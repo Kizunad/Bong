@@ -53,8 +53,8 @@ use self::anticheat::{
 };
 use self::components::{CombatState, DerivedAttrs, Lifecycle, Stamina, StatusEffects, Wounds};
 use self::events::{
-    ApplyStatusEffectIntent, AttackIntent, CombatEvent, DeathEvent, DeathInsightRequested,
-    DebugCombatCommand, DefenseIntent, RevivalActionIntent,
+    ApplyStatusEffectIntent, AttackIntent, CombatEvent, DeathCinematicPublished, DeathEvent,
+    DeathInsightRequested, DebugCombatCommand, DefenseIntent, RevivalActionIntent,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, SystemSet)]
@@ -176,6 +176,7 @@ pub fn register(app: &mut App) {
     app.add_event::<CombatEvent>();
     app.add_event::<DeathEvent>();
     app.add_event::<DeathInsightRequested>();
+    app.add_event::<DeathCinematicPublished>();
     app.add_event::<style_telemetry::StyleBalanceTelemetryEvent>();
     app.add_event::<RevivalActionIntent>();
     app.add_event::<DebugCombatCommand>();

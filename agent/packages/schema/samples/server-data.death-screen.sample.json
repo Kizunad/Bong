@@ -11,6 +11,28 @@
   "stage": "tribulation",
   "death_number": 4,
   "zone_kind": "negative",
+  "cinematic": {
+    "v": 1,
+    "character_id": "offline:Azure",
+    "phase": "roll",
+    "phase_tick": 0,
+    "phase_duration_ticks": 80,
+    "total_elapsed_ticks": 80,
+    "total_duration_ticks": 380,
+    "roll": {
+      "probability": 0.65,
+      "threshold": 0.65,
+      "luck_value": 0.65,
+      "result": "pending"
+    },
+    "insight_text": ["尘归尘，劫未尽。", "秘境所得悉数散落。"],
+    "is_final": false,
+    "death_number": 4,
+    "zone_kind": "negative",
+    "tsy_death": true,
+    "rebirth_weakened_ticks": 3600,
+    "skip_predeath": false
+  },
   "lifespan": {
     "years_lived": 78.5,
     "cap_by_realm": 80,

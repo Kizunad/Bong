@@ -120,6 +120,13 @@ import {
   DuguV2SkillIdV1,
 } from "./dugu_v2.js";
 import { CultivationDeathV1 } from "./cultivation-death.js";
+import {
+  DeathCinematicPhaseV1,
+  DeathCinematicRollV1,
+  DeathCinematicS2cV1,
+  DeathCinematicZoneKindV1,
+  DeathRollResultV1,
+} from "./death-cinematic.js";
 import { DeathInsightRequestV1 } from "./death-insight.js";
 import {
   DeathRegistryV1,
@@ -538,6 +545,11 @@ export const SCHEMA_REGISTRY = {
   forgeEventV1: ForgeEventV1,
   biographyEntryV1: BiographyEntryV1,
   cultivationDeathV1: CultivationDeathV1,
+  deathCinematicPhaseV1: DeathCinematicPhaseV1,
+  deathRollResultV1: DeathRollResultV1,
+  deathCinematicZoneKindV1: DeathCinematicZoneKindV1,
+  deathCinematicRollV1: DeathCinematicRollV1,
+  deathCinematicS2cV1: DeathCinematicS2cV1,
   deathInsightRequestV1: DeathInsightRequestV1,
   deathRegistryV1: DeathRegistryV1,
   deceasedIndexEntryV1: DeceasedIndexEntryV1,
@@ -959,6 +971,7 @@ export const GENERATED_SCHEMA_FILES = {
   "biography-entry-v1.json": SCHEMA_REGISTRY.biographyEntryV1,
   "heart-demon-outcome-v1.json": SCHEMA_REGISTRY.heartDemonOutcomeV1,
   "cultivation-death-v1.json": SCHEMA_REGISTRY.cultivationDeathV1,
+  "death-cinematic-s2c-v1.json": SCHEMA_REGISTRY.deathCinematicS2cV1,
   "death-insight-request-v1.json": SCHEMA_REGISTRY.deathInsightRequestV1,
   "spirit-eye-migrate-v1.json": SCHEMA_REGISTRY.spiritEyeMigrateV1,
   "spirit-eye-discovered-v1.json": SCHEMA_REGISTRY.spiritEyeDiscoveredV1,

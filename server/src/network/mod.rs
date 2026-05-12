@@ -346,6 +346,11 @@ pub fn register(app: &mut App) {
     );
     app.add_systems(
         Update,
+        combat_bridge::publish_death_cinematic_events
+            .after(crate::combat::lifecycle::near_death_tick),
+    );
+    app.add_systems(
+        Update,
         publish_season_changed_events.after(crate::world::season::season_tick),
     );
     app.add_systems(

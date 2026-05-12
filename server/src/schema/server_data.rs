@@ -15,6 +15,7 @@ use super::combat_hud::{
 use super::common::{EventKind, MAX_PAYLOAD_BYTES};
 use super::craft::{CraftOutcomeV1, CraftSessionStateV1, RecipeListV1, RecipeUnlockedV1};
 use super::cultivation::SkillMilestoneSnapshotV1;
+use super::death_cinematic::DeathCinematicS2cV1;
 use super::dugu::DuguPoisonStateV1;
 use super::forge::{
     ForgeBlueprintBookDataV1, ForgeOutcomeDataV1, ForgeSessionDataV1, WeaponForgeStationDataV1,
@@ -373,6 +374,7 @@ pub enum ServerDataPayloadV1 {
         death_number: Option<u32>,
         zone_kind: Option<DeathScreenZoneKindV1>,
         lifespan: Option<LifespanPreviewV1>,
+        cinematic: Option<DeathCinematicS2cV1>,
     },
     TerminateScreen {
         visible: bool,
@@ -1005,6 +1007,8 @@ enum ServerDataPayloadWireV1 {
         zone_kind: Option<DeathScreenZoneKindV1>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         lifespan: Option<LifespanPreviewV1>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        cinematic: Option<DeathCinematicS2cV1>,
     },
     TerminateScreen {
         visible: bool,
@@ -1837,6 +1841,7 @@ impl TryFrom<ServerDataPayloadWireV1> for ServerDataPayloadV1 {
                 death_number,
                 zone_kind,
                 lifespan,
+                cinematic,
             } => Ok(Self::DeathScreen {
                 visible,
                 cause,
@@ -1849,6 +1854,7 @@ impl TryFrom<ServerDataPayloadWireV1> for ServerDataPayloadV1 {
                 death_number,
                 zone_kind,
                 lifespan,
+                cinematic,
             }),
             ServerDataPayloadWireV1::TerminateScreen {
                 visible,
@@ -2369,6 +2375,7 @@ impl From<&ServerDataPayloadV1> for ServerDataPayloadWireV1 {
                 death_number,
                 zone_kind,
                 lifespan,
+                cinematic,
             } => Self::DeathScreen {
                 visible: *visible,
                 cause: cause.clone(),
@@ -2381,6 +2388,7 @@ impl From<&ServerDataPayloadV1> for ServerDataPayloadWireV1 {
                 death_number: *death_number,
                 zone_kind: zone_kind.clone(),
                 lifespan: lifespan.clone(),
+                cinematic: cinematic.clone(),
             },
             ServerDataPayloadV1::TerminateScreen {
                 visible,

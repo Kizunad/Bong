@@ -3,6 +3,7 @@ use valence::prelude::{bevy_ecs, Entity, Event};
 
 use crate::combat::components::{BodyPart, WoundKind};
 use crate::player::gameplay::CombatAction;
+use crate::schema::death_cinematic::DeathCinematicS2cV1;
 use crate::schema::death_insight::DeathInsightRequestV1;
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
@@ -176,6 +177,11 @@ pub struct DeathEvent {
 #[derive(Debug, Clone, Event, Serialize, Deserialize)]
 pub struct DeathInsightRequested {
     pub payload: DeathInsightRequestV1,
+}
+
+#[derive(Debug, Clone, Event, Serialize, Deserialize)]
+pub struct DeathCinematicPublished {
+    pub payload: DeathCinematicS2cV1,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

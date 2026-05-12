@@ -63,6 +63,9 @@ export const CHANNELS = {
   /** Server → Agent: 遗念生成请求（plan-death-lifecycle-v1 §7） */
   DEATH_INSIGHT: "bong:death_insight",
 
+  /** Server → Agent/Client: 死亡电影化阶段编排（plan-death-rebirth-cinematic-v1） */
+  DEATH_CINEMATIC: "bong:death_cinematic",
+
   /** Server → Agent: 老化 / 风烛 / tick rate 变化（plan-death-lifecycle-v1 §7） */
   AGING: "bong:aging",
 
@@ -340,6 +343,7 @@ export const REDIS_V1_CHANNELS = [
   CHANNELS.DEATH,
   CHANNELS.REBIRTH,
   CHANNELS.DEATH_INSIGHT,
+  CHANNELS.DEATH_CINEMATIC,
   CHANNELS.AGING,
   CHANNELS.LIFESPAN_EVENT,
   CHANNELS.DUO_SHE_EVENT,

@@ -1,6 +1,8 @@
 package com.bong.client.combat.screen;
 
 import com.bong.client.combat.store.DeathStateStore;
+import com.bong.client.death.DeathCinematicRenderer;
+import com.bong.client.hud.HudRenderCommand;
 import com.bong.client.network.ClientRequestSender;
 import net.minecraft.client.gui.DrawContext;
 import net.minecraft.client.gui.screen.Screen;
@@ -132,6 +134,48 @@ public final class DeathScreen extends Screen {
         }
 
         super.render(context, mouseX, mouseY, delta);
+        renderCinematicCommands(
+            context,
+            DeathCinematicRenderer.buildCommands(state.cinematic(), now, width, height)
+        );
+    }
+
+    private void renderCinematicCommands(DrawContext context, List<HudRenderCommand> commands) {
+        for (HudRenderCommand command : commands) {
+            if (command.isScreenTint()) {
+                context.fill(0, 0, width, height, command.color());
+                continue;
+            }
+            if (command.isEdgeVignette()) {
+                renderEdgeVignette(context, command.color());
+                continue;
+            }
+            if (command.isRect()) {
+                context.fill(command.x(), command.y(), command.x() + command.width(), command.y() + command.height(), command.color());
+                continue;
+            }
+            if (command.isText()) {
+                context.drawTextWithShadow(this.textRenderer, command.text(), command.x(), command.y(), command.color());
+                continue;
+            }
+            if (command.isScaledText()) {
+                var matrices = context.getMatrices();
+                matrices.push();
+                matrices.translate(command.x(), command.y(), 0);
+                float scale = (float) command.textScale();
+                matrices.scale(scale, scale, 1.0f);
+                context.drawTextWithShadow(this.textRenderer, command.text(), 0, 0, command.color());
+                matrices.pop();
+            }
+        }
+    }
+
+    private void renderEdgeVignette(DrawContext context, int color) {
+        int edge = Math.max(12, Math.min(width, height) / 8);
+        context.fill(0, 0, width, edge, color);
+        context.fill(0, height - edge, width, height, color);
+        context.fill(0, edge, edge, height - edge, color);
+        context.fill(width - edge, edge, width, height - edge, color);
     }
 
     private static String causeLabel(String cause) {

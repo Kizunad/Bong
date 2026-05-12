@@ -1,5 +1,7 @@
 package com.bong.client.combat.store;
 
+import com.bong.client.death.DeathCinematicState;
+
 import java.util.Collections;
 import java.util.List;
 import java.util.Objects;
@@ -27,7 +29,8 @@ public final class DeathStateStore {
         double remainingYears,
         int deathPenaltyYears,
         double lifespanTickRateMultiplier,
-        boolean windCandle
+        boolean windCandle,
+        DeathCinematicState cinematic
     ) {
         public State {
             cause = cause == null ? "" : cause;
@@ -42,18 +45,32 @@ public final class DeathStateStore {
             remainingYears = Math.max(0.0, remainingYears);
             deathPenaltyYears = Math.max(0, deathPenaltyYears);
             lifespanTickRateMultiplier = Math.max(0.0, lifespanTickRateMultiplier);
+            cinematic = cinematic == null ? DeathCinematicState.INACTIVE : cinematic;
         }
 
         public State(boolean visible, String cause, float luckRemaining, List<String> finalWords,
                      long countdownUntilMs, boolean canReincarnate, boolean canTerminate) {
             this(
                 visible, cause, luckRemaining, finalWords, countdownUntilMs, canReincarnate, canTerminate,
-                "", 0, "", 0.0, 0, 0.0, 0, 0.0, false
+                "", 0, "", 0.0, 0, 0.0, 0, 0.0, false, DeathCinematicState.INACTIVE
+            );
+        }
+
+        public State(boolean visible, String cause, float luckRemaining, List<String> finalWords,
+                     long countdownUntilMs, boolean canReincarnate, boolean canTerminate,
+                     String stage, int deathNumber, String zoneKind, double yearsLived,
+                     int lifespanCapByRealm, double remainingYears, int deathPenaltyYears,
+                     double lifespanTickRateMultiplier, boolean windCandle) {
+            this(
+                visible, cause, luckRemaining, finalWords, countdownUntilMs, canReincarnate, canTerminate,
+                stage, deathNumber, zoneKind, yearsLived, lifespanCapByRealm, remainingYears,
+                deathPenaltyYears, lifespanTickRateMultiplier, windCandle, DeathCinematicState.INACTIVE
             );
         }
 
         public static final State HIDDEN = new State(
-            false, "", 0f, List.of(), 0L, false, false, "", 0, "", 0.0, 0, 0.0, 0, 0.0, false
+            false, "", 0f, List.of(), 0L, false, false, "", 0, "", 0.0, 0, 0.0, 0, 0.0,
+            false, DeathCinematicState.INACTIVE
         );
 
         public boolean hasLifespanPreview() { return lifespanCapByRealm > 0; }

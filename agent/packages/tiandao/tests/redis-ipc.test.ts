@@ -13,6 +13,7 @@ const {
   BOTANY_ECOLOGY,
   BREAKTHROUGH_EVENT,
   COMBAT_REALTIME,
+  DEATH_CINEMATIC,
   ZONE_PRESSURE_CROSSED,
   PSEUDO_VEIN_ACTIVE,
   PSEUDO_VEIN_DISSIPATE,
@@ -775,6 +776,7 @@ describe("redis-ipc", () => {
         CHANNELS.ZONE_ENVIRONMENT_UPDATE,
         AGING,
         BREAKTHROUGH_EVENT,
+        DEATH_CINEMATIC,
         SOCIAL_FEUD,
         SOCIAL_NICHE_INTRUSION,
         COMBAT_REALTIME,
@@ -800,6 +802,26 @@ describe("redis-ipc", () => {
     await sub.publish(
       AGING,
       JSON.stringify({ v: 1, character_id: "offline:Azure", at_tick: 85, kind: "tick_rate" }),
+    );
+    await sub.publish(
+      DEATH_CINEMATIC,
+      JSON.stringify({
+        v: 1,
+        character_id: "offline:Azure",
+        phase: "roll",
+        phase_tick: 12,
+        phase_duration_ticks: 80,
+        total_elapsed_ticks: 92,
+        total_duration_ticks: 380,
+        roll: { probability: 0.65, threshold: 0.65, luck_value: 0.42, result: "pending" },
+        insight_text: ["坍缩渊，概不赊欠。"],
+        is_final: false,
+        death_number: 4,
+        zone_kind: "negative",
+        tsy_death: true,
+        rebirth_weakened_ticks: 3600,
+        skip_predeath: false,
+      }),
     );
     await sub.publish(SOCIAL_FEUD, JSON.stringify({ v: 1, left: "char:a", right: "char:b", tick: 86 }));
     await sub.publish(
@@ -875,10 +897,11 @@ describe("redis-ipc", () => {
       }),
     );
 
-    expect(callback).toHaveBeenCalledTimes(10);
+    expect(callback).toHaveBeenCalledTimes(11);
     expect(ipc.getLatestCrossSystemEvents()).toEqual([
       expect.objectContaining({ channel: BOTANY_ECOLOGY, payload: expect.objectContaining({ tick: 84 }) }),
       expect.objectContaining({ channel: AGING, payload: expect.objectContaining({ character_id: "offline:Azure" }) }),
+      expect.objectContaining({ channel: DEATH_CINEMATIC, payload: expect.objectContaining({ phase: "roll" }) }),
       expect.objectContaining({ channel: SOCIAL_FEUD, payload: expect.objectContaining({ left: "char:a" }) }),
       expect.objectContaining({
         channel: SOCIAL_NICHE_INTRUSION,
@@ -900,6 +923,18 @@ describe("redis-ipc", () => {
         payload: expect.objectContaining({ realm_to: "Foundation" }),
       }),
     ]);
+
+    await sub.publish(
+      DEATH_CINEMATIC,
+      JSON.stringify({
+        v: 1,
+        character_id: "offline:Azure",
+        phase: "not-a-phase",
+      }),
+    );
+
+    expect(callback).toHaveBeenCalledTimes(11);
+    expect(ipc.getLatestCrossSystemEvents().filter((event) => event.channel === DEATH_CINEMATIC)).toHaveLength(1);
   });
 
   it("publishes spawn_npc commands through the existing agent command channel", async () => {
