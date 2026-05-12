@@ -33,10 +33,9 @@ insight/
 ├── InsightDecision.java          # 玩家决定 (CHOSEN/DECLINED/TIMED_OUT)
 ├── InsightChoiceDispatcher.java  # 决定回传接口 (LOGGING 默认实现)
 ├── InsightOfferStore.java        # volatile 单 slot + listeners + dispatcher
-├── MockInsightOfferData.java     # mock：突破到引气境的 3 候选
 ├── InsightOfferScreen.java       # owo-lib 主屏 (倒计时 / 卡片点击 / ESC 拒绝)
 └── InsightOfferScreenBootstrap.java
-                                  # 监听 store 自动开关屏 + 调试键 J
+                                  # 监听 store 自动开关屏
 ```
 
 ## 交互
@@ -62,14 +61,6 @@ publish offer ─────────────► replace(vm) ───li
                                   │
                             replace(null) ───listener──► close Screen
 ```
-
-## 调试
-
-启动客户端后：
-
-- 按 **J**：若当前没有 offer，注入 `MockInsightOfferData.firstInduceBreakthrough()` 并打开屏。
-- 按 ESC / 点拒绝 / 等 60s 自动超时 → 决定通过 `InsightChoiceDispatcher.LOGGING` 打日志：
-  `[bong-client.insight] mock_offer_001 -> CHOSEN mock_choice_E1`
 
 ## 接入服务端
 

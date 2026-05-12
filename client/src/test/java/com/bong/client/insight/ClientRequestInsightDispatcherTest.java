@@ -24,11 +24,11 @@ public class ClientRequestInsightDispatcherTest {
 
     @Test
     void chosenResolvesChoiceIdToIdx() {
-        InsightOfferViewModel offer = MockInsightOfferData.firstInduceBreakthrough();
+        InsightOfferViewModel offer = InsightOfferFixtures.firstInduceBreakthrough();
         Capture cap = new Capture();
         var dispatcher = new ClientRequestInsightDispatcher(() -> offer, cap::accept);
 
-        dispatcher.dispatch(InsightDecision.chosen(offer.triggerId(), "mock_choice_C3"));
+        dispatcher.dispatch(InsightDecision.chosen(offer.triggerId(), "fixture_choice_C3"));
 
         assertEquals(offer.triggerId(), cap.triggerId);
         assertEquals(Integer.valueOf(1), cap.idx); // C3 是 index 1
@@ -36,7 +36,7 @@ public class ClientRequestInsightDispatcherTest {
 
     @Test
     void declinedSendsNullIdx() {
-        InsightOfferViewModel offer = MockInsightOfferData.firstInduceBreakthrough();
+        InsightOfferViewModel offer = InsightOfferFixtures.firstInduceBreakthrough();
         Capture cap = new Capture();
         var dispatcher = new ClientRequestInsightDispatcher(() -> offer, cap::accept);
 
@@ -48,7 +48,7 @@ public class ClientRequestInsightDispatcherTest {
 
     @Test
     void timedOutSendsNullIdx() {
-        InsightOfferViewModel offer = MockInsightOfferData.firstInduceBreakthrough();
+        InsightOfferViewModel offer = InsightOfferFixtures.firstInduceBreakthrough();
         Capture cap = new Capture();
         var dispatcher = new ClientRequestInsightDispatcher(() -> offer, cap::accept);
 
@@ -63,14 +63,14 @@ public class ClientRequestInsightDispatcherTest {
         AtomicReference<InsightOfferViewModel> ref = new AtomicReference<>(null);
         var dispatcher = new ClientRequestInsightDispatcher(ref::get, cap::accept);
 
-        dispatcher.dispatch(InsightDecision.chosen("some_offer", "mock_choice_E1"));
+        dispatcher.dispatch(InsightDecision.chosen("some_offer", "fixture_choice_E1"));
 
         assertNull(cap.idx, "missing offer snapshot should downgrade to null idx");
     }
 
     @Test
     void chosenWithUnknownChoiceIdDowngradesToNull() {
-        InsightOfferViewModel offer = MockInsightOfferData.firstInduceBreakthrough();
+        InsightOfferViewModel offer = InsightOfferFixtures.firstInduceBreakthrough();
         Capture cap = new Capture();
         var dispatcher = new ClientRequestInsightDispatcher(() -> offer, cap::accept);
 
@@ -81,7 +81,7 @@ public class ClientRequestInsightDispatcherTest {
 
     @Test
     void heartDemonTriggerRoutesToHeartDemonSender() {
-        InsightOfferViewModel offer = MockInsightOfferData.heartDemonOffer();
+        InsightOfferViewModel offer = InsightOfferFixtures.heartDemonOffer();
         Capture insight = new Capture();
         HeartDemonCapture heartDemon = new HeartDemonCapture();
         var dispatcher = new ClientRequestInsightDispatcher(() -> offer, insight::accept, heartDemon::accept);
@@ -94,7 +94,7 @@ public class ClientRequestInsightDispatcherTest {
 
     @Test
     void heartDemonDeclinedSendsNullToHeartDemonSender() {
-        InsightOfferViewModel offer = MockInsightOfferData.heartDemonOffer();
+        InsightOfferViewModel offer = InsightOfferFixtures.heartDemonOffer();
         Capture insight = new Capture();
         HeartDemonCapture heartDemon = new HeartDemonCapture();
         var dispatcher = new ClientRequestInsightDispatcher(() -> offer, insight::accept, heartDemon::accept);
