@@ -524,6 +524,92 @@ mod tests {
     }
 
     #[test]
+    fn conflict_outcome_emits_feud_relationship_payload() {
+        let mut app = app_with_pvp_encounter_system();
+        let mut event = betrayal_event();
+        event.outcome = EncounterOutcome::ProbeFight;
+        event.betrayer = None;
+        let expected_cause = event.outcome.wire_name();
+        let expected_place = event.zone.clone();
+        let expected_context = event.context.wire_name();
+
+        app.world_mut().send_event(event);
+        app.update();
+
+        let relationship_events = app.world().resource::<Events<SocialRelationshipEvent>>();
+        let emitted = relationship_events
+            .iter_current_update_events()
+            .cloned()
+            .collect::<Vec<_>>();
+        assert_eq!(
+            emitted.len(),
+            1,
+            "expected one feud relationship because probe fights are conflict outcomes, actual {emitted:?}"
+        );
+        let relationship = &emitted[0];
+        assert_eq!(
+            relationship.left_kind,
+            RelationshipKindV1::Feud,
+            "expected left_kind=Feud because PvP conflict creates mutual feud, actual {:?}",
+            relationship.left_kind
+        );
+        assert_eq!(
+            relationship.right_kind,
+            RelationshipKindV1::Feud,
+            "expected right_kind=Feud because PvP conflict creates mutual feud, actual {:?}",
+            relationship.right_kind
+        );
+        assert_eq!(
+            relationship
+                .metadata
+                .get("cause")
+                .and_then(serde_json::Value::as_str),
+            Some(expected_cause),
+            "expected metadata.cause to pin encounter outcome wire name, actual {}",
+            relationship.metadata
+        );
+        assert_eq!(
+            relationship
+                .metadata
+                .get("place")
+                .and_then(serde_json::Value::as_str),
+            Some(expected_place.as_str()),
+            "expected metadata.place to pin encounter zone, actual {}",
+            relationship.metadata
+        );
+        assert_eq!(
+            relationship
+                .metadata
+                .get("context")
+                .and_then(serde_json::Value::as_str),
+            Some(expected_context),
+            "expected metadata.context to pin encounter context wire name, actual {}",
+            relationship.metadata
+        );
+    }
+
+    #[test]
+    fn cooperative_outcome_does_not_emit_feud_relationship() {
+        let mut app = app_with_pvp_encounter_system();
+        let mut event = betrayal_event();
+        event.outcome = EncounterOutcome::TemporaryCooperation;
+        event.betrayer = None;
+
+        app.world_mut().send_event(event);
+        app.update();
+
+        let relationship_events = app.world().resource::<Events<SocialRelationshipEvent>>();
+        let emitted = relationship_events
+            .iter_current_update_events()
+            .next()
+            .cloned();
+        assert!(
+            emitted.is_none(),
+            "expected no feud relationship because temporary cooperation is non-conflict, actual {emitted:?}"
+        );
+    }
+
+    #[test]
     fn non_betrayal_outcome_never_applies_betrayal_renown() {
         let mut app = app_with_pvp_encounter_system();
         let alice = spawn_player(&mut app, "Alice", "char:alice");

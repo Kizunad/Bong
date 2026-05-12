@@ -233,12 +233,6 @@ fn classify_player_message(
         return None;
     }
 
-    if player_info.in_negative_pressure {
-        return Some(ClassifiedChat::PromptSelf(
-            "坍缩渊负压吞掉了你的话。".to_string(),
-        ));
-    }
-
     let zone = zone_name_for_position(zone_registry, position);
     let canonical_player = canonical_player_id(username.as_str());
     let char_id = player_info
@@ -271,6 +265,12 @@ fn classify_player_message(
                 }
             }
         }
+    }
+
+    if player_info.in_negative_pressure {
+        return Some(ClassifiedChat::PromptSelf(
+            "坍缩渊负压吞掉了你的话。".to_string(),
+        ));
     }
 
     Some(ClassifiedChat::PlayerChat {
@@ -826,6 +826,61 @@ mod chat_collector_tests {
         assert!(
             rx_outbound.try_recv().is_err(),
             "spirit treasure mention should not also enter normal player_chat"
+        );
+    }
+
+    #[test]
+    fn negative_pressure_preserves_spirit_treasure_dialogue_route() {
+        use crate::inventory::spirit_treasure::{ActiveTreasureEntry, JIZHAOJING_TEMPLATE_ID};
+
+        let (mut app, rx_outbound) = setup_chat_collector_app(true);
+        let (alice, mut helper) =
+            spawn_test_client_with_helper(&mut app, "Alice", [8.0, 66.0, 8.0]);
+        insert_negative_pressure_presence(&mut app, alice);
+        app.world_mut().entity_mut(alice).insert((
+            Lifecycle {
+                character_id: "char:alice".to_string(),
+                ..Default::default()
+            },
+            ActiveSpiritTreasures {
+                treasures: vec![ActiveTreasureEntry {
+                    template_id: JIZHAOJING_TEMPLATE_ID.to_string(),
+                    instance_id: 88,
+                    equipped: true,
+                    passive_active: true,
+                }],
+            },
+        ));
+
+        send_chat_event(&mut app, alice, "@寂照镜 负压里还能听见吗？", 1_712_345_709);
+        app.update();
+        flush_all_client_packets(&mut app);
+
+        let outbound = rx_outbound
+            .try_recv()
+            .expect("expected spirit treasure dialogue request because special routes precede negative pressure");
+        match outbound {
+            RedisOutbound::SpiritTreasureDialogueRequest(request) => {
+                assert_eq!(
+                    request.treasure_id, JIZHAOJING_TEMPLATE_ID,
+                    "expected Jizhaojing request because owned treasure mention should bypass normal chat, actual {}",
+                    request.treasure_id
+                );
+                assert_eq!(
+                    request.player_message.as_deref(),
+                    Some("负压里还能听见吗？"),
+                    "expected trimmed player message to reach spirit treasure runtime, actual {:?}",
+                    request.player_message
+                );
+            }
+            other => panic!("expected spirit treasure dialogue request, got {other:?}"),
+        }
+        let messages = collect_game_messages(&mut helper);
+        assert!(
+            messages
+                .iter()
+                .all(|message| !message.contains("坍缩渊负压吞掉了你的话。")),
+            "expected no negative-pressure prompt because spirit treasure route handled the message, actual {messages:?}"
         );
     }
 }
