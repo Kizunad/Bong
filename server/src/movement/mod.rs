@@ -6,7 +6,7 @@ use valence::math::Aabb;
 use valence::prelude::{
     bevy_ecs, Added, App, BlockPos, BlockState, Changed, ChunkLayer, Client, Commands, Component,
     DVec3, Entity, Event, EventReader, EventWriter, IntoSystemConfigs, Or, Position, Query, Res,
-    UniqueId, Update, With, Without,
+    UniqueId, Update, Vec3, With, Without,
 };
 
 use crate::combat::components::{
@@ -37,12 +37,12 @@ pub const BASE_MOVE_SPEED_MULTIPLIER: f32 = 0.75;
 pub const EXHAUSTED_SPEED_MULTIPLIER: f32 = 0.6;
 pub const LOW_STAMINA_THRESHOLD: f32 = 10.0;
 pub const LOW_STAMINA_HUD_RATIO: f32 = 0.30;
-pub const DASH_DISTANCE_BLOCKS: f64 = 4.0;
+pub const DASH_HORIZONTAL_IMPULSE: f32 = 2.8;
 pub const DASH_DURATION_TICKS: u64 = 4;
 pub const DASH_STAMINA_COST: f32 = 15.0;
 pub const DASH_ATTACK_BONUS_MULTIPLIER: f32 = 1.20;
 pub const DASH_ATTACK_BONUS_WINDOW_TICKS: u64 = 10;
-pub const SLIDE_DISTANCE_BLOCKS: f64 = 3.0;
+pub const SLIDE_HORIZONTAL_IMPULSE: f32 = 2.0;
 pub const SLIDE_DURATION_TICKS: u64 = 8;
 pub const SLIDE_STAND_TRANSITION_TICKS: u64 = 6;
 pub const SLIDE_STAMINA_COST: f32 = 12.0;
@@ -292,6 +292,7 @@ fn apply_movement_attribute_modifier(attributes: &mut EntityAttributes, multipli
 }
 
 type MovementActionQueryItem<'a> = (
+    &'a mut Client,
     &'a mut MovementState,
     &'a mut Stamina,
     &'a mut Position,
@@ -315,6 +316,7 @@ fn handle_movement_action_intents(
 ) {
     for intent in intents.read() {
         let Ok((
+            mut client,
             mut movement,
             mut stamina,
             mut position,
@@ -338,6 +340,7 @@ fn handle_movement_action_intents(
         let origin = position.get();
         let action = intent.action;
         let dimension_kind = dimension.map(|dimension| dimension.0).unwrap_or_default();
+        let mut velocity = velocity;
 
         if let Some(reason) = reject_reason(action, &movement, &stamina, grounded, now) {
             movement.rejected_action = movement_action_request(action);
@@ -357,14 +360,11 @@ fn handle_movement_action_intents(
         match action {
             MovementAction::None => {}
             MovementAction::Dashing => {
-                position.0 = movement_displacement_checked(
-                    origin,
+                apply_client_horizontal_impulse(
+                    &mut client,
+                    velocity.as_deref_mut(),
                     dir,
-                    DASH_DISTANCE_BLOCKS,
-                    movement.hitbox_height_blocks,
-                    dimension_kind,
-                    dimension_layers.as_deref(),
-                    &layers,
+                    DASH_HORIZONTAL_IMPULSE,
                 );
                 movement.action = MovementAction::Dashing;
                 movement.active_until_tick = now.saturating_add(DASH_DURATION_TICKS);
@@ -373,14 +373,11 @@ fn handle_movement_action_intents(
                     now.saturating_add(DASH_ATTACK_BONUS_WINDOW_TICKS);
             }
             MovementAction::Sliding => {
-                position.0 = movement_displacement_checked(
-                    origin,
+                apply_client_horizontal_impulse(
+                    &mut client,
+                    velocity.as_deref_mut(),
                     dir,
-                    SLIDE_DISTANCE_BLOCKS,
-                    SLIDE_HITBOX_HEIGHT_BLOCKS,
-                    dimension_kind,
-                    dimension_layers.as_deref(),
-                    &layers,
+                    SLIDE_HORIZONTAL_IMPULSE,
                 );
                 movement.action = MovementAction::Sliding;
                 movement.active_until_tick = now.saturating_add(SLIDE_DURATION_TICKS);
@@ -413,11 +410,18 @@ fn handle_movement_action_intents(
                     dimension_layers.as_deref(),
                     &layers,
                 );
-                if let Some(mut velocity) = velocity {
+                if let Some(velocity) = velocity.as_deref_mut() {
                     velocity.0.y =
                         DOUBLE_JUMP_BASE_VERTICAL_VELOCITY * double_jump_height_multiplier(realm);
                     velocity.0.x += air_dir.x as f32 * 1.8;
                     velocity.0.z += air_dir.z as f32 * 1.8;
+                    client.set_velocity(velocity.0);
+                } else {
+                    client.set_velocity(Vec3::new(
+                        air_dir.x as f32 * 1.8,
+                        DOUBLE_JUMP_BASE_VERTICAL_VELOCITY * double_jump_height_multiplier(realm),
+                        air_dir.z as f32 * 1.8,
+                    ));
                 }
             }
         }
@@ -849,6 +853,30 @@ pub fn movement_displacement(origin: DVec3, dir: DVec3, distance: f64) -> DVec3 
     origin + normalize_horizontal(dir) * distance
 }
 
+pub fn movement_horizontal_impulse(dir: DVec3, impulse: f32) -> (f32, f32) {
+    let normalized = normalize_horizontal(dir);
+    (
+        normalized.x as f32 * impulse.max(0.0),
+        normalized.z as f32 * impulse.max(0.0),
+    )
+}
+
+fn apply_client_horizontal_impulse(
+    client: &mut Client,
+    velocity: Option<&mut Velocity>,
+    dir: DVec3,
+    impulse: f32,
+) {
+    let (x, z) = movement_horizontal_impulse(dir, impulse);
+    if let Some(velocity) = velocity {
+        velocity.0.x += x;
+        velocity.0.z += z;
+        client.set_velocity(velocity.0);
+    } else {
+        client.set_velocity(Vec3::new(x, 0.0, z));
+    }
+}
+
 pub fn movement_displacement_swept(
     origin: DVec3,
     dir: DVec3,
@@ -1137,10 +1165,11 @@ mod tests {
     }
 
     #[test]
-    fn dash_distance_4_blocks() {
-        let origin = DVec3::new(1.0, 64.0, 2.0);
-        let end = movement_displacement(origin, DVec3::new(1.0, 0.0, 0.0), DASH_DISTANCE_BLOCKS);
-        assert_eq!(end, DVec3::new(5.0, 64.0, 2.0));
+    fn dash_impulse_uses_horizontal_direction() {
+        let (x, z) =
+            movement_horizontal_impulse(DVec3::new(1.0, 2.0, 0.0), DASH_HORIZONTAL_IMPULSE);
+        assert_close(x, DASH_HORIZONTAL_IMPULSE);
+        assert_close(z, 0.0);
     }
 
     #[test]
@@ -1259,7 +1288,7 @@ mod tests {
         let end = movement_displacement_swept(
             origin,
             DVec3::new(1.0, 0.0, 0.0),
-            DASH_DISTANCE_BLOCKS,
+            4.0,
             1.8,
             |candidate, _height| candidate.x >= 2.0,
         );
