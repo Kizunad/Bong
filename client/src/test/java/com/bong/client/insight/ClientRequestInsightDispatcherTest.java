@@ -65,6 +65,7 @@ public class ClientRequestInsightDispatcherTest {
 
         dispatcher.dispatch(InsightDecision.chosen("some_offer", "fixture_choice_E1"));
 
+        assertEquals("some_offer", cap.triggerId);
         assertNull(cap.idx, "missing offer snapshot should downgrade to null idx");
     }
 

@@ -684,6 +684,14 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
         return "已知配方 " + knownRecipes;
     }
 
+    static String craftStatusLineForTests() {
+        return craftStatusLine();
+    }
+
+    static boolean opensCraftScreenForTabForTests(int idx) {
+        return idx == TAB_CRAFT;
+    }
+
     private void openCraftScreen() {
         MinecraftClient client = MinecraftClient.getInstance();
         if (client != null) {

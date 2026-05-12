@@ -32,9 +32,10 @@ class InsightOfferStoreTest {
     void submitSendsDecisionThroughDispatcherAndClearsSlot() {
         List<InsightDecision> dispatched = new ArrayList<>();
         InsightOfferStore.setDispatcher(dispatched::add);
+        InsightOfferViewModel offer = InsightOfferFixtures.firstInduceBreakthrough();
 
-        InsightOfferStore.replace(InsightOfferFixtures.firstInduceBreakthrough());
-        InsightOfferStore.submit(InsightDecision.chosen("first_breakthrough_to_Induce", "fixture_choice_E1"));
+        InsightOfferStore.replace(offer);
+        InsightOfferStore.submit(InsightDecision.chosen(offer.triggerId(), offer.choices().get(0).choiceId()));
 
         assertEquals(1, dispatched.size());
         assertEquals("CHOSEN fixture_choice_E1", dispatched.get(0).summary());
