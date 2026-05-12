@@ -3671,7 +3671,7 @@ mod tests {
             .send(CustomPayloadEvent {
                 client: entity,
                 channel: ident!("bong:client_request").into(),
-                data: br#"{"type":"movement_action","v":1,"action":"slide"}"#
+                data: br#"{"type":"movement_action","v":1,"action":"dash"}"#
                     .to_vec()
                     .into_boxed_slice(),
             });

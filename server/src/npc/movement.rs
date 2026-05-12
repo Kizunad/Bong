@@ -25,9 +25,9 @@
 
 use bevy_transform::components::Transform;
 use valence::prelude::{
-    bevy_ecs, App, BlockPos, BlockState, Chunk, ChunkLayer, ChunkPos, Commands, Component, DVec3,
-    Entity, EventWriter, GameMode, HeadYaw, IntoSystemConfigs, Look, ParamSet, Position, Query,
-    Res, ResMut, Resource, Update, With, Without,
+    bevy_ecs, App, BlockPos, BlockState, Chunk, ChunkLayer, ChunkPos, Client, Commands, Component,
+    DVec3, Entity, EventWriter, GameMode, HeadYaw, IntoSystemConfigs, Look, ParamSet, Position,
+    Query, Res, ResMut, Resource, Update, With, Without,
 };
 
 use crate::combat::body_mass::BodyMass;
@@ -423,6 +423,12 @@ fn activate_knockback(
     }));
 }
 
+type StalePendingKnockbackFilter = (
+    With<PendingKnockback>,
+    Without<MovementController>,
+    Without<Client>,
+);
+
 fn apply_pending_knockback_system(
     mut commands: Commands,
     mut controllable: Query<(
@@ -431,14 +437,15 @@ fn apply_pending_knockback_system(
         &PendingKnockback,
         &mut MovementController,
     )>,
-    stale: Query<Entity, (With<PendingKnockback>, Without<MovementController>)>,
+    stale: Query<Entity, StalePendingKnockbackFilter>,
 ) {
     // Apply knockback to entities that have a MovementController (NPCs).
     for (entity, position, knockback, mut ctrl) in &mut controllable {
         activate_knockback(&mut ctrl, knockback, position.get().y);
         commands.entity(entity).remove::<PendingKnockback>();
     }
-    // Clean up PendingKnockback on entities without MovementController (players).
+    // Clean up PendingKnockback on non-player entities without MovementController. Players are
+    // consumed by movement::player_knockback so Valence velocity can carry the hit reaction.
     for entity in &stale {
         commands.entity(entity).remove::<PendingKnockback>();
     }

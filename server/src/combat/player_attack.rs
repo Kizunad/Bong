@@ -9,6 +9,7 @@ use crate::combat::components::{
 use crate::combat::events::{AttackIntent, AttackSource, FIST_REACH, SWORD_REACH};
 use crate::combat::weapon::Weapon;
 use crate::combat::CombatClock;
+use crate::movement::player_knockback::ActivePlayerKnockback;
 use crate::npc::spawn::NpcMarker;
 
 const ATTACK_COOLDOWN_TICKS: u64 = 10;
@@ -19,19 +20,19 @@ pub struct PlayerAttackCooldown {
     pub last_attack_tick: u64,
 }
 
+type PlayerAttackClientItem<'a> = (
+    &'a Position,
+    &'a Stamina,
+    Option<&'a Weapon>,
+    &'a mut PlayerAttackCooldown,
+    Option<&'a ActivePlayerKnockback>,
+);
+
 pub fn handle_player_attack(
     mut interactions: EventReader<InteractEntityEvent>,
     mut intents: EventWriter<AttackIntent>,
     clock: Res<CombatClock>,
-    mut clients: Query<
-        (
-            &Position,
-            &Stamina,
-            Option<&Weapon>,
-            &mut PlayerAttackCooldown,
-        ),
-        With<valence::prelude::Client>,
-    >,
+    mut clients: Query<PlayerAttackClientItem<'_>, With<valence::prelude::Client>>,
     targets: Query<(&Position, Option<&Lifecycle>), With<NpcMarker>>,
 ) {
     for ev in interactions.read() {
@@ -43,9 +44,14 @@ pub fn handle_player_attack(
             continue;
         }
 
-        let Ok((attacker_pos, stamina, weapon, mut cooldown)) = clients.get_mut(ev.client) else {
+        let Ok((attacker_pos, stamina, weapon, mut cooldown, knockback)) =
+            clients.get_mut(ev.client)
+        else {
             continue;
         };
+        if knockback.is_some_and(ActivePlayerKnockback::is_displacing) {
+            continue;
+        }
 
         let Ok((target_pos, target_lifecycle)) = targets.get(ev.entity) else {
             continue;
