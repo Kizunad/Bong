@@ -212,8 +212,9 @@ mod chat_collector_tests {
     use crate::world::dimension::DimensionKind;
     use crate::world::tsy::{DimensionAnchor, TsyPresence};
     use crossbeam_channel::unbounded;
-    use valence::prelude::{App, DVec3, Position, Update};
-    use valence::testing::create_mock_client;
+    use valence::prelude::{App, Client, DVec3, Position, Update};
+    use valence::protocol::packets::play::GameMessageS2c;
+    use valence::testing::{create_mock_client, MockClientHelper};
 
     fn setup_chat_collector_app(
         with_zone_registry: bool,
@@ -240,10 +241,20 @@ mod chat_collector_tests {
     }
 
     fn spawn_test_client(app: &mut App, username: &str, position: [f64; 3]) -> Entity {
+        let (entity, _helper) = spawn_test_client_with_helper(app, username, position);
+        entity
+    }
+
+    fn spawn_test_client_with_helper(
+        app: &mut App,
+        username: &str,
+        position: [f64; 3],
+    ) -> (Entity, MockClientHelper) {
         let (mut client_bundle, _helper) = create_mock_client(username);
         client_bundle.player.position = Position::new(position);
 
-        app.world_mut().spawn(client_bundle).id()
+        let entity = app.world_mut().spawn(client_bundle).id();
+        (entity, _helper)
     }
 
     fn send_chat_event(app: &mut App, client: Entity, message: &str, timestamp: u64) {
@@ -252,6 +263,30 @@ mod chat_collector_tests {
             message: message.to_string().into_boxed_str(),
             timestamp,
         });
+    }
+
+    fn flush_all_client_packets(app: &mut App) {
+        let world = app.world_mut();
+        let mut query = world.query::<&mut Client>();
+        for mut client in query.iter_mut(world) {
+            client
+                .flush_packets()
+                .expect("mock client packets should flush successfully");
+        }
+    }
+
+    fn collect_game_messages(helper: &mut MockClientHelper) -> Vec<String> {
+        helper
+            .collect_received()
+            .0
+            .into_iter()
+            .filter_map(|frame| {
+                frame
+                    .decode::<GameMessageS2c>()
+                    .ok()
+                    .map(|packet| packet.chat.to_legacy_lossy())
+            })
+            .collect()
     }
 
     #[test]
@@ -405,7 +440,8 @@ mod chat_collector_tests {
     #[test]
     fn chat_blocked_in_negative_pressure() {
         let (mut app, rx_outbound) = setup_chat_collector_app(true);
-        let alice = spawn_test_client(&mut app, "Alice", [8.0, 66.0, 8.0]);
+        let (alice, mut helper) =
+            spawn_test_client_with_helper(&mut app, "Alice", [8.0, 66.0, 8.0]);
         app.world_mut().entity_mut(alice).insert(TsyPresence {
             family_id: "tsy_lingxu_01".to_string(),
             entered_at_tick: 42,
@@ -418,10 +454,18 @@ mod chat_collector_tests {
 
         send_chat_event(&mut app, alice, "有人吗", 1_712_345_706);
         app.update();
+        flush_all_client_packets(&mut app);
 
         assert!(
             rx_outbound.try_recv().is_err(),
             "TSY negative pressure should block normal player chat"
+        );
+        let messages = collect_game_messages(&mut helper);
+        assert!(
+            messages
+                .iter()
+                .any(|message| message.contains("坍缩渊负压吞掉了你的话。")),
+            "expected client feedback because negative pressure swallowed chat, actual {messages:?}"
         );
         let events = app
             .world()

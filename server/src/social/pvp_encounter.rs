@@ -182,14 +182,26 @@ pub fn handle_pvp_encounter_events(
         if event.left == event.right {
             continue;
         }
+        let validated_betrayer = validated_betrayer(event);
 
-        record_life_entries(event, &mut players, persistence.as_deref());
-        emit_social_edges(event, &mut relationships, &mut renown_deltas);
+        record_life_entries(
+            event,
+            validated_betrayer,
+            &mut players,
+            persistence.as_deref(),
+        );
+        emit_social_edges(
+            event,
+            validated_betrayer,
+            &mut relationships,
+            &mut renown_deltas,
+        );
     }
 }
 
 fn record_life_entries(
     event: &PvpEncounterEvent,
+    validated_betrayer: Option<&str>,
     players: &mut EncounterPlayerQuery<'_, '_>,
     persistence: Option<&PersistenceSettings>,
 ) {
@@ -200,27 +212,21 @@ fn record_life_entries(
 
         if let Some(mut life_record) = life_record {
             life_record.push(encounter_entry(event, counterparty_id));
-            if event.outcome == EncounterOutcome::Betrayal
-                && event
-                    .betrayer
-                    .as_deref()
-                    .is_some_and(|betrayer| betrayer != lifecycle.character_id)
-            {
-                life_record.push(BiographyEntry::PvpBetrayal {
-                    betrayer_id: event.betrayer.clone().unwrap_or_default(),
-                    victim_id: lifecycle.character_id.clone(),
-                    scene: event.context.wire_name().to_string(),
-                    npc_witnessed: event.npc_witnessed,
-                    tick: event.tick,
-                });
+            if let Some(betrayer) = validated_betrayer {
+                if betrayer != lifecycle.character_id {
+                    life_record.push(BiographyEntry::PvpBetrayal {
+                        betrayer_id: betrayer.to_string(),
+                        victim_id: lifecycle.character_id.clone(),
+                        scene: event.context.wire_name().to_string(),
+                        npc_witnessed: event.npc_witnessed,
+                        tick: event.tick,
+                    });
+                }
             }
         }
 
         if event.npc_witnessed
-            && event
-                .betrayer
-                .as_deref()
-                .is_some_and(|betrayer| betrayer == lifecycle.character_id)
+            && validated_betrayer.is_some_and(|betrayer| betrayer == lifecycle.character_id)
         {
             if let Some(mut identities) = identities {
                 apply_betrayal_reputation_to_active_identity(&mut identities, event.tick);
@@ -266,6 +272,7 @@ fn apply_betrayal_reputation_to_active_identity(identities: &mut PlayerIdentitie
 
 fn emit_social_edges(
     event: &PvpEncounterEvent,
+    validated_betrayer: Option<&str>,
     relationships: &mut EventWriter<SocialRelationshipEvent>,
     renown_deltas: &mut EventWriter<SocialRenownDeltaEvent>,
 ) {
@@ -287,17 +294,15 @@ fn emit_social_edges(
         });
     }
 
-    if event.outcome == EncounterOutcome::Betrayal {
-        if let Some(betrayer) = event.betrayer.as_ref() {
-            renown_deltas.send(SocialRenownDeltaEvent {
-                char_id: betrayer.clone(),
-                fame_delta: 0,
-                notoriety_delta: BETRAYAL_REPUTATION_DELTA,
-                tags_added: vec![betrayal_tag(event.tick)],
-                tick: event.tick,
-                reason: "pvp_betrayal".to_string(),
-            });
-        }
+    if let Some(betrayer) = validated_betrayer {
+        renown_deltas.send(SocialRenownDeltaEvent {
+            char_id: betrayer.to_string(),
+            fame_delta: 0,
+            notoriety_delta: BETRAYAL_REPUTATION_DELTA,
+            tags_added: vec![betrayal_tag(event.tick)],
+            tick: event.tick,
+            reason: "pvp_betrayal".to_string(),
+        });
     }
 }
 
@@ -318,6 +323,16 @@ fn counterparty<'a>(event: &'a PvpEncounterEvent, char_id: &str) -> Option<&'a s
     } else {
         None
     }
+}
+
+fn validated_betrayer(event: &PvpEncounterEvent) -> Option<&str> {
+    if event.outcome != EncounterOutcome::Betrayal {
+        return None;
+    }
+    event
+        .betrayer
+        .as_deref()
+        .filter(|betrayer| *betrayer == event.left || *betrayer == event.right)
 }
 
 #[cfg(test)]
@@ -359,6 +374,15 @@ mod tests {
         }
     }
 
+    fn app_with_pvp_encounter_system() -> App {
+        let mut app = App::new();
+        app.add_event::<PvpEncounterEvent>();
+        app.add_event::<SocialRelationshipEvent>();
+        app.add_event::<SocialRenownDeltaEvent>();
+        app.add_systems(Update, handle_pvp_encounter_events);
+        app
+    }
+
     #[test]
     fn encounter_phase_follows_plan_distance_bands() {
         assert_eq!(phase_for_distance(50.0), EncounterPhase::FarAssessment);
@@ -368,11 +392,7 @@ mod tests {
 
     #[test]
     fn betrayal_reputation_impact() {
-        let mut app = App::new();
-        app.add_event::<PvpEncounterEvent>();
-        app.add_event::<SocialRelationshipEvent>();
-        app.add_event::<SocialRenownDeltaEvent>();
-        app.add_systems(Update, handle_pvp_encounter_events);
+        let mut app = app_with_pvp_encounter_system();
         spawn_player(&mut app, "Alice", "char:alice");
         let bob = spawn_player(&mut app, "Bob", "char:bob");
 
@@ -391,6 +411,70 @@ mod tests {
             .expect("betrayal should emit a social renown delta");
         assert_eq!(emitted.reason, "pvp_betrayal");
         assert_eq!(emitted.char_id, "char:bob");
+    }
+
+    #[test]
+    fn non_betrayal_outcome_never_applies_betrayal_renown() {
+        let mut app = app_with_pvp_encounter_system();
+        let alice = spawn_player(&mut app, "Alice", "char:alice");
+        let bob = spawn_player(&mut app, "Bob", "char:bob");
+        let mut event = betrayal_event();
+        event.outcome = EncounterOutcome::TemporaryCooperation;
+
+        app.world_mut().send_event(event);
+        app.update();
+
+        let identities = app.world().get::<PlayerIdentities>(bob).unwrap();
+        assert_eq!(
+            identities.active().unwrap().renown.notoriety,
+            0,
+            "non-betrayal encounter should not write betrayal notoriety"
+        );
+        let renown_events = app.world().resource::<Events<SocialRenownDeltaEvent>>();
+        assert!(
+            renown_events.iter_current_update_events().next().is_none(),
+            "non-betrayal encounter should not emit pvp_betrayal renown event"
+        );
+        let record = app.world().get::<LifeRecord>(alice).unwrap();
+        assert!(
+            record
+                .biography
+                .iter()
+                .all(|entry| !matches!(entry, BiographyEntry::PvpBetrayal { .. })),
+            "non-betrayal encounter should not record PvpBetrayal"
+        );
+    }
+
+    #[test]
+    fn outsider_betrayer_is_rejected_before_renown_writes() {
+        let mut app = app_with_pvp_encounter_system();
+        let alice = spawn_player(&mut app, "Alice", "char:alice");
+        let bob = spawn_player(&mut app, "Bob", "char:bob");
+        let mut event = betrayal_event();
+        event.betrayer = Some("char:outsider".to_string());
+
+        app.world_mut().send_event(event);
+        app.update();
+
+        let identities = app.world().get::<PlayerIdentities>(bob).unwrap();
+        assert_eq!(
+            identities.active().unwrap().renown.notoriety,
+            0,
+            "outsider betrayer should not write reputation to encounter participants"
+        );
+        let renown_events = app.world().resource::<Events<SocialRenownDeltaEvent>>();
+        assert!(
+            renown_events.iter_current_update_events().next().is_none(),
+            "outsider betrayer should not emit pvp_betrayal renown event"
+        );
+        let record = app.world().get::<LifeRecord>(alice).unwrap();
+        assert!(
+            record
+                .biography
+                .iter()
+                .all(|entry| !matches!(entry, BiographyEntry::PvpBetrayal { .. })),
+            "outsider betrayer should not be recorded as a valid betrayal"
+        );
     }
 
     #[test]
@@ -413,11 +497,7 @@ mod tests {
 
     #[test]
     fn life_record_encounter_entry() {
-        let mut app = App::new();
-        app.add_event::<PvpEncounterEvent>();
-        app.add_event::<SocialRelationshipEvent>();
-        app.add_event::<SocialRenownDeltaEvent>();
-        app.add_systems(Update, handle_pvp_encounter_events);
+        let mut app = app_with_pvp_encounter_system();
         let alice = spawn_player(&mut app, "Alice", "char:alice");
         spawn_player(&mut app, "Bob", "char:bob");
 

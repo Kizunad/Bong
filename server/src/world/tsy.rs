@@ -227,4 +227,35 @@ mod tests {
         assert!(!alone.prisoner_dilemma_active());
         assert_eq!(alone.pvp_window_ticks, 0);
     }
+
+    #[test]
+    fn pvp_extract_point_boundaries() {
+        let zero_ticks = pvp_extract_point_profile(2, 0, false);
+        assert!(!zero_ticks.prisoner_dilemma_active());
+        assert_eq!(zero_ticks.pvp_window_ticks, 0);
+
+        for (extract_ticks, expected_window) in [(59, 59), (60, 60), (61, 60)] {
+            let profile = pvp_extract_point_profile(2, extract_ticks, true);
+            assert!(
+                profile.prisoner_dilemma_active(),
+                "race-out should stay active at threshold input {extract_ticks}"
+            );
+            assert_eq!(
+                profile.pvp_window_ticks, expected_window,
+                "race-out pvp window should clamp at 60 ticks"
+            );
+        }
+
+        for (extract_ticks, expected_window) in [(299, 299), (300, 300), (301, 300)] {
+            let profile = pvp_extract_point_profile(2, extract_ticks, false);
+            assert!(
+                profile.prisoner_dilemma_active(),
+                "normal extract should stay active at threshold input {extract_ticks}"
+            );
+            assert_eq!(
+                profile.pvp_window_ticks, expected_window,
+                "normal extract pvp window should clamp at 300 ticks"
+            );
+        }
+    }
 }

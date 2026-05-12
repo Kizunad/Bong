@@ -18,30 +18,34 @@ public final class SilentSignalSystem {
     }
 
     public static List<SilentSignal> detect(ActionSnapshot snapshot) {
-        if (snapshot == null || snapshot.distanceBlocks() > SIGNAL_RANGE_BLOCKS) {
+        if (snapshot == null) {
+            return Collections.emptyList();
+        }
+        double distanceBlocks = snapshot.distanceBlocks();
+        if (!Double.isFinite(distanceBlocks) || distanceBlocks < 0.0 || distanceBlocks > SIGNAL_RANGE_BLOCKS) {
             return Collections.emptyList();
         }
 
         List<SilentSignal> signals = new ArrayList<>();
         if (isTorch(snapshot.heldItemId())) {
-            signals.add(new SilentSignal(SignalKind.PEACE_TORCH, "torch", snapshot.distanceBlocks(), false));
+            signals.add(new SilentSignal(SignalKind.PEACE_TORCH, "torch", distanceBlocks, false));
         }
         if (isBoneCoin(snapshot.droppedItemId())) {
-            signals.add(new SilentSignal(SignalKind.BONE_COIN_OFFER, "bone_coin", snapshot.distanceBlocks(), false));
+            signals.add(new SilentSignal(SignalKind.BONE_COIN_OFFER, "bone_coin", distanceBlocks, false));
         }
         if (snapshot.movingBackward()
             && snapshot.facingTarget()
             && snapshot.speedMultiplier() <= BACKING_AWAY_SPEED_LIMIT) {
-            signals.add(new SilentSignal(SignalKind.SLOW_BACK_AWAY, null, snapshot.distanceBlocks(), false));
+            signals.add(new SilentSignal(SignalKind.SLOW_BACK_AWAY, null, distanceBlocks, false));
         }
         if (snapshot.crouchToggles() >= DOUBLE_CROUCH_THRESHOLD) {
-            signals.add(new SilentSignal(SignalKind.DOUBLE_CROUCH_WARNING, null, snapshot.distanceBlocks(), false));
+            signals.add(new SilentSignal(SignalKind.DOUBLE_CROUCH_WARNING, null, distanceBlocks, false));
         }
         if (snapshot.pointingDurationMs() >= POINTING_THRESHOLD_MS) {
-            signals.add(new SilentSignal(SignalKind.DIRECTION_POINT, null, snapshot.distanceBlocks(), false));
+            signals.add(new SilentSignal(SignalKind.DIRECTION_POINT, null, distanceBlocks, false));
         }
         if (snapshot.meditatingDurationMs() >= MEDITATING_THRESHOLD_MS) {
-            signals.add(new SilentSignal(SignalKind.SEATED_NEUTRAL, null, snapshot.distanceBlocks(), false));
+            signals.add(new SilentSignal(SignalKind.SEATED_NEUTRAL, null, distanceBlocks, false));
         }
         return List.copyOf(signals);
     }

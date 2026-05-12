@@ -47,14 +47,14 @@ pub fn purchase_partial_encounter_intel(
         clue_limit,
     );
 
-    let identity_disclosed = paid_bone_coins >= 20 && asset.identity_name.is_some();
+    let identity_value = asset
+        .identity_name
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    let identity_disclosed = paid_bone_coins >= 20 && identity_value.is_some();
     if identity_disclosed {
-        push_clue(
-            &mut clues,
-            "identity",
-            asset.identity_name.as_deref(),
-            clue_limit + 1,
-        );
+        push_clue(&mut clues, "identity", identity_value, clue_limit + 1);
     }
 
     PurchasedEncounterIntel {
@@ -99,5 +99,30 @@ mod tests {
         let expensive = purchase_partial_encounter_intel(&asset, 20);
         assert!(expensive.clues.contains(&"identity:玄锋".to_string()));
         assert!(expensive.identity_disclosed);
+    }
+
+    #[test]
+    fn npc_intel_blank_identity_is_not_disclosed() {
+        let asset = EncounterIntelAsset {
+            zone: "blood_valley".to_string(),
+            appearance_hint: Some("右手持骨刺".to_string()),
+            observed_style: None,
+            qi_color_hint: None,
+            identity_name: Some("   ".to_string()),
+        };
+
+        let intel = purchase_partial_encounter_intel(&asset, 20);
+
+        assert!(
+            !intel.identity_disclosed,
+            "blank identity should not report identity_disclosed=true"
+        );
+        assert!(
+            intel
+                .clues
+                .iter()
+                .all(|clue| !clue.starts_with("identity:")),
+            "blank identity should not emit identity clue"
+        );
     }
 }
