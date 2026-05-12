@@ -45,6 +45,9 @@ export const CHANNELS = {
   /** Server → Agent: 突破事件（plan-cultivation §6.1） (Pub/Sub) */
   BREAKTHROUGH_EVENT: "bong:breakthrough_event",
 
+  /** Server → Agent: 突破 cinematic 阶段事件（plan-breakthrough-cinematic-v1） */
+  BREAKTHROUGH_CINEMATIC: "bong:breakthrough_cinematic",
+
   /** Server → Agent: 锻造事件（plan-cultivation §6.1） (Pub/Sub) */
   FORGE_EVENT: "bong:forge_event",
 
@@ -251,6 +254,18 @@ export const CHANNELS = {
   /** Server → Agent: 残卷使用结算 (plan-skill-v1 §3.2) — `was_duplicate=true` 时 `xp_granted=0` */
   SKILL_SCROLL_USED: "bong:skill/scroll_used",
 
+  /** Server → Agent/Client: 战斗功法残卷研读事件 */
+  TECHNIQUE_SCROLL_READ: "bong:technique/scroll_read",
+
+  /** Server → Agent/Client: 战斗功法习得事件 */
+  TECHNIQUE_LEARNED: "bong:technique/learned",
+
+  /** Server → Agent/Client: 战斗功法练满事件 */
+  TECHNIQUE_MASTERED: "bong:technique/mastered",
+
+  /** Server → Client: 战斗功法熟练度提升事件 */
+  TECHNIQUE_PROFICIENCY_UP: "bong:technique/proficiency_up",
+
   /** Server → Agent: 灵眼迁移观测（plan-spirit-eye-v1 §6） */
   SPIRIT_EYE_MIGRATE: "bong:spirit_eye/migrate",
 
@@ -259,6 +274,12 @@ export const CHANNELS = {
 
   /** Server → Agent: 灵眼内固元突破观测（plan-spirit-eye-v1 §5） */
   SPIRIT_EYE_USED_FOR_BREAKTHROUGH: "bong:spirit_eye/used_for_breakthrough",
+
+  /** Server → Agent: 灵宝器灵对话请求（plan-spirit-treasure-v1 P1） */
+  SPIRIT_TREASURE_DIALOGUE_REQUEST: "bong:spirit_treasure_dialogue_request",
+
+  /** Agent → Server: 灵宝器灵对话结果（plan-spirit-treasure-v1 P1） */
+  SPIRIT_TREASURE_DIALOGUE: "bong:spirit_treasure_dialogue",
 
   /** Server → Agent: 玩家踏进 / 走出活坍缩渊 (plan-tsy-zone-followup-v1 §2.4)
    *
@@ -372,6 +393,8 @@ export const REDIS_V1_CHANNELS = [
   CHANNELS.SPIRIT_EYE_MIGRATE,
   CHANNELS.SPIRIT_EYE_DISCOVERED,
   CHANNELS.SPIRIT_EYE_USED_FOR_BREAKTHROUGH,
+  CHANNELS.SPIRIT_TREASURE_DIALOGUE_REQUEST,
+  CHANNELS.SPIRIT_TREASURE_DIALOGUE,
   CHANNELS.TSY_EVENT,
   CHANNELS.POI_NOVICE_EVENT,
   CHANNELS.FORGE_START,

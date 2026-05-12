@@ -1,0 +1,18 @@
+{
+  "v": 1,
+  "actor_id": "char:alice",
+  "phase": "apex",
+  "phase_tick": 0,
+  "phase_duration_ticks": 120,
+  "realm_from": "Solidify",
+  "realm_to": "Spirit",
+  "result": "success",
+  "interrupted": false,
+  "world_pos": [128.5, 64.0, -32.25],
+  "visible_radius_blocks": 5000,
+  "global": true,
+  "distant_billboard": true,
+  "season_overlay": "adaptive",
+  "style": "sky_resonance",
+  "at_tick": 2400
+}

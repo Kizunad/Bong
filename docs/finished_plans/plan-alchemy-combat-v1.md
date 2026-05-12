@@ -656,3 +656,25 @@ registry.register(id("pill_xu_gu"), new XuGuGaoPlayer());
 - 回力丹 qi_drain 2.0/s 的真元必须出现在对应 zone 的 spirit_qi 增量中
 - 断续散 qi_max -3% 走 `QiCapPermMinus` 路径，与现有永降逻辑一致
 - 所有丹药的毒素注入走 `Contamination` 现有管线，不新建通道
+
+## Finish Evidence
+
+- 落地清单
+  - P0/P1：`server/src/alchemy/pill.rs`、`server/src/combat/status.rs`、`server/src/combat/resolve.rs`、`server/src/network/client_request_handler.rs`、`server/src/network/status_snapshot_emit.rs`
+  - P1 资源：`server/assets/items/pills.toml`、`server/assets/alchemy/recipes/*.json`、`server/assets/audio/recipes/*.json`
+  - P2/P3：`client/src/main/java/com/bong/client/hud/MiniBodyHudPlanner.java`、`client/src/main/java/com/bong/client/hud/StatusEffectHudPlanner.java`、`client/src/main/java/com/bong/client/visual/particle/BongParticles.java`、`client/src/main/java/com/bong/client/visual/particle/VfxBootstrap.java`、`client/src/main/java/com/bong/client/visual/particle/alchemy/AlchemyCombatPillVfxPlayer.java`
+  - P3 资源：`client/src/main/resources/assets/bong-client/textures/gui/items/*.png`、`client/src/main/resources/assets/bong/audio_recipes/*.json`、`client/src/main/resources/assets/bong/particles/*.json`、`client/src/main/resources/assets/bong/player_animation/*.json`、`client/src/main/resources/assets/minecraft/atlases/particles.json`
+  - 测试：`server/src/alchemy/pill.rs`、`server/src/alchemy/recipe.rs`、`server/src/audio/mod.rs`、`server/src/combat/status.rs`、`client/src/test/java/com/bong/client/hud/MiniBodyHudPlannerTest.java`、`client/src/test/java/com/bong/client/hud/StatusEffectHudPlannerTest.java`、`client/src/test/java/com/bong/client/visual/particle/VfxRegistryTest.java`、`client/src/test/java/com/bong/client/animation/AlchemyCombatPillAnimationAssetTest.java`
+- 关键 commit
+  - `0c965189f` / `2026-05-12` / `feat(alchemy): 接入战场丹药服务端效果`
+  - `9261ea767` / `2026-05-12` / `feat(client): 接入战场丹药 HUD 与视听表现`
+- 测试结果
+  - `cd server && cargo fmt --check`
+  - `cd server && cargo clippy --all-targets -- -D warnings`
+  - `cd server && cargo test` → `4487 passed; 0 failed`
+  - `cd client && JAVA_HOME="$HOME/.sdkman/candidates/java/17.0.18-amzn" PATH="$HOME/.sdkman/candidates/java/17.0.18-amzn/bin:$PATH" ./gradlew test build` → `BUILD SUCCESSFUL`
+- 跨栈核验
+  - server 侧：10 份 combat pill recipe、10 份 audio recipe、`StatusEffectKind` 扩展、战斗状态与伤口倍数、`status_snapshot` 下发
+  - client 侧：10 个粒子类型、10 个 VfxPlayer 入口、10 个服药动画、HUD 部位高亮与 debuff 倒计时
+- 遗留 / 后续
+  - 无本 plan 范围内的未完成项；后续若调整丹药平衡或补高阶灵丹，应另开 plan。

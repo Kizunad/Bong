@@ -2,6 +2,7 @@ pub mod brain;
 pub mod brain_rat;
 pub mod brain_whale;
 pub mod dormant;
+pub mod dying_master;
 pub mod faction;
 pub mod farming_brain;
 pub mod hunger;
@@ -36,7 +37,7 @@ pub mod tsy_hostile;
 pub mod whale_narration;
 pub mod zong_keeper;
 
-use valence::prelude::App;
+use valence::prelude::{App, Update};
 
 pub fn register(app: &mut App) {
     tracing::info!(
@@ -74,5 +75,8 @@ pub fn register(app: &mut App) {
     relic::register(app);
     lod::register(app);
     zong_keeper::register(app);
+    app.add_event::<dying_master::DyingMasterEncounterEvent>();
+    app.add_systems(Update, dying_master::dying_master_despawn_tick);
+    dying_master::log_dying_master_contract();
     poi_rogue_village::log_rogue_village_contract();
 }

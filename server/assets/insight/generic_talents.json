@@ -130,6 +130,62 @@
       },
       "gain_flavor": "{target_color_name}之理初窥——新色染色上限 +{gain_pct}%",
       "cost_flavor": "{color_name}之忆淡去——主色效率 -{cost_pct}%"
+    },
+    {
+      "id": "vortex_intricate_affinity",
+      "category": "style",
+      "color_affinity": ["intricate"],
+      "alignment": "converge",
+      "gain": {
+        "stat": "vortex_backfire_resist",
+        "op": "mul",
+        "base_value": 0.85
+      },
+      "cost": {
+        "stat": "opposite_color_penalty",
+        "op": "add",
+        "base_value": 0.10
+      },
+      "gain_flavor": "缜密色与涡流同源——反噬概率 -{gain_pct}%",
+      "cost_flavor": "越精于涡流，越钝于蛮力——对立色效率 -{cost_pct}%"
+    },
+    {
+      "id": "vortex_lung_heart_synergy",
+      "category": "meridian",
+      "color_affinity": ["intricate", "insidious"],
+      "alignment": "converge",
+      "gain": {
+        "stat": "vortex_delta",
+        "op": "add",
+        "base_value": 0.02,
+        "meridian_group": "arm_yin"
+      },
+      "cost": {
+        "stat": "meridian_overload_risk",
+        "op": "add",
+        "base_value": 0.02,
+        "meridian_group": "arm_yin"
+      },
+      "gain_flavor": "肺心二经协振——涡流 Δ +{gain_val}",
+      "cost_flavor": "二经联动的代价——手三阴过载风险 +{cost_pct}%"
+    },
+    {
+      "id": "vortex_flow_endurance",
+      "category": "qi",
+      "color_affinity": ["intricate"],
+      "alignment": "converge",
+      "gain": {
+        "stat": "vortex_sustain_cost",
+        "op": "mul",
+        "base_value": 0.90
+      },
+      "cost": {
+        "stat": "vortex_burst_damage",
+        "op": "mul",
+        "base_value": 0.92
+      },
+      "gain_flavor": "涡流持续消耗 -{gain_pct}%——持久博弈之道",
+      "cost_flavor": "爆发力略减——紊流爆发伤害 -{cost_pct}%"
     }
   ]
 }

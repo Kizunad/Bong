@@ -11,6 +11,7 @@ import { PoliticalNarrationRuntime } from "./political-narration.js";
 import { PoisonTraitNarrationRuntime } from "./poison-trait-runtime.js";
 import { ScatteredCultivatorNarrationRuntime } from "./scattered-cultivator-narration.js";
 import { SkillLvUpNarrationRuntime } from "./skill-lv-up-runtime.js";
+import { SpiritTreasureDialogueRuntime } from "./spirit-treasure-dialogue-runtime.js";
 import { TribulationNarrationRuntime } from "./tribulation-runtime.js";
 import { TuikeNarrationRuntime } from "./tuike-narration.js";
 import { TuikeV2NarrationRuntime } from "./tuike_v2_runtime.js";
@@ -22,6 +23,7 @@ import { ZhenmaiNarrationRuntime } from "./zhenmai-narration.js";
 import { ZhenfaV2NarrationRuntime } from "./zhenfa-v2-runtime.js";
 import { AnqiNarrationRuntime } from "./anqi-narration.js";
 import { BaomaiV3NarrationRuntime } from "./baomai-v3-runtime.js";
+import { BreakthroughCinematicNarrationRuntime } from "./breakthrough-cinematic-narration.js";
 import { createClient as createLlmClient, createMockClient, type LlmClient } from "./llm.js";
 import { createMockWorldState } from "./mock-state.js";
 import {
@@ -154,6 +156,9 @@ async function startAuxiliaryRuntimes(config: RuntimeConfig): Promise<RuntimeCle
   const skillLvUpCleanup = await startSkillLvUpRuntime({
     ...runtimeOpts,
   });
+  const breakthroughCinematicCleanup = await startBreakthroughCinematicRuntime({
+    ...runtimeOpts,
+  });
   const tribulationCleanup = await startTribulationRuntime({
     ...runtimeOpts,
   });
@@ -206,12 +211,17 @@ async function startAuxiliaryRuntimes(config: RuntimeConfig): Promise<RuntimeCle
   const craftCleanup = await startCraftRuntime({
     ...runtimeOpts,
   });
+  const spiritTreasureCleanup = await startSpiritTreasureRuntime({
+    ...runtimeOpts,
+    model: process.env.SPIRIT_TREASURE_MODEL ?? "claude-haiku-4-5-20251001",
+  });
   const politicalCleanup = await startPoliticalRuntime({
     ...runtimeOpts,
   });
 
   return [
     politicalCleanup,
+    spiritTreasureCleanup,
     heartDemonCleanup,
     craftCleanup,
     anqiCleanup,
@@ -229,10 +239,45 @@ async function startAuxiliaryRuntimes(config: RuntimeConfig): Promise<RuntimeCle
     woliuCleanup,
     voidActionCleanup,
     tribulationCleanup,
+    breakthroughCinematicCleanup,
     skillLvUpCleanup,
     deathInsightCleanup,
     insightCleanup,
   ];
+}
+
+async function startBreakthroughCinematicRuntime(opts: {
+  redisUrl: string;
+  baseUrl?: string;
+  apiKey?: string;
+  model: string;
+}): Promise<() => Promise<void>> {
+  const IORedisCtor = ((Redis as unknown as { default?: unknown }).default ??
+    Redis) as new (url: string) => unknown;
+  const sub = new IORedisCtor(opts.redisUrl) as ConstructorParameters<
+    typeof BreakthroughCinematicNarrationRuntime
+  >[0]["sub"];
+  const pub = new IORedisCtor(opts.redisUrl) as ConstructorParameters<
+    typeof BreakthroughCinematicNarrationRuntime
+  >[0]["pub"];
+  const llm: LlmClient = opts.baseUrl && opts.apiKey
+    ? createLlmClient({ baseURL: opts.baseUrl, apiKey: opts.apiKey, model: opts.model })
+    : createMockClient();
+  const runtime = new BreakthroughCinematicNarrationRuntime({ llm, model: opts.model, sub, pub });
+  runtime
+    .connect()
+    .then(() => console.log("[tiandao] breakthrough cinematic runtime online"))
+    .catch((error) =>
+      console.warn("[tiandao] breakthrough cinematic runtime failed to start:", error),
+    );
+  return async () => {
+    const timeout = new Promise<void>((resolve) => setTimeout(resolve, 500));
+    try {
+      await Promise.race([runtime.disconnect(), timeout]);
+    } catch (error) {
+      console.warn("[tiandao] breakthrough cinematic runtime disconnect error:", error);
+    }
+  };
 }
 
 async function startWoliuV2Runtime(opts: {
@@ -263,6 +308,51 @@ async function startWoliuV2Runtime(opts: {
       await Promise.race([runtime.disconnect(), timeout]);
     } catch (error) {
       console.warn("[tiandao] woliu v2 runtime disconnect error:", error);
+    }
+  };
+}
+
+async function startSpiritTreasureRuntime(opts: {
+  redisUrl: string;
+  baseUrl?: string;
+  apiKey?: string;
+  model: string;
+}): Promise<() => Promise<void>> {
+  const IORedisCtor = ((Redis as unknown as { default?: unknown }).default ??
+    Redis) as new (url: string) => unknown;
+  const sub = new IORedisCtor(opts.redisUrl) as ConstructorParameters<
+    typeof SpiritTreasureDialogueRuntime
+  >[0]["sub"];
+  const pub = new IORedisCtor(opts.redisUrl) as ConstructorParameters<
+    typeof SpiritTreasureDialogueRuntime
+  >[0]["pub"];
+
+  const llm: LlmClient = opts.baseUrl && opts.apiKey
+    ? createLlmClient({
+        baseURL: opts.baseUrl,
+        apiKey: opts.apiKey,
+        model: opts.model,
+      })
+    : createMockClient();
+
+  const runtime = new SpiritTreasureDialogueRuntime({
+    llm,
+    model: opts.model,
+    sub,
+    pub,
+  });
+  runtime
+    .connect()
+    .then(() => console.log("[tiandao] spirit treasure runtime online"))
+    .catch((error) =>
+      console.warn("[tiandao] spirit treasure runtime failed to start:", error),
+    );
+  return async () => {
+    const timeout = new Promise<void>((resolve) => setTimeout(resolve, 500));
+    try {
+      await Promise.race([runtime.disconnect(), timeout]);
+    } catch (error) {
+      console.warn("[tiandao] spirit treasure runtime disconnect error:", error);
     }
   };
 }

@@ -1,0 +1,74 @@
+{
+  "version": 3,
+  "author": "Bong",
+  "name": "pill_suo_di",
+  "description": "plan-alchemy-combat-v1 pill_suo_di combat pill consume pose.",
+  "emote": {
+    "beginTick": 0,
+    "endTick": 10,
+    "stopTick": 13,
+    "isLoop": false,
+    "returnTick": 0,
+    "nsfw": false,
+    "degrees": false,
+    "moves": [
+      {
+        "tick": 0,
+        "easing": "INOUTSINE",
+        "body": {
+          "y": 0.0
+        }
+      },
+      {
+        "tick": 5,
+        "easing": "INOUTSINE",
+        "rightArm": {
+          "pitch": -1.15,
+          "bend": 0.85,
+          "axis": 3.1415927
+        }
+      },
+      {
+        "tick": 8,
+        "easing": "INOUTSINE",
+        "body": {
+          "z": 0.15
+        },
+        "torso": {
+          "pitch": 0.25
+        },
+        "leftLeg": {
+          "pitch": -0.25,
+          "bend": 0.45
+        },
+        "rightLeg": {
+          "pitch": 0.28,
+          "bend": 0.25
+        }
+      },
+      {
+        "tick": 10,
+        "easing": "INOUTSINE",
+        "body": {
+          "z": 0.0
+        },
+        "torso": {
+          "pitch": 0.0
+        },
+        "rightArm": {
+          "pitch": 0.0,
+          "bend": 0.0,
+          "axis": 3.1415927
+        },
+        "leftLeg": {
+          "pitch": 0.0,
+          "bend": 0.0
+        },
+        "rightLeg": {
+          "pitch": 0.0,
+          "bend": 0.0
+        }
+      }
+    ]
+  }
+}

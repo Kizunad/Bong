@@ -25,6 +25,7 @@ import {
 import { BotanyEcologySnapshotV1 } from "./botany.js";
 import { BiographyEntryV1, HeartDemonOutcomeV1 } from "./biography.js";
 import { BreakthroughEventV1 } from "./breakthrough-event.js";
+import { BreakthroughCinematicEventV1 } from "./breakthrough-cinematic.js";
 import { CalamityIntentV1, CalamityKindV1 } from "./calamity.js";
 import { ChatMessageV1, ChatSignal } from "./chat-message.js";
 import {
@@ -291,6 +292,8 @@ import {
   ServerDataV1,
   ServerDataHealerNpcAiStateV1,
   ServerDataMovementStateV1,
+  ServerDataSpiritTreasureDialogueV1,
+  ServerDataSpiritTreasureStateV1,
   ServerDataCoffinStateV1,
   ServerDataWeaponBrokenV1,
   ServerDataWeaponEquippedV1,
@@ -426,6 +429,18 @@ import {
   SpiritEyeUsedForBreakthroughV1,
 } from "./spirit-eye.js";
 import {
+  SpiritTreasureClientStateV1,
+  SpiritTreasureDialogueContextV1,
+  SpiritTreasureDialogueHistoryEntryV1,
+  SpiritTreasureDialoguePayloadV1,
+  SpiritTreasureDialogueRequestV1,
+  SpiritTreasureDialogueToneV1,
+  SpiritTreasureDialogueTriggerV1,
+  SpiritTreasureDialogueV1,
+  SpiritTreasurePassiveV1,
+  SpiritTreasureStatePayloadV1,
+} from "./spirit-treasure.js";
+import {
   StyleBalanceTelemetryEventV1,
   StyleTelemetryColorSnapshotV1,
 } from "./style-balance.js";
@@ -519,6 +534,7 @@ export const SCHEMA_REGISTRY = {
   heartDemonPregenRequestV1: HeartDemonPregenRequestV1,
   heartDemonOfferDraftV1: HeartDemonOfferDraftV1,
   breakthroughEventV1: BreakthroughEventV1,
+  breakthroughCinematicEventV1: BreakthroughCinematicEventV1,
   forgeEventV1: ForgeEventV1,
   biographyEntryV1: BiographyEntryV1,
   cultivationDeathV1: CultivationDeathV1,
@@ -757,6 +773,18 @@ export const SCHEMA_REGISTRY = {
   spiritEyeUsedForBreakthroughV1: SpiritEyeUsedForBreakthroughV1,
   spiritEyeCoordinateNoteV1: SpiritEyeCoordinateNoteV1,
   deathInsightSpiritEyeV1: DeathInsightSpiritEyeV1,
+  spiritTreasureDialogueTriggerV1: SpiritTreasureDialogueTriggerV1,
+  spiritTreasureDialogueToneV1: SpiritTreasureDialogueToneV1,
+  spiritTreasureDialogueHistoryEntryV1: SpiritTreasureDialogueHistoryEntryV1,
+  spiritTreasureDialogueContextV1: SpiritTreasureDialogueContextV1,
+  spiritTreasureDialogueRequestV1: SpiritTreasureDialogueRequestV1,
+  spiritTreasureDialogueV1: SpiritTreasureDialogueV1,
+  spiritTreasurePassiveV1: SpiritTreasurePassiveV1,
+  spiritTreasureClientStateV1: SpiritTreasureClientStateV1,
+  spiritTreasureStatePayloadV1: SpiritTreasureStatePayloadV1,
+  spiritTreasureDialoguePayloadV1: SpiritTreasureDialoguePayloadV1,
+  serverDataSpiritTreasureStateV1: ServerDataSpiritTreasureStateV1,
+  serverDataSpiritTreasureDialogueV1: ServerDataSpiritTreasureDialogueV1,
   serverDataSpiritualSenseTargetsV1: ServerDataSpiritualSenseTargetsV1,
   tutorialHookV1: TutorialHookV1,
   tutorialHookEventV1: TutorialHookEventV1,
@@ -925,6 +953,8 @@ export const GENERATED_SCHEMA_FILES = {
     SCHEMA_REGISTRY.heartDemonPregenRequestV1,
   "heart-demon-offer-draft-v1.json": SCHEMA_REGISTRY.heartDemonOfferDraftV1,
   "breakthrough-event-v1.json": SCHEMA_REGISTRY.breakthroughEventV1,
+  "breakthrough-cinematic-event-v1.json":
+    SCHEMA_REGISTRY.breakthroughCinematicEventV1,
   "forge-event-v1.json": SCHEMA_REGISTRY.forgeEventV1,
   "biography-entry-v1.json": SCHEMA_REGISTRY.biographyEntryV1,
   "heart-demon-outcome-v1.json": SCHEMA_REGISTRY.heartDemonOutcomeV1,
@@ -936,6 +966,17 @@ export const GENERATED_SCHEMA_FILES = {
     SCHEMA_REGISTRY.spiritEyeUsedForBreakthroughV1,
   "spirit-eye-coordinate-note-v1.json":
     SCHEMA_REGISTRY.spiritEyeCoordinateNoteV1,
+  "spirit-treasure-dialogue-request-v1.json":
+    SCHEMA_REGISTRY.spiritTreasureDialogueRequestV1,
+  "spirit-treasure-dialogue-v1.json": SCHEMA_REGISTRY.spiritTreasureDialogueV1,
+  "spirit-treasure-state-payload-v1.json":
+    SCHEMA_REGISTRY.spiritTreasureStatePayloadV1,
+  "spirit-treasure-dialogue-payload-v1.json":
+    SCHEMA_REGISTRY.spiritTreasureDialoguePayloadV1,
+  "server-data-spirit-treasure-state-v1.json":
+    SCHEMA_REGISTRY.serverDataSpiritTreasureStateV1,
+  "server-data-spirit-treasure-dialogue-v1.json":
+    SCHEMA_REGISTRY.serverDataSpiritTreasureDialogueV1,
   "death-registry-v1.json": SCHEMA_REGISTRY.deathRegistryV1,
   "deceased-index-entry-v1.json": SCHEMA_REGISTRY.deceasedIndexEntryV1,
   "deceased-snapshot-v1.json": SCHEMA_REGISTRY.deceasedSnapshotV1,

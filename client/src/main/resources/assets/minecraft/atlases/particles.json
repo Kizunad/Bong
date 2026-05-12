@@ -1,35 +1,168 @@
 {
-    "sources": [
-        { "type": "single", "resource": "bong:particle/breakthrough_pillar" },
-        { "type": "single", "resource": "bong:particle/cloud256_dust" },
-        { "type": "single", "resource": "bong:particle/enlightenment_dust" },
-        { "type": "single", "resource": "bong:particle/flying_sword_trail" },
-        { "type": "single", "resource": "bong:particle/lingqi_ripple" },
-        { "type": "single", "resource": "bong:particle/poison_breath_aura" },
-        { "type": "single", "resource": "bong:particle/poison_pill_eaten_puff" },
-        { "type": "single", "resource": "bong:particle/qi_aura" },
-        { "type": "single", "resource": "bong:particle/rune_char_4ee4_cang" },
-        { "type": "single", "resource": "bong:particle/rune_char_4ee4_cao" },
-        { "type": "single", "resource": "bong:particle/rune_char_4ee4_kai" },
-        { "type": "single", "resource": "bong:particle/rune_char_4ee4_xing" },
-        { "type": "single", "resource": "bong:particle/rune_char_5c01_cang" },
-        { "type": "single", "resource": "bong:particle/rune_char_5c01_cao" },
-        { "type": "single", "resource": "bong:particle/rune_char_5c01_kai" },
-        { "type": "single", "resource": "bong:particle/rune_char_5c01_xing" },
-        { "type": "single", "resource": "bong:particle/rune_char_6555_cang" },
-        { "type": "single", "resource": "bong:particle/rune_char_6555_cao" },
-        { "type": "single", "resource": "bong:particle/rune_char_6555_kai" },
-        { "type": "single", "resource": "bong:particle/rune_char_6555_xing" },
-        { "type": "single", "resource": "bong:particle/rune_char_7834_cang" },
-        { "type": "single", "resource": "bong:particle/rune_char_7834_cao" },
-        { "type": "single", "resource": "bong:particle/rune_char_7834_kai" },
-        { "type": "single", "resource": "bong:particle/rune_char_7834_xing" },
-        { "type": "single", "resource": "bong:particle/rune_char_9053_cang" },
-        { "type": "single", "resource": "bong:particle/rune_char_9053_cao" },
-        { "type": "single", "resource": "bong:particle/rune_char_9053_kai" },
-        { "type": "single", "resource": "bong:particle/rune_char_9053_xing" },
-        { "type": "single", "resource": "bong:particle/sword_qi_trail" },
-        { "type": "single", "resource": "bong:particle/sword_slash_arc" },
-        { "type": "single", "resource": "bong:particle/tribulation_spark" }
-    ]
+  "sources": [
+    {
+      "type": "single",
+      "resource": "bong:particle/breakthrough_pillar"
+    },
+    {
+      "type": "single",
+      "resource": "bong:particle/cloud256_dust"
+    },
+    {
+      "type": "single",
+      "resource": "bong:particle/enlightenment_dust"
+    },
+    {
+      "type": "single",
+      "resource": "bong:particle/flying_sword_trail"
+    },
+    {
+      "type": "single",
+      "resource": "bong:particle/lingqi_ripple"
+    },
+    {
+      "type": "single",
+      "resource": "bong:particle/poison_breath_aura"
+    },
+    {
+      "type": "single",
+      "resource": "bong:particle/poison_pill_eaten_puff"
+    },
+    {
+      "type": "single",
+      "resource": "bong:particle/qi_aura"
+    },
+    {
+      "type": "single",
+      "resource": "bong:particle/rune_char_4ee4_cang"
+    },
+    {
+      "type": "single",
+      "resource": "bong:particle/rune_char_4ee4_cao"
+    },
+    {
+      "type": "single",
+      "resource": "bong:particle/rune_char_4ee4_kai"
+    },
+    {
+      "type": "single",
+      "resource": "bong:particle/rune_char_4ee4_xing"
+    },
+    {
+      "type": "single",
+      "resource": "bong:particle/rune_char_5c01_cang"
+    },
+    {
+      "type": "single",
+      "resource": "bong:particle/rune_char_5c01_cao"
+    },
+    {
+      "type": "single",
+      "resource": "bong:particle/rune_char_5c01_kai"
+    },
+    {
+      "type": "single",
+      "resource": "bong:particle/rune_char_5c01_xing"
+    },
+    {
+      "type": "single",
+      "resource": "bong:particle/rune_char_6555_cang"
+    },
+    {
+      "type": "single",
+      "resource": "bong:particle/rune_char_6555_cao"
+    },
+    {
+      "type": "single",
+      "resource": "bong:particle/rune_char_6555_kai"
+    },
+    {
+      "type": "single",
+      "resource": "bong:particle/rune_char_6555_xing"
+    },
+    {
+      "type": "single",
+      "resource": "bong:particle/rune_char_7834_cang"
+    },
+    {
+      "type": "single",
+      "resource": "bong:particle/rune_char_7834_cao"
+    },
+    {
+      "type": "single",
+      "resource": "bong:particle/rune_char_7834_kai"
+    },
+    {
+      "type": "single",
+      "resource": "bong:particle/rune_char_7834_xing"
+    },
+    {
+      "type": "single",
+      "resource": "bong:particle/rune_char_9053_cang"
+    },
+    {
+      "type": "single",
+      "resource": "bong:particle/rune_char_9053_cao"
+    },
+    {
+      "type": "single",
+      "resource": "bong:particle/rune_char_9053_kai"
+    },
+    {
+      "type": "single",
+      "resource": "bong:particle/rune_char_9053_xing"
+    },
+    {
+      "type": "single",
+      "resource": "bong:particle/sword_qi_trail"
+    },
+    {
+      "type": "single",
+      "resource": "bong:particle/sword_slash_arc"
+    },
+    {
+      "type": "single",
+      "resource": "bong:particle/tribulation_spark"
+    },
+    {
+      "type": "single",
+      "resource": "bong:particle/huo_xue_mist"
+    },
+    {
+      "type": "single",
+      "resource": "bong:particle/xu_gu_band"
+    },
+    {
+      "type": "single",
+      "resource": "bong:particle/duan_xu_vortex"
+    },
+    {
+      "type": "single",
+      "resource": "bong:particle/tie_bi_metallic"
+    },
+    {
+      "type": "single",
+      "resource": "bong:particle/jin_zhong_bell"
+    },
+    {
+      "type": "single",
+      "resource": "bong:particle/ning_jia_crust"
+    },
+    {
+      "type": "single",
+      "resource": "bong:particle/ji_feng_wind"
+    },
+    {
+      "type": "single",
+      "resource": "bong:particle/suo_di_arc"
+    },
+    {
+      "type": "single",
+      "resource": "bong:particle/hui_li_breath"
+    },
+    {
+      "type": "single",
+      "resource": "bong:particle/hu_gu_stripe"
+    }
+  ]
 }

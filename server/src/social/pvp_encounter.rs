@@ -37,16 +37,6 @@ pub enum EncounterPhase {
     CloseContact,
 }
 
-impl EncounterPhase {
-    pub const fn wire_name(self) -> &'static str {
-        match self {
-            Self::FarAssessment => "far_assessment",
-            Self::MidProbe => "mid_probe",
-            Self::CloseContact => "close_contact",
-        }
-    }
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum EncounterOutcome {
@@ -417,7 +407,7 @@ mod tests {
         ] {
             let serialized =
                 serde_json::to_string(&variant).expect("encounter phase should serialize");
-            assert_eq!(serialized, format!("\"{}\"", variant.wire_name()));
+            assert_eq!(serialized, format!("\"{}\"", phase_wire_name(variant)));
             let decoded: EncounterPhase =
                 serde_json::from_str(&serialized).expect("encounter phase should deserialize");
             assert_eq!(decoded, variant);
@@ -455,6 +445,14 @@ mod tests {
             let decoded: EncounterContext =
                 serde_json::from_str(&serialized).expect("encounter context should deserialize");
             assert_eq!(decoded, variant);
+        }
+    }
+
+    const fn phase_wire_name(phase: EncounterPhase) -> &'static str {
+        match phase {
+            EncounterPhase::FarAssessment => "far_assessment",
+            EncounterPhase::MidProbe => "mid_probe",
+            EncounterPhase::CloseContact => "close_contact",
         }
     }
 

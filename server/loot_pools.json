@@ -7,7 +7,10 @@
         { "template_id": "iron_sword",         "weight": 40, "count": [1, 1] },
         { "template_id": "fengling_bone_coin", "weight": 30, "count": [1, 5] },
         { "template_id": "spirit_grass",       "weight": 20, "count": [1, 3] },
-        { "template_id": "decoy_stake",        "weight": 10, "count": [1, 1] }
+        { "template_id": "decoy_stake",        "weight": 10, "count": [1, 1] },
+        { "template_id": "scroll_woliu_burst", "weight": 2,  "count": [1, 1] },
+        { "template_id": "scroll_woliu_vacuum_palm", "weight": 2, "count": [1, 1] },
+        { "template_id": "scroll_woliu_vortex_shield", "weight": 2, "count": [1, 1] }
       ]
     },
     "skeleton_shallow_common": {
@@ -39,13 +42,21 @@
         { "template_id": "spirit_sword",       "weight": 35, "count": [1, 1] },
         { "template_id": "wooden_staff",       "weight": 25, "count": [1, 1] },
         { "template_id": "skill_scroll_forging_duantie_can", "weight": 20, "count": [1, 1] },
-        { "template_id": "baomai_scripture",   "weight": 20, "count": [1, 1] }
+        { "template_id": "baomai_scripture",   "weight": 20, "count": [1, 1] },
+        { "template_id": "scroll_woliu_vortex", "weight": 1, "count": [1, 1] },
+        { "template_id": "scroll_woliu_hold", "weight": 1, "count": [1, 1] },
+        { "template_id": "scroll_woliu_mouth", "weight": 1, "count": [1, 1] },
+        { "template_id": "scroll_woliu_pull", "weight": 1, "count": [1, 1] },
+        { "template_id": "scroll_woliu_vacuum_lock", "weight": 1, "count": [1, 1] },
+        { "template_id": "scroll_woliu_vortex_resonance", "weight": 1, "count": [1, 1] }
       ]
     },
     "relic_core_deep": {
       "rolls": [1, 1],
       "entries": [
-        { "template_id": "__ancient_relic_random__", "weight": 100, "count": [1, 1] }
+        { "template_id": "__ancient_relic_random__", "weight": 100, "count": [1, 1] },
+        { "template_id": "scroll_woliu_heart", "weight": 1, "count": [1, 1] },
+        { "template_id": "scroll_woliu_turbulence_burst", "weight": 1, "count": [1, 1] }
       ]
     }
   }

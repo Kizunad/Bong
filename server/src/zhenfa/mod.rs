@@ -2,9 +2,10 @@ use std::collections::{HashMap, HashSet, VecDeque};
 
 use serde::{Deserialize, Serialize};
 use valence::prelude::{
-    bevy_ecs, App, BlockPos, BlockState, ChunkLayer, Client, Commands, Component, Entity, Event,
-    EventReader, EventWriter, Events, IntoSystemConfigs, Position, PropName, PropValue, Query, Res,
-    ResMut, Resource, SystemSet, Update, Username, With, Without,
+    bevy_ecs, bevy_ecs::system::SystemParam, App, BlockPos, BlockState, ChunkLayer, Client,
+    Commands, Component, Entity, Event, EventReader, EventWriter, Events, IntoSystemConfigs,
+    Position, PropName, PropValue, Query, Res, ResMut, Resource, SystemSet, Update, Username, With,
+    Without,
 };
 
 use crate::combat::components::{BodyPart, Lifecycle, LifecycleState, Wound, WoundKind, Wounds};
@@ -20,20 +21,28 @@ use crate::cultivation::meridian::severed::{
 };
 use crate::cultivation::tribulation::{JueBiTriggerEvent, JueBiTriggerSource};
 use crate::inventory::{
-    add_item_to_player_inventory, InventoryInstanceIdAllocator, ItemRegistry, PlayerInventory,
+    add_item_to_player_inventory, consume_item_instance_once, inventory_item_by_instance_borrow,
+    InventoryInstanceIdAllocator, ItemRegistry, PlayerInventory,
 };
 use crate::network::{gameplay_vfx, vfx_event_emit::VfxEventRequest};
 use crate::player::gameplay::PendingGameplayNarrations;
 use crate::player::state::canonical_player_id;
-use crate::qi_physics::{CarrierGrade, MediumKind, StyleAttack, StyleDefense};
+use crate::qi_physics::constants::QI_ZONE_UNIT_CAPACITY;
+use crate::qi_physics::{
+    qi_release_to_zone, CarrierGrade, MediumKind, QiAccountId, QiTransfer, StyleAttack,
+    StyleDefense,
+};
 use crate::schema::common::NarrationStyle;
 use crate::schema::realm_vision::{SenseEntryV1, SenseKindV1, SpiritualSenseTargetsV1};
 use crate::schema::social::RelationshipKindV1;
 use crate::social::components::{Relationships, Renown};
 use crate::world::{
     bong_blocks::{place_bong_block, remove_bong_block},
-    dimension::OverworldLayer,
+    dimension::{DimensionKind, OverworldLayer},
+    zone::ZoneRegistry,
 };
+
+pub mod trap_content;
 
 const TICKS_PER_SECOND: u64 = 20;
 const MIN_QI_INVEST_RATIO: f64 = 0.05;
@@ -48,6 +57,9 @@ const DISARM_RANGE: f64 = 4.5;
 pub enum ZhenfaKind {
     Trap,
     Ward,
+    WarningTrap,
+    BlastTrap,
+    SlowTrap,
     ShrineWard,
     Lingju,
     DeceiveHeaven,
@@ -99,6 +111,8 @@ pub struct ZhenfaPlaceRequest {
     pub carrier: ZhenfaCarrierKind,
     pub qi_invest_ratio: f64,
     pub trigger: Option<String>,
+    pub item_instance_id: Option<u64>,
+    pub target_face: Option<trap_content::TrapTargetFace>,
     pub requested_at_tick: u64,
 }
 
@@ -244,7 +258,10 @@ impl Default for ArrayMastery {
 impl ArrayMastery {
     pub fn value(&self, kind: ZhenfaKind) -> f64 {
         match kind {
-            ZhenfaKind::Trap => self.trap,
+            ZhenfaKind::Trap
+            | ZhenfaKind::WarningTrap
+            | ZhenfaKind::BlastTrap
+            | ZhenfaKind::SlowTrap => self.trap,
             ZhenfaKind::Ward => self.ward,
             ZhenfaKind::ShrineWard => self.shrine_ward,
             ZhenfaKind::Lingju => self.lingju,
@@ -263,7 +280,10 @@ impl ArrayMastery {
 
     fn add(&mut self, kind: ZhenfaKind, amount: f64) {
         let slot = match kind {
-            ZhenfaKind::Trap => &mut self.trap,
+            ZhenfaKind::Trap
+            | ZhenfaKind::WarningTrap
+            | ZhenfaKind::BlastTrap
+            | ZhenfaKind::SlowTrap => &mut self.trap,
             ZhenfaKind::Ward => &mut self.ward,
             ZhenfaKind::ShrineWard => &mut self.shrine_ward,
             ZhenfaKind::Lingju => &mut self.lingju,
@@ -355,11 +375,13 @@ impl ZhenfaInstance {
 #[derive(Debug, Clone, PartialEq)]
 struct TriggerSnapshot {
     id: u64,
+    kind: ZhenfaKind,
     owner: Entity,
     owner_player_id: String,
     pos: [i32; 3],
     triggered_at_tick: u64,
     qi_invest_ratio: f64,
+    qi_invest_amount: f64,
     effect_radius: u8,
     color_main: ColorKind,
     color_secondary: Option<ColorKind>,
@@ -380,6 +402,8 @@ pub struct ZhenfaRegistry {
     pending_chain: VecDeque<PendingChainTrigger>,
     ward_alert_seen: HashMap<(u64, Entity), u64>,
     ward_inside: HashSet<(u64, Entity)>,
+    slow_charges_remaining: HashMap<u64, u8>,
+    slow_inside: HashSet<(u64, Entity)>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -409,6 +433,7 @@ pub fn register(app: &mut App) {
     app.add_event::<IllusionArrayDeployEvent>();
     app.add_event::<ArrayDecayEvent>();
     app.add_event::<ArrayBreakthroughEvent>();
+    app.add_event::<QiTransfer>();
     app.add_systems(
         Update,
         (
@@ -434,6 +459,10 @@ impl ZhenfaRegistry {
 
         let id = self.allocate_id();
         instance.id = id;
+        if instance.kind == ZhenfaKind::SlowTrap {
+            self.slow_charges_remaining
+                .insert(id, trap_content::SLOW_TRAP_MAX_CHARGES);
+        }
         self.by_pos.insert(instance.pos, id);
         self.instances.insert(id, instance);
         Ok(id)
@@ -496,7 +525,27 @@ impl ZhenfaRegistry {
         self.ward_alert_seen
             .retain(|(array_id, _), _| *array_id != id);
         self.ward_inside.retain(|(array_id, _)| *array_id != id);
+        self.slow_charges_remaining.remove(&id);
+        self.slow_inside.retain(|(array_id, _)| *array_id != id);
         Some(removed)
+    }
+
+    fn sealed_qi_in_chunk(&self, pos: [i32; 3]) -> f64 {
+        let chunk = trap_content::chunk_coord(pos);
+        self.instances
+            .values()
+            .filter(|instance| trap_content::chunk_coord(instance.pos) == chunk)
+            .map(|instance| instance.qi_invest_amount.max(0.0))
+            .sum()
+    }
+
+    fn drain_slow_charge(&mut self, id: u64) -> bool {
+        let remaining = self
+            .slow_charges_remaining
+            .entry(id)
+            .or_insert(trap_content::SLOW_TRAP_MAX_CHARGES);
+        *remaining = remaining.saturating_sub(1);
+        *remaining == 0
     }
 
     fn expire_at_or_before(&mut self, tick: u64) -> Vec<ZhenfaInstance> {
@@ -532,11 +581,13 @@ impl ZhenfaRegistry {
             instance.triggered_at = Some(tick);
             snapshots.push(TriggerSnapshot {
                 id: instance.id,
+                kind: instance.kind,
                 owner: instance.owner,
                 owner_player_id: instance.owner_player_id.clone(),
                 pos: instance.pos,
                 triggered_at_tick: tick,
                 qi_invest_ratio: instance.qi_invest_ratio,
+                qi_invest_amount: instance.qi_invest_amount,
                 effect_radius: instance.effect_radius,
                 color_main: instance.color_main,
                 color_secondary: instance.color_secondary,
@@ -675,6 +726,49 @@ pub fn zhenfa_kind_profile(
             reveal_chance_per_tick: 0.0,
             reflect_ratio: 0.0,
         },
+        ZhenfaKind::WarningTrap => ZhenfaKindProfile {
+            min_invest_ratio: 0.0,
+            cap_invest_ratio: 0.02,
+            cast_time_ticks: cast_time_between(1, 1, mastery_ratio),
+            duration_ticks: trap_content::survival_ticks(trap_content::OrdinaryTrapKind::Warning),
+            radius: 2,
+            density_multiplier: 1.0,
+            tiandao_gaze_weight: 0.0,
+            reveal_threshold: trap_content::discovery_profile(
+                trap_content::OrdinaryTrapKind::Warning,
+            )
+            .reveal_threshold(),
+            reveal_chance_per_tick: 0.0,
+            reflect_ratio: 0.0,
+        },
+        ZhenfaKind::BlastTrap => ZhenfaKindProfile {
+            min_invest_ratio: 0.15,
+            cap_invest_ratio: 0.30,
+            cast_time_ticks: cast_time_between(1, 1, mastery_ratio),
+            duration_ticks: trap_content::survival_ticks(trap_content::OrdinaryTrapKind::Blast),
+            radius: 2,
+            density_multiplier: 1.0,
+            tiandao_gaze_weight: 0.0,
+            reveal_threshold: trap_content::discovery_profile(
+                trap_content::OrdinaryTrapKind::Blast,
+            )
+            .reveal_threshold(),
+            reveal_chance_per_tick: 0.0,
+            reflect_ratio: 0.0,
+        },
+        ZhenfaKind::SlowTrap => ZhenfaKindProfile {
+            min_invest_ratio: 0.0,
+            cap_invest_ratio: 0.08,
+            cast_time_ticks: cast_time_between(1, 1, mastery_ratio),
+            duration_ticks: trap_content::survival_ticks(trap_content::OrdinaryTrapKind::Slow),
+            radius: 2,
+            density_multiplier: 1.0,
+            tiandao_gaze_weight: 0.0,
+            reveal_threshold: trap_content::discovery_profile(trap_content::OrdinaryTrapKind::Slow)
+                .reveal_threshold(),
+            reveal_chance_per_tick: 0.0,
+            reflect_ratio: 0.0,
+        },
         ZhenfaKind::Ward => ZhenfaKindProfile {
             min_invest_ratio: MIN_QI_INVEST_RATIO,
             cap_invest_ratio: cap,
@@ -755,7 +849,11 @@ pub fn zhenfa_kind_profile(
 
 pub fn zhenfa_meridian_dependencies(kind: ZhenfaKind) -> &'static [MeridianId] {
     match kind {
-        ZhenfaKind::Trap | ZhenfaKind::Ward => &[MeridianId::Ren],
+        ZhenfaKind::Trap
+        | ZhenfaKind::Ward
+        | ZhenfaKind::WarningTrap
+        | ZhenfaKind::BlastTrap
+        | ZhenfaKind::SlowTrap => &[MeridianId::Ren],
         ZhenfaKind::ShrineWard => &[MeridianId::Ren, MeridianId::Du],
         ZhenfaKind::Lingju => &[MeridianId::Ren, MeridianId::Du, MeridianId::Kidney],
         ZhenfaKind::DeceiveHeaven => &[
@@ -798,6 +896,7 @@ fn handle_zhenfa_place_requests(
     mut commands: Commands,
     mut players: Query<ZhenfaPlacePlayer<'_>>,
     mut layers: Query<&mut ChunkLayer, With<OverworldLayer>>,
+    zones: Option<Res<ZoneRegistry>>,
     mut ward_events: EventWriter<WardArrayDeployEvent>,
     mut ling_events: EventWriter<LingArrayDeployEvent>,
     mut deceive_events: EventWriter<DeceiveHeavenEvent>,
@@ -812,7 +911,7 @@ fn handle_zhenfa_place_requests(
             continue;
         }
 
-        let Ok((username, mut cultivation, qi_color, modifiers, inventory, severed, mastery)) =
+        let Ok((username, mut cultivation, qi_color, modifiers, mut inventory, severed, mastery)) =
             players.get_mut(req.player)
         else {
             tracing::warn!(
@@ -821,12 +920,60 @@ fn handle_zhenfa_place_requests(
             );
             continue;
         };
-        if !has_zhenfa_flag(inventory) {
+        let ordinary_trap = trap_content::OrdinaryTrapKind::from_zhenfa_kind(req.kind);
+        if ordinary_trap.is_none() && !has_zhenfa_flag(inventory.as_deref()) {
             tracing::warn!(
                 "[bong][zhenfa] place rejected: player {:?} has no array flag",
                 req.player
             );
             continue;
+        }
+        if let Some(trap_kind) = ordinary_trap {
+            let Some(face) = req.target_face else {
+                tracing::warn!(
+                    "[bong][zhenfa] ordinary trap place rejected: missing target_face for {:?}",
+                    req.kind
+                );
+                continue;
+            };
+            if !trap_content::placement_allowed(trap_kind, face) {
+                tracing::warn!(
+                    "[bong][zhenfa] ordinary trap place rejected: {:?} cannot attach to {:?}",
+                    req.kind,
+                    face
+                );
+                continue;
+            }
+            let Some(item_instance_id) = req.item_instance_id else {
+                tracing::warn!(
+                    "[bong][zhenfa] ordinary trap place rejected: missing item_instance_id for {:?}",
+                    req.kind
+                );
+                continue;
+            };
+            let Some(inventory_ref) = inventory.as_deref() else {
+                tracing::warn!(
+                    "[bong][zhenfa] ordinary trap place rejected: player {:?} has no inventory",
+                    req.player
+                );
+                continue;
+            };
+            let Some(item) = inventory_item_by_instance_borrow(inventory_ref, item_instance_id)
+            else {
+                tracing::warn!(
+                    "[bong][zhenfa] ordinary trap place rejected: missing item instance {}",
+                    item_instance_id
+                );
+                continue;
+            };
+            if item.template_id != trap_kind.expected_item_id() {
+                tracing::warn!(
+                    "[bong][zhenfa] ordinary trap place rejected: item {} does not match {:?}",
+                    item.template_id,
+                    req.kind
+                );
+                continue;
+            }
         }
         if !realm_allows_zhenfa_kind(req.kind, cultivation.realm) {
             tracing::warn!(
@@ -853,17 +1000,41 @@ fn handle_zhenfa_place_requests(
             .unwrap_or_default();
         let profile =
             zhenfa_kind_profile(req.kind, cultivation.realm, mastery_at_cast, req.carrier);
-        let invest_ratio = sanitize_invest_ratio(
-            req.qi_invest_ratio,
-            profile.min_invest_ratio,
-            profile.cap_invest_ratio,
-        );
-        let qi_cost = cultivation.qi_max.max(1.0) * invest_ratio;
+        let (invest_ratio, qi_cost, effect_radius) = if let Some(trap_kind) = ordinary_trap {
+            let cost =
+                trap_content::resolve_qi_cost(trap_kind, cultivation.qi_max, req.qi_invest_ratio);
+            (
+                cost.ratio_of_max,
+                cost.sealed_qi,
+                trap_kind.detection_radius().ceil() as u8,
+            )
+        } else {
+            let invest_ratio = sanitize_invest_ratio(
+                req.qi_invest_ratio,
+                profile.min_invest_ratio,
+                profile.cap_invest_ratio,
+            );
+            (
+                invest_ratio,
+                cultivation.qi_max.max(1.0) * invest_ratio,
+                trap_effect_radius(invest_ratio),
+            )
+        };
         if cultivation.qi_current + f64::EPSILON < qi_cost {
             tracing::warn!(
                 "[bong][zhenfa] place rejected: player {:?} qi_current {:.3} < cost {:.3}",
                 req.player,
                 cultivation.qi_current,
+                qi_cost
+            );
+            continue;
+        }
+        if ordinary_trap.is_some()
+            && trap_content::chunk_density_exceeded(registry.sealed_qi_in_chunk(req.pos) + qi_cost)
+        {
+            tracing::warn!(
+                "[bong][zhenfa] ordinary trap place rejected: chunk density would exceed threshold pos={:?} cost={:.3}",
+                req.pos,
                 qi_cost
             );
             continue;
@@ -889,7 +1060,13 @@ fn handle_zhenfa_place_requests(
 
         let realm_at_cast = cultivation.realm;
         let specialist = zhenfa_specialist_level(modifiers);
-        let duration_ticks = effective_duration_ticks(profile.duration_ticks, qi_color, specialist);
+        let base_duration_ticks = if let Some(trap_kind) = ordinary_trap {
+            let zone_qi = zone_qi_at_pos(zones.as_deref(), req.pos).unwrap_or(0.2);
+            trap_content::survival_ticks_with_environment(trap_kind, zone_qi)
+        } else {
+            profile.duration_ticks
+        };
+        let duration_ticks = effective_duration_ticks(base_duration_ticks, qi_color, specialist);
         let owner_player_id = canonical_player_id(username.0.as_str());
         let anchor_entity = commands
             .spawn((
@@ -918,7 +1095,7 @@ fn handle_zhenfa_place_requests(
             qi_invest_amount: qi_cost,
             realm_at_cast,
             mastery_at_cast,
-            effect_radius: trap_effect_radius(invest_ratio),
+            effect_radius,
             ward_radius: ward_radius(req.kind, invest_ratio, profile.radius, specialist),
             placed_at_tick: req.requested_at_tick,
             expires_at_tick: req.requested_at_tick.saturating_add(duration_ticks),
@@ -931,6 +1108,25 @@ fn handle_zhenfa_place_requests(
 
         match registry.insert(instance) {
             Ok(id) => {
+                if let Some(item_instance_id) = req.item_instance_id {
+                    if ordinary_trap.is_some() {
+                        let consume_result = inventory
+                            .as_deref_mut()
+                            .ok_or_else(|| "inventory missing".to_string())
+                            .and_then(|inventory| {
+                                consume_item_instance_once(inventory, item_instance_id)
+                            });
+                        if let Err(error) = consume_result {
+                            registry.remove(id);
+                            remove_zhenfa_anchor_block(&mut layers, req.pos);
+                            commands.entity(anchor_entity).despawn();
+                            tracing::warn!(
+                                "[bong][zhenfa] ordinary trap place rolled back: item consume failed: {error}"
+                            );
+                            continue;
+                        }
+                    }
+                }
                 cultivation.qi_current = (cultivation.qi_current - qi_cost).max(0.0);
                 commands.entity(anchor_entity).insert(ZhenfaAnchor { id });
                 if let Some(mut mastery) = mastery {
@@ -1045,6 +1241,7 @@ fn handle_zhenfa_trigger_requests(
         apply_trigger_snapshots(
             snapshots,
             &mut targets,
+            &mut layers,
             &mut practice_logs,
             &mut combat_events,
             &mut death_events,
@@ -1115,7 +1312,11 @@ fn emit_deploy_event(
                 placed_at_tick,
             });
         }
-        ZhenfaKind::Trap | ZhenfaKind::Ward => {}
+        ZhenfaKind::Trap
+        | ZhenfaKind::Ward
+        | ZhenfaKind::WarningTrap
+        | ZhenfaKind::BlastTrap
+        | ZhenfaKind::SlowTrap => {}
     }
 }
 
@@ -1136,7 +1337,7 @@ type ZhenfaPlacePlayer<'a> = (
     &'a mut Cultivation,
     &'a QiColor,
     Option<&'a InsightModifiers>,
-    Option<&'a PlayerInventory>,
+    Option<&'a mut PlayerInventory>,
     Option<&'a MeridianSeveredPermanent>,
     Option<&'a mut ArrayMastery>,
 );
@@ -1159,6 +1360,18 @@ type ZhenfaDisarmPlayer<'a> = (
     Option<&'a mut PlayerInventory>,
 );
 
+#[derive(SystemParam)]
+struct ZhenfaTickEventWriters<'w> {
+    combat_events: EventWriter<'w, CombatEvent>,
+    death_events: EventWriter<'w, DeathEvent>,
+    status_effects: EventWriter<'w, ApplyStatusEffectIntent>,
+    sense_pulses: EventWriter<'w, ZhenfaSensePulse>,
+    decay_events: EventWriter<'w, ArrayDecayEvent>,
+    deceive_exposed_events: EventWriter<'w, DeceiveHeavenExposedEvent>,
+    juebi_events: EventWriter<'w, JueBiTriggerEvent>,
+    qi_transfers: EventWriter<'w, QiTransfer>,
+}
+
 #[allow(clippy::too_many_arguments)]
 fn tick_zhenfa_registry(
     clock: Res<CombatClock>,
@@ -1168,13 +1381,8 @@ fn tick_zhenfa_registry(
     mut targets: Query<ZhenfaDamageTarget<'_>>,
     mut practice_logs: Query<&mut PracticeLog>,
     ward_positions: Query<(Entity, &Position), Without<ZhenfaAnchor>>,
-    mut combat_events: EventWriter<CombatEvent>,
-    mut death_events: EventWriter<DeathEvent>,
-    mut status_effects: EventWriter<ApplyStatusEffectIntent>,
-    mut sense_pulses: EventWriter<ZhenfaSensePulse>,
-    mut decay_events: EventWriter<ArrayDecayEvent>,
-    mut deceive_exposed_events: EventWriter<DeceiveHeavenExposedEvent>,
-    mut juebi_events: EventWriter<JueBiTriggerEvent>,
+    mut events: ZhenfaTickEventWriters,
+    mut zones: Option<ResMut<ZoneRegistry>>,
     mut pending_narrations: Option<ResMut<PendingGameplayNarrations>>,
     mut vfx_events: Option<ResMut<Events<VfxEventRequest>>>,
 ) {
@@ -1184,8 +1392,11 @@ fn tick_zhenfa_registry(
         tracing::debug!("[bong][zhenfa] expired {} array eye(s)", expired.len());
     }
     for instance in &expired {
+        if trap_content::OrdinaryTrapKind::from_zhenfa_kind(instance.kind).is_some() {
+            release_trap_qi_to_zone(zones.as_deref_mut(), &mut events.qi_transfers, instance);
+        }
         remove_zhenfa_anchor_block(&mut layers, instance.pos);
-        decay_events.send(ArrayDecayEvent {
+        events.decay_events.send(ArrayDecayEvent {
             owner: instance.owner,
             owner_player_id: instance.owner_player_id.clone(),
             array_id: instance.id,
@@ -1206,9 +1417,13 @@ fn tick_zhenfa_registry(
     }
 
     let mut passive_triggers = Vec::new();
+    let mut blast_triggers = Vec::new();
+    let mut warning_alerts = Vec::new();
+    let mut slow_triggers = Vec::new();
     let mut ward_alerts = Vec::new();
     let mut deceived_exposed = Vec::new();
     let mut current_ward_inside = HashSet::new();
+    let mut current_slow_inside = HashSet::new();
     for instance in registry
         .active_instances()
         .filter(|instance| instance.placed_at_tick < now)
@@ -1223,6 +1438,81 @@ fn tick_zhenfa_registry(
                     if in_horizontal_radius(pos, instance.pos, instance.effect_radius) {
                         passive_triggers.push(instance.id);
                         break;
+                    }
+                }
+            }
+            ZhenfaKind::WarningTrap => {
+                for (target, position, ..) in &mut targets {
+                    if target == instance.owner {
+                        continue;
+                    }
+                    let pos = position.get();
+                    if trap_content::vertical_column_contains(
+                        pos,
+                        instance.pos,
+                        trap_content::OrdinaryTrapKind::Warning.detection_radius(),
+                        trap_content::OrdinaryTrapKind::Warning.vertical_height(),
+                    ) {
+                        let key = (instance.id, target);
+                        let last = registry.ward_alert_seen.get(&key).copied();
+                        if last.is_none_or(|tick| {
+                            now.saturating_sub(tick) >= trap_content::WARNING_TRIGGER_THROTTLE_TICKS
+                        }) {
+                            warning_alerts.push((
+                                instance.id,
+                                target,
+                                instance.owner,
+                                instance.owner_player_id.clone(),
+                                instance.pos,
+                            ));
+                        }
+                    }
+                }
+            }
+            ZhenfaKind::BlastTrap => {
+                for (target, position, ..) in &mut targets {
+                    if target == instance.owner {
+                        continue;
+                    }
+                    let pos = position.get();
+                    if !trap_content::horizontal_same_layer_contains(
+                        pos,
+                        instance.pos,
+                        trap_content::OrdinaryTrapKind::Blast.detection_radius(),
+                    ) {
+                        continue;
+                    }
+                    if !blast_has_clear_los(&mut layers, instance.pos, pos) {
+                        continue;
+                    }
+                    blast_triggers.push(instance.id);
+                    break;
+                }
+            }
+            ZhenfaKind::SlowTrap => {
+                for (target, position, ..) in &mut targets {
+                    if target == instance.owner {
+                        continue;
+                    }
+                    let pos = position.get();
+                    if trap_content::vertical_column_contains(
+                        pos,
+                        instance.pos,
+                        trap_content::OrdinaryTrapKind::Slow.detection_radius(),
+                        trap_content::OrdinaryTrapKind::Slow.vertical_height(),
+                    ) {
+                        let key = (instance.id, target);
+                        current_slow_inside.insert(key);
+                        if registry.slow_inside.contains(&key) {
+                            continue;
+                        }
+                        slow_triggers.push((
+                            instance.id,
+                            target,
+                            instance.owner,
+                            instance.owner_player_id.clone(),
+                            instance.pos,
+                        ));
                     }
                 }
             }
@@ -1258,9 +1548,9 @@ fn tick_zhenfa_registry(
                     instance,
                     now,
                     &mut targets,
-                    &mut combat_events,
-                    &mut death_events,
-                    &mut status_effects,
+                    &mut events.combat_events,
+                    &mut events.death_events,
+                    &mut events.status_effects,
                 );
             }
             ZhenfaKind::Lingju => {}
@@ -1282,6 +1572,11 @@ fn tick_zhenfa_registry(
         .retain(|key| current_ward_inside.contains(key));
     registry.ward_inside.extend(current_ward_inside);
 
+    registry
+        .slow_inside
+        .retain(|key| current_slow_inside.contains(key));
+    registry.slow_inside.extend(current_slow_inside);
+
     for (id, intruder, owner, owner_player_id, pos) in ward_alerts {
         registry.ward_alert_seen.insert((id, intruder), now);
         if let Some(pending_narrations) = pending_narrations.as_deref_mut() {
@@ -1291,7 +1586,7 @@ fn tick_zhenfa_registry(
                 NarrationStyle::Perception,
             );
         }
-        sense_pulses.send(ZhenfaSensePulse {
+        events.sense_pulses.send(ZhenfaSensePulse {
             owner,
             kind: SenseKindV1::ZhenfaWardAlert,
             pos,
@@ -1309,9 +1604,82 @@ fn tick_zhenfa_registry(
         );
     }
 
+    for (id, intruder, owner, owner_player_id, pos) in warning_alerts {
+        registry.ward_alert_seen.insert((id, intruder), now);
+        if let Some(pending_narrations) = pending_narrations.as_deref_mut() {
+            pending_narrations.push_player(
+                owner_player_id.as_str(),
+                "你埋下的警示阵震了一下，三格内有陌生真元靠近。",
+                NarrationStyle::Perception,
+            );
+        }
+        events.sense_pulses.send(ZhenfaSensePulse {
+            owner,
+            kind: SenseKindV1::ZhenfaWardAlert,
+            pos,
+            intensity: 1.0,
+            generation: now,
+        });
+        emit_zhenfa_vfx(
+            vfx_events.as_deref_mut(),
+            gameplay_vfx::ZHENFA_WARD,
+            pos,
+            "#66BBFF",
+            0.55,
+            14,
+            50,
+        );
+    }
+
+    for (id, intruder, owner, owner_player_id, pos) in slow_triggers {
+        if registry.drain_slow_charge(id) {
+            if let Some(instance) = registry.remove(id) {
+                remove_zhenfa_anchor_block(&mut layers, instance.pos);
+                commands.entity(instance.anchor_entity).despawn();
+            }
+        }
+        events.status_effects.send(ApplyStatusEffectIntent {
+            target: intruder,
+            kind: StatusEffectKind::Slowed,
+            magnitude: 0.50,
+            duration_ticks: trap_content::SLOW_TRAP_EFFECT_TICKS,
+            issued_at_tick: now,
+        });
+        events.status_effects.send(ApplyStatusEffectIntent {
+            target: intruder,
+            kind: StatusEffectKind::QiRegenPaused,
+            magnitude: 1.0,
+            duration_ticks: trap_content::SLOW_TRAP_EFFECT_TICKS,
+            issued_at_tick: now,
+        });
+        if let Some(pending_narrations) = pending_narrations.as_deref_mut() {
+            pending_narrations.push_player(
+                owner_player_id.as_str(),
+                "缓阵收紧了，来者的步子被拖慢了。",
+                NarrationStyle::Perception,
+            );
+        }
+        events.sense_pulses.send(ZhenfaSensePulse {
+            owner,
+            kind: SenseKindV1::ZhenfaWardAlert,
+            pos,
+            intensity: 1.0,
+            generation: now,
+        });
+        emit_zhenfa_vfx(
+            vfx_events.as_deref_mut(),
+            gameplay_vfx::ZHENFA_WARD,
+            pos,
+            "#55DDEE",
+            0.60,
+            18,
+            60,
+        );
+    }
+
     for (id, owner, pos, anchor_entity) in deceived_exposed {
         if let Some(instance) = registry.remove(id) {
-            juebi_events.send(JueBiTriggerEvent {
+            events.juebi_events.send(JueBiTriggerEvent {
                 entity: owner,
                 source: JueBiTriggerSource::ZhenfaDeceptionExposed,
                 delay_ticks: 0,
@@ -1322,33 +1690,46 @@ fn tick_zhenfa_registry(
                     f64::from(pos[2]) + 0.5,
                 ]),
             });
-            deceive_exposed_events.send(DeceiveHeavenExposedEvent {
-                owner: instance.owner,
-                owner_player_id: instance.owner_player_id.clone(),
-                array_id: instance.id,
-                pos: instance.pos,
-                self_weight_multiplier: 0.5,
-                target_weight_multiplier: 1.5,
-                reveal_chance_per_tick: deceive_heaven_reveal_chance(instance.realm_at_cast),
-                exposed_at_tick: now,
-            });
+            events
+                .deceive_exposed_events
+                .send(DeceiveHeavenExposedEvent {
+                    owner: instance.owner,
+                    owner_player_id: instance.owner_player_id.clone(),
+                    array_id: instance.id,
+                    pos: instance.pos,
+                    self_weight_multiplier: 0.5,
+                    target_weight_multiplier: 1.5,
+                    reveal_chance_per_tick: deceive_heaven_reveal_chance(instance.realm_at_cast),
+                    exposed_at_tick: now,
+                });
         }
         commands.entity(anchor_entity).despawn();
         remove_zhenfa_anchor_block(&mut layers, pos);
     }
 
+    passive_triggers.extend(blast_triggers);
     let mut snapshots = registry.trigger_now(passive_triggers, now);
     snapshots.extend(registry.drain_due_chain_triggers(now));
+    for snapshot in &snapshots {
+        if snapshot.kind == ZhenfaKind::BlastTrap {
+            release_trap_snapshot_qi_to_zone(
+                zones.as_deref_mut(),
+                &mut events.qi_transfers,
+                snapshot,
+            );
+        }
+    }
     remove_zhenfa_anchor_blocks(&mut layers, snapshots.iter().map(|snapshot| snapshot.pos));
     despawn_triggered_anchors(&mut commands, &snapshots);
     apply_trigger_snapshots(
         snapshots,
         &mut targets,
+        &mut layers,
         &mut practice_logs,
-        &mut combat_events,
-        &mut death_events,
-        &mut status_effects,
-        &mut sense_pulses,
+        &mut events.combat_events,
+        &mut events.death_events,
+        &mut events.status_effects,
+        &mut events.sense_pulses,
         vfx_events.as_deref_mut(),
     );
 }
@@ -1596,6 +1977,7 @@ fn shrine_ward_allows_target(
 fn apply_trigger_snapshots(
     snapshots: Vec<TriggerSnapshot>,
     targets: &mut Query<ZhenfaDamageTarget<'_>>,
+    layers: &mut Query<&mut ChunkLayer, With<OverworldLayer>>,
     practice_logs: &mut Query<&mut PracticeLog>,
     combat_events: &mut EventWriter<CombatEvent>,
     death_events: &mut EventWriter<DeathEvent>,
@@ -1616,13 +1998,30 @@ fn apply_trigger_snapshots(
             vfx_events.as_deref_mut(),
             gameplay_vfx::ZHENFA_TRAP,
             snapshot.pos,
-            "#FF3344",
-            snapshot.qi_invest_ratio.clamp(0.3, 1.0) as f32,
+            if snapshot.kind == ZhenfaKind::BlastTrap {
+                "#FF4422"
+            } else {
+                "#FF3344"
+            },
+            if snapshot.kind == ZhenfaKind::BlastTrap {
+                (snapshot.qi_invest_amount / 30.0).clamp(0.5, 1.0) as f32
+            } else {
+                snapshot.qi_invest_ratio.clamp(0.3, 1.0) as f32
+            },
             16,
             24,
         );
 
-        let damage_profile = damage_profile(snapshot.qi_invest_ratio);
+        let damage_profile = if snapshot.kind == ZhenfaKind::BlastTrap {
+            DamageProfile {
+                damage: trap_content::blast_damage(snapshot.qi_invest_amount),
+                severity: (snapshot.qi_invest_amount / 30.0).clamp(0.35, 0.80) as f32,
+                bleeding_per_sec: 0.12,
+                meridian_integrity_loss: 0.06,
+            }
+        } else {
+            damage_profile(snapshot.qi_invest_ratio)
+        };
         let mut hit_any = false;
         for (
             target,
@@ -1639,7 +2038,17 @@ fn apply_trigger_snapshots(
             if target == snapshot.owner {
                 continue;
             }
-            if !in_horizontal_radius(position.get(), snapshot.pos, snapshot.effect_radius) {
+            let target_pos = position.get();
+            let in_trigger_area = if snapshot.kind == ZhenfaKind::BlastTrap {
+                trap_content::horizontal_same_layer_contains(
+                    target_pos,
+                    snapshot.pos,
+                    trap_content::OrdinaryTrapKind::Blast.detection_radius(),
+                ) && blast_has_clear_los(layers, snapshot.pos, target_pos)
+            } else {
+                in_horizontal_radius(target_pos, snapshot.pos, snapshot.effect_radius)
+            };
+            if !in_trigger_area {
                 continue;
             }
             hit_any = true;
@@ -1647,14 +2056,24 @@ fn apply_trigger_snapshots(
             let was_alive = wounds.health_current > 0.0;
             wounds.health_current =
                 (wounds.health_current - damage_profile.damage).clamp(0.0, wounds.health_max);
-            for leg in [BodyPart::LegL, BodyPart::LegR] {
+            let hit_parts: &[BodyPart] = if snapshot.kind == ZhenfaKind::BlastTrap {
+                &[BodyPart::Chest]
+            } else {
+                &[BodyPart::LegL, BodyPart::LegR]
+            };
+            let wound_kind = if snapshot.kind == ZhenfaKind::BlastTrap {
+                WoundKind::Cut
+            } else {
+                WoundKind::Pierce
+            };
+            for part in hit_parts {
                 wounds.entries.push(Wound {
-                    location: leg,
-                    kind: WoundKind::Pierce,
+                    location: *part,
+                    kind: wound_kind,
                     severity: damage_profile.severity,
                     bleeding_per_sec: damage_profile.bleeding_per_sec,
                     created_at_tick: tick,
-                    inflicted_by: Some(format!("zhenfa_trap:{}", snapshot.id)),
+                    inflicted_by: Some(format!("{:?}:{}", snapshot.kind, snapshot.id)),
                 });
             }
 
@@ -1666,7 +2085,11 @@ fn apply_trigger_snapshots(
                 }
             }
 
-            let contam_delta = trap_contam_delta(snapshot.color_main, snapshot.color_secondary);
+            let contam_delta = if snapshot.kind == ZhenfaKind::BlastTrap {
+                0.10
+            } else {
+                trap_contam_delta(snapshot.color_main, snapshot.color_secondary)
+            };
             if contam_delta > 0.0 {
                 if let Some(mut contamination) = contamination {
                     contamination.entries.push(ContamSource {
@@ -1697,15 +2120,15 @@ fn apply_trigger_snapshots(
                 attacker: snapshot.owner,
                 target,
                 resolved_at_tick: tick,
-                body_part: BodyPart::LegL,
-                wound_kind: WoundKind::Pierce,
+                body_part: hit_parts[0],
+                wound_kind,
                 source: crate::combat::events::AttackSource::Melee,
                 debug_command: false,
                 damage: damage_profile.damage,
                 contam_delta,
                 description: format!(
-                    "zhenfa_trap {} -> {:?} ratio {:.3}",
-                    snapshot.id, target, snapshot.qi_invest_ratio
+                    "{:?} {} -> {:?} qi {:.3}",
+                    snapshot.kind, snapshot.id, target, snapshot.qi_invest_amount
                 ),
                 defense_kind: None,
                 defense_effectiveness: None,
@@ -1944,7 +2367,9 @@ fn has_zhenfa_flag(inventory: Option<&PlayerInventory>) -> bool {
 
 fn backlash_contam_delta(kind: ZhenfaKind) -> f64 {
     match kind {
-        ZhenfaKind::Trap => 0.5,
+        ZhenfaKind::Trap | ZhenfaKind::BlastTrap => 0.5,
+        ZhenfaKind::WarningTrap => 0.2,
+        ZhenfaKind::SlowTrap => 0.35,
         ZhenfaKind::Ward => 0.3,
         ZhenfaKind::ShrineWard => 0.35,
         ZhenfaKind::Lingju => 0.25,
@@ -2025,6 +2450,152 @@ fn distance_to_block(position: valence::math::DVec3, center: [i32; 3]) -> f64 {
 
 fn ordered_distance_to_block(position: valence::math::DVec3, center: [i32; 3]) -> u64 {
     (distance_to_block(position, center) * 1000.0).round() as u64
+}
+
+fn blast_has_clear_los(
+    layers: &mut Query<&mut ChunkLayer, With<OverworldLayer>>,
+    trap_pos: [i32; 3],
+    target_pos: valence::math::DVec3,
+) -> bool {
+    let Some(layer) = layers.iter_mut().next() else {
+        return true;
+    };
+    let origin = valence::math::DVec3::new(
+        f64::from(trap_pos[0]) + 0.5,
+        f64::from(trap_pos[1]) + 0.5,
+        f64::from(trap_pos[2]) + 0.5,
+    );
+    let delta = target_pos - origin;
+    let steps = ((delta.x.abs().max(delta.z.abs()).max(delta.y.abs())) * 4.0)
+        .ceil()
+        .max(1.0) as i32;
+
+    for step in 1..steps {
+        let t = f64::from(step) / f64::from(steps);
+        let sample = origin + delta * t;
+        let block_pos = BlockPos::new(
+            sample.x.floor() as i32,
+            sample.y.floor() as i32,
+            sample.z.floor() as i32,
+        );
+        if block_pos == block_pos_from_array(trap_pos) {
+            continue;
+        }
+        let Some(block) = layer.block(block_pos) else {
+            continue;
+        };
+        if is_solid_for_blast_los(block.state) {
+            return false;
+        }
+    }
+    true
+}
+
+fn is_solid_for_blast_los(block: BlockState) -> bool {
+    if block == BlockState::AIR || block == BlockState::CAVE_AIR {
+        return false;
+    }
+    block.collision_shapes().next().is_some()
+}
+
+fn zone_qi_at_pos(zones: Option<&ZoneRegistry>, pos: [i32; 3]) -> Option<f64> {
+    zones
+        .and_then(|zones| {
+            zones.find_zone(
+                DimensionKind::Overworld,
+                valence::math::DVec3::new(
+                    f64::from(pos[0]) + 0.5,
+                    f64::from(pos[1]) + 0.5,
+                    f64::from(pos[2]) + 0.5,
+                ),
+            )
+        })
+        .map(|zone| zone.spirit_qi)
+}
+
+fn release_trap_snapshot_qi_to_zone(
+    zones: Option<&mut ZoneRegistry>,
+    qi_transfers: &mut EventWriter<QiTransfer>,
+    snapshot: &TriggerSnapshot,
+) {
+    release_trap_qi_amount_to_zone(
+        zones,
+        qi_transfers,
+        snapshot.id,
+        snapshot.owner_player_id.as_str(),
+        snapshot.pos,
+        snapshot.qi_invest_amount,
+    );
+}
+
+fn release_trap_qi_to_zone(
+    zones: Option<&mut ZoneRegistry>,
+    qi_transfers: &mut EventWriter<QiTransfer>,
+    instance: &ZhenfaInstance,
+) {
+    release_trap_qi_amount_to_zone(
+        zones,
+        qi_transfers,
+        instance.id,
+        instance.owner_player_id.as_str(),
+        instance.pos,
+        instance.qi_invest_amount,
+    );
+}
+
+fn release_trap_qi_amount_to_zone(
+    zones: Option<&mut ZoneRegistry>,
+    qi_transfers: &mut EventWriter<QiTransfer>,
+    array_id: u64,
+    owner_player_id: &str,
+    pos: [i32; 3],
+    amount: f64,
+) {
+    if amount <= f64::EPSILON {
+        return;
+    }
+    let Some(zones) = zones else {
+        tracing::warn!(
+            "[bong][zhenfa] trap qi release skipped: ZoneRegistry missing array_id={array_id}"
+        );
+        return;
+    };
+    let zone_name = zones
+        .find_zone(
+            DimensionKind::Overworld,
+            valence::math::DVec3::new(
+                f64::from(pos[0]) + 0.5,
+                f64::from(pos[1]) + 0.5,
+                f64::from(pos[2]) + 0.5,
+            ),
+        )
+        .map(|zone| zone.name.clone());
+    let Some(zone_name) = zone_name else {
+        tracing::warn!(
+            "[bong][zhenfa] trap qi release skipped: no zone for array_id={array_id} pos={pos:?}"
+        );
+        return;
+    };
+    let Some(zone) = zones.find_zone_mut(zone_name.as_str()) else {
+        return;
+    };
+    let from = QiAccountId::container(format!("zhenfa_trap:{owner_player_id}:{array_id}"));
+    let to = QiAccountId::zone(zone.name.clone());
+    let zone_current = zone.spirit_qi.max(0.0) * QI_ZONE_UNIT_CAPACITY;
+    match qi_release_to_zone(amount, from, to, zone_current, QI_ZONE_UNIT_CAPACITY) {
+        Ok(outcome) => {
+            zone.spirit_qi = (outcome.zone_after / QI_ZONE_UNIT_CAPACITY).clamp(-1.0, 1.0);
+            if let Some(transfer) = outcome.transfer {
+                qi_transfers.send(transfer);
+            }
+        }
+        Err(error) => {
+            tracing::warn!(
+                ?error,
+                "[bong][zhenfa] invalid trap qi release array_id={array_id}"
+            );
+        }
+    }
 }
 
 fn chebyshev_distance(left: [i32; 3], right: [i32; 3]) -> i32 {
@@ -2112,8 +2683,8 @@ mod tests {
     use crate::combat::events::{CombatEvent, DeathEvent};
     use crate::cultivation::components::{QiColor, Realm};
     use crate::inventory::{
-        ContainerState, InventoryRevision, ItemCategory, ItemInstance, ItemRarity, ItemTemplate,
-        PlayerInventory, EQUIP_SLOT_MAIN_HAND,
+        inventory_item_by_instance_borrow, ContainerState, InventoryRevision, ItemCategory,
+        ItemInstance, ItemRarity, ItemTemplate, PlayerInventory, EQUIP_SLOT_MAIN_HAND,
     };
     use valence::prelude::{App, ChunkLayer, DVec3, Entity, Events, UnloadedChunk};
     use valence::testing::ScenarioSingleClient;
@@ -2184,6 +2755,7 @@ mod tests {
         app.add_event::<IllusionArrayDeployEvent>();
         app.add_event::<ArrayDecayEvent>();
         app.add_event::<ArrayBreakthroughEvent>();
+        app.add_event::<QiTransfer>();
         app.add_event::<JueBiTriggerEvent>();
         app.add_event::<CombatEvent>();
         app.add_event::<DeathEvent>();
@@ -2300,11 +2872,44 @@ mod tests {
         }
     }
 
+    fn trap_item(instance_id: u64, template_id: &str, display_name: &str) -> ItemInstance {
+        ItemInstance {
+            instance_id,
+            template_id: template_id.to_string(),
+            display_name: display_name.to_string(),
+            grid_w: 1,
+            grid_h: 1,
+            weight: 0.1,
+            rarity: ItemRarity::Common,
+            description: display_name.to_string(),
+            stack_count: 1,
+            spirit_quality: 1.0,
+            durability: 1.0,
+            freshness: None,
+            mineral_id: None,
+            charges: None,
+            forge_quality: None,
+            forge_color: None,
+            forge_side_effects: Vec::new(),
+            forge_achieved_tier: None,
+            alchemy: None,
+            lingering_owner_qi: None,
+        }
+    }
+
     fn zhenfa_flag_inventory() -> PlayerInventory {
         let mut inventory = empty_inventory();
         inventory
             .equipped
             .insert(EQUIP_SLOT_MAIN_HAND.to_string(), array_flag_item(9001));
+        inventory
+    }
+
+    fn ordinary_trap_inventory(item: ItemInstance) -> PlayerInventory {
+        let mut inventory = empty_inventory();
+        inventory
+            .equipped
+            .insert(EQUIP_SLOT_MAIN_HAND.to_string(), item);
         inventory
     }
 
@@ -2327,6 +2932,7 @@ mod tests {
             forge_station_spec: None,
             blueprint_scroll_spec: None,
             inscription_scroll_spec: None,
+            technique_scroll_spec: None,
         };
         ItemRegistry::from_map(HashMap::from([(
             ZHENFA_PEARL_ITEM_ID.to_string(),
@@ -2363,6 +2969,8 @@ mod tests {
             carrier: ZhenfaCarrierKind::CommonStone,
             qi_invest_ratio: 0.80,
             trigger: Some("proximity".to_string()),
+            item_instance_id: None,
+            target_face: None,
             requested_at_tick: 10,
         });
         app.update();
@@ -2389,6 +2997,8 @@ mod tests {
             carrier: ZhenfaCarrierKind::LingqiBlock,
             qi_invest_ratio: 0.10,
             trigger: None,
+            item_instance_id: None,
+            target_face: None,
             requested_at_tick: 10,
         });
         app.update();
@@ -2430,6 +3040,8 @@ mod tests {
             carrier: ZhenfaCarrierKind::LingqiBlock,
             qi_invest_ratio: 0.20,
             trigger: None,
+            item_instance_id: None,
+            target_face: None,
             requested_at_tick: 10,
         });
         app.update();
@@ -2458,6 +3070,8 @@ mod tests {
             carrier: ZhenfaCarrierKind::LingqiBlock,
             qi_invest_ratio: 0.20,
             trigger: None,
+            item_instance_id: None,
+            target_face: None,
             requested_at_tick: 10,
         });
         app.update();
@@ -2487,6 +3101,8 @@ mod tests {
             carrier: ZhenfaCarrierKind::LingqiBlock,
             qi_invest_ratio: 0.20,
             trigger: None,
+            item_instance_id: None,
+            target_face: None,
             requested_at_tick: 10,
         });
         app.update();
@@ -2520,6 +3136,8 @@ mod tests {
             carrier: ZhenfaCarrierKind::LingqiBlock,
             qi_invest_ratio: 0.20,
             trigger: None,
+            item_instance_id: None,
+            target_face: None,
             requested_at_tick: 10,
         });
         app.update();
@@ -2544,6 +3162,8 @@ mod tests {
                 carrier: ZhenfaCarrierKind::LingqiBlock,
                 qi_invest_ratio: 0.10,
                 trigger: None,
+                item_instance_id: None,
+                target_face: None,
                 requested_at_tick: tick,
             });
         }
@@ -2569,6 +3189,8 @@ mod tests {
             carrier: ZhenfaCarrierKind::LingqiBlock,
             qi_invest_ratio: 0.10,
             trigger: None,
+            item_instance_id: None,
+            target_face: None,
             requested_at_tick: 1,
         });
         app.update();
@@ -2581,8 +3203,454 @@ mod tests {
     }
 
     #[test]
+    fn place_warning_deducts_qi_and_consumes_trap_item_without_array_flag() {
+        let mut app = app_with_loaded_zhenfa();
+        let owner = spawn_player(&mut app, "Alice", [0.0, 64.0, 0.0]);
+        app.world_mut()
+            .entity_mut(owner)
+            .insert(ordinary_trap_inventory(trap_item(
+                9101,
+                trap_content::WARNING_TRAP_ITEM_ID,
+                "警示符",
+            )));
+
+        app.world_mut().send_event(ZhenfaPlaceRequest {
+            player: owner,
+            pos: [1, 64, 1],
+            kind: ZhenfaKind::WarningTrap,
+            carrier: ZhenfaCarrierKind::CommonStone,
+            qi_invest_ratio: 0.0,
+            trigger: None,
+            item_instance_id: Some(9101),
+            target_face: Some(trap_content::TrapTargetFace::Top),
+            requested_at_tick: 10,
+        });
+        app.update();
+
+        assert_eq!(
+            app.world().get::<Cultivation>(owner).unwrap().qi_current,
+            98.0
+        );
+        let registry = app.world().resource::<ZhenfaRegistry>();
+        let instance = registry
+            .find_at([1, 64, 1])
+            .expect("warning trap should be placed");
+        assert_eq!(instance.kind, ZhenfaKind::WarningTrap);
+        assert_eq!(instance.qi_invest_amount, 2.0);
+        let inventory = app.world().get::<PlayerInventory>(owner).unwrap();
+        assert!(inventory_item_by_instance_borrow(inventory, 9101).is_none());
+    }
+
+    #[test]
+    fn place_blast_rejects_bottom_face_without_consuming_item() {
+        let mut app = app_with_loaded_zhenfa();
+        let owner = spawn_player(&mut app, "Alice", [0.0, 64.0, 0.0]);
+        app.world_mut()
+            .entity_mut(owner)
+            .insert(ordinary_trap_inventory(trap_item(
+                9102,
+                trap_content::BLAST_TRAP_ITEM_ID,
+                "爆阵符",
+            )));
+
+        app.world_mut().send_event(ZhenfaPlaceRequest {
+            player: owner,
+            pos: [1, 64, 1],
+            kind: ZhenfaKind::BlastTrap,
+            carrier: ZhenfaCarrierKind::CommonStone,
+            qi_invest_ratio: 1.0,
+            trigger: None,
+            item_instance_id: Some(9102),
+            target_face: Some(trap_content::TrapTargetFace::Bottom),
+            requested_at_tick: 10,
+        });
+        app.update();
+
+        assert_eq!(app.world().resource::<ZhenfaRegistry>().len(), 0);
+        assert_eq!(
+            app.world().get::<Cultivation>(owner).unwrap().qi_current,
+            100.0
+        );
+        let inventory = app.world().get::<PlayerInventory>(owner).unwrap();
+        assert!(inventory_item_by_instance_borrow(inventory, 9102).is_some());
+    }
+
+    #[test]
+    fn place_rejects_ordinary_trap_when_qi_is_insufficient() {
+        let mut app = app_with_loaded_zhenfa();
+        let owner = spawn_player(&mut app, "Alice", [0.0, 64.0, 0.0]);
+        app.world_mut()
+            .entity_mut(owner)
+            .insert(ordinary_trap_inventory(trap_item(
+                9103,
+                trap_content::WARNING_TRAP_ITEM_ID,
+                "警示符",
+            )));
+        app.world_mut()
+            .get_mut::<Cultivation>(owner)
+            .unwrap()
+            .qi_current = 1.0;
+
+        app.world_mut().send_event(ZhenfaPlaceRequest {
+            player: owner,
+            pos: [1, 64, 1],
+            kind: ZhenfaKind::WarningTrap,
+            carrier: ZhenfaCarrierKind::CommonStone,
+            qi_invest_ratio: 0.0,
+            trigger: None,
+            item_instance_id: Some(9103),
+            target_face: Some(trap_content::TrapTargetFace::Top),
+            requested_at_tick: 10,
+        });
+        app.update();
+
+        assert_eq!(app.world().resource::<ZhenfaRegistry>().len(), 0);
+        let inventory = app.world().get::<PlayerInventory>(owner).unwrap();
+        assert!(inventory_item_by_instance_borrow(inventory, 9103).is_some());
+    }
+
+    #[test]
+    fn place_rejected_chunk_density_exceeded() {
+        let mut app = app_with_loaded_zhenfa();
+        let owner = spawn_player(&mut app, "Alice", [0.0, 64.0, 0.0]);
+        app.world_mut()
+            .entity_mut(owner)
+            .insert(ordinary_trap_inventory(trap_item(
+                9104,
+                trap_content::BLAST_TRAP_ITEM_ID,
+                "爆阵符",
+            )));
+        let anchor_entity = app.world_mut().spawn_empty().id();
+        app.world_mut()
+            .resource_mut::<ZhenfaRegistry>()
+            .insert(ZhenfaInstance {
+                id: 0,
+                kind: ZhenfaKind::BlastTrap,
+                owner,
+                owner_player_id: "offline:Alice".to_string(),
+                pos: [2, 64, 2],
+                carrier: ZhenfaCarrierKind::CommonStone,
+                qi_invest_ratio: 0.6,
+                qi_invest_amount: 60.0,
+                realm_at_cast: Realm::Induce,
+                mastery_at_cast: 0.0,
+                effect_radius: 2,
+                ward_radius: 1,
+                placed_at_tick: 1,
+                expires_at_tick: 1_000,
+                triggered_at: None,
+                trigger: None,
+                color_main: ColorKind::Intricate,
+                color_secondary: None,
+                anchor_entity,
+            })
+            .expect("seed existing trap");
+
+        app.world_mut().send_event(ZhenfaPlaceRequest {
+            player: owner,
+            pos: [3, 64, 3],
+            kind: ZhenfaKind::BlastTrap,
+            carrier: ZhenfaCarrierKind::CommonStone,
+            qi_invest_ratio: 1.0,
+            trigger: None,
+            item_instance_id: Some(9104),
+            target_face: Some(trap_content::TrapTargetFace::North),
+            requested_at_tick: 10,
+        });
+        app.update();
+
+        assert!(app
+            .world()
+            .resource::<ZhenfaRegistry>()
+            .find_at([3, 64, 3])
+            .is_none());
+        let inventory = app.world().get::<PlayerInventory>(owner).unwrap();
+        assert!(inventory_item_by_instance_borrow(inventory, 9104).is_some());
+    }
+
+    #[test]
+    fn warning_detects_above_three_blocks_and_keeps_node() {
+        let mut app = app_with_loaded_zhenfa();
+        let owner = spawn_player(&mut app, "Alice", [0.0, 64.0, 0.0]);
+        let _intruder = spawn_player(&mut app, "Bob", [0.5, 66.5, 0.5]);
+        app.world_mut()
+            .entity_mut(owner)
+            .insert(ordinary_trap_inventory(trap_item(
+                9105,
+                trap_content::WARNING_TRAP_ITEM_ID,
+                "警示符",
+            )));
+
+        app.world_mut().send_event(ZhenfaPlaceRequest {
+            player: owner,
+            pos: [0, 64, 0],
+            kind: ZhenfaKind::WarningTrap,
+            carrier: ZhenfaCarrierKind::CommonStone,
+            qi_invest_ratio: 0.0,
+            trigger: None,
+            item_instance_id: Some(9105),
+            target_face: Some(trap_content::TrapTargetFace::Top),
+            requested_at_tick: 1,
+        });
+        app.update();
+        app.world_mut().resource_mut::<CombatClock>().tick = 2;
+        app.update();
+
+        assert!(app
+            .world()
+            .resource::<ZhenfaRegistry>()
+            .find_at([0, 64, 0])
+            .is_some());
+        let narrations = app
+            .world_mut()
+            .resource_mut::<PendingGameplayNarrations>()
+            .drain();
+        assert_eq!(narrations.len(), 1);
+        assert_eq!(narrations[0].target.as_deref(), Some("offline:Alice"));
+    }
+
+    #[test]
+    fn warning_ignores_placer() {
+        let mut app = app_with_loaded_zhenfa();
+        let owner = spawn_player(&mut app, "Alice", [0.5, 66.5, 0.5]);
+        app.world_mut()
+            .entity_mut(owner)
+            .insert(ordinary_trap_inventory(trap_item(
+                9108,
+                trap_content::WARNING_TRAP_ITEM_ID,
+                "警示符",
+            )));
+
+        app.world_mut().send_event(ZhenfaPlaceRequest {
+            player: owner,
+            pos: [0, 64, 0],
+            kind: ZhenfaKind::WarningTrap,
+            carrier: ZhenfaCarrierKind::CommonStone,
+            qi_invest_ratio: 0.0,
+            trigger: None,
+            item_instance_id: Some(9108),
+            target_face: Some(trap_content::TrapTargetFace::Top),
+            requested_at_tick: 1,
+        });
+        app.update();
+        app.world_mut().resource_mut::<CombatClock>().tick = 2;
+        app.update();
+
+        assert!(app
+            .world()
+            .resource::<ZhenfaRegistry>()
+            .find_at([0, 64, 0])
+            .is_some());
+        assert!(app
+            .world_mut()
+            .resource_mut::<PendingGameplayNarrations>()
+            .drain()
+            .is_empty());
+    }
+
+    #[test]
+    fn blast_one_shot_removes_node_and_returns_qi_to_zone() {
+        let mut app = app_with_loaded_zhenfa();
+        app.insert_resource(ZoneRegistry::fallback());
+        app.world_mut()
+            .resource_mut::<ZoneRegistry>()
+            .find_zone_mut(crate::world::zone::DEFAULT_SPAWN_ZONE_NAME)
+            .expect("spawn zone should exist")
+            .spirit_qi = 0.0;
+        let owner = spawn_player(&mut app, "Alice", [0.0, 64.0, 0.0]);
+        let intruder = spawn_player(&mut app, "Bob", [1.5, 64.0, 1.5]);
+        app.world_mut()
+            .entity_mut(owner)
+            .insert(ordinary_trap_inventory(trap_item(
+                9106,
+                trap_content::BLAST_TRAP_ITEM_ID,
+                "爆阵符",
+            )));
+
+        app.world_mut().send_event(ZhenfaPlaceRequest {
+            player: owner,
+            pos: [1, 64, 1],
+            kind: ZhenfaKind::BlastTrap,
+            carrier: ZhenfaCarrierKind::CommonStone,
+            qi_invest_ratio: 1.0,
+            trigger: None,
+            item_instance_id: Some(9106),
+            target_face: Some(trap_content::TrapTargetFace::North),
+            requested_at_tick: 1,
+        });
+        app.update();
+        app.world_mut().resource_mut::<CombatClock>().tick = 2;
+        app.update();
+
+        assert!(app
+            .world()
+            .resource::<ZhenfaRegistry>()
+            .find_at([1, 64, 1])
+            .is_none());
+        let wounds = app.world().get::<Wounds>(intruder).unwrap();
+        assert!((wounds.health_current - 82.0).abs() < f32::EPSILON);
+        assert!(wounds
+            .entries
+            .iter()
+            .any(|wound| wound.location == BodyPart::Chest && wound.kind == WoundKind::Cut));
+        let transfers = app.world().resource::<Events<QiTransfer>>();
+        let released = transfers.iter_current_update_events().find(|transfer| {
+            transfer.to == QiAccountId::zone(crate::world::zone::DEFAULT_SPAWN_ZONE_NAME)
+        });
+        assert!(released.is_some_and(|transfer| (transfer.amount - 30.0).abs() < f64::EPSILON));
+    }
+
+    #[test]
+    fn blast_requires_los() {
+        let (mut app, layer_entity) = app_with_zhenfa_layer();
+        app.world_mut()
+            .get_mut::<ChunkLayer>(layer_entity)
+            .expect("test layer should exist")
+            .set_block(block_pos_from_array([2, 64, 1]), BlockState::STONE);
+        let owner = spawn_player(&mut app, "Alice", [0.0, 64.0, 0.0]);
+        let intruder = spawn_player(&mut app, "Bob", [2.9, 64.0, 1.5]);
+        app.world_mut()
+            .entity_mut(owner)
+            .insert(ordinary_trap_inventory(trap_item(
+                9109,
+                trap_content::BLAST_TRAP_ITEM_ID,
+                "爆阵符",
+            )));
+
+        app.world_mut().send_event(ZhenfaPlaceRequest {
+            player: owner,
+            pos: [1, 64, 1],
+            kind: ZhenfaKind::BlastTrap,
+            carrier: ZhenfaCarrierKind::CommonStone,
+            qi_invest_ratio: 1.0,
+            trigger: None,
+            item_instance_id: Some(9109),
+            target_face: Some(trap_content::TrapTargetFace::North),
+            requested_at_tick: 1,
+        });
+        app.update();
+        app.world_mut().resource_mut::<CombatClock>().tick = 2;
+        app.update();
+
+        assert!(app
+            .world()
+            .resource::<ZhenfaRegistry>()
+            .find_at([1, 64, 1])
+            .is_some());
+        let wounds = app.world().get::<Wounds>(intruder).unwrap();
+        assert_eq!(wounds.health_current, wounds.health_max);
+        assert!(wounds.entries.is_empty());
+    }
+
+    #[test]
+    fn blast_damage_resolution_keeps_los_filter_per_target() {
+        let (mut app, layer_entity) = app_with_zhenfa_layer();
+        app.world_mut()
+            .get_mut::<ChunkLayer>(layer_entity)
+            .expect("test layer should exist")
+            .set_block(block_pos_from_array([2, 64, 1]), BlockState::STONE);
+        let owner = spawn_player(&mut app, "Alice", [0.0, 64.0, 0.0]);
+        let visible_intruder = spawn_player(&mut app, "Bob", [1.5, 64.0, 1.5]);
+        let blocked_intruder = spawn_player(&mut app, "Chen", [2.9, 64.0, 1.5]);
+        app.world_mut()
+            .entity_mut(owner)
+            .insert(ordinary_trap_inventory(trap_item(
+                9110,
+                trap_content::BLAST_TRAP_ITEM_ID,
+                "爆阵符",
+            )));
+
+        app.world_mut().send_event(ZhenfaPlaceRequest {
+            player: owner,
+            pos: [1, 64, 1],
+            kind: ZhenfaKind::BlastTrap,
+            carrier: ZhenfaCarrierKind::CommonStone,
+            qi_invest_ratio: 1.0,
+            trigger: None,
+            item_instance_id: Some(9110),
+            target_face: Some(trap_content::TrapTargetFace::North),
+            requested_at_tick: 1,
+        });
+        app.update();
+        app.world_mut().resource_mut::<CombatClock>().tick = 2;
+        app.update();
+
+        let visible_wounds = app.world().get::<Wounds>(visible_intruder).unwrap();
+        assert!(
+            visible_wounds.health_current < visible_wounds.health_max,
+            "expected visible intruder to take blast damage because LOS is clear; actual health={}",
+            visible_wounds.health_current
+        );
+        let blocked_wounds = app.world().get::<Wounds>(blocked_intruder).unwrap();
+        assert_eq!(
+            blocked_wounds.health_current, blocked_wounds.health_max,
+            "expected blocked intruder to avoid blast damage because wall blocks LOS; actual health={}",
+            blocked_wounds.health_current
+        );
+        assert!(
+            blocked_wounds.entries.is_empty(),
+            "expected blocked intruder to receive no wound entries because LOS is blocked; actual={:?}",
+            blocked_wounds.entries
+        );
+    }
+
+    #[test]
+    fn slow_three_charges_then_remove() {
+        let mut app = app_with_loaded_zhenfa();
+        let owner = spawn_player(&mut app, "Alice", [0.0, 64.0, 0.0]);
+        let intruder = spawn_player(&mut app, "Bob", [2.5, 64.0, 2.5]);
+        app.world_mut()
+            .entity_mut(owner)
+            .insert(ordinary_trap_inventory(trap_item(
+                9107,
+                trap_content::SLOW_TRAP_ITEM_ID,
+                "缓阵符",
+            )));
+
+        app.world_mut().send_event(ZhenfaPlaceRequest {
+            player: owner,
+            pos: [2, 64, 2],
+            kind: ZhenfaKind::SlowTrap,
+            carrier: ZhenfaCarrierKind::CommonStone,
+            qi_invest_ratio: 0.0,
+            trigger: None,
+            item_instance_id: Some(9107),
+            target_face: Some(trap_content::TrapTargetFace::Top),
+            requested_at_tick: 1,
+        });
+        app.update();
+
+        for (idx, tick) in [2_u64, 4, 6].into_iter().enumerate() {
+            app.world_mut().resource_mut::<CombatClock>().tick = tick;
+            app.world_mut()
+                .entity_mut(intruder)
+                .insert(Position::new([2.5, 64.0, 2.5]));
+            app.update();
+            if idx == 2 {
+                break;
+            }
+            app.world_mut().resource_mut::<CombatClock>().tick = tick + 1;
+            app.world_mut()
+                .entity_mut(intruder)
+                .insert(Position::new([20.0, 64.0, 20.0]));
+            app.update();
+        }
+
+        assert!(app
+            .world()
+            .resource::<ZhenfaRegistry>()
+            .find_at([2, 64, 2])
+            .is_none());
+        let status_events = app.world().resource::<Events<ApplyStatusEffectIntent>>();
+        assert!(status_events
+            .iter_current_update_events()
+            .any(|event| event.kind == StatusEffectKind::QiRegenPaused));
+    }
+
+    #[test]
     fn decay_removes_expired_array_eye() {
         let (mut app, layer_entity) = app_with_zhenfa_layer();
+        app.insert_resource(ZoneRegistry::fallback());
         let owner = spawn_player(&mut app, "Alice", [0.0, 64.0, 0.0]);
         let pos = [3, 64, 3];
         app.world_mut().send_event(ZhenfaPlaceRequest {
@@ -2592,6 +3660,8 @@ mod tests {
             carrier: ZhenfaCarrierKind::CommonStone,
             qi_invest_ratio: 0.10,
             trigger: None,
+            item_instance_id: None,
+            target_face: None,
             requested_at_tick: 0,
         });
         app.update();
@@ -2620,6 +3690,11 @@ mod tests {
             layer_block_state(&app, layer_entity, pos),
             Some(BlockState::AIR)
         );
+        let transfers = app.world().resource::<Events<QiTransfer>>();
+        assert!(
+            transfers.iter_current_update_events().next().is_none(),
+            "expected legacy trap decay to skip ordinary-trap qi release path"
+        );
     }
 
     #[test]
@@ -2635,6 +3710,8 @@ mod tests {
             carrier: ZhenfaCarrierKind::LingqiBlock,
             qi_invest_ratio: 0.20,
             trigger: None,
+            item_instance_id: None,
+            target_face: None,
             requested_at_tick: 10,
         });
         app.update();
@@ -2701,6 +3778,8 @@ mod tests {
                 carrier: ZhenfaCarrierKind::LingqiBlock,
                 qi_invest_ratio: 0.10,
                 trigger: None,
+                item_instance_id: None,
+                target_face: None,
                 requested_at_tick: idx as u64,
             });
         }
@@ -2731,6 +3810,8 @@ mod tests {
                 carrier: ZhenfaCarrierKind::LingqiBlock,
                 qi_invest_ratio: 0.10,
                 trigger: None,
+                item_instance_id: None,
+                target_face: None,
                 requested_at_tick: tick,
             });
         }
@@ -2767,6 +3848,8 @@ mod tests {
             carrier: ZhenfaCarrierKind::LingqiBlock,
             qi_invest_ratio: 0.20,
             trigger: None,
+            item_instance_id: None,
+            target_face: None,
             requested_at_tick: 1,
         });
         app.update();
@@ -2830,6 +3913,8 @@ mod tests {
             carrier: ZhenfaCarrierKind::LingqiBlock,
             qi_invest_ratio: 0.10,
             trigger: None,
+            item_instance_id: None,
+            target_face: None,
             requested_at_tick: 1,
         });
         app.update();
@@ -2893,6 +3978,8 @@ mod tests {
             carrier: ZhenfaCarrierKind::LingqiBlock,
             qi_invest_ratio: 0.10,
             trigger: None,
+            item_instance_id: None,
+            target_face: None,
             requested_at_tick: 1,
         });
         app.update();
@@ -2957,6 +4044,8 @@ mod tests {
             carrier: ZhenfaCarrierKind::LingqiBlock,
             qi_invest_ratio: 0.20,
             trigger: None,
+            item_instance_id: None,
+            target_face: None,
             requested_at_tick: 1,
         });
         app.update();
@@ -2992,6 +4081,8 @@ mod tests {
             carrier: ZhenfaCarrierKind::LingqiBlock,
             qi_invest_ratio: 0.20,
             trigger: None,
+            item_instance_id: None,
+            target_face: None,
             requested_at_tick: 1,
         });
         app.update();
@@ -3047,6 +4138,8 @@ mod tests {
             carrier: ZhenfaCarrierKind::LingqiBlock,
             qi_invest_ratio: 0.20,
             trigger: None,
+            item_instance_id: None,
+            target_face: None,
             requested_at_tick: 1,
         });
         app.update();
@@ -3069,6 +4162,8 @@ mod tests {
             carrier: ZhenfaCarrierKind::BeastCoreInlaid,
             qi_invest_ratio: 0.90,
             trigger: None,
+            item_instance_id: None,
+            target_face: None,
             requested_at_tick: 1,
         });
         app.update();
@@ -3093,6 +4188,8 @@ mod tests {
             carrier: ZhenfaCarrierKind::BeastCoreInlaid,
             qi_invest_ratio: 0.90,
             trigger: None,
+            item_instance_id: None,
+            target_face: None,
             requested_at_tick: 1,
         });
         app.update();
@@ -3144,6 +4241,8 @@ mod tests {
             carrier: ZhenfaCarrierKind::BeastCoreInlaid,
             qi_invest_ratio: 0.30,
             trigger: None,
+            item_instance_id: None,
+            target_face: None,
             requested_at_tick: 1,
         });
         app.update();
@@ -3165,6 +4264,8 @@ mod tests {
             carrier: ZhenfaCarrierKind::LingqiBlock,
             qi_invest_ratio: 0.10,
             trigger: None,
+            item_instance_id: None,
+            target_face: None,
             requested_at_tick: 1,
         });
         app.update();

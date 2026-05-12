@@ -40,6 +40,7 @@ export * from "./server-data.js";
 export * from "./skill-config.js";
 export * from "./social.js";
 export * from "./spirit-eye.js";
+export * from "./spirit-treasure.js";
 export * from "./spiritual-sense.js";
 export * from "./spawn-tutorial.js";
 export * from "./style-balance.js";
@@ -64,6 +65,7 @@ export * from "./validate.js";
 
 // 修炼 (plan-cultivation-v1 §6)
 export * from "./breakthrough-event.js";
+export * from "./breakthrough-cinematic.js";
 export * from "./cultivation-death.js";
 export * from "./cultivation.js";
 export * from "./death-insight.js";

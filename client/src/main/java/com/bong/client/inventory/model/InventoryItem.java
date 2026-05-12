@@ -432,6 +432,10 @@ public final class InventoryItem {
         return "skill_scroll".equals(scrollKind);
     }
 
+    public boolean isTechniqueScroll() {
+        return "combat_technique".equals(scrollKind);
+    }
+
     public boolean isInscriptionScroll() {
         return "inscription_scroll".equals(scrollKind) || itemId.startsWith("inscription_scroll_");
     }

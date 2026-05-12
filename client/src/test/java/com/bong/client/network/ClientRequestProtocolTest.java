@@ -335,6 +335,18 @@ public class ClientRequestProtocolTest {
             )
         );
         assertEquals(
+            "{\"type\":\"zhenfa_place\",\"v\":1,\"x\":11,\"y\":64,\"z\":-3,\"kind\":\"blast_trap\",\"carrier\":\"common_stone\",\"qi_invest_ratio\":1.0,\"item_instance_id\":9001,\"target_face\":\"north\"}",
+            ClientRequestProtocol.encodeZhenfaPlace(
+                pos,
+                ClientRequestProtocol.ZhenfaKind.BLAST_TRAP,
+                ClientRequestProtocol.ZhenfaCarrierKind.COMMON_STONE,
+                1.0,
+                null,
+                9001L,
+                ClientRequestProtocol.ZhenfaTargetFace.NORTH
+            )
+        );
+        assertEquals(
             "{\"type\":\"zhenfa_disarm\",\"v\":1,\"x\":11,\"y\":64,\"z\":-3,\"mode\":\"force_break\"}",
             ClientRequestProtocol.encodeZhenfaDisarm(pos, ClientRequestProtocol.ZhenfaDisarmMode.FORCE_BREAK)
         );

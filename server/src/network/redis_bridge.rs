@@ -21,25 +21,26 @@ use crate::schema::channels::{
     CH_ANQI_CARRIER_ABRASION, CH_ANQI_CARRIER_CHARGED, CH_ANQI_CARRIER_IMPACT,
     CH_ANQI_CONTAINER_SWAP, CH_ANQI_ECHO_FRACTAL, CH_ANQI_MULTI_SHOT, CH_ANQI_PROJECTILE_DESPAWNED,
     CH_ANQI_QI_INJECTION, CH_ANTICHEAT, CH_ARMOR_DURABILITY_CHANGED, CH_BAOMAI_V3_SKILL_EVENT,
-    CH_BONE_COIN_TICK, CH_BOTANY_ECOLOGY, CH_BREAKTHROUGH_EVENT, CH_COMBAT_REALTIME,
-    CH_COMBAT_SUMMARY, CH_CULTIVATION_DEATH, CH_DEATH_INSIGHT, CH_DUGU_POISON_PROGRESS,
-    CH_DUGU_V2_CAST, CH_DUGU_V2_REVERSE, CH_DUGU_V2_SELF_CURE, CH_DUO_SHE_EVENT, CH_FACTION_EVENT,
-    CH_FORGE_EVENT, CH_FORGE_OUTCOME, CH_FORGE_START, CH_HEART_DEMON_OFFER, CH_HEART_DEMON_REQUEST,
-    CH_HIGH_RENOWN_MILESTONE, CH_INSIGHT_OFFER, CH_INSIGHT_REQUEST, CH_LIFESPAN_EVENT,
-    CH_NPC_DEATH, CH_NPC_SPAWN, CH_PLAYER_CHAT, CH_POISON_DOSE_EVENT, CH_POISON_OVERDOSE_EVENT,
-    CH_POI_NOVICE_EVENT, CH_PRICE_INDEX, CH_PSEUDO_VEIN_ACTIVE, CH_PSEUDO_VEIN_DISSIPATE,
-    CH_RAT_PHASE_EVENT, CH_REBIRTH, CH_SEASON_CHANGED, CH_SKILL_CAP_CHANGED, CH_SKILL_LV_UP,
-    CH_SKILL_SCROLL_USED, CH_SKILL_XP_GAIN, CH_SOCIAL_EXPOSURE, CH_SOCIAL_FEUD,
-    CH_SOCIAL_NICHE_INTRUSION, CH_SOCIAL_PACT, CH_SOCIAL_RENOWN_DELTA, CH_SPIRIT_EYE_DISCOVERED,
-    CH_SPIRIT_EYE_MIGRATE, CH_SPIRIT_EYE_USED_FOR_BREAKTHROUGH, CH_STYLE_BALANCE_TELEMETRY,
-    CH_TRIBULATION, CH_TRIBULATION_COLLAPSE, CH_TRIBULATION_LOCK, CH_TRIBULATION_OMEN,
-    CH_TRIBULATION_SETTLE, CH_TRIBULATION_WAVE, CH_TSY_EVENT, CH_TUIKE_SHED,
-    CH_TUIKE_V2_SKILL_EVENT, CH_VOID_ACTION_BARRIER, CH_VOID_ACTION_EXPLODE_ZONE,
-    CH_VOID_ACTION_LEGACY_ASSIGN, CH_VOID_ACTION_SUPPRESS_TSY, CH_WANTED_PLAYER,
-    CH_WEATHER_EVENT_UPDATE, CH_WOLIU_BACKFIRE, CH_WOLIU_PROJECTILE_DRAINED, CH_WOLIU_V2_BACKFIRE,
-    CH_WOLIU_V2_CAST, CH_WOLIU_V2_TURBULENCE, CH_WORLD_STATE, CH_YIDAO_EVENT, CH_ZHENFA_V2_EVENT,
-    CH_ZHENMAI_SKILL_EVENT, CH_ZONE_ENVIRONMENT_UPDATE, CH_ZONE_PRESSURE_CROSSED,
-    CH_ZONG_CORE_ACTIVATED,
+    CH_BONE_COIN_TICK, CH_BOTANY_ECOLOGY, CH_BREAKTHROUGH_CINEMATIC, CH_BREAKTHROUGH_EVENT,
+    CH_COMBAT_REALTIME, CH_COMBAT_SUMMARY, CH_CULTIVATION_DEATH, CH_DEATH_INSIGHT,
+    CH_DUGU_POISON_PROGRESS, CH_DUGU_V2_CAST, CH_DUGU_V2_REVERSE, CH_DUGU_V2_SELF_CURE,
+    CH_DUO_SHE_EVENT, CH_FACTION_EVENT, CH_FORGE_EVENT, CH_FORGE_OUTCOME, CH_FORGE_START,
+    CH_HEART_DEMON_OFFER, CH_HEART_DEMON_REQUEST, CH_HIGH_RENOWN_MILESTONE, CH_INSIGHT_OFFER,
+    CH_INSIGHT_REQUEST, CH_LIFESPAN_EVENT, CH_NPC_DEATH, CH_NPC_SPAWN, CH_PLAYER_CHAT,
+    CH_POISON_DOSE_EVENT, CH_POISON_OVERDOSE_EVENT, CH_POI_NOVICE_EVENT, CH_PRICE_INDEX,
+    CH_PSEUDO_VEIN_ACTIVE, CH_PSEUDO_VEIN_DISSIPATE, CH_RAT_PHASE_EVENT, CH_REBIRTH,
+    CH_SEASON_CHANGED, CH_SKILL_CAP_CHANGED, CH_SKILL_LV_UP, CH_SKILL_SCROLL_USED,
+    CH_SKILL_XP_GAIN, CH_SOCIAL_EXPOSURE, CH_SOCIAL_FEUD, CH_SOCIAL_NICHE_INTRUSION,
+    CH_SOCIAL_PACT, CH_SOCIAL_RENOWN_DELTA, CH_SPIRIT_EYE_DISCOVERED, CH_SPIRIT_EYE_MIGRATE,
+    CH_SPIRIT_EYE_USED_FOR_BREAKTHROUGH, CH_SPIRIT_TREASURE_DIALOGUE,
+    CH_SPIRIT_TREASURE_DIALOGUE_REQUEST, CH_STYLE_BALANCE_TELEMETRY, CH_TRIBULATION,
+    CH_TRIBULATION_COLLAPSE, CH_TRIBULATION_LOCK, CH_TRIBULATION_OMEN, CH_TRIBULATION_SETTLE,
+    CH_TRIBULATION_WAVE, CH_TSY_EVENT, CH_TUIKE_SHED, CH_TUIKE_V2_SKILL_EVENT,
+    CH_VOID_ACTION_BARRIER, CH_VOID_ACTION_EXPLODE_ZONE, CH_VOID_ACTION_LEGACY_ASSIGN,
+    CH_VOID_ACTION_SUPPRESS_TSY, CH_WANTED_PLAYER, CH_WEATHER_EVENT_UPDATE, CH_WOLIU_BACKFIRE,
+    CH_WOLIU_PROJECTILE_DRAINED, CH_WOLIU_V2_BACKFIRE, CH_WOLIU_V2_CAST, CH_WOLIU_V2_TURBULENCE,
+    CH_WORLD_STATE, CH_YIDAO_EVENT, CH_ZHENFA_V2_EVENT, CH_ZHENMAI_SKILL_EVENT,
+    CH_ZONE_ENVIRONMENT_UPDATE, CH_ZONE_PRESSURE_CROSSED, CH_ZONG_CORE_ACTIVATED,
 };
 use crate::schema::chat_message::ChatMessageV1;
 use crate::schema::combat_carrier::{
@@ -49,8 +50,8 @@ use crate::schema::combat_carrier::{
 use crate::schema::combat_event::{CombatRealtimeEventV1, CombatSummaryV1};
 use crate::schema::common::{MAX_COMMANDS_PER_TICK, MAX_NARRATION_LENGTH};
 use crate::schema::cultivation::{
-    BreakthroughEventV1, CultivationDeathV1, ForgeEventV1, HeartDemonPregenRequestV1,
-    InsightOfferV1, InsightRequestV1,
+    BreakthroughCinematicEventV1, BreakthroughEventV1, CultivationDeathV1, ForgeEventV1,
+    HeartDemonPregenRequestV1, InsightOfferV1, InsightRequestV1,
 };
 use crate::schema::death_insight::DeathInsightRequestV1;
 use crate::schema::death_lifecycle::{
@@ -80,6 +81,7 @@ use crate::schema::social::{
 use crate::schema::spirit_eye::{
     SpiritEyeDiscoveredV1, SpiritEyeMigrateV1, SpiritEyeUsedForBreakthroughV1,
 };
+use crate::schema::spirit_treasure::{SpiritTreasureDialogueRequestV1, SpiritTreasureDialogueV1};
 use crate::schema::style_balance::StyleBalanceTelemetryEventV1;
 use crate::schema::tribulation::{TribulationEventV1, TribulationKindV1, TribulationPhaseV1};
 use crate::schema::tsy::{TsyEnterEventV1, TsyExitEventV1};
@@ -113,6 +115,7 @@ pub enum RedisInbound {
     AgentWorldModel(AgentWorldModelEnvelopeV1),
     InsightOffer(InsightOfferV1),
     HeartDemonOffer(HeartDemonOfferV1),
+    SpiritTreasureDialogue(SpiritTreasureDialogueV1),
 }
 
 #[derive(Debug, Clone)]
@@ -135,6 +138,7 @@ pub enum RedisOutbound {
     #[allow(dead_code)]
     ZongCoreActivated(ZongCoreActivationV1),
     BreakthroughEvent(BreakthroughEventV1),
+    BreakthroughCinematic(BreakthroughCinematicEventV1),
     ForgeEvent(ForgeEventV1),
     ForgeStart(ForgeStartPayloadV1),
     ForgeOutcome(ForgeOutcomePayloadV1),
@@ -145,6 +149,7 @@ pub enum RedisOutbound {
     CultivationDeath(CultivationDeathV1),
     InsightRequest(InsightRequestV1),
     HeartDemonRequest(HeartDemonPregenRequestV1),
+    SpiritTreasureDialogueRequest(SpiritTreasureDialogueRequestV1),
     DeathInsight(DeathInsightRequestV1),
     Aging(AgingEventV1),
     LifespanEvent(LifespanEventV1),
@@ -622,6 +627,17 @@ fn prepare_outbound_command(message: RedisOutbound) -> Result<RedisIoCommand, Va
                 payload,
             })
         }
+        RedisOutbound::BreakthroughCinematic(evt) => {
+            let payload = serde_json::to_string(&evt).map_err(|error| {
+                ValidationError::new(format!(
+                    "failed to serialize BreakthroughCinematicEventV1: {error}"
+                ))
+            })?;
+            Ok(RedisIoCommand::Publish {
+                channel: CH_BREAKTHROUGH_CINEMATIC,
+                payload,
+            })
+        }
         RedisOutbound::ForgeEvent(evt) => {
             let payload = serde_json::to_string(&evt).map_err(|error| {
                 ValidationError::new(format!("failed to serialize ForgeEventV1: {error}"))
@@ -717,6 +733,17 @@ fn prepare_outbound_command(message: RedisOutbound) -> Result<RedisIoCommand, Va
             })?;
             Ok(RedisIoCommand::Publish {
                 channel: CH_HEART_DEMON_REQUEST,
+                payload,
+            })
+        }
+        RedisOutbound::SpiritTreasureDialogueRequest(evt) => {
+            let payload = serde_json::to_string(&evt).map_err(|error| {
+                ValidationError::new(format!(
+                    "failed to serialize SpiritTreasureDialogueRequestV1: {error}"
+                ))
+            })?;
+            Ok(RedisIoCommand::Publish {
+                channel: CH_SPIRIT_TREASURE_DIALOGUE_REQUEST,
                 payload,
             })
         }
@@ -1561,7 +1588,7 @@ async fn connect_bridge_session(
 
     subscribe_inbound_channels(&mut pubsub).await?;
     tracing::info!(
-        "[bong][redis] subscribed to {CH_AGENT_COMMAND}, {CH_AGENT_NARRATE}, {CH_AGENT_WORLD_MODEL}, {CH_INSIGHT_OFFER}, {CH_HEART_DEMON_OFFER}"
+        "[bong][redis] subscribed to {CH_AGENT_COMMAND}, {CH_AGENT_NARRATE}, {CH_AGENT_WORLD_MODEL}, {CH_INSIGHT_OFFER}, {CH_HEART_DEMON_OFFER}, {CH_SPIRIT_TREASURE_DIALOGUE}"
     );
 
     let tx_to_game_clone = tx_to_game.clone();
@@ -1595,6 +1622,13 @@ async fn subscribe_inbound_channels(pubsub: &mut redis::aio::PubSub) -> Result<(
         .subscribe(CH_HEART_DEMON_OFFER)
         .await
         .map_err(|error| format!("failed to subscribe to {CH_HEART_DEMON_OFFER}: {error}"))?;
+
+    pubsub
+        .subscribe(CH_SPIRIT_TREASURE_DIALOGUE)
+        .await
+        .map_err(|error| {
+            format!("failed to subscribe to {CH_SPIRIT_TREASURE_DIALOGUE}: {error}")
+        })?;
 
     Ok(())
 }
@@ -1722,6 +1756,12 @@ async fn run_subscriber_task(
                         offer.trigger_id,
                         offer.choices.len()
                     ),
+                    RedisInbound::SpiritTreasureDialogue(dialogue) => tracing::info!(
+                        "[bong][redis] received spirit treasure dialogue: treasure={} request={} tone={:?}",
+                        dialogue.treasure_id,
+                        dialogue.request_id,
+                        dialogue.tone
+                    ),
                 }
 
                 if tx_to_game.send(inbound).is_err() {
@@ -1801,6 +1841,15 @@ fn parse_inbound_message(
                 ValidationError::new(format!("failed to deserialize HeartDemonOfferV1: {error}"))
             })?;
             Ok(Some(RedisInbound::HeartDemonOffer(offer)))
+        }
+        CH_SPIRIT_TREASURE_DIALOGUE => {
+            let dialogue =
+                serde_json::from_value::<SpiritTreasureDialogueV1>(value).map_err(|error| {
+                    ValidationError::new(format!(
+                        "failed to deserialize SpiritTreasureDialogueV1: {error}"
+                    ))
+                })?;
+            Ok(Some(RedisInbound::SpiritTreasureDialogue(dialogue)))
         }
         _ => Ok(None),
     }
@@ -2430,6 +2479,28 @@ mod redis_bridge_tests {
                 let v: Value = serde_json::from_str(&payload).unwrap();
                 assert_eq!(v["trigger_id"], "heart_demon:1:1000");
                 assert_eq!(v["recent_biography"][0], "t240:reach:Spirit");
+            }
+            other => panic!("expected publish, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn publishes_spirit_treasure_dialogue_requests_on_dedicated_channel() {
+        let request: SpiritTreasureDialogueRequestV1 = serde_json::from_str(include_str!(
+            "../../../agent/packages/schema/samples/spirit-treasure-dialogue-request.sample.json"
+        ))
+        .expect("spirit treasure dialogue request sample should deserialize");
+
+        let command =
+            prepare_outbound_command(RedisOutbound::SpiritTreasureDialogueRequest(request))
+                .expect("spirit treasure dialogue request should serialize");
+
+        match command {
+            RedisIoCommand::Publish { channel, payload } => {
+                assert_eq!(channel, CH_SPIRIT_TREASURE_DIALOGUE_REQUEST);
+                let v: Value = serde_json::from_str(&payload).unwrap();
+                assert_eq!(v["treasure_id"], "spirit_treasure_jizhaojing");
+                assert_eq!(v["trigger"], "player");
             }
             other => panic!("expected publish, got {other:?}"),
         }
@@ -3595,6 +3666,15 @@ mod redis_bridge_tests {
             parse_inbound_message(CH_HEART_DEMON_OFFER, heart_demon_offer)
                 .expect("heart demon offer payload should pass"),
             Some(RedisInbound::HeartDemonOffer(_))
+        ));
+
+        let spirit_treasure_dialogue = include_str!(
+            "../../../agent/packages/schema/samples/spirit-treasure-dialogue.sample.json"
+        );
+        assert!(matches!(
+            parse_inbound_message(CH_SPIRIT_TREASURE_DIALOGUE, spirit_treasure_dialogue)
+                .expect("spirit treasure dialogue payload should pass"),
+            Some(RedisInbound::SpiritTreasureDialogue(_))
         ));
 
         let invalid_spawn_npc = r#"{

@@ -288,19 +288,32 @@ public class ClientRequestSenderTest {
             0.3,
             "proximity"
         );
+        ClientRequestSender.sendZhenfaPlace(
+            pos,
+            ClientRequestProtocol.ZhenfaKind.SLOW_TRAP,
+            ClientRequestProtocol.ZhenfaCarrierKind.COMMON_STONE,
+            0.0,
+            null,
+            9002L,
+            ClientRequestProtocol.ZhenfaTargetFace.TOP
+        );
         ClientRequestSender.sendZhenfaTrigger(null);
         ClientRequestSender.sendZhenfaDisarm(pos, ClientRequestProtocol.ZhenfaDisarmMode.FORCE_BREAK);
 
-        assertEquals(3, sent.size());
+        assertEquals(4, sent.size());
         assertEquals(new Identifier("bong", "client_request"), sent.get(0).channel());
         assertEquals(
             "{\"type\":\"zhenfa_place\",\"v\":1,\"x\":11,\"y\":64,\"z\":-3,\"kind\":\"trap\",\"carrier\":\"night_withered_vine\",\"qi_invest_ratio\":0.3,\"trigger\":\"proximity\"}",
             sent.get(0).body()
         );
-        assertEquals("{\"type\":\"zhenfa_trigger\",\"v\":1}", sent.get(1).body());
+        assertEquals(
+            "{\"type\":\"zhenfa_place\",\"v\":1,\"x\":11,\"y\":64,\"z\":-3,\"kind\":\"slow_trap\",\"carrier\":\"common_stone\",\"qi_invest_ratio\":0.0,\"item_instance_id\":9002,\"target_face\":\"top\"}",
+            sent.get(1).body()
+        );
+        assertEquals("{\"type\":\"zhenfa_trigger\",\"v\":1}", sent.get(2).body());
         assertEquals(
             "{\"type\":\"zhenfa_disarm\",\"v\":1,\"x\":11,\"y\":64,\"z\":-3,\"mode\":\"force_break\"}",
-            sent.get(2).body()
+            sent.get(3).body()
         );
     }
 

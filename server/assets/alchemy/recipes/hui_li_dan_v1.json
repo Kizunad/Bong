@@ -1,0 +1,85 @@
+{
+  "id": "hui_li_dan_v1",
+  "name": "回力丹·战场凡丹",
+  "furnace_tier_min": 1,
+  "stages": [
+    {
+      "at_tick": 0,
+      "required": [
+        {
+          "material": "hui_yuan_zhi",
+          "count": 1
+        },
+        {
+          "material": "spirit_grass",
+          "count": 1
+        }
+      ],
+      "window": 0
+    },
+    {
+      "at_tick": 60,
+      "required": [
+        {
+          "material": "ling_shui",
+          "count": 1
+        }
+      ],
+      "window": 20
+    }
+  ],
+  "fire_profile": {
+    "target_temp": 0.44,
+    "target_duration_ticks": 120,
+    "qi_cost": 10.0,
+    "tolerance": {
+      "temp_band": 0.1,
+      "duration_band": 20
+    }
+  },
+  "outcomes": {
+    "perfect": {
+      "pill": "hui_li_dan",
+      "quality": 1.0,
+      "toxin_amount": 0.15,
+      "toxin_color": "Mellow",
+      "qi_gain": 0.0
+    },
+    "good": {
+      "pill": "hui_li_dan",
+      "quality": 0.72,
+      "toxin_amount": 0.203,
+      "toxin_color": "Mellow",
+      "qi_gain": 0.0
+    },
+    "flawed": {
+      "pill": "hui_li_dan",
+      "quality": 0.42,
+      "toxin_amount": 0.3,
+      "toxin_color": "Turbid",
+      "qi_gain": 0.0
+    },
+    "waste": null,
+    "explode": {
+      "damage": 10.0,
+      "meridian_crack": 0.045
+    }
+  },
+  "flawed_fallback": {
+    "pill": "hui_li_dan",
+    "quality_scale": 0.45,
+    "toxin_scale": 1.6,
+    "side_effect_pool": [
+      {
+        "tag": "contam_boost",
+        "duration_s": 45,
+        "weight": 2
+      },
+      {
+        "tag": "minor_qi_regen_boost",
+        "duration_s": 20,
+        "weight": 1
+      }
+    ]
+  }
+}

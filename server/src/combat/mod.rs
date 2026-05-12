@@ -255,6 +255,12 @@ pub fn register(app: &mut App) {
     );
     app.add_systems(
         Update,
+        status::combat_pill_stamina_status_tick
+            .in_set(CombatSystemSet::Physics)
+            .before(lifecycle::stamina_tick),
+    );
+    app.add_systems(
+        Update,
         rat_bite::apply_rat_bite_qi_drain
             .in_set(CombatSystemSet::Resolve)
             .after(resolve::resolve_attack_intents),

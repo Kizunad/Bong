@@ -1,0 +1,27 @@
+{
+  "id": "pill_jin_zhong_consume",
+  "layers": [
+    {
+      "sound": "minecraft:block.anvil.use",
+      "volume": 0.7,
+      "pitch": 0.4,
+      "delay_ticks": 0
+    },
+    {
+      "sound": "minecraft:block.amethyst_block.chime",
+      "volume": 0.3,
+      "pitch": 0.6,
+      "delay_ticks": 3
+    },
+    {
+      "sound": "minecraft:entity.experience_orb.pickup",
+      "volume": 0.1,
+      "pitch": 0.3,
+      "delay_ticks": 15
+    }
+  ],
+  "priority": 45,
+  "attenuation": "player_local",
+  "category": "VOICE",
+  "bus": "UI"
+}

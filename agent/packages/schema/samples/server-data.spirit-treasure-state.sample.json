@@ -1,0 +1,24 @@
+{
+  "v": 1,
+  "type": "spirit_treasure_state",
+  "treasures": [
+    {
+      "template_id": "spirit_treasure_jizhaojing",
+      "display_name": "寂照镜",
+      "instance_id": 88,
+      "equipped": true,
+      "passive_active": true,
+      "affinity": 0.5,
+      "sleeping": false,
+      "source_sect": "清风宗",
+      "icon_texture": "bong-client:textures/gui/items/spirit_treasure_jizhaojing.png",
+      "passive_effects": [
+        {
+          "kind": "SpiritTreasurePerception",
+          "value": 0.3,
+          "description": "感知范围 +30%"
+        }
+      ]
+    }
+  ]
+}

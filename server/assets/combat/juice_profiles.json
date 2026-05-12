@@ -1,0 +1,26 @@
+{
+  "version": 1,
+  "profiles": [
+    {"school": "baomai", "tier": "light", "qi_color": "#B87333", "hit_stop_ticks": 3, "shake_intensity": 0.30, "shake_duration_ticks": 3, "tint_duration_ticks": 6, "audio_recipe_id": "baomai_hit_light"},
+    {"school": "baomai", "tier": "heavy", "qi_color": "#B87333", "hit_stop_ticks": 6, "shake_intensity": 0.60, "shake_duration_ticks": 8, "tint_duration_ticks": 10, "audio_recipe_id": "baomai_hit_heavy"},
+    {"school": "baomai", "tier": "critical", "qi_color": "#B87333", "hit_stop_ticks": 10, "shake_intensity": 0.90, "shake_duration_ticks": 12, "tint_duration_ticks": 15, "audio_recipe_id": "baomai_hit_critical"},
+    {"school": "anqi", "tier": "light", "qi_color": "#C0C0C0", "hit_stop_ticks": 1, "shake_intensity": 0.10, "shake_duration_ticks": 3, "tint_duration_ticks": 6, "audio_recipe_id": "dugu_hit_light"},
+    {"school": "anqi", "tier": "heavy", "qi_color": "#C0C0C0", "hit_stop_ticks": 3, "shake_intensity": 0.25, "shake_duration_ticks": 5, "tint_duration_ticks": 10, "audio_recipe_id": "dugu_hit_heavy"},
+    {"school": "anqi", "tier": "critical", "qi_color": "#C0C0C0", "hit_stop_ticks": 5, "shake_intensity": 0.50, "shake_duration_ticks": 8, "tint_duration_ticks": 12, "audio_recipe_id": "dugu_hit_critical"},
+    {"school": "tuike", "tier": "light", "qi_color": "#A08030", "hit_stop_ticks": 2, "shake_intensity": 0.15, "shake_duration_ticks": 3, "tint_duration_ticks": 6, "audio_recipe_id": "tuike_hit_light"},
+    {"school": "tuike", "tier": "heavy", "qi_color": "#A08030", "hit_stop_ticks": 4, "shake_intensity": 0.30, "shake_duration_ticks": 6, "tint_duration_ticks": 10, "audio_recipe_id": "tuike_hit_heavy"},
+    {"school": "tuike", "tier": "critical", "qi_color": "#A08030", "hit_stop_ticks": 7, "shake_intensity": 0.50, "shake_duration_ticks": 9, "tint_duration_ticks": 12, "audio_recipe_id": "tuike_hit_critical"},
+    {"school": "woliu", "tier": "light", "qi_color": "#9966CC", "hit_stop_ticks": 2, "shake_intensity": 0.20, "shake_duration_ticks": 3, "tint_duration_ticks": 6, "reverse_shake": true, "audio_recipe_id": "woliu_hit_light"},
+    {"school": "woliu", "tier": "heavy", "qi_color": "#9966CC", "hit_stop_ticks": 4, "shake_intensity": 0.40, "shake_duration_ticks": 7, "tint_duration_ticks": 10, "reverse_shake": true, "audio_recipe_id": "woliu_hit_heavy"},
+    {"school": "woliu", "tier": "critical", "qi_color": "#9966CC", "hit_stop_ticks": 8, "shake_intensity": 0.70, "shake_duration_ticks": 10, "tint_duration_ticks": 14, "reverse_shake": true, "audio_recipe_id": "woliu_hit_critical"},
+    {"school": "zhenfa", "tier": "light", "qi_color": "#C4A000", "hit_stop_ticks": 2, "shake_intensity": 0.15, "shake_duration_ticks": 3, "tint_duration_ticks": 6, "audio_recipe_id": "zhenfa_hit_light"},
+    {"school": "zhenfa", "tier": "heavy", "qi_color": "#C4A000", "hit_stop_ticks": 5, "shake_intensity": 0.40, "shake_duration_ticks": 6, "tint_duration_ticks": 10, "audio_recipe_id": "zhenfa_hit_heavy"},
+    {"school": "zhenfa", "tier": "critical", "qi_color": "#C4A000", "hit_stop_ticks": 8, "shake_intensity": 0.60, "shake_duration_ticks": 10, "tint_duration_ticks": 13, "audio_recipe_id": "zhenfa_hit_critical"},
+    {"school": "zhenmai", "tier": "light", "qi_color": "#4682B4", "hit_stop_ticks": 2, "shake_intensity": 0.20, "shake_duration_ticks": 3, "tint_duration_ticks": 6, "audio_recipe_id": "zhenmai_hit_light"},
+    {"school": "zhenmai", "tier": "heavy", "qi_color": "#4682B4", "hit_stop_ticks": 4, "shake_intensity": 0.40, "shake_duration_ticks": 6, "tint_duration_ticks": 10, "audio_recipe_id": "zhenmai_hit_heavy"},
+    {"school": "zhenmai", "tier": "critical", "qi_color": "#4682B4", "hit_stop_ticks": 6, "shake_intensity": 0.60, "shake_duration_ticks": 9, "tint_duration_ticks": 12, "audio_recipe_id": "zhenmai_hit_critical"},
+    {"school": "dugu", "tier": "light", "qi_color": "#2E4E2E", "hit_stop_ticks": 0, "shake_intensity": 0.00, "shake_duration_ticks": 0, "tint_duration_ticks": 18, "audio_recipe_id": "dugu_poison_hit_light"},
+    {"school": "dugu", "tier": "heavy", "qi_color": "#2E4E2E", "hit_stop_ticks": 1, "shake_intensity": 0.05, "shake_duration_ticks": 4, "tint_duration_ticks": 30, "audio_recipe_id": "dugu_poison_hit_heavy"},
+    {"school": "dugu", "tier": "critical", "qi_color": "#2E4E2E", "hit_stop_ticks": 2, "shake_intensity": 0.10, "shake_duration_ticks": 6, "tint_duration_ticks": 45, "audio_recipe_id": "dugu_poison_hit_critical"}
+  ]
+}

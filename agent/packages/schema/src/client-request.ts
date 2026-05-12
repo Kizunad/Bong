@@ -759,6 +759,9 @@ export type AnqiContainerSwitchRequestV1 = Static<typeof AnqiContainerSwitchRequ
 export const ZhenfaKindV1 = Type.Union([
   Type.Literal("trap"),
   Type.Literal("ward"),
+  Type.Literal("warning_trap"),
+  Type.Literal("blast_trap"),
+  Type.Literal("slow_trap"),
   Type.Literal("shrine_ward"),
   Type.Literal("lingju"),
   Type.Literal("deceive_heaven"),
@@ -773,6 +776,16 @@ export const ZhenfaCarrierKindV1 = Type.Union([
   Type.Literal("beast_core_inlaid"),
 ]);
 export type ZhenfaCarrierKindV1 = Static<typeof ZhenfaCarrierKindV1>;
+
+export const ZhenfaTargetFaceV1 = Type.Union([
+  Type.Literal("top"),
+  Type.Literal("bottom"),
+  Type.Literal("north"),
+  Type.Literal("south"),
+  Type.Literal("east"),
+  Type.Literal("west"),
+]);
+export type ZhenfaTargetFaceV1 = Static<typeof ZhenfaTargetFaceV1>;
 
 export const ZhenfaDisarmModeV1 = Type.Union([
   Type.Literal("disarm"),
@@ -791,6 +804,8 @@ export const ZhenfaPlaceRequestV1 = Type.Object(
     carrier: Type.Optional(ZhenfaCarrierKindV1),
     qi_invest_ratio: Type.Number({ minimum: 0, maximum: 1 }),
     trigger: Type.Optional(Type.String({ minLength: 1, maxLength: 64 })),
+    item_instance_id: Type.Optional(Type.Integer({ minimum: 0, maximum: JS_SAFE_INTEGER_MAX })),
+    target_face: Type.Optional(ZhenfaTargetFaceV1),
   },
   { additionalProperties: false },
 );
@@ -828,6 +843,16 @@ export const LearnSkillScrollRequestV1 = Type.Object(
   { additionalProperties: false },
 );
 export type LearnSkillScrollRequestV1 = Static<typeof LearnSkillScrollRequestV1>;
+
+export const TechniqueScrollUseRequestV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    type: Type.Literal("technique_scroll_use"),
+    instance_id: Type.Integer({ minimum: 0, maximum: JS_SAFE_INTEGER_MAX }),
+  },
+  { additionalProperties: false },
+);
+export type TechniqueScrollUseRequestV1 = Static<typeof TechniqueScrollUseRequestV1>;
 
 export const StartExtractRequestV1 = Type.Object(
   {
@@ -1004,6 +1029,7 @@ export const ClientRequestV1 = Type.Union([
   ZhenfaTriggerRequestV1,
   ZhenfaDisarmRequestV1,
   LearnSkillScrollRequestV1,
+  TechniqueScrollUseRequestV1,
   StartExtractRequestV1,
   CancelExtractRequestV1,
   StartSearchRequestV1,

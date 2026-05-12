@@ -266,8 +266,25 @@
 
 ---
 
-## Finish Evidence（待填）
+## Finish Evidence
 
-- **落地清单**：`CombatJuiceProfile` / `CombatJuiceSystem` / `HitStopController` / `CameraShakeController` / 异体排斥 vis / `GhostEntityRenderer`（闪避残影）/ 伤口 vis / 击杀慢动作 / 7 流派 profile
-- **关键 commit**：P0-P5 各自 hash
-- **遗留 / 后续**：不同武器材质的 juice 差异（未来 `plan-weapon-v2` 联动）/ 环境 juice（从高处落下、踩进水中——非战斗 juice，另立 plan）
+- **落地清单**：
+  - P0 hit-stop / camera shake / profile 骨架：`client/src/main/java/com/bong/client/combat/juice/CombatJuiceProfile.java`、`CombatJuiceSystem.java`、`HitStopController.java`、`CameraShakeController.java`，并接入 `CombatEventHandler`、`MixinCamera`、`BongClient` bootstrap。
+  - P1 异体排斥 / 全力一击 / 过载：`EntityTintController.java`、`CombatJuiceSystem.Overlay`、`CombatJuiceHudPlanner.java`，`FULL_CHARGE` 走 CRITICAL profile，`OVERLOAD` 走红色 vignette freeze。
+  - P2 招架 / 弹反 / 闪避：`ParryDodgeJuicePlanner.java`，覆盖 parry pushback、perfect parry white flash、dodge ghost fade。
+  - P3 伤口世界内表现：`WoundWorldVisualPlanner.java`，覆盖 fracture tilt、severed drip、contamination meridian glow、exhausted stumble command。
+  - P4 击杀 juice：`KillJuiceController.java`，覆盖 local-killer slowmo gate、FOV push、rare drop marker、multi-kill stack。
+  - P5 profile / PVP 校准 / 性能预算：`server/assets/combat/juice_profiles.json`（7 school x 3 tier = 21 条）和 `CombatJuiceCalibration.java`（49 组合 + 5v5 10min 预算闸门）。
+- **关键 commit**：
+  - `967338496`（2026-05-12）`plan-combat-gamefeel-v1: 接入战斗 juice 表现层`
+  - `f8a7b29fc`（2026-05-12）`plan-combat-gamefeel-v1: 补 PVP 校准预算`
+- **测试结果**：
+  - `cd client && ./gradlew test --tests com.bong.client.combat.CombatJuiceTest --tests com.bong.client.network.ServerDataRouterCombatTest` ✅
+  - `cd client && ./gradlew test build` ✅（rebase 到最新 `origin/main` 后重跑）
+- **跨仓库核验**：
+  - client：`CombatEventHandler` 消费 `combat_event` 的 hit/parry/dodge/kill/qi_collision/full_charge/overload 可选字段；`MixinCamera` 叠加 combat shake；`MixinGameRenderer` 叠加 kill FOV push；`BongHudOrchestrator` 渲染 combat juice overlay / kill confirm。
+  - server asset：`server/assets/combat/juice_profiles.json` 固化 21 条参数表，与 client `CombatJuiceProfile.profiles()` 数量一致。
+  - agent：本 plan 不新增 agent contract。
+- **遗留 / 后续**：
+  - 未在本环境启动多人 `runClient` 做真人 7x7 PVP 与 5v5 帧率日志；当前以 `CombatJuiceCalibration` 锁住参数矩阵、input-lag 风险和 30fps 预算闸门，后续 live tuning 应只调 `CombatJuiceProfile` / `juice_profiles.json` 参数。
+  - 不同武器材质 juice 差异留给 `plan-weapon-v2`；非战斗环境 juice（坠落、入水等）另立 plan。

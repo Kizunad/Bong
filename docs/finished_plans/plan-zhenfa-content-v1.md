@@ -38,7 +38,7 @@
 - **跨仓库契约**：
   - server：`server/src/zhenfa/trap_content.rs`（新文件，3 种凡阵的放置/触发/逸散逻辑）
   - client：放置动画 + 触发 VFX + 警示阵通知 HUD
-  - agent：无改动（凡阵是玩家行为，天道不干预）
+  - agent/schema：同步 `ZhenfaKindV1` 三种凡阵 kind、`ZhenfaTargetFaceV1` 与 `ZhenfaPlaceRequestV1.target_face`；天道运行时无新增干预逻辑
 - **worldview 锚点**：§五 地师阵法流 + §八 灵物密度阈值 + §十五 万物皆有成本
 - **qi_physics 锚点**：阵法逸散走 `qi_excretion(initial_qi, ContainerKind::EmbeddedTrap, elapsed, env)`；爆炸阵触发走 `qi_release_to_zone(blast_qi, region, env)`；不自定衰减公式
 
@@ -46,14 +46,14 @@
 
 ## §0 设计轴心
 
-- [ ] **三阵三定位**：警示 = 侦察（知道有人来了）/ 爆炸 = 杀伤（打人一下）/ 缓速 = 控制（让人跑不掉）。三者配合形成"发现→减速→击杀"战术链
-- [ ] **埋设规则的物理区分**：
+- [x] **三阵三定位**：警示 = 侦察（知道有人来了）/ 爆炸 = 杀伤（打人一下）/ 缓速 = 控制（让人跑不掉）。三者配合形成"发现→减速→击杀"战术链
+- [x] **埋设规则的物理区分**：
   - 警示阵/缓阵 = 低能量，可埋地下，竖向穿透 3 格感知/作用
   - 爆炸阵 = 高能量，必须水平同层放置，但可用方块视觉遮蔽（墙角/草丛/残灰堆旁）
-- [ ] **隐蔽 vs 威力取舍**：真元浓度越高 → 越容易被神识发现。地师专精的 ZhenfaConcealment 顿悟降低发现率
-- [ ] **时间是敌人**：所有凡阵都有半衰期，真元逐渐逸散 → 失效。高投入的爆炸阵衰减最快（密度高 = 逸散快）
-- [ ] **任何人可用，地师更强**：凡阵不锁流派。但地师专精等级（plan-zhenfa-v2）给加成：持续时间 ×1.5 / 被发现概率 ×0.5 / 触发范围 +1 格
-- [ ] **天道密度阈值**：同一 chunk 内阵法总真元 > `QI_DENSITY_GAZE_THRESHOLD`（0.85）→ 天道注视 → 该 chunk 灵气强制归零。防止满地铺阵
+- [x] **隐蔽 vs 威力取舍**：真元浓度越高 → 越容易被神识发现。地师专精的 ZhenfaConcealment 顿悟降低发现率
+- [x] **时间是敌人**：所有凡阵都有半衰期，真元逐渐逸散 → 失效。高投入的爆炸阵衰减最快（密度高 = 逸散快）
+- [x] **任何人可用，地师更强**：凡阵不锁流派。但地师专精等级（plan-zhenfa-v2）给加成：持续时间 ×1.5 / 被发现概率 ×0.5 / 触发范围 +1 格
+- [x] **天道密度阈值**：同一 chunk 内阵法总真元 > `QI_DENSITY_GAZE_THRESHOLD`（0.85）→ 天道注视 → 该 chunk 灵气强制归零。防止满地铺阵
 
 ---
 
@@ -219,17 +219,17 @@ current_qi = initial_qi × 0.5^(elapsed / half_life)
 
 | 阶段 | 内容 | 状态 |
 |----|------|----|
-| P0 | 3 种凡阵物品模板（TOML）+ craft 配方注册 + `TrapKind` enum 扩展 + GUI icon 生成 | ⬜ |
-| P1 | 放置交互（右键 → 预览 → 确认 → 嵌入/贴附）+ 放置动画/粒子 + 真元扣除 | ⬜ |
-| P2 | 触发系统（竖向柱形检测 / 水平 LOS 检测）+ 效果应用（通知/伤害/减速）| ⬜ |
-| P3 | 逸散 tick + 失效移除 + 天道密度阈值检查 + 环境修正 | ⬜ |
-| P4 | 隐蔽性判定（感知 vs 阵法 qi + 环境 + 地师专精加成）+ 拆除机制 | ⬜ |
-| P5 | Client 视觉（放置者标记粒子 / 触发 VFX / 警示 HUD 通知 / 神识扫描高亮） | ⬜ |
-| P6 | 饱和化测试（3 阵 × 放置位 × 触发条件 × 逸散 × 隐蔽 × 天道阈值） | ⬜ |
+| P0 | 3 种凡阵物品模板（TOML）+ craft 配方注册 + `TrapKind` enum 扩展 + GUI icon 生成 | ✅ 2026-05-12 NZST |
+| P1 | 放置交互（右键 → 预览 → 确认 → 嵌入/贴附）+ 放置动画/粒子 + 真元扣除 | ✅ 2026-05-12 NZST |
+| P2 | 触发系统（竖向柱形检测 / 水平 LOS 检测）+ 效果应用（通知/伤害/减速）| ✅ 2026-05-12 NZST |
+| P3 | 逸散 tick + 失效移除 + 天道密度阈值检查 + 环境修正 | ✅ 2026-05-12 NZST |
+| P4 | 隐蔽性判定（感知 vs 阵法 qi + 环境 + 地师专精加成）+ 拆除机制 | ✅ 2026-05-12 NZST |
+| P5 | Client 视觉（放置者标记粒子 / 触发 VFX / 警示 HUD 通知 / 神识扫描高亮） | ✅ 2026-05-12 NZST |
+| P6 | 饱和化测试（3 阵 × 放置位 × 触发条件 × 逸散 × 隐蔽 × 天道阈值） | ✅ 2026-05-12 NZST |
 
 ---
 
-## P0 — 物品 + 配方 + icon ⬜
+## P0 — 物品 + 配方 + icon ✅ 2026-05-12 NZST
 
 ### 交付物
 
@@ -350,7 +350,7 @@ current_qi = initial_qi × 0.5^(elapsed / half_life)
 
 ---
 
-## P1 — 放置交互 ⬜
+## P1 — 放置交互 ✅ 2026-05-12 NZST
 
 ### 交付物
 
@@ -387,7 +387,7 @@ current_qi = initial_qi × 0.5^(elapsed / half_life)
 
 ---
 
-## P2 — 触发系统 ⬜
+## P2 — 触发系统 ✅ 2026-05-12 NZST
 
 ### 交付物
 
@@ -426,7 +426,7 @@ current_qi = initial_qi × 0.5^(elapsed / half_life)
 
 ---
 
-## P3-P6 — 逸散/隐蔽/Client/测试
+## P3-P6 — 逸散/隐蔽/Client/测试 ✅ 2026-05-12 NZST
 
 （结构同 P0-P2 模式，具体交付物见 §5/§2/§4 对应节）
 
@@ -439,12 +439,33 @@ current_qi = initial_qi × 0.5^(elapsed / half_life)
 
 ---
 
-## Finish Evidence（待填）
+## Finish Evidence
 
-- **落地清单**：3 种凡阵物品（TOML + icon）/ 3 个 craft 配方 / `TrapKind` enum / 放置交互（嵌入/贴附）/ 竖向柱形检测 / 水平 LOS 检测 / 3 种触发效果 / 逸散 tick / 天道密度阈值 / 隐蔽性判定 / 拆除机制 / Client VFX + HUD
-- **关键 commit**：P0-P6 各自 hash
+- **落地清单**：
+  - P0：`server/assets/items/zhenfa.toml` 注册 `warning_trap` / `blast_trap` / `slow_trap`；`server/src/craft/mod.rs` 注册 3 个 `ZhenfaTrap` 配方；`client/src/main/resources/assets/bong-client/textures/gui/items/{warning_trap,blast_trap,slow_trap}.png` 落图标。
+  - P1：`server/src/zhenfa/mod.rs` 扩展 `ZhenfaKind::{WarningTrap,BlastTrap,SlowTrap}`、`ZhenfaPlaceRequest.item_instance_id/target_face`、真元扣除、物品消耗、chunk 密度拒绝；`client/src/main/java/com/bong/client/mixin/MixinClientPlayerInteractionManagerAlchemy.java` 接手持凡阵右键放置入口，`ZhenfaLayoutScreen` 负责确认请求。
+  - P2：`server/src/zhenfa/trap_content.rs` 提供竖向柱形/水平同层检测、真元成本、伤害、半衰期、隐蔽 profile；`tick_zhenfa_registry` 落警示通知、爆炸一次性伤害并回流 zone qi、缓阵 3 次触发和 `QiRegenPaused`。
+  - P3-P4：`survival_ticks_with_environment()` 接 zone qi 环境修正；过期阵法走 `ArrayDecayEvent` + `qi_release_to_zone`；`discovery_profile()` 进入 reveal threshold；拆除沿用 `ZhenfaDisarmRequest` / `ArrayBreakthroughEvent`。
+  - P5-P6：client/server/schema 对齐 `target_face` 和 3 个凡阵 kind；生成 schema 更新 `client-request-v1.json` / `client-request-zhenfa-place-v1.json`；边界回归覆盖放置扣 qi、无阵旗可用、LOS 阻挡、忽略放置者、缓阵耗尽、密度阈值、半衰期/环境倍率。
+- **关键 commit**：
+  - `dce9e0e99`（2026-05-12 NZST）实现凡阵内容服务端契约。
+  - `ca9d26b3a`（2026-05-12 NZST）接入凡阵客户端放置与图标。
+  - `2b97746d2`（2026-05-12 NZST）同步凡阵放置请求生成 schema。
+  - `edfab7d72`（2026-05-12 NZST）补齐凡阵环境逸散运行时。
+  - `af079f418`（2026-05-12 NZST）补充凡阵触发边界回归。
+  - `037980e3b`（2026-05-12 NZST）补齐 `QiRegenPaused` 在 `status_snapshot` 的 id/name/debuff 映射。
+  - `ec5f69405`（2026-05-12 NZST）覆盖凡阵布置屏幕的固定触发、item id 与 target face 请求映射。
+  - `7c73bbd7d`（2026-05-12 NZST）合并 `plan-spirit-treasure-v1` 后保留凡阵与灵宝状态快照映射。
+- **测试结果**：
+  - `server/`: `cargo build --release` → passed；`cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test` → 4514 passed。
+  - `agent/`: `npm run build && (cd packages/schema && npm test)` → build passed；schema 381 passed；`cd packages/tiandao && npm test` → tiandao 362 passed。
+  - `client/`: `source "$HOME/.sdkman/bin/sdkman-init.sh" && sdk use java 17.0.18-amzn && ./gradlew test build` → BUILD SUCCESSFUL（含 `ZhenfaLayoutScreenTest`）。
+- **跨仓库核验**：
+  - server：`OrdinaryTrapKind` / `ZhenfaKind::WarningTrap` / `ZhenfaKind::BlastTrap` / `ZhenfaKind::SlowTrap` / `StatusEffectKind::QiRegenPaused` / `ZhenfaPlaceRequest.target_face`。
+  - agent/schema：`ZhenfaKindV1` 包含 3 个凡阵 kind；`ZhenfaTargetFaceV1`；`ZhenfaPlaceRequestV1.target_face`。
+  - client：`ClientRequestProtocol.ZhenfaKind` / `ZhenfaTargetFace` / `ClientRequestSender.sendZhenfaPlace(... itemInstanceId, targetFace)` / `ZhenfaLayoutScreen`。
 - **遗留 / 后续**：
-  - 高阶阵法（地师专精版：更大范围/更长持续/连锁触发）→ plan-zhenfa-v3
-  - 阵法网络（多阵联动：警示→缓速→爆炸 自动连锁）→ plan-zhenfa-v3
-  - 反制道具（破阵符/探阵玉）→ plan-tools-v2
-  - 阵法交易（帮别人布阵 = 地师的经济来源）→ plan-economy-v2
+  - 高阶阵法（地师专精版：更大范围/更长持续/连锁触发）→ plan-zhenfa-v3。
+  - 阵法网络（多阵联动：警示→缓速→爆炸自动连锁）→ plan-zhenfa-v3。
+  - 反制道具（破阵符/探阵玉）→ plan-tools-v2。
+  - 阵法交易（帮别人布阵 = 地师的经济来源）→ plan-economy-v2。

@@ -1,0 +1,77 @@
+{
+  "version": 3,
+  "author": "Bong",
+  "name": "pill_huo_xue",
+  "description": "plan-alchemy-combat-v1 pill_huo_xue combat pill consume pose.",
+  "emote": {
+    "beginTick": 0,
+    "endTick": 30,
+    "stopTick": 33,
+    "isLoop": false,
+    "returnTick": 0,
+    "nsfw": false,
+    "degrees": false,
+    "moves": [
+      {
+        "tick": 0,
+        "easing": "INOUTSINE",
+        "body": {
+          "y": 0.0
+        },
+        "rightArm": {
+          "pitch": -0.25,
+          "bend": 0.25,
+          "axis": 3.1415927
+        }
+      },
+      {
+        "tick": 10,
+        "easing": "INOUTSINE",
+        "head": {
+          "pitch": -0.1
+        },
+        "rightArm": {
+          "pitch": -1.05,
+          "yaw": -0.25,
+          "roll": 0.12,
+          "bend": 0.95,
+          "axis": 3.1415927
+        }
+      },
+      {
+        "tick": 20,
+        "easing": "INOUTSINE",
+        "torso": {
+          "pitch": 0.08
+        },
+        "leftArm": {
+          "pitch": -0.25,
+          "bend": 0.2,
+          "axis": 3.1415927
+        }
+      },
+      {
+        "tick": 30,
+        "easing": "INOUTSINE",
+        "body": {
+          "y": 0.0
+        },
+        "head": {
+          "pitch": 0.0
+        },
+        "rightArm": {
+          "pitch": 0.0,
+          "yaw": 0.0,
+          "roll": 0.0,
+          "bend": 0.0,
+          "axis": 3.1415927
+        },
+        "leftArm": {
+          "pitch": 0.0,
+          "bend": 0.0,
+          "axis": 3.1415927
+        }
+      }
+    ]
+  }
+}

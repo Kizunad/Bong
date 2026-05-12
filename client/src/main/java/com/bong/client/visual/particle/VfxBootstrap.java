@@ -1,5 +1,7 @@
 package com.bong.client.visual.particle;
 
+import com.bong.client.visual.particle.alchemy.AlchemyCombatPillVfxPlayer;
+
 /**
  * 集中注册 {@link VfxRegistry} 的默认 event → player 绑定。
  *
@@ -166,5 +168,9 @@ public final class VfxBootstrap {
             new MovementVfxPlayer(MovementVfxPlayer.Kind.SLIDE));
         registry.register(MovementVfxPlayer.DOUBLE_JUMP,
             new MovementVfxPlayer(MovementVfxPlayer.Kind.DOUBLE_JUMP));
+        AlchemyCombatPillVfxPlayer combatPills = new AlchemyCombatPillVfxPlayer();
+        for (net.minecraft.util.Identifier eventId : AlchemyCombatPillVfxPlayer.EVENT_IDS) {
+            registry.register(eventId, combatPills);
+        }
     }
 }

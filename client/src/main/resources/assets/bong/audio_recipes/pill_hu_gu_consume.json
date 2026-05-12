@@ -1,0 +1,27 @@
+{
+  "id": "pill_hu_gu_consume",
+  "layers": [
+    {
+      "sound": "minecraft:entity.ravager.roar",
+      "volume": 0.4,
+      "pitch": 1.5,
+      "delay_ticks": 0
+    },
+    {
+      "sound": "minecraft:entity.player.attack.strong",
+      "volume": 0.3,
+      "pitch": 0.8,
+      "delay_ticks": 5
+    },
+    {
+      "sound": "minecraft:block.bone_block.fall",
+      "volume": 0.2,
+      "pitch": 0.6,
+      "delay_ticks": 10
+    }
+  ],
+  "priority": 45,
+  "attenuation": "player_local",
+  "category": "VOICE",
+  "bus": "UI"
+}

@@ -89,6 +89,9 @@ public final class ClientRequestProtocol {
     public enum ZhenfaKind {
         TRAP("trap"),
         WARD("ward"),
+        WARNING_TRAP("warning_trap"),
+        BLAST_TRAP("blast_trap"),
+        SLOW_TRAP("slow_trap"),
         SHRINE_WARD("shrine_ward"),
         LINGJU("lingju"),
         DECEIVE_HEAVEN("deceive_heaven"),
@@ -97,6 +100,25 @@ public final class ClientRequestProtocol {
         private final String wireName;
 
         ZhenfaKind(String wireName) {
+            this.wireName = wireName;
+        }
+
+        public String wireName() {
+            return wireName;
+        }
+    }
+
+    public enum ZhenfaTargetFace {
+        TOP("top"),
+        BOTTOM("bottom"),
+        NORTH("north"),
+        SOUTH("south"),
+        EAST("east"),
+        WEST("west");
+
+        private final String wireName;
+
+        ZhenfaTargetFace(String wireName) {
             this.wireName = wireName;
         }
 
@@ -476,6 +498,12 @@ public final class ClientRequestProtocol {
         return obj.toString();
     }
 
+    public static String encodeTechniqueScrollUse(long instanceId) {
+        JsonObject obj = envelope("technique_scroll_use");
+        obj.addProperty("instance_id", instanceId);
+        return obj.toString();
+    }
+
     // ─── Inventory move intent (client → server) ────────────────────────────
 
     /** 库存位置三态联合，匹配 server schema InventoryLocationV1。 */
@@ -641,6 +669,18 @@ public final class ClientRequestProtocol {
         double qiInvestRatio,
         String trigger
     ) {
+        return encodeZhenfaPlace(pos, kind, carrier, qiInvestRatio, trigger, null, null);
+    }
+
+    public static String encodeZhenfaPlace(
+        BlockPos pos,
+        ZhenfaKind kind,
+        ZhenfaCarrierKind carrier,
+        double qiInvestRatio,
+        String trigger,
+        Long itemInstanceId,
+        ZhenfaTargetFace targetFace
+    ) {
         if (pos == null) {
             throw new IllegalArgumentException("pos must not be null");
         }
@@ -661,6 +701,15 @@ public final class ClientRequestProtocol {
         obj.addProperty("qi_invest_ratio", qiInvestRatio);
         if (trigger != null && !trigger.isBlank()) {
             obj.addProperty("trigger", trigger.trim());
+        }
+        if (itemInstanceId != null) {
+            if (itemInstanceId < 0) {
+                throw new IllegalArgumentException("itemInstanceId must be >= 0, got " + itemInstanceId);
+            }
+            obj.addProperty("item_instance_id", itemInstanceId.longValue());
+        }
+        if (targetFace != null) {
+            obj.addProperty("target_face", targetFace.wireName());
         }
         return obj.toString();
     }

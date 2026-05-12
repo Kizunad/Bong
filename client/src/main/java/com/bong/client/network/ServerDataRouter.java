@@ -29,6 +29,7 @@ public final class ServerDataRouter {
         BotanyPlantRenderProfileHandler botanyPlantRenderProfileHandler = new BotanyPlantRenderProfileHandler();
         BotanySkillHandler botanySkillHandler = new BotanySkillHandler();
         HeartDemonOfferHandler heartDemonOfferHandler = new HeartDemonOfferHandler();
+        BreakthroughCinematicHandler breakthroughCinematicHandler = new BreakthroughCinematicHandler();
         com.bong.client.network.alchemy.AlchemyFurnaceHandler alchemyFurnaceHandler =
             new com.bong.client.network.alchemy.AlchemyFurnaceHandler();
         com.bong.client.network.alchemy.AlchemySessionHandler alchemySessionHandler =
@@ -96,6 +97,10 @@ public final class ServerDataRouter {
             new com.bong.client.yidao.YidaoServerDataHandler();
         MovementStateHandler movementStateHandler = new MovementStateHandler();
         CoffinStateHandler coffinStateHandler = new CoffinStateHandler();
+        com.bong.client.spirittreasure.SpiritTreasureStateHandler spiritTreasureStateHandler =
+            new com.bong.client.spirittreasure.SpiritTreasureStateHandler();
+        com.bong.client.spirittreasure.SpiritTreasureDialogueHandler spiritTreasureDialogueHandler =
+            new com.bong.client.spirittreasure.SpiritTreasureDialogueHandler();
 
         Map<String, ServerDataHandler> handlers = new LinkedHashMap<>();
         handlers.put("welcome", legacyHandler);
@@ -120,6 +125,7 @@ public final class ServerDataRouter {
         handlers.put("alchemy_recipe_book", alchemyRecipeBookHandler);
         handlers.put("alchemy_contamination", alchemyContaminationHandler);
         handlers.put("alchemy_outcome_resolved", alchemyOutcomeResolvedHandler);
+        handlers.put("breakthrough_cinematic", breakthroughCinematicHandler);
         handlers.put("combat_event", combatEventHandler);
         handlers.put("status_snapshot", statusSnapshotHandler);
         handlers.put("derived_attrs_sync", derivedAttrsHandler);
@@ -175,6 +181,8 @@ public final class ServerDataRouter {
         handlers.put("healer_npc_ai_state", yidaoServerDataHandler);
         handlers.put("yidao_hud_state", yidaoServerDataHandler);
         handlers.put("movement_state", movementStateHandler);
+        handlers.put("spirit_treasure_state", spiritTreasureStateHandler);
+        handlers.put("spirit_treasure_dialogue", spiritTreasureDialogueHandler);
         handlers.put("coffin_state", coffinStateHandler);
         // plan-forge-v1 §4 — 炼器（武器）
         com.bong.client.network.forge.ForgeStationHandler forgeStationHandler =

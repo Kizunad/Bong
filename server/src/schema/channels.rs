@@ -15,6 +15,7 @@ pub const CH_INSIGHT_OFFER: &str = "bong:insight_offer";
 pub const CH_HEART_DEMON_REQUEST: &str = "bong:heart_demon_request";
 pub const CH_HEART_DEMON_OFFER: &str = "bong:heart_demon_offer";
 pub const CH_BREAKTHROUGH_EVENT: &str = "bong:breakthrough_event";
+pub const CH_BREAKTHROUGH_CINEMATIC: &str = "bong:breakthrough_cinematic";
 pub const CH_FORGE_EVENT: &str = "bong:forge_event";
 pub const CH_CULTIVATION_DEATH: &str = "bong:cultivation_death";
 pub const CH_DEATH: &str = "bong:death";
@@ -135,11 +136,17 @@ pub const CH_SKILL_XP_GAIN: &str = "bong:skill/xp_gain";
 pub const CH_SKILL_LV_UP: &str = "bong:skill/lv_up";
 pub const CH_SKILL_CAP_CHANGED: &str = "bong:skill/cap_changed";
 pub const CH_SKILL_SCROLL_USED: &str = "bong:skill/scroll_used";
+pub const CH_TECHNIQUE_SCROLL_READ: &str = "bong:technique/scroll_read";
+pub const CH_TECHNIQUE_LEARNED: &str = "bong:technique/learned";
+pub const CH_TECHNIQUE_MASTERED: &str = "bong:technique/mastered";
+pub const CH_TECHNIQUE_PROFICIENCY_UP: &str = "bong:technique/proficiency_up";
 
 // 灵眼（plan-spirit-eye-v1 §8）：server → agent 观测频道。
 pub const CH_SPIRIT_EYE_MIGRATE: &str = "bong:spirit_eye/migrate";
 pub const CH_SPIRIT_EYE_DISCOVERED: &str = "bong:spirit_eye/discovered";
 pub const CH_SPIRIT_EYE_USED_FOR_BREAKTHROUGH: &str = "bong:spirit_eye/used_for_breakthrough";
+pub const CH_SPIRIT_TREASURE_DIALOGUE_REQUEST: &str = "bong:spirit_treasure_dialogue_request";
+pub const CH_SPIRIT_TREASURE_DIALOGUE: &str = "bong:spirit_treasure_dialogue";
 
 // 活坍缩渊 (plan-tsy-zone-followup-v1 §2.4)
 // 玩家踏进 / 走出 TSY 秘境时由 server publish；entry / exit 共享同一频道，consumer 按 `kind` 字段 dispatch。
@@ -186,6 +193,7 @@ mod tests {
         assert_eq!(CH_HEART_DEMON_REQUEST, "bong:heart_demon_request");
         assert_eq!(CH_HEART_DEMON_OFFER, "bong:heart_demon_offer");
         assert_eq!(CH_BREAKTHROUGH_EVENT, "bong:breakthrough_event");
+        assert_eq!(CH_BREAKTHROUGH_CINEMATIC, "bong:breakthrough_cinematic");
         assert_eq!(CH_FORGE_EVENT, "bong:forge_event");
         assert_eq!(CH_CULTIVATION_DEATH, "bong:cultivation_death");
         assert_eq!(CH_DEATH, "bong:death");
@@ -260,12 +268,21 @@ mod tests {
         assert_eq!(CH_SKILL_LV_UP, "bong:skill/lv_up");
         assert_eq!(CH_SKILL_CAP_CHANGED, "bong:skill/cap_changed");
         assert_eq!(CH_SKILL_SCROLL_USED, "bong:skill/scroll_used");
+        assert_eq!(CH_TECHNIQUE_SCROLL_READ, "bong:technique/scroll_read");
+        assert_eq!(CH_TECHNIQUE_LEARNED, "bong:technique/learned");
+        assert_eq!(CH_TECHNIQUE_MASTERED, "bong:technique/mastered");
+        assert_eq!(CH_TECHNIQUE_PROFICIENCY_UP, "bong:technique/proficiency_up");
         assert_eq!(CH_SPIRIT_EYE_MIGRATE, "bong:spirit_eye/migrate");
         assert_eq!(CH_SPIRIT_EYE_DISCOVERED, "bong:spirit_eye/discovered");
         assert_eq!(
             CH_SPIRIT_EYE_USED_FOR_BREAKTHROUGH,
             "bong:spirit_eye/used_for_breakthrough"
         );
+        assert_eq!(
+            CH_SPIRIT_TREASURE_DIALOGUE_REQUEST,
+            "bong:spirit_treasure_dialogue_request"
+        );
+        assert_eq!(CH_SPIRIT_TREASURE_DIALOGUE, "bong:spirit_treasure_dialogue");
         assert_eq!(CH_TSY_EVENT, "bong:tsy_event");
         assert_eq!(CH_POI_NOVICE_EVENT, "bong:poi_novice/event");
         assert_eq!(CH_FORGE_START, "bong:forge/start");

@@ -35,6 +35,7 @@ use super::social::{
     SocialAnonymityPayloadV1, SocialExposureEventV1, SocialFeudEventV1, SocialPactEventV1,
     SocialRenownDeltaV1, SparringInvitePayloadV1, TradeOfferPayloadV1,
 };
+use super::spirit_treasure::{SpiritTreasureDialoguePayloadV1, SpiritTreasureStatePayloadV1};
 use super::tuike::FalseSkinStateV1;
 use super::woliu::VortexFieldStateV1;
 use super::world_state::{PlayerPowerBreakdown, SeasonStateV1, ZoneStatusV1};
@@ -179,6 +180,7 @@ pub enum ServerDataType {
     AscensionQuota,
     HeartDemonOffer,
     BurstMeridianEvent,
+    BreakthroughCinematic,
     FullPowerChargingState,
     FullPowerRelease,
     FullPowerExhaustedState,
@@ -198,6 +200,8 @@ pub enum ServerDataType {
     HealerNpcAiState,
     YidaoHudState,
     MovementState,
+    SpiritTreasureState,
+    SpiritTreasureDialogue,
     // ─── plan-craft-v1 P2/P3：通用手搓 IPC ────────────────────────
     CraftRecipeList,
     CraftSessionState,
@@ -403,6 +407,7 @@ pub enum ServerDataPayloadV1 {
     AscensionQuota(AscensionQuotaV1),
     HeartDemonOffer(HeartDemonOfferV1),
     BurstMeridianEvent(BurstMeridianEventV1),
+    BreakthroughCinematic(BreakthroughCinematicS2cV1),
     FullPowerChargingState(FullPowerChargingStateV1),
     FullPowerRelease(FullPowerReleaseV1),
     FullPowerExhaustedState(FullPowerExhaustedStateV1),
@@ -422,6 +427,8 @@ pub enum ServerDataPayloadV1 {
     HealerNpcAiState(HealerNpcAiStateV1),
     YidaoHudState(YidaoHudStateV1),
     MovementState(MovementStateV1),
+    SpiritTreasureState(SpiritTreasureStatePayloadV1),
+    SpiritTreasureDialogue(SpiritTreasureDialoguePayloadV1),
     // ─── plan-craft-v1 P2/P3：通用手搓 IPC ────────────────────────
     /// inventory 打开时一次性推全配方表（含解锁状态）。
     CraftRecipeList(Box<RecipeListV1>),
@@ -634,6 +641,28 @@ pub struct BurstMeridianEventV1 {
     pub tick: u64,
     pub overload_ratio: f64,
     pub integrity_snapshot: f64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct BreakthroughCinematicS2cV1 {
+    pub actor_id: String,
+    pub phase: String,
+    pub phase_tick: u32,
+    pub phase_duration_ticks: u32,
+    pub realm_from: String,
+    pub realm_to: String,
+    pub result: String,
+    pub interrupted: bool,
+    pub world_pos: [f64; 3],
+    pub visible_radius_blocks: f64,
+    pub global: bool,
+    pub distant_billboard: bool,
+    pub particle_density: f32,
+    pub intensity: f32,
+    pub season_overlay: String,
+    pub style: String,
+    pub at_tick: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -1099,6 +1128,10 @@ enum ServerDataPayloadWireV1 {
         #[serde(flatten)]
         event: BurstMeridianEventV1,
     },
+    BreakthroughCinematic {
+        #[serde(flatten)]
+        event: BreakthroughCinematicS2cV1,
+    },
     FullPowerChargingState {
         #[serde(flatten)]
         state: FullPowerChargingStateV1,
@@ -1192,6 +1225,14 @@ enum ServerDataPayloadWireV1 {
     MovementState {
         #[serde(flatten)]
         state: MovementStateV1,
+    },
+    SpiritTreasureState {
+        #[serde(flatten)]
+        state: SpiritTreasureStatePayloadV1,
+    },
+    SpiritTreasureDialogue {
+        #[serde(flatten)]
+        dialogue: SpiritTreasureDialoguePayloadV1,
     },
     // ─── plan-craft-v1 P2/P3：通用手搓 IPC ────────────────────────
     CraftRecipeList {
@@ -1893,6 +1934,10 @@ impl TryFrom<ServerDataPayloadWireV1> for ServerDataPayloadV1 {
                 validate_burst_meridian_event(&event)?;
                 Ok(Self::BurstMeridianEvent(event))
             }
+            ServerDataPayloadWireV1::BreakthroughCinematic { event } => {
+                validate_breakthrough_cinematic(&event)?;
+                Ok(Self::BreakthroughCinematic(event))
+            }
             ServerDataPayloadWireV1::FullPowerChargingState { state } => {
                 validate_full_power_charging_state(&state)?;
                 Ok(Self::FullPowerChargingState(state))
@@ -2008,6 +2053,12 @@ impl TryFrom<ServerDataPayloadWireV1> for ServerDataPayloadV1 {
             }
             ServerDataPayloadWireV1::YidaoHudState { state } => Ok(Self::YidaoHudState(state)),
             ServerDataPayloadWireV1::MovementState { state } => Ok(Self::MovementState(state)),
+            ServerDataPayloadWireV1::SpiritTreasureState { state } => {
+                Ok(Self::SpiritTreasureState(state))
+            }
+            ServerDataPayloadWireV1::SpiritTreasureDialogue { dialogue } => {
+                Ok(Self::SpiritTreasureDialogue(dialogue))
+            }
             ServerDataPayloadWireV1::CraftRecipeList { list } => Ok(Self::CraftRecipeList(list)),
             ServerDataPayloadWireV1::CraftSessionState { state } => {
                 Ok(Self::CraftSessionState(state))
@@ -2424,6 +2475,9 @@ impl From<&ServerDataPayloadV1> for ServerDataPayloadWireV1 {
             ServerDataPayloadV1::BurstMeridianEvent(event) => Self::BurstMeridianEvent {
                 event: event.clone(),
             },
+            ServerDataPayloadV1::BreakthroughCinematic(event) => Self::BreakthroughCinematic {
+                event: event.clone(),
+            },
             ServerDataPayloadV1::FullPowerChargingState(state) => Self::FullPowerChargingState {
                 state: state.clone(),
             },
@@ -2502,6 +2556,12 @@ impl From<&ServerDataPayloadV1> for ServerDataPayloadWireV1 {
             ServerDataPayloadV1::MovementState(state) => Self::MovementState {
                 state: state.clone(),
             },
+            ServerDataPayloadV1::SpiritTreasureState(state) => Self::SpiritTreasureState {
+                state: state.clone(),
+            },
+            ServerDataPayloadV1::SpiritTreasureDialogue(dialogue) => Self::SpiritTreasureDialogue {
+                dialogue: dialogue.clone(),
+            },
             ServerDataPayloadV1::CraftRecipeList(list) => {
                 Self::CraftRecipeList { list: list.clone() }
             }
@@ -2536,6 +2596,47 @@ fn validate_burst_meridian_event(event: &BurstMeridianEventV1) -> Result<(), Str
     }
     if !event.integrity_snapshot.is_finite() || !(0.0..=1.0).contains(&event.integrity_snapshot) {
         return Err("BurstMeridianEventV1.integrity_snapshot must be finite in 0..=1".to_string());
+    }
+    Ok(())
+}
+
+fn validate_breakthrough_cinematic(event: &BreakthroughCinematicS2cV1) -> Result<(), String> {
+    if event.actor_id.trim().is_empty() {
+        return Err("BreakthroughCinematicS2cV1.actor_id must not be empty".to_string());
+    }
+    if !matches!(
+        event.phase.as_str(),
+        "prelude" | "charge" | "catalyze" | "apex" | "aftermath"
+    ) {
+        return Err("BreakthroughCinematicS2cV1.phase is not recognized".to_string());
+    }
+    if !matches!(
+        event.result.as_str(),
+        "pending" | "success" | "failure" | "interrupted"
+    ) {
+        return Err("BreakthroughCinematicS2cV1.result is not recognized".to_string());
+    }
+    if event.phase_duration_ticks == 0 {
+        return Err("BreakthroughCinematicS2cV1.phase_duration_ticks must be > 0".to_string());
+    }
+    if event.realm_from.trim().is_empty() || event.realm_to.trim().is_empty() {
+        return Err("BreakthroughCinematicS2cV1 realm fields must not be empty".to_string());
+    }
+    if event.world_pos.iter().any(|value| !value.is_finite()) {
+        return Err("BreakthroughCinematicS2cV1.world_pos must be finite".to_string());
+    }
+    if !event.visible_radius_blocks.is_finite() || event.visible_radius_blocks <= 0.0 {
+        return Err(
+            "BreakthroughCinematicS2cV1.visible_radius_blocks must be finite and > 0".to_string(),
+        );
+    }
+    if !(0.0..=8.0).contains(&event.particle_density) || !event.particle_density.is_finite() {
+        return Err(
+            "BreakthroughCinematicS2cV1.particle_density must be finite in 0..=8".to_string(),
+        );
+    }
+    if !(0.0..=1.0).contains(&event.intensity) || !event.intensity.is_finite() {
+        return Err("BreakthroughCinematicS2cV1.intensity must be finite in 0..=1".to_string());
     }
     Ok(())
 }
@@ -2741,6 +2842,7 @@ impl ServerDataPayloadV1 {
             Self::AscensionQuota(..) => ServerDataType::AscensionQuota,
             Self::HeartDemonOffer(..) => ServerDataType::HeartDemonOffer,
             Self::BurstMeridianEvent(..) => ServerDataType::BurstMeridianEvent,
+            Self::BreakthroughCinematic(..) => ServerDataType::BreakthroughCinematic,
             Self::FullPowerChargingState(..) => ServerDataType::FullPowerChargingState,
             Self::FullPowerRelease(..) => ServerDataType::FullPowerRelease,
             Self::FullPowerExhaustedState(..) => ServerDataType::FullPowerExhaustedState,
@@ -2760,6 +2862,8 @@ impl ServerDataPayloadV1 {
             Self::HealerNpcAiState(..) => ServerDataType::HealerNpcAiState,
             Self::YidaoHudState(..) => ServerDataType::YidaoHudState,
             Self::MovementState(..) => ServerDataType::MovementState,
+            Self::SpiritTreasureState(..) => ServerDataType::SpiritTreasureState,
+            Self::SpiritTreasureDialogue(..) => ServerDataType::SpiritTreasureDialogue,
             Self::CraftRecipeList(..) => ServerDataType::CraftRecipeList,
             Self::CraftSessionState(..) => ServerDataType::CraftSessionState,
             Self::CraftOutcome(..) => ServerDataType::CraftOutcome,
@@ -2990,6 +3094,25 @@ mod tests {
                 tick: 12,
                 overload_ratio: 1.5,
                 integrity_snapshot: 0.9,
+            }),
+            ServerDataPayloadV1::BreakthroughCinematic(BreakthroughCinematicS2cV1 {
+                actor_id: "offline:Kiz".to_string(),
+                phase: "apex".to_string(),
+                phase_tick: 0,
+                phase_duration_ticks: 80,
+                realm_from: "Condense".to_string(),
+                realm_to: "Solidify".to_string(),
+                result: "success".to_string(),
+                interrupted: false,
+                world_pos: [12.0, 64.0, -8.0],
+                visible_radius_blocks: 1024.0,
+                global: false,
+                distant_billboard: true,
+                particle_density: 2.2,
+                intensity: 0.78,
+                season_overlay: "adaptive".to_string(),
+                style: "golden_core".to_string(),
+                at_tick: 2400,
             }),
             ServerDataPayloadV1::FullPowerChargingState(FullPowerChargingStateV1 {
                 caster_uuid: "00000000-0000-0000-0000-000000000001".to_string(),
@@ -3525,6 +3648,12 @@ mod tests {
             ),
             include_str!(
                 "../../../agent/packages/schema/samples/server-data.movement-state.sample.json"
+            ),
+            include_str!(
+                "../../../agent/packages/schema/samples/server-data.spirit-treasure-state.sample.json"
+            ),
+            include_str!(
+                "../../../agent/packages/schema/samples/server-data.spirit-treasure-dialogue.sample.json"
             ),
         ];
 

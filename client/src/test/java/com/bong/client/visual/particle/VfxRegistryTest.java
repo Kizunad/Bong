@@ -1,6 +1,7 @@
 package com.bong.client.visual.particle;
 
 import com.bong.client.network.VfxEventPayload;
+import com.bong.client.visual.particle.alchemy.AlchemyCombatPillVfxPlayer;
 import net.minecraft.util.Identifier;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
@@ -277,6 +278,10 @@ public class VfxRegistryTest {
             "bootstrap should register movement_slide");
         assertTrue(VfxRegistry.instance().contains(MovementVfxPlayer.DOUBLE_JUMP),
             "bootstrap should register movement_double_jump");
+        for (Identifier eventId : AlchemyCombatPillVfxPlayer.EVENT_IDS) {
+            assertTrue(VfxRegistry.instance().contains(eventId),
+                "bootstrap should register alchemy combat pill VFX " + eventId);
+        }
         assertNotNull(VfxRegistry.instance().lookup(SwordQiSlashPlayer.EVENT_ID).orElse(null));
     }
 

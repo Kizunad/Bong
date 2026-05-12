@@ -1380,6 +1380,20 @@
                     "maxLength": 64,
                     "type": "string"
                   },
+                  "scroll_kind": {
+                    "minLength": 1,
+                    "maxLength": 64,
+                    "type": "string"
+                  },
+                  "scroll_skill_id": {
+                    "minLength": 1,
+                    "maxLength": 128,
+                    "type": "string"
+                  },
+                  "scroll_xp_grant": {
+                    "minimum": 0,
+                    "type": "integer"
+                  },
                   "charges": {
                     "minimum": 0,
                     "maximum": 5,
@@ -1951,6 +1965,20 @@
                       "maxLength": 64,
                       "type": "string"
                     },
+                    "scroll_kind": {
+                      "minLength": 1,
+                      "maxLength": 64,
+                      "type": "string"
+                    },
+                    "scroll_skill_id": {
+                      "minLength": 1,
+                      "maxLength": 128,
+                      "type": "string"
+                    },
+                    "scroll_xp_grant": {
+                      "minimum": 0,
+                      "type": "integer"
+                    },
                     "charges": {
                       "minimum": 0,
                       "maximum": 5,
@@ -2505,6 +2533,20 @@
                       "minLength": 1,
                       "maxLength": 64,
                       "type": "string"
+                    },
+                    "scroll_kind": {
+                      "minLength": 1,
+                      "maxLength": 64,
+                      "type": "string"
+                    },
+                    "scroll_skill_id": {
+                      "minLength": 1,
+                      "maxLength": 128,
+                      "type": "string"
+                    },
+                    "scroll_xp_grant": {
+                      "minimum": 0,
+                      "type": "integer"
                     },
                     "charges": {
                       "minimum": 0,
@@ -3061,6 +3103,20 @@
                       "maxLength": 64,
                       "type": "string"
                     },
+                    "scroll_kind": {
+                      "minLength": 1,
+                      "maxLength": 64,
+                      "type": "string"
+                    },
+                    "scroll_skill_id": {
+                      "minLength": 1,
+                      "maxLength": 128,
+                      "type": "string"
+                    },
+                    "scroll_xp_grant": {
+                      "minimum": 0,
+                      "type": "integer"
+                    },
                     "charges": {
                       "minimum": 0,
                       "maximum": 5,
@@ -3615,6 +3671,20 @@
                       "minLength": 1,
                       "maxLength": 64,
                       "type": "string"
+                    },
+                    "scroll_kind": {
+                      "minLength": 1,
+                      "maxLength": 64,
+                      "type": "string"
+                    },
+                    "scroll_skill_id": {
+                      "minLength": 1,
+                      "maxLength": 128,
+                      "type": "string"
+                    },
+                    "scroll_xp_grant": {
+                      "minimum": 0,
+                      "type": "integer"
                     },
                     "charges": {
                       "minimum": 0,
@@ -4171,6 +4241,20 @@
                       "maxLength": 64,
                       "type": "string"
                     },
+                    "scroll_kind": {
+                      "minLength": 1,
+                      "maxLength": 64,
+                      "type": "string"
+                    },
+                    "scroll_skill_id": {
+                      "minLength": 1,
+                      "maxLength": 128,
+                      "type": "string"
+                    },
+                    "scroll_xp_grant": {
+                      "minimum": 0,
+                      "type": "integer"
+                    },
                     "charges": {
                       "minimum": 0,
                       "maximum": 5,
@@ -4725,6 +4809,20 @@
                       "minLength": 1,
                       "maxLength": 64,
                       "type": "string"
+                    },
+                    "scroll_kind": {
+                      "minLength": 1,
+                      "maxLength": 64,
+                      "type": "string"
+                    },
+                    "scroll_skill_id": {
+                      "minLength": 1,
+                      "maxLength": 128,
+                      "type": "string"
+                    },
+                    "scroll_xp_grant": {
+                      "minimum": 0,
+                      "type": "integer"
                     },
                     "charges": {
                       "minimum": 0,
@@ -5281,6 +5379,20 @@
                       "maxLength": 64,
                       "type": "string"
                     },
+                    "scroll_kind": {
+                      "minLength": 1,
+                      "maxLength": 64,
+                      "type": "string"
+                    },
+                    "scroll_skill_id": {
+                      "minLength": 1,
+                      "maxLength": 128,
+                      "type": "string"
+                    },
+                    "scroll_xp_grant": {
+                      "minimum": 0,
+                      "type": "integer"
+                    },
                     "charges": {
                       "minimum": 0,
                       "maximum": 5,
@@ -5835,6 +5947,20 @@
                       "minLength": 1,
                       "maxLength": 64,
                       "type": "string"
+                    },
+                    "scroll_kind": {
+                      "minLength": 1,
+                      "maxLength": 64,
+                      "type": "string"
+                    },
+                    "scroll_skill_id": {
+                      "minLength": 1,
+                      "maxLength": 128,
+                      "type": "string"
+                    },
+                    "scroll_xp_grant": {
+                      "minimum": 0,
+                      "type": "integer"
                     },
                     "charges": {
                       "minimum": 0,
@@ -6391,6 +6517,20 @@
                       "maxLength": 64,
                       "type": "string"
                     },
+                    "scroll_kind": {
+                      "minLength": 1,
+                      "maxLength": 64,
+                      "type": "string"
+                    },
+                    "scroll_skill_id": {
+                      "minLength": 1,
+                      "maxLength": 128,
+                      "type": "string"
+                    },
+                    "scroll_xp_grant": {
+                      "minimum": 0,
+                      "type": "integer"
+                    },
                     "charges": {
                       "minimum": 0,
                       "maximum": 5,
@@ -6945,6 +7085,20 @@
                       "minLength": 1,
                       "maxLength": 64,
                       "type": "string"
+                    },
+                    "scroll_kind": {
+                      "minLength": 1,
+                      "maxLength": 64,
+                      "type": "string"
+                    },
+                    "scroll_skill_id": {
+                      "minLength": 1,
+                      "maxLength": 128,
+                      "type": "string"
+                    },
+                    "scroll_xp_grant": {
+                      "minimum": 0,
+                      "type": "integer"
                     },
                     "charges": {
                       "minimum": 0,
@@ -7501,6 +7655,20 @@
                       "maxLength": 64,
                       "type": "string"
                     },
+                    "scroll_kind": {
+                      "minLength": 1,
+                      "maxLength": 64,
+                      "type": "string"
+                    },
+                    "scroll_skill_id": {
+                      "minLength": 1,
+                      "maxLength": 128,
+                      "type": "string"
+                    },
+                    "scroll_xp_grant": {
+                      "minimum": 0,
+                      "type": "integer"
+                    },
                     "charges": {
                       "minimum": 0,
                       "maximum": 5,
@@ -8055,6 +8223,20 @@
                       "minLength": 1,
                       "maxLength": 64,
                       "type": "string"
+                    },
+                    "scroll_kind": {
+                      "minLength": 1,
+                      "maxLength": 64,
+                      "type": "string"
+                    },
+                    "scroll_skill_id": {
+                      "minLength": 1,
+                      "maxLength": 128,
+                      "type": "string"
+                    },
+                    "scroll_xp_grant": {
+                      "minimum": 0,
+                      "type": "integer"
                     },
                     "charges": {
                       "minimum": 0,
@@ -8616,6 +8798,20 @@
                     "minLength": 1,
                     "maxLength": 64,
                     "type": "string"
+                  },
+                  "scroll_kind": {
+                    "minLength": 1,
+                    "maxLength": 64,
+                    "type": "string"
+                  },
+                  "scroll_skill_id": {
+                    "minLength": 1,
+                    "maxLength": 128,
+                    "type": "string"
+                  },
+                  "scroll_xp_grant": {
+                    "minimum": 0,
+                    "type": "integer"
                   },
                   "charges": {
                     "minimum": 0,
@@ -9690,6 +9886,20 @@
                   "maxLength": 64,
                   "type": "string"
                 },
+                "scroll_kind": {
+                  "minLength": 1,
+                  "maxLength": 64,
+                  "type": "string"
+                },
+                "scroll_skill_id": {
+                  "minLength": 1,
+                  "maxLength": 128,
+                  "type": "string"
+                },
+                "scroll_xp_grant": {
+                  "minimum": 0,
+                  "type": "integer"
+                },
                 "charges": {
                   "minimum": 0,
                   "maximum": 5,
@@ -10383,6 +10593,20 @@
                     "minLength": 1,
                     "maxLength": 64,
                     "type": "string"
+                  },
+                  "scroll_kind": {
+                    "minLength": 1,
+                    "maxLength": 64,
+                    "type": "string"
+                  },
+                  "scroll_skill_id": {
+                    "minLength": 1,
+                    "maxLength": 128,
+                    "type": "string"
+                  },
+                  "scroll_xp_grant": {
+                    "minimum": 0,
+                    "type": "integer"
                   },
                   "charges": {
                     "minimum": 0,
@@ -12466,6 +12690,213 @@
       "required": [
         "v",
         "type",
+        "actor_id",
+        "phase",
+        "phase_tick",
+        "phase_duration_ticks",
+        "realm_from",
+        "realm_to",
+        "result",
+        "interrupted",
+        "world_pos",
+        "visible_radius_blocks",
+        "global",
+        "distant_billboard",
+        "particle_density",
+        "intensity",
+        "season_overlay",
+        "style",
+        "at_tick"
+      ],
+      "properties": {
+        "v": {
+          "const": 1,
+          "type": "number"
+        },
+        "type": {
+          "const": "breakthrough_cinematic",
+          "type": "string"
+        },
+        "actor_id": {
+          "minLength": 1,
+          "maxLength": 128,
+          "type": "string"
+        },
+        "phase": {
+          "anyOf": [
+            {
+              "const": "prelude",
+              "type": "string"
+            },
+            {
+              "const": "charge",
+              "type": "string"
+            },
+            {
+              "const": "catalyze",
+              "type": "string"
+            },
+            {
+              "const": "apex",
+              "type": "string"
+            },
+            {
+              "const": "aftermath",
+              "type": "string"
+            }
+          ]
+        },
+        "phase_tick": {
+          "minimum": 0,
+          "maximum": 10000,
+          "type": "integer"
+        },
+        "phase_duration_ticks": {
+          "minimum": 1,
+          "maximum": 10000,
+          "type": "integer"
+        },
+        "realm_from": {
+          "description": "6 境界：醒灵/引气/凝脉/固元/通灵/化虚",
+          "anyOf": [
+            {
+              "const": "Awaken",
+              "type": "string"
+            },
+            {
+              "const": "Induce",
+              "type": "string"
+            },
+            {
+              "const": "Condense",
+              "type": "string"
+            },
+            {
+              "const": "Solidify",
+              "type": "string"
+            },
+            {
+              "const": "Spirit",
+              "type": "string"
+            },
+            {
+              "const": "Void",
+              "type": "string"
+            }
+          ]
+        },
+        "realm_to": {
+          "description": "6 境界：醒灵/引气/凝脉/固元/通灵/化虚",
+          "anyOf": [
+            {
+              "const": "Awaken",
+              "type": "string"
+            },
+            {
+              "const": "Induce",
+              "type": "string"
+            },
+            {
+              "const": "Condense",
+              "type": "string"
+            },
+            {
+              "const": "Solidify",
+              "type": "string"
+            },
+            {
+              "const": "Spirit",
+              "type": "string"
+            },
+            {
+              "const": "Void",
+              "type": "string"
+            }
+          ]
+        },
+        "result": {
+          "anyOf": [
+            {
+              "const": "pending",
+              "type": "string"
+            },
+            {
+              "const": "success",
+              "type": "string"
+            },
+            {
+              "const": "failure",
+              "type": "string"
+            },
+            {
+              "const": "interrupted",
+              "type": "string"
+            }
+          ]
+        },
+        "interrupted": {
+          "type": "boolean"
+        },
+        "world_pos": {
+          "type": "array",
+          "items": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "number"
+            },
+            {
+              "type": "number"
+            }
+          ],
+          "additionalItems": false,
+          "minItems": 3,
+          "maxItems": 3
+        },
+        "visible_radius_blocks": {
+          "minimum": 1,
+          "maximum": 10000,
+          "type": "number"
+        },
+        "global": {
+          "type": "boolean"
+        },
+        "distant_billboard": {
+          "type": "boolean"
+        },
+        "particle_density": {
+          "minimum": 0,
+          "maximum": 8,
+          "type": "number"
+        },
+        "intensity": {
+          "minimum": 0,
+          "maximum": 1,
+          "type": "number"
+        },
+        "season_overlay": {
+          "minLength": 1,
+          "maxLength": 64,
+          "type": "string"
+        },
+        "style": {
+          "minLength": 1,
+          "maxLength": 64,
+          "type": "string"
+        },
+        "at_tick": {
+          "minimum": 0,
+          "type": "integer"
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "v",
+        "type",
         "caster_uuid",
         "active",
         "qi_committed",
@@ -13674,6 +14105,219 @@
               "type": "string"
             }
           ]
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "v",
+        "type",
+        "treasures"
+      ],
+      "properties": {
+        "v": {
+          "const": 1,
+          "type": "number"
+        },
+        "type": {
+          "const": "spirit_treasure_state",
+          "type": "string"
+        },
+        "treasures": {
+          "maxItems": 8,
+          "type": "array",
+          "items": {
+            "additionalProperties": false,
+            "type": "object",
+            "required": [
+              "template_id",
+              "display_name",
+              "instance_id",
+              "equipped",
+              "passive_active",
+              "affinity",
+              "sleeping",
+              "source_sect",
+              "icon_texture",
+              "passive_effects"
+            ],
+            "properties": {
+              "template_id": {
+                "minLength": 1,
+                "maxLength": 128,
+                "type": "string"
+              },
+              "display_name": {
+                "minLength": 1,
+                "maxLength": 64,
+                "type": "string"
+              },
+              "instance_id": {
+                "minimum": 0,
+                "type": "integer"
+              },
+              "equipped": {
+                "type": "boolean"
+              },
+              "passive_active": {
+                "type": "boolean"
+              },
+              "affinity": {
+                "minimum": 0,
+                "maximum": 1,
+                "type": "number"
+              },
+              "sleeping": {
+                "type": "boolean"
+              },
+              "source_sect": {
+                "anyOf": [
+                  {
+                    "minLength": 1,
+                    "maxLength": 64,
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "icon_texture": {
+                "minLength": 1,
+                "maxLength": 160,
+                "type": "string"
+              },
+              "passive_effects": {
+                "maxItems": 8,
+                "type": "array",
+                "items": {
+                  "additionalProperties": false,
+                  "type": "object",
+                  "required": [
+                    "kind",
+                    "value",
+                    "description"
+                  ],
+                  "properties": {
+                    "kind": {
+                      "minLength": 1,
+                      "maxLength": 96,
+                      "type": "string"
+                    },
+                    "value": {
+                      "type": "number"
+                    },
+                    "description": {
+                      "minLength": 1,
+                      "maxLength": 160,
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "v",
+        "type",
+        "dialogue",
+        "display_name",
+        "zone"
+      ],
+      "properties": {
+        "v": {
+          "const": 1,
+          "type": "number"
+        },
+        "type": {
+          "const": "spirit_treasure_dialogue",
+          "type": "string"
+        },
+        "dialogue": {
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "v",
+            "request_id",
+            "character_id",
+            "treasure_id",
+            "text",
+            "tone",
+            "affinity_delta"
+          ],
+          "properties": {
+            "v": {
+              "const": 1,
+              "type": "number"
+            },
+            "request_id": {
+              "minLength": 1,
+              "maxLength": 160,
+              "type": "string"
+            },
+            "character_id": {
+              "minLength": 1,
+              "maxLength": 160,
+              "type": "string"
+            },
+            "treasure_id": {
+              "minLength": 1,
+              "maxLength": 128,
+              "type": "string"
+            },
+            "text": {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            },
+            "tone": {
+              "anyOf": [
+                {
+                  "const": "cold",
+                  "type": "string"
+                },
+                {
+                  "const": "curious",
+                  "type": "string"
+                },
+                {
+                  "const": "warning",
+                  "type": "string"
+                },
+                {
+                  "const": "amused",
+                  "type": "string"
+                },
+                {
+                  "const": "silent",
+                  "type": "string"
+                }
+              ]
+            },
+            "affinity_delta": {
+              "minimum": -1,
+              "maximum": 1,
+              "type": "number"
+            }
+          }
+        },
+        "display_name": {
+          "minLength": 1,
+          "maxLength": 64,
+          "type": "string"
+        },
+        "zone": {
+          "minLength": 1,
+          "maxLength": 128,
+          "type": "string"
         }
       }
     },

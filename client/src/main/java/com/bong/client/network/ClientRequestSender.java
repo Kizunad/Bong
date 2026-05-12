@@ -176,6 +176,26 @@ public final class ClientRequestSender {
         dispatch(ClientRequestProtocol.encodeZhenfaPlace(pos, kind, carrier, qiInvestRatio, trigger));
     }
 
+    public static void sendZhenfaPlace(
+        BlockPos pos,
+        ClientRequestProtocol.ZhenfaKind kind,
+        ClientRequestProtocol.ZhenfaCarrierKind carrier,
+        double qiInvestRatio,
+        String trigger,
+        Long itemInstanceId,
+        ClientRequestProtocol.ZhenfaTargetFace targetFace
+    ) {
+        dispatch(ClientRequestProtocol.encodeZhenfaPlace(
+            pos,
+            kind,
+            carrier,
+            qiInvestRatio,
+            trigger,
+            itemInstanceId,
+            targetFace
+        ));
+    }
+
     public static void sendZhenfaTrigger(Long instanceId) {
         dispatch(ClientRequestProtocol.encodeZhenfaTrigger(instanceId));
     }
@@ -382,6 +402,10 @@ public final class ClientRequestSender {
 
     public static void sendLearnSkillScroll(long instanceId) {
         dispatch(ClientRequestProtocol.encodeLearnSkillScroll(instanceId));
+    }
+
+    public static void sendTechniqueScrollUse(long instanceId) {
+        dispatch(ClientRequestProtocol.encodeTechniqueScrollUse(instanceId));
     }
 
     // ─── 灵田 (plan-lingtian-v1 §1.2-§1.7) ──────────────────────────────────
