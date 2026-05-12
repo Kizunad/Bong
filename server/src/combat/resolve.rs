@@ -16,6 +16,7 @@ use crate::combat::knockback::{
     compute_combat_knockback, CombatKnockbackInput, KnockbackEvent, DEFAULT_CHAIN_DEPTH,
 };
 use crate::combat::status::{body_part_damage_multiplier, has_active_status};
+use crate::combat::sword_basics;
 use crate::combat::tuike::{tuike_filter_contam, FalseSkin, ShedEvent};
 use crate::combat::tuike_v2::physics::naked_defense_damage_multiplier;
 use crate::combat::tuike_v2::StackedFalseSkins;
@@ -41,6 +42,7 @@ use crate::cultivation::components::{
     ColorKind, ContamSource, Contamination, CrackCause, Cultivation, MeridianCrack, MeridianSystem,
     QiColor,
 };
+use crate::cultivation::known_techniques::KnownTechniques;
 use crate::cultivation::life_record::{BiographyEntry, LifeRecord};
 use crate::cultivation::tribulation::JueBiLawDisruption;
 use crate::inventory::{
@@ -106,6 +108,7 @@ const ATTACK_QI_THROUGHPUT_FACTOR: f64 = 1.0;
 
 #[derive(Debug, Clone, Copy)]
 struct WoundKindProfile {
+    damage_mul: f32,
     bleed_mul: f32,
     contam_mul: f64,
     crack_mul: f64,
@@ -141,6 +144,7 @@ type CombatAttackerItem<'a> = (
     Option<&'a DerivedAttrs>,
     Option<&'a mut AntiCheatCounter>,
     Option<&'a CombatState>,
+    Option<&'a KnownTechniques>,
 );
 type DefenseResponderItem<'a> = (
     &'a mut CombatState,
@@ -259,11 +263,7 @@ pub fn resolve_attack_intents(
             continue;
         };
 
-        if intent.qi_invest <= 0.0 {
-            continue;
-        }
-
-        let qi_invest = f64::from(intent.qi_invest);
+        let qi_invest = f64::from(intent.qi_invest.max(0.0));
         let juebi_law_env = juebi_law_disruptions
             .get(intent.attacker)
             .ok()
@@ -272,7 +272,7 @@ pub fn resolve_attack_intents(
 
         {
             let mut attacker_query = combatants.p0();
-            let Ok((attacker_cultivation, _, _, mut anticheat_counter, attacker_combat_state)) =
+            let Ok((attacker_cultivation, _, _, mut anticheat_counter, attacker_combat_state, _)) =
                 attacker_query.get_mut(intent.attacker)
             else {
                 continue;
@@ -297,10 +297,9 @@ pub fn resolve_attack_intents(
                 );
             }
 
-            if !matches!(
-                intent.source,
-                AttackSource::BurstMeridian | AttackSource::FullPower
-            ) && attacker_cultivation.qi_current + f64::EPSILON < qi_invest
+            if qi_invest > f64::EPSILON
+                && !source_uses_prepaid_qi(intent.source)
+                && attacker_cultivation.qi_current + f64::EPSILON < qi_invest
             {
                 if intent.debug_command.is_none() {
                     record_anticheat_violation(
@@ -326,7 +325,7 @@ pub fn resolve_attack_intents(
         ) else {
             if intent.debug_command.is_none() {
                 let mut attacker_query = combatants.p0();
-                if let Ok((_, _, _, mut anticheat_counter, _)) =
+                if let Ok((_, _, _, mut anticheat_counter, _, _)) =
                     attacker_query.get_mut(intent.attacker)
                 {
                     record_anticheat_violation(
@@ -344,32 +343,52 @@ pub fn resolve_attack_intents(
         };
         let distance = hit_probe.distance as f32;
 
-        let (attacker_damage_multiplier, attacker_body_mass) = {
+        let (attacker_damage_multiplier, attacker_body_mass, sword_damage_multiplier) = {
             let mut attacker_query = combatants.p0();
-            let Ok((mut attacker_cultivation, mut attacker_meridians, attacker_attrs, _, _)) =
-                attacker_query.get_mut(intent.attacker)
+            let Ok((
+                mut attacker_cultivation,
+                mut attacker_meridians,
+                attacker_attrs,
+                _,
+                _,
+                attacker_known_techniques,
+            )) = attacker_query.get_mut(intent.attacker)
             else {
                 continue;
             };
 
-            if !matches!(
-                intent.source,
-                AttackSource::BurstMeridian | AttackSource::FullPower
-            ) {
+            if qi_invest > f64::EPSILON && !source_uses_prepaid_qi(intent.source) {
                 attacker_cultivation.qi_current = (attacker_cultivation.qi_current - qi_invest)
                     .clamp(0.0, attacker_cultivation.qi_max);
             }
-            if let Some(primary_meridian) = first_open_or_fallback_meridian(&mut attacker_meridians)
-            {
-                primary_meridian.throughput_current += qi_invest
-                    * ATTACK_QI_THROUGHPUT_FACTOR
-                    * juebi_law_env.law_disruption_channeling_multiplier();
+            if qi_invest > f64::EPSILON && !sword_basics::is_sword_attack_source(intent.source) {
+                if let Some(primary_meridian) =
+                    first_open_or_fallback_meridian(&mut attacker_meridians)
+                {
+                    primary_meridian.throughput_current += qi_invest
+                        * ATTACK_QI_THROUGHPUT_FACTOR
+                        * juebi_law_env.law_disruption_channeling_multiplier();
+                }
             }
             (
                 attacker_attrs
                     .map(|attrs| attrs.attack_power)
                     .unwrap_or(1.0),
                 body_masses.get(intent.attacker).ok().copied(),
+                sword_basics::source_to_technique(intent.source)
+                    .and_then(|technique| {
+                        attacker_known_techniques.and_then(|known| {
+                            known
+                                .entries
+                                .iter()
+                                .find(|entry| entry.id == technique.id())
+                                .map(|entry| {
+                                    sword_basics::sword_profile(technique, entry.proficiency)
+                                        .damage_multiplier
+                                })
+                        })
+                    })
+                    .unwrap_or(1.0),
             )
         };
 
@@ -397,10 +416,8 @@ pub fn resolve_attack_intents(
 
         let decay = ((intent.reach.max - distance) / intent.reach.max.max(0.001)).clamp(0.0, 1.0);
         let hit_qi = (intent.qi_invest * decay).max(0.0);
-        if hit_qi <= 0.0 {
-            continue;
-        }
-        let (damage_multiplier, contam_multiplier, bleed_multiplier) =
+        let is_physical_hit = intent.qi_invest <= f32::EPSILON;
+        let (body_damage_multiplier, contam_multiplier, bleed_multiplier) =
             body_part_multipliers(hit_probe.body_part);
         let wound_profile = wound_kind_profile(intent.wound_kind);
         let defender_damage_multiplier = defender_attrs
@@ -411,7 +428,8 @@ pub fn resolve_attack_intents(
         // 正式武器走 Weapon component；凡器不挂 Weapon，但主手使用时按低倍率临时武器结算。
         let mut hit_tool: Option<crate::tools::ToolKind> = None;
         let mut weapon_kind_for_knockback = None;
-        let weapon_multiplier: f32 = match weapons.get(intent.attacker) {
+        let (weapon_base_damage, weapon_multiplier): (f32, f32) = match weapons.get(intent.attacker)
+        {
             Ok(weapon) => {
                 weapon_kind_for_knockback = Some(weapon.weapon_kind);
                 let resonance = inventories.get(intent.attacker).ok().and_then(|inventory| {
@@ -421,18 +439,20 @@ pub fn resolve_attack_intents(
                         qi_colors.get(intent.attacker).ok(),
                     )
                 });
-                resonance
+                let multiplier = resonance
                     .map(|value| weapon.damage_multiplier_with_resonance(value))
-                    .unwrap_or_else(|| weapon.damage_multiplier())
+                    .unwrap_or_else(|| weapon.damage_multiplier());
+                (weapon.base_attack.max(1.0), multiplier)
             }
             Err(_) => {
                 hit_tool = inventories
                     .get(intent.attacker)
                     .ok()
                     .and_then(crate::tools::main_hand_tool_in_inventory);
-                hit_tool
+                let multiplier = hit_tool
                     .map(crate::tools::ToolKind::combat_damage_multiplier)
-                    .unwrap_or(1.0)
+                    .unwrap_or(1.0);
+                (1.0, multiplier)
             }
         };
         let defender_stance = stances
@@ -448,22 +468,45 @@ pub fn resolve_attack_intents(
             .unwrap_or_default();
         let zhenmai_attack_kind =
             zhenmai_v2::attack_kind_for_source(intent.source, intent.wound_kind);
-        let harden_damage_multiplier = harden_active
-            .map(|active| flow_modifier(1.0, active.damage_multiplier))
-            .unwrap_or(1.0);
-        let backfire_incoming_damage_multiplier = backfire_amplification
-            .filter(|active| active.active_for(zhenmai_attack_kind, clock.tick))
-            .map(|active| active.incoming_damage_multiplier)
-            .unwrap_or(1.0);
-        let base_damage = hit_qi
-            * ATTACK_QI_DAMAGE_FACTOR
-            * damage_multiplier
-            * attacker_damage_multiplier
-            * defender_damage_multiplier
-            * weapon_multiplier
-            * harden_damage_multiplier
-            * backfire_incoming_damage_multiplier;
-        let juebi_backfire_fraction = juebi_law_env.law_disruption_backfire_fraction() as f32;
+        let harden_damage_multiplier = if is_physical_hit {
+            1.0
+        } else {
+            harden_active
+                .map(|active| flow_modifier(1.0, active.damage_multiplier))
+                .unwrap_or(1.0)
+        };
+        let backfire_incoming_damage_multiplier = if is_physical_hit {
+            1.0
+        } else {
+            backfire_amplification
+                .filter(|active| active.active_for(zhenmai_attack_kind, clock.tick))
+                .map(|active| active.incoming_damage_multiplier)
+                .unwrap_or(1.0)
+        };
+        let base_damage = if is_physical_hit {
+            weapon_base_damage
+                * body_damage_multiplier
+                * attacker_damage_multiplier
+                * defender_damage_multiplier
+                * weapon_multiplier
+                * wound_profile.damage_mul
+                * sword_damage_multiplier
+        } else {
+            hit_qi
+                * ATTACK_QI_DAMAGE_FACTOR
+                * body_damage_multiplier
+                * attacker_damage_multiplier
+                * defender_damage_multiplier
+                * weapon_multiplier
+                * harden_damage_multiplier
+                * backfire_incoming_damage_multiplier
+                * sword_damage_multiplier
+        };
+        let juebi_backfire_fraction = if is_physical_hit {
+            0.0
+        } else {
+            juebi_law_env.law_disruption_backfire_fraction() as f32
+        };
         let damage = (base_damage * (1.0 - juebi_backfire_fraction)).max(1.0);
         let juebi_backfire_damage = (base_damage * juebi_backfire_fraction).max(0.0);
         let was_alive = wounds.health_current > 0.0;
@@ -507,27 +550,34 @@ pub fn resolve_attack_intents(
             }
         }
         let mut pending_reflected_qi = 0.0_f64;
-        if let Some(active) = multipoint_active.as_deref_mut() {
-            let reflected =
-                zhenmai_v2::multipoint_contact(active, f64::from(hit_qi), zhenmai_attack_kind);
-            pending_reflected_qi += reflected;
-            if let Some(events) = event_writers.multipoint_backfires.as_deref_mut() {
-                events.send(zhenmai_v2::MultiPointBackfireEvent {
-                    defender: target_entity,
-                    attacker: Some(intent.attacker),
-                    attack_kind: zhenmai_attack_kind,
-                    contact_index: active.contact_count,
-                    reflected_qi: reflected,
-                    tick: clock.tick,
-                });
+        if !is_physical_hit {
+            if let Some(active) = multipoint_active.as_deref_mut() {
+                let reflected =
+                    zhenmai_v2::multipoint_contact(active, f64::from(hit_qi), zhenmai_attack_kind);
+                pending_reflected_qi += reflected;
+                if let Some(events) = event_writers.multipoint_backfires.as_deref_mut() {
+                    events.send(zhenmai_v2::MultiPointBackfireEvent {
+                        defender: target_entity,
+                        attacker: Some(intent.attacker),
+                        attack_kind: zhenmai_attack_kind,
+                        contact_index: active.contact_count,
+                        reflected_qi: reflected,
+                        tick: clock.tick,
+                    });
+                }
+                zhenmai_v2::apply_self_damage(&mut wounds, active.self_damage_per_contact);
             }
-            zhenmai_v2::apply_self_damage(&mut wounds, active.self_damage_per_contact);
         }
-        if let Some(active) = backfire_amplification
-            .filter(|active| active.active_for(zhenmai_attack_kind, clock.tick))
-        {
-            pending_reflected_qi +=
-                zhenmai_v2::reflected_qi(f64::from(hit_qi), active.k_drain, zhenmai_attack_kind);
+        if !is_physical_hit {
+            if let Some(active) = backfire_amplification
+                .filter(|active| active.active_for(zhenmai_attack_kind, clock.tick))
+            {
+                pending_reflected_qi += zhenmai_v2::reflected_qi(
+                    f64::from(hit_qi),
+                    active.k_drain,
+                    zhenmai_attack_kind,
+                );
+            }
         }
         if pending_reflected_qi > f64::EPSILON {
             if let Some(transfer) = zhenmai_v2::backfire_transfer(
@@ -678,14 +728,22 @@ pub fn resolve_attack_intents(
             }
         }
 
-        let mut emitted_contam_delta = f64::from(damage)
-            * DEBUG_ATTACK_CONTAMINATION_FACTOR
-            * f64::from(contam_multiplier)
-            * wound_profile.contam_mul;
+        let mut emitted_contam_delta = if is_physical_hit {
+            0.0
+        } else {
+            f64::from(damage)
+                * DEBUG_ATTACK_CONTAMINATION_FACTOR
+                * f64::from(contam_multiplier)
+                * wound_profile.contam_mul
+        };
         let mut jiemai_success = false;
         let mut jiemai_effectiveness_value = None;
         let mut jiemai_contam_reduced = None;
         let mut jiemai_wound_severity = None;
+        let mut sword_parry_success = false;
+        let mut sword_parry_block_ratio = None;
+        let mut sword_parry_contam_reduced = None;
+        let mut sword_parry_reflected_damage = None;
         let mut false_skin = false_skin;
         let mut defender_attrs = defender_attrs;
 
@@ -700,61 +758,63 @@ pub fn resolve_attack_intents(
             StaminaState::Combat
         };
 
-        if let (Some(mut combat_state), Some(mut defender_cultivation)) =
-            (combat_state, defender_cultivation)
-        {
-            let window_open = combat_state
-                .incoming_window
-                .as_ref()
-                .is_some_and(|window| clock.tick < window.expires_at_tick());
-
-            let qi_cost = zhenmai_v2::parry_qi_cost_for_realm(defender_cultivation.realm);
-            let fov_ok = jiemai_fov_check(
-                attacker_position,
-                target_position,
-                positions
-                    .get(target_entity)
-                    .ok()
-                    .and_then(|(_position, look)| look),
-                defender_cultivation.realm,
-            );
-            if window_open
-                && qi_cost
-                    .is_some_and(|cost| defender_cultivation.qi_current + f64::EPSILON >= cost)
-                && fov_ok
+        if !is_physical_hit {
+            if let (Some(mut combat_state), Some(mut defender_cultivation)) =
+                (combat_state, defender_cultivation)
             {
-                let qi_cost = qi_cost.expect("checked Some above");
-                defender_cultivation.qi_current = (defender_cultivation.qi_current - qi_cost)
-                    .clamp(0.0, defender_cultivation.qi_max);
+                let window_open = combat_state
+                    .incoming_window
+                    .as_ref()
+                    .is_some_and(|window| clock.tick < window.expires_at_tick());
 
-                let before = emitted_contam_delta;
-                let effectiveness = jiemai_effectiveness(distance);
-                let mut concussion_severity =
-                    zhenmai_v2::parry_self_damage_for_realm(defender_cultivation.realm);
-                jiemai_apply_effects(
-                    effectiveness,
-                    &mut emitted_contam_delta,
-                    &mut concussion_severity,
+                let qi_cost = zhenmai_v2::parry_qi_cost_for_realm(defender_cultivation.realm);
+                let fov_ok = jiemai_fov_check(
+                    attacker_position,
+                    target_position,
+                    positions
+                        .get(target_entity)
+                        .ok()
+                        .and_then(|(_position, look)| look),
+                    defender_cultivation.realm,
                 );
-                jiemai_effectiveness_value = Some(effectiveness);
-                jiemai_contam_reduced = Some((before - emitted_contam_delta).max(0.0));
-                jiemai_wound_severity = Some(concussion_severity);
+                if window_open
+                    && qi_cost
+                        .is_some_and(|cost| defender_cultivation.qi_current + f64::EPSILON >= cost)
+                    && fov_ok
+                {
+                    let qi_cost = qi_cost.expect("checked Some above");
+                    defender_cultivation.qi_current = (defender_cultivation.qi_current - qi_cost)
+                        .clamp(0.0, defender_cultivation.qi_max);
 
-                wounds.entries.push(Wound {
-                    location: hit_probe.body_part,
-                    kind: crate::combat::components::WoundKind::Concussion,
-                    severity: concussion_severity,
-                    bleeding_per_sec: QI_ZHENMAI_CONCUSSION_BLEEDING_PER_SEC,
-                    created_at_tick: clock.tick,
-                    inflicted_by: Some(attacker_id.clone()),
-                });
-                if let Some(mut practice_log) = defender_practice_log {
-                    record_style_practice(&mut practice_log, ColorKind::Violent);
+                    let before = emitted_contam_delta;
+                    let effectiveness = jiemai_effectiveness(distance);
+                    let mut concussion_severity =
+                        zhenmai_v2::parry_self_damage_for_realm(defender_cultivation.realm);
+                    jiemai_apply_effects(
+                        effectiveness,
+                        &mut emitted_contam_delta,
+                        &mut concussion_severity,
+                    );
+                    jiemai_effectiveness_value = Some(effectiveness);
+                    jiemai_contam_reduced = Some((before - emitted_contam_delta).max(0.0));
+                    jiemai_wound_severity = Some(concussion_severity);
+
+                    wounds.entries.push(Wound {
+                        location: hit_probe.body_part,
+                        kind: crate::combat::components::WoundKind::Concussion,
+                        severity: concussion_severity,
+                        bleeding_per_sec: QI_ZHENMAI_CONCUSSION_BLEEDING_PER_SEC,
+                        created_at_tick: clock.tick,
+                        inflicted_by: Some(attacker_id.clone()),
+                    });
+                    if let Some(mut practice_log) = defender_practice_log {
+                        record_style_practice(&mut practice_log, ColorKind::Violent);
+                    }
+                    jiemai_success = true;
                 }
-                jiemai_success = true;
-            }
 
-            combat_state.incoming_window = None;
+                combat_state.incoming_window = None;
+            }
         }
 
         let mut wound = Wound {
@@ -765,6 +825,61 @@ pub fn resolve_attack_intents(
             created_at_tick: clock.tick,
             inflicted_by: Some(attacker_id.clone()),
         };
+
+        let defender_status_effects = statuses.get(target_entity).ok();
+        if let Some(block_ratio) =
+            active_status_magnitude(defender_status_effects, StatusEffectKind::SwordParrying)
+        {
+            let block_ratio = block_ratio.clamp(0.0, 0.95);
+            let before_severity = wound.severity;
+            let before_contam = emitted_contam_delta;
+            wound.severity *= 1.0 - block_ratio;
+            wound.bleeding_per_sec *= 1.0 - block_ratio;
+            emitted_contam_delta *= f64::from(1.0 - block_ratio);
+            let blocked_damage = (before_severity - wound.severity).max(0.0);
+            let reflected_damage = blocked_damage * 0.15;
+            sword_parry_success = true;
+            sword_parry_block_ratio = Some(block_ratio);
+            sword_parry_contam_reduced = Some((before_contam - emitted_contam_delta).max(0.0));
+            sword_parry_reflected_damage = Some(reflected_damage);
+            let attacker = intent.attacker;
+            let reflected_by = target_id.clone();
+            let reflected_at_tick = clock.tick;
+            if reflected_damage > f32::EPSILON {
+                commands.add(
+                    move |world: &mut valence::prelude::bevy_ecs::world::World| {
+                        if let Some(mut attacker_wounds) = world.get_mut::<Wounds>(attacker) {
+                            attacker_wounds.health_current = (attacker_wounds.health_current
+                                - reflected_damage)
+                                .clamp(0.0, attacker_wounds.health_max);
+                            attacker_wounds.entries.push(Wound {
+                                location: BodyPart::Chest,
+                                kind: crate::combat::components::WoundKind::Blunt,
+                                severity: reflected_damage,
+                                bleeding_per_sec: 0.0,
+                                created_at_tick: reflected_at_tick,
+                                inflicted_by: Some(reflected_by),
+                            });
+                        }
+                    },
+                );
+            }
+            event_writers
+                .status_effect_intents
+                .send(ApplyStatusEffectIntent {
+                    target: intent.attacker,
+                    kind: StatusEffectKind::Staggered,
+                    magnitude: 0.3,
+                    duration_ticks: sword_basics::SWORD_PARRY_STAGGER_TICKS,
+                    issued_at_tick: clock.tick,
+                });
+            let defender = target_entity;
+            commands.add(
+                move |world: &mut valence::prelude::bevy_ecs::world::World| {
+                    sword_basics::record_sword_parry_success(world, defender);
+                },
+            );
+        }
 
         // plan-armor-v1 §4.1：护甲减免在截脉判定之后应用。
         // 截脉当前只影响污染与额外 concussion，不直接改变本次伤口 severity。
@@ -863,7 +978,6 @@ pub fn resolve_attack_intents(
                 }
             }
         }
-        let defender_status_effects = statuses.get(target_entity).ok();
         let pill_part_multiplier =
             body_part_damage_multiplier(defender_status_effects, hit_probe.body_part);
         if (pill_part_multiplier - 1.0).abs() > f32::EPSILON {
@@ -965,14 +1079,16 @@ pub fn resolve_attack_intents(
                 });
         }
 
-        if let Some(primary_meridian) = first_open_or_fallback_meridian(&mut meridians) {
-            primary_meridian.throughput_current += qi_invest * f64::from(decay);
-            primary_meridian.cracks.push(MeridianCrack {
-                severity: f64::from(wound_severity) * 0.02 * wound_profile.crack_mul,
-                healing_progress: 0.0,
-                cause: CrackCause::Attack,
-                created_at: clock.tick,
-            });
+        if !is_physical_hit {
+            if let Some(primary_meridian) = first_open_or_fallback_meridian(&mut meridians) {
+                primary_meridian.throughput_current += qi_invest * f64::from(decay);
+                primary_meridian.cracks.push(MeridianCrack {
+                    severity: f64::from(wound_severity) * 0.02 * wound_profile.crack_mul,
+                    healing_progress: 0.0,
+                    cause: CrackCause::Attack,
+                    created_at: clock.tick,
+                });
+            }
         }
 
         if let Some(mut life_record) = life_record {
@@ -997,17 +1113,23 @@ pub fn resolve_attack_intents(
         } else {
             attack_source_label(intent.source)
         };
+        let qi_damage = if is_physical_hit { 0.0 } else { wound_severity };
+        let physical_damage = if is_physical_hit { wound_severity } else { 0.0 };
         let description = format!(
-            "{} {} -> {} hit {:?} with {:?} for {:.1} damage (hit_qi {:.1}, jiemai={} eff={:.2}) at {:.2} reach decay",
+            "{} {} -> {} hit {:?} with {:?} for {:.1} qi / {:.1} physical damage (hit_qi {:.1}, jiemai={} sword_parry={} eff={:.2}) at {:.2} reach decay",
             action_label,
             attacker_id,
             target_id,
             hit_probe.body_part,
             intent.wound_kind,
-            wound_severity,
+            qi_damage,
+            physical_damage,
             hit_qi,
             jiemai_success,
-            jiemai_effectiveness_value.unwrap_or(0.0),
+            sword_parry_success,
+            jiemai_effectiveness_value
+                .or(sword_parry_block_ratio)
+                .unwrap_or(0.0),
             decay
         );
 
@@ -1019,13 +1141,18 @@ pub fn resolve_attack_intents(
             wound_kind: intent.wound_kind,
             source: intent.source,
             debug_command: intent.debug_command.is_some(),
-            damage: wound_severity,
+            physical_damage,
+            damage: qi_damage,
             contam_delta: emitted_contam_delta,
             description,
-            defense_kind: jiemai_success.then_some(DefenseKind::JieMai),
-            defense_effectiveness: jiemai_effectiveness_value,
-            defense_contam_reduced: jiemai_contam_reduced,
-            defense_wound_severity: jiemai_wound_severity,
+            defense_kind: if sword_parry_success {
+                Some(DefenseKind::SwordParry)
+            } else {
+                jiemai_success.then_some(DefenseKind::JieMai)
+            },
+            defense_effectiveness: jiemai_effectiveness_value.or(sword_parry_block_ratio),
+            defense_contam_reduced: jiemai_contam_reduced.or(sword_parry_contam_reduced),
+            defense_wound_severity: jiemai_wound_severity.or(sword_parry_reflected_damage),
         });
         if let Some(events) = event_writers.vfx_events.as_deref_mut() {
             let hit_origin = target_position + DVec3::new(0.0, 1.0, 0.0);
@@ -1058,15 +1185,22 @@ pub fn resolve_attack_intents(
                     12,
                 ),
             );
-            if jiemai_success {
+            if jiemai_success || sword_parry_success {
                 gameplay_vfx::send_spawn(
                     events,
                     gameplay_vfx::spawn_request(
                         gameplay_vfx::COMBAT_PARRY,
                         hit_origin,
                         Some([-hit_dir[0], -hit_dir[1], -hit_dir[2]]),
-                        "#4488FF",
-                        jiemai_effectiveness_value.unwrap_or(0.6).clamp(0.3, 1.0),
+                        if sword_parry_success {
+                            "#FFD080"
+                        } else {
+                            "#4488FF"
+                        },
+                        jiemai_effectiveness_value
+                            .or(sword_parry_block_ratio)
+                            .unwrap_or(0.6)
+                            .clamp(0.3, 1.0),
                         8,
                         16,
                     ),
@@ -1092,10 +1226,15 @@ pub fn resolve_attack_intents(
                         json!(format!("{:?}", intent.wound_kind)),
                     ),
                     ("damage".to_string(), json!(wound_severity)),
+                    ("physical_damage".to_string(), json!(physical_damage)),
                     ("contam_delta".to_string(), json!(emitted_contam_delta)),
                     ("qi_invest".to_string(), json!(intent.qi_invest)),
                     ("hit_qi".to_string(), json!(hit_qi)),
                     ("jiemai_success".to_string(), json!(jiemai_success)),
+                    (
+                        "sword_parry_success".to_string(),
+                        json!(sword_parry_success),
+                    ),
                     (
                         "jiemai_effectiveness".to_string(),
                         json!(jiemai_effectiveness_value),
@@ -1178,7 +1317,30 @@ fn attack_source_label(source: AttackSource) -> &'static str {
         AttackSource::BurstMeridian => "burst_meridian_attack",
         AttackSource::QiNeedle => "qi_needle",
         AttackSource::FullPower => "full_power_strike",
+        AttackSource::SwordCleave => "sword_cleave",
+        AttackSource::SwordThrust => "sword_thrust",
     }
+}
+
+fn source_uses_prepaid_qi(source: AttackSource) -> bool {
+    matches!(
+        source,
+        AttackSource::BurstMeridian
+            | AttackSource::FullPower
+            | AttackSource::SwordCleave
+            | AttackSource::SwordThrust
+    )
+}
+
+fn active_status_magnitude(
+    statuses: Option<&StatusEffects>,
+    kind: StatusEffectKind,
+) -> Option<f32> {
+    statuses?
+        .active
+        .iter()
+        .find(|effect| effect.kind == kind && effect.remaining_ticks > 0)
+        .map(|effect| effect.magnitude)
 }
 
 fn record_anticheat_violation(
@@ -1205,26 +1367,31 @@ fn body_part_multipliers(body_part: BodyPart) -> (f32, f32, f32) {
 fn wound_kind_profile(kind: crate::combat::components::WoundKind) -> WoundKindProfile {
     match kind {
         crate::combat::components::WoundKind::Cut => WoundKindProfile {
+            damage_mul: 1.0,
             bleed_mul: 1.4,
             contam_mul: 1.0,
             crack_mul: 1.0,
         },
         crate::combat::components::WoundKind::Blunt => WoundKindProfile {
+            damage_mul: 1.0,
             bleed_mul: 0.7,
             contam_mul: 0.8,
             crack_mul: 1.3,
         },
         crate::combat::components::WoundKind::Pierce => WoundKindProfile {
+            damage_mul: 1.0,
             bleed_mul: 1.0,
             contam_mul: 1.2,
             crack_mul: 1.1,
         },
         crate::combat::components::WoundKind::Burn => WoundKindProfile {
+            damage_mul: 1.0,
             bleed_mul: 0.2,
             contam_mul: 1.3,
             crack_mul: 0.7,
         },
         crate::combat::components::WoundKind::Concussion => WoundKindProfile {
+            damage_mul: 1.0,
             bleed_mul: 0.1,
             contam_mul: 0.6,
             crack_mul: 1.4,
@@ -1378,17 +1545,18 @@ mod tests {
     use crate::combat::anticheat::AntiCheatCounter;
     use crate::combat::armor::{ArmorProfile, ArmorProfileRegistry};
     use crate::combat::components::{
-        BodyPart, CombatState, DefenseWindow, DerivedAttrs, Lifecycle, StatusEffects, WoundKind,
-        Wounds,
+        ActiveStatusEffect, BodyPart, CombatState, DefenseWindow, DerivedAttrs, Lifecycle,
+        StatusEffects, WoundKind, Wounds,
     };
     use crate::combat::events::{
-        ApplyStatusEffectIntent, AttackIntent, AttackSource, DefenseKind, StatusEffectKind,
-        FIST_REACH,
+        ApplyStatusEffectIntent, AttackIntent, AttackReach, AttackSource, DefenseKind,
+        StatusEffectKind, FIST_REACH,
     };
     use crate::combat::jiemai::jiemai_contam_multiplier_for_effectiveness;
     use crate::cultivation::components::{
         Contamination, CrackCause, Cultivation, MeridianId, MeridianSystem, Realm,
     };
+    use crate::cultivation::known_techniques::KnownTechnique;
     use crate::cultivation::life_record::{BiographyEntry, LifeRecord};
     use crate::inventory::{
         ContainerState, InventoryRevision, ItemCategory, ItemInstance, ItemRarity, ItemRegistry,
@@ -5089,6 +5257,199 @@ mod tests {
             .amount;
 
         assert!(pierce_contam > blunt_contam);
+    }
+
+    #[test]
+    fn zero_qi_sword_hit_resolves_physical_damage_without_contamination_or_meridian_crack() {
+        use crate::combat::weapon::{EquipSlot, Weapon, WeaponKind};
+
+        let mut app = App::new();
+        app.insert_resource(CombatClock { tick: 1540 });
+        app.add_event::<AttackIntent>();
+        app.add_event::<ApplyStatusEffectIntent>();
+        app.add_event::<CombatEvent>();
+        app.add_event::<DeathEvent>();
+        app.add_event::<WeaponBroken>();
+        app.add_event::<InventoryDurabilityChangedEvent>();
+        app.add_systems(Update, resolve_attack_intents);
+
+        let attacker = spawn_player(
+            &mut app,
+            "ZeroQiSword",
+            [0.0, 64.0, 0.0],
+            Wounds::default(),
+            Stamina::default(),
+        );
+        app.world_mut().entity_mut(attacker).insert((
+            Weapon {
+                slot: EquipSlot::MainHand,
+                instance_id: 1540,
+                template_id: "iron_sword".to_string(),
+                weapon_kind: WeaponKind::Sword,
+                base_attack: 12.0,
+                quality_tier: 0,
+                durability: 200.0,
+                durability_max: 200.0,
+            },
+            KnownTechniques {
+                entries: vec![KnownTechnique {
+                    id: sword_basics::SWORD_CLEAVE_SKILL_ID.to_string(),
+                    proficiency: 0.5,
+                    active: true,
+                }],
+            },
+        ));
+        let mut target_meridians = MeridianSystem::default();
+        target_meridians.get_mut(MeridianId::Lung).opened = true;
+        let target = spawn_player(
+            &mut app,
+            "ZeroQiTarget",
+            [1.0, 64.0, 0.0],
+            Wounds::default(),
+            Stamina::default(),
+        );
+        app.world_mut().entity_mut(target).insert(target_meridians);
+
+        app.world_mut().send_event(AttackIntent {
+            attacker,
+            target: Some(target),
+            issued_at_tick: 1539,
+            reach: AttackReach::new(3.0, 0.0),
+            qi_invest: 0.0,
+            wound_kind: WoundKind::Cut,
+            source: AttackSource::SwordCleave,
+            debug_command: None,
+        });
+
+        app.update();
+
+        let events: Vec<_> = app
+            .world()
+            .resource::<Events<CombatEvent>>()
+            .iter_current_update_events()
+            .collect();
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].damage, 0.0);
+        assert!(
+            events[0].physical_damage > 0.0,
+            "zero-qi sword hit should still land physical damage"
+        );
+        assert_eq!(events[0].contam_delta, 0.0);
+
+        let target_ref = app.world().entity(target);
+        assert!(
+            target_ref
+                .get::<Contamination>()
+                .expect("target contamination")
+                .entries
+                .is_empty(),
+            "physical branch must not introduce contamination"
+        );
+        let meridian = target_ref
+            .get::<MeridianSystem>()
+            .expect("target meridians")
+            .get(MeridianId::Lung);
+        assert_eq!(meridian.throughput_current, 0.0);
+        assert!(
+            meridian.cracks.is_empty(),
+            "physical branch must not crack meridians"
+        );
+    }
+
+    #[test]
+    fn sword_parry_blocks_physical_damage_reflects_and_staggers_attacker() {
+        let mut app = App::new();
+        app.insert_resource(CombatClock { tick: 1541 });
+        app.add_event::<AttackIntent>();
+        app.add_event::<ApplyStatusEffectIntent>();
+        app.add_event::<CombatEvent>();
+        app.add_event::<DeathEvent>();
+        app.add_event::<WeaponBroken>();
+        app.add_event::<InventoryDurabilityChangedEvent>();
+        app.add_systems(Update, resolve_attack_intents);
+
+        let attacker = spawn_player(
+            &mut app,
+            "ParryAttacker",
+            [0.0, 64.0, 0.0],
+            Wounds::default(),
+            Stamina::default(),
+        );
+        let defender = spawn_player(
+            &mut app,
+            "ParryDefender",
+            [1.0, 64.0, 0.0],
+            Wounds::default(),
+            Stamina::default(),
+        );
+        app.world_mut().entity_mut(defender).insert((
+            StatusEffects {
+                active: vec![ActiveStatusEffect {
+                    kind: StatusEffectKind::SwordParrying,
+                    magnitude: 0.5,
+                    remaining_ticks: 4,
+                }],
+            },
+            KnownTechniques {
+                entries: vec![KnownTechnique {
+                    id: sword_basics::SWORD_PARRY_SKILL_ID.to_string(),
+                    proficiency: 0.0,
+                    active: true,
+                }],
+            },
+        ));
+
+        app.world_mut().send_event(AttackIntent {
+            attacker,
+            target: Some(defender),
+            issued_at_tick: 1540,
+            reach: FIST_REACH,
+            qi_invest: 0.0,
+            wound_kind: WoundKind::Blunt,
+            source: AttackSource::Melee,
+            debug_command: None,
+        });
+
+        app.update();
+
+        let events: Vec<_> = app
+            .world()
+            .resource::<Events<CombatEvent>>()
+            .iter_current_update_events()
+            .collect();
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].defense_kind, Some(DefenseKind::SwordParry));
+        assert_eq!(events[0].defense_effectiveness, Some(0.5));
+        assert!(
+            (events[0].physical_damage - 0.5).abs() < 0.001,
+            "50% sword parry should halve the 1.0 unarmed physical hit"
+        );
+
+        let status_intents: Vec<_> = app
+            .world()
+            .resource::<Events<ApplyStatusEffectIntent>>()
+            .iter_current_update_events()
+            .collect();
+        assert!(status_intents
+            .iter()
+            .any(|intent| intent.target == attacker && intent.kind == StatusEffectKind::Staggered));
+
+        let attacker_wounds = app.world().entity(attacker).get::<Wounds>().unwrap();
+        assert_eq!(attacker_wounds.entries.len(), 1);
+        assert!(
+            (attacker_wounds.entries[0].severity - 0.075).abs() < 0.001,
+            "reflected physical damage should be 15% of blocked damage"
+        );
+
+        let known = app
+            .world()
+            .entity(defender)
+            .get::<KnownTechniques>()
+            .unwrap();
+        assert!(
+            known.entries[0].proficiency > 0.0,
+            "successful parry should raise sword.parry proficiency"
+        );
     }
 
     #[test]

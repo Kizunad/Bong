@@ -119,28 +119,33 @@ pub fn emit_combat_audio_triggers(
             continue;
         };
         let origin = position.get();
+        let total_damage = event.damage + event.physical_damage;
         let recipe_id = if event.defense_kind == Some(DefenseKind::JieMai) {
             parry_recipe(event.defense_effectiveness.unwrap_or(0.6))
+        } else if event.defense_kind == Some(DefenseKind::SwordParry) {
+            "sword_parry"
         } else if let Some(effectiveness) = event.defense_effectiveness {
             parry_recipe(effectiveness)
-        } else if event.damage >= 0.5 {
+        } else if total_damage >= 0.5 {
             let critical = matches!(event.body_part, crate::combat::components::BodyPart::Head);
             match event.source {
                 AttackSource::BurstMeridian | AttackSource::FullPower => {
                     school_hit_recipe("baomai", event.damage, critical)
                 }
                 AttackSource::QiNeedle => school_hit_recipe("dugu", event.damage, critical),
-                AttackSource::Melee => combat_hit_recipe(event.damage, critical),
+                AttackSource::SwordCleave => "sword_cleave",
+                AttackSource::SwordThrust => "sword_thrust",
+                AttackSource::Melee => combat_hit_recipe(total_damage, critical),
             }
-        } else if npc_markers.get(event.target).is_ok() && event.damage > 0.0 {
+        } else if npc_markers.get(event.target).is_ok() && total_damage > 0.0 {
             "npc_hurt"
-        } else if npc_markers.get(event.attacker).is_ok() && event.damage > 0.0 {
+        } else if npc_markers.get(event.attacker).is_ok() && total_damage > 0.0 {
             "npc_aggro"
         } else {
             continue;
         };
         emit_play(&mut audio, recipe_id, event.target, origin, None, 1.0, 0.0);
-        if event.damage >= 8.0 {
+        if total_damage >= 8.0 {
             emit_play(
                 &mut audio,
                 "wound_inflict",
@@ -949,6 +954,7 @@ mod tests {
             wound_kind: WoundKind::Blunt,
             source: crate::combat::events::AttackSource::Melee,
             debug_command: false,
+            physical_damage: 0.0,
             damage: 0.4,
             contam_delta: 0.0,
             description: "test jiemai=true".to_string(),
@@ -987,6 +993,7 @@ mod tests {
                 wound_kind: WoundKind::Blunt,
                 source: crate::combat::events::AttackSource::Melee,
                 debug_command: false,
+                physical_damage: 0.0,
                 damage: 12.0,
                 contam_delta: 0.0,
                 description: "test hit tier".to_string(),

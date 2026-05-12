@@ -25,6 +25,7 @@ pub mod realm_gap;
 pub mod resolve;
 pub mod status;
 pub mod style_telemetry;
+pub mod sword_basics;
 pub mod tuike;
 pub mod tuike_v2;
 pub mod weapon;
@@ -230,6 +231,13 @@ pub fn register(app: &mut App) {
     dugu_v2::register(app);
     baomai_v3::register(app);
     tuike_v2::register(app);
+    app.add_systems(
+        Update,
+        (
+            sword_basics::sword_qi_store_tick.in_set(CombatSystemSet::Physics),
+            sword_basics::sword_infuse_completion_tick.in_set(CombatSystemSet::Physics),
+        ),
+    );
 
     app.add_systems(
         Update,
@@ -306,6 +314,12 @@ pub fn register(app: &mut App) {
     app.add_systems(
         Update,
         player_attack::handle_player_attack.in_set(CombatSystemSet::Intent),
+    );
+    app.add_systems(
+        Update,
+        sword_basics::track_sword_proficiency_from_hits
+            .in_set(CombatSystemSet::Emit)
+            .after(resolve::resolve_attack_intents),
     );
     // Separate add_systems call to stay below Bevy 0.14 tuple-arity limits.
     app.add_systems(

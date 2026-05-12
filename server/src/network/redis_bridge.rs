@@ -3253,6 +3253,7 @@ mod redis_bridge_tests {
                 wound_kind: Some(crate::schema::combat_event::CombatWoundKindV1::Blunt),
                 source: Some(CombatAttackSourceV1::Melee),
                 damage: Some(20.0),
+                physical_damage: None,
                 contam_delta: None,
                 description: Some(
                     "attack_intent offline:Azure -> offline:Crimson hit Chest with Blunt for 20.0 damage at 0.90 reach decay"

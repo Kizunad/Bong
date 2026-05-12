@@ -84,7 +84,8 @@ public final class TechniqueRowComponent {
             : Surface.flat(locked ? 0xFF141414 : 0xFF181818));
         grade.color(Color.ofArgb(locked ? 0xFF777777 : technique.grade().color()));
         name.color(Color.ofArgb(locked ? 0xFF777777 : 0xFFE0E0E0));
-        proficiency.text(Text.literal(Math.round(technique.proficiency() * 100.0f) + "%"));
+        proficiency.text(Text.literal(technique.proficiencyLabel()));
+        proficiency.tooltip(Text.literal(Math.round(technique.proficiency() * 100.0f) + "%"));
         proficiency.color(Color.ofArgb(locked ? 0xFF666666 : 0xFF88CCAA));
         int boundSlot = SkillBarStore.findSkill(technique.id());
         slot.text(Text.literal(boundSlot >= 0 ? String.valueOf(boundSlot + 1) : "-"));

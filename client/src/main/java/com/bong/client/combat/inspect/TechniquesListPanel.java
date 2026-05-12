@@ -55,6 +55,7 @@ public final class TechniquesListPanel {
         List<String> aliases,
         Grade grade,
         float proficiency,     // 0..1
+        String proficiencyLabel,
         boolean active,         // maintainable toggle
         String castKey,         // which quick slot, or ""
         String description,
@@ -65,6 +66,41 @@ public final class TechniquesListPanel {
         int cooldownTicks,
         float range
     ) {
+        public Technique(
+            String id,
+            String displayName,
+            List<String> aliases,
+            Grade grade,
+            float proficiency,
+            boolean active,
+            String castKey,
+            String description,
+            String requiredRealm,
+            List<RequiredMeridian> requiredMeridians,
+            float qiCost,
+            int castTicks,
+            int cooldownTicks,
+            float range
+        ) {
+            this(
+                id,
+                displayName,
+                aliases,
+                grade,
+                proficiency,
+                "",
+                active,
+                castKey,
+                description,
+                requiredRealm,
+                requiredMeridians,
+                qiCost,
+                castTicks,
+                cooldownTicks,
+                range
+            );
+        }
+
         public Technique(
             String id,
             String displayName,
@@ -86,6 +122,7 @@ public final class TechniquesListPanel {
                 List.of(),
                 grade,
                 proficiency,
+                "",
                 active,
                 castKey,
                 description,
@@ -105,6 +142,7 @@ public final class TechniquesListPanel {
             grade = grade == null ? Grade.MORTAL : grade;
             if (proficiency < 0f) proficiency = 0f;
             if (proficiency > 1f) proficiency = 1f;
+            proficiencyLabel = normalizeProficiencyLabel(proficiencyLabel, proficiency);
             castKey = castKey == null ? "" : castKey;
             description = description == null ? "" : description;
             requiredRealm = requiredRealm == null ? "" : requiredRealm;
@@ -116,6 +154,15 @@ public final class TechniquesListPanel {
             cooldownTicks = Math.max(0, cooldownTicks);
             if (!Float.isFinite(range) || range < 0f) range = 0f;
         }
+    }
+
+    private static String normalizeProficiencyLabel(String label, float proficiency) {
+        if (label != null && !label.isBlank()) return label;
+        if (proficiency < 0.20f) return "生疏";
+        if (proficiency < 0.50f) return "入门";
+        if (proficiency < 0.80f) return "熟练";
+        if (proficiency < 0.95f) return "精通";
+        return "化境";
     }
 
     public record RequiredMeridian(String channel, float minHealth) {

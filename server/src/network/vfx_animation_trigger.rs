@@ -23,6 +23,8 @@ use crate::schema::vfx_event::VfxEventPayloadV1;
 
 const ANIM_SWORD_SLASH_DOWN: &str = "bong:sword_slash_down";
 const ANIM_SWORD_STAB: &str = "bong:sword_stab";
+const ANIM_SWORD_CLEAVE: &str = "bong:sword_cleave";
+const ANIM_SWORD_THRUST: &str = "bong:sword_thrust";
 const ANIM_FIST_PUNCH_RIGHT: &str = "bong:fist_punch_right";
 const ANIM_PALM_STRIKE: &str = "bong:palm_strike";
 const ANIM_PARRY_BLOCK: &str = "bong:parry_block";
@@ -65,7 +67,7 @@ pub fn emit_attack_animation_triggers(
         if intent.source == AttackSource::BurstMeridian {
             continue;
         }
-        let anim_id = attack_anim_for_wound_kind(intent.wound_kind);
+        let anim_id = attack_anim_for_source(intent.source, intent.wound_kind);
         emit_play_for_entity(
             intent.attacker,
             anim_id,
@@ -102,7 +104,7 @@ pub fn emit_hit_recoil_animation_triggers(
     mut vfx_events: EventWriter<VfxEventRequest>,
 ) {
     for event in events.read() {
-        if event.damage <= 0.0 {
+        if event.damage + event.physical_damage <= 0.0 {
             continue;
         }
         emit_play_for_entity(
@@ -429,6 +431,14 @@ fn emit_spawn_particle(
     ));
 }
 
+fn attack_anim_for_source(source: AttackSource, kind: WoundKind) -> &'static str {
+    match source {
+        AttackSource::SwordCleave => ANIM_SWORD_CLEAVE,
+        AttackSource::SwordThrust => ANIM_SWORD_THRUST,
+        _ => attack_anim_for_wound_kind(kind),
+    }
+}
+
 fn attack_anim_for_wound_kind(kind: WoundKind) -> &'static str {
     match kind {
         WoundKind::Cut => ANIM_SWORD_SLASH_DOWN,
@@ -582,6 +592,32 @@ mod tests {
     }
 
     #[test]
+    fn sword_cleave_attack_source_emits_sword_cleave_animation() {
+        let mut app = App::new();
+        app.add_event::<AttackIntent>();
+        app.add_event::<VfxEventRequest>();
+        app.add_systems(Update, emit_attack_animation_triggers);
+        let attacker = spawn_player(&mut app, "Alice", [0.0, 64.0, 0.0]);
+
+        app.world_mut().send_event(AttackIntent {
+            attacker,
+            target: None,
+            issued_at_tick: 1,
+            reach: AttackReach::new(3.0, 0.0),
+            qi_invest: 0.0,
+            wound_kind: WoundKind::Cut,
+            source: AttackSource::SwordCleave,
+            debug_command: None,
+        });
+
+        app.update();
+
+        let emitted = drain_vfx(&mut app);
+        assert_eq!(emitted.len(), 1);
+        assert_play_anim(&emitted[0], ANIM_SWORD_CLEAVE, COMBAT_PRIORITY);
+    }
+
+    #[test]
     fn burst_meridian_attack_intent_does_not_duplicate_beng_quan_animation() {
         let mut app = App::new();
         app.add_event::<AttackIntent>();
@@ -648,9 +684,44 @@ mod tests {
             wound_kind: WoundKind::Blunt,
             source: crate::combat::events::AttackSource::Melee,
             debug_command: false,
+            physical_damage: 0.0,
             damage: 0.25,
             contam_delta: 0.0,
             description: "hit".to_string(),
+            defense_kind: None,
+            defense_effectiveness: None,
+            defense_contam_reduced: None,
+            defense_wound_severity: None,
+        });
+
+        app.update();
+
+        let emitted = drain_vfx(&mut app);
+        assert_eq!(emitted.len(), 1);
+        assert_play_anim(&emitted[0], ANIM_HURT_STAGGER, HIT_RECOIL_PRIORITY);
+    }
+
+    #[test]
+    fn physical_combat_hit_emits_recoil_for_unique_id_target() {
+        let mut app = App::new();
+        app.add_event::<CombatEvent>();
+        app.add_event::<VfxEventRequest>();
+        app.add_systems(Update, emit_hit_recoil_animation_triggers);
+        let attacker = app.world_mut().spawn_empty().id();
+        let target = spawn_player(&mut app, "Bob", [1.0, 64.0, 0.0]);
+
+        app.world_mut().send_event(CombatEvent {
+            attacker,
+            target,
+            resolved_at_tick: 1,
+            body_part: BodyPart::Chest,
+            wound_kind: WoundKind::Cut,
+            source: crate::combat::events::AttackSource::SwordCleave,
+            debug_command: false,
+            physical_damage: 1.0,
+            damage: 0.0,
+            contam_delta: 0.0,
+            description: "physical hit".to_string(),
             defense_kind: None,
             defense_effectiveness: None,
             defense_contam_reduced: None,

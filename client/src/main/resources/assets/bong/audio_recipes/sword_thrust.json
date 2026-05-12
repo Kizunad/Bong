@@ -1,0 +1,21 @@
+{
+  "id": "sword_thrust",
+  "layers": [
+    {
+      "sound": "minecraft:entity.player.attack.knockback",
+      "volume": 0.5,
+      "pitch": 1.2,
+      "delay_ticks": 0
+    },
+    {
+      "sound": "minecraft:entity.player.attack.strong",
+      "volume": 0.35,
+      "pitch": 1.1,
+      "delay_ticks": 2
+    }
+  ],
+  "priority": 52,
+  "attenuation": "world_3d",
+  "category": "PLAYERS",
+  "bus": "COMBAT"
+}

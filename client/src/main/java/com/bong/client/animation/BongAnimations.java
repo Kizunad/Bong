@@ -24,6 +24,10 @@ public final class BongAnimations {
     public static final Identifier SWORD_SWING_VERT = new Identifier(MOD_ID, "sword_swing_vert");
     public static final Identifier SWORD_SLASH_DOWN = new Identifier(MOD_ID, "sword_slash_down");
     public static final Identifier SWORD_STAB = new Identifier(MOD_ID, "sword_stab");
+    public static final Identifier SWORD_CLEAVE = new Identifier(MOD_ID, "sword_cleave");
+    public static final Identifier SWORD_THRUST = new Identifier(MOD_ID, "sword_thrust");
+    public static final Identifier SWORD_PARRY = new Identifier(MOD_ID, "sword_parry");
+    public static final Identifier SWORD_INFUSE = new Identifier(MOD_ID, "sword_infuse");
     public static final Identifier FIST_PUNCH_RIGHT = new Identifier(MOD_ID, "fist_punch_right");
     public static final Identifier FIST_PUNCH_LEFT = new Identifier(MOD_ID, "fist_punch_left");
     public static final Identifier PALM_THRUST = new Identifier(MOD_ID, "palm_thrust");
@@ -110,6 +114,10 @@ public final class BongAnimations {
         FIST_PUNCH_LEFT,
         PALM_STRIKE,
         SWORD_SLASH_DOWN,
+        SWORD_CLEAVE,
+        SWORD_THRUST,
+        SWORD_PARRY,
+        SWORD_INFUSE,
         WINDUP_CHARGE,
         RELEASE_BURST,
         PARRY_BLOCK,

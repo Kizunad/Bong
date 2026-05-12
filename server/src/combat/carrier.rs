@@ -842,6 +842,7 @@ fn projectile_tick_system(
                 wound_kind: WoundKind::Pierce,
                 source: crate::combat::events::AttackSource::Melee,
                 debug_command: false,
+                physical_damage: 0.0,
                 damage: wound_damage,
                 contam_delta: f64::from(contam_amount),
                 description: format!(

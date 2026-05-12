@@ -84,6 +84,8 @@ pub fn attack_source_knockback_modifier(source: AttackSource) -> f64 {
         AttackSource::BurstMeridian => 2.5,
         AttackSource::FullPower => 5.0,
         AttackSource::QiNeedle => 0.05,
+        AttackSource::SwordCleave => 1.2,
+        AttackSource::SwordThrust => 0.7,
     }
 }
 
@@ -119,6 +121,14 @@ mod tests {
             5.0
         );
         assert!(attack_source_knockback_modifier(AttackSource::QiNeedle) < 0.1);
+        assert_eq!(
+            attack_source_knockback_modifier(AttackSource::SwordCleave),
+            1.2
+        );
+        assert_eq!(
+            attack_source_knockback_modifier(AttackSource::SwordThrust),
+            0.7
+        );
     }
 
     #[test]

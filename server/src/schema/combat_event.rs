@@ -29,6 +29,8 @@ pub enum CombatAttackSourceV1 {
     BurstMeridian,
     QiNeedle,
     FullPower,
+    SwordCleave,
+    SwordThrust,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -42,6 +44,7 @@ pub enum CombatRealtimeKindV1 {
 #[serde(rename_all = "snake_case")]
 pub enum CombatDefenseKindV1 {
     JieMai,
+    SwordParry,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -61,6 +64,8 @@ pub struct CombatRealtimeEventV1 {
     pub source: Option<CombatAttackSourceV1>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub damage: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub physical_damage: Option<f32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub contam_delta: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -105,6 +110,7 @@ mod tests {
             wound_kind: Some(CombatWoundKindV1::Blunt),
             source: Some(CombatAttackSourceV1::Melee),
             damage: Some(20.0),
+            physical_damage: Some(0.0),
             contam_delta: Some(5.0),
             description: Some("debug_attack_intent offline:Azure -> offline:Crimson".to_string()),
             cause: None,

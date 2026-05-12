@@ -375,6 +375,7 @@ pub(crate) fn apply_alchemy_explode_outcomes(
                 wound_kind: WoundKind::Burn,
                 source: crate::combat::events::AttackSource::Melee,
                 debug_command: false,
+                physical_damage: 0.0,
                 damage,
                 contam_delta: 0.0,
                 description: format!(

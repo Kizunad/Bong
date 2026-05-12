@@ -87,6 +87,8 @@ fn status_effect_name(kind: &StatusEffectKind) -> String {
         StatusEffectKind::ContaminationBoost => "丹毒加重".to_string(),
         StatusEffectKind::AlchemyBuff(tag) => format!("丹药副效：{tag}"),
         StatusEffectKind::ParryRecovery => "截脉收势".to_string(),
+        StatusEffectKind::SwordParrying => "剑格架势".to_string(),
+        StatusEffectKind::Staggered => "反震硬直".to_string(),
         StatusEffectKind::Disoriented => "迷乱".to_string(),
         StatusEffectKind::WoundHeal => "伤口回稳".to_string(),
         StatusEffectKind::BodyPartResist(part) => format!("{}硬化", body_part_name(*part)),
@@ -109,6 +111,7 @@ fn status_effect_category(kind: &StatusEffectKind) -> &'static str {
         StatusEffectKind::Stunned
         | StatusEffectKind::VortexCasting
         | StatusEffectKind::ParryRecovery
+        | StatusEffectKind::Staggered
         | StatusEffectKind::Disoriented => "control",
         StatusEffectKind::DamageReduction
         | StatusEffectKind::BreakthroughBoost
@@ -120,6 +123,7 @@ fn status_effect_category(kind: &StatusEffectKind) -> &'static str {
         | StatusEffectKind::SpeedBoost
         | StatusEffectKind::StaminaRecovBoost
         | StatusEffectKind::MirrorConcealment
+        | StatusEffectKind::SwordParrying
         | StatusEffectKind::SpiritTreasurePerception => "buff",
         StatusEffectKind::Slowed
         | StatusEffectKind::DamageAmp

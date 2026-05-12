@@ -162,6 +162,7 @@ mod tests {
             wound_kind: WoundKind::Cut,
             source: AttackSource::Melee,
             debug_command: false,
+            physical_damage: 0.0,
             damage: 10.0,
             contam_delta: 0.0,
             description: String::new(),

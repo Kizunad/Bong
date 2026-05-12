@@ -611,3 +611,39 @@ remaining_ticks = 1200（60 秒）
 47. 格火星
 48. 三式音效区分
 49. 三式动画区分
+
+## Finish Evidence
+
+### 落地清单
+
+- P0 纯物理伤害分支与三式服务端接入：`server/src/combat/resolve.rs` 支持 `physical_damage`、零真元物理伤害、剑格 `DefenseKind::SwordParry`；`server/src/combat/sword_basics.rs` 注册 `sword.cleave` / `sword.thrust` / `sword.parry`；`server/src/combat/events.rs` 增加 `AttackSource::SwordCleave|SwordThrust` 与 `StatusEffectKind::SwordParrying`；`server/src/cultivation/known_techniques.rs` 增加 4 个剑道基础 `TechniqueDefinition` 与 `stamina_cost`。
+- P1 注剑：`SwordQiStore`、`cast_sword_infuse`、`sword_infuse_completion_tick` 落在 `server/src/combat/sword_basics.rs`，注剑视听走 `server/src/network/vfx_animation_trigger.rs`、`server/src/network/audio_trigger.rs` 与 `server/assets/audio/recipes/sword_infuse.json`。
+- P2 熟练度曲线：`sword_profile()`、`sword_proficiency_label()`、命中/格挡熟练度递增与 HUD 字段落在 `server/src/combat/sword_basics.rs`、`server/src/network/techniques_snapshot_emit.rs`、`agent/packages/schema/src/combat-hud.ts`、`client/src/main/java/com/bong/client/combat/inspect/`。
+- P3 饱和测试与跨端视听：server 覆盖零真元物理伤害、剑格反伤、注剑逸散、熟练度曲线；client 覆盖 `bong:sword_cleave|sword_thrust|sword_parry|sword_infuse` 动画 manifest、VFX registry 和技巧面板字段；schema 覆盖 `physical_damage`、剑式 attack source、`proficiency_label` 与 `stamina_cost`。
+
+### 关键 commit
+
+- `701cb45d3` 2026-05-12 `feat(sword-basics): 接入剑道三式服务端战斗`
+- `d995854ae` 2026-05-12 `feat(sword-basics): 同步战斗与功法 schema`
+- `bafbe08cb` 2026-05-12 `feat(sword-basics): 补客户端剑式视听与熟练度展示`
+- `f71113cae` 2026-05-13 `fix(sword-basics): 对齐击退上游验证`
+
+### 测试结果
+
+- `server/ cargo fmt --check`：通过。
+- `server/ cargo clippy --all-targets -- -D warnings`：通过。
+- `server/ cargo test`：4639 passed。
+- `client/ JAVA_HOME="$HOME/.sdkman/candidates/java/17.0.18-amzn" PATH="$HOME/.sdkman/candidates/java/17.0.18-amzn/bin:$PATH" ./gradlew test build`：BUILD SUCCESSFUL。
+- `agent/ npm run build`：通过。
+- `agent/packages/tiandao/ npm test`：54 test files，363 passed。
+- `agent/packages/schema/ npm test`：20 test files，384 passed。
+
+### 跨仓库核验
+
+- server：`sword_basics` 模块、`SwordQiStore`、`AttackSource::SwordCleave|SwordThrust`、`StatusEffectKind::SwordParrying`、`CombatEvent.physical_damage`、`TechniqueDefinition.stamina_cost`。
+- client：`SwordBasicsVfxPlayer`、`VfxBootstrap` 注册 4 个剑式 VFX、`BongAnimations.SWORD_CLEAVE|SWORD_THRUST|SWORD_PARRY|SWORD_INFUSE`、4 个 player animation asset、4 个 audio recipe。
+- agent/schema：`CombatAttackSourceV1` 增加 `sword_cleave|sword_thrust`，`CombatRealtimeEventV1.physical_damage`，`TechniqueEntryV1.proficiency_label` 与 `stamina_cost`。
+
+### 遗留 / 后续
+
+- 本 plan 无阻塞遗留；高阶剑道染色、刀/枪/拳基础武技按后续独立 plan 处理。

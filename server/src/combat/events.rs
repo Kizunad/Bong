@@ -51,6 +51,8 @@ pub enum AttackSource {
     BurstMeridian,
     QiNeedle,
     FullPower,
+    SwordCleave,
+    SwordThrust,
 }
 
 #[derive(Debug, Clone, Event, Serialize, Deserialize)]
@@ -62,6 +64,7 @@ pub struct DefenseIntent {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum DefenseKind {
     JieMai,
+    SwordParry,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -98,6 +101,10 @@ pub enum StatusEffectKind {
     AlchemyBuff(String),
     /// plan-zhenmai-v1 §3.1.C：截脉震爆触发后的半息僵直。
     ParryRecovery,
+    /// plan-sword-basics-v1：基础剑式“格”的短时剑身格挡窗口。
+    SwordParrying,
+    /// plan-sword-basics-v1：被剑格反震后的短暂硬直。
+    Staggered,
     /// plan-niche-defense-v1 P1：高级灵龛阵法陷阱制造的短时迷乱。
     Disoriented,
     /// plan-alchemy-combat-v1 P0：战场丹药即时伤口恢复的 HUD 标记。
@@ -146,6 +153,9 @@ pub struct CombatEvent {
     pub source: AttackSource,
     #[serde(default, skip_serializing_if = "is_false")]
     pub debug_command: bool,
+    /// 真元/经脉分支造成的伤害仍写入 `damage`；凡器/肉身的纯物理分支写入此字段。
+    #[serde(default)]
+    pub physical_damage: f32,
     pub damage: f32,
     pub contam_delta: f64,
     pub description: String,

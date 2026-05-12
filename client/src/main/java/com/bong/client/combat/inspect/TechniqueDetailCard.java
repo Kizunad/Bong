@@ -84,7 +84,9 @@ public final class TechniqueDetailCard {
         title.color(Color.ofArgb(technique.grade().color()));
         description.text(Text.literal(shorten(technique.description(), 52)));
         requirements.text(Text.literal("需求: " + realmText(technique) + " / 经脉 " + requiredMeridianText(technique)));
-        numbers.text(Text.literal("真元 " + String.format(java.util.Locale.ROOT, "%.2f", technique.qiCost())
+        numbers.text(Text.literal(technique.proficiencyLabel()
+            + " " + Math.round(technique.proficiency() * 100.0f) + "%"
+            + " · 真元 " + String.format(java.util.Locale.ROOT, "%.2f", technique.qiCost())
             + " · cast " + technique.castTicks() + "t"
             + " · cd " + technique.cooldownTicks() + "t"
             + " · 距离 " + String.format(java.util.Locale.ROOT, "%.1f", technique.range())));

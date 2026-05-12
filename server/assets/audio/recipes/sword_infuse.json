@@ -1,0 +1,21 @@
+{
+  "id": "sword_infuse",
+  "layers": [
+    {
+      "sound": "minecraft:block.amethyst_block.chime",
+      "volume": 0.4,
+      "pitch": 0.6,
+      "delay_ticks": 10
+    },
+    {
+      "sound": "minecraft:block.amethyst_cluster.step",
+      "volume": 0.3,
+      "pitch": 0.8,
+      "delay_ticks": 20
+    }
+  ],
+  "priority": 50,
+  "attenuation": "world_3d",
+  "category": "PLAYERS",
+  "bus": "COMBAT"
+}

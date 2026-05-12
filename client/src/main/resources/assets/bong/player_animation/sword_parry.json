@@ -1,0 +1,38 @@
+{
+  "version": 3,
+  "author": "Bong",
+  "name": "sword_parry",
+  "description": "Basic sword parry: set the blade across the body.",
+  "emote": {
+    "beginTick": 0,
+    "endTick": 12,
+    "stopTick": 14,
+    "isLoop": false,
+    "returnTick": 0,
+    "nsfw": false,
+    "degrees": false,
+    "moves": [
+      { "tick": 0, "easing": "INOUTSINE", "body": { "z": 0.0 } },
+      { "tick": 0, "easing": "INOUTSINE", "torso": { "yaw": 0.0 } },
+      { "tick": 0, "easing": "INOUTSINE", "rightArm": { "pitch": 0.0 } },
+      { "tick": 0, "easing": "INOUTSINE", "rightArm": { "yaw": 0.0 } },
+      { "tick": 0, "easing": "INOUTSINE", "rightArm": { "bend": 0.0 } },
+      { "tick": 0, "easing": "INOUTSINE", "leftArm": { "pitch": 0.0 } },
+      { "tick": 0, "easing": "INOUTSINE", "leftArm": { "yaw": 0.0 } },
+      { "tick": 4, "easing": "OUTQUAD", "body": { "z": -0.05 } },
+      { "tick": 4, "easing": "OUTQUAD", "torso": { "yaw": 0.15 } },
+      { "tick": 4, "easing": "OUTQUAD", "rightArm": { "pitch": -0.3 } },
+      { "tick": 4, "easing": "OUTQUAD", "rightArm": { "yaw": 0.5 } },
+      { "tick": 4, "easing": "OUTQUAD", "rightArm": { "bend": -0.5 } },
+      { "tick": 4, "easing": "OUTQUAD", "leftArm": { "pitch": -0.2 } },
+      { "tick": 4, "easing": "OUTQUAD", "leftArm": { "yaw": -0.3 } },
+      { "tick": 12, "easing": "OUTQUAD", "body": { "z": 0.0 } },
+      { "tick": 12, "easing": "OUTQUAD", "torso": { "yaw": 0.0 } },
+      { "tick": 12, "easing": "OUTQUAD", "rightArm": { "pitch": 0.0 } },
+      { "tick": 12, "easing": "OUTQUAD", "rightArm": { "yaw": 0.0 } },
+      { "tick": 12, "easing": "OUTQUAD", "rightArm": { "bend": 0.0 } },
+      { "tick": 12, "easing": "OUTQUAD", "leftArm": { "pitch": 0.0 } },
+      { "tick": 12, "easing": "OUTQUAD", "leftArm": { "yaw": 0.0 } }
+    ]
+  }
+}
