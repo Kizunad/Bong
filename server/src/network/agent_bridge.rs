@@ -147,6 +147,7 @@ pub fn payload_type_label(payload_type: ServerDataType) -> &'static str {
         ServerDataType::CraftOutcome => "craft_outcome",
         ServerDataType::RecipeUnlocked => "recipe_unlocked",
         ServerDataType::CombatEventFloater => "combat_event",
+        ServerDataType::KnockbackSync => "knockback_sync",
     }
 }
 

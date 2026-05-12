@@ -653,6 +653,21 @@ describe("sample files pass schema validation", () => {
     expect(result.ok, result.errors.join("; ")).toBe(true);
   });
 
+  it("accepts knockback sync server_data payloads", () => {
+    const result = validate(ServerDataV1, {
+      v: 1,
+      type: "knockback_sync",
+      distance_blocks: 4.0,
+      velocity_blocks_per_tick: 0.8,
+      duration_ticks: 5,
+      kinetic_energy: 22.4,
+      collision_damage: 3.0,
+      chain_depth: 2,
+      block_broken: true,
+    });
+    expect(result.ok, result.errors.join("; ")).toBe(true);
+  });
+
   it("server-data.player-state.sample.json", () => {
     const data = loadSample("server-data.player-state.sample.json");
     const result = validate(ServerDataV1, data);

@@ -44,6 +44,7 @@ public final class ServerDataRouter {
             new com.bong.client.network.alchemy.AlchemyOutcomeResolvedHandler();
         com.bong.client.combat.handler.CombatEventHandler combatEventHandler =
             new com.bong.client.combat.handler.CombatEventHandler();
+        KnockbackSyncHandler knockbackSyncHandler = new KnockbackSyncHandler();
         com.bong.client.combat.handler.StatusSnapshotHandler statusSnapshotHandler =
             new com.bong.client.combat.handler.StatusSnapshotHandler();
         com.bong.client.combat.handler.DerivedAttrsHandler derivedAttrsHandler =
@@ -127,6 +128,7 @@ public final class ServerDataRouter {
         handlers.put("alchemy_outcome_resolved", alchemyOutcomeResolvedHandler);
         handlers.put("breakthrough_cinematic", breakthroughCinematicHandler);
         handlers.put("combat_event", combatEventHandler);
+        handlers.put("knockback_sync", knockbackSyncHandler);
         handlers.put("status_snapshot", statusSnapshotHandler);
         handlers.put("derived_attrs_sync", derivedAttrsHandler);
         handlers.put("vortex_state", vortexStateHandler);

@@ -209,6 +209,7 @@ pub enum ServerDataType {
     CraftOutcome,
     RecipeUnlocked,
     CombatEventFloater,
+    KnockbackSync,
 }
 
 #[derive(Debug, Clone)]
@@ -441,6 +442,7 @@ pub enum ServerDataPayloadV1 {
     /// 三渠道解锁广播（残卷 / 师承 / 顿悟），客户端弹解锁通知。
     RecipeUnlocked(RecipeUnlockedV1),
     CombatEventFloater(CombatEventFloaterV1),
+    KnockbackSync(KnockbackSyncV1),
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -458,6 +460,19 @@ pub struct CombatEventFloaterEntryV1 {
     pub x: f64,
     pub y: f64,
     pub z: f64,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct KnockbackSyncV1 {
+    pub distance_blocks: f64,
+    pub velocity_blocks_per_tick: f64,
+    pub duration_ticks: u32,
+    pub kinetic_energy: f64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub collision_damage: Option<f32>,
+    pub chain_depth: u8,
+    pub block_broken: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -1257,6 +1272,10 @@ enum ServerDataPayloadWireV1 {
     },
     CombatEvent {
         events: Vec<CombatEventFloaterEntryV1>,
+    },
+    KnockbackSync {
+        #[serde(flatten)]
+        sync: KnockbackSyncV1,
     },
 }
 
@@ -2074,6 +2093,7 @@ impl TryFrom<ServerDataPayloadWireV1> for ServerDataPayloadV1 {
             ServerDataPayloadWireV1::CombatEvent { events } => {
                 Ok(Self::CombatEventFloater(CombatEventFloaterV1 { events }))
             }
+            ServerDataPayloadWireV1::KnockbackSync { sync } => Ok(Self::KnockbackSync(sync)),
         }
     }
 }
@@ -2585,6 +2605,7 @@ impl From<&ServerDataPayloadV1> for ServerDataPayloadWireV1 {
             ServerDataPayloadV1::CombatEventFloater(floater) => Self::CombatEvent {
                 events: floater.events.clone(),
             },
+            ServerDataPayloadV1::KnockbackSync(sync) => Self::KnockbackSync { sync: sync.clone() },
         }
     }
 }
@@ -2877,6 +2898,7 @@ impl ServerDataPayloadV1 {
             Self::CraftOutcome(..) => ServerDataType::CraftOutcome,
             Self::RecipeUnlocked(..) => ServerDataType::RecipeUnlocked,
             Self::CombatEventFloater(..) => ServerDataType::CombatEventFloater,
+            Self::KnockbackSync(..) => ServerDataType::KnockbackSync,
         }
     }
 }
@@ -3347,6 +3369,15 @@ mod tests {
                     y: 0.0,
                     z: 0.0,
                 }],
+            }),
+            ServerDataPayloadV1::KnockbackSync(KnockbackSyncV1 {
+                distance_blocks: 4.0,
+                velocity_blocks_per_tick: 0.8,
+                duration_ticks: 5,
+                kinetic_energy: 22.4,
+                collision_damage: Some(3.0),
+                chain_depth: 2,
+                block_broken: true,
             }),
         ];
 

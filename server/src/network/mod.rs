@@ -37,6 +37,7 @@ pub mod gameplay_vfx;
 pub mod identity_panel_emit;
 pub mod inventory_event_emit;
 pub mod inventory_snapshot_emit;
+pub mod knockback_sync_emit;
 pub mod npc_bubble;
 pub mod npc_event_bridge;
 pub mod npc_metadata;
@@ -719,6 +720,11 @@ pub fn register(app: &mut App) {
     app.add_systems(
         Update,
         combat_event_emit::emit_combat_event_to_client
+            .after(crate::combat::resolve::resolve_attack_intents),
+    );
+    app.add_systems(
+        Update,
+        knockback_sync_emit::emit_knockback_sync_to_client
             .after(crate::combat::resolve::resolve_attack_intents),
     );
     app.add_systems(Update, woliu_state_emit::emit_vortex_state_payloads);

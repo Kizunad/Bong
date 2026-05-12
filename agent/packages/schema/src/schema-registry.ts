@@ -322,6 +322,7 @@ import {
   ServerDataTradeOfferV1,
   ServerDataRealmVisionParamsV1,
   ServerDataSpiritualSenseTargetsV1,
+  ServerDataKnockbackSyncV1,
   ServerDataYidaoHudStateV1,
   CoffinStateV1,
   BurstMeridianEventV1,
@@ -798,6 +799,7 @@ export const SCHEMA_REGISTRY = {
   serverDataSpiritTreasureStateV1: ServerDataSpiritTreasureStateV1,
   serverDataSpiritTreasureDialogueV1: ServerDataSpiritTreasureDialogueV1,
   serverDataSpiritualSenseTargetsV1: ServerDataSpiritualSenseTargetsV1,
+  serverDataKnockbackSyncV1: ServerDataKnockbackSyncV1,
   tutorialHookV1: TutorialHookV1,
   tutorialHookEventV1: TutorialHookEventV1,
   coffinOpenedV1: CoffinOpenedV1,
@@ -1268,6 +1270,8 @@ export const GENERATED_SCHEMA_FILES = {
   "spiritual-sense-targets-v1.json": SCHEMA_REGISTRY.spiritualSenseTargetsV1,
   "server-data-spiritual-sense-targets-v1.json":
     SCHEMA_REGISTRY.serverDataSpiritualSenseTargetsV1,
+  "server-data-knockback-sync-v1.json":
+    SCHEMA_REGISTRY.serverDataKnockbackSyncV1,
   "tutorial-hook-v1.json": SCHEMA_REGISTRY.tutorialHookV1,
   "tutorial-hook-event-v1.json": SCHEMA_REGISTRY.tutorialHookEventV1,
   "coffin-opened-v1.json": SCHEMA_REGISTRY.coffinOpenedV1,

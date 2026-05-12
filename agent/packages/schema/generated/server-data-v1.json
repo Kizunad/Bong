@@ -16932,6 +16932,58 @@
           "type": "integer"
         }
       }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "v",
+        "type",
+        "distance_blocks",
+        "velocity_blocks_per_tick",
+        "duration_ticks",
+        "kinetic_energy",
+        "chain_depth",
+        "block_broken"
+      ],
+      "properties": {
+        "v": {
+          "const": 1,
+          "type": "number"
+        },
+        "type": {
+          "const": "knockback_sync",
+          "type": "string"
+        },
+        "distance_blocks": {
+          "minimum": 0,
+          "type": "number"
+        },
+        "velocity_blocks_per_tick": {
+          "minimum": 0,
+          "type": "number"
+        },
+        "duration_ticks": {
+          "minimum": 1,
+          "type": "integer"
+        },
+        "kinetic_energy": {
+          "minimum": 0,
+          "type": "number"
+        },
+        "collision_damage": {
+          "minimum": 0,
+          "type": "number"
+        },
+        "chain_depth": {
+          "minimum": 0,
+          "maximum": 3,
+          "type": "integer"
+        },
+        "block_broken": {
+          "type": "boolean"
+        }
+      }
     }
   ]
 }
