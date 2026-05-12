@@ -7,6 +7,7 @@ pub mod faction;
 pub mod farming_brain;
 pub mod hunger;
 pub mod hydrate;
+pub mod intel;
 pub mod interaction_memory;
 pub mod intrusion_npc;
 pub mod lifecycle;

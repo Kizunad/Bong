@@ -104,6 +104,43 @@ pub struct RelicCoreSlot {
     pub slot_count: u8,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[allow(dead_code)] // P4 records extract-point PvP math before full live encounter telemetry exists.
+pub struct TsyExtractPvpProfile {
+    pub waiting_players: usize,
+    pub extract_ticks: u64,
+    pub pvp_window_ticks: u64,
+    pub race_out: bool,
+}
+
+impl TsyExtractPvpProfile {
+    #[allow(dead_code)] // See TsyExtractPvpProfile.
+    pub fn prisoner_dilemma_active(&self) -> bool {
+        self.waiting_players >= 2 && self.pvp_window_ticks > 0
+    }
+}
+
+#[allow(dead_code)] // See TsyExtractPvpProfile.
+pub fn pvp_extract_point_profile(
+    waiting_players: usize,
+    extract_ticks: u64,
+    race_out: bool,
+) -> TsyExtractPvpProfile {
+    let pvp_window_ticks = if waiting_players < 2 {
+        0
+    } else if race_out {
+        extract_ticks.min(3 * 20)
+    } else {
+        extract_ticks.min(15 * 20)
+    };
+    TsyExtractPvpProfile {
+        waiting_players,
+        extract_ticks,
+        pvp_window_ticks,
+        race_out,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -174,5 +211,51 @@ mod tests {
         );
         assert_eq!(exit.direction, PortalDirection::Exit);
         assert_eq!(exit.target.dimension, DimensionKind::Overworld);
+    }
+
+    #[test]
+    fn pvp_at_extract_point() {
+        let normal = pvp_extract_point_profile(2, 12 * 20, false);
+        assert!(normal.prisoner_dilemma_active());
+        assert_eq!(normal.pvp_window_ticks, 12 * 20);
+
+        let race_out = pvp_extract_point_profile(3, 12 * 20, true);
+        assert!(race_out.prisoner_dilemma_active());
+        assert_eq!(race_out.pvp_window_ticks, 3 * 20);
+
+        let alone = pvp_extract_point_profile(1, 12 * 20, false);
+        assert!(!alone.prisoner_dilemma_active());
+        assert_eq!(alone.pvp_window_ticks, 0);
+    }
+
+    #[test]
+    fn pvp_extract_point_boundaries() {
+        let zero_ticks = pvp_extract_point_profile(2, 0, false);
+        assert!(!zero_ticks.prisoner_dilemma_active());
+        assert_eq!(zero_ticks.pvp_window_ticks, 0);
+
+        for (extract_ticks, expected_window) in [(59, 59), (60, 60), (61, 60)] {
+            let profile = pvp_extract_point_profile(2, extract_ticks, true);
+            assert!(
+                profile.prisoner_dilemma_active(),
+                "race-out should stay active at threshold input {extract_ticks}"
+            );
+            assert_eq!(
+                profile.pvp_window_ticks, expected_window,
+                "race-out pvp window should clamp at 60 ticks"
+            );
+        }
+
+        for (extract_ticks, expected_window) in [(299, 299), (300, 300), (301, 300)] {
+            let profile = pvp_extract_point_profile(2, extract_ticks, false);
+            assert!(
+                profile.prisoner_dilemma_active(),
+                "normal extract should stay active at threshold input {extract_ticks}"
+            );
+            assert_eq!(
+                profile.pvp_window_ticks, expected_window,
+                "normal extract pvp window should clamp at 300 ticks"
+            );
+        }
     }
 }

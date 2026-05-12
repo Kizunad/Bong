@@ -2,6 +2,7 @@ pub mod components;
 pub mod events;
 pub mod high_renown_tracker;
 pub mod niche_defense;
+pub mod pvp_encounter;
 
 use std::collections::{HashMap, HashSet};
 use std::fs;
@@ -150,6 +151,7 @@ pub fn register(app: &mut App) {
     app.init_resource::<TradeOfferRegistry>();
     app.init_resource::<SpiritNicheRegistry>();
     high_renown_tracker::register(app);
+    pvp_encounter::register(app);
     app.add_event::<PlayerChatCollected>();
     app.add_event::<SocialExposureEvent>();
     app.add_event::<SocialMentorshipEvent>();
@@ -194,12 +196,14 @@ pub fn register(app: &mut App) {
                 .after(handle_social_pacts),
             apply_social_relationships
                 .after(handle_death_social_effects)
+                .after(pvp_encounter::handle_pvp_encounter_events)
                 .after(handle_social_mentorships)
                 .after(update_companion_relationships)
                 .after(handle_social_pacts),
             expire_companion_relationships.after(apply_social_relationships),
             apply_social_renown_deltas
                 .after(handle_death_social_effects)
+                .after(pvp_encounter::handle_pvp_encounter_events)
                 .after(handle_social_pacts)
                 .after(apply_faction_membership_decisions),
             emit_niche_defense_server_data,

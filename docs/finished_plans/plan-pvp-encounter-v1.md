@@ -49,16 +49,16 @@
 
 | 阶段 | 内容 | 状态 |
 |----|------|----|
-| P0 | 遭遇决策树：远距离评估→近距离交互→结果分类 | ⬜ |
-| P1 | 非语言沟通渠道：移动/停顿/距离/物品展示作为"沉默的对话" | ⬜ |
-| P2 | 背叛叙事：从临时合作到翻脸的触发条件与情感后果 | ⬜ |
-| P3 | 遭遇后信息战：幸存者如何利用/传播/封锁遭遇信息 | ⬜ |
-| P4 | 坍缩渊遭遇模式：入口/浅层/深层/撤离点的不同遭遇剧本 | ⬜ |
-| P5 | 多人遭遇压测：5 玩家交叉遭遇矩阵 + 叙事涌现验证 | ⬜ |
+| P0 | 遭遇决策树：远距离评估→近距离交互→结果分类 | ✅ 2026-05-12 |
+| P1 | 非语言沟通渠道：移动/停顿/距离/物品展示作为"沉默的对话" | ✅ 2026-05-12 |
+| P2 | 背叛叙事：从临时合作到翻脸的触发条件与情感后果 | ✅ 2026-05-12 |
+| P3 | 遭遇后信息战：幸存者如何利用/传播/封锁遭遇信息 | ✅ 2026-05-12 |
+| P4 | 坍缩渊遭遇模式：入口/浅层/深层/撤离点的不同遭遇剧本 | ✅ 2026-05-12 |
+| P5 | 多人遭遇压测：5 玩家交叉遭遇矩阵 + 叙事涌现验证 | ✅ 2026-05-12 |
 
 ---
 
-## P0 — 遭遇决策树 ⬜
+## P0 — 遭遇决策树 ✅ 2026-05-12
 
 ### 交付物
 
@@ -111,7 +111,7 @@
 
 ---
 
-## P1 — 非语言沟通渠道 ⬜
+## P1 — 非语言沟通渠道 ✅ 2026-05-12
 
 ### 交付物
 
@@ -145,7 +145,7 @@
 
 ---
 
-## P2 — 背叛叙事 ⬜
+## P2 — 背叛叙事 ✅ 2026-05-12
 
 ### 交付物
 
@@ -181,7 +181,7 @@
 
 ---
 
-## P3 — 遭遇后信息战 ⬜
+## P3 — 遭遇后信息战 ✅ 2026-05-12
 
 ### 交付物
 
@@ -212,7 +212,7 @@
 
 ---
 
-## P4 — 坍缩渊遭遇模式 ⬜
+## P4 — 坍缩渊遭遇模式 ✅ 2026-05-12
 
 ### 交付物
 
@@ -244,7 +244,7 @@
 
 ---
 
-## P5 — 多人遭遇压测 ⬜
+## P5 — 多人遭遇压测 ✅ 2026-05-12
 
 ### 交付物
 
@@ -272,8 +272,36 @@
 
 ---
 
-## Finish Evidence（待填）
+## Finish Evidence
 
-- **落地清单**：遭遇决策树文档 / `SilentSignalSystem` / 背叛→社交后果链路 / 情报流通渠道 / 坍缩渊遭遇模式 / 5 玩家压测报告
-- **关键 commit**：P0-P5 各自 hash
-- **遗留 / 后续**：大规模遭遇（10+ 玩家在同一区域——兽潮触发点/伪灵脉中心）/ 长期宿敌叙事（两个玩家多次遭遇形成"老对手"关系——agent 识别并生成专属叙事）/ 组队系统 UI（目前仅靠 chat 组队，未来可能需要正式 party 系统）
+- **落地清单**：
+  - P0：`server/src/social/pvp_encounter.rs` 落地 `EncounterPhase`、`EncounterDecisionWeights`、`phase_for_distance`，把遭遇三阶段和权重表变成可测试契约。
+  - P1：`client/src/main/java/com/bong/client/social/SilentSignalSystem.java` + `SilentSignalSystemTest.java` 覆盖 15 格内火把、骨币、后退、双蹲、指向、打坐信号；不显示规则解释或假信号警告。
+  - P2：`PvpEncounterEvent`、`EncounterOutcome::Betrayal`、`SocialRelationshipEvent`、`SocialRenownDeltaEvent(reason=pvp_betrayal)`、`PlayerIdentities` 信誉惩罚链路已接入，NPC 目击时叛徒 active identity 增加恶名和“背信者”标签。
+  - P3：`BiographyEntry::PvpEncounter` / `PvpBetrayal`、`server/src/persistence/mod.rs` 生平事件索引、`agent/packages/schema/src/biography.ts` 与 generated schema 已同步；`server/src/npc/intel.rs` 提供骨币付费的部分遭遇情报查询契约。
+  - P4：`server/src/network/chat_collector.rs` 在 `TsyPresence` 下阻断普通 chat；`server/src/world/tsy.rs` 落地撤离点 PvP 囚徒困境窗口模型。
+  - P5：`scripts/e2e/pvp-5player-encounter.sh` 固化 5 玩家交叉遭遇矩阵测试；agent `political-narration` 订阅 `bong:social/renown_delta` 并把 `pvp_betrayal` 转成匿名江湖传闻。
+- **关键 commit**：
+  - `07be37d4e` · 2026-05-12 · `feat(pvp): 落地多人遭遇社交后果`
+  - `d22b7a00a` · 2026-05-12 · `feat(client): 增加沉默遭遇信号识别`
+  - `2a0372cf3` · 2026-05-12 · `feat(agent): 接入背叛声望叙事`
+- **测试结果**：
+  - `cd server && cargo test pvp_encounter` → 6 passed
+  - `cd server && cargo test chat_blocked_in_negative_pressure` → 1 passed
+  - `cd server && cargo test pvp_at_extract_point` → 1 passed
+  - `cd server && cargo test npc_intel_purchase_partial_info` → 1 passed
+  - `scripts/e2e/pvp-5player-encounter.sh` → `pvp_five_player_encounter_matrix_emits_trackable_story` passed
+  - `cd server && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test` → 4485 passed
+  - `cd client && JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64 PATH=/usr/lib/jvm/java-17-openjdk-amd64/bin:$PATH ./gradlew test --tests "com.bong.client.social.SilentSignalSystemTest"` → passed
+  - `cd client && JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64 PATH=/usr/lib/jvm/java-17-openjdk-amd64/bin:$PATH ./gradlew test build` → BUILD SUCCESSFUL
+  - `cd agent && npm run generate -w @bong/schema` → passed
+  - `cd agent && npm run generate:check -w @bong/schema` → passed
+  - `cd agent && npm run build && npm test -w @bong/tiandao && npm test -w @bong/schema` → tiandao 356 passed / schema 376 passed
+- **跨仓库核验**：
+  - server：`PvpEncounterEvent`、`EncounterOutcome::Betrayal`、`BiographyEntry::PvpEncounter`、`SocialRenownDeltaEvent(reason=pvp_betrayal)`、`TsyPresence` chat block、`TsyExtractPvpProfile`
+  - client：`SilentSignalSystem.detect`、`SignalKind.PEACE_TORCH`、`SignalKind.BONE_COIN_OFFER`、`SignalKind.SEATED_NEUTRAL`
+  - agent/schema：`BiographyEntryV1` 新增 `PvpEncounter` / `PvpBetrayal`，`POLITICAL_EVENT_CHANNELS` 订阅 `SOCIAL_RENOWN_DELTA`，`eventType: "pvp_betrayal"` 匿名 narration
+- **遗留 / 后续**：
+  - 大规模遭遇（10+ 玩家在兽潮触发点、伪灵脉中心或裂缝口聚集）仍需后续 plan 做 live telemetry 与负载验证。
+  - 长期宿敌叙事（同两名玩家多次遭遇形成“老对手”关系）尚未做跨遭遇聚合。
+  - 正式 party/组队 UI 不在本 plan 范围；当前仍保持匿名、动作信号与既有 chat/交易链路驱动。
