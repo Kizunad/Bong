@@ -4,8 +4,6 @@ use serde::{Deserialize, Serialize};
 #[serde(rename_all = "snake_case")]
 pub enum MovementActionRequestV1 {
     Dash,
-    Slide,
-    DoubleJump,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -13,8 +11,6 @@ pub enum MovementActionRequestV1 {
 pub enum MovementActionV1 {
     None,
     Dashing,
-    Sliding,
-    DoubleJumping,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -34,9 +30,6 @@ pub struct MovementStateV1 {
     pub movement_action: MovementActionV1,
     pub zone_kind: MovementZoneKindV1,
     pub dash_cooldown_remaining_ticks: u64,
-    pub slide_cooldown_remaining_ticks: u64,
-    pub double_jump_charges_remaining: u8,
-    pub double_jump_charges_max: u8,
     pub hitbox_height_blocks: f32,
     pub stamina_current: f32,
     pub stamina_max: f32,

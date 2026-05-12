@@ -14165,9 +14165,6 @@
         "movement_action",
         "zone_kind",
         "dash_cooldown_remaining_ticks",
-        "slide_cooldown_remaining_ticks",
-        "double_jump_charges_remaining",
-        "double_jump_charges_max",
         "hitbox_height_blocks",
         "stamina_current",
         "stamina_max",
@@ -14198,14 +14195,6 @@
             {
               "const": "dashing",
               "type": "string"
-            },
-            {
-              "const": "sliding",
-              "type": "string"
-            },
-            {
-              "const": "double_jumping",
-              "type": "string"
             }
           ]
         },
@@ -14233,18 +14222,6 @@
           "minimum": 0,
           "type": "integer"
         },
-        "slide_cooldown_remaining_ticks": {
-          "minimum": 0,
-          "type": "integer"
-        },
-        "double_jump_charges_remaining": {
-          "minimum": 0,
-          "type": "integer"
-        },
-        "double_jump_charges_max": {
-          "minimum": 0,
-          "type": "integer"
-        },
         "hitbox_height_blocks": {
           "minimum": 0,
           "type": "number"
@@ -14265,20 +14242,8 @@
           "type": "integer"
         },
         "rejected_action": {
-          "anyOf": [
-            {
-              "const": "dash",
-              "type": "string"
-            },
-            {
-              "const": "slide",
-              "type": "string"
-            },
-            {
-              "const": "double_jump",
-              "type": "string"
-            }
-          ]
+          "const": "dash",
+          "type": "string"
         }
       }
     },

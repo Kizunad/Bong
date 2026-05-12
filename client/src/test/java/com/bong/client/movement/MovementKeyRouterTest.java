@@ -13,7 +13,7 @@ class MovementKeyRouterTest {
 
         assertEquals(
             ClientRequestProtocol.MovementAction.DASH,
-            router.route(true, false, false, false)
+            router.route(true)
         );
     }
 
@@ -21,33 +21,6 @@ class MovementKeyRouterTest {
     void noMovementKeyDoesNotRouteAction() {
         MovementKeyRouter router = new MovementKeyRouter();
 
-        assertNull(router.route(false, false, false, false));
-    }
-
-    @Test
-    void slideKeyRoutesSlide() {
-        MovementKeyRouter router = new MovementKeyRouter();
-
-        assertEquals(
-            ClientRequestProtocol.MovementAction.SLIDE,
-            router.route(false, true, false, false)
-        );
-    }
-
-    @Test
-    void airborneJumpRoutesDoubleJump() {
-        MovementKeyRouter router = new MovementKeyRouter();
-
-        assertEquals(
-            ClientRequestProtocol.MovementAction.DOUBLE_JUMP,
-            router.route(false, false, true, true)
-        );
-    }
-
-    @Test
-    void groundedJumpDoesNotRouteDoubleJump() {
-        MovementKeyRouter router = new MovementKeyRouter();
-
-        assertNull(router.route(false, false, true, false));
+        assertNull(router.route(false));
     }
 }

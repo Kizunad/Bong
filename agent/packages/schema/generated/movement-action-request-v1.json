@@ -1,16 +1,4 @@
 {
-  "anyOf": [
-    {
-      "const": "dash",
-      "type": "string"
-    },
-    {
-      "const": "slide",
-      "type": "string"
-    },
-    {
-      "const": "double_jump",
-      "type": "string"
-    }
-  ]
+  "const": "dash",
+  "type": "string"
 }

@@ -36,11 +36,12 @@ impl KnownTechniques {
     }
 }
 
-const TECHNIQUE_IDS: [&str; 37] = [
+const TECHNIQUE_IDS: [&str; 38] = [
     "sword.cleave",
     "sword.thrust",
     "sword.parry",
     "sword.infuse",
+    "movement.dash",
     "burst_meridian.beng_quan",
     "burst_meridian.tie_shan_kao",
     "burst_meridian.xue_beng_bu",
@@ -109,7 +110,7 @@ const WOLIU_V3_REQUIRED_MERIDIANS: [TechniqueRequiredMeridian; 2] = [
     },
 ];
 
-pub const TECHNIQUE_DEFINITIONS: [TechniqueDefinition; 37] = [
+pub const TECHNIQUE_DEFINITIONS: [TechniqueDefinition; 38] = [
     TechniqueDefinition {
         id: "sword.cleave",
         display_name: "劈",
@@ -165,6 +166,20 @@ pub const TECHNIQUE_DEFINITIONS: [TechniqueDefinition; 37] = [
         cooldown_ticks: 100,
         range: 0.0,
         icon_texture: "bong:textures/gui/skill/sword_infuse.png",
+    },
+    TechniqueDefinition {
+        id: "movement.dash",
+        display_name: "闪避",
+        grade: "common",
+        description: "短距闪身，熟练后体力消耗与冷却下降、位移距离增加。",
+        required_realm: "Awaken",
+        required_meridians: &[],
+        qi_cost: 0.0,
+        stamina_cost: 15.0,
+        cast_ticks: 0,
+        cooldown_ticks: 40,
+        range: 2.8,
+        icon_texture: "bong:textures/gui/skill/movement_dash.png",
     },
     TechniqueDefinition {
         id: "burst_meridian.beng_quan",
@@ -758,9 +773,9 @@ mod tests {
     }
 
     #[test]
-    fn dev_default_has_all_37() {
+    fn dev_default_has_all_38() {
         let dev = KnownTechniques::dev_default();
-        assert_eq!(dev.entries.len(), 37);
+        assert_eq!(dev.entries.len(), 38);
         assert!(dev
             .entries
             .iter()

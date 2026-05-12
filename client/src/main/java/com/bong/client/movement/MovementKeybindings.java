@@ -14,11 +14,9 @@ import org.lwjgl.glfw.GLFW;
 public final class MovementKeybindings {
     private static final String CATEGORY = "category.bong-client.controls";
     private static final String DASH_KEY_TRANSLATION = "key.bong-client.movement_dash";
-    private static final String SLIDE_KEY_TRANSLATION = "key.bong-client.movement_slide";
     private static final MovementKeyRouter ROUTER = new MovementKeyRouter();
     private static boolean registered;
     private static KeyBinding dashKey;
-    private static KeyBinding slideKey;
 
     private MovementKeybindings() {
     }
@@ -30,13 +28,10 @@ public final class MovementKeybindings {
         dashKey = KeyBindingHelper.registerKeyBinding(
             new KeyBinding(DASH_KEY_TRANSLATION, InputUtil.Type.KEYSYM, GLFW.GLFW_KEY_V, CATEGORY)
         );
-        slideKey = KeyBindingHelper.registerKeyBinding(
-            new KeyBinding(SLIDE_KEY_TRANSLATION, InputUtil.Type.KEYSYM, GLFW.GLFW_KEY_B, CATEGORY)
-        );
         ClientTickEvents.END_CLIENT_TICK.register(MovementKeybindings::onEndClientTick);
         ClientPlayConnectionEvents.DISCONNECT.register((handler, client) -> client.execute(MovementKeybindings::resetOnDisconnect));
         registered = true;
-        BongClient.LOGGER.info("Movement key router ready: configurable dash/slide keys, airborne Space double jump.");
+        BongClient.LOGGER.info("Movement key router ready: configurable dash key.");
     }
 
     static void onEndClientTick(MinecraftClient client) {
@@ -45,14 +40,9 @@ public final class MovementKeybindings {
         }
 
         boolean dashTapped = consumeWasPressed(dashKey);
-        boolean slideTapped = consumeWasPressed(slideKey);
-        boolean jumpTapped = consumeWasPressed(client.options.jumpKey);
 
         ClientRequestProtocol.MovementAction action = ROUTER.route(
-            dashTapped,
-            slideTapped,
-            jumpTapped,
-            !client.player.isOnGround()
+            dashTapped
         );
         if (action != null) {
             ClientRequestSender.sendMovementAction(action);

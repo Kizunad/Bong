@@ -53,11 +53,11 @@ public class ClientRequestSenderTest {
     @Test
     void sendMovementActionUsesCorrectChannelAndJson() {
         install();
-        ClientRequestSender.sendMovementAction(ClientRequestProtocol.MovementAction.SLIDE);
+        ClientRequestSender.sendMovementAction(ClientRequestProtocol.MovementAction.DASH);
         assertEquals(1, sent.size());
         assertEquals(new Identifier("bong", "client_request"), sent.get(0).channel());
         assertEquals(
-            "{\"type\":\"movement_action\",\"v\":1,\"action\":\"slide\"}",
+            "{\"type\":\"movement_action\",\"v\":1,\"action\":\"dash\"}",
             sent.get(0).body()
         );
     }

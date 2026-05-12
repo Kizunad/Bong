@@ -9,8 +9,6 @@ import java.util.Objects;
 
 public final class MovementVfxPlayer implements VfxPlayer {
     public static final Identifier DASH = new Identifier("bong", "movement_dash");
-    public static final Identifier SLIDE = new Identifier("bong", "movement_slide");
-    public static final Identifier DOUBLE_JUMP = new Identifier("bong", "movement_double_jump");
 
     private final Kind kind;
 
@@ -19,9 +17,7 @@ public final class MovementVfxPlayer implements VfxPlayer {
     }
 
     public enum Kind {
-        DASH,
-        SLIDE,
-        DOUBLE_JUMP
+        DASH
     }
 
     @Override
@@ -45,8 +41,6 @@ public final class MovementVfxPlayer implements VfxPlayer {
 
         switch (kind) {
             case DASH -> playDash(client, world, ox, oy, oz, dir, rgb, count, maxAge);
-            case SLIDE -> playSlide(client, world, ox, oy, oz, dir, rgb, count, maxAge);
-            case DOUBLE_JUMP -> playDoubleJump(client, world, ox, oy, oz, rgb, count, maxAge);
         }
     }
 
@@ -75,85 +69,21 @@ public final class MovementVfxPlayer implements VfxPlayer {
         }
     }
 
-    private static void playSlide(
-        MinecraftClient client,
-        ClientWorld world,
-        double ox,
-        double oy,
-        double oz,
-        double[] dir,
-        float[] rgb,
-        int count,
-        int maxAge
-    ) {
-        for (int i = 0; i < count; i++) {
-            GameplayVfxUtil.spawnSprite(client, world, BongParticles.cloudDustSprites,
-                ox - dir[0] * world.random.nextDouble() * 0.7 + (world.random.nextDouble() - 0.5) * 0.25,
-                oy + 0.02,
-                oz - dir[2] * world.random.nextDouble() * 0.7 + (world.random.nextDouble() - 0.5) * 0.25,
-                -dir[0] * 0.04 + (world.random.nextDouble() - 0.5) * 0.04,
-                0.015,
-                -dir[2] * 0.04 + (world.random.nextDouble() - 0.5) * 0.04,
-                rgb, 0.7f, maxAge, 0.12f);
-        }
-        for (int i = 0; i < Math.max(1, count / 4); i++) {
-            GameplayVfxUtil.spawnSprite(client, world, BongParticles.tribulationSparkSprites,
-                ox + (world.random.nextDouble() - 0.5) * 0.5,
-                oy + 0.05,
-                oz + (world.random.nextDouble() - 0.5) * 0.5,
-                (world.random.nextDouble() - 0.5) * 0.08,
-                0.04,
-                (world.random.nextDouble() - 0.5) * 0.08,
-                new float[] { 1.0f, 0.53f, 0.0f }, 0.65f, Math.max(6, maxAge / 2), 0.07f);
-        }
-    }
-
-    private static void playDoubleJump(
-        MinecraftClient client,
-        ClientWorld world,
-        double ox,
-        double oy,
-        double oz,
-        float[] rgb,
-        int count,
-        int maxAge
-    ) {
-        GameplayVfxUtil.spawnDecal(client, world, BongParticles.lingqiRippleSprites,
-            ox, oy + 0.02, oz, rgb, 0.75f, maxAge, 0.55);
-        for (int i = 0; i < count; i++) {
-            double angle = (Math.PI * 2.0 * i) / Math.max(1, count);
-            GameplayVfxUtil.spawnSprite(client, world, BongParticles.qiAuraSprites,
-                ox + Math.cos(angle) * 0.25,
-                oy + 0.08,
-                oz + Math.sin(angle) * 0.25,
-                Math.cos(angle) * 0.025,
-                -0.08 - world.random.nextDouble() * 0.03,
-                Math.sin(angle) * 0.025,
-                rgb, 0.72f, maxAge, 0.10f);
-        }
-    }
-
     private int fallbackRgb() {
         return switch (kind) {
             case DASH -> 0xDDE6EE;
-            case SLIDE -> 0x9B7653;
-            case DOUBLE_JUMP -> 0xCCCCFF;
         };
     }
 
     private int defaultCount() {
         return switch (kind) {
             case DASH -> 10;
-            case SLIDE -> 12;
-            case DOUBLE_JUMP -> 8;
         };
     }
 
     private int defaultDuration() {
         return switch (kind) {
             case DASH -> 10;
-            case SLIDE -> 12;
-            case DOUBLE_JUMP -> 8;
         };
     }
 }

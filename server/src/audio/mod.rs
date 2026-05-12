@@ -176,8 +176,8 @@ mod tests {
             SoundRecipeRegistry::load_default().expect("default audio recipes should load");
         assert_eq!(
             registry.len(),
-            204,
-            "audio registry should include base cues plus alchemy-combat and sword-basics recipes"
+            202,
+            "audio registry should exclude removed slide and double-jump movement recipes"
         );
         assert!(registry.get("coffin_enter").is_some());
         assert!(registry.get("coffin_exit").is_some());
@@ -248,8 +248,6 @@ mod tests {
         assert!(registry.get("calamity_realm_collapse").is_some());
         assert!(registry.get("armor_break").is_some());
         assert!(registry.get("movement_dash").is_some());
-        assert!(registry.get("movement_slide").is_some());
-        assert!(registry.get("movement_double_jump").is_some());
         for key in [
             "sword_cleave",
             "sword_thrust",
