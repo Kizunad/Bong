@@ -5,6 +5,7 @@ import com.bong.client.forge.ForgeScreen;
 import com.bong.client.inspect.ItemInspectScreen;
 import com.bong.client.inventory.InspectScreen;
 import com.bong.client.inventory.model.InventoryModel;
+import net.minecraft.client.gui.screen.DownloadingTerrainScreen;
 import net.minecraft.client.gui.screen.GameMenuScreen;
 import net.minecraft.client.gui.screen.Screen;
 import net.minecraft.client.gui.screen.ingame.InventoryScreen;
@@ -144,6 +145,18 @@ class ScreenTransitionTest {
 
         assertEquals(ScreenTransition.Type.SLIDE_UP, spec.type());
         assertEquals(300, spec.durationMs());
+    }
+
+    @Test
+    void downloading_terrain_screen_bypasses_transition() {
+        ScreenTransitionRegistry.bootstrapDefaults();
+
+        TransitionConfig config = ScreenTransitionRegistry.getOrDefault(DownloadingTerrainScreen.class);
+
+        assertEquals(ScreenTransition.Type.NONE, config.openTransition());
+        assertEquals(ScreenTransition.Type.NONE, config.closeTransition());
+        assertEquals(0, config.openDurationMs());
+        assertEquals(0, config.closeDurationMs());
     }
 
     @Test

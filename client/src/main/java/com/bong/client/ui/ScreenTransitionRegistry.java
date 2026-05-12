@@ -16,6 +16,7 @@ import com.bong.client.lingtian.LingtianActionScreen;
 import com.bong.client.processing.ProcessingActionScreen;
 import com.bong.client.social.SparringInviteScreen;
 import com.bong.client.social.TradeOfferScreen;
+import net.minecraft.client.gui.screen.DownloadingTerrainScreen;
 import net.minecraft.client.gui.screen.GameMenuScreen;
 import net.minecraft.client.gui.screen.Screen;
 
@@ -45,6 +46,9 @@ public final class ScreenTransitionRegistry {
     }
 
     private static void bootstrapDefaultsLocked() {
+        register(DownloadingTerrainScreen.class, TransitionConfig.of(
+            DownloadingTerrainScreen.class, ScreenTransition.Type.NONE, 0, ScreenTransition.Type.NONE, 0
+        ));
         register(InspectScreen.class, TransitionConfig.of(
             InspectScreen.class, ScreenTransition.Type.SLIDE_UP, 300, ScreenTransition.Type.SLIDE_DOWN, 300
         ));
