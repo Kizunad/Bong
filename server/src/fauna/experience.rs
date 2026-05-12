@@ -203,7 +203,8 @@ pub const fn ambient_recipe_for_visual(visual: FaunaVisualKind) -> Option<&'stat
         | FaunaVisualKind::Daoxiang
         | FaunaVisualKind::Zhinian
         | FaunaVisualKind::TsySentinel
-        | FaunaVisualKind::Fuya => None,
+        | FaunaVisualKind::Fuya
+        | FaunaVisualKind::SkullFiend => None,
     }
 }
 

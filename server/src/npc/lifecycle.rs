@@ -100,6 +100,8 @@ pub enum NpcArchetype {
     Zhinian,
     /// plan-tsy-hostile-v1 §1 — 负压畸变体（环境威胁，带耗真元光环）。
     Fuya,
+    /// plan-skull-fiend-v1 §P0 — 骨煞（头骨畸变体，直线冲撞猎物）。
+    SkullFiend,
 }
 
 impl NpcArchetype {
@@ -114,6 +116,7 @@ impl NpcArchetype {
             Self::Daoxiang => "daoxiang",
             Self::Zhinian => "zhinian",
             Self::Fuya => "fuya",
+            Self::SkullFiend => "skull_fiend",
         }
     }
 
@@ -129,6 +132,7 @@ impl NpcArchetype {
             Self::Daoxiang => 1_000_000.0,
             Self::Zhinian => 180_000.0,
             Self::Fuya => 240_000.0,
+            Self::SkullFiend => 260_000.0,
         }
     }
 

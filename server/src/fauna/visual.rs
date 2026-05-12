@@ -12,6 +12,7 @@ pub const DAOXIANG_ENTITY_KIND: EntityKind = EntityKind::new(138);
 pub const ZHINIAN_ENTITY_KIND: EntityKind = EntityKind::new(139);
 pub const TSY_SENTINEL_ENTITY_KIND: EntityKind = EntityKind::new(140);
 pub const FUYA_ENTITY_KIND: EntityKind = EntityKind::new(141);
+pub const SKULL_FIEND_ENTITY_KIND: EntityKind = EntityKind::new(142);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Component)]
 pub enum FaunaVisualKind {
@@ -23,6 +24,7 @@ pub enum FaunaVisualKind {
     Zhinian,
     TsySentinel,
     Fuya,
+    SkullFiend,
 }
 
 impl FaunaVisualKind {
@@ -36,6 +38,7 @@ impl FaunaVisualKind {
             Self::Zhinian => "#343044",
             Self::TsySentinel => "#B89258",
             Self::Fuya => "#7A2FAD",
+            Self::SkullFiend => "#C8D0FF",
         }
     }
 }
@@ -83,5 +86,6 @@ mod tests {
         assert_eq!(ZHINIAN_ENTITY_KIND.get(), 139);
         assert_eq!(TSY_SENTINEL_ENTITY_KIND.get(), 140);
         assert_eq!(FUYA_ENTITY_KIND.get(), 141);
+        assert_eq!(SKULL_FIEND_ENTITY_KIND.get(), 142);
     }
 }
