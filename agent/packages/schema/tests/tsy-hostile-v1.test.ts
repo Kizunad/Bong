@@ -16,6 +16,7 @@ describe("plan-tsy-hostile-v1 §6 — TsyHostileArchetypeV1", () => {
       "zhinian",
       "guardian_relic_sentinel",
       "fuya",
+      "skull_fiend",
     ] as const) {
       expect(validate(TsyHostileArchetypeV1, archetype).ok).toBe(true);
     }

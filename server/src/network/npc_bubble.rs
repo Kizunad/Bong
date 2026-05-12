@@ -221,6 +221,7 @@ pub fn bubble_text_by_archetype(
             NpcArchetype::Daoxiang => crate::npc::tsy_hostile::dao_chang_fake_friendly_bubble(),
             NpcArchetype::Zhinian => "...这是...",
             NpcArchetype::Fuya => "气息陷下去了。",
+            NpcArchetype::SkullFiend => "骨声贴地。",
             NpcArchetype::Beast => "它警惕地盯着你。",
             NpcArchetype::Zombie => "...",
         },

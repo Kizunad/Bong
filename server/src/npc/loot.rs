@@ -113,6 +113,12 @@ pub fn default_loot_for_archetype(archetype: NpcArchetype) -> NpcLootTable {
             NpcLootEntry::new("item.fuya.mutated_core", 0.7),
             NpcLootEntry::new("item.beast.hide", 0.4),
         ],
+        NpcArchetype::SkullFiend => vec![
+            NpcLootEntry::new("mutant_beast_core", 0.3),
+            NpcLootEntry::new("bone_spike", 0.15),
+            NpcLootEntry::new("broken_artifact", 0.05),
+            NpcLootEntry::new("broken_artifact_scroll", 0.02),
+        ],
     };
     NpcLootTable::new(archetype, entries)
 }

@@ -12,6 +12,7 @@ export const NpcArchetypeV1 = Type.Union([
   Type.Literal("daoxiang"),
   Type.Literal("zhinian"),
   Type.Literal("fuya"),
+  Type.Literal("skull_fiend"),
 ]);
 export type NpcArchetypeV1 = Static<typeof NpcArchetypeV1>;
 

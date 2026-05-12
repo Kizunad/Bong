@@ -223,4 +223,39 @@ Stunned ←──(命中目标 or        Charging
 
 ## Finish Evidence
 
-（迁入 finished_plans/ 前填写）
+完成日期：2026-05-12
+
+### 落地清单
+
+- **P0 Server 实体 + 飞行冲撞 AI**：新增 `server/src/npc/skull_fiend.rs`，接入 `server/src/npc/mod.rs` / `server/src/npc/lifecycle.rs`。骨煞拥有 `SkullFiendMarker`、`SkullFiendConfig`、`SkullFiendState`，通过 big-brain `SkullFiendAggroScorer` + `SkullFiendChargeAction` 实现锁定、直线冲撞、撞墙自伤、命中眩晕、真元抽吸、击退和 `AttackIntent`。
+- **P1 Client 表现**：新增 `client/src/main/resources/assets/bong/geo/skull_fiend.geo.json` 与 `client/src/main/resources/assets/bong/textures/entity/fauna/skull_fiend.png`，注册 `FaunaVisualKind.SKULL_FIEND` raw id 142，并顺延 server/client modeled entity raw ids 143..153。锁定、拖尾、命中、眩晕表现复用现有 `VfxEventPayloadV1::SpawnParticle` 管线；音效复用 `fauna_fuya_charge`。
+- **P2 坍缩渊 spawn / 难度分层**：`server/src/npc/tsy_hostile.rs` 新增 `TsyHostileArchetype::SkullFiend`、`spawn_tsy_skull_fiend_at(...)`、spawn summary 事件、visual/entity kind 映射、drop key 映射；`server/tsy_spawn_pools.json` 在 `tsy_zhanchang_01` 中层 1 只、深层 3 只，其它起源显式 0。
+- **P3 狂暴 + 真元光环**：`SkullFiendConfig::profile_for(...)` 固定低血狂暴参数（蓄力 30→16 tick、速度 16→22 格/秒、眩晕 40→20 tick、撞墙自伤 10%→20%）；spawn 时挂 `FuyaAura { radius_blocks: 6.0, drain_boost_multiplier: 1.5 }`。
+- **掉落 / contract**：`server/tsy_drops.json` 新增 `skull_fiend` 掉落表；Rust schema、agent TypeBox schema 与 generated JSON 均接受 `skull_fiend`；client/server raw id 镜像测试固定 fauna 134..142 与 modeled 143..153。
+
+### 关键 commit
+
+- `9da11cc02` (2026-05-12) `feat(server): 接入骨煞冲撞敌人`
+- `f1415bb6f` (2026-05-12) `feat(contract): 注册骨煞视觉契约`
+
+### 测试结果
+
+- `server/`: `cargo fmt --check` ✅
+- `server/`: `cargo clippy --all-targets -- -D warnings` ✅
+- `server/`: `cargo test` ✅ 4576 passed
+- `agent/packages/schema/`: `npm run generate:check` ✅ 368 generated schema files fresh
+- `agent/packages/schema/`: `npm test` ✅ 20 files / 383 tests passed
+- `agent/`: `npm run build` ✅ `@bong/schema` + `@bong/tiandao` TypeScript build passed
+- `client/`: `JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64 PATH=/usr/lib/jvm/java-17-openjdk-amd64/bin:$PATH ./gradlew --no-daemon --console=plain test build` ✅ 266 suites / 1379 tests passed, build successful
+
+### 跨仓库核验
+
+- server symbols：`SkullFiendMarker`、`SkullFiendState`、`SkullFiendConfig`、`SkullFiendAggroScorer`、`SkullFiendChargeAction`、`spawn_tsy_skull_fiend_at`、`TsyHostileArchetype::SkullFiend`。
+- agent schema：`NpcArchetypeV1`、`TsyHostileArchetypeV1`、`ALLOWED_NPC_ARCHETYPES` 均包含 `"skull_fiend"`，生成物覆盖 npc spawned/death 与 TSY spawned contracts。
+- client symbols/assets：`FaunaVisualKind.SKULL_FIEND`、`skull_fiend.geo.json`、`textures/entity/fauna/skull_fiend.png`、`BongEntityModelKind` raw id 顺延。
+
+### 遗留 / 后续
+
+- 本次没有新增独立 `bong:skull_fiend_state` S2C payload；v1 直接复用现有 custom fauna entity + VFX/audio 事件管线，避免没有客户端消费者的孤立协议。
+- 原始 GLB 降面和专属骨裂音效未作为本 plan 阻塞项落地；当前 client 使用 Geckolib `geo` + 独立 PNG 纹理，音效暂复用 Fuya charge。后续可由模型资产 / audio 专项 plan 精修。
+- `骨煞·执`、`骨煞·狱` 等变体仍保留为后续扩展；v1 只落地基础款单次直线冲撞。

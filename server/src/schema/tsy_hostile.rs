@@ -11,6 +11,7 @@ pub enum TsyHostileArchetypeV1 {
     Zhinian,
     GuardianRelicSentinel,
     Fuya,
+    SkullFiend,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -82,6 +83,9 @@ mod tests {
         };
         let json = serde_json::to_string(&ev).expect("serialize");
         assert!(json.contains("guardian_relic_sentinel"));
+        assert!(serde_json::to_string(&TsyHostileArchetypeV1::SkullFiend)
+            .expect("serialize skull fiend")
+            .contains("skull_fiend"));
         let parsed: TsyNpcSpawnedV1 = serde_json::from_str(&json).expect("deserialize");
         assert_eq!(parsed, ev);
     }

@@ -142,6 +142,7 @@ fn archetype_to_wire(archetype: TsyHostileArchetype) -> TsyHostileArchetypeV1 {
         TsyHostileArchetype::Zhinian => TsyHostileArchetypeV1::Zhinian,
         TsyHostileArchetype::GuardianRelicSentinel => TsyHostileArchetypeV1::GuardianRelicSentinel,
         TsyHostileArchetype::Fuya => TsyHostileArchetypeV1::Fuya,
+        TsyHostileArchetype::SkullFiend => TsyHostileArchetypeV1::SkullFiend,
     }
 }
 
