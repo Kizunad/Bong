@@ -36,7 +36,11 @@ impl KnownTechniques {
     }
 }
 
-const TECHNIQUE_IDS: [&str; 33] = [
+const TECHNIQUE_IDS: [&str; 37] = [
+    "sword.cleave",
+    "sword.thrust",
+    "sword.parry",
+    "sword.infuse",
     "burst_meridian.beng_quan",
     "burst_meridian.tie_shan_kao",
     "burst_meridian.xue_beng_bu",
@@ -81,6 +85,7 @@ pub struct TechniqueDefinition {
     pub required_realm: &'static str,
     pub required_meridians: &'static [TechniqueRequiredMeridian],
     pub qi_cost: f32,
+    pub stamina_cost: f32,
     pub cast_ticks: u32,
     pub cooldown_ticks: u32,
     pub range: f32,
@@ -104,7 +109,63 @@ const WOLIU_V3_REQUIRED_MERIDIANS: [TechniqueRequiredMeridian; 2] = [
     },
 ];
 
-pub const TECHNIQUE_DEFINITIONS: [TechniqueDefinition; 33] = [
+pub const TECHNIQUE_DEFINITIONS: [TechniqueDefinition; 37] = [
+    TechniqueDefinition {
+        id: "sword.cleave",
+        display_name: "劈",
+        grade: "common",
+        description: "基础劈砍。举剑过顶，顺势劈下。",
+        required_realm: "Awaken",
+        required_meridians: &[],
+        qi_cost: 0.0,
+        stamina_cost: 8.0,
+        cast_ticks: 16,
+        cooldown_ticks: 30,
+        range: 3.0,
+        icon_texture: "bong:textures/gui/skill/sword_cleave.png",
+    },
+    TechniqueDefinition {
+        id: "sword.thrust",
+        display_name: "刺",
+        grade: "common",
+        description: "基础突刺。收肘蓄力，直线捅出。",
+        required_realm: "Awaken",
+        required_meridians: &[],
+        qi_cost: 0.0,
+        stamina_cost: 4.0,
+        cast_ticks: 10,
+        cooldown_ticks: 20,
+        range: 3.5,
+        icon_texture: "bong:textures/gui/skill/sword_thrust.png",
+    },
+    TechniqueDefinition {
+        id: "sword.parry",
+        display_name: "格",
+        grade: "common",
+        description: "基础格挡。以剑身格开来袭，时机精准可反震对手。",
+        required_realm: "Awaken",
+        required_meridians: &[],
+        qi_cost: 0.0,
+        stamina_cost: 6.0,
+        cast_ticks: 4,
+        cooldown_ticks: 40,
+        range: 0.0,
+        icon_texture: "bong:textures/gui/skill/sword_parry.png",
+    },
+    TechniqueDefinition {
+        id: "sword.infuse",
+        display_name: "注剑",
+        grade: "common",
+        description: "将真元注入剑身。持续期间命中附带真元污染。",
+        required_realm: "Induce",
+        required_meridians: &[],
+        qi_cost: 0.0,
+        stamina_cost: 3.0,
+        cast_ticks: 40,
+        cooldown_ticks: 100,
+        range: 0.0,
+        icon_texture: "bong:textures/gui/skill/sword_infuse.png",
+    },
     TechniqueDefinition {
         id: "burst_meridian.beng_quan",
         display_name: "崩拳",
@@ -126,6 +187,7 @@ pub const TECHNIQUE_DEFINITIONS: [TechniqueDefinition; 33] = [
             },
         ],
         qi_cost: 0.4,
+        stamina_cost: 0.0,
         cast_ticks: 8,
         cooldown_ticks: 60,
         range: 1.3,
@@ -142,6 +204,7 @@ pub const TECHNIQUE_DEFINITIONS: [TechniqueDefinition; 33] = [
             min_health: 0.5,
         }],
         qi_cost: 35.0,
+        stamina_cost: 0.0,
         cast_ticks: 10,
         cooldown_ticks: 70,
         range: 1.5,
@@ -158,6 +221,7 @@ pub const TECHNIQUE_DEFINITIONS: [TechniqueDefinition; 33] = [
             min_health: 0.4,
         }],
         qi_cost: 25.0,
+        stamina_cost: 0.0,
         cast_ticks: 6,
         cooldown_ticks: 50,
         range: 4.0,
@@ -174,6 +238,7 @@ pub const TECHNIQUE_DEFINITIONS: [TechniqueDefinition; 33] = [
             min_health: 0.55,
         }],
         qi_cost: 45.0,
+        stamina_cost: 0.0,
         cast_ticks: 12,
         cooldown_ticks: 120,
         range: 0.0,
@@ -187,6 +252,7 @@ pub const TECHNIQUE_DEFINITIONS: [TechniqueDefinition; 33] = [
         required_realm: "Induce",
         required_meridians: &[],
         qi_cost: 100.0,
+        stamina_cost: 0.0,
         cast_ticks: 1,
         cooldown_ticks: 0,
         range: 0.0,
@@ -200,6 +266,7 @@ pub const TECHNIQUE_DEFINITIONS: [TechniqueDefinition; 33] = [
         required_realm: "Induce",
         required_meridians: &[],
         qi_cost: 0.0,
+        stamina_cost: 0.0,
         cast_ticks: 1,
         cooldown_ticks: 20,
         range: 8.0,
@@ -216,6 +283,7 @@ pub const TECHNIQUE_DEFINITIONS: [TechniqueDefinition; 33] = [
             min_health: 0.01,
         }],
         qi_cost: 8.0,
+        stamina_cost: 0.0,
         cast_ticks: 1,
         cooldown_ticks: 600,
         range: 0.0,
@@ -232,6 +300,7 @@ pub const TECHNIQUE_DEFINITIONS: [TechniqueDefinition; 33] = [
             min_health: 0.01,
         }],
         qi_cost: 18.0,
+        stamina_cost: 0.0,
         cast_ticks: 4,
         cooldown_ticks: 200,
         range: 0.0,
@@ -245,6 +314,7 @@ pub const TECHNIQUE_DEFINITIONS: [TechniqueDefinition; 33] = [
         required_realm: "Awaken",
         required_meridians: &[],
         qi_cost: 12.0,
+        stamina_cost: 0.0,
         cast_ticks: 6,
         cooldown_ticks: 600,
         range: 0.0,
@@ -261,6 +331,7 @@ pub const TECHNIQUE_DEFINITIONS: [TechniqueDefinition; 33] = [
             min_health: 0.01,
         }],
         qi_cost: 8.0,
+        stamina_cost: 0.0,
         cast_ticks: 5,
         cooldown_ticks: 300,
         range: 0.0,
@@ -274,6 +345,7 @@ pub const TECHNIQUE_DEFINITIONS: [TechniqueDefinition; 33] = [
         required_realm: "Awaken",
         required_meridians: &[],
         qi_cost: 50.0,
+        stamina_cost: 0.0,
         cast_ticks: 8,
         cooldown_ticks: 1200,
         range: 1.0,
@@ -290,6 +362,7 @@ pub const TECHNIQUE_DEFINITIONS: [TechniqueDefinition; 33] = [
             min_health: 0.01,
         }],
         qi_cost: 0.0,
+        stamina_cost: 0.0,
         cast_ticks: 1,
         cooldown_ticks: 20,
         range: 0.0,
@@ -306,6 +379,7 @@ pub const TECHNIQUE_DEFINITIONS: [TechniqueDefinition; 33] = [
             min_health: 0.01,
         }],
         qi_cost: 0.0,
+        stamina_cost: 0.0,
         cast_ticks: 1,
         cooldown_ticks: 10,
         range: 0.0,
@@ -322,6 +396,7 @@ pub const TECHNIQUE_DEFINITIONS: [TechniqueDefinition; 33] = [
             min_health: 0.01,
         }],
         qi_cost: 8.0,
+        stamina_cost: 0.0,
         cast_ticks: 1,
         cooldown_ticks: 100,
         range: 1.0,
@@ -338,6 +413,7 @@ pub const TECHNIQUE_DEFINITIONS: [TechniqueDefinition; 33] = [
             min_health: 0.01,
         }],
         qi_cost: 12.0,
+        stamina_cost: 0.0,
         cast_ticks: 6,
         cooldown_ticks: 160,
         range: 30.0,
@@ -354,6 +430,7 @@ pub const TECHNIQUE_DEFINITIONS: [TechniqueDefinition; 33] = [
             min_health: 0.01,
         }],
         qi_cost: 25.0,
+        stamina_cost: 0.0,
         cast_ticks: 5,
         cooldown_ticks: 600,
         range: 30.0,
@@ -370,6 +447,7 @@ pub const TECHNIQUE_DEFINITIONS: [TechniqueDefinition; 33] = [
             min_health: 0.01,
         }],
         qi_cost: 50.0,
+        stamina_cost: 0.0,
         cast_ticks: 10,
         cooldown_ticks: 400,
         range: 100.0,
@@ -383,6 +461,7 @@ pub const TECHNIQUE_DEFINITIONS: [TechniqueDefinition; 33] = [
         required_realm: "Awaken",
         required_meridians: &WOLIU_V3_REQUIRED_MERIDIANS,
         qi_cost: 20.0,
+        stamina_cost: 0.0,
         cast_ticks: 6,
         cooldown_ticks: 60,
         range: 8.0,
@@ -396,6 +475,7 @@ pub const TECHNIQUE_DEFINITIONS: [TechniqueDefinition; 33] = [
         required_realm: "Awaken",
         required_meridians: &WOLIU_V3_REQUIRED_MERIDIANS,
         qi_cost: 50.0,
+        stamina_cost: 0.0,
         cast_ticks: 10,
         cooldown_ticks: 240,
         range: 2.0,
@@ -409,6 +489,7 @@ pub const TECHNIQUE_DEFINITIONS: [TechniqueDefinition; 33] = [
         required_realm: "Awaken",
         required_meridians: &WOLIU_V3_REQUIRED_MERIDIANS,
         qi_cost: 35.0,
+        stamina_cost: 0.0,
         cast_ticks: 8,
         cooldown_ticks: 300,
         range: 12.0,
@@ -422,6 +503,7 @@ pub const TECHNIQUE_DEFINITIONS: [TechniqueDefinition; 33] = [
         required_realm: "Awaken",
         required_meridians: &WOLIU_V3_REQUIRED_MERIDIANS,
         qi_cost: 50.0,
+        stamina_cost: 0.0,
         cast_ticks: 80,
         cooldown_ticks: 400,
         range: 6.0,
@@ -435,6 +517,7 @@ pub const TECHNIQUE_DEFINITIONS: [TechniqueDefinition; 33] = [
         required_realm: "Awaken",
         required_meridians: &WOLIU_V3_REQUIRED_MERIDIANS,
         qi_cost: 80.0,
+        stamina_cost: 0.0,
         cast_ticks: 40,
         cooldown_ticks: 600,
         range: 6.0,
@@ -448,6 +531,7 @@ pub const TECHNIQUE_DEFINITIONS: [TechniqueDefinition; 33] = [
         required_realm: "Induce",
         required_meridians: &[],
         qi_cost: 1.0,
+        stamina_cost: 0.0,
         cast_ticks: 1,
         cooldown_ticks: 12,
         range: 50.0,
@@ -461,6 +545,7 @@ pub const TECHNIQUE_DEFINITIONS: [TechniqueDefinition; 33] = [
         required_realm: "Induce",
         required_meridians: &[],
         qi_cost: 5.0,
+        stamina_cost: 0.0,
         cast_ticks: 1,
         cooldown_ticks: 40,
         range: 0.0,
@@ -474,6 +559,7 @@ pub const TECHNIQUE_DEFINITIONS: [TechniqueDefinition; 33] = [
         required_realm: "Awaken",
         required_meridians: &[],
         qi_cost: 0.0,
+        stamina_cost: 0.0,
         cast_ticks: 12,
         cooldown_ticks: 20,
         range: 0.0,
@@ -487,6 +573,7 @@ pub const TECHNIQUE_DEFINITIONS: [TechniqueDefinition; 33] = [
         required_realm: "Awaken",
         required_meridians: &[],
         qi_cost: 0.0,
+        stamina_cost: 0.0,
         cast_ticks: 8,
         cooldown_ticks: 160,
         range: 0.0,
@@ -500,6 +587,7 @@ pub const TECHNIQUE_DEFINITIONS: [TechniqueDefinition; 33] = [
         required_realm: "Awaken",
         required_meridians: &[],
         qi_cost: 0.0,
+        stamina_cost: 0.0,
         cast_ticks: 10,
         cooldown_ticks: 100,
         range: 0.0,
@@ -516,6 +604,7 @@ pub const TECHNIQUE_DEFINITIONS: [TechniqueDefinition; 33] = [
             min_health: 0.01,
         }],
         qi_cost: 0.0,
+        stamina_cost: 0.0,
         cast_ticks: 400,
         cooldown_ticks: 400,
         range: 0.0,
@@ -542,6 +631,7 @@ pub const TECHNIQUE_DEFINITIONS: [TechniqueDefinition; 33] = [
             },
         ],
         qi_cost: 0.25,
+        stamina_cost: 0.0,
         cast_ticks: 6,
         cooldown_ticks: 60,
         range: 80.0,
@@ -558,6 +648,7 @@ pub const TECHNIQUE_DEFINITIONS: [TechniqueDefinition; 33] = [
             min_health: 0.01,
         }],
         qi_cost: 0.40,
+        stamina_cost: 0.0,
         cast_ticks: 30,
         cooldown_ticks: 240,
         range: 30.0,
@@ -574,6 +665,7 @@ pub const TECHNIQUE_DEFINITIONS: [TechniqueDefinition; 33] = [
             min_health: 0.01,
         }],
         qi_cost: 0.35,
+        stamina_cost: 0.0,
         cast_ticks: 20,
         cooldown_ticks: 360,
         range: 50.0,
@@ -590,6 +682,7 @@ pub const TECHNIQUE_DEFINITIONS: [TechniqueDefinition; 33] = [
             min_health: 0.01,
         }],
         qi_cost: 0.45,
+        stamina_cost: 0.0,
         cast_ticks: 40,
         cooldown_ticks: 500,
         range: 80.0,
@@ -606,6 +699,7 @@ pub const TECHNIQUE_DEFINITIONS: [TechniqueDefinition; 33] = [
             min_health: 0.01,
         }],
         qi_cost: 0.60,
+        stamina_cost: 0.0,
         cast_ticks: 60,
         cooldown_ticks: 6000,
         range: 150.0,
@@ -664,13 +758,28 @@ mod tests {
     }
 
     #[test]
-    fn dev_default_has_all_33() {
+    fn dev_default_has_all_37() {
         let dev = KnownTechniques::dev_default();
-        assert_eq!(dev.entries.len(), 33);
+        assert_eq!(dev.entries.len(), 37);
         assert!(dev
             .entries
             .iter()
             .all(|entry| entry.active && (entry.proficiency - 0.5).abs() <= f32::EPSILON));
+    }
+
+    #[test]
+    fn sword_basics_have_no_meridian_gate_and_use_stamina() {
+        for (id, stamina_cost) in [
+            ("sword.cleave", 8.0),
+            ("sword.thrust", 4.0),
+            ("sword.parry", 6.0),
+            ("sword.infuse", 3.0),
+        ] {
+            let definition = technique_definition(id).expect("sword technique definition");
+            assert!(definition.required_meridians.is_empty());
+            assert_eq!(definition.qi_cost, 0.0);
+            assert_eq!(definition.stamina_cost, stamina_cost);
+        }
     }
 
     #[test]

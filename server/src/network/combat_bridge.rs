@@ -72,6 +72,7 @@ pub fn publish_combat_realtime_events(
             wound_kind: Some(map_wound_kind(ev.wound_kind)),
             source: Some(map_attack_source(ev.source)),
             damage: Some(ev.damage),
+            physical_damage: Some(ev.physical_damage),
             contam_delta: Some(ev.contam_delta),
             description: Some(ev.description.clone()),
             cause: None,
@@ -110,6 +111,7 @@ pub fn publish_combat_realtime_events(
             wound_kind: None,
             source: None,
             damage: None,
+            physical_damage: None,
             contam_delta: None,
             description: None,
             cause: Some(ev.cause.clone()),
@@ -277,12 +279,15 @@ fn map_attack_source(source: crate::combat::events::AttackSource) -> CombatAttac
         crate::combat::events::AttackSource::BurstMeridian => CombatAttackSourceV1::BurstMeridian,
         crate::combat::events::AttackSource::QiNeedle => CombatAttackSourceV1::QiNeedle,
         crate::combat::events::AttackSource::FullPower => CombatAttackSourceV1::FullPower,
+        crate::combat::events::AttackSource::SwordCleave => CombatAttackSourceV1::SwordCleave,
+        crate::combat::events::AttackSource::SwordThrust => CombatAttackSourceV1::SwordThrust,
     }
 }
 
 fn map_defense_kind(kind: crate::combat::events::DefenseKind) -> CombatDefenseKindV1 {
     match kind {
         crate::combat::events::DefenseKind::JieMai => CombatDefenseKindV1::JieMai,
+        crate::combat::events::DefenseKind::SwordParry => CombatDefenseKindV1::SwordParry,
     }
 }
 
@@ -440,6 +445,7 @@ mod tests {
             wound_kind: crate::combat::components::WoundKind::Blunt,
             source: crate::combat::events::AttackSource::Melee,
             debug_command: false,
+            physical_damage: 0.0,
             damage: 20.0,
             contam_delta: 5.0,
             description: "attack_intent offline:AttackerCanonical -> offline:TargetCanonical hit Chest with Blunt for 20.0 damage at 0.90 reach decay".to_string(),
@@ -559,6 +565,7 @@ mod tests {
             wound_kind: crate::combat::components::WoundKind::Pierce,
             source: crate::combat::events::AttackSource::Melee,
             debug_command: false,
+            physical_damage: 0.0,
             damage: 12.0,
             contam_delta: 3.0,
             description: "hit".to_string(),
@@ -667,6 +674,7 @@ mod tests {
             wound_kind: crate::combat::components::WoundKind::Cut,
             source: crate::combat::events::AttackSource::Melee,
             debug_command: false,
+            physical_damage: 0.0,
             damage: 0.1 + 0.2,
             contam_delta: 0.1 + 0.2,
             description: "rounded hit".to_string(),

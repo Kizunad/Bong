@@ -1903,6 +1903,7 @@ fn apply_shrine_ward_pressure(
             wound_kind: WoundKind::Concussion,
             source: crate::combat::events::AttackSource::Melee,
             debug_command: false,
+            physical_damage: 0.0,
             damage,
             contam_delta: 0.0,
             description: format!(
@@ -2124,6 +2125,7 @@ fn apply_trigger_snapshots(
                 wound_kind,
                 source: crate::combat::events::AttackSource::Melee,
                 debug_command: false,
+                physical_damage: 0.0,
                 damage: damage_profile.damage,
                 contam_delta,
                 description: format!(

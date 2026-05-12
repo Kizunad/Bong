@@ -468,6 +468,7 @@ fn apply_slide_contact_damage_system(
                 wound_kind: WoundKind::Blunt,
                 source: AttackSource::Melee,
                 debug_command: false,
+                physical_damage: 0.0,
                 damage,
                 contam_delta: 0.0,
                 description: "滑铲撞击".to_string(),

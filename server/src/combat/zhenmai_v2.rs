@@ -447,6 +447,7 @@ pub fn attack_kind_for_source(
     match source {
         AttackSource::QiNeedle => ZhenmaiAttackKind::TaintedYuan,
         AttackSource::BurstMeridian | AttackSource::FullPower => ZhenmaiAttackKind::RealYuan,
+        AttackSource::SwordCleave | AttackSource::SwordThrust => ZhenmaiAttackKind::PhysicalCarrier,
         AttackSource::Melee if wound_kind == crate::combat::components::WoundKind::Pierce => {
             ZhenmaiAttackKind::PhysicalCarrier
         }

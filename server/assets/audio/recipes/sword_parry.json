@@ -1,0 +1,21 @@
+{
+  "id": "sword_parry",
+  "layers": [
+    {
+      "sound": "minecraft:block.anvil.hit",
+      "volume": 0.5,
+      "pitch": 1.3,
+      "delay_ticks": 0
+    },
+    {
+      "sound": "minecraft:entity.player.attack.crit",
+      "volume": 0.35,
+      "pitch": 0.7,
+      "delay_ticks": 1
+    }
+  ],
+  "priority": 65,
+  "attenuation": "world_3d",
+  "category": "PLAYERS",
+  "bus": "COMBAT"
+}

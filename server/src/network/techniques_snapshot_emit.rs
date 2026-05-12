@@ -1,5 +1,6 @@
 use valence::prelude::{Added, Changed, Client, Entity, Query, Username, With};
 
+use crate::combat::sword_basics::sword_proficiency_label;
 use crate::cultivation::known_techniques::{KnownTechniques, TECHNIQUE_DEFINITIONS};
 use crate::network::agent_bridge::{
     payload_type_label, serialize_server_data_payload, SERVER_DATA_CHANNEL,
@@ -49,6 +50,7 @@ pub fn send_techniques_snapshot_to_client(
                     display_name: definition.display_name.to_string(),
                     grade: definition.grade.to_string(),
                     proficiency: known.proficiency.clamp(0.0, 1.0),
+                    proficiency_label: sword_proficiency_label(known.proficiency).to_string(),
                     active: known.active,
                     description: definition.description.to_string(),
                     required_realm: definition.required_realm.to_string(),
@@ -61,6 +63,7 @@ pub fn send_techniques_snapshot_to_client(
                         })
                         .collect(),
                     qi_cost: definition.qi_cost,
+                    stamina_cost: definition.stamina_cost,
                     cast_ticks: definition.cast_ticks,
                     cooldown_ticks: definition.cooldown_ticks,
                     range: definition.range,

@@ -71,6 +71,7 @@ pub fn init_registry() -> SkillRegistry {
     crate::combat::dugu_v2::register_skills(&mut registry);
     crate::combat::baomai_v3::register_skills(&mut registry);
     crate::combat::tuike_v2::register_skills(&mut registry);
+    crate::combat::sword_basics::register_skills(&mut registry);
     crate::cultivation::dugu::register_skills(&mut registry);
     crate::cultivation::full_power_strike::register_skills(&mut registry);
     registry

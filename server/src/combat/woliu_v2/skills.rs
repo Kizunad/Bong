@@ -560,6 +560,7 @@ fn apply_turbulence_burst_target_effects(
                 wound_kind: WoundKind::Concussion,
                 source: AttackSource::BurstMeridian,
                 debug_command: false,
+                physical_damage: 0.0,
                 damage,
                 contam_delta: 0.0,
                 description: format!(

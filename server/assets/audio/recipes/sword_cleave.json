@@ -1,0 +1,21 @@
+{
+  "id": "sword_cleave",
+  "layers": [
+    {
+      "sound": "minecraft:entity.player.attack.sweep",
+      "volume": 0.6,
+      "pitch": 0.9,
+      "delay_ticks": 0
+    },
+    {
+      "sound": "minecraft:entity.player.attack.strong",
+      "volume": 0.45,
+      "pitch": 0.8,
+      "delay_ticks": 3
+    }
+  ],
+  "priority": 55,
+  "attenuation": "world_3d",
+  "category": "PLAYERS",
+  "bus": "COMBAT"
+}

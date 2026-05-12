@@ -199,6 +199,7 @@ pub fn register(app: &mut App) {
     crate::combat::anqi_v2::declare_meridian_dependencies(&mut skill_meridian_dependencies);
     crate::combat::dugu_v2::declare_meridian_dependencies(&mut skill_meridian_dependencies);
     crate::combat::tuike_v2::declare_meridian_dependencies(&mut skill_meridian_dependencies);
+    crate::combat::sword_basics::declare_meridian_dependencies(&mut skill_meridian_dependencies);
 
     app.insert_resource(MeridianTopology::standard());
     app.insert_resource(CultivationClock::default());
