@@ -33,9 +33,12 @@ public final class SilentSignalSystem {
         if (isBoneCoin(snapshot.droppedItemId())) {
             signals.add(new SilentSignal(SignalKind.BONE_COIN_OFFER, "bone_coin", distanceBlocks, false));
         }
+        double speedMultiplier = snapshot.speedMultiplier();
         if (snapshot.movingBackward()
             && snapshot.facingTarget()
-            && snapshot.speedMultiplier() <= BACKING_AWAY_SPEED_LIMIT) {
+            && Double.isFinite(speedMultiplier)
+            && speedMultiplier >= 0.0
+            && speedMultiplier <= BACKING_AWAY_SPEED_LIMIT) {
             signals.add(new SilentSignal(SignalKind.SLOW_BACK_AWAY, null, distanceBlocks, false));
         }
         if (snapshot.crouchToggles() >= DOUBLE_CROUCH_THRESHOLD) {

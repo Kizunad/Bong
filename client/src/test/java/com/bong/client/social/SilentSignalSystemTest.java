@@ -163,6 +163,40 @@ class SilentSignalSystemTest {
         );
     }
 
+    @Test
+    void invalid_speed_multiplier_does_not_trigger_back_away() {
+        for (double speedMultiplier : new double[] {
+            -1.0,
+            Double.NaN,
+            Double.POSITIVE_INFINITY,
+            Double.NEGATIVE_INFINITY
+        }) {
+            SilentSignalSystem.ActionSnapshot snapshot = new SilentSignalSystem.ActionSnapshot(
+                "char:other",
+                8.0,
+                null,
+                null,
+                true,
+                speedMultiplier,
+                true,
+                0,
+                0,
+                0,
+                false
+            );
+
+            List<SilentSignalSystem.SignalKind> kinds = SilentSignalSystem.detect(snapshot)
+                .stream()
+                .map(SilentSignalSystem.SilentSignal::kind)
+                .toList();
+
+            assertFalse(
+                kinds.contains(SilentSignalSystem.SignalKind.SLOW_BACK_AWAY),
+                "expected no SLOW_BACK_AWAY because speedMultiplier is invalid, actual " + kinds
+            );
+        }
+    }
+
     private static SilentSignalSystem.ActionSnapshot snapshot(
         double distanceBlocks,
         String heldItemId,

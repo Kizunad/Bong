@@ -125,4 +125,84 @@ mod tests {
             "blank identity should not emit identity clue"
         );
     }
+
+    #[test]
+    fn npc_intel_purchase_thresholds_pin_clue_limits() {
+        let asset = full_asset();
+
+        for (paid_bone_coins, expected_clues, identity_disclosed) in [
+            (1, vec!["appearance:右手持骨刺"], false),
+            (2, vec!["appearance:右手持骨刺"], false),
+            (3, vec!["appearance:右手持骨刺", "style:涡流气息"], false),
+            (9, vec!["appearance:右手持骨刺", "style:涡流气息"], false),
+            (
+                10,
+                vec!["appearance:右手持骨刺", "style:涡流气息", "qi_color:青白"],
+                false,
+            ),
+            (
+                19,
+                vec!["appearance:右手持骨刺", "style:涡流气息", "qi_color:青白"],
+                false,
+            ),
+            (
+                20,
+                vec![
+                    "appearance:右手持骨刺",
+                    "style:涡流气息",
+                    "qi_color:青白",
+                    "identity:玄锋",
+                ],
+                true,
+            ),
+            (
+                u32::MAX,
+                vec![
+                    "appearance:右手持骨刺",
+                    "style:涡流气息",
+                    "qi_color:青白",
+                    "identity:玄锋",
+                ],
+                true,
+            ),
+        ] {
+            let intel = purchase_partial_encounter_intel(&asset, paid_bone_coins);
+
+            assert_eq!(
+                intel.clues, expected_clues,
+                "paid {paid_bone_coins} should return deterministic truncated clues"
+            );
+            assert_eq!(
+                intel.identity_disclosed, identity_disclosed,
+                "paid {paid_bone_coins} should flip identity only at 20+ coins"
+            );
+        }
+    }
+
+    #[test]
+    fn npc_intel_clue_limit_truncates_before_identity_threshold() {
+        let asset = full_asset();
+
+        let intel = purchase_partial_encounter_intel(&asset, 3);
+
+        assert_eq!(
+            intel.clues,
+            vec!["appearance:右手持骨刺", "style:涡流气息"],
+            "paid 3 should cap clues at two in deterministic priority order"
+        );
+        assert!(
+            !intel.identity_disclosed,
+            "paid 3 should not disclose identity before the 20 coin threshold"
+        );
+    }
+
+    fn full_asset() -> EncounterIntelAsset {
+        EncounterIntelAsset {
+            zone: "blood_valley".to_string(),
+            appearance_hint: Some("右手持骨刺".to_string()),
+            observed_style: Some("涡流气息".to_string()),
+            qi_color_hint: Some("青白".to_string()),
+            identity_name: Some("玄锋".to_string()),
+        }
+    }
 }

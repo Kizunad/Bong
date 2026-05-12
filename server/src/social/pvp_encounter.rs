@@ -37,6 +37,16 @@ pub enum EncounterPhase {
     CloseContact,
 }
 
+impl EncounterPhase {
+    pub const fn wire_name(self) -> &'static str {
+        match self {
+            Self::FarAssessment => "far_assessment",
+            Self::MidProbe => "mid_probe",
+            Self::CloseContact => "close_contact",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum EncounterOutcome {
@@ -391,6 +401,64 @@ mod tests {
     }
 
     #[test]
+    fn encounter_phase_boundary_precision() {
+        assert_eq!(phase_for_distance(8.0), EncounterPhase::CloseContact);
+        assert_eq!(phase_for_distance(8.01), EncounterPhase::MidProbe);
+        assert_eq!(phase_for_distance(20.0), EncounterPhase::MidProbe);
+        assert_eq!(phase_for_distance(20.01), EncounterPhase::FarAssessment);
+    }
+
+    #[test]
+    fn encounter_enums_serialize_to_wire_names() {
+        for variant in [
+            EncounterPhase::FarAssessment,
+            EncounterPhase::MidProbe,
+            EncounterPhase::CloseContact,
+        ] {
+            let serialized =
+                serde_json::to_string(&variant).expect("encounter phase should serialize");
+            assert_eq!(serialized, format!("\"{}\"", variant.wire_name()));
+            let decoded: EncounterPhase =
+                serde_json::from_str(&serialized).expect("encounter phase should deserialize");
+            assert_eq!(decoded, variant);
+        }
+
+        for variant in [
+            EncounterOutcome::Bypass,
+            EncounterOutcome::PeacefulSeparation,
+            EncounterOutcome::ProbeFight,
+            EncounterOutcome::DeathFight,
+            EncounterOutcome::TemporaryCooperation,
+            EncounterOutcome::Betrayal,
+        ] {
+            let serialized =
+                serde_json::to_string(&variant).expect("encounter outcome should serialize");
+            assert_eq!(serialized, format!("\"{}\"", variant.wire_name()));
+            let decoded: EncounterOutcome =
+                serde_json::from_str(&serialized).expect("encounter outcome should deserialize");
+            assert_eq!(decoded, variant);
+        }
+
+        for variant in [
+            EncounterContext::Wilderness,
+            EncounterContext::ResourcePoint,
+            EncounterContext::TsyEntrance,
+            EncounterContext::TsyShallow,
+            EncounterContext::TsyMid,
+            EncounterContext::TsyDeep,
+            EncounterContext::TsyExtract,
+            EncounterContext::TsyRaceOut,
+        ] {
+            let serialized =
+                serde_json::to_string(&variant).expect("encounter context should serialize");
+            assert_eq!(serialized, format!("\"{}\"", variant.wire_name()));
+            let decoded: EncounterContext =
+                serde_json::from_str(&serialized).expect("encounter context should deserialize");
+            assert_eq!(decoded, variant);
+        }
+    }
+
+    #[test]
     fn betrayal_reputation_impact() {
         let mut app = app_with_pvp_encounter_system();
         spawn_player(&mut app, "Alice", "char:alice");
@@ -538,7 +606,7 @@ mod tests {
     }
 
     #[test]
-    fn pvp_five_player_encounter_matrix_emits_trackable_story() {
+    fn five_player_encounter_matrix_produces_trackable_outcomes() {
         let realms = ["awaken", "induce", "condense", "solidify", "spirit"];
         let mut encounters = Vec::new();
         for left in 0..realms.len() {
