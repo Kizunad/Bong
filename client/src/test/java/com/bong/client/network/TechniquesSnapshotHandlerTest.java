@@ -30,6 +30,7 @@ class TechniquesSnapshotHandlerTest {
               "display_name":"崩拳",
               "grade":"yellow",
               "proficiency":0.62,
+              "proficiency_label":"熟练",
               "active":true,
               "description":"凝劲贯臂，短距爆发。",
               "required_realm":"凝脉一层",
@@ -44,6 +45,7 @@ class TechniquesSnapshotHandlerTest {
         assertEquals(1, TechniquesListPanel.snapshot().size());
         var technique = TechniquesListPanel.snapshot().get(0);
         assertEquals(TechniquesListPanel.Grade.YELLOW, technique.grade());
+        assertEquals("熟练", technique.proficiencyLabel());
         assertEquals(0.4f, technique.qiCost(), 0.0001f);
         assertEquals("LargeIntestine", technique.requiredMeridians().get(0).channel());
     }

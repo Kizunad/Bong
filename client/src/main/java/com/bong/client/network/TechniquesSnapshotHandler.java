@@ -71,6 +71,7 @@ public final class TechniquesSnapshotHandler implements ServerDataHandler {
         if (id == null || id.isEmpty() || displayName == null || displayName.isEmpty()) return null;
         List<String> aliases = parseAliases(obj);
         float proficiency = (float) readDouble(obj, "proficiency", 0.0);
+        String proficiencyLabel = SkillBarConfigHandler.readString(obj, "proficiency_label");
         boolean active = readBoolean(obj, "active", false);
         String description = SkillBarConfigHandler.readString(obj, "description");
         String requiredRealm = SkillBarConfigHandler.readString(obj, "required_realm");
@@ -85,6 +86,7 @@ public final class TechniquesSnapshotHandler implements ServerDataHandler {
             aliases,
             TechniquesListPanel.Grade.fromWire(grade),
             proficiency,
+            proficiencyLabel,
             active,
             "",
             description,

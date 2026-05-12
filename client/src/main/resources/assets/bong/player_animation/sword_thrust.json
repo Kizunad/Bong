@@ -1,0 +1,37 @@
+{
+  "version": 3,
+  "author": "Bong",
+  "name": "sword_thrust",
+  "description": "Basic sword thrust: draw back, lunge, recover.",
+  "emote": {
+    "beginTick": 0,
+    "endTick": 10,
+    "stopTick": 12,
+    "isLoop": false,
+    "returnTick": 0,
+    "nsfw": false,
+    "degrees": false,
+    "moves": [
+      { "tick": 0, "easing": "INOUTSINE", "body": { "z": 0.0 } },
+      { "tick": 0, "easing": "INOUTSINE", "torso": { "pitch": 0.0 } },
+      { "tick": 0, "easing": "INOUTSINE", "rightArm": { "pitch": 0.0 } },
+      { "tick": 0, "easing": "INOUTSINE", "rightArm": { "yaw": 0.0 } },
+      { "tick": 0, "easing": "INOUTSINE", "rightArm": { "bend": 0.0 } },
+      { "tick": 3, "easing": "OUTQUAD", "body": { "z": -0.1 } },
+      { "tick": 3, "easing": "OUTQUAD", "torso": { "pitch": -0.05 } },
+      { "tick": 3, "easing": "OUTQUAD", "rightArm": { "pitch": 0.3 } },
+      { "tick": 3, "easing": "OUTQUAD", "rightArm": { "yaw": 0.2 } },
+      { "tick": 3, "easing": "OUTQUAD", "rightArm": { "bend": 0.6 } },
+      { "tick": 5, "easing": "INQUAD", "body": { "z": 0.3 } },
+      { "tick": 5, "easing": "INQUAD", "torso": { "pitch": 0.12 } },
+      { "tick": 5, "easing": "INQUAD", "rightArm": { "pitch": -0.15 } },
+      { "tick": 5, "easing": "INQUAD", "rightArm": { "yaw": -0.05 } },
+      { "tick": 5, "easing": "INQUAD", "rightArm": { "bend": -0.4 } },
+      { "tick": 10, "easing": "OUTQUAD", "body": { "z": 0.0 } },
+      { "tick": 10, "easing": "OUTQUAD", "torso": { "pitch": 0.0 } },
+      { "tick": 10, "easing": "OUTQUAD", "rightArm": { "pitch": 0.0 } },
+      { "tick": 10, "easing": "OUTQUAD", "rightArm": { "yaw": 0.0 } },
+      { "tick": 10, "easing": "OUTQUAD", "rightArm": { "bend": 0.0 } }
+    ]
+  }
+}

@@ -114,6 +114,14 @@ public class VfxRegistryTest {
         VfxBootstrap.registerDefaults();
         assertTrue(VfxRegistry.instance().contains(SwordQiSlashPlayer.EVENT_ID),
             "bootstrap should register sword_qi_slash");
+        assertTrue(VfxRegistry.instance().contains(SwordBasicsVfxPlayer.CLEAVE_TRAIL),
+            "bootstrap should register sword_cleave_trail");
+        assertTrue(VfxRegistry.instance().contains(SwordBasicsVfxPlayer.THRUST_HIT),
+            "bootstrap should register sword_thrust_hit");
+        assertTrue(VfxRegistry.instance().contains(SwordBasicsVfxPlayer.PARRY_SPARK),
+            "bootstrap should register sword_parry_spark");
+        assertTrue(VfxRegistry.instance().contains(SwordBasicsVfxPlayer.INFUSE_GLOW),
+            "bootstrap should register sword_infuse_glow");
         assertTrue(VfxRegistry.instance().contains(FlyingSwordDemoPlayer.EVENT_ID),
             "bootstrap should register flying_sword_demo");
         assertTrue(VfxRegistry.instance().contains(FormationCoreDemoPlayer.EVENT_ID),

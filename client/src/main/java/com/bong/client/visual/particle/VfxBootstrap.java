@@ -14,6 +14,14 @@ public final class VfxBootstrap {
     public static void registerDefaults() {
         VfxRegistry registry = VfxRegistry.instance();
         registry.register(SwordQiSlashPlayer.EVENT_ID,           new SwordQiSlashPlayer());
+        registry.register(SwordBasicsVfxPlayer.CLEAVE_TRAIL,
+            new SwordBasicsVfxPlayer(SwordBasicsVfxPlayer.Kind.CLEAVE));
+        registry.register(SwordBasicsVfxPlayer.THRUST_HIT,
+            new SwordBasicsVfxPlayer(SwordBasicsVfxPlayer.Kind.THRUST));
+        registry.register(SwordBasicsVfxPlayer.PARRY_SPARK,
+            new SwordBasicsVfxPlayer(SwordBasicsVfxPlayer.Kind.PARRY));
+        registry.register(SwordBasicsVfxPlayer.INFUSE_GLOW,
+            new SwordBasicsVfxPlayer(SwordBasicsVfxPlayer.Kind.INFUSE));
         registry.register(BreakthroughPillarPlayer.EVENT_ID,     new BreakthroughPillarPlayer());
         registry.register(EnlightenmentAuraPlayer.EVENT_ID,      new EnlightenmentAuraPlayer());
         registry.register(TribulationLightningPlayer.EVENT_ID,   new TribulationLightningPlayer());
