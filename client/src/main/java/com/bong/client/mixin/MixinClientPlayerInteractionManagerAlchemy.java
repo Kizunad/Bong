@@ -2,7 +2,7 @@ package com.bong.client.mixin;
 
 import com.bong.client.alchemy.AlchemyFurnaceItems;
 import com.bong.client.alchemy.AlchemyFurnaceInteractionRules;
-import com.bong.client.alchemy.AlchemyScreen;
+import com.bong.client.alchemy.AlchemyScreenBootstrap;
 import com.bong.client.alchemy.state.AlchemyFurnaceStore;
 import com.bong.client.combat.screen.ZhenfaLayoutScreen;
 import com.bong.client.hud.TargetInfoStateStore;
@@ -112,8 +112,7 @@ public abstract class MixinClientPlayerInteractionManagerAlchemy {
         }
         if (client.world.getBlockState(pos).isOf(Blocks.FURNACE)
             && AlchemyFurnaceInteractionRules.shouldOpenAlchemyFurnace(pos, AlchemyFurnaceStore.snapshot())) {
-            ClientRequestSender.sendAlchemyOpenFurnace(pos);
-            client.execute(() -> client.setScreen(new AlchemyScreen(pos)));
+            AlchemyScreenBootstrap.requestOpenAlchemyScreen(client, pos);
             cir.setReturnValue(ActionResult.SUCCESS);
         }
     }
