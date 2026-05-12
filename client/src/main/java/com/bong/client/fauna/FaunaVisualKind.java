@@ -11,7 +11,8 @@ public enum FaunaVisualKind {
     DAOXIANG("daoxiang", 138, 0.65f, 1.9f, 0.95f, 0.38f),
     ZHINIAN("zhinian", 139, 0.65f, 1.9f, 0.95f, 0.38f),
     TSY_SENTINEL("tsy_sentinel", 140, 0.85f, 2.1f, 1.05f, 0.45f),
-    FUYA("fuya", 141, 0.8f, 2.0f, 1.1f, 0.25f);
+    FUYA("fuya", 141, 0.8f, 2.0f, 1.1f, 0.25f),
+    SKULL_FIEND("skull_fiend", 142, 1.4f, 1.4f, 1.05f, 0.18f);
 
     private final String path;
     private final int expectedRawId;

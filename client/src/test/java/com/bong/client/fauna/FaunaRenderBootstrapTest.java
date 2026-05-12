@@ -20,6 +20,7 @@ public class FaunaRenderBootstrapTest {
         assertEquals(139, FaunaVisualKind.ZHINIAN.expectedRawId());
         assertEquals(140, FaunaVisualKind.TSY_SENTINEL.expectedRawId());
         assertEquals(141, FaunaVisualKind.FUYA.expectedRawId());
+        assertEquals(142, FaunaVisualKind.SKULL_FIEND.expectedRawId());
     }
 
     @Test
@@ -36,7 +37,8 @@ public class FaunaRenderBootstrapTest {
             "geo/daoxiang.geo.json",
             "geo/zhinian.geo.json",
             "geo/tsy_sentinel.geo.json",
-            "geo/fuya.geo.json"
+            "geo/fuya.geo.json",
+            "geo/skull_fiend.geo.json"
         );
         assertEquals(expected, paths);
     }
@@ -46,5 +48,12 @@ public class FaunaRenderBootstrapTest {
         Identifier texture = FaunaVisualKind.FUYA.textureId();
         assertEquals("bong", texture.getNamespace());
         assertEquals("textures/entity/fauna/fuya.png", texture.getPath());
+    }
+
+    @Test
+    void skullFiendTextureUsesEntityFaunaNamespace() {
+        Identifier texture = FaunaVisualKind.SKULL_FIEND.textureId();
+        assertEquals("bong", texture.getNamespace());
+        assertEquals("textures/entity/fauna/skull_fiend.png", texture.getPath());
     }
 }
