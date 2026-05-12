@@ -31,14 +31,20 @@ public final class AlchemyAttemptHistoryStore {
     }
 
     private static final List<Entry> entries = Collections.synchronizedList(new ArrayList<>());
+    private static volatile long lastAppendMillis;
 
     private AlchemyAttemptHistoryStore() {}
 
     public static void append(Entry e) {
+        append(e, System.currentTimeMillis());
+    }
+
+    public static void append(Entry e, long nowMillis) {
         if (e == null) return;
         synchronized (entries) {
             entries.add(e);
             while (entries.size() > MAX_ENTRIES) entries.remove(0);
+            lastAppendMillis = Math.max(0L, nowMillis);
         }
     }
 
@@ -48,7 +54,14 @@ public final class AlchemyAttemptHistoryStore {
         }
     }
 
+    public static long lastAppendMillis() {
+        return lastAppendMillis;
+    }
+
     public static void resetForTests() {
-        synchronized (entries) { entries.clear(); }
+        synchronized (entries) {
+            entries.clear();
+            lastAppendMillis = 0L;
+        }
     }
 }

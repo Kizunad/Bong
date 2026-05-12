@@ -8,6 +8,7 @@ public final class AlchemySessionStore {
 
     public record Snapshot(
         String recipeId,
+        boolean active,
         int elapsedTicks,
         int targetTicks,
         float tempCurrent,
@@ -21,19 +22,15 @@ public final class AlchemySessionStore {
     ) {
         public static Snapshot empty() {
             return new Snapshot(
-                "kaimai_pill", 120, 200, 0.58f, 0.60f, 0.10f, 9.2, 15.0,
-                "容差带内",
+                "", false, 0, 0, 0.0f, 0.0f, 0.0f, 0.0, 0.0,
+                "",
                 List.of(),
-                List.of(
-                    "§7[t+58]  InjectQi(2.5)",
-                    "§7[t+94]  AdjustTemp(-0.08)",
-                    "§d[t+118] InjectQi(1.0) \u2190 刚刚"
-                )
+                List.of()
             );
         }
 
         public boolean isActive() {
-            return recipeId != null && !recipeId.isEmpty();
+            return active && recipeId != null && !recipeId.isEmpty();
         }
     }
 

@@ -15,11 +15,16 @@ public final class AlchemyProgressHudPlanner {
     static final int TRACK = 0xFF1C2630;
     static final int TEXT = 0xFFDCE8E0;
     static final int STEAM = 0x99D8F0FF;
+    static final long OUTCOME_TOAST_MS = 4_000L;
 
     private AlchemyProgressHudPlanner() {
     }
 
     public static List<HudRenderCommand> buildCommands(int screenWidth, int screenHeight) {
+        return buildCommands(screenWidth, screenHeight, System.currentTimeMillis());
+    }
+
+    public static List<HudRenderCommand> buildCommands(int screenWidth, int screenHeight, long nowMillis) {
         List<HudRenderCommand> out = new ArrayList<>();
         if (screenWidth <= 0 || screenHeight <= 0) {
             return out;
@@ -28,7 +33,7 @@ public final class AlchemyProgressHudPlanner {
         if (AlchemyFurnaceStore.snapshot().hasSession() && session != null && session.isActive()) {
             appendSession(out, session, AlchemyOutcomeForecastStore.snapshot(), screenWidth, screenHeight);
         }
-        appendOutcomeToast(out, AlchemyAttemptHistoryStore.snapshot());
+        appendOutcomeToast(out, AlchemyAttemptHistoryStore.snapshot(), AlchemyAttemptHistoryStore.lastAppendMillis(), nowMillis);
         return List.copyOf(out);
     }
 
@@ -86,8 +91,13 @@ public final class AlchemyProgressHudPlanner {
         }
     }
 
-    private static void appendOutcomeToast(List<HudRenderCommand> out, List<AlchemyAttemptHistoryStore.Entry> history) {
-        if (history == null || history.isEmpty()) {
+    private static void appendOutcomeToast(
+        List<HudRenderCommand> out,
+        List<AlchemyAttemptHistoryStore.Entry> history,
+        long updatedAtMillis,
+        long nowMillis
+    ) {
+        if (history == null || history.isEmpty() || !isRecentOutcome(updatedAtMillis, nowMillis)) {
             return;
         }
         AlchemyAttemptHistoryStore.Entry last = history.get(history.size() - 1);
@@ -100,6 +110,18 @@ public final class AlchemyProgressHudPlanner {
         };
         String pill = last.pill().isBlank() ? last.recipeId() : last.pill();
         out.add(HudRenderCommand.toast(HudRenderLayer.TOAST, label + " · " + pill, 0, 0, outcomeColor(last.bucket())));
+    }
+
+    static boolean isRecentOutcome(long updatedAtMillis, long nowMillis) {
+        long safeUpdatedAt = Math.max(0L, updatedAtMillis);
+        long safeNow = Math.max(0L, nowMillis);
+        if (safeUpdatedAt == 0L) {
+            return false;
+        }
+        if (safeNow < safeUpdatedAt) {
+            return true;
+        }
+        return safeNow - safeUpdatedAt <= OUTCOME_TOAST_MS;
     }
 
     private static void appendBar(List<HudRenderCommand> out, int x, int y, int width, double ratio, int fillColor) {

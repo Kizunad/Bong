@@ -1,6 +1,7 @@
 package com.bong.client.hud;
 
 import com.bong.client.alchemy.state.AlchemyFurnaceStore;
+import com.bong.client.alchemy.state.AlchemyAttemptHistoryStore;
 import com.bong.client.alchemy.state.AlchemySessionStore;
 import com.bong.client.forge.state.ForgeSessionStore;
 import org.junit.jupiter.api.AfterEach;
@@ -19,6 +20,7 @@ class ProcessingHudPlannerTest {
         ForgeProgressHudPlanner.resetForTests();
         AlchemySessionStore.resetForTests();
         AlchemyFurnaceStore.resetForTests();
+        AlchemyAttemptHistoryStore.resetForTests();
     }
 
     @Test
@@ -62,6 +64,7 @@ class ProcessingHudPlannerTest {
         AlchemyFurnaceStore.replace(new AlchemyFurnaceStore.Snapshot(new BlockPos(0, 64, 0), 1, 92f, 100f, "self", true));
         AlchemySessionStore.replace(new AlchemySessionStore.Snapshot(
             "kaimai_pill",
+            true,
             50,
             100,
             0.9f,
@@ -74,9 +77,50 @@ class ProcessingHudPlannerTest {
             List.of()
         ));
 
-        List<HudRenderCommand> commands = AlchemyProgressHudPlanner.buildCommands(320, 180);
+        List<HudRenderCommand> commands = AlchemyProgressHudPlanner.buildCommands(320, 180, 2_000L);
 
         assertEquals(0.5, AlchemyProgressHudPlanner.progressOf(AlchemySessionStore.snapshot()), 1e-6);
         assertTrue(commands.stream().anyMatch(cmd -> cmd.color() == 0xFFE06040));
+    }
+
+    @Test
+    void alchemyInactiveSessionDoesNotRenderProgressPanel() {
+        AlchemyFurnaceStore.replace(new AlchemyFurnaceStore.Snapshot(new BlockPos(0, 64, 0), 1, 92f, 100f, "self", true));
+        AlchemySessionStore.replace(new AlchemySessionStore.Snapshot(
+            "kaimai_pill",
+            false,
+            50,
+            100,
+            0.5f,
+            0.5f,
+            0.1f,
+            5.0,
+            10.0,
+            "未起炉",
+            List.of(),
+            List.of()
+        ));
+
+        List<HudRenderCommand> commands = AlchemyProgressHudPlanner.buildCommands(320, 180, 2_000L);
+
+        assertTrue(commands.stream().noneMatch(cmd -> cmd.layer() == HudRenderLayer.PROCESSING_HUD));
+    }
+
+    @Test
+    void alchemyOutcomeToastExpires() {
+        AlchemyAttemptHistoryStore.append(new AlchemyAttemptHistoryStore.Entry(
+            "good",
+            "hui_yuan_pill_v0",
+            "hui_yuan_pill",
+            "",
+            "",
+            false
+        ), 1_000L);
+
+        List<HudRenderCommand> fresh = AlchemyProgressHudPlanner.buildCommands(320, 180, 2_000L);
+        List<HudRenderCommand> stale = AlchemyProgressHudPlanner.buildCommands(320, 180, 6_001L);
+
+        assertTrue(fresh.stream().anyMatch(HudRenderCommand::isToast));
+        assertTrue(stale.stream().noneMatch(HudRenderCommand::isToast));
     }
 }

@@ -1,7 +1,8 @@
-//! 玩家加入时一次性推送 alchemy 6 个 mock 快照（plan-alchemy-v1 §4 vertical slice）。
+//! 玩家加入时可选推送 alchemy 6 个 mock 快照（plan-alchemy-v1 §4 vertical slice）。
 //!
-//! 当前为 **mock-only**：未挂 ECS 真实炉/会话状态，目的是验证双端通路（client 应能看到
-//! server 推过来的 mock 数据替换掉本地 store 默认值）。
+//! 默认不推 mock：这类快照会进入全局 HUD，若在正常本地联调里自动下发，会让玩家
+//! 一进服就看到假的炼丹进度和结算 toast。需要验证双端通路时显式设置
+//! `BONG_ALCHEMY_JOIN_MOCKS=1`。
 //!
 //! 后续切片：
 //!   * 改成响应 `AlchemyOpenFurnace` 请求（按需推）
@@ -25,10 +26,14 @@ use crate::schema::alchemy::{
 use crate::schema::server_data::{ServerDataPayloadV1, ServerDataV1};
 
 type JoinedClientQueryItem<'a> = (Entity, &'a mut Client, &'a Username);
+const ALCHEMY_JOIN_MOCKS_ENV_VAR: &str = "BONG_ALCHEMY_JOIN_MOCKS";
 
 pub fn emit_join_alchemy_snapshots(
     mut joined_clients: Query<JoinedClientQueryItem<'_>, (With<Client>, Added<PlayerInventory>)>,
 ) {
+    if !alchemy_join_mocks_enabled() {
+        return;
+    }
     for (entity, mut client, username) in &mut joined_clients {
         let player_id = canonical_player_id(username.0.as_str());
         let payloads = [
@@ -69,6 +74,19 @@ pub fn emit_join_alchemy_snapshots(
             );
         }
     }
+}
+
+fn alchemy_join_mocks_enabled() -> bool {
+    std::env::var(ALCHEMY_JOIN_MOCKS_ENV_VAR)
+        .ok()
+        .is_some_and(|raw| alchemy_join_mocks_enabled_value(raw.as_str()))
+}
+
+fn alchemy_join_mocks_enabled_value(raw: &str) -> bool {
+    matches!(
+        raw.trim().to_ascii_lowercase().as_str(),
+        "1" | "true" | "yes" | "on"
+    )
 }
 
 fn mock_furnace(owner: &str) -> AlchemyFurnaceDataV1 {
@@ -310,5 +328,20 @@ fn mock_outcome_resolved() -> AlchemyOutcomeResolvedDataV1 {
         flawed_path: false,
         damage: None,
         meridian_crack: None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::alchemy_join_mocks_enabled_value;
+
+    #[test]
+    fn join_alchemy_mocks_require_explicit_truthy_env() {
+        assert!(alchemy_join_mocks_enabled_value("1"));
+        assert!(alchemy_join_mocks_enabled_value("true"));
+        assert!(alchemy_join_mocks_enabled_value("YES"));
+        assert!(!alchemy_join_mocks_enabled_value(""));
+        assert!(!alchemy_join_mocks_enabled_value("0"));
+        assert!(!alchemy_join_mocks_enabled_value("false"));
     }
 }

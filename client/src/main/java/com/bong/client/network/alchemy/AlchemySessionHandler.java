@@ -18,6 +18,7 @@ public final class AlchemySessionHandler implements ServerDataHandler {
         JsonObject p = envelope.payload();
         try {
             String recipeId = readString(p, "recipe_id", "");
+            boolean active = p.has("active") && p.get("active").isJsonPrimitive() && p.get("active").getAsBoolean();
             int elapsed = readInt(p, "elapsed_ticks", 0);
             int target = readInt(p, "target_ticks", 0);
             float tempCur = (float) readDouble(p, "temp_current", 0.0);
@@ -49,7 +50,7 @@ public final class AlchemySessionHandler implements ServerDataHandler {
                 for (JsonElement el : ints) if (el.isJsonPrimitive()) log.add(el.getAsString());
             }
             AlchemySessionStore.replace(new AlchemySessionStore.Snapshot(
-                recipeId, elapsed, target, tempCur, tempTgt, tempBand, qiInj, qiTgt,
+                recipeId, active, elapsed, target, tempCur, tempTgt, tempBand, qiInj, qiTgt,
                 status, List.copyOf(stages), List.copyOf(log)));
             return ServerDataDispatch.handled(envelope.type(),
                 "Applied alchemy_session snapshot (elapsed=" + elapsed + "/" + target + ")");
