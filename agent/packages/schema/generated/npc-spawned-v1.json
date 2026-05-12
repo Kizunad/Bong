@@ -62,6 +62,10 @@
         {
           "const": "fuya",
           "type": "string"
+        },
+        {
+          "const": "skull_fiend",
+          "type": "string"
         }
       ]
     },

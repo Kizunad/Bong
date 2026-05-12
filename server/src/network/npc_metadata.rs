@@ -220,6 +220,7 @@ pub fn archetype_label(archetype: NpcArchetype) -> &'static str {
         NpcArchetype::Daoxiang => "道伥",
         NpcArchetype::Zhinian => "执念",
         NpcArchetype::Fuya => "负压畸体",
+        NpcArchetype::SkullFiend => "骨煞",
     }
 }
 
@@ -311,9 +312,10 @@ pub fn greeting_text_for_archetype(archetype: NpcArchetype) -> &'static str {
         NpcArchetype::Commoner => "大仙，小人不敢...",
         NpcArchetype::Beast => "它盯着你，喉间低鸣。",
         NpcArchetype::GuardianRelic => "遗种守卫无声拦在前方。",
-        NpcArchetype::Daoxiang | NpcArchetype::Zhinian | NpcArchetype::Fuya => {
-            "此人气息浑浊，答非所问。"
-        }
+        NpcArchetype::Daoxiang
+        | NpcArchetype::Zhinian
+        | NpcArchetype::Fuya
+        | NpcArchetype::SkullFiend => "此人气息浑浊，答非所问。",
         NpcArchetype::Zombie => "游尸没有回应。",
     }
 }

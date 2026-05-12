@@ -23,8 +23,8 @@ use crate::combat::CombatClock;
 use crate::cultivation::components::{Cultivation, Realm};
 use crate::fauna::experience::play_audio;
 use crate::fauna::visual::{
-    FaunaVisualKind, DAOXIANG_ENTITY_KIND, FUYA_ENTITY_KIND, TSY_SENTINEL_ENTITY_KIND,
-    ZHINIAN_ENTITY_KIND,
+    FaunaVisualKind, DAOXIANG_ENTITY_KIND, FUYA_ENTITY_KIND, SKULL_FIEND_ENTITY_KIND,
+    TSY_SENTINEL_ENTITY_KIND, ZHINIAN_ENTITY_KIND,
 };
 use crate::inventory::ancient_relics::{AncientRelicPool, AncientRelicSource};
 use crate::inventory::{
@@ -40,6 +40,9 @@ use crate::npc::lifecycle::{npc_runtime_bundle, NpcArchetype, NpcRegistry};
 use crate::npc::movement::{GameTick, MovementCapabilities, MovementController, MovementCooldowns};
 use crate::npc::navigator::Navigator;
 use crate::npc::patrol::NpcPatrol;
+use crate::npc::skull_fiend::{
+    skull_fiend_thinker, SkullFiendConfig, SkullFiendMarker, SkullFiendState,
+};
 use crate::npc::spawn::{
     NpcBlackboard, NpcCombatLoadout, NpcMarker, NpcMeleeArchetype, NpcMeleeProfile,
 };
@@ -327,11 +330,12 @@ pub struct TsyLayerSpawnCounts {
     pub daoxiang: u32,
     pub zhinian: u32,
     pub fuya: u32,
+    pub skull_fiend: u32,
 }
 
 impl TsyLayerSpawnCounts {
     pub const fn total(self) -> u32 {
-        self.daoxiang + self.zhinian + self.fuya
+        self.daoxiang + self.zhinian + self.fuya + self.skull_fiend
     }
 }
 
@@ -340,6 +344,7 @@ pub struct TsyHostileSpawnSummary {
     pub daoxiang: u32,
     pub zhinian: u32,
     pub fuya: u32,
+    pub skull_fiend: u32,
     pub sentinel: u32,
 }
 
@@ -357,6 +362,7 @@ pub enum TsyHostileArchetype {
     Zhinian,
     GuardianRelicSentinel,
     Fuya,
+    SkullFiend,
 }
 
 #[derive(Event, Debug, Clone)]
@@ -370,7 +376,7 @@ pub struct TsySentinelPhaseChanged {
 
 impl TsyHostileSpawnSummary {
     pub const fn total(self) -> u32 {
-        self.daoxiang + self.zhinian + self.fuya + self.sentinel
+        self.daoxiang + self.zhinian + self.fuya + self.skull_fiend + self.sentinel
     }
 }
 
@@ -717,6 +723,23 @@ fn spawn_layer_hostiles(
             *remaining = remaining.saturating_sub(1);
         }
     }
+    for i in 0..counts.skull_fiend {
+        if *remaining == 0 {
+            return;
+        }
+        if let Some(pos) = sample_hostile_position(zone, family_id, depth, "skull_fiend", i, tick) {
+            spawn_tsy_skull_fiend_at(
+                commands,
+                layer,
+                family_id,
+                &zone.name,
+                pos + DVec3::new(0.0, 4.0, 0.0),
+                zone.patrol_target(0),
+            );
+            summary.skull_fiend = summary.skull_fiend.saturating_add(1);
+            *remaining = remaining.saturating_sub(1);
+        }
+    }
 }
 
 pub fn spawn_tsy_daoxiang_at(
@@ -785,6 +808,13 @@ pub fn emit_tsy_hostile_spawn_summary(
         send_spawn_event(
             &mut events,
             &summary.family_id,
+            TsyHostileArchetype::SkullFiend,
+            summary.skull_fiend,
+            summary.at_tick,
+        );
+        send_spawn_event(
+            &mut events,
+            &summary.family_id,
             TsyHostileArchetype::GuardianRelicSentinel,
             summary.sentinel,
             summary.at_tick,
@@ -816,6 +846,7 @@ pub struct TsyHostileSpawnedSummary {
     pub daoxiang: u32,
     pub zhinian: u32,
     pub fuya: u32,
+    pub skull_fiend: u32,
     pub sentinel: u32,
     pub at_tick: u64,
 }
@@ -831,6 +862,7 @@ impl TsyHostileSpawnedSummary {
             daoxiang: summary.daoxiang,
             zhinian: summary.zhinian,
             fuya: summary.fuya,
+            skull_fiend: summary.skull_fiend,
             sentinel: summary.sentinel,
             at_tick,
         }
@@ -910,6 +942,55 @@ pub fn spawn_tsy_fuya_at(
     commands
         .entity(entity)
         .insert(npc_runtime_bundle(entity, NpcArchetype::Fuya));
+    entity
+}
+
+pub fn spawn_tsy_skull_fiend_at(
+    commands: &mut Commands,
+    layer: Entity,
+    family_id: &str,
+    home_zone: &str,
+    spawn_position: DVec3,
+    patrol_target: DVec3,
+) -> Entity {
+    let loadout = NpcCombatLoadout::new(
+        NpcMeleeArchetype::Brawler,
+        MovementCapabilities {
+            can_sprint: false,
+            can_dash: false,
+        },
+    );
+    let entity = spawn_zombie_shell(
+        commands,
+        layer,
+        NpcArchetype::SkullFiend,
+        loadout.clone(),
+        home_zone,
+        spawn_position,
+        patrol_target,
+    );
+    commands.entity(entity).insert((
+        TsyHostileMarker {
+            family_id: family_id.to_string(),
+        },
+        SkullFiendMarker {
+            family_id: family_id.to_string(),
+        },
+        SkullFiendConfig::default(),
+        SkullFiendState::default(),
+        FuyaAura {
+            radius_blocks: 6.0,
+            drain_boost_multiplier: FUYA_DEFAULT_DRAIN_MULTIPLIER,
+        },
+        skull_fiend_thinker(),
+    ));
+    let mut runtime = npc_runtime_bundle(entity, NpcArchetype::SkullFiend);
+    runtime.wounds = Wounds {
+        entries: Vec::new(),
+        health_current: 40.0,
+        health_max: 40.0,
+    };
+    commands.entity(entity).insert(runtime);
     entity
 }
 
@@ -1067,6 +1148,7 @@ fn entity_kind_for_tsy_archetype(archetype: NpcArchetype) -> valence::prelude::E
         NpcArchetype::Daoxiang => DAOXIANG_ENTITY_KIND,
         NpcArchetype::Zhinian => ZHINIAN_ENTITY_KIND,
         NpcArchetype::Fuya => FUYA_ENTITY_KIND,
+        NpcArchetype::SkullFiend => SKULL_FIEND_ENTITY_KIND,
         NpcArchetype::Zombie
         | NpcArchetype::Commoner
         | NpcArchetype::Rogue
@@ -1083,6 +1165,7 @@ fn visual_kind_for_tsy_archetype(archetype: NpcArchetype) -> FaunaVisualKind {
         NpcArchetype::Daoxiang => FaunaVisualKind::Daoxiang,
         NpcArchetype::Zhinian => FaunaVisualKind::Zhinian,
         NpcArchetype::Fuya => FaunaVisualKind::Fuya,
+        NpcArchetype::SkullFiend => FaunaVisualKind::SkullFiend,
         NpcArchetype::Zombie
         | NpcArchetype::Commoner
         | NpcArchetype::Rogue
@@ -1682,6 +1765,7 @@ fn drop_key_for_npc(
         NpcArchetype::Zhinian => Some("zhinian"),
         NpcArchetype::GuardianRelic if sentinel.is_some() => Some("tsy_sentinel"),
         NpcArchetype::Fuya => Some("fuya"),
+        NpcArchetype::SkullFiend => Some("skull_fiend"),
         _ => None,
     }
 }
@@ -1917,6 +2001,8 @@ struct TsyLayerSpawnCountsJson {
     zhinian: u32,
     #[serde(default)]
     fuya: u32,
+    #[serde(default)]
+    skull_fiend: u32,
 }
 
 impl TsyLayerSpawnCountsJson {
@@ -1925,6 +2011,7 @@ impl TsyLayerSpawnCountsJson {
             daoxiang: self.daoxiang,
             zhinian: self.zhinian,
             fuya: self.fuya,
+            skull_fiend: self.skull_fiend,
         }
     }
 }
@@ -2026,6 +2113,11 @@ mod tests {
         assert_eq!(zongmen.deep.daoxiang, 8);
         assert_eq!(registry.sentinel_count_for_family("tsy_zongmen_01"), 3);
         assert_eq!(registry.sentinel_count_for_family("tsy_zhanchang_01"), 0);
+        let zhanchang = registry
+            .get_for_family("tsy_zhanchang_01")
+            .expect("zhanchang pool exists");
+        assert_eq!(zhanchang.mid.skull_fiend, 1);
+        assert_eq!(zhanchang.deep.skull_fiend, 3);
     }
 
     #[test]
@@ -2058,6 +2150,14 @@ mod tests {
             DVec3::new(5.0, 64.0, 5.0),
             DVec3::new(6.0, 64.0, 6.0),
         );
+        let skull_fiend = spawn_tsy_skull_fiend_at(
+            &mut app.world_mut().commands(),
+            layer,
+            "tsy_zhanchang_01",
+            "tsy_zhanchang_01_mid",
+            DVec3::new(6.0, 68.0, 6.0),
+            DVec3::new(7.0, 64.0, 7.0),
+        );
         let container = app.world_mut().spawn_empty().id();
         let sentinel = spawn_tsy_sentinel_at(
             &mut app.world_mut().commands(),
@@ -2082,6 +2182,10 @@ mod tests {
             Some(&FUYA_ENTITY_KIND)
         );
         assert_eq!(
+            app.world().get::<valence::prelude::EntityKind>(skull_fiend),
+            Some(&SKULL_FIEND_ENTITY_KIND)
+        );
+        assert_eq!(
             app.world().get::<valence::prelude::EntityKind>(sentinel),
             Some(&TSY_SENTINEL_ENTITY_KIND)
         );
@@ -2096,6 +2200,14 @@ mod tests {
         assert_eq!(
             app.world().get::<FaunaVisualKind>(fuya),
             Some(&FaunaVisualKind::Fuya)
+        );
+        assert_eq!(
+            app.world().get::<FaunaVisualKind>(skull_fiend),
+            Some(&FaunaVisualKind::SkullFiend)
+        );
+        assert!(
+            app.world().get::<SkullFiendMarker>(skull_fiend).is_some(),
+            "skull fiend spawn must carry its charge state marker"
         );
         assert_eq!(
             app.world().get::<FaunaVisualKind>(sentinel),

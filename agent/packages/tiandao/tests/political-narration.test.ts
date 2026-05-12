@@ -14,6 +14,7 @@ const {
   AGENT_NARRATE,
   SOCIAL_FEUD,
   SOCIAL_PACT,
+  SOCIAL_RENOWN_DELTA,
   SOCIAL_NICHE_INTRUSION,
   WANTED_PLAYER,
   HIGH_RENOWN_MILESTONE,
@@ -63,7 +64,7 @@ class FlakyPubSub extends FakePubSub {
 const silent = { info: vi.fn(), warn: vi.fn() };
 
 describe("PoliticalNarrationRuntime", () => {
-  it("subscribes to the five political event channels", async () => {
+  it("subscribes to the political event channels", async () => {
     const runtime = new PoliticalNarrationRuntime({
       sub: new FakePubSub(),
       pub: new FakePubSub(),
@@ -167,6 +168,35 @@ describe("PoliticalNarrationRuntime", () => {
     expect(narrations[2].scope).toBe("broadcast");
     expect(narrations[2].text).toContain("玄锋");
     expect(narrations[3].scope).toBe("broadcast");
+  });
+
+  it("turns pvp betrayal renown deltas into anonymous jianghu narration", async () => {
+    const pub = new FakePubSub();
+    const runtime = new PoliticalNarrationRuntime({
+      sub: new FakePubSub(),
+      pub,
+      logger: silent,
+    });
+
+    await runtime.handlePayload(
+      SOCIAL_RENOWN_DELTA,
+      JSON.stringify({
+        v: 1,
+        char_id: "char:bob",
+        fame_delta: 0,
+        notoriety_delta: 30,
+        tags_added: [{ tag: "背信者", weight: 30, last_seen_tick: 77, permanent: false }],
+        tick: 77,
+        reason: "pvp_betrayal",
+      }),
+    );
+
+    expect(pub.published).toHaveLength(1);
+    const narration = JSON.parse(pub.published[0].message).narrations[0];
+    expect(narration.scope).toBe("zone");
+    expect(narration.style).toBe("political_jianghu");
+    expect(narration.text).toContain("背弃同伴");
+    expect(narration.text).not.toContain("char:bob");
   });
 
   it("ignores broken pact events", async () => {

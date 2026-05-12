@@ -329,6 +329,7 @@ pub fn apply_tsy_spawn_requests(
                     daoxiang = summary.daoxiang,
                     zhinian = summary.zhinian,
                     fuya = summary.fuya,
+                    skull_fiend = summary.skull_fiend,
                     sentinel = summary.sentinel,
                     "[bong][tsy-hostile] spawned hostile NPCs"
                 );

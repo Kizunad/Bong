@@ -41,5 +41,15 @@
       { "template_id": "fake_spirit_hide", "chance": 0.25, "count": [1, 1] }
     ],
     "max_rolls": 2
+  },
+  "skull_fiend": {
+    "guaranteed": [],
+    "rolls": [
+      { "template_id": "mutant_beast_core", "chance": 0.30, "count": [1, 1] },
+      { "template_id": "bone_spike", "chance": 0.15, "count": [1, 2] },
+      { "template_id": "broken_artifact", "chance": 0.05, "count": [1, 1] },
+      { "template_id": "broken_artifact_scroll", "chance": 0.02, "count": [1, 1] }
+    ],
+    "max_rolls": 3
   }
 }

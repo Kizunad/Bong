@@ -9,12 +9,14 @@ import {
   type NicheIntrusionEventV1,
   type SocialFeudEventV1,
   type SocialPactEventV1,
+  type SocialRenownDeltaV1,
   type WantedPlayerEventV1,
   validateHighRenownMilestoneEventV1Contract,
   validateNarrationV1Contract,
   validateNicheIntrusionEventV1Contract,
   validateSocialFeudEventV1Contract,
   validateSocialPactEventV1Contract,
+  validateSocialRenownDeltaV1Contract,
   validateWantedPlayerEventV1,
 } from "@bong/schema";
 
@@ -28,6 +30,7 @@ const {
   AGENT_NARRATE,
   SOCIAL_FEUD,
   SOCIAL_PACT,
+  SOCIAL_RENOWN_DELTA,
   SOCIAL_NICHE_INTRUSION,
   WANTED_PLAYER,
   HIGH_RENOWN_MILESTONE,
@@ -39,12 +42,19 @@ const DEFAULT_ROUTEABLE_ZONE = "spawn";
 export const POLITICAL_EVENT_CHANNELS = [
   SOCIAL_FEUD,
   SOCIAL_PACT,
+  SOCIAL_RENOWN_DELTA,
   SOCIAL_NICHE_INTRUSION,
   WANTED_PLAYER,
   HIGH_RENOWN_MILESTONE,
 ] as const;
 
-type PoliticalEventType = "feud" | "pact" | "niche_intrusion" | "wanted_player" | "high_renown_milestone";
+type PoliticalEventType =
+  | "feud"
+  | "pact"
+  | "niche_intrusion"
+  | "pvp_betrayal"
+  | "wanted_player"
+  | "high_renown_milestone";
 
 export interface PoliticalNarrationContext {
   eventType: PoliticalEventType;
@@ -293,6 +303,7 @@ export class PoliticalNarrationRuntime {
   private parseContext(channel: string, parsed: unknown): PoliticalNarrationContext | null {
     if (channel === SOCIAL_FEUD) return this.parseFeud(parsed);
     if (channel === SOCIAL_PACT) return this.parsePact(parsed);
+    if (channel === SOCIAL_RENOWN_DELTA) return this.parseRenownDelta(parsed);
     if (channel === SOCIAL_NICHE_INTRUSION) return this.parseNicheIntrusion(parsed);
     if (channel === WANTED_PLAYER) return this.parseWantedPlayer(parsed);
     if (channel === HIGH_RENOWN_MILESTONE) return this.parseHighRenownMilestone(parsed);
@@ -355,6 +366,28 @@ export class PoliticalNarrationRuntime {
       identityExposed: false,
       exposedIdentities: [],
       unexposedIdentities: [payload.intruder_id],
+      payload,
+    };
+  }
+
+  private parseRenownDelta(parsed: unknown): PoliticalNarrationContext | null {
+    const validation = validateSocialRenownDeltaV1Contract(parsed);
+    if (!validation.ok) return this.reject("SocialRenownDeltaV1", validation.errors);
+    const payload = parsed as SocialRenownDeltaV1;
+    if (payload.reason !== "pvp_betrayal") {
+      this.stats.ignored += 1;
+      return null;
+    }
+    return {
+      eventType: "pvp_betrayal",
+      scope: "zone",
+      target: DEFAULT_ROUTEABLE_ZONE,
+      zone: DEFAULT_ROUTEABLE_ZONE,
+      severity: 3,
+      bypassThrottle: true,
+      identityExposed: false,
+      exposedIdentities: [],
+      unexposedIdentities: [payload.char_id],
       payload,
     };
   }
@@ -477,6 +510,8 @@ function fallbackText(context: PoliticalNarrationContext): string {
       return "市井相传，有二修士结契同行，以血口作证；契上字未必能久，旁人只见火光一瞬，后事仍藏在袖底。";
     case "niche_intrusion":
       return `山中有人道，${displayLocation(context)} 一处灵龛遭破，主人名姓仍被尘土遮着；取物者脚印未干，传闻已先行过岭。`;
+    case "pvp_betrayal":
+      return "灵泉湿地有修士背弃同伴，骨币落地时无人弯腰；江湖只记半截影子，不记真名。";
     case "wanted_player": {
       const payload = context.payload as WantedPlayerEventV1;
       return `闻者道，${payload.identity_display_name} 的画影已过诸市，旧账与恶名一并钉在纸上；见者是避是杀，各凭命薄。`;

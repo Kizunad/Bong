@@ -7,6 +7,7 @@ pub mod faction;
 pub mod farming_brain;
 pub mod hunger;
 pub mod hydrate;
+pub mod intel;
 pub mod interaction_memory;
 pub mod intrusion_npc;
 pub mod lifecycle;
@@ -24,6 +25,7 @@ pub mod scattered_cultivator;
 pub mod scenario;
 pub mod schedule;
 pub mod seasonal_behavior;
+pub mod skull_fiend;
 pub mod social;
 pub mod spatial;
 pub mod spawn;
@@ -59,6 +61,7 @@ pub fn register(app: &mut App) {
     whale_narration::register(app);
     dormant::register(app);
     farming_brain::register(app);
+    skull_fiend::register(app);
     tsy_hostile::register(app);
     movement::register(app); // Ability layer — ticks overrides before Navigator
     hydrate::register(app);

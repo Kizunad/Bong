@@ -11,7 +11,7 @@ public enum BongEntityModelKind {
     SPIRIT_NICHE(
         "spirit_niche",
         "SpiritNiche.bbmodel",
-        134,
+        143,
         0.9f,
         1.5f,
         64,
@@ -24,7 +24,7 @@ public enum BongEntityModelKind {
     SPIRIT_EYE(
         "spirit_eye",
         "SpiritEye.bbmodel",
-        135,
+        144,
         1.0f,
         2.0f,
         96,
@@ -37,7 +37,7 @@ public enum BongEntityModelKind {
     RIFT_PORTAL(
         "rift_portal",
         "RiftPortal.bbmodel",
-        136,
+        145,
         2.0f,
         3.0f,
         128,
@@ -50,7 +50,7 @@ public enum BongEntityModelKind {
     FORGE_STATION(
         "forge_station",
         "ForgeStation.bbmodel",
-        137,
+        146,
         1.0f,
         1.0f,
         64,
@@ -62,7 +62,7 @@ public enum BongEntityModelKind {
     ALCHEMY_FURNACE(
         "alchemy_furnace",
         "AlchemyFurnace.bbmodel",
-        138,
+        147,
         1.0f,
         1.5f,
         64,
@@ -74,7 +74,7 @@ public enum BongEntityModelKind {
     FORMATION_CORE(
         "formation_core",
         "FormationCore.bbmodel",
-        139,
+        148,
         1.0f,
         0.35f,
         64,
@@ -87,7 +87,7 @@ public enum BongEntityModelKind {
     LINGTIAN_PLOT(
         "lingtian_plot",
         "LingtianPlot.bbmodel",
-        140,
+        149,
         0.9f,
         0.2f,
         64,
@@ -101,7 +101,7 @@ public enum BongEntityModelKind {
     DRY_CORPSE(
         "dry_corpse",
         "DryCorpse.bbmodel",
-        141,
+        150,
         1.0f,
         0.45f,
         64,
@@ -114,7 +114,7 @@ public enum BongEntityModelKind {
     BONE_SKELETON(
         "bone_skeleton",
         "BoneSkeleton.bbmodel",
-        142,
+        151,
         1.0f,
         0.35f,
         64,
@@ -127,7 +127,7 @@ public enum BongEntityModelKind {
     STORAGE_POUCH(
         "storage_pouch",
         "StoragePouch.bbmodel",
-        143,
+        152,
         0.55f,
         0.45f,
         64,
@@ -140,7 +140,7 @@ public enum BongEntityModelKind {
     STONE_CASKET(
         "stone_casket",
         "StoneCasket.bbmodel",
-        144,
+        153,
         1.2f,
         0.65f,
         64,

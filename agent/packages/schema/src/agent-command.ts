@@ -13,6 +13,7 @@ const ALLOWED_NPC_ARCHETYPES = [
   "daoxiang",
   "zhinian",
   "fuya",
+  "skull_fiend",
 ] as const;
 const ALLOWED_FACTION_IDS = ["attack", "defend", "neutral"] as const;
 const ALLOWED_FACTION_EVENT_KINDS = [

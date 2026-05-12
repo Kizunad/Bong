@@ -1490,6 +1490,129 @@
                 "additionalProperties": false,
                 "type": "object",
                 "required": [
+                  "PvpEncounter"
+                ],
+                "properties": {
+                  "PvpEncounter": {
+                    "type": "object",
+                    "required": [
+                      "counterparty_id",
+                      "outcome",
+                      "zone",
+                      "context",
+                      "tick"
+                    ],
+                    "properties": {
+                      "counterparty_id": {
+                        "minLength": 1,
+                        "maxLength": 128,
+                        "type": "string"
+                      },
+                      "outcome": {
+                        "minLength": 1,
+                        "maxLength": 64,
+                        "type": "string"
+                      },
+                      "zone": {
+                        "minLength": 1,
+                        "maxLength": 128,
+                        "type": "string"
+                      },
+                      "context": {
+                        "minLength": 1,
+                        "maxLength": 64,
+                        "type": "string"
+                      },
+                      "observed_style": {
+                        "anyOf": [
+                          {
+                            "minLength": 1,
+                            "maxLength": 64,
+                            "type": "string"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "appearance_hint": {
+                        "anyOf": [
+                          {
+                            "minLength": 1,
+                            "maxLength": 256,
+                            "type": "string"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "qi_color_hint": {
+                        "anyOf": [
+                          {
+                            "minLength": 1,
+                            "maxLength": 64,
+                            "type": "string"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "tick": {
+                        "minimum": 0,
+                        "type": "integer"
+                      }
+                    }
+                  }
+                }
+              },
+              {
+                "additionalProperties": false,
+                "type": "object",
+                "required": [
+                  "PvpBetrayal"
+                ],
+                "properties": {
+                  "PvpBetrayal": {
+                    "type": "object",
+                    "required": [
+                      "betrayer_id",
+                      "victim_id",
+                      "scene",
+                      "tick"
+                    ],
+                    "properties": {
+                      "betrayer_id": {
+                        "minLength": 1,
+                        "maxLength": 128,
+                        "type": "string"
+                      },
+                      "victim_id": {
+                        "minLength": 1,
+                        "maxLength": 128,
+                        "type": "string"
+                      },
+                      "scene": {
+                        "minLength": 1,
+                        "maxLength": 64,
+                        "type": "string"
+                      },
+                      "npc_witnessed": {
+                        "type": "boolean"
+                      },
+                      "tick": {
+                        "minimum": 0,
+                        "type": "integer"
+                      }
+                    }
+                  }
+                }
+              },
+              {
+                "additionalProperties": false,
+                "type": "object",
+                "required": [
                   "FalseSkinShed"
                 ],
                 "properties": {

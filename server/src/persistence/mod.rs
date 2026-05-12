@@ -4676,6 +4676,8 @@ fn biography_event_type(entry: &BiographyEntry) -> &'static str {
         BiographyEntry::TribulationFled { .. } => "tribulation_fled",
         BiographyEntry::HeartDemonRecord { .. } => "heart_demon_record",
         BiographyEntry::TradeCompleted { .. } => "trade_completed",
+        BiographyEntry::PvpEncounter { .. } => "pvp_encounter",
+        BiographyEntry::PvpBetrayal { .. } => "pvp_betrayal",
         BiographyEntry::NicheIntrusion { .. } => "niche_intrusion",
         BiographyEntry::VortexProjectileDrained { .. } => "vortex_projectile_drained",
         BiographyEntry::VortexBackfired { .. } => "vortex_backfired",
@@ -4764,6 +4766,8 @@ fn biography_tick(entry: &BiographyEntry) -> u64 {
         | BiographyEntry::TribulationFled { tick, .. }
         | BiographyEntry::HeartDemonRecord { tick, .. }
         | BiographyEntry::TradeCompleted { tick, .. }
+        | BiographyEntry::PvpEncounter { tick, .. }
+        | BiographyEntry::PvpBetrayal { tick, .. }
         | BiographyEntry::NicheIntrusion { tick, .. }
         | BiographyEntry::VortexProjectileDrained { tick, .. }
         | BiographyEntry::VortexBackfired { tick, .. }
@@ -5648,6 +5652,67 @@ mod persistence_tests {
             sanitize_deceased_snapshot_stem("offline:Ancestor/Shard\\Echo"),
             "offline_Ancestor_Shard_Echo"
         );
+    }
+
+    #[test]
+    fn pvp_biography_variants_pin_event_type_tick_and_payload_tag() {
+        let encounter = BiographyEntry::PvpEncounter {
+            counterparty_id: "char:bob".to_string(),
+            outcome: "betrayal".to_string(),
+            zone: "blood_valley".to_string(),
+            context: "tsy_extract".to_string(),
+            observed_style: Some("woliu".to_string()),
+            appearance_hint: Some("右手持骨刺".to_string()),
+            qi_color_hint: Some("青白".to_string()),
+            tick: 91,
+        };
+        let betrayal = BiographyEntry::PvpBetrayal {
+            betrayer_id: "char:bob".to_string(),
+            victim_id: "char:alice".to_string(),
+            scene: "tsy_extract".to_string(),
+            npc_witnessed: true,
+            tick: 92,
+        };
+
+        for (entry, expected_event_type, wrong_event_type, expected_tick, expected_tag) in [
+            (
+                encounter,
+                "pvp_encounter",
+                "pvp_betrayal",
+                91_u64,
+                "PvpEncounter",
+            ),
+            (
+                betrayal,
+                "pvp_betrayal",
+                "pvp_encounter",
+                92_u64,
+                "PvpBetrayal",
+            ),
+        ] {
+            assert_eq!(biography_event_type(&entry), expected_event_type);
+            assert_ne!(biography_event_type(&entry), wrong_event_type);
+            assert_eq!(biography_tick(&entry), expected_tick);
+
+            let payload_json = serde_json::to_string(&LifeEventPayload {
+                biography_entry: entry.clone(),
+            })
+            .expect("pvp life event payload should serialize");
+            let payload_value: Value =
+                serde_json::from_str(&payload_json).expect("pvp life event payload should be json");
+            assert!(
+                payload_value["biography_entry"].get(expected_tag).is_some(),
+                "expected pvp biography payload tag {expected_tag}, actual {payload_value}"
+            );
+
+            let decoded: LifeEventPayload = serde_json::from_str(&payload_json)
+                .expect("pvp life event payload should deserialize");
+            assert_eq!(
+                biography_event_type(&decoded.biography_entry),
+                expected_event_type
+            );
+            assert_eq!(biography_tick(&decoded.biography_entry), expected_tick);
+        }
     }
 
     fn unique_temp_dir(test_name: &str) -> PathBuf {

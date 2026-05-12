@@ -8,6 +8,7 @@ export const TsyHostileArchetypeV1 = Type.Union([
   Type.Literal("zhinian"),
   Type.Literal("guardian_relic_sentinel"),
   Type.Literal("fuya"),
+  Type.Literal("skull_fiend"),
 ]);
 export type TsyHostileArchetypeV1 = Static<typeof TsyHostileArchetypeV1>;
 

@@ -41,8 +41,8 @@ use crate::npc::spawn::{
 };
 use crate::npc::territory::Territory;
 use crate::npc::tsy_hostile::{
-    spawn_tsy_daoxiang_at, spawn_tsy_fuya_at, spawn_tsy_zhinian_at, FuyaAura, TsyHostileMarker,
-    ZhinianMind, ZhinianPhase,
+    spawn_tsy_daoxiang_at, spawn_tsy_fuya_at, spawn_tsy_skull_fiend_at, spawn_tsy_zhinian_at,
+    FuyaAura, TsyHostileMarker, ZhinianMind, ZhinianPhase,
 };
 use crate::skin::NpcSkinFallbackPolicy;
 use crate::world::dimension::{CurrentDimension, DimensionKind, DimensionLayers};
@@ -538,6 +538,20 @@ fn spawn_from_snapshot(
             .as_ref()
             .map(|tsy| {
                 spawn_tsy_fuya_at(
+                    commands,
+                    layer,
+                    tsy.family_id.as_str(),
+                    home_zone,
+                    pos,
+                    patrol_target,
+                )
+            })
+            .unwrap_or_else(|| spawn_zombie_npc_at(commands, layer, home_zone, pos, patrol_target)),
+        NpcArchetype::SkullFiend => snapshot
+            .tsy_hostile
+            .as_ref()
+            .map(|tsy| {
+                spawn_tsy_skull_fiend_at(
                     commands,
                     layer,
                     tsy.family_id.as_str(),

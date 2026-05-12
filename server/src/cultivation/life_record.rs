@@ -203,6 +203,29 @@ pub enum BiographyEntry {
         received_item: String,
         tick: u64,
     },
+    /// plan-pvp-encounter-v1 P3 — PvP 遭遇后幸存者保留的可流通情报。
+    PvpEncounter {
+        counterparty_id: String,
+        outcome: String,
+        zone: String,
+        context: String,
+        #[serde(default)]
+        observed_style: Option<String>,
+        #[serde(default)]
+        appearance_hint: Option<String>,
+        #[serde(default)]
+        qi_color_hint: Option<String>,
+        tick: u64,
+    },
+    /// plan-pvp-encounter-v1 P2 — 临时合作破裂后的受害者视角锚点。
+    PvpBetrayal {
+        betrayer_id: String,
+        victim_id: String,
+        scene: String,
+        #[serde(default)]
+        npc_witnessed: bool,
+        tick: u64,
+    },
     /// plan-niche-defense-v1 P3：灵龛抄家写入双方生平卷。
     NicheIntrusion {
         owner_id: String,
@@ -560,6 +583,32 @@ fn format_entry(entry: &BiographyEntry) -> String {
             received_item,
             tick,
         } => format!("t{tick}:trade:{counterparty_id}:{offered_item}->{received_item}"),
+        BiographyEntry::PvpEncounter {
+            counterparty_id,
+            outcome,
+            zone,
+            context,
+            observed_style,
+            appearance_hint,
+            qi_color_hint,
+            tick,
+        } => {
+            let style = observed_style.as_deref().unwrap_or("-");
+            let appearance = appearance_hint.as_deref().unwrap_or("-");
+            let qi_color = qi_color_hint.as_deref().unwrap_or("-");
+            format!(
+                "t{tick}:pvp_encounter:{counterparty_id}:{outcome}:{zone}:{context}:style{style}:appearance{appearance}:qi{qi_color}"
+            )
+        }
+        BiographyEntry::PvpBetrayal {
+            betrayer_id,
+            victim_id,
+            scene,
+            npc_witnessed,
+            tick,
+        } => format!(
+            "t{tick}:pvp_betrayal:{betrayer_id}->{victim_id}:{scene}:npc_witnessed{npc_witnessed}"
+        ),
         BiographyEntry::NicheIntrusion {
             owner_id,
             intruder_id,
