@@ -327,7 +327,7 @@ fn smoothstep(value: f32) -> f32 {
 fn clamp_world_y(world_y: i32, min_y: i32, world_height: i32) -> i32 {
     // Valence 0.2x still encodes chunk heightmaps with a fixed 9-bit budget.
     // Reserving the top two local Y values avoids overflow when a motion-blocking
-    // block reaches the absolute ceiling of a 512-high dimension.
+    // block reaches the absolute ceiling of the runtime dimension.
     world_y.clamp(min_y, min_y + world_height - 3)
 }
 

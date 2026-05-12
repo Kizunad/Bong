@@ -15,9 +15,9 @@ use std::collections::HashSet;
 use std::path::PathBuf;
 
 use valence::prelude::{
-    ident, App, BiomeRegistry, BlockState, Chunk, ChunkLayer, ChunkPos, Client, Commands,
-    DimensionTypeRegistry, Entity, Query, Res, ResMut, Resource, Server, UnloadedChunk, Update,
-    View, VisibleChunkLayer, With,
+    ident, App, BiomeRegistry, BlockState, Chunk, ChunkLayer, ChunkPos, ChunkView, Client,
+    Commands, DimensionTypeRegistry, Entity, Query, Res, ResMut, Resource, Server, UnloadedChunk,
+    Update, View, VisibleChunkLayer, With,
 };
 
 use crate::mineral::{MineralOreIndex, MineralOreNode};
@@ -28,7 +28,12 @@ pub use raster::{
     raster_dir_from_manifest_path, FossilBbox, Poi, TerrainProvider, TerrainProviders,
 };
 
-const WORLD_HEIGHT: u32 = 512;
+// Valence 0.2x still serializes chunk heightmaps as fixed 9-bit packed arrays
+// (37 longs). Vanilla clients choose the expected heightmap size from the
+// advertised dimension height; 512 would require 10-bit arrays (43 longs) and
+// make the client ignore every chunk heightmap. 496 is the highest 16-aligned
+// height that stays within the 9-bit client contract.
+pub const WORLD_HEIGHT: u32 = 496;
 pub const MIN_Y: i32 = -64;
 
 /// Surface information for a single world column, used by NPC navigation.
@@ -270,6 +275,7 @@ fn generate_chunks_around_players(
 
 fn remove_unviewed_chunks(
     mut layers: Query<&mut ChunkLayer>,
+    clients: Query<(View, &VisibleChunkLayer), With<Client>>,
     providers: Option<Res<TerrainProviders>>,
     dimension_layers: Option<Res<DimensionLayers>>,
     mut generated: ResMut<GeneratedChunks>,
@@ -285,12 +291,19 @@ fn remove_unviewed_chunks(
     let Ok(mut layer) = layers.get_mut(dimension_layers.overworld) else {
         return;
     };
+    let visible_overworld_views = clients
+        .iter()
+        .filter_map(|(view, visible_chunk_layer)| {
+            (visible_chunk_layer.0 == dimension_layers.overworld).then(|| view.get())
+        })
+        .collect::<Vec<_>>();
 
     generated.loaded.retain(|pos| layer.chunk(*pos).is_some());
 
     let mut removed = Vec::new();
     layer.retain_chunks(|pos, chunk| {
-        let keep = chunk.viewer_count_mut() > 0;
+        let keep = chunk.viewer_count_mut() > 0
+            || chunk_is_visible_in_any_view(pos, visible_overworld_views.iter().copied());
         if !keep {
             removed.push(pos);
         }
@@ -300,6 +313,10 @@ fn remove_unviewed_chunks(
     for pos in removed {
         generated.loaded.remove(&pos);
     }
+}
+
+fn chunk_is_visible_in_any_view(pos: ChunkPos, views: impl IntoIterator<Item = ChunkView>) -> bool {
+    views.into_iter().any(|view| view.contains(pos))
 }
 
 fn ensure_chunk_generated(
@@ -486,5 +503,37 @@ mod tests {
             chunk.block_state(3, (pos.y - MIN_Y) as u32, 5),
             BlockState::COPPER_ORE
         );
+    }
+
+    #[test]
+    fn current_player_view_keeps_newly_generated_chunk() {
+        let view = ChunkView::new(ChunkPos::new(0, 0), 2);
+
+        assert!(chunk_is_visible_in_any_view(ChunkPos::new(0, 0), [view]));
+    }
+
+    #[test]
+    fn chunk_outside_all_player_views_can_be_removed() {
+        let view = ChunkView::new(ChunkPos::new(0, 0), 2);
+
+        assert!(!chunk_is_visible_in_any_view(ChunkPos::new(64, 64), [view]));
+    }
+
+    #[test]
+    fn overworld_height_matches_valence_heightmap_encoding_budget() {
+        const VALENCE_HEIGHTMAP_BITS_PER_ENTRY: u32 = 9;
+        const COLUMN_COUNT: u32 = 16 * 16;
+
+        let entries_per_long = i64::BITS / VALENCE_HEIGHTMAP_BITS_PER_ENTRY;
+        let expected_longs =
+            COLUMN_COUNT / entries_per_long + (COLUMN_COUNT % entries_per_long != 0) as u32;
+
+        assert_eq!(WORLD_HEIGHT % 16, 0);
+        assert!(heightmap_bits_for_dimension(WORLD_HEIGHT) <= VALENCE_HEIGHTMAP_BITS_PER_ENTRY);
+        assert_eq!(expected_longs, 37);
+    }
+
+    fn heightmap_bits_for_dimension(height: u32) -> u32 {
+        u32::BITS - height.leading_zeros()
     }
 }

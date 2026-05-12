@@ -28,6 +28,9 @@ pub const DEFAULT_PLAYER_DATA_DIR: &str = "data/players";
 
 const PLAYER_ROW_SCHEMA_VERSION: i32 = 1;
 const DEFAULT_INVENTORY_JSON: &str = "null";
+const MIN_SAFE_PLAYER_Y: f64 = crate::world::terrain::MIN_Y as f64;
+const MAX_SAFE_PLAYER_Y: f64 =
+    (crate::world::terrain::MIN_Y + crate::world::terrain::WORLD_HEIGHT as i32 - 1) as f64;
 
 #[derive(Clone, Debug, Component, Serialize, Deserialize, PartialEq)]
 pub struct PlayerState {
@@ -420,7 +423,7 @@ pub fn load_player_slices(
     };
 
     let (position, last_dimension) = match load_player_slow_from_sqlite(&connection, username) {
-        Ok(Some((pos, dim))) => (pos, dim),
+        Ok(Some((pos, dim))) => sanitize_loaded_position(username, pos, dim),
         Ok(None) => (crate::player::spawn_position(), DimensionKind::default()),
         Err(error) => {
             tracing::warn!(
@@ -978,6 +981,27 @@ fn load_player_slow_from_sqlite(
     });
 
     Ok(Some(([pos_x, pos_y, pos_z], last_dimension)))
+}
+
+fn sanitize_loaded_position(
+    username: &str,
+    position: [f64; 3],
+    last_dimension: DimensionKind,
+) -> ([f64; 3], DimensionKind) {
+    let [x, y, z] = position;
+    if x.is_finite()
+        && y.is_finite()
+        && z.is_finite()
+        && (MIN_SAFE_PLAYER_Y..=MAX_SAFE_PLAYER_Y).contains(&y)
+    {
+        return (position, last_dimension);
+    }
+
+    tracing::warn!(
+        "[bong][player] persisted position for `{username}` is outside safe login bounds \
+         ({x:.2}, {y:.2}, {z:.2}, {last_dimension:?}); using spawn defaults"
+    );
+    (crate::player::spawn_position(), DimensionKind::default())
 }
 
 fn load_player_inventory_from_sqlite(
@@ -2058,6 +2082,48 @@ mod player_state_tests {
             serde_json::Value::Null
         );
         assert_eq!(prefs, PlayerUiPrefs::default());
+
+        let _ = fs::remove_dir_all(&data_dir);
+    }
+
+    #[test]
+    fn invalid_persisted_login_y_falls_back_to_spawn() {
+        let (persistence, data_dir) = sqlite_persistence("invalid-login-y");
+        save_player_state(&persistence, "Azure", &PlayerState::default())
+            .expect("saving PlayerState should succeed");
+        save_player_slow_slice(
+            &persistence,
+            "Azure",
+            [42.0, -26_297.0, -3.5],
+            DimensionKind::default(),
+        )
+        .expect("saving invalid slow slice should succeed");
+
+        let loaded = load_player_slices(&persistence, "Azure");
+
+        assert_eq!(loaded.position, crate::player::spawn_position());
+        assert_eq!(loaded.last_dimension, DimensionKind::default());
+
+        let _ = fs::remove_dir_all(&data_dir);
+    }
+
+    #[test]
+    fn persisted_login_y_above_runtime_world_falls_back_to_spawn() {
+        let (persistence, data_dir) = sqlite_persistence("too-high-login-y");
+        save_player_state(&persistence, "Azure", &PlayerState::default())
+            .expect("saving PlayerState should succeed");
+        save_player_slow_slice(
+            &persistence,
+            "Azure",
+            [42.0, MAX_SAFE_PLAYER_Y + 1.0, -3.5],
+            DimensionKind::default(),
+        )
+        .expect("saving too-high slow slice should succeed");
+
+        let loaded = load_player_slices(&persistence, "Azure");
+
+        assert_eq!(loaded.position, crate::player::spawn_position());
+        assert_eq!(loaded.last_dimension, DimensionKind::default());
 
         let _ = fs::remove_dir_all(&data_dir);
     }
