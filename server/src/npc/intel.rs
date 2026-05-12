@@ -92,13 +92,34 @@ mod tests {
         };
 
         let cheap = purchase_partial_encounter_intel(&asset, 2);
-        assert_eq!(cheap.zone, "blood_valley");
-        assert_eq!(cheap.clues, vec!["appearance:右手持骨刺"]);
-        assert!(!cheap.identity_disclosed);
+        assert_eq!(
+            cheap.zone, "blood_valley",
+            "expected source zone to be preserved for cheap intel, actual {}",
+            cheap.zone
+        );
+        assert_eq!(
+            cheap.clues,
+            vec!["appearance:右手持骨刺"],
+            "expected one appearance clue because 2 coins allows clue_limit=1, actual {:?}",
+            cheap.clues
+        );
+        assert!(
+            !cheap.identity_disclosed,
+            "expected identity_disclosed=false because 2 coins is below identity threshold, actual {}",
+            cheap.identity_disclosed
+        );
 
         let expensive = purchase_partial_encounter_intel(&asset, 20);
-        assert!(expensive.clues.contains(&"identity:玄锋".to_string()));
-        assert!(expensive.identity_disclosed);
+        assert!(
+            expensive.clues.contains(&"identity:玄锋".to_string()),
+            "expected identity clue because 20 coins reaches disclosure threshold, actual {:?}",
+            expensive.clues
+        );
+        assert!(
+            expensive.identity_disclosed,
+            "expected identity_disclosed=true because 20 coins reaches disclosure threshold, actual {}",
+            expensive.identity_disclosed
+        );
     }
 
     #[test]

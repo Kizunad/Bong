@@ -492,6 +492,18 @@ mod chat_collector_tests {
         });
     }
 
+    fn insert_negative_pressure_presence(app: &mut App, client: Entity) {
+        app.world_mut().entity_mut(client).insert(TsyPresence {
+            family_id: "tsy_lingxu_01".to_string(),
+            entered_at_tick: 42,
+            entry_inventory_snapshot: Vec::new(),
+            return_to: DimensionAnchor {
+                dimension: DimensionKind::Overworld,
+                pos: DVec3::new(8.0, 66.0, 8.0),
+            },
+        });
+    }
+
     fn flush_all_client_packets(app: &mut App) {
         let world = app.world_mut();
         let mut query = world.query::<&mut Client>();
@@ -669,15 +681,7 @@ mod chat_collector_tests {
         let (mut app, rx_outbound) = setup_chat_collector_app(true);
         let (alice, mut helper) =
             spawn_test_client_with_helper(&mut app, "Alice", [8.0, 66.0, 8.0]);
-        app.world_mut().entity_mut(alice).insert(TsyPresence {
-            family_id: "tsy_lingxu_01".to_string(),
-            entered_at_tick: 42,
-            entry_inventory_snapshot: Vec::new(),
-            return_to: DimensionAnchor {
-                dimension: DimensionKind::Overworld,
-                pos: DVec3::new(8.0, 66.0, 8.0),
-            },
-        });
+        insert_negative_pressure_presence(&mut app, alice);
 
         send_chat_event(&mut app, alice, "有人吗", 1_712_345_706);
         app.update();
@@ -699,6 +703,56 @@ mod chat_collector_tests {
             .resource::<valence::prelude::Events<PlayerChatCollected>>();
         let mut reader = events.get_reader();
         assert!(reader.read(events).next().is_none());
+    }
+
+    #[test]
+    fn slash_command_preempts_negative_pressure_prompt() {
+        let (mut app, rx_outbound) = setup_chat_collector_app(true);
+        let (alice, mut helper) =
+            spawn_test_client_with_helper(&mut app, "Alice", [8.0, 66.0, 8.0]);
+        insert_negative_pressure_presence(&mut app, alice);
+
+        send_chat_event(&mut app, alice, "/spawn", 1_712_345_707);
+        app.update();
+        flush_all_client_packets(&mut app);
+
+        assert!(
+            rx_outbound.try_recv().is_err(),
+            "slash command should not be forwarded to Redis even inside negative pressure"
+        );
+        let messages = collect_game_messages(&mut helper);
+        assert!(
+            messages.is_empty(),
+            "expected slash command branch to run before negative-pressure prompt, actual {messages:?}"
+        );
+    }
+
+    #[test]
+    fn legacy_bang_command_preempts_negative_pressure_prompt() {
+        let (mut app, rx_outbound) = setup_chat_collector_app(true);
+        let (alice, mut helper) =
+            spawn_test_client_with_helper(&mut app, "Alice", [8.0, 66.0, 8.0]);
+        insert_negative_pressure_presence(&mut app, alice);
+
+        send_chat_event(&mut app, alice, "!wound add chest 0.7", 1_712_345_708);
+        app.update();
+        flush_all_client_packets(&mut app);
+
+        assert!(
+            rx_outbound.try_recv().is_err(),
+            "legacy bang command should not be forwarded to Redis inside negative pressure"
+        );
+        let messages = collect_game_messages(&mut helper);
+        assert!(
+            messages.iter().any(|message| message.contains("已迁至 `/`")),
+            "expected legacy command migration prompt because command handling precedes negative pressure, actual {messages:?}"
+        );
+        assert!(
+            messages
+                .iter()
+                .all(|message| !message.contains("坍缩渊负压吞掉了你的话。")),
+            "expected legacy command branch to avoid negative-pressure prompt, actual {messages:?}"
+        );
     }
 
     #[test]
