@@ -3,8 +3,8 @@ use std::collections::BTreeMap;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use valence::prelude::{
-    bevy_ecs, App, Commands, Component, DVec3, Entity, Event, IntoSystemConfigs, Position, Query,
-    Res, UniqueId, Update, Username,
+    bevy_ecs, App, Commands, Component, DVec3, Entity, Event, GameMode, IntoSystemConfigs,
+    Position, Query, Res, UniqueId, Update, Username,
 };
 
 use crate::combat::components::{
@@ -875,6 +875,23 @@ pub fn apply_self_damage(wounds: &mut Wounds, amount: f32) -> f32 {
     before - wounds.health_current
 }
 
+pub fn apply_self_damage_to_entity(
+    world: &mut bevy_ecs::world::World,
+    entity: Entity,
+    amount: f32,
+) -> f32 {
+    if world
+        .get::<GameMode>(entity)
+        .is_some_and(|game_mode| *game_mode != GameMode::Survival)
+    {
+        return 0.0;
+    }
+    let Some(mut wounds) = world.get_mut::<Wounds>(entity) else {
+        return 0.0;
+    };
+    apply_self_damage(&mut wounds, amount)
+}
+
 pub fn multipoint_contact(
     active: &mut MultiPointActive,
     hit_qi: f64,
@@ -1273,7 +1290,7 @@ mod tests {
     use crate::combat::components::{WoundKind, Wounds};
     use crate::cultivation::components::{ContamSource, MeridianSystem};
     use crate::skill::config::SkillConfig;
-    use valence::prelude::{App, Events};
+    use valence::prelude::{App, Events, GameMode};
 
     fn all_realms() -> [Realm; 6] {
         [
@@ -1564,6 +1581,27 @@ mod tests {
         let applied = apply_self_damage(&mut wounds, 8.0);
         assert_eq!(applied, 5.0);
         assert_eq!(wounds.health_current, 0.0);
+    }
+
+    #[test]
+    fn apply_self_damage_to_entity_skips_creative_mode() {
+        let mut app = app_with_events();
+        let entity = caster(&mut app, Realm::Void, 100.0);
+        app.world_mut().entity_mut(entity).insert((
+            GameMode::Creative,
+            Wounds {
+                health_current: 12.0,
+                ..Default::default()
+            },
+        ));
+
+        let applied = apply_self_damage_to_entity(app.world_mut(), entity, 8.0);
+
+        assert_eq!(applied, 0.0);
+        assert_eq!(
+            app.world().get::<Wounds>(entity).unwrap().health_current,
+            12.0
+        );
     }
 
     #[test]

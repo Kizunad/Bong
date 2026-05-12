@@ -2,8 +2,8 @@ use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
 use valence::prelude::{
-    bevy_ecs, App, Commands, DVec3, Entity, Event, EventReader, EventWriter, IntoSystemConfigs,
-    Position, Query, Res, UniqueId, Update, With, Without,
+    bevy_ecs, App, Commands, DVec3, Entity, Event, EventReader, EventWriter, GameMode,
+    IntoSystemConfigs, Position, Query, Res, UniqueId, Update, With, Without,
 };
 
 use crate::combat::components::{
@@ -719,6 +719,7 @@ fn projectile_tick_system(
     mut commands: Commands,
     mut projectiles: Query<ProjectileItem<'_>>,
     mut targets: Query<TargetItem<'_>, (With<Wounds>, Without<AnqiProjectileFlight>)>,
+    game_modes: Query<&GameMode>,
     unique_ids: Query<&UniqueId>,
     mut combat_events: EventWriter<CombatEvent>,
     mut impacts: EventWriter<CarrierImpactEvent>,
@@ -778,6 +779,21 @@ fn projectile_tick_system(
         }
 
         if let Some((target_entity, hit_distance)) = hit {
+            if !crate::combat::is_damageable(target_entity, &game_modes) {
+                emit_projectile_despawn(
+                    &mut commands,
+                    &mut despawned,
+                    ProjectileDespawnArgs {
+                        projectile_entity,
+                        projectile: &projectile,
+                        flight: &flight,
+                        reason: ProjectileDespawnReason::HitTarget,
+                        pos: next,
+                        tick: clock.tick,
+                    },
+                );
+                continue;
+            }
             let Ok((_, _, mut wounds, mut contamination, life_record)) =
                 targets.get_mut(target_entity)
             else {
@@ -931,6 +947,7 @@ fn entity_wire_id(unique_id: Option<&UniqueId>, entity: Entity) -> String {
 mod tests {
     use super::*;
     use crate::inventory::{InventoryRevision, ItemCategory, ItemRarity, ItemTemplate, WeaponSpec};
+    use valence::prelude::{App, Events, Position, Update};
 
     fn template(id: &str, name: &str, max_stack_count: u32) -> ItemTemplate {
         ItemTemplate {
@@ -1040,6 +1057,66 @@ mod tests {
         assert_eq!(item.template_id, ANQI_CHARGED_TEMPLATE_ID);
         assert_eq!(item.stack_count, 1);
         assert_eq!(inventory.revision.0, 2);
+    }
+
+    #[test]
+    fn projectile_hit_despawns_without_damage_or_impact_on_creative_target() {
+        let mut app = App::new();
+        app.insert_resource(CombatClock { tick: 10 });
+        app.add_event::<CombatEvent>();
+        app.add_event::<CarrierImpactEvent>();
+        app.add_event::<ProjectileDespawnedEvent>();
+        app.add_systems(Update, projectile_tick_system);
+
+        app.world_mut().spawn((
+            Position::new([0.0, 65.0, 0.0]),
+            QiProjectile {
+                owner: None,
+                qi_payload: 20.0,
+            },
+            AnqiProjectileFlight {
+                carrier_kind: CarrierKind::BoneChip,
+                qi_color: ColorKind::Sharp,
+                carrier_grade: CarrierKind::BoneChip.grade(),
+                spawn_pos: DVec3::new(0.0, 65.0, 0.0),
+                prev_pos: DVec3::new(0.0, 65.0, 0.0),
+                velocity: DVec3::new(20.0, 0.0, 0.0),
+                max_distance: ANQI_PROJECTILE_MAX_DISTANCE,
+                hitbox_inflation: ANQI_HITBOX_INFLATION,
+            },
+        ));
+        let target = app
+            .world_mut()
+            .spawn((
+                Position::new([0.5, 64.0, 0.0]),
+                Wounds::default(),
+                Contamination::default(),
+                GameMode::Creative,
+            ))
+            .id();
+        let before = app
+            .world()
+            .entity(target)
+            .get::<Wounds>()
+            .unwrap()
+            .health_current;
+
+        app.update();
+
+        let wounds = app.world().entity(target).get::<Wounds>().unwrap();
+        assert_eq!(wounds.health_current, before);
+        assert!(wounds.entries.is_empty());
+        assert!(app.world().resource::<Events<CombatEvent>>().is_empty());
+        assert!(app
+            .world()
+            .resource::<Events<CarrierImpactEvent>>()
+            .is_empty());
+        assert_eq!(
+            app.world()
+                .resource::<Events<ProjectileDespawnedEvent>>()
+                .len(),
+            1
+        );
     }
 
     #[test]

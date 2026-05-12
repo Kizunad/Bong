@@ -1,11 +1,11 @@
-use crate::combat::{attach_combat_bundle_to_joined_clients, components::Lifecycle};
+use crate::combat::{attach_combat_bundle_to_joined_clients, components::Lifecycle, is_damageable};
 use crate::persistence::bootstrap_sqlite;
 use crate::player::state::{
     player_character_id, save_player_shrine_anchor_slice, save_player_state, PlayerStatePersistence,
 };
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
-use valence::prelude::{App, Update, Username};
+use valence::prelude::{App, Entity, GameMode, Query, Res, Update, Username};
 use valence::testing::create_mock_client;
 
 fn unique_temp_dir(test_name: &str) -> PathBuf {
@@ -18,6 +18,45 @@ fn unique_temp_dir(test_name: &str) -> PathBuf {
         "bong-combat-mod-{test_name}-{}-{unique_suffix}",
         std::process::id()
     ))
+}
+
+#[derive(Clone, Copy)]
+struct DamageabilityFixtures {
+    no_mode: Entity,
+    survival: Entity,
+    creative: Entity,
+    adventure: Entity,
+    spectator: Entity,
+}
+
+impl valence::prelude::Resource for DamageabilityFixtures {}
+
+fn assert_damageability(fixtures: Res<DamageabilityFixtures>, modes: Query<&GameMode>) {
+    assert!(is_damageable(fixtures.no_mode, &modes));
+    assert!(is_damageable(fixtures.survival, &modes));
+    assert!(!is_damageable(fixtures.creative, &modes));
+    assert!(!is_damageable(fixtures.adventure, &modes));
+    assert!(!is_damageable(fixtures.spectator, &modes));
+}
+
+#[test]
+fn damageable_gate_only_allows_survival_or_non_player_entities() {
+    let mut app = App::new();
+    let no_mode = app.world_mut().spawn_empty().id();
+    let survival = app.world_mut().spawn(GameMode::Survival).id();
+    let creative = app.world_mut().spawn(GameMode::Creative).id();
+    let adventure = app.world_mut().spawn(GameMode::Adventure).id();
+    let spectator = app.world_mut().spawn(GameMode::Spectator).id();
+    app.insert_resource(DamageabilityFixtures {
+        no_mode,
+        survival,
+        creative,
+        adventure,
+        spectator,
+    });
+    app.add_systems(Update, assert_damageability);
+
+    app.update();
 }
 
 #[test]

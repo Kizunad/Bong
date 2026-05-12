@@ -36,8 +36,8 @@ pub mod zhenmai_v2;
 
 use std::path::Path;
 use valence::prelude::{
-    bevy_ecs, Added, App, Client, Commands, IntoSystemConfigs, IntoSystemSetConfigs, Query,
-    SystemSet, Update, Username, Without,
+    bevy_ecs, Added, App, Client, Commands, Entity, GameMode, IntoSystemConfigs,
+    IntoSystemSetConfigs, Query, SystemSet, Update, Username, Without,
 };
 
 #[cfg(test)]
@@ -76,6 +76,12 @@ pub struct CombatClock {
 }
 
 impl valence::prelude::Resource for CombatClock {}
+
+pub fn is_damageable(entity: Entity, game_modes: &Query<&GameMode>) -> bool {
+    game_modes
+        .get(entity)
+        .map_or(true, |game_mode| *game_mode == GameMode::Survival)
+}
 
 type JoinedClientsWithoutCombatBundle<'a> = (valence::prelude::Entity, &'a Username);
 type JoinedClientsWithoutCombatBundleFilter = (Added<Client>, Without<Wounds>);
