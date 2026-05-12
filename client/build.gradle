@@ -172,6 +172,10 @@ tasks.register('runClientPreview') {
 }
 
 tasks.named('runClient').configure {
+    // GeckoLib 在 dev 环境默认注册 example blocks/entities，会抢占 Bong 固定协议 raw id。
+    // 生产 jar 不会注册这些 examples；runClient 需显式关闭，保持本地验证对齐 server。
+    jvmArgs '-Dgeckolib.disable_examples=true'
+
     def isPreviewRun = gradle.startParameter.taskNames.any {
         it == 'runClientPreview' || it.endsWith(':runClientPreview')
     }

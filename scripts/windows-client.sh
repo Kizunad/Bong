@@ -39,10 +39,17 @@ done
 : "$SYNC_ONLY" # 保留变量避免 set -u
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+JAVA17_HOME="${JAVA17_HOME:-/usr/lib/jvm/java-17-openjdk-amd64}"
 WIN_INSTANCE="/mnt/d/Minecraft/.minecraft/Fabric_Bang_Test"
 MODS_DIR="$WIN_INSTANCE/mods"
 HMCL_BAT_WIN='D:\Minecraft\Open-Bong-HMCL.bat'
 HMCL_BAT_WSL='/mnt/d/Minecraft/Open-Bong-HMCL.bat'
+
+if [[ ! -x "$JAVA17_HOME/bin/java" ]]; then
+    echo "[windows-client] Java 17 不存在或不可执行：$JAVA17_HOME/bin/java" >&2
+    echo "                  可用 JAVA17_HOME=/path/to/jdk17 覆盖" >&2
+    exit 1
+fi
 
 if [[ ! -d "$WIN_INSTANCE" ]]; then
     echo "[windows-client] HMCL 实例目录不存在：$WIN_INSTANCE" >&2
@@ -51,7 +58,7 @@ if [[ ! -d "$WIN_INSTANCE" ]]; then
 fi
 
 echo "[windows-client] 构建 client（./gradlew build）..."
-(cd "$ROOT/client" && ./gradlew build)
+(cd "$ROOT/client" && JAVA_HOME="$JAVA17_HOME" PATH="$JAVA17_HOME/bin:$PATH" ./gradlew build)
 
 # Loom 产物：bong-client-<version>.jar（排除 sources / dev / javadoc）
 JAR="$(ls -t "$ROOT"/client/build/libs/bong-client-*.jar 2>/dev/null \
