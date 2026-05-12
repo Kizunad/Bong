@@ -8,8 +8,12 @@ use valence::prelude::{
 
 use crate::combat::anticheat::AntiCheatCounter;
 use crate::combat::armor::{ArmorProfileRegistry, ARMOR_MITIGATION_CAP};
+use crate::combat::body_mass::{BodyMass, Stance};
 use crate::combat::jiemai::{
     jiemai_apply_effects, jiemai_effectiveness, jiemai_fov_check, jiemai_prep_window,
+};
+use crate::combat::knockback::{
+    compute_combat_knockback, CombatKnockbackInput, KnockbackEvent, DEFAULT_CHAIN_DEPTH,
 };
 use crate::combat::status::{body_part_damage_multiplier, has_active_status};
 use crate::combat::tuike::{tuike_filter_contam, FalseSkin, ShedEvent};
@@ -50,6 +54,7 @@ use crate::network::audio_event_emit::{
 };
 use crate::network::{gameplay_vfx, vfx_event_emit::VfxEventRequest};
 use crate::npc::brain::canonical_npc_id;
+use crate::npc::movement::PendingKnockback;
 use crate::npc::spawn::NpcMarker;
 use crate::player::state::canonical_player_id;
 use crate::qi_physics::constants::{
@@ -155,6 +160,7 @@ pub struct CombatResolveEventWriters<'w> {
     multipoint_backfires: Option<ResMut<'w, Events<zhenmai_v2::MultiPointBackfireEvent>>>,
     vfx_events: Option<ResMut<'w, Events<VfxEventRequest>>>,
     audio_events: Option<ResMut<'w, Events<PlaySoundRecipeRequest>>>,
+    knockback_events: Option<ResMut<'w, Events<KnockbackEvent>>>,
     death_events: EventWriter<'w, DeathEvent>,
     durability_changed_tx: EventWriter<'w, InventoryDurabilityChangedEvent>,
 }
@@ -212,6 +218,8 @@ pub fn resolve_attack_intents(
     juebi_law_disruptions: Query<&JueBiLawDisruption>,
     sparring_sessions: Query<&crate::social::components::SparringState>,
     mut combatants: ParamSet<(Query<CombatAttackerItem<'_>>, Query<CombatTargetItem<'_>>)>,
+    body_masses: Query<&BodyMass>,
+    stances: Query<&Stance>,
     mut event_writers: CombatResolveEventWriters,
     // plan-weapon-v1 §6：武器加成 + 耐久扣减
     weapon_break: (
@@ -336,7 +344,7 @@ pub fn resolve_attack_intents(
         };
         let distance = hit_probe.distance as f32;
 
-        let attacker_damage_multiplier = {
+        let (attacker_damage_multiplier, attacker_body_mass) = {
             let mut attacker_query = combatants.p0();
             let Ok((mut attacker_cultivation, mut attacker_meridians, attacker_attrs, _, _)) =
                 attacker_query.get_mut(intent.attacker)
@@ -357,9 +365,12 @@ pub fn resolve_attack_intents(
                     * ATTACK_QI_THROUGHPUT_FACTOR
                     * juebi_law_env.law_disruption_channeling_multiplier();
             }
-            attacker_attrs
-                .map(|attrs| attrs.attack_power)
-                .unwrap_or(1.0)
+            (
+                attacker_attrs
+                    .map(|attrs| attrs.attack_power)
+                    .unwrap_or(1.0),
+                body_masses.get(intent.attacker).ok().copied(),
+            )
         };
 
         let mut target_query = combatants.p1();
@@ -399,8 +410,10 @@ pub fn resolve_attack_intents(
             * naked_defense_damage_multiplier(tuike_v2_stack, clock.tick);
         // 正式武器走 Weapon component；凡器不挂 Weapon，但主手使用时按低倍率临时武器结算。
         let mut hit_tool: Option<crate::tools::ToolKind> = None;
+        let mut weapon_kind_for_knockback = None;
         let weapon_multiplier: f32 = match weapons.get(intent.attacker) {
             Ok(weapon) => {
+                weapon_kind_for_knockback = Some(weapon.weapon_kind);
                 let resonance = inventories.get(intent.attacker).ok().and_then(|inventory| {
                     crate::forge::artifact_meridian::artifact_resonance_for_inventory(
                         inventory,
@@ -422,6 +435,17 @@ pub fn resolve_attack_intents(
                     .unwrap_or(1.0)
             }
         };
+        let defender_stance = stances
+            .get(target_entity)
+            .ok()
+            .copied()
+            .unwrap_or_else(|| Stance::from_runtime(&stamina, combat_state.as_deref()));
+        let attacker_mass = attacker_body_mass.unwrap_or_default();
+        let defender_mass = body_masses
+            .get(target_entity)
+            .ok()
+            .copied()
+            .unwrap_or_default();
         let zhenmai_attack_kind =
             zhenmai_v2::attack_kind_for_source(intent.source, intent.wound_kind);
         let harden_damage_multiplier = harden_active
@@ -443,6 +467,45 @@ pub fn resolve_attack_intents(
         let damage = (base_damage * (1.0 - juebi_backfire_fraction)).max(1.0);
         let juebi_backfire_damage = (base_damage * juebi_backfire_fraction).max(0.0);
         let was_alive = wounds.health_current > 0.0;
+        if let Ok(knockback) = compute_combat_knockback(CombatKnockbackInput {
+            physical_damage: damage,
+            qi_invest: hit_qi,
+            attacker_mass: Some(&attacker_mass),
+            target_mass: Some(&defender_mass),
+            target_stance: Some(&defender_stance),
+            target_cultivation: defender_cultivation.as_deref(),
+            weapon_kind: weapon_kind_for_knockback,
+            source: intent.source,
+        }) {
+            if knockback.is_actionable() {
+                let direction = target_position - attacker_position;
+                if direction.length() > f64::EPSILON {
+                    commands
+                        .entity(target_entity)
+                        .insert(PendingKnockback::from_result(
+                            intent.attacker,
+                            intent.source,
+                            direction,
+                            knockback,
+                            DEFAULT_CHAIN_DEPTH,
+                        ));
+                    if let Some(events) = event_writers.knockback_events.as_deref_mut() {
+                        events.send(KnockbackEvent {
+                            attacker: intent.attacker,
+                            target: target_entity,
+                            source: intent.source,
+                            distance_blocks: knockback.distance_blocks,
+                            velocity_blocks_per_tick: knockback.velocity_blocks_per_tick,
+                            duration_ticks: knockback.duration_ticks,
+                            kinetic_energy: knockback.kinetic_energy,
+                            collision_damage: None,
+                            chain_depth: DEFAULT_CHAIN_DEPTH,
+                            block_broken: false,
+                        });
+                    }
+                }
+            }
+        }
         let mut pending_reflected_qi = 0.0_f64;
         if let Some(active) = multipoint_active.as_deref_mut() {
             let reflected =
@@ -1830,6 +1893,66 @@ mod tests {
             }
             other => panic!("expected SpawnParticle, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn hit_emits_knockback_event_and_pending_movement() {
+        let mut app = App::new();
+        app.insert_resource(CombatClock { tick: 44 });
+        app.add_event::<AttackIntent>();
+        app.add_event::<ApplyStatusEffectIntent>();
+        app.add_event::<CombatEvent>();
+        app.add_event::<KnockbackEvent>();
+        app.add_event::<DeathEvent>();
+        app.add_event::<crate::combat::weapon::WeaponBroken>();
+        app.add_event::<InventoryDurabilityChangedEvent>();
+        app.add_systems(Update, resolve_attack_intents);
+
+        let attacker = spawn_player(
+            &mut app,
+            "Azure",
+            [0.0, 64.0, 0.0],
+            Wounds::default(),
+            Stamina::default(),
+        );
+        let target = spawn_player(
+            &mut app,
+            "Crimson",
+            [1.0, 64.0, 0.0],
+            Wounds::default(),
+            Stamina::default(),
+        );
+
+        app.world_mut().send_event(AttackIntent {
+            attacker,
+            target: Some(target),
+            issued_at_tick: 44,
+            reach: FIST_REACH,
+            qi_invest: 10.0,
+            wound_kind: WoundKind::Blunt,
+            source: AttackSource::Melee,
+            debug_command: None,
+        });
+        app.update();
+
+        let pending = app
+            .world()
+            .get::<PendingKnockback>(target)
+            .expect("resolved hit should install pending knockback");
+        assert_eq!(pending.attacker, Some(attacker));
+        assert_eq!(pending.source, AttackSource::Melee);
+        assert!(pending.distance_blocks > 0.0);
+        assert_eq!(pending.chain_depth, DEFAULT_CHAIN_DEPTH);
+
+        let knockback_events = app.world().resource::<Events<KnockbackEvent>>();
+        let events = knockback_events
+            .iter_current_update_events()
+            .collect::<Vec<_>>();
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].attacker, attacker);
+        assert_eq!(events[0].target, target);
+        assert_eq!(events[0].collision_damage, None);
+        assert!(!events[0].block_broken);
     }
 
     #[test]
