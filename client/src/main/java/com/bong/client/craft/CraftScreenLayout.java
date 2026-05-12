@@ -12,7 +12,7 @@ public final class CraftScreenLayout {
     public static final int RIGHT_W = 200;
     public static final int MATERIAL_SLOT_SIZE = 44;
     public static final int MATERIAL_COLUMNS = 3;
-    public static final int MATERIAL_ROWS = 2;
+    public static final int MATERIAL_ROWS = 3;
 
     private CraftScreenLayout() {}
 

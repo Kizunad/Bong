@@ -21,6 +21,8 @@ class CraftUxViewModelTest {
         assertEquals(340, CraftScreenLayout.PANEL_H);
         assertTrue(CraftScreenLayout.matchesAlchemyTabHeight());
         assertEquals(44, CraftScreenLayout.MATERIAL_SLOT_SIZE);
+        assertEquals(3, CraftScreenLayout.MATERIAL_COLUMNS);
+        assertEquals(3, CraftScreenLayout.MATERIAL_ROWS);
         assertEquals(32, CraftScreenLayout.ACTION_BAR_H);
     }
 
