@@ -118,15 +118,15 @@ public class SocialServerDataHandlerTest {
 
     @Test
     void tradeOfferUpdatesStoreAndPublishesHudSignal() {
-        ServerDataDispatch dispatch = handler().handle(parseEnvelope("""
+        ServerDataRouter.RouteResult result = ServerDataRouter.createDefault().route("""
             {"v":1,"type":"trade_offer","offer_id":"trade:char:steve:char:new:1001:42",
              "initiator":"char:steve","target":"char:new",
              "offered_item":{"instance_id":1001,"item_id":"spirit_grass","display_name":"Spirit Grass","stack_count":1},
              "requested_items":[{"instance_id":2002,"item_id":"bone_coin","display_name":"Bone Coin","stack_count":3}],
              "expires_at_ms":1712346000000}
-            """));
+            """, 0);
 
-        assertTrue(dispatch.handled(), dispatch.logMessage());
+        assertTrue(result.isHandled(), result.logMessage());
         assertNotNull(SocialStateStore.tradeOffer());
         assertEquals("trade:char:steve:char:new:1001:42", SocialStateStore.tradeOffer().offerId());
         assertEquals("Spirit Grass", SocialStateStore.tradeOffer().offeredItem().displayName());
