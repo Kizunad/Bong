@@ -110,14 +110,17 @@ impl DeathCinematic {
 
     pub fn snapshot(&self, now_tick: u64) -> DeathCinematicS2cV1 {
         let (phase, phase_tick, phase_duration_ticks) = self.phase_at(now_tick);
+        let total_duration_ticks = self.total_duration_ticks();
         DeathCinematicS2cV1 {
             v: 1,
             character_id: self.character_id.clone(),
             phase,
             phase_tick,
             phase_duration_ticks,
-            total_elapsed_ticks: now_tick.saturating_sub(self.started_at_tick),
-            total_duration_ticks: self.total_duration_ticks(),
+            total_elapsed_ticks: now_tick
+                .saturating_sub(self.started_at_tick)
+                .min(total_duration_ticks),
+            total_duration_ticks,
             roll: self.roll,
             insight_text: self.insight_text.clone(),
             is_final: self.is_final,
@@ -245,6 +248,23 @@ mod tests {
             cinematic.phase_at(420),
             (DeathCinematicPhaseV1::Rebirth, 0, REBIRTH_TICKS)
         );
+        let end_tick = 100 + cinematic.total_duration_ticks();
+        assert_eq!(
+            cinematic.phase_at(end_tick),
+            (DeathCinematicPhaseV1::Rebirth, REBIRTH_TICKS, REBIRTH_TICKS)
+        );
+        assert_eq!(
+            cinematic.phase_at(end_tick + 1),
+            (DeathCinematicPhaseV1::Rebirth, REBIRTH_TICKS, REBIRTH_TICKS)
+        );
+        let end_snapshot = cinematic.snapshot(end_tick + 1);
+        assert_eq!(end_snapshot.phase, DeathCinematicPhaseV1::Rebirth);
+        assert_eq!(end_snapshot.phase_tick, REBIRTH_TICKS);
+        assert_eq!(end_snapshot.phase_duration_ticks, REBIRTH_TICKS);
+        assert_eq!(
+            end_snapshot.total_elapsed_ticks,
+            cinematic.total_duration_ticks()
+        );
     }
 
     #[test]
@@ -267,6 +287,14 @@ mod tests {
         assert_eq!(
             cinematic.phase_at(10),
             (DeathCinematicPhaseV1::Roll, 0, SHORT_ROLL_TICKS)
+        );
+        let end_tick = 10 + cinematic.total_duration_ticks();
+        let end_snapshot = cinematic.snapshot(end_tick + 1);
+        assert_eq!(end_snapshot.phase, DeathCinematicPhaseV1::Rebirth);
+        assert_eq!(end_snapshot.phase_tick, REBIRTH_TICKS);
+        assert_eq!(
+            end_snapshot.total_elapsed_ticks,
+            cinematic.total_duration_ticks()
         );
     }
 

@@ -2,6 +2,7 @@ package com.bong.client.death;
 
 import com.bong.client.hud.HudRenderCommand;
 import com.bong.client.hud.HudRenderLayer;
+import com.bong.client.hud.HudTextHelper;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -17,8 +18,14 @@ public final class NearDeathCollapsePlanner {
         List<HudRenderCommand> out = new ArrayList<>();
         if (state == null || !state.active() || width <= 0 || height <= 0) return out;
         double progress = state.phaseProgress();
-        out.add(HudRenderCommand.screenTint(HudRenderLayer.NEAR_DEATH, alpha(QI_COLOR, 40 + (int) (progress * 60))));
-        out.add(HudRenderCommand.edgeVignette(HudRenderLayer.NEAR_DEATH, alpha(MERIDIAN_COLOR, 80 + (int) (progress * 70))));
+        out.add(HudRenderCommand.screenTint(
+            HudRenderLayer.NEAR_DEATH,
+            HudTextHelper.withAlpha(QI_COLOR, 40 + (int) (progress * 60))
+        ));
+        out.add(HudRenderCommand.edgeVignette(
+            HudRenderLayer.NEAR_DEATH,
+            HudTextHelper.withAlpha(MERIDIAN_COLOR, 80 + (int) (progress * 70))
+        ));
         out.add(HudRenderCommand.text(
             HudRenderLayer.NEAR_DEATH,
             state.skipPredeath() ? "你已经习惯死亡" : "真元外泄 · 经脉承压 · 肉身将裂",
@@ -45,9 +52,5 @@ public final class NearDeathCollapsePlanner {
 
     public static boolean collapseFreezeBeforeDeath(long phaseTick) {
         return phaseTick >= 14L && phaseTick <= 20L;
-    }
-
-    private static int alpha(int color, int alpha) {
-        return (Math.max(0, Math.min(255, alpha)) << 24) | (color & 0x00FFFFFF);
     }
 }

@@ -621,7 +621,7 @@ pub fn near_death_tick(
     _revived: EventWriter<PlayerRevived>,
     mut commands: Commands,
     mut terminated: EventWriter<PlayerTerminated>,
-    mut death_cinematics: Option<ResMut<Events<DeathCinematicPublished>>>,
+    mut death_cinematics: ResMut<Events<DeathCinematicPublished>>,
     mut lifecycle_q: Query<NearDeathPersistenceQueryItem<'_>>,
     mut clients: Query<&mut valence::prelude::Client>,
     mut vfx_events: EventWriter<VfxEventRequest>,
@@ -734,11 +734,9 @@ pub fn near_death_tick(
         );
         commands.entity(entity).insert(cinematic.clone());
         let cinematic_payload = cinematic.snapshot(clock.tick);
-        if let Some(death_cinematics) = death_cinematics.as_deref_mut() {
-            death_cinematics.send(DeathCinematicPublished {
-                payload: cinematic_payload.clone(),
-            });
-        }
+        death_cinematics.send(DeathCinematicPublished {
+            payload: cinematic_payload.clone(),
+        });
         emit_death_screen(
             &mut clients,
             entity,
@@ -2237,6 +2235,7 @@ mod tests {
         app.add_event::<DeathEvent>();
         app.add_event::<CultivationDeathTrigger>();
         app.add_event::<DeathInsightRequested>();
+        app.add_event::<DeathCinematicPublished>();
         app.add_event::<PlayerRevived>();
         app.add_event::<PlayerTerminated>();
         app.add_event::<RevivalActionIntent>();
@@ -2350,6 +2349,7 @@ mod tests {
         app.add_event::<DeathEvent>();
         app.add_event::<CultivationDeathTrigger>();
         app.add_event::<DeathInsightRequested>();
+        app.add_event::<DeathCinematicPublished>();
         app.add_event::<PlayerRevived>();
         app.add_event::<PlayerTerminated>();
         app.add_event::<VfxEventRequest>();
@@ -2401,6 +2401,7 @@ mod tests {
         app.insert_resource(CombatClock { tick: 200 });
         app.add_event::<PlayerRevived>();
         app.add_event::<PlayerTerminated>();
+        app.add_event::<DeathCinematicPublished>();
         app.add_event::<VfxEventRequest>();
         app.add_systems(Update, near_death_tick);
 
@@ -2463,6 +2464,7 @@ mod tests {
         app.add_event::<DeathEvent>();
         app.add_event::<CultivationDeathTrigger>();
         app.add_event::<DeathInsightRequested>();
+        app.add_event::<DeathCinematicPublished>();
         app.add_event::<PlayerTerminated>();
         app.add_event::<VfxEventRequest>();
         app.add_systems(Update, death_arbiter_tick);
@@ -2534,6 +2536,7 @@ mod tests {
         app.add_event::<DeathEvent>();
         app.add_event::<CultivationDeathTrigger>();
         app.add_event::<DeathInsightRequested>();
+        app.add_event::<DeathCinematicPublished>();
         app.add_event::<PlayerTerminated>();
         app.add_event::<VfxEventRequest>();
         app.add_systems(Update, death_arbiter_tick);
@@ -2590,6 +2593,7 @@ mod tests {
         app.add_event::<DeathEvent>();
         app.add_event::<CultivationDeathTrigger>();
         app.add_event::<DeathInsightRequested>();
+        app.add_event::<DeathCinematicPublished>();
         app.add_event::<PlayerTerminated>();
         app.add_event::<VfxEventRequest>();
         app.add_systems(Update, death_arbiter_tick);
@@ -2695,6 +2699,7 @@ mod tests {
         app.add_event::<DeathEvent>();
         app.add_event::<CultivationDeathTrigger>();
         app.add_event::<DeathInsightRequested>();
+        app.add_event::<DeathCinematicPublished>();
         app.add_event::<PlayerTerminated>();
         app.add_event::<VfxEventRequest>();
         app.add_systems(Update, death_arbiter_tick);
@@ -2794,6 +2799,7 @@ mod tests {
         app.add_event::<DeathEvent>();
         app.add_event::<CultivationDeathTrigger>();
         app.add_event::<DeathInsightRequested>();
+        app.add_event::<DeathCinematicPublished>();
         app.add_event::<PlayerTerminated>();
         app.add_event::<VfxEventRequest>();
         app.add_systems(Update, death_arbiter_tick);
@@ -2850,6 +2856,7 @@ mod tests {
         app.add_event::<DeathEvent>();
         app.add_event::<CultivationDeathTrigger>();
         app.add_event::<DeathInsightRequested>();
+        app.add_event::<DeathCinematicPublished>();
         app.add_event::<PlayerTerminated>();
         app.add_event::<VfxEventRequest>();
         app.add_systems(Update, death_arbiter_tick);
@@ -2907,6 +2914,7 @@ mod tests {
         app.add_event::<DeathEvent>();
         app.add_event::<CultivationDeathTrigger>();
         app.add_event::<DeathInsightRequested>();
+        app.add_event::<DeathCinematicPublished>();
         app.add_event::<PlayerTerminated>();
         app.add_event::<VfxEventRequest>();
         app.add_systems(Update, death_arbiter_tick);
@@ -3008,6 +3016,7 @@ mod tests {
         app.add_event::<DeathEvent>();
         app.add_event::<CultivationDeathTrigger>();
         app.add_event::<DeathInsightRequested>();
+        app.add_event::<DeathCinematicPublished>();
         app.add_event::<PlayerRevived>();
         app.add_event::<PlayerTerminated>();
         app.add_event::<RevivalActionIntent>();
@@ -3237,6 +3246,7 @@ mod tests {
         app.add_event::<DeathEvent>();
         app.add_event::<CultivationDeathTrigger>();
         app.add_event::<DeathInsightRequested>();
+        app.add_event::<DeathCinematicPublished>();
         app.add_event::<PlayerRevived>();
         app.add_event::<PlayerTerminated>();
         app.add_event::<RevivalActionIntent>();
@@ -3385,6 +3395,7 @@ mod tests {
         app.add_event::<DeathEvent>();
         app.add_event::<CultivationDeathTrigger>();
         app.add_event::<DeathInsightRequested>();
+        app.add_event::<DeathCinematicPublished>();
         app.add_event::<PlayerRevived>();
         app.add_event::<PlayerTerminated>();
         app.add_event::<RevivalActionIntent>();
@@ -3797,6 +3808,7 @@ mod tests {
         app.add_event::<DeathEvent>();
         app.add_event::<CultivationDeathTrigger>();
         app.add_event::<DeathInsightRequested>();
+        app.add_event::<DeathCinematicPublished>();
         app.add_event::<PlayerRevived>();
         app.add_event::<PlayerTerminated>();
         app.add_event::<VfxEventRequest>();

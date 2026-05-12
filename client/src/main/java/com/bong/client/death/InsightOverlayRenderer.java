@@ -24,7 +24,7 @@ public final class InsightOverlayRenderer {
         int top = Math.max(28, height / 2 - 70);
         for (int i = 0; i < visible; i++) {
             String line = state.insightText().get(i);
-            int color = line.contains("运数") || line.contains("坍缩渊") ? 0xFFE07070 : 0xFFC0B090;
+            int color = usesWarningColor(line) ? 0xFFE07070 : 0xFFC0B090;
             out.add(HudRenderCommand.text(
                 HudRenderLayer.VISUAL,
                 verticalPreview(line),
@@ -40,5 +40,15 @@ public final class InsightOverlayRenderer {
         if (line == null || line.isBlank()) return "";
         String compact = line.replace(" ", "");
         return compact.length() <= 12 ? compact : compact.substring(0, 12);
+    }
+
+    static boolean usesWarningColor(String line) {
+        if (line == null || line.isBlank()) return false;
+        String compact = line.replace(" ", "");
+        return compact.contains("坍缩渊")
+            || compact.startsWith("运数")
+            || compact.contains("此次运数")
+            || compact.contains("运数：")
+            || compact.contains("运数:");
     }
 }

@@ -923,6 +923,18 @@ describe("redis-ipc", () => {
         payload: expect.objectContaining({ realm_to: "Foundation" }),
       }),
     ]);
+
+    await sub.publish(
+      DEATH_CINEMATIC,
+      JSON.stringify({
+        v: 1,
+        character_id: "offline:Azure",
+        phase: "not-a-phase",
+      }),
+    );
+
+    expect(callback).toHaveBeenCalledTimes(11);
+    expect(ipc.getLatestCrossSystemEvents().filter((event) => event.channel === DEATH_CINEMATIC)).toHaveLength(1);
   });
 
   it("publishes spawn_npc commands through the existing agent command channel", async () => {

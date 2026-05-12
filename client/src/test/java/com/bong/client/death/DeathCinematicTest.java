@@ -49,6 +49,60 @@ class DeathCinematicTest {
     }
 
     @Test
+    void payloadParserRejectsMissingVersionAndRequiredCharacter() {
+        assertFalse(DeathCinematicPayloadParser.parse(null, 1_000L).active());
+        assertFalse(DeathCinematicPayloadParser.parse(JsonParser.parseString("{}").getAsJsonObject(), 1_000L).active());
+        assertFalse(DeathCinematicPayloadParser.parse(
+            JsonParser.parseString("{\"v\":2,\"character_id\":\"offline:Azure\"}").getAsJsonObject(),
+            1_000L
+        ).active());
+        assertFalse(DeathCinematicPayloadParser.parse(
+            JsonParser.parseString("{\"v\":1,\"phase\":\"roll\"}").getAsJsonObject(),
+            1_000L
+        ).active());
+    }
+
+    @Test
+    void payloadParserClampsDurationsDeathNumberAndUnknownEnums() {
+        var obj = JsonParser.parseString("""
+            {
+              "v": 1,
+              "character_id": "offline:Azure",
+              "phase": "unknown_phase",
+              "phase_tick": "bad",
+              "phase_duration_ticks": 0,
+              "total_elapsed_ticks": 5,
+              "total_duration_ticks": 0,
+              "roll": {
+                "probability": 2.0,
+                "threshold": -1.0,
+                "luck_value": 0.42,
+                "result": "unknown_result"
+              },
+              "insight_text": [1, "", "劫未尽"],
+              "is_final": false,
+              "death_number": 9999999999,
+              "zone_kind": "ordinary",
+              "tsy_death": false,
+              "rebirth_weakened_ticks": -3,
+              "skip_predeath": false
+            }
+            """).getAsJsonObject();
+
+        DeathCinematicState state = DeathCinematicPayloadParser.parse(obj, 1_000L);
+
+        assertTrue(state.active());
+        assertEquals(DeathCinematicState.Phase.PREDEATH, state.phase());
+        assertEquals(DeathCinematicState.RollResult.PENDING, state.roll().result());
+        assertEquals(1L, state.phaseDurationTicks());
+        assertEquals(1L, state.totalDurationTicks());
+        assertEquals(Integer.MAX_VALUE, state.deathNumber());
+        assertEquals(List.of("劫未尽"), state.insightText());
+        assertEquals(0L, state.rebirthWeakenedTicks());
+        assertEquals(1_000L, state.receivedAtMillis());
+    }
+
+    @Test
     void localClockAdvancesPhaseSequenceAfterPayloadReceipt() {
         DeathCinematicState state = baseState(
             DeathCinematicState.Phase.PREDEATH,
@@ -105,7 +159,10 @@ class DeathCinematicTest {
         );
 
         assertEquals(0.65, DeathRollUI.displayedProbability(state), 1e-9);
+        assertEquals(List.of("?", "?", "?"), DeathRollUI.bambooSlipLabels(null));
+        assertEquals(List.of("?", "?", "?"), DeathRollUI.bambooSlipLabels(DeathCinematicState.RollResult.PENDING));
         assertEquals(List.of("生", "生", "生"), DeathRollUI.bambooSlipLabels(DeathCinematicState.RollResult.SURVIVE));
+        assertEquals(List.of("落", "落", "生"), DeathRollUI.bambooSlipLabels(DeathCinematicState.RollResult.FALL));
         assertEquals(List.of("终", "终", "碎"), DeathRollUI.bambooSlipLabels(DeathCinematicState.RollResult.FINAL));
     }
 
@@ -135,12 +192,25 @@ class DeathCinematicTest {
 
     @Test
     void nearDeathCollapseThresholdsMatchThreeLayers() {
+        assertEquals(3, NearDeathCollapsePlanner.qiEscapeDensityByHp(0.0));
+        assertEquals(0, NearDeathCollapsePlanner.qiEscapeDensityByHp(1.0));
         assertEquals(0, NearDeathCollapsePlanner.qiEscapeDensityByHp(0.20));
+        assertEquals(3, NearDeathCollapsePlanner.qiEscapeDensityByHp(0.1999));
+        assertEquals(0, NearDeathCollapsePlanner.qiEscapeDensityByHp(0.2001));
         assertEquals(3, NearDeathCollapsePlanner.qiEscapeDensityByHp(0.04));
         assertTrue(NearDeathCollapsePlanner.meridianGlowOnSevered(true, 0.50));
+        assertFalse(NearDeathCollapsePlanner.meridianGlowOnSevered(false, 0.10));
+        assertFalse(NearDeathCollapsePlanner.meridianGlowOnSevered(false, 0.11));
         assertTrue(NearDeathCollapsePlanner.meridianGlowOnSevered(false, 0.09));
+        assertEquals(0, NearDeathCollapsePlanner.surfaceCrackLines(0.05));
+        assertEquals(0, NearDeathCollapsePlanner.surfaceCrackLines(0.06));
+        assertEquals(8, NearDeathCollapsePlanner.surfaceCrackLines(0.0499));
         assertEquals(8, NearDeathCollapsePlanner.surfaceCrackLines(0.04));
+        assertFalse(NearDeathCollapsePlanner.collapseFreezeBeforeDeath(13L));
+        assertTrue(NearDeathCollapsePlanner.collapseFreezeBeforeDeath(14L));
         assertTrue(NearDeathCollapsePlanner.collapseFreezeBeforeDeath(18L));
+        assertTrue(NearDeathCollapsePlanner.collapseFreezeBeforeDeath(20L));
+        assertFalse(NearDeathCollapsePlanner.collapseFreezeBeforeDeath(21L));
     }
 
     @Test
@@ -157,6 +227,38 @@ class DeathCinematicTest {
             1_000L
         );
         assertEquals(2, InsightOverlayRenderer.visibleLineCount(insight));
+        assertEquals(0, InsightOverlayRenderer.visibleLineCount(null));
+        assertEquals(0, InsightOverlayRenderer.visibleLineCount(DeathCinematicState.INACTIVE));
+        assertEquals(0, InsightOverlayRenderer.visibleLineCount(new DeathCinematicState(
+            true,
+            "offline:Azure",
+            DeathCinematicState.Phase.INSIGHT_OVERLAY,
+            0L,
+            120L,
+            0L,
+            380L,
+            new DeathCinematicState.Roll(0.65, 0.65, 0.42, DeathCinematicState.RollResult.SURVIVE),
+            List.of(),
+            false,
+            1,
+            "ordinary",
+            false,
+            3_600L,
+            false,
+            1_000L
+        )));
+        assertEquals(1, InsightOverlayRenderer.visibleLineCount(
+            baseState(DeathCinematicState.Phase.INSIGHT_OVERLAY, 0L, 120L, 200L, 380L, false, 1, false, 1_000L)
+        ));
+        assertEquals(2, InsightOverlayRenderer.visibleLineCount(
+            baseState(DeathCinematicState.Phase.INSIGHT_OVERLAY, 79L, 120L, 200L, 380L, false, 1, false, 1_000L)
+        ));
+        assertEquals(3, InsightOverlayRenderer.visibleLineCount(
+            baseState(DeathCinematicState.Phase.INSIGHT_OVERLAY, 120L, 120L, 200L, 380L, false, 1, false, 1_000L)
+        ));
+        assertFalse(InsightOverlayRenderer.usesWarningColor("幸运数字是三"));
+        assertTrue(InsightOverlayRenderer.usesWarningColor("此次运数：35%。下次 20%。"));
+        assertTrue(InsightOverlayRenderer.usesWarningColor("坍缩渊，概不赊欠。"));
         assertTrue(RebirthCinematicRenderer.buildCommands(
                 baseState(DeathCinematicState.Phase.REBIRTH, 20L, 60L, 340L, 380L, false, 1, false, 1_000L),
                 320,

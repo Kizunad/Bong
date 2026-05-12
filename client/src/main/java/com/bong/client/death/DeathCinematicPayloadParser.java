@@ -9,6 +9,8 @@ import java.util.ArrayList;
 import java.util.List;
 
 public final class DeathCinematicPayloadParser {
+    private static final long SUPPORTED_VERSION = 1L;
+
     private DeathCinematicPayloadParser() {}
 
     public static DeathCinematicState parse(JsonObject obj) {
@@ -16,7 +18,7 @@ public final class DeathCinematicPayloadParser {
     }
 
     static DeathCinematicState parse(JsonObject obj, long receivedAtMillis) {
-        if (obj == null) {
+        if (obj == null || !hasSupportedVersion(obj)) {
             return DeathCinematicState.INACTIVE;
         }
         JsonObject rollObj = readObject(obj, "roll");
@@ -26,19 +28,23 @@ public final class DeathCinematicPayloadParser {
             readDouble(rollObj, "luck_value", 0.0),
             DeathCinematicState.RollResult.fromWire(readString(rollObj, "result"))
         );
+        String characterId = readString(obj, "character_id");
+        if (characterId.isBlank()) {
+            return DeathCinematicState.INACTIVE;
+        }
 
         return new DeathCinematicState(
             true,
-            readString(obj, "character_id"),
+            characterId,
             DeathCinematicState.Phase.fromWire(readString(obj, "phase")),
             readLong(obj, "phase_tick", 0L),
-            readLong(obj, "phase_duration_ticks", 1L),
+            readDurationTicks(obj, "phase_duration_ticks"),
             readLong(obj, "total_elapsed_ticks", 0L),
-            readLong(obj, "total_duration_ticks", 1L),
+            readDurationTicks(obj, "total_duration_ticks"),
             roll,
             readStringArray(obj, "insight_text"),
             readBoolean(obj, "is_final", false),
-            (int) readLong(obj, "death_number", 0L),
+            readInt(obj, "death_number", 0),
             readString(obj, "zone_kind"),
             readBoolean(obj, "tsy_death", false),
             readLong(obj, "rebirth_weakened_ticks", 0L),
@@ -53,6 +59,17 @@ public final class DeathCinematicPayloadParser {
         if (el == null || el.isJsonNull() || !el.isJsonPrimitive()) return "";
         JsonPrimitive primitive = el.getAsJsonPrimitive();
         return primitive.isString() ? primitive.getAsString() : "";
+    }
+
+    private static boolean hasSupportedVersion(JsonObject obj) {
+        JsonElement el = obj.get("v");
+        if (el == null || el.isJsonNull() || !el.isJsonPrimitive()) return false;
+        JsonPrimitive primitive = el.getAsJsonPrimitive();
+        if (!primitive.isNumber()) return false;
+        double value = primitive.getAsDouble();
+        return Double.isFinite(value)
+            && Math.rint(value) == value
+            && (long) value == SUPPORTED_VERSION;
     }
 
     private static boolean readBoolean(JsonObject obj, String field, boolean fallback) {
@@ -74,6 +91,16 @@ public final class DeathCinematicPayloadParser {
         double value = primitive.getAsDouble();
         if (!Double.isFinite(value)) return fallback;
         return Math.max(0L, Math.round(value));
+    }
+
+    private static long readDurationTicks(JsonObject obj, String field) {
+        return Math.max(1L, readLong(obj, field, 1L));
+    }
+
+    private static int readInt(JsonObject obj, String field, int fallback) {
+        long value = readLong(obj, field, fallback);
+        if (value > Integer.MAX_VALUE) return Integer.MAX_VALUE;
+        return (int) value;
     }
 
     private static double readDouble(JsonObject obj, String field, double fallback) {

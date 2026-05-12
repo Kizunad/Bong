@@ -942,7 +942,8 @@ mod tests {
     fn npc_full_death_chain_from_attack_to_despawned() {
         use crate::combat::components::NEAR_DEATH_WINDOW_TICKS;
         use crate::combat::events::{
-            ApplyStatusEffectIntent, AttackIntent, CombatEvent, DeathEvent, FIST_REACH,
+            ApplyStatusEffectIntent, AttackIntent, CombatEvent, DeathCinematicPublished,
+            DeathEvent, FIST_REACH,
         };
         use crate::combat::lifecycle::{death_arbiter_tick, near_death_tick};
         use crate::combat::resolve::resolve_attack_intents;
@@ -983,6 +984,7 @@ mod tests {
         app.add_event::<crate::network::vfx_event_emit::VfxEventRequest>();
         app.add_event::<PlayerTerminated>();
         app.add_event::<PlayerRevived>();
+        app.add_event::<DeathCinematicPublished>();
         app.add_event::<CultivationDeathTrigger>();
         app.add_event::<NpcDeathNotice>();
         app.add_systems(

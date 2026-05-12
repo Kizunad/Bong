@@ -2,6 +2,7 @@ package com.bong.client.death;
 
 import com.bong.client.hud.HudRenderCommand;
 import com.bong.client.hud.HudRenderLayer;
+import com.bong.client.hud.HudTextHelper;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -39,7 +40,10 @@ public final class ScreenShatterEffect {
         if (state == null || !state.active() || width <= 0 || height <= 0) return List.of();
         double progress = state.phaseProgress();
         List<HudRenderCommand> out = new ArrayList<>();
-        out.add(HudRenderCommand.screenTint(HudRenderLayer.VISUAL, alpha(0x000000, (int) (progress * 180))));
+        out.add(HudRenderCommand.screenTint(
+            HudRenderLayer.VISUAL,
+            HudTextHelper.withAlpha(0x000000, (int) (progress * 180))
+        ));
         for (Fragment fragment : fragments(width, height, state.deathNumber())) {
             int x = (int) Math.round(fragment.x() + fragment.velocityX() * progress * 24.0);
             int y = (int) Math.round(fragment.y() + fragment.velocityY() * progress * 24.0);
@@ -49,13 +53,9 @@ public final class ScreenShatterEffect {
                 y,
                 fragment.width(),
                 fragment.height(),
-                alpha(0x0F0F10, 190 - (int) (progress * 150))
+                HudTextHelper.withAlpha(0x0F0F10, 190 - (int) (progress * 150))
             ));
         }
         return out;
-    }
-
-    private static int alpha(int rgb, int alpha) {
-        return (Math.max(0, Math.min(255, alpha)) << 24) | (rgb & 0x00FFFFFF);
     }
 }

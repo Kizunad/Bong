@@ -308,6 +308,7 @@ mod tests {
         app.add_event::<CombatEvent>();
         app.add_event::<DeathEvent>();
         app.add_event::<DeathInsightRequested>();
+        app.add_event::<DeathCinematicPublished>();
         (app, rx_outbound)
     }
 
@@ -350,6 +351,65 @@ mod tests {
             }
             other => panic!("expected DeathInsight outbound, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn publishes_death_cinematic_events_to_redis_outbound() {
+        use crate::schema::death_cinematic::{
+            DeathCinematicPhaseV1, DeathCinematicRollV1, DeathCinematicS2cV1,
+            DeathCinematicZoneKindV1, DeathRollResultV1,
+        };
+
+        let (mut app, rx_outbound) = setup_app();
+        app.add_systems(Update, publish_death_cinematic_events);
+        let payload = DeathCinematicS2cV1 {
+            v: 1,
+            character_id: "offline:Azure".to_string(),
+            phase: DeathCinematicPhaseV1::Roll,
+            phase_tick: 12,
+            phase_duration_ticks: 80,
+            total_elapsed_ticks: 92,
+            total_duration_ticks: 380,
+            roll: DeathCinematicRollV1 {
+                probability: 0.65,
+                threshold: 0.65,
+                luck_value: 0.42,
+                result: DeathRollResultV1::Pending,
+            },
+            insight_text: vec!["坍缩渊，概不赊欠。".to_string()],
+            is_final: false,
+            death_number: 4,
+            zone_kind: DeathCinematicZoneKindV1::Negative,
+            tsy_death: true,
+            rebirth_weakened_ticks: 3_600,
+            skip_predeath: false,
+        };
+
+        app.world_mut().send_event(DeathCinematicPublished {
+            payload: payload.clone(),
+        });
+        app.update();
+
+        let outbound = rx_outbound
+            .try_recv()
+            .expect("death cinematic outbound should be published");
+        match outbound {
+            RedisOutbound::DeathCinematic(actual) => assert_eq!(actual, payload),
+            other => panic!("expected DeathCinematic outbound, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn publish_death_cinematic_events_is_idle_without_events() {
+        let (mut app, rx_outbound) = setup_app();
+        app.add_systems(Update, publish_death_cinematic_events);
+
+        app.update();
+
+        assert!(
+            rx_outbound.try_recv().is_err(),
+            "death cinematic publisher should not send messages without events"
+        );
     }
 
     #[test]

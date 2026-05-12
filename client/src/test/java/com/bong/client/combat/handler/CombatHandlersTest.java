@@ -156,6 +156,39 @@ class CombatHandlersTest {
     }
 
     @Test
+    void deathScreenHandlerDefaultsCinematicWhenMissing() {
+        new DeathScreenHandler().handle(parse("""
+            {"v":1,"type":"death_screen","visible":true,"cause":"pk",
+             "luck_remaining":0.4,"death_number":2,"zone_kind":"ordinary"}
+            """));
+
+        DeathStateStore.State s = DeathStateStore.snapshot();
+        assertTrue(s.visible());
+        assertEquals("pk", s.cause());
+        assertEquals(2, s.deathNumber());
+        assertFalse(s.cinematic().active());
+        assertEquals("", s.cinematic().characterId());
+    }
+
+    @Test
+    void deathScreenHandlerRejectsMalformedCinematicOnly() {
+        new DeathScreenHandler().handle(parse("""
+            {"v":1,"type":"death_screen","visible":true,"cause":"negative_zone",
+             "luck_remaining":0.65,"death_number":4,"zone_kind":"negative",
+             "cinematic":{"v":1,"phase":"roll","phase_duration_ticks":"bad"}}
+            """));
+
+        DeathStateStore.State s = DeathStateStore.snapshot();
+        assertTrue(s.visible());
+        assertEquals("negative_zone", s.cause());
+        assertEquals(4, s.deathNumber());
+        assertEquals("negative", s.zoneKind());
+        assertFalse(s.cinematic().active());
+        assertFalse(s.cinematic().tsyDeath());
+        assertEquals("", s.cinematic().characterId());
+    }
+
+    @Test
     void terminateScreenHandlerPopulatesFields() {
         String json = """
             {"v":1,"type":"terminate_screen","visible":true,

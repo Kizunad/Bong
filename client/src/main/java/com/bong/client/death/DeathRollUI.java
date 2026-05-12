@@ -7,11 +7,13 @@ import java.util.ArrayList;
 import java.util.List;
 
 public final class DeathRollUI {
+    private static final double ROLL_ANIMATION_PHASE_RATIO = 0.38;
+
     private DeathRollUI() {}
 
     public static double displayedProbability(DeathCinematicState state) {
         if (state == null || !state.active()) return 0.0;
-        double progress = Math.min(1.0, state.phaseProgress() / 0.38);
+        double progress = Math.min(1.0, state.phaseProgress() / ROLL_ANIMATION_PHASE_RATIO);
         double target = state.roll().probability();
         return 1.0 - (1.0 - target) * progress;
     }

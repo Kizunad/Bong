@@ -25,7 +25,10 @@ import {
   DuoSheEventV1,
   LifespanEventV1,
 } from "../src/death-lifecycle.js";
-import { validateDeathCinematicS2cV1Contract } from "../src/death-cinematic.js";
+import {
+  DeathCinematicRollV1,
+  validateDeathCinematicS2cV1Contract,
+} from "../src/death-cinematic.js";
 import {
   CalamityKindV1,
   CalamityIntentV1,
@@ -182,6 +185,19 @@ const CALAMITY_EVENT_KIND_WIRES = [
   "all_wither",
 ] as const;
 
+const DEATH_CINEMATIC_PHASE_WIRES = [
+  "predeath",
+  "death_moment",
+  "roll",
+  "insight_overlay",
+  "darkness",
+  "rebirth",
+] as const;
+
+const DEATH_ROLL_RESULT_WIRES = ["pending", "survive", "fall", "final"] as const;
+
+const DEATH_CINEMATIC_ZONE_KIND_WIRES = ["ordinary", "death", "negative"] as const;
+
 // ─── Sample validation ─────────────────────────────────
 
 describe("sample files pass schema validation", () => {
@@ -262,7 +278,7 @@ describe("sample files pass schema validation", () => {
   });
 
   it("accepts death cinematic phase snapshots", () => {
-    expectContractAccepts("DeathCinematicS2cV1", validateDeathCinematicS2cV1Contract, {
+    const base = {
       v: 1,
       character_id: "offline:Azure",
       phase: "roll",
@@ -283,30 +299,91 @@ describe("sample files pass schema validation", () => {
       tsy_death: true,
       rebirth_weakened_ticks: 3600,
       skip_predeath: false,
+    };
+
+    expectContractAccepts("DeathCinematicS2cV1", validateDeathCinematicS2cV1Contract, base);
+
+    for (const phase of DEATH_CINEMATIC_PHASE_WIRES) {
+      expectContractAccepts(`DeathCinematicS2cV1 phase ${phase}`, validateDeathCinematicS2cV1Contract, {
+        ...base,
+        phase,
+      });
+    }
+
+    for (const result of DEATH_ROLL_RESULT_WIRES) {
+      const roll = { probability: 0.65, threshold: 0.65, luck_value: 0.42, result };
+      expect(validate(DeathCinematicRollV1, roll).ok).toBe(true);
+      expectContractAccepts(`DeathCinematicS2cV1 roll ${result}`, validateDeathCinematicS2cV1Contract, {
+        ...base,
+        roll,
+      });
+    }
+
+    for (const zone_kind of DEATH_CINEMATIC_ZONE_KIND_WIRES) {
+      expectContractAccepts(`DeathCinematicS2cV1 zone ${zone_kind}`, validateDeathCinematicS2cV1Contract, {
+        ...base,
+        zone_kind,
+      });
+    }
+
+    expectContractAccepts("DeathCinematicS2cV1 lower numeric boundaries", validateDeathCinematicS2cV1Contract, {
+      ...base,
+      phase_tick: 0,
+      phase_duration_ticks: 1,
+      total_elapsed_ticks: 0,
+      total_duration_ticks: 1,
+      roll: {
+        probability: 0,
+        threshold: 0,
+        luck_value: 0,
+        result: "pending",
+      },
+      death_number: 1,
+      rebirth_weakened_ticks: 0,
+    });
+
+    expectContractAccepts("DeathCinematicS2cV1 upper roll boundaries", validateDeathCinematicS2cV1Contract, {
+      ...base,
+      roll: {
+        probability: 1,
+        threshold: 1,
+        luck_value: 1,
+        result: "survive",
+      },
     });
 
     expectContractRejects("DeathCinematicS2cV1", validateDeathCinematicS2cV1Contract, {
-      v: 1,
-      character_id: "offline:Azure",
-      phase: "roll",
-      phase_tick: 12,
+      ...base,
       phase_duration_ticks: 0,
-      total_elapsed_ticks: 92,
-      total_duration_ticks: 380,
       roll: {
         probability: 1.2,
         threshold: 0.65,
         luck_value: 0.42,
         result: "pending",
       },
-      insight_text: [],
-      is_final: false,
-      death_number: 4,
-      zone_kind: "negative",
-      tsy_death: true,
-      rebirth_weakened_ticks: 3600,
-      skip_predeath: false,
     });
+
+    expectContractRejects("DeathCinematicS2cV1 invalid phase", validateDeathCinematicS2cV1Contract, {
+      ...base,
+      phase: "final",
+    });
+    expectContractRejects("DeathCinematicS2cV1 invalid roll result", validateDeathCinematicS2cV1Contract, {
+      ...base,
+      roll: { probability: 0.65, threshold: 0.65, luck_value: 0.42, result: "dead" },
+    });
+    expectContractRejects("DeathCinematicS2cV1 invalid zone", validateDeathCinematicS2cV1Contract, {
+      ...base,
+      zone_kind: "void",
+    });
+    expectContractRejects("DeathCinematicS2cV1 missing character", validateDeathCinematicS2cV1Contract, {
+      ...base,
+      character_id: "",
+    });
+    expectContractRejects("DeathCinematicS2cV1 too many insight lines", validateDeathCinematicS2cV1Contract, {
+      ...base,
+      insight_text: Array.from({ length: 25 }, (_, i) => `line-${i}`),
+    });
+    expect(validate(DeathCinematicRollV1, { probability: -0.01, threshold: 0.65, luck_value: 0.42, result: "pending" }).ok).toBe(false);
   });
 
   it("declares calamity intent Redis channel", () => {
