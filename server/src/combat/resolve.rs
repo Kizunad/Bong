@@ -144,6 +144,7 @@ type CombatAttackerItem<'a> = (
     Option<&'a DerivedAttrs>,
     Option<&'a mut AntiCheatCounter>,
     Option<&'a CombatState>,
+    Option<&'a KnownTechniques>,
 );
 type DefenseResponderItem<'a> = (
     &'a mut CombatState,
@@ -218,7 +219,6 @@ pub fn resolve_attack_intents(
     npc_markers: Query<(), With<NpcMarker>>,
     npc_positions: Query<(Entity, &Position), With<NpcMarker>>,
     statuses: Query<&StatusEffects>,
-    known_techniques: Query<&KnownTechniques>,
     juebi_law_disruptions: Query<&JueBiLawDisruption>,
     sparring_sessions: Query<&crate::social::components::SparringState>,
     mut combatants: ParamSet<(Query<CombatAttackerItem<'_>>, Query<CombatTargetItem<'_>>)>,
@@ -272,7 +272,7 @@ pub fn resolve_attack_intents(
 
         {
             let mut attacker_query = combatants.p0();
-            let Ok((attacker_cultivation, _, _, mut anticheat_counter, attacker_combat_state)) =
+            let Ok((attacker_cultivation, _, _, mut anticheat_counter, attacker_combat_state, _)) =
                 attacker_query.get_mut(intent.attacker)
             else {
                 continue;
@@ -325,7 +325,7 @@ pub fn resolve_attack_intents(
         ) else {
             if intent.debug_command.is_none() {
                 let mut attacker_query = combatants.p0();
-                if let Ok((_, _, _, mut anticheat_counter, _)) =
+                if let Ok((_, _, _, mut anticheat_counter, _, _)) =
                     attacker_query.get_mut(intent.attacker)
                 {
                     record_anticheat_violation(
@@ -343,10 +343,16 @@ pub fn resolve_attack_intents(
         };
         let distance = hit_probe.distance as f32;
 
-        let (attacker_damage_multiplier, attacker_body_mass) = {
+        let (attacker_damage_multiplier, attacker_body_mass, sword_damage_multiplier) = {
             let mut attacker_query = combatants.p0();
-            let Ok((mut attacker_cultivation, mut attacker_meridians, attacker_attrs, _, _)) =
-                attacker_query.get_mut(intent.attacker)
+            let Ok((
+                mut attacker_cultivation,
+                mut attacker_meridians,
+                attacker_attrs,
+                _,
+                _,
+                attacker_known_techniques,
+            )) = attacker_query.get_mut(intent.attacker)
             else {
                 continue;
             };
@@ -369,6 +375,20 @@ pub fn resolve_attack_intents(
                     .map(|attrs| attrs.attack_power)
                     .unwrap_or(1.0),
                 body_masses.get(intent.attacker).ok().copied(),
+                sword_basics::source_to_technique(intent.source)
+                    .and_then(|technique| {
+                        attacker_known_techniques.and_then(|known| {
+                            known
+                                .entries
+                                .iter()
+                                .find(|entry| entry.id == technique.id())
+                                .map(|entry| {
+                                    sword_basics::sword_profile(technique, entry.proficiency)
+                                        .damage_multiplier
+                                })
+                        })
+                    })
+                    .unwrap_or(1.0),
             )
         };
 
@@ -446,18 +466,6 @@ pub fn resolve_attack_intents(
             .ok()
             .copied()
             .unwrap_or_default();
-        let sword_damage_multiplier = sword_basics::source_to_technique(intent.source)
-            .and_then(|technique| {
-                let known = known_techniques.get(intent.attacker).ok()?;
-                known
-                    .entries
-                    .iter()
-                    .find(|entry| entry.id == technique.id())
-                    .map(|entry| {
-                        sword_basics::sword_profile(technique, entry.proficiency).damage_multiplier
-                    })
-            })
-            .unwrap_or(1.0);
         let zhenmai_attack_kind =
             zhenmai_v2::attack_kind_for_source(intent.source, intent.wound_kind);
         let harden_damage_multiplier = if is_physical_hit {
