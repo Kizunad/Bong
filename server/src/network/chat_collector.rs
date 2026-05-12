@@ -702,7 +702,11 @@ mod chat_collector_tests {
             .world()
             .resource::<valence::prelude::Events<PlayerChatCollected>>();
         let mut reader = events.get_reader();
-        assert!(reader.read(events).next().is_none());
+        let first = reader.read(events).next().cloned();
+        assert!(
+            first.is_none(),
+            "expected no PlayerChatCollected because negative pressure should swallow normal chat, actual {first:?}"
+        );
     }
 
     #[test]

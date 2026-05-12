@@ -23,7 +23,8 @@ pub fn purchase_partial_encounter_intel(
     paid_bone_coins: u32,
 ) -> PurchasedEncounterIntel {
     let clue_limit = match paid_bone_coins {
-        0..=2 => 1,
+        0 => 0,
+        1..=2 => 1,
         3..=9 => 2,
         _ => 3,
     };
@@ -68,12 +69,9 @@ fn push_clue(clues: &mut Vec<String>, label: &str, value: Option<&str>, limit: u
     if clues.len() >= limit {
         return;
     }
-    let Some(value) = value else {
+    let Some(value) = value.map(str::trim).filter(|value| !value.is_empty()) else {
         return;
     };
-    if value.trim().is_empty() {
-        return;
-    }
     clues.push(format!("{label}:{value}"));
 }
 
@@ -152,6 +150,7 @@ mod tests {
         let asset = full_asset();
 
         for (paid_bone_coins, expected_clues, identity_disclosed) in [
+            (0, vec![], false),
             (1, vec!["appearance:右手持骨刺"], false),
             (2, vec!["appearance:右手持骨刺"], false),
             (3, vec!["appearance:右手持骨刺", "style:涡流气息"], false),
@@ -214,6 +213,43 @@ mod tests {
         assert!(
             !intel.identity_disclosed,
             "paid 3 should not disclose identity before the 20 coin threshold"
+        );
+    }
+
+    #[test]
+    fn npc_intel_zero_coin_and_skipped_primary_clue_paths() {
+        let zero = purchase_partial_encounter_intel(&full_asset(), 0);
+        assert!(
+            zero.clues.is_empty(),
+            "expected no clues because zero paid coins grants no intel, actual {:?}",
+            zero.clues
+        );
+        assert!(
+            !zero.identity_disclosed,
+            "expected identity_disclosed=false because zero paid coins is below threshold, actual {}",
+            zero.identity_disclosed
+        );
+
+        let asset = EncounterIntelAsset {
+            zone: "blood_valley".to_string(),
+            appearance_hint: Some("   ".to_string()),
+            observed_style: Some("  涡流气息  ".to_string()),
+            qi_color_hint: Some("青白".to_string()),
+            identity_name: Some("玄锋".to_string()),
+        };
+
+        let intel = purchase_partial_encounter_intel(&asset, 1);
+
+        assert_eq!(
+            intel.clues,
+            vec!["style:涡流气息"],
+            "expected blank appearance clue to be skipped and next valid clue trimmed, actual {:?}",
+            intel.clues
+        );
+        assert!(
+            !intel.identity_disclosed,
+            "expected identity_disclosed=false because paid 1 is below identity threshold, actual {}",
+            intel.identity_disclosed
         );
     }
 
