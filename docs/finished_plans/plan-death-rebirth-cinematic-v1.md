@@ -290,15 +290,14 @@
   - P4 坍缩渊/多周目参数：server `build_death_cinematic(...)` 写入 `zone_kind`、`tsy_death`、`death_number`、`rebirth_weakened_ticks`；client 根据 `tsyDeath`、`deathNumber`、`skipPredeath` 调整重生提示与阶段时长。
   - agent/schema 订阅：`agent/packages/schema/src/death-cinematic.ts`、`agent/packages/schema/src/channels.ts`、`agent/packages/tiandao/src/redis-ipc.ts`，新增 `bong:death_cinematic` 校验与 cross-system event buffer。
 - **关键 commit**：
-  - `4a5ae3ab7` 2026-05-12 `docs(plan-death-rebirth-cinematic-v1): 升级为 active plan`
-  - `72a1a1506` 2026-05-12 `feat(death-cinematic): 接入死亡电影化状态契约`
-  - `a8f122d25` 2026-05-12 `feat(client): 渲染死亡重生电影化流程`
-  - `ad1b7d7bc` 2026-05-12 `feat(agent): 订阅死亡电影化事件`
-  - `c8a0d2aae` 2026-05-12 `docs(plan-death-rebirth-cinematic-v1): finish evidence 并归档至 finished_plans/`
-  - `6ce38fadb` 2026-05-12 `fix(death-cinematic): 补 CodeRabbit 边界测试与解析护栏`
+  - `da1d652cc` 2026-05-12 `feat(death-cinematic): 接入死亡电影化状态契约`
+  - `4ec2ef8e4` 2026-05-12 `feat(client): 渲染死亡重生电影化流程`
+  - `327c3c54f` 2026-05-12 `feat(agent): 订阅死亡电影化事件`
+  - `6e5dcd739` 2026-05-12 `docs(plan-death-rebirth-cinematic-v1): finish evidence 并归档至 finished_plans/`
+  - `108859ad7` 2026-05-12 `fix(death-cinematic): 补 CodeRabbit 边界测试与解析护栏`
 - **测试结果**：
-  - `cd server && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test`：通过，`cargo test` 4482 passed。
-  - `cd agent && npm run build && npm test -w @bong/schema && npm test -w @bong/tiandao`：通过，schema 378 passed，tiandao 355 passed。
+  - `cd server && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test`：通过，`cargo test` 4568 passed。
+  - `cd agent && npm run build && npm test -w @bong/schema && npm test -w @bong/tiandao`：通过，schema 383 passed，tiandao 362 passed。
   - `cd client && JAVA_HOME="/usr/lib/jvm/java-17-openjdk-amd64" PATH="/usr/lib/jvm/java-17-openjdk-amd64/bin:$PATH" ./gradlew test build`：通过，BUILD SUCCESSFUL。
   - CodeRabbit review follow-up：`cargo test death_lifecycle::cinematic`、`cargo test network::combat_bridge`、`./gradlew test --rerun-tasks --tests "com.bong.client.death.DeathCinematicTest" --tests "com.bong.client.combat.handler.CombatHandlersTest"`、`npm test -w @bong/schema -- schema.test.ts`、`npm test -w @bong/tiandao -- redis-ipc.test.ts` 均通过。
   - `git diff --check`：通过。
