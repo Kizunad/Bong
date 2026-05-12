@@ -10,6 +10,7 @@ export type CombatRealtimeKindV1 = Static<typeof CombatRealtimeKindV1>;
 
 export const CombatDefenseKindV1 = Type.Union([
   Type.Literal("jie_mai"),
+  Type.Literal("sword_parry"),
 ]);
 export type CombatDefenseKindV1 = Static<typeof CombatDefenseKindV1>;
 
@@ -38,6 +39,8 @@ export const CombatAttackSourceV1 = Type.Union([
   Type.Literal("burst_meridian"),
   Type.Literal("qi_needle"),
   Type.Literal("full_power"),
+  Type.Literal("sword_cleave"),
+  Type.Literal("sword_thrust"),
 ]);
 export type CombatAttackSourceV1 = Static<typeof CombatAttackSourceV1>;
 
@@ -52,6 +55,7 @@ export const CombatRealtimeEventV1 = Type.Object(
     wound_kind: Type.Optional(CombatWoundKindV1),
     source: Type.Optional(CombatAttackSourceV1),
     damage: Type.Optional(Type.Number({ minimum: 0 })),
+    physical_damage: Type.Optional(Type.Number({ minimum: 0 })),
     contam_delta: Type.Optional(Type.Number({ minimum: 0 })),
     description: Type.Optional(Type.String({ minLength: 1 })),
     cause: Type.Optional(Type.String({ minLength: 1 })),

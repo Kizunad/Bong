@@ -13334,11 +13334,13 @@
               "display_name",
               "grade",
               "proficiency",
+              "proficiency_label",
               "active",
               "description",
               "required_realm",
               "required_meridians",
               "qi_cost",
+              "stamina_cost",
               "cast_ticks",
               "cooldown_ticks",
               "range"
@@ -13360,6 +13362,10 @@
                 "minimum": 0,
                 "maximum": 1,
                 "type": "number"
+              },
+              "proficiency_label": {
+                "minLength": 1,
+                "type": "string"
               },
               "active": {
                 "type": "boolean"
@@ -13393,6 +13399,10 @@
                 }
               },
               "qi_cost": {
+                "minimum": 0,
+                "type": "number"
+              },
+              "stamina_cost": {
                 "minimum": 0,
                 "type": "number"
               },

@@ -7,6 +7,7 @@
       "display_name": "崩拳",
       "grade": "yellow",
       "proficiency": 0.5,
+      "proficiency_label": "熟练",
       "active": true,
       "description": "主动撕裂右臂手三阳，零距灌入一记沉重短拳。",
       "required_realm": "Induce",
@@ -16,6 +17,7 @@
         { "channel": "TripleEnergizer", "min_health": 0.01 }
       ],
       "qi_cost": 0.4,
+      "stamina_cost": 0.0,
       "cast_ticks": 8,
       "cooldown_ticks": 60,
       "range": 1.3

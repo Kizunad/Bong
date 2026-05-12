@@ -109,10 +109,22 @@
         {
           "const": "full_power",
           "type": "string"
+        },
+        {
+          "const": "sword_cleave",
+          "type": "string"
+        },
+        {
+          "const": "sword_thrust",
+          "type": "string"
         }
       ]
     },
     "damage": {
+      "minimum": 0,
+      "type": "number"
+    },
+    "physical_damage": {
       "minimum": 0,
       "type": "number"
     },
@@ -129,8 +141,16 @@
       "type": "string"
     },
     "defense_kind": {
-      "const": "jie_mai",
-      "type": "string"
+      "anyOf": [
+        {
+          "const": "jie_mai",
+          "type": "string"
+        },
+        {
+          "const": "sword_parry",
+          "type": "string"
+        }
+      ]
     },
     "defense_effectiveness": {
       "minimum": 0.3,
