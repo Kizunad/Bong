@@ -7,14 +7,6 @@
     {
       "const": "dashing",
       "type": "string"
-    },
-    {
-      "const": "sliding",
-      "type": "string"
-    },
-    {
-      "const": "double_jumping",
-      "type": "string"
     }
   ]
 }
