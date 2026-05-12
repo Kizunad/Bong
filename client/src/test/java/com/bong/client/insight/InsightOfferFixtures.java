@@ -2,19 +2,15 @@ package com.bong.client.insight;
 
 import java.util.List;
 
-/**
- * 调试/无服务端数据时的样例邀约。对应 docs/plan-cultivation-v1.md §5.2 中
- * "首次突破到引气境 (first_breakthrough_to_Induce)" trigger 的 3 个候选 (E1 / C3 / G1)。
- */
-public final class MockInsightOfferData {
-    private MockInsightOfferData() {
+final class InsightOfferFixtures {
+    private InsightOfferFixtures() {
     }
 
-    public static InsightOfferViewModel firstInduceBreakthrough() {
+    static InsightOfferViewModel firstInduceBreakthrough() {
         return firstInduceBreakthrough(System.currentTimeMillis() + 60_000L);
     }
 
-    public static InsightOfferViewModel firstInduceBreakthrough(long expiresAtMillis) {
+    static InsightOfferViewModel firstInduceBreakthrough(long expiresAtMillis) {
         return new InsightOfferViewModel(
             "first_breakthrough_to_Induce",
             "首次突破到引气境",
@@ -25,7 +21,7 @@ public final class MockInsightOfferData {
             expiresAtMillis,
             List.of(
                 new InsightChoice(
-                    "mock_choice_E1",
+                    "fixture_choice_E1",
                     InsightCategory.BREAKTHROUGH,
                     InsightAlignment.CONVERGE,
                     "下次冲关稳",
@@ -36,7 +32,7 @@ public final class MockInsightOfferData {
                     "保下一关"
                 ),
                 new InsightChoice(
-                    "mock_choice_C3",
+                    "fixture_choice_C3",
                     InsightCategory.COMPOSURE,
                     InsightAlignment.NEUTRAL,
                     "闭关心如止",
@@ -47,7 +43,7 @@ public final class MockInsightOfferData {
                     "稀有强力，提升突破基线"
                 ),
                 new InsightChoice(
-                    "mock_choice_G1",
+                    "fixture_choice_G1",
                     InsightCategory.PERCEPTION,
                     InsightAlignment.DIVERGE,
                     "灵气浓淡可见",
@@ -61,7 +57,7 @@ public final class MockInsightOfferData {
         );
     }
 
-    public static InsightOfferViewModel heartDemonOffer() {
+    static InsightOfferViewModel heartDemonOffer() {
         return new InsightOfferViewModel(
             "heart_demon:1:1000",
             "心魔劫临身",

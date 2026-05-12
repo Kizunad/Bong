@@ -13,7 +13,7 @@ import net.minecraft.text.Text;
 
 import java.util.List;
 
-/** 中栏材料放置区：固定 3×2 材料格 + 需求清单 + 进度条。 */
+/** 中栏材料放置区：固定 3×3 材料格 + 需求清单 + 进度条。 */
 public final class CraftMaterialGrid {
     private final FlowLayout root;
     private final FlowLayout slotGrid;

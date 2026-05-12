@@ -12,7 +12,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class InsightOfferViewModelTest {
     @Test
     void mockOfferHasThreeChoicesCoveringDistinctCategories() {
-        InsightOfferViewModel offer = MockInsightOfferData.firstInduceBreakthrough();
+        InsightOfferViewModel offer = InsightOfferFixtures.firstInduceBreakthrough();
 
         assertEquals(3, offer.choices().size());
         assertEquals(InsightCategory.BREAKTHROUGH, offer.choices().get(0).category());
@@ -25,7 +25,7 @@ class InsightOfferViewModelTest {
 
     @Test
     void remainingMillisClampsToZeroAfterExpiry() {
-        InsightOfferViewModel offer = MockInsightOfferData.firstInduceBreakthrough(1_000L);
+        InsightOfferViewModel offer = InsightOfferFixtures.firstInduceBreakthrough(1_000L);
 
         assertEquals(500L, offer.remainingMillis(500L));
         assertEquals(0L, offer.remainingMillis(1_000L));
@@ -46,7 +46,7 @@ class InsightOfferViewModelTest {
     @Test
     void describeRendersTriggerHeaderAndAllChoices() {
         InsightOfferScreen.RenderContent content = InsightOfferScreen.describe(
-            MockInsightOfferData.firstInduceBreakthrough());
+            InsightOfferFixtures.firstInduceBreakthrough());
 
         assertEquals("◇ 心 有 所 感 ◇", content.lines().get(0));
         assertEquals("【触发】首次突破到引气境", content.lines().get(1));
@@ -64,7 +64,7 @@ class InsightOfferViewModelTest {
     @Test
     void describeRendersHeartDemonSpecificCopy() {
         InsightOfferScreen.RenderContent content = InsightOfferScreen.describe(
-            MockInsightOfferData.heartDemonOffer());
+            InsightOfferFixtures.heartDemonOffer());
 
         assertEquals("◇ 心 魔 劫 ◇", content.lines().get(0));
         assertEquals("【触发】心魔劫临身", content.lines().get(1));
@@ -94,7 +94,7 @@ class InsightOfferViewModelTest {
     @Test
     void costLineIsAlwaysRendered() {
         InsightOfferScreen.RenderContent content = InsightOfferScreen.describe(
-            MockInsightOfferData.firstInduceBreakthrough());
+            InsightOfferFixtures.firstInduceBreakthrough());
 
         assertTrue(content.lines().stream().anyMatch(l -> l.startsWith("    ▼ ")));
         assertTrue(content.lines().stream().anyMatch(l -> l.startsWith("    代价: ")));

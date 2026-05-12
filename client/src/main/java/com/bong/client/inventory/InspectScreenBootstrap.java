@@ -7,27 +7,16 @@ import com.bong.client.cultivation.QiColorObservedStore;
 import com.bong.client.inventory.model.InventoryModel;
 import com.bong.client.inventory.state.InventoryStateStore;
 import com.bong.client.network.ClientRequestSender;
-import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
-import net.fabricmc.fabric.api.client.keybinding.v1.KeyBindingHelper;
 import net.fabricmc.fabric.api.client.networking.v1.ClientPlayConnectionEvents;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.gui.screen.Screen;
-import net.minecraft.client.option.KeyBinding;
-import net.minecraft.client.util.InputUtil;
 import net.minecraft.text.Text;
 import net.minecraft.util.hit.EntityHitResult;
-import org.lwjgl.glfw.GLFW;
 
 public final class InspectScreenBootstrap {
-    private static final String CATEGORY = "category.bong-client.controls";
-    private static final String OPEN_KEY_TRANSLATION = "key.bong-client.open_inspect_screen";
-    private static KeyBinding openScreenKey;
-
     private InspectScreenBootstrap() {}
 
     public static void register() {
-        keyBinding();
-        ClientTickEvents.END_CLIENT_TICK.register(InspectScreenBootstrap::onEndClientTick);
         // 不在 JOIN 时清空 store —— 否则会与网络线程并发处理的 inventory_snapshot
         // 形成竞态：JOIN callback 经 client.execute 排队到主线程，期间快照已经到达
         // 并写入 store；queued task 一执行就把刚到的权威数据 reset 回 loading 态。
@@ -35,23 +24,7 @@ public final class InspectScreenBootstrap {
         ClientPlayConnectionEvents.DISCONNECT.register((handler, client) ->
             client.execute(InspectScreenBootstrap::clearInventorySnapshot)
         );
-        BongClient.LOGGER.info("Registered inspect screen bootstrap keybinding on key: I");
-    }
-
-    private static void onEndClientTick(MinecraftClient client) {
-        if (client == null || client.player == null) return;
-        while (keyBinding().wasPressed()) {
-            requestOpenInspectScreen(client);
-        }
-    }
-
-    private static KeyBinding keyBinding() {
-        if (openScreenKey == null) {
-            openScreenKey = KeyBindingHelper.registerKeyBinding(
-                new KeyBinding(OPEN_KEY_TRANSLATION, InputUtil.Type.KEYSYM, GLFW.GLFW_KEY_I, CATEGORY)
-            );
-        }
-        return openScreenKey;
+        BongClient.LOGGER.info("Registered inspect screen bootstrap via vanilla E inventory interception");
     }
 
     /** plan-weapon-v1 §4.4：Mixin 拦截 E 键后调用。 */
