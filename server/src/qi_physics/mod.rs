@@ -14,6 +14,7 @@ pub mod env;
 pub mod excretion;
 pub mod field;
 pub mod healing;
+pub mod knockback;
 pub mod ledger;
 pub mod projectile;
 pub mod release;
@@ -43,6 +44,11 @@ pub use healing::{
     contam_purge, emergency_stabilize, life_extend, mass_meridian_repair, meridian_repair,
     yidao_cast_ticks, ContamPurgeOutcome, EmergencyStabilizeOutcome, LifeExtendOutcome,
     MassMeridianRepairOutcome, MeridianRepairOutcome,
+};
+pub use knockback::{
+    compute_knockback, entity_collision, wall_collision, EntityCollisionInput,
+    EntityCollisionResult, KnockbackInput, KnockbackResult, WallCollisionInput,
+    WallCollisionResult, MAX_BLOCK_PENETRATION, MAX_KNOCKBACK_DISTANCE,
 };
 pub use ledger::{
     assert_conservation, snapshot_for_ipc, summarize_world_qi, QiAccountId, QiAccountKind,

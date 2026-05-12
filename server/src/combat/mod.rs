@@ -3,6 +3,7 @@ pub mod anticheat;
 pub mod armor;
 pub mod armor_sync;
 pub mod baomai_v3;
+pub mod body_mass;
 pub mod carrier;
 pub mod components;
 #[cfg(test)]
@@ -13,6 +14,7 @@ pub mod dugu_v2;
 pub mod events;
 pub mod foreign_qi_resistance;
 pub mod jiemai;
+pub mod knockback;
 pub mod lifecycle;
 pub mod needle;
 pub mod player_attack;
@@ -41,6 +43,7 @@ use valence::prelude::{
 mod tests;
 
 use crate::npc::brain::canonical_npc_id;
+use crate::npc::lifecycle::NpcArchetype;
 use crate::npc::spawn::NpcMarker;
 use crate::player::state::{
     canonical_player_id, load_current_character_id, load_player_shrine_anchor_slice,
@@ -51,6 +54,7 @@ use self::anticheat::{
     load_anticheat_config, AntiCheatConfig, AntiCheatCounter, AntiCheatViolationEvent,
     DEFAULT_ANTICHEAT_CONFIG_PATH,
 };
+use self::body_mass::{BodyMass, Stance};
 use self::components::{CombatState, DerivedAttrs, Lifecycle, Stamina, StatusEffects, Wounds};
 use self::events::{
     ApplyStatusEffectIntent, AttackIntent, CombatEvent, DeathCinematicPublished, DeathEvent,
@@ -104,6 +108,8 @@ fn attach_combat_bundle_to_joined_clients(
             CombatState::default(),
             StatusEffects::default(),
             DerivedAttrs::default(),
+            BodyMass::default(),
+            Stance::default(),
             AntiCheatCounter::default(),
             carrier::CarrierStore::default(),
             anqi_v2::ContainerSlot::default(),
@@ -117,26 +123,43 @@ fn attach_combat_bundle_to_joined_clients(
     }
 }
 
-type JoinedNpcsWithoutCombatBundle<'a> = valence::prelude::Entity;
+type JoinedNpcsWithoutCombatBundle<'a> = (valence::prelude::Entity, Option<&'a NpcArchetype>);
 type JoinedNpcsWithoutCombatBundleFilter = (Added<NpcMarker>, Without<Wounds>);
 
 fn attach_combat_bundle_to_joined_npcs(
     mut commands: Commands,
     joined_npcs: Query<JoinedNpcsWithoutCombatBundle<'_>, JoinedNpcsWithoutCombatBundleFilter>,
 ) {
-    for entity in &joined_npcs {
+    for (entity, archetype) in &joined_npcs {
         commands.entity(entity).insert((
             Wounds::default(),
             Stamina::default(),
             CombatState::default(),
             StatusEffects::default(),
             DerivedAttrs::default(),
+            BodyMass::for_npc_archetype(archetype.copied().unwrap_or_default()),
+            Stance::default(),
             carrier::CarrierStore::default(),
             anqi_v2::ContainerSlot::default(),
             Lifecycle {
                 character_id: canonical_npc_id(entity),
                 ..Default::default()
             },
+        ));
+    }
+}
+
+type RuntimeNpcsWithoutBodyMass<'a> = (valence::prelude::Entity, Option<&'a NpcArchetype>);
+type RuntimeNpcsWithoutBodyMassFilter = (Added<NpcMarker>, Without<BodyMass>);
+
+fn attach_body_mass_to_runtime_npcs(
+    mut commands: Commands,
+    joined_npcs: Query<RuntimeNpcsWithoutBodyMass<'_>, RuntimeNpcsWithoutBodyMassFilter>,
+) {
+    for (entity, archetype) in &joined_npcs {
+        commands.entity(entity).insert((
+            BodyMass::for_npc_archetype(archetype.copied().unwrap_or_default()),
+            Stance::default(),
         ));
     }
 }
@@ -181,6 +204,7 @@ pub fn register(app: &mut App) {
     app.add_event::<RevivalActionIntent>();
     app.add_event::<DebugCombatCommand>();
     app.add_event::<AntiCheatViolationEvent>();
+    app.add_event::<knockback::KnockbackEvent>();
     app.add_event::<rat_bite::RatBiteEvent>();
     app.add_event::<needle::ShootNeedleIntent>();
     app.add_event::<needle::QiNeedleChargedEvent>();
@@ -253,6 +277,19 @@ pub fn register(app: &mut App) {
             // plan-armor-v1 §1.3: 装备槽(四护甲槽) → DerivedAttrs.defense_profile。
             armor_sync::sync_armor_to_derived_attrs.in_set(CombatSystemSet::Intent),
         ),
+    );
+    app.add_systems(
+        Update,
+        attach_body_mass_to_runtime_npcs.in_set(CombatSystemSet::Intent),
+    );
+    app.add_systems(
+        Update,
+        (
+            // plan-knockback-physics-v1 P0: inventory/armor weight and stance feed the unified formula.
+            body_mass::sync_body_mass_from_inventory,
+            body_mass::sync_stance_from_runtime,
+        )
+            .in_set(CombatSystemSet::Intent),
     );
     app.add_systems(
         Update,

@@ -25,12 +25,20 @@
 
 use bevy_transform::components::Transform;
 use valence::prelude::{
-    bevy_ecs, App, BlockState, Chunk, ChunkLayer, ChunkPos, Commands, Component, DVec3, Entity,
-    HeadYaw, IntoSystemConfigs, Look, Position, Query, Res, ResMut, Resource, Update, With,
-    Without,
+    bevy_ecs, App, BlockPos, BlockState, Chunk, ChunkLayer, ChunkPos, Commands, Component, DVec3,
+    Entity, EventWriter, HeadYaw, IntoSystemConfigs, Look, ParamSet, Position, Query, Res, ResMut,
+    Resource, Update, With, Without,
 };
 
+use crate::combat::body_mass::BodyMass;
+use crate::combat::components::{BodyPart, Wound, WoundKind, Wounds};
+use crate::combat::events::AttackSource;
+use crate::combat::knockback::KnockbackEvent;
 use crate::npc::spawn::NpcMarker;
+use crate::qi_physics::{
+    entity_collision, wall_collision, EntityCollisionInput, KnockbackResult, WallCollisionInput,
+    MAX_BLOCK_PENETRATION,
+};
 
 // ---------------------------------------------------------------------------
 // GameTick — global frame counter for cooldown tracking
@@ -65,12 +73,6 @@ const DASH_COOLDOWN_TICKS: u32 = 80;
 
 /// Collision sweep step size for dash (blocks per check).
 const DASH_SWEEP_STEP: f64 = 0.5;
-
-/// How far a melee knockback pushes the target (blocks).
-const KNOCKBACK_DISTANCE: f64 = 4.0;
-
-/// Duration of knockback in ticks.
-const KNOCKBACK_DURATION_TICKS: u32 = 5;
 
 // ---------------------------------------------------------------------------
 // MovementMode — who owns Position this tick
@@ -121,7 +123,7 @@ pub struct SprintState {
 pub enum ActiveOverride {
     Dash(DashState),
     /// Involuntary pushback from a melee hit. Same physics as Dash, no cooldown.
-    Knockback(DashState),
+    Knockback(KnockbackState),
     // Future: Leap(LeapState), AirStep(AirStepState), Flight(FlightState)
 }
 
@@ -137,6 +139,29 @@ pub struct DashState {
     pub speed_per_tick: f64,
     /// Y level to maintain during dash (resolved at activation).
     pub ground_y: f64,
+}
+
+#[derive(Clone, Debug)]
+pub struct KnockbackState {
+    /// Original attacker when known; collision chains keep this attribution.
+    pub attacker: Option<Entity>,
+    pub source: AttackSource,
+    /// Normalized XZ direction of the forced movement.
+    pub direction: DVec3,
+    /// Total distance to cover.
+    pub total_distance: f64,
+    /// Distance covered so far.
+    pub distance_covered: f64,
+    /// Distance per tick.
+    pub speed_per_tick: f64,
+    /// Y level to maintain during forced movement.
+    pub ground_y: f64,
+    /// Kinetic energy carried by this knockback step.
+    pub kinetic_energy: f64,
+    /// Remaining entity collision chain depth.
+    pub chain_depth: u8,
+    /// Number of blocks already pierced by this knockback.
+    pub blocks_broken: u8,
 }
 
 // ---------------------------------------------------------------------------
@@ -285,25 +310,116 @@ pub fn activate_dash(
 /// converts this into an Override.
 #[derive(Clone, Debug, Component)]
 pub struct PendingKnockback {
+    pub attacker: Option<Entity>,
+    pub source: AttackSource,
     /// Direction the target is pushed (attacker → target).
     pub direction: DVec3,
+    pub distance_blocks: f64,
+    pub duration_ticks: u32,
+    pub velocity_blocks_per_tick: f64,
+    pub kinetic_energy: f64,
+    pub chain_depth: u8,
+}
+
+impl PendingKnockback {
+    pub fn from_result(
+        attacker: Entity,
+        source: AttackSource,
+        direction: DVec3,
+        result: KnockbackResult,
+        chain_depth: u8,
+    ) -> Self {
+        Self {
+            attacker: Some(attacker),
+            source,
+            direction,
+            distance_blocks: result.distance_blocks,
+            duration_ticks: result.duration_ticks,
+            velocity_blocks_per_tick: result.velocity_blocks_per_tick,
+            kinetic_energy: result.kinetic_energy,
+            chain_depth,
+        }
+    }
+
+    pub fn from_collision(
+        attacker: Option<Entity>,
+        source: AttackSource,
+        direction: DVec3,
+        distance_blocks: f64,
+        velocity_blocks_per_tick: f64,
+        kinetic_energy: f64,
+        chain_depth: u8,
+    ) -> Self {
+        let duration_ticks = if velocity_blocks_per_tick <= f64::EPSILON {
+            1
+        } else {
+            (distance_blocks / velocity_blocks_per_tick)
+                .ceil()
+                .clamp(1.0, 30.0) as u32
+        };
+        Self {
+            attacker,
+            source,
+            direction,
+            distance_blocks,
+            duration_ticks,
+            velocity_blocks_per_tick,
+            kinetic_energy,
+            chain_depth,
+        }
+    }
+
+    pub fn from_distance(
+        direction: DVec3,
+        distance_blocks: f64,
+        target_mass: f64,
+        chain_depth: u8,
+    ) -> Self {
+        let result = KnockbackResult::from_distance(distance_blocks, target_mass);
+        Self {
+            attacker: None,
+            source: AttackSource::Melee,
+            direction,
+            distance_blocks: result.distance_blocks,
+            duration_ticks: result.duration_ticks,
+            velocity_blocks_per_tick: result.velocity_blocks_per_tick,
+            kinetic_energy: result.kinetic_energy,
+            chain_depth,
+        }
+    }
 }
 
 /// Force-activate a knockback override. Ignores capabilities and cooldowns.
-fn activate_knockback(controller: &mut MovementController, direction: DVec3, ground_y: f64) {
-    let dir = DVec3::new(direction.x, 0.0, direction.z);
+fn activate_knockback(
+    controller: &mut MovementController,
+    knockback: &PendingKnockback,
+    ground_y: f64,
+) {
+    let dir = DVec3::new(knockback.direction.x, 0.0, knockback.direction.z);
     let len = dir.length();
     if len < 1e-6 {
         return;
     }
     let dir = dir / len;
 
-    controller.mode = MovementMode::Override(ActiveOverride::Knockback(DashState {
+    let duration_ticks = knockback.duration_ticks.max(1);
+    let distance_blocks = knockback.distance_blocks.max(0.0);
+
+    controller.mode = MovementMode::Override(ActiveOverride::Knockback(KnockbackState {
+        attacker: knockback.attacker,
+        source: knockback.source,
         direction: dir,
-        total_distance: KNOCKBACK_DISTANCE,
+        total_distance: distance_blocks,
         distance_covered: 0.0,
-        speed_per_tick: KNOCKBACK_DISTANCE / KNOCKBACK_DURATION_TICKS as f64,
+        speed_per_tick: if knockback.velocity_blocks_per_tick > 0.0 {
+            knockback.velocity_blocks_per_tick
+        } else {
+            distance_blocks / f64::from(duration_ticks)
+        },
         ground_y,
+        kinetic_energy: knockback.kinetic_energy,
+        chain_depth: knockback.chain_depth,
+        blocks_broken: 0,
     }));
 }
 
@@ -319,7 +435,7 @@ fn apply_pending_knockback_system(
 ) {
     // Apply knockback to entities that have a MovementController (NPCs).
     for (entity, position, knockback, mut ctrl) in &mut controllable {
-        activate_knockback(&mut ctrl, knockback.direction, position.get().y);
+        activate_knockback(&mut ctrl, knockback, position.get().y);
         commands.entity(entity).remove::<PendingKnockback>();
     }
     // Clean up PendingKnockback on entities without MovementController (players).
@@ -356,26 +472,53 @@ fn increment_game_tick(mut tick: ResMut<GameTick>) {
 /// - When an ability expires, resets to `GroundNav` and writes cooldown.
 #[allow(clippy::type_complexity)]
 fn movement_ability_tick_system(
-    mut npcs: Query<
-        (
-            Entity,
-            &mut Position,
-            &mut Transform,
-            &mut Look,
-            &mut HeadYaw,
-            &mut MovementController,
-            &mut MovementCooldowns,
-        ),
-        With<NpcMarker>,
-    >,
-    layers: Query<&ChunkLayer, With<crate::world::dimension::OverworldLayer>>,
+    mut npcs: ParamSet<(
+        Query<
+            (
+                Entity,
+                &mut Position,
+                &mut Transform,
+                &mut Look,
+                &mut HeadYaw,
+                &mut MovementController,
+                &mut MovementCooldowns,
+                Option<&BodyMass>,
+                Option<&mut Wounds>,
+            ),
+            With<NpcMarker>,
+        >,
+        Query<(Entity, &Position, Option<&BodyMass>), With<NpcMarker>>,
+    )>,
+    mut layers: Query<&mut ChunkLayer, With<crate::world::dimension::OverworldLayer>>,
+    mut commands: Commands,
+    mut knockback_events: EventWriter<KnockbackEvent>,
     game_tick: Res<GameTick>,
 ) {
-    let layer = layers.get_single().ok();
+    let collision_targets = {
+        let targets = npcs.p1();
+        targets
+            .iter()
+            .map(|(entity, position, body_mass)| CollisionTargetSnapshot {
+                entity,
+                position: position.get(),
+                mass: body_mass.copied().unwrap_or_default().total_mass(),
+            })
+            .collect::<Vec<_>>()
+    };
+    let mut layer = layers.get_single_mut().ok();
     let tick = game_tick.0;
 
-    for (_entity, mut position, mut transform, mut look, mut head_yaw, mut ctrl, mut cooldowns) in
-        &mut npcs
+    for (
+        entity,
+        mut position,
+        mut transform,
+        mut look,
+        mut head_yaw,
+        mut ctrl,
+        mut cooldowns,
+        body_mass,
+        mut wounds,
+    ) in &mut npcs.p0()
     {
         match &mut ctrl.mode {
             MovementMode::GroundNav => {
@@ -406,12 +549,12 @@ fn movement_ability_tick_system(
                     next_x.floor() as i32,
                     next_z.floor() as i32,
                     dash.ground_y as i32,
-                    layer,
+                    layer.as_deref(),
                 );
                 dash.ground_y = ground_y;
                 let tentative = DVec3::new(next_x, ground_y, next_z);
 
-                if is_blocked_at(tentative, layer) {
+                if is_blocked_at(tentative, layer.as_deref()) {
                     cooldowns.dash_ready_at = tick + DASH_COOLDOWN_TICKS;
                     ctrl.mode = MovementMode::GroundNav;
                     continue;
@@ -444,14 +587,123 @@ fn movement_ability_tick_system(
                     next_x.floor() as i32,
                     next_z.floor() as i32,
                     kb.ground_y as i32,
-                    layer,
+                    layer.as_deref(),
                 );
                 kb.ground_y = ground_y;
                 let tentative = DVec3::new(next_x, ground_y, next_z);
 
-                if is_blocked_at(tentative, layer) {
-                    ctrl.mode = MovementMode::GroundNav;
-                    continue;
+                if let Some((block_pos, block_state)) =
+                    blocked_block_at(tentative, layer.as_deref())
+                {
+                    let moving_mass = body_mass.copied().unwrap_or_default().total_mass();
+                    let collision = wall_collision(WallCollisionInput {
+                        target_mass: moving_mass,
+                        velocity_blocks_per_tick: kb.speed_per_tick,
+                        block_hardness: block_hardness(block_state),
+                        armor_mitigation: body_mass
+                            .copied()
+                            .map(collision_armor_mitigation)
+                            .unwrap_or_default(),
+                    })
+                    .ok();
+                    let mut block_broken = false;
+                    if let Some(collision) = collision {
+                        if collision.entity_damage > f64::EPSILON {
+                            if let Some(wounds) = wounds.as_deref_mut() {
+                                apply_collision_wound(
+                                    wounds,
+                                    collision.entity_damage as f32,
+                                    u64::from(tick),
+                                    kb.attacker.unwrap_or(entity),
+                                );
+                            }
+                        }
+                        if collision.block_broken && kb.blocks_broken < MAX_BLOCK_PENETRATION {
+                            if let Some(layer) = layer.as_deref_mut() {
+                                layer.set_block(block_pos, BlockState::AIR);
+                            }
+                            kb.blocks_broken = kb.blocks_broken.saturating_add(1);
+                            block_broken = true;
+                        }
+                        knockback_events.send(KnockbackEvent {
+                            attacker: kb.attacker.unwrap_or(entity),
+                            target: entity,
+                            source: kb.source,
+                            distance_blocks: kb.total_distance,
+                            velocity_blocks_per_tick: kb.speed_per_tick,
+                            duration_ticks: duration_ticks_for_knockback(kb),
+                            kinetic_energy: collision.kinetic_energy,
+                            collision_damage: Some(collision.entity_damage as f32),
+                            chain_depth: kb.chain_depth,
+                            block_broken,
+                        });
+                    }
+                    if !block_broken || kb.blocks_broken >= MAX_BLOCK_PENETRATION {
+                        ctrl.mode = MovementMode::GroundNav;
+                        continue;
+                    }
+                }
+
+                if let Some(hit) = first_entity_collision(entity, tentative, &collision_targets) {
+                    if kb.chain_depth > 0 {
+                        let moving_mass = body_mass.copied().unwrap_or_default().total_mass();
+                        if let Ok(collision) = entity_collision(EntityCollisionInput {
+                            moving_mass,
+                            hit_mass: hit.mass,
+                            incoming_velocity: kb.speed_per_tick,
+                            chain_decay: 0.5,
+                        }) {
+                            if collision.incoming_damage > f64::EPSILON {
+                                if let Some(wounds) = wounds.as_deref_mut() {
+                                    apply_collision_wound(
+                                        wounds,
+                                        collision.incoming_damage as f32,
+                                        u64::from(tick),
+                                        kb.attacker.unwrap_or(hit.entity),
+                                    );
+                                }
+                            }
+                            if collision.hit_damage > f64::EPSILON {
+                                queue_collision_wound(
+                                    &mut commands,
+                                    hit.entity,
+                                    collision.hit_damage as f32,
+                                    u64::from(tick),
+                                    entity,
+                                );
+                            }
+                            if collision.transferred_distance >= 0.05 {
+                                commands.entity(hit.entity).insert(
+                                    PendingKnockback::from_collision(
+                                        kb.attacker.or(Some(entity)),
+                                        kb.source,
+                                        kb.direction,
+                                        collision.transferred_distance,
+                                        collision.transferred_velocity,
+                                        collision.kinetic_energy,
+                                        kb.chain_depth.saturating_sub(1),
+                                    ),
+                                );
+                            }
+                            knockback_events.send(KnockbackEvent {
+                                attacker: kb.attacker.unwrap_or(entity),
+                                target: hit.entity,
+                                source: kb.source,
+                                distance_blocks: collision.transferred_distance,
+                                velocity_blocks_per_tick: collision.transferred_velocity,
+                                duration_ticks: duration_ticks_for_distance_and_velocity(
+                                    collision.transferred_distance,
+                                    collision.transferred_velocity,
+                                ),
+                                kinetic_energy: collision.kinetic_energy,
+                                collision_damage: Some(collision.hit_damage as f32),
+                                chain_depth: kb.chain_depth.saturating_sub(1),
+                                block_broken: false,
+                            });
+                            ctrl.mode = MovementMode::GroundNav;
+                            continue;
+                        }
+                    }
                 }
 
                 position.set(tentative);
@@ -469,6 +721,128 @@ fn movement_ability_tick_system(
 // ---------------------------------------------------------------------------
 // Collision helper — shared by all abilities
 // ---------------------------------------------------------------------------
+
+#[derive(Clone, Copy)]
+struct CollisionTargetSnapshot {
+    entity: Entity,
+    position: DVec3,
+    mass: f64,
+}
+
+fn duration_ticks_for_knockback(kb: &KnockbackState) -> u32 {
+    duration_ticks_for_distance_and_velocity(kb.total_distance, kb.speed_per_tick)
+}
+
+fn duration_ticks_for_distance_and_velocity(distance: f64, velocity: f64) -> u32 {
+    if velocity <= f64::EPSILON {
+        1
+    } else {
+        (distance / velocity).ceil().clamp(1.0, 30.0) as u32
+    }
+}
+
+fn first_entity_collision(
+    moving: Entity,
+    tentative: DVec3,
+    targets: &[CollisionTargetSnapshot],
+) -> Option<CollisionTargetSnapshot> {
+    const ENTITY_COLLISION_RADIUS: f64 = 0.75;
+    targets
+        .iter()
+        .copied()
+        .filter(|target| target.entity != moving)
+        .filter(|target| (target.position.y - tentative.y).abs() <= 1.5)
+        .find(|target| {
+            let dx = target.position.x - tentative.x;
+            let dz = target.position.z - tentative.z;
+            dx * dx + dz * dz <= ENTITY_COLLISION_RADIUS * ENTITY_COLLISION_RADIUS
+        })
+}
+
+fn collision_armor_mitigation(body_mass: BodyMass) -> f64 {
+    (body_mass.armor_mass / 60.0).clamp(0.0, 0.85)
+}
+
+fn apply_collision_wound(wounds: &mut Wounds, damage: f32, tick: u64, inflicted_by: Entity) {
+    let damage = damage.max(0.0);
+    if damage <= f32::EPSILON {
+        return;
+    }
+    wounds.health_current = (wounds.health_current - damage).clamp(0.0, wounds.health_max);
+    wounds.entries.push(Wound {
+        location: BodyPart::Chest,
+        kind: WoundKind::Blunt,
+        severity: damage,
+        bleeding_per_sec: damage * 0.02,
+        created_at_tick: tick,
+        inflicted_by: Some(format!("knockback:{inflicted_by:?}")),
+    });
+}
+
+fn queue_collision_wound(
+    commands: &mut Commands,
+    target: Entity,
+    damage: f32,
+    tick: u64,
+    inflicted_by: Entity,
+) {
+    commands.add(
+        move |world: &mut valence::prelude::bevy_ecs::world::World| {
+            if let Some(mut wounds) = world.get_mut::<Wounds>(target) {
+                apply_collision_wound(&mut wounds, damage, tick, inflicted_by);
+            }
+        },
+    );
+}
+
+fn blocked_block_at(pos: DVec3, layer: Option<&ChunkLayer>) -> Option<(BlockPos, BlockState)> {
+    let layer = layer?;
+    let wx = pos.x.floor() as i32;
+    let wz = pos.z.floor() as i32;
+    let feet_y = pos.y.floor() as i32;
+    let min_y = layer.min_y();
+    let max_y = min_y + layer.height() as i32 - 1;
+
+    for y in [feet_y, feet_y + 1] {
+        if y < min_y || y > max_y {
+            continue;
+        }
+        let block_pos = BlockPos::new(wx, y, wz);
+        let block = block_state_at(layer, block_pos)?;
+        if is_solid_block(block) {
+            return Some((block_pos, block));
+        }
+    }
+    None
+}
+
+fn block_state_at(layer: &ChunkLayer, pos: BlockPos) -> Option<BlockState> {
+    let chunk_pos = ChunkPos::new(pos.x.div_euclid(16), pos.z.div_euclid(16));
+    let chunk = layer.chunk(chunk_pos)?;
+    let lx = pos.x.rem_euclid(16) as u32;
+    let ly = (pos.y - layer.min_y()) as u32;
+    let lz = pos.z.rem_euclid(16) as u32;
+    Some(chunk.block_state(lx, ly, lz))
+}
+
+fn block_hardness(block: BlockState) -> f64 {
+    match block {
+        BlockState::COARSE_DIRT
+        | BlockState::GRAVEL
+        | BlockState::SAND
+        | BlockState::SMOOTH_STONE => 0.5,
+        BlockState::GRASS_BLOCK | BlockState::DIRT | BlockState::DIRT_PATH => 1.0,
+        BlockState::OAK_LOG
+        | BlockState::STRIPPED_OAK_LOG
+        | BlockState::DARK_OAK_LOG
+        | BlockState::OAK_PLANKS => 2.0,
+        BlockState::STONE | BlockState::COBBLESTONE | BlockState::STONE_BRICKS => 5.0,
+        BlockState::OAK_LEAVES | BlockState::SPRUCE_LEAVES | BlockState::MANGROVE_LEAVES => 8.0,
+        BlockState::IRON_BLOCK | BlockState::IRON_BARS | BlockState::IRON_ORE => 15.0,
+        BlockState::OBSIDIAN | BlockState::CRYING_OBSIDIAN => 50.0,
+        _ => 5.0,
+    }
+}
 
 /// Resolve the ground Y (feet level) at a given XZ, scanning down from `ref_y`.
 /// Returns the Y of the first air block above a solid block, or `ref_y` as fallback.
@@ -710,5 +1084,65 @@ mod tests {
         ctrl.reset_to_ground();
         assert!(!ctrl.navigator_should_yield());
         assert_eq!(ctrl.speed_scale(), 1.0);
+    }
+
+    #[test]
+    fn pending_knockback_activates_dynamic_distance_and_speed() {
+        let mut ctrl = MovementController::new();
+        let pending = PendingKnockback::from_distance(DVec3::new(1.0, 0.0, 0.0), 6.0, 70.0, 3);
+
+        activate_knockback(&mut ctrl, &pending, 64.0);
+
+        let MovementMode::Override(ActiveOverride::Knockback(kb)) = ctrl.mode else {
+            panic!("pending knockback should take over movement");
+        };
+        assert_eq!(kb.total_distance, 6.0);
+        assert!(kb.speed_per_tick > 0.0);
+        assert_eq!(kb.chain_depth, 3);
+    }
+
+    #[test]
+    fn collision_wound_is_blunt_damage_and_reduces_health() {
+        let mut wounds = Wounds::default();
+        let before = wounds.health_current;
+
+        apply_collision_wound(&mut wounds, 12.0, 7, Entity::from_raw(1));
+
+        assert_eq!(wounds.health_current, before - 12.0);
+        assert_eq!(wounds.entries.len(), 1);
+        assert_eq!(wounds.entries[0].kind, WoundKind::Blunt);
+        assert_eq!(wounds.entries[0].location, BodyPart::Chest);
+    }
+
+    #[test]
+    fn collision_target_scan_excludes_self_and_uses_horizontal_radius() {
+        let moving = Entity::from_raw(1);
+        let near = Entity::from_raw(2);
+        let targets = [
+            CollisionTargetSnapshot {
+                entity: moving,
+                position: DVec3::new(0.0, 64.0, 0.0),
+                mass: 70.0,
+            },
+            CollisionTargetSnapshot {
+                entity: near,
+                position: DVec3::new(0.5, 64.0, 0.0),
+                mass: 70.0,
+            },
+        ];
+
+        let hit = first_entity_collision(moving, DVec3::new(0.0, 64.0, 0.0), &targets)
+            .expect("nearby non-self entity should be detected");
+
+        assert_eq!(hit.entity, near);
+    }
+
+    #[test]
+    fn block_hardness_matches_knockback_plan_table() {
+        assert_eq!(block_hardness(BlockState::DIRT), 1.0);
+        assert_eq!(block_hardness(BlockState::OAK_PLANKS), 2.0);
+        assert_eq!(block_hardness(BlockState::STONE), 5.0);
+        assert_eq!(block_hardness(BlockState::IRON_BLOCK), 15.0);
+        assert_eq!(block_hardness(BlockState::OBSIDIAN), 50.0);
     }
 }

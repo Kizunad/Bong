@@ -46,6 +46,8 @@ public class ServerDataRouterTest {
             "ascension_quota",
             "heart_demon_offer",
             "breakthrough_cinematic",
+            // plan-knockback-physics-v1 — 击退同步复用 hit_pushback 视觉通道。
+            "knockback_sync",
             // Alchemy handlers (plan-alchemy-v1 §4).
             "alchemy_furnace",
             "alchemy_session",

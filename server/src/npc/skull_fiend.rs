@@ -11,8 +11,10 @@ use valence::prelude::{
     With, Without,
 };
 
+use crate::combat::body_mass::BodyMass;
 use crate::combat::components::{WoundKind, Wounds};
 use crate::combat::events::{AttackIntent, AttackReach, AttackSource};
+use crate::combat::knockback::DEFAULT_CHAIN_DEPTH;
 use crate::cultivation::components::Cultivation;
 use crate::fauna::experience::play_audio;
 use crate::network::audio_event_emit::PlaySoundRecipeRequest;
@@ -249,6 +251,7 @@ fn skull_fiend_charge_action_system(
         (With<NpcMarker>, With<SkullFiendMarker>),
     >,
     target_positions: Query<&Position, Without<SkullFiendMarker>>,
+    target_body_masses: Query<&BodyMass>,
     mut cultivations: Query<&mut Cultivation>,
     layers: Query<&ChunkLayer>,
     mut attack_intents: EventWriter<AttackIntent>,
@@ -309,6 +312,7 @@ fn skull_fiend_charge_action_system(
                     &mut skull_view,
                     tick,
                     &target_positions,
+                    &target_body_masses,
                     &mut cultivations,
                     &layers,
                     &mut attack_intents,
@@ -401,6 +405,7 @@ fn tick_skull_fiend_charge(
     skull: &mut SkullFiendView<'_>,
     tick: u32,
     target_positions: &Query<&Position, Without<SkullFiendMarker>>,
+    target_body_masses: &Query<&BodyMass>,
     cultivations: &mut Query<&mut Cultivation>,
     layers: &Query<&ChunkLayer>,
     attack_intents: &mut EventWriter<AttackIntent>,
@@ -513,9 +518,19 @@ fn tick_skull_fiend_charge(
                         source: AttackSource::Melee,
                         debug_command: None,
                     });
-                    commands.entity(target).insert(PendingKnockback {
-                        direction: velocity,
-                    });
+                    commands
+                        .entity(target)
+                        .insert(PendingKnockback::from_distance(
+                            velocity,
+                            6.0,
+                            target_body_masses
+                                .get(target)
+                                .ok()
+                                .copied()
+                                .unwrap_or_default()
+                                .total_mass(),
+                            DEFAULT_CHAIN_DEPTH,
+                        ));
                     emit_skull_fiend_vfx(
                         vfx_events,
                         SkullFiendVfx {

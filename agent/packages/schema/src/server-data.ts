@@ -245,6 +245,7 @@ export const ServerDataType = Type.Union([
   Type.Literal("movement_state"),
   Type.Literal("spirit_treasure_state"),
   Type.Literal("spirit_treasure_dialogue"),
+  Type.Literal("knockback_sync"),
   Type.Literal("coffin_state"),
 ]);
 export type ServerDataType = Static<typeof ServerDataType>;
@@ -1529,6 +1530,24 @@ export type ServerDataSpiritualSenseTargetsV1 = Static<
   typeof ServerDataSpiritualSenseTargetsV1
 >;
 
+export const ServerDataKnockbackSyncV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    type: Type.Literal("knockback_sync"),
+    distance_blocks: Type.Number({ minimum: 0 }),
+    velocity_blocks_per_tick: Type.Number({ minimum: 0 }),
+    duration_ticks: Type.Integer({ minimum: 1 }),
+    kinetic_energy: Type.Number({ minimum: 0 }),
+    collision_damage: Type.Optional(Type.Number({ minimum: 0 })),
+    chain_depth: Type.Integer({ minimum: 0, maximum: 3 }),
+    block_broken: Type.Boolean(),
+  },
+  { additionalProperties: false },
+);
+export type ServerDataKnockbackSyncV1 = Static<
+  typeof ServerDataKnockbackSyncV1
+>;
+
 export const ServerDataContainerStateV1 = Type.Object(
   {
     type: Type.Literal("container_state"),
@@ -1665,5 +1684,6 @@ export const ServerDataV1 = Type.Union([
   ServerDataIdentityPanelStateV1,
   ServerDataRealmVisionParamsV1,
   ServerDataSpiritualSenseTargetsV1,
+  ServerDataKnockbackSyncV1,
 ]);
 export type ServerDataV1 = Static<typeof ServerDataV1>;
