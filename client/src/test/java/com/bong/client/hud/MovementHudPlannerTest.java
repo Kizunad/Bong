@@ -14,16 +14,21 @@ class MovementHudPlannerTest {
     void hidesAfterAutoHideFadeWindow() {
         MovementState state = state(MovementState.Action.NONE, MovementState.ZoneKind.NORMAL, false, 1_000L, 0L);
 
-        List<HudRenderCommand> visible = MovementHudPlanner.buildCommands(state, 800, 600, 4_200L);
-        List<HudRenderCommand> hidden = MovementHudPlanner.buildCommands(state, 800, 600, 4_600L);
+        List<HudRenderCommand> visibleAtHoverEnd = MovementHudPlanner.buildCommands(state, 800, 600, 4_000L);
+        List<HudRenderCommand> visibleAtFadeLastMs = MovementHudPlanner.buildCommands(state, 800, 600, 4_499L);
+        List<HudRenderCommand> hiddenAtFadeEnd = MovementHudPlanner.buildCommands(state, 800, 600, 4_500L);
         assertFalse(
-            visible.isEmpty(),
-            "expected HUD commands because fade window has not expired, actual empty"
+            visibleAtHoverEnd.isEmpty(),
+            "expected HUD commands because hover visible window includes elapsed=3000ms, actual empty"
+        );
+        assertFalse(
+            visibleAtFadeLastMs.isEmpty(),
+            "expected HUD commands because fade window includes elapsed=3499ms, actual empty"
         );
         assertTrue(
-            hidden.isEmpty(),
+            hiddenAtFadeEnd.isEmpty(),
             "expected 0 commands because HUD fade window expired, actual size: "
-                + hidden.size() + ", commands: " + hidden
+                + hiddenAtFadeEnd.size() + ", commands: " + hiddenAtFadeEnd
         );
     }
 
@@ -127,6 +132,19 @@ class MovementHudPlannerTest {
             panel.y() + panel.height() <= upperY,
             "expected movement panel above hotbar because neither side slot fits, actual panel: "
                 + panel + ", hotbarUpperY: " + upperY
+            );
+    }
+
+    @Test
+    void dashPanelDoesNotRenderWhenViewportCannotFitPanel() {
+        MovementState state = state(MovementState.Action.DASHING, MovementState.ZoneKind.NORMAL, false, 1_000L, 0L);
+
+        List<HudRenderCommand> commands = MovementHudPlanner.buildCommands(state, 67, 21, 1_100L);
+
+        assertTrue(
+            commands.isEmpty(),
+            "expected movement panel to skip rendering because viewport cannot fit panel plus edge margins, commands: "
+                + commands
         );
     }
 
@@ -136,13 +154,25 @@ class MovementHudPlannerTest {
 
         List<HudRenderCommand> commands = MovementHudPlanner.buildCommands(state, 800, 600, 10_000L);
 
-        long vignetteCount = commands.stream().filter(HudRenderCommand::isEdgeVignette).count();
-        assertEquals(
-            1,
-            vignetteCount,
-            "expected one dead-zone vignette because zone feedback renders even without recent action, actual: "
-                + vignetteCount + ", commands: " + commands
-        );
+        assertZoneVignette(commands, 0x66000000, "dead zone");
+    }
+
+    @Test
+    void negativeZoneAddsBlueVignetteEvenWithoutRecentAction() {
+        MovementState state = state(MovementState.Action.NONE, MovementState.ZoneKind.NEGATIVE, false, 0L, 0L);
+
+        List<HudRenderCommand> commands = MovementHudPlanner.buildCommands(state, 800, 600, 10_000L);
+
+        assertZoneVignette(commands, 0x553A4A7A, "negative zone");
+    }
+
+    @Test
+    void residueAshZoneAddsAshVignetteEvenWithoutRecentAction() {
+        MovementState state = state(MovementState.Action.NONE, MovementState.ZoneKind.RESIDUE_ASH, false, 0L, 0L);
+
+        List<HudRenderCommand> commands = MovementHudPlanner.buildCommands(state, 800, 600, 10_000L);
+
+        assertZoneVignette(commands, 0x554B3A2E, "residue ash zone");
     }
 
     @Test
@@ -171,6 +201,24 @@ class MovementHudPlannerTest {
             .orElseThrow(() -> new AssertionError(
                 "expected movement panel rect because dash HUD is visible, commands: " + commands
             ));
+    }
+
+    private static void assertZoneVignette(List<HudRenderCommand> commands, int expectedColor, String reason) {
+        List<HudRenderCommand> vignettes = commands.stream()
+            .filter(HudRenderCommand::isEdgeVignette)
+            .toList();
+        assertEquals(
+            1,
+            vignettes.size(),
+            "expected one " + reason + " vignette because zone feedback renders without recent action, actual: "
+                + vignettes.size() + ", commands: " + commands
+        );
+        assertEquals(
+            expectedColor,
+            vignettes.get(0).color(),
+            "expected " + reason + " vignette color to match MovementHudPlanner zone mapping, actual: "
+                + vignettes.get(0).color()
+        );
     }
 
     private static int hotbarLeftX(int screenWidth) {

@@ -274,6 +274,26 @@ pub fn resolve_attack_intents(
             continue;
         }
 
+        let target_lifecycle_blocks_attack = {
+            let mut target_query = combatants.p1();
+            let Ok((_, _, _, _, _, lifecycle, _, _, _, _, _, _, _, _, _)) =
+                target_query.get_mut(target_entity)
+            else {
+                continue;
+            };
+            lifecycle.is_some_and(|lifecycle| {
+                matches!(
+                    lifecycle.state,
+                    LifecycleState::NearDeath
+                        | LifecycleState::AwaitingRevival
+                        | LifecycleState::Terminated
+                )
+            })
+        };
+        if target_lifecycle_blocks_attack {
+            continue;
+        }
+
         let qi_invest = f64::from(intent.qi_invest.max(0.0));
         let juebi_law_env = juebi_law_disruptions
             .get(intent.attacker)
@@ -424,17 +444,6 @@ pub fn resolve_attack_intents(
         else {
             continue;
         };
-        if lifecycle.is_some_and(|lifecycle| {
-            matches!(
-                lifecycle.state,
-                LifecycleState::NearDeath
-                    | LifecycleState::AwaitingRevival
-                    | LifecycleState::Terminated
-            )
-        }) {
-            continue;
-        }
-
         let decay = ((intent.reach.max - distance) / intent.reach.max.max(0.001)).clamp(0.0, 1.0);
         let hit_qi = (intent.qi_invest * decay).max(0.0);
         let is_physical_hit = intent.qi_invest <= f32::EPSILON;
@@ -2227,6 +2236,7 @@ mod tests {
     fn attack_intent_skips_near_death_target_without_extra_wounds_or_knockback() {
         assert_attack_intent_skips_lifecycle_target_without_extra_wounds_or_knockback(
             "NearDeath",
+            LifecycleState::NearDeath,
             |lifecycle| lifecycle.enter_near_death(40),
         );
     }
@@ -2235,9 +2245,20 @@ mod tests {
     fn attack_intent_skips_awaiting_revival_target_without_extra_wounds_or_knockback() {
         assert_attack_intent_skips_lifecycle_target_without_extra_wounds_or_knockback(
             "AwaitingRevival",
+            LifecycleState::AwaitingRevival,
             |lifecycle| {
                 lifecycle.enter_near_death(40);
+                assert_eq!(
+                    lifecycle.state,
+                    LifecycleState::NearDeath,
+                    "test setup expected enter_near_death to move target into NearDeath before awaiting revival"
+                );
                 lifecycle.await_revival_decision(RevivalDecision::Fortune { chance: 1.0 }, 120);
+                assert_eq!(
+                    lifecycle.state,
+                    LifecycleState::AwaitingRevival,
+                    "test setup expected await_revival_decision to move target into AwaitingRevival"
+                );
             },
         );
     }
@@ -2246,12 +2267,14 @@ mod tests {
     fn attack_intent_skips_terminated_target_without_extra_wounds_or_knockback() {
         assert_attack_intent_skips_lifecycle_target_without_extra_wounds_or_knockback(
             "Terminated",
+            LifecycleState::Terminated,
             |lifecycle| lifecycle.terminate(40),
         );
     }
 
     fn assert_attack_intent_skips_lifecycle_target_without_extra_wounds_or_knockback(
         state_name: &str,
+        expected_state: LifecycleState,
         enter_state: impl FnOnce(&mut Lifecycle),
     ) {
         let mut app = App::new();
@@ -2294,8 +2317,25 @@ mod tests {
             let mut target_entity = app.world_mut().entity_mut(target);
             let mut lifecycle = target_entity.get_mut::<Lifecycle>().unwrap();
             enter_state(&mut lifecycle);
+            assert_eq!(
+                lifecycle.state, expected_state,
+                "test setup expected target Lifecycle::{state_name} before resolver"
+            );
         }
         let before = app.world().entity(target).get::<Wounds>().unwrap().clone();
+        let attacker_qi_before = app
+            .world()
+            .entity(attacker)
+            .get::<Cultivation>()
+            .unwrap()
+            .qi_current;
+        let attacker_lung_throughput_before = app
+            .world()
+            .entity(attacker)
+            .get::<MeridianSystem>()
+            .unwrap()
+            .get(MeridianId::Lung)
+            .throughput_current;
 
         app.world_mut().send_event(AttackIntent {
             attacker,
@@ -2310,6 +2350,27 @@ mod tests {
         app.update();
 
         let wounds = app.world().entity(target).get::<Wounds>().unwrap();
+        let attacker_qi_after = app
+            .world()
+            .entity(attacker)
+            .get::<Cultivation>()
+            .unwrap()
+            .qi_current;
+        let attacker_lung_throughput_after = app
+            .world()
+            .entity(attacker)
+            .get::<MeridianSystem>()
+            .unwrap()
+            .get(MeridianId::Lung)
+            .throughput_current;
+        assert_eq!(
+            attacker_qi_after, attacker_qi_before,
+            "{state_name} target must not deduct attacker qi"
+        );
+        assert_eq!(
+            attacker_lung_throughput_after, attacker_lung_throughput_before,
+            "{state_name} target must not grant attacker meridian throughput"
+        );
         assert_eq!(
             wounds.health_current, before.health_current,
             "{state_name} target must not lose health from resolver"

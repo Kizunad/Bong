@@ -46,6 +46,9 @@ public final class MovementHudPlanner {
         }
 
         PanelGeometry geometry = panelGeometry(screenWidth, screenHeight);
+        if (geometry == null) {
+            return out;
+        }
         int x = geometry.x();
         int y = geometry.y();
         out.add(HudRenderCommand.rect(
@@ -77,6 +80,9 @@ public final class MovementHudPlanner {
     }
 
     private static PanelGeometry panelGeometry(int screenWidth, int screenHeight) {
+        if (screenWidth < PANEL_WIDTH + EDGE_MARGIN * 2 || screenHeight < PANEL_HEIGHT + EDGE_MARGIN * 2) {
+            return null;
+        }
         int hotbarWidth = QuickBarHudPlanner.TOTAL_SLOTS * QuickBarHudPlanner.SLOT_SIZE
             + (QuickBarHudPlanner.TOTAL_SLOTS - 1) * QuickBarHudPlanner.SLOT_GAP;
         int hotbarLeftX = (screenWidth - hotbarWidth) / 2;
@@ -91,24 +97,30 @@ public final class MovementHudPlanner {
             + HOTBAR_GAP;
         int rightReservedX = hotbarRightX + reservedSideGap;
         if (rightReservedX + PANEL_WIDTH <= screenWidth - EDGE_MARGIN) {
-            return new PanelGeometry(rightReservedX, besideY);
+            return clampPanelGeometry(rightReservedX, besideY, screenWidth, screenHeight);
         }
         int leftReservedX = hotbarLeftX - reservedSideGap - PANEL_WIDTH;
         if (leftReservedX >= EDGE_MARGIN) {
-            return new PanelGeometry(leftReservedX, besideY);
+            return clampPanelGeometry(leftReservedX, besideY, screenWidth, screenHeight);
         }
         int leftX = hotbarLeftX - HOTBAR_GAP - PANEL_WIDTH;
         if (leftX >= EDGE_MARGIN) {
-            return new PanelGeometry(leftX, besideY);
+            return clampPanelGeometry(leftX, besideY, screenWidth, screenHeight);
         }
         int rightX = hotbarRightX + HOTBAR_GAP;
         if (rightX + PANEL_WIDTH <= screenWidth - EDGE_MARGIN) {
-            return new PanelGeometry(rightX, besideY);
+            return clampPanelGeometry(rightX, besideY, screenWidth, screenHeight);
         }
 
         int aboveX = Math.max(EDGE_MARGIN, Math.min(screenWidth - PANEL_WIDTH - EDGE_MARGIN, (screenWidth - PANEL_WIDTH) / 2));
         int aboveY = Math.max(EDGE_MARGIN, upperY - HOTBAR_GAP - PANEL_HEIGHT);
-        return new PanelGeometry(aboveX, aboveY);
+        return clampPanelGeometry(aboveX, aboveY, screenWidth, screenHeight);
+    }
+
+    private static PanelGeometry clampPanelGeometry(int x, int y, int screenWidth, int screenHeight) {
+        int clampedX = Math.max(EDGE_MARGIN, Math.min(screenWidth - PANEL_WIDTH - EDGE_MARGIN, x));
+        int clampedY = Math.max(EDGE_MARGIN, Math.min(screenHeight - PANEL_HEIGHT - EDGE_MARGIN, y));
+        return new PanelGeometry(clampedX, clampedY);
     }
 
     private static double timedAlpha(MovementState state, long nowMs) {
