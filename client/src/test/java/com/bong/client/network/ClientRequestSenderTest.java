@@ -12,6 +12,7 @@ import java.util.ArrayList;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 
 public class ClientRequestSenderTest {
 
@@ -72,6 +73,26 @@ public class ClientRequestSenderTest {
             "{\"type\":\"movement_action\",\"v\":1,\"action\":\"dash\",\"yaw_degrees\":-45.0}",
             sent.get(0).body()
         );
+    }
+
+    @Test
+    void sendMovementActionRejectsNonFiniteYawAndDoesNotSend() {
+        install();
+
+        for (double yawDegrees : List.of(Double.NaN, Double.POSITIVE_INFINITY, Double.NEGATIVE_INFINITY)) {
+            assertThrows(
+                IllegalArgumentException.class,
+                () -> ClientRequestSender.sendMovementAction(ClientRequestProtocol.MovementAction.DASH, yawDegrees),
+                "expected IllegalArgumentException because yaw_degrees must be finite, actual no exception for "
+                    + yawDegrees
+            );
+            assertEquals(
+                0,
+                sent.size(),
+                "expected no client_request payload because non-finite yaw_degrees is rejected before send, actual sent: "
+                    + sent
+            );
+        }
     }
 
     @Test

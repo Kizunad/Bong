@@ -644,7 +644,18 @@ mod tests {
         }
 
         let encoded = serde_json::to_string(&req).expect("movement action serializes");
-        assert_eq!(encoded, json);
+        let encoded_value: serde_json::Value =
+            serde_json::from_str(&encoded).expect("encoded movement action is valid JSON");
+        let expected_value: serde_json::Value =
+            serde_json::from_str(json).expect("expected movement action JSON is valid");
+        assert_eq!(
+            encoded_value, expected_value,
+            "movement_action roundtrip must preserve payload structure without depending on object key order"
+        );
+        assert!(
+            encoded_value.get("yaw_degrees").is_none(),
+            "movement_action without client yaw must omit yaw_degrees, actual: {encoded_value}"
+        );
     }
 
     #[test]
@@ -665,7 +676,19 @@ mod tests {
         }
 
         let encoded = serde_json::to_string(&req).expect("movement action serializes");
-        assert_eq!(encoded, json);
+        let encoded_value: serde_json::Value =
+            serde_json::from_str(&encoded).expect("encoded movement action yaw JSON is valid");
+        let expected_value: serde_json::Value =
+            serde_json::from_str(json).expect("expected movement action yaw JSON is valid");
+        assert_eq!(
+            encoded_value, expected_value,
+            "movement_action with yaw_degrees must preserve payload structure without depending on object key order"
+        );
+        assert_eq!(
+            encoded_value.get("yaw_degrees").and_then(|value| value.as_f64()),
+            Some(90.5),
+            "movement_action with client yaw must include numeric yaw_degrees, actual: {encoded_value}"
+        );
     }
 
     #[test]

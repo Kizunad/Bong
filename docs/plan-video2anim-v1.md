@@ -21,11 +21,11 @@
 
 ## 阶段总览
 
-| 阶段 | 内容 | 状态 |
-|------|------|------|
-| P0 | 核心转换器 `video2emotecraft.py` — 端到端视频→Emotecraft v3 | ⬜ |
-| P1 | 工具链集成 — render 验证 / gen 脚本导出 / 批量 CLI | ⬜ |
-| P2 | 质量提升 — 时域平滑 / easing 推断 / 参考姿态校准 | ⬜ |
+| 阶段 | 内容 | 状态 | 验收日期 |
+|------|------|------|----------|
+| P0 | 核心转换器 `video2emotecraft.py` — 端到端视频→Emotecraft v3 | ⬜ | TBD |
+| P1 | 工具链集成 — render 验证 / gen 脚本导出 / 批量 CLI | ⬜ | TBD |
+| P2 | 质量提升 — 时域平滑 / easing 推断 / 参考姿态校准 | ⬜ | TBD |
 
 ---
 
@@ -88,7 +88,7 @@
 
 ### P0.4 CLI 入口
 
-```
+```bash
 python3 client/tools/video2emotecraft.py INPUT_VIDEO \
   -o NAME                    # 输出名（不含后缀）
   --fps 20                   # 采样帧率（默认 20 = MC TPS）
@@ -160,7 +160,7 @@ python3 client/tools/video2emotecraft.py INPUT_VIDEO \
 
 ### P2.1 时域平滑
 
-video2geckolib4 只做角度 unwrap（防 360° 跳变），不做真正的降噪。MediaPipe 在遮挡/快速运动时会产生逐帧抖动。
+video2geckolib4 只做角度 unwrap（防 360° 跳变），并未真正地降噪。MediaPipe 在遮挡/快速运动时会产生逐帧抖动。
 
 - 在 `_smooth_angle()` unwrap 之后，加一层 **Savitzky-Golay 滤波**（`scipy.signal.savgol_filter`）
 - 窗口长度 5 帧（250ms），多项式阶数 2
@@ -203,7 +203,7 @@ MediaPipe 的 T-pose 检测不完美，导致"站直不动"时骨骼旋转不为
 | 风险 | 影响 | 缓解 |
 |------|------|------|
 | MediaPipe 对武术快速动作精度不足 | 出拳/劈砍关键帧跳变 | P2.1 时域平滑 + 定位为"粗稿"而非最终产出 |
-| bend 分解信息损失（3DOF→2DOF） | 前臂扭转丢失 | 对修仙动画影响小（多是弯曲/伸展，少有前臂旋转） |
+| bend 分解信息损失（3DOF→2DOF） | 前臂扭转丢失 | 对修仙动画影响小（多为弯曲/伸展，少有前臂旋转） |
 | 单人姿态限制 | 不支持双人对练视频 | 分别录单人动作 |
 | torso/body 拆分不精确 | 弯腰/转身时 torso 和 body 耦合 | 参考 feedback_torso_legs_hinge 做鞠躬补偿 |
 | 腿 bend axis 固定 0 | 侧踢等非前向弯曲丢失 | 大多数战斗动作是前踢/前弓步，影响有限 |

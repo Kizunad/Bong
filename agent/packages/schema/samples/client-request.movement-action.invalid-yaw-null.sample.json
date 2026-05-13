@@ -1,0 +1,6 @@
+{
+  "v": 1,
+  "type": "movement_action",
+  "action": "dash",
+  "yaw_degrees": null
+}

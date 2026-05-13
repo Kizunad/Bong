@@ -3189,6 +3189,53 @@ mod tests {
         );
     }
 
+    fn assert_movement_action_yaw_forwarded(yaw_degrees: f32) {
+        let mut app = App::new();
+        register_request_app(&mut app);
+        app.add_event::<MovementActionIntent>();
+
+        let (client_bundle, _helper) = create_mock_client("Azure");
+        let entity = app.world_mut().spawn(client_bundle).id();
+        let payload = format!(
+            r#"{{"type":"movement_action","v":1,"action":"dash","yaw_degrees":{yaw_degrees}}}"#
+        );
+        app.world_mut()
+            .resource_mut::<valence::prelude::Events<CustomPayloadEvent>>()
+            .send(CustomPayloadEvent {
+                client: entity,
+                channel: ident!("bong:client_request").into(),
+                data: payload.into_bytes().into_boxed_slice(),
+            });
+
+        app.update();
+
+        let events = app
+            .world()
+            .resource::<valence::prelude::Events<MovementActionIntent>>();
+        let intents: Vec<_> = events.iter_current_update_events().collect();
+        assert_eq!(
+            intents.len(),
+            1,
+            "expected one MovementActionIntent because movement_action yaw payload was valid, actual: {}",
+            intents.len()
+        );
+        assert_eq!(
+            intents[0].entity, entity,
+            "expected MovementActionIntent entity to match sending client for yaw_degrees={yaw_degrees}"
+        );
+        assert_eq!(
+            intents[0].action,
+            MovementAction::Dashing,
+            "expected movement_action dash payload to map to MovementAction::Dashing for yaw_degrees={yaw_degrees}"
+        );
+        assert_eq!(
+            intents[0].yaw_degrees,
+            Some(yaw_degrees),
+            "expected server to forward numeric yaw_degrees unchanged, actual intent: {:?}",
+            intents[0]
+        );
+    }
+
     #[test]
     fn alchemy_inject_qi_ignored_for_furnace_in_collapsed_zone() {
         let mut app = App::new();
@@ -3660,14 +3707,41 @@ mod tests {
             .world()
             .resource::<valence::prelude::Events<MovementActionIntent>>();
         let intents: Vec<_> = events.iter_current_update_events().collect();
-        assert_eq!(intents.len(), 1);
-        assert_eq!(intents[0].entity, entity);
-        assert_eq!(intents[0].action, MovementAction::Dashing);
-        assert_eq!(intents[0].yaw_degrees, None);
+        assert_eq!(
+            intents.len(),
+            1,
+            "expected one MovementActionIntent because one valid movement_action payload was sent, actual: {}",
+            intents.len()
+        );
+        assert_eq!(
+            intents[0].entity, entity,
+            "expected MovementActionIntent entity to match the sending client"
+        );
+        assert_eq!(
+            intents[0].action,
+            MovementAction::Dashing,
+            "expected movement_action dash payload to map to MovementAction::Dashing"
+        );
+        assert_eq!(
+            intents[0].yaw_degrees, None,
+            "expected missing yaw_degrees to stay None for legacy movement_action payloads"
+        );
     }
 
     #[test]
     fn movement_action_request_emits_client_yaw_when_present() {
+        assert_movement_action_yaw_forwarded(90.5);
+    }
+
+    #[test]
+    fn movement_action_request_accepts_yaw_boundaries() {
+        for yaw_degrees in [0.0, 360.0, -45.0, 359.999] {
+            assert_movement_action_yaw_forwarded(yaw_degrees);
+        }
+    }
+
+    #[test]
+    fn movement_action_request_rejects_non_numeric_yaw_degrees() {
         let mut app = App::new();
         register_request_app(&mut app);
         app.add_event::<MovementActionIntent>();
@@ -3679,7 +3753,7 @@ mod tests {
             .send(CustomPayloadEvent {
                 client: entity,
                 channel: ident!("bong:client_request").into(),
-                data: br#"{"type":"movement_action","v":1,"action":"dash","yaw_degrees":90.5}"#
+                data: br#"{"type":"movement_action","v":1,"action":"dash","yaw_degrees":"east"}"#
                     .to_vec()
                     .into_boxed_slice(),
             });
@@ -3690,10 +3764,11 @@ mod tests {
             .world()
             .resource::<valence::prelude::Events<MovementActionIntent>>();
         let intents: Vec<_> = events.iter_current_update_events().collect();
-        assert_eq!(intents.len(), 1);
-        assert_eq!(intents[0].entity, entity);
-        assert_eq!(intents[0].action, MovementAction::Dashing);
-        assert_eq!(intents[0].yaw_degrees, Some(90.5));
+        assert!(
+            intents.is_empty(),
+            "expected no MovementActionIntent because yaw_degrees had invalid JSON type, actual: {}",
+            intents.len()
+        );
     }
 
     #[test]

@@ -2335,6 +2335,13 @@ mod tests {
                 .get::<MeridianSystem>()
                 .unwrap(),
         );
+        let target_stamina_before =
+            stamina_snapshot(app.world().entity(target).get::<Stamina>().unwrap());
+        let target_contamination_before =
+            contamination_snapshot(app.world().entity(target).get::<Contamination>().unwrap());
+        let target_meridian_throughputs_before = meridian_throughput_snapshot(
+            app.world().entity(target).get::<MeridianSystem>().unwrap(),
+        );
 
         app.world_mut().send_event(AttackIntent {
             attacker,
@@ -2361,6 +2368,13 @@ mod tests {
                 .get::<MeridianSystem>()
                 .unwrap(),
         );
+        let target_stamina_after =
+            stamina_snapshot(app.world().entity(target).get::<Stamina>().unwrap());
+        let target_contamination_after =
+            contamination_snapshot(app.world().entity(target).get::<Contamination>().unwrap());
+        let target_meridian_throughputs_after = meridian_throughput_snapshot(
+            app.world().entity(target).get::<MeridianSystem>().unwrap(),
+        );
         assert_eq!(
             attacker_qi_after, attacker_qi_before,
             "{state_name} target must not deduct attacker qi"
@@ -2368,6 +2382,18 @@ mod tests {
         assert_eq!(
             attacker_meridian_throughputs_after, attacker_meridian_throughputs_before,
             "{state_name} target must not grant throughput to any attacker meridian"
+        );
+        assert_eq!(
+            target_stamina_after, target_stamina_before,
+            "{state_name} target must not change target stamina"
+        );
+        assert_eq!(
+            target_contamination_after, target_contamination_before,
+            "{state_name} target must not change target contamination"
+        );
+        assert_eq!(
+            target_meridian_throughputs_after, target_meridian_throughputs_before,
+            "{state_name} target must not change any target meridian throughput"
         );
         assert_eq!(
             wounds.health_current, before.health_current,
@@ -2405,6 +2431,21 @@ mod tests {
             .into_iter()
             .map(|id| (id, meridians.get(id).throughput_current))
             .collect()
+    }
+
+    fn stamina_snapshot(stamina: &Stamina) -> (f32, f32, f32, Option<u64>, StaminaState) {
+        (
+            stamina.current,
+            stamina.max,
+            stamina.recover_per_sec,
+            stamina.last_drain_tick,
+            stamina.state,
+        )
+    }
+
+    fn contamination_snapshot(contamination: &Contamination) -> serde_json::Value {
+        serde_json::to_value(contamination)
+            .expect("Contamination should serialize for side-effect snapshot")
     }
 
     #[test]
@@ -3508,6 +3549,11 @@ mod tests {
         app.add_event::<InventoryDurabilityChangedEvent>();
         app.add_systems(Update, resolve_attack_intents);
 
+        assert!(
+            (FIST_REACH.max - 2.6).abs() <= f32::EPSILON,
+            "test pins the current client melee upper bound for unarmed attacks, actual: {}",
+            FIST_REACH.max
+        );
         let attacker = spawn_player(
             &mut app,
             "Azure",
@@ -3517,7 +3563,8 @@ mod tests {
         );
         let target = spawn_npc(
             &mut app,
-            [2.4, 64.0, 0.0],
+            // Raycast distance includes the chest-height slope from attacker eye to target AABB.
+            [f64::from(FIST_REACH.max) + 0.27, 64.0, 0.0],
             Wounds::default(),
             Stamina::default(),
         );
@@ -3539,9 +3586,20 @@ mod tests {
         let wounds = target_ref.get::<Wounds>().unwrap();
         let combat_events = app.world().resource::<Events<CombatEvent>>();
 
-        assert!(wounds.health_current < wounds.health_max);
-        assert!(!wounds.entries.is_empty());
-        assert!(!combat_events.is_empty());
+        assert!(
+            wounds.health_current < wounds.health_max,
+            "target just inside fist reach must lose health, actual health: {}/{}",
+            wounds.health_current,
+            wounds.health_max
+        );
+        assert!(
+            !wounds.entries.is_empty(),
+            "target just inside fist reach must receive wounds"
+        );
+        assert!(
+            !combat_events.is_empty(),
+            "target just inside fist reach must emit CombatEvent"
+        );
     }
 
     #[test]

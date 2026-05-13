@@ -1171,6 +1171,37 @@ describe("sample files pass schema validation", () => {
     expect(result.ok, result.errors.join("; ")).toBe(true);
   });
 
+  for (const [sample, expectedYaw] of [
+    ["client-request.movement-action-yaw.sample.json", 45.5],
+    ["client-request.movement-action-yaw-zero.sample.json", 0],
+    ["client-request.movement-action-yaw-360.sample.json", 360],
+    ["client-request.movement-action-yaw-negative.sample.json", -45],
+  ] as const) {
+    it(sample, () => {
+      const data = loadObjectSample(sample);
+      const result = validate(ClientRequestV1, data);
+      expect(
+        result.ok,
+        `expected ${sample} to accept numeric yaw_degrees because client dash direction forwards player yaw, actual errors: ${result.errors.join("; ")}`,
+      ).toBe(true);
+      expect(data.yaw_degrees).toBe(expectedYaw);
+    });
+  }
+
+  for (const sample of [
+    "client-request.movement-action.invalid-yaw-string.sample.json",
+    "client-request.movement-action.invalid-yaw-null.sample.json",
+  ]) {
+    it(sample, () => {
+      const data = loadSample(sample);
+      const result = validate(ClientRequestV1, data);
+      expect(
+        result.ok,
+        `expected ${sample} to reject non-numeric yaw_degrees because movement_action yaw is an optional number, actual accepted`,
+      ).toBe(false);
+    });
+  }
+
   it("client-request.inventory-discard-item.sample.json", () => {
     const data = loadSample("client-request.inventory-discard-item.sample.json");
     const result = validate(ClientRequestV1, data);
