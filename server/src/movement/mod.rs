@@ -110,6 +110,7 @@ impl From<MovementZoneKind> for MovementZoneKindV1 {
 pub struct MovementActionIntent {
     pub entity: Entity,
     pub action: MovementAction,
+    pub yaw_degrees: Option<f32>,
 }
 
 #[derive(Debug, Clone, Component)]
@@ -329,7 +330,10 @@ fn handle_movement_action_intents(
         let realm = cultivation
             .map(|cultivation| cultivation.realm)
             .unwrap_or(Realm::Awaken);
-        let dir = horizontal_direction(*look);
+        let dir = intent
+            .yaw_degrees
+            .and_then(horizontal_direction_from_yaw)
+            .unwrap_or_else(|| horizontal_direction(*look));
         let origin = position.get();
         let action = intent.action;
         let mut velocity = velocity;
@@ -809,6 +813,14 @@ fn horizontal_direction(look: Look) -> DVec3 {
     normalize_horizontal(DVec3::new(f64::from(v.x), 0.0, f64::from(v.z)))
 }
 
+fn horizontal_direction_from_yaw(yaw_degrees: f32) -> Option<DVec3> {
+    if !yaw_degrees.is_finite() {
+        return None;
+    }
+    let yaw = f64::from(yaw_degrees).to_radians();
+    Some(normalize_horizontal(DVec3::new(-yaw.sin(), 0.0, yaw.cos())))
+}
+
 fn normalize_horizontal(dir: DVec3) -> DVec3 {
     let horizontal = DVec3::new(dir.x, 0.0, dir.z);
     if horizontal.length_squared() <= 1e-8 {
@@ -935,6 +947,15 @@ mod tests {
         let impulse = dash_proficiency::dash_distance(0.0);
         let (x, z) = movement_horizontal_impulse(DVec3::new(1.0, 2.0, 0.0), impulse);
         assert_close(x, impulse);
+        assert_close(z, 0.0);
+    }
+
+    #[test]
+    fn dash_direction_can_use_client_yaw_snapshot() {
+        let impulse = dash_proficiency::dash_distance(0.0);
+        let dir = horizontal_direction_from_yaw(90.0).expect("finite yaw should map to direction");
+        let (x, z) = movement_horizontal_impulse(dir, impulse);
+        assert_close(x, -impulse);
         assert_close(z, 0.0);
     }
 

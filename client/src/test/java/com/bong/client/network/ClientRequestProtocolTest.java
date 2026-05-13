@@ -44,10 +44,26 @@ public class ClientRequestProtocolTest {
     }
 
     @Test
+    void encodesMovementActionRequestWithYaw() {
+        assertEquals(
+            "{\"type\":\"movement_action\",\"v\":1,\"action\":\"dash\",\"yaw_degrees\":90.5}",
+            ClientRequestProtocol.encodeMovementAction(ClientRequestProtocol.MovementAction.DASH, 90.5)
+        );
+    }
+
+    @Test
     void rejectsNullMovementAction() {
         assertThrows(
             IllegalArgumentException.class,
             () -> ClientRequestProtocol.encodeMovementAction(null)
+        );
+    }
+
+    @Test
+    void rejectsNonFiniteMovementYaw() {
+        assertThrows(
+            IllegalArgumentException.class,
+            () -> ClientRequestProtocol.encodeMovementAction(ClientRequestProtocol.MovementAction.DASH, Double.NaN)
         );
     }
 

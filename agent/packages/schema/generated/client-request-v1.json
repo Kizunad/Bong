@@ -315,6 +315,9 @@
         "action": {
           "const": "dash",
           "type": "string"
+        },
+        "yaw_degrees": {
+          "type": "number"
         }
       }
     },

@@ -529,11 +529,16 @@ pub fn handle_client_request_payloads(
                     requested_at_tick: combat_clock.tick,
                 });
             }
-            ClientRequestV1::MovementAction { action, .. } => {
+            ClientRequestV1::MovementAction {
+                action,
+                yaw_degrees,
+                ..
+            } => {
                 tracing::debug!(
-                    "[bong][network] client_request movement_action entity={:?} action={:?}",
+                    "[bong][network] client_request movement_action entity={:?} action={:?} yaw_degrees={:?}",
                     ev.client,
-                    action
+                    action,
+                    yaw_degrees
                 );
                 let Some(movement_action_tx) = dispatch.movement_action_tx.as_deref_mut() else {
                     tracing::debug!(
@@ -544,6 +549,7 @@ pub fn handle_client_request_payloads(
                 movement_action_tx.send(MovementActionIntent {
                     entity: ev.client,
                     action: MovementAction::from(action),
+                    yaw_degrees,
                 });
             }
             ClientRequestV1::AbortTribulation { .. } => {
@@ -3657,6 +3663,37 @@ mod tests {
         assert_eq!(intents.len(), 1);
         assert_eq!(intents[0].entity, entity);
         assert_eq!(intents[0].action, MovementAction::Dashing);
+        assert_eq!(intents[0].yaw_degrees, None);
+    }
+
+    #[test]
+    fn movement_action_request_emits_client_yaw_when_present() {
+        let mut app = App::new();
+        register_request_app(&mut app);
+        app.add_event::<MovementActionIntent>();
+
+        let (client_bundle, _helper) = create_mock_client("Azure");
+        let entity = app.world_mut().spawn(client_bundle).id();
+        app.world_mut()
+            .resource_mut::<valence::prelude::Events<CustomPayloadEvent>>()
+            .send(CustomPayloadEvent {
+                client: entity,
+                channel: ident!("bong:client_request").into(),
+                data: br#"{"type":"movement_action","v":1,"action":"dash","yaw_degrees":90.5}"#
+                    .to_vec()
+                    .into_boxed_slice(),
+            });
+
+        app.update();
+
+        let events = app
+            .world()
+            .resource::<valence::prelude::Events<MovementActionIntent>>();
+        let intents: Vec<_> = events.iter_current_update_events().collect();
+        assert_eq!(intents.len(), 1);
+        assert_eq!(intents[0].entity, entity);
+        assert_eq!(intents[0].action, MovementAction::Dashing);
+        assert_eq!(intents[0].yaw_degrees, Some(90.5));
     }
 
     #[test]

@@ -63,6 +63,18 @@ public class ClientRequestSenderTest {
     }
 
     @Test
+    void sendMovementActionIncludesYawWhenProvided() {
+        install();
+        ClientRequestSender.sendMovementAction(ClientRequestProtocol.MovementAction.DASH, -45.0);
+        assertEquals(1, sent.size());
+        assertEquals(new Identifier("bong", "client_request"), sent.get(0).channel());
+        assertEquals(
+            "{\"type\":\"movement_action\",\"v\":1,\"action\":\"dash\",\"yaw_degrees\":-45.0}",
+            sent.get(0).body()
+        );
+    }
+
+    @Test
     void sendForgeRequestIncludesMeridianAndAxis() {
         install();
         ClientRequestSender.sendForgeRequest(

@@ -71,6 +71,7 @@ export const MovementActionClientRequestV1 = Type.Object(
     v: Type.Literal(1),
     type: Type.Literal("movement_action"),
     action: MovementActionRequestV1,
+    yaw_degrees: Type.Optional(Type.Number()),
   },
   { additionalProperties: false },
 );
