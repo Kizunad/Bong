@@ -89,6 +89,7 @@ type NearDeathQueryItem<'a> = (
 type DeathArbiterQueryItem<'a> = (
     &'a mut Lifecycle,
     Option<&'a mut Wounds>,
+    Option<&'a mut StatusEffects>,
     Option<&'a mut LifeRecord>,
     Option<&'a Cultivation>,
     Option<&'a PlayerState>,
@@ -290,6 +291,7 @@ pub fn death_arbiter_tick(
         let Ok((
             mut lifecycle,
             wounds,
+            status_effects,
             life_record,
             cultivation,
             player_state,
@@ -430,7 +432,7 @@ pub fn death_arbiter_tick(
             lifespan_event_char_id,
             lifespan_event.as_ref(),
         );
-        enter_near_death(&mut lifecycle, wounds, now_tick);
+        enter_near_death(&mut lifecycle, wounds, status_effects, now_tick);
         if let Some(death_insights) = death_insights.as_deref_mut() {
             death_insights.send(DeathInsightRequested {
                 payload: insight_payload,
@@ -442,6 +444,7 @@ pub fn death_arbiter_tick(
         let Ok((
             mut lifecycle,
             wounds,
+            status_effects,
             life_record,
             cultivation,
             player_state,
@@ -609,7 +612,7 @@ pub fn death_arbiter_tick(
             lifespan_event_char_id,
             lifespan_event.as_ref(),
         );
-        enter_near_death(&mut lifecycle, wounds, clock.tick);
+        enter_near_death(&mut lifecycle, wounds, status_effects, clock.tick);
         if let Some(death_insights) = death_insights.as_deref_mut() {
             death_insights.send(DeathInsightRequested {
                 payload: insight_payload,
@@ -1879,6 +1882,7 @@ fn death_penalty_years(realm: Realm) -> i32 {
 fn enter_near_death(
     lifecycle: &mut Lifecycle,
     mut wounds: Option<valence::prelude::Mut<'_, Wounds>>,
+    status_effects: Option<valence::prelude::Mut<'_, StatusEffects>>,
     now_tick: u64,
 ) {
     if lifecycle.state == LifecycleState::Terminated {
@@ -1890,6 +1894,11 @@ fn enter_near_death(
         let floor = wounds.health_max.max(1.0) * NEAR_DEATH_HEALTH_FRACTION;
         wounds.health_current = wounds.health_current.min(floor);
     }
+    if let Some(mut status_effects) = status_effects {
+        if !status_effects.active.is_empty() {
+            status_effects.active.clear();
+        }
+    }
 }
 
 #[cfg(test)]
@@ -1898,10 +1907,12 @@ mod tests {
 
     use crate::combat::anticheat::AntiCheatCounter;
     use crate::combat::components::{
-        BodyPart, DefenseWindow, StatusEffects, Wound, WoundKind, IN_COMBAT_WINDOW_TICKS,
+        ActiveStatusEffect, BodyPart, DefenseWindow, StatusEffects, Wound, WoundKind,
+        IN_COMBAT_WINDOW_TICKS,
     };
     use crate::combat::events::{
         ApplyStatusEffectIntent, DefenseIntent, RevivalActionIntent, RevivalActionKind,
+        StatusEffectKind,
     };
     use crate::cultivation::components::Cultivation;
     use crate::cultivation::death_hooks::CultivationDeathCause;
@@ -2618,6 +2629,50 @@ mod tests {
             )
             .expect("life_events query should succeed");
         assert_eq!(life_event_count, 1);
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn death_arbiter_clears_status_effects_on_near_death() {
+        let mut app = App::new();
+        app.insert_resource(CombatClock { tick: 10 });
+        let (settings, root) = persistence_settings("death-clears-status-effects");
+        app.insert_resource(settings);
+        app.add_event::<DeathEvent>();
+        app.add_event::<CultivationDeathTrigger>();
+        app.add_event::<DeathInsightRequested>();
+        app.add_event::<PlayerTerminated>();
+        app.add_event::<VfxEventRequest>();
+        app.add_systems(Update, death_arbiter_tick);
+
+        let entity = spawn_actor(
+            &mut app,
+            Wounds::default(),
+            Stamina::default(),
+            Lifecycle::default(),
+        );
+        app.world_mut().entity_mut(entity).insert(StatusEffects {
+            active: vec![ActiveStatusEffect {
+                kind: StatusEffectKind::Bleeding,
+                magnitude: 1.0,
+                remaining_ticks: 120,
+            }],
+        });
+
+        app.world_mut().send_event(DeathEvent {
+            target: entity,
+            cause: "bleed_out".to_string(),
+            attacker: None,
+            attacker_player_id: None,
+            at_tick: 10,
+        });
+        app.update();
+
+        let lifecycle = app.world().entity(entity).get::<Lifecycle>().unwrap();
+        assert_eq!(lifecycle.state, LifecycleState::NearDeath);
+        let statuses = app.world().entity(entity).get::<StatusEffects>().unwrap();
+        assert!(statuses.active.is_empty());
 
         let _ = fs::remove_dir_all(root);
     }

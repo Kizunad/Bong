@@ -37,9 +37,22 @@ public class ClientRequestProtocolTest {
 
     @Test
     void encodesMovementActionRequest() {
+        String json = ClientRequestProtocol.encodeMovementAction(ClientRequestProtocol.MovementAction.DASH);
         assertEquals(
             "{\"type\":\"movement_action\",\"v\":1,\"action\":\"dash\"}",
-            ClientRequestProtocol.encodeMovementAction(ClientRequestProtocol.MovementAction.DASH)
+            json,
+            "expected movement_action without yaw_degrees because legacy dash requests omit yaw, actual: " + json
+        );
+    }
+
+    @Test
+    void encodesMovementActionRequestWithYaw() {
+        String json = ClientRequestProtocol.encodeMovementAction(ClientRequestProtocol.MovementAction.DASH, 90.5);
+        assertEquals(
+            "{\"type\":\"movement_action\",\"v\":1,\"action\":\"dash\",\"yaw_degrees\":90.5}",
+            json,
+            "expected movement_action with finite yaw_degrees because dash direction needs the client yaw snapshot, actual: "
+                + json
         );
     }
 
@@ -49,6 +62,18 @@ public class ClientRequestProtocolTest {
             IllegalArgumentException.class,
             () -> ClientRequestProtocol.encodeMovementAction(null)
         );
+    }
+
+    @Test
+    void rejectsNonFiniteMovementYaw() {
+        for (double yawDegrees : List.of(Double.NaN, Double.POSITIVE_INFINITY, Double.NEGATIVE_INFINITY)) {
+            assertThrows(
+                IllegalArgumentException.class,
+                () -> ClientRequestProtocol.encodeMovementAction(ClientRequestProtocol.MovementAction.DASH, yawDegrees),
+                "expected IllegalArgumentException because yaw_degrees must be finite, actual no exception for "
+                    + yawDegrees
+            );
+        }
     }
 
     @Test

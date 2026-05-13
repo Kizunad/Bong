@@ -31,6 +31,11 @@ public final class FaunaEntity extends Entity implements GeoEntity {
     }
 
     @Override
+    public boolean canHit() {
+        return true;
+    }
+
+    @Override
     public void registerControllers(AnimatableManager.ControllerRegistrar controllers) {
         controllers.add(new AnimationController<>(this, "main", 5, state -> {
             state.getController().setAnimation(IDLE);

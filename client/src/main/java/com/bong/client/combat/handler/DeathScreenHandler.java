@@ -1,6 +1,10 @@
 package com.bong.client.combat.handler;
 
+import com.bong.client.combat.CombatHudStateStore;
+import com.bong.client.combat.inspect.WoundLayerBinding;
 import com.bong.client.combat.store.DeathStateStore;
+import com.bong.client.combat.store.StatusEffectStore;
+import com.bong.client.combat.store.WoundsStore;
 import com.bong.client.death.DeathCinematicPayloadParser;
 import com.bong.client.death.DeathCinematicState;
 import com.bong.client.network.ServerDataDispatch;
@@ -44,6 +48,7 @@ public final class DeathScreenHandler implements ServerDataHandler {
             DeathStateStore.hide();
             return ServerDataDispatch.handled(envelope.type(), "death_screen hidden");
         }
+        clearTransientCombatState();
         String cause = readString(payload, "cause");
         float luck = (float) readDouble(payload, "luck_remaining", 0d);
         long deadline = (long) readDouble(payload, "countdown_until_ms", 0d);
@@ -92,6 +97,13 @@ public final class DeathScreenHandler implements ServerDataHandler {
             envelope.type(),
             "death_screen visible cause=" + cause + " deadline=" + deadline
         );
+    }
+
+    private static void clearTransientCombatState() {
+        CombatHudStateStore.clear();
+        StatusEffectStore.clear();
+        WoundsStore.clear();
+        WoundLayerBinding.apply();
     }
 
     private static String readString(JsonObject obj, String field) {

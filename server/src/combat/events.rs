@@ -23,7 +23,7 @@ impl AttackReach {
     }
 }
 
-pub const FIST_REACH: AttackReach = AttackReach::new(0.9, 0.4);
+pub const FIST_REACH: AttackReach = AttackReach::new(2.0, 0.6);
 #[allow(dead_code)]
 pub const DAGGER_REACH: AttackReach = AttackReach::new(1.2, 0.4);
 pub const SWORD_REACH: AttackReach = AttackReach::new(2.0, 0.5);

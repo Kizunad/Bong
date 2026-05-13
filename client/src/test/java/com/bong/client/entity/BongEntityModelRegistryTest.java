@@ -28,12 +28,12 @@ public class BongEntityModelRegistryTest {
 
     @Test
     void rawIdsStayAfterFaunaWithoutShiftingExistingContract() {
-        int expectedRawId = 143;
+        int expectedRawId = 135;
         for (BongEntityModelKind kind : BongEntityRegistry.orderedKindsForTests()) {
             assertEquals(
                 expectedRawId++,
                 kind.expectedRawId(),
-                "Entity model raw ids must start after fauna raw_id=142 and stay sequential"
+                "Entity model raw ids must start after fauna raw_id=134 and stay sequential"
             );
         }
     }
@@ -48,7 +48,7 @@ public class BongEntityModelRegistryTest {
             maxFaunaRawId = Math.max(maxFaunaRawId, kind.expectedRawId());
         }
 
-        assertEquals(142, maxFaunaRawId, "Entity model ids must move if fauna reserves more ids");
+        assertEquals(134, maxFaunaRawId, "Entity model ids must move if fauna reserves more ids");
         for (BongEntityModelKind kind : BongEntityModelKind.values()) {
             assertTrue(
                 kind.expectedRawId() > maxFaunaRawId,

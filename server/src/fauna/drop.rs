@@ -1,7 +1,7 @@
 //! 妖兽死亡掉落链路（plan-fauna-v1 §3 / §7 P0 + P4）。
 
 use valence::prelude::{
-    Commands, Entity, EventReader, EventWriter, Position, Query, Res, ResMut, With,
+    Commands, Despawned, Entity, EventReader, EventWriter, Position, Query, Res, ResMut, With,
 };
 
 use crate::combat::events::{
@@ -243,7 +243,9 @@ pub fn fauna_drop_system(
             }
         }
 
-        commands.entity(event.target).insert(FaunaDropIssued);
+        commands
+            .entity(event.target)
+            .insert((FaunaDropIssued, Despawned));
     }
 }
 
@@ -348,7 +350,7 @@ fn splitmix64(seed: u64) -> u64 {
 mod tests {
     use std::collections::HashMap;
 
-    use valence::prelude::{App, Events, Update};
+    use valence::prelude::{App, Despawned, Events, Update};
 
     use super::super::components::BeastVariant;
     use super::*;
@@ -581,7 +583,7 @@ mod tests {
     }
 
     #[test]
-    fn death_event_creates_dropped_loot_and_marks_target() {
+    fn death_event_creates_dropped_loot_and_marks_target_despawned() {
         let mut app = App::new();
         app.add_event::<DeathEvent>();
         app.add_event::<ApplyStatusEffectIntent>();
@@ -620,6 +622,10 @@ mod tests {
         assert!(
             app.world().get::<FaunaDropIssued>(beast).is_some(),
             "processed beast should be marked to prevent duplicate drops"
+        );
+        assert!(
+            app.world().get::<Despawned>(beast).is_some(),
+            "processed beast should be marked despawned so clients clear the dead entity"
         );
     }
 

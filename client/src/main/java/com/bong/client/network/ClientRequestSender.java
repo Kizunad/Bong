@@ -306,6 +306,10 @@ public final class ClientRequestSender {
         dispatch(ClientRequestProtocol.encodeMovementAction(action));
     }
 
+    public static void sendMovementAction(ClientRequestProtocol.MovementAction action, double yawDegrees) {
+        dispatch(ClientRequestProtocol.encodeMovementAction(action, yawDegrees));
+    }
+
     public static void sendQiColorInspect(String observed) {
         dispatch(ClientRequestProtocol.encodeQiColorInspect(observed));
     }

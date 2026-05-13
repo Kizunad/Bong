@@ -1626,7 +1626,7 @@ mod tests {
         let mut app = build_hunt_app();
         let territory = Territory::new(DVec3::new(0.0, 64.0, 0.0), 20.0);
         let beast = spawn_beast_hunter(&mut app, DVec3::new(0.0, 64.0, 0.0), territory);
-        // target 0.8 格外，在 FIST_REACH.max = 1.3 内
+        // target 0.8 格外，在 FIST_REACH.max 内
         let target = spawn_hunt_target(&mut app, DVec3::new(0.8, 64.0, 0.0), Realm::Awaken);
 
         let _action = app

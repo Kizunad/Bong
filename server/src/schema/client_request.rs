@@ -52,6 +52,8 @@ pub enum ClientRequestV1 {
     MovementAction {
         v: u8,
         action: MovementActionRequestV1,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        yaw_degrees: Option<f32>,
     },
     AbortTribulation {
         v: u8,
@@ -629,15 +631,64 @@ mod tests {
         let json = r#"{"type":"movement_action","v":1,"action":"dash"}"#;
         let req: ClientRequestV1 = serde_json::from_str(json).unwrap();
         match req {
-            ClientRequestV1::MovementAction { v, action } => {
+            ClientRequestV1::MovementAction {
+                v,
+                action,
+                yaw_degrees,
+            } => {
                 assert_eq!(v, 1);
                 assert_eq!(action, MovementActionRequestV1::Dash);
+                assert_eq!(yaw_degrees, None);
             }
             other => panic!("expected MovementAction, got {other:?}"),
         }
 
         let encoded = serde_json::to_string(&req).expect("movement action serializes");
-        assert_eq!(encoded, json);
+        let encoded_value: serde_json::Value =
+            serde_json::from_str(&encoded).expect("encoded movement action is valid JSON");
+        let expected_value: serde_json::Value =
+            serde_json::from_str(json).expect("expected movement action JSON is valid");
+        assert_eq!(
+            encoded_value, expected_value,
+            "movement_action roundtrip must preserve payload structure without depending on object key order"
+        );
+        assert!(
+            encoded_value.get("yaw_degrees").is_none(),
+            "movement_action without client yaw must omit yaw_degrees, actual: {encoded_value}"
+        );
+    }
+
+    #[test]
+    fn movement_action_request_accepts_client_yaw() {
+        let json = r#"{"type":"movement_action","v":1,"action":"dash","yaw_degrees":90.5}"#;
+        let req: ClientRequestV1 = serde_json::from_str(json).unwrap();
+        match req {
+            ClientRequestV1::MovementAction {
+                v,
+                action,
+                yaw_degrees,
+            } => {
+                assert_eq!(v, 1);
+                assert_eq!(action, MovementActionRequestV1::Dash);
+                assert_eq!(yaw_degrees, Some(90.5));
+            }
+            other => panic!("expected MovementAction, got {other:?}"),
+        }
+
+        let encoded = serde_json::to_string(&req).expect("movement action serializes");
+        let encoded_value: serde_json::Value =
+            serde_json::from_str(&encoded).expect("encoded movement action yaw JSON is valid");
+        let expected_value: serde_json::Value =
+            serde_json::from_str(json).expect("expected movement action yaw JSON is valid");
+        assert_eq!(
+            encoded_value, expected_value,
+            "movement_action with yaw_degrees must preserve payload structure without depending on object key order"
+        );
+        assert_eq!(
+            encoded_value.get("yaw_degrees").and_then(|value| value.as_f64()),
+            Some(90.5),
+            "movement_action with client yaw must include numeric yaw_degrees, actual: {encoded_value}"
+        );
     }
 
     #[test]

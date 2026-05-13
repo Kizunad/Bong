@@ -1,13 +1,16 @@
 package com.bong.client.hud;
 
+import com.bong.client.npc.NpcMoodStore;
+import com.bong.client.npc.NpcMetadata;
+import com.bong.client.npc.NpcMetadataStore;
 import com.bong.client.state.PlayerStateStore;
 import com.bong.client.state.PlayerStateViewModel;
-import com.bong.client.npc.NpcMoodStore;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -18,6 +21,7 @@ class TargetInfoHudPlannerTest {
     void reset() {
         PlayerStateStore.resetForTests();
         NpcMoodStore.clearAll();
+        NpcMetadataStore.clearAll();
     }
 
     @Test
@@ -85,5 +89,60 @@ class TargetInfoHudPlannerTest {
         assertTrue(commands.stream().noneMatch(
             cmd -> (cmd.color() & 0x00FFFFFF) == (TargetInfoHudPlanner.QI_COLOR & 0x00FFFFFF)
         ));
+    }
+
+    @Test
+    void npcMetadataBuildsTargetInfoWithoutLivingEntityHealth() {
+        NpcMetadata metadata = new NpcMetadata(
+            126,
+            "beast",
+            "Awaken",
+            "",
+            "",
+            -80,
+            "噬灵鼠",
+            "",
+            "",
+            "",
+            0.37,
+            0.22
+        );
+
+        TargetInfoState state = TargetInfoState.fromNpcMetadata(metadata, 7_000L);
+
+        assertFalse(
+            state.isEmpty(),
+            "expected non-empty target because NPC metadata is present, actual empty"
+        );
+        assertEquals(
+            TargetInfoState.Kind.NPC,
+            state.kind(),
+            "expected kind NPC because metadata target represents an NPC, actual: " + state.kind()
+        );
+        assertEquals(
+            "entity:126",
+            state.targetId(),
+            "expected target id entity:126 because metadata entity id is 126, actual: " + state.targetId()
+        );
+        assertEquals(
+            "噬灵鼠",
+            state.displayName(),
+            "expected display name from NPC metadata, actual: " + state.displayName()
+        );
+        assertEquals(
+            "Awaken",
+            state.realm(),
+            "expected realm Awaken because metadata realm is Awaken, actual: " + state.realm()
+        );
+        assertEquals(
+            0.37,
+            state.hpRatio(),
+            "expected hp ratio 0.37 because metadata supplies it, actual: " + state.hpRatio()
+        );
+        assertEquals(
+            0.22,
+            state.qiRatio(),
+            "expected qi ratio 0.22 because metadata supplies it, actual: " + state.qiRatio()
+        );
     }
 }

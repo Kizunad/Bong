@@ -104,7 +104,11 @@ public final class StatusEffectStore {
         INSTANCE.snapshot = Collections.unmodifiableList(cleaned);
     }
 
-    public static void resetForTests() {
+    public static void clear() {
         INSTANCE.snapshot = Collections.emptyList();
+    }
+
+    public static void resetForTests() {
+        clear();
     }
 }

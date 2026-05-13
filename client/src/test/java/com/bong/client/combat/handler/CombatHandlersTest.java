@@ -1,5 +1,8 @@
 package com.bong.client.combat.handler;
 
+import com.bong.client.combat.CombatHudState;
+import com.bong.client.combat.CombatHudStateStore;
+import com.bong.client.combat.DerivedAttrFlags;
 import com.bong.client.combat.store.AscensionQuotaStore;
 import com.bong.client.combat.store.DamageFloaterStore;
 import com.bong.client.combat.store.DeathStateStore;
@@ -17,6 +20,7 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 
 import java.nio.charset.StandardCharsets;
+import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -25,6 +29,7 @@ class CombatHandlersTest {
     @AfterEach
     void tearDown() {
         DamageFloaterStore.resetForTests();
+        CombatHudStateStore.resetForTests();
         StatusEffectStore.resetForTests();
         DerivedAttrsStore.resetForTests();
         DeathStateStore.resetForTests();
@@ -186,6 +191,40 @@ class CombatHandlersTest {
         assertFalse(s.cinematic().active());
         assertFalse(s.cinematic().tsyDeath());
         assertEquals("", s.cinematic().characterId());
+    }
+
+    @Test
+    void deathScreenHandlerVisibleClearsTransientCombatState() {
+        CombatHudStateStore.replace(CombatHudState.create(0.05f, 0.4f, 0.2f, DerivedAttrFlags.none()));
+        StatusEffectStore.replace(List.of(new StatusEffectStore.Effect(
+            "bleed_out",
+            "流血",
+            StatusEffectStore.Kind.DOT,
+            1,
+            5_000L,
+            0xFFE05050,
+            "战斗",
+            1
+        )));
+        WoundsStore.replace(List.of(new WoundsStore.Wound(
+            "chest",
+            "cut",
+            0.9f,
+            WoundsStore.HealingState.BLEEDING,
+            0.0f,
+            false,
+            123L
+        )));
+
+        new DeathScreenHandler().handle(parse(
+            "{\"v\":1,\"type\":\"death_screen\",\"visible\":true,\"cause\":\"bleed_out\"}"));
+
+        assertTrue(DeathStateStore.snapshot().visible());
+        assertFalse(CombatHudStateStore.snapshot().active());
+        assertEquals(1.0f, CombatHudStateStore.snapshot().hpPercent(), 1e-6);
+        assertTrue(StatusEffectStore.snapshot().isEmpty());
+        assertTrue(WoundsStore.snapshot().isEmpty());
+        assertFalse(WoundsStore.hasBleedingAny());
     }
 
     @Test

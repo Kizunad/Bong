@@ -1008,11 +1008,25 @@ public final class ClientRequestProtocol {
     }
 
     public static String encodeMovementAction(MovementAction action) {
+        return encodeMovementAction(action, null);
+    }
+
+    public static String encodeMovementAction(MovementAction action, double yawDegrees) {
+        if (!Double.isFinite(yawDegrees)) {
+            throw new IllegalArgumentException("movement yawDegrees must be finite");
+        }
+        return encodeMovementAction(action, Double.valueOf(yawDegrees));
+    }
+
+    private static String encodeMovementAction(MovementAction action, Double yawDegrees) {
         if (action == null) {
             throw new IllegalArgumentException("movement action must not be null");
         }
         JsonObject obj = envelope("movement_action");
         obj.addProperty("action", action.wireName());
+        if (yawDegrees != null) {
+            obj.addProperty("yaw_degrees", yawDegrees);
+        }
         return obj.toString();
     }
 

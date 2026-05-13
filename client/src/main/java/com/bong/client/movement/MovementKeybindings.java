@@ -45,7 +45,7 @@ public final class MovementKeybindings {
             dashTapped
         );
         if (action != null) {
-            ClientRequestSender.sendMovementAction(action);
+            ClientRequestSender.sendMovementAction(action, client.player.getYaw());
         }
     }
 

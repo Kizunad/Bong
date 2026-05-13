@@ -43,7 +43,9 @@ public final class NpcMetadataHandler {
             stringField(root, "display_name", ""),
             stringField(root, "age_band", "正值壮年"),
             stringField(root, "greeting_text", "对方沉默地看着你。"),
-            nullableString(root, "qi_hint")
+            nullableString(root, "qi_hint"),
+            doubleField(root, "hp_ratio", 1.0),
+            doubleField(root, "qi_ratio", 0.0)
         ));
         return true;
     }
@@ -72,6 +74,18 @@ public final class NpcMetadataHandler {
             return root.get(fieldName).getAsString();
         } catch (RuntimeException exception) {
             return null;
+        }
+    }
+
+    private static double doubleField(JsonObject root, String fieldName, double fallback) {
+        if (!root.has(fieldName) || root.get(fieldName).isJsonNull()) {
+            return fallback;
+        }
+        try {
+            double value = root.get(fieldName).getAsDouble();
+            return Double.isFinite(value) ? value : fallback;
+        } catch (RuntimeException exception) {
+            return fallback;
         }
     }
 }

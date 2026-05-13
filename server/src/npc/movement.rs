@@ -26,8 +26,8 @@
 use bevy_transform::components::Transform;
 use valence::prelude::{
     bevy_ecs, App, BlockPos, BlockState, Chunk, ChunkLayer, ChunkPos, Client, Commands, Component,
-    DVec3, Entity, EventWriter, GameMode, HeadYaw, IntoSystemConfigs, Look, ParamSet, Position,
-    Query, Res, ResMut, Resource, Update, With, Without,
+    DVec3, Entity, EntityLayerId, EventWriter, GameMode, HeadYaw, IntoSystemConfigs, Look,
+    ParamSet, Position, Query, Res, ResMut, Resource, Update, With, Without,
 };
 
 use crate::combat::body_mass::BodyMass;
@@ -491,12 +491,13 @@ fn movement_ability_tick_system(
                 &mut MovementCooldowns,
                 Option<&BodyMass>,
                 Option<&mut Wounds>,
+                Option<&EntityLayerId>,
             ),
             With<NpcMarker>,
         >,
         Query<(Entity, &Position, Option<&BodyMass>), With<NpcMarker>>,
     )>,
-    mut layers: Query<&mut ChunkLayer, With<crate::world::dimension::OverworldLayer>>,
+    mut layers: Query<&mut ChunkLayer>,
     mut commands: Commands,
     mut knockback_events: EventWriter<KnockbackEvent>,
     game_tick: Res<GameTick>,
@@ -512,7 +513,6 @@ fn movement_ability_tick_system(
             })
             .collect::<Vec<_>>()
     };
-    let mut layer = layers.get_single_mut().ok();
     let tick = game_tick.0;
 
     for (
@@ -525,8 +525,10 @@ fn movement_ability_tick_system(
         mut cooldowns,
         body_mass,
         mut wounds,
+        npc_layer,
     ) in &mut npcs.p0()
     {
+        let mut layer = npc_layer.and_then(|layer_id| layers.get_mut(layer_id.0).ok());
         match &mut ctrl.mode {
             MovementMode::GroundNav => {
                 // Nothing to do — Navigator handles it.
@@ -548,36 +550,38 @@ fn movement_ability_tick_system(
                     continue;
                 }
 
-                let step = dash.speed_per_tick;
+                let step = (dash.total_distance - dash.distance_covered).min(dash.speed_per_tick);
                 let current = position.get();
-                let next_x = current.x + dash.direction.x * step;
-                let next_z = current.z + dash.direction.z * step;
-                let ground_y = resolve_ground_y_at(
-                    next_x.floor() as i32,
-                    next_z.floor() as i32,
-                    dash.ground_y as i32,
-                    layer.as_deref(),
+                let Some(chunk_layer) = layer.as_deref() else {
+                    cooldowns.dash_ready_at = tick + DASH_COOLDOWN_TICKS;
+                    ctrl.mode = MovementMode::GroundNav;
+                    continue;
+                };
+                let motion = sweep_grounded_motion(
+                    current,
+                    dash.direction,
+                    step,
+                    dash.ground_y,
+                    Some(chunk_layer),
                 );
-                dash.ground_y = ground_y;
-                let tentative = DVec3::new(next_x, ground_y, next_z);
+                dash.ground_y = motion.ground_y;
 
-                if is_blocked_at(tentative, layer.as_deref()) {
+                if motion.blocked.is_some() {
+                    write_position(&mut position, &mut transform, motion.position);
+                    dash.distance_covered += motion.distance_moved;
                     cooldowns.dash_ready_at = tick + DASH_COOLDOWN_TICKS;
                     ctrl.mode = MovementMode::GroundNav;
                     continue;
                 }
 
-                position.set(tentative);
-                transform.translation.x = tentative.x as f32;
-                transform.translation.y = tentative.y as f32;
-                transform.translation.z = tentative.z as f32;
+                write_position(&mut position, &mut transform, motion.position);
 
                 let yaw = (dash.direction.z.atan2(dash.direction.x).to_degrees() - 90.0) as f32;
                 look.yaw = yaw;
                 look.pitch = 0.0;
                 head_yaw.0 = yaw;
 
-                dash.distance_covered += step;
+                dash.distance_covered += motion.distance_moved;
             }
 
             MovementMode::Override(ActiveOverride::Knockback(ref mut kb)) => {
@@ -586,22 +590,24 @@ fn movement_ability_tick_system(
                     continue;
                 }
 
-                let step = kb.speed_per_tick;
+                let step = (kb.total_distance - kb.distance_covered).min(kb.speed_per_tick);
                 let current = position.get();
-                let next_x = current.x + kb.direction.x * step;
-                let next_z = current.z + kb.direction.z * step;
-                let ground_y = resolve_ground_y_at(
-                    next_x.floor() as i32,
-                    next_z.floor() as i32,
-                    kb.ground_y as i32,
-                    layer.as_deref(),
+                let Some(chunk_layer) = layer.as_deref() else {
+                    ctrl.mode = MovementMode::GroundNav;
+                    continue;
+                };
+                let motion = sweep_grounded_motion(
+                    current,
+                    kb.direction,
+                    step,
+                    kb.ground_y,
+                    Some(chunk_layer),
                 );
-                kb.ground_y = ground_y;
-                let tentative = DVec3::new(next_x, ground_y, next_z);
+                kb.ground_y = motion.ground_y;
 
-                if let Some((block_pos, block_state)) =
-                    blocked_block_at(tentative, layer.as_deref())
-                {
+                if let Some((block_pos, block_state)) = motion.blocked {
+                    write_position(&mut position, &mut transform, motion.position);
+                    kb.distance_covered += motion.distance_moved;
                     let moving_mass = body_mass.copied().unwrap_or_default().total_mass();
                     let collision = wall_collision(WallCollisionInput {
                         target_mass: moving_mass,
@@ -651,7 +657,9 @@ fn movement_ability_tick_system(
                     }
                 }
 
-                if let Some(hit) = first_entity_collision(entity, tentative, &collision_targets) {
+                if let Some(hit) =
+                    first_entity_collision(entity, motion.position, &collision_targets)
+                {
                     if kb.chain_depth > 0 {
                         let moving_mass = body_mass.copied().unwrap_or_default().total_mass();
                         if let Ok(collision) = entity_collision(EntityCollisionInput {
@@ -713,13 +721,10 @@ fn movement_ability_tick_system(
                     }
                 }
 
-                position.set(tentative);
-                transform.translation.x = tentative.x as f32;
-                transform.translation.y = tentative.y as f32;
-                transform.translation.z = tentative.z as f32;
+                write_position(&mut position, &mut transform, motion.position);
 
                 // Don't change facing — NPC should still look at attacker.
-                kb.distance_covered += step;
+                kb.distance_covered += motion.distance_moved;
             }
         }
     }
@@ -734,6 +739,106 @@ struct CollisionTargetSnapshot {
     entity: Entity,
     position: DVec3,
     mass: f64,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct GroundedSweepResult {
+    position: DVec3,
+    ground_y: f64,
+    distance_moved: f64,
+    blocked: Option<(BlockPos, BlockState)>,
+}
+
+fn sweep_grounded_motion(
+    start: DVec3,
+    direction: DVec3,
+    requested_distance: f64,
+    ground_y: f64,
+    layer: Option<&ChunkLayer>,
+) -> GroundedSweepResult {
+    let Some(layer) = layer else {
+        return GroundedSweepResult {
+            position: start,
+            ground_y: start.y,
+            distance_moved: 0.0,
+            blocked: None,
+        };
+    };
+
+    let dir = normalize_xz(direction);
+    if dir.length_squared() <= f64::EPSILON || requested_distance <= f64::EPSILON {
+        return GroundedSweepResult {
+            position: start,
+            ground_y,
+            distance_moved: 0.0,
+            blocked: None,
+        };
+    }
+
+    let mut current = start;
+    let mut current_ground_y = ground_y;
+    let mut moved = 0.0;
+    let mut remaining = requested_distance;
+
+    while remaining > f64::EPSILON {
+        let step = remaining.min(DASH_SWEEP_STEP);
+        let next_x = current.x + dir.x * step;
+        let next_z = current.z + dir.z * step;
+        let horizontal_tentative = DVec3::new(next_x, current_ground_y, next_z);
+        if let Some(blocked) = blocked_block_at(horizontal_tentative, Some(layer)) {
+            return GroundedSweepResult {
+                position: current,
+                ground_y: current_ground_y,
+                distance_moved: moved,
+                blocked: Some(blocked),
+            };
+        }
+
+        let next_ground_y = resolve_ground_y_at(
+            next_x.floor() as i32,
+            next_z.floor() as i32,
+            current_ground_y as i32,
+            Some(layer),
+        );
+        let tentative = DVec3::new(next_x, next_ground_y, next_z);
+
+        if let Some(blocked) = blocked_block_at(tentative, Some(layer)) {
+            return GroundedSweepResult {
+                position: current,
+                ground_y: current_ground_y,
+                distance_moved: moved,
+                blocked: Some(blocked),
+            };
+        }
+
+        current = tentative;
+        current_ground_y = next_ground_y;
+        moved += step;
+        remaining -= step;
+    }
+
+    GroundedSweepResult {
+        position: current,
+        ground_y: current_ground_y,
+        distance_moved: moved,
+        blocked: None,
+    }
+}
+
+fn normalize_xz(direction: DVec3) -> DVec3 {
+    let horizontal = DVec3::new(direction.x, 0.0, direction.z);
+    if horizontal.length_squared() <= f64::EPSILON {
+        DVec3::ZERO
+    } else {
+        horizontal.normalize()
+    }
+}
+
+fn write_position(position: &mut Position, transform: &mut Transform, next: DVec3) {
+    position.set(next);
+    transform.translation.x = next.x as f32;
+    transform.translation.y = next.y as f32;
+    transform.translation.z = next.z as f32;
 }
 
 fn duration_ticks_for_knockback(kb: &KnockbackState) -> u32 {
@@ -882,43 +987,6 @@ fn resolve_ground_y_at(wx: i32, wz: i32, ref_y: i32, layer: Option<&ChunkLayer>)
         }
     }
     ref_y as f64
-}
-
-/// Check if a position is blocked (solid block at feet or head level).
-/// Used by Override abilities for collision detection.
-fn is_blocked_at(pos: DVec3, layer: Option<&ChunkLayer>) -> bool {
-    let Some(layer) = layer else {
-        return false;
-    };
-
-    let wx = pos.x.floor() as i32;
-    let wz = pos.z.floor() as i32;
-    let feet_y = pos.y.floor() as i32;
-
-    let min_y = layer.min_y();
-    let max_y = min_y + layer.height() as i32 - 1;
-
-    for y in [feet_y, feet_y + 1] {
-        if y < min_y || y > max_y {
-            continue;
-        }
-
-        let chunk_pos = ChunkPos::new(wx.div_euclid(16), wz.div_euclid(16));
-        let Some(chunk) = layer.chunk(chunk_pos) else {
-            continue;
-        };
-
-        let lx = wx.rem_euclid(16) as u32;
-        let ly = (y - min_y) as u32;
-        let lz = wz.rem_euclid(16) as u32;
-        let block = chunk.block_state(lx, ly, lz);
-
-        if is_solid_block(block) {
-            return true;
-        }
-    }
-
-    false
 }
 
 /// Whether a block is solid for NPC collision purposes.
@@ -1181,5 +1249,152 @@ mod tests {
         assert_eq!(block_hardness(BlockState::STONE), 5.0);
         assert_eq!(block_hardness(BlockState::IRON_BLOCK), 15.0);
         assert_eq!(block_hardness(BlockState::OBSIDIAN), 50.0);
+    }
+
+    #[test]
+    fn dash_override_without_chunk_layer_resets_to_ground_navigation() {
+        let mut app = App::new();
+        app.insert_resource(GameTick(10));
+        app.add_event::<KnockbackEvent>();
+        app.add_systems(Update, movement_ability_tick_system);
+        let npc = app
+            .world_mut()
+            .spawn((
+                NpcMarker,
+                Position::new([0.5, 67.0, 0.5]),
+                Transform::default(),
+                Look::default(),
+                HeadYaw::default(),
+                MovementController {
+                    mode: MovementMode::Override(ActiveOverride::Dash(DashState {
+                        direction: DVec3::new(1.0, 0.0, 0.0),
+                        total_distance: 2.0,
+                        distance_covered: 0.0,
+                        speed_per_tick: 1.0,
+                        ground_y: 67.0,
+                    })),
+                },
+                MovementCooldowns::default(),
+            ))
+            .id();
+
+        app.update();
+
+        let controller = app.world().get::<MovementController>(npc).unwrap();
+        let cooldowns = app.world().get::<MovementCooldowns>(npc).unwrap();
+        assert!(
+            !controller.navigator_should_yield(),
+            "expected dash override to end when NPC has no ChunkLayer, actual mode: {:?}",
+            controller.mode
+        );
+        assert_eq!(
+            cooldowns.dash_ready_at,
+            10 + DASH_COOLDOWN_TICKS,
+            "expected missing-layer dash to consume cooldown when override is ended"
+        );
+    }
+
+    fn make_wall_sweep_app() -> (App, Entity) {
+        use valence::prelude::{Chunk, UnloadedChunk};
+        use valence::testing::ScenarioSingleClient;
+
+        let scenario = ScenarioSingleClient::new();
+        let mut app = scenario.app;
+        crate::world::dimension::mark_test_layer_as_overworld(&mut app);
+        let layer_entity = {
+            let world = app.world_mut();
+            let mut query = world.query_filtered::<Entity, With<ChunkLayer>>();
+            query.iter(world).next().unwrap()
+        };
+
+        {
+            let mut layer = app.world_mut().get_mut::<ChunkLayer>(layer_entity).unwrap();
+            let mut chunk = UnloadedChunk::with_height(384);
+            let min_y = layer.min_y();
+            for lx in 0..4u32 {
+                let local_y = (66 - min_y) as u32;
+                chunk.set_block_state(lx, local_y, 0, BlockState::STONE);
+            }
+            chunk.set_block_state(1, (67 - min_y) as u32, 0, BlockState::STONE);
+            chunk.set_block_state(1, (68 - min_y) as u32, 0, BlockState::STONE);
+            layer.insert_chunk([0, 0], chunk);
+        }
+
+        (app, layer_entity)
+    }
+
+    #[test]
+    fn grounded_sweep_stops_at_wall_between_start_and_endpoint() {
+        let (app, layer_entity) = make_wall_sweep_app();
+        let layer = app.world().get::<ChunkLayer>(layer_entity).unwrap();
+
+        let result = sweep_grounded_motion(
+            DVec3::new(0.5, 67.0, 0.5),
+            DVec3::new(1.0, 0.0, 0.0),
+            2.0,
+            67.0,
+            Some(layer),
+        );
+
+        assert!(
+            result.blocked.is_some(),
+            "sweep must detect the wall even when the endpoint is past it"
+        );
+        assert!(
+            (result.position.x - 0.5).abs() < 1e-6,
+            "NPC should stay at the last safe position before the wall, got {:?}",
+            result.position
+        );
+        assert_eq!(result.distance_moved, 0.0);
+    }
+
+    #[test]
+    fn grounded_sweep_without_layer_does_not_advance_through_unknown_collision() {
+        let start = DVec3::new(0.5, 67.0, 0.5);
+
+        let result = sweep_grounded_motion(start, DVec3::new(1.0, 0.0, 0.0), 1.0, 67.0, None);
+
+        assert!(
+            result.blocked.is_none(),
+            "missing layer is handled by the caller, sweep should not report a concrete block"
+        );
+        assert_eq!(
+            result.position, start,
+            "without a ChunkLayer, sweep must not blindly advance through unknown blocks"
+        );
+        assert_eq!(
+            result.distance_moved, 0.0,
+            "without a ChunkLayer, sweep distance should stay zero"
+        );
+    }
+
+    #[test]
+    fn grounded_sweep_advances_full_distance_on_clear_path() {
+        let (app, layer_entity) = make_wall_sweep_app();
+        let layer = app.world().get::<ChunkLayer>(layer_entity).unwrap();
+
+        let result = sweep_grounded_motion(
+            DVec3::new(0.5, 67.0, 0.5),
+            DVec3::new(0.0, 0.0, 1.0),
+            1.0,
+            67.0,
+            Some(layer),
+        );
+
+        assert!(
+            result.blocked.is_none(),
+            "clear sweep should not report a wall, actual result: {:?}",
+            result
+        );
+        assert!(
+            (result.position.z - 1.5).abs() < 1e-6,
+            "clear sweep should advance full requested distance along Z, actual position: {:?}",
+            result.position
+        );
+        assert!(
+            (result.distance_moved - 1.0).abs() < 1e-6,
+            "clear sweep should report full requested distance, actual: {}",
+            result.distance_moved
+        );
     }
 }
