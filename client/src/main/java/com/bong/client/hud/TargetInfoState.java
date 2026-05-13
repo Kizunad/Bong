@@ -67,25 +67,43 @@ public final class TargetInfoState {
     }
 
     public static TargetInfoState fromEntity(Entity entity, long observedAtMillis) {
+        if (entity == null) {
+            return empty();
+        }
+        NpcMetadata npcMetadata = NpcMetadataStore.get(entity.getId());
+        if (npcMetadata != null) {
+            return fromNpcMetadata(npcMetadata, observedAtMillis);
+        }
         if (!(entity instanceof LivingEntity living)) {
             return empty();
         }
-        NpcMetadata npcMetadata = NpcMetadataStore.get(living.getId());
-        Kind kind = npcMetadata != null ? Kind.NPC : living instanceof PlayerEntity ? Kind.PLAYER : Kind.MOB;
-        String name = npcMetadata != null
-            ? npcMetadata.displayName()
-            : living.getDisplayName() == null
-                ? living.getType().getName().getString()
-                : living.getDisplayName().getString();
-        String realm = npcMetadata != null ? npcMetadata.realm() : "";
+        Kind kind = living instanceof PlayerEntity ? Kind.PLAYER : Kind.MOB;
+        String name = living.getDisplayName() == null
+            ? living.getType().getName().getString()
+            : living.getDisplayName().getString();
         float maxHealth = Math.max(1.0f, living.getMaxHealth());
         return create(
             kind,
             "entity:" + living.getId(),
             name,
-            realm,
+            "",
             living.getHealth() / maxHealth,
             0.0,
+            observedAtMillis
+        );
+    }
+
+    static TargetInfoState fromNpcMetadata(NpcMetadata metadata, long observedAtMillis) {
+        if (metadata == null) {
+            return empty();
+        }
+        return create(
+            Kind.NPC,
+            "entity:" + metadata.entityId(),
+            metadata.displayName(),
+            metadata.realm(),
+            metadata.hpRatio(),
+            metadata.qiRatio(),
             observedAtMillis
         );
     }

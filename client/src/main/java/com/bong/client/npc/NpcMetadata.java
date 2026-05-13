@@ -10,8 +10,38 @@ public record NpcMetadata(
     String displayName,
     String ageBand,
     String greetingText,
-    String qiHint
+    String qiHint,
+    double hpRatio,
+    double qiRatio
 ) {
+    public NpcMetadata(
+        int entityId,
+        String archetype,
+        String realm,
+        String factionName,
+        String factionRank,
+        int reputationToPlayer,
+        String displayName,
+        String ageBand,
+        String greetingText,
+        String qiHint
+    ) {
+        this(
+            entityId,
+            archetype,
+            realm,
+            factionName,
+            factionRank,
+            reputationToPlayer,
+            displayName,
+            ageBand,
+            greetingText,
+            qiHint,
+            1.0,
+            0.0
+        );
+    }
+
     public NpcMetadata {
         archetype = clean(archetype, "unknown");
         realm = clean(realm, "未知");
@@ -21,6 +51,8 @@ public record NpcMetadata(
         ageBand = clean(ageBand, "正值壮年");
         greetingText = clean(greetingText, "对方沉默地看着你。");
         qiHint = blankToNull(qiHint);
+        hpRatio = clamp01(hpRatio);
+        qiRatio = clamp01(qiRatio);
     }
 
     public boolean hostile() {
@@ -43,5 +75,12 @@ public record NpcMetadata(
             return null;
         }
         return value.trim();
+    }
+
+    private static double clamp01(double value) {
+        if (!Double.isFinite(value)) {
+            return 0.0;
+        }
+        return Math.max(0.0, Math.min(1.0, value));
     }
 }

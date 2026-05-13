@@ -19,16 +19,16 @@ class MovementHudPlannerTest {
     }
 
     @Test
-    void lowStaminaKeepsCompactIndicatorVisible() {
+    void lowStaminaDoesNotKeepDashIndicatorVisible() {
         MovementState state = state(MovementState.Action.NONE, MovementState.ZoneKind.NORMAL, true, 1_000L, 0L);
 
         List<HudRenderCommand> commands = MovementHudPlanner.buildCommands(state, 800, 600, 20_000L);
 
-        assertTrue(commands.stream().anyMatch(c -> c.layer() == HudRenderLayer.MOVEMENT_HUD && c.isRect()));
+        assertTrue(commands.isEmpty());
     }
 
     @Test
-    void recentStaminaCostUsesYellowHighlight() {
+    void rendersOnlyDashCooldownPanelWithoutStaminaBar() {
         MovementState state = new MovementState(
             0.75,
             true,
@@ -48,7 +48,29 @@ class MovementHudPlannerTest {
 
         List<HudRenderCommand> commands = MovementHudPlanner.buildCommands(state, 800, 600, 1_100L);
 
-        assertTrue(commands.stream().anyMatch(c -> isMovementRect(c) && c.color() == 0xFFFFD060));
+        assertEquals(3, commands.stream().filter(MovementHudPlannerTest::isMovementRect).count());
+        assertTrue(commands.stream().anyMatch(c -> c.isScaledText() && "DASH".equals(c.text())));
+        assertTrue(commands.stream().noneMatch(c -> isMovementRect(c) && c.color() == 0xFFFFD060));
+    }
+
+    @Test
+    void dashPanelSitsBesideHotbarWithoutHorizontalOverlap() {
+        MovementState state = state(MovementState.Action.DASHING, MovementState.ZoneKind.NORMAL, false, 1_000L, 0L);
+
+        List<HudRenderCommand> commands = MovementHudPlanner.buildCommands(state, 398, 121, 1_100L);
+
+        HudRenderCommand panel = commands.stream()
+            .filter(c -> isMovementRect(c)
+                && c.width() == MovementHudPlanner.PANEL_WIDTH
+                && c.height() == MovementHudPlanner.PANEL_HEIGHT)
+            .findFirst()
+            .orElseThrow();
+        int hotbarWidth = QuickBarHudPlanner.TOTAL_SLOTS * QuickBarHudPlanner.SLOT_SIZE
+            + (QuickBarHudPlanner.TOTAL_SLOTS - 1) * QuickBarHudPlanner.SLOT_GAP;
+        int hotbarLeftX = (398 - hotbarWidth) / 2;
+        int hotbarRightX = hotbarLeftX + hotbarWidth;
+
+        assertTrue(panel.x() >= hotbarRightX || panel.x() + panel.width() <= hotbarLeftX);
     }
 
     @Test
@@ -70,7 +92,6 @@ class MovementHudPlannerTest {
         assertTrue(commands.stream().anyMatch(c -> isMovementRect(c) && c.color() == 0xC0FF3030));
     }
 
-    @Test
     private static boolean isMovementRect(HudRenderCommand command) {
         return command.layer() == HudRenderLayer.MOVEMENT_HUD && command.isRect();
     }

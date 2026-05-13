@@ -1,13 +1,16 @@
 package com.bong.client.hud;
 
+import com.bong.client.npc.NpcMoodStore;
+import com.bong.client.npc.NpcMetadata;
+import com.bong.client.npc.NpcMetadataStore;
 import com.bong.client.state.PlayerStateStore;
 import com.bong.client.state.PlayerStateViewModel;
-import com.bong.client.npc.NpcMoodStore;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -18,6 +21,7 @@ class TargetInfoHudPlannerTest {
     void reset() {
         PlayerStateStore.resetForTests();
         NpcMoodStore.clearAll();
+        NpcMetadataStore.clearAll();
     }
 
     @Test
@@ -85,5 +89,33 @@ class TargetInfoHudPlannerTest {
         assertTrue(commands.stream().noneMatch(
             cmd -> (cmd.color() & 0x00FFFFFF) == (TargetInfoHudPlanner.QI_COLOR & 0x00FFFFFF)
         ));
+    }
+
+    @Test
+    void npcMetadataBuildsTargetInfoWithoutLivingEntityHealth() {
+        NpcMetadata metadata = new NpcMetadata(
+            126,
+            "beast",
+            "Awaken",
+            "",
+            "",
+            -80,
+            "噬灵鼠",
+            "",
+            "",
+            "",
+            0.37,
+            0.22
+        );
+
+        TargetInfoState state = TargetInfoState.fromNpcMetadata(metadata, 7_000L);
+
+        assertFalse(state.isEmpty());
+        assertEquals(TargetInfoState.Kind.NPC, state.kind());
+        assertEquals("entity:126", state.targetId());
+        assertEquals("噬灵鼠", state.displayName());
+        assertEquals("Awaken", state.realm());
+        assertEquals(0.37, state.hpRatio());
+        assertEquals(0.22, state.qiRatio());
     }
 }

@@ -19,7 +19,11 @@ public final class CombatHudStateStore {
         snapshot = next == null ? CombatHudState.empty() : next;
     }
 
-    public static void resetForTests() {
+    public static void clear() {
         snapshot = CombatHudState.empty();
+    }
+
+    public static void resetForTests() {
+        clear();
     }
 }
