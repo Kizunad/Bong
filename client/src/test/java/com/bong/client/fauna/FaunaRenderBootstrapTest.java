@@ -1,10 +1,18 @@
 package com.bong.client.fauna;
 
 import net.minecraft.util.Identifier;
+import org.objectweb.asm.ClassReader;
+import org.objectweb.asm.ClassVisitor;
+import org.objectweb.asm.MethodVisitor;
+import org.objectweb.asm.Opcodes;
 import org.junit.jupiter.api.Test;
 
+import java.io.IOException;
+import java.io.InputStream;
 import java.lang.reflect.Method;
+import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.List;
 import java.util.Set;
 import java.util.stream.Collectors;
 
@@ -61,6 +69,7 @@ public class FaunaRenderBootstrapTest {
     @Test
     void faunaEntityExplicitlyParticipatesInCrosshairPicking() {
         Method canHit = assertCanHitMethod();
+        List<Integer> canHitOpcodes = canHitInstructionOpcodes();
 
         assertEquals(
             boolean.class,
@@ -73,6 +82,47 @@ public class FaunaRenderBootstrapTest {
             canHit.getDeclaringClass(),
             "expected FaunaEntity to override canHit directly because the base Entity default is not hittable enough for fauna picking"
         );
+        assertEquals(
+            List.of(Opcodes.ICONST_1, Opcodes.IRETURN),
+            canHitOpcodes,
+            "expected FaunaEntity.canHit bytecode to return true because plain unit tests cannot bootstrap Minecraft Entity instances, actual opcodes: "
+                + canHitOpcodes
+        );
+    }
+
+    private static List<Integer> canHitInstructionOpcodes() {
+        try (InputStream input = FaunaEntity.class.getResourceAsStream("FaunaEntity.class")) {
+            if (input == null) {
+                throw new AssertionError("expected FaunaEntity.class resource to be available for canHit contract test");
+            }
+            List<Integer> opcodes = new ArrayList<>();
+            new ClassReader(input).accept(new ClassVisitor(Opcodes.ASM9) {
+                @Override
+                public MethodVisitor visitMethod(
+                    int access,
+                    String name,
+                    String descriptor,
+                    String signature,
+                    String[] exceptions
+                ) {
+                    if (!"canHit".equals(name) || !"()Z".equals(descriptor)) {
+                        return null;
+                    }
+                    return new MethodVisitor(Opcodes.ASM9) {
+                        @Override
+                        public void visitInsn(int opcode) {
+                            opcodes.add(opcode);
+                        }
+                    };
+                }
+            }, ClassReader.SKIP_DEBUG | ClassReader.SKIP_FRAMES);
+            return opcodes;
+        } catch (IOException error) {
+            throw new AssertionError(
+                "expected to read FaunaEntity.class so canHit behavior can be tested without registry bootstrap",
+                error
+            );
+        }
     }
 
     private static Method assertCanHitMethod() {

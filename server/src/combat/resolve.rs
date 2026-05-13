@@ -3433,6 +3433,70 @@ mod tests {
     }
 
     #[test]
+    fn fist_reach_misses_just_outside_client_melee_upper_bound() {
+        let mut app = App::new();
+        app.insert_resource(CombatClock { tick: 900 });
+        app.add_event::<AttackIntent>();
+        app.add_event::<ApplyStatusEffectIntent>();
+        app.add_event::<CombatEvent>();
+        app.add_event::<DeathEvent>();
+        app.add_event::<crate::combat::weapon::WeaponBroken>();
+        app.add_event::<InventoryDurabilityChangedEvent>();
+        app.add_systems(Update, resolve_attack_intents);
+
+        assert!(
+            (FIST_REACH.max - 2.6).abs() <= f32::EPSILON,
+            "test pins the current client melee upper bound for unarmed attacks, actual: {}",
+            FIST_REACH.max
+        );
+        let attacker = spawn_player(
+            &mut app,
+            "Azure",
+            [0.0, 64.0, 0.0],
+            Wounds::default(),
+            Stamina::default(),
+        );
+        // Humanoid hitboxes extend 0.3 block toward the attacker; this places the hitbox just outside reach.
+        let target = spawn_npc(
+            &mut app,
+            [f64::from(FIST_REACH.max) + 0.301, 64.0, 0.0],
+            Wounds::default(),
+            Stamina::default(),
+        );
+
+        app.world_mut().send_event(AttackIntent {
+            attacker,
+            target: Some(target),
+            issued_at_tick: 899,
+            reach: FIST_REACH,
+            qi_invest: 0.0,
+            wound_kind: WoundKind::Blunt,
+            source: AttackSource::Melee,
+            debug_command: None,
+        });
+
+        app.update();
+
+        let target_ref = app.world().entity(target);
+        let wounds = target_ref.get::<Wounds>().unwrap();
+        let combat_events = app.world().resource::<Events<CombatEvent>>();
+
+        assert_eq!(
+            wounds.health_current, wounds.health_max,
+            "target just outside fist reach must not lose health"
+        );
+        assert!(
+            wounds.entries.is_empty(),
+            "target just outside fist reach must not receive wounds, actual: {:?}",
+            wounds.entries
+        );
+        assert!(
+            combat_events.is_empty(),
+            "target just outside fist reach must not emit CombatEvent"
+        );
+    }
+
+    #[test]
     fn fist_reach_hits_at_client_melee_distance() {
         let mut app = App::new();
         app.insert_resource(CombatClock { tick: 900 });

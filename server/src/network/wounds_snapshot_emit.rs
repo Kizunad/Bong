@@ -190,6 +190,35 @@ mod tests {
     }
 
     #[test]
+    fn emits_wounds_snapshot_for_client_without_lifecycle() {
+        let mut app = App::new();
+        app.add_systems(Update, emit_wounds_snapshot_payloads);
+
+        let (client_bundle, mut helper) = create_mock_client("Azure");
+        app.world_mut().spawn((client_bundle, sample_wounds()));
+
+        app.update();
+        flush_client_packets(&mut app);
+
+        let payloads = collect_wounds_snapshot_payloads(&mut helper);
+        assert_eq!(
+            payloads.len(),
+            1,
+            "expected client without Lifecycle to receive one wounds snapshot"
+        );
+        assert_eq!(
+            payloads[0].wounds.len(),
+            1,
+            "expected missing Lifecycle to keep wound entries visible, actual: {:?}",
+            payloads[0].wounds
+        );
+        assert_eq!(
+            payloads[0].wounds[0].part, "chest",
+            "expected missing Lifecycle snapshot to carry sample chest wound"
+        );
+    }
+
+    #[test]
     fn emits_empty_snapshot_when_lifecycle_changes_to_near_death() {
         assert_lifecycle_change_emits_empty_snapshot(
             "NearDeath",
