@@ -227,6 +227,64 @@ mod tests {
         );
     }
 
+    #[test]
+    fn emits_wounds_snapshot_when_lifecycle_changes_back_to_alive() {
+        let mut app = App::new();
+        app.add_systems(Update, emit_wounds_snapshot_payloads);
+
+        let (client_bundle, mut helper) = create_mock_client("Azure");
+        let mut lifecycle = Lifecycle::default();
+        lifecycle.enter_near_death(20);
+        let entity = app
+            .world_mut()
+            .spawn((client_bundle, sample_wounds(), lifecycle))
+            .id();
+
+        app.update();
+        flush_client_packets(&mut app);
+        let initial = collect_wounds_snapshot_payloads(&mut helper);
+        assert_eq!(
+            initial.len(),
+            1,
+            "expected initial non-Alive snapshot before testing revive transition"
+        );
+        assert!(
+            initial[0].wounds.is_empty(),
+            "expected initial non-Alive snapshot to clear client wounds, actual: {:?}",
+            initial[0].wounds
+        );
+
+        {
+            let mut entity_mut = app.world_mut().entity_mut(entity);
+            let mut lifecycle = entity_mut.get_mut::<Lifecycle>().unwrap();
+            lifecycle.revive(60);
+            assert_eq!(
+                lifecycle.state,
+                LifecycleState::Alive,
+                "test setup expected revive to move lifecycle back into Alive"
+            );
+        }
+        app.update();
+        flush_client_packets(&mut app);
+
+        let changed = collect_wounds_snapshot_payloads(&mut helper);
+        assert_eq!(
+            changed.len(),
+            1,
+            "expected non-Alive -> Alive Changed<Lifecycle> to emit one wounds snapshot"
+        );
+        assert_eq!(
+            changed[0].wounds.len(),
+            1,
+            "expected revived Alive snapshot to restore visible wounds, actual: {:?}",
+            changed[0].wounds
+        );
+        assert_eq!(
+            changed[0].wounds[0].part, "chest",
+            "expected revived Alive snapshot to carry sample chest wound"
+        );
+    }
+
     fn assert_lifecycle_change_emits_empty_snapshot(
         state_name: &str,
         expected_state: LifecycleState,

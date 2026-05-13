@@ -2329,13 +2329,12 @@ mod tests {
             .get::<Cultivation>()
             .unwrap()
             .qi_current;
-        let attacker_lung_throughput_before = app
-            .world()
-            .entity(attacker)
-            .get::<MeridianSystem>()
-            .unwrap()
-            .get(MeridianId::Lung)
-            .throughput_current;
+        let attacker_meridian_throughputs_before = meridian_throughput_snapshot(
+            app.world()
+                .entity(attacker)
+                .get::<MeridianSystem>()
+                .unwrap(),
+        );
 
         app.world_mut().send_event(AttackIntent {
             attacker,
@@ -2356,20 +2355,19 @@ mod tests {
             .get::<Cultivation>()
             .unwrap()
             .qi_current;
-        let attacker_lung_throughput_after = app
-            .world()
-            .entity(attacker)
-            .get::<MeridianSystem>()
-            .unwrap()
-            .get(MeridianId::Lung)
-            .throughput_current;
+        let attacker_meridian_throughputs_after = meridian_throughput_snapshot(
+            app.world()
+                .entity(attacker)
+                .get::<MeridianSystem>()
+                .unwrap(),
+        );
         assert_eq!(
             attacker_qi_after, attacker_qi_before,
             "{state_name} target must not deduct attacker qi"
         );
         assert_eq!(
-            attacker_lung_throughput_after, attacker_lung_throughput_before,
-            "{state_name} target must not grant attacker meridian throughput"
+            attacker_meridian_throughputs_after, attacker_meridian_throughputs_before,
+            "{state_name} target must not grant throughput to any attacker meridian"
         );
         assert_eq!(
             wounds.health_current, before.health_current,
@@ -2400,6 +2398,13 @@ mod tests {
             app.world().get::<PendingKnockback>(target).is_none(),
             "{state_name} target must not receive pending knockback"
         );
+    }
+
+    fn meridian_throughput_snapshot(meridians: &MeridianSystem) -> Vec<(MeridianId, f64)> {
+        MeridianId::ALL
+            .into_iter()
+            .map(|id| (id, meridians.get(id).throughput_current))
+            .collect()
     }
 
     #[test]
