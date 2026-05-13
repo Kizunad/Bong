@@ -3,11 +3,11 @@ package com.bong.client.fauna;
 import net.minecraft.util.Identifier;
 import org.junit.jupiter.api.Test;
 
+import java.lang.reflect.Method;
 import java.util.Arrays;
 import java.util.Set;
 import java.util.stream.Collectors;
 
-import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
 public class FaunaRenderBootstrapTest {
@@ -60,6 +60,29 @@ public class FaunaRenderBootstrapTest {
 
     @Test
     void faunaEntityExplicitlyParticipatesInCrosshairPicking() {
-        assertDoesNotThrow(() -> FaunaEntity.class.getDeclaredMethod("canHit"));
+        Method canHit = assertCanHitMethod();
+
+        assertEquals(
+            boolean.class,
+            canHit.getReturnType(),
+            "expected FaunaEntity.canHit to return boolean because crosshair picking reads this contract, actual: "
+                + canHit.getReturnType()
+        );
+        assertEquals(
+            FaunaEntity.class,
+            canHit.getDeclaringClass(),
+            "expected FaunaEntity to override canHit directly because the base Entity default is not hittable enough for fauna picking"
+        );
+    }
+
+    private static Method assertCanHitMethod() {
+        try {
+            return FaunaEntity.class.getDeclaredMethod("canHit");
+        } catch (NoSuchMethodException error) {
+            throw new AssertionError(
+                "expected FaunaEntity.canHit override so fauna can participate in crosshair picking",
+                error
+            );
+        }
     }
 }

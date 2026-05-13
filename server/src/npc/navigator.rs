@@ -317,7 +317,11 @@ pub fn navigator_tick_system(
             (Some(_), None) | (None, _) => true,
         };
         let entity_layer = npc_layer.and_then(|layer_id| layers.get(layer_id.0).ok());
-        let layer = entity_layer.or(overworld_layer);
+        let layer = if in_overworld {
+            entity_layer.or(overworld_layer)
+        } else {
+            entity_layer
+        };
         let terrain = if in_overworld {
             overworld_terrain
         } else {
@@ -1260,6 +1264,35 @@ mod tests {
             (y_after_goal - 67.0).abs() < 2.0,
             "second tick after set_goal: NPC should stay near ground, not jitter back to 80; got Y={}",
             y_after_goal,
+        );
+    }
+
+    #[test]
+    fn non_overworld_npc_missing_own_layer_does_not_fallback_to_overworld_layer() {
+        let (mut app, _) = make_navigator_app_with_ground(66);
+        let mut navigator = Navigator::new();
+        navigator.set_goal(DVec3::new(6.5, 67.0, 0.5), 1.0);
+        navigator.force_next_repath = true;
+        let npc = app
+            .world_mut()
+            .spawn((
+                NpcMarker,
+                Position::new([0.5, 67.0, 0.5]),
+                Transform::default(),
+                Look::default(),
+                HeadYaw::default(),
+                navigator,
+                EntityLayerId(Entity::from_raw(999_999)),
+            ))
+            .id();
+
+        app.update();
+
+        let pos = app.world().get::<Position>(npc).unwrap();
+        assert!(
+            (pos.get().x - 0.5).abs() < 1e-6,
+            "non-overworld NPC with missing own layer must not move using overworld collision, got {:?}",
+            pos.get()
         );
     }
 

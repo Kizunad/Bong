@@ -93,10 +93,6 @@ public final class MovementHudPlanner {
         if (rightReservedX + PANEL_WIDTH <= screenWidth - EDGE_MARGIN) {
             return new PanelGeometry(rightReservedX, besideY);
         }
-        int rightX = hotbarRightX + HOTBAR_GAP;
-        if (rightX + PANEL_WIDTH <= screenWidth - EDGE_MARGIN) {
-            return new PanelGeometry(rightX, besideY);
-        }
         int leftReservedX = hotbarLeftX - reservedSideGap - PANEL_WIDTH;
         if (leftReservedX >= EDGE_MARGIN) {
             return new PanelGeometry(leftReservedX, besideY);
@@ -104,6 +100,10 @@ public final class MovementHudPlanner {
         int leftX = hotbarLeftX - HOTBAR_GAP - PANEL_WIDTH;
         if (leftX >= EDGE_MARGIN) {
             return new PanelGeometry(leftX, besideY);
+        }
+        int rightX = hotbarRightX + HOTBAR_GAP;
+        if (rightX + PANEL_WIDTH <= screenWidth - EDGE_MARGIN) {
+            return new PanelGeometry(rightX, besideY);
         }
 
         int aboveX = Math.max(EDGE_MARGIN, Math.min(screenWidth - PANEL_WIDTH - EDGE_MARGIN, (screenWidth - PANEL_WIDTH) / 2));

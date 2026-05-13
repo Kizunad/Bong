@@ -1565,7 +1565,7 @@ mod tests {
     use crate::combat::armor::{ArmorProfile, ArmorProfileRegistry};
     use crate::combat::components::{
         ActiveStatusEffect, BodyPart, CombatState, DefenseWindow, DerivedAttrs, Lifecycle,
-        StatusEffects, WoundKind, Wounds,
+        RevivalDecision, StatusEffects, WoundKind, Wounds,
     };
     use crate::combat::events::{
         ApplyStatusEffectIntent, AttackIntent, AttackReach, AttackSource, DefenseKind,
@@ -2225,6 +2225,35 @@ mod tests {
 
     #[test]
     fn attack_intent_skips_near_death_target_without_extra_wounds_or_knockback() {
+        assert_attack_intent_skips_lifecycle_target_without_extra_wounds_or_knockback(
+            "NearDeath",
+            |lifecycle| lifecycle.enter_near_death(40),
+        );
+    }
+
+    #[test]
+    fn attack_intent_skips_awaiting_revival_target_without_extra_wounds_or_knockback() {
+        assert_attack_intent_skips_lifecycle_target_without_extra_wounds_or_knockback(
+            "AwaitingRevival",
+            |lifecycle| {
+                lifecycle.enter_near_death(40);
+                lifecycle.await_revival_decision(RevivalDecision::Fortune { chance: 1.0 }, 120);
+            },
+        );
+    }
+
+    #[test]
+    fn attack_intent_skips_terminated_target_without_extra_wounds_or_knockback() {
+        assert_attack_intent_skips_lifecycle_target_without_extra_wounds_or_knockback(
+            "Terminated",
+            |lifecycle| lifecycle.terminate(40),
+        );
+    }
+
+    fn assert_attack_intent_skips_lifecycle_target_without_extra_wounds_or_knockback(
+        state_name: &str,
+        enter_state: impl FnOnce(&mut Lifecycle),
+    ) {
         let mut app = App::new();
         app.insert_resource(CombatClock { tick: 44 });
         app.add_event::<AttackIntent>();
@@ -2261,11 +2290,11 @@ mod tests {
             },
             Stamina::default(),
         );
-        app.world_mut()
-            .entity_mut(target)
-            .get_mut::<Lifecycle>()
-            .unwrap()
-            .enter_near_death(40);
+        {
+            let mut target_entity = app.world_mut().entity_mut(target);
+            let mut lifecycle = target_entity.get_mut::<Lifecycle>().unwrap();
+            enter_state(&mut lifecycle);
+        }
         let before = app.world().entity(target).get::<Wounds>().unwrap().clone();
 
         app.world_mut().send_event(AttackIntent {
@@ -2281,19 +2310,34 @@ mod tests {
         app.update();
 
         let wounds = app.world().entity(target).get::<Wounds>().unwrap();
-        assert_eq!(wounds.health_current, before.health_current);
-        assert_eq!(wounds.entries.len(), before.entries.len());
+        assert_eq!(
+            wounds.health_current, before.health_current,
+            "{state_name} target must not lose health from resolver"
+        );
+        assert_eq!(
+            wounds.entries.len(),
+            before.entries.len(),
+            "{state_name} target must not receive new wound entries"
+        );
         assert!(
             app.world()
                 .resource::<Events<CombatEvent>>()
                 .iter_current_update_events()
                 .next()
                 .is_none(),
-            "NearDeath target must not emit CombatEvent"
+            "{state_name} target must not emit CombatEvent"
+        );
+        assert!(
+            app.world()
+                .resource::<Events<KnockbackEvent>>()
+                .iter_current_update_events()
+                .next()
+                .is_none(),
+            "{state_name} target must not emit KnockbackEvent"
         );
         assert!(
             app.world().get::<PendingKnockback>(target).is_none(),
-            "NearDeath target must not receive pending knockback"
+            "{state_name} target must not receive pending knockback"
         );
     }
 

@@ -110,12 +110,39 @@ class TargetInfoHudPlannerTest {
 
         TargetInfoState state = TargetInfoState.fromNpcMetadata(metadata, 7_000L);
 
-        assertFalse(state.isEmpty());
-        assertEquals(TargetInfoState.Kind.NPC, state.kind());
-        assertEquals("entity:126", state.targetId());
-        assertEquals("噬灵鼠", state.displayName());
-        assertEquals("Awaken", state.realm());
-        assertEquals(0.37, state.hpRatio());
-        assertEquals(0.22, state.qiRatio());
+        assertFalse(
+            state.isEmpty(),
+            "expected non-empty target because NPC metadata is present, actual empty"
+        );
+        assertEquals(
+            TargetInfoState.Kind.NPC,
+            state.kind(),
+            "expected kind NPC because metadata target represents an NPC, actual: " + state.kind()
+        );
+        assertEquals(
+            "entity:126",
+            state.targetId(),
+            "expected target id entity:126 because metadata entity id is 126, actual: " + state.targetId()
+        );
+        assertEquals(
+            "噬灵鼠",
+            state.displayName(),
+            "expected display name from NPC metadata, actual: " + state.displayName()
+        );
+        assertEquals(
+            "Awaken",
+            state.realm(),
+            "expected realm Awaken because metadata realm is Awaken, actual: " + state.realm()
+        );
+        assertEquals(
+            0.37,
+            state.hpRatio(),
+            "expected hp ratio 0.37 because metadata supplies it, actual: " + state.hpRatio()
+        );
+        assertEquals(
+            0.22,
+            state.qiRatio(),
+            "expected qi ratio 0.22 because metadata supplies it, actual: " + state.qiRatio()
+        );
     }
 }

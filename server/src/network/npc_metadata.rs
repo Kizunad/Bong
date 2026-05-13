@@ -430,6 +430,74 @@ mod tests {
         assert!(json.contains(r#""qi_ratio":0.0"#));
     }
 
+    fn ratio_payload(wounds: Option<&Wounds>, cultivation: Option<&Cultivation>) -> NpcMetadataS2c {
+        build_npc_metadata(NpcMetadataBuildInput {
+            entity_id: 42,
+            archetype: NpcArchetype::Beast,
+            cultivation,
+            membership: None,
+            lifespan: None,
+            player_cultivation: None,
+            player_identities: None,
+            wounds,
+        })
+    }
+
+    #[test]
+    fn npc_metadata_hp_ratio_clamps_boundaries() {
+        let zero_max = Wounds {
+            health_current: 40.0,
+            health_max: 0.0,
+            entries: Vec::new(),
+        };
+        let over_max = Wounds {
+            health_current: 140.0,
+            health_max: 100.0,
+            entries: Vec::new(),
+        };
+        let below_zero = Wounds {
+            health_current: -5.0,
+            health_max: 100.0,
+            entries: Vec::new(),
+        };
+
+        assert_eq!(
+            ratio_payload(Some(&zero_max), None).hp_ratio,
+            0.0,
+            "expected hp_ratio 0.0 because health_max <= 0 is invalid"
+        );
+        assert_eq!(
+            ratio_payload(Some(&over_max), None).hp_ratio,
+            1.0,
+            "expected hp_ratio 1.0 because health_current > health_max is clamped"
+        );
+        assert_eq!(
+            ratio_payload(Some(&below_zero), None).hp_ratio,
+            0.0,
+            "expected hp_ratio 0.0 because health_current < 0 is clamped"
+        );
+        assert_eq!(
+            ratio_payload(None, None).hp_ratio,
+            1.0,
+            "expected hp_ratio 1.0 because missing Wounds defaults to full health"
+        );
+    }
+
+    #[test]
+    fn npc_metadata_qi_ratio_zero_when_qi_max_is_nonpositive() {
+        let cultivation = Cultivation {
+            qi_current: 20.0,
+            qi_max: 0.0,
+            ..Cultivation::default()
+        };
+
+        assert_eq!(
+            ratio_payload(None, Some(&cultivation)).qi_ratio,
+            0.0,
+            "expected qi_ratio 0.0 because qi_max <= 0 is invalid"
+        );
+    }
+
     #[test]
     fn realm_label_matches_worldview_canon() {
         assert_eq!(realm_label(Realm::Awaken), "醒灵");

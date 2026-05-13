@@ -26,8 +26,8 @@
 use bevy_transform::components::Transform;
 use valence::prelude::{
     bevy_ecs, App, BlockPos, BlockState, Chunk, ChunkLayer, ChunkPos, Client, Commands, Component,
-    DVec3, Entity, EventWriter, GameMode, HeadYaw, IntoSystemConfigs, Look, ParamSet, Position,
-    Query, Res, ResMut, Resource, Update, With, Without,
+    DVec3, Entity, EntityLayerId, EventWriter, GameMode, HeadYaw, IntoSystemConfigs, Look,
+    ParamSet, Position, Query, Res, ResMut, Resource, Update, With, Without,
 };
 
 use crate::combat::body_mass::BodyMass;
@@ -491,12 +491,13 @@ fn movement_ability_tick_system(
                 &mut MovementCooldowns,
                 Option<&BodyMass>,
                 Option<&mut Wounds>,
+                Option<&EntityLayerId>,
             ),
             With<NpcMarker>,
         >,
         Query<(Entity, &Position, Option<&BodyMass>), With<NpcMarker>>,
     )>,
-    mut layers: Query<&mut ChunkLayer, With<crate::world::dimension::OverworldLayer>>,
+    mut layers: Query<&mut ChunkLayer>,
     mut commands: Commands,
     mut knockback_events: EventWriter<KnockbackEvent>,
     game_tick: Res<GameTick>,
@@ -512,7 +513,6 @@ fn movement_ability_tick_system(
             })
             .collect::<Vec<_>>()
     };
-    let mut layer = layers.get_single_mut().ok();
     let tick = game_tick.0;
 
     for (
@@ -525,8 +525,10 @@ fn movement_ability_tick_system(
         mut cooldowns,
         body_mass,
         mut wounds,
+        npc_layer,
     ) in &mut npcs.p0()
     {
+        let mut layer = npc_layer.and_then(|layer_id| layers.get_mut(layer_id.0).ok());
         match &mut ctrl.mode {
             MovementMode::GroundNav => {
                 // Nothing to do — Navigator handles it.
@@ -550,12 +552,17 @@ fn movement_ability_tick_system(
 
                 let step = (dash.total_distance - dash.distance_covered).min(dash.speed_per_tick);
                 let current = position.get();
+                let Some(chunk_layer) = layer.as_deref() else {
+                    cooldowns.dash_ready_at = tick + DASH_COOLDOWN_TICKS;
+                    ctrl.mode = MovementMode::GroundNav;
+                    continue;
+                };
                 let motion = sweep_grounded_motion(
                     current,
                     dash.direction,
                     step,
                     dash.ground_y,
-                    layer.as_deref(),
+                    Some(chunk_layer),
                 );
                 dash.ground_y = motion.ground_y;
 
@@ -585,12 +592,16 @@ fn movement_ability_tick_system(
 
                 let step = (kb.total_distance - kb.distance_covered).min(kb.speed_per_tick);
                 let current = position.get();
+                let Some(chunk_layer) = layer.as_deref() else {
+                    ctrl.mode = MovementMode::GroundNav;
+                    continue;
+                };
                 let motion = sweep_grounded_motion(
                     current,
                     kb.direction,
                     step,
                     kb.ground_y,
-                    layer.as_deref(),
+                    Some(chunk_layer),
                 );
                 kb.ground_y = motion.ground_y;
 
@@ -1240,6 +1251,49 @@ mod tests {
         assert_eq!(block_hardness(BlockState::OBSIDIAN), 50.0);
     }
 
+    #[test]
+    fn dash_override_without_chunk_layer_resets_to_ground_navigation() {
+        let mut app = App::new();
+        app.insert_resource(GameTick(10));
+        app.add_event::<KnockbackEvent>();
+        app.add_systems(Update, movement_ability_tick_system);
+        let npc = app
+            .world_mut()
+            .spawn((
+                NpcMarker,
+                Position::new([0.5, 67.0, 0.5]),
+                Transform::default(),
+                Look::default(),
+                HeadYaw::default(),
+                MovementController {
+                    mode: MovementMode::Override(ActiveOverride::Dash(DashState {
+                        direction: DVec3::new(1.0, 0.0, 0.0),
+                        total_distance: 2.0,
+                        distance_covered: 0.0,
+                        speed_per_tick: 1.0,
+                        ground_y: 67.0,
+                    })),
+                },
+                MovementCooldowns::default(),
+            ))
+            .id();
+
+        app.update();
+
+        let controller = app.world().get::<MovementController>(npc).unwrap();
+        let cooldowns = app.world().get::<MovementCooldowns>(npc).unwrap();
+        assert!(
+            !controller.navigator_should_yield(),
+            "expected dash override to end when NPC has no ChunkLayer, actual mode: {:?}",
+            controller.mode
+        );
+        assert_eq!(
+            cooldowns.dash_ready_at,
+            10 + DASH_COOLDOWN_TICKS,
+            "expected missing-layer dash to consume cooldown when override is ended"
+        );
+    }
+
     fn make_wall_sweep_app() -> (App, Entity) {
         use valence::prelude::{Chunk, UnloadedChunk};
         use valence::testing::ScenarioSingleClient;
@@ -1292,5 +1346,55 @@ mod tests {
             result.position
         );
         assert_eq!(result.distance_moved, 0.0);
+    }
+
+    #[test]
+    fn grounded_sweep_without_layer_does_not_advance_through_unknown_collision() {
+        let start = DVec3::new(0.5, 67.0, 0.5);
+
+        let result = sweep_grounded_motion(start, DVec3::new(1.0, 0.0, 0.0), 1.0, 67.0, None);
+
+        assert!(
+            result.blocked.is_none(),
+            "missing layer is handled by the caller, sweep should not report a concrete block"
+        );
+        assert_eq!(
+            result.position, start,
+            "without a ChunkLayer, sweep must not blindly advance through unknown blocks"
+        );
+        assert_eq!(
+            result.distance_moved, 0.0,
+            "without a ChunkLayer, sweep distance should stay zero"
+        );
+    }
+
+    #[test]
+    fn grounded_sweep_advances_full_distance_on_clear_path() {
+        let (app, layer_entity) = make_wall_sweep_app();
+        let layer = app.world().get::<ChunkLayer>(layer_entity).unwrap();
+
+        let result = sweep_grounded_motion(
+            DVec3::new(0.5, 67.0, 0.5),
+            DVec3::new(0.0, 0.0, 1.0),
+            1.0,
+            67.0,
+            Some(layer),
+        );
+
+        assert!(
+            result.blocked.is_none(),
+            "clear sweep should not report a wall, actual result: {:?}",
+            result
+        );
+        assert!(
+            (result.position.z - 1.5).abs() < 1e-6,
+            "clear sweep should advance full requested distance along Z, actual position: {:?}",
+            result.position
+        );
+        assert!(
+            (result.distance_moved - 1.0).abs() < 1e-6,
+            "clear sweep should report full requested distance, actual: {}",
+            result.distance_moved
+        );
     }
 }
