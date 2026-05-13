@@ -235,3 +235,93 @@ base_weight = 4.0
 rarity = "uncommon"
 spirit_quality_initial = 0.9
 description = "上锁特制储物箱。非对应破坏即化灰 + 引爆毒气雷。"
+
+# ─── 基础采集材料 ─────────────────────────────────────────────────────────
+[[item]]
+id = "crude_wood"
+name = "粗木"
+category = "misc"
+grid_w = 1
+grid_h = 1
+base_weight = 0.8
+rarity = "common"
+spirit_quality_initial = 0.0
+description = "砍伐普通树木所得的凡俗木材。无灵气残留，可做柄、架、燃料。"
+
+[[item]]
+id = "stone_chunk"
+name = "石块"
+category = "misc"
+grid_w = 1
+grid_h = 1
+base_weight = 1.5
+rarity = "common"
+spirit_quality_initial = 0.0
+description = "挖掘岩层碎出的石块。质硬量沉，可磨刃、砌墙、垫炉底。"
+
+[[item]]
+id = "grass_fiber"
+name = "草根"
+category = "misc"
+grid_w = 1
+grid_h = 1
+base_weight = 0.05
+rarity = "common"
+spirit_quality_initial = 0.0
+description = "刨开草皮扯出的韧根须。编绳、引火、垫药都凑合。"
+
+# ─── 基础加工产物 ─────────────────────────────────────────────────────────
+[[item]]
+id = "wood_handle"
+name = "木柄"
+category = "misc"
+grid_w = 1
+grid_h = 1
+base_weight = 0.3
+rarity = "common"
+spirit_quality_initial = 0.0
+description = "粗木削成的工具柄。握感粗糙，但够结实。采药刀、斧、镐都离不开它。"
+
+[[item]]
+id = "iron_ingot"
+name = "粗铁锭"
+category = "misc"
+grid_w = 1
+grid_h = 1
+base_weight = 1.0
+rarity = "common"
+spirit_quality_initial = 0.0
+description = "铁矿粗炼得的铁坯。杂质多，将就做凡器够用。"
+
+[[item]]
+id = "iron_needle"
+name = "铁针"
+category = "misc"
+grid_w = 1
+grid_h = 1
+base_weight = 0.02
+rarity = "common"
+spirit_quality_initial = 0.0
+description = "粗铁拉丝敲出的铁针。暗器坯料，也能缝东西。"
+
+[[item]]
+id = "clay_pot"
+name = "土罐"
+category = "misc"
+grid_w = 1
+grid_h = 1
+base_weight = 0.6
+rarity = "common"
+spirit_quality_initial = 0.0
+description = "石块碾碎和泥、晒干捏出的粗陶罐。耐得住慢火，煎汤够用。"
+
+[[item]]
+id = "grass_rope"
+name = "草绳"
+category = "misc"
+grid_w = 1
+grid_h = 1
+base_weight = 0.1
+rarity = "common"
+spirit_quality_initial = 0.0
+description = "草根搓成的韧绳。绑柴、缠柄、做简易陷阱都靠它。"
