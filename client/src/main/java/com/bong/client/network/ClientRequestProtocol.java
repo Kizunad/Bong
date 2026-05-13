@@ -71,9 +71,7 @@ public final class ClientRequestProtocol {
     }
 
     public enum MovementAction {
-        DASH("dash"),
-        SLIDE("slide"),
-        DOUBLE_JUMP("double_jump");
+        DASH("dash");
 
         private final String wireName;
 

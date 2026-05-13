@@ -15,14 +15,10 @@ public final class MovementHudPlanner {
     public static final int BOTTOM_MARGIN = 86;
 
     private static final long DASH_COOLDOWN_MAX_TICKS = 40L;
-    private static final long SLIDE_COOLDOWN_MAX_TICKS = 60L;
     private static final int TRACK_COLOR = 0xA0182228;
     private static final int DASH_COLOR = 0xFF9FD3FF;
-    private static final int SLIDE_COLOR = 0xFFD7A56A;
     private static final int STAMINA_COLOR = 0xFF75E39A;
     private static final int STAMINA_LOW_COLOR = 0xFFE06040;
-    private static final int DOT_READY_COLOR = 0xFFC8CCFF;
-    private static final int DOT_SPENT_COLOR = 0xFF566070;
     private static final int REJECT_COLOR = 0xC0FF3030;
 
     private MovementHudPlanner() {
@@ -61,12 +57,9 @@ public final class MovementHudPlanner {
             withAlpha(TRACK_COLOR, alpha)
         ));
         appendCooldown(out, x + 6, y + 6, 48, state.dashCooldownRemainingTicks(), DASH_COOLDOWN_MAX_TICKS, DASH_COLOR, alpha);
-        appendCooldown(out, x + 6, y + 15, 48, state.slideCooldownRemainingTicks(), SLIDE_COOLDOWN_MAX_TICKS, SLIDE_COLOR, alpha);
         out.add(HudRenderCommand.scaledText(HudRenderLayer.MOVEMENT_HUD, "DASH", x + 58, y + 3, withAlpha(DASH_COLOR, alpha), 0.6));
-        out.add(HudRenderCommand.scaledText(HudRenderLayer.MOVEMENT_HUD, "SLIDE", x + 58, y + 12, withAlpha(SLIDE_COLOR, alpha), 0.6));
 
         appendStamina(out, state, x + 88, y + 20, alpha, nowMs);
-        appendDoubleJumpDots(out, state, x + 92, y + 6, alpha);
 
         if (state.rejectedRecently(nowMs, REJECT_FLASH_MS)) {
             out.add(HudRenderCommand.rect(
@@ -147,20 +140,6 @@ public final class MovementHudPlanner {
         boolean recentCost = state.staminaCostActive() && nowMs - state.hudActivityAtMs() <= REJECT_FLASH_MS;
         int color = state.lowStamina() ? STAMINA_LOW_COLOR : (recentCost ? 0xFFFFD060 : STAMINA_COLOR);
         out.add(HudRenderCommand.rect(HudRenderLayer.MOVEMENT_HUD, x, y, fill, 3, withAlpha(color, alpha)));
-    }
-
-    private static void appendDoubleJumpDots(
-        List<HudRenderCommand> out,
-        MovementState state,
-        int x,
-        int y,
-        double alpha
-    ) {
-        int max = Math.max(0, Math.min(2, state.doubleJumpChargesMax()));
-        for (int i = 0; i < max; i++) {
-            int color = i < state.doubleJumpChargesRemaining() ? DOT_READY_COLOR : DOT_SPENT_COLOR;
-            out.add(HudRenderCommand.rect(HudRenderLayer.MOVEMENT_HUD, x + i * 9, y, 6, 6, withAlpha(color, alpha)));
-        }
     }
 
     private static int withAlpha(int argb, double alphaMultiplier) {

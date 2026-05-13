@@ -26,6 +26,8 @@ public final class ServerDataRouter {
         DroppedLootSyncHandler droppedLootSyncHandler = new DroppedLootSyncHandler();
         BotanyHarvestProgressHandler botanyHarvestProgressHandler = new BotanyHarvestProgressHandler();
         GatheringSessionHandler gatheringSessionHandler = new GatheringSessionHandler();
+        MiningProgressHandler miningProgressHandler = new MiningProgressHandler();
+        LumberProgressHandler lumberProgressHandler = new LumberProgressHandler();
         BotanyPlantRenderProfileHandler botanyPlantRenderProfileHandler = new BotanyPlantRenderProfileHandler();
         BotanySkillHandler botanySkillHandler = new BotanySkillHandler();
         HeartDemonOfferHandler heartDemonOfferHandler = new HeartDemonOfferHandler();
@@ -118,6 +120,8 @@ public final class ServerDataRouter {
         handlers.put("dropped_loot_sync", droppedLootSyncHandler);
         handlers.put("botany_harvest_progress", botanyHarvestProgressHandler);
         handlers.put("gathering_session", gatheringSessionHandler);
+        handlers.put("mining_progress", miningProgressHandler);
+        handlers.put("lumber_progress", lumberProgressHandler);
         handlers.put("botany_plant_v2_render_profiles", botanyPlantRenderProfileHandler);
         handlers.put("botany_skill", botanySkillHandler);
         handlers.put("alchemy_furnace", alchemyFurnaceHandler);
@@ -209,6 +213,7 @@ public final class ServerDataRouter {
         handlers.put("niche_guardian_fatigue", socialServerDataHandler);
         handlers.put("niche_guardian_broken", socialServerDataHandler);
         handlers.put("sparring_invite", socialServerDataHandler);
+        handlers.put("trade_offer", socialServerDataHandler);
         // plan-identity-v1 P5 — 身份面板 / HUD 当前 identity 状态。
         handlers.put("identity_panel_state", identityPanelStateHandler);
         // plan-skill-v1 §8 — 4 个子技能事件 channel（server→client），后续各 plan 触发点接入即可吃数据

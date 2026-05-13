@@ -1,6 +1,6 @@
 {
   "category.bong-client.controls": "Bong 控制",
   "key.bong-client.interact": "环境交互",
-  "key.bong-client.movement_dash": "冲刺",
-  "key.bong-client.movement_slide": "滑铲"
+  "key.bong-client.open_craft_screen": "打开手搓台",
+  "key.bong-client.movement_dash": "冲刺"
 }

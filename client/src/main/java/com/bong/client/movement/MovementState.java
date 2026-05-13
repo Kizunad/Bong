@@ -8,9 +8,6 @@ public record MovementState(
     Action action,
     ZoneKind zoneKind,
     long dashCooldownRemainingTicks,
-    long slideCooldownRemainingTicks,
-    int doubleJumpChargesRemaining,
-    int doubleJumpChargesMax,
     double hitboxHeightBlocks,
     double staminaCurrent,
     double staminaMax,
@@ -26,12 +23,6 @@ public record MovementState(
         action = action == null ? Action.NONE : action;
         zoneKind = zoneKind == null ? ZoneKind.NORMAL : zoneKind;
         dashCooldownRemainingTicks = Math.max(0L, dashCooldownRemainingTicks);
-        slideCooldownRemainingTicks = Math.max(0L, slideCooldownRemainingTicks);
-        doubleJumpChargesRemaining = Math.max(0, doubleJumpChargesRemaining);
-        doubleJumpChargesMax = Math.max(0, doubleJumpChargesMax);
-        if (doubleJumpChargesRemaining > doubleJumpChargesMax) {
-            doubleJumpChargesRemaining = doubleJumpChargesMax;
-        }
         hitboxHeightBlocks = finiteNonNegative(hitboxHeightBlocks);
         staminaCurrent = finiteNonNegative(staminaCurrent);
         staminaMax = Math.max(1.0, finiteNonNegative(staminaMax));
@@ -54,9 +45,6 @@ public record MovementState(
             Action.NONE,
             ZoneKind.NORMAL,
             0L,
-            0L,
-            0,
-            0,
             1.8,
             0.0,
             1.0,
@@ -76,9 +64,6 @@ public record MovementState(
             action,
             zoneKind,
             dashCooldownRemainingTicks,
-            slideCooldownRemainingTicks,
-            doubleJumpChargesRemaining,
-            doubleJumpChargesMax,
             hitboxHeightBlocks,
             staminaCurrent,
             staminaMax,
@@ -97,9 +82,6 @@ public record MovementState(
             && currentSpeedMultiplier == 0.0
             && !staminaCostActive
             && dashCooldownRemainingTicks == 0L
-            && slideCooldownRemainingTicks == 0L
-            && doubleJumpChargesRemaining == 0
-            && doubleJumpChargesMax == 0
             && staminaCurrent == 0.0
             && staminaMax == 1.0
             && !lowStamina
@@ -124,9 +106,7 @@ public record MovementState(
 
     public enum Action {
         NONE("none"),
-        DASHING("dashing"),
-        SLIDING("sliding"),
-        DOUBLE_JUMPING("double_jumping");
+        DASHING("dashing");
 
         private final String wireName;
 

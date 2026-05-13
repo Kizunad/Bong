@@ -25,9 +25,9 @@
 
 use bevy_transform::components::Transform;
 use valence::prelude::{
-    bevy_ecs, App, BlockPos, BlockState, Chunk, ChunkLayer, ChunkPos, Commands, Component, DVec3,
-    Entity, EventWriter, HeadYaw, IntoSystemConfigs, Look, ParamSet, Position, Query, Res, ResMut,
-    Resource, Update, With, Without,
+    bevy_ecs, App, BlockPos, BlockState, Chunk, ChunkLayer, ChunkPos, Client, Commands, Component,
+    DVec3, Entity, EventWriter, GameMode, HeadYaw, IntoSystemConfigs, Look, ParamSet, Position,
+    Query, Res, ResMut, Resource, Update, With, Without,
 };
 
 use crate::combat::body_mass::BodyMass;
@@ -423,6 +423,12 @@ fn activate_knockback(
     }));
 }
 
+type StalePendingKnockbackFilter = (
+    With<PendingKnockback>,
+    Without<MovementController>,
+    Without<Client>,
+);
+
 fn apply_pending_knockback_system(
     mut commands: Commands,
     mut controllable: Query<(
@@ -431,14 +437,15 @@ fn apply_pending_knockback_system(
         &PendingKnockback,
         &mut MovementController,
     )>,
-    stale: Query<Entity, (With<PendingKnockback>, Without<MovementController>)>,
+    stale: Query<Entity, StalePendingKnockbackFilter>,
 ) {
     // Apply knockback to entities that have a MovementController (NPCs).
     for (entity, position, knockback, mut ctrl) in &mut controllable {
         activate_knockback(&mut ctrl, knockback, position.get().y);
         commands.entity(entity).remove::<PendingKnockback>();
     }
-    // Clean up PendingKnockback on entities without MovementController (players).
+    // Clean up PendingKnockback on non-player entities without MovementController. Players are
+    // consumed by movement::player_knockback so Valence velocity can carry the hit reaction.
     for entity in &stale {
         commands.entity(entity).remove::<PendingKnockback>();
     }
@@ -788,6 +795,12 @@ fn queue_collision_wound(
 ) {
     commands.add(
         move |world: &mut valence::prelude::bevy_ecs::world::World| {
+            if world
+                .get::<GameMode>(target)
+                .is_some_and(|game_mode| *game_mode != GameMode::Survival)
+            {
+                return;
+            }
             if let Some(mut wounds) = world.get_mut::<Wounds>(target) {
                 apply_collision_wound(&mut wounds, damage, tick, inflicted_by);
             }
@@ -1112,6 +1125,30 @@ mod tests {
         assert_eq!(wounds.entries.len(), 1);
         assert_eq!(wounds.entries[0].kind, WoundKind::Blunt);
         assert_eq!(wounds.entries[0].location, BodyPart::Chest);
+    }
+
+    #[test]
+    fn queued_collision_wound_skips_creative_target() {
+        let mut app = App::new();
+        let target = app
+            .world_mut()
+            .spawn((Wounds::default(), GameMode::Creative))
+            .id();
+        let before = app
+            .world()
+            .entity(target)
+            .get::<Wounds>()
+            .unwrap()
+            .health_current;
+        app.add_systems(Update, move |mut commands: Commands| {
+            queue_collision_wound(&mut commands, target, 12.0, 7, Entity::from_raw(1));
+        });
+
+        app.update();
+
+        let wounds = app.world().entity(target).get::<Wounds>().unwrap();
+        assert_eq!(wounds.health_current, before);
+        assert!(wounds.entries.is_empty());
     }
 
     #[test]

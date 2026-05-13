@@ -120,3 +120,50 @@ private void bong$hideExperienceBar(DrawContext context, int x, CallbackInfo ci)
 ### Client HUD（14-15）
 14. `MixinInGameHud` 注册 3 个 cancel（hotbar + statusBars + experienceBar）
 15. 进游戏确认无红心 / 饥饿条 / 经验条 / 护甲图标 / Bong 自有 HUD 正常
+
+## Finish Evidence
+
+### 落地清单
+
+- P0 Server GameMode 伤害门控：
+  - `server/src/combat/mod.rs` 新增 `is_damageable(Entity, &Query<&GameMode>) -> bool`，NPC / 非玩家无 `GameMode` 时保持可受伤，玩家仅 `GameMode::Survival` 可受伤。
+  - `server/src/combat/resolve.rs` 在 `resolve_attack_intents()` 命中结算前短路非 Survival target，覆盖伤害、`CombatEvent`、`KnockbackEvent`、`PendingKnockback`。
+  - `server/src/combat/lifecycle.rs` 在 `wound_bleed_tick()` 中跳过非 Survival entity 的残留伤口流血扣血。
+  - `server/src/npc/movement.rs` 在 `queue_collision_wound()` deferred command 内检查 target `GameMode`，非 Survival 不创建碰撞伤口。
+  - `server/src/combat/carrier.rs` 在暗器 projectile 命中时跳过非 Survival target 的伤害、污染、`CombatEvent` 与 `CarrierImpactEvent`。
+  - `server/src/combat/zhenmai_v2.rs` 新增 `apply_self_damage_to_entity()`，截脉 / 绝壁回火自伤统一经过 `GameMode` 门控。
+- P1 Client 原版 HUD 清理：
+  - `client/src/main/java/com/bong/client/mixin/MixinInGameHud.java` 维持已有 `renderHotbar` cancel，并新增 `renderStatusBars` / `renderExperienceBar` HEAD cancel。
+  - `client/src/test/java/com/bong/client/mixin/MixinInGameHudTest.java` 锁住 hotbar、status bars、experience bar 三个 mixin cancel 注册。
+- P2 饱和测试：
+  - `server/src/combat/tests.rs` 覆盖 `is_damageable` 的无 `GameMode`、Survival、Creative、Adventure、Spectator 五类输入。
+  - `server/src/combat/resolve.rs` 覆盖 Creative target 无伤害 / 无 CombatEvent / 无 KnockbackEvent，以及 `/gm` 类模式切换后即时生效。
+  - `server/src/combat/lifecycle.rs` 覆盖 Creative 残留伤口不流血扣血，以及 Creative 切换后停止残留流血。
+  - `server/src/npc/movement.rs`、`server/src/combat/carrier.rs`、`server/src/combat/zhenmai_v2.rs` 分别覆盖碰撞伤害、暗器命中、自伤入口的非 Survival 门控。
+
+### 关键 commit
+
+- `8c547a391` · 2026-05-13 · `feat: 加入 Survival 伤害门控`
+- `d9cde5393` · 2026-05-13 · `feat: 隐藏原版生存 HUD`
+
+### 测试结果
+
+- `cd server && cargo fmt --check` ✅
+- `cd server && cargo clippy -j 1 --all-targets -- -D warnings` ✅
+- `cd server && cargo test -j 1` ✅ `4647 passed`
+- `cd server && cargo test -j 1 creative` ✅ `9 passed`
+- `cd server && cargo test -j 1 latest_game_mode` ✅ `2 passed`
+- `cd client && JAVA_HOME="/usr/lib/jvm/java-17-openjdk-amd64" PATH="/usr/lib/jvm/java-17-openjdk-amd64/bin:$PATH" ./gradlew test --tests com.bong.client.mixin.MixinInGameHudTest` ✅
+- `cd client && JAVA_HOME="/usr/lib/jvm/java-17-openjdk-amd64" PATH="/usr/lib/jvm/java-17-openjdk-amd64/bin:$PATH" ./gradlew test build` ✅
+- `cd client && timeout 120s env JAVA_HOME="/usr/lib/jvm/java-17-openjdk-amd64" PATH="/usr/lib/jvm/java-17-openjdk-amd64/bin:$PATH" ./gradlew runClient --stacktrace` ⚠️ 启动到 Bong Client 初始化后被既有 entity raw_id mismatch 阻塞：`bong:devour_rat expected 134, got 126`。本 plan 未改 entity registry / fauna / whale raw id。
+
+### 跨仓库核验
+
+- server：`is_damageable`、`resolve_attack_intents`、`wound_bleed_tick`、`queue_collision_wound`、`projectile_tick_system`、`apply_self_damage_to_entity`
+- client：`MixinInGameHud.bong$replaceHotbar`、`bong$hideStatusBars`、`bong$hideExperienceBar`
+- agent / schema / worldgen：本 plan 无新增跨仓库协议类型，无需同步。
+
+### 遗留 / 后续
+
+- `runClient` 的实际进游戏 HUD 视觉确认被当前主线已存在的 fauna / whale raw_id 对齐问题挡住；需要后续独立 raw_id 协议对齐修复后再做人工视觉复核。
+- 本 plan 不新增 qi_physics、agent、schema 或 worldgen 行为。

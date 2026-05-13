@@ -30,6 +30,14 @@ public final class GatheringSessionStore {
         }
     }
 
+    public static void clear(String sessionId) {
+        String normalizedSessionId = sessionId == null ? "" : sessionId.trim();
+        GatheringSessionViewModel current = snapshot;
+        if (!normalizedSessionId.isEmpty() && normalizedSessionId.equals(current.sessionId())) {
+            replace(GatheringSessionViewModel.empty());
+        }
+    }
+
     public static void clearOnDisconnect() {
         replace(GatheringSessionViewModel.empty());
     }

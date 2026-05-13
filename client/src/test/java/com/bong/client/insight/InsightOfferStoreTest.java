@@ -20,7 +20,7 @@ class InsightOfferStoreTest {
         List<InsightOfferViewModel> notified = new ArrayList<>();
         InsightOfferStore.addListener(notified::add);
 
-        InsightOfferViewModel offer = MockInsightOfferData.firstInduceBreakthrough();
+        InsightOfferViewModel offer = InsightOfferFixtures.firstInduceBreakthrough();
         InsightOfferStore.replace(offer);
 
         assertEquals(1, notified.size());
@@ -32,12 +32,13 @@ class InsightOfferStoreTest {
     void submitSendsDecisionThroughDispatcherAndClearsSlot() {
         List<InsightDecision> dispatched = new ArrayList<>();
         InsightOfferStore.setDispatcher(dispatched::add);
+        InsightOfferViewModel offer = InsightOfferFixtures.firstInduceBreakthrough();
 
-        InsightOfferStore.replace(MockInsightOfferData.firstInduceBreakthrough());
-        InsightOfferStore.submit(InsightDecision.chosen("first_breakthrough_to_Induce", "mock_choice_E1"));
+        InsightOfferStore.replace(offer);
+        InsightOfferStore.submit(InsightDecision.chosen(offer.triggerId(), offer.choices().get(0).choiceId()));
 
         assertEquals(1, dispatched.size());
-        assertEquals("CHOSEN mock_choice_E1", dispatched.get(0).summary());
+        assertEquals("CHOSEN fixture_choice_E1", dispatched.get(0).summary());
         assertNull(InsightOfferStore.snapshot());
     }
 
@@ -45,7 +46,7 @@ class InsightOfferStoreTest {
     void resetClearsSnapshotAndDispatcherAndListeners() {
         List<InsightOfferViewModel> notified = new ArrayList<>();
         InsightOfferStore.addListener(notified::add);
-        InsightOfferStore.replace(MockInsightOfferData.firstInduceBreakthrough());
+        InsightOfferStore.replace(InsightOfferFixtures.firstInduceBreakthrough());
 
         InsightOfferStore.resetForTests();
 
@@ -53,7 +54,7 @@ class InsightOfferStoreTest {
         assertEquals(InsightChoiceDispatcher.LOGGING, InsightOfferStore.dispatcher());
 
         // Listener should be detached too: replacing again must not notify
-        InsightOfferStore.replace(MockInsightOfferData.firstInduceBreakthrough());
+        InsightOfferStore.replace(InsightOfferFixtures.firstInduceBreakthrough());
         assertEquals(1, notified.size()); // only the initial replace before reset
     }
 }

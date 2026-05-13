@@ -93,8 +93,6 @@ public final class BongAnimations {
     public static final Identifier ARM_INJURED_RIGHT = new Identifier(MOD_ID, "arm_injured_right");
     public static final Identifier EXHAUSTED_WALK = new Identifier(MOD_ID, "exhausted_walk");
     public static final Identifier DASH_FORWARD = new Identifier(MOD_ID, "dash_forward");
-    public static final Identifier SLIDE_LOW = new Identifier(MOD_ID, "slide_low");
-    public static final Identifier DOUBLE_JUMP = new Identifier(MOD_ID, "double_jump");
     public static final Identifier PILL_HUO_XUE = new Identifier(MOD_ID, "pill_huo_xue");
     public static final Identifier PILL_XU_GU = new Identifier(MOD_ID, "pill_xu_gu");
     public static final Identifier PILL_DUAN_XU = new Identifier(MOD_ID, "pill_duan_xu");
@@ -157,9 +155,7 @@ public final class BongAnimations {
     );
 
     public static final List<Identifier> MOVEMENT_V1_ANIMATIONS = List.of(
-        DASH_FORWARD,
-        SLIDE_LOW,
-        DOUBLE_JUMP
+        DASH_FORWARD
     );
 
     public static final List<Identifier> ALCHEMY_COMBAT_PILL_ANIMATIONS = List.of(

@@ -2,7 +2,7 @@
   "category.bong-client.controls": "Bong Controls",
   "key.bong-client.interact": "Interact",
   "key.bong-client.open_cultivation_screen": "Open Cultivation Screen",
-  "key.bong-client.open_inspect_screen": "Open Inspect Screen",
+  "key.bong-client.open_craft_screen": "Open Craft Screen",
   "category.bong-client.combat": "Bong Combat HUD",
   "key.bong-client.quick_slot_1": "Use Quick Slot F1",
   "key.bong-client.quick_slot_2": "Use Quick Slot F2",
@@ -17,9 +17,7 @@
   "key.bong-client.spell_volume_hold": "Hold Spell Volume Panel",
   "key.bong-client.event_stream_toggle": "Toggle Event Stream HUD",
   "key.bong-client.movement_dash": "Dash",
-  "key.bong-client.movement_slide": "Slide",
   "key.bong-client.botany_auto_harvest": "Botany Auto Harvest",
-  "key.bong-client.open_alchemy_screen": "Open Alchemy Furnace",
   "key.bong-client.tsy_extract": "Start TSY Extract",
   "key.bong-client.tsy_extract_cancel": "Cancel TSY Extract"
 }

@@ -6,6 +6,7 @@ import com.bong.client.combat.QuickUseSlotStore;
 import com.bong.client.combat.SkillBarEntry;
 import com.bong.client.combat.SkillBarStore;
 import com.bong.client.combat.inspect.StatusPanelExtension;
+import com.bong.client.craft.CraftScreen;
 import com.bong.client.combat.store.AscensionQuotaStore;
 import com.bong.client.cultivation.ColorKind;
 import com.bong.client.cultivation.QiColorVectorHud;
@@ -54,10 +55,8 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
     private static final int TAB_CULTIVATION = 1;
     private static final int TAB_SKILL = 2;
     private static final int TAB_TECHNIQUES = 3;
-    private static final int TAB_QUICK_USE = 4;
-    /** plan-craft-v1 §2 — 通用手搓标签（无方块、纯 inventory 内集成）。 */
-    private static final int TAB_CRAFT = 5;
-    private static final String[] TAB_NAMES = {"装备", "修仙", "技艺", "功法", "快捷使用", "手搓"};
+    private static final int TAB_CRAFT = 4;
+    private static final String[] TAB_NAMES = {"装备", "修仙", "技艺", "功法", "手搓"};
 
     private InventoryModel model;
     private final DragState dragState = new DragState();
@@ -86,9 +85,6 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
     private FlowLayout skillTabContent;
     private com.bong.client.combat.inspect.TechniquesTabPanel techniquesTabPanel;
     private FlowLayout techniquesTabContent;
-    private FlowLayout quickUseTabContent;
-    /** plan-craft-v1 §2 — 通用手搓 tab（CraftTabPanel 自管 listeners + UI 重建）。 */
-    private com.bong.client.inventory.component.CraftTabPanel craftTab;
     private FlowLayout craftTabContent;
     private FlowLayout skillScrollDropZone;
     private LabelComponent skillScrollDropTitle;
@@ -117,7 +113,6 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
 
     // Quick-use bar (F1-F9, plan-HUD-v1 §2.2 上层)
     private final GridSlotComponent[] quickUseSlots = new GridSlotComponent[HOTBAR_SLOTS];
-    private final GridSlotComponent[] quickUseTabSlots = new GridSlotComponent[HOTBAR_SLOTS];
     private final InventoryItem[] quickUseItems = new InventoryItem[HOTBAR_SLOTS];
     private FlowLayout quickUseStrip;
 
@@ -189,10 +184,6 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
         if (techniquesTabPanel != null) {
             techniquesTabPanel.close();
             techniquesTabPanel = null;
-        }
-        if (craftTab != null) {
-            craftTab.dispose();
-            craftTab = null;
         }
         super.removed();
     }
@@ -488,14 +479,8 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
         leftCol.child(techniquesTabContent);
         techniquesTabContent.positioning(Positioning.absolute(-9999, -9999));
 
-        // Tab 4: 快捷使用（plan-HUD-v1 §10）
-        quickUseTabContent = buildQuickUseTabContent();
-        leftCol.child(quickUseTabContent);
-        quickUseTabContent.positioning(Positioning.absolute(-9999, -9999));
-
-        // Tab 5: 手搓（plan-craft-v1 §2 — 无方块通用合成入口）
-        craftTab = new com.bong.client.inventory.component.CraftTabPanel();
-        craftTabContent = craftTab.root();
+        // Tab 4: 手搓入口。完整三栏布局在独立 CraftScreen，避免挤进 172px 左栏。
+        craftTabContent = buildCraftTabEntryContent();
         leftCol.child(craftTabContent);
         craftTabContent.positioning(Positioning.absolute(-9999, -9999));
 
@@ -658,39 +643,60 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
         return strip;
     }
 
-    private FlowLayout buildQuickUseTabContent() {
+    private FlowLayout buildCraftTabEntryContent() {
         FlowLayout panel = Containers.verticalFlow(Sizing.fill(100), Sizing.content());
-        panel.gap(3);
-        panel.padding(Insets.of(2));
+        panel.gap(4);
+        panel.padding(Insets.of(4));
+        panel.surface(Surface.flat(0xFF12121C).and(Surface.outline(0xFF4A4050)));
+        panel.cursorStyle(CursorStyle.HAND);
 
-        LabelComponent title = Components.label(Text.literal("F1-F9 快捷使用"));
-        title.color(Color.ofArgb(0xFF80FFCC));
+        LabelComponent title = Components.label(Text.literal("手搓台"));
+        title.color(Color.ofArgb(0xFFE8DDC4));
         panel.child(title);
 
-        LabelComponent hint = Components.label(Text.literal("拖入右侧背包物品绑定"));
-        hint.color(Color.ofArgb(0xFF888888));
+        LabelComponent hint = Components.label(Text.literal("C 打开手搓台"));
+        hint.color(Color.ofArgb(0xFFA8A8B8));
         hint.maxWidth(160);
         panel.child(hint);
 
-        for (int row = 0; row < 3; row++) {
-            FlowLayout slotRow = Containers.horizontalFlow(Sizing.content(), Sizing.content());
-            slotRow.gap(3);
-            for (int col = 0; col < 3; col++) {
-                int index = row * 3 + col;
-                FlowLayout cell = Containers.verticalFlow(Sizing.content(), Sizing.content());
-                cell.horizontalAlignment(HorizontalAlignment.CENTER);
-                LabelComponent label = Components.label(Text.literal("F" + (index + 1)));
-                label.color(Color.ofArgb(0xFF80FFCC));
-                GridSlotComponent slot = new GridSlotComponent(index, 0);
-                quickUseTabSlots[index] = slot;
-                cell.child(label);
-                cell.child(slot);
-                slotRow.child(cell);
+        LabelComponent status = Components.label(Text.literal(craftStatusLine()));
+        status.color(Color.ofArgb(0xFF80FFCC));
+        status.maxWidth(160);
+        panel.child(status);
+
+        panel.mouseDown().subscribe((mx, my, btn) -> {
+            if (btn == 0) {
+                openCraftScreen();
+                return true;
             }
-            panel.child(slotRow);
-        }
+            return false;
+        });
 
         return panel;
+    }
+
+    private static String craftStatusLine() {
+        com.bong.client.craft.CraftSessionStateView session = com.bong.client.craft.CraftStore.sessionState();
+        if (session != null && session.active()) {
+            return "当前任务进行中";
+        }
+        int knownRecipes = com.bong.client.craft.CraftStore.recipes().size();
+        return "已知配方 " + knownRecipes;
+    }
+
+    static String craftStatusLineForTests() {
+        return craftStatusLine();
+    }
+
+    static boolean opensCraftScreenForTabForTests(int idx) {
+        return idx == TAB_CRAFT;
+    }
+
+    private void openCraftScreen() {
+        MinecraftClient client = MinecraftClient.getInstance();
+        if (client != null) {
+            client.setScreen(new CraftScreen());
+        }
     }
 
     private void hydrateQuickUseFromStore() {
@@ -710,7 +716,6 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
 
     private void setQuickUseSlotVisual(int index, InventoryItem item) {
         setSlotVisual(quickUseSlots[index], item);
-        setSlotVisual(quickUseTabSlots[index], item);
     }
 
     private void setSlotVisual(GridSlotComponent slot, InventoryItem item) {
@@ -801,7 +806,6 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
             cultivationTabContent,
             skillTabContent,
             techniquesTabContent,
-            quickUseTabContent,
             craftTabContent,
         };
         for (int i = 0; i < tabs.length; i++) {
@@ -816,11 +820,8 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
         } else if (idx == TAB_TECHNIQUES && techniquesTabPanel != null) {
             techniquesTabPanel.refreshFromStores();
             hydrateSkillBarFromStore();
-        } else if (idx == TAB_QUICK_USE) {
-            hydrateQuickUseFromStore();
-        } else if (idx == TAB_CRAFT && craftTab != null) {
-            // 切到手搓 tab：刷一次最新 store 快照（store 在 tab 隐藏期间也会被更新）
-            craftTab.rebuildAll();
+        } else if (idx == TAB_CRAFT) {
+            openCraftScreen();
         }
     }
 
@@ -1405,11 +1406,6 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
         int cs = GridSlotComponent.CELL_SIZE;
         for (int i = 0; i < HOTBAR_SLOTS; i++) {
             GridSlotComponent s = quickUseSlots[i];
-            if (s != null && sx >= s.x() && sx < s.x() + cs && sy >= s.y() && sy < s.y() + cs)
-                return i;
-        }
-        for (int i = 0; i < HOTBAR_SLOTS; i++) {
-            GridSlotComponent s = quickUseTabSlots[i];
             if (s != null && sx >= s.x() && sx < s.x() + cs && sy >= s.y() && sy < s.y() + cs)
                 return i;
         }
@@ -2242,7 +2238,6 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
                 ? GridSlotComponent.HighlightState.VALID
                 : GridSlotComponent.HighlightState.INVALID;
             if (quickUseSlots[qIdx] != null) quickUseSlots[qIdx].setHighlightState(state);
-            if (quickUseTabSlots[qIdx] != null) quickUseTabSlots[qIdx].setHighlightState(state);
         }
 
         discardStrip.surface(Surface.flat(isOverDiscard(mouseX, mouseY) ? 0xFF331111 : 0xFF201010));
@@ -2254,7 +2249,6 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
         for (int i = 0; i < HOTBAR_SLOTS; i++) {
             if (hotbarSlots[i] != null) hotbarSlots[i].setHighlightState(GridSlotComponent.HighlightState.NONE);
             if (quickUseSlots[i] != null) quickUseSlots[i].setHighlightState(GridSlotComponent.HighlightState.NONE);
-            if (quickUseTabSlots[i] != null) quickUseTabSlots[i].setHighlightState(GridSlotComponent.HighlightState.NONE);
         }
         if (bodyInspect != null) bodyInspect.clearHighlight();
         discardStrip.surface(Surface.flat(0xFF201010));

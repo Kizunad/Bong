@@ -14,6 +14,7 @@ public record GatheringSessionViewModel(
     boolean completed,
     long updatedAtMillis
 ) {
+    private static final long RATIO_TOTAL_TICKS = 10_000L;
     private static final GatheringSessionViewModel EMPTY = new GatheringSessionViewModel(
         "",
         0L,
@@ -72,6 +73,33 @@ public record GatheringSessionViewModel(
             toolUsed,
             interrupted,
             completed,
+            updatedAtMillis
+        );
+    }
+
+    public static GatheringSessionViewModel createFromProgressRatio(
+        String sessionId,
+        double progressRatio,
+        String targetName,
+        String targetType,
+        boolean interrupted,
+        boolean completed,
+        long updatedAtMillis
+    ) {
+        double normalizedProgress = Double.isFinite(progressRatio)
+            ? Math.max(0.0, Math.min(1.0, progressRatio))
+            : 0.0;
+        long progressTicks = Math.round(normalizedProgress * RATIO_TOTAL_TICKS);
+        return create(
+            sessionId,
+            progressTicks,
+            RATIO_TOTAL_TICKS,
+            targetName,
+            targetType,
+            "",
+            "",
+            interrupted,
+            completed || normalizedProgress >= 1.0,
             updatedAtMillis
         );
     }

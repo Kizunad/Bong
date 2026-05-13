@@ -168,7 +168,7 @@ pub fn attribute_aggregate_tick(
             .iter()
             .filter(|effect| effect.kind == StatusEffectKind::LegStrain)
             .fold(1.0, |acc, effect| {
-                acc * (1.0 - (effect.magnitude * 0.15).clamp(0.0, 0.6))
+                acc * (1.0 - (effect.magnitude * 0.15).clamp(0.0, 1.0))
             });
 
         attrs.move_speed_multiplier = (slow_multiplier

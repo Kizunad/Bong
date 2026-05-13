@@ -32,6 +32,8 @@ public class ServerDataRouterTest {
             // Botany handlers (plan-botany-v1 §4).
             "botany_harvest_progress",
             "gathering_session",
+            "mining_progress",
+            "lumber_progress",
             "botany_plant_v2_render_profiles",
             "botany_skill",
             // Combat UI handlers (plan-combat-ui §U1–U7).
@@ -140,6 +142,7 @@ public class ServerDataRouterTest {
             "niche_guardian_fatigue",
             "niche_guardian_broken",
             "sparring_invite",
+            "trade_offer",
             // plan-identity-v1 P5 — 身份面板 / HUD 当前 identity 状态。
             "identity_panel_state",
             // plan-craft-v1 P2 — 通用手搓 IPC（4 类）

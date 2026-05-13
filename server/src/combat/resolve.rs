@@ -2,8 +2,8 @@ use serde_json::json;
 use valence::entity::Look;
 use valence::prelude::bevy_ecs::system::SystemParam;
 use valence::prelude::{
-    bevy_ecs, Client, Commands, DVec3, Entity, EventReader, EventWriter, Events, ParamSet,
-    Position, Query, Res, ResMut, Username, With,
+    bevy_ecs, Client, Commands, DVec3, Entity, EventReader, EventWriter, Events, GameMode,
+    ParamSet, Position, Query, Res, ResMut, Username, With,
 };
 
 use crate::combat::anticheat::AntiCheatCounter;
@@ -221,7 +221,11 @@ pub fn resolve_attack_intents(
     statuses: Query<&StatusEffects>,
     juebi_law_disruptions: Query<&JueBiLawDisruption>,
     sparring_sessions: Query<&crate::social::components::SparringState>,
-    mut combatants: ParamSet<(Query<CombatAttackerItem<'_>>, Query<CombatTargetItem<'_>>)>,
+    mut combatants: ParamSet<(
+        Query<CombatAttackerItem<'_>>,
+        Query<CombatTargetItem<'_>>,
+        Query<&GameMode>,
+    )>,
     body_masses: Query<&BodyMass>,
     stances: Query<&Stance>,
     mut event_writers: CombatResolveEventWriters,
@@ -262,6 +266,13 @@ pub fn resolve_attack_intents(
         else {
             continue;
         };
+        let target_damageable = {
+            let game_modes = combatants.p2();
+            crate::combat::is_damageable(target_entity, &game_modes)
+        };
+        if !target_damageable {
+            continue;
+        }
 
         let qi_invest = f64::from(intent.qi_invest.max(0.0));
         let juebi_law_env = juebi_law_disruptions
@@ -600,9 +611,7 @@ pub fn resolve_attack_intents(
             let attacker = intent.attacker;
             commands.add(
                 move |world: &mut valence::prelude::bevy_ecs::world::World| {
-                    if let Some(mut wounds) = world.get_mut::<Wounds>(attacker) {
-                        zhenmai_v2::apply_self_damage(&mut wounds, juebi_backfire_damage);
-                    }
+                    zhenmai_v2::apply_self_damage_to_entity(world, attacker, juebi_backfire_damage);
                 },
             );
         }
@@ -1568,7 +1577,7 @@ mod tests {
     use crate::player::state::PlayerState;
     use crate::social::components::SparringState;
     use valence::prelude::{
-        bevy_ecs, App, Entity, Events, IntoSystemConfigs, Position, Resource, Update,
+        bevy_ecs, App, Entity, Events, GameMode, IntoSystemConfigs, Position, Resource, Update,
     };
     use valence::testing::create_mock_client;
 
@@ -1596,7 +1605,8 @@ mod tests {
     ) -> Entity {
         let (mut client_bundle, _helper) = create_mock_client(username);
         client_bundle.player.position = Position::new(position);
-        app.world_mut()
+        let entity = app
+            .world_mut()
             .spawn((
                 client_bundle,
                 Cultivation {
@@ -1622,7 +1632,11 @@ mod tests {
                     ..Default::default()
                 },
             ))
-            .id()
+            .id();
+        app.world_mut()
+            .entity_mut(entity)
+            .insert(GameMode::Survival);
+        entity
     }
 
     fn weapon_test_registry() -> ItemRegistry {
@@ -2121,6 +2135,172 @@ mod tests {
         assert_eq!(events[0].target, target);
         assert_eq!(events[0].collision_damage, None);
         assert!(!events[0].block_broken);
+    }
+
+    #[test]
+    fn attack_intent_skips_creative_target_without_damage_events_or_knockback() {
+        let mut app = App::new();
+        app.insert_resource(CombatClock { tick: 44 });
+        app.add_event::<AttackIntent>();
+        app.add_event::<ApplyStatusEffectIntent>();
+        app.add_event::<CombatEvent>();
+        app.add_event::<KnockbackEvent>();
+        app.add_event::<DeathEvent>();
+        app.add_event::<crate::combat::weapon::WeaponBroken>();
+        app.add_event::<InventoryDurabilityChangedEvent>();
+        app.add_systems(Update, resolve_attack_intents);
+
+        let attacker = spawn_player(
+            &mut app,
+            "Azure",
+            [0.0, 64.0, 0.0],
+            Wounds::default(),
+            Stamina::default(),
+        );
+        let target = spawn_player(
+            &mut app,
+            "Crimson",
+            [1.0, 64.0, 0.0],
+            Wounds::default(),
+            Stamina::default(),
+        );
+        app.world_mut()
+            .entity_mut(target)
+            .insert(GameMode::Creative);
+        let before = app
+            .world()
+            .entity(target)
+            .get::<Wounds>()
+            .unwrap()
+            .health_current;
+
+        app.world_mut().send_event(AttackIntent {
+            attacker,
+            target: Some(target),
+            issued_at_tick: 44,
+            reach: FIST_REACH,
+            qi_invest: 10.0,
+            wound_kind: WoundKind::Blunt,
+            source: AttackSource::Melee,
+            debug_command: None,
+        });
+        app.update();
+
+        let wounds = app.world().entity(target).get::<Wounds>().unwrap();
+        assert_eq!(
+            wounds.health_current, before,
+            "Creative target must not lose health from resolver"
+        );
+        assert!(
+            app.world()
+                .resource::<Events<CombatEvent>>()
+                .iter_current_update_events()
+                .next()
+                .is_none(),
+            "Creative target must not emit CombatEvent"
+        );
+        assert!(
+            app.world()
+                .resource::<Events<KnockbackEvent>>()
+                .iter_current_update_events()
+                .next()
+                .is_none(),
+            "Creative target must not emit knockback"
+        );
+        assert!(
+            app.world().get::<PendingKnockback>(target).is_none(),
+            "Creative target must not receive pending knockback"
+        );
+    }
+
+    #[test]
+    fn attack_intent_uses_latest_game_mode_component() {
+        let mut app = App::new();
+        app.insert_resource(CombatClock { tick: 44 });
+        app.add_event::<AttackIntent>();
+        app.add_event::<ApplyStatusEffectIntent>();
+        app.add_event::<CombatEvent>();
+        app.add_event::<DeathEvent>();
+        app.add_event::<crate::combat::weapon::WeaponBroken>();
+        app.add_event::<InventoryDurabilityChangedEvent>();
+        app.add_systems(Update, resolve_attack_intents);
+
+        let attacker = spawn_player(
+            &mut app,
+            "Azure",
+            [0.0, 64.0, 0.0],
+            Wounds::default(),
+            Stamina::default(),
+        );
+        let target = spawn_player(
+            &mut app,
+            "Crimson",
+            [1.0, 64.0, 0.0],
+            Wounds::default(),
+            Stamina::default(),
+        );
+        app.world_mut()
+            .entity_mut(target)
+            .insert(GameMode::Creative);
+        let before = app
+            .world()
+            .entity(target)
+            .get::<Wounds>()
+            .unwrap()
+            .health_current;
+
+        app.world_mut().send_event(AttackIntent {
+            attacker,
+            target: Some(target),
+            issued_at_tick: 44,
+            reach: FIST_REACH,
+            qi_invest: 10.0,
+            wound_kind: WoundKind::Blunt,
+            source: AttackSource::Melee,
+            debug_command: None,
+        });
+        app.update();
+        assert_eq!(
+            app.world()
+                .entity(target)
+                .get::<Wounds>()
+                .unwrap()
+                .health_current,
+            before
+        );
+
+        app.world_mut()
+            .entity_mut(target)
+            .insert(GameMode::Survival);
+        app.world_mut().send_event(AttackIntent {
+            attacker,
+            target: Some(target),
+            issued_at_tick: 45,
+            reach: FIST_REACH,
+            qi_invest: 10.0,
+            wound_kind: WoundKind::Blunt,
+            source: AttackSource::Melee,
+            debug_command: None,
+        });
+        app.update();
+
+        assert!(
+            app.world()
+                .entity(target)
+                .get::<Wounds>()
+                .unwrap()
+                .health_current
+                < before,
+            "switching to Survival must make the target damageable immediately"
+        );
+        assert!(
+            app.world()
+                .resource::<Events<CombatEvent>>()
+                .iter_current_update_events()
+                .next()
+                .is_some(),
+            "Survival target should emit CombatEvent"
+        );
     }
 
     #[test]
