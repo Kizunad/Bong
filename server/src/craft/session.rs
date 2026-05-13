@@ -268,7 +268,10 @@ pub fn start_craft(
         .get(request.recipe_id)
         .ok_or_else(|| StartCraftError::UnknownRecipe(request.recipe_id.clone()))?;
 
-    if !deps.unlock_state.is_unlocked(request.player_id, &recipe.id) {
+    // 空 unlock_sources = 默认解锁（凡器基础加工链等无门槛配方）。
+    if !recipe.unlock_sources.is_empty()
+        && !deps.unlock_state.is_unlocked(request.player_id, &recipe.id)
+    {
         return Err(StartCraftError::NotUnlocked(recipe.id.clone()));
     }
 
@@ -1537,5 +1540,43 @@ mod tests {
         assert_eq!(cult.qi_current, 50.0);
         assert_eq!(ledger.balance(&QiAccountId::player("offline:Alice")), 200.0);
         assert_eq!(count_template_in_inventory(&inv, "herb_a"), 5);
+    }
+
+    #[test]
+    fn start_craft_allows_empty_unlock_sources_without_unlock_state() {
+        let mut registry = CraftRegistry::new();
+        let mut recipe = simple_recipe("default_unlocked");
+        recipe.unlock_sources = vec![];
+        recipe.qi_cost = 0.0;
+        registry.register(recipe).unwrap();
+
+        let unlock = RecipeUnlockState::new();
+        let mut inv = make_inventory(&[("herb_a", 5), ("iron_needle", 5)]);
+        let mut cult = Cultivation {
+            qi_current: 50.0,
+            qi_max: 80.0,
+            ..Default::default()
+        };
+        let color = QiColor::default();
+        let mut ledger = WorldQiAccount::default();
+        ledger
+            .set_balance(QiAccountId::player("offline:Alice"), 50.0)
+            .unwrap();
+
+        let result = start_craft(
+            StartCraftRequest {
+                caster: caster_entity(),
+                player_id: "offline:Alice",
+                recipe_id: &RecipeId::new("default_unlocked"),
+                current_tick: 0,
+                zone_id: "spawn",
+                quantity: 1,
+            },
+            ok_deps_for_player(&registry, &unlock, &mut inv, &mut cult, &color, &mut ledger),
+        );
+        assert!(
+            result.is_ok(),
+            "recipe with empty unlock_sources should be craftable without unlock: {result:?}"
+        );
     }
 }
