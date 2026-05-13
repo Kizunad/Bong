@@ -212,11 +212,7 @@ impl CraftRecipe {
                 id: self.id.clone(),
             });
         }
-        if self.unlock_sources.is_empty() {
-            return Err(RecipeValidationError::NoUnlockSources {
-                id: self.id.clone(),
-            });
-        }
+        // 空 unlock_sources = 默认解锁（凡器基础加工链等无门槛配方）。
         // qi_color_min share 范围 [0.0, 1.0]，finite
         if let Some((kind, share)) = self.requirements.qi_color_min {
             if !share.is_finite() || !(0.0..=1.0).contains(&share) {
@@ -275,6 +271,7 @@ pub enum RecipeValidationError {
     ZeroTimeTicks {
         id: RecipeId,
     },
+    #[allow(dead_code)]
     NoUnlockSources {
         id: RecipeId,
     },
@@ -486,13 +483,10 @@ mod tests {
     }
 
     #[test]
-    fn validate_rejects_no_unlock_sources() {
+    fn validate_accepts_empty_unlock_sources_as_default_unlocked() {
         let mut r = ok_recipe();
         r.unlock_sources.clear();
-        assert!(matches!(
-            r.validate(),
-            Err(RecipeValidationError::NoUnlockSources { .. })
-        ));
+        assert!(r.validate().is_ok());
     }
 
     #[test]
