@@ -7,20 +7,21 @@ import java.util.Arrays;
 import java.util.Set;
 import java.util.stream.Collectors;
 
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
 public class FaunaRenderBootstrapTest {
     @Test
     void faunaVisualKindsPinEntityRawIdOrderAfterWhale() {
-        assertEquals(134, FaunaVisualKind.DEVOUR_RAT.expectedRawId());
-        assertEquals(135, FaunaVisualKind.ASH_SPIDER.expectedRawId());
-        assertEquals(136, FaunaVisualKind.HYBRID_BEAST.expectedRawId());
-        assertEquals(137, FaunaVisualKind.VOID_DISTORTED.expectedRawId());
-        assertEquals(138, FaunaVisualKind.DAOXIANG.expectedRawId());
-        assertEquals(139, FaunaVisualKind.ZHINIAN.expectedRawId());
-        assertEquals(140, FaunaVisualKind.TSY_SENTINEL.expectedRawId());
-        assertEquals(141, FaunaVisualKind.FUYA.expectedRawId());
-        assertEquals(142, FaunaVisualKind.SKULL_FIEND.expectedRawId());
+        assertEquals(126, FaunaVisualKind.DEVOUR_RAT.expectedRawId());
+        assertEquals(127, FaunaVisualKind.ASH_SPIDER.expectedRawId());
+        assertEquals(128, FaunaVisualKind.HYBRID_BEAST.expectedRawId());
+        assertEquals(129, FaunaVisualKind.VOID_DISTORTED.expectedRawId());
+        assertEquals(130, FaunaVisualKind.DAOXIANG.expectedRawId());
+        assertEquals(131, FaunaVisualKind.ZHINIAN.expectedRawId());
+        assertEquals(132, FaunaVisualKind.TSY_SENTINEL.expectedRawId());
+        assertEquals(133, FaunaVisualKind.FUYA.expectedRawId());
+        assertEquals(134, FaunaVisualKind.SKULL_FIEND.expectedRawId());
     }
 
     @Test
@@ -55,5 +56,10 @@ public class FaunaRenderBootstrapTest {
         Identifier texture = FaunaVisualKind.SKULL_FIEND.textureId();
         assertEquals("bong", texture.getNamespace());
         assertEquals("textures/entity/fauna/skull_fiend.png", texture.getPath());
+    }
+
+    @Test
+    void faunaEntityExplicitlyParticipatesInCrosshairPicking() {
+        assertDoesNotThrow(() -> FaunaEntity.class.getDeclaredMethod("canHit"));
     }
 }
