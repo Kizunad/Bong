@@ -195,6 +195,33 @@ mod tests {
     }
 
     #[test]
+    fn unarmed_attack_generates_intent_at_client_melee_distance() {
+        let mut app = setup_app();
+        let attacker = spawn_attacker(&mut app, stamina_full(), PlayerAttackCooldown::default());
+        let target = app
+            .world_mut()
+            .spawn((NpcMarker, Position::new([2.4, 0.0, 0.0])))
+            .id();
+
+        app.world_mut().send_event(InteractEntityEvent {
+            client: attacker,
+            entity: target,
+            sneaking: false,
+            interact: EntityInteraction::Attack,
+        });
+        app.update();
+
+        let events = app.world().resource::<Events<AttackIntent>>();
+        let intent = events
+            .iter_current_update_events()
+            .next()
+            .expect("unarmed attack should accept normal client melee distance");
+        assert_eq!(intent.attacker, attacker);
+        assert_eq!(intent.target, Some(target));
+        assert_eq!(intent.reach, FIST_REACH);
+    }
+
+    #[test]
     fn non_attack_interaction_ignored() {
         let mut app = setup_app();
         let attacker = spawn_attacker(&mut app, stamina_full(), PlayerAttackCooldown::default());

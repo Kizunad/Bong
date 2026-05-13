@@ -8,7 +8,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use valence::prelude::{Changed, Client, Entity, Query, Username, With};
 
-use crate::combat::components::{BodyPart, Wound, WoundKind, Wounds};
+use crate::combat::components::{BodyPart, Lifecycle, LifecycleState, Wound, WoundKind, Wounds};
 use crate::network::agent_bridge::{
     payload_type_label, serialize_server_data_payload, SERVER_DATA_CHANNEL,
 };
@@ -19,16 +19,15 @@ use crate::schema::server_data::{ServerDataPayloadV1, ServerDataV1};
 type WoundsEmitFilter = (With<Client>, Changed<Wounds>);
 
 pub fn emit_wounds_snapshot_payloads(
-    mut clients: Query<(Entity, &mut Client, &Username, &Wounds), WoundsEmitFilter>,
+    mut clients: Query<
+        (Entity, &mut Client, &Username, &Wounds, Option<&Lifecycle>),
+        WoundsEmitFilter,
+    >,
 ) {
     let now_ms = current_unix_millis();
 
-    for (entity, mut client, username, wounds) in &mut clients {
-        let wire_wounds = wounds
-            .entries
-            .iter()
-            .map(|wound| wound_to_wire(wound, now_ms))
-            .collect::<Vec<_>>();
+    for (entity, mut client, username, wounds, lifecycle) in &mut clients {
+        let wire_wounds = wounds_to_wire(wounds, lifecycle, now_ms);
         let payload = ServerDataV1::new(ServerDataPayloadV1::WoundsSnapshot(WoundsSnapshotV1 {
             wounds: wire_wounds,
         }));
@@ -50,6 +49,21 @@ pub fn emit_wounds_snapshot_payloads(
             wounds.entries.len()
         );
     }
+}
+
+fn wounds_to_wire(
+    wounds: &Wounds,
+    lifecycle: Option<&Lifecycle>,
+    now_ms: u64,
+) -> Vec<WoundEntryV1> {
+    if lifecycle.is_some_and(|lifecycle| lifecycle.state != LifecycleState::Alive) {
+        return Vec::new();
+    }
+    wounds
+        .entries
+        .iter()
+        .map(|wound| wound_to_wire(wound, now_ms))
+        .collect()
 }
 
 fn wound_to_wire(wound: &Wound, now_ms: u64) -> WoundEntryV1 {
@@ -97,4 +111,56 @@ fn current_unix_millis() -> u64 {
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_millis() as u64)
         .unwrap_or(0)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn wounds_to_wire_clears_entries_for_near_death_lifecycle() {
+        let wounds = Wounds {
+            health_current: 5.0,
+            health_max: 100.0,
+            entries: vec![Wound {
+                location: BodyPart::Chest,
+                kind: WoundKind::Blunt,
+                severity: 3.0,
+                bleeding_per_sec: 0.0,
+                created_at_tick: 12,
+                inflicted_by: Some("test".to_string()),
+            }],
+        };
+        let mut lifecycle = Lifecycle::default();
+        lifecycle.enter_near_death(20);
+
+        let wire = wounds_to_wire(&wounds, Some(&lifecycle), 123);
+
+        assert!(
+            wire.is_empty(),
+            "death/near-death clients should receive an empty wounds snapshot"
+        );
+    }
+
+    #[test]
+    fn wounds_to_wire_keeps_entries_for_alive_lifecycle() {
+        let wounds = Wounds {
+            health_current: 90.0,
+            health_max: 100.0,
+            entries: vec![Wound {
+                location: BodyPart::Chest,
+                kind: WoundKind::Blunt,
+                severity: 3.0,
+                bleeding_per_sec: 0.0,
+                created_at_tick: 12,
+                inflicted_by: Some("test".to_string()),
+            }],
+        };
+        let lifecycle = Lifecycle::default();
+
+        let wire = wounds_to_wire(&wounds, Some(&lifecycle), 123);
+
+        assert_eq!(wire.len(), 1);
+        assert_eq!(wire[0].part, "chest");
+    }
 }

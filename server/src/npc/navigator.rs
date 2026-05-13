@@ -48,6 +48,7 @@ use crate::npc::lod::NpcLodTier;
 use crate::npc::movement::{GameTick, MovementController};
 use crate::npc::perf::NpcPerfProbe;
 use crate::npc::spawn::NpcMarker;
+use crate::world::dimension::OverworldLayer;
 use crate::world::terrain::{TerrainProvider, TerrainProviders};
 
 // ---------------------------------------------------------------------------
@@ -270,7 +271,8 @@ pub fn navigator_tick_system(
         With<NpcMarker>,
     >,
     providers: Option<Res<TerrainProviders>>,
-    layers: Query<(Entity, &ChunkLayer), With<crate::world::dimension::OverworldLayer>>,
+    layers: Query<&ChunkLayer>,
+    overworld_layers: Query<Entity, With<OverworldLayer>>,
     game_tick: Option<Res<GameTick>>,
     mut perf_probe: Option<ResMut<NpcPerfProbe>>,
 ) {
@@ -281,10 +283,9 @@ pub fn navigator_tick_system(
     // NPCs (e.g. TSY hostiles in `tsy_hostile.rs`) also carry NpcMarker +
     // Navigator and would otherwise be ground-snapped against the wrong
     // terrain.
-    let overworld = layers.get_single().ok();
-    let overworld_entity = overworld.map(|(e, _)| e);
-    let layer = overworld.map(|(_, l)| l);
-    let terrain = providers.as_deref().map(|p| &p.overworld);
+    let overworld_entity = overworld_layers.get_single().ok();
+    let overworld_layer = overworld_entity.and_then(|entity| layers.get(entity).ok());
+    let overworld_terrain = providers.as_deref().map(|p| &p.overworld);
 
     for (
         entity,
@@ -315,9 +316,19 @@ pub fn navigator_tick_system(
             // assume the NPC belongs here so existing tests keep working.
             (Some(_), None) | (None, _) => true,
         };
+        let entity_layer = npc_layer.and_then(|layer_id| layers.get(layer_id.0).ok());
+        let layer = entity_layer.or(overworld_layer);
+        let terrain = if in_overworld {
+            overworld_terrain
+        } else {
+            None
+        };
 
         if matches!(lod_tier, Some(NpcLodTier::Dormant)) {
             nav.stop();
+            if in_overworld {
+                snap_idle_position_to_ground(&mut position, &mut transform, layer, terrain);
+            }
             continue;
         }
 
@@ -331,12 +342,7 @@ pub fn navigator_tick_system(
             // Idle gravity: try chunk-based snap first (exact, respects loaded
             // blocks), then fall back to the terrain height map for NPCs that
             // are far above the chunk's ±GROUND_SCAN window.
-            let current = position.get();
-            let snapped = snap_to_ground_with_fallback(current, layer, terrain);
-            if (snapped.y - current.y).abs() > 1e-4 {
-                position.set(snapped);
-                transform.translation.y = snapped.y as f32;
-            }
+            snap_idle_position_to_ground(&mut position, &mut transform, layer, terrain);
             continue;
         };
 
@@ -440,6 +446,20 @@ pub fn navigator_tick_system(
     if let Some(probe) = perf_probe.as_deref_mut() {
         probe.record_elapsed("navigator", started_at);
         probe.flush_if_due(tick);
+    }
+}
+
+fn snap_idle_position_to_ground(
+    position: &mut Position,
+    transform: &mut Transform,
+    layer: Option<&ChunkLayer>,
+    terrain: Option<&TerrainProvider>,
+) {
+    let current = position.get();
+    let snapped = snap_to_ground_with_fallback(current, layer, terrain);
+    if (snapped.y - current.y).abs() > 1e-4 {
+        position.set(snapped);
+        transform.translation.y = snapped.y as f32;
     }
 }
 
@@ -823,12 +843,16 @@ fn step_toward_with_collision(
     max_step: f64,
     layer: Option<&ChunkLayer>,
 ) -> DVec3 {
+    let Some(layer) = layer else {
+        return current;
+    };
+
     let delta = DVec3::new(target.x - current.x, 0.0, target.z - current.z);
     let dist = delta.length();
 
     if dist <= f64::EPSILON {
         // Even if not moving in XZ, snap to ground (gravity).
-        return snap_to_ground(current, layer);
+        return snap_to_ground(current, Some(layer));
     }
 
     let dir = delta / dist;
@@ -850,7 +874,7 @@ fn step_toward_with_collision(
         let wz = tentative.z.floor() as i32;
 
         // Resolve real ground Y at the target XZ (sees trees, decorations).
-        let ground_y = resolve_ground_y_from_chunk(wx, wz, ref_y, layer).unwrap_or(ref_y - 1);
+        let ground_y = resolve_ground_y_from_chunk(wx, wz, ref_y, Some(layer)).unwrap_or(ref_y - 1);
         let feet_y = ground_y + 1;
 
         // Cliff check — don't jump too high or fall too far per step.
@@ -859,18 +883,16 @@ fn step_toward_with_collision(
             continue;
         }
 
-        if let Some(chunk_layer) = layer {
-            // Check feet and head aren't solid.
-            let feet_type = classify_block(wx, feet_y, wz, Some(chunk_layer));
-            let head_type = classify_block(wx, feet_y + 1, wz, Some(chunk_layer));
+        // Check feet and head aren't solid.
+        let feet_type = classify_block(wx, feet_y, wz, Some(layer));
+        let head_type = classify_block(wx, feet_y + 1, wz, Some(layer));
 
-            if feet_type == PathType::Blocked
-                || feet_type == PathType::Fence
-                || head_type == PathType::Blocked
-                || head_type == PathType::Fence
-            {
-                continue;
-            }
+        if feet_type == PathType::Blocked
+            || feet_type == PathType::Fence
+            || head_type == PathType::Blocked
+            || head_type == PathType::Fence
+        {
+            continue;
         }
 
         // Move in XZ and set Y to the resolved ground level (feet on ground).
@@ -878,7 +900,7 @@ fn step_toward_with_collision(
     }
 
     // All blocked — stay put but still apply gravity.
-    snap_to_ground(current, layer)
+    snap_to_ground(current, Some(layer))
 }
 
 /// Snap a position to the ground at its current XZ.
@@ -1064,8 +1086,10 @@ mod tests {
         let current = DVec3::new(5.0, 67.0, 5.0);
         let target = DVec3::new(10.0, 67.0, 5.0);
         let result = step_toward_with_collision(current, target, 0.2, None);
-        // Without a layer, no collision checks → should move.
-        assert!(result.x > current.x);
+        assert_eq!(
+            result, current,
+            "without a ChunkLayer, NPC ground navigation must not blindly walk through unknown blocks"
+        );
     }
 
     #[test]
@@ -1131,6 +1155,28 @@ mod tests {
             (pos.get().y - 67.0).abs() < 0.01,
             "idle NPC at Y=80 should snap to ground_y+1=67, got Y={}",
             pos.get().y,
+        );
+    }
+
+    #[test]
+    fn dormant_idle_npc_in_air_still_falls_to_ground() {
+        let (mut app, _) = make_navigator_app_with_ground(66);
+        let npc = spawn_idle_npc(&mut app, 80.0);
+        app.world_mut().entity_mut(npc).insert(NpcLodTier::Dormant);
+
+        app.update();
+
+        let pos = app.world().get::<Position>(npc).unwrap();
+        let transform = app.world().get::<Transform>(npc).unwrap();
+        assert!(
+            (pos.get().y - 67.0).abs() < 0.01,
+            "dormant NPC at Y=80 should still snap to ground_y+1=67, got Y={}",
+            pos.get().y,
+        );
+        assert!(
+            (f64::from(transform.translation.y) - 67.0).abs() < 0.1,
+            "dormant NPC ground snap should sync Transform.translation.y, got {}",
+            transform.translation.y,
         );
     }
 

@@ -5,8 +5,8 @@ use std::collections::HashMap;
 use std::time::Instant;
 use valence::client::ClientMarker;
 use valence::prelude::{
-    bevy_ecs, App, Commands, Component, DVec3, Entity, EntityKind, EventWriter, IntoSystemConfigs,
-    Position, PreUpdate, Query, Res, ResMut, Resource, Update, With, Without,
+    bevy_ecs, App, Commands, Component, DVec3, Entity, EntityKind, EventWriter, GameMode,
+    IntoSystemConfigs, Position, PreUpdate, Query, Res, ResMut, Resource, Update, With, Without,
 };
 
 use crate::combat::events::{AttackIntent, AttackSource};
@@ -794,7 +794,7 @@ type BlackboardNpcQueryItem<'a> = (
 
 pub fn update_npc_blackboard(
     mut npc_query: Query<BlackboardNpcQueryItem<'_>, With<NpcMarker>>,
-    player_query: Query<(Entity, &Position), With<ClientMarker>>,
+    player_query: Query<(Entity, &Position, Option<&GameMode>), With<ClientMarker>>,
     all_positions: Query<&Position>,
     game_tick: Option<Res<GameTick>>,
     mut perf_probe: Option<ResMut<NpcPerfProbe>>,
@@ -822,24 +822,45 @@ pub fn update_npc_blackboard(
         let mut nearest_distance = f64::INFINITY;
         let mut nearest_pos = None;
 
-        for (player_entity, player_position) in &player_query {
-            let distance = npc_pos.distance(player_position.get());
+        for (player_entity, player_position, game_mode) in &player_query {
+            if !is_trackable_player(game_mode) {
+                continue;
+            }
+
+            let player_pos = player_position.get();
+            let distance = horizontal_distance(npc_pos, player_pos);
             if distance < nearest_distance {
                 nearest_distance = distance;
                 nearest_player = Some(player_entity);
-                nearest_pos = Some(player_position.get());
+                nearest_pos = Some(DVec3::new(player_pos.x, npc_pos.y, player_pos.z));
             }
         }
 
-        blackboard.nearest_player = nearest_player;
-        blackboard.player_distance = nearest_distance as f32;
-        blackboard.target_position = nearest_pos;
+        if nearest_player.is_some() {
+            blackboard.nearest_player = nearest_player;
+            blackboard.player_distance = nearest_distance as f32;
+            blackboard.target_position = nearest_pos;
+        } else {
+            blackboard.nearest_player = None;
+            blackboard.player_distance = f32::INFINITY;
+            blackboard.target_position = None;
+        }
     }
 
     if let Some(probe) = perf_probe.as_deref_mut() {
         probe.record_elapsed("blackboard_update", started_at);
         probe.flush_if_due(game_tick.as_deref().map(|tick| tick.0).unwrap_or(0));
     }
+}
+
+fn is_trackable_player(game_mode: Option<&GameMode>) -> bool {
+    game_mode.is_none_or(|mode| *mode == GameMode::Survival)
+}
+
+fn horizontal_distance(a: DVec3, b: DVec3) -> f64 {
+    let dx = a.x - b.x;
+    let dz = a.z - b.z;
+    (dx * dx + dz * dz).sqrt()
 }
 
 fn player_proximity_scorer_system(
@@ -1174,7 +1195,7 @@ fn melee_attack_action_system(
                                 target: Some(target_entity),
                                 issued_at_tick: u64::from(tick),
                                 reach: profile.reach,
-                                qi_invest: 10.0,
+                                qi_invest: 0.0,
                                 wound_kind: profile.wound_kind,
                                 source: AttackSource::Melee,
                                 debug_command: None,
@@ -2905,6 +2926,71 @@ mod tests {
     }
 
     #[test]
+    fn blackboard_ignores_creative_players_and_clears_stale_target() {
+        let mut app = App::new();
+        app.add_systems(PreUpdate, update_npc_blackboard);
+
+        let creative = app
+            .world_mut()
+            .spawn((
+                ClientMarker,
+                Position::new([2.0, 96.0, 2.0]),
+                GameMode::Creative,
+            ))
+            .id();
+        let npc = app
+            .world_mut()
+            .spawn((
+                NpcMarker,
+                Position::new([0.0, 66.0, 0.0]),
+                NpcBlackboard {
+                    nearest_player: Some(creative),
+                    player_distance: 3.0,
+                    target_position: Some(DVec3::new(2.0, 96.0, 2.0)),
+                    ..Default::default()
+                },
+            ))
+            .id();
+
+        app.update();
+
+        let blackboard = app.world().get::<NpcBlackboard>(npc).unwrap();
+        assert_eq!(blackboard.nearest_player, None);
+        assert!(blackboard.player_distance.is_infinite());
+        assert_eq!(blackboard.target_position, None);
+    }
+
+    #[test]
+    fn blackboard_projects_airborne_survival_player_to_ground_target() {
+        let mut app = App::new();
+        app.add_systems(PreUpdate, update_npc_blackboard);
+
+        let player = app
+            .world_mut()
+            .spawn((
+                ClientMarker,
+                Position::new([3.0, 96.0, 4.0]),
+                GameMode::Survival,
+            ))
+            .id();
+        let npc = app
+            .world_mut()
+            .spawn((
+                NpcMarker,
+                Position::new([0.0, 66.0, 0.0]),
+                NpcBlackboard::default(),
+            ))
+            .id();
+
+        app.update();
+
+        let blackboard = app.world().get::<NpcBlackboard>(npc).unwrap();
+        assert_eq!(blackboard.nearest_player, Some(player));
+        assert!((blackboard.player_distance - 5.0).abs() < 1e-6);
+        assert_eq!(blackboard.target_position, Some(DVec3::new(3.0, 66.0, 4.0)));
+    }
+
+    #[test]
     fn dormant_blackboard_update_preserves_last_target_snapshot() {
         let mut app = App::new();
         app.add_systems(PreUpdate, update_npc_blackboard);
@@ -2994,7 +3080,7 @@ mod tests {
         assert_eq!(captured[0].attacker, npc);
         assert_eq!(captured[0].target, Some(target));
         assert_eq!(captured[0].reach, NpcMeleeProfile::spear().reach);
-        assert_eq!(captured[0].qi_invest, 10.0);
+        assert_eq!(captured[0].qi_invest, 0.0);
         assert_eq!(captured[0].wound_kind, NpcMeleeProfile::spear().wound_kind);
         assert_eq!(captured[0].debug_command, None);
 
@@ -3067,7 +3153,7 @@ mod tests {
             .spawn((
                 NpcMarker,
                 NpcBlackboard {
-                    player_distance: 1.6,
+                    player_distance: 2.8,
                     ..Default::default()
                 },
                 NpcMeleeProfile::fist(),
@@ -3078,7 +3164,7 @@ mod tests {
             .spawn((
                 NpcMarker,
                 NpcBlackboard {
-                    player_distance: 1.6,
+                    player_distance: 2.8,
                     ..Default::default()
                 },
                 NpcMeleeProfile::spear(),

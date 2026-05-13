@@ -424,6 +424,16 @@ pub fn resolve_attack_intents(
         else {
             continue;
         };
+        if lifecycle.is_some_and(|lifecycle| {
+            matches!(
+                lifecycle.state,
+                LifecycleState::NearDeath
+                    | LifecycleState::AwaitingRevival
+                    | LifecycleState::Terminated
+            )
+        }) {
+            continue;
+        }
 
         let decay = ((intent.reach.max - distance) / intent.reach.max.max(0.001)).clamp(0.0, 1.0);
         let hit_qi = (intent.qi_invest * decay).max(0.0);
@@ -2214,6 +2224,80 @@ mod tests {
     }
 
     #[test]
+    fn attack_intent_skips_near_death_target_without_extra_wounds_or_knockback() {
+        let mut app = App::new();
+        app.insert_resource(CombatClock { tick: 44 });
+        app.add_event::<AttackIntent>();
+        app.add_event::<ApplyStatusEffectIntent>();
+        app.add_event::<CombatEvent>();
+        app.add_event::<KnockbackEvent>();
+        app.add_event::<DeathEvent>();
+        app.add_event::<crate::combat::weapon::WeaponBroken>();
+        app.add_event::<InventoryDurabilityChangedEvent>();
+        app.add_systems(Update, resolve_attack_intents);
+
+        let attacker = spawn_player(
+            &mut app,
+            "Azure",
+            [0.0, 64.0, 0.0],
+            Wounds::default(),
+            Stamina::default(),
+        );
+        let target = spawn_player(
+            &mut app,
+            "Crimson",
+            [1.0, 64.0, 0.0],
+            Wounds {
+                health_current: 5.0,
+                health_max: 100.0,
+                entries: vec![Wound {
+                    location: BodyPart::Chest,
+                    kind: WoundKind::Blunt,
+                    severity: 3.0,
+                    bleeding_per_sec: 0.0,
+                    created_at_tick: 40,
+                    inflicted_by: Some("test".to_string()),
+                }],
+            },
+            Stamina::default(),
+        );
+        app.world_mut()
+            .entity_mut(target)
+            .get_mut::<Lifecycle>()
+            .unwrap()
+            .enter_near_death(40);
+        let before = app.world().entity(target).get::<Wounds>().unwrap().clone();
+
+        app.world_mut().send_event(AttackIntent {
+            attacker,
+            target: Some(target),
+            issued_at_tick: 44,
+            reach: FIST_REACH,
+            qi_invest: 10.0,
+            wound_kind: WoundKind::Blunt,
+            source: AttackSource::Melee,
+            debug_command: None,
+        });
+        app.update();
+
+        let wounds = app.world().entity(target).get::<Wounds>().unwrap();
+        assert_eq!(wounds.health_current, before.health_current);
+        assert_eq!(wounds.entries.len(), before.entries.len());
+        assert!(
+            app.world()
+                .resource::<Events<CombatEvent>>()
+                .iter_current_update_events()
+                .next()
+                .is_none(),
+            "NearDeath target must not emit CombatEvent"
+        );
+        assert!(
+            app.world().get::<PendingKnockback>(target).is_none(),
+            "NearDeath target must not receive pending knockback"
+        );
+    }
+
+    #[test]
     fn attack_intent_uses_latest_game_mode_component() {
         let mut app = App::new();
         app.insert_resource(CombatClock { tick: 44 });
@@ -2853,6 +2937,72 @@ mod tests {
     }
 
     #[test]
+    fn zero_qi_npc_mundane_melee_damages_survival_player() {
+        use crate::npc::lifecycle::{npc_runtime_bundle, NpcArchetype};
+
+        let mut app = App::new();
+        app.insert_resource(CombatClock { tick: 93 });
+        app.add_event::<AttackIntent>();
+        app.add_event::<ApplyStatusEffectIntent>();
+        app.add_event::<CombatEvent>();
+        app.add_event::<DeathEvent>();
+        app.add_event::<crate::combat::weapon::WeaponBroken>();
+        app.add_event::<InventoryDurabilityChangedEvent>();
+        app.add_systems(Update, resolve_attack_intents);
+
+        let player = spawn_player(
+            &mut app,
+            "Azure",
+            [1.0, 64.0, 0.0],
+            Wounds::default(),
+            Stamina::default(),
+        );
+        let npc = app
+            .world_mut()
+            .spawn((NpcMarker, Position::new([0.0, 64.0, 0.0])))
+            .id();
+        let runtime = npc_runtime_bundle(npc, NpcArchetype::Zombie);
+        assert_eq!(runtime.cultivation.qi_current, 0.0);
+        app.world_mut().entity_mut(npc).insert(runtime);
+
+        let before = app
+            .world()
+            .entity(player)
+            .get::<Wounds>()
+            .unwrap()
+            .health_current;
+        app.world_mut().send_event(AttackIntent {
+            attacker: npc,
+            target: Some(player),
+            issued_at_tick: 92,
+            reach: NpcMeleeProfile::fist().reach,
+            qi_invest: 0.0,
+            wound_kind: NpcMeleeProfile::fist().wound_kind,
+            source: AttackSource::Melee,
+            debug_command: None,
+        });
+
+        app.update();
+
+        let player_wounds = app.world().entity(player).get::<Wounds>().unwrap();
+        assert!(
+            player_wounds.health_current < before,
+            "mundane NPC melee must damage Survival players without requiring qi"
+        );
+        let events: Vec<_> = app
+            .world()
+            .resource::<Events<CombatEvent>>()
+            .iter_current_update_events()
+            .collect();
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].damage, 0.0);
+        assert!(
+            events[0].physical_damage > 0.0,
+            "mundane NPC melee should surface as physical damage"
+        );
+    }
+
+    #[test]
     fn player_killing_npc_emits_combat_skill_xp() {
         let mut app = App::new();
         app.insert_resource(CombatClock { tick: 92 });
@@ -3143,7 +3293,7 @@ mod tests {
         );
         let target = spawn_npc(
             &mut app,
-            [2.0, 64.0, 0.0],
+            [4.0, 64.0, 0.0],
             Wounds::default(),
             Stamina::default(),
         );
@@ -3170,6 +3320,54 @@ mod tests {
         assert!(wounds.entries.is_empty());
         assert!(contamination.entries.is_empty());
         assert!(combat_events.is_empty());
+    }
+
+    #[test]
+    fn fist_reach_hits_at_client_melee_distance() {
+        let mut app = App::new();
+        app.insert_resource(CombatClock { tick: 900 });
+        app.add_event::<AttackIntent>();
+        app.add_event::<ApplyStatusEffectIntent>();
+        app.add_event::<CombatEvent>();
+        app.add_event::<DeathEvent>();
+        app.add_event::<crate::combat::weapon::WeaponBroken>();
+        app.add_event::<InventoryDurabilityChangedEvent>();
+        app.add_systems(Update, resolve_attack_intents);
+
+        let attacker = spawn_player(
+            &mut app,
+            "Azure",
+            [0.0, 64.0, 0.0],
+            Wounds::default(),
+            Stamina::default(),
+        );
+        let target = spawn_npc(
+            &mut app,
+            [2.4, 64.0, 0.0],
+            Wounds::default(),
+            Stamina::default(),
+        );
+
+        app.world_mut().send_event(AttackIntent {
+            attacker,
+            target: Some(target),
+            issued_at_tick: 899,
+            reach: FIST_REACH,
+            qi_invest: 0.0,
+            wound_kind: WoundKind::Blunt,
+            source: AttackSource::Melee,
+            debug_command: None,
+        });
+
+        app.update();
+
+        let target_ref = app.world().entity(target);
+        let wounds = target_ref.get::<Wounds>().unwrap();
+        let combat_events = app.world().resource::<Events<CombatEvent>>();
+
+        assert!(wounds.health_current < wounds.health_max);
+        assert!(!wounds.entries.is_empty());
+        assert!(!combat_events.is_empty());
     }
 
     #[test]
@@ -3317,7 +3515,7 @@ mod tests {
         );
         let target = spawn_npc(
             &mut app,
-            [2.0, 64.0, 0.0],
+            [4.0, 64.0, 0.0],
             Wounds::default(),
             Stamina::default(),
         );

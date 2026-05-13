@@ -17,12 +17,12 @@ pub fn emit_combat_event_to_client(
     mut clients: Query<(Entity, &Username, &mut Client)>,
 ) {
     for ev in combat_reader.read() {
-        if ev.damage <= 0.0 {
+        let amount = ev.damage + ev.physical_damage;
+        if amount <= 0.0 {
             continue;
         }
 
         let kind = wire_kind(ev);
-        let amount = ev.damage;
         let text = format_amount(amount);
 
         let entry = CombatEventFloaterEntryV1 {
@@ -129,6 +129,19 @@ mod tests {
     #[test]
     fn format_amount_decimal() {
         assert_eq!(format_amount(12.5), "12.5");
+    }
+
+    #[test]
+    fn floater_amount_uses_physical_damage_for_mundane_hits() {
+        let ev = CombatEvent {
+            physical_damage: 7.0,
+            damage: 0.0,
+            ..make_event(None)
+        };
+        let amount = ev.damage + ev.physical_damage;
+
+        assert_eq!(amount, 7.0);
+        assert_eq!(format_amount(amount), "7");
     }
 
     #[test]

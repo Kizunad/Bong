@@ -9,7 +9,7 @@ use valence::prelude::{
     Without,
 };
 
-use crate::combat::components::{Lifecycle, LifecycleState};
+use crate::combat::components::{Lifecycle, LifecycleState, Wounds};
 use crate::cultivation::components::{Cultivation, Realm};
 use crate::identity::PlayerIdentities;
 use crate::network::audio_event_emit::{AudioRecipient, PlaySoundRecipeRequest};
@@ -40,6 +40,8 @@ pub struct NpcMetadataS2c {
     pub greeting_text: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub qi_hint: Option<String>,
+    pub hp_ratio: f32,
+    pub qi_ratio: f32,
 }
 
 impl NpcMetadataS2c {
@@ -77,6 +79,7 @@ type NpcMetadataItem<'a> = (
     Option<&'a FactionMembership>,
     Option<&'a NpcLifespan>,
     Option<&'a Lifecycle>,
+    Option<&'a Wounds>,
 );
 
 #[allow(clippy::type_complexity)]
@@ -105,6 +108,7 @@ pub fn emit_npc_metadata_payloads(
             membership,
             lifespan,
             lifecycle,
+            wounds,
         ) in &npcs
         {
             if lifecycle.is_some_and(|lifecycle| lifecycle.state == LifecycleState::Terminated) {
@@ -114,15 +118,16 @@ pub fn emit_npc_metadata_payloads(
                 continue;
             }
 
-            let metadata = build_npc_metadata(
-                entity_id.get(),
-                *archetype,
-                npc_cultivation,
+            let metadata = build_npc_metadata(NpcMetadataBuildInput {
+                entity_id: entity_id.get(),
+                archetype: *archetype,
+                cultivation: npc_cultivation,
                 membership,
                 lifespan,
                 player_cultivation,
                 player_identities,
-            );
+                wounds,
+            });
             let bytes = match metadata.to_json_bytes_checked() {
                 Ok(bytes) => bytes,
                 Err(error) => {
@@ -157,15 +162,28 @@ pub fn emit_npc_metadata_payloads(
         .retain(|pair| active_pairs.contains(pair));
 }
 
-pub fn build_npc_metadata(
-    entity_id: i32,
-    archetype: NpcArchetype,
-    cultivation: Option<&Cultivation>,
-    membership: Option<&FactionMembership>,
-    lifespan: Option<&NpcLifespan>,
-    player_cultivation: Option<&Cultivation>,
-    player_identities: Option<&PlayerIdentities>,
-) -> NpcMetadataS2c {
+pub struct NpcMetadataBuildInput<'a> {
+    pub entity_id: i32,
+    pub archetype: NpcArchetype,
+    pub cultivation: Option<&'a Cultivation>,
+    pub membership: Option<&'a FactionMembership>,
+    pub lifespan: Option<&'a NpcLifespan>,
+    pub player_cultivation: Option<&'a Cultivation>,
+    pub player_identities: Option<&'a PlayerIdentities>,
+    pub wounds: Option<&'a Wounds>,
+}
+
+pub fn build_npc_metadata(input: NpcMetadataBuildInput<'_>) -> NpcMetadataS2c {
+    let NpcMetadataBuildInput {
+        entity_id,
+        archetype,
+        cultivation,
+        membership,
+        lifespan,
+        player_cultivation,
+        player_identities,
+        wounds,
+    } = input;
     let realm = cultivation
         .map(|cultivation| cultivation.realm)
         .unwrap_or(Realm::Awaken);
@@ -174,6 +192,24 @@ pub fn build_npc_metadata(
     let faction_rank = membership.map(|membership| faction_rank_label(membership.rank).to_string());
     let display_name = display_name(archetype, realm, membership);
     let qi_hint = player_cultivation.map(|player| qi_hint(player.realm, realm));
+    let hp_ratio = wounds
+        .map(|wounds| {
+            if wounds.health_max > 0.0 {
+                (wounds.health_current / wounds.health_max).clamp(0.0, 1.0)
+            } else {
+                0.0
+            }
+        })
+        .unwrap_or(1.0);
+    let qi_ratio = cultivation
+        .map(|cultivation| {
+            if cultivation.qi_max > 0.0 {
+                (cultivation.qi_current / cultivation.qi_max).clamp(0.0, 1.0) as f32
+            } else {
+                0.0
+            }
+        })
+        .unwrap_or(0.0);
 
     NpcMetadataS2c {
         v: 1,
@@ -191,6 +227,8 @@ pub fn build_npc_metadata(
             .to_string(),
         greeting_text: greeting_text_for_archetype(archetype).to_string(),
         qi_hint,
+        hp_ratio,
+        qi_ratio,
     }
 }
 
@@ -357,21 +395,26 @@ mod tests {
     #[test]
     fn npc_metadata_packet_serializes() {
         let membership = membership(0.75);
-        let payload = build_npc_metadata(
-            42,
-            NpcArchetype::Disciple,
-            Some(&Cultivation {
+        let payload = build_npc_metadata(NpcMetadataBuildInput {
+            entity_id: 42,
+            archetype: NpcArchetype::Disciple,
+            cultivation: Some(&Cultivation {
                 realm: Realm::Condense,
                 ..Cultivation::default()
             }),
-            Some(&membership),
-            Some(&NpcLifespan::new(40.0, 100.0)),
-            Some(&Cultivation {
+            membership: Some(&membership),
+            lifespan: Some(&NpcLifespan::new(40.0, 100.0)),
+            player_cultivation: Some(&Cultivation {
                 realm: Realm::Awaken,
                 ..Cultivation::default()
             }),
-            None,
-        );
+            player_identities: None,
+            wounds: Some(&Wounds {
+                health_current: 40.0,
+                health_max: 100.0,
+                entries: Vec::new(),
+            }),
+        });
 
         let json = String::from_utf8(payload.to_json_bytes_checked().expect("serialize"))
             .expect("metadata payload should be utf8 json");
@@ -383,6 +426,8 @@ mod tests {
         assert!(json.contains(r#""greeting_text":"道友，可有灵草出让？""#));
         assert!(json.contains(r#""reputation_to_player":50"#));
         assert!(json.contains(r#""qi_hint":"你看不清此人深浅""#));
+        assert!(json.contains(r#""hp_ratio":0.4"#));
+        assert!(json.contains(r#""qi_ratio":0.0"#));
     }
 
     #[test]
@@ -401,15 +446,16 @@ mod tests {
         let mut identities = crate::identity::PlayerIdentities::with_default("Azure", 0);
         identities.active_mut().unwrap().renown.notoriety = 80;
 
-        let payload = build_npc_metadata(
-            42,
-            NpcArchetype::Rogue,
-            None,
-            Some(&membership),
-            None,
-            None,
-            Some(&identities),
-        );
+        let payload = build_npc_metadata(NpcMetadataBuildInput {
+            entity_id: 42,
+            archetype: NpcArchetype::Rogue,
+            cultivation: None,
+            membership: Some(&membership),
+            lifespan: None,
+            player_cultivation: None,
+            player_identities: Some(&identities),
+            wounds: None,
+        });
 
         assert_eq!(payload.reputation_to_player, -80);
     }
