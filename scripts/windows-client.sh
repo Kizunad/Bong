@@ -57,6 +57,19 @@ if [[ ! -d "$WIN_INSTANCE" ]]; then
     exit 1
 fi
 
+if command -v powershell.exe >/dev/null 2>&1; then
+    RUNNING_CLIENT_PID="$(
+        powershell.exe -NoProfile -Command '$process = Get-CimInstance Win32_Process | Where-Object { $_.Name -eq "java.exe" -and $_.CommandLine -match "Fabric_Bang_Test" } | Select-Object -First 1; if ($null -ne $process) { $process.ProcessId }' 2>/dev/null \
+            | tr -d '\r' \
+            | head -n 1
+    )"
+    if [[ -n "$RUNNING_CLIENT_PID" ]]; then
+        echo "[windows-client] 检测到 Fabric_Bang_Test 客户端仍在运行（PID $RUNNING_CLIENT_PID）。" >&2
+        echo "[windows-client] 请先关闭 Minecraft 客户端，再同步/启动；运行中覆盖 mod jar 会导致资源重载 ZipException。" >&2
+        exit 1
+    fi
+fi
+
 echo "[windows-client] 构建 client（./gradlew build）..."
 (cd "$ROOT/client" && JAVA_HOME="$JAVA17_HOME" PATH="$JAVA17_HOME/bin:$PATH" ./gradlew build)
 
