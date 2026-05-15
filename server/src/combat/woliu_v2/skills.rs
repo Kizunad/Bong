@@ -4,7 +4,10 @@ use valence::prelude::{bevy_ecs, DVec3, Entity, Events, Position, ResMut};
 use crate::combat::components::{
     BodyPart, SkillBarBindings, Wound, WoundKind, Wounds, TICKS_PER_SECOND,
 };
-use crate::combat::events::{ApplyStatusEffectIntent, AttackSource, CombatEvent, StatusEffectKind};
+use crate::combat::events::{
+    emit_death_event_if_lethal, ApplyStatusEffectIntent, AttackSource, CombatEvent,
+    StatusEffectKind,
+};
 use crate::combat::CombatClock;
 use crate::cultivation::components::{
     ColorKind, ContamSource, Contamination, Cultivation, MeridianId, MeridianSystem, Realm,
@@ -535,7 +538,9 @@ fn apply_turbulence_burst_target_effects(
     now_tick: u64,
 ) {
     let damage = WOLIU_TURBULENCE_BURST_DAMAGE;
+    let mut death_state = None;
     let damaged = if let Some(mut wounds) = world.get_mut::<Wounds>(target) {
+        let was_alive = wounds.health_current > 0.0;
         wounds.health_current = (wounds.health_current - damage).clamp(0.0, wounds.health_max);
         wounds.entries.push(Wound {
             location: BodyPart::Chest,
@@ -545,6 +550,7 @@ fn apply_turbulence_burst_target_effects(
             created_at_tick: now_tick,
             inflicted_by: Some(format!("entity:{}", caster.to_bits())),
         });
+        death_state = Some((was_alive, wounds.health_current));
         true
     } else {
         false
@@ -574,6 +580,18 @@ fn apply_turbulence_burst_target_effects(
                 defense_wound_severity: None,
             },
         );
+        if let Some((was_alive, health_current)) = death_state {
+            emit_death_event_if_lethal(
+                world,
+                was_alive,
+                health_current,
+                target,
+                format!("woliu.turbulence_burst:entity:{}", caster.to_bits()),
+                Some(caster),
+                None,
+                now_tick,
+            );
+        }
     }
     send_event_if_present(
         world,

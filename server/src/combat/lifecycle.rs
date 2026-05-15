@@ -25,6 +25,7 @@ use crate::cultivation::{
     color::PracticeLog,
     components::{Karma, QiColor},
 };
+use crate::fauna::components::{BeastKind, FaunaTag};
 use crate::inventory::{
     instantiate_inventory_from_loadout, DeathDropAnchor, DefaultLoadout,
     InventoryInstanceIdAllocator, PlayerInventory,
@@ -115,6 +116,7 @@ type NearDeathPersistenceQueryItem<'a> = (
     Option<&'a NpcVisualProfile>,
     Option<&'a mut PlayerInventory>,
     Option<&'a mut SkillSet>,
+    Option<&'a FaunaTag>,
 );
 
 struct DeathScreenContext<'a> {
@@ -649,6 +651,7 @@ pub fn near_death_tick(
         npc_visual_profile,
         _inventory,
         _skill_set,
+        fauna_tag,
     ) in &mut lifecycle_q
     {
         if lifecycle
@@ -671,11 +674,17 @@ pub fn near_death_tick(
             continue;
         }
 
-        let Some(deadline_tick) = lifecycle.near_death_deadline_tick else {
-            continue;
-        };
-        if clock.tick < deadline_tick {
-            continue;
+        let immediate_npc_termination = should_terminate_npc_without_near_death_wait(
+            npc_marker.as_deref(),
+            fauna_tag.as_deref(),
+        );
+        if !immediate_npc_termination {
+            let Some(deadline_tick) = lifecycle.near_death_deadline_tick else {
+                continue;
+            };
+            if clock.tick < deadline_tick {
+                continue;
+            }
         }
 
         if npc_marker.is_some() {
@@ -777,6 +786,13 @@ pub fn near_death_tick(
     }
 }
 
+fn should_terminate_npc_without_near_death_wait(
+    npc_marker: Option<&NpcMarker>,
+    fauna_tag: Option<&FaunaTag>,
+) -> bool {
+    npc_marker.is_some() && fauna_tag.is_some_and(|tag| matches!(tag.beast_kind, BeastKind::Rat))
+}
+
 #[allow(clippy::too_many_arguments)]
 pub fn handle_revival_action_intents(
     clock: Res<CombatClock>,
@@ -809,6 +825,7 @@ pub fn handle_revival_action_intents(
             npc_visual_profile,
             inventory,
             skill_set,
+            _fauna_tag,
         )) = lifecycle_q.get_mut(intent.entity)
         else {
             continue;
@@ -2556,6 +2573,53 @@ mod tests {
         assert!(
             event_ids.contains(&"bong:npc_death_qi_burst"),
             "high-realm NPC profile should survive the near-death wrapper and emit qi burst"
+        );
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn near_death_rat_terminates_without_waiting_for_player_revival_window() {
+        let mut app = App::new();
+        let (settings, root) = persistence_settings("rat-near-death-immediate");
+        app.insert_resource(settings);
+        app.insert_resource(CombatClock { tick: 200 });
+        app.add_event::<PlayerRevived>();
+        app.add_event::<PlayerTerminated>();
+        app.add_event::<DeathCinematicPublished>();
+        app.add_event::<VfxEventRequest>();
+        app.add_systems(Update, near_death_tick);
+
+        let entity = app
+            .world_mut()
+            .spawn((
+                Lifecycle {
+                    character_id: "rat-immediate".to_string(),
+                    state: LifecycleState::NearDeath,
+                    near_death_deadline_tick: Some(
+                        200 + crate::combat::components::NEAR_DEATH_WINDOW_TICKS,
+                    ),
+                    ..Default::default()
+                },
+                Wounds {
+                    health_current: 0.0,
+                    health_max: 100.0,
+                    entries: Vec::new(),
+                },
+                Position::new([0.0, 66.0, 0.0]),
+                NpcMarker,
+                crate::fauna::components::FaunaTag::new(crate::fauna::components::BeastKind::Rat),
+            ))
+            .id();
+
+        app.update();
+
+        let lifecycle = app.world().entity(entity).get::<Lifecycle>().unwrap();
+        assert_eq!(lifecycle.state, LifecycleState::Terminated);
+        assert_eq!(
+            app.world().resource::<Events<PlayerTerminated>>().len(),
+            1,
+            "rat should not wait out the player revival near-death window"
         );
 
         let _ = fs::remove_dir_all(root);

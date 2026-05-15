@@ -15,6 +15,7 @@ use crate::combat::dugu_v2::{
     EclipseNeedleEvent, PenetrateChainEvent, PermanentQiMaxDecayApplied, ReverseTriggeredEvent,
     SelfCureProgressEvent, ShroudActivatedEvent,
 };
+use crate::combat::events::DeathEvent;
 use crate::combat::CombatClock;
 use crate::cultivation::components::{ColorKind, Cultivation, MeridianId, QiColor, Realm};
 use crate::cultivation::dugu::DuguRevealedEvent;
@@ -35,6 +36,7 @@ fn setup_app() -> App {
     app.add_event::<PermanentQiMaxDecayApplied>();
     app.add_event::<DuguRevealedEvent>();
     app.add_event::<JueBiTriggerEvent>();
+    app.add_event::<DeathEvent>();
     app
 }
 
@@ -197,6 +199,43 @@ fn eclipse_applies_taint_mark_to_spirit_target() {
     assert!(mark.permanent_decay_rate_per_min > 0.0);
     let events = app.world().resource::<Events<EclipseNeedleEvent>>();
     assert_eq!(events.len(), 1);
+    assert!(app.world().resource::<Events<DeathEvent>>().is_empty());
+}
+
+#[test]
+fn eclipse_lethal_damage_emits_death_event() {
+    let mut app = setup_app();
+    let caster = actor(&mut app, Realm::Spirit, 100.0, 100.0, 0.0);
+    let target = actor(&mut app, Realm::Induce, 200.0, 200.0, 1.0);
+    app.world_mut()
+        .get_mut::<Wounds>(target)
+        .unwrap()
+        .health_current = 4.0;
+
+    let result = resolve_dugu_v2_skill(
+        app.world_mut(),
+        caster,
+        0,
+        Some(target),
+        DuguSkillId::Eclipse,
+    );
+
+    assert!(matches!(result, CastResult::Started { .. }));
+    assert_eq!(
+        app.world().get::<Wounds>(target).unwrap().health_current,
+        0.0
+    );
+    let death_events = app.world().resource::<Events<DeathEvent>>();
+    let event = death_events
+        .iter_current_update_events()
+        .find(|event| event.target == target)
+        .expect("lethal dugu eclipse should emit DeathEvent");
+    assert_eq!(event.attacker, Some(caster));
+    assert_eq!(event.attacker_player_id, None);
+    assert_eq!(
+        event.cause,
+        format!("dugu.eclipse:entity:{}", caster.to_bits())
+    );
 }
 
 #[test]
