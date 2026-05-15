@@ -12,7 +12,7 @@
 //!   - OAK_LOG / BIRCH_LOG / STRIPPED_OAK_LOG / STRIPPED_BIRCH_LOG → crude_wood ×1-2
 //!   - STONE / COBBLESTONE / ANDESITE / DIORITE / GRANITE → stone_chunk ×1
 //!   - IRON_ORE / DEEPSLATE_IRON_ORE → iron_ore ×1
-//!   - GRASS_BLOCK → grass_fiber ×0-1 (50%)
+//!   - GRASS_BLOCK → grass_fiber ×1
 
 use valence::prelude::{
     App, BlockPos, BlockState, Client, DiggingEvent, DiggingState, Entity, EventReader, GameMode,
@@ -61,7 +61,7 @@ pub fn block_drop_for(block: BlockState) -> Option<BlockDropEntry> {
         }),
         BlockState::GRASS_BLOCK => Some(BlockDropEntry {
             template_id: "grass_fiber",
-            min_count: 0,
+            min_count: 1,
             max_count: 1,
         }),
         _ => None,
@@ -266,10 +266,10 @@ mod tests {
     }
 
     #[test]
-    fn grass_block_drops_grass_fiber_probabilistic() {
+    fn grass_block_drops_grass_fiber() {
         let entry = block_drop_for(BlockState::GRASS_BLOCK).expect("grass should have a drop");
         assert_eq!(entry.template_id, "grass_fiber");
-        assert_eq!(entry.min_count, 0);
+        assert_eq!(entry.min_count, 1);
         assert_eq!(entry.max_count, 1);
     }
 
@@ -326,26 +326,15 @@ mod tests {
     }
 
     #[test]
-    fn roll_count_grass_can_be_zero() {
+    fn roll_count_grass_is_stable() {
         let entry = BlockDropEntry {
             template_id: "grass_fiber",
-            min_count: 0,
+            min_count: 1,
             max_count: 1,
         };
-        let mut saw_zero = false;
-        let mut saw_one = false;
         for tick in 0..500 {
             let count = roll_count(&entry, BlockPos::new(3, 64, 7), Entity::from_raw(2), tick);
-            match count {
-                0 => saw_zero = true,
-                1 => saw_one = true,
-                _ => panic!("unexpected count {count}"),
-            }
-            if saw_zero && saw_one {
-                break;
-            }
+            assert_eq!(count, 1);
         }
-        assert!(saw_zero, "grass_fiber should sometimes produce 0");
-        assert!(saw_one, "grass_fiber should sometimes produce 1");
     }
 }
