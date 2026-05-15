@@ -221,7 +221,7 @@ pub fn migration_move_system(
             }
             NpcLodTier::Far => {
                 if now % 1_200 == 0 {
-                    position.set(step_toward(
+                    position.set(step_toward_xz_preserving_y(
                         current,
                         target.target_pos,
                         MIGRATION_FAR_STEP_BLOCKS,
@@ -232,11 +232,6 @@ pub fn migration_move_system(
                 if let Some(mut navigator) = navigator {
                     navigator.set_goal(target.target_pos, target.speed_multiplier);
                 }
-                position.set(step_toward(
-                    current,
-                    target.target_pos,
-                    MIGRATION_NEAR_STEP_BLOCKS * target.speed_multiplier,
-                ));
             }
         }
     }
@@ -404,6 +399,11 @@ fn step_toward(current: DVec3, target: DVec3, max_step: f64) -> DVec3 {
         return target;
     }
     current + delta / distance * max_step
+}
+
+fn step_toward_xz_preserving_y(current: DVec3, target: DVec3, max_step: f64) -> DVec3 {
+    let horizontal_target = DVec3::new(target.x, current.y, target.z);
+    step_toward(current, horizontal_target, max_step)
 }
 
 #[cfg(test)]
@@ -579,6 +579,76 @@ mod tests {
             app.world().get::<Position>(entity).unwrap().get(),
             target_pos,
             "Dormant 层不真实寻路，直接落到目标 zone 边缘"
+        );
+    }
+
+    #[test]
+    fn near_entities_delegate_migration_to_navigator_without_direct_position_step() {
+        let mut app = App::new();
+        app.insert_resource(CultivationClock { tick: 1 });
+        app.add_systems(Update, migration_move_system);
+        let start_pos = DVec3::new(8.0, 80.0, 8.0);
+        let target_pos = DVec3::new(72.0, 66.0, 8.0);
+        let entity = app
+            .world_mut()
+            .spawn((
+                NpcMarker,
+                NpcLodTier::Near,
+                Position::new([start_pos.x, start_pos.y, start_pos.z]),
+                Navigator::new(),
+                MigrationTarget {
+                    origin_zone: "source".to_string(),
+                    target_zone: "refuge".to_string(),
+                    target_pos,
+                    speed_multiplier: 1.5,
+                    started_at_tick: 0,
+                },
+            ))
+            .id();
+
+        app.update();
+
+        assert_eq!(
+            app.world().get::<Position>(entity).unwrap().get(),
+            start_pos,
+            "Near 迁徙实体必须交给 Navigator，不能同 tick 裸写 Position 穿墙/飞行"
+        );
+        assert!(
+            !app.world().get::<Navigator>(entity).unwrap().is_idle(),
+            "Near 迁徙实体应设置 Navigator 目标"
+        );
+    }
+
+    #[test]
+    fn far_entities_preserve_altitude_during_coarse_migration_step() {
+        let mut app = App::new();
+        app.insert_resource(CultivationClock { tick: 1_200 });
+        app.add_systems(Update, migration_move_system);
+        let start_pos = DVec3::new(8.0, 96.0, 8.0);
+        let target_pos = DVec3::new(72.0, 66.0, 8.0);
+        let entity = app
+            .world_mut()
+            .spawn((
+                NpcMarker,
+                NpcLodTier::Far,
+                Position::new([start_pos.x, start_pos.y, start_pos.z]),
+                MigrationTarget {
+                    origin_zone: "source".to_string(),
+                    target_zone: "refuge".to_string(),
+                    target_pos,
+                    speed_multiplier: 1.5,
+                    started_at_tick: 0,
+                },
+            ))
+            .id();
+
+        app.update();
+
+        let moved = app.world().get::<Position>(entity).unwrap().get();
+        assert!(moved.x > start_pos.x, "Far 迁徙仍应低频向目标 XZ 推进");
+        assert_eq!(
+            moved.y, start_pos.y,
+            "Far 迁徙的粗粒度模拟不能把实体沿 3D 直线拉成飞行"
         );
     }
 
