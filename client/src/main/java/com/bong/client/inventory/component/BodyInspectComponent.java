@@ -394,8 +394,9 @@ public class BodyInspectComponent extends BaseComponent {
             if (cs == null) continue;
             boolean hover = (ch == hoveredChannel);
             boolean selected = (ch == selectedChannel);
+            boolean target = (ch == meridianBody.targetMeridian());
             boolean techniqueHighlighted = techniqueHighlightedChannels.contains(ch);
-            drawMeridianGlow(ctx, cx, by, ch, cs, hover, selected, techniqueHighlighted);
+            drawMeridianGlow(ctx, cx, by, ch, cs, hover, selected, target, techniqueHighlighted);
         }
 
         // Highlight drag target
@@ -450,15 +451,17 @@ public class BodyInspectComponent extends BaseComponent {
         String fam = focus.family() == MeridianChannel.Family.REGULAR ? "§8正经" : "§d奇经";
         ctx.drawTextWithShadow(tr, Text.literal(fam), afterName, py, 0xFFAAAAAA);
 
+        boolean target = meridianBody.targetMeridian() == focus;
         if (opened) {
             String dmg = cs.damage().label();
             int cracks = meridianBody.cracksFor(focus);
             String rightText = cracks > 0 ? (dmg + " · 裂 " + cracks) : dmg;
+            if (target) rightText = "目标 · " + rightText;
             int rightColor = cracks > 0 ? 0xFFFF5050 : cs.damage().color();
             ctx.drawTextWithShadow(tr, Text.literal(rightText),
                 bx + W - 4 - tr.getWidth(rightText), py, rightColor);
         } else {
-            String rightText = "未通";
+            String rightText = target ? "目标 · 未通" : "未通";
             ctx.drawTextWithShadow(tr, Text.literal("§c" + rightText),
                 bx + W - 4 - tr.getWidth(rightText), py, 0xFFCC6644);
         }
@@ -547,11 +550,12 @@ public class BodyInspectComponent extends BaseComponent {
     /** 显示脉 — 干净的单笔画：深色边 + 主色线 + 可选选中环。不发光。 */
     private void drawMeridianGlow(OwoUIDrawContext ctx, int cx, int by,
                                   MeridianChannel ch, ChannelState cs,
-                                  boolean hover, boolean selected, boolean techniqueHighlighted) {
+                                  boolean hover, boolean selected, boolean target,
+                                  boolean techniqueHighlighted) {
         int[][] wp = MERIDIAN_PATHS.get(ch);
         if (wp == null) return;
 
-        boolean active = hover || selected || techniqueHighlighted;
+        boolean active = hover || selected || target || techniqueHighlighted;
         int baseRgb;
         if (cs.blocked()) {
             baseRgb = active ? 0x888888 : 0x555555;
@@ -639,6 +643,10 @@ public class BodyInspectComponent extends BaseComponent {
         if (techniqueHighlighted && !selected) {
             int[] end = wp[wp.length - 1];
             drawCircleOutline(ctx, cx + end[0], by + end[1], 4, 0xCC9FE0D0);
+        }
+        if (target) {
+            int[] end = wp[wp.length - 1];
+            drawCircleOutline(ctx, cx + end[0], by + end[1], 6, 0xDD40C0E0);
         }
         if (selected) {
             int[] end = wp[wp.length - 1];

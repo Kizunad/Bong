@@ -107,6 +107,22 @@ quality_tier = 1
 durability_max = 50.0
 
 [[item]]
+id = "eclipse_needle_iron"
+name = "蚀针（凡铁）"
+category = "weapon"
+grid_w = 1
+grid_h = 1
+base_weight = 0.05
+rarity = "uncommon"
+spirit_quality_initial = 0.35
+description = "粗铁针以赤髓草汁浸过，能承一点阴诡色真元。凡铁胎，胜在便宜。"
+[item.weapon]
+kind = "dagger"
+base_attack = 2.0
+quality_tier = 0
+durability_max = 30.0
+
+[[item]]
 id = "zhenyuan_mine"
 name = "真元诡雷"
 category = "weapon"

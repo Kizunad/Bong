@@ -38,7 +38,7 @@ use crate::combat::needle::IntentSource;
 use crate::combat::tuike::{can_equip_false_skin, false_skin_kind_for_item, FalseSkinForgeRequest};
 use crate::combat::CombatClock;
 use crate::cultivation::breakthrough::BreakthroughRequest;
-use crate::cultivation::components::{recover_current_qi, Cultivation, MeridianSystem};
+use crate::cultivation::components::{recover_current_qi, Cultivation, MeridianId, MeridianSystem};
 use crate::cultivation::dugu::SelfAntidoteIntent;
 use crate::cultivation::forging::ForgeRequest;
 use crate::cultivation::insight::{InsightChosen, InsightRequest};
@@ -333,6 +333,31 @@ const NPC_INTERACTION_MAX_DISTANCE: f64 = 6.0;
 /// 20 tick/s × 60 s × 5 = 6000。
 const BREAKTHROUGH_BOOST_DURATION_TICKS: u64 = 6_000;
 
+fn meridian_label(id: MeridianId) -> &'static str {
+    match id {
+        MeridianId::Lung => "肺经",
+        MeridianId::LargeIntestine => "大肠经",
+        MeridianId::Stomach => "胃经",
+        MeridianId::Spleen => "脾经",
+        MeridianId::Heart => "心经",
+        MeridianId::SmallIntestine => "小肠经",
+        MeridianId::Bladder => "膀胱经",
+        MeridianId::Kidney => "肾经",
+        MeridianId::Pericardium => "心包经",
+        MeridianId::TripleEnergizer => "三焦经",
+        MeridianId::Gallbladder => "胆经",
+        MeridianId::Liver => "肝经",
+        MeridianId::Ren => "任脉",
+        MeridianId::Du => "督脉",
+        MeridianId::Chong => "冲脉",
+        MeridianId::Dai => "带脉",
+        MeridianId::YinQiao => "阴跷脉",
+        MeridianId::YangQiao => "阳跷脉",
+        MeridianId::YinWei => "阴维脉",
+        MeridianId::YangWei => "阳维脉",
+    }
+}
+
 #[allow(clippy::too_many_arguments)] // Bevy system signature; one resource/query per gameplay area.
 pub fn handle_client_request_payloads(
     mut events: EventReader<CustomPayloadEvent>,
@@ -485,6 +510,12 @@ pub fn handle_client_request_payloads(
                     meridian
                 );
                 commands.entity(ev.client).insert(MeridianTarget(meridian));
+                if let Ok((_username, mut client)) = clients.get_mut(ev.client) {
+                    client.send_chat_message(format!(
+                        "§a[修炼] 已收到冲脉目标：{}。",
+                        meridian_label(meridian)
+                    ));
+                }
             }
             ClientRequestV1::BreakthroughRequest { .. } => {
                 tracing::info!(
