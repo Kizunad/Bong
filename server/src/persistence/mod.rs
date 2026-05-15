@@ -37,7 +37,7 @@ pub mod identity;
 pub const DEFAULT_DATABASE_PATH: &str = "data/bong.db";
 pub const SQLITE_BUSY_TIMEOUT_MS: u64 = 15_000;
 const DEFAULT_DECEASED_PUBLIC_DIR: &str = "../library-web/public/deceased";
-const CURRENT_USER_VERSION: i32 = 24;
+const CURRENT_USER_VERSION: i32 = 25;
 const AGENT_WORLD_MODEL_ROW_ID: i64 = 1;
 const ASCENSION_QUOTA_ROW_ID: i64 = 1;
 const TRIBULATION_KIND_DU_XU: &str = "du_xu";
@@ -1601,6 +1601,25 @@ fn apply_migrations(connection: &mut Connection) -> rusqlite::Result<()> {
         transaction.commit()?;
     }
 
+    let current_version: i32 =
+        connection.query_row("PRAGMA user_version;", [], |row| row.get(0))?;
+    if current_version < 25 {
+        let transaction = connection.transaction()?;
+        transaction.execute_batch(
+            "
+            CREATE TABLE IF NOT EXISTS player_known_techniques (
+                username TEXT PRIMARY KEY,
+                known_techniques_json TEXT NOT NULL,
+                schema_version INTEGER NOT NULL CHECK (schema_version >= 1),
+                last_updated_wall INTEGER NOT NULL CHECK (last_updated_wall >= 0)
+            );
+            ",
+        )?;
+        assert_player_known_techniques_schema_ready(&transaction)?;
+        transaction.execute_batch("PRAGMA user_version = 25;")?;
+        transaction.commit()?;
+    }
+
     let final_version: i32 = connection.query_row("PRAGMA user_version;", [], |row| row.get(0))?;
     if final_version != CURRENT_USER_VERSION {
         return Err(rusqlite::Error::ToSqlConversionFailure(Box::new(
@@ -1756,6 +1775,47 @@ fn assert_spirit_treasure_schema_ready(
         }
     }
 
+    Ok(())
+}
+
+fn assert_player_known_techniques_schema_ready(
+    transaction: &rusqlite::Transaction<'_>,
+) -> rusqlite::Result<()> {
+    let columns = table_columns(transaction, "player_known_techniques")?;
+    let required = [
+        "username",
+        "known_techniques_json",
+        "schema_version",
+        "last_updated_wall",
+    ];
+    if let Some(missing) = required
+        .iter()
+        .find(|column| !columns.iter().any(|name| name == **column))
+    {
+        return Err(rusqlite::Error::ToSqlConversionFailure(Box::new(
+            io::Error::other(format!(
+                "v25 migration completed but player_known_techniques column {missing} missing"
+            )),
+        )));
+    }
+
+    let mut statement = transaction.prepare("PRAGMA table_info(player_known_techniques)")?;
+    let primary_key = statement
+        .query_map([], |row| {
+            Ok((row.get::<_, String>(1)?, row.get::<_, i32>(5)?))
+        })?
+        .collect::<Result<Vec<_>, _>>()?
+        .into_iter()
+        .filter(|(_, pk_ordinal)| *pk_ordinal > 0)
+        .collect::<Vec<_>>();
+    let expected_primary_key = [("username".to_owned(), 1)];
+    if primary_key.as_slice() != expected_primary_key.as_slice() {
+        return Err(rusqlite::Error::ToSqlConversionFailure(Box::new(
+            io::Error::other(format!(
+                "v25 migration completed but player_known_techniques primary key mismatch: expected username got {primary_key:?}"
+            )),
+        )));
+    }
     Ok(())
 }
 
@@ -5857,7 +5917,10 @@ mod persistence_tests {
         let user_version: i32 = connection
             .query_row("PRAGMA user_version;", [], |row| row.get(0))
             .expect("user_version should exist");
-        assert_eq!(user_version, CURRENT_USER_VERSION);
+        assert_eq!(
+            user_version, CURRENT_USER_VERSION,
+            "expected user_version to advance to CURRENT_USER_VERSION ({CURRENT_USER_VERSION}) because all migrations should finish after bootstrap, actual {user_version}"
+        );
 
         let has_index: Option<String> = connection
             .query_row(
@@ -6209,7 +6272,10 @@ mod persistence_tests {
         let user_version: i32 = connection
             .query_row("PRAGMA user_version;", [], |row| row.get(0))
             .expect("user_version should be readable");
-        assert_eq!(user_version, CURRENT_USER_VERSION);
+        assert_eq!(
+            user_version, CURRENT_USER_VERSION,
+            "expected user_version to advance to CURRENT_USER_VERSION ({CURRENT_USER_VERSION}) because v13 migration should succeed, actual {user_version}"
+        );
 
         for dropped_column in ["realm", "spirit_qi", "spirit_qi_max", "experience"] {
             let count: i64 = connection
@@ -6322,9 +6388,13 @@ mod persistence_tests {
         let user_version: i32 = connection
             .query_row("PRAGMA user_version;", [], |row| row.get(0))
             .expect("user_version should be readable");
-        assert_eq!(user_version, CURRENT_USER_VERSION);
+        assert_eq!(
+            user_version, CURRENT_USER_VERSION,
+            "expected user_version to advance to CURRENT_USER_VERSION ({CURRENT_USER_VERSION}) because legacy v12 fixture should migrate to current, actual {user_version}"
+        );
 
         for table in [
+            "player_known_techniques",
             "player_shrine",
             "player_cultivation",
             "social_anonymity",
@@ -7034,6 +7104,152 @@ mod persistence_tests {
                 "spirit_treasure_world should include {column}"
             );
         }
+    }
+
+    #[test]
+    fn v25_migration_adds_player_known_techniques_table() {
+        let db_path = database_path("v25-player-known-techniques");
+        fs::create_dir_all(db_path.parent().expect("db path should have parent"))
+            .expect("temp db parent should be created");
+        let mut connection = Connection::open(&db_path).expect("db should open");
+        connection
+            .execute_batch("PRAGMA user_version = 24;")
+            .expect("legacy v24 fixture should create");
+
+        apply_migrations(&mut connection).expect("v25 migration should succeed");
+
+        let user_version: i32 = connection
+            .query_row("PRAGMA user_version;", [], |row| row.get(0))
+            .expect("user_version should be readable");
+        assert_eq!(
+            user_version, CURRENT_USER_VERSION,
+            "expected user_version to advance to CURRENT_USER_VERSION ({CURRENT_USER_VERSION}) because v25 migration succeeded, actual {user_version}"
+        );
+
+        let exists: Option<String> = connection
+            .query_row(
+                "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'player_known_techniques'",
+                [],
+                |row| row.get(0),
+            )
+            .optional()
+            .expect("sqlite_master query should succeed");
+        assert_eq!(
+            exists.as_deref(),
+            Some("player_known_techniques"),
+            "expected sqlite_master to include player_known_techniques because v25 migration should create it, actual {exists:?}"
+        );
+
+        let mut statement = connection
+            .prepare("PRAGMA table_info(player_known_techniques)")
+            .expect("player_known_techniques table_info should prepare");
+        let columns = statement
+            .query_map([], |row| row.get::<_, String>(1))
+            .expect("player_known_techniques table_info should query")
+            .collect::<Result<Vec<_>, _>>()
+            .expect("player_known_techniques columns should collect");
+        for column in [
+            "username",
+            "known_techniques_json",
+            "schema_version",
+            "last_updated_wall",
+        ] {
+            assert!(
+                columns.iter().any(|candidate| candidate == column),
+                "player_known_techniques should include {column}"
+            );
+        }
+
+        let primary_keys = connection
+            .prepare("PRAGMA table_info(player_known_techniques)")
+            .expect("player_known_techniques primary key table_info should prepare")
+            .query_map([], |row| {
+                Ok((row.get::<_, String>(1)?, row.get::<_, i32>(5)?))
+            })
+            .expect("player_known_techniques primary key table_info should query")
+            .filter_map(|row| {
+                let (name, pk) =
+                    row.expect("player_known_techniques primary key row should decode");
+                (pk > 0).then_some(name)
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            primary_keys,
+            vec!["username".to_string()],
+            "expected username to be the only primary key because player_known_techniques is keyed by player, actual {primary_keys:?}"
+        );
+    }
+
+    #[test]
+    fn v25_migration_rejects_partial_player_known_techniques_schema() {
+        let db_path = database_path("v25-partial-player-known-techniques");
+        fs::create_dir_all(db_path.parent().expect("db path should have parent"))
+            .expect("temp db parent should be created");
+        let mut connection = Connection::open(&db_path).expect("db should open");
+        connection
+            .execute_batch(
+                "
+                CREATE TABLE player_known_techniques (
+                    username TEXT PRIMARY KEY
+                );
+                PRAGMA user_version = 24;
+                ",
+            )
+            .expect("partial v24 fixture should be created");
+
+        let error = apply_migrations(&mut connection)
+            .expect_err("v25 migration should reject partial player_known_techniques schema");
+        assert!(
+            error
+                .to_string()
+                .contains("player_known_techniques column"),
+            "expected partial schema error to name player_known_techniques column, actual error={error}"
+        );
+
+        let user_version: i32 = connection
+            .query_row("PRAGMA user_version;", [], |row| row.get(0))
+            .expect("user_version should be readable");
+        assert_eq!(
+            user_version, 24,
+            "expected failed v25 migration to leave user_version at 24, actual {user_version}"
+        );
+    }
+
+    #[test]
+    fn v25_migration_rejects_player_known_techniques_without_username_primary_key() {
+        let db_path = database_path("v25-wrong-player-known-techniques-pk");
+        fs::create_dir_all(db_path.parent().expect("db path should have parent"))
+            .expect("temp db parent should be created");
+        let mut connection = Connection::open(&db_path).expect("db should open");
+        connection
+            .execute_batch(
+                "
+                CREATE TABLE player_known_techniques (
+                    username TEXT NOT NULL,
+                    known_techniques_json TEXT NOT NULL,
+                    schema_version INTEGER NOT NULL,
+                    last_updated_wall INTEGER NOT NULL
+                );
+                PRAGMA user_version = 24;
+                ",
+            )
+            .expect("wrong primary key v24 fixture should be created");
+
+        let error = apply_migrations(&mut connection).expect_err(
+            "v25 migration should reject player_known_techniques without username primary key",
+        );
+        assert!(
+            error.to_string().contains("primary key mismatch"),
+            "expected primary key mismatch error, actual error={error}"
+        );
+
+        let user_version: i32 = connection
+            .query_row("PRAGMA user_version;", [], |row| row.get(0))
+            .expect("user_version should be readable");
+        assert_eq!(
+            user_version, 24,
+            "expected failed v25 migration to leave user_version at 24, actual {user_version}"
+        );
     }
 
     #[test]

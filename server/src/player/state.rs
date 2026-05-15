@@ -11,6 +11,7 @@ use valence::prelude::{bevy_ecs, Component, DVec3, Resource};
 
 use crate::combat::components::{QuickSlotBindings, SkillBarBindings, SkillSlot};
 use crate::cultivation::components::{Cultivation, Realm};
+use crate::cultivation::known_techniques::KnownTechniques;
 use crate::cultivation::lifespan::{
     lifespan_delta_years_for_real_seconds, LifespanComponent, LIFESPAN_OFFLINE_MULTIPLIER,
 };
@@ -153,6 +154,7 @@ pub struct LoadedPlayerSlices {
     pub lifespan: Option<LifespanComponent>,
     pub in_coffin: bool,
     pub skill_set: SkillSet,
+    pub known_techniques: KnownTechniques,
     pub(crate) ui_prefs: PlayerUiPrefs,
 }
 
@@ -167,6 +169,8 @@ pub struct PlayerExportBundle {
     pub last_dimension: DimensionKind,
     pub inventory: Option<PlayerInventory>,
     pub skill_set: SkillSet,
+    #[serde(default)]
+    pub known_techniques: KnownTechniques,
     pub ui_prefs: serde_json::Value,
 }
 
@@ -417,6 +421,7 @@ pub fn load_player_slices(
                 lifespan: None,
                 in_coffin: false,
                 skill_set: SkillSet::default(),
+                known_techniques: KnownTechniques::default(),
                 ui_prefs: PlayerUiPrefs::default(),
             };
         }
@@ -468,6 +473,17 @@ pub fn load_player_slices(
             SkillSet::default()
         }
     };
+    let known_techniques = match load_player_known_techniques_from_sqlite(&connection, username) {
+        Ok(known_techniques) => known_techniques,
+        Err(error) => {
+            tracing::warn!(
+                "[bong][player] failed to load persisted known techniques for `{}` from sqlite {}: {error}; using default known techniques",
+                username,
+                persistence.db_path().display()
+            );
+            KnownTechniques::default()
+        }
+    };
     let ui_prefs = match load_player_ui_prefs_from_sqlite(&connection, username) {
         Ok(ui_prefs) => ui_prefs,
         Err(error) => {
@@ -488,6 +504,7 @@ pub fn load_player_slices(
         lifespan,
         in_coffin,
         skill_set,
+        known_techniques,
         ui_prefs,
     }
 }
@@ -702,6 +719,16 @@ pub fn save_player_skill_slice(
     Ok(persistence.db_path().to_path_buf())
 }
 
+pub fn save_player_known_techniques_slice(
+    persistence: &PlayerStatePersistence,
+    username: &str,
+    known_techniques: &KnownTechniques,
+) -> io::Result<PathBuf> {
+    let mut connection = open_player_connection(persistence)?;
+    persist_player_known_techniques_slice_in_sqlite(&mut connection, username, known_techniques)?;
+    Ok(persistence.db_path().to_path_buf())
+}
+
 pub(crate) fn update_player_ui_prefs<F>(
     persistence: &PlayerStatePersistence,
     username: &str,
@@ -749,6 +776,7 @@ pub fn export_player_bundle(
         last_dimension: loaded.last_dimension,
         inventory: loaded.inventory,
         skill_set: loaded.skill_set,
+        known_techniques: loaded.known_techniques,
         ui_prefs,
     })
 }
@@ -772,6 +800,7 @@ pub fn import_player_bundle(
         .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
     let inventory_json = serialize_inventory_json(bundle.inventory.as_ref())?;
     let skill_set_json = serialize_skill_set_json(&bundle.skill_set)?;
+    let known_techniques_json = serialize_known_techniques_json(&bundle.known_techniques)?;
     let normalized = bundle.state.normalized();
     let [pos_x, pos_y, pos_z] = bundle.position;
     let last_updated_wall = current_unix_seconds();
@@ -876,6 +905,28 @@ pub fn import_player_bundle(
             params![
                 bundle.username,
                 skill_set_json,
+                PLAYER_ROW_SCHEMA_VERSION,
+                last_updated_wall
+            ],
+        )
+        .map_err(io::Error::other)?;
+    transaction
+        .execute(
+            "
+            INSERT INTO player_known_techniques (
+                username,
+                known_techniques_json,
+                schema_version,
+                last_updated_wall
+            ) VALUES (?1, ?2, ?3, ?4)
+            ON CONFLICT(username) DO UPDATE SET
+                known_techniques_json = excluded.known_techniques_json,
+                schema_version = excluded.schema_version,
+                last_updated_wall = excluded.last_updated_wall
+            ",
+            params![
+                bundle.username,
+                known_techniques_json,
                 PLAYER_ROW_SCHEMA_VERSION,
                 last_updated_wall
             ],
@@ -1313,6 +1364,31 @@ fn load_player_skill_set_from_sqlite(
         .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))
 }
 
+fn load_player_known_techniques_from_sqlite(
+    connection: &Connection,
+    username: &str,
+) -> io::Result<KnownTechniques> {
+    let known_techniques_json: Option<String> = connection
+        .query_row(
+            "
+            SELECT known_techniques_json
+            FROM player_known_techniques
+            WHERE username = ?1
+            ",
+            params![username],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(io::Error::other)?;
+
+    let Some(known_techniques_json) = known_techniques_json else {
+        return Ok(KnownTechniques::default());
+    };
+
+    serde_json::from_str::<KnownTechniques>(&known_techniques_json)
+        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))
+}
+
 fn persist_player_core_slice_in_sqlite(
     connection: &mut Connection,
     username: &str,
@@ -1499,6 +1575,40 @@ fn persist_player_skill_slice_in_sqlite(
     Ok(())
 }
 
+fn persist_player_known_techniques_slice_in_sqlite(
+    connection: &mut Connection,
+    username: &str,
+    known_techniques: &KnownTechniques,
+) -> io::Result<()> {
+    let known_techniques_json = serialize_known_techniques_json(known_techniques)?;
+    let last_updated_wall = current_unix_seconds();
+
+    connection
+        .execute(
+            "
+            INSERT INTO player_known_techniques (
+                username,
+                known_techniques_json,
+                schema_version,
+                last_updated_wall
+            ) VALUES (?1, ?2, ?3, ?4)
+            ON CONFLICT(username) DO UPDATE SET
+                known_techniques_json = excluded.known_techniques_json,
+                schema_version = excluded.schema_version,
+                last_updated_wall = excluded.last_updated_wall
+            ",
+            params![
+                username,
+                known_techniques_json,
+                PLAYER_ROW_SCHEMA_VERSION,
+                last_updated_wall
+            ],
+        )
+        .map_err(io::Error::other)?;
+
+    Ok(())
+}
+
 #[allow(clippy::too_many_arguments)]
 fn persist_player_slices_in_sqlite(
     connection: &mut Connection,
@@ -1517,6 +1627,7 @@ fn persist_player_slices_in_sqlite(
     let [pos_x, pos_y, pos_z] = position;
     let inventory_json = serialize_inventory_json(inventory)?;
     let skill_set_json = serialize_skill_set_json(skill_set)?;
+    let known_techniques_json = serialize_known_techniques_json(&KnownTechniques::default())?;
     let last_updated_wall = current_unix_seconds();
     let prefs_json = default_ui_prefs_json()?;
     let in_coffin_value = resolve_in_coffin_for_persist(connection, username, in_coffin)?;
@@ -1639,6 +1750,24 @@ fn persist_player_slices_in_sqlite(
     transaction
         .execute(
             "
+            INSERT OR IGNORE INTO player_known_techniques (
+                username,
+                known_techniques_json,
+                schema_version,
+                last_updated_wall
+            ) VALUES (?1, ?2, ?3, ?4)
+            ",
+            params![
+                username,
+                known_techniques_json,
+                PLAYER_ROW_SCHEMA_VERSION,
+                last_updated_wall
+            ],
+        )
+        .map_err(io::Error::other)?;
+    transaction
+        .execute(
+            "
             INSERT OR IGNORE INTO player_ui_prefs (
                 username,
                 prefs_json,
@@ -1712,6 +1841,8 @@ fn insert_default_player_slice_rows(
     let [pos_x, pos_y, pos_z] = crate::player::spawn_position();
     let skill_set_json = serialize_skill_set_json(&SkillSet::default())
         .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?;
+    let known_techniques_json = serialize_known_techniques_json(&KnownTechniques::default())
+        .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?;
 
     transaction.execute(
         "
@@ -1763,6 +1894,22 @@ fn insert_default_player_slice_rows(
         params![
             username,
             skill_set_json,
+            PLAYER_ROW_SCHEMA_VERSION,
+            last_updated_wall
+        ],
+    )?;
+    transaction.execute(
+        "
+        INSERT OR IGNORE INTO player_known_techniques (
+            username,
+            known_techniques_json,
+            schema_version,
+            last_updated_wall
+        ) VALUES (?1, ?2, ?3, ?4)
+        ",
+        params![
+            username,
+            known_techniques_json,
             PLAYER_ROW_SCHEMA_VERSION,
             last_updated_wall
         ],
@@ -1832,6 +1979,11 @@ fn serialize_inventory_json(inventory: Option<&PlayerInventory>) -> io::Result<S
 
 fn serialize_skill_set_json(skill_set: &SkillSet) -> io::Result<String> {
     serde_json::to_string(skill_set)
+        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))
+}
+
+fn serialize_known_techniques_json(known_techniques: &KnownTechniques) -> io::Result<String> {
+    serde_json::to_string(known_techniques)
         .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))
 }
 
@@ -2262,6 +2414,50 @@ mod player_state_tests {
     }
 
     #[test]
+    fn player_known_techniques_slice_roundtrips_dash_proficiency() {
+        let (persistence, data_dir) = sqlite_persistence("known-techniques-roundtrip");
+        let known_techniques = KnownTechniques {
+            entries: vec![crate::cultivation::known_techniques::KnownTechnique {
+                id: "movement.dash".to_string(),
+                proficiency: 0.42,
+                active: true,
+            }],
+        };
+
+        save_player_state(&persistence, "Azure", &PlayerState::default())
+            .expect("baseline player state should persist");
+        save_player_known_techniques_slice(&persistence, "Azure", &known_techniques)
+            .expect("known techniques slice should persist");
+
+        let loaded = load_player_slices(&persistence, "Azure");
+        let connection = Connection::open(persistence.db_path()).expect("sqlite db should open");
+        let known_techniques_json: String = connection
+            .query_row(
+                "SELECT known_techniques_json FROM player_known_techniques WHERE username = ?1",
+                params!["Azure"],
+                |row| row.get(0),
+            )
+            .expect("player_known_techniques row should exist");
+        let snapshot: serde_json::Value = serde_json::from_str(&known_techniques_json)
+            .expect("known techniques JSON should decode");
+
+        assert_eq!(loaded.known_techniques, known_techniques);
+        assert_eq!(
+            snapshot
+                .pointer("/entries/0/id")
+                .and_then(serde_json::Value::as_str),
+            Some("movement.dash")
+        );
+        let proficiency = snapshot
+            .pointer("/entries/0/proficiency")
+            .and_then(serde_json::Value::as_f64)
+            .expect("dash proficiency should persist");
+        assert!((proficiency - 0.42).abs() < 1e-6);
+
+        let _ = fs::remove_dir_all(&data_dir);
+    }
+
+    #[test]
     fn player_lifespan_load_applies_offline_delta_from_pause_wall() {
         let (persistence, data_dir) = sqlite_persistence("lifespan-offline-delta");
         save_player_state(&persistence, "Azure", &PlayerState::default())
@@ -2622,6 +2818,7 @@ mod player_state_tests {
             last_dimension: DimensionKind::default(),
             inventory: None,
             skill_set: SkillSet::default(),
+            known_techniques: KnownTechniques::default(),
             ui_prefs: serde_json::json!({
                 "quick_slots": [null, null, null, null, null, null, null, null, null]
             }),
@@ -2688,6 +2885,7 @@ mod player_state_tests {
             last_dimension: DimensionKind::default(),
             inventory: None,
             skill_set: SkillSet::default(),
+            known_techniques: KnownTechniques::default(),
             ui_prefs: serde_json::json!({
                 "quick_slots": [0, 1, 2]
             }),

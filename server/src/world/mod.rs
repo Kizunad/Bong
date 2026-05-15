@@ -591,10 +591,11 @@ fn scatter_spawn_resources(chunk_layer: &mut valence::prelude::ChunkLayer) {
             for dy in 0..deposit.count {
                 chunk_layer.set_block([deposit.x, tree_y + dy, deposit.z], deposit.block);
             }
-            chunk_layer.set_block(
-                [deposit.x, tree_y + deposit.count, deposit.z],
-                BlockState::OAK_LEAVES,
-            );
+            let leaves = match deposit.block {
+                BlockState::BIRCH_LOG => BlockState::BIRCH_LEAVES,
+                _ => BlockState::OAK_LEAVES,
+            };
+            chunk_layer.set_block([deposit.x, tree_y + deposit.count, deposit.z], leaves);
         } else {
             for i in 0..deposit.count {
                 let ox = i % 2;
@@ -615,10 +616,11 @@ mod tests {
     use super::{
         select_world_bootstrap, select_world_bootstrap_from_configured_paths,
         terrain::RasterBootstrapConfig, AnvilBootstrapConfig, FallbackFlatBootstrap,
-        FallbackFlatReason, WorldBootstrap, ANVIL_REGION_DIR_NAME, TERRAIN_RASTER_PATH_ENV_VAR,
-        WORLD_PATH_ENV_VAR,
+        FallbackFlatReason, WorldBootstrap, ANVIL_REGION_DIR_NAME, GRASS_Y,
+        TERRAIN_RASTER_PATH_ENV_VAR, WORLD_PATH_ENV_VAR,
     };
-    use valence::prelude::DVec3;
+    use valence::prelude::{BlockPos, BlockState, ChunkLayer, DVec3, UnloadedChunk};
+    use valence::testing::ScenarioSingleClient;
 
     #[test]
     fn fallback_spawn_zone_exists() {
@@ -650,6 +652,65 @@ mod tests {
         assert_eq!(registry.zones.len(), 1);
         assert_eq!(spawn_zone.name, DEFAULT_SPAWN_ZONE_NAME);
         assert_eq!(spawn_zone.bounds, default_spawn_bounds());
+    }
+
+    #[test]
+    fn scatter_spawn_resources_places_matching_tree_leaves_and_surface_clusters() {
+        let scenario = ScenarioSingleClient::new();
+        let mut app = scenario.app;
+        let mut layer = app
+            .world_mut()
+            .get_mut::<ChunkLayer>(scenario.layer)
+            .expect("test layer should carry ChunkLayer");
+        for chunk_x in 0..=2 {
+            for chunk_z in 0..=1 {
+                layer.insert_chunk([chunk_x, chunk_z], UnloadedChunk::new());
+            }
+        }
+
+        super::scatter_spawn_resources(&mut layer);
+
+        assert_eq!(
+            block_state(&layer, 12, GRASS_Y + 1, 8),
+            Some(BlockState::OAK_LOG)
+        );
+        assert_eq!(
+            block_state(&layer, 12, GRASS_Y + 5, 8),
+            Some(BlockState::OAK_LEAVES)
+        );
+        assert_eq!(
+            block_state(&layer, 6, GRASS_Y + 1, 22),
+            Some(BlockState::BIRCH_LOG)
+        );
+        assert_eq!(
+            block_state(&layer, 6, GRASS_Y + 4, 22),
+            Some(BlockState::BIRCH_LEAVES),
+            "expected birch trunk to receive birch leaves, actual mismatched leaves"
+        );
+        assert_eq!(
+            block_state(&layer, 30, GRASS_Y, 10),
+            Some(BlockState::IRON_ORE)
+        );
+        assert_eq!(
+            block_state(&layer, 31, GRASS_Y, 10),
+            Some(BlockState::IRON_ORE)
+        );
+        assert_eq!(
+            block_state(&layer, 30, GRASS_Y, 11),
+            Some(BlockState::IRON_ORE)
+        );
+        assert_eq!(
+            block_state(&layer, 18, GRASS_Y, 30),
+            Some(BlockState::STONE)
+        );
+        assert_eq!(
+            block_state(&layer, 19, GRASS_Y, 31),
+            Some(BlockState::STONE)
+        );
+    }
+
+    fn block_state(layer: &ChunkLayer, x: i32, y: i32, z: i32) -> Option<BlockState> {
+        layer.block(BlockPos::new(x, y, z)).map(|block| block.state)
     }
 
     #[test]

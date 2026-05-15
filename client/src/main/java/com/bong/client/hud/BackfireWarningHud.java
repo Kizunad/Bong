@@ -20,7 +20,7 @@ public final class BackfireWarningHud {
         int screenWidth,
         int screenHeight
     ) {
-        if (state == null || state.backfireLevel().isBlank()) return List.of();
+        if (state == null || !state.active() || state.backfireLevel().isBlank()) return List.of();
         String level = state.backfireLevel().trim();
         int color = colorFor(level);
         int x = Math.max(10, screenWidth / 2 - 58);

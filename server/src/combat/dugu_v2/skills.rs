@@ -3,6 +3,7 @@ use valence::prelude::{bevy_ecs, DVec3, Entity, Event, Events, Position};
 use crate::combat::components::{
     BodyPart, CastSource, Casting, SkillBarBindings, Wound, WoundKind, Wounds, TICKS_PER_SECOND,
 };
+use crate::combat::events::{emit_death_event_if_lethal, DeathEvent, DeathEventIfLethal};
 use crate::combat::CombatClock;
 use crate::cultivation::components::{ColorKind, Cultivation, MeridianId, QiColor, Realm};
 use crate::cultivation::dugu::DuguRevealedEvent;
@@ -179,7 +180,14 @@ fn apply_eclipse(
         distance_between(world, caster, target),
     );
 
-    apply_damage(world, caster, target, effect.hp_loss, now_tick);
+    apply_damage(
+        world,
+        caster,
+        target,
+        DuguSkillId::Eclipse,
+        effect.hp_loss,
+        now_tick,
+    );
     let mut mark_to_insert = None;
     if let Some(mut cultivation) = world.get_mut::<Cultivation>(target) {
         cultivation.qi_current = (cultivation.qi_current - f64::from(effect.qi_loss)).max(0.0);
@@ -323,7 +331,14 @@ fn apply_penetrate(
     let affected = affected_taint_targets(world, caster, target, spec.radius_blocks, false);
     let affected_count = affected.len().max(1) as u32;
     for entity in affected {
-        apply_damage(world, caster, entity, 10.0 * spec.multiplier, now_tick);
+        apply_damage(
+            world,
+            caster,
+            entity,
+            DuguSkillId::Penetrate,
+            10.0 * spec.multiplier,
+            now_tick,
+        );
         if let Some(mut target_cultivation) = world.get_mut::<Cultivation>(entity) {
             target_cultivation.qi_current =
                 (target_cultivation.qi_current - f64::from(15.0 * spec.multiplier)).max(0.0);
@@ -422,7 +437,14 @@ fn apply_reverse(
         .collect();
     let burst = reverse_burst_all_marks(intensities);
     for entity in &targets {
-        apply_damage(world, caster, *entity, burst.burst_damage as f32, now_tick);
+        apply_damage(
+            world,
+            caster,
+            *entity,
+            DuguSkillId::Reverse,
+            burst.burst_damage as f32,
+            now_tick,
+        );
         if let Some(mut cultivation) = world.get_mut::<Cultivation>(*entity) {
             cultivation.qi_current = 0.0;
         }
@@ -504,6 +526,7 @@ fn apply_damage(
     world: &mut bevy_ecs::world::World,
     caster: Entity,
     target: Entity,
+    skill: DuguSkillId,
     hp_loss: f32,
     now_tick: u64,
 ) {
@@ -511,7 +534,9 @@ fn apply_damage(
         return;
     }
     let inflicted_by = Some(format!("entity:{}", caster.to_bits()));
+    let mut death_state = None;
     if let Some(mut wounds) = world.get_mut::<Wounds>(target) {
+        let was_alive = wounds.health_current > 0.0;
         let severity = (hp_loss / wounds.health_max.max(1.0)).clamp(0.0, 1.0);
         wounds.health_current = (wounds.health_current - hp_loss).max(0.0);
         wounds.entries.push(Wound {
@@ -522,6 +547,23 @@ fn apply_damage(
             created_at_tick: now_tick,
             inflicted_by,
         });
+        death_state = Some((was_alive, wounds.health_current));
+    }
+    if let Some((was_alive, health_current)) = death_state {
+        emit_death_event_if_lethal(
+            world,
+            DeathEventIfLethal {
+                was_alive,
+                health_current,
+                event: DeathEvent {
+                    target,
+                    cause: format!("{}:entity:{}", skill.as_str(), caster.to_bits()),
+                    attacker: Some(caster),
+                    attacker_player_id: None,
+                    at_tick: now_tick,
+                },
+            },
+        );
     }
 }
 

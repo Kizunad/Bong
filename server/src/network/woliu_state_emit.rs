@@ -48,7 +48,7 @@ pub fn emit_vortex_state_payloads(
     let periodic = clock.tick.is_multiple_of(TICKS_PER_SECOND);
     for (entity, mut client, username, unique_id, field, v2_state, turbulence) in &mut clients {
         let v2_active = v2_state.is_some_and(|state| clock.tick < state.active_until_tick);
-        let active = field.is_some() || v2_active || turbulence.is_some();
+        let active = field.is_some() || v2_active;
         let previously_active = cache.active.get(&entity).copied().unwrap_or(false);
         if !periodic && active == previously_active {
             continue;
@@ -96,37 +96,39 @@ fn apply_woliu_v2_state_overlay(
     if let Some(v2_state) = v2_state {
         let in_active_window = now_tick < v2_state.active_until_tick;
         state.active = in_active_window;
-        state.active_skill_id = v2_state.active_skill_kind.as_str().to_string();
-        state.radius = v2_state.lethal_radius;
-        state.charge_progress = if in_active_window {
-            cast_progress(
+        state.cooldown_until_ms =
+            ticks_from_now_to_ms(now_ms, now_tick, v2_state.cooldown_until_tick);
+        if in_active_window {
+            state.active_skill_id = v2_state.active_skill_kind.as_str().to_string();
+            state.radius = v2_state.lethal_radius.max(v2_state.influence_radius);
+            state.charge_progress = cast_progress(
                 now_tick,
                 v2_state.started_at_tick,
                 v2_state.active_until_tick,
-            )
-        } else {
-            0.0
-        };
-        state.cooldown_until_ms =
-            ticks_from_now_to_ms(now_ms, now_tick, v2_state.cooldown_until_tick);
-        state.backfire_level = v2_state
-            .backfire_level
-            .map(backfire_level_label)
-            .unwrap_or_default()
-            .to_string();
-        state.turbulence_radius = v2_state.turbulence_radius;
-        state.turbulence_intensity = v2_state.turbulence_intensity;
+            );
+            state.backfire_level = v2_state
+                .backfire_level
+                .map(backfire_level_label)
+                .unwrap_or_default()
+                .to_string();
+            state.turbulence_radius = v2_state.turbulence_radius;
+            state.turbulence_intensity = v2_state.turbulence_intensity;
+            if v2_state.turbulence_radius > 0.0 && v2_state.turbulence_intensity > 0.0 {
+                state.turbulence_until_ms =
+                    ticks_from_now_to_ms(now_ms, now_tick, v2_state.active_until_tick);
+            }
+        }
     }
-    if let Some(turbulence) = turbulence {
-        state.active = true;
-        state.center = [
-            turbulence.center.x,
-            turbulence.center.y,
-            turbulence.center.z,
-        ];
-        state.turbulence_radius = turbulence.radius;
-        state.turbulence_intensity = turbulence.intensity;
-        state.turbulence_until_ms = turbulence_until_ms(now_ms, turbulence);
+    if state.active {
+        if let Some(turbulence) = turbulence {
+            state.center = [
+                turbulence.center.x,
+                turbulence.center.y,
+                turbulence.center.z,
+            ];
+            state.turbulence_radius = turbulence.radius;
+            state.turbulence_intensity = turbulence.intensity;
+        }
     }
 }
 
@@ -146,19 +148,6 @@ fn ticks_from_now_to_ms(now_ms: u64, now_tick: u64, until_tick: u64) -> u64 {
             .saturating_sub(now_tick)
             .saturating_mul(millis_per_tick),
     )
-}
-
-fn turbulence_until_ms(now_ms: u64, turbulence: &TurbulenceField) -> u64 {
-    if turbulence.remaining_swirl_qi <= f32::EPSILON {
-        return 0;
-    }
-    let rate = f64::from(turbulence.decay_rate_per_second).max(0.001);
-    let seconds = ((f64::from(turbulence.remaining_swirl_qi) / f64::from(f32::EPSILON))
-        .ln()
-        .max(0.0)
-        / rate)
-        .clamp(0.0, 300.0);
-    now_ms.saturating_add((seconds * 1000.0) as u64)
 }
 
 fn backfire_level_label(level: crate::combat::woliu_v2::BackfireLevel) -> &'static str {
@@ -212,7 +201,7 @@ mod tests {
         assert!(state.cooldown_until_ms > 0);
         assert_eq!(state.backfire_level, "micro_tear");
         assert_eq!(state.center, [3.0, 64.0, 4.0]);
-        assert_eq!(state.radius, 5.0);
+        assert_eq!(state.radius, 300.0);
         assert_eq!(state.turbulence_radius, 12.0);
         assert_eq!(state.turbulence_intensity, 0.75);
         assert!(state.turbulence_until_ms > 0);
@@ -237,9 +226,43 @@ mod tests {
         apply_woliu_v2_state_overlay(&mut state, Some(&v2_state), None, 30);
 
         assert!(!state.active);
-        assert_eq!(state.active_skill_id, "woliu.pull");
+        assert!(state.active_skill_id.is_empty());
         assert_eq!(state.charge_progress, 0.0);
         assert!(state.cooldown_until_ms > 0);
+        assert_eq!(state.turbulence_radius, 0.0);
+        assert_eq!(state.turbulence_intensity, 0.0);
+    }
+
+    #[test]
+    fn woliu_v2_overlay_ignores_lingering_turbulence_after_active_window() {
+        let mut state = vortex_field_state_payload("entity:1".to_string(), None, 30, 0);
+        let v2_state = VortexV2State {
+            active_skill_kind: WoliuSkillId::VortexResonance,
+            heart_passive_enabled: false,
+            lethal_radius: 0.0,
+            influence_radius: 5.0,
+            turbulence_radius: 5.0,
+            turbulence_intensity: 0.8,
+            backfire_level: None,
+            started_at_tick: 10,
+            active_until_tick: 20,
+            cooldown_until_tick: 110,
+        };
+        let turbulence = TurbulenceField::new(
+            Entity::from_raw(1),
+            DVec3::new(3.0, 64.0, 4.0),
+            12.0,
+            0.75,
+            100.0,
+            10,
+        );
+
+        apply_woliu_v2_state_overlay(&mut state, Some(&v2_state), Some(&turbulence), 30);
+
+        assert!(!state.active);
+        assert_eq!(state.turbulence_radius, 0.0);
+        assert_eq!(state.turbulence_intensity, 0.0);
+        assert_eq!(state.turbulence_until_ms, 0);
     }
 
     #[test]
