@@ -23,27 +23,24 @@ public final class VortexSpiralPlayer implements VfxPlayer {
     public void play(MinecraftClient client, VfxEventPayload.SpawnParticle payload) {
         ClientWorld world = client.world;
         if (world == null) return;
+        EffectSpec spec = effectSpec(payload);
 
-        if (VORTEX_RESONANCE.equals(payload.eventId())) {
-            playResonanceField(client, world, payload);
+        if (spec.route() == Route.RESONANCE_FIELD) {
+            playResonanceField(client, world, payload, spec);
             return;
         }
-        if (TURBULENCE_BURST.equals(payload.eventId())) {
-            playTurbulenceBurst(client, world, payload);
+        if (spec.route() == Route.TURBULENCE_BURST) {
+            playTurbulenceBurst(client, world, payload, spec);
             return;
         }
 
         double ox = payload.origin()[0];
         double oy = payload.origin()[1] + 1.0;
         double oz = payload.origin()[2];
-        int count = clamp(payload.count().orElse(OptionalInt.of(DEFAULT_COUNT).getAsInt()), 1, 64);
-        int maxAge = payload.durationTicks().orElse(OptionalInt.of(42).getAsInt());
-        double strength = clamp01(payload.strength().orElse(0.75));
         float[] color = rgb(payload);
-        float alpha = (float) Math.max(0.35, Math.min(0.95, 0.45 + strength * 0.5));
 
-        for (int i = 0; i < count; i++) {
-            double angle = (Math.PI * 2.0 * i / count) + world.random.nextDouble() * 0.35;
+        for (int i = 0; i < spec.count(); i++) {
+            double angle = (Math.PI * 2.0 * i / spec.count()) + world.random.nextDouble() * 0.35;
             double radius = 0.35 + world.random.nextDouble() * 0.65;
             double x = ox + Math.cos(angle) * radius;
             double z = oz + Math.sin(angle) * radius;
@@ -60,10 +57,10 @@ public final class VortexSpiralPlayer implements VfxPlayer {
                 oy,
                 oz
             );
-            particle.setAngularVelocity(0.055 + strength * 0.08);
+            particle.setAngularVelocity(0.055 + spec.strength() * 0.08);
             particle.setColor(color[0], color[1], color[2]);
-            particle.setAlphaPublic(alpha);
-            particle.setMaxAgePublic(maxAge);
+            particle.setAlphaPublic((float) spec.alpha());
+            particle.setMaxAgePublic(spec.maxAge());
             if (BongParticles.vortexSpiralSprites != null) {
                 particle.setSpritePublic(BongParticles.vortexSpiralSprites.getSprite(world.random));
             }
@@ -74,26 +71,23 @@ public final class VortexSpiralPlayer implements VfxPlayer {
     private static void playResonanceField(
         MinecraftClient client,
         ClientWorld world,
-        VfxEventPayload.SpawnParticle payload
+        VfxEventPayload.SpawnParticle payload,
+        EffectSpec spec
     ) {
         double ox = payload.origin()[0];
         double oy = payload.origin()[1] + 0.95;
         double oz = payload.origin()[2];
-        double strength = clamp01(payload.strength().orElse(0.8));
-        int count = clamp(payload.count().orElse(48), 24, 96);
-        int maxAge = clamp(payload.durationTicks().orElse(80), 30, 120);
-        double fieldRadius = 2.2 + strength * 3.8;
         float[] color = rgb(payload);
 
-        for (int i = 0; i < count; i++) {
+        for (int i = 0; i < spec.count(); i++) {
             int ring = i % 3;
             double ringRatio = 0.34 + ring * 0.28;
-            double angle = Math.PI * 2.0 * i / count + world.random.nextDouble() * 0.22;
-            double radius = fieldRadius * ringRatio + (world.random.nextDouble() - 0.5) * 0.35;
+            double angle = Math.PI * 2.0 * i / spec.count() + world.random.nextDouble() * 0.22;
+            double radius = spec.radius() * ringRatio + (world.random.nextDouble() - 0.5) * 0.35;
             double x = ox + Math.cos(angle) * radius;
             double z = oz + Math.sin(angle) * radius;
             double y = oy + Math.sin(angle * 2.0 + ring) * 0.32 + (world.random.nextDouble() - 0.5) * 0.18;
-            double tangent = 0.055 + strength * 0.045 + ring * 0.012;
+            double tangent = 0.055 + spec.strength() * 0.045 + ring * 0.012;
             VortexSpiralParticle particle = new VortexSpiralParticle(
                 world,
                 x,
@@ -106,11 +100,11 @@ public final class VortexSpiralPlayer implements VfxPlayer {
                 oy,
                 oz
             );
-            particle.setAngularVelocity(0.09 + strength * 0.09 + ring * 0.015);
-            particle.setRibbonWidth(0.12 + strength * 0.05, 0.018);
+            particle.setAngularVelocity(0.09 + spec.strength() * 0.09 + ring * 0.015);
+            particle.setRibbonWidth(spec.ribbonWidth(), spec.ribbonEndWidth());
             particle.setColor(color[0], color[1], color[2]);
-            particle.setAlphaPublic((float) Math.min(0.9, 0.48 + strength * 0.34));
-            particle.setMaxAgePublic(maxAge - world.random.nextInt(Math.max(1, maxAge / 4)));
+            particle.setAlphaPublic((float) spec.alpha());
+            particle.setMaxAgePublic(spec.maxAge() - world.random.nextInt(Math.max(1, spec.maxAge() / 4)));
             if (BongParticles.vortexSpiralSprites != null) {
                 particle.setSpritePublic(BongParticles.vortexSpiralSprites.getSprite(world.random));
             }
@@ -121,23 +115,20 @@ public final class VortexSpiralPlayer implements VfxPlayer {
     private static void playTurbulenceBurst(
         MinecraftClient client,
         ClientWorld world,
-        VfxEventPayload.SpawnParticle payload
+        VfxEventPayload.SpawnParticle payload,
+        EffectSpec spec
     ) {
         double ox = payload.origin()[0];
         double oy = payload.origin()[1] + 0.75;
         double oz = payload.origin()[2];
-        double strength = clamp01(payload.strength().orElse(0.9));
-        int count = clamp(payload.count().orElse(64), 24, 96);
-        int maxAge = clamp(payload.durationTicks().orElse(44), 18, 80);
-        double radius = 0.6 + strength * 0.7;
         float[] color = rgb(payload);
 
-        for (int i = 0; i < count; i++) {
-            double angle = Math.PI * 2.0 * i / count + world.random.nextDouble() * 0.16;
-            double x = ox + Math.cos(angle) * radius;
-            double z = oz + Math.sin(angle) * radius;
+        for (int i = 0; i < spec.count(); i++) {
+            double angle = Math.PI * 2.0 * i / spec.count() + world.random.nextDouble() * 0.16;
+            double x = ox + Math.cos(angle) * spec.radius();
+            double z = oz + Math.sin(angle) * spec.radius();
             double y = oy + (world.random.nextDouble() - 0.5) * 0.5;
-            double speed = 0.10 + strength * 0.08 + world.random.nextDouble() * 0.04;
+            double speed = 0.10 + spec.strength() * 0.08 + world.random.nextDouble() * 0.04;
             VortexSpiralParticle particle = new VortexSpiralParticle(
                 world,
                 x,
@@ -150,11 +141,11 @@ public final class VortexSpiralPlayer implements VfxPlayer {
                 oy,
                 oz
             );
-            particle.setAngularVelocity(0.02 + strength * 0.04);
-            particle.setRibbonWidth(0.14 + strength * 0.04, 0.02);
+            particle.setAngularVelocity(0.02 + spec.strength() * 0.04);
+            particle.setRibbonWidth(spec.ribbonWidth(), spec.ribbonEndWidth());
             particle.setColor(color[0], color[1], color[2]);
-            particle.setAlphaPublic((float) Math.min(0.92, 0.55 + strength * 0.32));
-            particle.setMaxAgePublic(maxAge - world.random.nextInt(Math.max(1, maxAge / 3)));
+            particle.setAlphaPublic((float) spec.alpha());
+            particle.setMaxAgePublic(spec.maxAge() - world.random.nextInt(Math.max(1, spec.maxAge() / 3)));
             if (BongParticles.vortexSpiralSprites != null) {
                 particle.setSpritePublic(BongParticles.vortexSpiralSprites.getSprite(world.random));
             }
@@ -171,6 +162,46 @@ public final class VortexSpiralPlayer implements VfxPlayer {
         };
     }
 
+    static EffectSpec effectSpec(VfxEventPayload.SpawnParticle payload) {
+        if (VORTEX_RESONANCE.equals(payload.eventId())) {
+            double strength = clamp01(payload.strength().orElse(0.8));
+            return new EffectSpec(
+                Route.RESONANCE_FIELD,
+                clamp(payload.count().orElse(48), 24, 96),
+                clamp(payload.durationTicks().orElse(80), 30, 120),
+                strength,
+                2.2 + strength * 3.8,
+                Math.min(0.9, 0.48 + strength * 0.34),
+                0.12 + strength * 0.05,
+                0.018
+            );
+        }
+        if (TURBULENCE_BURST.equals(payload.eventId())) {
+            double strength = clamp01(payload.strength().orElse(0.9));
+            return new EffectSpec(
+                Route.TURBULENCE_BURST,
+                clamp(payload.count().orElse(64), 24, 96),
+                clamp(payload.durationTicks().orElse(44), 18, 80),
+                strength,
+                0.6 + strength * 0.7,
+                Math.min(0.92, 0.55 + strength * 0.32),
+                0.14 + strength * 0.04,
+                0.02
+            );
+        }
+        double strength = clamp01(payload.strength().orElse(0.75));
+        return new EffectSpec(
+            Route.SPIRAL,
+            clamp(payload.count().orElse(OptionalInt.of(DEFAULT_COUNT).getAsInt()), 1, 64),
+            clamp(payload.durationTicks().orElse(42), 1, 120),
+            strength,
+            0.0,
+            Math.max(0.35, Math.min(0.95, 0.45 + strength * 0.5)),
+            0.0,
+            0.0
+        );
+    }
+
     private static int clamp(int value, int min, int max) {
         return Math.max(min, Math.min(max, value));
     }
@@ -178,4 +209,21 @@ public final class VortexSpiralPlayer implements VfxPlayer {
     private static double clamp01(double value) {
         return Math.max(0.0, Math.min(1.0, value));
     }
+
+    enum Route {
+        SPIRAL,
+        RESONANCE_FIELD,
+        TURBULENCE_BURST
+    }
+
+    record EffectSpec(
+        Route route,
+        int count,
+        int maxAge,
+        double strength,
+        double radius,
+        double alpha,
+        double ribbonWidth,
+        double ribbonEndWidth
+    ) {}
 }

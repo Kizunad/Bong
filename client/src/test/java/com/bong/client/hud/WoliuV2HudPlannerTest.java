@@ -10,6 +10,8 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class WoliuV2HudPlannerTest {
+    private static final int RIGHT_SIDE_PANEL_MIN_X = 700;
+
     @Test
     void activeVortexShowsChargeCooldownBackfireAndTurbulence() {
         VortexStateStore.State state = new VortexStateStore.State(
@@ -32,7 +34,7 @@ class WoliuV2HudPlannerTest {
 
         assertTrue(
             commands.stream().anyMatch(cmd ->
-                cmd.layer() == HudRenderLayer.VORTEX_TURBULENCE && cmd.isRect() && cmd.x() > 700
+                cmd.layer() == HudRenderLayer.VORTEX_TURBULENCE && cmd.isRect() && cmd.x() > RIGHT_SIDE_PANEL_MIN_X
             ),
             "expected right-side status panel rect because woliu HUD should render near the screen edge, actual rect x values="
                 + commands.stream().filter(HudRenderCommand::isRect).map(HudRenderCommand::x).toList()

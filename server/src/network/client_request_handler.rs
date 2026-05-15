@@ -2723,7 +2723,7 @@ mod tests {
     use valence::prelude::{
         ident, App, DVec3, EventReader, IntoSystemConfigs, Position, ResMut, Update,
     };
-    use valence::protocol::packets::play::CustomPayloadS2c;
+    use valence::protocol::packets::play::{CustomPayloadS2c, GameMessageS2c};
     use valence::testing::{create_mock_client, MockClientHelper};
 
     #[derive(Default)]
@@ -3112,6 +3112,20 @@ mod tests {
             .collect()
     }
 
+    fn collect_game_messages(helper: &mut MockClientHelper) -> Vec<String> {
+        helper
+            .collect_received()
+            .0
+            .into_iter()
+            .filter_map(|frame| {
+                frame
+                    .decode::<GameMessageS2c>()
+                    .ok()
+                    .map(|packet| packet.chat.to_legacy_lossy())
+            })
+            .collect()
+    }
+
     fn has_inventory_durability_payload(helper: &mut MockClientHelper, instance_id: u64) -> bool {
         for frame in helper.collect_received().0 {
             let Ok(packet) = frame.decode::<CustomPayloadS2c>() else {
@@ -3252,6 +3266,48 @@ mod tests {
                 "expected stable chat label for {id:?}"
             );
         }
+    }
+
+    #[test]
+    fn set_meridian_target_sends_generic_meridian_chat_echo() {
+        let mut app = App::new();
+        register_request_app(&mut app);
+
+        let (client_bundle, mut helper) = create_mock_client("Azure");
+        let entity = app.world_mut().spawn(client_bundle).id();
+        app.world_mut()
+            .resource_mut::<valence::prelude::Events<CustomPayloadEvent>>()
+            .send(CustomPayloadEvent {
+                client: entity,
+                channel: ident!("bong:client_request").into(),
+                data: serde_json::to_vec(&ClientRequestV1::SetMeridianTarget {
+                    v: 1,
+                    meridian: MeridianId::Du,
+                })
+                .expect("set meridian target request should serialize")
+                .into_boxed_slice(),
+            });
+
+        app.update();
+        flush_all_client_packets(&mut app);
+
+        let actual_target = app
+            .world()
+            .get::<MeridianTarget>(entity)
+            .map(|target| target.0);
+        assert_eq!(
+            actual_target,
+            Some(MeridianId::Du),
+            "expected SetMeridianTarget to insert selected meridian target, actual={:?}",
+            actual_target
+        );
+        let messages = collect_game_messages(&mut helper);
+        assert!(
+            messages
+                .iter()
+                .any(|message| message.contains("[修炼] 已收到经脉目标：督脉。")),
+            "expected generic meridian target chat echo because request is not limited to Chong, actual messages={messages:?}"
+        );
     }
 
     fn assert_movement_action_yaw_forwarded(yaw_degrees: f32) {
