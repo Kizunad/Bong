@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize};
-use valence::prelude::{bevy_ecs, Entity, Event};
+use valence::prelude::{bevy_ecs, Entity, Event, Events};
 
 use crate::combat::components::{BodyPart, WoundKind};
 use crate::player::gameplay::CombatAction;
@@ -182,6 +182,33 @@ pub struct DeathEvent {
     pub attacker: Option<Entity>,
     pub attacker_player_id: Option<String>,
     pub at_tick: u64,
+}
+
+pub fn emit_death_event_if_lethal(
+    world: &mut bevy_ecs::world::World,
+    was_alive: bool,
+    health_current: f32,
+    target: Entity,
+    cause: String,
+    attacker: Option<Entity>,
+    attacker_player_id: Option<String>,
+    at_tick: u64,
+) -> bool {
+    if !was_alive || health_current > 0.0 {
+        return false;
+    }
+    if let Some(mut death_events) = world.get_resource_mut::<Events<DeathEvent>>() {
+        death_events.send(DeathEvent {
+            target,
+            cause,
+            attacker,
+            attacker_player_id,
+            at_tick,
+        });
+        true
+    } else {
+        false
+    }
 }
 
 #[derive(Debug, Clone, Event, Serialize, Deserialize)]
