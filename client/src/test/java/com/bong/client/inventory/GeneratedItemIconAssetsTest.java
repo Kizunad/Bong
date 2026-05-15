@@ -87,7 +87,13 @@ class GeneratedItemIconAssetsTest {
         "anqi_dyed_bone_charged",
         "anqi_fenglinghe_bone",
         "anqi_fenglinghe_bone_charged",
-        "anqi_container_quiver"
+        "anqi_container_quiver",
+        "anqi_container_pocket_pouch",
+        "anqi_container_fenglinghe"
+    );
+    private static final List<String> ARMOR_MATERIAL_IDS = List.of(
+        "spirit_cloth",
+        "scroll_fragment"
     );
 
     @Test
@@ -103,6 +109,11 @@ class GeneratedItemIconAssetsTest {
     @Test
     void anqiBatchGeneratedIconsAre128RgbaPngs() throws Exception {
         assertGeneratedIconsAre128RgbaPngs(ITEM_TEXTURE_DIR, ANQI_BATCH_IDS);
+    }
+
+    @Test
+    void armorMaterialGeneratedIconsAre128RgbaPngs() throws Exception {
+        assertGeneratedIconsAre128RgbaPngs(ITEM_TEXTURE_DIR, ARMOR_MATERIAL_IDS);
     }
 
     @Test
