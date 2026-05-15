@@ -30,16 +30,34 @@ class WoliuV2HudPlannerTest {
 
         List<HudRenderCommand> commands = WoliuV2HudPlanner.buildCommands(state, 960, 540, 1_000L);
 
-        assertTrue(commands.stream().anyMatch(cmd -> cmd.layer() == HudRenderLayer.VORTEX_TURBULENCE && cmd.isRect() && cmd.x() > 700));
-        assertTrue(commands.stream().anyMatch(cmd -> cmd.layer() == HudRenderLayer.VORTEX_TURBULENCE && cmd.isText() && "涡流".equals(cmd.text())));
-        assertTrue(commands.stream().anyMatch(cmd -> cmd.layer() == HudRenderLayer.VORTEX_TURBULENCE && cmd.isText() && cmd.text().contains("涡心")));
-        assertTrue(commands.stream().anyMatch(cmd -> cmd.layer() == HudRenderLayer.VORTEX_BACKFIRE && cmd.isEdgeVignette()));
-        assertTrue(commands.stream().anyMatch(cmd -> cmd.layer() == HudRenderLayer.VORTEX_TURBULENCE && cmd.isScreenTint()));
+        assertTrue(
+            commands.stream().anyMatch(cmd ->
+                cmd.layer() == HudRenderLayer.VORTEX_TURBULENCE && cmd.isRect() && cmd.x() > 700
+            ),
+            "expected right-side status panel rect because woliu HUD should render near the screen edge, actual rect x values="
+                + commands.stream().filter(HudRenderCommand::isRect).map(HudRenderCommand::x).toList()
+        );
+        assertTextPresent(commands, "涡流");
+        assertTextPresent(commands, "涡心");
+        assertTrue(
+            commands.stream().anyMatch(cmd -> cmd.layer() == HudRenderLayer.VORTEX_BACKFIRE && cmd.isEdgeVignette()),
+            "expected backfire edge vignette because backfireLevel is present, actual command count=" + commands.size()
+        );
+        assertTrue(
+            commands.stream().anyMatch(cmd -> cmd.layer() == HudRenderLayer.VORTEX_TURBULENCE && cmd.isScreenTint()),
+            "expected turbulence screen tint because active turbulence is visible, actual command count=" + commands.size()
+        );
     }
 
     @Test
     void emptyStateDoesNotEmitVortexHud() {
-        assertTrue(WoliuV2HudPlanner.buildCommands(VortexStateStore.State.NONE, 960, 540, 1_000L).isEmpty());
+        List<HudRenderCommand> commands = WoliuV2HudPlanner.buildCommands(VortexStateStore.State.NONE, 960, 540, 1_000L);
+
+        assertTrue(
+            commands.isEmpty(),
+            "expected empty command list because NONE is an idle woliu state, actual command count="
+                + commands.size() + ", texts=" + texts(commands)
+        );
     }
 
     @Test
@@ -66,7 +84,8 @@ class WoliuV2HudPlannerTest {
             cmd.layer() == HudRenderLayer.VORTEX_TURBULENCE
                 && cmd.isText()
                 && "冷却 2147483647s".equals(cmd.text())
-        ));
+        ), "expected clamped cooldown text because Long.MAX_VALUE should clamp to Integer.MAX_VALUE seconds, actual texts="
+            + texts(commands));
     }
 
     @Test
@@ -89,7 +108,11 @@ class WoliuV2HudPlannerTest {
 
         List<HudRenderCommand> commands = WoliuV2HudPlanner.buildCommands(state, 960, 540, 1_000L);
 
-        assertTrue(commands.isEmpty());
+        assertTrue(
+            commands.isEmpty(),
+            "expected empty command list because inactive residual turbulence should not keep the HUD alive, actual command count="
+                + commands.size() + ", texts=" + texts(commands)
+        );
     }
 
     @Test
@@ -210,5 +233,12 @@ class WoliuV2HudPlannerTest {
                         .map(HudRenderCommand::text)
                         .toList()
             ));
+    }
+
+    private static List<String> texts(List<HudRenderCommand> commands) {
+        return commands.stream()
+            .filter(HudRenderCommand::isText)
+            .map(HudRenderCommand::text)
+            .toList();
     }
 }

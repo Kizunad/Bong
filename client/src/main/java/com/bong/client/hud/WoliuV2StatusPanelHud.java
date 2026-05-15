@@ -159,7 +159,8 @@ public final class WoliuV2StatusPanelHud {
     }
 
     private static String secondsText(long millis) {
-        long seconds = Math.max(0L, millis) / 1000L + (millis % 1000L == 0L ? 0L : 1L);
+        long safeMillis = Math.max(0L, millis);
+        long seconds = safeMillis / 1000L + (safeMillis % 1000L == 0L ? 0L : 1L);
         return Math.min(Integer.MAX_VALUE, seconds) + "s";
     }
 

@@ -6274,7 +6274,7 @@ mod persistence_tests {
             .expect("user_version should be readable");
         assert_eq!(
             user_version, CURRENT_USER_VERSION,
-            "expected user_version to advance to CURRENT_USER_VERSION ({CURRENT_USER_VERSION}) because v25 migration succeeded, actual {user_version}"
+            "expected user_version to advance to CURRENT_USER_VERSION ({CURRENT_USER_VERSION}) because v13 migration should succeed, actual {user_version}"
         );
 
         for dropped_column in ["realm", "spirit_qi", "spirit_qi_max", "experience"] {
@@ -6388,7 +6388,10 @@ mod persistence_tests {
         let user_version: i32 = connection
             .query_row("PRAGMA user_version;", [], |row| row.get(0))
             .expect("user_version should be readable");
-        assert_eq!(user_version, CURRENT_USER_VERSION);
+        assert_eq!(
+            user_version, CURRENT_USER_VERSION,
+            "expected user_version to advance to CURRENT_USER_VERSION ({CURRENT_USER_VERSION}) because legacy v12 fixture should migrate to current, actual {user_version}"
+        );
 
         for table in [
             "player_known_techniques",
@@ -7118,7 +7121,10 @@ mod persistence_tests {
         let user_version: i32 = connection
             .query_row("PRAGMA user_version;", [], |row| row.get(0))
             .expect("user_version should be readable");
-        assert_eq!(user_version, CURRENT_USER_VERSION);
+        assert_eq!(
+            user_version, CURRENT_USER_VERSION,
+            "expected user_version to advance to CURRENT_USER_VERSION ({CURRENT_USER_VERSION}) because v25 migration succeeded, actual {user_version}"
+        );
 
         let exists: Option<String> = connection
             .query_row(
@@ -7153,6 +7159,25 @@ mod persistence_tests {
                 "player_known_techniques should include {column}"
             );
         }
+
+        let primary_keys = connection
+            .prepare("PRAGMA table_info(player_known_techniques)")
+            .expect("player_known_techniques primary key table_info should prepare")
+            .query_map([], |row| {
+                Ok((row.get::<_, String>(1)?, row.get::<_, i32>(5)?))
+            })
+            .expect("player_known_techniques primary key table_info should query")
+            .filter_map(|row| {
+                let (name, pk) =
+                    row.expect("player_known_techniques primary key row should decode");
+                (pk > 0).then_some(name)
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            primary_keys,
+            vec!["username".to_string()],
+            "expected username to be the only primary key because player_known_techniques is keyed by player, actual {primary_keys:?}"
+        );
     }
 
     #[test]
