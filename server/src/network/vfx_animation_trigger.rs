@@ -4,7 +4,9 @@
 //! `vfx_event_emit`; this module only decides which first-party animation id should
 //! represent an already-authoritative server event.
 
-use valence::prelude::{EventReader, EventWriter, Position, Query, UniqueId};
+use std::collections::{HashMap, HashSet};
+
+use valence::prelude::{Entity, EventReader, EventWriter, Local, Position, Query, Res, UniqueId};
 
 use crate::botany::components::HarvestTerminalEvent;
 use crate::botany::lifecycle::botany_quality_color;
@@ -12,7 +14,9 @@ use crate::combat::baomai_v3::{BaomaiSkillEvent, BaomaiSkillId};
 use crate::combat::components::WoundKind;
 use crate::combat::events::{AttackIntent, AttackSource, CombatEvent, DefenseIntent};
 use crate::combat::tuike_v2::{ContamTransferredEvent, DonFalseSkinEvent, FalseSkinSheddedEvent};
+use crate::combat::woliu_v2::state::VortexV2State;
 use crate::combat::woliu_v2::{VortexCastEvent, WoliuSkillId};
+use crate::combat::CombatClock;
 use crate::cultivation::breakthrough::BreakthroughOutcome;
 use crate::cultivation::tribulation::{TribulationAnnounce, TribulationFailed};
 use crate::lingtian::events::{
@@ -44,6 +48,7 @@ const LINGTIAN_REPLENISH_VFX: &str = "bong:lingtian_replenish";
 const LINGTIAN_HARVEST_VFX: &str = "bong:lingtian_harvest";
 const LINGTIAN_DRAIN_VFX: &str = "bong:lingtian_drain";
 const WOLIU_PRIORITY: u16 = 1300;
+const WOLIU_STOP_FADE_OUT_TICKS: u8 = 4;
 const BAOMAI_PRIORITY: u16 = 1500;
 const TUIKE_PRIORITY: u16 = 1350;
 
@@ -53,6 +58,7 @@ const STORY_PRIORITY: u16 = 3000;
 
 type PlayerAnimTargetItem<'a> = (&'a Position, &'a UniqueId);
 type PlayerAnimTargetFilter = ();
+type WoliuVisualStateItem<'a> = (Entity, &'a Position, &'a UniqueId, &'a VortexV2State);
 
 /// Combat intent -> attacker action animation.
 ///
@@ -190,12 +196,50 @@ pub fn emit_woliu_v2_visual_triggers(
                 origin: [event.center.x, event.center.y, event.center.z],
                 direction: None,
                 color: Some(color_for_woliu_skill(event.skill).to_string()),
-                strength: Some(event.turbulence_radius.clamp(0.0, 30.0) / 30.0),
-                count: Some(12),
-                duration_ticks: Some(42),
+                strength: Some(woliu_particle_strength(event)),
+                count: Some(woliu_particle_count(event.skill)),
+                duration_ticks: Some(woliu_particle_duration_ticks(event.skill)),
             },
         ));
     }
+}
+
+#[derive(Clone, Copy)]
+pub(crate) struct WoliuVisualLifecycle {
+    skill: WoliuSkillId,
+    was_active: bool,
+}
+
+pub fn emit_woliu_v2_visual_stop_triggers(
+    clock: Res<CombatClock>,
+    mut seen_states: Local<HashMap<Entity, WoliuVisualLifecycle>>,
+    states: Query<WoliuVisualStateItem<'_>>,
+    mut vfx_events: EventWriter<VfxEventRequest>,
+) {
+    let mut seen_entities = HashSet::new();
+    for (entity, position, unique_id, state) in &states {
+        seen_entities.insert(entity);
+        let active_now = clock.tick < state.active_until_tick;
+        if let Some(previous) = seen_states.get(&entity) {
+            if previous.was_active && !active_now {
+                emit_stop_for_entity(
+                    position,
+                    unique_id,
+                    woliu_anim_for_skill(previous.skill),
+                    WOLIU_STOP_FADE_OUT_TICKS,
+                    &mut vfx_events,
+                );
+            }
+        }
+        seen_states.insert(
+            entity,
+            WoliuVisualLifecycle {
+                skill: state.active_skill_kind,
+                was_active: active_now,
+            },
+        );
+    }
+    seen_states.retain(|entity, _| seen_entities.contains(entity));
 }
 
 pub fn emit_botany_harvest_visual_triggers(
@@ -384,6 +428,73 @@ fn color_for_woliu_skill(skill: WoliuSkillId) -> &'static str {
         WoliuSkillId::VortexResonance => "#8F5BE0",
         WoliuSkillId::TurbulenceBurst => "#E8D9FF",
     }
+}
+
+fn woliu_particle_strength(event: &VortexCastEvent) -> f32 {
+    let radius = event
+        .turbulence_radius
+        .max(event.influence_radius)
+        .max(event.lethal_radius);
+    match event.skill {
+        WoliuSkillId::VortexResonance | WoliuSkillId::TurbulenceBurst => {
+            (radius / 6.0).clamp(0.35, 1.0)
+        }
+        WoliuSkillId::Heart => (radius / 12.0).clamp(0.45, 1.0),
+        _ => (radius / 8.0).clamp(0.25, 0.85),
+    }
+}
+
+fn woliu_particle_count(skill: WoliuSkillId) -> u16 {
+    match skill {
+        WoliuSkillId::VortexResonance => 48,
+        WoliuSkillId::TurbulenceBurst => 64,
+        WoliuSkillId::VortexShield | WoliuSkillId::VacuumLock => 32,
+        WoliuSkillId::Heart => 36,
+        _ => 16,
+    }
+}
+
+fn woliu_particle_duration_ticks(skill: WoliuSkillId) -> u16 {
+    match skill {
+        WoliuSkillId::VortexResonance => 80,
+        WoliuSkillId::TurbulenceBurst => 44,
+        WoliuSkillId::VortexShield | WoliuSkillId::VacuumLock => 60,
+        WoliuSkillId::Heart => 100,
+        _ => 42,
+    }
+}
+
+fn woliu_anim_for_skill(skill: WoliuSkillId) -> &'static str {
+    match skill {
+        WoliuSkillId::Hold => "bong:vortex_spiral_stance",
+        WoliuSkillId::Burst => "bong:vortex_palm_open",
+        WoliuSkillId::Mouth => "bong:vortex_spiral_stance",
+        WoliuSkillId::Pull => "bong:vortex_spiral_stance",
+        WoliuSkillId::Heart => "bong:stance_woliu",
+        WoliuSkillId::VacuumPalm => "bong:woliu_vacuum_palm",
+        WoliuSkillId::VortexShield => "bong:woliu_vortex_shield",
+        WoliuSkillId::VacuumLock => "bong:woliu_vacuum_lock",
+        WoliuSkillId::VortexResonance => "bong:woliu_vortex_resonance",
+        WoliuSkillId::TurbulenceBurst => "bong:woliu_turbulence_burst",
+    }
+}
+
+fn emit_stop_for_entity(
+    position: &Position,
+    unique_id: &UniqueId,
+    anim_id: &'static str,
+    fade_out_ticks: u8,
+    vfx_events: &mut EventWriter<VfxEventRequest>,
+) {
+    let origin = position.get();
+    vfx_events.send(VfxEventRequest::new(
+        origin,
+        VfxEventPayloadV1::StopAnim {
+            target_player: unique_id.0.to_string(),
+            anim_id: anim_id.to_string(),
+            fade_out_ticks: Some(fade_out_ticks),
+        },
+    ));
 }
 
 fn emit_block_decal(
@@ -780,6 +891,91 @@ mod tests {
     }
 
     #[test]
+    fn woliu_vortex_resonance_visual_uses_field_scale_particles() {
+        let mut app = App::new();
+        app.add_event::<VortexCastEvent>();
+        app.add_event::<VfxEventRequest>();
+        app.add_systems(Update, emit_woliu_v2_visual_triggers);
+        let caster = spawn_player(&mut app, "Alice", [0.0, 64.0, 0.0]);
+
+        app.world_mut().send_event(VortexCastEvent {
+            caster,
+            skill: WoliuSkillId::VortexResonance,
+            tick: 10,
+            center: valence::prelude::DVec3::new(1.0, 64.0, 2.0),
+            lethal_radius: 0.0,
+            influence_radius: 6.0,
+            turbulence_radius: 6.0,
+            absorbed_qi: 0.0,
+            swirl_qi: 10.0,
+            backfire_level: None,
+            visual: crate::combat::woliu_v2::events::WoliuSkillVisual {
+                animation_id: "bong:woliu_vortex_resonance",
+                particle_id: "bong:woliu_vortex_resonance_field",
+                sound_recipe_id: "woliu_vortex_resonance",
+                hud_hint: "vortex_resonance",
+                icon_texture: "bong:textures/gui/skill/woliu_heart.png",
+            },
+        });
+
+        app.update();
+
+        let emitted = drain_vfx(&mut app);
+        assert_eq!(emitted.len(), 2);
+        assert_play_anim(&emitted[0], "bong:woliu_vortex_resonance", WOLIU_PRIORITY);
+        match &emitted[1].payload {
+            VfxEventPayloadV1::SpawnParticle {
+                event_id,
+                strength,
+                count,
+                duration_ticks,
+                ..
+            } => {
+                assert_eq!(event_id, "bong:woliu_vortex_resonance_field");
+                assert_eq!(*strength, Some(1.0));
+                assert_eq!(*count, Some(48));
+                assert_eq!(*duration_ticks, Some(80));
+            }
+            other => panic!("expected SpawnParticle, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn woliu_looping_visual_stops_when_active_window_expires() {
+        let mut app = App::new();
+        app.insert_resource(CombatClock { tick: 10 });
+        app.add_event::<VfxEventRequest>();
+        app.add_systems(Update, emit_woliu_v2_visual_stop_triggers);
+        let caster = spawn_player(&mut app, "Alice", [0.0, 64.0, 0.0]);
+        app.world_mut().entity_mut(caster).insert(VortexV2State {
+            active_skill_kind: WoliuSkillId::VortexResonance,
+            heart_passive_enabled: false,
+            lethal_radius: 0.0,
+            influence_radius: 6.0,
+            turbulence_radius: 6.0,
+            turbulence_intensity: 0.8,
+            backfire_level: None,
+            started_at_tick: 10,
+            active_until_tick: 20,
+            cooldown_until_tick: 100,
+        });
+
+        app.update();
+        assert!(drain_vfx(&mut app).is_empty());
+
+        app.world_mut().resource_mut::<CombatClock>().tick = 20;
+        app.update();
+        let emitted = drain_vfx(&mut app);
+
+        assert_eq!(emitted.len(), 1);
+        assert_stop_anim(
+            &emitted[0],
+            "bong:woliu_vortex_resonance",
+            WOLIU_STOP_FADE_OUT_TICKS,
+        );
+    }
+
+    #[test]
     fn completed_botany_harvest_emits_leaf_burst_particle() {
         let mut app = App::new();
         app.add_event::<HarvestTerminalEvent>();
@@ -1013,6 +1209,20 @@ mod tests {
                 assert_eq!(*priority, expected_priority);
             }
             other => panic!("expected PlayAnim, got {other:?}"),
+        }
+    }
+
+    fn assert_stop_anim(request: &VfxEventRequest, expected_anim: &str, expected_fade: u8) {
+        match &request.payload {
+            VfxEventPayloadV1::StopAnim {
+                anim_id,
+                fade_out_ticks,
+                ..
+            } => {
+                assert_eq!(anim_id, expected_anim);
+                assert_eq!(*fade_out_ticks, Some(expected_fade));
+            }
+            other => panic!("expected StopAnim, got {other:?}"),
         }
     }
 

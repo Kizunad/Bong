@@ -20,8 +20,7 @@ public final class WoliuV2HudPlanner {
         if (screenWidth <= 0 || screenHeight <= 0) return List.of();
 
         List<HudRenderCommand> out = new ArrayList<>();
-        out.addAll(VortexChargeProgressHud.buildCommands(safeState, screenWidth, screenHeight));
-        out.addAll(VortexCooldownOverlay.buildCommands(safeState, screenWidth, screenHeight, nowMillis));
+        out.addAll(WoliuV2StatusPanelHud.buildCommands(safeState, screenWidth, screenHeight, nowMillis));
         out.addAll(BackfireWarningHud.buildCommands(safeState, screenWidth, screenHeight));
         out.addAll(TurbulenceFieldVisualizeHud.buildCommands(safeState, screenWidth, screenHeight, nowMillis));
         return List.copyOf(out);
