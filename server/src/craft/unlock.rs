@@ -403,8 +403,17 @@ mod tests {
         let mut registry = super::super::registry::CraftRegistry::new();
         crate::craft::register_examples(&mut registry).unwrap();
         let matches = find_recipes_unlockable_by_scroll(&registry, "scroll_herb_knife_iron");
-        assert_eq!(matches.len(), 1);
-        assert_eq!(matches[0].id.as_str(), "craft.example.herb_knife.iron");
+        assert_eq!(
+            matches.len(),
+            1,
+            "expected one recipe because scroll_herb_knife_iron maps to one example, actual matches={matches:?}"
+        );
+        assert_eq!(
+            matches[0].id.as_str(),
+            "craft.example.herb_knife.iron",
+            "expected herb knife recipe for scroll_herb_knife_iron, actual id={}",
+            matches[0].id.as_str()
+        );
     }
 
     #[test]
@@ -420,8 +429,17 @@ mod tests {
         let mut registry = super::super::registry::CraftRegistry::new();
         crate::craft::register_examples(&mut registry).unwrap();
         let matches = find_recipes_unlockable_by_mentor(&registry, "array_scribe");
-        assert_eq!(matches.len(), 1);
-        assert_eq!(matches[0].id.as_str(), "craft.example.zhenfa_trap.iron");
+        assert_eq!(
+            matches.len(),
+            1,
+            "expected one recipe because array_scribe teaches one example, actual matches={matches:?}"
+        );
+        assert_eq!(
+            matches[0].id.as_str(),
+            "craft.example.zhenfa_trap.iron",
+            "expected zhenfa trap recipe for array_scribe, actual id={}",
+            matches[0].id.as_str()
+        );
     }
 
     #[test]

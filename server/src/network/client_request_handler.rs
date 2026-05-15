@@ -512,7 +512,7 @@ pub fn handle_client_request_payloads(
                 commands.entity(ev.client).insert(MeridianTarget(meridian));
                 if let Ok((_username, mut client)) = clients.get_mut(ev.client) {
                     client.send_chat_message(format!(
-                        "§a[修炼] 已收到冲脉目标：{}。",
+                        "§a[修炼] 已收到经脉目标：{}。",
                         meridian_label(meridian)
                     ));
                 }
@@ -3218,6 +3218,40 @@ mod tests {
             Update,
             crate::alchemy::apply_alchemy_explode_outcomes.after(handle_client_request_payloads),
         );
+    }
+
+    #[test]
+    fn meridian_label_maps_regular_and_extraordinary_channels() {
+        let cases = [
+            (MeridianId::Lung, "肺经"),
+            (MeridianId::LargeIntestine, "大肠经"),
+            (MeridianId::Stomach, "胃经"),
+            (MeridianId::Spleen, "脾经"),
+            (MeridianId::Heart, "心经"),
+            (MeridianId::SmallIntestine, "小肠经"),
+            (MeridianId::Bladder, "膀胱经"),
+            (MeridianId::Kidney, "肾经"),
+            (MeridianId::Pericardium, "心包经"),
+            (MeridianId::TripleEnergizer, "三焦经"),
+            (MeridianId::Gallbladder, "胆经"),
+            (MeridianId::Liver, "肝经"),
+            (MeridianId::Ren, "任脉"),
+            (MeridianId::Du, "督脉"),
+            (MeridianId::Chong, "冲脉"),
+            (MeridianId::Dai, "带脉"),
+            (MeridianId::YinQiao, "阴跷脉"),
+            (MeridianId::YangQiao, "阳跷脉"),
+            (MeridianId::YinWei, "阴维脉"),
+            (MeridianId::YangWei, "阳维脉"),
+        ];
+
+        for (id, expected) in cases {
+            assert_eq!(
+                meridian_label(id),
+                expected,
+                "expected stable chat label for {id:?}"
+            );
+        }
     }
 
     fn assert_movement_action_yaw_forwarded(yaw_degrees: f32) {

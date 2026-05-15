@@ -38,7 +38,7 @@ public final class VortexSpiralPlayer implements VfxPlayer {
         double oz = payload.origin()[2];
         int count = clamp(payload.count().orElse(OptionalInt.of(DEFAULT_COUNT).getAsInt()), 1, 64);
         int maxAge = payload.durationTicks().orElse(OptionalInt.of(42).getAsInt());
-        double strength = payload.strength().orElse(0.75);
+        double strength = clamp01(payload.strength().orElse(0.75));
         float[] color = rgb(payload);
         float alpha = (float) Math.max(0.35, Math.min(0.95, 0.45 + strength * 0.5));
 
@@ -79,7 +79,7 @@ public final class VortexSpiralPlayer implements VfxPlayer {
         double ox = payload.origin()[0];
         double oy = payload.origin()[1] + 0.95;
         double oz = payload.origin()[2];
-        double strength = payload.strength().orElse(0.8);
+        double strength = clamp01(payload.strength().orElse(0.8));
         int count = clamp(payload.count().orElse(48), 24, 96);
         int maxAge = clamp(payload.durationTicks().orElse(80), 30, 120);
         double fieldRadius = 2.2 + strength * 3.8;
@@ -126,7 +126,7 @@ public final class VortexSpiralPlayer implements VfxPlayer {
         double ox = payload.origin()[0];
         double oy = payload.origin()[1] + 0.75;
         double oz = payload.origin()[2];
-        double strength = payload.strength().orElse(0.9);
+        double strength = clamp01(payload.strength().orElse(0.9));
         int count = clamp(payload.count().orElse(64), 24, 96);
         int maxAge = clamp(payload.durationTicks().orElse(44), 18, 80);
         double radius = 0.6 + strength * 0.7;
@@ -173,5 +173,9 @@ public final class VortexSpiralPlayer implements VfxPlayer {
 
     private static int clamp(int value, int min, int max) {
         return Math.max(min, Math.min(max, value));
+    }
+
+    private static double clamp01(double value) {
+        return Math.max(0.0, Math.min(1.0, value));
     }
 }

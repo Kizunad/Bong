@@ -77,7 +77,8 @@ public final class WoliuV2StatusPanelHud {
         int barY = y + 35;
         out.add(HudRenderCommand.rect(HudRenderLayer.VORTEX_TURBULENCE, innerX, barY, barW, TRACK_HEIGHT, 0xCC111722));
         if (skillActive) {
-            int fill = Math.round(barW * state.chargeProgress());
+            float progress = Math.max(0f, Math.min(1f, state.chargeProgress()));
+            int fill = Math.round(barW * progress);
             if (fill > 0) {
                 out.add(HudRenderCommand.rect(HudRenderLayer.VORTEX_TURBULENCE, innerX, barY, fill, TRACK_HEIGHT, ACCENT));
             }

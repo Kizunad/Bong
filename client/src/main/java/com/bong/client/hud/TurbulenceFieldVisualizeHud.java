@@ -19,7 +19,7 @@ public final class TurbulenceFieldVisualizeHud {
     ) {
         if (!WoliuV2StatusPanelHud.hasVisibleTurbulence(state, nowMillis)) return List.of();
 
-        int alpha = Math.max(0x10, Math.round(MAX_ALPHA * state.turbulenceIntensity()));
+        int alpha = Math.max(0x10, Math.min(MAX_ALPHA, Math.round(MAX_ALPHA * state.turbulenceIntensity())));
         int tint = (alpha << 24) | 0x182040;
         return List.of(HudRenderCommand.screenTint(HudRenderLayer.VORTEX_TURBULENCE, tint));
     }

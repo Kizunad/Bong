@@ -40,6 +40,7 @@ impl Command for TechniqueCmd {
 
         graph
             .at(technique)
+            // dev-only: 直接改写已知功法，绕过残卷/师承/顿悟与 qi_physics 路径。
             .literal("give")
             .argument("id")
             .with_parser::<String>()

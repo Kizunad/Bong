@@ -59,10 +59,13 @@ class WoliuV2HudPlannerTest {
             0L
         );
 
-        List<HudRenderCommand> commands = VortexCooldownOverlay.buildCommands(state, 960, 540, 0L);
+        List<HudRenderCommand> commands = WoliuV2HudPlanner.buildCommands(state, 960, 540, 0L);
 
-        assertEquals(1, commands.size());
-        assertEquals("涡流 2147483647s", commands.get(0).text());
+        assertTrue(commands.stream().anyMatch(cmd ->
+            cmd.layer() == HudRenderLayer.VORTEX_TURBULENCE
+                && cmd.isText()
+                && "冷却 2147483647s".equals(cmd.text())
+        ));
     }
 
     @Test

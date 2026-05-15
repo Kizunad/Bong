@@ -42,6 +42,10 @@ use crate::movement::{player_knockback::ActivePlayerKnockback, MovementState};
 use crate::player::state::PlayerState;
 use crate::skill::components::SkillSet;
 
+/// [dev-only] `/reset` 仅用于开发调试。
+///
+/// 该命令会直接重置玩家运行态，绕过世界观自然修炼流程与 qi_physics 分类账守恒；
+/// 不得把这里的状态改写逻辑复用到正式玩法路径。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ResetCmd {
     Self_,
@@ -56,6 +60,7 @@ impl Command for ResetCmd {
     }
 }
 
+/// 注册开发重置命令；生产玩法入口不应依赖这个模块。
 pub fn register(app: &mut App) {
     app.add_command::<ResetCmd>();
     register_systems(app);

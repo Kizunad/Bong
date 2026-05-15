@@ -1363,7 +1363,7 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
 
         com.bong.client.network.ClientRequestSender.sendSetMeridianTarget(
             com.bong.client.network.ClientRequestProtocol.toMeridianId(selected));
-        showActionToast("冲脉目标：" + selected.displayName(), ACTION_TOAST_OK);
+        showActionToast("经脉目标：" + selected.displayName(), ACTION_TOAST_OK);
         return true;
     }
 
@@ -1391,11 +1391,11 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
         if (selected == null) {
             return "先点击一条经脉";
         }
-        ChannelState state = body == null ? null : body.channel(selected);
+        ChannelState state = body.channel(selected);
         if (state != null && !state.blocked()) {
-            return selected.displayName() + "已通，不需要再设为冲脉目标";
+            return selected.displayName() + "已通，不需要再设为经脉目标";
         }
-        if (body != null && openedMeridianCount(body) == 0
+        if (openedMeridianCount(body) == 0
             && selected.family() == MeridianChannel.Family.EXTRAORDINARY) {
             return "首脉需先走十二正经";
         }

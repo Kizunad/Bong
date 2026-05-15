@@ -206,6 +206,64 @@ pub fn emit_death_event_if_lethal(
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn death_event(target: Entity) -> DeathEvent {
+        DeathEvent {
+            target,
+            cause: "test".to_string(),
+            attacker: None,
+            attacker_player_id: None,
+            at_tick: 1,
+        }
+    }
+
+    #[test]
+    fn emit_death_event_if_lethal_ignores_already_dead_actor() {
+        let mut world = bevy_ecs::world::World::new();
+        world.insert_resource(Events::<DeathEvent>::default());
+        let target = world.spawn_empty().id();
+
+        let emitted = emit_death_event_if_lethal(
+            &mut world,
+            DeathEventIfLethal {
+                was_alive: false,
+                health_current: 0.0,
+                event: death_event(target),
+            },
+        );
+
+        assert!(!emitted);
+        assert_eq!(
+            world.resource::<Events<DeathEvent>>().len(),
+            0,
+            "expected no DeathEvent because target was already dead"
+        );
+    }
+
+    #[test]
+    fn emit_death_event_if_lethal_returns_false_when_death_event_resource_missing() {
+        let mut world = bevy_ecs::world::World::new();
+        let target = world.spawn_empty().id();
+
+        let emitted = emit_death_event_if_lethal(
+            &mut world,
+            DeathEventIfLethal {
+                was_alive: true,
+                health_current: 0.0,
+                event: death_event(target),
+            },
+        );
+
+        assert!(
+            !emitted,
+            "expected false because Events<DeathEvent> resource is not registered"
+        );
+    }
+}
+
 #[derive(Debug, Clone, Event, Serialize, Deserialize)]
 pub struct DeathInsightRequested {
     pub payload: DeathInsightRequestV1,

@@ -48,7 +48,7 @@ pub fn emit_vortex_state_payloads(
     let periodic = clock.tick.is_multiple_of(TICKS_PER_SECOND);
     for (entity, mut client, username, unique_id, field, v2_state, turbulence) in &mut clients {
         let v2_active = v2_state.is_some_and(|state| clock.tick < state.active_until_tick);
-        let active = field.is_some() || v2_active || turbulence.is_some();
+        let active = field.is_some() || v2_active;
         let previously_active = cache.active.get(&entity).copied().unwrap_or(false);
         if !periodic && active == previously_active {
             continue;
@@ -231,6 +231,38 @@ mod tests {
         assert!(state.cooldown_until_ms > 0);
         assert_eq!(state.turbulence_radius, 0.0);
         assert_eq!(state.turbulence_intensity, 0.0);
+    }
+
+    #[test]
+    fn woliu_v2_overlay_ignores_lingering_turbulence_after_active_window() {
+        let mut state = vortex_field_state_payload("entity:1".to_string(), None, 30, 0);
+        let v2_state = VortexV2State {
+            active_skill_kind: WoliuSkillId::VortexResonance,
+            heart_passive_enabled: false,
+            lethal_radius: 0.0,
+            influence_radius: 5.0,
+            turbulence_radius: 5.0,
+            turbulence_intensity: 0.8,
+            backfire_level: None,
+            started_at_tick: 10,
+            active_until_tick: 20,
+            cooldown_until_tick: 110,
+        };
+        let turbulence = TurbulenceField::new(
+            Entity::from_raw(1),
+            DVec3::new(3.0, 64.0, 4.0),
+            12.0,
+            0.75,
+            100.0,
+            10,
+        );
+
+        apply_woliu_v2_state_overlay(&mut state, Some(&v2_state), Some(&turbulence), 30);
+
+        assert!(!state.active);
+        assert_eq!(state.turbulence_radius, 0.0);
+        assert_eq!(state.turbulence_intensity, 0.0);
+        assert_eq!(state.turbulence_until_ms, 0);
     }
 
     #[test]

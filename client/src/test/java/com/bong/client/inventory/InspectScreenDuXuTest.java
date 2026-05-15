@@ -76,6 +76,7 @@ public class InspectScreenDuXuTest {
     @Test
     void meridianTargetRejectsOpenedAndFirstExtraordinary() {
         assertEquals("经脉数据加载中", InspectScreen.meridianTargetBlockReason(null, MeridianChannel.LU));
+        assertEquals("先点击一条经脉", InspectScreen.meridianTargetBlockReason(body("Awaken", null), null));
         assertTrue(InspectScreen.meridianTargetBlockReason(body("Awaken", null), MeridianChannel.LU)
             .contains("已通"));
         assertEquals(
