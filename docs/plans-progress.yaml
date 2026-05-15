@@ -1,14 +1,12 @@
 # Bong 项目 plan 进度索引
 # 此文件由 scripts/plans_progress.py 消费，生成 README.md 进度段落。
 # 维护方式：plan 进度变化时更新对应条目的 percent / state / last_updated / pr_refs / summary。
-# 上一次刷新：2026-05-06 由 5 个 explorer subagent 并发实地核对（grep + git log + 文档对照）全审 active 5 组（combat-vfx / cultivation-economy / gameplay-npc / infrastructure / worldgen）。
+# 上一次刷新：2026-05-16 由 5 个 explorer subagent 并发实地核对（grep + git log + 文档对照）全审 dashboard active / skeleton drift。
 #   主要发现：
-#     - 本地 main 先 fast-forward 到 origin/main b99e8bef，纳入 PR #136 plan-botany-agent-v1 归档实现；用户未提交的 docs/plans-skeleton/* 改动保持不动。
-#     - **plan-alchemy-client-v1**：40% → 100%（grep 命中 furnace_pos / AlchemyScreen / 图标链路，旧“P3-P7 0 命中”判断过时）。
-#     - **plan-alchemy-recycle-v1**：5% → 90% active-implementing（PR #139 open；auto/plan-alchemy-recycle-v1 分支已有 PillResidue / dye_contamination / 客户端入口，main 尚未合）。
-#     - **plan-lingtian-process-v1**、**plan-lingtian-npc-v1**、**plan-multi-style-v1**、**plan-niche-defense-v1**、**plan-botany-agent-v1** 已按最新主线/归档路径上调为 merged 100%。
-#     - **plan-lingtian-weather-v1**：0% → 25%（jiezeq-v1 已提供 query_season / WorldSeasonState 基础设施，但 plot weather / WeatherEvent / client renderer 仍未落地）。
-#     - **plan-multi-life-v1**：8% → 65%；**plan-tsy-raceout-v1**：10% → 45%（既有前置代码超过旧 dashboard，但专属闭环未完成）。
+#     - 8 个旧 active 条目已归档并改为 finished_plans 路径：alchemy-recycle / lingtian-weather / tribulation / void-actions / inventory / multi-life / tsy-raceout / terrain-layer-query。
+#     - 新补 dashboard 缺口：breakthrough-cinematic、client-wiring-gaps 已合并；video2anim、tiandao-hunt、sou-da-che、territory 仍处 active design。
+#     - gameplay-journey 已从 skeleton 升为 active-implementing 65%，但 P0-P5 E2E 脚本仍缺。
+#     - skeleton 组纠偏：economy / qi-physics / player-journey 草案已归档，新增 plan-model-asset-v1 骨架。
 #
 # state 取值：
 #   - merged              代码已合并主线，plan 主体已落地
@@ -17,7 +15,7 @@
 #   - skeleton            骨架 plan（在 plans-skeleton/）
 #   - finished            已归档（在 finished_plans/）
 
-generated_at: "2026-05-11"
+generated_at: "2026-05-16"
 project: Bong
 
 groups:
@@ -48,12 +46,12 @@ groups:
 
 plans:
   # ============================================================
-  # Group: 坍缩渊
+  # Group: 坍缩渊（TSY）
   # ============================================================
   # tsy 系列 10 份请见下方 finished 分组条目.
 
   # ============================================================
-  # Group: combat-vfx
+  # Group: 战斗 / HUD / 视觉
   # ============================================================
   - file: finished_plans/plan-HUD-v1.md
     group: combat-vfx
@@ -110,10 +108,10 @@ plans:
     title: "Iris 光影集成"
     state: active-design
     percent: 5
-    last_updated: "2026-04-25"
+    last_updated: "2026-05-16"
     pr_refs: []
     blocking_on: []
-    summary: "grep IrisApi/CommonUniforms/bong_xianxia/recommends.iris 均 0；前置视觉 plan 已归档，但本 plan 仍未实现。"
+    summary: "fabric.mod.json 无 recommends.iris，client 无 IrisApi/CommonUniforms/BongClientState/bong_xianxia；仍停留调研设计。"
 
   - file: finished_plans/plan-style-vector-integration-v1.md
     group: combat-vfx
@@ -165,8 +163,28 @@ plans:
     blocking_on: []
     summary: "grep 命中 jiemai_effectiveness/ParryRecovery/JiemaiParry/ZhenmaiNarration；阶段表 P1/P2 仍空，代码已完成 v1 收口。"
 
+  - file: finished_plans/plan-style-balance-v1.md
+    group: combat-vfx
+    title: "流派克制系数 config + telemetry 回填"
+    state: merged
+    percent: 100
+    last_updated: "2026-05-11"
+    pr_refs: [204]
+    blocking_on: []
+    summary: "已归档；StyleAttack::rejection_rate、qi_collision resistance cap、流派 ρ 值、style_balance telemetry/schema、模拟器与 replay 校准脚本均落地并通过验证。"
+
+  - file: finished_plans/plan-breakthrough-cinematic-v1.md
+    group: combat-vfx
+    title: "突破 cinematic 三栈闭环"
+    state: merged
+    percent: 100
+    last_updated: "2026-05-16"
+    pr_refs: [226]
+    blocking_on: []
+    summary: "代码命中 breakthrough cinematic server/client/agent 三栈与验证脚本；PR #226 已合并，dashboard 补归档路径。"
+
   # ============================================================
-  # Group: cultivation-economy
+  # Group: 修炼 / 经济
   # ============================================================
   - file: finished_plans/plan-alchemy-client-v1.md
     group: cultivation-economy
@@ -177,16 +195,6 @@ plans:
     pr_refs: [93]
     blocking_on: []
     summary: "grep 命中 furnace_pos、AlchemyScreen、furnace_fantie.png 全链路；归档文档仍停 P1 且缺 Finish Evidence。"
-
-  - file: plan-alchemy-recycle-v1.md
-    group: cultivation-economy
-    title: "炼丹废料反哺灵田"
-    state: active-implementing
-    percent: 90
-    last_updated: "2026-05-06"
-    pr_refs: [139]
-    blocking_on: []
-    summary: "PR #139 open；auto/plan-alchemy-recycle-v1 已命中 PillResidue、dye_contamination、客户端入口，main 仍只有骨架与回收 hook。"
 
   - file: finished_plans/plan-alchemy-v2.md
     group: cultivation-economy
@@ -268,16 +276,6 @@ plans:
     blocking_on: []
     summary: "开垦/种植/收获/补灵/偷灵、SkillXpGain、server_data/client_request 已落；zhenfa/持久化为后续。"
 
-  - file: plan-lingtian-weather-v1.md
-    group: cultivation-economy
-    title: "灵田天气季节"
-    state: active-implementing
-    percent: 25
-    last_updated: "2026-05-05"
-    pr_refs: [138]
-    blocking_on: []
-    summary: "jiezeq 的 query_season/WorldSeasonState 已主线；PlotEnvironment 无 season/weather，WeatherEvent/schema/client renderer 未落。"
-
   - file: finished_plans/plan-mineral-v1.md
     group: cultivation-economy
     title: "矿物材料体系"
@@ -318,29 +316,89 @@ plans:
     blocking_on: []
     summary: "ToolKind/ToolTag、7 工具资产、forge 蓝图、botany required_tool、fauna ButcherSession 与耐久均命中；文档缺 Finish Evidence。"
 
-  - file: plan-tribulation-v1.md
+  - file: finished_plans/plan-void-quota-v1.md
+    group: cultivation-economy
+    title: "化虚名额按世界灵气总量动态调控"
+    state: merged
+    percent: 100
+    last_updated: "2026-05-08"
+    pr_refs: []
+    blocking_on: []
+    summary: "已归档；覆盖 plan-tribulation-v1 的 player_count/50 + hard cap 3 + half_step_on_success 旧规则。`check_void_quota` 改读 WorldQiBudget.current_total / BONG_VOID_QUOTA_K；超额起劫直接 VoidQuotaExceeded 真死；AscensionQuota payload 扩 total_world_qi/quota_k/quota_basis，agent 绝壁劫 narration 与 client inspect 展示均落地。"
+
+  - file: finished_plans/plan-alchemy-recycle-v1.md
+    group: cultivation-economy
+    title: "炼丹废料反哺灵田"
+    state: merged
+    percent: 100
+    last_updated: "2026-05-16"
+    pr_refs: [139]
+    blocking_on: []
+    summary: "grep 命中 PillResidueKind、ReplenishSource::PillResidue、dye_contamination 与客户端废料补灵；旧 PR open 判断过时。"
+
+  - file: finished_plans/plan-economy-v1.md
+    group: cultivation-economy
+    title: "骨币价格指数与经济叙事"
+    state: merged
+    percent: 100
+    last_updated: "2026-05-16"
+    pr_refs: [171]
+    blocking_on: []
+    summary: "已归档；PR #171 落地 EconomyPriceIndex/BoneCoinSupply、bone_coin_tick/schema、经济叙事与骨币 tooltip。"
+
+  - file: finished_plans/plan-lingtian-weather-v1.md
+    group: cultivation-economy
+    title: "灵田天气季节"
+    state: merged
+    percent: 100
+    last_updated: "2026-05-16"
+    pr_refs: [154]
+    blocking_on: []
+    summary: "grep 命中 WeatherEvent、ActiveWeather、WeatherEventUpdate 与 Redis 通道；旧 25% active 判断过时。"
+
+  - file: finished_plans/plan-qi-physics-v1.md
+    group: cultivation-economy
+    title: "修仙物理底盘"
+    state: merged
+    percent: 100
+    last_updated: "2026-05-16"
+    pr_refs: [132]
+    blocking_on: []
+    summary: "已归档；PR #132 建立 qi_physics 底盘、WorldQiBudget/WorldQiAccount、5 算子、账本 snapshot 与 61 个单测。"
+
+  - file: finished_plans/plan-qi-physics-patch-v1.md
+    group: cultivation-economy
+    title: "qi 物理迁移收口"
+    state: merged
+    percent: 100
+    last_updated: "2026-05-16"
+    pr_refs: [142, 152, 156, 160, 162]
+    blocking_on: []
+    summary: "已归档；shelflife、灵田账本、战斗/释放路径、汐转 TSY 与 era decay 接入 qi_physics，旧散常数 grep 为 0。"
+
+  - file: finished_plans/plan-tribulation-v1.md
     group: cultivation-economy
     title: "天劫与域崩"
     state: merged
-    percent: 90
-    last_updated: "2026-05-01"
+    percent: 100
+    last_updated: "2026-05-16"
     pr_refs: [96]
     blocking_on: []
-    summary: "DuXu 主链、HUD/agent、域崩、KarmaWeightStore 与 heart_demon MVP 均命中；多情境/阵法/terminal 仍后续。"
+    summary: "grep 命中 TribulationState、DuXu、KarmaWeightStore、heart-demon 与 client HUD；Finish Evidence 无红旗，旧 active 路径过时。"
 
-  # ============================================================
-  # Group: gameplay-npc
-  # ============================================================
-  - file: plan-inventory-v1.md
-    group: gameplay-npc
-    title: "背包与掉落闭环"
+  - file: finished_plans/plan-void-actions-v1.md
+    group: cultivation-economy
+    title: "化虚专属 action"
     state: merged
-    percent: 95
-    last_updated: "2026-05-01"
-    pr_refs: [12, 27]
+    percent: 100
+    last_updated: "2026-05-16"
+    pr_refs: [163]
     blocking_on: []
-    summary: "InventorySnapshot/Event、DroppedLootRegistry、world billboard 与 P1-P5 均命中；文档仍 active，Manual QA 未签 pass。"
+    summary: "grep 命中 VoidActionIntent、ledger/cooldowns、四路 fanout、client screen 与亡者页；旧 15% active 判断过时。"
 
+  # ============================================================
+  # Group: 玩法 / NPC / 世界
+  # ============================================================
   - file: finished_plans/plan-inventory-v2.md
     group: gameplay-npc
     title: "背包格子分配与堆叠修复"
@@ -370,16 +428,6 @@ plans:
     pr_refs: [137]
     blocking_on: []
     summary: "by_actor、ScatteredCultivator、farming_brain、zone pressure、tiandao narration 全命中；实际已归档。"
-
-  - file: plan-multi-life-v1.md
-    group: gameplay-npc
-    title: "多周目角色终结继承"
-    state: active-implementing
-    percent: 65
-    last_updated: "2026-05-04"
-    pr_refs: [53, 58, 117]
-    blocking_on: []
-    summary: "前置代码已超文档：CreateNewCharacter、fortune reset、亡者博物馆、TSY 遗物均命中；本 plan 专属 P2/P3 未完全闭环。"
 
   - file: finished_plans/plan-multi-style-v1.md
     group: gameplay-npc
@@ -431,18 +479,68 @@ plans:
     blocking_on: []
     summary: "TutorialState/CoffinOpen/dynamic_lingquan_selector/client mixin/tiandao baseline 全命中；阶段表仍标未做但证据对齐。"
 
-  - file: plan-tsy-raceout-v1.md
+  - file: finished_plans/plan-inventory-v1.md
+    group: gameplay-npc
+    title: "背包与掉落闭环"
+    state: merged
+    percent: 100
+    last_updated: "2026-05-16"
+    pr_refs: [12, 27]
+    blocking_on: []
+    summary: "grep 命中 InventorySnapshot/Event、DroppedLootRegistry、apply_tsy_death_drop、client store/world billboard；旧 active+95 过时。"
+
+  - file: plan-gameplay-journey-v1.md
+    group: gameplay-npc
+    title: "100h 玩家旅程总线"
+    state: active-implementing
+    percent: 65
+    last_updated: "2026-05-16"
+    pr_refs: [159]
+    blocking_on: ["plan-gameplay-acceptance-v1", "scripts/e2e/p0-p5"]
+    summary: "已迁入 docs/ 且大量依赖落地；spawn_plain/Breakthrough/PracticeLog/VoidAction 命中，但 P0-P5 E2E 脚本仍缺。"
+
+  - file: finished_plans/plan-multi-life-v1.md
+    group: gameplay-npc
+    title: "多周目终结继承"
+    state: merged
+    percent: 100
+    last_updated: "2026-05-16"
+    pr_refs: [148]
+    blocking_on: []
+    summary: "grep 命中 luck_pool、NewCharacterSpec、regenerate_or_terminate、era 新一世与 lives/index；旧 65% active 过时。"
+
+  - file: plan-sou-da-che-v1.md
+    group: gameplay-npc
+    title: "搜打撤风险节拍"
+    state: active-design
+    percent: 15
+    last_updated: "2026-05-16"
+    pr_refs: []
+    blocking_on: []
+    summary: "14 个前置已核验；RiskHeatmap/ExtractDecisionHud/HomeSequence 等交付物未命中，P0-P5 仍是设计稿。"
+
+  - file: plan-territory-v1.md
+    group: gameplay-npc
+    title: "领地影响力博弈"
+    state: active-design
+    percent: 10
+    last_updated: "2026-05-16"
+    pr_refs: []
+    blocking_on: []
+    summary: "git 仅见文档新增；ZoneInfluence/ZoneDominance/InfluenceChangedEvent/territory_tick 未命中，只有既有 npc/territory.rs。"
+
+  - file: finished_plans/plan-tsy-raceout-v1.md
     group: gameplay-npc
     title: "坍缩渊三秒撤离"
-    state: active-implementing
-    percent: 45
-    last_updated: "2026-05-04"
-    pr_refs: [54, 59]
+    state: merged
+    percent: 100
+    last_updated: "2026-05-16"
+    pr_refs: [151]
     blocking_on: []
-    summary: "CollapseStarted、3-5 CollapseTear、60tick extract 已有；COLLAPSE_DURATION 仍 30s，缺单裂口占用与专属 narration。"
+    summary: "grep 命中 PortalOccupied、CollapseTear 60tick、race-out HUD 与 calamity 语料；旧 45% active 判断过时。"
 
   # ============================================================
-  # Group: infrastructure
+  # Group: 基础设施 / 工作流
   # ============================================================
   - file: finished_plans/plan-anticheat-v1.md
     group: infrastructure
@@ -504,8 +602,38 @@ plans:
     blocking_on: []
     summary: "代码命中 Valence cmd、11 条 dev 命令、/bong、registry pin；头部阶段表仍空但归档证据齐。"
 
+  - file: finished_plans/plan-client-wiring-gaps-v1.md
+    group: infrastructure
+    title: "Client payload 接线补齐"
+    state: merged
+    percent: 100
+    last_updated: "2026-05-16"
+    pr_refs: [236]
+    blocking_on: []
+    summary: "rg 命中 ServerDataRouter 三注册、Mining/Lumber handler、GatheringSessionStore 和测试；PR #236 已合并。"
+
+  - file: plan-tiandao-hunt-v1.md
+    group: infrastructure
+    title: "天道狩猎注意力系统"
+    state: active-design
+    percent: 15
+    last_updated: "2026-05-16"
+    pr_refs: []
+    blocking_on: []
+    summary: "TiandaoAttention/tiandao_hunt_tick/客户端 HUD/agent runtime 未命中；仅相邻 calamity AttentionTier 已有。"
+
+  - file: plan-video2anim-v1.md
+    group: infrastructure
+    title: "视频动捕转玩家动画"
+    state: active-design
+    percent: 5
+    last_updated: "2026-05-16"
+    pr_refs: [240]
+    blocking_on: []
+    summary: "仅 active plan 文档存在；client/tools 只有 anim_common.py/render_animation.py，转换器、测试与依赖未落地。"
+
   # ============================================================
-  # Group: worldgen
+  # Group: 地形 / 世界生成
   # ============================================================
   - file: finished_plans/plan-terrain-ash-deadzone-v1.md
     group: worldgen
@@ -526,16 +654,6 @@ plans:
     pr_refs: [118]
     blocking_on: []
     summary: "grep 命中 jiu_zong_ruin/zongmen_origin_id/JiuzongRuinGenerator、ZongFormationCore/ZongKeeper/schema；归档属实。"
-
-  - file: plan-terrain-layer-query-v1.md
-    group: worldgen
-    title: "TerrainProvider 按层查询"
-    state: active-design
-    percent: 10
-    last_updated: "2026-04-29"
-    pr_refs: []
-    blocking_on: []
-    summary: "grep 未见 sample_layer_f32/u8、LayerSchema、layer_names；仅旧单轨 sample_layer 被 botany 用，文档未实现判断属实。"
 
   - file: finished_plans/plan-terrain-pseudo-vein-v1.md
     group: worldgen
@@ -567,19 +685,19 @@ plans:
     blocking_on: []
     summary: "已归档；worldgen tribulation_scorch profile、TribulationScorchGenerator、tianjie_ascension_pit structure、server 焦土雷击/染色/天劫记录 hook 落地。虚劫残屑用途留后续 plan。"
 
-  # ============================================================
-  # Group: skeleton
-  # ============================================================
-  - file: plan-economy-v1.md
-    group: skeleton
-    title: "骨币半衰期 + 末法节律 + 100h 经济曲线"
-    state: skeleton
-    percent: 5
-    last_updated: "2026-05-05"
-    pr_refs: []
-    blocking_on: ["plan-qi-physics-v1", "plan-qi-physics-patch-v1"]
-    summary: "骨架；承接 worldview §九经济 + §十七末法节律。P0 已在 plan-fauna-v1 (PR #105, 2026-05-02) 顺手实装；P1 衰变曲线原 §1.5 三选一裁决废弃，等 qi-physics 底盘 qi_excretion 算子 + qi-physics-patch P1 shelflife 迁移落地后启动；本 plan 不再自定衰变公式。"
+  - file: finished_plans/plan-terrain-layer-query-v1.md
+    group: worldgen
+    title: "TerrainProvider 按层查询"
+    state: merged
+    percent: 100
+    last_updated: "2026-05-16"
+    pr_refs: [167]
+    blocking_on: []
+    summary: "grep 命中 LayerSchema、sample_layer_f32/u8、layer_registry_fixture 与 dump_layer_registry；旧 10% active 判断过时。"
 
+  # ============================================================
+  # Group: 骨架 plan
+  # ============================================================
   - file: plan-gameplay-acceptance-v1.md
     group: skeleton
     title: "终极验收：6 段 E2E + 100h 实测"
@@ -590,88 +708,18 @@ plans:
     blocking_on: ["所有前置 42 plan"]
     summary: "骨架；Wave 5 收口唯一 plan，所有前置 plan 完成后才能跑。"
 
-  - file: plan-gameplay-journey-v1.md
+  - file: plan-model-asset-v1.md
     group: skeleton
-    title: "玩家旅程总线（普通人 → 化虚 100h）"
+    title: "Tripo3D 模型资产批产"
     state: skeleton
     percent: 5
-    last_updated: "2026-05-04"
+    last_updated: "2026-05-16"
     pr_refs: []
     blocking_on: []
-    summary: "总线 / Meta plan；不增子系统，把 35+ 已落地 + 28 active + 9 skeleton 串成 100h 路径。三方合并产物（2026-05-01）。"
-
-  - file: plan-player-journey-deepseek.md
-    group: skeleton
-    title: "玩家全程旅途（deepseek 版）"
-    state: skeleton
-    percent: 5
-    last_updated: ""
-    pr_refs: []
-    blocking_on: []
-    summary: "骨架；六境界 + 七流派 + 五大玩法线 + MC 自组织行为旅途阶段切分（与 gameplay-journey 三方交叉验证）。"
-
-  - file: plan-playthrough-100h-gpt-v1.md
-    group: skeleton
-    title: "100h 游玩路程（gpt 版）"
-    state: skeleton
-    percent: 5
-    last_updated: ""
-    pr_refs: []
-    blocking_on: []
-    summary: "骨架；从醒灵普通散修到化虚的 100h 路程详细骨架（与 gameplay-journey 三方交叉验证）。"
-
-  - file: plan-qi-physics-v1.md
-    group: skeleton
-    title: "修仙物理底盘（守恒律 + 压强法则 + 唯一物理实现入口）"
-    state: skeleton
-    percent: 5
-    last_updated: "2026-05-05"
-    pr_refs: []
-    blocking_on: []
-    summary: "骨架（2026-05-05 立）；worldview §二 真元极易挥发 / §十 全服灵气总量 SPIRIT_QI_TOTAL 守恒（const 暂定 100.0 可配置）/ §二+§三 压强法则 / §十一 坍缩渊回收 等同源现象的唯一物理实现入口。P0 决策门 4 红线（distance 0.06 vs 0.03 / TSY×死域协调 / woliu 离散表 vs 物理 / 守恒释放路径）；P1 算子（qi_excretion / qi_distance_atten / qi_collision / qi_release_to_zone）+ WorldQiAccount 全局账本 + StyleAttack/Defense trait。**plan 范围只到 P1**（立底盘冻结 API），迁移工作转 plan-qi-physics-patch-v1 承接。已审 audit：combat/decay.rs:5 0.06 与正典 0.03 翻倍 / shelflife 5 套独立 profile / WorldQiAccount TODO 已在 lingtian/qi_account.rs:3-7 注释点名等本 plan。"
-
-  - file: plan-qi-physics-patch-v1.md
-    group: skeleton
-    title: "qi-physics 迁移收口（散常数 → 底盘算子）"
-    state: skeleton
-    percent: 5
-    last_updated: "2026-05-05"
-    pr_refs: []
-    blocking_on: ["plan-qi-physics-v1"]
-    summary: "骨架（2026-05-05 立）；承接 qi-physics-v1 P1 完成后的迁移工作。基于 2026-05-05 下午穷尽 audit（500+ 处 qi 调用点）：**P0 红线 6 PR**（3 公式正典化 + 3 守恒律违反 fix）—— ① combat/decay 0.06→0.03 ② tsy_drain×dead_zone 合并 ③ WorldQiAccount 合账 ④ 采集奖励 +14 凭空生灵气 ⑤ TSY 抽取 drain 去向无记账 ⑥ 域崩 RealmCollapse 暴力清零；P1 shelflife 5 profile 全迁；P2 战斗+杂项+守恒释放路径补全+NPC 修炼对冲验证；P3 新机制（坍缩渊 collapse_redistribute / 7 流派异体排斥 ρ / 时代衰减 / 阈值灾劫 / 节律对接 / 汐转守恒检查 / 暴力清零去向）。每 PR 必带守恒断言 + 旧符号 grep 全 0。**反向被依赖**：plan-economy-v1 / plan-style-balance-v1 / 等等都在等本 plan 完成。"
-
-  - file: finished_plans/plan-style-balance-v1.md
-    group: combat-vfx
-    title: "流派克制系数 config + telemetry 回填"
-    state: merged
-    percent: 100
-    last_updated: "2026-05-11"
-    pr_refs: [204]
-    blocking_on: []
-    summary: "已归档；StyleAttack::rejection_rate、qi_collision resistance cap、流派 ρ 值、style_balance telemetry/schema、模拟器与 replay 校准脚本均落地并通过验证。"
-
-  - file: plan-void-actions-v1.md
-    group: cultivation-economy
-    title: "化虚专属 action（镇压/引爆/阻挡/传承）"
-    state: active-design
-    percent: 15
-    last_updated: "2026-05-08"
-    pr_refs: []
-    blocking_on: []
-    summary: "Active（2026-05-08 升级）；化虚后不再以突破为驱动，改为镇压坍缩渊 / 引爆区域 / 阻挡道伥扩散 / 道统传承四类 action。前置 void-quota 已 finished，P0 仍需收口 action 成本、寿元扣减、冷却与 narration 模板。"
-
-  - file: finished_plans/plan-void-quota-v1.md
-    group: cultivation-economy
-    title: "化虚名额按世界灵气总量动态调控"
-    state: merged
-    percent: 100
-    last_updated: "2026-05-08"
-    pr_refs: []
-    blocking_on: []
-    summary: "已归档；覆盖 plan-tribulation-v1 的 player_count/50 + hard cap 3 + half_step_on_success 旧规则。`check_void_quota` 改读 WorldQiBudget.current_total / BONG_VOID_QUOTA_K；超额起劫直接 VoidQuotaExceeded 真死；AscensionQuota payload 扩 total_world_qi/quota_k/quota_basis，agent 绝壁劫 narration 与 client inspect 展示均落地。"
+    summary: "骨架；2026-05-17 Tripo3D 到期前批产约 150 个模型，现记录 19 个已生成资产、API 批量脚本与本地减面流程。"
 
   # ============================================================
-  # Group: finished
+  # Group: 已完成归档
   # ============================================================
   - file: mvp01-plan.md
     group: finished
@@ -1132,3 +1180,23 @@ plans:
     pr_refs: [49]
     blocking_on: []
     summary: "PR #49 合并；tsy.rs / tsy_drain.rs / tsy_portal.rs / tsy_filter.rs / tsy_dev_command.rs + zone.rs is_tsy/tsy_family_id/register_runtime_zone + agent schema/tsy.ts 落地。"
+
+  - file: finished_plans/plan-player-journey-deepseek.md
+    group: finished
+    title: "玩家全程旅途 deepseek 稿"
+    state: finished
+    percent: 100
+    last_updated: "2026-05-16"
+    pr_refs: []
+    blocking_on: []
+    summary: "已归档为三方 journey 草案；内容已并入 plan-gameplay-journey-v1，无代码 PR。"
+
+  - file: finished_plans/plan-playthrough-100h-gpt-v1.md
+    group: finished
+    title: "100h 游玩路程 gpt 稿"
+    state: finished
+    percent: 100
+    last_updated: "2026-05-16"
+    pr_refs: []
+    blocking_on: []
+    summary: "已归档为三方 journey 草案；工程红线与 100h 验收内容已并入 plan-gameplay-journey-v1，无代码 PR。"
