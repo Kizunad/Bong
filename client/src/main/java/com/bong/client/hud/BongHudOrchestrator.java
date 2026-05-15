@@ -216,17 +216,18 @@ public final class BongHudOrchestrator {
             screenHeight,
             nowMillis
         ));
-        commands.addAll(QiDensityRadarHudPlanner.buildCommands(
-            playerState,
-            safeSnapshot.zoneState(),
-            perceptionState,
-            mode,
-            environmentVariant,
-            runtime,
-            nowMillis,
-            screenWidth,
-            screenHeight
-        ));
+        // 暂时停用阵盘 HUD，保留 QiDensityRadarHudPlanner 代码作为 dead code 便于后续恢复。
+        // commands.addAll(QiDensityRadarHudPlanner.buildCommands(
+        //     playerState,
+        //     safeSnapshot.zoneState(),
+        //     perceptionState,
+        //     mode,
+        //     environmentVariant,
+        //     runtime,
+        //     nowMillis,
+        //     screenWidth,
+        //     screenHeight
+        // ));
         if (HudRealmGate.atLeastCondense(playerState.realm())) {
             commands.addAll(DirectionalCompassHudPlanner.buildCommands(
                 safeSnapshot.zoneState(),

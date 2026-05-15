@@ -29,8 +29,9 @@ class WoliuV2HudPlannerTest {
 
         List<HudRenderCommand> commands = WoliuV2HudPlanner.buildCommands(state, 960, 540, 1_000L);
 
-        assertTrue(commands.stream().anyMatch(cmd -> cmd.layer() == HudRenderLayer.VORTEX_CHARGE && cmd.isRect()));
-        assertTrue(commands.stream().anyMatch(cmd -> cmd.layer() == HudRenderLayer.VORTEX_COOLDOWN && cmd.isText()));
+        assertTrue(commands.stream().anyMatch(cmd -> cmd.layer() == HudRenderLayer.VORTEX_TURBULENCE && cmd.isRect() && cmd.x() > 700));
+        assertTrue(commands.stream().anyMatch(cmd -> cmd.layer() == HudRenderLayer.VORTEX_TURBULENCE && cmd.isText() && "涡流".equals(cmd.text())));
+        assertTrue(commands.stream().anyMatch(cmd -> cmd.layer() == HudRenderLayer.VORTEX_TURBULENCE && cmd.isText() && cmd.text().contains("涡心")));
         assertTrue(commands.stream().anyMatch(cmd -> cmd.layer() == HudRenderLayer.VORTEX_BACKFIRE && cmd.isEdgeVignette()));
         assertTrue(commands.stream().anyMatch(cmd -> cmd.layer() == HudRenderLayer.VORTEX_TURBULENCE && cmd.isScreenTint()));
     }
@@ -62,5 +63,28 @@ class WoliuV2HudPlannerTest {
 
         assertEquals(1, commands.size());
         assertEquals("涡流 2147483647s", commands.get(0).text());
+    }
+
+    @Test
+    void inactiveResidualTurbulenceDoesNotKeepWoliuHudAlive() {
+        VortexStateStore.State state = new VortexStateStore.State(
+            false,
+            6f,
+            0f,
+            0f,
+            0L,
+            0,
+            "woliu.vortex_resonance",
+            0f,
+            0L,
+            "",
+            6f,
+            0.8f,
+            10_000L
+        );
+
+        List<HudRenderCommand> commands = WoliuV2HudPlanner.buildCommands(state, 960, 540, 1_000L);
+
+        assertTrue(commands.isEmpty());
     }
 }

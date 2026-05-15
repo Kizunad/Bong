@@ -550,6 +550,7 @@ pub fn register(app: &mut App) {
                 .after(crate::cultivation::tribulation::start_tribulation_system)
                 .after(crate::cultivation::tribulation::tribulation_failure_system),
             vfx_animation_trigger::emit_woliu_v2_visual_triggers,
+            vfx_animation_trigger::emit_woliu_v2_visual_stop_triggers,
             vfx_animation_trigger::emit_botany_harvest_visual_triggers,
             vfx_animation_trigger::emit_lingtian_visual_triggers,
             vfx_animation_trigger::emit_baomai_v3_visual_triggers,
