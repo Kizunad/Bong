@@ -3,8 +3,9 @@ package com.bong.client.inventory;
 import org.junit.jupiter.api.Test;
 
 import javax.imageio.ImageIO;
-import java.util.List;
+import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
@@ -60,37 +61,71 @@ class GeneratedItemIconAssetsTest {
         "anqi_shanggu_bone",
         "anqi_shanggu_bone_charged"
     );
+    private static final List<String> EARLY_FLOW_IDS = List.of(
+        "crude_wood",
+        "wood_handle",
+        "iron_ore",
+        "stone_chunk",
+        "grass_fiber",
+        "clay_pot",
+        "iron_ingot",
+        "iron_needle",
+        "eclipse_needle_iron",
+        "poison_decoction_fan",
+        "grass_rope",
+        "copper_ore"
+    );
+    private static final List<String> ANQI_BATCH_IDS = List.of(
+        "jiet_aning_dan",
+        "anqi_bone_chip",
+        "anqi_bone_chip_charged",
+        "anqi_yibian_shougu",
+        "anqi_yibian_shougu_charged",
+        "anqi_lingmu_arrow",
+        "anqi_lingmu_arrow_charged",
+        "anqi_dyed_bone",
+        "anqi_dyed_bone_charged",
+        "anqi_fenglinghe_bone",
+        "anqi_fenglinghe_bone_charged",
+        "anqi_container_quiver"
+    );
 
     @Test
     void firstBatchGeneratedIconsAre128RgbaPngs() throws Exception {
-        for (String itemId : FIRST_BATCH_IDS) {
-            Path path = ITEM_TEXTURE_DIR.resolve(itemId + ".png");
-            assertTrue(java.nio.file.Files.exists(path), itemId + " icon should exist");
-            var image = ImageIO.read(path.toFile());
-            assertNotNull(image, itemId + " icon should be readable");
-            assertEquals(128, image.getWidth(), itemId + " icon width");
-            assertEquals(128, image.getHeight(), itemId + " icon height");
-            assertTrue(image.getColorModel().hasAlpha(), itemId + " icon should keep transparent alpha");
-        }
+        assertGeneratedIconsAre128RgbaPngs(ITEM_TEXTURE_DIR, FIRST_BATCH_IDS);
+    }
+
+    @Test
+    void earlyFlowGeneratedIconsAre128RgbaPngs() throws Exception {
+        assertGeneratedIconsAre128RgbaPngs(ITEM_TEXTURE_DIR, EARLY_FLOW_IDS);
+    }
+
+    @Test
+    void anqiBatchGeneratedIconsAre128RgbaPngs() throws Exception {
+        assertGeneratedIconsAre128RgbaPngs(ITEM_TEXTURE_DIR, ANQI_BATCH_IDS);
     }
 
     @Test
     void mundaneArmorRepresentativeIconsAre128RgbaPngs() throws Exception {
-        for (String itemId : List.of(
+        assertGeneratedIconsAre128RgbaPngs(ARMOR_TEXTURE_DIR, List.of(
             "armor_bone",
             "armor_hide",
             "armor_iron",
             "armor_copper",
             "armor_spirit_cloth",
             "armor_scroll_wrap"
-        )) {
-            Path path = ARMOR_TEXTURE_DIR.resolve(itemId + ".png");
-            assertTrue(java.nio.file.Files.exists(path), itemId + " icon should exist");
+        ));
+    }
+
+    private static void assertGeneratedIconsAre128RgbaPngs(Path textureDir, List<String> itemIds) throws Exception {
+        for (String itemId : itemIds) {
+            Path path = textureDir.resolve(itemId + ".png");
+            assertTrue(Files.exists(path), itemId + " icon should exist");
             var image = ImageIO.read(path.toFile());
             assertNotNull(image, itemId + " icon should be readable");
             assertEquals(128, image.getWidth(), itemId + " icon width");
             assertEquals(128, image.getHeight(), itemId + " icon height");
-            assertTrue(image.getColorModel().hasAlpha(), itemId + " icon should keep transparent alpha");
+            assertTrue(image.getColorModel().hasAlpha(), itemId + " icon should keep alpha channel");
         }
     }
 }

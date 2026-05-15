@@ -125,8 +125,9 @@ pub fn handle_meridian(
                 }
                 tracing::warn!("[dev-cmd] bypass worldview rule: force open all meridians");
                 client.send_chat_message(format!(
-                    "[dev] opened {opened} meridian(s); total opened={}",
-                    meridians.opened_count()
+                    "[dev] opened {opened} meridian(s); total opened={}; realm remains {:?} (open_all does not auto-breakthrough)",
+                    meridians.opened_count(),
+                    cultivation.realm
                 ));
             }
             MeridianCmd::List => {
@@ -335,6 +336,10 @@ mod tests {
         let meridians = app.world().get::<MeridianSystem>(player).unwrap();
         let life = app.world().get::<LifeRecord>(player).unwrap();
         assert_eq!(meridians.opened_count(), 20);
+        assert_eq!(
+            cultivation.realm,
+            crate::cultivation::components::Realm::Awaken
+        );
         assert_eq!(cultivation.qi_max, 210.0);
         assert_eq!(life.biography.len(), 20);
     }

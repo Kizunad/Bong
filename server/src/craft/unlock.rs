@@ -402,9 +402,9 @@ mod tests {
     fn find_by_scroll_returns_only_matching_recipes() {
         let mut registry = super::super::registry::CraftRegistry::new();
         crate::craft::register_examples(&mut registry).unwrap();
-        let matches = find_recipes_unlockable_by_scroll(&registry, "scroll_eclipse_needle_iron");
+        let matches = find_recipes_unlockable_by_scroll(&registry, "scroll_herb_knife_iron");
         assert_eq!(matches.len(), 1);
-        assert_eq!(matches[0].id.as_str(), "craft.example.eclipse_needle.iron");
+        assert_eq!(matches[0].id.as_str(), "craft.example.herb_knife.iron");
     }
 
     #[test]
@@ -419,9 +419,9 @@ mod tests {
     fn find_by_mentor_returns_all_recipes_with_matching_archetype() {
         let mut registry = super::super::registry::CraftRegistry::new();
         crate::craft::register_examples(&mut registry).unwrap();
-        // poison_master 关联 蚀针 + 毒源煎汤 两个示例
-        let matches = find_recipes_unlockable_by_mentor(&registry, "poison_master");
-        assert_eq!(matches.len(), 2);
+        let matches = find_recipes_unlockable_by_mentor(&registry, "array_scribe");
+        assert_eq!(matches.len(), 1);
+        assert_eq!(matches[0].id.as_str(), "craft.example.zhenfa_trap.iron");
     }
 
     #[test]

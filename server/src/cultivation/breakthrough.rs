@@ -158,6 +158,44 @@ pub enum BreakthroughError {
     }, // 骰子输了
 }
 
+fn breakthrough_error_message(error: &BreakthroughError) -> String {
+    match error {
+        BreakthroughError::AtMaxRealm => "突破未成：你已抵达当前最高境界。".to_string(),
+        BreakthroughError::RequiresTribulation => {
+            "突破未成：通灵至化虚必须先走渡虚劫。".to_string()
+        }
+        BreakthroughError::NotEnoughMeridians { need, have } => {
+            format!("突破未成：需先打通 {need} 条经脉（当前 {have}）。")
+        }
+        BreakthroughError::NotEnoughRegularMeridians { need, have } => {
+            format!("突破未成：需先打通 {need} 条正经（当前 {have}）。")
+        }
+        BreakthroughError::NotEnoughExtraordinaryMeridians { need, have } => {
+            format!("突破未成：需先打通 {need} 条奇经（当前 {have}）。")
+        }
+        BreakthroughError::NotEnoughQi { need, have } => {
+            format!("突破未成：真元不足（需 {need:.1}，当前 {have:.1}）。")
+        }
+        BreakthroughError::ZoneTooWeak { need, have } => {
+            format!("突破未成：此地灵气不足（需 {need:.2}，当前 {have:.2}）。")
+        }
+        BreakthroughError::EnvInsufficient {
+            need,
+            have,
+            in_spirit_eye,
+        } => {
+            if *in_spirit_eye {
+                format!("突破未成：灵眼扰动未稳（需 {need:.2}，当前 {have:.2}）。")
+            } else {
+                format!("突破未成：固元须在灵气浓处或灵眼内（需 {need:.2}，当前 {have:.2}）。")
+            }
+        }
+        BreakthroughError::RolledFailure { severity } => {
+            format!("突破失败：气机反噬，伤势强度 {severity:.2}。")
+        }
+    }
+}
+
 /// 计算修正后的成功率 — plan §3.1 公式。
 pub fn compute_success_rate(
     next: Realm,
@@ -688,18 +726,19 @@ pub fn breakthrough_system(
                     ));
                 }
             }
-            Err(BreakthroughError::EnvInsufficient { .. }) => {
-                if let (Some(narrations), Some(username)) =
-                    (pending_narrations.as_deref_mut(), username.as_deref())
-                {
-                    narrations.push_player(
-                        username,
-                        "此地灵气稀薄，你的内力涣散如沙。",
-                        NarrationStyle::Perception,
-                    );
-                }
-            }
             Err(_) => {}
+        }
+
+        if let Err(error) = &res {
+            if let (Some(narrations), Some(username)) =
+                (pending_narrations.as_deref_mut(), username.as_deref())
+            {
+                narrations.push_player(
+                    username,
+                    breakthrough_error_message(error),
+                    NarrationStyle::SystemWarning,
+                );
+            }
         }
 
         if let Err(BreakthroughError::RolledFailure { severity }) = &res {

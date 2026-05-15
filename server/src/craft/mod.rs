@@ -139,7 +139,7 @@ pub fn register_examples(registry: &mut CraftRegistry) -> Result<(), RegistryErr
         display_name: "蚀针（凡铁档）".into(),
         materials: vec![
             ("iron_needle".into(), 3),
-            ("chi_xui_cao".into(), 1), // 赤髓草（plan-botany / 现有 herbalism 词条）
+            ("chi_sui_cao".into(), 1), // 赤髓草（plan-botany / 现有 herbalism 词条）
         ],
         qi_cost: 8.0,
         time_ticks: 3 * 60 * 20, // 3 min in-game
@@ -149,14 +149,7 @@ pub fn register_examples(registry: &mut CraftRegistry) -> Result<(), RegistryErr
             qi_color_min: Some((ColorKind::Insidious, 0.05)),
             skill_lv_min: None,
         },
-        unlock_sources: vec![
-            UnlockSource::Scroll {
-                item_template: "scroll_eclipse_needle_iron".into(),
-            },
-            UnlockSource::Mentor {
-                npc_archetype: "poison_master".into(),
-            },
-        ],
+        unlock_sources: vec![],
     })?;
 
     // 2. 毒源煎汤（凡毒）— DuguPotion
@@ -172,14 +165,7 @@ pub fn register_examples(registry: &mut CraftRegistry) -> Result<(), RegistryErr
         time_ticks: 90 * 20, // 1.5 min in-game
         output: ("poison_decoction_fan".into(), 1),
         requirements: CraftRequirements::default(),
-        unlock_sources: vec![
-            UnlockSource::Scroll {
-                item_template: "scroll_poison_decoction_fan".into(),
-            },
-            UnlockSource::Mentor {
-                npc_archetype: "poison_master".into(),
-            },
-        ],
+        unlock_sources: vec![],
     })?;
 
     // 3. 伪灵皮（轻档）— TuikeSkin
@@ -900,10 +886,16 @@ mod tests {
     }
 
     #[test]
-    fn register_examples_each_has_unlock_sources() {
+    fn register_examples_non_early_entries_keep_unlock_sources() {
         let mut registry = CraftRegistry::new();
         register_examples(&mut registry).unwrap();
         for recipe in registry.iter() {
+            if matches!(
+                recipe.id.as_str(),
+                "craft.example.eclipse_needle.iron" | "craft.example.poison_decoction.fan"
+            ) {
+                continue;
+            }
             assert!(
                 !recipe.unlock_sources.is_empty(),
                 "example `{}` must have at least one unlock_source",
@@ -949,6 +941,54 @@ mod tests {
             .expect("eclipse_needle must have qi_color gate");
         assert_eq!(kind, ColorKind::Insidious);
         assert!(share > 0.0);
+    }
+
+    #[test]
+    fn register_examples_early_dugu_recipes_are_default_unlocked() {
+        let mut registry = CraftRegistry::new();
+        register_examples(&mut registry).unwrap();
+        for id in [
+            "craft.example.eclipse_needle.iron",
+            "craft.example.poison_decoction.fan",
+        ] {
+            let recipe = registry
+                .get(&RecipeId::new(id))
+                .expect("early Dugu recipe must register");
+            assert!(
+                recipe.unlock_sources.is_empty(),
+                "`{id}` should be visible in hand-craft UI by default"
+            );
+        }
+    }
+
+    #[test]
+    fn register_examples_early_dugu_item_templates_exist() {
+        let mut registry = CraftRegistry::new();
+        register_examples(&mut registry).unwrap();
+        let item_registry = crate::inventory::load_item_registry().expect("item registry loads");
+        for id in [
+            "craft.example.eclipse_needle.iron",
+            "craft.example.poison_decoction.fan",
+        ] {
+            let recipe = registry
+                .get(&RecipeId::new(id))
+                .expect("early Dugu recipe must register");
+            for (template_id, count) in &recipe.materials {
+                assert!(
+                    item_registry.get(template_id).is_some(),
+                    "material `{template_id}` for recipe `{}` must exist in item registry",
+                    recipe.id
+                );
+                assert!(*count >= 1, "`{}` material count must be >= 1", recipe.id);
+            }
+            let (output_id, count) = &recipe.output;
+            assert!(
+                item_registry.get(output_id).is_some(),
+                "output `{output_id}` for recipe `{}` must exist in item registry",
+                recipe.id
+            );
+            assert!(*count >= 1, "`{}` output count must be >= 1", recipe.id);
+        }
     }
 
     #[test]
