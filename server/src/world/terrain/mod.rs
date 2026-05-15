@@ -16,8 +16,8 @@ use std::path::PathBuf;
 
 use valence::prelude::{
     ident, App, BiomeRegistry, BlockState, Chunk, ChunkLayer, ChunkPos, ChunkView, Client,
-    Commands, DimensionTypeRegistry, Entity, Query, Res, ResMut, Resource, Server, UnloadedChunk,
-    Update, View, VisibleChunkLayer, With,
+    Commands, DimensionTypeRegistry, Entity, IntoSystemConfigs, Query, Res, ResMut, Resource,
+    Server, UnloadedChunk, Update, View, VisibleChunkLayer, With,
 };
 
 use crate::mineral::{MineralOreIndex, MineralOreNode};
@@ -85,8 +85,15 @@ impl Resource for GeneratedChunks {}
 pub fn register(app: &mut App) {
     app.insert_resource(GeneratedChunks::default())
         .insert_resource(TickRateProbe::default())
-        .add_systems(Update, generate_chunks_around_players)
-        .add_systems(Update, remove_unviewed_chunks)
+        .add_systems(
+            Update,
+            generate_chunks_around_players
+                .after(crate::player::attach_player_state_to_joined_clients),
+        )
+        .add_systems(
+            Update,
+            remove_unviewed_chunks.after(generate_chunks_around_players),
+        )
         .add_systems(Update, log_tick_rate);
 }
 

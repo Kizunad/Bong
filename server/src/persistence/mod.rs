@@ -37,7 +37,7 @@ pub mod identity;
 pub const DEFAULT_DATABASE_PATH: &str = "data/bong.db";
 pub const SQLITE_BUSY_TIMEOUT_MS: u64 = 15_000;
 const DEFAULT_DECEASED_PUBLIC_DIR: &str = "../library-web/public/deceased";
-const CURRENT_USER_VERSION: i32 = 24;
+const CURRENT_USER_VERSION: i32 = 25;
 const AGENT_WORLD_MODEL_ROW_ID: i64 = 1;
 const ASCENSION_QUOTA_ROW_ID: i64 = 1;
 const TRIBULATION_KIND_DU_XU: &str = "du_xu";
@@ -1598,6 +1598,24 @@ fn apply_migrations(connection: &mut Connection) -> rusqlite::Result<()> {
         )?;
         assert_spirit_treasure_schema_ready(&transaction)?;
         transaction.execute_batch("PRAGMA user_version = 24;")?;
+        transaction.commit()?;
+    }
+
+    let current_version: i32 =
+        connection.query_row("PRAGMA user_version;", [], |row| row.get(0))?;
+    if current_version < 25 {
+        let transaction = connection.transaction()?;
+        transaction.execute_batch(
+            "
+            CREATE TABLE IF NOT EXISTS player_known_techniques (
+                username TEXT PRIMARY KEY,
+                known_techniques_json TEXT NOT NULL,
+                schema_version INTEGER NOT NULL CHECK (schema_version >= 1),
+                last_updated_wall INTEGER NOT NULL CHECK (last_updated_wall >= 0)
+            );
+            PRAGMA user_version = 25;
+            ",
+        )?;
         transaction.commit()?;
     }
 
@@ -6325,6 +6343,7 @@ mod persistence_tests {
         assert_eq!(user_version, CURRENT_USER_VERSION);
 
         for table in [
+            "player_known_techniques",
             "player_shrine",
             "player_cultivation",
             "social_anonymity",
@@ -7032,6 +7051,54 @@ mod persistence_tests {
             assert!(
                 columns.iter().any(|candidate| candidate == column),
                 "spirit_treasure_world should include {column}"
+            );
+        }
+    }
+
+    #[test]
+    fn v25_migration_adds_player_known_techniques_table() {
+        let db_path = database_path("v25-player-known-techniques");
+        fs::create_dir_all(db_path.parent().expect("db path should have parent"))
+            .expect("temp db parent should be created");
+        let mut connection = Connection::open(&db_path).expect("db should open");
+        connection
+            .execute_batch("PRAGMA user_version = 24;")
+            .expect("legacy v24 fixture should create");
+
+        apply_migrations(&mut connection).expect("v25 migration should succeed");
+
+        let user_version: i32 = connection
+            .query_row("PRAGMA user_version;", [], |row| row.get(0))
+            .expect("user_version should be readable");
+        assert_eq!(user_version, CURRENT_USER_VERSION);
+
+        let exists: Option<String> = connection
+            .query_row(
+                "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'player_known_techniques'",
+                [],
+                |row| row.get(0),
+            )
+            .optional()
+            .expect("sqlite_master query should succeed");
+        assert_eq!(exists.as_deref(), Some("player_known_techniques"));
+
+        let mut statement = connection
+            .prepare("PRAGMA table_info(player_known_techniques)")
+            .expect("player_known_techniques table_info should prepare");
+        let columns = statement
+            .query_map([], |row| row.get::<_, String>(1))
+            .expect("player_known_techniques table_info should query")
+            .collect::<Result<Vec<_>, _>>()
+            .expect("player_known_techniques columns should collect");
+        for column in [
+            "username",
+            "known_techniques_json",
+            "schema_version",
+            "last_updated_wall",
+        ] {
+            assert!(
+                columns.iter().any(|candidate| candidate == column),
+                "player_known_techniques should include {column}"
             );
         }
     }

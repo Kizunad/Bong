@@ -3,9 +3,9 @@ pub mod state;
 
 use self::state::{
     canonical_player_id, load_player_slices, save_player_core_slice, save_player_inventory_slice,
-    save_player_lifespan_slice_with_coffin, save_player_skill_slice,
-    save_player_slices_with_coffin, save_player_slow_slice, PlayerState, PlayerStateAutosaveTimer,
-    PlayerStatePersistence,
+    save_player_known_techniques_slice, save_player_lifespan_slice_with_coffin,
+    save_player_skill_slice, save_player_slices_with_coffin, save_player_slow_slice, PlayerState,
+    PlayerStateAutosaveTimer, PlayerStatePersistence,
 };
 use crate::coffin::{coffin_lower_from_player_position, CoffinComponent, CoffinRegistry};
 use crate::combat::components::{UnlockedStyles, TICKS_PER_SECOND};
@@ -58,6 +58,7 @@ type JoinedClientsWithoutStateQueryItem<'a> = (
     &'a mut EntityLayerId,
     &'a mut VisibleChunkLayer,
     &'a mut VisibleEntityLayers,
+    &'a mut Position,
     Option<&'a mut Flags>,
 );
 type JoinedClientsWithoutStateQueryFilter = (Added<Client>, Without<PlayerState>);
@@ -65,6 +66,8 @@ type ChangedInventoryClientsQueryItem<'a> = (&'a Username, &'a PlayerInventory);
 type ChangedInventoryClientsQueryFilter = (With<Client>, Changed<PlayerInventory>);
 type ChangedSkillClientsQueryItem<'a> = (&'a Username, &'a SkillSet);
 type ChangedSkillClientsQueryFilter = (With<Client>, Changed<SkillSet>);
+type ChangedKnownTechniquesClientsQueryItem<'a> = (&'a Username, &'a KnownTechniques);
+type ChangedKnownTechniquesClientsQueryFilter = (With<Client>, Changed<KnownTechniques>);
 type CultivationBundleQueryItem<'a> = (
     &'a Username,
     &'a Cultivation,
@@ -100,9 +103,10 @@ pub fn register(app: &mut App) {
             autosave_player_cultivation_bundles.after(autosave_player_slow_and_ui_slices),
             autosave_player_lifespan_slices.after(autosave_player_cultivation_bundles),
             flush_changed_player_skills.after(autosave_player_lifespan_slices),
+            flush_changed_player_known_techniques.after(flush_changed_player_skills),
             flush_changed_player_inventories
                 .after(attach_inventory_to_joined_clients)
-                .after(flush_changed_player_skills),
+                .after(flush_changed_player_known_techniques),
             despawn_disconnected_clients.after(flush_changed_player_inventories),
         ),
     );
@@ -187,6 +191,7 @@ pub(crate) fn attach_player_state_to_joined_clients(
         mut layer_id,
         mut visible_chunk_layer,
         mut visible_entity_layers,
+        mut position,
         flags,
     ) in &mut joined_clients
     {
@@ -195,8 +200,10 @@ pub(crate) fn attach_player_state_to_joined_clients(
         let restored_lifespan = persisted.lifespan.is_some();
         let restored_skill = !persisted.skill_set.skills.is_empty()
             || !persisted.skill_set.consumed_scrolls.is_empty();
+        let restored_technique = !persisted.known_techniques.entries.is_empty();
         let last_dimension = persisted.last_dimension;
         let composite_power = persisted.state.composite_power(&Cultivation::default());
+        position.set(persisted.position);
 
         if let Some(layers) = dimension_layers.as_deref() {
             let target_layer = layers.entity_for(last_dimension);
@@ -228,12 +235,11 @@ pub(crate) fn attach_player_state_to_joined_clients(
         let mut entity_commands = commands.entity(entity);
         entity_commands.insert((
             persisted.state,
-            Position::new(persisted.position),
             CurrentDimension(last_dimension),
             quick_slot_bindings,
             skill_bar_bindings,
             UnlockedStyles::default(),
-            KnownTechniques::default(),
+            persisted.known_techniques,
         ));
         if let Some(player_inventory) = persisted.inventory {
             entity_commands.insert(player_inventory);
@@ -256,7 +262,7 @@ pub(crate) fn attach_player_state_to_joined_clients(
         }
         entity_commands.insert(persisted.skill_set);
         tracing::info!(
-            "[bong][player] attached PlayerState to client entity {entity:?} for `{}` (composite_power={composite_power:.3}, restored_inventory={restored_inventory}, restored_lifespan={restored_lifespan}, restored_skill={restored_skill}, last_dimension={last_dimension:?})",
+            "[bong][player] attached PlayerState to client entity {entity:?} for `{}` (composite_power={composite_power:.3}, restored_inventory={restored_inventory}, restored_lifespan={restored_lifespan}, restored_skill={restored_skill}, restored_technique={restored_technique}, last_dimension={last_dimension:?})",
             username.0,
         );
     }
@@ -301,6 +307,7 @@ pub(crate) fn despawn_disconnected_clients(
         Option<&PlayerInventory>,
         Option<&LifespanComponent>,
         Option<&SkillSet>,
+        Option<&KnownTechniques>,
         Option<&CoffinComponent>,
     )>,
     cultivation_bundle: Query<(
@@ -329,6 +336,7 @@ pub(crate) fn despawn_disconnected_clients(
             player_inventory,
             lifespan,
             skill_set,
+            known_techniques,
             coffin,
         )) = core_players.get(entity)
         {
@@ -399,6 +407,18 @@ pub(crate) fn despawn_disconnected_clients(
                     username.0,
                 ),
             }
+            if let Some(known_techniques) = known_techniques {
+                if let Err(error) = save_player_known_techniques_slice(
+                    &persistence,
+                    username.0.as_str(),
+                    known_techniques,
+                ) {
+                    tracing::warn!(
+                        "[bong][player] failed to save known techniques for disconnected client `{}`: {error}",
+                        username.0,
+                    );
+                }
+            }
         } else {
             tracing::warn!(
                 "[bong][player] disconnected client entity {entity:?} had no username/PlayerState/Position to persist before cleanup"
@@ -430,6 +450,7 @@ fn flush_connected_players_on_shutdown(
             Option<&PlayerInventory>,
             Option<&LifespanComponent>,
             Option<&SkillSet>,
+            Option<&KnownTechniques>,
             Option<&CoffinComponent>,
         ),
         With<Client>,
@@ -464,6 +485,7 @@ fn flush_connected_players_on_shutdown(
         player_inventory,
         lifespan,
         skill_set,
+        known_techniques,
         coffin,
     ) in &players
     {
@@ -533,6 +555,18 @@ fn flush_connected_players_on_shutdown(
                 "[bong][player] failed to save player slices during shutdown flush for `{}`: {error}",
                 username.0,
             ),
+        }
+        if let Some(known_techniques) = known_techniques {
+            if let Err(error) = save_player_known_techniques_slice(
+                &persistence,
+                username.0.as_str(),
+                known_techniques,
+            ) {
+                tracing::warn!(
+                    "[bong][player] failed to save known techniques during shutdown flush for `{}`: {error}",
+                    username.0,
+                );
+            }
         }
     }
 }
@@ -725,6 +759,25 @@ fn flush_changed_player_skills(
     }
 }
 
+fn flush_changed_player_known_techniques(
+    persistence: Res<PlayerStatePersistence>,
+    players: Query<
+        ChangedKnownTechniquesClientsQueryItem<'_>,
+        ChangedKnownTechniquesClientsQueryFilter,
+    >,
+) {
+    for (username, known_techniques) in &players {
+        if let Err(error) =
+            save_player_known_techniques_slice(&persistence, username.0.as_str(), known_techniques)
+        {
+            tracing::warn!(
+                "[bong][player] immediate known techniques flush failed for `{}`: {error}",
+                username.0,
+            );
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -734,7 +787,7 @@ mod tests {
     use std::time::{SystemTime, UNIX_EPOCH};
 
     use rusqlite::{params, Connection};
-    use valence::prelude::{App, DVec3, Position, Update};
+    use valence::prelude::{App, DVec3, Position, Resource, Update};
     use valence::testing::create_mock_client;
 
     use crate::inventory::{
@@ -876,6 +929,51 @@ mod tests {
                 |row| row.get(0),
             )
             .expect("inventories row should exist")
+    }
+
+    fn read_known_techniques_json(db_path: &PathBuf) -> String {
+        let connection = Connection::open(db_path).expect("sqlite db should open");
+        connection
+            .query_row(
+                "SELECT known_techniques_json FROM player_known_techniques WHERE username = ?1",
+                params!["Azure"],
+                |row| row.get(0),
+            )
+            .expect("player_known_techniques row should exist")
+    }
+
+    fn dash_known_techniques(proficiency: f32) -> KnownTechniques {
+        KnownTechniques {
+            entries: vec![crate::cultivation::known_techniques::KnownTechnique {
+                id: "movement.dash".to_string(),
+                proficiency,
+                active: true,
+            }],
+        }
+    }
+
+    fn dash_proficiency_from_json(json: &str) -> f64 {
+        serde_json::from_str::<serde_json::Value>(json)
+            .expect("known techniques JSON should decode")
+            .pointer("/entries/0/proficiency")
+            .and_then(serde_json::Value::as_f64)
+            .expect("dash proficiency should exist")
+    }
+
+    #[derive(Default)]
+    struct CapturedLoginPosition(Option<[f64; 3]>);
+
+    impl Resource for CapturedLoginPosition {}
+
+    fn capture_login_position_after_attach(
+        mut captured: ResMut<CapturedLoginPosition>,
+        players: Query<(&Username, &Position), With<Client>>,
+    ) {
+        for (username, position) in &players {
+            if username.0 == "Azure" {
+                captured.0 = Some(position.get().to_array());
+            }
+        }
     }
 
     fn read_ui_prefs_json(db_path: &PathBuf) -> String {
@@ -1022,6 +1120,30 @@ mod tests {
     }
 
     #[test]
+    fn changed_known_techniques_flush_persists_dash_proficiency() {
+        let (persistence, data_dir, db_path) = sqlite_persistence("known-techniques-changed-flush");
+        crate::player::state::save_player_state(&persistence, "Azure", &PlayerState::default())
+            .expect("baseline player state should persist");
+
+        let mut app = App::new();
+        app.insert_resource(persistence);
+        app.add_systems(Update, flush_changed_player_known_techniques);
+
+        let (client_bundle, _helper) = create_mock_client("Azure");
+        let entity = app.world_mut().spawn(client_bundle).id();
+        app.world_mut()
+            .entity_mut(entity)
+            .insert(dash_known_techniques(0.58));
+
+        app.update();
+
+        let known_techniques_json = read_known_techniques_json(&db_path);
+        assert!((dash_proficiency_from_json(&known_techniques_json) - 0.58).abs() < 1e-6);
+
+        let _ = fs::remove_dir_all(&data_dir);
+    }
+
+    #[test]
     fn disconnect_flush_persists_latest_player_slices_before_cleanup() {
         let (persistence, data_dir, db_path) = sqlite_persistence("disconnect-flush");
         crate::player::state::save_player_state(&persistence, "Azure", &PlayerState::default())
@@ -1044,6 +1166,9 @@ mod tests {
             inventory_score: 0.7,
         });
         app.world_mut().entity_mut(entity).insert(make_inventory());
+        app.world_mut()
+            .entity_mut(entity)
+            .insert(dash_known_techniques(0.37));
 
         app.world_mut().entity_mut(entity).remove::<Client>();
         app.update();
@@ -1051,10 +1176,12 @@ mod tests {
         let (karma, inventory_score) = read_core_snapshot(&db_path);
         let (pos_x, pos_y, pos_z) = read_position_snapshot(&db_path);
         let inventory_json = read_inventory_json(&db_path);
+        let known_techniques_json = read_known_techniques_json(&db_path);
 
         assert_eq!(karma, -0.15);
         assert_eq!(inventory_score, 0.7);
         assert_eq!((pos_x, pos_y, pos_z), (42.0, 77.0, -3.5));
+        assert!((dash_proficiency_from_json(&known_techniques_json) - 0.37).abs() < 1e-6);
         assert_ne!(
             serde_json::from_str::<serde_json::Value>(&inventory_json)
                 .expect("inventory_json should decode"),
@@ -1091,6 +1218,9 @@ mod tests {
             inventory_score: 0.85,
         });
         app.world_mut().entity_mut(entity).insert(make_inventory());
+        app.world_mut()
+            .entity_mut(entity)
+            .insert(dash_known_techniques(0.64));
 
         app.world_mut().send_event(AppExit::Success);
         app.update();
@@ -1098,10 +1228,12 @@ mod tests {
         let (karma, inventory_score) = read_core_snapshot(&db_path);
         let (pos_x, pos_y, pos_z) = read_position_snapshot(&db_path);
         let inventory_json = read_inventory_json(&db_path);
+        let known_techniques_json = read_known_techniques_json(&db_path);
 
         assert_eq!(karma, 0.33);
         assert_eq!(inventory_score, 0.85);
         assert_eq!((pos_x, pos_y, pos_z), (64.0, 80.0, -12.0));
+        assert!((dash_proficiency_from_json(&known_techniques_json) - 0.64).abs() < 1e-6);
         assert_ne!(
             serde_json::from_str::<serde_json::Value>(&inventory_json)
                 .expect("inventory_json should decode"),
@@ -1184,6 +1316,56 @@ mod tests {
         assert!(visible_entities.contains(&tsy_layer));
         assert!(!visible_entities.contains(&overworld_layer));
         assert_eq!(position, DVec3::new(12.0, 80.0, -34.0));
+
+        let _ = fs::remove_dir_all(&data_dir);
+    }
+
+    #[test]
+    fn restored_login_position_is_visible_to_followup_update_system_same_frame() {
+        let (persistence, data_dir, _db_path) = sqlite_persistence("login-position-same-frame");
+        crate::player::state::save_player_slices(
+            &persistence,
+            "Azure",
+            &PlayerState::default(),
+            [512.0, 96.0, -768.0],
+            DimensionKind::default(),
+            None,
+            None,
+            &SkillSet::default(),
+        )
+        .expect("seeding restored player position should persist");
+
+        let mut app = App::new();
+        let overworld_layer = app.world_mut().spawn_empty().id();
+        let tsy_layer = app.world_mut().spawn_empty().id();
+        app.insert_resource(DimensionLayers {
+            overworld: overworld_layer,
+            tsy: tsy_layer,
+        });
+        app.insert_resource(persistence);
+        app.insert_resource(CapturedLoginPosition::default());
+        app.add_systems(
+            Update,
+            (
+                attach_player_state_to_joined_clients,
+                capture_login_position_after_attach.after(attach_player_state_to_joined_clients),
+            ),
+        );
+
+        let (mut client_bundle, _helper) = valence::testing::create_mock_client("Azure");
+        client_bundle.player.position = Position::new(crate::player::spawn_position());
+        client_bundle.player.layer.0 = overworld_layer;
+        client_bundle.visible_chunk_layer.0 = overworld_layer;
+        client_bundle
+            .visible_entity_layers
+            .0
+            .insert(overworld_layer);
+        app.world_mut().spawn(client_bundle);
+
+        app.update();
+
+        let captured = app.world().resource::<CapturedLoginPosition>();
+        assert_eq!(captured.0, Some([512.0, 96.0, -768.0]));
 
         let _ = fs::remove_dir_all(&data_dir);
     }
