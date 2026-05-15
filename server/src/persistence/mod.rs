@@ -7181,6 +7181,43 @@ mod persistence_tests {
     }
 
     #[test]
+    fn v25_migration_rejects_player_known_techniques_without_username_primary_key() {
+        let db_path = database_path("v25-wrong-player-known-techniques-pk");
+        fs::create_dir_all(db_path.parent().expect("db path should have parent"))
+            .expect("temp db parent should be created");
+        let mut connection = Connection::open(&db_path).expect("db should open");
+        connection
+            .execute_batch(
+                "
+                CREATE TABLE player_known_techniques (
+                    username TEXT NOT NULL,
+                    known_techniques_json TEXT NOT NULL,
+                    schema_version INTEGER NOT NULL,
+                    last_updated_wall INTEGER NOT NULL
+                );
+                PRAGMA user_version = 24;
+                ",
+            )
+            .expect("wrong primary key v24 fixture should be created");
+
+        let error = apply_migrations(&mut connection).expect_err(
+            "v25 migration should reject player_known_techniques without username primary key",
+        );
+        assert!(
+            error.to_string().contains("primary key mismatch"),
+            "expected primary key mismatch error, actual error={error}"
+        );
+
+        let user_version: i32 = connection
+            .query_row("PRAGMA user_version;", [], |row| row.get(0))
+            .expect("user_version should be readable");
+        assert_eq!(
+            user_version, 24,
+            "expected failed v25 migration to leave user_version at 24, actual {user_version}"
+        );
+    }
+
+    #[test]
     fn task13_migration_creates_player_shrine_table() {
         let db_path = database_path("task13-player-shrine");
         bootstrap_sqlite(&db_path, "task13-player-shrine").expect("bootstrap should succeed");

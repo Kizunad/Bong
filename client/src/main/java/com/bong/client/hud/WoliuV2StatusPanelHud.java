@@ -30,10 +30,12 @@ public final class WoliuV2StatusPanelHud {
     ) {
         if (state == null || screenWidth <= 0 || screenHeight <= 0) return List.of();
 
-        boolean skillActive = state.active() && !state.activeSkillId().isBlank();
+        String activeSkillId = state.activeSkillId();
+        boolean skillActive = state.active() && activeSkillId != null && !activeSkillId.isBlank();
         boolean turbulenceVisible = hasVisibleTurbulence(state, nowMillis);
         long cooldownMs = Math.max(0L, state.cooldownUntilMs() - nowMillis);
-        boolean backfire = skillActive && !state.backfireLevel().isBlank();
+        String backfireLevel = state.backfireLevel();
+        boolean backfire = skillActive && backfireLevel != null && !backfireLevel.isBlank();
         if (!skillActive && !turbulenceVisible && cooldownMs <= 0L && !backfire) {
             return List.of();
         }
@@ -59,7 +61,7 @@ public final class WoliuV2StatusPanelHud {
         int lineY = y + 20;
         out.add(HudRenderCommand.text(
             HudRenderLayer.VORTEX_TURBULENCE,
-            skillActive ? skillName(state.activeSkillId()) : "待机",
+            skillActive ? skillName(activeSkillId) : "待机",
             innerX,
             lineY,
             skillActive ? TEXT : MUTED
@@ -151,8 +153,9 @@ public final class WoliuV2StatusPanelHud {
     }
 
     private static String backfireText(VortexStateStore.State state) {
-        if (state.backfireLevel().isBlank()) return "";
-        return "  反噬 " + state.backfireLevel();
+        String backfireLevel = state.backfireLevel();
+        if (backfireLevel == null || backfireLevel.isBlank()) return "";
+        return "  反噬 " + backfireLevel;
     }
 
     private static String secondsText(long millis) {
