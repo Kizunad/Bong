@@ -5917,7 +5917,10 @@ mod persistence_tests {
         let user_version: i32 = connection
             .query_row("PRAGMA user_version;", [], |row| row.get(0))
             .expect("user_version should exist");
-        assert_eq!(user_version, CURRENT_USER_VERSION);
+        assert_eq!(
+            user_version, CURRENT_USER_VERSION,
+            "expected user_version to advance to CURRENT_USER_VERSION ({CURRENT_USER_VERSION}) because all migrations should finish after bootstrap, actual {user_version}"
+        );
 
         let has_index: Option<String> = connection
             .query_row(
@@ -6269,7 +6272,10 @@ mod persistence_tests {
         let user_version: i32 = connection
             .query_row("PRAGMA user_version;", [], |row| row.get(0))
             .expect("user_version should be readable");
-        assert_eq!(user_version, CURRENT_USER_VERSION);
+        assert_eq!(
+            user_version, CURRENT_USER_VERSION,
+            "expected user_version to advance to CURRENT_USER_VERSION ({CURRENT_USER_VERSION}) because v25 migration succeeded, actual {user_version}"
+        );
 
         for dropped_column in ["realm", "spirit_qi", "spirit_qi_max", "experience"] {
             let count: i64 = connection
@@ -7122,7 +7128,11 @@ mod persistence_tests {
             )
             .optional()
             .expect("sqlite_master query should succeed");
-        assert_eq!(exists.as_deref(), Some("player_known_techniques"));
+        assert_eq!(
+            exists.as_deref(),
+            Some("player_known_techniques"),
+            "expected sqlite_master to include player_known_techniques because v25 migration should create it, actual {exists:?}"
+        );
 
         let mut statement = connection
             .prepare("PRAGMA table_info(player_known_techniques)")

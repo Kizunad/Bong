@@ -6,6 +6,7 @@ import org.junit.jupiter.api.Test;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class WoliuV2HudPlannerTest {
@@ -89,5 +90,125 @@ class WoliuV2HudPlannerTest {
         List<HudRenderCommand> commands = WoliuV2HudPlanner.buildCommands(state, 960, 540, 1_000L);
 
         assertTrue(commands.isEmpty());
+    }
+
+    @Test
+    void statusPanelShowsInactiveBackfireWithWarningColor() {
+        VortexStateStore.State state = new VortexStateStore.State(
+            false,
+            0f,
+            0f,
+            0f,
+            0L,
+            0,
+            "",
+            0f,
+            0L,
+            "severed",
+            0f,
+            0f,
+            0L
+        );
+
+        List<HudRenderCommand> commands = WoliuV2StatusPanelHud.buildCommands(state, 960, 540, 1_000L);
+
+        assertTextPresent(commands, "待机");
+        HudRenderCommand backfireLine = findText(commands, "拦截 0  反噬 severed");
+        assertEquals(
+            0xFFFFB268,
+            backfireLine.color(),
+            "expected warning color because backfireLevel is present even when no skill is active, actual color="
+                + Integer.toHexString(backfireLine.color())
+        );
+        assertThrows(
+            UnsupportedOperationException.class,
+            () -> commands.add(HudRenderCommand.text(HudRenderLayer.VORTEX_TURBULENCE, "mutation", 0, 0, 0)),
+            "expected immutable command list because HUD planners return copyOf snapshots"
+        );
+    }
+
+    @Test
+    void statusPanelTreatsNullSkillAndBackfireAsBlankIdleState() {
+        VortexStateStore.State state = new VortexStateStore.State(
+            true,
+            0f,
+            0f,
+            0f,
+            0L,
+            0,
+            null,
+            0f,
+            0L,
+            null,
+            0f,
+            0f,
+            0L
+        );
+
+        List<HudRenderCommand> commands = WoliuV2StatusPanelHud.buildCommands(state, 960, 540, 1_000L);
+
+        assertTrue(
+            commands.isEmpty(),
+            "expected no panel because null activeSkillId/backfireLevel canonicalize to blank idle state, actual command count="
+                + commands.size()
+        );
+    }
+
+    @Test
+    void statusPanelRendersActiveSkillCooldownProgressAndTurbulenceText() {
+        VortexStateStore.State state = new VortexStateStore.State(
+            true,
+            12.25f,
+            0f,
+            0f,
+            0L,
+            3,
+            "woliu.vortex_resonance",
+            2f,
+            2_001L,
+            "",
+            30f,
+            2f,
+            2_000L
+        );
+
+        List<HudRenderCommand> commands = WoliuV2StatusPanelHud.buildCommands(state, 960, 540, 1_000L);
+
+        assertTextPresent(commands, "涡流");
+        assertTextPresent(commands, "施放");
+        assertTextPresent(commands, "涡流共振");
+        assertTextPresent(commands, "冷却 2s");
+        assertTextPresent(commands, "半径 30.0  强度 100%");
+        assertTextPresent(commands, "拦截 3");
+        assertTextPresent(commands, "紊流 1s");
+        assertTrue(
+            commands.stream().anyMatch(cmd ->
+                cmd.layer() == HudRenderLayer.VORTEX_TURBULENCE
+                    && cmd.isRect()
+                    && cmd.width() == 174
+                    && cmd.height() == 4
+                    && cmd.color() == 0xFF62D6E8
+            ),
+            "expected full-width charge fill because chargeProgress clamps to 1.0, actual commands=" + commands.size()
+        );
+    }
+
+    private static void assertTextPresent(List<HudRenderCommand> commands, String expectedText) {
+        findText(commands, expectedText);
+    }
+
+    private static HudRenderCommand findText(List<HudRenderCommand> commands, String expectedText) {
+        return commands.stream()
+            .filter(cmd -> cmd.layer() == HudRenderLayer.VORTEX_TURBULENCE)
+            .filter(HudRenderCommand::isText)
+            .filter(cmd -> expectedText.equals(cmd.text()))
+            .findFirst()
+            .orElseThrow(() -> new AssertionError(
+                "expected text command because status panel should render `" + expectedText + "`, actual texts="
+                    + commands.stream()
+                        .filter(HudRenderCommand::isText)
+                        .map(HudRenderCommand::text)
+                        .toList()
+            ));
     }
 }

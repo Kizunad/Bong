@@ -35,7 +35,7 @@ public final class WoliuV2StatusPanelHud {
         boolean turbulenceVisible = hasVisibleTurbulence(state, nowMillis);
         long cooldownMs = Math.max(0L, state.cooldownUntilMs() - nowMillis);
         String backfireLevel = state.backfireLevel();
-        boolean backfire = skillActive && backfireLevel != null && !backfireLevel.isBlank();
+        boolean backfire = backfireLevel != null && !backfireLevel.isBlank();
         if (!skillActive && !turbulenceVisible && cooldownMs <= 0L && !backfire) {
             return List.of();
         }
