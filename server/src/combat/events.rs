@@ -184,27 +184,22 @@ pub struct DeathEvent {
     pub at_tick: u64,
 }
 
+#[derive(Debug, Clone)]
+pub struct DeathEventIfLethal {
+    pub was_alive: bool,
+    pub health_current: f32,
+    pub event: DeathEvent,
+}
+
 pub fn emit_death_event_if_lethal(
     world: &mut bevy_ecs::world::World,
-    was_alive: bool,
-    health_current: f32,
-    target: Entity,
-    cause: String,
-    attacker: Option<Entity>,
-    attacker_player_id: Option<String>,
-    at_tick: u64,
+    input: DeathEventIfLethal,
 ) -> bool {
-    if !was_alive || health_current > 0.0 {
+    if !input.was_alive || input.health_current > 0.0 {
         return false;
     }
     if let Some(mut death_events) = world.get_resource_mut::<Events<DeathEvent>>() {
-        death_events.send(DeathEvent {
-            target,
-            cause,
-            attacker,
-            attacker_player_id,
-            at_tick,
-        });
+        death_events.send(input.event);
         true
     } else {
         false

@@ -5,8 +5,8 @@ use crate::combat::components::{
     BodyPart, SkillBarBindings, Wound, WoundKind, Wounds, TICKS_PER_SECOND,
 };
 use crate::combat::events::{
-    emit_death_event_if_lethal, ApplyStatusEffectIntent, AttackSource, CombatEvent,
-    StatusEffectKind,
+    emit_death_event_if_lethal, ApplyStatusEffectIntent, AttackSource, CombatEvent, DeathEvent,
+    DeathEventIfLethal, StatusEffectKind,
 };
 use crate::combat::CombatClock;
 use crate::cultivation::components::{
@@ -583,13 +583,17 @@ fn apply_turbulence_burst_target_effects(
         if let Some((was_alive, health_current)) = death_state {
             emit_death_event_if_lethal(
                 world,
-                was_alive,
-                health_current,
-                target,
-                format!("woliu.turbulence_burst:entity:{}", caster.to_bits()),
-                Some(caster),
-                None,
-                now_tick,
+                DeathEventIfLethal {
+                    was_alive,
+                    health_current,
+                    event: DeathEvent {
+                        target,
+                        cause: format!("woliu.turbulence_burst:entity:{}", caster.to_bits()),
+                        attacker: Some(caster),
+                        attacker_player_id: None,
+                        at_tick: now_tick,
+                    },
+                },
             );
         }
     }

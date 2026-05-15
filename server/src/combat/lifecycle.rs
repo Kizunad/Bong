@@ -674,10 +674,8 @@ pub fn near_death_tick(
             continue;
         }
 
-        let immediate_npc_termination = should_terminate_npc_without_near_death_wait(
-            npc_marker.as_deref(),
-            fauna_tag.as_deref(),
-        );
+        let immediate_npc_termination =
+            should_terminate_npc_without_near_death_wait(npc_marker, fauna_tag);
         if !immediate_npc_termination {
             let Some(deadline_tick) = lifecycle.near_death_deadline_tick else {
                 continue;
