@@ -5,12 +5,15 @@ use valence::command::{AddCommand, Command};
 use valence::message::SendMessage;
 use valence::prelude::{App, Client, EventReader, Query, Update};
 
-use crate::cultivation::known_techniques::{technique_definition, KnownTechnique, KnownTechniques};
+use crate::cultivation::known_techniques::{
+    technique_definition, KnownTechnique, KnownTechniques, TECHNIQUE_DEFINITIONS,
+};
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum TechniqueCmd {
     List,
     Add { id: String },
+    Give { id: String },
     Remove { id: String },
     Proficiency { id: String, value: f64 },
     Active { id: String, value: bool },
@@ -32,6 +35,16 @@ impl Command for TechniqueCmd {
             .argument("id")
             .with_parser::<String>()
             .with_executable(|input| TechniqueCmd::Add {
+                id: String::parse_arg(input).unwrap(),
+            });
+
+        graph
+            .at(technique)
+            // dev-only: 直接改写已知功法，绕过残卷/师承/顿悟与 qi_physics 路径。
+            .literal("give")
+            .argument("id")
+            .with_parser::<String>()
+            .with_executable(|input| TechniqueCmd::Give {
                 id: String::parse_arg(input).unwrap(),
             });
 
@@ -91,18 +104,9 @@ pub fn handle_technique(
 
         match &event.result {
             TechniqueCmd::List => {
-                let body = techniques
-                    .entries
-                    .iter()
-                    .map(|entry| {
-                        format!(
-                            "{} p={:.2} active={}",
-                            entry.id, entry.proficiency, entry.active
-                        )
-                    })
-                    .collect::<Vec<_>>()
-                    .join(", ");
-                client.send_chat_message(format!("[dev] techniques: {body}"));
+                for line in technique_catalog_lines(&techniques) {
+                    client.send_chat_message(line);
+                }
             }
             TechniqueCmd::Add { id } => {
                 if technique_definition(id).is_none() {
@@ -120,6 +124,38 @@ pub fn handle_technique(
                     active: true,
                 });
                 client.send_chat_message(format!("[dev] technique `{id}` added"));
+            }
+            TechniqueCmd::Give { id } => {
+                if id == "all" {
+                    let granted = grant_all_techniques(&mut techniques);
+                    client.send_chat_message(format!(
+                        "[dev] technique give all: added={} activated={} total={}",
+                        granted.added,
+                        granted.activated,
+                        techniques.entries.len()
+                    ));
+                    continue;
+                }
+                let Some(definition) = technique_definition(id) else {
+                    client.send_chat_message(format!(
+                        "[dev] technique give rejected: unknown `{id}`; use /technique list"
+                    ));
+                    continue;
+                };
+                match grant_technique(&mut techniques, definition.id) {
+                    TechniqueGrantResult::Added => client.send_chat_message(format!(
+                        "[dev] technique give `{}` ({}) added",
+                        definition.id, definition.display_name
+                    )),
+                    TechniqueGrantResult::Activated => client.send_chat_message(format!(
+                        "[dev] technique give `{}` ({}) activated",
+                        definition.id, definition.display_name
+                    )),
+                    TechniqueGrantResult::AlreadyKnown => client.send_chat_message(format!(
+                        "[dev] technique give `{}` ({}) already known",
+                        definition.id, definition.display_name
+                    )),
+                }
             }
             TechniqueCmd::Remove { id } => {
                 let before = techniques.entries.len();
@@ -179,6 +215,88 @@ pub fn handle_technique(
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TechniqueGrantResult {
+    Added,
+    Activated,
+    AlreadyKnown,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct TechniqueGrantSummary {
+    added: usize,
+    activated: usize,
+}
+
+fn technique_catalog_lines(techniques: &KnownTechniques) -> Vec<String> {
+    let mut lines = vec![format!(
+        "[dev] technique list: {} definitions; * = known; use /technique give <id|all>",
+        TECHNIQUE_DEFINITIONS.len()
+    )];
+    let mut grade: Option<&str> = None;
+    let mut parts = Vec::new();
+    for definition in TECHNIQUE_DEFINITIONS {
+        if grade.is_some_and(|current| current != definition.grade) {
+            flush_catalog_line(&mut lines, grade.unwrap_or("unknown"), &mut parts);
+        }
+        grade = Some(definition.grade);
+        let known = techniques
+            .entries
+            .iter()
+            .find(|entry| entry.id == definition.id);
+        let marker = known.map_or("", |_| "*");
+        let suffix = known
+            .map(|entry| format!(" p={:.2} active={}", entry.proficiency, entry.active))
+            .unwrap_or_default();
+        parts.push(format!(
+            "{marker}{}({}){suffix}",
+            definition.id, definition.display_name
+        ));
+    }
+    if let Some(grade) = grade {
+        flush_catalog_line(&mut lines, grade, &mut parts);
+    }
+    lines
+}
+
+fn flush_catalog_line(lines: &mut Vec<String>, grade: &str, parts: &mut Vec<String>) {
+    if !parts.is_empty() {
+        lines.push(format!("[dev] technique {grade}: {}", parts.join(", ")));
+        parts.clear();
+    }
+}
+
+fn grant_all_techniques(techniques: &mut KnownTechniques) -> TechniqueGrantSummary {
+    let mut summary = TechniqueGrantSummary {
+        added: 0,
+        activated: 0,
+    };
+    for definition in TECHNIQUE_DEFINITIONS {
+        match grant_technique(techniques, definition.id) {
+            TechniqueGrantResult::Added => summary.added += 1,
+            TechniqueGrantResult::Activated => summary.activated += 1,
+            TechniqueGrantResult::AlreadyKnown => {}
+        }
+    }
+    summary
+}
+
+fn grant_technique(techniques: &mut KnownTechniques, id: &str) -> TechniqueGrantResult {
+    if let Some(entry) = techniques.entries.iter_mut().find(|entry| entry.id == id) {
+        if entry.active {
+            return TechniqueGrantResult::AlreadyKnown;
+        }
+        entry.active = true;
+        return TechniqueGrantResult::Activated;
+    }
+    techniques.entries.push(KnownTechnique {
+        id: id.to_string(),
+        proficiency: 0.5,
+        active: true,
+    });
+    TechniqueGrantResult::Added
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -235,6 +353,25 @@ mod tests {
     }
 
     #[test]
+    fn technique_catalog_exposes_all_defined_ids() {
+        let lines = technique_catalog_lines(&KnownTechniques {
+            entries: Vec::new(),
+        });
+        let joined = lines.join("\n");
+        assert!(joined.contains("use /technique give <id|all>"));
+        assert!(joined.contains("movement.dash(闪避)"));
+        assert!(joined.contains("woliu.vortex"));
+        assert!(joined.contains("anqi.echo_fractal"));
+        assert_eq!(
+            lines[0],
+            format!(
+                "[dev] technique list: {} definitions; * = known; use /technique give <id|all>",
+                TECHNIQUE_DEFINITIONS.len()
+            )
+        );
+    }
+
+    #[test]
     fn technique_add_is_idempotent_and_rejects_unknown_ids() {
         let mut app = setup_app();
         let player = spawn_known(&mut app, KnownTechniques::dev_default());
@@ -258,6 +395,96 @@ mod tests {
         let techniques = app.world().get::<KnownTechniques>(player).unwrap();
         assert_eq!(techniques.entries.len(), default_technique_count());
         assert!(techniques.entries.iter().all(|entry| entry.id != "foo.bar"));
+    }
+
+    #[test]
+    fn technique_give_adds_from_empty_and_reactivates_existing() {
+        let mut app = setup_app();
+        let player = spawn_known(
+            &mut app,
+            KnownTechniques {
+                entries: vec![KnownTechnique {
+                    id: ECHO.to_string(),
+                    proficiency: 0.75,
+                    active: false,
+                }],
+            },
+        );
+
+        send(
+            &mut app,
+            player,
+            TechniqueCmd::Give {
+                id: NEEDLE.to_string(),
+            },
+        );
+        send(
+            &mut app,
+            player,
+            TechniqueCmd::Give {
+                id: ECHO.to_string(),
+            },
+        );
+        send(
+            &mut app,
+            player,
+            TechniqueCmd::Give {
+                id: "missing.technique".to_string(),
+            },
+        );
+        run_update(&mut app);
+
+        let techniques = app.world().get::<KnownTechniques>(player).unwrap();
+        assert_eq!(techniques.entries.len(), 2);
+        assert!(techniques
+            .entries
+            .iter()
+            .any(|entry| entry.id == NEEDLE && entry.active));
+        let echo = techniques
+            .entries
+            .iter()
+            .find(|entry| entry.id == ECHO)
+            .unwrap();
+        assert_eq!(echo.proficiency, 0.75);
+        assert!(echo.active);
+        assert!(techniques
+            .entries
+            .iter()
+            .all(|entry| entry.id != "missing.technique"));
+    }
+
+    #[test]
+    fn technique_give_all_adds_missing_without_resetting_proficiency() {
+        let mut app = setup_app();
+        let player = spawn_known(
+            &mut app,
+            KnownTechniques {
+                entries: vec![KnownTechnique {
+                    id: BENG_QUAN.to_string(),
+                    proficiency: 0.9,
+                    active: false,
+                }],
+            },
+        );
+
+        send(
+            &mut app,
+            player,
+            TechniqueCmd::Give {
+                id: "all".to_string(),
+            },
+        );
+        run_update(&mut app);
+
+        let techniques = app.world().get::<KnownTechniques>(player).unwrap();
+        assert_eq!(techniques.entries.len(), TECHNIQUE_DEFINITIONS.len());
+        let beng = techniques
+            .entries
+            .iter()
+            .find(|entry| entry.id == BENG_QUAN)
+            .unwrap();
+        assert_eq!(beng.proficiency, 0.9);
+        assert!(beng.active);
     }
 
     #[test]

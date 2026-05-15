@@ -1,4 +1,5 @@
 pub mod block_break;
+pub mod block_drop;
 pub mod bong_blocks;
 pub mod calamity;
 pub mod dimension;
@@ -111,6 +112,7 @@ pub fn register(app: &mut App) {
     // 仍消费同一份 DiggingEvent 做 drop / 索引清理，本系统在 Update 阶段统一抹平
     // chunk —— 否则 vanilla / 普通方块挖了会"复原"。
     block_break::register(app);
+    block_drop::register(app);
     zone::register(app);
     environment::register(app);
     weather_physics::register(app);
@@ -512,7 +514,96 @@ fn spawn_fallback_flat_world(
         }
     }
 
+    scatter_spawn_resources(&mut layer.chunk);
+
     commands.spawn((layer, OverworldLayer)).id()
+}
+
+/// 在出生点附近散布基础资源方块（树木、石头、铁矿），让新玩家裸手可采。
+/// 这些方块不在 MineralOreIndex 里，由 block_drop 系统处理掉落。
+fn scatter_spawn_resources(chunk_layer: &mut valence::prelude::ChunkLayer) {
+    let tree_y = GRASS_Y + 1;
+
+    struct Deposit {
+        x: i32,
+        z: i32,
+        block: BlockState,
+        count: i32,
+    }
+
+    let deposits = [
+        // 两棵橡木（出生点东北方向）
+        Deposit {
+            x: 12,
+            z: 8,
+            block: BlockState::OAK_LOG,
+            count: 4,
+        },
+        Deposit {
+            x: 20,
+            z: 14,
+            block: BlockState::OAK_LOG,
+            count: 5,
+        },
+        // 一棵白桦
+        Deposit {
+            x: 6,
+            z: 22,
+            block: BlockState::BIRCH_LOG,
+            count: 3,
+        },
+        // 铁矿露头（3 处，每处 2-3 块，嵌在地面里）
+        Deposit {
+            x: 30,
+            z: 10,
+            block: BlockState::IRON_ORE,
+            count: 3,
+        },
+        Deposit {
+            x: 35,
+            z: 18,
+            block: BlockState::IRON_ORE,
+            count: 2,
+        },
+        Deposit {
+            x: 28,
+            z: 26,
+            block: BlockState::IRON_ORE,
+            count: 2,
+        },
+        // 石头露头
+        Deposit {
+            x: 18,
+            z: 30,
+            block: BlockState::STONE,
+            count: 4,
+        },
+        Deposit {
+            x: 40,
+            z: 6,
+            block: BlockState::STONE,
+            count: 3,
+        },
+    ];
+
+    for deposit in &deposits {
+        if deposit.block == BlockState::OAK_LOG || deposit.block == BlockState::BIRCH_LOG {
+            for dy in 0..deposit.count {
+                chunk_layer.set_block([deposit.x, tree_y + dy, deposit.z], deposit.block);
+            }
+            let leaves = match deposit.block {
+                BlockState::BIRCH_LOG => BlockState::BIRCH_LEAVES,
+                _ => BlockState::OAK_LEAVES,
+            };
+            chunk_layer.set_block([deposit.x, tree_y + deposit.count, deposit.z], leaves);
+        } else {
+            for i in 0..deposit.count {
+                let ox = i % 2;
+                let oz = i / 2;
+                chunk_layer.set_block([deposit.x + ox, GRASS_Y, deposit.z + oz], deposit.block);
+            }
+        }
+    }
 }
 
 #[cfg(test)]
@@ -525,10 +616,11 @@ mod tests {
     use super::{
         select_world_bootstrap, select_world_bootstrap_from_configured_paths,
         terrain::RasterBootstrapConfig, AnvilBootstrapConfig, FallbackFlatBootstrap,
-        FallbackFlatReason, WorldBootstrap, ANVIL_REGION_DIR_NAME, TERRAIN_RASTER_PATH_ENV_VAR,
-        WORLD_PATH_ENV_VAR,
+        FallbackFlatReason, WorldBootstrap, ANVIL_REGION_DIR_NAME, GRASS_Y,
+        TERRAIN_RASTER_PATH_ENV_VAR, WORLD_PATH_ENV_VAR,
     };
-    use valence::prelude::DVec3;
+    use valence::prelude::{BlockPos, BlockState, ChunkLayer, DVec3, UnloadedChunk};
+    use valence::testing::ScenarioSingleClient;
 
     #[test]
     fn fallback_spawn_zone_exists() {
@@ -560,6 +652,65 @@ mod tests {
         assert_eq!(registry.zones.len(), 1);
         assert_eq!(spawn_zone.name, DEFAULT_SPAWN_ZONE_NAME);
         assert_eq!(spawn_zone.bounds, default_spawn_bounds());
+    }
+
+    #[test]
+    fn scatter_spawn_resources_places_matching_tree_leaves_and_surface_clusters() {
+        let scenario = ScenarioSingleClient::new();
+        let mut app = scenario.app;
+        let mut layer = app
+            .world_mut()
+            .get_mut::<ChunkLayer>(scenario.layer)
+            .expect("test layer should carry ChunkLayer");
+        for chunk_x in 0..=2 {
+            for chunk_z in 0..=1 {
+                layer.insert_chunk([chunk_x, chunk_z], UnloadedChunk::new());
+            }
+        }
+
+        super::scatter_spawn_resources(&mut layer);
+
+        assert_eq!(
+            block_state(&layer, 12, GRASS_Y + 1, 8),
+            Some(BlockState::OAK_LOG)
+        );
+        assert_eq!(
+            block_state(&layer, 12, GRASS_Y + 5, 8),
+            Some(BlockState::OAK_LEAVES)
+        );
+        assert_eq!(
+            block_state(&layer, 6, GRASS_Y + 1, 22),
+            Some(BlockState::BIRCH_LOG)
+        );
+        assert_eq!(
+            block_state(&layer, 6, GRASS_Y + 4, 22),
+            Some(BlockState::BIRCH_LEAVES),
+            "expected birch trunk to receive birch leaves, actual mismatched leaves"
+        );
+        assert_eq!(
+            block_state(&layer, 30, GRASS_Y, 10),
+            Some(BlockState::IRON_ORE)
+        );
+        assert_eq!(
+            block_state(&layer, 31, GRASS_Y, 10),
+            Some(BlockState::IRON_ORE)
+        );
+        assert_eq!(
+            block_state(&layer, 30, GRASS_Y, 11),
+            Some(BlockState::IRON_ORE)
+        );
+        assert_eq!(
+            block_state(&layer, 18, GRASS_Y, 30),
+            Some(BlockState::STONE)
+        );
+        assert_eq!(
+            block_state(&layer, 19, GRASS_Y, 31),
+            Some(BlockState::STONE)
+        );
+    }
+
+    fn block_state(layer: &ChunkLayer, x: i32, y: i32, z: i32) -> Option<BlockState> {
+        layer.block(BlockPos::new(x, y, z)).map(|block| block.state)
     }
 
     #[test]

@@ -5,6 +5,7 @@ import com.bong.client.inventory.model.ChannelState;
 import com.bong.client.inventory.model.InventoryModel;
 import com.bong.client.inventory.model.MeridianBody;
 import com.bong.client.inventory.model.MeridianChannel;
+import com.bong.client.hud.BongToast;
 import com.bong.client.network.ClientRequestSender;
 import net.minecraft.util.Identifier;
 import org.junit.jupiter.api.AfterEach;
@@ -16,6 +17,7 @@ import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 public class InspectScreenDuXuTest {
@@ -26,6 +28,7 @@ public class InspectScreenDuXuTest {
     @AfterEach
     void tearDown() {
         ClientRequestSender.resetBackendForTests();
+        BongToast.resetForTests();
     }
 
     private void install() {
@@ -70,6 +73,39 @@ public class InspectScreenDuXuTest {
         assertTrue(sent.isEmpty());
     }
 
+    @Test
+    void meridianTargetRejectsOpenedAndFirstExtraordinary() {
+        assertEquals("经脉数据加载中", InspectScreen.meridianTargetBlockReason(null, MeridianChannel.LU));
+        assertEquals("先点击一条经脉", InspectScreen.meridianTargetBlockReason(body("Awaken", null), null));
+        assertTrue(InspectScreen.meridianTargetBlockReason(body("Awaken", null), MeridianChannel.LU)
+            .contains("已通"));
+        assertEquals(
+            "首脉需先走十二正经",
+            InspectScreen.meridianTargetBlockReason(bodyWithOpened("Awaken"), MeridianChannel.REN)
+        );
+        assertNull(InspectScreen.meridianTargetBlockReason(bodyWithOpened("Awaken"), MeridianChannel.LU));
+    }
+
+    @Test
+    void dispatchSetMeridianTargetSendsOnlyWhenAllowed() {
+        install();
+        InspectScreen screen = new InspectScreen(InventoryModel.empty());
+        BodyInspectComponent bodyInspect = new BodyInspectComponent();
+        bodyInspect.setMeridianBody(bodyWithOpened("Awaken"));
+        bodyInspect.setSelectedChannel(MeridianChannel.LU);
+        screen.setBodyInspectForTests(bodyInspect);
+
+        assertTrue(screen.dispatchSetMeridianTarget());
+
+        assertEquals(1, sent.size());
+        assertEquals(new Identifier("bong", "client_request"), sent.get(0).channel());
+        assertEquals("{\"type\":\"set_meridian_target\",\"v\":1,\"meridian\":\"Lung\"}", sent.get(0).body());
+
+        bodyInspect.setSelectedChannel(MeridianChannel.REN);
+        assertFalse(screen.dispatchSetMeridianTarget());
+        assertEquals(1, sent.size());
+    }
+
     private static MeridianBody body(String realm, MeridianChannel blocked) {
         MeridianBody.Builder builder = MeridianBody.builder().realm(realm);
         for (MeridianChannel channel : MeridianChannel.values()) {
@@ -84,5 +120,31 @@ public class InspectScreenDuXuTest {
             ));
         }
         return builder.build();
+    }
+
+    private static MeridianBody bodyWithOpened(String realm, MeridianChannel... opened) {
+        MeridianBody.Builder builder = MeridianBody.builder().realm(realm);
+        for (MeridianChannel channel : MeridianChannel.values()) {
+            boolean isOpened = contains(opened, channel);
+            builder.channel(new ChannelState(
+                channel,
+                10.0,
+                isOpened ? 10.0 : 0.0,
+                ChannelState.DamageLevel.INTACT,
+                0.0,
+                0.0,
+                !isOpened
+            ));
+        }
+        return builder.build();
+    }
+
+    private static boolean contains(MeridianChannel[] values, MeridianChannel needle) {
+        for (MeridianChannel value : values) {
+            if (value == needle) {
+                return true;
+            }
+        }
+        return false;
     }
 }

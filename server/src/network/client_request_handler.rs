@@ -38,7 +38,7 @@ use crate::combat::needle::IntentSource;
 use crate::combat::tuike::{can_equip_false_skin, false_skin_kind_for_item, FalseSkinForgeRequest};
 use crate::combat::CombatClock;
 use crate::cultivation::breakthrough::BreakthroughRequest;
-use crate::cultivation::components::{recover_current_qi, Cultivation, MeridianSystem};
+use crate::cultivation::components::{recover_current_qi, Cultivation, MeridianId, MeridianSystem};
 use crate::cultivation::dugu::SelfAntidoteIntent;
 use crate::cultivation::forging::ForgeRequest;
 use crate::cultivation::insight::{InsightChosen, InsightRequest};
@@ -333,6 +333,31 @@ const NPC_INTERACTION_MAX_DISTANCE: f64 = 6.0;
 /// 20 tick/s × 60 s × 5 = 6000。
 const BREAKTHROUGH_BOOST_DURATION_TICKS: u64 = 6_000;
 
+fn meridian_label(id: MeridianId) -> &'static str {
+    match id {
+        MeridianId::Lung => "肺经",
+        MeridianId::LargeIntestine => "大肠经",
+        MeridianId::Stomach => "胃经",
+        MeridianId::Spleen => "脾经",
+        MeridianId::Heart => "心经",
+        MeridianId::SmallIntestine => "小肠经",
+        MeridianId::Bladder => "膀胱经",
+        MeridianId::Kidney => "肾经",
+        MeridianId::Pericardium => "心包经",
+        MeridianId::TripleEnergizer => "三焦经",
+        MeridianId::Gallbladder => "胆经",
+        MeridianId::Liver => "肝经",
+        MeridianId::Ren => "任脉",
+        MeridianId::Du => "督脉",
+        MeridianId::Chong => "冲脉",
+        MeridianId::Dai => "带脉",
+        MeridianId::YinQiao => "阴跷脉",
+        MeridianId::YangQiao => "阳跷脉",
+        MeridianId::YinWei => "阴维脉",
+        MeridianId::YangWei => "阳维脉",
+    }
+}
+
 #[allow(clippy::too_many_arguments)] // Bevy system signature; one resource/query per gameplay area.
 pub fn handle_client_request_payloads(
     mut events: EventReader<CustomPayloadEvent>,
@@ -485,6 +510,12 @@ pub fn handle_client_request_payloads(
                     meridian
                 );
                 commands.entity(ev.client).insert(MeridianTarget(meridian));
+                if let Ok((_username, mut client)) = clients.get_mut(ev.client) {
+                    client.send_chat_message(format!(
+                        "§a[修炼] 已收到经脉目标：{}。",
+                        meridian_label(meridian)
+                    ));
+                }
             }
             ClientRequestV1::BreakthroughRequest { .. } => {
                 tracing::info!(
@@ -2692,7 +2723,7 @@ mod tests {
     use valence::prelude::{
         ident, App, DVec3, EventReader, IntoSystemConfigs, Position, ResMut, Update,
     };
-    use valence::protocol::packets::play::CustomPayloadS2c;
+    use valence::protocol::packets::play::{CustomPayloadS2c, GameMessageS2c};
     use valence::testing::{create_mock_client, MockClientHelper};
 
     #[derive(Default)]
@@ -3081,6 +3112,20 @@ mod tests {
             .collect()
     }
 
+    fn collect_game_messages(helper: &mut MockClientHelper) -> Vec<String> {
+        helper
+            .collect_received()
+            .0
+            .into_iter()
+            .filter_map(|frame| {
+                frame
+                    .decode::<GameMessageS2c>()
+                    .ok()
+                    .map(|packet| packet.chat.to_legacy_lossy())
+            })
+            .collect()
+    }
+
     fn has_inventory_durability_payload(helper: &mut MockClientHelper, instance_id: u64) -> bool {
         for frame in helper.collect_received().0 {
             let Ok(packet) = frame.decode::<CustomPayloadS2c>() else {
@@ -3186,6 +3231,82 @@ mod tests {
         app.add_systems(
             Update,
             crate::alchemy::apply_alchemy_explode_outcomes.after(handle_client_request_payloads),
+        );
+    }
+
+    #[test]
+    fn meridian_label_maps_regular_and_extraordinary_channels() {
+        let cases = [
+            (MeridianId::Lung, "肺经"),
+            (MeridianId::LargeIntestine, "大肠经"),
+            (MeridianId::Stomach, "胃经"),
+            (MeridianId::Spleen, "脾经"),
+            (MeridianId::Heart, "心经"),
+            (MeridianId::SmallIntestine, "小肠经"),
+            (MeridianId::Bladder, "膀胱经"),
+            (MeridianId::Kidney, "肾经"),
+            (MeridianId::Pericardium, "心包经"),
+            (MeridianId::TripleEnergizer, "三焦经"),
+            (MeridianId::Gallbladder, "胆经"),
+            (MeridianId::Liver, "肝经"),
+            (MeridianId::Ren, "任脉"),
+            (MeridianId::Du, "督脉"),
+            (MeridianId::Chong, "冲脉"),
+            (MeridianId::Dai, "带脉"),
+            (MeridianId::YinQiao, "阴跷脉"),
+            (MeridianId::YangQiao, "阳跷脉"),
+            (MeridianId::YinWei, "阴维脉"),
+            (MeridianId::YangWei, "阳维脉"),
+        ];
+
+        for (id, expected) in cases {
+            assert_eq!(
+                meridian_label(id),
+                expected,
+                "expected stable chat label for {id:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn set_meridian_target_sends_generic_meridian_chat_echo() {
+        let mut app = App::new();
+        register_request_app(&mut app);
+
+        let (client_bundle, mut helper) = create_mock_client("Azure");
+        let entity = app.world_mut().spawn(client_bundle).id();
+        app.world_mut()
+            .resource_mut::<valence::prelude::Events<CustomPayloadEvent>>()
+            .send(CustomPayloadEvent {
+                client: entity,
+                channel: ident!("bong:client_request").into(),
+                data: serde_json::to_vec(&ClientRequestV1::SetMeridianTarget {
+                    v: 1,
+                    meridian: MeridianId::Du,
+                })
+                .expect("set meridian target request should serialize")
+                .into_boxed_slice(),
+            });
+
+        app.update();
+        flush_all_client_packets(&mut app);
+
+        let actual_target = app
+            .world()
+            .get::<MeridianTarget>(entity)
+            .map(|target| target.0);
+        assert_eq!(
+            actual_target,
+            Some(MeridianId::Du),
+            "expected SetMeridianTarget to insert selected meridian target, actual={:?}",
+            actual_target
+        );
+        let messages = collect_game_messages(&mut helper);
+        assert!(
+            messages
+                .iter()
+                .any(|message| message.contains("[修炼] 已收到经脉目标：督脉。")),
+            "expected generic meridian target chat echo because request is not limited to Chong, actual messages={messages:?}"
         );
     }
 

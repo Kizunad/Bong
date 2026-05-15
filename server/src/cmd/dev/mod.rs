@@ -9,6 +9,7 @@ pub mod preview_tp;
 pub mod qi;
 pub mod rat;
 pub mod realm;
+pub mod reset;
 pub mod revive;
 pub mod season;
 pub mod shrine;
@@ -40,6 +41,7 @@ pub fn register(app: &mut App) {
     meridian::register(app);
     qi::register(app);
     realm::register(app);
+    reset::register(app);
     revive::register(app);
     stamina::register(app);
     technique::register(app);

@@ -2,7 +2,7 @@ use valence::entity::Look;
 use valence::prelude::{App, DVec3, Entity, Events, Position, Startup, Update};
 
 use crate::combat::components::{SkillBarBindings, Wounds, TICKS_PER_SECOND};
-use crate::combat::events::{ApplyStatusEffectIntent, CombatEvent, StatusEffectKind};
+use crate::combat::events::{ApplyStatusEffectIntent, CombatEvent, DeathEvent, StatusEffectKind};
 use crate::combat::CombatClock;
 use crate::cultivation::components::{
     Contamination, Cultivation, MeridianId, MeridianSystem, Realm,
@@ -82,6 +82,7 @@ fn app(tick: u64) -> App {
     app.add_event::<SkillXpGain>();
     app.add_event::<ApplyStatusEffectIntent>();
     app.add_event::<CombatEvent>();
+    app.add_event::<DeathEvent>();
     app
 }
 
@@ -960,6 +961,14 @@ fn resolve_turbulence_burst_damages_stuns_and_knocks_targets() {
             .count(),
         1
     );
+    assert!(
+        app.world()
+            .resource::<Events<DeathEvent>>()
+            .iter_current_update_events()
+            .next()
+            .is_none(),
+        "non-lethal turbulence burst should not emit DeathEvent"
+    );
     assert!(app
         .world()
         .resource::<Events<ApplyStatusEffectIntent>>()
@@ -982,6 +991,47 @@ fn resolve_turbulence_burst_damages_stuns_and_knocks_targets() {
         (caster_after.x - caster_start.x).abs() < 1e-5,
         "recoil should follow facing direction instead of hard-coding an X-axis offset; start={caster_start:?}, after={caster_after:?}"
     );
+}
+
+#[test]
+fn resolve_turbulence_burst_lethal_damage_emits_death_event() {
+    let mut app = app(77);
+    let actor = spawn_actor(&mut app, Realm::Condense, 500.0);
+    app.world_mut()
+        .entity_mut(actor)
+        .insert(Look::new(0.0, 0.0));
+    let target = spawn_actor(&mut app, Realm::Induce, 80.0);
+    app.world_mut().entity_mut(target).insert(Wounds {
+        health_current: 40.0,
+        ..Default::default()
+    });
+    app.world_mut()
+        .get_mut::<Position>(target)
+        .unwrap()
+        .set([10.0, 66.0, 8.0]);
+
+    let result = resolve_woliu_v2_skill(
+        app.world_mut(),
+        actor,
+        1,
+        None,
+        WoliuSkillId::TurbulenceBurst,
+    );
+
+    assert!(matches!(result, CastResult::Started { .. }));
+    assert_eq!(
+        app.world().get::<Wounds>(target).unwrap().health_current,
+        0.0
+    );
+    let death_events = app.world().resource::<Events<DeathEvent>>();
+    let event = death_events
+        .iter_current_update_events()
+        .find(|event| event.target == target)
+        .expect("lethal turbulence burst should emit DeathEvent");
+    assert_eq!(event.attacker, Some(actor));
+    assert_eq!(event.attacker_player_id, None);
+    assert_eq!(event.at_tick, 77);
+    assert!(event.cause.starts_with("woliu.turbulence_burst:entity:"));
 }
 
 #[test]

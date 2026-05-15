@@ -96,6 +96,9 @@ pub fn register(app: &mut App) {
     register_gathering_tool_recipes(&mut registry).unwrap_or_else(|err| {
         panic!("[bong][craft] failed to register gathering-ux-v1 recipes: {err}");
     });
+    register_basic_processing_recipes(&mut registry).unwrap_or_else(|err| {
+        panic!("[bong][craft] failed to register basic-processing recipes: {err}");
+    });
     crate::coffin::register_craft_recipes(&mut registry).unwrap_or_else(|err| {
         panic!("[bong][craft] failed to register coffin-v1 recipes: {err}");
     });
@@ -136,7 +139,7 @@ pub fn register_examples(registry: &mut CraftRegistry) -> Result<(), RegistryErr
         display_name: "蚀针（凡铁档）".into(),
         materials: vec![
             ("iron_needle".into(), 3),
-            ("chi_xui_cao".into(), 1), // 赤髓草（plan-botany / 现有 herbalism 词条）
+            ("chi_sui_cao".into(), 1), // 赤髓草（plan-botany / 现有 herbalism 词条）
         ],
         qi_cost: 8.0,
         time_ticks: 3 * 60 * 20, // 3 min in-game
@@ -146,14 +149,7 @@ pub fn register_examples(registry: &mut CraftRegistry) -> Result<(), RegistryErr
             qi_color_min: Some((ColorKind::Insidious, 0.05)),
             skill_lv_min: None,
         },
-        unlock_sources: vec![
-            UnlockSource::Scroll {
-                item_template: "scroll_eclipse_needle_iron".into(),
-            },
-            UnlockSource::Mentor {
-                npc_archetype: "poison_master".into(),
-            },
-        ],
+        unlock_sources: vec![],
     })?;
 
     // 2. 毒源煎汤（凡毒）— DuguPotion
@@ -169,14 +165,7 @@ pub fn register_examples(registry: &mut CraftRegistry) -> Result<(), RegistryErr
         time_ticks: 90 * 20, // 1.5 min in-game
         output: ("poison_decoction_fan".into(), 1),
         requirements: CraftRequirements::default(),
-        unlock_sources: vec![
-            UnlockSource::Scroll {
-                item_template: "scroll_poison_decoction_fan".into(),
-            },
-            UnlockSource::Mentor {
-                npc_archetype: "poison_master".into(),
-            },
-        ],
+        unlock_sources: vec![],
     })?;
 
     // 3. 伪灵皮（轻档）— TuikeSkin
@@ -791,6 +780,73 @@ pub fn register_gathering_tool_recipes(registry: &mut CraftRegistry) -> Result<(
     Ok(())
 }
 
+/// 基础加工配方：把采集掉落的粗原料加工成中间材料。
+///
+/// 这些配方无境界 / 真元色门槛、0 qi 消耗、空 unlock_sources（默认解锁，
+/// 不需要残卷 / 师承 / 顿悟）。产出物接入现有高级配方的材料链。
+pub fn register_basic_processing_recipes(
+    registry: &mut CraftRegistry,
+) -> Result<(), RegistryError> {
+    #[allow(clippy::type_complexity)]
+    let specs: &[(&str, &str, &[(&str, u32)], u64, (&str, u32))] = &[
+        // 粗木 → 木柄：采药刀 / 真元诡雷等的前置
+        (
+            "basic.wood_handle",
+            "削木柄",
+            &[("crude_wood", 2)],
+            20 * 20,
+            ("wood_handle", 2),
+        ),
+        // 铁矿 → 粗铁锭：铁器的前置
+        (
+            "basic.iron_ingot",
+            "粗炼铁锭",
+            &[("iron_ore", 3)],
+            40 * 20,
+            ("iron_ingot", 1),
+        ),
+        // 粗铁锭 + 木柄 → 铁针：蚀针等暗器前置
+        (
+            "basic.iron_needle",
+            "锻铁针",
+            &[("iron_ingot", 1), ("wood_handle", 1)],
+            30 * 20,
+            ("iron_needle", 5),
+        ),
+        // 石块 + 草根 → 土罐：毒源煎汤前置
+        (
+            "basic.clay_pot",
+            "捏土罐",
+            &[("stone_chunk", 2), ("grass_fiber", 1)],
+            30 * 20,
+            ("clay_pot", 1),
+        ),
+        // 草根 → 草绳：通用绑扎材料
+        (
+            "basic.grass_rope",
+            "搓草绳",
+            &[("grass_fiber", 4)],
+            15 * 20,
+            ("grass_rope", 1),
+        ),
+    ];
+
+    for (id, display_name, materials, time_ticks, output) in specs {
+        registry.register(CraftRecipe {
+            id: RecipeId::new(*id),
+            category: CraftCategory::Tool,
+            display_name: (*display_name).into(),
+            materials: materials.iter().map(|(t, c)| (t.to_string(), *c)).collect(),
+            qi_cost: 0.0,
+            time_ticks: *time_ticks,
+            output: (output.0.to_string(), output.1),
+            requirements: CraftRequirements::default(),
+            unlock_sources: vec![],
+        })?;
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -830,10 +886,16 @@ mod tests {
     }
 
     #[test]
-    fn register_examples_each_has_unlock_sources() {
+    fn register_examples_non_early_entries_keep_unlock_sources() {
         let mut registry = CraftRegistry::new();
         register_examples(&mut registry).unwrap();
         for recipe in registry.iter() {
+            if matches!(
+                recipe.id.as_str(),
+                "craft.example.eclipse_needle.iron" | "craft.example.poison_decoction.fan"
+            ) {
+                continue;
+            }
             assert!(
                 !recipe.unlock_sources.is_empty(),
                 "example `{}` must have at least one unlock_source",
@@ -879,6 +941,54 @@ mod tests {
             .expect("eclipse_needle must have qi_color gate");
         assert_eq!(kind, ColorKind::Insidious);
         assert!(share > 0.0);
+    }
+
+    #[test]
+    fn register_examples_early_dugu_recipes_are_default_unlocked() {
+        let mut registry = CraftRegistry::new();
+        register_examples(&mut registry).unwrap();
+        for id in [
+            "craft.example.eclipse_needle.iron",
+            "craft.example.poison_decoction.fan",
+        ] {
+            let recipe = registry
+                .get(&RecipeId::new(id))
+                .expect("early Dugu recipe must register");
+            assert!(
+                recipe.unlock_sources.is_empty(),
+                "`{id}` should be visible in hand-craft UI by default"
+            );
+        }
+    }
+
+    #[test]
+    fn register_examples_early_dugu_item_templates_exist() {
+        let mut registry = CraftRegistry::new();
+        register_examples(&mut registry).unwrap();
+        let item_registry = crate::inventory::load_item_registry().expect("item registry loads");
+        for id in [
+            "craft.example.eclipse_needle.iron",
+            "craft.example.poison_decoction.fan",
+        ] {
+            let recipe = registry
+                .get(&RecipeId::new(id))
+                .expect("early Dugu recipe must register");
+            for (template_id, count) in &recipe.materials {
+                assert!(
+                    item_registry.get(template_id).is_some(),
+                    "material `{template_id}` for recipe `{}` must exist in item registry",
+                    recipe.id
+                );
+                assert!(*count >= 1, "`{}` material count must be >= 1", recipe.id);
+            }
+            let (output_id, count) = &recipe.output;
+            assert!(
+                item_registry.get(output_id).is_some(),
+                "output `{output_id}` for recipe `{}` must exist in item registry",
+                recipe.id
+            );
+            assert!(*count >= 1, "`{}` output count must be >= 1", recipe.id);
+        }
     }
 
     #[test]
@@ -1119,5 +1229,116 @@ mod tests {
         // 第二次 register 必须 reject（duplicate id）
         let err = register_examples(&mut registry).unwrap_err();
         assert!(matches!(err, RegistryError::DuplicateId(_)));
+    }
+
+    #[test]
+    fn register_basic_processing_succeeds_with_5_recipes() {
+        let mut registry = CraftRegistry::new();
+        register_basic_processing_recipes(&mut registry).unwrap();
+        assert_eq!(registry.len(), 5);
+    }
+
+    #[test]
+    fn basic_processing_ids_start_with_basic_namespace() {
+        let mut registry = CraftRegistry::new();
+        register_basic_processing_recipes(&mut registry).unwrap();
+        for recipe in registry.iter() {
+            assert!(
+                recipe.id.as_str().starts_with("basic."),
+                "basic processing recipe id `{}` should be in `basic.*` namespace",
+                recipe.id
+            );
+        }
+    }
+
+    #[test]
+    fn basic_processing_all_zero_qi_and_no_realm() {
+        let mut registry = CraftRegistry::new();
+        register_basic_processing_recipes(&mut registry).unwrap();
+        for recipe in registry.iter() {
+            assert_eq!(recipe.qi_cost, 0.0, "`{}` should have 0 qi cost", recipe.id);
+            assert_eq!(
+                recipe.requirements,
+                CraftRequirements::default(),
+                "`{}` should have no requirements",
+                recipe.id
+            );
+        }
+    }
+
+    #[test]
+    fn basic_processing_unlock_sources_empty_means_default_unlocked() {
+        let mut registry = CraftRegistry::new();
+        register_basic_processing_recipes(&mut registry).unwrap();
+        for recipe in registry.iter() {
+            assert!(
+                recipe.unlock_sources.is_empty(),
+                "`{}` should have empty unlock_sources (default unlocked)",
+                recipe.id
+            );
+        }
+    }
+
+    #[test]
+    fn basic_processing_output_templates_exist_in_item_registry() {
+        let mut registry = CraftRegistry::new();
+        register_basic_processing_recipes(&mut registry).unwrap();
+        let item_registry = crate::inventory::load_item_registry().expect("item registry loads");
+        for recipe in registry.iter() {
+            let (output_id, count) = &recipe.output;
+            assert!(
+                item_registry.get(output_id).is_some(),
+                "output `{output_id}` for recipe `{}` must exist in item registry",
+                recipe.id
+            );
+            assert!(*count >= 1, "`{}` output count must be >= 1", recipe.id);
+        }
+    }
+
+    #[test]
+    fn basic_processing_material_templates_exist_in_item_registry() {
+        let mut registry = CraftRegistry::new();
+        register_basic_processing_recipes(&mut registry).unwrap();
+        let item_registry = crate::inventory::load_item_registry().expect("item registry loads");
+        for recipe in registry.iter() {
+            for (template_id, count) in &recipe.materials {
+                assert!(
+                    item_registry.get(template_id).is_some(),
+                    "material `{template_id}` for recipe `{}` must exist in item registry",
+                    recipe.id
+                );
+                assert!(
+                    *count >= 1,
+                    "`{}` material `{template_id}` count must be >= 1",
+                    recipe.id
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn basic_processing_rejects_duplicate() {
+        let mut registry = CraftRegistry::new();
+        register_basic_processing_recipes(&mut registry).unwrap();
+        let err = register_basic_processing_recipes(&mut registry).unwrap_err();
+        assert!(matches!(err, RegistryError::DuplicateId(_)));
+    }
+
+    #[test]
+    fn basic_wood_handle_recipe_chain() {
+        let mut registry = CraftRegistry::new();
+        register_basic_processing_recipes(&mut registry).unwrap();
+        let recipe = registry.get(&RecipeId::new("basic.wood_handle")).unwrap();
+        assert_eq!(recipe.materials, vec![("crude_wood".into(), 2)]);
+        assert_eq!(recipe.output, ("wood_handle".into(), 2));
+    }
+
+    #[test]
+    fn basic_iron_ingot_recipe_chain() {
+        let mut registry = CraftRegistry::new();
+        register_basic_processing_recipes(&mut registry).unwrap();
+        let recipe = registry.get(&RecipeId::new("basic.iron_ingot")).unwrap();
+        assert_eq!(recipe.materials, vec![("iron_ore".into(), 3)]);
+        assert_eq!(recipe.output, ("iron_ingot".into(), 1));
     }
 }

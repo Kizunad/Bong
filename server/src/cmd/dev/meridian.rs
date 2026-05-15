@@ -125,8 +125,9 @@ pub fn handle_meridian(
                 }
                 tracing::warn!("[dev-cmd] bypass worldview rule: force open all meridians");
                 client.send_chat_message(format!(
-                    "[dev] opened {opened} meridian(s); total opened={}",
-                    meridians.opened_count()
+                    "[dev] opened {opened} meridian(s); total opened={}; realm remains {:?} (open_all does not auto-breakthrough)",
+                    meridians.opened_count(),
+                    cultivation.realm
                 ));
             }
             MeridianCmd::List => {
@@ -325,6 +326,7 @@ mod tests {
     fn meridian_open_all_opens_twenty_channels_and_is_idempotent() {
         let mut app = setup_app();
         let player = spawn_cultivator(&mut app);
+        let pre_realm = app.world().get::<Cultivation>(player).unwrap().realm;
 
         send(&mut app, player, MeridianCmd::OpenAll);
         run_update(&mut app);
@@ -335,6 +337,11 @@ mod tests {
         let meridians = app.world().get::<MeridianSystem>(player).unwrap();
         let life = app.world().get::<LifeRecord>(player).unwrap();
         assert_eq!(meridians.opened_count(), 20);
+        assert_eq!(
+            cultivation.realm, pre_realm,
+            "expected /meridian open_all to keep realm unchanged, actual realm={:?}",
+            cultivation.realm
+        );
         assert_eq!(cultivation.qi_max, 210.0);
         assert_eq!(life.biography.len(), 20);
     }

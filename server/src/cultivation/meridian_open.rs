@@ -3,7 +3,7 @@
 //!
 //! P1 约束：
 //!   * 目标必须与已打通经脉相邻（通过 `MeridianTopology`）
-//!   * Awaken 期首脉特许（无已开经脉时允许任一）
+//!   * Awaken 期首脉特许（无已开经脉时允许任一正经）
 //!   * zone.spirit_qi >= 0.3 才推进（阈值内不能打通）
 //!   * 打通本身消耗 qi（cost = progress_delta × COST_FACTOR）
 
@@ -13,7 +13,7 @@ use crate::world::dimension::{CurrentDimension, DimensionKind};
 use crate::world::events::EVENT_REALM_COLLAPSE;
 use crate::world::zone::ZoneRegistry;
 
-use super::components::{Cultivation, MeridianId, MeridianSystem};
+use super::components::{Cultivation, MeridianFamily, MeridianId, MeridianSystem};
 use super::life_record::{BiographyEntry, LifeRecord};
 use super::tick::CultivationClock;
 use super::topology::MeridianTopology;
@@ -115,14 +115,14 @@ pub fn advance_open_progress_at(
     Ok((delta, just_opened))
 }
 
-/// 判定邻接：首脉特许（无已开经脉时任意目标合法），否则必须邻接至少一条已通。
+/// 判定邻接：首脉特许（无已开经脉时任一正经合法），否则必须邻接至少一条已通。
 pub fn is_target_adjacent(
     topo: &MeridianTopology,
     meridians: &MeridianSystem,
     target: MeridianId,
 ) -> bool {
     if meridians.opened_count() == 0 {
-        return true;
+        return target.family() == MeridianFamily::Regular;
     }
     topo.neighbors(target)
         .iter()
@@ -251,11 +251,11 @@ mod tests {
     }
 
     #[test]
-    fn first_meridian_always_adjacent() {
+    fn first_meridian_allows_regular_only() {
         let t = MeridianTopology::standard();
         let ms = MeridianSystem::default();
         assert!(is_target_adjacent(&t, &ms, MeridianId::Lung));
-        assert!(is_target_adjacent(&t, &ms, MeridianId::YangWei));
+        assert!(!is_target_adjacent(&t, &ms, MeridianId::YangWei));
     }
 
     #[test]

@@ -12,6 +12,7 @@ import com.bong.client.cultivation.ColorKind;
 import com.bong.client.cultivation.QiColorVectorHud;
 import com.bong.client.cultivation.QiColorObservedState;
 import com.bong.client.cultivation.QiColorObservedStore;
+import com.bong.client.hud.BongToast;
 import com.bong.client.inspect.ItemInspectLongPressTracker;
 import com.bong.client.inspect.ItemInspectScreen;
 import com.bong.client.inventory.component.*;
@@ -57,6 +58,9 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
     private static final int TAB_TECHNIQUES = 3;
     private static final int TAB_CRAFT = 4;
     private static final String[] TAB_NAMES = {"装备", "修仙", "技艺", "功法", "手搓"};
+    private static final int ACTION_TOAST_OK = 0xFFA8E6CF;
+    private static final int ACTION_TOAST_WARN = 0xFFFFAA55;
+    private static final long ACTION_TOAST_MS = 2_200L;
 
     private InventoryModel model;
     private final DragState dragState = new DragState();
@@ -304,7 +308,8 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
         PhysicalBody physData = PhysicalBodyStore.snapshot();
         bodyInspect.setPhysicalBody(physData != null ? physData : MockPhysicalData.create());
         MeridianBody meridianData = MeridianStateStore.snapshot();
-        bodyInspect.setMeridianBody(meridianData != null ? meridianData : MockMeridianData.create());
+        // 经脉必须以服务端 cultivation_detail 为准；无快照时宁可显示加载态，不能用 mock 误导目标选择。
+        bodyInspect.setMeridianBody(meridianData);
 
         // Cultivation action bar: [设为目标] [突破] [淬炼·流速] [淬炼·容量]
         // 「突破」常开；其余三项需选中某条经脉 — 灰态表示禁用。
@@ -312,15 +317,9 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
         actionBar.gap(4);
         actionBar.padding(Insets.of(2, 2, 2, 2));
         actionBar.verticalAlignment(VerticalAlignment.CENTER);
-        Object[] setTargetBtn = buildActionButton("设为目标", () -> {
-            var sel = bodyInspect.selectedChannel();
-            if (sel != null) {
-                com.bong.client.network.ClientRequestSender.sendSetMeridianTarget(
-                    com.bong.client.network.ClientRequestProtocol.toMeridianId(sel));
-            }
-        });
+        Object[] setTargetBtn = buildActionButton("设为目标", this::dispatchSetMeridianTarget);
         Object[] breakthroughBtn = buildActionButton("突破",
-            com.bong.client.network.ClientRequestSender::sendBreakthroughRequest);
+            this::dispatchBreakthroughRequest);
         Object[] duXuBtn = buildActionButton("渡虚劫", this::dispatchStartDuXuIfEligible);
         Object[] forgeRateBtn = buildActionButton("淬炼·流速", () -> {
             var sel = bodyInspect.selectedChannel();
@@ -1352,6 +1351,28 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
         this.bodyInspect = bodyInspect;
     }
 
+    boolean dispatchSetMeridianTarget() {
+        MeridianChannel selected = bodyInspect == null ? null : bodyInspect.selectedChannel();
+        MeridianBody body = bodyInspect == null ? MeridianStateStore.snapshot() : bodyInspect.meridianBody();
+        String blockedReason = meridianTargetBlockReason(body, selected);
+        if (blockedReason != null) {
+            showActionToast(blockedReason, ACTION_TOAST_WARN);
+            com.bong.client.BongClient.LOGGER.warn("[bong][inspect] set_meridian_target skipped: {}", blockedReason);
+            return false;
+        }
+
+        com.bong.client.network.ClientRequestSender.sendSetMeridianTarget(
+            com.bong.client.network.ClientRequestProtocol.toMeridianId(selected));
+        showActionToast("经脉目标：" + selected.displayName(), ACTION_TOAST_OK);
+        return true;
+    }
+
+    boolean dispatchBreakthroughRequest() {
+        com.bong.client.network.ClientRequestSender.sendBreakthroughRequest();
+        showActionToast("已请求突破", ACTION_TOAST_OK);
+        return true;
+    }
+
     boolean dispatchStartDuXuIfEligible() {
         MeridianBody body = bodyInspect == null ? MeridianStateStore.snapshot() : bodyInspect.meridianBody();
         if (!isDuXuEligible(body)) {
@@ -1361,6 +1382,42 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
         }
         com.bong.client.network.ClientRequestSender.sendStartDuXuRequest();
         return true;
+    }
+
+    static String meridianTargetBlockReason(MeridianBody body, MeridianChannel selected) {
+        if (body == null) {
+            return "经脉数据加载中";
+        }
+        if (selected == null) {
+            return "先点击一条经脉";
+        }
+        ChannelState state = body.channel(selected);
+        if (state != null && !state.blocked()) {
+            return selected.displayName() + "已通，不需要再设为经脉目标";
+        }
+        if (openedMeridianCount(body) == 0
+            && selected.family() == MeridianChannel.Family.EXTRAORDINARY) {
+            return "首脉需先走十二正经";
+        }
+        return null;
+    }
+
+    private static int openedMeridianCount(MeridianBody body) {
+        if (body == null) {
+            return 0;
+        }
+        int count = 0;
+        for (MeridianChannel channel : MeridianChannel.values()) {
+            ChannelState state = body.channel(channel);
+            if (state != null && !state.blocked()) {
+                count++;
+            }
+        }
+        return count;
+    }
+
+    private static void showActionToast(String text, int color) {
+        BongToast.show(text, color, System.currentTimeMillis(), ACTION_TOAST_MS);
     }
 
     static boolean isDuXuEligible(MeridianBody body) {

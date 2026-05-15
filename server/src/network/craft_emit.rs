@@ -16,10 +16,13 @@
 //! `WorldQiAccount::transfer(QiTransferReason::Crafting)` —— 本模块**禁止**
 //! 直接写 `cultivation.qi_current`，否则破坏全局守恒律。
 
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::{
+    collections::{HashMap, HashSet},
+    time::{SystemTime, UNIX_EPOCH},
+};
 
 use valence::prelude::{
-    bevy_ecs, Added, Client, Commands, Component, Entity, EventReader, EventWriter, Query, Res,
+    bevy_ecs, Client, Commands, Component, Entity, EventReader, EventWriter, Local, Query, Res,
     ResMut, Username, With,
 };
 
@@ -103,14 +106,14 @@ fn build_session_state_payload(
     }
 }
 
-fn send_payload(client: &mut Client, payload: ServerDataPayloadV1, debug_tag: &str) {
+fn send_payload(client: &mut Client, payload: ServerDataPayloadV1, debug_tag: &str) -> bool {
     let envelope = ServerDataV1::new(payload);
     let label = payload_type_label(envelope.payload_type());
     let bytes = match serialize_server_data_payload(&envelope) {
         Ok(b) => b,
         Err(err) => {
             log_payload_build_error(label, &err);
-            return;
+            return false;
         }
     };
     send_server_data_payload(client, bytes.as_slice());
@@ -120,6 +123,7 @@ fn send_payload(client: &mut Client, payload: ServerDataPayloadV1, debug_tag: &s
         label,
         debug_tag
     );
+    true
 }
 
 /// §1 — 处理客户端发来的 Start/Cancel intent。
@@ -484,6 +488,8 @@ pub fn emit_craft_outcome_payloads(
 /// §5 — 监听 RecipeUnlockedEvent → push RecipeUnlockedV1 给 caster。
 pub fn emit_recipe_unlocked_payloads(
     mut events: EventReader<RecipeUnlockedEvent>,
+    registry: Res<CraftRegistry>,
+    unlock_state: Res<RecipeUnlockState>,
     names: Query<&Username>,
     mut clients: Query<&mut Client>,
 ) {
@@ -508,27 +514,46 @@ pub fn emit_recipe_unlocked_payloads(
             ServerDataPayloadV1::RecipeUnlocked(payload),
             "recipe_unlocked",
         );
+        let list = build_recipe_list_payload(&player_id, &registry, &unlock_state);
+        send_payload(
+            &mut client,
+            ServerDataPayloadV1::CraftRecipeList(Box::new(list)),
+            "recipe_list::unlock_refresh",
+        );
     }
 }
 
 /// §6 — 玩家上线 / 解锁后推 `RecipeListV1` 全表（含解锁状态）。
 ///
-/// P2 简化：每次新加玩家（ECS Added<Client>）推一次。后续 unlock 增量靠
-/// `RecipeUnlockedV1` 单条推。
+/// P2 简化：每个在线玩家成功推一次。不能只查 `Added<Client>`，因为
+/// `Username` / inventory 等组件可能在 join 后续系统才挂上，单帧查询会漏发。
+/// 后续 unlock 增量靠 `RecipeUnlockedV1` 单条推。
 pub fn emit_recipe_list_on_join(
     registry: Res<CraftRegistry>,
     unlock_state: Res<RecipeUnlockState>,
-    mut joined: Query<(&Username, &mut Client), Added<Client>>,
+    mut sent: Local<HashMap<Entity, String>>,
+    mut clients: Query<(Entity, &Username, &mut Client), With<Client>>,
 ) {
-    for (username, mut client) in joined.iter_mut() {
+    let mut active_clients = HashSet::new();
+    for (entity, username, mut client) in clients.iter_mut() {
+        active_clients.insert(entity);
         let player_id = canonical_player_id(username.0.as_str());
+        if sent
+            .get(&entity)
+            .is_some_and(|cached_player_id| cached_player_id == &player_id)
+        {
+            continue;
+        }
         let payload = build_recipe_list_payload(&player_id, &registry, &unlock_state);
-        send_payload(
+        if send_payload(
             &mut client,
             ServerDataPayloadV1::CraftRecipeList(Box::new(payload)),
             "recipe_list::join",
-        );
+        ) {
+            sent.insert(entity, player_id);
+        }
     }
+    sent.retain(|entity, _| active_clients.contains(entity));
 }
 
 /// §7 — plan-craft-v1 P3 三渠道解锁 intent 处理。
@@ -613,6 +638,9 @@ pub fn build_recipe_list_payload(
         .grouped_for_ui()
         .into_iter()
         .flat_map(|(_, recipes)| recipes.into_iter())
+        // 当前产品语义：未解锁配方先不下发，客户端只展示可制作/已解锁列表；
+        // 若以后改为灰显锁定配方，需要同步扩展 payload 与客户端交互。
+        .filter(|r| r.unlock_sources.is_empty() || unlock_state.is_unlocked(player_id, &r.id))
         .map(|r| CraftRecipeEntryV1 {
             id: r.id.as_str().to_string(),
             category: CraftCategoryV1::from(r.category),
@@ -626,7 +654,7 @@ pub fn build_recipe_list_payload(
                 qi_color_min: r.requirements.qi_color_min,
                 skill_lv_min: r.requirements.skill_lv_min,
             },
-            unlocked: unlock_state.is_unlocked(player_id, &r.id),
+            unlocked: r.unlock_sources.is_empty() || unlock_state.is_unlocked(player_id, &r.id),
         })
         .collect();
     RecipeListV1 {
@@ -641,8 +669,46 @@ pub fn build_recipe_list_payload(
 mod tests {
     use super::*;
     use crate::craft::{
-        register_examples, CraftRequirements, CraftSession, RecipeId, RecipeUnlockState,
+        register_basic_processing_recipes, register_examples, CraftRequirements, CraftSession,
+        RecipeId, RecipeUnlockState,
     };
+    use valence::prelude::{App, Update};
+    use valence::protocol::packets::play::CustomPayloadS2c;
+    use valence::testing::{create_mock_client, MockClientHelper};
+
+    fn flush_client_packets(app: &mut App) {
+        let world = app.world_mut();
+        let mut query = world.query::<&mut Client>();
+        for mut client in query.iter_mut(world) {
+            client
+                .flush_packets()
+                .expect("mock client packets should flush");
+        }
+    }
+
+    fn collect_recipe_lists(helper: &mut MockClientHelper) -> Vec<RecipeListV1> {
+        let mut out = Vec::new();
+        for frame in helper.collect_received().0 {
+            let Ok(packet) = frame.decode::<CustomPayloadS2c>() else {
+                continue;
+            };
+            if packet.channel.as_str() != SERVER_DATA_CHANNEL {
+                continue;
+            }
+            let payload = serde_json::from_slice::<serde_json::Value>(packet.data.0 .0)
+                .expect("server_data payload should decode as JSON");
+            if payload.get("type").and_then(|v| v.as_str()) == Some("craft_recipe_list") {
+                let mut list_payload = payload;
+                if let Some(object) = list_payload.as_object_mut() {
+                    object.remove("type");
+                }
+                let list = serde_json::from_value::<RecipeListV1>(list_payload)
+                    .expect("craft_recipe_list payload should decode");
+                out.push(list);
+            }
+        }
+        out
+    }
 
     #[test]
     fn build_session_state_inactive() {
@@ -710,15 +776,25 @@ mod tests {
     }
 
     #[test]
-    fn build_recipe_list_payload_includes_all_examples_unlocked_false_by_default() {
+    fn build_recipe_list_payload_includes_default_unlocked_early_examples() {
         let mut registry = CraftRegistry::new();
         register_examples(&mut registry).unwrap();
         let unlock_state = RecipeUnlockState::new();
         let payload = build_recipe_list_payload("offline:Alice", &registry, &unlock_state);
         assert_eq!(payload.player_id, "offline:Alice");
-        assert_eq!(payload.recipes.len(), 5);
-        // 未解锁前所有 entry.unlocked = false
-        assert!(payload.recipes.iter().all(|r| !r.unlocked));
+        assert_eq!(payload.recipes.len(), 2);
+        assert!(payload
+            .recipes
+            .iter()
+            .any(|r| r.id == "craft.example.eclipse_needle.iron" && r.unlocked));
+        assert!(payload
+            .recipes
+            .iter()
+            .any(|r| r.id == "craft.example.poison_decoction.fan" && r.unlocked));
+        assert!(payload
+            .recipes
+            .iter()
+            .all(|r| r.id != "craft.example.fake_skin.light"));
     }
 
     #[test]
@@ -728,13 +804,72 @@ mod tests {
         let mut unlock_state = RecipeUnlockState::new();
         unlock_state.unlock(
             "offline:Alice",
-            RecipeId::new("craft.example.eclipse_needle.iron"),
+            RecipeId::new("craft.example.fake_skin.light"),
         );
         let payload = build_recipe_list_payload("offline:Alice", &registry, &unlock_state);
-        let unlocked_count = payload.recipes.iter().filter(|r| r.unlocked).count();
-        assert_eq!(unlocked_count, 1);
-        let unlocked = payload.recipes.iter().find(|r| r.unlocked).unwrap();
-        assert_eq!(unlocked.id, "craft.example.eclipse_needle.iron");
+        let unlocked = payload
+            .recipes
+            .iter()
+            .find(|r| r.id == "craft.example.fake_skin.light")
+            .expect("fake skin recipe should be included");
+        assert!(unlocked.unlocked);
+    }
+
+    #[test]
+    fn build_recipe_list_payload_marks_empty_unlock_sources_default_unlocked() {
+        let mut registry = CraftRegistry::new();
+        register_basic_processing_recipes(&mut registry).unwrap();
+        let unlock_state = RecipeUnlockState::new();
+
+        let payload = build_recipe_list_payload("offline:Alice", &registry, &unlock_state);
+
+        let wood_handle = payload
+            .recipes
+            .iter()
+            .find(|r| r.id == "basic.wood_handle")
+            .expect("basic wood handle recipe should be included");
+        assert!(wood_handle.unlocked);
+        assert_eq!(wood_handle.display_name, "削木柄");
+        assert_eq!(wood_handle.materials, vec![("crude_wood".to_string(), 2)]);
+        assert_eq!(wood_handle.output, ("wood_handle".to_string(), 2));
+    }
+
+    #[test]
+    fn emit_recipe_list_sends_once_to_online_client() {
+        let mut app = App::new();
+        let mut registry = CraftRegistry::new();
+        register_basic_processing_recipes(&mut registry).unwrap();
+        app.insert_resource(registry);
+        app.insert_resource(RecipeUnlockState::new());
+        app.add_systems(Update, emit_recipe_list_on_join);
+
+        let (client_bundle, mut helper) = create_mock_client("Azure");
+        app.world_mut().spawn(client_bundle);
+        app.update();
+        flush_client_packets(&mut app);
+
+        let lists = collect_recipe_lists(&mut helper);
+        assert_eq!(lists.len(), 1);
+        assert!(lists[0].recipes.iter().any(|r| r.id == "basic.wood_handle"));
+
+        app.update();
+        flush_client_packets(&mut app);
+        assert!(collect_recipe_lists(&mut helper).is_empty());
+    }
+
+    #[test]
+    fn registered_recipe_list_fits_server_data_budget() {
+        let mut app = App::new();
+        crate::craft::register(&mut app);
+        let registry = app.world().resource::<CraftRegistry>();
+        let unlock_state = app.world().resource::<RecipeUnlockState>();
+        let payload = ServerDataV1::new(ServerDataPayloadV1::CraftRecipeList(Box::new(
+            build_recipe_list_payload("offline:Alice", registry, unlock_state),
+        )));
+
+        let bytes = serialize_server_data_payload(&payload)
+            .expect("registered craft recipe list must fit server_data budget");
+        assert!(bytes.len() <= crate::schema::common::MAX_PAYLOAD_BYTES);
     }
 
     #[test]
@@ -745,9 +880,9 @@ mod tests {
         let payload = build_recipe_list_payload("offline:Charlie", &registry, &unlock_state);
         // grouped_for_ui 输出应保证 category 分组连续：判定相邻 entry 同 category 段
         let cats: Vec<CraftCategoryV1> = payload.recipes.iter().map(|r| r.category).collect();
-        // 5 个示例 5 类（无 Misc），全 distinct
+        // 初始只下发当前可见配方；仍需保持类别分组稳定。
         let unique: std::collections::HashSet<_> = cats.iter().collect();
-        assert_eq!(unique.len(), 5);
+        assert_eq!(unique.len(), 2);
     }
 
     #[test]
