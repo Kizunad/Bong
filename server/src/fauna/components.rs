@@ -24,6 +24,8 @@ pub enum BeastKind {
     DarkTiger,
     // 通灵+ Boss
     LivingPillar,
+    // 通灵级 Boss（剑道）
+    Heiwushi,
     // 化虚级
     PoisonDragon,
     BoneDragon,
@@ -45,6 +47,7 @@ impl BeastKind {
             Self::VoidDistorted => "void_distorted",
             Self::DarkTiger => "dark_tiger",
             Self::LivingPillar => "living_pillar",
+            Self::Heiwushi => "heiwushi",
             Self::PoisonDragon => "poison_dragon",
             Self::BoneDragon => "bone_dragon",
             Self::Whale => "whale",
@@ -65,6 +68,7 @@ impl BeastKind {
             Self::VoidDistorted => 400.0,
             Self::DarkTiger => 500.0,
             Self::LivingPillar => 2500.0,
+            Self::Heiwushi => 2100.0,
             Self::PoisonDragon => 8000.0,
             Self::BoneDragon => 9000.0,
             Self::Whale => 10000.0,
@@ -77,7 +81,7 @@ impl BeastKind {
             Self::Spider | Self::GreenSpider | Self::JungleScorpion | Self::CockadeSnake => 1,
             Self::BlueSpider | Self::IceScorpion | Self::MandrakeSnake => 2,
             Self::HybridBeast | Self::VoidDistorted | Self::DarkTiger => 3,
-            Self::LivingPillar => 4,
+            Self::LivingPillar | Self::Heiwushi => 4,
             Self::PoisonDragon | Self::BoneDragon | Self::Whale => 5,
         }
     }
@@ -140,49 +144,142 @@ struct SpawnWeight {
 }
 
 const SPAWN_POOL_DEAD_EDGE: &[SpawnWeight] = &[
-    SpawnWeight { kind: BeastKind::Rat, weight: 50 },
-    SpawnWeight { kind: BeastKind::Spider, weight: 30 },
-    SpawnWeight { kind: BeastKind::JungleScorpion, weight: 15 },
-    SpawnWeight { kind: BeastKind::CockadeSnake, weight: 5 },
+    SpawnWeight {
+        kind: BeastKind::Rat,
+        weight: 50,
+    },
+    SpawnWeight {
+        kind: BeastKind::Spider,
+        weight: 30,
+    },
+    SpawnWeight {
+        kind: BeastKind::JungleScorpion,
+        weight: 15,
+    },
+    SpawnWeight {
+        kind: BeastKind::CockadeSnake,
+        weight: 5,
+    },
 ];
 
 const SPAWN_POOL_LOW_QI: &[SpawnWeight] = &[
-    SpawnWeight { kind: BeastKind::Rat, weight: 40 },
-    SpawnWeight { kind: BeastKind::Spider, weight: 15 },
-    SpawnWeight { kind: BeastKind::JungleScorpion, weight: 15 },
-    SpawnWeight { kind: BeastKind::CockadeSnake, weight: 15 },
-    SpawnWeight { kind: BeastKind::GreenSpider, weight: 15 },
+    SpawnWeight {
+        kind: BeastKind::Rat,
+        weight: 40,
+    },
+    SpawnWeight {
+        kind: BeastKind::Spider,
+        weight: 15,
+    },
+    SpawnWeight {
+        kind: BeastKind::JungleScorpion,
+        weight: 15,
+    },
+    SpawnWeight {
+        kind: BeastKind::CockadeSnake,
+        weight: 15,
+    },
+    SpawnWeight {
+        kind: BeastKind::GreenSpider,
+        weight: 15,
+    },
 ];
 
 const SPAWN_POOL_MID_QI: &[SpawnWeight] = &[
-    SpawnWeight { kind: BeastKind::JungleScorpion, weight: 20 },
-    SpawnWeight { kind: BeastKind::CockadeSnake, weight: 18 },
-    SpawnWeight { kind: BeastKind::GreenSpider, weight: 18 },
-    SpawnWeight { kind: BeastKind::IceScorpion, weight: 12 },
-    SpawnWeight { kind: BeastKind::MandrakeSnake, weight: 10 },
-    SpawnWeight { kind: BeastKind::Rat, weight: 8 },
-    SpawnWeight { kind: BeastKind::HybridBeast, weight: 8 },
-    SpawnWeight { kind: BeastKind::DarkTiger, weight: 3 },
-    SpawnWeight { kind: BeastKind::BlueSpider, weight: 3 },
+    SpawnWeight {
+        kind: BeastKind::JungleScorpion,
+        weight: 20,
+    },
+    SpawnWeight {
+        kind: BeastKind::CockadeSnake,
+        weight: 18,
+    },
+    SpawnWeight {
+        kind: BeastKind::GreenSpider,
+        weight: 18,
+    },
+    SpawnWeight {
+        kind: BeastKind::IceScorpion,
+        weight: 12,
+    },
+    SpawnWeight {
+        kind: BeastKind::MandrakeSnake,
+        weight: 10,
+    },
+    SpawnWeight {
+        kind: BeastKind::Rat,
+        weight: 8,
+    },
+    SpawnWeight {
+        kind: BeastKind::HybridBeast,
+        weight: 8,
+    },
+    SpawnWeight {
+        kind: BeastKind::DarkTiger,
+        weight: 3,
+    },
+    SpawnWeight {
+        kind: BeastKind::BlueSpider,
+        weight: 3,
+    },
 ];
 
 const SPAWN_POOL_HIGH_QI: &[SpawnWeight] = &[
-    SpawnWeight { kind: BeastKind::IceScorpion, weight: 20 },
-    SpawnWeight { kind: BeastKind::MandrakeSnake, weight: 18 },
-    SpawnWeight { kind: BeastKind::BlueSpider, weight: 15 },
-    SpawnWeight { kind: BeastKind::DarkTiger, weight: 15 },
-    SpawnWeight { kind: BeastKind::HybridBeast, weight: 15 },
-    SpawnWeight { kind: BeastKind::GreenSpider, weight: 7 },
-    SpawnWeight { kind: BeastKind::JungleScorpion, weight: 5 },
-    SpawnWeight { kind: BeastKind::CockadeSnake, weight: 5 },
+    SpawnWeight {
+        kind: BeastKind::IceScorpion,
+        weight: 20,
+    },
+    SpawnWeight {
+        kind: BeastKind::MandrakeSnake,
+        weight: 18,
+    },
+    SpawnWeight {
+        kind: BeastKind::BlueSpider,
+        weight: 15,
+    },
+    SpawnWeight {
+        kind: BeastKind::DarkTiger,
+        weight: 15,
+    },
+    SpawnWeight {
+        kind: BeastKind::HybridBeast,
+        weight: 15,
+    },
+    SpawnWeight {
+        kind: BeastKind::GreenSpider,
+        weight: 7,
+    },
+    SpawnWeight {
+        kind: BeastKind::JungleScorpion,
+        weight: 5,
+    },
+    SpawnWeight {
+        kind: BeastKind::CockadeSnake,
+        weight: 5,
+    },
 ];
 
 const SPAWN_POOL_PEAK_QI: &[SpawnWeight] = &[
-    SpawnWeight { kind: BeastKind::DarkTiger, weight: 30 },
-    SpawnWeight { kind: BeastKind::HybridBeast, weight: 25 },
-    SpawnWeight { kind: BeastKind::IceScorpion, weight: 18 },
-    SpawnWeight { kind: BeastKind::MandrakeSnake, weight: 15 },
-    SpawnWeight { kind: BeastKind::BlueSpider, weight: 12 },
+    SpawnWeight {
+        kind: BeastKind::DarkTiger,
+        weight: 30,
+    },
+    SpawnWeight {
+        kind: BeastKind::HybridBeast,
+        weight: 25,
+    },
+    SpawnWeight {
+        kind: BeastKind::IceScorpion,
+        weight: 18,
+    },
+    SpawnWeight {
+        kind: BeastKind::MandrakeSnake,
+        weight: 15,
+    },
+    SpawnWeight {
+        kind: BeastKind::BlueSpider,
+        weight: 12,
+    },
 ];
 
 fn pick_from_pool(pool: &[SpawnWeight], seed: u64) -> BeastKind {
@@ -356,17 +453,35 @@ mod tests {
 
     #[test]
     fn spawn_pool_zone_keyword_overrides_qi() {
-        assert_eq!(beast_kind_for_spawn_context("spider_valley", 0, Some(0.01)), BeastKind::Spider);
-        assert_eq!(beast_kind_for_spawn_context("tiger_den", 0, Some(0.01)), BeastKind::DarkTiger);
-        assert_eq!(beast_kind_for_spawn_context("蝎巢", 0, Some(0.99)), BeastKind::JungleScorpion);
-        assert_eq!(beast_kind_for_spawn_context("蛇穴", 0, Some(0.5)), BeastKind::CockadeSnake);
+        assert_eq!(
+            beast_kind_for_spawn_context("spider_valley", 0, Some(0.01)),
+            BeastKind::Spider
+        );
+        assert_eq!(
+            beast_kind_for_spawn_context("tiger_den", 0, Some(0.01)),
+            BeastKind::DarkTiger
+        );
+        assert_eq!(
+            beast_kind_for_spawn_context("蝎巢", 0, Some(0.99)),
+            BeastKind::JungleScorpion
+        );
+        assert_eq!(
+            beast_kind_for_spawn_context("蛇穴", 0, Some(0.5)),
+            BeastKind::CockadeSnake
+        );
     }
 
     #[test]
     fn spawn_pool_qi_boundary_dead_edge() {
         let kind = beast_kind_for_spawn_context("wilderness", 0, Some(0.10));
         assert!(
-            matches!(kind, BeastKind::Rat | BeastKind::Spider | BeastKind::JungleScorpion | BeastKind::CockadeSnake),
+            matches!(
+                kind,
+                BeastKind::Rat
+                    | BeastKind::Spider
+                    | BeastKind::JungleScorpion
+                    | BeastKind::CockadeSnake
+            ),
             "qi<0.15 should only produce dead-edge pool species, got {kind:?}"
         );
     }
@@ -375,7 +490,14 @@ mod tests {
     fn spawn_pool_qi_boundary_peak() {
         let kind = beast_kind_for_spawn_context("wilderness", 0, Some(0.85));
         assert!(
-            matches!(kind, BeastKind::DarkTiger | BeastKind::HybridBeast | BeastKind::IceScorpion | BeastKind::MandrakeSnake | BeastKind::BlueSpider),
+            matches!(
+                kind,
+                BeastKind::DarkTiger
+                    | BeastKind::HybridBeast
+                    | BeastKind::IceScorpion
+                    | BeastKind::MandrakeSnake
+                    | BeastKind::BlueSpider
+            ),
             "qi>0.80 should only produce peak pool species, got {kind:?}"
         );
     }
@@ -384,7 +506,14 @@ mod tests {
     fn spawn_pool_none_qi_defaults_to_low() {
         let kind = beast_kind_for_spawn_context("wilderness", 0, None);
         assert!(
-            matches!(kind, BeastKind::Rat | BeastKind::Spider | BeastKind::JungleScorpion | BeastKind::CockadeSnake | BeastKind::GreenSpider),
+            matches!(
+                kind,
+                BeastKind::Rat
+                    | BeastKind::Spider
+                    | BeastKind::JungleScorpion
+                    | BeastKind::CockadeSnake
+                    | BeastKind::GreenSpider
+            ),
             "None qi (default 0.3) should use low-qi pool, got {kind:?}"
         );
     }
@@ -392,7 +521,10 @@ mod tests {
     #[test]
     fn all_terrestrial_list_matches_is_terrestrial() {
         for kind in BeastKind::ALL_TERRESTRIAL {
-            assert!(kind.is_terrestrial(), "{kind:?} in ALL_TERRESTRIAL but is_terrestrial() false");
+            assert!(
+                kind.is_terrestrial(),
+                "{kind:?} in ALL_TERRESTRIAL but is_terrestrial() false"
+            );
         }
         assert!(!BeastKind::Whale.is_terrestrial());
         assert!(!BeastKind::PoisonDragon.is_terrestrial());

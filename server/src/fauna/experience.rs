@@ -185,7 +185,7 @@ pub const fn attack_recipe_for_beast(kind: BeastKind) -> Option<&'static str> {
         BeastKind::JungleScorpion | BeastKind::IceScorpion => Some("fauna_hybrid_beast_attack"),
         BeastKind::CockadeSnake | BeastKind::MandrakeSnake => Some("fauna_ash_spider_attack"),
         BeastKind::DarkTiger => Some("fauna_hybrid_beast_attack"),
-        BeastKind::LivingPillar => Some("fauna_void_distorted_attack"),
+        BeastKind::LivingPillar | BeastKind::Heiwushi => Some("fauna_void_distorted_attack"),
         BeastKind::PoisonDragon | BeastKind::BoneDragon => Some("fauna_hybrid_beast_attack"),
         BeastKind::Rat | BeastKind::Whale => None,
     }
@@ -198,7 +198,7 @@ pub const fn death_recipe_for_beast(kind: BeastKind) -> Option<&'static str> {
             Some("fauna_ash_spider_death")
         }
         BeastKind::HybridBeast | BeastKind::DarkTiger => Some("fauna_hybrid_beast_death"),
-        BeastKind::VoidDistorted | BeastKind::LivingPillar => {
+        BeastKind::VoidDistorted | BeastKind::LivingPillar | BeastKind::Heiwushi => {
             Some("fauna_void_distorted_death")
         }
         BeastKind::JungleScorpion | BeastKind::IceScorpion => Some("fauna_hybrid_beast_death"),
@@ -210,15 +210,15 @@ pub const fn death_recipe_for_beast(kind: BeastKind) -> Option<&'static str> {
 
 pub const fn ambient_recipe_for_visual(visual: FaunaVisualKind) -> Option<&'static str> {
     match visual {
-        FaunaVisualKind::AshSpider
-        | FaunaVisualKind::GreenSpider
-        | FaunaVisualKind::BlueSpider => Some("fauna_ash_spider_ambient"),
+        FaunaVisualKind::AshSpider | FaunaVisualKind::GreenSpider | FaunaVisualKind::BlueSpider => {
+            Some("fauna_ash_spider_ambient")
+        }
         FaunaVisualKind::HybridBeast | FaunaVisualKind::DarkTiger => {
             Some("fauna_hybrid_beast_ambient")
         }
-        FaunaVisualKind::VoidDistorted | FaunaVisualKind::LivingPillar => {
-            Some("fauna_void_distorted_ambient")
-        }
+        FaunaVisualKind::VoidDistorted
+        | FaunaVisualKind::LivingPillar
+        | FaunaVisualKind::Heiwushi => Some("fauna_void_distorted_ambient"),
         FaunaVisualKind::JungleScorpion
         | FaunaVisualKind::IceScorpion
         | FaunaVisualKind::CockadeSnake

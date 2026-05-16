@@ -23,6 +23,7 @@ pub const DARK_TIGER_ENTITY_KIND: EntityKind = EntityKind::new(141);
 pub const LIVING_PILLAR_ENTITY_KIND: EntityKind = EntityKind::new(142);
 pub const POISON_DRAGON_ENTITY_KIND: EntityKind = EntityKind::new(143);
 pub const BONE_DRAGON_ENTITY_KIND: EntityKind = EntityKind::new(144);
+pub const HEIWUSHI_ENTITY_KIND: EntityKind = EntityKind::new(145);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Component)]
 pub enum FaunaVisualKind {
@@ -40,6 +41,7 @@ pub enum FaunaVisualKind {
     LivingPillar,
     PoisonDragon,
     BoneDragon,
+    Heiwushi,
     Daoxiang,
     Zhinian,
     TsySentinel,
@@ -64,6 +66,7 @@ impl FaunaVisualKind {
             Self::LivingPillar => "#2A1A3A",
             Self::PoisonDragon => "#33AA22",
             Self::BoneDragon => "#DDDDAA",
+            Self::Heiwushi => "#1A0033",
             Self::Daoxiang => "#9C8A70",
             Self::Zhinian => "#343044",
             Self::TsySentinel => "#B89258",
@@ -89,6 +92,7 @@ pub const fn entity_kind_for_beast(kind: BeastKind) -> EntityKind {
         BeastKind::LivingPillar => LIVING_PILLAR_ENTITY_KIND,
         BeastKind::PoisonDragon => POISON_DRAGON_ENTITY_KIND,
         BeastKind::BoneDragon => BONE_DRAGON_ENTITY_KIND,
+        BeastKind::Heiwushi => HEIWUSHI_ENTITY_KIND,
         BeastKind::Whale => crate::npc::spawn_whale::WHALE_ENTITY_KIND,
     }
 }
@@ -109,6 +113,7 @@ pub const fn visual_kind_for_beast(kind: BeastKind) -> Option<FaunaVisualKind> {
         BeastKind::LivingPillar => Some(FaunaVisualKind::LivingPillar),
         BeastKind::PoisonDragon => Some(FaunaVisualKind::PoisonDragon),
         BeastKind::BoneDragon => Some(FaunaVisualKind::BoneDragon),
+        BeastKind::Heiwushi => Some(FaunaVisualKind::Heiwushi),
         BeastKind::Whale => None,
     }
 }
@@ -153,11 +158,19 @@ mod tests {
     fn new_beasts_map_to_correct_visual_kind_and_entity_kind() {
         let expected: &[(BeastKind, FaunaVisualKind, i32)] = &[
             (BeastKind::GreenSpider, FaunaVisualKind::GreenSpider, 135),
-            (BeastKind::JungleScorpion, FaunaVisualKind::JungleScorpion, 136),
+            (
+                BeastKind::JungleScorpion,
+                FaunaVisualKind::JungleScorpion,
+                136,
+            ),
             (BeastKind::CockadeSnake, FaunaVisualKind::CockadeSnake, 137),
             (BeastKind::BlueSpider, FaunaVisualKind::BlueSpider, 138),
             (BeastKind::IceScorpion, FaunaVisualKind::IceScorpion, 139),
-            (BeastKind::MandrakeSnake, FaunaVisualKind::MandrakeSnake, 140),
+            (
+                BeastKind::MandrakeSnake,
+                FaunaVisualKind::MandrakeSnake,
+                140,
+            ),
             (BeastKind::DarkTiger, FaunaVisualKind::DarkTiger, 141),
             (BeastKind::LivingPillar, FaunaVisualKind::LivingPillar, 142),
             (BeastKind::PoisonDragon, FaunaVisualKind::PoisonDragon, 143),
