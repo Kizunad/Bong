@@ -1843,14 +1843,17 @@ fn beast_kind_from_command(command: &Command) -> Option<BeastKind> {
     match value {
         "rat" => Some(BeastKind::Rat),
         "spider" => Some(BeastKind::Spider),
+        "green_spider" => Some(BeastKind::GreenSpider),
+        "jungle_scorpion" => Some(BeastKind::JungleScorpion),
+        "cockade_snake" => Some(BeastKind::CockadeSnake),
+        "blue_spider" => Some(BeastKind::BlueSpider),
+        "ice_scorpion" => Some(BeastKind::IceScorpion),
+        "mandrake_snake" => Some(BeastKind::MandrakeSnake),
         "hybrid_beast" => Some(BeastKind::HybridBeast),
         "void_distorted" => Some(BeastKind::VoidDistorted),
-        // 不接 "whale"：beast_tide 路径走 spawn_beast_tide_zombie 出普通僵尸贴
-        // FaunaTag，但 whale 需要专属 spawn_whale_npc_at（GeckoLib 渲染 / HP 800
-        // / drift brain）。如果在这里允许 whale，僵尸会顶 FaunaTag::Whale 并掉
-        // 神兽 legendary 表（jing_gu/jing_sui/jing_hun_yu），变成无限刷掉落 exploit。
-        // 飞鲸只走 `/summon whale` dev 命令；后续要接入 tide 须先把 spawn_beast_tide_*
-        // 改成走真正的 spawn_whale_npc_at。
+        "dark_tiger" => Some(BeastKind::DarkTiger),
+        // 不接 whale / dragon / pillar：这些需要专属 spawn 路径（GeckoLib 渲染 +
+        // 自定义 brain + 超高 HP），beast_tide 僵尸路径会导致无限刷 legendary exploit。
         _ => None,
     }
 }

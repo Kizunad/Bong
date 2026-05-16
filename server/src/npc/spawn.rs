@@ -1124,7 +1124,10 @@ pub fn spawn_beast_npc_at(
         beast_npc_thinker(),
     ));
 
-    let runtime = npc_runtime_bundle_with_age(entity, NpcArchetype::Beast, initial_age_ticks);
+    let mut runtime = npc_runtime_bundle_with_age(entity, NpcArchetype::Beast, initial_age_ticks);
+    let hp = fauna_tag.beast_kind.health_max();
+    runtime.wounds.health_current = hp;
+    runtime.wounds.health_max = hp;
     commands.entity(entity).insert(runtime);
     if let Some(visual_kind) = visual_kind {
         commands.entity(entity).insert(visual_kind);
