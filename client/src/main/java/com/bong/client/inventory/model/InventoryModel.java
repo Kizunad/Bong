@@ -11,9 +11,14 @@ public final class InventoryModel {
     public static final int GRID_ROWS = 5;
     public static final int GRID_COLS = 7;
     public static final int HOTBAR_SIZE = 9;
+    /** Legacy container ids — retained for backward compatibility with existing tests and fixture data. */
     public static final String PRIMARY_CONTAINER_ID = "main_pack";
     public static final String SMALL_POUCH_CONTAINER_ID = "small_pouch";
     public static final String FRONT_SATCHEL_CONTAINER_ID = "front_satchel";
+
+    /** P4 — new container ids aligned with server schema (plan-backpack-equip-v1 P0). */
+    public static final String BODY_POCKET_CONTAINER_ID = "body_pocket";
+    public static final String BACK_PACK_CONTAINER_ID = "back_pack";
 
     /** Container definition — stable id + display name + grid dimensions. */
     public record ContainerDef(String id, String name, int rows, int cols) {
@@ -29,11 +34,14 @@ public final class InventoryModel {
         }
     }
 
-    /** Default container layout — server can override via builder. */
+    /**
+     * Default container layout (fallback when server snapshot is unavailable).
+     * Aligned with plan-backpack-equip-v1 P0 schema: body_pocket (2×3) + back_pack (3×3).
+     * Server pushes the authoritative list; this is only used before the first snapshot arrives.
+     */
     public static final List<ContainerDef> DEFAULT_CONTAINERS = List.of(
-        new ContainerDef(PRIMARY_CONTAINER_ID, "主背包", 5, 7),
-        new ContainerDef(SMALL_POUCH_CONTAINER_ID, "小口袋", 3, 3),
-        new ContainerDef(FRONT_SATCHEL_CONTAINER_ID, "前挂包", 3, 4)
+        new ContainerDef(BODY_POCKET_CONTAINER_ID, "贴身口袋", 2, 3),
+        new ContainerDef(BACK_PACK_CONTAINER_ID, "破草包", 3, 3)
     );
 
     private final List<ContainerDef> containers;
