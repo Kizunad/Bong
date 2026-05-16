@@ -413,6 +413,7 @@ type TerritoryOwnerQuery<'w, 's> = Query<
         &'static Position,
         &'static Territory,
         Option<&'static NpcLodTier>,
+        Option<&'static crate::fauna::components::FaunaTag>,
     ),
     (With<NpcMarker>, Without<Despawned>),
 >;
@@ -435,7 +436,7 @@ fn territory_intruder_scorer_system(
     let tick = lod_tick.as_deref().map(|t| t.0).unwrap_or(0);
     let spatial_index = spatial_index.as_deref();
     for (Actor(actor), mut score) in &mut scorers {
-        let value = if let Ok((pos, territory, tier)) = beasts.get(*actor) {
+        let value = if let Ok((pos, territory, tier, self_fauna_tag)) = beasts.get(*actor) {
             match lod_gated_score(tier, tick, &cfg, || {
                 if pick_hunt_target_with_spatial(
                     pos.get(),
@@ -445,6 +446,7 @@ fn territory_intruder_scorer_system(
                     &npc_arch,
                     spirit_niches.as_deref(),
                     *actor,
+                    self_fauna_tag,
                     spatial_index,
                 )
                 .is_some()
@@ -486,7 +488,7 @@ fn protect_young_scorer_system(
     let cfg = lod_config.as_deref().cloned().unwrap_or_default();
     let tick = lod_tick.as_deref().map(|t| t.0).unwrap_or(0);
     for (Actor(actor), mut score) in &mut scorers {
-        let value = if let Ok((pos, territory, tier)) = beasts.get(*actor) {
+        let value = if let Ok((pos, territory, tier, _fauna_tag)) = beasts.get(*actor) {
             match lod_gated_score(tier, tick, &cfg, || {
                 if nearest_injured_young(pos.get(), territory, &young).is_some() {
                     1.0
@@ -601,7 +603,12 @@ fn territory_patrol_action_system(
 type HuntCandidateQuery<'w, 's> = Query<
     'w,
     's,
-    (Entity, &'static Position, &'static Cultivation),
+    (
+        Entity,
+        &'static Position,
+        &'static Cultivation,
+        Option<&'static crate::fauna::components::FaunaTag>,
+    ),
     (Without<Despawned>, Without<NpcYoung>),
 >;
 
@@ -612,18 +619,23 @@ type HuntPlayerCandidateQuery<'w, 's> = Query<
     (With<ClientMarker>, Without<Despawned>),
 >;
 
+type HuntActorQuery<'w, 's> = Query<
+    'w,
+    's,
+    (
+        &'static Position,
+        &'static Territory,
+        &'static NpcMeleeProfile,
+        &'static mut Navigator,
+        &'static mut HuntState,
+        Option<&'static crate::fauna::components::FaunaTag>,
+    ),
+    With<NpcMarker>,
+>;
+
 #[allow(clippy::too_many_arguments)]
 fn hunt_action_system(
-    mut beasts: Query<
-        (
-            &Position,
-            &Territory,
-            &NpcMeleeProfile,
-            &mut Navigator,
-            &mut HuntState,
-        ),
-        With<NpcMarker>,
-    >,
+    mut beasts: HuntActorQuery<'_, '_>,
     candidates: HuntCandidateQuery<'_, '_>,
     players: HuntPlayerCandidateQuery<'_, '_>,
     npc_arch: Query<&NpcArchetype, With<NpcMarker>>,
@@ -636,7 +648,9 @@ fn hunt_action_system(
     let tick = game_tick.as_deref().map(|t| t.0).unwrap_or(0);
     let spatial_index = spatial_index.as_deref();
     for (Actor(actor), mut state) in &mut actions {
-        let Ok((pos, territory, profile, mut navigator, mut hunt)) = beasts.get_mut(*actor) else {
+        let Ok((pos, territory, profile, mut navigator, mut hunt, self_fauna_tag)) =
+            beasts.get_mut(*actor)
+        else {
             *state = ActionState::Failure;
             continue;
         };
@@ -650,6 +664,7 @@ fn hunt_action_system(
                     &npc_arch,
                     spirit_niches.as_deref(),
                     *actor,
+                    self_fauna_tag,
                     spatial_index,
                 );
                 match picked {
@@ -679,7 +694,7 @@ fn hunt_action_system(
                     *state = ActionState::Success;
                     continue;
                 };
-                let Ok((_, tpos, _)) = candidates.get(target) else {
+                let Ok((_, tpos, _, _)) = candidates.get(target) else {
                     hunt.target = None;
                     *state = ActionState::Success;
                     continue;
@@ -724,6 +739,7 @@ pub(crate) fn pick_hunt_target(
     npc_arch: &Query<&NpcArchetype, With<NpcMarker>>,
     spirit_niches: Option<&SpiritNicheRegistry>,
     self_entity: Entity,
+    self_fauna_tag: Option<&crate::fauna::components::FaunaTag>,
 ) -> Option<(Entity, DVec3)> {
     pick_hunt_target_bruteforce(
         pos,
@@ -732,6 +748,7 @@ pub(crate) fn pick_hunt_target(
         npc_arch,
         spirit_niches,
         self_entity,
+        self_fauna_tag,
     )
 }
 
@@ -744,6 +761,7 @@ fn pick_hunt_target_with_spatial(
     npc_arch: &Query<&NpcArchetype, With<NpcMarker>>,
     spirit_niches: Option<&SpiritNicheRegistry>,
     self_entity: Entity,
+    self_fauna_tag: Option<&crate::fauna::components::FaunaTag>,
     spatial_index: Option<&NpcSpatialIndex>,
 ) -> Option<(Entity, DVec3)> {
     let Some(index) = spatial_index else {
@@ -754,22 +772,25 @@ fn pick_hunt_target_with_spatial(
             npc_arch,
             spirit_niches,
             self_entity,
+            self_fauna_tag,
         );
     };
 
     let mut best: Option<(Entity, DVec3, f64)> = None;
     for entity in index.neighbors_within(pos, HUNT_SEARCH_RADIUS) {
-        if let Ok((entity, tpos, cult)) = candidates.get(entity) {
+        if let Ok((entity, tpos, cult, target_fauna_tag)) = candidates.get(entity) {
             consider_hunt_candidate(
                 pos,
                 territory,
                 npc_arch,
                 spirit_niches,
                 self_entity,
+                self_fauna_tag,
                 &mut best,
                 entity,
                 tpos.get(),
                 cult,
+                target_fauna_tag,
             );
         }
     }
@@ -780,10 +801,12 @@ fn pick_hunt_target_with_spatial(
             npc_arch,
             spirit_niches,
             self_entity,
+            self_fauna_tag,
             &mut best,
             entity,
             tpos.get(),
             cult,
+            None,
         );
     }
 
@@ -797,19 +820,22 @@ fn pick_hunt_target_bruteforce(
     npc_arch: &Query<&NpcArchetype, With<NpcMarker>>,
     spirit_niches: Option<&SpiritNicheRegistry>,
     self_entity: Entity,
+    self_fauna_tag: Option<&crate::fauna::components::FaunaTag>,
 ) -> Option<(Entity, DVec3)> {
     let mut best: Option<(Entity, DVec3, f64)> = None;
-    for (entity, tpos, cult) in candidates.iter() {
+    for (entity, tpos, cult, target_fauna_tag) in candidates.iter() {
         consider_hunt_candidate(
             pos,
             territory,
             npc_arch,
             spirit_niches,
             self_entity,
+            self_fauna_tag,
             &mut best,
             entity,
             tpos.get(),
             cult,
+            target_fauna_tag,
         );
     }
     best.map(|(e, p, _)| (e, p))
@@ -822,10 +848,12 @@ fn consider_hunt_candidate(
     npc_arch: &Query<&NpcArchetype, With<NpcMarker>>,
     spirit_niches: Option<&SpiritNicheRegistry>,
     self_entity: Entity,
+    self_fauna_tag: Option<&crate::fauna::components::FaunaTag>,
     best: &mut Option<(Entity, DVec3, f64)>,
     entity: Entity,
     target_pos: DVec3,
     cultivation: &Cultivation,
+    target_fauna_tag: Option<&crate::fauna::components::FaunaTag>,
 ) {
     if entity == self_entity {
         return;
@@ -841,9 +869,15 @@ fn consider_hunt_candidate(
     }) {
         return;
     }
-    // NPC 侧过滤：Beast 不猎 Beast。Client（玩家）无 NpcMarker，arch 查询会返回 Err 视为"非 Beast"。
     if npc_arch.get(entity).ok().copied() == Some(NpcArchetype::Beast) {
-        return;
+        match (self_fauna_tag, target_fauna_tag) {
+            (Some(predator), Some(prey))
+                if crate::fauna::components::is_prey_of(prey.beast_kind, predator.beast_kind) =>
+            {
+                // 高 tier 兽猎杀低 tier 兽——允许
+            }
+            _ => return,
+        }
     }
     let d = pos.distance(target_pos);
     if d > HUNT_SEARCH_RADIUS {
