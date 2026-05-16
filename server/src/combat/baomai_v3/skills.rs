@@ -1,4 +1,4 @@
-use valence::prelude::{bevy_ecs, DVec3, Entity, Position};
+use valence::prelude::{bevy_ecs, DVec3, Entity, Events, Position, UniqueId};
 
 use crate::combat::components::{BodyPart, Lifecycle, SkillBarBindings, Wound, WoundKind, Wounds};
 use crate::combat::events::{
@@ -17,6 +17,9 @@ use crate::cultivation::meridian::severed::{
 };
 use crate::cultivation::skill_registry::{CastRejectReason, CastResult, SkillRegistry};
 use crate::cultivation::tribulation::{JueBiTriggerEvent, JueBiTriggerSource};
+use crate::network::audio_event_emit::{
+    AudioRecipient, PlaySoundRecipeRequest, AUDIO_BROADCAST_RADIUS,
+};
 use crate::network::vfx_event_emit::VfxEventRequest;
 use crate::qi_physics::{
     aoe_ground_wave, blood_burn_conversion, body_transcendence, QiAccountId, QiTransfer,
@@ -183,6 +186,8 @@ pub fn cast_beng_quan(
         0.9,
         8,
     );
+    emit_audio(world, "baomai_cast", caster_pos);
+    emit_anim(world, caster, "bong:beng_quan");
     CastResult::Started {
         cooldown_ticks: beng_quan_cooldown_ticks(mastery),
         anim_duration_ticks: 8,
@@ -222,6 +227,10 @@ pub fn cast_full_power_charge(
             },
         );
         record_practice(world, caster, BaomaiSkillId::FullPowerCharge);
+        if let Some(pos) = world.get::<Position>(caster).map(|p| p.get()) {
+            emit_audio(world, "charge_start", pos);
+            emit_anim(world, caster, "bong:windup_charge");
+        }
     }
     result
 }
@@ -277,6 +286,10 @@ pub fn cast_full_power_release(
             },
         );
         record_practice(world, caster, BaomaiSkillId::FullPowerRelease);
+        if let Some(pos) = world.get::<Position>(caster).map(|p| p.get()) {
+            emit_audio(world, "charge_release", pos);
+            emit_anim(world, caster, "bong:release_burst");
+        }
     }
     result
 }
@@ -380,6 +393,8 @@ pub fn cast_mountain_shake(
     );
     record_practice(world, caster, BaomaiSkillId::MountainShake);
     emit_particle(world, position, "bong:ground_wave_dust", "#A8885A", 1.0, 28);
+    emit_audio(world, "mountain_shake_rumble", position);
+    emit_anim(world, caster, "bong:baomai_mountain_shake");
     CastResult::Started {
         cooldown_ticks: profile.cooldown_ticks,
         anim_duration_ticks: profile.cast_ticks,
@@ -484,6 +499,8 @@ pub fn cast_blood_burn(
             1.0,
             16,
         );
+        emit_audio(world, "blood_burn_sizzle", position);
+        emit_anim(world, caster, "bong:baomai_blood_burn");
     }
     CastResult::Started {
         cooldown_ticks: profile.cooldown_ticks,
@@ -598,6 +615,8 @@ pub fn cast_disperse(
                 (outcome.flow_rate_multiplier / 10.0).clamp(0.0, 1.0) as f32,
                 32,
             );
+            emit_audio(world, "transcendence_thunder", position);
+            emit_anim(world, caster, "bong:baomai_disperse");
         }
     }
     CastResult::Started {
@@ -916,6 +935,45 @@ fn emit_particle(
             duration_ticks: Some(12),
         },
     ));
+}
+
+fn emit_audio(world: &mut bevy_ecs::world::World, recipe: &str, origin: DVec3) {
+    if let Some(mut events) = world.get_resource_mut::<Events<PlaySoundRecipeRequest>>() {
+        events.send(PlaySoundRecipeRequest {
+            recipe_id: recipe.to_string(),
+            instance_id: 0,
+            pos: None,
+            flag: None,
+            volume_mul: 1.0,
+            pitch_shift: 0.0,
+            recipient: AudioRecipient::Radius {
+                origin,
+                radius: AUDIO_BROADCAST_RADIUS,
+            },
+        });
+    }
+}
+
+fn emit_anim(world: &mut bevy_ecs::world::World, entity: Entity, anim_id: &str) {
+    let origin = world
+        .get::<Position>(entity)
+        .map(|p| p.get())
+        .unwrap_or(DVec3::ZERO);
+    let unique_id = world.get::<UniqueId>(entity).map(|id| id.0.to_string());
+    if let (Some(target_player), Some(mut events)) = (
+        unique_id,
+        world.get_resource_mut::<Events<VfxEventRequest>>(),
+    ) {
+        events.send(VfxEventRequest::new(
+            origin,
+            VfxEventPayloadV1::PlayAnim {
+                target_player,
+                anim_id: anim_id.to_string(),
+                priority: 1200,
+                fade_in_ticks: Some(2),
+            },
+        ));
+    }
 }
 
 fn rejected(reason: CastRejectReason) -> CastResult {

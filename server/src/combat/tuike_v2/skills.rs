@@ -1,6 +1,9 @@
-use valence::prelude::{bevy_ecs, Entity, Events, Position};
+use valence::prelude::{bevy_ecs, DVec3, Entity, Events, Position, UniqueId};
 
 use crate::combat::components::{DerivedAttrs, SkillBarBindings};
+use crate::network::audio_event_emit::{AudioRecipient, PlaySoundRecipeRequest, AUDIO_BROADCAST_RADIUS};
+use crate::network::vfx_event_emit::VfxEventRequest;
+use crate::schema::vfx_event::VfxEventPayloadV1;
 use crate::combat::CombatClock;
 use crate::cultivation::color::{record_style_practice, PracticeLog};
 use crate::cultivation::components::{ColorKind, ContamSource, Contamination, Cultivation};
@@ -101,6 +104,12 @@ pub fn cast_don(
     );
     record_practice(world, caster, TuikeSkillId::Don, 1);
 
+    if let Some(pos) = world.get::<Position>(caster).map(|p| p.get()) {
+        emit_vfx(world, pos, "bong:false_skin_don_dust", "#D8C08A", 0.75, 10, 34);
+        emit_audio(world, "don_skin_low_thud", pos);
+        emit_anim(world, caster, "bong:tuike_don_skin");
+    }
+
     CastResult::Started {
         cooldown_ticks: 20,
         anim_duration_ticks: 12,
@@ -138,6 +147,13 @@ pub fn cast_shed(
 
     set_cooldown(world, caster, slot, now_tick, ACTIVE_SHED_COOLDOWN_TICKS);
     record_practice(world, caster, TuikeSkillId::Shed, 2);
+
+    if let Some(pos) = world.get::<Position>(caster).map(|p| p.get()) {
+        emit_vfx(world, pos, "bong:false_skin_shed_burst", "#B58B5A", 0.9, 18, 34);
+        emit_audio(world, "shed_skin_burst", pos);
+        emit_anim(world, caster, "bong:tuike_shed_burst");
+    }
+
     CastResult::Started {
         cooldown_ticks: ACTIVE_SHED_COOLDOWN_TICKS,
         anim_duration_ticks: 8,
@@ -238,6 +254,15 @@ pub fn cast_transfer_taint(
     let cooldown_ticks = transfer_cooldown_ticks(outcome.permanent_absorbed);
     set_cooldown(world, caster, slot, now_tick, cooldown_ticks);
     record_practice(world, caster, TuikeSkillId::TransferTaint, 1);
+
+    if let Some(pos) = world.get::<Position>(caster).map(|p| p.get()) {
+        let vfx_id = if outcome.permanent_absorbed > 0.0 { "bong:ancient_skin_glow" } else { "bong:false_skin_don_dust" };
+        let color = if outcome.permanent_absorbed > 0.0 { "#BFD8FF" } else { "#D8C08A" };
+        emit_vfx(world, pos, vfx_id, color, 0.8, 12, 40);
+        emit_audio(world, "contam_transfer_hum", pos);
+        emit_anim(world, caster, "bong:tuike_taint_transfer");
+    }
+
     CastResult::Started {
         cooldown_ticks,
         anim_duration_ticks: 10,
@@ -533,6 +558,70 @@ fn record_practice(
             },
         },
     );
+}
+
+pub(super) fn emit_vfx(
+    world: &mut bevy_ecs::world::World,
+    origin: DVec3,
+    event_id: &str,
+    color: &str,
+    strength: f32,
+    count: u16,
+    duration_ticks: u16,
+) {
+    if let Some(mut events) = world.get_resource_mut::<Events<VfxEventRequest>>() {
+        events.send(VfxEventRequest::new(
+            origin,
+            VfxEventPayloadV1::SpawnParticle {
+                event_id: event_id.to_string(),
+                origin: [origin.x, origin.y + 1.0, origin.z],
+                direction: None,
+                color: Some(color.to_string()),
+                strength: Some(strength.clamp(0.0, 1.0)),
+                count: Some(count),
+                duration_ticks: Some(duration_ticks),
+            },
+        ));
+    }
+}
+
+pub(super) fn emit_audio(world: &mut bevy_ecs::world::World, recipe: &str, origin: DVec3) {
+    if let Some(mut events) = world.get_resource_mut::<Events<PlaySoundRecipeRequest>>() {
+        events.send(PlaySoundRecipeRequest {
+            recipe_id: recipe.to_string(),
+            instance_id: 0,
+            pos: None,
+            flag: None,
+            volume_mul: 1.0,
+            pitch_shift: 0.0,
+            recipient: AudioRecipient::Radius {
+                origin,
+                radius: AUDIO_BROADCAST_RADIUS,
+            },
+        });
+    }
+}
+
+pub(super) fn emit_anim(world: &mut bevy_ecs::world::World, entity: Entity, anim_id: &str) {
+    let origin = world
+        .get::<Position>(entity)
+        .map(|p| p.get())
+        .unwrap_or(DVec3::ZERO);
+    let unique_id = world.get::<UniqueId>(entity).map(|id| id.0.to_string());
+    if let (Some(target_player), Some(mut events)) = (
+        unique_id,
+        world.get_resource_mut::<Events<VfxEventRequest>>(),
+    ) {
+        events.send(VfxEventRequest::new(
+            origin,
+            VfxEventPayloadV1::PlayAnim {
+                target_player,
+                anim_id: anim_id.to_string(),
+                priority: 1200,
+                fade_in_ticks: Some(2),
+            },
+        ));
+    }
 }
 
 fn rejected(reason: CastRejectReason) -> CastResult {
