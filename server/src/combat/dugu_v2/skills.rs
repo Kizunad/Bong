@@ -1,4 +1,4 @@
-use valence::prelude::{bevy_ecs, DVec3, Entity, Event, Events, Position};
+use valence::prelude::{bevy_ecs, DVec3, Entity, Event, Events, Position, UniqueId};
 
 use crate::combat::components::{
     BodyPart, CastSource, Casting, SkillBarBindings, Wound, WoundKind, Wounds, TICKS_PER_SECOND,
@@ -12,8 +12,11 @@ use crate::cultivation::meridian::severed::{
 };
 use crate::cultivation::skill_registry::{CastRejectReason, CastResult, SkillRegistry};
 use crate::cultivation::tribulation::{JueBiTriggerEvent, JueBiTriggerSource};
+use crate::network::audio_event_emit::{AudioRecipient, PlaySoundRecipeRequest, AUDIO_BROADCAST_RADIUS};
 use crate::network::cast_emit::current_unix_millis;
+use crate::network::vfx_event_emit::VfxEventRequest;
 use crate::qi_physics::reverse_burst_all_marks;
+use crate::schema::vfx_event::VfxEventPayloadV1;
 
 use super::events::{
     DuguSelfRevealedEvent, DuguSkillId, DuguSkillVisual, EclipseNeedleEvent, PenetrateChainEvent,
@@ -254,6 +257,11 @@ fn apply_eclipse(
             visual: visual_for(DuguSkillId::Eclipse),
         },
     );
+    if let Some(pos) = world.get::<Position>(caster).map(|p| p.get()) {
+        emit_vfx(world, pos, "bong:poison_mist", "#44AA44", 0.85, 10, 40);
+        emit_audio(world, "dugu_needle_hiss", pos);
+        emit_anim(world, caster, "bong:dugu_needle_throw");
+    }
     Ok(())
 }
 
@@ -311,6 +319,10 @@ fn apply_self_cure(
             tick: now_tick,
         },
     );
+    if let Some(pos) = world.get::<Position>(caster).map(|p| p.get()) {
+        emit_audio(world, "dugu_self_cure_drink", pos);
+        emit_anim(world, caster, "bong:dugu_self_cure_pose");
+    }
     Ok(())
 }
 
@@ -371,6 +383,11 @@ fn apply_penetrate(
             visual: visual_for(DuguSkillId::Penetrate),
         },
     );
+    if let Some(pos) = world.get::<Position>(caster).map(|p| p.get()) {
+        emit_vfx(world, pos, "bong:poison_mist", "#228B22", 1.0, 16, 60);
+        emit_audio(world, "dugu_curse_cackle", pos);
+        emit_anim(world, caster, "bong:dugu_pointing_curse");
+    }
     Ok(())
 }
 
@@ -401,6 +418,10 @@ fn apply_shroud(
             visual: visual_for(DuguSkillId::Shroud),
         },
     );
+    if let Some(pos) = world.get::<Position>(caster).map(|p| p.get()) {
+        emit_audio(world, "dugu_cast", pos);
+        emit_anim(world, caster, "bong:dugu_shroud_activate");
+    }
     Ok(())
 }
 
@@ -493,6 +514,9 @@ fn apply_reverse(
             epicenter: Some([center.x, center.y, center.z]),
         },
     );
+    emit_vfx(world, center, "bong:poison_mist", "#006400", 1.0, 24, 80);
+    emit_audio(world, "dugu_poison_signature", center);
+    emit_anim(world, caster, "bong:dugu_pointing_curse");
     emit_reveal_if_needed(world, caster, target.unwrap_or(caster), now_tick);
     Ok(())
 }
@@ -743,6 +767,70 @@ fn send_event_if_present<T: Event>(world: &mut bevy_ecs::world::World, event: T)
 
 fn rejected(reason: CastRejectReason) -> CastResult {
     CastResult::Rejected { reason }
+}
+
+fn emit_vfx(
+    world: &mut bevy_ecs::world::World,
+    origin: DVec3,
+    event_id: &str,
+    color: &str,
+    strength: f32,
+    count: u16,
+    duration_ticks: u16,
+) {
+    if let Some(mut events) = world.get_resource_mut::<Events<VfxEventRequest>>() {
+        events.send(VfxEventRequest::new(
+            origin,
+            VfxEventPayloadV1::SpawnParticle {
+                event_id: event_id.to_string(),
+                origin: [origin.x, origin.y + 1.0, origin.z],
+                direction: None,
+                color: Some(color.to_string()),
+                strength: Some(strength.clamp(0.0, 1.0)),
+                count: Some(count),
+                duration_ticks: Some(duration_ticks),
+            },
+        ));
+    }
+}
+
+fn emit_audio(world: &mut bevy_ecs::world::World, recipe: &str, origin: DVec3) {
+    if let Some(mut events) = world.get_resource_mut::<Events<PlaySoundRecipeRequest>>() {
+        events.send(PlaySoundRecipeRequest {
+            recipe_id: recipe.to_string(),
+            instance_id: 0,
+            pos: None,
+            flag: None,
+            volume_mul: 1.0,
+            pitch_shift: 0.0,
+            recipient: AudioRecipient::Radius {
+                origin,
+                radius: AUDIO_BROADCAST_RADIUS,
+            },
+        });
+    }
+}
+
+fn emit_anim(world: &mut bevy_ecs::world::World, entity: Entity, anim_id: &str) {
+    let origin = world
+        .get::<Position>(entity)
+        .map(|p| p.get())
+        .unwrap_or(DVec3::ZERO);
+    let unique_id = world.get::<UniqueId>(entity).map(|id| id.0.to_string());
+    if let (Some(target_player), Some(mut events)) = (
+        unique_id,
+        world.get_resource_mut::<Events<VfxEventRequest>>(),
+    ) {
+        events.send(VfxEventRequest::new(
+            origin,
+            VfxEventPayloadV1::PlayAnim {
+                target_player,
+                anim_id: anim_id.to_string(),
+                priority: 1200,
+                fade_in_ticks: Some(2),
+            },
+        ));
+    }
 }
 
 pub fn visual_for(skill: DuguSkillId) -> DuguSkillVisual {

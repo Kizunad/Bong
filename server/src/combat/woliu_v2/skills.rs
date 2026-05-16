@@ -1,5 +1,5 @@
 use valence::entity::Look;
-use valence::prelude::{bevy_ecs, DVec3, Entity, Events, Position, ResMut};
+use valence::prelude::{bevy_ecs, DVec3, Entity, Events, Position, ResMut, UniqueId};
 
 use crate::combat::components::{
     BodyPart, SkillBarBindings, Wound, WoundKind, Wounds, TICKS_PER_SECOND,
@@ -17,6 +17,9 @@ use crate::cultivation::meridian::severed::{
     check_meridian_runtime_integrity, MeridianSeveredPermanent, SkillMeridianDependencies,
 };
 use crate::cultivation::skill_registry::{CastRejectReason, CastResult, SkillRegistry};
+use crate::network::audio_event_emit::{AudioRecipient, PlaySoundRecipeRequest, AUDIO_BROADCAST_RADIUS};
+use crate::network::vfx_event_emit::VfxEventRequest;
+use crate::schema::vfx_event::VfxEventPayloadV1;
 use crate::cultivation::technique_proficiency::woliu_scalars_for_proficiency;
 use crate::qi_physics::{QiAccountId, QiTransfer, QiTransferReason};
 use crate::skill::components::SkillId;
@@ -367,6 +370,17 @@ pub fn resolve_woliu_v2_skill(
             now_tick,
         },
     );
+
+    {
+        let origin = center;
+        let (vfx_id, audio_id, anim_id) = woliu_av_mapping(skill);
+        let vfx_strength = (spec.field_strength / 1.5).clamp(0.0, 1.0);
+        let vfx_count = ((spec.influence_radius * 6.0) as u16).clamp(8, 64);
+        let vfx_duration = (spec.duration_ticks.min(200) as u16).max(20);
+        emit_vfx(world, origin, vfx_id, "#201832", vfx_strength, vfx_count, vfx_duration);
+        emit_audio(world, audio_id, origin);
+        emit_anim(world, caster, anim_id);
+    }
 
     CastResult::Started {
         cooldown_ticks: spec.cooldown_ticks,
@@ -1086,6 +1100,81 @@ fn current_zone_context(
         env_qi: source.map(|zone| zone.spirit_qi).unwrap_or(0.9),
         source_zone,
         swirl_zones,
+    }
+}
+
+fn emit_vfx(
+    world: &mut bevy_ecs::world::World,
+    origin: DVec3,
+    event_id: &str,
+    color: &str,
+    strength: f32,
+    count: u16,
+    duration_ticks: u16,
+) {
+    if let Some(mut events) = world.get_resource_mut::<Events<VfxEventRequest>>() {
+        events.send(VfxEventRequest::new(
+            origin,
+            VfxEventPayloadV1::SpawnParticle {
+                event_id: event_id.to_string(),
+                origin: [origin.x, origin.y + 1.0, origin.z],
+                direction: None,
+                color: Some(color.to_string()),
+                strength: Some(strength.clamp(0.0, 1.0)),
+                count: Some(count),
+                duration_ticks: Some(duration_ticks),
+            },
+        ));
+    }
+}
+
+fn emit_audio(world: &mut bevy_ecs::world::World, recipe: &str, origin: DVec3) {
+    if let Some(mut events) = world.get_resource_mut::<Events<PlaySoundRecipeRequest>>() {
+        events.send(PlaySoundRecipeRequest {
+            recipe_id: recipe.to_string(),
+            instance_id: 0,
+            pos: None,
+            flag: None,
+            volume_mul: 1.0,
+            pitch_shift: 0.0,
+            recipient: AudioRecipient::Radius {
+                origin,
+                radius: AUDIO_BROADCAST_RADIUS,
+            },
+        });
+    }
+}
+
+fn emit_anim(world: &mut bevy_ecs::world::World, entity: Entity, anim_id: &str) {
+    let origin = world
+        .get::<Position>(entity)
+        .map(|p| p.get())
+        .unwrap_or(DVec3::ZERO);
+    let unique_id = world.get::<UniqueId>(entity).map(|id| id.0.to_string());
+    if let (Some(target_player), Some(mut events)) = (
+        unique_id,
+        world.get_resource_mut::<Events<VfxEventRequest>>(),
+    ) {
+        events.send(VfxEventRequest::new(
+            origin,
+            VfxEventPayloadV1::PlayAnim {
+                target_player,
+                anim_id: anim_id.to_string(),
+                priority: 1200,
+                fade_in_ticks: Some(2),
+            },
+        ));
+    }
+}
+
+fn woliu_av_mapping(skill: WoliuSkillId) -> (&'static str, &'static str, &'static str) {
+    match skill {
+        WoliuSkillId::VacuumPalm => ("bong:woliu_vacuum_palm_spiral", "woliu_vacuum_palm", "bong:woliu_vacuum_palm"),
+        WoliuSkillId::VortexShield => ("bong:woliu_vortex_shield_sphere", "woliu_vortex_shield", "bong:woliu_vortex_shield"),
+        WoliuSkillId::VacuumLock => ("bong:woliu_vacuum_lock_cage", "woliu_vacuum_lock", "bong:woliu_vacuum_lock"),
+        WoliuSkillId::VortexResonance => ("bong:woliu_vortex_resonance_field", "woliu_vortex_resonance", "bong:woliu_vortex_resonance"),
+        WoliuSkillId::TurbulenceBurst => ("bong:woliu_turbulence_burst_wave", "woliu_turbulence_burst", "bong:woliu_turbulence_burst"),
+        _ => ("bong:vortex_spiral", "woliu_cast", "bong:vortex_spiral_stance"),
     }
 }
 
