@@ -48,5 +48,6 @@ public enum HudRenderLayer {
     DUGU_SELF_CURE_PROGRESS,
     DUGU_SHROUD,
     POISON_TRAIT,
-    DANDAO_MUTATION
+    DANDAO_MUTATION,
+    SWORD_BOND
 }

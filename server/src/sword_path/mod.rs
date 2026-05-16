@@ -1,0 +1,20 @@
+//! plan-sword-path-v1 — 器修·剑道流派模块。
+//!
+//! 人剑共生 + 剑品阶 + 五招 + 天道盲区。
+
+pub mod bond;
+pub mod grade;
+pub mod heaven_gate;
+pub mod shatter;
+pub mod techniques;
+pub mod tiandao_blind;
+pub mod upgrade;
+
+use valence::prelude::*;
+
+pub fn register(app: &mut App) {
+    app.add_event::<bond::SwordBondFormedEvent>()
+        .add_event::<bond::SwordShatterEvent>()
+        .add_event::<heaven_gate::HeavenGateCastEvent>()
+        .init_resource::<heaven_gate::TiandaoBlindZoneRegistry>();
+}

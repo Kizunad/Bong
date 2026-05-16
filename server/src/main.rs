@@ -61,6 +61,8 @@ mod spiritwood;
 mod shelflife;
 mod skill;
 #[allow(dead_code)]
+mod sword_path;
+#[allow(dead_code)]
 mod tools;
 #[allow(dead_code)]
 mod tribulation;
@@ -145,6 +147,7 @@ fn run_server() {
     movement::register(&mut app);
     npc::register(&mut app);
     zhenfa::register(&mut app);
+    sword_path::register(&mut app);
     network::register(&mut app);
     persistence::register(&mut app);
     preview::register(&mut app);

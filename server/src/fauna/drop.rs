@@ -199,6 +199,13 @@ const LIVING_PILLAR_DROPS: [DropEntry; 3] = [
     DropEntry::rare(SHENYUAN_ZHI_YAN, QuantityRange::fixed(1), 0.20),
 ];
 
+const HEIWUSHI_DROPS: [DropEntry; 4] = [
+    DropEntry::guaranteed("star_iron", QuantityRange::between(1, 2)),
+    DropEntry::guaranteed("sword_embryo_shard", QuantityRange::between(1, 2)),
+    DropEntry::rare("ancient_sword_embryo", QuantityRange::fixed(1), 0.30),
+    DropEntry::rare("scroll_sword_path", QuantityRange::fixed(1), 0.10),
+];
+
 const POISON_DRAGON_DROPS: [DropEntry; 4] = [
     DropEntry::guaranteed(LONG_GU, QuantityRange::between(4, 6)),
     DropEntry::guaranteed(LONG_LIN, QuantityRange::between(2, 3)),
@@ -235,6 +242,7 @@ pub fn drop_table_for(kind: BeastKind) -> &'static [DropEntry] {
         BeastKind::VoidDistorted => &VOID_DISTORTED_DROPS,
         BeastKind::DarkTiger => &DARK_TIGER_DROPS,
         BeastKind::LivingPillar => &LIVING_PILLAR_DROPS,
+        BeastKind::Heiwushi => &HEIWUSHI_DROPS,
         BeastKind::PoisonDragon => &POISON_DRAGON_DROPS,
         BeastKind::BoneDragon => &BONE_DRAGON_DROPS,
         BeastKind::Whale => &WHALE_DROPS,

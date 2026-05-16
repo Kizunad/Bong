@@ -149,6 +149,24 @@
       "passability": "tsy_y_stratified",
       "depth_tiers": ["shallow", "mid", "deep"],
       "origin": "gaoshou_sichu"
+    },
+    "giant_sword_sea": {
+      "height": { "base": [58, 72], "peak": 95 },
+      "boundary": { "mode": "semi_hard", "width": 112 },
+      "surface": ["deepslate", "stone", "gravel", "sand", "prismarine"],
+      "water": { "level": "high", "coverage": 0.55 },
+      "passability": "medium_low",
+      "structure_density": {
+        "giant_sword_standing": 0.012,
+        "giant_sword_fallen": 0.008,
+        "sword_formation_circle": 0.002,
+        "collapsed_sword_tower": 0.001,
+        "seabed_sword_tomb": 0.004
+      },
+      "ambient_hint": {
+        "sword_hum": "intermittent",
+        "water_surface_glint": "metallic_blue"
+      }
     }
   }
 }

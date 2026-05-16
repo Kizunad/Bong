@@ -320,6 +320,12 @@ public final class BongHudOrchestrator {
                 screenHeight,
                 nowMillis
             ));
+            commands.addAll(SwordPathHudPlanner.buildCommands(
+                SwordBondHudStateStore.snapshot(),
+                nowMillis,
+                screenWidth,
+                screenHeight
+            ));
             FalseSkinHudStateStore.State falseSkinSnapshot = FalseSkinHudStateStore.snapshot();
             commands.addAll(FalseSkinStackHud.buildCommands(
                 falseSkinSnapshot,

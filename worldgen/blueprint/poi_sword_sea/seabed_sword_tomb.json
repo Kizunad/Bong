@@ -1,0 +1,20 @@
+{
+  "id": "seabed_sword_tomb",
+  "display_name": "海底剑冢",
+  "gameplay": "underwater_loot",
+  "qi_range": [0.2, 0.4],
+  "loot": [
+    { "item": "xuan_iron", "count": [1, 2], "chance": 0.6 },
+    { "item": "refined_iron", "count": [2, 4], "chance": 0.8 },
+    { "item": "spirit_spring_water", "count": [1, 3], "chance": 0.5 }
+  ],
+  "refresh": "one_time",
+  "visual_blocks": [
+    "deepslate_bricks", "deepslate_tiles", "iron_block",
+    "soul_lantern", "oxidized_copper"
+  ],
+  "size": [8, 6, 8],
+  "depth_below_water": [5, 10],
+  "tags": ["sword_path", "underwater", "scatter_loot"],
+  "description": "水下深处的 deepslate 平台，中央插着一柄锈迹斑斑的古剑，四角 soul_lantern 照明。"
+}
