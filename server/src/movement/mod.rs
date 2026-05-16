@@ -49,7 +49,6 @@ pub const LOW_STAMINA_HUD_RATIO: f32 = 0.30;
 pub const DASH_DURATION_TICKS: u64 = 4;
 pub const DASH_ATTACK_BONUS_MULTIPLIER: f32 = 1.20;
 pub const DASH_ATTACK_BONUS_WINDOW_TICKS: u64 = 10;
-const DASH_GROUND_GRACE_BLOCKS: f64 = 0.5;
 const LEG_STRAIN_REFRESH_TICKS: u64 = 40;
 const MOVEMENT_SPEED_ATTRIBUTE_UUID: Uuid = Uuid::from_u128(0x426f_6e67_4d6f_7665_6d65_6e74_5631);
 
@@ -292,8 +291,6 @@ type MovementActionQueryItem<'a> = (
     &'a mut Stamina,
     &'a Position,
     &'a Look,
-    Option<&'a OnGround>,
-    Option<&'a CurrentDimension>,
     Option<&'a Cultivation>,
     Option<&'a mut Velocity>,
     Option<&'a UniqueId>,
@@ -307,8 +304,6 @@ fn handle_movement_action_intents(
     clock: Res<CombatClock>,
     mut intents: EventReader<MovementActionIntent>,
     skill_meridian_deps: Option<Res<SkillMeridianDependencies>>,
-    dimension_layers: Option<Res<DimensionLayers>>,
-    layers: Query<&ChunkLayer>,
     mut players: Query<MovementActionQueryItem<'_>, With<Client>>,
     mut vfx: EventWriter<VfxEventRequest>,
     mut audio: EventWriter<PlaySoundRecipeRequest>,
@@ -320,8 +315,6 @@ fn handle_movement_action_intents(
             mut stamina,
             position,
             look,
-            on_ground,
-            dimension,
             cultivation,
             velocity,
             unique_id,
@@ -348,13 +341,6 @@ fn handle_movement_action_intents(
             .as_deref()
             .map(dash_proficiency::known_dash_proficiency)
             .unwrap_or_default();
-        let dash_grounded = dash_grounded(
-            on_ground,
-            position,
-            dimension,
-            dimension_layers.as_deref(),
-            &layers,
-        );
 
         if let Some(reason) = reject_reason(
             action,
@@ -365,7 +351,6 @@ fn handle_movement_action_intents(
                 now,
                 active_knockback,
                 leg_wound_factor: leg_wound::combined_leg_factor_from_optional(wounds),
-                dash_grounded,
                 skill_meridian_deps: skill_meridian_deps.as_deref(),
                 severed,
             },
@@ -497,7 +482,6 @@ struct MovementRejectContext<'a> {
     now: u64,
     active_knockback: Option<&'a player_knockback::ActivePlayerKnockback>,
     leg_wound_factor: f32,
-    dash_grounded: bool,
     skill_meridian_deps: Option<&'a SkillMeridianDependencies>,
     severed: Option<&'a MeridianSeveredPermanent>,
 }
@@ -527,7 +511,6 @@ fn reject_reason(action: MovementAction, ctx: MovementRejectContext<'_>) -> Opti
         MovementAction::Dashing if ctx.now < ctx.movement.dash_ready_at_tick => {
             Some("dash_cooldown".to_string())
         }
-        MovementAction::Dashing if !ctx.dash_grounded => Some("dash_airborne".to_string()),
         MovementAction::Dashing if ctx.leg_wound_factor <= f32::EPSILON => {
             Some("leg_severed".to_string())
         }
@@ -760,18 +743,14 @@ fn apply_client_horizontal_impulse(
     dir: DVec3,
     impulse: f32,
 ) {
+    let (x, z) = movement_horizontal_impulse(dir, impulse);
     if let Some(velocity) = velocity {
-        velocity.0 = horizontal_dash_velocity(velocity.0, dir, impulse);
+        velocity.0.x += x;
+        velocity.0.z += z;
         client.set_velocity(velocity.0);
     } else {
-        let (x, z) = movement_horizontal_impulse(dir, impulse);
         client.set_velocity(Vec3::new(x, 0.0, z));
     }
-}
-
-fn horizontal_dash_velocity(current: Vec3, dir: DVec3, impulse: f32) -> Vec3 {
-    let (x, z) = movement_horizontal_impulse(dir, impulse);
-    Vec3::new(x, current.y, z)
 }
 
 pub fn dash_attack_multiplier(state: &MovementState, tick: u64) -> f32 {
@@ -849,84 +828,6 @@ fn normalize_horizontal(dir: DVec3) -> DVec3 {
     } else {
         horizontal.normalize()
     }
-}
-
-fn dash_grounded(
-    on_ground: Option<&OnGround>,
-    position: &Position,
-    dimension: Option<&CurrentDimension>,
-    dimension_layers: Option<&DimensionLayers>,
-    layers: &Query<&ChunkLayer>,
-) -> bool {
-    let on_ground = on_ground.is_some_and(|on_ground| on_ground.0);
-    if on_ground {
-        return true;
-    }
-    let Some(dimension) = dimension else {
-        return false;
-    };
-    dash_grounded_from_contact(
-        false,
-        dash_ground_distance(position.get(), dimension.0, dimension_layers, layers),
-    )
-}
-
-fn dash_grounded_from_contact(on_ground: bool, ground_distance: Option<f64>) -> bool {
-    on_ground
-        || ground_distance
-            .is_some_and(|distance| (0.0..=DASH_GROUND_GRACE_BLOCKS).contains(&distance))
-}
-
-fn dash_ground_distance(
-    position: DVec3,
-    dimension: DimensionKind,
-    dimension_layers: Option<&DimensionLayers>,
-    layers: &Query<&ChunkLayer>,
-) -> Option<f64> {
-    let dimension_layers = dimension_layers?;
-    let layer = layers.get(dimension_layers.entity_for(dimension)).ok()?;
-    let ground_y = position.y.floor() as i32 - 1;
-    let ground_top_y = f64::from(ground_y + 1);
-    let distance = position.y - ground_top_y;
-    if !(0.0..=DASH_GROUND_GRACE_BLOCKS).contains(&distance) {
-        return None;
-    }
-    let pos = BlockPos::new(
-        position.x.floor() as i32,
-        ground_y,
-        position.z.floor() as i32,
-    );
-    layer
-        .block(pos)
-        .map(|block| block.state)
-        .filter(|block| is_dash_standable_block(*block))
-        .map(|_| distance)
-}
-
-fn is_dash_standable_block(block: BlockState) -> bool {
-    !block.is_air() && !block.is_liquid() && !is_dash_passthrough_block(block)
-}
-
-fn is_dash_passthrough_block(block: BlockState) -> bool {
-    matches!(
-        block,
-        BlockState::GRASS
-            | BlockState::TALL_GRASS
-            | BlockState::FERN
-            | BlockState::LARGE_FERN
-            | BlockState::POPPY
-            | BlockState::DANDELION
-            | BlockState::DEAD_BUSH
-            | BlockState::LILY_PAD
-            | BlockState::SNOW
-            | BlockState::VINE
-            | BlockState::TORCH
-            | BlockState::WALL_TORCH
-            | BlockState::RAIL
-            | BlockState::REDSTONE_WIRE
-            | BlockState::FIRE
-            | BlockState::SOUL_FIRE
-    )
 }
 
 fn zone_allows_residue_ash_surface(zone: &Zone) -> bool {
@@ -1056,65 +957,6 @@ mod tests {
         let (x, z) = movement_horizontal_impulse(dir, impulse);
         assert_close(x, -impulse);
         assert_close(z, 0.0);
-    }
-
-    #[test]
-    fn dash_velocity_replaces_stale_horizontal_velocity() {
-        let impulse = dash_proficiency::dash_distance(0.0);
-        let current = Vec3::new(12.0, 0.25, -8.0);
-        let next = horizontal_dash_velocity(current, DVec3::new(1.0, 0.0, 0.0), impulse);
-        assert_close(next.x, impulse);
-        assert_close(next.y, 0.25);
-        assert_close(next.z, 0.0);
-    }
-
-    #[test]
-    fn dash_ground_contact_allows_ground_flag_and_half_block_grace() {
-        assert!(dash_grounded_from_contact(true, None));
-        assert!(dash_grounded_from_contact(false, Some(0.0)));
-        assert!(dash_grounded_from_contact(
-            false,
-            Some(DASH_GROUND_GRACE_BLOCKS)
-        ));
-        assert!(!dash_grounded_from_contact(false, None));
-        assert!(!dash_grounded_from_contact(false, Some(-0.01)));
-        assert!(!dash_grounded_from_contact(
-            false,
-            Some(DASH_GROUND_GRACE_BLOCKS + 0.01)
-        ));
-    }
-
-    #[test]
-    fn dash_ground_contact_requires_standable_block() {
-        assert!(is_dash_standable_block(BlockState::STONE));
-        assert!(is_dash_standable_block(BlockState::OAK_LEAVES));
-        assert!(!is_dash_standable_block(BlockState::AIR));
-        assert!(!is_dash_standable_block(BlockState::CAVE_AIR));
-        assert!(!is_dash_standable_block(BlockState::WATER));
-        assert!(!is_dash_standable_block(BlockState::LAVA));
-        assert!(!is_dash_standable_block(BlockState::GRASS));
-        assert!(!is_dash_standable_block(BlockState::TORCH));
-    }
-
-    #[test]
-    fn dash_rejects_airborne_without_ground_contact() {
-        let movement = MovementState::default();
-        let stamina = Stamina::default();
-        let reason = reject_reason(
-            MovementAction::Dashing,
-            MovementRejectContext {
-                movement: &movement,
-                stamina: &stamina,
-                dash_proficiency: 0.0,
-                now: 0,
-                active_knockback: None,
-                leg_wound_factor: 1.0,
-                dash_grounded: false,
-                skill_meridian_deps: None,
-                severed: None,
-            },
-        );
-        assert_eq!(reason.as_deref(), Some("dash_airborne"));
     }
 
     #[test]

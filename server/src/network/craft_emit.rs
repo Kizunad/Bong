@@ -638,6 +638,8 @@ pub fn build_recipe_list_payload(
         .grouped_for_ui()
         .into_iter()
         .flat_map(|(_, recipes)| recipes.into_iter())
+        // 当前产品语义：未解锁配方先不下发，客户端只展示可制作/已解锁列表；
+        // 若以后改为灰显锁定配方，需要同步扩展 payload 与客户端交互。
         .filter(|r| r.unlock_sources.is_empty() || unlock_state.is_unlocked(player_id, &r.id))
         .map(|r| CraftRecipeEntryV1 {
             id: r.id.as_str().to_string(),

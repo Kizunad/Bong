@@ -268,6 +268,8 @@ pub struct DerivedAttrs {
     pub attack_power: f32,
     pub defense_power: f32,
     pub move_speed_multiplier: f32,
+    #[serde(default = "default_one_f32")]
+    pub jump_height_multiplier: f32,
     /// plan-armor-v1 §1.2：被动护甲二维矩阵（BodyPart × WoundKind -> mitigation）。
     /// 查询 miss 表示该部位/伤害类型无护甲减免。
     #[serde(default)]
@@ -280,12 +282,17 @@ pub struct DerivedAttrs {
     pub vortex_active: bool,
 }
 
+fn default_one_f32() -> f32 {
+    1.0
+}
+
 impl Default for DerivedAttrs {
     fn default() -> Self {
         Self {
             attack_power: 1.0,
             defense_power: 1.0,
             move_speed_multiplier: 1.0,
+            jump_height_multiplier: 1.0,
             defense_profile: HashMap::new(),
             tuike_layers: 0,
             vortex_active: false,

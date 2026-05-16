@@ -30,10 +30,12 @@ public final class WoliuV2StatusPanelHud {
     ) {
         if (state == null || screenWidth <= 0 || screenHeight <= 0) return List.of();
 
-        boolean skillActive = state.active() && !state.activeSkillId().isBlank();
+        String activeSkillId = state.activeSkillId();
+        boolean skillActive = state.active() && activeSkillId != null && !activeSkillId.isBlank();
         boolean turbulenceVisible = hasVisibleTurbulence(state, nowMillis);
         long cooldownMs = Math.max(0L, state.cooldownUntilMs() - nowMillis);
-        boolean backfire = skillActive && !state.backfireLevel().isBlank();
+        String backfireLevel = state.backfireLevel();
+        boolean backfire = backfireLevel != null && !backfireLevel.isBlank();
         if (!skillActive && !turbulenceVisible && cooldownMs <= 0L && !backfire) {
             return List.of();
         }
@@ -59,7 +61,7 @@ public final class WoliuV2StatusPanelHud {
         int lineY = y + 20;
         out.add(HudRenderCommand.text(
             HudRenderLayer.VORTEX_TURBULENCE,
-            skillActive ? skillName(state.activeSkillId()) : "待机",
+            skillActive ? skillName(activeSkillId) : "待机",
             innerX,
             lineY,
             skillActive ? TEXT : MUTED
@@ -77,7 +79,8 @@ public final class WoliuV2StatusPanelHud {
         int barY = y + 35;
         out.add(HudRenderCommand.rect(HudRenderLayer.VORTEX_TURBULENCE, innerX, barY, barW, TRACK_HEIGHT, 0xCC111722));
         if (skillActive) {
-            int fill = Math.round(barW * state.chargeProgress());
+            float progress = Math.max(0f, Math.min(1f, state.chargeProgress()));
+            int fill = Math.round(barW * progress);
             if (fill > 0) {
                 out.add(HudRenderCommand.rect(HudRenderLayer.VORTEX_TURBULENCE, innerX, barY, fill, TRACK_HEIGHT, ACCENT));
             }
@@ -150,12 +153,14 @@ public final class WoliuV2StatusPanelHud {
     }
 
     private static String backfireText(VortexStateStore.State state) {
-        if (state.backfireLevel().isBlank()) return "";
-        return "  反噬 " + state.backfireLevel();
+        String backfireLevel = state.backfireLevel();
+        if (backfireLevel == null || backfireLevel.isBlank()) return "";
+        return "  反噬 " + backfireLevel;
     }
 
     private static String secondsText(long millis) {
-        long seconds = Math.max(0L, millis) / 1000L + (millis % 1000L == 0L ? 0L : 1L);
+        long safeMillis = Math.max(0L, millis);
+        long seconds = safeMillis / 1000L + (safeMillis % 1000L == 0L ? 0L : 1L);
         return Math.min(Integer.MAX_VALUE, seconds) + "s";
     }
 

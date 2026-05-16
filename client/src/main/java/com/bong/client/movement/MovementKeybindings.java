@@ -8,7 +8,6 @@ import net.fabricmc.fabric.api.client.keybinding.v1.KeyBindingHelper;
 import net.fabricmc.fabric.api.client.networking.v1.ClientPlayConnectionEvents;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.option.KeyBinding;
-import net.minecraft.client.render.Camera;
 import net.minecraft.client.util.InputUtil;
 import org.lwjgl.glfw.GLFW;
 
@@ -46,21 +45,8 @@ public final class MovementKeybindings {
             dashTapped
         );
         if (action != null) {
-            ClientRequestSender.sendMovementAction(action, dashYawDegrees(client));
+            ClientRequestSender.sendMovementAction(action, client.player.getYaw());
         }
-    }
-
-    static double dashYawDegrees(MinecraftClient client) {
-        float playerYaw = client.player.getYaw();
-        Camera camera = client.gameRenderer == null ? null : client.gameRenderer.getCamera();
-        Double cameraYaw = camera == null ? null : Double.valueOf(camera.getYaw());
-        return resolveDashYawDegrees(cameraYaw, playerYaw);
-    }
-
-    static double resolveDashYawDegrees(Double cameraYawDegrees, double playerYawDegrees) {
-        return cameraYawDegrees != null && Double.isFinite(cameraYawDegrees)
-            ? cameraYawDegrees
-            : playerYawDegrees;
     }
 
     private static boolean consumeWasPressed(KeyBinding key) {

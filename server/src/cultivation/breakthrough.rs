@@ -849,6 +849,7 @@ mod tests {
     use super::*;
     use crate::cultivation::components::MeridianId;
     use crate::npc::spawn::NpcMarker;
+    use crate::schema::common::NarrationScope;
     use crate::schema::vfx_event::VfxEventPayloadV1;
     use crate::world::karma::KarmaWeightStore;
     use crate::world::zone::ZoneRegistry;
@@ -956,6 +957,116 @@ mod tests {
         }
         let err = try_breakthrough(&mut c, &mut m, 0.0, &mut FixedRoll(0.0)).unwrap_err();
         assert_eq!(err, BreakthroughError::RequiresTribulation);
+    }
+
+    #[test]
+    fn breakthrough_error_message_covers_all_error_variants() {
+        let cases = [
+            (
+                BreakthroughError::AtMaxRealm,
+                "突破未成：你已抵达当前最高境界。",
+            ),
+            (
+                BreakthroughError::RequiresTribulation,
+                "突破未成：通灵至化虚必须先走渡虚劫。",
+            ),
+            (
+                BreakthroughError::NotEnoughMeridians { need: 16, have: 15 },
+                "突破未成：需先打通 16 条经脉（当前 15）。",
+            ),
+            (
+                BreakthroughError::NotEnoughRegularMeridians { need: 12, have: 8 },
+                "突破未成：需先打通 12 条正经（当前 8）。",
+            ),
+            (
+                BreakthroughError::NotEnoughExtraordinaryMeridians { need: 4, have: 3 },
+                "突破未成：需先打通 4 条奇经（当前 3）。",
+            ),
+            (
+                BreakthroughError::NotEnoughQi {
+                    need: 100.0,
+                    have: 42.5,
+                },
+                "突破未成：真元不足（需 100.0，当前 42.5）。",
+            ),
+            (
+                BreakthroughError::ZoneTooWeak {
+                    need: 0.8,
+                    have: 0.4,
+                },
+                "突破未成：此地灵气不足（需 0.80，当前 0.40）。",
+            ),
+            (
+                BreakthroughError::EnvInsufficient {
+                    need: 0.7,
+                    have: 0.3,
+                    in_spirit_eye: true,
+                },
+                "突破未成：灵眼扰动未稳（需 0.70，当前 0.30）。",
+            ),
+            (
+                BreakthroughError::EnvInsufficient {
+                    need: 0.7,
+                    have: 0.3,
+                    in_spirit_eye: false,
+                },
+                "突破未成：固元须在灵气浓处或灵眼内（需 0.70，当前 0.30）。",
+            ),
+            (
+                BreakthroughError::RolledFailure { severity: 0.75 },
+                "突破失败：气机反噬，伤势强度 0.75。",
+            ),
+        ];
+
+        for (error, expected) in cases {
+            assert_eq!(
+                breakthrough_error_message(&error),
+                expected,
+                "expected stable breakthrough error text for {error:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn breakthrough_system_pushes_system_warning_on_precondition_error() {
+        let mut app = App::new();
+        app.insert_resource(CultivationClock { tick: 10 });
+        app.insert_resource(PendingGameplayNarrations::default());
+        app.add_event::<BreakthroughRequest>();
+        app.add_event::<BreakthroughOutcome>();
+        app.add_event::<CultivationDeathTrigger>();
+        app.add_event::<VfxEventRequest>();
+        app.add_event::<SkillCapChanged>();
+        app.add_systems(Update, breakthrough_system);
+        let player = app
+            .world_mut()
+            .spawn((
+                Cultivation::default(),
+                MeridianSystem::default(),
+                LifeRecord::default(),
+                Username("Azure".to_string()),
+            ))
+            .id();
+
+        app.world_mut().send_event(BreakthroughRequest {
+            entity: player,
+            material_bonus: 0.0,
+        });
+        app.update();
+
+        let narrations = app
+            .world_mut()
+            .resource_mut::<PendingGameplayNarrations>()
+            .drain();
+        assert_eq!(narrations.len(), 1);
+        assert_eq!(narrations[0].scope, NarrationScope::Player);
+        assert_eq!(narrations[0].target.as_deref(), Some("Azure"));
+        assert_eq!(narrations[0].style, NarrationStyle::SystemWarning);
+        assert!(
+            narrations[0].text.contains("突破未成"),
+            "expected system warning to include breakthrough failure reason, actual text={}",
+            narrations[0].text
+        );
     }
 
     #[test]

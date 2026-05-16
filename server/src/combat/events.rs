@@ -184,30 +184,83 @@ pub struct DeathEvent {
     pub at_tick: u64,
 }
 
+#[derive(Debug, Clone)]
+pub struct DeathEventIfLethal {
+    pub was_alive: bool,
+    pub health_current: f32,
+    pub event: DeathEvent,
+}
+
 pub fn emit_death_event_if_lethal(
     world: &mut bevy_ecs::world::World,
-    was_alive: bool,
-    health_current: f32,
-    target: Entity,
-    cause: String,
-    attacker: Option<Entity>,
-    attacker_player_id: Option<String>,
-    at_tick: u64,
+    input: DeathEventIfLethal,
 ) -> bool {
-    if !was_alive || health_current > 0.0 {
+    if !input.was_alive || input.health_current > 0.0 {
         return false;
     }
     if let Some(mut death_events) = world.get_resource_mut::<Events<DeathEvent>>() {
-        death_events.send(DeathEvent {
-            target,
-            cause,
-            attacker,
-            attacker_player_id,
-            at_tick,
-        });
+        death_events.send(input.event);
         true
     } else {
         false
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn death_event(target: Entity) -> DeathEvent {
+        DeathEvent {
+            target,
+            cause: "test".to_string(),
+            attacker: None,
+            attacker_player_id: None,
+            at_tick: 1,
+        }
+    }
+
+    #[test]
+    fn emit_death_event_if_lethal_ignores_already_dead_actor() {
+        let mut world = bevy_ecs::world::World::new();
+        world.insert_resource(Events::<DeathEvent>::default());
+        let target = world.spawn_empty().id();
+
+        let emitted = emit_death_event_if_lethal(
+            &mut world,
+            DeathEventIfLethal {
+                was_alive: false,
+                health_current: 0.0,
+                event: death_event(target),
+            },
+        );
+
+        assert!(!emitted);
+        assert_eq!(
+            world.resource::<Events<DeathEvent>>().len(),
+            0,
+            "expected no DeathEvent because target was already dead"
+        );
+    }
+
+    #[test]
+    fn emit_death_event_if_lethal_returns_false_when_death_event_resource_missing() {
+        let mut world = bevy_ecs::world::World::new();
+        let target = world.spawn_empty().id();
+
+        let emitted = emit_death_event_if_lethal(
+            &mut world,
+            DeathEventIfLethal {
+                was_alive: true,
+                health_current: 0.0,
+                event: death_event(target),
+            },
+        );
+
+        assert!(
+            !emitted,
+            "expected false because Events<DeathEvent> resource is not registered"
+        );
     }
 }
 

@@ -465,18 +465,7 @@ fn woliu_particle_duration_ticks(skill: WoliuSkillId) -> u16 {
 }
 
 fn woliu_anim_for_skill(skill: WoliuSkillId) -> &'static str {
-    match skill {
-        WoliuSkillId::Hold => "bong:vortex_spiral_stance",
-        WoliuSkillId::Burst => "bong:vortex_palm_open",
-        WoliuSkillId::Mouth => "bong:vortex_spiral_stance",
-        WoliuSkillId::Pull => "bong:vortex_spiral_stance",
-        WoliuSkillId::Heart => "bong:stance_woliu",
-        WoliuSkillId::VacuumPalm => "bong:woliu_vacuum_palm",
-        WoliuSkillId::VortexShield => "bong:woliu_vortex_shield",
-        WoliuSkillId::VacuumLock => "bong:woliu_vacuum_lock",
-        WoliuSkillId::VortexResonance => "bong:woliu_vortex_resonance",
-        WoliuSkillId::TurbulenceBurst => "bong:woliu_turbulence_burst",
-    }
+    crate::combat::woliu_v2::skills::visual_for(skill).animation_id
 }
 
 fn emit_stop_for_entity(
@@ -973,6 +962,35 @@ mod tests {
             "bong:woliu_vortex_resonance",
             WOLIU_STOP_FADE_OUT_TICKS,
         );
+
+        app.world_mut().resource_mut::<CombatClock>().tick = 21;
+        app.update();
+        assert!(
+            drain_vfx(&mut app).is_empty(),
+            "expected no second StopAnim because woliu lifecycle is already inactive"
+        );
+    }
+
+    #[test]
+    fn woliu_stop_animation_uses_same_animation_id_as_skill_visual() {
+        for skill in [
+            WoliuSkillId::Hold,
+            WoliuSkillId::Burst,
+            WoliuSkillId::Mouth,
+            WoliuSkillId::Pull,
+            WoliuSkillId::Heart,
+            WoliuSkillId::VacuumPalm,
+            WoliuSkillId::VortexShield,
+            WoliuSkillId::VacuumLock,
+            WoliuSkillId::VortexResonance,
+            WoliuSkillId::TurbulenceBurst,
+        ] {
+            assert_eq!(
+                woliu_anim_for_skill(skill),
+                crate::combat::woliu_v2::skills::visual_for(skill).animation_id,
+                "expected stop animation to match play animation for {skill:?}"
+            );
+        }
     }
 
     #[test]

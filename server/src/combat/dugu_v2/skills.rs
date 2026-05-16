@@ -3,7 +3,7 @@ use valence::prelude::{bevy_ecs, DVec3, Entity, Event, Events, Position, UniqueI
 use crate::combat::components::{
     BodyPart, CastSource, Casting, SkillBarBindings, Wound, WoundKind, Wounds, TICKS_PER_SECOND,
 };
-use crate::combat::events::emit_death_event_if_lethal;
+use crate::combat::events::{emit_death_event_if_lethal, DeathEvent, DeathEventIfLethal};
 use crate::combat::CombatClock;
 use crate::cultivation::components::{ColorKind, Cultivation, MeridianId, QiColor, Realm};
 use crate::cultivation::dugu::DuguRevealedEvent;
@@ -576,13 +576,17 @@ fn apply_damage(
     if let Some((was_alive, health_current)) = death_state {
         emit_death_event_if_lethal(
             world,
-            was_alive,
-            health_current,
-            target,
-            format!("{}:entity:{}", skill.as_str(), caster.to_bits()),
-            Some(caster),
-            None,
-            now_tick,
+            DeathEventIfLethal {
+                was_alive,
+                health_current,
+                event: DeathEvent {
+                    target,
+                    cause: format!("{}:entity:{}", skill.as_str(), caster.to_bits()),
+                    attacker: Some(caster),
+                    attacker_player_id: None,
+                    at_tick: now_tick,
+                },
+            },
         );
     }
 }

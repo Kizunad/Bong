@@ -674,10 +674,8 @@ pub fn near_death_tick(
             continue;
         }
 
-        let immediate_npc_termination = should_terminate_npc_without_near_death_wait(
-            npc_marker.as_deref(),
-            fauna_tag.as_deref(),
-        );
+        let immediate_npc_termination =
+            should_terminate_npc_without_near_death_wait(npc_marker, fauna_tag);
         if !immediate_npc_termination {
             let Some(deadline_tick) = lifecycle.near_death_deadline_tick else {
                 continue;
@@ -2620,6 +2618,101 @@ mod tests {
             app.world().resource::<Events<PlayerTerminated>>().len(),
             1,
             "rat should not wait out the player revival near-death window"
+        );
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn near_death_non_rat_npc_waits_for_deadline() {
+        let mut app = App::new();
+        let (settings, root) = persistence_settings("spider-near-death-waits");
+        app.insert_resource(settings);
+        app.insert_resource(CombatClock { tick: 200 });
+        app.add_event::<PlayerRevived>();
+        app.add_event::<PlayerTerminated>();
+        app.add_event::<DeathCinematicPublished>();
+        app.add_event::<VfxEventRequest>();
+        app.add_systems(Update, near_death_tick);
+
+        let entity = app
+            .world_mut()
+            .spawn((
+                Lifecycle {
+                    character_id: "spider-waits".to_string(),
+                    state: LifecycleState::NearDeath,
+                    near_death_deadline_tick: Some(
+                        200 + crate::combat::components::NEAR_DEATH_WINDOW_TICKS,
+                    ),
+                    ..Default::default()
+                },
+                Wounds {
+                    health_current: 0.0,
+                    health_max: 100.0,
+                    entries: Vec::new(),
+                },
+                Position::new([0.0, 66.0, 0.0]),
+                NpcMarker,
+                crate::fauna::components::FaunaTag::new(
+                    crate::fauna::components::BeastKind::Spider,
+                ),
+            ))
+            .id();
+
+        app.update();
+
+        let lifecycle = app.world().entity(entity).get::<Lifecycle>().unwrap();
+        assert_eq!(lifecycle.state, LifecycleState::NearDeath);
+        assert_eq!(
+            app.world().resource::<Events<PlayerTerminated>>().len(),
+            0,
+            "non-rat NPC should wait for normal near-death deadline"
+        );
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn near_death_rat_without_npc_marker_waits_for_deadline() {
+        let mut app = App::new();
+        let (settings, root) = persistence_settings("rat-without-npc-marker-waits");
+        app.insert_resource(settings);
+        app.insert_resource(CombatClock { tick: 200 });
+        app.add_event::<PlayerRevived>();
+        app.add_event::<PlayerTerminated>();
+        app.add_event::<DeathCinematicPublished>();
+        app.add_event::<VfxEventRequest>();
+        app.add_systems(Update, near_death_tick);
+
+        let entity = app
+            .world_mut()
+            .spawn((
+                Lifecycle {
+                    character_id: "rat-without-npc-marker".to_string(),
+                    state: LifecycleState::NearDeath,
+                    near_death_deadline_tick: Some(
+                        200 + crate::combat::components::NEAR_DEATH_WINDOW_TICKS,
+                    ),
+                    ..Default::default()
+                },
+                Wounds {
+                    health_current: 0.0,
+                    health_max: 100.0,
+                    entries: Vec::new(),
+                },
+                Position::new([0.0, 66.0, 0.0]),
+                crate::fauna::components::FaunaTag::new(crate::fauna::components::BeastKind::Rat),
+            ))
+            .id();
+
+        app.update();
+
+        let lifecycle = app.world().entity(entity).get::<Lifecycle>().unwrap();
+        assert_eq!(lifecycle.state, LifecycleState::NearDeath);
+        assert_eq!(
+            app.world().resource::<Events<PlayerTerminated>>().len(),
+            0,
+            "rat tag without NpcMarker should not use NPC immediate termination path"
         );
 
         let _ = fs::remove_dir_all(root);
