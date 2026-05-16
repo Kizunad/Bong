@@ -82,6 +82,29 @@ pub const EQUIP_SLOT_TREASURE_BELT_1: &str = "treasure_belt_1";
 pub const EQUIP_SLOT_TREASURE_BELT_2: &str = "treasure_belt_2";
 pub const EQUIP_SLOT_TREASURE_BELT_3: &str = "treasure_belt_3";
 
+// plan-backpack-equip-v1 P0 — 背包装备槽常量。
+/// 背部大背包装备槽 id（运行时 key）。
+#[allow(dead_code)]
+pub const EQUIP_SLOT_BACK_PACK: &str = "back_pack";
+/// 腰间小囊装备槽 id（运行时 key）。
+#[allow(dead_code)]
+pub const EQUIP_SLOT_WAIST_POUCH: &str = "waist_pouch";
+/// 胸前挎包装备槽 id（运行时 key）。
+#[allow(dead_code)]
+pub const EQUIP_SLOT_CHEST_SATCHEL: &str = "chest_satchel";
+/// 身体自带暗袋容器 id（不占装备槽，始终存在）。
+#[allow(dead_code)]
+pub const BODY_POCKET_CONTAINER_ID: &str = "body_pocket";
+/// 暗袋行数（2 行）。
+#[allow(dead_code)]
+pub const BODY_POCKET_ROWS: u8 = 2;
+/// 暗袋列数（3 列）。
+#[allow(dead_code)]
+pub const BODY_POCKET_COLS: u8 = 3;
+/// 玩家裸体基础负重（不含任何背包）。
+#[allow(dead_code)]
+pub const BASE_CARRY_CAPACITY: f64 = 15.0;
+
 type JoinedClientsWithoutInventoryFilter = (Added<Client>, Without<PlayerInventory>);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -115,6 +138,27 @@ pub struct ItemTemplate {
     pub blueprint_scroll_spec: Option<BlueprintScrollSpec>,
     pub inscription_scroll_spec: Option<InscriptionScrollSpec>,
     pub technique_scroll_spec: Option<TechniqueScrollSpec>,
+    /// plan-backpack-equip-v1 P0 — 可装备容器规格；category=Container 时必填。
+    pub container_spec: Option<ContainerSpec>,
+}
+
+/// plan-backpack-equip-v1 P0 — 可装备容器（背包/囊/挎包）的模板级静态规格。
+///
+/// 物品模板 `category = Container` 时必填；其余 category 须缺省（None）。
+/// 装备此物品后，`rebuild_containers_from_equipment` 会自动在 `PlayerInventory.containers`
+/// 中维护对应的 `ContainerState`，容量和行列数由此规格决定。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ContainerSpec {
+    /// 容器行数（1..=16）。
+    pub rows: u8,
+    /// 容器列数（1..=16）。
+    pub cols: u8,
+    /// 此容器提供的额外负重上限（叠加到 BASE_CARRY_CAPACITY）。
+    pub weight_capacity: f64,
+    /// 必须装在哪个 equip_slot 上才有效（"back_pack" / "waist_pouch" / "chest_satchel"）。
+    pub equip_slot: String,
+    /// 每次操作扣除的耐久度比例（0.0 = 无损耗）。
+    pub durability_cost_per_op: f64,
 }
 
 /// plan-weapon-v1 §1.1：武器模板级别的静态属性（不随 instance 变动）。
@@ -163,6 +207,9 @@ pub enum ItemCategory {
     Tool,
     Scroll,
     Misc,
+    /// plan-backpack-equip-v1 P0 — 可装备容器（背包/囊/挎包），携带 ContainerSpec。
+    #[allow(dead_code)]
+    Container,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -1300,6 +1347,9 @@ struct ItemTemplateToml {
     inscription_scroll: Option<InscriptionScrollSpecToml>,
     #[serde(default)]
     technique_scroll: Option<TechniqueScrollSpecToml>,
+    /// plan-backpack-equip-v1 P0：category == "Container" 时必填，否则须缺省。
+    #[serde(default)]
+    container: Option<ContainerSpecToml>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1340,12 +1390,82 @@ pub struct TechniqueScrollSpecToml {
     skill_id: String,
 }
 
+/// plan-backpack-equip-v1 P0 — TOML 层的容器规格块（对应 `[item.container]`）。
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ContainerSpecToml {
+    rows: u8,
+    cols: u8,
+    weight_capacity: f64,
+    equip_slot: String,
+    #[serde(default)]
+    durability_cost_per_op: f64,
+}
+
 fn default_qi_cost_mul() -> f32 {
     1.0
 }
 
 fn default_combat_technique_scroll_kind() -> String {
     "combat_technique".to_string()
+}
+
+/// plan-backpack-equip-v1 P0 — 解析 TOML 容器规格块为 `ContainerSpec`。
+pub fn parse_container_spec(
+    raw: ContainerSpecToml,
+    source_path: &Path,
+    item_id: &str,
+) -> Result<ContainerSpec, String> {
+    if !(1..=16).contains(&raw.rows) {
+        return Err(format!(
+            "{} item `{item_id}` has invalid container.rows {}; expected 1..=16",
+            source_path.display(),
+            raw.rows
+        ));
+    }
+    if !(1..=16).contains(&raw.cols) {
+        return Err(format!(
+            "{} item `{item_id}` has invalid container.cols {}; expected 1..=16",
+            source_path.display(),
+            raw.cols
+        ));
+    }
+    if !raw.weight_capacity.is_finite() || raw.weight_capacity < 0.0 {
+        return Err(format!(
+            "{} item `{item_id}` has invalid container.weight_capacity {}; expected finite >= 0",
+            source_path.display(),
+            raw.weight_capacity
+        ));
+    }
+    let valid_slots = [
+        EQUIP_SLOT_BACK_PACK,
+        EQUIP_SLOT_WAIST_POUCH,
+        EQUIP_SLOT_CHEST_SATCHEL,
+    ];
+    if !valid_slots.contains(&raw.equip_slot.as_str()) {
+        return Err(format!(
+            "{} item `{item_id}` has invalid container.equip_slot `{}`; expected one of [{}, {}, {}]",
+            source_path.display(),
+            raw.equip_slot,
+            EQUIP_SLOT_BACK_PACK,
+            EQUIP_SLOT_WAIST_POUCH,
+            EQUIP_SLOT_CHEST_SATCHEL
+        ));
+    }
+    if !raw.durability_cost_per_op.is_finite() || raw.durability_cost_per_op < 0.0 {
+        return Err(format!(
+            "{} item `{item_id}` has invalid container.durability_cost_per_op {}; expected finite >= 0",
+            source_path.display(),
+            raw.durability_cost_per_op
+        ));
+    }
+    Ok(ContainerSpec {
+        rows: raw.rows,
+        cols: raw.cols,
+        weight_capacity: raw.weight_capacity,
+        equip_slot: raw.equip_slot,
+        durability_cost_per_op: raw.durability_cost_per_op,
+    })
 }
 
 fn default_max_stack_count_for_category(category: ItemCategory) -> u32 {
@@ -1359,7 +1479,8 @@ fn default_max_stack_count_for_category(category: ItemCategory) -> u32 {
         | ItemCategory::Treasure
         | ItemCategory::RecipeFragment
         | ItemCategory::RecipeHint
-        | ItemCategory::Scroll => 1,
+        | ItemCategory::Scroll
+        | ItemCategory::Container => 1,
     }
 }
 
@@ -1458,6 +1579,26 @@ impl ItemTemplateToml {
             .map(|raw| parse_technique_scroll_spec(raw, source_path, id.as_str()))
             .transpose()?;
 
+        // plan-backpack-equip-v1 P0：container 块与 category=Container 必须一致。
+        let container_spec = match (&category, self.container) {
+            (ItemCategory::Container, Some(raw)) => {
+                Some(parse_container_spec(raw, source_path, id.as_str())?)
+            }
+            (ItemCategory::Container, None) => {
+                return Err(format!(
+                    "{} item `{id}` has category=Container but missing [item.container] block",
+                    source_path.display()
+                ));
+            }
+            (_, Some(_)) => {
+                return Err(format!(
+                    "{} item `{id}` has [item.container] block but category != Container",
+                    source_path.display()
+                ));
+            }
+            (_, None) => None,
+        };
+
         Ok(ItemTemplate {
             id,
             display_name,
@@ -1477,6 +1618,7 @@ impl ItemTemplateToml {
             blueprint_scroll_spec,
             inscription_scroll_spec,
             technique_scroll_spec,
+            container_spec,
         })
     }
 }
@@ -1627,6 +1769,7 @@ fn parse_item_category(
         "tool" => Ok(ItemCategory::Tool),
         "scroll" => Ok(ItemCategory::Scroll),
         "misc" => Ok(ItemCategory::Misc),
+        "container" => Ok(ItemCategory::Container),
         other => Err(format!(
             "{} item `{item_id}` has unknown category `{other}`",
             source_path.display()
@@ -2772,6 +2915,118 @@ pub fn calculate_current_weight(inventory: &PlayerInventory) -> f64 {
     container_weight + equipped_weight + hotbar_weight
 }
 
+/// plan-backpack-equip-v1 P0 — 根据已装备背包重算 `max_weight`。
+///
+/// 公式：`BASE_CARRY_CAPACITY + Σ(所有背包槽已装备的 ContainerSpec.weight_capacity)`。
+/// 暗袋（body_pocket）不提供额外负重，始终使用 BASE_CARRY_CAPACITY 作为基础。
+#[allow(dead_code)]
+pub fn compute_max_weight(inventory: &PlayerInventory, registry: &ItemRegistry) -> f64 {
+    let backpack_bonus: f64 = [
+        EQUIP_SLOT_BACK_PACK,
+        EQUIP_SLOT_WAIST_POUCH,
+        EQUIP_SLOT_CHEST_SATCHEL,
+    ]
+    .iter()
+    .filter_map(|slot| {
+        let item = inventory.equipped.get(*slot)?;
+        let template = registry.get(&item.template_id)?;
+        template
+            .container_spec
+            .as_ref()
+            .map(|spec| spec.weight_capacity)
+    })
+    .sum();
+
+    BASE_CARRY_CAPACITY + backpack_bonus
+}
+
+/// plan-backpack-equip-v1 P0 — 根据装备槽中的背包重建动态容器列表。
+///
+/// 规则：
+/// 1. `body_pocket`（2×3）始终存在；不存在时创建空容器。
+/// 2. 三个背包槽各自检查：有装备 + 有 container_spec → 确保对应容器在 containers 里；
+///    无装备 → 若容器为空则移除（有物品的容器不移除，防止数据丢失）。
+/// 3. 刷新 `max_weight = compute_max_weight(...)`。
+///
+/// 调用时机：`instantiate_inventory_from_loadout` 之后，以及任何背包槽装备变更后。
+#[allow(dead_code)]
+pub fn rebuild_containers_from_equipment(inventory: &mut PlayerInventory, registry: &ItemRegistry) {
+    // 1. 确保 body_pocket 始终存在。
+    if !inventory
+        .containers
+        .iter()
+        .any(|c| c.id == BODY_POCKET_CONTAINER_ID)
+    {
+        inventory.containers.push(ContainerState {
+            id: BODY_POCKET_CONTAINER_ID.to_string(),
+            name: "暗袋".to_string(),
+            rows: BODY_POCKET_ROWS,
+            cols: BODY_POCKET_COLS,
+            items: Vec::new(),
+        });
+    }
+
+    // 2. 遍历三个背包槽。
+    for slot_id in [
+        EQUIP_SLOT_BACK_PACK,
+        EQUIP_SLOT_WAIST_POUCH,
+        EQUIP_SLOT_CHEST_SATCHEL,
+    ] {
+        let equipped_spec: Option<(u8, u8, String)> =
+            inventory.equipped.get(slot_id).and_then(|item| {
+                registry
+                    .get(&item.template_id)
+                    .and_then(|t| t.container_spec.as_ref())
+                    .map(|spec| (spec.rows, spec.cols, slot_id.to_string()))
+            });
+
+        match equipped_spec {
+            Some((rows, cols, container_id)) => {
+                // 有装备且有 container_spec — 确保容器存在（规格如有变更则更新）。
+                if let Some(existing) = inventory
+                    .containers
+                    .iter_mut()
+                    .find(|c| c.id == container_id)
+                {
+                    // 更新行列（背包升级/换品场景）。
+                    existing.rows = rows;
+                    existing.cols = cols;
+                } else {
+                    inventory.containers.push(ContainerState {
+                        id: container_id,
+                        name: slot_display_name(slot_id),
+                        rows,
+                        cols,
+                        items: Vec::new(),
+                    });
+                }
+            }
+            None => {
+                // 无装备 — 容器为空则移除。
+                let container_pos = inventory.containers.iter().position(|c| c.id == slot_id);
+                if let Some(pos) = container_pos {
+                    if inventory.containers[pos].items.is_empty() {
+                        inventory.containers.remove(pos);
+                    }
+                }
+            }
+        }
+    }
+
+    // 3. 刷新 max_weight。
+    inventory.max_weight = compute_max_weight(inventory, registry);
+}
+
+#[allow(dead_code)]
+fn slot_display_name(slot_id: &str) -> String {
+    match slot_id {
+        EQUIP_SLOT_BACK_PACK => "大背包".to_string(),
+        EQUIP_SLOT_WAIST_POUCH => "腰囊".to_string(),
+        EQUIP_SLOT_CHEST_SATCHEL => "挎包".to_string(),
+        other => other.to_string(),
+    }
+}
+
 pub fn dropped_loot_snapshot(registry: &DroppedLootRegistry) -> Vec<DroppedLootEntry> {
     let mut drops = registry.entries.values().cloned().collect::<Vec<_>>();
     // Deterministic ordering avoids client-side insertionOrder churn.
@@ -3099,6 +3354,27 @@ fn validate_move_semantics(
         }
     );
 
+    // plan-backpack-equip-v1 P0 — 从背包装备槽移出时，检查对应容器是否为空。
+    // 此校验在 to 方向之前执行，覆盖卸到任何位置（container / hotbar）的路径。
+    if let InventoryLocationV1::Equip { slot: from_slot } = from {
+        let from_slot_key = equip_slot_key(from_slot);
+        let is_backpack_slot = matches!(
+            from_slot,
+            EquipSlotV1::BackPack | EquipSlotV1::WaistPouch | EquipSlotV1::ChestSatchel
+        );
+        if is_backpack_slot {
+            if let Some(container) = inventory.containers.iter().find(|c| c.id == from_slot_key) {
+                if !container.items.is_empty() {
+                    return Err(format!(
+                        "cannot unequip backpack `{}` from {from_slot_key}: container `{from_slot_key}` is not empty ({} items remaining)",
+                        item.template_id,
+                        container.items.len()
+                    ));
+                }
+            }
+        }
+    }
+
     match to {
         InventoryLocationV1::Hotbar { .. } if template.weapon_spec.is_some() => Err(format!(
             "weapon `{}` cannot move to hotbar; weapons must stay in equipped slots",
@@ -3121,6 +3397,14 @@ fn validate_move_semantics(
         {
             Err(format!(
                 "treasure `{}` cannot move to hotbar; treasures must stay in equipped slots",
+                item.template_id
+            ))
+        }
+        InventoryLocationV1::Hotbar { .. }
+            if matches!(template.category, ItemCategory::Container) =>
+        {
+            Err(format!(
+                "container `{}` cannot move to hotbar; containers must stay in equipped slots",
                 item.template_id
             ))
         }
@@ -3253,6 +3537,29 @@ fn validate_move_semantics(
                         equip_slot_key(&expected_slot)
                     ));
                 }
+                Ok(())
+            }
+            // plan-backpack-equip-v1 P0 — 背包类装备槽校验（装备方向）。
+            EquipSlotV1::BackPack | EquipSlotV1::WaistPouch | EquipSlotV1::ChestSatchel => {
+                let target_slot_key = equip_slot_key(slot);
+
+                // 物品必须有 container_spec。
+                let spec = template.container_spec.as_ref().ok_or_else(|| {
+                    format!(
+                        "item `{}` cannot equip to {target_slot_key}; expected container item with container_spec",
+                        item.template_id,
+                    )
+                })?;
+
+                // equip_slot 必须与当前目标槽匹配。
+                if spec.equip_slot != target_slot_key {
+                    return Err(format!(
+                        "item `{}` has container.equip_slot `{}`; cannot equip to {target_slot_key}",
+                        item.template_id,
+                        spec.equip_slot,
+                    ));
+                }
+
                 Ok(())
             }
         },
@@ -3471,6 +3778,9 @@ fn equip_slot_key(slot: &crate::schema::inventory::EquipSlotV1) -> &'static str 
         EquipSlotV1::TreasureBelt1 => EQUIP_SLOT_TREASURE_BELT_1,
         EquipSlotV1::TreasureBelt2 => EQUIP_SLOT_TREASURE_BELT_2,
         EquipSlotV1::TreasureBelt3 => EQUIP_SLOT_TREASURE_BELT_3,
+        EquipSlotV1::BackPack => EQUIP_SLOT_BACK_PACK,
+        EquipSlotV1::WaistPouch => EQUIP_SLOT_WAIST_POUCH,
+        EquipSlotV1::ChestSatchel => EQUIP_SLOT_CHEST_SATCHEL,
     }
 }
 
@@ -3613,6 +3923,7 @@ fn validate_container_id(id: &str, source_path: &Path) -> Result<(), String> {
         MAIN_PACK_CONTAINER_ID,
         SMALL_POUCH_CONTAINER_ID,
         FRONT_SATCHEL_CONTAINER_ID,
+        BODY_POCKET_CONTAINER_ID,
     ]
     .contains(&id);
 
@@ -3620,11 +3931,12 @@ fn validate_container_id(id: &str, source_path: &Path) -> Result<(), String> {
         Ok(())
     } else {
         Err(format!(
-            "{} has unsupported container id `{id}`; expected one of [{}, {}, {}]",
+            "{} has unsupported container id `{id}`; expected one of [{}, {}, {}, {}]",
             source_path.display(),
             MAIN_PACK_CONTAINER_ID,
             SMALL_POUCH_CONTAINER_ID,
-            FRONT_SATCHEL_CONTAINER_ID
+            FRONT_SATCHEL_CONTAINER_ID,
+            BODY_POCKET_CONTAINER_ID
         ))
     }
 }
@@ -3643,6 +3955,9 @@ fn validate_equip_slot(slot: &str, source_path: &Path) -> Result<(), String> {
         EQUIP_SLOT_TREASURE_BELT_1,
         EQUIP_SLOT_TREASURE_BELT_2,
         EQUIP_SLOT_TREASURE_BELT_3,
+        EQUIP_SLOT_BACK_PACK,
+        EQUIP_SLOT_WAIST_POUCH,
+        EQUIP_SLOT_CHEST_SATCHEL,
     ]
     .contains(&slot);
 
@@ -3650,7 +3965,7 @@ fn validate_equip_slot(slot: &str, source_path: &Path) -> Result<(), String> {
         Ok(())
     } else {
         Err(format!(
-            "{} has unsupported equip slot `{slot}`; expected one of [{}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}]",
+            "{} has unsupported equip slot `{slot}`; expected one of [{}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}]",
             source_path.display(),
             EQUIP_SLOT_HEAD,
             EQUIP_SLOT_CHEST,
@@ -3663,7 +3978,10 @@ fn validate_equip_slot(slot: &str, source_path: &Path) -> Result<(), String> {
             EQUIP_SLOT_TREASURE_BELT_0,
             EQUIP_SLOT_TREASURE_BELT_1,
             EQUIP_SLOT_TREASURE_BELT_2,
-            EQUIP_SLOT_TREASURE_BELT_3
+            EQUIP_SLOT_TREASURE_BELT_3,
+            EQUIP_SLOT_BACK_PACK,
+            EQUIP_SLOT_WAIST_POUCH,
+            EQUIP_SLOT_CHEST_SATCHEL
         ))
     }
 }
@@ -3722,6 +4040,7 @@ mod tests {
                     blueprint_scroll_spec: None,
                     inscription_scroll_spec: None,
                     technique_scroll_spec: None,
+                    container_spec: None,
                 },
             );
         }
@@ -3754,6 +4073,7 @@ mod tests {
             blueprint_scroll_spec: None,
             inscription_scroll_spec: None,
             technique_scroll_spec: None,
+            container_spec: None,
         }
     }
 
@@ -4511,6 +4831,7 @@ cols = 4
                 blueprint_scroll_spec: None,
                 inscription_scroll_spec: None,
                 technique_scroll_spec: None,
+                container_spec: None,
             },
         );
         let registry = ItemRegistry { templates };
@@ -4573,6 +4894,7 @@ cols = 4
                 blueprint_scroll_spec: None,
                 inscription_scroll_spec: None,
                 technique_scroll_spec: None,
+                container_spec: None,
             },
         );
         let registry = ItemRegistry { templates };
@@ -6289,6 +6611,7 @@ cols = 4
                 blueprint_scroll_spec: None,
                 inscription_scroll_spec: None,
                 technique_scroll_spec: None,
+                container_spec: None,
             },
         );
         let mut inv = make_test_inventory_with_one_item();
@@ -6359,6 +6682,7 @@ cols = 4
                 blueprint_scroll_spec: None,
                 inscription_scroll_spec: None,
                 technique_scroll_spec: None,
+                container_spec: None,
             },
         );
         let mut inv = make_test_inventory_with_one_item();
@@ -6628,5 +6952,692 @@ cols = 4
     fn borrow_helper_returns_none_for_missing_instance() {
         let inv = make_empty_inventory();
         assert!(inventory_item_by_instance_borrow(&inv, 99).is_none());
+    }
+
+    // =========== plan-backpack-equip-v1 P0 — ContainerSpec + 背包槽测试 ===========
+
+    fn make_container_template(
+        id: &str,
+        equip_slot: &str,
+        rows: u8,
+        cols: u8,
+        weight_capacity: f64,
+    ) -> ItemTemplate {
+        ItemTemplate {
+            id: id.to_string(),
+            display_name: id.to_string(),
+            category: ItemCategory::Container,
+            max_stack_count: 1,
+            grid_w: 2,
+            grid_h: 3,
+            base_weight: 0.5,
+            rarity: ItemRarity::Common,
+            spirit_quality_initial: 1.0,
+            description: "test backpack".to_string(),
+            effect: None,
+            cast_duration_ms: DEFAULT_CAST_DURATION_MS,
+            cooldown_ms: DEFAULT_COOLDOWN_MS,
+            weapon_spec: None,
+            forge_station_spec: None,
+            blueprint_scroll_spec: None,
+            inscription_scroll_spec: None,
+            technique_scroll_spec: None,
+            container_spec: Some(ContainerSpec {
+                rows,
+                cols,
+                weight_capacity,
+                equip_slot: equip_slot.to_string(),
+                durability_cost_per_op: 0.0,
+            }),
+        }
+    }
+
+    fn make_container_item(instance_id: u64, template_id: &str) -> ItemInstance {
+        ItemInstance {
+            instance_id,
+            template_id: template_id.to_string(),
+            display_name: template_id.to_string(),
+            grid_w: 2,
+            grid_h: 3,
+            weight: 0.5,
+            rarity: ItemRarity::Common,
+            description: String::new(),
+            stack_count: 1,
+            spirit_quality: 1.0,
+            durability: 1.0,
+            freshness: None,
+            mineral_id: None,
+            charges: None,
+            forge_quality: None,
+            forge_color: None,
+            forge_side_effects: Vec::new(),
+            forge_achieved_tier: None,
+            alchemy: None,
+            lingering_owner_qi: None,
+        }
+    }
+
+    // P0.1 — ContainerSpec TOML 解析：正例
+
+    #[test]
+    fn parse_container_spec_valid_back_pack() {
+        let raw = ContainerSpecToml {
+            rows: 7,
+            cols: 5,
+            weight_capacity: 30.0,
+            equip_slot: EQUIP_SLOT_BACK_PACK.to_string(),
+            durability_cost_per_op: 0.001,
+        };
+        let spec =
+            parse_container_spec(raw, Path::new("<test>"), "back_pack_item").expect("should parse");
+        assert_eq!(spec.rows, 7, "rows mismatch");
+        assert_eq!(spec.cols, 5, "cols mismatch");
+        assert!(
+            (spec.weight_capacity - 30.0).abs() < f64::EPSILON,
+            "weight_capacity mismatch"
+        );
+        assert_eq!(spec.equip_slot, EQUIP_SLOT_BACK_PACK, "equip_slot mismatch");
+        assert!((spec.durability_cost_per_op - 0.001).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn parse_container_spec_valid_waist_pouch() {
+        let raw = ContainerSpecToml {
+            rows: 3,
+            cols: 3,
+            weight_capacity: 10.0,
+            equip_slot: EQUIP_SLOT_WAIST_POUCH.to_string(),
+            durability_cost_per_op: 0.0,
+        };
+        let spec = parse_container_spec(raw, Path::new("<test>"), "waist_pouch_item")
+            .expect("should parse");
+        assert_eq!(spec.equip_slot, EQUIP_SLOT_WAIST_POUCH);
+    }
+
+    #[test]
+    fn parse_container_spec_valid_chest_satchel() {
+        let raw = ContainerSpecToml {
+            rows: 4,
+            cols: 3,
+            weight_capacity: 20.0,
+            equip_slot: EQUIP_SLOT_CHEST_SATCHEL.to_string(),
+            durability_cost_per_op: 0.0,
+        };
+        let spec = parse_container_spec(raw, Path::new("<test>"), "chest_satchel_item")
+            .expect("should parse");
+        assert_eq!(spec.equip_slot, EQUIP_SLOT_CHEST_SATCHEL);
+    }
+
+    // P0.1 — ContainerSpec TOML 解析：反例
+
+    #[test]
+    fn parse_container_spec_rejects_rows_zero() {
+        let raw = ContainerSpecToml {
+            rows: 0,
+            cols: 4,
+            weight_capacity: 10.0,
+            equip_slot: EQUIP_SLOT_BACK_PACK.to_string(),
+            durability_cost_per_op: 0.0,
+        };
+        let err = parse_container_spec(raw, Path::new("<test>"), "bad_rows")
+            .expect_err("should fail with rows=0");
+        assert!(err.contains("rows"), "expected rows error, got: {err}");
+    }
+
+    #[test]
+    fn parse_container_spec_rejects_rows_overflow() {
+        let raw = ContainerSpecToml {
+            rows: 17,
+            cols: 4,
+            weight_capacity: 10.0,
+            equip_slot: EQUIP_SLOT_BACK_PACK.to_string(),
+            durability_cost_per_op: 0.0,
+        };
+        let err = parse_container_spec(raw, Path::new("<test>"), "bad_rows_overflow")
+            .expect_err("rows > 16 should fail");
+        assert!(err.contains("rows"), "expected rows error, got: {err}");
+    }
+
+    #[test]
+    fn parse_container_spec_rejects_cols_zero() {
+        let raw = ContainerSpecToml {
+            rows: 4,
+            cols: 0,
+            weight_capacity: 10.0,
+            equip_slot: EQUIP_SLOT_BACK_PACK.to_string(),
+            durability_cost_per_op: 0.0,
+        };
+        let err = parse_container_spec(raw, Path::new("<test>"), "bad_cols")
+            .expect_err("cols=0 should fail");
+        assert!(err.contains("cols"), "expected cols error, got: {err}");
+    }
+
+    #[test]
+    fn parse_container_spec_rejects_negative_weight_capacity() {
+        let raw = ContainerSpecToml {
+            rows: 4,
+            cols: 4,
+            weight_capacity: -1.0,
+            equip_slot: EQUIP_SLOT_BACK_PACK.to_string(),
+            durability_cost_per_op: 0.0,
+        };
+        let err = parse_container_spec(raw, Path::new("<test>"), "bad_weight")
+            .expect_err("negative weight_capacity should fail");
+        assert!(
+            err.contains("weight_capacity"),
+            "expected weight_capacity error, got: {err}"
+        );
+    }
+
+    #[test]
+    fn parse_container_spec_rejects_invalid_equip_slot() {
+        let raw = ContainerSpecToml {
+            rows: 4,
+            cols: 4,
+            weight_capacity: 10.0,
+            equip_slot: "main_hand".to_string(),
+            durability_cost_per_op: 0.0,
+        };
+        let err = parse_container_spec(raw, Path::new("<test>"), "bad_slot")
+            .expect_err("invalid equip_slot should fail");
+        assert!(
+            err.contains("equip_slot"),
+            "expected equip_slot error, got: {err}"
+        );
+    }
+
+    #[test]
+    fn parse_container_spec_rejects_negative_durability_cost() {
+        let raw = ContainerSpecToml {
+            rows: 4,
+            cols: 4,
+            weight_capacity: 10.0,
+            equip_slot: EQUIP_SLOT_BACK_PACK.to_string(),
+            durability_cost_per_op: -0.1,
+        };
+        let err = parse_container_spec(raw, Path::new("<test>"), "bad_dur_cost")
+            .expect_err("negative durability_cost_per_op should fail");
+        assert!(
+            err.contains("durability_cost_per_op"),
+            "expected durability_cost_per_op error, got: {err}"
+        );
+    }
+
+    // P0.2 — 常量存在性
+
+    #[test]
+    fn backpack_equip_slot_constants_are_correct() {
+        assert_eq!(EQUIP_SLOT_BACK_PACK, "back_pack");
+        assert_eq!(EQUIP_SLOT_WAIST_POUCH, "waist_pouch");
+        assert_eq!(EQUIP_SLOT_CHEST_SATCHEL, "chest_satchel");
+        assert_eq!(BODY_POCKET_CONTAINER_ID, "body_pocket");
+        assert_eq!(BODY_POCKET_ROWS, 2);
+        assert_eq!(BODY_POCKET_COLS, 3);
+        assert!((BASE_CARRY_CAPACITY - 15.0).abs() < f64::EPSILON);
+    }
+
+    // P0.3 — rebuild_containers_from_equipment 行为
+
+    #[test]
+    fn rebuild_containers_creates_body_pocket_when_missing() {
+        let registry = ItemRegistry::from_map(HashMap::new());
+        let mut inv = make_empty_inventory();
+        assert!(
+            !inv.containers
+                .iter()
+                .any(|c| c.id == BODY_POCKET_CONTAINER_ID),
+            "should not have body_pocket initially"
+        );
+
+        rebuild_containers_from_equipment(&mut inv, &registry);
+
+        assert!(
+            inv.containers
+                .iter()
+                .any(|c| c.id == BODY_POCKET_CONTAINER_ID),
+            "body_pocket should be created"
+        );
+        let pocket = inv
+            .containers
+            .iter()
+            .find(|c| c.id == BODY_POCKET_CONTAINER_ID)
+            .unwrap();
+        assert_eq!(
+            pocket.rows, BODY_POCKET_ROWS,
+            "body_pocket rows should be {BODY_POCKET_ROWS}"
+        );
+        assert_eq!(
+            pocket.cols, BODY_POCKET_COLS,
+            "body_pocket cols should be {BODY_POCKET_COLS}"
+        );
+    }
+
+    #[test]
+    fn rebuild_containers_preserves_existing_body_pocket() {
+        let registry = ItemRegistry::from_map(HashMap::new());
+        let mut inv = make_empty_inventory();
+        inv.containers.push(ContainerState {
+            id: BODY_POCKET_CONTAINER_ID.to_string(),
+            name: "暗袋".to_string(),
+            rows: BODY_POCKET_ROWS,
+            cols: BODY_POCKET_COLS,
+            items: vec![PlacedItemState {
+                row: 0,
+                col: 0,
+                instance: make_test_item_instance(77, "herb_a"),
+            }],
+        });
+
+        rebuild_containers_from_equipment(&mut inv, &registry);
+
+        let pocket = inv
+            .containers
+            .iter()
+            .find(|c| c.id == BODY_POCKET_CONTAINER_ID)
+            .unwrap();
+        assert_eq!(
+            pocket.items.len(),
+            1,
+            "existing body_pocket item should be preserved"
+        );
+    }
+
+    #[test]
+    fn rebuild_containers_adds_container_for_equipped_backpack() {
+        let backpack_template =
+            make_container_template("large_backpack", EQUIP_SLOT_BACK_PACK, 7, 5, 30.0);
+        let registry = ItemRegistry::from_map(HashMap::from([(
+            "large_backpack".to_string(),
+            backpack_template,
+        )]));
+
+        let mut inv = make_empty_inventory();
+        inv.equipped.insert(
+            EQUIP_SLOT_BACK_PACK.to_string(),
+            make_container_item(200, "large_backpack"),
+        );
+
+        rebuild_containers_from_equipment(&mut inv, &registry);
+
+        assert!(
+            inv.containers.iter().any(|c| c.id == EQUIP_SLOT_BACK_PACK),
+            "back_pack container should be created when equipped"
+        );
+        let bp = inv
+            .containers
+            .iter()
+            .find(|c| c.id == EQUIP_SLOT_BACK_PACK)
+            .unwrap();
+        assert_eq!(bp.rows, 7, "rows should match container_spec");
+        assert_eq!(bp.cols, 5, "cols should match container_spec");
+    }
+
+    #[test]
+    fn rebuild_containers_removes_empty_container_when_unequipped() {
+        let backpack_template =
+            make_container_template("large_backpack", EQUIP_SLOT_BACK_PACK, 7, 5, 30.0);
+        let registry = ItemRegistry::from_map(HashMap::from([(
+            "large_backpack".to_string(),
+            backpack_template,
+        )]));
+
+        let mut inv = make_empty_inventory();
+        // Add the container but no equipped item.
+        inv.containers.push(ContainerState {
+            id: EQUIP_SLOT_BACK_PACK.to_string(),
+            name: "大背包".to_string(),
+            rows: 7,
+            cols: 5,
+            items: Vec::new(),
+        });
+
+        rebuild_containers_from_equipment(&mut inv, &registry);
+
+        assert!(
+            !inv.containers.iter().any(|c| c.id == EQUIP_SLOT_BACK_PACK),
+            "empty back_pack container should be removed when unequipped"
+        );
+    }
+
+    #[test]
+    fn rebuild_containers_keeps_nonempty_container_even_when_unequipped() {
+        let registry = ItemRegistry::from_map(HashMap::new());
+        let mut inv = make_empty_inventory();
+        // Non-empty container without an equipped item.
+        inv.containers.push(ContainerState {
+            id: EQUIP_SLOT_BACK_PACK.to_string(),
+            name: "大背包".to_string(),
+            rows: 7,
+            cols: 5,
+            items: vec![PlacedItemState {
+                row: 0,
+                col: 0,
+                instance: make_test_item_instance(55, "herb"),
+            }],
+        });
+
+        rebuild_containers_from_equipment(&mut inv, &registry);
+
+        assert!(
+            inv.containers.iter().any(|c| c.id == EQUIP_SLOT_BACK_PACK),
+            "non-empty container should NOT be removed even if unequipped (data safety)"
+        );
+    }
+
+    // P0.4 — compute_max_weight 计算
+
+    #[test]
+    fn compute_max_weight_no_backpacks_returns_base() {
+        let registry = ItemRegistry::from_map(HashMap::new());
+        let inv = make_empty_inventory();
+        let w = compute_max_weight(&inv, &registry);
+        assert!(
+            (w - BASE_CARRY_CAPACITY).abs() < f64::EPSILON,
+            "expected BASE_CARRY_CAPACITY={BASE_CARRY_CAPACITY}, got {w}"
+        );
+    }
+
+    #[test]
+    fn compute_max_weight_adds_equipped_backpack_capacity() {
+        let backpack_template =
+            make_container_template("large_backpack", EQUIP_SLOT_BACK_PACK, 7, 5, 30.0);
+        let registry = ItemRegistry::from_map(HashMap::from([(
+            "large_backpack".to_string(),
+            backpack_template,
+        )]));
+
+        let mut inv = make_empty_inventory();
+        inv.equipped.insert(
+            EQUIP_SLOT_BACK_PACK.to_string(),
+            make_container_item(300, "large_backpack"),
+        );
+
+        let w = compute_max_weight(&inv, &registry);
+        assert!(
+            (w - (BASE_CARRY_CAPACITY + 30.0)).abs() < f64::EPSILON,
+            "expected BASE + 30.0 = {}, got {w}",
+            BASE_CARRY_CAPACITY + 30.0
+        );
+    }
+
+    #[test]
+    fn compute_max_weight_sums_all_three_backpack_slots() {
+        let bp = make_container_template("large_backpack", EQUIP_SLOT_BACK_PACK, 7, 5, 30.0);
+        let wp = make_container_template("waist_pouch", EQUIP_SLOT_WAIST_POUCH, 3, 3, 10.0);
+        let cs = make_container_template("chest_satchel", EQUIP_SLOT_CHEST_SATCHEL, 3, 4, 20.0);
+        let registry = ItemRegistry::from_map(HashMap::from([
+            ("large_backpack".to_string(), bp),
+            ("waist_pouch".to_string(), wp),
+            ("chest_satchel".to_string(), cs),
+        ]));
+
+        let mut inv = make_empty_inventory();
+        inv.equipped.insert(
+            EQUIP_SLOT_BACK_PACK.to_string(),
+            make_container_item(1, "large_backpack"),
+        );
+        inv.equipped.insert(
+            EQUIP_SLOT_WAIST_POUCH.to_string(),
+            make_container_item(2, "waist_pouch"),
+        );
+        inv.equipped.insert(
+            EQUIP_SLOT_CHEST_SATCHEL.to_string(),
+            make_container_item(3, "chest_satchel"),
+        );
+
+        let w = compute_max_weight(&inv, &registry);
+        let expected = BASE_CARRY_CAPACITY + 30.0 + 10.0 + 20.0;
+        assert!(
+            (w - expected).abs() < f64::EPSILON,
+            "expected {expected}, got {w}"
+        );
+    }
+
+    #[test]
+    fn rebuild_containers_updates_max_weight() {
+        let backpack_template =
+            make_container_template("large_backpack", EQUIP_SLOT_BACK_PACK, 7, 5, 30.0);
+        let registry = ItemRegistry::from_map(HashMap::from([(
+            "large_backpack".to_string(),
+            backpack_template,
+        )]));
+
+        let mut inv = make_empty_inventory();
+        inv.equipped.insert(
+            EQUIP_SLOT_BACK_PACK.to_string(),
+            make_container_item(400, "large_backpack"),
+        );
+        inv.max_weight = 100.0; // stale value
+
+        rebuild_containers_from_equipment(&mut inv, &registry);
+
+        assert!(
+            (inv.max_weight - (BASE_CARRY_CAPACITY + 30.0)).abs() < f64::EPSILON,
+            "max_weight should be updated by rebuild, got {}",
+            inv.max_weight
+        );
+    }
+
+    // P0.5 — validate_move_semantics 背包槽校验
+
+    fn make_backpack_registry_and_inventory() -> (ItemRegistry, PlayerInventory) {
+        let bp_template =
+            make_container_template("large_backpack", EQUIP_SLOT_BACK_PACK, 7, 5, 30.0);
+        let wp_template = make_container_template("waist_pack", EQUIP_SLOT_WAIST_POUCH, 3, 3, 10.0);
+        let cs_template =
+            make_container_template("chest_bag", EQUIP_SLOT_CHEST_SATCHEL, 3, 4, 20.0);
+        let registry = ItemRegistry::from_map(HashMap::from([
+            ("large_backpack".to_string(), bp_template),
+            ("waist_pack".to_string(), wp_template),
+            ("chest_bag".to_string(), cs_template),
+        ]));
+        let inv = PlayerInventory {
+            revision: InventoryRevision(0),
+            containers: vec![ContainerState {
+                id: MAIN_PACK_CONTAINER_ID.to_string(),
+                name: "主背包".to_string(),
+                rows: 5,
+                cols: 7,
+                items: Vec::new(),
+            }],
+            equipped: HashMap::new(),
+            hotbar: Default::default(),
+            bone_coins: 0,
+            max_weight: 100.0,
+        };
+        (registry, inv)
+    }
+
+    #[test]
+    fn validate_move_semantics_accepts_back_pack_equip_to_back_pack_slot() {
+        use crate::schema::inventory::{EquipSlotV1, InventoryLocationV1};
+        let (registry, inv) = make_backpack_registry_and_inventory();
+        let item = make_container_item(501, "large_backpack");
+        let from = InventoryLocationV1::Container {
+            container_id: crate::schema::inventory::ContainerIdV1::MainPack,
+            row: 0,
+            col: 0,
+        };
+        let to = InventoryLocationV1::Equip {
+            slot: EquipSlotV1::BackPack,
+        };
+        assert!(
+            validate_move_semantics(&registry, &inv, &item, &from, &to).is_ok(),
+            "equipping large_backpack to back_pack slot should succeed"
+        );
+    }
+
+    #[test]
+    fn validate_move_semantics_rejects_non_container_item_to_back_pack_slot() {
+        use crate::schema::inventory::{EquipSlotV1, InventoryLocationV1};
+        let (registry, inv) = make_backpack_registry_and_inventory();
+        // Use a misc item (no container_spec).
+        let misc_template = test_template("iron_ore", ItemCategory::Misc, 1, 1, 16);
+        let registry_with_misc = ItemRegistry::from_map({
+            let mut m = registry.templates.clone();
+            m.insert("iron_ore".to_string(), misc_template);
+            m
+        });
+        let item = make_test_item_instance(502, "iron_ore");
+        let from = InventoryLocationV1::Container {
+            container_id: crate::schema::inventory::ContainerIdV1::MainPack,
+            row: 0,
+            col: 0,
+        };
+        let to = InventoryLocationV1::Equip {
+            slot: EquipSlotV1::BackPack,
+        };
+        let err = validate_move_semantics(&registry_with_misc, &inv, &item, &from, &to)
+            .expect_err("non-container item should not equip to back_pack slot");
+        assert!(
+            err.contains("container_spec"),
+            "expected container_spec error, got: {err}"
+        );
+    }
+
+    #[test]
+    fn validate_move_semantics_rejects_wrong_slot_backpack() {
+        use crate::schema::inventory::{EquipSlotV1, InventoryLocationV1};
+        let (registry, inv) = make_backpack_registry_and_inventory();
+        // large_backpack has equip_slot=back_pack; try to equip to waist_pouch slot.
+        let item = make_container_item(503, "large_backpack");
+        let from = InventoryLocationV1::Container {
+            container_id: crate::schema::inventory::ContainerIdV1::MainPack,
+            row: 0,
+            col: 0,
+        };
+        let to = InventoryLocationV1::Equip {
+            slot: EquipSlotV1::WaistPouch,
+        };
+        let err = validate_move_semantics(&registry, &inv, &item, &from, &to)
+            .expect_err("large_backpack should not equip to waist_pouch slot");
+        assert!(
+            err.contains("back_pack"),
+            "expected equip_slot mismatch error, got: {err}"
+        );
+    }
+
+    #[test]
+    fn validate_move_semantics_rejects_container_to_hotbar() {
+        use crate::schema::inventory::InventoryLocationV1;
+        let (registry, inv) = make_backpack_registry_and_inventory();
+        let item = make_container_item(504, "large_backpack");
+        let from = InventoryLocationV1::Container {
+            container_id: crate::schema::inventory::ContainerIdV1::MainPack,
+            row: 0,
+            col: 0,
+        };
+        let to = InventoryLocationV1::Hotbar { index: 0 };
+        let err = validate_move_semantics(&registry, &inv, &item, &from, &to)
+            .expect_err("container item should not move to hotbar");
+        assert!(err.contains("hotbar"), "expected hotbar error, got: {err}");
+    }
+
+    #[test]
+    fn validate_move_semantics_rejects_unequip_backpack_when_container_nonempty() {
+        use crate::schema::inventory::{EquipSlotV1, InventoryLocationV1};
+        let (registry, mut inv) = make_backpack_registry_and_inventory();
+        // Equip the backpack.
+        inv.equipped.insert(
+            EQUIP_SLOT_BACK_PACK.to_string(),
+            make_container_item(505, "large_backpack"),
+        );
+        // Add a non-empty back_pack container.
+        inv.containers.push(ContainerState {
+            id: EQUIP_SLOT_BACK_PACK.to_string(),
+            name: "大背包".to_string(),
+            rows: 7,
+            cols: 5,
+            items: vec![PlacedItemState {
+                row: 0,
+                col: 0,
+                instance: make_test_item_instance(99, "herb"),
+            }],
+        });
+
+        let item = make_container_item(505, "large_backpack");
+        let from = InventoryLocationV1::Equip {
+            slot: EquipSlotV1::BackPack,
+        };
+        let to = InventoryLocationV1::Container {
+            container_id: crate::schema::inventory::ContainerIdV1::MainPack,
+            row: 0,
+            col: 0,
+        };
+        let err = validate_move_semantics(&registry, &inv, &item, &from, &to)
+            .expect_err("cannot unequip backpack with items inside");
+        assert!(
+            err.contains("not empty"),
+            "expected 'not empty' error, got: {err}"
+        );
+    }
+
+    #[test]
+    fn validate_move_semantics_allows_unequip_backpack_when_container_empty() {
+        use crate::schema::inventory::{EquipSlotV1, InventoryLocationV1};
+        let (registry, mut inv) = make_backpack_registry_and_inventory();
+        inv.equipped.insert(
+            EQUIP_SLOT_BACK_PACK.to_string(),
+            make_container_item(506, "large_backpack"),
+        );
+        // Empty back_pack container.
+        inv.containers.push(ContainerState {
+            id: EQUIP_SLOT_BACK_PACK.to_string(),
+            name: "大背包".to_string(),
+            rows: 7,
+            cols: 5,
+            items: Vec::new(),
+        });
+
+        let item = make_container_item(506, "large_backpack");
+        let from = InventoryLocationV1::Equip {
+            slot: EquipSlotV1::BackPack,
+        };
+        let to = InventoryLocationV1::Container {
+            container_id: crate::schema::inventory::ContainerIdV1::MainPack,
+            row: 0,
+            col: 0,
+        };
+        assert!(
+            validate_move_semantics(&registry, &inv, &item, &from, &to).is_ok(),
+            "unequipping backpack with empty container should succeed"
+        );
+    }
+
+    // EquipSlotV1 serde pin 测试 — 新增三个 variant 必须正反 roundtrip
+
+    #[test]
+    fn equip_slot_v1_backpack_variants_serde_roundtrip() {
+        use crate::schema::inventory::EquipSlotV1;
+        let cases = [
+            (EquipSlotV1::BackPack, "\"back_pack\""),
+            (EquipSlotV1::WaistPouch, "\"waist_pouch\""),
+            (EquipSlotV1::ChestSatchel, "\"chest_satchel\""),
+        ];
+        for (variant, expected_json) in &cases {
+            let serialized =
+                serde_json::to_string(variant).expect("EquipSlotV1 variant should serialize");
+            assert_eq!(
+                serialized, *expected_json,
+                "serialize mismatch for {variant:?}"
+            );
+            let deserialized: EquipSlotV1 =
+                serde_json::from_str(expected_json).expect("EquipSlotV1 should deserialize");
+            assert_eq!(
+                deserialized, *variant,
+                "deserialize mismatch for {variant:?}"
+            );
+        }
+    }
+
+    // ItemCategory::Container serde pin
+
+    #[test]
+    fn item_category_container_serde_roundtrip() {
+        let cat = ItemCategory::Container;
+        let json = serde_json::to_string(&cat).expect("serialize Container category");
+        let back: ItemCategory =
+            serde_json::from_str(&json).expect("deserialize Container category");
+        assert_eq!(back, cat);
     }
 }

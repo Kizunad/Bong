@@ -33,6 +33,12 @@ pub enum EquipSlotV1 {
     TreasureBelt2,
     #[serde(rename = "treasure_belt_3")]
     TreasureBelt3,
+    /// plan-backpack-equip-v1 P0 — 背部大背包槽。
+    BackPack,
+    /// plan-backpack-equip-v1 P0 — 腰间小囊槽。
+    WaistPouch,
+    /// plan-backpack-equip-v1 P0 — 胸前挎包槽。
+    ChestSatchel,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
@@ -158,6 +164,15 @@ pub struct EquippedInventorySnapshotV1 {
     pub treasure_belt_1: Option<InventoryItemViewV1>,
     pub treasure_belt_2: Option<InventoryItemViewV1>,
     pub treasure_belt_3: Option<InventoryItemViewV1>,
+    /// plan-backpack-equip-v1 P0 — 背部大背包。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub back_pack: Option<InventoryItemViewV1>,
+    /// plan-backpack-equip-v1 P0 — 腰间小囊。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub waist_pouch: Option<InventoryItemViewV1>,
+    /// plan-backpack-equip-v1 P0 — 胸前挎包。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub chest_satchel: Option<InventoryItemViewV1>,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
