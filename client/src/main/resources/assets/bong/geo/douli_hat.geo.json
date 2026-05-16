@@ -1,0 +1,116 @@
+{
+  "format_version": "1.12.0",
+  "minecraft:geometry": [
+    {
+      "description": {
+        "identifier": "geometry.bong.douli_hat",
+        "texture_width": 64,
+        "texture_height": 64,
+        "visible_bounds_width": 2.0,
+        "visible_bounds_height": 1.0,
+        "visible_bounds_offset": [0, 2.0, 0]
+      },
+      "bones": [
+        {
+          "name": "Hat",
+          "pivot": [0, 28, 0],
+          "cubes": []
+        },
+        {
+          "name": "Crown",
+          "parent": "Hat",
+          "pivot": [0, 33, 0],
+          "cubes": [
+            {
+              "origin": [-1.5, 35, -1.5],
+              "size": [3, 2, 3],
+              "uv": [28, 0]
+            },
+            {
+              "origin": [-3, 34, -3],
+              "size": [6, 1, 6],
+              "uv": [0, 0]
+            },
+            {
+              "origin": [-5.5, 33, -5.5],
+              "size": [11, 1, 11],
+              "uv": [6, 0]
+            },
+            {
+              "origin": [-8, 32, -8],
+              "size": [16, 1, 16],
+              "uv": [17, 0]
+            },
+            {
+              "origin": [-10.5, 31, -10.5],
+              "size": [21, 1, 21],
+              "uv": [33, 0]
+            }
+          ]
+        },
+        {
+          "name": "Brim_Group",
+          "parent": "Hat",
+          "pivot": [0, 30, 0],
+          "cubes": [
+            {
+              "origin": [-13, 30, -13],
+              "size": [26, 1, 26],
+              "uv": [0, 38]
+            },
+            {
+              "origin": [-14, 29.5, -14],
+              "size": [28, 0.5, 28],
+              "inflate": 0.01,
+              "uv": [0, 20]
+            }
+          ]
+        },
+        {
+          "name": "Inner_Band",
+          "parent": "Hat",
+          "pivot": [0, 30, 0],
+          "cubes": [
+            {
+              "origin": [-4.5, 28, -4.5],
+              "size": [9, 4, 0.5],
+              "uv": [52, 0]
+            },
+            {
+              "origin": [-4.5, 28, 4],
+              "size": [9, 4, 0.5],
+              "uv": [52, 0]
+            },
+            {
+              "origin": [-4.5, 28, -4],
+              "size": [0.5, 4, 8],
+              "uv": [52, 9]
+            },
+            {
+              "origin": [4, 28, -4],
+              "size": [0.5, 4, 8],
+              "uv": [52, 9]
+            }
+          ]
+        },
+        {
+          "name": "Chin_Straps",
+          "parent": "Hat",
+          "pivot": [0, 25, 0],
+          "cubes": [
+            {
+              "origin": [-4, 22, -0.5],
+              "size": [0.5, 6, 1],
+              "uv": [60, 0]
+            },
+            {
+              "origin": [3.5, 22, -0.5],
+              "size": [0.5, 6, 1],
+              "uv": [61, 0]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

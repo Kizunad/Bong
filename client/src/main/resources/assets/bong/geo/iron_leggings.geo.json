@@ -1,0 +1,229 @@
+{
+  "format_version": "1.12.0",
+  "minecraft:geometry": [
+    {
+      "description": {
+        "identifier": "geometry.bong.iron_leggings",
+        "texture_width": 64,
+        "texture_height": 64,
+        "visible_bounds_width": 0.8,
+        "visible_bounds_height": 1.0,
+        "visible_bounds_offset": [
+          0,
+          0.5,
+          0
+        ]
+      },
+      "bones": [
+        {
+          "name": "IronLeggings",
+          "pivot": [
+            0,
+            8,
+            0
+          ],
+          "cubes": [
+            {
+              "origin": [
+                -4.5,
+                11,
+                -2.5
+              ],
+              "size": [
+                9,
+                2,
+                5
+              ],
+              "uv": [
+                48,
+                0
+              ]
+            }
+          ]
+        },
+        {
+          "name": "Leg_Left",
+          "parent": "IronLeggings",
+          "pivot": [
+            2,
+            6,
+            0
+          ],
+          "cubes": [
+            {
+              "origin": [
+                0.2,
+                4,
+                -2.5
+              ],
+              "size": [
+                4.1,
+                7,
+                0.5
+              ],
+              "uv": [
+                0,
+                0
+              ]
+            },
+            {
+              "origin": [
+                0.2,
+                4,
+                2
+              ],
+              "size": [
+                4.1,
+                7,
+                0.5
+              ],
+              "uv": [
+                0,
+                8
+              ]
+            },
+            {
+              "origin": [
+                3.8,
+                4,
+                -2.3
+              ],
+              "size": [
+                0.5,
+                7,
+                4.6
+              ],
+              "uv": [
+                5,
+                0
+              ]
+            },
+            {
+              "origin": [
+                0.5,
+                3,
+                -2.8
+              ],
+              "size": [
+                3,
+                2.5,
+                1
+              ],
+              "uv": [
+                0,
+                16
+              ]
+            },
+            {
+              "origin": [
+                0,
+                4,
+                -2
+              ],
+              "size": [
+                0.5,
+                7,
+                4
+              ],
+              "uv": [
+                48,
+                32
+              ]
+            }
+          ]
+        },
+        {
+          "name": "Leg_Right",
+          "parent": "IronLeggings",
+          "pivot": [
+            -2,
+            6,
+            0
+          ],
+          "cubes": [
+            {
+              "origin": [
+                -4.3,
+                4,
+                -2.5
+              ],
+              "size": [
+                4.1,
+                7,
+                0.5
+              ],
+              "uv": [
+                0,
+                0
+              ]
+            },
+            {
+              "origin": [
+                -4.3,
+                4,
+                2
+              ],
+              "size": [
+                4.1,
+                7,
+                0.5
+              ],
+              "uv": [
+                0,
+                8
+              ]
+            },
+            {
+              "origin": [
+                -4.3,
+                4,
+                -2.3
+              ],
+              "size": [
+                0.5,
+                7,
+                4.6
+              ],
+              "uv": [
+                5,
+                0
+              ]
+            },
+            {
+              "origin": [
+                -3.5,
+                3,
+                -2.8
+              ],
+              "size": [
+                3,
+                2.5,
+                1
+              ],
+              "uv": [
+                0,
+                16
+              ]
+            },
+            {
+              "origin": [
+                -0.5,
+                4,
+                -2
+              ],
+              "size": [
+                0.5,
+                7,
+                4
+              ],
+              "uv": [
+                48,
+                32
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

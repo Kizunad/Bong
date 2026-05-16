@@ -111,6 +111,61 @@ spirit_quality_initial = 0.45
 description = "残卷里再夹残卷的怪图样，可解锁残卷缠甲手搓配方。"
 
 [[item]]
+id = "scroll_armor_straw"
+name = "草编甲配方残卷"
+category = "misc"
+grid_w = 1
+grid_h = 2
+base_weight = 0.03
+rarity = "common"
+spirit_quality_initial = 0.0
+description = "皱巴巴的草纸，画着编草甲的手法。可解锁草编甲手搓配方。"
+
+[[item]]
+id = "armor_straw_helmet"
+name = "斗笠"
+category = "armor"
+grid_w = 2
+grid_h = 1
+base_weight = 0.15
+rarity = "common"
+spirit_quality_initial = 0.0
+description = "草根编成的宽檐斗笠。遮阳挡雨，挡刀就别指望了。凡物·草编；防御 +1.5，耐久 40。"
+
+[[item]]
+id = "armor_straw_chestplate"
+name = "蓑衣"
+category = "armor"
+grid_w = 2
+grid_h = 2
+base_weight = 0.3
+rarity = "common"
+spirit_quality_initial = 0.0
+description = "层层叠缝的草编披风，下雨天比什么都管用，打架时聊胜于无。凡物·草编；防御 +1.5，耐久 40。"
+
+[[item]]
+id = "armor_straw_leggings"
+name = "草编腿套"
+category = "armor"
+grid_w = 2
+grid_h = 2
+base_weight = 0.2
+rarity = "common"
+spirit_quality_initial = 0.0
+description = "草绳缠绕的护腿。防虫咬比防刀剑强。凡物·草编；防御 +1.5，耐久 40。"
+
+[[item]]
+id = "armor_straw_boots"
+name = "草鞋"
+category = "armor"
+grid_w = 2
+grid_h = 1
+base_weight = 0.1
+rarity = "common"
+spirit_quality_initial = 0.0
+description = "草根搓绳编的鞋。走山路凑合，踩石头硌脚。凡物·草编；防御 +1.5，耐久 40。"
+
+[[item]]
 id = "armor_bone_helmet"
 name = "骨甲盔"
 category = "armor"
@@ -203,44 +258,44 @@ id = "armor_iron_helmet"
 name = "铁甲盔"
 category = "armor"
 grid_w = 2
-grid_h = 1
-base_weight = 1.0
+grid_h = 2
+base_weight = 2.2
 rarity = "common"
 spirit_quality_initial = 0.1
-description = "深灰铁片压出的头盔。凡物·铁制；防御 +8，耐久 200。"
+description = "厚铁片锻压的全罩盔，带鼻梁护片和后颈甲。沉到脖子酸，但挨一刀你就知道值了。凡物·铁制；防御 +12，耐久 280。"
 
 [[item]]
 id = "armor_iron_chestplate"
 name = "铁甲胸甲"
 category = "armor"
-grid_w = 2
-grid_h = 2
-base_weight = 2.8
+grid_w = 3
+grid_h = 3
+base_weight = 6.5
 rarity = "common"
 spirit_quality_initial = 0.1
-description = "沉重铁片胸甲。凡物·铁制；防御 +8，耐久 200。"
+description = "前后两块锻铁板加铆钉肩甲，锁子甲护臂。穿上去像背了口锅，跑两步就喘。凡物·铁制；防御 +12，耐久 280。"
 
 [[item]]
 id = "armor_iron_leggings"
 name = "铁甲腿甲"
 category = "armor"
 grid_w = 2
-grid_h = 2
-base_weight = 2.0
+grid_h = 3
+base_weight = 4.0
 rarity = "common"
 spirit_quality_initial = 0.1
-description = "铁片护腿，结实但拖身。凡物·铁制；防御 +8，耐久 200。"
+description = "大腿三面铁片包裹，膝盖加固。蹲都蹲不利索，但砍腿的刀全弹开。凡物·铁制；防御 +12，耐久 280。"
 
 [[item]]
 id = "armor_iron_boots"
 name = "铁甲靴"
 category = "armor"
 grid_w = 2
-grid_h = 1
-base_weight = 0.95
+grid_h = 2
+base_weight = 2.5
 rarity = "common"
 spirit_quality_initial = 0.1
-description = "铁头短靴。凡物·铁制；防御 +8，耐久 200。"
+description = "铁片胫甲加铁包头短靴。踩蛇不怕，赶路要命。凡物·铁制；防御 +12，耐久 280。"
 
 [[item]]
 id = "armor_copper_helmet"

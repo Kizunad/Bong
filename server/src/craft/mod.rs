@@ -1112,11 +1112,16 @@ mod tests {
     }
 
     #[test]
-    fn register_mundane_armor_recipes_adds_24_armor_craft_entries() {
+    fn register_mundane_armor_recipes_adds_28_armor_craft_entries() {
         let mut registry = CraftRegistry::new();
         crate::armor::mundane::register_mundane_armor_recipes(&mut registry).unwrap();
 
-        assert_eq!(registry.by_category(CraftCategory::ArmorCraft).count(), 24);
+        assert_eq!(
+            registry.by_category(CraftCategory::ArmorCraft).count(),
+            28,
+            "expected 28 mundane armor recipes (7 materials × 4 slots), got {}",
+            registry.by_category(CraftCategory::ArmorCraft).count()
+        );
         assert!(registry
             .get(&RecipeId::new("armor.mundane.iron.chestplate"))
             .is_some_and(|recipe| recipe.output == ("armor_iron_chestplate".to_string(), 1)));
