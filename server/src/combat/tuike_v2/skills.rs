@@ -560,7 +560,7 @@ fn record_practice(
     );
 }
 
-fn emit_vfx(
+pub(super) fn emit_vfx(
     world: &mut bevy_ecs::world::World,
     origin: DVec3,
     event_id: &str,
@@ -585,7 +585,7 @@ fn emit_vfx(
     }
 }
 
-fn emit_audio(world: &mut bevy_ecs::world::World, recipe: &str, origin: DVec3) {
+pub(super) fn emit_audio(world: &mut bevy_ecs::world::World, recipe: &str, origin: DVec3) {
     if let Some(mut events) = world.get_resource_mut::<Events<PlaySoundRecipeRequest>>() {
         events.send(PlaySoundRecipeRequest {
             recipe_id: recipe.to_string(),
@@ -602,7 +602,7 @@ fn emit_audio(world: &mut bevy_ecs::world::World, recipe: &str, origin: DVec3) {
     }
 }
 
-fn emit_anim(world: &mut bevy_ecs::world::World, entity: Entity, anim_id: &str) {
+pub(super) fn emit_anim(world: &mut bevy_ecs::world::World, entity: Entity, anim_id: &str) {
     let origin = world
         .get::<Position>(entity)
         .map(|p| p.get())

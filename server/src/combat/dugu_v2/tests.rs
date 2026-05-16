@@ -372,3 +372,135 @@ fn penetrate_spec_void_reaches_zone_scale() {
     assert!(penetrate_spec(Realm::Void).radius_blocks.is_infinite());
     assert_eq!(penetrate_spec(Realm::Awaken).multiplier, 1.5);
 }
+
+// --- Visual ID pin tests & emit helpers (CodeRabbit review item: dugu_v2) ---
+
+#[test]
+fn dugu_visual_ids_pin_eclipse() {
+    use super::skills::visual_for;
+    let v = visual_for(DuguSkillId::Eclipse);
+    assert_eq!(v.animation_id, "bong:dugu_needle_throw");
+    assert_eq!(v.particle_id, "bong:dugu_taint_pulse");
+    assert_eq!(v.sound_recipe_id, "dugu_needle_hiss");
+    assert_eq!(v.hud_hint, "蚀针");
+    assert_eq!(
+        v.icon_texture,
+        "bong:textures/gui/skill/dugu_eclipse.png"
+    );
+}
+
+#[test]
+fn dugu_visual_ids_pin_self_cure() {
+    use super::skills::visual_for;
+    let v = visual_for(DuguSkillId::SelfCure);
+    assert_eq!(v.animation_id, "bong:dugu_self_cure_pose");
+    assert_eq!(v.particle_id, "bong:dugu_dark_green_mist");
+    assert_eq!(v.sound_recipe_id, "dugu_self_cure_drink");
+    assert_eq!(v.hud_hint, "自蕴");
+    assert_eq!(
+        v.icon_texture,
+        "bong:textures/gui/skill/dugu_self_cure.png"
+    );
+}
+
+#[test]
+fn dugu_visual_ids_pin_penetrate() {
+    use super::skills::visual_for;
+    let v = visual_for(DuguSkillId::Penetrate);
+    assert_eq!(v.animation_id, "bong:dugu_needle_throw");
+    assert_eq!(v.particle_id, "bong:dugu_taint_pulse");
+    assert_eq!(v.sound_recipe_id, "dugu_needle_hiss");
+    assert_eq!(v.hud_hint, "侵染");
+    assert_eq!(
+        v.icon_texture,
+        "bong:textures/gui/skill/dugu_penetrate.png"
+    );
+}
+
+#[test]
+fn dugu_visual_ids_pin_shroud() {
+    use super::skills::visual_for;
+    let v = visual_for(DuguSkillId::Shroud);
+    assert_eq!(v.animation_id, "bong:dugu_shroud_activate");
+    assert_eq!(v.particle_id, "bong:dugu_dark_green_mist");
+    assert_eq!(v.sound_recipe_id, "dugu_self_cure_drink");
+    assert_eq!(v.hud_hint, "神识遮蔽");
+    assert_eq!(
+        v.icon_texture,
+        "bong:textures/gui/skill/dugu_shroud.png"
+    );
+}
+
+#[test]
+fn dugu_visual_ids_pin_reverse() {
+    use super::skills::visual_for;
+    let v = visual_for(DuguSkillId::Reverse);
+    assert_eq!(v.animation_id, "bong:dugu_pointing_curse");
+    assert_eq!(v.particle_id, "bong:dugu_reverse_burst");
+    assert_eq!(v.sound_recipe_id, "dugu_curse_cackle");
+    assert_eq!(v.hud_hint, "倒蚀");
+    assert_eq!(
+        v.icon_texture,
+        "bong:textures/gui/skill/dugu_reverse.png"
+    );
+}
+
+#[test]
+fn dugu_visual_ids_exhaustive_all_five_skills_have_unique_hud_hint() {
+    use super::skills::visual_for;
+    let mut hints = std::collections::HashSet::new();
+    for skill in DuguSkillId::ALL {
+        let v = visual_for(skill);
+        assert!(
+            hints.insert(v.hud_hint),
+            "duplicate hud_hint '{}' for {skill:?} -- each skill must have a unique HUD hint",
+            v.hud_hint
+        );
+    }
+}
+
+#[test]
+fn dugu_emit_helpers_noop_without_event_resources() {
+    use super::skills::{emit_anim, emit_audio, emit_vfx};
+    use valence::prelude::{App, DVec3};
+
+    let mut app = App::new();
+    // Intentionally do NOT register VfxEventRequest or PlaySoundRecipeRequest events.
+    let entity = app.world_mut().spawn_empty().id();
+    // These should not panic when the event resources are absent.
+    emit_vfx(
+        app.world_mut(),
+        DVec3::ZERO,
+        "bong:test",
+        "#FF0000",
+        0.5,
+        4,
+        20,
+    );
+    emit_audio(app.world_mut(), "test_recipe", DVec3::ZERO);
+    emit_anim(app.world_mut(), entity, "bong:test_anim");
+}
+
+#[test]
+fn dugu_emit_anim_skips_without_unique_id() {
+    use super::skills::emit_anim;
+    use crate::network::vfx_event_emit::VfxEventRequest;
+    use valence::prelude::{App, Events};
+
+    let mut app = App::new();
+    app.add_event::<VfxEventRequest>();
+    // Spawn entity with Position but without UniqueId
+    let entity = app
+        .world_mut()
+        .spawn(Position::new([0.0, 64.0, 0.0]))
+        .id();
+
+    emit_anim(app.world_mut(), entity, "bong:dugu_needle_throw");
+
+    // Should emit zero VfxEventRequest because UniqueId is missing
+    assert_eq!(
+        app.world().resource::<Events<VfxEventRequest>>().len(),
+        0,
+        "emit_anim should skip PlayAnim when entity has no UniqueId"
+    );
+}

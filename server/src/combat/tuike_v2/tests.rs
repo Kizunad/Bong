@@ -1097,3 +1097,210 @@ fn cast_transfer_absorbs_permanent_marker_on_void_ancient() {
         0.3
     );
 }
+
+// --- Visual ID pin tests & emit helpers (CodeRabbit review item: tuike_v2) ---
+
+#[test]
+fn tuike_visual_don_pins_all_asset_ids() {
+    let v = TuikeSkillVisual::for_skill(TuikeSkillId::Don, false);
+    assert_eq!(v.animation_id, "bong:tuike_don_skin");
+    assert_eq!(v.particle_id, "bong:false_skin_don_dust");
+    assert_eq!(v.sound_recipe_id, "don_skin_low_thud");
+    assert_eq!(
+        v.icon_texture,
+        "bong-client:textures/gui/skill/tuike_don.png"
+    );
+}
+
+#[test]
+fn tuike_visual_shed_pins_all_asset_ids() {
+    let v = TuikeSkillVisual::for_skill(TuikeSkillId::Shed, false);
+    assert_eq!(v.animation_id, "bong:tuike_shed_burst");
+    assert_eq!(v.particle_id, "bong:false_skin_shed_burst");
+    assert_eq!(v.sound_recipe_id, "shed_skin_burst");
+    assert_eq!(
+        v.icon_texture,
+        "bong-client:textures/gui/skill/tuike_shed.png"
+    );
+}
+
+#[test]
+fn tuike_visual_shed_ancient_swaps_particle_to_glow() {
+    let normal = TuikeSkillVisual::for_skill(TuikeSkillId::Shed, false);
+    let ancient = TuikeSkillVisual::for_skill(TuikeSkillId::Shed, true);
+    assert_eq!(ancient.particle_id, "bong:ancient_skin_glow");
+    assert_ne!(normal.particle_id, ancient.particle_id);
+    // The rest should be unchanged
+    assert_eq!(normal.animation_id, ancient.animation_id);
+    assert_eq!(normal.sound_recipe_id, ancient.sound_recipe_id);
+}
+
+#[test]
+fn tuike_visual_transfer_pins_all_asset_ids() {
+    let v = TuikeSkillVisual::for_skill(TuikeSkillId::TransferTaint, false);
+    assert_eq!(v.animation_id, "bong:tuike_taint_transfer");
+    assert_eq!(v.particle_id, "bong:false_skin_don_dust");
+    assert_eq!(v.sound_recipe_id, "contam_transfer_hum");
+    assert_eq!(
+        v.icon_texture,
+        "bong-client:textures/gui/skill/tuike_transfer_taint.png"
+    );
+}
+
+#[test]
+fn tuike_visual_transfer_ancient_swaps_particle_to_glow() {
+    let normal = TuikeSkillVisual::for_skill(TuikeSkillId::TransferTaint, false);
+    let ancient = TuikeSkillVisual::for_skill(TuikeSkillId::TransferTaint, true);
+    assert_eq!(ancient.particle_id, "bong:ancient_skin_glow");
+    assert_ne!(normal.particle_id, ancient.particle_id);
+    assert_eq!(normal.animation_id, ancient.animation_id);
+    assert_eq!(normal.sound_recipe_id, ancient.sound_recipe_id);
+}
+
+#[test]
+fn tuike_cast_transfer_permanent_absorbed_branch_emits_permanent_event() {
+    let (mut world, entity) = world_with_player(Realm::Void, 1000.0, FALSE_SKIN_ANCIENT_ITEM_ID);
+    world.entity_mut(entity).insert(PermanentQiMaxDecay {
+        source: entity,
+        amount: 0.5,
+        applied_at_tick: 50,
+    });
+    assert_started(cast_don(&mut world, entity, 0, None));
+    assert_started(cast_transfer_taint(&mut world, entity, 1, None));
+
+    let permanent_events = world.resource::<Events<PermanentTaintAbsorbedEvent>>();
+    let event = permanent_events
+        .iter_current_update_events()
+        .next()
+        .expect("permanent_absorbed > 0 should emit PermanentTaintAbsorbedEvent");
+    assert_eq!(event.caster, entity);
+    assert_eq!(event.amount, 0.5);
+    assert_eq!(event.tier, FalseSkinTier::Ancient);
+    assert!(
+        world.get::<PermanentQiMaxDecay>(entity).is_none(),
+        "PermanentQiMaxDecay should be removed after absorption"
+    );
+    assert_eq!(
+        world
+            .get::<WornFalseSkin>(entity)
+            .unwrap()
+            .permanent_taint_load,
+        0.5,
+        "permanent taint should be written to the outer skin"
+    );
+}
+
+#[test]
+fn tuike_cast_don_without_position_skips_av_emission() {
+    // Player has no Position component -> emit_vfx/emit_audio/emit_anim should skip gracefully
+    use crate::network::vfx_event_emit::VfxEventRequest;
+    use crate::network::audio_event_emit::PlaySoundRecipeRequest;
+
+    let mut world = bevy_ecs::world::World::default();
+    world.insert_resource(CombatClock { tick: 100 });
+    add_tuike_events(&mut world);
+    world.insert_resource(Events::<VfxEventRequest>::default());
+    world.insert_resource(Events::<PlaySoundRecipeRequest>::default());
+    let entity = world
+        .spawn((
+            cultivation(Realm::Void, 1000.0, 1000.0),
+            inventory_with_skin(FALSE_SKIN_ANCIENT_ITEM_ID, 1.0),
+            SkillBarBindings::default(),
+            DerivedAttrs::default(),
+            PracticeLog::default(),
+            // NOTE: no Position or UniqueId
+        ))
+        .id();
+
+    let result = cast_don(&mut world, entity, 0, None);
+    assert_started(result);
+    // VFX/audio events should be zero because Position is absent
+    let vfx_count = world.resource::<Events<VfxEventRequest>>().len();
+    let audio_count = world.resource::<Events<PlaySoundRecipeRequest>>().len();
+    assert_eq!(
+        vfx_count, 0,
+        "cast_don without Position should skip VFX emission"
+    );
+    assert_eq!(
+        audio_count, 0,
+        "cast_don without Position should skip audio emission"
+    );
+}
+
+#[test]
+fn tuike_cast_shed_without_position_skips_av_emission() {
+    use crate::network::vfx_event_emit::VfxEventRequest;
+    use crate::network::audio_event_emit::PlaySoundRecipeRequest;
+
+    let mut world = bevy_ecs::world::World::default();
+    world.insert_resource(CombatClock { tick: 100 });
+    add_tuike_events(&mut world);
+    world.insert_resource(Events::<VfxEventRequest>::default());
+    world.insert_resource(Events::<PlaySoundRecipeRequest>::default());
+    let entity = world
+        .spawn((
+            cultivation(Realm::Void, 1000.0, 1000.0),
+            inventory_with_skin(FALSE_SKIN_ANCIENT_ITEM_ID, 1.0),
+            SkillBarBindings::default(),
+            DerivedAttrs::default(),
+            PracticeLog::default(),
+        ))
+        .id();
+
+    assert_started(cast_don(&mut world, entity, 0, None));
+    let result = cast_shed(&mut world, entity, 1, None);
+    assert_started(result);
+    let vfx_count = world.resource::<Events<VfxEventRequest>>().len();
+    let audio_count = world.resource::<Events<PlaySoundRecipeRequest>>().len();
+    assert_eq!(
+        vfx_count, 0,
+        "cast_shed without Position should skip VFX emission"
+    );
+    assert_eq!(
+        audio_count, 0,
+        "cast_shed without Position should skip audio emission"
+    );
+}
+
+#[test]
+fn tuike_emit_helpers_noop_without_event_resources() {
+    use super::skills::{emit_anim, emit_audio, emit_vfx};
+    use valence::prelude::{App, DVec3};
+
+    let mut app = App::new();
+    let entity = app.world_mut().spawn_empty().id();
+    // No event resources registered -- should not panic
+    emit_vfx(
+        app.world_mut(),
+        DVec3::ZERO,
+        "bong:test",
+        "#FF0000",
+        0.5,
+        4,
+        20,
+    );
+    emit_audio(app.world_mut(), "test_recipe", DVec3::ZERO);
+    emit_anim(app.world_mut(), entity, "bong:test_anim");
+}
+
+#[test]
+fn tuike_emit_anim_skips_without_unique_id() {
+    use super::skills::emit_anim;
+    use crate::network::vfx_event_emit::VfxEventRequest;
+    use valence::prelude::{App, Events};
+
+    let mut app = App::new();
+    app.add_event::<VfxEventRequest>();
+    let entity = app
+        .world_mut()
+        .spawn(valence::prelude::Position::new([0.0, 64.0, 0.0]))
+        .id();
+
+    emit_anim(app.world_mut(), entity, "bong:tuike_don_skin");
+
+    assert_eq!(
+        app.world().resource::<Events<VfxEventRequest>>().len(),
+        0,
+        "emit_anim should skip PlayAnim when entity has no UniqueId"
+    );
+}

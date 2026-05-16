@@ -1103,7 +1103,7 @@ fn current_zone_context(
     }
 }
 
-fn emit_vfx(
+pub(super) fn emit_vfx(
     world: &mut bevy_ecs::world::World,
     origin: DVec3,
     event_id: &str,
@@ -1128,7 +1128,7 @@ fn emit_vfx(
     }
 }
 
-fn emit_audio(world: &mut bevy_ecs::world::World, recipe: &str, origin: DVec3) {
+pub(super) fn emit_audio(world: &mut bevy_ecs::world::World, recipe: &str, origin: DVec3) {
     if let Some(mut events) = world.get_resource_mut::<Events<PlaySoundRecipeRequest>>() {
         events.send(PlaySoundRecipeRequest {
             recipe_id: recipe.to_string(),
@@ -1145,7 +1145,7 @@ fn emit_audio(world: &mut bevy_ecs::world::World, recipe: &str, origin: DVec3) {
     }
 }
 
-fn emit_anim(world: &mut bevy_ecs::world::World, entity: Entity, anim_id: &str) {
+pub(super) fn emit_anim(world: &mut bevy_ecs::world::World, entity: Entity, anim_id: &str) {
     let origin = world
         .get::<Position>(entity)
         .map(|p| p.get())
@@ -1167,7 +1167,7 @@ fn emit_anim(world: &mut bevy_ecs::world::World, entity: Entity, anim_id: &str) 
     }
 }
 
-fn woliu_av_mapping(skill: WoliuSkillId) -> (&'static str, &'static str, &'static str) {
+pub(super) fn woliu_av_mapping(skill: WoliuSkillId) -> (&'static str, &'static str, &'static str) {
     match skill {
         WoliuSkillId::VacuumPalm => ("bong:woliu_vacuum_palm_spiral", "woliu_vacuum_palm", "bong:woliu_vacuum_palm"),
         WoliuSkillId::VortexShield => ("bong:woliu_vortex_shield_sphere", "woliu_vortex_shield", "bong:woliu_vortex_shield"),

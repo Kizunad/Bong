@@ -1698,3 +1698,135 @@ fn generated_spec_case_099() {
 fn generated_spec_case_100() {
     assert_spec_case(100);
 }
+
+// --- AV mapping & VFX param tests (CodeRabbit review item: woliu_v2) ---
+
+#[test]
+fn woliu_av_mapping_covers_all_v3_skills() {
+    use super::skills::woliu_av_mapping;
+
+    let mappings = [
+        (WoliuSkillId::VacuumPalm, "bong:woliu_vacuum_palm_spiral", "woliu_vacuum_palm", "bong:woliu_vacuum_palm"),
+        (WoliuSkillId::VortexShield, "bong:woliu_vortex_shield_sphere", "woliu_vortex_shield", "bong:woliu_vortex_shield"),
+        (WoliuSkillId::VacuumLock, "bong:woliu_vacuum_lock_cage", "woliu_vacuum_lock", "bong:woliu_vacuum_lock"),
+        (WoliuSkillId::VortexResonance, "bong:woliu_vortex_resonance_field", "woliu_vortex_resonance", "bong:woliu_vortex_resonance"),
+        (WoliuSkillId::TurbulenceBurst, "bong:woliu_turbulence_burst_wave", "woliu_turbulence_burst", "bong:woliu_turbulence_burst"),
+    ];
+    for (skill, expected_vfx, expected_audio, expected_anim) in mappings {
+        let (vfx, audio, anim) = woliu_av_mapping(skill);
+        assert_eq!(vfx, expected_vfx, "VFX mismatch for {skill:?}");
+        assert_eq!(audio, expected_audio, "audio mismatch for {skill:?}");
+        assert_eq!(anim, expected_anim, "anim mismatch for {skill:?}");
+    }
+}
+
+#[test]
+fn woliu_av_mapping_v2_skills_use_fallback() {
+    use super::skills::woliu_av_mapping;
+
+    for skill in [
+        WoliuSkillId::Hold,
+        WoliuSkillId::Burst,
+        WoliuSkillId::Mouth,
+        WoliuSkillId::Pull,
+        WoliuSkillId::Heart,
+    ] {
+        let (vfx, audio, anim) = woliu_av_mapping(skill);
+        assert_eq!(
+            vfx, "bong:vortex_spiral",
+            "V2 skill {skill:?} should use fallback VFX"
+        );
+        assert_eq!(
+            audio, "woliu_cast",
+            "V2 skill {skill:?} should use fallback audio"
+        );
+        assert_eq!(
+            anim, "bong:vortex_spiral_stance",
+            "V2 skill {skill:?} should use fallback anim"
+        );
+    }
+}
+
+#[test]
+fn woliu_vfx_params_low_boundary_clamps_correctly() {
+    // Reproduce the same computation done in resolve_woliu_v2_skill for VFX params.
+    // Use a helper to avoid clippy::unnecessary_min_or_max on compile-time constants.
+    fn vfx_params(field_strength: f32, influence_radius: f32, duration_ticks: u64) -> (f32, u16, u16) {
+        let strength = (field_strength / 1.5).clamp(0.0, 1.0);
+        let count = ((influence_radius * 6.0) as u16).clamp(8, 64);
+        let duration = (duration_ticks.min(200) as u16).max(20);
+        (strength, count, duration)
+    }
+
+    // Low boundary: field_strength=0.3, influence_radius=1.0, duration_ticks=10
+    let (strength, count, duration) = vfx_params(0.3, 1.0, 10);
+    assert!(
+        (strength - 0.2).abs() < 0.01,
+        "low strength should be ~0.2, got {strength}"
+    );
+    assert_eq!(count, 8, "low count should clamp to minimum 8");
+    assert_eq!(duration, 20, "low duration should clamp to minimum 20");
+}
+
+#[test]
+fn woliu_vfx_params_high_boundary_clamps_correctly() {
+    fn vfx_params(field_strength: f32, influence_radius: f32, duration_ticks: u64) -> (f32, u16, u16) {
+        let strength = (field_strength / 1.5).clamp(0.0, 1.0);
+        let count = ((influence_radius * 6.0) as u16).clamp(8, 64);
+        let duration = (duration_ticks.min(200) as u16).max(20);
+        (strength, count, duration)
+    }
+
+    // High boundary: field_strength=2.0, influence_radius=12.0, duration_ticks=300
+    let (strength, count, duration) = vfx_params(2.0, 12.0, 300);
+    assert!(
+        (strength - 1.0).abs() < 0.01,
+        "high strength should clamp to 1.0, got {strength}"
+    );
+    assert_eq!(count, 64, "high count should clamp to maximum 64");
+    assert_eq!(duration, 200, "high duration should clamp to 200");
+}
+
+#[test]
+fn woliu_vfx_params_mid_range_no_clamp() {
+    fn vfx_params(field_strength: f32, influence_radius: f32, duration_ticks: u64) -> (f32, u16, u16) {
+        let strength = (field_strength / 1.5).clamp(0.0, 1.0);
+        let count = ((influence_radius * 6.0) as u16).clamp(8, 64);
+        let duration = (duration_ticks.min(200) as u16).max(20);
+        (strength, count, duration)
+    }
+
+    // Mid range: field_strength=0.75, influence_radius=5.0, duration_ticks=60
+    let (strength, count, duration) = vfx_params(0.75, 5.0, 60);
+    assert!(
+        (strength - 0.5).abs() < 0.01,
+        "mid strength should be 0.5, got {strength}"
+    );
+    assert_eq!(count, 30, "mid count should be 30 without clamping");
+    assert_eq!(
+        duration, 60,
+        "mid duration should be 60 without clamping"
+    );
+}
+
+#[test]
+fn woliu_emit_helpers_noop_without_event_resources() {
+    use super::skills::{emit_anim, emit_audio, emit_vfx};
+    use valence::prelude::App;
+
+    let mut app = App::new();
+    // Intentionally do NOT register VfxEventRequest or PlaySoundRecipeRequest events.
+    let entity = app.world_mut().spawn_empty().id();
+    // These should not panic when the event resources are absent.
+    emit_vfx(
+        app.world_mut(),
+        DVec3::ZERO,
+        "bong:test",
+        "#FF0000",
+        0.5,
+        4,
+        20,
+    );
+    emit_audio(app.world_mut(), "test_recipe", DVec3::ZERO);
+    emit_anim(app.world_mut(), entity, "bong:test_anim");
+}
