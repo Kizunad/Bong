@@ -3,6 +3,7 @@
 //! P0: 累计丹毒追踪 + 三基础招式（服丹急行/投丹/丹雾）+ PracticeLog 温润色。
 //! P1: 变异系统（MutationState + 阶段推进 + 顿悟 + 社会惩罚）。
 
+pub mod boss;
 pub mod components;
 pub mod mutation;
 mod skills;
