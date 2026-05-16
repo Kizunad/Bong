@@ -195,7 +195,7 @@ pub enum SwordGrade {
 
 ### P0.4 Server 模块结构
 
-```
+```text
 server/src/sword_path/
 ├── mod.rs              // SwordPathPlugin，注册 systems + events
 ├── bond.rs             // SwordBondComponent + 绑定/解绑/碎裂逻辑

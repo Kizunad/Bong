@@ -535,4 +535,15 @@ mod tests {
         assert!(!BeastKind::LivingPillar.is_terrestrial());
         assert!(!BeastKind::Heiwushi.is_terrestrial());
     }
+
+    #[test]
+    fn heiwushi_serde_roundtrip() {
+        let json = serde_json::to_string(&BeastKind::Heiwushi).expect("serialize Heiwushi");
+        assert_eq!(
+            json, "\"heiwushi\"",
+            "BeastKind::Heiwushi should serialize to \"heiwushi\", got {json}"
+        );
+        let back: BeastKind = serde_json::from_str(&json).expect("deserialize Heiwushi");
+        assert_eq!(back, BeastKind::Heiwushi);
+    }
 }
