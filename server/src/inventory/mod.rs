@@ -3032,6 +3032,128 @@ fn slot_display_name(slot_id: &str) -> String {
     }
 }
 
+// ─── plan-backpack-equip-v1 P3 — 背包耐久扣减与破损溢出 ─────────────────────────
+
+/// plan-backpack-equip-v1 P3.1 — 背包破损事件，当背包耐久降至 ≤ε 时由 `apply_backpack_wear` 返回。
+#[derive(Debug, Clone, PartialEq)]
+pub struct BackpackBreakEvent {
+    /// 对应的装备槽 id（"back_pack" / "waist_pouch" / "chest_satchel"）。
+    pub slot: String,
+    /// 触发耗损操作的容器 id（与 slot 相同，如 "back_pack"）。
+    pub container_id: String,
+}
+
+/// plan-backpack-equip-v1 P3.2 — 背包破损溢出结果。
+#[derive(Debug, Clone, PartialEq)]
+pub struct BackpackBreakOutcome {
+    /// 装备槽 id。
+    pub slot: String,
+    /// 容器 id。
+    pub container_id: String,
+    /// 背包内容物（调用方负责转为 DroppedItemEvent）。
+    pub spilled_items: Vec<ItemInstance>,
+    /// 破损的背包物品实例（已从 equipped 中移除）。
+    pub backpack_item: ItemInstance,
+    /// 破损后重算的新 max_weight。
+    pub new_max_weight: f64,
+}
+
+/// plan-backpack-equip-v1 P3.1 — 将容器 id 映射到对应的装备槽 id。
+///
+/// `body_pocket` 及未知容器返回 `None`（不扣耐久）。
+#[allow(dead_code)]
+fn container_id_to_equip_slot(container_id: &str) -> Option<&'static str> {
+    match container_id {
+        "back_pack" => Some(EQUIP_SLOT_BACK_PACK),
+        "waist_pouch" => Some(EQUIP_SLOT_WAIST_POUCH),
+        "chest_satchel" => Some(EQUIP_SLOT_CHEST_SATCHEL),
+        _ => None, // body_pocket 和未知 id 不扣
+    }
+}
+
+/// plan-backpack-equip-v1 P3.1 — 对指定背包容器的装备物品扣减一次耐久损耗。
+///
+/// 规则：
+/// - `container_id` 不对应背包槽（body_pocket 或未知）→ 返回 None，不扣减。
+/// - 对应槽未装备背包 → 返回 None。
+/// - 背包模板无 `container_spec` → 返回 None。
+/// - `durability_cost_per_op == 0.0` → 不扣减（无损耗），返回 None。
+/// - 扣减后 `durability ≤ ε` → 返回 `Some(BackpackBreakEvent)`，否则返回 None。
+#[allow(dead_code)]
+pub fn apply_backpack_wear(
+    inventory: &mut PlayerInventory,
+    registry: &ItemRegistry,
+    container_id: &str,
+) -> Option<BackpackBreakEvent> {
+    let slot = container_id_to_equip_slot(container_id)?;
+    let backpack = inventory.equipped.get_mut(slot)?;
+    let template = registry.get(&backpack.template_id)?;
+    let cost = template.container_spec.as_ref()?.durability_cost_per_op;
+    if cost <= 0.0 {
+        return None;
+    }
+    backpack.durability = (backpack.durability - cost).max(0.0);
+    if backpack.durability <= f64::EPSILON {
+        Some(BackpackBreakEvent {
+            slot: slot.to_string(),
+            container_id: container_id.to_string(),
+        })
+    } else {
+        None
+    }
+}
+
+/// plan-backpack-equip-v1 P3.2 — 处理背包破损溢出。
+///
+/// 逻辑：
+/// 1. 从 `equipped` 中移除背包物品。
+/// 2. 从 `containers` 中找到对应容器，提取所有 items。
+/// 3. 移除该容器。
+/// 4. 调用 `rebuild_containers_from_equipment` 刷新 `max_weight`。
+/// 5. 返回 `BackpackBreakOutcome`（spilled_items 由调用方转为 DroppedItemEvent）。
+///
+/// 若容器 id 不对应背包槽，或对应槽未装备，返回 `None`（无操作）。
+#[allow(dead_code)]
+pub fn handle_backpack_break(
+    inventory: &mut PlayerInventory,
+    registry: &ItemRegistry,
+    container_id: &str,
+) -> Option<BackpackBreakOutcome> {
+    let slot = container_id_to_equip_slot(container_id)?;
+
+    // 1. 从 equipped 中移除背包物品。
+    let backpack_item = inventory.equipped.remove(slot)?;
+
+    // 2. 提取容器内所有物品。
+    let container_pos = inventory
+        .containers
+        .iter()
+        .position(|c| c.id == container_id);
+    let spilled_items: Vec<ItemInstance> = if let Some(pos) = container_pos {
+        // 3. 移除容器，并取出内容物。
+        let container = inventory.containers.remove(pos);
+        container
+            .items
+            .into_iter()
+            .map(|placed| placed.instance)
+            .collect()
+    } else {
+        Vec::new()
+    };
+
+    // 4. 刷新 max_weight（equipped 已更新，rebuild 会重算）。
+    rebuild_containers_from_equipment(inventory, registry);
+    let new_max_weight = inventory.max_weight;
+
+    Some(BackpackBreakOutcome {
+        slot: slot.to_string(),
+        container_id: container_id.to_string(),
+        spilled_items,
+        backpack_item,
+        new_max_weight,
+    })
+}
+
 pub fn dropped_loot_snapshot(registry: &DroppedLootRegistry) -> Vec<DroppedLootEntry> {
     let mut drops = registry.entries.values().cloned().collect::<Vec<_>>();
     // Deterministic ordering avoids client-side insertionOrder churn.
@@ -7647,5 +7769,461 @@ cols = 4
         let back: ItemCategory =
             serde_json::from_str(&json).expect("deserialize Container category");
         assert_eq!(back, cat);
+    }
+
+    // =========== plan-backpack-equip-v1 P3 — 背包耐久扣减与破损溢出测试 ===========
+
+    /// 构造一个携带草编囊的 registry + inventory（耐久 cost_per_op = 0.008，
+    /// durability 初始值由调用方通过 `durability` 参数控制）。
+    fn make_worn_grass_pouch_setup(
+        durability: f64,
+        with_container_items: bool,
+    ) -> (ItemRegistry, PlayerInventory) {
+        let template = ItemTemplate {
+            id: "worn_grass_pouch".to_string(),
+            display_name: "草编囊（磨损）".to_string(),
+            category: ItemCategory::Container,
+            max_stack_count: 1,
+            grid_w: 1,
+            grid_h: 2,
+            base_weight: 0.3,
+            rarity: ItemRarity::Common,
+            spirit_quality_initial: 0.5,
+            description: "test".to_string(),
+            effect: None,
+            cast_duration_ms: DEFAULT_CAST_DURATION_MS,
+            cooldown_ms: DEFAULT_COOLDOWN_MS,
+            weapon_spec: None,
+            forge_station_spec: None,
+            blueprint_scroll_spec: None,
+            inscription_scroll_spec: None,
+            technique_scroll_spec: None,
+            container_spec: Some(ContainerSpec {
+                rows: 3,
+                cols: 3,
+                weight_capacity: 10.0,
+                equip_slot: EQUIP_SLOT_WAIST_POUCH.to_string(),
+                durability_cost_per_op: 0.008,
+            }),
+        };
+        let registry =
+            ItemRegistry::from_map(HashMap::from([("worn_grass_pouch".to_string(), template)]));
+
+        // 构造一个装备了草编囊的 inventory。
+        let backpack_instance = ItemInstance {
+            instance_id: 1,
+            template_id: "worn_grass_pouch".to_string(),
+            display_name: "草编囊（磨损）".to_string(),
+            grid_w: 1,
+            grid_h: 2,
+            weight: 0.3,
+            rarity: ItemRarity::Common,
+            description: "test".to_string(),
+            stack_count: 1,
+            spirit_quality: 0.5,
+            durability,
+            freshness: None,
+            mineral_id: None,
+            charges: None,
+            forge_quality: None,
+            forge_color: None,
+            forge_side_effects: Vec::new(),
+            forge_achieved_tier: None,
+            alchemy: None,
+            lingering_owner_qi: None,
+        };
+
+        let container_items = if with_container_items {
+            vec![
+                PlacedItemState {
+                    row: 0,
+                    col: 0,
+                    instance: make_test_item_instance(10, "spirit_herb"),
+                },
+                PlacedItemState {
+                    row: 1,
+                    col: 0,
+                    instance: make_test_item_instance(11, "bone_dust"),
+                },
+            ]
+        } else {
+            Vec::new()
+        };
+
+        let mut inv = make_empty_inventory();
+        inv.equipped
+            .insert(EQUIP_SLOT_WAIST_POUCH.to_string(), backpack_instance);
+        inv.containers.push(ContainerState {
+            id: EQUIP_SLOT_WAIST_POUCH.to_string(),
+            name: "腰囊".to_string(),
+            rows: 3,
+            cols: 3,
+            items: container_items,
+        });
+        inv.max_weight = BASE_CARRY_CAPACITY + 10.0;
+
+        (registry, inv)
+    }
+
+    // P3.1.1 — apply_backpack_wear 正常扣减
+
+    #[test]
+    fn apply_backpack_wear_deducts_cost_per_op() {
+        let (registry, mut inv) = make_worn_grass_pouch_setup(1.0, false);
+        let event = apply_backpack_wear(&mut inv, &registry, EQUIP_SLOT_WAIST_POUCH);
+        assert!(
+            event.is_none(),
+            "durability 1.0 minus 0.008 should not break yet"
+        );
+        let durability = inv.equipped.get(EQUIP_SLOT_WAIST_POUCH).unwrap().durability;
+        assert!(
+            (durability - 0.992).abs() < 1e-9,
+            "expected durability ≈ 0.992 after one wear, got {durability}"
+        );
+    }
+
+    #[test]
+    fn apply_backpack_wear_multiple_ops_reduce_durability_cumulatively() {
+        let (registry, mut inv) = make_worn_grass_pouch_setup(0.1, false);
+        // 12 ops × 0.008 = 0.096 > 0.1 − 0.008×12 = 0.004; not yet broken after 12.
+        for _ in 0..12 {
+            let event = apply_backpack_wear(&mut inv, &registry, EQUIP_SLOT_WAIST_POUCH);
+            assert!(
+                event.is_none(),
+                "should not break before 0.1/0.008 ≈ 12.5 ops"
+            );
+        }
+        let durability = inv.equipped.get(EQUIP_SLOT_WAIST_POUCH).unwrap().durability;
+        let expected = 0.1 - 12.0 * 0.008;
+        assert!(
+            (durability - expected).abs() < 1e-9,
+            "expected durability ≈ {expected} after 12 ops, got {durability}"
+        );
+    }
+
+    // P3.1.2 — body_pocket 操作不扣减
+
+    #[test]
+    fn apply_backpack_wear_body_pocket_does_not_deduct() {
+        let (registry, mut inv) = make_worn_grass_pouch_setup(1.0, false);
+        let event = apply_backpack_wear(&mut inv, &registry, BODY_POCKET_CONTAINER_ID);
+        assert!(
+            event.is_none(),
+            "body_pocket should never trigger wear deduction"
+        );
+        // 装备耐久不变。
+        let durability = inv.equipped.get(EQUIP_SLOT_WAIST_POUCH).unwrap().durability;
+        assert!(
+            (durability - 1.0).abs() < f64::EPSILON,
+            "worn_grass_pouch durability should be unchanged, got {durability}"
+        );
+    }
+
+    // P3.1.3 — 未知 container_id 不扣减
+
+    #[test]
+    fn apply_backpack_wear_unknown_container_id_no_deduct() {
+        let (registry, mut inv) = make_worn_grass_pouch_setup(1.0, false);
+        let event = apply_backpack_wear(&mut inv, &registry, "totally_unknown_container");
+        assert!(event.is_none(), "unknown container id should be a no-op");
+    }
+
+    // P3.1.4 — 多次扣减到 ≤ε 时返回 BackpackBreakEvent
+
+    #[test]
+    fn apply_backpack_wear_returns_break_event_when_durability_depleted() {
+        // worn_grass_pouch: durability_cost_per_op = 0.008，从 0.3 开始（P2 默认值）。
+        // 0.3 / 0.008 = 37.5，所以第 38 次调用会触发破损。
+        let (registry, mut inv) = make_worn_grass_pouch_setup(0.3, false);
+
+        for i in 1..38 {
+            let event = apply_backpack_wear(&mut inv, &registry, EQUIP_SLOT_WAIST_POUCH);
+            assert!(
+                event.is_none(),
+                "op {i}/38 should not break yet (durability = {})",
+                inv.equipped.get(EQUIP_SLOT_WAIST_POUCH).unwrap().durability
+            );
+        }
+        // 第 38 次——应触发破损。
+        let event = apply_backpack_wear(&mut inv, &registry, EQUIP_SLOT_WAIST_POUCH);
+        assert!(
+            event.is_some(),
+            "38th op should trigger BackpackBreakEvent (durability = {})",
+            inv.equipped.get(EQUIP_SLOT_WAIST_POUCH).unwrap().durability
+        );
+        let ev = event.unwrap();
+        assert_eq!(ev.slot, EQUIP_SLOT_WAIST_POUCH, "break event slot mismatch");
+        assert_eq!(
+            ev.container_id, EQUIP_SLOT_WAIST_POUCH,
+            "break event container_id mismatch"
+        );
+    }
+
+    // P3.1.5 — cost_per_op = 0.0 时永远不扣减（无损耗背包）
+
+    #[test]
+    fn apply_backpack_wear_zero_cost_per_op_never_deducts() {
+        let template = make_container_template("lossless_bag", EQUIP_SLOT_BACK_PACK, 5, 5, 20.0);
+        // make_container_template 默认 cost_per_op = 0.0。
+        let registry =
+            ItemRegistry::from_map(HashMap::from([("lossless_bag".to_string(), template)]));
+        let mut inv = make_empty_inventory();
+        let bag = ItemInstance {
+            instance_id: 200,
+            template_id: "lossless_bag".to_string(),
+            display_name: "lossless".to_string(),
+            grid_w: 2,
+            grid_h: 3,
+            weight: 0.5,
+            rarity: ItemRarity::Common,
+            description: String::new(),
+            stack_count: 1,
+            spirit_quality: 1.0,
+            durability: 0.001, // 极低耐久但 cost=0 不应触发破损
+            freshness: None,
+            mineral_id: None,
+            charges: None,
+            forge_quality: None,
+            forge_color: None,
+            forge_side_effects: Vec::new(),
+            forge_achieved_tier: None,
+            alchemy: None,
+            lingering_owner_qi: None,
+        };
+        inv.equipped.insert(EQUIP_SLOT_BACK_PACK.to_string(), bag);
+
+        let event = apply_backpack_wear(&mut inv, &registry, EQUIP_SLOT_BACK_PACK);
+        assert!(
+            event.is_none(),
+            "zero cost_per_op should never trigger wear even at low durability"
+        );
+        let durability = inv.equipped.get(EQUIP_SLOT_BACK_PACK).unwrap().durability;
+        assert!(
+            (durability - 0.001).abs() < f64::EPSILON,
+            "durability should be unchanged with cost_per_op=0.0"
+        );
+    }
+
+    // P3.1.6 — slot 未装备时返回 None
+
+    #[test]
+    fn apply_backpack_wear_missing_equip_returns_none() {
+        let (registry, mut inv) = make_worn_grass_pouch_setup(1.0, false);
+        // 试图对 back_pack 槽扣减，但该槽为空。
+        let event = apply_backpack_wear(&mut inv, &registry, EQUIP_SLOT_BACK_PACK);
+        assert!(
+            event.is_none(),
+            "empty equip slot should return None, not panic"
+        );
+    }
+
+    // P3.2.1 — handle_backpack_break 移除容器 + 返回 spilled_items + max_weight 下降
+
+    #[test]
+    fn handle_backpack_break_spills_items_and_removes_container() {
+        let (registry, mut inv) = make_worn_grass_pouch_setup(0.0, true);
+
+        let initial_max_weight = inv.max_weight;
+        let outcome = handle_backpack_break(&mut inv, &registry, EQUIP_SLOT_WAIST_POUCH)
+            .expect("handle_backpack_break should return Some for valid slot");
+
+        // 背包已从 equipped 移除。
+        assert!(
+            !inv.equipped.contains_key(EQUIP_SLOT_WAIST_POUCH),
+            "backpack should be removed from equipped after break"
+        );
+
+        // 容器已从 containers 移除。
+        assert!(
+            inv.containers
+                .iter()
+                .all(|c| c.id != EQUIP_SLOT_WAIST_POUCH),
+            "container should be removed from containers after break"
+        );
+
+        // 溢出物品包含原容器内的所有物品。
+        assert_eq!(
+            outcome.spilled_items.len(),
+            2,
+            "expected 2 spilled items (spirit_herb + bone_dust)"
+        );
+        let spilled_ids: Vec<u64> = outcome
+            .spilled_items
+            .iter()
+            .map(|i| i.instance_id)
+            .collect();
+        assert!(
+            spilled_ids.contains(&10),
+            "spirit_herb (id=10) should be spilled"
+        );
+        assert!(
+            spilled_ids.contains(&11),
+            "bone_dust (id=11) should be spilled"
+        );
+
+        // 破损的背包物品实例正确返回。
+        assert_eq!(
+            outcome.backpack_item.template_id, "worn_grass_pouch",
+            "backpack_item template_id mismatch"
+        );
+
+        // max_weight 下降（去掉 10.0 的 weight_capacity）。
+        let expected_new_max = BASE_CARRY_CAPACITY; // 15.0
+        assert!(
+            (outcome.new_max_weight - expected_new_max).abs() < f64::EPSILON,
+            "expected new_max_weight={expected_new_max}, got {}",
+            outcome.new_max_weight
+        );
+        assert!(
+            outcome.new_max_weight < initial_max_weight,
+            "max_weight should drop after backpack break"
+        );
+        // inventory 本身的 max_weight 也已更新。
+        assert!(
+            (inv.max_weight - expected_new_max).abs() < f64::EPSILON,
+            "inventory.max_weight should be refreshed to {expected_new_max}, got {}",
+            inv.max_weight
+        );
+    }
+
+    // P3.2.2 — handle_backpack_break 对空容器（无溢出物品）
+
+    #[test]
+    fn handle_backpack_break_empty_container_spills_nothing() {
+        let (registry, mut inv) = make_worn_grass_pouch_setup(0.0, false);
+
+        let outcome = handle_backpack_break(&mut inv, &registry, EQUIP_SLOT_WAIST_POUCH)
+            .expect("break on empty container should still succeed");
+
+        assert!(
+            outcome.spilled_items.is_empty(),
+            "no items should be spilled from an empty container"
+        );
+        assert_eq!(
+            outcome.backpack_item.template_id, "worn_grass_pouch",
+            "backpack_item should still be returned even with empty container"
+        );
+    }
+
+    // P3.2.3 — handle_backpack_break 对 body_pocket 返回 None
+
+    #[test]
+    fn handle_backpack_break_body_pocket_returns_none() {
+        let (registry, mut inv) = make_worn_grass_pouch_setup(0.0, false);
+        let outcome = handle_backpack_break(&mut inv, &registry, BODY_POCKET_CONTAINER_ID);
+        assert!(
+            outcome.is_none(),
+            "body_pocket should not trigger backpack break"
+        );
+    }
+
+    // P3.2.4 — handle_backpack_break 对未装备槽返回 None
+
+    #[test]
+    fn handle_backpack_break_unequipped_slot_returns_none() {
+        let (registry, mut inv) = make_worn_grass_pouch_setup(0.0, false);
+        // back_pack 槽未装备。
+        let outcome = handle_backpack_break(&mut inv, &registry, EQUIP_SLOT_BACK_PACK);
+        assert!(
+            outcome.is_none(),
+            "unequipped slot should return None from handle_backpack_break"
+        );
+    }
+
+    // P3.2.5 — handle_backpack_break 当容器不在 containers 列表时仍正常工作（spilled 为空）
+
+    #[test]
+    fn handle_backpack_break_missing_container_entry_spills_nothing() {
+        let (registry, mut inv) = make_worn_grass_pouch_setup(0.0, false);
+        // 手动移除容器，模拟 containers 与 equipped 不同步场景。
+        inv.containers.retain(|c| c.id != EQUIP_SLOT_WAIST_POUCH);
+
+        let outcome = handle_backpack_break(&mut inv, &registry, EQUIP_SLOT_WAIST_POUCH)
+            .expect("should succeed even without matching container");
+
+        assert!(
+            outcome.spilled_items.is_empty(),
+            "no items to spill when container entry is missing"
+        );
+    }
+
+    // P3 真实物品模板 — worn_grass_pouch（P2 草编囊）操作 38 次后破损
+
+    #[test]
+    fn worn_grass_pouch_breaks_after_38_ops_from_30_percent_durability() {
+        // P2 default: durability=0.3, cost_per_op=0.008
+        // 0.3 / 0.008 = 37.5 → floor = 37，第 38 次触发破损
+        let (registry, mut inv) = make_worn_grass_pouch_setup(0.3, false);
+
+        for i in 1..=37 {
+            let ev = apply_backpack_wear(&mut inv, &registry, EQUIP_SLOT_WAIST_POUCH);
+            assert!(
+                ev.is_none(),
+                "op {i}: should not break before op 38 (durability={})",
+                inv.equipped.get(EQUIP_SLOT_WAIST_POUCH).unwrap().durability
+            );
+        }
+        let ev = apply_backpack_wear(&mut inv, &registry, EQUIP_SLOT_WAIST_POUCH);
+        assert!(
+            ev.is_some(),
+            "38th op should return BackpackBreakEvent, durability={}",
+            inv.equipped.get(EQUIP_SLOT_WAIST_POUCH).unwrap().durability
+        );
+        let ev = ev.unwrap();
+        assert_eq!(ev.slot, EQUIP_SLOT_WAIST_POUCH);
+        assert_eq!(ev.container_id, EQUIP_SLOT_WAIST_POUCH);
+    }
+
+    // P3 BackpackBreakEvent PartialEq pin 测试
+
+    #[test]
+    fn backpack_break_event_partial_eq_and_clone() {
+        let ev1 = BackpackBreakEvent {
+            slot: "back_pack".to_string(),
+            container_id: "back_pack".to_string(),
+        };
+        let ev2 = ev1.clone();
+        assert_eq!(ev1, ev2, "BackpackBreakEvent should implement PartialEq");
+        let ev3 = BackpackBreakEvent {
+            slot: "waist_pouch".to_string(),
+            container_id: "waist_pouch".to_string(),
+        };
+        assert_ne!(ev1, ev3, "different slots should not be equal");
+    }
+
+    // P3 container_id_to_equip_slot 映射完整性 pin 测试
+
+    #[test]
+    fn container_id_to_equip_slot_maps_all_three_slots() {
+        assert_eq!(
+            container_id_to_equip_slot("back_pack"),
+            Some(EQUIP_SLOT_BACK_PACK),
+            "back_pack should map to EQUIP_SLOT_BACK_PACK"
+        );
+        assert_eq!(
+            container_id_to_equip_slot("waist_pouch"),
+            Some(EQUIP_SLOT_WAIST_POUCH),
+            "waist_pouch should map to EQUIP_SLOT_WAIST_POUCH"
+        );
+        assert_eq!(
+            container_id_to_equip_slot("chest_satchel"),
+            Some(EQUIP_SLOT_CHEST_SATCHEL),
+            "chest_satchel should map to EQUIP_SLOT_CHEST_SATCHEL"
+        );
+        assert_eq!(
+            container_id_to_equip_slot("body_pocket"),
+            None,
+            "body_pocket should return None"
+        );
+        assert_eq!(
+            container_id_to_equip_slot("main_pack"),
+            None,
+            "main_pack should return None"
+        );
+        assert_eq!(
+            container_id_to_equip_slot(""),
+            None,
+            "empty string should return None"
+        );
     }
 }
