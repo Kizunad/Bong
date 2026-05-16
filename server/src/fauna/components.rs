@@ -324,6 +324,7 @@ mod tests {
         assert_eq!(BeastKind::IceScorpion.realm_tier(), 2);
         assert_eq!(BeastKind::MandrakeSnake.realm_tier(), 2);
         assert_eq!(BeastKind::HybridBeast.realm_tier(), 3);
+        assert_eq!(BeastKind::VoidDistorted.realm_tier(), 3);
         assert_eq!(BeastKind::DarkTiger.realm_tier(), 3);
         assert_eq!(BeastKind::LivingPillar.realm_tier(), 4);
         assert_eq!(BeastKind::PoisonDragon.realm_tier(), 5);

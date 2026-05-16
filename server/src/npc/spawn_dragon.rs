@@ -37,6 +37,10 @@ pub fn spawn_dragon_npc_at(
     home_position: DVec3,
     kind: BeastKind,
 ) -> Entity {
+    debug_assert!(
+        matches!(kind, BeastKind::PoisonDragon | BeastKind::BoneDragon),
+        "spawn_dragon_npc_at only accepts PoisonDragon or BoneDragon, got {kind:?}"
+    );
     let entity = commands
         .spawn(MarkerEntityBundle {
             kind: entity_kind_for_beast(kind),
