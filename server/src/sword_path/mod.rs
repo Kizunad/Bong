@@ -4,6 +4,7 @@
 
 pub mod bond;
 pub mod grade;
+pub mod heaven_gate;
 pub mod shatter;
 pub mod techniques;
 pub mod tiandao_blind;
@@ -13,5 +14,7 @@ use valence::prelude::*;
 
 pub fn register(app: &mut App) {
     app.add_event::<bond::SwordBondFormedEvent>()
-        .add_event::<bond::SwordShatterEvent>();
+        .add_event::<bond::SwordShatterEvent>()
+        .add_event::<heaven_gate::HeavenGateCastEvent>()
+        .init_resource::<heaven_gate::TiandaoBlindZoneRegistry>();
 }
