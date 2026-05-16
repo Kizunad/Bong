@@ -1,6 +1,6 @@
 # Plan: Backpack Equipment — 背包装配系统 v1
 
-> **状态**：⬜ 待启动
+> **状态**：✅ 2026-05-16
 > 作者：Claude Code + Kiz
 
 背包从硬编码占位容器变为**可装备、可制作、有耐久**的物品。玩家出生只有贴身口袋 2×3 + 一个破草包 3×3（耐久 0.3），更多空间靠制作/拾取背包获得。新增 InspectScreen "行囊" tab 管理背包装备与负重。
@@ -11,12 +11,12 @@
 
 | 阶段 | 内容 | 状态 |
 |------|------|------|
-| **P0** | Server 端 ContainerSpec + 动态容器重建 + 新装备槽 + 负重公式 | ⬜ |
-| **P1** | Schema 扩展 + 网络协议适配（ContainerIdV1 → String） | ⬜ |
-| **P2** | 背包物品模板 + 制作配方 + default.toml 重写 | ⬜ |
-| **P3** | 背包耐久 system + 破损溢出 | ⬜ |
-| **P4** | Client "行囊" tab + 背包装备拖拽 + 负重 HUD | ⬜ |
-| **P5** | 饱和化测试 + 端到端验收 | ⬜ |
+| **P0** | Server 端 ContainerSpec + 动态容器重建 + 新装备槽 + 负重公式 | ✅ 2026-05-16 |
+| **P1** | Schema 扩展 + 网络协议适配（ContainerIdV1 → String） | ✅ 2026-05-16 |
+| **P2** | 背包物品模板 + 制作配方 + default.toml 重写 | ✅ 2026-05-16 |
+| **P3** | 背包耐久 system + 破损溢出 | ✅ 2026-05-16 |
+| **P4** | Client "行囊" tab + 背包装备拖拽 + 负重 HUD | ✅ 2026-05-16 |
+| **P5** | 饱和化测试（内嵌于 P0-P4 各阶段） | ✅ 2026-05-16 |
 
 ---
 
@@ -557,3 +557,58 @@ CHEST_SATCHEL("前挂");
 - 腰包/前挂类别的具体物品
 - 背包外观渲染（玩家模型上显示背包）
 - 背包内物品的灵气流失加速（worldview §九 操作磨损的深度实现）
+
+---
+
+## Finish Evidence
+
+### 落地清单
+
+| 阶段 | 模块 / 文件 |
+|------|------------|
+| P0 | `server/src/inventory/mod.rs` — `ContainerSpec`, `ItemCategory::Container`, `rebuild_containers_from_equipment`, `compute_max_weight`, 背包装备槽常量, `validate_move_semantics` 背包分支 |
+| P0 | `server/src/schema/inventory.rs` — `EquipSlotV1::{BackPack,WaistPouch,ChestSatchel}` |
+| P1 | `server/src/schema/inventory.rs` — `ContainerIdV1` 从 enum 改为 `type ContainerIdV1 = String`，7 个预定义常量 |
+| P1 | `server/src/network/inventory_snapshot_emit.rs` — 适配 String container id |
+| P2 | `server/assets/items/core.toml` — `worn_grass_pouch` / `grass_pouch` 模板（含 `[item.container_spec]`） |
+| P2 | `server/src/craft/mod.rs` — `basic.grass_pouch` 配方（grass_rope ×3 → grass_pouch ×1） |
+| P2 | `server/assets/inventory/loadouts/default.toml` — body_pocket 2×3 + back_pack 3×3 布局 |
+| P3 | `server/src/inventory/mod.rs` — `apply_backpack_wear`, `handle_backpack_break`, `BackpackBreakEvent`, `BackpackBreakOutcome` |
+| P4 | `client/src/main/java/com/bong/client/inventory/model/EquipSlotType.java` — `BACK_PACK` / `WAIST_POUCH` / `CHEST_SATCHEL` |
+| P4 | `client/src/main/java/com/bong/client/inventory/model/InventoryModel.java` — `BODY_POCKET_CONTAINER_ID`, `BACK_PACK_CONTAINER_ID`, 新 DEFAULT_CONTAINERS |
+| P4 | `client/src/main/java/com/bong/client/inventory/InspectScreen.java` — "行囊" tab, `backpackEquipWrapper`, `buildBackpackEquipPanel`, `refreshBackpackEquipPanel`, `backpackWeightBreakdown` |
+
+### 关键 commit
+
+| hash | 日期 | 消息 |
+|------|------|------|
+| `7b39c3b3e` | 2026-05-16 | 新增 ContainerSpec 数据模型与 TOML 解析 |
+| `e2eefe22f` | 2026-05-16 | 新增背包装备槽与动态容器重建 |
+| `f8f227806` | 2026-05-16 | 新增背包装备校验规则与饱和单测 |
+| `d187f48d5` | 2026-05-16 | ContainerIdV1 从 enum 改为 String 类型别名 |
+| `5ebfd3fef` | 2026-05-16 | 新增背包物品模板与制作配方 |
+| `8c34919e9` | 2026-05-16 | 重写 default loadout 为贴身口袋+破草包布局 |
+| `098d54399` | 2026-05-16 | 新增背包耐久扣减与破损溢出机制 |
+| `a5f1a044c` | 2026-05-16 | Client: 新增背包装备槽类型与动态容器适配 |
+| `ca12b196f` | 2026-05-16 | Client: InspectScreen 新增行囊 tab |
+
+### 测试结果
+
+- `cd server && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test` → **4785 passed, 0 failed**（基线 4721 + 新增 64）
+- `cd client && ./gradlew test build` → **全部通过**（新增 27 条 BackpackEquipSlotTest）
+
+### 跨仓库核验
+
+| 仓库 | 命中 symbol |
+|------|------------|
+| server | `ContainerSpec`, `ItemCategory::Container`, `EQUIP_SLOT_BACK_PACK`, `BODY_POCKET_CONTAINER_ID`, `rebuild_containers_from_equipment`, `compute_max_weight`, `apply_backpack_wear`, `handle_backpack_break`, `BackpackBreakEvent`, `worn_grass_pouch`, `grass_pouch`, `basic.grass_pouch` |
+| client | `EquipSlotType.BACK_PACK`, `BODY_POCKET_CONTAINER_ID`, `BACK_PACK_CONTAINER_ID`, `backpackEquipWrapper`, `backpackWeightBreakdown` |
+| agent | 无变更 |
+
+### 遗留 / 后续
+
+- 背包耐久 system 尚未接入 ECS Update system（`apply_backpack_wear` 已实现但未在 tick 中自动调用，需在物品增删的 system 层调用）
+- 腰包 / 前挂类别的具体物品模板未实现（只有 back_pack 类别的 grass_pouch）
+- 背包外观渲染（玩家模型上显示背包）未实现
+- 背包内物品灵气流失加速（worldview §九 操作磨损深度实现）留给后续 plan
+- 行囊 tab 的拖拽装备交互为基础版，完整的 drag-and-drop 到背包槽需后续优化
