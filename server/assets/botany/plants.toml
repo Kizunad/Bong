@@ -43,3 +43,50 @@ growth_cost = "high"
 growth_duration_ticks = 0
 rarity = "rare"
 description = "负灵域裂缝。剧毒。无种子，不可人工种植。"
+
+# ─── plan-dandao-path-v1 P2 丹道专属灵草（5 种，均 wild only）────────
+
+[[plant]]
+id = "tui_gu_teng"
+display_name = "蜕骨藤"
+cultivable = false
+growth_cost = "high"
+growth_duration_ticks = 0
+rarity = "rare"
+description = "负灵域边缘（灵气 -0.1~0.2）。藤蔓缠绕骨骼造型，暗紫色。变异丹（骨系）核心材料。"
+
+[[plant]]
+id = "shou_xin_cao"
+display_name = "兽心草"
+cultivable = false
+growth_cost = "mid_high"
+growth_duration_ticks = 0
+rarity = "rare"
+description = "异变兽出没区（灵气 >0.5）。心形叶片暗红脉络。变异丹（肌肉/体质系）核心材料。"
+
+[[plant]]
+id = "long_lin_tai"
+display_name = "龙鳞苔"
+cultivable = false
+growth_cost = "high"
+growth_duration_ticks = 0
+rarity = "rare"
+description = "坍缩渊入口（灵气 -0.3~0）。扁平苔藓表面鳞片状纹路，灰绿色。变异丹（鳞/甲系）核心材料。"
+
+[[plant]]
+id = "xu_yuan_rui"
+display_name = "续元蕊"
+cultivable = false
+growth_cost = "high"
+growth_duration_ticks = 0
+rarity = "rare"
+description = "灵眼附近（灵气 >0.8）。发光花蕊金黄色微弱脉动。续命丹核心材料。"
+
+[[plant]]
+id = "hua_xing_gen"
+display_name = "化形根"
+cultivable = false
+growth_cost = "high"
+growth_duration_ticks = 0
+rarity = "rare"
+description = "死域深处（灵气 =0）。人形根茎触碰时微动，乳白色。高阶变异丹（阶段4兽化）核心材料。传说级稀有。"

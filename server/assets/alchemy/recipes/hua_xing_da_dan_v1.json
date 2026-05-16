@@ -1,0 +1,35 @@
+{
+  "id": "hua_xing_da_dan_v1",
+  "name": "化形大丹",
+  "furnace_tier_min": 4,
+  "stages": [
+    { "at_tick": 0, "required": [
+      { "material": "hua_xing_gen", "count": 1 },
+      { "material": "tui_gu_teng", "count": 1 },
+      { "material": "shou_xin_cao", "count": 1 },
+      { "material": "long_lin_tai", "count": 1 }
+    ], "window": 0 }
+  ],
+  "fire_profile": {
+    "target_temp": 0.90,
+    "target_duration_ticks": 400,
+    "qi_cost": 80.0,
+    "tolerance": { "temp_band": 0.04, "duration_band": 8 }
+  },
+  "outcomes": {
+    "perfect": { "pill": "hua_xing_da_dan",        "quality": 1.0, "toxin_amount": 25.0, "toxin_color": "Turbid", "qi_gain": 0.0 },
+    "good":    { "pill": "hua_xing_da_dan",        "quality": 0.7, "toxin_amount": 30.0, "toxin_color": "Turbid", "qi_gain": 0.0 },
+    "flawed":  { "pill": "hua_xing_da_dan_flawed", "quality": 0.3, "toxin_amount": 45.0, "toxin_color": "Turbid", "qi_gain": 0.0 },
+    "waste":   null,
+    "explode": { "damage": 40.0, "meridian_crack": 0.25 }
+  },
+  "flawed_fallback": {
+    "pill": "hua_xing_da_dan_flawed",
+    "quality_scale": 0.3,
+    "toxin_scale": 2.5,
+    "side_effect_pool": [
+      { "tag": "qi_cap_perm_minus_1", "duration_s": 0,   "weight": 3 },
+      { "tag": "contam_boost",        "duration_s": 600, "weight": 2 }
+    ]
+  }
+}

@@ -1,0 +1,33 @@
+{
+  "id": "xu_yuan_dan_v1",
+  "name": "续元丹",
+  "furnace_tier_min": 3,
+  "stages": [
+    { "at_tick": 0, "required": [
+      { "material": "xu_yuan_rui", "count": 1 },
+      { "material": "hui_yuan_zhi", "count": 2 }
+    ], "window": 0 }
+  ],
+  "fire_profile": {
+    "target_temp": 0.50,
+    "target_duration_ticks": 300,
+    "qi_cost": 40.0,
+    "tolerance": { "temp_band": 0.05, "duration_band": 10 }
+  },
+  "outcomes": {
+    "perfect": { "pill": "xu_yuan_dan",        "quality": 1.0, "toxin_amount": 1.2, "toxin_color": "Mellow", "qi_gain": 0.0 },
+    "good":    { "pill": "xu_yuan_dan",        "quality": 0.7, "toxin_amount": 1.5, "toxin_color": "Mellow", "qi_gain": 0.0 },
+    "flawed":  { "pill": "xu_yuan_dan_flawed", "quality": 0.4, "toxin_amount": 2.5, "toxin_color": "Turbid", "qi_gain": 0.0 },
+    "waste":   null,
+    "explode": { "damage": 10.0, "meridian_crack": 0.05 }
+  },
+  "flawed_fallback": {
+    "pill": "xu_yuan_dan_flawed",
+    "quality_scale": 0.5,
+    "toxin_scale": 1.4,
+    "side_effect_pool": [
+      { "tag": "minor_qi_regen_boost", "duration_s": 600, "weight": 2 },
+      { "tag": "contam_boost",         "duration_s": 180, "weight": 1 }
+    ]
+  }
+}
