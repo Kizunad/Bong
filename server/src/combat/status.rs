@@ -117,6 +117,7 @@ pub fn attribute_aggregate_tick(
         attrs.attack_power = 1.0;
         attrs.defense_power = 1.0;
         attrs.move_speed_multiplier = 1.0;
+        attrs.jump_height_multiplier = 1.0;
 
         let slow_multiplier = status_effects
             .active

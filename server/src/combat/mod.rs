@@ -3,6 +3,7 @@ pub mod anticheat;
 pub mod armor;
 pub mod armor_sync;
 pub mod baomai_v3;
+pub mod body_conditioning;
 pub mod body_mass;
 pub mod carrier;
 pub mod components;
@@ -219,6 +220,7 @@ pub fn register(app: &mut App) {
     anqi_v2::register(app);
     app.add_event::<tuike::ShedEvent>();
     app.add_event::<tuike::FalseSkinForgeRequest>();
+    app.add_event::<body_conditioning::GuangboTicaoPracticeEvent>();
 
     app.configure_sets(
         Update,
@@ -290,6 +292,15 @@ pub fn register(app: &mut App) {
             weapon::sync_weapon_component_from_equipped.in_set(CombatSystemSet::Intent),
             // plan-armor-v1 §1.3: 装备槽(四护甲槽) → DerivedAttrs.defense_profile。
             armor_sync::sync_armor_to_derived_attrs.in_set(CombatSystemSet::Intent),
+        ),
+    );
+    app.add_systems(
+        Update,
+        (
+            body_conditioning::consume_guangbo_practice_events.in_set(CombatSystemSet::Intent),
+            body_conditioning::body_conditioning_aggregate
+                .in_set(CombatSystemSet::Physics)
+                .after(status::attribute_aggregate_tick),
         ),
     );
     app.add_systems(

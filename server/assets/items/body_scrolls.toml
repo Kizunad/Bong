@@ -1,0 +1,14 @@
+# 体修功法残卷。研读后学会对应锻体功法。
+
+[[item]]
+id = "scroll_body_guangbo_ticao"
+name = "残卷·广播体操"
+category = "scroll"
+grid_w = 1
+grid_h = 1
+base_weight = 0.02
+rarity = "common"
+spirit_quality_initial = 0.1
+description = "破旧纸页，画着一套古怪的伸展动作。末法修士嗤之以鼻，但勤练者四肢确有微妙变化。"
+[item.technique_scroll]
+skill_id = "body.guangbo_ticao"
