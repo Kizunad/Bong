@@ -18,7 +18,7 @@ public final class MutationVisualState {
     public static int stage() { return stage; }
     public static double cumulativeToxin() { return cumulativeToxin; }
     public static double meridianPenalty() { return meridianPenalty; }
-    public static List<MutationSlotEntry> activeSlots() { return activeSlots; }
+    public static List<MutationSlotEntry> activeSlots() { return List.copyOf(activeSlots); }
 
     public static void update(int newStage, double newToxin, double newPenalty, List<MutationSlotEntry> slots) {
         stage = newStage;

@@ -33,6 +33,8 @@ pub struct BaolongwangBoss {
     pub collapse_countdown: Option<u64>,
     /// HP 百分比缓存（由外部系统写入）
     pub hp_fraction: f32,
+    /// 是否曾进入 Rage 阶段（horn 掉落前置条件）
+    pub has_entered_rage: bool,
 }
 
 impl Default for BaolongwangBoss {
@@ -45,6 +47,7 @@ impl Default for BaolongwangBoss {
             furnace_intact: true,
             collapse_countdown: None,
             hp_fraction: 1.0,
+            has_entered_rage: false,
         }
     }
 }
@@ -94,8 +97,11 @@ pub fn tick_collapse_countdown(boss: &mut BaolongwangBoss) -> bool {
     }
 }
 
-/// 炉被摧毁时调用。
+/// 炉被摧毁时调用。幂等：重复调用不重置倒计时。
 pub fn on_furnace_destroyed(boss: &mut BaolongwangBoss) {
+    if !boss.furnace_intact {
+        return;
+    }
     boss.furnace_intact = false;
     boss.collapse_countdown = Some(2400); // 120s × 20 tps
     boss.phase = BossPhase::Collapse;
@@ -127,8 +133,8 @@ pub fn compute_loot(boss: &BaolongwangBoss, seed: u64) -> Vec<(&'static str, u32
     loot.push((LOOT_BOSS_CORE, 1));
     loot.push((LOOT_ANCIENT_RECIPE, 3));
 
-    // 50% horn (phase reached Rage = horn attack was possible)
-    if seed % 100 < 50 {
+    // 50% horn — only if boss entered Rage phase (horn attacks were possible)
+    if boss.has_entered_rage && seed % 100 < 50 {
         loot.push((LOOT_BOSS_HORN, 1));
     }
 
@@ -258,7 +264,10 @@ mod boss_tests {
 
     #[test]
     fn compute_loot_horn_probability_roughly_50_percent() {
-        let boss = BaolongwangBoss::default();
+        let boss = BaolongwangBoss {
+            has_entered_rage: true,
+            ..BaolongwangBoss::default()
+        };
         let count = (0..10000u64)
             .filter(|&seed| compute_loot(&boss, seed).iter().any(|(id, _)| *id == LOOT_BOSS_HORN))
             .count();
@@ -266,6 +275,16 @@ mod boss_tests {
             (4500..5500).contains(&count),
             "角掉率应约 50%, 10000 次中掉了 {count} 次"
         );
+    }
+
+    #[test]
+    fn compute_loot_horn_never_drops_without_rage() {
+        let boss = BaolongwangBoss::default();
+        assert!(!boss.has_entered_rage);
+        let count = (0..100u64)
+            .filter(|&seed| compute_loot(&boss, seed).iter().any(|(id, _)| *id == LOOT_BOSS_HORN))
+            .count();
+        assert_eq!(count, 0, "未进入 Rage 阶段不应掉角");
     }
 
     #[test]

@@ -42,11 +42,13 @@ public final class MutationHudPlanner {
             0xFFCCCCCC
         ));
 
-        // Progress bar to next stage
+        // Progress bar to next stage (clamp stage to valid range)
+        int clampedStage = Math.min(stage, 4);
         double toxin = MutationVisualState.cumulativeToxin();
-        double nextThreshold = stage < 4 ? THRESHOLDS[stage] : THRESHOLDS[3];
-        double prevThreshold = stage > 1 ? THRESHOLDS[stage - 2] : 0.0;
-        double progress = Math.min(1.0, (toxin - prevThreshold) / (nextThreshold - prevThreshold));
+        double nextThreshold = clampedStage < 4 ? THRESHOLDS[clampedStage] : THRESHOLDS[3];
+        double prevThreshold = clampedStage >= 2 ? THRESHOLDS[clampedStage - 2] : 0.0;
+        double range = nextThreshold - prevThreshold;
+        double progress = range > 0.0 ? Math.min(1.0, Math.max(0.0, (toxin - prevThreshold) / range)) : 1.0;
         int filled = (int)(BAR_WIDTH * progress);
 
         int barColor = switch (stage) {

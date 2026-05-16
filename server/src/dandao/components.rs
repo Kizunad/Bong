@@ -39,6 +39,9 @@ impl DandaoStyle {
     /// 推进累计丹毒并检查是否需要变异阶段提升。
     /// 返回 `Some(new_stage)` 表示刚刚跨越阈值。
     pub fn advance_toxin(&mut self, toxin_amount: f64) -> Option<u8> {
+        if !toxin_amount.is_finite() || toxin_amount < 0.0 {
+            return None;
+        }
         let old_stage = self.mutation_stage;
         self.cumulative_toxin += toxin_amount;
         self.pill_intake_count += 1;
