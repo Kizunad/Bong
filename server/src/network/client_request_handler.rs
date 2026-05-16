@@ -6783,6 +6783,9 @@ fn equip_slot_v1_for_runtime(slot: &str) -> Option<EquipSlotV1> {
         crate::inventory::EQUIP_SLOT_TREASURE_BELT_1 => Some(EquipSlotV1::TreasureBelt1),
         crate::inventory::EQUIP_SLOT_TREASURE_BELT_2 => Some(EquipSlotV1::TreasureBelt2),
         crate::inventory::EQUIP_SLOT_TREASURE_BELT_3 => Some(EquipSlotV1::TreasureBelt3),
+        crate::inventory::EQUIP_SLOT_BACK_PACK => Some(EquipSlotV1::BackPack),
+        crate::inventory::EQUIP_SLOT_WAIST_POUCH => Some(EquipSlotV1::WaistPouch),
+        crate::inventory::EQUIP_SLOT_CHEST_SATCHEL => Some(EquipSlotV1::ChestSatchel),
         _ => None,
     }
 }

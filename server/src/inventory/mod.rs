@@ -3086,14 +3086,18 @@ pub fn apply_backpack_wear(
     container_id: &str,
 ) -> Option<BackpackBreakEvent> {
     let slot = container_id_to_equip_slot(container_id)?;
-    let backpack = inventory.equipped.get_mut(slot)?;
-    let template = registry.get(&backpack.template_id)?;
-    let cost = template.container_spec.as_ref()?.durability_cost_per_op;
-    if cost <= 0.0 {
-        return None;
-    }
-    backpack.durability = (backpack.durability - cost).max(0.0);
-    if backpack.durability <= f64::EPSILON {
+    let cost = {
+        let backpack = inventory.equipped.get_mut(slot)?;
+        let template = registry.get(&backpack.template_id)?;
+        let cost = template.container_spec.as_ref()?.durability_cost_per_op;
+        if cost <= 0.0 {
+            return None;
+        }
+        backpack.durability = (backpack.durability - cost).max(0.0);
+        backpack.durability
+    };
+    bump_revision(inventory);
+    if cost <= f64::EPSILON {
         Some(BackpackBreakEvent {
             slot: slot.to_string(),
             container_id: container_id.to_string(),
@@ -3144,6 +3148,7 @@ pub fn handle_backpack_break(
     // 4. 刷新 max_weight（equipped 已更新，rebuild 会重算）。
     rebuild_containers_from_equipment(inventory, registry);
     let new_max_weight = inventory.max_weight;
+    bump_revision(inventory);
 
     Some(BackpackBreakOutcome {
         slot: slot.to_string(),
@@ -3854,9 +3859,35 @@ fn find_first_fit_container_location(
 ) -> Option<crate::schema::inventory::InventoryLocationV1> {
     use crate::schema::inventory::InventoryLocationV1;
 
-    // plan-backpack-equip-v1 P1 — ContainerIdV1 is now an open String alias;
-    // scan all containers in their stored order (body_pocket first, then back_pack, etc.).
-    for container in &inventory.containers {
+    // plan-backpack-equip-v1 P1 — ContainerIdV1 is now an open String alias.
+    // Scan non-body_pocket containers first (backpacks, pouches, satchels),
+    // then fall back to body_pocket so it acts as a last-resort slot.
+    for container in inventory
+        .containers
+        .iter()
+        .filter(|c| c.id != BODY_POCKET_CONTAINER_ID)
+    {
+        let container_id = container.id.clone();
+        for row in 0..container.rows {
+            for col in 0..container.cols {
+                let location = InventoryLocationV1::Container {
+                    container_id: container_id.clone(),
+                    row: u64::from(row),
+                    col: u64::from(col),
+                };
+                if validate_attach_fits(inventory, item, &location).is_ok() {
+                    return Some(location);
+                }
+            }
+        }
+    }
+
+    // body_pocket 兜底：只在所有背包/腰囊/挎包都满时才放入贴身口袋。
+    for container in inventory
+        .containers
+        .iter()
+        .filter(|c| c.id == BODY_POCKET_CONTAINER_ID)
+    {
         let container_id = container.id.clone();
         for row in 0..container.rows {
             for col in 0..container.cols {

@@ -198,9 +198,9 @@ public final class InventoryModel {
             this.containers = defs == null || defs.isEmpty()
                 ? new ArrayList<>(DEFAULT_CONTAINERS)
                 : new ArrayList<>(defs);
-            this.primaryContainerId = defs == null || defs.isEmpty()
-                ? PRIMARY_CONTAINER_ID
-                : defs.get(0).id();
+            this.primaryContainerId = this.containers.isEmpty()
+                ? BODY_POCKET_CONTAINER_ID
+                : this.containers.get(0).id();
             return this;
         }
 
