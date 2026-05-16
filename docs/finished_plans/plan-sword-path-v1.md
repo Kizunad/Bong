@@ -648,3 +648,69 @@ pub struct TiandaoBlindZone {
 5. **化虚盲区内 NPC 行为**：blind zone 内 NPC 是否也从天道感知消失？→ 建议是（一致性）
 6. **品阶升级失败概率曲线**：当前线性递增。是否加入 proficiency 减免？→ 建议 v2 处理
 7. **化虚一剑开天门 PvP 平衡**：staging_buffer = qi_max 10700 + stored_qi 3000 = 13700；10 格处 ≈ 5069 伤害（通灵必杀），50 格处 ≈ 1507，100 格处 ≈ 343（2.5%）；核心 10 格内才致命
+
+---
+
+## Finish Evidence
+
+### 落地清单
+
+| 阶段 | 模块 / 文件路径 |
+|------|----------------|
+| P0 | `server/src/sword_path/grade.rs` — SwordGrade 7 阶 + 数值表 |
+| P0 | `server/src/sword_path/bond.rs` — SwordBondComponent + 注入/碎裂 |
+| P0 | `server/src/sword_path/techniques.rs` — 五招定义 + 效果常数 + 染色权重 |
+| P0 | `server/src/sword_path/shatter.rs` — 碎裂/化虚结算纯函数 |
+| P0 | `server/src/sword_path/tiandao_blind.rs` — TiandaoBlindZone struct |
+| P0 | `server/src/sword_path/mod.rs` — Plugin 注册 |
+| P1 | `server/assets/items/sword_materials.toml` — 10 种原材料定义 |
+| P1 | `server/src/sword_path/upgrade.rs` — 6 阶升级配方 + check/resolve 逻辑 |
+| P2 | `server/zones.json` — giant_sword_sea zone |
+| P2 | `worldgen/terrain-profiles.example.json` — giant_sword_sea terrain profile |
+| P2 | `worldgen/blueprint/poi_sword_sea/` — 3 POI (铸剑古殿/剑阵遗迹/海底剑冢) |
+| P3 | `client/.../geo/heiwushi.geo.json` — 黑武士模型 (geometry.bong.heiwushi) |
+| P3 | `client/.../animations/heiwushi.animation.json` — 3 攻击动画 |
+| P3 | `client/.../textures/entity/fauna/heiwushi.png` — 128×128 贴图 |
+| P3 | `server/src/fauna/components.rs` — BeastKind::Heiwushi (HP 2100, realm_tier 4) |
+| P3 | `server/src/fauna/visual.rs` — FaunaVisualKind::Heiwushi + ENTITY_KIND 145 |
+| P3 | `server/src/fauna/drop.rs` — HEIWUSHI_DROPS 掉落表 |
+| P4 | `server/src/sword_path/heaven_gate.rs` — HeavenGateCastEvent + TiandaoBlindZoneRegistry + 伤害衰减 |
+| P5 | `client/.../hud/SwordBondHudState.java` — 绑定状态数据 |
+| P5 | `client/.../hud/SwordBondHudStateStore.java` — 线程安全 store |
+| P5 | `client/.../hud/SwordPathHudPlanner.java` — 品阶图标 + qi竖条 + bond弧线 + 化虚脉冲 |
+| P5 | `client/.../hud/HudRenderLayer.java` — SWORD_BOND layer |
+
+### 关键 commit
+
+| hash | 日期 | 说明 |
+|------|------|------|
+| 34d07a4bd | 2026-05-16 | P0：人剑共生核心 + 五招 + 天道盲区（59 测试） |
+| 3044297fe | 2026-05-16 | P1：铸剑材料 + 品阶升级配方（+19 测试） |
+| b8b9aeee8 | 2026-05-16 | P2：巨剑沧海地形 zone + profile + 3 POI |
+| c8c06b850 | 2026-05-16 | P3：黑武士 BOSS 模型 + fauna 注册 + 掉落 |
+| 74a4389cf | 2026-05-17 | P4：化虚一剑开天门 + 天道盲区 Registry（+9 测试） |
+| 13e1c0785 | 2026-05-17 | P5：剑道 HUD 完整包 + client 测试（11 cases） |
+
+### 测试结果
+
+- `cd server && cargo test sword_path` → **87 passed**
+- `cd server && cargo test` → **4913 passed, 0 failed**
+- `cd client && ./gradlew compileJava` → **BUILD SUCCESSFUL**
+- client test: 11 cases in SwordPathHudPlannerTest（compileTestJava 有 pre-existing MovementKeybindingsTest 错误，非本 PR 引入）
+
+### 跨仓库核验
+
+| 仓库 | 命中 symbol |
+|------|------------|
+| server | `SwordBondComponent` / `SwordGrade` / `SwordShatterEvent` / `HeavenGateCastEvent` / `TiandaoBlindZoneRegistry` / `BeastKind::Heiwushi` / `FaunaVisualKind::Heiwushi` / `HEIWUSHI_DROPS` |
+| client | `SwordPathHudPlanner` / `SwordBondHudState` / `SwordBondHudStateStore` / `HudRenderLayer.SWORD_BOND` / `geometry.bong.heiwushi` / `heiwushi.animation.json` |
+| agent | 待接入：`TiandaoBlindZoneRegistry.is_player_hidden()` 过滤 world_state 推送 |
+
+### 遗留 / 后续
+
+- agent 天道感知屏蔽：`publish_world_state_to_redis` 需读取 `TiandaoBlindZoneRegistry` 过滤玩家 snapshot（当前 Registry resource 已就绪，wiring 留 v2）
+- ECS runtime system wiring：bond 绑定触发 / 招式 cast 接入 SkillRegistry / shatter 反噬扣减 Cultivation component（纯函数已就绪，Bevy system 留 v2）
+- VFX asset：plan 中详述的粒子贴图 / audio_recipe JSON / PlayerAnimator JSON 未创建（规格已锁定）
+- 黑武士 AI 行为：big-brain Scorer/Action（spawn_heiwushi.rs）未实装（BeastKind + 掉落 + 模型已就绪）
+- InspectScreen 灵剑信息行扩展
+- client SwordBondHudStateStore 的 network handler 接入（解析 server 下发的 bond 状态 payload）
