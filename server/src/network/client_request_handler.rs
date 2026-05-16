@@ -2932,6 +2932,7 @@ mod tests {
                     }),
                     inscription_scroll_spec: None,
                     technique_scroll_spec: None,
+                    container_spec: None,
                 },
             ),
             (
@@ -2957,6 +2958,7 @@ mod tests {
                         inscription_id: "sharp_v0".to_string(),
                     }),
                     technique_scroll_spec: None,
+                    container_spec: None,
                 },
             ),
         ]))
@@ -3942,6 +3944,7 @@ mod tests {
                 blueprint_scroll_spec: None,
                 inscription_scroll_spec: None,
                 technique_scroll_spec: None,
+                container_spec: None,
             },
         )])));
         let mut karma = KarmaWeightStore::default();
@@ -4036,6 +4039,7 @@ mod tests {
                 blueprint_scroll_spec: None,
                 inscription_scroll_spec: None,
                 technique_scroll_spec: None,
+                container_spec: None,
             },
         )])));
 
