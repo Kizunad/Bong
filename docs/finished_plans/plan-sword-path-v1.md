@@ -322,6 +322,7 @@ zone 内唯一大型遗迹，固定坐标。
 - **功法残卷散落**：遗迹各处散落 3-5 个 `scroll_sword_path`，拾取后解锁剑道招式（走 `UnlockSource::Scroll` 现有机制）
 
 worldgen blueprint POI spec:
+
 ```json
 {
   "kind": "ruin",
@@ -337,6 +338,7 @@ worldgen blueprint POI spec:
 ### P2.5 Zone 环境视听
 
 **ambient_sword_sea** audio_recipe：
+
 ```json
 {
   "layers": [
