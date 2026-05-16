@@ -3725,22 +3725,16 @@ fn find_first_fit_container_location(
     inventory: &PlayerInventory,
     item: &ItemInstance,
 ) -> Option<crate::schema::inventory::InventoryLocationV1> {
-    use crate::schema::inventory::{ContainerIdV1, InventoryLocationV1};
+    use crate::schema::inventory::InventoryLocationV1;
 
-    let ordered = [
-        (MAIN_PACK_CONTAINER_ID, ContainerIdV1::MainPack),
-        (SMALL_POUCH_CONTAINER_ID, ContainerIdV1::SmallPouch),
-        (FRONT_SATCHEL_CONTAINER_ID, ContainerIdV1::FrontSatchel),
-    ];
-
-    for (runtime_id, wire_id) in ordered {
-        let Some(container) = inventory.containers.iter().find(|c| c.id == runtime_id) else {
-            continue;
-        };
+    // plan-backpack-equip-v1 P1 — ContainerIdV1 is now an open String alias;
+    // scan all containers in their stored order (body_pocket first, then back_pack, etc.).
+    for container in &inventory.containers {
+        let container_id = container.id.clone();
         for row in 0..container.rows {
             for col in 0..container.cols {
                 let location = InventoryLocationV1::Container {
-                    container_id: wire_id.clone(),
+                    container_id: container_id.clone(),
                     row: u64::from(row),
                     col: u64::from(col),
                 };
@@ -3755,12 +3749,8 @@ fn find_first_fit_container_location(
 }
 
 fn container_id_str(cid: &crate::schema::inventory::ContainerIdV1) -> &str {
-    use crate::schema::inventory::ContainerIdV1;
-    match cid {
-        ContainerIdV1::MainPack => MAIN_PACK_CONTAINER_ID,
-        ContainerIdV1::SmallPouch => SMALL_POUCH_CONTAINER_ID,
-        ContainerIdV1::FrontSatchel => FRONT_SATCHEL_CONTAINER_ID,
-    }
+    // plan-backpack-equip-v1 P1 — ContainerIdV1 is now String; wire id equals runtime id.
+    cid.as_str()
 }
 
 fn equip_slot_key(slot: &crate::schema::inventory::EquipSlotV1) -> &'static str {
@@ -5330,7 +5320,7 @@ cols = 4
 
     #[test]
     fn apply_move_grid_to_hotbar_succeeds_and_bumps_revision() {
-        use crate::schema::inventory::{ContainerIdV1, InventoryLocationV1};
+        use crate::schema::inventory::InventoryLocationV1;
         let registry = load_item_registry().expect("item registry should load");
         let mut inv = make_test_inventory_with_one_item();
         let outcome = apply_inventory_move(
@@ -5338,7 +5328,7 @@ cols = 4
             &registry,
             42,
             &InventoryLocationV1::Container {
-                container_id: ContainerIdV1::MainPack,
+                container_id: "main_pack".to_string(),
                 row: 0,
                 col: 0,
             },
@@ -5358,7 +5348,7 @@ cols = 4
 
     #[test]
     fn apply_move_rejects_when_from_does_not_match() {
-        use crate::schema::inventory::{ContainerIdV1, InventoryLocationV1};
+        use crate::schema::inventory::InventoryLocationV1;
         let registry = load_item_registry().expect("item registry should load");
         let mut inv = make_test_inventory_with_one_item();
         let result = apply_inventory_move(
@@ -5367,7 +5357,7 @@ cols = 4
             42,
             // Wrong from cell.
             &InventoryLocationV1::Container {
-                container_id: ContainerIdV1::MainPack,
+                container_id: "main_pack".to_string(),
                 row: 1,
                 col: 1,
             },
@@ -5415,7 +5405,7 @@ cols = 4
             &registry,
             42,
             &InventoryLocationV1::Container {
-                container_id: crate::schema::inventory::ContainerIdV1::MainPack,
+                container_id: "main_pack".to_string(),
                 row: 0,
                 col: 0,
             },
@@ -5440,7 +5430,7 @@ cols = 4
 
     #[test]
     fn apply_move_rejects_swap_when_footprints_differ() {
-        use crate::schema::inventory::{ContainerIdV1, InventoryLocationV1};
+        use crate::schema::inventory::InventoryLocationV1;
         let registry = load_item_registry().expect("item registry should load");
         let mut inv = make_test_inventory_with_one_item();
         // Add a 2×2 occupant at container (2,2).
@@ -5477,12 +5467,12 @@ cols = 4
             &registry,
             42,
             &InventoryLocationV1::Container {
-                container_id: ContainerIdV1::MainPack,
+                container_id: "main_pack".to_string(),
                 row: 0,
                 col: 0,
             },
             &InventoryLocationV1::Container {
-                container_id: ContainerIdV1::MainPack,
+                container_id: "main_pack".to_string(),
                 row: 2,
                 col: 2,
             },
@@ -5496,7 +5486,7 @@ cols = 4
 
     #[test]
     fn apply_move_within_grid_succeeds() {
-        use crate::schema::inventory::{ContainerIdV1, InventoryLocationV1};
+        use crate::schema::inventory::InventoryLocationV1;
         let registry = load_item_registry().expect("item registry should load");
         let mut inv = make_test_inventory_with_one_item();
         let _ = apply_inventory_move(
@@ -5504,12 +5494,12 @@ cols = 4
             &registry,
             42,
             &InventoryLocationV1::Container {
-                container_id: ContainerIdV1::MainPack,
+                container_id: "main_pack".to_string(),
                 row: 0,
                 col: 0,
             },
             &InventoryLocationV1::Container {
-                container_id: ContainerIdV1::MainPack,
+                container_id: "main_pack".to_string(),
                 row: 2,
                 col: 3,
             },
@@ -5525,7 +5515,7 @@ cols = 4
 
     #[test]
     fn apply_move_allows_weapon_to_main_hand() {
-        use crate::schema::inventory::{ContainerIdV1, EquipSlotV1, InventoryLocationV1};
+        use crate::schema::inventory::{EquipSlotV1, InventoryLocationV1};
 
         let registry = load_item_registry().expect("item registry should load");
         let mut inv = make_test_inventory_with_one_item();
@@ -5538,7 +5528,7 @@ cols = 4
             &registry,
             42,
             &InventoryLocationV1::Container {
-                container_id: ContainerIdV1::MainPack,
+                container_id: "main_pack".to_string(),
                 row: 0,
                 col: 0,
             },
@@ -5564,7 +5554,7 @@ cols = 4
 
     #[test]
     fn apply_move_allows_tool_to_main_hand() {
-        use crate::schema::inventory::{ContainerIdV1, EquipSlotV1, InventoryLocationV1};
+        use crate::schema::inventory::{EquipSlotV1, InventoryLocationV1};
 
         let registry = load_item_registry().expect("item registry should load");
         let mut inv = make_test_inventory_with_one_item();
@@ -5576,7 +5566,7 @@ cols = 4
             &registry,
             42,
             &InventoryLocationV1::Container {
-                container_id: ContainerIdV1::MainPack,
+                container_id: "main_pack".to_string(),
                 row: 0,
                 col: 0,
             },
@@ -5630,7 +5620,7 @@ cols = 4
 
     #[test]
     fn apply_move_allows_mundane_armor_to_matching_slot() {
-        use crate::schema::inventory::{ContainerIdV1, EquipSlotV1, InventoryLocationV1};
+        use crate::schema::inventory::{EquipSlotV1, InventoryLocationV1};
 
         let registry = load_item_registry().expect("item registry should load");
         let mut inv = make_test_inventory_with_one_item();
@@ -5644,7 +5634,7 @@ cols = 4
             &registry,
             42,
             &InventoryLocationV1::Container {
-                container_id: ContainerIdV1::MainPack,
+                container_id: "main_pack".to_string(),
                 row: 0,
                 col: 0,
             },
@@ -5670,7 +5660,7 @@ cols = 4
 
     #[test]
     fn apply_move_rejects_mundane_armor_to_wrong_slot() {
-        use crate::schema::inventory::{ContainerIdV1, EquipSlotV1, InventoryLocationV1};
+        use crate::schema::inventory::{EquipSlotV1, InventoryLocationV1};
 
         let registry = load_item_registry().expect("item registry should load");
         let mut inv = make_test_inventory_with_one_item();
@@ -5682,7 +5672,7 @@ cols = 4
             &registry,
             42,
             &InventoryLocationV1::Container {
-                container_id: ContainerIdV1::MainPack,
+                container_id: "main_pack".to_string(),
                 row: 0,
                 col: 0,
             },
@@ -5697,7 +5687,7 @@ cols = 4
 
     #[test]
     fn apply_move_rejects_broken_armor_unequippable() {
-        use crate::schema::inventory::{ContainerIdV1, EquipSlotV1, InventoryLocationV1};
+        use crate::schema::inventory::{EquipSlotV1, InventoryLocationV1};
 
         let registry = load_item_registry().expect("item registry should load");
         let mut inv = make_test_inventory_with_one_item();
@@ -5710,7 +5700,7 @@ cols = 4
             &registry,
             42,
             &InventoryLocationV1::Container {
-                container_id: ContainerIdV1::MainPack,
+                container_id: "main_pack".to_string(),
                 row: 0,
                 col: 0,
             },
@@ -5725,7 +5715,7 @@ cols = 4
 
     #[test]
     fn apply_move_rejects_tool_to_main_hand_when_two_hand_occupied() {
-        use crate::schema::inventory::{ContainerIdV1, EquipSlotV1, InventoryLocationV1};
+        use crate::schema::inventory::{EquipSlotV1, InventoryLocationV1};
 
         let registry = load_item_registry().expect("item registry should load");
         let mut inv = make_test_inventory_with_one_item();
@@ -5762,7 +5752,7 @@ cols = 4
             &registry,
             42,
             &InventoryLocationV1::Container {
-                container_id: ContainerIdV1::MainPack,
+                container_id: "main_pack".to_string(),
                 row: 0,
                 col: 0,
             },
@@ -5777,7 +5767,7 @@ cols = 4
 
     #[test]
     fn apply_move_rejects_weapon_to_hotbar() {
-        use crate::schema::inventory::{ContainerIdV1, InventoryLocationV1};
+        use crate::schema::inventory::InventoryLocationV1;
 
         let registry = load_item_registry().expect("item registry should load");
         let mut inv = make_test_inventory_with_one_item();
@@ -5790,7 +5780,7 @@ cols = 4
             &registry,
             42,
             &InventoryLocationV1::Container {
-                container_id: ContainerIdV1::MainPack,
+                container_id: "main_pack".to_string(),
                 row: 0,
                 col: 0,
             },
@@ -5803,7 +5793,7 @@ cols = 4
 
     #[test]
     fn apply_move_rejects_tool_to_hotbar() {
-        use crate::schema::inventory::{ContainerIdV1, InventoryLocationV1};
+        use crate::schema::inventory::InventoryLocationV1;
 
         let registry = load_item_registry().expect("item registry should load");
         let mut inv = make_test_inventory_with_one_item();
@@ -5815,7 +5805,7 @@ cols = 4
             &registry,
             42,
             &InventoryLocationV1::Container {
-                container_id: ContainerIdV1::MainPack,
+                container_id: "main_pack".to_string(),
                 row: 0,
                 col: 0,
             },
@@ -5828,7 +5818,7 @@ cols = 4
 
     #[test]
     fn apply_move_rejects_armor_to_hotbar() {
-        use crate::schema::inventory::{ContainerIdV1, InventoryLocationV1};
+        use crate::schema::inventory::InventoryLocationV1;
 
         let registry = load_item_registry().expect("item registry should load");
         let mut inv = make_test_inventory_with_one_item();
@@ -5840,7 +5830,7 @@ cols = 4
             &registry,
             42,
             &InventoryLocationV1::Container {
-                container_id: ContainerIdV1::MainPack,
+                container_id: "main_pack".to_string(),
                 row: 0,
                 col: 0,
             },
@@ -5853,7 +5843,7 @@ cols = 4
 
     #[test]
     fn apply_move_rejects_non_dagger_off_hand_weapon() {
-        use crate::schema::inventory::{ContainerIdV1, EquipSlotV1, InventoryLocationV1};
+        use crate::schema::inventory::{EquipSlotV1, InventoryLocationV1};
 
         let registry = load_item_registry().expect("item registry should load");
         let mut inv = make_test_inventory_with_one_item();
@@ -5866,7 +5856,7 @@ cols = 4
             &registry,
             42,
             &InventoryLocationV1::Container {
-                container_id: ContainerIdV1::MainPack,
+                container_id: "main_pack".to_string(),
                 row: 0,
                 col: 0,
             },
@@ -5881,7 +5871,7 @@ cols = 4
 
     #[test]
     fn apply_move_rejects_two_hand_when_main_hand_occupied() {
-        use crate::schema::inventory::{ContainerIdV1, EquipSlotV1, InventoryLocationV1};
+        use crate::schema::inventory::{EquipSlotV1, InventoryLocationV1};
 
         let registry = load_item_registry().expect("item registry should load");
         let mut inv = make_test_inventory_with_one_item();
@@ -5919,7 +5909,7 @@ cols = 4
             &registry,
             42,
             &InventoryLocationV1::Container {
-                container_id: ContainerIdV1::MainPack,
+                container_id: "main_pack".to_string(),
                 row: 0,
                 col: 0,
             },
@@ -6563,7 +6553,7 @@ cols = 4
             DimensionKind::Overworld,
             42,
             &crate::schema::inventory::InventoryLocationV1::Container {
-                container_id: crate::schema::inventory::ContainerIdV1::MainPack,
+                container_id: "main_pack".to_string(),
                 row: 0,
                 col: 0,
             },
@@ -7454,7 +7444,7 @@ cols = 4
         let (registry, inv) = make_backpack_registry_and_inventory();
         let item = make_container_item(501, "large_backpack");
         let from = InventoryLocationV1::Container {
-            container_id: crate::schema::inventory::ContainerIdV1::MainPack,
+            container_id: "main_pack".to_string(),
             row: 0,
             col: 0,
         };
@@ -7480,7 +7470,7 @@ cols = 4
         });
         let item = make_test_item_instance(502, "iron_ore");
         let from = InventoryLocationV1::Container {
-            container_id: crate::schema::inventory::ContainerIdV1::MainPack,
+            container_id: "main_pack".to_string(),
             row: 0,
             col: 0,
         };
@@ -7502,7 +7492,7 @@ cols = 4
         // large_backpack has equip_slot=back_pack; try to equip to waist_pouch slot.
         let item = make_container_item(503, "large_backpack");
         let from = InventoryLocationV1::Container {
-            container_id: crate::schema::inventory::ContainerIdV1::MainPack,
+            container_id: "main_pack".to_string(),
             row: 0,
             col: 0,
         };
@@ -7523,7 +7513,7 @@ cols = 4
         let (registry, inv) = make_backpack_registry_and_inventory();
         let item = make_container_item(504, "large_backpack");
         let from = InventoryLocationV1::Container {
-            container_id: crate::schema::inventory::ContainerIdV1::MainPack,
+            container_id: "main_pack".to_string(),
             row: 0,
             col: 0,
         };
@@ -7560,7 +7550,7 @@ cols = 4
             slot: EquipSlotV1::BackPack,
         };
         let to = InventoryLocationV1::Container {
-            container_id: crate::schema::inventory::ContainerIdV1::MainPack,
+            container_id: "main_pack".to_string(),
             row: 0,
             col: 0,
         };
@@ -7594,7 +7584,7 @@ cols = 4
             slot: EquipSlotV1::BackPack,
         };
         let to = InventoryLocationV1::Container {
-            container_id: crate::schema::inventory::ContainerIdV1::MainPack,
+            container_id: "main_pack".to_string(),
             row: 0,
             col: 0,
         };

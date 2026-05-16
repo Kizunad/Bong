@@ -301,9 +301,8 @@ mod server_data_tests {
     use super::*;
     use crate::schema::common::{EventKind, NarrationScope, NarrationStyle, MAX_PAYLOAD_BYTES};
     use crate::schema::inventory::{
-        ContainerIdV1, ContainerSnapshotV1, EquippedInventorySnapshotV1, InventoryEventV1,
-        InventoryItemViewV1, InventorySnapshotV1, InventoryWeightV1, ItemRarityV1,
-        PlacedInventoryItemV1,
+        ContainerSnapshotV1, EquippedInventorySnapshotV1, InventoryEventV1, InventoryItemViewV1,
+        InventorySnapshotV1, InventoryWeightV1, ItemRarityV1, PlacedInventoryItemV1,
     };
     use crate::schema::narration::Narration;
     use crate::schema::server_data::{
@@ -362,26 +361,26 @@ mod server_data_tests {
             revision: 12,
             containers: vec![
                 ContainerSnapshotV1 {
-                    id: ContainerIdV1::MainPack,
+                    id: "main_pack".to_string(),
                     name: "主背包".to_string(),
                     rows: 5,
                     cols: 7,
                 },
                 ContainerSnapshotV1 {
-                    id: ContainerIdV1::SmallPouch,
+                    id: "small_pouch".to_string(),
                     name: "小口袋".to_string(),
                     rows: 3,
                     cols: 3,
                 },
                 ContainerSnapshotV1 {
-                    id: ContainerIdV1::FrontSatchel,
+                    id: "front_satchel".to_string(),
                     name: "前挂包".to_string(),
                     rows: 3,
                     cols: 4,
                 },
             ],
             placed_items: vec![PlacedInventoryItemV1 {
-                container_id: ContainerIdV1::MainPack,
+                container_id: "main_pack".to_string(),
                 row: 0,
                 col: 0,
                 item: sample_inventory_item(
@@ -759,7 +758,7 @@ mod server_data_tests {
                 revision: 13,
                 instance_id: 1004,
                 from: crate::schema::inventory::InventoryLocationV1::Container {
-                    container_id: crate::schema::inventory::ContainerIdV1::MainPack,
+                    container_id: "main_pack".to_string(),
                     row: 0,
                     col: 0,
                 },

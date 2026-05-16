@@ -4,15 +4,29 @@ use crate::cultivation::components::ColorKind;
 
 const JS_SAFE_INTEGER_MAX: u64 = 9_007_199_254_740_991;
 const HOTBAR_SLOT_COUNT: usize = 9;
-const INVENTORY_CONTAINER_COUNT: usize = 3;
+/// plan-backpack-equip-v1 P1 — 容器数量上限（原固定 3 改为开放上限，最多 16 个容器）。
+const INVENTORY_CONTAINER_MAX: usize = 16;
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
-#[serde(rename_all = "snake_case")]
-pub enum ContainerIdV1 {
-    MainPack,
-    SmallPouch,
-    FrontSatchel,
-}
+/// plan-backpack-equip-v1 P1 — ContainerIdV1 改为开放字符串类型别名，
+/// 支持任意 container id（body_pocket / back_pack / waist_pouch / chest_satchel 等），
+/// wire format 与原 enum snake_case 序列化完全兼容。
+pub type ContainerIdV1 = String;
+
+// ─── 预定义常量（避免散落字符串字面量） ────────────────────────────────────
+/// 贴身口袋（2×3，固定，不可卸）。
+pub const CONTAINER_ID_BODY_POCKET: &str = "body_pocket";
+/// 背部大背包（装备 back_pack 槽产生的容器）。
+pub const CONTAINER_ID_BACK_PACK: &str = "back_pack";
+/// 腰间小囊（装备 waist_pouch 槽产生的容器）。
+pub const CONTAINER_ID_WAIST_POUCH: &str = "waist_pouch";
+/// 胸前挎包（装备 chest_satchel 槽产生的容器）。
+pub const CONTAINER_ID_CHEST_SATCHEL: &str = "chest_satchel";
+/// 旧 main_pack id（历史兼容）。
+pub const CONTAINER_ID_MAIN_PACK: &str = "main_pack";
+/// 旧 small_pouch id（历史兼容）。
+pub const CONTAINER_ID_SMALL_POUCH: &str = "small_pouch";
+/// 旧 front_satchel id（历史兼容）。
+pub const CONTAINER_ID_FRONT_SATCHEL: &str = "front_satchel";
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
 #[serde(rename_all = "snake_case")]
@@ -194,6 +208,7 @@ pub enum InventoryLocationV1 {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct PlacedInventoryItemV1 {
+    #[serde(deserialize_with = "deserialize_non_empty_string_up_to_64")]
     pub container_id: ContainerIdV1,
     #[serde(deserialize_with = "deserialize_grid_coordinate")]
     pub row: u64,
@@ -205,6 +220,7 @@ pub struct PlacedInventoryItemV1 {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct ContainerSnapshotV1 {
+    #[serde(deserialize_with = "deserialize_non_empty_string_up_to_64")]
     pub id: ContainerIdV1,
     #[serde(deserialize_with = "deserialize_non_empty_string_up_to_64")]
     pub name: String,
@@ -299,6 +315,7 @@ enum RawInventoryLocationV1 {
 #[serde(deny_unknown_fields)]
 struct RawInventoryContainerLocationV1 {
     kind: String,
+    #[serde(deserialize_with = "deserialize_non_empty_string_up_to_64")]
     container_id: ContainerIdV1,
     #[serde(deserialize_with = "deserialize_grid_coordinate")]
     row: u64,
@@ -516,7 +533,19 @@ fn deserialize_inventory_containers<'de, D>(
 where
     D: Deserializer<'de>,
 {
-    deserialize_fixed_len_vec::<D, ContainerSnapshotV1, INVENTORY_CONTAINER_COUNT>(deserializer)
+    let values = Vec::<ContainerSnapshotV1>::deserialize(deserializer)?;
+    if values.is_empty() {
+        return Err(D::Error::custom(
+            "inventory containers must not be empty (at least 1 container required)",
+        ));
+    }
+    if values.len() > INVENTORY_CONTAINER_MAX {
+        return Err(D::Error::custom(format!(
+            "inventory containers must have at most {INVENTORY_CONTAINER_MAX} entries, got {}",
+            values.len()
+        )));
+    }
+    Ok(values)
 }
 
 fn deserialize_hotbar<'de, D>(deserializer: D) -> Result<Vec<Option<InventoryItemViewV1>>, D::Error>
@@ -800,7 +829,7 @@ mod tests {
                 assert_eq!(
                     from,
                     InventoryLocationV1::Container {
-                        container_id: ContainerIdV1::MainPack,
+                        container_id: CONTAINER_ID_MAIN_PACK.to_string(),
                         row: 0,
                         col: 0,
                     }
@@ -848,7 +877,7 @@ mod tests {
             revision: 21,
             instance_id: 2002,
             from: InventoryLocationV1::Container {
-                container_id: ContainerIdV1::MainPack,
+                container_id: CONTAINER_ID_MAIN_PACK.to_string(),
                 row: 0,
                 col: 0,
             },
@@ -925,7 +954,7 @@ mod tests {
                             row,
                             col,
                         } => {
-                            assert_eq!(container_id, ContainerIdV1::MainPack);
+                            assert_eq!(container_id, CONTAINER_ID_MAIN_PACK);
                             assert_eq!(row, 0);
                             assert_eq!(col, 0);
                         }

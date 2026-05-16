@@ -14,7 +14,7 @@ use crate::network::RedisBridgeResource;
 use crate::network::{log_payload_build_error, send_server_data_payload};
 use crate::schema::armor_event::ArmorDurabilityChangedV1;
 use crate::schema::inventory::EquipSlotV1;
-use crate::schema::inventory::{ContainerIdV1, InventoryEventV1, InventoryLocationV1};
+use crate::schema::inventory::{InventoryEventV1, InventoryLocationV1};
 use crate::schema::server_data::{ServerDataPayloadV1, ServerDataV1};
 
 pub fn emit_durability_changed_inventory_events(
@@ -134,12 +134,9 @@ pub fn emit_dropped_item_inventory_events(
                     revision: ev.revision.0,
                     instance_id: dropped.instance.instance_id,
                     from: InventoryLocationV1::Container {
-                        container_id: match dropped.container_id.as_str() {
-                            "main_pack" => ContainerIdV1::MainPack,
-                            "small_pouch" => ContainerIdV1::SmallPouch,
-                            "front_satchel" => ContainerIdV1::FrontSatchel,
-                            _ => ContainerIdV1::MainPack,
-                        },
+                        // plan-backpack-equip-v1 P1 — ContainerIdV1 is now String;
+                        // pass the runtime id directly as the wire container_id.
+                        container_id: dropped.container_id.clone(),
                         row: u64::from(dropped.row),
                         col: u64::from(dropped.col),
                     },

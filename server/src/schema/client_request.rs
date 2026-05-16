@@ -1138,7 +1138,7 @@ mod tests {
                 assert_eq!(
                     from,
                     InventoryLocationV1::Container {
-                        container_id: crate::schema::inventory::ContainerIdV1::MainPack,
+                        container_id: "main_pack".to_string(),
                         row: 0,
                         col: 0,
                     }

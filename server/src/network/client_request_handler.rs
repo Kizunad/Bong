@@ -69,8 +69,7 @@ use crate::inventory::{
     apply_item_spiritual_wear, consume_item_instance_once, discard_inventory_item_to_dropped_loot,
     fully_repair_weapon_instance, inventory_item_by_instance_borrow, pickup_dropped_loot_instance,
     DroppedLootRegistry, InventoryDurabilityChangedEvent, InventoryInstanceIdAllocator,
-    InventoryMoveOutcome, ItemInstance, ItemTemplate, PlayerInventory, FRONT_SATCHEL_CONTAINER_ID,
-    MAIN_PACK_CONTAINER_ID, SMALL_POUCH_CONTAINER_ID,
+    InventoryMoveOutcome, ItemInstance, ItemTemplate, PlayerInventory,
 };
 use crate::inventory::{
     AlchemyItemData, ItemEffect, ItemRegistry,
@@ -6761,11 +6760,12 @@ fn find_inventory_instance_location(
 }
 
 fn container_id_v1_for_runtime(id: &str) -> Option<ContainerIdV1> {
-    match id {
-        MAIN_PACK_CONTAINER_ID => Some(ContainerIdV1::MainPack),
-        SMALL_POUCH_CONTAINER_ID => Some(ContainerIdV1::SmallPouch),
-        FRONT_SATCHEL_CONTAINER_ID => Some(ContainerIdV1::FrontSatchel),
-        _ => None,
+    // plan-backpack-equip-v1 P1 — ContainerIdV1 is now an open String alias;
+    // any non-empty container id maps 1:1 to its wire representation.
+    if id.is_empty() {
+        None
+    } else {
+        Some(id.to_string())
     }
 }
 
