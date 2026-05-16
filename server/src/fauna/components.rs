@@ -289,3 +289,113 @@ impl FaunaTag {
 /// 避免同一 DeathEvent / lifecycle 重入重复吐掉落。
 #[derive(Debug, Clone, Copy, Default, Component)]
 pub struct FaunaDropIssued;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn health_max_per_realm_tier() {
+        assert_eq!(BeastKind::Rat.health_max(), 8.0);
+        assert_eq!(BeastKind::Spider.health_max(), 25.0);
+        assert_eq!(BeastKind::GreenSpider.health_max(), 30.0);
+        assert_eq!(BeastKind::JungleScorpion.health_max(), 35.0);
+        assert_eq!(BeastKind::CockadeSnake.health_max(), 22.0);
+        assert_eq!(BeastKind::BlueSpider.health_max(), 55.0);
+        assert_eq!(BeastKind::IceScorpion.health_max(), 70.0);
+        assert_eq!(BeastKind::MandrakeSnake.health_max(), 50.0);
+        assert_eq!(BeastKind::HybridBeast.health_max(), 400.0);
+        assert_eq!(BeastKind::VoidDistorted.health_max(), 400.0);
+        assert_eq!(BeastKind::DarkTiger.health_max(), 500.0);
+        assert_eq!(BeastKind::LivingPillar.health_max(), 2500.0);
+        assert_eq!(BeastKind::PoisonDragon.health_max(), 8000.0);
+        assert_eq!(BeastKind::BoneDragon.health_max(), 9000.0);
+        assert_eq!(BeastKind::Whale.health_max(), 10000.0);
+    }
+
+    #[test]
+    fn realm_tier_ascending() {
+        assert_eq!(BeastKind::Rat.realm_tier(), 0);
+        assert_eq!(BeastKind::Spider.realm_tier(), 1);
+        assert_eq!(BeastKind::GreenSpider.realm_tier(), 1);
+        assert_eq!(BeastKind::JungleScorpion.realm_tier(), 1);
+        assert_eq!(BeastKind::CockadeSnake.realm_tier(), 1);
+        assert_eq!(BeastKind::BlueSpider.realm_tier(), 2);
+        assert_eq!(BeastKind::IceScorpion.realm_tier(), 2);
+        assert_eq!(BeastKind::MandrakeSnake.realm_tier(), 2);
+        assert_eq!(BeastKind::HybridBeast.realm_tier(), 3);
+        assert_eq!(BeastKind::DarkTiger.realm_tier(), 3);
+        assert_eq!(BeastKind::LivingPillar.realm_tier(), 4);
+        assert_eq!(BeastKind::PoisonDragon.realm_tier(), 5);
+        assert_eq!(BeastKind::BoneDragon.realm_tier(), 5);
+        assert_eq!(BeastKind::Whale.realm_tier(), 5);
+    }
+
+    #[test]
+    fn is_prey_of_cross_tier() {
+        assert!(is_prey_of(BeastKind::Rat, BeastKind::Spider));
+        assert!(is_prey_of(BeastKind::Rat, BeastKind::HybridBeast));
+        assert!(is_prey_of(BeastKind::Spider, BeastKind::IceScorpion));
+        assert!(is_prey_of(BeastKind::IceScorpion, BeastKind::DarkTiger));
+    }
+
+    #[test]
+    fn is_prey_of_same_tier_returns_false() {
+        assert!(!is_prey_of(BeastKind::Rat, BeastKind::Rat));
+        assert!(!is_prey_of(BeastKind::Spider, BeastKind::GreenSpider));
+        assert!(!is_prey_of(BeastKind::HybridBeast, BeastKind::DarkTiger));
+    }
+
+    #[test]
+    fn is_prey_of_non_terrestrial_returns_false() {
+        assert!(!is_prey_of(BeastKind::Rat, BeastKind::Whale));
+        assert!(!is_prey_of(BeastKind::Rat, BeastKind::PoisonDragon));
+        assert!(!is_prey_of(BeastKind::Rat, BeastKind::LivingPillar));
+    }
+
+    #[test]
+    fn spawn_pool_zone_keyword_overrides_qi() {
+        assert_eq!(beast_kind_for_spawn_context("spider_valley", 0, Some(0.01)), BeastKind::Spider);
+        assert_eq!(beast_kind_for_spawn_context("tiger_den", 0, Some(0.01)), BeastKind::DarkTiger);
+        assert_eq!(beast_kind_for_spawn_context("蝎巢", 0, Some(0.99)), BeastKind::JungleScorpion);
+        assert_eq!(beast_kind_for_spawn_context("蛇穴", 0, Some(0.5)), BeastKind::CockadeSnake);
+    }
+
+    #[test]
+    fn spawn_pool_qi_boundary_dead_edge() {
+        let kind = beast_kind_for_spawn_context("wilderness", 0, Some(0.10));
+        assert!(
+            matches!(kind, BeastKind::Rat | BeastKind::Spider | BeastKind::JungleScorpion | BeastKind::CockadeSnake),
+            "qi<0.15 should only produce dead-edge pool species, got {kind:?}"
+        );
+    }
+
+    #[test]
+    fn spawn_pool_qi_boundary_peak() {
+        let kind = beast_kind_for_spawn_context("wilderness", 0, Some(0.85));
+        assert!(
+            matches!(kind, BeastKind::DarkTiger | BeastKind::HybridBeast | BeastKind::IceScorpion | BeastKind::MandrakeSnake | BeastKind::BlueSpider),
+            "qi>0.80 should only produce peak pool species, got {kind:?}"
+        );
+    }
+
+    #[test]
+    fn spawn_pool_none_qi_defaults_to_low() {
+        let kind = beast_kind_for_spawn_context("wilderness", 0, None);
+        assert!(
+            matches!(kind, BeastKind::Rat | BeastKind::Spider | BeastKind::JungleScorpion | BeastKind::CockadeSnake | BeastKind::GreenSpider),
+            "None qi (default 0.3) should use low-qi pool, got {kind:?}"
+        );
+    }
+
+    #[test]
+    fn all_terrestrial_list_matches_is_terrestrial() {
+        for kind in BeastKind::ALL_TERRESTRIAL {
+            assert!(kind.is_terrestrial(), "{kind:?} in ALL_TERRESTRIAL but is_terrestrial() false");
+        }
+        assert!(!BeastKind::Whale.is_terrestrial());
+        assert!(!BeastKind::PoisonDragon.is_terrestrial());
+        assert!(!BeastKind::BoneDragon.is_terrestrial());
+        assert!(!BeastKind::LivingPillar.is_terrestrial());
+    }
+}

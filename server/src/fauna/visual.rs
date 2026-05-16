@@ -150,23 +150,29 @@ mod tests {
     }
 
     #[test]
-    fn all_new_beasts_have_visual_kind() {
-        let new_kinds = [
-            BeastKind::GreenSpider,
-            BeastKind::JungleScorpion,
-            BeastKind::CockadeSnake,
-            BeastKind::BlueSpider,
-            BeastKind::IceScorpion,
-            BeastKind::MandrakeSnake,
-            BeastKind::DarkTiger,
-            BeastKind::LivingPillar,
-            BeastKind::PoisonDragon,
-            BeastKind::BoneDragon,
+    fn new_beasts_map_to_correct_visual_kind_and_entity_kind() {
+        let expected: &[(BeastKind, FaunaVisualKind, i32)] = &[
+            (BeastKind::GreenSpider, FaunaVisualKind::GreenSpider, 135),
+            (BeastKind::JungleScorpion, FaunaVisualKind::JungleScorpion, 136),
+            (BeastKind::CockadeSnake, FaunaVisualKind::CockadeSnake, 137),
+            (BeastKind::BlueSpider, FaunaVisualKind::BlueSpider, 138),
+            (BeastKind::IceScorpion, FaunaVisualKind::IceScorpion, 139),
+            (BeastKind::MandrakeSnake, FaunaVisualKind::MandrakeSnake, 140),
+            (BeastKind::DarkTiger, FaunaVisualKind::DarkTiger, 141),
+            (BeastKind::LivingPillar, FaunaVisualKind::LivingPillar, 142),
+            (BeastKind::PoisonDragon, FaunaVisualKind::PoisonDragon, 143),
+            (BeastKind::BoneDragon, FaunaVisualKind::BoneDragon, 144),
         ];
-        for kind in new_kinds {
-            assert!(
-                visual_kind_for_beast(kind).is_some(),
-                "{kind:?} should have a FaunaVisualKind"
+        for &(beast, visual, raw_id) in expected {
+            assert_eq!(
+                visual_kind_for_beast(beast),
+                Some(visual),
+                "{beast:?} should map to {visual:?}"
+            );
+            assert_eq!(
+                entity_kind_for_beast(beast).get(),
+                raw_id,
+                "{beast:?} entity kind should be {raw_id}"
             );
         }
     }
