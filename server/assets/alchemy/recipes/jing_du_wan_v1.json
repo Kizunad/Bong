@@ -1,0 +1,32 @@
+{
+  "id": "jing_du_wan_v1",
+  "name": "净毒丸",
+  "furnace_tier_min": 1,
+  "stages": [
+    { "at_tick": 0, "required": [
+      { "material": "hui_yuan_zhi", "count": 3 },
+      { "material": "gu_yuan_gen", "count": 2 }
+    ], "window": 0 }
+  ],
+  "fire_profile": {
+    "target_temp": 0.35,
+    "target_duration_ticks": 100,
+    "qi_cost": 10.0,
+    "tolerance": { "temp_band": 0.15, "duration_band": 30 }
+  },
+  "outcomes": {
+    "perfect": { "pill": "jing_du_wan",        "quality": 1.0, "toxin_amount": 0.0, "toxin_color": "Mellow", "qi_gain": 0.0 },
+    "good":    { "pill": "jing_du_wan",        "quality": 0.7, "toxin_amount": 0.0, "toxin_color": "Mellow", "qi_gain": 0.0 },
+    "flawed":  { "pill": "jing_du_wan_flawed", "quality": 0.4, "toxin_amount": 0.15, "toxin_color": "Mellow", "qi_gain": 0.0 },
+    "waste":   null,
+    "explode": { "damage": 3.0, "meridian_crack": 0.02 }
+  },
+  "flawed_fallback": {
+    "pill": "jing_du_wan_flawed",
+    "quality_scale": 0.6,
+    "toxin_scale": 1.0,
+    "side_effect_pool": [
+      { "tag": "minor_qi_regen_boost", "duration_s": 60, "weight": 3 }
+    ]
+  }
+}

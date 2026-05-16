@@ -1,0 +1,33 @@
+{
+  "id": "long_lin_san_v1",
+  "name": "龙鳞散",
+  "furnace_tier_min": 3,
+  "stages": [
+    { "at_tick": 0, "required": [
+      { "material": "long_lin_tai", "count": 3 },
+      { "material": "mineral.ling_tie_fen", "count": 1 }
+    ], "window": 0 }
+  ],
+  "fire_profile": {
+    "target_temp": 0.75,
+    "target_duration_ticks": 240,
+    "qi_cost": 35.0,
+    "tolerance": { "temp_band": 0.06, "duration_band": 12 }
+  },
+  "outcomes": {
+    "perfect": { "pill": "long_lin_san",        "quality": 1.0, "toxin_amount": 3.2, "toxin_color": "Solid", "qi_gain": 0.0 },
+    "good":    { "pill": "long_lin_san",        "quality": 0.7, "toxin_amount": 4.0, "toxin_color": "Solid", "qi_gain": 0.0 },
+    "flawed":  { "pill": "long_lin_san_flawed", "quality": 0.4, "toxin_amount": 6.0, "toxin_color": "Turbid", "qi_gain": 0.0 },
+    "waste":   null,
+    "explode": { "damage": 18.0, "meridian_crack": 0.12 }
+  },
+  "flawed_fallback": {
+    "pill": "long_lin_san_flawed",
+    "quality_scale": 0.4,
+    "toxin_scale": 2.0,
+    "side_effect_pool": [
+      { "tag": "contam_boost",        "duration_s": 360, "weight": 2 },
+      { "tag": "qi_cap_perm_minus_1", "duration_s": 0,   "weight": 1 }
+    ]
+  }
+}

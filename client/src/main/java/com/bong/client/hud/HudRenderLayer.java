@@ -47,5 +47,6 @@ public enum HudRenderLayer {
     DUGU_REVEAL_RISK,
     DUGU_SELF_CURE_PROGRESS,
     DUGU_SHROUD,
-    POISON_TRAIT
+    POISON_TRAIT,
+    DANDAO_MUTATION
 }

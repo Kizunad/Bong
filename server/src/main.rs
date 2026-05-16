@@ -15,6 +15,8 @@ mod craft;
 #[allow(dead_code)]
 mod cultivation;
 #[allow(dead_code)]
+mod dandao;
+#[allow(dead_code)]
 mod death_lifecycle;
 #[allow(dead_code)]
 mod economy;
