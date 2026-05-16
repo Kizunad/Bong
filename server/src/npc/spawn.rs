@@ -1874,6 +1874,22 @@ mod tests {
             .world()
             .get::<ThinkerBuilder>(beast)
             .expect("beast should carry the live territory thinker");
+
+        let wounds = app
+            .world()
+            .get::<crate::combat::components::Wounds>(beast)
+            .expect("beast should have wounds");
+        let expected_hp = tag.beast_kind.health_max();
+        assert_eq!(
+            wounds.health_max, expected_hp,
+            "beast {:?} health_max should be {} (per-kind), not default 100",
+            tag.beast_kind, expected_hp
+        );
+        assert_eq!(
+            wounds.health_current, expected_hp,
+            "beast {:?} health_current should start at health_max",
+            tag.beast_kind
+        );
     }
 
     #[test]
