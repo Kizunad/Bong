@@ -75,6 +75,18 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
     private int containerCount;
     private int activeContainer = 0;
 
+    // --- 行囊 tab (plan-backpack-equip-v1 P4) ---
+    // Special tab appended after container tabs; index = containerCount (virtual, not in containerGrids).
+    // Shows 3 backpack equip slots + weight detail + body_pocket grid.
+    // Sentinel: activeContainer == containerCount means 行囊 is active.
+    private LabelComponent backpackTabLabel;
+    private FlowLayout backpackEquipWrapper;    // hides/shows alongside containerWrappers
+    private EquipSlotComponent backpackSlotBack;
+    private EquipSlotComponent backpackSlotWaist;
+    private EquipSlotComponent backpackSlotChest;
+    private LabelComponent backpackWeightLabel;
+    private BackpackGridPanel bodyPocketGrid;    // body_pocket always-present 2×3
+
     private EquipmentPanel equipPanel;
     private StatusBarsPanel statusBars;
     private ItemTooltipPanel tooltipPanel;
@@ -542,6 +554,28 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
             if (i != 0) w.positioning(Positioning.absolute(-9999, -9999));
         }
 
+        // 行囊 tab — appended after dynamic container tabs (plan-backpack-equip-v1 P4).
+        // Tab label in containerRow:
+        {
+            FlowLayout backpackTab = Containers.horizontalFlow(Sizing.content(), Sizing.fixed(14));
+            backpackTab.surface(Surface.flat(0xFF1E1E1E));
+            backpackTab.padding(Insets.of(1, 4, 1, 4));
+            backpackTab.verticalAlignment(VerticalAlignment.CENTER);
+            backpackTab.cursorStyle(CursorStyle.HAND);
+            backpackTabLabel = Components.label(Text.literal("§7行囊"));
+            backpackTab.child(backpackTabLabel);
+            backpackTab.mouseDown().subscribe((mx, my, btn) -> {
+                if (btn == 0) { switchToBackpackTab(); return true; }
+                return false;
+            });
+            containerRow.child(backpackTab);
+        }
+
+        // 行囊 panel — hidden until tab selected
+        backpackEquipWrapper = buildBackpackEquipPanel(wrapperW);
+        rightCol.child(backpackEquipWrapper);
+        backpackEquipWrapper.positioning(Positioning.absolute(-9999, -9999));
+
         // Tooltip
         tooltipPanel = new ItemTooltipPanel();
         rightCol.child(tooltipPanel);
@@ -826,6 +860,21 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
 
     static java.util.List<String> tabNamesForTests() {
         return java.util.List.of(TAB_NAMES);
+    }
+
+    /**
+     * Build the weight detail breakdown string for the 行囊 tab (plan-backpack-equip-v1 P4).
+     * Exposed as package-private static for unit tests.
+     */
+    static String backpackWeightBreakdown(InventoryModel model) {
+        if (model == null) return "";
+        boolean overweight = model.currentWeight() > model.maxWeight();
+        return String.format(
+            java.util.Locale.ROOT,
+            "重量 %.1f / %.1f%s",
+            model.currentWeight(), model.maxWeight(),
+            overweight ? "  §c负重过载" : ""
+        );
     }
 
     /** plan-skill-v1 §5.1 三行固定刷新；listener / switchTab 共用此入口。 */
@@ -1295,6 +1344,13 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
     private void switchContainer(int idx) {
         if (idx == activeContainer || idx < 0 || idx >= containerCount) return;
         activeContainer = idx;
+        // Deactivate 行囊 tab if we're switching to a normal container.
+        if (backpackEquipWrapper != null) {
+            backpackEquipWrapper.positioning(Positioning.absolute(-9999, -9999));
+        }
+        if (backpackTabLabel != null) {
+            backpackTabLabel.text(Text.literal("§7行囊"));
+        }
         var defs = model.containers();
         for (int i = 0; i < containerCount; i++) {
             containerWrappers[i].positioning(i == idx ? Positioning.layout() : Positioning.absolute(-9999, -9999));
@@ -1303,6 +1359,128 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
                 (i == idx ? "§f" : "§7") + def.name()
                 + " §8(" + def.rows() + "×" + def.cols() + ")"
             ));
+        }
+    }
+
+    /** 切换到行囊 tab：隐藏所有普通容器网格，显示背包装备槽 + 负重 + body_pocket。 */
+    private void switchToBackpackTab() {
+        // Hide all normal container grids
+        if (containerWrappers != null) {
+            for (FlowLayout w : containerWrappers) {
+                if (w != null) w.positioning(Positioning.absolute(-9999, -9999));
+            }
+        }
+        // Dim normal container labels
+        if (containerLabels != null && model != null) {
+            var defs = model.containers();
+            for (int i = 0; i < containerCount; i++) {
+                var def = defs.get(i);
+                containerLabels[i].text(Text.literal("§7" + def.name() + " §8(" + def.rows() + "×" + def.cols() + ")"));
+            }
+        }
+        // Mark activeContainer as "行囊 is active" by using a sentinel that's out of normal range.
+        // We use containerCount itself so switchContainer guards (idx >= containerCount) still work.
+        activeContainer = containerCount;
+        // Show backpack panel
+        if (backpackEquipWrapper != null) {
+            backpackEquipWrapper.positioning(Positioning.layout());
+        }
+        // Highlight 行囊 tab label
+        if (backpackTabLabel != null) {
+            backpackTabLabel.text(Text.literal("§f行囊"));
+        }
+        // Refresh backpack slot states from model
+        refreshBackpackEquipPanel();
+    }
+
+    /** Build the 行囊 panel showing 3 backpack equip slots + weight bar + body_pocket grid. */
+    private FlowLayout buildBackpackEquipPanel(int wrapperW) {
+        int panelW = Math.max(wrapperW, 100);
+        FlowLayout panel = Containers.verticalFlow(Sizing.fixed(panelW), Sizing.content());
+        panel.surface(Surface.flat(0xFF111111));
+        panel.padding(Insets.of(4));
+        panel.gap(4);
+
+        // ── Row 1: three backpack equip slots ──
+        FlowLayout slotsRow = Containers.horizontalFlow(Sizing.content(), Sizing.content());
+        slotsRow.gap(6);
+
+        backpackSlotBack = buildLabeledEquipSlot(slotsRow, EquipSlotType.BACK_PACK, "背部");
+        backpackSlotWaist = buildLabeledEquipSlot(slotsRow, EquipSlotType.WAIST_POUCH, "腰间");
+        backpackSlotChest = buildLabeledEquipSlot(slotsRow, EquipSlotType.CHEST_SATCHEL, "胸前");
+        panel.child(slotsRow);
+
+        // ── Row 2: weight detail bar ──
+        backpackWeightLabel = Components.label(Text.literal("重量 0.0 / 15.0"));
+        backpackWeightLabel.color(Color.ofArgb(0xFFAAAAAA));
+        panel.child(backpackWeightLabel);
+
+        // ── Row 3: body_pocket grid (贴身口袋) ──
+        LabelComponent pocketLabel = Components.label(Text.literal("§7贴身口袋"));
+        pocketLabel.color(Color.ofArgb(0xFF888888));
+        panel.child(pocketLabel);
+
+        bodyPocketGrid = new BackpackGridPanel(InventoryModel.BODY_POCKET_CONTAINER_ID, 2, 3);
+        FlowLayout pocketWrapper = Containers.verticalFlow(Sizing.content(), Sizing.content());
+        pocketWrapper.surface(Surface.flat(0xFF0D0D0D));
+        pocketWrapper.padding(Insets.of(2));
+        pocketWrapper.child(bodyPocketGrid.container());
+        panel.child(pocketWrapper);
+
+        return panel;
+    }
+
+    /**
+     * Helper: add a labeled equip slot column (icon + label) to {@code parent} and return the slot.
+     * Layout: [slot icon] then [label below].
+     */
+    private EquipSlotComponent buildLabeledEquipSlot(FlowLayout parent, EquipSlotType type, String label) {
+        FlowLayout col = Containers.verticalFlow(Sizing.content(), Sizing.content());
+        col.gap(2);
+        col.horizontalAlignment(HorizontalAlignment.CENTER);
+
+        EquipSlotComponent slot = new EquipSlotComponent(type);
+        col.child(slot);
+
+        LabelComponent lbl = Components.label(Text.literal("§8" + label));
+        col.child(lbl);
+
+        parent.child(col);
+        return slot;
+    }
+
+    /** Refresh the backpack equip slot visuals and weight label from current model. */
+    private void refreshBackpackEquipPanel() {
+        if (model == null) return;
+        if (backpackSlotBack != null) {
+            backpackSlotBack.setItem(model.equipped().get(EquipSlotType.BACK_PACK));
+        }
+        if (backpackSlotWaist != null) {
+            backpackSlotWaist.setItem(model.equipped().get(EquipSlotType.WAIST_POUCH));
+        }
+        if (backpackSlotChest != null) {
+            backpackSlotChest.setItem(model.equipped().get(EquipSlotType.CHEST_SATCHEL));
+        }
+        if (backpackWeightLabel != null) {
+            boolean overweight = model.currentWeight() > model.maxWeight();
+            String weightText = String.format(
+                java.util.Locale.ROOT,
+                "重量 %.1f / %.1f%s",
+                model.currentWeight(), model.maxWeight(),
+                overweight ? "  §c负重过载" : ""
+            );
+            backpackWeightLabel.text(Text.literal(weightText));
+            backpackWeightLabel.color(Color.ofArgb(overweight ? 0xFFFF4444 : 0xFFAAAAAA));
+        }
+        if (bodyPocketGrid != null) {
+            bodyPocketGrid.populateFromModel(model);
+        }
+    }
+
+    /** Called from populateFromModel — refresh backpack panel if it's active. */
+    private void refreshBackpackEquipPanelIfActive() {
+        if (activeContainer == containerCount) {
+            refreshBackpackEquipPanel();
         }
     }
 
@@ -1329,6 +1507,9 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
         hydrateSkillBarFromStore();
 
         hydrateQuickUseFromStore();
+
+        // Keep 行囊 panel in sync when it's the active view.
+        refreshBackpackEquipPanelIfActive();
     }
 
     static void populateContainerGrids(InventoryModel model, BackpackGridPanel[] containerGrids) {

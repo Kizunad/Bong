@@ -218,6 +218,7 @@ mod tests {
                 kind: "combat_technique".to_string(),
                 skill_id: skill_id.to_string(),
             }),
+            container_spec: None,
         }
     }
 

@@ -90,6 +90,9 @@ final class InventoryEquipRules {
             case FALSE_SKIN -> isFalseSkin(item);
             case TREASURE_BELT_0, TREASURE_BELT_1, TREASURE_BELT_2, TREASURE_BELT_3 -> isTreasure(item);
             case HEAD, CHEST, LEGS, FEET -> isArmorForSlot(item, targetSlot);
+            // Backpack slots — managed by server validation (plan-backpack-equip-v1 P4).
+            // Client does not apply local equip rules for container slots; server authoritative.
+            case BACK_PACK, WAIST_POUCH, CHEST_SATCHEL -> false;
         };
     }
 

@@ -829,6 +829,14 @@ pub fn register_basic_processing_recipes(
             15 * 20,
             ("grass_rope", 1),
         ),
+        // plan-backpack-equip-v1 P2.2 — 草绳 → 小草包：醒灵期散修首个可合背包
+        (
+            "basic.grass_pouch",
+            "编草包",
+            &[("grass_rope", 3)],
+            20 * 20,
+            ("grass_pouch", 1),
+        ),
     ];
 
     for (id, display_name, materials, time_ticks, output) in specs {
@@ -1232,10 +1240,11 @@ mod tests {
     }
 
     #[test]
-    fn register_basic_processing_succeeds_with_5_recipes() {
+    fn register_basic_processing_succeeds_with_6_recipes() {
         let mut registry = CraftRegistry::new();
         register_basic_processing_recipes(&mut registry).unwrap();
-        assert_eq!(registry.len(), 5);
+        // plan-backpack-equip-v1 P2.2 — 新增 basic.grass_pouch，共 6 条。
+        assert_eq!(registry.len(), 6);
     }
 
     #[test]

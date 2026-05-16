@@ -1,5 +1,3 @@
-use std::collections::HashMap;
-
 use valence::prelude::{
     bevy_ecs, Added, Changed, Client, DetectChanges, Entity, Query, Ref, Username, With,
 };
@@ -7,12 +5,11 @@ use valence::prelude::{
 use crate::cultivation::components::Cultivation;
 use crate::cultivation::death_hooks::PlayerRevived;
 use crate::inventory::{
-    calculate_current_weight, ContainerState, ItemInstance, ItemRarity, PlayerInventory,
-    EQUIP_SLOT_CHEST, EQUIP_SLOT_FALSE_SKIN, EQUIP_SLOT_FEET, EQUIP_SLOT_HEAD, EQUIP_SLOT_LEGS,
-    EQUIP_SLOT_MAIN_HAND, EQUIP_SLOT_OFF_HAND, EQUIP_SLOT_TREASURE_BELT_0,
-    EQUIP_SLOT_TREASURE_BELT_1, EQUIP_SLOT_TREASURE_BELT_2, EQUIP_SLOT_TREASURE_BELT_3,
-    EQUIP_SLOT_TWO_HAND, FRONT_SATCHEL_CONTAINER_ID, MAIN_PACK_CONTAINER_ID,
-    SMALL_POUCH_CONTAINER_ID,
+    calculate_current_weight, ItemInstance, ItemRarity, PlayerInventory, EQUIP_SLOT_BACK_PACK,
+    EQUIP_SLOT_CHEST, EQUIP_SLOT_CHEST_SATCHEL, EQUIP_SLOT_FALSE_SKIN, EQUIP_SLOT_FEET,
+    EQUIP_SLOT_HEAD, EQUIP_SLOT_LEGS, EQUIP_SLOT_MAIN_HAND, EQUIP_SLOT_OFF_HAND,
+    EQUIP_SLOT_TREASURE_BELT_0, EQUIP_SLOT_TREASURE_BELT_1, EQUIP_SLOT_TREASURE_BELT_2,
+    EQUIP_SLOT_TREASURE_BELT_3, EQUIP_SLOT_TWO_HAND, EQUIP_SLOT_WAIST_POUCH,
 };
 use crate::network::agent_bridge::{
     payload_type_label, serialize_server_data_payload, SERVER_DATA_CHANNEL,
@@ -28,12 +25,6 @@ use crate::schema::server_data::{ServerDataPayloadV1, ServerDataV1};
 #[cfg(test)]
 use crate::world::dimension::DimensionKind;
 use crate::world::season::query_season;
-
-const ORDERED_CONTAINER_IDS: [&str; 3] = [
-    MAIN_PACK_CONTAINER_ID,
-    SMALL_POUCH_CONTAINER_ID,
-    FRONT_SATCHEL_CONTAINER_ID,
-];
 
 type JoinedClientQueryItem<'a> = (
     Entity,
@@ -165,21 +156,12 @@ pub(crate) fn build_inventory_snapshot(
 ) -> InventorySnapshotV1 {
     // Keep normalization call for future derived fields; currently unused.
     let _normalized_state = player_state.normalized();
-    let containers_by_id: HashMap<&str, &ContainerState> = inventory
-        .containers
-        .iter()
-        .map(|container| (container.id.as_str(), container))
-        .collect();
 
-    let mut containers = Vec::with_capacity(ORDERED_CONTAINER_IDS.len());
+    let mut containers = Vec::with_capacity(inventory.containers.len());
     let mut placed_items = Vec::new();
 
-    for ordered_container_id in ORDERED_CONTAINER_IDS {
-        let Some(container) = containers_by_id.get(ordered_container_id).copied() else {
-            continue;
-        };
-
-        let container_id = container_id_from_runtime(ordered_container_id);
+    for container in &inventory.containers {
+        let container_id: ContainerIdV1 = container.id.clone();
         containers.push(ContainerSnapshotV1 {
             id: container_id.clone(),
             name: container.name.clone(),
@@ -220,6 +202,10 @@ pub(crate) fn build_inventory_snapshot(
         treasure_belt_1: equipped_slot_item(inventory, EQUIP_SLOT_TREASURE_BELT_1),
         treasure_belt_2: equipped_slot_item(inventory, EQUIP_SLOT_TREASURE_BELT_2),
         treasure_belt_3: equipped_slot_item(inventory, EQUIP_SLOT_TREASURE_BELT_3),
+        // plan-backpack-equip-v1 P0 — 背包装备槽。
+        back_pack: equipped_slot_item(inventory, EQUIP_SLOT_BACK_PACK),
+        waist_pouch: equipped_slot_item(inventory, EQUIP_SLOT_WAIST_POUCH),
+        chest_satchel: equipped_slot_item(inventory, EQUIP_SLOT_CHEST_SATCHEL),
     };
 
     let hotbar = inventory
@@ -251,15 +237,6 @@ pub(crate) fn build_inventory_snapshot(
 
 fn equipped_slot_item(inventory: &PlayerInventory, slot: &str) -> Option<InventoryItemViewV1> {
     inventory.equipped.get(slot).map(item_view_from_instance)
-}
-
-fn container_id_from_runtime(container_id: &str) -> ContainerIdV1 {
-    match container_id {
-        MAIN_PACK_CONTAINER_ID => ContainerIdV1::MainPack,
-        SMALL_POUCH_CONTAINER_ID => ContainerIdV1::SmallPouch,
-        FRONT_SATCHEL_CONTAINER_ID => ContainerIdV1::FrontSatchel,
-        _ => ContainerIdV1::MainPack,
-    }
 }
 
 pub(crate) fn item_view_from_instance(item: &ItemInstance) -> InventoryItemViewV1 {
@@ -630,21 +607,21 @@ mod tests {
 
         let containers = vec![
             ContainerState {
-                id: MAIN_PACK_CONTAINER_ID.to_string(),
+                id: "main_pack".to_string(),
                 name: "主背包".to_string(),
                 rows: 5,
                 cols: 7,
                 items: main_items,
             },
             ContainerState {
-                id: SMALL_POUCH_CONTAINER_ID.to_string(),
+                id: "small_pouch".to_string(),
                 name: "小口袋".to_string(),
                 rows: 3,
                 cols: 3,
                 items: vec![],
             },
             ContainerState {
-                id: FRONT_SATCHEL_CONTAINER_ID.to_string(),
+                id: "front_satchel".to_string(),
                 name: "前挂包".to_string(),
                 rows: 3,
                 cols: 4,
@@ -750,17 +727,11 @@ mod tests {
         assert_eq!(other_snapshot.revision, 22);
 
         assert_eq!(target_snapshot.containers.len(), 3);
-        assert_eq!(target_snapshot.containers[0].id, ContainerIdV1::MainPack);
-        assert_eq!(target_snapshot.containers[1].id, ContainerIdV1::SmallPouch);
-        assert_eq!(
-            target_snapshot.containers[2].id,
-            ContainerIdV1::FrontSatchel
-        );
+        assert_eq!(target_snapshot.containers[0].id, "main_pack");
+        assert_eq!(target_snapshot.containers[1].id, "small_pouch");
+        assert_eq!(target_snapshot.containers[2].id, "front_satchel");
 
-        assert_eq!(
-            target_snapshot.placed_items[0].container_id,
-            ContainerIdV1::MainPack
-        );
+        assert_eq!(target_snapshot.placed_items[0].container_id, "main_pack");
         assert_eq!(target_snapshot.placed_items[0].row, 0);
         assert_eq!(target_snapshot.placed_items[0].col, 0);
         assert_eq!(
@@ -857,7 +828,7 @@ mod tests {
             entity,
             revision: InventoryRevision(21),
             dropped: vec![DroppedItemRecord {
-                container_id: MAIN_PACK_CONTAINER_ID.to_string(),
+                container_id: "main_pack".to_string(),
                 row: 0,
                 col: 0,
                 instance: make_item(1004, "starter_talisman", "启程护符", 0.2, 1),
@@ -892,10 +863,7 @@ mod tests {
                             row,
                             col,
                         } => {
-                            assert_eq!(
-                                *container_id,
-                                crate::schema::inventory::ContainerIdV1::MainPack
-                            );
+                            assert_eq!(*container_id, "main_pack");
                             assert_eq!(*row, 0);
                             assert_eq!(*col, 0);
                         }
@@ -942,7 +910,7 @@ mod tests {
                 1004,
                 DroppedLootEntry {
                     instance_id: 1004,
-                    source_container_id: MAIN_PACK_CONTAINER_ID.to_string(),
+                    source_container_id: "main_pack".to_string(),
                     source_row: 0,
                     source_col: 0,
                     world_pos: [8.5, 66.0, 8.5],

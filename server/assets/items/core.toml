@@ -367,3 +367,41 @@ base_weight = 0.3
 rarity = "common"
 spirit_quality_initial = 0.7
 description = "灵气浸润之清水。可用于灵田补灵 / 部分丹方调和。"
+
+# plan-backpack-equip-v1 P2 — 背包类物品
+
+[[item]]
+id = "worn_grass_pouch"
+name = "破草包"
+category = "container"
+grid_w = 2
+grid_h = 2
+base_weight = 0.25
+rarity = "common"
+spirit_quality_initial = 0.0
+description = "不知哪个死人身上扒下来的草包。勉强能用，但缝线快散了。"
+
+[item.container]
+rows = 3
+cols = 3
+weight_capacity = 8.0
+equip_slot = "back_pack"
+durability_cost_per_op = 0.008
+
+[[item]]
+id = "grass_pouch"
+name = "小草包"
+category = "container"
+grid_w = 2
+grid_h = 2
+base_weight = 0.3
+rarity = "common"
+spirit_quality_initial = 0.0
+description = "草根编的粗糙小包。能多带几样东西，但别指望装太多。"
+
+[item.container]
+rows = 3
+cols = 3
+weight_capacity = 8.0
+equip_slot = "back_pack"
+durability_cost_per_op = 0.005

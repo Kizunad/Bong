@@ -47,7 +47,11 @@ pub struct GuangboTicaoPracticeEvent {
 }
 
 pub fn guangbo_proficiency_gain(current: f32) -> f32 {
-    if current < 0.5 { 0.01 } else { 0.005 }
+    if current < 0.5 {
+        0.01
+    } else {
+        0.005
+    }
 }
 
 pub fn record_guangbo_practice(known: &mut KnownTechniques) -> f32 {
@@ -106,9 +110,7 @@ pub fn apply_guangbo_ticao_bonuses(attrs: &mut DerivedAttrs, known: &KnownTechni
     }
 }
 
-pub fn body_conditioning_aggregate(
-    mut q: Query<(&mut DerivedAttrs, Option<&KnownTechniques>)>,
-) {
+pub fn body_conditioning_aggregate(mut q: Query<(&mut DerivedAttrs, Option<&KnownTechniques>)>) {
     for (mut attrs, known) in &mut q {
         let Some(known) = known else { continue };
         apply_guangbo_ticao_bonuses(&mut attrs, known);
@@ -138,16 +140,40 @@ mod tests {
 
     #[test]
     fn zero_proficiency_gives_no_bonus() {
-        assert_near(guangbo_ticao_move_speed(0.0), 0.0, "guangbo_ticao_move_speed(0)");
-        assert_near(guangbo_ticao_jump_height(0.0), 0.0, "guangbo_ticao_jump_height(0)");
-        assert_near(guangbo_ticao_limb_defense(0.0), 0.0, "guangbo_ticao_limb_defense(0)");
+        assert_near(
+            guangbo_ticao_move_speed(0.0),
+            0.0,
+            "guangbo_ticao_move_speed(0)",
+        );
+        assert_near(
+            guangbo_ticao_jump_height(0.0),
+            0.0,
+            "guangbo_ticao_jump_height(0)",
+        );
+        assert_near(
+            guangbo_ticao_limb_defense(0.0),
+            0.0,
+            "guangbo_ticao_limb_defense(0)",
+        );
     }
 
     #[test]
     fn half_proficiency_gives_half_bonus() {
-        assert_near(guangbo_ticao_move_speed(0.5), 0.025, "guangbo_ticao_move_speed(0.5)");
-        assert_near(guangbo_ticao_jump_height(0.5), 0.025, "guangbo_ticao_jump_height(0.5)");
-        assert_near(guangbo_ticao_limb_defense(0.5), 0.0025, "guangbo_ticao_limb_defense(0.5)");
+        assert_near(
+            guangbo_ticao_move_speed(0.5),
+            0.025,
+            "guangbo_ticao_move_speed(0.5)",
+        );
+        assert_near(
+            guangbo_ticao_jump_height(0.5),
+            0.025,
+            "guangbo_ticao_jump_height(0.5)",
+        );
+        assert_near(
+            guangbo_ticao_limb_defense(0.5),
+            0.0025,
+            "guangbo_ticao_limb_defense(0.5)",
+        );
     }
 
     #[test]
@@ -220,15 +246,21 @@ mod tests {
             }
         }
         assert!(
-            !attrs.defense_profile.contains_key(&(BodyPart::Head, WoundKind::Cut)),
+            !attrs
+                .defense_profile
+                .contains_key(&(BodyPart::Head, WoundKind::Cut)),
             "Head should not get limb defense"
         );
         assert!(
-            !attrs.defense_profile.contains_key(&(BodyPart::Chest, WoundKind::Blunt)),
+            !attrs
+                .defense_profile
+                .contains_key(&(BodyPart::Chest, WoundKind::Blunt)),
             "Chest should not get limb defense"
         );
         assert!(
-            !attrs.defense_profile.contains_key(&(BodyPart::Abdomen, WoundKind::Pierce)),
+            !attrs
+                .defense_profile
+                .contains_key(&(BodyPart::Abdomen, WoundKind::Pierce)),
             "Abdomen should not get limb defense"
         );
     }
@@ -237,7 +269,9 @@ mod tests {
     fn aggregate_stacks_with_existing_armor() {
         let known = make_known(1.0, true);
         let mut attrs = DerivedAttrs::default();
-        attrs.defense_profile.insert((BodyPart::ArmL, WoundKind::Cut), 0.3);
+        attrs
+            .defense_profile
+            .insert((BodyPart::ArmL, WoundKind::Cut), 0.3);
         apply_guangbo_ticao_bonuses(&mut attrs, &known);
 
         let expected = 0.3 + LIMB_DEFENSE_BONUS_MAX;
@@ -252,7 +286,9 @@ mod tests {
     fn aggregate_respects_mitigation_cap() {
         let known = make_known(1.0, true);
         let mut attrs = DerivedAttrs::default();
-        attrs.defense_profile.insert((BodyPart::LegR, WoundKind::Blunt), ARMOR_MITIGATION_CAP);
+        attrs
+            .defense_profile
+            .insert((BodyPart::LegR, WoundKind::Blunt), ARMOR_MITIGATION_CAP);
         apply_guangbo_ticao_bonuses(&mut attrs, &known);
 
         assert_eq!(

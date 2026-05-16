@@ -12,7 +12,10 @@ public enum EquipSlotType {
     TREASURE_BELT_0("宝1"),
     TREASURE_BELT_1("宝2"),
     TREASURE_BELT_2("宝3"),
-    TREASURE_BELT_3("宝4");
+    TREASURE_BELT_3("宝4"),
+    BACK_PACK("背包"),
+    WAIST_POUCH("腰包"),
+    CHEST_SATCHEL("前挂");
 
     private final String displayName;
 

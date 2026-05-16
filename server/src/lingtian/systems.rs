@@ -2639,6 +2639,7 @@ mod tests {
             blueprint_scroll_spec: None,
             inscription_scroll_spec: None,
             technique_scroll_spec: None,
+            container_spec: None,
         }
     }
 
@@ -2662,6 +2663,7 @@ mod tests {
             blueprint_scroll_spec: None,
             inscription_scroll_spec: None,
             technique_scroll_spec: None,
+            container_spec: None,
         }
     }
 
