@@ -1,0 +1,21 @@
+{
+  "id": "sword_forge_ruin",
+  "display_name": "铸剑古殿",
+  "gameplay": "boss_entrance",
+  "qi_range": [0.4, 0.6],
+  "entity": { "kind": "forge_station", "efficiency_multiplier": 1.0, "tier": 3 },
+  "loot": [
+    { "item": "meteor_iron", "count": [1, 2], "chance": 0.8 },
+    { "item": "sword_embryo_shard", "count": [1, 1], "chance": 0.6 },
+    { "item": "scroll_sword_path", "count": [1, 1], "chance": 0.5 }
+  ],
+  "refresh": "permanent",
+  "visual_blocks": [
+    "mossy_stone_bricks", "cracked_stone_bricks", "stone_bricks",
+    "chiseled_stone_bricks", "iron_block", "soul_lantern",
+    "deepslate_bricks", "cobblestone_stairs"
+  ],
+  "size": [30, 15, 30],
+  "tags": ["sword_path", "forge", "boss_entrance", "ancient_ruin"],
+  "narration_stele": "残碑上刻着模糊的文字：「归元剑宗·铸剑殿」。字迹被千年风化侵蚀，只余最后一行：「剑在人在。」"
+}
