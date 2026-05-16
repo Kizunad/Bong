@@ -177,9 +177,16 @@ pub fn spawn_particle(
 
 pub const fn attack_recipe_for_beast(kind: BeastKind) -> Option<&'static str> {
     match kind {
-        BeastKind::Spider => Some("fauna_ash_spider_attack"),
+        BeastKind::Spider | BeastKind::GreenSpider | BeastKind::BlueSpider => {
+            Some("fauna_ash_spider_attack")
+        }
         BeastKind::HybridBeast => Some("fauna_hybrid_beast_attack"),
         BeastKind::VoidDistorted => Some("fauna_void_distorted_attack"),
+        BeastKind::JungleScorpion | BeastKind::IceScorpion => Some("fauna_hybrid_beast_attack"),
+        BeastKind::CockadeSnake | BeastKind::MandrakeSnake => Some("fauna_ash_spider_attack"),
+        BeastKind::DarkTiger => Some("fauna_hybrid_beast_attack"),
+        BeastKind::LivingPillar => Some("fauna_void_distorted_attack"),
+        BeastKind::PoisonDragon | BeastKind::BoneDragon => Some("fauna_hybrid_beast_attack"),
         BeastKind::Rat | BeastKind::Whale => None,
     }
 }
@@ -187,19 +194,38 @@ pub const fn attack_recipe_for_beast(kind: BeastKind) -> Option<&'static str> {
 pub const fn death_recipe_for_beast(kind: BeastKind) -> Option<&'static str> {
     match kind {
         BeastKind::Rat => Some("fauna_rat_death"),
-        BeastKind::Spider => Some("fauna_ash_spider_death"),
-        BeastKind::HybridBeast => Some("fauna_hybrid_beast_death"),
-        BeastKind::VoidDistorted => Some("fauna_void_distorted_death"),
+        BeastKind::Spider | BeastKind::GreenSpider | BeastKind::BlueSpider => {
+            Some("fauna_ash_spider_death")
+        }
+        BeastKind::HybridBeast | BeastKind::DarkTiger => Some("fauna_hybrid_beast_death"),
+        BeastKind::VoidDistorted | BeastKind::LivingPillar => {
+            Some("fauna_void_distorted_death")
+        }
+        BeastKind::JungleScorpion | BeastKind::IceScorpion => Some("fauna_hybrid_beast_death"),
+        BeastKind::CockadeSnake | BeastKind::MandrakeSnake => Some("fauna_ash_spider_death"),
+        BeastKind::PoisonDragon | BeastKind::BoneDragon => Some("fauna_hybrid_beast_death"),
         BeastKind::Whale => None,
     }
 }
 
 pub const fn ambient_recipe_for_visual(visual: FaunaVisualKind) -> Option<&'static str> {
     match visual {
-        FaunaVisualKind::AshSpider => Some("fauna_ash_spider_ambient"),
-        FaunaVisualKind::HybridBeast => Some("fauna_hybrid_beast_ambient"),
-        FaunaVisualKind::VoidDistorted => Some("fauna_void_distorted_ambient"),
-        FaunaVisualKind::DevourRat
+        FaunaVisualKind::AshSpider
+        | FaunaVisualKind::GreenSpider
+        | FaunaVisualKind::BlueSpider => Some("fauna_ash_spider_ambient"),
+        FaunaVisualKind::HybridBeast | FaunaVisualKind::DarkTiger => {
+            Some("fauna_hybrid_beast_ambient")
+        }
+        FaunaVisualKind::VoidDistorted | FaunaVisualKind::LivingPillar => {
+            Some("fauna_void_distorted_ambient")
+        }
+        FaunaVisualKind::JungleScorpion
+        | FaunaVisualKind::IceScorpion
+        | FaunaVisualKind::CockadeSnake
+        | FaunaVisualKind::MandrakeSnake
+        | FaunaVisualKind::PoisonDragon
+        | FaunaVisualKind::BoneDragon
+        | FaunaVisualKind::DevourRat
         | FaunaVisualKind::Daoxiang
         | FaunaVisualKind::Zhinian
         | FaunaVisualKind::TsySentinel

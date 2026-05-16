@@ -29,6 +29,10 @@ pub mod skull_fiend;
 pub mod social;
 pub mod spatial;
 pub mod spawn;
+#[allow(dead_code)]
+pub mod spawn_dragon;
+#[allow(dead_code)]
+pub mod spawn_pillar;
 pub mod spawn_rat;
 pub mod spawn_whale;
 pub mod sync;

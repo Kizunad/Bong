@@ -1843,14 +1843,17 @@ fn beast_kind_from_command(command: &Command) -> Option<BeastKind> {
     match value {
         "rat" => Some(BeastKind::Rat),
         "spider" => Some(BeastKind::Spider),
+        "green_spider" => Some(BeastKind::GreenSpider),
+        "jungle_scorpion" => Some(BeastKind::JungleScorpion),
+        "cockade_snake" => Some(BeastKind::CockadeSnake),
+        "blue_spider" => Some(BeastKind::BlueSpider),
+        "ice_scorpion" => Some(BeastKind::IceScorpion),
+        "mandrake_snake" => Some(BeastKind::MandrakeSnake),
         "hybrid_beast" => Some(BeastKind::HybridBeast),
         "void_distorted" => Some(BeastKind::VoidDistorted),
-        // 不接 "whale"：beast_tide 路径走 spawn_beast_tide_zombie 出普通僵尸贴
-        // FaunaTag，但 whale 需要专属 spawn_whale_npc_at（GeckoLib 渲染 / HP 800
-        // / drift brain）。如果在这里允许 whale，僵尸会顶 FaunaTag::Whale 并掉
-        // 神兽 legendary 表（jing_gu/jing_sui/jing_hun_yu），变成无限刷掉落 exploit。
-        // 飞鲸只走 `/summon whale` dev 命令；后续要接入 tide 须先把 spawn_beast_tide_*
-        // 改成走真正的 spawn_whale_npc_at。
+        "dark_tiger" => Some(BeastKind::DarkTiger),
+        // 不接 whale / dragon / pillar：这些需要专属 spawn 路径（GeckoLib 渲染 +
+        // 自定义 brain + 超高 HP），beast_tide 僵尸路径会导致无限刷 legendary exploit。
         _ => None,
     }
 }
@@ -2846,19 +2849,35 @@ mod events_tests {
                 params,
             }
         };
-        // 接受这些（合法 tide kind）
-        for legit in ["rat", "spider", "hybrid_beast", "void_distorted"] {
-            assert!(
-                beast_kind_from_command(&make_cmd(legit)).is_some(),
-                "{legit} 应被合法 beast_tide 接受"
+        // 接受这些（合法 tide kind —— 含新增陆地物种）
+        let legit_kinds: &[(&str, BeastKind)] = &[
+            ("rat", BeastKind::Rat),
+            ("spider", BeastKind::Spider),
+            ("hybrid_beast", BeastKind::HybridBeast),
+            ("void_distorted", BeastKind::VoidDistorted),
+            ("green_spider", BeastKind::GreenSpider),
+            ("jungle_scorpion", BeastKind::JungleScorpion),
+            ("cockade_snake", BeastKind::CockadeSnake),
+            ("blue_spider", BeastKind::BlueSpider),
+            ("ice_scorpion", BeastKind::IceScorpion),
+            ("mandrake_snake", BeastKind::MandrakeSnake),
+            ("dark_tiger", BeastKind::DarkTiger),
+        ];
+        for (name, expected) in legit_kinds {
+            assert_eq!(
+                beast_kind_from_command(&make_cmd(name)),
+                Some(*expected),
+                "{name} 应被合法 beast_tide 接受并映射到 {expected:?}"
             );
         }
-        // 拒绝 whale —— 避免普通僵尸顶 FaunaTag::Whale 刷神兽 legendary
-        assert_eq!(
-            beast_kind_from_command(&make_cmd("whale")),
-            None,
-            "whale 不能进 beast_tide 通道（exploit 风险）—— 仅走 /summon whale"
-        );
+        // 拒绝 whale / dragon / pillar —— 需要专属 spawn 路径，防 legendary exploit
+        for rejected in ["whale", "poison_dragon", "bone_dragon", "living_pillar"] {
+            assert_eq!(
+                beast_kind_from_command(&make_cmd(rejected)),
+                None,
+                "{rejected} 不能进 beast_tide 通道（exploit 风险）"
+            );
+        }
         // 兜底：未知 kind 也是 None
         assert_eq!(beast_kind_from_command(&make_cmd("unknown_xyz")), None);
     }

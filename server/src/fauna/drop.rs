@@ -37,10 +37,37 @@ pub const YI_SHOU_GU: &str = "yi_shou_gu";
 pub const BIAN_YI_HEXIN: &str = "bian_yi_hexin";
 pub const FU_YA_HESUI: &str = "fu_ya_hesui";
 pub const ZHEN_SHI_CHU: &str = "zhen_shi_chu";
-// 飞鲸（神兽级）专属掉落 ID —— 用于 WHALE_DROPS 表 + ItemRegistry 查询
 pub const JING_GU: &str = "jing_gu";
 pub const JING_SUI: &str = "jing_sui";
 pub const JING_HUN_YU: &str = "jing_hun_yu";
+
+// ── 新增物种掉落 ID ──
+pub const ZHU_SI: &str = "zhu_si";
+pub const LV_ZHU_DUNANG: &str = "lv_zhu_dunang";
+pub const XIE_KE: &str = "xie_ke";
+pub const XIE_WEI_ZHEN: &str = "xie_wei_zhen";
+pub const XIE_DU_XIAN: &str = "xie_du_xian";
+pub const SHE_LIN: &str = "she_lin";
+pub const SHE_DAN: &str = "she_dan";
+pub const JIGUAN_SHE_GUAN: &str = "jiguan_she_guan";
+pub const BING_ZHU_SI: &str = "bing_zhu_si";
+pub const SHUANG_ZHU_HE: &str = "shuang_zhu_he";
+pub const BINGBI_JIAPIAN: &str = "bingbi_jiapian";
+pub const BINGBI_XIE_HE: &str = "bingbi_xie_he";
+pub const SHE_YA: &str = "she_ya";
+pub const MANTUOLUO_SHE_TONG: &str = "mantuoluo_she_tong";
+pub const HU_GU: &str = "hu_gu";
+pub const HU_PI: &str = "hu_pi";
+pub const XIESHEN_HU_XIN: &str = "xieshen_hu_xin";
+pub const LONG_GU: &str = "long_gu";
+pub const LONG_LIN: &str = "long_lin";
+pub const DU_LONG_ZHU: &str = "du_long_zhu";
+pub const KU_LONG_GU: &str = "ku_long_gu";
+pub const LONG_YA: &str = "long_ya";
+pub const GU_LONG_HUN_JING: &str = "gu_long_hun_jing";
+pub const ZHU_HE_SUIPIAN: &str = "zhu_he_suipian";
+pub const CHU_XU: &str = "chu_xu";
+pub const SHENYUAN_ZHI_YAN: &str = "shenyuan_zhi_yan";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct QuantityRange {
@@ -123,13 +150,69 @@ const VOID_DISTORTED_DROPS: [DropEntry; 4] = [
     DropEntry::rare(BIAN_YI_HEXIN, QuantityRange::fixed(1), 0.20),
 ];
 
-/// 飞行鲸：神兽级中立巨型生物，化虚境界以上才打得动（HP=800）。
-/// 专属掉落池（不复用 spider/void 系材料，独立"鲸"系列）：
-/// - 异兽骨 8-15：杂骨保底量大
-/// - 苍鲸脊骨 2-4：鲸专属保底，炼器极品 (legendary)
-/// - 鲸髓凝液 ×1 保底：髓液，破境/延寿用 (legendary)
-/// - 鲸魂玉珏 30%：灵识凝玉，化虚悟性 (legendary)
-/// - 变异核心 20%：异化兽核心，破境跳板（其他妖兽也掉，但鲸级稀有度 20% 高于平均）
+const GREEN_SPIDER_DROPS: [DropEntry; 3] = [
+    DropEntry::guaranteed(ZHU_GU, QuantityRange::between(1, 2)),
+    DropEntry::guaranteed(ZHU_SI, QuantityRange::between(2, 4)),
+    DropEntry::rare(LV_ZHU_DUNANG, QuantityRange::fixed(1), 0.08),
+];
+
+const JUNGLE_SCORPION_DROPS: [DropEntry; 3] = [
+    DropEntry::guaranteed(XIE_KE, QuantityRange::between(1, 3)),
+    DropEntry::guaranteed(XIE_WEI_ZHEN, QuantityRange::fixed(1)),
+    DropEntry::rare(XIE_DU_XIAN, QuantityRange::fixed(1), 0.08),
+];
+
+const COCKADE_SNAKE_DROPS: [DropEntry; 3] = [
+    DropEntry::guaranteed(SHE_LIN, QuantityRange::between(2, 4)),
+    DropEntry::guaranteed(SHE_DAN, QuantityRange::fixed(1)),
+    DropEntry::rare(JIGUAN_SHE_GUAN, QuantityRange::fixed(1), 0.08),
+];
+
+const BLUE_SPIDER_DROPS: [DropEntry; 3] = [
+    DropEntry::guaranteed(ZHU_GU, QuantityRange::between(2, 3)),
+    DropEntry::guaranteed(BING_ZHU_SI, QuantityRange::between(3, 5)),
+    DropEntry::rare(SHUANG_ZHU_HE, QuantityRange::fixed(1), 0.10),
+];
+
+const ICE_SCORPION_DROPS: [DropEntry; 3] = [
+    DropEntry::guaranteed(XIE_KE, QuantityRange::between(2, 4)),
+    DropEntry::guaranteed(BINGBI_JIAPIAN, QuantityRange::between(1, 2)),
+    DropEntry::rare(BINGBI_XIE_HE, QuantityRange::fixed(1), 0.12),
+];
+
+const MANDRAKE_SNAKE_DROPS: [DropEntry; 3] = [
+    DropEntry::guaranteed(SHE_LIN, QuantityRange::between(3, 5)),
+    DropEntry::guaranteed(SHE_YA, QuantityRange::between(1, 2)),
+    DropEntry::rare(MANTUOLUO_SHE_TONG, QuantityRange::fixed(1), 0.12),
+];
+
+const DARK_TIGER_DROPS: [DropEntry; 4] = [
+    DropEntry::guaranteed(HU_GU, QuantityRange::between(3, 5)),
+    DropEntry::guaranteed(HU_PI, QuantityRange::fixed(1)),
+    DropEntry::guaranteed(YI_SHOU_GU, QuantityRange::between(2, 3)),
+    DropEntry::rare(XIESHEN_HU_XIN, QuantityRange::fixed(1), 0.15),
+];
+
+const LIVING_PILLAR_DROPS: [DropEntry; 3] = [
+    DropEntry::guaranteed(ZHU_HE_SUIPIAN, QuantityRange::between(3, 5)),
+    DropEntry::guaranteed(CHU_XU, QuantityRange::between(2, 4)),
+    DropEntry::rare(SHENYUAN_ZHI_YAN, QuantityRange::fixed(1), 0.20),
+];
+
+const POISON_DRAGON_DROPS: [DropEntry; 4] = [
+    DropEntry::guaranteed(LONG_GU, QuantityRange::between(4, 6)),
+    DropEntry::guaranteed(LONG_LIN, QuantityRange::between(2, 3)),
+    DropEntry::guaranteed(YI_SHOU_GU, QuantityRange::between(5, 8)),
+    DropEntry::rare(DU_LONG_ZHU, QuantityRange::fixed(1), 0.15),
+];
+
+const BONE_DRAGON_DROPS: [DropEntry; 4] = [
+    DropEntry::guaranteed(KU_LONG_GU, QuantityRange::between(5, 8)),
+    DropEntry::guaranteed(LONG_YA, QuantityRange::between(2, 3)),
+    DropEntry::guaranteed(YI_SHOU_GU, QuantityRange::between(5, 8)),
+    DropEntry::rare(GU_LONG_HUN_JING, QuantityRange::fixed(1), 0.15),
+];
+
 const WHALE_DROPS: [DropEntry; 5] = [
     DropEntry::guaranteed(YI_SHOU_GU, QuantityRange::between(8, 15)),
     DropEntry::guaranteed(JING_GU, QuantityRange::between(2, 4)),
@@ -142,8 +225,18 @@ pub fn drop_table_for(kind: BeastKind) -> &'static [DropEntry] {
     match kind {
         BeastKind::Rat => &RAT_DROPS,
         BeastKind::Spider => &SPIDER_DROPS,
+        BeastKind::GreenSpider => &GREEN_SPIDER_DROPS,
+        BeastKind::JungleScorpion => &JUNGLE_SCORPION_DROPS,
+        BeastKind::CockadeSnake => &COCKADE_SNAKE_DROPS,
+        BeastKind::BlueSpider => &BLUE_SPIDER_DROPS,
+        BeastKind::IceScorpion => &ICE_SCORPION_DROPS,
+        BeastKind::MandrakeSnake => &MANDRAKE_SNAKE_DROPS,
         BeastKind::HybridBeast => &HYBRID_DROPS,
         BeastKind::VoidDistorted => &VOID_DISTORTED_DROPS,
+        BeastKind::DarkTiger => &DARK_TIGER_DROPS,
+        BeastKind::LivingPillar => &LIVING_PILLAR_DROPS,
+        BeastKind::PoisonDragon => &POISON_DRAGON_DROPS,
+        BeastKind::BoneDragon => &BONE_DRAGON_DROPS,
         BeastKind::Whale => &WHALE_DROPS,
     }
 }
@@ -403,6 +496,32 @@ mod tests {
             JING_GU,
             JING_SUI,
             JING_HUN_YU,
+            ZHU_SI,
+            LV_ZHU_DUNANG,
+            XIE_KE,
+            XIE_WEI_ZHEN,
+            XIE_DU_XIAN,
+            SHE_LIN,
+            SHE_DAN,
+            JIGUAN_SHE_GUAN,
+            BING_ZHU_SI,
+            SHUANG_ZHU_HE,
+            BINGBI_JIAPIAN,
+            BINGBI_XIE_HE,
+            SHE_YA,
+            MANTUOLUO_SHE_TONG,
+            HU_GU,
+            HU_PI,
+            XIESHEN_HU_XIN,
+            LONG_GU,
+            LONG_LIN,
+            DU_LONG_ZHU,
+            KU_LONG_GU,
+            LONG_YA,
+            GU_LONG_HUN_JING,
+            ZHU_HE_SUIPIAN,
+            CHU_XU,
+            SHENYUAN_ZHI_YAN,
             "bone_coin_5",
             "bone_coin_15",
             "bone_coin_40",
@@ -432,19 +551,30 @@ mod tests {
     }
 
     #[test]
-    fn each_beast_kind_rolls_guaranteed_bone_material() {
-        for kind in [
+    fn each_beast_kind_rolls_at_least_one_guaranteed_drop() {
+        let all_kinds = [
             BeastKind::Rat,
             BeastKind::Spider,
+            BeastKind::GreenSpider,
+            BeastKind::JungleScorpion,
+            BeastKind::CockadeSnake,
+            BeastKind::BlueSpider,
+            BeastKind::IceScorpion,
+            BeastKind::MandrakeSnake,
             BeastKind::HybridBeast,
             BeastKind::VoidDistorted,
+            BeastKind::DarkTiger,
+            BeastKind::LivingPillar,
+            BeastKind::PoisonDragon,
+            BeastKind::BoneDragon,
             BeastKind::Whale,
-        ] {
+        ];
+        for kind in all_kinds {
             for seed in [1, 42, 99] {
                 let drops = roll_fauna_drops(FaunaTag::new(kind), seed);
                 assert!(
-                    drops.iter().any(|drop| drop.item_id == YI_SHOU_GU),
-                    "{kind:?} must emit canonical yi_shou_gu for seed {seed}"
+                    !drops.is_empty(),
+                    "{kind:?} must produce at least one guaranteed drop for seed {seed}"
                 );
                 assert!(
                     drops.iter().any(|drop| drop.quantity >= 1),

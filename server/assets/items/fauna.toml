@@ -176,3 +176,291 @@ base_weight = 0.05
 rarity = "rare"
 spirit_quality_initial = 1.0
 description = "以缝合兽骨封入四十点真元的高额骨币，足以支撑一场小型交易。"
+
+# ── 生态扩充：新增物种掉落物 ──
+
+[[item]]
+id = "zhu_si"
+name = "蛛丝"
+category = "misc"
+grid_w = 1
+grid_h = 1
+base_weight = 0.1
+rarity = "common"
+spirit_quality_initial = 0.3
+description = "绿蜘蛛吐出的韧丝，可作陷阱线或炼器辅材。"
+
+[[item]]
+id = "lv_zhu_dunang"
+name = "绿蛛毒囊"
+category = "misc"
+grid_w = 1
+grid_h = 1
+base_weight = 0.15
+rarity = "uncommon"
+spirit_quality_initial = 0.55
+description = "绿蜘蛛的毒囊，毒蛊师和炼丹师都肯出价。"
+
+[[item]]
+id = "xie_ke"
+name = "蝎壳"
+category = "misc"
+grid_w = 1
+grid_h = 1
+base_weight = 0.4
+rarity = "common"
+spirit_quality_initial = 0.4
+description = "丛林蝎的甲壳碎片，质地坚硬，可镶嵌入护甲。"
+
+[[item]]
+id = "xie_wei_zhen"
+name = "蝎尾针"
+category = "misc"
+grid_w = 1
+grid_h = 1
+base_weight = 0.2
+rarity = "uncommon"
+spirit_quality_initial = 0.5
+description = "蝎尾末端的毒针，暗器流最爱的天然载体。"
+
+[[item]]
+id = "xie_du_xian"
+name = "蝎毒腺"
+category = "misc"
+grid_w = 1
+grid_h = 1
+base_weight = 0.15
+rarity = "rare"
+spirit_quality_initial = 0.65
+description = "从蝎体内完整剥离的毒腺，炼丹极品辅材。"
+
+[[item]]
+id = "she_lin"
+name = "蛇鳞"
+category = "misc"
+grid_w = 1
+grid_h = 1
+base_weight = 0.15
+rarity = "common"
+spirit_quality_initial = 0.35
+description = "灵蛇脱落的鳞片，可作炼器镶面或研粉入药。"
+
+[[item]]
+id = "she_dan"
+name = "蛇胆"
+category = "misc"
+grid_w = 1
+grid_h = 1
+base_weight = 0.1
+rarity = "uncommon"
+spirit_quality_initial = 0.5
+description = "灵蛇胆囊，入丹可解毒增韧。"
+
+[[item]]
+id = "jiguan_she_guan"
+name = "鸡冠蛇冠"
+category = "misc"
+grid_w = 1
+grid_h = 1
+base_weight = 0.2
+rarity = "rare"
+spirit_quality_initial = 0.7
+description = "凤尾鸡冠蛇头冠，色泽艳丽，蕴微量灵韵，炼丹稀有辅材。"
+
+[[item]]
+id = "bing_zhu_si"
+name = "冰蛛丝"
+category = "misc"
+grid_w = 1
+grid_h = 1
+base_weight = 0.12
+rarity = "uncommon"
+spirit_quality_initial = 0.5
+description = "蓝蜘蛛吐出的寒属性丝线，触之冰凉，炼器可附寒意。"
+
+[[item]]
+id = "shuang_zhu_he"
+name = "霜蛛核"
+category = "misc"
+grid_w = 1
+grid_h = 1
+base_weight = 0.25
+rarity = "rare"
+spirit_quality_initial = 0.75
+description = "蓝蜘蛛体内的寒核，凝脉境突破辅材。"
+
+[[item]]
+id = "bingbi_jiapian"
+name = "冰碧甲片"
+category = "misc"
+grid_w = 1
+grid_h = 1
+base_weight = 0.5
+rarity = "uncommon"
+spirit_quality_initial = 0.6
+description = "冰碧蝎背甲的碎片，寒意透骨，可作高级护甲镶嵌。"
+
+[[item]]
+id = "bingbi_xie_he"
+name = "冰碧蝎核"
+category = "misc"
+grid_w = 1
+grid_h = 1
+base_weight = 0.3
+rarity = "rare"
+spirit_quality_initial = 0.8
+description = "冰碧蝎的寒凝核心，凝脉境突破辅材。"
+
+[[item]]
+id = "she_ya"
+name = "蛇牙"
+category = "misc"
+grid_w = 1
+grid_h = 1
+base_weight = 0.1
+rarity = "uncommon"
+spirit_quality_initial = 0.45
+description = "曼陀罗蛇的毒牙，可作暗器尖端或毒蛊原料。"
+
+[[item]]
+id = "mantuoluo_she_tong"
+name = "曼陀罗蛇瞳"
+category = "misc"
+grid_w = 1
+grid_h = 1
+base_weight = 0.15
+rarity = "rare"
+spirit_quality_initial = 0.8
+description = "曼陀罗蛇的蛇瞳，蕴致幻灵韵，幻术类丹药必需。"
+
+[[item]]
+id = "hu_gu"
+name = "虎骨"
+category = "misc"
+grid_w = 1
+grid_h = 2
+base_weight = 1.5
+rarity = "rare"
+spirit_quality_initial = 0.85
+description = "邪神虎的粗壮骨骼，可铸高级骨币或炼器。"
+
+[[item]]
+id = "hu_pi"
+name = "虎皮"
+category = "misc"
+grid_w = 2
+grid_h = 2
+base_weight = 2.0
+rarity = "rare"
+spirit_quality_initial = 0.7
+description = "邪神虎皮，纹路诡异，可制重甲内衬。"
+
+[[item]]
+id = "xieshen_hu_xin"
+name = "邪神虎心"
+category = "misc"
+grid_w = 1
+grid_h = 1
+base_weight = 0.8
+rarity = "legendary"
+spirit_quality_initial = 0.95
+description = "邪神虎心脏，搏动未息，固元境突破辅材。"
+
+[[item]]
+id = "long_gu"
+name = "龙骨"
+category = "misc"
+grid_w = 2
+grid_h = 3
+base_weight = 5.0
+rarity = "legendary"
+spirit_quality_initial = 0.95
+description = "毒龙骨骼，骨纹中流淌剧毒灵韵，顶级炼器材料。"
+
+[[item]]
+id = "long_lin"
+name = "龙鳞"
+category = "misc"
+grid_w = 1
+grid_h = 1
+base_weight = 0.8
+rarity = "legendary"
+spirit_quality_initial = 0.9
+description = "毒龙鳞片，坚逾精铁，可锻入法器增其防护。"
+
+[[item]]
+id = "du_long_zhu"
+name = "毒龙珠"
+category = "misc"
+grid_w = 1
+grid_h = 1
+base_weight = 0.5
+rarity = "legendary"
+spirit_quality_initial = 1.0
+description = "毒龙体内凝结的毒珠，化虚境突破辅材，触之即灼经脉。"
+
+[[item]]
+id = "ku_long_gu"
+name = "枯龙骨"
+category = "misc"
+grid_w = 2
+grid_h = 3
+base_weight = 4.0
+rarity = "legendary"
+spirit_quality_initial = 0.9
+description = "骨龙遗骸，枯朽中犹存亡灵之力，负灵域器具必需。"
+
+[[item]]
+id = "long_ya"
+name = "龙牙"
+category = "misc"
+grid_w = 1
+grid_h = 1
+base_weight = 0.6
+rarity = "legendary"
+spirit_quality_initial = 0.85
+description = "骨龙利齿，可作法器破甲尖端。"
+
+[[item]]
+id = "gu_long_hun_jing"
+name = "骨龙魂晶"
+category = "misc"
+grid_w = 1
+grid_h = 1
+base_weight = 0.4
+rarity = "legendary"
+spirit_quality_initial = 1.0
+description = "骨龙颅内的魂识凝晶，化虚境突破辅材。"
+
+[[item]]
+id = "zhu_he_suipian"
+name = "柱核碎片"
+category = "misc"
+grid_w = 1
+grid_h = 2
+base_weight = 2.0
+rarity = "legendary"
+spirit_quality_initial = 0.85
+description = "邃渊柱核心的碎片，触手残渣犹在蠕动，坍缩渊相关炼器材料。"
+
+[[item]]
+id = "chu_xu"
+name = "触须"
+category = "misc"
+grid_w = 1
+grid_h = 2
+base_weight = 1.0
+rarity = "rare"
+spirit_quality_initial = 0.6
+description = "邃渊柱断裂的触须，湿滑冰冷，负灵域器具材料。"
+
+[[item]]
+id = "shenyuan_zhi_yan"
+name = "深渊之眼"
+category = "misc"
+grid_w = 1
+grid_h = 1
+base_weight = 0.3
+rarity = "legendary"
+spirit_quality_initial = 1.0
+description = "邃渊柱核心的眼状凝晶，窥视深渊者亦被深渊窥视。极品丹药/法宝材料。"
