@@ -8,11 +8,11 @@ use crate::cultivation::components::Cultivation;
 use crate::cultivation::death_hooks::PlayerRevived;
 use crate::inventory::{
     calculate_current_weight, ContainerState, ItemInstance, ItemRarity, PlayerInventory,
-    EQUIP_SLOT_CHEST, EQUIP_SLOT_FALSE_SKIN, EQUIP_SLOT_FEET, EQUIP_SLOT_HEAD, EQUIP_SLOT_LEGS,
-    EQUIP_SLOT_MAIN_HAND, EQUIP_SLOT_OFF_HAND, EQUIP_SLOT_TREASURE_BELT_0,
-    EQUIP_SLOT_TREASURE_BELT_1, EQUIP_SLOT_TREASURE_BELT_2, EQUIP_SLOT_TREASURE_BELT_3,
-    EQUIP_SLOT_TWO_HAND, FRONT_SATCHEL_CONTAINER_ID, MAIN_PACK_CONTAINER_ID,
-    SMALL_POUCH_CONTAINER_ID,
+    EQUIP_SLOT_BACK_PACK, EQUIP_SLOT_CHEST, EQUIP_SLOT_CHEST_SATCHEL, EQUIP_SLOT_FALSE_SKIN,
+    EQUIP_SLOT_FEET, EQUIP_SLOT_HEAD, EQUIP_SLOT_LEGS, EQUIP_SLOT_MAIN_HAND, EQUIP_SLOT_OFF_HAND,
+    EQUIP_SLOT_TREASURE_BELT_0, EQUIP_SLOT_TREASURE_BELT_1, EQUIP_SLOT_TREASURE_BELT_2,
+    EQUIP_SLOT_TREASURE_BELT_3, EQUIP_SLOT_TWO_HAND, EQUIP_SLOT_WAIST_POUCH,
+    FRONT_SATCHEL_CONTAINER_ID, MAIN_PACK_CONTAINER_ID, SMALL_POUCH_CONTAINER_ID,
 };
 use crate::network::agent_bridge::{
     payload_type_label, serialize_server_data_payload, SERVER_DATA_CHANNEL,
@@ -220,6 +220,10 @@ pub(crate) fn build_inventory_snapshot(
         treasure_belt_1: equipped_slot_item(inventory, EQUIP_SLOT_TREASURE_BELT_1),
         treasure_belt_2: equipped_slot_item(inventory, EQUIP_SLOT_TREASURE_BELT_2),
         treasure_belt_3: equipped_slot_item(inventory, EQUIP_SLOT_TREASURE_BELT_3),
+        // plan-backpack-equip-v1 P0 — 背包装备槽。
+        back_pack: equipped_slot_item(inventory, EQUIP_SLOT_BACK_PACK),
+        waist_pouch: equipped_slot_item(inventory, EQUIP_SLOT_WAIST_POUCH),
+        chest_satchel: equipped_slot_item(inventory, EQUIP_SLOT_CHEST_SATCHEL),
     };
 
     let hotbar = inventory

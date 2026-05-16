@@ -414,6 +414,9 @@ mod server_data_tests {
                 treasure_belt_1: None,
                 treasure_belt_2: None,
                 treasure_belt_3: None,
+                back_pack: None,
+                waist_pouch: None,
+                chest_satchel: None,
             },
             hotbar: vec![
                 Some(sample_inventory_item(
