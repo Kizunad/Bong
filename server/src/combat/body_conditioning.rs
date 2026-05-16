@@ -1,3 +1,7 @@
+//! 广播体操功法（`body.guangbo_ticao`）：proficiency 0→1 线性缩放三类增益
+//! （+5% 移速 / +5% 跳跃 / +0.5% 四肢防御），每次施放递减增长 proficiency。
+//! `body_conditioning_aggregate` 在 Physics 阶段读 `KnownTechniques` 写入 `DerivedAttrs`。
+
 use valence::prelude::{bevy_ecs, Entity, Event, EventReader, Query};
 
 use crate::combat::armor::ARMOR_MITIGATION_CAP;
