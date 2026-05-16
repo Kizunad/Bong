@@ -405,6 +405,7 @@ mod tests {
         assert_eq!(BeastKind::VoidDistorted.health_max(), 400.0);
         assert_eq!(BeastKind::DarkTiger.health_max(), 500.0);
         assert_eq!(BeastKind::LivingPillar.health_max(), 2500.0);
+        assert_eq!(BeastKind::Heiwushi.health_max(), 2100.0);
         assert_eq!(BeastKind::PoisonDragon.health_max(), 8000.0);
         assert_eq!(BeastKind::BoneDragon.health_max(), 9000.0);
         assert_eq!(BeastKind::Whale.health_max(), 10000.0);
@@ -424,6 +425,7 @@ mod tests {
         assert_eq!(BeastKind::VoidDistorted.realm_tier(), 3);
         assert_eq!(BeastKind::DarkTiger.realm_tier(), 3);
         assert_eq!(BeastKind::LivingPillar.realm_tier(), 4);
+        assert_eq!(BeastKind::Heiwushi.realm_tier(), 4);
         assert_eq!(BeastKind::PoisonDragon.realm_tier(), 5);
         assert_eq!(BeastKind::BoneDragon.realm_tier(), 5);
         assert_eq!(BeastKind::Whale.realm_tier(), 5);

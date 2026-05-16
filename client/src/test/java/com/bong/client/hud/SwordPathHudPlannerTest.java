@@ -58,9 +58,9 @@ class SwordPathHudPlannerTest {
     @Test
     void gradeColorBoundsCheck() {
         assertEquals(SwordPathHudPlanner.gradeColor(0), SwordPathHudPlanner.gradeColor(-1),
-            "negative grade should fallback to grade 0 color");
-        assertEquals(SwordPathHudPlanner.gradeColor(0), SwordPathHudPlanner.gradeColor(99),
-            "out-of-range grade should fallback to grade 0 color");
+            "negative grade should clamp to grade 0 color");
+        assertEquals(SwordPathHudPlanner.gradeColor(6), SwordPathHudPlanner.gradeColor(99),
+            "over-max grade should clamp to highest grade color");
     }
 
     @Test

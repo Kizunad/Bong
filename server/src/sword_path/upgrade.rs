@@ -348,6 +348,19 @@ mod tests {
     }
 
     #[test]
+    fn check_upgrade_insufficient_qi() {
+        let result = check_upgrade(SwordGrade::Induced, 3, 1, 2.0, |_| 10);
+        assert_eq!(
+            result,
+            UpgradeCheckResult::InsufficientQi {
+                need: 5.0,
+                have: 2.0,
+            },
+            "引→凝 needs qi=5 but player has 2"
+        );
+    }
+
+    #[test]
     fn resolve_upgrade_success() {
         let recipe = recipe_for(SwordGrade::Mortal).unwrap();
         let out = resolve_upgrade(recipe, 10.0, 0.0, 0.5);

@@ -97,7 +97,8 @@ public final class SwordPathHudPlanner {
     }
 
     static int gradeColor(int grade) {
-        if (grade < 0 || grade >= GRADE_COLORS.length) return GRADE_COLORS[0];
+        if (grade < 0) return GRADE_COLORS[0];
+        if (grade >= GRADE_COLORS.length) return GRADE_COLORS[GRADE_COLORS.length - 1];
         return GRADE_COLORS[grade];
     }
 }

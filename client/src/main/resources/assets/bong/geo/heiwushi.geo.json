@@ -122,14 +122,14 @@
 					]
 				},
 				{
-					"name": "rightArmSworld",
+					"name": "rightArmSword",
 					"parent": "body",
 					"pivot": [-7, 23, 3],
 					"rotation": [0, 0, 25]
 				},
 				{
 					"name": "in",
-					"parent": "rightArmSworld",
+					"parent": "rightArmSword",
 					"pivot": [-7, 23, 3],
 					"rotation": [0, 0, -25]
 				},
