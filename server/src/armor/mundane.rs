@@ -15,6 +15,7 @@ const BONE_COIN_TEMPLATE: &str = "bone_coin_5";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum MundaneArmorMaterial {
+    Straw,
     Bone,
     Hide,
     Iron,
@@ -24,7 +25,8 @@ pub enum MundaneArmorMaterial {
 }
 
 impl MundaneArmorMaterial {
-    pub const ALL: [Self; 6] = [
+    pub const ALL: [Self; 7] = [
+        Self::Straw,
         Self::Bone,
         Self::Hide,
         Self::Iron,
@@ -35,6 +37,7 @@ impl MundaneArmorMaterial {
 
     pub fn id(self) -> &'static str {
         match self {
+            Self::Straw => "straw",
             Self::Bone => "bone",
             Self::Hide => "hide",
             Self::Iron => "iron",
@@ -46,6 +49,7 @@ impl MundaneArmorMaterial {
 
     pub fn display_name(self) -> &'static str {
         match self {
+            Self::Straw => "草编",
             Self::Bone => "骨甲",
             Self::Hide => "兽皮甲",
             Self::Iron => "铁甲",
@@ -57,9 +61,10 @@ impl MundaneArmorMaterial {
 
     pub fn defense(self) -> f32 {
         match self {
+            Self::Straw => 1.5,
             Self::Bone => 3.0,
             Self::Hide => 5.0,
-            Self::Iron => 8.0,
+            Self::Iron => 12.0,
             Self::Copper => 7.0,
             Self::SpiritCloth => 4.0,
             Self::ScrollWrap => 6.0,
@@ -68,9 +73,10 @@ impl MundaneArmorMaterial {
 
     pub fn durability_max(self) -> u32 {
         match self {
+            Self::Straw => 40,
             Self::Bone => 80,
             Self::Hide => 120,
-            Self::Iron => 200,
+            Self::Iron => 280,
             Self::Copper => 160,
             Self::SpiritCloth => 100,
             Self::ScrollWrap => 140,
@@ -79,6 +85,7 @@ impl MundaneArmorMaterial {
 
     fn base_materials(self) -> &'static [(&'static str, u32)] {
         match self {
+            Self::Straw => &[("grass_fiber", 4), ("grass_rope", 2)],
             Self::Bone => &[(BONE_COIN_TEMPLATE, 6)],
             Self::Hide => &[("raw_beast_hide", 4), (BONE_COIN_TEMPLATE, 2)],
             Self::Iron => &[("iron_ore", 5), (BONE_COIN_TEMPLATE, 3)],
@@ -302,11 +309,11 @@ mod tests {
     }
 
     #[test]
-    fn all_24_items_registered() {
+    fn all_28_items_registered() {
         let mut registry = ArmorProfileRegistry::new();
         register_mundane_armors(&mut registry).expect("mundane armor profiles register");
 
-        assert_eq!(registry.len(), 24);
+        assert_eq!(registry.len(), 28);
         for item in all_mundane_armor_items() {
             assert!(
                 registry.get(item.item_id().as_str()).is_some(),
@@ -314,6 +321,58 @@ mod tests {
                 item.item_id()
             );
         }
+    }
+
+    #[test]
+    fn mundane_straw_defense_1_5() {
+        let total: f32 = MundaneArmorSlot::ALL
+            .into_iter()
+            .map(|slot| {
+                MundaneArmorItem {
+                    material: MundaneArmorMaterial::Straw,
+                    slot,
+                }
+                .defense()
+            })
+            .sum();
+
+        assert!(
+            (total - 1.5).abs() < 1e-6,
+            "straw full set defense should be 1.5, got {total}"
+        );
+    }
+
+    #[test]
+    fn straw_craft_recipe_uses_grass() {
+        let item = MundaneArmorItem {
+            material: MundaneArmorMaterial::Straw,
+            slot: MundaneArmorSlot::Helmet,
+        };
+        let recipe = craft_recipe_for(&item);
+
+        assert_eq!(recipe.id.as_str(), "armor.mundane.straw.helmet");
+        assert_eq!(recipe.output, ("armor_straw_helmet".to_string(), 1));
+        assert!(
+            recipe.materials.contains(&("grass_fiber".to_string(), 8)),
+            "helmet should need 8 grass_fiber (4 base × 2 ratio), got {:?}",
+            recipe.materials
+        );
+        assert!(
+            recipe.materials.contains(&("grass_rope".to_string(), 4)),
+            "helmet should need 4 grass_rope (2 base × 2 ratio), got {:?}",
+            recipe.materials
+        );
+    }
+
+    #[test]
+    fn straw_durability_lowest() {
+        assert!(
+            MundaneArmorMaterial::Straw.durability_max()
+                < MundaneArmorMaterial::Bone.durability_max(),
+            "straw durability ({}) should be less than bone ({})",
+            MundaneArmorMaterial::Straw.durability_max(),
+            MundaneArmorMaterial::Bone.durability_max()
+        );
     }
 
     #[test]

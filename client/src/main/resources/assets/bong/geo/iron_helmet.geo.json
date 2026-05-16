@@ -1,0 +1,218 @@
+{
+  "format_version": "1.12.0",
+  "minecraft:geometry": [
+    {
+      "description": {
+        "identifier": "geometry.bong.iron_helmet",
+        "texture_width": 64,
+        "texture_height": 64,
+        "visible_bounds_width": 0.8,
+        "visible_bounds_height": 0.8,
+        "visible_bounds_offset": [
+          0,
+          1.8,
+          0
+        ]
+      },
+      "bones": [
+        {
+          "name": "IronHelmet",
+          "pivot": [
+            0,
+            28,
+            0
+          ],
+          "cubes": []
+        },
+        {
+          "name": "Shell",
+          "parent": "IronHelmet",
+          "pivot": [
+            0,
+            28,
+            0
+          ],
+          "cubes": [
+            {
+              "origin": [
+                -4.8,
+                24,
+                -4.8
+              ],
+              "size": [
+                9.6,
+                9,
+                9.6
+              ],
+              "uv": [
+                0,
+                0
+              ]
+            },
+            {
+              "origin": [
+                -5,
+                27.5,
+                -5.2
+              ],
+              "size": [
+                10,
+                1.5,
+                0.4
+              ],
+              "uv": [
+                0,
+                10
+              ]
+            },
+            {
+              "origin": [
+                -0.5,
+                33,
+                -3
+              ],
+              "size": [
+                1,
+                1.5,
+                6
+              ],
+              "uv": [
+                0,
+                12
+              ]
+            }
+          ]
+        },
+        {
+          "name": "Face",
+          "parent": "IronHelmet",
+          "pivot": [
+            0,
+            27,
+            -5
+          ],
+          "cubes": [
+            {
+              "origin": [
+                -0.5,
+                25,
+                -5.5
+              ],
+              "size": [
+                1,
+                4,
+                0.7
+              ],
+              "uv": [
+                8,
+                10
+              ]
+            },
+            {
+              "origin": [
+                -5.2,
+                24,
+                -3
+              ],
+              "size": [
+                0.6,
+                4,
+                4
+              ],
+              "uv": [
+                10,
+                10
+              ]
+            },
+            {
+              "origin": [
+                4.6,
+                24,
+                -3
+              ],
+              "size": [
+                0.6,
+                4,
+                4
+              ],
+              "uv": [
+                12,
+                10
+              ]
+            }
+          ]
+        },
+        {
+          "name": "Neck",
+          "parent": "IronHelmet",
+          "pivot": [
+            0,
+            24,
+            4
+          ],
+          "cubes": [
+            {
+              "origin": [
+                -4.5,
+                23,
+                2
+              ],
+              "size": [
+                9,
+                2,
+                3.5
+              ],
+              "uv": [
+                0,
+                16
+              ]
+            }
+          ]
+        },
+        {
+          "name": "Straps",
+          "parent": "IronHelmet",
+          "pivot": [
+            0,
+            24,
+            0
+          ],
+          "cubes": [
+            {
+              "origin": [
+                -4.5,
+                22,
+                -0.5
+              ],
+              "size": [
+                0.5,
+                3,
+                1
+              ],
+              "uv": [
+                48,
+                0
+              ]
+            },
+            {
+              "origin": [
+                4,
+                22,
+                -0.5
+              ],
+              "size": [
+                0.5,
+                3,
+                1
+              ],
+              "uv": [
+                50,
+                0
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
