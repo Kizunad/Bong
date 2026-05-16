@@ -7,6 +7,7 @@ pub mod grade;
 pub mod shatter;
 pub mod techniques;
 pub mod tiandao_blind;
+pub mod upgrade;
 
 use valence::prelude::*;
 

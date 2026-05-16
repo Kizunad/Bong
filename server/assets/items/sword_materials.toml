@@ -1,0 +1,128 @@
+# plan-sword-path-v1 P1：剑道炼器原材料。
+# 获取方式见 P2（巨剑沧海地形）和 P3（黑武士 BOSS）。
+
+# ─── 金属系 ───────────────────────────────────────────────────────────────
+[[item]]
+id = "refined_iron"
+name = "精铁"
+category = "material"
+grid_w = 1
+grid_h = 1
+base_weight = 0.8
+rarity = "common"
+spirit_quality_initial = 0.0
+description = "铁锭反复锻打提纯所得。凡物，不含灵气，但密度高于普通铁。"
+
+[[item]]
+id = "xuan_iron"
+name = "玄铁"
+category = "material"
+grid_w = 1
+grid_h = 1
+base_weight = 1.2
+rarity = "uncommon"
+spirit_quality_initial = 0.1
+description = "巨剑沧海深层矿脉出产的暗色铁矿。微含灵气残留，上古灵剑锈蚀渗入地层的产物。"
+
+[[item]]
+id = "meteor_iron"
+name = "陨铁"
+category = "material"
+grid_w = 1
+grid_h = 1
+base_weight = 1.5
+rarity = "rare"
+spirit_quality_initial = 0.3
+description = "古遗迹宝箱或血谷深层偶得。密度极高，天外坠落时裹入微量灵气，适合作剑胚骨架。"
+
+[[item]]
+id = "star_iron"
+name = "星辰铁"
+category = "material"
+grid_w = 1
+grid_h = 1
+base_weight = 2.0
+rarity = "epic"
+spirit_quality_initial = 0.5
+description = "黑武士掉落或古遗迹核心深处才能觅得。铁色泛蓝光，据说是上古宗门从天劫残雷中淬炼。"
+
+[[item]]
+id = "sky_meteor_iron"
+name = "天外陨铁"
+category = "material"
+grid_w = 1
+grid_h = 1
+base_weight = 2.5
+rarity = "legendary"
+spirit_quality_initial = 0.8
+description = "天劫雷击点偶现的陨铁碎片，或巨剑沧海极深处的原始矿脉。铸化虚灵剑的唯一骨料。"
+
+# ─── 灵泉系 ───────────────────────────────────────────────────────────────
+[[item]]
+id = "spirit_spring_water"
+name = "灵泉水"
+category = "material"
+grid_w = 1
+grid_h = 1
+base_weight = 0.3
+rarity = "common"
+spirit_quality_initial = 0.4
+description = "灵泉沼泽取得。含微量灵气的清水，淬剑时可缓和应力。"
+
+[[item]]
+id = "spirit_spring_essence"
+name = "灵泉精华"
+category = "material"
+grid_w = 1
+grid_h = 1
+base_weight = 0.15
+rarity = "rare"
+spirit_quality_initial = 0.7
+description = "灵泉水五份浓缩而成。通灵级灵剑淬火必备，凡水淬不住那个温度。"
+
+# ─── 剑胚系 ───────────────────────────────────────────────────────────────
+[[item]]
+id = "sword_embryo_shard"
+name = "剑胚残片"
+category = "material"
+grid_w = 1
+grid_h = 2
+base_weight = 0.6
+rarity = "rare"
+spirit_quality_initial = 0.35
+description = "古遗迹散落的碎片，曾是上古灵剑锻造的半成品。残留的锻纹仍隐约可辨。"
+
+[[item]]
+id = "ancient_sword_embryo"
+name = "上古剑胚"
+category = "material"
+grid_w = 1
+grid_h = 2
+base_weight = 1.8
+rarity = "epic"
+spirit_quality_initial = 0.6
+description = "黑武士 BOSS 房或古遗迹核心才有。完整的上古剑胚，锻纹精密，只差最后一步灌注。"
+
+# ─── 剑魂 ─────────────────────────────────────────────────────────────────
+[[item]]
+id = "broken_sword_soul"
+name = "破碎剑魂"
+category = "material"
+grid_w = 1
+grid_h = 1
+base_weight = 0.05
+rarity = "legendary"
+spirit_quality_initial = 1.0
+description = "灵剑碎裂时极小概率结晶的魂核。黑武士首杀必掉一枚。铸化虚灵剑的灵魂部件。"
+
+# ─── 功法残卷 ──────────────────────────────────────────────────────────────
+[[item]]
+id = "scroll_sword_path"
+name = "剑道功法残卷"
+category = "misc"
+grid_w = 1
+grid_h = 2
+base_weight = 0.03
+rarity = "rare"
+spirit_quality_initial = 0.0
+description = "归元剑宗遗留的残卷。记载了剑道五式中某一式的心法口诀。拾取后可解锁对应招式。"
