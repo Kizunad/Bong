@@ -313,7 +313,12 @@ mod tests {
         let mut registry = ArmorProfileRegistry::new();
         register_mundane_armors(&mut registry).expect("mundane armor profiles register");
 
-        assert_eq!(registry.len(), 28);
+        assert_eq!(
+            registry.len(),
+            28,
+            "expected 28 mundane armor profiles (7 materials × 4 slots), got {}",
+            registry.len()
+        );
         for item in all_mundane_armor_items() {
             assert!(
                 registry.get(item.item_id().as_str()).is_some(),
@@ -350,8 +355,18 @@ mod tests {
         };
         let recipe = craft_recipe_for(&item);
 
-        assert_eq!(recipe.id.as_str(), "armor.mundane.straw.helmet");
-        assert_eq!(recipe.output, ("armor_straw_helmet".to_string(), 1));
+        assert_eq!(
+            recipe.id.as_str(),
+            "armor.mundane.straw.helmet",
+            "straw helmet recipe id should follow armor.mundane.<mat>.<slot>, got {}",
+            recipe.id.as_str()
+        );
+        assert_eq!(
+            recipe.output,
+            ("armor_straw_helmet".to_string(), 1),
+            "straw helmet recipe should output armor_straw_helmet ×1, got {:?}",
+            recipe.output
+        );
         assert!(
             recipe.materials.contains(&("grass_fiber".to_string(), 8)),
             "helmet should need 8 grass_fiber (4 base × 2 ratio), got {:?}",
