@@ -36,7 +36,7 @@ impl KnownTechniques {
     }
 }
 
-const TECHNIQUE_IDS: [&str; 38] = [
+const TECHNIQUE_IDS: [&str; 39] = [
     "sword.cleave",
     "sword.thrust",
     "sword.parry",
@@ -75,6 +75,7 @@ const TECHNIQUE_IDS: [&str; 38] = [
     "anqi.soul_inject",
     "anqi.armor_pierce",
     "anqi.echo_fractal",
+    "body.guangbo_ticao",
 ];
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -110,7 +111,7 @@ const WOLIU_V3_REQUIRED_MERIDIANS: [TechniqueRequiredMeridian; 2] = [
     },
 ];
 
-pub const TECHNIQUE_DEFINITIONS: [TechniqueDefinition; 38] = [
+pub const TECHNIQUE_DEFINITIONS: [TechniqueDefinition; 39] = [
     TechniqueDefinition {
         id: "sword.cleave",
         display_name: "劈",
@@ -720,6 +721,20 @@ pub const TECHNIQUE_DEFINITIONS: [TechniqueDefinition; 38] = [
         range: 150.0,
         icon_texture: "bong:textures/gui/skill/anqi_echo_fractal.png",
     },
+    TechniqueDefinition {
+        id: "body.guangbo_ticao",
+        display_name: "广播体操",
+        grade: "common",
+        description: "一套古怪的伸展动作。勤练者四肢筋骨渐强，步履亦轻。",
+        required_realm: "Awaken",
+        required_meridians: &[],
+        qi_cost: 1.0,
+        stamina_cost: 5.0,
+        cast_ticks: 60,
+        cooldown_ticks: 200,
+        range: 0.0,
+        icon_texture: "bong:textures/gui/skill/body_guangbo_ticao.png",
+    },
 ];
 
 pub fn technique_definition(id: &str) -> Option<&'static TechniqueDefinition> {
@@ -773,9 +788,9 @@ mod tests {
     }
 
     #[test]
-    fn dev_default_has_all_38() {
+    fn dev_default_has_all_39() {
         let dev = KnownTechniques::dev_default();
-        assert_eq!(dev.entries.len(), 38);
+        assert_eq!(dev.entries.len(), 39);
         assert!(dev
             .entries
             .iter()
