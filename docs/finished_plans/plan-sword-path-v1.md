@@ -370,7 +370,7 @@ worldgen blueprint POI spec:
 4. 新增 `FaunaVisualKind::Heiwushi` variant
 5. 新增 `HeiwushiEntityRenderer.java` + `HeiwushiEntityModel.java`（GeckoLib 注册）
 
-模型骨骼：`global` / `body` / `rightArm` / `leftArm` / `rightLeg` / `leftLeg` / `bone8`(head) / `beiSword2` / `beiSword3`(背剑) / `leftArmSword` / `rightArmSworld`(持剑)
+模型骨骼：`global` / `body` / `rightArm` / `leftArm` / `rightLeg` / `leftLeg` / `bone8`(head) / `beiSword2` / `beiSword3`(背剑) / `leftArmSword` / `rightArmSword`(持剑)
 
 现有动画（3 有效 + 2 空桩）：
 - `黑暗弹幕` / `skill1`（0.76s）— 暗影弹射
@@ -381,7 +381,7 @@ worldgen blueprint POI spec:
 需补写动画：
 - `idle`：站立持剑，背剑微摆（body.yaw ±0.05rad 4s 循环，beiSword2/3.roll ±0.03rad）
 - `walk`：标准行走循环（rightLeg/leftLeg 交替 pitch ±0.6rad）
-- `death`：前倾倒地（body.pitch +1.4rad 1.5s，rightArmSworld 松开）
+- `death`：前倾倒地（body.pitch +1.4rad 1.5s，rightArmSword 松开）
 
 ### P3.2 BOSS 叙事背景
 

@@ -361,6 +361,26 @@ mod tests {
     }
 
     #[test]
+    fn check_upgrade_exact_qi_passes() {
+        let result = check_upgrade(SwordGrade::Induced, 3, 1, 5.0, |_| 10);
+        assert_eq!(
+            result,
+            UpgradeCheckResult::Ok,
+            "qi_current == qi_need (5.0) should pass"
+        );
+    }
+
+    #[test]
+    fn resolve_upgrade_roll_equals_fail_chance_succeeds() {
+        let recipe = recipe_for(SwordGrade::Awakened).unwrap();
+        let out = resolve_upgrade(recipe, 100.0, 0.0, 0.05);
+        assert!(
+            out.success,
+            "roll == fail_chance (0.05) should succeed (>= comparison)"
+        );
+    }
+
+    #[test]
     fn resolve_upgrade_success() {
         let recipe = recipe_for(SwordGrade::Mortal).unwrap();
         let out = resolve_upgrade(recipe, 10.0, 0.0, 0.5);

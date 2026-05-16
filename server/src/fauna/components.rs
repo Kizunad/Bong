@@ -451,6 +451,7 @@ mod tests {
         assert!(!is_prey_of(BeastKind::Rat, BeastKind::Whale));
         assert!(!is_prey_of(BeastKind::Rat, BeastKind::PoisonDragon));
         assert!(!is_prey_of(BeastKind::Rat, BeastKind::LivingPillar));
+        assert!(!is_prey_of(BeastKind::Rat, BeastKind::Heiwushi));
     }
 
     #[test]
@@ -532,5 +533,6 @@ mod tests {
         assert!(!BeastKind::PoisonDragon.is_terrestrial());
         assert!(!BeastKind::BoneDragon.is_terrestrial());
         assert!(!BeastKind::LivingPillar.is_terrestrial());
+        assert!(!BeastKind::Heiwushi.is_terrestrial());
     }
 }

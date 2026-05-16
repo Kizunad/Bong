@@ -11,11 +11,9 @@ public final class SwordPathHudPlanner {
     private static final int BOND_ARC_RADIUS = 8;
 
     private static final int BG_COLOR = 0xB0121118;
-    private static final int GRADE_TEXT_COLOR = 0xFFDDEEFF;
     private static final int QI_BAR_BG = 0xFF1A1A2A;
     private static final int HEAVEN_PULSE_LO = 0x78FFFFFF;
     private static final int HEAVEN_PULSE_HI = 0xDCFFFFFF;
-    private static final int HEAVEN_TEXT_COLOR = 0xB4FFFFFF;
 
     private static final int[] GRADE_COLORS = {
         0xFF888888,
