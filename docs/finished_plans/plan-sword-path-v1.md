@@ -572,67 +572,103 @@ pub struct TiandaoBlindZone {
 
 #### server/src/sword_path/ 单测
 
-**bond.rs**：
-- [ ] 连续 20 次使用剑术 → SwordBondComponent 挂载成功
-- [ ] 19 次使用 → 不挂载
-- [ ] 已绑定时换剑 → 旧绑定不自动解除
-- [ ] 解绑仪式 30s → bond_strength 降 50%
-- [ ] 1 player 绑定 2 剑 → 拒绝第二绑定
-- [ ] stored_qi 自动注入 = qi_cost * 0.1（验证 QiTransfer 守恒）
-- [ ] stored_qi 超阈值 → SwordShatterEvent 触发
-- [ ] durability 归零 → SwordShatterEvent 触发
-- [ ] 剑碎反噬：qi_current -= stored_qi * 0.6 + qi_max -= stored_qi * 0.05（守恒：释放回 zone）
-- [ ] 剑碎后 SwordBondComponent 移除
+**bond.rs**（10 tests implemented）：
+- [ ] 连续 20 次使用剑术 → SwordBondComponent 挂载成功（ECS wiring 留 v2）
+- [ ] 19 次使用 → 不挂载（ECS wiring 留 v2）
+- [ ] 已绑定时换剑 → 旧绑定不自动解除（ECS wiring 留 v2）
+- [ ] 解绑仪式 30s → bond_strength 降 50%（ECS wiring 留 v2）
+- [ ] 1 player 绑定 2 剑 → 拒绝第二绑定（ECS wiring 留 v2）
+- [x] stored_qi 自动注入 = `qi_cost * 0.1`（`inject_qi_works_for_condensed` + `inject_qi_respects_cap` + `inject_qi_zero_cost_returns_zero`）
+- [x] stored_qi 低品阶不注入（`inject_qi_zero_for_low_grade`）
+- [x] stored_qi 超阈值 → should_shatter（`should_shatter_when_over_threshold`）
+- [x] 低品阶不会 shatter（`shatter_threshold_zero_for_low_grades`）
+- [x] 剑碎反噬：`qi_current -= stored_qi * 0.6` + `qi_max -= stored_qi * 0.05`（`backlash_values` + `backlash_zero_when_empty`）
 
-**grade.rs**：
-- [ ] 每个品阶的 stored_qi cap 正确（0 / 0 / 0 / 15 / 100 / 500 / 3000）
-- [ ] grade_mult 表正确（1.0 / 1.05 / 1.1 / 1.25 / 1.6 / 2.2 / 3.5）
-- [ ] 品阶升级：前置境界检查（引气才能 0→1）
-- [ ] 品阶升级：材料消耗正确
-- [ ] 品阶升级：qi_cost 走 QiTransfer 守恒
-- [ ] 品阶升级失败：材料损失 50% + stored_qi 归零（释放 zone）+ durability -30%
-- [ ] 品阶升级失败不降品阶
-- [ ] 锻造台 tier 检查（品阶 3+ 需 tier 2，5+ 需 tier 3）
+**grade.rs**（12 tests implemented）：
+- [x] 每个品阶的 stored_qi cap 正确（`specific_caps_match_plan`）
+- [x] grade_mult 表正确（`specific_mults_match_plan`）
+- [x] cap 单调递增（`grade_caps_monotonic`）
+- [x] mult 单调递增（`grade_mult_monotonic`）
+- [x] 品阶 3 以下不存气（`can_store_qi_only_grade_3_plus`）
+- [x] tier roundtrip（`tier_roundtrip`）
+- [x] next grade 链（`next_grade`）
+- [x] shatter threshold 0 for no-cap（`shatter_threshold_zero_for_no_cap`）
+- [x] shatter threshold = 1.5x cap（`shatter_threshold_is_1_5x_cap`）
+- [x] 升级 qi cost 低阶为零（`upgrade_qi_cost_low_grades_zero`）
+- [x] qi cost ALL resolve（`upgrade_qi_cost_resolve_all`）
+- [x] fail chance 单调 + mortal 零（`upgrade_fail_chance_monotonic` + `upgrade_fail_chance_mortal_zero`）
 
-**techniques.rs**：
-- [ ] 5 招 TechniqueDefinition 注册正确（id / qi_cost / stamina_cost / cast_ticks / cooldown_ticks / range）
-- [ ] 经脉依赖声明：condense_edge → [LI, SI]；qi_slash → [LI, SI, TE]；resonance → [LI, SI, TE]；manifest → [LI, SI, TE]；heaven_gate → [LI, SI, TE, Du]
-- [ ] LI SEVERED → condense_edge 拒绝 cast
-- [ ] SI SEVERED → 全部 5 招拒绝 cast
-- [ ] Du SEVERED → 仅 heaven_gate 拒绝，其余 4 招正常
-- [ ] 无剑持有 → 全部 5 招拒绝
-- [ ] condense_edge：下一次命中 ×1.8 + 穿甲 30%，5s 后消散
-- [ ] condense_edge：命中消散后 buff 移除
-- [ ] qi_slash：8 格内直线命中，8 格外无伤害
-- [ ] qi_slash：距离衰减符合 0.03/格
-- [ ] resonance：6 格 AoE，友方不受影响
-- [ ] resonance：敌方 cast 打断 + slow 3-5s（跟 stored_qi 正相关）
-- [ ] manifest：5s 自动追踪近敌，base_attack ×2.0
-- [ ] manifest：结束后 bond_strength -0.1
-- [ ] heaven_gate：全部 4 触发条件检查（境界 / 品阶 / bond / stored_qi）
-- [ ] 每招 PracticeLog 染色权重正确
+**techniques.rs**（20 tests implemented）：
+- [x] 5 招数量 + id 唯一（`all_techniques_count` + `technique_ids_unique`）
+- [x] 境界门槛递增（`realm_gates_ascending`）
+- [x] 凝锋 qi=0（`condense_edge_no_qi`）
+- [x] 剑气斩 qi=3（`qi_slash_low_qi`）
+- [x] 剑鸣 qi=20 + 固元门槛（`resonance_qi_for_solidify`）
+- [x] 剑意化形 qi=40 + 通灵门槛（`manifest_qi_for_spirit`）
+- [x] 一剑开天 qi=ALL + 一次性 CD（`heaven_gate_costs_all_qi` + `heaven_gate_one_shot`）
+- [x] 效果常数范围（7 tests: damage_mult / armor_pierce / attenuation / slow_range / manifest_mult / radius / defense_ignore）
+- [x] 染色权重全覆盖 + 凝锋无 keen + 天门重 keen（`color_weights_*` 4 tests）
+- [ ] 经脉依赖 SEVERED 拒绝 cast（ECS wiring 留 v2）
+- [ ] 无剑持有拒绝（ECS wiring 留 v2）
+- [ ] 招式战斗效果（命中/AoE/追踪等 ECS runtime 留 v2）
 
-**shatter.rs**：
-- [ ] SwordShatterEvent → qi_current/qi_max 扣除 + zone qi 增加（守恒）
-- [ ] 碎裂 10% 概率产出 broken_sword_soul
-- [ ] 碎裂后 bond / grade / stored_qi 全部清零
+**shatter.rs**（9 tests implemented）：
+- [x] 碎裂反噬比例正确（`shatter_backlash_proportional`）
+- [x] 碎裂真元守恒（`shatter_qi_conservation`）
+- [x] 空存储碎裂无损（`shatter_zero_stored_qi`）
+- [x] 剑魂低 roll 产出（`sword_soul_at_low_roll`）
+- [x] 剑魂高 roll 不产出（`no_sword_soul_at_high_roll`）
+- [x] 化虚 staging buffer 正确（`heaven_gate_staging_buffer`）
+- [x] 化虚 qi_max 保留 10%（`heaven_gate_qi_max_retained`）
+- [x] 化虚境界跌落固元（`heaven_gate_realm_drop`）
+- [x] 化虚 qi_max 守恒（`heaven_gate_qi_max_loss_conservation`）
 
-**tiandao_blind.rs**：
-- [ ] TiandaoBlindZone 创建 → 5 min TTL
-- [ ] TTL 到期 → 自动移除
-- [ ] blind zone 内玩家不出现在 world_state 推送中
-- [ ] blind zone 不影响 qi_physics 结算
-- [ ] zone spirit_qi 暂时归零 → 5 min 后恢复
+**tiandao_blind.rs**（8 tests implemented）：
+- [x] 中心点包含（`contains_center`）
+- [x] 边缘包含（`contains_at_edge`）
+- [x] 外部不包含（`not_contains_outside`）
+- [x] 创建时未过期（`not_expired_at_creation`）
+- [x] TTL 后过期（`expired_after_ttl` + `expired_exactly_at_end`）
+- [x] 剩余 tick 计算（`remaining_ticks_midway` + `remaining_ticks_after_expiry`）
+- [ ] blind zone 内玩家不出现在 world_state 推送中（agent bridge wiring 留 v2）
 
-#### client/ 单测
+**heaven_gate.rs**（9 tests implemented）：
+- [x] Registry 空初始化（`registry_starts_empty`）
+- [x] 添加 + 查询（`add_and_query`）
+- [x] 过期移除（`tick_expire_removes_old`）
+- [x] 多 zone 重叠（`multiple_zones_overlap`）
+- [x] 盲区常数匹配 plan（`create_blind_zone_uses_plan_constants`）
+- [x] 0 距离伤害（`heaven_gate_damage_at_zero_distance`）
+- [x] 伤害随距离衰减（`heaven_gate_damage_decays_with_distance`）
+- [x] 100 格伤害范围（`heaven_gate_damage_at_100_blocks`）
+- [x] 零 buffer 零伤害（`heaven_gate_damage_zero_buffer`）
 
-- [ ] SwordPathHudPlanner：绑定灵剑时显示 HUD，未绑定时隐藏
-- [ ] SwordGrade overlay 颜色随品阶变化
-- [ ] stored_qi 竖条比例正确
-- [ ] 化虚就绪脉冲显示
-- [ ] InspectScreen 灵剑信息行正确
+**upgrade.rs**（21 tests implemented）：
+- [x] 6 阶配方链完整（`all_six_recipes_exist` + `recipe_chain_covers_all_grades`）
+- [x] Void 无配方（`no_recipe_for_void`）
+- [x] 前两阶 qi=0（`first_two_upgrades_zero_qi`）
+- [x] 锻造台 tier 要求（`solidify_upgrade_needs_tier_2_station` + `spirit_upgrade_needs_tier_3_station`）
+- [x] 化虚 qi=ALL（`void_upgrade_costs_all_qi`）
+- [x] fail_chance/time_ticks 单调（`fail_chance_monotonic` + `time_ticks_monotonic`）
+- [x] check OK / NoRecipe / RealmTooLow / StationTierTooLow / MissingMaterials / InsufficientQi 全分支
+- [x] 等值边界：qi == need 通过（`check_upgrade_exact_qi_passes`）
+- [x] 等值边界：roll == fail_chance 成功（`resolve_upgrade_roll_equals_fail_chance_succeeds`）
+- [x] 成功/失败结算（`resolve_upgrade_success` + `resolve_upgrade_fail` + `resolve_upgrade_fail_partial_materials`）
+- [x] 化虚消耗全部 qi（`resolve_void_upgrade_consumes_all_qi`）
+- [x] realm_tier 辅助函数（`realm_tier_helper_values`）
 
-#### 集成测试
+#### client/ 单测（11 tests implemented）
+
+- [x] inactive/null/zero-screen 返回空（3 tests）
+- [x] active 产出 commands（`activeStateProducesCommands`）
+- [x] 化虚就绪追加 extra command（`heavenGateReadyAddsExtraCommand`）
+- [x] gradeColor 边界 clamp（`gradeColorBoundsCheck`）
+- [x] 7 阶颜色各不相同（`allGradesHaveDistinctColors`）
+- [x] storedQiRatio/bondStrength clamp01 + NaN（`stateClamp01` + `stateNanClamp`）
+- [x] store lifecycle（`storeReplaceAndSnapshot`）
+- [x] 全部 command 使用 SWORD_BOND layer（`allCommandsUseSwordBondLayer`）
+
+#### 集成测试（ECS runtime 留 v2）
 
 - [ ] 从零开始剑道流程：拾取剑 → 20 次使用绑定 → 逐步升品阶 → 使用 5 招 → 化虚一剑开天门
 - [ ] 天道盲区：施法后天道 agent 5 min 内无法查询该区域玩家
