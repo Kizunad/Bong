@@ -6,6 +6,7 @@
 pub mod boss;
 pub mod components;
 pub mod mutation;
+pub mod progression;
 mod skills;
 mod toxin_tracker;
 
