@@ -1087,15 +1087,20 @@ fn add_item_to_player_inventory_inner(
         .get(template_id)
         .ok_or_else(|| format!("unknown item template id `{template_id}`"))?;
 
-    let Some(main_pack_index) = inventory
+    // plan-backpack-equip-v1 P2 — 不再强制要求 main_pack；
+    // 优先找非 body_pocket 的第一个容器（back_pack / main_pack 等），
+    // body_pocket 作为最后兜底。
+    let main_pack_index = inventory
         .containers
         .iter()
-        .position(|container| container.id == MAIN_PACK_CONTAINER_ID)
-    else {
-        return Err(format!(
-            "player inventory missing required `{MAIN_PACK_CONTAINER_ID}` container"
-        ));
-    };
+        .position(|container| container.id != BODY_POCKET_CONTAINER_ID)
+        .or_else(|| {
+            inventory
+                .containers
+                .iter()
+                .position(|container| container.id == BODY_POCKET_CONTAINER_ID)
+        })
+        .ok_or_else(|| "player inventory has no containers".to_string())?;
 
     let max_stack_count = template.max_stack_count.max(1);
     let mut merge_probe = runtime_instance_from_template(template, 0, 1);
@@ -3892,28 +3897,31 @@ fn ensure_required_containers_present(
     containers: &[ContainerState],
     source_path: &Path,
 ) -> Result<(), String> {
-    for required in [
-        MAIN_PACK_CONTAINER_ID,
-        SMALL_POUCH_CONTAINER_ID,
-        FRONT_SATCHEL_CONTAINER_ID,
-    ] {
-        let exists = containers.iter().any(|container| container.id == required);
-        if !exists {
-            return Err(format!(
-                "{} loadout missing required container id `{required}`",
-                source_path.display()
-            ));
-        }
+    // plan-backpack-equip-v1 P2 — body_pocket 是唯一始终必须存在的容器；
+    // back_pack / waist_pouch / chest_satchel 由装备动态产生，不强制要求。
+    let exists = containers
+        .iter()
+        .any(|container| container.id == BODY_POCKET_CONTAINER_ID);
+    if !exists {
+        return Err(format!(
+            "{} loadout missing required container id `{BODY_POCKET_CONTAINER_ID}`",
+            source_path.display()
+        ));
     }
     Ok(())
 }
 
 fn validate_container_id(id: &str, source_path: &Path) -> Result<(), String> {
+    // plan-backpack-equip-v1 P2 — 新增装备容器 id；旧 id 保留以兼容遗留 loadout。
     let is_allowed = [
+        BODY_POCKET_CONTAINER_ID,
+        EQUIP_SLOT_BACK_PACK,
+        EQUIP_SLOT_WAIST_POUCH,
+        EQUIP_SLOT_CHEST_SATCHEL,
+        // 旧 id（历史兼容）
         MAIN_PACK_CONTAINER_ID,
         SMALL_POUCH_CONTAINER_ID,
         FRONT_SATCHEL_CONTAINER_ID,
-        BODY_POCKET_CONTAINER_ID,
     ]
     .contains(&id);
 
@@ -3921,12 +3929,16 @@ fn validate_container_id(id: &str, source_path: &Path) -> Result<(), String> {
         Ok(())
     } else {
         Err(format!(
-            "{} has unsupported container id `{id}`; expected one of [{}, {}, {}, {}]",
+            "{} has unsupported container id `{id}`; expected one of \
+            [{}, {}, {}, {}, {}, {}, {}]",
             source_path.display(),
+            BODY_POCKET_CONTAINER_ID,
+            EQUIP_SLOT_BACK_PACK,
+            EQUIP_SLOT_WAIST_POUCH,
+            EQUIP_SLOT_CHEST_SATCHEL,
             MAIN_PACK_CONTAINER_ID,
             SMALL_POUCH_CONTAINER_ID,
             FRONT_SATCHEL_CONTAINER_ID,
-            BODY_POCKET_CONTAINER_ID
         ))
     }
 }
@@ -5037,17 +5049,23 @@ cols = 4
         assert!(receipt.merged_instance_ids.is_empty());
         assert_eq!(inventory.revision.0, baseline_revision.0.saturating_add(1));
 
-        let main_pack = inventory
+        // plan-backpack-equip-v1 P2 — 新 loadout 无 main_pack，检查 back_pack（首个非 body_pocket 容器）。
+        let primary_pack = inventory
             .containers
             .iter()
-            .find(|container| container.id == MAIN_PACK_CONTAINER_ID)
-            .expect("main pack should exist");
+            .find(|container| container.id != BODY_POCKET_CONTAINER_ID)
+            .expect("primary pack should exist");
         assert!(
-            main_pack
+            primary_pack
                 .items
                 .iter()
                 .any(|entry| entry.instance.template_id == "ci_she_hao"),
-            "runtime grant should materialize in main pack"
+            "runtime grant should materialize in primary pack; got: {:?}",
+            primary_pack
+                .items
+                .iter()
+                .map(|p| &p.instance.template_id)
+                .collect::<Vec<_>>()
         );
     }
 
