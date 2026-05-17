@@ -56,10 +56,9 @@ mod shader;
 mod skin;
 mod social;
 mod spiritwood;
-// supply_coffin：plan-supply-coffin-v1 P0 注册 SupplyCoffinRegistry resource。
-// P2 systems (interact / refresh) 尚未挂入 Update —— register() 当前仅 init resource，
-// 让 P0 数据模型 + loot 抽样可被单测覆盖。
-#[allow(dead_code)]
+// supply_coffin：plan-supply-coffin-v1 — 巨剑沧海物资棺。
+// register() 注入 SupplyCoffinRegistry resource + interact/refresh systems +
+// SupplyCoffinOpened event。
 mod supply_coffin;
 // shelflife：M3a 注册 DecayProfileRegistry resource；compute_* / container_* 等
 // 辅助仍未被 system 调用（M5 消费侧接入前）— 故保留 #[allow(dead_code)]。

@@ -176,13 +176,19 @@ mod tests {
             SoundRecipeRegistry::load_default().expect("default audio recipes should load");
         assert_eq!(
             registry.len(),
-            202,
-            "audio registry should exclude removed slide and double-jump movement recipes"
+            206,
+            "audio registry should exclude removed slide and double-jump movement recipes \
+             plus include 4 supply_coffin recipes (break common/rare/precious + emerge)"
         );
         assert!(registry.get("coffin_enter").is_some());
         assert!(registry.get("coffin_exit").is_some());
         assert!(registry.get("coffin_ambient").is_some());
         assert!(registry.get("coffin_break").is_some());
+        // plan-supply-coffin-v1 P2.2 audio
+        assert!(registry.get("supply_coffin_break_common").is_some());
+        assert!(registry.get("supply_coffin_break_rare").is_some());
+        assert!(registry.get("supply_coffin_break_precious").is_some());
+        assert!(registry.get("supply_coffin_emerge").is_some());
         assert!(registry.get("pill_consume").is_some());
         assert!(registry.get("locust_swarm_warning").is_some());
         assert!(registry.get("tribulation_thunder_distant").is_some());

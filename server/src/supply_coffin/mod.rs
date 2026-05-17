@@ -11,15 +11,21 @@ use std::collections::HashMap;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
-use valence::prelude::{bevy_ecs, App, DVec3, Entity, Resource};
+use valence::prelude::{bevy_ecs, App, DVec3, Entity, IntoSystemConfigs, Resource, Update};
 
+pub mod interact;
 pub mod loot;
+pub mod refresh;
 
 #[cfg(test)]
 mod tests;
 
 #[allow(unused_imports)]
+pub use interact::{handle_supply_coffin_interact, SupplyCoffinOpened};
+#[allow(unused_imports)]
 pub use loot::{loot_table, roll_count_range, roll_loot, SupplyCoffinLootEntry};
+#[allow(unused_imports)]
+pub use refresh::{supply_coffin_refresh_tick, SupplyCoffinMarker};
 
 /// 物资棺三档（plan §0 设计轴心 6 + P0.1）。
 ///
@@ -60,6 +66,8 @@ impl SupplyCoffinGrade {
     }
 
     /// schema / 日志 / dev 命令用的 snake_case 名。
+    /// P3 dev cmd 实装前仅测试调用，故 `#[allow(dead_code)]`。
+    #[allow(dead_code)]
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::Common => "common",
@@ -69,6 +77,8 @@ impl SupplyCoffinGrade {
     }
 
     /// dev 命令解析用的反向映射，未识别返回 `None`。
+    /// P3 dev cmd 实装前仅测试调用，故 `#[allow(dead_code)]`。
+    #[allow(dead_code)]
     pub fn from_str(s: &str) -> Option<Self> {
         match s {
             "common" => Some(Self::Common),
@@ -246,4 +256,13 @@ pub fn register(app: &mut App) {
         zone_aabb.1.z,
     );
     app.insert_resource(registry);
+    app.add_event::<interact::SupplyCoffinOpened>();
+    app.add_systems(
+        Update,
+        (
+            interact::handle_supply_coffin_interact,
+            refresh::supply_coffin_refresh_tick,
+        )
+            .chain(),
+    );
 }

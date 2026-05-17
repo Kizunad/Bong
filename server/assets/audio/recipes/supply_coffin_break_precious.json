@@ -1,0 +1,13 @@
+{
+  "id": "supply_coffin_break_precious",
+  "layers": [
+    { "sound": "minecraft:block.wood.break", "volume": 1.0, "pitch": 0.55, "delay_ticks": 0 },
+    { "sound": "minecraft:entity.item.break", "volume": 0.7, "pitch": 0.8, "delay_ticks": 2 },
+    { "sound": "minecraft:block.chest.open", "volume": 0.6, "pitch": 0.45, "delay_ticks": 0 },
+    { "sound": "minecraft:entity.wither.ambient", "volume": 0.3, "pitch": 1.2, "delay_ticks": 3 }
+  ],
+  "priority": 60,
+  "attenuation": "world_3d",
+  "category": "BLOCKS",
+  "bus": "ENVIRONMENT"
+}
