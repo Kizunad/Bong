@@ -145,6 +145,20 @@ class BongShaderStateTest {
     }
 
     @Test
+    void setTargetRejectsNaN() {
+        BongShaderState.setTarget(BongUniform.BLOODMOON, Float.NaN);
+        assertEquals(0f, BongShaderState.getTarget(BongUniform.BLOODMOON), 0.0001f,
+                "NaN input should be treated as 0");
+    }
+
+    @Test
+    void setOverrideRejectsInfinity() {
+        BongShaderState.setOverride(BongUniform.LINGQI, Float.POSITIVE_INFINITY);
+        assertEquals(0f, BongShaderState.get(BongUniform.LINGQI), 0.0001f,
+                "Infinity input should be treated as 0");
+    }
+
+    @Test
     void lerpSpeedClampedAtUpperBound() {
         BongShaderState.setLerpSpeed(BongUniform.LINGQI, 1.5f);
         BongShaderState.setTarget(BongUniform.LINGQI, 1.0f);

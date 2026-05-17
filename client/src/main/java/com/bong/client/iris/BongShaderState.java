@@ -82,6 +82,9 @@ public final class BongShaderState {
     }
 
     private static float clamp(float value, BongUniform uniform) {
+        if (Float.isNaN(value) || Float.isInfinite(value)) {
+            return 0f;
+        }
         if (uniform == BongUniform.WIND_ANGLE) {
             float twoPi = (float) (Math.PI * 2);
             return Math.max(0f, Math.min(twoPi, value));

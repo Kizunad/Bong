@@ -161,6 +161,18 @@ mod tests {
     }
 
     #[test]
+    fn set_rejects_f32_overflow() {
+        let mut app = setup_app();
+        let player = spawn_test_client(&mut app, "Alice", [0.0, 0.0, 0.0]);
+        send_set(&mut app, player, "bong_realm", 1e39);
+        run_update(&mut app);
+        assert_eq!(
+            app.world().resource::<ShaderStatePayload>().bong_realm, 0.0,
+            "Value exceeding f32::MAX should be rejected"
+        );
+    }
+
+    #[test]
     fn broadcast_does_not_panic_with_no_clients() {
         let mut app = setup_app();
         let player = spawn_test_client(&mut app, "Alice", [0.0, 0.0, 0.0]);
