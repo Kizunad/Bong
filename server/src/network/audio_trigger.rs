@@ -141,6 +141,7 @@ pub fn emit_combat_audio_triggers(
                 AttackSource::SwordPathQiSlash => "sword_thrust",
                 AttackSource::SwordPathResonance => "sword_cleave",
                 AttackSource::SwordPathManifest => "sword_cleave",
+                AttackSource::SwordPathHeavenGate => "sword_cleave",
                 AttackSource::Melee => combat_hit_recipe(total_damage, critical),
             }
         } else if npc_markers.get(event.target).is_ok() && total_damage > 0.0 {

@@ -61,6 +61,8 @@ pub enum AttackSource {
     SwordPathResonance,
     /// plan-sword-path-v2 §P1.6 — 剑意化形追击。
     SwordPathManifest,
+    /// plan-sword-path-v2 §P2.1 — 化虚·一剑开天门 100 格 AoE 单向门。
+    SwordPathHeavenGate,
 }
 
 #[derive(Debug, Clone, Event, Serialize, Deserialize)]

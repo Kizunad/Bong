@@ -92,6 +92,9 @@ pub fn attack_source_knockback_modifier(source: AttackSource) -> f64 {
         AttackSource::SwordPathQiSlash => 0.5,
         AttackSource::SwordPathResonance => 0.3,
         AttackSource::SwordPathManifest => 1.0,
+        // 天门冲击波：化虚级 AoE，按 staging_buffer 衰减后再 ×0.5（plan §P2.1）。
+        // 击退按"凝实剑势"特征，介于剑斩与剑鸣之间。
+        AttackSource::SwordPathHeavenGate => 0.8,
     }
 }
 

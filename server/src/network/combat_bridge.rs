@@ -287,7 +287,8 @@ fn map_attack_source(source: crate::combat::events::AttackSource) -> CombatAttac
         crate::combat::events::AttackSource::SwordPathCondenseEdge
         | crate::combat::events::AttackSource::SwordPathQiSlash
         | crate::combat::events::AttackSource::SwordPathResonance
-        | crate::combat::events::AttackSource::SwordPathManifest => {
+        | crate::combat::events::AttackSource::SwordPathManifest
+        | crate::combat::events::AttackSource::SwordPathHeavenGate => {
             CombatAttackSourceV1::SwordCleave
         }
     }

@@ -219,6 +219,7 @@ pub fn is_sword_attack_source(source: AttackSource) -> bool {
             | AttackSource::SwordPathQiSlash
             | AttackSource::SwordPathResonance
             | AttackSource::SwordPathManifest
+            | AttackSource::SwordPathHeavenGate
     )
 }
 

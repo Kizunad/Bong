@@ -93,7 +93,7 @@ fn cast_condense_edge(
     slot: u8,
     target: Option<Entity>,
 ) -> CastResult {
-    let ctx = match build_cast_context(world, caster, slot, SWORD_PATH_CONDENSE_EDGE_ID) {
+    let ctx = match build_cast_context(world, caster, slot, &CONDENSE_EDGE_PROFILE) {
         Ok(ctx) => ctx,
         Err(reason) => return CastResult::Rejected { reason },
     };
@@ -132,7 +132,7 @@ fn cast_qi_slash(
     slot: u8,
     target: Option<Entity>,
 ) -> CastResult {
-    let ctx = match build_cast_context(world, caster, slot, SWORD_PATH_QI_SLASH_ID) {
+    let ctx = match build_cast_context(world, caster, slot, &QI_SLASH_PROFILE) {
         Ok(ctx) => ctx,
         Err(reason) => return CastResult::Rejected { reason },
     };
@@ -176,7 +176,7 @@ fn cast_resonance(
     slot: u8,
     _target: Option<Entity>,
 ) -> CastResult {
-    let ctx = match build_cast_context(world, caster, slot, SWORD_PATH_RESONANCE_ID) {
+    let ctx = match build_cast_context(world, caster, slot, &RESONANCE_PROFILE) {
         Ok(ctx) => ctx,
         Err(reason) => return CastResult::Rejected { reason },
     };
@@ -230,7 +230,7 @@ fn cast_manifest(
     slot: u8,
     target: Option<Entity>,
 ) -> CastResult {
-    let ctx = match build_cast_context(world, caster, slot, SWORD_PATH_MANIFEST_ID) {
+    let ctx = match build_cast_context(world, caster, slot, &MANIFEST_PROFILE) {
         Ok(ctx) => ctx,
         Err(reason) => return CastResult::Rejected { reason },
     };
@@ -280,7 +280,7 @@ fn cast_heaven_gate(
     slot: u8,
     _target: Option<Entity>,
 ) -> CastResult {
-    let ctx = match build_cast_context(world, caster, slot, SWORD_PATH_HEAVEN_GATE_ID) {
+    let ctx = match build_cast_context(world, caster, slot, &HEAVEN_GATE_PROFILE) {
         Ok(ctx) => ctx,
         Err(reason) => return CastResult::Rejected { reason },
     };
@@ -366,29 +366,29 @@ pub fn heaven_gate_cast_system(
                     reach: AttackReach::new(effects::HEAVEN_GATE_RADIUS as f32, 0.0),
                     qi_invest: damage as f32,
                     wound_kind: WoundKind::Cut,
-                    source: AttackSource::SwordPathManifest,
+                    source: AttackSource::SwordPathHeavenGate,
                     debug_command: None,
                 });
             }
         }
 
-        // Caster 修为 / 灵剑 aftermath
+        // Caster 修为 / 灵剑 aftermath（化虚自带完整结算：qi 归零、qi_max ×0.1、
+        // 境界跌固元、灵剑 stored_qi 清零）。
+        //
+        // **不**再额外 emit `SwordShatterEvent`——下面 `staging_buffer` 通过
+        // `QiTransfer::ReleaseToZone` 已经把全部真元（qi_max + bond.stored_qi）
+        // 走 ledger 回灌 zone。如果再让 `sword_shatter_system` 按 stored_qi 走
+        // 一次反噬，就会重复扣 qi_max / 重复写 ledger，破坏 worldview §二 守恒。
+        //
+        // 化虚走单向门 - cast 即结算 - 视觉碎剑由 P4 VFX 独立路径触发，逻辑上不
+        // 需要走通用 shatter pipeline。
+        let _shatter_events_unused = shatter_events.as_deref_mut(); // 保留 ResMut 借出以维持系统签名兼容性
         if let Ok((mut cultivation, bond_opt)) = players.get_mut(event.caster) {
             cultivation.qi_max = (cultivation.qi_max * effects::HEAVEN_GATE_QI_MAX_RETAIN).max(0.0);
             cultivation.qi_current = 0.0;
             cultivation.realm = Realm::Solidify;
-
             if let Some(mut bond) = bond_opt {
-                let stored = bond.stored_qi;
                 bond.stored_qi = 0.0;
-                if let Some(events) = shatter_events.as_deref_mut() {
-                    events.send(SwordShatterEvent {
-                        player: event.caster,
-                        weapon: bond.bonded_weapon_entity,
-                        stored_qi: stored,
-                        grade: bond.grade,
-                    });
-                }
             }
         }
 
@@ -473,8 +473,9 @@ fn build_cast_context(
     world: &mut bevy_ecs::world::World,
     caster: Entity,
     slot: u8,
-    skill_id: &'static str,
+    profile: &CastProfile,
 ) -> Result<CastContext, CastRejectReason> {
+    let skill_id = profile.skill_id;
     let now_tick = world
         .get_resource::<CombatClock>()
         .map(|c| c.tick)
@@ -496,12 +497,15 @@ fn build_cast_context(
         return Err(CastRejectReason::InvalidTarget);
     }
 
-    // 体力 / Stunned
-    if world
-        .get::<Stamina>(caster)
-        .is_some_and(|s| s.state == StaminaState::Exhausted || s.current <= 0.0)
-    {
-        return Err(CastRejectReason::InRecovery);
+    // 体力前置校验（review fix）：除了 Exhausted/≤0 之外，还要保证当前体力够支付
+    // profile.stamina_cost——否则 cast 走到 drain_qi 扣完真元再失败就是脏状态。
+    if let Some(stamina) = world.get::<Stamina>(caster) {
+        if stamina.state == StaminaState::Exhausted || stamina.current <= 0.0 {
+            return Err(CastRejectReason::InRecovery);
+        }
+        if profile.stamina_cost > 0.0 && stamina.current < profile.stamina_cost {
+            return Err(CastRejectReason::InRecovery);
+        }
     }
 
     // 招式拥有 + active
@@ -840,6 +844,46 @@ mod tests {
         );
     }
 
+    /// Review 第 2 轮 #3 fix — 体力前置校验：cast_qi_slash 体力不足时**先**拒绝，
+    /// **不**进入扣真元和写冷却的副作用。旧实现允许只剩 1 点体力的玩家先消耗真元
+    /// 再因 stamina clamp 到 0 失败，留下脏状态。
+    #[test]
+    fn cast_rejected_when_stamina_insufficient_before_qi_drain() {
+        let (mut app, caster) = setup_app();
+        // QI_SLASH.stamina_cost = 12.0；把体力降到 5.0 < 12.0
+        if let Some(mut stamina) = app.world_mut().get_mut::<Stamina>(caster) {
+            stamina.current = 5.0;
+        }
+        let qi_before = app.world().get::<Cultivation>(caster).unwrap().qi_current;
+        let target = app.world_mut().spawn(Position::default()).id();
+
+        let result = cast_qi_slash(app.world_mut(), caster, 0, Some(target));
+        assert!(
+            matches!(
+                result,
+                CastResult::Rejected {
+                    reason: CastRejectReason::InRecovery
+                }
+            ),
+            "体力 5 < 12 应触发 InRecovery 拒绝，实际 result={result:?}"
+        );
+        // 守 review 关键：真元、冷却、AttackIntent **不**应被写动
+        let qi_after = app.world().get::<Cultivation>(caster).unwrap().qi_current;
+        assert!(
+            (qi_before - qi_after).abs() < f64::EPSILON,
+            "拒绝 cast 不应扣真元（旧实现会先 drain 再失败留脏状态），\
+             实际 qi {qi_before} → {qi_after}"
+        );
+        assert_eq!(
+            app.world()
+                .resource::<Events<AttackIntent>>()
+                .iter_current_update_events()
+                .count(),
+            0,
+            "拒绝 cast 不应发 AttackIntent"
+        );
+    }
+
     /// P1.5 — 经脉 SEVERED → cast 拒绝 with MeridianSevered。
     #[test]
     fn cast_rejected_when_dependency_meridian_severed() {
@@ -964,7 +1008,10 @@ mod tests {
     }
 
     /// P2.1 — 化虚一击 → HeavenGateCastEvent → 系统结算：境界跌至固元，
-    /// qi_max 衰减 90%，qi_current = 0，发 SwordShatterEvent，注册盲区。
+    /// qi_max 衰减 90%，qi_current = 0，盲区注册。
+    ///
+    /// review 修复（双重结算）：化虚是单向门，**不**走通用 SwordShatterEvent
+    /// 路径——否则 sword_shatter_system 会再扣一次 qi_max + 再发一笔 ledger。
     #[test]
     fn heaven_gate_cast_system_full_aftermath() {
         let (mut app, caster) = setup_app();
@@ -1003,14 +1050,39 @@ mod tests {
             .resource::<Events<SwordShatterEvent>>()
             .iter_current_update_events()
             .collect();
-        assert_eq!(shatter_events.len(), 1, "必须发一条 SwordShatterEvent");
-        assert_eq!(shatter_events[0].stored_qi, 100.0);
+        assert!(
+            shatter_events.is_empty(),
+            "化虚单向门**不**走通用 SwordShatterEvent，否则会和 inline aftermath \
+             重复扣 qi_max 与重复写 ledger（review 第 2 轮 #1 critical bug）；\
+             实际事件数 {}",
+            shatter_events.len()
+        );
 
         let registry = app.world().resource::<TiandaoBlindZoneRegistry>();
         assert_eq!(
             registry.active_count(),
             1,
             "化虚一击必须注册一个天道盲区，agent 才会屏蔽 caster"
+        );
+
+        // QiTransfer 守恒：化虚释放 staging_buffer = qi_max(5000) + stored_qi(100) = 5100。
+        // 必须仅有一笔（不是两笔）ReleaseToZone event。
+        let release_events: Vec<_> = app
+            .world()
+            .resource::<Events<QiTransfer>>()
+            .iter_current_update_events()
+            .filter(|t| matches!(t.reason, QiTransferReason::ReleaseToZone))
+            .collect();
+        assert_eq!(
+            release_events.len(),
+            1,
+            "化虚一击应有且只有 1 笔 ReleaseToZone（staging_buffer）；多于 1 笔 \
+             意味着双重结算（review 第 2 轮 #1 critical bug）"
+        );
+        assert!(
+            (release_events[0].amount - 5100.0).abs() < 1e-6,
+            "ReleaseToZone amount = qi_max(5000) + stored_qi(100) = 5100，实际 {}",
+            release_events[0].amount
         );
     }
 }

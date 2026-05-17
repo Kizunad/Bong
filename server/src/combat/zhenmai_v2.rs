@@ -453,7 +453,8 @@ pub fn attack_kind_for_source(
         AttackSource::SwordPathCondenseEdge => ZhenmaiAttackKind::PhysicalCarrier,
         AttackSource::SwordPathQiSlash
         | AttackSource::SwordPathResonance
-        | AttackSource::SwordPathManifest => ZhenmaiAttackKind::RealYuan,
+        | AttackSource::SwordPathManifest
+        | AttackSource::SwordPathHeavenGate => ZhenmaiAttackKind::RealYuan,
         AttackSource::Melee if wound_kind == crate::combat::components::WoundKind::Pierce => {
             ZhenmaiAttackKind::PhysicalCarrier
         }

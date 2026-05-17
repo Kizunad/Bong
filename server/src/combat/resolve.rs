@@ -1351,6 +1351,7 @@ fn attack_source_label(source: AttackSource) -> &'static str {
         AttackSource::SwordPathQiSlash => "sword_path_qi_slash",
         AttackSource::SwordPathResonance => "sword_path_resonance",
         AttackSource::SwordPathManifest => "sword_path_manifest",
+        AttackSource::SwordPathHeavenGate => "sword_path_heaven_gate",
     }
 }
 
