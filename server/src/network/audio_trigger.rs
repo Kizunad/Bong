@@ -135,6 +135,13 @@ pub fn emit_combat_audio_triggers(
                 AttackSource::QiNeedle => school_hit_recipe("dugu", event.damage, critical),
                 AttackSource::SwordCleave => "sword_cleave",
                 AttackSource::SwordThrust => "sword_thrust",
+                // plan-sword-path-v2 §P4 留剑道五招专属音效，先沿用基础剑斩配方
+                // 保证音效链路不哑。
+                AttackSource::SwordPathCondenseEdge => "sword_cleave",
+                AttackSource::SwordPathQiSlash => "sword_thrust",
+                AttackSource::SwordPathResonance => "sword_cleave",
+                AttackSource::SwordPathManifest => "sword_cleave",
+                AttackSource::SwordPathHeavenGate => "sword_cleave",
                 AttackSource::Melee => combat_hit_recipe(total_damage, critical),
             }
         } else if npc_markers.get(event.target).is_ok() && total_damage > 0.0 {

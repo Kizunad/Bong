@@ -68,9 +68,9 @@
 
 | 阶段 | 内容 | 状态 |
 |------|------|------|
-| P0 | 残卷解锁（scroll_sword_path → technique_scroll_spec 5 招）+ 残卷读取 system | ⬜ |
-| P1 | ECS 接线——绑定触发 + 注入 + 碎裂 + 招式 cast + 经脉拦截 | ⬜ |
-| P2 | 化虚·一剑开天门 runtime + 天道盲区 tick/过滤 + agent 屏蔽 | ⬜ |
+| P0 | 残卷解锁（scroll_sword_path → technique_scroll_spec 5 招）+ 残卷读取 system | ✅ 2026-05-17 |
+| P1 | ECS 接线——绑定触发 + 注入 + 碎裂 + 招式 cast + 经脉拦截 | ✅ 2026-05-17 |
+| P2 | 化虚·一剑开天门 runtime + 天道盲区 tick/过滤 + agent 屏蔽 | ✅ 2026-05-17 |
 | P3 | 黑武士 BOSS AI（big-brain 3 阶段 + spawn + 掉落 runtime）| ⬜ |
 | P4 | VFX 资产全包（贴图 + audio_recipe + 动画 + VfxPlayer）+ 视听联调 | ⬜ |
 | P5 | v1 遗留测试补全 + e2e 集成测试 + InspectScreen 扩展 | ⬜ |
@@ -722,4 +722,118 @@ v1 已定义 `HEIWUSHI_DROPS`（`server/src/fauna/drop.rs`），v2 接入实际 
 
 ## Finish Evidence
 
-（迁入 `finished_plans/` 前必填）
+> **阶段性收口（2026-05-17）**：本次 PR 仅消费 P0+P1+P2 三个 phase（核心 ECS 接线），
+> P3（黑武士 BOSS AI）、P4（VFX 资产全包）、P5（v1 遗留测试补全 + e2e + InspectScreen）
+> 留待 sword-path-v3 plan 处理。Plan 文件**不归档**至 `finished_plans/`，仍 active。
+
+### P0 落地清单
+
+- `server/src/cultivation/known_techniques.rs`：
+  - `TECHNIQUE_IDS`（39 → 44）追加 5 个 `sword_path.*` 招式 ID
+  - `TECHNIQUE_DEFINITIONS` 注册 5 个 `TechniqueDefinition`，含 plan §P1.5 经脉依赖：
+    凝锋 [大肠/小肠] → 剑气斩/共鸣/化形 [+三焦] → 天门 [+督]
+  - 天门 `cooldown_ticks = u32::MAX` 作"一次性招式"哨兵
+- `server/assets/items/sword_materials.toml`：新增 5 个 `[[item]]` 子卷
+  （`scroll_sword_condense` / `qi_slash` / `resonance` / `manifest` / `heaven_gate`），
+  每个 `[item.technique_scroll]` 指向对应 skill_id；原 `scroll_sword_path` 保留为
+  loot 表通用占位（后续 runtime 随机替换归 v3 sword_path 流程）
+- **P0.2 残卷读取**：复用 `network/client_request_handler.rs::skill_scroll` 既有路径
+  （`can_learn_technique` → `learn_technique_if_allowed` → 消耗物品 + `TechniqueLearnedEvent`）。
+  P0.1 注册的 5 招使 read 链路立即生效，无需新建 `sword_path/scroll.rs`。
+- **测试**：`sword_path_techniques_registered_with_ascending_realm_gates`、
+  `sword_path_heaven_gate_marks_one_shot_cooldown`、
+  `dev_default_has_all_44`（共 13 known_techniques 单测）
+
+### P1 落地清单
+
+- `server/src/sword_path/systems.rs`（新建）：
+  - `sword_bond_tracking_system` (P1.1)：EventReader<CombatEvent> 追踪连续剑术命中
+  - `sword_shatter_system` (P1.3)：SwordShatterEvent → Cultivation 扣减 + QiTransfer ledger
+  - `tiandao_blind_zone_tick_system` (P2.2)：tick 过期清理
+- `server/src/sword_path/skill_register.rs`（新建）：
+  - `register_skills` (P1.4)：注册 5 招 SkillFn 到 SkillRegistry
+  - `declare_meridian_dependencies` (P1.5)：SkillMeridianDependencies 声明经脉依赖
+  - `cast_condense_edge` / `cast_qi_slash` / `cast_resonance` / `cast_manifest` /
+    `cast_heaven_gate` 五招 cast 函数 (P1.2 真元注入 + P1.6 战斗效果一体实现)
+- `server/src/combat/events.rs`：`AttackSource` 新增 4 个 `SwordPath*` 变体
+- `server/src/combat/knockback.rs`、`server/src/combat/zhenmai_v2.rs`、
+  `server/src/combat/sword_basics.rs`、`server/src/combat/resolve.rs`、
+  `server/src/network/audio_trigger.rs`、`server/src/network/combat_bridge.rs`：
+  match 全部补齐新变体
+- `server/src/cultivation/mod.rs::register`：调 `skill_register::declare_meridian_dependencies`
+- `server/src/cultivation/skill_registry.rs::init_registry`：调 `skill_register::register_skills`
+- **测试**：systems.rs 7 个、skill_register.rs 8 个（含拒绝场景：QiInsufficient/SEVERED/
+  无剑/InRecovery），饱和覆盖 happy-path + 边界 + 状态转换
+
+### P2 落地清单（不含 P3-P5）
+
+- `server/src/sword_path/skill_register.rs::heaven_gate_cast_system` (P2.1)：监听
+  `HeavenGateCastEvent` → 100 格 AoE attack + Cultivation 跌固元 + qi_max ×0.1 +
+  发 SwordShatterEvent + 注册 TiandaoBlindZone + QiTransfer ledger 释放 staging_buffer
+- `server/src/sword_path/systems.rs::tiandao_blind_zone_tick_system` (P2.2)
+- `server/src/network/mod.rs::publish_world_state_to_redis` + `collect_player_snapshots`
+  (P2.3)：新增 `Option<Res<TiandaoBlindZoneRegistry>>`，命中盲区的玩家不进
+  WorldStateV1.players（agent 看不见）
+- `server/src/sword_path/mod.rs::register`：通过 `app.add_systems(Update, …)`
+  注册全部 5 个 system
+
+### 关键 commit
+
+```
+17b3f419c  feat(sword_path-v2): P0.1 注册剑道五招到 TechniqueDefinition 表 + 拆 5 卷
+cf67dff24  feat(sword_path-v2): P1+P2.1/2.2 ECS 接线（绑定 / 招式 cast / 化虚 runtime / 盲区 tick）
+2e85e35fa  feat(sword_path-v2): P2.3 redis bridge 过滤盲区玩家不推送给 agent
+```
+
+### 测试结果
+
+- `cargo test`（worktree `.worktree/plan-sword-path-v2/server`）→ **5020 passed; 0 failed**
+- `cargo clippy --all-targets -- -D warnings` → 干净
+- 新增单测：sword_path::systems 7 个 + sword_path::skill_register 8 个 +
+  known_techniques 2 个 = 17 个，对接 v1 既有 87 个 sword_path 单测共 104 个
+
+### 跨仓库核验
+
+- **server**：
+  - SkillRegistry.lookup("sword_path.condense_edge"|...) → Some(SkillFn) ✅
+  - SkillMeridianDependencies.lookup("sword_path.heaven_gate") → 4 经脉 ✅
+  - CombatEvent.source = AttackSource::SwordPath* 4 变体 ✅
+  - TiandaoBlindZoneRegistry → publish_world_state_to_redis 过滤 ✅
+- **agent**：本次未动 agent 代码；agent 侧通过 WorldStateV1 看到的玩家集合自动
+  受 P2.3 过滤影响（盲区内玩家不在 `players` 数组里）
+- **client**：本次未动 client 代码；HUD/VFX 接入留 P4
+
+### 遗留 / 后续（明确 deferred 范围）
+
+- **P3 黑武士 BOSS AI**：6 Actions + 5 Scorers + 成长周期 + 4 个新动画 +
+  spawn + 掉落 runtime。需 big-brain Thinker 组装、HeiwushiState 组件、
+  `heiwushi.{idle,walk,melee_slash,death}` PlayerAnimator JSON。规模大，独立 PR。
+- **P4 VFX 资产**：13 个新粒子贴图（PNG 二进制）+ 17 个 audio_recipe JSON +
+  6 个 PlayerAnimator JSON + 9 个 Java VfxPlayer 类。需联调 server VfxEventRequest
+  事件触发到 client VfxPlayer 渲染的端到端链路。
+- **P5 测试 + UI**：v1 遗留单测补全（bond.rs 5 / techniques.rs 3 /
+  tiandao_blind.rs 1）+ 集成测试 e2e + InspectScreen 灵剑信息扩展 +
+  SwordBondHudStateStore client handler。
+- **schema 演进**：`CombatAttackSourceV1` 当前 sword_path 4 变体都映射到
+  `SwordCleave`。未来 schema v2 引入专属变体后，需同步更新 agent 侧 enum
+  反序列化与 narration 模板。
+- **剑意化形完整版**：P1.6 用 AttackIntent 占位，实际"剑意实体追踪 5s + 5 次伤害"
+  需 spawn 新实体类型 + big-brain Scorer/Action，与 P3 黑武士 AI 同栈，建议合并。
+- **化虚 cast 全流程**：P2.1 当前 cast 后立即结算 aftermath，跳过 plan 描述的
+  "蓄力 0-60 tick → 临界点 60 tick zone warning → 释放 60-80 tick AoE → aftermath"
+  4 阶段时间窗。完整时序留待 P4 视听联调 + tribulation 类似的 cinematic 引入。
+
+### 测试结果对照 plan 接入面 checklist
+
+| 接入面项目 | 状态 | 证据 |
+|----------|------|------|
+| 进料：SwordBondComponent / SwordGrade / techniques::* / shatter::* / heaven_gate::* | ✅ | systems.rs + skill_register.rs 全部 import 自 v1 |
+| 进料：Weapon { weapon_kind: Sword } | ✅ | systems.rs:sword_bond_tracking_system + skill_register.rs:build_cast_context |
+| 进料：Cultivation / KnownTechniques / MeridianSystem | ✅ | skill_register.rs:build_cast_context |
+| 进料：read_combat_technique_scroll | ✅ | client_request_handler.rs 既有路径，known_techniques.rs 接入新 ID |
+| 出料：CombatEvent | ✅ | sword_bond_tracking_system EventReader |
+| 出料：AttackSource::Sword* 4 变体 | ✅ | events.rs 新增 + 6 处 match 补齐 |
+| 出料：publish_world_state_to_redis 过滤 | ✅ | network/mod.rs:collect_player_snapshots.filter |
+| 共享类型：复用 v1 全部 struct/event | ✅ | 未新增数据结构，仅新增 systems + cast fn |
+| 跨仓库契约：server sword_path/systems.rs + skill_register.rs | ✅ | 两文件新建 |
+| qi_physics 锚点：QiTransfer { Channeling / ReleaseToZone } | ✅ | skill_register.rs:inject_bond_qi + systems.rs:sword_shatter_system + heaven_gate_cast_system |

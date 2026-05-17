@@ -86,6 +86,15 @@ pub fn attack_source_knockback_modifier(source: AttackSource) -> f64 {
         AttackSource::QiNeedle => 0.05,
         AttackSource::SwordCleave => 1.2,
         AttackSource::SwordThrust => 0.7,
+        // plan-sword-path-v2 §P1.6：凝锋是下一击的附魔（贴近物理斩击量级），
+        // 剑气斩远袭轻盈，剑鸣 AoE 偏震慑（轻击退），剑意化形是凝实剑灵（中等）。
+        AttackSource::SwordPathCondenseEdge => 1.4,
+        AttackSource::SwordPathQiSlash => 0.5,
+        AttackSource::SwordPathResonance => 0.3,
+        AttackSource::SwordPathManifest => 1.0,
+        // 天门冲击波：化虚级 AoE，按 staging_buffer 衰减后再 ×0.5（plan §P2.1）。
+        // 击退按"凝实剑势"特征，介于剑斩与剑鸣之间。
+        AttackSource::SwordPathHeavenGate => 0.8,
     }
 }
 

@@ -53,6 +53,16 @@ pub enum AttackSource {
     FullPower,
     SwordCleave,
     SwordThrust,
+    /// plan-sword-path-v2 §P1.6 — 凝锋附魔下次攻击。
+    SwordPathCondenseEdge,
+    /// plan-sword-path-v2 §P1.6 — 剑气斩直线远袭。
+    SwordPathQiSlash,
+    /// plan-sword-path-v2 §P1.6 — 剑鸣 AoE 打断 + 减速。
+    SwordPathResonance,
+    /// plan-sword-path-v2 §P1.6 — 剑意化形追击。
+    SwordPathManifest,
+    /// plan-sword-path-v2 §P2.1 — 化虚·一剑开天门 100 格 AoE 单向门。
+    SwordPathHeavenGate,
 }
 
 #[derive(Debug, Clone, Event, Serialize, Deserialize)]

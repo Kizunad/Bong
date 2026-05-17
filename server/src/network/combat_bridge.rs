@@ -281,6 +281,16 @@ fn map_attack_source(source: crate::combat::events::AttackSource) -> CombatAttac
         crate::combat::events::AttackSource::FullPower => CombatAttackSourceV1::FullPower,
         crate::combat::events::AttackSource::SwordCleave => CombatAttackSourceV1::SwordCleave,
         crate::combat::events::AttackSource::SwordThrust => CombatAttackSourceV1::SwordThrust,
+        // plan-sword-path-v2 §P4 / schema 演进留 v3：IPC schema 暂未引入 SwordPath* 变体，
+        // 这里映射回最接近的 SwordCleave，避免破坏 agent 侧 enum 反序列化。schema 演进
+        // 与 SchemaV2 一起跟进。
+        crate::combat::events::AttackSource::SwordPathCondenseEdge
+        | crate::combat::events::AttackSource::SwordPathQiSlash
+        | crate::combat::events::AttackSource::SwordPathResonance
+        | crate::combat::events::AttackSource::SwordPathManifest
+        | crate::combat::events::AttackSource::SwordPathHeavenGate => {
+            CombatAttackSourceV1::SwordCleave
+        }
     }
 }
 

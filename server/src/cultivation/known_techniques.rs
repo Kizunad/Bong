@@ -36,7 +36,7 @@ impl KnownTechniques {
     }
 }
 
-const TECHNIQUE_IDS: [&str; 39] = [
+const TECHNIQUE_IDS: [&str; 44] = [
     "sword.cleave",
     "sword.thrust",
     "sword.parry",
@@ -76,6 +76,11 @@ const TECHNIQUE_IDS: [&str; 39] = [
     "anqi.armor_pierce",
     "anqi.echo_fractal",
     "body.guangbo_ticao",
+    "sword_path.condense_edge",
+    "sword_path.qi_slash",
+    "sword_path.resonance",
+    "sword_path.manifest",
+    "sword_path.heaven_gate",
 ];
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -111,7 +116,7 @@ const WOLIU_V3_REQUIRED_MERIDIANS: [TechniqueRequiredMeridian; 2] = [
     },
 ];
 
-pub const TECHNIQUE_DEFINITIONS: [TechniqueDefinition; 39] = [
+pub const TECHNIQUE_DEFINITIONS: [TechniqueDefinition; 44] = [
     TechniqueDefinition {
         id: "sword.cleave",
         display_name: "劈",
@@ -735,6 +740,123 @@ pub const TECHNIQUE_DEFINITIONS: [TechniqueDefinition; 39] = [
         range: 0.0,
         icon_texture: "bong:textures/gui/skill/body_guangbo_ticao.png",
     },
+    // plan-sword-path-v2 P0：剑道五招纳入官方技能注册表，使残卷可被
+    // `read_combat_technique_scroll` / `learn_technique_if_allowed` 识别。
+    TechniqueDefinition {
+        id: "sword_path.condense_edge",
+        display_name: "剑意·凝锋",
+        grade: "yellow",
+        description: "凝聚剑势。下一次命中附带凝实剑意，威力提升并破甲。",
+        required_realm: "Induce",
+        required_meridians: &SWORD_PATH_BASE_MERIDIANS,
+        qi_cost: 0.0,
+        stamina_cost: 8.0,
+        cast_ticks: 12,
+        cooldown_ticks: 40,
+        range: 4.0,
+        icon_texture: "bong:textures/gui/skill/sword_condense_edge.png",
+    },
+    TechniqueDefinition {
+        id: "sword_path.qi_slash",
+        display_name: "剑气·斩",
+        grade: "yellow",
+        description: "凝脉之上挥剑出气，直线远袭。距离越远剑气越薄。",
+        required_realm: "Condense",
+        required_meridians: &SWORD_PATH_QI_SLASH_MERIDIANS,
+        qi_cost: 3.0,
+        stamina_cost: 12.0,
+        cast_ticks: 20,
+        cooldown_ticks: 60,
+        range: 8.0,
+        icon_texture: "bong:textures/gui/skill/sword_qi_slash.png",
+    },
+    TechniqueDefinition {
+        id: "sword_path.resonance",
+        display_name: "共鸣·剑鸣",
+        grade: "profound",
+        description: "固元剑修以剑鸣震慑四方，打断敌方法术并使其僵滞。",
+        required_realm: "Solidify",
+        required_meridians: &SWORD_PATH_QI_SLASH_MERIDIANS,
+        qi_cost: 20.0,
+        stamina_cost: 15.0,
+        cast_ticks: 30,
+        cooldown_ticks: 120,
+        range: 6.0,
+        icon_texture: "bong:textures/gui/skill/sword_resonance.png",
+    },
+    TechniqueDefinition {
+        id: "sword_path.manifest",
+        display_name: "归一·剑意化形",
+        grade: "profound",
+        description: "通灵剑修将剑意凝为实体，自动追击最近敌方。结束后人剑共鸣略损。",
+        required_realm: "Spirit",
+        required_meridians: &SWORD_PATH_QI_SLASH_MERIDIANS,
+        qi_cost: 40.0,
+        stamina_cost: 20.0,
+        cast_ticks: 40,
+        cooldown_ticks: 200,
+        range: 5.0,
+        icon_texture: "bong:textures/gui/skill/sword_manifest.png",
+    },
+    TechniqueDefinition {
+        id: "sword_path.heaven_gate",
+        display_name: "天门·一剑开天",
+        grade: "earth",
+        description: "化虚禁招。倾尽真元一击劈空，事后跌境碎剑、藏于天道盲区五分钟。",
+        required_realm: "Void",
+        required_meridians: &SWORD_PATH_HEAVEN_GATE_MERIDIANS,
+        qi_cost: 0.0,
+        stamina_cost: 0.0,
+        cast_ticks: 80,
+        cooldown_ticks: u32::MAX,
+        range: 100.0,
+        icon_texture: "bong:textures/gui/skill/sword_heaven_gate.png",
+    },
+];
+
+const SWORD_PATH_BASE_MERIDIANS: [TechniqueRequiredMeridian; 2] = [
+    TechniqueRequiredMeridian {
+        channel: "LargeIntestine",
+        min_health: 0.01,
+    },
+    TechniqueRequiredMeridian {
+        channel: "SmallIntestine",
+        min_health: 0.01,
+    },
+];
+
+const SWORD_PATH_QI_SLASH_MERIDIANS: [TechniqueRequiredMeridian; 3] = [
+    TechniqueRequiredMeridian {
+        channel: "LargeIntestine",
+        min_health: 0.01,
+    },
+    TechniqueRequiredMeridian {
+        channel: "SmallIntestine",
+        min_health: 0.01,
+    },
+    TechniqueRequiredMeridian {
+        channel: "TripleEnergizer",
+        min_health: 0.01,
+    },
+];
+
+const SWORD_PATH_HEAVEN_GATE_MERIDIANS: [TechniqueRequiredMeridian; 4] = [
+    TechniqueRequiredMeridian {
+        channel: "LargeIntestine",
+        min_health: 0.01,
+    },
+    TechniqueRequiredMeridian {
+        channel: "SmallIntestine",
+        min_health: 0.01,
+    },
+    TechniqueRequiredMeridian {
+        channel: "TripleEnergizer",
+        min_health: 0.01,
+    },
+    TechniqueRequiredMeridian {
+        channel: "Du",
+        min_health: 0.01,
+    },
 ];
 
 pub fn technique_definition(id: &str) -> Option<&'static TechniqueDefinition> {
@@ -788,9 +910,9 @@ mod tests {
     }
 
     #[test]
-    fn dev_default_has_all_39() {
+    fn dev_default_has_all_44() {
         let dev = KnownTechniques::dev_default();
-        assert_eq!(dev.entries.len(), 39);
+        assert_eq!(dev.entries.len(), 44);
         assert!(dev
             .entries
             .iter()
@@ -810,6 +932,61 @@ mod tests {
             assert_eq!(definition.qi_cost, 0.0);
             assert_eq!(definition.stamina_cost, stamina_cost);
         }
+    }
+
+    #[test]
+    fn sword_path_techniques_registered_with_ascending_realm_gates() {
+        // plan-sword-path-v2 P0：五招按境界递增注册 + 残卷依赖经脉对齐
+        // worldview §三/§四 + plan §P1.5。
+        let expected: &[(&str, &str, &[&str])] = &[
+            (
+                "sword_path.condense_edge",
+                "Induce",
+                &["LargeIntestine", "SmallIntestine"],
+            ),
+            (
+                "sword_path.qi_slash",
+                "Condense",
+                &["LargeIntestine", "SmallIntestine", "TripleEnergizer"],
+            ),
+            (
+                "sword_path.resonance",
+                "Solidify",
+                &["LargeIntestine", "SmallIntestine", "TripleEnergizer"],
+            ),
+            (
+                "sword_path.manifest",
+                "Spirit",
+                &["LargeIntestine", "SmallIntestine", "TripleEnergizer"],
+            ),
+            (
+                "sword_path.heaven_gate",
+                "Void",
+                &["LargeIntestine", "SmallIntestine", "TripleEnergizer", "Du"],
+            ),
+        ];
+        for (id, realm, channels) in expected {
+            let def = technique_definition(id).expect("sword_path technique must exist");
+            assert_eq!(def.required_realm, *realm, "realm gate for {id}");
+            let actual_channels: Vec<&str> =
+                def.required_meridians.iter().map(|m| m.channel).collect();
+            assert_eq!(
+                actual_channels, *channels,
+                "meridian deps for {id} should match plan §P1.5"
+            );
+        }
+    }
+
+    #[test]
+    fn sword_path_heaven_gate_marks_one_shot_cooldown() {
+        // plan-sword-path-v2 §techniques::HEAVEN_GATE：化虚禁招一次性，CD=u32::MAX。
+        let def =
+            technique_definition("sword_path.heaven_gate").expect("heaven_gate must be registered");
+        assert_eq!(
+            def.cooldown_ticks,
+            u32::MAX,
+            "化虚一剑开天应为一次性招式（CD = u32::MAX 哨兵值）"
+        );
     }
 
     #[test]

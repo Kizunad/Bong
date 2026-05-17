@@ -448,6 +448,13 @@ pub fn attack_kind_for_source(
         AttackSource::QiNeedle => ZhenmaiAttackKind::TaintedYuan,
         AttackSource::BurstMeridian | AttackSource::FullPower => ZhenmaiAttackKind::RealYuan,
         AttackSource::SwordCleave | AttackSource::SwordThrust => ZhenmaiAttackKind::PhysicalCarrier,
+        // plan-sword-path-v2 §P1.6 — 凝锋附魔走物理（依然是金属剑刃斩击）；
+        // 剑气斩/剑鸣/化形是凝实/锋锐色真元成形，按 RealYuan 走截脉反馈。
+        AttackSource::SwordPathCondenseEdge => ZhenmaiAttackKind::PhysicalCarrier,
+        AttackSource::SwordPathQiSlash
+        | AttackSource::SwordPathResonance
+        | AttackSource::SwordPathManifest
+        | AttackSource::SwordPathHeavenGate => ZhenmaiAttackKind::RealYuan,
         AttackSource::Melee if wound_kind == crate::combat::components::WoundKind::Pierce => {
             ZhenmaiAttackKind::PhysicalCarrier
         }

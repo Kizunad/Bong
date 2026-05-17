@@ -75,5 +75,6 @@ pub fn init_registry() -> SkillRegistry {
     crate::cultivation::dugu::register_skills(&mut registry);
     crate::cultivation::full_power_strike::register_skills(&mut registry);
     crate::dandao::register_skills(&mut registry);
+    crate::sword_path::skill_register::register_skills(&mut registry);
     registry
 }
