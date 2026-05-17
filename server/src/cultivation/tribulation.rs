@@ -26,7 +26,10 @@ use crate::cultivation::lifespan::{LifespanCapTable, LifespanComponent};
 use crate::inventory::{transfer_all_inventory_contents, PlayerInventory};
 use crate::network::vfx_event_emit::VfxEventRequest;
 use crate::network::RedisBridgeResource;
-use crate::qi_physics::{constants::DEFAULT_SPIRIT_QI_TOTAL, EnvField, QiTransfer, WorldQiBudget};
+use crate::qi_physics::{
+    constants::DEFAULT_SPIRIT_QI_TOTAL, EnvField, QiAccountId, QiTransfer, QiTransferReason,
+    WorldQiBudget,
+};
 use crate::schema::cultivation::{
     color_kind_to_string, realm_to_string, HeartDemonPregenRequestV1, QiColorStateV1,
 };
@@ -48,7 +51,8 @@ use super::meridian::severed::{MeridianSeveredEvent, SeveredSource};
 use super::qi_zero_decay::{close_meridian, pick_closures};
 use crate::persistence::{
     complete_tribulation_ascension, delete_active_tribulation, load_active_tribulation_count,
-    load_ascension_quota, persist_active_tribulation, ActiveTribulationRecord, PersistenceSettings,
+    load_ascension_quota, persist_active_tribulation, try_complete_tribulation_ascension,
+    ActiveTribulationRecord, AtomicAscensionOutcome, PersistenceSettings,
 };
 
 pub const DUXU_OMEN_TICKS: u64 = 60 * 20;
@@ -107,6 +111,12 @@ const JUEBI_UPHEAVAL_DENSITY_PER_MILLE: u32 = 350;
 pub const DEFAULT_VOID_QUOTA_K: f64 = DEFAULT_SPIRIT_QI_TOTAL / 2.0;
 pub const VOID_QUOTA_BASIS: &str = "world_qi_budget.current_total";
 pub const VOID_QUOTA_EXCEEDED_REASON: &str = "void_quota_exceeded";
+
+// plan-halfstep-buff-v1 P1：HalfStep buff 实装常数（首期值；后续运营数据驱动校准）
+pub const HALFSTEP_QI_MAX_BONUS: f32 = 0.10;
+pub const HALFSTEP_LIFESPAN_BONUS_YEARS: u32 = 200;
+// plan-halfstep-buff-v1 §8 Q1：重渡窗口 7 days in-game = 7 × 24 × 3600 sec × 20 ticks/sec
+pub const RECHALLENGE_WINDOW_TICKS: u64 = 7 * 24 * 3600 * 20;
 
 #[derive(Debug, Clone, Copy, PartialEq, Resource)]
 pub struct VoidQuotaConfig {
@@ -599,6 +609,117 @@ pub struct InitiateXuhuaTribulation {
 pub struct StartDuXuRequest {
     pub entity: Entity,
     pub requested_at_tick: u64,
+}
+
+/// plan-halfstep-buff-v1 P0/P1/P3：HalfStep 修士状态
+///
+/// `entered_at` 由 P0 metrics 系统在 settlement 时填入；
+/// `rechallenge_window_until` = `entered_at + RECHALLENGE_WINDOW_TICKS`（§8 Q1）；
+/// `buff_applied` 由 P1 守卫 — 防止多次 HalfStep 叠加 buff（§8 Q4）。
+#[derive(Debug, Clone, Copy, Component, PartialEq, Eq)]
+pub struct HalfStepState {
+    pub entered_at: u64,
+    pub rechallenge_window_until: u64,
+    pub buff_applied: bool,
+}
+
+impl HalfStepState {
+    pub fn new(entered_at: u64) -> Self {
+        Self {
+            entered_at,
+            rechallenge_window_until: entered_at.saturating_add(RECHALLENGE_WINDOW_TICKS),
+            buff_applied: false,
+        }
+    }
+
+    pub fn is_within_window(&self, current_tick: u64) -> bool {
+        current_tick <= self.rechallenge_window_until
+    }
+}
+
+/// plan-halfstep-buff-v1 P0：渡虚劫遥测计数（结算次数 + quota 满时长）
+#[derive(Resource, Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct TribulationMetrics {
+    pub halfstep_count: u64,
+    pub ascended_count: u64,
+    pub quota_full_duration_ticks: u64,
+}
+
+/// plan-halfstep-buff-v1 P0：quota 满时长事件驱动追踪器
+///
+/// 由 `AscensionQuotaOpened` / `AscensionQuotaOccupied` 事件驱动，状态变化时计算当前
+/// occupied / limit；当 `current_occupied >= current_limit > 0` 时标记 `full_since_tick`，
+/// 离开 full 状态时把累计 ticks 写入 `TribulationMetrics.quota_full_duration_ticks`。
+#[derive(Resource, Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct QuotaFullTracker {
+    pub current_occupied: u32,
+    pub current_limit: u32,
+    pub full_since_tick: Option<u64>,
+}
+
+/// plan-halfstep-buff-v1 P3：单个 HalfStep 修士在重渡队列中的条目。
+///
+/// `entity` 是 ECS entity 句柄（hydrated 玩家 / hydrated NPC）；`is_dormant` 标记表示
+/// dormant NPC 占位（hydrate-on-trigger 由 dispatch system 处理，参 plan-npc-virtualize-v1）。
+/// `char_id` 为持久化键（dormant NPC 没有 entity，靠 char_id 唯一标识）。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HalfStepRechallengeEntry {
+    pub char_id: String,
+    pub entity: Entity,
+    pub entered_at: u64,
+    pub rechallenge_window_until: u64,
+    pub is_dormant: bool,
+}
+
+/// plan-halfstep-buff-v1 P3：FIFO 重渡队列（§8 Q2 先到先得 + Q5 NPC 同池）。
+///
+/// 按 `entered_at` 升序保有所有当前 HalfStep 修士（玩家 + dormant NPC 同池）；
+/// `AscensionQuotaOpened` 事件触发时 dispatch system 从头取一名通知重渡。
+/// 队列头部过窗（§8 Q1）的条目会被 dispatch system 直接出队，继续看下一个。
+#[derive(Resource, Debug, Default, Clone)]
+pub struct HalfStepRechallengeQueue {
+    pub queue: VecDeque<HalfStepRechallengeEntry>,
+}
+
+impl HalfStepRechallengeQueue {
+    /// 按 `entered_at` 升序插入。FIFO 顺序：早进 HalfStep 的先得通知。
+    pub fn enqueue(&mut self, entry: HalfStepRechallengeEntry) {
+        // 找到第一个 entered_at > 我的位置插入；若都 ≤ 我，则 push_back
+        let insert_at = self
+            .queue
+            .iter()
+            .position(|e| e.entered_at > entry.entered_at)
+            .unwrap_or(self.queue.len());
+        self.queue.insert(insert_at, entry);
+    }
+
+    pub fn len(&self) -> usize {
+        self.queue.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.queue.is_empty()
+    }
+
+    /// 清理一个 entity 的所有 entry（用于 Ascended / 老死 / 降境时手动出队）。
+    pub fn remove_entity(&mut self, target: Entity) {
+        self.queue.retain(|e| e.entity != target);
+    }
+
+    /// 清理一个 char_id 的所有 entry（dormant NPC 用，没有 entity 句柄）。
+    pub fn remove_char_id(&mut self, target: &str) {
+        self.queue.retain(|e| e.char_id != target);
+    }
+}
+
+/// plan-halfstep-buff-v1 P3：重渡触发事件。dispatch system 取队列头有效 entry 时 emit；
+/// HUD（玩家）/ dormant hydrate（NPC）订阅响应。
+#[derive(Debug, Clone, Event, PartialEq, Eq)]
+pub struct HalfStepRechallengeTriggerEvent {
+    pub char_id: String,
+    pub entity: Entity,
+    pub is_dormant: bool,
+    pub at_tick: u64,
 }
 
 #[derive(Debug, Clone, Event)]
@@ -1705,6 +1826,8 @@ pub fn juebi_terrain_tick_system(
 pub fn juebi_settlement_system(
     settings: Res<PersistenceSettings>,
     clock: Res<CombatClock>,
+    budget: Res<WorldQiBudget>,
+    void_quota: Res<VoidQuotaConfig>,
     mut commands: Commands,
     mut skill_cap_events: EventWriter<SkillCapChanged>,
     mut settled: EventWriter<TribulationSettled>,
@@ -1757,12 +1880,20 @@ pub fn juebi_settlement_system(
             });
         }
 
+        // plan-halfstep-buff-v1 P2：atomic quota grant 替换原来的 unconditional increment。
+        // 仅当 survived + 有 quota_marker（DuXu 起劫时已占额）+ realm=Spirit 才走 ascension 路径；
+        // 否则 outcome 由其他分支决定（HalfStep/Killed）。`ascension_granted` 是最终授予标志，
+        // 用于 outcome enum + 是否真正翻 Realm 到 Void。
+        let mut ascension_granted = false;
+        let mut try_complete_invoked = false;
         if survived && quota_marker.is_some() && cultivation.realm == Realm::Spirit {
-            let quota = match complete_tribulation_ascension(
+            let quota_limit = compute_void_quota_limit(budget.current_total, void_quota.quota_k);
+            let outcome: AtomicAscensionOutcome = match try_complete_tribulation_ascension(
                 &settings,
                 lifecycle.character_id.as_str(),
+                quota_limit,
             ) {
-                Ok(quota) => quota,
+                Ok(outcome) => outcome,
                 Err(error) => {
                     tracing::error!(
                         "[bong][cultivation] failed to finalize void-quota JueBi ascension for {:?}: {error}",
@@ -1771,24 +1902,37 @@ pub fn juebi_settlement_system(
                     continue;
                 }
             };
-            quota_occupied.send(AscensionQuotaOccupied {
-                occupied_slots: quota.occupied_slots,
-            });
-            cultivation.realm = Realm::Void;
-            cultivation.qi_max *= super::breakthrough::qi_max_multiplier(Realm::Void);
-            if let Some(mut lifespan) = lifespan {
-                lifespan.apply_cap(LifespanCapTable::VOID);
-            }
-            let new_cap = skill_cap_for_realm(Realm::Void);
-            for skill in SkillId::ALL {
-                skill_cap_events.send(SkillCapChanged {
-                    char_entity: entity,
-                    skill,
-                    new_cap,
+            try_complete_invoked = true;
+            if outcome.granted {
+                ascension_granted = true;
+                quota_occupied.send(AscensionQuotaOccupied {
+                    occupied_slots: outcome.quota.occupied_slots,
                 });
+                cultivation.realm = Realm::Void;
+                cultivation.qi_max *= super::breakthrough::qi_max_multiplier(Realm::Void);
+                if let Some(mut lifespan) = lifespan {
+                    lifespan.apply_cap(LifespanCapTable::VOID);
+                }
+                let new_cap = skill_cap_for_realm(Realm::Void);
+                for skill in SkillId::ALL {
+                    skill_cap_events.send(SkillCapChanged {
+                        char_entity: entity,
+                        skill,
+                        new_cap,
+                    });
+                }
+            } else {
+                tracing::info!(
+                    "[bong][cultivation] {:?} ascension denied at settle by atomic quota check \
+                     (occupied_before={} limit={}); falling back to HalfStep",
+                    entity,
+                    outcome.occupied_before,
+                    outcome.limit_used,
+                );
             }
         }
-        if !(survived && quota_marker.is_some()) {
+        // 仅当未调用 try_complete（active row 未被事务删除）时才需要单独清理 active 行
+        if !try_complete_invoked {
             if let Err(error) =
                 delete_active_tribulation(&settings, lifecycle.character_id.as_str())
             {
@@ -1805,7 +1949,7 @@ pub fn juebi_settlement_system(
             source: Some(source),
             result: DuXuResultV1 {
                 char_id: lifecycle.character_id.clone(),
-                outcome: if survived && quota_marker.is_some() {
+                outcome: if survived && ascension_granted {
                     DuXuOutcomeV1::Ascended
                 } else if survived {
                     DuXuOutcomeV1::HalfStep
@@ -1838,6 +1982,202 @@ pub fn juebi_settlement_system(
             JueBiLawDisruption,
             JueBiNullified,
         )>();
+    }
+}
+
+/// plan-halfstep-buff-v1 P0+P1：消费 `TribulationSettled` 累计 halfstep / ascended 计数；
+/// 首次 HalfStep outcome 时应用 buff (qi_max ×1.10 / lifespan +200) + qi_physics ledger 标记 +
+/// 插入 `HalfStepState`。`HalfStepState.buff_applied` 守卫保证多次 HalfStep 只 apply 一次（§8 Q4）。
+///
+/// 设计要点：
+/// - **buff_applied=false** 仅出现在 entity 缺 `Cultivation` 的测试场景或 dormant NPC 未 hydrate 时；
+///   生产路径下 player / hydrated NPC 都有 Cultivation，应用即转为 `buff_applied=true`
+/// - **ledger 是 audit-only**：emit `QiTransfer` event 但不调 `WorldQiAccount::transfer`，因为
+///   buff 是容量扩张不是真元搬运（worldview §三:78 + §二 守恒律）
+/// - **不覆盖已有 HalfStepState**：保留 `entered_at` 不漂移（§8 Q1 重渡窗口起点稳定）
+#[allow(clippy::too_many_arguments)]
+pub fn track_tribulation_metrics_system(
+    mut commands: Commands,
+    mut events: EventReader<TribulationSettled>,
+    clock: Res<CombatClock>,
+    mut metrics: ResMut<TribulationMetrics>,
+    mut queue: ResMut<HalfStepRechallengeQueue>,
+    mut targets: Query<(&mut Cultivation, Option<&mut LifespanComponent>)>,
+    existing_states: Query<&HalfStepState>,
+    mut qi_transfers: EventWriter<QiTransfer>,
+) {
+    for ev in events.read() {
+        match ev.result.outcome {
+            DuXuOutcomeV1::HalfStep => {
+                metrics.halfstep_count = metrics.halfstep_count.saturating_add(1);
+
+                // has_state 独立 query：不依赖 Cultivation 存在（dummy entity / dormant NPC 路径）
+                let (already_buffed, has_state) = match existing_states.get(ev.entity) {
+                    Ok(state) => (state.buff_applied, true),
+                    Err(_) => (false, false),
+                };
+
+                let mut buff_now_applied = already_buffed;
+                if !already_buffed {
+                    if let Ok((mut cultivation, lifespan)) = targets.get_mut(ev.entity) {
+                        let before = cultivation.qi_max;
+                        cultivation.qi_max *= 1.0 + HALFSTEP_QI_MAX_BONUS as f64;
+                        let bonus_capacity = cultivation.qi_max - before;
+                        // qi_physics ledger audit-only 标记
+                        if bonus_capacity > 0.0 {
+                            if let Ok(transfer) = QiTransfer::new(
+                                QiAccountId::tiandao(),
+                                QiAccountId::player(ev.result.char_id.clone()),
+                                bonus_capacity,
+                                QiTransferReason::HalfStepBuff,
+                            ) {
+                                qi_transfers.send(transfer);
+                            }
+                        }
+                        if let Some(mut lifespan) = lifespan {
+                            let new_cap = lifespan
+                                .cap_by_realm
+                                .saturating_add(HALFSTEP_LIFESPAN_BONUS_YEARS);
+                            lifespan.apply_cap(new_cap);
+                        }
+                        buff_now_applied = true;
+                    }
+                }
+
+                if !has_state {
+                    let entered_at = clock.tick;
+                    let window_until = entered_at.saturating_add(RECHALLENGE_WINDOW_TICKS);
+                    commands.entity(ev.entity).insert(HalfStepState {
+                        entered_at,
+                        rechallenge_window_until: window_until,
+                        buff_applied: buff_now_applied,
+                    });
+                    // plan-halfstep-buff-v1 P3：首次 HalfStep 入 FIFO 重渡队列
+                    queue.enqueue(HalfStepRechallengeEntry {
+                        char_id: ev.result.char_id.clone(),
+                        entity: ev.entity,
+                        entered_at,
+                        rechallenge_window_until: window_until,
+                        is_dormant: false,
+                    });
+                }
+            }
+            DuXuOutcomeV1::Ascended => {
+                metrics.ascended_count = metrics.ascended_count.saturating_add(1);
+                // entity 化虚成功 → 不再是 HalfStep，从重渡队列移除（防止误派发）
+                queue.remove_entity(ev.entity);
+            }
+            DuXuOutcomeV1::Killed | DuXuOutcomeV1::Failed | DuXuOutcomeV1::Fled => {
+                // entity 不再 HalfStep（死亡 / 降境 / 逃跑），从队列清理
+                queue.remove_entity(ev.entity);
+            }
+        }
+    }
+}
+
+/// plan-halfstep-buff-v1 P3：`AscensionQuotaOpened` 事件触发派发——每个事件取队列头
+/// 一个有效（未过窗）entry 发出 `HalfStepRechallengeTriggerEvent`；过窗 entry 出队丢弃。
+///
+/// 玩家头部 entry → emit 事件，client HUD 监听后弹"灵机涌现，可重渡虚劫"提示。
+/// dormant NPC 头部 entry（`is_dormant=true`）→ 同样 emit；plan-npc-virtualize-v1
+/// 的 hydrate-on-trigger 路径监听 dormant 标记，强制 hydrate 后玩家路径生效。
+///
+/// 多个 quota slot 同时空出（多个 events）→ 队列出多个头，按 FIFO 顺序通知。
+pub fn dispatch_rechallenge_on_quota_opened_system(
+    mut events: EventReader<AscensionQuotaOpened>,
+    mut queue: ResMut<HalfStepRechallengeQueue>,
+    mut triggers: EventWriter<HalfStepRechallengeTriggerEvent>,
+    clock: Res<CombatClock>,
+) {
+    let event_count = events.read().count();
+    for _ in 0..event_count {
+        loop {
+            let Some(entry) = queue.queue.pop_front() else {
+                return; // 队列空，停
+            };
+            if clock.tick > entry.rechallenge_window_until {
+                tracing::info!(
+                    "[bong][cultivation] HalfStep rechallenge entry {} expired (window_until={}, current_tick={}), dropping",
+                    entry.char_id,
+                    entry.rechallenge_window_until,
+                    clock.tick,
+                );
+                continue; // 过窗，继续取下一个
+            }
+            triggers.send(HalfStepRechallengeTriggerEvent {
+                char_id: entry.char_id,
+                entity: entry.entity,
+                is_dormant: entry.is_dormant,
+                at_tick: clock.tick,
+            });
+            break; // 本 event 派发完毕
+        }
+    }
+}
+
+/// plan-halfstep-buff-v1 P0：事件驱动追踪 quota 满时长。
+///
+/// 由 `AscensionQuotaOpened` / `AscensionQuotaOccupied` 事件触发；状态变化时根据
+/// `check_void_quota` 重新计算 limit；进入 full 状态记 `full_since_tick`，离开
+/// full 状态把累计 ticks 写入 `TribulationMetrics.quota_full_duration_ticks`。
+///
+/// 当前 pending（仍在 full 状态的累计）可由 `current_quota_full_duration_ticks` 取得。
+pub fn track_quota_full_duration_system(
+    mut tracker: ResMut<QuotaFullTracker>,
+    mut metrics: ResMut<TribulationMetrics>,
+    mut occupied_events: EventReader<AscensionQuotaOccupied>,
+    mut opened_events: EventReader<AscensionQuotaOpened>,
+    clock: Res<CombatClock>,
+    budget: Res<WorldQiBudget>,
+    void_quota: Res<VoidQuotaConfig>,
+) {
+    let mut latest_occupied: Option<u32> = None;
+    for ev in occupied_events.read() {
+        latest_occupied = Some(ev.occupied_slots);
+    }
+    for ev in opened_events.read() {
+        latest_occupied = Some(ev.occupied_slots);
+    }
+
+    let Some(new_occupied) = latest_occupied else {
+        return;
+    };
+
+    let quota = check_void_quota(new_occupied, &budget, &void_quota);
+    tracker.current_occupied = new_occupied;
+    tracker.current_limit = quota.quota_limit;
+
+    let is_full = tracker.current_limit > 0 && tracker.current_occupied >= tracker.current_limit;
+    let was_full = tracker.full_since_tick.is_some();
+
+    match (was_full, is_full) {
+        (false, true) => {
+            tracker.full_since_tick = Some(clock.tick);
+        }
+        (true, false) => {
+            if let Some(since) = tracker.full_since_tick.take() {
+                let delta = clock.tick.saturating_sub(since);
+                metrics.quota_full_duration_ticks =
+                    metrics.quota_full_duration_ticks.saturating_add(delta);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// plan-halfstep-buff-v1 P0：取当前累计 quota_full_duration_ticks，含仍在 full 状态的 pending。
+///
+/// 调用方（dev cmd / 测试）可获得"截至当前 tick 为止的真实满时长"，不需要等 quota 状态变化才结算。
+pub fn current_quota_full_duration_ticks(
+    metrics: &TribulationMetrics,
+    tracker: &QuotaFullTracker,
+    current_tick: u64,
+) -> u64 {
+    let base = metrics.quota_full_duration_ticks;
+    if let Some(since) = tracker.full_since_tick {
+        base.saturating_add(current_tick.saturating_sub(since))
+    } else {
+        base
     }
 }
 
@@ -6179,6 +6519,8 @@ mod tests {
         let char_id = "offline:Azure";
         app.insert_resource(settings);
         app.insert_resource(CombatClock { tick: 600 });
+        app.insert_resource(WorldQiBudget::from_total(100.0));
+        app.insert_resource(VoidQuotaConfig::default());
         app.add_event::<SkillCapChanged>();
         app.add_event::<TribulationSettled>();
         app.add_event::<AscensionQuotaOccupied>();
@@ -6265,6 +6607,8 @@ mod tests {
         .expect("active JueBi should persist before settlement");
         app.insert_resource(settings.clone());
         app.insert_resource(CombatClock { tick: 600 });
+        app.insert_resource(WorldQiBudget::from_total(100.0));
+        app.insert_resource(VoidQuotaConfig::default());
         app.add_event::<SkillCapChanged>();
         app.add_event::<TribulationSettled>();
         app.add_event::<AscensionQuotaOccupied>();
@@ -7510,5 +7854,658 @@ mod tests {
         );
 
         let _ = fs::remove_dir_all(root);
+    }
+
+    // ─────────────────────────────────────────────────────────────
+    // plan-halfstep-buff-v1 P0：遥测 + quota 满时长追踪测试
+    // ─────────────────────────────────────────────────────────────
+
+    fn make_settled_event(entity: Entity, outcome: DuXuOutcomeV1) -> TribulationSettled {
+        TribulationSettled {
+            entity,
+            kind: TribulationKind::JueBi,
+            source: Some(JueBiTriggerSource::VoidQuotaExceeded),
+            result: DuXuResultV1 {
+                char_id: "halfstep_test_char".to_string(),
+                outcome,
+                killer: None,
+                waves_survived: 3,
+                reason: Some("halfstep_test".to_string()),
+            },
+        }
+    }
+
+    fn p0_metrics_test_app() -> App {
+        let mut app = App::new();
+        app.insert_resource(CombatClock::default());
+        app.init_resource::<TribulationMetrics>();
+        app.init_resource::<QuotaFullTracker>();
+        app.init_resource::<HalfStepRechallengeQueue>();
+        app.insert_resource(WorldQiBudget::from_total(100.0));
+        app.insert_resource(VoidQuotaConfig::default());
+        app.add_event::<TribulationSettled>();
+        app.add_event::<AscensionQuotaOpened>();
+        app.add_event::<AscensionQuotaOccupied>();
+        app.add_event::<QiTransfer>();
+        app.add_event::<HalfStepRechallengeTriggerEvent>();
+        app.add_systems(
+            Update,
+            (
+                track_tribulation_metrics_system,
+                track_quota_full_duration_system,
+                dispatch_rechallenge_on_quota_opened_system,
+            ),
+        );
+        app
+    }
+
+    /// 在测试 app 里 spawn 一个有 Cultivation + LifespanComponent 的 entity，
+    /// 用于 P1 buff 应用相关测试。
+    fn spawn_halfstep_candidate(
+        app: &mut App,
+        initial_qi_max: f64,
+        initial_lifespan_cap: u32,
+    ) -> Entity {
+        app.world_mut()
+            .spawn((
+                Cultivation {
+                    realm: Realm::Spirit,
+                    qi_current: 0.0,
+                    qi_max: initial_qi_max,
+                    ..Default::default()
+                },
+                LifespanComponent::new(initial_lifespan_cap),
+            ))
+            .id()
+    }
+
+    #[test]
+    fn track_metrics_increments_halfstep_counter_per_event() {
+        let mut app = p0_metrics_test_app();
+        let dummy = app.world_mut().spawn(()).id();
+        for _ in 0..10 {
+            app.world_mut()
+                .resource_mut::<Events<TribulationSettled>>()
+                .send(make_settled_event(dummy, DuXuOutcomeV1::HalfStep));
+        }
+        app.update();
+        let metrics = app.world().resource::<TribulationMetrics>();
+        assert_eq!(
+            metrics.halfstep_count, 10,
+            "10 HalfStep settlements should increment counter to 10 (got {}); P0 验收 \
+             — mock 10 halfstep 后 counter == 10",
+            metrics.halfstep_count
+        );
+        assert_eq!(
+            metrics.ascended_count, 0,
+            "ascended_count must stay 0 when only HalfStep events fire; bleed-over bug"
+        );
+    }
+
+    #[test]
+    fn track_metrics_increments_ascended_counter_per_event() {
+        let mut app = p0_metrics_test_app();
+        let dummy = app.world_mut().spawn(()).id();
+        for _ in 0..5 {
+            app.world_mut()
+                .resource_mut::<Events<TribulationSettled>>()
+                .send(make_settled_event(dummy, DuXuOutcomeV1::Ascended));
+        }
+        app.update();
+        let metrics = app.world().resource::<TribulationMetrics>();
+        assert_eq!(metrics.ascended_count, 5);
+        assert_eq!(metrics.halfstep_count, 0);
+    }
+
+    #[test]
+    fn track_metrics_ignores_failed_killed_fled_outcomes() {
+        let mut app = p0_metrics_test_app();
+        let dummy = app.world_mut().spawn(()).id();
+        for outcome in [
+            DuXuOutcomeV1::Killed,
+            DuXuOutcomeV1::Failed,
+            DuXuOutcomeV1::Fled,
+        ] {
+            app.world_mut()
+                .resource_mut::<Events<TribulationSettled>>()
+                .send(make_settled_event(dummy, outcome));
+        }
+        app.update();
+        let metrics = app.world().resource::<TribulationMetrics>();
+        assert_eq!(
+            metrics.halfstep_count, 0,
+            "Killed/Failed/Fled outcomes must not touch halfstep counter"
+        );
+        assert_eq!(metrics.ascended_count, 0);
+    }
+
+    #[test]
+    fn track_metrics_inserts_halfstep_state_with_correct_entered_at() {
+        let mut app = p0_metrics_test_app();
+        app.world_mut().resource_mut::<CombatClock>().tick = 12345;
+        let target = app.world_mut().spawn(()).id();
+        app.world_mut()
+            .resource_mut::<Events<TribulationSettled>>()
+            .send(make_settled_event(target, DuXuOutcomeV1::HalfStep));
+        app.update();
+        let state = app
+            .world()
+            .get::<HalfStepState>(target)
+            .copied()
+            .expect("HalfStepState component must be inserted on HalfStep settlement");
+        assert_eq!(state.entered_at, 12345, "entered_at must equal clock.tick");
+        assert_eq!(
+            state.rechallenge_window_until,
+            12345 + RECHALLENGE_WINDOW_TICKS,
+            "rechallenge_window_until must be entered_at + 7d (§8 Q1)"
+        );
+        assert!(!state.buff_applied, "buff_applied starts false (§8 Q4 守卫)");
+    }
+
+    #[test]
+    fn track_metrics_does_not_insert_halfstep_state_for_non_halfstep_outcomes() {
+        let mut app = p0_metrics_test_app();
+        let target = app.world_mut().spawn(()).id();
+        app.world_mut()
+            .resource_mut::<Events<TribulationSettled>>()
+            .send(make_settled_event(target, DuXuOutcomeV1::Ascended));
+        app.update();
+        assert!(
+            app.world().get::<HalfStepState>(target).is_none(),
+            "Ascended outcome must NOT insert HalfStepState; bleed-over would put 化虚 修士 in 半步 queue"
+        );
+    }
+
+    #[test]
+    fn quota_full_tracker_starts_full_period_on_occupied_event() {
+        let mut app = p0_metrics_test_app();
+        // limit = floor(100 / DEFAULT_VOID_QUOTA_K=50) = 2，先令 occupied 达到 limit
+        app.world_mut().resource_mut::<CombatClock>().tick = 100;
+        app.world_mut()
+            .resource_mut::<Events<AscensionQuotaOccupied>>()
+            .send(AscensionQuotaOccupied { occupied_slots: 2 });
+        app.update();
+        let tracker = app.world().resource::<QuotaFullTracker>();
+        assert_eq!(tracker.current_occupied, 2);
+        assert_eq!(
+            tracker.current_limit, 2,
+            "limit should be derived from check_void_quota(WorldQiBudget=100, k=50)"
+        );
+        assert_eq!(
+            tracker.full_since_tick,
+            Some(100),
+            "进入 full 状态应记录 full_since_tick=current clock"
+        );
+    }
+
+    #[test]
+    fn quota_full_tracker_ends_period_and_accumulates_on_opened_event() {
+        let mut app = p0_metrics_test_app();
+        app.world_mut().resource_mut::<CombatClock>().tick = 100;
+        app.world_mut()
+            .resource_mut::<Events<AscensionQuotaOccupied>>()
+            .send(AscensionQuotaOccupied { occupied_slots: 2 });
+        app.update();
+        // 时间推进 500 ticks，quota 名额空出
+        app.world_mut().resource_mut::<CombatClock>().tick = 600;
+        app.world_mut()
+            .resource_mut::<Events<AscensionQuotaOpened>>()
+            .send(AscensionQuotaOpened { occupied_slots: 1 });
+        app.update();
+        let metrics = app.world().resource::<TribulationMetrics>();
+        let tracker = app.world().resource::<QuotaFullTracker>();
+        assert_eq!(
+            metrics.quota_full_duration_ticks, 500,
+            "离开 full 状态后应把 (600-100)=500 写入累计计数；off-by-one 或漏算"
+        );
+        assert!(
+            tracker.full_since_tick.is_none(),
+            "离开 full 状态后 full_since_tick 必须清空"
+        );
+    }
+
+    #[test]
+    fn current_quota_full_duration_includes_pending_window() {
+        let mut app = p0_metrics_test_app();
+        app.world_mut().resource_mut::<CombatClock>().tick = 100;
+        app.world_mut()
+            .resource_mut::<Events<AscensionQuotaOccupied>>()
+            .send(AscensionQuotaOccupied { occupied_slots: 2 });
+        app.update();
+        let metrics = *app.world().resource::<TribulationMetrics>();
+        let tracker = *app.world().resource::<QuotaFullTracker>();
+        // 当前仍在 full 状态：current_tick=200，pending = 200 - 100 = 100
+        let observed = current_quota_full_duration_ticks(&metrics, &tracker, 200);
+        assert_eq!(
+            observed, 100,
+            "current 函数应把 pending (current_tick - full_since_tick) 加到 base 上"
+        );
+    }
+
+    #[test]
+    fn halfstep_state_is_within_window_boundary() {
+        let state = HalfStepState::new(1000);
+        let window_end = 1000 + RECHALLENGE_WINDOW_TICKS;
+        assert!(state.is_within_window(1000), "进入 tick 应在窗口内");
+        assert!(state.is_within_window(window_end), "等于窗口末端应在窗口内（闭区间）");
+        assert!(
+            !state.is_within_window(window_end + 1),
+            "超过窗口末端 1 tick 必须不在窗口内（边界一致性）"
+        );
+    }
+
+    // ─────────────────────────────────────────────────────────────
+    // plan-halfstep-buff-v1 P1：buff 实装 + qi_physics ledger + 不叠加守卫
+    // ─────────────────────────────────────────────────────────────
+
+    fn collect_qi_transfers(app: &mut App) -> Vec<QiTransfer> {
+        app.world_mut()
+            .resource_mut::<Events<QiTransfer>>()
+            .drain()
+            .collect()
+    }
+
+    #[test]
+    fn halfstep_buff_applies_qi_max_and_lifespan_on_first_settlement() {
+        let mut app = p0_metrics_test_app();
+        let entity = spawn_halfstep_candidate(&mut app, 1000.0, LifespanCapTable::SPIRIT);
+        app.world_mut()
+            .resource_mut::<Events<TribulationSettled>>()
+            .send(make_settled_event(entity, DuXuOutcomeV1::HalfStep));
+        app.update();
+
+        let cultivation = app.world().get::<Cultivation>(entity).expect("cultivation");
+        let lifespan = app.world().get::<LifespanComponent>(entity).expect("lifespan");
+        let state = app.world().get::<HalfStepState>(entity).expect("halfstep state");
+
+        // qi_max × (1.0 + 0.10) = 1100.0
+        let expected_qi_max = 1000.0 * (1.0 + HALFSTEP_QI_MAX_BONUS as f64);
+        assert!(
+            (cultivation.qi_max - expected_qi_max).abs() < 1e-6,
+            "qi_max expected {expected_qi_max} but got {} (HALFSTEP_QI_MAX_BONUS={HALFSTEP_QI_MAX_BONUS})",
+            cultivation.qi_max
+        );
+        assert_eq!(
+            lifespan.cap_by_realm,
+            LifespanCapTable::SPIRIT + HALFSTEP_LIFESPAN_BONUS_YEARS,
+            "lifespan cap should increment by HALFSTEP_LIFESPAN_BONUS_YEARS={HALFSTEP_LIFESPAN_BONUS_YEARS}"
+        );
+        assert!(
+            state.buff_applied,
+            "buff_applied must be true after first HalfStep settlement on entity with Cultivation"
+        );
+    }
+
+    #[test]
+    fn halfstep_buff_emits_audit_qi_transfer_event() {
+        let mut app = p0_metrics_test_app();
+        let entity = spawn_halfstep_candidate(&mut app, 1000.0, LifespanCapTable::SPIRIT);
+        app.world_mut()
+            .resource_mut::<Events<TribulationSettled>>()
+            .send(make_settled_event(entity, DuXuOutcomeV1::HalfStep));
+        app.update();
+        let transfers = collect_qi_transfers(&mut app);
+
+        let halfstep_transfers: Vec<&QiTransfer> = transfers
+            .iter()
+            .filter(|t| matches!(t.reason, QiTransferReason::HalfStepBuff))
+            .collect();
+        assert_eq!(
+            halfstep_transfers.len(),
+            1,
+            "expected exactly 1 HalfStepBuff QiTransfer event (got {}); transfers={transfers:?}",
+            halfstep_transfers.len()
+        );
+        let transfer = halfstep_transfers[0];
+        // bonus = 1000 × 0.10 = 100
+        let expected_bonus = 1000.0 * HALFSTEP_QI_MAX_BONUS as f64;
+        assert!(
+            (transfer.amount - expected_bonus).abs() < 1e-6,
+            "amount expected {expected_bonus} got {}",
+            transfer.amount
+        );
+        assert_eq!(transfer.from, QiAccountId::tiandao());
+        assert_eq!(transfer.to, QiAccountId::player("halfstep_test_char"));
+    }
+
+    #[test]
+    fn halfstep_buff_not_reapplied_when_state_already_marks_buff_applied() {
+        let mut app = p0_metrics_test_app();
+        let entity = spawn_halfstep_candidate(&mut app, 1000.0, LifespanCapTable::SPIRIT);
+        // Pre-insert HalfStepState 标记 buff_applied=true（模拟二次进入 HalfStep 的状态）
+        app.world_mut().entity_mut(entity).insert(HalfStepState {
+            entered_at: 100,
+            rechallenge_window_until: 100 + RECHALLENGE_WINDOW_TICKS,
+            buff_applied: true,
+        });
+        // 触发新一次 HalfStep settlement
+        app.world_mut()
+            .resource_mut::<Events<TribulationSettled>>()
+            .send(make_settled_event(entity, DuXuOutcomeV1::HalfStep));
+        app.update();
+
+        let cultivation = app.world().get::<Cultivation>(entity).unwrap();
+        let lifespan = app.world().get::<LifespanComponent>(entity).unwrap();
+        let state = app.world().get::<HalfStepState>(entity).unwrap();
+        assert_eq!(
+            cultivation.qi_max, 1000.0,
+            "qi_max must stay 1000.0 (not re-buffed); reapply would yield 1100.0 — §8 Q4 守卫失效"
+        );
+        assert_eq!(
+            lifespan.cap_by_realm,
+            LifespanCapTable::SPIRIT,
+            "lifespan cap must stay at SPIRIT base; reapply守卫失效"
+        );
+        assert_eq!(
+            state.entered_at, 100,
+            "entered_at must preserve original value (rechallenge window 起点稳定)"
+        );
+        let transfers = collect_qi_transfers(&mut app);
+        let halfstep_transfers: Vec<&QiTransfer> = transfers
+            .iter()
+            .filter(|t| matches!(t.reason, QiTransferReason::HalfStepBuff))
+            .collect();
+        assert!(
+            halfstep_transfers.is_empty(),
+            "no ledger emit on reapply skip; got {halfstep_transfers:?}"
+        );
+        // metric 仍累计（halfstep_count 计的是 settlement 次数，不是 buff 次数）
+        assert_eq!(
+            app.world().resource::<TribulationMetrics>().halfstep_count,
+            1,
+            "halfstep_count tracks settlement events, not unique entities; should still increment"
+        );
+    }
+
+    #[test]
+    fn halfstep_buff_applies_to_qi_max_only_when_lifespan_component_absent() {
+        let mut app = p0_metrics_test_app();
+        let entity = app
+            .world_mut()
+            .spawn(Cultivation {
+                realm: Realm::Spirit,
+                qi_current: 0.0,
+                qi_max: 500.0,
+                ..Default::default()
+            })
+            .id();
+        app.world_mut()
+            .resource_mut::<Events<TribulationSettled>>()
+            .send(make_settled_event(entity, DuXuOutcomeV1::HalfStep));
+        app.update();
+        let cultivation = app.world().get::<Cultivation>(entity).unwrap();
+        let expected = 500.0 * (1.0 + HALFSTEP_QI_MAX_BONUS as f64);
+        assert!(
+            (cultivation.qi_max - expected).abs() < 1e-6,
+            "qi_max should still buff even without lifespan; got {}",
+            cultivation.qi_max
+        );
+        let state = app.world().get::<HalfStepState>(entity).unwrap();
+        assert!(state.buff_applied);
+    }
+
+    #[test]
+    fn halfstep_buff_skipped_when_entity_lacks_cultivation_and_state_left_unbuffed() {
+        let mut app = p0_metrics_test_app();
+        // 仅 bare entity（无 Cultivation），模拟 dormant NPC / 测试 stub
+        let entity = app.world_mut().spawn(()).id();
+        app.world_mut()
+            .resource_mut::<Events<TribulationSettled>>()
+            .send(make_settled_event(entity, DuXuOutcomeV1::HalfStep));
+        app.update();
+
+        let state = app
+            .world()
+            .get::<HalfStepState>(entity)
+            .expect("HalfStepState 仍应插入（P3 重渡队列需要）");
+        assert!(
+            !state.buff_applied,
+            "无 Cultivation entity 应留 buff_applied=false，等待 hydrate 后由后续 settlement 应用；\
+             直接置 true 会丢失「未来需补 buff」信号"
+        );
+        // ledger 不应 emit
+        let transfers = collect_qi_transfers(&mut app);
+        assert!(
+            transfers
+                .iter()
+                .all(|t| !matches!(t.reason, QiTransferReason::HalfStepBuff)),
+            "无 Cultivation 路径不应触发 HalfStepBuff 转账事件"
+        );
+    }
+
+    // ─────────────────────────────────────────────────────────────
+    // plan-halfstep-buff-v1 P3：HalfStepRechallengeQueue + dispatch
+    // ─────────────────────────────────────────────────────────────
+
+    fn drain_rechallenge_triggers(app: &mut App) -> Vec<HalfStepRechallengeTriggerEvent> {
+        app.world_mut()
+            .resource_mut::<Events<HalfStepRechallengeTriggerEvent>>()
+            .drain()
+            .collect()
+    }
+
+    #[test]
+    fn rechallenge_queue_enqueue_preserves_fcfs_by_entered_at() {
+        let mut queue = HalfStepRechallengeQueue::default();
+        // 乱序入队
+        for (cid, et) in [("late", 300), ("early", 100), ("mid", 200)] {
+            queue.enqueue(HalfStepRechallengeEntry {
+                char_id: cid.to_string(),
+                entity: Entity::from_raw(1),
+                entered_at: et,
+                rechallenge_window_until: et + RECHALLENGE_WINDOW_TICKS,
+                is_dormant: false,
+            });
+        }
+        let order: Vec<&str> = queue.queue.iter().map(|e| e.char_id.as_str()).collect();
+        assert_eq!(
+            order,
+            vec!["early", "mid", "late"],
+            "enqueue 必须按 entered_at 升序插入，FCFS 公平性 (§8 Q2)"
+        );
+    }
+
+    #[test]
+    fn rechallenge_queue_remove_entity_clears_all_entries_for_target() {
+        let mut queue = HalfStepRechallengeQueue::default();
+        let target = Entity::from_raw(7);
+        let other = Entity::from_raw(8);
+        queue.enqueue(HalfStepRechallengeEntry {
+            char_id: "a".to_string(),
+            entity: target,
+            entered_at: 100,
+            rechallenge_window_until: 100 + RECHALLENGE_WINDOW_TICKS,
+            is_dormant: false,
+        });
+        queue.enqueue(HalfStepRechallengeEntry {
+            char_id: "b".to_string(),
+            entity: other,
+            entered_at: 200,
+            rechallenge_window_until: 200 + RECHALLENGE_WINDOW_TICKS,
+            is_dormant: false,
+        });
+        queue.remove_entity(target);
+        assert_eq!(queue.len(), 1, "目标 entity 应已移除");
+        assert_eq!(queue.queue[0].entity, other);
+    }
+
+    #[test]
+    fn settlement_enqueues_halfstep_entity_on_first_settle() {
+        let mut app = p0_metrics_test_app();
+        app.world_mut().resource_mut::<CombatClock>().tick = 555;
+        let entity = app.world_mut().spawn(()).id();
+        app.world_mut()
+            .resource_mut::<Events<TribulationSettled>>()
+            .send(make_settled_event(entity, DuXuOutcomeV1::HalfStep));
+        app.update();
+        let queue = app.world().resource::<HalfStepRechallengeQueue>();
+        assert_eq!(queue.len(), 1, "首次 HalfStep settlement 必入队");
+        let entry = &queue.queue[0];
+        assert_eq!(entry.char_id, "halfstep_test_char");
+        assert_eq!(entry.entity, entity);
+        assert_eq!(entry.entered_at, 555);
+        assert_eq!(entry.rechallenge_window_until, 555 + RECHALLENGE_WINDOW_TICKS);
+        assert!(!entry.is_dormant);
+    }
+
+    #[test]
+    fn settlement_does_not_double_enqueue_on_repeat_halfstep() {
+        let mut app = p0_metrics_test_app();
+        let entity = app.world_mut().spawn(()).id();
+        // 第一次 HalfStep
+        app.world_mut()
+            .resource_mut::<Events<TribulationSettled>>()
+            .send(make_settled_event(entity, DuXuOutcomeV1::HalfStep));
+        app.update();
+        // 第二次 HalfStep（已 has_state，应跳过入队）
+        app.world_mut()
+            .resource_mut::<Events<TribulationSettled>>()
+            .send(make_settled_event(entity, DuXuOutcomeV1::HalfStep));
+        app.update();
+        let queue = app.world().resource::<HalfStepRechallengeQueue>();
+        assert_eq!(
+            queue.len(),
+            1,
+            "二次 HalfStep settlement 必须不入队（has_state=true 守卫）"
+        );
+    }
+
+    #[test]
+    fn settlement_removes_from_queue_on_ascended_killed_failed_fled() {
+        for outcome in [
+            DuXuOutcomeV1::Ascended,
+            DuXuOutcomeV1::Killed,
+            DuXuOutcomeV1::Failed,
+            DuXuOutcomeV1::Fled,
+        ] {
+            let mut app = p0_metrics_test_app();
+            let entity = app.world_mut().spawn(()).id();
+            // 先制造一个 HalfStep 入队
+            app.world_mut()
+                .resource_mut::<Events<TribulationSettled>>()
+                .send(make_settled_event(entity, DuXuOutcomeV1::HalfStep));
+            app.update();
+            assert_eq!(app.world().resource::<HalfStepRechallengeQueue>().len(), 1);
+            // 后续 outcome 触发清队
+            app.world_mut()
+                .resource_mut::<Events<TribulationSettled>>()
+                .send(make_settled_event(entity, outcome));
+            app.update();
+            assert_eq!(
+                app.world().resource::<HalfStepRechallengeQueue>().len(),
+                0,
+                "outcome={outcome:?} 应触发 remove_entity 清队"
+            );
+        }
+    }
+
+    #[test]
+    fn dispatch_rechallenge_emits_trigger_for_queue_head_on_quota_opened() {
+        let mut app = p0_metrics_test_app();
+        app.world_mut().resource_mut::<CombatClock>().tick = 1000;
+        let entity = app.world_mut().spawn(()).id();
+        app.world_mut()
+            .resource_mut::<Events<TribulationSettled>>()
+            .send(make_settled_event(entity, DuXuOutcomeV1::HalfStep));
+        app.update();
+        // 触发名额空出
+        app.world_mut()
+            .resource_mut::<Events<AscensionQuotaOpened>>()
+            .send(AscensionQuotaOpened { occupied_slots: 1 });
+        app.update();
+        let triggers = drain_rechallenge_triggers(&mut app);
+        assert_eq!(
+            triggers.len(),
+            1,
+            "AscensionQuotaOpened 应派发一个 rechallenge trigger; got {}",
+            triggers.len()
+        );
+        assert_eq!(triggers[0].entity, entity);
+        assert_eq!(triggers[0].char_id, "halfstep_test_char");
+        assert!(!triggers[0].is_dormant);
+        // 队列已出队
+        assert!(app.world().resource::<HalfStepRechallengeQueue>().is_empty());
+    }
+
+    #[test]
+    fn dispatch_drops_expired_entries_and_continues_to_next() {
+        let mut app = p0_metrics_test_app();
+        app.world_mut().resource_mut::<CombatClock>().tick = 100;
+        let stale = app.world_mut().spawn(()).id();
+        app.world_mut()
+            .resource_mut::<Events<TribulationSettled>>()
+            .send(make_settled_event(stale, DuXuOutcomeV1::HalfStep));
+        app.update();
+        // 推进到过窗
+        let past_window = 100 + RECHALLENGE_WINDOW_TICKS + 1;
+        app.world_mut().resource_mut::<CombatClock>().tick = past_window;
+        // 第二个 HalfStep entity（在过窗时刻入队）
+        let fresh = app.world_mut().spawn(()).id();
+        app.world_mut()
+            .resource_mut::<Events<TribulationSettled>>()
+            .send(make_settled_event(fresh, DuXuOutcomeV1::HalfStep));
+        app.update();
+        // 派发：stale 应过窗 drop，fresh 应收到
+        app.world_mut()
+            .resource_mut::<Events<AscensionQuotaOpened>>()
+            .send(AscensionQuotaOpened { occupied_slots: 1 });
+        app.update();
+        let triggers = drain_rechallenge_triggers(&mut app);
+        assert_eq!(triggers.len(), 1);
+        assert_eq!(
+            triggers[0].entity, fresh,
+            "stale entry 应被丢弃，fresh entry 收到通知（§8 Q1 7d 窗口）"
+        );
+        assert!(app.world().resource::<HalfStepRechallengeQueue>().is_empty());
+    }
+
+    #[test]
+    fn dispatch_no_op_on_empty_queue() {
+        let mut app = p0_metrics_test_app();
+        app.world_mut()
+            .resource_mut::<Events<AscensionQuotaOpened>>()
+            .send(AscensionQuotaOpened { occupied_slots: 0 });
+        app.update();
+        let triggers = drain_rechallenge_triggers(&mut app);
+        assert!(
+            triggers.is_empty(),
+            "空队列应无声 no-op；触发空事件违反幂等性"
+        );
+    }
+
+    #[test]
+    fn dispatch_drains_multiple_events_in_fifo_order() {
+        let mut app = p0_metrics_test_app();
+        app.world_mut().resource_mut::<CombatClock>().tick = 100;
+        // 三个 HalfStep entity，按时间序入队
+        let mut entities = Vec::new();
+        for et in [100, 200, 300] {
+            app.world_mut().resource_mut::<CombatClock>().tick = et;
+            let e = app.world_mut().spawn(()).id();
+            entities.push(e);
+            app.world_mut()
+                .resource_mut::<Events<TribulationSettled>>()
+                .send(make_settled_event(e, DuXuOutcomeV1::HalfStep));
+            app.update();
+        }
+        assert_eq!(app.world().resource::<HalfStepRechallengeQueue>().len(), 3);
+        // 一次发送 3 个 AscensionQuotaOpened events
+        for _ in 0..3 {
+            app.world_mut()
+                .resource_mut::<Events<AscensionQuotaOpened>>()
+                .send(AscensionQuotaOpened { occupied_slots: 0 });
+        }
+        app.update();
+        let triggers = drain_rechallenge_triggers(&mut app);
+        assert_eq!(
+            triggers.len(),
+            3,
+            "3 个 AscensionQuotaOpened 应耗尽队列发 3 个 trigger"
+        );
+        // FIFO：早入队的先 trigger
+        assert_eq!(triggers[0].entity, entities[0]);
+        assert_eq!(triggers[1].entity, entities[1]);
+        assert_eq!(triggers[2].entity, entities[2]);
+        assert!(app.world().resource::<HalfStepRechallengeQueue>().is_empty());
     }
 }
