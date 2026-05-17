@@ -2285,15 +2285,29 @@ pub fn complete_tribulation_ascension(
     Ok(quota)
 }
 
+/// plan-halfstep-buff-v1 P2 atomic ascension grant 三态决策（CodeRabbit P3 review #4）。
+///
+/// 把"缺 active row"从 granted=true 中拆出来，避免与"真实授予"混在一起被 caller 误升 Realm。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AscensionGrant {
+    /// 事务内 quota 校验通过，`occupied_slots` 已 +1，caller 可正常升 Realm
+    Granted,
+    /// quota 已满（`occupied == limit`）或 `limit=0`（灵气枯竭），caller 回退 HalfStep
+    Denied,
+    /// `tribulations_active` 找不到 char_id（重复结算 / 状态错乱 / 已被另一进程 settle）。
+    /// 本分支**不增量** `quota.occupied_slots`，但仍 commit transaction（保 idempotency +
+    /// 清理 active 行）。caller 应 warn + 回退 HalfStep，绝不升 Realm
+    MissingActive,
+}
+
 /// plan-halfstep-buff-v1 P2 atomic ascension grant outcome。
 ///
-/// `granted=true` 代表事务内 quota 校验通过、`occupied_slots` 已 +1；
-/// `granted=false` 代表 quota 已满（占用 == limit）或 limit=0（灵气枯竭），entity 应回退到 HalfStep。
-/// `limit_used` / `occupied_before` 字段便于追踪并发情况和测试断言。
+/// `grant` 字段表达三态（见 [`AscensionGrant`]）；`limit_used` / `occupied_before` 便于
+/// 追踪并发情况和测试断言。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AtomicAscensionOutcome {
     pub quota: AscensionQuotaRecord,
-    pub granted: bool,
+    pub grant: AscensionGrant,
     pub limit_used: u32,
     pub occupied_before: u32,
 }
@@ -2335,24 +2349,35 @@ pub fn try_complete_tribulation_ascension(
         )
         .optional()
         .map_err(io::Error::other)?;
-    let occupies_quota = matches!(
-        active_kind_source
-            .as_ref()
-            .map(|(kind, source)| (kind.as_str(), source.as_str())),
-        Some((TRIBULATION_KIND_DU_XU, _))
-            | Some((TRIBULATION_KIND_JUE_BI, JUEBI_SOURCE_VOID_QUOTA_EXCEEDED))
-    );
 
-    let granted = if occupies_quota {
-        if quota_limit > 0 && quota.occupied_slots < quota_limit {
-            quota.occupied_slots = quota.occupied_slots.saturating_add(1);
-            true
-        } else {
-            false
+    let grant = match active_kind_source.as_ref().map(|(kind, source)| {
+        (
+            kind.as_str(),
+            source.as_str(),
+            matches!(
+                (kind.as_str(), source.as_str()),
+                (TRIBULATION_KIND_DU_XU, _)
+                    | (TRIBULATION_KIND_JUE_BI, JUEBI_SOURCE_VOID_QUOTA_EXCEEDED)
+            ),
+        )
+    }) {
+        None => {
+            // active row 缺失 → 状态错乱或重复结算；不增量，让 caller 走 warn + HalfStep
+            AscensionGrant::MissingActive
         }
-    } else {
-        // 非占额路径（普通天劫意外 trigger 至此）—— 不增不减，视为通过
-        true
+        Some((_, _, true)) => {
+            // 占额路径（du_xu / jue_bi+void_quota_exceeded）→ 名额校验
+            if quota_limit > 0 && quota.occupied_slots < quota_limit {
+                quota.occupied_slots = quota.occupied_slots.saturating_add(1);
+                AscensionGrant::Granted
+            } else {
+                AscensionGrant::Denied
+            }
+        }
+        Some((_, _, false)) => {
+            // 非占额路径（独立 JueBi 如 VoidActionExplodeZone）→ 不增不减，granted
+            AscensionGrant::Granted
+        }
     };
 
     transaction
@@ -2365,7 +2390,7 @@ pub fn try_complete_tribulation_ascension(
     transaction.commit().map_err(io::Error::other)?;
     Ok(AtomicAscensionOutcome {
         quota,
-        granted,
+        grant,
         limit_used: quota_limit,
         occupied_before,
     })
@@ -10837,6 +10862,24 @@ mod persistence_tests {
         .expect("active tribulation should persist");
     }
 
+    fn persist_jue_bi_active(settings: &PersistenceSettings, char_id: &str, source: &str) {
+        persist_active_tribulation(
+            settings,
+            &ActiveTribulationRecord {
+                char_id: char_id.to_string(),
+                kind: "jue_bi".to_string(),
+                source: source.to_string(),
+                origin_dimension: Some("minecraft:overworld".to_string()),
+                wave_current: 3,
+                waves_total: 3,
+                started_tick: 1440,
+                epicenter: [0.0, 64.0, 0.0],
+                intensity: 1.6,
+            },
+        )
+        .expect("active jue_bi should persist");
+    }
+
     #[test]
     fn try_ascension_grants_when_within_limit() {
         let (settings, root) = persistence_settings("ascension-atomic-grant");
@@ -10845,9 +10888,11 @@ mod persistence_tests {
         persist_du_xu_active(&settings, "offline:A");
         let outcome = try_complete_tribulation_ascension(&settings, "offline:A", 3)
             .expect("atomic ascension should succeed");
-        assert!(
-            outcome.granted,
-            "limit=3 occupied_before=0 must grant; got denied"
+        assert_eq!(
+            outcome.grant,
+            AscensionGrant::Granted,
+            "limit=3 occupied_before=0 must Granted; got {:?}",
+            outcome.grant
         );
         assert_eq!(outcome.quota.occupied_slots, 1);
         assert_eq!(outcome.occupied_before, 0);
@@ -10880,9 +10925,10 @@ mod persistence_tests {
         persist_du_xu_active(&settings, "offline:B");
         let outcome = try_complete_tribulation_ascension(&settings, "offline:B", 2)
             .expect("atomic ascension should succeed");
-        assert!(
-            !outcome.granted,
-            "occupied=2 limit=2 必须 deny；增长会突破 §三 化虚稀缺底线"
+        assert_eq!(
+            outcome.grant,
+            AscensionGrant::Denied,
+            "occupied=2 limit=2 必须 Denied；增长会突破 §三 化虚稀缺底线"
         );
         assert_eq!(
             outcome.quota.occupied_slots, 2,
@@ -10905,24 +10951,81 @@ mod persistence_tests {
         // quota_limit=0 代表灵气枯竭（compute_void_quota_limit(total_qi=0, ...) = 0）—— 必须拒绝
         let outcome = try_complete_tribulation_ascension(&settings, "offline:C", 0)
             .expect("atomic ascension should succeed");
-        assert!(!outcome.granted, "limit=0 永远不授予；灵气枯竭名额清零");
+        assert_eq!(
+            outcome.grant,
+            AscensionGrant::Denied,
+            "limit=0 永远不授予；灵气枯竭名额清零"
+        );
         assert_eq!(outcome.quota.occupied_slots, 0);
         let _ = fs::remove_dir_all(root);
     }
 
     #[test]
-    fn try_ascension_grants_idempotently_when_no_active_row() {
-        let (settings, root) = persistence_settings("ascension-atomic-idempotent");
+    fn try_ascension_reports_missing_active_when_no_active_row() {
+        // CodeRabbit P3 review #4：缺 active row 不再当 granted=true；
+        // 改返回 AscensionGrant::MissingActive，让 caller 显式 warn 不升 Realm。
+        let (settings, root) = persistence_settings("ascension-atomic-missing-active");
         bootstrap_sqlite(settings.db_path(), settings.server_run_id())
             .expect("bootstrap should succeed");
-        // 无 active row（occupies_quota=false 路径）—— 不增不减，granted=true
+        // 无 active row（重复结算 / 状态错乱）
         let outcome = try_complete_tribulation_ascension(&settings, "offline:phantom", 3)
             .expect("atomic ascension should succeed");
-        assert!(
-            outcome.granted,
-            "无 active 行（非占额路径）应 granted=true; 否则普通天劫意外死循环走不通"
+        assert_eq!(
+            outcome.grant,
+            AscensionGrant::MissingActive,
+            "missing active row 必须返回 MissingActive；混入 Granted 会让 caller 错升 Realm"
         );
-        assert_eq!(outcome.quota.occupied_slots, 0, "非占额路径不增量");
+        assert_eq!(outcome.quota.occupied_slots, 0, "MissingActive 路径不增量");
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn try_ascension_grants_for_jue_bi_void_quota_exceeded_kind() {
+        // CodeRabbit P3 review #5：jue_bi + source=void_quota_exceeded 属于 occupies_quota 分支
+        // —— DuXu 起劫时 quota 已满，转 JueBi 绝壁劫；JueBi 成功 → 占额升 Realm
+        let (settings, root) = persistence_settings("ascension-atomic-juebi-quota-exceeded");
+        bootstrap_sqlite(settings.db_path(), settings.server_run_id())
+            .expect("bootstrap should succeed");
+        persist_jue_bi_active(&settings, "offline:JB1", JUEBI_SOURCE_VOID_QUOTA_EXCEEDED);
+        let outcome = try_complete_tribulation_ascension(&settings, "offline:JB1", 3)
+            .expect("atomic ascension should succeed");
+        assert_eq!(
+            outcome.grant,
+            AscensionGrant::Granted,
+            "jue_bi + void_quota_exceeded 是占额路径；limit=3 空位下应 Granted"
+        );
+        assert_eq!(
+            outcome.quota.occupied_slots, 1,
+            "占额路径成功后 occupied_slots 必须 +1"
+        );
+        assert!(load_active_tribulation(&settings, "offline:JB1")
+            .expect("active query")
+            .is_none());
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn try_ascension_grants_without_increment_for_jue_bi_other_source() {
+        // CodeRabbit P3 review #5：jue_bi + source != void_quota_exceeded（例 void_action_explode_zone）
+        // 是非占额独立 JueBi；幸存不算升格，不增 quota，但 grant=Granted 让 caller 走非升 Realm 路径
+        let (settings, root) = persistence_settings("ascension-atomic-juebi-independent");
+        bootstrap_sqlite(settings.db_path(), settings.server_run_id())
+            .expect("bootstrap should succeed");
+        persist_jue_bi_active(&settings, "offline:JB2", "void_action_explode_zone");
+        let outcome = try_complete_tribulation_ascension(&settings, "offline:JB2", 3)
+            .expect("atomic ascension should succeed");
+        assert_eq!(
+            outcome.grant,
+            AscensionGrant::Granted,
+            "独立 JueBi（非 void_quota_exceeded）非占额路径，grant=Granted 但不增量"
+        );
+        assert_eq!(
+            outcome.quota.occupied_slots, 0,
+            "独立 JueBi 路径绝不增 quota；增量会让化虚老怪扛过 zone collapse 把 quota 用掉"
+        );
+        assert!(load_active_tribulation(&settings, "offline:JB2")
+            .expect("active query")
+            .is_none());
         let _ = fs::remove_dir_all(root);
     }
 
@@ -10965,22 +11068,25 @@ mod persistence_tests {
 
         let mut granted_count = 0;
         let mut denied_count = 0;
+        let mut other_count = 0;
         let mut errors: Vec<String> = Vec::new();
         for handle in handles {
             match handle.join().expect("thread join should succeed") {
-                Ok(outcome) => {
-                    if outcome.granted {
-                        granted_count += 1;
-                    } else {
-                        denied_count += 1;
-                    }
-                }
+                Ok(outcome) => match outcome.grant {
+                    AscensionGrant::Granted => granted_count += 1,
+                    AscensionGrant::Denied => denied_count += 1,
+                    AscensionGrant::MissingActive => other_count += 1,
+                },
                 Err(error) => errors.push(error.to_string()),
             }
         }
         assert!(
             errors.is_empty(),
             "没有线程应返回 SQLITE_BUSY/LOCKED 错误；IMMEDIATE 事务应序列化等待。got errors: {errors:?}"
+        );
+        assert_eq!(
+            other_count, 0,
+            "所有 thread 都 persist 了 du_xu active row，不该出现 MissingActive；got {other_count}"
         );
         assert_eq!(
             granted_count, LIMIT as usize,

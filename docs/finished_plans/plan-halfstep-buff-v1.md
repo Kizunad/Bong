@@ -64,13 +64,13 @@
 
 ## P0 — 遥测计数器 + dev 命令
 
-- [ ] 遥测计数器（`server/src/cultivation/tribulation.rs` metrics 段）：
+- [x] 遥测计数器（`server/src/cultivation/tribulation.rs` metrics 段）：
   - `tribulation_halfstep_count` — 累计半步化虚人次
   - `tribulation_ascended_count` — 累计化虚人次
   - `ascension_quota_full_duration_ticks` — quota 满时（current == max）的累计 tick 数
   - `halfstep_stuck_duration_ticks` — 当前半步修士平均滞留 tick 数
-- [ ] `/debug tribulation` 命令显示以上遥测数据（dev-only，CLAUDE.md 测试命令段；与 `/meridian` `/realm` 等同槽）
-- [ ] 该数据用于后续运营观察与跟进 plan 的 buff 校准，本 plan 不在 P0 内做观察期门控
+- [x] `/debug tribulation` 命令显示以上遥测数据（dev-only，CLAUDE.md 测试命令段；与 `/meridian` `/realm` 等同槽）
+- [x] 该数据用于后续运营观察与跟进 plan 的 buff 校准，本 plan 不在 P0 内做观察期门控
 
 **P0 验收**：遥测计数器在 CI e2e 中可正确累计（mock 10 次半步结算 → counter == 10）；`/debug tribulation` 在 cargo test 中可调用并返回结构化数据
 
@@ -78,18 +78,18 @@
 
 ## P1 — buff 实装为命名 const + 不叠加守卫
 
-- [ ] 把 buff 值提取为命名 const（`server/src/cultivation/tribulation.rs`）：
+- [x] 把 buff 值提取为命名 const（`server/src/cultivation/tribulation.rs`）：
 
   ```rust
   pub const HALFSTEP_QI_MAX_BONUS: f32 = 0.10;     // 首期值，后续运营数据驱动调整
   pub const HALFSTEP_LIFESPAN_BONUS_YEARS: f64 = 200.0; // 首期值，后续运营数据驱动调整
   ```
 
-- [ ] **在 settlement 处真实应用 buff**（当前 `server/src/cultivation/tribulation.rs:1811` 只设置 `DuXuOutcomeV1::HalfStep` 枚举，buff 未应用，是真实代码缺口）：HalfStep 分支补 `cultivation.qi_max *= 1.0 + HALFSTEP_QI_MAX_BONUS` + `lifespan.cap += HALFSTEP_LIFESPAN_BONUS_YEARS`
-- [ ] qi_physics ledger 标记：`qi_max` 容量扩张走 `qi_physics::ledger::QiTransfer`（worldview §二 守恒律，参 plan-qi-physics-v1 P1 既有 API）—— 容量扩张视为 Tiandao → entity 的一次性转账记账，不破坏 SPIRIT_QI_TOTAL 恒定
-- [ ] **buff 不叠加守卫**（§8 Q4 决策）：第二次起 HalfStep 不再 reapply。用 `HalfStepBuffApplied` marker component（或 `HalfStepState.buff_applied: bool` 字段）做幂等校验，已应用则 skip
-- [ ] 回归测试：`assert_eq!(halfstep_buff.qi_max_factor, HALFSTEP_QI_MAX_BONUS)` 引用 const（**禁止测试写字面 0.10**，防止常数改了测试不跟）
-- [ ] ≥ 5 单测（buff 应用后 qi_max 正确计算 / lifespan 正确增加 / **buff 不叠加（同一 entity 二次 HalfStep settlement 后 qi_max 不变化）** / dormant NPC 同样应用 / qi_physics ledger 记账正确）
+- [x] **在 settlement 处真实应用 buff**（当前 `server/src/cultivation/tribulation.rs:1811` 只设置 `DuXuOutcomeV1::HalfStep` 枚举，buff 未应用，是真实代码缺口）：HalfStep 分支补 `cultivation.qi_max *= 1.0 + HALFSTEP_QI_MAX_BONUS` + `lifespan.cap += HALFSTEP_LIFESPAN_BONUS_YEARS`
+- [x] qi_physics ledger 标记：`qi_max` 容量扩张走 `qi_physics::ledger::QiTransfer`（worldview §二 守恒律，参 plan-qi-physics-v1 P1 既有 API）—— 容量扩张视为 Tiandao → entity 的一次性转账记账，不破坏 SPIRIT_QI_TOTAL 恒定
+- [x] **buff 不叠加守卫**（§8 Q4 决策）：第二次起 HalfStep 不再 reapply。用 `HalfStepBuffApplied` marker component（或 `HalfStepState.buff_applied: bool` 字段）做幂等校验，已应用则 skip
+- [x] 回归测试：`assert_eq!(halfstep_buff.qi_max_factor, HALFSTEP_QI_MAX_BONUS)` 引用 const（**禁止测试写字面 0.10**，防止常数改了测试不跟）
+- [x] ≥ 5 单测（buff 应用后 qi_max 正确计算 / lifespan 正确增加 / **buff 不叠加（同一 entity 二次 HalfStep settlement 后 qi_max 不变化）** / dormant NPC 同样应用 / qi_physics ledger 记账正确）
 
 **P1 验收**：const 提取 + settlement 实装 + 5 单测 green；run `cargo test cultivation::tribulation::halfstep` 全过
 
@@ -97,30 +97,32 @@
 
 ## P2 — quota 事务性再校验
 
-- [ ] 最终 `Ascended/HalfStep` 判定移入 DB transaction：并发起劫结算时，quota 校验用 Redis `INCR` + `WATCH/MULTI/EXEC` 原子操作（或 Lua script）防止多人同时 Ascended
-- [ ] 修复路径：`tribulation::settle_ascension` 函数加 `atomic_quota_check` 内层校验（`server/src/cultivation/tribulation.rs`）
-- [ ] ≥ 5 并发测试（10 人同时结算，Ascended 数量 ≤ quota_max；剩余人走 HalfStep 不漏掉）
+> **实施方案修订（与原 plan 描述对照）**：原 plan 写"Redis `INCR` + `WATCH/MULTI/EXEC` / Lua"，但本项目 quota 持久层用 SQLite（不是 Redis；`ascension_quota` 表存于 server bong.db）。**最终采用 SQLite IMMEDIATE 事务方案**：`rusqlite::Connection::transaction_with_behavior(TransactionBehavior::Immediate)` 立即拿写锁，把 select-check-update 序列化，相同的"并发不漏判"保证、无需引入 Redis 依赖。Redis 方案已弃用/未采纳。
 
-**P2 验收**：并发测试 green（500 次随机并发结算，Ascended 数量严格 ≤ quota_max）
+- [x] 最终 `Ascended/HalfStep` 判定移入 DB transaction：**SQLite IMMEDIATE 事务** 内做原子 select-check-update（`persistence::try_complete_tribulation_ascension`）；返回三态 `AscensionGrant::{Granted, Denied, MissingActive}`，caller `juebi_settlement_system` 按 grant 路由 outcome
+- [x] 修复路径：`juebi_settlement_system` 调 `try_complete_tribulation_ascension(quota_limit)` 替换原 unconditional `complete_tribulation_ascension`；caller 用 `ascension_granted` 标志驱动 outcome enum + Realm 翻转（`server/src/cultivation/tribulation.rs`）
+- [x] ≥ 5 并发测试：4 单线程边界（grant / deny / limit=0 / missing-active）+ 1 真并发（`std::sync::Barrier + thread::spawn` 5 线程齐头并进，断言恰好 limit granted）+ 2 jue_bi 占额分支
+
+**P2 验收**：并发测试 green —— 5 线程同时 settle, limit=2 → 严格 2 Granted + 3 Denied，final `occupied == limit`，零 SQLITE_BUSY/LOCKED 错误
 
 ---
 
 ## P3 — 重渡机制 + HUD（7d 窗口 + FIFO + NPC 同池）
 
-- [ ] **复用既有 `AscensionQuotaOpened` event**（`server/src/cultivation/tribulation.rs` 已实装，不另造 `QuotaSlotOpened`）—— 化虚修士死亡 / 降境时已 emit
-- [ ] `HalfStepState { entered_at: u64, rechallenge_window_until: u64, buff_applied: bool }` component（玩家 + dormant NPC 通用，与 P1 buff 守卫共用）：
+- [x] **复用既有 `AscensionQuotaOpened` event**（`server/src/cultivation/tribulation.rs` 已实装，不另造 `QuotaSlotOpened`）—— 化虚修士死亡 / 降境时已 emit
+- [x] `HalfStepState { entered_at: u64, rechallenge_window_until: u64, buff_applied: bool }` component（玩家 + dormant NPC 通用，与 P1 buff 守卫共用）：
   - `entered_at` = 进入 HalfStep 时的 server tick
   - `rechallenge_window_until = entered_at + RECHALLENGE_WINDOW_TICKS`（§8 Q1 决策）
-- [ ] `RECHALLENGE_WINDOW_TICKS` const = `7 * 24 * 3600 * 20`（7 days in-game，server 20Hz；§8 Q1）
-- [ ] `HalfStepRechallengeQueue` resource：FIFO 队列，按 `entered_at` 升序保有所有当前 HalfStep 修士（玩家 + dormant NPC 同池；§8 Q2 + Q5 决策）
-- [ ] `dispatch_rechallenge_system`（`AscensionQuotaOpened` event 触发）：
+- [x] `RECHALLENGE_WINDOW_TICKS` const = `7 * 24 * 3600 * 20`（7 days in-game，server 20Hz；§8 Q1）
+- [x] `HalfStepRechallengeQueue` resource：FIFO 队列，按 `entered_at` 升序保有所有当前 HalfStep 修士（玩家 + dormant NPC 同池；§8 Q2 + Q5 决策）
+- [x] `dispatch_rechallenge_system`（`AscensionQuotaOpened` event 触发）：
   - 取队列头部修士，若 `current_tick > rechallenge_window_until` → 出队丢弃（过窗），继续看下一个，直到找到有效或队列空
   - 若头部修士为玩家 → emit `HalfStepRechallengeTriggerEvent { char_id }` 给该玩家
   - 若头部修士为 dormant NPC → 强制 hydrate（复用 plan-npc-virtualize-v1 dormant 渡虚劫 hydrate 路径），hydrate 后入队第一行
-- [ ] 玩家收到 event → client HUD 提示"灵机涌现，可重渡虚劫"（`client/src/hud/tribulation_status.java`）+ 窗口剩余时长倒计时
-- [ ] 玩家响应：手动触发 `/tribulation rechallenge`（CLAUDE.md dev-only 命令段）or 在渡劫台交互
-- [ ] **重渡失败结算复用 `tribulation::settle_failed` 通灵降境路径**（§8 Q3 决策：失败降境到通灵初，不另设独立宽容路径）
-- [ ] narration 模板（已含 scope/style/priority，跟进 agent PR 接 TS schema 时直接消费）：
+- [x] 玩家收到 event → client HUD 提示"灵机涌现，可重渡虚劫"（`client/src/hud/tribulation_status.java`）+ 窗口剩余时长倒计时
+- [x] 玩家响应：手动触发 `/tribulation rechallenge`（CLAUDE.md dev-only 命令段）or 在渡劫台交互
+- [x] **重渡失败结算复用 `tribulation::settle_failed` 通灵降境路径**（§8 Q3 决策：失败降境到通灵初，不另设独立宽容路径）
+- [x] narration 模板（已含 scope/style/priority，跟进 agent PR 接 TS schema 时直接消费）：
   - "灵脉间隐约传来一股真元波动，似有化虚修士陨落，名额空出一席。" — scope: `broadcast`，style: `perception`，priority: `high`（复用既有 quota_release narration 通道，全服广播 1 次）
   - "你感到曾遭封压的经脉微微松动，或许时机已到。" — scope: `player`（target = `HalfStepRechallengeTriggerEvent.entity`），style: `perception`
   - "虚空中某处的修士收到了相同的消息。" — scope: `zone`（entity 所在 zone），style: `perception`，触发条件: 同 zone 内 ≥ 2 个 HalfStep 修士
@@ -177,7 +179,7 @@
 - 这三个 recipe key 由 agent narration emit 时与 narration scope 一一对应；client audio bus 按 key 播放
 - 音量参考 `plan-audio-v1` baseline（broadcast: 0.6-0.8 / player: 0.5-0.7 / zone echo: 0.2-0.4）
 
-- [ ] ≥ 8 单测（队列 FIFO 顺序 / 窗口过期出队 / dormant NPC 触发 hydrate / 玩家收到通知 / 非 HalfStep 不收到通知 / 重渡失败走 `settle_failed` 降境 / NPC 与玩家同池排序正确 / narration scope 正确）
+- [x] ≥ 8 单测（队列 FIFO 顺序 / 窗口过期出队 / dormant NPC 触发 hydrate / 玩家收到通知 / 非 HalfStep 不收到通知 / 重渡失败走 `settle_failed` 降境 / NPC 与玩家同池排序正确 / narration scope 正确）
 
 **P3 验收**：e2e 手测——化虚修士被击杀 → 全服 narration 广播 → 队列头部 HalfStep 玩家 HUD 提示 + 7d 倒计时 → 玩家可重新起劫；并发场景下队列 FIFO 正确 + 过窗修士自动出队
 
@@ -242,7 +244,7 @@
 
 ### 测试结果
 
-`cd server && cargo test` → **5039 passed; 0 failed**（增加 33 case 覆盖：13 P0 + 5 P1 + 5 P2 + 8 P3 队列/派发 + 7 dev 命令 gate；既有 5006 个测试零回归）
+`cd server && cargo test` → **5053 passed; 0 failed**（截至 PR #257 review-2 修复后；累计 47 新 case：13 P0 + 10 P1 + 7 P2 + 11 P3 队列/派发/路径 + 6 dev 命令 + 文档/边界守护；既有 5006 个测试零回归）
 
 `cd server && cargo clippy --all-targets -- -D warnings` → 零 warning
 

@@ -52,7 +52,7 @@ use super::qi_zero_decay::{close_meridian, pick_closures};
 use crate::persistence::{
     complete_tribulation_ascension, delete_active_tribulation, load_active_tribulation_count,
     load_ascension_quota, persist_active_tribulation, try_complete_tribulation_ascension,
-    ActiveTribulationRecord, AtomicAscensionOutcome, PersistenceSettings,
+    ActiveTribulationRecord, AscensionGrant, AtomicAscensionOutcome, PersistenceSettings,
 };
 
 pub const DUXU_OMEN_TICKS: u64 = 60 * 20;
@@ -1903,32 +1903,44 @@ pub fn juebi_settlement_system(
                 }
             };
             try_complete_invoked = true;
-            if outcome.granted {
-                ascension_granted = true;
-                quota_occupied.send(AscensionQuotaOccupied {
-                    occupied_slots: outcome.quota.occupied_slots,
-                });
-                cultivation.realm = Realm::Void;
-                cultivation.qi_max *= super::breakthrough::qi_max_multiplier(Realm::Void);
-                if let Some(mut lifespan) = lifespan {
-                    lifespan.apply_cap(LifespanCapTable::VOID);
-                }
-                let new_cap = skill_cap_for_realm(Realm::Void);
-                for skill in SkillId::ALL {
-                    skill_cap_events.send(SkillCapChanged {
-                        char_entity: entity,
-                        skill,
-                        new_cap,
+            match outcome.grant {
+                AscensionGrant::Granted => {
+                    ascension_granted = true;
+                    quota_occupied.send(AscensionQuotaOccupied {
+                        occupied_slots: outcome.quota.occupied_slots,
                     });
+                    cultivation.realm = Realm::Void;
+                    cultivation.qi_max *= super::breakthrough::qi_max_multiplier(Realm::Void);
+                    if let Some(mut lifespan) = lifespan {
+                        lifespan.apply_cap(LifespanCapTable::VOID);
+                    }
+                    let new_cap = skill_cap_for_realm(Realm::Void);
+                    for skill in SkillId::ALL {
+                        skill_cap_events.send(SkillCapChanged {
+                            char_entity: entity,
+                            skill,
+                            new_cap,
+                        });
+                    }
                 }
-            } else {
-                tracing::info!(
-                    "[bong][cultivation] {:?} ascension denied at settle by atomic quota check \
-                     (occupied_before={} limit={}); falling back to HalfStep",
-                    entity,
-                    outcome.occupied_before,
-                    outcome.limit_used,
-                );
+                AscensionGrant::Denied => {
+                    tracing::info!(
+                        "[bong][cultivation] {:?} ascension denied at settle by atomic quota check \
+                         (occupied_before={} limit={}); falling back to HalfStep",
+                        entity,
+                        outcome.occupied_before,
+                        outcome.limit_used,
+                    );
+                }
+                AscensionGrant::MissingActive => {
+                    // 状态不一致：start 时插入了 marker 但 settle 时 active row 已消失。
+                    // 可能是另一进程 / 重复结算 / row 被外部清理。回退 HalfStep（保守），不升 Realm
+                    tracing::warn!(
+                        "[bong][cultivation] {:?} ascension at settle saw missing tribulations_active row \
+                         (possible double-settle or external cleanup); falling back to HalfStep",
+                        entity,
+                    );
+                }
             }
         }
         // 仅当未调用 try_complete（active row 未被事务删除）时才需要单独清理 active 行
@@ -2016,6 +2028,15 @@ pub fn track_tribulation_metrics_system(
     for ev in events.read() {
         match ev.result.outcome {
             DuXuOutcomeV1::HalfStep => {
+                // plan-halfstep-buff-v1 fix（CodeRabbit P3 review #1 outside-diff）：
+                // 只有 `VoidQuotaExceeded` 路径才是真半步化虚（升格冲刺被 quota 阻挡）；
+                // 其他 JueBi 来源（当前 `VoidActionExplodeZone`，未来可能扩展 ZoneCollapse /
+                // Hypocrite 等）虽然 settlement outcome 也是 HalfStep（schema 兼容），但语义上
+                // 是**"额外天劫幸存"**——化虚老怪可能扛过 zone collapse 触发的 JueBi 而幸存，
+                // 但他/她**没在升格**，绝不应授予半步 buff、不入重渡队列、不计 halfstep_count
+                if !matches!(ev.source, Some(JueBiTriggerSource::VoidQuotaExceeded)) {
+                    continue;
+                }
                 metrics.halfstep_count = metrics.halfstep_count.saturating_add(1);
 
                 // 读 existing state：有则保留 entered_at + window_until（§8 Q1 窗口起点不漂移）；
@@ -2071,13 +2092,21 @@ pub fn track_tribulation_metrics_system(
                 });
 
                 // 确保队列里有 entry（dedup-then-enqueue，防止二次 HalfStep 留下重复或
-                // dispatch pop_front 过后永久失去重渡资格）
+                // dispatch pop_front 过后永久失去重渡资格）。
+                // **双键 dedup**（CodeRabbit P3 review #3）：char_id 是持久化稳定键，
+                // entity 是 ECS 句柄；dormant→hydrate 之间 ECS entity 会换号，仅按 entity
+                // 清不掉同一角色的旧 entry，会造成同 char_id 双入队 + 收到重复 trigger
                 queue.remove_entity(ev.entity);
+                queue.remove_char_id(&ev.result.char_id);
                 queue.enqueue(HalfStepRechallengeEntry {
                     char_id: ev.result.char_id.clone(),
                     entity: ev.entity,
                     entered_at,
                     rechallenge_window_until: window_until,
+                    // is_dormant=false：hydrated entity 默认走在线路径。
+                    // dormant NPC 强制 hydrate 通路由 plan-npc-virtualize-v1
+                    // hydrate-on-trigger 系统直接 enqueue 带 is_dormant=true 的 entry
+                    // （那条路径不经此 system；本 system 只见 hydrated entity）
                     is_dormant: false,
                 });
             }
@@ -7884,10 +7913,18 @@ mod tests {
     // ─────────────────────────────────────────────────────────────
 
     fn make_settled_event(entity: Entity, outcome: DuXuOutcomeV1) -> TribulationSettled {
+        make_settled_event_with_source(entity, outcome, JueBiTriggerSource::VoidQuotaExceeded)
+    }
+
+    fn make_settled_event_with_source(
+        entity: Entity,
+        outcome: DuXuOutcomeV1,
+        source: JueBiTriggerSource,
+    ) -> TribulationSettled {
         TribulationSettled {
             entity,
             kind: TribulationKind::JueBi,
-            source: Some(JueBiTriggerSource::VoidQuotaExceeded),
+            source: Some(source),
             result: DuXuResultV1 {
                 char_id: "halfstep_test_char".to_string(),
                 outcome,
@@ -7978,6 +8015,39 @@ mod tests {
         let metrics = app.world().resource::<TribulationMetrics>();
         assert_eq!(metrics.ascended_count, 5);
         assert_eq!(metrics.halfstep_count, 0);
+    }
+
+    #[test]
+    fn track_metrics_ignores_independent_juebi_halfstep_outcome() {
+        // 化虚老怪扛过 VoidActionExplodeZone 触发的 JueBi 幸存 → outcome=HalfStep（schema 同），
+        // 但语义不是"升格被 quota 拒"。绝不应授予半步 buff、不入队、不增 halfstep_count。
+        let mut app = p0_metrics_test_app();
+        let entity = app.world_mut().spawn(()).id();
+        for _ in 0..10 {
+            app.world_mut()
+                .resource_mut::<Events<TribulationSettled>>()
+                .send(make_settled_event_with_source(
+                    entity,
+                    DuXuOutcomeV1::HalfStep,
+                    JueBiTriggerSource::VoidActionExplodeZone,
+                ));
+        }
+        app.update();
+        let metrics = app.world().resource::<TribulationMetrics>();
+        let queue = app.world().resource::<HalfStepRechallengeQueue>();
+        assert_eq!(
+            metrics.halfstep_count, 0,
+            "VoidActionExplodeZone 路径的 HalfStep outcome 不应增 halfstep_count；\
+             否则化虚老怪频繁触发非升格 JueBi 会污染遥测"
+        );
+        assert!(
+            queue.is_empty(),
+            "独立 JueBi 幸存者不应入重渡队列；否则化虚老怪会被列为半步等待升格名额"
+        );
+        assert!(
+            app.world().get::<HalfStepState>(entity).is_none(),
+            "独立 JueBi 幸存者不应被插 HalfStepState component；否则会被误授半步 buff"
+        );
     }
 
     #[test]
@@ -8635,15 +8705,24 @@ mod tests {
     fn dispatch_drains_multiple_events_in_fifo_order() {
         let mut app = p0_metrics_test_app();
         app.world_mut().resource_mut::<CombatClock>().tick = 100;
-        // 三个 HalfStep entity，按时间序入队
+        // 三个 HalfStep entity，按时间序入队。
+        // 注意每个 char_id 必须独立——否则 char_id dedup（P3 review #3 修复引入）
+        // 会把前两条清掉只剩最后一条
         let mut entities = Vec::new();
-        for et in [100, 200, 300] {
-            app.world_mut().resource_mut::<CombatClock>().tick = et;
+        let char_ids = ["char_alpha", "char_bravo", "char_charlie"];
+        for (i, et) in [100u64, 200, 300].iter().enumerate() {
+            app.world_mut().resource_mut::<CombatClock>().tick = *et;
             let e = app.world_mut().spawn(()).id();
             entities.push(e);
+            let mut ev = make_settled_event_with_source(
+                e,
+                DuXuOutcomeV1::HalfStep,
+                JueBiTriggerSource::VoidQuotaExceeded,
+            );
+            ev.result.char_id = char_ids[i].to_string();
             app.world_mut()
                 .resource_mut::<Events<TribulationSettled>>()
-                .send(make_settled_event(e, DuXuOutcomeV1::HalfStep));
+                .send(ev);
             app.update();
         }
         assert_eq!(app.world().resource::<HalfStepRechallengeQueue>().len(), 3);
