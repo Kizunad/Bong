@@ -871,6 +871,7 @@ fn publish_world_state_to_redis(
         (Entity, &Cultivation, &MeridianSystem, &QiColor, &LifeRecord),
         With<Client>,
     >,
+    tiandao_blind_zones: Option<Res<crate::sword_path::heaven_gate::TiandaoBlindZoneRegistry>>,
 ) {
     timer.ticks += 1;
     if !timer
@@ -899,6 +900,7 @@ fn publish_world_state_to_redis(
         &cultivation_by_entity,
         dormant_store.as_deref(),
         rat_density_heatmap,
+        tiandao_blind_zones.as_deref(),
     );
 
     let _ = redis.tx_outbound.send(RedisOutbound::WorldState(state));
@@ -1009,10 +1011,16 @@ fn build_world_state_snapshot(
     cultivation_by_entity: &HashMap<Entity, (CultivationSnapshotV1, LifeRecordSnapshotV1)>,
     dormant_store: Option<&NpcDormantStore>,
     rat_density_heatmap: RatDensityHeatmapV1,
+    tiandao_blind_zones: Option<&crate::sword_path::heaven_gate::TiandaoBlindZoneRegistry>,
 ) -> WorldStateV1 {
     let zone_registry = effective_zone_registry(zone_registry);
-    let (players, player_ids_by_entity, player_counts_by_zone) =
-        collect_player_snapshots(tick, clients, &zone_registry, cultivation_by_entity);
+    let (players, player_ids_by_entity, player_counts_by_zone) = collect_player_snapshots(
+        tick,
+        clients,
+        &zone_registry,
+        cultivation_by_entity,
+        tiandao_blind_zones,
+    );
 
     WorldStateV1 {
         v: 1,
@@ -1190,6 +1198,7 @@ fn collect_player_snapshots(
     >,
     zone_registry: &ZoneRegistry,
     cultivation_by_entity: &HashMap<Entity, (CultivationSnapshotV1, LifeRecordSnapshotV1)>,
+    tiandao_blind_zones: Option<&crate::sword_path::heaven_gate::TiandaoBlindZoneRegistry>,
 ) -> (
     Vec<PlayerProfile>,
     HashMap<Entity, String>,
@@ -1200,6 +1209,15 @@ fn collect_player_snapshots(
 
     let mut players = clients
         .iter()
+        .filter(|(_, position, _, _, _, _, _, _, _)| {
+            // plan-sword-path-v2 P2.3: 化虚一击后玩家被天道盲区遮蔽 5 min，
+            // 此期间不向 agent 推送其 snapshot——agent 看不见、查不到、推演不到。
+            // 守 worldview §八 天道感应 + plan §techniques::heaven_gate。
+            !matches!(
+                tiandao_blind_zones,
+                Some(registry) if registry.is_player_hidden(position.get())
+            )
+        })
         .map(
             |(
                 entity,
