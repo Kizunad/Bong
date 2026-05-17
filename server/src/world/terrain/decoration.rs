@@ -14,6 +14,13 @@ pub fn decorate_chunk(
     terrain: &TerrainProvider,
     top_y_by_column: &[[i32; 16]; 16],
 ) {
+    // Sword sea: no cave vines / kelp / water plants
+    if super::giant_sword::is_in_sword_sea(pos.x * 16, pos.z * 16)
+        && super::giant_sword::is_in_sword_sea(pos.x * 16 + 15, pos.z * 16 + 15)
+    {
+        return;
+    }
+
     for (local_z, row) in top_y_by_column.iter().enumerate() {
         for (local_x, &top_y) in row.iter().enumerate() {
             let world_x = pos.x * 16 + local_x as i32;

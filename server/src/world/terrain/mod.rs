@@ -4,11 +4,12 @@ pub mod broken_peaks;
 mod column;
 mod decoration;
 mod flora;
+mod giant_sword;
 pub(crate) mod mega_tree;
 mod noise;
 mod raster;
 mod spatial;
-mod structures;
+pub(super) mod structures;
 mod wilderness;
 
 use std::collections::HashSet;
@@ -355,6 +356,7 @@ fn ensure_chunk_generated(
     decoration::decorate_chunk(&mut chunk, pos, min_y, terrain, &top_y_by_column);
     flora::decorate_chunk(&mut chunk, pos, min_y, terrain, &top_y_by_column);
     structures::decorate_chunk(&mut chunk, pos, min_y, terrain);
+    giant_sword::decorate_chunk(&mut chunk, pos, min_y, terrain);
     overlay_mineral_ores(&mut chunk, pos, min_y, mineral_index, mineral_nodes);
     erase_harvested_spiritwood_logs(&mut chunk, pos, min_y, harvested_spiritwood);
     biome::fill_chunk_biomes(&mut chunk, pos.x, pos.z, WORLD_HEIGHT, terrain);

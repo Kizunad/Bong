@@ -60,6 +60,13 @@ pub fn decorate_chunk(
     terrain: &TerrainProvider,
     top_y_by_column: &[[i32; 16]; 16],
 ) {
+    // Sword sea zone: no vegetation — only bare stone and swords
+    if super::giant_sword::is_in_sword_sea(pos.x * 16, pos.z * 16)
+        && super::giant_sword::is_in_sword_sea(pos.x * 16 + 15, pos.z * 16 + 15)
+    {
+        return;
+    }
+
     let world_height = chunk.height() as i32;
     // Track which columns took a feature decoration so the ground-cover loop
     // can skip them — otherwise a boulder's lower rim sits on top of the

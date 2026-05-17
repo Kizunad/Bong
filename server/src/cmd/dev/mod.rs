@@ -2,6 +2,7 @@ pub mod clearinv;
 pub mod give;
 pub mod gm;
 pub mod health;
+pub mod heiwushi;
 pub mod kill;
 pub mod meridian;
 pub mod npc_scenario;
@@ -31,6 +32,7 @@ use valence::prelude::App;
 pub fn register(app: &mut App) {
     clearinv::register(app);
     give::register(app);
+    heiwushi::register(app);
     spawn::register(app);
     top::register(app);
     zones::register(app);

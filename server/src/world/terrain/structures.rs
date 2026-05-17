@@ -103,6 +103,13 @@ pub(super) fn decorate_chunk(
     min_y: i32,
     terrain: &TerrainProvider,
 ) {
+    // Sword sea has its own dedicated structure generator
+    if super::giant_sword::is_in_sword_sea(pos.x * 16, pos.z * 16)
+        && super::giant_sword::is_in_sword_sea(pos.x * 16 + 15, pos.z * 16 + 15)
+    {
+        return;
+    }
+
     let bounds = ChunkBounds::from_chunk_pos(pos);
     let world_height = chunk.height() as i32;
 
@@ -343,15 +350,15 @@ struct SpawnPortalProfile {
 }
 
 #[derive(Clone, Copy)]
-struct StructureBounds {
-    min_x: i32,
-    max_x: i32,
-    min_z: i32,
-    max_z: i32,
+pub(super) struct StructureBounds {
+    pub min_x: i32,
+    pub max_x: i32,
+    pub min_z: i32,
+    pub max_z: i32,
 }
 
 impl StructureBounds {
-    fn intersects_chunk(self, chunk: &ChunkBounds) -> bool {
+    pub(super) fn intersects_chunk(self, chunk: &ChunkBounds) -> bool {
         self.max_x >= chunk.min_x
             && self.min_x <= chunk.max_x
             && self.max_z >= chunk.min_z
