@@ -90,6 +90,7 @@ mod id 确认为 `iris`（非 `iris-flywheel-compat`）。
 | 天劫黑云 | `bong_tribulation` (0-1) | 顶部边缘暗化 + 雷光闪烁 mask |
 | 入定景深 | `bong_meditation` (0-1) | 假 DoF（按 depth buffer 模糊） |
 | 入魔黑暗 | `bong_demonic` (0-1) | 全局降饱和 + vignette 浓化 |
+| 强风 | `bong_wind_strength` (0-1) + `bong_wind_angle` (0-2π) | 方向性屏幕拉丝 + 雾气偏移 + 草/叶顶点摆幅加剧（gbuffers_terrain.vsh） |
 
 ### 3.2 资源结构
 
@@ -135,6 +136,8 @@ public class MixinCommonUniforms {
         holder.uniform1f(PER_FRAME, "bong_bloodmoon",     () -> BongClientState.getBloodmoon());
         holder.uniform1f(PER_FRAME, "bong_meditation",    () -> BongClientState.getMeditation());
         holder.uniform1f(PER_FRAME, "bong_demonic",       () -> BongClientState.getDemonic());
+        holder.uniform1f(PER_FRAME, "bong_wind_strength", () -> BongClientState.getWindStrength());
+        holder.uniform1f(PER_FRAME, "bong_wind_angle",    () -> BongClientState.getWindAngle());
     }
 }
 ```
@@ -156,25 +159,89 @@ public class MixinCommonUniforms {
 
 ## §5 实施节点
 
-### 5.1 Phase A —— 技术可行性验证（必须先做）
+### 5.0 Phase 0 —— 接入管线 + 测试平台（先做这个）
 
-- [ ] Mixin 注入 `bong_test_uniform = 1.0`
-- [ ] 写最小 shader pack：`final.fsh` 读 `bong_test_uniform`，颜色按值线性偏红
-- [ ] 装 Iris + 加载 pack，确认值能传通
-- [ ] 验证 Iris 1.6.x → 1.7.x 升级时 Mixin 注入点是否变化
+**目标**：搭好完整的数据通路和调试工具，让后续每个 shader 效果都能"写 GLSL → 热改 uniform → 即时看结果"，不再有环境障碍。
 
-### 5.2 Phase B —— shader pack 起手
+#### 5.0.1 依赖声明 & 运行时检测
 
-- [ ] §3.1 选 1 个效果先做（推荐 `bong_bloodmoon`，最简单）
-- [ ] composite1 + final pass 实现
-- [ ] 服务端事件 → 客户端 BongClientState → uniform → shader 联动
-- [ ] 端到端 demo：触发血月事件，全屏变红
+- [ ] `fabric.mod.json` 新增 `"recommends": { "iris": ">=1.6.0" }`
+- [ ] 启动检测 `FabricLoader.getInstance().isModLoaded("iris")`，结果写入 `BongIrisCompat.isAvailable()`
+- [ ] 未检测到 Iris 时：所有 Iris 代码路径 no-op，零副作用
+- [ ] 检测到 Iris 时：日志打印版本号，激活 Mixin 注入路径
 
-### 5.3 Phase C —— 全量 uniform 接入
+#### 5.0.2 BongClientState 单例
 
-- [ ] §3.1 全部 7 个效果实现
-- [ ] §4.3 uniform 契约文档定稿
-- [ ] 性能测试（多个效果同时激活 FPS 影响）
+- [ ] `client/src/main/java/com/bong/client/iris/BongClientState.java`
+- [ ] 内部 `float[] uniforms` 数组，按 enum `BongUniform` 索引（realm / lingqi / tribulation / enlightenment / inkwash / bloodmoon / meditation / demonic / wind_strength / wind_angle）
+- [ ] `set(BongUniform, float)` / `get(BongUniform)` → 直写直读
+- [ ] `tickInterpolate()` 每 client tick 对所有 uniform 做 lerp 平滑（速率可配，默认 0.1/tick）
+- [ ] 来源：服务端 `bong:shader_state` CustomPayload（S2C 频率 = 状态变化时 + 每 20 tick heartbeat）
+- [ ] 不依赖 Iris 本身——即使没装 Iris，`BongClientState` 照常更新（其他系统也可读）
+
+#### 5.0.3 Mixin 注入点
+
+- [ ] `MixinCommonUniforms.java`：§4.1 代码，注入全部 10 个 uniform
+- [ ] Mixin 配置仅在 `BongIrisCompat.isAvailable()` 为 true 时注册（条件 Mixin plugin / `@Pseudo` / refmap 隔离）
+- [ ] 注入失败（Iris 内部 API 变动）时 catch + 日志警告，不崩客户端
+
+#### 5.0.4 最小测试 shader pack
+
+- [ ] `client/src/main/resources/assets/bong/iris/bong_test.zip`（仅用于开发/CI，不随正式包分发）
+- [ ] 内容：`shaders/final.fsh` 读 `uniform float bong_test_uniform`，按值线性叠加红色 tint
+- [ ] 启动时自动复制到 `.minecraft/shaderpacks/bong_test.zip`（仅 dev 环境，release 不带）
+- [ ] README 写明手动测试步骤：装 Iris → 选 bong_test → `/bong shader set bong_test_uniform 0.5` → 屏幕半红
+
+#### 5.0.5 调试命令
+
+- [ ] `/bong shader list` —— 列出所有 uniform 当前值
+- [ ] `/bong shader set <name> <value>` —— 临时覆写（跳过服务端，直写 BongClientState）
+- [ ] `/bong shader reset` —— 清除覆写，恢复服务端驱动
+- [ ] `/bong shader dump` —— 打印 Iris 检测状态、当前 shader pack 名、注入是否成功
+
+#### 5.0.6 服务端 payload 定义
+
+- [ ] `server/src/iris/mod.rs`：`ShaderStatePayload` 结构体，字段对应 10 个 uniform float
+- [ ] 触发逻辑暂时只挂 dev 命令：`/shader_push <uniform> <value>` 直接广播 S2C payload
+- [ ] 后续各系统（天劫、血月、风场等）在自己的 plan 里往 `ShaderStatePayload` 写值
+
+#### 5.0.7 验收标准
+
+- [ ] `./gradlew runClient` 启动，日志出现 `[BongIris] Iris detected v1.x.x, uniform injection active`
+- [ ] 加载 `bong_test` shader pack，执行 `/bong shader set bong_test_uniform 1.0`，屏幕明显偏红
+- [ ] 执行 `/bong shader reset`，屏幕恢复正常
+- [ ] 不装 Iris 启动，日志出现 `[BongIris] Iris not found, shader features disabled`，无报错
+- [ ] 单测：`BongClientState` 的 lerp 逻辑、uniform 枚举完整性、set/get 正确性
+
+---
+
+### 5.1 Phase A —— 首个效果端到端（血月）
+
+**前置**：Phase 0 验收通过
+
+- [ ] 正式 shader pack `bong_xianxia.zip` 骨架：`shaders.properties` + `composite1.fsh` + `final.fsh` + `lib/common.glsl`
+- [ ] `lib/bloodmoon.glsl`：读 `bong_bloodmoon`，全屏色调偏红 + 高光蓝色压制
+- [ ] 服务端血月事件 → 写 `ShaderStatePayload.bloodmoon = 1.0` → S2C → `BongClientState` lerp 渐入
+- [ ] 端到端验收：触发血月 → 2 秒内全屏渐红 → 事件结束 → 2 秒渐回
+
+### 5.2 Phase B —— 核心效果组（5 个）
+
+- [ ] `bong_inkwash`：Sobel 边缘 + 灰阶 + 纸纹 noise
+- [ ] `bong_lingqi`：径向涟漪 + 屏幕微扭
+- [ ] `bong_tribulation`：顶部暗化 + 雷光闪烁 mask
+- [ ] `bong_enlightenment`：bloom 强化 + 色相微偏金
+- [ ] `bong_meditation`：depth buffer 假 DoF
+- [ ] 每个效果独立 `.glsl` lib，composite pass 按 uniform > 0.01 条件跳过（零开销）
+- [ ] 性能基准：6 效果同时 1.0 时 RTX 3060 保持 60fps（1080p）
+
+### 5.3 Phase C —— 环境效果组（风 + 入魔）
+
+- [ ] `bong_wind_strength` + `bong_wind_angle`：
+  - composite pass：方向性 motion blur 采样（沿 wind_angle 的屏幕空间拉丝）
+  - composite pass：雾气浓度 += wind_strength * 0.3
+  - `gbuffers_terrain.vsh`：草/叶顶点 `mc_Entity` 识别，sin 偏移幅度 *= (1 + wind_strength * 4)
+- [ ] `bong_demonic`：全局降饱和 + vignette 浓化
+- [ ] uniform 契约文档 `docs/iris_uniform_contract.md` 定稿（值范围、语义、更新频率、淡入规则）
 
 ### 5.4 Phase D（可选）—— 程序化切 pack
 
@@ -231,3 +298,4 @@ public class MixinCommonUniforms {
 ## §9 进度日志
 
 - 2026-04-25：审计 client/ 实际代码 —— `fabric.mod.json` 无 `recommends.iris` 声明，`client/src` 无 `IrisApi`/`CommonUniforms` Mixin / `BongClientState` / `bong_xianxia` shader pack 资源，全 plan 仍处 §1 调研结论阶段，§2–§5 任务全部未启动，所有 `[ ]` 维持原状。Phase A 技术验证尚未开跑；启动需待 `plan-vfx-v1.md` Phase 1 完成后再决定。
+- 2026-05-17：重构实施节点——新增 Phase 0（接入管线 + 测试平台），将原 Phase A 改为"首个效果端到端"，新增风效果 uniform（`bong_wind_strength` / `bong_wind_angle`），Phase B/C 按效果复杂度分组。优先级：先把调试工具链和数据通路跑通，后续效果开发变成纯 GLSL 迭代。
