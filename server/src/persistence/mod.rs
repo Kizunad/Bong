@@ -10902,9 +10902,18 @@ mod persistence_tests {
             "limit=3 occupied_before=0 must Granted; got {:?}",
             outcome.grant
         );
-        assert_eq!(outcome.quota.occupied_slots, 1);
-        assert_eq!(outcome.occupied_before, 0);
-        assert_eq!(outcome.limit_used, 3);
+        assert_eq!(
+            outcome.quota.occupied_slots, 1,
+            "Granted 必须把 quota.occupied_slots 由 0 增到 1；got outcome={outcome:?}"
+        );
+        assert_eq!(
+            outcome.occupied_before, 0,
+            "事务读取的 occupied_before 应为入前 quota 状态 (0)；got outcome={outcome:?}"
+        );
+        assert_eq!(
+            outcome.limit_used, 3,
+            "limit_used 必须回传调用方传入的 quota_limit=3；got outcome={outcome:?}"
+        );
         // active row 已删
         assert!(load_active_tribulation(&settings, "offline:A")
             .expect("active query should succeed")
@@ -10942,7 +10951,10 @@ mod persistence_tests {
             outcome.quota.occupied_slots, 2,
             "denied 不增量；occupied_slots 保持 2"
         );
-        assert_eq!(outcome.occupied_before, 2);
+        assert_eq!(
+            outcome.occupied_before, 2,
+            "occupied_before 必须报告事务起始时的 quota.occupied (=2)，与 limit 相等才触发 Denied；got outcome={outcome:?}"
+        );
         // active row 仍删除（entity 渡劫流程已完毕）
         assert!(load_active_tribulation(&settings, "offline:B")
             .expect("active query should succeed")
@@ -10964,7 +10976,10 @@ mod persistence_tests {
             AscensionGrant::Denied,
             "limit=0 永远不授予；灵气枯竭名额清零"
         );
-        assert_eq!(outcome.quota.occupied_slots, 0);
+        assert_eq!(
+            outcome.quota.occupied_slots, 0,
+            "limit=0 → Denied，quota.occupied_slots 必须保持 0 不增量；got outcome={outcome:?}"
+        );
         let _ = fs::remove_dir_all(root);
     }
 
@@ -11084,9 +11099,7 @@ mod persistence_tests {
                 Ok(outcome) => match outcome.grant {
                     AscensionGrant::Granted => granted_count += 1,
                     AscensionGrant::Denied => denied_count += 1,
-                    AscensionGrant::SettledOnly | AscensionGrant::MissingActive => {
-                        other_count += 1
-                    }
+                    AscensionGrant::SettledOnly | AscensionGrant::MissingActive => other_count += 1,
                 },
                 Err(error) => errors.push(error.to_string()),
             }

@@ -710,6 +710,13 @@ impl HalfStepRechallengeQueue {
     pub fn remove_char_id(&mut self, target: &str) {
         self.queue.retain(|e| e.char_id != target);
     }
+
+    /// plan-halfstep-buff-v1 P4 review #2：按 `char_id` 找队列项（dormant→hydrate
+    /// 换 entity 时复用旧 `entered_at` / `rechallenge_window_until`，防 §8 Q1 7d 窗口
+    /// 被刷新 + §8 Q2 FCFS 顺序乱）。返回第一个匹配项的拷贝，调用方负责后续 dedup。
+    pub fn find_by_char_id(&self, target: &str) -> Option<HalfStepRechallengeEntry> {
+        self.queue.iter().find(|e| e.char_id == target).cloned()
+    }
 }
 
 /// plan-halfstep-buff-v1 P3：重渡触发事件。dispatch system 取队列头有效 entry 时 emit；
@@ -2056,24 +2063,48 @@ pub fn track_tribulation_metrics_system(
                 }
                 metrics.halfstep_count = metrics.halfstep_count.saturating_add(1);
 
-                // 状态优先级：staged（本帧已处理） > existing_states（world 现状） > 全新
-                // staged 优先解决"commands 同帧延迟"问题；existing 解决"跨帧 buff 透传"问题
-                let prior_state = staged_states
+                // 状态优先级（P4 review #2 fix）：
+                //   1. staged（本帧已处理） —— 解决 commands 同帧延迟问题
+                //   2. existing_states（world 现状） —— 跨帧 buff 透传
+                //   3. queue 中按 char_id 找的旧 entry —— dormant→hydrate 换 ECS entity 时
+                //      复用原 entered_at/window，防 §8 Q1 7d 窗口被刷新 + §8 Q2 FCFS 乱序
+                //   4. 全新（用 clock.tick）
+                let prior_state_from_components = staged_states
                     .get(&ev.entity)
                     .copied()
                     .or_else(|| existing_states.get(ev.entity).ok().copied());
-                let (existing_entered_at, existing_window, already_buffed) = match prior_state {
-                    Some(state) => (
-                        Some(state.entered_at),
-                        Some(state.rechallenge_window_until),
-                        state.buff_applied,
-                    ),
-                    None => (None, None, false),
-                };
+                let (existing_entered_at, existing_window, already_buffed) =
+                    match prior_state_from_components {
+                        Some(state) => (
+                            Some(state.entered_at),
+                            Some(state.rechallenge_window_until),
+                            state.buff_applied,
+                        ),
+                        None => {
+                            // component 缺失 → 按 char_id 查队列里的旧 entry。
+                            // 这条 fallback 让换 ECS entity 后复用原窗口；buff_applied 留 false
+                            // 是保守的——component 没了证明不了真元/寿元被改过，hydrate 后
+                            // backfill 路径会补 buff（已有专属测试 pin 行为）
+                            match queue.find_by_char_id(&ev.result.char_id) {
+                                Some(entry) => (
+                                    Some(entry.entered_at),
+                                    Some(entry.rechallenge_window_until),
+                                    false,
+                                ),
+                                None => (None, None, false),
+                            }
+                        }
+                    };
 
                 let mut buff_now_applied = already_buffed;
+                // P4 review #1 fix：用 has_cultivation 兼做 is_dormant heuristic。
+                // 缺 Cultivation 的 entity 是 dormant 占位（参 plan-npc-virtualize-v1）；
+                // hydrated 玩家/NPC 都带 Cultivation。这条让 dispatch 系统派发的 trigger
+                // 能区分在线/休眠目标，hydrate-on-trigger 路径才能正确识别
+                let mut has_cultivation = false;
                 if !already_buffed {
                     if let Ok((mut cultivation, lifespan)) = targets.get_mut(ev.entity) {
+                        has_cultivation = true;
                         let before = cultivation.qi_max;
                         cultivation.qi_max *= 1.0 + HALFSTEP_QI_MAX_BONUS as f64;
                         let bonus_capacity = cultivation.qi_max - before;
@@ -2097,6 +2128,9 @@ pub fn track_tribulation_metrics_system(
                         }
                         buff_now_applied = true;
                     }
+                } else {
+                    // 已 buffed 不 reapply，但仍需要 has_cultivation 判 is_dormant
+                    has_cultivation = targets.get(ev.entity).is_ok();
                 }
 
                 let entered_at = existing_entered_at.unwrap_or(clock.tick);
@@ -2115,9 +2149,11 @@ pub fn track_tribulation_metrics_system(
 
                 // 确保队列里有 entry（dedup-then-enqueue，防止二次 HalfStep 留下重复或
                 // dispatch pop_front 过后永久失去重渡资格）。
-                // **双键 dedup**（CodeRabbit P3 review #3）：char_id 是持久化稳定键，
-                // entity 是 ECS 句柄；dormant→hydrate 之间 ECS entity 会换号，仅按 entity
-                // 清不掉同一角色的旧 entry，会造成同 char_id 双入队 + 收到重复 trigger
+                // **双键 dedup**：char_id 是持久化稳定键，entity 是 ECS 句柄；
+                // dormant→hydrate 之间 ECS entity 会换号，仅按 entity 清不掉同一角色的
+                // 旧 entry，会造成同 char_id 双入队 + 收到重复 trigger。
+                // 注意：必须先 find_by_char_id 取旧时间戳（上面 prior_state fallback 用），
+                // 再 remove_char_id 删旧条目
                 queue.remove_entity(ev.entity);
                 queue.remove_char_id(&ev.result.char_id);
                 queue.enqueue(HalfStepRechallengeEntry {
@@ -2125,11 +2161,7 @@ pub fn track_tribulation_metrics_system(
                     entity: ev.entity,
                     entered_at,
                     rechallenge_window_until: window_until,
-                    // is_dormant=false：hydrated entity 默认走在线路径。
-                    // dormant NPC 强制 hydrate 通路由 plan-npc-virtualize-v1
-                    // hydrate-on-trigger 系统直接 enqueue 带 is_dormant=true 的 entry
-                    // （那条路径不经此 system；本 system 只见 hydrated entity）
-                    is_dormant: false,
+                    is_dormant: !has_cultivation,
                 });
             }
             DuXuOutcomeV1::Ascended => {
@@ -8464,7 +8496,8 @@ mod tests {
     fn settlement_enqueues_halfstep_entity_on_first_settle() {
         let mut app = p0_metrics_test_app();
         app.world_mut().resource_mut::<CombatClock>().tick = 555;
-        let entity = app.world_mut().spawn(()).id();
+        // 用 hydrated entity（带 Cultivation）测 is_dormant=false 分支
+        let entity = spawn_halfstep_candidate(&mut app, 100.0, LifespanCapTable::SPIRIT);
         app.world_mut()
             .resource_mut::<Events<TribulationSettled>>()
             .send(make_settled_event(entity, DuXuOutcomeV1::HalfStep));
@@ -8479,7 +8512,10 @@ mod tests {
             entry.rechallenge_window_until,
             555 + RECHALLENGE_WINDOW_TICKS
         );
-        assert!(!entry.is_dormant);
+        assert!(
+            !entry.is_dormant,
+            "hydrated entity（带 Cultivation）必须 is_dormant=false"
+        );
     }
 
     #[test]
@@ -8687,6 +8723,95 @@ mod tests {
     }
 
     #[test]
+    fn enqueue_preserves_entered_at_when_entity_swaps_under_same_char_id() {
+        // P4 review #2：dormant→hydrate 换 ECS entity 时，新 entity 必须复用旧 entry 的
+        // entered_at + rechallenge_window_until（按 char_id 查队列），否则 7d 窗口被刷新
+        // + FCFS 顺序乱（玩家可以通过反复重连无限延长窗口）
+        let mut app = p0_metrics_test_app();
+        app.world_mut().resource_mut::<CombatClock>().tick = 100;
+        let entity_a = app.world_mut().spawn(()).id();
+        let mut ev_a = make_settled_event_with_source(
+            entity_a,
+            DuXuOutcomeV1::HalfStep,
+            JueBiTriggerSource::VoidQuotaExceeded,
+        );
+        ev_a.result.char_id = "swap_char".to_string();
+        app.world_mut()
+            .resource_mut::<Events<TribulationSettled>>()
+            .send(ev_a);
+        app.update();
+        let original_entered_at =
+            app.world().resource::<HalfStepRechallengeQueue>().queue[0].entered_at;
+        assert_eq!(original_entered_at, 100, "前提：原 entered_at=100");
+
+        // 模拟 dormant→hydrate：entity_a 被 despawn 或换号；新 entity_b 用同 char_id 再次结算
+        // 推进 tick 模拟跨帧重 spawn
+        app.world_mut().resource_mut::<CombatClock>().tick = 500;
+        let entity_b = app.world_mut().spawn(()).id();
+        assert_ne!(entity_a, entity_b);
+        let mut ev_b = make_settled_event_with_source(
+            entity_b,
+            DuXuOutcomeV1::HalfStep,
+            JueBiTriggerSource::VoidQuotaExceeded,
+        );
+        ev_b.result.char_id = "swap_char".to_string();
+        app.world_mut()
+            .resource_mut::<Events<TribulationSettled>>()
+            .send(ev_b);
+        app.update();
+
+        let queue = app.world().resource::<HalfStepRechallengeQueue>();
+        assert_eq!(queue.len(), 1, "char_id dedup 后只剩 1 条");
+        let entry = &queue.queue[0];
+        assert_eq!(
+            entry.entered_at, original_entered_at,
+            "新 entity 必须复用旧 entered_at={original_entered_at}（不能用 clock.tick=500 重建）；\
+             否则 §8 Q1 7d 窗口被刷新"
+        );
+        assert_eq!(
+            entry.rechallenge_window_until,
+            original_entered_at + RECHALLENGE_WINDOW_TICKS,
+            "rechallenge_window_until 必须从原 entered_at 推算（不漂移）"
+        );
+        assert_eq!(entry.entity, entity_b, "entity 字段更新为最新 ECS 句柄");
+    }
+
+    #[test]
+    fn enqueue_marks_dormant_when_entity_lacks_cultivation() {
+        // P4 review #1：缺 Cultivation 的 entity 是 dormant 占位（参 plan-npc-virtualize-v1
+        // 二态 MVP），入队时必须标记 is_dormant=true，让 dispatch trigger 接收方
+        // 区分在线/休眠目标
+        let mut app = p0_metrics_test_app();
+        let dormant = app.world_mut().spawn(()).id();
+        app.world_mut()
+            .resource_mut::<Events<TribulationSettled>>()
+            .send(make_settled_event(dormant, DuXuOutcomeV1::HalfStep));
+        app.update();
+        let queue = app.world().resource::<HalfStepRechallengeQueue>();
+        assert_eq!(queue.len(), 1);
+        assert!(
+            queue.queue[0].is_dormant,
+            "缺 Cultivation entity 必须标 is_dormant=true；hydrate-on-trigger 路径靠此识别"
+        );
+    }
+
+    #[test]
+    fn enqueue_marks_not_dormant_when_entity_has_cultivation() {
+        // 镜像测试：hydrated entity（带 Cultivation）必须 is_dormant=false
+        let mut app = p0_metrics_test_app();
+        let hydrated = spawn_halfstep_candidate(&mut app, 1000.0, LifespanCapTable::SPIRIT);
+        app.world_mut()
+            .resource_mut::<Events<TribulationSettled>>()
+            .send(make_settled_event(hydrated, DuXuOutcomeV1::HalfStep));
+        app.update();
+        let queue = app.world().resource::<HalfStepRechallengeQueue>();
+        assert!(
+            !queue.queue[0].is_dormant,
+            "带 Cultivation 的 hydrated entity 必须 is_dormant=false"
+        );
+    }
+
+    #[test]
     fn enqueue_dedupes_same_char_id_across_different_entities() {
         // CodeRabbit P4 review #4：dormant→hydrate 之间换了 ECS entity 但 char_id 持久；
         // 入队前的 char_id dedup 必须把 entity A 的旧 entry 清掉，最终队列只剩 entity B
@@ -8739,7 +8864,8 @@ mod tests {
     fn dispatch_rechallenge_emits_trigger_for_queue_head_on_quota_opened() {
         let mut app = p0_metrics_test_app();
         app.world_mut().resource_mut::<CombatClock>().tick = 1000;
-        let entity = app.world_mut().spawn(()).id();
+        // 用 hydrated entity（带 Cultivation）验证 is_dormant=false 的派发路径
+        let entity = spawn_halfstep_candidate(&mut app, 100.0, LifespanCapTable::SPIRIT);
         app.world_mut()
             .resource_mut::<Events<TribulationSettled>>()
             .send(make_settled_event(entity, DuXuOutcomeV1::HalfStep));
@@ -8758,7 +8884,10 @@ mod tests {
         );
         assert_eq!(triggers[0].entity, entity);
         assert_eq!(triggers[0].char_id, "halfstep_test_char");
-        assert!(!triggers[0].is_dormant);
+        assert!(
+            !triggers[0].is_dormant,
+            "hydrated entity 派发的 trigger 必须 is_dormant=false"
+        );
         // 队列已出队
         assert!(app
             .world()
@@ -8770,19 +8899,33 @@ mod tests {
     fn dispatch_drops_expired_entries_and_continues_to_next() {
         let mut app = p0_metrics_test_app();
         app.world_mut().resource_mut::<CombatClock>().tick = 100;
+        // stale 和 fresh 必须用不同 char_id，否则 fresh 会继承 stale 的窗口
+        // （P4 review #2 char_id-fallback 复用窗口的预期行为）
         let stale = app.world_mut().spawn(()).id();
+        let mut ev_stale = make_settled_event_with_source(
+            stale,
+            DuXuOutcomeV1::HalfStep,
+            JueBiTriggerSource::VoidQuotaExceeded,
+        );
+        ev_stale.result.char_id = "stale_char".to_string();
         app.world_mut()
             .resource_mut::<Events<TribulationSettled>>()
-            .send(make_settled_event(stale, DuXuOutcomeV1::HalfStep));
+            .send(ev_stale);
         app.update();
         // 推进到过窗
         let past_window = 100 + RECHALLENGE_WINDOW_TICKS + 1;
         app.world_mut().resource_mut::<CombatClock>().tick = past_window;
-        // 第二个 HalfStep entity（在过窗时刻入队）
+        // 第二个 HalfStep entity（在过窗时刻入队），独立 char_id 保证拿新窗口
         let fresh = app.world_mut().spawn(()).id();
+        let mut ev_fresh = make_settled_event_with_source(
+            fresh,
+            DuXuOutcomeV1::HalfStep,
+            JueBiTriggerSource::VoidQuotaExceeded,
+        );
+        ev_fresh.result.char_id = "fresh_char".to_string();
         app.world_mut()
             .resource_mut::<Events<TribulationSettled>>()
-            .send(make_settled_event(fresh, DuXuOutcomeV1::HalfStep));
+            .send(ev_fresh);
         app.update();
         // 派发：stale 应过窗 drop，fresh 应收到
         app.world_mut()

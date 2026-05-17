@@ -99,9 +99,13 @@
 
 > **实施方案修订（与原 plan 描述对照）**：原 plan 写"Redis `INCR` + `WATCH/MULTI/EXEC` / Lua"，但本项目 quota 持久层用 SQLite（不是 Redis；`ascension_quota` 表存于 server bong.db）。**最终采用 SQLite IMMEDIATE 事务方案**：`rusqlite::Connection::transaction_with_behavior(TransactionBehavior::Immediate)` 立即拿写锁，把 select-check-update 序列化，相同的"并发不漏判"保证、无需引入 Redis 依赖。Redis 方案已弃用/未采纳。
 
-- [x] 最终 `Ascended/HalfStep` 判定移入 DB transaction：**SQLite IMMEDIATE 事务** 内做原子 select-check-update（`persistence::try_complete_tribulation_ascension`）；返回三态 `AscensionGrant::{Granted, Denied, MissingActive}`，caller `juebi_settlement_system` 按 grant 路由 outcome
-- [x] 修复路径：`juebi_settlement_system` 调 `try_complete_tribulation_ascension(quota_limit)` 替换原 unconditional `complete_tribulation_ascension`；caller 用 `ascension_granted` 标志驱动 outcome enum + Realm 翻转（`server/src/cultivation/tribulation.rs`）
-- [x] ≥ 5 并发测试：4 单线程边界（grant / deny / limit=0 / missing-active）+ 1 真并发（`std::sync::Barrier + thread::spawn` 5 线程齐头并进，断言恰好 limit granted）+ 2 jue_bi 占额分支
+- [x] 最终 `Ascended/HalfStep` 判定移入 DB transaction：**SQLite IMMEDIATE 事务** 内做原子 select-check-update（`persistence::try_complete_tribulation_ascension`）；返回 **4 态** `AscensionGrant::{Granted, SettledOnly, Denied, MissingActive}`，caller `juebi_settlement_system` 按 grant 路由 outcome：
+  - `Granted` → 升 Realm 到 Void（占额成功路径）
+  - `SettledOnly` → 仅 settlement 完毕，不升 Realm（独立 JueBi，如 VoidActionExplodeZone）
+  - `Denied` → 回退 HalfStep + `tracing::info!`
+  - `MissingActive` → 回退 HalfStep + `tracing::warn!`（状态错乱，重复结算 / 外部清理）
+- [x] 修复路径：`juebi_settlement_system` 调 `try_complete_tribulation_ascension(quota_limit)` 替换原 unconditional `complete_tribulation_ascension`；caller 用 `match outcome.grant` 4 分支驱动 outcome enum + Realm 翻转（`server/src/cultivation/tribulation.rs`）
+- [x] ≥ 5 并发测试：5 单线程边界（grant / deny / limit=0 / missing-active / SettledOnly 非占额）+ 1 真并发（`std::sync::Barrier + thread::spawn` 5 线程齐头并进，断言恰好 limit granted + 零 SettledOnly/MissingActive）+ 1 jue_bi+void_quota_exceeded 占额分支
 
 **P2 验收**：并发测试 green —— 5 线程同时 settle, limit=2 → 严格 2 Granted + 3 Denied，final `occupied == limit`，零 SQLITE_BUSY/LOCKED 错误
 
@@ -222,8 +226,8 @@
 - `HalfStepState.buff_applied` 字段守卫（§8 Q4）：第二次 settlement 跳过重新应用
 
 **P2 — quota 原子授予**：
-- `server/src/persistence/mod.rs` `try_complete_tribulation_ascension` 新增（transaction 内校验 `occupied < limit`，超限 deny 返回 `AtomicAscensionOutcome { granted: false }`）
-- `server/src/cultivation/tribulation.rs` `juebi_settlement_system` 改用 `try_complete_*`：`ascension_granted` 标志驱动 outcome（Ascended/HalfStep），新增 `WorldQiBudget` + `VoidQuotaConfig` 系统 params
+- `server/src/persistence/mod.rs` `try_complete_tribulation_ascension` 新增（transaction 内校验 `occupied < limit`；返回 `AtomicAscensionOutcome { grant: AscensionGrant }` 4 态枚举：`Granted` / `SettledOnly` / `Denied` / `MissingActive`）
+- `server/src/cultivation/tribulation.rs` `juebi_settlement_system` 改用 `try_complete_*`：`match outcome.grant` 4 分支驱动 outcome（Ascended/HalfStep），新增 `WorldQiBudget` + `VoidQuotaConfig` 系统 params
 
 **P3 — 重渡机制 + dev 命令**：
 - `server/src/cultivation/tribulation.rs` `HalfStepRechallengeEntry` / `HalfStepRechallengeQueue` resource / `HalfStepRechallengeTriggerEvent` event
