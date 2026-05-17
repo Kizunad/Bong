@@ -162,9 +162,9 @@ pub struct CoffinCooldown {
 |------|-------------|------|------|------|
 | 精铁 | `refined_iron` | 2-4 | 30 | 锻造基础材料 |
 | 玄铁 | `xuan_iron` | 1-2 | 25 | 巨剑沧海特产矿 |
-| 灵木心 | `spirit_wood_core` | 1 | 20 | 剑柄材料 |
+| 灵木 | `spirit_wood` | 1 | 20 | 剑柄材料 |
 | 灵泉水 | `spirit_spring_water` | 1-3 | 15 | 淬剑辅材 |
-| 退活骨币 | `bone_coin_dead` | 3-8 | 10 | 前人遗留货币残骸 |
+| 腐朽骨币 | `rotten_bone_coin` | 3-8 | 10 | 前人遗留货币残骸 |
 
 每次开箱 roll 2-3 种，每种独立 roll 数量。
 
