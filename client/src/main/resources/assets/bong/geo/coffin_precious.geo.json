@@ -1,0 +1,217 @@
+{
+  "format_version": "1.12.0",
+  "minecraft:geometry": [
+    {
+      "description": {
+        "identifier": "geometry.bong.coffin_precious",
+        "texture_width": 128,
+        "texture_height": 128,
+        "visible_bounds_width": 5,
+        "visible_bounds_height": 3,
+        "visible_bounds_offset": [0, 1, 0]
+      },
+      "bones": [
+        {
+          "name": "root",
+          "pivot": [0, 0, 0]
+        },
+        {
+          "name": "altar_base",
+          "parent": "root",
+          "pivot": [0, 0, 0],
+          "cubes": [
+            {
+              "origin": [-12, 0, -16],
+              "size": [24, 1, 32],
+              "uv": [0, 0]
+            },
+            {
+              "origin": [-10, 1, -14],
+              "size": [20, 1, 28],
+              "uv": [0, 33]
+            },
+            {
+              "origin": [-9, 2, -13],
+              "size": [18, 1, 26],
+              "uv": [0, 62]
+            }
+          ]
+        },
+        {
+          "name": "body",
+          "parent": "root",
+          "pivot": [0, 3, 0],
+          "cubes": [
+            {
+              "origin": [-8, 3, -12],
+              "size": [16, 8, 24],
+              "uv": [0, 89]
+            }
+          ]
+        },
+        {
+          "name": "head_wall",
+          "parent": "body",
+          "pivot": [0, 7, -12],
+          "cubes": [
+            {
+              "origin": [-7, 3, -12.5],
+              "size": [14, 9, 1],
+              "uv": [64, 0]
+            }
+          ]
+        },
+        {
+          "name": "foot_wall",
+          "parent": "body",
+          "pivot": [0, 6, 12],
+          "cubes": [
+            {
+              "origin": [-6, 3, 11.5],
+              "size": [12, 7, 1],
+              "uv": [64, 10]
+            }
+          ]
+        },
+        {
+          "name": "lid",
+          "parent": "root",
+          "pivot": [0, 11, 0],
+          "cubes": [
+            {
+              "origin": [-8.5, 11, -12.5],
+              "size": [17, 2, 25],
+              "uv": [0, 33]
+            },
+            {
+              "origin": [-5, 13, -10],
+              "size": [10, 2, 20],
+              "uv": [56, 89]
+            },
+            {
+              "origin": [-3, 15, -8],
+              "size": [6, 2, 16],
+              "uv": [56, 111]
+            },
+            {
+              "origin": [-1.5, 17, -5],
+              "size": [3, 1, 10],
+              "uv": [84, 111]
+            }
+          ]
+        },
+        {
+          "name": "ornament_head",
+          "parent": "lid",
+          "pivot": [0, 14, -11],
+          "cubes": [
+            {
+              "origin": [-2, 13, -13],
+              "size": [4, 4, 2],
+              "uv": [94, 0]
+            },
+            {
+              "origin": [-1, 17, -12.5],
+              "size": [2, 3, 1],
+              "uv": [94, 6]
+            }
+          ]
+        },
+        {
+          "name": "ornament_foot",
+          "parent": "lid",
+          "pivot": [0, 13, 11],
+          "cubes": [
+            {
+              "origin": [-1.5, 13, 11],
+              "size": [3, 3, 2],
+              "uv": [104, 0]
+            }
+          ]
+        },
+        {
+          "name": "pillar_fl",
+          "parent": "altar_base",
+          "pivot": [-10, 0, -14],
+          "cubes": [
+            {
+              "origin": [-11.5, 0, -15.5],
+              "size": [3, 14, 3],
+              "uv": [112, 0]
+            },
+            {
+              "origin": [-12, 14, -16],
+              "size": [4, 1, 4],
+              "uv": [112, 17]
+            }
+          ]
+        },
+        {
+          "name": "pillar_fr",
+          "parent": "altar_base",
+          "pivot": [10, 0, -14],
+          "cubes": [
+            {
+              "origin": [8.5, 0, -15.5],
+              "size": [3, 14, 3],
+              "uv": [112, 22]
+            },
+            {
+              "origin": [8, 14, -16],
+              "size": [4, 1, 4],
+              "uv": [112, 39]
+            }
+          ]
+        },
+        {
+          "name": "pillar_bl",
+          "parent": "altar_base",
+          "pivot": [-10, 0, 14],
+          "cubes": [
+            {
+              "origin": [-11.5, 0, 12.5],
+              "size": [3, 12, 3],
+              "uv": [112, 44]
+            }
+          ]
+        },
+        {
+          "name": "pillar_br",
+          "parent": "altar_base",
+          "pivot": [10, 0, 14],
+          "cubes": [
+            {
+              "origin": [8.5, 0, 12.5],
+              "size": [3, 12, 3],
+              "uv": [112, 59]
+            }
+          ]
+        },
+        {
+          "name": "talisman_left",
+          "parent": "body",
+          "pivot": [-8, 6, 0],
+          "cubes": [
+            {
+              "origin": [-8.5, 4, -4],
+              "size": [0.5, 5, 8],
+              "uv": [94, 10]
+            }
+          ]
+        },
+        {
+          "name": "talisman_right",
+          "parent": "body",
+          "pivot": [8, 6, 0],
+          "cubes": [
+            {
+              "origin": [8, 4, -4],
+              "size": [0.5, 5, 8],
+              "uv": [94, 23]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

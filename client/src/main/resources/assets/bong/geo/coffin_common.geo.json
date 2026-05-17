@@ -1,0 +1,105 @@
+{
+  "format_version": "1.12.0",
+  "minecraft:geometry": [
+    {
+      "description": {
+        "identifier": "geometry.bong.coffin_common",
+        "texture_width": 64,
+        "texture_height": 64,
+        "visible_bounds_width": 3,
+        "visible_bounds_height": 2,
+        "visible_bounds_offset": [0, 0.5, 0]
+      },
+      "bones": [
+        {
+          "name": "root",
+          "pivot": [0, 0, 0]
+        },
+        {
+          "name": "base",
+          "parent": "root",
+          "pivot": [0, 0, 0],
+          "cubes": [
+            {
+              "origin": [-7, 0, -12],
+              "size": [14, 2, 24],
+              "uv": [0, 0]
+            }
+          ]
+        },
+        {
+          "name": "body",
+          "parent": "root",
+          "pivot": [0, 2, 0],
+          "cubes": [
+            {
+              "origin": [-6, 2, -11],
+              "size": [12, 6, 22],
+              "uv": [0, 26]
+            },
+            {
+              "origin": [-5, 2, -11],
+              "size": [10, 7, 4],
+              "uv": [0, 54],
+              "comments": "head_end_wider"
+            },
+            {
+              "origin": [-4, 2, 7],
+              "size": [8, 5, 4],
+              "uv": [28, 54],
+              "comments": "foot_end_narrower"
+            }
+          ]
+        },
+        {
+          "name": "lid",
+          "parent": "root",
+          "pivot": [0, 8, 0],
+          "cubes": [
+            {
+              "origin": [-6.5, 8, -11.5],
+              "size": [13, 2, 23],
+              "uv": [0, 12]
+            },
+            {
+              "origin": [-3, 10, -9],
+              "size": [6, 1, 18],
+              "uv": [16, 37],
+              "comments": "ridge"
+            },
+            {
+              "origin": [-2, 11, -6],
+              "size": [4, 1, 12],
+              "uv": [24, 42],
+              "comments": "ridge_top"
+            }
+          ]
+        },
+        {
+          "name": "handle_left",
+          "parent": "body",
+          "pivot": [-6, 4, 0],
+          "cubes": [
+            {
+              "origin": [-7.5, 3, -3],
+              "size": [1.5, 2, 6],
+              "uv": [48, 0]
+            }
+          ]
+        },
+        {
+          "name": "handle_right",
+          "parent": "body",
+          "pivot": [6, 4, 0],
+          "cubes": [
+            {
+              "origin": [6, 3, -3],
+              "size": [1.5, 2, 6],
+              "uv": [48, 8]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
