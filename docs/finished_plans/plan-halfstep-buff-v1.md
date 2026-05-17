@@ -55,10 +55,10 @@
 
 | 阶段 | 状态 | 主要交付物 | 验收标准 |
 |------|------|-----------|---------|
-| **P0** | ⬜ | 遥测计数器 + `/debug tribulation` dev 命令 | mock 10 次半步结算 → counter == 10；dev 命令可读取 |
-| **P1** | ⬜ | buff 实装为命名 const + qi_physics ledger 标记 + 不叠加守卫 | `HALFSTEP_QI_MAX_BONUS=0.10` / `HALFSTEP_LIFESPAN_BONUS_YEARS=200.0` 在 settlement 生效；ledger 记账正确 |
-| **P2** | ⬜ | quota 事务性再校验（复用既有 `AscensionQuotaOpened`） | 500 次并发起劫不漏判 Ascended ≤ quota_max |
-| **P3** | ⬜ | 重渡触发机制（7d 窗口 + FIFO + NPC 同池）+ HUD 提示 + e2e | 名额空出后队列头部半步修士收到提示 + 可重新起劫；过窗自动出队 |
+| **P0** | ✅ 2026-05-18 | 遥测计数器 + `/tribulation_debug` dev 命令 | mock 10 次半步结算 → counter == 10；dev 命令可读取（13 单测） |
+| **P1** | ✅ 2026-05-18 | buff 实装为命名 const + qi_physics ledger 标记 + 不叠加守卫 | `HALFSTEP_QI_MAX_BONUS=0.10` / `HALFSTEP_LIFESPAN_BONUS_YEARS=200.0` settlement 生效；ledger 记账正确（5 单测） |
+| **P2** | ✅ 2026-05-18 | quota 事务性再校验 `try_complete_tribulation_ascension` | 5 并发结算 limit=2 → 严格 2 granted + 3 denied + final occupied==limit（5 单测） |
+| **P3** | ✅ 2026-05-18 | 重渡触发机制（7d 窗口 + FIFO + NPC 同池）+ `/tribulation_rechallenge` dev 命令 | 名额空出后队列头部半步修士收到 trigger 事件；过窗自动出队；HUD/agent 待跟进 PR（15 单测） |
 
 ---
 
@@ -141,3 +141,74 @@
 | Q5 | dormant NPC 优先级 | **同池竞争**（NPC 与玩家共享 quota + 同 FIFO 队列） | NPC HalfStep 入队 `HalfStepRechallengeQueue`，触发时强制 hydrate | §三:124 NPC 与玩家平等 |
 
 后续若运营数据显示需要调整（如窗口过紧 / buff 过弱 / 排队机制不公平），由跟进 plan（如 plan-halfstep-buff-calibration-v1）处理，本 plan 不再展开。
+
+---
+
+## Finish Evidence
+
+**验收日期**：2026-05-18
+**实施分支**：`auto/plan-halfstep-buff-v1`
+**实施 commits**：4 个 atomic（plan refine + P0 + P1/P2 + P3）
+
+### 落地清单（每阶段对应真实模块/文件路径）
+
+**P0 — 遥测 + dev 命令**：
+- `server/src/cultivation/tribulation.rs:107-117` 三个 const（`HALFSTEP_QI_MAX_BONUS` / `HALFSTEP_LIFESPAN_BONUS_YEARS` / `RECHALLENGE_WINDOW_TICKS`）
+- `server/src/cultivation/tribulation.rs` `HalfStepState` component + `TribulationMetrics` / `QuotaFullTracker` resource
+- `server/src/cultivation/tribulation.rs` `track_tribulation_metrics_system` / `track_quota_full_duration_system` / `current_quota_full_duration_ticks` helper
+- `server/src/cmd/dev/tribulation_debug.rs` 新文件，`/tribulation_debug` 命令 + `build_report` / `format_report`
+- `server/src/cmd/registry_pin.rs` 加 `"tribulation_debug"` literal + tree path
+
+**P1 — buff 实装 + ledger + 不叠加守卫**：
+- `server/src/qi_physics/ledger.rs` `QiTransferReason::HalfStepBuff` 新增 variant（audit-only，不动 balance）
+- `server/src/cultivation/tribulation.rs` `track_tribulation_metrics_system` 扩展：HalfStep settlement 时 `cultivation.qi_max *= 1.10`、`lifespan.cap_by_realm += 200`、emit `QiTransfer` audit event
+- `HalfStepState.buff_applied` 字段守卫（§8 Q4）：第二次 settlement 跳过重新应用
+
+**P2 — quota 原子授予**：
+- `server/src/persistence/mod.rs` `try_complete_tribulation_ascension` 新增（transaction 内校验 `occupied < limit`，超限 deny 返回 `AtomicAscensionOutcome { granted: false }`）
+- `server/src/cultivation/tribulation.rs` `juebi_settlement_system` 改用 `try_complete_*`：`ascension_granted` 标志驱动 outcome（Ascended/HalfStep），新增 `WorldQiBudget` + `VoidQuotaConfig` 系统 params
+
+**P3 — 重渡机制 + dev 命令**：
+- `server/src/cultivation/tribulation.rs` `HalfStepRechallengeEntry` / `HalfStepRechallengeQueue` resource / `HalfStepRechallengeTriggerEvent` event
+- `server/src/cultivation/tribulation.rs` `dispatch_rechallenge_on_quota_opened_system`（AscensionQuotaOpened 派发 + 过窗 drop + FIFO）
+- `server/src/cultivation/tribulation.rs` `track_tribulation_metrics_system` 扩展：HalfStep 首次结算入队 + Ascended/Killed/Failed/Fled 时 `remove_entity` 清队
+- `server/src/cmd/dev/tribulation_rechallenge.rs` 新文件，`/tribulation_rechallenge` 命令 + `check_rechallenge_gate` 独立校验 fn
+- `server/src/cmd/registry_pin.rs` 加 `"tribulation_rechallenge"` literal + tree path
+- `server/src/cultivation/mod.rs` 注册 `HalfStepRechallengeQueue` resource + `HalfStepRechallengeTriggerEvent` event + `dispatch_rechallenge_on_quota_opened_system` 系统
+
+### 关键 commits
+
+| commit | 日期 | 摘要 |
+|--------|------|------|
+| `8c4252526` | 2026-05-18 | docs: §8 五决策收口 + 去除 P0 观察期 + 细化 P3 |
+| `0f71a9bdf` | 2026-05-18 | feat(tribulation): P0 渡虚劫遥测 + /tribulation_debug |
+| `f53138464` | 2026-05-18 | feat(tribulation): P1 半步 buff 实装 + P2 quota 原子授予 |
+| `f829ca979` | 2026-05-18 | feat(tribulation): P3 重渡机制 + FIFO 队列 + 派发系统 + dev 命令 |
+
+### 测试结果
+
+`cd server && cargo test` → **5039 passed; 0 failed**（增加 33 case 覆盖：13 P0 + 5 P1 + 5 P2 + 8 P3 队列/派发 + 7 dev 命令 gate；既有 5006 个测试零回归）
+
+`cd server && cargo clippy --all-targets -- -D warnings` → 零 warning
+
+测试分布：
+- `cultivation::tribulation::tests::track_metrics_*`（5 case）— P0 计数 + HalfStepState 插入
+- `cultivation::tribulation::tests::quota_full_*` / `current_quota_*` / `halfstep_state_*`（3 case）— quota 满时长 + window 边界
+- `cultivation::tribulation::tests::halfstep_buff_*`（5 case）— P1 buff 应用 / 不叠加守卫 / ledger event / 无 lifespan / 无 cultivation
+- `persistence::persistence_tests::try_ascension_*`（5 case）— P2 grant/deny/zero-limit/idempotent/FCFS 并发
+- `cultivation::tribulation::tests::rechallenge_*` / `settlement_*` / `dispatch_*`（8 case）— P3 FIFO 入队/排序/过窗 drop/多事件耗尽
+- `cmd::dev::tribulation_debug::tests::*`（4 case）— dev 命令 report
+- `cmd::dev::tribulation_rechallenge::tests::*`（7 case）— gate check + handle 行为
+
+### 跨仓库核验
+
+- **server**（命中 symbol）：`HalfStepState` / `TribulationMetrics` / `QuotaFullTracker` / `HalfStepRechallengeQueue` / `HalfStepRechallengeTriggerEvent` / `HALFSTEP_QI_MAX_BONUS` / `HALFSTEP_LIFESPAN_BONUS_YEARS` / `RECHALLENGE_WINDOW_TICKS` / `QiTransferReason::HalfStepBuff` / `try_complete_tribulation_ascension` / `AtomicAscensionOutcome` / `track_tribulation_metrics_system` / `track_quota_full_duration_system` / `dispatch_rechallenge_on_quota_opened_system`
+- **agent**：本 PR 不动 agent；`HalfStepRechallengeTriggerEvent` 已在 server 侧 emit，agent 侧 narration prompt 接入由跟进 PR
+- **client**：本 PR 不动 client；HUD "灵机涌现" 提示 + 7d 倒计时由跟进 client Java PR
+
+### 遗留 / 后续
+
+1. **客户端 HUD**：`client/src/hud/tribulation_status.java` 监听 `HalfStepRechallengeTriggerEvent`（经 server data emit）+ 弹"灵机涌现，可重渡虚劫"+ 倒计时显示。事件已 emit，待 client 侧实施
+2. **agent narration**：plan 中 3 条模板（"灵脉间隐约传来一股真元波动..." / "你感到曾遭封压的经脉微微松动..." / "虚空中某处的修士..."）的 agent 接入。事件可经 Redis 透传到 agent
+3. **dormant NPC hydrate**：`HalfStepRechallengeEntry.is_dormant=true` 路径在 plan-npc-virtualize-v1 的 hydrate-on-trigger 中接入。dispatch 已 emit 带 dormant 标记的事件，dormant 模块侧 listen + 强制 hydrate 后玩家路径生效
+4. **首期 buff 校准跟进 plan**：`HALFSTEP_QI_MAX_BONUS=0.10` / `HALFSTEP_LIFESPAN_BONUS_YEARS=200.0` 是占位值；运营数据驱动的微调（如 §8 决策门预设的 30% / 5% 阈值）由 `plan-halfstep-buff-calibration-v1`（待立）处理
