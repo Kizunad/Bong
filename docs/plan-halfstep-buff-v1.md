@@ -1,6 +1,6 @@
-# Bong · plan-halfstep-buff-v1 · 骨架
+# Bong · plan-halfstep-buff-v1
 
-**半步化虚 buff 强度校准 + 名额空出时重渡机制**——承接 plan-tribulation-v1 ✅ finished 中的延后事项：当前 buff 值（真元上限 +10%、寿元 +200 年）为占位，待观察"卡在半步化虚"玩家比例后校准；同时设计名额空出时半步化虚修士可重新尝试渡虚劫的机制（`重渡`）。
+**半步化虚 buff 落地 + 名额空出时重渡机制**——承接 plan-tribulation-v1 ✅ finished 中的延后事项：把当前占位 buff（真元上限 +10%、寿元 +200 年）实装为命名 const（后续运营数据驱动的微调由跟进 plan 负责，不在本 plan 范围）；同时落地名额空出时半步化虚修士可重新尝试渡虚劫的机制（`重渡`）。§8 五个开放问题已于 **2026-05-17** 全部收口（见下方 §8 决策表）。
 
 **背景**（plan-tribulation-v1 §9 遗留）：
 - `DuXuOutcomeV1::HalfStep` 已实装（`server/src/cultivation/tribulation.rs`），名额满时渡虚劫成功者获得通灵圆满永久 buff 但不占名额
@@ -43,9 +43,10 @@
 
 ## §0 设计轴心
 
-- **buff 校准原则**：半步化虚 buff 应"有意义但不等同化虚"——worldview §三:78 化虚是质变，半步只是量变。参考基线：通灵满级 vs 化虚的差距在 `qi_max × 1.5-3×`，则半步 buff 10-15% 是合理区间；寿元 +200 年在世界观寿元体系中约是通灵修士"多活半辈子"
-- **重渡触发时机**：名额空出（化虚修士死亡 / 被截胡降境）→ `AscensionQuotaStore` 广播 `QuotaSlotOpened` event → 通知所有 `HalfStep` 状态修士 / dormant NPC → 可手动申请重渡 or 自动排队
-- **重渡不免费**：重渡起劫消耗与正常渡虚劫相同（需要真元储备 + 3 波 AOE），不是"再点一次"
+- **buff 强度定调**：半步化虚 buff 应"有意义但不等同化虚"——worldview §三:78 化虚是质变，半步只是量变。本 plan 首期 const 取 `qi_max +10% / lifespan +200`（位于"通灵满级 vs 化虚 × 1.5-3×"差距的下沿、寿元体系中约通灵修士"多活半辈子"）；后续运营数据驱动的微调由跟进 plan 处理
+- **重渡触发时机**：名额空出（化虚修士死亡 / 被截胡降境）→ 复用既有 `AscensionQuotaOpened` event（`server/src/cultivation/tribulation.rs` 已实装，不另造 `QuotaSlotOpened`）→ 通知队列头部 `HalfStep` 修士 → 7 天 in-game 窗口内 FIFO 排队（详见 §8 Q1/Q2 决策）
+- **重渡不免费**：重渡起劫消耗与正常渡虚劫相同（需要真元储备 + 3 波 AOE），失败按正常渡劫降境（§8 Q3 决策）
+- **NPC 与玩家同池**：dormant HalfStep NPC 与玩家共用 quota 与 FIFO 队列（§8 Q5 决策，worldview §三:124 平等原则）
 - **quota 事务性再校验**：多人同时起劫并发 Ascended/HalfStep 最终判定移入 DB transaction（plan-tribulation-v1 §9 遗留）
 
 ---
@@ -54,39 +55,41 @@
 
 | 阶段 | 状态 | 主要交付物 | 验收标准 |
 |------|------|-----------|---------|
-| **P0** | ⬜ | 遥测仪表盘 + 观察期（≥ 2 weeks 数据）| 半步玩家比例 / quota 满时占比可观测 |
-| **P1** | ⬜ | buff 常数校准 + 常数提取为命名 const | `HALFSTEP_QI_MAX_BONUS` / `HALFSTEP_LIFESPAN_BONUS_YEARS` 写入配置 |
-| **P2** | ⬜ | quota 事务性再校验 + `QuotaSlotOpened` event | 并发起劫不漏判 Ascended/HalfStep |
-| **P3** | ⬜ | 重渡触发机制 + HUD 提示 + e2e | 名额空出后半步修士收到提示 + 可重新起劫 |
+| **P0** | ⬜ | 遥测计数器 + `/debug tribulation` dev 命令 | mock 10 次半步结算 → counter == 10；dev 命令可读取 |
+| **P1** | ⬜ | buff 实装为命名 const + qi_physics ledger 标记 + 不叠加守卫 | `HALFSTEP_QI_MAX_BONUS=0.10` / `HALFSTEP_LIFESPAN_BONUS_YEARS=200.0` 在 settlement 生效；ledger 记账正确 |
+| **P2** | ⬜ | quota 事务性再校验（复用既有 `AscensionQuotaOpened`） | 500 次并发起劫不漏判 Ascended ≤ quota_max |
+| **P3** | ⬜ | 重渡触发机制（7d 窗口 + FIFO + NPC 同池）+ HUD 提示 + e2e | 名额空出后队列头部半步修士收到提示 + 可重新起劫；过窗自动出队 |
 
 ---
 
-## P0 — 遥测仪表盘 + 观察期
+## P0 — 遥测计数器 + dev 命令
 
 - [ ] 遥测计数器（`server/src/cultivation/tribulation.rs` metrics 段）：
   - `tribulation_halfstep_count` — 累计半步化虚人次
   - `tribulation_ascended_count` — 累计化虚人次
   - `ascension_quota_full_duration_ticks` — quota 满时（current == max）的累计 tick 数
   - `halfstep_stuck_duration_ticks` — 当前半步修士平均滞留 tick 数
-- [ ] `/zone_qi list` 或 `/debug tribulation` 命令显示以上遥测数据（dev-only，CLAUDE.md 测试命令）
-- [ ] 观察期 ≥ 2 weeks（或服务器 100h in-game 等效），记录数据后再做 P1 校准
+- [ ] `/debug tribulation` 命令显示以上遥测数据（dev-only，CLAUDE.md 测试命令段；与 `/meridian` `/realm` 等同槽）
+- [ ] 该数据用于后续运营观察与跟进 plan 的 buff 校准，本 plan 不在 P0 内做观察期门控
 
-**P0 验收**：遥测计数器在 CI e2e 中可正确累计（mock 10 次半步结算 → counter == 10）
+**P0 验收**：遥测计数器在 CI e2e 中可正确累计（mock 10 次半步结算 → counter == 10）；`/debug tribulation` 在 cargo test 中可调用并返回结构化数据
 
 ---
 
-## P1 — buff 常数校准
+## P1 — buff 实装为命名 const + 不叠加守卫
 
-- [ ] 将 buff 值提取为命名 const（`server/src/cultivation/tribulation.rs`）：
+- [ ] 把 buff 值提取为命名 const（`server/src/cultivation/tribulation.rs`）：
   ```rust
-  pub const HALFSTEP_QI_MAX_BONUS: f32 = 0.10;    // 待 P0 数据后调整
-  pub const HALFSTEP_LIFESPAN_BONUS_YEARS: f64 = 200.0; // 待 P0 数据后调整
+  pub const HALFSTEP_QI_MAX_BONUS: f32 = 0.10;     // 首期值，后续运营数据驱动调整
+  pub const HALFSTEP_LIFESPAN_BONUS_YEARS: f64 = 200.0; // 首期值，后续运营数据驱动调整
   ```
-- [ ] 基于 P0 观察数据选定最终值（P1 决策门：若 > 30% 玩家卡在半步超过 1 month in-game → 提高 buff 强度；若 < 5% 才遇半步 → 维持现值）
+- [ ] **在 settlement 处真实应用 buff**（当前 `server/src/cultivation/tribulation.rs:1811` 只设置 `DuXuOutcomeV1::HalfStep` 枚举，buff 未应用，是真实代码缺口）：HalfStep 分支补 `cultivation.qi_max *= 1.0 + HALFSTEP_QI_MAX_BONUS` + `lifespan.cap += HALFSTEP_LIFESPAN_BONUS_YEARS`
+- [ ] qi_physics ledger 标记：`qi_max` 容量扩张走 `qi_physics::ledger::QiTransfer`（worldview §二 守恒律，参 plan-qi-physics-v1 P1 既有 API）—— 容量扩张视为 Tiandao → entity 的一次性转账记账，不破坏 SPIRIT_QI_TOTAL 恒定
+- [ ] **buff 不叠加守卫**（§8 Q4 决策）：第二次起 HalfStep 不再 reapply。用 `HalfStepBuffApplied` marker component（或 `HalfStepState.buff_applied: bool` 字段）做幂等校验，已应用则 skip
 - [ ] 回归测试：`assert_eq!(halfstep_buff.qi_max_factor, HALFSTEP_QI_MAX_BONUS)` 引用 const（**禁止测试写字面 0.10**，防止常数改了测试不跟）
-- [ ] ≥ 5 单测（buff 应用后 qi_max 正确计算 / lifespan 正确增加 / buff 不叠加（多次半步只取一次）/ dormant NPC 同样应用）
+- [ ] ≥ 5 单测（buff 应用后 qi_max 正确计算 / lifespan 正确增加 / **buff 不叠加（同一 entity 二次 HalfStep settlement 后 qi_max 不变化）** / dormant NPC 同样应用 / qi_physics ledger 记账正确）
 
-**P1 验收**：const 提取 PR 合并 + 5 单测 green
+**P1 验收**：const 提取 + settlement 实装 + 5 单测 green；run `cargo test cultivation::tribulation::halfstep` 全过
 
 ---
 
@@ -100,27 +103,41 @@
 
 ---
 
-## P3 — 重渡机制 + HUD
+## P3 — 重渡机制 + HUD（7d 窗口 + FIFO + NPC 同池）
 
-- [ ] `QuotaSlotOpened { new_quota: u32, timestamp: u64 }` event（`server/src/cultivation/tribulation.rs`）：化虚修士死亡 / 降境时 emit
-- [ ] `HalfStepRechallengeTriggerEvent { char_id: CharId }` event：广播给所有 HalfStep 状态玩家 / dormant NPC
-- [ ] 玩家收到 event → client HUD 提示"灵机涌现，可重渡虚劫"（`client/src/hud/tribulation_status.java`）
+- [ ] **复用既有 `AscensionQuotaOpened` event**（`server/src/cultivation/tribulation.rs` 已实装，不另造 `QuotaSlotOpened`）—— 化虚修士死亡 / 降境时已 emit
+- [ ] `HalfStepState { entered_at: u64, rechallenge_window_until: u64, buff_applied: bool }` component（玩家 + dormant NPC 通用，与 P1 buff 守卫共用）：
+  - `entered_at` = 进入 HalfStep 时的 server tick
+  - `rechallenge_window_until = entered_at + RECHALLENGE_WINDOW_TICKS`（§8 Q1 决策）
+- [ ] `RECHALLENGE_WINDOW_TICKS` const = `7 * 24 * 3600 * 20`（7 days in-game，server 20Hz；§8 Q1）
+- [ ] `HalfStepRechallengeQueue` resource：FIFO 队列，按 `entered_at` 升序保有所有当前 HalfStep 修士（玩家 + dormant NPC 同池；§8 Q2 + Q5 决策）
+- [ ] `dispatch_rechallenge_system`（`AscensionQuotaOpened` event 触发）：
+  - 取队列头部修士，若 `current_tick > rechallenge_window_until` → 出队丢弃（过窗），继续看下一个，直到找到有效或队列空
+  - 若头部修士为玩家 → emit `HalfStepRechallengeTriggerEvent { char_id }` 给该玩家
+  - 若头部修士为 dormant NPC → 强制 hydrate（复用 plan-npc-virtualize-v1 dormant 渡虚劫 hydrate 路径），hydrate 后入队第一行
+- [ ] 玩家收到 event → client HUD 提示"灵机涌现，可重渡虚劫"（`client/src/hud/tribulation_status.java`）+ 窗口剩余时长倒计时
 - [ ] 玩家响应：手动触发 `/tribulation rechallenge`（CLAUDE.md dev-only 命令段）or 在渡劫台交互
-- [ ] dormant NPC HalfStep → QuotaSlotOpened → `dormant_tribulation_rechal­lenge` 触发强制 hydrate（同 v1 dormant 渡虚劫路径）
+- [ ] **重渡失败结算复用 `tribulation::settle_failed` 通灵降境路径**（§8 Q3 决策：失败降境到通灵初，不另设独立宽容路径）
 - [ ] narration 模板（scope: broadcast，style: perception）：
-  - "灵脉间隐约传来一股真元波动，似有化虚修士陨落，名额空出一席。"（quota 空出时全服广播）
-  - "你感到曾遭封压的经脉微微松动，或许时机已到。"（HalfStep 玩家收到 rechal­lenge event）
-  - "虚空中某处的修士收到了相同的消息。"（多人同为 HalfStep 时 scope 缩为 zone）
-- [ ] ≥ 8 单测（QuotaSlotOpened emit 条件 / HalfStep 玩家收到通知 / dormant NPC 触发 hydrate / 非 HalfStep 不收到通知 / narration 正确 scope）
+  - "灵脉间隐约传来一股真元波动，似有化虚修士陨落，名额空出一席。"（quota 空出时全服广播，复用既有 quota_release narration）
+  - "你感到曾遭封压的经脉微微松动，或许时机已到。"（队列头部 HalfStep 玩家收到 rechallenge event；player scope）
+  - "虚空中某处的修士收到了相同的消息。"（队列后续多人均为 HalfStep 时；zone scope）
+- [ ] ≥ 8 单测（队列 FIFO 顺序 / 窗口过期出队 / dormant NPC 触发 hydrate / 玩家收到通知 / 非 HalfStep 不收到通知 / 重渡失败走 `settle_failed` 降境 / NPC 与玩家同池排序正确 / narration scope 正确）
 
-**P3 验收**：e2e 手测——化虚修士被击杀 → 全服 narration 广播 → HalfStep 玩家 HUD 提示 → 玩家可重新起劫
+**P3 验收**：e2e 手测——化虚修士被击杀 → 全服 narration 广播 → 队列头部 HalfStep 玩家 HUD 提示 + 7d 倒计时 → 玩家可重新起劫；并发场景下队列 FIFO 正确 + 过窗修士自动出队
 
 ---
 
-## §8 开放问题（P0 决策门后收口）
+## §8 决策（2026-05-17 closed）
 
-1. **重渡时间限制**：名额空出后多少 in-game 时间内有效（永久有效 vs 24h in-game 窗口）
-2. **重渡排队机制**：多个 HalfStep 修士同时请求时先到先得 vs 境界积分（当前真元 × 修炼时长）排序
-3. **重渡失败代价**：重渡失败是否降境（同正常渡劫失败，plan-tribulation-v1 §2 规则）or 有宽容机制（首次重渡失败不降境）
-4. **buff 值上限**：半步化虚可叠多次（如连续多次达到半步）→ buff 是否叠加 or 仅取最大值
-5. **dormant NPC 重渡优先级**：dormant HalfStep NPC 是否与玩家竞争同一名额（worldview §三 平等原则 = 应竞争）or NPC 单独 quota 池
+五个开放问题已在实施前互动决策全部收口（user 拍板，全部采纳推荐项；推荐依据见 worldview 锚点列）：
+
+| # | 问题 | 决策 | 关键实装 | worldview 锚点 |
+|---|------|------|---------|----------|
+| Q1 | 重渡有效时长 | **7 days in-game (~7h real)** | `RECHALLENGE_WINDOW_TICKS` const + `HalfStepState.rechallenge_window_until` | §三:78 稀缺 + §十:1013 寿元节奏 |
+| Q2 | 重渡排队 | **先到先得**（按 `HalfStepState.entered_at` FIFO） | `HalfStepRechallengeQueue` resource | §三:124 平等 |
+| Q3 | 重渡失败代价 | **同正常渡劫**（失败降境到通灵初） | 复用 `tribulation::settle_failed` 通灵降境路径 | §十二:1043 生死循环 + plan-tribulation-v1 §2 |
+| Q4 | buff 叠加 | **仅取最大**（多次半步只算一次） | `HalfStepState.buff_applied` 守卫，已应用则 skip | §三:78 化虚稀缺 |
+| Q5 | dormant NPC 优先级 | **同池竞争**（NPC 与玩家共享 quota + 同 FIFO 队列） | NPC HalfStep 入队 `HalfStepRechallengeQueue`，触发时强制 hydrate | §三:124 NPC 与玩家平等 |
+
+后续若运营数据显示需要调整（如窗口过紧 / buff 过弱 / 排队机制不公平），由跟进 plan（如 plan-halfstep-buff-calibration-v1）处理，本 plan 不再展开。
