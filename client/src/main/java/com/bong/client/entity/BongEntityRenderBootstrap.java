@@ -26,7 +26,11 @@ public final class BongEntityRenderBootstrap {
         new RendererBinding(BongEntityModelKind.DRY_CORPSE, DryCorpseRenderer.class, DryCorpseRenderer::new),
         new RendererBinding(BongEntityModelKind.BONE_SKELETON, BoneSkeletonRenderer.class, BoneSkeletonRenderer::new),
         new RendererBinding(BongEntityModelKind.STORAGE_POUCH, StoragePouchRenderer.class, StoragePouchRenderer::new),
-        new RendererBinding(BongEntityModelKind.STONE_CASKET, StoneCasketRenderer.class, StoneCasketRenderer::new)
+        new RendererBinding(BongEntityModelKind.STONE_CASKET, StoneCasketRenderer.class, StoneCasketRenderer::new),
+        // plan-supply-coffin-v1
+        new RendererBinding(BongEntityModelKind.COFFIN_COMMON, CoffinCommonRenderer.class, CoffinCommonRenderer::new),
+        new RendererBinding(BongEntityModelKind.COFFIN_RARE, CoffinRareRenderer.class, CoffinRareRenderer::new),
+        new RendererBinding(BongEntityModelKind.COFFIN_PRECIOUS, CoffinPreciousRenderer.class, CoffinPreciousRenderer::new)
     );
 
     private static final Map<BongEntityModelKind, Class<? extends BongModeledEntityRenderer>> RENDERER_CLASSES =

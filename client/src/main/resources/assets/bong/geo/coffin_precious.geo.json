@@ -38,7 +38,7 @@
           ]
         },
         {
-          "name": "body",
+          "name": "Body",
           "parent": "root",
           "pivot": [0, 3, 0],
           "cubes": [
@@ -51,7 +51,7 @@
         },
         {
           "name": "head_wall",
-          "parent": "body",
+          "parent": "Body",
           "pivot": [0, 7, -12],
           "cubes": [
             {
@@ -63,7 +63,7 @@
         },
         {
           "name": "foot_wall",
-          "parent": "body",
+          "parent": "Body",
           "pivot": [0, 6, 12],
           "cubes": [
             {
@@ -74,7 +74,7 @@
           ]
         },
         {
-          "name": "lid",
+          "name": "Lid",
           "parent": "root",
           "pivot": [0, 11, 0],
           "cubes": [
@@ -102,7 +102,7 @@
         },
         {
           "name": "ornament_head",
-          "parent": "lid",
+          "parent": "Lid",
           "pivot": [0, 14, -11],
           "cubes": [
             {
@@ -119,7 +119,7 @@
         },
         {
           "name": "ornament_foot",
-          "parent": "lid",
+          "parent": "Lid",
           "pivot": [0, 13, 11],
           "cubes": [
             {
@@ -189,7 +189,7 @@
         },
         {
           "name": "talisman_left",
-          "parent": "body",
+          "parent": "Body",
           "pivot": [-8, 6, 0],
           "cubes": [
             {
@@ -201,7 +201,7 @@
         },
         {
           "name": "talisman_right",
-          "parent": "body",
+          "parent": "Body",
           "pivot": [8, 6, 0],
           "cubes": [
             {

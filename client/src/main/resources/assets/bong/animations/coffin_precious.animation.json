@@ -1,0 +1,30 @@
+{
+  "format_version": "1.8.0",
+  "animations": {
+    "animation.bong.coffin_precious.idle": {
+      "loop": true,
+      "animation_length": 3.0,
+      "bones": {
+        "Lid": {
+          "rotation": {
+            "0.0": [
+              0,
+              0,
+              0
+            ],
+            "1.5": [
+              0,
+              0,
+              1.5
+            ],
+            "3.0": [
+              0,
+              0,
+              0
+            ]
+          }
+        }
+      }
+    }
+  }
+}

@@ -28,7 +28,7 @@
           ]
         },
         {
-          "name": "body",
+          "name": "Body",
           "parent": "root",
           "pivot": [0, 2, 0],
           "cubes": [
@@ -52,7 +52,7 @@
           ]
         },
         {
-          "name": "lid",
+          "name": "Lid",
           "parent": "root",
           "pivot": [0, 8, 0],
           "cubes": [
@@ -77,7 +77,7 @@
         },
         {
           "name": "handle_left",
-          "parent": "body",
+          "parent": "Body",
           "pivot": [-6, 4, 0],
           "cubes": [
             {
@@ -89,7 +89,7 @@
         },
         {
           "name": "handle_right",
-          "parent": "body",
+          "parent": "Body",
           "pivot": [6, 4, 0],
           "cubes": [
             {
