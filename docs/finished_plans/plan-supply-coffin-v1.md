@@ -406,7 +406,7 @@ server 5052 tests 全绿，clippy `--all-targets -D warnings` 干净。
 | P2 交互 | `server/src/supply_coffin/interact.rs` | `handle_supply_coffin_interact` / `SupplyCoffinOpened` event |
 | P2 刷新 | `server/src/supply_coffin/refresh.rs` | `supply_coffin_refresh_tick` / `pick_valid_pos` / `SupplyCoffinMarker` |
 | P2 视听 audio | `server/assets/audio/recipes/supply_coffin_break_{common,rare,precious}.json` + `supply_coffin_emerge.json` | recipe id 同名，注入 `SoundRecipeRegistry`（audio 总数 202 → 206） |
-| P2 视听 VFX | server emit `bong:supply_coffin_break` / `bong:supply_coffin_emerge` SpawnParticle —— 客户端 `BongSpriteParticle` / `BongGroundDecalParticle` 渲染器待视觉 polish PR（见遗留） |
+| P2 视听 VFX | server emit `bong:supply_coffin_break` / `bong:supply_coffin_emerge` SpawnParticle | 客户端 `BongSpriteParticle` / `BongGroundDecalParticle` 渲染器待视觉 polish PR（见遗留） |
 | P3 dev cmd | `server/src/cmd/dev/supply_coffin.rs` | `SupplyCoffinCmd::{Spawn,List,Reset,Cooldown}` + `handle_supply_coffin_cmd`，`registry_pin` 已含 4 条 path |
 | P3 测试 | `server/src/supply_coffin/tests.rs` + `server/src/supply_coffin/refresh.rs::tests` + `server/src/cmd/dev/supply_coffin.rs::tests` | 50 + 3 + 7 = 60 项；外加 `world::entity_model::tests::supply_coffin_grade_maps_to_visual_kind` |
 
