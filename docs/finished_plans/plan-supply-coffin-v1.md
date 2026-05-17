@@ -76,10 +76,10 @@
 
 | 阶段 | 内容 | 状态 |
 |------|------|------|
-| P0 | 物资棺数据模型 + Registry + 刷新计时器 + loot 表 | ⬜ |
-| P1 | Entity 渲染（3 个 BongEntityModelKind 注册 + client geo/texture 接入）| ⬜ |
-| P2 | 交互系统（开棺 → 发 loot → 碎裂 → 刷新排队）+ 视听 | ⬜ |
-| P3 | Dev 命令 + 饱和测试 + 集成联调 | ⬜ |
+| P0 | 物资棺数据模型 + Registry + 刷新计时器 + loot 表 | ✅ 2026-05-17 |
+| P1 | Entity 渲染（3 个 BongEntityModelKind 注册 + client geo/texture 接入）| ✅ 2026-05-17 |
+| P2 | 交互系统（开棺 → 发 loot → 碎裂 → 刷新排队）+ 视听 | ✅ 2026-05-17 |
+| P3 | Dev 命令 + 饱和测试 + 集成联调 | ✅ 2026-05-17 |
 
 ---
 
@@ -390,7 +390,7 @@ fn supply_coffin_refresh_tick(
 ## Finish Evidence
 
 **验收**：2026-05-17 全部 P0/P1/P2/P3 ✅，60 个本 plan 单测 + 4 跨模块测试通过，
-server 5050 tests 全绿，clippy `--all-targets -D warnings` 干净。
+server 5052 tests 全绿，clippy `--all-targets -D warnings` 干净。
 
 ### 落地清单（每阶段 ↔ 真实文件）
 
@@ -421,7 +421,7 @@ server 5050 tests 全绿，clippy `--all-targets -D warnings` 干净。
 
 | 命令 | 结果 |
 |------|------|
-| `cargo test`（server 全量） | 5050 passed / 0 failed |
+| `cargo test`（server 全量） | 5052 passed / 0 failed |
 | `cargo test --bin bong-server supply_coffin` | 50 passed（含 47 supply_coffin::tests + 3 refresh::tests） |
 | `cargo test --bin bong-server cmd::dev::supply_coffin` | 7 passed（dev cmd 集成） |
 | `cargo test --bin bong-server cmd::tests` | 4 passed（registry_pin frozen path 同步） |
