@@ -213,7 +213,12 @@ pub fn sword_proficiency_gain(current: f32, successful: bool, parry_bonus: bool)
 pub fn is_sword_attack_source(source: AttackSource) -> bool {
     matches!(
         source,
-        AttackSource::SwordCleave | AttackSource::SwordThrust
+        AttackSource::SwordCleave
+            | AttackSource::SwordThrust
+            | AttackSource::SwordPathCondenseEdge
+            | AttackSource::SwordPathQiSlash
+            | AttackSource::SwordPathResonance
+            | AttackSource::SwordPathManifest
     )
 }
 

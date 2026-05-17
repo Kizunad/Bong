@@ -1347,6 +1347,10 @@ fn attack_source_label(source: AttackSource) -> &'static str {
         AttackSource::FullPower => "full_power_strike",
         AttackSource::SwordCleave => "sword_cleave",
         AttackSource::SwordThrust => "sword_thrust",
+        AttackSource::SwordPathCondenseEdge => "sword_path_condense_edge",
+        AttackSource::SwordPathQiSlash => "sword_path_qi_slash",
+        AttackSource::SwordPathResonance => "sword_path_resonance",
+        AttackSource::SwordPathManifest => "sword_path_manifest",
     }
 }
 

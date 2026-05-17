@@ -939,7 +939,11 @@ mod tests {
         // plan-sword-path-v2 P0：五招按境界递增注册 + 残卷依赖经脉对齐
         // worldview §三/§四 + plan §P1.5。
         let expected: &[(&str, &str, &[&str])] = &[
-            ("sword_path.condense_edge", "Induce", &["LargeIntestine", "SmallIntestine"]),
+            (
+                "sword_path.condense_edge",
+                "Induce",
+                &["LargeIntestine", "SmallIntestine"],
+            ),
             (
                 "sword_path.qi_slash",
                 "Condense",
@@ -964,11 +968,8 @@ mod tests {
         for (id, realm, channels) in expected {
             let def = technique_definition(id).expect("sword_path technique must exist");
             assert_eq!(def.required_realm, *realm, "realm gate for {id}");
-            let actual_channels: Vec<&str> = def
-                .required_meridians
-                .iter()
-                .map(|m| m.channel)
-                .collect();
+            let actual_channels: Vec<&str> =
+                def.required_meridians.iter().map(|m| m.channel).collect();
             assert_eq!(
                 actual_channels, *channels,
                 "meridian deps for {id} should match plan §P1.5"
