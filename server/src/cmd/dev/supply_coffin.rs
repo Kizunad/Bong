@@ -302,25 +302,31 @@ mod tests {
 
     #[test]
     fn grade_arg_parses_all_three_variants() {
-        assert_eq!(
-            SupplyCoffinGradeArg::arg_from_str("common").unwrap().0,
-            SupplyCoffinGrade::Common
-        );
-        assert_eq!(
-            SupplyCoffinGradeArg::arg_from_str("rare").unwrap().0,
-            SupplyCoffinGrade::Rare
-        );
-        assert_eq!(
-            SupplyCoffinGradeArg::arg_from_str("precious").unwrap().0,
-            SupplyCoffinGrade::Precious
-        );
+        for (raw, expected) in [
+            ("common", SupplyCoffinGrade::Common),
+            ("rare", SupplyCoffinGrade::Rare),
+            ("precious", SupplyCoffinGrade::Precious),
+        ] {
+            let parsed = SupplyCoffinGradeArg::arg_from_str(raw)
+                .unwrap_or_else(|_| panic!("expected `{}` to parse, got Err", raw))
+                .0;
+            assert_eq!(
+                parsed, expected,
+                "expected `{}` to parse as {:?}; actual {:?}",
+                raw, expected, parsed
+            );
+        }
     }
 
     #[test]
     fn grade_arg_rejects_unknown_input() {
-        assert!(SupplyCoffinGradeArg::arg_from_str("epic").is_err());
-        assert!(SupplyCoffinGradeArg::arg_from_str("Common").is_err());
-        assert!(SupplyCoffinGradeArg::arg_from_str("").is_err());
+        for raw in ["epic", "Common", "", "legendary"] {
+            assert!(
+                SupplyCoffinGradeArg::arg_from_str(raw).is_err(),
+                "expected `{}` to be rejected (only snake_case common/rare/precious valid); actual Ok(...)",
+                raw
+            );
+        }
     }
 
     #[test]
@@ -331,8 +337,18 @@ mod tests {
         run_update(&mut app);
         // 不验证 chat 内容（需 Valence helper）；仅校验 registry 未被破坏。
         let r = app.world().resource::<SupplyCoffinRegistry>();
-        assert_eq!(r.active.len(), 0);
-        assert_eq!(r.cooldowns.len(), 0);
+        assert_eq!(
+            r.active.len(),
+            0,
+            "expected /supply_coffin list to be read-only; registry.active grew to {}",
+            r.active.len()
+        );
+        assert_eq!(
+            r.cooldowns.len(),
+            0,
+            "expected /supply_coffin list to be read-only; registry.cooldowns grew to {}",
+            r.cooldowns.len()
+        );
     }
 
     #[test]
@@ -356,16 +372,28 @@ mod tests {
         run_update(&mut app);
 
         let r = app.world().resource::<SupplyCoffinRegistry>();
-        assert_eq!(r.active.len(), 0, "reset 后 active 必空");
-        assert_eq!(r.cooldowns.len(), 0, "reset 后 cooldowns 必空");
+        assert_eq!(
+            r.active.len(),
+            0,
+            "expected reset to clear active; actual {} entries left (registry.active should be empty)",
+            r.active.len()
+        );
+        assert_eq!(
+            r.cooldowns.len(),
+            0,
+            "expected reset to clear cooldowns; actual {} entries left (registry.cooldowns should be empty)",
+            r.cooldowns.len()
+        );
     }
 
     #[test]
     fn cooldown_subcommand_retargets_existing_cooldown_to_finish_in_n_seconds() {
+        // Wall-clock independent: 命令处理时 handler 内部读取 wall clock 计算
+        // target_broken_at；测试只断言"now+5 时 ready 边界恰好落在 ready_at 上"，
+        // 而不是跨秒重新读取 wall clock。避免 CR review #5 指出的跨秒翻转。
         let mut app = setup_app(false);
         let player = spawn_test_client(&mut app, "Alice", [0.0, 0.0, 0.0]);
 
-        // 预先放 Common 冷却
         {
             let mut r = app.world_mut().resource_mut::<SupplyCoffinRegistry>();
             r.enqueue_cooldown(SupplyCoffinGrade::Common, current_wall_clock_secs());
@@ -382,15 +410,22 @@ mod tests {
         run_update(&mut app);
 
         let r = app.world().resource::<SupplyCoffinRegistry>();
-        // is_ready(now+5) 必须 true；is_ready(now+4) 必须 false
-        let now = current_wall_clock_secs();
+        let broken_at = r.cooldowns[0].broken_at_wall_secs;
+        // Cooldown 在 broken_at + cooldown_secs 时变 ready；handler 让该时刻 = 命令处理时 now + secs。
+        let ready_at = broken_at.saturating_add(SupplyCoffinGrade::Common.cooldown_secs());
         assert!(
-            !r.cooldowns[0].is_ready(now + 4),
-            "Cooldown 子命令应让 cooldown 在 5s 后到期，而不是 4s"
+            !r.cooldowns[0].is_ready(ready_at.saturating_sub(1)),
+            "expected cooldown not ready at ready_at-1 = {}; actual is_ready=true (broken_at={}, cooldown_secs={})",
+            ready_at.saturating_sub(1),
+            broken_at,
+            SupplyCoffinGrade::Common.cooldown_secs()
         );
         assert!(
-            r.cooldowns[0].is_ready(now + 5),
-            "Cooldown 子命令必须让 cooldown 恰在 5s 后到期"
+            r.cooldowns[0].is_ready(ready_at),
+            "expected cooldown ready exactly at ready_at = {}; actual is_ready=false (broken_at={}, cooldown_secs={})",
+            ready_at,
+            broken_at,
+            SupplyCoffinGrade::Common.cooldown_secs()
         );
     }
 
@@ -409,8 +444,76 @@ mod tests {
         run_update(&mut app);
 
         let r = app.world().resource::<SupplyCoffinRegistry>();
-        assert_eq!(r.cooldowns.len(), 1);
-        assert_eq!(r.cooldowns[0].grade, SupplyCoffinGrade::Precious);
+        assert_eq!(
+            r.cooldowns.len(),
+            1,
+            "expected exactly one cooldown enqueued; actual {} (handler should add a new entry when no match exists)",
+            r.cooldowns.len()
+        );
+        assert_eq!(
+            r.cooldowns[0].grade,
+            SupplyCoffinGrade::Precious,
+            "expected enqueued cooldown grade=Precious; actual {:?}",
+            r.cooldowns[0].grade
+        );
+    }
+
+    /// CR review #3：守门错误分支 —— `Option<ResMut<SupplyCoffinRegistry>>` 缺失时
+    /// handler 应 drain 事件并 return，不应对其它资源有副作用。
+    #[test]
+    fn handler_drains_events_and_noops_when_registry_resource_is_absent() {
+        // 用与 cmd::tests 同型的最小化 App：不 insert SupplyCoffinRegistry
+        let mut app = App::new();
+        app.add_event::<CommandResultEvent<SupplyCoffinCmd>>();
+        // 不 insert SupplyCoffinRegistry —— 模拟 cmd::register 早于运行时 register 的窗口
+        app.add_systems(Update, handle_supply_coffin_cmd);
+        let player = spawn_test_client(&mut app, "Alice", [0.0, 0.0, 0.0]);
+
+        // 发 3 个不同的 cmd —— 它们都应该被 drain，不应 panic
+        send(&mut app, player, SupplyCoffinCmd::List);
+        send(
+            &mut app,
+            player,
+            SupplyCoffinCmd::Cooldown {
+                grade: SupplyCoffinGrade::Common,
+                secs: 10,
+            },
+        );
+        send(&mut app, player, SupplyCoffinCmd::Reset);
+
+        run_update(&mut app);
+
+        // 第二次 tick：事件应已被 drain，不会再次处理（保证不会"延后"在 registry 加入后突然触发）
+        run_update(&mut app);
+
+        // 再 run 一轮也不应 panic
+        run_update(&mut app);
+    }
+
+    /// CR review #3：执行者缺 `Position` 时 spawn 子命令应平稳走错误分支，
+    /// 不应 panic、不应破坏 registry 状态。
+    #[test]
+    fn spawn_subcommand_noop_when_executor_lacks_position() {
+        let mut app = setup_app(true); // 有 DimensionLayers
+                                       // 用 spawn_empty 造一个"没有 Position 组件"的实体作为 executor
+        let bogus = app.world_mut().spawn_empty().id();
+
+        send(
+            &mut app,
+            bogus,
+            SupplyCoffinCmd::Spawn {
+                grade: SupplyCoffinGrade::Common,
+            },
+        );
+        run_update(&mut app);
+
+        let r = app.world().resource::<SupplyCoffinRegistry>();
+        assert_eq!(
+            r.active.len(),
+            0,
+            "expected /supply_coffin spawn to be a no-op when executor lacks Position; actual registry.active={}",
+            r.active.len()
+        );
     }
 
     #[test]

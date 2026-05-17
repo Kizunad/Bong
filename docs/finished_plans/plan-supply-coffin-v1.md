@@ -401,8 +401,8 @@ server 5050 tests 全绿，clippy `--all-targets -D warnings` 干净。
 | P0 单测 | `server/src/supply_coffin/tests.rs` | 35 P0 + 3 集成 = 38 个 supply_coffin::tests |
 | P1 server | `server/src/world/entity_model.rs` | `COFFIN_COMMON/RARE/PRECIOUS_ENTITY_KIND` (146/147/148) / `BongVisualKind::CoffinCommon/Rare/Precious` / `SupplyCoffinGrade::visual_kind()` |
 | P1 client | `client/src/main/java/com/bong/client/entity/BongEntityModelKind.java` | 三个枚举 `COFFIN_COMMON/RARE/PRECIOUS` raw_id 146-148 单 state "intact" |
-| P1 client renderer | `client/src/main/java/com/bong/client/entity/Coffin{Common,Rare,Precious}Renderer.java` + `BongEntityRenderBootstrap.java` 绑定 |
-| P1 client 资产 | `client/src/main/resources/assets/bong/geo/coffin_{common,rare,precious}.geo.json`（bone Body/Lid 大写化）/ `animations/coffin_*.animation.json`（Lid 摆动）/ `textures/entity/coffin_*_intact.png` |
+| P1 client renderer | `client/src/main/java/com/bong/client/entity/Coffin{Common,Rare,Precious}Renderer.java` | 三个 renderer 子类 + `BongEntityRenderBootstrap.java` 绑定 |
+| P1 client 资产 | `client/src/main/resources/assets/bong/{geo,animations,textures/entity}/coffin_*` | geo bone Body/Lid 大写化 / Lid 摆动 idle 动画 / `_intact` 后缀贴图 |
 | P2 交互 | `server/src/supply_coffin/interact.rs` | `handle_supply_coffin_interact` / `SupplyCoffinOpened` event |
 | P2 刷新 | `server/src/supply_coffin/refresh.rs` | `supply_coffin_refresh_tick` / `pick_valid_pos` / `SupplyCoffinMarker` |
 | P2 视听 audio | `server/assets/audio/recipes/supply_coffin_break_{common,rare,precious}.json` + `supply_coffin_emerge.json` | recipe id 同名，注入 `SoundRecipeRegistry`（audio 总数 202 → 206） |
@@ -435,7 +435,7 @@ server 5050 tests 全绿，clippy `--all-targets -D warnings` 干净。
   `cmd::dev::supply_coffin` + `world::entity_model::BongVisualKind::Coffin*` +
   4 audio recipe JSON + entity raw_id 146/147/148
 - **client** `BongEntityModelKind.COFFIN_{COMMON,RARE,PRECIOUS}` (raw_id
-  146/147/148) + 3 Coffin*Renderer 类 + 3 geo + 3 animation + 3 _intact.png
+  146/147/148) + 3 Coffin*Renderer 类 + 3 geo + 3 animation + 3 `_intact.png`
   贴图 + `BongEntityRenderBootstrap` 绑定
 - **agent** 不参与（plan 头部已声明 "agent: 无 —— 纯本地循环"）
 
