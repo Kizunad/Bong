@@ -16,6 +16,7 @@ pub fn register(app: &mut App) {
 mod tests {
     use super::*;
     use crate::combat::events::DebugCombatCommand;
+    use crate::cultivation::tribulation::StartDuXuRequest;
     use crate::fauna::rat_phase::RatPhaseChangeEvent;
     use crate::npc::scenario::PendingScenario;
     use crate::player::gameplay::GameplayActionQueue;
@@ -33,6 +34,7 @@ mod tests {
         app.add_event::<DebugCombatCommand>();
         app.add_event::<RatPhaseChangeEvent>();
         app.add_event::<TsySpawnRequested>();
+        app.add_event::<StartDuXuRequest>();
         app.insert_resource(PendingScenario::default());
         app.insert_resource(GameplayActionQueue::default());
         app.insert_resource(ShaderStatePayload::default());

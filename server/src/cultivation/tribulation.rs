@@ -657,6 +657,71 @@ pub struct QuotaFullTracker {
     pub full_since_tick: Option<u64>,
 }
 
+/// plan-halfstep-buff-v1 P3：单个 HalfStep 修士在重渡队列中的条目。
+///
+/// `entity` 是 ECS entity 句柄（hydrated 玩家 / hydrated NPC）；`is_dormant` 标记表示
+/// dormant NPC 占位（hydrate-on-trigger 由 dispatch system 处理，参 plan-npc-virtualize-v1）。
+/// `char_id` 为持久化键（dormant NPC 没有 entity，靠 char_id 唯一标识）。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HalfStepRechallengeEntry {
+    pub char_id: String,
+    pub entity: Entity,
+    pub entered_at: u64,
+    pub rechallenge_window_until: u64,
+    pub is_dormant: bool,
+}
+
+/// plan-halfstep-buff-v1 P3：FIFO 重渡队列（§8 Q2 先到先得 + Q5 NPC 同池）。
+///
+/// 按 `entered_at` 升序保有所有当前 HalfStep 修士（玩家 + dormant NPC 同池）；
+/// `AscensionQuotaOpened` 事件触发时 dispatch system 从头取一名通知重渡。
+/// 队列头部过窗（§8 Q1）的条目会被 dispatch system 直接出队，继续看下一个。
+#[derive(Resource, Debug, Default, Clone)]
+pub struct HalfStepRechallengeQueue {
+    pub queue: VecDeque<HalfStepRechallengeEntry>,
+}
+
+impl HalfStepRechallengeQueue {
+    /// 按 `entered_at` 升序插入。FIFO 顺序：早进 HalfStep 的先得通知。
+    pub fn enqueue(&mut self, entry: HalfStepRechallengeEntry) {
+        // 找到第一个 entered_at > 我的位置插入；若都 ≤ 我，则 push_back
+        let insert_at = self
+            .queue
+            .iter()
+            .position(|e| e.entered_at > entry.entered_at)
+            .unwrap_or(self.queue.len());
+        self.queue.insert(insert_at, entry);
+    }
+
+    pub fn len(&self) -> usize {
+        self.queue.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.queue.is_empty()
+    }
+
+    /// 清理一个 entity 的所有 entry（用于 Ascended / 老死 / 降境时手动出队）。
+    pub fn remove_entity(&mut self, target: Entity) {
+        self.queue.retain(|e| e.entity != target);
+    }
+
+    /// 清理一个 char_id 的所有 entry（dormant NPC 用，没有 entity 句柄）。
+    pub fn remove_char_id(&mut self, target: &str) {
+        self.queue.retain(|e| e.char_id != target);
+    }
+}
+
+/// plan-halfstep-buff-v1 P3：重渡触发事件。dispatch system 取队列头有效 entry 时 emit；
+/// HUD（玩家）/ dormant hydrate（NPC）订阅响应。
+#[derive(Debug, Clone, Event, PartialEq, Eq)]
+pub struct HalfStepRechallengeTriggerEvent {
+    pub char_id: String,
+    pub entity: Entity,
+    pub is_dormant: bool,
+    pub at_tick: u64,
+}
+
 #[derive(Debug, Clone, Event)]
 pub struct TribulationAnnounce {
     pub entity: Entity,
@@ -1930,16 +1995,15 @@ pub fn juebi_settlement_system(
 /// - **ledger 是 audit-only**：emit `QiTransfer` event 但不调 `WorldQiAccount::transfer`，因为
 ///   buff 是容量扩张不是真元搬运（worldview §三:78 + §二 守恒律）
 /// - **不覆盖已有 HalfStepState**：保留 `entered_at` 不漂移（§8 Q1 重渡窗口起点稳定）
+#[allow(clippy::too_many_arguments)]
 pub fn track_tribulation_metrics_system(
     mut commands: Commands,
     mut events: EventReader<TribulationSettled>,
     clock: Res<CombatClock>,
     mut metrics: ResMut<TribulationMetrics>,
-    mut targets: Query<(
-        &mut Cultivation,
-        Option<&mut LifespanComponent>,
-        Option<&HalfStepState>,
-    )>,
+    mut queue: ResMut<HalfStepRechallengeQueue>,
+    mut targets: Query<(&mut Cultivation, Option<&mut LifespanComponent>)>,
+    existing_states: Query<&HalfStepState>,
     mut qi_transfers: EventWriter<QiTransfer>,
 ) {
     for ev in events.read() {
@@ -1947,17 +2011,15 @@ pub fn track_tribulation_metrics_system(
             DuXuOutcomeV1::HalfStep => {
                 metrics.halfstep_count = metrics.halfstep_count.saturating_add(1);
 
-                // 先快速读 existing state（不动 borrow）确定是否需要应用 buff
-                let (already_buffed, has_state) = match targets.get(ev.entity) {
-                    Ok((_, _, state)) => {
-                        (state.map(|s| s.buff_applied).unwrap_or(false), state.is_some())
-                    }
+                // has_state 独立 query：不依赖 Cultivation 存在（dummy entity / dormant NPC 路径）
+                let (already_buffed, has_state) = match existing_states.get(ev.entity) {
+                    Ok(state) => (state.buff_applied, true),
                     Err(_) => (false, false),
                 };
 
                 let mut buff_now_applied = already_buffed;
                 if !already_buffed {
-                    if let Ok((mut cultivation, lifespan, _)) = targets.get_mut(ev.entity) {
+                    if let Ok((mut cultivation, lifespan)) = targets.get_mut(ev.entity) {
                         let before = cultivation.qi_max;
                         cultivation.qi_max *= 1.0 + HALFSTEP_QI_MAX_BONUS as f64;
                         let bonus_capacity = cultivation.qi_max - before;
@@ -1983,19 +2045,72 @@ pub fn track_tribulation_metrics_system(
                 }
 
                 if !has_state {
+                    let entered_at = clock.tick;
+                    let window_until = entered_at.saturating_add(RECHALLENGE_WINDOW_TICKS);
                     commands.entity(ev.entity).insert(HalfStepState {
-                        entered_at: clock.tick,
-                        rechallenge_window_until: clock
-                            .tick
-                            .saturating_add(RECHALLENGE_WINDOW_TICKS),
+                        entered_at,
+                        rechallenge_window_until: window_until,
                         buff_applied: buff_now_applied,
+                    });
+                    // plan-halfstep-buff-v1 P3：首次 HalfStep 入 FIFO 重渡队列
+                    queue.enqueue(HalfStepRechallengeEntry {
+                        char_id: ev.result.char_id.clone(),
+                        entity: ev.entity,
+                        entered_at,
+                        rechallenge_window_until: window_until,
+                        is_dormant: false,
                     });
                 }
             }
             DuXuOutcomeV1::Ascended => {
                 metrics.ascended_count = metrics.ascended_count.saturating_add(1);
+                // entity 化虚成功 → 不再是 HalfStep，从重渡队列移除（防止误派发）
+                queue.remove_entity(ev.entity);
             }
-            DuXuOutcomeV1::Killed | DuXuOutcomeV1::Failed | DuXuOutcomeV1::Fled => {}
+            DuXuOutcomeV1::Killed | DuXuOutcomeV1::Failed | DuXuOutcomeV1::Fled => {
+                // entity 不再 HalfStep（死亡 / 降境 / 逃跑），从队列清理
+                queue.remove_entity(ev.entity);
+            }
+        }
+    }
+}
+
+/// plan-halfstep-buff-v1 P3：`AscensionQuotaOpened` 事件触发派发——每个事件取队列头
+/// 一个有效（未过窗）entry 发出 `HalfStepRechallengeTriggerEvent`；过窗 entry 出队丢弃。
+///
+/// 玩家头部 entry → emit 事件，client HUD 监听后弹"灵机涌现，可重渡虚劫"提示。
+/// dormant NPC 头部 entry（`is_dormant=true`）→ 同样 emit；plan-npc-virtualize-v1
+/// 的 hydrate-on-trigger 路径监听 dormant 标记，强制 hydrate 后玩家路径生效。
+///
+/// 多个 quota slot 同时空出（多个 events）→ 队列出多个头，按 FIFO 顺序通知。
+pub fn dispatch_rechallenge_on_quota_opened_system(
+    mut events: EventReader<AscensionQuotaOpened>,
+    mut queue: ResMut<HalfStepRechallengeQueue>,
+    mut triggers: EventWriter<HalfStepRechallengeTriggerEvent>,
+    clock: Res<CombatClock>,
+) {
+    let event_count = events.read().count();
+    for _ in 0..event_count {
+        loop {
+            let Some(entry) = queue.queue.pop_front() else {
+                return; // 队列空，停
+            };
+            if clock.tick > entry.rechallenge_window_until {
+                tracing::info!(
+                    "[bong][cultivation] HalfStep rechallenge entry {} expired (window_until={}, current_tick={}), dropping",
+                    entry.char_id,
+                    entry.rechallenge_window_until,
+                    clock.tick,
+                );
+                continue; // 过窗，继续取下一个
+            }
+            triggers.send(HalfStepRechallengeTriggerEvent {
+                char_id: entry.char_id,
+                entity: entry.entity,
+                is_dormant: entry.is_dormant,
+                at_tick: clock.tick,
+            });
+            break; // 本 event 派发完毕
         }
     }
 }
@@ -7765,17 +7880,20 @@ mod tests {
         app.insert_resource(CombatClock::default());
         app.init_resource::<TribulationMetrics>();
         app.init_resource::<QuotaFullTracker>();
+        app.init_resource::<HalfStepRechallengeQueue>();
         app.insert_resource(WorldQiBudget::from_total(100.0));
         app.insert_resource(VoidQuotaConfig::default());
         app.add_event::<TribulationSettled>();
         app.add_event::<AscensionQuotaOpened>();
         app.add_event::<AscensionQuotaOccupied>();
         app.add_event::<QiTransfer>();
+        app.add_event::<HalfStepRechallengeTriggerEvent>();
         app.add_systems(
             Update,
             (
                 track_tribulation_metrics_system,
                 track_quota_full_duration_system,
+                dispatch_rechallenge_on_quota_opened_system,
             ),
         );
         app
@@ -8153,5 +8271,241 @@ mod tests {
                 .all(|t| !matches!(t.reason, QiTransferReason::HalfStepBuff)),
             "无 Cultivation 路径不应触发 HalfStepBuff 转账事件"
         );
+    }
+
+    // ─────────────────────────────────────────────────────────────
+    // plan-halfstep-buff-v1 P3：HalfStepRechallengeQueue + dispatch
+    // ─────────────────────────────────────────────────────────────
+
+    fn drain_rechallenge_triggers(app: &mut App) -> Vec<HalfStepRechallengeTriggerEvent> {
+        app.world_mut()
+            .resource_mut::<Events<HalfStepRechallengeTriggerEvent>>()
+            .drain()
+            .collect()
+    }
+
+    #[test]
+    fn rechallenge_queue_enqueue_preserves_fcfs_by_entered_at() {
+        let mut queue = HalfStepRechallengeQueue::default();
+        // 乱序入队
+        for (cid, et) in [("late", 300), ("early", 100), ("mid", 200)] {
+            queue.enqueue(HalfStepRechallengeEntry {
+                char_id: cid.to_string(),
+                entity: Entity::from_raw(1),
+                entered_at: et,
+                rechallenge_window_until: et + RECHALLENGE_WINDOW_TICKS,
+                is_dormant: false,
+            });
+        }
+        let order: Vec<&str> = queue.queue.iter().map(|e| e.char_id.as_str()).collect();
+        assert_eq!(
+            order,
+            vec!["early", "mid", "late"],
+            "enqueue 必须按 entered_at 升序插入，FCFS 公平性 (§8 Q2)"
+        );
+    }
+
+    #[test]
+    fn rechallenge_queue_remove_entity_clears_all_entries_for_target() {
+        let mut queue = HalfStepRechallengeQueue::default();
+        let target = Entity::from_raw(7);
+        let other = Entity::from_raw(8);
+        queue.enqueue(HalfStepRechallengeEntry {
+            char_id: "a".to_string(),
+            entity: target,
+            entered_at: 100,
+            rechallenge_window_until: 100 + RECHALLENGE_WINDOW_TICKS,
+            is_dormant: false,
+        });
+        queue.enqueue(HalfStepRechallengeEntry {
+            char_id: "b".to_string(),
+            entity: other,
+            entered_at: 200,
+            rechallenge_window_until: 200 + RECHALLENGE_WINDOW_TICKS,
+            is_dormant: false,
+        });
+        queue.remove_entity(target);
+        assert_eq!(queue.len(), 1, "目标 entity 应已移除");
+        assert_eq!(queue.queue[0].entity, other);
+    }
+
+    #[test]
+    fn settlement_enqueues_halfstep_entity_on_first_settle() {
+        let mut app = p0_metrics_test_app();
+        app.world_mut().resource_mut::<CombatClock>().tick = 555;
+        let entity = app.world_mut().spawn(()).id();
+        app.world_mut()
+            .resource_mut::<Events<TribulationSettled>>()
+            .send(make_settled_event(entity, DuXuOutcomeV1::HalfStep));
+        app.update();
+        let queue = app.world().resource::<HalfStepRechallengeQueue>();
+        assert_eq!(queue.len(), 1, "首次 HalfStep settlement 必入队");
+        let entry = &queue.queue[0];
+        assert_eq!(entry.char_id, "halfstep_test_char");
+        assert_eq!(entry.entity, entity);
+        assert_eq!(entry.entered_at, 555);
+        assert_eq!(entry.rechallenge_window_until, 555 + RECHALLENGE_WINDOW_TICKS);
+        assert!(!entry.is_dormant);
+    }
+
+    #[test]
+    fn settlement_does_not_double_enqueue_on_repeat_halfstep() {
+        let mut app = p0_metrics_test_app();
+        let entity = app.world_mut().spawn(()).id();
+        // 第一次 HalfStep
+        app.world_mut()
+            .resource_mut::<Events<TribulationSettled>>()
+            .send(make_settled_event(entity, DuXuOutcomeV1::HalfStep));
+        app.update();
+        // 第二次 HalfStep（已 has_state，应跳过入队）
+        app.world_mut()
+            .resource_mut::<Events<TribulationSettled>>()
+            .send(make_settled_event(entity, DuXuOutcomeV1::HalfStep));
+        app.update();
+        let queue = app.world().resource::<HalfStepRechallengeQueue>();
+        assert_eq!(
+            queue.len(),
+            1,
+            "二次 HalfStep settlement 必须不入队（has_state=true 守卫）"
+        );
+    }
+
+    #[test]
+    fn settlement_removes_from_queue_on_ascended_killed_failed_fled() {
+        for outcome in [
+            DuXuOutcomeV1::Ascended,
+            DuXuOutcomeV1::Killed,
+            DuXuOutcomeV1::Failed,
+            DuXuOutcomeV1::Fled,
+        ] {
+            let mut app = p0_metrics_test_app();
+            let entity = app.world_mut().spawn(()).id();
+            // 先制造一个 HalfStep 入队
+            app.world_mut()
+                .resource_mut::<Events<TribulationSettled>>()
+                .send(make_settled_event(entity, DuXuOutcomeV1::HalfStep));
+            app.update();
+            assert_eq!(app.world().resource::<HalfStepRechallengeQueue>().len(), 1);
+            // 后续 outcome 触发清队
+            app.world_mut()
+                .resource_mut::<Events<TribulationSettled>>()
+                .send(make_settled_event(entity, outcome));
+            app.update();
+            assert_eq!(
+                app.world().resource::<HalfStepRechallengeQueue>().len(),
+                0,
+                "outcome={outcome:?} 应触发 remove_entity 清队"
+            );
+        }
+    }
+
+    #[test]
+    fn dispatch_rechallenge_emits_trigger_for_queue_head_on_quota_opened() {
+        let mut app = p0_metrics_test_app();
+        app.world_mut().resource_mut::<CombatClock>().tick = 1000;
+        let entity = app.world_mut().spawn(()).id();
+        app.world_mut()
+            .resource_mut::<Events<TribulationSettled>>()
+            .send(make_settled_event(entity, DuXuOutcomeV1::HalfStep));
+        app.update();
+        // 触发名额空出
+        app.world_mut()
+            .resource_mut::<Events<AscensionQuotaOpened>>()
+            .send(AscensionQuotaOpened { occupied_slots: 1 });
+        app.update();
+        let triggers = drain_rechallenge_triggers(&mut app);
+        assert_eq!(
+            triggers.len(),
+            1,
+            "AscensionQuotaOpened 应派发一个 rechallenge trigger; got {}",
+            triggers.len()
+        );
+        assert_eq!(triggers[0].entity, entity);
+        assert_eq!(triggers[0].char_id, "halfstep_test_char");
+        assert!(!triggers[0].is_dormant);
+        // 队列已出队
+        assert!(app.world().resource::<HalfStepRechallengeQueue>().is_empty());
+    }
+
+    #[test]
+    fn dispatch_drops_expired_entries_and_continues_to_next() {
+        let mut app = p0_metrics_test_app();
+        app.world_mut().resource_mut::<CombatClock>().tick = 100;
+        let stale = app.world_mut().spawn(()).id();
+        app.world_mut()
+            .resource_mut::<Events<TribulationSettled>>()
+            .send(make_settled_event(stale, DuXuOutcomeV1::HalfStep));
+        app.update();
+        // 推进到过窗
+        let past_window = 100 + RECHALLENGE_WINDOW_TICKS + 1;
+        app.world_mut().resource_mut::<CombatClock>().tick = past_window;
+        // 第二个 HalfStep entity（在过窗时刻入队）
+        let fresh = app.world_mut().spawn(()).id();
+        app.world_mut()
+            .resource_mut::<Events<TribulationSettled>>()
+            .send(make_settled_event(fresh, DuXuOutcomeV1::HalfStep));
+        app.update();
+        // 派发：stale 应过窗 drop，fresh 应收到
+        app.world_mut()
+            .resource_mut::<Events<AscensionQuotaOpened>>()
+            .send(AscensionQuotaOpened { occupied_slots: 1 });
+        app.update();
+        let triggers = drain_rechallenge_triggers(&mut app);
+        assert_eq!(triggers.len(), 1);
+        assert_eq!(
+            triggers[0].entity, fresh,
+            "stale entry 应被丢弃，fresh entry 收到通知（§8 Q1 7d 窗口）"
+        );
+        assert!(app.world().resource::<HalfStepRechallengeQueue>().is_empty());
+    }
+
+    #[test]
+    fn dispatch_no_op_on_empty_queue() {
+        let mut app = p0_metrics_test_app();
+        app.world_mut()
+            .resource_mut::<Events<AscensionQuotaOpened>>()
+            .send(AscensionQuotaOpened { occupied_slots: 0 });
+        app.update();
+        let triggers = drain_rechallenge_triggers(&mut app);
+        assert!(
+            triggers.is_empty(),
+            "空队列应无声 no-op；触发空事件违反幂等性"
+        );
+    }
+
+    #[test]
+    fn dispatch_drains_multiple_events_in_fifo_order() {
+        let mut app = p0_metrics_test_app();
+        app.world_mut().resource_mut::<CombatClock>().tick = 100;
+        // 三个 HalfStep entity，按时间序入队
+        let mut entities = Vec::new();
+        for et in [100, 200, 300] {
+            app.world_mut().resource_mut::<CombatClock>().tick = et;
+            let e = app.world_mut().spawn(()).id();
+            entities.push(e);
+            app.world_mut()
+                .resource_mut::<Events<TribulationSettled>>()
+                .send(make_settled_event(e, DuXuOutcomeV1::HalfStep));
+            app.update();
+        }
+        assert_eq!(app.world().resource::<HalfStepRechallengeQueue>().len(), 3);
+        // 一次发送 3 个 AscensionQuotaOpened events
+        for _ in 0..3 {
+            app.world_mut()
+                .resource_mut::<Events<AscensionQuotaOpened>>()
+                .send(AscensionQuotaOpened { occupied_slots: 0 });
+        }
+        app.update();
+        let triggers = drain_rechallenge_triggers(&mut app);
+        assert_eq!(
+            triggers.len(),
+            3,
+            "3 个 AscensionQuotaOpened 应耗尽队列发 3 个 trigger"
+        );
+        // FIFO：早入队的先 trigger
+        assert_eq!(triggers[0].entity, entities[0]);
+        assert_eq!(triggers[1].entity, entities[1]);
+        assert_eq!(triggers[2].entity, entities[2]);
+        assert!(app.world().resource::<HalfStepRechallengeQueue>().is_empty());
     }
 }

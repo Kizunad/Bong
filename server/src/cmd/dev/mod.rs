@@ -23,6 +23,7 @@ pub mod top;
 pub mod tptree;
 pub mod tpzone;
 pub mod tribulation_debug;
+pub mod tribulation_rechallenge;
 pub mod tsy_spawn;
 pub mod whale;
 pub mod wound;
@@ -62,6 +63,7 @@ pub fn register(app: &mut App) {
     zone_qi::register(app);
     shader_push::register(app);
     tribulation_debug::register(app);
+    tribulation_rechallenge::register(app);
 }
 
 #[cfg(test)]
