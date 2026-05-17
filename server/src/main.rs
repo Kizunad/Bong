@@ -56,6 +56,10 @@ mod shader;
 mod skin;
 mod social;
 mod spiritwood;
+// supply_coffin：plan-supply-coffin-v1 — 巨剑沧海物资棺。
+// register() 注入 SupplyCoffinRegistry resource + interact/refresh systems +
+// SupplyCoffinOpened event。
+mod supply_coffin;
 // shelflife：M3a 注册 DecayProfileRegistry resource；compute_* / container_* 等
 // 辅助仍未被 system 调用（M5 消费侧接入前）— 故保留 #[allow(dead_code)]。
 #[allow(dead_code)]
@@ -149,6 +153,7 @@ fn run_server() {
     npc::register(&mut app);
     zhenfa::register(&mut app);
     sword_path::register(&mut app);
+    supply_coffin::register(&mut app);
     shader::register(&mut app);
     network::register(&mut app);
     persistence::register(&mut app);

@@ -149,6 +149,43 @@ public enum BongEntityModelKind {
         "intact",
         "searching",
         "looted"
+    ),
+    // plan-supply-coffin-v1：三档物资棺。当前仅 intact 单 state；P2 视觉 polish
+    // PR 接入 opening 裂纹叠层贴图后再扩 state count。raw_id 146-148 紧跟
+    // STONE_CASKET(145) 之后，与 server 端 entity_model.rs COFFIN_*_ENTITY_KIND
+    // 1:1 对应（plan-supply-coffin-v1 P1.1）。
+    COFFIN_COMMON(
+        "coffin_common",
+        "CoffinCommon.bbmodel",
+        146,
+        1.0f,
+        0.6f,
+        64,
+        10,
+        0.15f,
+        "intact"
+    ),
+    COFFIN_RARE(
+        "coffin_rare",
+        "CoffinRare.bbmodel",
+        147,
+        1.0f,
+        0.7f,
+        64,
+        10,
+        0.18f,
+        "intact"
+    ),
+    COFFIN_PRECIOUS(
+        "coffin_precious",
+        "CoffinPrecious.bbmodel",
+        148,
+        1.2f,
+        0.8f,
+        64,
+        10,
+        0.22f,
+        "intact"
     );
 
     private static final String MOD_ID = "bong";

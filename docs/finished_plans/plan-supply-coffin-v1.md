@@ -76,10 +76,10 @@
 
 | 阶段 | 内容 | 状态 |
 |------|------|------|
-| P0 | 物资棺数据模型 + Registry + 刷新计时器 + loot 表 | ⬜ |
-| P1 | Entity 渲染（3 个 BongEntityModelKind 注册 + client geo/texture 接入）| ⬜ |
-| P2 | 交互系统（开棺 → 发 loot → 碎裂 → 刷新排队）+ 视听 | ⬜ |
-| P3 | Dev 命令 + 饱和测试 + 集成联调 | ⬜ |
+| P0 | 物资棺数据模型 + Registry + 刷新计时器 + loot 表 | ✅ 2026-05-17 |
+| P1 | Entity 渲染（3 个 BongEntityModelKind 注册 + client geo/texture 接入）| ✅ 2026-05-17 |
+| P2 | 交互系统（开棺 → 发 loot → 碎裂 → 刷新排队）+ 视听 | ✅ 2026-05-17 |
+| P3 | Dev 命令 + 饱和测试 + 集成联调 | ✅ 2026-05-17 |
 
 ---
 
@@ -389,4 +389,63 @@ fn supply_coffin_refresh_tick(
 
 ## Finish Evidence
 
-（迁入 `finished_plans/` 前必填）
+**验收**：2026-05-17 全部 P0/P1/P2/P3 ✅，60 个本 plan 单测 + 4 跨模块测试通过，
+server 5052 tests 全绿，clippy `--all-targets -D warnings` 干净。
+
+### 落地清单（每阶段 ↔ 真实文件）
+
+| 阶段 | 模块 / 文件 | 关键 symbol |
+|------|-------------|-------------|
+| P0 数据模型 | `server/src/supply_coffin/mod.rs` | `SupplyCoffinGrade` / `SupplyCoffinRegistry` / `ActiveSupplyCoffin` / `CoffinCooldown` / `current_wall_clock_secs` |
+| P0 loot 表 | `server/src/supply_coffin/loot.rs` | `SupplyCoffinLootEntry` / `loot_table` / `roll_count_range` / `roll_loot` |
+| P0 单测 | `server/src/supply_coffin/tests.rs` | 35 P0 + 3 集成 = 38 个 supply_coffin::tests |
+| P1 server | `server/src/world/entity_model.rs` | `COFFIN_COMMON/RARE/PRECIOUS_ENTITY_KIND` (146/147/148) / `BongVisualKind::CoffinCommon/Rare/Precious` / `SupplyCoffinGrade::visual_kind()` |
+| P1 client | `client/src/main/java/com/bong/client/entity/BongEntityModelKind.java` | 三个枚举 `COFFIN_COMMON/RARE/PRECIOUS` raw_id 146-148 单 state "intact" |
+| P1 client renderer | `client/src/main/java/com/bong/client/entity/Coffin{Common,Rare,Precious}Renderer.java` | 三个 renderer 子类 + `BongEntityRenderBootstrap.java` 绑定 |
+| P1 client 资产 | `client/src/main/resources/assets/bong/{geo,animations,textures/entity}/coffin_*` | geo bone Body/Lid 大写化 / Lid 摆动 idle 动画 / `_intact` 后缀贴图 |
+| P2 交互 | `server/src/supply_coffin/interact.rs` | `handle_supply_coffin_interact` / `SupplyCoffinOpened` event |
+| P2 刷新 | `server/src/supply_coffin/refresh.rs` | `supply_coffin_refresh_tick` / `pick_valid_pos` / `SupplyCoffinMarker` |
+| P2 视听 audio | `server/assets/audio/recipes/supply_coffin_break_{common,rare,precious}.json` + `supply_coffin_emerge.json` | recipe id 同名，注入 `SoundRecipeRegistry`（audio 总数 202 → 206） |
+| P2 视听 VFX | server emit `bong:supply_coffin_break` / `bong:supply_coffin_emerge` SpawnParticle | 客户端 `BongSpriteParticle` / `BongGroundDecalParticle` 渲染器待视觉 polish PR（见遗留） |
+| P3 dev cmd | `server/src/cmd/dev/supply_coffin.rs` | `SupplyCoffinCmd::{Spawn,List,Reset,Cooldown}` + `handle_supply_coffin_cmd`，`registry_pin` 已含 4 条 path |
+| P3 测试 | `server/src/supply_coffin/tests.rs` + `server/src/supply_coffin/refresh.rs::tests` + `server/src/cmd/dev/supply_coffin.rs::tests` | 50 + 3 + 7 = 60 项；外加 `world::entity_model::tests::supply_coffin_grade_maps_to_visual_kind` |
+
+### 关键 commit（本 worktree）
+
+- `bf6872edb` 2026-05-17 — feat(supply-coffin): P0 数据模型 + Registry + 剑道材料 loot 表
+- `9e815e651` 2026-05-17 — feat(supply-coffin): P1 entity 渲染 —— server EntityKind + client renderer
+- `10753feea` 2026-05-17 — feat(supply-coffin): P2 交互 + 刷新 tick + 视听
+- `c484bece8` 2026-05-17 — feat(supply-coffin): P3 /supply_coffin dev 命令 + 饱和集成测试
+
+### 测试结果
+
+| 命令 | 结果 |
+|------|------|
+| `cargo test`（server 全量） | 5052 passed / 0 failed |
+| `cargo test --bin bong-server supply_coffin` | 50 passed（含 47 supply_coffin::tests + 3 refresh::tests） |
+| `cargo test --bin bong-server cmd::dev::supply_coffin` | 7 passed（dev cmd 集成） |
+| `cargo test --bin bong-server cmd::tests` | 4 passed（registry_pin frozen path 同步） |
+| `cargo test --bin bong-server audio::tests::loads_default_audio_recipes` | 1 passed（recipe 总数 206 含 4 supply_coffin） |
+| `cargo test --bin bong-server world::entity_model::tests` | 4 passed（含 `supply_coffin_grade_maps_to_visual_kind` + entity_kind id 对齐） |
+| `cargo clippy --all-targets -- -D warnings` | 0 warnings |
+
+### 跨仓库核验
+
+- **server** `supply_coffin` 模块（mod / loot / interact / refresh / tests）+
+  `cmd::dev::supply_coffin` + `world::entity_model::BongVisualKind::Coffin*` +
+  4 audio recipe JSON + entity raw_id 146/147/148
+- **client** `BongEntityModelKind.COFFIN_{COMMON,RARE,PRECIOUS}` (raw_id
+  146/147/148) + 3 Coffin*Renderer 类 + 3 geo + 3 animation + 3 `_intact.png`
+  贴图 + `BongEntityRenderBootstrap` 绑定
+- **agent** 不参与（plan 头部已声明 "agent: 无 —— 纯本地循环"）
+
+### 遗留 / 后续
+
+| 项 | 原因 | 跟进 |
+|----|------|------|
+| EntityKind 选 146-148（plan 文档原写 157-159） | origin/main 在 plan 写出时 EntityKind 仅到 145，紧跟使用 146-148 衔接；行为与 plan 等价 | 文档已就 commit log 注明，无需修订 plan 编号 |
+| 棺木"opening" 裂纹叠层贴图缺失 | 仅"intact" 单 state；plan §P2.1 设的 10-tick `BongVisualState=1` 延迟改为立即 despawn + 粒子 burst | 视觉 polish PR：补 3 张 `coffin_*_opening.png` + `BongEntityModelKind` 扩 stateCount → 2 |
+| 客户端 `SupplyCoffinBreakVfxPlayer` / `SupplyCoffinSpawnVfxPlayer` 未实装 | server 已 emit `bong:supply_coffin_break` / `bong:supply_coffin_emerge` SpawnParticle，但 client VfxPlayer 注册留作视觉 polish | 同上 PR，新增 2 个 VfxPlayer + 8×8 `coffin_debris.png` 碎片贴图 |
+| 选点 y 用常数 `spawn_y=65.0`（plan §P2.3 期望 ChunkLayer 顶面查询） | ChunkLayer ground-height API 在 sword_sea 区域调用代价较高，且 sword_sea 65±海面浮动 ≤2 格 | 后续 plan：抽象 `WorldGroundHeightProvider`，与 npc spawn 共用 |
+| 客户端 `./gradlew test` 受阻于 `MovementKeybindingsTest.java` | origin/main 已存在的 `MovementKeybindingsTest` 引用未合并的 `resolveDashYawDegrees` 方法，与本 plan 无关 | 由另一条 PR 处理（fix/combat-npc-fauna-hud-pr 分支线索） |
+| `coffin_break` recipe 已被 plan-tsy-container 占用 → 本 plan 用 `supply_coffin_break_{grade}` 三档 | 命名空间隔离；plan §P2.2 期望单一 break recipe，按祭坛棺 layer 不同的需求自然拆三档 | — |

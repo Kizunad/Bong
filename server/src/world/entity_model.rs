@@ -3,8 +3,11 @@
 //! The client registers `bong:*` entity types after whale (`raw_id=125`) and
 //! fauna (`raw_id=126..=134`). This module is the server-side mirror: existing
 //! gameplay components keep owning logic, while this layer spawns lightweight
-//! marker entities with the custom `EntityKind` ids (`135..=145`) that the
+//! marker entities with the custom `EntityKind` ids (`135..=148`) that the
 //! Fabric renderer consumes.
+//!
+//! `135..=145`: plan-entity-model-v1 / tsy-container entries.
+//! `146..=148`: plan-supply-coffin-v1 — 巨剑沧海 物资棺 (Common/Rare/Precious).
 
 use std::collections::{HashMap, HashSet};
 
@@ -39,6 +42,10 @@ pub const DRY_CORPSE_ENTITY_KIND: EntityKind = EntityKind::new(142);
 pub const BONE_SKELETON_ENTITY_KIND: EntityKind = EntityKind::new(143);
 pub const STORAGE_POUCH_ENTITY_KIND: EntityKind = EntityKind::new(144);
 pub const STONE_CASKET_ENTITY_KIND: EntityKind = EntityKind::new(145);
+// plan-supply-coffin-v1 — 巨剑沧海三档物资棺。客户端 BongEntityModelKind 同步注册。
+pub const COFFIN_COMMON_ENTITY_KIND: EntityKind = EntityKind::new(146);
+pub const COFFIN_RARE_ENTITY_KIND: EntityKind = EntityKind::new(147);
+pub const COFFIN_PRECIOUS_ENTITY_KIND: EntityKind = EntityKind::new(148);
 
 const BONG_VISUAL_STATE_INDEX: u8 = 8;
 const TRACKED_DATA_TYPE_INTEGER: u8 = 1;
@@ -56,6 +63,12 @@ pub enum BongVisualKind {
     BoneSkeleton,
     StoragePouch,
     StoneCasket,
+    // plan-supply-coffin-v1 — 三档物资棺，作为渲染壳。
+    // server 端的 spawn / despawn 由 supply_coffin::refresh 驱动；视觉 state
+    // 当前只用 0 (intact)，opening 状态贴图待后续视觉 polish PR 接入。
+    CoffinCommon,
+    CoffinRare,
+    CoffinPrecious,
 }
 
 impl BongVisualKind {
@@ -72,6 +85,21 @@ impl BongVisualKind {
             Self::BoneSkeleton => BONE_SKELETON_ENTITY_KIND,
             Self::StoragePouch => STORAGE_POUCH_ENTITY_KIND,
             Self::StoneCasket => STONE_CASKET_ENTITY_KIND,
+            Self::CoffinCommon => COFFIN_COMMON_ENTITY_KIND,
+            Self::CoffinRare => COFFIN_RARE_ENTITY_KIND,
+            Self::CoffinPrecious => COFFIN_PRECIOUS_ENTITY_KIND,
+        }
+    }
+}
+
+impl crate::supply_coffin::SupplyCoffinGrade {
+    /// Maps `SupplyCoffinGrade` → `BongVisualKind` for entity spawning.
+    /// plan-supply-coffin-v1 P1.1 — server-side render kind selection.
+    pub const fn visual_kind(self) -> BongVisualKind {
+        match self {
+            Self::Common => BongVisualKind::CoffinCommon,
+            Self::Rare => BongVisualKind::CoffinRare,
+            Self::Precious => BongVisualKind::CoffinPrecious,
         }
     }
 }
@@ -540,10 +568,33 @@ mod tests {
             BONE_SKELETON_ENTITY_KIND,
             STORAGE_POUCH_ENTITY_KIND,
             STONE_CASKET_ENTITY_KIND,
+            COFFIN_COMMON_ENTITY_KIND,
+            COFFIN_RARE_ENTITY_KIND,
+            COFFIN_PRECIOUS_ENTITY_KIND,
         ]
         .map(|kind| kind.get());
 
-        assert_eq!(ids, [135, 136, 137, 138, 139, 140, 141, 142, 143, 144, 145]);
+        assert_eq!(
+            ids,
+            [135, 136, 137, 138, 139, 140, 141, 142, 143, 144, 145, 146, 147, 148]
+        );
+    }
+
+    #[test]
+    fn supply_coffin_grade_maps_to_visual_kind() {
+        use crate::supply_coffin::SupplyCoffinGrade;
+        assert_eq!(
+            SupplyCoffinGrade::Common.visual_kind().entity_kind(),
+            COFFIN_COMMON_ENTITY_KIND
+        );
+        assert_eq!(
+            SupplyCoffinGrade::Rare.visual_kind().entity_kind(),
+            COFFIN_RARE_ENTITY_KIND
+        );
+        assert_eq!(
+            SupplyCoffinGrade::Precious.visual_kind().entity_kind(),
+            COFFIN_PRECIOUS_ENTITY_KIND
+        );
     }
 
     #[test]

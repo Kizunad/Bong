@@ -33,7 +33,7 @@
           ]
         },
         {
-          "name": "body",
+          "name": "Body",
           "parent": "root",
           "pivot": [0, 2, 0],
           "cubes": [
@@ -57,7 +57,7 @@
           ]
         },
         {
-          "name": "lid",
+          "name": "Lid",
           "parent": "root",
           "pivot": [0, 9, 0],
           "cubes": [
@@ -80,7 +80,7 @@
         },
         {
           "name": "trim_head",
-          "parent": "body",
+          "parent": "Body",
           "pivot": [0, 5, -12],
           "cubes": [
             {
@@ -92,7 +92,7 @@
         },
         {
           "name": "trim_foot",
-          "parent": "body",
+          "parent": "Body",
           "pivot": [0, 5, 12],
           "cubes": [
             {
@@ -104,7 +104,7 @@
         },
         {
           "name": "ring_left",
-          "parent": "body",
+          "parent": "Body",
           "pivot": [-7, 5, -3],
           "cubes": [
             {
@@ -116,7 +116,7 @@
         },
         {
           "name": "ring_right",
-          "parent": "body",
+          "parent": "Body",
           "pivot": [7, 5, -3],
           "cubes": [
             {
@@ -128,7 +128,7 @@
         },
         {
           "name": "ring_left_back",
-          "parent": "body",
+          "parent": "Body",
           "pivot": [-7, 5, 5],
           "cubes": [
             {
@@ -140,7 +140,7 @@
         },
         {
           "name": "ring_right_back",
-          "parent": "body",
+          "parent": "Body",
           "pivot": [7, 5, 5],
           "cubes": [
             {
@@ -152,7 +152,7 @@
         },
         {
           "name": "seal_plate",
-          "parent": "lid",
+          "parent": "Lid",
           "pivot": [0, 11, 0],
           "cubes": [
             {

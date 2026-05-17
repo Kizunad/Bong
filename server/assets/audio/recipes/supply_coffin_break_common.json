@@ -1,0 +1,12 @@
+{
+  "id": "supply_coffin_break_common",
+  "layers": [
+    { "sound": "minecraft:block.wood.break", "volume": 1.0, "pitch": 0.7, "delay_ticks": 0 },
+    { "sound": "minecraft:entity.item.break", "volume": 0.6, "pitch": 0.9, "delay_ticks": 2 },
+    { "sound": "minecraft:block.chest.open", "volume": 0.4, "pitch": 0.5, "delay_ticks": 0 }
+  ],
+  "priority": 50,
+  "attenuation": "world_3d",
+  "category": "BLOCKS",
+  "bus": "ENVIRONMENT"
+}

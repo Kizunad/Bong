@@ -23,6 +23,15 @@ pub fn is_in_sword_sea(world_x: i32, world_z: i32) -> bool {
         && (SWORD_SEA_MIN_Z..=SWORD_SEA_MAX_Z).contains(&world_z)
 }
 
+/// 巨剑沧海 xz 边界，供 supply_coffin / 其它 zone-bound 系统作为 AABB 输入。
+/// 返回 ((min_x, min_z), (max_x, max_z))，闭区间。
+pub const fn sword_sea_xz_bounds() -> ((i32, i32), (i32, i32)) {
+    (
+        (SWORD_SEA_MIN_X, SWORD_SEA_MIN_Z),
+        (SWORD_SEA_MAX_X, SWORD_SEA_MAX_Z),
+    )
+}
+
 fn chunk_overlaps_sword_sea(pos: ChunkPos) -> bool {
     let cx = pos.x * 16;
     let cz = pos.z * 16;
