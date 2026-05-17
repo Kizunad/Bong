@@ -2285,6 +2285,83 @@ pub fn complete_tribulation_ascension(
     Ok(quota)
 }
 
+/// plan-halfstep-buff-v1 P2 atomic ascension grant outcome。
+///
+/// `granted=true` 代表事务内 quota 校验通过、`occupied_slots` 已 +1；
+/// `granted=false` 代表 quota 已满（占用 == limit）或 limit=0（灵气枯竭），entity 应回退到 HalfStep。
+/// `limit_used` / `occupied_before` 字段便于追踪并发情况和测试断言。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AtomicAscensionOutcome {
+    pub quota: AscensionQuotaRecord,
+    pub granted: bool,
+    pub limit_used: u32,
+    pub occupied_before: u32,
+}
+
+/// plan-halfstep-buff-v1 P2：事务内原子校验 quota 限额后再决定是否授予 ascension。
+///
+/// 与 `complete_tribulation_ascension` 的区别：本函数在 transaction 内额外检查
+/// `quota.occupied_slots < quota_limit`；如果已满，**不增量、不破坏 DB 状态**，仅返回
+/// `granted=false`。即使如此，仍然删除 `tribulations_active` 行（entity 渡劫流程已完成，
+/// 不该留下孤儿 active 记录）+ commit quota 行（保持 idempotent）。
+///
+/// 这是 worldview §三:78 化虚稀缺性的硬保证 —— 即使多人同 tick 渡虚劫成功也不会突破名额上限。
+/// FCFS 顺序由 SQLite 单进程 transaction 队列保证（同一连接池序列化处理）。
+pub fn try_complete_tribulation_ascension(
+    settings: &PersistenceSettings,
+    char_id: &str,
+    quota_limit: u32,
+) -> io::Result<AtomicAscensionOutcome> {
+    let wall_clock = current_unix_seconds();
+    let mut connection = open_persistence_connection(settings)?;
+    let transaction = connection.transaction().map_err(io::Error::other)?;
+    let mut quota = load_ascension_quota_from_transaction(&transaction)?;
+    let occupied_before = quota.occupied_slots;
+
+    let active_kind_source: Option<(String, String)> = transaction
+        .query_row(
+            "SELECT kind, source FROM tribulations_active WHERE char_id = ?1",
+            params![char_id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .optional()
+        .map_err(io::Error::other)?;
+    let occupies_quota = matches!(
+        active_kind_source
+            .as_ref()
+            .map(|(kind, source)| (kind.as_str(), source.as_str())),
+        Some((TRIBULATION_KIND_DU_XU, _))
+            | Some((TRIBULATION_KIND_JUE_BI, JUEBI_SOURCE_VOID_QUOTA_EXCEEDED))
+    );
+
+    let granted = if occupies_quota {
+        if quota_limit > 0 && quota.occupied_slots < quota_limit {
+            quota.occupied_slots = quota.occupied_slots.saturating_add(1);
+            true
+        } else {
+            false
+        }
+    } else {
+        // 非占额路径（普通天劫意外 trigger 至此）—— 不增不减，视为通过
+        true
+    };
+
+    transaction
+        .execute(
+            "DELETE FROM tribulations_active WHERE char_id = ?1",
+            params![char_id],
+        )
+        .map_err(io::Error::other)?;
+    upsert_ascension_quota(&transaction, &quota, wall_clock)?;
+    transaction.commit().map_err(io::Error::other)?;
+    Ok(AtomicAscensionOutcome {
+        quota,
+        granted,
+        limit_used: quota_limit,
+        occupied_before,
+    })
+}
+
 pub fn release_ascension_quota_slot(
     settings: &PersistenceSettings,
 ) -> io::Result<AscensionQuotaRelease> {
@@ -10726,6 +10803,163 @@ mod persistence_tests {
         let loaded = load_faction_social_state(&settings).expect("social bundle should load");
         assert_eq!(loaded, bundle);
 
+        let _ = fs::remove_dir_all(root);
+    }
+
+    // ─────────────────────────────────────────────────────────────
+    // plan-halfstep-buff-v1 P2：try_complete_tribulation_ascension 原子校验
+    // ─────────────────────────────────────────────────────────────
+
+    fn persist_du_xu_active(settings: &PersistenceSettings, char_id: &str) {
+        persist_active_tribulation(
+            settings,
+            &ActiveTribulationRecord {
+                char_id: char_id.to_string(),
+                kind: "du_xu".to_string(),
+                source: String::new(),
+                origin_dimension: Some("minecraft:overworld".to_string()),
+                wave_current: 4,
+                waves_total: 5,
+                started_tick: 2880,
+                epicenter: [0.0, 64.0, 0.0],
+                intensity: 0.0,
+            },
+        )
+        .expect("active tribulation should persist");
+    }
+
+    #[test]
+    fn try_ascension_grants_when_within_limit() {
+        let (settings, root) = persistence_settings("ascension-atomic-grant");
+        bootstrap_sqlite(settings.db_path(), settings.server_run_id())
+            .expect("bootstrap should succeed");
+        persist_du_xu_active(&settings, "offline:A");
+        let outcome = try_complete_tribulation_ascension(&settings, "offline:A", 3)
+            .expect("atomic ascension should succeed");
+        assert!(
+            outcome.granted,
+            "limit=3 occupied_before=0 must grant; got denied"
+        );
+        assert_eq!(outcome.quota.occupied_slots, 1);
+        assert_eq!(outcome.occupied_before, 0);
+        assert_eq!(outcome.limit_used, 3);
+        // active row 已删
+        assert!(load_active_tribulation(&settings, "offline:A")
+            .expect("active query should succeed")
+            .is_none());
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn try_ascension_denies_when_at_limit_and_does_not_increment_quota() {
+        let (settings, root) = persistence_settings("ascension-atomic-deny-full");
+        bootstrap_sqlite(settings.db_path(), settings.server_run_id())
+            .expect("bootstrap should succeed");
+        // 先把 quota.occupied 设到 limit 边界
+        let wall_clock = current_unix_seconds();
+        {
+            let mut connection = open_persistence_connection(&settings).unwrap();
+            let transaction = connection.transaction().unwrap();
+            upsert_ascension_quota(
+                &transaction,
+                &AscensionQuotaRecord { occupied_slots: 2 },
+                wall_clock,
+            )
+            .unwrap();
+            transaction.commit().unwrap();
+        }
+        persist_du_xu_active(&settings, "offline:B");
+        let outcome = try_complete_tribulation_ascension(&settings, "offline:B", 2)
+            .expect("atomic ascension should succeed");
+        assert!(
+            !outcome.granted,
+            "occupied=2 limit=2 必须 deny；增长会突破 §三 化虚稀缺底线"
+        );
+        assert_eq!(
+            outcome.quota.occupied_slots, 2,
+            "denied 不增量；occupied_slots 保持 2"
+        );
+        assert_eq!(outcome.occupied_before, 2);
+        // active row 仍删除（entity 渡劫流程已完毕）
+        assert!(load_active_tribulation(&settings, "offline:B")
+            .expect("active query should succeed")
+            .is_none());
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn try_ascension_denies_when_quota_limit_zero() {
+        let (settings, root) = persistence_settings("ascension-atomic-deny-zero-limit");
+        bootstrap_sqlite(settings.db_path(), settings.server_run_id())
+            .expect("bootstrap should succeed");
+        persist_du_xu_active(&settings, "offline:C");
+        // quota_limit=0 代表灵气枯竭（compute_void_quota_limit(total_qi=0, ...) = 0）—— 必须拒绝
+        let outcome = try_complete_tribulation_ascension(&settings, "offline:C", 0)
+            .expect("atomic ascension should succeed");
+        assert!(!outcome.granted, "limit=0 永远不授予；灵气枯竭名额清零");
+        assert_eq!(outcome.quota.occupied_slots, 0);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn try_ascension_grants_idempotently_when_no_active_row() {
+        let (settings, root) = persistence_settings("ascension-atomic-idempotent");
+        bootstrap_sqlite(settings.db_path(), settings.server_run_id())
+            .expect("bootstrap should succeed");
+        // 无 active row（occupies_quota=false 路径）—— 不增不减，granted=true
+        let outcome = try_complete_tribulation_ascension(&settings, "offline:phantom", 3)
+            .expect("atomic ascension should succeed");
+        assert!(
+            outcome.granted,
+            "无 active 行（非占额路径）应 granted=true; 否则普通天劫意外死循环走不通"
+        );
+        assert_eq!(
+            outcome.quota.occupied_slots, 0,
+            "非占额路径不增量"
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn try_ascension_serializes_concurrent_settlements_via_fcfs() {
+        let (settings, root) = persistence_settings("ascension-atomic-concurrent-fcfs");
+        bootstrap_sqlite(settings.db_path(), settings.server_run_id())
+            .expect("bootstrap should succeed");
+        // 模拟 5 个 entity 同时结算，limit=2
+        // SQLite 单进程串行执行 transactions（同一 connection pool），FCFS by call order
+        for i in 0..5 {
+            persist_du_xu_active(&settings, &format!("offline:R{i}"));
+        }
+        let mut granted_count = 0;
+        let mut denied_count = 0;
+        for i in 0..5 {
+            let outcome = try_complete_tribulation_ascension(&settings, &format!("offline:R{i}"), 2)
+                .expect("atomic ascension should succeed");
+            if outcome.granted {
+                granted_count += 1;
+            } else {
+                denied_count += 1;
+            }
+        }
+        assert_eq!(
+            granted_count, 2,
+            "limit=2 + 5 并发结算应恰好 2 granted；得到 {granted_count}"
+        );
+        assert_eq!(
+            denied_count, 3,
+            "剩余 3 应全部 denied；得到 {denied_count}"
+        );
+        let final_quota = load_ascension_quota(&settings).expect("final quota load");
+        assert_eq!(
+            final_quota.occupied_slots, 2,
+            "最终 occupied 必须严格 == limit；任何 > limit 都是 §三 稀缺性突破"
+        );
+        // 所有 active 行都被清理（无论 granted/denied）
+        for i in 0..5 {
+            assert!(load_active_tribulation(&settings, &format!("offline:R{i}"))
+                .unwrap()
+                .is_none());
+        }
         let _ = fs::remove_dir_all(root);
     }
 }
