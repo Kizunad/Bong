@@ -25,6 +25,9 @@ public enum BongUniform {
     }
 
     public static BongUniform fromShaderName(String name) {
+        if (name == null) {
+            return null;
+        }
         for (BongUniform u : values()) {
             if (u.shaderName.equals(name)) {
                 return u;

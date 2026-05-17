@@ -28,13 +28,21 @@ public final class IrisBootstrap {
                     byte[] bytes = new byte[readableBytes];
                     buf.readBytes(bytes);
 
-                    String jsonPayload = ServerDataEnvelope.decodeUtf8(bytes);
-                    client.execute(() -> {
-                        boolean handled = ShaderStateHandler.handle(jsonPayload);
-                        if (!handled) {
-                            BongClient.LOGGER.warn("[BongIris] Ignoring bong:shader_state payload ({} bytes)", readableBytes);
-                        }
-                    });
+                    try {
+                        String jsonPayload = ServerDataEnvelope.decodeUtf8(bytes);
+                        client.execute(() -> {
+                            try {
+                                boolean handled = ShaderStateHandler.handle(jsonPayload);
+                                if (!handled) {
+                                    BongClient.LOGGER.warn("[BongIris] Ignoring bong:shader_state payload ({} bytes)", readableBytes);
+                                }
+                            } catch (RuntimeException ex) {
+                                BongClient.LOGGER.warn("[BongIris] Failed to handle shader_state payload ({} bytes)", readableBytes, ex);
+                            }
+                        });
+                    } catch (RuntimeException ex) {
+                        BongClient.LOGGER.warn("[BongIris] Failed to decode shader_state payload ({} bytes)", readableBytes, ex);
+                    }
                 }
         );
     }

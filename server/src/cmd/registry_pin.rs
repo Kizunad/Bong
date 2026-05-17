@@ -20,7 +20,6 @@ pub const COMMAND_NAMES: &[&str] = &[
     "spawn",
     "stamina",
     "summon",
-    "summon",
     "technique",
     "time",
     "top",
@@ -91,9 +90,9 @@ mod tests {
     use super::*;
 
     #[test]
-    fn command_names_are_sorted() {
+    fn command_names_are_sorted_and_unique() {
         assert!(
-            COMMAND_NAMES.windows(2).all(|pair| pair[0] <= pair[1]),
+            COMMAND_NAMES.windows(2).all(|pair| pair[0] < pair[1]),
             "COMMAND_NAMES must stay sorted so command tree diffs are reviewable"
         );
     }
@@ -123,7 +122,6 @@ mod tests {
                 "shrine",
                 "spawn",
                 "stamina",
-                "summon",
                 "summon",
                 "technique",
                 "time",

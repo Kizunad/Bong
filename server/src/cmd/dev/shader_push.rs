@@ -52,9 +52,13 @@ pub fn handle_shader_push(
                 let Ok(mut executor_client) = clients.get_mut(event.executor) else {
                     continue;
                 };
-                if !value.is_finite() {
-                    executor_client
-                        .send_chat_message("[dev] shader_push rejected: value must be finite");
+                if !value.is_finite()
+                    || *value < f32::MIN as f64
+                    || *value > f32::MAX as f64
+                {
+                    executor_client.send_chat_message(
+                        "[dev] shader_push rejected: value must be finite and within f32 range",
+                    );
                     continue;
                 }
                 let val = *value as f32;

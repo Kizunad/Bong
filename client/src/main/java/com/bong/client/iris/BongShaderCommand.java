@@ -57,8 +57,9 @@ public final class BongShaderCommand {
             return 0;
         }
         BongShaderState.setOverride(uniform, value);
+        float applied = BongShaderState.get(uniform);
         ctx.getSource().sendFeedback(Text.literal(
-                String.format(Locale.ROOT, "[BongShader] Override %s = %.4f", name, value)));
+                String.format(Locale.ROOT, "[BongShader] Override %s = %.4f", uniform.shaderName(), applied)));
         return 1;
     }
 

@@ -40,6 +40,7 @@ class BongUniformTest {
         assertNull(BongUniform.fromShaderName("bong_nonexistent"));
         assertNull(BongUniform.fromShaderName(""));
         assertNull(BongUniform.fromShaderName("realm"));
+        assertNull(BongUniform.fromShaderName(null));
     }
 
     @Test

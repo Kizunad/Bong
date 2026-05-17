@@ -18,7 +18,7 @@ public final class BongShaderState {
     }
 
     public static void setTarget(BongUniform uniform, float value) {
-        targets[uniform.ordinal()] = clamp01(value);
+        targets[uniform.ordinal()] = clamp(value, uniform);
     }
 
     public static void setOverride(BongUniform uniform, float value) {

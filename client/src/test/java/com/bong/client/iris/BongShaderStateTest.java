@@ -133,4 +133,23 @@ class BongShaderStateTest {
         assertEquals(1.0f, BongShaderState.get(BongUniform.LINGQI), 0.001f,
                 "With lerp speed 1.0, should reach target in one tick");
     }
+
+    @Test
+    void lerpSpeedClampedAtLowerBound() {
+        BongShaderState.setLerpSpeed(BongUniform.LINGQI, 0.0f);
+        BongShaderState.setTarget(BongUniform.LINGQI, 1.0f);
+        BongShaderState.tickInterpolate();
+        float after = BongShaderState.get(BongUniform.LINGQI);
+        assertTrue(after > 0f, "Even with speed=0 (clamped to 0.001), value should still move slightly");
+        assertTrue(after < 0.01f, "With minimum clamped speed, movement should be minimal");
+    }
+
+    @Test
+    void lerpSpeedClampedAtUpperBound() {
+        BongShaderState.setLerpSpeed(BongUniform.LINGQI, 1.5f);
+        BongShaderState.setTarget(BongUniform.LINGQI, 1.0f);
+        BongShaderState.tickInterpolate();
+        assertEquals(1.0f, BongShaderState.get(BongUniform.LINGQI), 0.001f,
+                "Speed > 1.0 should be clamped to 1.0, reaching target in one tick");
+    }
 }

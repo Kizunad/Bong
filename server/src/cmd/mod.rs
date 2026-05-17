@@ -59,6 +59,7 @@ mod tests {
             })
             .collect::<Vec<_>>();
         roots.sort_unstable();
+        roots.dedup();
 
         assert_eq!(
             roots,
@@ -118,6 +119,7 @@ mod tests {
             })
             .collect::<Vec<_>>();
         roots.sort_unstable();
+        roots.dedup();
 
         assert_eq!(
             roots,

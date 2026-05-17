@@ -18,8 +18,8 @@ class ShaderStateHandlerTest {
         assertTrue(result, "Should return true for valid payload");
         assertEquals(0.8f, BongShaderState.getTarget(BongUniform.BLOODMOON), 0.001f);
         assertEquals(0.5f, BongShaderState.getTarget(BongUniform.WIND_STRENGTH), 0.001f);
-        assertEquals(1.0f, BongShaderState.getTarget(BongUniform.WIND_ANGLE), 0.01f,
-                "WIND_ANGLE target is clamped via setTarget (0-1 range)");
+        assertEquals(3.14f, BongShaderState.getTarget(BongUniform.WIND_ANGLE), 0.01f,
+                "WIND_ANGLE target uses per-uniform clamp (0-2*PI range)");
     }
 
     @Test
