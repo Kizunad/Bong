@@ -106,6 +106,7 @@ spirit_quality_initial = 1.0
 description = "灵剑碎裂时极小概率结晶的魂核。黑武士首杀必掉一枚。铸化虚灵剑的灵魂部件。"
 
 # ─── 功法残卷 ──────────────────────────────────────────────────────────────
+# 通用占位（loot 表抓阄用）—— plan-sword-path-v2 P0 后续可加运行时随机替换为下方 5 卷。
 [[item]]
 id = "scroll_sword_path"
 name = "剑道功法残卷"
@@ -116,3 +117,70 @@ base_weight = 0.03
 rarity = "rare"
 spirit_quality_initial = 0.0
 description = "归元剑宗遗留的残卷。记载了剑道五式中某一式的心法口诀。拾取后可解锁对应招式。"
+
+# plan-sword-path-v2 P0.1：五招分卷，残卷读取由 read_combat_technique_scroll 校验
+# 境界 + 经脉前置 → 学得 KnownTechnique 条目。
+[[item]]
+id = "scroll_sword_condense"
+name = "剑道残卷·凝锋心法"
+category = "scroll"
+grid_w = 1
+grid_h = 2
+base_weight = 0.05
+rarity = "rare"
+spirit_quality_initial = 0.4
+description = "归元剑宗外门修士抄录的剑意凝锋口诀。引气境以上可习。"
+[item.technique_scroll]
+skill_id = "sword_path.condense_edge"
+
+[[item]]
+id = "scroll_sword_qi_slash"
+name = "剑道残卷·剑气斩诀"
+category = "scroll"
+grid_w = 1
+grid_h = 2
+base_weight = 0.05
+rarity = "rare"
+spirit_quality_initial = 0.5
+description = "凝脉以上方能演练。卷上墨痕断断续续，仍可辨出气随剑出的轨迹。"
+[item.technique_scroll]
+skill_id = "sword_path.qi_slash"
+
+[[item]]
+id = "scroll_sword_resonance"
+name = "剑道残卷·共鸣要义"
+category = "scroll"
+grid_w = 1
+grid_h = 2
+base_weight = 0.05
+rarity = "epic"
+spirit_quality_initial = 0.6
+description = "古籍残页讲剑鸣震慑众生。固元剑修读后可使敌方招式中断。"
+[item.technique_scroll]
+skill_id = "sword_path.resonance"
+
+[[item]]
+id = "scroll_sword_manifest"
+name = "剑道残卷·归一秘录"
+category = "scroll"
+grid_w = 1
+grid_h = 2
+base_weight = 0.05
+rarity = "epic"
+spirit_quality_initial = 0.7
+description = "通灵之上的功诀。剑意凝形自主追击，是归元剑宗失传的杀招。"
+[item.technique_scroll]
+skill_id = "sword_path.manifest"
+
+[[item]]
+id = "scroll_sword_heaven_gate"
+name = "剑道残卷·天门禁忌"
+category = "scroll"
+grid_w = 1
+grid_h = 2
+base_weight = 0.05
+rarity = "legendary"
+spirit_quality_initial = 1.0
+description = "残页字迹皆为血书。化虚之下不可习——一剑出，跌境碎剑，从此匿于天道。"
+[item.technique_scroll]
+skill_id = "sword_path.heaven_gate"
