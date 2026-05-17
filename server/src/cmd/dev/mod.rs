@@ -17,6 +17,7 @@ pub mod shader_push;
 pub mod shrine;
 pub mod spawn;
 pub mod stamina;
+pub mod supply_coffin;
 pub mod technique;
 pub mod time;
 pub mod top;
@@ -47,6 +48,7 @@ pub fn register(app: &mut App) {
     reset::register(app);
     revive::register(app);
     stamina::register(app);
+    supply_coffin::register(app);
     technique::register(app);
     time::register(app);
     tptree::register(app);

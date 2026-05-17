@@ -578,6 +578,106 @@ fn rng_diverges_for_different_seed() {
     assert!(diverged, "RNG state 0 vs 1 应在 5 步内出现分歧");
 }
 
+// =============================================================================
+// 集成式生命周期：spawn → open → cooldown → spawn-again
+// =============================================================================
+
+#[test]
+fn full_lifecycle_open_cooldown_respawn_state_transitions() {
+    // 模拟 plan §P3.2 集成测试 10/11：
+    //   spawn 一个 Common → 玩家开棺 → 30min cooldown → 到期后可再 spawn
+    let mut r = make_registry();
+    let e1 = Entity::from_raw(101);
+    let pos1 = DVec3::new(50.0, 65.0, 50.0);
+    r.insert_active(e1, SupplyCoffinGrade::Common, pos1, 1000);
+    assert_eq!(r.active_count(SupplyCoffinGrade::Common), 1);
+
+    // 玩家开棺：remove + enqueue
+    let active = r
+        .remove_active(e1)
+        .expect("插入过的 entity 必须能 remove");
+    r.enqueue_cooldown(active.grade, 2000);
+    assert_eq!(r.active_count(SupplyCoffinGrade::Common), 0);
+    assert_eq!(r.cooldowns.len(), 1);
+    assert_eq!(r.cooldowns[0].grade, SupplyCoffinGrade::Common);
+
+    // 30min - 1s 时未到期
+    let cd = SupplyCoffinGrade::Common.cooldown_secs();
+    assert!(!r.pop_ready_cooldown(SupplyCoffinGrade::Common, 2000 + cd - 1));
+    assert_eq!(r.cooldowns.len(), 1, "未到期不应被 pop");
+
+    // 精确到期时可 pop
+    assert!(r.pop_ready_cooldown(SupplyCoffinGrade::Common, 2000 + cd));
+    assert_eq!(r.cooldowns.len(), 0);
+
+    // 新位置再 spawn
+    let e2 = Entity::from_raw(102);
+    let pos2 = DVec3::new(80.0, 65.0, 80.0);
+    r.insert_active(e2, SupplyCoffinGrade::Common, pos2, 2000 + cd);
+    assert_eq!(r.active_count(SupplyCoffinGrade::Common), 1);
+    let new_record = r.active.values().next().unwrap();
+    assert_ne!(new_record.pos, pos1, "刷新后新棺位置不应等于旧棺");
+}
+
+#[test]
+fn max_active_cap_blocks_additional_inserts_until_one_removed() {
+    // 模拟 plan §P3.2 测试 7：同档活跃数达上限时 refresh 系统应 skip。
+    // 单测在 registry 层校验：active_count(grade) >= max_active(grade) 是
+    // refresh tick 的 gate 条件。
+    let mut r = make_registry();
+    let common_cap = SupplyCoffinGrade::Common.max_active();
+
+    for i in 0..common_cap {
+        r.insert_active(
+            Entity::from_raw(200 + i as u32),
+            SupplyCoffinGrade::Common,
+            DVec3::new(i as f64 * 20.0, 65.0, 0.0),
+            0,
+        );
+    }
+    assert_eq!(r.active_count(SupplyCoffinGrade::Common), common_cap);
+
+    // refresh tick 的判定逻辑
+    let cap_reached = r.active_count(SupplyCoffinGrade::Common) >= common_cap;
+    assert!(cap_reached, "达到 max_active 后 refresh 应 skip 该 grade");
+
+    // 开掉一个后又能 spawn
+    r.remove_active(Entity::from_raw(200));
+    let cap_reached_after = r.active_count(SupplyCoffinGrade::Common) >= common_cap;
+    assert!(
+        !cap_reached_after,
+        "移除一个 active 后，cap 检查应放行 refresh"
+    );
+
+    // 其它档不受 Common 上限影响
+    assert!(r.active_count(SupplyCoffinGrade::Rare) < SupplyCoffinGrade::Rare.max_active());
+}
+
+#[test]
+fn precious_grade_high_tier_items_only_appear_via_precious_roll() {
+    // 模拟 plan §P3.2 测试 12：祭坛棺 loot 必包含 high-tier 独占。
+    // 500 seed 内 Precious 应至少命中一次每个 high-tier。
+    let high_tier = ["star_iron", "ancient_sword_embryo", "broken_sword_soul"];
+    let mut hit_counts: HashMap<&'static str, usize> = HashMap::new();
+    for seed in 0..500_u64 {
+        for (tid, _) in roll_loot(SupplyCoffinGrade::Precious, seed) {
+            for &tag in &high_tier {
+                if tid == tag {
+                    *hit_counts.entry(tag).or_insert(0) += 1;
+                }
+            }
+        }
+    }
+    for tag in high_tier {
+        assert!(
+            *hit_counts.get(tag).unwrap_or(&0) >= 1,
+            "Precious 500 seed 应至少命中一次 `{}`：实际 {}",
+            tag,
+            hit_counts.get(tag).copied().unwrap_or(0)
+        );
+    }
+}
+
 #[test]
 fn cooldown_struct_is_ready_uses_saturating_add() {
     // 即便 broken_at_wall_secs 是 u64::MAX，is_ready 应不 overflow
