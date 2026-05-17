@@ -29,6 +29,10 @@ pub use raster::{
     raster_dir_from_manifest_path, FossilBbox, Poi, TerrainProvider, TerrainProviders,
 };
 
+// plan-supply-coffin-v1：物资棺刷新选点需要 zone xz 边界。其余 giant_sword 内部
+// 实现仍保持 `mod`-private，只对外暴露 zone bounds 这一最小接口。
+pub use giant_sword::sword_sea_xz_bounds;
+
 // Valence 0.2x still serializes chunk heightmaps as fixed 9-bit packed arrays
 // (37 longs). Vanilla clients choose the expected heightmap size from the
 // advertised dimension height; 512 would require 10-bit arrays (43 longs) and
