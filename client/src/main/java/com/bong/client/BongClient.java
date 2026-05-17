@@ -23,6 +23,7 @@ import com.bong.client.insight.InsightOfferScreenBootstrap;
 import com.bong.client.insight.InsightOfferStore;
 import com.bong.client.alchemy.AlchemyScreenBootstrap;
 import com.bong.client.forge.ForgeScreenBootstrap;
+import com.bong.client.iris.IrisBootstrap;
 import com.bong.client.hud.HudImmersionControls;
 import com.bong.client.identity.IdentityPanelScreenBootstrap;
 import com.bong.client.input.DefaultInteractionHandlers;
@@ -123,7 +124,8 @@ public class BongClient implements ClientModInitializer {
         WeaponRenderBootstrap.register();
         WeaponScreenshotHarness.install();
         PreviewHarnessClient.install();
+        IrisBootstrap.register();
 
-        LOGGER.info("Bong Client bootstrap ready: network, HUD, keybinding scheduler, /vfx /anim /bonghud /spawnp commands active.");
+        LOGGER.info("Bong Client bootstrap ready: network, HUD, keybinding scheduler, /vfx /anim /bonghud /bong_shader commands active.");
     }
 }

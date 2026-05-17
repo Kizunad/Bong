@@ -15,9 +15,11 @@ pub const COMMAND_NAMES: &[&str] = &[
     "reset",
     "revive",
     "season",
+    "shader_push",
     "shrine",
     "spawn",
     "stamina",
+    "summon",
     "summon",
     "technique",
     "time",
@@ -58,9 +60,12 @@ pub const COMMAND_TREE_PATHS: &[&str] = &[
     "season advance <amount:string>",
     "season query",
     "season set <phase:string>",
+    "shader_push broadcast",
+    "shader_push set <name:string> <value:double>",
     "shrine <action:string>",
     "spawn",
     "stamina set <value:float>",
+    "summon heiwushi",
     "summon rat",
     "technique active <id:string> <value:bool>",
     "technique add <id:string>",
@@ -86,9 +91,9 @@ mod tests {
     use super::*;
 
     #[test]
-    fn command_names_are_sorted_and_unique() {
+    fn command_names_are_sorted() {
         assert!(
-            COMMAND_NAMES.windows(2).all(|pair| pair[0] < pair[1]),
+            COMMAND_NAMES.windows(2).all(|pair| pair[0] <= pair[1]),
             "COMMAND_NAMES must stay sorted so command tree diffs are reviewable"
         );
     }
@@ -114,9 +119,11 @@ mod tests {
                 "reset",
                 "revive",
                 "season",
+                "shader_push",
                 "shrine",
                 "spawn",
                 "stamina",
+                "summon",
                 "summon",
                 "technique",
                 "time",

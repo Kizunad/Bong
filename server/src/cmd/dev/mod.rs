@@ -13,6 +13,7 @@ pub mod realm;
 pub mod reset;
 pub mod revive;
 pub mod season;
+pub mod shader_push;
 pub mod shrine;
 pub mod spawn;
 pub mod stamina;
@@ -58,6 +59,7 @@ pub fn register(app: &mut App) {
     rat::register(app);
     whale::register(app);
     zone_qi::register(app);
+    shader_push::register(app);
 }
 
 #[cfg(test)]

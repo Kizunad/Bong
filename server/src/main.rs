@@ -52,6 +52,7 @@ mod qi_physics;
 mod preview;
 #[allow(dead_code)]
 mod schema;
+mod shader;
 mod skin;
 mod social;
 mod spiritwood;
@@ -148,6 +149,7 @@ fn run_server() {
     npc::register(&mut app);
     zhenfa::register(&mut app);
     sword_path::register(&mut app);
+    shader::register(&mut app);
     network::register(&mut app);
     persistence::register(&mut app);
     preview::register(&mut app);

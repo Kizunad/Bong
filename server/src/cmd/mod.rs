@@ -19,6 +19,7 @@ mod tests {
     use crate::fauna::rat_phase::RatPhaseChangeEvent;
     use crate::npc::scenario::PendingScenario;
     use crate::player::gameplay::GameplayActionQueue;
+    use crate::shader::ShaderStatePayload;
     use crate::world::tsy_dev_command::TsySpawnRequested;
     use valence::command::CommandRegistry;
     use valence::prelude::App;
@@ -34,6 +35,7 @@ mod tests {
         app.add_event::<TsySpawnRequested>();
         app.insert_resource(PendingScenario::default());
         app.insert_resource(GameplayActionQueue::default());
+        app.insert_resource(ShaderStatePayload::default());
         register(&mut app);
         app.finish();
         app.cleanup();
