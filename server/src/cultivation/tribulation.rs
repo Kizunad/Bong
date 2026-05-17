@@ -1932,6 +1932,16 @@ pub fn juebi_settlement_system(
                         outcome.limit_used,
                     );
                 }
+                AscensionGrant::SettledOnly => {
+                    // 非占额路径（独立 JueBi 等）幸存；不升 Realm，仅作 settlement 完毕标志。
+                    // 实际 juebi_settlement_system 这条 caller 路径只在 quota_marker.is_some()
+                    // 才调 try_complete，理论不会进入；保留分支防御未来 caller 扩展
+                    tracing::info!(
+                        "[bong][cultivation] {:?} settle-only path at atomic quota check \
+                         (non-quota-occupying tribulation source); no Realm elevation",
+                        entity,
+                    );
+                }
                 AscensionGrant::MissingActive => {
                     // 状态不一致：start 时插入了 marker 但 settle 时 active row 已消失。
                     // 可能是另一进程 / 重复结算 / row 被外部清理。回退 HalfStep（保守），不升 Realm
@@ -2025,6 +2035,13 @@ pub fn track_tribulation_metrics_system(
     existing_states: Query<&HalfStepState>,
     mut qi_transfers: EventWriter<QiTransfer>,
 ) {
+    // plan-halfstep-buff-v1 fix（CodeRabbit P4 review #1）：同帧多条 HalfStep event 给同一 entity
+    // 时，`commands.entity().insert()` 是 deferred 到 system 结束才生效，所以第二条 event 仍会
+    // 从 `existing_states` 里读到旧值（buff_applied=false） → 重复应用 buff、破 §8 Q4。
+    // 用 local HashMap 在 system 内部 staged 已处理的状态作为 commands 队列的镜像。
+    let mut staged_states: std::collections::HashMap<Entity, HalfStepState> =
+        std::collections::HashMap::new();
+
     for ev in events.read() {
         match ev.result.outcome {
             DuXuOutcomeV1::HalfStep => {
@@ -2039,17 +2056,20 @@ pub fn track_tribulation_metrics_system(
                 }
                 metrics.halfstep_count = metrics.halfstep_count.saturating_add(1);
 
-                // 读 existing state：有则保留 entered_at + window_until（§8 Q1 窗口起点不漂移）；
-                // 无则用 current tick 作起点。已 buffed 时 buff_applied 透传，避免重复应用。
-                let (existing_entered_at, existing_window, already_buffed) =
-                    match existing_states.get(ev.entity) {
-                        Ok(state) => (
-                            Some(state.entered_at),
-                            Some(state.rechallenge_window_until),
-                            state.buff_applied,
-                        ),
-                        Err(_) => (None, None, false),
-                    };
+                // 状态优先级：staged（本帧已处理） > existing_states（world 现状） > 全新
+                // staged 优先解决"commands 同帧延迟"问题；existing 解决"跨帧 buff 透传"问题
+                let prior_state = staged_states
+                    .get(&ev.entity)
+                    .copied()
+                    .or_else(|| existing_states.get(ev.entity).ok().copied());
+                let (existing_entered_at, existing_window, already_buffed) = match prior_state {
+                    Some(state) => (
+                        Some(state.entered_at),
+                        Some(state.rechallenge_window_until),
+                        state.buff_applied,
+                    ),
+                    None => (None, None, false),
+                };
 
                 let mut buff_now_applied = already_buffed;
                 if !already_buffed {
@@ -2085,11 +2105,13 @@ pub fn track_tribulation_metrics_system(
 
                 // upsert HalfStepState：新建或回写 buff_applied（dormant→hydrate 路径 + Cultivation
                 // 缺失 → 已 hydrate 路径都靠这条统一）
-                commands.entity(ev.entity).insert(HalfStepState {
+                let new_state = HalfStepState {
                     entered_at,
                     rechallenge_window_until: window_until,
                     buff_applied: buff_now_applied,
-                });
+                };
+                commands.entity(ev.entity).insert(new_state);
+                staged_states.insert(ev.entity, new_state);
 
                 // 确保队列里有 entry（dedup-then-enqueue，防止二次 HalfStep 留下重复或
                 // dispatch pop_front 过后永久失去重渡资格）。
@@ -2116,12 +2138,16 @@ pub fn track_tribulation_metrics_system(
                 queue.remove_entity(ev.entity);
                 queue.remove_char_id(&ev.result.char_id);
                 commands.entity(ev.entity).remove::<HalfStepState>();
+                // 也清 staged：本帧若 HalfStep→Ascended 接续发生（罕见但可能 in test），
+                // 后续 HalfStep 在同帧应按"全新"处理而非看到旧 staged buff_applied=true
+                staged_states.remove(&ev.entity);
             }
             DuXuOutcomeV1::Killed | DuXuOutcomeV1::Failed | DuXuOutcomeV1::Fled => {
                 // 死亡 / 降境 / 逃跑 → 同 Ascended：清队 + 清 component；下一轮重新建状态
                 queue.remove_entity(ev.entity);
                 queue.remove_char_id(&ev.result.char_id);
                 commands.entity(ev.entity).remove::<HalfStepState>();
+                staged_states.remove(&ev.entity);
             }
         }
     }
@@ -8619,6 +8645,94 @@ mod tests {
             state_after.entered_at, entered_at_before,
             "entered_at 必须保留原值（dormant 阶段进 HalfStep 的时间戳）"
         );
+    }
+
+    #[test]
+    fn halfstep_buff_does_not_double_apply_within_same_frame() {
+        // CodeRabbit P4 review #1：同帧多条 HalfStep event 给同一 entity →
+        // commands.insert 是 deferred，第二条事件读 existing_states 仍是 None →
+        // 原代码会把 buff 应用两次（破 §8 Q4）。
+        // 修复后：staged_states local map 镜像 commands 队列，第二条事件读到 staged 的
+        // buff_applied=true，跳过第二次应用。
+        let mut app = p0_metrics_test_app();
+        let entity = spawn_halfstep_candidate(&mut app, 1000.0, LifespanCapTable::SPIRIT);
+        // 一次 update 内 dispatch 两条 HalfStep event 给同一 entity
+        for _ in 0..2 {
+            app.world_mut()
+                .resource_mut::<Events<TribulationSettled>>()
+                .send(make_settled_event(entity, DuXuOutcomeV1::HalfStep));
+        }
+        app.update();
+
+        let cultivation = app.world().get::<Cultivation>(entity).unwrap();
+        let lifespan = app.world().get::<LifespanComponent>(entity).unwrap();
+        let expected_qi_max = 1000.0 * (1.0 + HALFSTEP_QI_MAX_BONUS as f64);
+        assert!(
+            (cultivation.qi_max - expected_qi_max).abs() < 1e-6,
+            "同帧二次 HalfStep 不应重复 buff；expected {expected_qi_max} got {} (重复=1210)",
+            cultivation.qi_max
+        );
+        assert_eq!(
+            lifespan.cap_by_realm,
+            LifespanCapTable::SPIRIT + HALFSTEP_LIFESPAN_BONUS_YEARS,
+            "lifespan 同帧也不该重复 +200"
+        );
+        let queue = app.world().resource::<HalfStepRechallengeQueue>();
+        assert_eq!(
+            queue.len(),
+            1,
+            "队列只该有 1 条（dedup-then-enqueue）；got {}",
+            queue.len()
+        );
+    }
+
+    #[test]
+    fn enqueue_dedupes_same_char_id_across_different_entities() {
+        // CodeRabbit P4 review #4：dormant→hydrate 之间换了 ECS entity 但 char_id 持久；
+        // 入队前的 char_id dedup 必须把 entity A 的旧 entry 清掉，最终队列只剩 entity B
+        let mut app = p0_metrics_test_app();
+        app.world_mut().resource_mut::<CombatClock>().tick = 100;
+        // entity A 先用 char_id="X" 入队
+        let entity_a = app.world_mut().spawn(()).id();
+        let mut ev_a = make_settled_event_with_source(
+            entity_a,
+            DuXuOutcomeV1::HalfStep,
+            JueBiTriggerSource::VoidQuotaExceeded,
+        );
+        ev_a.result.char_id = "shared_char_id".to_string();
+        app.world_mut()
+            .resource_mut::<Events<TribulationSettled>>()
+            .send(ev_a);
+        app.update();
+        assert_eq!(app.world().resource::<HalfStepRechallengeQueue>().len(), 1);
+
+        // 时间推进；entity B（不同 ECS 句柄，模拟 hydrate 重 spawn）用同 char_id 再次 HalfStep
+        app.world_mut().resource_mut::<CombatClock>().tick = 500;
+        let entity_b = app.world_mut().spawn(()).id();
+        assert_ne!(entity_a, entity_b, "测试前提：entity A != B");
+        let mut ev_b = make_settled_event_with_source(
+            entity_b,
+            DuXuOutcomeV1::HalfStep,
+            JueBiTriggerSource::VoidQuotaExceeded,
+        );
+        ev_b.result.char_id = "shared_char_id".to_string();
+        app.world_mut()
+            .resource_mut::<Events<TribulationSettled>>()
+            .send(ev_b);
+        app.update();
+
+        let queue = app.world().resource::<HalfStepRechallengeQueue>();
+        assert_eq!(
+            queue.len(),
+            1,
+            "char_id dedup 后队列只剩 1 条；同 char_id 双占 FIFO 会让玩家收到重复 trigger"
+        );
+        let entry = &queue.queue[0];
+        assert_eq!(
+            entry.entity, entity_b,
+            "残留 entry 必须是后入队的 entity B（旧 entity A entry 已被 remove_char_id 清除）"
+        );
+        assert_eq!(entry.char_id, "shared_char_id");
     }
 
     #[test]

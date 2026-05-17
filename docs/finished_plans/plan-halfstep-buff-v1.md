@@ -20,7 +20,7 @@
 - 重渡起劫前 qi 状态检查走现有 `tribulation::check_qi_threshold`
 
 **前置依赖**：
-- `plan-tribulation-v1` ✅ — `DuXuOutcomeV1::HalfStep` / `AscensionQuotaStore` / `ascension_quota` Redis key
+- `plan-tribulation-v1` ✅ — `DuXuOutcomeV1::HalfStep` / `AscensionQuotaStore` (in-process resource) / `ascension_quota` SQLite 持久化表（注：原 plan 写 "Redis key" 不准确，本项目 quota 持久层是 SQLite，详见 P2 实施修订）
 - `plan-cultivation-v1` ✅ — `cultivation.qi_max` / `cultivation.lifespan_max` 字段
 - `plan-npc-virtualize-v1` ✅（可选）— dormant NPC 重渡触发 hydrate 路径
 
@@ -115,7 +115,7 @@
   - `rechallenge_window_until = entered_at + RECHALLENGE_WINDOW_TICKS`（§8 Q1 决策）
 - [x] `RECHALLENGE_WINDOW_TICKS` const = `7 * 24 * 3600 * 20`（7 days in-game，server 20Hz；§8 Q1）
 - [x] `HalfStepRechallengeQueue` resource：FIFO 队列，按 `entered_at` 升序保有所有当前 HalfStep 修士（玩家 + dormant NPC 同池；§8 Q2 + Q5 决策）
-- [x] `dispatch_rechallenge_system`（`AscensionQuotaOpened` event 触发）：
+- [x] `dispatch_rechallenge_on_quota_opened_system`（`AscensionQuotaOpened` event 触发；下方落地清单使用相同符号名）：
   - 取队列头部修士，若 `current_tick > rechallenge_window_until` → 出队丢弃（过窗），继续看下一个，直到找到有效或队列空
   - 若头部修士为玩家 → emit `HalfStepRechallengeTriggerEvent { char_id }` 给该玩家
   - 若头部修士为 dormant NPC → 强制 hydrate（复用 plan-npc-virtualize-v1 dormant 渡虚劫 hydrate 路径），hydrate 后入队第一行

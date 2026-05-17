@@ -2285,13 +2285,20 @@ pub fn complete_tribulation_ascension(
     Ok(quota)
 }
 
-/// plan-halfstep-buff-v1 P2 atomic ascension grant 三态决策（CodeRabbit P3 review #4）。
+/// plan-halfstep-buff-v1 P2 atomic ascension grant 四态决策。
 ///
-/// 把"缺 active row"从 granted=true 中拆出来，避免与"真实授予"混在一起被 caller 误升 Realm。
+/// 演进历史：
+/// - P3 review #4：把"缺 active row"从 `granted=true` 中拆出（避免误升 Realm）→ `MissingActive`
+/// - P4 review #2：把"占额成功"和"非占额仅结算"也拆开（独立 JueBi 不应升 Realm）→ `SettledOnly`
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AscensionGrant {
-    /// 事务内 quota 校验通过，`occupied_slots` 已 +1，caller 可正常升 Realm
+    /// 占额路径（`du_xu` / `jue_bi + void_quota_exceeded`）+ 事务内 quota 校验通过：
+    /// `occupied_slots` 已 +1，caller **应升 Realm 到 Void**
     Granted,
+    /// 非占额路径（独立 JueBi，如 `void_action_explode_zone`）幸存：
+    /// active row 已删但 `occupied_slots` **未增**；caller **不升 Realm**（化虚老怪扛过
+    /// 额外天劫不算升格冲刺），仅作 settlement-success 标志
+    SettledOnly,
     /// quota 已满（`occupied == limit`）或 `limit=0`（灵气枯竭），caller 回退 HalfStep
     Denied,
     /// `tribulations_active` 找不到 char_id（重复结算 / 状态错乱 / 已被另一进程 settle）。
@@ -2375,8 +2382,9 @@ pub fn try_complete_tribulation_ascension(
             }
         }
         Some((_, _, false)) => {
-            // 非占额路径（独立 JueBi 如 VoidActionExplodeZone）→ 不增不减，granted
-            AscensionGrant::Granted
+            // 非占额路径（独立 JueBi 如 VoidActionExplodeZone）→ 不增不减
+            // 用 `SettledOnly` 而非 `Granted` 让 caller 显式不升 Realm
+            AscensionGrant::SettledOnly
         }
     };
 
@@ -11005,10 +11013,11 @@ mod persistence_tests {
     }
 
     #[test]
-    fn try_ascension_grants_without_increment_for_jue_bi_other_source() {
-        // CodeRabbit P3 review #5：jue_bi + source != void_quota_exceeded（例 void_action_explode_zone）
-        // 是非占额独立 JueBi；幸存不算升格，不增 quota，但 grant=Granted 让 caller 走非升 Realm 路径
-        let (settings, root) = persistence_settings("ascension-atomic-juebi-independent");
+    fn try_ascension_settled_only_without_increment_for_jue_bi_other_source() {
+        // CodeRabbit P3 review #5 + P4 review #2：jue_bi + source != void_quota_exceeded（例
+        // void_action_explode_zone）是非占额独立 JueBi；幸存不算升格，不增 quota，
+        // grant=SettledOnly（而非 Granted，否则 caller 会误升 Realm）
+        let (settings, root) = persistence_settings("ascension-atomic-juebi-settled-only");
         bootstrap_sqlite(settings.db_path(), settings.server_run_id())
             .expect("bootstrap should succeed");
         persist_jue_bi_active(&settings, "offline:JB2", "void_action_explode_zone");
@@ -11016,8 +11025,8 @@ mod persistence_tests {
             .expect("atomic ascension should succeed");
         assert_eq!(
             outcome.grant,
-            AscensionGrant::Granted,
-            "独立 JueBi（非 void_quota_exceeded）非占额路径，grant=Granted 但不增量"
+            AscensionGrant::SettledOnly,
+            "独立 JueBi 非占额路径必须 SettledOnly；Granted 会让 caller 误升 Realm"
         );
         assert_eq!(
             outcome.quota.occupied_slots, 0,
@@ -11075,7 +11084,9 @@ mod persistence_tests {
                 Ok(outcome) => match outcome.grant {
                     AscensionGrant::Granted => granted_count += 1,
                     AscensionGrant::Denied => denied_count += 1,
-                    AscensionGrant::MissingActive => other_count += 1,
+                    AscensionGrant::SettledOnly | AscensionGrant::MissingActive => {
+                        other_count += 1
+                    }
                 },
                 Err(error) => errors.push(error.to_string()),
             }
@@ -11086,7 +11097,7 @@ mod persistence_tests {
         );
         assert_eq!(
             other_count, 0,
-            "所有 thread 都 persist 了 du_xu active row，不该出现 MissingActive；got {other_count}"
+            "所有 thread 都 persist 了 du_xu active row（占额路径），不该出现 SettledOnly/MissingActive；got {other_count}"
         );
         assert_eq!(
             granted_count, LIMIT as usize,
