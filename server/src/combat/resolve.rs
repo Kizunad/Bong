@@ -1362,6 +1362,15 @@ fn source_uses_prepaid_qi(source: AttackSource) -> bool {
             | AttackSource::FullPower
             | AttackSource::SwordCleave
             | AttackSource::SwordThrust
+            // plan-sword-path-v2 §P1: 五招都在 cast 阶段通过 apply_cast_costs 已扣
+            // 真元 / 体力。若漏掉 prepaid 白名单，resolver 的反作弊会因
+            // qi_invest > qi_current 拒绝结算（QiInvestExceeded），结果是所有
+            // sword_path 攻击都被错误拦截。
+            | AttackSource::SwordPathCondenseEdge
+            | AttackSource::SwordPathQiSlash
+            | AttackSource::SwordPathResonance
+            | AttackSource::SwordPathManifest
+            | AttackSource::SwordPathHeavenGate
     )
 }
 
