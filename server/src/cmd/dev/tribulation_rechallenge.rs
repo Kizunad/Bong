@@ -252,4 +252,92 @@ mod tests {
             "无 HalfStepState 应 gate 拦截，绝不能 emit StartDuXuRequest"
         );
     }
+
+    #[test]
+    fn handle_does_not_emit_when_clock_missing() {
+        // CombatClock 缺失 → handle 整体 no-op，不能瞎猜 tick 就发起劫
+        let mut app = App::new();
+        // 故意不 insert_resource(CombatClock { .. })
+        app.add_event::<CommandResultEvent<TribulationRechallengeCmd>>();
+        app.add_event::<StartDuXuRequest>();
+        app.add_systems(Update, handle);
+        let entity = app.world_mut().spawn(make_halfstep_state(100, true)).id();
+        app.world_mut()
+            .resource_mut::<Events<CommandResultEvent<TribulationRechallengeCmd>>>()
+            .send(CommandResultEvent {
+                result: TribulationRechallengeCmd::Trigger,
+                executor: entity,
+                modifiers: Default::default(),
+            });
+        app.update();
+        let requests: Vec<_> = app
+            .world_mut()
+            .resource_mut::<Events<StartDuXuRequest>>()
+            .drain()
+            .collect();
+        assert!(
+            requests.is_empty(),
+            "CombatClock 缺失时 handle 必须整体 no-op；瞎猜 tick=0 起劫会破坏 invariants"
+        );
+    }
+
+    #[test]
+    fn handle_does_not_emit_when_entity_already_tribulating() {
+        // entity 有 HalfStepState 但同时挂 TribulationState（正在渡劫中）→ AlreadyTribulating gate
+        let mut app = App::new();
+        app.insert_resource(CombatClock { tick: 500 });
+        app.add_event::<CommandResultEvent<TribulationRechallengeCmd>>();
+        app.add_event::<StartDuXuRequest>();
+        app.add_systems(Update, handle);
+        let entity = app
+            .world_mut()
+            .spawn((make_halfstep_state(100, true), make_tribulation_state()))
+            .id();
+        app.world_mut()
+            .resource_mut::<Events<CommandResultEvent<TribulationRechallengeCmd>>>()
+            .send(CommandResultEvent {
+                result: TribulationRechallengeCmd::Trigger,
+                executor: entity,
+                modifiers: Default::default(),
+            });
+        app.update();
+        let requests: Vec<_> = app
+            .world_mut()
+            .resource_mut::<Events<StartDuXuRequest>>()
+            .drain()
+            .collect();
+        assert!(
+            requests.is_empty(),
+            "AlreadyTribulating 应被 gate 拒绝；双重渡劫会破 quota / settlement 状态机"
+        );
+    }
+
+    #[test]
+    fn handle_does_not_emit_when_window_expired() {
+        // entity 有 HalfStepState 但 current_tick 已超 rechallenge_window_until → WindowExpired
+        let mut app = App::new();
+        let past_window = 100 + RECHALLENGE_WINDOW_TICKS + 1;
+        app.insert_resource(CombatClock { tick: past_window });
+        app.add_event::<CommandResultEvent<TribulationRechallengeCmd>>();
+        app.add_event::<StartDuXuRequest>();
+        app.add_systems(Update, handle);
+        let entity = app.world_mut().spawn(make_halfstep_state(100, true)).id();
+        app.world_mut()
+            .resource_mut::<Events<CommandResultEvent<TribulationRechallengeCmd>>>()
+            .send(CommandResultEvent {
+                result: TribulationRechallengeCmd::Trigger,
+                executor: entity,
+                modifiers: Default::default(),
+            });
+        app.update();
+        let requests: Vec<_> = app
+            .world_mut()
+            .resource_mut::<Events<StartDuXuRequest>>()
+            .drain()
+            .collect();
+        assert!(
+            requests.is_empty(),
+            "过窗后必须 gate 拒绝；§8 Q1 决策 7d 窗口是硬上限"
+        );
+    }
 }

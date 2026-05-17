@@ -33,7 +33,7 @@
 ## 接入面 Checklist
 
 - **进料**：`AscensionQuotaStore`（当前 quota / max）+ `DuXuOutcomeV1::HalfStep` 结算代码（`tribulation.rs`）+ 遥测数据（半步化虚玩家数 / quota 满时长占比）
-- **出料**：调整后的 buff 常数（`HALFSTEP_QI_MAX_BONUS: f32` / `HALFSTEP_LIFESPAN_BONUS_YEARS: f64`）+ `HalfStepRechallengeTriggerEvent` 🆕 + 重渡起劫接入点（`tribulation::request_rechal­lenge`）
+- **出料**：调整后的 buff 常数（`HALFSTEP_QI_MAX_BONUS: f32` / `HALFSTEP_LIFESPAN_BONUS_YEARS: f64`）+ `HalfStepRechallengeTriggerEvent` 🆕 + 重渡起劫接入点（`tribulation::request_rechallenge`）
 - **共享类型**：复用 `AscensionQuotaStore` / `DuXuOutcomeV1` / `TribulationState`；新增 `HalfStepRechallengeTriggerEvent` event
 - **跨仓库契约**：agent 侧 `bong:tribulation/halfstep_rechallenge` 新 Redis key（广播可重渡通知）；client HUD 提示可重渡状态
 - **worldview 锚点**：§三:78 稀缺性 + §十二 生死循环
@@ -79,10 +79,12 @@
 ## P1 — buff 实装为命名 const + 不叠加守卫
 
 - [ ] 把 buff 值提取为命名 const（`server/src/cultivation/tribulation.rs`）：
+
   ```rust
   pub const HALFSTEP_QI_MAX_BONUS: f32 = 0.10;     // 首期值，后续运营数据驱动调整
   pub const HALFSTEP_LIFESPAN_BONUS_YEARS: f64 = 200.0; // 首期值，后续运营数据驱动调整
   ```
+
 - [ ] **在 settlement 处真实应用 buff**（当前 `server/src/cultivation/tribulation.rs:1811` 只设置 `DuXuOutcomeV1::HalfStep` 枚举，buff 未应用，是真实代码缺口）：HalfStep 分支补 `cultivation.qi_max *= 1.0 + HALFSTEP_QI_MAX_BONUS` + `lifespan.cap += HALFSTEP_LIFESPAN_BONUS_YEARS`
 - [ ] qi_physics ledger 标记：`qi_max` 容量扩张走 `qi_physics::ledger::QiTransfer`（worldview §二 守恒律，参 plan-qi-physics-v1 P1 既有 API）—— 容量扩张视为 Tiandao → entity 的一次性转账记账，不破坏 SPIRIT_QI_TOTAL 恒定
 - [ ] **buff 不叠加守卫**（§8 Q4 决策）：第二次起 HalfStep 不再 reapply。用 `HalfStepBuffApplied` marker component（或 `HalfStepState.buff_applied: bool` 字段）做幂等校验，已应用则 skip
@@ -118,10 +120,63 @@
 - [ ] 玩家收到 event → client HUD 提示"灵机涌现，可重渡虚劫"（`client/src/hud/tribulation_status.java`）+ 窗口剩余时长倒计时
 - [ ] 玩家响应：手动触发 `/tribulation rechallenge`（CLAUDE.md dev-only 命令段）or 在渡劫台交互
 - [ ] **重渡失败结算复用 `tribulation::settle_failed` 通灵降境路径**（§8 Q3 决策：失败降境到通灵初，不另设独立宽容路径）
-- [ ] narration 模板（scope: broadcast，style: perception）：
-  - "灵脉间隐约传来一股真元波动，似有化虚修士陨落，名额空出一席。"（quota 空出时全服广播，复用既有 quota_release narration）
-  - "你感到曾遭封压的经脉微微松动，或许时机已到。"（队列头部 HalfStep 玩家收到 rechallenge event；player scope）
-  - "虚空中某处的修士收到了相同的消息。"（队列后续多人均为 HalfStep 时；zone scope）
+- [ ] narration 模板（已含 scope/style/priority，跟进 agent PR 接 TS schema 时直接消费）：
+  - "灵脉间隐约传来一股真元波动，似有化虚修士陨落，名额空出一席。" — scope: `broadcast`，style: `perception`，priority: `high`（复用既有 quota_release narration 通道，全服广播 1 次）
+  - "你感到曾遭封压的经脉微微松动，或许时机已到。" — scope: `player`（target = `HalfStepRechallengeTriggerEvent.entity`），style: `perception`
+  - "虚空中某处的修士收到了相同的消息。" — scope: `zone`（entity 所在 zone），style: `perception`，触发条件: 同 zone 内 ≥ 2 个 HalfStep 修士
+
+### P3 音画规格（实施级参数，跟进 client/agent PR 直接消费）
+
+**HUD 提示**（`client/src/hud/tribulation_status.java` 新增 layer）：
+- `HudRenderLayer`: `ABOVE_HOTBAR`（不遮挡战斗 hotbar）；anchor: top-right corner，`right=24px / top=64px`
+- 显示内容: 文字 `"灵机涌现：可重渡虚劫"` + 第二行倒计时 `"剩余 Xd Yh"`（动态刷新，刷新率 20Hz，显示精度到分钟）
+- 字体: `minecraft.font.default` 14pt
+- 颜色 hex: 文字 `#E8DFCF`（米黄）；倒计时强调色 `#FF9F5E`（橙发光）—— 仅在剩余 < 24h 时切换
+- Overlay 类型: text + countdown box（**禁用** vignette/tint，避免战斗视野污染）；opacity: `0.85` 常驻
+- Fade in: `400ms ease-out-cubic`（收到 `HalfStepRechallengeTriggerEvent` 后立即触发）
+- Fade out: `800ms ease-in-cubic`（玩家 `/tribulation_rechallenge` 后 or `window_until` 过期）
+- 显示触发: server `HalfStepRechallengeTriggerEvent` → client 收到 + 该 entity 是本地玩家 → fade in
+- 显示终止: `/tribulation_rechallenge` 起劫成功 / `current_tick > window_until` / 玩家化虚
+
+**粒子效果**（rechallenge trigger 玩家头顶专属反馈）：
+- 基类: `BongRibbonParticle`
+- `bong:vfx_event` ID: `bong:halfstep_rechallenge_trigger`
+- VfxPlayer 类: `BongRibbonVfxPlayer`
+- 贴图 ID: `bong:particle/lingji_ribbon`（复用既有 ribbon 贴图，无需新增）
+- 数量: `5`（radial spawn 围绕玩家头部一圈）
+- spawn 模式: `continuous` 持续 `30 ticks` 后自动停止
+- 生命周期: 单粒子 `60 ticks`
+- 速度: `y=+0.08`, `xz=±0.02 random`
+- 颜色 hex: `#BFD9FF`（浅蓝白起始）→ `#FFE8AA`（米黄，lifetime 60% 后线性过渡）
+
+**audio_recipe JSON**（三个独立 recipe，对应 narration 三种 scope）：
+
+```json
+{
+  "halfstep_quota_release_broadcast": {
+    "layers": [
+      { "sound": "entity.wither.death", "pitch": 0.5, "volume": 0.6, "delay_ticks": 0 },
+      { "sound": "block.beacon.deactivate", "pitch": 0.8, "volume": 0.4, "delay_ticks": 10 },
+      { "sound": "ambient.cave", "pitch": 0.3, "volume": 0.2, "delay_ticks": 20 }
+    ]
+  },
+  "halfstep_rechallenge_trigger_player": {
+    "layers": [
+      { "sound": "entity.experience_orb.pickup", "pitch": 1.4, "volume": 0.7, "delay_ticks": 0 },
+      { "sound": "block.beacon.activate", "pitch": 1.1, "volume": 0.5, "delay_ticks": 8 }
+    ]
+  },
+  "halfstep_rechallenge_trigger_zone_echo": {
+    "layers": [
+      { "sound": "block.beacon.ambient", "pitch": 1.0, "volume": 0.3, "delay_ticks": 0 }
+    ]
+  }
+}
+```
+
+- 这三个 recipe key 由 agent narration emit 时与 narration scope 一一对应；client audio bus 按 key 播放
+- 音量参考 `plan-audio-v1` baseline（broadcast: 0.6-0.8 / player: 0.5-0.7 / zone echo: 0.2-0.4）
+
 - [ ] ≥ 8 单测（队列 FIFO 顺序 / 窗口过期出队 / dormant NPC 触发 hydrate / 玩家收到通知 / 非 HalfStep 不收到通知 / 重渡失败走 `settle_failed` 降境 / NPC 与玩家同池排序正确 / narration scope 正确）
 
 **P3 验收**：e2e 手测——化虚修士被击杀 → 全服 narration 广播 → 队列头部 HalfStep 玩家 HUD 提示 + 7d 倒计时 → 玩家可重新起劫；并发场景下队列 FIFO 正确 + 过窗修士自动出队

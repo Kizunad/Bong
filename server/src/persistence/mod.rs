@@ -6,7 +6,7 @@ use std::sync::{Mutex, MutexGuard, OnceLock};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use big_brain::prelude::{ActionState, Actor};
-use rusqlite::{params, types::Type, Connection, OptionalExtension};
+use rusqlite::{params, types::Type, Connection, OptionalExtension, TransactionBehavior};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use uuid::Uuid;
 use valence::prelude::bevy_ecs;
@@ -2314,7 +2314,16 @@ pub fn try_complete_tribulation_ascension(
 ) -> io::Result<AtomicAscensionOutcome> {
     let wall_clock = current_unix_seconds();
     let mut connection = open_persistence_connection(settings)?;
-    let transaction = connection.transaction().map_err(io::Error::other)?;
+    // plan-halfstep-buff-v1 P2 fix：用 IMMEDIATE 事务而非默认 DEFERRED。
+    //
+    // DEFERRED 在 WAL 模式下先读后写：另一个 writer 在我们 BEGIN 之后、UPDATE 之前提交了
+    // 自己的写入，会让我们的 commit 失败为 `SQLITE_BUSY_SNAPSHOT` 或 `SQLITE_BUSY`，而不是
+    // 把 read-check-write 序列化。IMMEDIATE 立即拿写锁，保证 `quota.occupied_slots <
+    // quota_limit` 检查与 UPDATE 之间没有并发 writer 插队。这是 §三:78 化虚稀缺底线在
+    // SQLite 层面的硬保证。
+    let transaction = connection
+        .transaction_with_behavior(TransactionBehavior::Immediate)
+        .map_err(io::Error::other)?;
     let mut quota = load_ascension_quota_from_transaction(&transaction)?;
     let occupied_before = quota.occupied_slots;
 
@@ -10913,52 +10922,91 @@ mod persistence_tests {
             outcome.granted,
             "无 active 行（非占额路径）应 granted=true; 否则普通天劫意外死循环走不通"
         );
-        assert_eq!(
-            outcome.quota.occupied_slots, 0,
-            "非占额路径不增量"
-        );
+        assert_eq!(outcome.quota.occupied_slots, 0, "非占额路径不增量");
         let _ = fs::remove_dir_all(root);
     }
 
     #[test]
-    fn try_ascension_serializes_concurrent_settlements_via_fcfs() {
-        let (settings, root) = persistence_settings("ascension-atomic-concurrent-fcfs");
+    fn try_ascension_serializes_truly_concurrent_settlements_via_fcfs() {
+        // plan-halfstep-buff-v1 P2 真并发测试（不是串行）：5 个线程同时 settle，limit=2。
+        //
+        // 用 `std::sync::Barrier` 让线程齐头并进，每线程独立 open connection 模拟真实并发。
+        // IMMEDIATE 事务保证 select-check-update 之间没有 writer 插队。期望：
+        //   - 恰好 limit (=2) 个线程 granted
+        //   - 其余 (=3) 个线程 denied
+        //   - 没有线程返回 SQLITE_BUSY / SQLITE_LOCKED（IMMEDIATE 会让冲突 writer 等而非立刻 fail）
+        //   - 最终 quota.occupied_slots == limit（强守恒）
+        use std::sync::{Arc, Barrier};
+        use std::thread;
+
+        let (settings, root) = persistence_settings("ascension-atomic-true-concurrent-fcfs");
         bootstrap_sqlite(settings.db_path(), settings.server_run_id())
             .expect("bootstrap should succeed");
-        // 模拟 5 个 entity 同时结算，limit=2
-        // SQLite 单进程串行执行 transactions（同一 connection pool），FCFS by call order
-        for i in 0..5 {
+        const N: usize = 5;
+        const LIMIT: u32 = 2;
+        for i in 0..N {
             persist_du_xu_active(&settings, &format!("offline:R{i}"));
         }
+
+        let barrier = Arc::new(Barrier::new(N));
+        let settings = Arc::new(settings);
+        let handles: Vec<_> = (0..N)
+            .map(|i| {
+                let barrier = Arc::clone(&barrier);
+                let settings = Arc::clone(&settings);
+                thread::spawn(move || -> io::Result<AtomicAscensionOutcome> {
+                    let char_id = format!("offline:R{i}");
+                    // 在 barrier 处齐头：5 个 thread 同一瞬间发起 BEGIN IMMEDIATE
+                    barrier.wait();
+                    try_complete_tribulation_ascension(&settings, &char_id, LIMIT)
+                })
+            })
+            .collect();
+
         let mut granted_count = 0;
         let mut denied_count = 0;
-        for i in 0..5 {
-            let outcome = try_complete_tribulation_ascension(&settings, &format!("offline:R{i}"), 2)
-                .expect("atomic ascension should succeed");
-            if outcome.granted {
-                granted_count += 1;
-            } else {
-                denied_count += 1;
+        let mut errors: Vec<String> = Vec::new();
+        for handle in handles {
+            match handle.join().expect("thread join should succeed") {
+                Ok(outcome) => {
+                    if outcome.granted {
+                        granted_count += 1;
+                    } else {
+                        denied_count += 1;
+                    }
+                }
+                Err(error) => errors.push(error.to_string()),
             }
         }
-        assert_eq!(
-            granted_count, 2,
-            "limit=2 + 5 并发结算应恰好 2 granted；得到 {granted_count}"
+        assert!(
+            errors.is_empty(),
+            "没有线程应返回 SQLITE_BUSY/LOCKED 错误；IMMEDIATE 事务应序列化等待。got errors: {errors:?}"
         );
         assert_eq!(
-            denied_count, 3,
-            "剩余 3 应全部 denied；得到 {denied_count}"
+            granted_count, LIMIT as usize,
+            "limit=2 + N=5 真并发结算应恰好 2 granted；得到 {granted_count}"
         );
+        assert_eq!(
+            denied_count,
+            N - LIMIT as usize,
+            "剩余 {} 个应全部 denied；得到 {denied_count}",
+            N - LIMIT as usize
+        );
+
+        let settings = Arc::try_unwrap(settings).expect("settings should have no other refs");
         let final_quota = load_ascension_quota(&settings).expect("final quota load");
         assert_eq!(
-            final_quota.occupied_slots, 2,
+            final_quota.occupied_slots, LIMIT,
             "最终 occupied 必须严格 == limit；任何 > limit 都是 §三 稀缺性突破"
         );
         // 所有 active 行都被清理（无论 granted/denied）
-        for i in 0..5 {
-            assert!(load_active_tribulation(&settings, &format!("offline:R{i}"))
-                .unwrap()
-                .is_none());
+        for i in 0..N {
+            assert!(
+                load_active_tribulation(&settings, &format!("offline:R{i}"))
+                    .unwrap()
+                    .is_none(),
+                "active row {i} 应被事务删除（granted/denied 都删）"
+            );
         }
         let _ = fs::remove_dir_all(root);
     }

@@ -222,4 +222,88 @@ mod tests {
             );
         }
     }
+
+    // ─── handle 集成路径（含资源缺失分支） ───
+    //
+    // 这些测试用 `spawn_test_client` 给 entity 装 Client component，让 handle 的
+    // `clients.get_mut(executor)` 能命中分支；测试断言 handle 不 panic、不破坏 world state，
+    // 缺资源时走 graceful fallback（仅返回 chat 提示，不影响其它系统）。
+
+    use crate::cmd::dev::test_support::{run_update, spawn_test_client};
+    use valence::prelude::{Entity, Events};
+
+    fn dispatch_dump(app: &mut App, executor: Entity) {
+        app.world_mut()
+            .resource_mut::<Events<CommandResultEvent<TribulationDebugCmd>>>()
+            .send(CommandResultEvent {
+                result: TribulationDebugCmd::Dump,
+                executor,
+                modifiers: Default::default(),
+            });
+        run_update(app);
+    }
+
+    #[test]
+    fn handle_runs_to_completion_with_full_resources_and_client() {
+        let mut app = App::new();
+        app.insert_resource(crate::combat::CombatClock { tick: 200 });
+        app.init_resource::<TribulationMetrics>();
+        app.init_resource::<QuotaFullTracker>();
+        app.add_event::<CommandResultEvent<TribulationDebugCmd>>();
+        app.add_systems(Update, handle);
+        let player = spawn_test_client(&mut app, "Alice", [0.0, 0.0, 0.0]);
+        // happy path：所有资源到位，client 存在 → handle 不 panic 不挂
+        dispatch_dump(&mut app, player);
+    }
+
+    #[test]
+    fn handle_chats_missing_resource_when_metrics_absent() {
+        let mut app = App::new();
+        app.insert_resource(crate::combat::CombatClock { tick: 200 });
+        app.init_resource::<QuotaFullTracker>();
+        // 故意不 init TribulationMetrics → handle 应该走 graceful 分支
+        app.add_event::<CommandResultEvent<TribulationDebugCmd>>();
+        app.add_systems(Update, handle);
+        let player = spawn_test_client(&mut app, "Bob", [0.0, 0.0, 0.0]);
+        dispatch_dump(&mut app, player);
+        // 关键断言：handle 不 panic（如果挂了 app.update() 会 panic 整个测试）；
+        // graceful fallback 表示资源缺失下系统依然 safe-running
+    }
+
+    #[test]
+    fn handle_chats_missing_resource_when_tracker_absent() {
+        let mut app = App::new();
+        app.insert_resource(crate::combat::CombatClock { tick: 200 });
+        app.init_resource::<TribulationMetrics>();
+        // 故意不 init QuotaFullTracker
+        app.add_event::<CommandResultEvent<TribulationDebugCmd>>();
+        app.add_systems(Update, handle);
+        let player = spawn_test_client(&mut app, "Carol", [0.0, 0.0, 0.0]);
+        dispatch_dump(&mut app, player);
+    }
+
+    #[test]
+    fn handle_chats_missing_resource_when_clock_absent() {
+        let mut app = App::new();
+        // 故意不 insert CombatClock
+        app.init_resource::<TribulationMetrics>();
+        app.init_resource::<QuotaFullTracker>();
+        app.add_event::<CommandResultEvent<TribulationDebugCmd>>();
+        app.add_systems(Update, handle);
+        let player = spawn_test_client(&mut app, "Dave", [0.0, 0.0, 0.0]);
+        dispatch_dump(&mut app, player);
+    }
+
+    #[test]
+    fn handle_no_op_when_executor_lacks_client_component() {
+        let mut app = App::new();
+        app.insert_resource(crate::combat::CombatClock { tick: 200 });
+        app.init_resource::<TribulationMetrics>();
+        app.init_resource::<QuotaFullTracker>();
+        app.add_event::<CommandResultEvent<TribulationDebugCmd>>();
+        app.add_systems(Update, handle);
+        let bare = app.world_mut().spawn_empty().id();
+        dispatch_dump(&mut app, bare);
+        // 无 Client 的 executor → handle continue 跳过，不影响其它 entity / 资源
+    }
 }

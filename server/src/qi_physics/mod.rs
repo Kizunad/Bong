@@ -83,6 +83,11 @@ pub enum QiPhysicsError {
         actual: f64,
         tolerance: f64,
     },
+    /// plan-halfstep-buff-v1 P1：标记为 audit-only 的 QiTransferReason 被误传给会变动余额的
+    /// `WorldQiAccount::transfer`，应改为单纯 emit `QiTransfer` 事件而不调 transfer 方法。
+    AuditOnlyReason {
+        reason: &'static str,
+    },
 }
 
 impl std::fmt::Display for QiPhysicsError {
@@ -106,6 +111,10 @@ impl std::fmt::Display for QiPhysicsError {
             } => write!(
                 f,
                 "qi conservation drift: expected {expected}, actual {actual}, tolerance {tolerance}"
+            ),
+            Self::AuditOnlyReason { reason } => write!(
+                f,
+                "QiTransferReason::{reason} is audit-only and must not mutate WorldQiAccount balance"
             ),
         }
     }

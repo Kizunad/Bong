@@ -1985,16 +1985,23 @@ pub fn juebi_settlement_system(
     }
 }
 
-/// plan-halfstep-buff-v1 P0+P1：消费 `TribulationSettled` 累计 halfstep / ascended 计数；
-/// 首次 HalfStep outcome 时应用 buff (qi_max ×1.10 / lifespan +200) + qi_physics ledger 标记 +
-/// 插入 `HalfStepState`。`HalfStepState.buff_applied` 守卫保证多次 HalfStep 只 apply 一次（§8 Q4）。
+/// plan-halfstep-buff-v1 P0+P1+P3：消费 `TribulationSettled` 累计 halfstep / ascended 计数；
+/// HalfStep outcome 时应用 buff (qi_max ×1.10 / lifespan +200) + qi_physics ledger 标记 +
+/// 插入/更新 `HalfStepState` + 确保 FIFO 队列里有 entry。`HalfStepState.buff_applied` 守卫
+/// 保证 buff 只 apply 一次（§8 Q4）；保留原 `entered_at` 让 §8 Q1 重渡窗口起点稳定。
 ///
 /// 设计要点：
-/// - **buff_applied=false** 仅出现在 entity 缺 `Cultivation` 的测试场景或 dormant NPC 未 hydrate 时；
-///   生产路径下 player / hydrated NPC 都有 Cultivation，应用即转为 `buff_applied=true`
-/// - **ledger 是 audit-only**：emit `QiTransfer` event 但不调 `WorldQiAccount::transfer`，因为
-///   buff 是容量扩张不是真元搬运（worldview §三:78 + §二 守恒律）
-/// - **不覆盖已有 HalfStepState**：保留 `entered_at` 不漂移（§8 Q1 重渡窗口起点稳定）
+/// - **buff_applied=false → true 是状态机的单向跃迁**：dormant NPC 第一次 HalfStep 时缺
+///   `Cultivation`（buff_applied 留 false），后续 hydrate 再次结算 HalfStep 时**必须**回写
+///   buff_applied=true 并应用 buff，否则 dormant 玩家永远拿不到 buff
+/// - **二次入队是 §8 Q1 + Q2 的可恢复性保证**：dispatch system pop_front 后玩家若没起劫
+///   就结束（被新一波 HalfStep settlement 再次结算，例如重渡又失败回 HalfStep 的边界情况），
+///   必须**重新入队**才能在下次 quota 空出时被通知；否则永久失去 FCFS 资格
+/// - **ledger 是 audit-only**：emit `QiTransfer` event 但不调 `WorldQiAccount::transfer`（已
+///   在 `WorldQiAccount::transfer` 入口硬拒，参 `qi_physics::ledger` 中 `AuditOnlyReason` 守卫）
+/// - **终态清理**：Ascended/Killed/Failed/Fled 不光出队，**还要 remove HalfStepState** —— 否则
+///   下一轮 HalfStep（如复活 + 重新渡虚劫失败）会用旧 `entered_at`、`buff_applied=true` 守卫
+///   错乱，污染整个状态机
 #[allow(clippy::too_many_arguments)]
 pub fn track_tribulation_metrics_system(
     mut commands: Commands,
@@ -2011,11 +2018,17 @@ pub fn track_tribulation_metrics_system(
             DuXuOutcomeV1::HalfStep => {
                 metrics.halfstep_count = metrics.halfstep_count.saturating_add(1);
 
-                // has_state 独立 query：不依赖 Cultivation 存在（dummy entity / dormant NPC 路径）
-                let (already_buffed, has_state) = match existing_states.get(ev.entity) {
-                    Ok(state) => (state.buff_applied, true),
-                    Err(_) => (false, false),
-                };
+                // 读 existing state：有则保留 entered_at + window_until（§8 Q1 窗口起点不漂移）；
+                // 无则用 current tick 作起点。已 buffed 时 buff_applied 透传，避免重复应用。
+                let (existing_entered_at, existing_window, already_buffed) =
+                    match existing_states.get(ev.entity) {
+                        Ok(state) => (
+                            Some(state.entered_at),
+                            Some(state.rechallenge_window_until),
+                            state.buff_applied,
+                        ),
+                        Err(_) => (None, None, false),
+                    };
 
                 let mut buff_now_applied = already_buffed;
                 if !already_buffed {
@@ -2023,7 +2036,8 @@ pub fn track_tribulation_metrics_system(
                         let before = cultivation.qi_max;
                         cultivation.qi_max *= 1.0 + HALFSTEP_QI_MAX_BONUS as f64;
                         let bonus_capacity = cultivation.qi_max - before;
-                        // qi_physics ledger audit-only 标记
+                        // qi_physics ledger audit-only 标记（emit event；WorldQiAccount::transfer
+                        // 拒绝该 reason，防止误调动 balance）
                         if bonus_capacity > 0.0 {
                             if let Ok(transfer) = QiTransfer::new(
                                 QiAccountId::tiandao(),
@@ -2044,32 +2058,41 @@ pub fn track_tribulation_metrics_system(
                     }
                 }
 
-                if !has_state {
-                    let entered_at = clock.tick;
-                    let window_until = entered_at.saturating_add(RECHALLENGE_WINDOW_TICKS);
-                    commands.entity(ev.entity).insert(HalfStepState {
-                        entered_at,
-                        rechallenge_window_until: window_until,
-                        buff_applied: buff_now_applied,
-                    });
-                    // plan-halfstep-buff-v1 P3：首次 HalfStep 入 FIFO 重渡队列
-                    queue.enqueue(HalfStepRechallengeEntry {
-                        char_id: ev.result.char_id.clone(),
-                        entity: ev.entity,
-                        entered_at,
-                        rechallenge_window_until: window_until,
-                        is_dormant: false,
-                    });
-                }
+                let entered_at = existing_entered_at.unwrap_or(clock.tick);
+                let window_until = existing_window
+                    .unwrap_or_else(|| entered_at.saturating_add(RECHALLENGE_WINDOW_TICKS));
+
+                // upsert HalfStepState：新建或回写 buff_applied（dormant→hydrate 路径 + Cultivation
+                // 缺失 → 已 hydrate 路径都靠这条统一）
+                commands.entity(ev.entity).insert(HalfStepState {
+                    entered_at,
+                    rechallenge_window_until: window_until,
+                    buff_applied: buff_now_applied,
+                });
+
+                // 确保队列里有 entry（dedup-then-enqueue，防止二次 HalfStep 留下重复或
+                // dispatch pop_front 过后永久失去重渡资格）
+                queue.remove_entity(ev.entity);
+                queue.enqueue(HalfStepRechallengeEntry {
+                    char_id: ev.result.char_id.clone(),
+                    entity: ev.entity,
+                    entered_at,
+                    rechallenge_window_until: window_until,
+                    is_dormant: false,
+                });
             }
             DuXuOutcomeV1::Ascended => {
                 metrics.ascended_count = metrics.ascended_count.saturating_add(1);
-                // entity 化虚成功 → 不再是 HalfStep，从重渡队列移除（防止误派发）
+                // 化虚成功 → 不再是 HalfStep；清队 + 清 component 防下一轮污染
                 queue.remove_entity(ev.entity);
+                queue.remove_char_id(&ev.result.char_id);
+                commands.entity(ev.entity).remove::<HalfStepState>();
             }
             DuXuOutcomeV1::Killed | DuXuOutcomeV1::Failed | DuXuOutcomeV1::Fled => {
-                // entity 不再 HalfStep（死亡 / 降境 / 逃跑），从队列清理
+                // 死亡 / 降境 / 逃跑 → 同 Ascended：清队 + 清 component；下一轮重新建状态
                 queue.remove_entity(ev.entity);
+                queue.remove_char_id(&ev.result.char_id);
+                commands.entity(ev.entity).remove::<HalfStepState>();
             }
         }
     }
@@ -7999,7 +8022,10 @@ mod tests {
             12345 + RECHALLENGE_WINDOW_TICKS,
             "rechallenge_window_until must be entered_at + 7d (§8 Q1)"
         );
-        assert!(!state.buff_applied, "buff_applied starts false (§8 Q4 守卫)");
+        assert!(
+            !state.buff_applied,
+            "buff_applied starts false (§8 Q4 守卫)"
+        );
     }
 
     #[test]
@@ -8087,7 +8113,10 @@ mod tests {
         let state = HalfStepState::new(1000);
         let window_end = 1000 + RECHALLENGE_WINDOW_TICKS;
         assert!(state.is_within_window(1000), "进入 tick 应在窗口内");
-        assert!(state.is_within_window(window_end), "等于窗口末端应在窗口内（闭区间）");
+        assert!(
+            state.is_within_window(window_end),
+            "等于窗口末端应在窗口内（闭区间）"
+        );
         assert!(
             !state.is_within_window(window_end + 1),
             "超过窗口末端 1 tick 必须不在窗口内（边界一致性）"
@@ -8115,8 +8144,14 @@ mod tests {
         app.update();
 
         let cultivation = app.world().get::<Cultivation>(entity).expect("cultivation");
-        let lifespan = app.world().get::<LifespanComponent>(entity).expect("lifespan");
-        let state = app.world().get::<HalfStepState>(entity).expect("halfstep state");
+        let lifespan = app
+            .world()
+            .get::<LifespanComponent>(entity)
+            .expect("lifespan");
+        let state = app
+            .world()
+            .get::<HalfStepState>(entity)
+            .expect("halfstep state");
 
         // qi_max × (1.0 + 0.10) = 1100.0
         let expected_qi_max = 1000.0 * (1.0 + HALFSTEP_QI_MAX_BONUS as f64);
@@ -8344,7 +8379,10 @@ mod tests {
         assert_eq!(entry.char_id, "halfstep_test_char");
         assert_eq!(entry.entity, entity);
         assert_eq!(entry.entered_at, 555);
-        assert_eq!(entry.rechallenge_window_until, 555 + RECHALLENGE_WINDOW_TICKS);
+        assert_eq!(
+            entry.rechallenge_window_until,
+            555 + RECHALLENGE_WINDOW_TICKS
+        );
         assert!(!entry.is_dormant);
     }
 
@@ -8371,7 +8409,7 @@ mod tests {
     }
 
     #[test]
-    fn settlement_removes_from_queue_on_ascended_killed_failed_fled() {
+    fn settlement_removes_from_queue_and_state_on_ascended_killed_failed_fled() {
         for outcome in [
             DuXuOutcomeV1::Ascended,
             DuXuOutcomeV1::Killed,
@@ -8386,7 +8424,11 @@ mod tests {
                 .send(make_settled_event(entity, DuXuOutcomeV1::HalfStep));
             app.update();
             assert_eq!(app.world().resource::<HalfStepRechallengeQueue>().len(), 1);
-            // 后续 outcome 触发清队
+            assert!(
+                app.world().get::<HalfStepState>(entity).is_some(),
+                "HalfStep settle 后必须有 HalfStepState component（前提）"
+            );
+            // 后续 outcome 触发清队 + 清 component
             app.world_mut()
                 .resource_mut::<Events<TribulationSettled>>()
                 .send(make_settled_event(entity, outcome));
@@ -8394,9 +8436,119 @@ mod tests {
             assert_eq!(
                 app.world().resource::<HalfStepRechallengeQueue>().len(),
                 0,
-                "outcome={outcome:?} 应触发 remove_entity 清队"
+                "outcome={outcome:?} 应触发清队"
+            );
+            assert!(
+                app.world().get::<HalfStepState>(entity).is_none(),
+                "outcome={outcome:?} 必须 remove HalfStepState component；\
+                 留 stale state 会污染下一轮 HalfStep（entered_at 错乱 / buff_applied 守卫失效）"
             );
         }
+    }
+
+    #[test]
+    fn halfstep_re_settle_after_dispatch_pop_re_enqueues_and_preserves_entered_at() {
+        // 场景：玩家 HalfStep settle → 入队。AscensionQuotaOpened 触发 dispatch pop_front。
+        // 玩家未起劫，又一次 HalfStep settle 进来 —— 必须**重新入队**（否则永久失去 FCFS 资格）
+        // 且 entered_at **不变**（§8 Q1 重渡窗口起点稳定）。
+        let mut app = p0_metrics_test_app();
+        app.world_mut().resource_mut::<CombatClock>().tick = 100;
+        let entity = app.world_mut().spawn(()).id();
+        app.world_mut()
+            .resource_mut::<Events<TribulationSettled>>()
+            .send(make_settled_event(entity, DuXuOutcomeV1::HalfStep));
+        app.update();
+        // dispatch 弹出
+        app.world_mut()
+            .resource_mut::<Events<AscensionQuotaOpened>>()
+            .send(AscensionQuotaOpened { occupied_slots: 0 });
+        app.update();
+        assert!(
+            app.world()
+                .resource::<HalfStepRechallengeQueue>()
+                .is_empty(),
+            "dispatch 应已弹出该 entry"
+        );
+        let original_entered_at = app
+            .world()
+            .get::<HalfStepState>(entity)
+            .map(|s| s.entered_at)
+            .expect("HalfStepState 仍应在 component 上（dispatch 不清 component）");
+        // 时间推进 + 二次 HalfStep
+        app.world_mut().resource_mut::<CombatClock>().tick = 500;
+        app.world_mut()
+            .resource_mut::<Events<TribulationSettled>>()
+            .send(make_settled_event(entity, DuXuOutcomeV1::HalfStep));
+        app.update();
+        assert_eq!(
+            app.world().resource::<HalfStepRechallengeQueue>().len(),
+            1,
+            "二次 HalfStep settle 必须重新入队；否则玩家永久失去重渡资格"
+        );
+        let state_after = app
+            .world()
+            .get::<HalfStepState>(entity)
+            .expect("HalfStepState 仍在 component");
+        assert_eq!(
+            state_after.entered_at, original_entered_at,
+            "entered_at 必须保持原值（{original_entered_at}）；重置会让 7d 窗口被玩家无限延期"
+        );
+    }
+
+    #[test]
+    fn halfstep_buff_applied_flag_backfills_on_resettle_when_cultivation_now_present() {
+        // 场景：dormant NPC 第一次 HalfStep（缺 Cultivation → buff_applied=false）。
+        // 后续 hydrate 后该 entity 有 Cultivation 了，再次 HalfStep settle 时 buff 应回写应用。
+        let mut app = p0_metrics_test_app();
+        let entity = app.world_mut().spawn(()).id();
+        // Phase 1: dormant - 无 Cultivation
+        app.world_mut()
+            .resource_mut::<Events<TribulationSettled>>()
+            .send(make_settled_event(entity, DuXuOutcomeV1::HalfStep));
+        app.update();
+        let state_before = app.world().get::<HalfStepState>(entity).expect("state");
+        assert!(
+            !state_before.buff_applied,
+            "无 Cultivation 路径下 buff_applied 必须留 false（避免谎报应用过）"
+        );
+        let entered_at_before = state_before.entered_at;
+
+        // Phase 2: hydrate - 给 entity 加 Cultivation + Lifespan
+        app.world_mut().entity_mut(entity).insert((
+            Cultivation {
+                realm: Realm::Spirit,
+                qi_current: 0.0,
+                qi_max: 1000.0,
+                ..Default::default()
+            },
+            LifespanComponent::new(LifespanCapTable::SPIRIT),
+        ));
+        // 二次 HalfStep settle
+        app.world_mut()
+            .resource_mut::<Events<TribulationSettled>>()
+            .send(make_settled_event(entity, DuXuOutcomeV1::HalfStep));
+        app.update();
+
+        let cultivation = app.world().get::<Cultivation>(entity).unwrap();
+        let lifespan = app.world().get::<LifespanComponent>(entity).unwrap();
+        let state_after = app.world().get::<HalfStepState>(entity).unwrap();
+        let expected_qi_max = 1000.0 * (1.0 + HALFSTEP_QI_MAX_BONUS as f64);
+        assert!(
+            (cultivation.qi_max - expected_qi_max).abs() < 1e-6,
+            "hydrate 后二次 settle 必须补 buff (qi_max {} → expected {})",
+            cultivation.qi_max,
+            expected_qi_max
+        );
+        assert_eq!(
+            lifespan.cap_by_realm,
+            LifespanCapTable::SPIRIT + HALFSTEP_LIFESPAN_BONUS_YEARS,
+            "lifespan 也必须补"
+        );
+        assert!(state_after.buff_applied, "buff_applied 必须回写 true");
+        assert_eq!(
+            state_after.entered_at, entered_at_before,
+            "entered_at 必须保留原值（dormant 阶段进 HalfStep 的时间戳）"
+        );
     }
 
     #[test]
@@ -8424,7 +8576,10 @@ mod tests {
         assert_eq!(triggers[0].char_id, "halfstep_test_char");
         assert!(!triggers[0].is_dormant);
         // 队列已出队
-        assert!(app.world().resource::<HalfStepRechallengeQueue>().is_empty());
+        assert!(app
+            .world()
+            .resource::<HalfStepRechallengeQueue>()
+            .is_empty());
     }
 
     #[test]
@@ -8456,7 +8611,10 @@ mod tests {
             triggers[0].entity, fresh,
             "stale entry 应被丢弃，fresh entry 收到通知（§8 Q1 7d 窗口）"
         );
-        assert!(app.world().resource::<HalfStepRechallengeQueue>().is_empty());
+        assert!(app
+            .world()
+            .resource::<HalfStepRechallengeQueue>()
+            .is_empty());
     }
 
     #[test]
@@ -8506,6 +8664,9 @@ mod tests {
         assert_eq!(triggers[0].entity, entities[0]);
         assert_eq!(triggers[1].entity, entities[1]);
         assert_eq!(triggers[2].entity, entities[2]);
-        assert!(app.world().resource::<HalfStepRechallengeQueue>().is_empty());
+        assert!(app
+            .world()
+            .resource::<HalfStepRechallengeQueue>()
+            .is_empty());
     }
 }
