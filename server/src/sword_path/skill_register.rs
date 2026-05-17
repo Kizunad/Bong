@@ -332,6 +332,7 @@ pub fn heaven_gate_cast_system(
     mut shatter_events: Option<ResMut<Events<SwordShatterEvent>>>,
     mut qi_transfers: Option<ResMut<Events<QiTransfer>>>,
     mut blind_registry: ResMut<TiandaoBlindZoneRegistry>,
+    zone_registry: Option<Res<crate::world::zone::ZoneRegistry>>,
 ) {
     // 多 caster 同 tick 触发的情况罕见，但为了保证 deterministic 排序，按 Entity bits 排序。
     let mut pending: Vec<HeavenGateCastEvent> = events.read().cloned().collect();
@@ -395,14 +396,21 @@ pub fn heaven_gate_cast_system(
         let zone = create_blind_zone_from_cast(&event, clock.tick);
         blind_registry.add(zone);
 
-        // 守恒：staging_buffer 进 zone（worldview §二 真元守恒）。先用 compute
-        // 函数算出 qi_max_lost / new_qi_max（不直接覆盖前面的 qi_max 写入）。
-        let outcome = compute_heaven_gate_shatter(event.qi_max, event.stored_qi);
-        let _ = outcome; // 数值已在上面写入 cultivation，这里仅保留 ledger entry。
+        // 守恒：staging_buffer 进 caster 当前所在 zone（worldview §二 真元守恒、
+        // zone 级储量必须按位置归账）。compute 函数算出 qi_max_lost / new_qi_max
+        // 数值已在上面写入 cultivation，这里仅保留 ledger entry 并解析目标 zone。
+        let _outcome = compute_heaven_gate_shatter(event.qi_max, event.stored_qi);
+        let target_zone = zone_registry
+            .as_deref()
+            .and_then(|r| {
+                r.find_zone(crate::world::dimension::DimensionKind::Overworld, event.position)
+            })
+            .map(|z| z.name.clone())
+            .unwrap_or_else(|| DEFAULT_SPAWN_ZONE_NAME.to_string());
         if let Some(transfers) = qi_transfers.as_deref_mut() {
             if let Ok(transfer) = QiTransfer::new(
                 QiAccountId::player(format!("entity:{:?}", event.caster)),
-                QiAccountId::zone(DEFAULT_SPAWN_ZONE_NAME),
+                QiAccountId::zone(target_zone),
                 staging_buffer,
                 QiTransferReason::ReleaseToZone,
             ) {
@@ -532,12 +540,14 @@ fn build_cast_context(
             }
             // 同时校验当前 integrity（worldview §四:286）：完全 SEVERED 已被
             // check_meridian_dependencies 拦截；这里再防 integrity = 0 的临时损伤。
+            // 语义：剑道五招要求**所有**依赖经脉都通畅，任一断裂就拒绝（与 check_meridian
+            // _dependencies 的 ANY 拒绝语义对齐）。
             if let Some(meridians) = world.get::<MeridianSystem>(caster) {
-                if deps
+                if let Some(broken) = deps
                     .iter()
-                    .all(|m| meridians.get(*m).integrity <= f64::EPSILON)
+                    .find(|m| meridians.get(**m).integrity <= f64::EPSILON)
                 {
-                    return Err(CastRejectReason::MeridianSevered(deps.first().copied()));
+                    return Err(CastRejectReason::MeridianSevered(Some(*broken)));
                 }
             }
         }
@@ -852,6 +862,34 @@ mod tests {
                 }
             ),
             "三焦 SEVERED 时剑气斩必须被 check_meridian_dependencies 拦截，实际 result={result:?}"
+        );
+    }
+
+    /// P1.5 review 修复 — 任一依赖经脉 integrity ≤ ε 即拒绝，不要求"全部依赖断"。
+    /// 原 `all()` 实现会放过部分损伤状态，违反 worldview §四:286。
+    #[test]
+    fn cast_rejected_when_any_dependency_meridian_integrity_zero() {
+        let (mut app, caster) = setup_app();
+        // 只损坏一条依赖经脉（小肠 SmallIntestine），保留其他两条
+        // (LargeIntestine + TripleEnergizer)
+        if let Some(mut meridians) = app.world_mut().get_mut::<MeridianSystem>(caster) {
+            meridians.get_mut(MeridianId::SmallIntestine).integrity = 0.0;
+            // 显式保证其余两条仍 > ε
+            meridians.get_mut(MeridianId::LargeIntestine).integrity = 1.0;
+            meridians.get_mut(MeridianId::TripleEnergizer).integrity = 1.0;
+        }
+        let target = app.world_mut().spawn(Position::default()).id();
+
+        let result = cast_qi_slash(app.world_mut(), caster, 0, Some(target));
+        assert!(
+            matches!(
+                result,
+                CastResult::Rejected {
+                    reason: CastRejectReason::MeridianSevered(Some(MeridianId::SmallIntestine))
+                }
+            ),
+            "小肠 integrity=0 时剑气斩必须立即拒绝（实际 result={result:?}）—— 旧 all() \
+            实现要求全部依赖都坏才拒绝，会破 worldview §四:286 物理可见性"
         );
     }
 

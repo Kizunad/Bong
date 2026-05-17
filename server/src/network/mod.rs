@@ -315,7 +315,11 @@ pub fn register(app: &mut App) {
     app.add_systems(
         Update,
         (
-            publish_world_state_to_redis,
+            // plan-sword-path-v2 P2.3 review fix: 必须在 heaven_gate_cast_system 之后跑，
+            // 否则化虚一击同 tick 内 publish 会先于盲区注册执行，导致 caster 坐标
+            // 在被隐藏前泄露一个发布周期给 agent。
+            publish_world_state_to_redis
+                .after(crate::sword_path::skill_register::heaven_gate_cast_system),
             collect_player_chat,
             process_redis_inbound,
             reconcile_world_model_runtime_mirror_system.after(process_redis_inbound),
@@ -3216,6 +3220,118 @@ mod tests {
                 .expect("spawn fallback zone should still be emitted");
 
             assert_eq!(spawn_zone.status, ZoneStatusV1::Collapsed);
+        }
+
+        /// plan-sword-path-v2 P2.3 review fix —— 化虚一击注册的盲区会把玩家从
+        /// world_state.players 中过滤出去；盲区外玩家保留；player_counts 同步少 1。
+        /// 守 worldview §八 天道感应：盲区内角色对 agent 是不可见的。
+        #[test]
+        fn world_state_excludes_player_inside_tiandao_blind_zone() {
+            use crate::sword_path::heaven_gate::TiandaoBlindZoneRegistry;
+            use crate::sword_path::tiandao_blind::TiandaoBlindZone;
+
+            let (mut app, rx_outbound) = setup_publish_app(true);
+            // 盲区中心点正好落在出生区中央，半径 100 格——一个玩家在中心，另一个
+            // 在 1000 格外
+            let mut registry = TiandaoBlindZoneRegistry::default();
+            registry.add(TiandaoBlindZone {
+                center: DVec3::new(0.0, 64.0, 0.0),
+                radius: 100.0,
+                ttl_ticks: 6000,
+                created_tick: 0,
+            });
+            app.insert_resource(registry);
+
+            spawn_test_client(&mut app, "inside_blind", [0.0, 64.0, 0.0]);
+            spawn_test_client(&mut app, "outside_blind", [1000.0, 64.0, 0.0]);
+
+            let state = publish_once(&mut app, &rx_outbound);
+
+            let names: Vec<&str> = state.players.iter().map(|p| p.name.as_str()).collect();
+            assert!(
+                !names.contains(&"inside_blind"),
+                "化虚一击注册的盲区内玩家必须从 world_state.players 中消失，\
+                 否则 agent 仍能看到 caster 坐标。实际 names={names:?}"
+            );
+            assert!(
+                names.contains(&"outside_blind"),
+                "盲区外玩家应保留，实际 names={names:?}"
+            );
+            // 盲区内玩家也不应计入 player_count（zones 列表中 spawn 的 count 应为 1
+            // 不是 2）
+            let spawn_zone = state
+                .zones
+                .iter()
+                .find(|zone| zone.name == DEFAULT_SPAWN_ZONE_NAME);
+            if let Some(spawn_zone) = spawn_zone {
+                assert!(
+                    spawn_zone.player_count <= 1,
+                    "盲区内玩家不应计入 player_count，实际 spawn.player_count={}",
+                    spawn_zone.player_count
+                );
+            }
+        }
+
+        /// plan-sword-path-v2 P2.3 review fix —— 没有 TiandaoBlindZoneRegistry resource
+        /// 时（如其他 plan 单测沿用同一 setup），行为不变，所有玩家都进 world_state。
+        #[test]
+        fn world_state_includes_all_players_when_no_blind_zone_registry() {
+            let (mut app, rx_outbound) = setup_publish_app(true);
+            spawn_test_client(&mut app, "player_a", [0.0, 64.0, 0.0]);
+            spawn_test_client(&mut app, "player_b", [1000.0, 64.0, 0.0]);
+
+            let state = publish_once(&mut app, &rx_outbound);
+
+            let names: Vec<&str> = state.players.iter().map(|p| p.name.as_str()).collect();
+            assert!(
+                names.contains(&"player_a") && names.contains(&"player_b"),
+                "无盲区 registry 时所有玩家都应出现在 world_state，实际 names={names:?}"
+            );
+        }
+
+        /// plan-sword-path-v2 P2.3 review fix —— 盲区过期后玩家应重新出现。
+        /// 验证 TiandaoBlindZone 是否到 TTL 后被 `tick_expire` 移除的端到端链路。
+        #[test]
+        fn world_state_re_includes_player_after_blind_zone_expires() {
+            use crate::sword_path::heaven_gate::TiandaoBlindZoneRegistry;
+            use crate::sword_path::tiandao_blind::TiandaoBlindZone;
+
+            let (mut app, rx_outbound) = setup_publish_app(true);
+            // 注册 ttl=1 的盲区，下一次 tick_expire 会清理它。
+            let mut registry = TiandaoBlindZoneRegistry::default();
+            registry.add(TiandaoBlindZone {
+                center: DVec3::new(0.0, 64.0, 0.0),
+                radius: 100.0,
+                ttl_ticks: 1,
+                created_tick: 0,
+            });
+            app.insert_resource(registry);
+
+            spawn_test_client(&mut app, "tester", [0.0, 64.0, 0.0]);
+
+            // 第 1 次 publish：盲区还活跃，玩家被隐藏。
+            let state1 = publish_once(&mut app, &rx_outbound);
+            assert!(
+                !state1.players.iter().any(|p| p.name == "tester"),
+                "首发 publish 时玩家应被盲区隐藏"
+            );
+
+            // 手动清空盲区 registry 模拟 tick_expire 完成。
+            {
+                let mut registry = app
+                    .world_mut()
+                    .resource_mut::<TiandaoBlindZoneRegistry>();
+                registry.tick_expire(u64::MAX);
+            }
+            // 让下一次 publish 触发：把 timer 回到能 publish 的状态
+            app.world_mut().resource_mut::<WorldStateTimer>().ticks =
+                WORLD_STATE_PUBLISH_INTERVAL_TICKS - 1;
+
+            let state2 = publish_once(&mut app, &rx_outbound);
+            assert!(
+                state2.players.iter().any(|p| p.name == "tester"),
+                "盲区过期后 publish 应重新包含玩家"
+            );
         }
 
         #[test]

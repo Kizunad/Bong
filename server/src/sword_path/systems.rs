@@ -4,14 +4,17 @@
 //! 行为（招式 cast / 真元注入 / 化虚 runtime）走 `super::skill_register`，因为
 //! 它们都是 `SkillFn` 入口而不是独立 Bevy system。
 
-use valence::prelude::{Commands, Entity, EventReader, EventWriter, Events, Query, Res, ResMut};
+use valence::prelude::{
+    Commands, Entity, EventReader, EventWriter, Events, Position, Query, Res, ResMut,
+};
 
 use crate::combat::events::{AttackSource, CombatEvent};
 use crate::combat::weapon::{Weapon, WeaponKind};
 use crate::combat::CombatClock;
 use crate::cultivation::components::Cultivation;
 use crate::qi_physics::{QiAccountId, QiTransfer, QiTransferReason};
-use crate::world::zone::DEFAULT_SPAWN_ZONE_NAME;
+use crate::world::dimension::DimensionKind;
+use crate::world::zone::{ZoneRegistry, DEFAULT_SPAWN_ZONE_NAME};
 
 use super::bond::{
     SwordBondComponent, SwordBondFormedEvent, SwordBondProgress, SwordShatterEvent,
@@ -37,17 +40,30 @@ pub fn sword_bond_tracking_system(
     for event in combat_events.read() {
         let attacker = event.attacker;
         let Ok(weapon) = weapons.get(attacker) else {
-            // 攻击者没有 Weapon component（赤手空拳、NPC 等）→ 不参与剑道追踪。
+            // 攻击者没有 Weapon component（赤手空拳、NPC 等）→ 链路断了，
+            // 已有 progress 视为非连续命中，清零。
+            if progress.get(attacker).is_ok() {
+                commands.entity(attacker).remove::<SwordBondProgress>();
+            }
             continue;
         };
         if weapon.weapon_kind != WeaponKind::Sword {
+            // 换非剑武器 → 非连续剑术。
+            if progress.get(attacker).is_ok() {
+                commands.entity(attacker).remove::<SwordBondProgress>();
+            }
             continue;
         }
         if !matches!(
             event.source,
             AttackSource::SwordCleave | AttackSource::SwordThrust
         ) {
-            // 仅 sword_basics 直接命中算"连续使用剑术"；其他来源（远袭/AoE）不增计数。
+            // 仅 sword_basics 直接命中算"连续使用剑术"。其他来源（拳击 / 远袭 / AoE）
+            // 视为打断连续——清零 progress，防止"19 有效 + 1 非剑 + 1 有效 → 绑定"
+            // 这种"累计而非连续"的语义漂移。
+            if progress.get(attacker).is_ok() {
+                commands.entity(attacker).remove::<SwordBondProgress>();
+            }
             continue;
         }
 
@@ -57,7 +73,11 @@ pub fn sword_bond_tracking_system(
         }
 
         // 命中目标无意义，但伤害必须 > 0（避免 parry / 无效命中也涨计数）。
+        // 0 伤命中视为"被格挡"，打断连续。
         if event.damage <= 0.0 && event.physical_damage <= 0.0 {
+            if progress.get(attacker).is_ok() {
+                commands.entity(attacker).remove::<SwordBondProgress>();
+            }
             continue;
         }
 
@@ -91,20 +111,35 @@ pub fn sword_bond_tracking_system(
 }
 
 /// P1.3 — 监听 `SwordShatterEvent`：扣减玩家 `Cultivation.qi_current` + 永久衰减
-/// `qi_max`，剩余真元走 ledger 释放回所在 zone。
+/// `qi_max`，剩余真元走 ledger 释放回**玩家当前所在 zone**（守 worldview §二 zone 级守恒）。
 ///
 /// 守恒律：`stored_qi = backlash_qi_current + qi_released_to_zone`，由
-/// `shatter::compute_shatter_outcome` 锁定。
+/// `shatter::compute_shatter_outcome` 锁定；目标 zone 由 `zone_registry.find_zone(pos)`
+/// 派生——玩家在血谷碎剑灵气就回血谷池，不会错误倒灌出生区。`ZoneRegistry` 缺失
+/// （测试场景）时 fallback 到 `DEFAULT_SPAWN_ZONE_NAME`。
 pub fn sword_shatter_system(
     mut shatter_events: EventReader<SwordShatterEvent>,
-    mut players: Query<&mut Cultivation>,
+    mut players: Query<(&mut Cultivation, Option<&Position>)>,
+    zone_registry: Option<Res<ZoneRegistry>>,
     mut qi_transfers: Option<ResMut<Events<QiTransfer>>>,
 ) {
     for event in shatter_events.read() {
         // 0.5 是确定性占位 roll —— "10% 概率结晶剑魂" 由独立的 spawn system 抽样决定，
         // 这里只关心真元守恒。
         let outcome = compute_shatter_outcome(event, 0.5);
-        if let Ok(mut cultivation) = players.get_mut(event.player) {
+        let target_zone = players
+            .get(event.player)
+            .ok()
+            .and_then(|(_, pos)| pos)
+            .and_then(|pos| {
+                zone_registry
+                    .as_deref()
+                    .and_then(|r| r.find_zone(DimensionKind::Overworld, pos.get()))
+                    .map(|zone| zone.name.clone())
+            })
+            .unwrap_or_else(|| DEFAULT_SPAWN_ZONE_NAME.to_string());
+
+        if let Ok((mut cultivation, _)) = players.get_mut(event.player) {
             cultivation.qi_current =
                 (cultivation.qi_current - outcome.backlash_qi_current).max(0.0);
             cultivation.qi_max = (cultivation.qi_max - outcome.backlash_qi_max_permanent).max(0.0);
@@ -114,7 +149,7 @@ pub fn sword_shatter_system(
             if let Some(events) = qi_transfers.as_deref_mut() {
                 if let Ok(transfer) = QiTransfer::new(
                     QiAccountId::container(format!("sword_bond:{:?}", event.weapon)),
-                    QiAccountId::zone(DEFAULT_SPAWN_ZONE_NAME),
+                    QiAccountId::zone(target_zone),
                     outcome.qi_released_to_zone,
                     QiTransferReason::ReleaseToZone,
                 ) {
@@ -332,6 +367,92 @@ mod tests {
         app.world_mut().send_event(cleave_hit(attacker, target));
         app.update();
         assert!(app.world().get::<SwordBondProgress>(attacker).is_none());
+    }
+
+    /// P1.1 review 修复 — "连续命中"必须真连续：19 次有效 + 1 次 Melee（拳击/非剑）
+    /// + 1 次有效 ≠ 20 连续。中断事件要清零 progress，不是简单 continue。
+    #[test]
+    fn bond_tracking_clears_progress_on_non_sword_interruption() {
+        let mut app = App::new();
+        app.add_event::<CombatEvent>();
+        app.add_event::<SwordBondFormedEvent>();
+        app.add_systems(Update, sword_bond_tracking_system);
+
+        let attacker = spawn_sword_player(&mut app);
+        let target = app.world_mut().spawn_empty().id();
+
+        // 攻 19 次有效剑术
+        for _ in 0..(BOND_TRIGGER_USES - 1) {
+            app.world_mut().send_event(cleave_hit(attacker, target));
+            app.update();
+        }
+        assert_eq!(
+            app.world()
+                .get::<SwordBondProgress>(attacker)
+                .map(|p| p.consecutive_uses),
+            Some(BOND_TRIGGER_USES - 1),
+            "前 19 次有效命中应积累完整"
+        );
+
+        // 第 20 次是拳击（AttackSource::Melee），应该打断连续
+        let mut interruption = cleave_hit(attacker, target);
+        interruption.source = AttackSource::Melee;
+        app.world_mut().send_event(interruption);
+        app.update();
+        assert!(
+            app.world().get::<SwordBondProgress>(attacker).is_none(),
+            "中断事件后 progress 应被清零，否则下次有效命中会立即触发绑定"
+        );
+
+        // 第 21 次重新有效剑术，应只算 1，不能立即触发绑定
+        app.world_mut().send_event(cleave_hit(attacker, target));
+        app.update();
+        assert!(
+            app.world().get::<SwordBondComponent>(attacker).is_none(),
+            "中断后再 1 次命中不应触发绑定（否则就是'累计而非连续'语义漂移）"
+        );
+        assert_eq!(
+            app.world()
+                .get::<SwordBondProgress>(attacker)
+                .map(|p| p.consecutive_uses),
+            Some(1),
+            "应从 1 重新开始计数"
+        );
+    }
+
+    /// P1.1 review 修复 — 0 伤命中（被格挡）也应清零 progress。
+    #[test]
+    fn bond_tracking_clears_progress_on_zero_damage_hit() {
+        let mut app = App::new();
+        app.add_event::<CombatEvent>();
+        app.add_event::<SwordBondFormedEvent>();
+        app.add_systems(Update, sword_bond_tracking_system);
+
+        let attacker = spawn_sword_player(&mut app);
+        let target = app.world_mut().spawn_empty().id();
+
+        // 攻 10 次有效，积累 progress=10
+        for _ in 0..10 {
+            app.world_mut().send_event(cleave_hit(attacker, target));
+            app.update();
+        }
+        assert_eq!(
+            app.world()
+                .get::<SwordBondProgress>(attacker)
+                .map(|p| p.consecutive_uses),
+            Some(10)
+        );
+
+        // 被格挡：damage=0 + physical_damage=0
+        let mut blocked = cleave_hit(attacker, target);
+        blocked.damage = 0.0;
+        blocked.physical_damage = 0.0;
+        app.world_mut().send_event(blocked);
+        app.update();
+        assert!(
+            app.world().get::<SwordBondProgress>(attacker).is_none(),
+            "被格挡（0 伤）应打断连续，progress 清零"
+        );
     }
 
     /// P1.3 — shatter 守恒：stored_qi 总额 = qi_current 扣减 + zone 释放。
