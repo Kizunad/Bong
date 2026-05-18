@@ -93,6 +93,7 @@ def run_layout(
                 "Unknown placement kind '%s' for layout '%s'",
                 placement.kind, spec.name,
             )
+            continue
 
         placed.append(
             PlacedStructure(
