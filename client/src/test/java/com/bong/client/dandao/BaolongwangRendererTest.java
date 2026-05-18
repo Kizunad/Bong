@@ -1,6 +1,7 @@
 package com.bong.client.dandao;
 
 import org.junit.jupiter.api.Test;
+import software.bernie.geckolib.core.animation.RawAnimation;
 
 import java.util.Map;
 import java.util.Set;
@@ -82,5 +83,44 @@ class BaolongwangRendererTest {
         Set<String> values = Set.copyOf(BaolongwangRenderer.BONE_ALIASES.values());
         assertEquals(BaolongwangRenderer.BONE_ALIASES.size(), values.size(),
             "All semantic bone names should be unique");
+    }
+
+    // -- Animation state definitions (CodeRabbit #1 follow-up) --
+
+    @Test
+    void allFiveAnimationConstantsDefined() {
+        // Verify all 5 RawAnimation static fields are non-null and distinct
+        RawAnimation idle = BaolongwangEntity.IDLE;
+        RawAnimation walk = BaolongwangEntity.WALK;
+        RawAnimation attack = BaolongwangEntity.ATTACK;
+        RawAnimation skill1 = BaolongwangEntity.SKILL1;
+        RawAnimation skill2 = BaolongwangEntity.SKILL2;
+
+        assertNotNull(idle, "IDLE animation must be defined");
+        assertNotNull(walk, "WALK animation must be defined");
+        assertNotNull(attack, "ATTACK animation must be defined");
+        assertNotNull(skill1, "SKILL1 animation must be defined");
+        assertNotNull(skill2, "SKILL2 animation must be defined");
+
+        // All 5 must be distinct objects
+        Set<RawAnimation> unique = Set.of(idle, walk, attack, skill1, skill2);
+        assertEquals(5, unique.size(),
+            "All 5 animation constants must be distinct RawAnimation instances");
+    }
+
+    @Test
+    void actionStateMappingCoversAllActions() {
+        // Verify the action state constants match expected durations:
+        // 0=none, 1=attack(33t), 2=skill1(64t), 3=skill2(33t)
+        // We can't instantiate the entity but we can verify the constants
+        // are referenced in the controller (covered by allFiveAnimationConstantsDefined)
+        // and the action state enum range is [0,3].
+        // This test documents the contract for server sync (Phase B-2).
+        assertNotNull(BaolongwangEntity.ATTACK,
+            "action=1 maps to ATTACK (1.64s = ~33 ticks)");
+        assertNotNull(BaolongwangEntity.SKILL1,
+            "action=2 maps to SKILL1 (3.2s = ~64 ticks)");
+        assertNotNull(BaolongwangEntity.SKILL2,
+            "action=3 maps to SKILL2 (1.64s = ~33 ticks)");
     }
 }

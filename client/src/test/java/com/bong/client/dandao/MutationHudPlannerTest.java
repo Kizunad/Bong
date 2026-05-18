@@ -128,4 +128,59 @@ class MutationHudPlannerTest {
         assertFalse(MutationHudPlanner.hasExtraArms(),
             "Should not detect ExtraArms when not present");
     }
+
+    @Test
+    void extraHandSlotsHiddenWhenMultiArmNotUnlocked() {
+        // §8.1 #2: ExtraHand slots must be completely hidden when ExtraArms is not active.
+        // No grey, no placeholder — completely absent from HUD commands.
+        MutationVisualState.update(2, 150.0, 0.05, List.of(
+            new MutationVisualState.MutationSlotEntry("GoldenIris", "Head", 1),
+            new MutationVisualState.MutationSlotEntry("Weapon", "ExtraHand0", 1),
+            new MutationVisualState.MutationSlotEntry("Shield", "ExtraHand1", 1)
+        ));
+
+        List<HudRenderCommand> commands = MutationHudPlanner.buildCommands(960, 540);
+
+        // Only GoldenIris should appear as a slot entry (the ◆ marker)
+        long slotTexts = commands.stream()
+            .filter(cmd -> cmd.isText() && cmd.text().contains("◆"))
+            .count();
+        assertEquals(1, slotTexts,
+            "ExtraHand slots should be completely hidden when ExtraArms is not unlocked "
+                + "(§8.1 #2 / feedback_hud_conditional.md)");
+    }
+
+    @Test
+    void extraHandSlotsShownWhenMultiArmUnlocked() {
+        // §8.1 #2: ExtraHand slots appear when ExtraArms is active.
+        MutationVisualState.update(4, 600.0, 0.20, List.of(
+            new MutationVisualState.MutationSlotEntry("ExtraArms", "Torso", 3),
+            new MutationVisualState.MutationSlotEntry("Weapon", "ExtraHand0", 1),
+            new MutationVisualState.MutationSlotEntry("Shield", "ExtraHand1", 1)
+        ));
+
+        List<HudRenderCommand> commands = MutationHudPlanner.buildCommands(960, 540);
+
+        long slotTexts = commands.stream()
+            .filter(cmd -> cmd.isText() && cmd.text().contains("◆"))
+            .count();
+        assertEquals(3, slotTexts,
+            "All 3 slots (ExtraArms + 2 ExtraHand) should show when multi-arm is unlocked");
+    }
+
+    @Test
+    void isExtraHandSlotDetection() {
+        assertTrue(MutationHudPlanner.isExtraHandSlot(
+            new MutationVisualState.MutationSlotEntry("Weapon", "ExtraHand0", 1)),
+            "ExtraHand0 should be detected as ExtraHand slot");
+        assertTrue(MutationHudPlanner.isExtraHandSlot(
+            new MutationVisualState.MutationSlotEntry("Shield", "ExtraHand1", 1)),
+            "ExtraHand1 should be detected as ExtraHand slot");
+        assertFalse(MutationHudPlanner.isExtraHandSlot(
+            new MutationVisualState.MutationSlotEntry("GoldenIris", "Head", 1)),
+            "Head slot should not be detected as ExtraHand");
+        assertFalse(MutationHudPlanner.isExtraHandSlot(
+            new MutationVisualState.MutationSlotEntry("ExtraArms", "Torso", 3)),
+            "Torso slot should not be detected as ExtraHand");
+    }
 }
