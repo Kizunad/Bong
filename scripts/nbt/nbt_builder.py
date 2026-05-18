@@ -20,6 +20,7 @@ from __future__ import annotations
 import gzip
 import io
 import struct
+from dataclasses import dataclass
 from typing import Any
 
 # ── NBT tag type IDs ──
@@ -500,6 +501,160 @@ def read_nbt_stats(path: str) -> dict[str, Any]:
     }
 
 
+class _NBTReader:
+    """Low-level NBT binary reader."""
+
+    def __init__(self, data: bytes) -> None:
+        self._data = data
+        self._pos = 0
+
+    def _read_byte(self) -> int:
+        v = struct.unpack_from(">b", self._data, self._pos)[0]
+        self._pos += 1
+        return v
+
+    def _read_ubyte(self) -> int:
+        v = struct.unpack_from(">B", self._data, self._pos)[0]
+        self._pos += 1
+        return v
+
+    def _read_short(self) -> int:
+        v = struct.unpack_from(">h", self._data, self._pos)[0]
+        self._pos += 2
+        return v
+
+    def _read_int(self) -> int:
+        v = struct.unpack_from(">i", self._data, self._pos)[0]
+        self._pos += 4
+        return v
+
+    def _read_long(self) -> int:
+        v = struct.unpack_from(">q", self._data, self._pos)[0]
+        self._pos += 8
+        return v
+
+    def _read_float(self) -> float:
+        v = struct.unpack_from(">f", self._data, self._pos)[0]
+        self._pos += 4
+        return v
+
+    def _read_double(self) -> float:
+        v = struct.unpack_from(">d", self._data, self._pos)[0]
+        self._pos += 8
+        return v
+
+    def _read_string(self) -> str:
+        length = self._read_short()
+        s = self._data[self._pos : self._pos + length].decode("utf-8")
+        self._pos += length
+        return s
+
+    def _read_payload(self, tag_type: int) -> Any:
+        if tag_type == TAG_BYTE:
+            return self._read_byte()
+        if tag_type == TAG_SHORT:
+            return self._read_short()
+        if tag_type == TAG_INT:
+            return self._read_int()
+        if tag_type == TAG_LONG:
+            return self._read_long()
+        if tag_type == TAG_FLOAT:
+            return self._read_float()
+        if tag_type == TAG_DOUBLE:
+            return self._read_double()
+        if tag_type == TAG_STRING:
+            return self._read_string()
+        if tag_type == TAG_BYTE_ARRAY:
+            length = self._read_int()
+            arr = [self._read_byte() for _ in range(length)]
+            return arr
+        if tag_type == TAG_INT_ARRAY:
+            length = self._read_int()
+            arr = [self._read_int() for _ in range(length)]
+            return arr
+        if tag_type == TAG_LONG_ARRAY:
+            length = self._read_int()
+            arr = [self._read_long() for _ in range(length)]
+            return arr
+        if tag_type == TAG_LIST:
+            elem_type = self._read_ubyte()
+            length = self._read_int()
+            return [self._read_payload(elem_type) for _ in range(length)]
+        if tag_type == TAG_COMPOUND:
+            return self._read_compound()
+        raise ValueError(f"Unknown tag type: {tag_type}")
+
+    def _read_compound(self) -> dict[str, Any]:
+        result: dict[str, Any] = {}
+        while True:
+            tag_type = self._read_ubyte()
+            if tag_type == TAG_END:
+                break
+            name = self._read_string()
+            result[name] = self._read_payload(tag_type)
+        return result
+
+    def read_root(self) -> tuple[str, dict[str, Any]]:
+        """Read root TAG_Compound. Returns (root_name, compound_dict)."""
+        tag_type = self._read_ubyte()
+        if tag_type != TAG_COMPOUND:
+            raise ValueError(f"Root tag must be TAG_Compound (10), got {tag_type}")
+        name = self._read_string()
+        compound = self._read_compound()
+        return name, compound
+
+
+@dataclass(frozen=True)
+class StructureBlock:
+    """A single block from a loaded NBT structure."""
+
+    pos: tuple[int, int, int]
+    block_name: str
+    properties: dict[str, str]
+
+
+def load_structure(path: str) -> list[StructureBlock]:
+    """Load an NBT structure file and return a list of (pos, block_name, properties).
+
+    This is the read counterpart to StructureBuilder.save().
+    Parses the MC 1.20.1 Structure Block .nbt format and extracts all
+    non-air blocks with their positions and block state properties.
+    """
+    with gzip.open(path, "rb") as f:
+        data = f.read()
+
+    reader = _NBTReader(data)
+    _name, root = reader.read_root()
+
+    palette: list[dict[str, Any]] = root.get("palette", [])
+    blocks: list[dict[str, Any]] = root.get("blocks", [])
+
+    result: list[StructureBlock] = []
+    for block in blocks:
+        pos_list = block.get("pos", [0, 0, 0])
+        state_idx = block.get("state", 0)
+        if state_idx >= len(palette):
+            continue
+
+        palette_entry = palette[state_idx]
+        block_name = palette_entry.get("Name", "minecraft:air")
+
+        # Skip air blocks
+        if block_name == "minecraft:air":
+            continue
+
+        properties = palette_entry.get("Properties", {})
+        result.append(
+            StructureBlock(
+                pos=(int(pos_list[0]), int(pos_list[1]), int(pos_list[2])),
+                block_name=block_name,
+                properties=dict(properties) if properties else {},
+            )
+        )
+
+    return result
+
+
 if __name__ == "__main__":
     # Quick self-test
     sb = StructureBuilder(3, 3, 3)
@@ -512,4 +667,11 @@ if __name__ == "__main__":
     print(sb.ascii_top_view(y_level=0))
     info = read_nbt_stats("/tmp/test_structure.nbt")
     print(f"File info: {info}")
+
+    # Test load_structure round-trip
+    blocks = load_structure("/tmp/test_structure.nbt")
+    print(f"Loaded {len(blocks)} blocks:")
+    for b in blocks:
+        print(f"  {b.pos} -> {b.block_name} {b.properties}")
+    assert len(blocks) == 3, f"Expected 3 blocks, got {len(blocks)}"
     print("Self-test passed!")
