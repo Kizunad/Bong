@@ -738,10 +738,10 @@ class ProfileCatalogLoadTests(unittest.TestCase):
 
         from scripts.terrain_gen.blueprint import load_profile_catalog
 
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
-            json.dump(catalog_data, f)
-            f.flush()
-            catalog = load_profile_catalog(Path(f.name))
+        with tempfile.TemporaryDirectory() as tmpdir:
+            catalog_path = Path(tmpdir) / "profiles.json"
+            catalog_path.write_text(json.dumps(catalog_data), encoding="utf-8")
+            catalog = load_profile_catalog(catalog_path)
 
         # Zone with layout fields
         layout_profile = catalog.profiles["test_layout_zone"]
