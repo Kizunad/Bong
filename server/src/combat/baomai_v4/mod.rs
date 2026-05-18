@@ -8,6 +8,7 @@ pub mod crack_reading;
 pub mod dead_armor;
 pub mod events;
 pub mod iron_cocoon;
+pub mod resonance_lock;
 pub mod scar_circuit;
 pub mod scar_history;
 
@@ -28,6 +29,9 @@ pub fn register(app: &mut App) {
     // P3 voluntary_sever_apply_system emits MeridianSeveredEvent. Ensure it's registered
     // (no-op if already registered by cultivation::register in the full app).
     app.add_event::<crate::cultivation::meridian::severed::MeridianSeveredEvent>();
+    // P5 resonance lock events.
+    app.add_event::<events::ResonanceLockEvent>();
+    app.add_event::<events::ResonanceLockEndEvent>();
 
     // Systems.
     app.add_systems(
@@ -55,6 +59,12 @@ pub fn register(app: &mut App) {
             dead_armor::voluntary_sever_apply_system.in_set(CombatSystemSet::Resolve),
             // P4: Crack reading — runs in Emit (after Resolve) to read final CombatEvent results.
             crack_reading::crack_reading_system.in_set(CombatSystemSet::Emit),
+            // P5: Resonance meter — runs in Emit (reads CombatEvent results).
+            resonance_lock::resonance_meter_system.in_set(CombatSystemSet::Emit),
+            // P5: Resonance lock tick — runs in Physics (per-tick drain + termination check).
+            resonance_lock::resonance_lock_tick_system.in_set(CombatSystemSet::Physics),
+            // P5: Resonance cascade — runs in Resolve (after MeridianSeveredEvent).
+            resonance_lock::resonance_cascade_system.in_set(CombatSystemSet::Resolve),
         ),
     );
 }

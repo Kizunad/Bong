@@ -139,6 +139,8 @@ pub enum StatusEffectKind {
     MirrorExposed,
     /// plan-spirit-treasure-v1 P3：寂照镜好感缩放后的常驻感知加成标记。
     SpiritTreasurePerception,
+    /// plan-baomai-v4 §6.4：互噬共振锁定——移速 -30%，Dash 禁用。
+    ResonanceLocked,
 }
 
 pub const HALLUCINATION_DURATION_TICKS: u64 = 20 * 5;

@@ -79,3 +79,38 @@ pub struct VoluntarySeverEvent {
     pub meridian: MeridianId,
     pub tick: u64,
 }
+
+/// 共振锁定结束原因（plan-baomai-v4 §6.5）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum LockEndReason {
+    /// 60 tick 自然到期。
+    Expired,
+    /// 一方先移出 RESONANCE_LOCK_RANGE。Entity 是先脱离者。
+    Retreated(Entity),
+    /// 一方死亡。Entity 是死亡者。
+    Death(Entity),
+}
+
+/// 共振锁定开始事件（plan-baomai-v4 §6.2/§7）。
+///
+/// 消费方：client VFX + HUD meter（`bong:resonance_lock` CustomPayload）+ agent narration。
+#[derive(Debug, Clone, Event)]
+#[allow(dead_code)]
+pub struct ResonanceLockEvent {
+    pub fighter_a: Entity,
+    pub fighter_b: Entity,
+    pub started_at: u64,
+    pub ends_at: u64,
+}
+
+/// 共振锁定结束事件（plan-baomai-v4 §6.5/§7）。
+///
+/// 消费方：client VFX + HUD meter + agent narration。
+#[derive(Debug, Clone, Event)]
+#[allow(dead_code)]
+pub struct ResonanceLockEndEvent {
+    pub fighter_a: Entity,
+    pub fighter_b: Entity,
+    pub reason: LockEndReason,
+    pub tick: u64,
+}
