@@ -423,4 +423,12 @@ mod tests {
         };
         assert_eq!(super::weapon_wound_kind(&spear), WoundKind::Pierce);
     }
+
+    #[test]
+    fn weapon_swap_cooldown_constant_value() {
+        assert_eq!(
+            WEAPON_SWAP_COOLDOWN_TICKS, 20,
+            "WEAPON_SWAP_COOLDOWN_TICKS must be 20 as per plan-dandao-path-v1 §8.1 #2"
+        );
+    }
 }

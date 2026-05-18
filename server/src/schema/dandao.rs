@@ -234,4 +234,94 @@ mod dandao_schema_tests {
             assert_eq!(event, back);
         }
     }
+
+    // ─── negative pinning tests ─────────────────────────────────────────
+
+    #[test]
+    fn mutation_stage_v1_rejects_invalid_string() {
+        let result = serde_json::from_str::<MutationStageV1>(r#""corrupted""#);
+        assert!(
+            result.is_err(),
+            "invalid stage string 'corrupted' should fail deserialization"
+        );
+    }
+
+    #[test]
+    fn mutation_kind_v1_rejects_invalid_string() {
+        let result = serde_json::from_str::<MutationKindV1>(r#""laser_eyes""#);
+        assert!(
+            result.is_err(),
+            "invalid kind string 'laser_eyes' should fail deserialization"
+        );
+    }
+
+    #[test]
+    fn mutation_event_v1_rejects_unknown_fields() {
+        let json = r#"{"entity":"test","from_stage":"none","to_stage":"subtle","cumulative_toxin":0.0,"new_meridian_penalty":0.0,"server_tick":0,"bonus_field":42}"#;
+        let result = serde_json::from_str::<MutationEventV1>(json);
+        assert!(
+            result.is_err(),
+            "deny_unknown_fields should reject unknown field in MutationEventV1"
+        );
+    }
+
+    #[test]
+    fn mutation_event_v1_rejects_missing_required_field() {
+        // Missing from_stage.
+        let json = r#"{"entity":"test","to_stage":"subtle","cumulative_toxin":0.0,"new_meridian_penalty":0.0,"server_tick":0}"#;
+        let result = serde_json::from_str::<MutationEventV1>(json);
+        assert!(
+            result.is_err(),
+            "missing required field should fail for MutationEventV1"
+        );
+    }
+
+    #[test]
+    fn dandao_style_v1_rejects_unknown_fields() {
+        let json = r#"{"entity":"test","brew_count":0,"pill_intake_count":0,"cumulative_toxin":0.0,"mutation_stage":"none","mastery_ticks":0,"server_tick":0,"secret_field":"hack"}"#;
+        let result = serde_json::from_str::<DandaoStyleV1>(json);
+        assert!(
+            result.is_err(),
+            "deny_unknown_fields should reject unknown field in DandaoStyleV1"
+        );
+    }
+
+    #[test]
+    fn dandao_style_v1_rejects_invalid_mutation_stage() {
+        let json = r#"{"entity":"test","brew_count":0,"pill_intake_count":0,"cumulative_toxin":0.0,"mutation_stage":"mega","mastery_ticks":0,"server_tick":0}"#;
+        let result = serde_json::from_str::<DandaoStyleV1>(json);
+        assert!(
+            result.is_err(),
+            "invalid mutation_stage 'mega' should fail for DandaoStyleV1"
+        );
+    }
+
+    #[test]
+    fn active_mutation_v1_rejects_unknown_fields() {
+        let json = r#"{"kind":"horns","body_slot":"head","level":1,"acquired_tick":0,"phantom_field":true}"#;
+        let result = serde_json::from_str::<ActiveMutationV1>(json);
+        assert!(
+            result.is_err(),
+            "deny_unknown_fields should reject unknown field in ActiveMutationV1"
+        );
+    }
+
+    #[test]
+    fn all_5_mutation_stage_v1_serde() {
+        let stages = [
+            MutationStageV1::None,
+            MutationStageV1::Subtle,
+            MutationStageV1::Visible,
+            MutationStageV1::Heavy,
+            MutationStageV1::Bestial,
+        ];
+        for stage in stages {
+            let json = serde_json::to_string(&stage).expect("serialize");
+            let back: MutationStageV1 = serde_json::from_str(&json).expect("deserialize");
+            assert_eq!(
+                stage, back,
+                "MutationStageV1::{stage:?} serde round-trip failed"
+            );
+        }
+    }
 }
