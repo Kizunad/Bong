@@ -92,6 +92,12 @@ pub const EQUIP_SLOT_WAIST_POUCH: &str = "waist_pouch";
 /// 胸前挎包装备槽 id（运行时 key）。
 #[allow(dead_code)]
 pub const EQUIP_SLOT_CHEST_SATCHEL: &str = "chest_satchel";
+/// plan-dandao-path-v1 §8.1 #2 — 变异多臂额外手槽 0。
+#[allow(dead_code)]
+pub const EQUIP_SLOT_EXTRA_HAND_0: &str = "extra_hand_0";
+/// plan-dandao-path-v1 §8.1 #2 — 变异多臂额外手槽 1。
+#[allow(dead_code)]
+pub const EQUIP_SLOT_EXTRA_HAND_1: &str = "extra_hand_1";
 /// 身体自带暗袋容器 id（不占装备槽，始终存在）。
 #[allow(dead_code)]
 pub const BODY_POCKET_CONTAINER_ID: &str = "body_pocket";
@@ -3943,8 +3949,8 @@ fn equip_slot_key(slot: &crate::schema::inventory::EquipSlotV1) -> &'static str 
         EquipSlotV1::BackPack => EQUIP_SLOT_BACK_PACK,
         EquipSlotV1::WaistPouch => EQUIP_SLOT_WAIST_POUCH,
         EquipSlotV1::ChestSatchel => EQUIP_SLOT_CHEST_SATCHEL,
-        EquipSlotV1::ExtraHand0 => "extra_hand_0",
-        EquipSlotV1::ExtraHand1 => "extra_hand_1",
+        EquipSlotV1::ExtraHand0 => EQUIP_SLOT_EXTRA_HAND_0,
+        EquipSlotV1::ExtraHand1 => EQUIP_SLOT_EXTRA_HAND_1,
     }
 }
 
@@ -4129,6 +4135,8 @@ fn validate_equip_slot(slot: &str, source_path: &Path) -> Result<(), String> {
         EQUIP_SLOT_BACK_PACK,
         EQUIP_SLOT_WAIST_POUCH,
         EQUIP_SLOT_CHEST_SATCHEL,
+        EQUIP_SLOT_EXTRA_HAND_0,
+        EQUIP_SLOT_EXTRA_HAND_1,
     ]
     .contains(&slot);
 
@@ -4136,7 +4144,7 @@ fn validate_equip_slot(slot: &str, source_path: &Path) -> Result<(), String> {
         Ok(())
     } else {
         Err(format!(
-            "{} has unsupported equip slot `{slot}`; expected one of [{}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}]",
+            "{} has unsupported equip slot `{slot}`; expected one of [{}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}]",
             source_path.display(),
             EQUIP_SLOT_HEAD,
             EQUIP_SLOT_CHEST,
@@ -4152,7 +4160,9 @@ fn validate_equip_slot(slot: &str, source_path: &Path) -> Result<(), String> {
             EQUIP_SLOT_TREASURE_BELT_3,
             EQUIP_SLOT_BACK_PACK,
             EQUIP_SLOT_WAIST_POUCH,
-            EQUIP_SLOT_CHEST_SATCHEL
+            EQUIP_SLOT_CHEST_SATCHEL,
+            EQUIP_SLOT_EXTRA_HAND_0,
+            EQUIP_SLOT_EXTRA_HAND_1
         ))
     }
 }
@@ -8236,6 +8246,194 @@ cols = 4
             container_id: "waist_pouch".to_string(),
         };
         assert_ne!(ev1, ev3, "different slots should not be equal");
+    }
+
+    // plan-dandao-path-v1 — ExtraHand0/ExtraHand1 equip slot tests
+
+    fn make_weapon_template(id: &str) -> ItemTemplate {
+        ItemTemplate {
+            id: id.to_string(),
+            display_name: id.to_string(),
+            category: ItemCategory::Weapon,
+            max_stack_count: 1,
+            grid_w: 1,
+            grid_h: 2,
+            base_weight: 2.0,
+            rarity: ItemRarity::Common,
+            spirit_quality_initial: 0.5,
+            description: "test weapon".to_string(),
+            effect: None,
+            cast_duration_ms: 0,
+            cooldown_ms: 0,
+            weapon_spec: Some(WeaponSpec {
+                weapon_kind: crate::combat::weapon::WeaponKind::Sword,
+                base_attack: 5.0,
+                quality_tier: 0,
+                durability_max: 100.0,
+                qi_cost_mul: 1.0,
+            }),
+            forge_station_spec: None,
+            blueprint_scroll_spec: None,
+            inscription_scroll_spec: None,
+            technique_scroll_spec: None,
+            container_spec: None,
+        }
+    }
+
+    fn make_misc_template(id: &str) -> ItemTemplate {
+        ItemTemplate {
+            id: id.to_string(),
+            display_name: id.to_string(),
+            category: ItemCategory::Misc,
+            max_stack_count: 64,
+            grid_w: 1,
+            grid_h: 1,
+            base_weight: 0.1,
+            rarity: ItemRarity::Common,
+            spirit_quality_initial: 0.0,
+            description: "misc".to_string(),
+            effect: None,
+            cast_duration_ms: 0,
+            cooldown_ms: 0,
+            weapon_spec: None,
+            forge_station_spec: None,
+            blueprint_scroll_spec: None,
+            inscription_scroll_spec: None,
+            technique_scroll_spec: None,
+            container_spec: None,
+        }
+    }
+
+    #[test]
+    fn equip_slot_key_extra_hand_0_returns_correct_string() {
+        use crate::schema::inventory::EquipSlotV1;
+        assert_eq!(
+            equip_slot_key(&EquipSlotV1::ExtraHand0),
+            "extra_hand_0",
+            "ExtraHand0 should map to runtime key 'extra_hand_0'"
+        );
+    }
+
+    #[test]
+    fn equip_slot_key_extra_hand_1_returns_correct_string() {
+        use crate::schema::inventory::EquipSlotV1;
+        assert_eq!(
+            equip_slot_key(&EquipSlotV1::ExtraHand1),
+            "extra_hand_1",
+            "ExtraHand1 should map to runtime key 'extra_hand_1'"
+        );
+    }
+
+    #[test]
+    fn validate_equip_slot_accepts_extra_hand_0() {
+        let path = std::path::Path::new("test.toml");
+        assert!(
+            validate_equip_slot(EQUIP_SLOT_EXTRA_HAND_0, path).is_ok(),
+            "validate_equip_slot should accept 'extra_hand_0'"
+        );
+    }
+
+    #[test]
+    fn validate_equip_slot_accepts_extra_hand_1() {
+        let path = std::path::Path::new("test.toml");
+        assert!(
+            validate_equip_slot(EQUIP_SLOT_EXTRA_HAND_1, path).is_ok(),
+            "validate_equip_slot should accept 'extra_hand_1'"
+        );
+    }
+
+    #[test]
+    fn validate_move_semantics_accepts_weapon_to_extra_hand_0() {
+        use crate::schema::inventory::{EquipSlotV1, InventoryLocationV1};
+        let registry = ItemRegistry::from_map(HashMap::from([(
+            "test_sword".to_string(),
+            make_weapon_template("test_sword"),
+        )]));
+        let inv = make_empty_inventory();
+        let item = make_test_item_instance(900, "test_sword");
+        let from = InventoryLocationV1::Container {
+            container_id: "main_pack".to_string(),
+            row: 0,
+            col: 0,
+        };
+        let to = InventoryLocationV1::Equip {
+            slot: EquipSlotV1::ExtraHand0,
+        };
+        assert!(
+            validate_move_semantics(&registry, &inv, &item, &from, &to).is_ok(),
+            "weapon should be equippable to ExtraHand0"
+        );
+    }
+
+    #[test]
+    fn validate_move_semantics_accepts_weapon_to_extra_hand_1() {
+        use crate::schema::inventory::{EquipSlotV1, InventoryLocationV1};
+        let registry = ItemRegistry::from_map(HashMap::from([(
+            "test_sword".to_string(),
+            make_weapon_template("test_sword"),
+        )]));
+        let inv = make_empty_inventory();
+        let item = make_test_item_instance(901, "test_sword");
+        let from = InventoryLocationV1::Container {
+            container_id: "main_pack".to_string(),
+            row: 0,
+            col: 0,
+        };
+        let to = InventoryLocationV1::Equip {
+            slot: EquipSlotV1::ExtraHand1,
+        };
+        assert!(
+            validate_move_semantics(&registry, &inv, &item, &from, &to).is_ok(),
+            "weapon should be equippable to ExtraHand1"
+        );
+    }
+
+    #[test]
+    fn validate_move_semantics_rejects_misc_item_to_extra_hand() {
+        use crate::schema::inventory::{EquipSlotV1, InventoryLocationV1};
+        let registry = ItemRegistry::from_map(HashMap::from([(
+            "random_herb".to_string(),
+            make_misc_template("random_herb"),
+        )]));
+        let inv = make_empty_inventory();
+        let item = make_test_item_instance(902, "random_herb");
+        let from = InventoryLocationV1::Container {
+            container_id: "main_pack".to_string(),
+            row: 0,
+            col: 0,
+        };
+        let to = InventoryLocationV1::Equip {
+            slot: EquipSlotV1::ExtraHand0,
+        };
+        let err = validate_move_semantics(&registry, &inv, &item, &from, &to)
+            .expect_err("misc item should not equip to ExtraHand0");
+        assert!(
+            err.contains("weapon, tool, or hoe"),
+            "expected weapon/tool/hoe error, got: {err}"
+        );
+    }
+
+    #[test]
+    fn validate_move_semantics_accepts_tool_to_extra_hand() {
+        use crate::schema::inventory::{EquipSlotV1, InventoryLocationV1};
+        let mut tool_template = make_misc_template("test_tool");
+        tool_template.category = ItemCategory::Tool;
+        let registry =
+            ItemRegistry::from_map(HashMap::from([("test_tool".to_string(), tool_template)]));
+        let inv = make_empty_inventory();
+        let item = make_test_item_instance(903, "test_tool");
+        let from = InventoryLocationV1::Container {
+            container_id: "main_pack".to_string(),
+            row: 0,
+            col: 0,
+        };
+        let to = InventoryLocationV1::Equip {
+            slot: EquipSlotV1::ExtraHand1,
+        };
+        assert!(
+            validate_move_semantics(&registry, &inv, &item, &from, &to).is_ok(),
+            "tool should be equippable to ExtraHand1"
+        );
     }
 
     // P3 container_id_to_equip_slot 映射完整性 pin 测试

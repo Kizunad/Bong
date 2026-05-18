@@ -416,6 +416,8 @@ mod server_data_tests {
                 back_pack: None,
                 waist_pouch: None,
                 chest_satchel: None,
+                extra_hand_0: None,
+                extra_hand_1: None,
             },
             hotbar: vec![
                 Some(sample_inventory_item(

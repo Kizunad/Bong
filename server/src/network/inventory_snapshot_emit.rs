@@ -6,10 +6,11 @@ use crate::cultivation::components::Cultivation;
 use crate::cultivation::death_hooks::PlayerRevived;
 use crate::inventory::{
     calculate_current_weight, ItemInstance, ItemRarity, PlayerInventory, EQUIP_SLOT_BACK_PACK,
-    EQUIP_SLOT_CHEST, EQUIP_SLOT_CHEST_SATCHEL, EQUIP_SLOT_FALSE_SKIN, EQUIP_SLOT_FEET,
-    EQUIP_SLOT_HEAD, EQUIP_SLOT_LEGS, EQUIP_SLOT_MAIN_HAND, EQUIP_SLOT_OFF_HAND,
-    EQUIP_SLOT_TREASURE_BELT_0, EQUIP_SLOT_TREASURE_BELT_1, EQUIP_SLOT_TREASURE_BELT_2,
-    EQUIP_SLOT_TREASURE_BELT_3, EQUIP_SLOT_TWO_HAND, EQUIP_SLOT_WAIST_POUCH,
+    EQUIP_SLOT_CHEST, EQUIP_SLOT_CHEST_SATCHEL, EQUIP_SLOT_EXTRA_HAND_0, EQUIP_SLOT_EXTRA_HAND_1,
+    EQUIP_SLOT_FALSE_SKIN, EQUIP_SLOT_FEET, EQUIP_SLOT_HEAD, EQUIP_SLOT_LEGS, EQUIP_SLOT_MAIN_HAND,
+    EQUIP_SLOT_OFF_HAND, EQUIP_SLOT_TREASURE_BELT_0, EQUIP_SLOT_TREASURE_BELT_1,
+    EQUIP_SLOT_TREASURE_BELT_2, EQUIP_SLOT_TREASURE_BELT_3, EQUIP_SLOT_TWO_HAND,
+    EQUIP_SLOT_WAIST_POUCH,
 };
 use crate::network::agent_bridge::{
     payload_type_label, serialize_server_data_payload, SERVER_DATA_CHANNEL,
@@ -206,6 +207,9 @@ pub(crate) fn build_inventory_snapshot(
         back_pack: equipped_slot_item(inventory, EQUIP_SLOT_BACK_PACK),
         waist_pouch: equipped_slot_item(inventory, EQUIP_SLOT_WAIST_POUCH),
         chest_satchel: equipped_slot_item(inventory, EQUIP_SLOT_CHEST_SATCHEL),
+        // plan-dandao-path-v1 §8.1 #2 — 变异多臂额外手槽。
+        extra_hand_0: equipped_slot_item(inventory, EQUIP_SLOT_EXTRA_HAND_0),
+        extra_hand_1: equipped_slot_item(inventory, EQUIP_SLOT_EXTRA_HAND_1),
     };
 
     let hotbar = inventory
