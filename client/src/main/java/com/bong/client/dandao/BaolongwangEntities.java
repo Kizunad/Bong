@@ -35,14 +35,14 @@ public final class BaolongwangEntities {
         EntityType<BaolongwangEntity> type = baolongwang();
         int rawId = Registries.ENTITY_TYPE.getRawId(type);
         if (rawId != EXPECTED_RAW_ID) {
-            LOGGER.error(
+            LOGGER.warn(
                 "[bong][dandao] raw_id MISMATCH: {} expected {}, got {}. "
+                    + "Entity is still registered but server sync may fail. "
                     + "Check BongClient entity registration order.",
                 BAOLONGWANG_ID,
                 EXPECTED_RAW_ID,
                 rawId
             );
-            return;
         }
         LOGGER.info(
             "[bong][dandao] registered EntityType {} raw_id={}",
