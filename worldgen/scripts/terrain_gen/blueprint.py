@@ -249,7 +249,7 @@ def load_profile_catalog(path: Path) -> TerrainProfileCatalog:
         # Extract compound_flatten_radius from height sub-dict if present.
         compound_flatten_radius: int | None = None
         if "compound_flatten_radius" in height_raw:
-            compound_flatten_radius = int(height_raw["compound_flatten_radius"])
+            compound_flatten_radius = int(height_raw.pop("compound_flatten_radius"))
         # Also check top-level (some profiles may put it there).
         if "compound_flatten_radius" in profile_raw:
             compound_flatten_radius = int(profile_raw["compound_flatten_radius"])
