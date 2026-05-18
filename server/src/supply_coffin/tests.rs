@@ -593,9 +593,7 @@ fn full_lifecycle_open_cooldown_respawn_state_transitions() {
     assert_eq!(r.active_count(SupplyCoffinGrade::Common), 1);
 
     // 玩家开棺：remove + enqueue
-    let active = r
-        .remove_active(e1)
-        .expect("插入过的 entity 必须能 remove");
+    let active = r.remove_active(e1).expect("插入过的 entity 必须能 remove");
     r.enqueue_cooldown(active.grade, 2000);
     assert_eq!(r.active_count(SupplyCoffinGrade::Common), 0);
     assert_eq!(r.cooldowns.len(), 1);

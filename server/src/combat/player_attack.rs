@@ -13,6 +13,11 @@ use crate::movement::player_knockback::ActivePlayerKnockback;
 use crate::npc::spawn::NpcMarker;
 
 const ATTACK_COOLDOWN_TICKS: u64 = 10;
+/// plan-dandao-path-v1 §8.1 #2: 多臂武器切换共享 GCD（所有手槽位共享）。
+/// 当前由 `dandao::mutation::WEAPON_SWAP_COOLDOWN_TICKS` 正典定义；
+/// 这里导出以供 attack 路径未来接入。
+#[allow(dead_code)]
+pub const WEAPON_SWAP_COOLDOWN_TICKS: u64 = 20;
 const REACH_TOLERANCE: f64 = 0.5;
 
 #[derive(Debug, Clone, Component, Default)]
@@ -417,5 +422,13 @@ mod tests {
             ..sword
         };
         assert_eq!(super::weapon_wound_kind(&spear), WoundKind::Pierce);
+    }
+
+    #[test]
+    fn weapon_swap_cooldown_constant_value() {
+        assert_eq!(
+            WEAPON_SWAP_COOLDOWN_TICKS, 20,
+            "WEAPON_SWAP_COOLDOWN_TICKS must be 20 as per plan-dandao-path-v1 §8.1 #2"
+        );
     }
 }

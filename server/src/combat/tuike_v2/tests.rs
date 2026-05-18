@@ -1193,8 +1193,8 @@ fn tuike_cast_transfer_permanent_absorbed_branch_emits_permanent_event() {
 #[test]
 fn tuike_cast_don_without_position_skips_av_emission() {
     // Player has no Position component -> emit_vfx/emit_audio/emit_anim should skip gracefully
-    use crate::network::vfx_event_emit::VfxEventRequest;
     use crate::network::audio_event_emit::PlaySoundRecipeRequest;
+    use crate::network::vfx_event_emit::VfxEventRequest;
 
     let mut world = bevy_ecs::world::World::default();
     world.insert_resource(CombatClock { tick: 100 });
@@ -1229,8 +1229,8 @@ fn tuike_cast_don_without_position_skips_av_emission() {
 
 #[test]
 fn tuike_cast_shed_without_position_skips_av_emission() {
-    use crate::network::vfx_event_emit::VfxEventRequest;
     use crate::network::audio_event_emit::PlaySoundRecipeRequest;
+    use crate::network::vfx_event_emit::VfxEventRequest;
 
     let mut world = bevy_ecs::world::World::default();
     world.insert_resource(CombatClock { tick: 100 });

@@ -8,7 +8,10 @@ use valence::prelude::{bevy_ecs, Commands, Component, DVec3, Entity, EntityLayer
 
 use crate::fauna::components::{BeastKind, FaunaTag};
 use crate::fauna::visual::{entity_kind_for_beast, visual_kind_for_beast};
-use crate::npc::brain::{ChaseAction, ChaseTargetScorer, MeleeAttackAction, MeleeRangeScorer, WanderAction, WanderScorer, WanderState};
+use crate::npc::brain::{
+    ChaseAction, ChaseTargetScorer, MeleeAttackAction, MeleeRangeScorer, WanderAction,
+    WanderScorer, WanderState,
+};
 use crate::npc::lifecycle::{npc_runtime_bundle, NpcArchetype};
 use crate::npc::lod::NpcLodTier;
 use crate::npc::movement::{MovementController, MovementCooldowns};

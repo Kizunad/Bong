@@ -1,17 +1,19 @@
 use valence::prelude::{bevy_ecs, DVec3, Entity, Events, Position, UniqueId};
 
 use crate::combat::components::{DerivedAttrs, SkillBarBindings};
-use crate::network::audio_event_emit::{AudioRecipient, PlaySoundRecipeRequest, AUDIO_BROADCAST_RADIUS};
-use crate::network::vfx_event_emit::VfxEventRequest;
-use crate::schema::vfx_event::VfxEventPayloadV1;
 use crate::combat::CombatClock;
 use crate::cultivation::color::{record_style_practice, PracticeLog};
 use crate::cultivation::components::{ColorKind, ContamSource, Contamination, Cultivation};
 use crate::cultivation::meridian::severed::SkillMeridianDependencies;
 use crate::cultivation::skill_registry::{CastRejectReason, CastResult, SkillRegistry};
 use crate::inventory::{consume_item_instance_once, PlayerInventory, EQUIP_SLOT_FALSE_SKIN};
+use crate::network::audio_event_emit::{
+    AudioRecipient, PlaySoundRecipeRequest, AUDIO_BROADCAST_RADIUS,
+};
+use crate::network::vfx_event_emit::VfxEventRequest;
 use crate::qi_physics::constants::{QI_EPSILON, QI_ZONE_UNIT_CAPACITY};
 use crate::qi_physics::{qi_release_to_zone, QiAccountId, QiTransfer, QiTransferReason};
+use crate::schema::vfx_event::VfxEventPayloadV1;
 use crate::skill::components::SkillId;
 use crate::skill::events::{SkillXpGain, XpGainSource};
 use crate::world::dimension::{CurrentDimension, DimensionKind};
@@ -105,7 +107,15 @@ pub fn cast_don(
     record_practice(world, caster, TuikeSkillId::Don, 1);
 
     if let Some(pos) = world.get::<Position>(caster).map(|p| p.get()) {
-        emit_vfx(world, pos, "bong:false_skin_don_dust", "#D8C08A", 0.75, 10, 34);
+        emit_vfx(
+            world,
+            pos,
+            "bong:false_skin_don_dust",
+            "#D8C08A",
+            0.75,
+            10,
+            34,
+        );
         emit_audio(world, "don_skin_low_thud", pos);
         emit_anim(world, caster, "bong:tuike_don_skin");
     }
@@ -149,7 +159,15 @@ pub fn cast_shed(
     record_practice(world, caster, TuikeSkillId::Shed, 2);
 
     if let Some(pos) = world.get::<Position>(caster).map(|p| p.get()) {
-        emit_vfx(world, pos, "bong:false_skin_shed_burst", "#B58B5A", 0.9, 18, 34);
+        emit_vfx(
+            world,
+            pos,
+            "bong:false_skin_shed_burst",
+            "#B58B5A",
+            0.9,
+            18,
+            34,
+        );
         emit_audio(world, "shed_skin_burst", pos);
         emit_anim(world, caster, "bong:tuike_shed_burst");
     }
@@ -256,8 +274,16 @@ pub fn cast_transfer_taint(
     record_practice(world, caster, TuikeSkillId::TransferTaint, 1);
 
     if let Some(pos) = world.get::<Position>(caster).map(|p| p.get()) {
-        let vfx_id = if outcome.permanent_absorbed > 0.0 { "bong:ancient_skin_glow" } else { "bong:false_skin_don_dust" };
-        let color = if outcome.permanent_absorbed > 0.0 { "#BFD8FF" } else { "#D8C08A" };
+        let vfx_id = if outcome.permanent_absorbed > 0.0 {
+            "bong:ancient_skin_glow"
+        } else {
+            "bong:false_skin_don_dust"
+        };
+        let color = if outcome.permanent_absorbed > 0.0 {
+            "#BFD8FF"
+        } else {
+            "#D8C08A"
+        };
         emit_vfx(world, pos, vfx_id, color, 0.8, 12, 40);
         emit_audio(world, "contam_transfer_hum", pos);
         emit_anim(world, caster, "bong:tuike_taint_transfer");

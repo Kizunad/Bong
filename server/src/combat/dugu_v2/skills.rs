@@ -12,7 +12,9 @@ use crate::cultivation::meridian::severed::{
 };
 use crate::cultivation::skill_registry::{CastRejectReason, CastResult, SkillRegistry};
 use crate::cultivation::tribulation::{JueBiTriggerEvent, JueBiTriggerSource};
-use crate::network::audio_event_emit::{AudioRecipient, PlaySoundRecipeRequest, AUDIO_BROADCAST_RADIUS};
+use crate::network::audio_event_emit::{
+    AudioRecipient, PlaySoundRecipeRequest, AUDIO_BROADCAST_RADIUS,
+};
 use crate::network::cast_emit::current_unix_millis;
 use crate::network::vfx_event_emit::VfxEventRequest;
 use crate::qi_physics::reverse_burst_all_marks;

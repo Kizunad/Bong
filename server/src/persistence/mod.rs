@@ -4879,6 +4879,7 @@ fn biography_event_type(entry: &BiographyEntry) -> &'static str {
         BiographyEntry::VoidAction { .. } => "void_action",
         BiographyEntry::JueBiSurvived { .. } => "jue_bi_survived",
         BiographyEntry::JueBiKilled { .. } => "jue_bi_killed",
+        BiographyEntry::MutationAdvanced { .. } => "mutation_advanced",
     }
 }
 
@@ -4968,7 +4969,8 @@ fn biography_tick(entry: &BiographyEntry) -> u64 {
         | BiographyEntry::SpawnTutorialCompleted { tick, .. }
         | BiographyEntry::VoidAction { tick, .. }
         | BiographyEntry::JueBiSurvived { tick, .. }
-        | BiographyEntry::JueBiKilled { tick, .. } => *tick,
+        | BiographyEntry::JueBiKilled { tick, .. }
+        | BiographyEntry::MutationAdvanced { tick, .. } => *tick,
     }
 }
 
@@ -5904,6 +5906,74 @@ mod persistence_tests {
                 expected_event_type
             );
             assert_eq!(biography_tick(&decoded.biography_entry), expected_tick);
+        }
+    }
+
+    #[test]
+    fn mutation_advanced_biography_pin_event_type_tick_and_payload_tag() {
+        let entry = BiographyEntry::MutationAdvanced {
+            from_stage: 1,
+            to_stage: 2,
+            cumulative_toxin: 105.5,
+            tick: 8888,
+        };
+
+        // Pin event type.
+        assert_eq!(
+            biography_event_type(&entry),
+            "mutation_advanced",
+            "MutationAdvanced event type should be 'mutation_advanced'"
+        );
+        assert_ne!(
+            biography_event_type(&entry),
+            "mutation",
+            "MutationAdvanced event type should not be 'mutation'"
+        );
+
+        // Pin tick extraction.
+        assert_eq!(
+            biography_tick(&entry),
+            8888,
+            "MutationAdvanced tick should be 8888"
+        );
+
+        // Pin LifeEventPayload serialization tag.
+        let payload_json = serde_json::to_string(&LifeEventPayload {
+            biography_entry: entry.clone(),
+        })
+        .expect("MutationAdvanced life event payload should serialize");
+        let payload_value: Value =
+            serde_json::from_str(&payload_json).expect("payload should be valid json");
+        assert!(
+            payload_value["biography_entry"]
+                .get("MutationAdvanced")
+                .is_some(),
+            "expected MutationAdvanced tag in serialized payload, actual: {payload_value}"
+        );
+
+        // Pin round-trip.
+        let decoded: LifeEventPayload = serde_json::from_str(&payload_json)
+            .expect("MutationAdvanced life event payload should deserialize");
+        assert_eq!(
+            biography_event_type(&decoded.biography_entry),
+            "mutation_advanced"
+        );
+        assert_eq!(biography_tick(&decoded.biography_entry), 8888);
+
+        // Verify fields survive round-trip.
+        match &decoded.biography_entry {
+            BiographyEntry::MutationAdvanced {
+                from_stage,
+                to_stage,
+                cumulative_toxin,
+                tick,
+            } => {
+                assert_eq!(*from_stage, 1);
+                assert_eq!(*to_stage, 2);
+                assert!((cumulative_toxin - 105.5).abs() < f64::EPSILON);
+                assert_eq!(*tick, 8888);
+            }
+            other => panic!("expected MutationAdvanced, got {other:?}"),
         }
     }
 

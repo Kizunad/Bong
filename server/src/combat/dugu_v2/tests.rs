@@ -383,10 +383,7 @@ fn dugu_visual_ids_pin_eclipse() {
     assert_eq!(v.particle_id, "bong:dugu_taint_pulse");
     assert_eq!(v.sound_recipe_id, "dugu_needle_hiss");
     assert_eq!(v.hud_hint, "蚀针");
-    assert_eq!(
-        v.icon_texture,
-        "bong:textures/gui/skill/dugu_eclipse.png"
-    );
+    assert_eq!(v.icon_texture, "bong:textures/gui/skill/dugu_eclipse.png");
 }
 
 #[test]
@@ -397,10 +394,7 @@ fn dugu_visual_ids_pin_self_cure() {
     assert_eq!(v.particle_id, "bong:dugu_dark_green_mist");
     assert_eq!(v.sound_recipe_id, "dugu_self_cure_drink");
     assert_eq!(v.hud_hint, "自蕴");
-    assert_eq!(
-        v.icon_texture,
-        "bong:textures/gui/skill/dugu_self_cure.png"
-    );
+    assert_eq!(v.icon_texture, "bong:textures/gui/skill/dugu_self_cure.png");
 }
 
 #[test]
@@ -411,10 +405,7 @@ fn dugu_visual_ids_pin_penetrate() {
     assert_eq!(v.particle_id, "bong:dugu_taint_pulse");
     assert_eq!(v.sound_recipe_id, "dugu_needle_hiss");
     assert_eq!(v.hud_hint, "侵染");
-    assert_eq!(
-        v.icon_texture,
-        "bong:textures/gui/skill/dugu_penetrate.png"
-    );
+    assert_eq!(v.icon_texture, "bong:textures/gui/skill/dugu_penetrate.png");
 }
 
 #[test]
@@ -425,10 +416,7 @@ fn dugu_visual_ids_pin_shroud() {
     assert_eq!(v.particle_id, "bong:dugu_dark_green_mist");
     assert_eq!(v.sound_recipe_id, "dugu_self_cure_drink");
     assert_eq!(v.hud_hint, "神识遮蔽");
-    assert_eq!(
-        v.icon_texture,
-        "bong:textures/gui/skill/dugu_shroud.png"
-    );
+    assert_eq!(v.icon_texture, "bong:textures/gui/skill/dugu_shroud.png");
 }
 
 #[test]
@@ -439,10 +427,7 @@ fn dugu_visual_ids_pin_reverse() {
     assert_eq!(v.particle_id, "bong:dugu_reverse_burst");
     assert_eq!(v.sound_recipe_id, "dugu_curse_cackle");
     assert_eq!(v.hud_hint, "倒蚀");
-    assert_eq!(
-        v.icon_texture,
-        "bong:textures/gui/skill/dugu_reverse.png"
-    );
+    assert_eq!(v.icon_texture, "bong:textures/gui/skill/dugu_reverse.png");
 }
 
 #[test]
@@ -490,10 +475,7 @@ fn dugu_emit_anim_skips_without_unique_id() {
     let mut app = App::new();
     app.add_event::<VfxEventRequest>();
     // Spawn entity with Position but without UniqueId
-    let entity = app
-        .world_mut()
-        .spawn(Position::new([0.0, 64.0, 0.0]))
-        .id();
+    let entity = app.world_mut().spawn(Position::new([0.0, 64.0, 0.0])).id();
 
     emit_anim(app.world_mut(), entity, "bong:dugu_needle_throw");
 

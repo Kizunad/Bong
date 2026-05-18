@@ -3318,9 +3318,7 @@ mod tests {
 
             // 手动清空盲区 registry 模拟 tick_expire 完成。
             {
-                let mut registry = app
-                    .world_mut()
-                    .resource_mut::<TiandaoBlindZoneRegistry>();
+                let mut registry = app.world_mut().resource_mut::<TiandaoBlindZoneRegistry>();
                 registry.tick_expire(u64::MAX);
             }
             // 让下一次 publish 触发：把 timer 回到能 publish 的状态

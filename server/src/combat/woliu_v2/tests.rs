@@ -1706,11 +1706,36 @@ fn woliu_av_mapping_covers_all_v3_skills() {
     use super::skills::woliu_av_mapping;
 
     let mappings = [
-        (WoliuSkillId::VacuumPalm, "bong:woliu_vacuum_palm_spiral", "woliu_vacuum_palm", "bong:woliu_vacuum_palm"),
-        (WoliuSkillId::VortexShield, "bong:woliu_vortex_shield_sphere", "woliu_vortex_shield", "bong:woliu_vortex_shield"),
-        (WoliuSkillId::VacuumLock, "bong:woliu_vacuum_lock_cage", "woliu_vacuum_lock", "bong:woliu_vacuum_lock"),
-        (WoliuSkillId::VortexResonance, "bong:woliu_vortex_resonance_field", "woliu_vortex_resonance", "bong:woliu_vortex_resonance"),
-        (WoliuSkillId::TurbulenceBurst, "bong:woliu_turbulence_burst_wave", "woliu_turbulence_burst", "bong:woliu_turbulence_burst"),
+        (
+            WoliuSkillId::VacuumPalm,
+            "bong:woliu_vacuum_palm_spiral",
+            "woliu_vacuum_palm",
+            "bong:woliu_vacuum_palm",
+        ),
+        (
+            WoliuSkillId::VortexShield,
+            "bong:woliu_vortex_shield_sphere",
+            "woliu_vortex_shield",
+            "bong:woliu_vortex_shield",
+        ),
+        (
+            WoliuSkillId::VacuumLock,
+            "bong:woliu_vacuum_lock_cage",
+            "woliu_vacuum_lock",
+            "bong:woliu_vacuum_lock",
+        ),
+        (
+            WoliuSkillId::VortexResonance,
+            "bong:woliu_vortex_resonance_field",
+            "woliu_vortex_resonance",
+            "bong:woliu_vortex_resonance",
+        ),
+        (
+            WoliuSkillId::TurbulenceBurst,
+            "bong:woliu_turbulence_burst_wave",
+            "woliu_turbulence_burst",
+            "bong:woliu_turbulence_burst",
+        ),
     ];
     for (skill, expected_vfx, expected_audio, expected_anim) in mappings {
         let (vfx, audio, anim) = woliu_av_mapping(skill);
@@ -1751,7 +1776,11 @@ fn woliu_av_mapping_v2_skills_use_fallback() {
 fn woliu_vfx_params_low_boundary_clamps_correctly() {
     // Reproduce the same computation done in resolve_woliu_v2_skill for VFX params.
     // Use a helper to avoid clippy::unnecessary_min_or_max on compile-time constants.
-    fn vfx_params(field_strength: f32, influence_radius: f32, duration_ticks: u64) -> (f32, u16, u16) {
+    fn vfx_params(
+        field_strength: f32,
+        influence_radius: f32,
+        duration_ticks: u64,
+    ) -> (f32, u16, u16) {
         let strength = (field_strength / 1.5).clamp(0.0, 1.0);
         let count = ((influence_radius * 6.0) as u16).clamp(8, 64);
         let duration = (duration_ticks.min(200) as u16).max(20);
@@ -1770,7 +1799,11 @@ fn woliu_vfx_params_low_boundary_clamps_correctly() {
 
 #[test]
 fn woliu_vfx_params_high_boundary_clamps_correctly() {
-    fn vfx_params(field_strength: f32, influence_radius: f32, duration_ticks: u64) -> (f32, u16, u16) {
+    fn vfx_params(
+        field_strength: f32,
+        influence_radius: f32,
+        duration_ticks: u64,
+    ) -> (f32, u16, u16) {
         let strength = (field_strength / 1.5).clamp(0.0, 1.0);
         let count = ((influence_radius * 6.0) as u16).clamp(8, 64);
         let duration = (duration_ticks.min(200) as u16).max(20);
@@ -1789,7 +1822,11 @@ fn woliu_vfx_params_high_boundary_clamps_correctly() {
 
 #[test]
 fn woliu_vfx_params_mid_range_no_clamp() {
-    fn vfx_params(field_strength: f32, influence_radius: f32, duration_ticks: u64) -> (f32, u16, u16) {
+    fn vfx_params(
+        field_strength: f32,
+        influence_radius: f32,
+        duration_ticks: u64,
+    ) -> (f32, u16, u16) {
         let strength = (field_strength / 1.5).clamp(0.0, 1.0);
         let count = ((influence_radius * 6.0) as u16).clamp(8, 64);
         let duration = (duration_ticks.min(200) as u16).max(20);
@@ -1803,10 +1840,7 @@ fn woliu_vfx_params_mid_range_no_clamp() {
         "mid strength should be 0.5, got {strength}"
     );
     assert_eq!(count, 30, "mid count should be 30 without clamping");
-    assert_eq!(
-        duration, 60,
-        "mid duration should be 60 without clamping"
-    );
+    assert_eq!(duration, 60, "mid duration should be 60 without clamping");
 }
 
 #[test]
