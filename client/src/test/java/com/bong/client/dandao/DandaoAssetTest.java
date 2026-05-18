@@ -145,8 +145,30 @@ class DandaoAssetTest {
         Path anim = RESOURCES.resolve(Path.of("assets", "bong", "animations", "baolongwang.animation.json"));
         String body = Files.readString(anim, StandardCharsets.UTF_8);
 
-        // idle and walk should be looping
-        assertTrue(body.contains("\"loop\""), "Should have looping animations");
+        // Verify idle and walk specifically have "loop": true.
+        // A naive contains("\"loop\"") is a false positive — non-looping
+        // animations also contain "loop": false.
+        // Parse the animation entries to check per-animation loop status.
+        var root = com.google.gson.JsonParser.parseString(body).getAsJsonObject();
+        var animations = root.getAsJsonObject("animations");
+
+        var idle = animations.getAsJsonObject("idle");
+        assertNotNull(idle, "Should have 'idle' animation entry");
+        assertTrue(idle.has("loop") && idle.get("loop").getAsBoolean(),
+            "idle animation must have \"loop\": true (4.76s breathing loop)");
+
+        var walk = animations.getAsJsonObject("walk");
+        assertNotNull(walk, "Should have 'walk' animation entry");
+        assertTrue(walk.has("loop") && walk.get("loop").getAsBoolean(),
+            "walk animation must have \"loop\": true (1.12s walk cycle)");
+
+        // attack, skill1, skill2 must NOT be looping
+        for (String oneShot : new String[]{"attack", "skill1", "skill2"}) {
+            var entry = animations.getAsJsonObject(oneShot);
+            assertNotNull(entry, "Should have '" + oneShot + "' animation entry");
+            assertFalse(entry.has("loop") && entry.get("loop").getAsBoolean(),
+                oneShot + " animation must not be looping (one-shot action)");
+        }
     }
 
     @Test
