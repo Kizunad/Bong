@@ -151,6 +151,7 @@
 
 | 阶段 | 内容 | 状态 |
 |---|---|---|
+| **P-1** ⬜ | worldgen layout 基础设施 — `LayoutSpec` / `Placement` / `layouts/runner.py` + terrain profile schema 扩 `architectural_layout` + `compound_flatten_radius` + stitcher density mask（§9.4a 详述）。**前置 hard dependency，P0 起所有阶段依赖 layout runner 可用**。 | — |
 | **P0** ⬜ | 丹道底盘 — `DandaoStyleComponent` + `MutationComponent` + 累计丹毒追踪 + 3 基础招式（自服丹/投掷丹/丹雾）+ 经脉依赖 + PracticeLog 温润色 | — |
 | **P1** ⬜ | 变异系统 — `MutationRegistry` + 4 阶段变异触发 + 变异 slot + 顿悟选择 + 社会反应 | — |
 | **P2** ⬜ | 丹道专属物品 — 5 种专属灵草（含植物模型）+ 变异丹/体质丹/续命丹配方 + 变异催化炉 tier 4 | — |
@@ -854,3 +855,793 @@ pub struct BaolongwangBoss {
 6. **暴龙王模型 Bedrock→GeckoLib 转换**：骨骼命名 `bdk_*` 非标准（`bdk_la`=左臂、`bdk_rl`=右腿、`bdk_lw`/`bdk_rw`=左右翼）。需要映射表但不需重命名源文件——在 client renderer 里做 alias
 7. **变异丹的经济投入 vs 正常修炼**：一颗蜕骨丹(+5.0 toxin)需要 2 蜕骨藤(稀有) + 1 异变兽骨。从微变(30)到兽化(500)纯吃蜕骨丹 = 94 颗 = 188 蜕骨藤 + 94 异变兽骨。这个采集量对应多少小时？需要对照 botany 产出速率校准
 8. **变异附件模型制作方式**：10 个 GeckoLib 附件是手工 Blockbench 还是走 `scripts/images/gen.py` + Tripo 生成 + 手工调整？后者可大幅缩短工期但质量不可控
+
+> 全部已在 §8.1 收口。原表保留以备追溯，**实施时以 §8.1 决议为准**。
+
+---
+
+## §8.1 决议（pre-P0 收口，2026-05-18）
+
+> 以 Explore agent 实地核查 server / client / worldgen 现状为依据。每条结尾的「落点」是 P0/P1 实施时应当读的代码符号或 plan 章节。
+
+### #1 经脉惩罚数值与"经脉效率"的代码语义
+
+**决议**：
+
+1. **`meridian_penalty` 不直接缩放经脉效率字段**——`server/src/cultivation/` 里**没有** `efficiency_multiplier` / `flow_rate_multiplier` 这类乘数字段。`Contamination` 的影响走的是**链式损耗**：`contamination.rs:29-31` 定义 `DRAIN_RATIO = 1.5`（排 1 单位污染要花 1.5 qi）+ `BASE_PURGE_RATE = 0.1`，qi_current 不足时排异失败 → 已通经脉添加 `MeridianCrack`（`contamination.rs:142-149`）→ 招式 hit_chance / cast 成功率受损。
+2. **`MutationState.meridian_penalty` 重定义为「污染基线加成」**：每 tick 给 `Contamination.current` 累加 `meridian_penalty × CONTAMINATION_BASELINE_TICK`（新增常数，建议 `0.01/tick × penalty 系数`），从而通过现有排异链路自然削弱角色。**不要在 plan 范围内新建经脉效率乘数**——会和现有 contamination 系统两套并行不一致（红旗，对齐 `docs/CLAUDE.md §四 自定真元物理常数`）。
+3. **阶段 4 -30% 调到 -20%**：根据 DPS 推算（化虚变异体 70% 经脉效率 + 体质 +50% + 多臂 = DPS 比值 ~0.7-0.85），-30% 偏强（变异体 net DPS 已下降到 0.7 以下时仍要承担社会代价 + 不可逆，吸引力为负）。最终数值：**-3% / -8% / -15% / -20%**。阶段 4 的 OP 抑制改由"经常进入 contamination overflow → 自动触发裂痕"承担，而非纯惩罚乘数。
+4. **plan §1.3 三招式 qi 消耗的高境界数值需重算**：现有 `qi_max × 3%（醒灵 0.3 ... 化虚 321）`隐含 qi_max 几何 4× 递增到化虚 ~10,700——但代码里 `qi_max = 10 + Σ flow_capacity`（`components.rs:384`），化虚 20 脉全通约 **210-500 范围**。**实施时直接读 `cultivation::components::capacity_for_tier(realm)` 算实际 qi_cost，不要硬编 0.3/1.2/4.5/16/63/321 这串**。plan §1.3 表格作为"占用比例"语义保留（× qi_max 3%），但要在 P0 P0 测试断言里去掉绝对数值。
+
+**落点**：`server/src/cultivation/contamination.rs:29-31, 142-149` / `server/src/cultivation/components.rs:196-208, 384` / `server/src/combat/armor.rs:10`（`ARMOR_MITIGATION_CAP = 0.85`）/ plan §1.3 + §2.1 + §2.4。
+
+### #2 多臂切换：cooldown share 限速
+
+**决议**：
+
+1. **武器切换当前无延迟**：`AttackIntent`（`server/src/combat/events.rs:35-45`）不绑武器实例；攻击冷却走全局 `ATTACK_COOLDOWN_TICKS = 10`（`server/src/combat/player_attack.rs:15`），换武器立即生效；招式冷却绑 `skill_id` 不绑武器（`server/src/network/skillbar_config_emit_test.rs:85-157`），换武器不重置 cooldown。
+2. **多臂 = 扩 `EquipSlotV1` 加 `ExtraHand0/ExtraHand1`**（`server/src/schema/inventory.rs:31-56`），保留 hotbar 9 槽平行。不改 `AttackIntent` 不改 attack 路径。
+3. **"切换无延迟"防 AI 滥用 = cooldown share**：新增 `WEAPON_SWAP_COOLDOWN_TICKS = 20`（1s GCD），所有手槽位共享 `last_swap_tick`。这是最少改动方案——不引入 mastery-gated（增加新维度）也不引入 attack-locking（侵入 attack 路径）。等真有滥用证据再细化。
+4. **plan §2.1 `ExtraArms` 注释更新**：从"切换无延迟"改为"切换共享 1s GCD，攻击节奏不变但应对场景灵活（一手 buff 一手输出）"。
+5. **HUD 条件显示硬约束**（对齐 memory `feedback_hud_conditional.md`）：`ExtraHand0/ExtraHand1` 槽位的快捷栏渲染**只在玩家已解锁多臂变异 slot 时才出现**，未解锁时 `WeaponHotbarHudPlanner` 不画这两格、不画灰位、不画占位提示——**完全隐藏**。同理：丹道·丹体异化 HUD 面板（plan §4.2）只在 `DandaoStyleComponent` 已 lazy insert 后才显示；变异阶段标签（金瞳/角/尾）只在对应 `ActiveMutation` 写入后才出现；变异部位标记（plan §4.2 "迷你人体剪影 + 变异部位标记"）按 `MutationState.slots` 列表条件渲染，每多一个 slot 多画一个点。规则一句话：**未解锁的能力/槽位/状态绝不在 HUD 上留痕**。
+
+**落点**：`server/src/schema/inventory.rs:31-56` / `server/src/combat/player_attack.rs:15, 69` / `server/src/combat/weapon.rs:121-167` / `client/src/main/java/com/bong/client/hud/WeaponHotbarHudPlanner.java:39-75`（多臂槽位渲染条件门）/ plan §2.1 `ExtraArms` 描述 / plan §4.2 HUD 章节 + 加 "条件显示" 子节。
+
+### #3 暴龙王巨洞：blueprint 固定坐标 + 负灵域 zone
+
+**决议**：
+
+1. **走 blueprint 固定坐标方案**（同灵眼 / 坍缩渊口模式）。Blueprint 模型 `worldgen/scripts/terrain_gen/blueprint.py:54-69` 已支持 `BlueprintZone.pois: tuple[PoiSpec, ...]`，每 POI 带 `pos_xyz`。`server/zones.worldview.example.json` 里 `rift_mouth_north_001 @ (-500, 74, -8500)` 就是范本。
+2. **新增 zone**：`baolongwang_cavern_deep`，aabb 选未占用地下区（建议 `x: 1500-2000, y: -80 to -20, z: -5500 to -4800` 区间），`spirit_qi: -0.8` 自动落入 `BotanyZoneTag::NegativeField`（阈值 `< -0.2`，`server/src/world/zone.rs:48`）→ 天道感知屏蔽（对应 plan §6.4 暴龙王"活在天道盲区"设定）。
+3. **2 个 POI**：`baolongwang_furnace`（炉位置，弱点）+ `baolongwang_spawn`（BOSS 站位）。POI `kind` 字段在 server 侧通过 `ZoneRegistry::find_poi_by_kind(...)` 查询用于 NPC spawn 初始化（plan-npc-ai-v1 框架已就位）。
+4. **不需要 worldgen Python 代码改动**——只动 `server/zones.worldview.example.json` JSON（~30 行新增）。
+
+**落点**：`server/zones.worldview.example.json`（待新增 baolongwang zone 条目）/ `server/src/world/zone.rs:48`（NegativeField tag 阈值）/ `worldgen/scripts/terrain_gen/blueprint.py:54-69, 170-187`（POI spec 加载） / plan §5.5。
+
+### #4 化虚大衍丹体：复用 AlchemyAutoProfile + is_internal 分支
+
+**决议**：
+
+1. **不新写完整 Session 状态机**——`AlchemySession`（`server/src/alchemy/session.rs:68-82`）是 tick 驱动而非 enum FSM，没有"跳过中途阶段直接产出"接口；硬绕过会破坏现有 contamination 写入路径。
+2. **复用 plan-alchemy-v2 的 `AlchemyAutoProfile`**（`server/src/alchemy/auto_profile.rs:69-100`）—— 它本来就是"无 GUI 全自动炼丹"通道。新增分支：
+   - `AlchemyAutoProfile.is_internal: bool` 字段
+   - `is_internal == true` 时跳过 `FurnaceQiReserve` 储备消耗 → 改为直接扣 `player.qi_current`（守恒律仍走 `qi_physics::ledger::QiTransfer { from: player, to: zone, amount: qi_cost × dissipation_ratio }`，dissipation 给末态 zone 不凭空消失）
+   - `feed_stage / tick / classify` 链路全部复用，不重写
+3. **新增 IPC event**：`DandaoInternalBrewIntent { recipe_id, duration_ticks }`，client → server 触发；server 端 `spawn_furnace_with_auto_profile(player, recipe, profile_curve_internal)`。
+4. **HUD 不画完整炼丹 UI**——化虚招式 cast 走通用 5s progress bar（plan §1.3 模式）即可，配套 narration "你在体内点燃了丹炉"。复用率约 95%。
+
+**化虚大衍丹体「身体即是丹炉」机制完整说明**（plan §6.1 表"化虚"行的展开）：
+
+化虚境界变异体不再需要外置丹炉。把材料（灵草 + 矿物）吞入腹中，用自身真元在体内"点火"——`AlchemyAutoProfile.is_internal = true` 分支会跳过 `FurnaceQiReserve` 储备，直接消耗 `player.qi_current` 烧火 5s，期间复用 `auto_profile.rs` 的 `feed_stage / tick / classify` 链路（火候曲线 / 投料窗 / 品阶分类全套），**只是没有可见的炉子**。5s 后：
+
+- **不产出实体丹药**——效果直接施加到玩家身体（如蜕骨丹效果 → 直接 `cumulative_toxin += 5.0` + `Contamination::add(ContamSource::Pill { ... })`）
+- **代价远高于外炼**：每次内炼无条件 `cumulative_toxin += 15.0`（约等于一颗化形大丹半剂） + `meridian_penalty += 0.01`（永久 1% 经脉惩罚叠加，**不可洗**）
+- **优点**：不依赖丹方器具，野外即可炼；可在战斗中（5s 内不可移动 / 不可施法）当应急 buff
+- **触发条件**：化虚境界 + 已解锁「大衍丹体」被动（任意变异阶段 ≥ 3 时通过顿悟选择解锁，写入 `DandaoStyle.passives: Vec<DandaoPassive>`）
+- **守恒律**：消耗的 qi 走 `QiTransfer { from: player, to: zone, amount: qi_cost × dissipation }`，dissipation 给当前 zone 不凭空消失，对齐 `docs/CLAUDE.md §四`
+
+**叙事定位**：这是丹道流派的"终极返祖"——丹宗远祖（百草门初代）就是这样炼丹的，后来才发明外炉；变异体身体已经接近上古丹师状态，重新拾回了这门失传技术。代价是每次内炼都让你离"人"更远一步。
+
+**落点**：`server/src/alchemy/auto_profile.rs:69-100` / `server/src/alchemy/session.rs:68-82` / `qi_physics::ledger::QiTransfer`（守恒律）/ plan §6.1 化虚行 + §9.1 丹宗叙事呼应。
+
+### #5 暴龙王三阶段 AI：纯 Scorer 链组合，不扩 big-brain
+
+**决议**：
+
+1. **现有 big-brain 用法**（`server/src/npc/brain.rs:1-10, 118-129, 1006-1048`）= 标准 Scorer + Action + Picker(big-brain 内置) + Thinker，每个 Scorer 一个 component + system pair。
+2. **三阶段不需要 PhaseGate 特殊组件**——改用 **health-ratio Scorer 驱动三平行 Phase Scorer 链**：
+   - 阶段一 Scorer（`AvoidPlayerScorer` / `PillMistScorer` / `TailSwipeScorer`），其评分公式都乘上 `phase1_active = (health_ratio > 0.7) as f32`
+   - 阶段二 Scorer 同理，乘 `phase2_active = (0.3 < health_ratio ≤ 0.7) as f32`
+   - 阶段三 Scorer 乘 `phase3_active = (health_ratio ≤ 0.3) as f32`
+   - 自然形成"同一时刻只有一个阶段的 Action 评分 > 0"，big-brain Picker 自动选最高分 Action
+3. **优势**：纯组合现有模式，无新 trait/component；阶段切换由 health 实时驱动，无显式状态转换 bug 空间；后续要加阶段（暴怒后再"垂死爆发"）只是再加一个 Scorer 链。
+4. **plan §5.3 Scorer 描述更新**：删除"PhaseGate 包装"叙述，改为"每阶段 Action 评分函数内置 health_ratio 区间门控"。
+
+**落点**：`server/src/npc/brain.rs:1006-1046`（chase_target_scorer_system 范本）/ plan §5.3 三阶段 Scorer 表。
+
+### #6 Bedrock → GeckoLib 骨骼 alias：renderer 侧 HashMap，不改源文件
+
+**决议**：
+
+1. **现有 GeckoLib 模型也用自定义骨骼名**（`client/src/main/resources/assets/bong/geo/iron_leggings.geo.json` / `jungle_scorpion.geo.json`）—— Bong 项目本就不强求 Minecraft humanoid 标准命名，FaunaModel 直接指 geo.json 无 alias 层。
+2. **`baolongwang.geo.json` 骨骼完整列表**：`bone2 / bdk_rl / bdk_ra / bdk_la / bdk_ll / bdk_lw / bdk_rw / bdk_body / bone / group`。
+3. **映射表（renderer 侧 HashMap 实装，不动源文件）**：
+   ```
+   bdk_body → body
+   bdk_rl   → right_leg
+   bdk_ll   → left_leg
+   bdk_ra   → right_arm
+   bdk_la   → left_arm
+   bdk_rw   → right_wing  (GeckoLib standard 无此骨骼 — animation processor no-op pass-through)
+   bdk_lw   → left_wing   (同上)
+   bone / bone2 / group   → 弃用 / 装饰，无 animation 绑定
+   ```
+4. **实装位置**：`BaolongwangEntityRenderer extends GeoEntityRenderer`，构造时注册 `boneAlias: Map<String, String>`，在 `applyMolangQueries` / `getAnimationProcessor` 处做 lookup。**不改 `local_models/baolongwang/baolongwang.geo.json`**——美术工具重导出会覆盖。
+
+**落点**：`local_models/baolongwang/baolongwang.geo.json:1-50` / `client/src/main/java/com/bong/client/fauna/FaunaModel.java:1-21`（参考 pattern）/ plan §5.1。
+
+### #7 蜕骨藤 / 异变兽骨经济：靠 botany density 校准，不改 plan 阈值
+
+**决议**：
+
+1. **plan §六.4 阈值（0/30/100/250/500）保留**——这些是"累计 toxin"语义，普通辅助丹 0.5/颗在自然修炼路径下天花板 ~75，永远不触发微变。变异轨道明确要"刻意大量服药"。
+2. **关键校准在 botany 侧**：`ye_ku_teng`（蜕骨藤）配置当前在 `server/src/botany/registry.rs:700+` 但 `v2_spec.env_locks` **尚未实装**（plan-botany-v2 骨架在跑）。P2 实施时设 **`density_factor = 0.05`（极稀有）+ `survival_mode = NegPressureFeed` + `env_locks = [NegativeField, Ruins]`**——让 188 颗采集约 12-18h 游戏时间，对齐 plan §六.4 表"凝脉后期~固元（~30h）"窗口的~半段时间投入。
+3. **异变兽骨**：plan §5.4 暴龙王掉落 + plan-tsy-hostile-v1 / plan-npc-ai-v1 的 hostile mob 掉落已有底盘。P2 实施时在异变兽 loot table 加 `BeastBone × 1-3 (70%)`。94 颗约 35-50 次击杀，与采集时长匹配。
+4. **若实施时实测严重偏离**（采集 ≥ 30h），降级到选项 C：把蜕骨丹需求数降到 50 颗 + toxin/颗 8.0（材料量减半）。
+
+**落点**：`server/src/botany/registry.rs:700+`（ye_ku_teng v2_spec）/ `server/src/botany/lifecycle.rs:126-190`（spawn_v2_plants_for_zone）/ plan §3.1 表"蜕骨藤"行新增 `density_factor: 0.05` 字段提示 / plan §3.2 蜕骨丹配方备注"如实施时采集时长 >30h 触发选项 C 调整"。
+
+### #8 变异附件模型：6 手工 + 4 gen-image，总 5-6 小时
+
+**决议**：
+
+1. **`scripts/images/gen.py` 现状**：仅 2D PNG（item/particle/hud/scene 四档），**无 Tripo 集成 / 无 image-to-3d**。`scripts/images/style.py:20-79`。
+2. **现有 GeckoLib 模型复杂度**：最简 `douli_hat.geo.json` 116 行 5 骨骼 ≈ 30-60 min/件手工 Blockbench。
+3. **10 个变异附件分工**：
+   - **手工 Blockbench 6 个**（需精确骨骼层级 / pivot / 关节）：金瞳、硬甲指、额骨脊、双角、尾、多臂
+   - **gen-image 贴图 + 简单 Blockbench cube 4 个**（规则几何贴图为主）：前臂鳞、脊突、背甲、兽面
+   - 总工作量 ~5-6h
+4. **plan §7.2 表"估计工作量"列重定**：手工 6 个标 "Blockbench 30-60min/件" / gen-image 4 个标 "/gen-image item + cube paste UV 15-20min/件"。
+5. **不引入 Tripo 等外部 3D 生成工具**——质量不可控且增加依赖；plan §8 #8 提到的 Tripo 路线**拒绝**。
+
+**落点**：`scripts/images/gen.py` / `scripts/images/style.py:20-79` / `client/src/main/resources/assets/bong/geo/douli_hat.geo.json`（最简范本）/ plan §7.2 工作量表 + §7.4 命令样板。
+
+---
+
+## §8.2 §8.1 收口后下一步（**已修订 2026-05-18**：单 plan 多 PR 路径）
+
+§8.1 决议是 plan **设计补丁**，未实施。原本（早期草案）建议拆 4 个独立 plan 分别消费——**该建议已废弃**，改走 **单 plan 多 PR 路径**（见 §10.2 / §10.4）：
+
+- **不另起 `plan-worldgen-layout-v1` / `plan-dandao-base-v1` / `plan-dandao-items-v1` / `plan-baolongwang-boss-v1` / `plan-dandao-advance-v1` 这类骨架 plan**——全部内容在本 plan 内做。
+- worldgen layout 基础设施作为 **P-1 前置阶段**（§0 阶段总览），仍在本 plan-dandao-path-v1 内实施。
+- 单次 `/consume-plan dandao-path-v1` 调用按 §10.2 推荐的 4 PR 序列依次提交、依次 merge，全程 ScheduleWakeup 驱动。
+- **唯一例外**：worldview §六.4 仍**单独 PR**——把 plan 头部"Worldview 扩展：§六.4 丹体异化"章节作为 `docs/worldview.md` 的 amend，单独提 PR（CLAUDE.md / AGENTS.md 严禁自动改 worldview，必须人工 review）。归档前 worldview §六.4 必须先 land。这条不在 consume-plan 自动化范围内。
+
+为什么放弃拆 plan：拆 plan 增加 plan 文件管理成本（4 份 active + 维护交叉引用），且每份子 plan 体量都不大到独立成 plan 的程度；单 plan 多 PR 在 consume-plan agent 视角下序列化推进效率更高，仍能满足"PR review 不会爆"目标。
+
+---
+
+## §9 丹道地形：丹宗遗园（百草门覆灭遗迹）
+
+> 对标 `plan-sword-path-v1` §P2 巨剑沧海。剑道地标是「上古剑宗插剑入海」，丹道地标是「上古丹宗百草门覆灭后的整片药圃 + 露天大丹炉群 + 异灵兽散落」。叙事上 §6.4 暴龙王 = 百草门末代掌门，本 zone = 他的故乡。
+
+### §9.1 叙事
+
+末法降临前，**百草门**是九大宗门中唯一的纯丹宗——不修战斗、不练剑，整门人靠"以丹养身"维持，掌门人是后来的暴龙王。末法初年灵气暴跌，门内弟子按掌门指示集体服用囤积的"续命大丹"——掌门活下来（变成了暴龙王，沦为续命成瘾者），其他人没扛过灵气崩塌期，**药效与本体真元的最后失衡**让他们当场扭曲变形，倒在自家药圃里。
+
+千年后这片山谷成了：
+
+- 上百口**露天炼丹大鼎**残骸（青铜半埋入土，仍有微温）
+- 数十块**药圃石篱**（曾经按八卦布局，现在只剩低矮石墙圈出土框）
+- **变异灵草疯长**（蜕骨藤 / 兽心草 / 龙鳞苔 全是上古百草门的培育品种，野化后变得更稀有更剧毒）
+- **服丹未死的"半人"散落**（异灵兽：变形未完成的丹师，掉异变兽骨 / 残破丹药 / 失传丹方）
+- **丹师枯骨遍地**（手里仍紧握未炼成的丹药）
+
+地表土壤被千年丹毒侵染，呈灰紫色（podzol + purple_terracotta 混合）。Zone 中央有一座半塌大殿，是百草门的「百草丹殿」总坛——里面藏着全套的丹方壁画 + 一座唯一保留完好的 tier-4 变异催化炉（剧情上是掌门炼"续命大丹"时用的）。
+
+**与暴龙王 BOSS 的关系**：本 zone 是叙事支线 / 采集场 / 入门 elite，**不是暴龙王战场**。暴龙王本人在 §8.1 #3 决议的 `baolongwang_cavern_deep`（地下深处坍缩渊边缘负灵域），不在丹宗遗园。但本 zone 的丹师枯骨 + 壁画会大量铺垫"掌门叛逃"叙事，让玩家在去坍缩渊打 BOSS 之前先理解他是谁。
+
+### §9.2 Zone 定义
+
+`server/zones.json`（或 `server/zones.worldview.example.json`）新增：
+
+```json
+{
+  "name": "dan_zong_yi_yuan",
+  "display_name": "丹宗遗园",
+  "aabb": {
+    "min": [-2400.0, -16.0, 3200.0],
+    "max": [-800.0, 240.0, 4800.0]
+  },
+  "spirit_qi": 0.40,
+  "danger_level": 4,
+  "ambient_recipe_id": "ambient_dan_zong",
+  "active_events": [],
+  "patrol_anchors": [
+    [-1600.0, 78.0, 3600.0],
+    [-1200.0, 82.0, 4000.0],
+    [-2000.0, 76.0, 4400.0]
+  ],
+  "blocked_tiles": []
+}
+```
+
+- **spirit_qi 0.40**：中等灵气区（边缘略偏低）——千年丹毒侵染土壤抑制灵气流通，比正常宗门遗迹（jiu_zong_ruin spirit_qi 通常 0.5）稍低。
+- **danger_level 4**：等同于巨剑沧海（剑道）。异灵兽 + 蒸气毒泉 + 大殿地下守卫构成主威胁，不需要化虚来打但凝脉以下风险高。
+- **坐标选择**：负 x 负 z 第三象限，避开 spawn / qingyun_peaks / lingquan_marsh / 渊口荒丘 现有坐标群，靠近 worldgen 已有的 north_waste 区域。具体坐标实施时按 `server/zones.worldview.example.json` 现状再敲。
+
+### §9.3 Terrain Profile
+
+> **本 zone 是宗门人工遗迹，不走「density-based 杂物 spawn」的 noise 范式**——所有建筑（大殿 / 药圃 16 格 / 丹炉 8 对 / 中轴大道 / 蒸气毒泉 3 处）都是 **deterministic layout**，按八卦/对称/中轴公式相对 POI 中心点摆放。只有"野草 / 散落丹师枯骨 / 表层小石"这类自然杂物才走 density spawn。地形 height field 仍走 noise（缓坡），表层 surface 仍走 palette——**唯独建筑结构不能 noise**。
+
+`worldgen/terrain-profiles.example.json` 新增 `dan_zong_yi_yuan`：
+
+```json
+"dan_zong_yi_yuan": {
+  "height": { "base": [62, 78], "peak": 92, "compound_flatten_radius": 96 },
+  "boundary": { "mode": "soft", "width": 96 },
+  "surface": ["podzol", "coarse_dirt", "mud", "purple_terracotta", "mossy_cobblestone"],
+  "water": { "level": "low", "coverage": 0.10 },
+  "passability": "medium",
+  "structure_density": {
+    "wild_herb_clump": 0.020,
+    "scattered_bone_fragment": 0.004,
+    "small_rubble": 0.008
+  },
+  "architectural_layout": "dan_zong_compound",
+  "ambient_hint": {
+    "pill_steam_drift": "continuous",
+    "soil_tint": "purple_grey",
+    "alchemist_groan": "rare"
+  }
+}
+```
+
+**与其他 profile 的关键不同**：
+
+1. **新增 `architectural_layout` 字段**（worldgen schema 扩展）——值是 layout 生成器 ID，对应 `worldgen/scripts/terrain_gen/layouts/dan_zong_compound.py`（详见 §9.4a）。layout 生成器在 procedural 表层 / decoration density spawn 之后运行，最后一步覆盖建筑区块。layout 区域内 density spawn 会被 mask 遮蔽（不在建筑物上长草）。
+2. **新增 `height.compound_flatten_radius`**——以 POI `dan_zong_great_hall` 坐标为中心 96 格半径内强制摊平到 height = 76（宗门台地，方便建筑站立），半径外正常 noise 高程。这是「建筑场地」的硬性平整需求，noise 不能在建筑区生成陡坡。
+3. **`structure_density` 大幅删减**——只保留 3 项纯"自然杂物"（野草 / 骨片 / 小碎石）。原来 §9.3 旧版的 `ruined_open_furnace / herb_garden_stone_pen / vapor_poison_spring / fallen_recipe_stele / fallen_alchemist_bone` 全部移到 §9.4a layout（确定坐标），**不在 density spawn 序列里**。
+4. **地形高程**：base 62-78 / peak 92 是 zone 外缘的缓坡丘陵，宗门内部因 `compound_flatten_radius` 实际高程恒定 76 = 平台。
+
+### §9.4 Decorations & Layout
+
+本 zone 的 decoration 拆成两层：
+
+#### §9.4a 建筑 layout（deterministic，**新增 worldgen 能力**）
+
+新建 `worldgen/scripts/terrain_gen/layouts/dan_zong_compound.py`（worldgen 系统需要新增 `layouts/` 子模块——`LayoutSpec` 类、layout-runner 入口 system，独立于现有 `profiles/*.py` 的 procedural decoration 体系）。
+
+**Layout 生成器规格**：
+
+```python
+# worldgen/scripts/terrain_gen/layouts/base.py（新增）
+@dataclass(frozen=True)
+class LayoutSpec:
+    """Deterministic 建筑布局——按 POI 中心点 + 几何公式放块。"""
+    name: str
+    poi_kind: str                     # 锚定的 POI 类型，从 BlueprintZone.pois 找中心点
+    radius: int                       # 影响半径，layout 内禁用 density spawn
+    placements: tuple["Placement", ...]  # 由 Python 算法生成 / 也可手写
+    # masks density spawn：在 radius 内 noise-spawned decoration 被覆盖
+
+@dataclass(frozen=True)
+class Placement:
+    """单个结构投放：坐标 + 块映射 / NBT。"""
+    offset: tuple[int, int, int]      # 相对 POI 中心的 (dx, dy, dz)
+    rotation: int                     # 0 / 90 / 180 / 270
+    kind: Literal["nbt", "block_grid", "stamp_radial"]
+    payload: str                      # NBT 路径 或 inline block list 名
+```
+
+**`dan_zong_compound` layout 具体内容**：
+
+```python
+DAN_ZONG_COMPOUND_LAYOUT = LayoutSpec(
+    name="dan_zong_compound",
+    poi_kind="dan_zong_great_hall",   # 中心点 = POI 坐标，整片 layout 相对它定位
+    radius=96,                         # 与 terrain profile compound_flatten_radius 对齐
+    placements=(
+        # ── 中央：百草丹殿（单一大型 NBT） ──
+        Placement(offset=(0, 0, 0), rotation=0, kind="nbt",
+                  payload="dan_zong_great_hall.nbt"),
+
+        # ── 八卦药圃 16 格（内环 8 + 外环 8 偏 22.5°） ──
+        # 内环 r1=24，外环 r2=48
+        *(
+            Placement(
+                offset=(int(24 * cos(radians(angle))), 0, int(24 * sin(radians(angle)))),
+                rotation=int(angle) % 360,
+                kind="stamp_radial",
+                payload="herb_garden_pen_6x6",   # 6×6 mossy_cobblestone 石篱 + podzol 内土
+            )
+            for angle in (0, 45, 90, 135, 180, 225, 270, 315)
+        ),
+        *(
+            Placement(
+                offset=(int(48 * cos(radians(angle + 22.5))), 0, int(48 * sin(radians(angle + 22.5)))),
+                rotation=int(angle + 22.5) % 360,
+                kind="stamp_radial",
+                payload="herb_garden_pen_8x8",   # 外环放大版 8×8
+            )
+            for angle in (0, 45, 90, 135, 180, 225, 270, 315)
+        ),
+
+        # ── 露天炼丹大鼎 8 对沿中轴对称（共 16 口） ──
+        *(
+            placement
+            for z in (16, 32, 48, 64, 80, 96, 112, 128)
+            for placement in (
+                Placement(offset=(-12, 0, z), rotation=0, kind="nbt",
+                          payload="ruined_open_furnace.nbt"),
+                Placement(offset=(+12, 0, z), rotation=180, kind="nbt",
+                          payload="ruined_open_furnace.nbt"),
+            )
+        ),
+
+        # ── 中轴大道（6 格宽 mossy_cobblestone，z = -8 到 +144） ──
+        Placement(offset=(0, 0, 64), rotation=0, kind="block_grid",
+                  payload="central_path_6x152"),
+
+        # ── 蒸气毒泉 3 处固定 ──
+        Placement(offset=(0, -1, 96), rotation=0, kind="nbt",
+                  payload="vapor_poison_spring_main.nbt"),     # 主毒泉，正前方
+        Placement(offset=(+64, -1, 48), rotation=0, kind="nbt",
+                  payload="vapor_poison_spring_small.nbt"),    # 东南角
+        Placement(offset=(-64, -1, 48), rotation=0, kind="nbt",
+                  payload="vapor_poison_spring_small.nbt"),    # 西北角
+
+        # ── 倒塌丹方碑 4 块按内环药圃间隙 ──
+        *(
+            Placement(offset=(int(36 * cos(radians(angle))), 0, int(36 * sin(radians(angle)))),
+                      rotation=int(angle + 90) % 360, kind="nbt",
+                      payload="fallen_recipe_stele.nbt")
+            for angle in (22.5, 112.5, 202.5, 292.5)
+        ),
+
+        # ── 丹师枯骨 8 具固定放在中轴大道两侧（叙事锚点，非杂草） ──
+        *(
+            Placement(offset=(dx, 0, dz), rotation=rot, kind="nbt",
+                      payload="fallen_alchemist_bone.nbt")
+            for (dx, dz, rot) in (
+                (-4, 24, 90), (+4, 40, 270),
+                (-4, 56, 90), (+4, 72, 270),
+                (-4, 88, 90), (+4, 104, 270),
+                (-4, 120, 90), (+4, 136, 270),
+            )
+        ),
+    ),
+)
+```
+
+**摆放语义**：
+
+- **大殿位于原点 (0,0,0)**——所有结构相对大殿坐标。大殿 NBT 自带正门朝 z+ 方向。
+- **八卦药圃**：内外两环各 8 格，外环偏转 22.5° 错位避开内环遮挡（玩家从大殿沿中轴走能看见所有 16 格药圃）。
+- **丹炉对称**：8 对沿中轴正前方两侧排列，距中轴 ±12 格，z 方向 16 格间隔。沿大道走时左右各有一排炼丹大鼎，仪式感强。
+- **中轴大道**：6 格宽 mossy_cobblestone 主干道，从大殿正门延伸 152 格到 zone 边缘。
+- **3 处毒泉固定坐标**：主毒泉在中轴最远端（视觉锚点）+ 两侧角落各 1 处（探索奖励）。**不是 density spawn**——玩家每次进入 zone 看到的 3 处毒泉位置完全一致。
+- **丹方碑 4 块**：按内环药圃 + 22.5° 角落（即外环的 8 个方位被外环药圃占了之后剩下的「间隙」），叙事铺垫密度刚好。
+- **丹师枯骨 8 具**：固定在中轴大道两侧（玩家必经路径），保证叙事 / loot 触达率 100%。**这些不是 density 杂物**——剩余的"无主小骨片"才走 §9.4b density spawn。
+
+**Layout-runner 系统**：
+
+- 新增 `worldgen/scripts/terrain_gen/layouts/runner.py`：从 BlueprintZone.pois 查询 `poi_kind` 找中心坐标，按 LayoutSpec.placements 顺序 paste blocks / NBT
+- 在 raster_export 之前 layout runner 运行一次，把 deterministic 结构刻入 chunk
+- layout 覆盖区（POI 半径 96）内禁用 density spawn（避免野草长到大殿屋顶）—— mask 通过 SDF 函数注入到 `stitcher.py` 的 spawn judge
+
+**worldgen 系统扩展工作量**（layout 系统是新增能力，约 1-2 天）：
+
+| 任务 | 文件 | 工作量 |
+|------|------|------|
+| `LayoutSpec` / `Placement` 基类 | `worldgen/scripts/terrain_gen/layouts/base.py` | 0.5d |
+| layout-runner + NBT paste | `worldgen/scripts/terrain_gen/layouts/runner.py` | 1d |
+| `compound_flatten_radius` height 摊平 | `worldgen/scripts/terrain_gen/fields.py` 扩 | 0.5d |
+| density spawn mask（layout 区禁草） | `worldgen/scripts/terrain_gen/stitcher.py` 扩 | 0.5d |
+| terrain-profiles schema 加 `architectural_layout` 字段 | `worldgen/scripts/terrain_gen/profiles/base.py` | 0.25d |
+
+**关键约束**：worldgen layout 系统作为本 plan **P-1 前置阶段**（见 §0 阶段总览 + §10.2 PR-1），仍在本 plan 内做但**独立成 PR**——基础设施 PR-1 必须先 merge，后续 PR-2/3/4 才能依赖 layout runner 可用。不另立 `plan-worldgen-layout-v1`。基础设施 PR 与玩法 PR 分离避免 review 混杂。
+
+#### §9.4b 自然杂物（density spawn，传统范式）
+
+`worldgen/scripts/terrain_gen/profiles/dan_zong_yi_yuan.py`（按 `ash_dead_zone.py` 现有范式）：
+
+```python
+DAN_ZONG_YI_YUAN_DECORATIONS = (
+    DecorationSpec(
+        name="wild_herb_clump",
+        kind="shrub",
+        blocks=("crimson_roots", "warped_roots", "twisting_vines"),
+        size_range=(1, 3),
+        rarity=0.85,
+        notes="野生变异灵草丛：在 layout 半径 96 外的自然区域散布。layout 内的药圃格子另有种植规则（见 §9.4a 注），不靠这条。",
+    ),
+    DecorationSpec(
+        name="scattered_bone_fragment",
+        kind="shrub",
+        blocks=("bone_block",),
+        size_range=(1, 1),
+        rarity=0.40,
+        notes="散落骨片：1×1 bone_block，没有 loot——纯氛围，对应「弟子尸体被千年风蚀，连完整骸骨都难找」。叙事重要的 8 具枯骨在 layout 里。",
+    ),
+    DecorationSpec(
+        name="small_rubble",
+        kind="shrub",
+        blocks=("cobblestone", "mossy_cobblestone", "andesite"),
+        size_range=(1, 2),
+        rarity=0.60,
+        notes="小石堆：宗门外缘建筑物风化残砾，1-2 格高小堆。",
+    ),
+)
+```
+
+**只覆盖 zone 外缘（layout 半径 96 外的 ~1.5km × 1.5km 区域）**——layout 区禁草 mask 自动遮蔽。野生灵草 spawn 不会出现在大殿屋顶 / 中轴大道 / 药圃格内（药圃格内的灵草由 layout 显式 plant_grid 摆放，不靠 density）。
+
+### §9.5 古遗迹 — 百草丹殿（POI: `dan_zong_great_hall`）
+
+zone 内唯一大型遗迹，固定坐标，对标剑道铸剑古殿。
+
+- **外观**：50×30×18 mossy_stone_bricks + chiseled_polished_blackstone 半塌大殿，正门两侧各立一口完整的 ruined_open_furnace（标志），门上石匾刻"百草"二字（用 jigsaw structure 嵌入 chiseled blocks）。
+- **内部结构**（3 层）：
+  - **地表大殿**（30×30）：
+    - 中央一座 **tier-4 变异催化炉**（不需自带，世界生成时直接 spawn 完成态——剧情设定是掌门当年用过的，自动落入玩家 interaction radius）
+    - 四周墙壁有 **6 张完整丹方壁画**（pixel-painted wall map / item frame + 壁画贴图）——靠近交互可解锁丹方到玩家 `recipe_known` 集合（走 `plan-alchemy-v2` 残卷识别底盘）
+    - 散落 **3-5 卷 `scroll_dandao_path`**（丹道功法残卷），拾取解锁 P0 三招式中的某一个（走 `UnlockSource::Scroll` 现有机制）
+  - **侧室 ×2**（侧厅药库）：每间 1-2 个箱子，随机掉 `meteor_iron` ×1-2 / 变异灵草核心材料（兽心草核 / 龙鳞苔精） / 续命丹 ×1-3 / `scroll_alchemy_archaic`（上古炼丹术残卷）
+  - **地下储药库**（10 格深）：
+    - 大型石棺一口，开棺得 **掌门师弟「玄草子」骸骨** + 残破续命大丹 ×1（叙事铺垫：暴龙王服了同款丹活下来，他师弟没扛住）
+    - 石棺旁石碑刻字："**师兄……你为何只给我们留了一半剂量？**"（narration trigger，scope: player, style: dialogue）—— 这是暴龙王叙事的关键伏笔
+    - 地下守卫：1-2 只 **守墓异灵**（elite 级 mutant，掉异变兽骨 ×3-5 + 暴龙王相关线索物品「师叔之印」）
+
+- **worldgen blueprint POI spec**：
+
+  ```json
+  {
+    "kind": "ruin",
+    "pos_xyz": [-1600.0, 82.0, 4000.0],
+    "name": "百草丹殿",
+    "display_name": "百草丹殿·宗主炉房",
+    "tags": ["dandao_path", "alchemy", "boss_lore", "baolongwang_prequel"],
+    "unlock": "found_by_exploration",
+    "qi_affinity": -0.10,
+    "danger_bias": 2
+  }
+  ```
+
+  - `qi_affinity -0.10`：负灵（千年丹毒抑制大殿周边灵气），但不到负灵域（spirit_qi 仍正），对天道感知**不屏蔽**（区别于暴龙王巢穴的 -0.8 屏蔽）。
+  - `tags` 含 `baolongwang_prequel` 让 agent 在玩家进入 / 拾取师叔之印时触发暴龙王前情 narration。
+
+### §9.6 Zone 环境视听
+
+#### ambient_dan_zong（audio_recipe）
+
+```json
+{
+  "layers": [
+    { "sound": "block.brewing_stand.brew", "pitch": 0.4, "volume": 0.12, "delay_ticks": 0 },
+    { "sound": "block.fire.ambient", "pitch": 0.6, "volume": 0.08, "delay_ticks": 240 },
+    { "sound": "entity.witch.ambient", "pitch": 0.5, "volume": 0.06, "delay_ticks": 480 },
+    { "sound": "block.bubble_column.ambient", "pitch": 0.7, "volume": 0.05, "delay_ticks": 720 }
+  ]
+}
+```
+
+层意：低频炼丹炉冒泡 + 残火 + 偶发"丹师残魂呻吟" + 蒸气毒泉气泡。
+
+#### ZoneAtmosphereProfile 新增 `dan_zong_yi_yuan`
+
+- **粒子**：`BongSpriteParticle` type `pill_haze`，密度 0.4/s（高于一般 zone，体现"药气弥漫"），tint `#8B6FA5`（紫灰色，对齐丹毒色系），drift Y +0.015（缓慢上升），生命 90 tick；额外 `BongGroundDecalParticle` type `purple_soil_stain`，密度 0.05/s，地表斑驳紫色印记。
+- **雾**：fogStart 56，fogEnd 144，density 0.008（比 spawn 浓），color `#5A4060`（暗紫灰远雾）。
+- **天空色温**：RGB shift `(+8, -5, +12)` 偏紫，下午时段叠加 `#6B4A7A` × 0.2 透明度（"丹毒夕阳"特效）。
+- **音效随机插入**：每 600-1200 tick rolling check（5% 概率）插入 `entity.zombie_villager.ambient` pitch 0.4 volume 0.15 = 「丹师残魂呻吟」（对齐 ambient_hint 的 `alchemist_groan: rare`）。
+- **服务端 narration 触发**（每首次进入 zone，scope: player, style: perception）：
+  - `"空气是甜的——不是花香，是丹药熬过头的焦糖味。"`
+  - `"你脚下的紫土很软，像踩在反复发酵过的药渣上。"`
+- **靠近 dan_zong_great_hall 大殿 30 格（scope: player, style: narrative）**：
+  - `"半塌的大殿正门刻着'百草'二字。门两边各立一口齐人高的青铜大鼎，鼎内还有一点微温。"`
+- **拾取师叔之印（scope: player, style: dialogue）**：
+  - `"印面刻着「百草门·师叔·玄草子」。你忽然听见自己脑中有人说话——是个老人的声音：'师兄，你为何只给我们留了一半剂量？'"`
+
+### §9.7 与 botany / npc-ai / agent 的接入
+
+- **botany（药圃格内规律种植）**：
+  - 16 格药圃**每格只种一种灵草**（与 §9.4a layout 配套）——内环 8 格分配：北 / 北东 / 东 / 东南 = 蜕骨藤 ×4 格；南 / 南西 / 西 / 西北 = 兽心草 ×4 格。外环 8 格分配：4 个正方位 = 龙鳞苔，4 个角位 = 续元蕊。这是宗门当年的"八卦药圃配方"，**deterministic 不随机**。
+  - 每格 6×6 / 8×8 内按 grid 摆 4-6 株（layout 显式 `plant_grid` payload），由 `botany::lifecycle` 的 `place_plant_explicit(zone, pos, plant_id)` 注入（绕过 `spawn_v2_plants_for_zone` 的 score 判定）。
+  - layout 半径 96 外的"野外"靠 §9.4b `wild_herb_clump` density spawn 出零散变异灵草（混合三种），让玩家既能在药圃格内"规律采集"也能在野外"撞见"——主刚需走 layout 保证可见性，野外是惊喜。
+  - 本 zone 的 `BotanyZoneTag` 落入 `Ruins` + 新增 `DandaoPoisoned`（spirit_qi 0.4 + ambient_hint pill_steam_drift），让 蜕骨藤 / 兽心草 / 龙鳞苔 的 env_locks（§8.1 #7 决议）match 到本 zone（既支持 wild spawn 也支持 layout 种植）。
+
+- **npc-ai**：守墓异灵走 plan-npc-ai-v1 的 big-brain Scorer/Action 体系，复用 chase / attack pattern；spawn 位置由 layout 显式锚定到大殿地下室（不是 density spawn）。掉落 table 加 `BeastBone × 3-5 (100%)` + `ShishuYin × 1 (10% 仅首杀)`。
+
+- **agent**：当玩家首次进入 dan_zong_yi_yuan 或首次拾取 ShishuYin 时，server emit `bong:lore_event { kind: "baolongwang_prequel", chapter: "..." }`，agent 端 narration_pipeline 接管 chapter 化叙事，铺垫后续暴龙王 BOSS 战。
+
+### §9.8 资产清单（§9 部分）
+
+#### 贴图（gen-image 强制）
+
+| 资产 | 路径 | 来源 |
+|------|------|------|
+| 紫色蒸气粒子 `pill_haze` | `assets/bong/textures/particle/pill_haze.png` | `/gen-image particle "紫灰色丹药蒸气粒子 32×32，柔光，末法残土像素风"` |
+| 紫色土壤印 `purple_soil_stain` | `assets/bong/textures/particle/purple_soil_stain.png` | `/gen-image particle "紫色丹毒侵染地表印记 32×32，斑驳，半透明"` |
+| 丹方壁画 `dandao_recipe_mural_*`（6 张） | `assets/bong/textures/painting/dandao_*.png` | `/gen-image item "百草门炼丹方壁画 32×32 古卷风格，水墨残破"` × 6 主题 |
+| 师叔之印 `shishu_yin` 物品图标 | `assets/bong/textures/item/shishu_yin.png` | `/gen-image item "青铜方印「师叔」二字篆体 16×16 古旧"` |
+
+#### Structure NBT（layout 投放，手工 Blockbench / WorldEdit）
+
+| 资产 | 路径 | 尺寸 | 工作量 |
+|------|------|------|--------|
+| 百草丹殿主体 | `server/structures/dan_zong/dan_zong_great_hall.nbt` | 50×30×18（地表大殿 + 2 侧厅 + 地下室通道） | 4-6h |
+| 露天炼丹大鼎 | `server/structures/dan_zong/ruined_open_furnace.nbt` | 5×5×5 | 1h |
+| 药圃石篱 6×6（内环） | `server/structures/dan_zong/herb_garden_pen_6x6.nbt` | 6×2×6 | 0.5h |
+| 药圃石篱 8×8（外环） | `server/structures/dan_zong/herb_garden_pen_8x8.nbt` | 8×2×8 | 0.5h |
+| 蒸气毒泉·主 | `server/structures/dan_zong/vapor_poison_spring_main.nbt` | 5×3×5 | 1h |
+| 蒸气毒泉·小 | `server/structures/dan_zong/vapor_poison_spring_small.nbt` | 3×2×3 | 0.5h |
+| 倒塌丹方碑 | `server/structures/dan_zong/fallen_recipe_stele.nbt` | 1×3×2 | 0.5h |
+| 丹师枯骨 | `server/structures/dan_zong/fallen_alchemist_bone.nbt` | 2×1×3 | 0.5h |
+| 地下室·宗主石棺 | `server/structures/dan_zong/master_sarcophagus.nbt` | 3×2×5（含师叔之印放置点） | 1h |
+
+总 9 个 NBT，~9-11h 手工搭建。
+
+#### Worldgen 系统扩展（新代码模块）
+
+| 资产 | 路径 | 工作量 |
+|------|------|--------|
+| Layout 基类 + Placement | `worldgen/scripts/terrain_gen/layouts/base.py` | 0.5d |
+| Layout-runner + NBT paste 实现 | `worldgen/scripts/terrain_gen/layouts/runner.py` | 1d |
+| dan_zong_compound layout 定义 | `worldgen/scripts/terrain_gen/layouts/dan_zong_compound.py` | 0.5d |
+| terrain profile schema 扩 `architectural_layout` + `compound_flatten_radius` | `worldgen/scripts/terrain_gen/profiles/base.py` / `fields.py` | 0.5d |
+| stitcher 加 layout-region density mask | `worldgen/scripts/terrain_gen/stitcher.py` | 0.5d |
+| dan_zong_yi_yuan density profile（杂物） | `worldgen/scripts/terrain_gen/profiles/dan_zong_yi_yuan.py` | 0.5d |
+
+总 ~3.5d worldgen 系统扩 + profile 落地。
+
+#### 总成本汇总
+
+- 贴图 ~10 张（gen-image），半小时
+- NBT 9 个（手工），9-11h
+- worldgen 系统扩展 + profile，~3.5d 工程时间
+
+**归入阶段**：worldgen 系统扩展 → 本 plan **P-1 + PR-1**；NBT 资产 + dan_zong_compound layout 定义 + profile + ambient → 本 plan **PR-3 丹道地形**（依赖 PR-1 merged）。两者均在 plan-dandao-path-v1 内完成，不另立独立 plan。
+
+### §9.9 测试要求（§9 部分）
+
+- `dan_zong_yi_yuan` zone 写入后 `cargo test world::zone` 全绿（zone schema 解析 + aabb 不与现有 zone 重叠）
+- terrain profile JSON 解析通过：`cd worldgen && python -m scripts.terrain_gen` 跑 dan_zong_yi_yuan tile 不抛
+- raster 校验通过：`worldgen/scripts/terrain_gen/harness/raster_check.py` 对 dan_zong_yi_yuan range 不报红
+- ambient_dan_zong audio_recipe 通过 `agent/packages/schema` typebox 校验
+- ZoneAtmosphereProfile dan_zong_yi_yuan 注册到 client 后 `./gradlew test` 全绿
+- **layout determinism 测试**（worldgen layout 系统专属）：同 seed 跑两次 worldgen，dan_zong_compound 内 16 格药圃 / 16 口丹炉 / 3 处毒泉 / 8 具枯骨 的坐标完全一致（断言）
+- **layout-region density mask 测试**：在 dan_zong_great_hall POI 周围 96 格内不出现 wild_herb_clump / scattered_bone_fragment / small_rubble（断言层 query 应为空）
+- **compound_flatten_radius 测试**：POI 周围 96 格内 height field 恒等于 76（容差 ±1，配合 NBT 楼梯过渡）
+- **药圃格内灵草种植规则测试**：内环正北格只长蜕骨藤、外环角位只长续元蕊，与 §9.7 配方表一一对应
+- 整 zone 端到端 smoke：`bash scripts/smoke-test.sh` 跑通玩家 teleport 进 dan_zong_yi_yuan + 沿中轴大道看到对称丹炉 + 走入主蒸气毒泉触发 contamination + 进入大殿地下室触发师叔之印 narration
+
+---
+
+## §10 消费本 plan 的工作流约束（consume-plan agent 必读）
+
+> 本 plan 含 9 个 NBT 建筑 + 1 套 worldgen layout 系统扩展，**建筑类工作对 LLM 是难点**——一把过质量差。本 §10 是对 `commands/consume-plan.md` 通用工作流在本 plan 特殊场景下的细化约束，**不是替代**——通用约束（worktree / atomic commit / 测试全绿 / 不绕过 hooks）仍然全部生效。
+
+### §10.1 建筑类任务：多轮打磨 + 自我 review + `<PROMISE>` 担保
+
+凡涉及 NBT 建筑 / dan_zong_compound layout placement 摆位 / 视觉资产产出的 TODO，**禁止一次 commit 完成**。必须按以下迭代：
+
+1. **Round 1 — first cut**：按 spec 摆出最简能用版本（大殿粗结构 / layout placements 公式套用）。commit message 标 `(round 1/3)`。
+2. **Round 2 — 自我 review**：
+   - **NBT 建筑**：用 Minecraft structure dump / 截图渲染检查比例 / 对称性 / 入口朝向 / 内部走廊是否能通；layout placements 用 ASCII 平面图打印（用 Python 脚本读 LayoutSpec 把 16 格药圃 / 16 口丹炉的 (dx, dz) 坐标投影到 200×200 字符网格）验证八卦布局真的 8 方位等距 + 22.5° 偏转 + 中轴对称
+   - 发现问题 → 修 → commit `(round 2/3)`
+3. **Round 3 — 终轮 review**：
+   - 检查与 §9 spec 描述的视觉叙事一致性（百草丹殿是否给出"宗门遗迹废弃千年"的感受？药圃格子内灵草种植是否符合 §9.7 八卦方位配方？）
+   - 修最后一轮 → commit `(round 3/3)`
+4. **`<PROMISE>` 担保标记**：当 agent 认为"已尽 100% 努力，再改 1 轮也不会显著提升质量"时，在该建筑/layout 的**最终 round 3 commit message 末尾**写：
+
+   ```
+   <PROMISE>该建筑(/layout/...) 已经过 3 轮自我打磨 + review，达到当前能力上限。
+   已检查：[比例对称 / 入口朝向 / 内部连通 / 视觉叙事 / spec 一致]
+   仍存在的局限：[一两条诚实承认的不足，比如"装饰细节较单调，受 NBT 手搭工作量限制"]</PROMISE>
+   ```
+
+   `<PROMISE>` 不是免责声明，是**自我担保信号**——后续 CodeRabbit / 人工 review 若指出严重问题，仍要按 step 7 修复；但 nit / 偏好类不再继续打磨。
+
+5. **不允许跳过迭代**：哪怕 Round 1 你觉得"已经很好"，仍必须走 Round 2 / Round 3——LLM 自评 first cut 质量普遍虚高，强制多轮是质量底线。
+6. **非建筑类 TODO 不适用本节**：纯 Rust / TypeScript 逻辑代码（如 `MutationComponent` 实装、`DandaoStyle` 系统）按 commands/consume-plan.md 通常的 atomic commit + 测试全绿即可，无需多轮。
+
+### §10.2 可选拆分多 PR（同一次 consume-plan 内）
+
+本 plan **单 plan 多 PR** 路径（§8.2 修订后定调）。consume-plan agent 在 worktree 内**分多个 PR 序列化提交**：
+
+- 推荐拆分点（依赖顺序，前一个 merge 后开下一个）：
+  1. **PR-1 worldgen-layout 基础设施**：§9.4a `LayoutSpec / Placement / runner.py` + terrain profile schema 扩 + stitcher mask
+  2. **PR-2 dandao 底盘**：§P0 + §P1 + §8.1 #1/#2/#4/#5 决议落地（纯 Rust 服务端 + schema）
+  3. **PR-3 丹道地形**：§9 全部（依赖 PR-1，需要 layout 基础设施 land 后才能定义 dan_zong_compound）+ NBT 资产
+  4. **PR-4 物品 / 视觉 / BOSS / 平衡**：§P2/P3/P4/P5（依赖前 3）
+
+- **多 PR 仍属于同一次 `/consume-plan` 调用**：不退回让用户重跑。consume-plan agent 在 worktree 内顺序开 PR、等 merge、再开下一个，直到全部 land 后归档 plan。
+- **PR 依赖处理**：前序 PR merge 前不开后续 PR；前序 PR 卡住（review 阻断 / CI 红 / merge 冲突）→ 走通用 step 7 / step 4.2 处理，处理完再继续；处理不了 → 停交人工，已 land 的 PR 保留不回退。
+- **可选不拆**：如果 agent 评估单 PR 也能 review 过（不太可能但允许），可以一把出。**拆与不拆都合法**，按 agent 自己对 review 风险的判断。
+
+### §10.3 CodeRabbit Review 等待协议（ScheduleWakeup 驱动）
+
+CodeRabbit 是 PR 自动 review bot，以 GitHub Actions check run 形式呈现。consume-plan step 6 等 review 时按以下协议：
+
+#### 状态判定
+
+`gh pr checks <PR_NUM> --json name,status,conclusion` 查 CodeRabbit check：
+
+| 状态 | 含义 | 动作 |
+|------|------|------|
+| `pass` (conclusion: success) | review 通过 | 进入 step 7 评审意见处理 / step 8 merge |
+| `pending` (status: in_progress / queued) | 仍在 review | **等下一回合**（ScheduleWakeup） |
+| `fail` (conclusion: failure) | review 不通过 | 按 step 7 严重性桶处理修复 |
+
+#### 等待节奏
+
+**禁止 sleep 循环 / busy poll**。每回合用 `ScheduleWakeup`：
+
+- 首次提 PR 后 → `ScheduleWakeup delaySeconds=1200`（20 min，CodeRabbit 单回合典型耗时）reason="等 CodeRabbit review pass，PR #<num>"
+- 醒来 → `gh pr checks <PR_NUM>` 查状态
+- 若 `pending` → 再 `ScheduleWakeup delaySeconds=1200`，最多 3 回合 = 总 60 min
+- 3 回合（60 min）仍 `pending` → 停交人工，输出 PR URL + `$WT_ABS` + "CodeRabbit 卡死 60+ min"
+- `pass` / `fail` → 退出等待，进 step 7
+
+#### 必须等 APPROVED 才 merge
+
+对齐 memory `feedback_wait_coderabbit_approve.md`——**修完 review 意见后必须重新等 CodeRabbit re-review APPROVED**，**不自行判定**"我修好了应该过了所以直接 merge"。第二轮 review 同样按本协议（ScheduleWakeup 20 min × 最多 3 回合）。
+
+#### 多 PR 场景
+
+§10.2 多 PR 序列化时，**每个 PR 各自走完整 CodeRabbit 等待协议**——不能省。前一个 PR 未 APPROVED 不开下一个 PR。
+
+### §10.4 单次 consume-plan 全自动到 merge
+
+本 plan 的期望调用方式：**一次 `/consume-plan dandao-path-v1` 跑完全部 4 个 PR + 归档 plan**。
+
+- consume-plan agent 在同一个 worktree / branch 序列中开 PR-1 → 等 review → merge → 开 PR-2 → ... → 全部 4 个 merge 完毕 → step 9 收尾清理
+- 中途不要求人工干预——除非：
+  - review 严重阻断（step 7 严重桶）反复修不过（≥2 轮）
+  - merge 冲突 rebase 拿不准（step 4.2 ≥2 轮失败）
+  - CodeRabbit 60 min 卡死（§10.3）
+  - plan 设计层问题（评论指 plan 本身而非实装 patch）
+- 全部 PR merge 后归档 plan（§3 末尾 "全 P 完成后" 章节），plan 文件 `git mv` 到 `docs/finished_plans/plan-dandao-path-v1.md` + Finish Evidence。
+
+**预估总时长**（参考）：4 PR × (实施 1-3h + CodeRabbit 20-60 min + merge 5 min) ≈ 6-15 小时。consume-plan 全程 ScheduleWakeup 驱动，**不占用用户在线时间**——用户提交 `/consume-plan` 后即可下班，醒来看 plan 是否在 finished_plans/。
+
+### §10.5 Subagent 驱动的 4 PR 实施（context 隔离强制）
+
+> **2026-05-18 用户立此规则**：consume-plan 主线 agent **不亲自实施 PR**——为每个 PR 单独起一个 subagent（独立 context），主线只接收 subagent 的 `result` 段（200-500 token），不接收实施细节的几十 K token。4 PR 走完主线 context 增长 ≈ 2-5k token（vs 主线亲自跑会涨 200k+），等价实现"每 PR 后自动清理 context"，避免 1M context 模型在长任务里挤爆。
+
+#### §10.5.1 subagent 配置（强制约定）
+
+每次起 PR 实施 subagent 用以下参数：
+
+```
+Agent(
+  description: "实施 PR-N <PR 名>",
+  subagent_type: "claude",           // catch-all + 全工具集（Edit/Write/Bash/gh 全可用）
+  model: "opus",                     // 强制 Opus 4.7（最强模型）
+  prompt: "...任务描述...\n\nultrathink"   // 末尾 ultrathink keyword 触发最高思维 budget
+)
+```
+
+**关键约定**：
+
+- **`subagent_type: "claude"`**：catch-all subagent，工具集 `*`（Edit/Write/Bash/gh/Read 全可用）；不要用 `general-purpose`（功能等价但语义偏研究）也不要用 `Explore`（只读，没法实施）
+- **`model: "opus"`**：显式指定 Opus 4.7。**不要用 sonnet/haiku**——实施 + 多轮自我 review + ultrathink 需要顶级模型
+- **prompt 末尾 `ultrathink`**：Claude Code 硬约定，思维 budget 阶梯 `think` < `think hard` < `think harder` < `ultrathink`。`ultrathink` 是最高档，等价"思维强度 xhigh"，用于实施和 review 决策的高复杂度场景
+- **`run_in_background: false`**（默认）：主线必须等 subagent 返回结果再继续（PR-N 完成才能开 PR-N+1，序列依赖）
+- **`isolation: "worktree"`**：**不使用**——subagent 直接在主 worktree (`.worktree/plan-dandao-path-v1`) 内做事，与 consume-plan 通用 worktree 路径共享。`isolation: "worktree"` 会再开一个 nested worktree，无端复杂化
+
+#### §10.5.2 subagent prompt 模板（PR-N 实施任务）
+
+```
+你是 plan-dandao-path-v1 的 PR-N 实施 subagent。任务是在主 worktree
+(`$REPO_ROOT/.worktree/plan-dandao-path-v1`, branch: `auto/plan-dandao-path-v1`)
+内完成以下范围：
+
+## 范围（严格）
+<本 PR 对应 plan 章节列表 + 必须实施的 TODO 清单，例如：
+ - §9.4a worldgen layout 基础设施：LayoutSpec/Placement/runner.py
+ - §9.3 terrain profile schema 扩 architectural_layout + compound_flatten_radius
+ - 单元测试：layout determinism + density mask>
+
+## 工作流约束（必读）
+- 必读 plan: docs/plan-dandao-path-v1.md（特别是 §10.1 建筑多轮打磨 + §10.5）
+- 必读 commands: .claude/commands/consume-plan.md（atomic commit / 测试全绿 / 不绕过 hooks）
+- 建筑/NBT/layout placement 类 TODO → 走 §10.1 强制 3 轮迭代 + 终轮 commit 写 <PROMISE>...</PROMISE> 块
+- 纯代码 TODO → 常规 atomic commit + 跑对应子项目测试全绿
+
+## 禁止
+- 不 push 到 origin（push 由你完成但 PR 创建由主线确认）—— 实际上你完成所有 commit + push + `gh pr create`，PR URL 返回主线
+- 不等 CodeRabbit review（主线负责等）—— 提完 PR 你的任务就结束
+- 不修改本 plan 范围外的文件
+- 不动其他 plan-*.md / CLAUDE.md / worldview.md
+
+## 完成后返回（严格 JSON 格式）
+```json
+{
+  "pr_url": "https://github.com/.../pull/<num>",
+  "pr_number": <num>,
+  "branch": "auto/plan-dandao-path-v1",
+  "commits": [
+    { "hash": "abc1234", "message": "..." },
+    ...
+  ],
+  "tests_run": [
+    "cd server && cargo test layout::  → 12 passed",
+    ...
+  ],
+  "promise_blocks": [
+    "dan_zong_great_hall: <PROMISE>...</PROMISE>",
+    ...
+  ],
+  "notes": "任何主线需要知道的留待事项"
+}
+```
+
+ultrathink
+```
+
+#### §10.5.3 主线主流程（subagent + ScheduleWakeup 编排）
+
+```
+for pr_n in [PR-1, PR-2, PR-3, PR-4]:
+    # 1. 起 subagent 实施（主线 context 只加一段 result）
+    result = Agent(
+        subagent_type="claude",
+        model="opus",
+        prompt=f"...PR-{pr_n} 任务模板... ultrathink"
+    )
+    pr_url, pr_number = parse(result)
+
+    # 2. ScheduleWakeup 等 CodeRabbit（§10.3 协议）
+    for round in range(3):
+        ScheduleWakeup(delaySeconds=1200, prompt="continue consume-plan", reason=f"等 CR review PR #{pr_number}")
+        # wakeup
+        status = gh pr checks pr_number
+        if status == "pass": break
+        if status == "fail": handle_review(pr_number)  # 见步骤 3
+    else:
+        stop("CodeRabbit 60 min 卡死")
+
+    # 3. 若 CodeRabbit fail：起一个修复 subagent（也是独立 context）
+    if has_review_issues:
+        fix_result = Agent(
+            subagent_type="claude",
+            model="opus",
+            prompt=f"修 PR #{pr_number} 的 CodeRabbit 意见: ... ultrathink"
+        )
+        # 修完回到步骤 2 重等
+
+    # 4. merge（主线直接做，命令简单不消耗 context）
+    gh pr merge pr_number --squash --delete-branch
+
+# 全 4 PR merge 后归档
+git mv docs/plan-dandao-path-v1.md docs/finished_plans/
+git commit -m "归档 plan-dandao-path-v1：..."
+git push
+```
+
+**context 估算对比**：
+
+| 路径 | 主线 context 增长 |
+|------|-----------------|
+| 主线亲自跑 4 PR | ~200k token（4 × 50k 实施细节） |
+| **subagent + ScheduleWakeup（本规范）** | **~2-5k token**（4 × subagent result + wakeup tick + merge cmd） |
+
+#### §10.5.4 子 subagent 修复 review 意见
+
+CodeRabbit 给 review 意见后，主线**不亲自修**——再起一个新 subagent：
+
+```
+Agent(
+  subagent_type: "claude",
+  model: "opus",
+  prompt: """
+  PR #<num> (<url>) 收到 CodeRabbit review 意见：
+
+  <粘 review 评论原文>
+
+  在主 worktree 内修复。按 §7 严重性桶处理：
+  - 严重（bug/安全/与 plan 目标矛盾）→ 必修
+  - 中等（质量问题不影响功能）→ 自行决定，未采纳要回 PR 评论说明理由
+  - 轻微（nit/style）→ 默认不采纳，统一回一条评论
+
+  修完 push 到 origin（不需等 CR re-review，主线负责）。
+  返回：{ "fixed": [...], "rejected": [...], "fix_commits": [...] }
+
+  ultrathink
+  """
+)
+```
+
+主线收到修复 result 后再走一轮 ScheduleWakeup 等 CR re-review。
+
+#### §10.5.5 与 §10.1 多轮打磨的关系
+
+§10.1 的 3 轮打磨 + `<PROMISE>` 担保**发生在 subagent 内部**——subagent 自己 commit `(round 1/3)` / `(round 2/3)` / `(round 3/3)` + 终轮 commit 写 `<PROMISE>` 块。主线只在 subagent 返回的 `promise_blocks` 字段里收到摘要，**不参与每轮 review**。
+
+
+
+
+
+
+

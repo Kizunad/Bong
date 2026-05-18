@@ -1,6 +1,6 @@
 # Plan 制定指南（防孤岛）
 
-立新 plan 之前的调研流程。**根 `CLAUDE.md` 的"Plan 工作流"讲三态流转和 plan 文件本身的结构**；本文件讲**立 plan 之前要做什么调研**，确保新模块跟现有玩法接得上、不自成孤岛。
+立新 plan 之前的调研流程 + plan 演进 / 消费的工作流方法论。**根 `CLAUDE.md` 的"Plan 工作流"讲三态流转和 plan 文件本身的结构**；本文件 §一-§四 讲**立 plan 前的调研**（确保新模块跟现有玩法接得上、不自成孤岛），§五-§六 讲 **plan 立后的演进与消费规范**（开放问题收口 / 实施工作流 / consume-plan 多 PR 编排）。
 
 ---
 
@@ -73,3 +73,157 @@ grep -rn "<EventName>" server/src/                # 同名 / 近义 event 检查
 ---
 
 > 一句话原则：**新 plan 的第一段不应该是"我要做 X"，而应该是"我要做 X，它从 A/B 进料、向 C/D 出料、对应 worldview §N"**。
+
+---
+
+## 五、Plan 演进：开放问题 pre-P0 收口模式
+
+plan 立完后常带 **§N 开放问题**（设计未决 / 数值待校准 / 接口待选）。**严禁带着开放问题进 P0 实施**——agent 自动消费时会替你拍板，方向走偏后回退成本巨大。
+
+### 5.1 §N → §N.1 决议模式
+
+每份 plan 在最后留一节 `## §N 开放问题（P0 决策门前需收口）`（建议 §8 / §最末数字），列出所有未决项。**实施前必须**追加一节 `## §N.1 决议（pre-P0 收口，YYYY-MM-DD）`，每条开放问题对应一段决议，结构如下：
+
+```markdown
+### #M <问题简述>
+
+**决议**：
+1. <核心结论，一句话>
+2. <实施方案，含具体函数 / 字段 / 数值>
+3. <边界条件 / 拒绝某条路线的理由>
+
+**落点**：`server/src/.../foo.rs:123-145`（依据代码）/ `client/src/.../Bar.java:67`（依据代码）/ plan §X.Y（涉及修改的章节）
+```
+
+**关键约束**：
+
+- **每条决议必须落到「文件:行号 + plan 章节」双锚点**——不允许"建议这样"含糊收尾。落点是 P0 实施时直接抓的入口。
+- **决议数据必须靠 Explore agent 并行核查代码现状产出**，不能拍脑袋——经脉效率公式、状态机暴露接口、worldgen 现有 zone 范本、botany spawn 速率，全部要 grep 代码确认。
+- **决议触发 plan 章节更新时同步修改**——比如 §8.1 #1 改了某个数值，plan 头部对应表格也要同步打补丁注释「数值见 §8.1 #1」。
+- **§N 原表保留作历史回溯**，但末尾必须写「全部已在 §N.1 收口。原表保留以备追溯，**实施时以 §N.1 决议为准**」。
+
+### 5.2 启动方式
+
+```
+1. 立完 plan，写完 §N 开放问题
+2. 并行起 3-4 个 Explore agent，每个 agent 负责 2-3 个开放问题
+   - Explore agent prompt 必须含「只读、不改文件」+ 明确问的事 + 输出格式（每段 200-400 字 + 文件:行号引用）
+3. 收齐 Explore reports → 合成 §N.1 决议章节追加到 plan
+4. 若决议触发新问题（比如发现现有代码与 plan 假设不符），回到步骤 1 列入 §N
+5. 全部收口才能开 P0
+```
+
+---
+
+## 六、Plan 消费规范：写入 plan §10 章节
+
+任何 scope ≥ 4 PR 的 plan，**必须在 plan 末尾写一节 §10 实施工作流**，写清以下 5 条。consume-plan agent 跑这份 plan 时按 §10 执行；这是对 `commands/consume-plan.md` 通用流程在该 plan 特殊场景下的细化，不是替代。
+
+### 6.1 建筑 / 视觉资产类：3 轮自我打磨 + `<PROMISE>` 担保
+
+任何涉及 NBT 建筑搭建、worldgen layout placement 摆位、复杂视觉资产产出的 TODO，**禁止一次 commit 完成**。强制：
+
+1. **Round 1 first cut** → commit message 标 `(round 1/3)`
+2. **Round 2 自我 review**（截图渲染 / structure dump / ASCII 平面投影验证布局）→ 修 → commit `(round 2/3)`
+3. **Round 3 终轮 review**（与 spec 一致性 + 视觉叙事检查）→ 修 → commit `(round 3/3)`
+4. 终轮 commit message 末尾写 `<PROMISE>` 担保块（**注意拼写：PROMISE 不是 PROMIS**）：
+
+   ```
+   <PROMISE>该建筑(/layout/...) 已经过 3 轮自我打磨 + review，达到当前能力上限。
+   已检查：[比例对称 / 入口朝向 / 内部连通 / 视觉叙事 / spec 一致]
+   仍存在的局限：[一两条诚实承认的不足]</PROMISE>
+   ```
+
+   `<PROMISE>` 不是免责声明，是"已尽全力"的可追溯信号——后续 review 仍按严重性修，但不再要求继续打磨。
+
+**纯逻辑代码 TODO 不适用本节**——按常规 atomic commit + 测试全绿即可。
+
+### 6.2 Worldgen 建筑场地：deterministic layout，不用 noise density
+
+**人工建筑遗迹**（宗门废墟 / 古殿 / 阵法布局）**禁止用 density-based noise spawn**——必须 deterministic layout：
+
+- terrain profile schema 加 `architectural_layout: "<layout_id>"` 字段 + `height.compound_flatten_radius: <半径>`（POI 周围强制摊平到固定高程）
+- 新建 `worldgen/scripts/terrain_gen/layouts/<layout_id>.py`，用 `LayoutSpec` 定义 `Placement` 列表（坐标公式 / NBT 投放 / block_grid stamp），相对 POI 中心点摆放
+- layout 半径内 stitcher density spawn mask 自动遮蔽，避免野草长到建筑屋顶
+- 自然杂物（野草 / 散落骨片 / 小石头）仍走 `DecorationSpec` density spawn，只覆盖 layout 半径外区域
+
+**典型 layout 公式**：八卦布局（内外两环 × 8 方位 + 22.5° 偏转）/ 中轴对称（沿 z 轴 ±N 格） / 网格 plant_grid（药圃每格按规律种一种灵草）。布局公式驱动而非随机，是「人工建筑」与「自然地貌」的本质区分。
+
+**测试要求专属**：layout determinism（同 seed 两次跑坐标完全一致） / region density mask（layout 半径内不出杂物） / flatten_radius（POI 周围高程恒定）。
+
+### 6.3 单 plan 多 PR 序列化（vs 拆多 plan）
+
+scope ≥ 4 PR 的 plan，**不拆多 plan**——单 plan 内分多个 PR 序列化提交。理由：拆 plan 增加 plan 文件管理成本（多份 active + 维护交叉引用），且子 plan 体量通常不够立项门槛。
+
+§10.2 应明列推荐拆分点（依赖顺序，前一个 merge 后开下一个），例如：
+
+1. **PR-1 基础设施**：worldgen / schema / 底层框架扩展（独立成 PR 避免与玩法 PR review 混杂）
+2. **PR-2 核心系统底盘**：纯 server 逻辑 + IPC schema
+3. **PR-3 资产 / UI**：依赖 PR-1/2 的视觉资产 + 客户端渲染
+4. **PR-4 集成 / 平衡 / BOSS**：依赖前 3，集成测试 + 数值校准
+
+**唯一例外**：`docs/worldview.md` 修改必须单独 PR，CLAUDE.md / AGENTS.md 严禁 agent 自动改 worldview，必须人工 review。归档前必须先 land。
+
+### 6.4 PR 实施用独立 subagent（context 隔离）
+
+**主线 agent 不亲自跑 PR 实施**——每个 PR 起独立 subagent，主线只接收 subagent result（200-500 token），实现"每 PR 后自动清理 context"。
+
+**强制配置**（写入 plan §10.5）：
+
+```
+Agent(
+  subagent_type: "claude",          # catch-all + 全工具集（Edit/Write/Bash/gh 可用）
+  model: "opus",                    # 强制 Opus 4.7（最强模型）
+  prompt: "...任务...\n\nultrathink"  # 末尾 ultrathink 触发最高思维 budget（≈ "xhigh"）
+  # isolation 不用 worktree（共享主 worktree 避免 nested）
+)
+```
+
+**主流程**（伪代码）：
+
+```
+for pr_n in [PR-1..PR-N]:
+    result = Agent(...subagent, prompt 含本 PR 范围 + 必读 §10.1 多轮 + 测试要求...)
+    pr_url = parse(result)
+    # 等 CR review（§6.5）
+    while gh pr checks pr_url == "pending":
+        ScheduleWakeup(1200, "等 CR PR #N")
+    if has_review_issues:
+        Agent(...修复 subagent...)  # 修复也用独立 subagent
+        重等
+    gh pr merge --squash --delete-branch
+归档 plan
+```
+
+**context 估算**：主线亲自跑 4 PR ≈ 200k token；subagent 模式 ≈ 2-5k token（实质等价于"每 PR 后清理"）。
+
+**关键约定**：
+- `subagent_type: "claude"`（不要 general-purpose / Explore——前者语义偏研究、后者只读）
+- `model: "opus"` 显式（不要 sonnet/haiku，实施 + 多轮 review 需要顶级模型）
+- prompt 末尾 `ultrathink`（思维 budget 阶梯 `think` < `think hard` < `think harder` < `ultrathink`）
+- subagent 只负责**实施 + 提 PR**，**不等 review**（subagent 是 single-call，没有跨调用 ScheduleWakeup 能力；等待逻辑归主线）
+- 主线 merge 命令简单不消耗 context，主线亲自做
+
+### 6.5 CodeRabbit ScheduleWakeup 等待协议
+
+CodeRabbit 是 GitHub Actions check run，`gh pr checks <PR>` 看状态：
+
+| 状态 | 含义 | 动作 |
+|------|------|------|
+| `pass` | review 通过 | 进 merge |
+| `pending` | 仍在跑（典型 ~20 min） | `ScheduleWakeup delaySeconds=1200` 等下回合 |
+| `fail` | 不通过 | 按 commands/consume-plan.md step 7 严重性桶处理 |
+
+**等待节奏硬约束**：
+
+- **禁止 sleep loop / busy poll**——必须 `ScheduleWakeup`
+- 每回合 1200s（20 min，对齐 CR 单回合典型耗时）
+- 最多 3 回合 = 总 60 min 卡死才停交人工
+- 修完 review 意见**必须重新等 CR re-review**，不自行判定"我修好了应该过"（对齐 memory `feedback_wait_coderabbit_approve.md`）
+- 多 PR 场景每个 PR 各自走完整等待协议，前一个未 APPROVED/收敛不开下一个
+
+### 6.6 §10 章节模板
+
+新立 plan 的 §10 章节按本指南 §六 各小节顺序写（建筑多轮 / 多 PR / subagent / CR 等待），最末加一节 **§10.N 单次 consume-plan 全自动到 merge**，重申"用户提交 `/consume-plan` 后即可下班，醒来看 plan 是否在 finished_plans/"。
+
+可参考 `docs/plan-dandao-path-v1.md` §10（2026-05-18 首次实践）作为模板，复制结构 + 按本 plan 实际范围替换具体内容。
