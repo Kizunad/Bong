@@ -1,8 +1,9 @@
-//! plan-baomai-v4 §7 — 事件类型汇总（P0-P3 部分）。
+//! plan-baomai-v4 §7 — 事件类型汇总（P0-P4 部分）。
 
 use serde::{Deserialize, Serialize};
 use valence::prelude::{bevy_ecs, Entity, Event};
 
+use super::crack_reading::CrackReadingResult;
 use super::iron_cocoon::IronCocoonStage;
 use super::scar_circuit::ScarCircuitKind;
 use crate::cultivation::components::MeridianId;
@@ -53,6 +54,18 @@ pub struct IronCocoonStageUpEvent {
     pub from: IronCocoonStage,
     pub to: IronCocoonStage,
     pub total_overloads: u32,
+    pub tick: u64,
+}
+
+/// 裂读结果事件（plan-baomai-v4 §5.3）。
+///
+/// 消费方：client HUD overlay（`bong:crack_reading` CustomPayload）。
+#[derive(Debug, Clone, Event)]
+#[allow(dead_code)]
+pub struct CrackReadingResultEvent {
+    pub reader: Entity,
+    pub target: Entity,
+    pub result: CrackReadingResult,
     pub tick: u64,
 }
 

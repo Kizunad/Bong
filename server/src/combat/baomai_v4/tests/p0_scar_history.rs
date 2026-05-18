@@ -5,6 +5,7 @@ use valence::prelude::{App, Events};
 use crate::combat::baomai_v3::events::{BaomaiSkillId, OverloadMeridianRippleEvent};
 use crate::combat::baomai_v3::state::MeridianRippleScar;
 use crate::combat::baomai_v4::scar_history::ScarHistory;
+use crate::combat::events::CombatEvent;
 use crate::combat::CombatClock;
 use crate::cultivation::components::MeridianId;
 
@@ -12,7 +13,7 @@ fn app() -> App {
     let mut app = App::new();
     app.insert_resource(CombatClock { tick: 100 });
     app.add_event::<OverloadMeridianRippleEvent>();
-    // Register baomai_v4 events + systems.
+    app.add_event::<CombatEvent>();
     crate::combat::baomai_v4::register(&mut app);
     app
 }
