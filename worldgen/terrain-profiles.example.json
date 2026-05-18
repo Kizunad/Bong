@@ -167,6 +167,24 @@
         "sword_hum": "intermittent",
         "water_surface_glint": "metallic_blue"
       }
+    },
+    "dan_zong_yi_yuan": {
+      "height": { "base": [62, 78], "peak": 92, "compound_flatten_radius": 96 },
+      "boundary": { "mode": "soft", "width": 96 },
+      "surface": ["podzol", "coarse_dirt", "mud", "purple_terracotta", "mossy_cobblestone"],
+      "water": { "level": "low", "coverage": 0.10 },
+      "passability": "medium",
+      "structure_density": {
+        "wild_herb_clump": 0.020,
+        "scattered_bone_fragment": 0.004,
+        "small_rubble": 0.008
+      },
+      "architectural_layout": "dan_zong_compound",
+      "ambient_hint": {
+        "pill_steam_drift": "continuous",
+        "soil_tint": "purple_grey",
+        "alchemist_groan": "rare"
+      }
     }
   }
 }

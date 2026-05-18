@@ -1435,6 +1435,94 @@
           "danger_bias": 2
         }
       ]
+    },
+    {
+      "name": "dan_zong_yi_yuan",
+      "display_name": "丹宗遗园",
+      "aabb": {
+        "min": [-2400.0, -16.0, 3200.0],
+        "max": [-800.0, 240.0, 4800.0]
+      },
+      "center_xz": [-1600.0, 4000.0],
+      "size_xz": [1600.0, 1600.0],
+      "spirit_qi": 0.40,
+      "danger_level": 4,
+      "active_events": [],
+      "patrol_anchors": [
+        [-1600.0, 78.0, 3600.0],
+        [-1200.0, 82.0, 4000.0],
+        [-2000.0, 76.0, 4400.0]
+      ],
+      "blocked_tiles": [],
+      "worldgen": {
+        "terrain_profile": "dan_zong_yi_yuan",
+        "shape": "ellipse",
+        "boundary": { "mode": "soft", "width": 96 },
+        "height_model": { "base": [62, 78], "peak": 92, "compound_flatten_radius": 96 },
+        "surface_palette": ["podzol", "coarse_dirt", "mud", "purple_terracotta", "mossy_cobblestone"],
+        "biome_mix": ["mofa:dandao_ruins", "mofa:si_yu"],
+        "landmarks": ["dan_zong_great_hall", "herb_garden_bagua", "furnace_row"],
+        "architectural_layout": "dan_zong_compound",
+        "notes": "上古百草门覆灭遗迹：千年丹毒侵染灰紫土壤，八卦药圃+露天丹炉群+中轴大道+百草丹殿。"
+      },
+      "pois": [
+        {
+          "kind": "ruin",
+          "name": "百草丹殿",
+          "pos_xyz": [-1600.0, 82.0, 4000.0],
+          "tags": ["dandao_path", "alchemy", "boss_lore", "baolongwang_prequel"],
+          "unlock": "found_by_exploration",
+          "qi_affinity": -0.10,
+          "danger_bias": 2
+        }
+      ]
+    },
+    {
+      "name": "baolongwang_cavern_deep",
+      "display_name": "暴龙王巢穴",
+      "aabb": {
+        "min": [1500.0, -80.0, -5500.0],
+        "max": [2000.0, -20.0, -4800.0]
+      },
+      "center_xz": [1750.0, -5150.0],
+      "size_xz": [500.0, 700.0],
+      "spirit_qi": -0.80,
+      "danger_level": 5,
+      "active_events": [],
+      "patrol_anchors": [
+        [1750.0, -50.0, -5150.0]
+      ],
+      "blocked_tiles": [],
+      "worldgen": {
+        "terrain_profile": "cave_network",
+        "shape": "circular",
+        "boundary": { "mode": "hard", "width": 48 },
+        "height_model": { "surface": [68, 92], "underground": [-80, -20] },
+        "surface_palette": ["deepslate", "blackstone", "basalt", "gravel"],
+        "biome_mix": ["mofa:fu_ling_abyss"],
+        "landmarks": ["baolongwang_furnace"],
+        "notes": "坍缩渊边缘负灵域地下巨洞。暴龙王巢穴，spirit_qi -0.8 屏蔽天道感知。"
+      },
+      "pois": [
+        {
+          "kind": "boss_arena",
+          "name": "暴龙王丹炉",
+          "pos_xyz": [1750.0, -45.0, -5100.0],
+          "tags": ["baolongwang", "boss_furnace", "dandao_path"],
+          "unlock": "击破外层甲壳可摧毁丹炉，切断续命丹供给",
+          "qi_affinity": -0.90,
+          "danger_bias": 4
+        },
+        {
+          "kind": "boss_spawn",
+          "name": "暴龙王",
+          "pos_xyz": [1750.0, -40.0, -5200.0],
+          "tags": ["baolongwang", "boss", "dandao_path", "unique"],
+          "unlock": "进入巢穴即触发BOSS战",
+          "qi_affinity": -0.80,
+          "danger_bias": 5
+        }
+      ]
     }
   ],
   "paths": [
