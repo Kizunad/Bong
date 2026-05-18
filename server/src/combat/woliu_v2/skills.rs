@@ -17,11 +17,13 @@ use crate::cultivation::meridian::severed::{
     check_meridian_runtime_integrity, MeridianSeveredPermanent, SkillMeridianDependencies,
 };
 use crate::cultivation::skill_registry::{CastRejectReason, CastResult, SkillRegistry};
-use crate::network::audio_event_emit::{AudioRecipient, PlaySoundRecipeRequest, AUDIO_BROADCAST_RADIUS};
-use crate::network::vfx_event_emit::VfxEventRequest;
-use crate::schema::vfx_event::VfxEventPayloadV1;
 use crate::cultivation::technique_proficiency::woliu_scalars_for_proficiency;
+use crate::network::audio_event_emit::{
+    AudioRecipient, PlaySoundRecipeRequest, AUDIO_BROADCAST_RADIUS,
+};
+use crate::network::vfx_event_emit::VfxEventRequest;
 use crate::qi_physics::{QiAccountId, QiTransfer, QiTransferReason};
+use crate::schema::vfx_event::VfxEventPayloadV1;
 use crate::skill::components::SkillId;
 use crate::skill::events::{SkillXpGain, XpGainSource};
 use crate::world::dimension::{CurrentDimension, DimensionKind};
@@ -377,7 +379,15 @@ pub fn resolve_woliu_v2_skill(
         let vfx_strength = (spec.field_strength / 1.5).clamp(0.0, 1.0);
         let vfx_count = ((spec.influence_radius * 6.0) as u16).clamp(8, 64);
         let vfx_duration = (spec.duration_ticks.min(200) as u16).max(20);
-        emit_vfx(world, origin, vfx_id, "#201832", vfx_strength, vfx_count, vfx_duration);
+        emit_vfx(
+            world,
+            origin,
+            vfx_id,
+            "#201832",
+            vfx_strength,
+            vfx_count,
+            vfx_duration,
+        );
         emit_audio(world, audio_id, origin);
         emit_anim(world, caster, anim_id);
     }
@@ -1173,12 +1183,36 @@ pub(super) fn emit_anim(world: &mut bevy_ecs::world::World, entity: Entity, anim
 
 pub(super) fn woliu_av_mapping(skill: WoliuSkillId) -> (&'static str, &'static str, &'static str) {
     match skill {
-        WoliuSkillId::VacuumPalm => ("bong:woliu_vacuum_palm_spiral", "woliu_vacuum_palm", "bong:woliu_vacuum_palm"),
-        WoliuSkillId::VortexShield => ("bong:woliu_vortex_shield_sphere", "woliu_vortex_shield", "bong:woliu_vortex_shield"),
-        WoliuSkillId::VacuumLock => ("bong:woliu_vacuum_lock_cage", "woliu_vacuum_lock", "bong:woliu_vacuum_lock"),
-        WoliuSkillId::VortexResonance => ("bong:woliu_vortex_resonance_field", "woliu_vortex_resonance", "bong:woliu_vortex_resonance"),
-        WoliuSkillId::TurbulenceBurst => ("bong:woliu_turbulence_burst_wave", "woliu_turbulence_burst", "bong:woliu_turbulence_burst"),
-        _ => ("bong:vortex_spiral", "woliu_cast", "bong:vortex_spiral_stance"),
+        WoliuSkillId::VacuumPalm => (
+            "bong:woliu_vacuum_palm_spiral",
+            "woliu_vacuum_palm",
+            "bong:woliu_vacuum_palm",
+        ),
+        WoliuSkillId::VortexShield => (
+            "bong:woliu_vortex_shield_sphere",
+            "woliu_vortex_shield",
+            "bong:woliu_vortex_shield",
+        ),
+        WoliuSkillId::VacuumLock => (
+            "bong:woliu_vacuum_lock_cage",
+            "woliu_vacuum_lock",
+            "bong:woliu_vacuum_lock",
+        ),
+        WoliuSkillId::VortexResonance => (
+            "bong:woliu_vortex_resonance_field",
+            "woliu_vortex_resonance",
+            "bong:woliu_vortex_resonance",
+        ),
+        WoliuSkillId::TurbulenceBurst => (
+            "bong:woliu_turbulence_burst_wave",
+            "woliu_turbulence_burst",
+            "bong:woliu_turbulence_burst",
+        ),
+        _ => (
+            "bong:vortex_spiral",
+            "woliu_cast",
+            "bong:vortex_spiral_stance",
+        ),
     }
 }
 

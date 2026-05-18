@@ -403,7 +403,10 @@ pub fn heaven_gate_cast_system(
         let target_zone = zone_registry
             .as_deref()
             .and_then(|r| {
-                r.find_zone(crate::world::dimension::DimensionKind::Overworld, event.position)
+                r.find_zone(
+                    crate::world::dimension::DimensionKind::Overworld,
+                    event.position,
+                )
             })
             .map(|z| z.name.clone())
             .unwrap_or_else(|| DEFAULT_SPAWN_ZONE_NAME.to_string());

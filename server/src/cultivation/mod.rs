@@ -164,11 +164,10 @@ use self::tribulation::{
     abort_du_xu_on_client_removed, dispatch_rechallenge_on_quota_opened_system,
     emit_tribulation_boundary_vfx_system, heart_demon_choice_system, heart_demon_timeout_system,
     juebi_phase_effect_system, juebi_settlement_system, juebi_terrain_seed_system,
-    juebi_terrain_tick_system, juebi_zone_aftershock_system,
-    record_tribulation_interceptor_system, schedule_juebi_triggers_system,
-    start_du_xu_request_system, start_due_juebi_triggers_system, start_tribulation_system,
-    track_quota_full_duration_system, track_tribulation_metrics_system, tribulation_aoe_system,
-    tribulation_escape_boundary_system, tribulation_failure_system,
+    juebi_terrain_tick_system, juebi_zone_aftershock_system, record_tribulation_interceptor_system,
+    schedule_juebi_triggers_system, start_du_xu_request_system, start_due_juebi_triggers_system,
+    start_tribulation_system, track_quota_full_duration_system, track_tribulation_metrics_system,
+    tribulation_aoe_system, tribulation_escape_boundary_system, tribulation_failure_system,
     tribulation_intercept_death_system, tribulation_omen_cloud_block_overlay_system,
     tribulation_phase_tick_system, tribulation_wave_system, AscensionQuotaOccupied,
     AscensionQuotaOpened, HalfStepRechallengeQueue, HalfStepRechallengeTriggerEvent,
@@ -416,8 +415,7 @@ pub fn register(app: &mut App) {
         (
             track_tribulation_metrics_system.after(juebi_settlement_system),
             track_quota_full_duration_system,
-            dispatch_rechallenge_on_quota_opened_system
-                .after(track_quota_full_duration_system),
+            dispatch_rechallenge_on_quota_opened_system.after(track_quota_full_duration_system),
         ),
     );
     app.add_systems(

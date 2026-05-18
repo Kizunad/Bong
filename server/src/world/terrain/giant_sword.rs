@@ -128,7 +128,6 @@ pub fn decorate_chunk(
     // Wind scatter: dead bushes, chains
     scatter_wind_debris(chunk, pos, min_y, terrain);
 
-
     // Unique landmark: giant crater with grey broken sword at zone center
     place_crater_sword_if_overlaps(chunk, pos, min_y, terrain);
 }
@@ -455,7 +454,11 @@ fn rasterize_standing_sword(
         };
 
         // Blade is flat: 1 block thick (Z=0 only). Only colossal gets Z=-1..=1.
-        let z_extent: i32 = if inst.variant == SwordVariant::Colossal { 1 } else { 0 };
+        let z_extent: i32 = if inst.variant == SwordVariant::Colossal {
+            1
+        } else {
+            0
+        };
 
         for dx in -width..=width {
             for dz in -z_extent..=z_extent {

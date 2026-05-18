@@ -52,10 +52,7 @@ pub fn handle_shader_push(
                 let Ok(mut executor_client) = clients.get_mut(event.executor) else {
                     continue;
                 };
-                if !value.is_finite()
-                    || *value < f32::MIN as f64
-                    || *value > f32::MAX as f64
-                {
+                if !value.is_finite() || *value < f32::MIN as f64 || *value > f32::MAX as f64 {
                     executor_client.send_chat_message(
                         "[dev] shader_push rejected: value must be finite and within f32 range",
                     );
@@ -167,7 +164,8 @@ mod tests {
         send_set(&mut app, player, "bong_realm", 1e39);
         run_update(&mut app);
         assert_eq!(
-            app.world().resource::<ShaderStatePayload>().bong_realm, 0.0,
+            app.world().resource::<ShaderStatePayload>().bong_realm,
+            0.0,
             "Value exceeding f32::MAX should be rejected"
         );
     }

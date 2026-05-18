@@ -58,13 +58,7 @@ fn handle_summon_heiwushi(
             .map(|z| z.name.clone())
             .unwrap_or_else(|| DEFAULT_SPAWN_ZONE_NAME.to_string());
 
-        let entity = spawn_zombie_npc_at(
-            &mut commands,
-            layer,
-            &zone_name,
-            spawn_pos,
-            spawn_pos,
-        );
+        let entity = spawn_zombie_npc_at(&mut commands, layer, &zone_name, spawn_pos, spawn_pos);
 
         // Override entity kind to Heiwushi model
         commands.entity(entity).insert(HEIWUSHI_ENTITY_KIND);
