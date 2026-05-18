@@ -225,6 +225,9 @@ pub struct MutationAdvanceEvent {
 /// 顿悟触发 ID 前缀。
 const INSIGHT_TRIGGER_PREFIX: &str = "mutation_advance_stage_";
 
+/// 600-tick 节流间隔（30 秒检测一次）。
+pub const MUTATION_ADVANCE_INTERVAL_TICKS: u64 = 600;
+
 /// 每 600 tick (30s) 检测一次 DandaoStyle 是否跨越变异阈值。
 /// 跨越时：
 /// 1. Insert/update MutationState
@@ -246,6 +249,11 @@ pub fn mutation_advance_system(
     mut insight_tx: EventWriter<InsightRequest>,
 ) {
     let current_tick = clock.map(|c| c.tick).unwrap_or(0);
+
+    // 600-tick 节流：非整数倍 tick 直接跳过。
+    if current_tick % MUTATION_ADVANCE_INTERVAL_TICKS != 0 {
+        return;
+    }
 
     for (entity, style, mutation_opt, life_record) in dandao_q.iter_mut() {
         let expected_stage = DandaoStyle::stage_for_toxin(style.cumulative_toxin);
@@ -752,6 +760,16 @@ mod mutation_tests {
         assert_eq!(
             state.meridian_penalty, penalty_heavy,
             "advance_to(Heavy) 后惩罚应为 Heavy 级"
+        );
+    }
+
+    // --- 节流常量 ---
+
+    #[test]
+    fn mutation_advance_interval_is_600_ticks() {
+        assert_eq!(
+            MUTATION_ADVANCE_INTERVAL_TICKS, 600,
+            "mutation_advance_system 应每 600 tick (30s) 检测一次"
         );
     }
 }
