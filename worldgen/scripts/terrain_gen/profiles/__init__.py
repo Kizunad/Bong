@@ -5,6 +5,7 @@ from .abyssal_maze import AbyssalMazeGenerator
 from .ancient_battlefield import AncientBattlefieldGenerator
 from .base import DecorationSpec, ProfileContext, TerrainProfileGenerator
 from .broken_peaks import BrokenPeaksGenerator
+from .dan_zong_yi_yuan import DanZongYiYuanGenerator
 from .cave_network import CaveNetworkGenerator
 from .jiu_zong_ruin import JiuzongRuinGenerator
 from .pseudo_vein_oasis import PseudoVeinOasisGenerator
@@ -34,6 +35,7 @@ _GENERATORS: dict[str, TerrainProfileGenerator] = {
         RiftMouthBarrensGenerator(),
         SkyIsleGenerator(),
         AshDeadZoneGenerator(),
+        DanZongYiYuanGenerator(),
         AbyssalMazeGenerator(),
         AncientBattlefieldGenerator(),
         TribulationScorchGenerator(),

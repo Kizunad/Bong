@@ -1,0 +1,24 @@
+{
+  "zone_id": "dan_zong_yi_yuan",
+  "fog_color": "#5A4060",
+  "fog_density": 0.30,
+  "ambient_particles": [
+    {
+      "type": "pill_haze",
+      "tint": "#8B6FA5",
+      "density": 0.4,
+      "drift": [0.005, 0.015, 0.005],
+      "interval_ticks": 18
+    },
+    {
+      "type": "purple_soil_stain",
+      "tint": "#6B4A7A",
+      "density": 0.05,
+      "drift": [0.0, 0.0, 0.0],
+      "interval_ticks": 80
+    }
+  ],
+  "sky_tint": "#6B4A7A",
+  "entry_transition_fx": "MIST_BURST",
+  "ambient_recipe_id": "ambient_dan_zong"
+}

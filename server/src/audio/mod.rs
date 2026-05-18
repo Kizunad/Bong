@@ -176,9 +176,10 @@ mod tests {
             SoundRecipeRegistry::load_default().expect("default audio recipes should load");
         assert_eq!(
             registry.len(),
-            206,
+            207,
             "audio registry should exclude removed slide and double-jump movement recipes \
-             plus include 4 supply_coffin recipes (break common/rare/precious + emerge)"
+             plus include 4 supply_coffin recipes (break common/rare/precious + emerge) \
+             plus 1 ambient_dan_zong recipe"
         );
         assert!(registry.get("coffin_enter").is_some());
         assert!(registry.get("coffin_exit").is_some());
