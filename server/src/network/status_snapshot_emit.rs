@@ -102,6 +102,7 @@ fn status_effect_name(kind: &StatusEffectKind) -> String {
         StatusEffectKind::MirrorConcealment => "镜隐".to_string(),
         StatusEffectKind::MirrorExposed => "镜照暴露".to_string(),
         StatusEffectKind::SpiritTreasurePerception => "灵宝感知".to_string(),
+        StatusEffectKind::ResonanceLocked => "共振锁定".to_string(),
     }
 }
 
@@ -137,7 +138,8 @@ fn status_effect_category(kind: &StatusEffectKind) -> &'static str {
         | StatusEffectKind::QiDrainForStamina
         | StatusEffectKind::LegStrain
         | StatusEffectKind::QiRegenPaused
-        | StatusEffectKind::MirrorExposed => "debuff",
+        | StatusEffectKind::MirrorExposed
+        | StatusEffectKind::ResonanceLocked => "debuff",
         StatusEffectKind::AlchemyBuff(_) => "unknown",
     }
 }
