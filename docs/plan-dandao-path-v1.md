@@ -158,6 +158,8 @@
 | **P4** ⬜ | 暴龙王 BOSS — 模型导入 + 5 动画映射 + big-brain AI + 3 阶段战斗 + 掉落物 | — |
 | **P5** ⬜ | 境界递进功法 + 平衡 — 醒灵→化虚各境界解锁丹道能力 + 与七流派克制关系 + 天道互动 | — |
 
+**贴图政策（硬规则）**：所有新增 2D 贴图（粒子 VFX / 物品图标 / 方块面 / entity overlay UV / HUD / 场景概念）必须走 `/gen-image <style> <prompt>`（脚本 `scripts/images/gen.py`，cliproxy 优先 / openai fallback）。四档画风 item / particle / hud / scene 各自对应见 §7.4。Blockbench / GIMP 仅作 gen-image 首稿之后的 UV 边缘 / alpha / 像素对齐调整，**禁止手工从零画**。已搬入资源（`local_models/baolongwang/*.png`）除外。
+
 ---
 
 ## P0：丹道底盘
@@ -774,17 +776,19 @@ pub struct BaolongwangBoss {
 
 ---
 
-## §7 模型资源清单
+## §7 模型与贴图资产清单
 
-### 暴龙王（已有，已搬入）
+### §7.1 暴龙王（已有，已搬入）
 
 | 文件 | 路径 | 状态 |
 |------|------|------|
 | geometry | `local_models/baolongwang/baolongwang.geo.json` | ✅ 已搬入 |
 | animation | `local_models/baolongwang/baolongwang.animation.json` | ✅ 已搬入 |
-| texture | `local_models/baolongwang/baolongwang.png` | ✅ 已搬入 |
+| texture | `local_models/baolongwang/baolongwang.png` | ✅ 已搬入（gen-image 豁免） |
 
-### 变异附件（P3 需制作）
+### §7.2 变异附件 GeckoLib 模型（P3 需制作）
+
+骨骼/几何走 Blockbench；UV 贴图走 `/gen-image item`（见 §7.4）。
 
 | 模型 | 估计工作量 | 说明 |
 |------|----------|------|
@@ -799,7 +803,9 @@ pub struct BaolongwangBoss {
 | 多臂 | 极大 | 额外骨骼 + 独立动画 |
 | 兽面 | 大 | 完全覆盖头部 |
 
-### 灵草植物模型（P2 需制作）
+### §7.3 灵草植物模型（P2 需制作）
+
+方块模型走 Blockbench JSON；图标 + 方块贴图走 `/gen-image item`（见 §7.4）。
 
 | 植物 | 方块模型 | 图标 |
 |------|---------|------|
@@ -808,6 +814,33 @@ pub struct BaolongwangBoss {
 | 龙鳞苔 | 需要 | `/gen-image item` |
 | 续元蕊 | 需要 | `/gen-image item` |
 | 化形根 | 需要 | `/gen-image item` |
+
+### §7.4 贴图资产管线（/gen-image 强制）
+
+所有新增 2D 贴图按下表对应 style 调 `/gen-image <style> <prompt>`（脚本 `scripts/images/gen.py`）。手工只在 gen 产出之后做 UV 边缘 / alpha / 像素对齐微调，**首稿禁手画**。
+
+| 贴图类别 | style | 数量 | 路径 | 尺寸 |
+|---------|-------|-----|------|------|
+| 招式粒子 VFX：`pill_glow` / `pill_trail` / `pill_burst` / `pill_mist` | particle | 4 | `assets/bong/textures/particle/<id>.png` | 16-32 |
+| 灵草物品图标：蜕骨藤 / 兽心草 / 龙鳞苔 / 续元蕊 / 化形根 | item | 5 | `assets/bong/textures/item/<id>.png` | 16×16 |
+| 灵草方块贴图（每种灵草至少一面） | item | 5 | `assets/bong/textures/block/<id>.png` | 16×16 |
+| 丹药物品图标：蜕骨丹 / 兽心丹 / 龙鳞散 / 续元丹 / 化形大丹 / 净毒丸 | item | 6 | `assets/bong/textures/item/<id>.png` | 16×16 |
+| 变异附件 entity UV：`dandao_iris` / `_nails` / `_ridge` / `_scales` / `_spurs` / `_horns` / `_tail` / `_carapace` / `_arms` / `_beast` | item | 10 | `assets/bong/textures/entity/mutation/<id>.png` | 16-128（与 §P3 §4.1 表对齐） |
+| 变异催化炉 tier 4 外观 | item | 1 | `assets/bong/textures/entity/alchemy_furnace_tier4.png` | 64×64 |
+| 暴龙王 BOSS arena 场景概念图（仅 design ref，不入运行时） | scene | 1 | `docs/library/ecology/baolongwang_arena.png` | 1024×1024 |
+| 丹道 HUD 面板背景 / inspect 变异图（若需） | hud | 0-2 | `assets/bong/textures/gui/<id>.png` | 256×128 |
+
+**命令样板**（按类别一条；其他同类参数同源调整）：
+
+```bash
+/gen-image particle "温润绿丹药口部光晕 16×16，柔和发光 #7ED4A0，末法残土像素风"
+/gen-image item "蜕骨藤暗紫色藤蔓缠绕骨骼图标 16×16，像素风"
+/gen-image item "变异前臂鳞 UV 贴图 64×64，灰绿龙鳞无缝纹理，UV 友好"
+/gen-image scene "末法残土地下巨洞，暴龙王 BOSS arena，毒紫雾气，坍缩渊边缘"
+/gen-image hud "丹道·丹体异化面板背景，暗木纹边框 + 内层温润绿淡光，256×128"
+```
+
+**总贴图工作量估算**：32 个新贴图 + 1 个场景概念图 = ~33 次 `/gen-image` 调用（部分需多次重抽选稿）。
 
 ---
 
