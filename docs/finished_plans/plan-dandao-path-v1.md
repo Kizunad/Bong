@@ -1667,6 +1667,8 @@ Agent(
 | `0c1e4b6f4` | 2026-05-18 | #265 | PR-5: 贴图资产（placeholder）+ Blockbench 模型 15 个 |
 | `7507eca4c` | 2026-05-18 | #266 | PR-6: Client 渲染（变异附件 + 暴龙王 + HUD + inspect） |
 | merged | 2026-05-18 | #268 | PR-7: 丹宗遗园 9 个 NBT 结构体（3 轮打磨 + PROMISE） |
+| `74c83ae5b` | 2026-05-19 | direct | NBT v2 精修——故宫级规模 + 装饰细节 |
+| merged | 2026-05-19 | #271 | PR-8: qi 扣除 + 600-tick 节流 + narration pipeline + layout paste |
 
 ### 测试结果
 
@@ -1674,6 +1676,7 @@ Agent(
 - PR-2: `cargo test → 5192 passed (116 new dandao)`
 - PR-3: `python3 -m pytest worldgen/ → 109 passed (79 new terrain)` + `cargo test world::zone → 16 passed`
 - PR-4: `cargo test → 5356 passed (98 new P2-P5)`
+- PR-8: `cargo test dandao → 66 passed` + `vitest mutation-narration → 13 passed` + `pytest test_nbt_paste → 18 passed`
 - 全部 PR 均通过 e2e CI pipeline（Schema + Agent + Server build + cargo test + Smoke/E2E）
 
 ### 跨仓库核验
@@ -1682,17 +1685,13 @@ Agent(
 |------|-------------|
 | server | `DandaoStyle` / `MutationState` / `MutationStage` / `MutationKind` / `BodySlot` / `ActiveMutation` / `BaolongwangBoss` / `MutationVisualSyncPayload` / `DandaoHudPanelData` / `DandaoInternalBrewIntent` / `EquipSlotV1::ExtraHand0/1` / `WEAPON_SWAP_COOLDOWN_TICKS` / `LayoutSpec` / `Placement` / `run_layout` / `apply_compound_flatten` / `compute_layout_density_mask` |
 | schema | `MutationStageV1` / `MutationKindV1` / `MutationEventV1` / `DandaoStyleV1` / `ActiveMutationV1` / `EquippedInventorySnapshotV1.extra_hand_0/1` |
-| agent | `bong:mutation_event`（schema 已定义，agent 端 narration_pipeline 接入待后续） |
-| client | `bong:mutation_visual`（CustomPayload 已定义，GeckoLib 渲染待后续 client PR） |
+| agent | `bong:mutation_event` + `mutation-narration-runtime.ts`（PR-8 实装） |
+| client | `bong:mutation_visual` + `MutationFeatureRenderer` + `BaolongwangEntityRenderer` + `DandaoHudPanel`（PR-6 实装） |
 
 ### 遗留 / 后续
 
 - **worldview §六.4 丹体异化**：需单独 PR 写入 `docs/worldview.md`，人工 review（§8.2 说明，不在 consume-plan 范围）
 - **贴图正式替换**：33 张贴图目前是 placeholder 色块（gen.py API key 过期），需有效 key 后逐张 `/gen-image` 替换
-- **Agent 端 narration pipeline**：`bong:mutation_event` 消费 + 天道对变异体的反应文案
-- **炼丹招式实际 qi 扣除**：P0 三招式 resolver 目前只做 gate check，实际 qi 扣除 + side-effect 需接入 QiTransfer + alchemy::pill 路径
-- **mutation_advance_system 节流**：当前每帧检测，需加 600-tick 节流计数器
-- **NBT layout runner 真实 paste**：runner.py 的 _paste_nbt 目前是 stub（log only），需接入 Rust server 端 structure 加载
 
 
 
