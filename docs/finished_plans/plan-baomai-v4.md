@@ -10,12 +10,12 @@
 
 | Phase | 内容 | 状态 | 验收日期 |
 |-------|------|------|---------|
-| P0 | 底盘扩展：ScarHistory + MeridianAdjacency + qi_physics 常数 | ⬜ | — |
-| P1 | 疤纹回路：相邻微裂经脉自发形成被动回路 | ⬜ | — |
-| P2 | 活茧：累计过载触发四阶肉身被动进化 | ⬜ | — |
-| P3 | 死脉甲：主动绝脉技 + SEVERED 经脉污染免疫 | ⬜ | — |
-| P4 | 裂读：近战命中时探测对方经脉损伤分布 | ⬜ | — |
-| P5 | 互噬：双体修贴身搏杀触发共振锁定 | ⬜ | — |
+| P0 | 底盘扩展：ScarHistory + MeridianAdjacency + qi_physics 常数 | ✅ | 2026-05-18 |
+| P1 | 疤纹回路：相邻微裂经脉自发形成被动回路 | ✅ | 2026-05-18 |
+| P2 | 活茧：累计过载触发四阶肉身被动进化 | ✅ | 2026-05-18 |
+| P3 | 死脉甲：主动绝脉技 + SEVERED 经脉污染免疫 | ✅ | 2026-05-18 |
+| P4 | 裂读：近战命中时探测对方经脉损伤分布 | ✅ | 2026-05-18 |
+| P5 | 互噬：双体修贴身搏杀触发共振锁定 | ✅ | 2026-05-18 |
 
 ---
 
@@ -1200,3 +1200,48 @@ for pr_n in [PR-1..PR-4]:
 git mv docs/plan-baomai-v4.md docs/finished_plans/
 # 填写 Finish Evidence + commit
 ```
+
+---
+
+## Finish Evidence
+
+### 落地清单
+
+| Phase | 模块/文件 |
+|-------|----------|
+| P0 底盘 | `server/src/combat/baomai_v4/scar_history.rs` · `adjacency.rs` · `constants.rs` · `events.rs` · `mod.rs` |
+| P0 常数 | `server/src/qi_physics/constants.rs`（追加 SCAR_CIRCUIT_*/RESONANCE_* 物理常数） |
+| P1 疤纹回路 | `server/src/combat/baomai_v4/scar_circuit.rs` · DerivedAttrs 扩展（`combat/components.rs`） |
+| P2 活茧 | `server/src/combat/baomai_v4/iron_cocoon.rs` |
+| P3 死脉甲 | `server/src/combat/baomai_v4/dead_armor.rs` · `combat/resolve.rs` 污染拦截 · BodyPart::Back 新增 |
+| P4 裂读 | `server/src/combat/baomai_v4/crack_reading.rs` |
+| P5 互噬 | `server/src/combat/baomai_v4/resonance_lock.rs` · StatusEffectKind::ResonanceLocked 新增 |
+
+### 关键 commit（squash merge）
+
+| PR | hash | 日期 | 消息 |
+|----|------|------|------|
+| PR-1 | `0574fe3b4` | 2026-05-18 | plan-baomai-v4 PR-1: P0 底盘 + P1 疤纹回路 + P2 活茧 (#261) |
+| PR-2 | `ce41554b6` | 2026-05-18 | plan-baomai-v4 PR-2: P3 死脉甲 (#263) |
+| PR-3 | `5fb4eabbd` | 2026-05-18 | feat(baomai_v4): P4 裂读——近战探测经脉损伤 + 深读窗口 + 9 测试 (#267) |
+| PR-4 | `9235a0e34` | 2026-05-18 | plan-baomai-v4 PR-4: P5 互噬 (#269) |
+
+### 测试结果
+
+- `cargo test baomai_v4` → **84 passed**（P0: 15, P1: 16, P2: 17, P3: 14, P4: 9, P5: 13）
+- `cargo fmt --check` → ok
+- `cargo clippy --all-targets -- -D warnings` → ok
+- `cargo test` → 5392 passed（全量无回归）
+
+### 跨仓库核验
+
+- **Server**: `combat::baomai_v4::*` 全部 10 个源文件 + 9 个测试文件
+- **Client**: `bong:crack_reading` CustomPayload type ID（P4，payload 序列化已实装）· `bong:resonance_lock` CustomPayload type ID（P5，payload 序列化已实装）
+- **Agent**: `ScarCircuitFormedEvent` / `IronCocoonStageUpEvent` / `VoluntarySeverEvent` / `ResonanceLockEvent` 可选叙事消费（非阻塞，event 已定义）
+
+### 遗留 / 后续
+
+- 视听资产（粒子/音效/HUD overlay/narration 模板）已在 plan 中详细规格化但**未在 server PR 中实装**——属于 client plan 范围
+- P5 互噬 PvE 扩展（NPC ScarHistory seed）待 NPC update plan
+- 死脉甲奇经扩展（Chong/Dai/YinQiao/YangQiao/YinWei/YangWei）待 worldview 补充奇经身体通道定义
+- `CrackReadingOverlayRenderer`（Java client）待 client HUD plan
