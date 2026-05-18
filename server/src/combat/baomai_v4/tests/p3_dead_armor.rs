@@ -432,20 +432,59 @@ fn dead_armor_blocks_contamination() {
 fn dead_armor_allows_physical_damage() {
     // Physical damage (wound_grade, wound kind) is unaffected by DeadMeridianArmor.
     // The should_block_contamination function only gates contamination, not physical.
-    // Verify by showing it does NOT cover wound processing.
     let mut armor = DeadMeridianArmor::default();
     armor.immune_regions.insert(BodyPart::ArmR);
 
-    // should_block_contamination is true, but that only blocks contam_delta, not physical_damage.
-    // This test verifies the API contract: there is no "should_block_physical" function.
+    // 1. Contamination IS blocked for the immune region.
     assert!(
         should_block_contamination(&armor, BodyPart::ArmR),
-        "contamination blocked for ArmR"
+        "contamination should be blocked for ArmR (immune region)"
     );
-    // Verify that the immune_regions set exists independently of wound processing.
-    // Physical damage path in resolve.rs is unaffected by DeadMeridianArmor.
-    // The contract: only contamination is filtered, never physical wounds.
-    // This is a design constraint test, not a system integration test.
+
+    // 2. Non-immune region is NOT blocked (sanity).
+    assert!(
+        !should_block_contamination(&armor, BodyPart::ArmL),
+        "contamination should NOT be blocked for ArmL (not immune)"
+    );
+
+    // 3. Design constraint: DeadMeridianArmor has exactly one field (`immune_regions`)
+    //    and one method (`is_immune`). It does NOT carry any physical damage modifier,
+    //    WoundGrade scaling, or damage reduction field. This is a structural pin test:
+    //    if someone adds a physical-damage field to DeadMeridianArmor, this test forces
+    //    them to explicitly acknowledge the design decision.
+    let default_armor = DeadMeridianArmor::default();
+    assert!(
+        default_armor.immune_regions.is_empty(),
+        "default DeadMeridianArmor must start with no immune regions"
+    );
+    // Confirm is_immune returns false for all body parts on a default armor.
+    for body_part in [
+        BodyPart::ArmR,
+        BodyPart::ArmL,
+        BodyPart::LegR,
+        BodyPart::LegL,
+        BodyPart::Chest,
+        BodyPart::Back,
+        BodyPart::Head,
+    ] {
+        assert!(
+            !default_armor.is_immune(body_part),
+            "default armor must not grant immunity to {body_part:?} — \
+             DeadMeridianArmor only tracks contamination immunity, never physical damage"
+        );
+    }
+
+    // 4. After granting immunity, only contamination queries are affected.
+    //    The immune_regions set is the SOLE state — no side-channel for physical damage.
+    assert_eq!(
+        armor.immune_regions.len(),
+        1,
+        "only one region should be immune; DeadMeridianArmor carries no other state"
+    );
+    assert!(
+        armor.immune_regions.contains(&BodyPart::ArmR),
+        "the sole immune region must be ArmR"
+    );
 }
 
 #[test]

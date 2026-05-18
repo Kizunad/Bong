@@ -235,7 +235,7 @@ pub fn voluntary_sever_apply_system(
     )>,
     mut severed_events: EventWriter<MeridianSeveredEvent>,
     mut broken_events: EventWriter<ScarCircuitBrokenEvent>,
-    clock: Res<CombatClock>,
+    _clock: Res<CombatClock>,
 ) {
     for ev in events.read() {
         let Ok((mut meridians, mut severed, mut armor, circuits)) = targets.get_mut(ev.entity)
@@ -279,7 +279,7 @@ pub fn voluntary_sever_apply_system(
                         entity: ev.entity,
                         circuit: kind,
                         reason: CircuitBreakReason::Severed,
-                        tick: clock.tick,
+                        tick: ev.tick,
                     });
                 }
             }
