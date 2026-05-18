@@ -174,6 +174,7 @@ fn body_part_wire(part: BodyPart) -> &'static str {
     match part {
         BodyPart::Head => "head",
         BodyPart::Chest => "chest",
+        BodyPart::Back => "back",
         BodyPart::Abdomen => "abdomen",
         BodyPart::ArmL => "arm_l",
         BodyPart::ArmR => "arm_r",
@@ -186,6 +187,7 @@ fn body_part_name(part: BodyPart) -> &'static str {
     match part {
         BodyPart::Head => "头部",
         BodyPart::Chest => "胸部",
+        BodyPart::Back => "背部",
         BodyPart::Abdomen => "腹部",
         BodyPart::ArmL => "左臂",
         BodyPart::ArmR => "右臂",

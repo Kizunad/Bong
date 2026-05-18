@@ -480,6 +480,7 @@ pub fn body_part_to_meridian(body_part: BodyPart) -> MeridianId {
     match body_part {
         BodyPart::Head => MeridianId::Du,
         BodyPart::Chest => MeridianId::Heart,
+        BodyPart::Back => MeridianId::Du,
         BodyPart::Abdomen => MeridianId::Spleen,
         BodyPart::ArmL | BodyPart::ArmR => MeridianId::LargeIntestine,
         BodyPart::LegL | BodyPart::LegR => MeridianId::Bladder,

@@ -4,6 +4,7 @@
 
 pub mod adjacency;
 pub mod constants;
+pub mod dead_armor;
 pub mod events;
 pub mod iron_cocoon;
 pub mod scar_circuit;
@@ -17,10 +18,14 @@ use valence::prelude::{App, IntoSystemConfigs, Update};
 use crate::combat::CombatSystemSet;
 
 pub fn register(app: &mut App) {
-    // P0-P2 events.
+    // P0-P3 events.
     app.add_event::<events::ScarCircuitFormedEvent>();
     app.add_event::<events::ScarCircuitBrokenEvent>();
     app.add_event::<events::IronCocoonStageUpEvent>();
+    app.add_event::<events::VoluntarySeverEvent>();
+    // P3 voluntary_sever_apply_system emits MeridianSeveredEvent. Ensure it's registered
+    // (no-op if already registered by cultivation::register in the full app).
+    app.add_event::<crate::cultivation::meridian::severed::MeridianSeveredEvent>();
 
     // Systems.
     app.add_systems(
@@ -44,6 +49,8 @@ pub fn register(app: &mut App) {
             iron_cocoon::iron_cocoon_passive_system
                 .in_set(CombatSystemSet::Physics)
                 .after(iron_cocoon::iron_cocoon_check_system),
+            // P3: VoluntarySever apply — runs in Resolve (after Physics).
+            dead_armor::voluntary_sever_apply_system.in_set(CombatSystemSet::Resolve),
         ),
     );
 }

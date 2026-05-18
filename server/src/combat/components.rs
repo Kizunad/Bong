@@ -31,6 +31,7 @@ pub const HEAD_STUN_DURATION_TICKS: u64 = 20;
 pub enum BodyPart {
     Head,
     Chest,
+    Back,
     Abdomen,
     ArmL,
     ArmR,

@@ -1400,6 +1400,7 @@ fn body_part_multipliers(body_part: BodyPart) -> (f32, f32, f32) {
     match body_part {
         BodyPart::Head => (2.0, 1.5, 1.5),
         BodyPart::Chest => (1.0, 1.0, 1.0),
+        BodyPart::Back => (0.9, 1.0, 1.0),
         BodyPart::Abdomen => (0.9, 1.2, 1.3),
         BodyPart::ArmL | BodyPart::ArmR => (0.7, 0.8, 0.8),
         BodyPart::LegL | BodyPart::LegR => (0.6, 0.7, 1.0),
