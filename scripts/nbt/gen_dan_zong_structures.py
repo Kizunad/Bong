@@ -91,7 +91,8 @@ def build_fallen_alchemist_bone() -> StructureBuilder:
 
 def build_vapor_poison_spring_small() -> StructureBuilder:
     """Small corner poison spring, 3x2x3.
-    Soul sand base with water/bubble column, purple stained glass rim."""
+    Soul sand base with water/bubble column, purple stained glass rim.
+    One corner glass is broken (ruin effect)."""
     sb = StructureBuilder(3, 2, 3)
 
     # Layer 0 (ground) — soul sand basin
@@ -106,15 +107,16 @@ def build_vapor_poison_spring_small() -> StructureBuilder:
     sb.set_block(2, 0, 2, "minecraft:mossy_cobblestone")
 
     # Layer 1 — rim of purple glass + center water
-    sb.set_block(0, 1, 0, "minecraft:purple_stained_glass")
+    # One corner missing (ruin gap), one replaced with cracked stone
     sb.set_block(1, 1, 0, "minecraft:purple_stained_glass")
     sb.set_block(2, 1, 0, "minecraft:purple_stained_glass")
     sb.set_block(0, 1, 1, "minecraft:purple_stained_glass")
     sb.set_block(1, 1, 1, "minecraft:water")  # toxic water
     sb.set_block(2, 1, 1, "minecraft:purple_stained_glass")
-    sb.set_block(0, 1, 2, "minecraft:purple_stained_glass")
+    sb.set_block(0, 1, 2, "minecraft:cracked_stone_bricks")  # broken corner
     sb.set_block(1, 1, 2, "minecraft:purple_stained_glass")
     sb.set_block(2, 1, 2, "minecraft:purple_stained_glass")
+    # (0,1,0) intentionally missing — ruin gap
 
     return sb
 
@@ -301,22 +303,30 @@ def build_ruined_open_furnace() -> StructureBuilder:
 
 def build_master_sarcophagus() -> StructureBuilder:
     """Sect master's sarcophagus in the basement, 3x2x5.
-    Polished blackstone slab construction with the 师叔之印 placement point."""
+    Polished blackstone slab construction with the 师叔之印 placement point.
+    Some base slabs cracked / missing (千年地下室的侵蚀)."""
     sb = StructureBuilder(3, 2, 5)
 
-    # Layer 0 — sarcophagus base (solid blackstone slab platform)
+    # Layer 0 — sarcophagus base (with ruin damage — 2 blocks missing)
     for x in range(3):
         for z in range(5):
+            # Skip two corner blocks for ruin effect
+            if (x == 0 and z == 4) or (x == 2 and z == 0):
+                continue  # crumbled base corner
             sb.set_block(x, 0, z, "minecraft:polished_blackstone_slab",
                         {"type": "bottom"})
 
     # Layer 1 — coffin walls + lid
-    # Side walls
+    # Side walls (one block cracked)
     for z in range(5):
         sb.set_block(0, 1, z, "minecraft:polished_blackstone_slab",
                     {"type": "top"})
-        sb.set_block(2, 1, z, "minecraft:polished_blackstone_slab",
-                    {"type": "top"})
+        if z == 3:
+            # One side slab replaced with cracked stone (damage)
+            sb.set_block(2, 1, z, "minecraft:cracked_stone_bricks")
+        else:
+            sb.set_block(2, 1, z, "minecraft:polished_blackstone_slab",
+                        {"type": "top"})
 
     # Head and foot
     sb.set_block(1, 1, 0, "minecraft:chiseled_polished_blackstone")  # head end — decorated
