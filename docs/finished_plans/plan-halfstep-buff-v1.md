@@ -69,10 +69,10 @@
   - `tribulation_ascended_count` — 累计化虚人次
   - `ascension_quota_full_duration_ticks` — quota 满时（current == max）的累计 tick 数
   - `halfstep_stuck_duration_ticks` — 当前半步修士平均滞留 tick 数
-- [x] `/debug tribulation` 命令显示以上遥测数据（dev-only，CLAUDE.md 测试命令段；与 `/meridian` `/realm` 等同槽）
+- [x] `/tribulation_debug` 命令显示以上遥测数据（dev-only，CLAUDE.md 测试命令段；与 `/meridian` `/realm` 等同槽）
 - [x] 该数据用于后续运营观察与跟进 plan 的 buff 校准，本 plan 不在 P0 内做观察期门控
 
-**P0 验收**：遥测计数器在 CI e2e 中可正确累计（mock 10 次半步结算 → counter == 10）；`/debug tribulation` 在 cargo test 中可调用并返回结构化数据
+**P0 验收**：遥测计数器在 CI e2e 中可正确累计（mock 10 次半步结算 → counter == 10）；`/tribulation_debug` 在 cargo test 中可调用并返回结构化数据
 
 ---
 
@@ -124,7 +124,7 @@
   - 若头部修士为玩家 → emit `HalfStepRechallengeTriggerEvent { char_id }` 给该玩家
   - 若头部修士为 dormant NPC → 强制 hydrate（复用 plan-npc-virtualize-v1 dormant 渡虚劫 hydrate 路径），hydrate 后入队第一行
 - [x] 玩家收到 event → client HUD 提示"灵机涌现，可重渡虚劫"（`client/src/hud/tribulation_status.java`）+ 窗口剩余时长倒计时
-- [x] 玩家响应：手动触发 `/tribulation rechallenge`（CLAUDE.md dev-only 命令段）or 在渡劫台交互
+- [x] 玩家响应：手动触发 `/tribulation_rechallenge`（CLAUDE.md dev-only 命令段）or 在渡劫台交互
 - [x] **重渡失败结算复用 `tribulation::settle_failed` 通灵降境路径**（§8 Q3 决策：失败降境到通灵初，不另设独立宽容路径）
 - [x] narration 模板（已含 scope/style/priority，跟进 agent PR 接 TS schema 时直接消费）：
   - "灵脉间隐约传来一股真元波动，似有化虚修士陨落，名额空出一席。" — scope: `broadcast`，style: `perception`，priority: `high`（复用既有 quota_release narration 通道，全服广播 1 次）
@@ -222,7 +222,7 @@
 
 **P1 — buff 实装 + ledger + 不叠加守卫**：
 - `server/src/qi_physics/ledger.rs` `QiTransferReason::HalfStepBuff` 新增 variant（audit-only，不动 balance）
-- `server/src/cultivation/tribulation.rs` `track_tribulation_metrics_system` 扩展：HalfStep settlement 时 `cultivation.qi_max *= 1.10`、`lifespan.cap_by_realm += 200`、emit `QiTransfer` audit event
+- `server/src/cultivation/tribulation.rs` HalfStep buff 应用：`track_tribulation_metrics_system` 在 HalfStep outcome 分支内一次性完成 buff (`cultivation.qi_max *= 1.10`、`lifespan.cap_by_realm += 200`)、emit `QiTransfer` audit event、插入 `HalfStepState` + 入队。注意 system 名虽含 "metrics"，但 settlement event 触发的 buff 副作用也归并在此（同一 ECS Query 借用避免多 system 锁竞争）；P1 buff 行为的真正 anchor 是 `DuXuOutcomeV1::HalfStep` outcome 分支
 - `HalfStepState.buff_applied` 字段守卫（§8 Q4）：第二次 settlement 跳过重新应用
 
 **P2 — quota 原子授予**：
@@ -248,7 +248,7 @@
 
 ### 测试结果
 
-`cd server && cargo test` → **5053 passed; 0 failed**（截至 PR #257 review-2 修复后；累计 47 新 case：13 P0 + 10 P1 + 7 P2 + 11 P3 队列/派发/路径 + 6 dev 命令 + 文档/边界守护；既有 5006 个测试零回归）
+`cd server && cargo test` → **5059 passed; 0 failed**（截至 PR #257 review-5 修复后；累计 53 新 case：13 P0 + 10 P1 + 7 P2 + 17 P3 队列/派发/路径/dormant/buff 继承 + 6 dev 命令；既有 5006 个测试零回归）
 
 `cd server && cargo clippy --all-targets -- -D warnings` → 零 warning
 

@@ -2309,8 +2309,15 @@ pub enum AscensionGrant {
 
 /// plan-halfstep-buff-v1 P2 atomic ascension grant outcome。
 ///
-/// `grant` 字段表达三态（见 [`AscensionGrant`]）；`limit_used` / `occupied_before` 便于
-/// 追踪并发情况和测试断言。
+/// `quota` 是事务 commit 后最终的 [`AscensionQuotaRecord`]；`grant` 是 4 态决策
+/// [`AscensionGrant::Granted`] / [`AscensionGrant::SettledOnly`] /
+/// [`AscensionGrant::Denied`] / [`AscensionGrant::MissingActive`]，caller 必须 match
+/// 全部 4 分支（典型用法：仅 `Granted` 升 Realm；其余 3 态均回退 HalfStep / 不升 Realm）；
+/// `limit_used` / `occupied_before` 便于追踪并发情况和测试断言。
+///
+/// **事务行为**：与 [`complete_tribulation_ascension`] 一致——无论 `grant` 何种状态，
+/// 事务都会删除 `tribulations_active` 行 + commit quota 行（保 idempotency）；
+/// 区别在只有 `Granted` 路径会 `occupied_slots += 1`，其他 3 态保持 quota 不变。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AtomicAscensionOutcome {
     pub quota: AscensionQuotaRecord,
@@ -2323,11 +2330,17 @@ pub struct AtomicAscensionOutcome {
 ///
 /// 与 `complete_tribulation_ascension` 的区别：本函数在 transaction 内额外检查
 /// `quota.occupied_slots < quota_limit`；如果已满，**不增量、不破坏 DB 状态**，仅返回
-/// `granted=false`。即使如此，仍然删除 `tribulations_active` 行（entity 渡劫流程已完成，
-/// 不该留下孤儿 active 记录）+ commit quota 行（保持 idempotent）。
+/// `AscensionGrant::Denied`。即使如此，仍然删除 `tribulations_active` 行（entity 渡劫
+/// 流程已完成，不该留下孤儿 active 记录）+ commit quota 行（保持 idempotent）。返回值
+/// 见 [`AtomicAscensionOutcome`] 的 4 态枚举说明。
 ///
 /// 这是 worldview §三:78 化虚稀缺性的硬保证 —— 即使多人同 tick 渡虚劫成功也不会突破名额上限。
-/// FCFS 顺序由 SQLite 单进程 transaction 队列保证（同一连接池序列化处理）。
+///
+/// **并发语义**（P5 review #5 澄清）：IMMEDIATE 事务保证 select-check-update 的
+/// **原子串行化**（atomic serialization），即任何两个并发调用不会同时读到相同 quota
+/// 然后都增量；SQLite **不承诺公平/FIFO 顺序**——多个 BEGIN IMMEDIATE 的获取顺序由
+/// SQLite 内部锁队列决定，不一定按调用次序。worldview §三:78 关心的是"不突破名额上限"
+/// （原子性保证），不是"谁先谁后"（公平性），所以这里的语义足够。
 pub fn try_complete_tribulation_ascension(
     settings: &PersistenceSettings,
     char_id: &str,
@@ -11054,19 +11067,26 @@ mod persistence_tests {
     }
 
     #[test]
-    fn try_ascension_serializes_truly_concurrent_settlements_via_fcfs() {
+    fn try_ascension_serializes_truly_concurrent_settlements_atomically() {
         // plan-halfstep-buff-v1 P2 真并发测试（不是串行）：5 个线程同时 settle，limit=2。
         //
         // 用 `std::sync::Barrier` 让线程齐头并进，每线程独立 open connection 模拟真实并发。
-        // IMMEDIATE 事务保证 select-check-update 之间没有 writer 插队。期望：
-        //   - 恰好 limit (=2) 个线程 granted
+        // IMMEDIATE 事务保证 select-check-update **原子串行化**（atomic serialization），
+        // 即没有 writer 在中间插队读到陈旧 occupied_slots 然后都增量。
+        //
+        // 注意：SQLite IMMEDIATE 不承诺公平/FIFO 顺序——多个 BEGIN IMMEDIATE 谁先拿到写锁
+        // 由 SQLite 内部锁队列决定，与调用次序无关。本测试只断言"原子性"和"不破名额上限"，
+        // 不断言哪几个 thread 具体 granted（防止依赖未定义的 fairness 假设）。
+        //
+        // 期望：
+        //   - 恰好 limit (=2) 个线程 granted（哪几个不定）
         //   - 其余 (=3) 个线程 denied
         //   - 没有线程返回 SQLITE_BUSY / SQLITE_LOCKED（IMMEDIATE 会让冲突 writer 等而非立刻 fail）
         //   - 最终 quota.occupied_slots == limit（强守恒）
         use std::sync::{Arc, Barrier};
         use std::thread;
 
-        let (settings, root) = persistence_settings("ascension-atomic-true-concurrent-fcfs");
+        let (settings, root) = persistence_settings("ascension-atomic-true-concurrent");
         bootstrap_sqlite(settings.db_path(), settings.server_run_id())
             .expect("bootstrap should succeed");
         const N: usize = 5;

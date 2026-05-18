@@ -662,6 +662,9 @@ pub struct QuotaFullTracker {
 /// `entity` 是 ECS entity 句柄（hydrated 玩家 / hydrated NPC）；`is_dormant` 标记表示
 /// dormant NPC 占位（hydrate-on-trigger 由 dispatch system 处理，参 plan-npc-virtualize-v1）。
 /// `char_id` 为持久化键（dormant NPC 没有 entity，靠 char_id 唯一标识）。
+/// `buff_applied` 镜像 `HalfStepState.buff_applied`（P5 review #1 fix）—— dormant→hydrate
+/// 换 entity 时用 `find_by_char_id` 复用 entered_at/window，**也必须**复用 buff 标志，否则
+/// 已 buffed 的同角色再次结算会重复加 buff（破 §8 Q4）
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HalfStepRechallengeEntry {
     pub char_id: String,
@@ -669,6 +672,7 @@ pub struct HalfStepRechallengeEntry {
     pub entered_at: u64,
     pub rechallenge_window_until: u64,
     pub is_dormant: bool,
+    pub buff_applied: bool,
 }
 
 /// plan-halfstep-buff-v1 P3：FIFO 重渡队列（§8 Q2 先到先得 + Q5 NPC 同池）。
@@ -2081,15 +2085,18 @@ pub fn track_tribulation_metrics_system(
                             state.buff_applied,
                         ),
                         None => {
-                            // component 缺失 → 按 char_id 查队列里的旧 entry。
-                            // 这条 fallback 让换 ECS entity 后复用原窗口；buff_applied 留 false
-                            // 是保守的——component 没了证明不了真元/寿元被改过，hydrate 后
-                            // backfill 路径会补 buff（已有专属测试 pin 行为）
+                            // component 缺失 → 按 char_id 查队列里的旧 entry，复用 entered_at /
+                            // window_until + **buff_applied**（P5 review #1 fix）。
+                            //
+                            // 如果旧 entry 已 buff_applied=true，新 entity（同 char_id）必继承，
+                            // 否则 dormant→hydrate 同角色再 settle 会重复加 buff（破 §8 Q4）。
+                            // 这是 P5 修复的真 bug：上一版回退 false 是错的"保守"——保守应是
+                            // 假设已 buff（避免重复加），而非假设没 buff（导致重复加）
                             match queue.find_by_char_id(&ev.result.char_id) {
                                 Some(entry) => (
                                     Some(entry.entered_at),
                                     Some(entry.rechallenge_window_until),
-                                    false,
+                                    entry.buff_applied,
                                 ),
                                 None => (None, None, false),
                             }
@@ -2162,6 +2169,9 @@ pub fn track_tribulation_metrics_system(
                     entered_at,
                     rechallenge_window_until: window_until,
                     is_dormant: !has_cultivation,
+                    // P5 review #1 fix：镜像 HalfStepState.buff_applied 让 char_id-fallback
+                    // 复用（dormant→hydrate 同角色再 settle 时不重复加 buff）
+                    buff_applied: buff_now_applied,
                 });
             }
             DuXuOutcomeV1::Ascended => {
@@ -8458,6 +8468,7 @@ mod tests {
                 entered_at: et,
                 rechallenge_window_until: et + RECHALLENGE_WINDOW_TICKS,
                 is_dormant: false,
+                buff_applied: false,
             });
         }
         let order: Vec<&str> = queue.queue.iter().map(|e| e.char_id.as_str()).collect();
@@ -8479,6 +8490,7 @@ mod tests {
             entered_at: 100,
             rechallenge_window_until: 100 + RECHALLENGE_WINDOW_TICKS,
             is_dormant: false,
+            buff_applied: false,
         });
         queue.enqueue(HalfStepRechallengeEntry {
             char_id: "b".to_string(),
@@ -8486,6 +8498,7 @@ mod tests {
             entered_at: 200,
             rechallenge_window_until: 200 + RECHALLENGE_WINDOW_TICKS,
             is_dormant: false,
+            buff_applied: false,
         });
         queue.remove_entity(target);
         assert_eq!(queue.len(), 1, "目标 entity 应已移除");
@@ -8774,6 +8787,74 @@ mod tests {
             "rechallenge_window_until 必须从原 entered_at 推算（不漂移）"
         );
         assert_eq!(entry.entity, entity_b, "entity 字段更新为最新 ECS 句柄");
+    }
+
+    #[test]
+    fn entity_swap_under_same_char_id_inherits_buff_applied_and_does_not_double_buff() {
+        // P5 review #1 真 bug：dormant→hydrate 换 entity 后 char_id-fallback 复用窗口，
+        // 但若 buff_applied 没继承，新 entity 会被认为"全新"再加一次 buff，破 §8 Q4
+        let mut app = p0_metrics_test_app();
+        app.world_mut().resource_mut::<CombatClock>().tick = 100;
+        // entity_a: hydrated（带 Cultivation），首次 HalfStep → 应用 buff
+        let entity_a = spawn_halfstep_candidate(&mut app, 1000.0, LifespanCapTable::SPIRIT);
+        let mut ev_a = make_settled_event_with_source(
+            entity_a,
+            DuXuOutcomeV1::HalfStep,
+            JueBiTriggerSource::VoidQuotaExceeded,
+        );
+        ev_a.result.char_id = "char_with_buff".to_string();
+        app.world_mut()
+            .resource_mut::<Events<TribulationSettled>>()
+            .send(ev_a);
+        app.update();
+        // 验证 entity_a 已 buff
+        let cultivation_a = app.world().get::<Cultivation>(entity_a).unwrap();
+        let expected_after_first_buff = 1000.0 * (1.0 + HALFSTEP_QI_MAX_BONUS as f64);
+        assert!(
+            (cultivation_a.qi_max - expected_after_first_buff).abs() < 1e-6,
+            "前提：entity_a qi_max 应已 buff 到 1100；got {}",
+            cultivation_a.qi_max
+        );
+        let entry_buff_flag =
+            app.world().resource::<HalfStepRechallengeQueue>().queue[0].buff_applied;
+        assert!(
+            entry_buff_flag,
+            "前提：队列 entry.buff_applied 应为 true（镜像 HalfStepState.buff_applied）"
+        );
+
+        // Despawn entity_a（模拟 dormant），新 entity_b 用同 char_id 再 settle
+        app.world_mut().entity_mut(entity_a).despawn();
+        app.world_mut().resource_mut::<CombatClock>().tick = 500;
+        let entity_b = spawn_halfstep_candidate(&mut app, 2000.0, LifespanCapTable::SPIRIT);
+        let entity_b_qi_max_before = app.world().get::<Cultivation>(entity_b).unwrap().qi_max;
+        assert_eq!(
+            entity_b_qi_max_before, 2000.0,
+            "前提：entity_b qi_max 起始 2000（与 entity_a 区分以验证不被错误改）"
+        );
+        let mut ev_b = make_settled_event_with_source(
+            entity_b,
+            DuXuOutcomeV1::HalfStep,
+            JueBiTriggerSource::VoidQuotaExceeded,
+        );
+        ev_b.result.char_id = "char_with_buff".to_string();
+        app.world_mut()
+            .resource_mut::<Events<TribulationSettled>>()
+            .send(ev_b);
+        app.update();
+
+        // 核心断言：entity_b qi_max 不变（不被再 buff），尽管它确实 settle 了 HalfStep
+        let cultivation_b = app.world().get::<Cultivation>(entity_b).unwrap();
+        assert_eq!(
+            cultivation_b.qi_max, 2000.0,
+            "char_id-fallback 继承 buff_applied=true → 不重复 buff entity_b；\
+             如果错误地重复 buff 会得到 2200（破 §8 Q4 不叠加守卫）"
+        );
+        // HalfStepState 也必须显示 buff_applied=true
+        let state_b = app.world().get::<HalfStepState>(entity_b).unwrap();
+        assert!(
+            state_b.buff_applied,
+            "entity_b 的 HalfStepState.buff_applied 必须继承 true，否则 deletion+respawn 又破守卫"
+        );
     }
 
     #[test]
