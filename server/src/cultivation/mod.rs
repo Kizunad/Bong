@@ -161,19 +161,23 @@ use self::tick::{
 };
 use self::topology::MeridianTopology;
 use self::tribulation::{
-    abort_du_xu_on_client_removed, emit_tribulation_boundary_vfx_system, heart_demon_choice_system,
-    heart_demon_timeout_system, juebi_phase_effect_system, juebi_settlement_system,
-    juebi_terrain_seed_system, juebi_terrain_tick_system, juebi_zone_aftershock_system,
+    abort_du_xu_on_client_removed, dispatch_rechallenge_on_quota_opened_system,
+    emit_tribulation_boundary_vfx_system, heart_demon_choice_system, heart_demon_timeout_system,
+    juebi_phase_effect_system, juebi_settlement_system, juebi_terrain_seed_system,
+    juebi_terrain_tick_system, juebi_zone_aftershock_system,
     record_tribulation_interceptor_system, schedule_juebi_triggers_system,
     start_du_xu_request_system, start_due_juebi_triggers_system, start_tribulation_system,
-    tribulation_aoe_system, tribulation_escape_boundary_system, tribulation_failure_system,
+    track_quota_full_duration_system, track_tribulation_metrics_system, tribulation_aoe_system,
+    tribulation_escape_boundary_system, tribulation_failure_system,
     tribulation_intercept_death_system, tribulation_omen_cloud_block_overlay_system,
     tribulation_phase_tick_system, tribulation_wave_system, AscensionQuotaOccupied,
-    AscensionQuotaOpened, HeartDemonChoiceSubmitted, InitiateXuhuaTribulation, JueBiRuntimeContext,
-    JueBiTerrainOverlay, JueBiTriggerEvent, JueBiTriggerSource, JueBiTriggeredEvent,
-    JueBiZoneAftershocks, PendingJueBiTriggers, StartDuXuRequest, TribulationAnnounce,
-    TribulationFailed, TribulationFled, TribulationLocked, TribulationOmenCloudBlocks,
-    TribulationOriginDimension, TribulationSettled, TribulationState, TribulationWaveCleared,
+    AscensionQuotaOpened, HalfStepRechallengeQueue, HalfStepRechallengeTriggerEvent,
+    HeartDemonChoiceSubmitted, InitiateXuhuaTribulation, JueBiRuntimeContext, JueBiTerrainOverlay,
+    JueBiTriggerEvent, JueBiTriggerSource, JueBiTriggeredEvent, JueBiZoneAftershocks,
+    PendingJueBiTriggers, QuotaFullTracker, StartDuXuRequest, TribulationAnnounce,
+    TribulationFailed, TribulationFled, TribulationLocked, TribulationMetrics,
+    TribulationOmenCloudBlocks, TribulationOriginDimension, TribulationSettled, TribulationState,
+    TribulationWaveCleared,
 };
 use crate::cultivation::components::Realm;
 use crate::npc::possession::DuoSheIntentForwardSet;
@@ -222,6 +226,11 @@ pub fn register(app: &mut App) {
     app.insert_resource(JueBiZoneAftershocks::default());
     app.init_resource::<TribulationScorchRecords>();
     app.insert_resource(self::tribulation::VoidQuotaConfig::from_env());
+    // plan-halfstep-buff-v1 P0/P3：渡虚劫遥测 + quota 满时长追踪 + 重渡 FIFO 队列
+    app.init_resource::<TribulationMetrics>();
+    app.init_resource::<QuotaFullTracker>();
+    app.init_resource::<HalfStepRechallengeQueue>();
+    app.add_event::<HalfStepRechallengeTriggerEvent>();
     app.insert_resource(SpiritualSensePushState::default());
     realm_taint::register(app);
     void::register(app);
@@ -399,6 +408,16 @@ pub fn register(app: &mut App) {
                 .after(tribulation_failure_system)
                 .after(tribulation_escape_boundary_system)
                 .after(tribulation_intercept_death_system),
+        ),
+    );
+    // plan-halfstep-buff-v1 P0/P3：渡虚劫遥测累计 + quota 满时长追踪 + 重渡派发
+    app.add_systems(
+        Update,
+        (
+            track_tribulation_metrics_system.after(juebi_settlement_system),
+            track_quota_full_duration_system,
+            dispatch_rechallenge_on_quota_opened_system
+                .after(track_quota_full_duration_system),
         ),
     );
     app.add_systems(

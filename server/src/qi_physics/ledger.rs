@@ -132,6 +132,13 @@ pub enum QiTransferReason {
     VoidAction,
     /// plan-yidao-v1 — 医者把自身真元转入患者治疗路径，守恒轨迹必须可追溯。
     Healing,
+    /// plan-halfstep-buff-v1 P1 — 半步化虚 buff 容量扩张（qi_max ×1.10）的 audit-only 标记。
+    ///
+    /// 半步 buff 是**容量扩张**，不是真元搬运（worldview §三:78 化虚稀缺 + qi_physics 守恒律）。
+    /// 此变种用于在 ledger 留下"天道授予 N 真元容量"的可审计轨迹，amount = bonus capacity；
+    /// 实际 qi_current 不变、SPIRIT_QI_TOTAL 不变。emit 为 event，不调 `WorldQiAccount::transfer`
+    /// （后者会变动 balance）。
+    HalfStepBuff,
 }
 
 #[derive(Debug, Clone, Event, PartialEq)]
@@ -187,6 +194,15 @@ impl WorldQiAccount {
     }
 
     pub fn transfer(&mut self, transfer: QiTransfer) -> Result<(), QiPhysicsError> {
+        // plan-halfstep-buff-v1 P1：HalfStepBuff 是 audit-only 标记（容量扩张，非真元搬运），
+        // 误调 transfer 会变动 balance，违反 doc-comment 语义 + worldview §二 守恒律。
+        // 拒绝在入口，强制 caller 走 EventWriter<QiTransfer> 单纯 emit 路径。
+        if matches!(transfer.reason, QiTransferReason::HalfStepBuff) {
+            return Err(QiPhysicsError::AuditOnlyReason {
+                reason: "HalfStepBuff",
+            });
+        }
+
         let amount = finite_non_negative(transfer.amount, "transfer.amount")?;
         let available = self.balance(&transfer.from);
         if amount > available {
@@ -395,6 +411,48 @@ mod tests {
             .transfer(QiTransfer::new(from, to, 3.0, QiTransferReason::ReleaseToZone).unwrap())
             .expect_err("overdraft should fail");
         assert!(matches!(err, QiPhysicsError::InsufficientQi { .. }));
+    }
+
+    #[test]
+    fn transfer_rejects_halfstep_buff_audit_only_reason() {
+        // plan-halfstep-buff-v1 P1：HalfStepBuff 是 audit-only 标记，绝不可走变动 balance 的 transfer 路径。
+        // 调用方应直接 emit `EventWriter<QiTransfer>` event，不走 WorldQiAccount::transfer。
+        let from = QiAccountId::tiandao();
+        let to = QiAccountId::player("alice");
+        let mut account = WorldQiAccount::default();
+        account.set_balance(from.clone(), 100.0).unwrap();
+        let initial_from_balance = account.balance(&from);
+        let initial_to_balance = account.balance(&to);
+        let transfer = QiTransfer::new(
+            from.clone(),
+            to.clone(),
+            10.0,
+            QiTransferReason::HalfStepBuff,
+        )
+        .expect("QiTransfer::new must accept HalfStepBuff reason (event-level allowed)");
+        let err = account.transfer(transfer).expect_err(
+            "WorldQiAccount::transfer 必须拒绝 HalfStepBuff reason；audit-only 误用会破守恒律",
+        );
+        assert!(
+            matches!(err, QiPhysicsError::AuditOnlyReason { reason } if reason == "HalfStepBuff"),
+            "expected AuditOnlyReason::HalfStepBuff, got {err:?}"
+        );
+        // balance 必须未变动
+        assert_eq!(
+            account.balance(&from),
+            initial_from_balance,
+            "拒绝后 from balance 必须保持不变"
+        );
+        assert_eq!(
+            account.balance(&to),
+            initial_to_balance,
+            "拒绝后 to balance 必须保持不变"
+        );
+        // transfers 记录也不应增加
+        assert!(
+            account.transfers().is_empty(),
+            "拒绝的 transfer 不应留下 audit trail；防止统计被误污染"
+        );
     }
 
     #[test]
