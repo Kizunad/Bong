@@ -3671,6 +3671,20 @@ fn validate_move_semantics(
                 }
                 Ok(())
             }
+            // plan-dandao-path-v1 §8.1 #2 — 多臂额外手槽：与 MainHand 相同校验。
+            EquipSlotV1::ExtraHand0 | EquipSlotV1::ExtraHand1 => {
+                if template.weapon_spec.is_none()
+                    && !matches!(template.category, ItemCategory::Tool)
+                    && crate::lingtian::hoe::HoeKind::from_item_id(&item.template_id).is_none()
+                {
+                    return Err(format!(
+                        "item `{}` cannot equip to {}; expected weapon, tool, or hoe",
+                        item.template_id,
+                        equip_slot_key(slot)
+                    ));
+                }
+                Ok(())
+            }
             // plan-backpack-equip-v1 P0 — 背包类装备槽校验（装备方向）。
             EquipSlotV1::BackPack | EquipSlotV1::WaistPouch | EquipSlotV1::ChestSatchel => {
                 let target_slot_key = equip_slot_key(slot);
@@ -3929,6 +3943,8 @@ fn equip_slot_key(slot: &crate::schema::inventory::EquipSlotV1) -> &'static str 
         EquipSlotV1::BackPack => EQUIP_SLOT_BACK_PACK,
         EquipSlotV1::WaistPouch => EQUIP_SLOT_WAIST_POUCH,
         EquipSlotV1::ChestSatchel => EQUIP_SLOT_CHEST_SATCHEL,
+        EquipSlotV1::ExtraHand0 => "extra_hand_0",
+        EquipSlotV1::ExtraHand1 => "extra_hand_1",
     }
 }
 

@@ -13,9 +13,7 @@ mod toxin_tracker;
 #[cfg(test)]
 mod tests;
 
-pub use skills::{
-    DANDAO_PILL_BOMB_SKILL_ID, DANDAO_PILL_MIST_SKILL_ID, DANDAO_PILL_RUSH_SKILL_ID,
-};
+pub use skills::{DANDAO_PILL_BOMB_SKILL_ID, DANDAO_PILL_MIST_SKILL_ID, DANDAO_PILL_RUSH_SKILL_ID};
 
 use valence::prelude::*;
 

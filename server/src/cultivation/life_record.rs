@@ -277,6 +277,13 @@ pub enum BiographyEntry {
         lifespan_cost_years: u32,
         tick: u64,
     },
+    /// plan-dandao-path-v1 §2.2 — 变异阶段推进记录。
+    MutationAdvanced {
+        from_stage: u8,
+        to_stage: u8,
+        cumulative_toxin: f64,
+        tick: u64,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -671,6 +678,14 @@ fn format_entry(entry: &BiographyEntry) -> String {
             "t{tick}:void_action:{}:{target}:qi{qi_cost:.1}:life{lifespan_cost_years}",
             kind.wire_name()
         ),
+        BiographyEntry::MutationAdvanced {
+            from_stage,
+            to_stage,
+            cumulative_toxin,
+            tick,
+        } => {
+            format!("t{tick}:mutation_advanced:{from_stage}->{to_stage}:toxin{cumulative_toxin:.1}")
+        }
     }
 }
 

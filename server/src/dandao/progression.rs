@@ -54,14 +54,14 @@ pub const GREAT_TRANSMUTATION_PENALTY_PER_USE: f64 = 0.01;
 /// 1.0 = 完全受影响；0.5 = 半影响；0.0 = 不受影响。
 pub fn meridian_penalty_factor_for_style(style: &str) -> f64 {
     match style {
-        "baomai" => 1.2,   // 体修依赖经脉流量极高，惩罚放大
-        "woliu" => 1.1,    // 涡流依赖经脉持续输出
-        "anqi" => 0.8,     // 暗器部分依赖载体而非经脉
-        "zhenmai" => 0.9,  // 截脉依赖接触面不依赖整体流量
-        "tuike" => 0.5,    // 替尸纯物资派，经脉影响小
-        "dugu" => 1.0,     // 毒蛊依赖经脉精确控制
-        "zhenfa" => 0.7,   // 阵法预埋不依赖实时经脉
-        "dandao" => 0.6,   // 丹道自身已适应变异
+        "baomai" => 1.2,  // 体修依赖经脉流量极高，惩罚放大
+        "woliu" => 1.1,   // 涡流依赖经脉持续输出
+        "anqi" => 0.8,    // 暗器部分依赖载体而非经脉
+        "zhenmai" => 0.9, // 截脉依赖接触面不依赖整体流量
+        "tuike" => 0.5,   // 替尸纯物资派，经脉影响小
+        "dugu" => 1.0,    // 毒蛊依赖经脉精确控制
+        "zhenfa" => 0.7,  // 阵法预埋不依赖实时经脉
+        "dandao" => 0.6,  // 丹道自身已适应变异
         _ => 1.0,
     }
 }
@@ -132,8 +132,10 @@ mod progression_tests {
         let d = abilities_unlocked_at(Realm::Solidify).len();
         let e = abilities_unlocked_at(Realm::Spirit).len();
         let f = abilities_unlocked_at(Realm::Void).len();
-        assert!(a <= b && b <= c && c <= d && d <= e && e <= f,
-            "能力数量应随境界递增: {a}/{b}/{c}/{d}/{e}/{f}");
+        assert!(
+            a <= b && b <= c && c <= d && d <= e && e <= f,
+            "能力数量应随境界递增: {a}/{b}/{c}/{d}/{e}/{f}"
+        );
     }
 
     #[test]
@@ -148,7 +150,9 @@ mod progression_tests {
 
     #[test]
     fn meridian_penalty_factors_in_valid_range() {
-        for style in ["baomai", "woliu", "anqi", "zhenmai", "tuike", "dugu", "zhenfa", "dandao"] {
+        for style in [
+            "baomai", "woliu", "anqi", "zhenmai", "tuike", "dugu", "zhenfa", "dandao",
+        ] {
             let f = meridian_penalty_factor_for_style(style);
             assert!(
                 (0.0..=2.0).contains(&f),
@@ -185,15 +189,26 @@ mod progression_tests {
         assert_eq!(tiandao_attention_weight(MutationStage::Subtle), 0.0);
         assert_eq!(tiandao_attention_weight(MutationStage::Visible), 0.0);
         assert!(tiandao_attention_weight(MutationStage::Heavy) > 0.0);
-        assert!(tiandao_attention_weight(MutationStage::Bestial) > tiandao_attention_weight(MutationStage::Heavy));
+        assert!(
+            tiandao_attention_weight(MutationStage::Bestial)
+                > tiandao_attention_weight(MutationStage::Heavy)
+        );
     }
 
     #[test]
     fn style_interaction_has_content() {
-        for style in ["baomai", "woliu", "anqi", "zhenmai", "tuike", "dugu", "zhenfa"] {
+        for style in [
+            "baomai", "woliu", "anqi", "zhenmai", "tuike", "dugu", "zhenfa",
+        ] {
             let interaction = dandao_vs_style(style);
-            assert!(!interaction.advantage.is_empty(), "style={style} advantage 不应为空");
-            assert!(!interaction.disadvantage.is_empty(), "style={style} disadvantage 不应为空");
+            assert!(
+                !interaction.advantage.is_empty(),
+                "style={style} advantage 不应为空"
+            );
+            assert!(
+                !interaction.disadvantage.is_empty(),
+                "style={style} disadvantage 不应为空"
+            );
         }
     }
 

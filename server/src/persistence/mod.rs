@@ -4879,6 +4879,7 @@ fn biography_event_type(entry: &BiographyEntry) -> &'static str {
         BiographyEntry::VoidAction { .. } => "void_action",
         BiographyEntry::JueBiSurvived { .. } => "jue_bi_survived",
         BiographyEntry::JueBiKilled { .. } => "jue_bi_killed",
+        BiographyEntry::MutationAdvanced { .. } => "mutation_advanced",
     }
 }
 
@@ -4968,7 +4969,8 @@ fn biography_tick(entry: &BiographyEntry) -> u64 {
         | BiographyEntry::SpawnTutorialCompleted { tick, .. }
         | BiographyEntry::VoidAction { tick, .. }
         | BiographyEntry::JueBiSurvived { tick, .. }
-        | BiographyEntry::JueBiKilled { tick, .. } => *tick,
+        | BiographyEntry::JueBiKilled { tick, .. }
+        | BiographyEntry::MutationAdvanced { tick, .. } => *tick,
     }
 }
 

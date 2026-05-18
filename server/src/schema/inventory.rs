@@ -53,6 +53,12 @@ pub enum EquipSlotV1 {
     WaistPouch,
     /// plan-backpack-equip-v1 P0 — 胸前挎包槽。
     ChestSatchel,
+    /// plan-dandao-path-v1 §8.1 #2 — 变异多臂额外手槽 0。
+    #[serde(rename = "extra_hand_0")]
+    ExtraHand0,
+    /// plan-dandao-path-v1 §8.1 #2 — 变异多臂额外手槽 1。
+    #[serde(rename = "extra_hand_1")]
+    ExtraHand1,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]

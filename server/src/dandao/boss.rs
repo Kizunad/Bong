@@ -175,7 +175,10 @@ mod boss_tests {
     fn defense_power_at_5000_years_is_035() {
         let boss = BaolongwangBoss::default();
         let dp = boss_defense_power(&boss);
-        assert!((dp - 0.35).abs() < f32::EPSILON, "5000 年 defense_power 应为 0.35, got {dp}");
+        assert!(
+            (dp - 0.35).abs() < f32::EPSILON,
+            "5000 年 defense_power 应为 0.35, got {dp}"
+        );
     }
 
     #[test]
@@ -185,7 +188,10 @@ mod boss_tests {
             ..BaolongwangBoss::default()
         };
         let dp = boss_defense_power(&boss);
-        assert!((dp - 0.20).abs() < f32::EPSILON, "1000 年 defense_power 应为 0.20, got {dp}");
+        assert!(
+            (dp - 0.20).abs() < f32::EPSILON,
+            "1000 年 defense_power 应为 0.20, got {dp}"
+        );
     }
 
     #[test]
@@ -196,7 +202,10 @@ mod boss_tests {
             ..BaolongwangBoss::default()
         };
         let dp = boss_defense_power(&boss);
-        assert!(dp > 0.35, "崩溃阶段 defense 应退化（大于正常 0.35）: got {dp}");
+        assert!(
+            dp > 0.35,
+            "崩溃阶段 defense 应退化（大于正常 0.35）: got {dp}"
+        );
         assert!(dp <= 0.6, "defense 不超过 0.6: got {dp}");
     }
 
@@ -207,7 +216,11 @@ mod boss_tests {
         assert_eq!(determine_phase(0.69, true), BossPhase::Rage);
         assert_eq!(determine_phase(0.31, true), BossPhase::Rage);
         assert_eq!(determine_phase(0.29, true), BossPhase::Collapse);
-        assert_eq!(determine_phase(0.5, false), BossPhase::Collapse, "炉毁 = 直接崩溃");
+        assert_eq!(
+            determine_phase(0.5, false),
+            BossPhase::Collapse,
+            "炉毁 = 直接崩溃"
+        );
     }
 
     #[test]
@@ -247,7 +260,10 @@ mod boss_tests {
             let loot = compute_loot(&boss, seed);
             let ids: Vec<&str> = loot.iter().map(|(id, _)| *id).collect();
             assert!(ids.contains(&LOOT_BOSS_CORE), "seed={seed} 缺少 boss core");
-            assert!(ids.contains(&LOOT_ANCIENT_RECIPE), "seed={seed} 缺少 ancient recipe");
+            assert!(
+                ids.contains(&LOOT_ANCIENT_RECIPE),
+                "seed={seed} 缺少 ancient recipe"
+            );
         }
     }
 
@@ -255,11 +271,15 @@ mod boss_tests {
     fn compute_loot_furnace_remnant_only_if_destroyed() {
         let mut boss = BaolongwangBoss::default();
         let loot_intact = compute_loot(&boss, 42);
-        assert!(!loot_intact.iter().any(|(id, _)| *id == LOOT_FURNACE_REMNANT));
+        assert!(!loot_intact
+            .iter()
+            .any(|(id, _)| *id == LOOT_FURNACE_REMNANT));
 
         on_furnace_destroyed(&mut boss);
         let loot_destroyed = compute_loot(&boss, 42);
-        assert!(loot_destroyed.iter().any(|(id, _)| *id == LOOT_FURNACE_REMNANT));
+        assert!(loot_destroyed
+            .iter()
+            .any(|(id, _)| *id == LOOT_FURNACE_REMNANT));
     }
 
     #[test]
@@ -269,7 +289,11 @@ mod boss_tests {
             ..BaolongwangBoss::default()
         };
         let count = (0..10000u64)
-            .filter(|&seed| compute_loot(&boss, seed).iter().any(|(id, _)| *id == LOOT_BOSS_HORN))
+            .filter(|&seed| {
+                compute_loot(&boss, seed)
+                    .iter()
+                    .any(|(id, _)| *id == LOOT_BOSS_HORN)
+            })
             .count();
         assert!(
             (4500..5500).contains(&count),
@@ -282,7 +306,11 @@ mod boss_tests {
         let boss = BaolongwangBoss::default();
         assert!(!boss.has_entered_rage);
         let count = (0..100u64)
-            .filter(|&seed| compute_loot(&boss, seed).iter().any(|(id, _)| *id == LOOT_BOSS_HORN))
+            .filter(|&seed| {
+                compute_loot(&boss, seed)
+                    .iter()
+                    .any(|(id, _)| *id == LOOT_BOSS_HORN)
+            })
             .count();
         assert_eq!(count, 0, "未进入 Rage 阶段不应掉角");
     }

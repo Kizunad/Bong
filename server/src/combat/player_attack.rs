@@ -13,6 +13,11 @@ use crate::movement::player_knockback::ActivePlayerKnockback;
 use crate::npc::spawn::NpcMarker;
 
 const ATTACK_COOLDOWN_TICKS: u64 = 10;
+/// plan-dandao-path-v1 §8.1 #2: 多臂武器切换共享 GCD（所有手槽位共享）。
+/// 当前由 `dandao::mutation::WEAPON_SWAP_COOLDOWN_TICKS` 正典定义；
+/// 这里导出以供 attack 路径未来接入。
+#[allow(dead_code)]
+pub const WEAPON_SWAP_COOLDOWN_TICKS: u64 = 20;
 const REACH_TOLERANCE: f64 = 0.5;
 
 #[derive(Debug, Clone, Component, Default)]
