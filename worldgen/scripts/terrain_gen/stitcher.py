@@ -399,6 +399,67 @@ def _apply_realm_collapse_mask(
     )
 
 
+def apply_compound_flatten(
+    buffer: TileFieldBuffer,
+    poi_center_xz: tuple[int, int],
+    radius: int,
+    target_height: float,
+) -> None:
+    """Flatten the height field to *target_height* within *radius* of a POI.
+
+    Provides a level platform for deterministic building layouts.
+    Outside the radius the height field is untouched.
+    """
+    if radius <= 0:
+        return
+    tile = buffer.tile
+    tile_size = buffer.tile_size
+    wx, wz = _tile_coords(tile.min_x, tile.min_z, tile_size)
+    cx, cz = poi_center_xz
+    dist_sq = (wx - cx) ** 2 + (wz - cz) ** 2
+    inside = (dist_sq < radius * radius).ravel()
+
+    if "height" in buffer.layers:
+        buffer.layers["height"] = np.where(
+            inside, target_height, buffer.layers["height"]
+        )
+
+
+def compute_layout_density_mask(
+    buffer: TileFieldBuffer,
+    poi_center_xz: tuple[int, int],
+    radius: int,
+) -> None:
+    """Zero out density-spawned decoration layers within *radius* of a POI.
+
+    This prevents density-spawned vegetation from growing on top of
+    deterministic building layouts.  Affects ``flora_density``,
+    ``flora_variant_id``, ``ground_cover_density``, and
+    ``ground_cover_id`` layers.
+
+    Uses a circular SDF: distance(column, POI center) < radius => masked.
+    """
+    if radius <= 0:
+        return
+    tile = buffer.tile
+    tile_size = buffer.tile_size
+    wx, wz = _tile_coords(tile.min_x, tile.min_z, tile_size)
+    cx, cz = poi_center_xz
+    dist_sq = (wx - cx) ** 2 + (wz - cz) ** 2
+    inside = (dist_sq < radius * radius).ravel()
+
+    for layer_name in (
+        "flora_density",
+        "flora_variant_id",
+        "ground_cover_density",
+        "ground_cover_id",
+    ):
+        if layer_name in buffer.layers:
+            buffer.layers[layer_name] = np.where(
+                inside, 0, buffer.layers[layer_name]
+            )
+
+
 def _remap_flora_variant_to_global(
     buffer: TileFieldBuffer, profile_name: str
 ) -> None:
