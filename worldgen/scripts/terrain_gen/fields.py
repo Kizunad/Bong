@@ -40,6 +40,7 @@ class LayerSpec:
     safe_default: float
     blend_mode: str   # maximum | minimum | lerp | swap | special
     export_type: str  # float32 | uint8
+    density_maskable: bool = False  # zeroed inside layout-flatten radius
 
 
 LAYER_REGISTRY: dict[str, LayerSpec] = {
@@ -97,14 +98,14 @@ LAYER_REGISTRY: dict[str, LayerSpec] = {
     #   Rust consumer samples it per-chunk and rolls against per-variant rarity.
     # flora_variant_id: uint8 index into the zone profile's EcologySpec.decorations
     #   tuple (or into a merged palette — manifest declares both). 0 = none.
-    "flora_density":        LayerSpec(safe_default=0.0,    blend_mode="maximum", export_type="float32"),
-    "flora_variant_id":     LayerSpec(safe_default=0.0,    blend_mode="swap",    export_type="uint8"),
+    "flora_density":        LayerSpec(safe_default=0.0,    blend_mode="maximum", export_type="float32", density_maskable=True),
+    "flora_variant_id":     LayerSpec(safe_default=0.0,    blend_mode="swap",    export_type="uint8",   density_maskable=True),
     # ground_cover_density / ground_cover_id: 与 flora_* 平行的"地表植被层"
     # （短草/花/蕨/枯木）。flora 是稀疏特征装饰（树/灌木/巨石），ground_cover
     # 是密集地表覆盖。两层独立 swap，让一列既能长树又能长花，不再二选一。
     # 同样指向全局 GLOBAL_DECORATION_PALETTE（kind="flower" 的 spec）。
-    "ground_cover_density": LayerSpec(safe_default=0.0,    blend_mode="maximum", export_type="float32"),
-    "ground_cover_id":      LayerSpec(safe_default=0.0,    blend_mode="swap",    export_type="uint8"),
+    "ground_cover_density": LayerSpec(safe_default=0.0,    blend_mode="maximum", export_type="float32", density_maskable=True),
+    "ground_cover_id":      LayerSpec(safe_default=0.0,    blend_mode="swap",    export_type="uint8",   density_maskable=True),
     # zongmen_origin_id: overworld 九宗故地 origin discriminator.
     #   1=血溪 / 2=北陵 / 3=南渊 / 4=赤霞 / 5=玄水 / 6=太初 / 7=幽暗 / 0=none.
     "zongmen_origin_id":    LayerSpec(safe_default=0.0,    blend_mode="swap",    export_type="uint8"),

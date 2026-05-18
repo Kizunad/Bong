@@ -399,6 +399,20 @@ def _apply_realm_collapse_mask(
     )
 
 
+def _compute_circular_mask(
+    buffer: TileFieldBuffer,
+    poi_center_xz: tuple[int, int],
+    radius: int,
+) -> np.ndarray:
+    """Return a 1-D boolean mask marking columns within *radius* of a POI."""
+    tile = buffer.tile
+    tile_size = buffer.tile_size
+    wx, wz = _tile_coords(tile.min_x, tile.min_z, tile_size)
+    cx, cz = poi_center_xz
+    dist_sq = (wx - cx) ** 2 + (wz - cz) ** 2
+    return (dist_sq < radius * radius).ravel()
+
+
 def apply_compound_flatten(
     buffer: TileFieldBuffer,
     poi_center_xz: tuple[int, int],
@@ -412,17 +426,18 @@ def apply_compound_flatten(
     """
     if radius <= 0:
         return
-    tile = buffer.tile
-    tile_size = buffer.tile_size
-    wx, wz = _tile_coords(tile.min_x, tile.min_z, tile_size)
-    cx, cz = poi_center_xz
-    dist_sq = (wx - cx) ** 2 + (wz - cz) ** 2
-    inside = (dist_sq < radius * radius).ravel()
+    inside = _compute_circular_mask(buffer, poi_center_xz, radius)
 
     if "height" in buffer.layers:
         buffer.layers["height"] = np.where(
             inside, target_height, buffer.layers["height"]
         )
+
+
+# Layers zeroed inside layout-flatten radius, derived from LAYER_REGISTRY.
+_DENSITY_MASKABLE_LAYERS: tuple[str, ...] = tuple(
+    name for name, spec in LAYER_REGISTRY.items() if spec.density_maskable
+)
 
 
 def compute_layout_density_mask(
@@ -433,27 +448,16 @@ def compute_layout_density_mask(
     """Zero out density-spawned decoration layers within *radius* of a POI.
 
     This prevents density-spawned vegetation from growing on top of
-    deterministic building layouts.  Affects ``flora_density``,
-    ``flora_variant_id``, ``ground_cover_density``, and
-    ``ground_cover_id`` layers.
+    deterministic building layouts.  Affected layers are derived from
+    ``LAYER_REGISTRY`` entries with ``density_maskable=True``.
 
     Uses a circular SDF: distance(column, POI center) < radius => masked.
     """
     if radius <= 0:
         return
-    tile = buffer.tile
-    tile_size = buffer.tile_size
-    wx, wz = _tile_coords(tile.min_x, tile.min_z, tile_size)
-    cx, cz = poi_center_xz
-    dist_sq = (wx - cx) ** 2 + (wz - cz) ** 2
-    inside = (dist_sq < radius * radius).ravel()
+    inside = _compute_circular_mask(buffer, poi_center_xz, radius)
 
-    for layer_name in (
-        "flora_density",
-        "flora_variant_id",
-        "ground_cover_density",
-        "ground_cover_id",
-    ):
+    for layer_name in _DENSITY_MASKABLE_LAYERS:
         if layer_name in buffer.layers:
             buffer.layers[layer_name] = np.where(
                 inside, 0, buffer.layers[layer_name]
