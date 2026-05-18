@@ -10,12 +10,12 @@
 
 | Phase | 内容 | 状态 | 验收日期 |
 |-------|------|------|---------|
-| P0 | 底盘扩展：ScarHistory + MeridianAdjacency + qi_physics 常数 | ⬜ | — |
-| P1 | 疤纹回路：相邻微裂经脉自发形成被动回路 | ⬜ | — |
-| P2 | 活茧：累计过载触发四阶肉身被动进化 | ⬜ | — |
-| P3 | 死脉甲：主动绝脉技 + SEVERED 经脉污染免疫 | ⬜ | — |
-| P4 | 裂读：近战命中时探测对方经脉损伤分布 | ⬜ | — |
-| P5 | 互噬：双体修贴身搏杀触发共振锁定 | ⬜ | — |
+| P0 | 底盘扩展：ScarHistory + MeridianAdjacency + qi_physics 常数 | ✅ | 2026-05-18 |
+| P1 | 疤纹回路：相邻微裂经脉自发形成被动回路 | ✅ | 2026-05-18 |
+| P2 | 活茧：累计过载触发四阶肉身被动进化 | ✅ | 2026-05-18 |
+| P3 | 死脉甲：主动绝脉技 + SEVERED 经脉污染免疫 | ✅ | 2026-05-18 |
+| P4 | 裂读：近战命中时探测对方经脉损伤分布 | ✅ | 2026-05-18 |
+| P5 | 互噬：双体修贴身搏杀触发共振锁定 | ✅ | 2026-05-18 |
 
 ---
 
@@ -1228,7 +1228,7 @@ git mv docs/plan-baomai-v4.md docs/finished_plans/
 
 ### 测试结果
 
-- `cargo test baomai_v4` → **84 passed**（P0: 9, P1: 12, P2: 13, P3: 12, P4: 9, P5: 13, 含 PR-1 review 修复追加的覆盖）
+- `cargo test baomai_v4` → **84 passed**（P0: 15, P1: 16, P2: 17, P3: 14, P4: 9, P5: 13）
 - `cargo fmt --check` → ok
 - `cargo clippy --all-targets -- -D warnings` → ok
 - `cargo test` → 5392 passed（全量无回归）
