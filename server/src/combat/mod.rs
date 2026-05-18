@@ -3,6 +3,7 @@ pub mod anticheat;
 pub mod armor;
 pub mod armor_sync;
 pub mod baomai_v3;
+pub mod baomai_v4;
 pub mod body_conditioning;
 pub mod body_mass;
 pub mod carrier;
@@ -238,6 +239,7 @@ pub fn register(app: &mut App) {
     zhenmai_v2::register(app);
     dugu_v2::register(app);
     baomai_v3::register(app);
+    baomai_v4::register(app);
     tuike_v2::register(app);
     app.add_systems(
         Update,

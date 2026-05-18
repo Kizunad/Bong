@@ -99,6 +99,20 @@ pub const QI_ZHENMAI_PARRY_RECOVERY_MOVE_SPEED_MULTIPLIER: f32 = 0.7;
 /// 数值断言默认容忍度。
 pub const QI_EPSILON: f64 = 1e-6;
 
+// ── plan-baomai-v4 §1.3 疤纹回路（经脉 integrity 物理阈值）──
+/// 回路形成所需经脉 integrity 下限（含）。
+pub const SCAR_CIRCUIT_INTEGRITY_MIN: f64 = 0.50;
+/// 回路形成所需经脉 integrity 上限（含）——超过此值回路断开。
+pub const SCAR_CIRCUIT_INTEGRITY_MAX: f64 = 0.85;
+
+// ── plan-baomai-v4 §1.3 互噬（真元排斥/经脉损伤物理）──
+/// 共振锁定期间 ρ 覆写值（排斥系数降为零）。
+pub const RESONANCE_LOCK_RHO_OVERRIDE: f64 = 0.0;
+/// 锁定期间经脉 integrity 下降速率（per tick，仅已受损经脉）。
+pub const RESONANCE_LOCK_INTEGRITY_DRAIN: f64 = 0.005;
+/// 脱离共振的 integrity 惩罚（per 受损经脉）。
+pub const RESONANCE_RETREAT_INTEGRITY_PENALTY: f64 = 0.08;
+
 #[cfg(test)]
 mod tests {
     use super::*;
