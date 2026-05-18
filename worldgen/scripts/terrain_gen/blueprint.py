@@ -96,6 +96,9 @@ class TerrainProfileSpec:
     water: dict[str, Any]
     passability: str
     extras: dict[str, Any] = field(default_factory=dict)
+    # --- layout infrastructure (plan-dandao-path-v1 PR-1) ---
+    architectural_layout: str | None = None
+    compound_flatten_radius: int | None = None
 
 
 @dataclass(frozen=True)
@@ -242,17 +245,31 @@ def load_profile_catalog(path: Path) -> TerrainProfileCatalog:
 
     profiles: dict[str, TerrainProfileSpec] = {}
     for profile_name, profile_raw in raw["profiles"].items():
+        height_raw = dict(profile_raw.get("height", {}))
+        # Extract compound_flatten_radius from height sub-dict if present.
+        compound_flatten_radius: int | None = None
+        if "compound_flatten_radius" in height_raw:
+            compound_flatten_radius = int(height_raw.pop("compound_flatten_radius"))
+        # Also check top-level (some profiles may put it there).
+        if "compound_flatten_radius" in profile_raw:
+            compound_flatten_radius = int(profile_raw["compound_flatten_radius"])
         profiles[str(profile_name)] = TerrainProfileSpec(
             name=str(profile_name),
             boundary=_parse_boundary(profile_raw["boundary"]),
-            height=dict(profile_raw.get("height", {})),
+            height=height_raw,
             surface=tuple(str(item) for item in profile_raw.get("surface", [])),
             water=dict(profile_raw.get("water", {})),
             passability=str(profile_raw.get("passability", "unknown")),
             extras=_pop_known(
                 profile_raw,
-                ("boundary", "height", "surface", "water", "passability"),
+                (
+                    "boundary", "height", "surface", "water",
+                    "passability", "architectural_layout",
+                    "compound_flatten_radius",
+                ),
             ),
+            architectural_layout=profile_raw.get("architectural_layout"),
+            compound_flatten_radius=compound_flatten_radius,
         )
 
     return TerrainProfileCatalog(version=int(raw.get("version", 1)), profiles=profiles)
