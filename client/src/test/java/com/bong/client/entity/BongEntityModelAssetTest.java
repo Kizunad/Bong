@@ -72,6 +72,7 @@ public class BongEntityModelAssetTest {
                     || body.contains("\"Glow\"")
                     || body.contains("\"Lid\"")
                     || body.contains("\"Hammer\"")
+                    || body.contains("\"HangHammer\"")
                     || body.contains("\"Veil\"")
                     || body.contains("\"Runes\"")
                     || body.contains("\"Body\"")
