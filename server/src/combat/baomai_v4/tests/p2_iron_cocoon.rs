@@ -12,6 +12,7 @@ use crate::combat::baomai_v4::iron_cocoon::{IronCocoonStage, IronCocoonTracker};
 use crate::combat::baomai_v4::scar_circuit::ActiveScarCircuits;
 use crate::combat::baomai_v4::scar_history::ScarHistory;
 use crate::combat::components::DerivedAttrs;
+use crate::combat::events::CombatEvent;
 use crate::combat::CombatClock;
 use crate::cultivation::components::MeridianSystem;
 
@@ -19,6 +20,7 @@ fn app() -> App {
     let mut app = App::new();
     app.insert_resource(CombatClock { tick: 100 });
     app.add_event::<OverloadMeridianRippleEvent>();
+    app.add_event::<CombatEvent>();
     crate::combat::baomai_v4::register(&mut app);
     app
 }

@@ -7,8 +7,8 @@
 
 use super::boss::{BaolongwangBoss, BossPhase};
 
-/// 三阶段 AI Scorer 权重。
-/// §8.1 #5: 纯 Scorer 链组合，每阶段 Action 评分函数内置 health_ratio 区间门控。
+// 三阶段 AI Scorer 权重。
+// §8.1 #5: 纯 Scorer 链组合，每阶段 Action 评分函数内置 health_ratio 区间门控。
 
 // ── 阶段一：驱逐 ────────────────────────────────────────────
 

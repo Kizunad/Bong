@@ -21,6 +21,7 @@ use crate::combat::baomai_v4::iron_cocoon::IronCocoonTracker;
 use crate::combat::baomai_v4::scar_circuit::{ActiveScarCircuits, ScarCircuitKind};
 use crate::combat::baomai_v4::scar_history::ScarHistory;
 use crate::combat::components::{BodyPart, CombatState, DerivedAttrs};
+use crate::combat::events::CombatEvent;
 use crate::combat::CombatClock;
 use crate::cultivation::components::{MeridianId, MeridianSystem};
 use crate::cultivation::meridian::severed::{
@@ -34,6 +35,7 @@ fn app_at_tick(tick: u64) -> App {
     app.insert_resource(CombatClock { tick });
     app.add_event::<OverloadMeridianRippleEvent>();
     app.add_event::<MeridianSeveredEvent>();
+    app.add_event::<CombatEvent>();
     crate::combat::baomai_v4::register(&mut app);
     app
 }
