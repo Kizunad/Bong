@@ -280,9 +280,41 @@ pub struct DerivedAttrs {
     /// plan-HUD-v1 §3.4 / plan-woliu-v1 §3.1.G：绝灵涡流当前激活态。
     #[serde(default)]
     pub vortex_active: bool,
+
+    // ── plan-baomai-v4 §2.4 疤纹回路被动效果 ──
+    /// 三阳合流：近战 reach 加成（blocks）。0.0 = 无加成。
+    #[serde(default)]
+    pub reach_bonus: f64,
+    /// 心肺短路：焚血期间 qi regen 倍率。1.0 = 无加成。
+    #[serde(default = "default_one_f64")]
+    pub qi_regen_multiplier: f64,
+    /// 肝肾交汇：contamination 排毒速率倍率。1.0 = 无加成。
+    #[serde(default = "default_one_f64")]
+    pub contam_purge_multiplier: f64,
+    /// 脾肾固本：安全区经脉自愈速率倍率。1.0 = 无加成。
+    #[serde(default = "default_one_f64")]
+    pub healing_rate_multiplier: f64,
+
+    // ── plan-baomai-v4 §3.3 活茧被动效果 ──
+    /// 茧皮：BRUISE 伤害阈值倍率。1.0 = 无加成。
+    #[serde(default = "default_one_f64")]
+    pub bruise_threshold_multiplier: f64,
+    /// 茧骨：FRACTURE 降级为 LACERATION 的概率 [0.0, 1.0]。
+    #[serde(default)]
+    pub fracture_downgrade_chance: f64,
+    /// 茧肉：Cut/Pierce 类伤害降一档（LACERATION→ABRASION）。
+    #[serde(default)]
+    pub cut_pierce_downgrade: bool,
+    /// 茧灵：有活跃回路的经脉 flow_rate +5%。
+    #[serde(default)]
+    pub scar_forged_flow_bonus: bool,
 }
 
 fn default_one_f32() -> f32 {
+    1.0
+}
+
+fn default_one_f64() -> f64 {
     1.0
 }
 
@@ -296,6 +328,16 @@ impl Default for DerivedAttrs {
             defense_profile: HashMap::new(),
             tuike_layers: 0,
             vortex_active: false,
+            // plan-baomai-v4 scar circuit passives (neutral defaults)
+            reach_bonus: 0.0,
+            qi_regen_multiplier: 1.0,
+            contam_purge_multiplier: 1.0,
+            healing_rate_multiplier: 1.0,
+            // plan-baomai-v4 iron cocoon passives (neutral defaults)
+            bruise_threshold_multiplier: 1.0,
+            fracture_downgrade_chance: 0.0,
+            cut_pierce_downgrade: false,
+            scar_forged_flow_bonus: false,
         }
     }
 }
