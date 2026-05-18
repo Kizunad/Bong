@@ -1,0 +1,7 @@
+{
+  "parent": "minecraft:block/cross",
+  "textures": {
+    "cross": "bong:block/long_lin_tai"
+  },
+  "render_type": "cutout"
+}

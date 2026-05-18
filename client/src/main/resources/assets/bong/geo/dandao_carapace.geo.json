@@ -1,0 +1,130 @@
+{
+  "format_version": "1.12.0",
+  "minecraft:geometry": [
+    {
+      "description": {
+        "identifier": "geometry.bong.dandao_carapace",
+        "texture_width": 128,
+        "texture_height": 128,
+        "visible_bounds_width": 3.0,
+        "visible_bounds_height": 2.5,
+        "visible_bounds_offset": [0, 1.5, 0.5]
+      },
+      "bones": [
+        {
+          "name": "root",
+          "pivot": [0, 24, 0]
+        },
+        {
+          "name": "carapace_group",
+          "parent": "root",
+          "pivot": [0, 24, 2],
+          "cubes": []
+        },
+        {
+          "name": "shell_upper",
+          "parent": "carapace_group",
+          "pivot": [0, 28, 2.5],
+          "cubes": [
+            {
+              "origin": [-5, 27, 1.5],
+              "size": [10, 3, 3],
+              "inflate": 0.3,
+              "uv": [0, 0]
+            }
+          ]
+        },
+        {
+          "name": "shell_mid",
+          "parent": "carapace_group",
+          "pivot": [0, 25, 2.5],
+          "cubes": [
+            {
+              "origin": [-5.5, 24, 1.5],
+              "size": [11, 3, 3.5],
+              "inflate": 0.4,
+              "uv": [0, 16]
+            }
+          ]
+        },
+        {
+          "name": "shell_lower",
+          "parent": "carapace_group",
+          "pivot": [0, 22, 2.5],
+          "cubes": [
+            {
+              "origin": [-5, 21, 1.5],
+              "size": [10, 3, 3],
+              "inflate": 0.3,
+              "uv": [0, 32]
+            }
+          ]
+        },
+        {
+          "name": "shell_left_flank",
+          "parent": "carapace_group",
+          "pivot": [-5, 25, 1],
+          "rotation": [0, 0, -20],
+          "cubes": [
+            {
+              "origin": [-6.5, 23, 0.5],
+              "size": [2, 6, 3],
+              "inflate": 0.2,
+              "uv": [0, 48]
+            }
+          ]
+        },
+        {
+          "name": "shell_right_flank",
+          "parent": "carapace_group",
+          "pivot": [5, 25, 1],
+          "rotation": [0, 0, 20],
+          "cubes": [
+            {
+              "origin": [4.5, 23, 0.5],
+              "size": [2, 6, 3],
+              "inflate": 0.2,
+              "uv": [16, 48]
+            }
+          ]
+        },
+        {
+          "name": "shell_ridge_center",
+          "parent": "carapace_group",
+          "pivot": [0, 28.5, 3],
+          "cubes": [
+            {
+              "origin": [-0.5, 28, 2.5],
+              "size": [1, 1, 6],
+              "uv": [0, 64]
+            }
+          ]
+        },
+        {
+          "name": "shell_ridge_left",
+          "parent": "carapace_group",
+          "pivot": [-2.5, 28, 3],
+          "cubes": [
+            {
+              "origin": [-3, 27.5, 2.5],
+              "size": [1, 0.5, 5],
+              "uv": [16, 64]
+            }
+          ]
+        },
+        {
+          "name": "shell_ridge_right",
+          "parent": "carapace_group",
+          "pivot": [2.5, 28, 3],
+          "cubes": [
+            {
+              "origin": [2, 27.5, 2.5],
+              "size": [1, 0.5, 5],
+              "uv": [32, 64]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

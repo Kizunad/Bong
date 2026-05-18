@@ -1,0 +1,7 @@
+{
+  "parent": "minecraft:block/cross",
+  "textures": {
+    "cross": "bong:block/hua_xing_gen"
+  },
+  "render_type": "cutout"
+}

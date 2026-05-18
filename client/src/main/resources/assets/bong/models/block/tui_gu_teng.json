@@ -1,0 +1,7 @@
+{
+  "parent": "minecraft:block/cross",
+  "textures": {
+    "cross": "bong:block/tui_gu_teng"
+  },
+  "render_type": "cutout"
+}

@@ -1,0 +1,111 @@
+{
+  "format_version": "1.12.0",
+  "minecraft:geometry": [
+    {
+      "description": {
+        "identifier": "geometry.bong.dandao_forearm_scales",
+        "texture_width": 64,
+        "texture_height": 64,
+        "visible_bounds_width": 2.0,
+        "visible_bounds_height": 2.0,
+        "visible_bounds_offset": [0, 1.5, 0]
+      },
+      "bones": [
+        {
+          "name": "root",
+          "pivot": [0, 0, 0]
+        },
+        {
+          "name": "right_arm_scales",
+          "parent": "root",
+          "pivot": [-6, 20, 0],
+          "cubes": []
+        },
+        {
+          "name": "r_scale_row_1",
+          "parent": "right_arm_scales",
+          "pivot": [-6, 18, 0],
+          "cubes": [
+            {
+              "origin": [-8.1, 17, -2.5],
+              "size": [4.2, 2, 5],
+              "inflate": 0.15,
+              "uv": [0, 0]
+            }
+          ]
+        },
+        {
+          "name": "r_scale_row_2",
+          "parent": "right_arm_scales",
+          "pivot": [-6, 16, 0],
+          "cubes": [
+            {
+              "origin": [-8.1, 15, -2.5],
+              "size": [4.2, 2, 5],
+              "inflate": 0.2,
+              "uv": [0, 10]
+            }
+          ]
+        },
+        {
+          "name": "r_scale_row_3",
+          "parent": "right_arm_scales",
+          "pivot": [-6, 14, 0],
+          "cubes": [
+            {
+              "origin": [-8.1, 13, -2.5],
+              "size": [4.2, 2, 5],
+              "inflate": 0.25,
+              "uv": [0, 20]
+            }
+          ]
+        },
+        {
+          "name": "left_arm_scales",
+          "parent": "root",
+          "pivot": [6, 20, 0],
+          "cubes": []
+        },
+        {
+          "name": "l_scale_row_1",
+          "parent": "left_arm_scales",
+          "pivot": [6, 18, 0],
+          "cubes": [
+            {
+              "origin": [3.9, 17, -2.5],
+              "size": [4.2, 2, 5],
+              "inflate": 0.15,
+              "uv": [20, 0]
+            }
+          ]
+        },
+        {
+          "name": "l_scale_row_2",
+          "parent": "left_arm_scales",
+          "pivot": [6, 16, 0],
+          "cubes": [
+            {
+              "origin": [3.9, 15, -2.5],
+              "size": [4.2, 2, 5],
+              "inflate": 0.2,
+              "uv": [20, 10]
+            }
+          ]
+        },
+        {
+          "name": "l_scale_row_3",
+          "parent": "left_arm_scales",
+          "pivot": [6, 14, 0],
+          "cubes": [
+            {
+              "origin": [3.9, 13, -2.5],
+              "size": [4.2, 2, 5],
+              "inflate": 0.25,
+              "uv": [20, 20]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

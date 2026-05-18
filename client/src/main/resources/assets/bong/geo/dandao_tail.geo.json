@@ -1,0 +1,99 @@
+{
+  "format_version": "1.12.0",
+  "minecraft:geometry": [
+    {
+      "description": {
+        "identifier": "geometry.bong.dandao_tail",
+        "texture_width": 64,
+        "texture_height": 64,
+        "visible_bounds_width": 2.0,
+        "visible_bounds_height": 3.0,
+        "visible_bounds_offset": [0, 1.0, 1.5]
+      },
+      "bones": [
+        {
+          "name": "root",
+          "pivot": [0, 24, 0]
+        },
+        {
+          "name": "tail_base",
+          "parent": "root",
+          "pivot": [0, 21, 2],
+          "rotation": [30, 0, 0],
+          "cubes": [
+            {
+              "origin": [-1.5, 20, 1],
+              "size": [3, 3, 3],
+              "uv": [0, 0]
+            }
+          ]
+        },
+        {
+          "name": "tail_seg_1",
+          "parent": "tail_base",
+          "pivot": [0, 20, 4],
+          "rotation": [15, 0, 0],
+          "cubes": [
+            {
+              "origin": [-1.2, 19.2, 3.5],
+              "size": [2.4, 2.4, 3],
+              "uv": [0, 10]
+            }
+          ]
+        },
+        {
+          "name": "tail_seg_2",
+          "parent": "tail_seg_1",
+          "pivot": [0, 19.5, 6.5],
+          "rotation": [10, 0, 0],
+          "cubes": [
+            {
+              "origin": [-1, 18.8, 6],
+              "size": [2, 2, 3],
+              "uv": [0, 20]
+            }
+          ]
+        },
+        {
+          "name": "tail_seg_3",
+          "parent": "tail_seg_2",
+          "pivot": [0, 19, 9],
+          "rotation": [5, 0, 0],
+          "cubes": [
+            {
+              "origin": [-0.8, 18.5, 8.5],
+              "size": [1.6, 1.6, 3],
+              "uv": [0, 28]
+            }
+          ]
+        },
+        {
+          "name": "tail_seg_4",
+          "parent": "tail_seg_3",
+          "pivot": [0, 18.8, 11.5],
+          "rotation": [0, 0, 0],
+          "cubes": [
+            {
+              "origin": [-0.6, 18.2, 11],
+              "size": [1.2, 1.2, 2.5],
+              "uv": [0, 36]
+            }
+          ]
+        },
+        {
+          "name": "tail_tip",
+          "parent": "tail_seg_4",
+          "pivot": [0, 18.5, 13.5],
+          "rotation": [-5, 0, 0],
+          "cubes": [
+            {
+              "origin": [-0.4, 18, 13],
+              "size": [0.8, 0.8, 2],
+              "uv": [0, 44]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
