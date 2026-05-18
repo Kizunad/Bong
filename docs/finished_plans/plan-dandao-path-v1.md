@@ -1664,6 +1664,9 @@ Agent(
 | `a3b91ce33` | 2026-05-18 | #260 | PR-2: 丹道底盘 + 变异系统 (P0+P1) |
 | `660376340` | 2026-05-18 | #262 | PR-3: 丹道地形——丹宗遗园 + 暴龙王巢穴 |
 | `cc2b3dc7b` | 2026-05-18 | #264 | PR-4: 物品 / BOSS / 境界递进 (P2-P5) |
+| `0c1e4b6f4` | 2026-05-18 | #265 | PR-5: 贴图资产（placeholder）+ Blockbench 模型 15 个 |
+| `7507eca4c` | 2026-05-18 | #266 | PR-6: Client 渲染（变异附件 + 暴龙王 + HUD + inspect） |
+| merged | 2026-05-18 | #268 | PR-7: 丹宗遗园 9 个 NBT 结构体（3 轮打磨 + PROMISE） |
 
 ### 测试结果
 
@@ -1685,14 +1688,11 @@ Agent(
 ### 遗留 / 后续
 
 - **worldview §六.4 丹体异化**：需单独 PR 写入 `docs/worldview.md`，人工 review（§8.2 说明，不在 consume-plan 范围）
-- **Client GeckoLib 变异附件渲染**：10 个 Blockbench 模型 + GeckoLib renderer（P3 §4.1 只做了 schema placeholder）
-- **Client HUD 丹道面板 Java 实现**：P3 §4.2 只做了 schema
-- **贴图资产**：33 次 `/gen-image` 调用（§7.4 贴图管线）
-- **NBT 建筑文件**：9 个 structure NBT（§9.8），layout runner 目前为 stub paste
-- **暴龙王 GeckoLib 模型渲染**：Bedrock→GeckoLib 转换 + bone alias renderer
+- **贴图正式替换**：33 张贴图目前是 placeholder 色块（gen.py API key 过期），需有效 key 后逐张 `/gen-image` 替换
 - **Agent 端 narration pipeline**：`bong:mutation_event` 消费 + 天道对变异体的反应文案
 - **炼丹招式实际 qi 扣除**：P0 三招式 resolver 目前只做 gate check，实际 qi 扣除 + side-effect 需接入 QiTransfer + alchemy::pill 路径
 - **mutation_advance_system 节流**：当前每帧检测，需加 600-tick 节流计数器
+- **NBT layout runner 真实 paste**：runner.py 的 _paste_nbt 目前是 stub（log only），需接入 Rust server 端 structure 加载
 
 
 
