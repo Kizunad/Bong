@@ -1639,6 +1639,61 @@ Agent(
 
 §10.1 的 3 轮打磨 + `<PROMISE>` 担保**发生在 subagent 内部**——subagent 自己 commit `(round 1/3)` / `(round 2/3)` / `(round 3/3)` + 终轮 commit 写 `<PROMISE>` 块。主线只在 subagent 返回的 `promise_blocks` 字段里收到摘要，**不参与每轮 review**。
 
+---
+
+## Finish Evidence
+
+### 落地清单
+
+| 阶段 | 模块 / 文件路径 |
+|------|----------------|
+| P-1 worldgen layout infra | `worldgen/scripts/terrain_gen/layouts/{base,runner,__init__}.py` + `stitcher.py` 扩展（`_compute_circular_mask` / `apply_compound_flatten` / `compute_layout_density_mask`）+ `fields.py` `density_maskable` + `blueprint.py` `compound_flatten_radius` / `architectural_layout` |
+| P0 丹道底盘 | `server/src/dandao/{mod,components,skills,toxin_tracker}.rs` + `server/src/schema/dandao.rs` |
+| P1 变异系统 | `server/src/dandao/{mutation,progression}.rs` + `server/src/cultivation/life_record.rs` 扩展 + `server/src/schema/inventory.rs` ExtraHand slots |
+| P2 物品 | `server/src/dandao/{herbs,recipes,catalyst_furnace,mutation_forge}.rs` + `server/assets/alchemy/recipes/dandao_*.json` |
+| P3 视觉 placeholder | `server/src/dandao/visual_sync.rs`（MutationVisualSyncPayload + DandaoHudPanelData schema） |
+| P4 暴龙王 BOSS | `server/src/dandao/{boss,boss_ai}.rs` |
+| P5 境界递进 | `server/src/dandao/{internal_brew,progression}.rs` |
+| 丹道地形 | `worldgen/scripts/terrain_gen/{layouts/dan_zong_compound,profiles/dan_zong_yi_yuan}.py` + `server/zones.json` 新增 2 zones |
+
+### 关键 commit（squash merge）
+
+| hash | 日期 | PR | 内容 |
+|------|------|-----|------|
+| `82c5d082b` | 2026-05-18 | #259 | PR-1: worldgen layout 基础设施 |
+| `a3b91ce33` | 2026-05-18 | #260 | PR-2: 丹道底盘 + 变异系统 (P0+P1) |
+| `660376340` | 2026-05-18 | #262 | PR-3: 丹道地形——丹宗遗园 + 暴龙王巢穴 |
+| `cc2b3dc7b` | 2026-05-18 | #264 | PR-4: 物品 / BOSS / 境界递进 (P2-P5) |
+
+### 测试结果
+
+- PR-1: `python3 -m pytest worldgen/ → 88 passed (46 new layout infra)`
+- PR-2: `cargo test → 5192 passed (116 new dandao)`
+- PR-3: `python3 -m pytest worldgen/ → 109 passed (79 new terrain)` + `cargo test world::zone → 16 passed`
+- PR-4: `cargo test → 5356 passed (98 new P2-P5)`
+- 全部 PR 均通过 e2e CI pipeline（Schema + Agent + Server build + cargo test + Smoke/E2E）
+
+### 跨仓库核验
+
+| 仓库 | 命中 symbol |
+|------|-------------|
+| server | `DandaoStyle` / `MutationState` / `MutationStage` / `MutationKind` / `BodySlot` / `ActiveMutation` / `BaolongwangBoss` / `MutationVisualSyncPayload` / `DandaoHudPanelData` / `DandaoInternalBrewIntent` / `EquipSlotV1::ExtraHand0/1` / `WEAPON_SWAP_COOLDOWN_TICKS` / `LayoutSpec` / `Placement` / `run_layout` / `apply_compound_flatten` / `compute_layout_density_mask` |
+| schema | `MutationStageV1` / `MutationKindV1` / `MutationEventV1` / `DandaoStyleV1` / `ActiveMutationV1` / `EquippedInventorySnapshotV1.extra_hand_0/1` |
+| agent | `bong:mutation_event`（schema 已定义，agent 端 narration_pipeline 接入待后续） |
+| client | `bong:mutation_visual`（CustomPayload 已定义，GeckoLib 渲染待后续 client PR） |
+
+### 遗留 / 后续
+
+- **worldview §六.4 丹体异化**：需单独 PR 写入 `docs/worldview.md`，人工 review（§8.2 说明，不在 consume-plan 范围）
+- **Client GeckoLib 变异附件渲染**：10 个 Blockbench 模型 + GeckoLib renderer（P3 §4.1 只做了 schema placeholder）
+- **Client HUD 丹道面板 Java 实现**：P3 §4.2 只做了 schema
+- **贴图资产**：33 次 `/gen-image` 调用（§7.4 贴图管线）
+- **NBT 建筑文件**：9 个 structure NBT（§9.8），layout runner 目前为 stub paste
+- **暴龙王 GeckoLib 模型渲染**：Bedrock→GeckoLib 转换 + bone alias renderer
+- **Agent 端 narration pipeline**：`bong:mutation_event` 消费 + 天道对变异体的反应文案
+- **炼丹招式实际 qi 扣除**：P0 三招式 resolver 目前只做 gate check，实际 qi 扣除 + side-effect 需接入 QiTransfer + alchemy::pill 路径
+- **mutation_advance_system 节流**：当前每帧检测，需加 600-tick 节流计数器
+
 
 
 
