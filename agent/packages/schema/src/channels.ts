@@ -316,6 +316,10 @@ export const CHANNELS = {
   /** Server → Agent: 经脉永久 SEVERED 事件流（7 类来源 emit 同一通道） */
   MERIDIAN_SEVERED: "bong:meridian_severed",
 
+  // ─── 丹道变异（plan-dandao-path-v1 §6.4） ────────────────────────────
+  /** Server → Agent: 变异阶段推进事件（阶段 3+ 触发天道 narration） */
+  MUTATION_EVENT: "bong:mutation_event",
+
   // ─── 通用手搓（plan-craft-v1 P3） ────────────────────────────
   /** Server → Agent: 出炉结果（成功 / 失败），narration 出炉叙事的 trigger */
   CRAFT_OUTCOME: "bong:craft/outcome",
@@ -415,6 +419,7 @@ export const REDIS_V1_CHANNELS = [
   CHANNELS.BAOMAI_V3_SKILL_EVENT,
   CHANNELS.CRAFT_OUTCOME,
   CHANNELS.CRAFT_RECIPE_UNLOCKED,
+  CHANNELS.MUTATION_EVENT,
 ] as const;
 
 export type ChannelName = (typeof CHANNELS)[keyof typeof CHANNELS];

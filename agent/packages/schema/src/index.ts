@@ -28,6 +28,7 @@ export * from "./identity.js";
 export * from "./inventory.js";
 export * from "./lingtian-weather.js";
 export * from "./movement.js";
+export * from "./mutation-event.js";
 export * from "./narration.js";
 export * from "./npc.js";
 export * from "./poi-novice.js";
