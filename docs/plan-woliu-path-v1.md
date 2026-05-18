@@ -535,6 +535,84 @@ WANGYINTAI_LAYOUT = LayoutSpec(
 7. **zone spirit_qi 被常驻涡流永久抽低的恢复机制**：是否引入 zone 自然回复？或者接受"涡流者驻留过的地方灵气变薄"作为世界观后果？
 8. **观主残碟装备的具体属性与 forge/inventory 集成**
 
+> 全部已在 §8.1 收口。原表保留以备追溯，**实施时以 §8.1 决议为准**。
+
+---
+
+## 九.1、§8.1 决议（pre-P0 收口，2026-05-19）
+
+### #1 常驻涡流切换 vs 常驻被动
+
+**决议**：
+1. 手动 toggle，复用 `PassiveVortex { enabled, toggled_at_tick }` pattern
+2. `PassiveVortex.enabled` 字段当前存在但从未被读取（`state.rs:90-94`），toggle 命令未实现。P0 实现时：新增 `ambient_vortex_tick()` system 读 `enabled` 驱动 qi 回复 / zone drain / contamination；toggle 走 skill intent 或 dev command
+3. 拒绝"永久开启"：worldview §五:472 "算计型"防御要求主动决策权；永久开启剥夺玩家在正灵域关闭止损的能力
+
+**落点**：`server/src/combat/woliu_v2/state.rs:90-94`（PassiveVortex 定义）/ `server/src/combat/woliu_v2/tick.rs:150-173`（lifecycle 清理）/ plan §5.4
+
+### #2 回响失控目标范围
+
+**决议**：
+1. 阶段 3 失控仅命中施法者自身；阶段 4 扩展到半径内所有实体（含队友）
+2. 当前 `collect_targets_in_radius()`（`skills.rs:515-546`）仅排除 caster，无 team/faction 系统。失控实现方式：阶段 3 = 将回响目标强制重定向为 caster entity；阶段 4 = 随机选 `collect_targets_in_radius()` 结果中任一实体（含 caster）
+3. **不引入 team/faction 基础设施**——回响失控是特殊随机事件，不需要通用阵营系统。若未来需要友方判定，那是独立 plan 的事
+
+**落点**：`server/src/combat/woliu_v2/skills.rs:515-546`（collect_targets_in_radius）/ plan §6.2
+
+### #3 虚心无敌态实现
+
+**决议**：
+1. 新增 `StatusEffectKind::VoidCoreActive` 枚举变体
+2. 当前 `StatusEffectKind` 有 33 个变体（`events.rs:81-144`），通用检查 `has_active_status()`（`status.rs:62-67`）。在 `resolve.rs:185-187`（攻击判定）和 `resolve.rs:257-259`（防御判定）注入 VoidCoreActive 检查：施法者有此状态 → 不可发起攻击；目标有此状态 → 攻击不命中
+3. 拒绝独立 component：增加检查分散点、不走 tick 自动过期、HUD/agent 渲染需额外适配。StatusEffectKind 统一框架更干净
+
+**落点**：`server/src/combat/events.rs:144`（新增变体）/ `server/src/combat/resolve.rs:185-187, 257-259`（注入检查）/ `server/src/combat/status.rs:62-67`（通用检查函数）/ plan §6.3
+
+### #4 忘音台 layout 依赖
+
+**决议**：
+1. 直接复用 LayoutSpec 系统——dandao PR-1 layout 基础设施**已完整落地**
+2. `LayoutSpec` / `Placement` / `LayoutResult` 定义在 `worldgen/scripts/terrain_gen/layouts/base.py:16-101`；`dan_zong_compound.py` 是 49 placement 的完整范例。忘音台新建 `worldgen/scripts/terrain_gen/layouts/wangyintai_compound.py`，照 plan §7.4 的 `WANGYINTAI_LAYOUT` 定义 Placement 列表
+3. 无需 fallback 到 blueprint 固定坐标——基础设施已就绪
+
+**落点**：`worldgen/scripts/terrain_gen/layouts/base.py:16-101`（LayoutSpec 定义）/ `worldgen/scripts/terrain_gen/layouts/dan_zong_compound.py`（范例）/ plan §7.4
+
+### #5 虚蚀值跨死亡持久性
+
+**决议**：
+1. `VoidErosion` component 跨死亡保留（`cumulative_erosion` + `stage` 不重置），与 dandao `cumulative_toxin` 对齐
+2. dandao `DandaoStyle`（`dandao/components.rs:12-24`）是 `#[derive(Component, Serialize, Deserialize)]`，death cleanup 不移除此类 component。`VoidErosion` 采用相同 derive pattern，持久化层自动处理序列化
+3. 死亡时仅重置临时状态：`ambient_active = false`（常驻涡流关闭）、清除 `StatusEffectKind::VoidCoreActive`。`cumulative_erosion` 和 `stage` 永久保留——虚蚀是不可逆的
+
+**落点**：`server/src/dandao/components.rs:12-24`（DandaoStyle 持久化范例）/ `server/src/npc/lifecycle.rs:942-1089`（death handling）/ plan §5.1
+
+### #6 丹道变异 + 涡流虚蚀双叠加
+
+**决议**：
+1. 两者 contamination 惩罚叠加（乘法组合）。选双极端路径的代价应当极端
+2. dandao `MERIDIAN_PENALTY_BY_STAGE`（`mutation.rs:15`）= `[0.0, 0.03, 0.08, 0.15, 0.20]`，当前**未接入 combat resolve**（`resolve.rs:762-765` 无 MutationState 查询）。本 plan P1 `erosion_modifier().contam_mult` 实现时：查询 `Option<&MutationState>` → 公式 `(1.0 + meridian_penalty) × contam_mult`。例：dandao 阶段 3 + 虚蚀阶段 3 = `(1.0 + 0.15) × 1.5 = 1.725×` 基线 contamination
+3. dandao meridian_penalty 接入 combat resolve 属于丹道 plan 遗留缺口，本 plan 顺带补上（在同一个 contamination emission 点注入两个查询，不扩大改动面）
+
+**落点**：`server/src/dandao/mutation.rs:15`（MERIDIAN_PENALTY_BY_STAGE）/ `server/src/combat/resolve.rs:762-765`（contamination emission）/ plan §6.4
+
+### #7 zone spirit_qi 恢复机制
+
+**决议**：
+1. 不引入 zone 自然回复——接受"涡流者驻留过的地方灵气变薄"作为世界观后果
+2. 当前 zone spirit_qi 恢复途径仅有：botany 枯萎归还（`botany/lifecycle.rs:438`）和鼠类生态泄回（`fauna/rat_phase.rs:371`，仅 1% 回收率）。worldview §二 负灵域设计为天地的倒吸，无自然恢复描述。`qi_physics/constants.rs` 无 `ZONE_RECOVERY_*` 常数
+3. 常驻涡流已有硬上限（zone spirit_qi ≤ 0 → 自动关闭，plan §5.4），防止无限负值。涡流者要么周期性迁移、要么忍受枯竭——这本身就是"吸灵成瘾者"（worldview §十二:1010）的经济代价
+
+**落点**：`server/src/world/zone.rs:31`（Zone.spirit_qi 定义）/ `server/src/botany/lifecycle.rs:438`（唯一自然恢复）/ plan §5.4（硬上限）
+
+### #8 观主残碟装备属性
+
+**决议**：
+1. 新增 `ItemEffect` 变体 `VortexEchoAccelerator { delay_reduction_secs: f64, erosion_cost_per_sec: f64 }`，注册为 JSON item template
+2. `ItemEffect` enum（`inventory/mod.rs:234-243`）已有 passive-while-held pattern（`BreakthroughBonus`、`QiRecovery` 等）。观主残碟注册为 `category: Treasure`，`rarity: Legendary`，效果：持有时 `ScheduledEcho.replay_at_tick` 减 0.3s（6 tick），但常驻虚蚀 +0.003/s
+3. P2 实现时：在 `woliu_v2` tick 系统中查询 `PlayerInventory.equipment` → 读 `ItemEffect` → 修改 echo 延迟 + 注入额外虚蚀。不需要新的 forge 配方——观主残魂 NPC 直接出售（`UnlockSource::Npc`）
+
+**落点**：`server/src/inventory/mod.rs:234-243`（ItemEffect enum）/ `server/src/inventory/mod.rs:246-250`（ItemRegistry）/ plan §7.5
+
 ---
 
 ## 十、§10 实施工作流
