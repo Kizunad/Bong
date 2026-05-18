@@ -2,6 +2,8 @@ package com.bong.client;
 
 import com.bong.client.animation.ClientAnimationBridge;
 import com.bong.client.audio.SoundRecipePlayer;
+import com.bong.client.dandao.MutationPayloadHandler;
+import com.bong.client.dandao.MutationVisualState;
 import com.bong.client.environment.EnvironmentEffectController;
 import com.bong.client.hud.BongHudStateSnapshot;
 import com.bong.client.hud.BongHudStateStore;
@@ -35,6 +37,8 @@ import com.bong.client.tsy.TsyDeathVfxStore;
 import com.bong.client.ui.ClientConnectionStatusStore;
 import com.bong.client.ui.UiOpenScreens;
 import com.bong.client.visual.VisualEffectController;
+import com.google.gson.JsonObject;
+import com.google.gson.JsonParser;
 import net.fabricmc.fabric.api.client.networking.v1.ClientPlayConnectionEvents;
 import net.fabricmc.fabric.api.client.networking.v1.ClientPlayNetworking;
 import net.minecraft.text.Text;
@@ -78,6 +82,7 @@ public class BongNetworkHandler {
         registerAudioStopChannel();
         registerAmbientZoneChannel();
         registerZoneEnvironmentChannel();
+        registerMutationVisualChannel();
         // 旧 server 推过的 realm_collapse evac HUD 是 static volatile 字段倒计时，
         // 不会在断线 / 切服 / 重连时自清。Disconnect 时强制清掉，避免上一 server
         // 的 "域崩撤离 48s" 倒计时跨 session 续命。
@@ -93,6 +98,7 @@ public class BongNetworkHandler {
                 com.bong.client.gathering.GatheringSessionStore.clearOnDisconnect();
                 ClientConnectionStatusStore.markDisconnected(Util.getMeasuringTimeMs());
                 com.bong.client.audio.MusicStateMachine.instance().clear();
+                MutationVisualState.reset();
             })
         );
         ClientPlayConnectionEvents.JOIN.register(
@@ -348,6 +354,26 @@ public class BongNetworkHandler {
             String jsonPayload = ServerDataEnvelope.decodeUtf8(bytes);
             markConnectionPayload();
             client.execute(() -> EnvironmentEffectController.acceptPayload(jsonPayload));
+        });
+    }
+
+    private static void registerMutationVisualChannel() {
+        ClientPlayNetworking.registerGlobalReceiver(new Identifier("bong", "mutation_visual"), (client, handler, buf, responseSender) -> {
+            int readableBytes = buf.readableBytes();
+            byte[] bytes = new byte[readableBytes];
+            buf.readBytes(bytes);
+
+            String jsonPayload = ServerDataEnvelope.decodeUtf8(bytes);
+            markConnectionPayload();
+            client.execute(() -> {
+                try {
+                    JsonObject json = JsonParser.parseString(jsonPayload).getAsJsonObject();
+                    MutationPayloadHandler.handle(json);
+                    BongClient.LOGGER.info("Processed bong:mutation_visual payload ({} bytes)", readableBytes);
+                } catch (Exception e) {
+                    BongClient.LOGGER.error("Failed to parse bong:mutation_visual payload: {}", e.getMessage());
+                }
+            });
         });
     }
 
