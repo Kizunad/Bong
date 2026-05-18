@@ -1,0 +1,131 @@
+{
+  "format_version": "1.12.0",
+  "minecraft:geometry": [
+    {
+      "description": {
+        "identifier": "geometry.bong.dandao_horns",
+        "texture_width": 64,
+        "texture_height": 64,
+        "visible_bounds_width": 2.5,
+        "visible_bounds_height": 2.5,
+        "visible_bounds_offset": [0, 2.5, 0]
+      },
+      "bones": [
+        {
+          "name": "root",
+          "pivot": [0, 24, 0]
+        },
+        {
+          "name": "horn_group",
+          "parent": "root",
+          "pivot": [0, 31, -1],
+          "cubes": []
+        },
+        {
+          "name": "left_horn_base",
+          "parent": "horn_group",
+          "pivot": [-3, 31, -1],
+          "rotation": [-10, 0, 25],
+          "cubes": [
+            {
+              "origin": [-4, 31, -2],
+              "size": [2, 3, 2],
+              "uv": [0, 0]
+            }
+          ]
+        },
+        {
+          "name": "left_horn_mid",
+          "parent": "left_horn_base",
+          "pivot": [-4, 34, -1],
+          "rotation": [-15, 0, 15],
+          "cubes": [
+            {
+              "origin": [-4.7, 33.5, -1.7],
+              "size": [1.5, 3, 1.5],
+              "uv": [0, 8]
+            }
+          ]
+        },
+        {
+          "name": "left_horn_upper",
+          "parent": "left_horn_mid",
+          "pivot": [-5, 36.5, -1],
+          "rotation": [-20, 0, 10],
+          "cubes": [
+            {
+              "origin": [-5.3, 36, -1.3],
+              "size": [1, 2.5, 1],
+              "uv": [0, 16]
+            }
+          ]
+        },
+        {
+          "name": "left_horn_tip",
+          "parent": "left_horn_upper",
+          "pivot": [-5, 38.5, -0.8],
+          "rotation": [-25, 0, 5],
+          "cubes": [
+            {
+              "origin": [-5.2, 38, -1],
+              "size": [0.5, 2, 0.5],
+              "uv": [0, 22]
+            }
+          ]
+        },
+        {
+          "name": "right_horn_base",
+          "parent": "horn_group",
+          "pivot": [3, 31, -1],
+          "rotation": [-10, 0, -25],
+          "cubes": [
+            {
+              "origin": [2, 31, -2],
+              "size": [2, 3, 2],
+              "uv": [16, 0]
+            }
+          ]
+        },
+        {
+          "name": "right_horn_mid",
+          "parent": "right_horn_base",
+          "pivot": [4, 34, -1],
+          "rotation": [-15, 0, -15],
+          "cubes": [
+            {
+              "origin": [3.2, 33.5, -1.7],
+              "size": [1.5, 3, 1.5],
+              "uv": [16, 8]
+            }
+          ]
+        },
+        {
+          "name": "right_horn_upper",
+          "parent": "right_horn_mid",
+          "pivot": [5, 36.5, -1],
+          "rotation": [-20, 0, -10],
+          "cubes": [
+            {
+              "origin": [4.3, 36, -1.3],
+              "size": [1, 2.5, 1],
+              "uv": [16, 16]
+            }
+          ]
+        },
+        {
+          "name": "right_horn_tip",
+          "parent": "right_horn_upper",
+          "pivot": [5, 38.5, -0.8],
+          "rotation": [-25, 0, -5],
+          "cubes": [
+            {
+              "origin": [4.7, 38, -1],
+              "size": [0.5, 2, 0.5],
+              "uv": [16, 22]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

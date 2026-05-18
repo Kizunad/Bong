@@ -1,0 +1,79 @@
+{
+  "format_version": "1.12.0",
+  "minecraft:geometry": [
+    {
+      "description": {
+        "identifier": "geometry.bong.dandao_bone_ridge",
+        "texture_width": 32,
+        "texture_height": 32,
+        "visible_bounds_width": 1.5,
+        "visible_bounds_height": 1.5,
+        "visible_bounds_offset": [0, 2.0, 0]
+      },
+      "bones": [
+        {
+          "name": "root",
+          "pivot": [0, 24, 0]
+        },
+        {
+          "name": "ridge_group",
+          "parent": "root",
+          "pivot": [0, 31, 0],
+          "cubes": []
+        },
+        {
+          "name": "ridge_center",
+          "parent": "ridge_group",
+          "pivot": [0, 31.5, -2],
+          "rotation": [-15, 0, 0],
+          "cubes": [
+            {
+              "origin": [-1.5, 31, -3],
+              "size": [3, 1.5, 2],
+              "uv": [0, 0]
+            }
+          ]
+        },
+        {
+          "name": "ridge_left",
+          "parent": "ridge_group",
+          "pivot": [-2.5, 31, -1.5],
+          "rotation": [-10, 0, 15],
+          "cubes": [
+            {
+              "origin": [-3.5, 30.5, -2.5],
+              "size": [2, 1, 2],
+              "uv": [0, 6]
+            }
+          ]
+        },
+        {
+          "name": "ridge_right",
+          "parent": "ridge_group",
+          "pivot": [2.5, 31, -1.5],
+          "rotation": [-10, 0, -15],
+          "cubes": [
+            {
+              "origin": [1.5, 30.5, -2.5],
+              "size": [2, 1, 2],
+              "uv": [8, 6]
+            }
+          ]
+        },
+        {
+          "name": "ridge_peak",
+          "parent": "ridge_center",
+          "pivot": [0, 32.5, -2.5],
+          "rotation": [-20, 0, 0],
+          "cubes": [
+            {
+              "origin": [-0.5, 32, -3],
+              "size": [1, 1, 1],
+              "uv": [10, 0]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

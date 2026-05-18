@@ -1,0 +1,127 @@
+{
+  "format_version": "1.12.0",
+  "minecraft:geometry": [
+    {
+      "description": {
+        "identifier": "geometry.bong.dandao_extra_arms",
+        "texture_width": 128,
+        "texture_height": 128,
+        "visible_bounds_width": 4.0,
+        "visible_bounds_height": 3.0,
+        "visible_bounds_offset": [0, 1.5, 0]
+      },
+      "bones": [
+        {
+          "name": "root",
+          "pivot": [0, 24, 0]
+        },
+        {
+          "name": "extra_arms_anchor",
+          "parent": "root",
+          "pivot": [0, 22, 1],
+          "cubes": []
+        },
+        {
+          "name": "left_extra_shoulder",
+          "parent": "extra_arms_anchor",
+          "pivot": [5, 22, 1],
+          "cubes": [
+            {
+              "origin": [4, 21, 0],
+              "size": [3, 3, 3],
+              "uv": [0, 0]
+            }
+          ]
+        },
+        {
+          "name": "left_extra_upper_arm",
+          "parent": "left_extra_shoulder",
+          "pivot": [6, 21, 1.5],
+          "rotation": [0, 0, -15],
+          "cubes": [
+            {
+              "origin": [5, 17, 0.5],
+              "size": [2, 4, 2],
+              "uv": [0, 12]
+            }
+          ]
+        },
+        {
+          "name": "left_extra_forearm",
+          "parent": "left_extra_upper_arm",
+          "pivot": [6, 17, 1.5],
+          "rotation": [-20, 0, 0],
+          "cubes": [
+            {
+              "origin": [5, 13, 0.5],
+              "size": [2, 4, 2],
+              "uv": [0, 24]
+            }
+          ]
+        },
+        {
+          "name": "left_extra_hand",
+          "parent": "left_extra_forearm",
+          "pivot": [6, 13, 1.5],
+          "cubes": [
+            {
+              "origin": [5.2, 12, 0.7],
+              "size": [1.6, 1.5, 1.6],
+              "uv": [0, 36]
+            }
+          ]
+        },
+        {
+          "name": "right_extra_shoulder",
+          "parent": "extra_arms_anchor",
+          "pivot": [-5, 22, 1],
+          "cubes": [
+            {
+              "origin": [-7, 21, 0],
+              "size": [3, 3, 3],
+              "uv": [32, 0]
+            }
+          ]
+        },
+        {
+          "name": "right_extra_upper_arm",
+          "parent": "right_extra_shoulder",
+          "pivot": [-6, 21, 1.5],
+          "rotation": [0, 0, 15],
+          "cubes": [
+            {
+              "origin": [-7, 17, 0.5],
+              "size": [2, 4, 2],
+              "uv": [32, 12]
+            }
+          ]
+        },
+        {
+          "name": "right_extra_forearm",
+          "parent": "right_extra_upper_arm",
+          "pivot": [-6, 17, 1.5],
+          "rotation": [-20, 0, 0],
+          "cubes": [
+            {
+              "origin": [-7, 13, 0.5],
+              "size": [2, 4, 2],
+              "uv": [32, 24]
+            }
+          ]
+        },
+        {
+          "name": "right_extra_hand",
+          "parent": "right_extra_forearm",
+          "pivot": [-6, 13, 1.5],
+          "cubes": [
+            {
+              "origin": [-6.8, 12, 0.7],
+              "size": [1.6, 1.5, 1.6],
+              "uv": [32, 36]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

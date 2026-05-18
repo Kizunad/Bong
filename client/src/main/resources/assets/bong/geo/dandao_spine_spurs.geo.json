@@ -1,0 +1,92 @@
+{
+  "format_version": "1.12.0",
+  "minecraft:geometry": [
+    {
+      "description": {
+        "identifier": "geometry.bong.dandao_spine_spurs",
+        "texture_width": 32,
+        "texture_height": 32,
+        "visible_bounds_width": 1.5,
+        "visible_bounds_height": 2.0,
+        "visible_bounds_offset": [0, 1.5, 0]
+      },
+      "bones": [
+        {
+          "name": "root",
+          "pivot": [0, 24, 0]
+        },
+        {
+          "name": "spur_group",
+          "parent": "root",
+          "pivot": [0, 24, 2],
+          "cubes": []
+        },
+        {
+          "name": "spur_upper",
+          "parent": "spur_group",
+          "pivot": [0, 27, 2.5],
+          "rotation": [-30, 0, 0],
+          "cubes": [
+            {
+              "origin": [-0.5, 27, 2],
+              "size": [1, 2.5, 1],
+              "uv": [0, 0]
+            }
+          ]
+        },
+        {
+          "name": "spur_mid_left",
+          "parent": "spur_group",
+          "pivot": [-1, 25.5, 2.5],
+          "rotation": [-25, 0, 10],
+          "cubes": [
+            {
+              "origin": [-1.5, 25.5, 2],
+              "size": [1, 2, 1],
+              "uv": [4, 0]
+            }
+          ]
+        },
+        {
+          "name": "spur_mid_right",
+          "parent": "spur_group",
+          "pivot": [1, 25.5, 2.5],
+          "rotation": [-25, 0, -10],
+          "cubes": [
+            {
+              "origin": [0.5, 25.5, 2],
+              "size": [1, 2, 1],
+              "uv": [8, 0]
+            }
+          ]
+        },
+        {
+          "name": "spur_lower",
+          "parent": "spur_group",
+          "pivot": [0, 23.5, 2.5],
+          "rotation": [-20, 0, 0],
+          "cubes": [
+            {
+              "origin": [-0.5, 23.5, 2],
+              "size": [1, 1.5, 1],
+              "uv": [12, 0]
+            }
+          ]
+        },
+        {
+          "name": "spur_lowest",
+          "parent": "spur_group",
+          "pivot": [0, 22, 2.5],
+          "rotation": [-15, 0, 0],
+          "cubes": [
+            {
+              "origin": [-0.5, 22, 2],
+              "size": [1, 1.5, 1],
+              "uv": [16, 0]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

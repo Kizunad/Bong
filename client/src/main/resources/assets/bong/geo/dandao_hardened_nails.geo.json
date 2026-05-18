@@ -1,0 +1,163 @@
+{
+  "format_version": "1.12.0",
+  "minecraft:geometry": [
+    {
+      "description": {
+        "identifier": "geometry.bong.dandao_hardened_nails",
+        "texture_width": 32,
+        "texture_height": 32,
+        "visible_bounds_width": 2.0,
+        "visible_bounds_height": 1.5,
+        "visible_bounds_offset": [0, 1.0, 0]
+      },
+      "bones": [
+        {
+          "name": "root",
+          "pivot": [0, 0, 0]
+        },
+        {
+          "name": "right_hand_claws",
+          "parent": "root",
+          "pivot": [-5, 10, 0],
+          "cubes": []
+        },
+        {
+          "name": "r_claw_thumb",
+          "parent": "right_hand_claws",
+          "pivot": [-4, 10, -1],
+          "rotation": [15, 0, -10],
+          "cubes": [
+            {
+              "origin": [-4.5, 9, -1.5],
+              "size": [1, 2.5, 1],
+              "uv": [0, 0]
+            }
+          ]
+        },
+        {
+          "name": "r_claw_index",
+          "parent": "right_hand_claws",
+          "pivot": [-5.5, 10, -2],
+          "rotation": [20, 0, 0],
+          "cubes": [
+            {
+              "origin": [-6, 9, -2.5],
+              "size": [1, 3, 1],
+              "uv": [4, 0]
+            }
+          ]
+        },
+        {
+          "name": "r_claw_middle",
+          "parent": "right_hand_claws",
+          "pivot": [-5.5, 10, 0],
+          "rotation": [20, 0, 5],
+          "cubes": [
+            {
+              "origin": [-6, 9, -0.5],
+              "size": [1, 3.5, 1],
+              "uv": [8, 0]
+            }
+          ]
+        },
+        {
+          "name": "r_claw_ring",
+          "parent": "right_hand_claws",
+          "pivot": [-5.5, 10, 1],
+          "rotation": [18, 0, 5],
+          "cubes": [
+            {
+              "origin": [-6, 9, 0.5],
+              "size": [1, 3, 1],
+              "uv": [12, 0]
+            }
+          ]
+        },
+        {
+          "name": "r_claw_pinky",
+          "parent": "right_hand_claws",
+          "pivot": [-5, 10, 2],
+          "rotation": [15, 0, 10],
+          "cubes": [
+            {
+              "origin": [-5.5, 9, 1.5],
+              "size": [1, 2.5, 1],
+              "uv": [16, 0]
+            }
+          ]
+        },
+        {
+          "name": "left_hand_claws",
+          "parent": "root",
+          "pivot": [5, 10, 0],
+          "cubes": []
+        },
+        {
+          "name": "l_claw_thumb",
+          "parent": "left_hand_claws",
+          "pivot": [4, 10, -1],
+          "rotation": [15, 0, 10],
+          "cubes": [
+            {
+              "origin": [3.5, 9, -1.5],
+              "size": [1, 2.5, 1],
+              "uv": [0, 8]
+            }
+          ]
+        },
+        {
+          "name": "l_claw_index",
+          "parent": "left_hand_claws",
+          "pivot": [5.5, 10, -2],
+          "rotation": [20, 0, 0],
+          "cubes": [
+            {
+              "origin": [5, 9, -2.5],
+              "size": [1, 3, 1],
+              "uv": [4, 8]
+            }
+          ]
+        },
+        {
+          "name": "l_claw_middle",
+          "parent": "left_hand_claws",
+          "pivot": [5.5, 10, 0],
+          "rotation": [20, 0, -5],
+          "cubes": [
+            {
+              "origin": [5, 9, -0.5],
+              "size": [1, 3.5, 1],
+              "uv": [8, 8]
+            }
+          ]
+        },
+        {
+          "name": "l_claw_ring",
+          "parent": "left_hand_claws",
+          "pivot": [5.5, 10, 1],
+          "rotation": [18, 0, -5],
+          "cubes": [
+            {
+              "origin": [5, 9, 0.5],
+              "size": [1, 3, 1],
+              "uv": [12, 8]
+            }
+          ]
+        },
+        {
+          "name": "l_claw_pinky",
+          "parent": "left_hand_claws",
+          "pivot": [5, 10, 2],
+          "rotation": [15, 0, -10],
+          "cubes": [
+            {
+              "origin": [4.5, 9, 1.5],
+              "size": [1, 2.5, 1],
+              "uv": [16, 8]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
