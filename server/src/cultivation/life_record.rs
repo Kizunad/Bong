@@ -947,4 +947,66 @@ mod tests {
             "t80:skill:herbalism:lv2 | t160:skill:alchemy:lv3"
         );
     }
+
+    // plan-dandao-path-v1 — BiographyEntry::MutationAdvanced tests
+
+    #[test]
+    fn mutation_advanced_serde_roundtrip() {
+        let entry = BiographyEntry::MutationAdvanced {
+            from_stage: 1,
+            to_stage: 2,
+            cumulative_toxin: 105.5,
+            tick: 8000,
+        };
+        let json = serde_json::to_string(&entry).expect("MutationAdvanced should serialize");
+        let back: BiographyEntry =
+            serde_json::from_str(&json).expect("MutationAdvanced should deserialize");
+        assert_eq!(
+            serde_json::to_value(&entry).unwrap(),
+            serde_json::to_value(&back).unwrap(),
+            "MutationAdvanced serde round-trip should preserve all fields"
+        );
+    }
+
+    #[test]
+    fn mutation_advanced_format_entry_includes_stage_and_toxin() {
+        let mut lr = LifeRecord::new(canonical_player_id("Alice"));
+        lr.push(BiographyEntry::MutationAdvanced {
+            from_stage: 0,
+            to_stage: 1,
+            cumulative_toxin: 50.0,
+            tick: 1234,
+        });
+        let summary = lr.recent_summary_text(1);
+        assert!(
+            summary.contains("mutation_advanced"),
+            "summary should contain 'mutation_advanced', got: {summary}"
+        );
+        assert!(
+            summary.contains("0->1"),
+            "summary should contain stage transition '0->1', got: {summary}"
+        );
+        assert!(
+            summary.contains("toxin50.0"),
+            "summary should contain toxin value, got: {summary}"
+        );
+    }
+
+    #[test]
+    fn mutation_advanced_format_entry_all_stage_transitions() {
+        // Verify format_entry works for various stage transitions.
+        for (from, to) in [(0, 1), (1, 2), (2, 3), (3, 4)] {
+            let entry = BiographyEntry::MutationAdvanced {
+                from_stage: from,
+                to_stage: to,
+                cumulative_toxin: 100.0 * f64::from(to),
+                tick: 5000 + u64::from(to),
+            };
+            let text = format_entry(&entry);
+            assert!(
+                text.contains(&format!("{from}->{to}")),
+                "expected '{from}->{to}' in formatted text, got: {text}"
+            );
+        }
+    }
 }
