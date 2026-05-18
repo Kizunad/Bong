@@ -63,10 +63,16 @@ public final class MutationHudPlanner {
         }
 
         // Active mutation slot list
+        // §8.1 #2: ExtraHand slots only appear when multi-arm mutation is unlocked.
+        // When ExtraArms is not active, completely hide ExtraHand entries (no grey, no placeholder).
         List<MutationVisualState.MutationSlotEntry> slots = MutationVisualState.activeSlots();
+        boolean extraArmsUnlocked = hasExtraArms();
         if (!slots.isEmpty()) {
             int slotY = y + BAR_HEIGHT + (penalty > 0.0 ? 14 : 6);
             for (MutationVisualState.MutationSlotEntry slot : slots) {
+                if (isExtraHandSlot(slot) && !extraArmsUnlocked) {
+                    continue; // completely hidden per feedback_hud_conditional.md
+                }
                 String kindDisplay = MutationInspectLabel.translateKind(slot.kind());
                 int slotColor = slotColor(slot.level());
                 out.add(HudRenderCommand.text(
@@ -126,5 +132,14 @@ public final class MutationHudPlanner {
     public static boolean hasExtraArms() {
         return MutationVisualState.activeSlots().stream()
             .anyMatch(slot -> "ExtraArms".equals(slot.kind()));
+    }
+
+    /**
+     * Whether a slot entry represents an ExtraHand slot (ExtraHand0/ExtraHand1).
+     * These body slots only exist when the multi-arm mutation is unlocked.
+     */
+    static boolean isExtraHandSlot(MutationVisualState.MutationSlotEntry slot) {
+        String bodySlot = slot.bodySlot();
+        return bodySlot != null && bodySlot.startsWith("ExtraHand");
     }
 }
