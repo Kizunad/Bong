@@ -112,6 +112,7 @@ pub fn resonance_meter_system(
     clock: Res<CombatClock>,
     mut combat_events: EventReader<CombatEvent>,
     mut query: Query<(&mut ResonanceMeter, &ScarHistory), With<ScarHistory>>,
+    locked_query: Query<&ResonanceLocked>,
     mut lock_events: EventWriter<ResonanceLockEvent>,
     mut commands: valence::prelude::Commands,
 ) {
@@ -208,8 +209,8 @@ pub fn resonance_meter_system(
 
         // If either meter hit 1.0 and neither is already locked, trigger lock.
         if trigger {
-            let a_locked = query.get(attacker).map(|_| false).unwrap_or(false);
-            let b_locked = query.get(target).map(|_| false).unwrap_or(false);
+            let a_locked = locked_query.get(attacker).is_ok();
+            let b_locked = locked_query.get(target).is_ok();
             if !a_locked && !b_locked {
                 let ends_at = now + RESONANCE_LOCK_DURATION_TICKS;
                 commands.entity(attacker).insert(ResonanceLocked {
