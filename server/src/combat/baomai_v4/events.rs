@@ -26,6 +26,8 @@ pub enum CircuitBreakReason {
     Deepened,
     /// 经脉被永久 SEVERED。
     Severed,
+    /// 经脉被关闭（opened = false）。
+    Closed,
 }
 
 /// 疤纹回路断裂事件。

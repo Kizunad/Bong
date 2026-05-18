@@ -129,6 +129,9 @@ fn break_reason(
         }
     }
     let m = ms.get(id);
+    if !m.opened {
+        return Some(CircuitBreakReason::Closed);
+    }
     if m.integrity > SCAR_CIRCUIT_INTEGRITY_MAX {
         Some(CircuitBreakReason::Healed)
     } else if m.integrity < SCAR_CIRCUIT_INTEGRITY_MIN {

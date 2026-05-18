@@ -39,9 +39,11 @@ impl ScarHistory {
     /// 记录一次过载事件。
     pub fn record_overload(&mut self, skill: BaomaiSkillId, meridians: &[MeridianId]) {
         self.total_overloads = self.total_overloads.saturating_add(1);
-        *self.overloads_by_skill.entry(skill).or_insert(0) += 1;
+        let skill_count = self.overloads_by_skill.entry(skill).or_insert(0);
+        *skill_count = skill_count.saturating_add(1);
         for &mid in meridians {
-            *self.overloads_by_meridian.entry(mid).or_insert(0) += 1;
+            let mid_count = self.overloads_by_meridian.entry(mid).or_insert(0);
+            *mid_count = mid_count.saturating_add(1);
         }
     }
 }
@@ -52,12 +54,12 @@ impl ScarHistory {
 /// `from_ripple_scar()` 迁移。
 pub fn scar_history_track_system(
     mut events: EventReader<OverloadMeridianRippleEvent>,
-    mut with_history: Query<(&mut ScarHistory, Option<&MeridianRippleScar>)>,
+    mut with_history: Query<&mut ScarHistory>,
     without_history: Query<&MeridianRippleScar, Without<ScarHistory>>,
     mut commands: valence::prelude::Commands,
 ) {
     for event in events.read() {
-        if let Ok((mut history, _)) = with_history.get_mut(event.caster) {
+        if let Ok(mut history) = with_history.get_mut(event.caster) {
             history.record_overload(event.skill, &event.meridian_ids);
         } else if let Ok(ripple_scar) = without_history.get(event.caster) {
             // First overload event for this entity — migrate from MeridianRippleScar.

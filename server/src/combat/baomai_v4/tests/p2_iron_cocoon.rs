@@ -273,27 +273,34 @@ fn cocoon_event_emitted_on_stage_up() {
 
 #[test]
 fn cocoon_no_event_when_stage_unchanged() {
-    // Stay at same stage → no event.
+    // Stay at same stage → no event on second update.
     let mut app = app();
     let _entity = spawn_cocoon_entity(&mut app, 55);
 
-    // First update — tracker initializes to ToughSkin.
+    // First update — tracker initializes to ToughSkin (may emit None→ToughSkin event).
     app.update();
-    // Second update — still ToughSkin.
+
+    // Create a persistent reader and drain all events from the first update.
+    let mut reader = app
+        .world()
+        .resource::<Events<IronCocoonStageUpEvent>>()
+        .get_reader();
+    {
+        let events = app.world().resource::<Events<IronCocoonStageUpEvent>>();
+        let _: Vec<_> = reader.read(events).collect();
+    }
+
+    // Second update — still ToughSkin, should NOT emit any new event.
     app.update();
 
     let events = app.world().resource::<Events<IronCocoonStageUpEvent>>();
-    let mut reader = events.get_reader();
     let stage_ups: Vec<_> = reader.read(events).collect();
-    // The first update may emit an event (from None to ToughSkin in tracker).
-    // The second update should NOT emit another event.
-    // We check that after the second update, no new events are emitted.
-    // Since Bevy events auto-clear after 2 frames, we need to be careful.
-    // The key assertion is that the system only fires on transitions.
-    assert!(
-        stage_ups.len() <= 1,
-        "Should not emit redundant stage-up events when stage is unchanged. Got {} events",
-        stage_ups.len()
+    assert_eq!(
+        stage_ups.len(),
+        0,
+        "Should not emit any stage-up event when stage is unchanged on second update. Got {} events: {:?}",
+        stage_ups.len(),
+        stage_ups
     );
 }
 
