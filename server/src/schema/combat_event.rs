@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 pub enum CombatBodyPartV1 {
     Head,
     Chest,
+    Back,
     Abdomen,
     ArmL,
     ArmR,

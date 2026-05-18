@@ -255,6 +255,7 @@ fn map_body_part(body_part: crate::combat::components::BodyPart) -> CombatBodyPa
     match body_part {
         crate::combat::components::BodyPart::Head => CombatBodyPartV1::Head,
         crate::combat::components::BodyPart::Chest => CombatBodyPartV1::Chest,
+        crate::combat::components::BodyPart::Back => CombatBodyPartV1::Back,
         crate::combat::components::BodyPart::Abdomen => CombatBodyPartV1::Abdomen,
         crate::combat::components::BodyPart::ArmL => CombatBodyPartV1::ArmL,
         crate::combat::components::BodyPart::ArmR => CombatBodyPartV1::ArmR,

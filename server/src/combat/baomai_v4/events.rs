@@ -1,10 +1,11 @@
-//! plan-baomai-v4 §7 — 事件类型汇总（P0-P2 部分）。
+//! plan-baomai-v4 §7 — 事件类型汇总（P0-P3 部分）。
 
 use serde::{Deserialize, Serialize};
 use valence::prelude::{bevy_ecs, Entity, Event};
 
 use super::iron_cocoon::IronCocoonStage;
 use super::scar_circuit::ScarCircuitKind;
+use crate::cultivation::components::MeridianId;
 
 /// 疤纹回路形成事件。
 ///
@@ -52,5 +53,16 @@ pub struct IronCocoonStageUpEvent {
     pub from: IronCocoonStage,
     pub to: IronCocoonStage,
     pub total_overloads: u32,
+    pub tick: u64,
+}
+
+/// 主动绝脉事件（plan-baomai-v4 §4.2）。
+///
+/// 消费方：`MeridianSeveredPermanent` 写入 + `DeadMeridianArmor` 更新 + agent narration。
+#[derive(Debug, Clone, Event)]
+#[allow(dead_code)]
+pub struct VoluntarySeverEvent {
+    pub entity: Entity,
+    pub meridian: MeridianId,
     pub tick: u64,
 }

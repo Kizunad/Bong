@@ -88,6 +88,7 @@ fn body_part_wire(part: BodyPart) -> &'static str {
     match part {
         BodyPart::Head => "head",
         BodyPart::Chest => "chest",
+        BodyPart::Back => "back",
         BodyPart::Abdomen => "abdomen",
         BodyPart::ArmL => "left_upper_arm",
         BodyPart::ArmR => "right_upper_arm",
