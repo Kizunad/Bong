@@ -7,13 +7,14 @@
 //! 3. 真元是否足够（§8.1 #4: capacity_for_tier(realm) × 3%，不硬编绝对数值）
 //! 4. 冷却
 
-use valence::prelude::{bevy_ecs, Entity};
+use valence::prelude::{bevy_ecs, Entity, Events};
 
 use crate::cultivation::components::{Cultivation, Meridian, MeridianId, Realm};
 use crate::cultivation::meridian::severed::{
     check_meridian_dependencies, MeridianSeveredPermanent,
 };
 use crate::cultivation::skill_registry::{CastRejectReason, CastResult};
+use crate::qi_physics::ledger::{QiAccountId, QiTransfer, QiTransferReason};
 
 pub const DANDAO_PILL_RUSH_SKILL_ID: &str = "dandao.pill_rush";
 pub const DANDAO_PILL_BOMB_SKILL_ID: &str = "dandao.pill_bomb";
@@ -56,6 +57,34 @@ pub fn dandao_qi_cost_base(realm: Realm) -> f64 {
     Meridian::capacity_for_tier(tier) * DANDAO_QI_RATIO
 }
 
+/// 实际扣除 qi 并 emit QiTransfer（player → zone 守恒）。
+/// 返回 true 表示扣除成功。
+fn drain_dandao_qi(world: &mut bevy_ecs::world::World, caster: Entity, cost: f64) -> bool {
+    if cost <= 0.0 {
+        return true;
+    }
+    let Some(mut cultivation) = world.get_mut::<Cultivation>(caster) else {
+        return false;
+    };
+    if cultivation.qi_current + f64::EPSILON < cost {
+        return false;
+    }
+    cultivation.qi_current = (cultivation.qi_current - cost).clamp(0.0, cultivation.qi_max);
+
+    // Emit QiTransfer for ledger audit (player → zone, ReleaseToZone reason).
+    if let Some(mut events) = world.get_resource_mut::<Events<QiTransfer>>() {
+        if let Ok(transfer) = QiTransfer::new(
+            QiAccountId::player(format!("entity:{caster:?}")),
+            QiAccountId::zone("current_zone".to_string()),
+            cost,
+            QiTransferReason::ReleaseToZone,
+        ) {
+            events.send(transfer);
+        }
+    }
+    true
+}
+
 /// 招式一：服丹急行 — 自服战斗丹（零距离，buff 自身）
 /// 境界要求：醒灵+
 /// 消耗：capacity_for_tier(realm) × 3%
@@ -90,6 +119,9 @@ pub fn resolve_pill_rush(
             reason: CastRejectReason::QiInsufficient,
         };
     }
+
+    // Actual qi deduction (守恒: player → zone via QiTransfer)
+    drain_dandao_qi(world, caster, qi_cost);
 
     CastResult::Started {
         cooldown_ticks: PILL_RUSH_COOLDOWN_TICKS,
@@ -132,6 +164,9 @@ pub fn resolve_pill_bomb(
         };
     }
 
+    // Actual qi deduction (守恒: player → zone via QiTransfer)
+    drain_dandao_qi(world, caster, qi_cost);
+
     CastResult::Started {
         cooldown_ticks: PILL_BOMB_COOLDOWN_TICKS,
         anim_duration_ticks: 12,
@@ -172,6 +207,9 @@ pub fn resolve_pill_mist(
         };
     }
 
+    // Actual qi deduction (守恒: player → zone via QiTransfer)
+    drain_dandao_qi(world, caster, PILL_MIST_QI_COST);
+
     CastResult::Started {
         cooldown_ticks: PILL_MIST_COOLDOWN_TICKS,
         anim_duration_ticks: 16,
@@ -189,6 +227,7 @@ mod skill_tests {
         qi_max: f64,
     ) -> (bevy_ecs::world::World, Entity) {
         let mut world = bevy_ecs::world::World::new();
+        world.init_resource::<Events<QiTransfer>>();
         let entity = world
             .spawn(Cultivation {
                 realm,
@@ -492,5 +531,108 @@ mod skill_tests {
             }
             _ => panic!("应为 Started"),
         }
+    }
+
+    // --- qi 实际扣除验证 ---
+
+    #[test]
+    fn pill_rush_actually_deducts_qi() {
+        let qi_cost = dandao_qi_cost_base(Realm::Awaken);
+        let initial_qi = qi_cost + 10.0;
+        let (mut world, caster) = make_world_with_caster(Realm::Awaken, initial_qi, 100.0);
+        let result = resolve_pill_rush(&mut world, caster, 0, None);
+        assert!(matches!(result, CastResult::Started { .. }));
+        let cultivation = world.get::<Cultivation>(caster).unwrap();
+        let expected = initial_qi - qi_cost;
+        assert!(
+            (cultivation.qi_current - expected).abs() < f64::EPSILON,
+            "服丹急行应扣除 {qi_cost} qi: 期望 {expected}, 实际 {}",
+            cultivation.qi_current
+        );
+    }
+
+    #[test]
+    fn pill_bomb_actually_deducts_qi() {
+        let qi_cost = dandao_qi_cost_base(Realm::Induce) * PILL_BOMB_QI_MULTIPLIER;
+        let initial_qi = qi_cost + 10.0;
+        let (mut world, caster) = make_world_with_caster(Realm::Induce, initial_qi, 200.0);
+        let result = resolve_pill_bomb(&mut world, caster, 0, None);
+        assert!(matches!(result, CastResult::Started { .. }));
+        let cultivation = world.get::<Cultivation>(caster).unwrap();
+        let expected = initial_qi - qi_cost;
+        assert!(
+            (cultivation.qi_current - expected).abs() < f64::EPSILON,
+            "投丹应扣除 {qi_cost} qi: 期望 {expected}, 实际 {}",
+            cultivation.qi_current
+        );
+    }
+
+    #[test]
+    fn pill_mist_actually_deducts_qi() {
+        let initial_qi = 50.0;
+        let (mut world, caster) = make_world_with_caster(Realm::Condense, initial_qi, 200.0);
+        let result = resolve_pill_mist(&mut world, caster, 0, None);
+        assert!(matches!(result, CastResult::Started { .. }));
+        let cultivation = world.get::<Cultivation>(caster).unwrap();
+        let expected = initial_qi - PILL_MIST_QI_COST;
+        assert!(
+            (cultivation.qi_current - expected).abs() < f64::EPSILON,
+            "丹雾应扣除 {PILL_MIST_QI_COST} qi: 期望 {expected}, 实际 {}",
+            cultivation.qi_current
+        );
+    }
+
+    #[test]
+    fn pill_rush_emits_qi_transfer_event() {
+        let qi_cost = dandao_qi_cost_base(Realm::Awaken);
+        let (mut world, caster) = make_world_with_caster(Realm::Awaken, qi_cost + 1.0, 100.0);
+        let result = resolve_pill_rush(&mut world, caster, 0, None);
+        assert!(matches!(result, CastResult::Started { .. }));
+        let events = world.resource::<Events<QiTransfer>>();
+        let mut reader = events.get_reader();
+        let transfers: Vec<_> = reader.read(events).collect();
+        assert_eq!(
+            transfers.len(),
+            1,
+            "服丹急行应 emit 1 条 QiTransfer 事件"
+        );
+        assert_eq!(
+            transfers[0].reason,
+            QiTransferReason::ReleaseToZone,
+            "QiTransfer reason 应为 ReleaseToZone"
+        );
+        assert!(
+            (transfers[0].amount - qi_cost).abs() < f64::EPSILON,
+            "QiTransfer 金额应等于 qi_cost={qi_cost}, 实际 {}",
+            transfers[0].amount
+        );
+    }
+
+    #[test]
+    fn pill_mist_exact_boundary_deducts_to_zero() {
+        let (mut world, caster) =
+            make_world_with_caster(Realm::Condense, PILL_MIST_QI_COST, 200.0);
+        let result = resolve_pill_mist(&mut world, caster, 0, None);
+        assert!(matches!(result, CastResult::Started { .. }));
+        let cultivation = world.get::<Cultivation>(caster).unwrap();
+        assert!(
+            cultivation.qi_current.abs() < f64::EPSILON,
+            "恰好 {PILL_MIST_QI_COST} qi 后应扣至 0, 实际 {}",
+            cultivation.qi_current
+        );
+    }
+
+    #[test]
+    fn rejected_cast_does_not_deduct_qi() {
+        // Realm too low for pill_bomb (need Induce, have Awaken)
+        let (mut world, caster) = make_world_with_caster(Realm::Awaken, 100.0, 100.0);
+        let result = resolve_pill_bomb(&mut world, caster, 0, None);
+        assert!(matches!(result, CastResult::Rejected { .. }));
+        let cultivation = world.get::<Cultivation>(caster).unwrap();
+        assert!(
+            (cultivation.qi_current - 100.0).abs() < f64::EPSILON,
+            "拒绝时不应扣除 qi: 期望 100.0, 实际 {}",
+            cultivation.qi_current
+        );
     }
 }
