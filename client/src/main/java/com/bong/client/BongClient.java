@@ -11,6 +11,7 @@ import com.bong.client.botany.BotanyHudBootstrap;
 import com.bong.client.botany.BotanyPlantRenderBootstrap;
 import com.bong.client.combat.CombatHudBootstrap;
 import com.bong.client.combat.juice.CombatJuiceSystem;
+import com.bong.client.dandao.BaolongwangRenderBootstrap;
 import com.bong.client.debug.BongAnimCommand;
 import com.bong.client.debug.BongHudCommand;
 import com.bong.client.debug.BongSpawnParticleCommand;
@@ -115,6 +116,7 @@ public class BongClient implements ClientModInitializer {
         WhaleRenderBootstrap.register();
         FaunaRenderBootstrap.register();
         BongEntityRenderBootstrap.register();
+        BaolongwangRenderBootstrap.register();
         WhaleDebugCommand.register();
         SpiritNicheRevealBootstrap.register();
         SparringInviteScreenBootstrap.register();
