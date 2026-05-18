@@ -152,6 +152,7 @@ mod tests {
         assert_eq!(LIVING_PILLAR_ENTITY_KIND.get(), 142);
         assert_eq!(POISON_DRAGON_ENTITY_KIND.get(), 143);
         assert_eq!(BONE_DRAGON_ENTITY_KIND.get(), 144);
+        assert_eq!(HEIWUSHI_ENTITY_KIND.get(), 145);
     }
 
     #[test]
@@ -175,6 +176,7 @@ mod tests {
             (BeastKind::LivingPillar, FaunaVisualKind::LivingPillar, 142),
             (BeastKind::PoisonDragon, FaunaVisualKind::PoisonDragon, 143),
             (BeastKind::BoneDragon, FaunaVisualKind::BoneDragon, 144),
+            (BeastKind::Heiwushi, FaunaVisualKind::Heiwushi, 145),
         ];
         for &(beast, visual, raw_id) in expected {
             assert_eq!(

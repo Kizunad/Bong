@@ -30,6 +30,17 @@ public class FaunaRenderBootstrapTest {
         assertFaunaRawId(FaunaVisualKind.TSY_SENTINEL, 132);
         assertFaunaRawId(FaunaVisualKind.FUYA, 133);
         assertFaunaRawId(FaunaVisualKind.SKULL_FIEND, 134);
+        assertFaunaRawId(FaunaVisualKind.GREEN_SPIDER, 135);
+        assertFaunaRawId(FaunaVisualKind.JUNGLE_SCORPION, 136);
+        assertFaunaRawId(FaunaVisualKind.COCKADE_SNAKE, 137);
+        assertFaunaRawId(FaunaVisualKind.BLUE_SPIDER, 138);
+        assertFaunaRawId(FaunaVisualKind.ICE_SCORPION, 139);
+        assertFaunaRawId(FaunaVisualKind.MANDRAKE_SNAKE, 140);
+        assertFaunaRawId(FaunaVisualKind.DARK_TIGER, 141);
+        assertFaunaRawId(FaunaVisualKind.LIVING_PILLAR, 142);
+        assertFaunaRawId(FaunaVisualKind.POISON_DRAGON, 143);
+        assertFaunaRawId(FaunaVisualKind.BONE_DRAGON, 144);
+        assertFaunaRawId(FaunaVisualKind.HEIWUSHI, 145);
     }
 
     @Test
@@ -43,6 +54,17 @@ public class FaunaRenderBootstrapTest {
             "geo/ash_spider.geo.json",
             "geo/hybrid_beast.geo.json",
             "geo/void_distorted.geo.json",
+            "geo/green_spider.geo.json",
+            "geo/jungle_scorpion.geo.json",
+            "geo/cockade_snake.geo.json",
+            "geo/blue_spider.geo.json",
+            "geo/ice_scorpion.geo.json",
+            "geo/mandrake_snake.geo.json",
+            "geo/dark_tiger.geo.json",
+            "geo/living_pillar.geo.json",
+            "geo/poison_dragon.geo.json",
+            "geo/bone_dragon.geo.json",
+            "geo/heiwushi.geo.json",
             "geo/daoxiang.geo.json",
             "geo/zhinian.geo.json",
             "geo/tsy_sentinel.geo.json",
