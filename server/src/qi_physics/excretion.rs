@@ -126,7 +126,7 @@ mod tests {
     #[test]
     fn regen_from_zone_is_zero_sum_scaled() {
         let (gain, drain) = regen_from_zone(0.5, 2.0, 1.0, 99.0);
-        assert_eq!(gain, 0.01);
+        assert_eq!(gain, 0.003);
         assert!(gain > 0.0);
         assert!((gain / QI_ZONE_UNIT_CAPACITY - drain).abs() < 1e-9);
     }

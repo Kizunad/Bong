@@ -32,7 +32,7 @@ pub struct MeridianOpenedEvent {
 }
 
 pub const MIN_ZONE_QI_TO_OPEN: f64 = 0.3;
-pub const BASE_OPEN_RATE: f64 = 0.01;
+pub const BASE_OPEN_RATE: f64 = 0.00003;
 pub const OPEN_COST_FACTOR: f64 = 5.0;
 pub const MERIDIAN_CAPACITY_ON_OPEN: f64 = 10.0;
 
@@ -301,7 +301,7 @@ mod tests {
         let mut c = player_with_qi(1000.0);
         c.qi_max = 1000.0;
         let mut ms = MeridianSystem::default();
-        for _ in 0..200 {
+        for _ in 0..35_000 {
             let _ = advance_open_progress(&mut c, &mut ms, MeridianId::Lung, 1.0, true);
             if ms.get(MeridianId::Lung).opened {
                 break;
@@ -385,7 +385,9 @@ mod tests {
         let mut cultivation = player_with_qi(1000.0);
         cultivation.qi_max = 1000.0;
         let mut meridians = MeridianSystem::default();
-        meridians.get_mut(MeridianId::Lung).open_progress = 0.999;
+        // open_progress 必须离 1.0 足够近，使得一次 delta（BASE_OPEN_RATE * zone_qi * qi_ratio
+        // = 0.00003 * 1.0 * 1.0 = 0.00003）能跨过 1.0 门槛。
+        meridians.get_mut(MeridianId::Lung).open_progress = 1.0 - 1e-6;
         app.world_mut().spawn((
             Position::new([8.0, 66.0, 8.0]),
             MeridianTarget(MeridianId::Lung),
@@ -422,7 +424,8 @@ mod tests {
         let mut cultivation = player_with_qi(1000.0);
         cultivation.qi_max = 1000.0;
         let mut meridians = MeridianSystem::default();
-        meridians.get_mut(MeridianId::Lung).open_progress = 0.999;
+        // open_progress 必须离 1.0 足够近（同 emits_vfx 测试理由）。
+        meridians.get_mut(MeridianId::Lung).open_progress = 1.0 - 1e-6;
         let player = app
             .world_mut()
             .spawn((
