@@ -52,6 +52,35 @@ pub struct VoidErosionEventV1 {
     pub server_tick: u64,
 }
 
+/// P3: 虚蚀视觉同步 payload（server -> client `bong:void_erosion_visual`）。
+///
+/// 当虚蚀阶段变化或常驻涡流切换时，服务端向客户端发送此 payload
+/// 以驱动半透明渲染、回响粒子重播、声音扭曲 HUD overlay。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct VoidErosionVisualSyncPayloadV1 {
+    pub entity_id: String,
+    pub stage: u8,
+    pub cumulative_erosion: f64,
+    pub ambient_active: bool,
+    /// 玩家模型 alpha = `1.0 - stage * 0.15`（阶段 4 = 0.4 半透明）。
+    pub model_alpha: f32,
+    /// 声音扭曲 HUD overlay 是否激活（阶段 3+）。
+    pub sound_distortion_active: bool,
+    pub server_tick: u64,
+}
+
+/// P4: 天道感知修正 payload（server -> agent IPC）。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct VoidErosionTiandaoModifierV1 {
+    pub entity: String,
+    pub stage: VoidErosionStageV1,
+    /// 天道感知概率乘数：1.0=无修正, 0.6=阶段3(-40%), 0.0=阶段4(放弃追踪)。
+    pub detection_modifier: f64,
+    pub server_tick: u64,
+}
+
 #[cfg(test)]
 mod woliu_erosion_schema_tests {
     use super::*;
@@ -197,5 +226,117 @@ mod woliu_erosion_schema_tests {
             "VoidErosionStageV1 should serialize as snake_case, got {}",
             json
         );
+    }
+
+    // ────────────────────────────────────────────────────────
+    // P3: VoidErosionVisualSyncPayloadV1
+    // ────────────────────────────────────────────────────────
+
+    #[test]
+    fn visual_sync_payload_serde_roundtrip() {
+        let payload = VoidErosionVisualSyncPayloadV1 {
+            entity_id: "player_789".to_string(),
+            stage: 3,
+            cumulative_erosion: 250.0,
+            ambient_active: true,
+            model_alpha: 0.55,
+            sound_distortion_active: true,
+            server_tick: 12345,
+        };
+        let json = serde_json::to_string(&payload).expect("serialize");
+        let back: VoidErosionVisualSyncPayloadV1 =
+            serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(
+            payload, back,
+            "VoidErosionVisualSyncPayloadV1 serde round-trip should preserve all fields"
+        );
+    }
+
+    #[test]
+    fn visual_sync_payload_rejects_unknown_fields() {
+        let json = r#"{"entity_id":"test","stage":0,"cumulative_erosion":0.0,"ambient_active":false,"model_alpha":1.0,"sound_distortion_active":false,"server_tick":0,"extra":42}"#;
+        let result = serde_json::from_str::<VoidErosionVisualSyncPayloadV1>(json);
+        assert!(
+            result.is_err(),
+            "deny_unknown_fields should reject unknown field"
+        );
+    }
+
+    #[test]
+    fn visual_sync_payload_all_stages() {
+        for stage in 0..=4u8 {
+            let payload = VoidErosionVisualSyncPayloadV1 {
+                entity_id: format!("player_{stage}"),
+                stage,
+                cumulative_erosion: stage as f64 * 100.0,
+                ambient_active: stage >= 1,
+                model_alpha: 1.0 - stage as f32 * 0.15,
+                sound_distortion_active: stage >= 3,
+                server_tick: 0,
+            };
+            let json = serde_json::to_string(&payload).expect("serialize");
+            let back: VoidErosionVisualSyncPayloadV1 =
+                serde_json::from_str(&json).expect("deserialize");
+            assert_eq!(
+                payload, back,
+                "stage {stage} visual sync serde round-trip failed"
+            );
+        }
+    }
+
+    // ────────────────────────────────────────────────────────
+    // P4: VoidErosionTiandaoModifierV1
+    // ────────────────────────────────────────────────────────
+
+    #[test]
+    fn tiandao_modifier_serde_roundtrip() {
+        let payload = VoidErosionTiandaoModifierV1 {
+            entity: "player_void".to_string(),
+            stage: VoidErosionStageV1::EchoBody,
+            detection_modifier: 0.6,
+            server_tick: 55555,
+        };
+        let json = serde_json::to_string(&payload).expect("serialize");
+        let back: VoidErosionTiandaoModifierV1 = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(
+            payload, back,
+            "VoidErosionTiandaoModifierV1 serde round-trip should preserve all fields"
+        );
+    }
+
+    #[test]
+    fn tiandao_modifier_rejects_unknown_fields() {
+        let json = r#"{"entity":"test","stage":"none","detection_modifier":1.0,"server_tick":0,"foo":"bar"}"#;
+        let result = serde_json::from_str::<VoidErosionTiandaoModifierV1>(json);
+        assert!(
+            result.is_err(),
+            "deny_unknown_fields should reject unknown field"
+        );
+    }
+
+    #[test]
+    fn tiandao_modifier_all_stages() {
+        let cases = [
+            (VoidErosionStageV1::None, 1.0),
+            (VoidErosionStageV1::LowPressure, 1.0),
+            (VoidErosionStageV1::VoidShadow, 1.0),
+            (VoidErosionStageV1::EchoBody, 0.6),
+            (VoidErosionStageV1::VoidEroded, 0.0),
+        ];
+        for (stage, expected_modifier) in cases {
+            let payload = VoidErosionTiandaoModifierV1 {
+                entity: "test".to_string(),
+                stage,
+                detection_modifier: expected_modifier,
+                server_tick: 0,
+            };
+            let json = serde_json::to_string(&payload).expect("serialize");
+            let back: VoidErosionTiandaoModifierV1 =
+                serde_json::from_str(&json).expect("deserialize");
+            assert_eq!(
+                payload, back,
+                "stage {stage:?} tiandao modifier round-trip failed"
+            );
+        }
     }
 }

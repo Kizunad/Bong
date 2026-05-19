@@ -9,6 +9,9 @@ use serde::{Deserialize, Serialize};
 use valence::prelude::{bevy_ecs, Component, Entity, Event};
 
 use crate::combat::components::TICKS_PER_SECOND;
+use crate::cultivation::components::Realm;
+
+use super::events::WoliuSkillId;
 
 /// 虚蚀阶段推进检测周期（tick）— 每 30 秒检测一次。
 pub const VOID_EROSION_CHECK_INTERVAL: u64 = 600;
@@ -341,6 +344,112 @@ pub fn void_core_crack_probability(stage: VoidErosionStage) -> f64 {
 /// 虚心回归时每条经脉 contamination 量。
 pub fn void_core_contam_per_meridian(stage: VoidErosionStage) -> f64 {
     stage.as_index() as f64 * 5.0
+}
+
+// ────────────────────────────────────────────────────────
+// P3: 虚蚀视觉同步常量
+// ────────────────────────────────────────────────────────
+
+/// 玩家模型半透明 alpha = `1.0 - stage * 0.15`（阶段 4 = 0.4 半透明）。
+pub fn erosion_model_alpha(stage: VoidErosionStage) -> f32 {
+    (1.0 - stage.as_index() as f32 * 0.15).clamp(0.0, 1.0)
+}
+
+/// 回响重播 VfxEventRequest 的 scale 参数（40% 威力）。
+pub const ECHO_REPLAY_VFX_SCALE: f32 = 0.4;
+
+/// 声音扭曲 HUD overlay 触发的最低虚蚀阶段。
+pub const SOUND_DISTORTION_MIN_STAGE: VoidErosionStage = VoidErosionStage::EchoBody;
+
+/// 检测声音扭曲 HUD overlay 是否应激活。
+pub fn should_show_sound_distortion_overlay(stage: VoidErosionStage) -> bool {
+    stage >= SOUND_DISTORTION_MIN_STAGE
+}
+
+// ────────────────────────────────────────────────────────
+// P4: 境界递进门控
+// ────────────────────────────────────────────────────────
+
+/// 境界 → 虚蚀阶段上限。VoidErosion 不可超过对应境界的 cap。
+///
+/// | 境界 | 最高阶段 |
+/// |------|----------|
+/// | 醒灵 | None（可积累，不推进） |
+/// | 引气 | LowPressure（涡流回响解锁） |
+/// | 凝脉 | LowPressure（常驻涡流 + 阶段 1 可达） |
+/// | 固元 | VoidShadow（虚涡 + 吞涡 + 阶段 2 可达） |
+/// | 通灵 | EchoBody（虚心 + 阶段 3 可达） |
+/// | 化虚 | VoidEroded（阶段 4 可达 + 所有招式全解锁） |
+pub fn realm_erosion_cap(realm: Realm) -> VoidErosionStage {
+    match realm {
+        Realm::Awaken => VoidErosionStage::None,
+        Realm::Induce => VoidErosionStage::LowPressure,
+        Realm::Condense => VoidErosionStage::LowPressure,
+        Realm::Solidify => VoidErosionStage::VoidShadow,
+        Realm::Spirit => VoidErosionStage::EchoBody,
+        Realm::Void => VoidErosionStage::VoidEroded,
+    }
+}
+
+/// 境界 → 某虚蚀招式是否解锁。
+///
+/// | 境界 | 解锁招式 |
+/// |------|----------|
+/// | 醒灵 | 无（可积累虚蚀但无招式） |
+/// | 引气 | 涡流回响 |
+/// | 凝脉 | 常驻涡流 |
+/// | 固元 | 虚涡 + 吞涡 |
+/// | 通灵 | 虚心 |
+/// | 化虚 | 全部 |
+pub fn realm_unlocks_skill(realm: Realm, skill: WoliuSkillId) -> bool {
+    match skill {
+        WoliuSkillId::VortexEcho => matches!(
+            realm,
+            Realm::Induce | Realm::Condense | Realm::Solidify | Realm::Spirit | Realm::Void
+        ),
+        WoliuSkillId::AmbientVortex => matches!(
+            realm,
+            Realm::Condense | Realm::Solidify | Realm::Spirit | Realm::Void
+        ),
+        WoliuSkillId::VoidVortex | WoliuSkillId::SwallowingVortex => {
+            matches!(realm, Realm::Solidify | Realm::Spirit | Realm::Void)
+        }
+        WoliuSkillId::VoidCore => matches!(realm, Realm::Spirit | Realm::Void),
+        // 非虚蚀招式不受此函数管——返回 true 以免误拦截
+        _ => true,
+    }
+}
+
+/// 虚蚀值累积（带境界阶段 cap）。
+///
+/// 即使 `cumulative_erosion` 数值超过阈值，`stage` 也不会超过 `realm_erosion_cap(realm)`。
+pub fn add_erosion_capped(erosion: &mut VoidErosion, amount: f64, realm: Realm) {
+    if !amount.is_finite() || amount <= 0.0 {
+        return;
+    }
+    erosion.cumulative_erosion += amount;
+    let cap = realm_erosion_cap(realm);
+    let computed = VoidErosionStage::from_cumulative(erosion.cumulative_erosion);
+    erosion.stage = if computed > cap { cap } else { computed };
+}
+
+// ────────────────────────────────────────────────────────
+// P4: 天道互动
+// ────────────────────────────────────────────────────────
+
+/// 天道感知概率修正。
+///
+/// - 阶段 0-2：无修正（1.0）
+/// - 阶段 3（EchoBody）：-40%（0.6）——存在于天道盲区
+/// - 阶段 4（VoidEroded）：0.0——天道放弃追踪
+pub fn tiandao_detection_modifier(stage: VoidErosionStage) -> f64 {
+    match stage {
+        VoidErosionStage::None | VoidErosionStage::LowPressure | VoidErosionStage::VoidShadow => {
+            1.0
+        }
+        VoidErosionStage::EchoBody => 0.6,
+        VoidErosionStage::VoidEroded => 0.0,
+    }
 }
 
 #[cfg(test)]
@@ -1405,5 +1514,441 @@ mod tests {
 
     fn deterministic_rng(seed: u64) -> TestRng {
         TestRng { state: seed }
+    }
+
+    // ────────────────────────────────────────────────────────
+    // P3: 虚蚀视觉常量
+    // ────────────────────────────────────────────────────────
+
+    #[test]
+    fn erosion_model_alpha_by_stage() {
+        let cases = [
+            (VoidErosionStage::None, 1.0_f32),
+            (VoidErosionStage::LowPressure, 0.85),
+            (VoidErosionStage::VoidShadow, 0.70),
+            (VoidErosionStage::EchoBody, 0.55),
+            (VoidErosionStage::VoidEroded, 0.40),
+        ];
+        for (stage, expected_alpha) in cases {
+            let alpha = erosion_model_alpha(stage);
+            assert!(
+                (alpha - expected_alpha).abs() < 1e-6,
+                "stage {:?}: expected alpha={expected_alpha}, got {alpha}",
+                stage
+            );
+        }
+    }
+
+    #[test]
+    fn sound_distortion_overlay_by_stage() {
+        assert!(
+            !should_show_sound_distortion_overlay(VoidErosionStage::None),
+            "stage 0 should not show distortion"
+        );
+        assert!(
+            !should_show_sound_distortion_overlay(VoidErosionStage::LowPressure),
+            "stage 1 should not show distortion"
+        );
+        assert!(
+            !should_show_sound_distortion_overlay(VoidErosionStage::VoidShadow),
+            "stage 2 should not show distortion"
+        );
+        assert!(
+            should_show_sound_distortion_overlay(VoidErosionStage::EchoBody),
+            "stage 3 should show distortion"
+        );
+        assert!(
+            should_show_sound_distortion_overlay(VoidErosionStage::VoidEroded),
+            "stage 4 should show distortion"
+        );
+    }
+
+    #[test]
+    fn echo_replay_vfx_scale_is_0_4() {
+        assert!(
+            (bb_f32(ECHO_REPLAY_VFX_SCALE) - 0.4).abs() < f32::EPSILON,
+            "echo replay VFX scale should be 0.4"
+        );
+    }
+
+    // ────────────────────────────────────────────────────────
+    // P4: 境界递进门控 — realm_erosion_cap
+    // ────────────────────────────────────────────────────────
+
+    #[test]
+    fn realm_erosion_cap_awaken() {
+        assert_eq!(
+            realm_erosion_cap(Realm::Awaken),
+            VoidErosionStage::None,
+            "Awaken should cap at stage None"
+        );
+    }
+
+    #[test]
+    fn realm_erosion_cap_induce() {
+        assert_eq!(
+            realm_erosion_cap(Realm::Induce),
+            VoidErosionStage::LowPressure,
+            "Induce should cap at LowPressure"
+        );
+    }
+
+    #[test]
+    fn realm_erosion_cap_condense() {
+        assert_eq!(
+            realm_erosion_cap(Realm::Condense),
+            VoidErosionStage::LowPressure,
+            "Condense should cap at LowPressure (阶段 1 可达)"
+        );
+    }
+
+    #[test]
+    fn realm_erosion_cap_solidify() {
+        assert_eq!(
+            realm_erosion_cap(Realm::Solidify),
+            VoidErosionStage::VoidShadow,
+            "Solidify should cap at VoidShadow (阶段 2 可达)"
+        );
+    }
+
+    #[test]
+    fn realm_erosion_cap_spirit() {
+        assert_eq!(
+            realm_erosion_cap(Realm::Spirit),
+            VoidErosionStage::EchoBody,
+            "Spirit should cap at EchoBody (阶段 3 可达)"
+        );
+    }
+
+    #[test]
+    fn realm_erosion_cap_void() {
+        assert_eq!(
+            realm_erosion_cap(Realm::Void),
+            VoidErosionStage::VoidEroded,
+            "Void should cap at VoidEroded (阶段 4 可达 + 所有招式)"
+        );
+    }
+
+    #[test]
+    fn realm_erosion_cap_monotonically_increasing() {
+        let realms = [
+            Realm::Awaken,
+            Realm::Induce,
+            Realm::Condense,
+            Realm::Solidify,
+            Realm::Spirit,
+            Realm::Void,
+        ];
+        for i in 1..realms.len() {
+            assert!(
+                realm_erosion_cap(realms[i]) >= realm_erosion_cap(realms[i - 1]),
+                "realm {:?} cap should >= {:?} cap",
+                realms[i],
+                realms[i - 1]
+            );
+        }
+    }
+
+    // ────────────────────────────────────────────────────────
+    // P4: realm_unlocks_skill — 全交叉矩阵
+    // ────────────────────────────────────────────────────────
+
+    #[test]
+    fn realm_unlocks_vortex_echo() {
+        assert!(
+            !realm_unlocks_skill(Realm::Awaken, WoliuSkillId::VortexEcho),
+            "Awaken should NOT unlock VortexEcho"
+        );
+        assert!(
+            realm_unlocks_skill(Realm::Induce, WoliuSkillId::VortexEcho),
+            "Induce should unlock VortexEcho"
+        );
+        assert!(
+            realm_unlocks_skill(Realm::Condense, WoliuSkillId::VortexEcho),
+            "Condense should unlock VortexEcho"
+        );
+        assert!(
+            realm_unlocks_skill(Realm::Solidify, WoliuSkillId::VortexEcho),
+            "Solidify should unlock VortexEcho"
+        );
+        assert!(
+            realm_unlocks_skill(Realm::Spirit, WoliuSkillId::VortexEcho),
+            "Spirit should unlock VortexEcho"
+        );
+        assert!(
+            realm_unlocks_skill(Realm::Void, WoliuSkillId::VortexEcho),
+            "Void should unlock VortexEcho"
+        );
+    }
+
+    #[test]
+    fn realm_unlocks_ambient_vortex() {
+        assert!(
+            !realm_unlocks_skill(Realm::Awaken, WoliuSkillId::AmbientVortex),
+            "Awaken should NOT unlock AmbientVortex"
+        );
+        assert!(
+            !realm_unlocks_skill(Realm::Induce, WoliuSkillId::AmbientVortex),
+            "Induce should NOT unlock AmbientVortex"
+        );
+        assert!(
+            realm_unlocks_skill(Realm::Condense, WoliuSkillId::AmbientVortex),
+            "Condense should unlock AmbientVortex"
+        );
+        assert!(
+            realm_unlocks_skill(Realm::Solidify, WoliuSkillId::AmbientVortex),
+            "Solidify should unlock AmbientVortex"
+        );
+    }
+
+    #[test]
+    fn realm_unlocks_void_vortex_and_swallowing() {
+        for skill in [WoliuSkillId::VoidVortex, WoliuSkillId::SwallowingVortex] {
+            assert!(
+                !realm_unlocks_skill(Realm::Awaken, skill),
+                "Awaken should NOT unlock {skill:?}"
+            );
+            assert!(
+                !realm_unlocks_skill(Realm::Induce, skill),
+                "Induce should NOT unlock {skill:?}"
+            );
+            assert!(
+                !realm_unlocks_skill(Realm::Condense, skill),
+                "Condense should NOT unlock {skill:?}"
+            );
+            assert!(
+                realm_unlocks_skill(Realm::Solidify, skill),
+                "Solidify should unlock {skill:?}"
+            );
+            assert!(
+                realm_unlocks_skill(Realm::Spirit, skill),
+                "Spirit should unlock {skill:?}"
+            );
+            assert!(
+                realm_unlocks_skill(Realm::Void, skill),
+                "Void should unlock {skill:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn realm_unlocks_void_core() {
+        assert!(
+            !realm_unlocks_skill(Realm::Awaken, WoliuSkillId::VoidCore),
+            "Awaken should NOT unlock VoidCore"
+        );
+        assert!(
+            !realm_unlocks_skill(Realm::Induce, WoliuSkillId::VoidCore),
+            "Induce should NOT unlock VoidCore"
+        );
+        assert!(
+            !realm_unlocks_skill(Realm::Condense, WoliuSkillId::VoidCore),
+            "Condense should NOT unlock VoidCore"
+        );
+        assert!(
+            !realm_unlocks_skill(Realm::Solidify, WoliuSkillId::VoidCore),
+            "Solidify should NOT unlock VoidCore"
+        );
+        assert!(
+            realm_unlocks_skill(Realm::Spirit, WoliuSkillId::VoidCore),
+            "Spirit should unlock VoidCore"
+        );
+        assert!(
+            realm_unlocks_skill(Realm::Void, WoliuSkillId::VoidCore),
+            "Void should unlock VoidCore"
+        );
+    }
+
+    #[test]
+    fn realm_unlocks_non_erosion_skills_always_true() {
+        // Non-erosion skills should always return true (not gated by this function)
+        for realm in [
+            Realm::Awaken,
+            Realm::Induce,
+            Realm::Condense,
+            Realm::Solidify,
+            Realm::Spirit,
+            Realm::Void,
+        ] {
+            for skill in [
+                WoliuSkillId::Hold,
+                WoliuSkillId::Burst,
+                WoliuSkillId::Mouth,
+                WoliuSkillId::Pull,
+                WoliuSkillId::Heart,
+            ] {
+                assert!(
+                    realm_unlocks_skill(realm, skill),
+                    "non-erosion skill {skill:?} should always be unlocked at realm {realm:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn void_realm_unlocks_all_erosion_skills() {
+        for skill in [
+            WoliuSkillId::AmbientVortex,
+            WoliuSkillId::VoidVortex,
+            WoliuSkillId::SwallowingVortex,
+            WoliuSkillId::VortexEcho,
+            WoliuSkillId::VoidCore,
+        ] {
+            assert!(
+                realm_unlocks_skill(Realm::Void, skill),
+                "Void realm should unlock all erosion skills, failed for {skill:?}"
+            );
+        }
+    }
+
+    // ────────────────────────────────────────────────────────
+    // P4: add_erosion_capped — 境界阶段 cap 验证
+    // ────────────────────────────────────────────────────────
+
+    #[test]
+    fn add_erosion_capped_respects_realm_cap() {
+        // Awaken realm: cap = None, even with massive erosion
+        let mut erosion = VoidErosion::default();
+        add_erosion_capped(&mut erosion, 500.0, Realm::Awaken);
+        assert_eq!(
+            erosion.stage,
+            VoidErosionStage::None,
+            "Awaken realm should cap stage at None even with cumulative_erosion=500"
+        );
+        assert!(
+            (erosion.cumulative_erosion - 500.0).abs() < f64::EPSILON,
+            "cumulative_erosion should still accumulate"
+        );
+    }
+
+    #[test]
+    fn add_erosion_capped_induce_caps_at_low_pressure() {
+        let mut erosion = VoidErosion::default();
+        add_erosion_capped(&mut erosion, 100.0, Realm::Induce);
+        assert_eq!(
+            erosion.stage,
+            VoidErosionStage::LowPressure,
+            "Induce realm should cap at LowPressure even with cumulative=100"
+        );
+    }
+
+    #[test]
+    fn add_erosion_capped_solidify_caps_at_void_shadow() {
+        let mut erosion = VoidErosion::default();
+        add_erosion_capped(&mut erosion, 999.0, Realm::Solidify);
+        assert_eq!(
+            erosion.stage,
+            VoidErosionStage::VoidShadow,
+            "Solidify realm should cap at VoidShadow even with cumulative=999"
+        );
+    }
+
+    #[test]
+    fn add_erosion_capped_void_allows_max_stage() {
+        let mut erosion = VoidErosion::default();
+        add_erosion_capped(&mut erosion, 500.0, Realm::Void);
+        assert_eq!(
+            erosion.stage,
+            VoidErosionStage::VoidEroded,
+            "Void realm should allow VoidEroded"
+        );
+    }
+
+    #[test]
+    fn add_erosion_capped_below_threshold_normal_progression() {
+        // Within Solidify cap (VoidShadow = 80-200), 50 erosion -> LowPressure
+        let mut erosion = VoidErosion::default();
+        add_erosion_capped(&mut erosion, 50.0, Realm::Solidify);
+        assert_eq!(
+            erosion.stage,
+            VoidErosionStage::LowPressure,
+            "50 erosion at Solidify should be LowPressure (below cap)"
+        );
+    }
+
+    #[test]
+    fn add_erosion_capped_invalid_amounts_ignored() {
+        let mut erosion = VoidErosion::default();
+        add_erosion_capped(&mut erosion, 0.0, Realm::Void);
+        assert!(
+            erosion.cumulative_erosion.abs() < f64::EPSILON,
+            "zero amount should not change erosion"
+        );
+        add_erosion_capped(&mut erosion, -5.0, Realm::Void);
+        assert!(
+            erosion.cumulative_erosion.abs() < f64::EPSILON,
+            "negative amount should not change erosion"
+        );
+        add_erosion_capped(&mut erosion, f64::NAN, Realm::Void);
+        assert!(
+            erosion.cumulative_erosion.abs() < f64::EPSILON,
+            "NaN should not change erosion"
+        );
+    }
+
+    #[test]
+    fn add_erosion_capped_incremental_with_realm_change() {
+        let mut erosion = VoidErosion::default();
+        // Start at Induce: accumulate 30 -> LowPressure (capped at LowPressure)
+        add_erosion_capped(&mut erosion, 30.0, Realm::Induce);
+        assert_eq!(erosion.stage, VoidErosionStage::LowPressure);
+
+        // More erosion at Induce: 100 total -> still LowPressure (cap)
+        add_erosion_capped(&mut erosion, 70.0, Realm::Induce);
+        assert_eq!(
+            erosion.stage,
+            VoidErosionStage::LowPressure,
+            "Induce cap prevents VoidShadow"
+        );
+
+        // Breakthrough to Solidify: now VoidShadow cap applies
+        // cumulative = 100 -> VoidShadow, and cap is VoidShadow
+        add_erosion_capped(&mut erosion, 0.1, Realm::Solidify);
+        assert_eq!(
+            erosion.stage,
+            VoidErosionStage::VoidShadow,
+            "after breakthrough to Solidify, stage should unlock to VoidShadow"
+        );
+    }
+
+    // ────────────────────────────────────────────────────────
+    // P4: 天道互动
+    // ────────────────────────────────────────────────────────
+
+    #[test]
+    fn tiandao_detection_modifier_by_stage() {
+        let cases = [
+            (VoidErosionStage::None, 1.0),
+            (VoidErosionStage::LowPressure, 1.0),
+            (VoidErosionStage::VoidShadow, 1.0),
+            (VoidErosionStage::EchoBody, 0.6),
+            (VoidErosionStage::VoidEroded, 0.0),
+        ];
+        for (stage, expected) in cases {
+            let modifier = tiandao_detection_modifier(stage);
+            assert!(
+                (modifier - expected).abs() < 1e-9,
+                "stage {:?}: expected tiandao modifier={expected}, got {modifier}",
+                stage
+            );
+        }
+    }
+
+    #[test]
+    fn tiandao_detection_modifier_stage3_is_minus_40_percent() {
+        let modifier = tiandao_detection_modifier(VoidErosionStage::EchoBody);
+        assert!(
+            (modifier - 0.6).abs() < 1e-9,
+            "stage 3 should reduce tiandao detection by 40% (modifier=0.6), got {modifier}"
+        );
+    }
+
+    #[test]
+    fn tiandao_detection_modifier_stage4_abandons_tracking() {
+        let modifier = tiandao_detection_modifier(VoidErosionStage::VoidEroded);
+        assert!(
+            modifier.abs() < 1e-9,
+            "stage 4 should fully abandon tracking (modifier=0.0), got {modifier}"
+        );
     }
 }
