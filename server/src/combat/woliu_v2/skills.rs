@@ -1354,9 +1354,11 @@ pub fn scale_spec_for_proficiency(mut spec: WoliuSkillSpec, proficiency: f32) ->
     spec.lethal_radius *= scalars.radius_multiplier;
     spec.influence_radius *= scalars.radius_multiplier;
     spec.turbulence_radius *= scalars.radius_multiplier;
-    spec.cast_ticks = ((spec.cast_ticks as f32) * scalars.cast_ticks_multiplier)
-        .ceil()
-        .max(1.0) as u32;
+    if spec.cast_ticks > 0 {
+        spec.cast_ticks = ((spec.cast_ticks as f32) * scalars.cast_ticks_multiplier)
+            .ceil()
+            .max(1.0) as u32;
+    }
     spec
 }
 
