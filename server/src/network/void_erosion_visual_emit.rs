@@ -70,6 +70,11 @@ pub fn emit_void_erosion_visual_sync(
         cache.last_ambient.insert(entity, erosion.ambient_active);
     }
 
+    // Prune cache entries for entities no longer in the query
+    let active: std::collections::HashSet<Entity> = erosion_query.iter().map(|(e, ..)| e).collect();
+    cache.last_stage.retain(|e, _| active.contains(e));
+    cache.last_ambient.retain(|e, _| active.contains(e));
+
     // Emit payloads
     for sync_entity in &entities_to_sync {
         let Ok((_, erosion, erosion_pos, unique_id)) = erosion_query.get(*sync_entity) else {
@@ -88,6 +93,10 @@ pub fn emit_void_erosion_visual_sync(
             server_tick: clock.tick,
         };
         let Ok(bytes) = serialize_visual_payload(&payload) else {
+            tracing::warn!(
+                "[void-erosion-visual] serialize failed for {}",
+                payload.entity_id
+            );
             continue;
         };
         let erosion_origin = erosion_pos.get();

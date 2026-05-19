@@ -415,8 +415,16 @@ pub fn realm_unlocks_skill(realm: Realm, skill: WoliuSkillId) -> bool {
             matches!(realm, Realm::Solidify | Realm::Spirit | Realm::Void)
         }
         WoliuSkillId::VoidCore => matches!(realm, Realm::Spirit | Realm::Void),
-        // 非虚蚀招式不受此函数管——返回 true 以免误拦截
-        _ => true,
+        WoliuSkillId::Hold
+        | WoliuSkillId::Burst
+        | WoliuSkillId::Mouth
+        | WoliuSkillId::Pull
+        | WoliuSkillId::Heart
+        | WoliuSkillId::VacuumPalm
+        | WoliuSkillId::VortexShield
+        | WoliuSkillId::VacuumLock
+        | WoliuSkillId::VortexResonance
+        | WoliuSkillId::TurbulenceBurst => true,
     }
 }
 
