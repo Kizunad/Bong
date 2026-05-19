@@ -36,6 +36,18 @@ pub const BASE_OPEN_RATE: f64 = 0.00003;
 pub const OPEN_COST_FACTOR: f64 = 5.0;
 pub const MERIDIAN_CAPACITY_ON_OPEN: f64 = 10.0;
 
+/// 逐脉难度递增：已开经脉越多，后续经脉打通越慢。
+/// `progression` 对所有经脉适用（1/(1 + count*0.15)），
+/// 奇经额外乘以 0.4 系数（天赋稀缺资源）。
+pub fn meridian_difficulty_factor(opened_count: usize, family: MeridianFamily) -> f64 {
+    let progression = 1.0 / (1.0 + opened_count as f64 * 0.15);
+    let family_mult = match family {
+        MeridianFamily::Regular => 1.0,
+        MeridianFamily::Extraordinary => 0.4,
+    };
+    progression * family_mult
+}
+
 type MeridianOpenItem<'a> = (
     Entity,
     &'a Position,
@@ -93,7 +105,8 @@ pub fn advance_open_progress_at(
     } else {
         0.0
     };
-    let delta = BASE_OPEN_RATE * zone_qi * qi_ratio;
+    let difficulty = meridian_difficulty_factor(meridians.opened_count(), target.family());
+    let delta = BASE_OPEN_RATE * zone_qi * qi_ratio * difficulty;
     let cost = delta * OPEN_COST_FACTOR;
     if cultivation.qi_current < cost {
         return Err(OpenStepError::NotEnoughQi);

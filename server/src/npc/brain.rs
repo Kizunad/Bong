@@ -4644,8 +4644,8 @@ mod tests {
             .id();
         app.world_mut().insert_resource(TestActionEntity(action));
 
-        // 降速后单脉 ~35k tick，加突破尝试+失败恢复预算，50000 tick 够用。
-        for _ in 0..50_000 {
+        // 降速后第 6 脉（difficulty=0.57）需 ~61k tick，加突破尝试+composure 恢复预算。
+        for _ in 0..80_000 {
             app.update();
         }
 
