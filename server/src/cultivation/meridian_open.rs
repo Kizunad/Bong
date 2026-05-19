@@ -459,4 +459,169 @@ mod tests {
         assert_eq!(emitted.entity, player);
         assert_eq!(emitted.origin, valence::prelude::DVec3::new(8.0, 66.0, 8.0));
     }
+
+    // ── P0.3 meridian_difficulty_factor pin 测试 ──
+
+    fn assert_close(actual: f64, expected: f64, label: &str) {
+        assert!(
+            (actual - expected).abs() < 0.001,
+            "{label}: 期望 {expected:.4} 因为公式 1/(1+count*0.15)*family_mult，实际 {actual:.4}"
+        );
+    }
+
+    #[test]
+    fn difficulty_factor_opened_0_regular() {
+        assert_close(
+            meridian_difficulty_factor(0, MeridianFamily::Regular),
+            1.0,
+            "opened=0 Regular",
+        );
+    }
+
+    #[test]
+    fn difficulty_factor_opened_3_regular() {
+        // 1/(1+3*0.15) = 1/1.45 ≈ 0.6897
+        assert_close(
+            meridian_difficulty_factor(3, MeridianFamily::Regular),
+            0.6897,
+            "opened=3 Regular",
+        );
+    }
+
+    #[test]
+    fn difficulty_factor_opened_6_regular() {
+        // 1/(1+6*0.15) = 1/1.9 ≈ 0.5263
+        assert_close(
+            meridian_difficulty_factor(6, MeridianFamily::Regular),
+            0.5263,
+            "opened=6 Regular",
+        );
+    }
+
+    #[test]
+    fn difficulty_factor_opened_12_regular() {
+        // 1/(1+12*0.15) = 1/2.8 ≈ 0.3571
+        assert_close(
+            meridian_difficulty_factor(12, MeridianFamily::Regular),
+            0.3571,
+            "opened=12 Regular",
+        );
+    }
+
+    #[test]
+    fn difficulty_factor_opened_0_extraordinary() {
+        // 1.0 * 0.4 = 0.4
+        assert_close(
+            meridian_difficulty_factor(0, MeridianFamily::Extraordinary),
+            0.4,
+            "opened=0 Extraordinary",
+        );
+    }
+
+    #[test]
+    fn difficulty_factor_opened_3_extraordinary() {
+        // 0.6897 * 0.4 ≈ 0.2759
+        assert_close(
+            meridian_difficulty_factor(3, MeridianFamily::Extraordinary),
+            0.2759,
+            "opened=3 Extraordinary",
+        );
+    }
+
+    #[test]
+    fn difficulty_factor_opened_6_extraordinary() {
+        // 0.5263 * 0.4 ≈ 0.2105
+        assert_close(
+            meridian_difficulty_factor(6, MeridianFamily::Extraordinary),
+            0.2105,
+            "opened=6 Extraordinary",
+        );
+    }
+
+    #[test]
+    fn difficulty_factor_opened_12_extraordinary() {
+        // 0.3571 * 0.4 ≈ 0.1429
+        assert_close(
+            meridian_difficulty_factor(12, MeridianFamily::Extraordinary),
+            0.1429,
+            "opened=12 Extraordinary",
+        );
+    }
+
+    // ── P0.3 首条正经开脉耗时测试 ──
+
+    #[test]
+    fn first_regular_meridian_tick_count_matches_expected() {
+        // zone_qi=0.6, qi_ratio≈0.8 (8000/10000), opened_count=0, Regular
+        // delta = 0.00003 * 0.6 * 0.8 * 1.0 = 0.0000144
+        // ticks = ceil(1.0/0.0000144) = 69445
+        // qi 充足（qi_current=8000）使 qi_ratio 在循环内微降可忽略。
+        let mut c = Cultivation {
+            qi_current: 8000.0,
+            qi_max: 10000.0,
+            ..Default::default()
+        };
+        let mut ms = MeridianSystem::default();
+        let target = MeridianId::Lung;
+
+        // 69400 次后不应 opened
+        for _ in 0..69_400 {
+            let _ = advance_open_progress(&mut c, &mut ms, target, 0.6, true);
+        }
+        assert!(
+            !ms.get(target).opened,
+            "首条正经在 69400 tick 后不应打通（delta≈0.0000144，需 ~69445 tick）；\
+             实际 open_progress={:.6}",
+            ms.get(target).open_progress
+        );
+
+        // 再跑到 69600 次后应已 opened
+        for _ in 0..200 {
+            let _ = advance_open_progress(&mut c, &mut ms, target, 0.6, true);
+            if ms.get(target).opened {
+                break;
+            }
+        }
+        assert!(
+            ms.get(target).opened,
+            "首条正经在 69600 tick 后应已打通；实际 open_progress={:.6}",
+            ms.get(target).open_progress
+        );
+    }
+
+    // ── P0.3 首条奇经开脉 delta 测试（不循环，直接验 delta 值）──
+
+    #[test]
+    fn first_extraordinary_meridian_delta_matches_expected() {
+        let mut c = Cultivation {
+            qi_current: 10000.0,
+            qi_max: 10000.0,
+            ..Default::default()
+        };
+        let mut ms = MeridianSystem::default();
+        // 模拟已开 12 条正经
+        for &id in MeridianId::REGULAR.iter() {
+            ms.get_mut(id).opened = true;
+        }
+        let target = MeridianId::Ren; // 奇经，首脉特许不适用但 adjacent_ok=true 跳过检查
+
+        let (delta, _just_opened) = advance_open_progress_at(&mut c, &mut ms, target, 0.6, true, 0)
+            .expect("应成功推进奇经进度");
+
+        // expected: 0.00003 * 0.6 * (10000/10000) * meridian_difficulty_factor(12, Extraordinary)
+        //         = 0.00003 * 0.6 * 1.0 * (0.4 / 2.8)
+        //         = 0.00003 * 0.6 * 0.14286
+        //         = 0.000002571
+        let ticks_to_open = (1.0 / delta).ceil() as u64;
+        assert!(
+            ticks_to_open >= 380_000,
+            "奇经开脉应极慢（opened=12, Extraordinary），\
+             期望 ≥380000 tick 因为 delta≈2.57e-6，实际 {ticks_to_open} tick (delta={delta:.9})"
+        );
+        assert!(
+            ticks_to_open <= 500_000,
+            "奇经开脉不应超出合理范围，\
+             期望 ≤500000 tick，实际 {ticks_to_open} tick (delta={delta:.9})"
+        );
+    }
 }
