@@ -355,6 +355,9 @@ pub struct ActiveStatusEffect {
     pub kind: StatusEffectKind,
     pub magnitude: f32,
     pub remaining_ticks: u64,
+    /// plan-cultivation-pacing-v1 §8.1 #7：丹药来源 PillKind ID，用于 per-pill cap。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_pill: Option<String>,
 }
 
 #[derive(Debug, Clone, Component, Default, Serialize, Deserialize)]

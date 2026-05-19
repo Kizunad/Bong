@@ -36,6 +36,7 @@ pub fn status_effect_apply_tick(
                 kind: intent.kind.clone(),
                 magnitude: intent.magnitude,
                 remaining_ticks: intent.duration_ticks,
+                source_pill: None,
             },
         );
     }
@@ -53,6 +54,27 @@ pub fn upsert_status_effect(status_effects: &mut StatusEffects, effect: ActiveSt
     }
 
     status_effects.active.push(effect);
+}
+
+/// plan-cultivation-pacing-v1 §8.1 #7：CultivationAcceleration 专用堆叠入口。
+/// 允许多条同 kind 共存（丹药堆叠），但同一 `source_pill` 最多 2 条有效。
+/// 返回 true 表示成功入栈，false 表示被 per-pill cap 拦截。
+///
+/// 当前由 dandao/alchemy 系统投喂；本 plan 仅提供基建。
+#[allow(dead_code)]
+pub fn push_status_effect(status_effects: &mut StatusEffects, effect: ActiveStatusEffect) -> bool {
+    if let Some(ref pill) = effect.source_pill {
+        let same_pill_count = status_effects
+            .active
+            .iter()
+            .filter(|e| e.source_pill.as_deref() == Some(pill))
+            .count();
+        if same_pill_count >= 2 {
+            return false; // 同种丹药最多 2 层
+        }
+    }
+    status_effects.active.push(effect);
+    true
 }
 
 pub fn remove_status_effect(status_effects: &mut StatusEffects, kind: StatusEffectKind) {
@@ -401,6 +423,7 @@ mod tests {
                     kind: StatusEffectKind::VortexCasting,
                     magnitude: 1.0,
                     remaining_ticks: u64::MAX,
+                    source_pill: None,
                 }],
             })
             .id();
@@ -438,6 +461,7 @@ mod tests {
                     kind: StatusEffectKind::Bleeding,
                     magnitude: 0.5,
                     remaining_ticks: STATUS_EFFECT_TICK_INTERVAL_TICKS,
+                    source_pill: None,
                 }],
             })
             .id();
@@ -461,6 +485,7 @@ mod tests {
                         kind: StatusEffectKind::Slowed,
                         magnitude: 0.4,
                         remaining_ticks: 20,
+                        source_pill: None,
                     }],
                 },
                 DerivedAttrs::default(),
@@ -486,6 +511,7 @@ mod tests {
                         kind: StatusEffectKind::VortexCasting,
                         magnitude: 1.0,
                         remaining_ticks: 20,
+                        source_pill: None,
                     }],
                 },
                 DerivedAttrs::default(),
@@ -512,11 +538,13 @@ mod tests {
                             kind: StatusEffectKind::Slowed,
                             magnitude: 0.4,
                             remaining_ticks: 20,
+                            source_pill: None,
                         },
                         crate::combat::components::ActiveStatusEffect {
                             kind: StatusEffectKind::ParryRecovery,
                             magnitude: 1.0,
                             remaining_ticks: 10,
+                            source_pill: None,
                         },
                     ],
                 },
@@ -543,6 +571,7 @@ mod tests {
                         kind: StatusEffectKind::DamageAmp,
                         magnitude: 0.25,
                         remaining_ticks: 20,
+                        source_pill: None,
                     }],
                 },
                 DerivedAttrs::default(),
@@ -568,6 +597,7 @@ mod tests {
                         kind: StatusEffectKind::DamageReduction,
                         magnitude: 0.25,
                         remaining_ticks: 20,
+                        source_pill: None,
                     }],
                 },
                 DerivedAttrs::default(),
@@ -613,6 +643,7 @@ mod tests {
                         kind: StatusEffectKind::DamageReduction,
                         magnitude: 0.25,
                         remaining_ticks: 20,
+                        source_pill: None,
                     }],
                 },
                 DerivedAttrs::default(),
@@ -634,21 +665,25 @@ mod tests {
                     kind: StatusEffectKind::BreakthroughBoost,
                     magnitude: 0.12,
                     remaining_ticks: 100,
+                    source_pill: None,
                 },
                 crate::combat::components::ActiveStatusEffect {
                     kind: StatusEffectKind::BreakthroughBoost,
                     magnitude: 0.05,
                     remaining_ticks: 50,
+                    source_pill: None,
                 },
                 crate::combat::components::ActiveStatusEffect {
                     kind: StatusEffectKind::DamageAmp,
                     magnitude: 0.25,
                     remaining_ticks: 100,
+                    source_pill: None,
                 },
                 crate::combat::components::ActiveStatusEffect {
                     kind: StatusEffectKind::BreakthroughBoost,
                     magnitude: 0.20,
-                    remaining_ticks: 0, // 过期，不计入
+                    remaining_ticks: 0,
+                    source_pill: None, // 过期，不计入
                 },
             ],
         };
@@ -663,11 +698,13 @@ mod tests {
                     kind: StatusEffectKind::BreakthroughBoost,
                     magnitude: 0.1,
                     remaining_ticks: 100,
+                    source_pill: None,
                 },
                 crate::combat::components::ActiveStatusEffect {
                     kind: StatusEffectKind::Bleeding,
                     magnitude: 0.4,
                     remaining_ticks: 50,
+                    source_pill: None,
                 },
             ],
         };
@@ -684,11 +721,13 @@ mod tests {
                     kind: StatusEffectKind::Stunned,
                     magnitude: 1.0,
                     remaining_ticks: 20,
+                    source_pill: None,
                 },
                 crate::combat::components::ActiveStatusEffect {
                     kind: StatusEffectKind::Slowed,
                     magnitude: 0.4,
                     remaining_ticks: 0,
+                    source_pill: None,
                 },
             ],
         };
@@ -718,6 +757,7 @@ mod tests {
                     kind: StatusEffectKind::Stunned,
                     magnitude: 1.0,
                     remaining_ticks: STATUS_EFFECT_TICK_INTERVAL_TICKS,
+                    source_pill: None,
                 }],
             })
             .id();
@@ -736,16 +776,19 @@ mod tests {
                     kind: StatusEffectKind::BodyPartResist(BodyPart::Chest),
                     magnitude: 0.40,
                     remaining_ticks: 20,
+                    source_pill: None,
                 },
                 crate::combat::components::ActiveStatusEffect {
                     kind: StatusEffectKind::BodyPartWeaken(BodyPart::Chest),
                     magnitude: 0.25,
                     remaining_ticks: 20,
+                    source_pill: None,
                 },
                 crate::combat::components::ActiveStatusEffect {
                     kind: StatusEffectKind::BodyPartWeaken(BodyPart::Chest),
                     magnitude: 0.50,
                     remaining_ticks: 0,
+                    source_pill: None,
                 },
             ],
         };
@@ -778,11 +821,13 @@ mod tests {
                             kind: StatusEffectKind::StaminaRecovBoost,
                             magnitude: 3.0,
                             remaining_ticks: 20,
+                            source_pill: None,
                         },
                         crate::combat::components::ActiveStatusEffect {
                             kind: StatusEffectKind::QiDrainForStamina,
                             magnitude: 2.0,
                             remaining_ticks: 20,
+                            source_pill: None,
                         },
                     ],
                 },
@@ -834,6 +879,7 @@ mod tests {
                         kind: StatusEffectKind::StaminaRecovBoost,
                         magnitude: 0.5,
                         remaining_ticks: 0,
+                        source_pill: None,
                     }],
                 },
                 Stamina {

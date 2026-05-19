@@ -4266,6 +4266,7 @@ mod tests {
                 kind: StatusEffectKind::Stunned,
                 magnitude: 1.0,
                 remaining_ticks: 20,
+                source_pill: None,
             }],
         });
 
@@ -4317,6 +4318,7 @@ mod tests {
                         kind: StatusEffectKind::Stunned,
                         magnitude: 1.0,
                         remaining_ticks: 20,
+                        source_pill: None,
                     }],
                 },
             ))
@@ -4524,6 +4526,7 @@ mod tests {
                     kind: StatusEffectKind::DamageAmp,
                     magnitude: 0.25,
                     remaining_ticks: 20,
+                    source_pill: None,
                 }],
             });
 
@@ -4625,6 +4628,7 @@ mod tests {
                     kind: StatusEffectKind::DamageReduction,
                     magnitude: 0.25,
                     remaining_ticks: 20,
+                    source_pill: None,
                 }],
             });
 
@@ -6027,6 +6031,7 @@ mod tests {
                     kind: StatusEffectKind::SwordParrying,
                     magnitude: 0.5,
                     remaining_ticks: 4,
+                    source_pill: None,
                 }],
             },
             KnownTechniques {
@@ -6365,6 +6370,7 @@ mod tests {
                 kind: StatusEffectKind::VoidCoreActive,
                 magnitude: 1.0,
                 remaining_ticks: 60,
+                source_pill: None,
             }],
         });
 
@@ -6428,6 +6434,7 @@ mod tests {
                 kind: StatusEffectKind::VoidCoreActive,
                 magnitude: 1.0,
                 remaining_ticks: 60,
+                source_pill: None,
             }],
         });
 
@@ -6481,6 +6488,7 @@ mod tests {
                         kind: StatusEffectKind::VoidCoreActive,
                         magnitude: 1.0,
                         remaining_ticks: 60,
+                        source_pill: None,
                     }],
                 },
             ))

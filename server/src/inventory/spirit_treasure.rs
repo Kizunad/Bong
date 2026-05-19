@@ -411,6 +411,7 @@ fn sync_passive_status_effects(
                     kind: passive.effect_kind.clone(),
                     magnitude: (passive.magnitude * scale).max(0.01),
                     remaining_ticks: u64::MAX / 2,
+                    source_pill: None,
                 },
             );
         }

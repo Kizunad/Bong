@@ -511,6 +511,7 @@ fn cast_sword_parry(
                 kind: StatusEffectKind::SwordParrying,
                 magnitude: profile.block_ratio,
                 remaining_ticks: profile.parry_window_ticks,
+                source_pill: None,
             },
         );
     }

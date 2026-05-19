@@ -618,6 +618,7 @@ fn sync_leg_strain_status(status_effects: Option<MutStatusEffects<'_>>, leg_woun
         kind: StatusEffectKind::LegStrain,
         magnitude,
         remaining_ticks: LEG_STRAIN_REFRESH_TICKS,
+        source_pill: None,
     });
 }
 

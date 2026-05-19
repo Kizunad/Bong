@@ -344,6 +344,7 @@ pub fn resolve_vortex_toggle_in_world(
                 kind: StatusEffectKind::VortexCasting,
                 magnitude: VORTEX_CASTING_MAGNITUDE,
                 remaining_ticks: VORTEX_CASTING_DURATION_TICKS,
+                source_pill: None,
             },
         );
     }
@@ -443,6 +444,7 @@ fn resolve_vortex_toggle_parts(
             kind: StatusEffectKind::VortexCasting,
             magnitude: VORTEX_CASTING_MAGNITUDE,
             remaining_ticks: VORTEX_CASTING_DURATION_TICKS,
+            source_pill: None,
         },
     );
     attrs.vortex_active = true;
@@ -1119,6 +1121,7 @@ mod tests {
                 kind: StatusEffectKind::VortexCasting,
                 magnitude: 1.0,
                 remaining_ticks: u64::MAX,
+                source_pill: None,
             },
         );
         app.add_systems(Update, vortex_maintain_tick);
@@ -1203,6 +1206,7 @@ mod tests {
                     kind: StatusEffectKind::AntiSpiritPressurePill,
                     magnitude: 1.0,
                     remaining_ticks: 20,
+                    source_pill: None,
                 },
             );
         }

@@ -584,6 +584,7 @@ mod tests {
                         kind: StatusEffectKind::QiRegenPaused,
                         magnitude: 1.0,
                         remaining_ticks,
+                        source_pill: None,
                     }],
                 });
             }
