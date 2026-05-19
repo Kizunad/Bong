@@ -672,3 +672,59 @@ cd server && cargo test cultivation::contamination  # P-1 回归
 cd agent && npm test -w @bong/schema
 cd client && ./gradlew test build
 ```
+
+## Finish Evidence
+
+### 落地清单
+
+| 阶段 | 内容 | 关键文件 |
+|------|------|---------|
+| **P-1** | contamination `meridian_id` 定向裂痕路由 | `server/src/cultivation/contamination.rs` |
+| **P0** | `VoidErosion` 组件 + 阶段推进 + 累计追踪 | `server/src/combat/woliu_v2/erosion.rs` |
+| **P0** | 5 虚蚀招式注册（AmbientVortex / VoidVortex / SwallowingVortex / VortexEcho / VoidCore） | `server/src/combat/woliu_v2/events.rs`, `skills.rs` |
+| **P1** | 死亡螺旋 `erosion_modifier()` + 正/负灵域效率修正 | `server/src/combat/woliu_v2/erosion.rs` |
+| **P1** | `StatusEffectKind::VoidCoreActive` 无敌态 + resolve 检查 | `server/src/combat/events.rs`, `resolve.rs` |
+| **P1** | `ScheduledEcho` + 回响递归防护 | `server/src/combat/woliu_v2/state.rs` |
+| **P2** | 忘音台 zone（spirit_qi -0.15, danger_level 3） | `server/zones.worldview.example.json` |
+| **P2** | 忘音台 terrain profile + `wangyintai_compound` layout | `worldgen/scripts/terrain_gen/profiles/wangyintai.py`, `layouts/wangyintai_compound.py` |
+| **P2** | 观主残魂 NPC（虚蚀阶段 2+ 可见门控） | `server/src/npc/guanzhu_remnant.rs` |
+| **P2** | 馆藏书 `cultivation-0005.json` 静虚观覆灭志 | `docs/library/cultivation/cultivation-0005.json` |
+| **P3** | `VoidErosionVisualSyncPayloadV1` CustomPayload 发射 | `server/src/network/void_erosion_visual_emit.rs` |
+| **P3** | schema `woliu_erosion.ts` + `woliu_erosion.rs` 双端对齐 | `agent/packages/schema/src/woliu_erosion.ts`, `server/src/schema/woliu_erosion.rs` |
+| **P4** | `realm_unlocks_skill()` + `realm_erosion_cap()` 境界递进 | `server/src/combat/woliu_v2/erosion.rs` |
+| **P4** | `tiandao_detection_modifier()` 天道感知衰减 | `server/src/combat/woliu_v2/erosion.rs` |
+
+### 关键 commit
+
+| hash | 日期 | 说明 |
+|------|------|------|
+| `3687f91ab` | 2026-05-19 | PR-1: contamination meridian_id 定向裂痕路由 (#273) |
+| `4d095de9d` | 2026-05-19 | PR-2: VoidErosion 虚蚀底盘 + 5 招式 + 死亡螺旋 (#274) |
+| `9a64ed1b9` | 2026-05-19 | PR-3 (P2): 忘音台 zone + 观主残魂 NPC + 馆藏书 (#275) |
+| `ca14c242f` | 2026-05-19 | PR-4 (P3+P4): visual sync + realm gating + tiandao modifier (#276) |
+
+### 测试结果
+
+```
+cd server && cargo test                           → 5548 passed, 0 failed
+cd server && cargo test combat::woliu_v2          → 239 passed (含虚蚀全量)
+cd server && cargo test cultivation::contamination → 13 passed (P-1 回归)
+cd server && cargo test network::void_erosion     → 3 passed (P3 视觉发射)
+cd agent && npm test -w @bong/schema              → 405 passed (含 woliu_erosion 双端)
+```
+
+### 跨仓库核验
+
+| 仓库 | 命中 symbol |
+|------|------------|
+| **server** | `VoidErosion`, `VoidErosionStage`, `VoidErosionAdvanceEvent`, `erosion_modifier()`, `realm_unlocks_skill()`, `realm_erosion_cap()`, `tiandao_detection_modifier()`, `StatusEffectKind::VoidCoreActive`, `ScheduledEcho`, `VoidErosionVisualSyncPayloadV1`, `emit_void_erosion_visual_sync()`, `guanzhu_remnant` NPC |
+| **agent/schema** | `VoidErosionStateV1`, `VoidErosionEventV1`, `VoidErosionVisualSyncPayloadV1`, `VoidErosionTiandaoModifierV1`, `validateVoidErosionStateV1Contract()`, `validateVoidErosionEventV1Contract()`, `validateVoidErosionVisualSyncV1Contract()` |
+| **worldgen** | `WangyintaiGenerator`, `wangyintai_compound` layout, terrain profile registered in `__init__.py` |
+
+### 遗留 / 后续
+
+- **worldview.md §五.2 虚蚀**：plan 头部标"待写入"——属 worldview 修改，需人工 PR（consume-plan 禁止自动改 worldview）
+- **client 渲染实装**：P3 schema + server 发射已落地，client Fabric 侧渲染（半透明 / 回响粒子 / 声音扭曲 HUD）需后续 client plan
+- **CodeRabbit 低优先级建议（PR #276 round 2）**：HashSet dedup、magic number constant、EPSILON tolerance、补充边界测试——均为 polish，不阻塞功能
+- **观主残碟装备**：plan §7.5 提及的涡流专属辅助装备，需 forge/inventory 集成后续 plan
+- **zone spirit_qi 自然回复机制**：plan §9 #7 开放问题——当前接受"涡流者驻留过的地方灵气变薄"作为世界观后果
