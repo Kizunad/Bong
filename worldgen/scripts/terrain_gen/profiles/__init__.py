@@ -19,6 +19,7 @@ from .tsy_daneng_crater import TsyDanengCraterGenerator
 from .tsy_gaoshou_hermitage import TsyGaoshouHermitageGenerator
 from .tsy_zhanchang import TsyZhanchangGenerator
 from .tsy_zongmen_ruin import TsyZongmenRuinGenerator
+from .wangyintai import WangyintaiGenerator
 from .waste_plateau import WastePlateauGenerator
 
 _GENERATORS: dict[str, TerrainProfileGenerator] = {
@@ -43,6 +44,7 @@ _GENERATORS: dict[str, TerrainProfileGenerator] = {
         TsyDanengCraterGenerator(),
         TsyZhanchangGenerator(),
         TsyGaoshouHermitageGenerator(),
+        WangyintaiGenerator(),
     )
 }
 
@@ -127,8 +129,10 @@ def _build_global_decoration_palette() -> tuple[
         )
     next_id += len(WILDERNESS_GROUND_COVER)
 
-    for profile_name in sorted(_GENERATORS):
-        gen = _GENERATORS[profile_name]
+    # Iterate in registration (insertion) order — NOT sorted — so that
+    # existing profiles keep their global decoration IDs when new profiles
+    # are appended to _GENERATORS.
+    for profile_name, gen in _GENERATORS.items():
         offsets[profile_name] = next_id
         for local_idx, deco in enumerate(gen.ecology.decorations):
             palette.append(

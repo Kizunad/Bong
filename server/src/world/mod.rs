@@ -36,6 +36,8 @@ mod tsy_lifecycle_integration_test;
 pub mod tsy_origin;
 pub mod tsy_poi_consumer;
 pub mod tsy_portal;
+#[allow(dead_code)]
+pub mod wangyintai_atmosphere;
 pub mod weather_physics;
 pub mod weather_to_environment;
 pub mod zone;
