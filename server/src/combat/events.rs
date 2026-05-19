@@ -143,6 +143,15 @@ pub enum StatusEffectKind {
     ResonanceLocked,
     /// plan-woliu-path-v1 §6.3：虚心 3s 坍缩态——不可被选中/命中/攻击，10 格吸引。
     VoidCoreActive,
+    /// plan-cultivation-pacing-v1 P1.1：修炼加速，magnitude N → (1+N)× 修炼速度。
+    CultivationAcceleration,
+    /// plan-cultivation-pacing-v1 P1.1：qi 回复减速，magnitude N → qi 回复 × (1-N)。
+    /// 区别于 QiRegenPaused（后者是 bool 全停）。
+    QiRegenSlowed,
+    /// plan-cultivation-pacing-v1 P1.1：受击伤害增加，magnitude N → 受击伤害 × (1+N)。
+    DamageVulnerability,
+    /// plan-cultivation-pacing-v1 P1.5：仅加速奇经打通，对正经无效。
+    ExtraordinaryMeridianAcceleration,
 }
 
 pub const HALLUCINATION_DURATION_TICKS: u64 = 20 * 5;
