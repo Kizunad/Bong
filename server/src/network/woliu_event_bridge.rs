@@ -130,6 +130,11 @@ fn woliu_skill_payload(skill: WoliuSkillId) -> WoliuSkillIdV1 {
         WoliuSkillId::VacuumLock => WoliuSkillIdV1::VacuumLock,
         WoliuSkillId::VortexResonance => WoliuSkillIdV1::VortexResonance,
         WoliuSkillId::TurbulenceBurst => WoliuSkillIdV1::TurbulenceBurst,
+        WoliuSkillId::AmbientVortex => WoliuSkillIdV1::AmbientVortex,
+        WoliuSkillId::VoidVortex => WoliuSkillIdV1::VoidVortex,
+        WoliuSkillId::SwallowingVortex => WoliuSkillIdV1::SwallowingVortex,
+        WoliuSkillId::VortexEcho => WoliuSkillIdV1::VortexEcho,
+        WoliuSkillId::VoidCore => WoliuSkillIdV1::VoidCore,
     }
 }
 

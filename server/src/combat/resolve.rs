@@ -185,6 +185,7 @@ pub fn apply_defense_intents(
             has_active_status(se, StatusEffectKind::Stunned)
                 || has_active_status(se, StatusEffectKind::VortexCasting)
                 || has_active_status(se, StatusEffectKind::ParryRecovery)
+                || has_active_status(se, StatusEffectKind::VoidCoreActive)
         }) {
             continue;
         }
@@ -253,10 +254,12 @@ pub fn resolve_attack_intents(
     ) = weapon_break;
 
     for intent in intents.read() {
+        // Attacker blocked by VoidCoreActive (cannot attack while in void core collapse)
         if statuses.get(intent.attacker).is_ok_and(|se| {
             has_active_status(se, StatusEffectKind::Stunned)
                 || has_active_status(se, StatusEffectKind::VortexCasting)
                 || has_active_status(se, StatusEffectKind::ParryRecovery)
+                || has_active_status(se, StatusEffectKind::VoidCoreActive)
         }) {
             continue;
         }
@@ -271,6 +274,14 @@ pub fn resolve_attack_intents(
             crate::combat::is_damageable(target_entity, &game_modes)
         };
         if !target_damageable {
+            continue;
+        }
+
+        // Target blocked by VoidCoreActive (cannot be hit while in void core collapse)
+        if statuses
+            .get(target_entity)
+            .is_ok_and(|se| has_active_status(se, StatusEffectKind::VoidCoreActive))
+        {
             continue;
         }
 

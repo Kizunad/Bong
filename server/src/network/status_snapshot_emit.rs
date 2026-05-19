@@ -103,6 +103,7 @@ fn status_effect_name(kind: &StatusEffectKind) -> String {
         StatusEffectKind::MirrorExposed => "镜照暴露".to_string(),
         StatusEffectKind::SpiritTreasurePerception => "灵宝感知".to_string(),
         StatusEffectKind::ResonanceLocked => "共振锁定".to_string(),
+        StatusEffectKind::VoidCoreActive => "虚心坍缩".to_string(),
     }
 }
 
@@ -113,7 +114,8 @@ fn status_effect_category(kind: &StatusEffectKind) -> &'static str {
         | StatusEffectKind::VortexCasting
         | StatusEffectKind::ParryRecovery
         | StatusEffectKind::Staggered
-        | StatusEffectKind::Disoriented => "control",
+        | StatusEffectKind::Disoriented
+        | StatusEffectKind::VoidCoreActive => "control",
         StatusEffectKind::DamageReduction
         | StatusEffectKind::BreakthroughBoost
         | StatusEffectKind::AntiSpiritPressurePill

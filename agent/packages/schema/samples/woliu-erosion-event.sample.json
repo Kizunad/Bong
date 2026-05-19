@@ -1,0 +1,7 @@
+{
+  "entity": "player_456",
+  "from_stage": "low_pressure",
+  "to_stage": "void_shadow",
+  "cumulative_erosion": 80.0,
+  "server_tick": 50000
+}

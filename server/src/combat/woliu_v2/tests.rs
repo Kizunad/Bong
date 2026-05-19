@@ -55,9 +55,13 @@ fn assert_spec_case(index: usize) {
     let spec = skill_spec(skill, realm);
     assert_eq!(spec.skill, skill);
     assert_eq!(spec.visual, visual_for(skill));
-    assert!(spec.cooldown_ticks > 0);
-    assert!(spec.cast_ticks > 0);
-    assert!(spec.duration_ticks > 0);
+    // Erosion-path placeholder specs may have zero cast/cooldown/duration
+    // (they use their own constants from erosion.rs, not the WoliuSkillSpec flow).
+    if !skill.is_erosion_skill() {
+        assert!(spec.cooldown_ticks > 0);
+        assert!(spec.cast_ticks > 0);
+        assert!(spec.duration_ticks > 0);
+    }
     assert!(spec.total_qi_cost().is_finite());
     assert!(spec.total_drained().is_finite());
     if skill == WoliuSkillId::Heart && realm == Realm::Void {
@@ -1863,4 +1867,190 @@ fn woliu_emit_helpers_noop_without_event_resources() {
     );
     emit_audio(app.world_mut(), "test_recipe", DVec3::ZERO);
     emit_anim(app.world_mut(), entity, "bong:test_anim");
+}
+
+// ────────────────────────────────────────────────────────
+// plan-woliu-path-v1: 虚蚀路径 WoliuSkillId 新变体测试
+// ────────────────────────────────────────────────────────
+
+#[test]
+fn erosion_skill_ids_are_correct() {
+    assert_eq!(WoliuSkillId::AmbientVortex.as_str(), "woliu.ambient_vortex");
+    assert_eq!(WoliuSkillId::VoidVortex.as_str(), "woliu.void_vortex");
+    assert_eq!(
+        WoliuSkillId::SwallowingVortex.as_str(),
+        "woliu.swallowing_vortex"
+    );
+    assert_eq!(WoliuSkillId::VortexEcho.as_str(), "woliu.vortex_echo");
+    assert_eq!(WoliuSkillId::VoidCore.as_str(), "woliu.void_core");
+}
+
+#[test]
+fn is_erosion_skill_correct() {
+    // Erosion skills should return true
+    for skill in [
+        WoliuSkillId::AmbientVortex,
+        WoliuSkillId::VoidVortex,
+        WoliuSkillId::SwallowingVortex,
+        WoliuSkillId::VortexEcho,
+        WoliuSkillId::VoidCore,
+    ] {
+        assert!(
+            skill.is_erosion_skill(),
+            "{:?}.is_erosion_skill() should be true",
+            skill
+        );
+    }
+    // Base skills should return false
+    for skill in [
+        WoliuSkillId::Hold,
+        WoliuSkillId::Burst,
+        WoliuSkillId::Mouth,
+        WoliuSkillId::Pull,
+        WoliuSkillId::Heart,
+        WoliuSkillId::VacuumPalm,
+        WoliuSkillId::VortexShield,
+        WoliuSkillId::VacuumLock,
+        WoliuSkillId::VortexResonance,
+        WoliuSkillId::TurbulenceBurst,
+    ] {
+        assert!(
+            !skill.is_erosion_skill(),
+            "{:?}.is_erosion_skill() should be false",
+            skill
+        );
+    }
+}
+
+#[test]
+fn all_15_skill_ids_have_unique_as_str() {
+    let mut seen = std::collections::HashSet::new();
+    for skill in WoliuSkillId::ALL {
+        let s = skill.as_str();
+        assert!(
+            seen.insert(s),
+            "duplicate as_str() value '{}' for {:?}",
+            s,
+            skill
+        );
+    }
+    assert_eq!(seen.len(), 15, "expected 15 unique skill IDs");
+}
+
+#[test]
+fn erosion_skills_practice_xp_positive() {
+    for skill in [
+        WoliuSkillId::AmbientVortex,
+        WoliuSkillId::VoidVortex,
+        WoliuSkillId::SwallowingVortex,
+        WoliuSkillId::VortexEcho,
+        WoliuSkillId::VoidCore,
+    ] {
+        assert!(
+            skill.practice_xp() > 0,
+            "{:?} practice_xp should be positive, got {}",
+            skill,
+            skill.practice_xp()
+        );
+    }
+}
+
+#[test]
+fn erosion_skill_meridian_dependencies_declared() {
+    let mut app = App::new();
+    app.insert_resource(SkillMeridianDependencies::default());
+    app.add_systems(Startup, declare_woliu_v2_meridian_dependencies);
+    app.update();
+
+    let deps = app.world().resource::<SkillMeridianDependencies>();
+    for skill in [
+        WoliuSkillId::AmbientVortex,
+        WoliuSkillId::VoidVortex,
+        WoliuSkillId::SwallowingVortex,
+        WoliuSkillId::VortexEcho,
+        WoliuSkillId::VoidCore,
+    ] {
+        let meridians = deps.lookup(skill.as_str());
+        assert_eq!(
+            meridians,
+            &[MeridianId::Lung, MeridianId::Heart],
+            "erosion skill {:?} should depend on [Lung, Heart], got {:?}",
+            skill,
+            meridians
+        );
+    }
+}
+
+#[test]
+fn erosion_skill_serde_roundtrip() {
+    for skill in [
+        WoliuSkillId::AmbientVortex,
+        WoliuSkillId::VoidVortex,
+        WoliuSkillId::SwallowingVortex,
+        WoliuSkillId::VortexEcho,
+        WoliuSkillId::VoidCore,
+    ] {
+        let json = serde_json::to_string(&skill).unwrap();
+        let back: WoliuSkillId = serde_json::from_str(&json).unwrap();
+        assert_eq!(
+            skill, back,
+            "{:?} serde round-trip failed, json={json}",
+            skill
+        );
+    }
+}
+
+#[test]
+fn erosion_skill_serialize_snake_case() {
+    let json = serde_json::to_string(&WoliuSkillId::AmbientVortex).unwrap();
+    assert!(
+        json.contains("ambient_vortex"),
+        "expected snake_case, got {json}"
+    );
+    let json = serde_json::to_string(&WoliuSkillId::VoidCore).unwrap();
+    assert!(
+        json.contains("void_core"),
+        "expected snake_case, got {json}"
+    );
+}
+
+#[test]
+fn is_woliu_skill_always_true_for_all_variants() {
+    for skill in WoliuSkillId::ALL {
+        assert!(
+            skill.is_woliu_skill(),
+            "{:?}.is_woliu_skill() should be true (all variants are woliu)",
+            skill
+        );
+    }
+}
+
+#[test]
+fn erosion_placeholder_spec_qi_costs_match_constants() {
+    use super::erosion::{SWALLOWING_QI_COST, VOID_CORE_QI_COST, VOID_VORTEX_QI_COST};
+    use super::skills::skill_spec;
+
+    let void_vortex_spec = skill_spec(WoliuSkillId::VoidVortex, Realm::Condense);
+    assert!(
+        (void_vortex_spec.startup_qi - VOID_VORTEX_QI_COST).abs() < 1e-9,
+        "void vortex spec qi cost should match constant"
+    );
+
+    let swallowing_spec = skill_spec(WoliuSkillId::SwallowingVortex, Realm::Condense);
+    assert!(
+        (swallowing_spec.startup_qi - SWALLOWING_QI_COST).abs() < 1e-9,
+        "swallowing vortex spec qi cost should match constant"
+    );
+
+    let void_core_spec = skill_spec(WoliuSkillId::VoidCore, Realm::Condense);
+    assert!(
+        (void_core_spec.startup_qi - VOID_CORE_QI_COST).abs() < 1e-9,
+        "void core spec qi cost should match constant"
+    );
+
+    let ambient_spec = skill_spec(WoliuSkillId::AmbientVortex, Realm::Condense);
+    assert!(
+        ambient_spec.startup_qi.abs() < 1e-9,
+        "ambient vortex has no upfront qi cost"
+    );
 }

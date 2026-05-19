@@ -591,11 +591,7 @@ mod skill_tests {
         let events = world.resource::<Events<QiTransfer>>();
         let mut reader = events.get_reader();
         let transfers: Vec<_> = reader.read(events).collect();
-        assert_eq!(
-            transfers.len(),
-            1,
-            "服丹急行应 emit 1 条 QiTransfer 事件"
-        );
+        assert_eq!(transfers.len(), 1, "服丹急行应 emit 1 条 QiTransfer 事件");
         assert_eq!(
             transfers[0].reason,
             QiTransferReason::ReleaseToZone,
@@ -610,8 +606,7 @@ mod skill_tests {
 
     #[test]
     fn pill_mist_exact_boundary_deducts_to_zero() {
-        let (mut world, caster) =
-            make_world_with_caster(Realm::Condense, PILL_MIST_QI_COST, 200.0);
+        let (mut world, caster) = make_world_with_caster(Realm::Condense, PILL_MIST_QI_COST, 200.0);
         let result = resolve_pill_mist(&mut world, caster, 0, None);
         assert!(matches!(result, CastResult::Started { .. }));
         let cultivation = world.get::<Cultivation>(caster).unwrap();

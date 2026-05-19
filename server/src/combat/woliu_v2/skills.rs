@@ -51,8 +51,16 @@ pub const WOLIU_VORTEX_SHIELD_SKILL_ID: &str = "woliu.vortex_shield";
 pub const WOLIU_VACUUM_LOCK_SKILL_ID: &str = "woliu.vacuum_lock";
 pub const WOLIU_VORTEX_RESONANCE_SKILL_ID: &str = "woliu.vortex_resonance";
 pub const WOLIU_TURBULENCE_BURST_SKILL_ID: &str = "woliu.turbulence_burst";
+// plan-woliu-path-v1：虚蚀路径 5 招式
+pub const WOLIU_AMBIENT_VORTEX_SKILL_ID: &str = "woliu.ambient_vortex";
+pub const WOLIU_VOID_VORTEX_SKILL_ID: &str = "woliu.void_vortex";
+pub const WOLIU_SWALLOWING_VORTEX_SKILL_ID: &str = "woliu.swallowing_vortex";
+pub const WOLIU_VORTEX_ECHO_SKILL_ID: &str = "woliu.vortex_echo";
+pub const WOLIU_VOID_CORE_SKILL_ID: &str = "woliu.void_core";
 pub const WOLIU_V2_REQUIRED_MERIDIANS: [MeridianId; 1] = [MeridianId::Lung];
 pub const WOLIU_V3_REQUIRED_MERIDIANS: [MeridianId; 2] = [MeridianId::Lung, MeridianId::Heart];
+/// 虚蚀路径招式需要 Lung + Heart 经脉。
+pub const WOLIU_EROSION_REQUIRED_MERIDIANS: [MeridianId; 2] = [MeridianId::Lung, MeridianId::Heart];
 pub const WOLIU_TURBULENCE_BURST_DAMAGE: f32 = 60.0;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -121,6 +129,16 @@ pub fn declare_woliu_v2_meridian_dependencies(mut deps: ResMut<SkillMeridianDepe
         WOLIU_TURBULENCE_BURST_SKILL_ID,
     ] {
         deps.declare(skill_id, WOLIU_V3_REQUIRED_MERIDIANS.to_vec());
+    }
+    // plan-woliu-path-v1：虚蚀路径 5 招式均依赖 Lung + Heart
+    for skill_id in [
+        WOLIU_AMBIENT_VORTEX_SKILL_ID,
+        WOLIU_VOID_VORTEX_SKILL_ID,
+        WOLIU_SWALLOWING_VORTEX_SKILL_ID,
+        WOLIU_VORTEX_ECHO_SKILL_ID,
+        WOLIU_VOID_CORE_SKILL_ID,
+    ] {
+        deps.declare(skill_id, WOLIU_EROSION_REQUIRED_MERIDIANS.to_vec());
     }
 }
 
@@ -1232,6 +1250,12 @@ pub fn skill_spec(skill: WoliuSkillId, realm: Realm) -> WoliuSkillSpec {
         WoliuSkillId::VacuumLock => vacuum_lock_spec(),
         WoliuSkillId::VortexResonance => vortex_resonance_spec(),
         WoliuSkillId::TurbulenceBurst => turbulence_burst_spec(),
+        // 虚蚀路径招式不走 WoliuSkillSpec（各有独立机制），返回 placeholder spec
+        WoliuSkillId::AmbientVortex
+        | WoliuSkillId::VoidVortex
+        | WoliuSkillId::SwallowingVortex
+        | WoliuSkillId::VortexEcho
+        | WoliuSkillId::VoidCore => erosion_placeholder_spec(skill),
     }
 }
 
@@ -1497,6 +1521,54 @@ fn heart_spec(realm: Realm) -> WoliuSkillSpec {
     }
 }
 
+/// 虚蚀路径招式的 placeholder WoliuSkillSpec。
+///
+/// 虚蚀路径招式有各自独立的消耗/冷却/机制（在 erosion.rs 常量定义），
+/// 不走通用 resolve_woliu_v2_skill 流程。此 spec 仅用于 API 兼容
+/// （如 total_qi_cost / practice_xp 等 display 用途）。
+fn erosion_placeholder_spec(skill: WoliuSkillId) -> WoliuSkillSpec {
+    use super::erosion::*;
+    let (startup_qi, cooldown, duration, visual) = match skill {
+        WoliuSkillId::AmbientVortex => (0.0, 0_u64, 0_u64, visual_for(skill)),
+        WoliuSkillId::VoidVortex => (
+            VOID_VORTEX_QI_COST,
+            VOID_VORTEX_COOLDOWN_TICKS,
+            VOID_VORTEX_DURATION_TICKS,
+            visual_for(skill),
+        ),
+        WoliuSkillId::SwallowingVortex => (
+            SWALLOWING_QI_COST,
+            SWALLOWING_COOLDOWN_TICKS,
+            SWALLOWING_ATTRACT_DURATION_TICKS,
+            visual_for(skill),
+        ),
+        WoliuSkillId::VortexEcho => (0.0, 0, 0, visual_for(skill)),
+        WoliuSkillId::VoidCore => (
+            VOID_CORE_QI_COST,
+            VOID_CORE_COOLDOWN_TICKS,
+            VOID_CORE_DURATION_TICKS,
+            visual_for(skill),
+        ),
+        _ => unreachable!("erosion_placeholder_spec called with non-erosion skill"),
+    };
+    WoliuSkillSpec {
+        skill,
+        field_strength: 0.0,
+        lethal_radius: 0.0,
+        influence_radius: 0.0,
+        turbulence_radius: 0.0,
+        startup_qi,
+        maintain_qi_per_sec: 0.0,
+        duration_ticks: duration,
+        cooldown_ticks: cooldown,
+        cast_ticks: 0,
+        pull_force: 0.0,
+        drain_qi_per_sec: 0.0,
+        passive_default_enabled: false,
+        visual,
+    }
+}
+
 pub fn visual_for(skill: WoliuSkillId) -> WoliuSkillVisual {
     match skill {
         WoliuSkillId::Hold => WoliuSkillVisual {
@@ -1568,6 +1640,42 @@ pub fn visual_for(skill: WoliuSkillId) -> WoliuSkillVisual {
             sound_recipe_id: "woliu_turbulence_burst",
             hud_hint: "turbulence_burst",
             icon_texture: "bong:textures/gui/skill/woliu_burst.png",
+        },
+        // plan-woliu-path-v1：虚蚀路径 5 招式视觉
+        WoliuSkillId::AmbientVortex => WoliuSkillVisual {
+            animation_id: "bong:woliu_ambient_vortex",
+            particle_id: "bong:vortex_ambient",
+            sound_recipe_id: "woliu_ambient_vortex",
+            hud_hint: "ambient_vortex",
+            icon_texture: "bong:textures/gui/skill/woliu_ambient_vortex.png",
+        },
+        WoliuSkillId::VoidVortex => WoliuSkillVisual {
+            animation_id: "bong:woliu_void_vortex",
+            particle_id: "bong:woliu_void_sphere",
+            sound_recipe_id: "woliu_void_vortex",
+            hud_hint: "void_vortex",
+            icon_texture: "bong:textures/gui/skill/woliu_void_vortex.png",
+        },
+        WoliuSkillId::SwallowingVortex => WoliuSkillVisual {
+            animation_id: "bong:woliu_swallowing_vortex",
+            particle_id: "bong:woliu_swallowing_spiral",
+            sound_recipe_id: "woliu_swallowing_vortex",
+            hud_hint: "swallowing_vortex",
+            icon_texture: "bong:textures/gui/skill/woliu_swallowing_vortex.png",
+        },
+        WoliuSkillId::VortexEcho => WoliuSkillVisual {
+            animation_id: "bong:woliu_vortex_echo",
+            particle_id: "bong:woliu_echo_ripple",
+            sound_recipe_id: "woliu_vortex_echo",
+            hud_hint: "vortex_echo",
+            icon_texture: "bong:textures/gui/skill/woliu_vortex_echo.png",
+        },
+        WoliuSkillId::VoidCore => WoliuSkillVisual {
+            animation_id: "bong:woliu_void_core",
+            particle_id: "bong:woliu_void_core_collapse",
+            sound_recipe_id: "woliu_void_core",
+            hud_hint: "void_core",
+            icon_texture: "bong:textures/gui/skill/woliu_void_core.png",
         },
     }
 }

@@ -1,15 +1,21 @@
 pub mod backfire;
+#[allow(dead_code)]
+pub mod erosion;
 pub mod events;
 pub mod physics;
 pub mod skills;
 pub mod state;
 pub mod tick;
 
+#[allow(unused_imports)]
+pub use erosion::{VoidErosion, VoidErosionAdvanceEvent, VoidErosionStage};
 pub use events::{
     BackfireCauseV2, BackfireLevel, EntityDisplacedByVortexPull, TurbulenceFieldDecayed,
     TurbulenceFieldSpawned, VortexBackfireEventV2, VortexCastEvent, WoliuSkillId,
 };
 pub use skills::register_skills;
+#[allow(unused_imports)]
+pub use state::{ScheduledEcho, VoidCoreState};
 
 use valence::prelude::{App, IntoSystemConfigs, Startup, Update};
 
@@ -19,6 +25,7 @@ pub fn register(app: &mut App) {
     app.add_event::<TurbulenceFieldSpawned>();
     app.add_event::<TurbulenceFieldDecayed>();
     app.add_event::<EntityDisplacedByVortexPull>();
+    app.add_event::<VoidErosionAdvanceEvent>();
     app.add_systems(Startup, skills::declare_woliu_v2_meridian_dependencies);
     app.add_systems(
         Update,

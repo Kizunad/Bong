@@ -427,6 +427,12 @@ fn color_for_woliu_skill(skill: WoliuSkillId) -> &'static str {
         WoliuSkillId::VacuumLock => "#7A4CC2",
         WoliuSkillId::VortexResonance => "#8F5BE0",
         WoliuSkillId::TurbulenceBurst => "#E8D9FF",
+        // plan-woliu-path-v1：虚蚀路径——深紫黑色调
+        WoliuSkillId::AmbientVortex => "#9B7DB8",
+        WoliuSkillId::VoidVortex => "#2D1B4E",
+        WoliuSkillId::SwallowingVortex => "#7B5EA7",
+        WoliuSkillId::VortexEcho => "#9B7DB8",
+        WoliuSkillId::VoidCore => "#000000",
     }
 }
 

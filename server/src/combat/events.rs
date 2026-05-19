@@ -141,6 +141,8 @@ pub enum StatusEffectKind {
     SpiritTreasurePerception,
     /// plan-baomai-v4 §6.4：互噬共振锁定——移速 -30%，Dash 禁用。
     ResonanceLocked,
+    /// plan-woliu-path-v1 §6.3：虚心 3s 坍缩态——不可被选中/命中/攻击，10 格吸引。
+    VoidCoreActive,
 }
 
 pub const HALLUCINATION_DURATION_TICKS: u64 = 20 * 5;
