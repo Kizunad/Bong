@@ -5,6 +5,8 @@ pub mod dormant;
 pub mod dying_master;
 pub mod faction;
 pub mod farming_brain;
+#[allow(dead_code)]
+pub mod guanzhu_remnant;
 pub mod hunger;
 pub mod hydrate;
 pub mod intel;
@@ -84,5 +86,6 @@ pub fn register(app: &mut App) {
     app.add_event::<dying_master::DyingMasterEncounterEvent>();
     app.add_systems(Update, dying_master::dying_master_despawn_tick);
     dying_master::log_dying_master_contract();
+    guanzhu_remnant::log_guanzhu_remnant_contract();
     poi_rogue_village::log_rogue_village_contract();
 }

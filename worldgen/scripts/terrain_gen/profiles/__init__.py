@@ -19,6 +19,7 @@ from .tsy_daneng_crater import TsyDanengCraterGenerator
 from .tsy_gaoshou_hermitage import TsyGaoshouHermitageGenerator
 from .tsy_zhanchang import TsyZhanchangGenerator
 from .tsy_zongmen_ruin import TsyZongmenRuinGenerator
+from .wangyintai import WangyintaiGenerator
 from .waste_plateau import WastePlateauGenerator
 
 _GENERATORS: dict[str, TerrainProfileGenerator] = {
@@ -43,6 +44,7 @@ _GENERATORS: dict[str, TerrainProfileGenerator] = {
         TsyDanengCraterGenerator(),
         TsyZhanchangGenerator(),
         TsyGaoshouHermitageGenerator(),
+        WangyintaiGenerator(),
     )
 }
 

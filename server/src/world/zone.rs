@@ -1010,6 +1010,132 @@ mod zone_tests {
         std::env::temp_dir().join(format!("{prefix}-{nanos}{suffix}"))
     }
 
+    // ----- plan-woliu-path-v1 §7.2 — wangyintai zone pin tests -----
+
+    #[test]
+    fn wangyintai_zone_loads_from_zones_json() {
+        let registry =
+            ZoneRegistry::load_from_path(Path::new(env!("CARGO_MANIFEST_DIR")).join("zones.json"));
+        let zone = registry
+            .find_zone_by_name("wangyintai")
+            .expect("wangyintai zone should exist in zones.json");
+
+        assert_eq!(zone.name, "wangyintai", "zone name must be wangyintai");
+        assert_eq!(
+            zone.dimension,
+            crate::world::dimension::DimensionKind::Overworld,
+            "wangyintai is an overworld zone"
+        );
+    }
+
+    #[test]
+    fn wangyintai_spirit_qi_is_negative() {
+        let registry =
+            ZoneRegistry::load_from_path(Path::new(env!("CARGO_MANIFEST_DIR")).join("zones.json"));
+        let zone = registry
+            .find_zone_by_name("wangyintai")
+            .expect("wangyintai zone should exist");
+
+        assert!(
+            (zone.spirit_qi - (-0.15)).abs() < f64::EPSILON,
+            "wangyintai spirit_qi should be -0.15 (negative qi edge), got {}",
+            zone.spirit_qi
+        );
+    }
+
+    #[test]
+    fn wangyintai_danger_level_is_3() {
+        let registry =
+            ZoneRegistry::load_from_path(Path::new(env!("CARGO_MANIFEST_DIR")).join("zones.json"));
+        let zone = registry
+            .find_zone_by_name("wangyintai")
+            .expect("wangyintai zone should exist");
+
+        assert_eq!(
+            zone.danger_level, 3,
+            "wangyintai danger_level should be 3 (medium risk), got {}",
+            zone.danger_level
+        );
+    }
+
+    #[test]
+    fn wangyintai_bounds_match_plan_spec() {
+        let registry =
+            ZoneRegistry::load_from_path(Path::new(env!("CARGO_MANIFEST_DIR")).join("zones.json"));
+        let zone = registry
+            .find_zone_by_name("wangyintai")
+            .expect("wangyintai zone should exist");
+
+        let (min, max) = zone.bounds;
+        assert!(
+            (min.x - 3200.0).abs() < f64::EPSILON
+                && (min.y - 40.0).abs() < f64::EPSILON
+                && (min.z - (-2800.0)).abs() < f64::EPSILON,
+            "wangyintai min bounds should be (3200, 40, -2800), got ({}, {}, {})",
+            min.x,
+            min.y,
+            min.z
+        );
+        assert!(
+            (max.x - 4200.0).abs() < f64::EPSILON
+                && (max.y - 200.0).abs() < f64::EPSILON
+                && (max.z - (-1800.0)).abs() < f64::EPSILON,
+            "wangyintai max bounds should be (4200, 200, -1800), got ({}, {}, {})",
+            max.x,
+            max.y,
+            max.z
+        );
+    }
+
+    #[test]
+    fn wangyintai_patrol_anchors_within_bounds() {
+        let registry =
+            ZoneRegistry::load_from_path(Path::new(env!("CARGO_MANIFEST_DIR")).join("zones.json"));
+        let zone = registry
+            .find_zone_by_name("wangyintai")
+            .expect("wangyintai zone should exist");
+
+        assert_eq!(
+            zone.patrol_anchors.len(),
+            2,
+            "wangyintai should have 2 patrol anchors per plan spec, got {}",
+            zone.patrol_anchors.len()
+        );
+        for (i, anchor) in zone.patrol_anchors.iter().enumerate() {
+            assert!(
+                zone.contains(*anchor),
+                "wangyintai patrol_anchor[{}] at ({}, {}, {}) must be within zone bounds",
+                i,
+                anchor.x,
+                anchor.y,
+                anchor.z
+            );
+        }
+    }
+
+    #[test]
+    fn wangyintai_center_resolves_to_zone() {
+        let registry =
+            ZoneRegistry::load_from_path(Path::new(env!("CARGO_MANIFEST_DIR")).join("zones.json"));
+
+        // Center of the zone AABB
+        let center = DVec3::new(3700.0, 120.0, -2300.0);
+        let found = registry
+            .find_zone(crate::world::dimension::DimensionKind::Overworld, center)
+            .expect("center point should resolve to wangyintai zone");
+        assert_eq!(found.name, "wangyintai");
+    }
+
+    #[test]
+    fn wangyintai_is_not_tsy() {
+        let registry =
+            ZoneRegistry::load_from_path(Path::new(env!("CARGO_MANIFEST_DIR")).join("zones.json"));
+        let zone = registry
+            .find_zone_by_name("wangyintai")
+            .expect("wangyintai zone should exist");
+        assert!(!zone.is_tsy(), "wangyintai is an overworld zone, not TSY");
+    }
+
     // ----- plan-tsy-zone-v1 §1.2 / §-1 helper unit tests -----
 
     fn make_zone(name: &str, dim: crate::world::dimension::DimensionKind) -> super::Zone {
