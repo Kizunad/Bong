@@ -129,8 +129,10 @@ def _build_global_decoration_palette() -> tuple[
         )
     next_id += len(WILDERNESS_GROUND_COVER)
 
-    for profile_name in sorted(_GENERATORS):
-        gen = _GENERATORS[profile_name]
+    # Iterate in registration (insertion) order — NOT sorted — so that
+    # existing profiles keep their global decoration IDs when new profiles
+    # are appended to _GENERATORS.
+    for profile_name, gen in _GENERATORS.items():
         offsets[profile_name] = next_id
         for local_idx, deco in enumerate(gen.ecology.decorations):
             palette.append(
