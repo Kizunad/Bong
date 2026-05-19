@@ -201,6 +201,17 @@ pub fn attribute_aggregate_tick(
             * stamina_crash_slow
             * leg_strain_slow)
             .clamp(0.05, 2.5);
+        // plan-cultivation-pacing-v1 P1.1：DamageVulnerability —— 受击伤害 × (1+N)。
+        // 在所有防御 reduction 之后乘入，允许 defense_power 超过 1.0（脆弱态）。
+        let vulnerability_multiplier = status_effects
+            .active
+            .iter()
+            .filter(|effect| {
+                effect.kind == StatusEffectKind::DamageVulnerability && effect.remaining_ticks > 0
+            })
+            .map(|effect| effect.magnitude.max(0.0))
+            .sum::<f32>();
+
         attrs.attack_power = damage_amp_multiplier.max(1.0);
         attrs.defense_power = damage_reduction_multiplier.clamp(0.05, 1.0);
 
@@ -214,6 +225,11 @@ pub fn attribute_aggregate_tick(
         if let Some(exhausted) = exhausted {
             attrs.defense_power =
                 (attrs.defense_power * exhausted.defense_modifier).clamp(0.05, 1.0);
+        }
+
+        // Vulnerability 在所有 reduction 之后乘入。不 clamp 上限——脆弱就是脆弱。
+        if vulnerability_multiplier > f32::EPSILON {
+            attrs.defense_power *= 1.0 + vulnerability_multiplier;
         }
     }
 }
