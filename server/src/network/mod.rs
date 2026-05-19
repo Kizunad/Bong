@@ -69,6 +69,7 @@ pub mod tuike_event_bridge;
 pub mod unlocks_sync_emit;
 pub mod vfx_animation_trigger;
 pub mod vfx_event_emit;
+pub mod void_erosion_visual_emit;
 pub mod weapon_equipped_emit;
 pub mod weather_bridge;
 pub mod woliu_event_bridge;
@@ -733,6 +734,10 @@ pub fn register(app: &mut App) {
             .after(crate::combat::resolve::resolve_attack_intents),
     );
     app.add_systems(Update, woliu_state_emit::emit_vortex_state_payloads);
+    app.add_systems(
+        Update,
+        void_erosion_visual_emit::emit_void_erosion_visual_sync,
+    );
     app.add_systems(Update, dugu_state_emit::emit_dugu_poison_state_payloads);
     app.add_systems(Update, carrier_state_emit::emit_carrier_state_payloads);
     app.add_systems(
