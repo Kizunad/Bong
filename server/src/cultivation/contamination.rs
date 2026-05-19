@@ -137,6 +137,7 @@ pub fn contamination_tick(
 
         for entry in contam.entries.iter_mut() {
             let budget = cultivation.qi_current.max(0.0);
+            let want_cost = purge_rate.min(entry.amount) * DRAIN_RATIO;
             let (_purge, planned_cost, _cleared) =
                 preview_purge_step(entry.amount, budget, purge_rate);
             let accepted_cost = release_qi_amount_to_zone(
@@ -154,9 +155,8 @@ pub fn contamination_tick(
             }
             apply_purge_cost(entry, accepted_cost);
             cultivation.qi_current -= accepted_cost;
-            if cultivation.qi_current < 0.0 {
+            if accepted_cost + QI_EPSILON < want_cost {
                 any_qi_deficit = true;
-                // 定向裂痕路由（resolve_crack_target）
                 if let Some(target_id) = resolve_crack_target(entry.meridian_id, &meridians) {
                     let m = meridians.get_mut(target_id);
                     m.cracks.push(MeridianCrack {
@@ -167,7 +167,7 @@ pub fn contamination_tick(
                     });
                     m.integrity = (m.integrity - 0.05).max(0.0);
                 }
-                cultivation.qi_current = 0.0;
+                cultivation.qi_current = cultivation.qi_current.max(0.0);
             }
         }
 
