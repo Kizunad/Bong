@@ -662,4 +662,135 @@ mod tests {
              期望 ≤500000 tick，实际 {ticks_to_open} tick (delta={delta:.9})"
         );
     }
+
+    // ── plan-cultivation-pacing-v1 P1.3 meridian delta 在 CultivationAcceleration 下的测试 ──
+
+    #[test]
+    fn meridian_delta_tripled_under_cultivation_acceleration_mag_two() {
+        let mut c = Cultivation {
+            qi_current: 1000.0,
+            qi_max: 1000.0,
+            ..Default::default()
+        };
+        let mut ms = MeridianSystem::default();
+        let target = MeridianId::Lung;
+
+        // 基线：boost=1.0
+        let (delta_base, _) =
+            advance_open_progress_at(&mut c, &mut ms, target, 0.6, true, 0, 1.0).unwrap();
+
+        // 重置 progress
+        ms.get_mut(target).open_progress = 0.0;
+        c.qi_current = 1000.0;
+
+        // boost=3.0 (CultivationAcceleration mag=2.0)
+        let (delta_boosted, _) =
+            advance_open_progress_at(&mut c, &mut ms, target, 0.6, true, 0, 3.0).unwrap();
+
+        assert!(
+            (delta_boosted - delta_base * 3.0).abs() < 1e-12,
+            "cultivation_boost=3.0 应使 delta 3×；\
+             期望 {:.12}，实际 {:.12}",
+            delta_base * 3.0,
+            delta_boosted
+        );
+    }
+
+    // ── plan-cultivation-pacing-v1 P1.5 ExtraordinaryMeridianAcceleration 测试 ──
+
+    #[test]
+    fn extraordinary_accel_only_affects_extraordinary_meridian() {
+        use crate::combat::components::{ActiveStatusEffect, StatusEffects};
+
+        let extra_accel_effects = StatusEffects {
+            active: vec![ActiveStatusEffect {
+                kind: crate::combat::events::StatusEffectKind::ExtraordinaryMeridianAcceleration,
+                magnitude: 4.0,
+                remaining_ticks: 100,
+                source_pill: None,
+            }],
+        };
+
+        // 对正经无效
+        let regular_boost = {
+            let accel = cultivation_acceleration_multiplier(&extra_accel_effects);
+            // ExtraordinaryMeridianAcceleration is NOT CultivationAcceleration, so accel=1.0
+            let extra = 1.0; // Regular meridian → no extra boost
+            (accel * extra).min(5.0)
+        };
+        assert!(
+            (regular_boost - 1.0).abs() < 1e-9,
+            "ExtraordinaryMeridianAcceleration 对正经应无效；实际 boost={regular_boost}"
+        );
+
+        // 对奇经有效：boost = 1.0 * (1 + 4.0) = 5.0
+        let extraordinary_boost = {
+            let accel = cultivation_acceleration_multiplier(&extra_accel_effects);
+            let extra = extraordinary_meridian_acceleration_multiplier(&extra_accel_effects);
+            (accel * extra).min(5.0)
+        };
+        assert!(
+            (extraordinary_boost - 5.0).abs() < 1e-9,
+            "ExtraordinaryMeridianAcceleration(mag=4.0) 对奇经应 (1+4)=5.0× 但被 min(5.0) cap；\
+             实际 boost={extraordinary_boost}"
+        );
+    }
+
+    #[test]
+    fn extraordinary_accel_multiplier_basic() {
+        use crate::combat::components::{ActiveStatusEffect, StatusEffects};
+
+        let se = StatusEffects {
+            active: vec![ActiveStatusEffect {
+                kind: crate::combat::events::StatusEffectKind::ExtraordinaryMeridianAcceleration,
+                magnitude: 4.0,
+                remaining_ticks: 100,
+                source_pill: None,
+            }],
+        };
+        let result = extraordinary_meridian_acceleration_multiplier(&se);
+        assert!(
+            (result - 5.0).abs() < 1e-9,
+            "mag=4.0 应返回 5.0×；实际 {result}"
+        );
+    }
+
+    #[test]
+    fn extraordinary_accel_expired_not_counted() {
+        use crate::combat::components::{ActiveStatusEffect, StatusEffects};
+
+        let se = StatusEffects {
+            active: vec![ActiveStatusEffect {
+                kind: crate::combat::events::StatusEffectKind::ExtraordinaryMeridianAcceleration,
+                magnitude: 4.0,
+                remaining_ticks: 0,
+                source_pill: None,
+            }],
+        };
+        let result = extraordinary_meridian_acceleration_multiplier(&se);
+        assert!(
+            (result - 1.0).abs() < 1e-9,
+            "remaining_ticks=0 不应计入；实际 {result}"
+        );
+    }
+
+    #[test]
+    fn extraordinary_accel_no_cap() {
+        use crate::combat::components::{ActiveStatusEffect, StatusEffects};
+
+        // 单独函数不 cap（cap 在 meridian_open_tick 聚合时做）
+        let se = StatusEffects {
+            active: vec![ActiveStatusEffect {
+                kind: crate::combat::events::StatusEffectKind::ExtraordinaryMeridianAcceleration,
+                magnitude: 10.0,
+                remaining_ticks: 100,
+                source_pill: None,
+            }],
+        };
+        let result = extraordinary_meridian_acceleration_multiplier(&se);
+        assert!(
+            (result - 11.0).abs() < 1e-9,
+            "extraordinary_meridian_acceleration_multiplier 本身无 cap；mag=10 应返回 11.0×，实际 {result}"
+        );
+    }
 }

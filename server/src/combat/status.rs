@@ -915,4 +915,194 @@ mod tests {
         assert_eq!(stamina.current, 100.0);
         assert_eq!(stamina.recover_per_sec, 5.0);
     }
+
+    // ── plan-cultivation-pacing-v1 push_status_effect 测试 ──
+
+    fn pill_effect(pill: &str, magnitude: f32) -> ActiveStatusEffect {
+        ActiveStatusEffect {
+            kind: StatusEffectKind::CultivationAcceleration,
+            magnitude,
+            remaining_ticks: 100,
+            source_pill: Some(pill.to_string()),
+        }
+    }
+
+    #[test]
+    fn push_status_effect_same_pill_third_rejected() {
+        let mut se = StatusEffects::default();
+        assert!(push_status_effect(&mut se, pill_effect("pill_a", 0.5)));
+        assert!(push_status_effect(&mut se, pill_effect("pill_a", 0.5)));
+        assert!(
+            !push_status_effect(&mut se, pill_effect("pill_a", 0.5)),
+            "同种丹药第 3 颗应被拒绝"
+        );
+        assert_eq!(se.active.len(), 2);
+    }
+
+    #[test]
+    fn push_status_effect_different_pill_not_blocked() {
+        let mut se = StatusEffects::default();
+        assert!(push_status_effect(&mut se, pill_effect("pill_a", 0.5)));
+        assert!(push_status_effect(&mut se, pill_effect("pill_a", 0.5)));
+        assert!(
+            push_status_effect(&mut se, pill_effect("pill_b", 0.5)),
+            "不同丹药不应被 per-pill cap 拦截"
+        );
+        assert_eq!(se.active.len(), 3);
+    }
+
+    #[test]
+    fn push_status_effect_none_source_pill_unlimited() {
+        let mut se = StatusEffects::default();
+        for _ in 0..5 {
+            let effect = ActiveStatusEffect {
+                kind: StatusEffectKind::CultivationAcceleration,
+                magnitude: 0.5,
+                remaining_ticks: 100,
+                source_pill: None,
+            };
+            assert!(
+                push_status_effect(&mut se, effect),
+                "source_pill=None 不应受 per-pill cap 限制"
+            );
+        }
+        assert_eq!(se.active.len(), 5);
+    }
+
+    #[test]
+    fn push_status_effect_boundary_exactly_two_same_pill() {
+        let mut se = StatusEffects::default();
+        assert!(push_status_effect(&mut se, pill_effect("x", 1.0)));
+        assert!(push_status_effect(&mut se, pill_effect("x", 2.0)));
+        // 第三颗被拒
+        assert!(!push_status_effect(&mut se, pill_effect("x", 3.0)));
+        // 确认已有的两颗 magnitude 正确（push 不合并，直接入栈）
+        assert_eq!(se.active[0].magnitude, 1.0);
+        assert_eq!(se.active[1].magnitude, 2.0);
+    }
+
+    // ── plan-cultivation-pacing-v1 DamageVulnerability 消费侧测试 ──
+
+    #[test]
+    fn damage_vulnerability_doubles_defense_power() {
+        let mut app = App::new();
+        app.add_systems(Update, attribute_aggregate_tick);
+
+        let entity = app
+            .world_mut()
+            .spawn((
+                StatusEffects {
+                    active: vec![crate::combat::components::ActiveStatusEffect {
+                        kind: StatusEffectKind::DamageVulnerability,
+                        magnitude: 1.0,
+                        remaining_ticks: 20,
+                        source_pill: None,
+                    }],
+                },
+                DerivedAttrs::default(),
+            ))
+            .id();
+
+        app.update();
+
+        let attrs = app.world().entity(entity).get::<DerivedAttrs>().unwrap();
+        // 基线 defense_power=1.0，乘以 (1+1.0)=2.0
+        assert!(
+            (attrs.defense_power - 2.0).abs() < 1e-6,
+            "DamageVulnerability(mag=1.0) 应使 defense_power=2.0（受伤翻倍）；\
+             实际 {:.6}",
+            attrs.defense_power
+        );
+    }
+
+    #[test]
+    fn damage_vulnerability_stacks_with_damage_reduction() {
+        let mut app = App::new();
+        app.add_systems(Update, attribute_aggregate_tick);
+
+        let entity = app
+            .world_mut()
+            .spawn((
+                StatusEffects {
+                    active: vec![
+                        crate::combat::components::ActiveStatusEffect {
+                            kind: StatusEffectKind::DamageReduction,
+                            magnitude: 0.5,
+                            remaining_ticks: 20,
+                            source_pill: None,
+                        },
+                        crate::combat::components::ActiveStatusEffect {
+                            kind: StatusEffectKind::DamageVulnerability,
+                            magnitude: 1.0,
+                            remaining_ticks: 20,
+                            source_pill: None,
+                        },
+                    ],
+                },
+                DerivedAttrs::default(),
+            ))
+            .id();
+
+        app.update();
+
+        let attrs = app.world().entity(entity).get::<DerivedAttrs>().unwrap();
+        // DamageReduction(0.5) → defense_power=0.5
+        // DamageVulnerability(1.0) → defense_power *= 2.0 → 1.0
+        assert!(
+            (attrs.defense_power - 1.0).abs() < 1e-6,
+            "DamageReduction(0.5) + DamageVulnerability(1.0) 应回到 1.0；\
+             实际 {:.6}",
+            attrs.defense_power
+        );
+    }
+
+    #[test]
+    fn damage_vulnerability_expired_not_applied() {
+        let mut app = App::new();
+        app.add_systems(Update, attribute_aggregate_tick);
+
+        let entity = app
+            .world_mut()
+            .spawn((
+                StatusEffects {
+                    active: vec![crate::combat::components::ActiveStatusEffect {
+                        kind: StatusEffectKind::DamageVulnerability,
+                        magnitude: 1.0,
+                        remaining_ticks: 0,
+                        source_pill: None,
+                    }],
+                },
+                DerivedAttrs::default(),
+            ))
+            .id();
+
+        app.update();
+
+        let attrs = app.world().entity(entity).get::<DerivedAttrs>().unwrap();
+        assert!(
+            (attrs.defense_power - 1.0).abs() < 1e-6,
+            "过期的 DamageVulnerability 不应影响 defense_power；实际 {:.6}",
+            attrs.defense_power
+        );
+    }
+
+    #[test]
+    fn no_damage_vulnerability_preserves_baseline() {
+        let mut app = App::new();
+        app.add_systems(Update, attribute_aggregate_tick);
+
+        let entity = app
+            .world_mut()
+            .spawn((StatusEffects::default(), DerivedAttrs::default()))
+            .id();
+
+        app.update();
+
+        let attrs = app.world().entity(entity).get::<DerivedAttrs>().unwrap();
+        assert!(
+            (attrs.defense_power - 1.0).abs() < 1e-6,
+            "无 DamageVulnerability 时 defense_power 应为 1.0；实际 {:.6}",
+            attrs.defense_power
+        );
+    }
 }
