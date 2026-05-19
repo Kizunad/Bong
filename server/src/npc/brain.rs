@@ -4141,8 +4141,8 @@ mod tests {
 
         assert!(!app.world().get::<MeridianSystem>(npc).unwrap().regular[0].opened);
 
-        // Open rate ~0.01 per tick in high-qi zone — 300 ticks should be plenty.
-        for _ in 0..300 {
+        // Open rate ~0.00003 per tick in high-qi zone — 40000 ticks for one meridian.
+        for _ in 0..40_000 {
             app.update();
         }
 
@@ -4610,6 +4610,10 @@ mod tests {
         // Rogue 生产 bundle（无 LifeRecord）；为压缩 tick 预算，提高起始 qi +
         // composure_recover_rate（模拟后续 forging/insight plan 效果，只调
         // 参数不改公式）。
+        //
+        // plan-cultivation-pacing-v1 降速后 BASE_OPEN_RATE 0.00003，单脉 ~35k tick；
+        // 预开 5 正经（Awaken→Induce 已发生）使测试只需再开 1 脉即可验证
+        // Condense 升境流程，将 tick 预算控制在合理范围。
         let rogue = app
             .world_mut()
             .spawn((NpcMarker, Position::new([0.0, 66.0, 0.0])))
@@ -4618,6 +4622,15 @@ mod tests {
         bundle.cultivation.qi_max = 400.0;
         bundle.cultivation.qi_current = 400.0;
         bundle.cultivation.composure_recover_rate = 0.01;
+        // 预开 5 条正经，模拟已完成 Awaken→Induce 阶段。
+        for &mid in MeridianId::REGULAR.iter().take(5) {
+            let m = bundle.meridian_system.get_mut(mid);
+            m.opened = true;
+            m.open_progress = 1.0;
+            m.opened_at = 1;
+        }
+        // Induce 需 3 脉，Condense 需 6 脉——已有 5 脉，再开 1 条即可尝试突破。
+        bundle.cultivation.realm = Realm::Induce;
         app.world_mut().entity_mut(rogue).insert((
             bundle,
             NpcPatrol::new(DEFAULT_SPAWN_ZONE_NAME, DVec3::new(0.0, 66.0, 0.0)),
@@ -4631,8 +4644,8 @@ mod tests {
             .id();
         app.world_mut().insert_resource(TestActionEntity(action));
 
-        // 30000 tick：多次突破 + 失败恢复 + 开多脉的完整循环预算。
-        for _ in 0..30000 {
+        // 降速后第 6 脉（difficulty=0.57）需 ~61k tick，加突破尝试+composure 恢复预算。
+        for _ in 0..80_000 {
             app.update();
         }
 

@@ -67,7 +67,7 @@ pub const QI_DENSITY_GAZE_THRESHOLD: f64 = 0.85;
 /// worldview §九/§十一：区域饥饿阈值。
 pub const QI_REGION_STARVATION_THRESHOLD: f64 = 0.1;
 /// plan-cultivation-v1：修炼吸纳速率系数。
-pub const QI_CULTIVATION_REGEN_RATE: f64 = 0.01;
+pub const QI_CULTIVATION_REGEN_RATE: f64 = 0.003;
 /// plan-cultivation-v1：1.0 zone 浓度可支撑的玩家真元点数。
 pub const QI_ZONE_UNIT_CAPACITY: f64 = 50.0;
 /// player gather：采集动作默认真元奖励，以 zone qi 对冲供给。

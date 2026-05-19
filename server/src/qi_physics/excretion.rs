@@ -126,7 +126,7 @@ mod tests {
     #[test]
     fn regen_from_zone_is_zero_sum_scaled() {
         let (gain, drain) = regen_from_zone(0.5, 2.0, 1.0, 99.0);
-        assert_eq!(gain, 0.01);
+        assert_eq!(gain, 0.003);
         assert!(gain > 0.0);
         assert!((gain / QI_ZONE_UNIT_CAPACITY - drain).abs() < 1e-9);
     }
@@ -143,6 +143,26 @@ mod tests {
         let (gain, drain) = regen_from_zone(0.001, 1_000_000.0, 1.0, 1_000_000.0);
         assert_eq!(drain, 0.001);
         assert_eq!(gain, 0.001 * QI_ZONE_UNIT_CAPACITY);
+    }
+
+    /// P0.3 qi_regen 降速验收：
+    /// 醒灵期 rate=0.1, zone_qi=0.6, integrity=1.0, qi_max=10
+    /// raw_gain = 0.6 * 0.1 * 1.0 * 0.003 = 0.00018/tick
+    /// ticks_to_fill = 10.0 / 0.00018 ≈ 55556
+    #[test]
+    fn qi_regen_slowdown_matches_pacing_target() {
+        let (gain, _drain) = regen_from_zone(0.6, 0.1, 1.0, 10.0);
+        let ticks_to_fill = (10.0 / gain).ceil() as u64;
+        assert!(
+            ticks_to_fill >= 55_000,
+            "醒灵期真元回满应 ≥55000 tick（rate=0.1 zone_qi=0.6 QI_CULTIVATION_REGEN_RATE=0.003），\
+             实际 {ticks_to_fill} tick (gain={gain:.9})"
+        );
+        assert!(
+            ticks_to_fill <= 60_000,
+            "醒灵期真元回满不应超出合理范围，\
+             期望 ≤60000 tick，实际 {ticks_to_fill} tick (gain={gain:.9})"
+        );
     }
 
     #[test]
