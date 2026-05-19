@@ -233,11 +233,14 @@ impl VoidErosionStage {
 }
 
 /// 虚蚀值累积函数。
+///
+/// 增加 `cumulative_erosion` 并同步更新 `stage` 字段。
 pub fn add_erosion(erosion: &mut VoidErosion, amount: f64) {
     if !amount.is_finite() || amount <= 0.0 {
         return;
     }
     erosion.cumulative_erosion += amount;
+    erosion.stage = erosion.computed_stage();
 }
 
 /// 虚蚀阶段推进事件。
@@ -500,6 +503,36 @@ mod tests {
             (erosion.cumulative_erosion - 25.0).abs() < f64::EPSILON,
             "expected 25.0, got {}",
             erosion.cumulative_erosion
+        );
+    }
+
+    #[test]
+    fn add_erosion_updates_stage_in_place() {
+        let mut erosion = VoidErosion::default();
+        assert_eq!(erosion.stage, VoidErosionStage::None);
+        add_erosion(&mut erosion, 25.0);
+        assert_eq!(
+            erosion.stage,
+            VoidErosionStage::LowPressure,
+            "add_erosion should update stage from None to LowPressure after crossing 20.0 threshold"
+        );
+        add_erosion(&mut erosion, 60.0);
+        assert_eq!(
+            erosion.stage,
+            VoidErosionStage::VoidShadow,
+            "add_erosion should update stage to VoidShadow after crossing 80.0 threshold"
+        );
+        add_erosion(&mut erosion, 120.0);
+        assert_eq!(
+            erosion.stage,
+            VoidErosionStage::EchoBody,
+            "add_erosion should update stage to EchoBody after crossing 200.0 threshold"
+        );
+        add_erosion(&mut erosion, 200.0);
+        assert_eq!(
+            erosion.stage,
+            VoidErosionStage::VoidEroded,
+            "add_erosion should update stage to VoidEroded after crossing 400.0 threshold"
         );
     }
 

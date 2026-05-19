@@ -2053,4 +2053,12 @@ fn erosion_placeholder_spec_qi_costs_match_constants() {
         ambient_spec.startup_qi.abs() < 1e-9,
         "ambient vortex has no upfront qi cost"
     );
+
+    // VortexEcho is a passive echo of the last skill — no upfront qi cost
+    let echo_spec = skill_spec(WoliuSkillId::VortexEcho, Realm::Condense);
+    assert!(
+        echo_spec.startup_qi.abs() < 1e-9,
+        "vortex echo has no upfront qi cost (passive echo), got {}",
+        echo_spec.startup_qi
+    );
 }

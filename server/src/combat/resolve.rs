@@ -6328,4 +6328,174 @@ mod tests {
         assert_eq!(deaths.len(), 1);
         assert_eq!(deaths[0].target, npc_a);
     }
+
+    // ────────────────────────────────────────────────────────
+    // plan-woliu-path-v1: VoidCoreActive 回归测试
+    // ────────────────────────────────────────────────────────
+
+    #[test]
+    fn void_core_active_attacker_cannot_deal_damage() {
+        let mut app = App::new();
+        app.insert_resource(CombatClock { tick: 1100 });
+        app.add_event::<AttackIntent>();
+        app.add_event::<ApplyStatusEffectIntent>();
+        app.add_event::<CombatEvent>();
+        app.add_event::<DeathEvent>();
+        app.add_event::<crate::combat::weapon::WeaponBroken>();
+        app.add_event::<InventoryDurabilityChangedEvent>();
+        app.add_systems(Update, resolve_attack_intents);
+
+        let attacker = spawn_player(
+            &mut app,
+            "Azure",
+            [0.0, 64.0, 0.0],
+            Wounds::default(),
+            Stamina::default(),
+        );
+        let target = spawn_player(
+            &mut app,
+            "Crimson",
+            [1.0, 64.0, 0.0],
+            Wounds::default(),
+            Stamina::default(),
+        );
+
+        app.world_mut().entity_mut(attacker).insert(StatusEffects {
+            active: vec![ActiveStatusEffect {
+                kind: StatusEffectKind::VoidCoreActive,
+                magnitude: 1.0,
+                remaining_ticks: 60,
+            }],
+        });
+
+        app.world_mut().send_event(AttackIntent {
+            attacker,
+            target: Some(target),
+            issued_at_tick: 1099,
+            reach: FIST_REACH,
+            qi_invest: 10.0,
+            wound_kind: WoundKind::Blunt,
+            source: AttackSource::Melee,
+            debug_command: None,
+        });
+
+        app.update();
+
+        let wounds = app.world().entity(target).get::<Wounds>().unwrap();
+        assert_eq!(
+            wounds.health_current, wounds.health_max,
+            "VoidCoreActive attacker should not deal damage; target health should be unchanged"
+        );
+        assert!(
+            wounds.entries.is_empty(),
+            "VoidCoreActive attacker should produce no wound entries"
+        );
+        assert!(
+            app.world().resource::<Events<CombatEvent>>().is_empty(),
+            "no CombatEvent should be emitted when attacker has VoidCoreActive"
+        );
+    }
+
+    #[test]
+    fn void_core_active_target_cannot_be_hit() {
+        let mut app = App::new();
+        app.insert_resource(CombatClock { tick: 1100 });
+        app.add_event::<AttackIntent>();
+        app.add_event::<ApplyStatusEffectIntent>();
+        app.add_event::<CombatEvent>();
+        app.add_event::<DeathEvent>();
+        app.add_event::<crate::combat::weapon::WeaponBroken>();
+        app.add_event::<InventoryDurabilityChangedEvent>();
+        app.add_systems(Update, resolve_attack_intents);
+
+        let attacker = spawn_player(
+            &mut app,
+            "Azure",
+            [0.0, 64.0, 0.0],
+            Wounds::default(),
+            Stamina::default(),
+        );
+        let target = spawn_player(
+            &mut app,
+            "Crimson",
+            [1.0, 64.0, 0.0],
+            Wounds::default(),
+            Stamina::default(),
+        );
+
+        app.world_mut().entity_mut(target).insert(StatusEffects {
+            active: vec![ActiveStatusEffect {
+                kind: StatusEffectKind::VoidCoreActive,
+                magnitude: 1.0,
+                remaining_ticks: 60,
+            }],
+        });
+
+        app.world_mut().send_event(AttackIntent {
+            attacker,
+            target: Some(target),
+            issued_at_tick: 1099,
+            reach: FIST_REACH,
+            qi_invest: 10.0,
+            wound_kind: WoundKind::Blunt,
+            source: AttackSource::Melee,
+            debug_command: None,
+        });
+
+        app.update();
+
+        let wounds = app.world().entity(target).get::<Wounds>().unwrap();
+        assert_eq!(
+            wounds.health_current, wounds.health_max,
+            "VoidCoreActive target should be immune to hits; health should be unchanged"
+        );
+        assert!(
+            wounds.entries.is_empty(),
+            "VoidCoreActive target should produce no wound entries"
+        );
+        assert!(
+            app.world().resource::<Events<CombatEvent>>().is_empty(),
+            "no CombatEvent should be emitted when target has VoidCoreActive"
+        );
+    }
+
+    #[test]
+    fn void_core_active_defender_cannot_produce_defense_event() {
+        let mut app = App::new();
+        app.add_event::<DefenseIntent>();
+        app.add_event::<ApplyStatusEffectIntent>();
+        app.add_systems(Update, apply_defense_intents);
+
+        let defender = app
+            .world_mut()
+            .spawn((
+                CombatState::default(),
+                Cultivation {
+                    realm: Realm::Induce,
+                    qi_current: 10.0,
+                    qi_max: 10.0,
+                    ..Cultivation::default()
+                },
+                StatusEffects {
+                    active: vec![ActiveStatusEffect {
+                        kind: StatusEffectKind::VoidCoreActive,
+                        magnitude: 1.0,
+                        remaining_ticks: 60,
+                    }],
+                },
+            ))
+            .id();
+
+        app.world_mut().send_event(DefenseIntent {
+            defender,
+            issued_at_tick: 10,
+        });
+        app.update();
+
+        let state = app.world().entity(defender).get::<CombatState>().unwrap();
+        assert!(
+            state.incoming_window.is_none(),
+            "VoidCoreActive defender should not produce a defense window"
+        );
+    }
 }

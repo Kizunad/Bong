@@ -109,6 +109,12 @@ pub fn register_skills(registry: &mut SkillRegistry) {
     registry.register(WOLIU_VACUUM_LOCK_SKILL_ID, cast_vacuum_lock);
     registry.register(WOLIU_VORTEX_RESONANCE_SKILL_ID, cast_vortex_resonance);
     registry.register(WOLIU_TURBULENCE_BURST_SKILL_ID, cast_turbulence_burst);
+    // plan-woliu-path-v1：虚蚀路径 5 招式
+    registry.register(WOLIU_AMBIENT_VORTEX_SKILL_ID, cast_ambient_vortex);
+    registry.register(WOLIU_VOID_VORTEX_SKILL_ID, cast_void_vortex);
+    registry.register(WOLIU_SWALLOWING_VORTEX_SKILL_ID, cast_swallowing_vortex);
+    registry.register(WOLIU_VORTEX_ECHO_SKILL_ID, cast_vortex_echo);
+    registry.register(WOLIU_VOID_CORE_SKILL_ID, cast_void_core);
 }
 
 pub fn declare_woliu_v2_meridian_dependencies(mut deps: ResMut<SkillMeridianDependencies>) {
@@ -230,6 +236,55 @@ pub fn cast_turbulence_burst(
     target: Option<Entity>,
 ) -> CastResult {
     resolve_woliu_v2_skill(world, caster, slot, target, WoliuSkillId::TurbulenceBurst)
+}
+
+// plan-woliu-path-v1：虚蚀路径 5 招式 cast 入口
+// 虚蚀招式有各自独立机制（在 erosion.rs / tick 系统中实现），
+// 此处通过通用 resolve_woliu_v2_skill 路由以校验经脉/qi/冷却。
+
+pub fn cast_ambient_vortex(
+    world: &mut bevy_ecs::world::World,
+    caster: Entity,
+    slot: u8,
+    target: Option<Entity>,
+) -> CastResult {
+    resolve_woliu_v2_skill(world, caster, slot, target, WoliuSkillId::AmbientVortex)
+}
+
+pub fn cast_void_vortex(
+    world: &mut bevy_ecs::world::World,
+    caster: Entity,
+    slot: u8,
+    target: Option<Entity>,
+) -> CastResult {
+    resolve_woliu_v2_skill(world, caster, slot, target, WoliuSkillId::VoidVortex)
+}
+
+pub fn cast_swallowing_vortex(
+    world: &mut bevy_ecs::world::World,
+    caster: Entity,
+    slot: u8,
+    target: Option<Entity>,
+) -> CastResult {
+    resolve_woliu_v2_skill(world, caster, slot, target, WoliuSkillId::SwallowingVortex)
+}
+
+pub fn cast_vortex_echo(
+    world: &mut bevy_ecs::world::World,
+    caster: Entity,
+    slot: u8,
+    target: Option<Entity>,
+) -> CastResult {
+    resolve_woliu_v2_skill(world, caster, slot, target, WoliuSkillId::VortexEcho)
+}
+
+pub fn cast_void_core(
+    world: &mut bevy_ecs::world::World,
+    caster: Entity,
+    slot: u8,
+    target: Option<Entity>,
+) -> CastResult {
+    resolve_woliu_v2_skill(world, caster, slot, target, WoliuSkillId::VoidCore)
 }
 
 pub fn resolve_woliu_v2_skill(
@@ -832,6 +887,12 @@ fn required_meridians_for(skill: WoliuSkillId) -> &'static [MeridianId] {
         | WoliuSkillId::VacuumLock
         | WoliuSkillId::VortexResonance
         | WoliuSkillId::TurbulenceBurst => &WOLIU_V3_REQUIRED_MERIDIANS,
+        // 虚蚀路径 5 招式均需要 Lung + Heart
+        WoliuSkillId::AmbientVortex
+        | WoliuSkillId::VoidVortex
+        | WoliuSkillId::SwallowingVortex
+        | WoliuSkillId::VortexEcho
+        | WoliuSkillId::VoidCore => &WOLIU_EROSION_REQUIRED_MERIDIANS,
         _ => &WOLIU_V2_REQUIRED_MERIDIANS,
     }
 }

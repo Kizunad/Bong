@@ -456,6 +456,11 @@ fn woliu_particle_count(skill: WoliuSkillId) -> u16 {
         WoliuSkillId::TurbulenceBurst => 64,
         WoliuSkillId::VortexShield | WoliuSkillId::VacuumLock => 32,
         WoliuSkillId::Heart => 36,
+        // plan-woliu-path-v1：虚蚀路径粒子数
+        WoliuSkillId::VoidVortex => 48,
+        WoliuSkillId::SwallowingVortex | WoliuSkillId::VoidCore => 32,
+        WoliuSkillId::AmbientVortex => 6,
+        WoliuSkillId::VortexEcho => 4,
         _ => 16,
     }
 }
@@ -466,6 +471,12 @@ fn woliu_particle_duration_ticks(skill: WoliuSkillId) -> u16 {
         WoliuSkillId::TurbulenceBurst => 44,
         WoliuSkillId::VortexShield | WoliuSkillId::VacuumLock => 60,
         WoliuSkillId::Heart => 100,
+        // plan-woliu-path-v1：虚蚀路径粒子持续
+        WoliuSkillId::VoidVortex => 80,
+        WoliuSkillId::VoidCore => 60,
+        WoliuSkillId::AmbientVortex => 40,
+        WoliuSkillId::SwallowingVortex => 32,
+        WoliuSkillId::VortexEcho => 20,
         _ => 42,
     }
 }
@@ -990,6 +1001,12 @@ mod tests {
             WoliuSkillId::VacuumLock,
             WoliuSkillId::VortexResonance,
             WoliuSkillId::TurbulenceBurst,
+            // plan-woliu-path-v1：虚蚀路径 5 招式
+            WoliuSkillId::AmbientVortex,
+            WoliuSkillId::VoidVortex,
+            WoliuSkillId::SwallowingVortex,
+            WoliuSkillId::VortexEcho,
+            WoliuSkillId::VoidCore,
         ] {
             assert_eq!(
                 woliu_anim_for_skill(skill),
