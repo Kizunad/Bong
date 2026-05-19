@@ -3,7 +3,9 @@
 //! 每 tick：
 //!   * 对每条污染记录 `ContamSource`，按排异效率扣减 `amount`
 //!   * 自身真元按 `排异量 × DRAIN_RATIO`（10:15 亏损）扣
-//!   * qi_current 不够时，对随机经脉施加裂痕（P1: 施加到首条已打通经脉）
+//!   * qi_current 不够时，按 `ContamSource.meridian_id` 定向施加裂痕：
+//!     - `Some(id)` → 打指定经脉（已开时精确命中，未开时 fallback 首开经脉）
+//!     - `None` → 首条已打通经脉（原行为）
 //!   * `amount <= 0` 的条目移除
 //!   * 所有条目都清空 + qi/经络全毁 → emit `CultivationDeathTrigger::ContaminationOverflow`
 
@@ -30,6 +32,22 @@ use super::life_record::LifeRecord;
 pub const DRAIN_RATIO: f64 = 1.5;
 /// 每 tick 基础排异速率。
 pub const BASE_PURGE_RATE: f64 = 0.1;
+
+/// 定向裂痕路由：决定裂痕应施加到哪条经脉。
+///
+/// - `meridian_id = Some(id)` 且该经脉已开 → 返回 `Some(id)`（精确命中）
+/// - `meridian_id = Some(id)` 但未开 → fallback 到首条已开经脉
+/// - `meridian_id = None` → 首条已开经脉（原行为）
+/// - 无已开经脉 → `None`（不施加裂痕）
+pub fn resolve_crack_target(
+    meridian_id: Option<super::components::MeridianId>,
+    meridians: &MeridianSystem,
+) -> Option<super::components::MeridianId> {
+    match meridian_id {
+        Some(id) if meridians.get(id).opened => Some(id),
+        _ => meridians.iter().find(|m| m.opened).map(|m| m.id),
+    }
+}
 
 /// 纯函数：推进一条 contam 的排异。返回 (排异量, 真元消耗, 是否清空)。
 pub fn purge_step(
@@ -138,8 +156,9 @@ pub fn contamination_tick(
             cultivation.qi_current -= accepted_cost;
             if cultivation.qi_current < 0.0 {
                 any_qi_deficit = true;
-                // 对首条已打通经脉添加裂痕
-                if let Some(m) = meridians.iter_mut().find(|m| m.opened) {
+                // 定向裂痕路由（resolve_crack_target）
+                if let Some(target_id) = resolve_crack_target(entry.meridian_id, &meridians) {
+                    let m = meridians.get_mut(target_id);
                     m.cracks.push(MeridianCrack {
                         severity: 0.1,
                         healing_progress: 0.0,
@@ -435,5 +454,114 @@ mod tests {
             QiAccountId::overflow(format!("contamination_purge:{entity:?}"))
         );
         assert_eq!(transfers[0].reason, QiTransferReason::ReleaseToZone);
+    }
+
+    // ── 定向裂痕路由测试（PR-1: contamination meridian_id routing）──
+    //
+    // 测试 `resolve_crack_target` 纯函数：决定裂痕施加到哪条经脉。
+
+    use crate::cultivation::components::MeridianId;
+
+    /// 辅助：构造带指定已开经脉的 MeridianSystem。
+    fn meridian_system_with_opened(opened_ids: &[MeridianId]) -> MeridianSystem {
+        let mut ms = MeridianSystem::default();
+        for &id in opened_ids {
+            let m = ms.get_mut(id);
+            m.opened = true;
+            m.opened_at = 1;
+        }
+        ms
+    }
+
+    #[test]
+    fn crack_route_none_hits_first_opened_meridian() {
+        // meridian_id: None → 应该命中首条已开经脉（Lung，因 iter 顺序 Lung 在前）
+        let ms = meridian_system_with_opened(&[MeridianId::Lung, MeridianId::Heart]);
+        let target = resolve_crack_target(None, &ms);
+        assert_eq!(
+            target,
+            Some(MeridianId::Lung),
+            "meridian_id=None 时应 fallback 到首开经脉 Lung（iter 序第一），\
+             实际返回 {:?}",
+            target
+        );
+    }
+
+    #[test]
+    fn crack_route_some_lung_hits_lung() {
+        // meridian_id: Some(Lung) → 精确打肺经
+        let ms = meridian_system_with_opened(&[MeridianId::Lung, MeridianId::Heart]);
+        let target = resolve_crack_target(Some(MeridianId::Lung), &ms);
+        assert_eq!(
+            target,
+            Some(MeridianId::Lung),
+            "meridian_id=Some(Lung) 且 Lung 已开时应精确命中 Lung，\
+             实际返回 {:?}",
+            target
+        );
+    }
+
+    #[test]
+    fn crack_route_some_heart_hits_heart() {
+        // meridian_id: Some(Heart) → 精确打心经
+        let ms = meridian_system_with_opened(&[MeridianId::Lung, MeridianId::Heart]);
+        let target = resolve_crack_target(Some(MeridianId::Heart), &ms);
+        assert_eq!(
+            target,
+            Some(MeridianId::Heart),
+            "meridian_id=Some(Heart) 且 Heart 已开时应精确命中 Heart，\
+             实际返回 {:?}",
+            target
+        );
+    }
+
+    #[test]
+    fn crack_route_target_not_opened_falls_back_to_first_opened() {
+        // meridian_id: Some(Kidney) 但 Kidney 未开 → fallback 到首开经脉 Lung
+        let ms = meridian_system_with_opened(&[MeridianId::Lung]); // 只开了 Lung
+        let target = resolve_crack_target(Some(MeridianId::Kidney), &ms);
+        assert_eq!(
+            target,
+            Some(MeridianId::Lung),
+            "目标经脉 Kidney 未开时应 fallback 到首开经脉 Lung，\
+             实际返回 {:?}",
+            target
+        );
+    }
+
+    #[test]
+    fn crack_route_target_opened_but_not_first_still_hits_target() {
+        // meridian_id: Some(Heart) 且 Heart 已开但非首开（Lung 在 iter 序更前）
+        // → 应精确打 Heart 而非 Lung
+        let ms = meridian_system_with_opened(&[MeridianId::Lung, MeridianId::Heart]);
+        let target = resolve_crack_target(Some(MeridianId::Heart), &ms);
+        assert_eq!(
+            target,
+            Some(MeridianId::Heart),
+            "meridian_id=Some(Heart) 且 Heart 已开时应精确命中 Heart（即使非首开），\
+             实际返回 {:?}",
+            target
+        );
+    }
+
+    #[test]
+    fn crack_route_no_meridians_opened_returns_none() {
+        // 所有经脉都未开 → 返回 None（无合法目标，不 panic）
+        let ms = meridian_system_with_opened(&[]); // 全部未开
+        let target = resolve_crack_target(Some(MeridianId::Lung), &ms);
+        assert_eq!(
+            target, None,
+            "所有经脉都未开时应返回 None（无合法目标），\
+             实际返回 {:?}",
+            target
+        );
+        // None meridian_id 同样
+        let target2 = resolve_crack_target(None, &ms);
+        assert_eq!(
+            target2, None,
+            "meridian_id=None 且所有经脉都未开时应返回 None，\
+             实际返回 {:?}",
+            target2
+        );
     }
 }
