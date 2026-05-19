@@ -13,6 +13,12 @@ pub enum WoliuSkillIdV1 {
     VacuumLock,
     VortexResonance,
     TurbulenceBurst,
+    // plan-woliu-path-v1 虚蚀路径
+    AmbientVortex,
+    VoidVortex,
+    SwallowingVortex,
+    VortexEcho,
+    VoidCore,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

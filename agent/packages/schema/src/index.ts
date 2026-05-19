@@ -52,6 +52,7 @@ export * from "./tuike-v2.js";
 export * from "./void-actions.js";
 export * from "./woliu.js";
 export * from "./woliu_v2.js";
+export * from "./woliu_erosion.js";
 export * from "./world-state.js";
 export * from "./yidao.js";
 export * from "./zone-environment.js";

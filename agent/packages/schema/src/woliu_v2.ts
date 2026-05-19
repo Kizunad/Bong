@@ -13,6 +13,12 @@ export const WoliuSkillIdV1 = Type.Union([
   Type.Literal("vacuum_lock"),
   Type.Literal("vortex_resonance"),
   Type.Literal("turbulence_burst"),
+  // plan-woliu-path-v1 erosion path
+  Type.Literal("ambient_vortex"),
+  Type.Literal("void_vortex"),
+  Type.Literal("swallowing_vortex"),
+  Type.Literal("vortex_echo"),
+  Type.Literal("void_core"),
 ]);
 export type WoliuSkillIdV1 = Static<typeof WoliuSkillIdV1>;
 

@@ -1,0 +1,9 @@
+{
+  "entity": "player_123",
+  "stage": "echo_body",
+  "cumulative_erosion": 250.0,
+  "ambient_active": true,
+  "contam_mult": 1.5,
+  "efficiency": 0.8,
+  "server_tick": 99999
+}

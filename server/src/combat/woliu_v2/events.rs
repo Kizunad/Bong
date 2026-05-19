@@ -14,11 +14,17 @@ pub enum WoliuSkillId {
     VacuumLock,
     VortexResonance,
     TurbulenceBurst,
+    // plan-woliu-path-v1 虚蚀路径 5 招式
+    AmbientVortex,
+    VoidVortex,
+    SwallowingVortex,
+    VortexEcho,
+    VoidCore,
 }
 
 impl WoliuSkillId {
     #[cfg(test)]
-    pub const ALL: [Self; 10] = [
+    pub const ALL: [Self; 15] = [
         Self::Hold,
         Self::Burst,
         Self::Mouth,
@@ -29,6 +35,11 @@ impl WoliuSkillId {
         Self::VacuumLock,
         Self::VortexResonance,
         Self::TurbulenceBurst,
+        Self::AmbientVortex,
+        Self::VoidVortex,
+        Self::SwallowingVortex,
+        Self::VortexEcho,
+        Self::VoidCore,
     ];
 
     pub fn as_str(self) -> &'static str {
@@ -43,7 +54,31 @@ impl WoliuSkillId {
             Self::VacuumLock => "woliu.vacuum_lock",
             Self::VortexResonance => "woliu.vortex_resonance",
             Self::TurbulenceBurst => "woliu.turbulence_burst",
+            Self::AmbientVortex => "woliu.ambient_vortex",
+            Self::VoidVortex => "woliu.void_vortex",
+            Self::SwallowingVortex => "woliu.swallowing_vortex",
+            Self::VortexEcho => "woliu.vortex_echo",
+            Self::VoidCore => "woliu.void_core",
         }
+    }
+
+    /// Whether this skill is a 虚蚀路径 skill (added by plan-woliu-path-v1).
+    #[allow(dead_code)]
+    pub fn is_erosion_skill(self) -> bool {
+        matches!(
+            self,
+            Self::AmbientVortex
+                | Self::VoidVortex
+                | Self::SwallowingVortex
+                | Self::VortexEcho
+                | Self::VoidCore
+        )
+    }
+
+    /// Whether this skill is any woliu-family skill (can trigger vortex echo).
+    #[allow(dead_code)]
+    pub fn is_woliu_skill(self) -> bool {
+        true // All variants in WoliuSkillId are woliu skills
     }
 
     pub fn practice_xp(self) -> u32 {
@@ -56,6 +91,11 @@ impl WoliuSkillId {
             Self::VacuumLock => 3,
             Self::VortexResonance => 4,
             Self::TurbulenceBurst => 5,
+            Self::AmbientVortex => 0,
+            Self::VoidVortex => 4,
+            Self::SwallowingVortex => 4,
+            Self::VortexEcho => 0,
+            Self::VoidCore => 6,
         }
     }
 }

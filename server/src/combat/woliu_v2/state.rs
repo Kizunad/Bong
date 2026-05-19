@@ -92,3 +92,47 @@ pub struct PassiveVortex {
     pub enabled: bool,
     pub toggled_at_tick: u64,
 }
+
+/// 涡流回响——被动延迟重播涡流招式。
+///
+/// 当 VortexCastEvent 触发时（且 `is_echo == false`），写入一条 ScheduledEcho。
+/// tick system 到 `replay_at_tick` 后 emit 弱化版 VortexCastEvent（`is_echo = true`）。
+#[allow(dead_code)]
+#[derive(bevy_ecs::component::Component, Debug, Clone, PartialEq)]
+pub struct ScheduledEcho {
+    /// 原始施法 entity。
+    pub caster: Entity,
+    /// 原始招式。
+    pub skill: WoliuSkillId,
+    /// 原始施法位置。
+    pub center: DVec3,
+    /// 重播时刻。
+    pub replay_at_tick: u64,
+    /// 威力比（通常 0.4 = 40%）。
+    pub power_ratio: f32,
+    /// 原始 lethal_radius。
+    pub original_lethal_radius: f32,
+    /// 原始 influence_radius。
+    pub original_influence_radius: f32,
+    /// 原始 turbulence_radius。
+    pub original_turbulence_radius: f32,
+    /// 是否失控（方向随机化 / 可命中自己/队友）。
+    pub misfired: bool,
+}
+
+/// 虚心坍缩态——追踪虚心持续状态的辅助 component。
+///
+/// 与 `StatusEffectKind::VoidCoreActive` 配合使用。StatusEffect 控制无敌/不可选中，
+/// 此 component 追踪冲击波参数和回归时刻。
+#[allow(dead_code)]
+#[derive(bevy_ecs::component::Component, Debug, Clone, Copy, PartialEq)]
+pub struct VoidCoreState {
+    /// 回归冲击波时刻（= started_at + VOID_CORE_DURATION_TICKS）。
+    pub shockwave_at_tick: u64,
+    /// 冲击波伤害（预计算）。
+    pub shockwave_damage: f64,
+    /// 冲击波范围（格）。
+    pub shockwave_radius: f32,
+    /// 虚蚀阶段（用于 MeridianCrack / SEVERED 概率）。
+    pub erosion_stage: super::erosion::VoidErosionStage,
+}
