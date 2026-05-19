@@ -6497,5 +6497,14 @@ mod tests {
             state.incoming_window.is_none(),
             "VoidCoreActive defender should not produce a defense window"
         );
+        let intent_count = app
+            .world()
+            .resource::<Events<ApplyStatusEffectIntent>>()
+            .iter_current_update_events()
+            .count();
+        assert_eq!(
+            intent_count, 0,
+            "VoidCoreActive defender should not emit ApplyStatusEffectIntent (e.g. ParryRecovery), got {intent_count}"
+        );
     }
 }

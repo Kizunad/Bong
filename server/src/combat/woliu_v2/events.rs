@@ -91,10 +91,10 @@ impl WoliuSkillId {
             Self::VacuumLock => 3,
             Self::VortexResonance => 4,
             Self::TurbulenceBurst => 5,
-            Self::AmbientVortex => 1,
+            Self::AmbientVortex => 0,
             Self::VoidVortex => 4,
             Self::SwallowingVortex => 4,
-            Self::VortexEcho => 2,
+            Self::VortexEcho => 0,
             Self::VoidCore => 6,
         }
     }

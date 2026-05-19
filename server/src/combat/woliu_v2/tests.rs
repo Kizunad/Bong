@@ -58,12 +58,12 @@ fn assert_spec_case(index: usize) {
     // Erosion-path placeholder specs may have zero cast/cooldown/duration
     // (they use their own constants from erosion.rs, not the WoliuSkillSpec flow).
     if !skill.is_erosion_skill() {
-        assert!(spec.cooldown_ticks > 0);
-        assert!(spec.cast_ticks > 0);
-        assert!(spec.duration_ticks > 0);
+        assert!(spec.cooldown_ticks > 0, "non-erosion skill {skill:?} at {realm:?} should have cooldown > 0, got {}", spec.cooldown_ticks);
+        assert!(spec.cast_ticks > 0, "non-erosion skill {skill:?} at {realm:?} should have cast_ticks > 0, got {}", spec.cast_ticks);
+        assert!(spec.duration_ticks > 0, "non-erosion skill {skill:?} at {realm:?} should have duration > 0, got {}", spec.duration_ticks);
     }
-    assert!(spec.total_qi_cost().is_finite());
-    assert!(spec.total_drained().is_finite());
+    assert!(spec.total_qi_cost().is_finite(), "skill {skill:?} at {realm:?} total_qi_cost must be finite, got {}", spec.total_qi_cost());
+    assert!(spec.total_drained().is_finite(), "skill {skill:?} at {realm:?} total_drained must be finite, got {}", spec.total_drained());
     if skill == WoliuSkillId::Heart && realm == Realm::Void {
         assert!(spec.influence_radius >= 100.0);
         assert!(!spec.passive_default_enabled);
@@ -1938,17 +1938,17 @@ fn all_15_skill_ids_have_unique_as_str() {
 }
 
 #[test]
-fn erosion_skills_practice_xp_positive() {
+fn erosion_skills_practice_xp_values() {
+    assert_eq!(WoliuSkillId::AmbientVortex.practice_xp(), 0, "AmbientVortex is a toggle, should grant 0 XP");
+    assert_eq!(WoliuSkillId::VortexEcho.practice_xp(), 0, "VortexEcho is passive, should grant 0 XP");
     for skill in [
-        WoliuSkillId::AmbientVortex,
         WoliuSkillId::VoidVortex,
         WoliuSkillId::SwallowingVortex,
-        WoliuSkillId::VortexEcho,
         WoliuSkillId::VoidCore,
     ] {
         assert!(
             skill.practice_xp() > 0,
-            "{:?} practice_xp should be positive, got {}",
+            "{:?} practice_xp should be positive for active skills, got {}",
             skill,
             skill.practice_xp()
         );

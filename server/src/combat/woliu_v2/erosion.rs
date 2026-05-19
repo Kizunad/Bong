@@ -156,7 +156,7 @@ impl VoidErosion {
 
     /// 常驻涡流有效范围（格）。
     pub fn ambient_range(&self) -> f32 {
-        if self.stage >= VoidErosionStage::VoidEroded {
+        if self.computed_stage() >= VoidErosionStage::VoidEroded {
             AMBIENT_STAGE_4_RANGE
         } else {
             AMBIENT_BASE_RANGE
@@ -839,6 +839,7 @@ mod tests {
     #[test]
     fn ambient_range_stage_4_expanded() {
         let erosion_s3 = VoidErosion {
+            cumulative_erosion: 200.0,
             stage: VoidErosionStage::EchoBody,
             ..VoidErosion::default()
         };
@@ -847,6 +848,7 @@ mod tests {
             "stage 3 should be 3 blocks"
         );
         let erosion_s4 = VoidErosion {
+            cumulative_erosion: 400.0,
             stage: VoidErosionStage::VoidEroded,
             ..VoidErosion::default()
         };

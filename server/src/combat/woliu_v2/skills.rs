@@ -1287,6 +1287,31 @@ pub(super) fn woliu_av_mapping(skill: WoliuSkillId) -> (&'static str, &'static s
             "woliu_turbulence_burst",
             "bong:woliu_turbulence_burst",
         ),
+        WoliuSkillId::AmbientVortex => (
+            "bong:woliu_ambient_vortex_ground",
+            "woliu_ambient_vortex",
+            "bong:woliu_ambient_vortex",
+        ),
+        WoliuSkillId::VoidVortex => (
+            "bong:woliu_void_vortex_sphere",
+            "woliu_void_vortex",
+            "bong:woliu_void_vortex",
+        ),
+        WoliuSkillId::SwallowingVortex => (
+            "bong:woliu_swallowing_vortex_pull",
+            "woliu_swallowing_vortex",
+            "bong:woliu_swallowing_vortex",
+        ),
+        WoliuSkillId::VortexEcho => (
+            "bong:woliu_vortex_echo_ripple",
+            "woliu_vortex_echo",
+            "bong:woliu_vortex_echo",
+        ),
+        WoliuSkillId::VoidCore => (
+            "bong:woliu_void_core_collapse",
+            "woliu_void_core",
+            "bong:woliu_void_core",
+        ),
         _ => (
             "bong:vortex_spiral",
             "woliu_cast",
