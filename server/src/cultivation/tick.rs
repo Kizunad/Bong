@@ -176,6 +176,10 @@ pub fn qi_regen_and_zone_drain_tick(
         };
         let humility_multiplier = statuses.map(humility_qi_recovery_multiplier).unwrap_or(1.0);
         let qi_regen_pause_multiplier = statuses.map(qi_regen_pause_multiplier).unwrap_or(1.0);
+        let cultivation_accel = statuses
+            .map(cultivation_acceleration_multiplier)
+            .unwrap_or(1.0);
+        let qi_regen_slowed = statuses.map(qi_regen_slowed_multiplier).unwrap_or(1.0);
         let exhausted_multiplier = exhausted
             .map(|state| state.qi_recovery_modifier)
             .unwrap_or(1.0)
@@ -192,6 +196,8 @@ pub fn qi_regen_and_zone_drain_tick(
             rate * wind_candle_multiplier
                 * humility_multiplier
                 * qi_regen_pause_multiplier
+                * cultivation_accel
+                * qi_regen_slowed
                 * exhausted_multiplier
                 * turbulence_multiplier
                 * juebi_aftershock_multiplier,
@@ -308,6 +314,30 @@ pub fn frailty_qi_recovery_multiplier_for_realm(realm: Realm) -> f64 {
         Realm::Spirit => 0.4,
         Realm::Void => 0.3,
     }
+}
+
+/// plan-cultivation-pacing-v1 P1.2：修炼加速乘数。
+/// 叠加所有 CultivationAcceleration buff 的 magnitude，上限 5×。
+pub(crate) fn cultivation_acceleration_multiplier(se: &StatusEffects) -> f64 {
+    let sum: f32 = se
+        .active
+        .iter()
+        .filter(|e| e.kind == StatusEffectKind::CultivationAcceleration && e.remaining_ticks > 0)
+        .map(|e| e.magnitude.max(0.0))
+        .sum();
+    (1.0 + sum as f64).min(5.0)
+}
+
+/// plan-cultivation-pacing-v1 P1.2：qi 回复减速乘数。
+/// 叠加所有 QiRegenSlowed debuff 的 magnitude，clamp 到 [0.0, 1.0]。
+fn qi_regen_slowed_multiplier(se: &StatusEffects) -> f64 {
+    let sum: f32 = se
+        .active
+        .iter()
+        .filter(|e| e.kind == StatusEffectKind::QiRegenSlowed && e.remaining_ticks > 0)
+        .map(|e| e.magnitude.max(0.0))
+        .sum();
+    (1.0 - sum as f64).clamp(0.0, 1.0)
 }
 
 fn has_frailty_status(status_effects: &StatusEffects) -> bool {
