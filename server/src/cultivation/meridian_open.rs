@@ -9,6 +9,9 @@
 
 use valence::prelude::{bevy_ecs, Component, Entity, Event, Events, Position, Query, Res, ResMut};
 
+use crate::combat::components::StatusEffects;
+use crate::combat::events::StatusEffectKind;
+use crate::cultivation::tick::cultivation_acceleration_multiplier;
 use crate::world::dimension::{CurrentDimension, DimensionKind};
 use crate::world::events::EVENT_REALM_COLLAPSE;
 use crate::world::zone::ZoneRegistry;
@@ -58,6 +61,9 @@ type MeridianOpenItem<'a> = (
     // LifeRecord 可选：玩家有完整生平卷，NPC 无（plan §8 已决定）。
     // 推进经脉逻辑对 NPC / 玩家一视同仁，仅生平记录步骤按存在与否跳过。
     Option<&'a mut LifeRecord>,
+    // plan-cultivation-pacing-v1 P1.3：StatusEffects 用于 CultivationAcceleration
+    // / ExtraordinaryMeridianAcceleration 聚合。
+    Option<&'a StatusEffects>,
 );
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -77,12 +83,14 @@ pub fn advance_open_progress(
     zone_qi: f64,
     adjacent_ok: bool,
 ) -> Result<f64, OpenStepError> {
-    advance_open_progress_at(cultivation, meridians, target, zone_qi, adjacent_ok, 0)
+    advance_open_progress_at(cultivation, meridians, target, zone_qi, adjacent_ok, 0, 1.0)
         .map(|(delta, _just_opened)| delta)
 }
 
 /// 与 [`advance_open_progress`] 相同，但额外返回 "本次是否完成打通"，并在打通时写入
 /// `opened_at = tick_now` 以支持 LIFO 排序。
+///
+/// `cultivation_boost`：外部（StatusEffects）聚合后的加速倍率，1.0 = 无加速。
 pub fn advance_open_progress_at(
     cultivation: &mut Cultivation,
     meridians: &mut MeridianSystem,
@@ -90,6 +98,7 @@ pub fn advance_open_progress_at(
     zone_qi: f64,
     adjacent_ok: bool,
     tick_now: u64,
+    cultivation_boost: f64,
 ) -> Result<(f64, bool), OpenStepError> {
     if meridians.get(target).opened {
         return Err(OpenStepError::AlreadyOpen);
@@ -106,7 +115,7 @@ pub fn advance_open_progress_at(
         0.0
     };
     let difficulty = meridian_difficulty_factor(meridians.opened_count(), target.family());
-    let delta = BASE_OPEN_RATE * zone_qi * qi_ratio * difficulty;
+    let delta = BASE_OPEN_RATE * zone_qi * qi_ratio * difficulty * cultivation_boost;
     let cost = delta * OPEN_COST_FACTOR;
     if cultivation.qi_current < cost {
         return Err(OpenStepError::NotEnoughQi);
@@ -156,7 +165,7 @@ pub fn meridian_open_tick(
         return;
     };
     let now = clock.tick;
-    for (entity, pos, current_dimension, target, mut cultivation, mut meridians, life) in
+    for (entity, pos, current_dimension, target, mut cultivation, mut meridians, life, statuses) in
         entities.iter_mut()
     {
         let dimension = current_dimension
@@ -173,6 +182,19 @@ pub fn meridian_open_tick(
             .map(|z| z.spirit_qi)
             .unwrap_or(0.0);
         let adj = is_target_adjacent(&topo, &meridians, target.0);
+        let cultivation_boost = {
+            let accel = statuses
+                .map(cultivation_acceleration_multiplier)
+                .unwrap_or(1.0);
+            let extra = if target.0.family() == MeridianFamily::Extraordinary {
+                statuses
+                    .map(extraordinary_meridian_acceleration_multiplier)
+                    .unwrap_or(1.0)
+            } else {
+                1.0
+            };
+            (accel * extra).min(5.0)
+        };
         if let Ok((_delta, just_opened)) = advance_open_progress_at(
             &mut cultivation,
             &mut meridians,
@@ -180,6 +202,7 @@ pub fn meridian_open_tick(
             zone_qi,
             adj,
             now,
+            cultivation_boost,
         ) {
             if just_opened {
                 if let Some(meridian_opened_events) = meridian_opened_events.as_deref_mut() {
@@ -226,6 +249,20 @@ pub fn meridian_open_tick(
             }
         }
     }
+}
+
+/// plan-cultivation-pacing-v1 P1.5：仅加速奇经打通，magnitude N → (1+N)× 奇经开脉速度。
+/// 无上限——丹药系统控制投入量。
+fn extraordinary_meridian_acceleration_multiplier(se: &StatusEffects) -> f64 {
+    let sum: f32 = se
+        .active
+        .iter()
+        .filter(|e| {
+            e.kind == StatusEffectKind::ExtraordinaryMeridianAcceleration && e.remaining_ticks > 0
+        })
+        .map(|e| e.magnitude.max(0.0))
+        .sum();
+    1.0 + sum as f64
 }
 
 fn meridian_flash_direction(target: MeridianId) -> [f64; 3] {
@@ -605,8 +642,9 @@ mod tests {
         }
         let target = MeridianId::Ren; // 奇经，首脉特许不适用但 adjacent_ok=true 跳过检查
 
-        let (delta, _just_opened) = advance_open_progress_at(&mut c, &mut ms, target, 0.6, true, 0)
-            .expect("应成功推进奇经进度");
+        let (delta, _just_opened) =
+            advance_open_progress_at(&mut c, &mut ms, target, 0.6, true, 0, 1.0)
+                .expect("应成功推进奇经进度");
 
         // expected: 0.00003 * 0.6 * (10000/10000) * meridian_difficulty_factor(12, Extraordinary)
         //         = 0.00003 * 0.6 * 1.0 * (0.4 / 2.8)
