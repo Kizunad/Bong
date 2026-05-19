@@ -150,11 +150,6 @@ pub fn contamination_tick(
                 qi_transfers.as_deref_mut(),
                 "contamination_purge",
             );
-            if accepted_cost <= QI_EPSILON {
-                continue;
-            }
-            apply_purge_cost(entry, accepted_cost);
-            cultivation.qi_current -= accepted_cost;
             if accepted_cost + QI_EPSILON < want_cost {
                 any_qi_deficit = true;
                 if let Some(target_id) = resolve_crack_target(entry.meridian_id, &meridians) {
@@ -167,8 +162,12 @@ pub fn contamination_tick(
                     });
                     m.integrity = (m.integrity - 0.05).max(0.0);
                 }
-                cultivation.qi_current = cultivation.qi_current.max(0.0);
             }
+            if accepted_cost <= QI_EPSILON {
+                continue;
+            }
+            apply_purge_cost(entry, accepted_cost);
+            cultivation.qi_current -= accepted_cost;
         }
 
         contam.entries.retain(|e| e.amount > 1e-9);
