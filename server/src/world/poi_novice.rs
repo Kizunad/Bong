@@ -864,4 +864,34 @@ mod tests {
             "第一次搜遗缴"
         );
     }
+
+    // ——— plan-onboarding-loop-v1 P4: 校准测试 ———
+
+    #[test]
+    fn craft_stash_near_poi_distance_200_400() {
+        let stashes = super::scatter_surface_stashes(42);
+        let craft_stashes: Vec<_> = stashes
+            .iter()
+            .filter(|s| s.pool_id == "surface_stash_craft")
+            .collect();
+        assert_eq!(
+            craft_stashes.len(),
+            super::CRAFT_COUNT,
+            "craft stash 数量应为 {}; got {}",
+            super::CRAFT_COUNT,
+            craft_stashes.len()
+        );
+        for s in &craft_stashes {
+            let dist = ((s.x - super::SPAWN_CENTER_X).powi(2)
+                + (s.z - super::SPAWN_CENTER_Z).powi(2))
+            .sqrt();
+            assert!(
+                dist <= super::CRAFT_RADIUS + 1.0,
+                "craft 遗缴 #{} 距 spawn {:.0} 应在 {} 格内",
+                s.index,
+                dist,
+                super::CRAFT_RADIUS
+            );
+        }
+    }
 }

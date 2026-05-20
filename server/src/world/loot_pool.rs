@@ -578,4 +578,61 @@ mod tests {
             "stone_casket_mid should contain scroll_technique_zhenmai_parry"
         );
     }
+
+    // ——— plan-onboarding-loop-v1 P4: 校准测试 ———
+
+    #[test]
+    fn material_sufficiency_from_5_basic_stashes() {
+        let pools = load_loot_pool_registry().expect("loot_pools.json must parse");
+        let pool = pools.get("surface_stash_basic").unwrap();
+        let base_materials = ["crude_wood", "stone_chunk", "grass_fiber"];
+        let total_weight: u32 = pool.entries.iter().map(|e| e.weight).sum();
+        let base_weight: u32 = pool
+            .entries
+            .iter()
+            .filter(|e| base_materials.contains(&e.template_id.as_str()))
+            .map(|e| e.weight)
+            .sum();
+        let base_ratio = base_weight as f64 / total_weight as f64;
+        assert!(
+            base_ratio >= 0.5,
+            "basic pool 基础材料权重占比 {:.2} 应 >= 50%，确保 5 个 basic stash 足够产出首件工具材料",
+            base_ratio
+        );
+    }
+
+    #[test]
+    fn technique_scroll_expected_from_4_scroll_stashes() {
+        let pools = load_loot_pool_registry().expect("loot_pools.json must parse");
+        let pool = pools.get("surface_stash_scroll").unwrap();
+        let scroll_entries: Vec<_> = pool
+            .entries
+            .iter()
+            .filter(|e| e.template_id.starts_with("scroll_technique_"))
+            .collect();
+        assert!(
+            !scroll_entries.is_empty(),
+            "scroll pool 应含有 scroll_technique_* 条目"
+        );
+        let total_weight: u32 = pool.entries.iter().map(|e| e.weight).sum();
+        let scroll_weight: u32 = scroll_entries.iter().map(|e| e.weight).sum();
+        let scroll_ratio = scroll_weight as f64 / total_weight as f64;
+        assert!(
+            scroll_ratio >= 0.4,
+            "scroll pool 招式残卷权重占比 {:.2} 应 >= 40%，确保 4 个 scroll stash 期望产出 ≥ 1 张招式残卷",
+            scroll_ratio
+        );
+    }
+
+    #[test]
+    fn iron_sword_v0_fan_tie_available_in_spawn_mineral_anchor() {
+        let anchors_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../worldgen/blueprint/mineral_anchors.json");
+        let content =
+            std::fs::read_to_string(&anchors_path).expect("mineral_anchors.json should exist");
+        assert!(
+            content.contains("\"fan_tie\""),
+            "mineral_anchors.json should contain fan_tie anchor for spawn area iron sword crafting"
+        );
+    }
 }
