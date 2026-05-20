@@ -1,0 +1,10 @@
+# bone_leggings material -- plan-depth-loop-v1 P4 placeholder
+
+newmtl bone_leggings_mat_0
+Ka 1.000000 1.000000 1.000000
+Kd 0.831373 0.772549 0.662745
+Ks 0.000000 0.000000 0.000000
+Ns 10.000000
+d 1.000000
+illum 1
+map_Kd bong:armor/bone_leggings/0

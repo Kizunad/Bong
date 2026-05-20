@@ -1,0 +1,15 @@
+{
+  "template_id": "armor_bone_leggings",
+  "profile": {
+    "slot": "legs",
+    "body_coverage": ["leg_l", "leg_r"],
+    "kind_mitigation": {
+      "cut": 0.20,
+      "blunt": 0.10,
+      "pierce": 0.25,
+      "concussion": 0.15
+    },
+    "durability_max": 80,
+    "broken_multiplier": 0.3
+  }
+}

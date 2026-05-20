@@ -1,0 +1,15 @@
+{
+  "template_id": "armor_bone_boots",
+  "profile": {
+    "slot": "feet",
+    "body_coverage": ["leg_l", "leg_r"],
+    "kind_mitigation": {
+      "cut": 0.15,
+      "blunt": 0.15,
+      "pierce": 0.20,
+      "concussion": 0.10
+    },
+    "durability_max": 80,
+    "broken_multiplier": 0.3
+  }
+}
