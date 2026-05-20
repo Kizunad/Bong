@@ -446,7 +446,10 @@ mod tests {
                 .get(id)
                 .unwrap_or_else(|| panic!("{id} should be loaded"));
             assert_eq!(profile.slot, slot, "{id} slot mismatch");
-            assert_eq!(profile.body_coverage, coverage, "{id} body_coverage mismatch");
+            assert_eq!(
+                profile.body_coverage, coverage,
+                "{id} body_coverage mismatch"
+            );
             assert_eq!(
                 profile.durability_max, 80,
                 "{id} durability_max should be 80 per mundane.rs Bone spec"

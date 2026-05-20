@@ -355,4 +355,77 @@ mod tests {
         );
         assert!(result.is_none(), "no exit condition met should return None");
     }
+
+    // ─── plan-depth-loop-v1 P5 — 循环闭合校准 e2e test ───
+
+    /// P5.1 E2E: Verify the practice session system accumulates proficiency
+    /// gain over multiple ticks and consumes qi proportionally.
+    ///
+    /// Simulates a 10-tick practice session with zone_qi=0.5, starting
+    /// proficiency=0.0, no color match, full meridian health.
+    #[test]
+    fn e2e_practice_session_raises_proficiency_over_time() {
+        let mut session = PracticeSession {
+            technique_id: "sword.cleave".to_string(),
+            started_at_tick: 0,
+            total_gain: 0.0,
+        };
+        let initial_qi = 1000.0;
+        let mut qi = initial_qi;
+        let tick_count = 10;
+
+        // Run 10 ticks of practice
+        for _ in 0..tick_count {
+            practice_session_tick(&mut session, 0.5, 0.0, false, 1.0, &mut qi);
+        }
+
+        // total_gain must accumulate — practice is meaningful over time
+        assert!(
+            session.total_gain > 0.0,
+            "practice session should accumulate proficiency gain over {tick_count} ticks, \
+             got total_gain={} — practice would be pointless if it produced zero gain",
+            session.total_gain
+        );
+
+        // qi must be consumed — practice costs resources
+        assert!(
+            qi < initial_qi,
+            "qi should decrease during practice because each tick costs qi, \
+             expected qi < {initial_qi}, got qi={qi}"
+        );
+
+        // qi consumed should match exactly tick_count * qi_cost_per_tick
+        let expected_cost = practice_session_qi_cost_per_tick() * tick_count as f64;
+        let actual_consumed = initial_qi - qi;
+        assert!(
+            (actual_consumed - expected_cost).abs() < 1e-9,
+            "qi consumed ({actual_consumed}) should equal {tick_count} * qi_cost_per_tick ({}) = {expected_cost} \
+             — each practice tick should consume exactly qi_cost_per_tick qi",
+            practice_session_qi_cost_per_tick()
+        );
+
+        // Verify the gain per tick is consistent with practice_session_gain at proficiency=0
+        let expected_gain_per_tick = practice_session_gain(0.5, 0.0, false, 1.0);
+        assert!(
+            expected_gain_per_tick > 0.0,
+            "practice_session_gain at proficiency=0 should be positive"
+        );
+        // Note: total_gain accumulates roughly tick_count * initial_gain_per_tick.
+        // Tiny f32 rounding can push total_gain fractionally above the naive sum,
+        // so we use a small epsilon for the upper bound.
+        let naive_total = expected_gain_per_tick * tick_count as f32;
+        let eps = 1e-5;
+        assert!(
+            session.total_gain <= naive_total + eps,
+            "total_gain ({}) should be approximately <= tick_count * initial_gain_per_tick \
+             ({naive_total}) — proficiency increases cause diminishing returns per tick",
+            session.total_gain
+        );
+        assert!(
+            session.total_gain >= naive_total * 0.5,
+            "total_gain ({}) should be at least 50% of naive total ({naive_total}) — \
+             10 ticks is not enough for extreme diminishing returns",
+            session.total_gain
+        );
+    }
 }

@@ -842,13 +842,23 @@ mod tests {
         let Some(StepSpec::Billet { profile }) = bp.steps.first() else {
             panic!("bone_dagger first step should be billet");
         };
-        assert_eq!(profile.required.len(), 2, "bone dagger needs yi_shou_gu + grass_fiber");
+        assert_eq!(
+            profile.required.len(),
+            2,
+            "bone dagger needs yi_shou_gu + grass_fiber"
+        );
         assert!(
-            profile.required.iter().any(|s| s.material == "yi_shou_gu" && s.count == 2),
+            profile
+                .required
+                .iter()
+                .any(|s| s.material == "yi_shou_gu" && s.count == 2),
             "bone dagger should need 2 yi_shou_gu"
         );
         assert!(
-            profile.required.iter().any(|s| s.material == "grass_fiber" && s.count == 1),
+            profile
+                .required
+                .iter()
+                .any(|s| s.material == "grass_fiber" && s.count == 1),
             "bone dagger should need 1 grass_fiber"
         );
     }
@@ -902,7 +912,8 @@ mod tests {
             panic!("bone_chestplate first step should be billet");
         };
         assert_eq!(
-            profile.required.len(), 1,
+            profile.required.len(),
+            1,
             "bone_chestplate_v0 should have exactly 1 required material, got {}",
             profile.required.len()
         );
@@ -963,5 +974,220 @@ mod tests {
                 scroll.blueprint_id
             );
         }
+    }
+
+    // ─── plan-depth-loop-v1 P5 — 循环闭合校准 e2e tests ───
+
+    /// Helper: parse mineral_anchors.json and find max_units for a given zone + mineral_id.
+    fn spawn_anchor_max_units(zone: &str, mineral_id: &str) -> Option<u64> {
+        let json_str = include_str!("../../../worldgen/blueprint/mineral_anchors.json");
+        let root: serde_json::Value =
+            serde_json::from_str(json_str).expect("mineral_anchors.json should parse");
+        let anchors = root["anchors"]
+            .as_array()
+            .expect("mineral_anchors.json should have 'anchors' array");
+        for anchor in anchors {
+            let z = anchor["zone"].as_str().unwrap_or("");
+            let m = anchor["mineral_id"].as_str().unwrap_or("");
+            if z == zone && m == mineral_id {
+                return anchor["max_units"].as_u64();
+            }
+        }
+        None
+    }
+
+    /// Helper: sum fan_tie needed for one full iron armor set from blueprints.
+    fn fan_tie_per_iron_armor_set(reg: &BlueprintRegistry) -> u32 {
+        let mut total = 0u32;
+        for bp_id in [
+            "iron_helmet_v0",
+            "iron_chestplate_v0",
+            "iron_leggings_v0",
+            "iron_boots_v0",
+        ] {
+            let bp = reg
+                .get(bp_id)
+                .unwrap_or_else(|| panic!("missing blueprint {bp_id}"));
+            let Some(StepSpec::Billet { profile }) = bp.steps.first() else {
+                panic!("{bp_id} first step should be billet");
+            };
+            for req in &profile.required {
+                if req.material == "fan_tie" {
+                    total += req.count;
+                }
+            }
+        }
+        total
+    }
+
+    /// P5.1 E2E: Verify all 4 iron armor blueprints exist, fan_tie exists in
+    /// mineral registry, and spawn zone mineral anchor has enough max_units for
+    /// 1 full iron armor set (11 fan_tie).
+    #[test]
+    fn e2e_full_iron_armor_set_forgeable_from_spawn_minerals() {
+        let minerals = crate::mineral::build_default_registry();
+        let reg =
+            BlueprintRegistry::load_dir_with_minerals(DEFAULT_BLUEPRINTS_DIR, Some(&minerals))
+                .expect("blueprint registry should load");
+
+        // All 4 iron armor blueprints must exist
+        for bp_id in [
+            "iron_helmet_v0",
+            "iron_chestplate_v0",
+            "iron_leggings_v0",
+            "iron_boots_v0",
+        ] {
+            assert!(
+                reg.get(bp_id).is_some(),
+                "iron armor blueprint '{bp_id}' should exist in registry — \
+                 required for the iron armor forging path from spawn minerals"
+            );
+        }
+
+        // fan_tie must be a valid mineral
+        assert!(
+            minerals.is_valid_mineral_id("fan_tie"),
+            "fan_tie should be a valid mineral_id in MineralRegistry — \
+             it is the primary material for all iron armor blueprints"
+        );
+
+        // Spawn zone fan_tie anchor must have enough max_units for 1 full set
+        let fan_tie_per_set = fan_tie_per_iron_armor_set(&reg);
+        assert_eq!(
+            fan_tie_per_set, 11,
+            "expected 1 iron armor set to cost 11 fan_tie (2+4+3+2), got {fan_tie_per_set}"
+        );
+
+        let max_units = spawn_anchor_max_units("spawn", "fan_tie").unwrap_or_else(|| {
+            panic!(
+                "mineral_anchors.json should have a spawn zone fan_tie anchor — \
+                 this is the tutorial mining vein for new players"
+            )
+        });
+        assert!(
+            max_units >= fan_tie_per_set as u64,
+            "spawn zone fan_tie anchor max_units ({max_units}) should be >= {fan_tie_per_set} \
+             (1 full iron armor set) — otherwise new players cannot forge a complete armor set \
+             from the tutorial mining vein"
+        );
+    }
+
+    /// P5.1 E2E: Verify all 4 bone armor blueprints exist, yi_shou_gu exists
+    /// in item registry (monster drop), and is listed as an allowed forge item
+    /// material.
+    #[test]
+    fn e2e_bone_armor_set_forgeable_from_monster_drops() {
+        let reg = BlueprintRegistry::load_dir(DEFAULT_BLUEPRINTS_DIR)
+            .expect("blueprint registry should load");
+
+        // All 4 bone armor blueprints must exist
+        for bp_id in [
+            "bone_helmet_v0",
+            "bone_chestplate_v0",
+            "bone_leggings_v0",
+            "bone_boots_v0",
+        ] {
+            assert!(
+                reg.get(bp_id).is_some(),
+                "bone armor blueprint '{bp_id}' should exist in registry — \
+                 required for the bone armor forging path from monster drops"
+            );
+        }
+
+        // yi_shou_gu must be in the item registry (it is a monster drop, not a mineral)
+        let item_reg = crate::inventory::load_item_registry().expect("item registry should load");
+        assert!(
+            item_reg.get("yi_shou_gu").is_some(),
+            "yi_shou_gu should exist in item registry — \
+             it is the primary material for bone armor, obtained from monster drops"
+        );
+
+        // yi_shou_gu must be allowed as a forge item material
+        assert!(
+            is_allowed_item_material("yi_shou_gu"),
+            "yi_shou_gu should be in the allowed item material list — \
+             bone armor blueprints reference it as a non-mineral forge material"
+        );
+
+        // Each bone armor blueprint should reference yi_shou_gu as required material
+        let mut total_yi_shou_gu = 0u32;
+        for bp_id in [
+            "bone_helmet_v0",
+            "bone_chestplate_v0",
+            "bone_leggings_v0",
+            "bone_boots_v0",
+        ] {
+            let bp = reg
+                .get(bp_id)
+                .unwrap_or_else(|| panic!("expected blueprint {bp_id} in registry"));
+            let Some(StepSpec::Billet { profile }) = bp.steps.first() else {
+                panic!("{bp_id} first step should be billet");
+            };
+            let has_yi_shou_gu = profile
+                .required
+                .iter()
+                .any(|req| req.material == "yi_shou_gu");
+            assert!(
+                has_yi_shou_gu,
+                "{bp_id} should require yi_shou_gu as material — \
+                 bone armor is crafted from monster drops"
+            );
+            total_yi_shou_gu += profile
+                .required
+                .iter()
+                .filter(|req| req.material == "yi_shou_gu")
+                .map(|req| req.count)
+                .sum::<u32>();
+        }
+        assert_eq!(
+            total_yi_shou_gu, 11,
+            "expected 1 bone armor set to cost 11 yi_shou_gu (2+4+3+2), got {total_yi_shou_gu}"
+        );
+    }
+
+    /// P5.1 E2E: Verify spawn zone mineral anchor max_units is sufficient for
+    /// 2 full iron armor sets + 3 iron swords (total 31 fan_tie).
+    ///
+    /// Budget: 2 armor sets = 2 x 11 = 22 fan_tie;
+    ///         3 iron swords = 3 x 3 = 9 fan_tie;
+    ///         total = 31 fan_tie.
+    #[test]
+    fn material_sufficiency_fan_tie_for_2_armor_sets() {
+        let reg = BlueprintRegistry::load_dir(DEFAULT_BLUEPRINTS_DIR)
+            .expect("blueprint registry should load");
+
+        let fan_tie_per_set = fan_tie_per_iron_armor_set(&reg);
+        let sword_bp = reg
+            .get("iron_sword_v0")
+            .expect("iron_sword_v0 blueprint should exist");
+        let Some(StepSpec::Billet { profile }) = sword_bp.steps.first() else {
+            panic!("iron_sword first step should be billet");
+        };
+        let fan_tie_per_sword: u32 = profile
+            .required
+            .iter()
+            .filter(|req| req.material == "fan_tie")
+            .map(|req| req.count)
+            .sum();
+        assert_eq!(
+            fan_tie_per_sword, 3,
+            "expected iron_sword_v0 to cost 3 fan_tie, got {fan_tie_per_sword}"
+        );
+
+        let total_needed: u64 = (fan_tie_per_set as u64) * 2 + (fan_tie_per_sword as u64) * 3;
+        assert_eq!(
+            total_needed, 31,
+            "expected total needed = 2 armor sets (22) + 3 swords (9) = 31, got {total_needed}"
+        );
+
+        let max_units = spawn_anchor_max_units("spawn", "fan_tie").unwrap_or_else(|| {
+            panic!("mineral_anchors.json should have a spawn zone fan_tie anchor")
+        });
+        assert!(
+            max_units >= total_needed,
+            "spawn zone fan_tie anchor max_units ({max_units}) should be >= {total_needed} \
+             (2 iron armor sets = 22 + 3 iron swords = 9 = 31 fan_tie) — \
+             otherwise the tutorial mining vein does not support expected early-game throughput"
+        );
     }
 }
