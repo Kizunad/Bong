@@ -3856,4 +3856,38 @@ mod tests {
         let round: ContainerKindV1 = serde_json::from_str(&json).expect("should deserialize back");
         assert_eq!(round, ContainerKindV1::SurfaceStash);
     }
+
+    #[test]
+    fn technique_proficiency_update_rejects_missing_gain() {
+        let missing_gain = serde_json::json!({
+            "v": SERVER_DATA_VERSION,
+            "type": "technique_proficiency_update",
+            "update": {
+                "technique_id": "sword.cleave",
+                "proficiency": 0.42
+            }
+        });
+        assert!(
+            serde_json::from_value::<ServerDataV1>(missing_gain).is_err(),
+            "technique_proficiency_update missing 'gain' should fail deserialization"
+        );
+    }
+
+    #[test]
+    fn technique_proficiency_update_rejects_unknown_field() {
+        let unknown_field = serde_json::json!({
+            "v": SERVER_DATA_VERSION,
+            "type": "technique_proficiency_update",
+            "update": {
+                "technique_id": "sword.cleave",
+                "proficiency": 0.42,
+                "gain": 0.008,
+                "unexpected": true
+            }
+        });
+        assert!(
+            serde_json::from_value::<ServerDataV1>(unknown_field).is_err(),
+            "technique_proficiency_update with unknown field should fail due to deny_unknown_fields"
+        );
+    }
 }

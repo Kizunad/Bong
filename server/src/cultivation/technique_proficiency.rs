@@ -508,4 +508,40 @@ mod tests {
             scalars.cooldown_mult
         );
     }
+
+    #[test]
+    fn generic_scalars_clamps_negative_proficiency() {
+        let scalars = generic_proficiency_scalars(-0.5);
+        let expected = generic_proficiency_scalars(0.0);
+        assert!(
+            (scalars.cast_ticks_mult - expected.cast_ticks_mult).abs() < 1e-6,
+            "prof=-0.5 should clamp to 0.0: cast_ticks_mult expected {}, got {}",
+            expected.cast_ticks_mult,
+            scalars.cast_ticks_mult
+        );
+        assert!(
+            (scalars.cooldown_mult - expected.cooldown_mult).abs() < 1e-6,
+            "prof=-0.5 should clamp to 0.0: cooldown_mult expected {}, got {}",
+            expected.cooldown_mult,
+            scalars.cooldown_mult
+        );
+    }
+
+    #[test]
+    fn generic_scalars_clamps_above_one_proficiency() {
+        let scalars = generic_proficiency_scalars(1.5);
+        let expected = generic_proficiency_scalars(1.0);
+        assert!(
+            (scalars.cast_ticks_mult - expected.cast_ticks_mult).abs() < 1e-6,
+            "prof=1.5 should clamp to 1.0: cast_ticks_mult expected {}, got {}",
+            expected.cast_ticks_mult,
+            scalars.cast_ticks_mult
+        );
+        assert!(
+            (scalars.cooldown_mult - expected.cooldown_mult).abs() < 1e-6,
+            "prof=1.5 should clamp to 1.0: cooldown_mult expected {}, got {}",
+            expected.cooldown_mult,
+            scalars.cooldown_mult
+        );
+    }
 }

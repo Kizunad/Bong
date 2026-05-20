@@ -75,7 +75,7 @@ fn practice_session_tick(
     current_qi: &mut f64,
 ) -> f32 {
     let cost = practice_session_qi_cost_per_tick();
-    *current_qi -= cost;
+    *current_qi = (*current_qi - cost).max(0.0);
     let gain = practice_session_gain(zone_qi, current_proficiency, color_match, meridian_health);
     session.total_gain += gain;
     gain
@@ -83,6 +83,7 @@ fn practice_session_tick(
 
 #[allow(dead_code)]
 fn check_practice_session_exit(
+    player: Entity,
     session: &PracticeSession,
     current_tick: u64,
     moved: bool,
@@ -94,7 +95,7 @@ fn check_practice_session_exit(
         current_technique.is_some_and(|technique| technique != session.technique_id);
     if different_technique || should_exit_practice_session(moved, attacked, qi_ratio) {
         Some(PracticeSessionEnded {
-            player: Entity::PLACEHOLDER,
+            player,
             technique_id: session.technique_id.clone(),
             total_gain: session.total_gain,
             duration_ticks: current_tick.saturating_sub(session.started_at_tick),
@@ -287,19 +288,50 @@ mod tests {
     }
 
     #[test]
+    fn practice_session_tick_clamps_qi_to_zero() {
+        let mut session = PracticeSession {
+            technique_id: "sword.cleave".to_string(),
+            started_at_tick: 0,
+            total_gain: 0.0,
+        };
+        let mut qi = 0.5;
+        practice_session_tick(&mut session, 0.5, 0.0, false, 1.0, &mut qi);
+        assert!(
+            qi >= 0.0,
+            "qi should never go negative after tick, got qi={qi}"
+        );
+        assert!(
+            qi.abs() < 1e-9,
+            "qi should be clamped to 0.0 when cost exceeds remaining, got qi={qi}"
+        );
+    }
+
+    #[test]
     fn check_exit_returns_ended_on_different_technique() {
         let session = PracticeSession {
             technique_id: "sword.cleave".to_string(),
             started_at_tick: 100,
             total_gain: 0.05,
         };
-        let result =
-            check_practice_session_exit(&session, 300, false, false, 1.0, Some("sword.thrust"));
+        let player = Entity::PLACEHOLDER;
+        let result = check_practice_session_exit(
+            player,
+            &session,
+            300,
+            false,
+            false,
+            1.0,
+            Some("sword.thrust"),
+        );
         assert!(
             result.is_some(),
             "casting a different technique should trigger practice session exit"
         );
         let ended = result.unwrap();
+        assert_eq!(
+            ended.player, player,
+            "ended event should carry the real player entity"
+        );
         assert_eq!(ended.technique_id, "sword.cleave");
         assert_eq!(ended.duration_ticks, 200);
         assert!((ended.total_gain - 0.05).abs() < 1e-6);
@@ -312,7 +344,15 @@ mod tests {
             started_at_tick: 100,
             total_gain: 0.05,
         };
-        let result = check_practice_session_exit(&session, 300, false, false, 0.50, None);
+        let result = check_practice_session_exit(
+            Entity::PLACEHOLDER,
+            &session,
+            300,
+            false,
+            false,
+            0.50,
+            None,
+        );
         assert!(result.is_none(), "no exit condition met should return None");
     }
 }
