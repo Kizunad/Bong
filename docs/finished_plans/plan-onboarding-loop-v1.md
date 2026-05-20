@@ -221,7 +221,7 @@ pub struct SurfaceStashPlayerLimit {
 
 **测试**（P0 总计 18 条）：
 
-```
+```text
 // ContainerKind::SurfaceStash enum
 surface_stash_search_ticks_is_60
 surface_stash_not_locked
@@ -417,7 +417,7 @@ Narration（`NarrationStyle::Perception`，scope=player）：
 
 **测试**（P1 总计 17 条）：
 
-```
+```text
 // 8 新物品模板 parse + 1 已有物品验证
 onboarding_scroll_sword_cleave_parses
 onboarding_scroll_sword_thrust_parses
@@ -490,7 +490,7 @@ Toast 内容（`NarrationStyle::Perception`，scope=player）：
 
 **测试**（P2 总计 14 条）：
 
-```
+```text
 // CraftHintShown
 pickup_crude_wood_triggers_craft_hint_toast
 craft_hint_only_once
@@ -536,7 +536,7 @@ P1.3 已将 `scroll_technique_burst_beng_quan` 和 `scroll_technique_zhenmai_par
 
 **测试**（P3 总计 6 条）：
 
-```
+```text
 style_tendency_counter_increments_on_attack
 style_tendency_narration_at_10_uses
 style_tendency_narration_once_per_style
@@ -553,7 +553,7 @@ observe_yellow_technique_base_chance_0_05  // pin test
 
 从 tutorial 完成（引气）开始，模拟 ~2h 新手体验：
 
-```
+```text
 [0:00]  引气态，空手出生点
 [0:05]  找到第 1 个 basic 遗缴 → crude_wood + grass_fiber + stone_chunk
 [0:08]  手搓 wood_handle + grass_rope + grass_pouch（背包！）
@@ -581,8 +581,8 @@ observe_yellow_technique_base_chance_0_05  // pin test
 
 ### P4.3 测试（P4 总计 5 条）
 
-```
-e2e_12_stashes_within_spawn_1000
+```text
+e2e_12_stashes_within_spawn_1000  // P0.3 已实现为 scatter_surface_stashes_produces_12_in_spawn_1000
 material_sufficiency_from_5_basic_stashes  // 期望产出 ≥ 首件工具所需
 technique_scroll_expected_from_4_scroll_stashes  // 期望 ≥ 1 张招式残卷
 craft_stash_near_poi_distance_200_400
@@ -678,7 +678,7 @@ PR-3 和 PR-4 **可并行**（PR-3 改 spawn_tutorial.rs / inventory/mod.rs / al
 
 ### §10.2 PR 序列
 
-```
+```text
 PR-1 (P0) ──→ PR-2 (P1) ──→ PR-3 (P2) [与 PR-4 并行]
                           └──→ PR-4 (P3) [与 PR-3 并行]
                                     ↓
@@ -687,7 +687,7 @@ PR-1 (P0) ──→ PR-2 (P1) ──→ PR-3 (P2) [与 PR-4 并行]
 
 ### §10.3 subagent 配置
 
-```
+```rust
 Agent(
   subagent_type: "claude",
   model: "opus",
@@ -715,7 +715,7 @@ Agent(
 | P1 | `server/assets/items/onboarding_scrolls.toml` (8 新物品) · `server/src/inventory/mod.rs` (RecipeFragmentSpec + TOML 解析) · `server/src/cultivation/technique_scroll.rs` (LearnSource::CombatInsight) · `server/src/cultivation/first_hit_dash.rs` (首战自学闪避系统) · `server/loot_pools.json` (残卷入池追加) |
 | P2 | `server/src/world/spawn_tutorial.rs` (TutorialHook::CraftHintShown/FirstAlchemyHint/FirstForgeHint + 3 ECS hint 系统) · `server/src/schema/client_request.rs` (AlchemyLearnRecipeFragment) · `server/src/network/client_request_handler.rs` (fragment 学习管线) · `agent/packages/schema/src/spawn-tutorial.ts` (3 新 variant) |
 | P3 | `server/src/combat/style_telemetry.rs` (StyleUsageCounter + track_style_tendency) · `server/src/combat/mod.rs` (系统注册) · `server/src/cultivation/technique_observe.rs` (pin 测试) |
-| P4 | `server/src/world/loot_pool.rs` (3 校准测试) · `server/src/world/poi_novice.rs` (1 校准测试) |
+| P4 | `server/src/world/loot_pool.rs` (basic_pool_base_material_weight_over_50_pct · scroll_pool_technique_scroll_weight_over_40_pct · iron_sword_v0_fan_tie_available_in_spawn_mineral_anchor) · `server/src/world/poi_novice.rs` (craft_stashes_within_spawn_radius) · P0.3 已实现 scatter_surface_stashes_produces_12_in_spawn_1000 |
 
 ### 关键 commit
 
@@ -728,7 +728,7 @@ Agent(
 
 ### 测试结果
 
-```
+```text
 cargo test — 5827 passed, 0 failed
 npm test (agent/packages/schema) — 410 passed
 ```

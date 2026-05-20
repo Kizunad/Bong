@@ -868,7 +868,7 @@ mod tests {
     // ——— plan-onboarding-loop-v1 P4: 校准测试 ———
 
     #[test]
-    fn craft_stash_near_poi_distance_200_400() {
+    fn craft_stashes_within_spawn_radius() {
         let stashes = super::scatter_surface_stashes(42);
         let craft_stashes: Vec<_> = stashes
             .iter()
@@ -887,7 +887,7 @@ mod tests {
             .sqrt();
             assert!(
                 dist <= super::CRAFT_RADIUS + 1.0,
-                "craft 遗缴 #{} 距 spawn {:.0} 应在 {} 格内",
+                "craft 遗缴 #{} 距 spawn 中心 {:.0} 格，应在 CRAFT_RADIUS {} 格内",
                 s.index,
                 dist,
                 super::CRAFT_RADIUS

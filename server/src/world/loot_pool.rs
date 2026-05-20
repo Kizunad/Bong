@@ -582,7 +582,7 @@ mod tests {
     // ——— plan-onboarding-loop-v1 P4: 校准测试 ———
 
     #[test]
-    fn material_sufficiency_from_5_basic_stashes() {
+    fn basic_pool_base_material_weight_over_50_pct() {
         let pools = load_loot_pool_registry().expect("loot_pools.json must parse");
         let pool = pools.get("surface_stash_basic").unwrap();
         let base_materials = ["crude_wood", "stone_chunk", "grass_fiber"];
@@ -602,7 +602,7 @@ mod tests {
     }
 
     #[test]
-    fn technique_scroll_expected_from_4_scroll_stashes() {
+    fn scroll_pool_technique_scroll_weight_over_40_pct() {
         let pools = load_loot_pool_registry().expect("loot_pools.json must parse");
         let pool = pools.get("surface_stash_scroll").unwrap();
         let scroll_entries: Vec<_> = pool
@@ -630,9 +630,17 @@ mod tests {
             .join("../worldgen/blueprint/mineral_anchors.json");
         let content =
             std::fs::read_to_string(&anchors_path).expect("mineral_anchors.json should exist");
+        let root: serde_json::Value =
+            serde_json::from_str(&content).expect("mineral_anchors.json must be valid JSON");
+        let has_fan_tie = root
+            .get("anchors")
+            .and_then(|v| v.as_array())
+            .into_iter()
+            .flatten()
+            .any(|a| a.get("mineral_id").and_then(|v| v.as_str()) == Some("fan_tie"));
         assert!(
-            content.contains("\"fan_tie\""),
-            "mineral_anchors.json should contain fan_tie anchor for spawn area iron sword crafting"
+            has_fan_tie,
+            "mineral_anchors.json should contain a fan_tie anchor (mineral_id field) for spawn area iron sword crafting"
         );
     }
 }
