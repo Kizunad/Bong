@@ -59,6 +59,18 @@
         {
           "const": "realm_advanced_to_induce",
           "type": "string"
+        },
+        {
+          "const": "craft_hint_shown",
+          "type": "string"
+        },
+        {
+          "const": "first_alchemy_hint",
+          "type": "string"
+        },
+        {
+          "const": "first_forge_hint",
+          "type": "string"
         }
       ]
     },
