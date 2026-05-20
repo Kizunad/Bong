@@ -22,6 +22,8 @@ public final class PillBuffHudPlanner {
     private static final List<PillBuff> activeBuffs = new ArrayList<>();
 
     public static void updateBuff(String buffId, int remainingTicks, double effectMultiplier) {
+        if (buffId == null || buffId.isBlank()) return;
+        if (!Double.isFinite(effectMultiplier) || effectMultiplier <= 0.0) return;
         activeBuffs.removeIf(b -> b.buffId().equals(buffId));
         if (remainingTicks > 0) {
             activeBuffs.add(new PillBuff(buffId, remainingTicks, effectMultiplier));

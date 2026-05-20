@@ -90,4 +90,75 @@ class PillBuffHudPlannerTest {
             "negative remaining ticks should not be stored as active"
         );
     }
+
+    @Test
+    void nullBuffIdIgnored() {
+        PillBuffHudPlanner.updateBuff(null, 3000, 1.0);
+        assertTrue(
+            PillBuffHudPlanner.activeBuffs().isEmpty(),
+            "null buffId should be silently ignored"
+        );
+    }
+
+    @Test
+    void blankBuffIdIgnored() {
+        PillBuffHudPlanner.updateBuff("  ", 3000, 1.0);
+        assertTrue(
+            PillBuffHudPlanner.activeBuffs().isEmpty(),
+            "blank buffId should be silently ignored"
+        );
+    }
+
+    @Test
+    void nanEffectMultiplierIgnored() {
+        PillBuffHudPlanner.updateBuff("bad_nan", 3000, Double.NaN);
+        assertTrue(
+            PillBuffHudPlanner.activeBuffs().isEmpty(),
+            "NaN effectMultiplier should be silently ignored"
+        );
+    }
+
+    @Test
+    void infiniteEffectMultiplierIgnored() {
+        PillBuffHudPlanner.updateBuff("bad_inf", 3000, Double.POSITIVE_INFINITY);
+        assertTrue(
+            PillBuffHudPlanner.activeBuffs().isEmpty(),
+            "infinite effectMultiplier should be silently ignored"
+        );
+    }
+
+    @Test
+    void zeroEffectMultiplierIgnored() {
+        PillBuffHudPlanner.updateBuff("bad_zero", 3000, 0.0);
+        assertTrue(
+            PillBuffHudPlanner.activeBuffs().isEmpty(),
+            "zero effectMultiplier should be silently ignored"
+        );
+    }
+
+    @Test
+    void negativeEffectMultiplierIgnored() {
+        PillBuffHudPlanner.updateBuff("bad_neg", 3000, -0.5);
+        assertTrue(
+            PillBuffHudPlanner.activeBuffs().isEmpty(),
+            "negative effectMultiplier should be silently ignored"
+        );
+    }
+
+    @Test
+    void progressAtTypicalMaxTicks() {
+        PillBuffHudPlanner.PillBuff atMax = new PillBuffHudPlanner.PillBuff("max", 6000, 1.0);
+        assertEquals(1.0f, atMax.progress(), 1e-6f,
+            "progress at TYPICAL_MAX_TICKS (6000) should be exactly 1.0");
+    }
+
+    @Test
+    void invalidBuffIdDoesNotRemoveExisting() {
+        PillBuffHudPlanner.updateBuff("existing", 3000, 1.0);
+        PillBuffHudPlanner.updateBuff(null, 1000, 1.0);
+        PillBuffHudPlanner.updateBuff("  ", 1000, 1.0);
+        assertEquals(1, PillBuffHudPlanner.activeBuffs().size(),
+            "invalid buffId updates should not affect existing buffs");
+        assertEquals("existing", PillBuffHudPlanner.activeBuffs().get(0).buffId());
+    }
 }
