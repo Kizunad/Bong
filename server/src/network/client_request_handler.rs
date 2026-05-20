@@ -229,6 +229,7 @@ pub struct AlchemyRequestParams<'w, 's> {
     pub furnaces: Query<'w, 's, (Entity, &'static mut AlchemyFurnace)>,
     pub learned: Query<'w, 's, &'static mut LearnedRecipes>,
     pub recipe_registry: Res<'w, RecipeRegistry>,
+    pub learn_fragment_tx: EventWriter<'w, crate::alchemy::LearnRecipeFragmentIntent>,
     pub place_furnace_tx: EventWriter<'w, PlaceFurnaceRequest>,
     pub outcome_tx: Option<ResMut<'w, Events<crate::alchemy::AlchemyOutcomeEvent>>>,
     pub item_registry: Res<'w, ItemRegistry>,
@@ -426,6 +427,7 @@ pub fn handle_client_request_payloads(
             | ClientRequestV1::AlchemyIntervention { v, .. }
             | ClientRequestV1::AlchemyTurnPage { v, .. }
             | ClientRequestV1::AlchemyLearnRecipe { v, .. }
+            | ClientRequestV1::AlchemyLearnRecipeFragment { v, .. }
             | ClientRequestV1::AlchemyTakePill { v, .. }
             | ClientRequestV1::AlchemyFurnacePlace { v, .. }
             | ClientRequestV1::CoffinOpen { v, .. }
@@ -679,6 +681,20 @@ pub fn handle_client_request_payloads(
                     &mut alchemy_params.learned,
                     &alchemy_params.recipe_registry,
                 );
+            }
+            ClientRequestV1::AlchemyLearnRecipeFragment {
+                item_instance_id, ..
+            } => {
+                tracing::info!(
+                    "[bong][network][alchemy] learn_recipe_fragment entity={:?} item_instance_id={item_instance_id}",
+                    ev.client
+                );
+                alchemy_params
+                    .learn_fragment_tx
+                    .send(crate::alchemy::LearnRecipeFragmentIntent {
+                        player: ev.client,
+                        item_instance_id,
+                    });
             }
             ClientRequestV1::AlchemyIntervention {
                 furnace_pos,
@@ -3197,6 +3213,7 @@ mod tests {
         app.add_event::<ApplyStatusEffectIntent>();
         app.add_event::<FalseSkinForgeRequest>();
         app.add_event::<PlaceFurnaceRequest>();
+        app.add_event::<crate::alchemy::LearnRecipeFragmentIntent>();
         app.add_event::<SpiritNichePlaceRequest>();
         app.add_event::<SpiritNicheCoordinateRevealRequest>();
         app.add_event::<CoffinOpenRequest>();
@@ -3701,6 +3718,7 @@ mod tests {
         app.add_event::<RevivalActionIntent>();
         app.add_event::<ApplyStatusEffectIntent>();
         app.add_event::<PlaceFurnaceRequest>();
+        app.add_event::<crate::alchemy::LearnRecipeFragmentIntent>();
         app.add_event::<StartTillRequest>();
         app.add_event::<StartRenewRequest>();
         app.add_event::<StartPlantingRequest>();
@@ -4124,6 +4142,7 @@ mod tests {
         app.add_event::<DefenseIntent>();
         app.add_event::<ApplyStatusEffectIntent>();
         app.add_event::<PlaceFurnaceRequest>();
+        app.add_event::<crate::alchemy::LearnRecipeFragmentIntent>();
         app.add_event::<StartTillRequest>();
         app.add_event::<StartRenewRequest>();
         app.add_event::<StartPlantingRequest>();
@@ -4184,6 +4203,7 @@ mod tests {
         app.add_event::<DefenseIntent>();
         app.add_event::<ApplyStatusEffectIntent>();
         app.add_event::<PlaceFurnaceRequest>();
+        app.add_event::<crate::alchemy::LearnRecipeFragmentIntent>();
         app.add_event::<SpiritNichePlaceRequest>();
         app.add_event::<SpiritNicheCoordinateRevealRequest>();
         app.add_event::<StartTillRequest>();
@@ -4273,6 +4293,7 @@ mod tests {
         app.add_event::<DefenseIntent>();
         app.add_event::<ApplyStatusEffectIntent>();
         app.add_event::<PlaceFurnaceRequest>();
+        app.add_event::<crate::alchemy::LearnRecipeFragmentIntent>();
         app.add_event::<SpiritNichePlaceRequest>();
         app.add_event::<SpiritNicheCoordinateRevealRequest>();
         app.add_event::<StartTillRequest>();
@@ -4351,6 +4372,7 @@ mod tests {
         app.add_event::<DefenseIntent>();
         app.add_event::<ApplyStatusEffectIntent>();
         app.add_event::<PlaceFurnaceRequest>();
+        app.add_event::<crate::alchemy::LearnRecipeFragmentIntent>();
         app.add_event::<StartTillRequest>();
         app.add_event::<StartRenewRequest>();
         app.add_event::<StartPlantingRequest>();
@@ -4405,6 +4427,7 @@ mod tests {
         app.add_event::<DefenseIntent>();
         app.add_event::<ApplyStatusEffectIntent>();
         app.add_event::<PlaceFurnaceRequest>();
+        app.add_event::<crate::alchemy::LearnRecipeFragmentIntent>();
         app.add_event::<StartTillRequest>();
         app.add_event::<StartRenewRequest>();
         app.add_event::<StartPlantingRequest>();
@@ -4524,6 +4547,7 @@ mod tests {
         app.add_event::<DefenseIntent>();
         app.add_event::<ApplyStatusEffectIntent>();
         app.add_event::<PlaceFurnaceRequest>();
+        app.add_event::<crate::alchemy::LearnRecipeFragmentIntent>();
         app.add_event::<StartTillRequest>();
         app.add_event::<StartRenewRequest>();
         app.add_event::<StartPlantingRequest>();
@@ -4606,6 +4630,7 @@ mod tests {
         app.add_event::<DefenseIntent>();
         app.add_event::<ApplyStatusEffectIntent>();
         app.add_event::<PlaceFurnaceRequest>();
+        app.add_event::<crate::alchemy::LearnRecipeFragmentIntent>();
         app.add_event::<StartTillRequest>();
         app.add_event::<StartRenewRequest>();
         app.add_event::<StartPlantingRequest>();
@@ -4690,6 +4715,7 @@ mod tests {
         app.add_event::<DefenseIntent>();
         app.add_event::<ApplyStatusEffectIntent>();
         app.add_event::<PlaceFurnaceRequest>();
+        app.add_event::<crate::alchemy::LearnRecipeFragmentIntent>();
         app.add_event::<StartTillRequest>();
         app.add_event::<StartRenewRequest>();
         app.add_event::<StartPlantingRequest>();
@@ -4752,6 +4778,7 @@ mod tests {
         app.add_event::<DefenseIntent>();
         app.add_event::<ApplyStatusEffectIntent>();
         app.add_event::<PlaceFurnaceRequest>();
+        app.add_event::<crate::alchemy::LearnRecipeFragmentIntent>();
         app.add_event::<StartTillRequest>();
         app.add_event::<StartRenewRequest>();
         app.add_event::<StartPlantingRequest>();
@@ -4819,6 +4846,7 @@ mod tests {
         app.add_event::<DefenseIntent>();
         app.add_event::<ApplyStatusEffectIntent>();
         app.add_event::<PlaceFurnaceRequest>();
+        app.add_event::<crate::alchemy::LearnRecipeFragmentIntent>();
         app.add_event::<StartTillRequest>();
         app.add_event::<StartRenewRequest>();
         app.add_event::<StartPlantingRequest>();
@@ -4884,6 +4912,7 @@ mod tests {
         app.add_event::<DefenseIntent>();
         app.add_event::<ApplyStatusEffectIntent>();
         app.add_event::<PlaceFurnaceRequest>();
+        app.add_event::<crate::alchemy::LearnRecipeFragmentIntent>();
         app.add_event::<StartTillRequest>();
         app.add_event::<StartRenewRequest>();
         app.add_event::<StartPlantingRequest>();
@@ -4940,6 +4969,7 @@ mod tests {
         app.add_event::<DefenseIntent>();
         app.add_event::<ApplyStatusEffectIntent>();
         app.add_event::<PlaceFurnaceRequest>();
+        app.add_event::<crate::alchemy::LearnRecipeFragmentIntent>();
         app.add_event::<StartTillRequest>();
         app.add_event::<StartRenewRequest>();
         app.add_event::<StartPlantingRequest>();
@@ -4992,6 +5022,7 @@ mod tests {
         app.add_event::<DefenseIntent>();
         app.add_event::<ApplyStatusEffectIntent>();
         app.add_event::<PlaceFurnaceRequest>();
+        app.add_event::<crate::alchemy::LearnRecipeFragmentIntent>();
         app.add_event::<StartTillRequest>();
         app.add_event::<StartRenewRequest>();
         app.add_event::<StartPlantingRequest>();
@@ -5048,6 +5079,7 @@ mod tests {
         app.add_event::<DefenseIntent>();
         app.add_event::<ApplyStatusEffectIntent>();
         app.add_event::<PlaceFurnaceRequest>();
+        app.add_event::<crate::alchemy::LearnRecipeFragmentIntent>();
         app.add_event::<StartTillRequest>();
         app.add_event::<StartRenewRequest>();
         app.add_event::<StartPlantingRequest>();
@@ -5100,6 +5132,7 @@ mod tests {
         app.add_event::<DefenseIntent>();
         app.add_event::<ApplyStatusEffectIntent>();
         app.add_event::<PlaceFurnaceRequest>();
+        app.add_event::<crate::alchemy::LearnRecipeFragmentIntent>();
         app.add_event::<StartTillRequest>();
         app.add_event::<StartRenewRequest>();
         app.add_event::<StartPlantingRequest>();
@@ -5156,6 +5189,7 @@ mod tests {
         app.add_event::<DefenseIntent>();
         app.add_event::<ApplyStatusEffectIntent>();
         app.add_event::<PlaceFurnaceRequest>();
+        app.add_event::<crate::alchemy::LearnRecipeFragmentIntent>();
         app.add_event::<StartTillRequest>();
         app.add_event::<StartRenewRequest>();
         app.add_event::<StartPlantingRequest>();

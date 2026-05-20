@@ -114,6 +114,11 @@ pub enum ClientRequestV1 {
         v: u8,
         recipe_id: String,
     },
+    /// plan-onboarding-loop-v1 P2.2 — 使用丹方残卷学习碎片化丹方知识。
+    AlchemyLearnRecipeFragment {
+        v: u8,
+        item_instance_id: u64,
+    },
     AlchemyTakePill {
         v: u8,
         pill_item_id: String,

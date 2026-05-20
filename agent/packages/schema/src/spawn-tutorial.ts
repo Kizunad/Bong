@@ -15,6 +15,9 @@ export const TutorialHookV1 = Type.Union([
   Type.Literal("lingquan_reached"),
   Type.Literal("breakthrough_window"),
   Type.Literal("realm_advanced_to_induce"),
+  Type.Literal("craft_hint_shown"),
+  Type.Literal("first_alchemy_hint"),
+  Type.Literal("first_forge_hint"),
 ]);
 export type TutorialHookV1 = Static<typeof TutorialHookV1>;
 

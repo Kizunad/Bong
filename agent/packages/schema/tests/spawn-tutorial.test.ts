@@ -43,6 +43,31 @@ describe("spawn tutorial schema", () => {
     ).toBe(true);
   });
 
+  it.each(["craft_hint_shown", "first_alchemy_hint", "first_forge_hint"] as const)(
+    "accepts %s hook event",
+    (hook) => {
+      const result = validateTutorialHookEventV1Contract({
+        v: 1,
+        type: "tutorial_hook_event",
+        player_id: "offline:TestPlayer",
+        hook,
+        tick: 5000,
+      });
+      expect(result.ok).toBe(true);
+    },
+  );
+
+  it("rejects unknown hook variant", () => {
+    const result = validateTutorialHookEventV1Contract({
+      v: 1,
+      type: "tutorial_hook_event",
+      player_id: "offline:TestPlayer",
+      hook: "nonexistent_hook",
+      tick: 5000,
+    });
+    expect(result.ok).toBe(false);
+  });
+
   it("accepts spawn tutorial completion biography entry", () => {
     expect(
       validateBiographyEntryV1Contract({
