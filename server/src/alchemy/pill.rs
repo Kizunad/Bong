@@ -682,6 +682,361 @@ fn is_severed_like(wound: &Wound) -> bool {
     wound.severity >= 0.85
 }
 
+// ══════════════════════════════════════════════════════════════════════════════
+// plan-cultivation-pacing-v1 P1.4–P1.6：八种修炼丹药 CultivationPillKind
+// ══════════════════════════════════════════════════════════════════════════════
+
+pub const CULTIVATION_PILL_IDS: [&str; 8] = [
+    "ling_xi_wan",
+    "ju_ling_dan",
+    "tong_mai_san",
+    "ning_yuan_dan",
+    "xi_sui_ye",
+    "po_jing_dan",
+    "kai_qiao_dan",
+    "du_jie_dan",
+];
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CultivationPillKind {
+    LingXiWan,   // ① 灵息丸
+    JuLingDan,   // ② 聚灵丹
+    TongMaiSan,  // ③ 通脉散
+    NingYuanDan, // ④ 凝元丹
+    XiSuiYe,     // ⑤ 洗髓液
+    PoJingDan,   // ⑥ 破境丹
+    KaiQiaoDan,  // ⑦ 开窍丹
+    DuJieDan,    // ⑧ 渡劫丹
+}
+
+/// 修炼丹药规格。
+///
+/// 与战斗丹药 `CombatPillSpec` 类似，但效果走 `push_status_effect` 挂载
+/// `CultivationAcceleration` / `BreakthroughBoost` / `ExtraordinaryMeridianAcceleration` 等
+/// StatusEffect，而非直接 apply 到 Wounds / DerivedAttrs。
+#[derive(Debug, Clone, PartialEq)]
+pub struct CultivationPillSpec {
+    pub id: &'static str,
+    pub name: &'static str,
+    pub kind: CultivationPillKind,
+    pub toxin_amount: f64,
+    pub toxin_color: ColorKind,
+}
+
+/// 修炼丹药消费后需要挂载的 StatusEffect 列表。
+///
+/// 每条包含 kind + magnitude + duration_ticks + source_pill（堆叠限制用）。
+#[derive(Debug, Clone, PartialEq)]
+pub struct CultivationPillEffectEntry {
+    pub kind: StatusEffectKind,
+    pub magnitude: f32,
+    pub duration_ticks: u64,
+}
+
+/// 修炼丹药消费结果。
+#[derive(Debug, Clone, PartialEq)]
+pub struct CultivationPillConsumeResult {
+    /// 成功挂载的 StatusEffect 列表（被堆叠 cap 拦截的不在此列）。
+    pub applied_effects: Vec<CultivationPillEffectEntry>,
+    /// 洗髓液专用：buff 到期后需要追加的 QiRegenSlowed 参数。
+    /// 调用侧可在 status_effect_tick 中检查 source_pill=="xi_sui_ye" 到期后 push。
+    pub deferred_qi_regen_slowed: Option<DeferredQiRegenSlowed>,
+    /// 注入的丹毒量（toxin_amount）。
+    pub toxin_injected: f64,
+    /// 被堆叠 cap 拦截的 effect 数量（第 3 颗同种丹药时 > 0）。
+    pub blocked_by_cap: usize,
+}
+
+/// 洗髓液到期后追加的 QiRegenSlowed 参数。
+#[derive(Debug, Clone, PartialEq)]
+pub struct DeferredQiRegenSlowed {
+    pub magnitude: f32,
+    pub duration_ticks: u64,
+}
+
+/// 获取修炼丹药基础规格。
+pub fn cultivation_pill_spec(id: &str) -> Option<CultivationPillSpec> {
+    Some(match id {
+        "ling_xi_wan" => CultivationPillSpec {
+            id: "ling_xi_wan",
+            name: "灵息丸",
+            kind: CultivationPillKind::LingXiWan,
+            toxin_amount: 0.15,
+            toxin_color: ColorKind::Gentle,
+        },
+        "ju_ling_dan" => CultivationPillSpec {
+            id: "ju_ling_dan",
+            name: "聚灵丹",
+            kind: CultivationPillKind::JuLingDan,
+            toxin_amount: 0.20,
+            toxin_color: ColorKind::Mellow,
+        },
+        "tong_mai_san" => CultivationPillSpec {
+            id: "tong_mai_san",
+            name: "通脉散",
+            kind: CultivationPillKind::TongMaiSan,
+            toxin_amount: 0.30,
+            toxin_color: ColorKind::Solid,
+        },
+        "ning_yuan_dan" => CultivationPillSpec {
+            id: "ning_yuan_dan",
+            name: "凝元丹",
+            kind: CultivationPillKind::NingYuanDan,
+            toxin_amount: 0.35,
+            toxin_color: ColorKind::Heavy,
+        },
+        "xi_sui_ye" => CultivationPillSpec {
+            id: "xi_sui_ye",
+            name: "洗髓液",
+            kind: CultivationPillKind::XiSuiYe,
+            toxin_amount: 0.40,
+            toxin_color: ColorKind::Violent,
+        },
+        "po_jing_dan" => CultivationPillSpec {
+            id: "po_jing_dan",
+            name: "破境丹",
+            kind: CultivationPillKind::PoJingDan,
+            toxin_amount: 0.45,
+            toxin_color: ColorKind::Insidious,
+        },
+        "kai_qiao_dan" => CultivationPillSpec {
+            id: "kai_qiao_dan",
+            name: "开窍丹",
+            kind: CultivationPillKind::KaiQiaoDan,
+            toxin_amount: 0.50,
+            toxin_color: ColorKind::Turbid,
+        },
+        "du_jie_dan" => CultivationPillSpec {
+            id: "du_jie_dan",
+            name: "渡劫丹",
+            kind: CultivationPillKind::DuJieDan,
+            toxin_amount: 0.60,
+            toxin_color: ColorKind::Insidious,
+        },
+        _ => return None,
+    })
+}
+
+/// 获取修炼丹药消费时应挂载的 StatusEffect 列表。
+///
+/// 按 plan-cultivation-pacing-v1 §8.1 定义：
+/// - ①灵息丸: CultivationAcceleration(0.5) 36000t
+/// - ②聚灵丹: CultivationAcceleration(1.0) 24000t
+/// - ③通脉散: CultivationAcceleration(1.5) 18000t
+/// - ④凝元丹: CultivationAcceleration(2.0) 18000t + BreakthroughBoost(0.10)
+/// - ⑤洗髓液: CultivationAcceleration(3.0) 12000t + DamageVulnerability(1.0) 12000t
+/// - ⑥破境丹: BreakthroughBoost(0.20) 单次消费
+/// - ⑦开窍丹: ExtraordinaryMeridianAcceleration(4.0) 12000t
+/// - ⑧渡劫丹: BreakthroughBoost(0.25) + DamageReduction(0.30) u64::MAX
+pub fn cultivation_pill_effects(kind: CultivationPillKind) -> Vec<CultivationPillEffectEntry> {
+    match kind {
+        CultivationPillKind::LingXiWan => vec![CultivationPillEffectEntry {
+            kind: StatusEffectKind::CultivationAcceleration,
+            magnitude: 0.5,
+            duration_ticks: 36_000,
+        }],
+        CultivationPillKind::JuLingDan => vec![CultivationPillEffectEntry {
+            kind: StatusEffectKind::CultivationAcceleration,
+            magnitude: 1.0,
+            duration_ticks: 24_000,
+        }],
+        CultivationPillKind::TongMaiSan => vec![CultivationPillEffectEntry {
+            kind: StatusEffectKind::CultivationAcceleration,
+            magnitude: 1.5,
+            duration_ticks: 18_000,
+        }],
+        CultivationPillKind::NingYuanDan => vec![
+            CultivationPillEffectEntry {
+                kind: StatusEffectKind::CultivationAcceleration,
+                magnitude: 2.0,
+                duration_ticks: 18_000,
+            },
+            CultivationPillEffectEntry {
+                kind: StatusEffectKind::BreakthroughBoost,
+                magnitude: 0.10,
+                duration_ticks: 18_000,
+            },
+        ],
+        CultivationPillKind::XiSuiYe => vec![
+            CultivationPillEffectEntry {
+                kind: StatusEffectKind::CultivationAcceleration,
+                magnitude: 3.0,
+                duration_ticks: 12_000,
+            },
+            CultivationPillEffectEntry {
+                kind: StatusEffectKind::DamageVulnerability,
+                magnitude: 1.0,
+                duration_ticks: 12_000,
+            },
+        ],
+        CultivationPillKind::PoJingDan => vec![CultivationPillEffectEntry {
+            kind: StatusEffectKind::BreakthroughBoost,
+            magnitude: 0.20,
+            // 单次消费——挂载后由 breakthrough_system 一次性消费。
+            // 给一个足够长的 duration 让它存活到突破事务发生。
+            duration_ticks: 72_000, // 60 分钟 @20tps
+        }],
+        CultivationPillKind::KaiQiaoDan => vec![CultivationPillEffectEntry {
+            kind: StatusEffectKind::ExtraordinaryMeridianAcceleration,
+            magnitude: 4.0,
+            duration_ticks: 12_000,
+        }],
+        CultivationPillKind::DuJieDan => vec![
+            CultivationPillEffectEntry {
+                kind: StatusEffectKind::BreakthroughBoost,
+                magnitude: 0.25,
+                // 渡劫全程有效——给 u64::MAX 让它在渡劫结束后由 tribulation_system 清理
+                duration_ticks: u64::MAX,
+            },
+            CultivationPillEffectEntry {
+                // 渡劫减伤 30%
+                kind: StatusEffectKind::DamageReduction,
+                magnitude: 0.30,
+                duration_ticks: u64::MAX,
+            },
+        ],
+    }
+}
+
+/// 是否为洗髓液——buff 到期后需要追加 QiRegenSlowed 回调。
+pub fn xi_sui_ye_deferred_debuff() -> DeferredQiRegenSlowed {
+    DeferredQiRegenSlowed {
+        magnitude: 0.8,
+        duration_ticks: 12_000,
+    }
+}
+
+/// plan-cultivation-pacing-v1 P1.5：消费修炼丹药。
+///
+/// 1. 注入丹毒（Contamination）
+/// 2. 通过 `push_status_effect` 挂载各 StatusEffect（受 per-pill 2 层 cap 限制）
+/// 3. 洗髓液额外返回 `deferred_qi_regen_slowed` 供 tick 系统延迟追加
+///
+/// # 前置条件
+/// - 调用方应先 `can_take_pill(contam, spec.toxin_color)` 检查丹毒阈值
+/// - 调用方应先判断是否有空间服药（非战斗状态等）
+pub fn consume_cultivation_pill(
+    spec: &CultivationPillSpec,
+    contam: &mut Contamination,
+    status_effects: &mut crate::combat::components::StatusEffects,
+    now_tick: u64,
+) -> CultivationPillConsumeResult {
+    use crate::combat::components::ActiveStatusEffect;
+    use crate::combat::status::push_status_effect;
+
+    // 1. 注入丹毒
+    contam.entries.push(ContamSource {
+        amount: spec.toxin_amount,
+        color: spec.toxin_color,
+        meridian_id: None,
+        attacker_id: None,
+        introduced_at: now_tick,
+    });
+
+    // 2. 挂载 StatusEffect
+    let effects = cultivation_pill_effects(spec.kind);
+    let mut applied = Vec::new();
+    let mut blocked_count = 0usize;
+
+    for entry in &effects {
+        let active = ActiveStatusEffect {
+            kind: entry.kind.clone(),
+            magnitude: entry.magnitude,
+            remaining_ticks: entry.duration_ticks,
+            source_pill: Some(spec.id.to_string()),
+        };
+        if push_status_effect(status_effects, active) {
+            applied.push(entry.clone());
+        } else {
+            blocked_count += 1;
+        }
+    }
+
+    // 3. 洗髓液特殊处理
+    let deferred = if spec.kind == CultivationPillKind::XiSuiYe {
+        Some(xi_sui_ye_deferred_debuff())
+    } else {
+        None
+    };
+
+    CultivationPillConsumeResult {
+        applied_effects: applied,
+        deferred_qi_regen_slowed: deferred,
+        toxin_injected: spec.toxin_amount,
+        blocked_by_cap: blocked_count,
+    }
+}
+
+/// plan-cultivation-pacing-v1 §8.1 #8：洗髓液到期回调。
+///
+/// 在 `status_effect_tick` 中调用：当 source_pill=="xi_sui_ye" 的
+/// CultivationAcceleration 刚刚到期（从 >0 变为 0），追加 QiRegenSlowed。
+///
+/// 返回 true 表示触发了追加。
+pub fn check_xi_sui_ye_expiry_and_push_debuff(
+    status_effects: &mut crate::combat::components::StatusEffects,
+) -> bool {
+    use crate::combat::components::ActiveStatusEffect;
+    use crate::combat::status::push_status_effect;
+
+    // 查找是否有 source_pill="xi_sui_ye" 且 kind=CultivationAcceleration 且 remaining=0
+    let has_expired_xi_sui = status_effects.active.iter().any(|e| {
+        e.kind == StatusEffectKind::CultivationAcceleration
+            && e.source_pill.as_deref() == Some("xi_sui_ye")
+            && e.remaining_ticks == 0
+    });
+
+    if !has_expired_xi_sui {
+        return false;
+    }
+
+    let debuff = xi_sui_ye_deferred_debuff();
+    push_status_effect(
+        status_effects,
+        ActiveStatusEffect {
+            kind: StatusEffectKind::QiRegenSlowed,
+            magnitude: debuff.magnitude,
+            remaining_ticks: debuff.duration_ticks,
+            source_pill: Some("xi_sui_ye".to_string()),
+        },
+    );
+    true
+}
+
+/// plan-cultivation-pacing-v1 P1.6：激活 PillEffect.meridian_progress_bonus 接口。
+///
+/// 当消费含有 `meridian_progress_bonus = Some(mag)` 的丹药时，通过
+/// push_status_effect 挂载 CultivationAcceleration(mag)。
+///
+/// 归并说明：`QiRegenBoost`（plan-alchemy-v2 P0 定义）在修炼加速语境下
+/// 统一归并到 `CultivationAcceleration`，避免双轨。`QiRegenBoost` 仍在
+/// side_effect_apply.rs 中用于短时战斗回气——两者语境不同，不冲突。
+pub fn activate_meridian_progress_bonus(
+    effect: &PillEffect,
+    status_effects: &mut crate::combat::components::StatusEffects,
+    source_pill_id: &str,
+) -> bool {
+    use crate::combat::components::ActiveStatusEffect;
+    use crate::combat::status::push_status_effect;
+
+    let Some(mag) = effect.meridian_progress_bonus else {
+        return false;
+    };
+    if mag <= 0.0 {
+        return false;
+    }
+
+    push_status_effect(
+        status_effects,
+        ActiveStatusEffect {
+            kind: StatusEffectKind::CultivationAcceleration,
+            magnitude: mag as f32,
+            remaining_ticks: 36_000, // 默认 30 分钟 @20tps
+            source_pill: Some(source_pill_id.to_string()),
+        },
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -71,7 +71,10 @@ pub use furnace::{furnace_tier_from_item_id, AlchemyFurnace};
 pub use learned::LearnedRecipes;
 #[allow(unused_imports)]
 pub use pill::{
-    can_take_pill, consume_pill, overdose_penalty, PillConsumeOutcome, PillEffect, SPOIL_TOXIN_MULT,
+    activate_meridian_progress_bonus, can_take_pill, check_xi_sui_ye_expiry_and_push_debuff,
+    consume_cultivation_pill, consume_pill, cultivation_pill_effects, cultivation_pill_spec,
+    overdose_penalty, CultivationPillConsumeResult, CultivationPillEffectEntry,
+    CultivationPillKind, CultivationPillSpec, PillConsumeOutcome, PillEffect, SPOIL_TOXIN_MULT,
 };
 #[allow(unused_imports)]
 pub use recipe::{Recipe, RecipeId, RecipeRegistry};
