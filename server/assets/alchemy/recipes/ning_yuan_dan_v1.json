@@ -1,0 +1,34 @@
+{
+  "id": "ning_yuan_dan_v1",
+  "name": "凝元丹·固元突破辅助",
+  "furnace_tier_min": 1,
+  "stages": [
+    { "at_tick": 0, "required": [
+      { "material": "xue_se_mai_cao", "count": 1 },
+      { "material": "ning_mai_cao", "count": 1 },
+      { "material": "fan_tie", "count": 1 }
+    ], "window": 0 }
+  ],
+  "fire_profile": {
+    "target_temp": 0.48,
+    "target_duration_ticks": 140,
+    "qi_cost": 14.0,
+    "tolerance": { "temp_band": 0.08, "duration_band": 18 }
+  },
+  "outcomes": {
+    "perfect": { "pill": "ning_yuan_dan", "quality": 1.0, "toxin_amount": 0.35, "toxin_color": "Heavy", "qi_gain": 0.0 },
+    "good":    { "pill": "ning_yuan_dan", "quality": 0.68, "toxin_amount": 0.47, "toxin_color": "Heavy", "qi_gain": 0.0 },
+    "flawed":  { "pill": "ning_yuan_dan", "quality": 0.35, "toxin_amount": 0.62, "toxin_color": "Turbid", "qi_gain": 0.0 },
+    "waste":   null,
+    "explode": { "damage": 9.0, "meridian_crack": 0.04 }
+  },
+  "flawed_fallback": {
+    "pill": "ning_yuan_dan",
+    "quality_scale": 0.40,
+    "toxin_scale": 1.8,
+    "side_effect_pool": [
+      { "tag": "qi_regen_boost", "duration_s": 30, "weight": 2 },
+      { "tag": "contam_boost", "duration_s": 50, "weight": 2 }
+    ]
+  }
+}

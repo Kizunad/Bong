@@ -1,0 +1,33 @@
+{
+  "id": "tong_mai_san_v1",
+  "name": "通脉散·经脉加速丹",
+  "furnace_tier_min": 1,
+  "stages": [
+    { "at_tick": 0, "required": [
+      { "material": "ning_mai_cao", "count": 2 },
+      { "material": "ying_yuan_gu", "count": 1 }
+    ], "window": 0 }
+  ],
+  "fire_profile": {
+    "target_temp": 0.42,
+    "target_duration_ticks": 120,
+    "qi_cost": 10.0,
+    "tolerance": { "temp_band": 0.10, "duration_band": 20 }
+  },
+  "outcomes": {
+    "perfect": { "pill": "tong_mai_san", "quality": 1.0, "toxin_amount": 0.30, "toxin_color": "Solid", "qi_gain": 0.0 },
+    "good":    { "pill": "tong_mai_san", "quality": 0.70, "toxin_amount": 0.40, "toxin_color": "Solid", "qi_gain": 0.0 },
+    "flawed":  { "pill": "tong_mai_san", "quality": 0.38, "toxin_amount": 0.55, "toxin_color": "Turbid", "qi_gain": 0.0 },
+    "waste":   null,
+    "explode": { "damage": 7.0, "meridian_crack": 0.03 }
+  },
+  "flawed_fallback": {
+    "pill": "tong_mai_san",
+    "quality_scale": 0.42,
+    "toxin_scale": 1.7,
+    "side_effect_pool": [
+      { "tag": "qi_regen_boost", "duration_s": 25, "weight": 2 },
+      { "tag": "contam_boost", "duration_s": 40, "weight": 1 }
+    ]
+  }
+}

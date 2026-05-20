@@ -60,8 +60,7 @@ pub fn upsert_status_effect(status_effects: &mut StatusEffects, effect: ActiveSt
 /// 允许多条同 kind 共存（丹药堆叠），但同一 `source_pill` 最多 2 条有效。
 /// 返回 true 表示成功入栈，false 表示被 per-pill cap 拦截。
 ///
-/// 当前由 dandao/alchemy 系统投喂；本 plan 仅提供基建。
-#[allow(dead_code)]
+/// 由修炼丹药 consume_cultivation_pill 和 dandao/alchemy 系统投喂。
 pub fn push_status_effect(status_effects: &mut StatusEffects, effect: ActiveStatusEffect) -> bool {
     if let Some(ref pill) = effect.source_pill {
         let same_pill_count = status_effects
@@ -117,6 +116,12 @@ pub fn status_effect_tick(clock: Res<CombatClock>, mut statuses: Query<&mut Stat
                 .remaining_ticks
                 .saturating_sub(STATUS_EFFECT_TICK_INTERVAL_TICKS);
         }
+
+        // plan-cultivation-pacing-v1 §8.1 #8：洗髓液到期回调。
+        // 在清理过期 effect 之前检查——source_pill=="xi_sui_ye" 的
+        // CultivationAcceleration 到期（remaining==0）时追加 QiRegenSlowed。
+        crate::alchemy::pill::check_xi_sui_ye_expiry_and_push_debuff(&mut status_effects);
+
         status_effects
             .active
             .retain(|effect| effect.remaining_ticks > 0);
