@@ -2701,4 +2701,75 @@ mod tests {
             "tie_bi_san should produce status effect intents"
         );
     }
+
+    // ─── plan-depth-loop-v1 P5 — 循环闭合校准 e2e test ───
+
+    /// P5.1 E2E: Verify combat pill specs exist for known combat pills and
+    /// PillBuffStatusV1 can represent their buff state.
+    ///
+    /// Validates the full pill-buff pipeline: spec lookup -> status intents ->
+    /// PillBuffStatusV1 schema serialization.
+    #[test]
+    fn e2e_pill_buff_active_during_combat() {
+        use crate::schema::server_data::PillBuffStatusV1;
+
+        // Verify combat pill specs exist for the two primary combat pills
+        for pill_id in ["huo_xue_dan", "tie_bi_san"] {
+            let spec = combat_pill_spec(pill_id).unwrap_or_else(|| {
+                panic!(
+                    "combat_pill_spec(\"{pill_id}\") should return Some — \
+                     {pill_id} is a primary combat pill required for the depth loop"
+                )
+            });
+            assert_eq!(spec.id, pill_id, "spec.id should match the lookup key");
+
+            // Verify the spec produces usable status effect intents
+            let entity = valence::prelude::Entity::from_raw(42);
+            let intents = combat_pill_status_intents(entity, spec, 1.0, 1.0, 0);
+            assert!(
+                !intents.is_empty(),
+                "{pill_id} should produce at least one status effect intent — \
+                 a combat pill with no effects would be useless in the depth loop"
+            );
+
+            // Verify positive_duration_ticks is non-zero (pills must have duration)
+            assert!(
+                spec.positive_duration_ticks > 0,
+                "{pill_id} positive_duration_ticks should be > 0, got {} — \
+                 a zero-duration buff cannot be \"active during combat\"",
+                spec.positive_duration_ticks
+            );
+
+            // Verify PillBuffStatusV1 can represent this pill's buff state
+            let buff_status = PillBuffStatusV1 {
+                buff_id: pill_id.to_string(),
+                remaining_ticks: spec.positive_duration_ticks as u32,
+                effect_multiplier: 1.0,
+            };
+            let json = serde_json::to_string(&buff_status).unwrap_or_else(|e| {
+                panic!("PillBuffStatusV1 for {pill_id} should serialize to JSON — {e}")
+            });
+            let roundtrip: PillBuffStatusV1 = serde_json::from_str(&json).unwrap_or_else(|e| {
+                panic!("PillBuffStatusV1 for {pill_id} should roundtrip through JSON — {e}")
+            });
+            assert_eq!(
+                roundtrip.buff_id, pill_id,
+                "PillBuffStatusV1 roundtrip buff_id should be '{pill_id}'"
+            );
+            assert_eq!(
+                roundtrip.remaining_ticks, spec.positive_duration_ticks as u32,
+                "PillBuffStatusV1 roundtrip remaining_ticks should match spec"
+            );
+        }
+
+        // Verify all 10 combat pills resolve
+        for pill_id in &COMBAT_PILL_IDS {
+            assert!(
+                combat_pill_spec(pill_id).is_some(),
+                "combat_pill_spec(\"{pill_id}\") should resolve — \
+                 all {n} combat pills must be available for the depth loop",
+                n = COMBAT_PILL_IDS.len()
+            );
+        }
+    }
 }
