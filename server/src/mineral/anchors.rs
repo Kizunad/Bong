@@ -537,6 +537,7 @@ mod tests {
             y: exhausted_pos.y,
             z: exhausted_pos.z,
             tick: 1,
+            respawn_at_tick: None,
         });
 
         let mut app = App::new();

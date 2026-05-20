@@ -36,6 +36,10 @@ pub struct ExhaustedEntry {
     pub y: i32,
     pub z: i32,
     pub tick: u64,
+    /// plan-cultivation-pacing-v1 P1.9 — 再生到期 tick。
+    /// None = 永久耗尽（向后兼容旧数据）。Some(t) = tick >= t 时从 exhausted 列表移除。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub respawn_at_tick: Option<u64>,
 }
 
 impl ExhaustedEntry {
@@ -46,6 +50,23 @@ impl ExhaustedEntry {
             y: event.position.y,
             z: event.position.z,
             tick,
+            respawn_at_tick: None,
+        }
+    }
+
+    /// plan-cultivation-pacing-v1 P1.9 — 创建带 respawn 时间的耗尽记录。
+    pub fn from_event_with_respawn(
+        event: &MineralExhaustedEvent,
+        tick: u64,
+        respawn_ticks: Option<u64>,
+    ) -> Self {
+        Self {
+            mineral_id: event.mineral_id.as_str().to_string(),
+            x: event.position.x,
+            y: event.position.y,
+            z: event.position.z,
+            tick,
+            respawn_at_tick: respawn_ticks.map(|r| tick.saturating_add(r)),
         }
     }
 }
@@ -111,6 +132,25 @@ impl ExhaustedMineralsLog {
         self.dirty = true;
     }
 
+    /// plan-cultivation-pacing-v1 P1.9 — 移除到期的 exhausted entries（再生矿脉）。
+    /// 返回被移除的 entry 列表，供调用方重新 spawn ore nodes。
+    pub fn remove_respawned(&mut self, current_tick: u64) -> Vec<ExhaustedEntry> {
+        let mut respawned = Vec::new();
+        self.entries.retain(|entry| {
+            if let Some(respawn_at) = entry.respawn_at_tick {
+                if current_tick >= respawn_at {
+                    respawned.push(entry.clone());
+                    return false;
+                }
+            }
+            true
+        });
+        if !respawned.is_empty() {
+            self.dirty = true;
+        }
+        respawned
+    }
+
     /// 强制刷盘 — 测试 / 关服 hook 用。
     pub fn flush(&mut self) -> Result<(), String> {
         if !self.dirty {
@@ -147,13 +187,23 @@ pub fn tick_mineral_clock(mut clock: ResMut<MineralTickClock>) {
 }
 
 /// system — 把 MineralExhaustedEvent 收入内存 log，按节流刷盘。
+/// plan-cultivation-pacing-v1 P1.9: 查 registry 获取 respawn_ticks 写入 entry。
 pub fn record_exhausted_minerals(
     mut events: EventReader<MineralExhaustedEvent>,
     mut log: ResMut<ExhaustedMineralsLog>,
     clock: Res<MineralTickClock>,
+    registry: Option<Res<super::registry::MineralRegistry>>,
 ) {
     for event in events.read() {
-        log.record(ExhaustedEntry::from_event(event, clock.tick));
+        let respawn_ticks = registry
+            .as_deref()
+            .and_then(|reg| reg.get(event.mineral_id))
+            .and_then(|entry| entry.respawn_ticks);
+        log.record(ExhaustedEntry::from_event_with_respawn(
+            event,
+            clock.tick,
+            respawn_ticks,
+        ));
     }
 
     log.flush_clock = log.flush_clock.saturating_add(1);
@@ -236,6 +286,36 @@ mod tests {
         assert_eq!(entry.y, 64);
         assert_eq!(entry.z, -5);
         assert_eq!(entry.tick, 999);
+        assert_eq!(entry.respawn_at_tick, None);
+    }
+
+    #[test]
+    fn entry_from_event_with_respawn_sets_absolute_tick() {
+        let ev = MineralExhaustedEvent {
+            mineral_id: MineralId::FanTie,
+            position: BlockPos::new(1, 64, 2),
+        };
+        let entry = ExhaustedEntry::from_event_with_respawn(&ev, 1000, Some(72_000));
+        assert_eq!(entry.mineral_id, "fan_tie");
+        assert_eq!(entry.tick, 1000);
+        assert_eq!(
+            entry.respawn_at_tick,
+            Some(73_000),
+            "respawn_at_tick should be exhausted_tick + respawn_ticks"
+        );
+    }
+
+    #[test]
+    fn entry_from_event_with_respawn_none_is_permanent() {
+        let ev = MineralExhaustedEvent {
+            mineral_id: MineralId::KuJin,
+            position: BlockPos::new(1, 64, 2),
+        };
+        let entry = ExhaustedEntry::from_event_with_respawn(&ev, 1000, None);
+        assert_eq!(
+            entry.respawn_at_tick, None,
+            "永不再生矿物的 respawn_at_tick 应为 None"
+        );
     }
 
     #[test]
@@ -248,6 +328,7 @@ mod tests {
             y: 64,
             z: 0,
             tick: 100,
+            respawn_at_tick: None,
         });
         log.flush().expect("flush should succeed");
 
@@ -279,6 +360,7 @@ mod tests {
             y: 2,
             z: 3,
             tick: 5,
+            respawn_at_tick: None,
         });
         assert!(log.dirty);
         assert_eq!(log.entries().len(), 1);
@@ -314,6 +396,7 @@ mod tests {
             y: 64,
             z: -5,
             tick: 12345,
+            respawn_at_tick: None,
         });
         prior.flush().expect("flush should succeed");
 
