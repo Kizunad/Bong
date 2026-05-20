@@ -2814,6 +2814,7 @@ mod tests {
                 kind: StatusEffectKind::Bleeding,
                 magnitude: 1.0,
                 remaining_ticks: 120,
+                source_pill: None,
             }],
         });
 

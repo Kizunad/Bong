@@ -176,6 +176,10 @@ pub fn qi_regen_and_zone_drain_tick(
         };
         let humility_multiplier = statuses.map(humility_qi_recovery_multiplier).unwrap_or(1.0);
         let qi_regen_pause_multiplier = statuses.map(qi_regen_pause_multiplier).unwrap_or(1.0);
+        let cultivation_accel = statuses
+            .map(cultivation_acceleration_multiplier)
+            .unwrap_or(1.0);
+        let qi_regen_slowed = statuses.map(qi_regen_slowed_multiplier).unwrap_or(1.0);
         let exhausted_multiplier = exhausted
             .map(|state| state.qi_recovery_modifier)
             .unwrap_or(1.0)
@@ -192,6 +196,8 @@ pub fn qi_regen_and_zone_drain_tick(
             rate * wind_candle_multiplier
                 * humility_multiplier
                 * qi_regen_pause_multiplier
+                * cultivation_accel
+                * qi_regen_slowed
                 * exhausted_multiplier
                 * turbulence_multiplier
                 * juebi_aftershock_multiplier,
@@ -308,6 +314,30 @@ pub fn frailty_qi_recovery_multiplier_for_realm(realm: Realm) -> f64 {
         Realm::Spirit => 0.4,
         Realm::Void => 0.3,
     }
+}
+
+/// plan-cultivation-pacing-v1 P1.2：修炼加速乘数。
+/// 叠加所有 CultivationAcceleration buff 的 magnitude，上限 5×。
+pub(crate) fn cultivation_acceleration_multiplier(se: &StatusEffects) -> f64 {
+    let sum: f32 = se
+        .active
+        .iter()
+        .filter(|e| e.kind == StatusEffectKind::CultivationAcceleration && e.remaining_ticks > 0)
+        .map(|e| e.magnitude.max(0.0))
+        .sum();
+    (1.0 + sum as f64).min(5.0)
+}
+
+/// plan-cultivation-pacing-v1 P1.2：qi 回复减速乘数。
+/// 叠加所有 QiRegenSlowed debuff 的 magnitude，clamp 到 [0.0, 1.0]。
+fn qi_regen_slowed_multiplier(se: &StatusEffects) -> f64 {
+    let sum: f32 = se
+        .active
+        .iter()
+        .filter(|e| e.kind == StatusEffectKind::QiRegenSlowed && e.remaining_ticks > 0)
+        .map(|e| e.magnitude.max(0.0))
+        .sum();
+    (1.0 - sum as f64).clamp(0.0, 1.0)
 }
 
 fn has_frailty_status(status_effects: &StatusEffects) -> bool {
@@ -584,6 +614,7 @@ mod tests {
                         kind: StatusEffectKind::QiRegenPaused,
                         magnitude: 1.0,
                         remaining_ticks,
+                        source_pill: None,
                     }],
                 });
             }
@@ -809,6 +840,280 @@ mod tests {
                 .unwrap()
                 .spirit_qi,
             0.0
+        );
+    }
+
+    // ── plan-cultivation-pacing-v1 P1.2 cultivation_acceleration_multiplier pin 测试 ──
+
+    fn make_status_effects(effects: Vec<ActiveStatusEffect>) -> StatusEffects {
+        StatusEffects { active: effects }
+    }
+
+    fn accel_effect(magnitude: f32, remaining_ticks: u64) -> ActiveStatusEffect {
+        ActiveStatusEffect {
+            kind: StatusEffectKind::CultivationAcceleration,
+            magnitude,
+            remaining_ticks,
+            source_pill: None,
+        }
+    }
+
+    fn slowed_effect(magnitude: f32, remaining_ticks: u64) -> ActiveStatusEffect {
+        ActiveStatusEffect {
+            kind: StatusEffectKind::QiRegenSlowed,
+            magnitude,
+            remaining_ticks,
+            source_pill: None,
+        }
+    }
+
+    #[test]
+    fn cultivation_accel_mag_zero_returns_one() {
+        let se = make_status_effects(vec![accel_effect(0.0, 100)]);
+        let result = cultivation_acceleration_multiplier(&se);
+        assert!(
+            (result - 1.0).abs() < 1e-9,
+            "mag=0 应返回 1.0×；实际 {result}"
+        );
+    }
+
+    #[test]
+    fn cultivation_accel_mag_half_returns_one_point_five() {
+        let se = make_status_effects(vec![accel_effect(0.5, 100)]);
+        let result = cultivation_acceleration_multiplier(&se);
+        assert!(
+            (result - 1.5).abs() < 1e-9,
+            "mag=0.5 应返回 1.5×；实际 {result}"
+        );
+    }
+
+    #[test]
+    fn cultivation_accel_mag_one_returns_two() {
+        let se = make_status_effects(vec![accel_effect(1.0, 100)]);
+        let result = cultivation_acceleration_multiplier(&se);
+        assert!(
+            (result - 2.0).abs() < 1e-9,
+            "mag=1.0 应返回 2.0×；实际 {result}"
+        );
+    }
+
+    #[test]
+    fn cultivation_accel_mag_four_caps_at_five() {
+        let se = make_status_effects(vec![accel_effect(4.0, 100)]);
+        let result = cultivation_acceleration_multiplier(&se);
+        assert!(
+            (result - 5.0).abs() < 1e-9,
+            "mag=4.0 应命中 cap 返回 5.0×；实际 {result}"
+        );
+    }
+
+    #[test]
+    fn cultivation_accel_mag_ten_caps_at_five() {
+        let se = make_status_effects(vec![accel_effect(10.0, 100)]);
+        let result = cultivation_acceleration_multiplier(&se);
+        assert!(
+            (result - 5.0).abs() < 1e-9,
+            "mag=10 超过 cap 应返回 5.0×；实际 {result}"
+        );
+    }
+
+    #[test]
+    fn cultivation_accel_stacks_multiple_buffs() {
+        let se = make_status_effects(vec![accel_effect(0.5, 100), accel_effect(1.0, 100)]);
+        let result = cultivation_acceleration_multiplier(&se);
+        // 1 + 0.5 + 1.0 = 2.5
+        assert!(
+            (result - 2.5).abs() < 1e-9,
+            "mag=0.5 + mag=1.0 叠加应返回 2.5×；实际 {result}"
+        );
+    }
+
+    #[test]
+    fn cultivation_accel_expired_ticks_not_counted() {
+        let se = make_status_effects(vec![
+            accel_effect(1.0, 100),
+            accel_effect(2.0, 0), // expired
+        ]);
+        let result = cultivation_acceleration_multiplier(&se);
+        assert!(
+            (result - 2.0).abs() < 1e-9,
+            "remaining_ticks=0 的 buff 不应计入；期望 2.0×，实际 {result}"
+        );
+    }
+
+    #[test]
+    fn cultivation_accel_empty_effects_returns_one() {
+        let se = make_status_effects(vec![]);
+        let result = cultivation_acceleration_multiplier(&se);
+        assert!(
+            (result - 1.0).abs() < 1e-9,
+            "空列表应返回 1.0×；实际 {result}"
+        );
+    }
+
+    #[test]
+    fn cultivation_accel_ignores_other_kinds() {
+        let se = make_status_effects(vec![ActiveStatusEffect {
+            kind: StatusEffectKind::DamageAmp,
+            magnitude: 3.0,
+            remaining_ticks: 100,
+            source_pill: None,
+        }]);
+        let result = cultivation_acceleration_multiplier(&se);
+        assert!(
+            (result - 1.0).abs() < 1e-9,
+            "不同 kind 不应计入；实际 {result}"
+        );
+    }
+
+    // ── plan-cultivation-pacing-v1 P1.2 qi_regen_slowed_multiplier pin 测试 ──
+
+    #[test]
+    fn qi_regen_slowed_mag_half_returns_half() {
+        let se = make_status_effects(vec![slowed_effect(0.5, 100)]);
+        let result = qi_regen_slowed_multiplier(&se);
+        assert!(
+            (result - 0.5).abs() < 1e-9,
+            "mag=0.5 应返回 0.5×；实际 {result}"
+        );
+    }
+
+    #[test]
+    fn qi_regen_slowed_mag_0_8_returns_0_2() {
+        let se = make_status_effects(vec![slowed_effect(0.8, 100)]);
+        let result = qi_regen_slowed_multiplier(&se);
+        // f32(0.8) → f64 有微量精度损失，放宽到 1e-6
+        assert!(
+            (result - 0.2).abs() < 1e-6,
+            "mag=0.8 应返回 ≈0.2×；实际 {result}"
+        );
+    }
+
+    #[test]
+    fn qi_regen_slowed_mag_one_clamps_to_zero() {
+        let se = make_status_effects(vec![slowed_effect(1.0, 100)]);
+        let result = qi_regen_slowed_multiplier(&se);
+        assert!(
+            result.abs() < 1e-9,
+            "mag=1.0 应 clamp 到 0.0×；实际 {result}"
+        );
+    }
+
+    #[test]
+    fn qi_regen_slowed_mag_oversize_clamps_to_zero() {
+        let se = make_status_effects(vec![slowed_effect(1.5, 100)]);
+        let result = qi_regen_slowed_multiplier(&se);
+        assert!(
+            result.abs() < 1e-9,
+            "mag=1.5 超出 1.0 应 clamp 到 0.0×（不能为负）；实际 {result}"
+        );
+    }
+
+    #[test]
+    fn qi_regen_slowed_expired_not_counted() {
+        let se = make_status_effects(vec![slowed_effect(0.5, 0)]);
+        let result = qi_regen_slowed_multiplier(&se);
+        assert!(
+            (result - 1.0).abs() < 1e-9,
+            "remaining_ticks=0 不应计入；期望 1.0×，实际 {result}"
+        );
+    }
+
+    // ── QiRegenPaused × QiRegenSlowed 优先级测试 ──
+
+    #[test]
+    fn qi_regen_paused_short_circuits_slowed() {
+        fn run_once(effects: Vec<ActiveStatusEffect>) -> f64 {
+            let mut app = App::new();
+            app.insert_resource(CultivationClock::default());
+            app.insert_resource(ZoneRegistry::fallback());
+            app.add_systems(Update, qi_regen_and_zone_drain_tick);
+
+            let mut meridians = MeridianSystem::default();
+            meridians.get_mut(MeridianId::Lung).opened = true;
+            let entity = app
+                .world_mut()
+                .spawn((
+                    Position::new([8.0, 66.0, 8.0]),
+                    meridians,
+                    Cultivation::default(),
+                    StatusEffects { active: effects },
+                ))
+                .id();
+
+            app.update();
+
+            app.world()
+                .entity(entity)
+                .get::<Cultivation>()
+                .unwrap()
+                .qi_current
+        }
+
+        let paused_only = run_once(vec![ActiveStatusEffect {
+            kind: StatusEffectKind::QiRegenPaused,
+            magnitude: 1.0,
+            remaining_ticks: 100,
+            source_pill: None,
+        }]);
+        let paused_plus_slowed = run_once(vec![
+            ActiveStatusEffect {
+                kind: StatusEffectKind::QiRegenPaused,
+                magnitude: 1.0,
+                remaining_ticks: 100,
+                source_pill: None,
+            },
+            slowed_effect(0.5, 100),
+        ]);
+
+        assert_eq!(paused_only, 0.0, "QiRegenPaused 独立时 qi 应为 0");
+        assert_eq!(
+            paused_plus_slowed, 0.0,
+            "QiRegenPaused=0 短路 QiRegenSlowed(0.5)，qi 应仍为 0；实际 {paused_plus_slowed}"
+        );
+    }
+
+    // ── qi_regen 在 CultivationAcceleration 下速率变化测试 ──
+
+    #[test]
+    fn qi_regen_doubled_under_cultivation_acceleration_mag_one() {
+        fn run_once(effects: Option<StatusEffects>) -> f64 {
+            let mut app = App::new();
+            app.insert_resource(CultivationClock::default());
+            app.insert_resource(ZoneRegistry::fallback());
+            app.add_systems(Update, qi_regen_and_zone_drain_tick);
+
+            let mut meridians = MeridianSystem::default();
+            meridians.get_mut(MeridianId::Lung).opened = true;
+            let mut entity = app.world_mut().spawn((
+                Position::new([8.0, 66.0, 8.0]),
+                meridians,
+                Cultivation::default(),
+            ));
+            if let Some(se) = effects {
+                entity.insert(se);
+            }
+            let entity = entity.id();
+
+            app.update();
+
+            app.world()
+                .entity(entity)
+                .get::<Cultivation>()
+                .unwrap()
+                .qi_current
+        }
+
+        let normal_qi = run_once(None);
+        let accel_qi = run_once(Some(make_status_effects(vec![accel_effect(1.0, 100)])));
+
+        assert!(normal_qi > 0.0, "基线 qi 回复应为正；实际 {normal_qi}");
+        assert!(
+            (accel_qi - normal_qi * 2.0).abs() < 1e-6,
+            "CultivationAcceleration(mag=1.0) 应使 qi 回复 2×；\
+             期望 {:.6}，实际 {:.6}",
+            normal_qi * 2.0,
+            accel_qi
         );
     }
 }

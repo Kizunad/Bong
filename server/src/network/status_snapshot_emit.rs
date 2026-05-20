@@ -104,6 +104,10 @@ fn status_effect_name(kind: &StatusEffectKind) -> String {
         StatusEffectKind::SpiritTreasurePerception => "灵宝感知".to_string(),
         StatusEffectKind::ResonanceLocked => "共振锁定".to_string(),
         StatusEffectKind::VoidCoreActive => "虚心坍缩".to_string(),
+        StatusEffectKind::CultivationAcceleration => "修炼加速".to_string(),
+        StatusEffectKind::QiRegenSlowed => "回气减速".to_string(),
+        StatusEffectKind::DamageVulnerability => "脆弱易伤".to_string(),
+        StatusEffectKind::ExtraordinaryMeridianAcceleration => "奇经加速".to_string(),
     }
 }
 
@@ -127,7 +131,9 @@ fn status_effect_category(kind: &StatusEffectKind) -> &'static str {
         | StatusEffectKind::StaminaRecovBoost
         | StatusEffectKind::MirrorConcealment
         | StatusEffectKind::SwordParrying
-        | StatusEffectKind::SpiritTreasurePerception => "buff",
+        | StatusEffectKind::SpiritTreasurePerception
+        | StatusEffectKind::CultivationAcceleration
+        | StatusEffectKind::ExtraordinaryMeridianAcceleration => "buff",
         StatusEffectKind::Slowed
         | StatusEffectKind::DamageAmp
         | StatusEffectKind::Humility
@@ -141,7 +147,9 @@ fn status_effect_category(kind: &StatusEffectKind) -> &'static str {
         | StatusEffectKind::LegStrain
         | StatusEffectKind::QiRegenPaused
         | StatusEffectKind::MirrorExposed
-        | StatusEffectKind::ResonanceLocked => "debuff",
+        | StatusEffectKind::ResonanceLocked
+        | StatusEffectKind::QiRegenSlowed
+        | StatusEffectKind::DamageVulnerability => "debuff",
         StatusEffectKind::AlchemyBuff(_) => "unknown",
     }
 }

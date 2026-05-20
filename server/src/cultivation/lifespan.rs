@@ -663,6 +663,7 @@ pub fn sync_frailty_status_effects(
             kind: StatusEffectKind::Frailty,
             magnitude,
             remaining_ticks: u64::MAX,
+            source_pill: None,
         });
     }
 }

@@ -9,6 +9,9 @@
 
 use valence::prelude::{bevy_ecs, Component, Entity, Event, Events, Position, Query, Res, ResMut};
 
+use crate::combat::components::StatusEffects;
+use crate::combat::events::StatusEffectKind;
+use crate::cultivation::tick::cultivation_acceleration_multiplier;
 use crate::world::dimension::{CurrentDimension, DimensionKind};
 use crate::world::events::EVENT_REALM_COLLAPSE;
 use crate::world::zone::ZoneRegistry;
@@ -58,6 +61,9 @@ type MeridianOpenItem<'a> = (
     // LifeRecord 可选：玩家有完整生平卷，NPC 无（plan §8 已决定）。
     // 推进经脉逻辑对 NPC / 玩家一视同仁，仅生平记录步骤按存在与否跳过。
     Option<&'a mut LifeRecord>,
+    // plan-cultivation-pacing-v1 P1.3：StatusEffects 用于 CultivationAcceleration
+    // / ExtraordinaryMeridianAcceleration 聚合。
+    Option<&'a StatusEffects>,
 );
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -77,12 +83,14 @@ pub fn advance_open_progress(
     zone_qi: f64,
     adjacent_ok: bool,
 ) -> Result<f64, OpenStepError> {
-    advance_open_progress_at(cultivation, meridians, target, zone_qi, adjacent_ok, 0)
+    advance_open_progress_at(cultivation, meridians, target, zone_qi, adjacent_ok, 0, 1.0)
         .map(|(delta, _just_opened)| delta)
 }
 
 /// 与 [`advance_open_progress`] 相同，但额外返回 "本次是否完成打通"，并在打通时写入
 /// `opened_at = tick_now` 以支持 LIFO 排序。
+///
+/// `cultivation_boost`：外部（StatusEffects）聚合后的加速倍率，1.0 = 无加速。
 pub fn advance_open_progress_at(
     cultivation: &mut Cultivation,
     meridians: &mut MeridianSystem,
@@ -90,6 +98,7 @@ pub fn advance_open_progress_at(
     zone_qi: f64,
     adjacent_ok: bool,
     tick_now: u64,
+    cultivation_boost: f64,
 ) -> Result<(f64, bool), OpenStepError> {
     if meridians.get(target).opened {
         return Err(OpenStepError::AlreadyOpen);
@@ -105,8 +114,13 @@ pub fn advance_open_progress_at(
     } else {
         0.0
     };
+    let cultivation_boost = if cultivation_boost.is_finite() && cultivation_boost > 0.0 {
+        cultivation_boost
+    } else {
+        1.0
+    };
     let difficulty = meridian_difficulty_factor(meridians.opened_count(), target.family());
-    let delta = BASE_OPEN_RATE * zone_qi * qi_ratio * difficulty;
+    let delta = BASE_OPEN_RATE * zone_qi * qi_ratio * difficulty * cultivation_boost;
     let cost = delta * OPEN_COST_FACTOR;
     if cultivation.qi_current < cost {
         return Err(OpenStepError::NotEnoughQi);
@@ -156,7 +170,7 @@ pub fn meridian_open_tick(
         return;
     };
     let now = clock.tick;
-    for (entity, pos, current_dimension, target, mut cultivation, mut meridians, life) in
+    for (entity, pos, current_dimension, target, mut cultivation, mut meridians, life, statuses) in
         entities.iter_mut()
     {
         let dimension = current_dimension
@@ -173,6 +187,19 @@ pub fn meridian_open_tick(
             .map(|z| z.spirit_qi)
             .unwrap_or(0.0);
         let adj = is_target_adjacent(&topo, &meridians, target.0);
+        let cultivation_boost = {
+            let accel = statuses
+                .map(cultivation_acceleration_multiplier)
+                .unwrap_or(1.0);
+            let extra = if target.0.family() == MeridianFamily::Extraordinary {
+                statuses
+                    .map(extraordinary_meridian_acceleration_multiplier)
+                    .unwrap_or(1.0)
+            } else {
+                1.0
+            };
+            (accel * extra).min(5.0)
+        };
         if let Ok((_delta, just_opened)) = advance_open_progress_at(
             &mut cultivation,
             &mut meridians,
@@ -180,6 +207,7 @@ pub fn meridian_open_tick(
             zone_qi,
             adj,
             now,
+            cultivation_boost,
         ) {
             if just_opened {
                 if let Some(meridian_opened_events) = meridian_opened_events.as_deref_mut() {
@@ -226,6 +254,20 @@ pub fn meridian_open_tick(
             }
         }
     }
+}
+
+/// plan-cultivation-pacing-v1 P1.5：仅加速奇经打通，magnitude N → (1+N)× 奇经开脉速度。
+/// 无上限——丹药系统控制投入量。
+fn extraordinary_meridian_acceleration_multiplier(se: &StatusEffects) -> f64 {
+    let sum: f32 = se
+        .active
+        .iter()
+        .filter(|e| {
+            e.kind == StatusEffectKind::ExtraordinaryMeridianAcceleration && e.remaining_ticks > 0
+        })
+        .map(|e| e.magnitude.max(0.0))
+        .sum();
+    1.0 + sum as f64
 }
 
 fn meridian_flash_direction(target: MeridianId) -> [f64; 3] {
@@ -605,8 +647,9 @@ mod tests {
         }
         let target = MeridianId::Ren; // 奇经，首脉特许不适用但 adjacent_ok=true 跳过检查
 
-        let (delta, _just_opened) = advance_open_progress_at(&mut c, &mut ms, target, 0.6, true, 0)
-            .expect("应成功推进奇经进度");
+        let (delta, _just_opened) =
+            advance_open_progress_at(&mut c, &mut ms, target, 0.6, true, 0, 1.0)
+                .expect("应成功推进奇经进度");
 
         // expected: 0.00003 * 0.6 * (10000/10000) * meridian_difficulty_factor(12, Extraordinary)
         //         = 0.00003 * 0.6 * 1.0 * (0.4 / 2.8)
@@ -622,6 +665,200 @@ mod tests {
             ticks_to_open <= 500_000,
             "奇经开脉不应超出合理范围，\
              期望 ≤500000 tick，实际 {ticks_to_open} tick (delta={delta:.9})"
+        );
+    }
+
+    // ── plan-cultivation-pacing-v1 P1.3 meridian delta 在 CultivationAcceleration 下的测试 ──
+
+    #[test]
+    fn meridian_delta_tripled_under_cultivation_acceleration_mag_two() {
+        let mut c = Cultivation {
+            qi_current: 1000.0,
+            qi_max: 1000.0,
+            ..Default::default()
+        };
+        let mut ms = MeridianSystem::default();
+        let target = MeridianId::Lung;
+
+        // 基线：boost=1.0
+        let (delta_base, _) =
+            advance_open_progress_at(&mut c, &mut ms, target, 0.6, true, 0, 1.0).unwrap();
+
+        // 重置 progress
+        ms.get_mut(target).open_progress = 0.0;
+        c.qi_current = 1000.0;
+
+        // boost=3.0 (CultivationAcceleration mag=2.0)
+        let (delta_boosted, _) =
+            advance_open_progress_at(&mut c, &mut ms, target, 0.6, true, 0, 3.0).unwrap();
+
+        assert!(
+            (delta_boosted - delta_base * 3.0).abs() < 1e-12,
+            "cultivation_boost=3.0 应使 delta 3×；\
+             期望 {:.12}，实际 {:.12}",
+            delta_base * 3.0,
+            delta_boosted
+        );
+    }
+
+    // ── plan-cultivation-pacing-v1 P1.5 ExtraordinaryMeridianAcceleration 测试 ──
+
+    #[test]
+    fn extraordinary_accel_only_affects_extraordinary_meridian() {
+        use crate::combat::components::{ActiveStatusEffect, StatusEffects};
+
+        let extra_accel_effects = StatusEffects {
+            active: vec![ActiveStatusEffect {
+                kind: crate::combat::events::StatusEffectKind::ExtraordinaryMeridianAcceleration,
+                magnitude: 4.0,
+                remaining_ticks: 100,
+                source_pill: None,
+            }],
+        };
+
+        // 对正经无效
+        let regular_boost = {
+            let accel = cultivation_acceleration_multiplier(&extra_accel_effects);
+            // ExtraordinaryMeridianAcceleration is NOT CultivationAcceleration, so accel=1.0
+            let extra = 1.0; // Regular meridian → no extra boost
+            (accel * extra).min(5.0)
+        };
+        assert!(
+            (regular_boost - 1.0).abs() < 1e-9,
+            "ExtraordinaryMeridianAcceleration 对正经应无效；实际 boost={regular_boost}"
+        );
+
+        // 对奇经有效：boost = 1.0 * (1 + 4.0) = 5.0
+        let extraordinary_boost = {
+            let accel = cultivation_acceleration_multiplier(&extra_accel_effects);
+            let extra = extraordinary_meridian_acceleration_multiplier(&extra_accel_effects);
+            (accel * extra).min(5.0)
+        };
+        assert!(
+            (extraordinary_boost - 5.0).abs() < 1e-9,
+            "ExtraordinaryMeridianAcceleration(mag=4.0) 对奇经应 (1+4)=5.0× 但被 min(5.0) cap；\
+             实际 boost={extraordinary_boost}"
+        );
+    }
+
+    #[test]
+    fn extraordinary_accel_multiplier_basic() {
+        use crate::combat::components::{ActiveStatusEffect, StatusEffects};
+
+        let se = StatusEffects {
+            active: vec![ActiveStatusEffect {
+                kind: crate::combat::events::StatusEffectKind::ExtraordinaryMeridianAcceleration,
+                magnitude: 4.0,
+                remaining_ticks: 100,
+                source_pill: None,
+            }],
+        };
+        let result = extraordinary_meridian_acceleration_multiplier(&se);
+        assert!(
+            (result - 5.0).abs() < 1e-9,
+            "mag=4.0 应返回 5.0×；实际 {result}"
+        );
+    }
+
+    #[test]
+    fn extraordinary_accel_expired_not_counted() {
+        use crate::combat::components::{ActiveStatusEffect, StatusEffects};
+
+        let se = StatusEffects {
+            active: vec![ActiveStatusEffect {
+                kind: crate::combat::events::StatusEffectKind::ExtraordinaryMeridianAcceleration,
+                magnitude: 4.0,
+                remaining_ticks: 0,
+                source_pill: None,
+            }],
+        };
+        let result = extraordinary_meridian_acceleration_multiplier(&se);
+        assert!(
+            (result - 1.0).abs() < 1e-9,
+            "remaining_ticks=0 不应计入；实际 {result}"
+        );
+    }
+
+    #[test]
+    fn cultivation_boost_zero_falls_back_to_one() {
+        let mut c = player_with_qi(10000.0);
+        c.qi_max = 10000.0;
+        let mut ms = MeridianSystem::default();
+        let (delta_default, _) =
+            advance_open_progress_at(&mut c, &mut ms, MeridianId::Lung, 0.6, true, 0, 1.0).unwrap();
+
+        let mut c2 = player_with_qi(10000.0);
+        c2.qi_max = 10000.0;
+        let mut ms2 = MeridianSystem::default();
+        let (delta_zero, _) =
+            advance_open_progress_at(&mut c2, &mut ms2, MeridianId::Lung, 0.6, true, 0, 0.0)
+                .unwrap();
+
+        assert!(
+            (delta_default - delta_zero).abs() < 1e-15,
+            "cultivation_boost=0.0 应 fallback 到 1.0，delta_default={delta_default} delta_zero={delta_zero}"
+        );
+    }
+
+    #[test]
+    fn cultivation_boost_negative_falls_back_to_one() {
+        let mut c = player_with_qi(10000.0);
+        c.qi_max = 10000.0;
+        let mut ms = MeridianSystem::default();
+        let (delta_default, _) =
+            advance_open_progress_at(&mut c, &mut ms, MeridianId::Lung, 0.6, true, 0, 1.0).unwrap();
+
+        let mut c2 = player_with_qi(10000.0);
+        c2.qi_max = 10000.0;
+        let mut ms2 = MeridianSystem::default();
+        let (delta_neg, _) =
+            advance_open_progress_at(&mut c2, &mut ms2, MeridianId::Lung, 0.6, true, 0, -5.0)
+                .unwrap();
+
+        assert!(
+            (delta_default - delta_neg).abs() < 1e-15,
+            "cultivation_boost=-5.0 应 fallback 到 1.0"
+        );
+    }
+
+    #[test]
+    fn cultivation_boost_nan_falls_back_to_one() {
+        let mut c = player_with_qi(10000.0);
+        c.qi_max = 10000.0;
+        let mut ms = MeridianSystem::default();
+        let (delta_default, _) =
+            advance_open_progress_at(&mut c, &mut ms, MeridianId::Lung, 0.6, true, 0, 1.0).unwrap();
+
+        let mut c2 = player_with_qi(10000.0);
+        c2.qi_max = 10000.0;
+        let mut ms2 = MeridianSystem::default();
+        let (delta_nan, _) =
+            advance_open_progress_at(&mut c2, &mut ms2, MeridianId::Lung, 0.6, true, 0, f64::NAN)
+                .unwrap();
+
+        assert!(
+            (delta_default - delta_nan).abs() < 1e-15,
+            "cultivation_boost=NaN 应 fallback 到 1.0"
+        );
+    }
+
+    #[test]
+    fn extraordinary_accel_no_cap() {
+        use crate::combat::components::{ActiveStatusEffect, StatusEffects};
+
+        // 单独函数不 cap（cap 在 meridian_open_tick 聚合时做）
+        let se = StatusEffects {
+            active: vec![ActiveStatusEffect {
+                kind: crate::combat::events::StatusEffectKind::ExtraordinaryMeridianAcceleration,
+                magnitude: 10.0,
+                remaining_ticks: 100,
+                source_pill: None,
+            }],
+        };
+        let result = extraordinary_meridian_acceleration_multiplier(&se);
+        assert!(
+            (result - 11.0).abs() < 1e-9,
+            "extraordinary_meridian_acceleration_multiplier 本身无 cap；mag=10 应返回 11.0×，实际 {result}"
         );
     }
 }

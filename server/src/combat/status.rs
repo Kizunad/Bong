@@ -36,6 +36,7 @@ pub fn status_effect_apply_tick(
                 kind: intent.kind.clone(),
                 magnitude: intent.magnitude,
                 remaining_ticks: intent.duration_ticks,
+                source_pill: None,
             },
         );
     }
@@ -53,6 +54,27 @@ pub fn upsert_status_effect(status_effects: &mut StatusEffects, effect: ActiveSt
     }
 
     status_effects.active.push(effect);
+}
+
+/// plan-cultivation-pacing-v1 §8.1 #7：CultivationAcceleration 专用堆叠入口。
+/// 允许多条同 kind 共存（丹药堆叠），但同一 `source_pill` 最多 2 条有效。
+/// 返回 true 表示成功入栈，false 表示被 per-pill cap 拦截。
+///
+/// 当前由 dandao/alchemy 系统投喂；本 plan 仅提供基建。
+#[allow(dead_code)]
+pub fn push_status_effect(status_effects: &mut StatusEffects, effect: ActiveStatusEffect) -> bool {
+    if let Some(ref pill) = effect.source_pill {
+        let same_pill_count = status_effects
+            .active
+            .iter()
+            .filter(|e| e.source_pill.as_deref() == Some(pill) && e.remaining_ticks > 0)
+            .count();
+        if same_pill_count >= 2 {
+            return false; // 同种丹药最多 2 层
+        }
+    }
+    status_effects.active.push(effect);
+    true
 }
 
 pub fn remove_status_effect(status_effects: &mut StatusEffects, kind: StatusEffectKind) {
@@ -179,6 +201,17 @@ pub fn attribute_aggregate_tick(
             * stamina_crash_slow
             * leg_strain_slow)
             .clamp(0.05, 2.5);
+        // plan-cultivation-pacing-v1 P1.1：DamageVulnerability —— 受击伤害 × (1+N)。
+        // 在所有防御 reduction 之后乘入，允许 defense_power 超过 1.0（脆弱态）。
+        let vulnerability_multiplier = status_effects
+            .active
+            .iter()
+            .filter(|effect| {
+                effect.kind == StatusEffectKind::DamageVulnerability && effect.remaining_ticks > 0
+            })
+            .map(|effect| effect.magnitude.max(0.0))
+            .sum::<f32>();
+
         attrs.attack_power = damage_amp_multiplier.max(1.0);
         attrs.defense_power = damage_reduction_multiplier.clamp(0.05, 1.0);
 
@@ -192,6 +225,11 @@ pub fn attribute_aggregate_tick(
         if let Some(exhausted) = exhausted {
             attrs.defense_power =
                 (attrs.defense_power * exhausted.defense_modifier).clamp(0.05, 1.0);
+        }
+
+        // Vulnerability 在所有 reduction 之后乘入。不 clamp 上限——脆弱就是脆弱。
+        if vulnerability_multiplier > f32::EPSILON {
+            attrs.defense_power *= 1.0 + vulnerability_multiplier;
         }
     }
 }
@@ -401,6 +439,7 @@ mod tests {
                     kind: StatusEffectKind::VortexCasting,
                     magnitude: 1.0,
                     remaining_ticks: u64::MAX,
+                    source_pill: None,
                 }],
             })
             .id();
@@ -438,6 +477,7 @@ mod tests {
                     kind: StatusEffectKind::Bleeding,
                     magnitude: 0.5,
                     remaining_ticks: STATUS_EFFECT_TICK_INTERVAL_TICKS,
+                    source_pill: None,
                 }],
             })
             .id();
@@ -461,6 +501,7 @@ mod tests {
                         kind: StatusEffectKind::Slowed,
                         magnitude: 0.4,
                         remaining_ticks: 20,
+                        source_pill: None,
                     }],
                 },
                 DerivedAttrs::default(),
@@ -486,6 +527,7 @@ mod tests {
                         kind: StatusEffectKind::VortexCasting,
                         magnitude: 1.0,
                         remaining_ticks: 20,
+                        source_pill: None,
                     }],
                 },
                 DerivedAttrs::default(),
@@ -512,11 +554,13 @@ mod tests {
                             kind: StatusEffectKind::Slowed,
                             magnitude: 0.4,
                             remaining_ticks: 20,
+                            source_pill: None,
                         },
                         crate::combat::components::ActiveStatusEffect {
                             kind: StatusEffectKind::ParryRecovery,
                             magnitude: 1.0,
                             remaining_ticks: 10,
+                            source_pill: None,
                         },
                     ],
                 },
@@ -543,6 +587,7 @@ mod tests {
                         kind: StatusEffectKind::DamageAmp,
                         magnitude: 0.25,
                         remaining_ticks: 20,
+                        source_pill: None,
                     }],
                 },
                 DerivedAttrs::default(),
@@ -568,6 +613,7 @@ mod tests {
                         kind: StatusEffectKind::DamageReduction,
                         magnitude: 0.25,
                         remaining_ticks: 20,
+                        source_pill: None,
                     }],
                 },
                 DerivedAttrs::default(),
@@ -613,6 +659,7 @@ mod tests {
                         kind: StatusEffectKind::DamageReduction,
                         magnitude: 0.25,
                         remaining_ticks: 20,
+                        source_pill: None,
                     }],
                 },
                 DerivedAttrs::default(),
@@ -634,21 +681,25 @@ mod tests {
                     kind: StatusEffectKind::BreakthroughBoost,
                     magnitude: 0.12,
                     remaining_ticks: 100,
+                    source_pill: None,
                 },
                 crate::combat::components::ActiveStatusEffect {
                     kind: StatusEffectKind::BreakthroughBoost,
                     magnitude: 0.05,
                     remaining_ticks: 50,
+                    source_pill: None,
                 },
                 crate::combat::components::ActiveStatusEffect {
                     kind: StatusEffectKind::DamageAmp,
                     magnitude: 0.25,
                     remaining_ticks: 100,
+                    source_pill: None,
                 },
                 crate::combat::components::ActiveStatusEffect {
                     kind: StatusEffectKind::BreakthroughBoost,
                     magnitude: 0.20,
-                    remaining_ticks: 0, // 过期，不计入
+                    remaining_ticks: 0,
+                    source_pill: None, // 过期，不计入
                 },
             ],
         };
@@ -663,11 +714,13 @@ mod tests {
                     kind: StatusEffectKind::BreakthroughBoost,
                     magnitude: 0.1,
                     remaining_ticks: 100,
+                    source_pill: None,
                 },
                 crate::combat::components::ActiveStatusEffect {
                     kind: StatusEffectKind::Bleeding,
                     magnitude: 0.4,
                     remaining_ticks: 50,
+                    source_pill: None,
                 },
             ],
         };
@@ -684,11 +737,13 @@ mod tests {
                     kind: StatusEffectKind::Stunned,
                     magnitude: 1.0,
                     remaining_ticks: 20,
+                    source_pill: None,
                 },
                 crate::combat::components::ActiveStatusEffect {
                     kind: StatusEffectKind::Slowed,
                     magnitude: 0.4,
                     remaining_ticks: 0,
+                    source_pill: None,
                 },
             ],
         };
@@ -718,6 +773,7 @@ mod tests {
                     kind: StatusEffectKind::Stunned,
                     magnitude: 1.0,
                     remaining_ticks: STATUS_EFFECT_TICK_INTERVAL_TICKS,
+                    source_pill: None,
                 }],
             })
             .id();
@@ -736,16 +792,19 @@ mod tests {
                     kind: StatusEffectKind::BodyPartResist(BodyPart::Chest),
                     magnitude: 0.40,
                     remaining_ticks: 20,
+                    source_pill: None,
                 },
                 crate::combat::components::ActiveStatusEffect {
                     kind: StatusEffectKind::BodyPartWeaken(BodyPart::Chest),
                     magnitude: 0.25,
                     remaining_ticks: 20,
+                    source_pill: None,
                 },
                 crate::combat::components::ActiveStatusEffect {
                     kind: StatusEffectKind::BodyPartWeaken(BodyPart::Chest),
                     magnitude: 0.50,
                     remaining_ticks: 0,
+                    source_pill: None,
                 },
             ],
         };
@@ -778,11 +837,13 @@ mod tests {
                             kind: StatusEffectKind::StaminaRecovBoost,
                             magnitude: 3.0,
                             remaining_ticks: 20,
+                            source_pill: None,
                         },
                         crate::combat::components::ActiveStatusEffect {
                             kind: StatusEffectKind::QiDrainForStamina,
                             magnitude: 2.0,
                             remaining_ticks: 20,
+                            source_pill: None,
                         },
                     ],
                 },
@@ -834,6 +895,7 @@ mod tests {
                         kind: StatusEffectKind::StaminaRecovBoost,
                         magnitude: 0.5,
                         remaining_ticks: 0,
+                        source_pill: None,
                     }],
                 },
                 Stamina {
@@ -852,5 +914,226 @@ mod tests {
         assert_eq!(stamina.max, 100.0);
         assert_eq!(stamina.current, 100.0);
         assert_eq!(stamina.recover_per_sec, 5.0);
+    }
+
+    // ── plan-cultivation-pacing-v1 push_status_effect 测试 ──
+
+    fn pill_effect(pill: &str, magnitude: f32) -> ActiveStatusEffect {
+        ActiveStatusEffect {
+            kind: StatusEffectKind::CultivationAcceleration,
+            magnitude,
+            remaining_ticks: 100,
+            source_pill: Some(pill.to_string()),
+        }
+    }
+
+    #[test]
+    fn push_status_effect_same_pill_third_rejected() {
+        let mut se = StatusEffects::default();
+        assert!(push_status_effect(&mut se, pill_effect("pill_a", 0.5)));
+        assert!(push_status_effect(&mut se, pill_effect("pill_a", 0.5)));
+        assert!(
+            !push_status_effect(&mut se, pill_effect("pill_a", 0.5)),
+            "同种丹药第 3 颗应被拒绝"
+        );
+        assert_eq!(se.active.len(), 2);
+    }
+
+    #[test]
+    fn push_status_effect_different_pill_not_blocked() {
+        let mut se = StatusEffects::default();
+        assert!(push_status_effect(&mut se, pill_effect("pill_a", 0.5)));
+        assert!(push_status_effect(&mut se, pill_effect("pill_a", 0.5)));
+        assert!(
+            push_status_effect(&mut se, pill_effect("pill_b", 0.5)),
+            "不同丹药不应被 per-pill cap 拦截"
+        );
+        assert_eq!(se.active.len(), 3);
+    }
+
+    #[test]
+    fn push_status_effect_none_source_pill_unlimited() {
+        let mut se = StatusEffects::default();
+        for _ in 0..5 {
+            let effect = ActiveStatusEffect {
+                kind: StatusEffectKind::CultivationAcceleration,
+                magnitude: 0.5,
+                remaining_ticks: 100,
+                source_pill: None,
+            };
+            assert!(
+                push_status_effect(&mut se, effect),
+                "source_pill=None 不应受 per-pill cap 限制"
+            );
+        }
+        assert_eq!(se.active.len(), 5);
+    }
+
+    #[test]
+    fn push_status_effect_expired_same_pill_not_counted() {
+        let mut se = StatusEffects {
+            active: vec![
+                ActiveStatusEffect {
+                    kind: StatusEffectKind::CultivationAcceleration,
+                    magnitude: 0.5,
+                    remaining_ticks: 0, // 已过期
+                    source_pill: Some("ling_xi_wan".to_string()),
+                },
+                ActiveStatusEffect {
+                    kind: StatusEffectKind::CultivationAcceleration,
+                    magnitude: 0.5,
+                    remaining_ticks: 0, // 已过期
+                    source_pill: Some("ling_xi_wan".to_string()),
+                },
+            ],
+        };
+        // 即使有 2 条同 pill 但都过期，新的应该能 push 成功
+        let ok = push_status_effect(
+            &mut se,
+            ActiveStatusEffect {
+                kind: StatusEffectKind::CultivationAcceleration,
+                magnitude: 0.5,
+                remaining_ticks: 100,
+                source_pill: Some("ling_xi_wan".to_string()),
+            },
+        );
+        assert!(ok, "过期的同种丹药不应计入 per-pill cap");
+    }
+
+    #[test]
+    fn push_status_effect_boundary_exactly_two_same_pill() {
+        let mut se = StatusEffects::default();
+        assert!(push_status_effect(&mut se, pill_effect("x", 1.0)));
+        assert!(push_status_effect(&mut se, pill_effect("x", 2.0)));
+        // 第三颗被拒
+        assert!(!push_status_effect(&mut se, pill_effect("x", 3.0)));
+        // 确认已有的两颗 magnitude 正确（push 不合并，直接入栈）
+        assert_eq!(se.active[0].magnitude, 1.0);
+        assert_eq!(se.active[1].magnitude, 2.0);
+    }
+
+    // ── plan-cultivation-pacing-v1 DamageVulnerability 消费侧测试 ──
+
+    #[test]
+    fn damage_vulnerability_doubles_defense_power() {
+        let mut app = App::new();
+        app.add_systems(Update, attribute_aggregate_tick);
+
+        let entity = app
+            .world_mut()
+            .spawn((
+                StatusEffects {
+                    active: vec![crate::combat::components::ActiveStatusEffect {
+                        kind: StatusEffectKind::DamageVulnerability,
+                        magnitude: 1.0,
+                        remaining_ticks: 20,
+                        source_pill: None,
+                    }],
+                },
+                DerivedAttrs::default(),
+            ))
+            .id();
+
+        app.update();
+
+        let attrs = app.world().entity(entity).get::<DerivedAttrs>().unwrap();
+        // 基线 defense_power=1.0，乘以 (1+1.0)=2.0
+        assert!(
+            (attrs.defense_power - 2.0).abs() < 1e-6,
+            "DamageVulnerability(mag=1.0) 应使 defense_power=2.0（受伤翻倍）；\
+             实际 {:.6}",
+            attrs.defense_power
+        );
+    }
+
+    #[test]
+    fn damage_vulnerability_stacks_with_damage_reduction() {
+        let mut app = App::new();
+        app.add_systems(Update, attribute_aggregate_tick);
+
+        let entity = app
+            .world_mut()
+            .spawn((
+                StatusEffects {
+                    active: vec![
+                        crate::combat::components::ActiveStatusEffect {
+                            kind: StatusEffectKind::DamageReduction,
+                            magnitude: 0.5,
+                            remaining_ticks: 20,
+                            source_pill: None,
+                        },
+                        crate::combat::components::ActiveStatusEffect {
+                            kind: StatusEffectKind::DamageVulnerability,
+                            magnitude: 1.0,
+                            remaining_ticks: 20,
+                            source_pill: None,
+                        },
+                    ],
+                },
+                DerivedAttrs::default(),
+            ))
+            .id();
+
+        app.update();
+
+        let attrs = app.world().entity(entity).get::<DerivedAttrs>().unwrap();
+        // DamageReduction(0.5) → defense_power=0.5
+        // DamageVulnerability(1.0) → defense_power *= 2.0 → 1.0
+        assert!(
+            (attrs.defense_power - 1.0).abs() < 1e-6,
+            "DamageReduction(0.5) + DamageVulnerability(1.0) 应回到 1.0；\
+             实际 {:.6}",
+            attrs.defense_power
+        );
+    }
+
+    #[test]
+    fn damage_vulnerability_expired_not_applied() {
+        let mut app = App::new();
+        app.add_systems(Update, attribute_aggregate_tick);
+
+        let entity = app
+            .world_mut()
+            .spawn((
+                StatusEffects {
+                    active: vec![crate::combat::components::ActiveStatusEffect {
+                        kind: StatusEffectKind::DamageVulnerability,
+                        magnitude: 1.0,
+                        remaining_ticks: 0,
+                        source_pill: None,
+                    }],
+                },
+                DerivedAttrs::default(),
+            ))
+            .id();
+
+        app.update();
+
+        let attrs = app.world().entity(entity).get::<DerivedAttrs>().unwrap();
+        assert!(
+            (attrs.defense_power - 1.0).abs() < 1e-6,
+            "过期的 DamageVulnerability 不应影响 defense_power；实际 {:.6}",
+            attrs.defense_power
+        );
+    }
+
+    #[test]
+    fn no_damage_vulnerability_preserves_baseline() {
+        let mut app = App::new();
+        app.add_systems(Update, attribute_aggregate_tick);
+
+        let entity = app
+            .world_mut()
+            .spawn((StatusEffects::default(), DerivedAttrs::default()))
+            .id();
+
+        app.update();
+
+        let attrs = app.world().entity(entity).get::<DerivedAttrs>().unwrap();
+        assert!(
+            (attrs.defense_power - 1.0).abs() < 1e-6,
+            "无 DamageVulnerability 时 defense_power 应为 1.0；实际 {:.6}",
+            attrs.defense_power
+        );
     }
 }
