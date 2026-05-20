@@ -7,6 +7,7 @@ use valence::prelude::{Changed, Client, Entity, Query, Username, With};
 
 use crate::combat::components::{BodyPart, StatusEffects};
 use crate::combat::events::StatusEffectKind;
+use crate::cultivation::tick::cultivation_acceleration_multiplier;
 use crate::network::agent_bridge::SERVER_DATA_CHANNEL;
 use crate::network::send_server_data_payload;
 
@@ -33,10 +34,13 @@ pub fn emit_status_snapshot_payloads(
                 })
             })
             .collect::<Vec<_>>();
+        // plan-cultivation-pacing-v1 P2.3：聚合修炼加速倍率，供 client HUD 显示。
+        let accel_mult = cultivation_acceleration_multiplier(status_effects);
         let payload = serde_json::json!({
             "v": 1,
             "type": "status_snapshot",
-            "effects": effects
+            "effects": effects,
+            "cultivation_acceleration": accel_mult
         });
         let Ok(bytes) = serde_json::to_vec(&payload) else {
             continue;
@@ -159,6 +163,11 @@ fn status_effect_source_label(kind: &StatusEffectKind) -> &'static str {
         StatusEffectKind::MirrorConcealment
         | StatusEffectKind::MirrorExposed
         | StatusEffectKind::SpiritTreasurePerception => "灵宝",
+        // plan-cultivation-pacing-v1 P2.3：修炼类 buff/debuff 来源标注"修炼丹药"。
+        StatusEffectKind::CultivationAcceleration
+        | StatusEffectKind::ExtraordinaryMeridianAcceleration
+        | StatusEffectKind::QiRegenSlowed
+        | StatusEffectKind::DamageVulnerability => "修炼丹药",
         _ => "战场丹药",
     }
 }
@@ -205,5 +214,115 @@ fn body_part_name(part: BodyPart) -> &'static str {
         BodyPart::ArmR => "右臂",
         BodyPart::LegL => "左腿",
         BodyPart::LegR => "右腿",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ── plan-cultivation-pacing-v1 P2.3 status_effect wire shape 测试 ──
+
+    #[test]
+    fn cultivation_acceleration_id_is_lowercase() {
+        let id = status_effect_id(&StatusEffectKind::CultivationAcceleration);
+        assert!(
+            id.chars().all(|c| c.is_ascii_lowercase() || c == '_'),
+            "CultivationAcceleration id should be lowercase snake_case, got: {id}"
+        );
+    }
+
+    #[test]
+    fn cultivation_acceleration_name_is_chinese() {
+        assert_eq!(
+            status_effect_name(&StatusEffectKind::CultivationAcceleration),
+            "修炼加速"
+        );
+    }
+
+    #[test]
+    fn qi_regen_slowed_name() {
+        assert_eq!(
+            status_effect_name(&StatusEffectKind::QiRegenSlowed),
+            "回气减速"
+        );
+    }
+
+    #[test]
+    fn damage_vulnerability_name() {
+        assert_eq!(
+            status_effect_name(&StatusEffectKind::DamageVulnerability),
+            "脆弱易伤"
+        );
+    }
+
+    #[test]
+    fn extraordinary_meridian_acceleration_name() {
+        assert_eq!(
+            status_effect_name(&StatusEffectKind::ExtraordinaryMeridianAcceleration),
+            "奇经加速"
+        );
+    }
+
+    #[test]
+    fn cultivation_acceleration_is_buff_category() {
+        assert_eq!(
+            status_effect_category(&StatusEffectKind::CultivationAcceleration),
+            "buff"
+        );
+        assert_eq!(
+            status_effect_category(&StatusEffectKind::ExtraordinaryMeridianAcceleration),
+            "buff"
+        );
+    }
+
+    #[test]
+    fn qi_regen_slowed_is_debuff_category() {
+        assert_eq!(
+            status_effect_category(&StatusEffectKind::QiRegenSlowed),
+            "debuff"
+        );
+    }
+
+    #[test]
+    fn damage_vulnerability_is_debuff_category() {
+        assert_eq!(
+            status_effect_category(&StatusEffectKind::DamageVulnerability),
+            "debuff"
+        );
+    }
+
+    #[test]
+    fn cultivation_effects_source_label_is_cultivation_pill() {
+        assert_eq!(
+            status_effect_source_label(&StatusEffectKind::CultivationAcceleration),
+            "修炼丹药"
+        );
+        assert_eq!(
+            status_effect_source_label(&StatusEffectKind::QiRegenSlowed),
+            "修炼丹药"
+        );
+        assert_eq!(
+            status_effect_source_label(&StatusEffectKind::DamageVulnerability),
+            "修炼丹药"
+        );
+        assert_eq!(
+            status_effect_source_label(&StatusEffectKind::ExtraordinaryMeridianAcceleration),
+            "修炼丹药"
+        );
+    }
+
+    #[test]
+    fn buff_color_is_green_family() {
+        let color = status_effect_color(&StatusEffectKind::CultivationAcceleration);
+        // buff category → 0xFF55CC66
+        assert_eq!(color, 0xFF55CC66_u32 as i32);
+    }
+
+    #[test]
+    fn debuff_color_is_orange_family() {
+        let color = status_effect_color(&StatusEffectKind::QiRegenSlowed);
+        // debuff category → 0xFFFF8030
+        assert_eq!(color, 0xFFFF8030_u32 as i32);
     }
 }

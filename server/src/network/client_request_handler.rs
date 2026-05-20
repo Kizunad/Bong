@@ -6390,6 +6390,17 @@ fn npc_trade_catalog_entry(
         (NpcArchetype::Rogue, "skill_scroll_herbalism_baicao_can") => {
             Some(("skill_scroll_herbalism_baicao_can", 30))
         }
+        // plan-cultivation-pacing-v1 P2.2：NPC 售卖低品质修炼丹药。
+        // Commoner/Rogue 均可购买次品灵息丸（8 骨币）和次品聚灵丹（15 骨币），
+        // 效果 ×0.6，引导玩家自炼正品。
+        (
+            NpcArchetype::Commoner | NpcArchetype::Rogue,
+            "ling_xi_wan_flawed" | "ling_xi_wan_次品",
+        ) => Some(("ling_xi_wan_flawed", 8)),
+        (
+            NpcArchetype::Commoner | NpcArchetype::Rogue,
+            "ju_ling_dan_flawed" | "ju_ling_dan_次品",
+        ) => Some(("ju_ling_dan_flawed", 15)),
         _ => None,
     }
 }
@@ -9009,6 +9020,108 @@ mod take_pill_tests {
         assert!(
             matches!(forced_spoil, SpoilCheckOutcome::Safe { .. }),
             "forced winter phase should slow spoil checks immediately"
+        );
+    }
+}
+
+// ── plan-cultivation-pacing-v1 P2.2 NPC 丹药交易测试 ──
+
+#[cfg(test)]
+mod npc_flawed_pill_trade_tests {
+    use super::*;
+    use crate::npc::lifecycle::NpcArchetype;
+
+    #[test]
+    fn commoner_sells_flawed_ling_xi_wan_at_8_bones() {
+        let result = npc_trade_catalog_entry(NpcArchetype::Commoner, "ling_xi_wan_flawed");
+        assert_eq!(
+            result,
+            Some(("ling_xi_wan_flawed", 8)),
+            "Commoner 应以 8 骨币售卖次品灵息丸"
+        );
+    }
+
+    #[test]
+    fn commoner_sells_flawed_ju_ling_dan_at_15_bones() {
+        let result = npc_trade_catalog_entry(NpcArchetype::Commoner, "ju_ling_dan_flawed");
+        assert_eq!(
+            result,
+            Some(("ju_ling_dan_flawed", 15)),
+            "Commoner 应以 15 骨币售卖次品聚灵丹"
+        );
+    }
+
+    #[test]
+    fn rogue_sells_flawed_ling_xi_wan_at_8_bones() {
+        let result = npc_trade_catalog_entry(NpcArchetype::Rogue, "ling_xi_wan_flawed");
+        assert_eq!(
+            result,
+            Some(("ling_xi_wan_flawed", 8)),
+            "Rogue 也应以 8 骨币售卖次品灵息丸"
+        );
+    }
+
+    #[test]
+    fn rogue_sells_flawed_ju_ling_dan_at_15_bones() {
+        let result = npc_trade_catalog_entry(NpcArchetype::Rogue, "ju_ling_dan_flawed");
+        assert_eq!(
+            result,
+            Some(("ju_ling_dan_flawed", 15)),
+            "Rogue 也应以 15 骨币售卖次品聚灵丹"
+        );
+    }
+
+    #[test]
+    fn chinese_alias_also_resolves_for_commoner() {
+        assert_eq!(
+            npc_trade_catalog_entry(NpcArchetype::Commoner, "ling_xi_wan_次品"),
+            Some(("ling_xi_wan_flawed", 8)),
+            "中文别名 ling_xi_wan_次品 应解析到同一物品"
+        );
+        assert_eq!(
+            npc_trade_catalog_entry(NpcArchetype::Commoner, "ju_ling_dan_次品"),
+            Some(("ju_ling_dan_flawed", 15)),
+            "中文别名 ju_ling_dan_次品 应解析到同一物品"
+        );
+    }
+
+    #[test]
+    fn beast_does_not_sell_flawed_pills() {
+        assert!(
+            npc_trade_catalog_entry(NpcArchetype::Beast, "ling_xi_wan_flawed").is_none(),
+            "Beast 不应售卖次品丹药"
+        );
+    }
+
+    #[test]
+    fn zombie_does_not_sell_flawed_pills() {
+        assert!(
+            npc_trade_catalog_entry(NpcArchetype::Zombie, "ling_xi_wan_flawed").is_none(),
+            "Zombie 不应售卖次品丹药"
+        );
+    }
+
+    #[test]
+    fn normal_pills_not_in_npc_catalog() {
+        assert!(
+            npc_trade_catalog_entry(NpcArchetype::Commoner, "ling_xi_wan").is_none(),
+            "正品灵息丸不应在 NPC 交易目录中"
+        );
+        assert!(
+            npc_trade_catalog_entry(NpcArchetype::Commoner, "ju_ling_dan").is_none(),
+            "正品聚灵丹不应在 NPC 交易目录中"
+        );
+    }
+
+    #[test]
+    fn higher_pills_not_in_npc_catalog() {
+        assert!(
+            npc_trade_catalog_entry(NpcArchetype::Commoner, "tong_mai_san_flawed").is_none(),
+            "通脉散以上 NPC 不售卖"
+        );
+        assert!(
+            npc_trade_catalog_entry(NpcArchetype::Rogue, "xi_sui_ye_flawed").is_none(),
+            "洗髓液以上 NPC 不售卖"
         );
     }
 }

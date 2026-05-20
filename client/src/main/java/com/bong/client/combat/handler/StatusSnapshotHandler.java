@@ -66,10 +66,14 @@ public final class StatusSnapshotHandler implements ServerDataHandler {
         }
 
         StatusEffectStore.replace(parsed);
+        // plan-cultivation-pacing-v1 P2.3: parse cultivation_acceleration top-level field.
+        double cultivationAccel = readDouble(payload, "cultivation_acceleration", 1.0);
+        StatusEffectStore.setCultivationAcceleration(cultivationAccel);
         return ServerDataDispatch.handled(
             envelope.type(),
             "Applied status_snapshot with " + parsed.size() + " effects ("
                 + invalid + " invalid skipped)"
+                + (cultivationAccel > 1.0 ? ", accel=" + cultivationAccel : "")
         );
     }
 

@@ -391,3 +391,137 @@ base_weight = 0.0
 rarity = "rare"
 spirit_quality_initial = 0.0
 description = "丹心识别所得的配方碎片，只记下几味药性。"
+
+# ── plan-cultivation-pacing-v1 P1.4 八种修炼丹药 ──
+
+[[item]]
+id = "ling_xi_wan"
+name = "灵息丸"
+category = "pill"
+grid_w = 1
+grid_h = 1
+base_weight = 0.15
+rarity = "common"
+spirit_quality_initial = 0.6
+description = "以灵草炼成的入门修炼丹，服后气息温和，可短暂加速经脉疏通。"
+cast_duration_ms = 1500
+cooldown_ms = 6000
+
+[[item]]
+id = "ju_ling_dan"
+name = "聚灵丹"
+category = "pill"
+grid_w = 1
+grid_h = 1
+base_weight = 0.18
+rarity = "uncommon"
+spirit_quality_initial = 0.7
+description = "灵草与刺舌蒿合炼，聚灵于脉，修炼速度显著提升。"
+cast_duration_ms = 1500
+cooldown_ms = 6000
+
+[[item]]
+id = "tong_mai_san"
+name = "通脉散"
+category = "pill"
+grid_w = 1
+grid_h = 1
+base_weight = 0.20
+rarity = "uncommon"
+spirit_quality_initial = 0.75
+description = "凝脉草与萤渊菇入炉，专攻经脉打通，引气期修士常备。"
+cast_duration_ms = 1500
+cooldown_ms = 6000
+
+[[item]]
+id = "ning_yuan_dan"
+name = "凝元丹"
+category = "pill"
+grid_w = 1
+grid_h = 1
+base_weight = 0.22
+rarity = "rare"
+spirit_quality_initial = 0.8
+description = "血色脉草、凝脉草与凡铁三味合炼，修炼加速兼增突破概率。"
+cast_duration_ms = 2000
+cooldown_ms = 8000
+
+[[item]]
+id = "xi_sui_ye"
+name = "洗髓液"
+category = "pill"
+grid_w = 1
+grid_h = 1
+base_weight = 0.25
+rarity = "rare"
+spirit_quality_initial = 0.85
+description = "兽心草与焦脉藤炼出的烈性药液，极速洗髓开脉，但身体虚脱代价极重。"
+cast_duration_ms = 2500
+cooldown_ms = 10000
+
+[[item]]
+id = "po_jing_dan"
+name = "破境丹"
+category = "pill"
+grid_w = 1
+grid_h = 1
+base_weight = 0.22
+rarity = "epic"
+spirit_quality_initial = 0.9
+description = "玄绒苔、血色脉草与灵石合炼的突破专用丹，服后只有一次机会。"
+cast_duration_ms = 3000
+cooldown_ms = 12000
+
+[[item]]
+id = "kai_qiao_dan"
+name = "开窍丹"
+category = "pill"
+grid_w = 1
+grid_h = 1
+base_weight = 0.22
+rarity = "epic"
+spirit_quality_initial = 0.9
+description = "蜕骨藤与井心藻双极材料入炉，专攻奇经八脉打通，正经无效。"
+cast_duration_ms = 3000
+cooldown_ms = 12000
+
+[[item]]
+id = "du_jie_dan"
+name = "渡劫丹"
+category = "pill"
+grid_w = 1
+grid_h = 1
+base_weight = 0.30
+rarity = "legendary"
+spirit_quality_initial = 1.0
+description = "龙鳞苔、续元蕊与灵石三枚合炼的终极丹药，渡劫时护体减伤兼增突破。"
+cast_duration_ms = 5000
+cooldown_ms = 30000
+
+# ── plan-cultivation-pacing-v1 P2.2 NPC 售卖低品质（flawed）修炼丹药 ──
+
+[[item]]
+id = "ling_xi_wan_flawed"
+name = "灵息丸（次品）"
+category = "pill"
+grid_w = 1
+grid_h = 1
+base_weight = 0.15
+rarity = "common"
+spirit_quality_initial = 0.3
+description = "NPC 售卖的次品灵息丸，药力散失大半，效果仅正品六成，聊胜于无。"
+cast_duration_ms = 1500
+cooldown_ms = 6000
+
+[[item]]
+id = "ju_ling_dan_flawed"
+name = "聚灵丹（次品）"
+category = "pill"
+grid_w = 1
+grid_h = 1
+base_weight = 0.18
+rarity = "common"
+spirit_quality_initial = 0.35
+description = "NPC 售卖的次品聚灵丹，灵气留存不足，效果仅正品六成，自炼更划算。"
+cast_duration_ms = 1500
+cooldown_ms = 6000

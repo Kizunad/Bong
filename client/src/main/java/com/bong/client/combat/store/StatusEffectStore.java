@@ -60,6 +60,8 @@ public final class StatusEffectStore {
 
     private static final StatusEffectStore INSTANCE = new StatusEffectStore();
     private volatile List<Effect> snapshot = Collections.emptyList();
+    /** plan-cultivation-pacing-v1 P2.3: aggregated cultivation acceleration multiplier (1.0 = no buff). */
+    private volatile double cultivationAcceleration = 1.0;
 
     private StatusEffectStore() {}
 
@@ -91,6 +93,16 @@ public final class StatusEffectStore {
         };
     }
 
+    /** plan-cultivation-pacing-v1 P2.3: get current cultivation acceleration multiplier. */
+    public static double cultivationAcceleration() {
+        return INSTANCE.cultivationAcceleration;
+    }
+
+    /** plan-cultivation-pacing-v1 P2.3: update the cultivation acceleration multiplier from server payload. */
+    public static void setCultivationAcceleration(double value) {
+        INSTANCE.cultivationAcceleration = value;
+    }
+
     public static void replace(List<Effect> effects) {
         if (effects == null || effects.isEmpty()) {
             INSTANCE.snapshot = Collections.emptyList();
@@ -106,6 +118,7 @@ public final class StatusEffectStore {
 
     public static void clear() {
         INSTANCE.snapshot = Collections.emptyList();
+        INSTANCE.cultivationAcceleration = 1.0;
     }
 
     public static void resetForTests() {

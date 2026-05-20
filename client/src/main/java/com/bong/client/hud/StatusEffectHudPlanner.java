@@ -21,18 +21,39 @@ public final class StatusEffectHudPlanner {
 
     private StatusEffectHudPlanner() {}
 
+    /** plan-cultivation-pacing-v1 P2.3: text color for cultivation acceleration indicator. */
+    public static final int CULTIVATION_ACCEL_COLOR = 0xFF80E0A0;
+
     public static List<HudRenderCommand> buildCommands(
         int screenWidth,
         int screenHeight
     ) {
         List<HudRenderCommand> out = new ArrayList<>();
+        if (screenWidth <= 0 || screenHeight <= 0) return out;
+
+        // plan-cultivation-pacing-v1 P2.3: show cultivation acceleration multiplier above status slots.
+        double accel = StatusEffectStore.cultivationAcceleration();
+        if (accel > 1.001) {
+            String label = String.format("修炼 ×%.1f", accel); // "修炼 ×N.N"
+            int labelWidth = label.length() * 6; // approximate glyph width
+            int labelX = (screenWidth - labelWidth) / 2;
+            int labelY = TOP_MARGIN;
+            out.add(HudRenderCommand.text(
+                HudRenderLayer.STATUS_EFFECTS,
+                label,
+                labelX,
+                labelY,
+                CULTIVATION_ACCEL_COLOR
+            ));
+        }
+
         List<StatusEffectStore.Effect> top = StatusEffectStore.topBar();
         if (top.isEmpty()) return out;
-        if (screenWidth <= 0 || screenHeight <= 0) return out;
 
         int totalWidth = top.size() * SLOT_SIZE + (top.size() - 1) * SLOT_GAP;
         int x = (screenWidth - totalWidth) / 2;
-        int y = TOP_MARGIN;
+        // Shift status slots down if cultivation label is shown.
+        int y = (accel > 1.001) ? TOP_MARGIN + 12 : TOP_MARGIN;
 
         for (StatusEffectStore.Effect e : top) {
             // Border (2px frame in source color)

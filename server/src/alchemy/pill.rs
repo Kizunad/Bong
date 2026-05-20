@@ -813,8 +813,32 @@ pub fn cultivation_pill_spec(id: &str) -> Option<CultivationPillSpec> {
             toxin_amount: 0.60,
             toxin_color: ColorKind::Insidious,
         },
+        // plan-cultivation-pacing-v1 P2.2：NPC 售卖低品质（flawed）修炼丹药。
+        // 效果走 cultivation_pill_effects_flawed()（magnitude × 0.6）。
+        "ling_xi_wan_flawed" => CultivationPillSpec {
+            id: "ling_xi_wan_flawed",
+            name: "灵息丸（次品）",
+            kind: CultivationPillKind::LingXiWan,
+            toxin_amount: 0.15,
+            toxin_color: ColorKind::Gentle,
+        },
+        "ju_ling_dan_flawed" => CultivationPillSpec {
+            id: "ju_ling_dan_flawed",
+            name: "聚灵丹（次品）",
+            kind: CultivationPillKind::JuLingDan,
+            toxin_amount: 0.20,
+            toxin_color: ColorKind::Mellow,
+        },
         _ => return None,
     })
+}
+
+/// plan-cultivation-pacing-v1 P2.2：次品丹药效果（magnitude × 0.6）。
+pub const FLAWED_MAGNITUDE_MULTIPLIER: f32 = 0.6;
+
+/// 判断一个丹药 ID 是否是次品。
+pub fn is_flawed_cultivation_pill(id: &str) -> bool {
+    id.ends_with("_flawed")
 }
 
 /// 获取修炼丹药消费时应挂载的 StatusEffect 列表。
@@ -935,13 +959,19 @@ pub fn consume_cultivation_pill(
 
     // 2. 挂载 StatusEffect
     let effects = cultivation_pill_effects(spec.kind);
+    let flawed = is_flawed_cultivation_pill(spec.id);
     let mut applied = Vec::new();
     let mut blocked_count = 0usize;
 
     for entry in &effects {
+        let magnitude = if flawed {
+            entry.magnitude * FLAWED_MAGNITUDE_MULTIPLIER
+        } else {
+            entry.magnitude
+        };
         let active = ActiveStatusEffect {
             kind: entry.kind.clone(),
-            magnitude: entry.magnitude,
+            magnitude,
             remaining_ticks: entry.duration_ticks,
             source_pill: Some(spec.id.to_string()),
         };
@@ -2339,5 +2369,165 @@ mod tests {
                 "首颗 {id} 应至少挂载 1 个 effect"
             );
         }
+    }
+
+    // ── plan-cultivation-pacing-v1 P2.2 flawed 丹药测试 ──
+
+    #[test]
+    fn flawed_ling_xi_wan_spec_resolves() {
+        let s = cultivation_pill_spec("ling_xi_wan_flawed").unwrap();
+        assert_eq!(
+            s.kind,
+            CultivationPillKind::LingXiWan,
+            "次品灵息丸 kind 应为 LingXiWan"
+        );
+        assert_eq!(s.name, "灵息丸（次品）");
+        assert!(
+            (s.toxin_amount - 0.15).abs() < 1e-9,
+            "次品灵息丸丹毒与正品相同（0.15）"
+        );
+        assert_eq!(s.toxin_color, ColorKind::Gentle);
+    }
+
+    #[test]
+    fn flawed_ju_ling_dan_spec_resolves() {
+        let s = cultivation_pill_spec("ju_ling_dan_flawed").unwrap();
+        assert_eq!(
+            s.kind,
+            CultivationPillKind::JuLingDan,
+            "次品聚灵丹 kind 应为 JuLingDan"
+        );
+        assert_eq!(s.name, "聚灵丹（次品）");
+        assert!(
+            (s.toxin_amount - 0.20).abs() < 1e-9,
+            "次品聚灵丹丹毒与正品相同（0.20）"
+        );
+    }
+
+    #[test]
+    fn is_flawed_cultivation_pill_detects_suffix() {
+        assert!(is_flawed_cultivation_pill("ling_xi_wan_flawed"));
+        assert!(is_flawed_cultivation_pill("ju_ling_dan_flawed"));
+        assert!(!is_flawed_cultivation_pill("ling_xi_wan"));
+        assert!(!is_flawed_cultivation_pill("ju_ling_dan"));
+        assert!(!is_flawed_cultivation_pill("flawed_ling_xi_wan")); // prefix doesn't count
+    }
+
+    #[test]
+    fn flawed_ling_xi_wan_magnitude_is_0_6x_normal() {
+        let normal = cultivation_pill_spec("ling_xi_wan").unwrap();
+        let flawed = cultivation_pill_spec("ling_xi_wan_flawed").unwrap();
+
+        let mut normal_contam = fresh_contam();
+        let mut normal_se = fresh_status_effects();
+        consume_cultivation_pill(&normal, &mut normal_contam, &mut normal_se, 0);
+
+        let mut flawed_contam = fresh_contam();
+        let mut flawed_se = fresh_status_effects();
+        consume_cultivation_pill(&flawed, &mut flawed_contam, &mut flawed_se, 0);
+
+        assert!(!normal_se.active.is_empty(), "正品应挂载 effect");
+        assert!(!flawed_se.active.is_empty(), "次品应挂载 effect");
+
+        let normal_mag = normal_se.active[0].magnitude;
+        let flawed_mag = flawed_se.active[0].magnitude;
+
+        // 正品 mag=0.5，次品 mag=0.5×0.6=0.3
+        assert!(
+            (normal_mag - 0.5).abs() < 1e-6,
+            "正品灵息丸 magnitude 应为 0.5，实际 {normal_mag}"
+        );
+        assert!(
+            (flawed_mag - 0.3).abs() < 1e-6,
+            "次品灵息丸 magnitude 应为 0.3（0.5×0.6），实际 {flawed_mag}"
+        );
+    }
+
+    #[test]
+    fn flawed_ju_ling_dan_magnitude_is_0_6x_normal() {
+        let normal = cultivation_pill_spec("ju_ling_dan").unwrap();
+        let flawed = cultivation_pill_spec("ju_ling_dan_flawed").unwrap();
+
+        let mut normal_contam = fresh_contam();
+        let mut normal_se = fresh_status_effects();
+        consume_cultivation_pill(&normal, &mut normal_contam, &mut normal_se, 0);
+
+        let mut flawed_contam = fresh_contam();
+        let mut flawed_se = fresh_status_effects();
+        consume_cultivation_pill(&flawed, &mut flawed_contam, &mut flawed_se, 0);
+
+        let normal_mag = normal_se.active[0].magnitude;
+        let flawed_mag = flawed_se.active[0].magnitude;
+
+        // 正品 mag=1.0，次品 mag=1.0×0.6=0.6
+        assert!(
+            (normal_mag - 1.0).abs() < 1e-6,
+            "正品聚灵丹 magnitude 应为 1.0，实际 {normal_mag}"
+        );
+        assert!(
+            (flawed_mag - 0.6).abs() < 1e-6,
+            "次品聚灵丹 magnitude 应为 0.6（1.0×0.6），实际 {flawed_mag}"
+        );
+    }
+
+    #[test]
+    fn flawed_pill_same_duration_as_normal() {
+        let normal = cultivation_pill_spec("ling_xi_wan").unwrap();
+        let flawed = cultivation_pill_spec("ling_xi_wan_flawed").unwrap();
+
+        let mut nc = fresh_contam();
+        let mut nse = fresh_status_effects();
+        consume_cultivation_pill(&normal, &mut nc, &mut nse, 0);
+
+        let mut fc = fresh_contam();
+        let mut fse = fresh_status_effects();
+        consume_cultivation_pill(&flawed, &mut fc, &mut fse, 0);
+
+        assert_eq!(
+            nse.active[0].remaining_ticks, fse.active[0].remaining_ticks,
+            "次品丹药 duration 应与正品相同"
+        );
+    }
+
+    #[test]
+    fn flawed_pill_source_pill_contains_flawed_suffix() {
+        let spec = cultivation_pill_spec("ling_xi_wan_flawed").unwrap();
+        let mut contam = fresh_contam();
+        let mut se = fresh_status_effects();
+        consume_cultivation_pill(&spec, &mut contam, &mut se, 0);
+
+        assert_eq!(
+            se.active[0].source_pill.as_deref(),
+            Some("ling_xi_wan_flawed"),
+            "次品丹药 source_pill 应为 ling_xi_wan_flawed"
+        );
+    }
+
+    #[test]
+    fn flawed_pill_acceleration_multiplier_lower_than_normal() {
+        use crate::cultivation::tick::cultivation_acceleration_multiplier;
+
+        // 正品灵息丸 → 1.5× accel
+        let spec_normal = cultivation_pill_spec("ling_xi_wan").unwrap();
+        let mut nc = fresh_contam();
+        let mut nse = fresh_status_effects();
+        consume_cultivation_pill(&spec_normal, &mut nc, &mut nse, 0);
+        let mult_normal = cultivation_acceleration_multiplier(&nse);
+
+        // 次品灵息丸 → 1.3× accel
+        let spec_flawed = cultivation_pill_spec("ling_xi_wan_flawed").unwrap();
+        let mut fc = fresh_contam();
+        let mut fse = fresh_status_effects();
+        consume_cultivation_pill(&spec_flawed, &mut fc, &mut fse, 0);
+        let mult_flawed = cultivation_acceleration_multiplier(&fse);
+
+        assert!(
+            (mult_normal - 1.5).abs() < 1e-6,
+            "正品灵息丸加速应为 1.5×，实际 {mult_normal}"
+        );
+        assert!(
+            (mult_flawed - 1.3).abs() < 1e-4,
+            "次品灵息丸加速应为 1.3×（0.5×0.6=0.3 → 1+0.3），实际 {mult_flawed}"
+        );
     }
 }
