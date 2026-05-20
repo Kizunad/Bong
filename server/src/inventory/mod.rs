@@ -4580,6 +4580,56 @@ mod tests {
         );
     }
 
+    // ── plan-cultivation-pacing-v1 P2.2：次品修炼丹药模板加载测试 ──
+
+    #[test]
+    fn flawed_cultivation_pill_templates_load_from_assets() {
+        let registry =
+            load_item_registry().expect("item registry should load from assets/items/*.toml");
+
+        let flawed_ling_xi = registry
+            .get("ling_xi_wan_flawed")
+            .expect("ling_xi_wan_flawed template should load from pills.toml");
+        assert_eq!(flawed_ling_xi.display_name, "灵息丸（次品）");
+        assert_eq!(flawed_ling_xi.category, ItemCategory::Pill);
+        assert_eq!(flawed_ling_xi.rarity, ItemRarity::Common);
+
+        let flawed_ju_ling = registry
+            .get("ju_ling_dan_flawed")
+            .expect("ju_ling_dan_flawed template should load from pills.toml");
+        assert_eq!(flawed_ju_ling.display_name, "聚灵丹（次品）");
+        assert_eq!(flawed_ju_ling.category, ItemCategory::Pill);
+        assert_eq!(flawed_ju_ling.rarity, ItemRarity::Common);
+    }
+
+    #[test]
+    fn all_eight_cultivation_pill_templates_load_from_assets() {
+        let registry =
+            load_item_registry().expect("item registry should load from assets/items/*.toml");
+        let ids = [
+            "ling_xi_wan",
+            "ju_ling_dan",
+            "tong_mai_san",
+            "ning_yuan_dan",
+            "xi_sui_ye",
+            "po_jing_dan",
+            "kai_qiao_dan",
+            "du_jie_dan",
+        ];
+        for id in ids {
+            assert!(
+                registry.get(id).is_some(),
+                "cultivation pill template `{id}` should be registered in assets/items/pills.toml"
+            );
+            let template = registry.get(id).unwrap();
+            assert_eq!(
+                template.category,
+                ItemCategory::Pill,
+                "`{id}` should have category Pill"
+            );
+        }
+    }
+
     #[test]
     fn woliu_scrolls_load_as_combat_technique_templates() {
         let registry =
