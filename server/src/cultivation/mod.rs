@@ -60,6 +60,7 @@ pub mod negative_zone;
 pub mod overload;
 pub mod poison_trait;
 pub mod possession;
+pub mod practice_session;
 pub mod qi_field;
 pub mod qi_zero_decay;
 pub mod realm_taint;

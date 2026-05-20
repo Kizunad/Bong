@@ -94,6 +94,26 @@ pub fn woliu_scalars_for_proficiency(proficiency: f32) -> WoliuProficiencyScalar
     }
 }
 
+#[allow(dead_code)]
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ProficiencyScalars {
+    pub cast_ticks_mult: f32,
+    pub qi_cost_mult: f32,
+    pub stamina_cost_mult: f32,
+    pub cooldown_mult: f32,
+}
+
+#[allow(dead_code)]
+pub fn generic_proficiency_scalars(proficiency: f32) -> ProficiencyScalars {
+    let prof = proficiency.clamp(0.0, 1.0);
+    ProficiencyScalars {
+        cast_ticks_mult: 1.2 - 0.3 * prof,
+        qi_cost_mult: 1.1 - 0.25 * prof,
+        stamina_cost_mult: 1.1 - 0.25 * prof,
+        cooldown_mult: 1.0 - 0.2 * prof,
+    }
+}
+
 pub fn record_mastered_life_event(
     life_record: &mut LifeRecord,
     technique_id: &str,
@@ -407,5 +427,85 @@ mod tests {
                 icon_texture: "test",
             },
         }
+    }
+
+    #[test]
+    fn generic_scalars_prof_0_cast_ticks_1_2() {
+        let scalars = generic_proficiency_scalars(0.0);
+        assert!(
+            (scalars.cast_ticks_mult - 1.2).abs() < 1e-6,
+            "prof=0.0 should yield cast_ticks_mult=1.2, got {}",
+            scalars.cast_ticks_mult
+        );
+    }
+
+    #[test]
+    fn generic_scalars_prof_1_cast_ticks_0_9() {
+        let scalars = generic_proficiency_scalars(1.0);
+        assert!(
+            (scalars.cast_ticks_mult - 0.9).abs() < 1e-6,
+            "prof=1.0 should yield cast_ticks_mult=0.9, got {}",
+            scalars.cast_ticks_mult
+        );
+    }
+
+    #[test]
+    fn generic_scalars_prof_0_5_cooldown_0_9() {
+        let scalars = generic_proficiency_scalars(0.5);
+        assert!(
+            (scalars.cooldown_mult - 0.9).abs() < 1e-6,
+            "prof=0.5 should yield cooldown_mult=0.9, got {}",
+            scalars.cooldown_mult
+        );
+    }
+
+    #[test]
+    fn dash_applies_proficiency_scalars() {
+        let scalars = generic_proficiency_scalars(0.0);
+        assert!(
+            (scalars.cast_ticks_mult - 1.2).abs() < 1e-6,
+            "dash at prof=0: cast_ticks_mult should be 1.2, got {}",
+            scalars.cast_ticks_mult
+        );
+        assert!(
+            (scalars.qi_cost_mult - 1.1).abs() < 1e-6,
+            "dash at prof=0: qi_cost_mult should be 1.1, got {}",
+            scalars.qi_cost_mult
+        );
+        assert!(
+            (scalars.stamina_cost_mult - 1.1).abs() < 1e-6,
+            "dash at prof=0: stamina_cost_mult should be 1.1, got {}",
+            scalars.stamina_cost_mult
+        );
+        assert!(
+            (scalars.cooldown_mult - 1.0).abs() < 1e-6,
+            "dash at prof=0: cooldown_mult should be 1.0, got {}",
+            scalars.cooldown_mult
+        );
+    }
+
+    #[test]
+    fn beng_quan_applies_proficiency_scalars() {
+        let scalars = generic_proficiency_scalars(1.0);
+        assert!(
+            (scalars.cast_ticks_mult - 0.9).abs() < 1e-6,
+            "beng_quan at prof=1: cast_ticks_mult should be 0.9, got {}",
+            scalars.cast_ticks_mult
+        );
+        assert!(
+            (scalars.qi_cost_mult - 0.85).abs() < 1e-6,
+            "beng_quan at prof=1: qi_cost_mult should be 0.85, got {}",
+            scalars.qi_cost_mult
+        );
+        assert!(
+            (scalars.stamina_cost_mult - 0.85).abs() < 1e-6,
+            "beng_quan at prof=1: stamina_cost_mult should be 0.85, got {}",
+            scalars.stamina_cost_mult
+        );
+        assert!(
+            (scalars.cooldown_mult - 0.8).abs() < 1e-6,
+            "beng_quan at prof=1: cooldown_mult should be 0.8, got {}",
+            scalars.cooldown_mult
+        );
     }
 }
