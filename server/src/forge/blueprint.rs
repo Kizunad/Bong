@@ -902,6 +902,11 @@ mod tests {
             panic!("bone_chestplate first step should be billet");
         };
         assert_eq!(
+            profile.required.len(), 1,
+            "bone_chestplate_v0 should have exactly 1 required material, got {}",
+            profile.required.len()
+        );
+        assert_eq!(
             profile.required[0].material, "yi_shou_gu",
             "bone chestplate material should be yi_shou_gu, got {}",
             profile.required[0].material
