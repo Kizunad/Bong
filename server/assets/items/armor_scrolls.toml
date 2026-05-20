@@ -1,0 +1,55 @@
+[[item]]
+id = "blueprint_scroll_iron_helmet"
+name = "锻造图·凡铁兜鍪"
+category = "scroll"
+grid_w = 1
+grid_h = 2
+base_weight = 0.05
+rarity = "uncommon"
+spirit_quality_initial = 0.3
+description = "薄铁片上刻着兜鍪的展开图。边角卷曲——锻造师死前没来得及用。"
+
+[item.blueprint_scroll]
+blueprint_id = "iron_helmet_v0"
+
+[[item]]
+id = "blueprint_scroll_iron_chestplate"
+name = "锻造图·凡铁胸甲"
+category = "scroll"
+grid_w = 1
+grid_h = 2
+base_weight = 0.05
+rarity = "uncommon"
+spirit_quality_initial = 0.3
+description = "皱巴巴的锻造蓝图。胸甲正面画着四块互锁的铁片——简单，但能挡一刀。"
+
+[item.blueprint_scroll]
+blueprint_id = "iron_chestplate_v0"
+
+[[item]]
+id = "blueprint_scroll_iron_leggings"
+name = "锻造图·凡铁腿甲"
+category = "scroll"
+grid_w = 1
+grid_h = 2
+base_weight = 0.05
+rarity = "uncommon"
+spirit_quality_initial = 0.3
+description = "半截蓝图。画的是一对绑腿铁片——有总比没有强。"
+
+[item.blueprint_scroll]
+blueprint_id = "iron_leggings_v0"
+
+[[item]]
+id = "blueprint_scroll_iron_boots"
+name = "锻造图·凡铁靴"
+category = "scroll"
+grid_w = 1
+grid_h = 2
+base_weight = 0.05
+rarity = "uncommon"
+spirit_quality_initial = 0.3
+description = "铁靴展开图。画着铆钉位置——底子厚，踩什么都不怕。"
+
+[item.blueprint_scroll]
+blueprint_id = "iron_boots_v0"

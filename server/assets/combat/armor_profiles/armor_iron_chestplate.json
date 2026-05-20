@@ -1,0 +1,16 @@
+{
+  "template_id": "armor_iron_chestplate",
+  "profile": {
+    "slot": "chest",
+    "body_coverage": ["chest", "abdomen"],
+    "kind_mitigation": {
+      "cut": 0.55,
+      "blunt": 0.40,
+      "pierce": 0.45,
+      "burn": 0.15,
+      "concussion": 0.35
+    },
+    "durability_max": 280,
+    "broken_multiplier": 0.3
+  }
+}
