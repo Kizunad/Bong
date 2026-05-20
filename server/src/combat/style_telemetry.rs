@@ -1,9 +1,16 @@
-use valence::prelude::{bevy_ecs, Entity, Event, EventReader, EventWriter, Query, Res, Username};
+use std::collections::{HashMap, HashSet};
+
+use valence::prelude::{
+    bevy_ecs, Client, Entity, Event, EventReader, EventWriter, Query, Res, ResMut, Resource,
+    Username, With,
+};
 
 use crate::cultivation::components::QiColor;
 use crate::network::redis_bridge::RedisOutbound;
 use crate::network::RedisBridgeResource;
+use crate::player::gameplay::PendingGameplayNarrations;
 use crate::player::state::canonical_player_id;
+use crate::schema::common::NarrationStyle;
 use crate::schema::style_balance::{StyleBalanceTelemetryEventV1, StyleTelemetryColorSnapshotV1};
 
 use super::events::DeathEvent;
@@ -158,6 +165,45 @@ fn normalize_quantity(value: Option<f64>) -> Option<f64> {
         .map(|value| value.max(0.0))
 }
 
+const STYLE_TENDENCY_THRESHOLD: u32 = 10;
+
+#[derive(Resource, Default, Debug)]
+pub struct StyleUsageCounter {
+    pub counts: HashMap<(Entity, String), u32>,
+    pub notified: HashSet<(Entity, String)>,
+}
+
+pub fn track_style_tendency(
+    mut events: EventReader<StyleBalanceTelemetryEvent>,
+    mut counter: ResMut<StyleUsageCounter>,
+    players: Query<&Username, With<Client>>,
+    mut narrations: Option<ResMut<PendingGameplayNarrations>>,
+) {
+    for event in events.read() {
+        if players.get(event.attacker).is_err() {
+            continue;
+        }
+        let Some(ref style) = event.attacker_style else {
+            continue;
+        };
+        let key = (event.attacker, style.clone());
+        let count = counter.counts.entry(key.clone()).or_insert(0);
+        *count += 1;
+
+        if *count >= STYLE_TENDENCY_THRESHOLD && counter.notified.insert(key) {
+            if let Ok(username) = players.get(event.attacker) {
+                let text = format!(
+                    "你似乎偏好[{}]的打法。经脉记得——你的选择会刻进身体。",
+                    style
+                );
+                if let Some(ref mut narr) = narrations {
+                    narr.push_player(username.0.as_str(), &text, NarrationStyle::Perception);
+                }
+            }
+        }
+    }
+}
+
 impl From<&QiColor> for StyleTelemetryColorSnapshotV1 {
     fn from(color: &QiColor) -> Self {
         Self {
@@ -172,6 +218,7 @@ impl From<&QiColor> for StyleTelemetryColorSnapshotV1 {
 #[cfg(test)]
 mod tests {
     use valence::prelude::{App, IntoSystemConfigs, Update, Username};
+    use valence::testing::create_mock_client;
 
     use super::*;
     use crate::cultivation::components::{ColorKind, QiColor};
@@ -310,6 +357,195 @@ mod tests {
         assert_eq!(collected.effective_hit, None);
         assert_eq!(collected.defender_lost, Some(0.0));
         assert_eq!(collected.defender_absorbed, Some(0.4));
+    }
+
+    fn setup_tendency_app() -> App {
+        let mut app = App::new();
+        app.add_event::<StyleBalanceTelemetryEvent>();
+        app.insert_resource(StyleUsageCounter::default());
+        app.insert_resource(PendingGameplayNarrations::default());
+        app.add_systems(Update, track_style_tendency);
+        app
+    }
+
+    fn telemetry_event(attacker: Entity, style: &str) -> StyleBalanceTelemetryEvent {
+        StyleBalanceTelemetryEvent {
+            attacker,
+            attacker_player_id: "offline:TestPlayer".to_string(),
+            defender: Entity::PLACEHOLDER,
+            defender_player_id: "offline:Mob".to_string(),
+            attacker_color: None,
+            defender_color: None,
+            attacker_style: Some(style.to_string()),
+            defender_style: None,
+            attacker_rejection_rate: None,
+            defender_resistance: None,
+            defender_drain_affinity: None,
+            attacker_qi: None,
+            distance_blocks: None,
+            effective_hit: None,
+            defender_lost: None,
+            defender_absorbed: None,
+            cause: "test".to_string(),
+            resolved_at_tick: 1,
+        }
+    }
+
+    #[test]
+    fn style_tendency_counter_increments_on_attack() {
+        let mut app = setup_tendency_app();
+        let (client_bundle, _helper) = create_mock_client("TestPlayer");
+        let player = app.world_mut().spawn(client_bundle).id();
+
+        app.world_mut()
+            .send_event(telemetry_event(player, "baomai"));
+        app.update();
+
+        let counter = app.world().resource::<StyleUsageCounter>();
+        assert_eq!(
+            *counter.counts.get(&(player, "baomai".to_string())).unwrap(),
+            1,
+            "counter should be 1 after one attack; got {:?}",
+            counter.counts
+        );
+    }
+
+    #[test]
+    fn style_tendency_narration_at_10_uses() {
+        let mut app = setup_tendency_app();
+        let (client_bundle, _helper) = create_mock_client("TestPlayer");
+        let player = app.world_mut().spawn(client_bundle).id();
+
+        for _ in 0..9 {
+            app.world_mut()
+                .send_event(telemetry_event(player, "baomai"));
+            app.update();
+        }
+        let narrations = app
+            .world_mut()
+            .resource_mut::<PendingGameplayNarrations>()
+            .drain();
+        assert_eq!(
+            narrations.len(),
+            0,
+            "no narration should fire before 10 uses; got {}",
+            narrations.len()
+        );
+
+        app.world_mut()
+            .send_event(telemetry_event(player, "baomai"));
+        app.update();
+
+        let narrations = app
+            .world_mut()
+            .resource_mut::<PendingGameplayNarrations>()
+            .drain();
+        assert_eq!(
+            narrations.len(),
+            1,
+            "exactly one narration should fire at 10 uses; got {}",
+            narrations.len()
+        );
+        assert!(
+            narrations[0].text.contains("baomai"),
+            "narration should mention the style; got: {}",
+            narrations[0].text
+        );
+        assert_eq!(
+            narrations[0].style,
+            NarrationStyle::Perception,
+            "narration style should be Perception"
+        );
+    }
+
+    #[test]
+    fn style_tendency_narration_once_per_style() {
+        let mut app = setup_tendency_app();
+        let (client_bundle, _helper) = create_mock_client("TestPlayer");
+        let player = app.world_mut().spawn(client_bundle).id();
+
+        for _ in 0..15 {
+            app.world_mut()
+                .send_event(telemetry_event(player, "baomai"));
+            app.update();
+        }
+        let narrations = app
+            .world_mut()
+            .resource_mut::<PendingGameplayNarrations>()
+            .drain();
+        assert_eq!(
+            narrations.len(),
+            1,
+            "only one narration should fire even after 15 uses; got {}",
+            narrations.len()
+        );
+    }
+
+    #[test]
+    fn style_tendency_narration_different_styles_independent() {
+        let mut app = setup_tendency_app();
+        let (client_bundle, _helper) = create_mock_client("TestPlayer");
+        let player = app.world_mut().spawn(client_bundle).id();
+
+        for _ in 0..10 {
+            app.world_mut()
+                .send_event(telemetry_event(player, "baomai"));
+            app.update();
+        }
+        let narrations = app
+            .world_mut()
+            .resource_mut::<PendingGameplayNarrations>()
+            .drain();
+        assert_eq!(narrations.len(), 1, "baomai narration should fire");
+
+        for _ in 0..10 {
+            app.world_mut()
+                .send_event(telemetry_event(player, "jiemai"));
+            app.update();
+        }
+        let narrations = app
+            .world_mut()
+            .resource_mut::<PendingGameplayNarrations>()
+            .drain();
+        assert_eq!(
+            narrations.len(),
+            1,
+            "jiemai narration should fire independently; got {}",
+            narrations.len()
+        );
+        assert!(
+            narrations[0].text.contains("jiemai"),
+            "narration should mention jiemai; got: {}",
+            narrations[0].text
+        );
+    }
+
+    #[test]
+    fn style_tendency_counter_ignores_npc_vs_npc() {
+        let mut app = setup_tendency_app();
+        let npc = app.world_mut().spawn(Username("NpcMob".into())).id();
+
+        for _ in 0..15 {
+            app.world_mut().send_event(telemetry_event(npc, "baomai"));
+            app.update();
+        }
+
+        let counter = app.world().resource::<StyleUsageCounter>();
+        assert!(
+            counter.counts.is_empty(),
+            "NPC attacks should not be counted; counts: {:?}",
+            counter.counts
+        );
+        let narrations = app
+            .world_mut()
+            .resource_mut::<PendingGameplayNarrations>()
+            .drain();
+        assert_eq!(
+            narrations.len(),
+            0,
+            "no narration should fire for NPC; got {}",
+            narrations.len()
+        );
     }
 
     #[test]

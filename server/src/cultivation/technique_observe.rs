@@ -213,6 +213,20 @@ mod tests {
     }
 
     #[test]
+    fn observe_yellow_technique_base_chance_0_05() {
+        let chance = observe_learn_chance(
+            TechniqueGrade::Yellow,
+            &QiColor::default(),
+            None,
+            &InsightModifiers::new(),
+        );
+        assert!(
+            (chance - 0.05).abs() < 1e-9,
+            "yellow base chance with default QiColor and no bonuses should be 0.05; got {chance}"
+        );
+    }
+
+    #[test]
     fn observe_cooldown_60s() {
         let observer = Entity::from_raw(1);
         let caster = Entity::from_raw(2);
