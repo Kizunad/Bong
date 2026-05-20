@@ -8739,8 +8739,7 @@ cols = 4
             known_stages: vec![0],
             max_quality_tier: 3,
         };
-        let spec =
-            parse_recipe_fragment_spec(raw, Path::new("test.toml"), "test_item").unwrap();
+        let spec = parse_recipe_fragment_spec(raw, Path::new("test.toml"), "test_item").unwrap();
         assert_eq!(spec.recipe_id, "hui_yuan_pill_v0");
         assert_eq!(spec.known_stages, vec![0]);
         assert_eq!(spec.max_quality_tier, 3);

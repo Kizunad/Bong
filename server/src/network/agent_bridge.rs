@@ -149,6 +149,7 @@ pub fn payload_type_label(payload_type: ServerDataType) -> &'static str {
         ServerDataType::CombatEventFloater => "combat_event",
         ServerDataType::KnockbackSync => "knockback_sync",
         ServerDataType::TechniqueProficiencyUpdate => "technique_proficiency_update",
+        ServerDataType::PillBuffStatus => "pill_buff_status",
     }
 }
 

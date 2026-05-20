@@ -211,6 +211,7 @@ pub enum ServerDataType {
     CombatEventFloater,
     KnockbackSync,
     TechniqueProficiencyUpdate,
+    PillBuffStatus,
 }
 
 #[derive(Debug, Clone)]
@@ -445,6 +446,7 @@ pub enum ServerDataPayloadV1 {
     CombatEventFloater(CombatEventFloaterV1),
     KnockbackSync(KnockbackSyncV1),
     TechniqueProficiencyUpdate(TechniqueProficiencyUpdateV1),
+    PillBuffStatus(PillBuffStatusV1),
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -483,6 +485,14 @@ pub struct TechniqueProficiencyUpdateV1 {
     pub technique_id: String,
     pub proficiency: f32,
     pub gain: f32,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PillBuffStatusV1 {
+    pub buff_id: String,
+    pub remaining_ticks: u32,
+    pub effect_multiplier: f64,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -1290,6 +1300,10 @@ enum ServerDataPayloadWireV1 {
     TechniqueProficiencyUpdate {
         #[serde(flatten)]
         update: TechniqueProficiencyUpdateV1,
+    },
+    PillBuffStatus {
+        #[serde(flatten)]
+        status: PillBuffStatusV1,
     },
 }
 
@@ -2112,6 +2126,7 @@ impl TryFrom<ServerDataPayloadWireV1> for ServerDataPayloadV1 {
             ServerDataPayloadWireV1::TechniqueProficiencyUpdate { update } => {
                 Ok(Self::TechniqueProficiencyUpdate(update))
             }
+            ServerDataPayloadWireV1::PillBuffStatus { status } => Ok(Self::PillBuffStatus(status)),
         }
     }
 }
@@ -2629,6 +2644,9 @@ impl From<&ServerDataPayloadV1> for ServerDataPayloadWireV1 {
                     update: update.clone(),
                 }
             }
+            ServerDataPayloadV1::PillBuffStatus(status) => Self::PillBuffStatus {
+                status: status.clone(),
+            },
         }
     }
 }
@@ -2923,6 +2941,7 @@ impl ServerDataPayloadV1 {
             Self::CombatEventFloater(..) => ServerDataType::CombatEventFloater,
             Self::KnockbackSync(..) => ServerDataType::KnockbackSync,
             Self::TechniqueProficiencyUpdate(..) => ServerDataType::TechniqueProficiencyUpdate,
+            Self::PillBuffStatus(..) => ServerDataType::PillBuffStatus,
         }
     }
 }
@@ -3404,6 +3423,11 @@ mod tests {
                 technique_id: "sword.cleave".to_string(),
                 proficiency: 0.42,
                 gain: 0.008,
+            }),
+            ServerDataPayloadV1::PillBuffStatus(PillBuffStatusV1 {
+                buff_id: "huo_xue_dan".to_string(),
+                remaining_ticks: 3000,
+                effect_multiplier: 1.0,
             }),
         ];
 
@@ -3889,5 +3913,79 @@ mod tests {
             serde_json::from_value::<ServerDataV1>(unknown_field).is_err(),
             "technique_proficiency_update with unknown field should fail due to deny_unknown_fields"
         );
+    }
+
+    #[test]
+    fn pill_buff_status_v1_serde_pin() {
+        let original = PillBuffStatusV1 {
+            buff_id: "huo_xue_dan".to_string(),
+            remaining_ticks: 3000,
+            effect_multiplier: 1.0,
+        };
+        let json = serde_json::to_string(&original).expect("PillBuffStatusV1 should serialize");
+        let back: PillBuffStatusV1 =
+            serde_json::from_str(&json).expect("PillBuffStatusV1 should deserialize");
+        assert_eq!(
+            original, back,
+            "PillBuffStatusV1 roundtrip must be lossless"
+        );
+
+        let envelope = ServerDataV1::new(ServerDataPayloadV1::PillBuffStatus(original.clone()));
+        let bytes = serde_json::to_vec(&envelope).expect("envelope should serialize");
+        let round: ServerDataV1 =
+            serde_json::from_slice(&bytes).expect("envelope should roundtrip");
+        match round.payload {
+            ServerDataPayloadV1::PillBuffStatus(status) => {
+                assert_eq!(
+                    status, original,
+                    "envelope roundtrip must preserve PillBuffStatusV1"
+                );
+            }
+            other => panic!("expected PillBuffStatus, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn pill_buff_status_v1_rejects_unknown_field() {
+        let unknown_field = serde_json::json!({
+            "v": SERVER_DATA_VERSION,
+            "type": "pill_buff_status",
+            "buff_id": "tie_bi_san",
+            "remaining_ticks": 600,
+            "effect_multiplier": 1.2,
+            "unexpected": true
+        });
+        assert!(
+            serde_json::from_value::<ServerDataV1>(unknown_field).is_err(),
+            "PillBuffStatusV1 with unknown field should fail due to deny_unknown_fields"
+        );
+    }
+
+    #[test]
+    fn pill_buff_status_v1_rejects_missing_buff_id() {
+        let missing = serde_json::json!({
+            "v": SERVER_DATA_VERSION,
+            "type": "pill_buff_status",
+            "remaining_ticks": 600,
+            "effect_multiplier": 1.2
+        });
+        assert!(
+            serde_json::from_value::<ServerDataV1>(missing).is_err(),
+            "PillBuffStatusV1 missing 'buff_id' should fail deserialization"
+        );
+    }
+
+    #[test]
+    fn pill_buff_status_v1_zero_ticks_roundtrips() {
+        let zero = PillBuffStatusV1 {
+            buff_id: "expired_buff".to_string(),
+            remaining_ticks: 0,
+            effect_multiplier: 0.0,
+        };
+        let json =
+            serde_json::to_string(&zero).expect("zero-tick PillBuffStatusV1 should serialize");
+        let back: PillBuffStatusV1 =
+            serde_json::from_str(&json).expect("zero-tick should deserialize");
+        assert_eq!(zero, back);
     }
 }
