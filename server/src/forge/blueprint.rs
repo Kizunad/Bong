@@ -690,29 +690,27 @@ mod tests {
     }
 
     #[test]
-    fn blueprint_scroll_iron_helmet_parses() {
+    fn iron_armor_blueprint_scrolls_parse_and_link_correctly() {
         let item_reg = crate::inventory::load_item_registry().expect("item registry should load");
-        let item = item_reg
-            .get("blueprint_scroll_iron_helmet")
-            .expect("blueprint_scroll_iron_helmet should be in item registry");
-        let scroll = item
-            .blueprint_scroll_spec
-            .as_ref()
-            .expect("should have blueprint_scroll_spec");
-        assert_eq!(scroll.blueprint_id, "iron_helmet_v0");
-    }
-
-    #[test]
-    fn blueprint_scroll_iron_chestplate_parses() {
-        let item_reg = crate::inventory::load_item_registry().expect("item registry should load");
-        let item = item_reg
-            .get("blueprint_scroll_iron_chestplate")
-            .expect("blueprint_scroll_iron_chestplate should be in item registry");
-        let scroll = item
-            .blueprint_scroll_spec
-            .as_ref()
-            .expect("should have blueprint_scroll_spec");
-        assert_eq!(scroll.blueprint_id, "iron_chestplate_v0");
+        for (item_id, blueprint_id) in [
+            ("blueprint_scroll_iron_helmet", "iron_helmet_v0"),
+            ("blueprint_scroll_iron_chestplate", "iron_chestplate_v0"),
+            ("blueprint_scroll_iron_leggings", "iron_leggings_v0"),
+            ("blueprint_scroll_iron_boots", "iron_boots_v0"),
+        ] {
+            let item = item_reg
+                .get(item_id)
+                .unwrap_or_else(|| panic!("expected {item_id} in item registry"));
+            let scroll = item
+                .blueprint_scroll_spec
+                .as_ref()
+                .unwrap_or_else(|| panic!("expected blueprint_scroll_spec for {item_id}"));
+            assert_eq!(
+                scroll.blueprint_id, blueprint_id,
+                "{item_id} should map to forge blueprint {blueprint_id}, got {}",
+                scroll.blueprint_id
+            );
+        }
     }
 
     #[test]

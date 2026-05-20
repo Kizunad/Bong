@@ -54,7 +54,11 @@ pub(crate) fn effective_durability(
     item: &crate::inventory::ItemInstance,
 ) -> f32 {
     let base = profile.durability_max as f32;
-    let quality_mult = item.forge_quality.unwrap_or(0.5);
+    let quality_mult = item
+        .forge_quality
+        .filter(|q| q.is_finite())
+        .unwrap_or(0.5)
+        .clamp(0.0, 1.0);
     base * (0.7 + 0.6 * quality_mult)
 }
 
@@ -272,6 +276,45 @@ mod tests {
         assert!(
             (eff - expected).abs() < 0.01,
             "None forge_quality defaults to 0.5 → {expected}, got {eff}"
+        );
+    }
+
+    #[test]
+    fn effective_durability_clamps_negative_quality() {
+        let profile = make_armor_profile(280);
+        let mut item = make_item(104);
+        item.forge_quality = Some(-0.1);
+        let eff = super::effective_durability(&profile, &item);
+        let expected = 280.0 * 0.7; // clamped to 0.0
+        assert!(
+            (eff - expected).abs() < 0.01,
+            "negative quality should clamp to 0.0 → 0.7× → {expected}, got {eff}"
+        );
+    }
+
+    #[test]
+    fn effective_durability_clamps_overflow_quality() {
+        let profile = make_armor_profile(280);
+        let mut item = make_item(105);
+        item.forge_quality = Some(1.2);
+        let eff = super::effective_durability(&profile, &item);
+        let expected = 280.0 * 1.3; // clamped to 1.0
+        assert!(
+            (eff - expected).abs() < 0.01,
+            "quality >1.0 should clamp to 1.0 → 1.3× → {expected}, got {eff}"
+        );
+    }
+
+    #[test]
+    fn effective_durability_nan_defaults_to_0_5() {
+        let profile = make_armor_profile(280);
+        let mut item = make_item(106);
+        item.forge_quality = Some(f32::NAN);
+        let eff = super::effective_durability(&profile, &item);
+        let expected = 280.0 * (0.7 + 0.6 * 0.5);
+        assert!(
+            (eff - expected).abs() < 0.01,
+            "NaN forge_quality should fallback to default 0.5 → {expected}, got {eff}"
         );
     }
 }
