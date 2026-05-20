@@ -20,7 +20,7 @@
 
 use valence::prelude::{
     bevy_ecs, Commands, Component, Entity, Event, EventReader, EventWriter, Position, Query, Res,
-    ResMut, With,
+    ResMut, Username, With,
 };
 
 use std::collections::HashMap;
@@ -39,6 +39,7 @@ use crate::inventory::{
 };
 use crate::network::audio_event_emit::{AudioRecipient, PlaySoundRecipeRequest};
 use crate::network::vfx_event_emit::VfxEventRequest;
+use crate::player::state::canonical_player_id;
 use crate::schema::vfx_event::VfxEventPayloadV1;
 use crate::world::loot_pool::{roll_loot_pool, LootPoolRegistry};
 use crate::world::tsy_container::{
@@ -158,7 +159,7 @@ const SURFACE_STASH_RESET_INTERVAL_SECS: u64 = 24 * 60 * 60;
 
 #[derive(Debug, Default, Resource)]
 pub struct SurfaceStashPlayerLimit {
-    /// (poi_id, player_debug_id) → search_count_today
+    /// (poi_id, canonical_player_id) → search_count_today
     pub limits: HashMap<(String, String), u8>,
     pub last_reset_wall_clock: u64,
 }
@@ -222,7 +223,7 @@ pub fn register(app: &mut valence::prelude::App) {
     );
 }
 
-#[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments, clippy::type_complexity)]
 pub fn start_search_container(
     mut requests: EventReader<StartSearchRequest>,
     mut results: EventWriter<StartSearchResult>,
@@ -233,6 +234,7 @@ pub fn start_search_container(
             &PlayerInventory,
             &CombatState,
             Option<&SearchProgress>,
+            &Username,
         ),
         With<valence::prelude::Client>,
     >,
@@ -243,7 +245,7 @@ pub fn start_search_container(
     mut stash_limit: ResMut<SurfaceStashPlayerLimit>,
 ) {
     for req in requests.read() {
-        let Ok((p_pos, p_inv, p_combat, p_progress)) = players.get(req.player) else {
+        let Ok((p_pos, p_inv, p_combat, p_progress, p_username)) = players.get(req.player) else {
             continue;
         };
         let Ok((mut container, c_pos)) = containers.get_mut(req.container) else {
@@ -295,7 +297,7 @@ pub fn start_search_container(
 
         // 散修遗缴每 24h 限额检查
         if container.kind == crate::world::tsy_container::ContainerKind::SurfaceStash {
-            let player_id = format!("{:?}", req.player);
+            let player_id = canonical_player_id(p_username.0.as_str());
             let now = SurfaceStashPlayerLimit::current_wall_clock_secs();
             if !stash_limit.can_search(&container.family_id, &player_id, now) {
                 results.send(StartSearchResult::Rejected {
@@ -359,7 +361,7 @@ pub fn start_search_container(
     }
 }
 
-#[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments, clippy::type_complexity)]
 pub fn tick_search_progress(
     mut players: Query<
         (
@@ -368,6 +370,7 @@ pub fn tick_search_progress(
             &CombatState,
             &Wounds,
             &mut SearchProgress,
+            &Username,
         ),
         With<valence::prelude::Client>,
     >,
@@ -388,9 +391,10 @@ pub fn tick_search_progress(
     mut stash_limit: ResMut<SurfaceStashPlayerLimit>,
 ) {
     let mut to_clear: Vec<(Entity, Entity, Option<SearchAbortReason>)> = Vec::new();
-    let mut completions: Vec<(Entity, Entity, Option<u64>, valence::prelude::DVec3)> = Vec::new();
+    let mut completions: Vec<(Entity, Entity, Option<u64>, valence::prelude::DVec3, String)> =
+        Vec::new();
 
-    for (player_ent, pos, combat, wounds, mut progress) in players.iter_mut() {
+    for (player_ent, pos, combat, wounds, mut progress, username) in players.iter_mut() {
         let dist = pos.0.distance(valence::math::DVec3::new(
             progress.started_pos[0],
             progress.started_pos[1],
@@ -428,6 +432,7 @@ pub fn tick_search_progress(
                 progress.container,
                 progress.key_item_instance_id,
                 pos.0,
+                canonical_player_id(username.0.as_str()),
             ));
         }
     }
@@ -451,7 +456,7 @@ pub fn tick_search_progress(
         }
     }
 
-    for (player_ent, container_ent, key_id, player_pos) in completions {
+    for (player_ent, container_ent, key_id, player_pos, player_id) in completions {
         // 必须有容器
         let Ok((mut container, container_pos)) = containers.get_mut(container_ent) else {
             commands
@@ -511,7 +516,6 @@ pub fn tick_search_progress(
 
         // 散修遗缴完成搜索时记录限额
         if is_surface_stash {
-            let player_id = format!("{:?}", player_ent);
             let now = SurfaceStashPlayerLimit::current_wall_clock_secs();
             stash_limit.record_search(&family_id, &player_id, now);
         }
