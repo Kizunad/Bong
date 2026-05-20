@@ -236,13 +236,14 @@ fn player_id(clients: &Query<(&Username, &mut Client)>, entity: Entity) -> Optio
         .map(|(username, _)| canonical_player_id(username.0.as_str()))
 }
 
-fn container_kind_wire(kind: ContainerKind) -> ContainerKindV1 {
+pub fn container_kind_wire(kind: ContainerKind) -> ContainerKindV1 {
     match kind {
         ContainerKind::DryCorpse => ContainerKindV1::DryCorpse,
         ContainerKind::Skeleton => ContainerKindV1::Skeleton,
         ContainerKind::StoragePouch => ContainerKindV1::StoragePouch,
         ContainerKind::StoneCasket => ContainerKindV1::StoneCasket,
         ContainerKind::RelicCore => ContainerKindV1::RelicCore,
+        ContainerKind::SurfaceStash => ContainerKindV1::SurfaceStash,
     }
 }
 

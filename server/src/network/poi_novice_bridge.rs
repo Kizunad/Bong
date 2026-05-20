@@ -71,6 +71,7 @@ fn kind_to_wire(kind: PoiNoviceKind) -> PoiNoviceKindV1 {
         PoiNoviceKind::TradeSpot => PoiNoviceKindV1::TradeSpot,
         PoiNoviceKind::ShelterSpot => PoiNoviceKindV1::ShelterSpot,
         PoiNoviceKind::WaterSource => PoiNoviceKindV1::WaterSource,
+        PoiNoviceKind::SurfaceStash => PoiNoviceKindV1::SurfaceStash,
     }
 }
 

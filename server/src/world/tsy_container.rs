@@ -20,8 +20,8 @@ use valence::prelude::{bevy_ecs, Component, Entity};
 use crate::inventory::ItemInstance;
 use crate::world::zone::TsyDepth;
 
-/// 5 档容器类型（plan §0.2 / §十六.三）。决定 base_search_ticks / required_key /
-/// is_skeleton 等运行时行为。
+/// 6 档容器类型（plan §0.2 / §十六.三 + plan-onboarding-loop-v1 P0.1）。
+/// 决定 base_search_ticks / required_key / is_skeleton 等运行时行为。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ContainerKind {
@@ -35,6 +35,8 @@ pub enum ContainerKind {
     StoneCasket,
     /// 传说：法阵核心（locked，= 骨架）
     RelicCore,
+    /// 散修遗缴：地表可见，无需钥匙，搜索 60 ticks（plan-onboarding-loop-v1 P0.1）
+    SurfaceStash,
 }
 
 impl ContainerKind {
@@ -45,6 +47,7 @@ impl ContainerKind {
             Self::StoragePouch => 200,
             Self::StoneCasket => 400,
             Self::RelicCore => 600,
+            Self::SurfaceStash => 60,
         }
     }
 
@@ -53,7 +56,7 @@ impl ContainerKind {
         match self {
             Self::StoneCasket => Some(KeyKind::StoneCasketKey),
             Self::RelicCore => Some(KeyKind::ArrayCoreSigil),
-            _ => None,
+            Self::DryCorpse | Self::Skeleton | Self::StoragePouch | Self::SurfaceStash => None,
         }
     }
 
@@ -70,6 +73,7 @@ impl ContainerKind {
             Self::StoragePouch => "storage_pouch",
             Self::StoneCasket => "stone_casket",
             Self::RelicCore => "relic_core",
+            Self::SurfaceStash => "surface_stash",
         }
     }
 
@@ -80,6 +84,7 @@ impl ContainerKind {
             "storage_pouch" => Some(Self::StoragePouch),
             "stone_casket" => Some(Self::StoneCasket),
             "relic_core" => Some(Self::RelicCore),
+            "surface_stash" => Some(Self::SurfaceStash),
             _ => None,
         }
     }
@@ -224,6 +229,57 @@ mod tests {
         assert_eq!(ContainerKind::StoragePouch.base_search_ticks(), 200);
         assert_eq!(ContainerKind::StoneCasket.base_search_ticks(), 400);
         assert_eq!(ContainerKind::RelicCore.base_search_ticks(), 600);
+        assert_eq!(ContainerKind::SurfaceStash.base_search_ticks(), 60);
+    }
+
+    #[test]
+    fn surface_stash_search_ticks_is_60() {
+        assert_eq!(
+            ContainerKind::SurfaceStash.base_search_ticks(),
+            60,
+            "SurfaceStash search_ticks 应为 60（plan-onboarding P0.1），实际为 {}",
+            ContainerKind::SurfaceStash.base_search_ticks()
+        );
+    }
+
+    #[test]
+    fn surface_stash_not_locked() {
+        assert_eq!(
+            ContainerKind::SurfaceStash.required_key(),
+            None,
+            "SurfaceStash 不需要钥匙（plan-onboarding P0.1），但 required_key 返回了 Some"
+        );
+    }
+
+    #[test]
+    fn surface_stash_not_skeleton() {
+        assert!(
+            !ContainerKind::SurfaceStash.is_skeleton(),
+            "SurfaceStash 不是 skeleton（plan-onboarding P0.1），但 is_skeleton 返回 true"
+        );
+    }
+
+    #[test]
+    fn surface_stash_as_str_roundtrip() {
+        assert_eq!(ContainerKind::SurfaceStash.as_str(), "surface_stash");
+        assert_eq!(
+            ContainerKind::from_str("surface_stash"),
+            Some(ContainerKind::SurfaceStash),
+            "from_str(\"surface_stash\") 应返回 Some(SurfaceStash)"
+        );
+    }
+
+    #[test]
+    fn surface_stash_serde_pin() {
+        let json = serde_json::to_string(&ContainerKind::SurfaceStash)
+            .expect("SurfaceStash should serialize");
+        assert_eq!(
+            json, "\"surface_stash\"",
+            "SurfaceStash serde 应输出 \"surface_stash\"，实际为 {json}"
+        );
+        let round: ContainerKind =
+            serde_json::from_str(&json).expect("SurfaceStash should deserialize");
+        assert_eq!(round, ContainerKind::SurfaceStash);
     }
 
     #[test]
@@ -239,6 +295,7 @@ mod tests {
             ContainerKind::RelicCore.required_key(),
             Some(KeyKind::ArrayCoreSigil)
         );
+        assert_eq!(ContainerKind::SurfaceStash.required_key(), None);
     }
 
     #[test]
@@ -248,6 +305,7 @@ mod tests {
         assert!(!ContainerKind::StoragePouch.is_skeleton());
         assert!(!ContainerKind::StoneCasket.is_skeleton());
         assert!(ContainerKind::RelicCore.is_skeleton());
+        assert!(!ContainerKind::SurfaceStash.is_skeleton());
     }
 
     #[test]
@@ -258,6 +316,7 @@ mod tests {
             ContainerKind::StoragePouch,
             ContainerKind::StoneCasket,
             ContainerKind::RelicCore,
+            ContainerKind::SurfaceStash,
         ] {
             assert_eq!(ContainerKind::from_str(kind.as_str()), Some(kind));
         }

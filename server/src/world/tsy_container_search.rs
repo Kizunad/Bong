@@ -23,6 +23,9 @@ use valence::prelude::{
     ResMut, With,
 };
 
+use std::collections::HashMap;
+use std::time::{SystemTime, UNIX_EPOCH};
+
 use crate::combat::components::{CombatState, Wounds};
 use crate::combat::CombatClock;
 use crate::inventory::ancient_relics::AncientRelicPool;
@@ -141,9 +144,63 @@ pub struct CancelSearchRequest {
 #[derive(Component, Debug, Default)]
 pub struct IsSearching;
 
+/// per-player per-poi 每 real-time 24h 只产出 3 次限频（plan-onboarding-loop-v1 P0.1 §6）。
+/// key = (poi_id, player_uuid_string)，value = 今日已搜次数。
+/// 24h 重置基于 wall-clock。
+use valence::prelude::Resource;
+
+/// 每个散修遗缴对每个玩家每 24h 允许的搜索次数上限。
+pub const SURFACE_STASH_DAILY_LIMIT: u8 = 3;
+/// 24 小时的秒数。
+const SURFACE_STASH_RESET_INTERVAL_SECS: u64 = 24 * 60 * 60;
+
+#[derive(Debug, Default, Resource)]
+pub struct SurfaceStashPlayerLimit {
+    /// (poi_id, player_debug_id) → search_count_today
+    pub limits: HashMap<(String, String), u8>,
+    pub last_reset_wall_clock: u64,
+}
+
+impl SurfaceStashPlayerLimit {
+    /// 检查该玩家对该 poi 是否还有搜索配额。若当前 wall-clock 距上次重置 ≥ 24h
+    /// 则先重置所有计数器。
+    pub fn can_search(&mut self, poi_id: &str, player_id: &str, now_secs: u64) -> bool {
+        self.maybe_reset(now_secs);
+        let key = (poi_id.to_string(), player_id.to_string());
+        let count = self.limits.get(&key).copied().unwrap_or(0);
+        count < SURFACE_STASH_DAILY_LIMIT
+    }
+
+    /// 记录一次搜索。返回搜索后的计数。
+    pub fn record_search(&mut self, poi_id: &str, player_id: &str, now_secs: u64) -> u8 {
+        self.maybe_reset(now_secs);
+        let key = (poi_id.to_string(), player_id.to_string());
+        let count = self.limits.entry(key).or_insert(0);
+        *count = count.saturating_add(1);
+        *count
+    }
+
+    fn maybe_reset(&mut self, now_secs: u64) {
+        if now_secs.saturating_sub(self.last_reset_wall_clock) >= SURFACE_STASH_RESET_INTERVAL_SECS
+        {
+            self.limits.clear();
+            self.last_reset_wall_clock = now_secs;
+        }
+    }
+
+    /// 当前 wall-clock 秒（helper，测试可绕过）。
+    pub fn current_wall_clock_secs() -> u64 {
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0)
+    }
+}
+
 pub fn register(app: &mut valence::prelude::App) {
     use valence::prelude::{IntoSystemConfigs, Update};
-    app.add_event::<StartSearchRequest>()
+    app.init_resource::<SurfaceStashPlayerLimit>()
+        .add_event::<StartSearchRequest>()
         .add_event::<StartSearchResult>()
         .add_event::<SearchCompleted>()
         .add_event::<SearchAborted>()
@@ -713,5 +770,53 @@ mod tests {
         // 不应 panic，仅警告
         place_item_in_main_pack(&mut inv, key_item("x", 1));
         assert!(inv.containers.is_empty());
+    }
+
+    // ——— plan-onboarding-loop-v1 P0: SurfaceStashPlayerLimit 测试 ———
+
+    #[test]
+    fn surface_stash_player_limit_allows_3_per_day() {
+        let mut limit = SurfaceStashPlayerLimit::default();
+        let now = 1_000_000u64;
+        for i in 0..SURFACE_STASH_DAILY_LIMIT {
+            assert!(
+                limit.can_search("stash_0", "player_a", now),
+                "第 {} 次搜索应被允许（上限 {}），但被拒绝",
+                i + 1,
+                SURFACE_STASH_DAILY_LIMIT
+            );
+            limit.record_search("stash_0", "player_a", now);
+        }
+    }
+
+    #[test]
+    fn surface_stash_player_limit_blocks_4th_search() {
+        let mut limit = SurfaceStashPlayerLimit::default();
+        let now = 1_000_000u64;
+        for _ in 0..SURFACE_STASH_DAILY_LIMIT {
+            limit.record_search("stash_0", "player_a", now);
+        }
+        assert!(
+            !limit.can_search("stash_0", "player_a", now),
+            "第 {} 次搜索应被拒绝，但被允许",
+            SURFACE_STASH_DAILY_LIMIT + 1
+        );
+    }
+
+    #[test]
+    fn surface_stash_player_limit_resets_after_24h() {
+        let mut limit = SurfaceStashPlayerLimit::default();
+        let now = 1_000_000u64;
+        for _ in 0..SURFACE_STASH_DAILY_LIMIT {
+            limit.record_search("stash_0", "player_a", now);
+        }
+        assert!(!limit.can_search("stash_0", "player_a", now));
+
+        // 24h 后重置
+        let after_24h = now + 24 * 60 * 60;
+        assert!(
+            limit.can_search("stash_0", "player_a", after_24h),
+            "24h 后限额应重置，但搜索仍被拒绝"
+        );
     }
 }

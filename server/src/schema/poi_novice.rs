@@ -16,6 +16,7 @@ pub enum PoiNoviceKindV1 {
     TradeSpot,
     ShelterSpot,
     WaterSource,
+    SurfaceStash,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

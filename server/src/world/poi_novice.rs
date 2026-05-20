@@ -27,6 +27,8 @@ pub enum PoiNoviceKind {
     TradeSpot,
     ShelterSpot,
     WaterSource,
+    /// 散修遗缴：地表可见容器（plan-onboarding-loop-v1 P0.3）
+    SurfaceStash,
 }
 
 impl PoiNoviceKind {
@@ -43,6 +45,7 @@ impl PoiNoviceKind {
             Self::TradeSpot => "trade_spot",
             Self::ShelterSpot => "shelter_spot",
             Self::WaterSource => "water_source",
+            Self::SurfaceStash => "surface_stash",
         }
     }
 
@@ -59,6 +62,7 @@ impl PoiNoviceKind {
             Self::TradeSpot => "第一次路口交易",
             Self::ShelterSpot => "第一次归巢休息",
             Self::WaterSource => "第一次取水",
+            Self::SurfaceStash => "第一次搜遗缴",
         }
     }
 }
@@ -79,6 +83,7 @@ impl TryFrom<&str> for PoiNoviceKind {
             "trade_spot" => Ok(Self::TradeSpot),
             "shelter_spot" => Ok(Self::ShelterSpot),
             "water_source" => Ok(Self::WaterSource),
+            "surface_stash" => Ok(Self::SurfaceStash),
             other => Err(format!("unknown novice POI type `{other}`")),
         }
     }
@@ -413,7 +418,7 @@ pub fn parse_tags(tags: &[String]) -> HashMap<&str, &str> {
     parsed
 }
 
-fn novice_kinds() -> [PoiNoviceKind; 11] {
+fn novice_kinds() -> [PoiNoviceKind; 12] {
     [
         PoiNoviceKind::ForgeStation,
         PoiNoviceKind::AlchemyFurnace,
@@ -426,6 +431,7 @@ fn novice_kinds() -> [PoiNoviceKind; 11] {
         PoiNoviceKind::TradeSpot,
         PoiNoviceKind::ShelterSpot,
         PoiNoviceKind::WaterSource,
+        PoiNoviceKind::SurfaceStash,
     ]
 }
 
@@ -434,6 +440,148 @@ fn current_wall_clock_secs() -> u64 {
         .duration_since(UNIX_EPOCH)
         .map(|duration| duration.as_secs())
         .unwrap_or(0)
+}
+
+// ——— plan-onboarding-loop-v1 P0.3: 散修遗缴 runtime scatter ———
+//
+// 以下函数 / 常数是 P0.3 scatter 系统的 building block，Startup system
+// 接入在后续集成。本 PR 先建立纯函数 + 测试锁住契约。
+
+/// 散修遗缴 Poisson-disk 散布参数。
+#[allow(dead_code)]
+pub const SURFACE_STASH_COUNT: usize = 12;
+#[allow(dead_code)]
+pub const SURFACE_STASH_MIN_DIST: f64 = 200.0;
+/// 与已有 POI 的最小距离。
+#[allow(dead_code)]
+pub const SURFACE_STASH_MIN_POI_DIST: f64 = 100.0;
+/// spawn 中心（fallback flat world 为 128,128）。
+#[allow(dead_code)]
+const SPAWN_CENTER_X: f64 = 128.0;
+#[allow(dead_code)]
+const SPAWN_CENTER_Z: f64 = 128.0;
+
+/// basic stash 半径上限（距 spawn 中心）。
+#[allow(dead_code)]
+const BASIC_RADIUS: f64 = 500.0;
+/// scroll stash 半径上限。
+#[allow(dead_code)]
+const SCROLL_RADIUS: f64 = 800.0;
+/// craft stash 半径上限。
+#[allow(dead_code)]
+const CRAFT_RADIUS: f64 = 1000.0;
+
+/// basic / scroll / craft 目标数量。
+#[allow(dead_code)]
+const BASIC_COUNT: usize = 5;
+#[allow(dead_code)]
+const SCROLL_COUNT: usize = 4;
+#[allow(dead_code)]
+const CRAFT_COUNT: usize = 3;
+
+/// 运行时 Poisson-disk 采样 12 个散修遗缴点。
+///
+/// 使用 world_seed × index 做 PRNG seed 保证 determinism。
+/// 分配 pool：距 spawn 中心 ≤500 → basic（5 个）、≤800 → scroll（4 个）、
+/// ≤1000 → craft（3 个）。
+#[allow(dead_code)]
+pub fn scatter_surface_stashes(seed: u64) -> Vec<ScatteredStash> {
+    let mut points = Vec::with_capacity(SURFACE_STASH_COUNT);
+    // 简单 reject-sample Poisson-disk
+    let mut attempt = 0u64;
+    while points.len() < SURFACE_STASH_COUNT && attempt < 10000 {
+        let rng = splitmix64(
+            seed.wrapping_mul(0x9E37_79B9_7F4A_7C15)
+                .wrapping_add(attempt),
+        );
+        let angle = (rng & 0xFFFF) as f64 / 65536.0 * std::f64::consts::TAU;
+        let rng2 = splitmix64(rng);
+        let dist = (rng2 & 0xFFFF) as f64 / 65536.0 * CRAFT_RADIUS;
+        let x = SPAWN_CENTER_X + angle.cos() * dist;
+        let z = SPAWN_CENTER_Z + angle.sin() * dist;
+        attempt += 1;
+
+        // 距离检查：与已有遗缴点的 min_dist
+        let too_close = points.iter().any(|p: &ScatteredStash| {
+            let dx = p.x - x;
+            let dz = p.z - z;
+            (dx * dx + dz * dz).sqrt() < SURFACE_STASH_MIN_DIST
+        });
+        if too_close {
+            continue;
+        }
+        points.push(ScatteredStash {
+            x,
+            z,
+            pool_id: String::new(), // 后面分配
+            index: points.len(),
+        });
+    }
+
+    // 按距 spawn 中心距离排序，分配 pool
+    points.sort_by(|a, b| {
+        let da = ((a.x - SPAWN_CENTER_X).powi(2) + (a.z - SPAWN_CENTER_Z).powi(2)).sqrt();
+        let db = ((b.x - SPAWN_CENTER_X).powi(2) + (b.z - SPAWN_CENTER_Z).powi(2)).sqrt();
+        da.partial_cmp(&db).unwrap_or(std::cmp::Ordering::Equal)
+    });
+
+    let mut basic_count = 0usize;
+    let mut scroll_count = 0usize;
+    let mut craft_count = 0usize;
+
+    for point in &mut points {
+        let dist = ((point.x - SPAWN_CENTER_X).powi(2) + (point.z - SPAWN_CENTER_Z).powi(2)).sqrt();
+        if dist <= BASIC_RADIUS && basic_count < BASIC_COUNT {
+            point.pool_id = "surface_stash_basic".to_string();
+            basic_count += 1;
+        } else if dist <= SCROLL_RADIUS && scroll_count < SCROLL_COUNT {
+            point.pool_id = "surface_stash_scroll".to_string();
+            scroll_count += 1;
+        } else {
+            point.pool_id = "surface_stash_craft".to_string();
+            craft_count += 1;
+        }
+    }
+
+    // 保证 craft 够 3 个（如果靠近中心的点太多全给了 basic）
+    while craft_count < CRAFT_COUNT && !points.is_empty() {
+        // 把最远的未标记 craft 的改为 craft
+        if let Some(last) = points
+            .iter_mut()
+            .rev()
+            .find(|p| p.pool_id != "surface_stash_craft")
+        {
+            match last.pool_id.as_str() {
+                "surface_stash_basic" => basic_count = basic_count.saturating_sub(1),
+                "surface_stash_scroll" => scroll_count = scroll_count.saturating_sub(1),
+                _ => {}
+            }
+            last.pool_id = "surface_stash_craft".to_string();
+            craft_count += 1;
+        } else {
+            break;
+        }
+    }
+
+    points
+}
+
+#[allow(dead_code)]
+#[derive(Debug, Clone, PartialEq)]
+pub struct ScatteredStash {
+    pub x: f64,
+    pub z: f64,
+    pub pool_id: String,
+    pub index: usize,
+}
+
+/// 简单 splitmix64 PRNG（deterministic, 无状态）。
+#[allow(dead_code)]
+fn splitmix64(seed: u64) -> u64 {
+    let z = seed.wrapping_add(0x9E37_79B9_7F4A_7C15);
+    let z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+    let z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+    z ^ (z >> 31)
 }
 
 #[cfg(test)]
@@ -614,5 +762,87 @@ mod tests {
         };
         assert_eq!(event.village_id, "spawn:rogue_village");
         assert_eq!(event.killed_npc_count, 2);
+    }
+
+    // ——— plan-onboarding-loop-v1 P0.3: scatter_surface_stashes 测试 ———
+
+    #[test]
+    fn scatter_surface_stashes_produces_12_in_spawn_1000() {
+        let stashes = super::scatter_surface_stashes(42);
+        assert_eq!(
+            stashes.len(),
+            super::SURFACE_STASH_COUNT,
+            "scatter 应产出 {} 个遗缴，实际 {}",
+            super::SURFACE_STASH_COUNT,
+            stashes.len()
+        );
+        // 所有点都在 spawn ±1000 范围内
+        for s in &stashes {
+            let dist = ((s.x - super::SPAWN_CENTER_X).powi(2)
+                + (s.z - super::SPAWN_CENTER_Z).powi(2))
+            .sqrt();
+            assert!(
+                dist <= super::CRAFT_RADIUS + 1.0, // +1 浮点容差
+                "遗缴 #{} 距 spawn 中心 {:.0} 超过 {} 格上限",
+                s.index,
+                dist,
+                super::CRAFT_RADIUS
+            );
+        }
+        // pool_id 都是合法值
+        for s in &stashes {
+            assert!(
+                [
+                    "surface_stash_basic",
+                    "surface_stash_scroll",
+                    "surface_stash_craft"
+                ]
+                .contains(&s.pool_id.as_str()),
+                "遗缴 #{} pool_id \"{}\" 不是合法值",
+                s.index,
+                s.pool_id
+            );
+        }
+    }
+
+    #[test]
+    fn scatter_surface_stashes_min_spacing_200() {
+        let stashes = super::scatter_surface_stashes(123456);
+        for (i, a) in stashes.iter().enumerate() {
+            for (j, b) in stashes.iter().enumerate() {
+                if i == j {
+                    continue;
+                }
+                let dist = ((a.x - b.x).powi(2) + (a.z - b.z).powi(2)).sqrt();
+                assert!(
+                    dist >= super::SURFACE_STASH_MIN_DIST - 1.0, // -1 浮点容差
+                    "遗缴 #{} 与 #{} 间距 {:.1} < 最小间距 {}",
+                    i,
+                    j,
+                    dist,
+                    super::SURFACE_STASH_MIN_DIST
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn scatter_surface_stashes_deterministic() {
+        let a = super::scatter_surface_stashes(999);
+        let b = super::scatter_surface_stashes(999);
+        assert_eq!(a, b, "同 seed 的 scatter 结果应完全一致");
+    }
+
+    #[test]
+    fn surface_stash_poi_kind_str_roundtrip() {
+        assert_eq!(PoiNoviceKind::SurfaceStash.as_str(), "surface_stash");
+        assert_eq!(
+            PoiNoviceKind::try_from("surface_stash"),
+            Ok(PoiNoviceKind::SurfaceStash)
+        );
+        assert_eq!(
+            PoiNoviceKind::SurfaceStash.first_action_label(),
+            "第一次搜遗缴"
+        );
     }
 }

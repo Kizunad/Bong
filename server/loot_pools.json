@@ -58,6 +58,43 @@
         { "template_id": "scroll_woliu_heart", "weight": 1, "count": [1, 1] },
         { "template_id": "scroll_woliu_turbulence_burst", "weight": 1, "count": [1, 1] }
       ]
+    },
+    "surface_stash_basic": {
+      "rolls": [1, 2],
+      "entries": [
+        { "template_id": "crude_wood",          "weight": 30, "count": [2, 4] },
+        { "template_id": "stone_chunk",         "weight": 25, "count": [1, 3] },
+        { "template_id": "grass_fiber",         "weight": 25, "count": [3, 6] },
+        { "template_id": "spirit_grass",        "weight": 10, "count": [1, 2] },
+        { "template_id": "fengling_bone_coin",  "weight": 8,  "count": [1, 3] },
+        { "template_id": "healing_herb_bundle", "weight": 2,  "count": [1, 1] }
+      ]
+    },
+    "surface_stash_scroll": {
+      "rolls": [1, 2],
+      "entries": [
+        { "template_id": "scroll_gathering_axe_bone",      "weight": 30, "count": [1, 1] },
+        { "template_id": "scroll_gathering_pickaxe_bone",  "weight": 25, "count": [1, 1] },
+        { "template_id": "spirit_grass",                   "weight": 15, "count": [1, 2] },
+        { "template_id": "ci_she_hao",                     "weight": 15, "count": [1, 2] },
+        { "template_id": "fengling_bone_coin",             "weight": 15, "count": [2, 5] }
+      ],
+      "_note": "P1 追加: scroll_technique_sword_cleave/thrust/movement_dash"
+    },
+    "surface_stash_craft": {
+      "rolls": [1, 3],
+      "entries": [
+        { "template_id": "scroll_body_guangbo_ticao",      "weight": 12, "count": [1, 1] },
+        { "template_id": "blueprint_scroll_iron_sword",    "weight": 15, "count": [1, 1] },
+        { "template_id": "scroll_gathering_axe_iron",      "weight": 12, "count": [1, 1] },
+        { "template_id": "scroll_gathering_pickaxe_iron",  "weight": 12, "count": [1, 1] },
+        { "template_id": "hui_yuan_zhi",                   "weight": 12, "count": [1, 2] },
+        { "template_id": "ling_shui",                      "weight": 10, "count": [1, 2] },
+        { "template_id": "ci_she_hao",                     "weight": 10, "count": [1, 3] },
+        { "template_id": "ning_mai_cao",                   "weight": 7,  "count": [1, 1] },
+        { "template_id": "fengling_bone_coin",             "weight": 10, "count": [3, 8] }
+      ],
+      "_note": "P1 追加: scroll_technique_sword_parry, fragment_alchemy_hui_yuan_pill"
     }
   }
 }

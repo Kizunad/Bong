@@ -517,6 +517,8 @@ fn container_visual_kind(kind: ContainerKind) -> BongVisualKind {
         ContainerKind::Skeleton => BongVisualKind::BoneSkeleton,
         ContainerKind::StoragePouch => BongVisualKind::StoragePouch,
         ContainerKind::StoneCasket | ContainerKind::RelicCore => BongVisualKind::StoneCasket,
+        // SurfaceStash 用 DryCorpse 视觉（plan-onboarding P0.1 fallback）
+        ContainerKind::SurfaceStash => BongVisualKind::DryCorpse,
     }
 }
 
