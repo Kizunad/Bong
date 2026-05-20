@@ -1,0 +1,113 @@
+# plan-onboarding-loop-v1 P1.1 — 入门循环招式残卷 + 丹方 fragment。
+
+# ── 5 基础招式残卷 ──
+
+[[item]]
+id = "scroll_technique_sword_cleave"
+name = "《劈法残页》"
+category = "scroll"
+grid_w = 1
+grid_h = 2
+base_weight = 0.04
+rarity = "common"
+spirit_quality_initial = 0.3
+description = "残破纸页，墨迹斑驳。上面画着一个人举剑过顶劈下的分解动作。"
+[item.technique_scroll]
+skill_id = "sword.cleave"
+
+[[item]]
+id = "scroll_technique_sword_thrust"
+name = "《刺法残页》"
+category = "scroll"
+grid_w = 1
+grid_h = 2
+base_weight = 0.04
+rarity = "common"
+spirit_quality_initial = 0.3
+description = "几乎碎成两半的纸条，勉强看出一个直刺的出手轨迹。"
+[item.technique_scroll]
+skill_id = "sword.thrust"
+
+[[item]]
+id = "scroll_technique_sword_parry"
+name = "《格挡残页》"
+category = "scroll"
+grid_w = 1
+grid_h = 2
+base_weight = 0.04
+rarity = "uncommon"
+spirit_quality_initial = 0.3
+description = "泛黄的半页纸，画着横剑架住来刀的姿势。旁注写着'宁断臂不断势'。"
+[item.technique_scroll]
+skill_id = "sword.parry"
+
+[[item]]
+id = "scroll_technique_sword_infuse"
+name = "《注剑法》"
+category = "scroll"
+grid_w = 1
+grid_h = 2
+base_weight = 0.04
+rarity = "uncommon"
+spirit_quality_initial = 0.3
+description = "记述如何将真元灌入剑身的入门法诀。末尾警告'灵器方可受注，凡铁勉强一用'。"
+[item.technique_scroll]
+skill_id = "sword.infuse"
+
+[[item]]
+id = "scroll_technique_movement_dash"
+name = "《闪身步残页》"
+category = "scroll"
+grid_w = 1
+grid_h = 2
+base_weight = 0.04
+rarity = "common"
+spirit_quality_initial = 0.3
+description = "只剩几笔的残页，画着一个人侧身闪避的瞬间。脚下画了箭头。"
+[item.technique_scroll]
+skill_id = "movement.dash"
+
+# ── 2 黄阶招式残卷 ──
+
+[[item]]
+id = "scroll_technique_burst_beng_quan"
+name = "《崩拳残页》"
+category = "scroll"
+grid_w = 1
+grid_h = 2
+base_weight = 0.04
+rarity = "rare"
+spirit_quality_initial = 0.5
+description = "泛黄的绢帛，边角焦黑。画着一拳从丹田发力直击的姿势——旁注密密麻麻，大半已不可辨。"
+[item.technique_scroll]
+skill_id = "burst_meridian.beng_quan"
+
+[[item]]
+id = "scroll_technique_zhenmai_parry"
+name = "《振脉格残页》"
+category = "scroll"
+grid_w = 1
+grid_h = 2
+base_weight = 0.04
+rarity = "rare"
+spirit_quality_initial = 0.5
+description = "蜡封铜管里抽出的薄纸。描述了以经脉震荡卸力的防御法——写者笔迹颤抖，似乎在重伤时记录。"
+[item.technique_scroll]
+skill_id = "zhenmai.parry"
+
+# ── 1 丹方 fragment 残卷 ──
+
+[[item]]
+id = "fragment_alchemy_hui_yuan_pill"
+name = "《回元丹方·残》"
+category = "recipe_fragment"
+grid_w = 1
+grid_h = 2
+base_weight = 0.05
+rarity = "uncommon"
+spirit_quality_initial = 0.4
+description = "残卷只剩半页。画着一炉简单的丹方——两根回元枝、一瓢灵水，文火慢煮。"
+[item.recipe_fragment]
+recipe_id = "hui_yuan_pill_v0"
+known_stages = [0]
+max_quality_tier = 3

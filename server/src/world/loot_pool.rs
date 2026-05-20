@@ -326,6 +326,7 @@ mod tests {
                     blueprint_scroll_spec: None,
                     inscription_scroll_spec: None,
                     technique_scroll_spec: None,
+                    recipe_fragment_spec: None,
                     container_spec: None,
                 },
             );
@@ -532,5 +533,49 @@ mod tests {
             }],
         };
         assert!(bad.try_into_pool("p", path).is_err());
+    }
+
+    // ── plan-onboarding-loop-v1 P1.3: loot pool 追加测试 ──
+
+    #[test]
+    fn dry_corpse_pool_contains_axe_bone_scroll() {
+        let pools = load_loot_pool_registry().expect("loot_pools.json must parse");
+        let pool = pools.get("dry_corpse_shallow_common").unwrap();
+        assert!(
+            pool.entries
+                .iter()
+                .any(|e| e.template_id == "scroll_gathering_axe_bone"),
+            "dry_corpse_shallow_common should contain scroll_gathering_axe_bone"
+        );
+        assert!(
+            pool.entries
+                .iter()
+                .any(|e| e.template_id == "scroll_technique_burst_beng_quan"),
+            "dry_corpse_shallow_common should contain scroll_technique_burst_beng_quan"
+        );
+        assert!(
+            pool.entries
+                .iter()
+                .any(|e| e.template_id == "scroll_technique_zhenmai_parry"),
+            "dry_corpse_shallow_common should contain scroll_technique_zhenmai_parry"
+        );
+    }
+
+    #[test]
+    fn stone_casket_pool_contains_beng_quan_scroll() {
+        let pools = load_loot_pool_registry().expect("loot_pools.json must parse");
+        let pool = pools.get("stone_casket_mid").unwrap();
+        assert!(
+            pool.entries
+                .iter()
+                .any(|e| e.template_id == "scroll_technique_burst_beng_quan"),
+            "stone_casket_mid should contain scroll_technique_burst_beng_quan"
+        );
+        assert!(
+            pool.entries
+                .iter()
+                .any(|e| e.template_id == "scroll_technique_zhenmai_parry"),
+            "stone_casket_mid should contain scroll_technique_zhenmai_parry"
+        );
     }
 }

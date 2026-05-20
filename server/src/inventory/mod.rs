@@ -144,6 +144,8 @@ pub struct ItemTemplate {
     pub blueprint_scroll_spec: Option<BlueprintScrollSpec>,
     pub inscription_scroll_spec: Option<InscriptionScrollSpec>,
     pub technique_scroll_spec: Option<TechniqueScrollSpec>,
+    /// plan-onboarding-loop-v1 P1.1 — 丹方 fragment 物品规格；category=RecipeFragment 时可填。
+    pub recipe_fragment_spec: Option<RecipeFragmentSpec>,
     /// plan-backpack-equip-v1 P0 — 可装备容器规格；category=Container 时必填。
     pub container_spec: Option<ContainerSpec>,
 }
@@ -198,6 +200,15 @@ pub struct InscriptionScrollSpec {
 pub struct TechniqueScrollSpec {
     pub kind: String,
     pub skill_id: String,
+}
+
+/// plan-onboarding-loop-v1 P1.1 — 丹方 fragment 物品的模板级静态规格。
+/// TOML `[item.recipe_fragment]` 解析后存入 `ItemTemplate.recipe_fragment_spec`。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct RecipeFragmentSpec {
+    pub recipe_id: String,
+    pub known_stages: Vec<u8>,
+    pub max_quality_tier: u8,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -1358,6 +1369,9 @@ struct ItemTemplateToml {
     inscription_scroll: Option<InscriptionScrollSpecToml>,
     #[serde(default)]
     technique_scroll: Option<TechniqueScrollSpecToml>,
+    /// plan-onboarding-loop-v1 P1.1：category == "recipe_fragment" 时可填。
+    #[serde(default)]
+    recipe_fragment: Option<RecipeFragmentSpecToml>,
     /// plan-backpack-equip-v1 P0：category == "Container" 时必填，否则须缺省。
     #[serde(default)]
     container: Option<ContainerSpecToml>,
@@ -1399,6 +1413,15 @@ pub struct TechniqueScrollSpecToml {
     #[serde(default = "default_combat_technique_scroll_kind")]
     kind: String,
     skill_id: String,
+}
+
+/// plan-onboarding-loop-v1 P1.1 — TOML 层的丹方 fragment 规格块（对应 `[item.recipe_fragment]`）。
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RecipeFragmentSpecToml {
+    recipe_id: String,
+    known_stages: Vec<u8>,
+    max_quality_tier: u8,
 }
 
 /// plan-backpack-equip-v1 P0 — TOML 层的容器规格块（对应 `[item.container]`）。
@@ -1589,6 +1612,10 @@ impl ItemTemplateToml {
             .technique_scroll
             .map(|raw| parse_technique_scroll_spec(raw, source_path, id.as_str()))
             .transpose()?;
+        let recipe_fragment_spec = self
+            .recipe_fragment
+            .map(|raw| parse_recipe_fragment_spec(raw, source_path, id.as_str()))
+            .transpose()?;
 
         // plan-backpack-equip-v1 P0：container 块与 category=Container 必须一致。
         let container_spec = match (&category, self.container) {
@@ -1629,6 +1656,7 @@ impl ItemTemplateToml {
             blueprint_scroll_spec,
             inscription_scroll_spec,
             technique_scroll_spec,
+            recipe_fragment_spec,
             container_spec,
         })
     }
@@ -1703,6 +1731,37 @@ pub fn parse_technique_scroll_spec(
         ));
     }
     Ok(TechniqueScrollSpec { kind, skill_id })
+}
+
+/// plan-onboarding-loop-v1 P1.1 — 解析 TOML `[item.recipe_fragment]` 为 `RecipeFragmentSpec`。
+pub fn parse_recipe_fragment_spec(
+    raw: RecipeFragmentSpecToml,
+    source_path: &Path,
+    item_id: &str,
+) -> Result<RecipeFragmentSpec, String> {
+    let recipe_id = required_non_empty(
+        raw.recipe_id,
+        source_path,
+        &format!("item `{item_id}` recipe_fragment.recipe_id"),
+    )?;
+    if raw.known_stages.is_empty() {
+        return Err(format!(
+            "{} item `{item_id}` recipe_fragment.known_stages must not be empty",
+            source_path.display()
+        ));
+    }
+    if !(1..=3).contains(&raw.max_quality_tier) {
+        return Err(format!(
+            "{} item `{item_id}` recipe_fragment.max_quality_tier {} must be 1..=3",
+            source_path.display(),
+            raw.max_quality_tier
+        ));
+    }
+    Ok(RecipeFragmentSpec {
+        recipe_id,
+        known_stages: raw.known_stages,
+        max_quality_tier: raw.max_quality_tier,
+    })
 }
 
 fn parse_weapon_spec(
@@ -4221,6 +4280,7 @@ mod tests {
                     blueprint_scroll_spec: None,
                     inscription_scroll_spec: None,
                     technique_scroll_spec: None,
+                    recipe_fragment_spec: None,
                     container_spec: None,
                 },
             );
@@ -4254,6 +4314,7 @@ mod tests {
             blueprint_scroll_spec: None,
             inscription_scroll_spec: None,
             technique_scroll_spec: None,
+            recipe_fragment_spec: None,
             container_spec: None,
         }
     }
@@ -5062,6 +5123,7 @@ cols = 4
                 blueprint_scroll_spec: None,
                 inscription_scroll_spec: None,
                 technique_scroll_spec: None,
+                recipe_fragment_spec: None,
                 container_spec: None,
             },
         );
@@ -5125,6 +5187,7 @@ cols = 4
                 blueprint_scroll_spec: None,
                 inscription_scroll_spec: None,
                 technique_scroll_spec: None,
+                recipe_fragment_spec: None,
                 container_spec: None,
             },
         );
@@ -6848,6 +6911,7 @@ cols = 4
                 blueprint_scroll_spec: None,
                 inscription_scroll_spec: None,
                 technique_scroll_spec: None,
+                recipe_fragment_spec: None,
                 container_spec: None,
             },
         );
@@ -6919,6 +6983,7 @@ cols = 4
                 blueprint_scroll_spec: None,
                 inscription_scroll_spec: None,
                 technique_scroll_spec: None,
+                recipe_fragment_spec: None,
                 container_spec: None,
             },
         );
@@ -7219,6 +7284,7 @@ cols = 4
             blueprint_scroll_spec: None,
             inscription_scroll_spec: None,
             technique_scroll_spec: None,
+            recipe_fragment_spec: None,
             container_spec: Some(ContainerSpec {
                 rows,
                 cols,
@@ -7905,6 +7971,7 @@ cols = 4
             blueprint_scroll_spec: None,
             inscription_scroll_spec: None,
             technique_scroll_spec: None,
+            recipe_fragment_spec: None,
             container_spec: Some(ContainerSpec {
                 rows: 3,
                 cols: 3,
@@ -8326,6 +8393,7 @@ cols = 4
             blueprint_scroll_spec: None,
             inscription_scroll_spec: None,
             technique_scroll_spec: None,
+            recipe_fragment_spec: None,
             container_spec: None,
         }
     }
@@ -8350,6 +8418,7 @@ cols = 4
             blueprint_scroll_spec: None,
             inscription_scroll_spec: None,
             technique_scroll_spec: None,
+            recipe_fragment_spec: None,
             container_spec: None,
         }
     }
@@ -8519,6 +8588,149 @@ cols = 4
             container_id_to_equip_slot(""),
             None,
             "empty string should return None"
+        );
+    }
+
+    // ── plan-onboarding-loop-v1 P1.1: 入门残卷 + fragment 物品解析测试 ──
+
+    #[test]
+    fn onboarding_scroll_sword_cleave_parses() {
+        let registry = load_item_registry().expect("item registry should load");
+        let template = registry
+            .get("scroll_technique_sword_cleave")
+            .expect("scroll_technique_sword_cleave should exist in registry");
+        assert_eq!(template.category, ItemCategory::Scroll);
+        assert_eq!(template.rarity, ItemRarity::Common);
+        let spec = template
+            .technique_scroll_spec
+            .as_ref()
+            .expect("should have technique_scroll_spec");
+        assert_eq!(spec.skill_id, "sword.cleave");
+    }
+
+    #[test]
+    fn onboarding_scroll_sword_thrust_parses() {
+        let registry = load_item_registry().expect("item registry should load");
+        let template = registry
+            .get("scroll_technique_sword_thrust")
+            .expect("scroll_technique_sword_thrust should exist in registry");
+        assert_eq!(template.category, ItemCategory::Scroll);
+        let spec = template.technique_scroll_spec.as_ref().unwrap();
+        assert_eq!(spec.skill_id, "sword.thrust");
+    }
+
+    #[test]
+    fn onboarding_scroll_sword_parry_parses() {
+        let registry = load_item_registry().expect("item registry should load");
+        let template = registry
+            .get("scroll_technique_sword_parry")
+            .expect("scroll_technique_sword_parry should exist in registry");
+        assert_eq!(template.category, ItemCategory::Scroll);
+        assert_eq!(template.rarity, ItemRarity::Uncommon);
+        let spec = template.technique_scroll_spec.as_ref().unwrap();
+        assert_eq!(spec.skill_id, "sword.parry");
+    }
+
+    #[test]
+    fn onboarding_scroll_sword_infuse_parses() {
+        let registry = load_item_registry().expect("item registry should load");
+        let template = registry
+            .get("scroll_technique_sword_infuse")
+            .expect("scroll_technique_sword_infuse should exist in registry");
+        assert_eq!(template.category, ItemCategory::Scroll);
+        assert_eq!(template.rarity, ItemRarity::Uncommon);
+        let spec = template.technique_scroll_spec.as_ref().unwrap();
+        assert_eq!(spec.skill_id, "sword.infuse");
+    }
+
+    #[test]
+    fn onboarding_scroll_movement_dash_parses() {
+        let registry = load_item_registry().expect("item registry should load");
+        let template = registry
+            .get("scroll_technique_movement_dash")
+            .expect("scroll_technique_movement_dash should exist in registry");
+        assert_eq!(template.category, ItemCategory::Scroll);
+        assert_eq!(template.rarity, ItemRarity::Common);
+        let spec = template.technique_scroll_spec.as_ref().unwrap();
+        assert_eq!(spec.skill_id, "movement.dash");
+    }
+
+    #[test]
+    fn existing_scroll_body_guangbo_ticao_in_registry() {
+        let registry = load_item_registry().expect("item registry should load");
+        let template = registry
+            .get("scroll_body_guangbo_ticao")
+            .expect("scroll_body_guangbo_ticao should exist in registry (body_scrolls.toml)");
+        assert_eq!(template.category, ItemCategory::Scroll);
+        let spec = template.technique_scroll_spec.as_ref().unwrap();
+        assert_eq!(spec.skill_id, "body.guangbo_ticao");
+    }
+
+    #[test]
+    fn onboarding_scroll_burst_beng_quan_parses() {
+        let registry = load_item_registry().expect("item registry should load");
+        let template = registry
+            .get("scroll_technique_burst_beng_quan")
+            .expect("scroll_technique_burst_beng_quan should exist in registry");
+        assert_eq!(template.category, ItemCategory::Scroll);
+        assert_eq!(template.rarity, ItemRarity::Rare);
+        let spec = template.technique_scroll_spec.as_ref().unwrap();
+        assert_eq!(spec.skill_id, "burst_meridian.beng_quan");
+    }
+
+    #[test]
+    fn onboarding_scroll_zhenmai_parry_parses() {
+        let registry = load_item_registry().expect("item registry should load");
+        let template = registry
+            .get("scroll_technique_zhenmai_parry")
+            .expect("scroll_technique_zhenmai_parry should exist in registry");
+        assert_eq!(template.category, ItemCategory::Scroll);
+        assert_eq!(template.rarity, ItemRarity::Rare);
+        let spec = template.technique_scroll_spec.as_ref().unwrap();
+        assert_eq!(spec.skill_id, "zhenmai.parry");
+    }
+
+    #[test]
+    fn fragment_alchemy_hui_yuan_pill_parses() {
+        let registry = load_item_registry().expect("item registry should load");
+        let template = registry
+            .get("fragment_alchemy_hui_yuan_pill")
+            .expect("fragment_alchemy_hui_yuan_pill should exist in registry");
+        assert_eq!(template.category, ItemCategory::RecipeFragment);
+        assert_eq!(template.rarity, ItemRarity::Uncommon);
+        let spec = template
+            .recipe_fragment_spec
+            .as_ref()
+            .expect("should have recipe_fragment_spec");
+        assert_eq!(spec.recipe_id, "hui_yuan_pill_v0");
+        assert_eq!(spec.known_stages, vec![0]);
+        assert_eq!(spec.max_quality_tier, 3);
+    }
+
+    #[test]
+    fn recipe_fragment_spec_toml_roundtrip() {
+        let original = RecipeFragmentSpec {
+            recipe_id: "hui_yuan_pill_v0".to_string(),
+            known_stages: vec![0],
+            max_quality_tier: 3,
+        };
+        let json = serde_json::to_string(&original).expect("should serialize");
+        let deserialized: RecipeFragmentSpec =
+            serde_json::from_str(&json).expect("should deserialize");
+        assert_eq!(
+            original, deserialized,
+            "RecipeFragmentSpec roundtrip failed"
+        );
+    }
+
+    #[test]
+    fn scroll_sword_cleave_skill_id_matches_definition() {
+        // Verify that the skill_id in the scroll matches a valid technique_definition
+        use crate::cultivation::known_techniques::technique_definition;
+        let def = technique_definition("sword.cleave");
+        assert!(
+            def.is_some(),
+            "sword.cleave should be a registered technique definition"
         );
     }
 }

@@ -39,6 +39,7 @@ pub mod contamination;
 pub mod dead_zone;
 pub mod death_hooks;
 pub mod dugu;
+pub mod first_hit_dash;
 pub mod forging;
 pub mod full_power_strike;
 pub mod generic_talent;
