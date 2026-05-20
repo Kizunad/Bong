@@ -388,4 +388,11 @@ pub fn register(app: &mut App) {
             .in_set(CombatSystemSet::Emit)
             .after(style_telemetry::collect_hunyuan_pvp_telemetry),
     );
+    app.insert_resource(style_telemetry::StyleUsageCounter::default());
+    app.add_systems(
+        Update,
+        style_telemetry::track_style_tendency
+            .in_set(CombatSystemSet::Emit)
+            .after(style_telemetry::collect_hunyuan_pvp_telemetry),
+    );
 }
