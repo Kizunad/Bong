@@ -2,12 +2,17 @@ package com.bong.client.armor;
 
 import org.junit.jupiter.api.Test;
 
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class ArmorModelRegistryTest {
+    private static final Path RESOURCES = Path.of("src", "main", "resources");
 
     @Test
     void armorModelRegistryIronHelmetRegistered() {
@@ -23,6 +28,8 @@ class ArmorModelRegistryTest {
             "unknown template_id should return empty Optional");
         assertTrue(ArmorModelRegistry.get(null).isEmpty(),
             "null template_id should return empty Optional");
+        assertTrue(ArmorModelRegistry.get("  ").isEmpty(),
+            "whitespace-only template_id should return empty Optional");
     }
 
     @Test
@@ -75,5 +82,37 @@ class ArmorModelRegistryTest {
         var url = getClass().getClassLoader().getResource(
             "assets/bong/models/armor/iron_chestplate/iron_chestplate.obj");
         assertNotNull(url, "iron_chestplate.obj should exist in resources");
+    }
+
+    @Test
+    void registrySizeIsFourIronPieces() {
+        assertEquals(4, ArmorModelRegistry.size(),
+            "ArmorModelRegistry should contain exactly 4 iron armor pieces");
+    }
+
+    @Test
+    void allRegisteredModelsHaveObjMtlTextureAndJson() throws IOException {
+        String[] dirs = {"iron_helmet", "iron_chestplate", "iron_leggings", "iron_boots"};
+        for (String dir : dirs) {
+            Path modelDir = RESOURCES.resolve("assets/bong/models/armor/" + dir);
+            assertTrue(Files.isRegularFile(modelDir.resolve(dir + ".obj")),
+                dir + ".obj missing");
+            assertTrue(Files.isRegularFile(modelDir.resolve(dir + ".mtl")),
+                dir + ".mtl missing");
+            assertTrue(Files.isRegularFile(modelDir.resolve(dir + ".json")),
+                dir + ".json (SML override) missing");
+
+            Path texDir = RESOURCES.resolve("assets/bong/textures/armor/" + dir);
+            assertTrue(Files.isRegularFile(texDir.resolve("0.png")),
+                dir + "/0.png texture missing");
+        }
+    }
+
+    @Test
+    void allSlotsRepresented() {
+        assertEquals("head",  ArmorModelRegistry.get("armor_iron_helmet").get().slot());
+        assertEquals("chest", ArmorModelRegistry.get("armor_iron_chestplate").get().slot());
+        assertEquals("legs",  ArmorModelRegistry.get("armor_iron_leggings").get().slot());
+        assertEquals("feet",  ArmorModelRegistry.get("armor_iron_boots").get().slot());
     }
 }
