@@ -110,9 +110,34 @@ class ArmorModelRegistryTest {
 
     @Test
     void allSlotsRepresented() {
-        assertEquals("head",  ArmorModelRegistry.get("armor_iron_helmet").get().slot());
-        assertEquals("chest", ArmorModelRegistry.get("armor_iron_chestplate").get().slot());
-        assertEquals("legs",  ArmorModelRegistry.get("armor_iron_leggings").get().slot());
-        assertEquals("feet",  ArmorModelRegistry.get("armor_iron_boots").get().slot());
+        var helmet = ArmorModelRegistry.get("armor_iron_helmet");
+        assertTrue(helmet.isPresent(), "armor_iron_helmet should be registered");
+        assertEquals("head", helmet.get().slot(), "iron helmet slot mismatch");
+
+        var chestplate = ArmorModelRegistry.get("armor_iron_chestplate");
+        assertTrue(chestplate.isPresent(), "armor_iron_chestplate should be registered");
+        assertEquals("chest", chestplate.get().slot(), "iron chestplate slot mismatch");
+
+        var leggings = ArmorModelRegistry.get("armor_iron_leggings");
+        assertTrue(leggings.isPresent(), "armor_iron_leggings should be registered");
+        assertEquals("legs", leggings.get().slot(), "iron leggings slot mismatch");
+
+        var boots = ArmorModelRegistry.get("armor_iron_boots");
+        assertTrue(boots.isPresent(), "armor_iron_boots should be registered");
+        assertEquals("feet", boots.get().slot(), "iron boots slot mismatch");
+    }
+
+    @Test
+    void modelPathsReturnsAllFourIronPieces() {
+        var paths = ArmorModelRegistry.modelPaths();
+        assertEquals(4, paths.size(), "modelPaths() should return 4 iron armor model paths");
+        assertTrue(paths.stream().anyMatch(p -> p.contains("iron_helmet")),
+            "modelPaths() should include iron_helmet");
+        assertTrue(paths.stream().anyMatch(p -> p.contains("iron_chestplate")),
+            "modelPaths() should include iron_chestplate");
+        assertTrue(paths.stream().anyMatch(p -> p.contains("iron_leggings")),
+            "modelPaths() should include iron_leggings");
+        assertTrue(paths.stream().anyMatch(p -> p.contains("iron_boots")),
+            "modelPaths() should include iron_boots");
     }
 }

@@ -67,9 +67,10 @@ public final class ArmorFeatureRenderer
             Optional<ArmorModelRegistry.ArmorModelSpec> spec = ArmorModelRegistry.get(item.itemId());
             if (spec.isEmpty()) continue;
 
+            ArmorModelRegistry.ArmorModelSpec armorSpec = spec.get();
             // TODO: wire SML baked model lookup + OBJ rendering when GL context is available
             LOGGER.debug("armor_obj_render: slot={} template={} model={}",
-                slot, spec.get().templateId(), spec.get().modelPath());
+                slot, armorSpec.templateId(), armorSpec.modelPath());
         }
     }
 }
