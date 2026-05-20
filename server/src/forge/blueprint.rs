@@ -427,6 +427,7 @@ pub fn is_allowed_item_material(material: &str) -> bool {
             | "fake_spirit_hide"
             | "feng_he_gu"
             | "yi_shou_gu"
+            | "grass_fiber"
             | "xuan_gen_wei"
             | "yuan_ni_hong_yu"
             | "lie_yuan_tai"
@@ -471,8 +472,8 @@ mod tests {
                 .expect("assets/forge/blueprints should load");
         assert_eq!(
             reg.len(),
-            15,
-            "expected 3 weapon + 7 tool + 1 spiritwood + 4 iron armor blueprint"
+            20,
+            "expected 3 weapon + 7 tool + 1 spiritwood + 4 iron armor + 4 bone armor + 1 bone dagger blueprint"
         );
         assert!(reg.get("iron_sword_v0").is_some());
         assert!(reg.get("qing_feng_v0").is_some());
@@ -806,5 +807,161 @@ mod tests {
             3,
             "plan-mineral-v2 P2: 稀铁炉可承接枯金"
         );
+    }
+
+    // ─── bone armor & dagger blueprint tests (plan-depth-loop-v1 P4) ───
+
+    #[test]
+    fn bone_helmet_v0_blueprint_loads() {
+        let reg = BlueprintRegistry::load_dir(DEFAULT_BLUEPRINTS_DIR).unwrap();
+        let bp = reg
+            .get("bone_helmet_v0")
+            .expect("bone_helmet_v0 should load");
+        assert_eq!(bp.name, "骨兜鍪");
+        assert_eq!(bp.station_tier_min, 1);
+        assert_eq!(bp.tier_cap, 1);
+    }
+
+    #[test]
+    fn bone_chestplate_v0_blueprint_loads() {
+        let reg = BlueprintRegistry::load_dir(DEFAULT_BLUEPRINTS_DIR).unwrap();
+        assert!(
+            reg.get("bone_chestplate_v0").is_some(),
+            "bone_chestplate_v0 should be in registry"
+        );
+    }
+
+    #[test]
+    fn bone_dagger_v0_blueprint_loads() {
+        let reg = BlueprintRegistry::load_dir(DEFAULT_BLUEPRINTS_DIR).unwrap();
+        let bp = reg
+            .get("bone_dagger_v0")
+            .expect("bone_dagger_v0 should load");
+        assert_eq!(bp.name, "骨匕首");
+        assert_eq!(bp.station_tier_min, 1);
+        let Some(StepSpec::Billet { profile }) = bp.steps.first() else {
+            panic!("bone_dagger first step should be billet");
+        };
+        assert_eq!(profile.required.len(), 2, "bone dagger needs yi_shou_gu + grass_fiber");
+        assert!(
+            profile.required.iter().any(|s| s.material == "yi_shou_gu" && s.count == 2),
+            "bone dagger should need 2 yi_shou_gu"
+        );
+        assert!(
+            profile.required.iter().any(|s| s.material == "grass_fiber" && s.count == 1),
+            "bone dagger should need 1 grass_fiber"
+        );
+    }
+
+    #[test]
+    fn bone_armor_blueprints_produce_correct_outcomes() {
+        let reg = BlueprintRegistry::load_dir(DEFAULT_BLUEPRINTS_DIR).unwrap();
+        for (bp_id, weapon_id) in [
+            ("bone_helmet_v0", "armor_bone_helmet"),
+            ("bone_chestplate_v0", "armor_bone_chestplate"),
+            ("bone_leggings_v0", "armor_bone_leggings"),
+            ("bone_boots_v0", "armor_bone_boots"),
+        ] {
+            let bp = reg.get(bp_id).unwrap_or_else(|| panic!("missing {bp_id}"));
+            assert_eq!(
+                bp.outcomes.perfect.as_ref().map(|o| o.weapon.as_str()),
+                Some(weapon_id),
+                "{bp_id} perfect outcome should produce {weapon_id}"
+            );
+            let explode = bp.outcomes.explode.as_ref().unwrap();
+            assert!(
+                (explode.damage - 3.0).abs() < f32::EPSILON,
+                "{bp_id} explode damage should be 3.0 (lower than iron), got {}",
+                explode.damage
+            );
+            assert!(
+                (explode.station_wear - 0.01).abs() < f32::EPSILON,
+                "{bp_id} station_wear should be 0.01 (lower than iron), got {}",
+                explode.station_wear
+            );
+        }
+    }
+
+    #[test]
+    fn bone_helmet_v0_needs_yi_shou_gu_x2() {
+        let reg = BlueprintRegistry::load_dir(DEFAULT_BLUEPRINTS_DIR).unwrap();
+        let bp = reg.get("bone_helmet_v0").unwrap();
+        let Some(StepSpec::Billet { profile }) = bp.steps.first() else {
+            panic!("bone_helmet first step should be billet");
+        };
+        assert_eq!(profile.required.len(), 1);
+        assert_eq!(profile.required[0].material, "yi_shou_gu");
+        assert_eq!(profile.required[0].count, 2);
+    }
+
+    #[test]
+    fn bone_chestplate_v0_needs_yi_shou_gu_x4() {
+        let reg = BlueprintRegistry::load_dir(DEFAULT_BLUEPRINTS_DIR).unwrap();
+        let bp = reg.get("bone_chestplate_v0").unwrap();
+        let Some(StepSpec::Billet { profile }) = bp.steps.first() else {
+            panic!("bone_chestplate first step should be billet");
+        };
+        assert_eq!(
+            profile.required.len(), 1,
+            "bone_chestplate_v0 should have exactly 1 required material, got {}",
+            profile.required.len()
+        );
+        assert_eq!(
+            profile.required[0].material, "yi_shou_gu",
+            "bone chestplate material should be yi_shou_gu, got {}",
+            profile.required[0].material
+        );
+        assert_eq!(
+            profile.required[0].count, 4,
+            "bone chestplate is the biggest piece, needs 4 yi_shou_gu"
+        );
+    }
+
+    #[test]
+    fn bone_dagger_v0_outcome_quality_coefficients() {
+        let reg = BlueprintRegistry::load_dir(DEFAULT_BLUEPRINTS_DIR).unwrap();
+        let bp = reg.get("bone_dagger_v0").unwrap();
+        let perfect = bp.outcomes.perfect.as_ref().unwrap();
+        assert!(
+            (perfect.quality - 1.0).abs() < f32::EPSILON,
+            "bone_dagger perfect quality should be 1.0, got {}",
+            perfect.quality
+        );
+        let good = bp.outcomes.good.as_ref().unwrap();
+        assert!(
+            (good.quality - 0.8).abs() < f32::EPSILON,
+            "bone_dagger good quality should be 0.8, got {}",
+            good.quality
+        );
+        let flawed = bp.outcomes.flawed.as_ref().unwrap();
+        assert!(
+            (flawed.quality - 0.5).abs() < f32::EPSILON,
+            "bone_dagger flawed quality should be 0.5, got {}",
+            flawed.quality
+        );
+    }
+
+    #[test]
+    fn bone_armor_blueprint_scrolls_parse_and_link_correctly() {
+        let item_reg = crate::inventory::load_item_registry().expect("item registry should load");
+        for (item_id, blueprint_id) in [
+            ("blueprint_scroll_bone_helmet", "bone_helmet_v0"),
+            ("blueprint_scroll_bone_chestplate", "bone_chestplate_v0"),
+            ("blueprint_scroll_bone_leggings", "bone_leggings_v0"),
+            ("blueprint_scroll_bone_boots", "bone_boots_v0"),
+        ] {
+            let item = item_reg
+                .get(item_id)
+                .unwrap_or_else(|| panic!("expected {item_id} in item registry"));
+            let scroll = item
+                .blueprint_scroll_spec
+                .as_ref()
+                .unwrap_or_else(|| panic!("expected blueprint_scroll_spec for {item_id}"));
+            assert_eq!(
+                scroll.blueprint_id, blueprint_id,
+                "{item_id} should map to forge blueprint {blueprint_id}, got {}",
+                scroll.blueprint_id
+            );
+        }
     }
 }

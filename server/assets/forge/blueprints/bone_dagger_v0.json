@@ -1,0 +1,26 @@
+{
+  "id": "bone_dagger_v0",
+  "name": "骨匕首",
+  "station_tier_min": 1,
+  "tier_cap": 1,
+  "steps": [
+    {
+      "kind": "billet",
+      "profile": {
+        "required": [
+          { "material": "yi_shou_gu", "count": 2 },
+          { "material": "grass_fiber", "count": 1 }
+        ],
+        "optional_carriers": [],
+        "tolerance": { "count_miss": 0 }
+      }
+    }
+  ],
+  "outcomes": {
+    "perfect": { "weapon": "bone_dagger", "quality": 1.0 },
+    "good":    { "weapon": "bone_dagger", "quality": 0.8 },
+    "flawed":  { "weapon": "bone_dagger", "quality": 0.5 },
+    "waste":   null,
+    "explode": { "damage": 3.0, "station_wear": 0.01 }
+  }
+}

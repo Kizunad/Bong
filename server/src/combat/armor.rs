@@ -407,7 +407,7 @@ mod tests {
             .get("fake_spirit_hide")
             .expect("fake_spirit_hide armor profile should be loaded from blueprint JSON");
 
-        assert_eq!(registry.len(), 8);
+        assert_eq!(registry.len(), 12);
         assert_eq!(profile.slot, EquipSlotV1::Chest);
         assert_eq!(
             profile.body_coverage,
@@ -416,5 +416,72 @@ mod tests {
         assert_eq!(profile.kind_mitigation.get(&WoundKind::Cut), Some(&0.25));
         assert_eq!(profile.durability_max, 10);
         assert_eq!(profile.broken_multiplier, 0.3);
+    }
+
+    // ─── bone armor profile tests (plan-depth-loop-v1 P4) ───
+
+    #[test]
+    fn bone_armor_profile_loads_from_json() {
+        let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join(DEFAULT_ARMOR_PROFILES_DIR);
+        let registry = ArmorProfileRegistry::load_dir(dir).expect("load armor profiles");
+        for (id, slot, coverage) in [
+            ("armor_bone_helmet", EquipSlotV1::Head, vec![BodyPart::Head]),
+            (
+                "armor_bone_chestplate",
+                EquipSlotV1::Chest,
+                vec![BodyPart::Chest, BodyPart::Abdomen],
+            ),
+            (
+                "armor_bone_leggings",
+                EquipSlotV1::Legs,
+                vec![BodyPart::LegL, BodyPart::LegR],
+            ),
+            (
+                "armor_bone_boots",
+                EquipSlotV1::Feet,
+                vec![BodyPart::LegL, BodyPart::LegR],
+            ),
+        ] {
+            let profile = registry
+                .get(id)
+                .unwrap_or_else(|| panic!("{id} should be loaded"));
+            assert_eq!(profile.slot, slot, "{id} slot mismatch");
+            assert_eq!(profile.body_coverage, coverage, "{id} body_coverage mismatch");
+            assert_eq!(
+                profile.durability_max, 80,
+                "{id} durability_max should be 80 per mundane.rs Bone spec"
+            );
+            assert!(
+                (profile.broken_multiplier - 0.3).abs() < f32::EPSILON,
+                "{id} broken_multiplier should be 0.3"
+            );
+        }
+    }
+
+    #[test]
+    fn bone_helmet_mitigation_cut_0_15() {
+        let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join(DEFAULT_ARMOR_PROFILES_DIR);
+        let registry = ArmorProfileRegistry::load_dir(dir).unwrap();
+        let profile = registry.get("armor_bone_helmet").unwrap();
+        assert_eq!(
+            profile.kind_mitigation.get(&WoundKind::Cut),
+            Some(&0.15),
+            "bone helmet cut mitigation should be exactly 0.15 per plan spec"
+        );
+        assert_eq!(
+            profile.kind_mitigation.get(&WoundKind::Concussion),
+            Some(&0.15),
+            "bone helmet concussion mitigation should be 0.15"
+        );
+        assert_eq!(
+            profile.kind_mitigation.get(&WoundKind::Pierce),
+            Some(&0.20),
+            "bone helmet pierce mitigation should be 0.20"
+        );
+        assert_eq!(
+            profile.kind_mitigation.get(&WoundKind::Blunt),
+            Some(&0.10),
+            "bone helmet blunt mitigation should be 0.10"
+        );
     }
 }

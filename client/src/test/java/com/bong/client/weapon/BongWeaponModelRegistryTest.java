@@ -65,6 +65,70 @@ class BongWeaponModelRegistryTest {
     }
 
     @Test
+    void toolModelRegistryAxeBoneRegistered() {
+        assertTrue(BongWeaponModelRegistry.get("axe_bone").isPresent(),
+            "axe_bone should be registered in BongWeaponModelRegistry");
+        BongWeaponModelRegistry.Entry entry = BongWeaponModelRegistry.get("axe_bone").orElseThrow();
+        assertEquals("item/wooden_axe", entry.vanillaModelPath(),
+            "axe_bone vanilla model path should be item/wooden_axe");
+        assertEquals("bong:models/item/axe_bone/axe_bone.obj", entry.bongObjModelPath(),
+            "axe_bone bong OBJ path mismatch");
+    }
+
+    @Test
+    void toolModelRegistryPickaxeIronRegistered() {
+        assertTrue(BongWeaponModelRegistry.get("pickaxe_iron").isPresent(),
+            "pickaxe_iron should be registered in BongWeaponModelRegistry");
+        BongWeaponModelRegistry.Entry entry = BongWeaponModelRegistry.get("pickaxe_iron").orElseThrow();
+        assertEquals("item/iron_pickaxe", entry.vanillaModelPath(),
+            "pickaxe_iron vanilla model path should be item/iron_pickaxe");
+        assertEquals("bong:models/item/pickaxe_iron/pickaxe_iron.obj", entry.bongObjModelPath(),
+            "pickaxe_iron bong OBJ path mismatch");
+    }
+
+    @Test
+    void axeBoneObjResourceExists() {
+        var url = getClass().getClassLoader().getResource(
+            "assets/bong/models/item/axe_bone/axe_bone.obj");
+        assertTrue(url != null, "axe_bone.obj should exist in resources");
+    }
+
+    @Test
+    void pickaxeIronObjResourceExists() {
+        var url = getClass().getClassLoader().getResource(
+            "assets/bong/models/item/pickaxe_iron/pickaxe_iron.obj");
+        assertTrue(url != null, "pickaxe_iron.obj should exist in resources");
+    }
+
+    @Test
+    void toolResourcePathsExistAndHostJsonPointsAtRegistryObj() throws IOException {
+        for (String templateId : BongWeaponModelRegistry.TOOL_TEMPLATE_IDS) {
+            assertTrue(BongWeaponModelRegistry.get(templateId).isPresent(),
+                "tool " + templateId + " should be registered");
+            BongWeaponModelRegistry.Entry entry = BongWeaponModelRegistry.get(templateId).orElseThrow();
+            JsonObject hostJson = readHostJson(entry);
+
+            assertEquals("sml:builtin/obj", hostJson.get("parent").getAsString(), templateId + " host parent");
+            assertEquals(entry.bongObjModelPath(), hostJson.get("model").getAsString(), templateId + " host model");
+            assertTrue(Files.isRegularFile(bongResourcePath(entry.bongObjModelPath())), templateId + " OBJ missing");
+            assertTrue(Files.isRegularFile(bongResourcePath(mtlPath(entry.bongObjModelPath()))), templateId + " MTL missing");
+            assertTrue(Files.isDirectory(textureDir(templateId)), templateId + " texture dir missing");
+            assertTrue(hasPngTexture(textureDir(templateId)), templateId + " texture dir has no PNG");
+        }
+    }
+
+    @Test
+    void toolTemplateIdsSetMatchesRegisteredTools() {
+        Set<String> expected = Set.of("axe_bone", "pickaxe_bone", "axe_iron", "pickaxe_iron");
+        assertEquals(expected, BongWeaponModelRegistry.TOOL_TEMPLATE_IDS,
+            "expected TOOL_TEMPLATE_IDS=" + expected + ", actual=" + BongWeaponModelRegistry.TOOL_TEMPLATE_IDS);
+        for (String templateId : BongWeaponModelRegistry.TOOL_TEMPLATE_IDS) {
+            assertTrue(BongWeaponModelRegistry.get(templateId).isPresent(),
+                "expected " + templateId + " in registry because it's in TOOL_TEMPLATE_IDS, actual isPresent=false");
+        }
+    }
+
+    @Test
     void vanillaModelPathSetIncludesOnlyObjBackedHosts() {
         Set<String> paths = BongWeaponModelRegistry.vanillaModelPaths();
 

@@ -29,6 +29,11 @@ public final class ArmorModelRegistry {
         register("armor_iron_leggings", "legs", "iron_leggings");
         register("armor_iron_boots", "feet", "iron_boots");
 
+        register("armor_bone_helmet", "head", "bone_helmet");
+        register("armor_bone_chestplate", "chest", "bone_chestplate");
+        register("armor_bone_leggings", "legs", "bone_leggings");
+        register("armor_bone_boots", "feet", "bone_boots");
+
         MODEL_PATHS = REGISTRY.values().stream()
             .map(ArmorModelSpec::modelPath)
             .collect(Collectors.toUnmodifiableSet());

@@ -1,0 +1,15 @@
+{
+  "template_id": "armor_bone_chestplate",
+  "profile": {
+    "slot": "chest",
+    "body_coverage": ["chest", "abdomen"],
+    "kind_mitigation": {
+      "cut": 0.25,
+      "blunt": 0.15,
+      "pierce": 0.30,
+      "concussion": 0.20
+    },
+    "durability_max": 80,
+    "broken_multiplier": 0.3
+  }
+}

@@ -36,6 +36,13 @@ public final class BongWeaponModelRegistry {
         "flying_sword_feixuan"
     );
 
+    public static final Set<String> TOOL_TEMPLATE_IDS = Set.of(
+        "axe_bone",
+        "pickaxe_bone",
+        "axe_iron",
+        "pickaxe_iron"
+    );
+
     private static final Map<String, Entry> ENTRIES;
     private static final Set<String> VANILLA_MODEL_PATHS;
 
@@ -100,6 +107,30 @@ public final class BongWeaponModelRegistry {
             () -> Items.DIAMOND_SWORD,
             "item/diamond_sword",
             "bong:models/item/flying_sword_feixuan/flying_sword_feixuan.obj"
+        ));
+        entries.put("axe_bone", new Entry(
+            "axe_bone",
+            () -> Items.WOODEN_AXE,
+            "item/wooden_axe",
+            "bong:models/item/axe_bone/axe_bone.obj"
+        ));
+        entries.put("pickaxe_bone", new Entry(
+            "pickaxe_bone",
+            () -> Items.WOODEN_PICKAXE,
+            "item/wooden_pickaxe",
+            "bong:models/item/pickaxe_bone/pickaxe_bone.obj"
+        ));
+        entries.put("axe_iron", new Entry(
+            "axe_iron",
+            () -> Items.IRON_AXE,
+            "item/iron_axe",
+            "bong:models/item/axe_iron/axe_iron.obj"
+        ));
+        entries.put("pickaxe_iron", new Entry(
+            "pickaxe_iron",
+            () -> Items.IRON_PICKAXE,
+            "item/iron_pickaxe",
+            "bong:models/item/pickaxe_iron/pickaxe_iron.obj"
         ));
         ENTRIES = Collections.unmodifiableMap(entries);
         VANILLA_MODEL_PATHS = ENTRIES.values().stream()

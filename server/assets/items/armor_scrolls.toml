@@ -53,3 +53,59 @@ description = "铁靴展开图。画着铆钉位置——底子厚，踩什么�
 
 [item.blueprint_scroll]
 blueprint_id = "iron_boots_v0"
+
+[[item]]
+id = "blueprint_scroll_bone_helmet"
+name = "锻造图·骨兜鍪"
+category = "scroll"
+grid_w = 1
+grid_h = 2
+base_weight = 0.05
+rarity = "uncommon"
+spirit_quality_initial = 0.3
+description = "兽骨拼接的兜鍪展开图。画法粗犷——蛮荒风格。"
+
+[item.blueprint_scroll]
+blueprint_id = "bone_helmet_v0"
+
+[[item]]
+id = "blueprint_scroll_bone_chestplate"
+name = "锻造图·骨胸甲"
+category = "scroll"
+grid_w = 1
+grid_h = 2
+base_weight = 0.05
+rarity = "uncommon"
+spirit_quality_initial = 0.3
+description = "骨片互扣的胸甲蓝图。缝隙间夹着干草——防不住箭，挡得住爪。"
+
+[item.blueprint_scroll]
+blueprint_id = "bone_chestplate_v0"
+
+[[item]]
+id = "blueprint_scroll_bone_leggings"
+name = "锻造图·骨腿甲"
+category = "scroll"
+grid_w = 1
+grid_h = 2
+base_weight = 0.05
+rarity = "uncommon"
+spirit_quality_initial = 0.3
+description = "两段骨片绑腿的做法。图上标着筋绳走向——简陋但实用。"
+
+[item.blueprint_scroll]
+blueprint_id = "bone_leggings_v0"
+
+[[item]]
+id = "blueprint_scroll_bone_boots"
+name = "锻造图·骨靴"
+category = "scroll"
+grid_w = 1
+grid_h = 2
+base_weight = 0.05
+rarity = "uncommon"
+spirit_quality_initial = 0.3
+description = "兽骨削成的靴底图纸。比草鞋硬——踩碎石不心疼。"
+
+[item.blueprint_scroll]
+blueprint_id = "bone_boots_v0"
