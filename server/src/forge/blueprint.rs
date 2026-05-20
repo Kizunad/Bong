@@ -1117,7 +1117,9 @@ mod tests {
             "bone_leggings_v0",
             "bone_boots_v0",
         ] {
-            let bp = reg.get(bp_id).unwrap();
+            let bp = reg
+                .get(bp_id)
+                .unwrap_or_else(|| panic!("expected blueprint {bp_id} in registry"));
             let Some(StepSpec::Billet { profile }) = bp.steps.first() else {
                 panic!("{bp_id} first step should be billet");
             };
