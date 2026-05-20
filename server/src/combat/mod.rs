@@ -330,6 +330,13 @@ pub fn register(app: &mut App) {
             .in_set(CombatSystemSet::Resolve)
             .after(resolve::resolve_attack_intents),
     );
+    // plan-onboarding-loop-v1 P1.2: 首次受击自学闪身步。
+    app.add_systems(
+        Update,
+        crate::cultivation::first_hit_dash::first_hit_dash_insight
+            .in_set(CombatSystemSet::Emit)
+            .after(resolve::resolve_attack_intents),
+    );
     app.add_systems(
         Update,
         player_attack::handle_player_attack.in_set(CombatSystemSet::Intent),
