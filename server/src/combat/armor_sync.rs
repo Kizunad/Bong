@@ -48,6 +48,16 @@ pub(crate) fn build_defense_profile_from_inventory(
     profile
 }
 
+#[allow(dead_code)]
+pub(crate) fn effective_durability(
+    profile: &crate::combat::armor::ArmorProfile,
+    item: &crate::inventory::ItemInstance,
+) -> f32 {
+    let base = profile.durability_max as f32;
+    let quality_mult = item.forge_quality.unwrap_or(0.5);
+    base * (0.7 + 0.6 * quality_mult)
+}
+
 /// plan-armor-v1 §1.3：每当装备变化，重新聚合护甲二维矩阵。
 ///
 /// 聚合规则：同 `(BodyPart, WoundKind)` 多件覆盖时取最大，不叠加。
@@ -200,6 +210,68 @@ mod tests {
                 .defense_profile
                 .get(&(BodyPart::Chest, WoundKind::Cut)),
             Some(&0.15)
+        );
+    }
+
+    fn make_armor_profile(durability_max: u32) -> ArmorProfile {
+        ArmorProfile {
+            slot: EquipSlotV1::Head,
+            body_coverage: vec![BodyPart::Head],
+            kind_mitigation: HashMap::from([(WoundKind::Cut, 0.45)]),
+            durability_max,
+            broken_multiplier: 0.3,
+        }
+    }
+
+    #[test]
+    fn effective_durability_scales_with_forge_quality() {
+        let profile = make_armor_profile(280);
+        let mut item = make_item(100);
+        item.forge_quality = Some(0.5);
+        let eff = super::effective_durability(&profile, &item);
+        let expected = 280.0 * (0.7 + 0.6 * 0.5);
+        assert!(
+            (eff - expected).abs() < 0.01,
+            "quality=0.5 → effective_durability should be {expected}, got {eff}"
+        );
+    }
+
+    #[test]
+    fn effective_durability_quality_0_gives_0_7x() {
+        let profile = make_armor_profile(280);
+        let mut item = make_item(101);
+        item.forge_quality = Some(0.0);
+        let eff = super::effective_durability(&profile, &item);
+        let expected = 280.0 * 0.7;
+        assert!(
+            (eff - expected).abs() < 0.01,
+            "quality=0.0 → 0.7× base → {expected}, got {eff}"
+        );
+    }
+
+    #[test]
+    fn effective_durability_quality_1_gives_1_3x() {
+        let profile = make_armor_profile(280);
+        let mut item = make_item(102);
+        item.forge_quality = Some(1.0);
+        let eff = super::effective_durability(&profile, &item);
+        let expected = 280.0 * 1.3;
+        assert!(
+            (eff - expected).abs() < 0.01,
+            "quality=1.0 → 1.3× base → {expected}, got {eff}"
+        );
+    }
+
+    #[test]
+    fn effective_durability_none_quality_defaults_to_0_5() {
+        let profile = make_armor_profile(280);
+        let item = make_item(103);
+        assert!(item.forge_quality.is_none());
+        let eff = super::effective_durability(&profile, &item);
+        let expected = 280.0 * (0.7 + 0.6 * 0.5);
+        assert!(
+            (eff - expected).abs() < 0.01,
+            "None forge_quality defaults to 0.5 → {expected}, got {eff}"
         );
     }
 }

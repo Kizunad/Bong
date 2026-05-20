@@ -471,8 +471,8 @@ mod tests {
                 .expect("assets/forge/blueprints should load");
         assert_eq!(
             reg.len(),
-            11,
-            "expected 3 weapon + 7 tool + 1 spiritwood blueprint"
+            15,
+            "expected 3 weapon + 7 tool + 1 spiritwood + 4 iron armor blueprint"
         );
         assert!(reg.get("iron_sword_v0").is_some());
         assert!(reg.get("qing_feng_v0").is_some());
@@ -488,6 +488,98 @@ mod tests {
             "ling_xia_v1",
         ] {
             assert!(reg.get(id).is_some(), "missing tool blueprint `{id}`");
+        }
+    }
+
+    #[test]
+    fn iron_helmet_v0_blueprint_loads() {
+        let reg = BlueprintRegistry::load_dir(DEFAULT_BLUEPRINTS_DIR).unwrap();
+        let bp = reg
+            .get("iron_helmet_v0")
+            .expect("iron_helmet_v0 should load");
+        assert_eq!(bp.name, "凡铁兜鍪");
+        assert_eq!(bp.station_tier_min, 1);
+        assert_eq!(bp.tier_cap, 1);
+    }
+
+    #[test]
+    fn iron_chestplate_v0_blueprint_loads() {
+        let reg = BlueprintRegistry::load_dir(DEFAULT_BLUEPRINTS_DIR).unwrap();
+        assert!(
+            reg.get("iron_chestplate_v0").is_some(),
+            "iron_chestplate_v0 should be in registry"
+        );
+    }
+
+    #[test]
+    fn iron_leggings_v0_blueprint_loads() {
+        let reg = BlueprintRegistry::load_dir(DEFAULT_BLUEPRINTS_DIR).unwrap();
+        assert!(
+            reg.get("iron_leggings_v0").is_some(),
+            "iron_leggings_v0 should be in registry"
+        );
+    }
+
+    #[test]
+    fn iron_boots_v0_blueprint_loads() {
+        let reg = BlueprintRegistry::load_dir(DEFAULT_BLUEPRINTS_DIR).unwrap();
+        assert!(
+            reg.get("iron_boots_v0").is_some(),
+            "iron_boots_v0 should be in registry"
+        );
+    }
+
+    #[test]
+    fn iron_helmet_v0_only_needs_fan_tie_x2() {
+        let reg = BlueprintRegistry::load_dir(DEFAULT_BLUEPRINTS_DIR).unwrap();
+        let bp = reg.get("iron_helmet_v0").unwrap();
+        assert_eq!(bp.steps.len(), 1, "helmet is single-step billet");
+        let Some(StepSpec::Billet { profile }) = bp.steps.first() else {
+            panic!("iron_helmet first step should be billet");
+        };
+        assert_eq!(profile.required.len(), 1);
+        assert_eq!(profile.required[0].material, "fan_tie");
+        assert_eq!(profile.required[0].count, 2);
+    }
+
+    #[test]
+    fn iron_chestplate_v0_needs_fan_tie_x4() {
+        let reg = BlueprintRegistry::load_dir(DEFAULT_BLUEPRINTS_DIR).unwrap();
+        let bp = reg.get("iron_chestplate_v0").unwrap();
+        let Some(StepSpec::Billet { profile }) = bp.steps.first() else {
+            panic!("iron_chestplate first step should be billet");
+        };
+        assert_eq!(
+            profile.required[0].count, 4,
+            "chestplate is the biggest piece, needs 4 fan_tie"
+        );
+    }
+
+    #[test]
+    fn iron_armor_blueprints_produce_correct_outcomes() {
+        let reg = BlueprintRegistry::load_dir(DEFAULT_BLUEPRINTS_DIR).unwrap();
+        for (bp_id, weapon_id) in [
+            ("iron_helmet_v0", "armor_iron_helmet"),
+            ("iron_chestplate_v0", "armor_iron_chestplate"),
+            ("iron_leggings_v0", "armor_iron_leggings"),
+            ("iron_boots_v0", "armor_iron_boots"),
+        ] {
+            let bp = reg.get(bp_id).unwrap_or_else(|| panic!("missing {bp_id}"));
+            assert_eq!(
+                bp.outcomes.perfect.as_ref().map(|o| o.weapon.as_str()),
+                Some(weapon_id),
+                "{bp_id} perfect outcome should produce {weapon_id}"
+            );
+            let perfect_q = bp.outcomes.perfect.as_ref().unwrap().quality;
+            let flawed_q = bp.outcomes.flawed.as_ref().unwrap().quality;
+            assert!(
+                (perfect_q - 1.0).abs() < f32::EPSILON,
+                "{bp_id} perfect quality should be 1.0"
+            );
+            assert!(
+                (flawed_q - 0.5).abs() < f32::EPSILON,
+                "{bp_id} flawed quality should be 0.5"
+            );
         }
     }
 
@@ -595,6 +687,32 @@ mod tests {
                 "tool blueprint `{id}` should produce `{item_id}`"
             );
         }
+    }
+
+    #[test]
+    fn blueprint_scroll_iron_helmet_parses() {
+        let item_reg = crate::inventory::load_item_registry().expect("item registry should load");
+        let item = item_reg
+            .get("blueprint_scroll_iron_helmet")
+            .expect("blueprint_scroll_iron_helmet should be in item registry");
+        let scroll = item
+            .blueprint_scroll_spec
+            .as_ref()
+            .expect("should have blueprint_scroll_spec");
+        assert_eq!(scroll.blueprint_id, "iron_helmet_v0");
+    }
+
+    #[test]
+    fn blueprint_scroll_iron_chestplate_parses() {
+        let item_reg = crate::inventory::load_item_registry().expect("item registry should load");
+        let item = item_reg
+            .get("blueprint_scroll_iron_chestplate")
+            .expect("blueprint_scroll_iron_chestplate should be in item registry");
+        let scroll = item
+            .blueprint_scroll_spec
+            .as_ref()
+            .expect("should have blueprint_scroll_spec");
+        assert_eq!(scroll.blueprint_id, "iron_chestplate_v0");
     }
 
     #[test]

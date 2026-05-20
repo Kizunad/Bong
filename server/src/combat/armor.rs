@@ -303,6 +303,103 @@ mod tests {
     }
 
     #[test]
+    fn iron_helmet_profile_loads_from_json() {
+        let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join(DEFAULT_ARMOR_PROFILES_DIR);
+        let registry = ArmorProfileRegistry::load_dir(dir).expect("load armor profiles");
+        let profile = registry
+            .get("armor_iron_helmet")
+            .expect("armor_iron_helmet should be loaded");
+        assert_eq!(profile.slot, EquipSlotV1::Head);
+        assert_eq!(profile.body_coverage, vec![BodyPart::Head]);
+        assert_eq!(
+            profile.kind_mitigation.get(&WoundKind::Cut),
+            Some(&0.45),
+            "helmet cut mitigation should be 0.45"
+        );
+        assert_eq!(
+            profile.kind_mitigation.get(&WoundKind::Concussion),
+            Some(&0.40),
+            "helmet concussion mitigation should be 0.40"
+        );
+    }
+
+    #[test]
+    fn iron_chestplate_profile_loads_from_json() {
+        let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join(DEFAULT_ARMOR_PROFILES_DIR);
+        let registry = ArmorProfileRegistry::load_dir(dir).expect("load armor profiles");
+        let profile = registry
+            .get("armor_iron_chestplate")
+            .expect("armor_iron_chestplate should be loaded");
+        assert_eq!(profile.slot, EquipSlotV1::Chest);
+        assert_eq!(
+            profile.body_coverage,
+            vec![BodyPart::Chest, BodyPart::Abdomen]
+        );
+    }
+
+    #[test]
+    fn iron_leggings_profile_loads_from_json() {
+        let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join(DEFAULT_ARMOR_PROFILES_DIR);
+        let registry = ArmorProfileRegistry::load_dir(dir).expect("load armor profiles");
+        let profile = registry
+            .get("armor_iron_leggings")
+            .expect("armor_iron_leggings should be loaded");
+        assert_eq!(profile.slot, EquipSlotV1::Legs);
+        assert_eq!(profile.body_coverage, vec![BodyPart::LegL, BodyPart::LegR]);
+    }
+
+    #[test]
+    fn iron_boots_profile_loads_from_json() {
+        let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join(DEFAULT_ARMOR_PROFILES_DIR);
+        let registry = ArmorProfileRegistry::load_dir(dir).expect("load armor profiles");
+        let profile = registry
+            .get("armor_iron_boots")
+            .expect("armor_iron_boots should be loaded");
+        assert_eq!(profile.slot, EquipSlotV1::Feet);
+    }
+
+    #[test]
+    fn iron_helmet_mitigation_cut_0_45() {
+        let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join(DEFAULT_ARMOR_PROFILES_DIR);
+        let registry = ArmorProfileRegistry::load_dir(dir).unwrap();
+        let profile = registry.get("armor_iron_helmet").unwrap();
+        assert_eq!(
+            profile.kind_mitigation.get(&WoundKind::Cut),
+            Some(&0.45),
+            "iron helmet cut mitigation should be exactly 0.45 per plan spec"
+        );
+    }
+
+    #[test]
+    fn iron_chestplate_durability_280() {
+        let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join(DEFAULT_ARMOR_PROFILES_DIR);
+        let registry = ArmorProfileRegistry::load_dir(dir).unwrap();
+        let profile = registry.get("armor_iron_chestplate").unwrap();
+        assert_eq!(
+            profile.durability_max, 280,
+            "iron chestplate durability_max should be 280 per mundane.rs Iron spec"
+        );
+    }
+
+    #[test]
+    fn all_iron_armor_profiles_have_broken_multiplier_0_3() {
+        let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join(DEFAULT_ARMOR_PROFILES_DIR);
+        let registry = ArmorProfileRegistry::load_dir(dir).unwrap();
+        for id in [
+            "armor_iron_helmet",
+            "armor_iron_chestplate",
+            "armor_iron_leggings",
+            "armor_iron_boots",
+        ] {
+            let profile = registry.get(id).unwrap_or_else(|| panic!("missing {id}"));
+            assert!(
+                (profile.broken_multiplier - 0.3).abs() < f32::EPSILON,
+                "{id} broken_multiplier should be 0.3"
+            );
+        }
+    }
+
+    #[test]
     fn loads_default_blueprint_json_from_assets() {
         let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join(DEFAULT_ARMOR_PROFILES_DIR);
         let registry = ArmorProfileRegistry::load_dir(dir).expect("load armor profile assets");
@@ -310,7 +407,7 @@ mod tests {
             .get("fake_spirit_hide")
             .expect("fake_spirit_hide armor profile should be loaded from blueprint JSON");
 
-        assert_eq!(registry.len(), 4);
+        assert_eq!(registry.len(), 8);
         assert_eq!(profile.slot, EquipSlotV1::Chest);
         assert_eq!(
             profile.body_coverage,
