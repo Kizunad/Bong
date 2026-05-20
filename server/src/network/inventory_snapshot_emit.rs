@@ -447,6 +447,7 @@ mod tests {
         app.add_event::<RevivalActionIntent>();
         app.add_event::<ApplyStatusEffectIntent>();
         app.add_event::<crate::alchemy::PlaceFurnaceRequest>();
+        app.add_event::<crate::alchemy::LearnRecipeFragmentIntent>();
         app.add_event::<StartTillRequest>();
         app.add_event::<StartRenewRequest>();
         app.add_event::<StartPlantingRequest>();

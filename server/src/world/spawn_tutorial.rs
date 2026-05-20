@@ -14,11 +14,13 @@ use valence::prelude::{
     Update, Username, With, Without,
 };
 
+use crate::alchemy::learned::LearnedRecipes;
 use crate::combat::rat_bite::RatBiteEvent;
 use crate::combat::CombatClock;
 use crate::cultivation::breakthrough::{BreakthroughOutcome, BreakthroughSuccess};
 use crate::cultivation::components::{Cultivation, MeridianSystem, Realm};
 use crate::cultivation::life_record::{BiographyEntry, LifeRecord};
+use crate::forge::learned::LearnedBlueprints;
 use crate::inventory::{
     add_item_to_player_inventory, InventoryInstanceIdAllocator, ItemRegistry, PlayerInventory,
 };
@@ -29,6 +31,8 @@ use crate::npc::spawn::{
 };
 use crate::npc::spawn_rat::spawn_rat_npc_at;
 use crate::persistence::{load_player_cultivation_bundle, PersistenceSettings};
+use crate::player::gameplay::PendingGameplayNarrations;
+use crate::schema::common::NarrationStyle;
 use crate::skin::{NpcSkinFallbackPolicy, SkinPool};
 use crate::world::dimension::DimensionLayers;
 use crate::world::setup_world;
@@ -47,6 +51,16 @@ pub const RAT_SWARM_DRAIN_RADIUS: f64 = 4.5;
 pub const RAT_SWARM_DRAIN_AMOUNT: f64 = 1.0;
 pub const COMPLETION_WINDOW_TICKS: u64 = 30 * 60 * 20;
 
+/// Base material template IDs whose presence in inventory triggers the CraftHintShown toast.
+pub const BASE_MATERIAL_IDS: &[&str] = &[
+    "fan_tie",
+    "shou_gu",
+    "zhu_pi",
+    "ci_she_hao",
+    "hui_yuan_zhi",
+    "ling_shui",
+];
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum TutorialHook {
@@ -59,6 +73,9 @@ pub enum TutorialHook {
     LingquanReached,
     BreakthroughWindow,
     RealmAdvancedToInduce,
+    CraftHintShown,
+    FirstAlchemyHint,
+    FirstForgeHint,
 }
 
 #[derive(Debug, Clone, Component, Serialize, Deserialize, PartialEq)]
@@ -175,6 +192,9 @@ pub fn register(app: &mut App) {
             dynamic_rat_swarm_spawner.after(tutorial_hook_state_machine),
             tutorial_rat_qi_drain_tick.after(dynamic_rat_swarm_spawner),
             record_tutorial_breakthrough_completion,
+            check_craft_hint_on_inventory,
+            check_first_alchemy_hint,
+            check_first_forge_hint,
         ),
     );
 }
@@ -671,6 +691,141 @@ pub fn should_spawn_rat_swarm(state: &TutorialState, current: [f64; 3]) -> bool 
     current_distance <= RAT_SWARM_TRIGGER_DISTANCE && current_distance < last_distance
 }
 
+/// Returns `true` when the player's inventory contains at least one item whose
+/// `template_id` is in [`BASE_MATERIAL_IDS`].
+pub fn inventory_has_base_material(inventory: &PlayerInventory) -> bool {
+    inventory.containers.iter().any(|c| {
+        c.items
+            .iter()
+            .any(|item| BASE_MATERIAL_IDS.contains(&item.instance.template_id.as_str()))
+    })
+}
+
+/// P2.1 -- When the player first picks up a base material, fire
+/// `CraftHintShown` and push a perception toast.
+fn check_craft_hint_on_inventory(
+    clock: Option<Res<CombatClock>>,
+    mut hook_events: ResMut<valence::prelude::Events<TutorialHookEvent>>,
+    mut narrations: Option<ResMut<PendingGameplayNarrations>>,
+    mut players: Query<(Entity, &Username, &PlayerInventory, &mut TutorialState)>,
+) {
+    let now = clock.as_deref().map(|c| c.tick).unwrap_or_default();
+    for (entity, username, inventory, mut state) in &mut players {
+        if state.has(TutorialHook::CraftHintShown) {
+            continue;
+        }
+        if !inventory_has_base_material(inventory) {
+            continue;
+        }
+        if state.trigger(TutorialHook::CraftHintShown) {
+            hook_events.send(TutorialHookEvent {
+                player: entity,
+                hook: TutorialHook::CraftHintShown,
+                tick: now,
+            });
+            if let Some(ref mut narr) = narrations {
+                narr.push_player(
+                    username.0.as_str(),
+                    "背包中有了基础材料，可以尝试手搓合成。",
+                    NarrationStyle::Perception,
+                );
+            }
+        }
+    }
+}
+
+/// P2.4 -- When the player has learned at least one recipe and is at
+/// Induce realm or above, fire `FirstAlchemyHint` and push a perception toast.
+fn check_first_alchemy_hint(
+    clock: Option<Res<CombatClock>>,
+    mut hook_events: ResMut<valence::prelude::Events<TutorialHookEvent>>,
+    mut narrations: Option<ResMut<PendingGameplayNarrations>>,
+    mut players: Query<(
+        Entity,
+        &Username,
+        &Cultivation,
+        &LearnedRecipes,
+        &mut TutorialState,
+    )>,
+) {
+    let now = clock.as_deref().map(|c| c.tick).unwrap_or_default();
+    for (entity, username, cultivation, learned, mut state) in &mut players {
+        if state.has(TutorialHook::FirstAlchemyHint) {
+            continue;
+        }
+        let at_induce_or_above = matches!(
+            cultivation.realm,
+            Realm::Induce | Realm::Condense | Realm::Solidify | Realm::Spirit | Realm::Void
+        );
+        if !at_induce_or_above {
+            continue;
+        }
+        if learned.ids.is_empty() && learned.partial.is_empty() {
+            continue;
+        }
+        if state.trigger(TutorialHook::FirstAlchemyHint) {
+            hook_events.send(TutorialHookEvent {
+                player: entity,
+                hook: TutorialHook::FirstAlchemyHint,
+                tick: now,
+            });
+            if let Some(ref mut narr) = narrations {
+                narr.push_player(
+                    username.0.as_str(),
+                    "已习得丹方，可以寻一座丹炉试炼了。",
+                    NarrationStyle::Perception,
+                );
+            }
+        }
+    }
+}
+
+/// P2.4 -- When the player has learned at least one blueprint and is at
+/// Induce realm or above, fire `FirstForgeHint` and push a perception toast.
+fn check_first_forge_hint(
+    clock: Option<Res<CombatClock>>,
+    mut hook_events: ResMut<valence::prelude::Events<TutorialHookEvent>>,
+    mut narrations: Option<ResMut<PendingGameplayNarrations>>,
+    mut players: Query<(
+        Entity,
+        &Username,
+        &Cultivation,
+        &LearnedBlueprints,
+        &mut TutorialState,
+    )>,
+) {
+    let now = clock.as_deref().map(|c| c.tick).unwrap_or_default();
+    for (entity, username, cultivation, learned, mut state) in &mut players {
+        if state.has(TutorialHook::FirstForgeHint) {
+            continue;
+        }
+        let at_induce_or_above = matches!(
+            cultivation.realm,
+            Realm::Induce | Realm::Condense | Realm::Solidify | Realm::Spirit | Realm::Void
+        );
+        if !at_induce_or_above {
+            continue;
+        }
+        if learned.ids.is_empty() {
+            continue;
+        }
+        if state.trigger(TutorialHook::FirstForgeHint) {
+            hook_events.send(TutorialHookEvent {
+                player: entity,
+                hook: TutorialHook::FirstForgeHint,
+                tick: now,
+            });
+            if let Some(ref mut narr) = narrations {
+                narr.push_player(
+                    username.0.as_str(),
+                    "已习得图谱，可以找砧台试炼器了。",
+                    NarrationStyle::Perception,
+                );
+            }
+        }
+    }
+}
+
 fn nearest_lingquan_from_query(lingquans: &Query<&TutorialLingquan>) -> Option<[f64; 3]> {
     lingquans
         .iter()
@@ -720,9 +875,10 @@ fn poi_pos_dvec3(pos: [f32; 3]) -> DVec3 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::alchemy::recipe_fragment::PartialRecipeKnowledge;
     use crate::inventory::{
-        ContainerState, InventoryRevision, ItemCategory, ItemRarity, ItemTemplate,
-        MAIN_PACK_CONTAINER_ID,
+        ContainerState, InventoryRevision, ItemCategory, ItemInstance, ItemRarity, ItemTemplate,
+        PlacedItemState, MAIN_PACK_CONTAINER_ID,
     };
     use std::collections::HashMap;
 
@@ -859,5 +1015,280 @@ mod tests {
         telemetry.started = 4;
         telemetry.completed_within_30min = 3;
         assert_eq!(telemetry.completion_rate_30min(), 0.75);
+    }
+
+    // ── test helper ──────────────────────────────────────────────
+
+    fn test_item(instance_id: u64, template_id: &str) -> ItemInstance {
+        ItemInstance {
+            instance_id,
+            template_id: template_id.to_string(),
+            display_name: template_id.to_string(),
+            grid_w: 1,
+            grid_h: 1,
+            weight: 0.1,
+            rarity: ItemRarity::Common,
+            description: String::new(),
+            stack_count: 1,
+            spirit_quality: 1.0,
+            durability: 1.0,
+            freshness: None,
+            mineral_id: None,
+            charges: None,
+            forge_quality: None,
+            forge_color: None,
+            forge_side_effects: Vec::new(),
+            forge_achieved_tier: None,
+            alchemy: None,
+            lingering_owner_qi: None,
+        }
+    }
+
+    fn inventory_with_items(items: Vec<(&str, u64)>) -> PlayerInventory {
+        let mut inv = empty_inventory();
+        for (idx, (template_id, instance_id)) in items.iter().enumerate() {
+            inv.containers[0].items.push(PlacedItemState {
+                row: idx as u8,
+                col: 0,
+                instance: test_item(*instance_id, template_id),
+            });
+        }
+        inv
+    }
+
+    // ── P2.1: CraftHintShown ─────────────────────────────────────
+
+    #[test]
+    fn craft_hint_shown_serde_roundtrip() {
+        let hook = TutorialHook::CraftHintShown;
+        let json = serde_json::to_string(&hook).expect("CraftHintShown should serialize");
+        assert_eq!(
+            json, "\"craft_hint_shown\"",
+            "CraftHintShown serde rename_all=snake_case must produce 'craft_hint_shown', got {json}"
+        );
+        let back: TutorialHook =
+            serde_json::from_str(&json).expect("CraftHintShown should deserialize");
+        assert_eq!(back, hook);
+    }
+
+    #[test]
+    fn inventory_has_base_material_detects_fan_tie() {
+        let inv = inventory_with_items(vec![("fan_tie", 1)]);
+        assert!(
+            inventory_has_base_material(&inv),
+            "inventory with fan_tie should be detected as having base material"
+        );
+    }
+
+    #[test]
+    fn inventory_has_base_material_ignores_non_base() {
+        let inv = inventory_with_items(vec![("spirit_niche_stone", 1)]);
+        assert!(
+            !inventory_has_base_material(&inv),
+            "spirit_niche_stone is not a base material, should not trigger"
+        );
+    }
+
+    #[test]
+    fn inventory_has_base_material_empty_inventory() {
+        let inv = empty_inventory();
+        assert!(
+            !inventory_has_base_material(&inv),
+            "empty inventory should not have base materials"
+        );
+    }
+
+    #[test]
+    fn craft_hint_fires_once_per_player() {
+        let mut state = TutorialState::new(0);
+        assert!(
+            !state.has(TutorialHook::CraftHintShown),
+            "fresh state should not have CraftHintShown"
+        );
+        assert!(
+            state.trigger(TutorialHook::CraftHintShown),
+            "first trigger should return true (newly inserted)"
+        );
+        assert!(
+            state.has(TutorialHook::CraftHintShown),
+            "state should now have CraftHintShown"
+        );
+        assert!(
+            !state.trigger(TutorialHook::CraftHintShown),
+            "second trigger should return false (already present)"
+        );
+    }
+
+    #[test]
+    fn all_base_material_ids_trigger_detection() {
+        for &material_id in BASE_MATERIAL_IDS {
+            let inv = inventory_with_items(vec![(material_id, 42)]);
+            assert!(
+                inventory_has_base_material(&inv),
+                "BASE_MATERIAL_IDS entry '{material_id}' should be detected in inventory"
+            );
+        }
+    }
+
+    // ── P2.2: recipe fragment learning flow (client_request plumbing) ──
+
+    #[test]
+    fn alchemy_learn_recipe_fragment_serde_roundtrip() {
+        use crate::schema::client_request::ClientRequestV1;
+        let json = r#"{"type":"alchemy_learn_recipe_fragment","v":1,"item_instance_id":4242}"#;
+        let req: ClientRequestV1 = serde_json::from_str(json)
+            .expect("AlchemyLearnRecipeFragment should deserialize from JSON");
+        match req {
+            ClientRequestV1::AlchemyLearnRecipeFragment {
+                v,
+                item_instance_id,
+            } => {
+                assert_eq!(v, 1, "version should be 1");
+                assert_eq!(item_instance_id, 4242, "item_instance_id should be 4242");
+            }
+            other => panic!("expected AlchemyLearnRecipeFragment, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn alchemy_learn_recipe_fragment_rejects_extra_fields() {
+        use crate::schema::client_request::ClientRequestV1;
+        let json = r#"{"type":"alchemy_learn_recipe_fragment","v":1,"item_instance_id":4242,"extra":true}"#;
+        assert!(
+            serde_json::from_str::<ClientRequestV1>(json).is_err(),
+            "extra fields should be rejected by deny_unknown_fields"
+        );
+    }
+
+    // ── P2.3: blueprint & recipe asset verification ──
+
+    #[test]
+    fn recipe_hui_yuan_pill_v0_loads_and_has_stages() {
+        let registry = crate::alchemy::recipe::load_recipe_registry()
+            .expect("recipe registry should load from assets");
+        let recipe = registry
+            .get("hui_yuan_pill_v0")
+            .expect("hui_yuan_pill_v0 must exist in recipe registry");
+        assert!(
+            !recipe.stages.is_empty(),
+            "hui_yuan_pill_v0 must have at least one stage"
+        );
+    }
+
+    #[test]
+    fn blueprint_iron_sword_v0_loads_and_has_steps() {
+        let registry = crate::forge::blueprint::BlueprintRegistry::load_dir(
+            crate::forge::blueprint::DEFAULT_BLUEPRINTS_DIR,
+        )
+        .expect("blueprint registry should load from assets");
+        let bp = registry
+            .get("iron_sword_v0")
+            .expect("iron_sword_v0 must exist in blueprint registry");
+        assert!(
+            !bp.steps.is_empty(),
+            "iron_sword_v0 must have at least one step"
+        );
+    }
+
+    #[test]
+    fn loot_pool_surface_stash_craft_contains_blueprint_and_fragment() {
+        let registry = crate::world::loot_pool::load_loot_pool_registry()
+            .expect("loot_pools.json should load");
+        let pool = registry
+            .get("surface_stash_craft")
+            .expect("surface_stash_craft pool must exist in loot_pools.json");
+        let has_blueprint = pool
+            .entries
+            .iter()
+            .any(|entry| entry.template_id.contains("blueprint_scroll"));
+        assert!(
+            has_blueprint,
+            "surface_stash_craft loot pool should contain at least one blueprint_scroll entry"
+        );
+        let has_fragment = pool
+            .entries
+            .iter()
+            .any(|entry| entry.template_id.contains("fragment_alchemy"));
+        assert!(
+            has_fragment,
+            "surface_stash_craft loot pool should contain at least one fragment_alchemy entry"
+        );
+    }
+
+    // ── P2.4: first alchemy / forge hint logic ──
+
+    #[test]
+    fn first_alchemy_hint_serde_roundtrip() {
+        let hook = TutorialHook::FirstAlchemyHint;
+        let json = serde_json::to_string(&hook).expect("FirstAlchemyHint should serialize");
+        assert_eq!(
+            json, "\"first_alchemy_hint\"",
+            "FirstAlchemyHint serde rename_all=snake_case must produce 'first_alchemy_hint', got {json}"
+        );
+        let back: TutorialHook =
+            serde_json::from_str(&json).expect("FirstAlchemyHint should deserialize");
+        assert_eq!(back, hook);
+    }
+
+    #[test]
+    fn first_forge_hint_serde_roundtrip() {
+        let hook = TutorialHook::FirstForgeHint;
+        let json = serde_json::to_string(&hook).expect("FirstForgeHint should serialize");
+        assert_eq!(
+            json, "\"first_forge_hint\"",
+            "FirstForgeHint serde rename_all=snake_case must produce 'first_forge_hint', got {json}"
+        );
+        let back: TutorialHook =
+            serde_json::from_str(&json).expect("FirstForgeHint should deserialize");
+        assert_eq!(back, hook);
+    }
+
+    #[test]
+    fn alchemy_hint_needs_at_least_one_recipe() {
+        // Simulates the logic from check_first_alchemy_hint:
+        // learned recipes empty → hint should NOT fire even at correct realm
+        let learned = LearnedRecipes::default();
+        assert!(
+            learned.ids.is_empty() && learned.partial.is_empty(),
+            "default LearnedRecipes should be empty"
+        );
+
+        // With a partial recipe
+        let mut learned_with_partial = LearnedRecipes::default();
+        learned_with_partial.partial.push(PartialRecipeKnowledge {
+            recipe_id: "hui_yuan_pill_v0".into(),
+            known_stages: vec![0],
+            max_quality_tier: 3,
+        });
+        assert!(
+            !learned_with_partial.ids.is_empty() || !learned_with_partial.partial.is_empty(),
+            "partial recipe should satisfy the has-recipe check"
+        );
+
+        // With a full recipe
+        let mut learned_with_full = LearnedRecipes::default();
+        learned_with_full.ids.push("hui_yuan_pill_v0".into());
+        assert!(
+            !learned_with_full.ids.is_empty(),
+            "full recipe should satisfy the has-recipe check"
+        );
+    }
+
+    #[test]
+    fn forge_hint_needs_at_least_one_blueprint() {
+        // Empty
+        let learned = LearnedBlueprints::default();
+        assert!(
+            learned.ids.is_empty(),
+            "default LearnedBlueprints should be empty"
+        );
+
+        // With a blueprint
+        let mut learned_with_bp = LearnedBlueprints::default();
+        learned_with_bp.ids.push("iron_sword_v0".into());
+        assert!(
+            !learned_with_bp.ids.is_empty(),
+            "learned blueprint should satisfy the has-blueprint check"
+        );
     }
 }
