@@ -190,15 +190,17 @@ pub fn track_style_tendency(
         let count = counter.counts.entry(key.clone()).or_insert(0);
         *count += 1;
 
-        if *count >= STYLE_TENDENCY_THRESHOLD && counter.notified.insert(key) {
-            if let Ok(username) = players.get(event.attacker) {
+        if *count >= STYLE_TENDENCY_THRESHOLD && !counter.notified.contains(&key) {
+            let Ok(username) = players.get(event.attacker) else {
+                continue;
+            };
+            if let Some(ref mut narr) = narrations {
+                counter.notified.insert(key);
                 let text = format!(
                     "你似乎偏好[{}]的打法。经脉记得——你的选择会刻进身体。",
                     style
                 );
-                if let Some(ref mut narr) = narrations {
-                    narr.push_player(username.0.as_str(), &text, NarrationStyle::Perception);
-                }
+                narr.push_player(username.0.as_str(), &text, NarrationStyle::Perception);
             }
         }
     }
@@ -544,6 +546,47 @@ mod tests {
             narrations.len(),
             0,
             "no narration should fire for NPC; got {}",
+            narrations.len()
+        );
+    }
+
+    #[test]
+    fn style_tendency_no_narration_resource_does_not_mark_notified() {
+        let mut app = App::new();
+        app.add_event::<StyleBalanceTelemetryEvent>();
+        app.insert_resource(StyleUsageCounter::default());
+        // Deliberately omit PendingGameplayNarrations
+        app.add_systems(Update, track_style_tendency);
+
+        let (client_bundle, _helper) = create_mock_client("TestPlayer");
+        let player = app.world_mut().spawn(client_bundle).id();
+
+        for _ in 0..10 {
+            app.world_mut()
+                .send_event(telemetry_event(player, "baomai"));
+            app.update();
+        }
+
+        let counter = app.world().resource::<StyleUsageCounter>();
+        assert!(
+            !counter.notified.contains(&(player, "baomai".to_string())),
+            "should not mark as notified when narration resource is absent"
+        );
+
+        // Now insert the resource and fire one more event — narration should fire
+        app.insert_resource(PendingGameplayNarrations::default());
+        app.world_mut()
+            .send_event(telemetry_event(player, "baomai"));
+        app.update();
+
+        let narrations = app
+            .world_mut()
+            .resource_mut::<PendingGameplayNarrations>()
+            .drain();
+        assert_eq!(
+            narrations.len(),
+            1,
+            "narration should fire once resource becomes available; got {}",
             narrations.len()
         );
     }
