@@ -114,6 +114,11 @@ pub fn advance_open_progress_at(
     } else {
         0.0
     };
+    let cultivation_boost = if cultivation_boost.is_finite() && cultivation_boost > 0.0 {
+        cultivation_boost
+    } else {
+        1.0
+    };
     let difficulty = meridian_difficulty_factor(meridians.opened_count(), target.family());
     let delta = BASE_OPEN_RATE * zone_qi * qi_ratio * difficulty * cultivation_boost;
     let cost = delta * OPEN_COST_FACTOR;
@@ -771,6 +776,69 @@ mod tests {
         assert!(
             (result - 1.0).abs() < 1e-9,
             "remaining_ticks=0 不应计入；实际 {result}"
+        );
+    }
+
+    #[test]
+    fn cultivation_boost_zero_falls_back_to_one() {
+        let mut c = player_with_qi(10000.0);
+        c.qi_max = 10000.0;
+        let mut ms = MeridianSystem::default();
+        let (delta_default, _) =
+            advance_open_progress_at(&mut c, &mut ms, MeridianId::Lung, 0.6, true, 0, 1.0).unwrap();
+
+        let mut c2 = player_with_qi(10000.0);
+        c2.qi_max = 10000.0;
+        let mut ms2 = MeridianSystem::default();
+        let (delta_zero, _) =
+            advance_open_progress_at(&mut c2, &mut ms2, MeridianId::Lung, 0.6, true, 0, 0.0)
+                .unwrap();
+
+        assert!(
+            (delta_default - delta_zero).abs() < 1e-15,
+            "cultivation_boost=0.0 应 fallback 到 1.0，delta_default={delta_default} delta_zero={delta_zero}"
+        );
+    }
+
+    #[test]
+    fn cultivation_boost_negative_falls_back_to_one() {
+        let mut c = player_with_qi(10000.0);
+        c.qi_max = 10000.0;
+        let mut ms = MeridianSystem::default();
+        let (delta_default, _) =
+            advance_open_progress_at(&mut c, &mut ms, MeridianId::Lung, 0.6, true, 0, 1.0).unwrap();
+
+        let mut c2 = player_with_qi(10000.0);
+        c2.qi_max = 10000.0;
+        let mut ms2 = MeridianSystem::default();
+        let (delta_neg, _) =
+            advance_open_progress_at(&mut c2, &mut ms2, MeridianId::Lung, 0.6, true, 0, -5.0)
+                .unwrap();
+
+        assert!(
+            (delta_default - delta_neg).abs() < 1e-15,
+            "cultivation_boost=-5.0 应 fallback 到 1.0"
+        );
+    }
+
+    #[test]
+    fn cultivation_boost_nan_falls_back_to_one() {
+        let mut c = player_with_qi(10000.0);
+        c.qi_max = 10000.0;
+        let mut ms = MeridianSystem::default();
+        let (delta_default, _) =
+            advance_open_progress_at(&mut c, &mut ms, MeridianId::Lung, 0.6, true, 0, 1.0).unwrap();
+
+        let mut c2 = player_with_qi(10000.0);
+        c2.qi_max = 10000.0;
+        let mut ms2 = MeridianSystem::default();
+        let (delta_nan, _) =
+            advance_open_progress_at(&mut c2, &mut ms2, MeridianId::Lung, 0.6, true, 0, f64::NAN)
+                .unwrap();
+
+        assert!(
+            (delta_default - delta_nan).abs() < 1e-15,
+            "cultivation_boost=NaN 应 fallback 到 1.0"
         );
     }
 

@@ -67,7 +67,7 @@ pub fn push_status_effect(status_effects: &mut StatusEffects, effect: ActiveStat
         let same_pill_count = status_effects
             .active
             .iter()
-            .filter(|e| e.source_pill.as_deref() == Some(pill))
+            .filter(|e| e.source_pill.as_deref() == Some(pill) && e.remaining_ticks > 0)
             .count();
         if same_pill_count >= 2 {
             return false; // 同种丹药最多 2 层
@@ -967,6 +967,37 @@ mod tests {
             );
         }
         assert_eq!(se.active.len(), 5);
+    }
+
+    #[test]
+    fn push_status_effect_expired_same_pill_not_counted() {
+        let mut se = StatusEffects {
+            active: vec![
+                ActiveStatusEffect {
+                    kind: StatusEffectKind::CultivationAcceleration,
+                    magnitude: 0.5,
+                    remaining_ticks: 0, // 已过期
+                    source_pill: Some("ling_xi_wan".to_string()),
+                },
+                ActiveStatusEffect {
+                    kind: StatusEffectKind::CultivationAcceleration,
+                    magnitude: 0.5,
+                    remaining_ticks: 0, // 已过期
+                    source_pill: Some("ling_xi_wan".to_string()),
+                },
+            ],
+        };
+        // 即使有 2 条同 pill 但都过期，新的应该能 push 成功
+        let ok = push_status_effect(
+            &mut se,
+            ActiveStatusEffect {
+                kind: StatusEffectKind::CultivationAcceleration,
+                magnitude: 0.5,
+                remaining_ticks: 100,
+                source_pill: Some("ling_xi_wan".to_string()),
+            },
+        );
+        assert!(ok, "过期的同种丹药不应计入 per-pill cap");
     }
 
     #[test]
