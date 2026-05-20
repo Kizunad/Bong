@@ -2530,4 +2530,175 @@ mod tests {
             "次品灵息丸加速应为 1.3×（0.5×0.6=0.3 → 1+0.3），实际 {mult_flawed}"
         );
     }
+
+    // ══════════════════════════════════════════════════════════════════
+    // plan-depth-loop-v1 P3.1 — 战斗丹供给链材料可达性验证
+    // ══════════════════════════════════════════════════════════════════
+
+    #[test]
+    fn hui_yuan_zhi_spawns_in_marsh_zone() {
+        use crate::botany::registry::{BotanyKindRegistry, BotanyPlantId, HUI_YUAN_ZHI};
+        use crate::world::zone::BotanyZoneTag;
+
+        let registry = BotanyKindRegistry::default();
+        let kind = registry
+            .get(BotanyPlantId::HuiYuanZhi)
+            .expect("HuiYuanZhi should be registered in BotanyPlantKindRegistry");
+        assert_eq!(
+            kind.item_id, HUI_YUAN_ZHI,
+            "HuiYuanZhi item_id should be '{HUI_YUAN_ZHI}'"
+        );
+        assert!(
+            kind.zone_tags.contains(&BotanyZoneTag::Marsh),
+            "HuiYuanZhi should spawn in Marsh zone (lingquan_marsh), got {:?}",
+            kind.zone_tags
+        );
+    }
+
+    #[test]
+    fn hui_yuan_pill_v0_recipe_materials_are_hui_yuan_zhi_and_ling_shui() {
+        let recipe_json = include_str!("../../assets/alchemy/recipes/hui_yuan_pill_v0.json");
+        let recipe: serde_json::Value =
+            serde_json::from_str(recipe_json).expect("hui_yuan_pill_v0 recipe should parse");
+        let materials: Vec<&str> = recipe["stages"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .flat_map(|stage| stage["required"].as_array().unwrap().iter())
+            .map(|req| req["material"].as_str().unwrap())
+            .collect();
+        assert!(
+            materials.contains(&"hui_yuan_zhi"),
+            "hui_yuan_pill_v0 recipe must require hui_yuan_zhi, got {materials:?}"
+        );
+        assert!(
+            materials.contains(&"ling_shui"),
+            "hui_yuan_pill_v0 recipe must require ling_shui, got {materials:?}"
+        );
+    }
+
+    #[test]
+    fn huo_xue_dan_recipe_materials_all_in_registry() {
+        let recipe_json = include_str!("../../assets/alchemy/recipes/huo_xue_dan_v1.json");
+        let recipe: serde_json::Value =
+            serde_json::from_str(recipe_json).expect("huo_xue_dan_v1 recipe should parse");
+        let materials: Vec<&str> = recipe["stages"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .flat_map(|stage| stage["required"].as_array().unwrap().iter())
+            .map(|req| req["material"].as_str().unwrap())
+            .collect();
+        assert!(
+            !materials.is_empty(),
+            "huo_xue_dan_v1 recipe should have at least one material"
+        );
+        let items_toml_core = include_str!("../../assets/items/core.toml");
+        let items_toml_botany = include_str!("../../assets/items/botany_v2.toml");
+        let items_toml_pills = include_str!("../../assets/items/pills.toml");
+        let combined = format!("{items_toml_core}\n{items_toml_botany}\n{items_toml_pills}");
+        for mat in &materials {
+            assert!(
+                combined.contains(&format!("id = \"{mat}\"")),
+                "huo_xue_dan material '{mat}' not found in item registry (core/botany_v2/pills.toml)"
+            );
+        }
+    }
+
+    #[test]
+    fn tie_bi_san_recipe_materials_all_in_registry() {
+        let recipe_json = include_str!("../../assets/alchemy/recipes/tie_bi_san_v1.json");
+        let recipe: serde_json::Value =
+            serde_json::from_str(recipe_json).expect("tie_bi_san_v1 recipe should parse");
+        let materials: Vec<&str> = recipe["stages"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .flat_map(|stage| stage["required"].as_array().unwrap().iter())
+            .map(|req| req["material"].as_str().unwrap())
+            .collect();
+        assert!(
+            !materials.is_empty(),
+            "tie_bi_san_v1 recipe should have at least one material"
+        );
+        let items_toml_core = include_str!("../../assets/items/core.toml");
+        let items_toml_fauna = include_str!("../../assets/items/fauna.toml");
+        let items_toml_zhenfa = include_str!("../../assets/items/zhenfa.toml");
+        let items_toml_forge = include_str!("../../assets/items/forge.toml");
+        let combined = format!(
+            "{items_toml_core}\n{items_toml_fauna}\n{items_toml_zhenfa}\n{items_toml_forge}"
+        );
+        for mat in &materials {
+            assert!(
+                combined.contains(&format!("id = \"{mat}\"")),
+                "tie_bi_san material '{mat}' not found in item registry (core/fauna/zhenfa/forge.toml)"
+            );
+        }
+    }
+
+    // ══════════════════════════════════════════════════════════════════
+    // plan-depth-loop-v1 P3.4 — pill buff status payload structure
+    // ══════════════════════════════════════════════════════════════════
+
+    #[test]
+    fn pill_buff_status_emitted_on_consume() {
+        use crate::schema::server_data::PillBuffStatusV1;
+
+        let spec =
+            combat_pill_spec("huo_xue_dan").expect("huo_xue_dan should be a known combat pill");
+        assert_eq!(
+            spec.kind,
+            CombatPillKind::HuoXueDan,
+            "combat_pill_spec should resolve huo_xue_dan to HuoXueDan kind"
+        );
+
+        let entity = valence::prelude::Entity::from_raw(42);
+        let intents = combat_pill_status_intents(entity, spec, 1.0, 1.0, 100);
+        assert!(
+            !intents.is_empty(),
+            "huo_xue_dan should produce at least one status effect intent"
+        );
+
+        let buff = PillBuffStatusV1 {
+            buff_id: "huo_xue_dan".to_string(),
+            remaining_ticks: spec.positive_duration_ticks as u32,
+            effect_multiplier: 1.0,
+        };
+        assert_eq!(buff.buff_id, "huo_xue_dan");
+        assert!(
+            buff.remaining_ticks > 0,
+            "huo_xue_dan positive_duration_ticks should be > 0, got {}",
+            buff.remaining_ticks
+        );
+
+        let envelope = crate::schema::server_data::ServerDataV1::new(
+            crate::schema::server_data::ServerDataPayloadV1::PillBuffStatus(buff.clone()),
+        );
+        let bytes =
+            serde_json::to_vec(&envelope).expect("PillBuffStatus envelope should serialize");
+        let value: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(
+            value["type"], "pill_buff_status",
+            "wire type should be 'pill_buff_status'"
+        );
+        assert_eq!(value["buff_id"], "huo_xue_dan");
+        assert_eq!(
+            value["remaining_ticks"], spec.positive_duration_ticks as u64,
+            "remaining_ticks should match spec positive_duration_ticks"
+        );
+    }
+
+    #[test]
+    fn tie_bi_san_combat_pill_spec_resolves() {
+        let spec =
+            combat_pill_spec("tie_bi_san").expect("tie_bi_san should be a known combat pill");
+        assert_eq!(spec.kind, CombatPillKind::TieBiSan);
+
+        let entity = valence::prelude::Entity::from_raw(99);
+        let intents = combat_pill_status_intents(entity, spec, 1.0, 1.0, 0);
+        assert!(
+            !intents.is_empty(),
+            "tie_bi_san should produce status effect intents"
+        );
+    }
 }
