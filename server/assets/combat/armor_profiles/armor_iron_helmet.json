@@ -1,0 +1,15 @@
+{
+  "template_id": "armor_iron_helmet",
+  "profile": {
+    "slot": "head",
+    "body_coverage": ["head"],
+    "kind_mitigation": {
+      "cut": 0.45,
+      "blunt": 0.30,
+      "pierce": 0.35,
+      "concussion": 0.40
+    },
+    "durability_max": 280,
+    "broken_multiplier": 0.3
+  }
+}

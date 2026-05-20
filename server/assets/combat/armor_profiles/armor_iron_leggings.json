@@ -1,0 +1,15 @@
+{
+  "template_id": "armor_iron_leggings",
+  "profile": {
+    "slot": "legs",
+    "body_coverage": ["leg_l", "leg_r"],
+    "kind_mitigation": {
+      "cut": 0.40,
+      "blunt": 0.35,
+      "pierce": 0.30,
+      "concussion": 0.25
+    },
+    "durability_max": 280,
+    "broken_multiplier": 0.3
+  }
+}
