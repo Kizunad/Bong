@@ -583,9 +583,9 @@ observe_yellow_technique_base_chance_0_05  // pin test
 
 ```text
 e2e_12_stashes_within_spawn_1000  // P0.3 已实现为 scatter_surface_stashes_produces_12_in_spawn_1000
-material_sufficiency_from_5_basic_stashes  // 期望产出 ≥ 首件工具所需
-technique_scroll_expected_from_4_scroll_stashes  // 期望 ≥ 1 张招式残卷
-craft_stash_near_poi_distance_200_400
+basic_pool_base_material_weight_over_50_pct  // 期望产出 ≥ 首件工具所需
+scroll_pool_technique_scroll_weight_over_40_pct  // 期望 ≥ 1 张招式残卷
+craft_stashes_within_spawn_radius
 iron_sword_v0_fan_tie_available_in_spawn_mineral_anchor
 ```
 
