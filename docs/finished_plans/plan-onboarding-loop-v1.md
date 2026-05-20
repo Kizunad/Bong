@@ -55,15 +55,15 @@
 
 | 阶段 | 内容 | 验收日期 | 状态 |
 |------|------|---------|------|
-| P0 | 散修遗缴系统（地表容器 + 3 loot pool + POI 布点 + client schema） | — | ⬜ |
-| P1 | 基础功法获取（10 残卷物品 + 首战自学闪避 + 工具残卷入池 + loot pool 追加） | — | ⬜ |
-| P2 | 手搓+炼丹+炼器引导（craft hint toast + 丹方 fragment + 蓝图残卷 + ling_shui 入池） | — | ⬜ |
-| P3 | 流派感知（黄阶残卷入池 + style 倾向 narration hook） | — | ⬜ |
-| P4 | 校准 + 集成验收（e2e timeline + 掉率调参） | — | ⬜ |
+| P0 | 散修遗缴系统（地表容器 + 3 loot pool + POI 布点 + client schema） | 2026-05-20 | ✅ |
+| P1 | 基础功法获取（10 残卷物品 + 首战自学闪避 + 工具残卷入池 + loot pool 追加） | 2026-05-20 | ✅ |
+| P2 | 手搓+炼丹+炼器引导（craft hint toast + 丹方 fragment + 蓝图残卷 + ling_shui 入池） | 2026-05-20 | ✅ |
+| P3 | 流派感知（黄阶残卷入池 + style 倾向 narration hook） | 2026-05-20 | ✅ |
+| P4 | 校准 + 集成验收（e2e timeline + 掉率调参） | 2026-05-21 | ✅ |
 
 ---
 
-## P0 — 散修遗缴系统 ⬜
+## P0 — 散修遗缴系统 ✅ 2026-05-20
 
 ### P0.1 地表容器变体：`SurfaceStash`
 
@@ -255,7 +255,7 @@ scatter_surface_stashes_min_spacing_200
 
 ---
 
-## P1 — 基础功法获取 ⬜
+## P1 — 基础功法获取 ✅ 2026-05-20
 
 ### P1.1 新增 9 个残卷/fragment 物品 + 复用 1 个已有残卷
 
@@ -446,7 +446,7 @@ stone_casket_pool_contains_beng_quan_scroll
 
 ---
 
-## P2 — 手搓 + 炼丹 + 炼器引导 ⬜
+## P2 — 手搓 + 炼丹 + 炼器引导 ✅ 2026-05-20
 
 ### P2.1 手搓提示 toast
 
@@ -516,7 +516,7 @@ forge_hint_on_first_station_interact
 
 ---
 
-## P3 — 流派感知 ⬜
+## P3 — 流派感知 ✅ 2026-05-20
 
 > **设计哲学**：worldview §五"无职业锁，流派 = 行为涌现"。本 plan **不**新增"选择流派"UI，不新增 NPC 脚本对战系统（big-brain 无 Script action，基建不存在）。流派感知通过两条现有管线实现：(1) 黄阶残卷掉落让玩家体验不同招式；(2) style_telemetry 攻击统计触发 narration 反馈。
 
@@ -547,7 +547,7 @@ observe_yellow_technique_base_chance_0_05  // pin test
 
 ---
 
-## P4 — 校准 + 集成验收 ⬜
+## P4 — 校准 + 集成验收 ✅ 2026-05-21
 
 ### P4.1 全链路 timeline
 
