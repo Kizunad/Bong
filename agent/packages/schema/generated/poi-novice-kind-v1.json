@@ -43,6 +43,10 @@
     {
       "const": "water_source",
       "type": "string"
+    },
+    {
+      "const": "surface_stash",
+      "type": "string"
     }
   ]
 }

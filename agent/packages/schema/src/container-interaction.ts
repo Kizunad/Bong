@@ -17,6 +17,7 @@ export const ContainerKindV1 = Type.Union([
   Type.Literal("storage_pouch"),
   Type.Literal("stone_casket"),
   Type.Literal("relic_core"),
+  Type.Literal("surface_stash"),
 ]);
 export type ContainerKindV1 = Static<typeof ContainerKindV1>;
 

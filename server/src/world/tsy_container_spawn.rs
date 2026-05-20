@@ -125,6 +125,8 @@ impl OriginMultiplier {
             ContainerKind::StoragePouch => self.storage_pouch_x,
             ContainerKind::StoneCasket => self.stone_casket_x,
             ContainerKind::RelicCore => self.relic_core_x,
+            // SurfaceStash 是地表容器，不走 TSY origin 乘数；fallback 到 1.0
+            ContainerKind::SurfaceStash => 1.0,
         }
     }
 }

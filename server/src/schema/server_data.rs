@@ -1435,6 +1435,7 @@ pub enum ContainerKindV1 {
     StoragePouch,
     StoneCasket,
     RelicCore,
+    SurfaceStash,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -3802,5 +3803,29 @@ mod tests {
             error.to_string().contains("ServerDataV1.v must be"),
             "unexpected server_data version error: {error}"
         );
+    }
+
+    #[test]
+    fn container_kind_v1_surface_stash_wire() {
+        use crate::network::tsy_container_search_emit::container_kind_wire;
+        use crate::world::tsy_container::ContainerKind;
+
+        assert_eq!(
+            container_kind_wire(ContainerKind::SurfaceStash),
+            ContainerKindV1::SurfaceStash,
+            "ContainerKind::SurfaceStash should map to ContainerKindV1::SurfaceStash"
+        );
+    }
+
+    #[test]
+    fn container_kind_v1_serde_pin_with_surface_stash() {
+        let json = serde_json::to_string(&ContainerKindV1::SurfaceStash)
+            .expect("ContainerKindV1::SurfaceStash should serialize");
+        assert_eq!(
+            json, "\"surface_stash\"",
+            "ContainerKindV1::SurfaceStash serde should produce \"surface_stash\", got {json}"
+        );
+        let round: ContainerKindV1 = serde_json::from_str(&json).expect("should deserialize back");
+        assert_eq!(round, ContainerKindV1::SurfaceStash);
     }
 }

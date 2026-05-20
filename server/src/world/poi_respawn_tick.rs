@@ -13,6 +13,8 @@ pub const SERVER_TICKS_PER_SECOND: u64 = 20;
 pub const MUTANT_NEST_RESPAWN_TICKS: u64 = 24 * 60 * 60 * SERVER_TICKS_PER_SECOND;
 pub const ROGUE_NPC_RESPAWN_TICKS: u64 = MUTANT_NEST_RESPAWN_TICKS;
 pub const SCROLL_REFRESH_SECONDS: u64 = 7 * 24 * 60 * 60;
+/// 散修遗缴 respawn：3 分钟 @ 20tps = 3600 ticks（plan-onboarding-loop-v1 P0.1）。
+pub const SURFACE_STASH_RESPAWN_TICKS: u64 = 3600;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PoiRespawnState {
@@ -24,13 +26,11 @@ pub struct PoiRespawnState {
 
 impl PoiRespawnState {
     pub fn is_server_tick_ready(&self, now_tick: u64) -> bool {
+        let elapsed = now_tick.saturating_sub(self.last_server_tick);
         match self.kind {
-            PoiNoviceKind::MutantNest => {
-                now_tick.saturating_sub(self.last_server_tick) >= MUTANT_NEST_RESPAWN_TICKS
-            }
-            PoiNoviceKind::RogueVillage => {
-                now_tick.saturating_sub(self.last_server_tick) >= ROGUE_NPC_RESPAWN_TICKS
-            }
+            PoiNoviceKind::MutantNest => elapsed >= MUTANT_NEST_RESPAWN_TICKS,
+            PoiNoviceKind::RogueVillage => elapsed >= ROGUE_NPC_RESPAWN_TICKS,
+            PoiNoviceKind::SurfaceStash => elapsed >= SURFACE_STASH_RESPAWN_TICKS,
             _ => false,
         }
     }
@@ -164,5 +164,53 @@ mod tests {
         store.ensure_site("spawn:scroll_hidden", PoiNoviceKind::ScrollHidden);
         let ready = store.ready_ids(MUTANT_NEST_RESPAWN_TICKS, SCROLL_REFRESH_SECONDS);
         assert_eq!(ready, vec!["spawn:mutant_nest", "spawn:scroll_hidden"]);
+    }
+
+    #[test]
+    fn surface_stash_respawn_ready_at_3600_ticks() {
+        let stash = PoiRespawnState {
+            poi_id: "spawn:surface_stash:0".to_string(),
+            kind: PoiNoviceKind::SurfaceStash,
+            last_server_tick: 100,
+            last_wall_clock_secs: 0,
+        };
+        assert!(
+            stash.is_server_tick_ready(100 + SURFACE_STASH_RESPAWN_TICKS),
+            "SurfaceStash 应在 3600 ticks 后 ready（plan P0.1），实际未 ready"
+        );
+    }
+
+    #[test]
+    fn surface_stash_respawn_not_ready_at_3599_ticks() {
+        let stash = PoiRespawnState {
+            poi_id: "spawn:surface_stash:0".to_string(),
+            kind: PoiNoviceKind::SurfaceStash,
+            last_server_tick: 100,
+            last_wall_clock_secs: 0,
+        };
+        assert!(
+            !stash.is_server_tick_ready(100 + SURFACE_STASH_RESPAWN_TICKS - 1),
+            "SurfaceStash 在 3599 ticks 时不应 ready，但返回了 true"
+        );
+    }
+
+    #[test]
+    fn surface_stash_respawn_resets_depleted_flag() {
+        let mut store = PoiRespawnStore::default();
+        store.ensure_site("spawn:stash_0", PoiNoviceKind::SurfaceStash);
+
+        // 模拟搜索完成后 mark_refreshed
+        store.mark_refreshed("spawn:stash_0", 1000, 0);
+        let state = store.get("spawn:stash_0").expect("stash should exist");
+        assert_eq!(
+            state.last_server_tick, 1000,
+            "mark_refreshed 应更新 last_server_tick"
+        );
+
+        // 3600 ticks 后应 ready
+        assert!(
+            state.is_server_tick_ready(1000 + SURFACE_STASH_RESPAWN_TICKS),
+            "mark_refreshed 后 3600 ticks，stash 应 respawn ready"
+        );
     }
 }

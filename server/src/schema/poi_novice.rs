@@ -16,6 +16,7 @@ pub enum PoiNoviceKindV1 {
     TradeSpot,
     ShelterSpot,
     WaterSource,
+    SurfaceStash,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -73,5 +74,25 @@ mod tests {
         let back = serde_json::to_string(&event).expect("serialize");
         let parsed: TrespassEventV1 = serde_json::from_str(&back).expect("deserialize");
         assert_eq!(parsed, event);
+    }
+
+    #[test]
+    fn surface_stash_serde_roundtrip() {
+        // 序列化方向：SurfaceStash → "surface_stash"
+        let json = serde_json::to_string(&PoiNoviceKindV1::SurfaceStash)
+            .expect("SurfaceStash should serialize");
+        assert_eq!(
+            json, "\"surface_stash\"",
+            "PoiNoviceKindV1::SurfaceStash 应序列化为 \"surface_stash\"，实际为 {json}"
+        );
+        // 反序列化方向："surface_stash" → SurfaceStash
+        let round: PoiNoviceKindV1 = serde_json::from_str("\"surface_stash\"")
+            .expect("\"surface_stash\" should deserialize to SurfaceStash");
+        assert_eq!(
+            round,
+            PoiNoviceKindV1::SurfaceStash,
+            "反序列化 \"surface_stash\" 应得到 SurfaceStash，实际为 {:?}",
+            round
+        );
     }
 }

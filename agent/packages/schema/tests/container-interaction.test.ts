@@ -45,6 +45,18 @@ describe("plan-tsy-container-v1 §5.1 — ContainerStateV1", () => {
     expect(validateContainerStateV1Contract(depleted).ok).toBe(true);
   });
 
+  it("accepts surface_stash kind (plan-onboarding-loop-v1 P0.1)", () => {
+    const surfaceStash = {
+      v: 1 as const,
+      entity_id: 99,
+      kind: "surface_stash" as const,
+      family_id: "surface_stash_01",
+      world_pos: [128.0, 66.0, 128.0],
+      depleted: false,
+    };
+    expect(validateContainerStateV1Contract(surfaceStash).ok).toBe(true);
+  });
+
   it("rejects unknown kind", () => {
     const bad = { ...valid, kind: "treasure_chest" };
     expect(validateContainerStateV1Contract(bad).ok).toBe(false);

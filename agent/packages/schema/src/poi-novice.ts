@@ -14,6 +14,7 @@ export const PoiNoviceKindV1 = Type.Union([
   Type.Literal("trade_spot"),
   Type.Literal("shelter_spot"),
   Type.Literal("water_source"),
+  Type.Literal("surface_stash"),
 ]);
 export type PoiNoviceKindV1 = Static<typeof PoiNoviceKindV1>;
 
