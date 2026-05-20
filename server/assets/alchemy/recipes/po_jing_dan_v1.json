@@ -1,0 +1,34 @@
+{
+  "id": "po_jing_dan_v1",
+  "name": "破境丹·突破辅助丹",
+  "furnace_tier_min": 2,
+  "stages": [
+    { "at_tick": 0, "required": [
+      { "material": "xuan_rong_tai", "count": 1 },
+      { "material": "xue_se_mai_cao", "count": 1 },
+      { "material": "ling_shi", "count": 1 }
+    ], "window": 0 }
+  ],
+  "fire_profile": {
+    "target_temp": 0.52,
+    "target_duration_ticks": 180,
+    "qi_cost": 22.0,
+    "tolerance": { "temp_band": 0.06, "duration_band": 12 }
+  },
+  "outcomes": {
+    "perfect": { "pill": "po_jing_dan", "quality": 1.0, "toxin_amount": 0.45, "toxin_color": "Insidious", "qi_gain": 0.0 },
+    "good":    { "pill": "po_jing_dan", "quality": 0.62, "toxin_amount": 0.61, "toxin_color": "Insidious", "qi_gain": 0.0 },
+    "flawed":  { "pill": "po_jing_dan", "quality": 0.30, "toxin_amount": 0.80, "toxin_color": "Turbid", "qi_gain": 0.0 },
+    "waste":   null,
+    "explode": { "damage": 14.0, "meridian_crack": 0.07 }
+  },
+  "flawed_fallback": {
+    "pill": "po_jing_dan",
+    "quality_scale": 0.32,
+    "toxin_scale": 2.2,
+    "side_effect_pool": [
+      { "tag": "contam_boost", "duration_s": 45, "weight": 3 },
+      { "tag": "qi_cap_perm_minus_1", "duration_s": 0, "weight": 1, "perm": true }
+    ]
+  }
+}

@@ -1,0 +1,31 @@
+{
+  "id": "ling_xi_wan_v1",
+  "name": "灵息丸·入门修炼丹",
+  "furnace_tier_min": 1,
+  "stages": [
+    { "at_tick": 0, "required": [
+      { "material": "spirit_grass", "count": 3 }
+    ], "window": 0 }
+  ],
+  "fire_profile": {
+    "target_temp": 0.30,
+    "target_duration_ticks": 80,
+    "qi_cost": 5.0,
+    "tolerance": { "temp_band": 0.15, "duration_band": 25 }
+  },
+  "outcomes": {
+    "perfect": { "pill": "ling_xi_wan", "quality": 1.0, "toxin_amount": 0.15, "toxin_color": "Gentle", "qi_gain": 0.0 },
+    "good":    { "pill": "ling_xi_wan", "quality": 0.75, "toxin_amount": 0.20, "toxin_color": "Gentle", "qi_gain": 0.0 },
+    "flawed":  { "pill": "ling_xi_wan", "quality": 0.40, "toxin_amount": 0.30, "toxin_color": "Turbid", "qi_gain": 0.0 },
+    "waste":   null,
+    "explode": { "damage": 3.0, "meridian_crack": 0.01 }
+  },
+  "flawed_fallback": {
+    "pill": "ling_xi_wan",
+    "quality_scale": 0.50,
+    "toxin_scale": 1.5,
+    "side_effect_pool": [
+      { "tag": "minor_qi_regen_boost", "duration_s": 30, "weight": 2 }
+    ]
+  }
+}

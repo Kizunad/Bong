@@ -1,0 +1,33 @@
+{
+  "id": "ju_ling_dan_v1",
+  "name": "聚灵丹·标准修炼丹",
+  "furnace_tier_min": 1,
+  "stages": [
+    { "at_tick": 0, "required": [
+      { "material": "spirit_grass", "count": 2 },
+      { "material": "ci_she_hao", "count": 1 }
+    ], "window": 0 }
+  ],
+  "fire_profile": {
+    "target_temp": 0.38,
+    "target_duration_ticks": 100,
+    "qi_cost": 8.0,
+    "tolerance": { "temp_band": 0.12, "duration_band": 20 }
+  },
+  "outcomes": {
+    "perfect": { "pill": "ju_ling_dan", "quality": 1.0, "toxin_amount": 0.20, "toxin_color": "Mellow", "qi_gain": 0.0 },
+    "good":    { "pill": "ju_ling_dan", "quality": 0.72, "toxin_amount": 0.27, "toxin_color": "Mellow", "qi_gain": 0.0 },
+    "flawed":  { "pill": "ju_ling_dan", "quality": 0.40, "toxin_amount": 0.40, "toxin_color": "Turbid", "qi_gain": 0.0 },
+    "waste":   null,
+    "explode": { "damage": 5.0, "meridian_crack": 0.02 }
+  },
+  "flawed_fallback": {
+    "pill": "ju_ling_dan",
+    "quality_scale": 0.45,
+    "toxin_scale": 1.6,
+    "side_effect_pool": [
+      { "tag": "minor_qi_regen_boost", "duration_s": 40, "weight": 2 },
+      { "tag": "contam_boost", "duration_s": 30, "weight": 1 }
+    ]
+  }
+}
