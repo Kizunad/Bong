@@ -482,14 +482,22 @@ const CRAFT_COUNT: usize = 3;
 /// 运行时 Poisson-disk 采样 12 个散修遗缴点。
 ///
 /// 使用 world_seed × index 做 PRNG seed 保证 determinism。
-/// 分配 pool：距 spawn 中心 ≤500 → basic（5 个）、≤800 → scroll（4 个）、
-/// ≤1000 → craft（3 个）。
+/// 分配 pool：按距 spawn 中心距离排序后，前 5 个 = basic，接下来 4 个 = scroll，
+/// 最后 3 个 = craft（deterministic quota slice）。
+///
+/// 若 10000 次尝试未凑满 12 点，自动将 min_dist 减半继续尝试，保证最终
+/// 产出恰好 12 个点。
 #[allow(dead_code)]
 pub fn scatter_surface_stashes(seed: u64) -> Vec<ScatteredStash> {
     let mut points = Vec::with_capacity(SURFACE_STASH_COUNT);
-    // 简单 reject-sample Poisson-disk
+    let mut current_min_dist = SURFACE_STASH_MIN_DIST;
     let mut attempt = 0u64;
-    while points.len() < SURFACE_STASH_COUNT && attempt < 10000 {
+
+    while points.len() < SURFACE_STASH_COUNT {
+        if attempt > 0 && attempt % 10000 == 0 {
+            // 放宽 min_dist 继续尝试
+            current_min_dist *= 0.5;
+        }
         let rng = splitmix64(
             seed.wrapping_mul(0x9E37_79B9_7F4A_7C15)
                 .wrapping_add(attempt),
@@ -505,7 +513,7 @@ pub fn scatter_surface_stashes(seed: u64) -> Vec<ScatteredStash> {
         let too_close = points.iter().any(|p: &ScatteredStash| {
             let dx = p.x - x;
             let dz = p.z - z;
-            (dx * dx + dz * dz).sqrt() < SURFACE_STASH_MIN_DIST
+            (dx * dx + dz * dz).sqrt() < current_min_dist
         });
         if too_close {
             continue;
@@ -518,49 +526,22 @@ pub fn scatter_surface_stashes(seed: u64) -> Vec<ScatteredStash> {
         });
     }
 
-    // 按距 spawn 中心距离排序，分配 pool
+    // 按距 spawn 中心距离排序
     points.sort_by(|a, b| {
         let da = ((a.x - SPAWN_CENTER_X).powi(2) + (a.z - SPAWN_CENTER_Z).powi(2)).sqrt();
         let db = ((b.x - SPAWN_CENTER_X).powi(2) + (b.z - SPAWN_CENTER_Z).powi(2)).sqrt();
         da.partial_cmp(&db).unwrap_or(std::cmp::Ordering::Equal)
     });
 
-    let mut basic_count = 0usize;
-    let mut scroll_count = 0usize;
-    let mut craft_count = 0usize;
-
-    for point in &mut points {
-        let dist = ((point.x - SPAWN_CENTER_X).powi(2) + (point.z - SPAWN_CENTER_Z).powi(2)).sqrt();
-        if dist <= BASIC_RADIUS && basic_count < BASIC_COUNT {
-            point.pool_id = "surface_stash_basic".to_string();
-            basic_count += 1;
-        } else if dist <= SCROLL_RADIUS && scroll_count < SCROLL_COUNT {
-            point.pool_id = "surface_stash_scroll".to_string();
-            scroll_count += 1;
+    // Deterministic quota slice：前 5 = basic，接下来 4 = scroll，最后 3 = craft
+    for (i, point) in points.iter_mut().enumerate() {
+        point.pool_id = if i < BASIC_COUNT {
+            "surface_stash_basic".to_string()
+        } else if i < BASIC_COUNT + SCROLL_COUNT {
+            "surface_stash_scroll".to_string()
         } else {
-            point.pool_id = "surface_stash_craft".to_string();
-            craft_count += 1;
-        }
-    }
-
-    // 保证 craft 够 3 个（如果靠近中心的点太多全给了 basic）
-    while craft_count < CRAFT_COUNT && !points.is_empty() {
-        // 把最远的未标记 craft 的改为 craft
-        if let Some(last) = points
-            .iter_mut()
-            .rev()
-            .find(|p| p.pool_id != "surface_stash_craft")
-        {
-            match last.pool_id.as_str() {
-                "surface_stash_basic" => basic_count = basic_count.saturating_sub(1),
-                "surface_stash_scroll" => scroll_count = scroll_count.saturating_sub(1),
-                _ => {}
-            }
-            last.pool_id = "surface_stash_craft".to_string();
-            craft_count += 1;
-        } else {
-            break;
-        }
+            "surface_stash_craft".to_string()
+        };
     }
 
     points
@@ -831,6 +812,44 @@ mod tests {
         let a = super::scatter_surface_stashes(999);
         let b = super::scatter_surface_stashes(999);
         assert_eq!(a, b, "同 seed 的 scatter 结果应完全一致");
+    }
+
+    #[test]
+    fn scatter_surface_stashes_quota_5_4_3() {
+        let stashes = super::scatter_surface_stashes(42);
+        let basic = stashes
+            .iter()
+            .filter(|s| s.pool_id == "surface_stash_basic")
+            .count();
+        let scroll = stashes
+            .iter()
+            .filter(|s| s.pool_id == "surface_stash_scroll")
+            .count();
+        let craft = stashes
+            .iter()
+            .filter(|s| s.pool_id == "surface_stash_craft")
+            .count();
+        assert_eq!(
+            basic,
+            super::BASIC_COUNT,
+            "basic 数量应为 {}，实际为 {}",
+            super::BASIC_COUNT,
+            basic
+        );
+        assert_eq!(
+            scroll,
+            super::SCROLL_COUNT,
+            "scroll 数量应为 {}，实际为 {}",
+            super::SCROLL_COUNT,
+            scroll
+        );
+        assert_eq!(
+            craft,
+            super::CRAFT_COUNT,
+            "craft 数量应为 {}，实际为 {}",
+            super::CRAFT_COUNT,
+            craft
+        );
     }
 
     #[test]

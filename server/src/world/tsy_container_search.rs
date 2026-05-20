@@ -88,6 +88,8 @@ pub enum SearchRejectionReason {
     OutOfRange,
     /// 战斗中
     InCombat,
+    /// 散修遗缴每 24h 限额用尽
+    DailyLimitExceeded,
 }
 
 /// plan §2.4 — 搜刮成功完成（loot 已发放）。
@@ -238,6 +240,7 @@ pub fn start_search_container(
     mut commands: Commands,
     mut vfx_events: EventWriter<VfxEventRequest>,
     mut audio_events: EventWriter<PlaySoundRecipeRequest>,
+    mut stash_limit: ResMut<SurfaceStashPlayerLimit>,
 ) {
     for req in requests.read() {
         let Ok((p_pos, p_inv, p_combat, p_progress)) = players.get(req.player) else {
@@ -288,6 +291,20 @@ pub fn start_search_container(
                 reason: SearchRejectionReason::InCombat,
             });
             continue;
+        }
+
+        // 散修遗缴每 24h 限额检查
+        if container.kind == crate::world::tsy_container::ContainerKind::SurfaceStash {
+            let player_id = format!("{:?}", req.player);
+            let now = SurfaceStashPlayerLimit::current_wall_clock_secs();
+            if !stash_limit.can_search(&container.family_id, &player_id, now) {
+                results.send(StartSearchResult::Rejected {
+                    player: req.player,
+                    container: req.container,
+                    reason: SearchRejectionReason::DailyLimitExceeded,
+                });
+                continue;
+            }
         }
 
         // 钥匙检查
@@ -368,6 +385,7 @@ pub fn tick_search_progress(
     mut relic_extracted: EventWriter<RelicExtracted>,
     mut vfx_events: EventWriter<VfxEventRequest>,
     mut audio_events: EventWriter<PlaySoundRecipeRequest>,
+    mut stash_limit: ResMut<SurfaceStashPlayerLimit>,
 ) {
     let mut to_clear: Vec<(Entity, Entity, Option<SearchAbortReason>)> = Vec::new();
     let mut completions: Vec<(Entity, Entity, Option<u64>, valence::prelude::DVec3)> = Vec::new();
@@ -486,8 +504,17 @@ pub fn tick_search_progress(
 
         let family_id = container.family_id.clone();
         let is_skeleton = container.kind.is_skeleton();
+        let is_surface_stash =
+            container.kind == crate::world::tsy_container::ContainerKind::SurfaceStash;
         container.searched_by = None;
         container.depleted = true;
+
+        // 散修遗缴完成搜索时记录限额
+        if is_surface_stash {
+            let player_id = format!("{:?}", player_ent);
+            let now = SurfaceStashPlayerLimit::current_wall_clock_secs();
+            stash_limit.record_search(&family_id, &player_id, now);
+        }
 
         commands
             .entity(player_ent)
@@ -817,6 +844,70 @@ mod tests {
         assert!(
             limit.can_search("stash_0", "player_a", after_24h),
             "24h 后限额应重置，但搜索仍被拒绝"
+        );
+    }
+
+    #[test]
+    fn surface_stash_limit_24h_minus_1s_does_not_reset() {
+        let mut limit = SurfaceStashPlayerLimit::default();
+        let now = 1_000_000u64;
+        for _ in 0..SURFACE_STASH_DAILY_LIMIT {
+            limit.record_search("stash_0", "player_a", now);
+        }
+        // 24h - 1s：不应重置
+        let almost_24h = now + 24 * 60 * 60 - 1;
+        assert!(
+            !limit.can_search("stash_0", "player_a", almost_24h),
+            "24h-1s 时限额不应重置（off-by-one），但 can_search 返回了 true"
+        );
+    }
+
+    #[test]
+    fn surface_stash_limit_poi_isolation() {
+        let mut limit = SurfaceStashPlayerLimit::default();
+        let now = 1_000_000u64;
+        // 在 stash_0 用完配额
+        for _ in 0..SURFACE_STASH_DAILY_LIMIT {
+            limit.record_search("stash_0", "player_a", now);
+        }
+        assert!(
+            !limit.can_search("stash_0", "player_a", now),
+            "stash_0 配额用尽后应拒绝"
+        );
+        // stash_1 应独立计数，仍然可搜
+        assert!(
+            limit.can_search("stash_1", "player_a", now),
+            "不同 poi（stash_1）的配额应独立于 stash_0，但被拒绝"
+        );
+    }
+
+    #[test]
+    fn surface_stash_limit_player_isolation() {
+        let mut limit = SurfaceStashPlayerLimit::default();
+        let now = 1_000_000u64;
+        // player_a 用完配额
+        for _ in 0..SURFACE_STASH_DAILY_LIMIT {
+            limit.record_search("stash_0", "player_a", now);
+        }
+        assert!(
+            !limit.can_search("stash_0", "player_a", now),
+            "player_a 配额用尽后应拒绝"
+        );
+        // player_b 应独立计数，仍然可搜
+        assert!(
+            limit.can_search("stash_0", "player_b", now),
+            "不同玩家（player_b）的配额应独立于 player_a，但被拒绝"
+        );
+    }
+
+    #[test]
+    fn surface_stash_limit_empty_state_allows_search() {
+        let mut limit = SurfaceStashPlayerLimit::default();
+        let now = 1_000_000u64;
+        // 初始无记录时 can_search 应返回 true
+        assert!(
+            limit.can_search("stash_0", "player_a", now),
+            "初始无记录时 can_search 应返回 true，但返回了 false"
         );
     }
 }
