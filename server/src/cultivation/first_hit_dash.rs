@@ -231,6 +231,41 @@ mod tests {
     }
 
     #[test]
+    fn first_hit_ignores_zero_damage() {
+        let mut app = setup_app();
+        let attacker = app.world_mut().spawn_empty().id();
+        let player = spawn_player(&mut app, KnownTechniques::default());
+
+        let mut e = combat_event(attacker, player);
+        e.damage = 0.0;
+        e.physical_damage = 0.0;
+        app.world_mut().send_event(e);
+        app.update();
+
+        let known = app.world().get::<KnownTechniques>(player).unwrap();
+        assert!(
+            !known.entries.iter().any(|t| t.id == "movement.dash"),
+            "zero-damage hit should not trigger dash learning; entries: {:?}",
+            known.entries.iter().map(|t| &t.id).collect::<Vec<_>>()
+        );
+        let events = app.world().resource::<Events<TechniqueLearnedEvent>>();
+        assert_eq!(
+            events.len(),
+            0,
+            "no TechniqueLearnedEvent should be emitted for zero-damage hit"
+        );
+        let narrations = app
+            .world_mut()
+            .resource_mut::<PendingGameplayNarrations>()
+            .drain();
+        assert_eq!(
+            narrations.len(),
+            0,
+            "no narration should be emitted for zero-damage hit"
+        );
+    }
+
+    #[test]
     fn first_hit_narration_emitted() {
         let mut app = setup_app();
         let attacker = app.world_mut().spawn_empty().id();

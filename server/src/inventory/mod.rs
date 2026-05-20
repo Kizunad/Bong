@@ -1612,10 +1612,19 @@ impl ItemTemplateToml {
             .technique_scroll
             .map(|raw| parse_technique_scroll_spec(raw, source_path, id.as_str()))
             .transpose()?;
-        let recipe_fragment_spec = self
-            .recipe_fragment
-            .map(|raw| parse_recipe_fragment_spec(raw, source_path, id.as_str()))
-            .transpose()?;
+        let recipe_fragment_spec = match (&category, self.recipe_fragment) {
+            (ItemCategory::RecipeFragment, Some(raw)) => {
+                Some(parse_recipe_fragment_spec(raw, source_path, id.as_str())?)
+            }
+            (ItemCategory::RecipeFragment, None) => None,
+            (_, Some(_)) => {
+                return Err(format!(
+                    "{} item `{id}` has [item.recipe_fragment] block but category != RecipeFragment",
+                    source_path.display()
+                ));
+            }
+            (_, None) => None,
+        };
 
         // plan-backpack-equip-v1 P0：container 块与 category=Container 必须一致。
         let container_spec = match (&category, self.container) {
@@ -8721,6 +8730,67 @@ cols = 4
             original, deserialized,
             "RecipeFragmentSpec roundtrip failed"
         );
+    }
+
+    #[test]
+    fn parse_recipe_fragment_spec_happy_path() {
+        let raw = RecipeFragmentSpecToml {
+            recipe_id: "hui_yuan_pill_v0".to_string(),
+            known_stages: vec![0],
+            max_quality_tier: 3,
+        };
+        let spec =
+            parse_recipe_fragment_spec(raw, Path::new("test.toml"), "test_item").unwrap();
+        assert_eq!(spec.recipe_id, "hui_yuan_pill_v0");
+        assert_eq!(spec.known_stages, vec![0]);
+        assert_eq!(spec.max_quality_tier, 3);
+    }
+
+    #[test]
+    fn parse_recipe_fragment_spec_empty_recipe_id() {
+        let raw = RecipeFragmentSpecToml {
+            recipe_id: String::new(),
+            known_stages: vec![0],
+            max_quality_tier: 1,
+        };
+        let err = parse_recipe_fragment_spec(raw, Path::new("test.toml"), "bad_item")
+            .expect_err("empty recipe_id should fail");
+        assert!(
+            err.contains("test.toml"),
+            "error should mention source path; got: {err}"
+        );
+    }
+
+    #[test]
+    fn parse_recipe_fragment_spec_empty_known_stages() {
+        let raw = RecipeFragmentSpecToml {
+            recipe_id: "some_recipe".to_string(),
+            known_stages: vec![],
+            max_quality_tier: 1,
+        };
+        let err = parse_recipe_fragment_spec(raw, Path::new("test.toml"), "bad_item")
+            .expect_err("empty known_stages should fail");
+        assert!(
+            err.contains("known_stages must not be empty"),
+            "error should mention known_stages; got: {err}"
+        );
+    }
+
+    #[test]
+    fn parse_recipe_fragment_spec_max_quality_tier_out_of_range() {
+        for bad_tier in [0, 4] {
+            let raw = RecipeFragmentSpecToml {
+                recipe_id: "some_recipe".to_string(),
+                known_stages: vec![0],
+                max_quality_tier: bad_tier,
+            };
+            let err = parse_recipe_fragment_spec(raw, Path::new("test.toml"), "bad_item")
+                .expect_err(&format!("tier {bad_tier} should fail"));
+            assert!(
+                err.contains("max_quality_tier"),
+                "error should mention max_quality_tier for tier {bad_tier}; got: {err}"
+            );
+        }
     }
 
     #[test]
