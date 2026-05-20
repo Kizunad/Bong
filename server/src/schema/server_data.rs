@@ -210,6 +210,7 @@ pub enum ServerDataType {
     RecipeUnlocked,
     CombatEventFloater,
     KnockbackSync,
+    TechniqueProficiencyUpdate,
 }
 
 #[derive(Debug, Clone)]
@@ -443,6 +444,7 @@ pub enum ServerDataPayloadV1 {
     RecipeUnlocked(RecipeUnlockedV1),
     CombatEventFloater(CombatEventFloaterV1),
     KnockbackSync(KnockbackSyncV1),
+    TechniqueProficiencyUpdate(TechniqueProficiencyUpdateV1),
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -473,6 +475,14 @@ pub struct KnockbackSyncV1 {
     pub collision_damage: Option<f32>,
     pub chain_depth: u8,
     pub block_broken: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TechniqueProficiencyUpdateV1 {
+    pub technique_id: String,
+    pub proficiency: f32,
+    pub gain: f32,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -1276,6 +1286,10 @@ enum ServerDataPayloadWireV1 {
     KnockbackSync {
         #[serde(flatten)]
         sync: KnockbackSyncV1,
+    },
+    TechniqueProficiencyUpdate {
+        #[serde(flatten)]
+        update: TechniqueProficiencyUpdateV1,
     },
 }
 
@@ -2095,6 +2109,9 @@ impl TryFrom<ServerDataPayloadWireV1> for ServerDataPayloadV1 {
                 Ok(Self::CombatEventFloater(CombatEventFloaterV1 { events }))
             }
             ServerDataPayloadWireV1::KnockbackSync { sync } => Ok(Self::KnockbackSync(sync)),
+            ServerDataPayloadWireV1::TechniqueProficiencyUpdate { update } => {
+                Ok(Self::TechniqueProficiencyUpdate(update))
+            }
         }
     }
 }
@@ -2607,6 +2624,11 @@ impl From<&ServerDataPayloadV1> for ServerDataPayloadWireV1 {
                 events: floater.events.clone(),
             },
             ServerDataPayloadV1::KnockbackSync(sync) => Self::KnockbackSync { sync: sync.clone() },
+            ServerDataPayloadV1::TechniqueProficiencyUpdate(update) => {
+                Self::TechniqueProficiencyUpdate {
+                    update: update.clone(),
+                }
+            }
         }
     }
 }
@@ -2900,6 +2922,7 @@ impl ServerDataPayloadV1 {
             Self::RecipeUnlocked(..) => ServerDataType::RecipeUnlocked,
             Self::CombatEventFloater(..) => ServerDataType::CombatEventFloater,
             Self::KnockbackSync(..) => ServerDataType::KnockbackSync,
+            Self::TechniqueProficiencyUpdate(..) => ServerDataType::TechniqueProficiencyUpdate,
         }
     }
 }
@@ -3377,6 +3400,11 @@ mod tests {
                 chain_depth: 2,
                 block_broken: true,
             }),
+            ServerDataPayloadV1::TechniqueProficiencyUpdate(TechniqueProficiencyUpdateV1 {
+                technique_id: "sword.cleave".to_string(),
+                proficiency: 0.42,
+                gain: 0.008,
+            }),
         ];
 
         for payload in cases {
@@ -3827,5 +3855,39 @@ mod tests {
         );
         let round: ContainerKindV1 = serde_json::from_str(&json).expect("should deserialize back");
         assert_eq!(round, ContainerKindV1::SurfaceStash);
+    }
+
+    #[test]
+    fn technique_proficiency_update_rejects_missing_gain() {
+        let missing_gain = serde_json::json!({
+            "v": SERVER_DATA_VERSION,
+            "type": "technique_proficiency_update",
+            "update": {
+                "technique_id": "sword.cleave",
+                "proficiency": 0.42
+            }
+        });
+        assert!(
+            serde_json::from_value::<ServerDataV1>(missing_gain).is_err(),
+            "technique_proficiency_update missing 'gain' should fail deserialization"
+        );
+    }
+
+    #[test]
+    fn technique_proficiency_update_rejects_unknown_field() {
+        let unknown_field = serde_json::json!({
+            "v": SERVER_DATA_VERSION,
+            "type": "technique_proficiency_update",
+            "update": {
+                "technique_id": "sword.cleave",
+                "proficiency": 0.42,
+                "gain": 0.008,
+                "unexpected": true
+            }
+        });
+        assert!(
+            serde_json::from_value::<ServerDataV1>(unknown_field).is_err(),
+            "technique_proficiency_update with unknown field should fail due to deny_unknown_fields"
+        );
     }
 }
