@@ -1,0 +1,33 @@
+# iron_helmet.obj -- plan-depth-loop-v1 P1 placeholder
+mtllib iron_helmet.mtl
+o iron_helmet
+
+# Box slightly larger than player head (8px = 0.5 units, 1.1x scale)
+v -0.28 -0.01 -0.28
+v  0.28 -0.01 -0.28
+v  0.28  0.55 -0.28
+v -0.28  0.55 -0.28
+v -0.28 -0.01  0.28
+v  0.28 -0.01  0.28
+v  0.28  0.55  0.28
+v -0.28  0.55  0.28
+
+vt 0.0 0.0
+vt 1.0 0.0
+vt 1.0 1.0
+vt 0.0 1.0
+
+vn 0.0 0.0 -1.0
+vn 0.0 0.0  1.0
+vn 0.0 -1.0 0.0
+vn 1.0  0.0 0.0
+vn 0.0  1.0 0.0
+vn -1.0 0.0 0.0
+
+usemtl iron_helmet_mat_0
+f 1/1/1 2/2/1 3/3/1 4/4/1
+f 5/1/2 8/2/2 7/3/2 6/4/2
+f 1/1/3 5/2/3 6/3/3 2/4/3
+f 2/1/4 6/2/4 7/3/4 3/4/4
+f 3/1/5 7/2/5 8/3/5 4/4/5
+f 4/1/6 8/2/6 5/3/6 1/4/6

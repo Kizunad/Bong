@@ -1,5 +1,6 @@
 package com.bong.client.mixin;
 
+import com.bong.client.armor.ArmorModelRegistry;
 import com.bong.client.armor.ArmorTintRegistry;
 import com.bong.client.inventory.model.EquipSlotType;
 import com.bong.client.inventory.model.InventoryItem;
@@ -42,6 +43,12 @@ public abstract class MixinPlayerEntityArmor {
         InventoryItem equipped = InventoryStateStore.snapshot().equipped().get(bongSlot);
         if (equipped == null || equipped.isEmpty()) return;
 
+        // If we have a custom OBJ model, skip leather dye -- ArmorFeatureRenderer handles it
+        if (ArmorModelRegistry.get(equipped.itemId()).isPresent()) {
+            return; // leave vanilla stack empty, ArmorFeatureRenderer will render the OBJ
+        }
+
+        // Otherwise fall back to leather dye
         ItemStack fake = ArmorTintRegistry.createLeatherArmorStack(
             equipped.itemId(),
             slot,

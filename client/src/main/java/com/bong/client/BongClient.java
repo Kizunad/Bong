@@ -3,6 +3,7 @@ package com.bong.client;
 import com.bong.client.animation.BongAnimationPlayer;
 import com.bong.client.animation.BongAnimations;
 import com.bong.client.animation.BongPunchCombo;
+import com.bong.client.armor.ArmorRenderBootstrap;
 import com.bong.client.atmosphere.ZoneAtmosphereRenderer;
 import com.bong.client.audio.NpcFootstepAudioController;
 import com.bong.client.audio.SoundRecipePlayer;
@@ -124,6 +125,7 @@ public class BongClient implements ClientModInitializer {
         ExtractInteractionBootstrap.register();
         SpiritTreasureScreenBootstrap.register();
         WeaponRenderBootstrap.register();
+        ArmorRenderBootstrap.register();
         WeaponScreenshotHarness.install();
         PreviewHarnessClient.install();
         IrisBootstrap.register();
