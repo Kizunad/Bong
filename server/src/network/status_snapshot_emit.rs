@@ -325,4 +325,189 @@ mod tests {
         // debuff category → 0xFFFF8030
         assert_eq!(color, 0xFFFF8030_u32 as i32);
     }
+
+    // ── plan-cultivation-pacing-v1 P2.3 cultivation_acceleration 协议契约测试 ──
+
+    /// 辅助函数：模拟 emit system 中的 payload 构造逻辑，
+    /// 以纯函数形式测试 wire shape 包含 cultivation_acceleration 字段。
+    fn build_test_status_snapshot_payload(
+        status_effects: &crate::combat::components::StatusEffects,
+    ) -> serde_json::Value {
+        let effects: Vec<serde_json::Value> = status_effects
+            .active
+            .iter()
+            .filter(|e| e.remaining_ticks > 0)
+            .map(|e| {
+                serde_json::json!({
+                    "id": status_effect_id(&e.kind),
+                    "name": status_effect_name(&e.kind),
+                    "kind": status_effect_category(&e.kind),
+                    "stacks": 1,
+                    "remaining_ms": e.remaining_ticks.saturating_mul(50),
+                    "source_color": status_effect_color(&e.kind),
+                    "source_label": status_effect_source_label(&e.kind),
+                    "dispel": status_effect_dispel(&e.kind),
+                })
+            })
+            .collect();
+        let accel_mult =
+            crate::cultivation::tick::cultivation_acceleration_multiplier(status_effects);
+        serde_json::json!({
+            "v": 1,
+            "type": "status_snapshot",
+            "effects": effects,
+            "cultivation_acceleration": accel_mult,
+        })
+    }
+
+    #[test]
+    fn status_snapshot_payload_includes_cultivation_acceleration_field() {
+        use crate::combat::components::{ActiveStatusEffect, StatusEffects};
+
+        let se = StatusEffects {
+            active: vec![ActiveStatusEffect {
+                kind: StatusEffectKind::CultivationAcceleration,
+                magnitude: 2.0,
+                remaining_ticks: 100,
+                source_pill: None,
+            }],
+        };
+        let payload = build_test_status_snapshot_payload(&se);
+
+        assert_eq!(
+            payload["type"], "status_snapshot",
+            "payload type 应为 status_snapshot"
+        );
+        assert_eq!(payload["v"], 1, "payload version 应为 1");
+        assert_eq!(
+            payload["cultivation_acceleration"], 3.0,
+            "CultivationAcceleration(mag=2.0) 应产生 cultivation_acceleration=3.0 (1+2)；\
+             实际 {}",
+            payload["cultivation_acceleration"]
+        );
+        // effects 数组应包含一条 CultivationAcceleration 条目
+        let effects = payload["effects"].as_array().expect("effects 应为数组");
+        assert_eq!(effects.len(), 1, "应有 1 条 active effect");
+        assert_eq!(effects[0]["name"], "修炼加速");
+        assert_eq!(effects[0]["kind"], "buff");
+    }
+
+    #[test]
+    fn status_snapshot_payload_cultivation_acceleration_defaults_to_one() {
+        use crate::combat::components::StatusEffects;
+
+        // 无任何 CultivationAcceleration buff 时，字段应为 1.0
+        let se = StatusEffects { active: vec![] };
+        let payload = build_test_status_snapshot_payload(&se);
+
+        assert_eq!(
+            payload["cultivation_acceleration"], 1.0,
+            "无 CultivationAcceleration buff 时 cultivation_acceleration 应为 1.0；\
+             实际 {}",
+            payload["cultivation_acceleration"]
+        );
+        let effects = payload["effects"].as_array().expect("effects 应为数组");
+        assert!(effects.is_empty(), "空 StatusEffects 不应产生 effects 条目");
+    }
+
+    #[test]
+    fn status_snapshot_payload_cultivation_acceleration_caps_at_five() {
+        use crate::combat::components::{ActiveStatusEffect, StatusEffects};
+
+        // 多条 stacking 超过 cap：mag=3.0 + mag=2.0 = sum 5.0 → 1+5 = 6 → cap 5.0
+        let se = StatusEffects {
+            active: vec![
+                ActiveStatusEffect {
+                    kind: StatusEffectKind::CultivationAcceleration,
+                    magnitude: 3.0,
+                    remaining_ticks: 100,
+                    source_pill: None,
+                },
+                ActiveStatusEffect {
+                    kind: StatusEffectKind::CultivationAcceleration,
+                    magnitude: 2.0,
+                    remaining_ticks: 100,
+                    source_pill: None,
+                },
+            ],
+        };
+        let payload = build_test_status_snapshot_payload(&se);
+
+        assert_eq!(
+            payload["cultivation_acceleration"], 5.0,
+            "多条 CultivationAcceleration(mag=3+2) 叠加超 cap 应为 5.0；\
+             实际 {}",
+            payload["cultivation_acceleration"]
+        );
+    }
+
+    #[test]
+    fn status_snapshot_payload_cultivation_acceleration_ignores_expired_buffs() {
+        use crate::combat::components::{ActiveStatusEffect, StatusEffects};
+
+        let se = StatusEffects {
+            active: vec![
+                ActiveStatusEffect {
+                    kind: StatusEffectKind::CultivationAcceleration,
+                    magnitude: 1.0,
+                    remaining_ticks: 50,
+                    source_pill: None,
+                },
+                ActiveStatusEffect {
+                    kind: StatusEffectKind::CultivationAcceleration,
+                    magnitude: 2.0,
+                    remaining_ticks: 0, // expired
+                    source_pill: None,
+                },
+            ],
+        };
+        let payload = build_test_status_snapshot_payload(&se);
+
+        assert_eq!(
+            payload["cultivation_acceleration"], 2.0,
+            "expired buff(remaining_ticks=0) 不应计入 cultivation_acceleration；\
+             期望 2.0 (1+1.0)，实际 {}",
+            payload["cultivation_acceleration"]
+        );
+        // expired effect 也不应出现在 effects 数组
+        let effects = payload["effects"].as_array().expect("effects 应为数组");
+        assert_eq!(
+            effects.len(),
+            1,
+            "expired buff 不应出现在 effects 数组；实际 {} 条",
+            effects.len()
+        );
+    }
+
+    #[test]
+    fn status_snapshot_payload_cultivation_acceleration_coexists_with_other_effects() {
+        use crate::combat::components::{ActiveStatusEffect, StatusEffects};
+
+        let se = StatusEffects {
+            active: vec![
+                ActiveStatusEffect {
+                    kind: StatusEffectKind::CultivationAcceleration,
+                    magnitude: 0.5,
+                    remaining_ticks: 100,
+                    source_pill: None,
+                },
+                ActiveStatusEffect {
+                    kind: StatusEffectKind::Bleeding,
+                    magnitude: 1.0,
+                    remaining_ticks: 60,
+                    source_pill: None,
+                },
+            ],
+        };
+        let payload = build_test_status_snapshot_payload(&se);
+
+        assert_eq!(
+            payload["cultivation_acceleration"], 1.5,
+            "只有 CultivationAcceleration(mag=0.5) 计入 → 1.5；\
+             Bleeding 不影响 cultivation_acceleration；实际 {}",
+            payload["cultivation_acceleration"]
+        );
+        let effects = payload["effects"].as_array().expect("effects 应为数组");
+        assert_eq!(effects.len(), 2, "应有 2 条 active effects");
+    }
 }

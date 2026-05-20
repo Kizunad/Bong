@@ -4,6 +4,7 @@ import com.bong.client.combat.store.StatusEffectStore;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 
 /**
  * Top-center 8-slot status-effect strip (plan §U2 / §1 "HUD 顶部状态效果栏").
@@ -34,7 +35,7 @@ public final class StatusEffectHudPlanner {
         // plan-cultivation-pacing-v1 P2.3: show cultivation acceleration multiplier above status slots.
         double accel = StatusEffectStore.cultivationAcceleration();
         if (accel > 1.001) {
-            String label = String.format("修炼 ×%.1f", accel); // "修炼 ×N.N"
+            String label = String.format(Locale.US, "修炼 ×%.1f", accel); // "修炼 ×N.N"
             int labelWidth = label.length() * 6; // approximate glyph width
             int labelX = (screenWidth - labelWidth) / 2;
             int labelY = TOP_MARGIN;
