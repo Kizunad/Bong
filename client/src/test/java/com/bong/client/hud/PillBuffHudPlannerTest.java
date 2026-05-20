@@ -94,62 +94,56 @@ class PillBuffHudPlannerTest {
     @Test
     void nullBuffIdIgnored() {
         PillBuffHudPlanner.updateBuff(null, 3000, 1.0);
-        assertTrue(
-            PillBuffHudPlanner.activeBuffs().isEmpty(),
-            "null buffId should be silently ignored"
-        );
+        var buffs = PillBuffHudPlanner.activeBuffs();
+        assertTrue(buffs.isEmpty(),
+            "expected empty activeBuffs because null buffId should be rejected, actual size=" + buffs.size());
     }
 
     @Test
     void blankBuffIdIgnored() {
         PillBuffHudPlanner.updateBuff("  ", 3000, 1.0);
-        assertTrue(
-            PillBuffHudPlanner.activeBuffs().isEmpty(),
-            "blank buffId should be silently ignored"
-        );
+        var buffs = PillBuffHudPlanner.activeBuffs();
+        assertTrue(buffs.isEmpty(),
+            "expected empty activeBuffs because blank buffId should be rejected, actual size=" + buffs.size());
     }
 
     @Test
     void nanEffectMultiplierIgnored() {
         PillBuffHudPlanner.updateBuff("bad_nan", 3000, Double.NaN);
-        assertTrue(
-            PillBuffHudPlanner.activeBuffs().isEmpty(),
-            "NaN effectMultiplier should be silently ignored"
-        );
+        var buffs = PillBuffHudPlanner.activeBuffs();
+        assertTrue(buffs.isEmpty(),
+            "expected empty activeBuffs because NaN multiplier should be rejected, actual size=" + buffs.size());
     }
 
     @Test
     void infiniteEffectMultiplierIgnored() {
         PillBuffHudPlanner.updateBuff("bad_inf", 3000, Double.POSITIVE_INFINITY);
-        assertTrue(
-            PillBuffHudPlanner.activeBuffs().isEmpty(),
-            "infinite effectMultiplier should be silently ignored"
-        );
+        var buffs = PillBuffHudPlanner.activeBuffs();
+        assertTrue(buffs.isEmpty(),
+            "expected empty activeBuffs because Infinity multiplier should be rejected, actual size=" + buffs.size());
     }
 
     @Test
     void zeroEffectMultiplierIgnored() {
         PillBuffHudPlanner.updateBuff("bad_zero", 3000, 0.0);
-        assertTrue(
-            PillBuffHudPlanner.activeBuffs().isEmpty(),
-            "zero effectMultiplier should be silently ignored"
-        );
+        var buffs = PillBuffHudPlanner.activeBuffs();
+        assertTrue(buffs.isEmpty(),
+            "expected empty activeBuffs because zero multiplier should be rejected, actual size=" + buffs.size());
     }
 
     @Test
     void negativeEffectMultiplierIgnored() {
         PillBuffHudPlanner.updateBuff("bad_neg", 3000, -0.5);
-        assertTrue(
-            PillBuffHudPlanner.activeBuffs().isEmpty(),
-            "negative effectMultiplier should be silently ignored"
-        );
+        var buffs = PillBuffHudPlanner.activeBuffs();
+        assertTrue(buffs.isEmpty(),
+            "expected empty activeBuffs because negative multiplier should be rejected, actual size=" + buffs.size());
     }
 
     @Test
     void progressAtTypicalMaxTicks() {
         PillBuffHudPlanner.PillBuff atMax = new PillBuffHudPlanner.PillBuff("max", 6000, 1.0);
         assertEquals(1.0f, atMax.progress(), 1e-6f,
-            "progress at TYPICAL_MAX_TICKS (6000) should be exactly 1.0");
+            "expected progress=1.0 because 6000 ticks equals TYPICAL_MAX_TICKS, actual=" + atMax.progress());
     }
 
     @Test
@@ -157,8 +151,10 @@ class PillBuffHudPlannerTest {
         PillBuffHudPlanner.updateBuff("existing", 3000, 1.0);
         PillBuffHudPlanner.updateBuff(null, 1000, 1.0);
         PillBuffHudPlanner.updateBuff("  ", 1000, 1.0);
-        assertEquals(1, PillBuffHudPlanner.activeBuffs().size(),
-            "invalid buffId updates should not affect existing buffs");
-        assertEquals("existing", PillBuffHudPlanner.activeBuffs().get(0).buffId());
+        var buffs = PillBuffHudPlanner.activeBuffs();
+        assertEquals(1, buffs.size(),
+            "expected 1 buff because invalid buffId should not clobber existing, actual size=" + buffs.size());
+        assertEquals("existing", buffs.get(0).buffId(),
+            "expected buffId='existing' to survive invalid updates, actual='" + buffs.get(0).buffId() + "'");
     }
 }
