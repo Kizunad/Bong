@@ -94,6 +94,9 @@ pub fn load_plant_kind_registry_from(path: &Path) -> Result<PlantKindRegistry, S
 // botany 野生侧：BotanyKindRegistry（22 种正典静态表）
 // ============================================================================
 
+// plan-cultivation-pacing-v1 P1.8 — 灵草（最基础的 Plains 采集草）
+pub const SPIRIT_GRASS: &str = "spirit_grass";
+
 // 已有 6 种（MVP 初始）
 pub const CI_SHE_HAO: &str = "ci_she_hao";
 pub const NING_MAI_CAO: &str = "ning_mai_cao";
@@ -306,6 +309,7 @@ pub const BAI_CAO_ALIAS: &str = "bai_cao";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum BotanyPlantId {
+    SpiritGrass,
     CiSheHao,
     NingMaiCao,
     HuiYuanZhi,
@@ -350,6 +354,7 @@ pub enum BotanyPlantId {
 impl BotanyPlantId {
     pub fn as_str(self) -> &'static str {
         match self {
+            Self::SpiritGrass => SPIRIT_GRASS,
             Self::CiSheHao => CI_SHE_HAO,
             Self::NingMaiCao => NING_MAI_CAO,
             Self::HuiYuanZhi => HUI_YUAN_ZHI,
@@ -394,6 +399,7 @@ impl BotanyPlantId {
 
     pub fn from_canonical(id: &str) -> Option<Self> {
         match id {
+            SPIRIT_GRASS => Some(Self::SpiritGrass),
             CI_SHE_HAO => Some(Self::CiSheHao),
             NING_MAI_CAO => Some(Self::NingMaiCao),
             HUI_YUAN_ZHI => Some(Self::HuiYuanZhi),
@@ -636,6 +642,20 @@ impl Resource for BotanyKindRegistry {}
 impl Default for BotanyKindRegistry {
     fn default() -> Self {
         let kinds = [
+            // plan-cultivation-pacing-v1 P1.8 — 灵草（Plains 最基础采集草，高密度）
+            BotanyPlantKind {
+                id: BotanyPlantId::SpiritGrass,
+                item_id: SPIRIT_GRASS,
+                zone_tags: &[BotanyZoneTag::Plains],
+                density_factor: 20.0,
+                growth_cost: 0.002,
+                survive_threshold: 0.2,
+                max_age_ticks: 4_000,
+                regen_ticks: 0,
+                spawn_mode: BotanySpawnMode::ZoneRefresh,
+                restore_ratio: 0.8,
+                v2: None,
+            },
             BotanyPlantKind {
                 id: BotanyPlantId::CiSheHao,
                 item_id: CI_SHE_HAO,
@@ -653,7 +673,7 @@ impl Default for BotanyKindRegistry {
                 id: BotanyPlantId::NingMaiCao,
                 item_id: NING_MAI_CAO,
                 zone_tags: &[BotanyZoneTag::Plains],
-                density_factor: 2.0,
+                density_factor: 3.0,
                 growth_cost: 0.003,
                 survive_threshold: 0.4,
                 max_age_ticks: 7_200,
@@ -987,11 +1007,14 @@ impl Default for BotanyKindRegistry {
                     icon_prompt: "blood-dark thorn growing around broken spear fragments, battlefield herb icon",
                 },
             ),
-            botany_v2_kind(
+            // plan-cultivation-pacing-v1 P1.8 — ZoneRefresh BloodValley, density 1.5
+            botany_v2_kind_with_density(
                 BotanyPlantId::XueSeMaiCao,
                 XUE_SE_MAI_CAO,
-                0.003,
+                0.008,
                 10_000,
+                1.5,
+                &[BotanyZoneTag::BloodValley],
                 BotanyV2Spec {
                     survival_mode: SurvivalMode::DualMetabolism,
                     env_locks: ENV_XUE_SE_MAI_CAO,
@@ -1035,11 +1058,14 @@ impl Default for BotanyKindRegistry {
                     icon_prompt: "hanging green root vine with crystal tips, floating island underside herb icon",
                 },
             ),
-            botany_v2_kind(
+            // plan-cultivation-pacing-v1 P1.8 — ZoneRefresh Cave, density 2.5
+            botany_v2_kind_with_density(
                 BotanyPlantId::YingYuanGu,
                 YING_YUAN_GU,
-                0.003,
+                0.005,
                 10_000,
+                2.5,
+                &[BotanyZoneTag::Cave],
                 BotanyV2Spec {
                     survival_mode: SurvivalMode::PhotoLuminance,
                     env_locks: ENV_YING_YUAN_GU,
@@ -1051,11 +1077,14 @@ impl Default for BotanyKindRegistry {
                     icon_prompt: "warm orange glowing abyss mushroom, emissive cave herb icon",
                 },
             ),
-            botany_v2_kind(
+            // plan-cultivation-pacing-v1 P1.8 — StaticPoint Cave, regen 7200 ticks (60 min)
+            botany_v2_static_point(
                 BotanyPlantId::XuanRongTai,
                 XUAN_RONG_TAI,
                 0.004,
                 12_000,
+                7_200,
+                &[BotanyZoneTag::Cave],
                 BotanyV2Spec {
                     survival_mode: SurvivalMode::ThermalConvection,
                     env_locks: ENV_XUAN_RONG_TAI,
@@ -1083,11 +1112,14 @@ impl Default for BotanyKindRegistry {
                     icon_prompt: "red jade fern under black abyss mud tree, precious herb icon",
                 },
             ),
-            botany_v2_kind(
+            // plan-cultivation-pacing-v1 P1.8 — StaticPoint Marsh, regen 14400 ticks (2 h)
+            botany_v2_static_point(
                 BotanyPlantId::JingXinZao,
                 JING_XIN_ZAO,
                 0.005,
                 14_000,
+                14_400,
+                &[BotanyZoneTag::Marsh],
                 BotanyV2Spec {
                     survival_mode: SurvivalMode::WaterPulse,
                     env_locks: ENV_JING_XIN_ZAO,
@@ -1115,11 +1147,14 @@ impl Default for BotanyKindRegistry {
                     icon_prompt: "snow-white lotus with frost-blue rim, high snowline herb icon",
                 },
             ),
-            botany_v2_kind(
+            // plan-cultivation-pacing-v1 P1.8 — StaticPoint BloodValley, regen 3600 ticks (30 min)
+            botany_v2_static_point(
                 BotanyPlantId::JiaoMaiTeng,
                 JIAO_MAI_TENG,
                 0.004,
                 12_000,
+                3_600,
+                &[BotanyZoneTag::BloodValley],
                 BotanyV2Spec {
                     survival_mode: SurvivalMode::PressureDifferential,
                     env_locks: ENV_JIAO_MAI_TENG,
@@ -1256,6 +1291,56 @@ fn botany_v2_kind(
     }
 }
 
+/// plan-cultivation-pacing-v1 P1.8 — v2 herb with explicit zone_tags + density_factor (ZoneRefresh).
+fn botany_v2_kind_with_density(
+    id: BotanyPlantId,
+    item_id: &'static str,
+    growth_cost: f32,
+    max_age_ticks: u64,
+    density_factor: f32,
+    zone_tags: &'static [BotanyZoneTag],
+    v2: BotanyV2Spec,
+) -> BotanyPlantKind {
+    BotanyPlantKind {
+        id,
+        item_id,
+        zone_tags,
+        density_factor,
+        growth_cost,
+        survive_threshold: -1.0,
+        max_age_ticks,
+        regen_ticks: 0,
+        spawn_mode: BotanySpawnMode::ZoneRefresh,
+        restore_ratio: 0.8,
+        v2: Some(v2),
+    }
+}
+
+/// plan-cultivation-pacing-v1 P1.8 — v2 herb with StaticPoint spawn_mode + explicit zone_tags + regen_ticks.
+fn botany_v2_static_point(
+    id: BotanyPlantId,
+    item_id: &'static str,
+    growth_cost: f32,
+    max_age_ticks: u64,
+    regen_ticks: u64,
+    zone_tags: &'static [BotanyZoneTag],
+    v2: BotanyV2Spec,
+) -> BotanyPlantKind {
+    BotanyPlantKind {
+        id,
+        item_id,
+        zone_tags,
+        density_factor: 0.3,
+        growth_cost,
+        survive_threshold: -1.0,
+        max_age_ticks,
+        regen_ticks,
+        spawn_mode: BotanySpawnMode::StaticPoint,
+        restore_ratio: 0.8,
+        v2: Some(v2),
+    }
+}
+
 impl BotanyPlantKind {
     pub fn is_v2(&self) -> bool {
         self.v2.is_some()
@@ -1349,6 +1434,7 @@ mod tests {
     #[test]
     fn canonical_registry_accepts_known_ids() {
         for id in [
+            SPIRIT_GRASS,
             CI_SHE_HAO,
             NING_MAI_CAO,
             HUI_YUAN_ZHI,
@@ -1411,17 +1497,254 @@ mod tests {
     }
 
     #[test]
-    fn default_registry_contains_22_v1_and_17_v2_canonical_kinds() {
-        // plan-botany-v1 22 种 + plan-botany-v2 绝地草木拾遗 17 种。
+    fn default_registry_contains_23_v1_and_17_v2_canonical_kinds() {
+        // plan-botany-v1 22 种 + plan-cultivation-pacing-v1 P1.8 spirit_grass 1 种 +
+        // plan-botany-v2 绝地草木拾遗 17 种 = 40。
         let registry = BotanyKindRegistry::default();
         let count = registry.iter().count();
         assert_eq!(
-            count, 39,
-            "BotanyKindRegistry should register exactly 39 canonical kinds, got {count}"
+            count, 40,
+            "BotanyKindRegistry should register exactly 40 canonical kinds (23 v1 + 17 v2), got {count}"
         );
         assert_eq!(registry.iter().filter(|kind| kind.is_v2()).count(), 17);
-        assert!(registry.iter().filter(|kind| kind.is_v2()).all(|kind| {
-            kind.zone_tags.is_empty() && kind.spawn_mode == BotanySpawnMode::ZoneRefresh
-        }));
+    }
+
+    // ===== plan-cultivation-pacing-v1 P1.8 灵草刷新配置验收测试 =====
+
+    #[test]
+    fn spirit_grass_registered_as_zone_refresh_plains() {
+        let registry = BotanyKindRegistry::default();
+        let kind = registry
+            .get(BotanyPlantId::SpiritGrass)
+            .expect("SpiritGrass should be registered in BotanyKindRegistry");
+        assert_eq!(kind.item_id, SPIRIT_GRASS);
+        assert_eq!(kind.zone_tags, &[BotanyZoneTag::Plains]);
+        assert_eq!(kind.spawn_mode, BotanySpawnMode::ZoneRefresh);
+        assert!(
+            (kind.density_factor - 20.0).abs() < f32::EPSILON,
+            "SpiritGrass density_factor should be 20.0 (highest density herb), got {}",
+            kind.density_factor
+        );
+        assert!(
+            (kind.growth_cost - 0.002).abs() < f32::EPSILON,
+            "SpiritGrass growth_cost should be 0.002, got {}",
+            kind.growth_cost
+        );
+        assert!(!kind.is_v2(), "SpiritGrass should be a v1 kind");
+    }
+
+    #[test]
+    fn spirit_grass_canonical_id_roundtrip() {
+        assert_eq!(
+            BotanyPlantId::from_canonical(SPIRIT_GRASS),
+            Some(BotanyPlantId::SpiritGrass)
+        );
+        assert_eq!(BotanyPlantId::SpiritGrass.as_str(), SPIRIT_GRASS);
+    }
+
+    #[test]
+    fn ci_she_hao_density_matches_plan_spec() {
+        let registry = BotanyKindRegistry::default();
+        let kind = registry
+            .get(BotanyPlantId::CiSheHao)
+            .expect("CiSheHao should be registered");
+        assert!(
+            (kind.density_factor - 4.0).abs() < f32::EPSILON,
+            "CiSheHao density_factor should be 4.0, got {}",
+            kind.density_factor
+        );
+        assert!(
+            (kind.growth_cost - 0.002).abs() < f32::EPSILON,
+            "CiSheHao growth_cost should be 0.002, got {}",
+            kind.growth_cost
+        );
+        assert_eq!(kind.zone_tags, &[BotanyZoneTag::Plains]);
+        assert_eq!(kind.spawn_mode, BotanySpawnMode::ZoneRefresh);
+    }
+
+    #[test]
+    fn ning_mai_cao_density_updated_to_3() {
+        let registry = BotanyKindRegistry::default();
+        let kind = registry
+            .get(BotanyPlantId::NingMaiCao)
+            .expect("NingMaiCao should be registered");
+        assert!(
+            (kind.density_factor - 3.0).abs() < f32::EPSILON,
+            "NingMaiCao density_factor should be 3.0 (updated from 2.0), got {}",
+            kind.density_factor
+        );
+        assert!(
+            (kind.growth_cost - 0.003).abs() < f32::EPSILON,
+            "NingMaiCao growth_cost should be 0.003, got {}",
+            kind.growth_cost
+        );
+        assert_eq!(kind.zone_tags, &[BotanyZoneTag::Plains]);
+    }
+
+    #[test]
+    fn ying_yuan_gu_zone_refresh_cave_with_density() {
+        let registry = BotanyKindRegistry::default();
+        let kind = registry
+            .get(BotanyPlantId::YingYuanGu)
+            .expect("YingYuanGu should be registered");
+        assert!(kind.is_v2(), "YingYuanGu should be a v2 kind");
+        assert_eq!(kind.zone_tags, &[BotanyZoneTag::Cave]);
+        assert_eq!(kind.spawn_mode, BotanySpawnMode::ZoneRefresh);
+        assert!(
+            (kind.density_factor - 2.5).abs() < f32::EPSILON,
+            "YingYuanGu density_factor should be 2.5, got {}",
+            kind.density_factor
+        );
+        assert!(
+            (kind.growth_cost - 0.005).abs() < f32::EPSILON,
+            "YingYuanGu growth_cost should be 0.005, got {}",
+            kind.growth_cost
+        );
+    }
+
+    #[test]
+    fn xue_se_mai_cao_zone_refresh_blood_valley_with_density() {
+        let registry = BotanyKindRegistry::default();
+        let kind = registry
+            .get(BotanyPlantId::XueSeMaiCao)
+            .expect("XueSeMaiCao should be registered");
+        assert!(kind.is_v2(), "XueSeMaiCao should be a v2 kind");
+        assert_eq!(kind.zone_tags, &[BotanyZoneTag::BloodValley]);
+        assert_eq!(kind.spawn_mode, BotanySpawnMode::ZoneRefresh);
+        assert!(
+            (kind.density_factor - 1.5).abs() < f32::EPSILON,
+            "XueSeMaiCao density_factor should be 1.5, got {}",
+            kind.density_factor
+        );
+        assert!(
+            (kind.growth_cost - 0.008).abs() < f32::EPSILON,
+            "XueSeMaiCao growth_cost should be 0.008, got {}",
+            kind.growth_cost
+        );
+    }
+
+    #[test]
+    fn jiao_mai_teng_static_point_blood_valley() {
+        let registry = BotanyKindRegistry::default();
+        let kind = registry
+            .get(BotanyPlantId::JiaoMaiTeng)
+            .expect("JiaoMaiTeng should be registered");
+        assert!(kind.is_v2(), "JiaoMaiTeng should be a v2 kind");
+        assert_eq!(kind.zone_tags, &[BotanyZoneTag::BloodValley]);
+        assert_eq!(
+            kind.spawn_mode,
+            BotanySpawnMode::StaticPoint,
+            "JiaoMaiTeng should be StaticPoint spawn_mode"
+        );
+        assert_eq!(
+            kind.regen_ticks, 3_600,
+            "JiaoMaiTeng regen_ticks should be 3600 (30 min)"
+        );
+    }
+
+    #[test]
+    fn xuan_rong_tai_static_point_cave() {
+        let registry = BotanyKindRegistry::default();
+        let kind = registry
+            .get(BotanyPlantId::XuanRongTai)
+            .expect("XuanRongTai should be registered");
+        assert!(kind.is_v2(), "XuanRongTai should be a v2 kind");
+        assert_eq!(kind.zone_tags, &[BotanyZoneTag::Cave]);
+        assert_eq!(
+            kind.spawn_mode,
+            BotanySpawnMode::StaticPoint,
+            "XuanRongTai should be StaticPoint spawn_mode"
+        );
+        assert_eq!(
+            kind.regen_ticks, 7_200,
+            "XuanRongTai regen_ticks should be 7200 (60 min)"
+        );
+    }
+
+    #[test]
+    fn jing_xin_zao_static_point_marsh() {
+        let registry = BotanyKindRegistry::default();
+        let kind = registry
+            .get(BotanyPlantId::JingXinZao)
+            .expect("JingXinZao should be registered");
+        assert!(kind.is_v2(), "JingXinZao should be a v2 kind");
+        assert_eq!(kind.zone_tags, &[BotanyZoneTag::Marsh]);
+        assert_eq!(
+            kind.spawn_mode,
+            BotanySpawnMode::StaticPoint,
+            "JingXinZao should be StaticPoint spawn_mode"
+        );
+        assert_eq!(
+            kind.regen_ticks, 14_400,
+            "JingXinZao regen_ticks should be 14400 (2 h)"
+        );
+    }
+
+    #[test]
+    fn all_zone_tags_covered_by_herbs() {
+        let registry = BotanyKindRegistry::default();
+        let all_tags: std::collections::HashSet<BotanyZoneTag> = registry
+            .iter()
+            .flat_map(|kind| kind.zone_tags.iter().copied())
+            .collect();
+        for expected in [
+            BotanyZoneTag::Plains,
+            BotanyZoneTag::Mountain,
+            BotanyZoneTag::Marsh,
+            BotanyZoneTag::BloodValley,
+            BotanyZoneTag::Cave,
+        ] {
+            assert!(
+                all_tags.contains(&expected),
+                "BotanyZoneTag::{expected:?} should have at least one herb registered"
+            );
+        }
+    }
+
+    #[test]
+    fn v2_static_point_herbs_not_in_zone_refresh_set() {
+        let registry = BotanyKindRegistry::default();
+        let static_v2: Vec<_> = registry
+            .iter()
+            .filter(|kind| kind.is_v2() && kind.spawn_mode == BotanySpawnMode::StaticPoint)
+            .collect();
+        assert_eq!(
+            static_v2.len(),
+            3,
+            "should have exactly 3 v2 StaticPoint herbs (JiaoMaiTeng, XuanRongTai, JingXinZao)"
+        );
+        for kind in &static_v2 {
+            assert!(
+                kind.regen_ticks > 0,
+                "{:?} is StaticPoint but regen_ticks is 0",
+                kind.id
+            );
+            assert!(
+                !kind.zone_tags.is_empty(),
+                "{:?} is StaticPoint but zone_tags is empty (needed for zone_supports check)",
+                kind.id
+            );
+        }
+    }
+
+    #[test]
+    fn zone_refresh_density_ordering_matches_rarity() {
+        // 越基础的草越高密度：spirit_grass > ci_she_hao > ning_mai_cao
+        let registry = BotanyKindRegistry::default();
+        let spirit = registry.get(BotanyPlantId::SpiritGrass).unwrap();
+        let ci = registry.get(BotanyPlantId::CiSheHao).unwrap();
+        let ning = registry.get(BotanyPlantId::NingMaiCao).unwrap();
+        assert!(
+            spirit.density_factor > ci.density_factor,
+            "SpiritGrass ({}) should be denser than CiSheHao ({})",
+            spirit.density_factor,
+            ci.density_factor
+        );
+        assert!(
+            ci.density_factor > ning.density_factor,
+            "CiSheHao ({}) should be denser than NingMaiCao ({})",
+            ci.density_factor,
+            ning.density_factor
+        );
     }
 }

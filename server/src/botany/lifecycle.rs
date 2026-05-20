@@ -138,7 +138,10 @@ fn spawn_v2_plants_for_zone(
         return;
     };
 
-    for kind in registry.iter().filter(|kind| kind.is_v2()) {
+    for kind in registry
+        .iter()
+        .filter(|kind| kind.is_v2() && kind.spawn_mode != BotanySpawnMode::StaticPoint)
+    {
         let Some(spec) = kind.v2_spec() else {
             continue;
         };
