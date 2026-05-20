@@ -421,4 +421,217 @@ mod tests {
         assert!(!log.dirty);
         let _ = fs::remove_file(&path);
     }
+
+    // ===== plan-cultivation-pacing-v1 P1.9 矿物再生验收测试 =====
+
+    #[test]
+    fn remove_respawned_removes_expired_entries() {
+        let mut log = ExhaustedMineralsLog::default();
+        log.record(ExhaustedEntry {
+            mineral_id: "fan_tie".into(),
+            x: 0,
+            y: 64,
+            z: 0,
+            tick: 100,
+            respawn_at_tick: Some(200),
+        });
+        log.record(ExhaustedEntry {
+            mineral_id: "ling_shi_yi".into(),
+            x: 1,
+            y: 64,
+            z: 1,
+            tick: 100,
+            respawn_at_tick: None, // 永不再生
+        });
+        log.record(ExhaustedEntry {
+            mineral_id: "za_gang".into(),
+            x: 2,
+            y: 64,
+            z: 2,
+            tick: 100,
+            respawn_at_tick: Some(500), // 未到期
+        });
+        log.dirty = false; // 手动清 dirty 来验证 remove_respawned 会重新标 dirty
+
+        let respawned = log.remove_respawned(200);
+        assert_eq!(
+            respawned.len(),
+            1,
+            "only the expired fan_tie entry should be removed at tick 200"
+        );
+        assert_eq!(respawned[0].mineral_id, "fan_tie");
+        assert_eq!(
+            log.entries().len(),
+            2,
+            "ling_shi_yi (永不再生) + za_gang (未到期) should remain"
+        );
+        assert!(log.dirty, "remove_respawned should mark log dirty");
+    }
+
+    #[test]
+    fn remove_respawned_no_op_when_nothing_expired() {
+        let mut log = ExhaustedMineralsLog::default();
+        log.record(ExhaustedEntry {
+            mineral_id: "fan_tie".into(),
+            x: 0,
+            y: 64,
+            z: 0,
+            tick: 100,
+            respawn_at_tick: Some(500),
+        });
+        log.dirty = false;
+
+        let respawned = log.remove_respawned(200);
+        assert!(
+            respawned.is_empty(),
+            "nothing should be removed before respawn_at_tick"
+        );
+        assert_eq!(log.entries().len(), 1);
+        assert!(!log.dirty, "no removal means no dirty flag");
+    }
+
+    #[test]
+    fn remove_respawned_leaves_permanent_entries_untouched() {
+        let mut log = ExhaustedMineralsLog::default();
+        log.record(ExhaustedEntry {
+            mineral_id: "ku_jin".into(),
+            x: 0,
+            y: 64,
+            z: 0,
+            tick: 100,
+            respawn_at_tick: None,
+        });
+        log.record(ExhaustedEntry {
+            mineral_id: "ling_shi_yi".into(),
+            x: 1,
+            y: 64,
+            z: 1,
+            tick: 100,
+            respawn_at_tick: None,
+        });
+
+        let respawned = log.remove_respawned(999_999);
+        assert!(respawned.is_empty(), "永不再生矿物在任何 tick 都不应被移除");
+        assert_eq!(log.entries().len(), 2);
+    }
+
+    #[test]
+    fn remove_respawned_handles_exact_boundary() {
+        let mut log = ExhaustedMineralsLog::default();
+        log.record(ExhaustedEntry {
+            mineral_id: "fan_tie".into(),
+            x: 0,
+            y: 64,
+            z: 0,
+            tick: 100,
+            respawn_at_tick: Some(200),
+        });
+
+        // tick=199: 还没到期
+        let respawned = log.remove_respawned(199);
+        assert!(
+            respawned.is_empty(),
+            "tick 199 < respawn_at 200, should not remove"
+        );
+        assert_eq!(log.entries().len(), 1);
+
+        // tick=200: 刚好到期
+        let respawned = log.remove_respawned(200);
+        assert_eq!(
+            respawned.len(),
+            1,
+            "tick 200 >= respawn_at 200, should remove"
+        );
+        assert!(log.entries().is_empty());
+    }
+
+    #[test]
+    fn remove_respawned_removes_multiple_at_once() {
+        let mut log = ExhaustedMineralsLog::default();
+        for i in 0..5 {
+            log.record(ExhaustedEntry {
+                mineral_id: "fan_tie".into(),
+                x: i,
+                y: 64,
+                z: 0,
+                tick: 100,
+                respawn_at_tick: Some(300),
+            });
+        }
+        // 加一个未到期的
+        log.record(ExhaustedEntry {
+            mineral_id: "ling_tie".into(),
+            x: 10,
+            y: 64,
+            z: 10,
+            tick: 100,
+            respawn_at_tick: Some(1000),
+        });
+
+        let respawned = log.remove_respawned(300);
+        assert_eq!(
+            respawned.len(),
+            5,
+            "all 5 fan_tie entries should respawn at tick 300"
+        );
+        assert_eq!(log.entries().len(), 1, "only ling_tie should remain");
+        assert_eq!(log.entries()[0].mineral_id, "ling_tie");
+    }
+
+    #[test]
+    fn respawn_at_tick_serialization_roundtrip() {
+        let path = unique_tmp_path("respawn_serde");
+        let mut log = ExhaustedMineralsLog::default().with_path(&path);
+        log.record(ExhaustedEntry {
+            mineral_id: "fan_tie".into(),
+            x: 0,
+            y: 64,
+            z: 0,
+            tick: 100,
+            respawn_at_tick: Some(72_100),
+        });
+        log.record(ExhaustedEntry {
+            mineral_id: "ku_jin".into(),
+            x: 1,
+            y: 64,
+            z: 1,
+            tick: 100,
+            respawn_at_tick: None,
+        });
+        log.flush().expect("flush should succeed");
+
+        let loaded = load_exhausted_log(&path).expect("load should parse");
+        assert_eq!(loaded.entries.len(), 2);
+        assert_eq!(
+            loaded.entries[0].respawn_at_tick,
+            Some(72_100),
+            "respawn_at_tick should survive serialization roundtrip"
+        );
+        assert_eq!(
+            loaded.entries[1].respawn_at_tick, None,
+            "None respawn_at_tick should survive serialization roundtrip"
+        );
+
+        let _ = fs::remove_file(&path);
+    }
+
+    #[test]
+    fn old_format_without_respawn_at_tick_deserializes_as_none() {
+        let path = unique_tmp_path("old_format_compat");
+        // 模拟旧版格式（无 respawn_at_tick 字段）
+        fs::write(
+            &path,
+            r#"{"version":1,"entries":[{"mineral_id":"fan_tie","x":0,"y":64,"z":0,"tick":100}]}"#,
+        )
+        .unwrap();
+
+        let loaded = load_exhausted_log(&path).expect("old format should parse");
+        assert_eq!(loaded.entries.len(), 1);
+        assert_eq!(
+            loaded.entries[0].respawn_at_tick, None,
+            "旧版格式无 respawn_at_tick 字段应默认为 None（向后兼容）"
+        );
+
+        let _ = fs::remove_file(&path);
+    }
 }

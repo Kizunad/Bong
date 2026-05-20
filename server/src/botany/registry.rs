@@ -1508,4 +1508,243 @@ mod tests {
         );
         assert_eq!(registry.iter().filter(|kind| kind.is_v2()).count(), 17);
     }
+
+    // ===== plan-cultivation-pacing-v1 P1.8 灵草刷新配置验收测试 =====
+
+    #[test]
+    fn spirit_grass_registered_as_zone_refresh_plains() {
+        let registry = BotanyKindRegistry::default();
+        let kind = registry
+            .get(BotanyPlantId::SpiritGrass)
+            .expect("SpiritGrass should be registered in BotanyKindRegistry");
+        assert_eq!(kind.item_id, SPIRIT_GRASS);
+        assert_eq!(kind.zone_tags, &[BotanyZoneTag::Plains]);
+        assert_eq!(kind.spawn_mode, BotanySpawnMode::ZoneRefresh);
+        assert!(
+            (kind.density_factor - 20.0).abs() < f32::EPSILON,
+            "SpiritGrass density_factor should be 20.0 (highest density herb), got {}",
+            kind.density_factor
+        );
+        assert!(
+            (kind.growth_cost - 0.002).abs() < f32::EPSILON,
+            "SpiritGrass growth_cost should be 0.002, got {}",
+            kind.growth_cost
+        );
+        assert!(!kind.is_v2(), "SpiritGrass should be a v1 kind");
+    }
+
+    #[test]
+    fn spirit_grass_canonical_id_roundtrip() {
+        assert_eq!(
+            BotanyPlantId::from_canonical(SPIRIT_GRASS),
+            Some(BotanyPlantId::SpiritGrass)
+        );
+        assert_eq!(BotanyPlantId::SpiritGrass.as_str(), SPIRIT_GRASS);
+    }
+
+    #[test]
+    fn ci_she_hao_density_matches_plan_spec() {
+        let registry = BotanyKindRegistry::default();
+        let kind = registry
+            .get(BotanyPlantId::CiSheHao)
+            .expect("CiSheHao should be registered");
+        assert!(
+            (kind.density_factor - 4.0).abs() < f32::EPSILON,
+            "CiSheHao density_factor should be 4.0, got {}",
+            kind.density_factor
+        );
+        assert!(
+            (kind.growth_cost - 0.002).abs() < f32::EPSILON,
+            "CiSheHao growth_cost should be 0.002, got {}",
+            kind.growth_cost
+        );
+        assert_eq!(kind.zone_tags, &[BotanyZoneTag::Plains]);
+        assert_eq!(kind.spawn_mode, BotanySpawnMode::ZoneRefresh);
+    }
+
+    #[test]
+    fn ning_mai_cao_density_updated_to_3() {
+        let registry = BotanyKindRegistry::default();
+        let kind = registry
+            .get(BotanyPlantId::NingMaiCao)
+            .expect("NingMaiCao should be registered");
+        assert!(
+            (kind.density_factor - 3.0).abs() < f32::EPSILON,
+            "NingMaiCao density_factor should be 3.0 (updated from 2.0), got {}",
+            kind.density_factor
+        );
+        assert!(
+            (kind.growth_cost - 0.003).abs() < f32::EPSILON,
+            "NingMaiCao growth_cost should be 0.003, got {}",
+            kind.growth_cost
+        );
+        assert_eq!(kind.zone_tags, &[BotanyZoneTag::Plains]);
+    }
+
+    #[test]
+    fn ying_yuan_gu_zone_refresh_cave_with_density() {
+        let registry = BotanyKindRegistry::default();
+        let kind = registry
+            .get(BotanyPlantId::YingYuanGu)
+            .expect("YingYuanGu should be registered");
+        assert!(kind.is_v2(), "YingYuanGu should be a v2 kind");
+        assert_eq!(kind.zone_tags, &[BotanyZoneTag::Cave]);
+        assert_eq!(kind.spawn_mode, BotanySpawnMode::ZoneRefresh);
+        assert!(
+            (kind.density_factor - 2.5).abs() < f32::EPSILON,
+            "YingYuanGu density_factor should be 2.5, got {}",
+            kind.density_factor
+        );
+        assert!(
+            (kind.growth_cost - 0.005).abs() < f32::EPSILON,
+            "YingYuanGu growth_cost should be 0.005, got {}",
+            kind.growth_cost
+        );
+    }
+
+    #[test]
+    fn xue_se_mai_cao_zone_refresh_blood_valley_with_density() {
+        let registry = BotanyKindRegistry::default();
+        let kind = registry
+            .get(BotanyPlantId::XueSeMaiCao)
+            .expect("XueSeMaiCao should be registered");
+        assert!(kind.is_v2(), "XueSeMaiCao should be a v2 kind");
+        assert_eq!(kind.zone_tags, &[BotanyZoneTag::BloodValley]);
+        assert_eq!(kind.spawn_mode, BotanySpawnMode::ZoneRefresh);
+        assert!(
+            (kind.density_factor - 1.5).abs() < f32::EPSILON,
+            "XueSeMaiCao density_factor should be 1.5, got {}",
+            kind.density_factor
+        );
+        assert!(
+            (kind.growth_cost - 0.008).abs() < f32::EPSILON,
+            "XueSeMaiCao growth_cost should be 0.008, got {}",
+            kind.growth_cost
+        );
+    }
+
+    #[test]
+    fn jiao_mai_teng_static_point_blood_valley() {
+        let registry = BotanyKindRegistry::default();
+        let kind = registry
+            .get(BotanyPlantId::JiaoMaiTeng)
+            .expect("JiaoMaiTeng should be registered");
+        assert!(kind.is_v2(), "JiaoMaiTeng should be a v2 kind");
+        assert_eq!(kind.zone_tags, &[BotanyZoneTag::BloodValley]);
+        assert_eq!(
+            kind.spawn_mode,
+            BotanySpawnMode::StaticPoint,
+            "JiaoMaiTeng should be StaticPoint spawn_mode"
+        );
+        assert_eq!(
+            kind.regen_ticks, 3_600,
+            "JiaoMaiTeng regen_ticks should be 3600 (30 min)"
+        );
+    }
+
+    #[test]
+    fn xuan_rong_tai_static_point_cave() {
+        let registry = BotanyKindRegistry::default();
+        let kind = registry
+            .get(BotanyPlantId::XuanRongTai)
+            .expect("XuanRongTai should be registered");
+        assert!(kind.is_v2(), "XuanRongTai should be a v2 kind");
+        assert_eq!(kind.zone_tags, &[BotanyZoneTag::Cave]);
+        assert_eq!(
+            kind.spawn_mode,
+            BotanySpawnMode::StaticPoint,
+            "XuanRongTai should be StaticPoint spawn_mode"
+        );
+        assert_eq!(
+            kind.regen_ticks, 7_200,
+            "XuanRongTai regen_ticks should be 7200 (60 min)"
+        );
+    }
+
+    #[test]
+    fn jing_xin_zao_static_point_marsh() {
+        let registry = BotanyKindRegistry::default();
+        let kind = registry
+            .get(BotanyPlantId::JingXinZao)
+            .expect("JingXinZao should be registered");
+        assert!(kind.is_v2(), "JingXinZao should be a v2 kind");
+        assert_eq!(kind.zone_tags, &[BotanyZoneTag::Marsh]);
+        assert_eq!(
+            kind.spawn_mode,
+            BotanySpawnMode::StaticPoint,
+            "JingXinZao should be StaticPoint spawn_mode"
+        );
+        assert_eq!(
+            kind.regen_ticks, 14_400,
+            "JingXinZao regen_ticks should be 14400 (2 h)"
+        );
+    }
+
+    #[test]
+    fn all_zone_tags_covered_by_herbs() {
+        let registry = BotanyKindRegistry::default();
+        let all_tags: std::collections::HashSet<BotanyZoneTag> = registry
+            .iter()
+            .flat_map(|kind| kind.zone_tags.iter().copied())
+            .collect();
+        for expected in [
+            BotanyZoneTag::Plains,
+            BotanyZoneTag::Mountain,
+            BotanyZoneTag::Marsh,
+            BotanyZoneTag::BloodValley,
+            BotanyZoneTag::Cave,
+        ] {
+            assert!(
+                all_tags.contains(&expected),
+                "BotanyZoneTag::{expected:?} should have at least one herb registered"
+            );
+        }
+    }
+
+    #[test]
+    fn v2_static_point_herbs_not_in_zone_refresh_set() {
+        let registry = BotanyKindRegistry::default();
+        let static_v2: Vec<_> = registry
+            .iter()
+            .filter(|kind| kind.is_v2() && kind.spawn_mode == BotanySpawnMode::StaticPoint)
+            .collect();
+        assert_eq!(
+            static_v2.len(),
+            3,
+            "should have exactly 3 v2 StaticPoint herbs (JiaoMaiTeng, XuanRongTai, JingXinZao)"
+        );
+        for kind in &static_v2 {
+            assert!(
+                kind.regen_ticks > 0,
+                "{:?} is StaticPoint but regen_ticks is 0",
+                kind.id
+            );
+            assert!(
+                !kind.zone_tags.is_empty(),
+                "{:?} is StaticPoint but zone_tags is empty (needed for zone_supports check)",
+                kind.id
+            );
+        }
+    }
+
+    #[test]
+    fn zone_refresh_density_ordering_matches_rarity() {
+        // 越基础的草越高密度：spirit_grass > ci_she_hao > ning_mai_cao
+        let registry = BotanyKindRegistry::default();
+        let spirit = registry.get(BotanyPlantId::SpiritGrass).unwrap();
+        let ci = registry.get(BotanyPlantId::CiSheHao).unwrap();
+        let ning = registry.get(BotanyPlantId::NingMaiCao).unwrap();
+        assert!(
+            spirit.density_factor > ci.density_factor,
+            "SpiritGrass ({}) should be denser than CiSheHao ({})",
+            spirit.density_factor,
+            ci.density_factor
+        );
+        assert!(
+            ci.density_factor > ning.density_factor,
+            "CiSheHao ({}) should be denser than NingMaiCao ({})",
+            ci.density_factor,
+            ning.density_factor
+        );
+    }
 }

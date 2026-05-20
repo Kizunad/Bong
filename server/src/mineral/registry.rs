@@ -296,4 +296,119 @@ mod tests {
             assert!(entry.decay_profile.is_none());
         }
     }
+
+    // ===== plan-cultivation-pacing-v1 P1.9 矿物再生配置验收测试 =====
+
+    #[test]
+    fn fan_tie_cu_tie_respawn_72000() {
+        let reg = build_default_registry();
+        for &id in &[MineralId::FanTie, MineralId::CuTie] {
+            let entry = reg.get(id).unwrap();
+            assert_eq!(
+                entry.respawn_ticks,
+                Some(72_000),
+                "{} respawn_ticks should be 72000 (~1h)",
+                entry.display_name_zh
+            );
+        }
+    }
+
+    #[test]
+    fn za_gang_dan_sha_respawn_108000() {
+        let reg = build_default_registry();
+        for &id in &[MineralId::ZaGang, MineralId::DanSha] {
+            let entry = reg.get(id).unwrap();
+            assert_eq!(
+                entry.respawn_ticks,
+                Some(108_000),
+                "{} respawn_ticks should be 108000 (~1.5h)",
+                entry.display_name_zh
+            );
+        }
+    }
+
+    #[test]
+    fn ling_shi_fan_respawn_144000() {
+        let reg = build_default_registry();
+        let entry = reg.get(MineralId::LingShiFan).unwrap();
+        assert_eq!(
+            entry.respawn_ticks,
+            Some(144_000),
+            "凡品灵石 respawn_ticks should be 144000 (~2h)"
+        );
+    }
+
+    #[test]
+    fn ling_tie_ling_shi_zhong_respawn_288000() {
+        let reg = build_default_registry();
+        for &id in &[MineralId::LingTie, MineralId::LingShiZhong] {
+            let entry = reg.get(id).unwrap();
+            assert_eq!(
+                entry.respawn_ticks,
+                Some(288_000),
+                "{} respawn_ticks should be 288000 (~4h)",
+                entry.display_name_zh
+            );
+        }
+    }
+
+    #[test]
+    fn sui_tie_ling_shi_shang_respawn_576000() {
+        let reg = build_default_registry();
+        for &id in &[MineralId::SuiTie, MineralId::LingShiShang] {
+            let entry = reg.get(id).unwrap();
+            assert_eq!(
+                entry.respawn_ticks,
+                Some(576_000),
+                "{} respawn_ticks should be 576000 (~8h)",
+                entry.display_name_zh
+            );
+        }
+    }
+
+    #[test]
+    fn ling_shi_yi_ku_jin_never_respawn() {
+        let reg = build_default_registry();
+        for &id in &[MineralId::LingShiYi, MineralId::KuJin] {
+            let entry = reg.get(id).unwrap();
+            assert_eq!(
+                entry.respawn_ticks, None,
+                "{} should never respawn (respawn_ticks=None)",
+                entry.display_name_zh
+            );
+        }
+    }
+
+    #[test]
+    fn respawn_ticks_increases_with_rarity() {
+        // 凡 < 灵 < 稀；遗品永不再生
+        let reg = build_default_registry();
+        let fan = reg.get(MineralId::FanTie).unwrap().respawn_ticks.unwrap();
+        let ling = reg.get(MineralId::LingTie).unwrap().respawn_ticks.unwrap();
+        let xi = reg.get(MineralId::SuiTie).unwrap().respawn_ticks.unwrap();
+        assert!(fan < ling, "凡铁 respawn ({fan}) should be < 灵铁 ({ling})");
+        assert!(ling < xi, "灵铁 respawn ({ling}) should be < 髓铁 ({xi})");
+    }
+
+    #[test]
+    fn unset_respawn_minerals_default_to_none() {
+        // 残铁 / 灵晶 / 朱砂等未配 respawn 的矿物
+        let reg = build_default_registry();
+        for &id in &[
+            MineralId::CanTie,
+            MineralId::LingJing,
+            MineralId::YuSui,
+            MineralId::WuYao,
+            MineralId::ZhuSha,
+            MineralId::XiongHuang,
+            MineralId::XiePhen,
+        ] {
+            let entry = reg.get(id).unwrap();
+            assert_eq!(
+                entry.respawn_ticks, None,
+                "{} should default to None (no respawn configured)",
+                entry.display_name_zh
+            );
+        }
+    }
 }
