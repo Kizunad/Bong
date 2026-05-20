@@ -72,24 +72,25 @@ class ArmorModelRegistryTest {
 
     @Test
     void armorModelRegistryBoneHelmetRegistered() {
-        assertTrue(ArmorModelRegistry.get("armor_bone_helmet").isPresent(),
-            "armor_bone_helmet should be registered in ArmorModelRegistry");
-        assertEquals("head", ArmorModelRegistry.get("armor_bone_helmet").get().slot(),
-            "bone helmet slot should be 'head'");
+        var spec = ArmorModelRegistry.get("armor_bone_helmet");
+        assertTrue(spec.isPresent(),
+            "expected armor_bone_helmet present because it was registered, actual isPresent=" + spec.isPresent());
+        assertEquals("head", spec.get().slot(),
+            "expected slot='head' for bone helmet, actual='" + spec.get().slot() + "'");
     }
 
     @Test
     void boneHelmetObjResourceExists() {
         var url = getClass().getClassLoader().getResource(
             "assets/bong/models/armor/bone_helmet/bone_helmet.obj");
-        assertNotNull(url, "bone_helmet.obj should exist in resources");
+        assertNotNull(url, "expected bone_helmet.obj to exist in resources because bone armor was added, actual url=null");
     }
 
     @Test
     void boneChestplateObjResourceExists() {
         var url = getClass().getClassLoader().getResource(
             "assets/bong/models/armor/bone_chestplate/bone_chestplate.obj");
-        assertNotNull(url, "bone_chestplate.obj should exist in resources");
+        assertNotNull(url, "expected bone_chestplate.obj to exist in resources because bone armor was added, actual url=null");
     }
 
     @Test

@@ -119,12 +119,13 @@ class BongWeaponModelRegistryTest {
 
     @Test
     void toolTemplateIdsSetMatchesRegisteredTools() {
+        Set<String> expected = Set.of("axe_bone", "pickaxe_bone", "axe_iron", "pickaxe_iron");
+        assertEquals(expected, BongWeaponModelRegistry.TOOL_TEMPLATE_IDS,
+            "expected TOOL_TEMPLATE_IDS=" + expected + ", actual=" + BongWeaponModelRegistry.TOOL_TEMPLATE_IDS);
         for (String templateId : BongWeaponModelRegistry.TOOL_TEMPLATE_IDS) {
             assertTrue(BongWeaponModelRegistry.get(templateId).isPresent(),
-                "TOOL_TEMPLATE_IDS entry " + templateId + " should be in registry");
+                "expected " + templateId + " in registry because it's in TOOL_TEMPLATE_IDS, actual isPresent=false");
         }
-        assertEquals(4, BongWeaponModelRegistry.TOOL_TEMPLATE_IDS.size(),
-            "TOOL_TEMPLATE_IDS should contain exactly 4 tool entries");
     }
 
     @Test

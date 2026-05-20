@@ -902,8 +902,37 @@ mod tests {
             panic!("bone_chestplate first step should be billet");
         };
         assert_eq!(
+            profile.required[0].material, "yi_shou_gu",
+            "bone chestplate material should be yi_shou_gu, got {}",
+            profile.required[0].material
+        );
+        assert_eq!(
             profile.required[0].count, 4,
             "bone chestplate is the biggest piece, needs 4 yi_shou_gu"
+        );
+    }
+
+    #[test]
+    fn bone_dagger_v0_outcome_quality_coefficients() {
+        let reg = BlueprintRegistry::load_dir(DEFAULT_BLUEPRINTS_DIR).unwrap();
+        let bp = reg.get("bone_dagger_v0").unwrap();
+        let perfect = bp.outcomes.perfect.as_ref().unwrap();
+        assert!(
+            (perfect.quality - 1.0).abs() < f32::EPSILON,
+            "bone_dagger perfect quality should be 1.0, got {}",
+            perfect.quality
+        );
+        let good = bp.outcomes.good.as_ref().unwrap();
+        assert!(
+            (good.quality - 0.8).abs() < f32::EPSILON,
+            "bone_dagger good quality should be 0.8, got {}",
+            good.quality
+        );
+        let flawed = bp.outcomes.flawed.as_ref().unwrap();
+        assert!(
+            (flawed.quality - 0.5).abs() < f32::EPSILON,
+            "bone_dagger flawed quality should be 0.5, got {}",
+            flawed.quality
         );
     }
 
