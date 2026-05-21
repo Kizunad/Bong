@@ -40,6 +40,7 @@ use crate::npc::schedule::{
     NpcDailySchedule, NpcHomeBase, ScheduleActivity, DAILY_POI_SEARCH_RADIUS,
 };
 use crate::npc::spawn::{DuelTarget, NpcBlackboard, NpcMarker, NpcMeleeProfile};
+use crate::npc::technique::NpcCooldownMap;
 use crate::npc::tribulation::{AscensionQuotaStore, NpcTribulationPacing};
 use crate::world::poi_novice::PoiNoviceRegistry;
 use crate::world::zone::{Zone, ZoneRegistry};
@@ -639,6 +640,7 @@ pub fn register(app: &mut App) {
     // tests that only register brain but not cultivation.
     app.add_event::<InitiateXuhuaTribulation>();
     app.insert_resource(NpcBehaviorConfig::default())
+        .insert_resource(NpcCooldownMap::default())
         .add_plugins(BigBrainPlugin::new(PreUpdate))
         .add_systems(
             PreUpdate,
@@ -667,6 +669,7 @@ pub fn register(app: &mut App) {
                 curiosity_scorer_system,
                 tribulation_ready_scorer_system,
                 seclusion_scorer_system,
+                crate::npc::technique::npc_technique_scorer_system,
             )
                 .in_set(BigBrainSet::Scorers),
         )
@@ -696,6 +699,10 @@ pub fn register(app: &mut App) {
                 seclusion_action_system,
             )
                 .in_set(BigBrainSet::Actions),
+        )
+        .add_systems(
+            PreUpdate,
+            crate::npc::technique::npc_technique_action_system.in_set(BigBrainSet::Actions),
         )
         // Must run before `process_npc_retire_requests` (also in Update) so
         // the request is consumed in the same tick it's emitted. Without this
