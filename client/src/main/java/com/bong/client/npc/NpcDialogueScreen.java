@@ -74,12 +74,13 @@ public final class NpcDialogueScreen extends BaseOwoScreen<FlowLayout> {
         mainPanel.gap(4);
         mainPanel.horizontalAlignment(HorizontalAlignment.LEFT);
 
-        // ── header row ──
+        // ── header row (spec: archetype[4px]name[8px]realm) ──
         FlowLayout headerRow = Containers.horizontalFlow(Sizing.content(), Sizing.content());
-        headerRow.gap(4);
         headerRow.child(coloredLabel("[" + archetypeLabel(metadata.archetype()) + "]", COLOR_ARCHETYPE_TAG));
+        headerRow.child(Containers.verticalFlow(Sizing.fixed(4), Sizing.fixed(1)));  // 4px spacer
         headerRow.child(coloredLabel(metadata.displayName(), COLOR_NPC_NAME));
-        headerRow.child(coloredLabel("  " + realmBadge(metadata.realm()), COLOR_REALM_BADGE));
+        headerRow.child(Containers.verticalFlow(Sizing.fixed(8), Sizing.fixed(1)));  // 8px spacer
+        headerRow.child(coloredLabel(realmBadge(metadata.realm()), COLOR_REALM_BADGE));
         mainPanel.child(headerRow);
 
         // ── divider ──
