@@ -91,6 +91,8 @@ pub enum StartCraftError {
     InvalidQuantity(u32),
     /// 批量数量超过服务端硬上限。
     QuantityTooLarge { requested: u32, max: u32 },
+    /// plan-workbench-recipes-v1 §P2.4：配方需要制作台但玩家 3 格内没有。
+    StationOutOfRange,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -233,6 +235,10 @@ pub struct StartCraftDeps<'a> {
     pub qi_color: &'a QiColor,
     pub ledger: &'a mut WorldQiAccount,
     pub existing_session: Option<&'a CraftSession>,
+    /// plan-workbench-recipes-v1 §P2.4：玩家 3 格内是否有制作台。
+    /// `true` = 有（或不需要），`false` = 没有。
+    /// 对 station=None 的配方此字段被忽略。
+    pub has_nearby_workbench: bool,
 }
 
 /// §3 主入口 — 起手手搓。
@@ -277,6 +283,13 @@ pub fn start_craft(
 
     if deps.existing_session.is_some() {
         return Err(StartCraftError::AlreadyHasSession);
+    }
+
+    // plan-workbench-recipes-v1 §P2.4：station 校验。
+    // station=Some(Workbench) → 玩家 3 格内必须有 WorkbenchBlock。
+    // station=None → 手搓，不受制作台距离限制。
+    if recipe.station.is_some() && !deps.has_nearby_workbench {
+        return Err(StartCraftError::StationOutOfRange);
     }
 
     if let Some(min) = recipe.requirements.realm_min {
@@ -580,6 +593,7 @@ mod tests {
             qi_color: color,
             ledger,
             existing_session: None,
+            has_nearby_workbench: true, // 默认近处有制作台（手搓配方不需要）
         }
     }
 

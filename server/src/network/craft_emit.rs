@@ -184,6 +184,9 @@ pub fn apply_craft_intents(
             qi_color,
             ledger: &mut ledger,
             existing_session: existing,
+            // TODO(plan-workbench-recipes-v1 PR-3): 实际检查玩家 3 格内是否有
+            // WorkbenchBlock entity。当前暂时传 true，待 PR-3 接入实际 ECS 查询。
+            has_nearby_workbench: true,
         };
 
         match start_craft(req, deps) {
