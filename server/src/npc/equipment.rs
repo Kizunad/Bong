@@ -312,7 +312,7 @@ fn assign_rogue(seed: u64, tier_bonus: u8, armor_bonus: u32) -> NpcEquipment {
             "木杖",
             ItemKind::Stick,
             WeaponKind::Staff,
-            0,
+            tier,
             5.0,
             0.9,
         ));
@@ -913,16 +913,43 @@ mod tests {
 
     #[test]
     fn assign_rogue_condense_upgrades_tier() {
-        // At Condense (realm_rank >= 2), tier_bonus = 1
-        let eq = assign_npc_equipment(NpcArchetype::Rogue, Realm::Condense, None, 42);
-        if let Some(main) = &eq.main_hand {
-            if main.template_id == "iron_sword" {
-                assert!(
-                    main.quality_tier >= 1,
-                    "Condense rogue sword should have tier >= 1"
-                );
+        // Scan seeds until we find iron_sword and wooden_staff to assert tier upgrade on both
+        let mut found_sword = false;
+        let mut found_staff = false;
+        for seed in 0..500u64 {
+            let eq = assign_npc_equipment(NpcArchetype::Rogue, Realm::Condense, None, seed);
+            if let Some(main) = &eq.main_hand {
+                if main.template_id == "iron_sword" && !found_sword {
+                    assert!(
+                        main.quality_tier >= 1,
+                        "Condense rogue iron_sword should have tier >= 1, got {} (seed {})",
+                        main.quality_tier,
+                        seed
+                    );
+                    found_sword = true;
+                }
+                if main.template_id == "wooden_staff" && !found_staff {
+                    assert!(
+                        main.quality_tier >= 1,
+                        "Condense rogue wooden_staff should have tier >= 1, got {} (seed {})",
+                        main.quality_tier,
+                        seed
+                    );
+                    found_staff = true;
+                }
+            }
+            if found_sword && found_staff {
+                break;
             }
         }
+        assert!(
+            found_sword,
+            "failed to find iron_sword seed in 500 iterations"
+        );
+        assert!(
+            found_staff,
+            "failed to find wooden_staff seed in 500 iterations"
+        );
     }
 
     #[test]
