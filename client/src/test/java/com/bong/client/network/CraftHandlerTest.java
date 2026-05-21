@@ -95,6 +95,51 @@ class CraftHandlerTest {
     }
 
     @Test
+    void recipeListHandlerParsesStationField() {
+        String json = """
+            {
+              "v":1,"type":"craft_recipe_list","player_id":"offline:Alice","ts":1,
+              "recipes":[
+                {"id":"workbench.tool.pick",
+                 "category":"tool",
+                 "display_name":"石镐",
+                 "materials":[["stone_chunk",3]],
+                 "qi_cost":0.0,
+                 "time_ticks":500,
+                 "output":["stone_pickaxe",1],
+                 "requirements":{},
+                 "unlocked":true,
+                 "station":"workbench"},
+                {"id":"craft.hand.rope",
+                 "category":"misc",
+                 "display_name":"草绳",
+                 "materials":[["grass_fiber",3]],
+                 "qi_cost":0.0,
+                 "time_ticks":400,
+                 "output":["grass_rope",1],
+                 "requirements":{},
+                 "unlocked":true}
+              ]
+            }
+            """;
+        ServerDataDispatch dispatch = new CraftRecipeListHandler().handle(envelope(json));
+        assertTrue(dispatch.handled());
+        assertEquals(2, CraftStore.recipes().size());
+
+        CraftRecipe wbRecipe = CraftStore.recipe("workbench.tool.pick").orElseThrow();
+        assertEquals("workbench", wbRecipe.station(),
+            "station 字段应被解析为 \"workbench\"，实际 " + wbRecipe.station());
+        assertTrue(wbRecipe.isWorkbenchRecipe(),
+            "station=\"workbench\" 配方的 isWorkbenchRecipe() 应为 true");
+
+        CraftRecipe handRecipe = CraftStore.recipe("craft.hand.rope").orElseThrow();
+        assertNull(handRecipe.station(),
+            "无 station 字段时应为 null，实际 " + handRecipe.station());
+        assertFalse(handRecipe.isWorkbenchRecipe(),
+            "无 station 的配方 isWorkbenchRecipe() 应为 false");
+    }
+
+    @Test
     void recipeListHandlerNoOpsOnMissingRecipesArray() {
         String json = "{\"v\":1,\"type\":\"craft_recipe_list\",\"player_id\":\"offline:A\",\"ts\":0}";
         ServerDataDispatch dispatch = new CraftRecipeListHandler().handle(envelope(json));
