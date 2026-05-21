@@ -1,6 +1,6 @@
 //! NPC engagement metadata bridge (`bong:npc_metadata`).
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use serde::{Deserialize, Serialize};
 use valence::entity::EntityId;
@@ -11,11 +11,14 @@ use valence::prelude::{
 
 use crate::combat::components::{Lifecycle, LifecycleState, Wounds};
 use crate::cultivation::components::{Cultivation, Realm};
+use crate::cultivation::known_techniques::KnownTechniques;
 use crate::identity::PlayerIdentities;
 use crate::network::audio_event_emit::{AudioRecipient, PlaySoundRecipeRequest};
+use crate::npc::equipment::NpcEquipment;
 use crate::npc::faction::{FactionId, FactionMembership, FactionRank};
 use crate::npc::lifecycle::{NpcArchetype, NpcLifespan};
 use crate::npc::spawn::NpcMarker;
+use crate::npc::trade::NpcTradeInventory;
 use crate::schema::common::MAX_PAYLOAD_BYTES;
 use crate::schema::server_data::ServerDataBuildError;
 
@@ -42,6 +45,38 @@ pub struct NpcMetadataS2c {
     pub qi_hint: Option<String>,
     pub hp_ratio: f32,
     pub qi_ratio: f32,
+    #[serde(skip_serializing_if = "HashMap::is_empty")]
+    pub equipment: HashMap<String, NpcEquipSlotS2c>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub techniques: Vec<NpcTechniqueS2c>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub trade_offers: Vec<NpcTradeOfferS2c>,
+}
+
+/// S2C equipment slot data (per-slot summary for client display).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct NpcEquipSlotS2c {
+    pub template_id: String,
+    pub display_name: String,
+    pub quality_tier: u8,
+    pub durability_ratio: f32,
+}
+
+/// S2C technique data (per-technique summary for client display).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct NpcTechniqueS2c {
+    pub id: String,
+    pub display_name: String,
+    pub proficiency: f32,
+}
+
+/// S2C trade offer data.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct NpcTradeOfferS2c {
+    pub template_id: String,
+    pub display_name: String,
+    pub count: u32,
+    pub price_bone_coins: u32,
 }
 
 impl NpcMetadataS2c {
@@ -80,6 +115,9 @@ type NpcMetadataItem<'a> = (
     Option<&'a NpcLifespan>,
     Option<&'a Lifecycle>,
     Option<&'a Wounds>,
+    Option<&'a NpcEquipment>,
+    Option<&'a KnownTechniques>,
+    Option<&'a NpcTradeInventory>,
 );
 
 #[allow(clippy::type_complexity)]
@@ -109,6 +147,9 @@ pub fn emit_npc_metadata_payloads(
             lifespan,
             lifecycle,
             wounds,
+            npc_equipment,
+            npc_techniques,
+            npc_trade_inv,
         ) in &npcs
         {
             if lifecycle.is_some_and(|lifecycle| lifecycle.state == LifecycleState::Terminated) {
@@ -127,6 +168,9 @@ pub fn emit_npc_metadata_payloads(
                 player_cultivation,
                 player_identities,
                 wounds,
+                equipment: npc_equipment,
+                techniques: npc_techniques,
+                trade_inventory: npc_trade_inv,
             });
             let bytes = match metadata.to_json_bytes_checked() {
                 Ok(bytes) => bytes,
@@ -171,6 +215,9 @@ pub struct NpcMetadataBuildInput<'a> {
     pub player_cultivation: Option<&'a Cultivation>,
     pub player_identities: Option<&'a PlayerIdentities>,
     pub wounds: Option<&'a Wounds>,
+    pub equipment: Option<&'a NpcEquipment>,
+    pub techniques: Option<&'a KnownTechniques>,
+    pub trade_inventory: Option<&'a NpcTradeInventory>,
 }
 
 pub fn build_npc_metadata(input: NpcMetadataBuildInput<'_>) -> NpcMetadataS2c {
@@ -183,6 +230,9 @@ pub fn build_npc_metadata(input: NpcMetadataBuildInput<'_>) -> NpcMetadataS2c {
         player_cultivation,
         player_identities,
         wounds,
+        equipment,
+        techniques,
+        trade_inventory,
     } = input;
     let realm = cultivation
         .map(|cultivation| cultivation.realm)
@@ -211,6 +261,61 @@ pub fn build_npc_metadata(input: NpcMetadataBuildInput<'_>) -> NpcMetadataS2c {
         })
         .unwrap_or(0.0);
 
+    // ── equipment → HashMap<slot_name, NpcEquipSlotS2c> ──
+    let equip_map: HashMap<String, NpcEquipSlotS2c> = equipment
+        .map(|eq| {
+            eq.iter_slots()
+                .map(|(slot_name, slot)| {
+                    (
+                        slot_name.to_string(),
+                        NpcEquipSlotS2c {
+                            template_id: slot.template_id.clone(),
+                            display_name: slot.display_name.clone(),
+                            quality_tier: slot.quality_tier,
+                            durability_ratio: slot.durability_ratio,
+                        },
+                    )
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+
+    // ── techniques → Vec<NpcTechniqueS2c> ──
+    let tech_vec: Vec<NpcTechniqueS2c> = techniques
+        .map(|kt| {
+            kt.entries
+                .iter()
+                .filter(|entry| entry.active)
+                .map(|entry| {
+                    let def_name =
+                        crate::cultivation::known_techniques::technique_definition(&entry.id)
+                            .map(|def| def.display_name)
+                            .unwrap_or("未知功法");
+                    NpcTechniqueS2c {
+                        id: entry.id.clone(),
+                        display_name: def_name.to_string(),
+                        proficiency: entry.proficiency,
+                    }
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+
+    // ── trade_offers → Vec<NpcTradeOfferS2c> ──
+    let trade_vec: Vec<NpcTradeOfferS2c> = trade_inventory
+        .map(|inv| {
+            inv.offers
+                .iter()
+                .map(|offer| NpcTradeOfferS2c {
+                    template_id: offer.template_id.clone(),
+                    display_name: offer.display_name.clone(),
+                    count: offer.count,
+                    price_bone_coins: offer.price_bone_coins,
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+
     NpcMetadataS2c {
         v: 1,
         ty: "npc_metadata".to_string(),
@@ -229,6 +334,9 @@ pub fn build_npc_metadata(input: NpcMetadataBuildInput<'_>) -> NpcMetadataS2c {
         qi_hint,
         hp_ratio,
         qi_ratio,
+        equipment: equip_map,
+        techniques: tech_vec,
+        trade_offers: trade_vec,
     }
 }
 
@@ -378,6 +486,7 @@ fn block_pos(origin: DVec3) -> [i32; 3] {
 mod tests {
     use super::*;
     use crate::npc::faction::{FactionId, FactionRank, Lineage, MissionQueue, Reputation};
+    use valence::prelude::ItemKind;
 
     fn membership(loyalty: f64) -> FactionMembership {
         FactionMembership {
@@ -414,6 +523,9 @@ mod tests {
                 health_max: 100.0,
                 entries: Vec::new(),
             }),
+            equipment: None,
+            techniques: None,
+            trade_inventory: None,
         });
 
         let json = String::from_utf8(payload.to_json_bytes_checked().expect("serialize"))
@@ -440,6 +552,9 @@ mod tests {
             player_cultivation: None,
             player_identities: None,
             wounds,
+            equipment: None,
+            techniques: None,
+            trade_inventory: None,
         })
     }
 
@@ -523,6 +638,9 @@ mod tests {
             player_cultivation: None,
             player_identities: Some(&identities),
             wounds: None,
+            equipment: None,
+            techniques: None,
+            trade_inventory: None,
         });
 
         assert_eq!(payload.reputation_to_player, -80);
@@ -537,6 +655,164 @@ mod tests {
         assert_eq!(
             greeting_text_for_archetype(NpcArchetype::Commoner),
             "大仙，小人不敢..."
+        );
+    }
+
+    #[test]
+    fn npc_metadata_equipment_serializes() {
+        use crate::combat::weapon::WeaponKind;
+        use crate::npc::equipment::{NpcEquipSlot, NpcEquipment};
+
+        let equipment = NpcEquipment {
+            main_hand: Some(NpcEquipSlot {
+                template_id: "iron_sword".to_string(),
+                display_name: "铁剑".to_string(),
+                item_kind: ItemKind::IronSword,
+                quality_tier: 0,
+                base_attack: 6.0,
+                weapon_kind: Some(WeaponKind::Sword),
+                armor_profile_id: None,
+                durability_ratio: 0.85,
+            }),
+            chest: Some(NpcEquipSlot {
+                template_id: "bone_chestplate".to_string(),
+                display_name: "骨甲".to_string(),
+                item_kind: ItemKind::LeatherChestplate,
+                quality_tier: 0,
+                base_attack: 0.0,
+                weapon_kind: None,
+                armor_profile_id: Some("bone_chest".to_string()),
+                durability_ratio: 0.7,
+            }),
+            ..Default::default()
+        };
+        let payload = build_npc_metadata(NpcMetadataBuildInput {
+            entity_id: 99,
+            archetype: NpcArchetype::Rogue,
+            cultivation: None,
+            membership: None,
+            lifespan: None,
+            player_cultivation: None,
+            player_identities: None,
+            wounds: None,
+            equipment: Some(&equipment),
+            techniques: None,
+            trade_inventory: None,
+        });
+
+        assert_eq!(payload.equipment.len(), 2, "expected 2 equipment slots");
+        let main = payload
+            .equipment
+            .get("main_hand")
+            .expect("main_hand missing");
+        assert_eq!(main.template_id, "iron_sword");
+        assert_eq!(main.quality_tier, 0);
+        let chest = payload.equipment.get("chest").expect("chest missing");
+        assert_eq!(chest.display_name, "骨甲");
+    }
+
+    #[test]
+    fn npc_metadata_techniques_serializes() {
+        use crate::cultivation::known_techniques::{KnownTechnique, KnownTechniques};
+
+        let techniques = KnownTechniques {
+            entries: vec![
+                KnownTechnique {
+                    id: "sword.cleave".to_string(),
+                    proficiency: 0.75,
+                    active: true,
+                },
+                KnownTechnique {
+                    id: "sword.thrust".to_string(),
+                    proficiency: 0.4,
+                    active: false,
+                },
+            ],
+        };
+        let payload = build_npc_metadata(NpcMetadataBuildInput {
+            entity_id: 99,
+            archetype: NpcArchetype::Rogue,
+            cultivation: None,
+            membership: None,
+            lifespan: None,
+            player_cultivation: None,
+            player_identities: None,
+            wounds: None,
+            equipment: None,
+            techniques: Some(&techniques),
+            trade_inventory: None,
+        });
+
+        assert_eq!(
+            payload.techniques.len(),
+            1,
+            "expected only active techniques"
+        );
+        assert_eq!(payload.techniques[0].id, "sword.cleave");
+        assert_eq!(payload.techniques[0].display_name, "劈");
+        assert!((payload.techniques[0].proficiency - 0.75).abs() < 0.01);
+    }
+
+    #[test]
+    fn npc_metadata_trade_offers_serializes() {
+        use crate::npc::trade::{NpcTradeInventory, TradeOffer};
+
+        let trade = NpcTradeInventory {
+            offers: vec![TradeOffer {
+                template_id: "lingcao".to_string(),
+                display_name: "灵草".to_string(),
+                count: 3,
+                price_bone_coins: 12,
+            }],
+        };
+        let payload = build_npc_metadata(NpcMetadataBuildInput {
+            entity_id: 99,
+            archetype: NpcArchetype::Rogue,
+            cultivation: None,
+            membership: None,
+            lifespan: None,
+            player_cultivation: None,
+            player_identities: None,
+            wounds: None,
+            equipment: None,
+            techniques: None,
+            trade_inventory: Some(&trade),
+        });
+
+        assert_eq!(payload.trade_offers.len(), 1);
+        assert_eq!(payload.trade_offers[0].template_id, "lingcao");
+        assert_eq!(payload.trade_offers[0].price_bone_coins, 12);
+    }
+
+    #[test]
+    fn npc_metadata_empty_equipment_not_in_json() {
+        let payload = build_npc_metadata(NpcMetadataBuildInput {
+            entity_id: 99,
+            archetype: NpcArchetype::Beast,
+            cultivation: None,
+            membership: None,
+            lifespan: None,
+            player_cultivation: None,
+            player_identities: None,
+            wounds: None,
+            equipment: None,
+            techniques: None,
+            trade_inventory: None,
+        });
+
+        let json = String::from_utf8(payload.to_json_bytes_checked().expect("serialize"))
+            .expect("metadata payload should be utf8 json");
+        assert!(
+            !json.contains("\"equipment\""),
+            "expected empty equipment map to be skipped in JSON"
+        );
+        assert!(
+            !json.contains("\"techniques\""),
+            "expected empty techniques vec to be skipped in JSON"
+        );
+        assert!(
+            !json.contains("\"trade_offers\""),
+            "expected empty trade_offers vec to be skipped in JSON"
         );
     }
 }
