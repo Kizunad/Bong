@@ -14,6 +14,9 @@ import com.bong.client.insight.InsightOfferScreen;
 import com.bong.client.inventory.InspectScreen;
 import com.bong.client.lingtian.LingtianActionScreen;
 import com.bong.client.processing.ProcessingActionScreen;
+import com.bong.client.npc.NpcDialogueScreen;
+import com.bong.client.npc.NpcInspectScreen;
+import com.bong.client.npc.NpcTradeScreen;
 import com.bong.client.social.SparringInviteScreen;
 import com.bong.client.social.TradeOfferScreen;
 import net.minecraft.client.gui.screen.DownloadingTerrainScreen;
@@ -130,6 +133,29 @@ public final class ScreenTransitionRegistry {
         ));
         register(TerminateScreen.class, TransitionConfig.of(
             TerminateScreen.class, ScreenTransition.Type.FADE, 200, ScreenTransition.Type.FADE, 100
+        ));
+        register(NpcDialogueScreen.class, TransitionConfig.of(
+            NpcDialogueScreen.class, ScreenTransition.Type.FADE, 250, ScreenTransition.Type.FADE, 200
+        ));
+        register(NpcInspectScreen.class, TransitionConfig.of(
+            NpcInspectScreen.class, ScreenTransition.Type.SLIDE_RIGHT, 200, ScreenTransition.Type.SLIDE_LEFT, 200
+        ));
+        register(NpcTradeScreen.class, TransitionConfig.of(
+            NpcTradeScreen.class, ScreenTransition.Type.SLIDE_RIGHT, 200, ScreenTransition.Type.FADE, 200
+        ));
+        registerChain(NpcDialogueScreen.class, NpcInspectScreen.class, new TransitionConfig.TransitionSpec(
+            ScreenTransition.Type.SLIDE_RIGHT,
+            200,
+            ScreenTransition.Easing.EASE_OUT_CUBIC,
+            TransitionConfig.OverlayStyle.NONE,
+            false
+        ));
+        registerChain(NpcDialogueScreen.class, NpcTradeScreen.class, new TransitionConfig.TransitionSpec(
+            ScreenTransition.Type.SLIDE_RIGHT,
+            200,
+            ScreenTransition.Easing.EASE_OUT_CUBIC,
+            TransitionConfig.OverlayStyle.NONE,
+            false
         ));
         registerChain(SparringInviteScreen.class, TradeOfferScreen.class, new TransitionConfig.TransitionSpec(
             ScreenTransition.Type.SLIDE_RIGHT,
