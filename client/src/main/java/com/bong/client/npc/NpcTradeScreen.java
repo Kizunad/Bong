@@ -23,7 +23,8 @@ import java.util.List;
 /**
  * NPC 交易屏——owo-lib 重写（plan-npc-combat-gear-v1 P2.3）。
  *
- * <p>双列布局：左=NPC 货物可滚动列表，右=玩家出价+确认按钮。
+ * <p>双列布局：左=NPC 货物可滚动列表（170px），右=玩家出价+确认按钮（170px）。
+ * 骨币定价走枚数（整数），server 端按 shelflife 模块做折算。
  */
 public final class NpcTradeScreen extends BaseOwoScreen<FlowLayout> {
     static final int PANEL_WIDTH = 360;

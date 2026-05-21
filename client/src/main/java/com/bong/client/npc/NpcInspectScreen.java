@@ -24,7 +24,8 @@ import java.util.Map;
 /**
  * NPC 查看屏——owo-lib 重写（plan-npc-combat-gear-v1 P2.2）。
  *
- * <p>双列布局：左=基础信息+状态条，右=装备+功法列表。
+ * <p>双列布局：左（140px）=基础信息+qi/hp 状态条，右（190px）=装备+功法列表。
+ * 功法可见性按玩家境界分级（醒灵/引气=未知，凝脉=名字，固元+=完整+熟练度）。
  */
 public final class NpcInspectScreen extends BaseOwoScreen<FlowLayout> {
     static final int PANEL_WIDTH = 340;

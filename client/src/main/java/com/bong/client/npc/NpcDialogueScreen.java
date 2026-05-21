@@ -22,7 +22,8 @@ import java.util.List;
 /**
  * NPC 对话主屏——owo-lib 重写（plan-npc-combat-gear-v1 P2.1）。
  *
- * <p>布局：headerRow + greeting + option rows + reputation bar。
+ * <p>布局（280px DARK_PANEL）：headerRow + greeting + option rows + reputation bar。
+ * 敌对 NPC（rep &lt; -30）显示红色警告并隐藏交易选项。
  */
 public final class NpcDialogueScreen extends BaseOwoScreen<FlowLayout> {
     static final int PANEL_WIDTH = 280;
