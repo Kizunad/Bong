@@ -1,0 +1,919 @@
+# plan-workbench-recipes-v1 §P1.0 — 制作台配方涉及的新增 ItemTemplate。
+# 仅包含现有 toml 中不存在的物品。已有 ID（如 clay_pot、iron_needle、cao_lian、
+# armor_straw_*、armor_hide_* 等）由各自原始文件定义，不在此重复。
+
+# ═══════════════════════════════════════════════════════════════════════════
+# 基础材料 (14)
+# ═══════════════════════════════════════════════════════════════════════════
+
+[[item]]
+id = "rough_cloth"
+name = "粗布"
+category = "misc"
+grid_w = 1
+grid_h = 1
+base_weight = 0.2
+rarity = "common"
+spirit_quality_initial = 0.0
+description = "蛛丝编织的粗糙布片，防潮包扎皆可。"
+
+[[item]]
+id = "tanned_hide"
+name = "熟皮"
+category = "misc"
+grid_w = 1
+grid_h = 1
+base_weight = 0.5
+rarity = "common"
+spirit_quality_initial = 0.0
+description = "灰烬苔鞣制的兽皮，柔韧防水。"
+
+[[item]]
+id = "bone_chip_mat"
+name = "骨片"
+category = "misc"
+grid_w = 1
+grid_h = 1
+base_weight = 0.1
+rarity = "common"
+spirit_quality_initial = 0.0
+description = "兽骨劈碎的薄片，削刮缝补用。"
+
+[[item]]
+id = "bone_meal_mat"
+name = "骨粉"
+category = "misc"
+grid_w = 1
+grid_h = 1
+base_weight = 0.15
+rarity = "common"
+spirit_quality_initial = 0.0
+description = "兽骨碾磨的粉末，灵田肥料或丹药辅料。"
+
+[[item]]
+id = "spirit_charcoal"
+name = "灵木炭"
+category = "misc"
+grid_w = 1
+grid_h = 1
+base_weight = 0.3
+rarity = "common"
+spirit_quality_initial = 0.3
+description = "灵木闷烧的碳块，保留微灵可作灵火引。"
+
+[[item]]
+id = "rat_tail_oil"
+name = "鼠尾油"
+category = "misc"
+grid_w = 1
+grid_h = 1
+base_weight = 0.15
+rarity = "common"
+spirit_quality_initial = 0.33
+description = "噬元鼠尾巴炼出的油脂，防水润滑。"
+
+[[item]]
+id = "salt_crystal"
+name = "盐蓬晶"
+category = "misc"
+grid_w = 1
+grid_h = 1
+base_weight = 0.2
+rarity = "common"
+spirit_quality_initial = 0.15
+description = "白盐蓬析出的晶体，诱鼠兼灵石代用。"
+
+[[item]]
+id = "spider_silk_cord"
+name = "蛛丝绳"
+category = "misc"
+grid_w = 1
+grid_h = 1
+base_weight = 0.1
+rarity = "common"
+spirit_quality_initial = 0.5
+description = "灰烬蛛丝搓成的韧绳，比草绳结实十倍。"
+
+[[item]]
+id = "wood_plank"
+name = "木板"
+category = "misc"
+grid_w = 1
+grid_h = 1
+base_weight = 0.6
+rarity = "common"
+spirit_quality_initial = 0.0
+description = "灵木锯开的板材，建造或容器基材。"
+
+[[item]]
+id = "dried_grass"
+name = "干草"
+category = "misc"
+grid_w = 1
+grid_h = 1
+base_weight = 0.05
+rarity = "common"
+spirit_quality_initial = 0.0
+description = "晒干的野草，铺床引火垫药。"
+
+[[item]]
+id = "zhenfa_blank_array"
+name = "阵法白纸"
+category = "misc"
+grid_w = 1
+grid_h = 1
+base_weight = 0.05
+rarity = "common"
+spirit_quality_initial = 0.15
+description = "丹砂油浸粗布阵纸，阵法基础载体。"
+
+[[item]]
+id = "powder_dan_sha"
+name = "丹砂粉"
+category = "misc"
+grid_w = 1
+grid_h = 1
+base_weight = 0.1
+rarity = "common"
+spirit_quality_initial = 0.0
+description = "丹砂碾制的细粉，画符染色调和用。"
+
+[[item]]
+id = "powder_zhu_sha"
+name = "朱砂粉"
+category = "misc"
+grid_w = 1
+grid_h = 1
+base_weight = 0.1
+rarity = "uncommon"
+spirit_quality_initial = 0.13
+description = "朱砂碾磨的赤粉，高阶丹药引料。"
+
+[[item]]
+id = "herb_bundle"
+name = "灵草束"
+category = "herb"
+grid_w = 1
+grid_h = 1
+base_weight = 0.5
+rarity = "common"
+spirit_quality_initial = 0.80
+description = "灵草扎束延缓散灵，批量存放减损耗。"
+
+# ═══════════════════════════════════════════════════════════════════════════
+# 容器与装具 (13)
+# ═══════════════════════════════════════════════════════════════════════════
+
+[[item]]
+id = "herb_vial"
+name = "药瓶"
+category = "container"
+grid_w = 1
+grid_h = 1
+base_weight = 0.15
+rarity = "common"
+spirit_quality_initial = 0.0
+description = "灵晶碎封口的小瓶，密封保灵。"
+
+[[item]]
+id = "sealed_vial"
+name = "密封药瓶"
+category = "container"
+grid_w = 1
+grid_h = 1
+base_weight = 0.2
+rarity = "uncommon"
+spirit_quality_initial = 0.4
+description = "蛛丝绳缠封灵力加固，保质期翻倍。"
+
+[[item]]
+id = "herb_pouch"
+name = "灵草囊"
+category = "container"
+grid_w = 1
+grid_h = 2
+base_weight = 0.3
+rarity = "common"
+spirit_quality_initial = 0.0
+description = "粗布缝成的草药袋，采集时直接塞入减少磨损。"
+
+[[item]]
+id = "coin_box"
+name = "骨币匣"
+category = "container"
+grid_w = 1
+grid_h = 1
+base_weight = 0.8
+rarity = "common"
+spirit_quality_initial = 0.0
+description = "木匣内壁涂丹砂隔灵，骨币少漏。"
+
+[[item]]
+id = "projectile_bag"
+name = "暗器袋"
+category = "container"
+grid_w = 1
+grid_h = 2
+base_weight = 0.4
+rarity = "common"
+spirit_quality_initial = 0.0
+description = "兽皮内衬的暗器袋，骨刺不戳破。"
+
+[[item]]
+id = "spirit_seal_box"
+name = "封灵匣"
+category = "container"
+grid_w = 1
+grid_h = 1
+base_weight = 1.0
+rarity = "uncommon"
+spirit_quality_initial = 0.0
+description = "灵铁箍的密封小匣，高灵物短存最佳。"
+
+[[item]]
+id = "dead_drop_box"
+name = "死信箱"
+category = "container"
+grid_w = 2
+grid_h = 2
+base_weight = 3.0
+rarity = "uncommon"
+spirit_quality_initial = 0.0
+description = "埋地交易箱，内设防砸阵纹。"
+
+[[item]]
+id = "moisture_guard"
+name = "防潮包"
+category = "misc"
+grid_w = 1
+grid_h = 1
+base_weight = 0.1
+rarity = "common"
+spirit_quality_initial = 0.0
+description = "灰烬苔裹布包，吸湿防霉。"
+
+[[item]]
+id = "ore_sack"
+name = "矿石袋"
+category = "container"
+grid_w = 1
+grid_h = 2
+base_weight = 0.3
+rarity = "common"
+spirit_quality_initial = 0.0
+description = "粗布加底皮的矿石袋，耐磨。"
+
+[[item]]
+id = "water_skin"
+name = "水囊"
+category = "misc"
+grid_w = 1
+grid_h = 1
+base_weight = 0.4
+rarity = "common"
+spirit_quality_initial = 0.0
+description = "兽皮缝的水袋，远征不渴。"
+
+[[item]]
+id = "trade_crate"
+name = "货箱"
+category = "container"
+grid_w = 2
+grid_h = 2
+base_weight = 2.0
+rarity = "common"
+spirit_quality_initial = 0.0
+description = "六面木板钉成的大箱，集市搬运用。"
+
+[[item]]
+id = "herb_crate"
+name = "灵草箱"
+category = "container"
+grid_w = 2
+grid_h = 2
+base_weight = 1.5
+rarity = "common"
+spirit_quality_initial = 0.0
+description = "木板内衬粗布的存放箱，灵草批量少磨损。"
+
+[[item]]
+id = "sealed_envelope"
+name = "密封信封"
+category = "misc"
+grid_w = 1
+grid_h = 1
+base_weight = 0.05
+rarity = "common"
+spirit_quality_initial = 0.0
+description = "鼠尾油封口的粗布信封，拆即毁。"
+
+# ═══════════════════════════════════════════════════════════════════════════
+# 工具与装备 (5)
+# ═══════════════════════════════════════════════════════════════════════════
+
+[[item]]
+id = "stone_pickaxe"
+name = "石镐"
+category = "tool"
+grid_w = 1
+grid_h = 2
+base_weight = 2.0
+rarity = "common"
+spirit_quality_initial = 0.0
+description = "碎石绑木柄，挖矿入门。"
+
+[[item]]
+id = "stone_axe"
+name = "石斧"
+category = "tool"
+grid_w = 1
+grid_h = 2
+base_weight = 1.8
+rarity = "common"
+spirit_quality_initial = 0.0
+description = "碎石夹木柄，伐木入门。"
+
+[[item]]
+id = "stone_hoe"
+name = "石锄"
+category = "tool"
+grid_w = 1
+grid_h = 2
+base_weight = 1.5
+rarity = "common"
+spirit_quality_initial = 0.0
+description = "碎石绑木柄，翻土入门。"
+
+[[item]]
+id = "mortar_stone"
+name = "研钵"
+category = "tool"
+grid_w = 1
+grid_h = 1
+base_weight = 2.0
+rarity = "common"
+spirit_quality_initial = 0.0
+description = "石块凿成的药臼，碾草磨粉。"
+
+[[item]]
+id = "heat_gloves"
+name = "绝热手套"
+category = "tool"
+grid_w = 1
+grid_h = 1
+base_weight = 0.3
+rarity = "uncommon"
+spirit_quality_initial = 0.3
+description = "蛛丝内衬的厚手套，采焦脉藤不灼伤。"
+
+# ═══════════════════════════════════════════════════════════════════════════
+# 急救与修炼 (13)
+# ═══════════════════════════════════════════════════════════════════════════
+
+[[item]]
+id = "arm_splint"
+name = "夹板·臂"
+category = "misc"
+grid_w = 1
+grid_h = 1
+base_weight = 0.3
+rarity = "common"
+spirit_quality_initial = 0.0
+description = "木板布条绑的夹板，固定臂骨折。"
+
+[[item]]
+id = "leg_splint"
+name = "夹板·腿"
+category = "misc"
+grid_w = 1
+grid_h = 1
+base_weight = 0.5
+rarity = "common"
+spirit_quality_initial = 0.0
+description = "加长木板夹板，固定腿骨折。"
+
+[[item]]
+id = "bandage"
+name = "止血绷带"
+category = "misc"
+grid_w = 1
+grid_h = 1
+base_weight = 0.1
+rarity = "common"
+spirit_quality_initial = 0.0
+description = "粗布撕成条裹伤口，压迫止血。"
+
+[[item]]
+id = "meridian_salve"
+name = "养经膏"
+category = "pill"
+grid_w = 1
+grid_h = 1
+base_weight = 0.1
+rarity = "uncommon"
+spirit_quality_initial = 0.6
+description = "养经苔熬油制膏，外敷修复微裂经脉。"
+
+[[item]]
+id = "anti_gu_powder"
+name = "解蛊散"
+category = "pill"
+grid_w = 1
+grid_h = 1
+base_weight = 0.1
+rarity = "uncommon"
+spirit_quality_initial = 0.7
+description = "解蛊蕊雄黄研末，紧急解毒蛊。"
+
+[[item]]
+id = "qingzhuo_powder"
+name = "清浊散"
+category = "pill"
+grid_w = 1
+grid_h = 1
+base_weight = 0.1
+rarity = "uncommon"
+spirit_quality_initial = 0.6
+description = "清浊草丹砂研末，克染色浊乱。"
+
+[[item]]
+id = "calming_tea"
+name = "安神茶"
+category = "pill"
+grid_w = 1
+grid_h = 1
+base_weight = 0.2
+rarity = "common"
+spirit_quality_initial = 0.4
+description = "安神果煮水，镇心安神。"
+
+[[item]]
+id = "meditation_mat"
+name = "蒲团"
+category = "misc"
+grid_w = 2
+grid_h = 2
+base_weight = 1.5
+rarity = "common"
+spirit_quality_initial = 0.0
+description = "干草粗布叠成的打坐垫，坐上多静半分。"
+
+[[item]]
+id = "qi_guide_talisman"
+name = "灵气引导符"
+category = "misc"
+grid_w = 1
+grid_h = 1
+base_weight = 0.05
+rarity = "uncommon"
+spirit_quality_initial = 0.13
+description = "丹砂画引灵符，修炼时增强灵气感应。"
+
+[[item]]
+id = "meridian_rubbing"
+name = "经脉图拓片"
+category = "misc"
+grid_w = 1
+grid_h = 1
+base_weight = 0.05
+rarity = "uncommon"
+spirit_quality_initial = 0.4
+description = "灵草汁拓印的经脉走向参考图。"
+
+[[item]]
+id = "ningmai_prep_kit"
+name = "凝脉散预制包"
+category = "misc"
+grid_w = 1
+grid_h = 1
+base_weight = 0.3
+rarity = "uncommon"
+spirit_quality_initial = 0.5
+description = "凝脉散所需原料预包装，送炼丹炉即用。"
+
+[[item]]
+id = "huiyuan_decoction"
+name = "回元芷煎汤"
+category = "pill"
+grid_w = 1
+grid_h = 1
+base_weight = 0.3
+rarity = "uncommon"
+spirit_quality_initial = 0.5
+description = "回元芷简易煎法制剂，非炼丹产物。"
+
+[[item]]
+id = "rat_bait"
+name = "鼠群诱饵"
+category = "misc"
+grid_w = 1
+grid_h = 1
+base_weight = 0.2
+rarity = "common"
+spirit_quality_initial = 0.1
+description = "盐蓬晶裹粗布的诱鼠包。"
+
+[[item]]
+id = "spirit_stone_rack"
+name = "灵石架"
+category = "misc"
+grid_w = 1
+grid_h = 1
+base_weight = 1.0
+rarity = "common"
+spirit_quality_initial = 0.0
+description = "木架铁钉挂灵石，减接触磨损。"
+
+# ═══════════════════════════════════════════════════════════════════════════
+# 阵法与防御 (7)
+# ═══════════════════════════════════════════════════════════════════════════
+
+[[item]]
+id = "array_flag_basic"
+name = "阵旗·凡"
+category = "misc"
+grid_w = 1
+grid_h = 2
+base_weight = 0.4
+rarity = "common"
+spirit_quality_initial = 0.0
+description = "粗布丹砂的入门阵旗，凡物无灵质。"
+
+[[item]]
+id = "array_eye_basic"
+name = "阵眼·凡"
+category = "misc"
+grid_w = 1
+grid_h = 1
+base_weight = 0.5
+rarity = "uncommon"
+spirit_quality_initial = 0.5
+description = "灵晶碎镶铁的阵法核心，入门级。"
+
+[[item]]
+id = "trip_wire"
+name = "预警绊线"
+category = "misc"
+grid_w = 1
+grid_h = 1
+base_weight = 0.1
+rarity = "common"
+spirit_quality_initial = 0.0
+description = "蛛丝绳挂铁针，碰断即响。"
+
+[[item]]
+id = "beast_trap"
+name = "困兽圈"
+category = "misc"
+grid_w = 1
+grid_h = 1
+base_weight = 1.2
+rarity = "common"
+spirit_quality_initial = 0.0
+description = "铁夹绳套的陷阱，夹住野兽腿。"
+
+[[item]]
+id = "qi_scatter_bead"
+name = "散真元珠"
+category = "misc"
+grid_w = 1
+grid_h = 1
+base_weight = 0.1
+rarity = "uncommon"
+spirit_quality_initial = 0.3
+description = "灵晶碎粉混骨粉封珠，散布真元干扰追踪。"
+
+[[item]]
+id = "gather_array_base"
+name = "聚灵阵基座"
+category = "misc"
+grid_w = 2
+grid_h = 2
+base_weight = 4.0
+rarity = "rare"
+spirit_quality_initial = 0.5
+description = "灵铁阵纸灵晶组成的聚灵阵核心。"
+
+[[item]]
+id = "camouflage_net"
+name = "伪装网"
+category = "misc"
+grid_w = 2
+grid_h = 2
+base_weight = 0.8
+rarity = "common"
+spirit_quality_initial = 0.0
+description = "粗布编灵草的遮蔽网，藏人藏物。"
+
+# ═══════════════════════════════════════════════════════════════════════════
+# 基础武器 (10)
+# ═══════════════════════════════════════════════════════════════════════════
+
+[[item]]
+id = "stone_spearhead"
+name = "石矛头"
+category = "misc"
+grid_w = 1
+grid_h = 1
+base_weight = 0.5
+rarity = "common"
+spirit_quality_initial = 0.0
+description = "碎石磨尖的矛头，绑木棍成矛。"
+
+[[item]]
+id = "sling_weapon"
+name = "弹弓"
+category = "weapon"
+grid_w = 1
+grid_h = 1
+base_weight = 0.3
+rarity = "common"
+spirit_quality_initial = 0.0
+description = "兽皮兜木叉弹弓，甩石打鼠。"
+
+[[item]]
+id = "sling_stone"
+name = "飞石"
+category = "misc"
+grid_w = 1
+grid_h = 1
+base_weight = 0.3
+rarity = "common"
+spirit_quality_initial = 0.0
+description = "磨圆的弹弓石，打不远但打得准。"
+
+[[item]]
+id = "wooden_shield"
+name = "木盾"
+category = "armor"
+grid_w = 1
+grid_h = 2
+base_weight = 3.0
+rarity = "common"
+spirit_quality_initial = 0.0
+description = "木板钉铁的粗盾，挡一两下。"
+
+[[item]]
+id = "bone_shield"
+name = "骨盾"
+category = "armor"
+grid_w = 1
+grid_h = 2
+base_weight = 2.5
+rarity = "common"
+spirit_quality_initial = 0.0
+description = "兽骨编绳的圆盾，轻但脆。"
+
+[[item]]
+id = "iron_sword_blank"
+name = "凡铁剑胎"
+category = "misc"
+grid_w = 1
+grid_h = 2
+base_weight = 2.5
+rarity = "common"
+spirit_quality_initial = 0.0
+description = "凡铁粗锻的剑形坯料，送锻造台精锻。"
+
+[[item]]
+id = "iron_dagger"
+name = "凡铁匕首"
+category = "weapon"
+grid_w = 1
+grid_h = 1
+base_weight = 0.8
+rarity = "common"
+spirit_quality_initial = 0.0
+description = "近身防御短刃，小巧好藏。"
+
+[[item]]
+id = "stone_knife"
+name = "石刃"
+category = "weapon"
+grid_w = 1
+grid_h = 1
+base_weight = 0.5
+rarity = "common"
+spirit_quality_initial = 0.0
+description = "碎石磨薄的切割器，最入门。"
+
+[[item]]
+id = "bone_spike_crude"
+name = "粗骨刺"
+category = "weapon"
+grid_w = 1
+grid_h = 1
+base_weight = 0.15
+rarity = "common"
+spirit_quality_initial = 0.0
+description = "兽骨粗削尖的低档投掷物，打不死但打得疼。"
+
+[[item]]
+id = "wooden_club"
+name = "木棍"
+category = "weapon"
+grid_w = 1
+grid_h = 2
+base_weight = 0.8
+rarity = "common"
+spirit_quality_initial = 0.0
+description = "灵木削成的凡物木棍，近战入门。"
+
+# ═══════════════════════════════════════════════════════════════════════════
+# 经济 (8)
+# ═══════════════════════════════════════════════════════════════════════════
+
+[[item]]
+id = "bone_coin_blank"
+name = "骨币胚"
+category = "misc"
+grid_w = 1
+grid_h = 1
+base_weight = 0.1
+rarity = "common"
+spirit_quality_initial = 0.0
+description = "兽骨切片阵纸贴面的空白骨币，灌真元才有价。"
+
+[[item]]
+id = "trade_scale"
+name = "交易秤"
+category = "tool"
+grid_w = 1
+grid_h = 1
+base_weight = 0.8
+rarity = "common"
+spirit_quality_initial = 0.0
+description = "铁杆木盘的简易秤，称骨币灵草。"
+
+[[item]]
+id = "waymark_stone"
+name = "标记石"
+category = "misc"
+grid_w = 1
+grid_h = 1
+base_weight = 0.4
+rarity = "common"
+spirit_quality_initial = 0.0
+description = "丹砂画记号的石头，标路不迷。"
+
+[[item]]
+id = "disguise_wrap"
+name = "伪装包裹"
+category = "misc"
+grid_w = 1
+grid_h = 1
+base_weight = 0.2
+rarity = "common"
+spirit_quality_initial = 0.0
+description = "灰烬苔裹布的包装，掩盖灵物气息。"
+
+[[item]]
+id = "trade_scale_stand"
+name = "交易秤台"
+category = "tool"
+grid_w = 1
+grid_h = 1
+base_weight = 1.5
+rarity = "common"
+spirit_quality_initial = 0.0
+description = "秤固定在木架上，摊位交易免手持。"
+
+[[item]]
+id = "trade_puppet_frame"
+name = "交易傀儡骨架"
+category = "misc"
+grid_w = 2
+grid_h = 2
+base_weight = 5.0
+rarity = "rare"
+spirit_quality_initial = 0.3
+description = "兽骨蛛丝铁关节的人形骨架，注灵后可充当游商。"
+
+[[item]]
+id = "niche_repair_kit"
+name = "灵龛修补料"
+category = "misc"
+grid_w = 1
+grid_h = 1
+base_weight = 1.5
+rarity = "uncommon"
+spirit_quality_initial = 0.3
+description = "碎石灵铁混合料，修补损坏灵龛。"
+
+[[item]]
+id = "price_tag"
+name = "标价签"
+category = "misc"
+grid_w = 1
+grid_h = 1
+base_weight = 0.01
+rarity = "common"
+spirit_quality_initial = 0.0
+description = "丹砂写价的粗布签，贴在交易品上。"
+
+# ═══════════════════════════════════════════════════════════════════════════
+# 住所 (7)
+# ═══════════════════════════════════════════════════════════════════════════
+
+[[item]]
+id = "torch_item"
+name = "火把"
+category = "misc"
+grid_w = 1
+grid_h = 1
+base_weight = 0.2
+rarity = "common"
+spirit_quality_initial = 0.1
+description = "木柄缠油炭的火把，照明一时辰。"
+
+[[item]]
+id = "lantern_item"
+name = "灯笼"
+category = "misc"
+grid_w = 1
+grid_h = 1
+base_weight = 0.6
+rarity = "common"
+spirit_quality_initial = 0.2
+description = "铁框灵晶芯的长明灯，灵气耗尽才灭。"
+
+[[item]]
+id = "door_bolt"
+name = "门闩"
+category = "misc"
+grid_w = 1
+grid_h = 1
+base_weight = 1.5
+rarity = "common"
+spirit_quality_initial = 0.0
+description = "铁杆木板的门闩，堵门挡贼。"
+
+[[item]]
+id = "moisture_base"
+name = "防潮地基"
+category = "misc"
+grid_w = 2
+grid_h = 1
+base_weight = 3.0
+rarity = "common"
+spirit_quality_initial = 0.0
+description = "石块灰烬苔铺的地基，架上不潮。"
+
+[[item]]
+id = "simple_bed"
+name = "简易床铺"
+category = "misc"
+grid_w = 2
+grid_h = 2
+base_weight = 4.0
+rarity = "common"
+spirit_quality_initial = 0.0
+description = "木板干草粗布叠的床，总比地上强。"
+
+[[item]]
+id = "window_grate"
+name = "窗栅"
+category = "misc"
+grid_w = 1
+grid_h = 1
+base_weight = 2.0
+rarity = "common"
+spirit_quality_initial = 0.0
+description = "凡铁条焊的栅栏窗，通风防贼。"
+
+[[item]]
+id = "niche_base"
+name = "灵龛基座"
+category = "misc"
+grid_w = 2
+grid_h = 2
+base_weight = 6.0
+rarity = "rare"
+spirit_quality_initial = 0.5
+description = "龛石灵铁木台组合的永久复活点基座。"
+
+# ═══════════════════════════════════════════════════════════════════════════
+# 炼丹 / 炼器预备 (2)
+# ═══════════════════════════════════════════════════════════════════════════
+
+[[item]]
+id = "furnace_kit_fantie"
+name = "凡铁炉组件"
+category = "misc"
+grid_w = 2
+grid_h = 2
+base_weight = 8.0
+rarity = "common"
+spirit_quality_initial = 0.0
+description = "凡铁拼焊石块砌底的炉胎。放置后消耗此 item 并 spawn furnace ECS entity。"
+
+[[item]]
+id = "forge_station_kit"
+name = "锻造台组件"
+category = "misc"
+grid_w = 2
+grid_h = 2
+base_weight = 10.0
+rarity = "common"
+spirit_quality_initial = 0.0
+description = "凡铁砧灵木架石块基的锻造台料包。"
