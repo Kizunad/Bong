@@ -1,8 +1,15 @@
 package com.bong.client.npc;
 
 import com.bong.client.network.ServerDataEnvelope;
+import com.google.gson.JsonArray;
+import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
+
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
 
 public final class NpcMetadataHandler {
     public static final String CHANNEL_NAMESPACE = "bong";
@@ -45,10 +52,96 @@ public final class NpcMetadataHandler {
             stringField(root, "greeting_text", "对方沉默地看着你。"),
             nullableString(root, "qi_hint"),
             doubleField(root, "hp_ratio", 1.0),
-            doubleField(root, "qi_ratio", 0.0)
+            doubleField(root, "qi_ratio", 0.0),
+            parseEquipment(root),
+            parseTechniques(root),
+            parseTradeOffers(root)
         ));
         return true;
     }
+
+    // ── equipment parsing ────────────────────────────────────────────────────
+
+    static Map<String, NpcEquipSlotData> parseEquipment(JsonObject root) {
+        if (!root.has("equipment") || root.get("equipment").isJsonNull()) {
+            return Map.of();
+        }
+        JsonElement element = root.get("equipment");
+        if (!element.isJsonObject()) {
+            return Map.of();
+        }
+        JsonObject equipObj = element.getAsJsonObject();
+        Map<String, NpcEquipSlotData> result = new HashMap<>();
+        for (String slotName : equipObj.keySet()) {
+            JsonElement slotElem = equipObj.get(slotName);
+            if (slotElem == null || slotElem.isJsonNull() || !slotElem.isJsonObject()) {
+                continue;
+            }
+            JsonObject slot = slotElem.getAsJsonObject();
+            result.put(slotName, new NpcEquipSlotData(
+                stringField(slot, "template_id", ""),
+                stringField(slot, "display_name", ""),
+                intField(slot, "quality_tier", 0),
+                doubleField(slot, "durability_ratio", 1.0)
+            ));
+        }
+        return result.isEmpty() ? Map.of() : Map.copyOf(result);
+    }
+
+    // ── techniques parsing ───────────────────────────────────────────────────
+
+    static List<NpcTechniqueData> parseTechniques(JsonObject root) {
+        if (!root.has("techniques") || root.get("techniques").isJsonNull()) {
+            return List.of();
+        }
+        JsonElement element = root.get("techniques");
+        if (!element.isJsonArray()) {
+            return List.of();
+        }
+        JsonArray arr = element.getAsJsonArray();
+        List<NpcTechniqueData> result = new ArrayList<>();
+        for (JsonElement item : arr) {
+            if (item == null || item.isJsonNull() || !item.isJsonObject()) {
+                continue;
+            }
+            JsonObject tech = item.getAsJsonObject();
+            result.add(new NpcTechniqueData(
+                stringField(tech, "id", ""),
+                stringField(tech, "display_name", ""),
+                doubleField(tech, "proficiency", 0.0)
+            ));
+        }
+        return result.isEmpty() ? List.of() : List.copyOf(result);
+    }
+
+    // ── trade_offers parsing ─────────────────────────────────────────────────
+
+    static List<NpcTradeOffer> parseTradeOffers(JsonObject root) {
+        if (!root.has("trade_offers") || root.get("trade_offers").isJsonNull()) {
+            return List.of();
+        }
+        JsonElement element = root.get("trade_offers");
+        if (!element.isJsonArray()) {
+            return List.of();
+        }
+        JsonArray arr = element.getAsJsonArray();
+        List<NpcTradeOffer> result = new ArrayList<>();
+        for (JsonElement item : arr) {
+            if (item == null || item.isJsonNull() || !item.isJsonObject()) {
+                continue;
+            }
+            JsonObject offer = item.getAsJsonObject();
+            result.add(new NpcTradeOffer(
+                stringField(offer, "template_id", ""),
+                stringField(offer, "display_name", ""),
+                intField(offer, "count", 0),
+                intField(offer, "price_bone_coins", 0)
+            ));
+        }
+        return result.isEmpty() ? List.of() : List.copyOf(result);
+    }
+
+    // ── field helpers ────────────────────────────────────────────────────────
 
     private static int intField(JsonObject root, String fieldName, int fallback) {
         if (!root.has(fieldName) || root.get(fieldName).isJsonNull()) {
