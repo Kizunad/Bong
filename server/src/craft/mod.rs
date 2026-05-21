@@ -1379,4 +1379,32 @@ mod tests {
         assert_eq!(recipe.materials, vec![("iron_ore".into(), 3)]);
         assert_eq!(recipe.output, ("iron_ingot".into(), 1));
     }
+
+    /// 回归测试：所有非 workbench 的 legacy 注册器注册的配方 station 必须为 None。
+    ///
+    /// plan-workbench-recipes-v1 新增 `CraftStationKind` 字段后，既有配方写了
+    /// `station: None`，此测试锁定该行为，防止误将 legacy 手搓配方绑到 workbench。
+    #[test]
+    fn legacy_recipe_registrars_keep_station_none() {
+        let mut registry = CraftRegistry::new();
+        register_examples(&mut registry).unwrap();
+        register_anqi_v2_recipes(&mut registry).unwrap();
+        register_zhenfa_v2_recipes(&mut registry).unwrap();
+        register_zhenfa_content_recipes(&mut registry).unwrap();
+        register_tuike_v2_recipes(&mut registry).unwrap();
+        register_gathering_tool_recipes(&mut registry).unwrap();
+        register_basic_processing_recipes(&mut registry).unwrap();
+        crate::cultivation::poison_trait::register_craft_recipes(&mut registry).unwrap();
+        crate::armor::mundane::register_mundane_armor_recipes(&mut registry).unwrap();
+        crate::coffin::register_craft_recipes(&mut registry).unwrap();
+
+        for recipe in registry.iter() {
+            assert!(
+                recipe.station.is_none(),
+                "legacy recipe `{}` must have station=None (hand-craft without workbench); \
+                 only workbench_recipes registrar should set station=Some",
+                recipe.id
+            );
+        }
+    }
 }
