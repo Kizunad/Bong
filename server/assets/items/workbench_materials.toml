@@ -162,12 +162,15 @@ description = "灵草扎束延缓散灵，批量存放减损耗。"
 
 # ═══════════════════════════════════════════════════════════════════════════
 # 容器与装具 (13)
+# 注：plan 定义这些为 category="container"，但 server 要求 container 类有
+# [item.container] 块（equip_slot / rows / cols）。这些物品是制作台产出而非
+# 背包装具，暂用 category="misc"；待各自功能落地时升级为 container + 补容器规格。
 # ═══════════════════════════════════════════════════════════════════════════
 
 [[item]]
 id = "herb_vial"
 name = "药瓶"
-category = "container"
+category = "misc"
 grid_w = 1
 grid_h = 1
 base_weight = 0.15
@@ -178,7 +181,7 @@ description = "灵晶碎封口的小瓶，密封保灵。"
 [[item]]
 id = "sealed_vial"
 name = "密封药瓶"
-category = "container"
+category = "misc"
 grid_w = 1
 grid_h = 1
 base_weight = 0.2
@@ -189,7 +192,7 @@ description = "蛛丝绳缠封灵力加固，保质期翻倍。"
 [[item]]
 id = "herb_pouch"
 name = "灵草囊"
-category = "container"
+category = "misc"
 grid_w = 1
 grid_h = 2
 base_weight = 0.3
@@ -200,7 +203,7 @@ description = "粗布缝成的草药袋，采集时直接塞入减少磨损。"
 [[item]]
 id = "coin_box"
 name = "骨币匣"
-category = "container"
+category = "misc"
 grid_w = 1
 grid_h = 1
 base_weight = 0.8
@@ -211,7 +214,7 @@ description = "木匣内壁涂丹砂隔灵，骨币少漏。"
 [[item]]
 id = "projectile_bag"
 name = "暗器袋"
-category = "container"
+category = "misc"
 grid_w = 1
 grid_h = 2
 base_weight = 0.4
@@ -222,7 +225,7 @@ description = "兽皮内衬的暗器袋，骨刺不戳破。"
 [[item]]
 id = "spirit_seal_box"
 name = "封灵匣"
-category = "container"
+category = "misc"
 grid_w = 1
 grid_h = 1
 base_weight = 1.0
@@ -233,7 +236,7 @@ description = "灵铁箍的密封小匣，高灵物短存最佳。"
 [[item]]
 id = "dead_drop_box"
 name = "死信箱"
-category = "container"
+category = "misc"
 grid_w = 2
 grid_h = 2
 base_weight = 3.0
@@ -255,7 +258,7 @@ description = "灰烬苔裹布包，吸湿防霉。"
 [[item]]
 id = "ore_sack"
 name = "矿石袋"
-category = "container"
+category = "misc"
 grid_w = 1
 grid_h = 2
 base_weight = 0.3
@@ -277,7 +280,7 @@ description = "兽皮缝的水袋，远征不渴。"
 [[item]]
 id = "trade_crate"
 name = "货箱"
-category = "container"
+category = "misc"
 grid_w = 2
 grid_h = 2
 base_weight = 2.0
@@ -288,7 +291,7 @@ description = "六面木板钉成的大箱，集市搬运用。"
 [[item]]
 id = "herb_crate"
 name = "灵草箱"
-category = "container"
+category = "misc"
 grid_w = 2
 grid_h = 2
 base_weight = 1.5
@@ -631,6 +634,12 @@ rarity = "common"
 spirit_quality_initial = 0.0
 description = "兽皮兜木叉弹弓，甩石打鼠。"
 
+[item.weapon]
+kind = "bow"
+base_attack = 2.0
+quality_tier = 0
+durability_max = 40.0
+
 [[item]]
 id = "sling_stone"
 name = "飞石"
@@ -686,6 +695,12 @@ rarity = "common"
 spirit_quality_initial = 0.0
 description = "近身防御短刃，小巧好藏。"
 
+[item.weapon]
+kind = "dagger"
+base_attack = 4.0
+quality_tier = 0
+durability_max = 80.0
+
 [[item]]
 id = "stone_knife"
 name = "石刃"
@@ -696,6 +711,12 @@ base_weight = 0.5
 rarity = "common"
 spirit_quality_initial = 0.0
 description = "碎石磨薄的切割器，最入门。"
+
+[item.weapon]
+kind = "dagger"
+base_attack = 2.0
+quality_tier = 0
+durability_max = 30.0
 
 [[item]]
 id = "bone_spike_crude"
@@ -708,6 +729,12 @@ rarity = "common"
 spirit_quality_initial = 0.0
 description = "兽骨粗削尖的低档投掷物，打不死但打得疼。"
 
+[item.weapon]
+kind = "dagger"
+base_attack = 1.5
+quality_tier = 0
+durability_max = 15.0
+
 [[item]]
 id = "wooden_club"
 name = "木棍"
@@ -718,6 +745,12 @@ base_weight = 0.8
 rarity = "common"
 spirit_quality_initial = 0.0
 description = "灵木削成的凡物木棍，近战入门。"
+
+[item.weapon]
+kind = "staff"
+base_attack = 3.0
+quality_tier = 0
+durability_max = 60.0
 
 # ═══════════════════════════════════════════════════════════════════════════
 # 经济 (8)
