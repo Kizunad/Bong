@@ -104,13 +104,18 @@ def gen_side():
                 c = (0x35, 0x25, 0x15)
                 img.putpixel((x, y), c + (255,))
 
-    # Spirit veins (subtle blue-grey, semi-random paths)
+    # Spirit veins (subtle blue-grey, semi-random paths, blended into wood)
     vein_starts = [(2, 4), (10, 9), (6, 13)]
     for sx, sy in vein_starts:
         x, y = sx, sy
-        for _ in range(4):
+        for _ in range(5):
             if 0 <= x < 16 and 0 <= y < 16:
-                img.putpixel((x, y), VEIN_BLUE + (120,))
+                base = img.getpixel((x, y))
+                # Blend 30% vein color into base wood
+                blended = tuple(
+                    int(base[c] * 0.7 + VEIN_BLUE[c] * 0.3) for c in range(3)
+                ) + (255,)
+                img.putpixel((x, y), blended)
             x += rng.choice([-1, 0, 1])
             y += rng.choice([0, 1])
             x = max(0, min(15, x))
@@ -130,19 +135,18 @@ def gen_front():
     """Workbench front: same as side but with iron handle in center."""
     img = gen_side()
 
-    # Iron handle: 2x3 recessed area at center + 1x1 ring
-    # Recess area (darker) at x=7-8, y=6-8
+    # Iron handle: 2x3 px recess (spec) + 1x1 ring below
+    # Recess area (darker, 2 wide x 3 tall) at x=7-8, y=5-7
     recess_color = (0x2E, 0x1E, 0x12, 255)
-    for y in range(6, 9):
+    for y in range(5, 8):
         for x in range(7, 9):
             img.putpixel((x, y), recess_color)
 
-    # Iron ring (1x1 at center of recess)
+    # Iron ring (1x1 at bottom center of recess)
     img.putpixel((7, 7), IRON_GREY + (255,))
-    img.putpixel((8, 7), IRON_GREY + (255,))
-    # Ring highlight
-    img.putpixel((7, 6), (0x80, 0x80, 0x80, 255))
-    # Ring shadow
+    img.putpixel((8, 7), (0x7A, 0x7A, 0x7A, 255))  # ring highlight
+    # Ring shadow below
+    img.putpixel((7, 8), (0x55, 0x55, 0x55, 255))
     img.putpixel((8, 8), (0x55, 0x55, 0x55, 255))
 
     return img
