@@ -46,6 +46,7 @@ use crate::npc::skull_fiend::{
 use crate::npc::spawn::{
     NpcBlackboard, NpcCombatLoadout, NpcMarker, NpcMeleeArchetype, NpcMeleeProfile,
 };
+use crate::npc::technique::{NpcTechniqueAction, NpcTechniqueScorer};
 use crate::schema::vfx_event::VfxEventPayloadV1;
 use crate::world::dimension::DimensionKind;
 use crate::world::tsy_container::{ContainerKind, LootContainer};
@@ -773,6 +774,22 @@ pub fn spawn_tsy_daoxiang_at(
         crate::npc::brain::WanderState::default(),
         daoxiang_thinker(),
     ));
+    // P1: NPC 功法（Daoxiang 默认 Induce 境界）
+    let daoxiang_realm = Realm::Induce;
+    let meridian_sys = crate::npc::technique::npc_meridian_system_for_realm(daoxiang_realm);
+    let empty_deps = crate::cultivation::meridian::severed::SkillMeridianDependencies::default();
+    let known_techniques = crate::npc::technique::assign_npc_techniques(
+        NpcArchetype::Daoxiang,
+        daoxiang_realm,
+        &meridian_sys,
+        &empty_deps,
+        None,
+        entity.index() as u64,
+    );
+    commands.entity(entity).insert((
+        known_techniques,
+        crate::npc::technique::NpcLastTechniqueTick::default(),
+    ));
     commands
         .entity(entity)
         .insert(npc_runtime_bundle(entity, NpcArchetype::Daoxiang));
@@ -900,6 +917,22 @@ pub fn spawn_tsy_zhinian_at(
         ZhinianMind::default(),
         crate::npc::brain::WanderState::default(),
         zhinian_thinker(),
+    ));
+    // P1: NPC 功法（Zhinian 默认 Condense 境界）
+    let zhinian_realm = Realm::Condense;
+    let meridian_sys = crate::npc::technique::npc_meridian_system_for_realm(zhinian_realm);
+    let empty_deps = crate::cultivation::meridian::severed::SkillMeridianDependencies::default();
+    let known_techniques = crate::npc::technique::assign_npc_techniques(
+        NpcArchetype::Zhinian,
+        zhinian_realm,
+        &meridian_sys,
+        &empty_deps,
+        None,
+        entity.index() as u64,
+    );
+    commands.entity(entity).insert((
+        known_techniques,
+        crate::npc::technique::NpcLastTechniqueTick::default(),
     ));
     commands
         .entity(entity)
@@ -1182,6 +1215,7 @@ fn daoxiang_thinker() -> ThinkerBuilder {
         .picker(FirstToScore { threshold: 0.05 })
         .when(AgeingScorer, RetireAction)
         .when(DaoxiangInstinctScorer, DaoxiangInstinctAction)
+        .when(NpcTechniqueScorer, NpcTechniqueAction)
         .when(MeleeRangeScorer, MeleeAttackAction)
         .when(ChaseTargetScorer, ChaseAction)
         .when(WanderScorer, WanderAction)
@@ -1192,6 +1226,7 @@ fn zhinian_thinker() -> ThinkerBuilder {
         .picker(FirstToScore { threshold: 0.05 })
         .when(AgeingScorer, RetireAction)
         .when(ZhinianAmbushScorer, ZhinianComboStepAction)
+        .when(NpcTechniqueScorer, NpcTechniqueAction)
         .when(MeleeRangeScorer, ZhinianComboStepAction)
         .when(ZhinianChaseScorer, ChaseAction)
         .when(WanderScorer, WanderAction)
