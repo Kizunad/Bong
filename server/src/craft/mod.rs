@@ -31,6 +31,8 @@ pub mod recipe;
 pub mod registry;
 pub mod session;
 pub mod unlock;
+pub mod workbench;
+pub mod workbench_recipes;
 
 use valence::prelude::App;
 
@@ -57,6 +59,13 @@ pub use session::{
 pub use unlock::{
     unlock_via_insight, unlock_via_mentor, unlock_via_scroll, RecipeUnlockState, UnlockOutcome,
 };
+#[allow(unused_imports)]
+pub use workbench::{
+    is_within_workbench_range, WorkbenchBlock, WorkbenchOpenPayload, WORKBENCH_INTERACT_RANGE,
+    WORKBENCH_ITEM_TEMPLATE,
+};
+#[allow(unused_imports)]
+pub use workbench_recipes::register_workbench_recipes;
 
 use crate::cultivation::components::{ColorKind, Realm};
 
@@ -93,6 +102,9 @@ pub fn register(app: &mut App) {
     });
     crate::armor::mundane::register_mundane_armor_recipes(&mut registry).unwrap_or_else(|err| {
         panic!("[bong][craft] failed to register armor-visual-v1 recipes: {err}");
+    });
+    workbench_recipes::register_workbench_recipes(&mut registry).unwrap_or_else(|err| {
+        panic!("[bong][craft] failed to register workbench-recipes-v1 recipes: {err}");
     });
     register_gathering_tool_recipes(&mut registry).unwrap_or_else(|err| {
         panic!("[bong][craft] failed to register gathering-ux-v1 recipes: {err}");
