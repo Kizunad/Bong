@@ -40,7 +40,11 @@ pub mod spawn_pillar;
 pub mod spawn_rat;
 pub mod spawn_whale;
 pub mod sync;
+#[allow(dead_code)]
+pub mod technique;
 pub mod territory;
+#[allow(dead_code)]
+pub mod trade;
 pub mod tribulation;
 pub mod tsy_hostile;
 pub mod whale_narration;

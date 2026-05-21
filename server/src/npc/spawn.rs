@@ -48,10 +48,14 @@ use crate::npc::relic::{
 use crate::npc::scattered_cultivator::{FarmingTemperament, ScatteredCultivator};
 use crate::npc::schedule::{home_base_for_archetype, schedule_seed_from_char_id, NpcDailySchedule};
 use crate::npc::social::{FactionDuelScorer, SocializeAction, SocializeScorer, SocializeState};
+use crate::npc::technique::{
+    assign_npc_techniques, NpcLastTechniqueTick, NpcTechniqueAction, NpcTechniqueScorer,
+};
 use crate::npc::territory::{
     HuntAction, HuntState, ProtectYoungAction, ProtectYoungScorer, ProtectYoungState, Territory,
     TerritoryIntruderScorer, TerritoryPatrolAction, TerritoryPatrolState,
 };
+use crate::npc::trade::assign_npc_trade_inventory;
 use crate::skin::faction_tint::visual_equipment;
 use crate::skin::{
     initial_age_ratio, npc_uuid, select_npc_visual_profile, NpcPlayerSkin, NpcSkinFallbackPolicy,
@@ -699,6 +703,8 @@ fn rogue_npc_thinker() -> ThinkerBuilder {
         .when(AgeingScorer, RetireAction)
         .when(SeclusionScorer, SeclusionAction)
         .when(TribulationReadyScorer, StartDuXuAction)
+        .when(NpcTechniqueScorer, NpcTechniqueAction)
+        .when(MeleeRangeScorer, MeleeAttackAction)
         .when(PlayerProximityScorer, FleeAction)
         .when(ReturnHomeScorer, ReturnHomeAction)
         .when(TradeStallScorer, StallAction)
@@ -745,6 +751,7 @@ fn disciple_npc_thinker() -> ThinkerBuilder {
         .when(AgeingScorer, RetireAction)
         .when(SeclusionScorer, SeclusionAction)
         .when(TribulationReadyScorer, StartDuXuAction)
+        .when(NpcTechniqueScorer, NpcTechniqueAction)
         .when(MeleeRangeScorer, MeleeAttackAction)
         .when(FactionDuelScorer, ChaseAction)
         .when(PlayerProximityScorer, FleeAction)
@@ -762,6 +769,8 @@ fn relic_guard_thinker() -> ThinkerBuilder {
     Thinker::build()
         .picker(FirstToScore { threshold: 0.05 })
         .when(GuardianDutyScorer, GuardAction)
+        .when(NpcTechniqueScorer, NpcTechniqueAction)
+        .when(MeleeRangeScorer, MeleeAttackAction)
         .when(TrialEvalScorer, TrialAction)
         .when(WanderScorer, WanderAction)
 }
@@ -810,6 +819,22 @@ pub fn spawn_rogue_npc_at(
         CultivationDriveHistory::default(),
         rogue_npc_thinker(),
     ));
+
+    // P1: NPC 功法 + 交易库存
+    let meridian_sys = crate::npc::technique::npc_meridian_system_for_realm(realm);
+    let empty_deps = crate::cultivation::meridian::severed::SkillMeridianDependencies::default();
+    let known_techniques = assign_npc_techniques(
+        NpcArchetype::Rogue,
+        realm,
+        &meridian_sys,
+        &empty_deps,
+        None,
+        entity.index() as u64,
+    );
+    let trade_inv = assign_npc_trade_inventory(NpcArchetype::Rogue, realm, entity.index() as u64);
+    commands
+        .entity(entity)
+        .insert((known_techniques, NpcLastTechniqueTick::default(), trade_inv));
 
     let runtime = npc_runtime_bundle_with_age(entity, NpcArchetype::Rogue, initial_age_ticks);
     commands.entity(entity).insert(runtime);
@@ -1226,6 +1251,23 @@ pub fn spawn_disciple_npc_at(
         disciple_npc_thinker(),
     ));
 
+    // P1: NPC 功法 + 交易库存
+    let meridian_sys = crate::npc::technique::npc_meridian_system_for_realm(realm);
+    let empty_deps = crate::cultivation::meridian::severed::SkillMeridianDependencies::default();
+    let known_techniques = assign_npc_techniques(
+        NpcArchetype::Disciple,
+        realm,
+        &meridian_sys,
+        &empty_deps,
+        None,
+        entity.index() as u64,
+    );
+    let trade_inv =
+        assign_npc_trade_inventory(NpcArchetype::Disciple, realm, entity.index() as u64);
+    commands
+        .entity(entity)
+        .insert((known_techniques, NpcLastTechniqueTick::default(), trade_inv));
+
     let runtime = npc_runtime_bundle_with_age(entity, NpcArchetype::Disciple, initial_age_ticks);
     commands.entity(entity).insert(runtime);
 
@@ -1282,6 +1324,22 @@ pub fn spawn_relic_guard_npc_at(
         TrialEval::new(trial_template_id),
         relic_guard_thinker(),
     ));
+
+    // P1: NPC 功法（GuardianRelic 默认 Spirit 境界）
+    let guard_realm = Realm::Spirit;
+    let meridian_sys = crate::npc::technique::npc_meridian_system_for_realm(guard_realm);
+    let empty_deps = crate::cultivation::meridian::severed::SkillMeridianDependencies::default();
+    let known_techniques = assign_npc_techniques(
+        NpcArchetype::GuardianRelic,
+        guard_realm,
+        &meridian_sys,
+        &empty_deps,
+        None,
+        entity.index() as u64,
+    );
+    commands
+        .entity(entity)
+        .insert((known_techniques, NpcLastTechniqueTick::default()));
 
     // GuardianRelic 不老：max_age 极大 + rate_multiplier 不会撞上限
     let runtime = npc_runtime_bundle(entity, NpcArchetype::GuardianRelic);
