@@ -365,6 +365,7 @@ pub fn npc_technique_scorer_system(
             &Cultivation,
             Option<&KnownTechniques>,
             Option<&NpcLastTechniqueTick>,
+            Option<&MeridianSeveredPermanent>,
         ),
         With<crate::npc::spawn::NpcMarker>,
     >,
@@ -380,7 +381,7 @@ pub fn npc_technique_scorer_system(
     let deps = meridian_deps.as_deref().unwrap_or(&empty_deps);
 
     for (Actor(actor), mut score) in &mut scorers {
-        let Ok((bb, cultivation, known_opt, last_tick_opt)) = npcs.get(*actor) else {
+        let Ok((bb, cultivation, known_opt, last_tick_opt, severed_opt)) = npcs.get(*actor) else {
             score.set(0.0);
             continue;
         };
@@ -409,12 +410,12 @@ pub fn npc_technique_scorer_system(
             continue;
         }
 
-        // 检查是否有可用功法
+        // 检查是否有可用功法（含经脉 SEVERED 过滤）
         let has_usable = select_technique(
             known,
             cultivation,
             deps,
-            None, // scorer 不读 MeridianSeveredPermanent，由 action 精确检查
+            severed_opt,
             cooldowns,
             *actor,
             bb.player_distance,

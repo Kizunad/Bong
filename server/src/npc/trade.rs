@@ -181,10 +181,14 @@ pub fn assign_npc_trade_inventory(
         }
     };
 
-    // 过滤可用物品
+    // 过滤可用物品（Commoner 固定只卖 Awaken 级别物品，不随 realm 解锁）
+    let effective_rank = match archetype {
+        NpcArchetype::Commoner => 0,
+        _ => npc_rank,
+    };
     let available: Vec<&CatalogueEntry> = TRADE_CATALOGUE
         .iter()
-        .filter(|entry| entry.realm_min <= npc_rank)
+        .filter(|entry| entry.realm_min <= effective_rank)
         .collect();
 
     if available.is_empty() {
