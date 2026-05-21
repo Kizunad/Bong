@@ -3,6 +3,8 @@ pub mod brain_rat;
 pub mod brain_whale;
 pub mod dormant;
 pub mod dying_master;
+#[allow(dead_code)]
+pub mod equipment;
 pub mod faction;
 pub mod farming_brain;
 #[allow(dead_code)]
