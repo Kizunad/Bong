@@ -22,18 +22,18 @@ use std::{
 };
 
 use valence::prelude::{
-    bevy_ecs, Client, Commands, Component, Entity, EventReader, EventWriter, Local, Query, Res,
-    ResMut, Username, With,
+    bevy_ecs, Client, Commands, Component, Entity, EventReader, EventWriter, Local, Position,
+    Query, Res, ResMut, Username, With,
 };
 
 use crate::combat::CombatClock;
 use crate::craft::{
-    cancel_craft, finalize_craft, start_craft, tick_session, unlock_via_insight, unlock_via_mentor,
-    unlock_via_scroll, CancelCraftOutcome, CraftCancelIntent, CraftCompletedEvent,
-    CraftFailedEvent, CraftFailureReason, CraftRegistry, CraftSession, CraftStartIntent,
-    CraftStartedEvent, CraftUnlockIntent, FinalizeCraftOutcome, RecipeUnlockState,
-    RecipeUnlockedEvent, StartCraftDeps, StartCraftError, StartCraftRequest, UnlockEventSource,
-    UnlockOutcome,
+    cancel_craft, finalize_craft, is_within_workbench_range, start_craft, tick_session,
+    unlock_via_insight, unlock_via_mentor, unlock_via_scroll, CancelCraftOutcome,
+    CraftCancelIntent, CraftCompletedEvent, CraftFailedEvent, CraftFailureReason, CraftRegistry,
+    CraftSession, CraftStartIntent, CraftStartedEvent, CraftUnlockIntent, FinalizeCraftOutcome,
+    RecipeUnlockState, RecipeUnlockedEvent, StartCraftDeps, StartCraftError, StartCraftRequest,
+    UnlockEventSource, UnlockOutcome, WorkbenchBlock,
 };
 use crate::cultivation::components::{Cultivation, QiColor};
 use crate::inventory::{
@@ -145,6 +145,8 @@ pub fn apply_craft_intents(
     clock: Res<CombatClock>,
     mut commands: Commands,
     names: Query<&Username>,
+    player_positions: Query<&Position>,
+    workbenches: Query<&Position, With<WorkbenchBlock>>,
     mut casters: Query<(
         &mut PlayerInventory,
         &mut Cultivation,
@@ -176,6 +178,22 @@ pub fn apply_craft_intents(
             zone_id: DEFAULT_CRAFT_ZONE_ID,
             quantity: intent.quantity,
         };
+        // §P2.4：检查玩家 Chebyshev 3 格内是否有 WorkbenchBlock entity。
+        let has_nearby_workbench = player_positions
+            .get(intent.caster)
+            .map(|pos| {
+                let player_pos = [pos.0.x, pos.0.y, pos.0.z];
+                workbenches.iter().any(|wb_pos| {
+                    let block_pos = [
+                        wb_pos.0.x.floor() as i32,
+                        wb_pos.0.y.floor() as i32,
+                        wb_pos.0.z.floor() as i32,
+                    ];
+                    is_within_workbench_range(player_pos, block_pos)
+                })
+            })
+            .unwrap_or(false);
+
         let deps = StartCraftDeps {
             registry: &registry,
             unlock_state: &unlock_state,
@@ -184,9 +202,7 @@ pub fn apply_craft_intents(
             qi_color,
             ledger: &mut ledger,
             existing_session: existing,
-            // TODO(plan-workbench-recipes-v1 PR-3): 实际检查玩家 3 格内是否有
-            // WorkbenchBlock entity。当前暂时传 true，待 PR-3 接入实际 ECS 查询。
-            has_nearby_workbench: true,
+            has_nearby_workbench,
         };
 
         match start_craft(req, deps) {
