@@ -1,0 +1,80 @@
+# plan-workbench-recipes-v1 §P1.0 — 矿物掉落物 ItemTemplate。
+# mineral 模块运行时注册矿脉/方块逻辑，本文件仅定义可拾取矿物掉落物的 inventory ItemTemplate。
+# 两者注册维度不同不冲突（矿脉 = 世界方块，掉落物 = 背包物品）。
+
+[[item]]
+id = "fan_tie"
+name = "凡铁矿"
+category = "misc"
+grid_w = 1
+grid_h = 1
+base_weight = 2.0
+rarity = "common"
+spirit_quality_initial = 0.0
+description = "地表至 y=0 的凡铁矿石，冶炼得粗铁锭。"
+
+[[item]]
+id = "cu_tie"
+name = "粗铁矿"
+category = "misc"
+grid_w = 1
+grid_h = 1
+base_weight = 2.5
+rarity = "common"
+spirit_quality_initial = 0.0
+description = "y=-32~-64 的粗铁矿，杂质多但量大。"
+
+[[item]]
+id = "ling_tie"
+name = "灵铁"
+category = "misc"
+grid_w = 1
+grid_h = 1
+base_weight = 1.8
+rarity = "uncommon"
+spirit_quality_initial = 0.6
+description = "血谷矿脉产，储灵兵胎或密封容器。"
+
+[[item]]
+id = "ling_jing"
+name = "灵晶"
+category = "misc"
+grid_w = 1
+grid_h = 1
+base_weight = 0.5
+rarity = "rare"
+spirit_quality_initial = 0.8
+description = "青云/血谷产，法宝阵眼核心。"
+
+[[item]]
+id = "dan_sha"
+name = "丹砂"
+category = "misc"
+grid_w = 1
+grid_h = 1
+base_weight = 0.3
+rarity = "common"
+spirit_quality_initial = 0.0
+description = "洞穴/红岩产，调和辛度染色画符。"
+
+[[item]]
+id = "zhu_sha"
+name = "朱砂"
+category = "misc"
+grid_w = 1
+grid_h = 1
+base_weight = 0.3
+rarity = "uncommon"
+spirit_quality_initial = 0.3
+description = "火山/血谷产，高阶药引。"
+
+[[item]]
+id = "xiong_huang"
+name = "雄黄"
+category = "misc"
+grid_w = 1
+grid_h = 1
+base_weight = 0.3
+rarity = "common"
+spirit_quality_initial = 0.0
+description = "洞穴/尸骸产，驱邪解蛊。"

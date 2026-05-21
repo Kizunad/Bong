@@ -405,3 +405,16 @@ cols = 3
 weight_capacity = 8.0
 equip_slot = "back_pack"
 durability_cost_per_op = 0.005
+
+# plan-workbench-recipes-v1 §P0.3 — 制作台物品定义。
+# 放置后 spawn WorkbenchBlock ECS entity，右键打开制作台 UI。
+[[item]]
+id = "workbench_item"
+name = "制作台"
+category = "misc"
+grid_w = 2
+grid_h = 2
+base_weight = 6.0
+rarity = "common"
+spirit_quality_initial = 0.0
+description = "灵木板钉上凡铁骨钉的粗木台子。放下就能搓东西。"
