@@ -745,10 +745,20 @@ Agent(
 )
 ```
 
-### §10.3 CodeRabbit 等待协议
+### §10.3 视觉资产 3 轮自审 + `<PROMISE>` 担保
+
+PR-3（bbmodel + Client）包含视觉资产（Workbench.bbmodel、纹理、item icon），按 `docs/CLAUDE.md` §6.1 强制 3 轮自我打磨：
+
+1. **Round 1** first cut → commit `(round 1/3)`
+2. **Round 2** 自我 review（与 §P0.2 spec 一致性 + 配色校验）→ 修 → commit `(round 2/3)`
+3. **Round 3** 终轮 review → 修 → commit `(round 3/3)`，commit message 末尾写 `<PROMISE>` 块
+
+纯逻辑代码（WorkbenchScreen.java 等）不适用，按常规 atomic commit。
+
+### §10.4 CodeRabbit 等待协议
 
 每 PR 提交后 ScheduleWakeup 1200s 等 CR review，最多 3 回合。
 
-### §10.4 单次 consume-plan 全自动到 merge
+### §10.5 单次 consume-plan 全自动到 merge
 
 用户提交 `/consume-plan` 后即可下班。
