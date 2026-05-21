@@ -31,6 +31,8 @@ pub mod recipe;
 pub mod registry;
 pub mod session;
 pub mod unlock;
+pub mod workbench;
+pub mod workbench_recipes;
 
 use valence::prelude::App;
 
@@ -41,7 +43,8 @@ pub use events::{
 };
 #[allow(unused_imports)]
 pub use recipe::{
-    CraftCategory, CraftRecipe, CraftRequirements, RecipeId, RecipeValidationError, UnlockSource,
+    CraftCategory, CraftRecipe, CraftRequirements, CraftStationKind, RecipeId,
+    RecipeValidationError, UnlockSource,
 };
 #[allow(unused_imports)]
 pub use registry::{CraftRegistry, RegistryError};
@@ -56,6 +59,13 @@ pub use session::{
 pub use unlock::{
     unlock_via_insight, unlock_via_mentor, unlock_via_scroll, RecipeUnlockState, UnlockOutcome,
 };
+#[allow(unused_imports)]
+pub use workbench::{
+    is_within_workbench_range, WorkbenchBlock, WorkbenchOpenPayload, WORKBENCH_INTERACT_RANGE,
+    WORKBENCH_ITEM_TEMPLATE,
+};
+#[allow(unused_imports)]
+pub use workbench_recipes::register_workbench_recipes;
 
 use crate::cultivation::components::{ColorKind, Realm};
 
@@ -92,6 +102,9 @@ pub fn register(app: &mut App) {
     });
     crate::armor::mundane::register_mundane_armor_recipes(&mut registry).unwrap_or_else(|err| {
         panic!("[bong][craft] failed to register armor-visual-v1 recipes: {err}");
+    });
+    workbench_recipes::register_workbench_recipes(&mut registry).unwrap_or_else(|err| {
+        panic!("[bong][craft] failed to register workbench-recipes-v1 recipes: {err}");
     });
     register_gathering_tool_recipes(&mut registry).unwrap_or_else(|err| {
         panic!("[bong][craft] failed to register gathering-ux-v1 recipes: {err}");
@@ -150,6 +163,7 @@ pub fn register_examples(registry: &mut CraftRegistry) -> Result<(), RegistryErr
             skill_lv_min: None,
         },
         unlock_sources: vec![],
+        station: None,
     })?;
 
     // 2. 毒源煎汤（凡毒）— DuguPotion
@@ -166,6 +180,7 @@ pub fn register_examples(registry: &mut CraftRegistry) -> Result<(), RegistryErr
         output: ("poison_decoction_fan".into(), 1),
         requirements: CraftRequirements::default(),
         unlock_sources: vec![],
+        station: None,
     })?;
 
     // 3. 伪灵皮（轻档）— TuikeSkin
@@ -193,6 +208,7 @@ pub fn register_examples(registry: &mut CraftRegistry) -> Result<(), RegistryErr
                 trigger: InsightTrigger::NearDeath,
             },
         ],
+        station: None,
     })?;
 
     // 4. 真元诡雷（凡铁）— ZhenfaTrap
@@ -220,6 +236,7 @@ pub fn register_examples(registry: &mut CraftRegistry) -> Result<(), RegistryErr
                 npc_archetype: "array_scribe".into(),
             },
         ],
+        station: None,
     })?;
 
     // 5. 采药刀（凡铁）— Tool（§5 决策门 #5 凡器破例收录手搓 tab）
@@ -235,6 +252,7 @@ pub fn register_examples(registry: &mut CraftRegistry) -> Result<(), RegistryErr
         unlock_sources: vec![UnlockSource::Scroll {
             item_template: "scroll_herb_knife_iron".into(),
         }],
+        station: None,
     })?;
 
     Ok(())
@@ -389,6 +407,7 @@ pub fn register_anqi_v2_recipes(registry: &mut CraftRegistry) -> Result<(), Regi
             output,
             requirements,
             unlock_sources: scroll(id),
+            station: None,
         })?;
     }
 
@@ -536,6 +555,7 @@ pub fn register_zhenfa_v2_recipes(registry: &mut CraftRegistry) -> Result<(), Re
             output,
             requirements,
             unlock_sources,
+            station: None,
         })?;
     }
 
@@ -604,6 +624,7 @@ pub fn register_zhenfa_content_recipes(registry: &mut CraftRegistry) -> Result<(
             output,
             requirements: CraftRequirements::default(),
             unlock_sources,
+            station: None,
         })?;
     }
 
@@ -699,6 +720,7 @@ pub fn register_tuike_v2_recipes(registry: &mut CraftRegistry) -> Result<(), Reg
             output: (output.to_string(), 1),
             requirements,
             unlock_sources: scroll(id),
+            station: None,
         })?;
     }
 
@@ -775,6 +797,7 @@ pub fn register_gathering_tool_recipes(registry: &mut CraftRegistry) -> Result<(
             output: (output.to_string(), 1),
             requirements: CraftRequirements::default(),
             unlock_sources: scroll(output),
+            station: None,
         })?;
     }
     Ok(())
@@ -850,6 +873,7 @@ pub fn register_basic_processing_recipes(
             output: (output.0.to_string(), output.1),
             requirements: CraftRequirements::default(),
             unlock_sources: vec![],
+            station: None,
         })?;
     }
     Ok(())
@@ -1354,5 +1378,33 @@ mod tests {
         let recipe = registry.get(&RecipeId::new("basic.iron_ingot")).unwrap();
         assert_eq!(recipe.materials, vec![("iron_ore".into(), 3)]);
         assert_eq!(recipe.output, ("iron_ingot".into(), 1));
+    }
+
+    /// 回归测试：所有非 workbench 的 legacy 注册器注册的配方 station 必须为 None。
+    ///
+    /// plan-workbench-recipes-v1 新增 `CraftStationKind` 字段后，既有配方写了
+    /// `station: None`，此测试锁定该行为，防止误将 legacy 手搓配方绑到 workbench。
+    #[test]
+    fn legacy_recipe_registrars_keep_station_none() {
+        let mut registry = CraftRegistry::new();
+        register_examples(&mut registry).unwrap();
+        register_anqi_v2_recipes(&mut registry).unwrap();
+        register_zhenfa_v2_recipes(&mut registry).unwrap();
+        register_zhenfa_content_recipes(&mut registry).unwrap();
+        register_tuike_v2_recipes(&mut registry).unwrap();
+        register_gathering_tool_recipes(&mut registry).unwrap();
+        register_basic_processing_recipes(&mut registry).unwrap();
+        crate::cultivation::poison_trait::register_craft_recipes(&mut registry).unwrap();
+        crate::armor::mundane::register_mundane_armor_recipes(&mut registry).unwrap();
+        crate::coffin::register_craft_recipes(&mut registry).unwrap();
+
+        for recipe in registry.iter() {
+            assert!(
+                recipe.station.is_none(),
+                "legacy recipe `{}` must have station=None (hand-craft without workbench); \
+                 only workbench_recipes registrar should set station=Some",
+                recipe.id
+            );
+        }
     }
 }

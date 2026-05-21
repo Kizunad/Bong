@@ -285,6 +285,7 @@ pub fn craft_recipe_for(item: &MundaneArmorItem) -> CraftRecipe {
         unlock_sources: vec![UnlockSource::Scroll {
             item_template: format!("scroll_armor_{}", item.material.id()),
         }],
+        station: None,
     }
 }
 
