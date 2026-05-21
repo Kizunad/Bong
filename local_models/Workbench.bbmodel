@@ -1,0 +1,135 @@
+{
+  "meta": {
+    "format_version": "4.10",
+    "model_format": "free"
+  },
+  "name": "workbench",
+  "resolution": {
+    "width": 16,
+    "height": 16
+  },
+  "elements": [
+    {
+      "name": "MainBody",
+      "from": [-8, 0, -8],
+      "to": [8, 16, 8],
+      "faces": {
+        "north": { "uv": [0, 0, 16, 16], "texture": 2 },
+        "east":  { "uv": [0, 0, 16, 16], "texture": 1 },
+        "south": { "uv": [0, 0, 16, 16], "texture": 1 },
+        "west":  { "uv": [0, 0, 16, 16], "texture": 1 },
+        "up":    { "uv": [0, 0, 16, 16], "texture": 0 },
+        "down":  { "uv": [0, 0, 16, 16], "texture": 3 }
+      }
+    },
+    {
+      "name": "StoneBase",
+      "from": [-8, -1, -8],
+      "to": [8, 0, 8],
+      "faces": {
+        "north": { "uv": [0, 15, 16, 16], "texture": 3 },
+        "east":  { "uv": [0, 15, 16, 16], "texture": 3 },
+        "south": { "uv": [0, 15, 16, 16], "texture": 3 },
+        "west":  { "uv": [0, 15, 16, 16], "texture": 3 },
+        "up":    { "uv": [0, 0, 16, 16], "texture": 3 },
+        "down":  { "uv": [0, 0, 16, 16], "texture": 3 }
+      }
+    },
+    {
+      "name": "BonePin_NW",
+      "from": [-7, 16, -7],
+      "to": [-6, 18, -6],
+      "faces": {
+        "north": { "uv": [1, 1, 2, 3], "texture": 0 },
+        "east":  { "uv": [1, 1, 2, 3], "texture": 0 },
+        "south": { "uv": [1, 1, 2, 3], "texture": 0 },
+        "west":  { "uv": [1, 1, 2, 3], "texture": 0 },
+        "up":    { "uv": [1, 1, 2, 2], "texture": 0 },
+        "down":  { "uv": [1, 1, 2, 2], "texture": 0 }
+      }
+    },
+    {
+      "name": "BonePin_NE",
+      "from": [6, 16, -7],
+      "to": [7, 18, -6],
+      "faces": {
+        "north": { "uv": [13, 1, 14, 3], "texture": 0 },
+        "east":  { "uv": [13, 1, 14, 3], "texture": 0 },
+        "south": { "uv": [13, 1, 14, 3], "texture": 0 },
+        "west":  { "uv": [13, 1, 14, 3], "texture": 0 },
+        "up":    { "uv": [13, 1, 14, 2], "texture": 0 },
+        "down":  { "uv": [13, 1, 14, 2], "texture": 0 }
+      }
+    },
+    {
+      "name": "BonePin_SW",
+      "from": [-7, 16, 6],
+      "to": [-6, 18, 7],
+      "faces": {
+        "north": { "uv": [1, 13, 2, 15], "texture": 0 },
+        "east":  { "uv": [1, 13, 2, 15], "texture": 0 },
+        "south": { "uv": [1, 13, 2, 15], "texture": 0 },
+        "west":  { "uv": [1, 13, 2, 15], "texture": 0 },
+        "up":    { "uv": [1, 13, 2, 14], "texture": 0 },
+        "down":  { "uv": [1, 13, 2, 14], "texture": 0 }
+      }
+    },
+    {
+      "name": "BonePin_SE",
+      "from": [6, 16, 6],
+      "to": [7, 18, 7],
+      "faces": {
+        "north": { "uv": [13, 13, 14, 15], "texture": 0 },
+        "east":  { "uv": [13, 13, 14, 15], "texture": 0 },
+        "south": { "uv": [13, 13, 14, 15], "texture": 0 },
+        "west":  { "uv": [13, 13, 14, 15], "texture": 0 },
+        "up":    { "uv": [13, 13, 14, 14], "texture": 0 },
+        "down":  { "uv": [13, 13, 14, 14], "texture": 0 }
+      }
+    },
+    {
+      "name": "HandleRecess",
+      "from": [-1, 6, -9],
+      "to": [1, 9, -8],
+      "faces": {
+        "north": { "uv": [7, 6, 9, 9], "texture": 2 },
+        "east":  { "uv": [7, 6, 8, 9], "texture": 2 },
+        "south": { "uv": [7, 6, 9, 9], "texture": 1 },
+        "west":  { "uv": [8, 6, 9, 9], "texture": 2 },
+        "up":    { "uv": [7, 6, 9, 7], "texture": 2 },
+        "down":  { "uv": [7, 8, 9, 9], "texture": 2 }
+      }
+    },
+    {
+      "name": "HandleRing",
+      "from": [-0.5, 6.5, -9.5],
+      "to": [0.5, 8, -9],
+      "faces": {
+        "north": { "uv": [7, 7, 9, 8], "texture": 2 },
+        "east":  { "uv": [7, 7, 8, 8], "texture": 2 },
+        "south": { "uv": [7, 7, 9, 8], "texture": 2 },
+        "west":  { "uv": [8, 7, 9, 8], "texture": 2 },
+        "up":    { "uv": [7, 7, 9, 8], "texture": 2 },
+        "down":  { "uv": [7, 7, 9, 8], "texture": 2 }
+      }
+    }
+  ],
+  "textures": [
+    {
+      "name": "workbench_top",
+      "source": "client/src/main/resources/assets/bong/textures/block/workbench_top.png"
+    },
+    {
+      "name": "workbench_side",
+      "source": "client/src/main/resources/assets/bong/textures/block/workbench_side.png"
+    },
+    {
+      "name": "workbench_front",
+      "source": "client/src/main/resources/assets/bong/textures/block/workbench_front.png"
+    },
+    {
+      "name": "workbench_bottom",
+      "source": "client/src/main/resources/assets/bong/textures/block/workbench_bottom.png"
+    }
+  ]
+}

@@ -227,6 +227,9 @@ public final class ServerDataRouter {
         handlers.put("craft_session_state", new CraftSessionStateHandler());
         handlers.put("craft_outcome", new CraftOutcomeHandler());
         handlers.put("recipe_unlocked", new RecipeUnlockedHandler());
+        // plan-workbench-recipes-v1 P3.1 — 制作台 UI 打开
+        handlers.put("workbench_open",
+            com.bong.client.craft.WorkbenchScreenBootstrap.handler());
         return new ServerDataRouter(handlers);
     }
 

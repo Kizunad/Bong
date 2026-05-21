@@ -1,0 +1,12 @@
+{
+  "parent": "minecraft:block/cube",
+  "textures": {
+    "up": "bong:block/workbench_top",
+    "down": "bong:block/workbench_bottom",
+    "north": "bong:block/workbench_front",
+    "south": "bong:block/workbench_side",
+    "east": "bong:block/workbench_side",
+    "west": "bong:block/workbench_side",
+    "particle": "bong:block/workbench_top"
+  }
+}
