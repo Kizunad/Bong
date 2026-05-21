@@ -149,7 +149,9 @@ public class ServerDataRouterTest {
             "craft_recipe_list",
             "craft_session_state",
             "craft_outcome",
-            "recipe_unlocked"
+            "recipe_unlocked",
+            // plan-workbench-recipes-v1 P3.1 — 制作台 UI 打开
+            "workbench_open"
         ), router.registeredTypes());
     }
 

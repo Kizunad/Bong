@@ -21,6 +21,8 @@ public final class CraftRecipe {
     private final int outputCount;
     private final Requirements requirements;
     private final boolean unlocked;
+    /** plan-workbench-recipes-v1: null = 手搓, "workbench" = 制作台. */
+    private final String station;
 
     public CraftRecipe(
         String id,
@@ -34,6 +36,23 @@ public final class CraftRecipe {
         Requirements requirements,
         boolean unlocked
     ) {
+        this(id, category, displayName, materials, qiCost, timeTicks,
+            outputTemplate, outputCount, requirements, unlocked, null);
+    }
+
+    public CraftRecipe(
+        String id,
+        CraftCategory category,
+        String displayName,
+        List<MaterialEntry> materials,
+        double qiCost,
+        long timeTicks,
+        String outputTemplate,
+        int outputCount,
+        Requirements requirements,
+        boolean unlocked,
+        String station
+    ) {
         this.id = Objects.requireNonNull(id, "id");
         this.category = Objects.requireNonNull(category, "category");
         this.displayName = Objects.requireNonNull(displayName, "displayName");
@@ -44,6 +63,7 @@ public final class CraftRecipe {
         this.outputCount = outputCount;
         this.requirements = Objects.requireNonNull(requirements, "requirements");
         this.unlocked = unlocked;
+        this.station = station;
     }
 
     public String id() { return id; }
@@ -56,13 +76,18 @@ public final class CraftRecipe {
     public int outputCount() { return outputCount; }
     public Requirements requirements() { return requirements; }
     public boolean unlocked() { return unlocked; }
+    /** null = 手搓（无站台要求）, "workbench" = 需制作台. */
+    public String station() { return station; }
+
+    /** 是否为制作台配方。 */
+    public boolean isWorkbenchRecipe() { return "workbench".equals(station); }
 
     /** 仅替换 unlock 字段，其他字段保持。用于 RecipeUnlocked 增量更新。 */
     public CraftRecipe withUnlocked(boolean newUnlocked) {
         if (newUnlocked == this.unlocked) return this;
         return new CraftRecipe(
             id, category, displayName, materials, qiCost, timeTicks,
-            outputTemplate, outputCount, requirements, newUnlocked
+            outputTemplate, outputCount, requirements, newUnlocked, station
         );
     }
 

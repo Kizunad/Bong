@@ -56,8 +56,9 @@ public final class CraftRecipeListHandler implements ServerDataHandler {
         }
         CraftRecipe.Requirements req = parseRequirements(obj.get("requirements"));
         boolean unlocked = readBoolean(obj, "unlocked");
+        String station = readString(obj, "station");
         return new CraftRecipe(id, category, displayName, materials, qiCost, timeTicks,
-            outputTemplate, outputCount, req, unlocked);
+            outputTemplate, outputCount, req, unlocked, station);
     }
 
     private static List<CraftRecipe.MaterialEntry> parseMaterials(JsonElement el) {
