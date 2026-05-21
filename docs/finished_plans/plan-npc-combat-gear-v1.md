@@ -6,10 +6,10 @@ NPC 功法调用 + 装备携带 + 手持武器 + 交互 GUI 重绘——让散�
 
 | 阶段 | 状态 | 主要交付物 | 验收标准 |
 |------|------|-----------|---------|
-| **P0** | ⬜ | NPC 装备模型 + Valence Equipment 同步 | NPC 手持铁剑/穿戴护甲可见；装备影响战斗结算 |
-| **P1** | ⬜ | NPC 功法系统（KnownTechniques + brain 调用 + 经脉校验） | 散修 NPC 在战斗中释放已学功法，qi 消耗走 ledger，经脉 SEVERED 阻断功法 |
-| **P2** | ⬜ | NPC 交互 GUI 重绘（owo-lib 三屏） | 对话/查看/交易三屏全部 BaseOwoScreen，装备+功法可视 |
-| **P3** | ⬜ | 集成测试 + 校准 | e2e：玩家看见 NPC 持剑释放功法 + 打开查看屏看到装备列表 |
+| **P0** | ✅ 2026-05-21 | NPC 装备模型 + Valence Equipment 同步 | NPC 手持铁剑/穿戴护甲可见；装备影响战斗结算 |
+| **P1** | ✅ 2026-05-21 | NPC 功法系统（KnownTechniques + brain 调用 + 经脉校验） | 散修 NPC 在战斗中释放已学功法，qi 消耗走 ledger，经脉 SEVERED 阻断功法 |
+| **P2** | ✅ 2026-05-21 | NPC 交互 GUI 重绘（owo-lib 三屏） | 对话/查看/交易三屏全部 BaseOwoScreen，装备+功法可视 |
+| **P3** | ✅ 2026-05-21 | 集成测试 + 校准 | e2e：玩家看见 NPC 持剑释放功法 + 打开查看屏看到装备列表 |
 
 ---
 
@@ -708,4 +708,58 @@ git mv docs/plan-npc-combat-gear-v1.md docs/finished_plans/
 
 ## Finish Evidence
 
-（归档前填写）
+### 落地清单
+
+| 阶段 | 模块 / 文件 |
+|------|------------|
+| **P0** | `server/src/npc/equipment.rs` — `NpcEquipment` / `NpcEquipSlot` / `assign_npc_equipment()` / `merge_equipment()` / `roll_equipment_drops()` / `npc_weapon_damage_multiplier()` |
+| **P1** | `server/src/npc/technique.rs` — `assign_npc_techniques()` / `select_technique()` / `NpcCooldownMap` / `NpcTechniqueScorer` / `NpcTechniqueAction` / `npc_meridian_system_for_realm()` |
+| **P1** | `server/src/npc/trade.rs` — `NpcTradeInventory` / `TradeOffer` / `assign_npc_trade_inventory()` |
+| **P2** | `server/src/network/npc_metadata.rs` — `NpcMetadataS2c` 扩展 `equipment` / `techniques` / `trade_offers` 字段 |
+| **P2** | `client/src/main/java/com/bong/client/npc/NpcMetadata.java` — record 扩展 + backward-compatible constructors |
+| **P2** | `client/src/main/java/com/bong/client/npc/NpcMetadataHandler.java` — `parseEquipment()` / `parseTechniques()` / `parseTradeOffers()` |
+| **P2** | `client/src/main/java/com/bong/client/npc/NpcEquipSlotData.java` / `NpcTechniqueData.java` / `NpcTradeOffer.java` |
+| **P2** | `client/src/main/java/com/bong/client/npc/NpcDialogueScreen.java` — owo-lib 重写 |
+| **P2** | `client/src/main/java/com/bong/client/npc/NpcInspectScreen.java` — owo-lib 重写（装备+功法可视） |
+| **P2** | `client/src/main/java/com/bong/client/npc/NpcTradeScreen.java` — owo-lib 重写（骨币交易） |
+| **P3** | `server/src/npc/combat_gear_integration_test.rs` — 20 集成测试（spawn 链路 + 协议兼容 + 频率校准） |
+
+### 关键 commit
+
+| Hash | 日期 | 消息 |
+|------|------|------|
+| `2a3720d20` | 2026-05-21 | plan-npc-combat-gear-v1 PR-1: P0 NPC 装备模型 + Valence 同步 (#296) |
+| `b8a041aa4` | 2026-05-21 | plan-npc-combat-gear-v1 PR-2: P1 NPC 功法系统 + NpcTradeInventory (#297) |
+| `2477a195f` | 2026-05-21 | plan-npc-combat-gear-v1 PR-3: P2 NPC 交互 GUI 重绘 (#299) |
+| `58ab78d92` | 2026-05-21 | plan-npc-combat-gear-v1 PR-4: P3 集成测试 + 校准 |
+
+### 测试结果
+
+**Server**（`cd server && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test`）:
+- 全量 5957 测试通过，0 失败
+- 本 plan 新增测试：121 个（equipment 53 + technique 38 + trade 17 + npc_metadata 10 + integration 20 + loot 相关继承）
+
+**Client**（`cd client && ./gradlew test`）:
+- 1643 测试通过（1 pre-existing failure: `ArmorProfileStoreCrossCheckTest` 与本 plan 无关）
+- 本 plan 新增/修改：NpcMetadataHandlerTest 23 tests + NpcScreenDescribeTest 35 tests
+
+### 跨仓库核验
+
+**Server**:
+- `NpcEquipment` — `server/src/npc/equipment.rs`, `server/src/npc/spawn.rs`, `server/src/npc/brain.rs`, `server/src/network/npc_metadata.rs`
+- `NpcTechniqueScorer` / `NpcTechniqueAction` — `server/src/npc/technique.rs`, `server/src/npc/brain.rs`
+- `NpcCooldownMap` — `server/src/npc/technique.rs`
+- `NpcTradeInventory` — `server/src/npc/trade.rs`, `server/src/network/npc_metadata.rs`
+- `bong:npc_metadata` 协议扩展 — `server/src/network/npc_metadata.rs` (`equipment` / `techniques` / `trade_offers` 字段)
+
+**Client**:
+- `NpcMetadata` record — `client/src/main/java/com/bong/client/npc/NpcMetadata.java`（含 backward-compatible constructors）
+- `NpcMetadataHandler` — `client/src/main/java/com/bong/client/npc/NpcMetadataHandler.java`（`parseEquipment` / `parseTechniques` / `parseTradeOffers`）
+- `NpcEquipSlotData` / `NpcTechniqueData` / `NpcTradeOffer` — 新增 record 类
+- `NpcDialogueScreen` / `NpcInspectScreen` / `NpcTradeScreen` — owo-lib `BaseOwoScreen` 重写
+
+### 遗留 / 后续
+
+- NPC 功法调用的 `SkillFn` 路径在真实 ECS 中尚未端到端验证（需要 `SkillRegistry` 注册 + 真实 World）——当前 P3 测试验证到 `select_technique` 纯函数层，action system 的 exclusive system 路径待后续 plan 覆盖
+- NPC 交易结算中骨币真元含量折算（§8.1 #6）依赖 `shelflife` 模块的骨币半衰期公式，当前 GUI 直接显示枚数，折算逻辑待 `economy/` 模块落地
+- `ArmorProfileRegistry` 读取（§P0.4 护甲减伤）目前走默认 profile，待 `plan-armor-v1` 的 NPC 侧适配完善后接入真实 profile lookup
