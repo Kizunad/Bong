@@ -504,7 +504,7 @@ mod tests {
     use std::collections::HashMap;
 
     use super::super::events::{InsightTrigger, UnlockEventSource};
-    use super::super::recipe::{CraftCategory, CraftRequirements, UnlockSource};
+    use super::super::recipe::{CraftCategory, CraftRequirements, CraftStationKind, UnlockSource};
     use super::*;
     use crate::cultivation::components::Cultivation;
     use crate::inventory::{
@@ -1592,6 +1592,164 @@ mod tests {
         assert!(
             result.is_ok(),
             "recipe with empty unlock_sources should be craftable without unlock: {result:?}"
+        );
+    }
+
+    // ============= station validation =============
+
+    #[test]
+    fn start_craft_handcraft_passes_without_nearby_workbench() {
+        // station: None = 手搓配方，不需要制作台
+        let mut registry = CraftRegistry::new();
+        let mut recipe = simple_recipe("handcraft");
+        recipe.station = None;
+        recipe.qi_cost = 0.0;
+        registry.register(recipe).unwrap();
+
+        let mut unlock = RecipeUnlockState::new();
+        unlock.unlock("offline:Alice", RecipeId::new("handcraft"));
+        let mut inv = make_inventory(&[("herb_a", 5), ("iron_needle", 5)]);
+        let mut cult = Cultivation {
+            qi_current: 50.0,
+            qi_max: 80.0,
+            ..Default::default()
+        };
+        let color = QiColor::default();
+        let mut ledger = WorldQiAccount::default();
+        ledger
+            .set_balance(QiAccountId::player("offline:Alice"), 50.0)
+            .unwrap();
+
+        let result = start_craft(
+            StartCraftRequest {
+                caster: caster_entity(),
+                player_id: "offline:Alice",
+                recipe_id: &RecipeId::new("handcraft"),
+                current_tick: 0,
+                zone_id: "spawn",
+                quantity: 1,
+            },
+            StartCraftDeps {
+                registry: &registry,
+                unlock_state: &unlock,
+                inventory: &mut inv,
+                cultivation: &mut cult,
+                qi_color: &color,
+                ledger: &mut ledger,
+                existing_session: None,
+                has_nearby_workbench: false, // 附近没有制作台
+            },
+        );
+        assert!(
+            result.is_ok(),
+            "handcraft recipe (station: None) must succeed even without nearby workbench: {result:?}"
+        );
+    }
+
+    #[test]
+    fn start_craft_workbench_recipe_fails_without_nearby_workbench() {
+        // station: Some(Workbench) 且 has_nearby_workbench: false → StationOutOfRange
+        let mut registry = CraftRegistry::new();
+        let mut recipe = simple_recipe("wb_tool");
+        recipe.station = Some(CraftStationKind::Workbench);
+        recipe.qi_cost = 0.0;
+        registry.register(recipe).unwrap();
+
+        let mut unlock = RecipeUnlockState::new();
+        unlock.unlock("offline:Alice", RecipeId::new("wb_tool"));
+        let mut inv = make_inventory(&[("herb_a", 5), ("iron_needle", 5)]);
+        let mut cult = Cultivation {
+            qi_current: 50.0,
+            qi_max: 80.0,
+            ..Default::default()
+        };
+        let color = QiColor::default();
+        let mut ledger = WorldQiAccount::default();
+        ledger
+            .set_balance(QiAccountId::player("offline:Alice"), 50.0)
+            .unwrap();
+
+        let err = start_craft(
+            StartCraftRequest {
+                caster: caster_entity(),
+                player_id: "offline:Alice",
+                recipe_id: &RecipeId::new("wb_tool"),
+                current_tick: 0,
+                zone_id: "spawn",
+                quantity: 1,
+            },
+            StartCraftDeps {
+                registry: &registry,
+                unlock_state: &unlock,
+                inventory: &mut inv,
+                cultivation: &mut cult,
+                qi_color: &color,
+                ledger: &mut ledger,
+                existing_session: None,
+                has_nearby_workbench: false, // 附近没有制作台
+            },
+        )
+        .unwrap_err();
+
+        assert_eq!(
+            err,
+            StartCraftError::StationOutOfRange,
+            "workbench recipe must fail with StationOutOfRange when no workbench is nearby"
+        );
+        // 失败时不扣材料
+        assert_eq!(
+            count_template_in_inventory(&inv, "herb_a"),
+            5,
+            "materials must not be consumed on StationOutOfRange rejection"
+        );
+    }
+
+    #[test]
+    fn start_craft_workbench_recipe_passes_with_nearby_workbench() {
+        // station: Some(Workbench) 且 has_nearby_workbench: true → 正常通过
+        let mut registry = CraftRegistry::new();
+        let mut recipe = simple_recipe("wb_tool2");
+        recipe.station = Some(CraftStationKind::Workbench);
+        recipe.qi_cost = 0.0;
+        registry.register(recipe).unwrap();
+
+        let mut unlock = RecipeUnlockState::new();
+        unlock.unlock("offline:Alice", RecipeId::new("wb_tool2"));
+        let mut inv = make_inventory(&[("herb_a", 5), ("iron_needle", 5)]);
+        let mut cult = Cultivation {
+            qi_current: 50.0,
+            qi_max: 80.0,
+            ..Default::default()
+        };
+        let color = QiColor::default();
+        let mut ledger = WorldQiAccount::default();
+        ledger
+            .set_balance(QiAccountId::player("offline:Alice"), 50.0)
+            .unwrap();
+
+        let result = start_craft(
+            StartCraftRequest {
+                caster: caster_entity(),
+                player_id: "offline:Alice",
+                recipe_id: &RecipeId::new("wb_tool2"),
+                current_tick: 0,
+                zone_id: "spawn",
+                quantity: 1,
+            },
+            StartCraftDeps {
+                registry: &registry,
+                unlock_state: &unlock,
+                inventory: &mut inv,
+                cultivation: &mut cult,
+                qi_color: &color,
+                ledger: &mut ledger,
+                existing_session: None,
+                has_nearby_workbench: true, // 附近有制作台
+            },
+        );
+        assert!(
+            result.is_ok(),
+            "workbench recipe must succeed when workbench is nearby: {result:?}"
         );
     }
 }

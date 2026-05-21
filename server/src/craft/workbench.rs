@@ -44,10 +44,7 @@ pub const WORKBENCH_ITEM_TEMPLATE: &str = "workbench_item";
 /// 检查玩家位置是否在制作台 3 格交互范围内。
 ///
 /// 使用曼哈顿距离（与 MC 交互距离一致）。
-pub fn is_within_workbench_range(
-    player_pos: [f64; 3],
-    workbench_pos: [i32; 3],
-) -> bool {
+pub fn is_within_workbench_range(player_pos: [f64; 3], workbench_pos: [i32; 3]) -> bool {
     let dx = (player_pos[0] - workbench_pos[0] as f64).abs();
     let dy = (player_pos[1] - workbench_pos[1] as f64).abs();
     let dz = (player_pos[2] - workbench_pos[2] as f64).abs();

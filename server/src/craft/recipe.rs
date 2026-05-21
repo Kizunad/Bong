@@ -617,6 +617,9 @@ mod tests {
     fn craft_recipe_station_workbench_accepted() {
         let mut r = ok_recipe();
         r.station = Some(CraftStationKind::Workbench);
-        assert!(r.validate().is_ok(), "station=Workbench must pass validation");
+        assert!(
+            r.validate().is_ok(),
+            "station=Workbench must pass validation"
+        );
     }
 }

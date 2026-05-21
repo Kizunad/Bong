@@ -15,6 +15,35 @@ use super::registry::{CraftRegistry, RegistryError};
 
 const WORKBENCH: Option<CraftStationKind> = Some(CraftStationKind::Workbench);
 
+/// 7-元组配方描述：(id, name, materials, qi, time_sec, output, unlock)
+type RecipeRow<'a> = (
+    &'a str,
+    &'a str,
+    Vec<(&'a str, u32)>,
+    f64,
+    u64,
+    (&'a str, u32),
+    Vec<UnlockSource>,
+);
+
+/// 5-元组护甲/庇护配方描述：(id, name, materials, time_sec, output_id)
+type ArmorRow<'a> = (&'a str, &'a str, Vec<(&'a str, u32)>, u64, &'a str);
+
+/// 5-元组医药配方描述：(id, name, materials, time_sec, (output_id, count))
+type MedicalRow<'a> = (&'a str, &'a str, Vec<(&'a str, u32)>, u64, (&'a str, u32));
+
+/// 8-元组配方描述（带自定义 category）：(id, name, materials, qi, time_sec, output, category, unlock)
+type CategorizedRow<'a> = (
+    &'a str,
+    &'a str,
+    Vec<(&'a str, u32)>,
+    f64,
+    u64,
+    (&'a str, u32),
+    CraftCategory,
+    Vec<UnlockSource>,
+);
+
 /// 滚筒 unlock helper
 fn scroll(scroll_id: &str) -> Vec<UnlockSource> {
     vec![UnlockSource::Scroll {
@@ -31,16 +60,16 @@ fn mentor(npc: &str) -> Vec<UnlockSource> {
 /// 注册全部 100 条制作台配方 + 制作台自身手搓配方。
 pub fn register_workbench_recipes(registry: &mut CraftRegistry) -> Result<(), RegistryError> {
     register_workbench_self_recipe(registry)?;
-    register_survival_tools(registry)?;      // #1-12
-    register_processing(registry)?;           // #13-30
-    register_containers(registry)?;           // #31-42
-    register_basic_armor(registry)?;          // #43-52
-    register_weapon_components(registry)?;    // #53-62
-    register_cultivation_support(registry)?;  // #63-74
-    register_array_basics(registry)?;         // #75-82
-    register_economy(registry)?;              // #83-90
-    register_shelter(registry)?;              // #91-98
-    register_alchemy_forge_prep(registry)?;   // #99-100
+    register_survival_tools(registry)?; // #1-12
+    register_processing(registry)?; // #13-30
+    register_containers(registry)?; // #31-42
+    register_basic_armor(registry)?; // #43-52
+    register_weapon_components(registry)?; // #53-62
+    register_cultivation_support(registry)?; // #63-74
+    register_array_basics(registry)?; // #75-82
+    register_economy(registry)?; // #83-90
+    register_shelter(registry)?; // #91-98
+    register_alchemy_forge_prep(registry)?; // #99-100
     Ok(())
 }
 
@@ -66,55 +95,127 @@ fn register_workbench_self_recipe(registry: &mut CraftRegistry) -> Result<(), Re
 
 /// 一、生存凡器 #1-12
 fn register_survival_tools(registry: &mut CraftRegistry) -> Result<(), RegistryError> {
-    let recipes: Vec<(&str, &str, Vec<(&str, u32)>, f64, u64, (&str, u32), Vec<UnlockSource>)> = vec![
+    let recipes: Vec<RecipeRow> = vec![
         // #1 石镐
-        ("workbench.tool.stone_pickaxe", "石镐",
-         vec![("stone_chunk", 3), ("wood_handle", 1)],
-         0.0, 25, ("stone_pickaxe", 1), vec![]),
+        (
+            "workbench.tool.stone_pickaxe",
+            "石镐",
+            vec![("stone_chunk", 3), ("wood_handle", 1)],
+            0.0,
+            25,
+            ("stone_pickaxe", 1),
+            vec![],
+        ),
         // #2 石斧
-        ("workbench.tool.stone_axe", "石斧",
-         vec![("stone_chunk", 2), ("wood_handle", 1)],
-         0.0, 25, ("stone_axe", 1), vec![]),
+        (
+            "workbench.tool.stone_axe",
+            "石斧",
+            vec![("stone_chunk", 2), ("wood_handle", 1)],
+            0.0,
+            25,
+            ("stone_axe", 1),
+            vec![],
+        ),
         // #3 石锄
-        ("workbench.tool.stone_hoe", "石锄",
-         vec![("stone_chunk", 1), ("wood_handle", 1)],
-         0.0, 20, ("stone_hoe", 1), vec![]),
+        (
+            "workbench.tool.stone_hoe",
+            "石锄",
+            vec![("stone_chunk", 1), ("wood_handle", 1)],
+            0.0,
+            20,
+            ("stone_hoe", 1),
+            vec![],
+        ),
         // #4 铁镐
-        ("workbench.tool.pickaxe_iron", "铁镐",
-         vec![("iron_ingot", 3), ("wood_handle", 1)],
-         0.0, 45, ("pickaxe_iron", 1), vec![]),
+        (
+            "workbench.tool.pickaxe_iron",
+            "铁镐",
+            vec![("iron_ingot", 3), ("wood_handle", 1)],
+            0.0,
+            45,
+            ("pickaxe_iron", 1),
+            vec![],
+        ),
         // #5 铁斧
-        ("workbench.tool.axe_iron", "铁斧",
-         vec![("iron_ingot", 2), ("wood_handle", 1)],
-         0.0, 40, ("axe_iron", 1), vec![]),
+        (
+            "workbench.tool.axe_iron",
+            "铁斧",
+            vec![("iron_ingot", 2), ("wood_handle", 1)],
+            0.0,
+            40,
+            ("axe_iron", 1),
+            vec![],
+        ),
         // #6 铁锄
-        ("workbench.tool.hoe_iron", "铁锄",
-         vec![("iron_ingot", 1), ("wood_handle", 1)],
-         0.0, 35, ("hoe_iron", 1), vec![]),
+        (
+            "workbench.tool.hoe_iron",
+            "铁锄",
+            vec![("iron_ingot", 1), ("wood_handle", 1)],
+            0.0,
+            35,
+            ("hoe_iron", 1),
+            vec![],
+        ),
         // #7 研钵
-        ("workbench.tool.mortar", "研钵",
-         vec![("stone_chunk", 4)],
-         0.0, 40, ("mortar_stone", 1), vec![]),
+        (
+            "workbench.tool.mortar",
+            "研钵",
+            vec![("stone_chunk", 4)],
+            0.0,
+            40,
+            ("mortar_stone", 1),
+            vec![],
+        ),
         // #8 草镰
-        ("workbench.tool.sickle", "草镰",
-         vec![("iron_ingot", 2), ("wood_handle", 1)],
-         0.0, 40, ("cao_lian", 1), vec![]),
+        (
+            "workbench.tool.sickle",
+            "草镰",
+            vec![("iron_ingot", 2), ("wood_handle", 1)],
+            0.0,
+            40,
+            ("cao_lian", 1),
+            vec![],
+        ),
         // #9 交易秤
-        ("workbench.tool.trade_scale", "交易秤",
-         vec![("iron_ingot", 2), ("wood_plank", 1)],
-         0.0, 45, ("trade_scale", 1), vec![]),
+        (
+            "workbench.tool.trade_scale",
+            "交易秤",
+            vec![("iron_ingot", 2), ("wood_plank", 1)],
+            0.0,
+            45,
+            ("trade_scale", 1),
+            vec![],
+        ),
         // #10 绝热手套
-        ("workbench.tool.heat_gloves", "绝热手套",
-         vec![("ash_spider_silk", 3), ("tanned_hide", 2)],
-         0.0, 60, ("heat_gloves", 1), scroll("scroll_workbench_heat_gloves")),
+        (
+            "workbench.tool.heat_gloves",
+            "绝热手套",
+            vec![("ash_spider_silk", 3), ("tanned_hide", 2)],
+            0.0,
+            60,
+            ("heat_gloves", 1),
+            scroll("scroll_workbench_heat_gloves"),
+        ),
         // #11 冰甲手套
-        ("workbench.tool.ice_gauntlet", "冰甲手套",
-         vec![("tanned_hide", 2), ("iron_ingot", 1)],
-         0.0, 50, ("bing_jia_shou_tao", 1), vec![]),
+        (
+            "workbench.tool.ice_gauntlet",
+            "冰甲手套",
+            vec![("tanned_hide", 2), ("iron_ingot", 1)],
+            0.0,
+            50,
+            ("bing_jia_shou_tao", 1),
+            vec![],
+        ),
         // #12 刮刀
-        ("workbench.tool.scraper", "刮刀",
-         vec![("iron_ingot", 1), ("bone_chip_mat", 1)],
-         0.0, 30, ("gua_dao", 1), vec![]),
+        (
+            "workbench.tool.scraper",
+            "刮刀",
+            vec![("iron_ingot", 1), ("bone_chip_mat", 1)],
+            0.0,
+            30,
+            ("gua_dao", 1),
+            vec![],
+        ),
     ];
 
     for (id, name, mats, qi, t_sec, output, unlock) in recipes {
@@ -136,61 +237,187 @@ fn register_survival_tools(registry: &mut CraftRegistry) -> Result<(), RegistryE
 
 /// 二、材料加工 #13-30
 fn register_processing(registry: &mut CraftRegistry) -> Result<(), RegistryError> {
-    let recipes: Vec<(&str, &str, Vec<(&str, u32)>, f64, u64, (&str, u32), Vec<UnlockSource>)> = vec![
+    let recipes: Vec<RecipeRow> = vec![
         // #13 木柄
-        ("workbench.process.wood_handle", "木柄",
-         vec![("spirit_wood", 1)], 0.0, 15, ("wood_handle", 4), vec![]),
+        (
+            "workbench.process.wood_handle",
+            "木柄",
+            vec![("spirit_wood", 1)],
+            0.0,
+            15,
+            ("wood_handle", 4),
+            vec![],
+        ),
         // #14 木板
-        ("workbench.process.wood_plank", "木板",
-         vec![("spirit_wood", 1)], 0.0, 15, ("wood_plank", 2), vec![]),
+        (
+            "workbench.process.wood_plank",
+            "木板",
+            vec![("spirit_wood", 1)],
+            0.0,
+            15,
+            ("wood_plank", 2),
+            vec![],
+        ),
         // #15 草绳
-        ("workbench.process.rope", "草绳",
-         vec![("grass_fiber", 3)], 0.0, 20, ("grass_rope", 1), vec![]),
+        (
+            "workbench.process.rope",
+            "草绳",
+            vec![("grass_fiber", 3)],
+            0.0,
+            20,
+            ("grass_rope", 1),
+            vec![],
+        ),
         // #16 蛛丝绳
-        ("workbench.process.spider_cord", "蛛丝绳",
-         vec![("ash_spider_silk", 4)], 0.0, 30, ("spider_silk_cord", 1), vec![]),
+        (
+            "workbench.process.spider_cord",
+            "蛛丝绳",
+            vec![("ash_spider_silk", 4)],
+            0.0,
+            30,
+            ("spider_silk_cord", 1),
+            vec![],
+        ),
         // #17 粗布
-        ("workbench.process.rough_cloth", "粗布",
-         vec![("ash_spider_silk", 5)], 0.0, 45, ("rough_cloth", 1), vec![]),
+        (
+            "workbench.process.rough_cloth",
+            "粗布",
+            vec![("ash_spider_silk", 5)],
+            0.0,
+            45,
+            ("rough_cloth", 1),
+            vec![],
+        ),
         // #18 熟皮
-        ("workbench.process.tanned_hide", "熟皮",
-         vec![("raw_beast_hide", 1), ("hui_jin_tai", 1)], 0.0, 60, ("tanned_hide", 1), vec![]),
+        (
+            "workbench.process.tanned_hide",
+            "熟皮",
+            vec![("raw_beast_hide", 1), ("hui_jin_tai", 1)],
+            0.0,
+            60,
+            ("tanned_hide", 1),
+            vec![],
+        ),
         // #19 骨片
-        ("workbench.process.bone_chip", "骨片",
-         vec![("shu_gu", 1)], 0.0, 10, ("bone_chip_mat", 4), vec![]),
+        (
+            "workbench.process.bone_chip",
+            "骨片",
+            vec![("shu_gu", 1)],
+            0.0,
+            10,
+            ("bone_chip_mat", 4),
+            vec![],
+        ),
         // #20 骨粉
-        ("workbench.process.bone_meal", "骨粉",
-         vec![("shu_gu", 2)], 0.0, 25, ("bone_meal_mat", 1), vec![]),
+        (
+            "workbench.process.bone_meal",
+            "骨粉",
+            vec![("shu_gu", 2)],
+            0.0,
+            25,
+            ("bone_meal_mat", 1),
+            vec![],
+        ),
         // #21 粗铁锭
-        ("workbench.process.iron_ingot", "粗铁锭",
-         vec![("cu_tie", 2)], 0.0, 50, ("iron_ingot", 1), vec![]),
+        (
+            "workbench.process.iron_ingot",
+            "粗铁锭",
+            vec![("cu_tie", 2)],
+            0.0,
+            50,
+            ("iron_ingot", 1),
+            vec![],
+        ),
         // #22 灵木炭
-        ("workbench.process.spirit_charcoal", "灵木炭",
-         vec![("spirit_wood", 2)], 0.0, 60, ("spirit_charcoal", 3), vec![]),
+        (
+            "workbench.process.spirit_charcoal",
+            "灵木炭",
+            vec![("spirit_wood", 2)],
+            0.0,
+            60,
+            ("spirit_charcoal", 3),
+            vec![],
+        ),
         // #23 干草
-        ("workbench.process.dried_grass", "干草",
-         vec![("grass_fiber", 5)], 0.0, 20, ("dried_grass", 3), vec![]),
+        (
+            "workbench.process.dried_grass",
+            "干草",
+            vec![("grass_fiber", 5)],
+            0.0,
+            20,
+            ("dried_grass", 3),
+            vec![],
+        ),
         // #24 鼠尾油
-        ("workbench.process.rat_tail_oil", "鼠尾油",
-         vec![("rat_tail", 3)], 0.0, 45, ("rat_tail_oil", 1), vec![]),
+        (
+            "workbench.process.rat_tail_oil",
+            "鼠尾油",
+            vec![("rat_tail", 3)],
+            0.0,
+            45,
+            ("rat_tail_oil", 1),
+            vec![],
+        ),
         // #25 盐蓬晶
-        ("workbench.process.salt_crystal", "盐蓬晶",
-         vec![("bai_yan_peng", 3)], 0.0, 35, ("salt_crystal", 1), vec![]),
+        (
+            "workbench.process.salt_crystal",
+            "盐蓬晶",
+            vec![("bai_yan_peng", 3)],
+            0.0,
+            35,
+            ("salt_crystal", 1),
+            vec![],
+        ),
         // #26 陶罐
-        ("workbench.process.clay_pot", "陶罐",
-         vec![("stone_chunk", 3)], 0.0, 40, ("clay_pot", 1), vec![]),
+        (
+            "workbench.process.clay_pot",
+            "陶罐",
+            vec![("stone_chunk", 3)],
+            0.0,
+            40,
+            ("clay_pot", 1),
+            vec![],
+        ),
         // #27 灵草束
-        ("workbench.process.herb_bundle", "灵草束",
-         vec![("spirit_grass", 5)], 0.0, 10, ("herb_bundle", 1), vec![]),
+        (
+            "workbench.process.herb_bundle",
+            "灵草束",
+            vec![("spirit_grass", 5)],
+            0.0,
+            10,
+            ("herb_bundle", 1),
+            vec![],
+        ),
         // #28 丹砂粉
-        ("workbench.process.dan_sha_powder", "丹砂粉",
-         vec![("dan_sha", 1)], 0.0, 15, ("powder_dan_sha", 3), vec![]),
+        (
+            "workbench.process.dan_sha_powder",
+            "丹砂粉",
+            vec![("dan_sha", 1)],
+            0.0,
+            15,
+            ("powder_dan_sha", 3),
+            vec![],
+        ),
         // #29 朱砂粉
-        ("workbench.process.zhu_sha_powder", "朱砂粉",
-         vec![("zhu_sha", 1)], 0.0, 25, ("powder_zhu_sha", 2), vec![]),
+        (
+            "workbench.process.zhu_sha_powder",
+            "朱砂粉",
+            vec![("zhu_sha", 1)],
+            0.0,
+            25,
+            ("powder_zhu_sha", 2),
+            vec![],
+        ),
         // #30 铁针
-        ("workbench.process.needle_batch", "铁针",
-         vec![("iron_ingot", 1)], 0.0, 20, ("iron_needle", 5), vec![]),
+        (
+            "workbench.process.needle_batch",
+            "铁针",
+            vec![("iron_ingot", 1)],
+            0.0,
+            20,
+            ("iron_needle", 5),
+            vec![],
+        ),
     ];
 
     for (id, name, mats, qi, t_sec, output, unlock) in recipes {
@@ -212,49 +439,138 @@ fn register_processing(registry: &mut CraftRegistry) -> Result<(), RegistryError
 
 /// 三、容器与存储 #31-42
 fn register_containers(registry: &mut CraftRegistry) -> Result<(), RegistryError> {
-    let recipes: Vec<(&str, &str, Vec<(&str, u32)>, f64, u64, (&str, u32), Vec<UnlockSource>)> = vec![
+    let recipes: Vec<RecipeRow> = vec![
         // #31 药瓶
-        ("workbench.container.herb_vial", "药瓶",
-         vec![("stone_chunk", 2), ("iron_ingot", 1)], 0.0, 35, ("herb_vial", 2), vec![]),
+        (
+            "workbench.container.herb_vial",
+            "药瓶",
+            vec![("stone_chunk", 2), ("iron_ingot", 1)],
+            0.0,
+            35,
+            ("herb_vial", 2),
+            vec![],
+        ),
         // #32 密封药瓶
-        ("workbench.container.sealed_vial", "密封药瓶",
-         vec![("herb_vial", 1), ("spider_silk_cord", 1)], 1.0, 25, ("sealed_vial", 1),
-         scroll("scroll_workbench_sealed_vial")),
+        (
+            "workbench.container.sealed_vial",
+            "密封药瓶",
+            vec![("herb_vial", 1), ("spider_silk_cord", 1)],
+            1.0,
+            25,
+            ("sealed_vial", 1),
+            scroll("scroll_workbench_sealed_vial"),
+        ),
         // #33 灵草囊
-        ("workbench.container.herb_pouch", "灵草囊",
-         vec![("rough_cloth", 2), ("grass_rope", 1)], 0.0, 40, ("herb_pouch", 1), vec![]),
+        (
+            "workbench.container.herb_pouch",
+            "灵草囊",
+            vec![("rough_cloth", 2), ("grass_rope", 1)],
+            0.0,
+            40,
+            ("herb_pouch", 1),
+            vec![],
+        ),
         // #34 灵草箱
-        ("workbench.container.herb_crate", "灵草箱",
-         vec![("wood_plank", 4), ("rough_cloth", 1)], 0.0, 45, ("herb_crate", 1), vec![]),
+        (
+            "workbench.container.herb_crate",
+            "灵草箱",
+            vec![("wood_plank", 4), ("rough_cloth", 1)],
+            0.0,
+            45,
+            ("herb_crate", 1),
+            vec![],
+        ),
         // #35 暗器袋
-        ("workbench.container.projectile_bag", "暗器袋",
-         vec![("tanned_hide", 2), ("grass_rope", 1)], 0.0, 40, ("projectile_bag", 1), vec![]),
+        (
+            "workbench.container.projectile_bag",
+            "暗器袋",
+            vec![("tanned_hide", 2), ("grass_rope", 1)],
+            0.0,
+            40,
+            ("projectile_bag", 1),
+            vec![],
+        ),
         // #36 封灵匣
-        ("workbench.container.seal_box", "封灵匣",
-         vec![("wood_plank", 4), ("ling_tie", 1)], 3.0, 90, ("spirit_seal_box", 1),
-         scroll("scroll_workbench_seal_box")),
+        (
+            "workbench.container.seal_box",
+            "封灵匣",
+            vec![("wood_plank", 4), ("ling_tie", 1)],
+            3.0,
+            90,
+            ("spirit_seal_box", 1),
+            scroll("scroll_workbench_seal_box"),
+        ),
         // #37 死信箱 (📜👤)
-        ("workbench.container.dead_drop", "死信箱",
-         vec![("wood_plank", 6), ("iron_ingot", 2), ("zhenfa_blank_array", 1)], 4.0, 120, ("dead_drop_box", 1),
-         vec![
-             UnlockSource::Scroll { item_template: "scroll_workbench_dead_drop".into() },
-             UnlockSource::Mentor { npc_archetype: "smuggler".into() },
-         ]),
+        (
+            "workbench.container.dead_drop",
+            "死信箱",
+            vec![
+                ("wood_plank", 6),
+                ("iron_ingot", 2),
+                ("zhenfa_blank_array", 1),
+            ],
+            4.0,
+            120,
+            ("dead_drop_box", 1),
+            vec![
+                UnlockSource::Scroll {
+                    item_template: "scroll_workbench_dead_drop".into(),
+                },
+                UnlockSource::Mentor {
+                    npc_archetype: "smuggler".into(),
+                },
+            ],
+        ),
         // #38 防潮包
-        ("workbench.container.moisture_guard", "防潮包",
-         vec![("rough_cloth", 1), ("hui_jin_tai", 2)], 0.0, 25, ("moisture_guard", 2), vec![]),
+        (
+            "workbench.container.moisture_guard",
+            "防潮包",
+            vec![("rough_cloth", 1), ("hui_jin_tai", 2)],
+            0.0,
+            25,
+            ("moisture_guard", 2),
+            vec![],
+        ),
         // #39 矿石袋
-        ("workbench.container.ore_sack", "矿石袋",
-         vec![("rough_cloth", 2), ("tanned_hide", 1)], 0.0, 30, ("ore_sack", 1), vec![]),
+        (
+            "workbench.container.ore_sack",
+            "矿石袋",
+            vec![("rough_cloth", 2), ("tanned_hide", 1)],
+            0.0,
+            30,
+            ("ore_sack", 1),
+            vec![],
+        ),
         // #40 水囊
-        ("workbench.container.water_skin", "水囊",
-         vec![("tanned_hide", 1), ("grass_rope", 1)], 0.0, 30, ("water_skin", 1), vec![]),
+        (
+            "workbench.container.water_skin",
+            "水囊",
+            vec![("tanned_hide", 1), ("grass_rope", 1)],
+            0.0,
+            30,
+            ("water_skin", 1),
+            vec![],
+        ),
         // #41 货箱
-        ("workbench.container.trade_crate", "货箱",
-         vec![("wood_plank", 6), ("iron_ingot", 2)], 0.0, 65, ("trade_crate", 1), vec![]),
+        (
+            "workbench.container.trade_crate",
+            "货箱",
+            vec![("wood_plank", 6), ("iron_ingot", 2)],
+            0.0,
+            65,
+            ("trade_crate", 1),
+            vec![],
+        ),
         // #42 密封信封
-        ("workbench.container.sealed_envelope", "密封信封",
-         vec![("rough_cloth", 1), ("rat_tail_oil", 1)], 0.0, 20, ("sealed_envelope", 3), vec![]),
+        (
+            "workbench.container.sealed_envelope",
+            "密封信封",
+            vec![("rough_cloth", 1), ("rat_tail_oil", 1)],
+            0.0,
+            20,
+            ("sealed_envelope", 3),
+            vec![],
+        ),
     ];
 
     for (id, name, mats, qi, t_sec, output, unlock) in recipes {
@@ -277,31 +593,71 @@ fn register_containers(registry: &mut CraftRegistry) -> Result<(), RegistryError
 /// 四、基础护甲 #43-52（含医疗夹板 #51-52 归 Misc）
 fn register_basic_armor(registry: &mut CraftRegistry) -> Result<(), RegistryError> {
     // #43-50 护甲 → ArmorCraft category
-    let armor_recipes: Vec<(&str, &str, Vec<(&str, u32)>, u64, &str)> = vec![
+    let armor_recipes: Vec<ArmorRow> = vec![
         // #43 草甲·头
-        ("workbench.armor.armor_straw_helmet", "草甲·头",
-         vec![("dried_grass", 5), ("grass_rope", 1)], 30, "armor_straw_helmet"),
+        (
+            "workbench.armor.armor_straw_helmet",
+            "草甲·头",
+            vec![("dried_grass", 5), ("grass_rope", 1)],
+            30,
+            "armor_straw_helmet",
+        ),
         // #44 草甲·胸
-        ("workbench.armor.straw_chest", "草甲·胸",
-         vec![("dried_grass", 8), ("grass_rope", 2)], 45, "armor_straw_chestplate"),
+        (
+            "workbench.armor.straw_chest",
+            "草甲·胸",
+            vec![("dried_grass", 8), ("grass_rope", 2)],
+            45,
+            "armor_straw_chestplate",
+        ),
         // #45 草甲·腿
-        ("workbench.armor.straw_legs", "草甲·腿",
-         vec![("dried_grass", 6), ("grass_rope", 2)], 40, "armor_straw_leggings"),
+        (
+            "workbench.armor.straw_legs",
+            "草甲·腿",
+            vec![("dried_grass", 6), ("grass_rope", 2)],
+            40,
+            "armor_straw_leggings",
+        ),
         // #46 草甲·脚
-        ("workbench.armor.armor_straw_boots", "草甲·脚",
-         vec![("dried_grass", 4), ("grass_rope", 1)], 25, "armor_straw_boots"),
+        (
+            "workbench.armor.armor_straw_boots",
+            "草甲·脚",
+            vec![("dried_grass", 4), ("grass_rope", 1)],
+            25,
+            "armor_straw_boots",
+        ),
         // #47 皮甲·头
-        ("workbench.armor.armor_hide_helmet", "皮甲·头",
-         vec![("tanned_hide", 2), ("grass_rope", 1)], 45, "armor_hide_helmet"),
+        (
+            "workbench.armor.armor_hide_helmet",
+            "皮甲·头",
+            vec![("tanned_hide", 2), ("grass_rope", 1)],
+            45,
+            "armor_hide_helmet",
+        ),
         // #48 皮甲·胸
-        ("workbench.armor.hide_chest", "皮甲·胸",
-         vec![("tanned_hide", 4), ("grass_rope", 2)], 65, "armor_hide_chestplate"),
+        (
+            "workbench.armor.hide_chest",
+            "皮甲·胸",
+            vec![("tanned_hide", 4), ("grass_rope", 2)],
+            65,
+            "armor_hide_chestplate",
+        ),
         // #49 皮甲·腿
-        ("workbench.armor.hide_legs", "皮甲·腿",
-         vec![("tanned_hide", 3), ("grass_rope", 2)], 55, "armor_hide_leggings"),
+        (
+            "workbench.armor.hide_legs",
+            "皮甲·腿",
+            vec![("tanned_hide", 3), ("grass_rope", 2)],
+            55,
+            "armor_hide_leggings",
+        ),
         // #50 皮甲·脚
-        ("workbench.armor.armor_hide_boots", "皮甲·脚",
-         vec![("tanned_hide", 2), ("grass_rope", 1)], 40, "armor_hide_boots"),
+        (
+            "workbench.armor.armor_hide_boots",
+            "皮甲·脚",
+            vec![("tanned_hide", 2), ("grass_rope", 1)],
+            40,
+            "armor_hide_boots",
+        ),
     ];
 
     for (id, name, mats, t_sec, output) in armor_recipes {
@@ -320,13 +676,23 @@ fn register_basic_armor(registry: &mut CraftRegistry) -> Result<(), RegistryErro
     }
 
     // #51-52 夹板 → Misc category
-    let medical_recipes: Vec<(&str, &str, Vec<(&str, u32)>, u64, (&str, u32))> = vec![
+    let medical_recipes: Vec<MedicalRow> = vec![
         // #51 夹板·臂
-        ("workbench.medical.arm_splint", "夹板·臂",
-         vec![("wood_plank", 2), ("rough_cloth", 1)], 15, ("arm_splint", 2)),
+        (
+            "workbench.medical.arm_splint",
+            "夹板·臂",
+            vec![("wood_plank", 2), ("rough_cloth", 1)],
+            15,
+            ("arm_splint", 2),
+        ),
         // #52 夹板·腿
-        ("workbench.medical.leg_splint", "夹板·腿",
-         vec![("wood_plank", 3), ("rough_cloth", 2)], 20, ("leg_splint", 2)),
+        (
+            "workbench.medical.leg_splint",
+            "夹板·腿",
+            vec![("wood_plank", 3), ("rough_cloth", 2)],
+            20,
+            ("leg_splint", 2),
+        ),
     ];
 
     for (id, name, mats, t_sec, output) in medical_recipes {
@@ -348,37 +714,117 @@ fn register_basic_armor(registry: &mut CraftRegistry) -> Result<(), RegistryErro
 
 /// 五、基础武器组件 #53-62
 fn register_weapon_components(registry: &mut CraftRegistry) -> Result<(), RegistryError> {
-    let recipes: Vec<(&str, &str, Vec<(&str, u32)>, f64, u64, (&str, u32), CraftCategory, Vec<UnlockSource>)> = vec![
+    let recipes: Vec<CategorizedRow> = vec![
         // #53 凡铁剑胎
-        ("workbench.weapon.iron_sword_blank", "凡铁剑胎",
-         vec![("iron_ingot", 3)], 0.0, 65, ("iron_sword_blank", 1), CraftCategory::Misc, vec![]),
+        (
+            "workbench.weapon.iron_sword_blank",
+            "凡铁剑胎",
+            vec![("iron_ingot", 3)],
+            0.0,
+            65,
+            ("iron_sword_blank", 1),
+            CraftCategory::Misc,
+            vec![],
+        ),
         // #54 粗骨刺 (AnqiCarrier)
-        ("workbench.weapon.bone_spike_crude", "粗骨刺",
-         vec![("shu_gu", 2), ("stone_chunk", 1)], 0.0, 40, ("bone_spike_crude", 3), CraftCategory::AnqiCarrier, vec![]),
+        (
+            "workbench.weapon.bone_spike_crude",
+            "粗骨刺",
+            vec![("shu_gu", 2), ("stone_chunk", 1)],
+            0.0,
+            40,
+            ("bone_spike_crude", 3),
+            CraftCategory::AnqiCarrier,
+            vec![],
+        ),
         // #55 木棍
-        ("workbench.weapon.wooden_club", "木棍",
-         vec![("spirit_wood", 2)], 0.0, 20, ("wooden_club", 1), CraftCategory::Misc, vec![]),
+        (
+            "workbench.weapon.wooden_club",
+            "木棍",
+            vec![("spirit_wood", 2)],
+            0.0,
+            20,
+            ("wooden_club", 1),
+            CraftCategory::Misc,
+            vec![],
+        ),
         // #56 石矛头
-        ("workbench.weapon.stone_spearhead", "石矛头",
-         vec![("stone_chunk", 2)], 0.0, 30, ("stone_spearhead", 1), CraftCategory::Misc, vec![]),
+        (
+            "workbench.weapon.stone_spearhead",
+            "石矛头",
+            vec![("stone_chunk", 2)],
+            0.0,
+            30,
+            ("stone_spearhead", 1),
+            CraftCategory::Misc,
+            vec![],
+        ),
         // #57 弹弓
-        ("workbench.weapon.sling", "弹弓",
-         vec![("wood_handle", 1), ("tanned_hide", 1), ("grass_rope", 1)], 0.0, 35, ("sling_weapon", 1), CraftCategory::Misc, vec![]),
+        (
+            "workbench.weapon.sling",
+            "弹弓",
+            vec![("wood_handle", 1), ("tanned_hide", 1), ("grass_rope", 1)],
+            0.0,
+            35,
+            ("sling_weapon", 1),
+            CraftCategory::Misc,
+            vec![],
+        ),
         // #58 飞石
-        ("workbench.weapon.sling_stone", "飞石",
-         vec![("stone_chunk", 3)], 0.0, 10, ("sling_stone", 5), CraftCategory::Misc, vec![]),
+        (
+            "workbench.weapon.sling_stone",
+            "飞石",
+            vec![("stone_chunk", 3)],
+            0.0,
+            10,
+            ("sling_stone", 5),
+            CraftCategory::Misc,
+            vec![],
+        ),
         // #59 木盾 (ArmorCraft)
-        ("workbench.weapon.wooden_shield", "木盾",
-         vec![("wood_plank", 4), ("iron_ingot", 1)], 0.0, 60, ("wooden_shield", 1), CraftCategory::ArmorCraft, vec![]),
+        (
+            "workbench.weapon.wooden_shield",
+            "木盾",
+            vec![("wood_plank", 4), ("iron_ingot", 1)],
+            0.0,
+            60,
+            ("wooden_shield", 1),
+            CraftCategory::ArmorCraft,
+            vec![],
+        ),
         // #60 骨盾 (ArmorCraft)
-        ("workbench.weapon.bone_shield", "骨盾",
-         vec![("shu_gu", 6), ("grass_rope", 2)], 0.0, 55, ("bone_shield", 1), CraftCategory::ArmorCraft, vec![]),
+        (
+            "workbench.weapon.bone_shield",
+            "骨盾",
+            vec![("shu_gu", 6), ("grass_rope", 2)],
+            0.0,
+            55,
+            ("bone_shield", 1),
+            CraftCategory::ArmorCraft,
+            vec![],
+        ),
         // #61 凡铁匕首
-        ("workbench.weapon.iron_dagger", "凡铁匕首",
-         vec![("iron_ingot", 1), ("wood_handle", 1)], 0.0, 40, ("iron_dagger", 1), CraftCategory::Misc, vec![]),
+        (
+            "workbench.weapon.iron_dagger",
+            "凡铁匕首",
+            vec![("iron_ingot", 1), ("wood_handle", 1)],
+            0.0,
+            40,
+            ("iron_dagger", 1),
+            CraftCategory::Misc,
+            vec![],
+        ),
         // #62 石刃
-        ("workbench.weapon.stone_knife", "石刃",
-         vec![("stone_chunk", 1), ("wood_handle", 1)], 0.0, 20, ("stone_knife", 1), CraftCategory::Misc, vec![]),
+        (
+            "workbench.weapon.stone_knife",
+            "石刃",
+            vec![("stone_chunk", 1), ("wood_handle", 1)],
+            0.0,
+            20,
+            ("stone_knife", 1),
+            CraftCategory::Misc,
+            vec![],
+        ),
     ];
 
     for (id, name, mats, qi, t_sec, output, cat, unlock) in recipes {
@@ -400,54 +846,139 @@ fn register_weapon_components(registry: &mut CraftRegistry) -> Result<(), Regist
 
 /// 六、修炼辅材 #63-74
 fn register_cultivation_support(registry: &mut CraftRegistry) -> Result<(), RegistryError> {
-    let recipes: Vec<(&str, &str, Vec<(&str, u32)>, f64, u64, (&str, u32), CraftCategory, Vec<UnlockSource>)> = vec![
+    let recipes: Vec<CategorizedRow> = vec![
         // #63 蒲团
-        ("workbench.cultivation.meditation_mat", "蒲团",
-         vec![("dried_grass", 6), ("rough_cloth", 2)], 0.0, 35, ("meditation_mat", 1), CraftCategory::Misc, vec![]),
+        (
+            "workbench.cultivation.meditation_mat",
+            "蒲团",
+            vec![("dried_grass", 6), ("rough_cloth", 2)],
+            0.0,
+            35,
+            ("meditation_mat", 1),
+            CraftCategory::Misc,
+            vec![],
+        ),
         // #64 灵气引导符 (📜)
-        ("workbench.cultivation.qi_talisman", "灵气引导符",
-         vec![("zhenfa_blank_array", 1), ("powder_dan_sha", 1)], 2.0, 50, ("qi_guide_talisman", 1),
-         CraftCategory::Misc, scroll("scroll_workbench_qi_talisman")),
+        (
+            "workbench.cultivation.qi_talisman",
+            "灵气引导符",
+            vec![("zhenfa_blank_array", 1), ("powder_dan_sha", 1)],
+            2.0,
+            50,
+            ("qi_guide_talisman", 1),
+            CraftCategory::Misc,
+            scroll("scroll_workbench_qi_talisman"),
+        ),
         // #65 经脉图拓片 (📜)
-        ("workbench.cultivation.meridian_rub", "经脉图拓片",
-         vec![("zhenfa_blank_array", 1), ("spirit_grass", 1)], 1.0, 35, ("meridian_rubbing", 1),
-         CraftCategory::Misc, scroll("scroll_workbench_meridian_rub")),
+        (
+            "workbench.cultivation.meridian_rub",
+            "经脉图拓片",
+            vec![("zhenfa_blank_array", 1), ("spirit_grass", 1)],
+            1.0,
+            35,
+            ("meridian_rubbing", 1),
+            CraftCategory::Misc,
+            scroll("scroll_workbench_meridian_rub"),
+        ),
         // #66 凝脉散预制包 (📜)
-        ("workbench.cultivation.ningmai_prep", "凝脉散预制包",
-         vec![("ning_mai_cao", 3), ("powder_dan_sha", 1), ("herb_vial", 1)], 0.0, 45, ("ningmai_prep_kit", 1),
-         CraftCategory::Misc, scroll("scroll_workbench_ningmai_prep")),
+        (
+            "workbench.cultivation.ningmai_prep",
+            "凝脉散预制包",
+            vec![("ning_mai_cao", 3), ("powder_dan_sha", 1), ("herb_vial", 1)],
+            0.0,
+            45,
+            ("ningmai_prep_kit", 1),
+            CraftCategory::Misc,
+            scroll("scroll_workbench_ningmai_prep"),
+        ),
         // #67 回元芷煎汤
-        ("workbench.cultivation.huiyuan_soup", "回元芷煎汤",
-         vec![("hui_yuan_zhi", 2), ("clay_pot", 1), ("spirit_charcoal", 1)], 0.0, 60, ("huiyuan_decoction", 1),
-         CraftCategory::Misc, vec![]),
+        (
+            "workbench.cultivation.huiyuan_soup",
+            "回元芷煎汤",
+            vec![("hui_yuan_zhi", 2), ("clay_pot", 1), ("spirit_charcoal", 1)],
+            0.0,
+            60,
+            ("huiyuan_decoction", 1),
+            CraftCategory::Misc,
+            vec![],
+        ),
         // #68 养经膏 (📜)
-        ("workbench.cultivation.meridian_salve", "养经膏",
-         vec![("yang_jing_tai", 2), ("rat_tail_oil", 1), ("herb_vial", 1)], 1.0, 50, ("meridian_salve", 1),
-         CraftCategory::Misc, scroll("scroll_workbench_meridian_salve")),
+        (
+            "workbench.cultivation.meridian_salve",
+            "养经膏",
+            vec![("yang_jing_tai", 2), ("rat_tail_oil", 1), ("herb_vial", 1)],
+            1.0,
+            50,
+            ("meridian_salve", 1),
+            CraftCategory::Misc,
+            scroll("scroll_workbench_meridian_salve"),
+        ),
         // #69 解蛊散 (DuguPotion, 📜)
-        ("workbench.cultivation.anti_gu", "解蛊散",
-         vec![("jie_gu_rui", 3), ("xiong_huang", 1)], 1.0, 45, ("anti_gu_powder", 1),
-         CraftCategory::DuguPotion, scroll("scroll_workbench_anti_gu")),
+        (
+            "workbench.cultivation.anti_gu",
+            "解蛊散",
+            vec![("jie_gu_rui", 3), ("xiong_huang", 1)],
+            1.0,
+            45,
+            ("anti_gu_powder", 1),
+            CraftCategory::DuguPotion,
+            scroll("scroll_workbench_anti_gu"),
+        ),
         // #70 清浊散 (DuguPotion, 📜)
-        ("workbench.cultivation.qingzhuo", "清浊散",
-         vec![("qing_zhuo_cao", 2), ("powder_dan_sha", 1)], 1.0, 40, ("qingzhuo_powder", 1),
-         CraftCategory::DuguPotion, scroll("scroll_workbench_qingzhuo")),
+        (
+            "workbench.cultivation.qingzhuo",
+            "清浊散",
+            vec![("qing_zhuo_cao", 2), ("powder_dan_sha", 1)],
+            1.0,
+            40,
+            ("qingzhuo_powder", 1),
+            CraftCategory::DuguPotion,
+            scroll("scroll_workbench_qingzhuo"),
+        ),
         // #71 安神茶
-        ("workbench.cultivation.calming_tea", "安神茶",
-         vec![("an_shen_guo", 2), ("clay_pot", 1)], 0.0, 30, ("calming_tea", 1),
-         CraftCategory::Misc, vec![]),
+        (
+            "workbench.cultivation.calming_tea",
+            "安神茶",
+            vec![("an_shen_guo", 2), ("clay_pot", 1)],
+            0.0,
+            30,
+            ("calming_tea", 1),
+            CraftCategory::Misc,
+            vec![],
+        ),
         // #72 鼠群诱饵
-        ("workbench.cultivation.rat_bait", "鼠群诱饵",
-         vec![("salt_crystal", 2), ("rough_cloth", 1)], 0.0, 20, ("rat_bait", 1),
-         CraftCategory::Misc, vec![]),
+        (
+            "workbench.cultivation.rat_bait",
+            "鼠群诱饵",
+            vec![("salt_crystal", 2), ("rough_cloth", 1)],
+            0.0,
+            20,
+            ("rat_bait", 1),
+            CraftCategory::Misc,
+            vec![],
+        ),
         // #73 灵石架
-        ("workbench.cultivation.spirit_rack", "灵石架",
-         vec![("wood_plank", 2), ("iron_ingot", 1)], 0.0, 45, ("spirit_stone_rack", 1),
-         CraftCategory::Misc, vec![]),
+        (
+            "workbench.cultivation.spirit_rack",
+            "灵石架",
+            vec![("wood_plank", 2), ("iron_ingot", 1)],
+            0.0,
+            45,
+            ("spirit_stone_rack", 1),
+            CraftCategory::Misc,
+            vec![],
+        ),
         // #74 止血绷带
-        ("workbench.cultivation.bandage", "止血绷带",
-         vec![("rough_cloth", 2)], 0.0, 10, ("bandage", 4),
-         CraftCategory::Misc, vec![]),
+        (
+            "workbench.cultivation.bandage",
+            "止血绷带",
+            vec![("rough_cloth", 2)],
+            0.0,
+            10,
+            ("bandage", 4),
+            CraftCategory::Misc,
+            vec![],
+        ),
     ];
 
     for (id, name, mats, qi, t_sec, output, cat, unlock) in recipes {
@@ -469,45 +1000,117 @@ fn register_cultivation_support(registry: &mut CraftRegistry) -> Result<(), Regi
 
 /// 七、阵法基础 #75-82
 fn register_array_basics(registry: &mut CraftRegistry) -> Result<(), RegistryError> {
-    let recipes: Vec<(&str, &str, Vec<(&str, u32)>, f64, u64, (&str, u32), CraftCategory, Vec<UnlockSource>)> = vec![
+    let recipes: Vec<CategorizedRow> = vec![
         // #75 阵法白纸
-        ("workbench.array.blank_paper", "阵法白纸",
-         vec![("rough_cloth", 1), ("powder_dan_sha", 1), ("rat_tail_oil", 1)], 1.0, 35, ("zhenfa_blank_array", 2),
-         CraftCategory::Misc, vec![]),
+        (
+            "workbench.array.blank_paper",
+            "阵法白纸",
+            vec![
+                ("rough_cloth", 1),
+                ("powder_dan_sha", 1),
+                ("rat_tail_oil", 1),
+            ],
+            1.0,
+            35,
+            ("zhenfa_blank_array", 2),
+            CraftCategory::Misc,
+            vec![],
+        ),
         // #76 阵旗·凡 (ZhenfaTrap, 📜)
-        ("workbench.array.flag_basic", "阵旗·凡",
-         vec![("wood_handle", 1), ("rough_cloth", 1), ("powder_dan_sha", 1)], 2.0, 50, ("array_flag_basic", 1),
-         CraftCategory::ZhenfaTrap, scroll("scroll_workbench_array_flag")),
+        (
+            "workbench.array.flag_basic",
+            "阵旗·凡",
+            vec![
+                ("wood_handle", 1),
+                ("rough_cloth", 1),
+                ("powder_dan_sha", 1),
+            ],
+            2.0,
+            50,
+            ("array_flag_basic", 1),
+            CraftCategory::ZhenfaTrap,
+            scroll("scroll_workbench_array_flag"),
+        ),
         // #77 阵眼·凡 (ZhenfaTrap, 📜)
-        ("workbench.array.eye_basic", "阵眼·凡",
-         vec![("ling_jing", 1), ("iron_ingot", 2)], 3.0, 65, ("array_eye_basic", 1),
-         CraftCategory::ZhenfaTrap, scroll("scroll_workbench_array_eye")),
+        (
+            "workbench.array.eye_basic",
+            "阵眼·凡",
+            vec![("ling_jing", 1), ("iron_ingot", 2)],
+            3.0,
+            65,
+            ("array_eye_basic", 1),
+            CraftCategory::ZhenfaTrap,
+            scroll("scroll_workbench_array_eye"),
+        ),
         // #78 预警绊线
-        ("workbench.array.trip_wire", "预警绊线",
-         vec![("spider_silk_cord", 2), ("iron_needle", 1)], 0.0, 20, ("trip_wire", 3),
-         CraftCategory::Misc, vec![]),
+        (
+            "workbench.array.trip_wire",
+            "预警绊线",
+            vec![("spider_silk_cord", 2), ("iron_needle", 1)],
+            0.0,
+            20,
+            ("trip_wire", 3),
+            CraftCategory::Misc,
+            vec![],
+        ),
         // #79 欺天阵木桩 (ZhenfaTrap, 📜👤)
-        ("workbench.array.decoy_stake", "欺天阵木桩",
-         vec![("spirit_wood", 2), ("rough_cloth", 1), ("shu_gu", 1)], 2.0, 65, ("decoy_stake", 1),
-         CraftCategory::ZhenfaTrap, vec![
-             UnlockSource::Scroll { item_template: "scroll_workbench_decoy_stake".into() },
-             UnlockSource::Mentor { npc_archetype: "array_scribe".into() },
-         ]),
+        (
+            "workbench.array.decoy_stake",
+            "欺天阵木桩",
+            vec![("spirit_wood", 2), ("rough_cloth", 1), ("shu_gu", 1)],
+            2.0,
+            65,
+            ("decoy_stake", 1),
+            CraftCategory::ZhenfaTrap,
+            vec![
+                UnlockSource::Scroll {
+                    item_template: "scroll_workbench_decoy_stake".into(),
+                },
+                UnlockSource::Mentor {
+                    npc_archetype: "array_scribe".into(),
+                },
+            ],
+        ),
         // #80 散真元珠 (ZhenfaTrap, 📜)
-        ("workbench.array.scatter_bead", "散真元珠",
-         vec![("ling_jing", 1), ("bone_meal_mat", 1)], 2.0, 35, ("qi_scatter_bead", 2),
-         CraftCategory::ZhenfaTrap, scroll("scroll_workbench_scatter_bead")),
+        (
+            "workbench.array.scatter_bead",
+            "散真元珠",
+            vec![("ling_jing", 1), ("bone_meal_mat", 1)],
+            2.0,
+            35,
+            ("qi_scatter_bead", 2),
+            CraftCategory::ZhenfaTrap,
+            scroll("scroll_workbench_scatter_bead"),
+        ),
         // #81 聚灵阵基座 (ZhenfaTrap, 📜👤)
-        ("workbench.array.gather_base", "聚灵阵基座",
-         vec![("ling_tie", 2), ("zhenfa_blank_array", 2), ("ling_jing", 1)], 5.0, 130, ("gather_array_base", 1),
-         CraftCategory::ZhenfaTrap, vec![
-             UnlockSource::Scroll { item_template: "scroll_workbench_gather_base".into() },
-             UnlockSource::Mentor { npc_archetype: "array_scribe".into() },
-         ]),
+        (
+            "workbench.array.gather_base",
+            "聚灵阵基座",
+            vec![("ling_tie", 2), ("zhenfa_blank_array", 2), ("ling_jing", 1)],
+            5.0,
+            130,
+            ("gather_array_base", 1),
+            CraftCategory::ZhenfaTrap,
+            vec![
+                UnlockSource::Scroll {
+                    item_template: "scroll_workbench_gather_base".into(),
+                },
+                UnlockSource::Mentor {
+                    npc_archetype: "array_scribe".into(),
+                },
+            ],
+        ),
         // #82 困兽圈
-        ("workbench.array.beast_trap", "困兽圈",
-         vec![("iron_ingot", 3), ("grass_rope", 2)], 0.0, 50, ("beast_trap", 1),
-         CraftCategory::Misc, vec![]),
+        (
+            "workbench.array.beast_trap",
+            "困兽圈",
+            vec![("iron_ingot", 3), ("grass_rope", 2)],
+            0.0,
+            50,
+            ("beast_trap", 1),
+            CraftCategory::Misc,
+            vec![],
+        ),
     ];
 
     for (id, name, mats, qi, t_sec, output, cat, unlock) in recipes {
@@ -529,42 +1132,102 @@ fn register_array_basics(registry: &mut CraftRegistry) -> Result<(), RegistryErr
 
 /// 八、经济与交易 #83-90
 fn register_economy(registry: &mut CraftRegistry) -> Result<(), RegistryError> {
-    let recipes: Vec<(&str, &str, Vec<(&str, u32)>, f64, u64, (&str, u32), CraftCategory, Vec<UnlockSource>)> = vec![
+    let recipes: Vec<CategorizedRow> = vec![
         // #83 骨币胚
-        ("workbench.economy.coin_blank", "骨币胚",
-         vec![("shu_gu", 1), ("zhenfa_blank_array", 1)], 0.0, 30, ("bone_coin_blank", 3),
-         CraftCategory::Misc, vec![]),
+        (
+            "workbench.economy.coin_blank",
+            "骨币胚",
+            vec![("shu_gu", 1), ("zhenfa_blank_array", 1)],
+            0.0,
+            30,
+            ("bone_coin_blank", 3),
+            CraftCategory::Misc,
+            vec![],
+        ),
         // #84 骨币匣 (Container)
-        ("workbench.economy.coin_box", "骨币匣",
-         vec![("wood_plank", 4), ("iron_ingot", 1), ("powder_dan_sha", 1)], 0.0, 55, ("coin_box", 1),
-         CraftCategory::Container, vec![]),
+        (
+            "workbench.economy.coin_box",
+            "骨币匣",
+            vec![("wood_plank", 4), ("iron_ingot", 1), ("powder_dan_sha", 1)],
+            0.0,
+            55,
+            ("coin_box", 1),
+            CraftCategory::Container,
+            vec![],
+        ),
         // #85 交易秤台 (Tool)
-        ("workbench.economy.trade_scale_stand", "交易秤台",
-         vec![("trade_scale", 1), ("wood_plank", 2)], 0.0, 40, ("trade_scale_stand", 1),
-         CraftCategory::Tool, vec![]),
+        (
+            "workbench.economy.trade_scale_stand",
+            "交易秤台",
+            vec![("trade_scale", 1), ("wood_plank", 2)],
+            0.0,
+            40,
+            ("trade_scale_stand", 1),
+            CraftCategory::Tool,
+            vec![],
+        ),
         // #86 标记石
-        ("workbench.economy.waymark", "标记石",
-         vec![("stone_chunk", 1), ("powder_dan_sha", 1)], 0.0, 10, ("waymark_stone", 4),
-         CraftCategory::Misc, vec![]),
+        (
+            "workbench.economy.waymark",
+            "标记石",
+            vec![("stone_chunk", 1), ("powder_dan_sha", 1)],
+            0.0,
+            10,
+            ("waymark_stone", 4),
+            CraftCategory::Misc,
+            vec![],
+        ),
         // #87 伪装包裹 (TuikeSkin)
-        ("workbench.economy.disguise_wrap", "伪装包裹",
-         vec![("rough_cloth", 2), ("hui_jin_tai", 1)], 0.0, 25, ("disguise_wrap", 2),
-         CraftCategory::TuikeSkin, vec![]),
+        (
+            "workbench.economy.disguise_wrap",
+            "伪装包裹",
+            vec![("rough_cloth", 2), ("hui_jin_tai", 1)],
+            0.0,
+            25,
+            ("disguise_wrap", 2),
+            CraftCategory::TuikeSkin,
+            vec![],
+        ),
         // #88 标价签
-        ("workbench.economy.price_tag", "标价签",
-         vec![("rough_cloth", 1), ("powder_dan_sha", 1)], 0.0, 10, ("price_tag", 5),
-         CraftCategory::Misc, vec![]),
+        (
+            "workbench.economy.price_tag",
+            "标价签",
+            vec![("rough_cloth", 1), ("powder_dan_sha", 1)],
+            0.0,
+            10,
+            ("price_tag", 5),
+            CraftCategory::Misc,
+            vec![],
+        ),
         // #89 交易傀儡骨架 (📜👤)
-        ("workbench.economy.puppet_frame", "交易傀儡骨架",
-         vec![("shu_gu", 8), ("spider_silk_cord", 3), ("iron_ingot", 2)], 4.0, 150, ("trade_puppet_frame", 1),
-         CraftCategory::Misc, vec![
-             UnlockSource::Scroll { item_template: "scroll_workbench_puppet_frame".into() },
-             UnlockSource::Mentor { npc_archetype: "trader_npc".into() },
-         ]),
+        (
+            "workbench.economy.puppet_frame",
+            "交易傀儡骨架",
+            vec![("shu_gu", 8), ("spider_silk_cord", 3), ("iron_ingot", 2)],
+            4.0,
+            150,
+            ("trade_puppet_frame", 1),
+            CraftCategory::Misc,
+            vec![
+                UnlockSource::Scroll {
+                    item_template: "scroll_workbench_puppet_frame".into(),
+                },
+                UnlockSource::Mentor {
+                    npc_archetype: "trader_npc".into(),
+                },
+            ],
+        ),
         // #90 灵龛修补料 (📜)
-        ("workbench.economy.niche_repair", "灵龛修补料",
-         vec![("stone_chunk", 3), ("ling_tie", 1)], 2.0, 65, ("niche_repair_kit", 1),
-         CraftCategory::Misc, scroll("scroll_workbench_niche_repair")),
+        (
+            "workbench.economy.niche_repair",
+            "灵龛修补料",
+            vec![("stone_chunk", 3), ("ling_tie", 1)],
+            2.0,
+            65,
+            ("niche_repair_kit", 1),
+            CraftCategory::Misc,
+            scroll("scroll_workbench_niche_repair"),
+        ),
     ];
 
     for (id, name, mats, qi, t_sec, output, cat, unlock) in recipes {
@@ -588,43 +1251,113 @@ fn register_economy(registry: &mut CraftRegistry) -> Result<(), RegistryError> {
 fn register_shelter(registry: &mut CraftRegistry) -> Result<(), RegistryError> {
     use super::events::InsightTrigger;
 
-    let recipes: Vec<(&str, &str, Vec<(&str, u32)>, f64, u64, (&str, u32), CraftCategory, Vec<UnlockSource>)> = vec![
+    let recipes: Vec<CategorizedRow> = vec![
         // #91 火把
-        ("workbench.shelter.torch", "火把",
-         vec![("wood_handle", 1), ("spirit_charcoal", 1), ("rat_tail_oil", 1)], 0.0, 10, ("torch_item", 4),
-         CraftCategory::Misc, vec![]),
+        (
+            "workbench.shelter.torch",
+            "火把",
+            vec![
+                ("wood_handle", 1),
+                ("spirit_charcoal", 1),
+                ("rat_tail_oil", 1),
+            ],
+            0.0,
+            10,
+            ("torch_item", 4),
+            CraftCategory::Misc,
+            vec![],
+        ),
         // #92 灯笼 (📜)
-        ("workbench.shelter.lantern", "灯笼",
-         vec![("iron_ingot", 2), ("spirit_charcoal", 1), ("ling_jing", 1)], 1.0, 45, ("lantern_item", 1),
-         CraftCategory::Misc, scroll("scroll_workbench_lantern")),
+        (
+            "workbench.shelter.lantern",
+            "灯笼",
+            vec![("iron_ingot", 2), ("spirit_charcoal", 1), ("ling_jing", 1)],
+            1.0,
+            45,
+            ("lantern_item", 1),
+            CraftCategory::Misc,
+            scroll("scroll_workbench_lantern"),
+        ),
         // #93 门闩
-        ("workbench.shelter.door_bolt", "门闩",
-         vec![("iron_ingot", 3), ("wood_plank", 2)], 0.0, 45, ("door_bolt", 1),
-         CraftCategory::Misc, vec![]),
+        (
+            "workbench.shelter.door_bolt",
+            "门闩",
+            vec![("iron_ingot", 3), ("wood_plank", 2)],
+            0.0,
+            45,
+            ("door_bolt", 1),
+            CraftCategory::Misc,
+            vec![],
+        ),
         // #94 伪装网 (TuikeSkin)
-        ("workbench.shelter.camo_net", "伪装网",
-         vec![("rough_cloth", 3), ("spirit_grass", 2)], 0.0, 55, ("camouflage_net", 1),
-         CraftCategory::TuikeSkin, vec![]),
+        (
+            "workbench.shelter.camo_net",
+            "伪装网",
+            vec![("rough_cloth", 3), ("spirit_grass", 2)],
+            0.0,
+            55,
+            ("camouflage_net", 1),
+            CraftCategory::TuikeSkin,
+            vec![],
+        ),
         // #95 简易床铺
-        ("workbench.shelter.simple_bed", "简易床铺",
-         vec![("wood_plank", 4), ("dried_grass", 4), ("rough_cloth", 2)], 0.0, 60, ("simple_bed", 1),
-         CraftCategory::Misc, vec![]),
+        (
+            "workbench.shelter.simple_bed",
+            "简易床铺",
+            vec![("wood_plank", 4), ("dried_grass", 4), ("rough_cloth", 2)],
+            0.0,
+            60,
+            ("simple_bed", 1),
+            CraftCategory::Misc,
+            vec![],
+        ),
         // #96 防潮地基
-        ("workbench.shelter.moisture_base", "防潮地基",
-         vec![("stone_chunk", 4), ("hui_jin_tai", 2)], 0.0, 35, ("moisture_base", 4),
-         CraftCategory::Misc, vec![]),
+        (
+            "workbench.shelter.moisture_base",
+            "防潮地基",
+            vec![("stone_chunk", 4), ("hui_jin_tai", 2)],
+            0.0,
+            35,
+            ("moisture_base", 4),
+            CraftCategory::Misc,
+            vec![],
+        ),
         // #97 窗栅
-        ("workbench.shelter.window_grate", "窗栅",
-         vec![("iron_ingot", 4)], 0.0, 35, ("window_grate", 2),
-         CraftCategory::Misc, vec![]),
+        (
+            "workbench.shelter.window_grate",
+            "窗栅",
+            vec![("iron_ingot", 4)],
+            0.0,
+            35,
+            ("window_grate", 2),
+            CraftCategory::Misc,
+            vec![],
+        ),
         // #98 灵龛基座 (📜👤💡)
-        ("workbench.shelter.niche_base", "灵龛基座",
-         vec![("spirit_niche_stone", 1), ("ling_tie", 2), ("wood_plank", 4)], 5.0, 180, ("niche_base", 1),
-         CraftCategory::Misc, vec![
-             UnlockSource::Scroll { item_template: "scroll_workbench_niche_base".into() },
-             UnlockSource::Mentor { npc_archetype: "hermit_builder".into() },
-             UnlockSource::Insight { trigger: InsightTrigger::Breakthrough },
-         ]),
+        (
+            "workbench.shelter.niche_base",
+            "灵龛基座",
+            vec![
+                ("spirit_niche_stone", 1),
+                ("ling_tie", 2),
+                ("wood_plank", 4),
+            ],
+            5.0,
+            180,
+            ("niche_base", 1),
+            CraftCategory::Misc,
+            vec![
+                UnlockSource::Scroll {
+                    item_template: "scroll_workbench_niche_base".into(),
+                },
+                UnlockSource::Mentor {
+                    npc_archetype: "hermit_builder".into(),
+                },
+                UnlockSource::Insight {
+                    trigger: InsightTrigger::Breakthrough,
+                },
+            ],
+        ),
     ];
 
     for (id, name, mats, qi, t_sec, output, cat, unlock) in recipes {
@@ -646,13 +1379,27 @@ fn register_shelter(registry: &mut CraftRegistry) -> Result<(), RegistryError> {
 
 /// 十、炼丹/炼器预备 #99-100
 fn register_alchemy_forge_prep(registry: &mut CraftRegistry) -> Result<(), RegistryError> {
-    let recipes: Vec<(&str, &str, Vec<(&str, u32)>, u64, &str)> = vec![
+    let recipes: Vec<ArmorRow> = vec![
         // #99 凡铁炉组件
-        ("workbench.prep.furnace_kit", "凡铁炉组件",
-         vec![("iron_ingot", 6), ("spirit_charcoal", 2), ("stone_chunk", 4)], 120, "furnace_kit_fantie"),
+        (
+            "workbench.prep.furnace_kit",
+            "凡铁炉组件",
+            vec![
+                ("iron_ingot", 6),
+                ("spirit_charcoal", 2),
+                ("stone_chunk", 4),
+            ],
+            120,
+            "furnace_kit_fantie",
+        ),
         // #100 锻造台组件
-        ("workbench.prep.forge_station", "锻造台组件",
-         vec![("iron_ingot", 4), ("spirit_wood", 2), ("stone_chunk", 6)], 100, "forge_station_kit"),
+        (
+            "workbench.prep.forge_station",
+            "锻造台组件",
+            vec![("iron_ingot", 4), ("spirit_wood", 2), ("stone_chunk", 6)],
+            100,
+            "forge_station_kit",
+        ),
     ];
 
     for (id, name, mats, t_sec, output) in recipes {
@@ -696,7 +1443,10 @@ mod tests {
         let r = registry
             .get(&RecipeId::new("craft.tool.workbench"))
             .expect("workbench self recipe must exist");
-        assert_eq!(r.station, None, "workbench self recipe must be handcraft (station=None)");
+        assert_eq!(
+            r.station, None,
+            "workbench self recipe must be handcraft (station=None)"
+        );
         assert_eq!(r.qi_cost, 0.0);
         assert_eq!(r.time_ticks, 60 * 20);
         assert_eq!(r.output, ("workbench_item".into(), 1));
@@ -743,7 +1493,8 @@ mod tests {
             assert!(
                 recipe.time_ticks > 0,
                 "recipe `{}` must have time_ticks > 0, got {}",
-                recipe.id, recipe.time_ticks
+                recipe.id,
+                recipe.time_ticks
             );
         }
     }
@@ -756,7 +1507,8 @@ mod tests {
             assert!(
                 recipe.qi_cost >= 0.0 && recipe.qi_cost.is_finite(),
                 "recipe `{}` must have finite non-negative qi_cost, got {}",
-                recipe.id, recipe.qi_cost
+                recipe.id,
+                recipe.qi_cost
             );
         }
     }
@@ -835,14 +1587,14 @@ mod tests {
                 .filter_map(|(template_id, count)| {
                     item_registry
                         .get(template_id)
-                        .map(|t| t.spirit_quality_initial as f64 * *count as f64)
+                        .map(|t| t.spirit_quality_initial * *count as f64)
                 })
                 .sum();
 
             let (output_id, output_count) = &recipe.output;
             let output_sq = item_registry
                 .get(output_id)
-                .map(|t| t.spirit_quality_initial as f64 * *output_count as f64)
+                .map(|t| t.spirit_quality_initial * *output_count as f64)
                 .unwrap_or(0.0);
 
             // qi_cost 可视为额外灵质输入（真元灌注）
