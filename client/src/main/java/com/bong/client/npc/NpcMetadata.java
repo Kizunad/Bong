@@ -1,5 +1,8 @@
 package com.bong.client.npc;
 
+import java.util.List;
+import java.util.Map;
+
 public record NpcMetadata(
     int entityId,
     String archetype,
@@ -12,8 +15,12 @@ public record NpcMetadata(
     String greetingText,
     String qiHint,
     double hpRatio,
-    double qiRatio
+    double qiRatio,
+    Map<String, NpcEquipSlotData> equipment,
+    List<NpcTechniqueData> techniques,
+    List<NpcTradeOffer> tradeOffers
 ) {
+    /** Backward-compatible 10-param constructor (old server without hp/qi/equip/tech/trade). */
     public NpcMetadata(
         int entityId,
         String archetype,
@@ -38,7 +45,44 @@ public record NpcMetadata(
             greetingText,
             qiHint,
             1.0,
-            0.0
+            0.0,
+            Map.of(),
+            List.of(),
+            List.of()
+        );
+    }
+
+    /** Backward-compatible 12-param constructor (old server without equip/tech/trade). */
+    public NpcMetadata(
+        int entityId,
+        String archetype,
+        String realm,
+        String factionName,
+        String factionRank,
+        int reputationToPlayer,
+        String displayName,
+        String ageBand,
+        String greetingText,
+        String qiHint,
+        double hpRatio,
+        double qiRatio
+    ) {
+        this(
+            entityId,
+            archetype,
+            realm,
+            factionName,
+            factionRank,
+            reputationToPlayer,
+            displayName,
+            ageBand,
+            greetingText,
+            qiHint,
+            hpRatio,
+            qiRatio,
+            Map.of(),
+            List.of(),
+            List.of()
         );
     }
 
@@ -53,14 +97,21 @@ public record NpcMetadata(
         qiHint = blankToNull(qiHint);
         hpRatio = clamp01(hpRatio);
         qiRatio = clamp01(qiRatio);
+        equipment = equipment == null ? Map.of() : Map.copyOf(equipment);
+        techniques = techniques == null ? List.of() : List.copyOf(techniques);
+        tradeOffers = tradeOffers == null ? List.of() : List.copyOf(tradeOffers);
     }
 
     public boolean hostile() {
         return reputationToPlayer < -30;
     }
 
+    /**
+     * Data-driven trade candidacy: not hostile and has trade offers available.
+     * Replaces the old hardcoded archetype check.
+     */
     public boolean tradeCandidate() {
-        return !hostile() && ("rogue".equals(archetype) || "commoner".equals(archetype));
+        return !hostile() && tradeOffers != null && !tradeOffers.isEmpty();
     }
 
     private static String clean(String value, String fallback) {
