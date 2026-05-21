@@ -41,7 +41,8 @@ pub use events::{
 };
 #[allow(unused_imports)]
 pub use recipe::{
-    CraftCategory, CraftRecipe, CraftRequirements, RecipeId, RecipeValidationError, UnlockSource,
+    CraftCategory, CraftRecipe, CraftRequirements, CraftStationKind, RecipeId,
+    RecipeValidationError, UnlockSource,
 };
 #[allow(unused_imports)]
 pub use registry::{CraftRegistry, RegistryError};
@@ -150,6 +151,7 @@ pub fn register_examples(registry: &mut CraftRegistry) -> Result<(), RegistryErr
             skill_lv_min: None,
         },
         unlock_sources: vec![],
+        station: None,
     })?;
 
     // 2. 毒源煎汤（凡毒）— DuguPotion
@@ -166,6 +168,7 @@ pub fn register_examples(registry: &mut CraftRegistry) -> Result<(), RegistryErr
         output: ("poison_decoction_fan".into(), 1),
         requirements: CraftRequirements::default(),
         unlock_sources: vec![],
+        station: None,
     })?;
 
     // 3. 伪灵皮（轻档）— TuikeSkin
@@ -193,6 +196,7 @@ pub fn register_examples(registry: &mut CraftRegistry) -> Result<(), RegistryErr
                 trigger: InsightTrigger::NearDeath,
             },
         ],
+        station: None,
     })?;
 
     // 4. 真元诡雷（凡铁）— ZhenfaTrap
@@ -220,6 +224,7 @@ pub fn register_examples(registry: &mut CraftRegistry) -> Result<(), RegistryErr
                 npc_archetype: "array_scribe".into(),
             },
         ],
+        station: None,
     })?;
 
     // 5. 采药刀（凡铁）— Tool（§5 决策门 #5 凡器破例收录手搓 tab）
@@ -235,6 +240,7 @@ pub fn register_examples(registry: &mut CraftRegistry) -> Result<(), RegistryErr
         unlock_sources: vec![UnlockSource::Scroll {
             item_template: "scroll_herb_knife_iron".into(),
         }],
+        station: None,
     })?;
 
     Ok(())
@@ -389,6 +395,7 @@ pub fn register_anqi_v2_recipes(registry: &mut CraftRegistry) -> Result<(), Regi
             output,
             requirements,
             unlock_sources: scroll(id),
+            station: None,
         })?;
     }
 
@@ -536,6 +543,7 @@ pub fn register_zhenfa_v2_recipes(registry: &mut CraftRegistry) -> Result<(), Re
             output,
             requirements,
             unlock_sources,
+            station: None,
         })?;
     }
 
@@ -604,6 +612,7 @@ pub fn register_zhenfa_content_recipes(registry: &mut CraftRegistry) -> Result<(
             output,
             requirements: CraftRequirements::default(),
             unlock_sources,
+            station: None,
         })?;
     }
 
@@ -699,6 +708,7 @@ pub fn register_tuike_v2_recipes(registry: &mut CraftRegistry) -> Result<(), Reg
             output: (output.to_string(), 1),
             requirements,
             unlock_sources: scroll(id),
+            station: None,
         })?;
     }
 
@@ -775,6 +785,7 @@ pub fn register_gathering_tool_recipes(registry: &mut CraftRegistry) -> Result<(
             output: (output.to_string(), 1),
             requirements: CraftRequirements::default(),
             unlock_sources: scroll(output),
+            station: None,
         })?;
     }
     Ok(())
@@ -850,6 +861,7 @@ pub fn register_basic_processing_recipes(
             output: (output.0.to_string(), output.1),
             requirements: CraftRequirements::default(),
             unlock_sources: vec![],
+            station: None,
         })?;
     }
     Ok(())

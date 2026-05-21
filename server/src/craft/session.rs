@@ -560,6 +560,7 @@ mod tests {
             unlock_sources: vec![UnlockSource::Scroll {
                 item_template: "scroll_x".into(),
             }],
+            station: None,
         }
     }
 

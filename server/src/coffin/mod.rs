@@ -202,6 +202,7 @@ pub fn register_craft_recipes(registry: &mut CraftRegistry) -> Result<(), Regist
         unlock_sources: vec![UnlockSource::Scroll {
             item_template: "scroll_mundane_coffin".into(),
         }],
+        station: None,
     })
 }
 

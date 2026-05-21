@@ -31,6 +31,7 @@ pub fn craft_recipe_for_powder(powder: PoisonPowderKind) -> CraftRecipe {
                 npc_archetype: "alchemist_quirk".into(),
             },
         ],
+        station: None,
     }
 }
 

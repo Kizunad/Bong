@@ -246,6 +246,7 @@ mod tests {
             output: ("test_out".into(), 1),
             requirements: CraftRequirements::default(),
             unlock_sources: sources,
+            station: None,
         }
     }
 

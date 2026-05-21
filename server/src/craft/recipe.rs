@@ -19,6 +19,24 @@ use crate::cultivation::components::{ColorKind, Realm};
 
 use super::events::InsightTrigger;
 
+/// plan-workbench-recipes-v1 §P2.1 — 制作站类型。
+///
+/// `None` = 手搓（随时随地），`Some(Workbench)` = 需 3 格内制作台。
+/// 未来可扩展 AlchemyBench / ForgeBench 等。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CraftStationKind {
+    Workbench,
+}
+
+impl CraftStationKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Workbench => "workbench",
+        }
+    }
+}
+
 /// 配方唯一 ID。命名约定：`<流派>.<物品>.<档位>`，如 `dugu.eclipse_needle.iron`。
 /// 各流派 plan 内统一 prefix，避免与本 plan 内的 `craft.example.*` 示例 ID 冲突。
 #[derive(Debug, Clone, Hash, PartialEq, Eq, Serialize, Deserialize)]
@@ -165,6 +183,9 @@ pub struct CraftRecipe {
     pub requirements: CraftRequirements,
     /// 解锁来源（残卷 / 师承 / 顿悟 任一）。注册时 invariant：非空。
     pub unlock_sources: Vec<UnlockSource>,
+    /// plan-workbench-recipes-v1 §P2.1 — 制作站约束。
+    /// `None` = 手搓（不需要制作台），`Some(Workbench)` = 需 3 格内制作台。
+    pub station: Option<CraftStationKind>,
 }
 
 impl CraftRecipe {
@@ -341,6 +362,7 @@ mod tests {
             unlock_sources: vec![UnlockSource::Scroll {
                 item_template: "scroll_test".into(),
             }],
+            station: None,
         }
     }
 
@@ -560,5 +582,41 @@ mod tests {
             r.validate(),
             Err(RecipeValidationError::EmptyUnlockSourceTemplate { kind: "mentor", .. })
         ));
+    }
+
+    // ============= CraftStationKind pin tests =============
+
+    #[test]
+    fn craft_station_kind_workbench_str_stable() {
+        assert_eq!(
+            CraftStationKind::Workbench.as_str(),
+            "workbench",
+            "CraftStationKind::Workbench str repr must be 'workbench' for IPC/agent contract"
+        );
+    }
+
+    #[test]
+    fn craft_station_kind_serde_roundtrip() {
+        let kind = CraftStationKind::Workbench;
+        let json = serde_json::to_string(&kind).unwrap();
+        assert_eq!(json, "\"workbench\"");
+        let back: CraftStationKind = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, kind);
+    }
+
+    #[test]
+    fn craft_recipe_station_none_means_handcraft() {
+        let r = ok_recipe();
+        assert_eq!(
+            r.station, None,
+            "default ok_recipe must have station=None (handcraft)"
+        );
+    }
+
+    #[test]
+    fn craft_recipe_station_workbench_accepted() {
+        let mut r = ok_recipe();
+        r.station = Some(CraftStationKind::Workbench);
+        assert!(r.validate().is_ok(), "station=Workbench must pass validation");
     }
 }
