@@ -131,7 +131,7 @@ public class ServerDataEnvelopeTest {
 
         assertEquals(ServerDataEnvelope.MAX_PAYLOAD_BYTES + 1, payloadSizeBytes);
         assertFalse(result.isSuccess());
-        assertTrue(result.errorMessage().contains("Payload exceeds max size of 8192 bytes"));
+        assertTrue(result.errorMessage().contains("Payload exceeds max size of 32768 bytes"));
     }
 
     @Test
@@ -142,7 +142,7 @@ public class ServerDataEnvelopeTest {
         ServerPayloadParseResult result = ServerDataEnvelope.parse(json, payloadSizeBytes);
 
         assertEquals(ServerDataEnvelope.MAX_PAYLOAD_BYTES, payloadSizeBytes);
-        assertTrue(result.isSuccess(), "payload at the shared 8192-byte budget should parse successfully");
+        assertTrue(result.isSuccess(), "payload at the shared 32768-byte budget should parse successfully");
         assertEquals("welcome", result.envelope().type());
     }
 
@@ -155,7 +155,7 @@ public class ServerDataEnvelopeTest {
 
         assertEquals(ServerDataEnvelope.MAX_PAYLOAD_BYTES + 1, payloadSizeBytes);
         assertFalse(result.isSuccess());
-        assertTrue(result.errorMessage().contains("Payload exceeds max size of 8192 bytes"));
+        assertTrue(result.errorMessage().contains("Payload exceeds max size of 32768 bytes"));
     }
 
     private static String buildWelcomePayloadOfSize(int targetSizeBytes) {

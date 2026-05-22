@@ -826,6 +826,7 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
     // ==================== Active grid shortcut ====================
 
     private BackpackGridPanel activeGrid() {
+        if (activeContainer < 0 || activeContainer >= containerGrids.length) return null;
         return containerGrids[activeContainer];
     }
 
@@ -1709,7 +1710,7 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
             }
 
             BackpackGridPanel grid = activeGrid();
-            if (grid.containsPoint(mouseX, mouseY)) {
+            if (grid != null && grid.containsPoint(mouseX, mouseY)) {
                 var pos = grid.screenToGrid(mouseX, mouseY);
                 if (pos != null) {
                     InventoryItem item = grid.itemAt(pos.row(), pos.col());
@@ -1740,7 +1741,7 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
             BackpackGridPanel grid = activeGrid();
 
             // Grid
-            if (grid.containsPoint(mouseX, mouseY)) {
+            if (grid != null && grid.containsPoint(mouseX, mouseY)) {
                 var pos = grid.screenToGrid(mouseX, mouseY);
                 if (pos != null) {
                     InventoryItem item = grid.itemAt(pos.row(), pos.col());
@@ -1869,7 +1870,7 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
 
     private InventoryItem itemAtScreen(double mouseX, double mouseY) {
         BackpackGridPanel grid = activeGrid();
-        if (grid.containsPoint(mouseX, mouseY)) {
+        if (grid != null && grid.containsPoint(mouseX, mouseY)) {
             var pos = grid.screenToGrid(mouseX, mouseY);
             if (pos != null) {
                 InventoryItem item = grid.itemAt(pos.row(), pos.col());
@@ -1934,7 +1935,7 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
 
         // Active grid
         BackpackGridPanel grid = activeGrid();
-        if (grid.containsPoint(mouseX, mouseY)) {
+        if (grid != null && grid.containsPoint(mouseX, mouseY)) {
             var pos = grid.screenToGrid(mouseX, mouseY);
             if (pos != null && grid.canPlace(dragged, pos.row(), pos.col())) {
                 grid.place(dragged, pos.row(), pos.col());
@@ -2359,7 +2360,7 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
             case GRID -> {
                 // Try return to the active grid (user may have switched containers)
                 BackpackGridPanel grid = activeGrid();
-                if (grid.canPlace(item, r.sourceRow(), r.sourceCol()))
+                if (grid != null && grid.canPlace(item, r.sourceRow(), r.sourceCol()))
                     grid.place(item, r.sourceRow(), r.sourceCol());
                 else placeItemAnywhere(item);
             }
@@ -2397,8 +2398,11 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
 
     private void placeItemAnywhere(InventoryItem item) {
         // 优先放当前容器
-        var pos = activeGrid().findFreeSpace(item);
-        if (pos != null) { activeGrid().place(item, pos.row(), pos.col()); return; }
+        BackpackGridPanel cur = activeGrid();
+        if (cur != null) {
+            var pos = cur.findFreeSpace(item);
+            if (pos != null) { cur.place(item, pos.row(), pos.col()); return; }
+        }
         // 尝试其他容器
         for (int i = 0; i < containerCount; i++) {
             if (i == activeContainer) continue;
@@ -2415,8 +2419,10 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
                 }
             }
         }
-        // 实在放不下 — 强制放进当前容器第一格（覆盖，避免数据丢失）
-        activeGrid().place(item, 0, 0);
+        // 实在放不下 — 强制放进第一个容器第一格（覆盖，避免数据丢失）
+        if (containerGrids.length > 0) {
+            containerGrids[0].place(item, 0, 0);
+        }
     }
 
     // ==================== Highlights ====================
@@ -2431,7 +2437,7 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
         }
 
         BackpackGridPanel grid = activeGrid();
-        if (grid.containsPoint(mouseX, mouseY)) {
+        if (grid != null && grid.containsPoint(mouseX, mouseY)) {
             var pos = grid.screenToGrid(mouseX, mouseY);
             if (pos != null) {
                 boolean valid = grid.canPlace(dragged, pos.row(), pos.col());
@@ -2658,7 +2664,9 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
             && !InventoryEquipRules.isTreasure(item)) {
             return;
         }
-        var anchor = activeGrid().anchorOf(item);
+        BackpackGridPanel grid = activeGrid();
+        if (grid == null) return;
+        var anchor = grid.anchorOf(item);
         if (anchor == null) return;
 
         var equipped = equippedStateForValidation(null, null);
@@ -2671,12 +2679,12 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
             );
         if (targetSlot == null) return;
 
-        activeGrid().remove(item);
+        grid.remove(item);
         equipPanel.slotFor(targetSlot).setItem(item);
         dispatchMoveIntent(
             item,
             new com.bong.client.network.ClientRequestProtocol.ContainerLoc(
-                activeGrid().containerId(),
+                grid.containerId(),
                 anchor.row(),
                 anchor.col()
             ),
@@ -2687,17 +2695,19 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
     }
 
     private void quickUnequipToGrid(EquipSlotType slotType, InventoryItem item) {
-        var pos = activeGrid().findFreeSpace(item);
+        BackpackGridPanel grid = activeGrid();
+        if (grid == null) return;
+        var pos = grid.findFreeSpace(item);
         if (pos != null) {
             equipPanel.slotFor(slotType).clearItem();
-            activeGrid().place(item, pos.row(), pos.col());
+            grid.place(item, pos.row(), pos.col());
             dispatchMoveIntent(
                 item,
                 new com.bong.client.network.ClientRequestProtocol.EquipLoc(
                     slotType.name().toLowerCase()
                 ),
                 new com.bong.client.network.ClientRequestProtocol.ContainerLoc(
-                    activeGrid().containerId(),
+                    grid.containerId(),
                     pos.row(),
                     pos.col()
                 )
@@ -2722,16 +2732,18 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
     private void quickMoveHotbarToGrid(int index) {
         InventoryItem item = hotbarItems[index];
         if (item == null) return;
-        var pos = activeGrid().findFreeSpace(item);
+        BackpackGridPanel grid = activeGrid();
+        if (grid == null) return;
+        var pos = grid.findFreeSpace(item);
         if (pos != null) {
             hotbarItems[index] = null;
             hotbarSlots[index].clearItem();
-            activeGrid().place(item, pos.row(), pos.col());
+            grid.place(item, pos.row(), pos.col());
             dispatchMoveIntent(
                 item,
                 new com.bong.client.network.ClientRequestProtocol.HotbarLoc(index),
                 new com.bong.client.network.ClientRequestProtocol.ContainerLoc(
-                    activeGrid().containerId(),
+                    grid.containerId(),
                     pos.row(),
                     pos.col()
                 )
@@ -2742,12 +2754,14 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
     private void quickMoveQuickUseToGrid(int index) {
         InventoryItem item = quickUseItems[index];
         if (item == null) return;
-        var pos = activeGrid().findFreeSpace(item);
+        BackpackGridPanel grid = activeGrid();
+        if (grid == null) return;
+        var pos = grid.findFreeSpace(item);
         if (pos != null) {
             quickUseItems[index] = null;
             setQuickUseSlotVisual(index, null);
             publishQuickUseSlot(index, null);
-            activeGrid().place(item, pos.row(), pos.col());
+            grid.place(item, pos.row(), pos.col());
         }
     }
 
@@ -2801,6 +2815,7 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
 
     private void drawMultiCellItems(DrawContext context) {
         BackpackGridPanel grid = activeGrid();
+        if (grid == null) return;
         for (var entry : grid.toGridEntries()) {
             InventoryItem item = entry.item();
             if (item.gridWidth() == 1 && item.gridHeight() == 1) continue;
@@ -2938,7 +2953,7 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
         if (dragState.isDragging()) { tooltipPanel.setHoveredItem(dragState.draggedItem()); return; }
         InventoryItem hovered = null;
         BackpackGridPanel grid = activeGrid();
-        if (grid.containsPoint(mx, my)) {
+        if (grid != null && grid.containsPoint(mx, my)) {
             var pos = grid.screenToGrid(mx, my);
             if (pos != null) hovered = grid.itemAt(pos.row(), pos.col());
         }
