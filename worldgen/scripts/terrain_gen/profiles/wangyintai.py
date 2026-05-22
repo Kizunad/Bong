@@ -52,6 +52,8 @@ class WangyintaiGenerator(TerrainProfileGenerator):
     extra_layers = (
         "qi_density",
         "mofa_decay",
+        "flora_density",
+        "flora_variant_id",
     )
     ecology = EcologySpec(
         decorations=WANGYINTAI_DECORATIONS,
@@ -68,6 +70,7 @@ class WangyintaiGenerator(TerrainProfileGenerator):
             "mofa_decay elevated (~0.55) from millennium of vortex erosion.",
             "surface: smooth_basalt / deepslate / calcite / gray_concrete.",
             "compound_flatten_radius=48 applied by stitcher for layout placement site.",
+            "flora_density uses local ids 1..2 (silent_rubble, cracked_disc_fragment).",
             "no water features. Architectural layout: wangyintai_compound.",
         )
 
@@ -91,6 +94,8 @@ def fill_wangyintai_tile(
             "boundary_weight",
             "qi_density",
             "mofa_decay",
+            "flora_density",
+            "flora_variant_id",
         ),
     )
 
@@ -153,6 +158,26 @@ def fill_wangyintai_tile(
     # mofa_decay: elevated from vortex erosion
     mofa_decay = np.where(interior, 0.55 + terrain_noise * 0.06, 0.35)
 
+    # Flora density / variant for density-spawned decorations
+    flora_density = np.zeros_like(height)
+    flora_variant = np.zeros_like(height, dtype=np.int32)
+
+    # Variant 1 = silent_rubble (more common, outer zone debris)
+    rubble_noise = fbm_2d(wx, wz, scale=110.0, octaves=3, seed=2240)
+    rubble_mask = interior & (rubble_noise > 0.0) & (radial > 0.25)
+    flora_variant = np.where(rubble_mask, 1, flora_variant)
+    flora_density = np.where(
+        rubble_mask, 0.40 + rubble_noise * 0.15, flora_density
+    )
+
+    # Variant 2 = cracked_disc_fragment (rarer, closer to center)
+    disc_noise = fbm_2d(wx, wz, scale=140.0, octaves=2, seed=2250)
+    disc_mask = interior & (disc_noise > 0.20) & (radial < 0.70)
+    flora_variant = np.where(disc_mask, 2, flora_variant)
+    flora_density = np.where(
+        disc_mask, np.maximum(flora_density, 0.28 + disc_noise * 0.10), flora_density
+    )
+
     # Feature mask
     feature_mask = np.clip(
         0.40 + (1.0 - np.minimum(radial, 1.0)) * 0.35 + np.abs(terrain_noise) * 0.15,
@@ -170,6 +195,10 @@ def fill_wangyintai_tile(
     buffer.layers["boundary_weight"] = np.zeros(area, dtype=np.float64)
     buffer.layers["qi_density"] = np.round(qi_density, 3).ravel()
     buffer.layers["mofa_decay"] = np.round(mofa_decay, 3).ravel()
+    buffer.layers["flora_density"] = np.round(
+        np.clip(flora_density, 0.0, 1.0), 3
+    ).ravel()
+    buffer.layers["flora_variant_id"] = flora_variant.ravel().astype(np.uint8)
 
     buffer.contributing_zones.append(zone.name)
     return buffer

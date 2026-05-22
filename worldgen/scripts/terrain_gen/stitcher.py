@@ -27,6 +27,7 @@ from .profiles.abyssal_maze import fill_abyssal_maze_tile
 from .profiles.ancient_battlefield import fill_ancient_battlefield_tile
 from .profiles.broken_peaks import fill_broken_peaks_tile
 from .profiles.cave_network import fill_cave_network_tile
+from .profiles.dan_zong_yi_yuan import fill_dan_zong_yi_yuan_tile
 from .profiles.jiu_zong_ruin import fill_jiu_zong_ruin_tile
 from .profiles.spawn_plain import fill_spawn_plain_tile
 from .profiles.pseudo_vein_oasis import fill_pseudo_vein_oasis_tile
@@ -39,6 +40,7 @@ from .profiles.tsy_daneng_crater import fill_tsy_daneng_crater_tile
 from .profiles.tsy_gaoshou_hermitage import fill_tsy_gaoshou_hermitage_tile
 from .profiles.tsy_zhanchang import fill_tsy_zhanchang_tile
 from .profiles.tsy_zongmen_ruin import fill_tsy_zongmen_ruin_tile
+from .profiles.wangyintai import fill_wangyintai_tile
 from .profiles.waste_plateau import fill_waste_plateau_tile
 from .profiles.wilderness import build_wilderness_base_plan, fill_wilderness_tile
 
@@ -530,6 +532,10 @@ def _build_zone_overlay_tile(
         buffer = fill_tsy_zhanchang_tile(zone, tile, tile_size, palette)
     elif profile == "tsy_gaoshou_hermitage":
         buffer = fill_tsy_gaoshou_hermitage_tile(zone, tile, tile_size, palette)
+    elif profile == "dan_zong_yi_yuan":
+        buffer = fill_dan_zong_yi_yuan_tile(zone, tile, tile_size, palette)
+    elif profile == "wangyintai":
+        buffer = fill_wangyintai_tile(zone, tile, tile_size, palette)
     else:
         return None
     if buffer is not None:
