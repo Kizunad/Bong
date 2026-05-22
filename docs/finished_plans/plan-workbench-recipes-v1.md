@@ -81,12 +81,12 @@
 
 | 阶段 | 内容 | 状态 |
 |---|---|---|
-| **P0** ⬜ | 制作台方块定义 + bbmodel 模型 + 服务端方块交互 | — |
-| **P1** ⬜ | 100 配方 + 新增 ItemTemplate 补全（~80 新模板） | — |
-| **P2** ⬜ | Server 端 WorkbenchRecipe 注册 + CraftRegistry 扩展 + 100 配方注册 | — |
-| **P3** ⬜ | Client UI（WorkbenchScreen）+ bbmodel 渲染 + 音效/VFX 规格 | — |
-| **P4** ⬜ | 饱和测试（100 pin + 守恒律 + session + 物理推导 + e2e） | — |
-| **P5** ⬜ | e2e 集成 + 归档 | — |
+| **P0** ✅ 2026-05-22 | 制作台方块定义 + bbmodel 模型 + 服务端方块交互 | PR-1 #298, PR-2 #301, PR-3 #302 |
+| **P1** ✅ 2026-05-22 | 100 配方 + 新增 ItemTemplate 补全（~80 新模板） | PR-1 #298 |
+| **P2** ✅ 2026-05-22 | Server 端 WorkbenchRecipe 注册 + CraftRegistry 扩展 + 100 配方注册 | PR-2 #301 |
+| **P3** ✅ 2026-05-22 | Client UI（WorkbenchScreen）+ bbmodel 渲染 + 音效/VFX 规格 | PR-3 #302 |
+| **P4** ✅ 2026-05-22 | 饱和测试（100 pin + 守恒律 + session + 物理推导 + e2e） | PR-4 |
+| **P5** ✅ 2026-05-22 | e2e 集成 + 归档 | PR-4 |
 
 ---
 
@@ -762,3 +762,63 @@ PR-3（bbmodel + Client）包含视觉资产（Workbench.bbmodel、纹理、item
 ### §10.5 单次 consume-plan 全自动到 merge
 
 用户提交 `/consume-plan` 后即可下班。
+
+---
+
+## Finish Evidence
+
+### 落地清单
+
+| 阶段 | 模块/文件 |
+|------|-----------|
+| P0 | `server/src/craft/workbench.rs` — WorkbenchBlock component + is_within_workbench_range |
+| P0 | `local_models/Workbench.bbmodel` — Blockbench 源模型 |
+| P0 | `client/.../textures/block/workbench_{top,side,front,bottom}.png` — 4 张 16×16 纹理 |
+| P0 | `client/.../models/block/workbench.json` — MC JSON model |
+| P1 | `server/assets/items/workbench_materials.toml` — 80 个新 ItemTemplate |
+| P1 | `server/assets/items/minerals.toml` — 7 个矿物 ItemTemplate |
+| P1 | `server/assets/items/core.toml` — workbench_item 定义 |
+| P2 | `server/src/craft/recipe.rs` — CraftStationKind 枚举 + station 字段 |
+| P2 | `server/src/craft/workbench_recipes.rs` — 100 条制作台配方注册 |
+| P2 | `server/src/craft/session.rs` — start_craft station 校验 + StationOutOfRange |
+| P2 | `server/src/network/craft_emit.rs` — ECS WorkbenchBlock 距离查询 |
+| P3 | `client/.../craft/WorkbenchScreen.java` — 制作台 UI |
+| P3 | `client/.../craft/WorkbenchScreenBootstrap.java` — payload 路由注册 |
+| P3 | `client/.../craft/WorkbenchConstants.java` — 7 SFX + 3 VFX 常量 |
+| P3 | `client/.../blockstates/crafting_table.json` — blockstate 替换 |
+| P4 | `server/src/craft/workbench_recipes.rs` tests — 100 pin + physics spot-check |
+
+### 关键 commit
+
+| Hash | 日期 | 描述 |
+|------|------|------|
+| 8d701c71e | 2026-05-21 | PR-1: 数据层——制作台 + 88 ItemTemplate (#298) |
+| cc89a2533 | 2026-05-21 | PR-2: Server 逻辑层——station 字段 + 100 配方 + session 校验 (#301) |
+| 53ebf3ce8 | 2026-05-22 | PR-3: Client UI + bbmodel + 视觉资产 (#302) |
+| 96dd8e3d0 | 2026-05-22 | PR-4: P4 饱和测试 |
+
+### 测试结果
+
+```
+cd server && cargo test
+test result: ok. 5988 passed; 0 failed; 0 ignored
+
+cd client && ./gradlew test build
+BUILD SUCCESSFUL (WorkbenchScreenTest 14 cases + WorkbenchConstantsTest 18 cases)
+```
+
+### 跨仓库核验
+
+| 层 | Symbol | 命中数 |
+|----|--------|--------|
+| server | `WorkbenchBlock` | 8 |
+| server | `CraftStationKind` | 19 |
+| client | `WorkbenchScreen` | 26 |
+
+### 遗留 / 后续
+
+- item icon 图标生成（需 `/gen-image item` skill，不在代码 PR 范围）
+- 实际音效资产（.ogg）录制（SFX ID 已定义在 WorkbenchConstants）
+- VFX 粒子渲染 system 实装（参数已定义，渲染逻辑待 plan-vfx-v1）
+- 制作台被拆除中途取消 session 的完整 Bevy system（依赖 ChunkLayer/BlockState API）
+- agent 层 `bong:craft/outcome` 增加 `station: "workbench"` 字段（当前 Agent IPC 已有 craft outcome，字段扩展待 agent plan）
