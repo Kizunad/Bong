@@ -1843,9 +1843,9 @@ mod tests {
                 );
             }
         }
-        assert!(
-            qi_recipe_count >= 5,
-            "expected at least 5 recipes with qi_cost > 0, got {qi_recipe_count}"
+        assert_eq!(
+            qi_recipe_count, 18,
+            "expected exactly 18 recipes with qi_cost > 0 (pin count to detect accidental removal/addition)"
         );
     }
 }
