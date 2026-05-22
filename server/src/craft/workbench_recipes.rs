@@ -1613,4 +1613,239 @@ mod tests {
             }
         }
     }
+
+    #[test]
+    fn all_100_workbench_recipes_individual_pin() {
+        let mut registry = CraftRegistry::new();
+        register_workbench_recipes(&mut registry).unwrap();
+        let item_registry = crate::inventory::load_item_registry().expect("item registry loads");
+
+        let mut workbench_count = 0u32;
+        for recipe in registry.iter() {
+            if recipe.id.as_str() == "craft.tool.workbench" {
+                assert_eq!(
+                    recipe.station, None,
+                    "[{}] self recipe must be handcraft",
+                    recipe.id
+                );
+                continue;
+            }
+            workbench_count += 1;
+
+            assert_eq!(
+                recipe.station,
+                Some(CraftStationKind::Workbench),
+                "[{}] station must be Workbench",
+                recipe.id
+            );
+            assert!(
+                recipe.time_ticks > 0,
+                "[{}] time_ticks must be > 0, got {}",
+                recipe.id,
+                recipe.time_ticks
+            );
+            assert!(
+                recipe.qi_cost >= 0.0 && recipe.qi_cost.is_finite(),
+                "[{}] qi_cost must be finite non-negative, got {}",
+                recipe.id,
+                recipe.qi_cost
+            );
+            for (mat_id, count) in &recipe.materials {
+                assert!(
+                    item_registry.get(mat_id).is_some(),
+                    "[{}] material `{}` not found in item registry",
+                    recipe.id,
+                    mat_id
+                );
+                assert!(
+                    *count >= 1,
+                    "[{}] material `{}` count < 1",
+                    recipe.id,
+                    mat_id
+                );
+            }
+            let (out_id, out_count) = &recipe.output;
+            assert!(
+                item_registry.get(out_id).is_some(),
+                "[{}] output `{}` not found in item registry",
+                recipe.id,
+                out_id
+            );
+            assert!(*out_count >= 1, "[{}] output count < 1", recipe.id);
+
+            let input_sq: f64 = recipe
+                .materials
+                .iter()
+                .filter_map(|(tid, c)| {
+                    item_registry
+                        .get(tid)
+                        .map(|t| t.spirit_quality_initial * *c as f64)
+                })
+                .sum();
+            let total_input = input_sq + recipe.qi_cost;
+            let output_sq = item_registry
+                .get(out_id)
+                .map(|t| t.spirit_quality_initial * *out_count as f64)
+                .unwrap_or(0.0);
+            if output_sq > 0.0 && total_input > 0.0 {
+                assert!(
+                    output_sq <= total_input * 0.95 + 1e-9,
+                    "[{}] conservation violated: out_sq={:.3} > in_sq={:.3} × 0.95 = {:.3}",
+                    recipe.id,
+                    output_sq,
+                    total_input,
+                    total_input * 0.95
+                );
+            }
+        }
+        assert_eq!(
+            workbench_count, 100,
+            "expected exactly 100 workbench recipes"
+        );
+    }
+
+    #[test]
+    fn workbench_physics_derivation_spot_check() {
+        let mut registry = CraftRegistry::new();
+        register_workbench_recipes(&mut registry).unwrap();
+
+        #[allow(clippy::type_complexity)]
+        let spot_checks: Vec<(&str, Vec<(&str, u32)>, f64, u64, (&str, u32))> = vec![
+            // #22 灵木炭: spirit_wood×2 → spirit_charcoal×3, qi=0, time=60s
+            (
+                "workbench.process.spirit_charcoal",
+                vec![("spirit_wood", 2)],
+                0.0,
+                60 * 20,
+                ("spirit_charcoal", 3),
+            ),
+            // #27 灵草束: spirit_grass×5 → herb_bundle×1, qi=0, time=10s
+            (
+                "workbench.process.herb_bundle",
+                vec![("spirit_grass", 5)],
+                0.0,
+                10 * 20,
+                ("herb_bundle", 1),
+            ),
+            // #32 密封药瓶: herb_vial×1 + spider_silk_cord×1 → sealed_vial×1, qi=1.0
+            (
+                "workbench.container.sealed_vial",
+                vec![("herb_vial", 1), ("spider_silk_cord", 1)],
+                1.0,
+                25 * 20,
+                ("sealed_vial", 1),
+            ),
+            // #16 蛛丝绳: ash_spider_silk×4 → spider_silk_cord×1, qi=0
+            (
+                "workbench.process.spider_cord",
+                vec![("ash_spider_silk", 4)],
+                0.0,
+                30 * 20,
+                ("spider_silk_cord", 1),
+            ),
+            // #17 粗布: ash_spider_silk×5 → rough_cloth×1, qi=0
+            (
+                "workbench.process.rough_cloth",
+                vec![("ash_spider_silk", 5)],
+                0.0,
+                45 * 20,
+                ("rough_cloth", 1),
+            ),
+            // #18 熟皮: raw_beast_hide×1 + hui_jin_tai×1 → tanned_hide×1, qi=0
+            (
+                "workbench.process.tanned_hide",
+                vec![("raw_beast_hide", 1), ("hui_jin_tai", 1)],
+                0.0,
+                60 * 20,
+                ("tanned_hide", 1),
+            ),
+            // #19 骨片: shu_gu×1 → bone_chip_mat×4, qi=0
+            (
+                "workbench.process.bone_chip",
+                vec![("shu_gu", 1)],
+                0.0,
+                10 * 20,
+                ("bone_chip_mat", 4),
+            ),
+            // #24 鼠尾油: rat_tail×3 → rat_tail_oil×1, qi=0
+            (
+                "workbench.process.rat_tail_oil",
+                vec![("rat_tail", 3)],
+                0.0,
+                45 * 20,
+                ("rat_tail_oil", 1),
+            ),
+            // #25 盐蓬晶: bai_yan_peng×3 → salt_crystal×1, qi=0
+            (
+                "workbench.process.salt_crystal",
+                vec![("bai_yan_peng", 3)],
+                0.0,
+                35 * 20,
+                ("salt_crystal", 1),
+            ),
+            // #21 粗铁锭: cu_tie×2 → iron_ingot×1, qi=0
+            (
+                "workbench.process.iron_ingot",
+                vec![("cu_tie", 2)],
+                0.0,
+                50 * 20,
+                ("iron_ingot", 1),
+            ),
+        ];
+
+        for (id, expected_mats, expected_qi, expected_ticks, expected_output) in &spot_checks {
+            let recipe = registry
+                .get(&RecipeId::new(*id))
+                .unwrap_or_else(|| panic!("[spot-check] recipe `{id}` not found"));
+
+            let actual_mats: Vec<(&str, u32)> = recipe
+                .materials
+                .iter()
+                .map(|(t, c)| (t.as_str(), *c))
+                .collect();
+            assert_eq!(actual_mats, *expected_mats, "[{id}] materials mismatch");
+            assert!(
+                (recipe.qi_cost - expected_qi).abs() < 1e-9,
+                "[{id}] qi_cost: expected {expected_qi}, got {}",
+                recipe.qi_cost
+            );
+            assert_eq!(
+                recipe.time_ticks, *expected_ticks,
+                "[{id}] time_ticks mismatch"
+            );
+            assert_eq!(
+                recipe.output,
+                (expected_output.0.into(), expected_output.1),
+                "[{id}] output mismatch"
+            );
+        }
+    }
+
+    #[test]
+    fn all_qi_cost_positive_recipes_have_finite_cost() {
+        let mut registry = CraftRegistry::new();
+        register_workbench_recipes(&mut registry).unwrap();
+        let mut qi_recipe_count = 0u32;
+        for recipe in registry.iter() {
+            if recipe.qi_cost > 0.0 {
+                qi_recipe_count += 1;
+                assert!(
+                    recipe.qi_cost.is_finite(),
+                    "[{}] qi_cost must be finite, got {}",
+                    recipe.id,
+                    recipe.qi_cost
+                );
+                assert!(
+                    recipe.qi_cost > 0.0,
+                    "[{}] qi_cost flagged positive but is {}",
+                    recipe.id,
+                    recipe.qi_cost
+                );
+            }
+        }
+        assert!(
+            qi_recipe_count >= 5,
+            "expected at least 5 recipes with qi_cost > 0, got {qi_recipe_count}"
+        );
+    }
 }
