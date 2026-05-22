@@ -100,6 +100,7 @@ fn init_tracing() {
 }
 
 fn main() {
+    let _ = dotenvy::dotenv();
     init_tracing();
 
     if let Err(code) = run_cli(std::env::args()) {
