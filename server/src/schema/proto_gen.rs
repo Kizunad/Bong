@@ -211,7 +211,7 @@ mod tests {
                     cracks_count: 2,
                 },
             ],
-            target_meridian: Some(5), // Heart
+            target_meridian: Some(MeridianId::Heart as i32),
         };
         let envelope = ServerDataEnvelope {
             payload: Some(server_data_envelope::Payload::CultivationDetail(detail)),
@@ -230,7 +230,13 @@ mod tests {
                 );
                 assert!(d.meridians[0].opened, "Lung 应已打通");
                 assert!(!d.meridians[1].opened, "Heart 应未打通");
-                assert_eq!(d.target_meridian, Some(5), "target_meridian 不匹配");
+                assert_eq!(
+                    d.target_meridian,
+                    Some(MeridianId::Heart as i32),
+                    "target_meridian 应为 Heart ({})，实际是 {:?}",
+                    MeridianId::Heart as i32,
+                    d.target_meridian
+                );
             }
             other => panic!("期望 CultivationDetail payload，实际是 {other:?}"),
         }
@@ -404,5 +410,56 @@ mod tests {
         let bytes = slot.encode_to_vec();
         let decoded = ItemSlot::decode(bytes.as_slice()).unwrap();
         assert_eq!(decoded.forge_color, Some(999), "未知 enum 值应保留原始 i32");
+    }
+
+    // ─── 错误分支 / malformed decode 测试 ────────────────────────
+
+    #[test]
+    fn server_data_envelope_rejects_malformed_bytes() {
+        let bad = vec![0x0a, 0xff, 0xff, 0xff];
+        let result = ServerDataEnvelope::decode(bad.as_slice());
+        assert!(
+            result.is_err(),
+            "truncated/malformed bytes 应导致 decode 失败，实际成功: {result:?}"
+        );
+    }
+
+    #[test]
+    fn client_request_envelope_rejects_malformed_bytes() {
+        let bad = vec![0x0a, 0xff, 0xff, 0xff];
+        let result = ClientRequestEnvelope::decode(bad.as_slice());
+        assert!(
+            result.is_err(),
+            "truncated/malformed bytes 应导致 decode 失败，实际成功: {result:?}"
+        );
+    }
+
+    #[test]
+    fn item_slot_rejects_truncated_bytes() {
+        let valid = ItemSlot {
+            slot_index: 1,
+            template_id: "sword".to_string(),
+            count: 1,
+            forge_color: None,
+            durability: None,
+        };
+        let mut bytes = valid.encode_to_vec();
+        bytes.truncate(bytes.len() / 2);
+        let result = ItemSlot::decode(bytes.as_slice());
+        assert!(
+            result.is_err(),
+            "截断后的 ItemSlot bytes 应导致 decode 失败，实际成功: {result:?}"
+        );
+    }
+
+    #[test]
+    fn narration_batch_rejects_truncated_length_delimited() {
+        // length-delimited field 声明 100 字节但实际只有 2 字节
+        let bad = vec![0x0a, 0x64, 0x0a, 0x02];
+        let result = NarrationBatch::decode(bad.as_slice());
+        assert!(
+            result.is_err(),
+            "截断的 length-delimited field 应导致 decode 失败，实际成功: {result:?}"
+        );
     }
 }

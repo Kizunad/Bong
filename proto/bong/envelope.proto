@@ -90,7 +90,7 @@ message MeridianState {
 message CultivationDetail {
   Realm                   realm     = 1;
   repeated MeridianState  meridians = 2;
-  optional uint32         target_meridian = 3;
+  optional MeridianId     target_meridian = 3;
 }
 
 // ─── C2S payloads ──────────────────────────────────────────────
