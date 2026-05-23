@@ -1,7 +1,8 @@
 // Server↔Client IPC 信封 — 替代现有 JSON tagged union。
 //
 // P0 阶段只放少量占位 message 证明 codegen pipeline 跑通。
-// 完整的 106 S2C + 88 C2S payload 在 P1/P2 阶段逐步填充。
+// P1 阶段补齐 10 个高频 payload 的完整 proto 定义。
+// 完整的 106 S2C + 88 C2S payload 在 P2/P3 阶段逐步填充。
 syntax = "proto3";
 
 package bong;
@@ -12,13 +13,17 @@ import "bong/common.proto";
 
 message ServerDataEnvelope {
   oneof payload {
-    Welcome          welcome           = 1;
-    Heartbeat        heartbeat         = 2;
-    NarrationBatch   narration         = 3;
-    ZoneInfo         zone_info         = 4;
-    PlayerState      player_state      = 5;
+    Welcome           welcome            = 1;
+    Heartbeat         heartbeat          = 2;
+    NarrationBatch    narration          = 3;
+    ZoneInfo          zone_info          = 4;
+    PlayerState       player_state       = 5;
     CultivationDetail cultivation_detail = 6;
-    // P1/P2 阶段继续追加 field 7..N。
+    SkillXpGain       skill_xp_gain      = 7;
+    InventorySnapshot inventory_snapshot = 8;
+    CombatHudState    combat_hud_state   = 9;
+    KnockbackSync     knockback_sync     = 10;
+    // P2/P3 阶段继续追加 field 11..N。
     // 字段编号一旦分配永不复用（buf breaking 检测保证）。
   }
 }
@@ -29,54 +34,146 @@ message ClientRequestEnvelope {
   oneof payload {
     SetMeridianTarget   set_meridian_target   = 1;
     BreakthroughRequest breakthrough_request  = 2;
-    // P1/P2 阶段继续追加。
+    // P2/P3 阶段继续追加。
   }
 }
 
 // ═══════════════════════════════════════════════════════════════
-// 以下为占位 message 定义（P0 验证 codegen pipeline，非最终形态）
+// S2C payload 定义
 // ═══════════════════════════════════════════════════════════════
 
-// ─── S2C payloads ──────────────────────────────────────────────
+// ─── 1. Welcome ────────────────────────────────────────────────
 
 message Welcome {
   string message = 1;
 }
 
+// ─── 2. Heartbeat ──────────────────────────────────────────────
+
 message Heartbeat {
   string message = 1;
 }
 
+// ─── 3. Narration ──────────────────────────────────────────────
+// 与 Rust Narration struct 精确对应：scope, target(optional), text, style, kind(optional)。
+
 message NarrationEntry {
-  string text  = 1;
-  string scope = 2; // broadcast / zone / player
-  string style = 3; // perception / narrative / dialogue
+  string text            = 1;
+  string scope           = 2; // broadcast / zone / player
+  string style           = 3; // system_warning / perception / narration / era_decree / political_jianghu
+  optional string target = 4; // 非 broadcast 时必填
+  optional string kind   = 5; // death_insight / niche_intrusion / ...
 }
 
 message NarrationBatch {
   repeated NarrationEntry narrations = 1;
 }
 
+// ─── 4. ZoneInfo ───────────────────────────────────────────────
+// 与 Rust ServerDataPayloadV1::ZoneInfo 精确对应。
+
 message ZoneInfo {
-  string zone       = 1;
-  double spirit_qi   = 2;
-  uint32 danger_level = 3;
-  string status      = 4;
+  string zone                    = 1;
+  double spirit_qi               = 2;
+  uint32 danger_level            = 3; // Rust u8，proto uint32 安全包含
+  string status                  = 4; // Normal / RaceOut / Collapsed
   repeated string active_events  = 5;
   optional string perception_text = 6;
 }
 
-message PlayerState {
-  optional string player        = 1;
-  Realm           realm         = 2;
-  double          spirit_qi     = 3;
-  double          karma         = 4;
-  double          composite_power = 5;
-  string          zone          = 6;
-  optional float  local_neg_pressure = 7;
+// ─── 5. PlayerState ────────────────────────────────────────────
+// 与 Rust ServerDataPayloadV1::PlayerState 精确对应。
+// breakdown / season_state / social 作为嵌套 message。
+
+message PlayerPowerBreakdown {
+  double combat    = 1;
+  double wealth    = 2;
+  double social    = 3;
+  double karma     = 4;
+  double territory = 5;
 }
 
-// 经脉状态：替代并行数组，每条经脉一个 message（plan §8.1 #5 决议）。
+// 与 Rust SeasonStateV1 精确对应。
+enum Season {
+  SEASON_UNSPECIFIED      = 0;
+  SEASON_SUMMER           = 1;
+  SEASON_SUMMER_TO_WINTER = 2;
+  SEASON_WINTER           = 3;
+  SEASON_WINTER_TO_SUMMER = 4;
+}
+
+message SeasonState {
+  Season season            = 1;
+  uint64 tick_into_phase   = 2;
+  uint64 phase_total_ticks = 3;
+  uint64 year_index        = 4;
+}
+
+// 与 Rust PlayerSocialSnapshotV1 精确对应。
+// 嵌套 RenownSnapshot + RelationshipSnapshot + FactionMembershipSnapshot。
+
+message RenownTag {
+  string tag            = 1;
+  double weight         = 2;
+  uint64 last_seen_tick = 3;
+  bool   permanent      = 4;
+}
+
+message RenownSnapshot {
+  int32           fame      = 1;
+  int32           notoriety = 2;
+  repeated RenownTag top_tags = 3;
+}
+
+enum RelationshipKind {
+  RELATIONSHIP_KIND_UNSPECIFIED = 0;
+  RELATIONSHIP_KIND_MASTER     = 1;
+  RELATIONSHIP_KIND_DISCIPLE   = 2;
+  RELATIONSHIP_KIND_COMPANION  = 3;
+  RELATIONSHIP_KIND_PACT       = 4;
+  RELATIONSHIP_KIND_FEUD       = 5;
+}
+
+message RelationshipSnapshot {
+  RelationshipKind kind       = 1;
+  string           peer       = 2;
+  uint64           since_tick = 3;
+  string           metadata   = 4; // JSON string（Rust serde_json::Value）
+}
+
+message FactionMembershipSnapshot {
+  string           faction                = 1;
+  uint32           rank                   = 2; // Rust u8
+  int32            loyalty                = 3;
+  uint32           betrayal_count         = 4; // Rust u8
+  optional uint64  invite_block_until_tick = 5;
+  bool             permanently_refused    = 6;
+}
+
+message PlayerSocialSnapshot {
+  RenownSnapshot                   renown             = 1;
+  repeated RelationshipSnapshot    relationships      = 2;
+  uint32                           exposed_to_count   = 3;
+  optional FactionMembershipSnapshot faction_membership = 4;
+}
+
+message PlayerState {
+  optional string            player             = 1;
+  Realm                      realm              = 2;
+  double                     spirit_qi          = 3;
+  double                     karma              = 4;
+  double                     composite_power    = 5;
+  string                     zone               = 6;
+  optional float             local_neg_pressure = 7;
+  PlayerPowerBreakdown       breakdown          = 8;
+  optional SeasonState       season_state       = 9;
+  optional PlayerSocialSnapshot social          = 10;
+}
+
+// ─── 6. CultivationDetail ──────────────────────────────────────
+// 经脉状态：每条经脉一个 MeridianState message（plan §8.1 #5 决议）。
+// 额外字段与 Rust CultivationDetail variant 精确对应。
+
 message MeridianState {
   MeridianId id            = 1;
   bool       opened        = 2;
@@ -87,10 +184,188 @@ message MeridianState {
   uint32     cracks_count  = 7;
 }
 
+message LifespanPreview {
+  double years_lived           = 1;
+  uint32 cap_by_realm          = 2;
+  double remaining_years       = 3;
+  uint32 death_penalty_years   = 4;
+  double tick_rate_multiplier  = 5;
+  bool   is_wind_candle        = 6;
+}
+
+message SkillMilestoneSnapshot {
+  string skill       = 1;
+  uint32 new_lv      = 2; // Rust u8
+  uint64 achieved_at = 3;
+  string narration   = 4;
+  uint64 total_xp_at = 5;
+}
+
+message PracticeWeight {
+  ColorKind color  = 1;
+  double    weight = 2;
+  double    ratio  = 3;
+}
+
 message CultivationDetail {
-  Realm                   realm     = 1;
-  repeated MeridianState  meridians = 2;
-  optional MeridianId     target_meridian = 3;
+  Realm                          realm                             = 1;
+  repeated MeridianState         meridians                         = 2;
+  optional MeridianId            target_meridian                   = 3;
+  double                         contamination_total               = 4;
+  optional LifespanPreview       lifespan                          = 5;
+  string                         recent_skill_milestones_summary   = 6;
+  repeated SkillMilestoneSnapshot skill_milestones                 = 7;
+  ColorKind                      qi_color_main                     = 8;
+  optional ColorKind             qi_color_secondary                = 9;
+  bool                           qi_color_chaotic                  = 10;
+  bool                           qi_color_hunyuan                  = 11;
+  repeated PracticeWeight        practice_weights                  = 12;
+}
+
+// ─── 7. SkillXpGain ────────────────────────────────────────────
+// 与 Rust SkillXpGainPayloadV1 精确对应。
+// XpGainSource 是 tagged union → proto oneof。
+
+message XpGainSourceAction {
+  string plan_id = 1;
+  string action  = 2;
+}
+
+message XpGainSourceScroll {
+  string scroll_id = 1;
+  uint32 xp_grant  = 2;
+}
+
+message XpGainSourceMentor {
+  uint64 mentor_char = 1;
+}
+
+message SkillXpGain {
+  uint64 char_id = 1;
+  SkillId skill  = 2;
+  uint32 amount  = 3;
+  oneof source {
+    XpGainSourceAction  action_source       = 4;
+    XpGainSourceScroll  scroll_source       = 5;
+    XpGainSourceMentor  mentor_source       = 7;
+  }
+  // realm_breakthrough 变体无额外字段，单独 bool 标记存在性。
+  bool source_realm_breakthrough = 6;
+}
+
+// ─── 8. InventorySnapshot ──────────────────────────────────────
+// 与 Rust InventorySnapshotV1 精确对应。重型嵌套。
+// 使用 common.proto 的 ItemSlot 做轻量引用；
+// InventoryItemView 是完整物品视图（对应 Rust InventoryItemViewV1）。
+
+message InventoryItemView {
+  uint64           instance_id        = 1;
+  string           item_id            = 2;
+  string           display_name       = 3;
+  uint32           grid_width         = 4;  // Rust u8
+  uint32           grid_height        = 5;  // Rust u8
+  double           weight             = 6;
+  string           rarity             = 7;  // common/uncommon/rare/epic/legendary/ancient
+  string           description        = 8;
+  uint64           stack_count        = 9;
+  double           spirit_quality     = 10;
+  double           durability         = 11;
+  optional string  mineral_id         = 12;
+  optional string  scroll_kind        = 13;
+  optional string  scroll_skill_id    = 14;
+  optional uint32  scroll_xp_grant    = 15;
+  optional uint32  charges            = 16;
+  optional float   forge_quality      = 17;
+  optional ColorKind forge_color      = 18;
+  repeated string  forge_side_effects = 19;
+  optional uint32  forge_achieved_tier = 20;
+}
+
+message ContainerSnapshot {
+  string id   = 1;
+  string name = 2;
+  uint32 rows = 3; // Rust u8
+  uint32 cols = 4; // Rust u8
+}
+
+message PlacedInventoryItem {
+  string            container_id = 1;
+  uint64            row          = 2;
+  uint64            col          = 3;
+  InventoryItemView item         = 4;
+}
+
+message EquippedInventorySnapshot {
+  optional InventoryItemView head           = 1;
+  optional InventoryItemView chest          = 2;
+  optional InventoryItemView legs           = 3;
+  optional InventoryItemView feet           = 4;
+  optional InventoryItemView false_skin     = 5;
+  optional InventoryItemView main_hand      = 6;
+  optional InventoryItemView off_hand       = 7;
+  optional InventoryItemView two_hand       = 8;
+  optional InventoryItemView treasure_belt_0 = 9;
+  optional InventoryItemView treasure_belt_1 = 10;
+  optional InventoryItemView treasure_belt_2 = 11;
+  optional InventoryItemView treasure_belt_3 = 12;
+  optional InventoryItemView back_pack      = 13;
+  optional InventoryItemView waist_pouch    = 14;
+  optional InventoryItemView chest_satchel  = 15;
+  optional InventoryItemView extra_hand_0   = 16;
+  optional InventoryItemView extra_hand_1   = 17;
+}
+
+message InventoryWeight {
+  double current = 1;
+  double max     = 2;
+}
+
+// hotbar 槽用 wrapper 表达 optional（proto3 repeated 不支持 optional element）。
+message HotbarSlot {
+  optional InventoryItemView item = 1;
+}
+
+message InventorySnapshot {
+  uint64                      revision    = 1;
+  repeated ContainerSnapshot  containers  = 2;
+  repeated PlacedInventoryItem placed_items = 3;
+  EquippedInventorySnapshot   equipped    = 4;
+  repeated HotbarSlot         hotbar      = 5; // 固定 9 槽
+  uint64                      bone_coins  = 6;
+  InventoryWeight             weight      = 7;
+  string                      realm       = 8;
+  double                      qi_current  = 9;
+  double                      qi_max      = 10;
+  double                      body_level  = 11;
+}
+
+// ─── 9. CombatHudState ─────────────────────────────────────────
+// 与 Rust CombatHudStateV1 精确对应。高频推送，尽量紧凑。
+
+message DerivedAttrFlags {
+  bool flying              = 1;
+  bool phasing             = 2;
+  bool tribulation_locked  = 3;
+}
+
+message CombatHudState {
+  float          hp_percent      = 1;
+  float          qi_percent      = 2;
+  float          stamina_percent = 3;
+  DerivedAttrFlags derived       = 4;
+}
+
+// ─── 10. KnockbackSync ────────────────────────────────────────
+// 与 Rust KnockbackSyncV1 精确对应。含 optional collision_damage。
+
+message KnockbackSync {
+  double         distance_blocks            = 1;
+  double         velocity_blocks_per_tick   = 2;
+  uint32         duration_ticks             = 3;
+  double         kinetic_energy             = 4;
+  optional float collision_damage           = 5;
+  uint32         chain_depth                = 6; // Rust u8
+  bool           block_broken               = 7;
 }
 
 // ─── C2S payloads ──────────────────────────────────────────────

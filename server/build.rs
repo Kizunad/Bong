@@ -6,14 +6,13 @@
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let proto_root = std::path::Path::new("../proto");
 
-    prost_build::Config::new()
-        .compile_protos(
-            &[
-                proto_root.join("bong/common.proto"),
-                proto_root.join("bong/envelope.proto"),
-            ],
-            &[proto_root],
-        )?;
+    prost_build::Config::new().compile_protos(
+        &[
+            proto_root.join("bong/common.proto"),
+            proto_root.join("bong/envelope.proto"),
+        ],
+        &[proto_root],
+    )?;
 
     // 当 proto 文件变化时触发重新编译。
     println!("cargo::rerun-if-changed=../proto/bong/common.proto");
