@@ -657,15 +657,25 @@ mod tests {
                 territory: 5.0,
             }),
             season_state: Some(SeasonState {
-                season_name: "spring".to_string(),
-                day_in_season: 15,
-                total_days: 90,
-                qi_multiplier: 1.2,
+                season: Season::Summer as i32,
+                tick_into_phase: 1500,
+                phase_total_ticks: 72000,
+                year_index: 3,
             }),
             social: Some(PlayerSocialSnapshot {
-                fame: 100,
-                notoriety: -5,
-                reputation_tag: "righteous".to_string(),
+                renown: Some(RenownSnapshot {
+                    fame: 100,
+                    notoriety: -5,
+                    top_tags: vec![RenownTag {
+                        tag: "righteous".to_string(),
+                        weight: 0.8,
+                        last_seen_tick: 5000,
+                        permanent: false,
+                    }],
+                }),
+                relationships: vec![],
+                exposed_to_count: 3,
+                faction_membership: None,
             }),
         };
         let bytes = state.encode_to_vec();
@@ -677,11 +687,15 @@ mod tests {
         assert_eq!(bd.combat, 50.0, "breakdown.combat 不匹配");
         assert_eq!(bd.territory, 5.0, "breakdown.territory 不匹配");
         let ss = decoded.season_state.expect("season_state 应存在");
-        assert_eq!(ss.season_name, "spring");
-        assert_eq!(ss.day_in_season, 15);
+        assert_eq!(ss.season, Season::Summer as i32, "season 应为 Summer");
+        assert_eq!(ss.tick_into_phase, 1500, "tick_into_phase 不匹配");
+        assert_eq!(ss.year_index, 3, "year_index 不匹配");
         let soc = decoded.social.expect("social 应存在");
-        assert_eq!(soc.fame, 100);
-        assert_eq!(soc.notoriety, -5);
+        let renown = soc.renown.expect("renown 应存在");
+        assert_eq!(renown.fame, 100, "fame 不匹配");
+        assert_eq!(renown.notoriety, -5, "notoriety 不匹配");
+        assert_eq!(renown.top_tags.len(), 1, "top_tags 应有 1 条");
+        assert_eq!(soc.exposed_to_count, 3, "exposed_to_count 不匹配");
     }
 
     #[test]

@@ -93,17 +93,68 @@ message PlayerPowerBreakdown {
   double territory = 5;
 }
 
+// 与 Rust SeasonStateV1 精确对应。
+enum Season {
+  SEASON_UNSPECIFIED      = 0;
+  SEASON_SUMMER           = 1;
+  SEASON_SUMMER_TO_WINTER = 2;
+  SEASON_WINTER           = 3;
+  SEASON_WINTER_TO_SUMMER = 4;
+}
+
 message SeasonState {
-  string season_name     = 1;
-  uint32 day_in_season   = 2;
-  uint32 total_days      = 3;
-  double qi_multiplier   = 4;
+  Season season            = 1;
+  uint64 tick_into_phase   = 2;
+  uint64 phase_total_ticks = 3;
+  uint64 year_index        = 4;
+}
+
+// 与 Rust PlayerSocialSnapshotV1 精确对应。
+// 嵌套 RenownSnapshot + RelationshipSnapshot + FactionMembershipSnapshot。
+
+message RenownTag {
+  string tag            = 1;
+  double weight         = 2;
+  uint64 last_seen_tick = 3;
+  bool   permanent      = 4;
+}
+
+message RenownSnapshot {
+  int32           fame      = 1;
+  int32           notoriety = 2;
+  repeated RenownTag top_tags = 3;
+}
+
+enum RelationshipKind {
+  RELATIONSHIP_KIND_UNSPECIFIED = 0;
+  RELATIONSHIP_KIND_MASTER     = 1;
+  RELATIONSHIP_KIND_DISCIPLE   = 2;
+  RELATIONSHIP_KIND_COMPANION  = 3;
+  RELATIONSHIP_KIND_PACT       = 4;
+  RELATIONSHIP_KIND_FEUD       = 5;
+}
+
+message RelationshipSnapshot {
+  RelationshipKind kind       = 1;
+  string           peer       = 2;
+  uint64           since_tick = 3;
+  string           metadata   = 4; // JSON string（Rust serde_json::Value）
+}
+
+message FactionMembershipSnapshot {
+  string           faction                = 1;
+  uint32           rank                   = 2; // Rust u8
+  int32            loyalty                = 3;
+  uint32           betrayal_count         = 4; // Rust u8
+  optional uint64  invite_block_until_tick = 5;
+  bool             permanently_refused    = 6;
 }
 
 message PlayerSocialSnapshot {
-  int32  fame           = 1;
-  int32  notoriety      = 2;
-  string reputation_tag = 3;
+  RenownSnapshot                   renown             = 1;
+  repeated RelationshipSnapshot    relationships      = 2;
+  uint32                           exposed_to_count   = 3;
+  optional FactionMembershipSnapshot faction_membership = 4;
 }
 
 message PlayerState {
