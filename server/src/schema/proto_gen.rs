@@ -2351,6 +2351,39 @@ mod tests {
     }
 
     #[test]
+    fn forge_session_data_inscription_step_roundtrip() {
+        let msg = ForgeSessionData {
+            session_id: 50,
+            blueprint_id: "dao_v0".to_string(),
+            blueprint_name: "铸刀".to_string(),
+            active: true,
+            current_step: ForgeStep::Inscription as i32,
+            step_index: 2,
+            achieved_tier: 0,
+            step_state: Some(ForgeStepState {
+                state: Some(forge_step_state::State::Inscription(
+                    ForgeStepStateInscription {
+                        filled_slots: 3,
+                        max_slots: 5,
+                        failed: false,
+                    },
+                )),
+            }),
+        };
+        let bytes = msg.encode_to_vec();
+        let decoded = ForgeSessionData::decode(bytes.as_slice())
+            .expect("ForgeSessionData (inscription) decode 失败");
+        match decoded.step_state.unwrap().state.unwrap() {
+            forge_step_state::State::Inscription(i) => {
+                assert_eq!(i.filled_slots, 3, "filled_slots 应为 3");
+                assert_eq!(i.max_slots, 5, "max_slots 应为 5");
+                assert!(!i.failed, "failed 应为 false");
+            }
+            other => panic!("期望 Inscription，实际 {other:?}"),
+        }
+    }
+
+    #[test]
     fn forge_outcome_roundtrip() {
         let msg = ForgeOutcome {
             session_id: 1,
