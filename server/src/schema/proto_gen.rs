@@ -1732,6 +1732,1854 @@ mod tests {
         );
     }
 
+    // ═══════════════════════════════════════════════════════════════
+    // P2 B1 — 炼丹 roundtrip
+    // ═══════════════════════════════════════════════════════════════
+
+    #[test]
+    fn alchemy_furnace_roundtrip() {
+        let msg = AlchemyFurnace {
+            pos_x: Some(-12),
+            pos_y: Some(64),
+            pos_z: Some(38),
+            tier: 2,
+            integrity: 0.95,
+            integrity_max: 1.0,
+            owner_name: "Azure".to_string(),
+            has_session: true,
+        };
+        let bytes = msg.encode_to_vec();
+        let decoded = AlchemyFurnace::decode(bytes.as_slice())
+            .expect("AlchemyFurnace decode 失败");
+        assert_eq!(decoded.pos_x, Some(-12), "pos_x 应为 -12");
+        assert_eq!(decoded.pos_y, Some(64), "pos_y 应为 64");
+        assert_eq!(decoded.pos_z, Some(38), "pos_z 应为 38");
+        assert_eq!(decoded.tier, 2, "tier 应为 2");
+        assert!((decoded.integrity - 0.95).abs() < 1e-9, "integrity 应为 0.95");
+        assert!((decoded.integrity_max - 1.0).abs() < 1e-9, "integrity_max 应为 1.0");
+        assert_eq!(decoded.owner_name, "Azure");
+        assert!(decoded.has_session, "has_session 应为 true");
+    }
+
+    #[test]
+    fn alchemy_furnace_no_pos_roundtrip() {
+        let msg = AlchemyFurnace {
+            pos_x: None,
+            pos_y: None,
+            pos_z: None,
+            tier: 1,
+            integrity: 0.5,
+            integrity_max: 1.0,
+            owner_name: "".to_string(),
+            has_session: false,
+        };
+        let bytes = msg.encode_to_vec();
+        let decoded = AlchemyFurnace::decode(bytes.as_slice())
+            .expect("AlchemyFurnace (no pos) decode 失败");
+        assert!(decoded.pos_x.is_none(), "pos_x 应为 None");
+        assert!(decoded.pos_y.is_none(), "pos_y 应为 None");
+        assert!(decoded.pos_z.is_none(), "pos_z 应为 None");
+    }
+
+    #[test]
+    fn alchemy_session_roundtrip() {
+        let msg = AlchemySession {
+            recipe_id: Some("kai_mai_pill_v0".to_string()),
+            active: true,
+            elapsed_ticks: 80,
+            target_ticks: 200,
+            temp_current: 320.0,
+            temp_target: 350.0,
+            temp_band: 30.0,
+            qi_injected: 5.0,
+            qi_target: 10.0,
+            status_label: "heating".to_string(),
+            stages: vec![AlchemyStageHint {
+                at_tick: 80,
+                window: 20,
+                summary: "hui_yuan_zhi x1".to_string(),
+                completed: false,
+                missed: false,
+            }],
+            interventions_recent: vec!["inject_qi".to_string()],
+        };
+        let bytes = msg.encode_to_vec();
+        let decoded = AlchemySession::decode(bytes.as_slice())
+            .expect("AlchemySession decode 失败");
+        assert_eq!(decoded.recipe_id.as_deref(), Some("kai_mai_pill_v0"));
+        assert!(decoded.active);
+        assert_eq!(decoded.elapsed_ticks, 80);
+        assert_eq!(decoded.stages.len(), 1, "应有 1 个 stage hint");
+        assert_eq!(decoded.stages[0].at_tick, 80);
+        assert_eq!(decoded.interventions_recent.len(), 1);
+    }
+
+    #[test]
+    fn alchemy_session_empty_stages_roundtrip() {
+        let msg = AlchemySession {
+            recipe_id: None,
+            active: false,
+            elapsed_ticks: 0,
+            target_ticks: 0,
+            temp_current: 0.0,
+            temp_target: 0.0,
+            temp_band: 0.0,
+            qi_injected: 0.0,
+            qi_target: 0.0,
+            status_label: "".to_string(),
+            stages: vec![],
+            interventions_recent: vec![],
+        };
+        let bytes = msg.encode_to_vec();
+        let decoded = AlchemySession::decode(bytes.as_slice())
+            .expect("AlchemySession (empty) decode 失败");
+        assert!(decoded.recipe_id.is_none());
+        assert!(decoded.stages.is_empty());
+        assert!(decoded.interventions_recent.is_empty());
+    }
+
+    #[test]
+    fn alchemy_outcome_forecast_roundtrip() {
+        let msg = AlchemyOutcomeForecast {
+            perfect_pct: 0.1,
+            good_pct: 0.3,
+            flawed_pct: 0.3,
+            waste_pct: 0.2,
+            explode_pct: 0.1,
+            perfect_note: "温度精准".to_string(),
+            good_note: "偏差可控".to_string(),
+            flawed_note: "杂质较多".to_string(),
+        };
+        let bytes = msg.encode_to_vec();
+        let decoded = AlchemyOutcomeForecast::decode(bytes.as_slice())
+            .expect("AlchemyOutcomeForecast decode 失败");
+        assert!((decoded.perfect_pct - 0.1).abs() < 1e-9);
+        assert_eq!(decoded.perfect_note, "温度精准");
+    }
+
+    #[test]
+    fn alchemy_outcome_bucket_enum_pin() {
+        let expected = [
+            (AlchemyOutcomeBucket::Unspecified, 0),
+            (AlchemyOutcomeBucket::Perfect, 1),
+            (AlchemyOutcomeBucket::Good, 2),
+            (AlchemyOutcomeBucket::Flawed, 3),
+            (AlchemyOutcomeBucket::Waste, 4),
+            (AlchemyOutcomeBucket::Explode, 5),
+        ];
+        for (variant, wire) in expected {
+            assert_eq!(
+                variant as i32, wire,
+                "AlchemyOutcomeBucket::{:?} wire 值应为 {wire}",
+                variant
+            );
+        }
+    }
+
+    #[test]
+    fn alchemy_outcome_resolved_full_roundtrip() {
+        let msg = AlchemyOutcomeResolved {
+            bucket: AlchemyOutcomeBucket::Perfect as i32,
+            recipe_id: Some("kai_mai_pill_v0".to_string()),
+            pill: Some("kai_mai_pill".to_string()),
+            quality: Some(0.95),
+            toxin_amount: Some(0.02),
+            toxin_color: Some(ColorKind::Insidious as i32),
+            qi_gain: Some(5.0),
+            side_effect_tag: Some("minor_burn".to_string()),
+            flawed_path: false,
+            damage: None,
+            meridian_crack: None,
+        };
+        let bytes = msg.encode_to_vec();
+        let decoded = AlchemyOutcomeResolved::decode(bytes.as_slice())
+            .expect("AlchemyOutcomeResolved decode 失败");
+        assert_eq!(decoded.bucket, AlchemyOutcomeBucket::Perfect as i32);
+        assert_eq!(decoded.pill.as_deref(), Some("kai_mai_pill"));
+        assert_eq!(decoded.toxin_color, Some(ColorKind::Insidious as i32));
+        assert!(!decoded.flawed_path);
+        assert!(decoded.damage.is_none(), "damage 应为 None");
+        assert!(decoded.meridian_crack.is_none(), "meridian_crack 应为 None");
+    }
+
+    #[test]
+    fn alchemy_outcome_resolved_explode_with_damage_roundtrip() {
+        let msg = AlchemyOutcomeResolved {
+            bucket: AlchemyOutcomeBucket::Explode as i32,
+            recipe_id: None,
+            pill: None,
+            quality: None,
+            toxin_amount: None,
+            toxin_color: None,
+            qi_gain: None,
+            side_effect_tag: None,
+            flawed_path: true,
+            damage: Some(12.0),
+            meridian_crack: Some(0.3),
+        };
+        let bytes = msg.encode_to_vec();
+        let decoded = AlchemyOutcomeResolved::decode(bytes.as_slice())
+            .expect("AlchemyOutcomeResolved (explode) decode 失败");
+        assert_eq!(decoded.bucket, AlchemyOutcomeBucket::Explode as i32);
+        assert!(decoded.recipe_id.is_none());
+        assert!(decoded.flawed_path);
+        assert_eq!(decoded.damage, Some(12.0));
+        assert!((decoded.meridian_crack.unwrap() - 0.3).abs() < 1e-9);
+    }
+
+    #[test]
+    fn alchemy_recipe_book_roundtrip() {
+        let msg = AlchemyRecipeBook {
+            learned: vec![
+                AlchemyRecipeEntry {
+                    id: "kai_mai_pill_v0".to_string(),
+                    display_name: "开脉丹方".to_string(),
+                    body_text: "...".to_string(),
+                    author: "散修 刘三".to_string(),
+                    era: "末法 十二年".to_string(),
+                    max_known: 8,
+                },
+            ],
+            current_index: 0,
+        };
+        let bytes = msg.encode_to_vec();
+        let decoded = AlchemyRecipeBook::decode(bytes.as_slice())
+            .expect("AlchemyRecipeBook decode 失败");
+        assert_eq!(decoded.learned.len(), 1);
+        assert_eq!(decoded.learned[0].id, "kai_mai_pill_v0");
+        assert_eq!(decoded.learned[0].max_known, 8);
+        assert_eq!(decoded.current_index, 0);
+    }
+
+    #[test]
+    fn alchemy_recipe_book_empty_roundtrip() {
+        let msg = AlchemyRecipeBook {
+            learned: vec![],
+            current_index: 0,
+        };
+        let bytes = msg.encode_to_vec();
+        let decoded = AlchemyRecipeBook::decode(bytes.as_slice())
+            .expect("AlchemyRecipeBook (empty) decode 失败");
+        assert!(decoded.learned.is_empty());
+    }
+
+    #[test]
+    fn alchemy_contamination_roundtrip() {
+        let msg = AlchemyContamination {
+            levels: vec![AlchemyContaminationLevel {
+                color: ColorKind::Mellow as i32,
+                current: 0.18,
+                max: 0.6,
+                ok: true,
+            }],
+            metabolism_note: "代谢正常".to_string(),
+        };
+        let bytes = msg.encode_to_vec();
+        let decoded = AlchemyContamination::decode(bytes.as_slice())
+            .expect("AlchemyContamination decode 失败");
+        assert_eq!(decoded.levels.len(), 1);
+        assert_eq!(decoded.levels[0].color, ColorKind::Mellow as i32);
+        assert!(decoded.levels[0].ok);
+        assert_eq!(decoded.metabolism_note, "代谢正常");
+    }
+
+    // ─── 炼丹 C2S roundtrip ─────────────────────────────────────
+
+    #[test]
+    fn alchemy_open_furnace_roundtrip() {
+        let msg = AlchemyOpenFurnace {
+            furnace_pos_x: -12,
+            furnace_pos_y: 64,
+            furnace_pos_z: 38,
+        };
+        let bytes = msg.encode_to_vec();
+        let decoded = AlchemyOpenFurnace::decode(bytes.as_slice())
+            .expect("AlchemyOpenFurnace decode 失败");
+        assert_eq!(decoded.furnace_pos_x, -12);
+        assert_eq!(decoded.furnace_pos_y, 64);
+        assert_eq!(decoded.furnace_pos_z, 38);
+    }
+
+    #[test]
+    fn alchemy_feed_slot_roundtrip() {
+        let msg = AlchemyFeedSlot {
+            furnace_pos_x: -12,
+            furnace_pos_y: 64,
+            furnace_pos_z: 38,
+            slot_idx: 0,
+            material: "ci_she_hao".to_string(),
+            count: 3,
+        };
+        let bytes = msg.encode_to_vec();
+        let decoded = AlchemyFeedSlot::decode(bytes.as_slice())
+            .expect("AlchemyFeedSlot decode 失败");
+        assert_eq!(decoded.slot_idx, 0);
+        assert_eq!(decoded.material, "ci_she_hao");
+        assert_eq!(decoded.count, 3);
+    }
+
+    #[test]
+    fn alchemy_take_back_roundtrip() {
+        let msg = AlchemyTakeBack {
+            furnace_pos_x: -12,
+            furnace_pos_y: 64,
+            furnace_pos_z: 38,
+            slot_idx: 2,
+        };
+        let bytes = msg.encode_to_vec();
+        let decoded = AlchemyTakeBack::decode(bytes.as_slice())
+            .expect("AlchemyTakeBack decode 失败");
+        assert_eq!(decoded.slot_idx, 2);
+    }
+
+    #[test]
+    fn alchemy_ignite_roundtrip() {
+        let msg = AlchemyIgnite {
+            furnace_pos_x: -12,
+            furnace_pos_y: 64,
+            furnace_pos_z: 38,
+            recipe_id: "kai_mai_pill_v0".to_string(),
+        };
+        let bytes = msg.encode_to_vec();
+        let decoded = AlchemyIgnite::decode(bytes.as_slice())
+            .expect("AlchemyIgnite decode 失败");
+        assert_eq!(decoded.recipe_id, "kai_mai_pill_v0");
+    }
+
+    #[test]
+    fn alchemy_intervention_adjust_temp_roundtrip() {
+        let msg = AlchemyIntervention {
+            furnace_pos_x: -12,
+            furnace_pos_y: 64,
+            furnace_pos_z: 38,
+            intervention: Some(AlchemyInterventionProto {
+                kind: Some(alchemy_intervention_proto::Kind::AdjustTemp(0.6)),
+            }),
+        };
+        let bytes = msg.encode_to_vec();
+        let decoded = AlchemyIntervention::decode(bytes.as_slice())
+            .expect("AlchemyIntervention (adjust_temp) decode 失败");
+        match decoded.intervention.unwrap().kind.unwrap() {
+            alchemy_intervention_proto::Kind::AdjustTemp(t) => {
+                assert!((t - 0.6).abs() < 1e-9, "temp 应为 0.6，实际 {t}");
+            }
+            other => panic!("期望 AdjustTemp，实际 {other:?}"),
+        }
+    }
+
+    #[test]
+    fn alchemy_intervention_inject_qi_proto_roundtrip() {
+        let msg = AlchemyIntervention {
+            furnace_pos_x: 0,
+            furnace_pos_y: 0,
+            furnace_pos_z: 0,
+            intervention: Some(AlchemyInterventionProto {
+                kind: Some(alchemy_intervention_proto::Kind::InjectQi(1.5)),
+            }),
+        };
+        let bytes = msg.encode_to_vec();
+        let decoded = AlchemyIntervention::decode(bytes.as_slice())
+            .expect("AlchemyIntervention (inject_qi) decode 失败");
+        match decoded.intervention.unwrap().kind.unwrap() {
+            alchemy_intervention_proto::Kind::InjectQi(q) => {
+                assert!((q - 1.5).abs() < 1e-9, "qi 应为 1.5，实际 {q}");
+            }
+            other => panic!("期望 InjectQi，实际 {other:?}"),
+        }
+    }
+
+    #[test]
+    fn alchemy_intervention_auto_profile_proto_roundtrip() {
+        let msg = AlchemyIntervention {
+            furnace_pos_x: 0,
+            furnace_pos_y: 0,
+            furnace_pos_z: 0,
+            intervention: Some(AlchemyInterventionProto {
+                kind: Some(alchemy_intervention_proto::Kind::AutoProfileId(
+                    "kai_mai_safe".to_string(),
+                )),
+            }),
+        };
+        let bytes = msg.encode_to_vec();
+        let decoded = AlchemyIntervention::decode(bytes.as_slice())
+            .expect("AlchemyIntervention (auto_profile) decode 失败");
+        match decoded.intervention.unwrap().kind.unwrap() {
+            alchemy_intervention_proto::Kind::AutoProfileId(id) => {
+                assert_eq!(id, "kai_mai_safe");
+            }
+            other => panic!("期望 AutoProfileId，实际 {other:?}"),
+        }
+    }
+
+    #[test]
+    fn alchemy_turn_page_roundtrip() {
+        let msg = AlchemyTurnPage { delta: -1 };
+        let bytes = msg.encode_to_vec();
+        let decoded = AlchemyTurnPage::decode(bytes.as_slice())
+            .expect("AlchemyTurnPage decode 失败");
+        assert_eq!(decoded.delta, -1);
+    }
+
+    #[test]
+    fn alchemy_learn_recipe_roundtrip() {
+        let msg = AlchemyLearnRecipe {
+            recipe_id: "kai_mai_pill_v0".to_string(),
+        };
+        let bytes = msg.encode_to_vec();
+        let decoded = AlchemyLearnRecipe::decode(bytes.as_slice())
+            .expect("AlchemyLearnRecipe decode 失败");
+        assert_eq!(decoded.recipe_id, "kai_mai_pill_v0");
+    }
+
+    #[test]
+    fn alchemy_learn_recipe_fragment_roundtrip() {
+        let msg = AlchemyLearnRecipeFragment {
+            item_instance_id: 4242,
+        };
+        let bytes = msg.encode_to_vec();
+        let decoded = AlchemyLearnRecipeFragment::decode(bytes.as_slice())
+            .expect("AlchemyLearnRecipeFragment decode 失败");
+        assert_eq!(decoded.item_instance_id, 4242);
+    }
+
+    #[test]
+    fn alchemy_take_pill_roundtrip() {
+        let msg = AlchemyTakePill {
+            pill_item_id: "kai_mai_pill".to_string(),
+        };
+        let bytes = msg.encode_to_vec();
+        let decoded = AlchemyTakePill::decode(bytes.as_slice())
+            .expect("AlchemyTakePill decode 失败");
+        assert_eq!(decoded.pill_item_id, "kai_mai_pill");
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // P2 B1 — 锻造 roundtrip
+    // ═══════════════════════════════════════════════════════════════
+
+    #[test]
+    fn forge_station_roundtrip() {
+        let msg = ForgeStation {
+            station_id: "s1".to_string(),
+            tier: 1,
+            integrity: 0.95,
+            owner_name: "test".to_string(),
+            has_session: false,
+        };
+        let bytes = msg.encode_to_vec();
+        let decoded = ForgeStation::decode(bytes.as_slice())
+            .expect("ForgeStation decode 失败");
+        assert_eq!(decoded.station_id, "s1");
+        assert_eq!(decoded.tier, 1);
+        assert!(!decoded.has_session);
+    }
+
+    #[test]
+    fn forge_step_enum_pin() {
+        let expected = [
+            (ForgeStep::Unspecified, 0),
+            (ForgeStep::Billet, 1),
+            (ForgeStep::Tempering, 2),
+            (ForgeStep::Inscription, 3),
+            (ForgeStep::Consecration, 4),
+            (ForgeStep::Done, 5),
+        ];
+        for (variant, wire) in expected {
+            assert_eq!(variant as i32, wire, "ForgeStep::{variant:?} wire 值应为 {wire}");
+        }
+    }
+
+    #[test]
+    fn temper_beat_enum_pin() {
+        let expected = [
+            (TemperBeat::Unspecified, 0),
+            (TemperBeat::Light, 1),
+            (TemperBeat::Heavy, 2),
+            (TemperBeat::Fold, 3),
+        ];
+        for (variant, wire) in expected {
+            assert_eq!(variant as i32, wire, "TemperBeat::{variant:?} wire 值应为 {wire}");
+        }
+    }
+
+    #[test]
+    fn forge_outcome_bucket_enum_pin() {
+        let expected = [
+            (ForgeOutcomeBucket::Unspecified, 0),
+            (ForgeOutcomeBucket::Perfect, 1),
+            (ForgeOutcomeBucket::Good, 2),
+            (ForgeOutcomeBucket::Flawed, 3),
+            (ForgeOutcomeBucket::Waste, 4),
+            (ForgeOutcomeBucket::Explode, 5),
+        ];
+        for (variant, wire) in expected {
+            assert_eq!(variant as i32, wire, "ForgeOutcomeBucket::{variant:?} wire 值应为 {wire}");
+        }
+    }
+
+    #[test]
+    fn forge_session_data_billet_roundtrip() {
+        let msg = ForgeSessionData {
+            session_id: 42,
+            blueprint_id: "iron_sword_v0".to_string(),
+            blueprint_name: "铁剑".to_string(),
+            active: true,
+            current_step: ForgeStep::Billet as i32,
+            step_index: 0,
+            achieved_tier: 1,
+            step_state: Some(ForgeStepState {
+                state: Some(forge_step_state::State::Billet(ForgeStepStateBillet {
+                    materials_in: vec![ForgeMaterialPair {
+                        material: "iron_ingot".to_string(),
+                        count: 3,
+                    }],
+                    active_carrier: None,
+                    resolved_tier_cap: 1,
+                })),
+            }),
+        };
+        let bytes = msg.encode_to_vec();
+        let decoded = ForgeSessionData::decode(bytes.as_slice())
+            .expect("ForgeSessionData (billet) decode 失败");
+        assert_eq!(decoded.session_id, 42);
+        assert_eq!(decoded.blueprint_id, "iron_sword_v0");
+        assert_eq!(decoded.current_step, ForgeStep::Billet as i32);
+        match decoded.step_state.unwrap().state.unwrap() {
+            forge_step_state::State::Billet(b) => {
+                assert_eq!(b.materials_in.len(), 1);
+                assert_eq!(b.materials_in[0].material, "iron_ingot");
+                assert_eq!(b.materials_in[0].count, 3);
+                assert!(b.active_carrier.is_none());
+                assert_eq!(b.resolved_tier_cap, 1);
+            }
+            other => panic!("期望 Billet state，实际 {other:?}"),
+        }
+    }
+
+    #[test]
+    fn forge_session_data_tempering_roundtrip() {
+        let msg = ForgeSessionData {
+            session_id: 43,
+            blueprint_id: "qing_feng_v0".to_string(),
+            blueprint_name: "清风".to_string(),
+            active: true,
+            current_step: ForgeStep::Tempering as i32,
+            step_index: 1,
+            achieved_tier: 2,
+            step_state: Some(ForgeStepState {
+                state: Some(forge_step_state::State::Tempering(ForgeStepStateTempering {
+                    pattern: vec![
+                        TemperBeat::Light as i32,
+                        TemperBeat::Heavy as i32,
+                        TemperBeat::Fold as i32,
+                    ],
+                    beat_cursor: 0,
+                    hits: 0,
+                    misses: 0,
+                    deviation: 0,
+                    qi_spent: 0.0,
+                })),
+            }),
+        };
+        let bytes = msg.encode_to_vec();
+        let decoded = ForgeSessionData::decode(bytes.as_slice())
+            .expect("ForgeSessionData (tempering) decode 失败");
+        match decoded.step_state.unwrap().state.unwrap() {
+            forge_step_state::State::Tempering(t) => {
+                assert_eq!(t.pattern.len(), 3);
+                assert_eq!(t.pattern[0], TemperBeat::Light as i32);
+                assert_eq!(t.pattern[1], TemperBeat::Heavy as i32);
+                assert_eq!(t.pattern[2], TemperBeat::Fold as i32);
+            }
+            other => panic!("期望 Tempering state，实际 {other:?}"),
+        }
+    }
+
+    #[test]
+    fn forge_session_data_consecration_with_color_roundtrip() {
+        let msg = ForgeSessionData {
+            session_id: 44,
+            blueprint_id: "x".to_string(),
+            blueprint_name: "x".to_string(),
+            active: true,
+            current_step: ForgeStep::Consecration as i32,
+            step_index: 3,
+            achieved_tier: 3,
+            step_state: Some(ForgeStepState {
+                state: Some(forge_step_state::State::Consecration(
+                    ForgeStepStateConsecration {
+                        qi_injected: 50.0,
+                        qi_required: 100.0,
+                        color_imprint: Some(ColorKind::Sharp as i32),
+                    },
+                )),
+            }),
+        };
+        let bytes = msg.encode_to_vec();
+        let decoded = ForgeSessionData::decode(bytes.as_slice())
+            .expect("ForgeSessionData (consecration) decode 失败");
+        match decoded.step_state.unwrap().state.unwrap() {
+            forge_step_state::State::Consecration(c) => {
+                assert!((c.qi_injected - 50.0).abs() < 1e-9);
+                assert_eq!(c.color_imprint, Some(ColorKind::Sharp as i32));
+            }
+            other => panic!("期望 Consecration state，实际 {other:?}"),
+        }
+    }
+
+    #[test]
+    fn forge_session_data_none_state_roundtrip() {
+        let msg = ForgeSessionData {
+            session_id: 45,
+            blueprint_id: "x".to_string(),
+            blueprint_name: "x".to_string(),
+            active: false,
+            current_step: ForgeStep::Done as i32,
+            step_index: 4,
+            achieved_tier: 1,
+            step_state: Some(ForgeStepState {
+                state: Some(forge_step_state::State::NoneState(true)),
+            }),
+        };
+        let bytes = msg.encode_to_vec();
+        let decoded = ForgeSessionData::decode(bytes.as_slice())
+            .expect("ForgeSessionData (none) decode 失败");
+        match decoded.step_state.unwrap().state.unwrap() {
+            forge_step_state::State::NoneState(v) => assert!(v),
+            other => panic!("期望 NoneState，实际 {other:?}"),
+        }
+    }
+
+    #[test]
+    fn forge_outcome_roundtrip() {
+        let msg = ForgeOutcome {
+            session_id: 1,
+            blueprint_id: "iron_sword_v0".to_string(),
+            bucket: ForgeOutcomeBucket::Perfect as i32,
+            weapon_item: Some("iron_sword".to_string()),
+            quality: 1.0,
+            color: None,
+            side_effects: vec![],
+            achieved_tier: 1,
+            flawed_path: false,
+        };
+        let bytes = msg.encode_to_vec();
+        let decoded = ForgeOutcome::decode(bytes.as_slice())
+            .expect("ForgeOutcome decode 失败");
+        assert_eq!(decoded.session_id, 1);
+        assert_eq!(decoded.bucket, ForgeOutcomeBucket::Perfect as i32);
+        assert_eq!(decoded.weapon_item.as_deref(), Some("iron_sword"));
+        assert!(!decoded.flawed_path);
+        assert!(decoded.color.is_none());
+    }
+
+    #[test]
+    fn forge_outcome_flawed_with_color_roundtrip() {
+        let msg = ForgeOutcome {
+            session_id: 2,
+            blueprint_id: "qing_feng_v0".to_string(),
+            bucket: ForgeOutcomeBucket::Flawed as i32,
+            weapon_item: None,
+            quality: 0.3,
+            color: Some(ColorKind::Heavy as i32),
+            side_effects: vec!["brittle".to_string()],
+            achieved_tier: 1,
+            flawed_path: true,
+        };
+        let bytes = msg.encode_to_vec();
+        let decoded = ForgeOutcome::decode(bytes.as_slice())
+            .expect("ForgeOutcome (flawed) decode 失败");
+        assert_eq!(decoded.bucket, ForgeOutcomeBucket::Flawed as i32);
+        assert!(decoded.weapon_item.is_none());
+        assert_eq!(decoded.color, Some(ColorKind::Heavy as i32));
+        assert_eq!(decoded.side_effects, vec!["brittle"]);
+        assert!(decoded.flawed_path);
+    }
+
+    #[test]
+    fn forge_blueprint_book_roundtrip() {
+        let msg = ForgeBlueprintBook {
+            learned: vec![ForgeBlueprintEntry {
+                id: "iron_sword_v0".to_string(),
+                display_name: "铁剑（测试）".to_string(),
+                tier_cap: 1,
+                step_count: 1,
+            }],
+            current_index: 0,
+        };
+        let bytes = msg.encode_to_vec();
+        let decoded = ForgeBlueprintBook::decode(bytes.as_slice())
+            .expect("ForgeBlueprintBook decode 失败");
+        assert_eq!(decoded.learned.len(), 1);
+        assert_eq!(decoded.learned[0].id, "iron_sword_v0");
+        assert_eq!(decoded.learned[0].tier_cap, 1);
+    }
+
+    // ─── 锻造 C2S roundtrip ─────────────────────────────────────
+
+    #[test]
+    fn forge_start_session_roundtrip() {
+        let msg = ForgeStartSession {
+            station_id: "s1".to_string(),
+            blueprint_id: "iron_sword_v0".to_string(),
+            materials: vec![ForgeMaterialPair {
+                material: "iron_ingot".to_string(),
+                count: 3,
+            }],
+        };
+        let bytes = msg.encode_to_vec();
+        let decoded = ForgeStartSession::decode(bytes.as_slice())
+            .expect("ForgeStartSession decode 失败");
+        assert_eq!(decoded.station_id, "s1");
+        assert_eq!(decoded.materials.len(), 1);
+        assert_eq!(decoded.materials[0].material, "iron_ingot");
+    }
+
+    #[test]
+    fn forge_tempering_hit_roundtrip() {
+        let msg = ForgeTemperingHit {
+            session_id: 42,
+            beat: "L".to_string(),
+            ticks_remaining: 100,
+        };
+        let bytes = msg.encode_to_vec();
+        let decoded = ForgeTemperingHit::decode(bytes.as_slice())
+            .expect("ForgeTemperingHit decode 失败");
+        assert_eq!(decoded.session_id, 42);
+        assert_eq!(decoded.beat, "L");
+        assert_eq!(decoded.ticks_remaining, 100);
+    }
+
+    #[test]
+    fn forge_inscription_scroll_roundtrip() {
+        let msg = ForgeInscriptionScroll {
+            session_id: 42,
+            inscription_id: "rune_fire_v0".to_string(),
+        };
+        let bytes = msg.encode_to_vec();
+        let decoded = ForgeInscriptionScroll::decode(bytes.as_slice())
+            .expect("ForgeInscriptionScroll decode 失败");
+        assert_eq!(decoded.inscription_id, "rune_fire_v0");
+    }
+
+    #[test]
+    fn forge_consecration_inject_roundtrip() {
+        let msg = ForgeConsecrationInject {
+            session_id: 42,
+            qi_amount: 50.0,
+        };
+        let bytes = msg.encode_to_vec();
+        let decoded = ForgeConsecrationInject::decode(bytes.as_slice())
+            .expect("ForgeConsecrationInject decode 失败");
+        assert!((decoded.qi_amount - 50.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn forge_step_advance_roundtrip() {
+        let msg = ForgeStepAdvance { session_id: 42 };
+        let bytes = msg.encode_to_vec();
+        let decoded = ForgeStepAdvance::decode(bytes.as_slice())
+            .expect("ForgeStepAdvance decode 失败");
+        assert_eq!(decoded.session_id, 42);
+    }
+
+    #[test]
+    fn forge_blueprint_turn_page_roundtrip() {
+        let msg = ForgeBlueprintTurnPage { delta: -1 };
+        let bytes = msg.encode_to_vec();
+        let decoded = ForgeBlueprintTurnPage::decode(bytes.as_slice())
+            .expect("ForgeBlueprintTurnPage decode 失败");
+        assert_eq!(decoded.delta, -1);
+    }
+
+    #[test]
+    fn forge_learn_blueprint_roundtrip() {
+        let msg = ForgeLearnBlueprint {
+            blueprint_id: "qing_feng_v0".to_string(),
+        };
+        let bytes = msg.encode_to_vec();
+        let decoded = ForgeLearnBlueprint::decode(bytes.as_slice())
+            .expect("ForgeLearnBlueprint decode 失败");
+        assert_eq!(decoded.blueprint_id, "qing_feng_v0");
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // P2 B1 — 工坊合成 roundtrip
+    // ═══════════════════════════════════════════════════════════════
+
+    #[test]
+    fn craft_category_enum_pin() {
+        let expected = [
+            (CraftCategory::Unspecified, 0),
+            (CraftCategory::AnqiCarrier, 1),
+            (CraftCategory::DuguPotion, 2),
+            (CraftCategory::TuikeSkin, 3),
+            (CraftCategory::ZhenfaTrap, 4),
+            (CraftCategory::Tool, 5),
+            (CraftCategory::ArmorCraft, 6),
+            (CraftCategory::Container, 7),
+            (CraftCategory::PoisonPowder, 8),
+            (CraftCategory::Misc, 9),
+        ];
+        for (variant, wire) in expected {
+            assert_eq!(variant as i32, wire, "CraftCategory::{variant:?} wire 值应为 {wire}");
+        }
+    }
+
+    #[test]
+    fn craft_failure_reason_enum_pin() {
+        let expected = [
+            (CraftFailureReason::Unspecified, 0),
+            (CraftFailureReason::PlayerCancelled, 1),
+            (CraftFailureReason::PlayerDied, 2),
+            (CraftFailureReason::InternalError, 3),
+        ];
+        for (variant, wire) in expected {
+            assert_eq!(variant as i32, wire, "CraftFailureReason::{variant:?} wire 值应为 {wire}");
+        }
+    }
+
+    #[test]
+    fn insight_trigger_enum_pin() {
+        let expected = [
+            (InsightTrigger::Unspecified, 0),
+            (InsightTrigger::Breakthrough, 1),
+            (InsightTrigger::NearDeath, 2),
+            (InsightTrigger::DefeatStronger, 3),
+        ];
+        for (variant, wire) in expected {
+            assert_eq!(variant as i32, wire, "InsightTrigger::{variant:?} wire 值应为 {wire}");
+        }
+    }
+
+    #[test]
+    fn craft_recipe_list_roundtrip() {
+        let msg = CraftRecipeList {
+            v: 1,
+            player_id: "offline:Alice".to_string(),
+            recipes: vec![CraftRecipeEntry {
+                id: "craft.example.herb_knife.iron".to_string(),
+                category: CraftCategory::Tool as i32,
+                display_name: "采药刀（凡铁）".to_string(),
+                materials: vec![
+                    CraftMaterialPair { template_id: "iron_ingot".to_string(), count: 1 },
+                    CraftMaterialPair { template_id: "wood_handle".to_string(), count: 1 },
+                ],
+                qi_cost: 0.0,
+                time_ticks: 600,
+                output: Some(CraftOutputPair {
+                    template_id: "herb_knife_iron".to_string(),
+                    count: 1,
+                }),
+                requirements: Some(CraftRequirements {
+                    realm_min: None,
+                    qi_color_min: None,
+                    skill_lv_min: None,
+                }),
+                unlocked: false,
+            }],
+            ts: 1234567,
+        };
+        let bytes = msg.encode_to_vec();
+        let decoded = CraftRecipeList::decode(bytes.as_slice())
+            .expect("CraftRecipeList decode 失败");
+        assert_eq!(decoded.v, 1);
+        assert_eq!(decoded.player_id, "offline:Alice");
+        assert_eq!(decoded.recipes.len(), 1);
+        assert_eq!(decoded.recipes[0].id, "craft.example.herb_knife.iron");
+        assert_eq!(decoded.recipes[0].category, CraftCategory::Tool as i32);
+        assert_eq!(decoded.recipes[0].materials.len(), 2);
+        assert_eq!(decoded.recipes[0].output.as_ref().unwrap().template_id, "herb_knife_iron");
+        assert!(!decoded.recipes[0].unlocked);
+    }
+
+    #[test]
+    fn craft_recipe_list_empty_roundtrip() {
+        let msg = CraftRecipeList {
+            v: 1,
+            player_id: "offline:Alice".to_string(),
+            recipes: vec![],
+            ts: 0,
+        };
+        let bytes = msg.encode_to_vec();
+        let decoded = CraftRecipeList::decode(bytes.as_slice())
+            .expect("CraftRecipeList (empty) decode 失败");
+        assert!(decoded.recipes.is_empty());
+    }
+
+    #[test]
+    fn craft_recipe_entry_with_requirements_roundtrip() {
+        let entry = CraftRecipeEntry {
+            id: "craft.example.foo".to_string(),
+            category: CraftCategory::ArmorCraft as i32,
+            display_name: "测试".to_string(),
+            materials: vec![],
+            qi_cost: 10.0,
+            time_ticks: 1200,
+            output: Some(CraftOutputPair {
+                template_id: "foo".to_string(),
+                count: 1,
+            }),
+            requirements: Some(CraftRequirements {
+                realm_min: Some(Realm::Awaken as i32),
+                qi_color_min: Some(QiColorMinPair {
+                    color: ColorKind::Insidious as i32,
+                    min_share: 0.05,
+                }),
+                skill_lv_min: Some(2),
+            }),
+            unlocked: true,
+        };
+        let bytes = entry.encode_to_vec();
+        let decoded = CraftRecipeEntry::decode(bytes.as_slice())
+            .expect("CraftRecipeEntry (with requirements) decode 失败");
+        let req = decoded.requirements.unwrap();
+        assert_eq!(req.realm_min, Some(Realm::Awaken as i32));
+        let qc = req.qi_color_min.unwrap();
+        assert_eq!(qc.color, ColorKind::Insidious as i32);
+        assert!((qc.min_share - 0.05).abs() < 1e-6);
+        assert_eq!(req.skill_lv_min, Some(2));
+        assert!(decoded.unlocked);
+    }
+
+    #[test]
+    fn craft_session_state_active_roundtrip() {
+        let msg = CraftSessionState {
+            v: 1,
+            player_id: "offline:Alice".to_string(),
+            active: true,
+            recipe_id: Some("craft.example.eclipse_needle.iron".to_string()),
+            elapsed_ticks: 30,
+            total_ticks: 100,
+            completed_count: 1,
+            total_count: 3,
+            ts: 1234567,
+        };
+        let bytes = msg.encode_to_vec();
+        let decoded = CraftSessionState::decode(bytes.as_slice())
+            .expect("CraftSessionState decode 失败");
+        assert!(decoded.active);
+        assert_eq!(decoded.recipe_id.as_deref(), Some("craft.example.eclipse_needle.iron"));
+        assert_eq!(decoded.completed_count, 1);
+        assert_eq!(decoded.total_count, 3);
+    }
+
+    #[test]
+    fn craft_session_state_inactive_roundtrip() {
+        let msg = CraftSessionState {
+            v: 1,
+            player_id: "offline:Alice".to_string(),
+            active: false,
+            recipe_id: None,
+            elapsed_ticks: 0,
+            total_ticks: 0,
+            completed_count: 0,
+            total_count: 0,
+            ts: 1234567,
+        };
+        let bytes = msg.encode_to_vec();
+        let decoded = CraftSessionState::decode(bytes.as_slice())
+            .expect("CraftSessionState (inactive) decode 失败");
+        assert!(!decoded.active);
+        assert!(decoded.recipe_id.is_none());
+    }
+
+    #[test]
+    fn craft_outcome_completed_roundtrip() {
+        let msg = CraftOutcome {
+            outcome: Some(craft_outcome::Outcome::Completed(CraftOutcomeCompleted {
+                v: 1,
+                player_id: "offline:Alice".to_string(),
+                recipe_id: "craft.example.eclipse_needle.iron".to_string(),
+                output_template: "eclipse_needle_iron".to_string(),
+                output_count: 3,
+                completed_at_tick: 5000,
+                ts: 1234567,
+            })),
+        };
+        let bytes = msg.encode_to_vec();
+        let decoded = CraftOutcome::decode(bytes.as_slice())
+            .expect("CraftOutcome (completed) decode 失败");
+        match decoded.outcome.unwrap() {
+            craft_outcome::Outcome::Completed(c) => {
+                assert_eq!(c.output_template, "eclipse_needle_iron");
+                assert_eq!(c.output_count, 3);
+            }
+            other => panic!("期望 Completed，实际 {other:?}"),
+        }
+    }
+
+    #[test]
+    fn craft_outcome_failed_roundtrip() {
+        let msg = CraftOutcome {
+            outcome: Some(craft_outcome::Outcome::Failed(CraftOutcomeFailed {
+                v: 1,
+                player_id: "offline:Alice".to_string(),
+                recipe_id: "craft.example.eclipse_needle.iron".to_string(),
+                reason: CraftFailureReason::PlayerCancelled as i32,
+                material_returned: 3,
+                qi_refunded: 0.0,
+                ts: 1234567,
+            })),
+        };
+        let bytes = msg.encode_to_vec();
+        let decoded = CraftOutcome::decode(bytes.as_slice())
+            .expect("CraftOutcome (failed) decode 失败");
+        match decoded.outcome.unwrap() {
+            craft_outcome::Outcome::Failed(f) => {
+                assert_eq!(f.reason, CraftFailureReason::PlayerCancelled as i32);
+                assert_eq!(f.material_returned, 3);
+            }
+            other => panic!("期望 Failed，实际 {other:?}"),
+        }
+    }
+
+    #[test]
+    fn recipe_unlocked_scroll_source_roundtrip() {
+        let msg = RecipeUnlocked {
+            v: 1,
+            player_id: "offline:Alice".to_string(),
+            recipe_id: "craft.example.foo".to_string(),
+            source: Some(UnlockEventSource {
+                source: Some(unlock_event_source::Source::ScrollItemTemplate(
+                    "scroll_eclipse".to_string(),
+                )),
+            }),
+            unlocked_at_tick: 10000,
+            ts: 1234567,
+        };
+        let bytes = msg.encode_to_vec();
+        let decoded = RecipeUnlocked::decode(bytes.as_slice())
+            .expect("RecipeUnlocked (scroll) decode 失败");
+        match decoded.source.unwrap().source.unwrap() {
+            unlock_event_source::Source::ScrollItemTemplate(s) => {
+                assert_eq!(s, "scroll_eclipse");
+            }
+            other => panic!("期望 ScrollItemTemplate，实际 {other:?}"),
+        }
+    }
+
+    #[test]
+    fn recipe_unlocked_mentor_source_roundtrip() {
+        let msg = RecipeUnlocked {
+            v: 1,
+            player_id: "offline:Alice".to_string(),
+            recipe_id: "craft.example.foo".to_string(),
+            source: Some(UnlockEventSource {
+                source: Some(unlock_event_source::Source::MentorNpcArchetype(
+                    "poison_master".to_string(),
+                )),
+            }),
+            unlocked_at_tick: 10000,
+            ts: 1234567,
+        };
+        let bytes = msg.encode_to_vec();
+        let decoded = RecipeUnlocked::decode(bytes.as_slice())
+            .expect("RecipeUnlocked (mentor) decode 失败");
+        match decoded.source.unwrap().source.unwrap() {
+            unlock_event_source::Source::MentorNpcArchetype(s) => {
+                assert_eq!(s, "poison_master");
+            }
+            other => panic!("期望 MentorNpcArchetype，实际 {other:?}"),
+        }
+    }
+
+    #[test]
+    fn recipe_unlocked_insight_source_roundtrip() {
+        let msg = RecipeUnlocked {
+            v: 1,
+            player_id: "offline:Alice".to_string(),
+            recipe_id: "craft.example.foo".to_string(),
+            source: Some(UnlockEventSource {
+                source: Some(unlock_event_source::Source::InsightTrigger(
+                    InsightTrigger::NearDeath as i32,
+                )),
+            }),
+            unlocked_at_tick: 10000,
+            ts: 1234567,
+        };
+        let bytes = msg.encode_to_vec();
+        let decoded = RecipeUnlocked::decode(bytes.as_slice())
+            .expect("RecipeUnlocked (insight) decode 失败");
+        match decoded.source.unwrap().source.unwrap() {
+            unlock_event_source::Source::InsightTrigger(t) => {
+                assert_eq!(t, InsightTrigger::NearDeath as i32);
+            }
+            other => panic!("期望 InsightTrigger，实际 {other:?}"),
+        }
+    }
+
+    // ─── 工坊 C2S roundtrip ─────────────────────────────────────
+
+    #[test]
+    fn craft_start_roundtrip() {
+        let msg = CraftStart {
+            recipe_id: "craft.example.herb_knife.iron".to_string(),
+            quantity: 3,
+        };
+        let bytes = msg.encode_to_vec();
+        let decoded = CraftStart::decode(bytes.as_slice())
+            .expect("CraftStart decode 失败");
+        assert_eq!(decoded.recipe_id, "craft.example.herb_knife.iron");
+        assert_eq!(decoded.quantity, 3);
+    }
+
+    #[test]
+    fn craft_cancel_roundtrip() {
+        let msg = CraftCancel {};
+        let bytes = msg.encode_to_vec();
+        let decoded = CraftCancel::decode(bytes.as_slice())
+            .expect("CraftCancel decode 失败");
+        let _ = decoded; // 无字段，decode 成功即通过
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // P2 B1 — 采集 / 药草 roundtrip
+    // ═══════════════════════════════════════════════════════════════
+
+    #[test]
+    fn botany_harvest_mode_enum_pin() {
+        let expected = [
+            (BotanyHarvestMode::Unspecified, 0),
+            (BotanyHarvestMode::Manual, 1),
+            (BotanyHarvestMode::Auto, 2),
+        ];
+        for (variant, wire) in expected {
+            assert_eq!(variant as i32, wire, "BotanyHarvestMode::{variant:?} wire 值应为 {wire}");
+        }
+    }
+
+    #[test]
+    fn botany_model_overlay_enum_pin() {
+        let expected = [
+            (BotanyModelOverlay::Unspecified, 0),
+            (BotanyModelOverlay::None, 1),
+            (BotanyModelOverlay::Emissive, 2),
+            (BotanyModelOverlay::DualPhase, 3),
+        ];
+        for (variant, wire) in expected {
+            assert_eq!(variant as i32, wire, "BotanyModelOverlay::{variant:?} wire 值应为 {wire}");
+        }
+    }
+
+    #[test]
+    fn botany_harvest_progress_full_roundtrip() {
+        let msg = BotanyHarvestProgress {
+            session_id: "session-botany-01".to_string(),
+            target_id: "plant-1".to_string(),
+            target_name: "开脉草".to_string(),
+            plant_kind: "ning_mai_cao".to_string(),
+            mode: "manual".to_string(),
+            progress: 0.5,
+            auto_selectable: true,
+            request_pending: false,
+            interrupted: false,
+            completed: false,
+            detail: "晨露未散".to_string(),
+            hazard_hints: vec!["靠近 -0.4 真元/s 叠加".to_string()],
+            target_pos_x: Some(10.5),
+            target_pos_y: Some(64.0),
+            target_pos_z: Some(10.5),
+        };
+        let bytes = msg.encode_to_vec();
+        let decoded = BotanyHarvestProgress::decode(bytes.as_slice())
+            .expect("BotanyHarvestProgress decode 失败");
+        assert_eq!(decoded.session_id, "session-botany-01");
+        assert_eq!(decoded.mode, "manual");
+        assert!((decoded.progress - 0.5).abs() < 1e-9);
+        assert!(decoded.auto_selectable);
+        assert_eq!(decoded.hazard_hints.len(), 1);
+        assert_eq!(decoded.target_pos_x, Some(10.5));
+        assert_eq!(decoded.target_pos_y, Some(64.0));
+        assert_eq!(decoded.target_pos_z, Some(10.5));
+    }
+
+    #[test]
+    fn botany_harvest_progress_no_pos_roundtrip() {
+        let msg = BotanyHarvestProgress {
+            session_id: "session-botany-02".to_string(),
+            target_id: "plant-2".to_string(),
+            target_name: "赤髓草".to_string(),
+            plant_kind: "chi_sui_cao".to_string(),
+            mode: "auto".to_string(),
+            progress: 1.0,
+            auto_selectable: true,
+            request_pending: false,
+            interrupted: false,
+            completed: true,
+            detail: "".to_string(),
+            hazard_hints: vec![],
+            target_pos_x: None,
+            target_pos_y: None,
+            target_pos_z: None,
+        };
+        let bytes = msg.encode_to_vec();
+        let decoded = BotanyHarvestProgress::decode(bytes.as_slice())
+            .expect("BotanyHarvestProgress (no pos) decode 失败");
+        assert!(decoded.target_pos_x.is_none());
+        assert!(decoded.target_pos_y.is_none());
+        assert!(decoded.target_pos_z.is_none());
+        assert!(decoded.completed);
+        assert!(decoded.hazard_hints.is_empty());
+    }
+
+    #[test]
+    fn botany_plant_v2_render_profiles_roundtrip() {
+        let msg = BotanyPlantV2RenderProfiles {
+            profiles: vec![BotanyPlantV2RenderProfile {
+                plant_id: "ying_yuan_gu".to_string(),
+                base_mesh_ref: "red_mushroom".to_string(),
+                tint_rgb: 0xFFA040,
+                tint_rgb_secondary: None,
+                model_overlay: BotanyModelOverlay::Emissive as i32,
+            }],
+        };
+        let bytes = msg.encode_to_vec();
+        let decoded = BotanyPlantV2RenderProfiles::decode(bytes.as_slice())
+            .expect("BotanyPlantV2RenderProfiles decode 失败");
+        assert_eq!(decoded.profiles.len(), 1);
+        assert_eq!(decoded.profiles[0].plant_id, "ying_yuan_gu");
+        assert_eq!(decoded.profiles[0].tint_rgb, 0xFFA040);
+        assert!(decoded.profiles[0].tint_rgb_secondary.is_none());
+        assert_eq!(decoded.profiles[0].model_overlay, BotanyModelOverlay::Emissive as i32);
+    }
+
+    #[test]
+    fn botany_plant_v2_render_profile_with_secondary_roundtrip() {
+        let msg = BotanyPlantV2RenderProfile {
+            plant_id: "ci_she_hao".to_string(),
+            base_mesh_ref: "sweet_berries".to_string(),
+            tint_rgb: 0x40FF80,
+            tint_rgb_secondary: Some(0xFF2020),
+            model_overlay: BotanyModelOverlay::DualPhase as i32,
+        };
+        let bytes = msg.encode_to_vec();
+        let decoded = BotanyPlantV2RenderProfile::decode(bytes.as_slice())
+            .expect("BotanyPlantV2RenderProfile (secondary) decode 失败");
+        assert_eq!(decoded.tint_rgb_secondary, Some(0xFF2020));
+        assert_eq!(decoded.model_overlay, BotanyModelOverlay::DualPhase as i32);
+    }
+
+    #[test]
+    fn botany_skill_roundtrip() {
+        let msg = BotanySkill {
+            level: 3,
+            xp: 240,
+            xp_to_next_level: 400,
+            auto_unlock_level: 3,
+        };
+        let bytes = msg.encode_to_vec();
+        let decoded = BotanySkill::decode(bytes.as_slice())
+            .expect("BotanySkill decode 失败");
+        assert_eq!(decoded.level, 3);
+        assert_eq!(decoded.xp, 240);
+        assert_eq!(decoded.xp_to_next_level, 400);
+        assert_eq!(decoded.auto_unlock_level, 3);
+    }
+
+    // ─── 采集 C2S roundtrip ─────────────────────────────────────
+
+    #[test]
+    fn botany_harvest_request_manual_roundtrip() {
+        let msg = BotanyHarvestRequest {
+            session_id: "session-botany-01".to_string(),
+            mode: BotanyHarvestMode::Manual as i32,
+        };
+        let bytes = msg.encode_to_vec();
+        let decoded = BotanyHarvestRequest::decode(bytes.as_slice())
+            .expect("BotanyHarvestRequest decode 失败");
+        assert_eq!(decoded.session_id, "session-botany-01");
+        assert_eq!(decoded.mode, BotanyHarvestMode::Manual as i32);
+    }
+
+    #[test]
+    fn botany_harvest_request_auto_roundtrip() {
+        let msg = BotanyHarvestRequest {
+            session_id: "session-botany-02".to_string(),
+            mode: BotanyHarvestMode::Auto as i32,
+        };
+        let bytes = msg.encode_to_vec();
+        let decoded = BotanyHarvestRequest::decode(bytes.as_slice())
+            .expect("BotanyHarvestRequest (auto) decode 失败");
+        assert_eq!(decoded.mode, BotanyHarvestMode::Auto as i32);
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // P2 B1 — 采矿 / 伐木 / 通用采集 roundtrip
+    // ═══════════════════════════════════════════════════════════════
+
+    #[test]
+    fn mining_progress_roundtrip() {
+        let msg = MiningProgress {
+            session_id: "mining-01".to_string(),
+            ore_pos_x: 10,
+            ore_pos_y: 32,
+            ore_pos_z: -5,
+            progress: 0.75,
+            interrupted: false,
+            completed: false,
+        };
+        let bytes = msg.encode_to_vec();
+        let decoded = MiningProgress::decode(bytes.as_slice())
+            .expect("MiningProgress decode 失败");
+        assert_eq!(decoded.session_id, "mining-01");
+        assert_eq!(decoded.ore_pos_x, 10);
+        assert_eq!(decoded.ore_pos_y, 32);
+        assert_eq!(decoded.ore_pos_z, -5);
+        assert!((decoded.progress - 0.75).abs() < 1e-9);
+        assert!(!decoded.interrupted);
+        assert!(!decoded.completed);
+    }
+
+    #[test]
+    fn mining_progress_completed_roundtrip() {
+        let msg = MiningProgress {
+            session_id: "mining-02".to_string(),
+            ore_pos_x: 0,
+            ore_pos_y: 0,
+            ore_pos_z: 0,
+            progress: 1.0,
+            interrupted: false,
+            completed: true,
+        };
+        let bytes = msg.encode_to_vec();
+        let decoded = MiningProgress::decode(bytes.as_slice())
+            .expect("MiningProgress (completed) decode 失败");
+        assert!(decoded.completed);
+    }
+
+    #[test]
+    fn lumber_progress_roundtrip() {
+        let msg = LumberProgress {
+            session_id: "lumber-01".to_string(),
+            log_pos_x: 5,
+            log_pos_y: 64,
+            log_pos_z: 5,
+            progress: 0.5,
+            interrupted: true,
+            completed: false,
+            detail: "树干太硬".to_string(),
+        };
+        let bytes = msg.encode_to_vec();
+        let decoded = LumberProgress::decode(bytes.as_slice())
+            .expect("LumberProgress decode 失败");
+        assert_eq!(decoded.session_id, "lumber-01");
+        assert!(decoded.interrupted);
+        assert_eq!(decoded.detail, "树干太硬");
+    }
+
+    #[test]
+    fn gathering_target_type_enum_pin() {
+        let expected = [
+            (GatheringTargetType::Unspecified, 0),
+            (GatheringTargetType::Herb, 1),
+            (GatheringTargetType::Ore, 2),
+            (GatheringTargetType::Wood, 3),
+        ];
+        for (variant, wire) in expected {
+            assert_eq!(variant as i32, wire, "GatheringTargetType::{variant:?} wire 值应为 {wire}");
+        }
+    }
+
+    #[test]
+    fn gathering_quality_hint_enum_pin() {
+        let expected = [
+            (GatheringQualityHint::Unspecified, 0),
+            (GatheringQualityHint::Normal, 1),
+            (GatheringQualityHint::FineLikely, 2),
+            (GatheringQualityHint::PerfectPossible, 3),
+            (GatheringQualityHint::Fine, 4),
+            (GatheringQualityHint::Perfect, 5),
+        ];
+        for (variant, wire) in expected {
+            assert_eq!(variant as i32, wire, "GatheringQualityHint::{variant:?} wire 值应为 {wire}");
+        }
+    }
+
+    #[test]
+    fn gathering_session_roundtrip() {
+        let msg = GatheringSession {
+            session_id: "gather-01".to_string(),
+            progress_ticks: 30,
+            total_ticks: 100,
+            target_name: "开脉草".to_string(),
+            target_type: GatheringTargetType::Herb as i32,
+            quality_hint: GatheringQualityHint::FineLikely as i32,
+            tool_used: Some("herb_knife_iron".to_string()),
+            interrupted: false,
+            completed: false,
+        };
+        let bytes = msg.encode_to_vec();
+        let decoded = GatheringSession::decode(bytes.as_slice())
+            .expect("GatheringSession decode 失败");
+        assert_eq!(decoded.session_id, "gather-01");
+        assert_eq!(decoded.progress_ticks, 30);
+        assert_eq!(decoded.total_ticks, 100);
+        assert_eq!(decoded.target_type, GatheringTargetType::Herb as i32);
+        assert_eq!(decoded.quality_hint, GatheringQualityHint::FineLikely as i32);
+        assert_eq!(decoded.tool_used.as_deref(), Some("herb_knife_iron"));
+    }
+
+    #[test]
+    fn gathering_session_no_tool_roundtrip() {
+        let msg = GatheringSession {
+            session_id: "gather-02".to_string(),
+            progress_ticks: 0,
+            total_ticks: 200,
+            target_name: "铁矿".to_string(),
+            target_type: GatheringTargetType::Ore as i32,
+            quality_hint: GatheringQualityHint::Normal as i32,
+            tool_used: None,
+            interrupted: false,
+            completed: false,
+        };
+        let bytes = msg.encode_to_vec();
+        let decoded = GatheringSession::decode(bytes.as_slice())
+            .expect("GatheringSession (no tool) decode 失败");
+        assert!(decoded.tool_used.is_none());
+        assert_eq!(decoded.target_type, GatheringTargetType::Ore as i32);
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // P2 B1 — 灵田 roundtrip
+    // ═══════════════════════════════════════════════════════════════
+
+    #[test]
+    fn lingtian_session_kind_enum_pin() {
+        let expected = [
+            (LingtianSessionKind::Unspecified, 0),
+            (LingtianSessionKind::Till, 1),
+            (LingtianSessionKind::Renew, 2),
+            (LingtianSessionKind::Planting, 3),
+            (LingtianSessionKind::Harvest, 4),
+            (LingtianSessionKind::Replenish, 5),
+            (LingtianSessionKind::DrainQi, 6),
+        ];
+        for (variant, wire) in expected {
+            assert_eq!(variant as i32, wire, "LingtianSessionKind::{variant:?} wire 值应为 {wire}");
+        }
+    }
+
+    #[test]
+    fn lingtian_session_data_active_roundtrip() {
+        let msg = LingtianSessionData {
+            active: true,
+            kind: LingtianSessionKind::Planting as i32,
+            pos_x: 10,
+            pos_y: 64,
+            pos_z: 20,
+            elapsed_ticks: 30,
+            target_ticks: 100,
+            plant_id: Some("ning_mai_cao".to_string()),
+            source: None,
+            dye_contamination: Some(0.15),
+            dye_contamination_warning: false,
+        };
+        let bytes = msg.encode_to_vec();
+        let decoded = LingtianSessionData::decode(bytes.as_slice())
+            .expect("LingtianSessionData (planting) decode 失败");
+        assert!(decoded.active);
+        assert_eq!(decoded.kind, LingtianSessionKind::Planting as i32);
+        assert_eq!(decoded.pos_x, 10);
+        assert_eq!(decoded.pos_y, 64);
+        assert_eq!(decoded.pos_z, 20);
+        assert_eq!(decoded.plant_id.as_deref(), Some("ning_mai_cao"));
+        assert!(decoded.source.is_none());
+        assert!((decoded.dye_contamination.unwrap() - 0.15).abs() < 1e-6);
+        assert!(!decoded.dye_contamination_warning);
+    }
+
+    #[test]
+    fn lingtian_session_data_replenish_roundtrip() {
+        let msg = LingtianSessionData {
+            active: true,
+            kind: LingtianSessionKind::Replenish as i32,
+            pos_x: 0,
+            pos_y: 64,
+            pos_z: 0,
+            elapsed_ticks: 0,
+            target_ticks: 200,
+            plant_id: None,
+            source: Some("bone_coin".to_string()),
+            dye_contamination: None,
+            dye_contamination_warning: false,
+        };
+        let bytes = msg.encode_to_vec();
+        let decoded = LingtianSessionData::decode(bytes.as_slice())
+            .expect("LingtianSessionData (replenish) decode 失败");
+        assert_eq!(decoded.source.as_deref(), Some("bone_coin"));
+        assert!(decoded.plant_id.is_none());
+        assert!(decoded.dye_contamination.is_none());
+    }
+
+    #[test]
+    fn lingtian_session_data_inactive_roundtrip() {
+        let msg = LingtianSessionData {
+            active: false,
+            kind: LingtianSessionKind::Till as i32,
+            pos_x: 0,
+            pos_y: 0,
+            pos_z: 0,
+            elapsed_ticks: 0,
+            target_ticks: 0,
+            plant_id: None,
+            source: None,
+            dye_contamination: None,
+            dye_contamination_warning: false,
+        };
+        let bytes = msg.encode_to_vec();
+        let decoded = LingtianSessionData::decode(bytes.as_slice())
+            .expect("LingtianSessionData (inactive) decode 失败");
+        assert!(!decoded.active);
+    }
+
+    #[test]
+    fn lingtian_session_dye_contamination_warning_roundtrip() {
+        let msg = LingtianSessionData {
+            active: true,
+            kind: LingtianSessionKind::Harvest as i32,
+            pos_x: 5,
+            pos_y: 65,
+            pos_z: 5,
+            elapsed_ticks: 50,
+            target_ticks: 60,
+            plant_id: Some("ci_she_hao".to_string()),
+            source: None,
+            dye_contamination: Some(0.35),
+            dye_contamination_warning: true,
+        };
+        let bytes = msg.encode_to_vec();
+        let decoded = LingtianSessionData::decode(bytes.as_slice())
+            .expect("LingtianSessionData (dye warning) decode 失败");
+        assert!(decoded.dye_contamination_warning);
+        assert!((decoded.dye_contamination.unwrap() - 0.35).abs() < 1e-6);
+    }
+
+    // ─── 灵田 C2S roundtrip ─────────────────────────────────────
+
+    #[test]
+    fn lingtian_start_till_roundtrip() {
+        let msg = LingtianStartTill {
+            x: 10,
+            y: 64,
+            z: 20,
+            hoe_instance_id: 4242,
+            mode: "manual".to_string(),
+        };
+        let bytes = msg.encode_to_vec();
+        let decoded = LingtianStartTill::decode(bytes.as_slice())
+            .expect("LingtianStartTill decode 失败");
+        assert_eq!(decoded.x, 10);
+        assert_eq!(decoded.hoe_instance_id, 4242);
+        assert_eq!(decoded.mode, "manual");
+    }
+
+    #[test]
+    fn lingtian_start_renew_roundtrip() {
+        let msg = LingtianStartRenew {
+            x: 10,
+            y: 64,
+            z: 20,
+            hoe_instance_id: 4242,
+        };
+        let bytes = msg.encode_to_vec();
+        let decoded = LingtianStartRenew::decode(bytes.as_slice())
+            .expect("LingtianStartRenew decode 失败");
+        assert_eq!(decoded.hoe_instance_id, 4242);
+    }
+
+    #[test]
+    fn lingtian_start_planting_roundtrip() {
+        let msg = LingtianStartPlanting {
+            x: 10,
+            y: 64,
+            z: 20,
+            plant_id: "ning_mai_cao".to_string(),
+        };
+        let bytes = msg.encode_to_vec();
+        let decoded = LingtianStartPlanting::decode(bytes.as_slice())
+            .expect("LingtianStartPlanting decode 失败");
+        assert_eq!(decoded.plant_id, "ning_mai_cao");
+    }
+
+    #[test]
+    fn lingtian_start_harvest_roundtrip() {
+        let msg = LingtianStartHarvest {
+            x: 10,
+            y: 64,
+            z: 20,
+            mode: "auto".to_string(),
+        };
+        let bytes = msg.encode_to_vec();
+        let decoded = LingtianStartHarvest::decode(bytes.as_slice())
+            .expect("LingtianStartHarvest decode 失败");
+        assert_eq!(decoded.mode, "auto");
+    }
+
+    #[test]
+    fn lingtian_start_replenish_roundtrip() {
+        let msg = LingtianStartReplenish {
+            x: 10,
+            y: 64,
+            z: 20,
+            source: "bone_coin".to_string(),
+        };
+        let bytes = msg.encode_to_vec();
+        let decoded = LingtianStartReplenish::decode(bytes.as_slice())
+            .expect("LingtianStartReplenish decode 失败");
+        assert_eq!(decoded.source, "bone_coin");
+    }
+
+    #[test]
+    fn lingtian_start_drain_qi_roundtrip() {
+        let msg = LingtianStartDrainQi {
+            x: 10,
+            y: 64,
+            z: 20,
+        };
+        let bytes = msg.encode_to_vec();
+        let decoded = LingtianStartDrainQi::decode(bytes.as_slice())
+            .expect("LingtianStartDrainQi decode 失败");
+        assert_eq!(decoded.x, 10);
+        assert_eq!(decoded.y, 64);
+        assert_eq!(decoded.z, 20);
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // P2 B1 — 矿石 C2S roundtrip
+    // ═══════════════════════════════════════════════════════════════
+
+    #[test]
+    fn mineral_probe_roundtrip() {
+        let msg = MineralProbe {
+            x: 8,
+            y: 32,
+            z: 8,
+        };
+        let bytes = msg.encode_to_vec();
+        let decoded = MineralProbe::decode(bytes.as_slice())
+            .expect("MineralProbe decode 失败");
+        assert_eq!(decoded.x, 8);
+        assert_eq!(decoded.y, 32);
+        assert_eq!(decoded.z, 8);
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // P2 B1 — envelope S2C oneof 可区分性
+    // ═══════════════════════════════════════════════════════════════
+
+    #[test]
+    fn server_data_envelope_b1_s2c_variants_distinguishable() {
+        // 验证所有 B1 S2C oneof variant 能正确 encode → decode 且不互相串。
+        let variant_payloads: Vec<(&str, server_data_envelope::Payload)> = vec![
+            ("AlchemyFurnace", server_data_envelope::Payload::AlchemyFurnace(AlchemyFurnace {
+                pos_x: Some(0), pos_y: Some(64), pos_z: Some(0),
+                tier: 1, integrity: 1.0, integrity_max: 1.0,
+                owner_name: "t".to_string(), has_session: false,
+            })),
+            ("AlchemySession", server_data_envelope::Payload::AlchemySession(AlchemySession {
+                recipe_id: None, active: false, elapsed_ticks: 0, target_ticks: 0,
+                temp_current: 0.0, temp_target: 0.0, temp_band: 0.0,
+                qi_injected: 0.0, qi_target: 0.0, status_label: "".to_string(),
+                stages: vec![], interventions_recent: vec![],
+            })),
+            ("AlchemyOutcomeForecast", server_data_envelope::Payload::AlchemyOutcomeForecast(AlchemyOutcomeForecast {
+                perfect_pct: 0.0, good_pct: 0.0, flawed_pct: 0.0,
+                waste_pct: 0.0, explode_pct: 0.0, perfect_note: "".to_string(),
+                good_note: "".to_string(), flawed_note: "".to_string(),
+            })),
+            ("AlchemyOutcomeResolved", server_data_envelope::Payload::AlchemyOutcomeResolved(AlchemyOutcomeResolved {
+                bucket: 0, recipe_id: None, pill: None, quality: None,
+                toxin_amount: None, toxin_color: None, qi_gain: None,
+                side_effect_tag: None, flawed_path: false, damage: None, meridian_crack: None,
+            })),
+            ("AlchemyRecipeBook", server_data_envelope::Payload::AlchemyRecipeBook(AlchemyRecipeBook {
+                learned: vec![], current_index: 0,
+            })),
+            ("AlchemyContamination", server_data_envelope::Payload::AlchemyContamination(AlchemyContamination {
+                levels: vec![], metabolism_note: "".to_string(),
+            })),
+            ("ForgeStation", server_data_envelope::Payload::ForgeStation(ForgeStation {
+                station_id: "s".to_string(), tier: 1, integrity: 1.0,
+                owner_name: "t".to_string(), has_session: false,
+            })),
+            ("ForgeSession", server_data_envelope::Payload::ForgeSession(ForgeSessionData {
+                session_id: 1, blueprint_id: "x".to_string(), blueprint_name: "x".to_string(),
+                active: false, current_step: 0, step_index: 0, achieved_tier: 0,
+                step_state: None,
+            })),
+            ("ForgeOutcome", server_data_envelope::Payload::ForgeOutcome(ForgeOutcome {
+                session_id: 1, blueprint_id: "x".to_string(),
+                bucket: 0, weapon_item: None, quality: 0.0,
+                color: None, side_effects: vec![], achieved_tier: 0, flawed_path: false,
+            })),
+            ("ForgeBlueprintBook", server_data_envelope::Payload::ForgeBlueprintBook(ForgeBlueprintBook {
+                learned: vec![], current_index: 0,
+            })),
+            ("CraftRecipeList", server_data_envelope::Payload::CraftRecipeList(CraftRecipeList {
+                v: 1, player_id: "x".to_string(), recipes: vec![], ts: 0,
+            })),
+            ("CraftSessionState", server_data_envelope::Payload::CraftSessionState(CraftSessionState {
+                v: 1, player_id: "x".to_string(), active: false, recipe_id: None,
+                elapsed_ticks: 0, total_ticks: 0, completed_count: 0, total_count: 0, ts: 0,
+            })),
+            ("CraftOutcome", server_data_envelope::Payload::CraftOutcome(CraftOutcome {
+                outcome: None,
+            })),
+            ("RecipeUnlocked", server_data_envelope::Payload::RecipeUnlocked(RecipeUnlocked {
+                v: 1, player_id: "x".to_string(), recipe_id: "y".to_string(),
+                source: None, unlocked_at_tick: 0, ts: 0,
+            })),
+            ("BotanyHarvestProgress", server_data_envelope::Payload::BotanyHarvestProgress(BotanyHarvestProgress {
+                session_id: "s".to_string(), target_id: "t".to_string(),
+                target_name: "n".to_string(), plant_kind: "k".to_string(),
+                mode: "manual".to_string(), progress: 0.0,
+                auto_selectable: false, request_pending: false,
+                interrupted: false, completed: false, detail: "".to_string(),
+                hazard_hints: vec![], target_pos_x: None, target_pos_y: None, target_pos_z: None,
+            })),
+            ("BotanyPlantV2RenderProfiles", server_data_envelope::Payload::BotanyPlantV2RenderProfiles(BotanyPlantV2RenderProfiles {
+                profiles: vec![],
+            })),
+            ("BotanySkill", server_data_envelope::Payload::BotanySkill(BotanySkill {
+                level: 0, xp: 0, xp_to_next_level: 0, auto_unlock_level: 0,
+            })),
+            ("MiningProgress", server_data_envelope::Payload::MiningProgress(MiningProgress {
+                session_id: "m".to_string(), ore_pos_x: 0, ore_pos_y: 0, ore_pos_z: 0,
+                progress: 0.0, interrupted: false, completed: false,
+            })),
+            ("LumberProgress", server_data_envelope::Payload::LumberProgress(LumberProgress {
+                session_id: "l".to_string(), log_pos_x: 0, log_pos_y: 0, log_pos_z: 0,
+                progress: 0.0, interrupted: false, completed: false, detail: "".to_string(),
+            })),
+            ("GatheringSession", server_data_envelope::Payload::GatheringSession(GatheringSession {
+                session_id: "g".to_string(), progress_ticks: 0, total_ticks: 0,
+                target_name: "n".to_string(), target_type: 0, quality_hint: 0,
+                tool_used: None, interrupted: false, completed: false,
+            })),
+            ("LingtianSession", server_data_envelope::Payload::LingtianSession(LingtianSessionData {
+                active: false, kind: 0, pos_x: 0, pos_y: 0, pos_z: 0,
+                elapsed_ticks: 0, target_ticks: 0, plant_id: None, source: None,
+                dye_contamination: None, dye_contamination_warning: false,
+            })),
+        ];
+
+        for (name, payload) in variant_payloads {
+            let envelope = ServerDataEnvelope {
+                payload: Some(payload),
+            };
+            let bytes = envelope.encode_to_vec();
+            let decoded = ServerDataEnvelope::decode(bytes.as_slice())
+                .unwrap_or_else(|e| panic!("{name} envelope decode 失败: {e}"));
+            assert!(
+                decoded.payload.is_some(),
+                "{name} envelope roundtrip 后 payload 不应为 None"
+            );
+        }
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // P2 B1 — envelope C2S oneof 可区分性
+    // ═══════════════════════════════════════════════════════════════
+
+    #[test]
+    fn client_request_envelope_b1_c2s_variants_distinguishable() {
+        let variant_payloads: Vec<(&str, client_request_envelope::Payload)> = vec![
+            ("AlchemyOpenFurnace", client_request_envelope::Payload::AlchemyOpenFurnace(AlchemyOpenFurnace {
+                furnace_pos_x: 0, furnace_pos_y: 64, furnace_pos_z: 0,
+            })),
+            ("AlchemyFeedSlot", client_request_envelope::Payload::AlchemyFeedSlot(AlchemyFeedSlot {
+                furnace_pos_x: 0, furnace_pos_y: 64, furnace_pos_z: 0,
+                slot_idx: 0, material: "x".to_string(), count: 1,
+            })),
+            ("AlchemyTakeBack", client_request_envelope::Payload::AlchemyTakeBack(AlchemyTakeBack {
+                furnace_pos_x: 0, furnace_pos_y: 64, furnace_pos_z: 0, slot_idx: 0,
+            })),
+            ("AlchemyIgnite", client_request_envelope::Payload::AlchemyIgnite(AlchemyIgnite {
+                furnace_pos_x: 0, furnace_pos_y: 64, furnace_pos_z: 0,
+                recipe_id: "x".to_string(),
+            })),
+            ("AlchemyIntervention", client_request_envelope::Payload::AlchemyIntervention(AlchemyIntervention {
+                furnace_pos_x: 0, furnace_pos_y: 64, furnace_pos_z: 0,
+                intervention: None,
+            })),
+            ("AlchemyTurnPage", client_request_envelope::Payload::AlchemyTurnPage(AlchemyTurnPage {
+                delta: 1,
+            })),
+            ("AlchemyLearnRecipe", client_request_envelope::Payload::AlchemyLearnRecipe(AlchemyLearnRecipe {
+                recipe_id: "x".to_string(),
+            })),
+            ("AlchemyLearnRecipeFragment", client_request_envelope::Payload::AlchemyLearnRecipeFragment(AlchemyLearnRecipeFragment {
+                item_instance_id: 1,
+            })),
+            ("AlchemyTakePill", client_request_envelope::Payload::AlchemyTakePill(AlchemyTakePill {
+                pill_item_id: "x".to_string(),
+            })),
+            ("ForgeStartSession", client_request_envelope::Payload::ForgeStartSession(ForgeStartSession {
+                station_id: "s".to_string(), blueprint_id: "b".to_string(), materials: vec![],
+            })),
+            ("ForgeTemperingHit", client_request_envelope::Payload::ForgeTemperingHit(ForgeTemperingHit {
+                session_id: 1, beat: "L".to_string(), ticks_remaining: 0,
+            })),
+            ("ForgeInscriptionScroll", client_request_envelope::Payload::ForgeInscriptionScroll(ForgeInscriptionScroll {
+                session_id: 1, inscription_id: "x".to_string(),
+            })),
+            ("ForgeConsecrationInject", client_request_envelope::Payload::ForgeConsecrationInject(ForgeConsecrationInject {
+                session_id: 1, qi_amount: 0.0,
+            })),
+            ("ForgeStepAdvance", client_request_envelope::Payload::ForgeStepAdvance(ForgeStepAdvance {
+                session_id: 1,
+            })),
+            ("ForgeBlueprintTurnPage", client_request_envelope::Payload::ForgeBlueprintTurnPage(ForgeBlueprintTurnPage {
+                delta: 1,
+            })),
+            ("ForgeLearnBlueprint", client_request_envelope::Payload::ForgeLearnBlueprint(ForgeLearnBlueprint {
+                blueprint_id: "x".to_string(),
+            })),
+            ("CraftStart", client_request_envelope::Payload::CraftStart(CraftStart {
+                recipe_id: "x".to_string(), quantity: 1,
+            })),
+            ("CraftCancel", client_request_envelope::Payload::CraftCancel(CraftCancel {})),
+            ("BotanyHarvestRequest", client_request_envelope::Payload::BotanyHarvestRequest(BotanyHarvestRequest {
+                session_id: "s".to_string(), mode: BotanyHarvestMode::Manual as i32,
+            })),
+            ("LingtianStartTill", client_request_envelope::Payload::LingtianStartTill(LingtianStartTill {
+                x: 0, y: 64, z: 0, hoe_instance_id: 1, mode: "manual".to_string(),
+            })),
+            ("LingtianStartRenew", client_request_envelope::Payload::LingtianStartRenew(LingtianStartRenew {
+                x: 0, y: 64, z: 0, hoe_instance_id: 1,
+            })),
+            ("LingtianStartPlanting", client_request_envelope::Payload::LingtianStartPlanting(LingtianStartPlanting {
+                x: 0, y: 64, z: 0, plant_id: "x".to_string(),
+            })),
+            ("LingtianStartHarvest", client_request_envelope::Payload::LingtianStartHarvest(LingtianStartHarvest {
+                x: 0, y: 64, z: 0, mode: "manual".to_string(),
+            })),
+            ("LingtianStartReplenish", client_request_envelope::Payload::LingtianStartReplenish(LingtianStartReplenish {
+                x: 0, y: 64, z: 0, source: "bone_coin".to_string(),
+            })),
+            ("LingtianStartDrainQi", client_request_envelope::Payload::LingtianStartDrainQi(LingtianStartDrainQi {
+                x: 0, y: 64, z: 0,
+            })),
+            ("MineralProbe", client_request_envelope::Payload::MineralProbe(MineralProbe {
+                x: 8, y: 32, z: 8,
+            })),
+        ];
+
+        for (name, payload) in variant_payloads {
+            let envelope = ClientRequestEnvelope {
+                payload: Some(payload),
+            };
+            let bytes = envelope.encode_to_vec();
+            let decoded = ClientRequestEnvelope::decode(bytes.as_slice())
+                .unwrap_or_else(|e| panic!("{name} C2S envelope decode 失败: {e}"));
+            assert!(
+                decoded.payload.is_some(),
+                "{name} C2S envelope roundtrip 后 payload 不应为 None"
+            );
+        }
+    }
+
     // ─── envelope 完整性：新增 oneof variant 全覆盖 ──────────────
 
     #[test]

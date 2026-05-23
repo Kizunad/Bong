@@ -23,7 +23,29 @@ message ServerDataEnvelope {
     InventorySnapshot inventory_snapshot = 8;
     CombatHudState    combat_hud_state   = 9;
     KnockbackSync     knockback_sync     = 10;
-    // P2/P3 阶段继续追加 field 11..N。
+    // ─── P2 B1：炼丹 / 锻造 / 工坊 / 采集 / 灵田 ──────────────
+    AlchemyFurnace          alchemy_furnace           = 11;
+    AlchemySession          alchemy_session           = 12;
+    AlchemyOutcomeForecast  alchemy_outcome_forecast  = 13;
+    AlchemyOutcomeResolved  alchemy_outcome_resolved  = 14;
+    AlchemyRecipeBook       alchemy_recipe_book       = 15;
+    AlchemyContamination    alchemy_contamination     = 16;
+    ForgeStation            forge_station             = 17;
+    ForgeSessionData        forge_session             = 18;
+    ForgeOutcome            forge_outcome             = 19;
+    ForgeBlueprintBook      forge_blueprint_book      = 20;
+    CraftRecipeList         craft_recipe_list         = 21;
+    CraftSessionState       craft_session_state       = 22;
+    CraftOutcome            craft_outcome             = 23;
+    RecipeUnlocked          recipe_unlocked           = 24;
+    BotanyHarvestProgress   botany_harvest_progress   = 25;
+    BotanyPlantV2RenderProfiles botany_plant_v2_render_profiles = 26;
+    BotanySkill             botany_skill              = 27;
+    MiningProgress          mining_progress           = 28;
+    LumberProgress          lumber_progress           = 29;
+    GatheringSession        gathering_session         = 30;
+    LingtianSessionData     lingtian_session          = 31;
+    // P2/P3 阶段继续追加 field 32..N。
     // 字段编号一旦分配永不复用（buf breaking 检测保证）。
   }
 }
@@ -34,6 +56,33 @@ message ClientRequestEnvelope {
   oneof payload {
     SetMeridianTarget   set_meridian_target   = 1;
     BreakthroughRequest breakthrough_request  = 2;
+    // ─── P2 B1：炼丹 / 锻造 / 工坊 / 采集 / 灵田 / 矿石 ──────
+    AlchemyOpenFurnace        alchemy_open_furnace        = 3;
+    AlchemyFeedSlot           alchemy_feed_slot           = 4;
+    AlchemyTakeBack           alchemy_take_back           = 5;
+    AlchemyIgnite             alchemy_ignite              = 6;
+    AlchemyIntervention       alchemy_intervention        = 7;
+    AlchemyTurnPage           alchemy_turn_page           = 8;
+    AlchemyLearnRecipe        alchemy_learn_recipe        = 9;
+    AlchemyLearnRecipeFragment alchemy_learn_recipe_fragment = 10;
+    AlchemyTakePill           alchemy_take_pill           = 11;
+    ForgeStartSession         forge_start_session         = 12;
+    ForgeTemperingHit         forge_tempering_hit         = 13;
+    ForgeInscriptionScroll    forge_inscription_scroll    = 14;
+    ForgeConsecrationInject   forge_consecration_inject   = 15;
+    ForgeStepAdvance          forge_step_advance          = 16;
+    ForgeBlueprintTurnPage    forge_blueprint_turn_page   = 17;
+    ForgeLearnBlueprint       forge_learn_blueprint       = 18;
+    CraftStart                craft_start                 = 19;
+    CraftCancel               craft_cancel                = 20;
+    BotanyHarvestRequest      botany_harvest_request      = 21;
+    LingtianStartTill         lingtian_start_till         = 22;
+    LingtianStartRenew        lingtian_start_renew        = 23;
+    LingtianStartPlanting     lingtian_start_planting     = 24;
+    LingtianStartHarvest      lingtian_start_harvest      = 25;
+    LingtianStartReplenish    lingtian_start_replenish    = 26;
+    LingtianStartDrainQi      lingtian_start_drain_qi     = 27;
+    MineralProbe              mineral_probe               = 28;
     // P2/P3 阶段继续追加。
   }
 }
@@ -376,4 +425,732 @@ message SetMeridianTarget {
 
 message BreakthroughRequest {
   // 无额外字段，仅触发。
+}
+
+// ═══════════════════════════════════════════════════════════════
+// P2 B1 — 炼丹 S2C
+// ═══════════════════════════════════════════════════════════════
+
+// 与 Rust AlchemyFurnaceDataV1 精确对应。
+message AlchemyFurnace {
+  optional int32 pos_x   = 1; // Rust Option<(i32,i32,i32)> 拆三字段
+  optional int32 pos_y   = 2;
+  optional int32 pos_z   = 3;
+  uint32 tier            = 4; // Rust u8
+  double integrity       = 5;
+  double integrity_max   = 6;
+  string owner_name      = 7;
+  bool   has_session     = 8;
+}
+
+// 与 Rust AlchemyStageHintV1 精确对应。
+message AlchemyStageHint {
+  uint32 at_tick   = 1;
+  uint32 window    = 2;
+  string summary   = 3;
+  bool   completed = 4;
+  bool   missed    = 5;
+}
+
+// 与 Rust AlchemySessionDataV1 精确对应。
+message AlchemySession {
+  optional string            recipe_id            = 1;
+  bool                       active               = 2;
+  uint32                     elapsed_ticks        = 3;
+  uint32                     target_ticks         = 4;
+  double                     temp_current         = 5;
+  double                     temp_target          = 6;
+  double                     temp_band            = 7;
+  double                     qi_injected          = 8;
+  double                     qi_target            = 9;
+  string                     status_label         = 10;
+  repeated AlchemyStageHint  stages               = 11;
+  repeated string            interventions_recent = 12;
+}
+
+// 与 Rust AlchemyOutcomeForecastDataV1 精确对应。
+message AlchemyOutcomeForecast {
+  double perfect_pct  = 1;
+  double good_pct     = 2;
+  double flawed_pct   = 3;
+  double waste_pct    = 4;
+  double explode_pct  = 5;
+  string perfect_note = 6;
+  string good_note    = 7;
+  string flawed_note  = 8;
+}
+
+// 与 Rust AlchemyOutcomeBucketV1 精确对应。
+enum AlchemyOutcomeBucket {
+  ALCHEMY_OUTCOME_BUCKET_UNSPECIFIED = 0;
+  ALCHEMY_OUTCOME_BUCKET_PERFECT    = 1;
+  ALCHEMY_OUTCOME_BUCKET_GOOD       = 2;
+  ALCHEMY_OUTCOME_BUCKET_FLAWED     = 3;
+  ALCHEMY_OUTCOME_BUCKET_WASTE      = 4;
+  ALCHEMY_OUTCOME_BUCKET_EXPLODE    = 5;
+}
+
+// 与 Rust AlchemyOutcomeResolvedDataV1 精确对应。
+message AlchemyOutcomeResolved {
+  AlchemyOutcomeBucket bucket         = 1;
+  optional string      recipe_id      = 2;
+  optional string      pill           = 3;
+  optional double      quality        = 4;
+  optional double      toxin_amount   = 5;
+  optional ColorKind   toxin_color    = 6;
+  optional double      qi_gain        = 7;
+  optional string      side_effect_tag = 8;
+  bool                 flawed_path    = 9;
+  optional double      damage         = 10;
+  optional double      meridian_crack = 11;
+}
+
+// 与 Rust AlchemyRecipeEntryV1 精确对应。
+message AlchemyRecipeEntry {
+  string id           = 1;
+  string display_name = 2;
+  string body_text    = 3;
+  string author       = 4;
+  string era          = 5;
+  uint32 max_known    = 6;
+}
+
+// 与 Rust AlchemyRecipeBookDataV1 精确对应。
+message AlchemyRecipeBook {
+  repeated AlchemyRecipeEntry learned = 1;
+  uint32 current_index               = 2;
+}
+
+// 与 Rust AlchemyContaminationLevelV1 精确对应。
+message AlchemyContaminationLevel {
+  ColorKind color   = 1;
+  double    current = 2;
+  double    max     = 3;
+  bool      ok      = 4;
+}
+
+// 与 Rust AlchemyContaminationDataV1 精确对应。
+message AlchemyContamination {
+  repeated AlchemyContaminationLevel levels = 1;
+  string metabolism_note                    = 2;
+}
+
+// ═══════════════════════════════════════════════════════════════
+// P2 B1 — 炼丹 C2S
+// ═══════════════════════════════════════════════════════════════
+
+// 与 Rust ClientRequestV1::AlchemyOpenFurnace 精确对应。
+// furnace_pos 是 Rust (i32,i32,i32) tuple → 拆成三字段。
+message AlchemyOpenFurnace {
+  int32 furnace_pos_x = 1;
+  int32 furnace_pos_y = 2;
+  int32 furnace_pos_z = 3;
+}
+
+// 与 Rust ClientRequestV1::AlchemyFeedSlot 精确对应。
+message AlchemyFeedSlot {
+  int32  furnace_pos_x = 1;
+  int32  furnace_pos_y = 2;
+  int32  furnace_pos_z = 3;
+  uint32 slot_idx      = 4; // Rust u8
+  string material      = 5;
+  uint32 count         = 6;
+}
+
+// 与 Rust ClientRequestV1::AlchemyTakeBack 精确对应。
+message AlchemyTakeBack {
+  int32  furnace_pos_x = 1;
+  int32  furnace_pos_y = 2;
+  int32  furnace_pos_z = 3;
+  uint32 slot_idx      = 4; // Rust u8
+}
+
+// 与 Rust ClientRequestV1::AlchemyIgnite 精确对应。
+message AlchemyIgnite {
+  int32  furnace_pos_x = 1;
+  int32  furnace_pos_y = 2;
+  int32  furnace_pos_z = 3;
+  string recipe_id     = 4;
+}
+
+// 与 Rust AlchemyInterventionV1 精确对应 — tagged union。
+message AlchemyInterventionProto {
+  oneof kind {
+    double adjust_temp     = 1; // AdjustTemp { temp }
+    double inject_qi       = 2; // InjectQi { qi }
+    string auto_profile_id = 3; // AutoProfile { profile_id }
+  }
+}
+
+// 与 Rust ClientRequestV1::AlchemyIntervention 精确对应。
+message AlchemyIntervention {
+  int32                    furnace_pos_x = 1;
+  int32                    furnace_pos_y = 2;
+  int32                    furnace_pos_z = 3;
+  AlchemyInterventionProto intervention  = 4;
+}
+
+// 与 Rust ClientRequestV1::AlchemyTurnPage 精确对应。
+message AlchemyTurnPage {
+  int32 delta = 1;
+}
+
+// 与 Rust ClientRequestV1::AlchemyLearnRecipe 精确对应。
+message AlchemyLearnRecipe {
+  string recipe_id = 1;
+}
+
+// 与 Rust ClientRequestV1::AlchemyLearnRecipeFragment 精确对应。
+message AlchemyLearnRecipeFragment {
+  uint64 item_instance_id = 1;
+}
+
+// 与 Rust ClientRequestV1::AlchemyTakePill 精确对应。
+message AlchemyTakePill {
+  string pill_item_id = 1;
+}
+
+// ═══════════════════════════════════════════════════════════════
+// P2 B1 — 锻造 S2C
+// ═══════════════════════════════════════════════════════════════
+
+// 与 Rust WeaponForgeStationDataV1 精确对应。
+message ForgeStation {
+  string station_id  = 1;
+  uint32 tier        = 2; // Rust u8
+  float  integrity   = 3;
+  string owner_name  = 4;
+  bool   has_session = 5;
+}
+
+// 与 Rust ForgeStepV1 精确对应。
+enum ForgeStep {
+  FORGE_STEP_UNSPECIFIED  = 0;
+  FORGE_STEP_BILLET       = 1;
+  FORGE_STEP_TEMPERING    = 2;
+  FORGE_STEP_INSCRIPTION  = 3;
+  FORGE_STEP_CONSECRATION = 4;
+  FORGE_STEP_DONE         = 5;
+}
+
+// 与 Rust TemperBeatV1 精确对应。
+enum TemperBeat {
+  TEMPER_BEAT_UNSPECIFIED = 0;
+  TEMPER_BEAT_LIGHT       = 1; // "L"
+  TEMPER_BEAT_HEAVY       = 2; // "H"
+  TEMPER_BEAT_FOLD        = 3; // "F"
+}
+
+// 与 Rust ForgeOutcomeBucketV1 精确对应。
+enum ForgeOutcomeBucket {
+  FORGE_OUTCOME_BUCKET_UNSPECIFIED = 0;
+  FORGE_OUTCOME_BUCKET_PERFECT    = 1;
+  FORGE_OUTCOME_BUCKET_GOOD       = 2;
+  FORGE_OUTCOME_BUCKET_FLAWED     = 3;
+  FORGE_OUTCOME_BUCKET_WASTE      = 4;
+  FORGE_OUTCOME_BUCKET_EXPLODE    = 5;
+}
+
+// 材料 kv 对：Rust (String, u32) tuple。
+message ForgeMaterialPair {
+  string material = 1;
+  uint32 count    = 2;
+}
+
+// 与 Rust ForgeStepStateDataV1 精确对应 — tagged union by step。
+// proto oneof 拆为 5 variant message。
+message ForgeStepStateBillet {
+  repeated ForgeMaterialPair materials_in = 1;
+  optional string            active_carrier       = 2;
+  uint32                     resolved_tier_cap    = 3;
+}
+
+message ForgeStepStateTempering {
+  repeated TemperBeat pattern     = 1;
+  uint32              beat_cursor = 2;
+  uint32              hits        = 3;
+  uint32              misses      = 4;
+  uint32              deviation   = 5;
+  double              qi_spent    = 6;
+}
+
+message ForgeStepStateInscription {
+  uint32 filled_slots = 1;
+  uint32 max_slots    = 2;
+  bool   failed       = 3;
+}
+
+message ForgeStepStateConsecration {
+  double           qi_injected    = 1;
+  double           qi_required    = 2;
+  optional ColorKind color_imprint = 3;
+}
+
+message ForgeStepState {
+  oneof state {
+    ForgeStepStateBillet       billet       = 1;
+    ForgeStepStateTempering    tempering    = 2;
+    ForgeStepStateInscription  inscription  = 3;
+    ForgeStepStateConsecration consecration = 4;
+    bool                       none_state   = 5; // ForgeStepStateDataV1::None
+  }
+}
+
+// 与 Rust ForgeSessionDataV1 精确对应。
+message ForgeSessionData {
+  uint64         session_id     = 1;
+  string         blueprint_id   = 2;
+  string         blueprint_name = 3;
+  bool           active         = 4;
+  ForgeStep      current_step   = 5;
+  uint32         step_index     = 6;
+  uint32         achieved_tier  = 7;
+  ForgeStepState step_state     = 8;
+}
+
+// 与 Rust ForgeOutcomeDataV1 精确对应。
+message ForgeOutcome {
+  uint64             session_id    = 1;
+  string             blueprint_id  = 2;
+  ForgeOutcomeBucket bucket        = 3;
+  optional string    weapon_item   = 4;
+  float              quality       = 5;
+  optional ColorKind color         = 6;
+  repeated string    side_effects  = 7;
+  uint32             achieved_tier = 8;
+  bool               flawed_path   = 9;
+}
+
+// 与 Rust ForgeBlueprintEntryV1 精确对应。
+message ForgeBlueprintEntry {
+  string id           = 1;
+  string display_name = 2;
+  uint32 tier_cap     = 3; // Rust u8
+  uint32 step_count   = 4;
+}
+
+// 与 Rust ForgeBlueprintBookDataV1 精确对应。
+message ForgeBlueprintBook {
+  repeated ForgeBlueprintEntry learned = 1;
+  uint32 current_index                 = 2;
+}
+
+// ═══════════════════════════════════════════════════════════════
+// P2 B1 — 锻造 C2S
+// ═══════════════════════════════════════════════════════════════
+
+// 与 Rust ClientRequestV1::ForgeStartSession 精确对应。
+message ForgeStartSession {
+  string                   station_id   = 1;
+  string                   blueprint_id = 2;
+  repeated ForgeMaterialPair materials   = 3;
+}
+
+// 与 Rust ClientRequestV1::ForgeTemperingHit 精确对应。
+message ForgeTemperingHit {
+  uint64 session_id      = 1;
+  string beat            = 2; // "L" / "H" / "F"
+  uint32 ticks_remaining = 3;
+}
+
+// 与 Rust ClientRequestV1::ForgeInscriptionScroll 精确对应。
+message ForgeInscriptionScroll {
+  uint64 session_id    = 1;
+  string inscription_id = 2;
+}
+
+// 与 Rust ClientRequestV1::ForgeConsecrationInject 精确对应。
+message ForgeConsecrationInject {
+  uint64 session_id = 1;
+  double qi_amount  = 2;
+}
+
+// 与 Rust ClientRequestV1::ForgeStepAdvance 精确对应。
+message ForgeStepAdvance {
+  uint64 session_id = 1;
+}
+
+// 与 Rust ClientRequestV1::ForgeBlueprintTurnPage 精确对应。
+message ForgeBlueprintTurnPage {
+  int32 delta = 1;
+}
+
+// 与 Rust ClientRequestV1::ForgeLearnBlueprint 精确对应。
+message ForgeLearnBlueprint {
+  string blueprint_id = 1;
+}
+
+// ═══════════════════════════════════════════════════════════════
+// P2 B1 — 工坊合成 S2C
+// ═══════════════════════════════════════════════════════════════
+
+// 与 Rust CraftCategoryV1 精确对应。
+enum CraftCategory {
+  CRAFT_CATEGORY_UNSPECIFIED   = 0;
+  CRAFT_CATEGORY_ANQI_CARRIER  = 1;
+  CRAFT_CATEGORY_DUGU_POTION   = 2;
+  CRAFT_CATEGORY_TUIKE_SKIN    = 3;
+  CRAFT_CATEGORY_ZHENFA_TRAP   = 4;
+  CRAFT_CATEGORY_TOOL          = 5;
+  CRAFT_CATEGORY_ARMOR_CRAFT   = 6;
+  CRAFT_CATEGORY_CONTAINER     = 7;
+  CRAFT_CATEGORY_POISON_POWDER = 8;
+  CRAFT_CATEGORY_MISC          = 9;
+}
+
+// 与 Rust CraftFailureReasonV1 精确对应。
+enum CraftFailureReason {
+  CRAFT_FAILURE_REASON_UNSPECIFIED     = 0;
+  CRAFT_FAILURE_REASON_PLAYER_CANCELLED = 1;
+  CRAFT_FAILURE_REASON_PLAYER_DIED     = 2;
+  CRAFT_FAILURE_REASON_INTERNAL_ERROR  = 3;
+}
+
+// 与 Rust InsightTriggerV1 精确对应。
+enum InsightTrigger {
+  INSIGHT_TRIGGER_UNSPECIFIED     = 0;
+  INSIGHT_TRIGGER_BREAKTHROUGH    = 1;
+  INSIGHT_TRIGGER_NEAR_DEATH      = 2;
+  INSIGHT_TRIGGER_DEFEAT_STRONGER = 3;
+}
+
+// 材料 kv 对：(template_id, count)。
+message CraftMaterialPair {
+  string template_id = 1;
+  uint32 count       = 2;
+}
+
+// 产出 kv 对：(template_id, count)。
+message CraftOutputPair {
+  string template_id = 1;
+  uint32 count       = 2;
+}
+
+// 真元色门槛 kv 对：(color_kind, min_share)。
+message QiColorMinPair {
+  ColorKind color     = 1;
+  float     min_share = 2;
+}
+
+// 与 Rust CraftRequirementsV1 精确对应。
+message CraftRequirements {
+  optional Realm        realm_min    = 1;
+  optional QiColorMinPair qi_color_min = 2;
+  optional uint32       skill_lv_min = 3; // Rust u8
+}
+
+// 与 Rust CraftRecipeEntryV1 精确对应。
+message CraftRecipeEntry {
+  string                     id           = 1;
+  CraftCategory              category     = 2;
+  string                     display_name = 3;
+  repeated CraftMaterialPair materials    = 4;
+  double                     qi_cost      = 5;
+  uint64                     time_ticks   = 6;
+  CraftOutputPair            output       = 7;
+  CraftRequirements          requirements = 8;
+  bool                       unlocked     = 9;
+}
+
+// 与 Rust RecipeListV1 精确对应。
+message CraftRecipeList {
+  uint32                    v         = 1; // Rust u8
+  string                    player_id = 2;
+  repeated CraftRecipeEntry recipes   = 3;
+  uint64                    ts        = 4;
+}
+
+// 与 Rust CraftSessionStateV1 精确对应。
+message CraftSessionState {
+  uint32          v               = 1; // Rust u8
+  string          player_id       = 2;
+  bool            active          = 3;
+  optional string recipe_id       = 4;
+  uint64          elapsed_ticks   = 5;
+  uint64          total_ticks     = 6;
+  uint32          completed_count = 7;
+  uint32          total_count     = 8;
+  uint64          ts              = 9;
+}
+
+// 与 Rust UnlockEventSourceV1 精确对应 — tagged union。
+message UnlockEventSource {
+  oneof source {
+    string         scroll_item_template = 1;
+    string         mentor_npc_archetype = 2;
+    InsightTrigger insight_trigger      = 3;
+  }
+}
+
+// 与 Rust CraftOutcomeV1 精确对应 — Completed / Failed variants。
+message CraftOutcome {
+  oneof outcome {
+    CraftOutcomeCompleted completed = 1;
+    CraftOutcomeFailed    failed    = 2;
+  }
+}
+
+message CraftOutcomeCompleted {
+  uint32 v                = 1; // Rust u8
+  string player_id        = 2;
+  string recipe_id        = 3;
+  string output_template  = 4;
+  uint32 output_count     = 5;
+  uint64 completed_at_tick = 6;
+  uint64 ts               = 7;
+}
+
+message CraftOutcomeFailed {
+  uint32             v                 = 1; // Rust u8
+  string             player_id        = 2;
+  string             recipe_id        = 3;
+  CraftFailureReason reason           = 4;
+  uint32             material_returned = 5;
+  double             qi_refunded      = 6;
+  uint64             ts               = 7;
+}
+
+// 与 Rust RecipeUnlockedV1 精确对应。
+message RecipeUnlocked {
+  uint32            v               = 1; // Rust u8
+  string            player_id       = 2;
+  string            recipe_id       = 3;
+  UnlockEventSource source          = 4;
+  uint64            unlocked_at_tick = 5;
+  uint64            ts              = 6;
+}
+
+// ═══════════════════════════════════════════════════════════════
+// P2 B1 — 工坊合成 C2S
+// ═══════════════════════════════════════════════════════════════
+
+// 与 Rust ClientRequestV1::CraftStart 精确对应。
+message CraftStart {
+  string recipe_id = 1;
+  uint32 quantity  = 2;
+}
+
+// 与 Rust ClientRequestV1::CraftCancel 精确对应。
+message CraftCancel {
+  // 无额外字段。
+}
+
+// ═══════════════════════════════════════════════════════════════
+// P2 B1 — 采集 / 药草 S2C
+// ═══════════════════════════════════════════════════════════════
+
+// 与 Rust BotanyHarvestModeV1 精确对应。
+enum BotanyHarvestMode {
+  BOTANY_HARVEST_MODE_UNSPECIFIED = 0;
+  BOTANY_HARVEST_MODE_MANUAL      = 1;
+  BOTANY_HARVEST_MODE_AUTO        = 2;
+}
+
+// 与 Rust BotanyModelOverlayV1 精确对应。
+enum BotanyModelOverlay {
+  BOTANY_MODEL_OVERLAY_UNSPECIFIED = 0;
+  BOTANY_MODEL_OVERLAY_NONE        = 1;
+  BOTANY_MODEL_OVERLAY_EMISSIVE    = 2;
+  BOTANY_MODEL_OVERLAY_DUAL_PHASE  = 3;
+}
+
+// ServerDataPayloadV1::BotanyHarvestProgress inline variant 精确对应。
+message BotanyHarvestProgress {
+  string          session_id       = 1;
+  string          target_id        = 2;
+  string          target_name      = 3;
+  string          plant_kind       = 4;
+  string          mode             = 5; // Rust String ("manual"/"auto")
+  double          progress         = 6;
+  bool            auto_selectable  = 7;
+  bool            request_pending  = 8;
+  bool            interrupted      = 9;
+  bool            completed        = 10;
+  string          detail           = 11;
+  repeated string hazard_hints     = 12;
+  optional double target_pos_x     = 13; // Rust Option<[f64;3]> 拆三字段
+  optional double target_pos_y     = 14;
+  optional double target_pos_z     = 15;
+}
+
+// 与 Rust BotanyPlantV2RenderProfileV1 精确对应。
+message BotanyPlantV2RenderProfile {
+  string           plant_id             = 1;
+  string           base_mesh_ref        = 2;
+  uint32           tint_rgb             = 3;
+  optional uint32  tint_rgb_secondary   = 4;
+  BotanyModelOverlay model_overlay      = 5;
+}
+
+message BotanyPlantV2RenderProfiles {
+  repeated BotanyPlantV2RenderProfile profiles = 1;
+}
+
+// ServerDataPayloadV1::BotanySkill inline variant 精确对应。
+message BotanySkill {
+  uint64 level              = 1;
+  uint64 xp                 = 2;
+  uint64 xp_to_next_level   = 3;
+  uint64 auto_unlock_level  = 4;
+}
+
+// ═══════════════════════════════════════════════════════════════
+// P2 B1 — 采集 C2S
+// ═══════════════════════════════════════════════════════════════
+
+// 与 Rust ClientRequestV1::BotanyHarvestRequest 精确对应。
+message BotanyHarvestRequest {
+  string           session_id = 1;
+  BotanyHarvestMode mode      = 2;
+}
+
+// ═══════════════════════════════════════════════════════════════
+// P2 B1 — 采矿 / 伐木 / 通用采集 S2C
+// ═══════════════════════════════════════════════════════════════
+
+// ServerDataPayloadV1::MiningProgress inline variant 精确对应。
+message MiningProgress {
+  string session_id = 1;
+  int32  ore_pos_x  = 2; // Rust [i32;3] 拆三字段
+  int32  ore_pos_y  = 3;
+  int32  ore_pos_z  = 4;
+  double progress   = 5;
+  bool   interrupted = 6;
+  bool   completed  = 7;
+}
+
+// ServerDataPayloadV1::LumberProgress inline variant 精确对应。
+message LumberProgress {
+  string session_id = 1;
+  int32  log_pos_x  = 2; // Rust [i32;3] 拆三字段
+  int32  log_pos_y  = 3;
+  int32  log_pos_z  = 4;
+  double progress   = 5;
+  bool   interrupted = 6;
+  bool   completed  = 7;
+  string detail     = 8;
+}
+
+// 与 Rust GatheringTargetTypeV1 精确对应。
+enum GatheringTargetType {
+  GATHERING_TARGET_TYPE_UNSPECIFIED = 0;
+  GATHERING_TARGET_TYPE_HERB        = 1;
+  GATHERING_TARGET_TYPE_ORE         = 2;
+  GATHERING_TARGET_TYPE_WOOD        = 3;
+}
+
+// 与 Rust GatheringQualityHintV1 精确对应。
+enum GatheringQualityHint {
+  GATHERING_QUALITY_HINT_UNSPECIFIED      = 0;
+  GATHERING_QUALITY_HINT_NORMAL           = 1;
+  GATHERING_QUALITY_HINT_FINE_LIKELY      = 2;
+  GATHERING_QUALITY_HINT_PERFECT_POSSIBLE = 3;
+  GATHERING_QUALITY_HINT_FINE             = 4;
+  GATHERING_QUALITY_HINT_PERFECT          = 5;
+}
+
+// ServerDataPayloadV1::GatheringSession inline variant 精确对应。
+message GatheringSession {
+  string              session_id    = 1;
+  uint64              progress_ticks = 2;
+  uint64              total_ticks   = 3;
+  string              target_name   = 4;
+  GatheringTargetType target_type   = 5;
+  GatheringQualityHint quality_hint = 6;
+  optional string     tool_used     = 7;
+  bool                interrupted   = 8;
+  bool                completed     = 9;
+}
+
+// ═══════════════════════════════════════════════════════════════
+// P2 B1 — 灵田 S2C
+// ═══════════════════════════════════════════════════════════════
+
+// 与 Rust LingtianSessionKindV1 精确对应。
+enum LingtianSessionKind {
+  LINGTIAN_SESSION_KIND_UNSPECIFIED = 0;
+  LINGTIAN_SESSION_KIND_TILL        = 1;
+  LINGTIAN_SESSION_KIND_RENEW       = 2;
+  LINGTIAN_SESSION_KIND_PLANTING    = 3;
+  LINGTIAN_SESSION_KIND_HARVEST     = 4;
+  LINGTIAN_SESSION_KIND_REPLENISH   = 5;
+  LINGTIAN_SESSION_KIND_DRAIN_QI    = 6;
+}
+
+// 与 Rust LingtianSessionDataV1 精确对应。
+message LingtianSessionData {
+  bool                 active                    = 1;
+  LingtianSessionKind  kind                      = 2;
+  int32                pos_x                     = 3; // Rust [i32;3] 拆三字段
+  int32                pos_y                     = 4;
+  int32                pos_z                     = 5;
+  uint32               elapsed_ticks             = 6;
+  uint32               target_ticks              = 7;
+  optional string      plant_id                  = 8;
+  optional string      source                    = 9;
+  optional float       dye_contamination         = 10;
+  bool                 dye_contamination_warning  = 11;
+}
+
+// ═══════════════════════════════════════════════════════════════
+// P2 B1 — 灵田 C2S
+// ═══════════════════════════════════════════════════════════════
+
+// 与 Rust ClientRequestV1::LingtianStartTill 精确对应。
+message LingtianStartTill {
+  int32  x                = 1;
+  int32  y                = 2;
+  int32  z                = 3;
+  uint64 hoe_instance_id  = 4;
+  string mode             = 5; // "manual" / "auto"
+}
+
+// 与 Rust ClientRequestV1::LingtianStartRenew 精确对应。
+message LingtianStartRenew {
+  int32  x                = 1;
+  int32  y                = 2;
+  int32  z                = 3;
+  uint64 hoe_instance_id  = 4;
+}
+
+// 与 Rust ClientRequestV1::LingtianStartPlanting 精确对应。
+message LingtianStartPlanting {
+  int32  x        = 1;
+  int32  y        = 2;
+  int32  z        = 3;
+  string plant_id = 4;
+}
+
+// 与 Rust ClientRequestV1::LingtianStartHarvest 精确对应。
+message LingtianStartHarvest {
+  int32  x    = 1;
+  int32  y    = 2;
+  int32  z    = 3;
+  string mode = 4; // "manual" / "auto"
+}
+
+// 与 Rust ClientRequestV1::LingtianStartReplenish 精确对应。
+message LingtianStartReplenish {
+  int32  x      = 1;
+  int32  y      = 2;
+  int32  z      = 3;
+  string source = 4;
+}
+
+// 与 Rust ClientRequestV1::LingtianStartDrainQi 精确对应。
+message LingtianStartDrainQi {
+  int32 x = 1;
+  int32 y = 2;
+  int32 z = 3;
+}
+
+// ═══════════════════════════════════════════════════════════════
+// P2 B1 — 矿石 C2S
+// ═══════════════════════════════════════════════════════════════
+
+// 与 Rust ClientRequestV1::MineralProbe 精确对应。
+message MineralProbe {
+  int32 x = 1;
+  int32 y = 2;
+  int32 z = 3;
 }
