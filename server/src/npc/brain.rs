@@ -9,6 +9,7 @@ use valence::prelude::{
     IntoSystemConfigs, Position, PreUpdate, Query, Res, ResMut, Resource, Update, With, Without,
 };
 
+use crate::combat::components::{Lifecycle, LifecycleState};
 use crate::combat::events::{AttackIntent, AttackSource};
 use crate::cultivation::breakthrough::{
     breakthrough_qi_cost, try_breakthrough, BreakthroughError, BreakthroughSuccess, XorshiftRoll,
@@ -1010,8 +1011,17 @@ fn should_flee_from_score(score: f32) -> bool {
 // Chase action — sets Navigator goal toward the player
 // ---------------------------------------------------------------------------
 
+#[allow(clippy::type_complexity)]
 fn chase_target_scorer_system(
-    npcs: Query<(&NpcBlackboard, &NpcMeleeProfile, Option<&NpcLodTier>), With<NpcMarker>>,
+    npcs: Query<
+        (
+            &NpcBlackboard,
+            &NpcMeleeProfile,
+            Option<&NpcLodTier>,
+            Option<&Lifecycle>,
+        ),
+        With<NpcMarker>,
+    >,
     players: Query<&PlayerIdentities, With<ClientMarker>>,
     mut scorers: Query<(&Actor, &mut Score), With<ChaseTargetScorer>>,
     lod_config: Option<Res<NpcLodConfig>>,
@@ -1020,7 +1030,12 @@ fn chase_target_scorer_system(
     let cfg = lod_config.as_deref().cloned().unwrap_or_default();
     let tick = lod_tick.as_deref().map(|t| t.0).unwrap_or(0);
     for (Actor(actor), mut score) in &mut scorers {
-        let value = if let Ok((bb, profile, tier)) = npcs.get(*actor) {
+        let value = if let Ok((bb, profile, tier, lifecycle)) = npcs.get(*actor) {
+            // NPC is not alive — suppress all chase scoring.
+            if lifecycle.is_some_and(|lc| lc.state != LifecycleState::Alive) {
+                score.set(0.0);
+                continue;
+            }
             match lod_gated_score_by_kind(tier, tick, &cfg, ScorerKind::Cosmetic, || {
                 if bb
                     .nearest_player
@@ -1125,8 +1140,17 @@ fn chase_action_system(
 // Melee attack — NPC stands still
 // ---------------------------------------------------------------------------
 
+#[allow(clippy::type_complexity)]
 fn melee_range_scorer_system(
-    npcs: Query<(&NpcBlackboard, &NpcMeleeProfile, Option<&NpcLodTier>), With<NpcMarker>>,
+    npcs: Query<
+        (
+            &NpcBlackboard,
+            &NpcMeleeProfile,
+            Option<&NpcLodTier>,
+            Option<&Lifecycle>,
+        ),
+        With<NpcMarker>,
+    >,
     mut scorers: Query<(&Actor, &mut Score), With<MeleeRangeScorer>>,
     lod_config: Option<Res<NpcLodConfig>>,
     lod_tick: Option<Res<NpcLodTick>>,
@@ -1134,7 +1158,12 @@ fn melee_range_scorer_system(
     let cfg = lod_config.as_deref().cloned().unwrap_or_default();
     let tick = lod_tick.as_deref().map(|t| t.0).unwrap_or(0);
     for (Actor(actor), mut score) in &mut scorers {
-        let value = if let Ok((bb, profile, tier)) = npcs.get(*actor) {
+        let value = if let Ok((bb, profile, tier, lifecycle)) = npcs.get(*actor) {
+            // NPC is not alive — suppress melee scoring.
+            if lifecycle.is_some_and(|lc| lc.state != LifecycleState::Alive) {
+                score.set(0.0);
+                continue;
+            }
             match lod_gated_score_by_kind(tier, tick, &cfg, ScorerKind::Cosmetic, || {
                 if bb.player_distance <= profile.reach.max {
                     1.0
@@ -1152,6 +1181,7 @@ fn melee_range_scorer_system(
     }
 }
 
+#[allow(clippy::type_complexity)]
 fn melee_attack_action_system(
     mut actions: Query<(&Actor, &mut ActionState), With<MeleeAttackAction>>,
     mut npcs: Query<
@@ -1160,6 +1190,7 @@ fn melee_attack_action_system(
             &mut NpcBlackboard,
             &NpcMeleeProfile,
             &mut Navigator,
+            Option<&Lifecycle>,
         ),
         With<NpcMarker>,
     >,
@@ -1171,16 +1202,22 @@ fn melee_attack_action_system(
     for (Actor(actor), mut state) in &mut actions {
         match *state {
             ActionState::Requested => {
-                if let Ok((_, _, _, mut nav)) = npcs.get_mut(*actor) {
+                if let Ok((_, _, _, mut nav, _)) = npcs.get_mut(*actor) {
                     nav.stop();
                 }
                 *state = ActionState::Executing;
             }
             ActionState::Executing => {
-                let Ok((_npc_pos, mut bb, profile, _)) = npcs.get_mut(*actor) else {
+                let Ok((_npc_pos, mut bb, profile, _, lifecycle)) = npcs.get_mut(*actor) else {
                     *state = ActionState::Failure;
                     continue;
                 };
+
+                // NPC is not alive — abort attack action.
+                if lifecycle.is_some_and(|lc| lc.state != LifecycleState::Alive) {
+                    *state = ActionState::Failure;
+                    continue;
+                }
 
                 if bb.player_distance > profile.disengage_distance {
                     *state = ActionState::Success;
@@ -1232,6 +1269,7 @@ fn dash_scorer_system(
             &MovementCooldowns,
             &MovementController,
             Option<&NpcLodTier>,
+            Option<&Lifecycle>,
         ),
         With<NpcMarker>,
     >,
@@ -1245,7 +1283,12 @@ fn dash_scorer_system(
     let lod_tick = lod_tick.as_deref().map(|t| t.0).unwrap_or(0);
 
     for (Actor(actor), mut score) in &mut scorers {
-        let value = if let Ok((bb, caps, cooldowns, ctrl, tier)) = npcs.get(*actor) {
+        let value = if let Ok((bb, caps, cooldowns, ctrl, tier, lifecycle)) = npcs.get(*actor) {
+            // NPC is not alive — suppress dash scoring.
+            if lifecycle.is_some_and(|lc| lc.state != LifecycleState::Alive) {
+                score.set(0.0);
+                continue;
+            }
             match lod_gated_score_by_kind(tier, lod_tick, &cfg, ScorerKind::Cosmetic, || {
                 dash_score(bb, caps, cooldowns, ctrl, tick)
             }) {
