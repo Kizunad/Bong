@@ -30,12 +30,13 @@ use super::common::{
     attach_player_skin, draw_npc_skin, skin_salt, spawn_notice, spawn_rogue_commoner_base,
     DeferredNpcBrain, NpcCombatLoadout, NpcSkinSpawnContext,
 };
+use super::PoissonSpawnSampler;
 
 // ---------------------------------------------------------------------------
 // Rogue population seed config + progress
 // ---------------------------------------------------------------------------
 
-const ROGUE_SEED_BATCH_SIZE: u32 = 10;
+const ROGUE_SEED_BATCH_SIZE: u32 = 5;
 
 /// 启动时预生成散修种群（plan §7 Phase 7 等 agent 实装前的硬编码替身）。
 /// `resource_fraction` 比例进入 `spirit_qi >= resource_spirit_qi_threshold` 的区域，
@@ -57,7 +58,7 @@ impl Default for RoguePopulationSeedConfig {
         let target_count = std::env::var("BONG_ROGUE_SEED_COUNT")
             .ok()
             .and_then(|raw| raw.parse::<u32>().ok())
-            .unwrap_or(100);
+            .unwrap_or(20);
         Self {
             target_count,
             resource_fraction: 0.8,
@@ -85,6 +86,9 @@ pub(crate) struct RogueSeedProgress {
     pub(crate) resource_reserved: u32,
     pub(crate) other_zone_count: usize,
     pub(crate) other_reserved: u32,
+    /// plan-npc-overhaul-v1 §P1.3 — 各 zone 已 spawn 位置，用于 Poisson 采样。
+    pub(crate) spawned_positions_by_zone:
+        std::collections::HashMap<String, Vec<(DVec3, NpcArchetype)>>,
 }
 
 // ---------------------------------------------------------------------------
@@ -461,17 +465,58 @@ pub(crate) fn seed_initial_rogue_population_on_startup(
             continue;
         }
 
+        // Extract zone data before mutable borrow of progress.
+        let zone_name = job.zone.name.clone();
+        let zone_bounds = job.zone.bounds;
+        let zone_spirit_qi = job.zone.spirit_qi;
+        let zone_count = job.count;
         let global_index = progress.spawned_total;
-        let (pos, patrol_target) = seed_position_for_zone(&job.zone, global_index);
+
+        // plan-npc-overhaul-v1 §P1.3 — 使用 PoissonSpawnSampler 替代 anchor+jitter。
+        let sampler = PoissonSpawnSampler::adaptive_for_zone(zone_bounds);
+        let rng_seed = (global_index as u64)
+            .wrapping_mul(0x9E37_79B9_7F4A_7C15)
+            .wrapping_add(0xbf58_476d_1ce4_e5b9);
+        // Snapshot existing positions to avoid borrow conflict.
+        let existing: Vec<(DVec3, NpcArchetype)> = progress
+            .spawned_positions_by_zone
+            .get(&zone_name)
+            .cloned()
+            .unwrap_or_default();
+        let sampled =
+            sampler.sample_position(zone_bounds, &existing, NpcArchetype::Rogue, rng_seed);
+        let pos = match sampled {
+            Some(p) => {
+                let zone_min = zone_bounds.0;
+                let zone_max = zone_bounds.1;
+                DVec3::new(
+                    p.x.clamp(zone_min.x, zone_max.x),
+                    p.y.clamp(zone_min.y, zone_max.y),
+                    p.z.clamp(zone_min.z, zone_max.z),
+                )
+            }
+            None => {
+                // Zone saturated by Poisson — fall back to seed_position_for_zone.
+                let job = &progress.jobs[progress.job_index];
+                let (fallback_pos, _) = seed_position_for_zone(&job.zone, global_index);
+                fallback_pos
+            }
+        };
+        let patrol_center = DVec3::new(
+            (zone_bounds.0.x + zone_bounds.1.x) * 0.5,
+            (zone_bounds.0.y + zone_bounds.1.y) * 0.5,
+            (zone_bounds.0.z + zone_bounds.1.z) * 0.5,
+        );
+
         let age = initial_age_for_index(global_index, max_age, cfg.max_initial_age_ratio);
         let entity = spawn_scattered_cultivator_at(
             &mut commands,
             NpcSkinSpawnContext::new(skin_pool.as_deref_mut(), skin_policy),
             layer,
-            job.zone.name.as_str(),
+            &zone_name,
             pos,
-            patrol_target,
-            job.zone.spirit_qi,
+            patrol_center,
+            zone_spirit_qi,
             Realm::Awaken,
             age,
         );
@@ -483,14 +528,24 @@ pub(crate) fn seed_initial_rogue_population_on_startup(
             entity,
             NpcArchetype::Rogue,
             NpcSpawnSource::Seed,
-            job.zone.name.as_str(),
+            &zone_name,
             pos,
             age,
         ));
 
+        // Track for future Poisson samples.
+        progress
+            .spawned_positions_by_zone
+            .entry(zone_name)
+            .or_default()
+            .push((pos, NpcArchetype::Rogue));
+
         progress.spawned_in_job += 1;
         progress.spawned_total += 1;
         spawned_this_tick += 1;
+
+        // Suppress unused variables if needed.
+        let _ = (zone_count, zone_spirit_qi);
     }
 
     if progress.job_index >= progress.jobs.len() {
