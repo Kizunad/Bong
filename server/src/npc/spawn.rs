@@ -1176,6 +1176,7 @@ pub fn fallback_rogue_commoner_kind(skin: &Option<SignedSkin>) -> EntityKind {
 #[allow(dead_code)]
 pub fn spawn_disciple_npc_at(
     commands: &mut Commands,
+    skin_context: NpcSkinSpawnContext<'_>,
     layer: Entity,
     home_zone: &str,
     spawn_position: DVec3,
@@ -1194,45 +1195,24 @@ pub fn spawn_disciple_npc_at(
         Some(rank),
         initial_age_ratio(NpcArchetype::Disciple, initial_age_ticks),
     );
-    let entity = commands
-        .spawn((
-            VillagerEntityBundle {
-                kind: EntityKind::VILLAGER,
-                layer: EntityLayerId(layer),
-                position: Position::new([spawn_position.x, spawn_position.y, spawn_position.z]),
-                ..Default::default()
-            },
-            Transform::from_xyz(
-                spawn_position.x as f32,
-                spawn_position.y as f32,
-                spawn_position.z as f32,
-            ),
-            GlobalTransform::default(),
-            NpcMarker,
-            NpcBlackboard::default(),
-            loadout.clone(),
-            loadout.melee_archetype,
-            loadout.melee_profile(),
-            NpcArchetype::Disciple,
-            NpcLodTier::Dormant,
-            Navigator::new(),
-            MovementController::new(),
-            loadout.movement_capabilities,
-            MovementCooldowns::default(),
-            NpcPatrol::new(home_zone, patrol_target),
-        ))
-        .id();
+    let skin = draw_npc_skin(skin_context, profile, spawn_position);
+    let entity = spawn_rogue_commoner_base(
+        commands,
+        layer,
+        spawn_position,
+        &skin,
+        profile,
+        loadout.clone(),
+        NpcArchetype::Disciple,
+        home_zone,
+        patrol_target,
+    );
 
-    commands
-        .entity(entity)
-        .insert((profile, visual_equipment(&profile)));
+    if let Some(skin) = skin.filter(|skin| !skin.is_fallback()) {
+        attach_player_skin(commands, entity, NpcArchetype::Disciple, skin);
+    }
 
     commands.entity(entity).insert((
-        NpcDailySchedule::for_archetype(NpcArchetype::Disciple, schedule_seed_for_entity(entity)),
-        home_base_for_archetype(NpcArchetype::Disciple, patrol_target),
-        GoToPoiState::default(),
-        StallState::default(),
-        RestState::default(),
         WanderState::default(),
         CultivateState::default(),
         CultivationDriveHistory::default(),
@@ -2021,6 +2001,7 @@ mod tests {
     fn spawn_test_disciple(mut commands: Commands, layer: Res<TestLayer>) {
         spawn_disciple_npc_at(
             &mut commands,
+            NpcSkinSpawnContext::new(None, NpcSkinFallbackPolicy::AllowFallback),
             layer.0,
             DEFAULT_SPAWN_ZONE_NAME,
             DVec3::new(42.0, 66.0, 42.0),

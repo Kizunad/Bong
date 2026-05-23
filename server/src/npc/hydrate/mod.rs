@@ -44,7 +44,7 @@ use crate::npc::tsy_hostile::{
     spawn_tsy_daoxiang_at, spawn_tsy_fuya_at, spawn_tsy_skull_fiend_at, spawn_tsy_zhinian_at,
     FuyaAura, TsyHostileMarker, ZhinianMind, ZhinianPhase,
 };
-use crate::skin::NpcSkinFallbackPolicy;
+use crate::skin::{NpcSkinFallbackPolicy, SkinPool};
 use crate::world::dimension::{CurrentDimension, DimensionKind, DimensionLayers};
 use crate::world::poi_novice::PoiNoviceRegistry;
 use crate::world::tsy_lifecycle::DaoxiangOrigin;
@@ -85,6 +85,7 @@ pub fn hydrate_dormant_near_players_system(
     players: Query<(&Position, Option<&CurrentDimension>), With<ClientMarker>>,
     registry: Option<Res<NpcRegistry>>,
     pois: Option<Res<PoiNoviceRegistry>>,
+    mut skin_pool: Option<ResMut<SkinPool>>,
     mut tribulations: EventWriter<InitiateXuhuaTribulation>,
 ) {
     let tick = crate::npc::dormant::current_tick(game_tick.as_deref());
@@ -133,6 +134,7 @@ pub fn hydrate_dormant_near_players_system(
             dimension_layers,
             tick,
             pois.as_deref(),
+            skin_pool.as_deref_mut(),
         );
         if force_tribulation {
             tribulations.send(InitiateXuhuaTribulation {
@@ -411,6 +413,7 @@ fn spawn_from_snapshot(
     dimension_layers: &DimensionLayers,
     current_tick: u64,
     pois: Option<&PoiNoviceRegistry>,
+    skin_pool: Option<&mut SkinPool>,
 ) -> Entity {
     let layer = match snapshot.dimension {
         DimensionKind::Tsy => dimension_layers.tsy,
@@ -435,11 +438,12 @@ fn spawn_from_snapshot(
         pois,
     );
     let home_zone = snapshot.zone_name.as_str();
+    let skin_policy = NpcSkinFallbackPolicy::AllowFallback;
     let entity = match snapshot.archetype {
         NpcArchetype::Zombie => spawn_zombie_npc_at(commands, layer, home_zone, pos, patrol_target),
         NpcArchetype::Commoner => spawn_commoner_npc_at(
             commands,
-            NpcSkinSpawnContext::new(None, NpcSkinFallbackPolicy::AllowFallback),
+            NpcSkinSpawnContext::new(skin_pool, skin_policy),
             layer,
             home_zone,
             pos,
@@ -449,7 +453,7 @@ fn spawn_from_snapshot(
         ),
         NpcArchetype::Rogue => spawn_rogue_npc_at(
             commands,
-            NpcSkinSpawnContext::new(None, NpcSkinFallbackPolicy::AllowFallback),
+            NpcSkinSpawnContext::new(skin_pool, skin_policy),
             layer,
             home_zone,
             pos,
@@ -467,6 +471,7 @@ fn spawn_from_snapshot(
         ),
         NpcArchetype::Disciple => spawn_disciple_npc_at(
             commands,
+            NpcSkinSpawnContext::new(skin_pool, skin_policy),
             layer,
             home_zone,
             pos,
