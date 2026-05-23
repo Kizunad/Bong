@@ -81,7 +81,19 @@ message ServerDataEnvelope {
     NicheGuardianBroken   niche_guardian_broken    = 63;
     SparringInvite        sparring_invite         = 64;
     TradeOffer            trade_offer             = 65;
-    // P2/P3 阶段继续追加 field 66..N。
+    // ─── P2 B4：天劫 / 死亡 / 复活 / 突破 / 境界视觉 ────────────
+    TribulationState        tribulation_state       = 66;
+    TribulationBroadcast    tribulation_broadcast   = 67;
+    AscensionQuota          ascension_quota         = 68;
+    HeartDemonOffer         heart_demon_offer       = 69;
+    BurstMeridianEvent      burst_meridian_event    = 70;
+    BreakthroughCinematic   breakthrough_cinematic  = 71;
+    DeathScreen             death_screen            = 72;
+    TerminateScreen         terminate_screen        = 73;
+    QiColorObserved         qi_color_observed       = 74;
+    RealmVisionParams       realm_vision_params     = 75;
+    SpiritualSenseTargets   spiritual_sense_targets = 76;
+    // P2/P3 阶段继续追加 field 77..N。
     // 字段编号一旦分配永不复用（buf breaking 检测保证）。
   }
 }
@@ -143,7 +155,14 @@ message ClientRequestEnvelope {
     NpcInspectRequest           npc_inspect_request           = 48;
     NpcDialogueChoice           npc_dialogue_choice           = 49;
     NpcTradeRequest             npc_trade_request             = 50;
-    // P2/P3 阶段继续追加 field 51..N。
+    // ─── P2 B4：天劫 / 死亡 / 突破 C2S ───────────────────────────
+    StartDuXu                   start_du_xu                   = 51;
+    AbortTribulation            abort_tribulation             = 52;
+    HeartDemonDecision          heart_demon_decision          = 53;
+    DuoSheRequest               duo_she_request               = 54;
+    QiColorInspect              qi_color_inspect              = 55;
+    UseLifeCore                 use_life_core                 = 56;
+    // P2/P3 阶段继续追加 field 57..N。
   }
 }
 
@@ -1998,4 +2017,315 @@ message NpcTradeRequest {
   int32           npc_entity_id     = 1;
   repeated uint64 offered_items     = 2;
   string          requested_item_id = 3;
+}
+
+// ═══════════════════════════════════════════════════════════════
+// P2 B4 — 天劫 / 死亡 / 复活 / 突破 / 境界视觉 S2C
+// ═══════════════════════════════════════════════════════════════
+
+// ─── TribulationState ──────────────────────────────────────────
+// 与 Rust TribulationStateV1 精确对应。
+
+message TribulationState {
+  bool            active              = 1;
+  string          char_id             = 2;
+  string          actor_name          = 3;
+  string          kind                = 4;  // du_xu / zone_collapse / targeted / jue_bi / ascension_quota_open
+  string          phase               = 5;  // omen / lock / wave / heart_demon / settle
+  double          world_x             = 6;
+  double          world_z             = 7;
+  uint32          wave_current        = 8;
+  uint32          wave_total          = 9;
+  uint64          started_tick        = 10;
+  uint64          phase_started_tick  = 11;
+  uint64          next_wave_tick      = 12;
+  bool            failed              = 13;
+  bool            half_step_on_success = 14;
+  repeated string participants        = 15;
+  optional string result              = 16;
+}
+
+// ─── TribulationBroadcast ──────────────────────────────────────
+// 与 Rust TribulationBroadcastV1 精确对应。
+
+message TribulationBroadcast {
+  bool   active            = 1;
+  string actor_name        = 2;
+  string stage             = 3;
+  double world_x           = 4;
+  double world_z           = 5;
+  uint64 expires_at_ms     = 6;
+  bool   spectate_invite   = 7;
+  double spectate_distance = 8;
+}
+
+// ─── AscensionQuota ────────────────────────────────────────────
+// 与 Rust AscensionQuotaV1 精确对应。
+
+message AscensionQuota {
+  uint32 occupied_slots = 1;
+  uint32 quota_limit    = 2;
+  uint32 available_slots = 3;
+  double total_world_qi = 4;
+  double quota_k        = 5;
+  string quota_basis    = 6;
+}
+
+// ─── HeartDemonOffer ───────────────────────────────────────────
+// 与 Rust HeartDemonOfferV1 / HeartDemonOfferChoiceV1 精确对应。
+
+message HeartDemonOfferChoice {
+  string choice_id      = 1;
+  string category       = 2;
+  string title          = 3;
+  string effect_summary = 4;
+  string flavor         = 5;
+  string style_hint     = 6;
+}
+
+message HeartDemonOffer {
+  string                       offer_id        = 1;
+  string                       trigger_id      = 2;
+  string                       trigger_label   = 3;
+  string                       realm_label     = 4;
+  double                       composure       = 5;
+  uint32                       quota_remaining = 6;
+  uint32                       quota_total     = 7;
+  uint64                       expires_at_ms   = 8;
+  repeated HeartDemonOfferChoice choices       = 9;
+}
+
+// ─── BurstMeridianEvent ────────────────────────────────────────
+// 与 Rust BurstMeridianEventV1 精确对应。
+
+message BurstMeridianEvent {
+  string          skill              = 1;
+  string          caster             = 2;
+  optional string target             = 3;
+  uint64          tick               = 4;
+  double          overload_ratio     = 5;
+  double          integrity_snapshot = 6;
+}
+
+// ─── BreakthroughCinematic ─────────────────────────────────────
+// 与 Rust BreakthroughCinematicS2cV1 精确对应。
+
+message BreakthroughCinematic {
+  string actor_id              = 1;
+  string phase                 = 2;
+  uint32 phase_tick            = 3;
+  uint32 phase_duration_ticks  = 4;
+  string realm_from            = 5;
+  string realm_to              = 6;
+  string result                = 7;
+  bool   interrupted           = 8;
+  double world_pos_x           = 9;   // Rust [f64;3] 拆三字段
+  double world_pos_y           = 10;
+  double world_pos_z           = 11;
+  double visible_radius_blocks = 12;
+  bool   global                = 13;
+  bool   distant_billboard     = 14;
+  float  particle_density      = 15;
+  float  intensity             = 16;
+  string season_overlay        = 17;
+  string style                 = 18;
+  uint64 at_tick               = 19;
+}
+
+// ─── DeathScreen ───────────────────────────────────────────────
+// 与 Rust ServerDataPayloadV1::DeathScreen inline variant 精确对应。
+
+// 与 Rust DeathScreenStageV1 精确对应。
+enum DeathScreenStage {
+  DEATH_SCREEN_STAGE_UNSPECIFIED  = 0;
+  DEATH_SCREEN_STAGE_FORTUNE      = 1;
+  DEATH_SCREEN_STAGE_TRIBULATION  = 2;
+}
+
+// 与 Rust DeathScreenZoneKindV1 精确对应。
+enum DeathScreenZoneKind {
+  DEATH_SCREEN_ZONE_KIND_UNSPECIFIED = 0;
+  DEATH_SCREEN_ZONE_KIND_ORDINARY    = 1;
+  DEATH_SCREEN_ZONE_KIND_DEATH       = 2;
+  DEATH_SCREEN_ZONE_KIND_NEGATIVE    = 3;
+}
+
+// 与 Rust DeathCinematicPhaseV1 精确对应。
+enum DeathCinematicPhase {
+  DEATH_CINEMATIC_PHASE_UNSPECIFIED     = 0;
+  DEATH_CINEMATIC_PHASE_PREDEATH        = 1;
+  DEATH_CINEMATIC_PHASE_DEATH_MOMENT    = 2;
+  DEATH_CINEMATIC_PHASE_ROLL            = 3;
+  DEATH_CINEMATIC_PHASE_INSIGHT_OVERLAY = 4;
+  DEATH_CINEMATIC_PHASE_DARKNESS        = 5;
+  DEATH_CINEMATIC_PHASE_REBIRTH         = 6;
+}
+
+// 与 Rust DeathRollResultV1 精确对应。
+enum DeathRollResult {
+  DEATH_ROLL_RESULT_UNSPECIFIED = 0;
+  DEATH_ROLL_RESULT_PENDING     = 1;
+  DEATH_ROLL_RESULT_SURVIVE     = 2;
+  DEATH_ROLL_RESULT_FALL        = 3;
+  DEATH_ROLL_RESULT_FINAL       = 4;
+}
+
+// 与 Rust DeathCinematicZoneKindV1 精确对应。
+enum DeathCinematicZoneKind {
+  DEATH_CINEMATIC_ZONE_KIND_UNSPECIFIED = 0;
+  DEATH_CINEMATIC_ZONE_KIND_ORDINARY    = 1;
+  DEATH_CINEMATIC_ZONE_KIND_DEATH       = 2;
+  DEATH_CINEMATIC_ZONE_KIND_NEGATIVE    = 3;
+}
+
+// 与 Rust DeathCinematicRollV1 精确对应。
+message DeathCinematicRoll {
+  double          probability = 1;
+  double          threshold   = 2;
+  double          luck_value  = 3;
+  DeathRollResult result      = 4;
+}
+
+// 与 Rust DeathCinematicS2cV1 精确对应。
+message DeathCinematicData {
+  uint32                   v                     = 1;  // Rust u8
+  string                   character_id          = 2;
+  DeathCinematicPhase      phase                 = 3;
+  uint64                   phase_tick            = 4;
+  uint64                   phase_duration_ticks  = 5;
+  uint64                   total_elapsed_ticks   = 6;
+  uint64                   total_duration_ticks  = 7;
+  DeathCinematicRoll       roll                  = 8;
+  repeated string          insight_text          = 9;
+  bool                     is_final              = 10;
+  uint32                   death_number          = 11;
+  DeathCinematicZoneKind   zone_kind             = 12;
+  bool                     tsy_death             = 13;
+  uint64                   rebirth_weakened_ticks = 14;
+  bool                     skip_predeath         = 15;
+}
+
+message DeathScreen {
+  bool                            visible            = 1;
+  string                          cause              = 2;
+  double                          luck_remaining     = 3;
+  repeated string                 final_words        = 4;
+  uint64                          countdown_until_ms = 5;
+  bool                            can_reincarnate    = 6;
+  bool                            can_terminate      = 7;
+  optional DeathScreenStage       stage              = 8;
+  optional uint32                 death_number       = 9;
+  optional DeathScreenZoneKind    zone_kind          = 10;
+  optional LifespanPreview        lifespan           = 11;
+  optional DeathCinematicData     cinematic          = 12;
+}
+
+// ─── TerminateScreen ───────────────────────────────────────────
+// 与 Rust ServerDataPayloadV1::TerminateScreen inline variant 精确对应。
+
+message TerminateScreen {
+  bool   visible                = 1;
+  string final_words            = 2;
+  string epilogue               = 3;
+  string archetype_suggestion   = 4;
+}
+
+// ─── QiColorObserved ───────────────────────────────────────────
+// 与 Rust QiColorObservedV1 精确对应。
+
+message QiColorObserved {
+  string            observer     = 1;
+  string            observed     = 2;
+  ColorKind         main         = 3;
+  optional ColorKind secondary   = 4;
+  bool              is_chaotic   = 5;
+  bool              is_hunyuan   = 6;
+  int32             realm_diff   = 7;
+}
+
+// ─── RealmVisionParams ─────────────────────────────────────────
+// 与 Rust RealmVisionParamsV1 精确对应。
+
+// 与 Rust FogShapeV1 精确对应。
+enum FogShape {
+  FOG_SHAPE_UNSPECIFIED = 0;
+  FOG_SHAPE_CYLINDER    = 1;
+  FOG_SHAPE_SPHERE      = 2;
+}
+
+message RealmVisionParams {
+  double   fog_start                      = 1;
+  double   fog_end                        = 2;
+  uint32   fog_color_rgb                  = 3;
+  FogShape fog_shape                      = 4;
+  double   vignette_alpha                 = 5;
+  uint32   tint_color_argb                = 6;
+  double   particle_density               = 7;
+  uint32   transition_ticks               = 8;
+  uint32   server_view_distance_chunks    = 9;  // Rust u8
+  double   post_fx_sharpen                = 10;
+}
+
+// ─── SpiritualSenseTargets ─────────────────────────────────────
+// 与 Rust SpiritualSenseTargetsV1 / SenseEntryV1 / SenseKindV1 精确对应。
+
+// 与 Rust SenseKindV1 精确对应。
+enum SenseKind {
+  SENSE_KIND_UNSPECIFIED          = 0;
+  SENSE_KIND_LIVING_QI            = 1;
+  SENSE_KIND_AMBIENT_LEYLINE      = 2;
+  SENSE_KIND_CULTIVATOR_REALM     = 3;
+  SENSE_KIND_HEAVENLY_GAZE        = 4;
+  SENSE_KIND_CRISIS_PREMONITION   = 5;
+  SENSE_KIND_ZHENFA_ARRAY         = 6;
+  SENSE_KIND_ZHENFA_WARD_ALERT    = 7;
+  SENSE_KIND_SPIRIT_EYE           = 8;
+  SENSE_KIND_NICHE_INTRUSION_TRACE = 9;
+}
+
+message SenseEntry {
+  SenseKind kind      = 1;
+  double    x         = 2;
+  double    y         = 3;
+  double    z         = 4;
+  double    intensity = 5;
+}
+
+message SpiritualSenseTargets {
+  repeated SenseEntry entries    = 1;
+  uint64              generation = 2;
+}
+
+// ═══════════════════════════════════════════════════════════════
+// P2 B4 — 天劫 / 死亡 / 突破 C2S
+// ═══════════════════════════════════════════════════════════════
+
+// 与 Rust ClientRequestV1::StartDuXu 精确对应。
+message StartDuXu {
+  // 无额外字段，仅触发。
+}
+
+// 与 Rust ClientRequestV1::AbortTribulation 精确对应。
+message AbortTribulation {
+  // 无额外字段，仅触发。
+}
+
+// 与 Rust ClientRequestV1::HeartDemonDecision 精确对应。
+message HeartDemonDecision {
+  optional uint32 choice_idx = 1;
+}
+
+// 与 Rust ClientRequestV1::DuoSheRequest 精确对应。
+message DuoSheRequest {
+  string target_id = 1;
+}
+
+// 与 Rust ClientRequestV1::QiColorInspect 精确对应。
+message QiColorInspect {
+  string observed = 1;
+}
+
+// 与 Rust ClientRequestV1::UseLifeCore 精确对应。
+message UseLifeCore {
+  uint64 instance_id = 1;
 }

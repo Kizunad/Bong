@@ -1749,14 +1749,19 @@ mod tests {
             has_session: true,
         };
         let bytes = msg.encode_to_vec();
-        let decoded = AlchemyFurnace::decode(bytes.as_slice())
-            .expect("AlchemyFurnace decode 失败");
+        let decoded = AlchemyFurnace::decode(bytes.as_slice()).expect("AlchemyFurnace decode 失败");
         assert_eq!(decoded.pos_x, Some(-12), "pos_x 应为 -12");
         assert_eq!(decoded.pos_y, Some(64), "pos_y 应为 64");
         assert_eq!(decoded.pos_z, Some(38), "pos_z 应为 38");
         assert_eq!(decoded.tier, 2, "tier 应为 2");
-        assert!((decoded.integrity - 0.95).abs() < 1e-9, "integrity 应为 0.95");
-        assert!((decoded.integrity_max - 1.0).abs() < 1e-9, "integrity_max 应为 1.0");
+        assert!(
+            (decoded.integrity - 0.95).abs() < 1e-9,
+            "integrity 应为 0.95"
+        );
+        assert!(
+            (decoded.integrity_max - 1.0).abs() < 1e-9,
+            "integrity_max 应为 1.0"
+        );
         assert_eq!(decoded.owner_name, "Azure");
         assert!(decoded.has_session, "has_session 应为 true");
     }
@@ -1774,8 +1779,8 @@ mod tests {
             has_session: false,
         };
         let bytes = msg.encode_to_vec();
-        let decoded = AlchemyFurnace::decode(bytes.as_slice())
-            .expect("AlchemyFurnace (no pos) decode 失败");
+        let decoded =
+            AlchemyFurnace::decode(bytes.as_slice()).expect("AlchemyFurnace (no pos) decode 失败");
         assert!(decoded.pos_x.is_none(), "pos_x 应为 None");
         assert!(decoded.pos_y.is_none(), "pos_y 应为 None");
         assert!(decoded.pos_z.is_none(), "pos_z 应为 None");
@@ -1804,8 +1809,7 @@ mod tests {
             interventions_recent: vec!["inject_qi".to_string()],
         };
         let bytes = msg.encode_to_vec();
-        let decoded = AlchemySession::decode(bytes.as_slice())
-            .expect("AlchemySession decode 失败");
+        let decoded = AlchemySession::decode(bytes.as_slice()).expect("AlchemySession decode 失败");
         assert_eq!(decoded.recipe_id.as_deref(), Some("kai_mai_pill_v0"));
         assert!(decoded.active);
         assert_eq!(decoded.elapsed_ticks, 80);
@@ -1831,8 +1835,8 @@ mod tests {
             interventions_recent: vec![],
         };
         let bytes = msg.encode_to_vec();
-        let decoded = AlchemySession::decode(bytes.as_slice())
-            .expect("AlchemySession (empty) decode 失败");
+        let decoded =
+            AlchemySession::decode(bytes.as_slice()).expect("AlchemySession (empty) decode 失败");
         assert!(decoded.recipe_id.is_none());
         assert!(decoded.stages.is_empty());
         assert!(decoded.interventions_recent.is_empty());
@@ -1930,21 +1934,19 @@ mod tests {
     #[test]
     fn alchemy_recipe_book_roundtrip() {
         let msg = AlchemyRecipeBook {
-            learned: vec![
-                AlchemyRecipeEntry {
-                    id: "kai_mai_pill_v0".to_string(),
-                    display_name: "开脉丹方".to_string(),
-                    body_text: "...".to_string(),
-                    author: "散修 刘三".to_string(),
-                    era: "末法 十二年".to_string(),
-                    max_known: 8,
-                },
-            ],
+            learned: vec![AlchemyRecipeEntry {
+                id: "kai_mai_pill_v0".to_string(),
+                display_name: "开脉丹方".to_string(),
+                body_text: "...".to_string(),
+                author: "散修 刘三".to_string(),
+                era: "末法 十二年".to_string(),
+                max_known: 8,
+            }],
             current_index: 0,
         };
         let bytes = msg.encode_to_vec();
-        let decoded = AlchemyRecipeBook::decode(bytes.as_slice())
-            .expect("AlchemyRecipeBook decode 失败");
+        let decoded =
+            AlchemyRecipeBook::decode(bytes.as_slice()).expect("AlchemyRecipeBook decode 失败");
         assert_eq!(decoded.learned.len(), 1);
         assert_eq!(decoded.learned[0].id, "kai_mai_pill_v0");
         assert_eq!(decoded.learned[0].max_known, 8);
@@ -1993,8 +1995,8 @@ mod tests {
             furnace_pos_z: 38,
         };
         let bytes = msg.encode_to_vec();
-        let decoded = AlchemyOpenFurnace::decode(bytes.as_slice())
-            .expect("AlchemyOpenFurnace decode 失败");
+        let decoded =
+            AlchemyOpenFurnace::decode(bytes.as_slice()).expect("AlchemyOpenFurnace decode 失败");
         assert_eq!(decoded.furnace_pos_x, -12);
         assert_eq!(decoded.furnace_pos_y, 64);
         assert_eq!(decoded.furnace_pos_z, 38);
@@ -2011,8 +2013,8 @@ mod tests {
             count: 3,
         };
         let bytes = msg.encode_to_vec();
-        let decoded = AlchemyFeedSlot::decode(bytes.as_slice())
-            .expect("AlchemyFeedSlot decode 失败");
+        let decoded =
+            AlchemyFeedSlot::decode(bytes.as_slice()).expect("AlchemyFeedSlot decode 失败");
         assert_eq!(decoded.slot_idx, 0);
         assert_eq!(decoded.material, "ci_she_hao");
         assert_eq!(decoded.count, 3);
@@ -2027,8 +2029,8 @@ mod tests {
             slot_idx: 2,
         };
         let bytes = msg.encode_to_vec();
-        let decoded = AlchemyTakeBack::decode(bytes.as_slice())
-            .expect("AlchemyTakeBack decode 失败");
+        let decoded =
+            AlchemyTakeBack::decode(bytes.as_slice()).expect("AlchemyTakeBack decode 失败");
         assert_eq!(decoded.slot_idx, 2);
     }
 
@@ -2041,8 +2043,7 @@ mod tests {
             recipe_id: "kai_mai_pill_v0".to_string(),
         };
         let bytes = msg.encode_to_vec();
-        let decoded = AlchemyIgnite::decode(bytes.as_slice())
-            .expect("AlchemyIgnite decode 失败");
+        let decoded = AlchemyIgnite::decode(bytes.as_slice()).expect("AlchemyIgnite decode 失败");
         assert_eq!(decoded.recipe_id, "kai_mai_pill_v0");
     }
 
@@ -2115,8 +2116,8 @@ mod tests {
     fn alchemy_turn_page_roundtrip() {
         let msg = AlchemyTurnPage { delta: -1 };
         let bytes = msg.encode_to_vec();
-        let decoded = AlchemyTurnPage::decode(bytes.as_slice())
-            .expect("AlchemyTurnPage decode 失败");
+        let decoded =
+            AlchemyTurnPage::decode(bytes.as_slice()).expect("AlchemyTurnPage decode 失败");
         assert_eq!(decoded.delta, -1);
     }
 
@@ -2126,8 +2127,8 @@ mod tests {
             recipe_id: "kai_mai_pill_v0".to_string(),
         };
         let bytes = msg.encode_to_vec();
-        let decoded = AlchemyLearnRecipe::decode(bytes.as_slice())
-            .expect("AlchemyLearnRecipe decode 失败");
+        let decoded =
+            AlchemyLearnRecipe::decode(bytes.as_slice()).expect("AlchemyLearnRecipe decode 失败");
         assert_eq!(decoded.recipe_id, "kai_mai_pill_v0");
     }
 
@@ -2148,8 +2149,8 @@ mod tests {
             pill_item_id: "kai_mai_pill".to_string(),
         };
         let bytes = msg.encode_to_vec();
-        let decoded = AlchemyTakePill::decode(bytes.as_slice())
-            .expect("AlchemyTakePill decode 失败");
+        let decoded =
+            AlchemyTakePill::decode(bytes.as_slice()).expect("AlchemyTakePill decode 失败");
         assert_eq!(decoded.pill_item_id, "kai_mai_pill");
     }
 
@@ -2167,8 +2168,7 @@ mod tests {
             has_session: false,
         };
         let bytes = msg.encode_to_vec();
-        let decoded = ForgeStation::decode(bytes.as_slice())
-            .expect("ForgeStation decode 失败");
+        let decoded = ForgeStation::decode(bytes.as_slice()).expect("ForgeStation decode 失败");
         assert_eq!(decoded.station_id, "s1");
         assert_eq!(decoded.tier, 1);
         assert!(!decoded.has_session);
@@ -2185,7 +2185,10 @@ mod tests {
             (ForgeStep::Done, 5),
         ];
         for (variant, wire) in expected {
-            assert_eq!(variant as i32, wire, "ForgeStep::{variant:?} wire 值应为 {wire}");
+            assert_eq!(
+                variant as i32, wire,
+                "ForgeStep::{variant:?} wire 值应为 {wire}"
+            );
         }
     }
 
@@ -2198,7 +2201,10 @@ mod tests {
             (TemperBeat::Fold, 3),
         ];
         for (variant, wire) in expected {
-            assert_eq!(variant as i32, wire, "TemperBeat::{variant:?} wire 值应为 {wire}");
+            assert_eq!(
+                variant as i32, wire,
+                "TemperBeat::{variant:?} wire 值应为 {wire}"
+            );
         }
     }
 
@@ -2213,7 +2219,10 @@ mod tests {
             (ForgeOutcomeBucket::Explode, 5),
         ];
         for (variant, wire) in expected {
-            assert_eq!(variant as i32, wire, "ForgeOutcomeBucket::{variant:?} wire 值应为 {wire}");
+            assert_eq!(
+                variant as i32, wire,
+                "ForgeOutcomeBucket::{variant:?} wire 值应为 {wire}"
+            );
         }
     }
 
@@ -2267,18 +2276,20 @@ mod tests {
             step_index: 1,
             achieved_tier: 2,
             step_state: Some(ForgeStepState {
-                state: Some(forge_step_state::State::Tempering(ForgeStepStateTempering {
-                    pattern: vec![
-                        TemperBeat::Light as i32,
-                        TemperBeat::Heavy as i32,
-                        TemperBeat::Fold as i32,
-                    ],
-                    beat_cursor: 0,
-                    hits: 0,
-                    misses: 0,
-                    deviation: 0,
-                    qi_spent: 0.0,
-                })),
+                state: Some(forge_step_state::State::Tempering(
+                    ForgeStepStateTempering {
+                        pattern: vec![
+                            TemperBeat::Light as i32,
+                            TemperBeat::Heavy as i32,
+                            TemperBeat::Fold as i32,
+                        ],
+                        beat_cursor: 0,
+                        hits: 0,
+                        misses: 0,
+                        deviation: 0,
+                        qi_spent: 0.0,
+                    },
+                )),
             }),
         };
         let bytes = msg.encode_to_vec();
@@ -2397,8 +2408,7 @@ mod tests {
             flawed_path: false,
         };
         let bytes = msg.encode_to_vec();
-        let decoded = ForgeOutcome::decode(bytes.as_slice())
-            .expect("ForgeOutcome decode 失败");
+        let decoded = ForgeOutcome::decode(bytes.as_slice()).expect("ForgeOutcome decode 失败");
         assert_eq!(decoded.session_id, 1);
         assert_eq!(decoded.bucket, ForgeOutcomeBucket::Perfect as i32);
         assert_eq!(decoded.weapon_item.as_deref(), Some("iron_sword"));
@@ -2420,8 +2430,8 @@ mod tests {
             flawed_path: true,
         };
         let bytes = msg.encode_to_vec();
-        let decoded = ForgeOutcome::decode(bytes.as_slice())
-            .expect("ForgeOutcome (flawed) decode 失败");
+        let decoded =
+            ForgeOutcome::decode(bytes.as_slice()).expect("ForgeOutcome (flawed) decode 失败");
         assert_eq!(decoded.bucket, ForgeOutcomeBucket::Flawed as i32);
         assert!(decoded.weapon_item.is_none());
         assert_eq!(decoded.color, Some(ColorKind::Heavy as i32));
@@ -2441,8 +2451,8 @@ mod tests {
             current_index: 0,
         };
         let bytes = msg.encode_to_vec();
-        let decoded = ForgeBlueprintBook::decode(bytes.as_slice())
-            .expect("ForgeBlueprintBook decode 失败");
+        let decoded =
+            ForgeBlueprintBook::decode(bytes.as_slice()).expect("ForgeBlueprintBook decode 失败");
         assert_eq!(decoded.learned.len(), 1);
         assert_eq!(decoded.learned[0].id, "iron_sword_v0");
         assert_eq!(decoded.learned[0].tier_cap, 1);
@@ -2461,8 +2471,8 @@ mod tests {
             }],
         };
         let bytes = msg.encode_to_vec();
-        let decoded = ForgeStartSession::decode(bytes.as_slice())
-            .expect("ForgeStartSession decode 失败");
+        let decoded =
+            ForgeStartSession::decode(bytes.as_slice()).expect("ForgeStartSession decode 失败");
         assert_eq!(decoded.station_id, "s1");
         assert_eq!(decoded.materials.len(), 1);
         assert_eq!(decoded.materials[0].material, "iron_ingot");
@@ -2476,8 +2486,8 @@ mod tests {
             ticks_remaining: 100,
         };
         let bytes = msg.encode_to_vec();
-        let decoded = ForgeTemperingHit::decode(bytes.as_slice())
-            .expect("ForgeTemperingHit decode 失败");
+        let decoded =
+            ForgeTemperingHit::decode(bytes.as_slice()).expect("ForgeTemperingHit decode 失败");
         assert_eq!(decoded.session_id, 42);
         assert_eq!(decoded.beat, "L");
         assert_eq!(decoded.ticks_remaining, 100);
@@ -2511,8 +2521,8 @@ mod tests {
     fn forge_step_advance_roundtrip() {
         let msg = ForgeStepAdvance { session_id: 42 };
         let bytes = msg.encode_to_vec();
-        let decoded = ForgeStepAdvance::decode(bytes.as_slice())
-            .expect("ForgeStepAdvance decode 失败");
+        let decoded =
+            ForgeStepAdvance::decode(bytes.as_slice()).expect("ForgeStepAdvance decode 失败");
         assert_eq!(decoded.session_id, 42);
     }
 
@@ -2531,8 +2541,8 @@ mod tests {
             blueprint_id: "qing_feng_v0".to_string(),
         };
         let bytes = msg.encode_to_vec();
-        let decoded = ForgeLearnBlueprint::decode(bytes.as_slice())
-            .expect("ForgeLearnBlueprint decode 失败");
+        let decoded =
+            ForgeLearnBlueprint::decode(bytes.as_slice()).expect("ForgeLearnBlueprint decode 失败");
         assert_eq!(decoded.blueprint_id, "qing_feng_v0");
     }
 
@@ -2555,7 +2565,10 @@ mod tests {
             (CraftCategory::Misc, 9),
         ];
         for (variant, wire) in expected {
-            assert_eq!(variant as i32, wire, "CraftCategory::{variant:?} wire 值应为 {wire}");
+            assert_eq!(
+                variant as i32, wire,
+                "CraftCategory::{variant:?} wire 值应为 {wire}"
+            );
         }
     }
 
@@ -2568,7 +2581,10 @@ mod tests {
             (CraftFailureReason::InternalError, 3),
         ];
         for (variant, wire) in expected {
-            assert_eq!(variant as i32, wire, "CraftFailureReason::{variant:?} wire 值应为 {wire}");
+            assert_eq!(
+                variant as i32, wire,
+                "CraftFailureReason::{variant:?} wire 值应为 {wire}"
+            );
         }
     }
 
@@ -2581,7 +2597,10 @@ mod tests {
             (InsightTrigger::DefeatStronger, 3),
         ];
         for (variant, wire) in expected {
-            assert_eq!(variant as i32, wire, "InsightTrigger::{variant:?} wire 值应为 {wire}");
+            assert_eq!(
+                variant as i32, wire,
+                "InsightTrigger::{variant:?} wire 值应为 {wire}"
+            );
         }
     }
 
@@ -2595,8 +2614,14 @@ mod tests {
                 category: CraftCategory::Tool as i32,
                 display_name: "采药刀（凡铁）".to_string(),
                 materials: vec![
-                    CraftMaterialPair { template_id: "iron_ingot".to_string(), count: 1 },
-                    CraftMaterialPair { template_id: "wood_handle".to_string(), count: 1 },
+                    CraftMaterialPair {
+                        template_id: "iron_ingot".to_string(),
+                        count: 1,
+                    },
+                    CraftMaterialPair {
+                        template_id: "wood_handle".to_string(),
+                        count: 1,
+                    },
                 ],
                 qi_cost: 0.0,
                 time_ticks: 600,
@@ -2614,15 +2639,18 @@ mod tests {
             ts: 1234567,
         };
         let bytes = msg.encode_to_vec();
-        let decoded = CraftRecipeList::decode(bytes.as_slice())
-            .expect("CraftRecipeList decode 失败");
+        let decoded =
+            CraftRecipeList::decode(bytes.as_slice()).expect("CraftRecipeList decode 失败");
         assert_eq!(decoded.v, 1);
         assert_eq!(decoded.player_id, "offline:Alice");
         assert_eq!(decoded.recipes.len(), 1);
         assert_eq!(decoded.recipes[0].id, "craft.example.herb_knife.iron");
         assert_eq!(decoded.recipes[0].category, CraftCategory::Tool as i32);
         assert_eq!(decoded.recipes[0].materials.len(), 2);
-        assert_eq!(decoded.recipes[0].output.as_ref().unwrap().template_id, "herb_knife_iron");
+        assert_eq!(
+            decoded.recipes[0].output.as_ref().unwrap().template_id,
+            "herb_knife_iron"
+        );
         assert!(!decoded.recipes[0].unlocked);
     }
 
@@ -2635,8 +2663,8 @@ mod tests {
             ts: 0,
         };
         let bytes = msg.encode_to_vec();
-        let decoded = CraftRecipeList::decode(bytes.as_slice())
-            .expect("CraftRecipeList (empty) decode 失败");
+        let decoded =
+            CraftRecipeList::decode(bytes.as_slice()).expect("CraftRecipeList (empty) decode 失败");
         assert!(decoded.recipes.is_empty());
     }
 
@@ -2689,10 +2717,13 @@ mod tests {
             ts: 1234567,
         };
         let bytes = msg.encode_to_vec();
-        let decoded = CraftSessionState::decode(bytes.as_slice())
-            .expect("CraftSessionState decode 失败");
+        let decoded =
+            CraftSessionState::decode(bytes.as_slice()).expect("CraftSessionState decode 失败");
         assert!(decoded.active);
-        assert_eq!(decoded.recipe_id.as_deref(), Some("craft.example.eclipse_needle.iron"));
+        assert_eq!(
+            decoded.recipe_id.as_deref(),
+            Some("craft.example.eclipse_needle.iron")
+        );
         assert_eq!(decoded.completed_count, 1);
         assert_eq!(decoded.total_count, 3);
     }
@@ -2731,8 +2762,8 @@ mod tests {
             })),
         };
         let bytes = msg.encode_to_vec();
-        let decoded = CraftOutcome::decode(bytes.as_slice())
-            .expect("CraftOutcome (completed) decode 失败");
+        let decoded =
+            CraftOutcome::decode(bytes.as_slice()).expect("CraftOutcome (completed) decode 失败");
         match decoded.outcome.unwrap() {
             craft_outcome::Outcome::Completed(c) => {
                 assert_eq!(c.output_template, "eclipse_needle_iron");
@@ -2756,8 +2787,8 @@ mod tests {
             })),
         };
         let bytes = msg.encode_to_vec();
-        let decoded = CraftOutcome::decode(bytes.as_slice())
-            .expect("CraftOutcome (failed) decode 失败");
+        let decoded =
+            CraftOutcome::decode(bytes.as_slice()).expect("CraftOutcome (failed) decode 失败");
         match decoded.outcome.unwrap() {
             craft_outcome::Outcome::Failed(f) => {
                 assert_eq!(f.reason, CraftFailureReason::PlayerCancelled as i32);
@@ -2782,8 +2813,8 @@ mod tests {
             ts: 1234567,
         };
         let bytes = msg.encode_to_vec();
-        let decoded = RecipeUnlocked::decode(bytes.as_slice())
-            .expect("RecipeUnlocked (scroll) decode 失败");
+        let decoded =
+            RecipeUnlocked::decode(bytes.as_slice()).expect("RecipeUnlocked (scroll) decode 失败");
         match decoded.source.unwrap().source.unwrap() {
             unlock_event_source::Source::ScrollItemTemplate(s) => {
                 assert_eq!(s, "scroll_eclipse");
@@ -2807,8 +2838,8 @@ mod tests {
             ts: 1234567,
         };
         let bytes = msg.encode_to_vec();
-        let decoded = RecipeUnlocked::decode(bytes.as_slice())
-            .expect("RecipeUnlocked (mentor) decode 失败");
+        let decoded =
+            RecipeUnlocked::decode(bytes.as_slice()).expect("RecipeUnlocked (mentor) decode 失败");
         match decoded.source.unwrap().source.unwrap() {
             unlock_event_source::Source::MentorNpcArchetype(s) => {
                 assert_eq!(s, "poison_master");
@@ -2832,8 +2863,8 @@ mod tests {
             ts: 1234567,
         };
         let bytes = msg.encode_to_vec();
-        let decoded = RecipeUnlocked::decode(bytes.as_slice())
-            .expect("RecipeUnlocked (insight) decode 失败");
+        let decoded =
+            RecipeUnlocked::decode(bytes.as_slice()).expect("RecipeUnlocked (insight) decode 失败");
         match decoded.source.unwrap().source.unwrap() {
             unlock_event_source::Source::InsightTrigger(t) => {
                 assert_eq!(t, InsightTrigger::NearDeath as i32);
@@ -2851,8 +2882,7 @@ mod tests {
             quantity: 3,
         };
         let bytes = msg.encode_to_vec();
-        let decoded = CraftStart::decode(bytes.as_slice())
-            .expect("CraftStart decode 失败");
+        let decoded = CraftStart::decode(bytes.as_slice()).expect("CraftStart decode 失败");
         assert_eq!(decoded.recipe_id, "craft.example.herb_knife.iron");
         assert_eq!(decoded.quantity, 3);
     }
@@ -2861,8 +2891,7 @@ mod tests {
     fn craft_cancel_roundtrip() {
         let msg = CraftCancel {};
         let bytes = msg.encode_to_vec();
-        let decoded = CraftCancel::decode(bytes.as_slice())
-            .expect("CraftCancel decode 失败");
+        let decoded = CraftCancel::decode(bytes.as_slice()).expect("CraftCancel decode 失败");
         let _ = decoded; // 无字段，decode 成功即通过
     }
 
@@ -2878,7 +2907,10 @@ mod tests {
             (BotanyHarvestMode::Auto, 2),
         ];
         for (variant, wire) in expected {
-            assert_eq!(variant as i32, wire, "BotanyHarvestMode::{variant:?} wire 值应为 {wire}");
+            assert_eq!(
+                variant as i32, wire,
+                "BotanyHarvestMode::{variant:?} wire 值应为 {wire}"
+            );
         }
     }
 
@@ -2891,7 +2923,10 @@ mod tests {
             (BotanyModelOverlay::DualPhase, 3),
         ];
         for (variant, wire) in expected {
-            assert_eq!(variant as i32, wire, "BotanyModelOverlay::{variant:?} wire 值应为 {wire}");
+            assert_eq!(
+                variant as i32, wire,
+                "BotanyModelOverlay::{variant:?} wire 值应为 {wire}"
+            );
         }
     }
 
@@ -2974,7 +3009,10 @@ mod tests {
         assert_eq!(decoded.profiles[0].plant_id, "ying_yuan_gu");
         assert_eq!(decoded.profiles[0].tint_rgb, 0xFFA040);
         assert!(decoded.profiles[0].tint_rgb_secondary.is_none());
-        assert_eq!(decoded.profiles[0].model_overlay, BotanyModelOverlay::Emissive as i32);
+        assert_eq!(
+            decoded.profiles[0].model_overlay,
+            BotanyModelOverlay::Emissive as i32
+        );
     }
 
     #[test]
@@ -3002,8 +3040,7 @@ mod tests {
             auto_unlock_level: 3,
         };
         let bytes = msg.encode_to_vec();
-        let decoded = BotanySkill::decode(bytes.as_slice())
-            .expect("BotanySkill decode 失败");
+        let decoded = BotanySkill::decode(bytes.as_slice()).expect("BotanySkill decode 失败");
         assert_eq!(decoded.level, 3);
         assert_eq!(decoded.xp, 240);
         assert_eq!(decoded.xp_to_next_level, 400);
@@ -3053,8 +3090,7 @@ mod tests {
             completed: false,
         };
         let bytes = msg.encode_to_vec();
-        let decoded = MiningProgress::decode(bytes.as_slice())
-            .expect("MiningProgress decode 失败");
+        let decoded = MiningProgress::decode(bytes.as_slice()).expect("MiningProgress decode 失败");
         assert_eq!(decoded.session_id, "mining-01");
         assert_eq!(decoded.ore_pos_x, 10);
         assert_eq!(decoded.ore_pos_y, 32);
@@ -3094,8 +3130,7 @@ mod tests {
             detail: "树干太硬".to_string(),
         };
         let bytes = msg.encode_to_vec();
-        let decoded = LumberProgress::decode(bytes.as_slice())
-            .expect("LumberProgress decode 失败");
+        let decoded = LumberProgress::decode(bytes.as_slice()).expect("LumberProgress decode 失败");
         assert_eq!(decoded.session_id, "lumber-01");
         assert!(decoded.interrupted);
         assert_eq!(decoded.detail, "树干太硬");
@@ -3110,7 +3145,10 @@ mod tests {
             (GatheringTargetType::Wood, 3),
         ];
         for (variant, wire) in expected {
-            assert_eq!(variant as i32, wire, "GatheringTargetType::{variant:?} wire 值应为 {wire}");
+            assert_eq!(
+                variant as i32, wire,
+                "GatheringTargetType::{variant:?} wire 值应为 {wire}"
+            );
         }
     }
 
@@ -3125,7 +3163,10 @@ mod tests {
             (GatheringQualityHint::Perfect, 5),
         ];
         for (variant, wire) in expected {
-            assert_eq!(variant as i32, wire, "GatheringQualityHint::{variant:?} wire 值应为 {wire}");
+            assert_eq!(
+                variant as i32, wire,
+                "GatheringQualityHint::{variant:?} wire 值应为 {wire}"
+            );
         }
     }
 
@@ -3143,13 +3184,16 @@ mod tests {
             completed: false,
         };
         let bytes = msg.encode_to_vec();
-        let decoded = GatheringSession::decode(bytes.as_slice())
-            .expect("GatheringSession decode 失败");
+        let decoded =
+            GatheringSession::decode(bytes.as_slice()).expect("GatheringSession decode 失败");
         assert_eq!(decoded.session_id, "gather-01");
         assert_eq!(decoded.progress_ticks, 30);
         assert_eq!(decoded.total_ticks, 100);
         assert_eq!(decoded.target_type, GatheringTargetType::Herb as i32);
-        assert_eq!(decoded.quality_hint, GatheringQualityHint::FineLikely as i32);
+        assert_eq!(
+            decoded.quality_hint,
+            GatheringQualityHint::FineLikely as i32
+        );
         assert_eq!(decoded.tool_used.as_deref(), Some("herb_knife_iron"));
     }
 
@@ -3189,7 +3233,10 @@ mod tests {
             (LingtianSessionKind::DrainQi, 6),
         ];
         for (variant, wire) in expected {
-            assert_eq!(variant as i32, wire, "LingtianSessionKind::{variant:?} wire 值应为 {wire}");
+            assert_eq!(
+                variant as i32, wire,
+                "LingtianSessionKind::{variant:?} wire 值应为 {wire}"
+            );
         }
     }
 
@@ -3300,8 +3347,8 @@ mod tests {
             mode: "manual".to_string(),
         };
         let bytes = msg.encode_to_vec();
-        let decoded = LingtianStartTill::decode(bytes.as_slice())
-            .expect("LingtianStartTill decode 失败");
+        let decoded =
+            LingtianStartTill::decode(bytes.as_slice()).expect("LingtianStartTill decode 失败");
         assert_eq!(decoded.x, 10);
         assert_eq!(decoded.hoe_instance_id, 4242);
         assert_eq!(decoded.mode, "manual");
@@ -3316,8 +3363,8 @@ mod tests {
             hoe_instance_id: 4242,
         };
         let bytes = msg.encode_to_vec();
-        let decoded = LingtianStartRenew::decode(bytes.as_slice())
-            .expect("LingtianStartRenew decode 失败");
+        let decoded =
+            LingtianStartRenew::decode(bytes.as_slice()).expect("LingtianStartRenew decode 失败");
         assert_eq!(decoded.hoe_instance_id, 4242);
     }
 
@@ -3384,14 +3431,9 @@ mod tests {
 
     #[test]
     fn mineral_probe_roundtrip() {
-        let msg = MineralProbe {
-            x: 8,
-            y: 32,
-            z: 8,
-        };
+        let msg = MineralProbe { x: 8, y: 32, z: 8 };
         let bytes = msg.encode_to_vec();
-        let decoded = MineralProbe::decode(bytes.as_slice())
-            .expect("MineralProbe decode 失败");
+        let decoded = MineralProbe::decode(bytes.as_slice()).expect("MineralProbe decode 失败");
         assert_eq!(decoded.x, 8);
         assert_eq!(decoded.y, 32);
         assert_eq!(decoded.z, 8);
@@ -3405,96 +3447,251 @@ mod tests {
     fn server_data_envelope_b1_s2c_variants_distinguishable() {
         // 验证所有 B1 S2C oneof variant 能正确 encode → decode 且不互相串。
         let variant_payloads: Vec<(&str, server_data_envelope::Payload)> = vec![
-            ("AlchemyFurnace", server_data_envelope::Payload::AlchemyFurnace(AlchemyFurnace {
-                pos_x: Some(0), pos_y: Some(64), pos_z: Some(0),
-                tier: 1, integrity: 1.0, integrity_max: 1.0,
-                owner_name: "t".to_string(), has_session: false,
-            })),
-            ("AlchemySession", server_data_envelope::Payload::AlchemySession(AlchemySession {
-                recipe_id: None, active: false, elapsed_ticks: 0, target_ticks: 0,
-                temp_current: 0.0, temp_target: 0.0, temp_band: 0.0,
-                qi_injected: 0.0, qi_target: 0.0, status_label: "".to_string(),
-                stages: vec![], interventions_recent: vec![],
-            })),
-            ("AlchemyOutcomeForecast", server_data_envelope::Payload::AlchemyOutcomeForecast(AlchemyOutcomeForecast {
-                perfect_pct: 0.0, good_pct: 0.0, flawed_pct: 0.0,
-                waste_pct: 0.0, explode_pct: 0.0, perfect_note: "".to_string(),
-                good_note: "".to_string(), flawed_note: "".to_string(),
-            })),
-            ("AlchemyOutcomeResolved", server_data_envelope::Payload::AlchemyOutcomeResolved(AlchemyOutcomeResolved {
-                bucket: 0, recipe_id: None, pill: None, quality: None,
-                toxin_amount: None, toxin_color: None, qi_gain: None,
-                side_effect_tag: None, flawed_path: false, damage: None, meridian_crack: None,
-            })),
-            ("AlchemyRecipeBook", server_data_envelope::Payload::AlchemyRecipeBook(AlchemyRecipeBook {
-                learned: vec![], current_index: 0,
-            })),
-            ("AlchemyContamination", server_data_envelope::Payload::AlchemyContamination(AlchemyContamination {
-                levels: vec![], metabolism_note: "".to_string(),
-            })),
-            ("ForgeStation", server_data_envelope::Payload::ForgeStation(ForgeStation {
-                station_id: "s".to_string(), tier: 1, integrity: 1.0,
-                owner_name: "t".to_string(), has_session: false,
-            })),
-            ("ForgeSession", server_data_envelope::Payload::ForgeSession(ForgeSessionData {
-                session_id: 1, blueprint_id: "x".to_string(), blueprint_name: "x".to_string(),
-                active: false, current_step: 0, step_index: 0, achieved_tier: 0,
-                step_state: None,
-            })),
-            ("ForgeOutcome", server_data_envelope::Payload::ForgeOutcome(ForgeOutcome {
-                session_id: 1, blueprint_id: "x".to_string(),
-                bucket: 0, weapon_item: None, quality: 0.0,
-                color: None, side_effects: vec![], achieved_tier: 0, flawed_path: false,
-            })),
-            ("ForgeBlueprintBook", server_data_envelope::Payload::ForgeBlueprintBook(ForgeBlueprintBook {
-                learned: vec![], current_index: 0,
-            })),
-            ("CraftRecipeList", server_data_envelope::Payload::CraftRecipeList(CraftRecipeList {
-                v: 1, player_id: "x".to_string(), recipes: vec![], ts: 0,
-            })),
-            ("CraftSessionState", server_data_envelope::Payload::CraftSessionState(CraftSessionState {
-                v: 1, player_id: "x".to_string(), active: false, recipe_id: None,
-                elapsed_ticks: 0, total_ticks: 0, completed_count: 0, total_count: 0, ts: 0,
-            })),
-            ("CraftOutcome", server_data_envelope::Payload::CraftOutcome(CraftOutcome {
-                outcome: None,
-            })),
-            ("RecipeUnlocked", server_data_envelope::Payload::RecipeUnlocked(RecipeUnlocked {
-                v: 1, player_id: "x".to_string(), recipe_id: "y".to_string(),
-                source: None, unlocked_at_tick: 0, ts: 0,
-            })),
-            ("BotanyHarvestProgress", server_data_envelope::Payload::BotanyHarvestProgress(BotanyHarvestProgress {
-                session_id: "s".to_string(), target_id: "t".to_string(),
-                target_name: "n".to_string(), plant_kind: "k".to_string(),
-                mode: "manual".to_string(), progress: 0.0,
-                auto_selectable: false, request_pending: false,
-                interrupted: false, completed: false, detail: "".to_string(),
-                hazard_hints: vec![], target_pos_x: None, target_pos_y: None, target_pos_z: None,
-            })),
-            ("BotanyPlantV2RenderProfiles", server_data_envelope::Payload::BotanyPlantV2RenderProfiles(BotanyPlantV2RenderProfiles {
-                profiles: vec![],
-            })),
-            ("BotanySkill", server_data_envelope::Payload::BotanySkill(BotanySkill {
-                level: 0, xp: 0, xp_to_next_level: 0, auto_unlock_level: 0,
-            })),
-            ("MiningProgress", server_data_envelope::Payload::MiningProgress(MiningProgress {
-                session_id: "m".to_string(), ore_pos_x: 0, ore_pos_y: 0, ore_pos_z: 0,
-                progress: 0.0, interrupted: false, completed: false,
-            })),
-            ("LumberProgress", server_data_envelope::Payload::LumberProgress(LumberProgress {
-                session_id: "l".to_string(), log_pos_x: 0, log_pos_y: 0, log_pos_z: 0,
-                progress: 0.0, interrupted: false, completed: false, detail: "".to_string(),
-            })),
-            ("GatheringSession", server_data_envelope::Payload::GatheringSession(GatheringSession {
-                session_id: "g".to_string(), progress_ticks: 0, total_ticks: 0,
-                target_name: "n".to_string(), target_type: 0, quality_hint: 0,
-                tool_used: None, interrupted: false, completed: false,
-            })),
-            ("LingtianSession", server_data_envelope::Payload::LingtianSession(LingtianSessionData {
-                active: false, kind: 0, pos_x: 0, pos_y: 0, pos_z: 0,
-                elapsed_ticks: 0, target_ticks: 0, plant_id: None, source: None,
-                dye_contamination: None, dye_contamination_warning: false,
-            })),
+            (
+                "AlchemyFurnace",
+                server_data_envelope::Payload::AlchemyFurnace(AlchemyFurnace {
+                    pos_x: Some(0),
+                    pos_y: Some(64),
+                    pos_z: Some(0),
+                    tier: 1,
+                    integrity: 1.0,
+                    integrity_max: 1.0,
+                    owner_name: "t".to_string(),
+                    has_session: false,
+                }),
+            ),
+            (
+                "AlchemySession",
+                server_data_envelope::Payload::AlchemySession(AlchemySession {
+                    recipe_id: None,
+                    active: false,
+                    elapsed_ticks: 0,
+                    target_ticks: 0,
+                    temp_current: 0.0,
+                    temp_target: 0.0,
+                    temp_band: 0.0,
+                    qi_injected: 0.0,
+                    qi_target: 0.0,
+                    status_label: "".to_string(),
+                    stages: vec![],
+                    interventions_recent: vec![],
+                }),
+            ),
+            (
+                "AlchemyOutcomeForecast",
+                server_data_envelope::Payload::AlchemyOutcomeForecast(AlchemyOutcomeForecast {
+                    perfect_pct: 0.0,
+                    good_pct: 0.0,
+                    flawed_pct: 0.0,
+                    waste_pct: 0.0,
+                    explode_pct: 0.0,
+                    perfect_note: "".to_string(),
+                    good_note: "".to_string(),
+                    flawed_note: "".to_string(),
+                }),
+            ),
+            (
+                "AlchemyOutcomeResolved",
+                server_data_envelope::Payload::AlchemyOutcomeResolved(AlchemyOutcomeResolved {
+                    bucket: 0,
+                    recipe_id: None,
+                    pill: None,
+                    quality: None,
+                    toxin_amount: None,
+                    toxin_color: None,
+                    qi_gain: None,
+                    side_effect_tag: None,
+                    flawed_path: false,
+                    damage: None,
+                    meridian_crack: None,
+                }),
+            ),
+            (
+                "AlchemyRecipeBook",
+                server_data_envelope::Payload::AlchemyRecipeBook(AlchemyRecipeBook {
+                    learned: vec![],
+                    current_index: 0,
+                }),
+            ),
+            (
+                "AlchemyContamination",
+                server_data_envelope::Payload::AlchemyContamination(AlchemyContamination {
+                    levels: vec![],
+                    metabolism_note: "".to_string(),
+                }),
+            ),
+            (
+                "ForgeStation",
+                server_data_envelope::Payload::ForgeStation(ForgeStation {
+                    station_id: "s".to_string(),
+                    tier: 1,
+                    integrity: 1.0,
+                    owner_name: "t".to_string(),
+                    has_session: false,
+                }),
+            ),
+            (
+                "ForgeSession",
+                server_data_envelope::Payload::ForgeSession(ForgeSessionData {
+                    session_id: 1,
+                    blueprint_id: "x".to_string(),
+                    blueprint_name: "x".to_string(),
+                    active: false,
+                    current_step: 0,
+                    step_index: 0,
+                    achieved_tier: 0,
+                    step_state: None,
+                }),
+            ),
+            (
+                "ForgeOutcome",
+                server_data_envelope::Payload::ForgeOutcome(ForgeOutcome {
+                    session_id: 1,
+                    blueprint_id: "x".to_string(),
+                    bucket: 0,
+                    weapon_item: None,
+                    quality: 0.0,
+                    color: None,
+                    side_effects: vec![],
+                    achieved_tier: 0,
+                    flawed_path: false,
+                }),
+            ),
+            (
+                "ForgeBlueprintBook",
+                server_data_envelope::Payload::ForgeBlueprintBook(ForgeBlueprintBook {
+                    learned: vec![],
+                    current_index: 0,
+                }),
+            ),
+            (
+                "CraftRecipeList",
+                server_data_envelope::Payload::CraftRecipeList(CraftRecipeList {
+                    v: 1,
+                    player_id: "x".to_string(),
+                    recipes: vec![],
+                    ts: 0,
+                }),
+            ),
+            (
+                "CraftSessionState",
+                server_data_envelope::Payload::CraftSessionState(CraftSessionState {
+                    v: 1,
+                    player_id: "x".to_string(),
+                    active: false,
+                    recipe_id: None,
+                    elapsed_ticks: 0,
+                    total_ticks: 0,
+                    completed_count: 0,
+                    total_count: 0,
+                    ts: 0,
+                }),
+            ),
+            (
+                "CraftOutcome",
+                server_data_envelope::Payload::CraftOutcome(CraftOutcome { outcome: None }),
+            ),
+            (
+                "RecipeUnlocked",
+                server_data_envelope::Payload::RecipeUnlocked(RecipeUnlocked {
+                    v: 1,
+                    player_id: "x".to_string(),
+                    recipe_id: "y".to_string(),
+                    source: None,
+                    unlocked_at_tick: 0,
+                    ts: 0,
+                }),
+            ),
+            (
+                "BotanyHarvestProgress",
+                server_data_envelope::Payload::BotanyHarvestProgress(BotanyHarvestProgress {
+                    session_id: "s".to_string(),
+                    target_id: "t".to_string(),
+                    target_name: "n".to_string(),
+                    plant_kind: "k".to_string(),
+                    mode: "manual".to_string(),
+                    progress: 0.0,
+                    auto_selectable: false,
+                    request_pending: false,
+                    interrupted: false,
+                    completed: false,
+                    detail: "".to_string(),
+                    hazard_hints: vec![],
+                    target_pos_x: None,
+                    target_pos_y: None,
+                    target_pos_z: None,
+                }),
+            ),
+            (
+                "BotanyPlantV2RenderProfiles",
+                server_data_envelope::Payload::BotanyPlantV2RenderProfiles(
+                    BotanyPlantV2RenderProfiles { profiles: vec![] },
+                ),
+            ),
+            (
+                "BotanySkill",
+                server_data_envelope::Payload::BotanySkill(BotanySkill {
+                    level: 0,
+                    xp: 0,
+                    xp_to_next_level: 0,
+                    auto_unlock_level: 0,
+                }),
+            ),
+            (
+                "MiningProgress",
+                server_data_envelope::Payload::MiningProgress(MiningProgress {
+                    session_id: "m".to_string(),
+                    ore_pos_x: 0,
+                    ore_pos_y: 0,
+                    ore_pos_z: 0,
+                    progress: 0.0,
+                    interrupted: false,
+                    completed: false,
+                }),
+            ),
+            (
+                "LumberProgress",
+                server_data_envelope::Payload::LumberProgress(LumberProgress {
+                    session_id: "l".to_string(),
+                    log_pos_x: 0,
+                    log_pos_y: 0,
+                    log_pos_z: 0,
+                    progress: 0.0,
+                    interrupted: false,
+                    completed: false,
+                    detail: "".to_string(),
+                }),
+            ),
+            (
+                "GatheringSession",
+                server_data_envelope::Payload::GatheringSession(GatheringSession {
+                    session_id: "g".to_string(),
+                    progress_ticks: 0,
+                    total_ticks: 0,
+                    target_name: "n".to_string(),
+                    target_type: 0,
+                    quality_hint: 0,
+                    tool_used: None,
+                    interrupted: false,
+                    completed: false,
+                }),
+            ),
+            (
+                "LingtianSession",
+                server_data_envelope::Payload::LingtianSession(LingtianSessionData {
+                    active: false,
+                    kind: 0,
+                    pos_x: 0,
+                    pos_y: 0,
+                    pos_z: 0,
+                    elapsed_ticks: 0,
+                    target_ticks: 0,
+                    plant_id: None,
+                    source: None,
+                    dye_contamination: None,
+                    dye_contamination_warning: false,
+                }),
+            ),
         ];
 
         for (name, payload) in variant_payloads {
@@ -3518,85 +3715,202 @@ mod tests {
     #[test]
     fn client_request_envelope_b1_c2s_variants_distinguishable() {
         let variant_payloads: Vec<(&str, client_request_envelope::Payload)> = vec![
-            ("AlchemyOpenFurnace", client_request_envelope::Payload::AlchemyOpenFurnace(AlchemyOpenFurnace {
-                furnace_pos_x: 0, furnace_pos_y: 64, furnace_pos_z: 0,
-            })),
-            ("AlchemyFeedSlot", client_request_envelope::Payload::AlchemyFeedSlot(AlchemyFeedSlot {
-                furnace_pos_x: 0, furnace_pos_y: 64, furnace_pos_z: 0,
-                slot_idx: 0, material: "x".to_string(), count: 1,
-            })),
-            ("AlchemyTakeBack", client_request_envelope::Payload::AlchemyTakeBack(AlchemyTakeBack {
-                furnace_pos_x: 0, furnace_pos_y: 64, furnace_pos_z: 0, slot_idx: 0,
-            })),
-            ("AlchemyIgnite", client_request_envelope::Payload::AlchemyIgnite(AlchemyIgnite {
-                furnace_pos_x: 0, furnace_pos_y: 64, furnace_pos_z: 0,
-                recipe_id: "x".to_string(),
-            })),
-            ("AlchemyIntervention", client_request_envelope::Payload::AlchemyIntervention(AlchemyIntervention {
-                furnace_pos_x: 0, furnace_pos_y: 64, furnace_pos_z: 0,
-                intervention: None,
-            })),
-            ("AlchemyTurnPage", client_request_envelope::Payload::AlchemyTurnPage(AlchemyTurnPage {
-                delta: 1,
-            })),
-            ("AlchemyLearnRecipe", client_request_envelope::Payload::AlchemyLearnRecipe(AlchemyLearnRecipe {
-                recipe_id: "x".to_string(),
-            })),
-            ("AlchemyLearnRecipeFragment", client_request_envelope::Payload::AlchemyLearnRecipeFragment(AlchemyLearnRecipeFragment {
-                item_instance_id: 1,
-            })),
-            ("AlchemyTakePill", client_request_envelope::Payload::AlchemyTakePill(AlchemyTakePill {
-                pill_item_id: "x".to_string(),
-            })),
-            ("ForgeStartSession", client_request_envelope::Payload::ForgeStartSession(ForgeStartSession {
-                station_id: "s".to_string(), blueprint_id: "b".to_string(), materials: vec![],
-            })),
-            ("ForgeTemperingHit", client_request_envelope::Payload::ForgeTemperingHit(ForgeTemperingHit {
-                session_id: 1, beat: "L".to_string(), ticks_remaining: 0,
-            })),
-            ("ForgeInscriptionScroll", client_request_envelope::Payload::ForgeInscriptionScroll(ForgeInscriptionScroll {
-                session_id: 1, inscription_id: "x".to_string(),
-            })),
-            ("ForgeConsecrationInject", client_request_envelope::Payload::ForgeConsecrationInject(ForgeConsecrationInject {
-                session_id: 1, qi_amount: 0.0,
-            })),
-            ("ForgeStepAdvance", client_request_envelope::Payload::ForgeStepAdvance(ForgeStepAdvance {
-                session_id: 1,
-            })),
-            ("ForgeBlueprintTurnPage", client_request_envelope::Payload::ForgeBlueprintTurnPage(ForgeBlueprintTurnPage {
-                delta: 1,
-            })),
-            ("ForgeLearnBlueprint", client_request_envelope::Payload::ForgeLearnBlueprint(ForgeLearnBlueprint {
-                blueprint_id: "x".to_string(),
-            })),
-            ("CraftStart", client_request_envelope::Payload::CraftStart(CraftStart {
-                recipe_id: "x".to_string(), quantity: 1,
-            })),
-            ("CraftCancel", client_request_envelope::Payload::CraftCancel(CraftCancel {})),
-            ("BotanyHarvestRequest", client_request_envelope::Payload::BotanyHarvestRequest(BotanyHarvestRequest {
-                session_id: "s".to_string(), mode: BotanyHarvestMode::Manual as i32,
-            })),
-            ("LingtianStartTill", client_request_envelope::Payload::LingtianStartTill(LingtianStartTill {
-                x: 0, y: 64, z: 0, hoe_instance_id: 1, mode: "manual".to_string(),
-            })),
-            ("LingtianStartRenew", client_request_envelope::Payload::LingtianStartRenew(LingtianStartRenew {
-                x: 0, y: 64, z: 0, hoe_instance_id: 1,
-            })),
-            ("LingtianStartPlanting", client_request_envelope::Payload::LingtianStartPlanting(LingtianStartPlanting {
-                x: 0, y: 64, z: 0, plant_id: "x".to_string(),
-            })),
-            ("LingtianStartHarvest", client_request_envelope::Payload::LingtianStartHarvest(LingtianStartHarvest {
-                x: 0, y: 64, z: 0, mode: "manual".to_string(),
-            })),
-            ("LingtianStartReplenish", client_request_envelope::Payload::LingtianStartReplenish(LingtianStartReplenish {
-                x: 0, y: 64, z: 0, source: "bone_coin".to_string(),
-            })),
-            ("LingtianStartDrainQi", client_request_envelope::Payload::LingtianStartDrainQi(LingtianStartDrainQi {
-                x: 0, y: 64, z: 0,
-            })),
-            ("MineralProbe", client_request_envelope::Payload::MineralProbe(MineralProbe {
-                x: 8, y: 32, z: 8,
-            })),
+            (
+                "AlchemyOpenFurnace",
+                client_request_envelope::Payload::AlchemyOpenFurnace(AlchemyOpenFurnace {
+                    furnace_pos_x: 0,
+                    furnace_pos_y: 64,
+                    furnace_pos_z: 0,
+                }),
+            ),
+            (
+                "AlchemyFeedSlot",
+                client_request_envelope::Payload::AlchemyFeedSlot(AlchemyFeedSlot {
+                    furnace_pos_x: 0,
+                    furnace_pos_y: 64,
+                    furnace_pos_z: 0,
+                    slot_idx: 0,
+                    material: "x".to_string(),
+                    count: 1,
+                }),
+            ),
+            (
+                "AlchemyTakeBack",
+                client_request_envelope::Payload::AlchemyTakeBack(AlchemyTakeBack {
+                    furnace_pos_x: 0,
+                    furnace_pos_y: 64,
+                    furnace_pos_z: 0,
+                    slot_idx: 0,
+                }),
+            ),
+            (
+                "AlchemyIgnite",
+                client_request_envelope::Payload::AlchemyIgnite(AlchemyIgnite {
+                    furnace_pos_x: 0,
+                    furnace_pos_y: 64,
+                    furnace_pos_z: 0,
+                    recipe_id: "x".to_string(),
+                }),
+            ),
+            (
+                "AlchemyIntervention",
+                client_request_envelope::Payload::AlchemyIntervention(AlchemyIntervention {
+                    furnace_pos_x: 0,
+                    furnace_pos_y: 64,
+                    furnace_pos_z: 0,
+                    intervention: None,
+                }),
+            ),
+            (
+                "AlchemyTurnPage",
+                client_request_envelope::Payload::AlchemyTurnPage(AlchemyTurnPage { delta: 1 }),
+            ),
+            (
+                "AlchemyLearnRecipe",
+                client_request_envelope::Payload::AlchemyLearnRecipe(AlchemyLearnRecipe {
+                    recipe_id: "x".to_string(),
+                }),
+            ),
+            (
+                "AlchemyLearnRecipeFragment",
+                client_request_envelope::Payload::AlchemyLearnRecipeFragment(
+                    AlchemyLearnRecipeFragment {
+                        item_instance_id: 1,
+                    },
+                ),
+            ),
+            (
+                "AlchemyTakePill",
+                client_request_envelope::Payload::AlchemyTakePill(AlchemyTakePill {
+                    pill_item_id: "x".to_string(),
+                }),
+            ),
+            (
+                "ForgeStartSession",
+                client_request_envelope::Payload::ForgeStartSession(ForgeStartSession {
+                    station_id: "s".to_string(),
+                    blueprint_id: "b".to_string(),
+                    materials: vec![],
+                }),
+            ),
+            (
+                "ForgeTemperingHit",
+                client_request_envelope::Payload::ForgeTemperingHit(ForgeTemperingHit {
+                    session_id: 1,
+                    beat: "L".to_string(),
+                    ticks_remaining: 0,
+                }),
+            ),
+            (
+                "ForgeInscriptionScroll",
+                client_request_envelope::Payload::ForgeInscriptionScroll(ForgeInscriptionScroll {
+                    session_id: 1,
+                    inscription_id: "x".to_string(),
+                }),
+            ),
+            (
+                "ForgeConsecrationInject",
+                client_request_envelope::Payload::ForgeConsecrationInject(
+                    ForgeConsecrationInject {
+                        session_id: 1,
+                        qi_amount: 0.0,
+                    },
+                ),
+            ),
+            (
+                "ForgeStepAdvance",
+                client_request_envelope::Payload::ForgeStepAdvance(ForgeStepAdvance {
+                    session_id: 1,
+                }),
+            ),
+            (
+                "ForgeBlueprintTurnPage",
+                client_request_envelope::Payload::ForgeBlueprintTurnPage(ForgeBlueprintTurnPage {
+                    delta: 1,
+                }),
+            ),
+            (
+                "ForgeLearnBlueprint",
+                client_request_envelope::Payload::ForgeLearnBlueprint(ForgeLearnBlueprint {
+                    blueprint_id: "x".to_string(),
+                }),
+            ),
+            (
+                "CraftStart",
+                client_request_envelope::Payload::CraftStart(CraftStart {
+                    recipe_id: "x".to_string(),
+                    quantity: 1,
+                }),
+            ),
+            (
+                "CraftCancel",
+                client_request_envelope::Payload::CraftCancel(CraftCancel {}),
+            ),
+            (
+                "BotanyHarvestRequest",
+                client_request_envelope::Payload::BotanyHarvestRequest(BotanyHarvestRequest {
+                    session_id: "s".to_string(),
+                    mode: BotanyHarvestMode::Manual as i32,
+                }),
+            ),
+            (
+                "LingtianStartTill",
+                client_request_envelope::Payload::LingtianStartTill(LingtianStartTill {
+                    x: 0,
+                    y: 64,
+                    z: 0,
+                    hoe_instance_id: 1,
+                    mode: "manual".to_string(),
+                }),
+            ),
+            (
+                "LingtianStartRenew",
+                client_request_envelope::Payload::LingtianStartRenew(LingtianStartRenew {
+                    x: 0,
+                    y: 64,
+                    z: 0,
+                    hoe_instance_id: 1,
+                }),
+            ),
+            (
+                "LingtianStartPlanting",
+                client_request_envelope::Payload::LingtianStartPlanting(LingtianStartPlanting {
+                    x: 0,
+                    y: 64,
+                    z: 0,
+                    plant_id: "x".to_string(),
+                }),
+            ),
+            (
+                "LingtianStartHarvest",
+                client_request_envelope::Payload::LingtianStartHarvest(LingtianStartHarvest {
+                    x: 0,
+                    y: 64,
+                    z: 0,
+                    mode: "manual".to_string(),
+                }),
+            ),
+            (
+                "LingtianStartReplenish",
+                client_request_envelope::Payload::LingtianStartReplenish(LingtianStartReplenish {
+                    x: 0,
+                    y: 64,
+                    z: 0,
+                    source: "bone_coin".to_string(),
+                }),
+            ),
+            (
+                "LingtianStartDrainQi",
+                client_request_envelope::Payload::LingtianStartDrainQi(LingtianStartDrainQi {
+                    x: 0,
+                    y: 64,
+                    z: 0,
+                }),
+            ),
+            (
+                "MineralProbe",
+                client_request_envelope::Payload::MineralProbe(MineralProbe { x: 8, y: 32, z: 8 }),
+            ),
         ];
 
         for (name, payload) in variant_payloads {
@@ -3715,8 +4029,7 @@ mod tests {
             ],
         };
         let bytes = msg.encode_to_vec();
-        let decoded = WoundsSnapshot::decode(bytes.as_slice())
-            .expect("WoundsSnapshot decode 失败");
+        let decoded = WoundsSnapshot::decode(bytes.as_slice()).expect("WoundsSnapshot decode 失败");
         assert_eq!(decoded.wounds.len(), 2, "应有 2 条伤口记录");
         assert_eq!(decoded.wounds[0].part, "chest");
         assert_eq!(decoded.wounds[0].severity, 0.6_f32);
@@ -3727,8 +4040,8 @@ mod tests {
     fn wounds_snapshot_roundtrip_empty() {
         let msg = WoundsSnapshot { wounds: vec![] };
         let bytes = msg.encode_to_vec();
-        let decoded = WoundsSnapshot::decode(bytes.as_slice())
-            .expect("空 WoundsSnapshot decode 失败");
+        let decoded =
+            WoundsSnapshot::decode(bytes.as_slice()).expect("空 WoundsSnapshot decode 失败");
         assert!(decoded.wounds.is_empty(), "空伤口快照应为空 vec");
     }
 
@@ -3771,8 +4084,7 @@ mod tests {
             expires_at_ms: 1_700_000_000_200,
         };
         let bytes = msg.encode_to_vec();
-        let decoded = DefenseWindow::decode(bytes.as_slice())
-            .expect("DefenseWindow decode 失败");
+        let decoded = DefenseWindow::decode(bytes.as_slice()).expect("DefenseWindow decode 失败");
         assert_eq!(decoded.duration_ms, 200, "duration_ms 应为 200");
         assert_eq!(decoded.started_at_ms, 1_700_000_000_000);
         assert_eq!(decoded.expires_at_ms, 1_700_000_000_200);
@@ -3821,8 +4133,9 @@ mod tests {
                 outcome: outcome as i32,
             };
             let bytes = msg.encode_to_vec();
-            let decoded = CastSync::decode(bytes.as_slice())
-                .unwrap_or_else(|e| panic!("CastSync phase={phase:?} outcome={outcome:?} decode 失败: {e}"));
+            let decoded = CastSync::decode(bytes.as_slice()).unwrap_or_else(|e| {
+                panic!("CastSync phase={phase:?} outcome={outcome:?} decode 失败: {e}")
+            });
             assert_eq!(
                 decoded.phase, phase as i32,
                 "CastSync phase 应为 {phase:?}，实际 {}",
@@ -3849,8 +4162,8 @@ mod tests {
             })),
         };
         let bytes = envelope.encode_to_vec();
-        let decoded = ServerDataEnvelope::decode(bytes.as_slice())
-            .expect("CastSync envelope decode 失败");
+        let decoded =
+            ServerDataEnvelope::decode(bytes.as_slice()).expect("CastSync envelope decode 失败");
         match decoded.payload {
             Some(server_data_envelope::Payload::CastSync(c)) => {
                 assert_eq!(c.slot, 5);
@@ -3881,8 +4194,8 @@ mod tests {
             cooldown_until_ms: vec![1_700_000_001_500, 0, 0],
         };
         let bytes = msg.encode_to_vec();
-        let decoded = QuickSlotConfig::decode(bytes.as_slice())
-            .expect("QuickSlotConfig decode 失败");
+        let decoded =
+            QuickSlotConfig::decode(bytes.as_slice()).expect("QuickSlotConfig decode 失败");
         assert_eq!(decoded.slots.len(), 3);
         assert!(decoded.slots[0].entry.is_some(), "槽 0 应有条目");
         assert!(decoded.slots[1].entry.is_none(), "槽 1 应为空");
@@ -3926,8 +4239,7 @@ mod tests {
             cooldown_until_ms: vec![3000, 0, 0],
         };
         let bytes = msg.encode_to_vec();
-        let decoded = SkillBarConfig::decode(bytes.as_slice())
-            .expect("SkillBarConfig decode 失败");
+        let decoded = SkillBarConfig::decode(bytes.as_slice()).expect("SkillBarConfig decode 失败");
         assert_eq!(decoded.slots.len(), 3);
         match &decoded.slots[0].entry.as_ref().unwrap().kind {
             Some(skill_bar_entry::Kind::Skill(s)) => {
@@ -3970,8 +4282,8 @@ mod tests {
             }],
         };
         let bytes = msg.encode_to_vec();
-        let decoded = TechniquesSnapshot::decode(bytes.as_slice())
-            .expect("TechniquesSnapshot decode 失败");
+        let decoded =
+            TechniquesSnapshot::decode(bytes.as_slice()).expect("TechniquesSnapshot decode 失败");
         assert_eq!(decoded.entries.len(), 1);
         let e = &decoded.entries[0];
         assert_eq!(e.id, "burst_meridian.beng_quan");
@@ -4000,8 +4312,7 @@ mod tests {
             jueling: true,
         };
         let bytes = msg.encode_to_vec();
-        let decoded = UnlocksSync::decode(bytes.as_slice())
-            .expect("UnlocksSync decode 失败");
+        let decoded = UnlocksSync::decode(bytes.as_slice()).expect("UnlocksSync decode 失败");
         assert!(decoded.jiemai, "jiemai 应为 true");
         assert!(!decoded.tishi, "tishi 应为 false");
         assert!(decoded.jueling, "jueling 应为 true");
@@ -4024,8 +4335,8 @@ mod tests {
             vortex_active: false,
         };
         let bytes = msg.encode_to_vec();
-        let decoded = DerivedAttrsSync::decode(bytes.as_slice())
-            .expect("DerivedAttrsSync decode 失败");
+        let decoded =
+            DerivedAttrsSync::decode(bytes.as_slice()).expect("DerivedAttrsSync decode 失败");
         assert!(decoded.flying, "flying 应为 true");
         assert_eq!(decoded.flying_qi_remaining, 42.5_f32);
         assert!(decoded.tribulation_locked);
@@ -4056,10 +4367,7 @@ mod tests {
             let bytes = msg.encode_to_vec();
             let decoded = EventStreamPush::decode(bytes.as_slice())
                 .unwrap_or_else(|e| panic!("EventStreamPush channel={channel:?} decode 失败: {e}"));
-            assert_eq!(
-                decoded.channel, channel as i32,
-                "channel 应为 {channel:?}"
-            );
+            assert_eq!(decoded.channel, channel as i32, "channel 应为 {channel:?}");
         }
     }
 
@@ -4103,8 +4411,7 @@ mod tests {
             }),
         };
         let bytes = msg.encode_to_vec();
-        let decoded = WeaponEquipped::decode(bytes.as_slice())
-            .expect("WeaponEquipped decode 失败");
+        let decoded = WeaponEquipped::decode(bytes.as_slice()).expect("WeaponEquipped decode 失败");
         assert_eq!(decoded.slot, "main_hand");
         let w = decoded.weapon.expect("weapon 应为 Some");
         assert_eq!(w.instance_id, 42);
@@ -4119,8 +4426,8 @@ mod tests {
             weapon: None,
         };
         let bytes = msg.encode_to_vec();
-        let decoded = WeaponEquipped::decode(bytes.as_slice())
-            .expect("WeaponEquipped 无武器 decode 失败");
+        let decoded =
+            WeaponEquipped::decode(bytes.as_slice()).expect("WeaponEquipped 无武器 decode 失败");
         assert_eq!(decoded.slot, "off_hand");
         assert!(decoded.weapon.is_none(), "weapon 应为 None");
     }
@@ -4134,8 +4441,7 @@ mod tests {
             template_id: "bone_dagger".to_string(),
         };
         let bytes = msg.encode_to_vec();
-        let decoded = WeaponBroken::decode(bytes.as_slice())
-            .expect("WeaponBroken decode 失败");
+        let decoded = WeaponBroken::decode(bytes.as_slice()).expect("WeaponBroken decode 失败");
         assert_eq!(decoded.instance_id, 77);
         assert_eq!(decoded.template_id, "bone_dagger");
     }
@@ -4153,8 +4459,8 @@ mod tests {
             }),
         };
         let bytes = msg.encode_to_vec();
-        let decoded = TreasureEquipped::decode(bytes.as_slice())
-            .expect("TreasureEquipped decode 失败");
+        let decoded =
+            TreasureEquipped::decode(bytes.as_slice()).expect("TreasureEquipped decode 失败");
         assert_eq!(decoded.slot, "treasure_belt_0");
         let t = decoded.treasure.expect("treasure 应为 Some");
         assert_eq!(t.display_name, "启程护符");
@@ -4196,8 +4502,8 @@ mod tests {
             turbulence_until_ms: 1_700_000_000_000,
         };
         let bytes = msg.encode_to_vec();
-        let decoded = VortexFieldState::decode(bytes.as_slice())
-            .expect("VortexFieldState decode 失败");
+        let decoded =
+            VortexFieldState::decode(bytes.as_slice()).expect("VortexFieldState decode 失败");
         assert_eq!(decoded.caster, "player:a");
         assert!(decoded.active);
         assert_eq!(decoded.center_x, 100.0);
@@ -4223,8 +4529,8 @@ mod tests {
             server_tick: 200,
         };
         let bytes = msg.encode_to_vec();
-        let decoded = DuguPoisonState::decode(bytes.as_slice())
-            .expect("DuguPoisonState decode 失败");
+        let decoded =
+            DuguPoisonState::decode(bytes.as_slice()).expect("DuguPoisonState decode 失败");
         assert_eq!(decoded.target, "player:alice");
         assert!(decoded.active);
         assert_eq!(decoded.poisoner_realm_tier, 3);
@@ -4246,8 +4552,8 @@ mod tests {
             server_tick: 88,
         };
         let bytes = msg.encode_to_vec();
-        let decoded = DuguPoisonState::decode(bytes.as_slice())
-            .expect("cleared DuguPoisonState decode 失败");
+        let decoded =
+            DuguPoisonState::decode(bytes.as_slice()).expect("cleared DuguPoisonState decode 失败");
         assert!(!decoded.active);
         assert_eq!(decoded.server_tick, 88);
     }
@@ -4304,10 +4610,7 @@ mod tests {
             let bytes = msg.encode_to_vec();
             let decoded = PoisonOverdoseEvent::decode(bytes.as_slice())
                 .unwrap_or_else(|e| panic!("PoisonOverdoseEvent sev={sev:?} decode 失败: {e}"));
-            assert_eq!(
-                decoded.severity, sev as i32,
-                "severity 应为 {sev:?}"
-            );
+            assert_eq!(decoded.severity, sev as i32, "severity 应为 {sev:?}");
             assert_eq!(decoded.overflow, 1.5_f32);
         }
     }
@@ -4324,8 +4627,8 @@ mod tests {
             toxicity_tier_unlocked: false,
         };
         let bytes = msg.encode_to_vec();
-        let decoded = PoisonTraitState::decode(bytes.as_slice())
-            .expect("PoisonTraitState decode 失败");
+        let decoded =
+            PoisonTraitState::decode(bytes.as_slice()).expect("PoisonTraitState decode 失败");
         assert_eq!(decoded.player_entity_id, 7);
         assert_eq!(decoded.poison_toxicity, 5.0_f32);
         assert_eq!(decoded.digestion_capacity, 100.0_f32);
@@ -4346,8 +4649,7 @@ mod tests {
             item_instance_id: Some(42),
         };
         let bytes = msg.encode_to_vec();
-        let decoded = CarrierState::decode(bytes.as_slice())
-            .expect("CarrierState decode 失败");
+        let decoded = CarrierState::decode(bytes.as_slice()).expect("CarrierState decode 失败");
         assert_eq!(decoded.carrier, "bone_chip");
         assert_eq!(decoded.phase, CarrierChargePhase::Charged as i32);
         assert_eq!(decoded.item_instance_id, Some(42));
@@ -4365,8 +4667,8 @@ mod tests {
             item_instance_id: None,
         };
         let bytes = msg.encode_to_vec();
-        let decoded = CarrierState::decode(bytes.as_slice())
-            .expect("CarrierState 无 instance decode 失败");
+        let decoded =
+            CarrierState::decode(bytes.as_slice()).expect("CarrierState 无 instance decode 失败");
         assert!(decoded.item_instance_id.is_none());
         assert_eq!(decoded.phase, CarrierChargePhase::Idle as i32);
     }
@@ -4424,8 +4726,7 @@ mod tests {
             ],
         };
         let bytes = msg.encode_to_vec();
-        let decoded = FalseSkinState::decode(bytes.as_slice())
-            .expect("FalseSkinState decode 失败");
+        let decoded = FalseSkinState::decode(bytes.as_slice()).expect("FalseSkinState decode 失败");
         assert_eq!(decoded.target_id, "offline:Azure");
         assert_eq!(decoded.kind, Some(FalseSkinKind::SpiderSilk as i32));
         assert_eq!(decoded.layers.len(), 2);
@@ -4445,18 +4746,15 @@ mod tests {
             layers: vec![],
         };
         let bytes = msg.encode_to_vec();
-        let decoded = FalseSkinState::decode(bytes.as_slice())
-            .expect("空 FalseSkinState decode 失败");
+        let decoded =
+            FalseSkinState::decode(bytes.as_slice()).expect("空 FalseSkinState decode 失败");
         assert!(decoded.kind.is_none());
         assert!(decoded.layers.is_empty());
     }
 
     #[test]
     fn false_skin_kind_all_variants() {
-        let kinds = [
-            FalseSkinKind::SpiderSilk,
-            FalseSkinKind::RottenWoodArmor,
-        ];
+        let kinds = [FalseSkinKind::SpiderSilk, FalseSkinKind::RottenWoodArmor];
         for kind in kinds {
             assert_ne!(kind as i32, 0, "{kind:?} 不应为 UNSPECIFIED (0)");
         }
@@ -4501,8 +4799,8 @@ mod tests {
             ],
         };
         let bytes = msg.encode_to_vec();
-        let decoded = CombatEventFloater::decode(bytes.as_slice())
-            .expect("CombatEventFloater decode 失败");
+        let decoded =
+            CombatEventFloater::decode(bytes.as_slice()).expect("CombatEventFloater decode 失败");
         assert_eq!(decoded.events.len(), 2);
         assert_eq!(decoded.events[0].kind, "damage");
         assert_eq!(decoded.events[0].amount, 25.0_f32);
@@ -4545,8 +4843,7 @@ mod tests {
             effect_multiplier: 1.5,
         };
         let bytes = msg.encode_to_vec();
-        let decoded = PillBuffStatus::decode(bytes.as_slice())
-            .expect("PillBuffStatus decode 失败");
+        let decoded = PillBuffStatus::decode(bytes.as_slice()).expect("PillBuffStatus decode 失败");
         assert_eq!(decoded.buff_id, "kai_mai_buff");
         assert_eq!(decoded.remaining_ticks, 1200);
         assert_eq!(decoded.effect_multiplier, 1.5);
@@ -4618,8 +4915,8 @@ mod tests {
             )),
         };
         let bytes = envelope.encode_to_vec();
-        let decoded = ClientRequestEnvelope::decode(bytes.as_slice())
-            .expect("ChargeCarrier C2S decode 失败");
+        let decoded =
+            ClientRequestEnvelope::decode(bytes.as_slice()).expect("ChargeCarrier C2S decode 失败");
         match decoded.payload {
             Some(client_request_envelope::Payload::ChargeCarrier(c)) => {
                 assert_eq!(c.slot, Some(AnqiCarrierSlot::MainHand as i32));
@@ -4667,8 +4964,8 @@ mod tests {
             )),
         };
         let bytes = envelope.encode_to_vec();
-        let decoded = ClientRequestEnvelope::decode(bytes.as_slice())
-            .expect("ThrowCarrier C2S decode 失败");
+        let decoded =
+            ClientRequestEnvelope::decode(bytes.as_slice()).expect("ThrowCarrier C2S decode 失败");
         match decoded.payload {
             Some(client_request_envelope::Payload::ThrowCarrier(t)) => {
                 assert_eq!(t.slot, AnqiCarrierSlot::OffHand as i32);
@@ -4742,8 +5039,8 @@ mod tests {
             )),
         };
         let bytes = envelope.encode_to_vec();
-        let decoded = ClientRequestEnvelope::decode(bytes.as_slice())
-            .expect("UseQuickSlot C2S decode 失败");
+        let decoded =
+            ClientRequestEnvelope::decode(bytes.as_slice()).expect("UseQuickSlot C2S decode 失败");
         match decoded.payload {
             Some(client_request_envelope::Payload::UseQuickSlot(u)) => {
                 assert_eq!(u.slot, 3);
@@ -4861,8 +5158,8 @@ mod tests {
             )),
         };
         let bytes = envelope.encode_to_vec();
-        let decoded = ClientRequestEnvelope::decode(bytes.as_slice())
-            .expect("SkillBarBind item decode 失败");
+        let decoded =
+            ClientRequestEnvelope::decode(bytes.as_slice()).expect("SkillBarBind item decode 失败");
         match decoded.payload {
             Some(client_request_envelope::Payload::SkillBarBind(b)) => {
                 assert_eq!(b.slot, 1);
@@ -5001,7 +5298,9 @@ mod tests {
             .expect("CombatCreateNewCharacter C2S decode 失败");
         assert!(matches!(
             decoded.payload,
-            Some(client_request_envelope::Payload::CombatCreateNewCharacter(_))
+            Some(client_request_envelope::Payload::CombatCreateNewCharacter(
+                _
+            ))
         ));
     }
 
@@ -5567,8 +5866,8 @@ mod tests {
             reason: "defeated_elite".to_string(),
         };
         let bytes = msg.encode_to_vec();
-        let decoded = SocialRenownDelta::decode(bytes.as_slice())
-            .expect("SocialRenownDelta decode 失败");
+        let decoded =
+            SocialRenownDelta::decode(bytes.as_slice()).expect("SocialRenownDelta decode 失败");
         assert_eq!(decoded.fame_delta, 100);
         assert_eq!(decoded.notoriety_delta, -50);
         assert_eq!(decoded.tags_added.len(), 1);
@@ -5618,8 +5917,8 @@ mod tests {
             ],
         };
         let bytes = msg.encode_to_vec();
-        let decoded = IdentityPanelState::decode(bytes.as_slice())
-            .expect("IdentityPanelState decode 失败");
+        let decoded =
+            IdentityPanelState::decode(bytes.as_slice()).expect("IdentityPanelState decode 失败");
         assert_eq!(decoded.active_identity_id, 1);
         assert_eq!(decoded.identities.len(), 2);
         assert_eq!(decoded.identities[0].display_name, "kiz");
@@ -5659,8 +5958,7 @@ mod tests {
             taint_delta: 0.25,
         };
         let bytes = msg.encode_to_vec();
-        let decoded =
-            NicheIntrusion::decode(bytes.as_slice()).expect("NicheIntrusion decode 失败");
+        let decoded = NicheIntrusion::decode(bytes.as_slice()).expect("NicheIntrusion decode 失败");
         assert_eq!(decoded.niche_pos_x, 10);
         assert_eq!(decoded.niche_pos_y, 64);
         assert_eq!(decoded.niche_pos_z, -20);
@@ -5700,9 +5998,7 @@ mod tests {
             };
             let bytes = msg.encode_to_vec();
             let decoded = NicheGuardianFatigue::decode(bytes.as_slice())
-                .unwrap_or_else(|e| {
-                    panic!("NicheGuardianFatigue kind={kind:?} decode 失败: {e}")
-                });
+                .unwrap_or_else(|e| panic!("NicheGuardianFatigue kind={kind:?} decode 失败: {e}"));
             assert_eq!(decoded.guardian_kind, kind as i32);
             assert_eq!(decoded.charges_remaining, 3);
         }
@@ -5737,8 +6033,7 @@ mod tests {
             expires_at_ms: 1700000000000,
         };
         let bytes = msg.encode_to_vec();
-        let decoded =
-            SparringInvite::decode(bytes.as_slice()).expect("SparringInvite decode 失败");
+        let decoded = SparringInvite::decode(bytes.as_slice()).expect("SparringInvite decode 失败");
         assert_eq!(decoded.invite_id, "sparring:1:a:b");
         assert_eq!(decoded.initiator, "char:alice");
         assert_eq!(decoded.target, "char:bob");
@@ -5854,22 +6149,22 @@ mod tests {
     #[test]
     fn spirit_niche_mark_coordinate_c2s_roundtrip() {
         let envelope = ClientRequestEnvelope {
-            payload: Some(
-                client_request_envelope::Payload::SpiritNicheMarkCoordinate(
-                    SpiritNicheMarkCoordinate {
-                        x: 11,
-                        y: 64,
-                        z: 10,
-                    },
-                ),
-            ),
+            payload: Some(client_request_envelope::Payload::SpiritNicheMarkCoordinate(
+                SpiritNicheMarkCoordinate {
+                    x: 11,
+                    y: 64,
+                    z: 10,
+                },
+            )),
         };
         let bytes = envelope.encode_to_vec();
         let decoded = ClientRequestEnvelope::decode(bytes.as_slice())
             .expect("SpiritNicheMarkCoordinate C2S decode 失败");
         assert!(matches!(
             decoded.payload,
-            Some(client_request_envelope::Payload::SpiritNicheMarkCoordinate(_))
+            Some(client_request_envelope::Payload::SpiritNicheMarkCoordinate(
+                _
+            ))
         ));
     }
 
@@ -6352,6 +6647,1460 @@ mod tests {
             assert!(
                 decoded.payload.is_some(),
                 "{name} B3 C2S envelope roundtrip 后 payload 应为 Some"
+            );
+        }
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // P2 B4 — 天劫 / 死亡 / 复活 / 突破 / 境界视觉
+    // ═══════════════════════════════════════════════════════════════
+
+    // ─── TribulationState roundtrip ────────────────────────────────
+
+    #[test]
+    fn tribulation_state_envelope_roundtrip() {
+        let state = TribulationState {
+            active: true,
+            char_id: "offline:Azure".to_string(),
+            actor_name: "Azure".to_string(),
+            kind: "du_xu".to_string(),
+            phase: "wave".to_string(),
+            world_x: 100.5,
+            world_z: -200.3,
+            wave_current: 2,
+            wave_total: 5,
+            started_tick: 10000,
+            phase_started_tick: 10500,
+            next_wave_tick: 11000,
+            failed: false,
+            half_step_on_success: true,
+            participants: vec!["Azure".to_string(), "Observer1".to_string()],
+            result: None,
+        };
+        let envelope = ServerDataEnvelope {
+            payload: Some(server_data_envelope::Payload::TribulationState(
+                state.clone(),
+            )),
+        };
+        let bytes = envelope.encode_to_vec();
+        let decoded =
+            ServerDataEnvelope::decode(bytes.as_slice()).expect("TribulationState decode 失败");
+        match decoded.payload {
+            Some(server_data_envelope::Payload::TribulationState(s)) => {
+                assert!(s.active, "active should be true");
+                assert_eq!(s.char_id, "offline:Azure");
+                assert_eq!(s.actor_name, "Azure");
+                assert_eq!(s.kind, "du_xu");
+                assert_eq!(s.phase, "wave");
+                assert!((s.world_x - 100.5).abs() < 1e-9);
+                assert!((s.world_z - (-200.3)).abs() < 1e-9);
+                assert_eq!(s.wave_current, 2);
+                assert_eq!(s.wave_total, 5);
+                assert_eq!(s.started_tick, 10000);
+                assert_eq!(s.phase_started_tick, 10500);
+                assert_eq!(s.next_wave_tick, 11000);
+                assert!(!s.failed);
+                assert!(s.half_step_on_success);
+                assert_eq!(s.participants.len(), 2);
+                assert_eq!(s.result, None, "result should be None");
+            }
+            other => panic!("expected TribulationState, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn tribulation_state_cleared_roundtrip() {
+        let state = TribulationState {
+            active: false,
+            char_id: String::new(),
+            actor_name: String::new(),
+            kind: "du_xu".to_string(),
+            phase: "settle".to_string(),
+            world_x: 0.0,
+            world_z: 0.0,
+            wave_current: 0,
+            wave_total: 0,
+            started_tick: 0,
+            phase_started_tick: 0,
+            next_wave_tick: 0,
+            failed: false,
+            half_step_on_success: false,
+            participants: vec![],
+            result: Some("ascended".to_string()),
+        };
+        let envelope = ServerDataEnvelope {
+            payload: Some(server_data_envelope::Payload::TribulationState(state)),
+        };
+        let bytes = envelope.encode_to_vec();
+        let decoded =
+            ServerDataEnvelope::decode(bytes.as_slice()).expect("cleared TribulationState decode");
+        match decoded.payload {
+            Some(server_data_envelope::Payload::TribulationState(s)) => {
+                assert!(!s.active);
+                assert_eq!(s.result, Some("ascended".to_string()));
+            }
+            other => panic!("expected cleared TribulationState, got {other:?}"),
+        }
+    }
+
+    // ─── TribulationBroadcast roundtrip ────────────────────────────
+
+    #[test]
+    fn tribulation_broadcast_active_roundtrip() {
+        let bc = TribulationBroadcast {
+            active: true,
+            actor_name: "Elder".to_string(),
+            stage: "wave".to_string(),
+            world_x: 50.0,
+            world_z: 60.0,
+            expires_at_ms: 1700000000000,
+            spectate_invite: true,
+            spectate_distance: 128.0,
+        };
+        let envelope = ServerDataEnvelope {
+            payload: Some(server_data_envelope::Payload::TribulationBroadcast(
+                bc.clone(),
+            )),
+        };
+        let bytes = envelope.encode_to_vec();
+        let decoded =
+            ServerDataEnvelope::decode(bytes.as_slice()).expect("TribulationBroadcast decode 失败");
+        match decoded.payload {
+            Some(server_data_envelope::Payload::TribulationBroadcast(b)) => {
+                assert!(b.active);
+                assert_eq!(b.actor_name, "Elder");
+                assert_eq!(b.stage, "wave");
+                assert!((b.world_x - 50.0).abs() < 1e-9);
+                assert!((b.world_z - 60.0).abs() < 1e-9);
+                assert_eq!(b.expires_at_ms, 1700000000000);
+                assert!(b.spectate_invite);
+                assert!((b.spectate_distance - 128.0).abs() < 1e-9);
+            }
+            other => panic!("expected TribulationBroadcast, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn tribulation_broadcast_clear_roundtrip() {
+        let bc = TribulationBroadcast {
+            active: false,
+            actor_name: String::new(),
+            stage: "done".to_string(),
+            world_x: 0.0,
+            world_z: 0.0,
+            expires_at_ms: 0,
+            spectate_invite: false,
+            spectate_distance: 0.0,
+        };
+        let envelope = ServerDataEnvelope {
+            payload: Some(server_data_envelope::Payload::TribulationBroadcast(bc)),
+        };
+        let bytes = envelope.encode_to_vec();
+        let decoded =
+            ServerDataEnvelope::decode(bytes.as_slice()).expect("cleared TribulationBroadcast");
+        match decoded.payload {
+            Some(server_data_envelope::Payload::TribulationBroadcast(b)) => {
+                assert!(!b.active);
+                assert_eq!(b.stage, "done");
+            }
+            other => panic!("expected cleared TribulationBroadcast, got {other:?}"),
+        }
+    }
+
+    // ─── AscensionQuota roundtrip ──────────────────────────────────
+
+    #[test]
+    fn ascension_quota_envelope_roundtrip() {
+        let quota = AscensionQuota {
+            occupied_slots: 3,
+            quota_limit: 10,
+            available_slots: 7,
+            total_world_qi: 50000.0,
+            quota_k: 0.0001,
+            quota_basis: "natural".to_string(),
+        };
+        let envelope = ServerDataEnvelope {
+            payload: Some(server_data_envelope::Payload::AscensionQuota(quota)),
+        };
+        let bytes = envelope.encode_to_vec();
+        let decoded =
+            ServerDataEnvelope::decode(bytes.as_slice()).expect("AscensionQuota decode 失败");
+        match decoded.payload {
+            Some(server_data_envelope::Payload::AscensionQuota(q)) => {
+                assert_eq!(q.occupied_slots, 3);
+                assert_eq!(q.quota_limit, 10);
+                assert_eq!(q.available_slots, 7);
+                assert!((q.total_world_qi - 50000.0).abs() < 1e-3);
+                assert!((q.quota_k - 0.0001).abs() < 1e-9);
+                assert_eq!(q.quota_basis, "natural");
+            }
+            other => panic!("expected AscensionQuota, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn ascension_quota_zero_values_roundtrip() {
+        let quota = AscensionQuota {
+            occupied_slots: 0,
+            quota_limit: 0,
+            available_slots: 0,
+            total_world_qi: 0.0,
+            quota_k: 0.0,
+            quota_basis: String::new(),
+        };
+        let envelope = ServerDataEnvelope {
+            payload: Some(server_data_envelope::Payload::AscensionQuota(quota)),
+        };
+        let bytes = envelope.encode_to_vec();
+        let decoded =
+            ServerDataEnvelope::decode(bytes.as_slice()).expect("zero AscensionQuota decode 失败");
+        assert!(
+            decoded.payload.is_some(),
+            "zero AscensionQuota should have payload"
+        );
+    }
+
+    // ─── HeartDemonOffer roundtrip ─────────────────────────────────
+
+    #[test]
+    fn heart_demon_offer_envelope_roundtrip() {
+        let offer = HeartDemonOffer {
+            offer_id: "hd_offer:1".to_string(),
+            trigger_id: "du_xu_wave_3".to_string(),
+            trigger_label: "渡虚第三波".to_string(),
+            realm_label: "凝脉".to_string(),
+            composure: 0.75,
+            quota_remaining: 2,
+            quota_total: 3,
+            expires_at_ms: 1700000060000,
+            choices: vec![
+                HeartDemonOfferChoice {
+                    choice_id: "resist".to_string(),
+                    category: "willpower".to_string(),
+                    title: "坚守本心".to_string(),
+                    effect_summary: "composure +0.1".to_string(),
+                    flavor: "你的意志如山".to_string(),
+                    style_hint: "positive".to_string(),
+                },
+                HeartDemonOfferChoice {
+                    choice_id: "submit".to_string(),
+                    category: "corruption".to_string(),
+                    title: "顺从心魔".to_string(),
+                    effect_summary: "composure -0.3".to_string(),
+                    flavor: "黑暗涌来".to_string(),
+                    style_hint: "negative".to_string(),
+                },
+            ],
+        };
+        let envelope = ServerDataEnvelope {
+            payload: Some(server_data_envelope::Payload::HeartDemonOffer(offer)),
+        };
+        let bytes = envelope.encode_to_vec();
+        let decoded =
+            ServerDataEnvelope::decode(bytes.as_slice()).expect("HeartDemonOffer decode 失败");
+        match decoded.payload {
+            Some(server_data_envelope::Payload::HeartDemonOffer(o)) => {
+                assert_eq!(o.offer_id, "hd_offer:1");
+                assert_eq!(o.trigger_id, "du_xu_wave_3");
+                assert!((o.composure - 0.75).abs() < 1e-9);
+                assert_eq!(o.quota_remaining, 2);
+                assert_eq!(o.quota_total, 3);
+                assert_eq!(o.choices.len(), 2);
+                assert_eq!(o.choices[0].choice_id, "resist");
+                assert_eq!(o.choices[1].choice_id, "submit");
+                assert_eq!(o.choices[0].category, "willpower");
+                assert_eq!(o.choices[1].style_hint, "negative");
+            }
+            other => panic!("expected HeartDemonOffer, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn heart_demon_offer_empty_choices_roundtrip() {
+        let offer = HeartDemonOffer {
+            offer_id: "hd_offer:empty".to_string(),
+            trigger_id: "t".to_string(),
+            trigger_label: String::new(),
+            realm_label: String::new(),
+            composure: 1.0,
+            quota_remaining: 0,
+            quota_total: 0,
+            expires_at_ms: 0,
+            choices: vec![],
+        };
+        let envelope = ServerDataEnvelope {
+            payload: Some(server_data_envelope::Payload::HeartDemonOffer(offer)),
+        };
+        let bytes = envelope.encode_to_vec();
+        let decoded = ServerDataEnvelope::decode(bytes.as_slice())
+            .expect("empty HeartDemonOffer decode 失败");
+        match decoded.payload {
+            Some(server_data_envelope::Payload::HeartDemonOffer(o)) => {
+                assert_eq!(o.choices.len(), 0);
+            }
+            other => panic!("expected empty HeartDemonOffer, got {other:?}"),
+        }
+    }
+
+    // ─── BurstMeridianEvent roundtrip ──────────────────────────────
+
+    #[test]
+    fn burst_meridian_event_envelope_roundtrip() {
+        let event = BurstMeridianEvent {
+            skill: "beng_quan".to_string(),
+            caster: "offline:Azure".to_string(),
+            target: Some("npc_1v0".to_string()),
+            tick: 42000,
+            overload_ratio: 1.5,
+            integrity_snapshot: 0.3,
+        };
+        let envelope = ServerDataEnvelope {
+            payload: Some(server_data_envelope::Payload::BurstMeridianEvent(event)),
+        };
+        let bytes = envelope.encode_to_vec();
+        let decoded =
+            ServerDataEnvelope::decode(bytes.as_slice()).expect("BurstMeridianEvent decode 失败");
+        match decoded.payload {
+            Some(server_data_envelope::Payload::BurstMeridianEvent(e)) => {
+                assert_eq!(e.skill, "beng_quan");
+                assert_eq!(e.caster, "offline:Azure");
+                assert_eq!(e.target, Some("npc_1v0".to_string()));
+                assert_eq!(e.tick, 42000);
+                assert!((e.overload_ratio - 1.5).abs() < 1e-9);
+                assert!((e.integrity_snapshot - 0.3).abs() < 1e-9);
+            }
+            other => panic!("expected BurstMeridianEvent, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn burst_meridian_event_no_target_roundtrip() {
+        let event = BurstMeridianEvent {
+            skill: "vortex_overload".to_string(),
+            caster: "offline:Azure".to_string(),
+            target: None,
+            tick: 50000,
+            overload_ratio: 2.0,
+            integrity_snapshot: 0.0,
+        };
+        let envelope = ServerDataEnvelope {
+            payload: Some(server_data_envelope::Payload::BurstMeridianEvent(event)),
+        };
+        let bytes = envelope.encode_to_vec();
+        let decoded = ServerDataEnvelope::decode(bytes.as_slice())
+            .expect("BurstMeridianEvent no target decode");
+        match decoded.payload {
+            Some(server_data_envelope::Payload::BurstMeridianEvent(e)) => {
+                assert_eq!(e.target, None, "target should be None");
+            }
+            other => panic!("expected BurstMeridianEvent, got {other:?}"),
+        }
+    }
+
+    // ─── BreakthroughCinematic roundtrip ───────────────────────────
+
+    #[test]
+    fn breakthrough_cinematic_envelope_roundtrip() {
+        let cin = BreakthroughCinematic {
+            actor_id: "offline:Azure".to_string(),
+            phase: "ascending".to_string(),
+            phase_tick: 100,
+            phase_duration_ticks: 300,
+            realm_from: "Condense".to_string(),
+            realm_to: "Solidify".to_string(),
+            result: "success".to_string(),
+            interrupted: false,
+            world_pos_x: 8.0,
+            world_pos_y: 150.0,
+            world_pos_z: 8.0,
+            visible_radius_blocks: 64.0,
+            global: true,
+            distant_billboard: true,
+            particle_density: 4.0,
+            intensity: 0.8,
+            season_overlay: "summer".to_string(),
+            style: "standard".to_string(),
+            at_tick: 90000,
+        };
+        let envelope = ServerDataEnvelope {
+            payload: Some(server_data_envelope::Payload::BreakthroughCinematic(cin)),
+        };
+        let bytes = envelope.encode_to_vec();
+        let decoded = ServerDataEnvelope::decode(bytes.as_slice())
+            .expect("BreakthroughCinematic decode 失败");
+        match decoded.payload {
+            Some(server_data_envelope::Payload::BreakthroughCinematic(c)) => {
+                assert_eq!(c.actor_id, "offline:Azure");
+                assert_eq!(c.phase, "ascending");
+                assert_eq!(c.phase_tick, 100);
+                assert_eq!(c.phase_duration_ticks, 300);
+                assert_eq!(c.realm_from, "Condense");
+                assert_eq!(c.realm_to, "Solidify");
+                assert_eq!(c.result, "success");
+                assert!(!c.interrupted);
+                assert!((c.world_pos_x - 8.0).abs() < 1e-9);
+                assert!((c.world_pos_y - 150.0).abs() < 1e-9);
+                assert!((c.world_pos_z - 8.0).abs() < 1e-9);
+                assert!((c.visible_radius_blocks - 64.0).abs() < 1e-9);
+                assert!(c.global);
+                assert!(c.distant_billboard);
+                assert!((c.particle_density - 4.0).abs() < 1e-5);
+                assert!((c.intensity - 0.8).abs() < 1e-5);
+                assert_eq!(c.season_overlay, "summer");
+                assert_eq!(c.style, "standard");
+                assert_eq!(c.at_tick, 90000);
+            }
+            other => panic!("expected BreakthroughCinematic, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn breakthrough_cinematic_interrupted_roundtrip() {
+        let cin = BreakthroughCinematic {
+            actor_id: "npc_1v0".to_string(),
+            phase: "disrupted".to_string(),
+            phase_tick: 0,
+            phase_duration_ticks: 0,
+            realm_from: "Induce".to_string(),
+            realm_to: "Condense".to_string(),
+            result: "failed".to_string(),
+            interrupted: true,
+            world_pos_x: -50.0,
+            world_pos_y: 64.0,
+            world_pos_z: 100.0,
+            visible_radius_blocks: 32.0,
+            global: false,
+            distant_billboard: false,
+            particle_density: 1.0,
+            intensity: 0.2,
+            season_overlay: "winter".to_string(),
+            style: "minimal".to_string(),
+            at_tick: 0,
+        };
+        let envelope = ServerDataEnvelope {
+            payload: Some(server_data_envelope::Payload::BreakthroughCinematic(cin)),
+        };
+        let bytes = envelope.encode_to_vec();
+        let decoded = ServerDataEnvelope::decode(bytes.as_slice())
+            .expect("interrupted BreakthroughCinematic decode");
+        match decoded.payload {
+            Some(server_data_envelope::Payload::BreakthroughCinematic(c)) => {
+                assert!(c.interrupted);
+                assert_eq!(c.result, "failed");
+                assert!(!c.global);
+            }
+            other => panic!("expected interrupted BreakthroughCinematic, got {other:?}"),
+        }
+    }
+
+    // ─── DeathScreen roundtrip ─────────────────────────────────────
+
+    #[test]
+    fn death_screen_full_roundtrip() {
+        let ds = DeathScreen {
+            visible: true,
+            cause: "combat:bleed_out".to_string(),
+            luck_remaining: 0.3,
+            final_words: vec!["你的修为到此为止".to_string(), "但愿来生...".to_string()],
+            countdown_until_ms: 1700000030000,
+            can_reincarnate: true,
+            can_terminate: false,
+            stage: Some(DeathScreenStage::Fortune as i32),
+            death_number: Some(3),
+            zone_kind: Some(DeathScreenZoneKind::Death as i32),
+            lifespan: Some(LifespanPreview {
+                years_lived: 85.5,
+                cap_by_realm: 120,
+                remaining_years: 34.5,
+                death_penalty_years: 10,
+                tick_rate_multiplier: 1.0,
+                is_wind_candle: false,
+            }),
+            cinematic: Some(DeathCinematicData {
+                v: 1,
+                character_id: "offline:Azure".to_string(),
+                phase: DeathCinematicPhase::Roll as i32,
+                phase_tick: 40,
+                phase_duration_ticks: 100,
+                total_elapsed_ticks: 200,
+                total_duration_ticks: 500,
+                roll: Some(DeathCinematicRoll {
+                    probability: 0.7,
+                    threshold: 0.5,
+                    luck_value: 0.6,
+                    result: DeathRollResult::Survive as i32,
+                }),
+                insight_text: vec!["一念之间".to_string()],
+                is_final: false,
+                death_number: 3,
+                zone_kind: DeathCinematicZoneKind::Death as i32,
+                tsy_death: false,
+                rebirth_weakened_ticks: 600,
+                skip_predeath: false,
+            }),
+        };
+        let envelope = ServerDataEnvelope {
+            payload: Some(server_data_envelope::Payload::DeathScreen(ds)),
+        };
+        let bytes = envelope.encode_to_vec();
+        let decoded =
+            ServerDataEnvelope::decode(bytes.as_slice()).expect("DeathScreen decode 失败");
+        match decoded.payload {
+            Some(server_data_envelope::Payload::DeathScreen(d)) => {
+                assert!(d.visible);
+                assert_eq!(d.cause, "combat:bleed_out");
+                assert!((d.luck_remaining - 0.3).abs() < 1e-9);
+                assert_eq!(d.final_words.len(), 2);
+                assert_eq!(d.countdown_until_ms, 1700000030000);
+                assert!(d.can_reincarnate);
+                assert!(!d.can_terminate);
+                assert_eq!(d.stage, Some(DeathScreenStage::Fortune as i32));
+                assert_eq!(d.death_number, Some(3));
+                assert_eq!(d.zone_kind, Some(DeathScreenZoneKind::Death as i32));
+                // lifespan
+                let ls = d.lifespan.expect("lifespan should be Some");
+                assert!((ls.years_lived - 85.5).abs() < 1e-9);
+                assert_eq!(ls.cap_by_realm, 120);
+                assert!((ls.remaining_years - 34.5).abs() < 1e-9);
+                assert_eq!(ls.death_penalty_years, 10);
+                assert!(!ls.is_wind_candle);
+                // cinematic
+                let cin = d.cinematic.expect("cinematic should be Some");
+                assert_eq!(cin.v, 1);
+                assert_eq!(cin.character_id, "offline:Azure");
+                assert_eq!(cin.phase, DeathCinematicPhase::Roll as i32);
+                let roll = cin.roll.expect("roll should be Some");
+                assert!((roll.probability - 0.7).abs() < 1e-9);
+                assert_eq!(roll.result, DeathRollResult::Survive as i32);
+                assert_eq!(cin.insight_text.len(), 1);
+                assert!(!cin.is_final);
+                assert!(!cin.tsy_death);
+                assert_eq!(cin.rebirth_weakened_ticks, 600);
+            }
+            other => panic!("expected DeathScreen, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn death_screen_minimal_roundtrip() {
+        let ds = DeathScreen {
+            visible: false,
+            cause: String::new(),
+            luck_remaining: 0.0,
+            final_words: vec![],
+            countdown_until_ms: 0,
+            can_reincarnate: false,
+            can_terminate: false,
+            stage: None,
+            death_number: None,
+            zone_kind: None,
+            lifespan: None,
+            cinematic: None,
+        };
+        let envelope = ServerDataEnvelope {
+            payload: Some(server_data_envelope::Payload::DeathScreen(ds)),
+        };
+        let bytes = envelope.encode_to_vec();
+        let decoded =
+            ServerDataEnvelope::decode(bytes.as_slice()).expect("minimal DeathScreen decode");
+        match decoded.payload {
+            Some(server_data_envelope::Payload::DeathScreen(d)) => {
+                assert!(!d.visible);
+                assert_eq!(d.stage, None);
+                assert_eq!(d.death_number, None);
+                assert_eq!(d.zone_kind, None);
+                assert!(d.lifespan.is_none());
+                assert!(d.cinematic.is_none());
+            }
+            other => panic!("expected minimal DeathScreen, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn death_screen_tribulation_stage_roundtrip() {
+        let ds = DeathScreen {
+            visible: true,
+            cause: "tribulation:lightning".to_string(),
+            luck_remaining: 0.0,
+            final_words: vec![],
+            countdown_until_ms: 0,
+            can_reincarnate: false,
+            can_terminate: true,
+            stage: Some(DeathScreenStage::Tribulation as i32),
+            death_number: Some(1),
+            zone_kind: Some(DeathScreenZoneKind::Negative as i32),
+            lifespan: None,
+            cinematic: None,
+        };
+        let envelope = ServerDataEnvelope {
+            payload: Some(server_data_envelope::Payload::DeathScreen(ds)),
+        };
+        let bytes = envelope.encode_to_vec();
+        let decoded =
+            ServerDataEnvelope::decode(bytes.as_slice()).expect("tribulation DeathScreen decode");
+        match decoded.payload {
+            Some(server_data_envelope::Payload::DeathScreen(d)) => {
+                assert_eq!(d.stage, Some(DeathScreenStage::Tribulation as i32));
+                assert_eq!(d.zone_kind, Some(DeathScreenZoneKind::Negative as i32));
+                assert!(d.can_terminate);
+            }
+            other => panic!("expected tribulation DeathScreen, got {other:?}"),
+        }
+    }
+
+    // ─── DeathCinematic enum pin tests ─────────────────────────────
+
+    #[test]
+    fn death_cinematic_phase_enum_pin() {
+        assert_eq!(DeathCinematicPhase::Unspecified as i32, 0);
+        assert_eq!(DeathCinematicPhase::Predeath as i32, 1);
+        assert_eq!(DeathCinematicPhase::DeathMoment as i32, 2);
+        assert_eq!(DeathCinematicPhase::Roll as i32, 3);
+        assert_eq!(DeathCinematicPhase::InsightOverlay as i32, 4);
+        assert_eq!(DeathCinematicPhase::Darkness as i32, 5);
+        assert_eq!(DeathCinematicPhase::Rebirth as i32, 6);
+    }
+
+    #[test]
+    fn death_roll_result_enum_pin() {
+        assert_eq!(DeathRollResult::Unspecified as i32, 0);
+        assert_eq!(DeathRollResult::Pending as i32, 1);
+        assert_eq!(DeathRollResult::Survive as i32, 2);
+        assert_eq!(DeathRollResult::Fall as i32, 3);
+        assert_eq!(DeathRollResult::Final as i32, 4);
+    }
+
+    #[test]
+    fn death_screen_stage_enum_pin() {
+        assert_eq!(DeathScreenStage::Unspecified as i32, 0);
+        assert_eq!(DeathScreenStage::Fortune as i32, 1);
+        assert_eq!(DeathScreenStage::Tribulation as i32, 2);
+    }
+
+    #[test]
+    fn death_screen_zone_kind_enum_pin() {
+        assert_eq!(DeathScreenZoneKind::Unspecified as i32, 0);
+        assert_eq!(DeathScreenZoneKind::Ordinary as i32, 1);
+        assert_eq!(DeathScreenZoneKind::Death as i32, 2);
+        assert_eq!(DeathScreenZoneKind::Negative as i32, 3);
+    }
+
+    #[test]
+    fn death_cinematic_zone_kind_enum_pin() {
+        assert_eq!(DeathCinematicZoneKind::Unspecified as i32, 0);
+        assert_eq!(DeathCinematicZoneKind::Ordinary as i32, 1);
+        assert_eq!(DeathCinematicZoneKind::Death as i32, 2);
+        assert_eq!(DeathCinematicZoneKind::Negative as i32, 3);
+    }
+
+    // ─── DeathCinematicData all phases roundtrip ───────────────────
+
+    #[test]
+    fn death_cinematic_all_phases_roundtrip() {
+        let phases = [
+            DeathCinematicPhase::Predeath,
+            DeathCinematicPhase::DeathMoment,
+            DeathCinematicPhase::Roll,
+            DeathCinematicPhase::InsightOverlay,
+            DeathCinematicPhase::Darkness,
+            DeathCinematicPhase::Rebirth,
+        ];
+        for phase in phases {
+            let cin = DeathCinematicData {
+                v: 1,
+                character_id: "c".to_string(),
+                phase: phase as i32,
+                phase_tick: 0,
+                phase_duration_ticks: 100,
+                total_elapsed_ticks: 0,
+                total_duration_ticks: 500,
+                roll: Some(DeathCinematicRoll {
+                    probability: 0.5,
+                    threshold: 0.5,
+                    luck_value: 0.5,
+                    result: DeathRollResult::Pending as i32,
+                }),
+                insight_text: vec![],
+                is_final: false,
+                death_number: 1,
+                zone_kind: DeathCinematicZoneKind::Ordinary as i32,
+                tsy_death: false,
+                rebirth_weakened_ticks: 0,
+                skip_predeath: false,
+            };
+            let ds = DeathScreen {
+                visible: true,
+                cause: "test".to_string(),
+                luck_remaining: 0.0,
+                final_words: vec![],
+                countdown_until_ms: 0,
+                can_reincarnate: false,
+                can_terminate: false,
+                stage: None,
+                death_number: None,
+                zone_kind: None,
+                lifespan: None,
+                cinematic: Some(cin),
+            };
+            let envelope = ServerDataEnvelope {
+                payload: Some(server_data_envelope::Payload::DeathScreen(ds)),
+            };
+            let bytes = envelope.encode_to_vec();
+            let decoded = ServerDataEnvelope::decode(bytes.as_slice())
+                .unwrap_or_else(|e| panic!("DeathCinematic phase {phase:?} decode: {e}"));
+            match decoded.payload {
+                Some(server_data_envelope::Payload::DeathScreen(d)) => {
+                    let c = d.cinematic.unwrap();
+                    assert_eq!(
+                        c.phase, phase as i32,
+                        "phase should roundtrip for {phase:?}"
+                    );
+                }
+                other => panic!("expected DeathScreen for phase {phase:?}, got {other:?}"),
+            }
+        }
+    }
+
+    // ─── DeathRollResult all variants roundtrip ────────────────────
+
+    #[test]
+    fn death_roll_all_results_roundtrip() {
+        let results = [
+            DeathRollResult::Pending,
+            DeathRollResult::Survive,
+            DeathRollResult::Fall,
+            DeathRollResult::Final,
+        ];
+        for result in results {
+            let roll = DeathCinematicRoll {
+                probability: 0.5,
+                threshold: 0.5,
+                luck_value: 0.5,
+                result: result as i32,
+            };
+            let cin = DeathCinematicData {
+                v: 1,
+                character_id: "c".to_string(),
+                phase: DeathCinematicPhase::Roll as i32,
+                phase_tick: 0,
+                phase_duration_ticks: 100,
+                total_elapsed_ticks: 0,
+                total_duration_ticks: 500,
+                roll: Some(roll),
+                insight_text: vec![],
+                is_final: result == DeathRollResult::Final,
+                death_number: 1,
+                zone_kind: DeathCinematicZoneKind::Ordinary as i32,
+                tsy_death: false,
+                rebirth_weakened_ticks: 0,
+                skip_predeath: false,
+            };
+            let ds = DeathScreen {
+                visible: true,
+                cause: "test".to_string(),
+                luck_remaining: 0.0,
+                final_words: vec![],
+                countdown_until_ms: 0,
+                can_reincarnate: false,
+                can_terminate: false,
+                stage: None,
+                death_number: None,
+                zone_kind: None,
+                lifespan: None,
+                cinematic: Some(cin),
+            };
+            let envelope = ServerDataEnvelope {
+                payload: Some(server_data_envelope::Payload::DeathScreen(ds)),
+            };
+            let bytes = envelope.encode_to_vec();
+            let decoded = ServerDataEnvelope::decode(bytes.as_slice())
+                .unwrap_or_else(|e| panic!("DeathRoll result {result:?} decode: {e}"));
+            match decoded.payload {
+                Some(server_data_envelope::Payload::DeathScreen(d)) => {
+                    let r = d.cinematic.unwrap().roll.unwrap();
+                    assert_eq!(
+                        r.result, result as i32,
+                        "roll result should roundtrip for {result:?}"
+                    );
+                }
+                other => panic!("expected DeathScreen for result {result:?}, got {other:?}"),
+            }
+        }
+    }
+
+    // ─── TerminateScreen roundtrip ─────────────────────────────────
+
+    #[test]
+    fn terminate_screen_envelope_roundtrip() {
+        let ts = TerminateScreen {
+            visible: true,
+            final_words: "归于虚无".to_string(),
+            epilogue: "角色终结".to_string(),
+            archetype_suggestion: "warrior".to_string(),
+        };
+        let envelope = ServerDataEnvelope {
+            payload: Some(server_data_envelope::Payload::TerminateScreen(ts)),
+        };
+        let bytes = envelope.encode_to_vec();
+        let decoded =
+            ServerDataEnvelope::decode(bytes.as_slice()).expect("TerminateScreen decode 失败");
+        match decoded.payload {
+            Some(server_data_envelope::Payload::TerminateScreen(t)) => {
+                assert!(t.visible);
+                assert_eq!(t.final_words, "归于虚无");
+                assert_eq!(t.epilogue, "角色终结");
+                assert_eq!(t.archetype_suggestion, "warrior");
+            }
+            other => panic!("expected TerminateScreen, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn terminate_screen_hidden_roundtrip() {
+        let ts = TerminateScreen {
+            visible: false,
+            final_words: String::new(),
+            epilogue: String::new(),
+            archetype_suggestion: String::new(),
+        };
+        let envelope = ServerDataEnvelope {
+            payload: Some(server_data_envelope::Payload::TerminateScreen(ts)),
+        };
+        let bytes = envelope.encode_to_vec();
+        let decoded =
+            ServerDataEnvelope::decode(bytes.as_slice()).expect("hidden TerminateScreen decode");
+        match decoded.payload {
+            Some(server_data_envelope::Payload::TerminateScreen(t)) => {
+                assert!(!t.visible);
+            }
+            other => panic!("expected hidden TerminateScreen, got {other:?}"),
+        }
+    }
+
+    // ─── QiColorObserved roundtrip ─────────────────────────────────
+
+    #[test]
+    fn qi_color_observed_envelope_roundtrip() {
+        let obs = QiColorObserved {
+            observer: "offline:Azure".to_string(),
+            observed: "npc_1v0".to_string(),
+            main: ColorKind::Sharp as i32,
+            secondary: Some(ColorKind::Heavy as i32),
+            is_chaotic: true,
+            is_hunyuan: false,
+            realm_diff: -2,
+        };
+        let envelope = ServerDataEnvelope {
+            payload: Some(server_data_envelope::Payload::QiColorObserved(obs)),
+        };
+        let bytes = envelope.encode_to_vec();
+        let decoded =
+            ServerDataEnvelope::decode(bytes.as_slice()).expect("QiColorObserved decode 失败");
+        match decoded.payload {
+            Some(server_data_envelope::Payload::QiColorObserved(o)) => {
+                assert_eq!(o.observer, "offline:Azure");
+                assert_eq!(o.observed, "npc_1v0");
+                assert_eq!(o.main, ColorKind::Sharp as i32);
+                assert_eq!(o.secondary, Some(ColorKind::Heavy as i32));
+                assert!(o.is_chaotic);
+                assert!(!o.is_hunyuan);
+                assert_eq!(o.realm_diff, -2);
+            }
+            other => panic!("expected QiColorObserved, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn qi_color_observed_no_secondary_roundtrip() {
+        let obs = QiColorObserved {
+            observer: "a".to_string(),
+            observed: "b".to_string(),
+            main: ColorKind::Mellow as i32,
+            secondary: None,
+            is_chaotic: false,
+            is_hunyuan: true,
+            realm_diff: 3,
+        };
+        let envelope = ServerDataEnvelope {
+            payload: Some(server_data_envelope::Payload::QiColorObserved(obs)),
+        };
+        let bytes = envelope.encode_to_vec();
+        let decoded = ServerDataEnvelope::decode(bytes.as_slice())
+            .expect("QiColorObserved no secondary decode");
+        match decoded.payload {
+            Some(server_data_envelope::Payload::QiColorObserved(o)) => {
+                assert_eq!(o.secondary, None);
+                assert!(o.is_hunyuan);
+                assert_eq!(o.realm_diff, 3);
+            }
+            other => panic!("expected QiColorObserved, got {other:?}"),
+        }
+    }
+
+    // ─── RealmVisionParams roundtrip ───────────────────────────────
+
+    #[test]
+    fn realm_vision_params_envelope_roundtrip() {
+        let params = RealmVisionParams {
+            fog_start: 10.0,
+            fog_end: 80.0,
+            fog_color_rgb: 0x4488CC,
+            fog_shape: FogShape::Cylinder as i32,
+            vignette_alpha: 0.3,
+            tint_color_argb: 0x80FF0000,
+            particle_density: 2.5,
+            transition_ticks: 40,
+            server_view_distance_chunks: 8,
+            post_fx_sharpen: 0.1,
+        };
+        let envelope = ServerDataEnvelope {
+            payload: Some(server_data_envelope::Payload::RealmVisionParams(params)),
+        };
+        let bytes = envelope.encode_to_vec();
+        let decoded =
+            ServerDataEnvelope::decode(bytes.as_slice()).expect("RealmVisionParams decode 失败");
+        match decoded.payload {
+            Some(server_data_envelope::Payload::RealmVisionParams(p)) => {
+                assert!((p.fog_start - 10.0).abs() < 1e-9);
+                assert!((p.fog_end - 80.0).abs() < 1e-9);
+                assert_eq!(p.fog_color_rgb, 0x4488CC);
+                assert_eq!(p.fog_shape, FogShape::Cylinder as i32);
+                assert!((p.vignette_alpha - 0.3).abs() < 1e-9);
+                assert_eq!(p.tint_color_argb, 0x80FF0000);
+                assert!((p.particle_density - 2.5).abs() < 1e-9);
+                assert_eq!(p.transition_ticks, 40);
+                assert_eq!(p.server_view_distance_chunks, 8);
+                assert!((p.post_fx_sharpen - 0.1).abs() < 1e-9);
+            }
+            other => panic!("expected RealmVisionParams, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn realm_vision_params_sphere_fog_roundtrip() {
+        let params = RealmVisionParams {
+            fog_start: 5.0,
+            fog_end: 50.0,
+            fog_color_rgb: 0,
+            fog_shape: FogShape::Sphere as i32,
+            vignette_alpha: 0.0,
+            tint_color_argb: 0,
+            particle_density: 0.0,
+            transition_ticks: 0,
+            server_view_distance_chunks: 32,
+            post_fx_sharpen: 0.0,
+        };
+        let envelope = ServerDataEnvelope {
+            payload: Some(server_data_envelope::Payload::RealmVisionParams(params)),
+        };
+        let bytes = envelope.encode_to_vec();
+        let decoded =
+            ServerDataEnvelope::decode(bytes.as_slice()).expect("sphere RealmVisionParams decode");
+        match decoded.payload {
+            Some(server_data_envelope::Payload::RealmVisionParams(p)) => {
+                assert_eq!(p.fog_shape, FogShape::Sphere as i32);
+                assert_eq!(p.server_view_distance_chunks, 32);
+            }
+            other => panic!("expected sphere RealmVisionParams, got {other:?}"),
+        }
+    }
+
+    // ─── FogShape enum pin ─────────────────────────────────────────
+
+    #[test]
+    fn fog_shape_enum_pin() {
+        assert_eq!(FogShape::Unspecified as i32, 0);
+        assert_eq!(FogShape::Cylinder as i32, 1);
+        assert_eq!(FogShape::Sphere as i32, 2);
+    }
+
+    // ─── SpiritualSenseTargets roundtrip ───────────────────────────
+
+    #[test]
+    fn spiritual_sense_targets_envelope_roundtrip() {
+        let targets = SpiritualSenseTargets {
+            entries: vec![
+                SenseEntry {
+                    kind: SenseKind::LivingQi as i32,
+                    x: 100.0,
+                    y: 64.0,
+                    z: -50.0,
+                    intensity: 0.8,
+                },
+                SenseEntry {
+                    kind: SenseKind::CultivatorRealm as i32,
+                    x: 200.0,
+                    y: 70.0,
+                    z: 30.0,
+                    intensity: 0.5,
+                },
+                SenseEntry {
+                    kind: SenseKind::ZhenfaArray as i32,
+                    x: -10.0,
+                    y: 55.0,
+                    z: 80.0,
+                    intensity: 1.0,
+                },
+            ],
+            generation: 42,
+        };
+        let envelope = ServerDataEnvelope {
+            payload: Some(server_data_envelope::Payload::SpiritualSenseTargets(
+                targets,
+            )),
+        };
+        let bytes = envelope.encode_to_vec();
+        let decoded = ServerDataEnvelope::decode(bytes.as_slice())
+            .expect("SpiritualSenseTargets decode 失败");
+        match decoded.payload {
+            Some(server_data_envelope::Payload::SpiritualSenseTargets(t)) => {
+                assert_eq!(t.entries.len(), 3);
+                assert_eq!(t.generation, 42);
+                assert_eq!(t.entries[0].kind, SenseKind::LivingQi as i32);
+                assert!((t.entries[0].x - 100.0).abs() < 1e-9);
+                assert!((t.entries[0].intensity - 0.8).abs() < 1e-9);
+                assert_eq!(t.entries[1].kind, SenseKind::CultivatorRealm as i32);
+                assert_eq!(t.entries[2].kind, SenseKind::ZhenfaArray as i32);
+            }
+            other => panic!("expected SpiritualSenseTargets, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn spiritual_sense_targets_empty_roundtrip() {
+        let targets = SpiritualSenseTargets {
+            entries: vec![],
+            generation: 0,
+        };
+        let envelope = ServerDataEnvelope {
+            payload: Some(server_data_envelope::Payload::SpiritualSenseTargets(
+                targets,
+            )),
+        };
+        let bytes = envelope.encode_to_vec();
+        let decoded = ServerDataEnvelope::decode(bytes.as_slice())
+            .expect("empty SpiritualSenseTargets decode");
+        match decoded.payload {
+            Some(server_data_envelope::Payload::SpiritualSenseTargets(t)) => {
+                assert_eq!(t.entries.len(), 0);
+                assert_eq!(t.generation, 0);
+            }
+            other => panic!("expected empty SpiritualSenseTargets, got {other:?}"),
+        }
+    }
+
+    // ─── SenseKind enum pin ────────────────────────────────────────
+
+    #[test]
+    fn sense_kind_enum_pin() {
+        assert_eq!(SenseKind::Unspecified as i32, 0);
+        assert_eq!(SenseKind::LivingQi as i32, 1);
+        assert_eq!(SenseKind::AmbientLeyline as i32, 2);
+        assert_eq!(SenseKind::CultivatorRealm as i32, 3);
+        assert_eq!(SenseKind::HeavenlyGaze as i32, 4);
+        assert_eq!(SenseKind::CrisisPremonition as i32, 5);
+        assert_eq!(SenseKind::ZhenfaArray as i32, 6);
+        assert_eq!(SenseKind::ZhenfaWardAlert as i32, 7);
+        assert_eq!(SenseKind::SpiritEye as i32, 8);
+        assert_eq!(SenseKind::NicheIntrusionTrace as i32, 9);
+    }
+
+    // ─── SenseKind all variants roundtrip ──────────────────────────
+
+    #[test]
+    fn sense_kind_all_variants_roundtrip() {
+        let kinds = [
+            SenseKind::LivingQi,
+            SenseKind::AmbientLeyline,
+            SenseKind::CultivatorRealm,
+            SenseKind::HeavenlyGaze,
+            SenseKind::CrisisPremonition,
+            SenseKind::ZhenfaArray,
+            SenseKind::ZhenfaWardAlert,
+            SenseKind::SpiritEye,
+            SenseKind::NicheIntrusionTrace,
+        ];
+        for kind in kinds {
+            let targets = SpiritualSenseTargets {
+                entries: vec![SenseEntry {
+                    kind: kind as i32,
+                    x: 0.0,
+                    y: 0.0,
+                    z: 0.0,
+                    intensity: 0.5,
+                }],
+                generation: 1,
+            };
+            let envelope = ServerDataEnvelope {
+                payload: Some(server_data_envelope::Payload::SpiritualSenseTargets(
+                    targets,
+                )),
+            };
+            let bytes = envelope.encode_to_vec();
+            let decoded = ServerDataEnvelope::decode(bytes.as_slice())
+                .unwrap_or_else(|e| panic!("SenseKind {kind:?} decode: {e}"));
+            match decoded.payload {
+                Some(server_data_envelope::Payload::SpiritualSenseTargets(t)) => {
+                    assert_eq!(
+                        t.entries[0].kind, kind as i32,
+                        "kind should roundtrip for {kind:?}"
+                    );
+                }
+                other => panic!("expected SpiritualSenseTargets for {kind:?}, got {other:?}"),
+            }
+        }
+    }
+
+    // ─── B4 S2C all variants distinguishable ───────────────────────
+
+    #[test]
+    fn b4_s2c_all_envelope_variants_roundtrip() {
+        let payloads: Vec<(server_data_envelope::Payload, &str)> = vec![
+            (
+                server_data_envelope::Payload::TribulationState(TribulationState {
+                    active: true,
+                    char_id: "c".to_string(),
+                    actor_name: "a".to_string(),
+                    kind: "du_xu".to_string(),
+                    phase: "omen".to_string(),
+                    world_x: 0.0,
+                    world_z: 0.0,
+                    wave_current: 0,
+                    wave_total: 3,
+                    started_tick: 0,
+                    phase_started_tick: 0,
+                    next_wave_tick: 0,
+                    failed: false,
+                    half_step_on_success: false,
+                    participants: vec![],
+                    result: None,
+                }),
+                "TribulationState",
+            ),
+            (
+                server_data_envelope::Payload::TribulationBroadcast(TribulationBroadcast {
+                    active: true,
+                    actor_name: "a".to_string(),
+                    stage: "wave".to_string(),
+                    world_x: 0.0,
+                    world_z: 0.0,
+                    expires_at_ms: 0,
+                    spectate_invite: false,
+                    spectate_distance: 0.0,
+                }),
+                "TribulationBroadcast",
+            ),
+            (
+                server_data_envelope::Payload::AscensionQuota(AscensionQuota {
+                    occupied_slots: 1,
+                    quota_limit: 5,
+                    available_slots: 4,
+                    total_world_qi: 0.0,
+                    quota_k: 0.0,
+                    quota_basis: String::new(),
+                }),
+                "AscensionQuota",
+            ),
+            (
+                server_data_envelope::Payload::HeartDemonOffer(HeartDemonOffer {
+                    offer_id: "o".to_string(),
+                    trigger_id: "t".to_string(),
+                    trigger_label: String::new(),
+                    realm_label: String::new(),
+                    composure: 1.0,
+                    quota_remaining: 0,
+                    quota_total: 0,
+                    expires_at_ms: 0,
+                    choices: vec![],
+                }),
+                "HeartDemonOffer",
+            ),
+            (
+                server_data_envelope::Payload::BurstMeridianEvent(BurstMeridianEvent {
+                    skill: "s".to_string(),
+                    caster: "c".to_string(),
+                    target: None,
+                    tick: 0,
+                    overload_ratio: 0.0,
+                    integrity_snapshot: 0.0,
+                }),
+                "BurstMeridianEvent",
+            ),
+            (
+                server_data_envelope::Payload::BreakthroughCinematic(BreakthroughCinematic {
+                    actor_id: "a".to_string(),
+                    phase: "p".to_string(),
+                    phase_tick: 0,
+                    phase_duration_ticks: 1,
+                    realm_from: "Awaken".to_string(),
+                    realm_to: "Induce".to_string(),
+                    result: "success".to_string(),
+                    interrupted: false,
+                    world_pos_x: 0.0,
+                    world_pos_y: 0.0,
+                    world_pos_z: 0.0,
+                    visible_radius_blocks: 1.0,
+                    global: false,
+                    distant_billboard: false,
+                    particle_density: 1.0,
+                    intensity: 0.5,
+                    season_overlay: String::new(),
+                    style: String::new(),
+                    at_tick: 0,
+                }),
+                "BreakthroughCinematic",
+            ),
+            (
+                server_data_envelope::Payload::DeathScreen(DeathScreen {
+                    visible: true,
+                    cause: "c".to_string(),
+                    luck_remaining: 0.0,
+                    final_words: vec![],
+                    countdown_until_ms: 0,
+                    can_reincarnate: false,
+                    can_terminate: false,
+                    stage: None,
+                    death_number: None,
+                    zone_kind: None,
+                    lifespan: None,
+                    cinematic: None,
+                }),
+                "DeathScreen",
+            ),
+            (
+                server_data_envelope::Payload::TerminateScreen(TerminateScreen {
+                    visible: true,
+                    final_words: "f".to_string(),
+                    epilogue: "e".to_string(),
+                    archetype_suggestion: "a".to_string(),
+                }),
+                "TerminateScreen",
+            ),
+            (
+                server_data_envelope::Payload::QiColorObserved(QiColorObserved {
+                    observer: "o".to_string(),
+                    observed: "t".to_string(),
+                    main: ColorKind::Mellow as i32,
+                    secondary: None,
+                    is_chaotic: false,
+                    is_hunyuan: false,
+                    realm_diff: 0,
+                }),
+                "QiColorObserved",
+            ),
+            (
+                server_data_envelope::Payload::RealmVisionParams(RealmVisionParams {
+                    fog_start: 0.0,
+                    fog_end: 100.0,
+                    fog_color_rgb: 0,
+                    fog_shape: FogShape::Cylinder as i32,
+                    vignette_alpha: 0.0,
+                    tint_color_argb: 0,
+                    particle_density: 0.0,
+                    transition_ticks: 0,
+                    server_view_distance_chunks: 8,
+                    post_fx_sharpen: 0.0,
+                }),
+                "RealmVisionParams",
+            ),
+            (
+                server_data_envelope::Payload::SpiritualSenseTargets(SpiritualSenseTargets {
+                    entries: vec![],
+                    generation: 0,
+                }),
+                "SpiritualSenseTargets",
+            ),
+        ];
+
+        for (payload, name) in payloads {
+            let envelope = ServerDataEnvelope {
+                payload: Some(payload),
+            };
+            let bytes = envelope.encode_to_vec();
+            let decoded = ServerDataEnvelope::decode(bytes.as_slice())
+                .unwrap_or_else(|e| panic!("{name} B4 S2C envelope decode 失败: {e}"));
+            assert!(
+                decoded.payload.is_some(),
+                "{name} B4 S2C envelope roundtrip 后 payload 应为 Some"
+            );
+        }
+    }
+
+    // ─── B4 C2S roundtrip tests ────────────────────────────────────
+
+    #[test]
+    fn start_du_xu_envelope_roundtrip() {
+        let envelope = ClientRequestEnvelope {
+            payload: Some(client_request_envelope::Payload::StartDuXu(StartDuXu {})),
+        };
+        let bytes = envelope.encode_to_vec();
+        let decoded =
+            ClientRequestEnvelope::decode(bytes.as_slice()).expect("StartDuXu decode 失败");
+        match decoded.payload {
+            Some(client_request_envelope::Payload::StartDuXu(_)) => {}
+            other => panic!("expected StartDuXu, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn abort_tribulation_envelope_roundtrip() {
+        let envelope = ClientRequestEnvelope {
+            payload: Some(client_request_envelope::Payload::AbortTribulation(
+                AbortTribulation {},
+            )),
+        };
+        let bytes = envelope.encode_to_vec();
+        let decoded =
+            ClientRequestEnvelope::decode(bytes.as_slice()).expect("AbortTribulation decode 失败");
+        match decoded.payload {
+            Some(client_request_envelope::Payload::AbortTribulation(_)) => {}
+            other => panic!("expected AbortTribulation, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn heart_demon_decision_chosen_envelope_roundtrip() {
+        let envelope = ClientRequestEnvelope {
+            payload: Some(client_request_envelope::Payload::HeartDemonDecision(
+                HeartDemonDecision {
+                    choice_idx: Some(2),
+                },
+            )),
+        };
+        let bytes = envelope.encode_to_vec();
+        let decoded = ClientRequestEnvelope::decode(bytes.as_slice())
+            .expect("HeartDemonDecision chosen decode 失败");
+        match decoded.payload {
+            Some(client_request_envelope::Payload::HeartDemonDecision(d)) => {
+                assert_eq!(d.choice_idx, Some(2));
+            }
+            other => panic!("expected HeartDemonDecision, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn heart_demon_decision_timeout_envelope_roundtrip() {
+        let envelope = ClientRequestEnvelope {
+            payload: Some(client_request_envelope::Payload::HeartDemonDecision(
+                HeartDemonDecision { choice_idx: None },
+            )),
+        };
+        let bytes = envelope.encode_to_vec();
+        let decoded = ClientRequestEnvelope::decode(bytes.as_slice())
+            .expect("HeartDemonDecision timeout decode");
+        match decoded.payload {
+            Some(client_request_envelope::Payload::HeartDemonDecision(d)) => {
+                assert_eq!(d.choice_idx, None, "timeout should yield None");
+            }
+            other => panic!("expected HeartDemonDecision timeout, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn duo_she_request_envelope_roundtrip() {
+        let envelope = ClientRequestEnvelope {
+            payload: Some(client_request_envelope::Payload::DuoSheRequest(
+                DuoSheRequest {
+                    target_id: "npc_12v0".to_string(),
+                },
+            )),
+        };
+        let bytes = envelope.encode_to_vec();
+        let decoded =
+            ClientRequestEnvelope::decode(bytes.as_slice()).expect("DuoSheRequest decode 失败");
+        match decoded.payload {
+            Some(client_request_envelope::Payload::DuoSheRequest(d)) => {
+                assert_eq!(d.target_id, "npc_12v0");
+            }
+            other => panic!("expected DuoSheRequest, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn qi_color_inspect_envelope_roundtrip() {
+        let envelope = ClientRequestEnvelope {
+            payload: Some(client_request_envelope::Payload::QiColorInspect(
+                QiColorInspect {
+                    observed: "entity_bits:42".to_string(),
+                },
+            )),
+        };
+        let bytes = envelope.encode_to_vec();
+        let decoded =
+            ClientRequestEnvelope::decode(bytes.as_slice()).expect("QiColorInspect decode 失败");
+        match decoded.payload {
+            Some(client_request_envelope::Payload::QiColorInspect(q)) => {
+                assert_eq!(q.observed, "entity_bits:42");
+            }
+            other => panic!("expected QiColorInspect, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn use_life_core_envelope_roundtrip() {
+        let envelope = ClientRequestEnvelope {
+            payload: Some(client_request_envelope::Payload::UseLifeCore(UseLifeCore {
+                instance_id: 4242,
+            })),
+        };
+        let bytes = envelope.encode_to_vec();
+        let decoded =
+            ClientRequestEnvelope::decode(bytes.as_slice()).expect("UseLifeCore decode 失败");
+        match decoded.payload {
+            Some(client_request_envelope::Payload::UseLifeCore(u)) => {
+                assert_eq!(u.instance_id, 4242);
+            }
+            other => panic!("expected UseLifeCore, got {other:?}"),
+        }
+    }
+
+    // ─── B4 C2S all variants distinguishable ───────────────────────
+
+    #[test]
+    fn b4_c2s_all_envelope_variants_roundtrip() {
+        let payloads: Vec<(client_request_envelope::Payload, &str)> = vec![
+            (
+                client_request_envelope::Payload::StartDuXu(StartDuXu {}),
+                "StartDuXu",
+            ),
+            (
+                client_request_envelope::Payload::AbortTribulation(AbortTribulation {}),
+                "AbortTribulation",
+            ),
+            (
+                client_request_envelope::Payload::HeartDemonDecision(HeartDemonDecision {
+                    choice_idx: Some(0),
+                }),
+                "HeartDemonDecision",
+            ),
+            (
+                client_request_envelope::Payload::DuoSheRequest(DuoSheRequest {
+                    target_id: "t".to_string(),
+                }),
+                "DuoSheRequest",
+            ),
+            (
+                client_request_envelope::Payload::QiColorInspect(QiColorInspect {
+                    observed: "o".to_string(),
+                }),
+                "QiColorInspect",
+            ),
+            (
+                client_request_envelope::Payload::UseLifeCore(UseLifeCore { instance_id: 1 }),
+                "UseLifeCore",
+            ),
+        ];
+
+        for (payload, name) in payloads {
+            let envelope = ClientRequestEnvelope {
+                payload: Some(payload),
+            };
+            let bytes = envelope.encode_to_vec();
+            let decoded = ClientRequestEnvelope::decode(bytes.as_slice())
+                .unwrap_or_else(|e| panic!("{name} B4 C2S envelope decode 失败: {e}"));
+            assert!(
+                decoded.payload.is_some(),
+                "{name} B4 C2S envelope roundtrip 后 payload 应为 Some"
             );
         }
     }
