@@ -7,6 +7,7 @@ on:
     paths:
       - "agent/**"
       - "server/**"
+      - "proto/**"
       - "scripts/**"
       - "docker-compose.test.yml"
       - ".github/workflows/e2e.yml"
@@ -14,6 +15,7 @@ on:
     paths:
       - "agent/**"
       - "server/**"
+      - "proto/**"
       - "scripts/**"
       - "docker-compose.test.yml"
       - ".github/workflows/e2e.yml"
@@ -45,6 +47,9 @@ jobs:
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
 
+      - name: Install protoc
+        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
+
       - name: Cache Rust target
         uses: actions/cache@v4
         with:
@@ -55,6 +60,25 @@ jobs:
           key: ${{ runner.os }}-cargo-${{ hashFiles('server/Cargo.lock') }}
           restore-keys: |
             ${{ runner.os }}-cargo-
+
+      - name: Install buf
+        uses: bufbuild/buf-action@v1
+        with:
+          setup_only: true
+
+      - name: Proto lint (buf)
+        working-directory: proto
+        run: buf lint
+
+      - name: Proto breaking change check (buf)
+        if: github.event_name == 'pull_request'
+        working-directory: proto
+        run: |
+          if git ls-tree origin/${{ github.event.pull_request.base.ref }} proto/ | grep -q .; then
+            buf breaking --against '../.git#branch=origin/${{ github.event.pull_request.base.ref }},subdir=proto'
+          else
+            echo "proto/ not found on base branch — skipping breaking check (first PR)"
+          fi
 
       - name: Install agent workspace dependencies
         working-directory: agent
