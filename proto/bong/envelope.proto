@@ -45,7 +45,31 @@ message ServerDataEnvelope {
     LumberProgress          lumber_progress           = 29;
     GatheringSession        gathering_session         = 30;
     LingtianSessionData     lingtian_session          = 31;
-    // P2/P3 阶段继续追加 field 32..N。
+    // ─── P2 B2：战斗 / 伤口 / 防御 / 施法 / 毒 / 载体 / 暗器 ────
+    WoundsSnapshot          wounds_snapshot           = 32;
+    DefenseWindow           defense_window            = 33;
+    CastSync                cast_sync                 = 34;
+    QuickSlotConfig         quick_slot_config         = 35;
+    SkillBarConfig          skill_bar_config          = 36;
+    TechniquesSnapshot      techniques_snapshot       = 37;
+    UnlocksSync             unlocks_sync              = 38;
+    DerivedAttrsSync        derived_attrs_sync        = 39;
+    EventStreamPush         event_stream_push         = 40;
+    WeaponEquipped          weapon_equipped           = 41;
+    WeaponBroken            weapon_broken             = 42;
+    TreasureEquipped        treasure_equipped         = 43;
+    VortexFieldState        vortex_state              = 44;
+    DuguPoisonState         dugu_poison_state         = 45;
+    PoisonDoseEvent         poison_dose_event         = 46;
+    PoisonOverdoseEvent     poison_overdose_event     = 47;
+    PoisonTraitState        poison_trait_state        = 48;
+    CarrierState            carrier_state             = 49;
+    FalseSkinState          false_skin_state          = 50;
+    CombatEventFloater      combat_event_floater      = 51;
+    TechniqueProficiencyUpdate technique_proficiency_update = 52;
+    PillBuffStatus          pill_buff_status          = 53;
+    SkillConfigSnapshotProto skill_config_snapshot    = 54;
+    // P2/P3 阶段继续追加 field 55..N。
     // 字段编号一旦分配永不复用（buf breaking 检测保证）。
   }
 }
@@ -83,7 +107,20 @@ message ClientRequestEnvelope {
     LingtianStartReplenish    lingtian_start_replenish    = 26;
     LingtianStartDrainQi      lingtian_start_drain_qi     = 27;
     MineralProbe              mineral_probe               = 28;
-    // P2/P3 阶段继续追加。
+    // ─── P2 B2：战斗 / 暗器 / 技能栏 / 死亡 C2S ──────────────────
+    Jiemai                    jiemai                      = 29;
+    ChargeCarrier             charge_carrier              = 30;
+    ThrowCarrier              throw_carrier               = 31;
+    AnqiContainerSwitch       anqi_container_switch       = 32;
+    UseQuickSlot              use_quick_slot              = 33;
+    QuickSlotBind             quick_slot_bind             = 34;
+    SkillBarCast              skill_bar_cast              = 35;
+    SkillBarBind              skill_bar_bind              = 36;
+    SkillConfigIntent         skill_config_intent         = 37;
+    CombatReincarnate         combat_reincarnate          = 38;
+    CombatTerminate           combat_terminate            = 39;
+    CombatCreateNewCharacter  combat_create_new_character = 40;
+    // P2/P3 阶段继续追加 field 41..N。
   }
 }
 
@@ -1153,4 +1190,538 @@ message MineralProbe {
   int32 x = 1;
   int32 y = 2;
   int32 z = 3;
+}
+
+// ═══════════════════════════════════════════════════════════════
+// P2 B2 — 战斗 / 伤口 / 防御 / 施法 S2C
+// ═══════════════════════════════════════════════════════════════
+
+// 与 Rust WoundEntryV1 精确对应。
+message WoundEntry {
+  string part           = 1;
+  string kind           = 2;
+  float  severity       = 3;
+  string state          = 4; // "stable" / "bleeding" / "healing" / "scarred"
+  float  infection      = 5;
+  bool   scar           = 6;
+  uint64 updated_at_ms  = 7;
+}
+
+// 与 Rust WoundsSnapshotV1 精确对应。
+message WoundsSnapshot {
+  repeated WoundEntry wounds = 1;
+}
+
+// 与 Rust DefenseWindowV1 精确对应。
+message DefenseWindow {
+  uint32 duration_ms     = 1;
+  uint64 started_at_ms   = 2;
+  uint64 expires_at_ms   = 3;
+}
+
+// 与 Rust CastPhaseV1 精确对应。
+enum CastPhase {
+  CAST_PHASE_UNSPECIFIED = 0;
+  CAST_PHASE_IDLE        = 1;
+  CAST_PHASE_CASTING     = 2;
+  CAST_PHASE_COMPLETE    = 3;
+  CAST_PHASE_INTERRUPT   = 4;
+}
+
+// 与 Rust CastOutcomeV1 精确对应。
+enum CastOutcome {
+  CAST_OUTCOME_UNSPECIFIED          = 0;
+  CAST_OUTCOME_NONE                 = 1;
+  CAST_OUTCOME_COMPLETED            = 2;
+  CAST_OUTCOME_INTERRUPT_MOVEMENT   = 3;
+  CAST_OUTCOME_INTERRUPT_CONTAM     = 4;
+  CAST_OUTCOME_INTERRUPT_CONTROL    = 5;
+  CAST_OUTCOME_USER_CANCEL          = 6;
+  CAST_OUTCOME_DEATH                = 7;
+}
+
+// 与 Rust CastSyncV1 精确对应。
+message CastSync {
+  CastPhase   phase          = 1;
+  uint32      slot           = 2; // Rust u8 (0..=8)
+  uint32      duration_ms    = 3;
+  uint64      started_at_ms  = 4;
+  CastOutcome outcome        = 5;
+}
+
+// ═══════════════════════════════════════════════════════════════
+// P2 B2 — 快捷栏 / 技能栏 / 功法 S2C
+// ═══════════════════════════════════════════════════════════════
+
+// 与 Rust QuickSlotEntryV1 精确对应。
+message QuickSlotEntry {
+  string item_id          = 1;
+  string display_name     = 2;
+  uint32 cast_duration_ms = 3;
+  uint32 cooldown_ms      = 4;
+  string icon_texture     = 5;
+}
+
+// QuickSlotConfigV1.slots 是 Vec<Option<QuickSlotEntryV1>>，
+// proto3 repeated 不支持 optional element，用 wrapper。
+message OptionalQuickSlotEntry {
+  optional QuickSlotEntry entry = 1;
+}
+
+// 与 Rust QuickSlotConfigV1 精确对应。
+message QuickSlotConfig {
+  repeated OptionalQuickSlotEntry slots = 1; // 固定 9 槽
+  repeated uint64 cooldown_until_ms     = 2; // 固定 9 个 cooldown 截止时间
+}
+
+// 与 Rust SkillBarEntryV1 精确对应 — tagged union (Item / Skill)。
+message SkillBarEntryItem {
+  string template_id      = 1;
+  string display_name     = 2;
+  uint32 cast_duration_ms = 3;
+  uint32 cooldown_ms      = 4;
+  string icon_texture     = 5;
+}
+
+message SkillBarEntrySkill {
+  string skill_id         = 1;
+  string display_name     = 2;
+  uint32 cast_duration_ms = 3;
+  uint32 cooldown_ms      = 4;
+  string icon_texture     = 5;
+}
+
+message SkillBarEntry {
+  oneof kind {
+    SkillBarEntryItem  item  = 1;
+    SkillBarEntrySkill skill = 2;
+  }
+}
+
+// SkillBarConfigV1.slots 是 Vec<Option<SkillBarEntryV1>>，用 wrapper。
+message OptionalSkillBarEntry {
+  optional SkillBarEntry entry = 1;
+}
+
+// 与 Rust SkillBarConfigV1 精确对应。
+message SkillBarConfig {
+  repeated OptionalSkillBarEntry slots = 1; // 固定 9 槽
+  repeated uint64 cooldown_until_ms    = 2;
+}
+
+// 与 Rust TechniqueRequiredMeridianV1 精确对应。
+message TechniqueRequiredMeridian {
+  string channel    = 1;
+  float  min_health = 2;
+}
+
+// 与 Rust TechniqueEntryV1 精确对应。
+message TechniqueEntry {
+  string                          id                  = 1;
+  string                          display_name        = 2;
+  string                          grade               = 3;
+  float                           proficiency         = 4;
+  string                          proficiency_label   = 5;
+  bool                            active              = 6;
+  string                          description         = 7;
+  string                          required_realm      = 8;
+  repeated TechniqueRequiredMeridian required_meridians = 9;
+  float                           qi_cost             = 10;
+  float                           stamina_cost        = 11;
+  uint32                          cast_ticks          = 12;
+  uint32                          cooldown_ticks      = 13;
+  float                           range               = 14;
+}
+
+// 与 Rust TechniquesSnapshotV1 精确对应。
+message TechniquesSnapshot {
+  repeated TechniqueEntry entries = 1;
+}
+
+// 与 Rust UnlocksSyncV1 精确对应。
+message UnlocksSync {
+  bool jiemai  = 1;
+  bool tishi   = 2;
+  bool jueling = 3;
+}
+
+// 与 Rust DerivedAttrsSyncV1 精确对应。
+message DerivedAttrsSync {
+  bool   flying                     = 1;
+  float  flying_qi_remaining        = 2;
+  uint64 flying_force_descent_at_ms = 3;
+  bool   phasing                    = 4;
+  uint64 phasing_until_ms           = 5;
+  bool   tribulation_locked         = 6;
+  string tribulation_stage          = 7;
+  float  throughput_peak_norm       = 8;
+  uint32 tuike_layers               = 9;  // Rust u8
+  bool   vortex_active              = 10;
+}
+
+// 与 Rust EventChannelV1 精确对应。
+enum EventChannel {
+  EVENT_CHANNEL_UNSPECIFIED = 0;
+  EVENT_CHANNEL_COMBAT      = 1;
+  EVENT_CHANNEL_CULTIVATION = 2;
+  EVENT_CHANNEL_WORLD       = 3;
+  EVENT_CHANNEL_SOCIAL      = 4;
+  EVENT_CHANNEL_SYSTEM      = 5;
+}
+
+// 与 Rust EventPriorityV1 精确对应。
+enum EventPriority {
+  EVENT_PRIORITY_UNSPECIFIED = 0;
+  EVENT_PRIORITY_P0_CRITICAL = 1;
+  EVENT_PRIORITY_P1_IMPORTANT = 2;
+  EVENT_PRIORITY_P2_NORMAL   = 3;
+  EVENT_PRIORITY_P3_VERBOSE  = 4;
+}
+
+// 与 Rust EventStreamPushV1 精确对应。
+message EventStreamPush {
+  EventChannel  channel       = 1;
+  EventPriority priority      = 2;
+  string        source_tag    = 3;
+  string        text          = 4;
+  uint32        color         = 5;
+  uint64        created_at_ms = 6;
+}
+
+// ═══════════════════════════════════════════════════════════════
+// P2 B2 — 武器 / 法宝 S2C
+// ═══════════════════════════════════════════════════════════════
+
+// 与 Rust WeaponViewV1 精确对应。
+message WeaponView {
+  uint64 instance_id        = 1;
+  string template_id        = 2;
+  string weapon_kind        = 3; // sword / saber / staff / fist / spear / dagger / bow
+  float  durability_current = 4;
+  float  durability_max     = 5;
+  uint32 quality_tier       = 6; // Rust u8
+}
+
+// 与 Rust WeaponEquippedV1 精确对应。
+message WeaponEquipped {
+  string              slot   = 1; // main_hand / off_hand / two_hand
+  optional WeaponView weapon = 2;
+}
+
+// 与 Rust WeaponBrokenV1 精确对应。
+message WeaponBroken {
+  uint64 instance_id = 1;
+  string template_id = 2;
+}
+
+// 与 Rust TreasureViewV1 精确对应。
+message TreasureView {
+  uint64 instance_id  = 1;
+  string template_id  = 2;
+  string display_name = 3;
+}
+
+// 与 Rust TreasureEquippedV1 精确对应。
+message TreasureEquipped {
+  string                slot     = 1;
+  optional TreasureView treasure = 2;
+}
+
+// ═══════════════════════════════════════════════════════════════
+// P2 B2 — 涡流 / 独孤 / 毒 / 载体 / 伪皮 S2C
+// ═══════════════════════════════════════════════════════════════
+
+// 与 Rust VortexFieldStateV1 精确对应。
+message VortexFieldState {
+  string caster                      = 1;
+  bool   active                      = 2;
+  double center_x                    = 3; // Rust [f64;3] 拆三字段
+  double center_y                    = 4;
+  double center_z                    = 5;
+  float  radius                      = 6;
+  float  delta                       = 7;
+  float  env_qi_at_cast              = 8;
+  uint64 maintain_remaining_ticks    = 9;
+  uint32 intercepted_count           = 10;
+  string active_skill_id             = 11;
+  float  charge_progress             = 12;
+  uint64 cooldown_until_ms           = 13;
+  string backfire_level              = 14;
+  float  turbulence_radius           = 15;
+  float  turbulence_intensity        = 16;
+  uint64 turbulence_until_ms         = 17;
+}
+
+// 与 Rust DuguPoisonStateV1 精确对应。
+message DuguPoisonState {
+  string target              = 1;
+  bool   active              = 2;
+  string meridian_id         = 3;
+  string attacker            = 4;
+  uint64 attached_at_tick    = 5;
+  uint32 poisoner_realm_tier = 6; // Rust u8
+  double loss_per_tick       = 7;
+  double flow_capacity_after = 8;
+  double qi_max_after        = 9;
+  uint64 server_tick         = 10;
+}
+
+// 与 Rust PoisonSideEffectTagV1 精确对应。
+enum PoisonSideEffectTag {
+  POISON_SIDE_EFFECT_TAG_UNSPECIFIED         = 0;
+  POISON_SIDE_EFFECT_TAG_QI_FOCUS_DRIFT_2H   = 1;
+  POISON_SIDE_EFFECT_TAG_RAGE_BURST_30M      = 2;
+  POISON_SIDE_EFFECT_TAG_HALLUCIN_TINT_6H    = 3;
+  POISON_SIDE_EFFECT_TAG_DIGEST_LOCK_6H      = 4;
+  POISON_SIDE_EFFECT_TAG_TOXICITY_TIER_UNLOCK = 5;
+}
+
+// 与 Rust PoisonDoseEventV1 精确对应。
+// v 字段在 proto 中省略（Rust 反序列化时 v 恒为 1，proto 无需版本字段）。
+message PoisonDoseEvent {
+  uint64              player_entity_id  = 1;
+  float               dose_amount       = 2;
+  PoisonSideEffectTag side_effect_tag   = 3;
+  float               poison_level_after = 4;
+  float               digestion_after   = 5;
+  uint64              at_tick           = 6;
+}
+
+// 与 Rust PoisonOverdoseSeverityV1 精确对应。
+enum PoisonOverdoseSeverity {
+  POISON_OVERDOSE_SEVERITY_UNSPECIFIED = 0;
+  POISON_OVERDOSE_SEVERITY_MILD       = 1;
+  POISON_OVERDOSE_SEVERITY_MODERATE   = 2;
+  POISON_OVERDOSE_SEVERITY_SEVERE     = 3;
+}
+
+// 与 Rust PoisonOverdoseEventV1 精确对应。
+message PoisonOverdoseEvent {
+  uint64                  player_entity_id       = 1;
+  PoisonOverdoseSeverity  severity               = 2;
+  float                   overflow               = 3;
+  float                   lifespan_penalty_years = 4;
+  float                   micro_tear_probability = 5;
+  uint64                  at_tick                = 6;
+}
+
+// 与 Rust PoisonTraitStateV1 精确对应。
+message PoisonTraitState {
+  uint64 player_entity_id        = 1;
+  float  poison_toxicity         = 2;
+  float  digestion_current       = 3;
+  float  digestion_capacity      = 4;
+  bool   toxicity_tier_unlocked  = 5;
+}
+
+// 与 Rust CarrierChargePhaseV1 精确对应。
+enum CarrierChargePhase {
+  CARRIER_CHARGE_PHASE_UNSPECIFIED = 0;
+  CARRIER_CHARGE_PHASE_IDLE        = 1;
+  CARRIER_CHARGE_PHASE_CHARGING    = 2;
+  CARRIER_CHARGE_PHASE_CHARGED     = 3;
+}
+
+// 与 Rust CarrierStateV1 精确对应。
+message CarrierState {
+  string             carrier                 = 1;
+  CarrierChargePhase phase                   = 2;
+  float              progress                = 3;
+  float              sealed_qi               = 4;
+  float              sealed_qi_initial       = 5;
+  uint64             half_life_remaining_ticks = 6;
+  optional uint64    item_instance_id        = 7;
+}
+
+// 与 Rust FalseSkinKindV1 精确对应。
+enum FalseSkinKind {
+  FALSE_SKIN_KIND_UNSPECIFIED      = 0;
+  FALSE_SKIN_KIND_SPIDER_SILK      = 1;
+  FALSE_SKIN_KIND_ROTTEN_WOOD_ARMOR = 2;
+}
+
+// 与 Rust FalseSkinTierV1 精确对应。
+enum FalseSkinTier {
+  FALSE_SKIN_TIER_UNSPECIFIED = 0;
+  FALSE_SKIN_TIER_FAN         = 1;
+  FALSE_SKIN_TIER_LIGHT       = 2;
+  FALSE_SKIN_TIER_MID         = 3;
+  FALSE_SKIN_TIER_HEAVY       = 4;
+  FALSE_SKIN_TIER_ANCIENT     = 5;
+}
+
+// 与 Rust FalseSkinLayerStateV1 精确对应。
+message FalseSkinLayerState {
+  FalseSkinTier tier                 = 1;
+  double        spirit_quality       = 2;
+  double        damage_capacity      = 3;
+  double        contam_load          = 4;
+  double        permanent_taint_load = 5;
+}
+
+// 与 Rust FalseSkinStateV1 精确对应。
+message FalseSkinState {
+  string                       target_id                 = 1;
+  optional FalseSkinKind       kind                      = 2;
+  uint32                       layers_remaining          = 3; // Rust u8
+  double                       contam_capacity_per_layer = 4;
+  double                       absorbed_contam           = 5;
+  uint64                       equipped_at_tick          = 6;
+  repeated FalseSkinLayerState layers                    = 7;
+}
+
+// ═══════════════════════════════════════════════════════════════
+// P2 B2 — 战斗浮字 / 功法熟练度 / 丹药 Buff S2C
+// ═══════════════════════════════════════════════════════════════
+
+// 与 Rust CombatEventFloaterEntryV1 精确对应。
+message CombatEventFloaterEntry {
+  string kind   = 1;
+  float  amount = 2;
+  string text   = 3;
+  double x      = 4;
+  double y      = 5;
+  double z      = 6;
+}
+
+// 与 Rust CombatEventFloaterV1 精确对应。
+message CombatEventFloater {
+  repeated CombatEventFloaterEntry events = 1;
+}
+
+// 与 Rust TechniqueProficiencyUpdateV1 精确对应。
+message TechniqueProficiencyUpdate {
+  string technique_id = 1;
+  float  proficiency  = 2;
+  float  gain         = 3;
+}
+
+// 与 Rust PillBuffStatusV1 精确对应。
+message PillBuffStatus {
+  string buff_id           = 1;
+  uint32 remaining_ticks   = 2;
+  double effect_multiplier = 3;
+}
+
+// ═══════════════════════════════════════════════════════════════
+// P2 B2 — SkillConfigSnapshot S2C
+// ═══════════════════════════════════════════════════════════════
+
+// 与 Rust SkillConfig 精确对应。
+// BTreeMap<String, serde_json::Value> → json_string（序列化为 JSON 字符串）。
+message SkillConfigEntry {
+  string skill_id    = 1;
+  string json_config = 2; // 序列化后的 JSON object 字符串
+}
+
+// 与 Rust SkillConfigSnapshot 精确对应。
+// BTreeMap<String, SkillConfig> → repeated SkillConfigEntry。
+message SkillConfigSnapshotProto {
+  repeated SkillConfigEntry configs = 1;
+}
+
+// ═══════════════════════════════════════════════════════════════
+// P2 B2 — 战斗 / 暗器 / 技能栏 / 死亡 C2S
+// ═══════════════════════════════════════════════════════════════
+
+// 与 Rust ClientRequestV1::Jiemai 精确对应。
+message Jiemai {
+  // 无额外字段，仅触发。
+}
+
+// 与 Rust AnqiCarrierSlotV1 精确对应。
+enum AnqiCarrierSlot {
+  ANQI_CARRIER_SLOT_UNSPECIFIED = 0;
+  ANQI_CARRIER_SLOT_MAIN_HAND   = 1;
+  ANQI_CARRIER_SLOT_OFF_HAND    = 2;
+}
+
+// 与 Rust ClientRequestV1::ChargeCarrier 精确对应。
+message ChargeCarrier {
+  optional AnqiCarrierSlot slot      = 1;
+  float                    qi_target = 2;
+}
+
+// 与 Rust ClientRequestV1::ThrowCarrier 精确对应。
+message ThrowCarrier {
+  AnqiCarrierSlot slot      = 1;
+  float           dir_x     = 2; // Rust [f32;3] 拆三字段
+  float           dir_y     = 3;
+  float           dir_z     = 4;
+  float           power     = 5;
+}
+
+// 与 Rust AnqiContainerKindV1 精确对应。
+enum AnqiContainerKind {
+  ANQI_CONTAINER_KIND_UNSPECIFIED  = 0;
+  ANQI_CONTAINER_KIND_HAND_SLOT    = 1;
+  ANQI_CONTAINER_KIND_QUIVER       = 2;
+  ANQI_CONTAINER_KIND_POCKET_POUCH = 3;
+  ANQI_CONTAINER_KIND_FENGLINGHE   = 4;
+}
+
+// 与 Rust ClientRequestV1::AnqiContainerSwitch 精确对应。
+message AnqiContainerSwitch {
+  optional AnqiContainerKind to = 1;
+}
+
+// 与 Rust ClientRequestV1::UseQuickSlot 精确对应。
+message UseQuickSlot {
+  uint32 slot = 1; // Rust u8 (0..=8)
+}
+
+// 与 Rust ClientRequestV1::QuickSlotBind 精确对应。
+message QuickSlotBind {
+  uint32          slot    = 1; // Rust u8 (0..=8)
+  optional string item_id = 2;
+}
+
+// 与 Rust ClientRequestV1::SkillBarCast 精确对应。
+message SkillBarCast {
+  uint32          slot   = 1; // Rust u8 (0..=8)
+  optional string target = 2;
+}
+
+// 与 Rust SkillBarBindingV1 精确对应 — tagged union (Item / Skill)。
+message SkillBarBindingItem {
+  string template_id = 1;
+}
+
+message SkillBarBindingSkill {
+  string skill_id = 1;
+}
+
+message SkillBarBinding {
+  oneof kind {
+    SkillBarBindingItem  item  = 1;
+    SkillBarBindingSkill skill = 2;
+  }
+}
+
+// 与 Rust ClientRequestV1::SkillBarBind 精确对应。
+message SkillBarBind {
+  uint32                  slot    = 1; // Rust u8 (0..=8)
+  optional SkillBarBinding binding = 2;
+}
+
+// 与 Rust ClientRequestV1::SkillConfigIntent 精确对应。
+// BTreeMap<String, serde_json::Value> → json_config string。
+message SkillConfigIntent {
+  string skill_id    = 1;
+  string json_config = 2; // 序列化后的 JSON object 字符串
+}
+
+// 与 Rust ClientRequestV1::CombatReincarnate 精确对应。
+message CombatReincarnate {
+  // 无额外字段，仅触发。
+}
+
+// 与 Rust ClientRequestV1::CombatTerminate 精确对应。
+message CombatTerminate {
+  // 无额外字段，仅触发。
+}
+
+// 与 Rust ClientRequestV1::CombatCreateNewCharacter 精确对应。
+message CombatCreateNewCharacter {
+  // 无额外字段，仅触发。
 }

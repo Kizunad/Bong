@@ -3683,4 +3683,1660 @@ mod tests {
             }
         }
     }
+
+    // ═══════════════════════════════════════════════════════════
+    // P2 B2：战斗 / 伤口 / 防御 / 施法 / 毒 / 载体 / 暗器
+    // ═══════════════════════════════════════════════════════════
+
+    // ─── WoundsSnapshot ─────────────────────────────────────────
+
+    #[test]
+    fn wounds_snapshot_roundtrip_nonempty() {
+        let msg = WoundsSnapshot {
+            wounds: vec![
+                WoundEntry {
+                    part: "chest".to_string(),
+                    kind: "cut".to_string(),
+                    severity: 0.6,
+                    state: "bleeding".to_string(),
+                    infection: 0.1,
+                    scar: false,
+                    updated_at_ms: 123_456,
+                },
+                WoundEntry {
+                    part: "head".to_string(),
+                    kind: "concussion".to_string(),
+                    severity: 0.3,
+                    state: "stable".to_string(),
+                    infection: 0.0,
+                    scar: true,
+                    updated_at_ms: 123_457,
+                },
+            ],
+        };
+        let bytes = msg.encode_to_vec();
+        let decoded = WoundsSnapshot::decode(bytes.as_slice())
+            .expect("WoundsSnapshot decode 失败");
+        assert_eq!(decoded.wounds.len(), 2, "应有 2 条伤口记录");
+        assert_eq!(decoded.wounds[0].part, "chest");
+        assert_eq!(decoded.wounds[0].severity, 0.6_f32);
+        assert!(decoded.wounds[1].scar, "head 伤口应有疤痕");
+    }
+
+    #[test]
+    fn wounds_snapshot_roundtrip_empty() {
+        let msg = WoundsSnapshot { wounds: vec![] };
+        let bytes = msg.encode_to_vec();
+        let decoded = WoundsSnapshot::decode(bytes.as_slice())
+            .expect("空 WoundsSnapshot decode 失败");
+        assert!(decoded.wounds.is_empty(), "空伤口快照应为空 vec");
+    }
+
+    #[test]
+    fn wounds_snapshot_envelope_roundtrip() {
+        let envelope = ServerDataEnvelope {
+            payload: Some(server_data_envelope::Payload::WoundsSnapshot(
+                WoundsSnapshot {
+                    wounds: vec![WoundEntry {
+                        part: "arm_l".to_string(),
+                        kind: "burn".to_string(),
+                        severity: 0.9,
+                        state: "healing".to_string(),
+                        infection: 0.0,
+                        scar: false,
+                        updated_at_ms: 999,
+                    }],
+                },
+            )),
+        };
+        let bytes = envelope.encode_to_vec();
+        let decoded = ServerDataEnvelope::decode(bytes.as_slice())
+            .expect("WoundsSnapshot envelope decode 失败");
+        match decoded.payload {
+            Some(server_data_envelope::Payload::WoundsSnapshot(s)) => {
+                assert_eq!(s.wounds.len(), 1);
+                assert_eq!(s.wounds[0].part, "arm_l");
+            }
+            other => panic!("期望 WoundsSnapshot payload，实际是 {other:?}"),
+        }
+    }
+
+    // ─── DefenseWindow ──────────────────────────────────────────
+
+    #[test]
+    fn defense_window_roundtrip() {
+        let msg = DefenseWindow {
+            duration_ms: 200,
+            started_at_ms: 1_700_000_000_000,
+            expires_at_ms: 1_700_000_000_200,
+        };
+        let bytes = msg.encode_to_vec();
+        let decoded = DefenseWindow::decode(bytes.as_slice())
+            .expect("DefenseWindow decode 失败");
+        assert_eq!(decoded.duration_ms, 200, "duration_ms 应为 200");
+        assert_eq!(decoded.started_at_ms, 1_700_000_000_000);
+        assert_eq!(decoded.expires_at_ms, 1_700_000_000_200);
+    }
+
+    #[test]
+    fn defense_window_envelope_roundtrip() {
+        let envelope = ServerDataEnvelope {
+            payload: Some(server_data_envelope::Payload::DefenseWindow(
+                DefenseWindow {
+                    duration_ms: 1000,
+                    started_at_ms: 100,
+                    expires_at_ms: 1100,
+                },
+            )),
+        };
+        let bytes = envelope.encode_to_vec();
+        let decoded = ServerDataEnvelope::decode(bytes.as_slice())
+            .expect("DefenseWindow envelope decode 失败");
+        assert!(matches!(
+            decoded.payload,
+            Some(server_data_envelope::Payload::DefenseWindow(_))
+        ));
+    }
+
+    // ─── CastSync ───────────────────────────────────────────────
+
+    #[test]
+    fn cast_sync_roundtrip_all_phases() {
+        let phases = [
+            (CastPhase::Idle, CastOutcome::None),
+            (CastPhase::Casting, CastOutcome::None),
+            (CastPhase::Complete, CastOutcome::Completed),
+            (CastPhase::Interrupt, CastOutcome::InterruptMovement),
+            (CastPhase::Interrupt, CastOutcome::InterruptContam),
+            (CastPhase::Interrupt, CastOutcome::InterruptControl),
+            (CastPhase::Interrupt, CastOutcome::UserCancel),
+            (CastPhase::Interrupt, CastOutcome::Death),
+        ];
+        for (phase, outcome) in phases {
+            let msg = CastSync {
+                phase: phase as i32,
+                slot: 3,
+                duration_ms: 1500,
+                started_at_ms: 1_700_000_000_000,
+                outcome: outcome as i32,
+            };
+            let bytes = msg.encode_to_vec();
+            let decoded = CastSync::decode(bytes.as_slice())
+                .unwrap_or_else(|e| panic!("CastSync phase={phase:?} outcome={outcome:?} decode 失败: {e}"));
+            assert_eq!(
+                decoded.phase, phase as i32,
+                "CastSync phase 应为 {phase:?}，实际 {}",
+                decoded.phase
+            );
+            assert_eq!(
+                decoded.outcome, outcome as i32,
+                "CastSync outcome 应为 {outcome:?}，实际 {}",
+                decoded.outcome
+            );
+            assert_eq!(decoded.slot, 3);
+        }
+    }
+
+    #[test]
+    fn cast_sync_envelope_roundtrip() {
+        let envelope = ServerDataEnvelope {
+            payload: Some(server_data_envelope::Payload::CastSync(CastSync {
+                phase: CastPhase::Casting as i32,
+                slot: 5,
+                duration_ms: 800,
+                started_at_ms: 42,
+                outcome: CastOutcome::None as i32,
+            })),
+        };
+        let bytes = envelope.encode_to_vec();
+        let decoded = ServerDataEnvelope::decode(bytes.as_slice())
+            .expect("CastSync envelope decode 失败");
+        match decoded.payload {
+            Some(server_data_envelope::Payload::CastSync(c)) => {
+                assert_eq!(c.slot, 5);
+                assert_eq!(c.phase, CastPhase::Casting as i32);
+            }
+            other => panic!("期望 CastSync payload，实际是 {other:?}"),
+        }
+    }
+
+    // ─── QuickSlotConfig ────────────────────────────────────────
+
+    #[test]
+    fn quick_slot_config_roundtrip_mixed_slots() {
+        let msg = QuickSlotConfig {
+            slots: vec![
+                OptionalQuickSlotEntry {
+                    entry: Some(QuickSlotEntry {
+                        item_id: "kai_mai_pill".to_string(),
+                        display_name: "开脉丹".to_string(),
+                        cast_duration_ms: 1500,
+                        cooldown_ms: 1500,
+                        icon_texture: "bong:pill.png".to_string(),
+                    }),
+                },
+                OptionalQuickSlotEntry { entry: None },
+                OptionalQuickSlotEntry { entry: None },
+            ],
+            cooldown_until_ms: vec![1_700_000_001_500, 0, 0],
+        };
+        let bytes = msg.encode_to_vec();
+        let decoded = QuickSlotConfig::decode(bytes.as_slice())
+            .expect("QuickSlotConfig decode 失败");
+        assert_eq!(decoded.slots.len(), 3);
+        assert!(decoded.slots[0].entry.is_some(), "槽 0 应有条目");
+        assert!(decoded.slots[1].entry.is_none(), "槽 1 应为空");
+        assert_eq!(decoded.cooldown_until_ms[0], 1_700_000_001_500);
+        assert_eq!(
+            decoded.slots[0].entry.as_ref().unwrap().item_id,
+            "kai_mai_pill"
+        );
+    }
+
+    // ─── SkillBarConfig ─────────────────────────────────────────
+
+    #[test]
+    fn skill_bar_config_roundtrip_item_and_skill() {
+        let msg = SkillBarConfig {
+            slots: vec![
+                OptionalSkillBarEntry {
+                    entry: Some(SkillBarEntry {
+                        kind: Some(skill_bar_entry::Kind::Skill(SkillBarEntrySkill {
+                            skill_id: "burst_meridian.beng_quan".to_string(),
+                            display_name: "崩拳".to_string(),
+                            cast_duration_ms: 400,
+                            cooldown_ms: 3000,
+                            icon_texture: "bong:beng_quan.png".to_string(),
+                        })),
+                    }),
+                },
+                OptionalSkillBarEntry {
+                    entry: Some(SkillBarEntry {
+                        kind: Some(skill_bar_entry::Kind::Item(SkillBarEntryItem {
+                            template_id: "iron_sword".to_string(),
+                            display_name: "铁剑".to_string(),
+                            cast_duration_ms: 0,
+                            cooldown_ms: 0,
+                            icon_texture: "bong:iron_sword.png".to_string(),
+                        })),
+                    }),
+                },
+                OptionalSkillBarEntry { entry: None },
+            ],
+            cooldown_until_ms: vec![3000, 0, 0],
+        };
+        let bytes = msg.encode_to_vec();
+        let decoded = SkillBarConfig::decode(bytes.as_slice())
+            .expect("SkillBarConfig decode 失败");
+        assert_eq!(decoded.slots.len(), 3);
+        match &decoded.slots[0].entry.as_ref().unwrap().kind {
+            Some(skill_bar_entry::Kind::Skill(s)) => {
+                assert_eq!(s.skill_id, "burst_meridian.beng_quan");
+            }
+            other => panic!("槽 0 应为 Skill variant，实际 {other:?}"),
+        }
+        match &decoded.slots[1].entry.as_ref().unwrap().kind {
+            Some(skill_bar_entry::Kind::Item(i)) => {
+                assert_eq!(i.template_id, "iron_sword");
+            }
+            other => panic!("槽 1 应为 Item variant，实际 {other:?}"),
+        }
+        assert!(decoded.slots[2].entry.is_none(), "槽 2 应为空");
+    }
+
+    // ─── TechniquesSnapshot ─────────────────────────────────────
+
+    #[test]
+    fn techniques_snapshot_roundtrip() {
+        let msg = TechniquesSnapshot {
+            entries: vec![TechniqueEntry {
+                id: "burst_meridian.beng_quan".to_string(),
+                display_name: "崩拳".to_string(),
+                grade: "yellow".to_string(),
+                proficiency: 0.5,
+                proficiency_label: "熟练".to_string(),
+                active: true,
+                description: "以臂经爆发短劲".to_string(),
+                required_realm: "Induce".to_string(),
+                required_meridians: vec![TechniqueRequiredMeridian {
+                    channel: "LargeIntestine".to_string(),
+                    min_health: 0.01,
+                }],
+                qi_cost: 0.4,
+                stamina_cost: 0.0,
+                cast_ticks: 8,
+                cooldown_ticks: 60,
+                range: 1.3,
+            }],
+        };
+        let bytes = msg.encode_to_vec();
+        let decoded = TechniquesSnapshot::decode(bytes.as_slice())
+            .expect("TechniquesSnapshot decode 失败");
+        assert_eq!(decoded.entries.len(), 1);
+        let e = &decoded.entries[0];
+        assert_eq!(e.id, "burst_meridian.beng_quan");
+        assert_eq!(e.required_meridians.len(), 1);
+        assert_eq!(e.required_meridians[0].channel, "LargeIntestine");
+        assert_eq!(e.cast_ticks, 8);
+        assert_eq!(e.range, 1.3_f32);
+    }
+
+    #[test]
+    fn techniques_snapshot_empty() {
+        let msg = TechniquesSnapshot { entries: vec![] };
+        let bytes = msg.encode_to_vec();
+        let decoded = TechniquesSnapshot::decode(bytes.as_slice())
+            .expect("空 TechniquesSnapshot decode 失败");
+        assert!(decoded.entries.is_empty());
+    }
+
+    // ─── UnlocksSync ────────────────────────────────────────────
+
+    #[test]
+    fn unlocks_sync_roundtrip() {
+        let msg = UnlocksSync {
+            jiemai: true,
+            tishi: false,
+            jueling: true,
+        };
+        let bytes = msg.encode_to_vec();
+        let decoded = UnlocksSync::decode(bytes.as_slice())
+            .expect("UnlocksSync decode 失败");
+        assert!(decoded.jiemai, "jiemai 应为 true");
+        assert!(!decoded.tishi, "tishi 应为 false");
+        assert!(decoded.jueling, "jueling 应为 true");
+    }
+
+    // ─── DerivedAttrsSync ───────────────────────────────────────
+
+    #[test]
+    fn derived_attrs_sync_roundtrip() {
+        let msg = DerivedAttrsSync {
+            flying: true,
+            flying_qi_remaining: 42.5,
+            flying_force_descent_at_ms: 1_700_000_000_000,
+            phasing: false,
+            phasing_until_ms: 0,
+            tribulation_locked: true,
+            tribulation_stage: "gather".to_string(),
+            throughput_peak_norm: 0.8,
+            tuike_layers: 3,
+            vortex_active: false,
+        };
+        let bytes = msg.encode_to_vec();
+        let decoded = DerivedAttrsSync::decode(bytes.as_slice())
+            .expect("DerivedAttrsSync decode 失败");
+        assert!(decoded.flying, "flying 应为 true");
+        assert_eq!(decoded.flying_qi_remaining, 42.5_f32);
+        assert!(decoded.tribulation_locked);
+        assert_eq!(decoded.tribulation_stage, "gather");
+        assert_eq!(decoded.tuike_layers, 3);
+    }
+
+    // ─── EventStreamPush ────────────────────────────────────────
+
+    #[test]
+    fn event_stream_push_roundtrip_all_channels() {
+        let channels = [
+            EventChannel::Combat,
+            EventChannel::Cultivation,
+            EventChannel::World,
+            EventChannel::Social,
+            EventChannel::System,
+        ];
+        for channel in channels {
+            let msg = EventStreamPush {
+                channel: channel as i32,
+                priority: EventPriority::P1Important as i32,
+                source_tag: "test".to_string(),
+                text: "事件文本".to_string(),
+                color: 0xFF0000,
+                created_at_ms: 42,
+            };
+            let bytes = msg.encode_to_vec();
+            let decoded = EventStreamPush::decode(bytes.as_slice())
+                .unwrap_or_else(|e| panic!("EventStreamPush channel={channel:?} decode 失败: {e}"));
+            assert_eq!(
+                decoded.channel, channel as i32,
+                "channel 应为 {channel:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn event_stream_push_all_priorities() {
+        let priorities = [
+            EventPriority::P0Critical,
+            EventPriority::P1Important,
+            EventPriority::P2Normal,
+            EventPriority::P3Verbose,
+        ];
+        for prio in priorities {
+            let msg = EventStreamPush {
+                channel: EventChannel::Combat as i32,
+                priority: prio as i32,
+                source_tag: "test".to_string(),
+                text: "t".to_string(),
+                color: 0,
+                created_at_ms: 0,
+            };
+            let bytes = msg.encode_to_vec();
+            let decoded = EventStreamPush::decode(bytes.as_slice())
+                .unwrap_or_else(|e| panic!("EventStreamPush prio={prio:?} decode 失败: {e}"));
+            assert_eq!(decoded.priority, prio as i32);
+        }
+    }
+
+    // ─── WeaponEquipped ─────────────────────────────────────────
+
+    #[test]
+    fn weapon_equipped_roundtrip_with_weapon() {
+        let msg = WeaponEquipped {
+            slot: "main_hand".to_string(),
+            weapon: Some(WeaponView {
+                instance_id: 42,
+                template_id: "iron_sword".to_string(),
+                weapon_kind: "sword".to_string(),
+                durability_current: 185.0,
+                durability_max: 200.0,
+                quality_tier: 1,
+            }),
+        };
+        let bytes = msg.encode_to_vec();
+        let decoded = WeaponEquipped::decode(bytes.as_slice())
+            .expect("WeaponEquipped decode 失败");
+        assert_eq!(decoded.slot, "main_hand");
+        let w = decoded.weapon.expect("weapon 应为 Some");
+        assert_eq!(w.instance_id, 42);
+        assert_eq!(w.template_id, "iron_sword");
+        assert_eq!(w.quality_tier, 1);
+    }
+
+    #[test]
+    fn weapon_equipped_roundtrip_without_weapon() {
+        let msg = WeaponEquipped {
+            slot: "off_hand".to_string(),
+            weapon: None,
+        };
+        let bytes = msg.encode_to_vec();
+        let decoded = WeaponEquipped::decode(bytes.as_slice())
+            .expect("WeaponEquipped 无武器 decode 失败");
+        assert_eq!(decoded.slot, "off_hand");
+        assert!(decoded.weapon.is_none(), "weapon 应为 None");
+    }
+
+    // ─── WeaponBroken ───────────────────────────────────────────
+
+    #[test]
+    fn weapon_broken_roundtrip() {
+        let msg = WeaponBroken {
+            instance_id: 77,
+            template_id: "bone_dagger".to_string(),
+        };
+        let bytes = msg.encode_to_vec();
+        let decoded = WeaponBroken::decode(bytes.as_slice())
+            .expect("WeaponBroken decode 失败");
+        assert_eq!(decoded.instance_id, 77);
+        assert_eq!(decoded.template_id, "bone_dagger");
+    }
+
+    // ─── TreasureEquipped ───────────────────────────────────────
+
+    #[test]
+    fn treasure_equipped_roundtrip_with_treasure() {
+        let msg = TreasureEquipped {
+            slot: "treasure_belt_0".to_string(),
+            treasure: Some(TreasureView {
+                instance_id: 88,
+                template_id: "starter_talisman".to_string(),
+                display_name: "启程护符".to_string(),
+            }),
+        };
+        let bytes = msg.encode_to_vec();
+        let decoded = TreasureEquipped::decode(bytes.as_slice())
+            .expect("TreasureEquipped decode 失败");
+        assert_eq!(decoded.slot, "treasure_belt_0");
+        let t = decoded.treasure.expect("treasure 应为 Some");
+        assert_eq!(t.display_name, "启程护符");
+    }
+
+    #[test]
+    fn treasure_equipped_roundtrip_without_treasure() {
+        let msg = TreasureEquipped {
+            slot: "treasure_belt_1".to_string(),
+            treasure: None,
+        };
+        let bytes = msg.encode_to_vec();
+        let decoded = TreasureEquipped::decode(bytes.as_slice())
+            .expect("TreasureEquipped 无法宝 decode 失败");
+        assert!(decoded.treasure.is_none());
+    }
+
+    // ─── VortexFieldState ───────────────────────────────────────
+
+    #[test]
+    fn vortex_field_state_roundtrip() {
+        let msg = VortexFieldState {
+            caster: "player:a".to_string(),
+            active: true,
+            center_x: 100.0,
+            center_y: 64.0,
+            center_z: -200.0,
+            radius: 5.0,
+            delta: 0.3,
+            env_qi_at_cast: 0.8,
+            maintain_remaining_ticks: 100,
+            intercepted_count: 2,
+            active_skill_id: "woliu.hold".to_string(),
+            charge_progress: 0.5,
+            cooldown_until_ms: 0,
+            backfire_level: "safe".to_string(),
+            turbulence_radius: 10.0,
+            turbulence_intensity: 0.7,
+            turbulence_until_ms: 1_700_000_000_000,
+        };
+        let bytes = msg.encode_to_vec();
+        let decoded = VortexFieldState::decode(bytes.as_slice())
+            .expect("VortexFieldState decode 失败");
+        assert_eq!(decoded.caster, "player:a");
+        assert!(decoded.active);
+        assert_eq!(decoded.center_x, 100.0);
+        assert_eq!(decoded.center_z, -200.0);
+        assert_eq!(decoded.maintain_remaining_ticks, 100);
+        assert_eq!(decoded.active_skill_id, "woliu.hold");
+    }
+
+    // ─── DuguPoisonState ────────────────────────────────────────
+
+    #[test]
+    fn dugu_poison_state_roundtrip_active() {
+        let msg = DuguPoisonState {
+            target: "player:alice".to_string(),
+            active: true,
+            meridian_id: "Heart".to_string(),
+            attacker: "player:bob".to_string(),
+            attached_at_tick: 100,
+            poisoner_realm_tier: 3,
+            loss_per_tick: 0.01,
+            flow_capacity_after: 0.5,
+            qi_max_after: 80.0,
+            server_tick: 200,
+        };
+        let bytes = msg.encode_to_vec();
+        let decoded = DuguPoisonState::decode(bytes.as_slice())
+            .expect("DuguPoisonState decode 失败");
+        assert_eq!(decoded.target, "player:alice");
+        assert!(decoded.active);
+        assert_eq!(decoded.poisoner_realm_tier, 3);
+        assert_eq!(decoded.loss_per_tick, 0.01);
+    }
+
+    #[test]
+    fn dugu_poison_state_roundtrip_cleared() {
+        let msg = DuguPoisonState {
+            target: "player:alice".to_string(),
+            active: false,
+            meridian_id: String::new(),
+            attacker: String::new(),
+            attached_at_tick: 0,
+            poisoner_realm_tier: 0,
+            loss_per_tick: 0.0,
+            flow_capacity_after: 0.0,
+            qi_max_after: 0.0,
+            server_tick: 88,
+        };
+        let bytes = msg.encode_to_vec();
+        let decoded = DuguPoisonState::decode(bytes.as_slice())
+            .expect("cleared DuguPoisonState decode 失败");
+        assert!(!decoded.active);
+        assert_eq!(decoded.server_tick, 88);
+    }
+
+    // ─── PoisonDoseEvent ────────────────────────────────────────
+
+    #[test]
+    fn poison_dose_event_roundtrip_all_tags() {
+        let tags = [
+            PoisonSideEffectTag::QiFocusDrift2h,
+            PoisonSideEffectTag::RageBurst30m,
+            PoisonSideEffectTag::HallucinTint6h,
+            PoisonSideEffectTag::DigestLock6h,
+            PoisonSideEffectTag::ToxicityTierUnlock,
+        ];
+        for tag in tags {
+            let msg = PoisonDoseEvent {
+                player_entity_id: 7,
+                dose_amount: 5.0,
+                side_effect_tag: tag as i32,
+                poison_level_after: 5.0,
+                digestion_after: 20.0,
+                at_tick: 10,
+            };
+            let bytes = msg.encode_to_vec();
+            let decoded = PoisonDoseEvent::decode(bytes.as_slice())
+                .unwrap_or_else(|e| panic!("PoisonDoseEvent tag={tag:?} decode 失败: {e}"));
+            assert_eq!(
+                decoded.side_effect_tag, tag as i32,
+                "side_effect_tag 应为 {tag:?}"
+            );
+            assert_eq!(decoded.dose_amount, 5.0_f32);
+        }
+    }
+
+    // ─── PoisonOverdoseEvent ────────────────────────────────────
+
+    #[test]
+    fn poison_overdose_event_roundtrip_all_severities() {
+        let severities = [
+            PoisonOverdoseSeverity::Mild,
+            PoisonOverdoseSeverity::Moderate,
+            PoisonOverdoseSeverity::Severe,
+        ];
+        for sev in severities {
+            let msg = PoisonOverdoseEvent {
+                player_entity_id: 7,
+                severity: sev as i32,
+                overflow: 1.5,
+                lifespan_penalty_years: 0.1,
+                micro_tear_probability: 0.05,
+                at_tick: 10,
+            };
+            let bytes = msg.encode_to_vec();
+            let decoded = PoisonOverdoseEvent::decode(bytes.as_slice())
+                .unwrap_or_else(|e| panic!("PoisonOverdoseEvent sev={sev:?} decode 失败: {e}"));
+            assert_eq!(
+                decoded.severity, sev as i32,
+                "severity 应为 {sev:?}"
+            );
+            assert_eq!(decoded.overflow, 1.5_f32);
+        }
+    }
+
+    // ─── PoisonTraitState ───────────────────────────────────────
+
+    #[test]
+    fn poison_trait_state_roundtrip() {
+        let msg = PoisonTraitState {
+            player_entity_id: 7,
+            poison_toxicity: 5.0,
+            digestion_current: 20.0,
+            digestion_capacity: 100.0,
+            toxicity_tier_unlocked: false,
+        };
+        let bytes = msg.encode_to_vec();
+        let decoded = PoisonTraitState::decode(bytes.as_slice())
+            .expect("PoisonTraitState decode 失败");
+        assert_eq!(decoded.player_entity_id, 7);
+        assert_eq!(decoded.poison_toxicity, 5.0_f32);
+        assert_eq!(decoded.digestion_capacity, 100.0_f32);
+        assert!(!decoded.toxicity_tier_unlocked);
+    }
+
+    // ─── CarrierState ───────────────────────────────────────────
+
+    #[test]
+    fn carrier_state_roundtrip_with_instance_id() {
+        let msg = CarrierState {
+            carrier: "bone_chip".to_string(),
+            phase: CarrierChargePhase::Charged as i32,
+            progress: 1.0,
+            sealed_qi: 50.0,
+            sealed_qi_initial: 50.0,
+            half_life_remaining_ticks: 200,
+            item_instance_id: Some(42),
+        };
+        let bytes = msg.encode_to_vec();
+        let decoded = CarrierState::decode(bytes.as_slice())
+            .expect("CarrierState decode 失败");
+        assert_eq!(decoded.carrier, "bone_chip");
+        assert_eq!(decoded.phase, CarrierChargePhase::Charged as i32);
+        assert_eq!(decoded.item_instance_id, Some(42));
+    }
+
+    #[test]
+    fn carrier_state_roundtrip_without_instance_id() {
+        let msg = CarrierState {
+            carrier: "lingmu_arrow".to_string(),
+            phase: CarrierChargePhase::Idle as i32,
+            progress: 0.0,
+            sealed_qi: 0.0,
+            sealed_qi_initial: 0.0,
+            half_life_remaining_ticks: 0,
+            item_instance_id: None,
+        };
+        let bytes = msg.encode_to_vec();
+        let decoded = CarrierState::decode(bytes.as_slice())
+            .expect("CarrierState 无 instance decode 失败");
+        assert!(decoded.item_instance_id.is_none());
+        assert_eq!(decoded.phase, CarrierChargePhase::Idle as i32);
+    }
+
+    #[test]
+    fn carrier_charge_phase_all_variants() {
+        let phases = [
+            CarrierChargePhase::Idle,
+            CarrierChargePhase::Charging,
+            CarrierChargePhase::Charged,
+        ];
+        for phase in phases {
+            let msg = CarrierState {
+                carrier: "test".to_string(),
+                phase: phase as i32,
+                progress: 0.0,
+                sealed_qi: 0.0,
+                sealed_qi_initial: 0.0,
+                half_life_remaining_ticks: 0,
+                item_instance_id: None,
+            };
+            let bytes = msg.encode_to_vec();
+            let decoded = CarrierState::decode(bytes.as_slice())
+                .unwrap_or_else(|e| panic!("CarrierState phase={phase:?} decode 失败: {e}"));
+            assert_eq!(decoded.phase, phase as i32);
+        }
+    }
+
+    // ─── FalseSkinState ─────────────────────────────────────────
+
+    #[test]
+    fn false_skin_state_roundtrip_with_layers() {
+        let msg = FalseSkinState {
+            target_id: "offline:Azure".to_string(),
+            kind: Some(FalseSkinKind::SpiderSilk as i32),
+            layers_remaining: 2,
+            contam_capacity_per_layer: 30.0,
+            absorbed_contam: 10.0,
+            equipped_at_tick: 100,
+            layers: vec![
+                FalseSkinLayerState {
+                    tier: FalseSkinTier::Light as i32,
+                    spirit_quality: 0.5,
+                    damage_capacity: 20.0,
+                    contam_load: 5.0,
+                    permanent_taint_load: 0.1,
+                },
+                FalseSkinLayerState {
+                    tier: FalseSkinTier::Ancient as i32,
+                    spirit_quality: 0.9,
+                    damage_capacity: 50.0,
+                    contam_load: 0.0,
+                    permanent_taint_load: 0.0,
+                },
+            ],
+        };
+        let bytes = msg.encode_to_vec();
+        let decoded = FalseSkinState::decode(bytes.as_slice())
+            .expect("FalseSkinState decode 失败");
+        assert_eq!(decoded.target_id, "offline:Azure");
+        assert_eq!(decoded.kind, Some(FalseSkinKind::SpiderSilk as i32));
+        assert_eq!(decoded.layers.len(), 2);
+        assert_eq!(decoded.layers[0].tier, FalseSkinTier::Light as i32);
+        assert_eq!(decoded.layers[1].tier, FalseSkinTier::Ancient as i32);
+    }
+
+    #[test]
+    fn false_skin_state_roundtrip_empty() {
+        let msg = FalseSkinState {
+            target_id: "test".to_string(),
+            kind: None,
+            layers_remaining: 0,
+            contam_capacity_per_layer: 0.0,
+            absorbed_contam: 0.0,
+            equipped_at_tick: 0,
+            layers: vec![],
+        };
+        let bytes = msg.encode_to_vec();
+        let decoded = FalseSkinState::decode(bytes.as_slice())
+            .expect("空 FalseSkinState decode 失败");
+        assert!(decoded.kind.is_none());
+        assert!(decoded.layers.is_empty());
+    }
+
+    #[test]
+    fn false_skin_kind_all_variants() {
+        let kinds = [
+            FalseSkinKind::SpiderSilk,
+            FalseSkinKind::RottenWoodArmor,
+        ];
+        for kind in kinds {
+            assert_ne!(kind as i32, 0, "{kind:?} 不应为 UNSPECIFIED (0)");
+        }
+    }
+
+    #[test]
+    fn false_skin_tier_all_variants() {
+        let tiers = [
+            FalseSkinTier::Fan,
+            FalseSkinTier::Light,
+            FalseSkinTier::Mid,
+            FalseSkinTier::Heavy,
+            FalseSkinTier::Ancient,
+        ];
+        for tier in tiers {
+            assert_ne!(tier as i32, 0, "{tier:?} 不应为 UNSPECIFIED (0)");
+        }
+    }
+
+    // ─── CombatEventFloater ─────────────────────────────────────
+
+    #[test]
+    fn combat_event_floater_roundtrip() {
+        let msg = CombatEventFloater {
+            events: vec![
+                CombatEventFloaterEntry {
+                    kind: "damage".to_string(),
+                    amount: 25.0,
+                    text: "-25".to_string(),
+                    x: 100.0,
+                    y: 65.0,
+                    z: -50.0,
+                },
+                CombatEventFloaterEntry {
+                    kind: "heal".to_string(),
+                    amount: 10.0,
+                    text: "+10".to_string(),
+                    x: 101.0,
+                    y: 66.0,
+                    z: -49.0,
+                },
+            ],
+        };
+        let bytes = msg.encode_to_vec();
+        let decoded = CombatEventFloater::decode(bytes.as_slice())
+            .expect("CombatEventFloater decode 失败");
+        assert_eq!(decoded.events.len(), 2);
+        assert_eq!(decoded.events[0].kind, "damage");
+        assert_eq!(decoded.events[0].amount, 25.0_f32);
+        assert_eq!(decoded.events[1].text, "+10");
+    }
+
+    #[test]
+    fn combat_event_floater_empty() {
+        let msg = CombatEventFloater { events: vec![] };
+        let bytes = msg.encode_to_vec();
+        let decoded = CombatEventFloater::decode(bytes.as_slice())
+            .expect("空 CombatEventFloater decode 失败");
+        assert!(decoded.events.is_empty());
+    }
+
+    // ─── TechniqueProficiencyUpdate ─────────────────────────────
+
+    #[test]
+    fn technique_proficiency_update_roundtrip() {
+        let msg = TechniqueProficiencyUpdate {
+            technique_id: "burst_meridian.beng_quan".to_string(),
+            proficiency: 0.75,
+            gain: 0.05,
+        };
+        let bytes = msg.encode_to_vec();
+        let decoded = TechniqueProficiencyUpdate::decode(bytes.as_slice())
+            .expect("TechniqueProficiencyUpdate decode 失败");
+        assert_eq!(decoded.technique_id, "burst_meridian.beng_quan");
+        assert_eq!(decoded.proficiency, 0.75_f32);
+        assert_eq!(decoded.gain, 0.05_f32);
+    }
+
+    // ─── PillBuffStatus ─────────────────────────────────────────
+
+    #[test]
+    fn pill_buff_status_roundtrip() {
+        let msg = PillBuffStatus {
+            buff_id: "kai_mai_buff".to_string(),
+            remaining_ticks: 1200,
+            effect_multiplier: 1.5,
+        };
+        let bytes = msg.encode_to_vec();
+        let decoded = PillBuffStatus::decode(bytes.as_slice())
+            .expect("PillBuffStatus decode 失败");
+        assert_eq!(decoded.buff_id, "kai_mai_buff");
+        assert_eq!(decoded.remaining_ticks, 1200);
+        assert_eq!(decoded.effect_multiplier, 1.5);
+    }
+
+    // ─── SkillConfigSnapshotProto ───────────────────────────────
+
+    #[test]
+    fn skill_config_snapshot_proto_roundtrip() {
+        let msg = SkillConfigSnapshotProto {
+            configs: vec![
+                SkillConfigEntry {
+                    skill_id: "zhenmai.sever_chain".to_string(),
+                    json_config: r#"{"meridian_id":"Pericardium"}"#.to_string(),
+                },
+                SkillConfigEntry {
+                    skill_id: "burst_meridian.beng_quan".to_string(),
+                    json_config: r#"{}"#.to_string(),
+                },
+            ],
+        };
+        let bytes = msg.encode_to_vec();
+        let decoded = SkillConfigSnapshotProto::decode(bytes.as_slice())
+            .expect("SkillConfigSnapshotProto decode 失败");
+        assert_eq!(decoded.configs.len(), 2);
+        assert_eq!(decoded.configs[0].skill_id, "zhenmai.sever_chain");
+        assert!(decoded.configs[0].json_config.contains("Pericardium"));
+    }
+
+    #[test]
+    fn skill_config_snapshot_proto_empty() {
+        let msg = SkillConfigSnapshotProto { configs: vec![] };
+        let bytes = msg.encode_to_vec();
+        let decoded = SkillConfigSnapshotProto::decode(bytes.as_slice())
+            .expect("空 SkillConfigSnapshotProto decode 失败");
+        assert!(decoded.configs.is_empty());
+    }
+
+    // ═══════════════════════════════════════════════════════════
+    // P2 B2：C2S 战斗 / 暗器 / 技能栏 / 死亡
+    // ═══════════════════════════════════════════════════════════
+
+    // ─── Jiemai ─────────────────────────────────────────────────
+
+    #[test]
+    fn jiemai_c2s_roundtrip() {
+        let envelope = ClientRequestEnvelope {
+            payload: Some(client_request_envelope::Payload::Jiemai(Jiemai {})),
+        };
+        let bytes = envelope.encode_to_vec();
+        let decoded = ClientRequestEnvelope::decode(bytes.as_slice())
+            .expect("Jiemai C2S envelope decode 失败");
+        assert!(matches!(
+            decoded.payload,
+            Some(client_request_envelope::Payload::Jiemai(_))
+        ));
+    }
+
+    // ─── ChargeCarrier ──────────────────────────────────────────
+
+    #[test]
+    fn charge_carrier_roundtrip_with_slot() {
+        let envelope = ClientRequestEnvelope {
+            payload: Some(client_request_envelope::Payload::ChargeCarrier(
+                ChargeCarrier {
+                    slot: Some(AnqiCarrierSlot::MainHand as i32),
+                    qi_target: 50.0,
+                },
+            )),
+        };
+        let bytes = envelope.encode_to_vec();
+        let decoded = ClientRequestEnvelope::decode(bytes.as_slice())
+            .expect("ChargeCarrier C2S decode 失败");
+        match decoded.payload {
+            Some(client_request_envelope::Payload::ChargeCarrier(c)) => {
+                assert_eq!(c.slot, Some(AnqiCarrierSlot::MainHand as i32));
+                assert_eq!(c.qi_target, 50.0_f32);
+            }
+            other => panic!("期望 ChargeCarrier payload，实际 {other:?}"),
+        }
+    }
+
+    #[test]
+    fn charge_carrier_roundtrip_without_slot() {
+        let envelope = ClientRequestEnvelope {
+            payload: Some(client_request_envelope::Payload::ChargeCarrier(
+                ChargeCarrier {
+                    slot: None,
+                    qi_target: 30.0,
+                },
+            )),
+        };
+        let bytes = envelope.encode_to_vec();
+        let decoded = ClientRequestEnvelope::decode(bytes.as_slice())
+            .expect("ChargeCarrier 无 slot decode 失败");
+        match decoded.payload {
+            Some(client_request_envelope::Payload::ChargeCarrier(c)) => {
+                assert!(c.slot.is_none(), "slot 应为 None");
+                assert_eq!(c.qi_target, 30.0_f32);
+            }
+            other => panic!("期望 ChargeCarrier payload，实际 {other:?}"),
+        }
+    }
+
+    // ─── ThrowCarrier ───────────────────────────────────────────
+
+    #[test]
+    fn throw_carrier_roundtrip() {
+        let envelope = ClientRequestEnvelope {
+            payload: Some(client_request_envelope::Payload::ThrowCarrier(
+                ThrowCarrier {
+                    slot: AnqiCarrierSlot::OffHand as i32,
+                    dir_x: 0.0,
+                    dir_y: 1.0,
+                    dir_z: 0.0,
+                    power: 0.8,
+                },
+            )),
+        };
+        let bytes = envelope.encode_to_vec();
+        let decoded = ClientRequestEnvelope::decode(bytes.as_slice())
+            .expect("ThrowCarrier C2S decode 失败");
+        match decoded.payload {
+            Some(client_request_envelope::Payload::ThrowCarrier(t)) => {
+                assert_eq!(t.slot, AnqiCarrierSlot::OffHand as i32);
+                assert_eq!(t.dir_y, 1.0_f32);
+                assert_eq!(t.power, 0.8_f32);
+            }
+            other => panic!("期望 ThrowCarrier payload，实际 {other:?}"),
+        }
+    }
+
+    // ─── AnqiContainerSwitch ────────────────────────────────────
+
+    #[test]
+    fn anqi_container_switch_roundtrip_cycle() {
+        let envelope = ClientRequestEnvelope {
+            payload: Some(client_request_envelope::Payload::AnqiContainerSwitch(
+                AnqiContainerSwitch { to: None },
+            )),
+        };
+        let bytes = envelope.encode_to_vec();
+        let decoded = ClientRequestEnvelope::decode(bytes.as_slice())
+            .expect("AnqiContainerSwitch cycle decode 失败");
+        match decoded.payload {
+            Some(client_request_envelope::Payload::AnqiContainerSwitch(s)) => {
+                assert!(s.to.is_none(), "to 应为 None（循环切换）");
+            }
+            other => panic!("期望 AnqiContainerSwitch payload，实际 {other:?}"),
+        }
+    }
+
+    #[test]
+    fn anqi_container_switch_roundtrip_direct() {
+        let envelope = ClientRequestEnvelope {
+            payload: Some(client_request_envelope::Payload::AnqiContainerSwitch(
+                AnqiContainerSwitch {
+                    to: Some(AnqiContainerKind::Quiver as i32),
+                },
+            )),
+        };
+        let bytes = envelope.encode_to_vec();
+        let decoded = ClientRequestEnvelope::decode(bytes.as_slice())
+            .expect("AnqiContainerSwitch direct decode 失败");
+        match decoded.payload {
+            Some(client_request_envelope::Payload::AnqiContainerSwitch(s)) => {
+                assert_eq!(s.to, Some(AnqiContainerKind::Quiver as i32));
+            }
+            other => panic!("期望 AnqiContainerSwitch payload，实际 {other:?}"),
+        }
+    }
+
+    #[test]
+    fn anqi_container_kind_all_variants() {
+        let kinds = [
+            AnqiContainerKind::HandSlot,
+            AnqiContainerKind::Quiver,
+            AnqiContainerKind::PocketPouch,
+            AnqiContainerKind::Fenglinghe,
+        ];
+        for kind in kinds {
+            assert_ne!(kind as i32, 0, "{kind:?} 不应为 UNSPECIFIED (0)");
+        }
+    }
+
+    // ─── UseQuickSlot ───────────────────────────────────────────
+
+    #[test]
+    fn use_quick_slot_roundtrip() {
+        let envelope = ClientRequestEnvelope {
+            payload: Some(client_request_envelope::Payload::UseQuickSlot(
+                UseQuickSlot { slot: 3 },
+            )),
+        };
+        let bytes = envelope.encode_to_vec();
+        let decoded = ClientRequestEnvelope::decode(bytes.as_slice())
+            .expect("UseQuickSlot C2S decode 失败");
+        match decoded.payload {
+            Some(client_request_envelope::Payload::UseQuickSlot(u)) => {
+                assert_eq!(u.slot, 3);
+            }
+            other => panic!("期望 UseQuickSlot payload，实际 {other:?}"),
+        }
+    }
+
+    // ─── QuickSlotBind ──────────────────────────────────────────
+
+    #[test]
+    fn quick_slot_bind_roundtrip_bind() {
+        let envelope = ClientRequestEnvelope {
+            payload: Some(client_request_envelope::Payload::QuickSlotBind(
+                QuickSlotBind {
+                    slot: 1,
+                    item_id: Some("kai_mai_pill".to_string()),
+                },
+            )),
+        };
+        let bytes = envelope.encode_to_vec();
+        let decoded = ClientRequestEnvelope::decode(bytes.as_slice())
+            .expect("QuickSlotBind bind decode 失败");
+        match decoded.payload {
+            Some(client_request_envelope::Payload::QuickSlotBind(b)) => {
+                assert_eq!(b.slot, 1);
+                assert_eq!(b.item_id.as_deref(), Some("kai_mai_pill"));
+            }
+            other => panic!("期望 QuickSlotBind payload，实际 {other:?}"),
+        }
+    }
+
+    #[test]
+    fn quick_slot_bind_roundtrip_clear() {
+        let envelope = ClientRequestEnvelope {
+            payload: Some(client_request_envelope::Payload::QuickSlotBind(
+                QuickSlotBind {
+                    slot: 5,
+                    item_id: None,
+                },
+            )),
+        };
+        let bytes = envelope.encode_to_vec();
+        let decoded = ClientRequestEnvelope::decode(bytes.as_slice())
+            .expect("QuickSlotBind clear decode 失败");
+        match decoded.payload {
+            Some(client_request_envelope::Payload::QuickSlotBind(b)) => {
+                assert_eq!(b.slot, 5);
+                assert!(b.item_id.is_none(), "清空槽位 item_id 应为 None");
+            }
+            other => panic!("期望 QuickSlotBind payload，实际 {other:?}"),
+        }
+    }
+
+    // ─── SkillBarCast ───────────────────────────────────────────
+
+    #[test]
+    fn skill_bar_cast_roundtrip_with_target() {
+        let envelope = ClientRequestEnvelope {
+            payload: Some(client_request_envelope::Payload::SkillBarCast(
+                SkillBarCast {
+                    slot: 0,
+                    target: Some("entity:42".to_string()),
+                },
+            )),
+        };
+        let bytes = envelope.encode_to_vec();
+        let decoded = ClientRequestEnvelope::decode(bytes.as_slice())
+            .expect("SkillBarCast with target decode 失败");
+        match decoded.payload {
+            Some(client_request_envelope::Payload::SkillBarCast(c)) => {
+                assert_eq!(c.slot, 0);
+                assert_eq!(c.target.as_deref(), Some("entity:42"));
+            }
+            other => panic!("期望 SkillBarCast payload，实际 {other:?}"),
+        }
+    }
+
+    #[test]
+    fn skill_bar_cast_roundtrip_without_target() {
+        let envelope = ClientRequestEnvelope {
+            payload: Some(client_request_envelope::Payload::SkillBarCast(
+                SkillBarCast {
+                    slot: 2,
+                    target: None,
+                },
+            )),
+        };
+        let bytes = envelope.encode_to_vec();
+        let decoded = ClientRequestEnvelope::decode(bytes.as_slice())
+            .expect("SkillBarCast no target decode 失败");
+        match decoded.payload {
+            Some(client_request_envelope::Payload::SkillBarCast(c)) => {
+                assert_eq!(c.slot, 2);
+                assert!(c.target.is_none());
+            }
+            other => panic!("期望 SkillBarCast payload，实际 {other:?}"),
+        }
+    }
+
+    // ─── SkillBarBind ───────────────────────────────────────────
+
+    #[test]
+    fn skill_bar_bind_roundtrip_item() {
+        let envelope = ClientRequestEnvelope {
+            payload: Some(client_request_envelope::Payload::SkillBarBind(
+                SkillBarBind {
+                    slot: 1,
+                    binding: Some(SkillBarBinding {
+                        kind: Some(skill_bar_binding::Kind::Item(SkillBarBindingItem {
+                            template_id: "iron_sword".to_string(),
+                        })),
+                    }),
+                },
+            )),
+        };
+        let bytes = envelope.encode_to_vec();
+        let decoded = ClientRequestEnvelope::decode(bytes.as_slice())
+            .expect("SkillBarBind item decode 失败");
+        match decoded.payload {
+            Some(client_request_envelope::Payload::SkillBarBind(b)) => {
+                assert_eq!(b.slot, 1);
+                match b.binding.as_ref().unwrap().kind.as_ref() {
+                    Some(skill_bar_binding::Kind::Item(i)) => {
+                        assert_eq!(i.template_id, "iron_sword");
+                    }
+                    other => panic!("期望 Item binding，实际 {other:?}"),
+                }
+            }
+            other => panic!("期望 SkillBarBind payload，实际 {other:?}"),
+        }
+    }
+
+    #[test]
+    fn skill_bar_bind_roundtrip_skill() {
+        let envelope = ClientRequestEnvelope {
+            payload: Some(client_request_envelope::Payload::SkillBarBind(
+                SkillBarBind {
+                    slot: 2,
+                    binding: Some(SkillBarBinding {
+                        kind: Some(skill_bar_binding::Kind::Skill(SkillBarBindingSkill {
+                            skill_id: "burst_meridian.beng_quan".to_string(),
+                        })),
+                    }),
+                },
+            )),
+        };
+        let bytes = envelope.encode_to_vec();
+        let decoded = ClientRequestEnvelope::decode(bytes.as_slice())
+            .expect("SkillBarBind skill decode 失败");
+        match decoded.payload {
+            Some(client_request_envelope::Payload::SkillBarBind(b)) => {
+                assert_eq!(b.slot, 2);
+                match b.binding.as_ref().unwrap().kind.as_ref() {
+                    Some(skill_bar_binding::Kind::Skill(s)) => {
+                        assert_eq!(s.skill_id, "burst_meridian.beng_quan");
+                    }
+                    other => panic!("期望 Skill binding，实际 {other:?}"),
+                }
+            }
+            other => panic!("期望 SkillBarBind payload，实际 {other:?}"),
+        }
+    }
+
+    #[test]
+    fn skill_bar_bind_roundtrip_clear() {
+        let envelope = ClientRequestEnvelope {
+            payload: Some(client_request_envelope::Payload::SkillBarBind(
+                SkillBarBind {
+                    slot: 0,
+                    binding: None,
+                },
+            )),
+        };
+        let bytes = envelope.encode_to_vec();
+        let decoded = ClientRequestEnvelope::decode(bytes.as_slice())
+            .expect("SkillBarBind clear decode 失败");
+        match decoded.payload {
+            Some(client_request_envelope::Payload::SkillBarBind(b)) => {
+                assert_eq!(b.slot, 0);
+                assert!(b.binding.is_none(), "清空槽位 binding 应为 None");
+            }
+            other => panic!("期望 SkillBarBind payload，实际 {other:?}"),
+        }
+    }
+
+    // ─── SkillConfigIntent ──────────────────────────────────────
+
+    #[test]
+    fn skill_config_intent_roundtrip() {
+        let envelope = ClientRequestEnvelope {
+            payload: Some(client_request_envelope::Payload::SkillConfigIntent(
+                SkillConfigIntent {
+                    skill_id: "zhenmai.sever_chain".to_string(),
+                    json_config: r#"{"meridian_id":"Pericardium","backfire_kind":"tainted_yuan"}"#
+                        .to_string(),
+                },
+            )),
+        };
+        let bytes = envelope.encode_to_vec();
+        let decoded = ClientRequestEnvelope::decode(bytes.as_slice())
+            .expect("SkillConfigIntent C2S decode 失败");
+        match decoded.payload {
+            Some(client_request_envelope::Payload::SkillConfigIntent(s)) => {
+                assert_eq!(s.skill_id, "zhenmai.sever_chain");
+                assert!(s.json_config.contains("Pericardium"));
+            }
+            other => panic!("期望 SkillConfigIntent payload，实际 {other:?}"),
+        }
+    }
+
+    // ─── CombatReincarnate / CombatTerminate / CombatCreateNewCharacter ──
+
+    #[test]
+    fn combat_reincarnate_roundtrip() {
+        let envelope = ClientRequestEnvelope {
+            payload: Some(client_request_envelope::Payload::CombatReincarnate(
+                CombatReincarnate {},
+            )),
+        };
+        let bytes = envelope.encode_to_vec();
+        let decoded = ClientRequestEnvelope::decode(bytes.as_slice())
+            .expect("CombatReincarnate C2S decode 失败");
+        assert!(matches!(
+            decoded.payload,
+            Some(client_request_envelope::Payload::CombatReincarnate(_))
+        ));
+    }
+
+    #[test]
+    fn combat_terminate_roundtrip() {
+        let envelope = ClientRequestEnvelope {
+            payload: Some(client_request_envelope::Payload::CombatTerminate(
+                CombatTerminate {},
+            )),
+        };
+        let bytes = envelope.encode_to_vec();
+        let decoded = ClientRequestEnvelope::decode(bytes.as_slice())
+            .expect("CombatTerminate C2S decode 失败");
+        assert!(matches!(
+            decoded.payload,
+            Some(client_request_envelope::Payload::CombatTerminate(_))
+        ));
+    }
+
+    #[test]
+    fn combat_create_new_character_roundtrip() {
+        let envelope = ClientRequestEnvelope {
+            payload: Some(client_request_envelope::Payload::CombatCreateNewCharacter(
+                CombatCreateNewCharacter {},
+            )),
+        };
+        let bytes = envelope.encode_to_vec();
+        let decoded = ClientRequestEnvelope::decode(bytes.as_slice())
+            .expect("CombatCreateNewCharacter C2S decode 失败");
+        assert!(matches!(
+            decoded.payload,
+            Some(client_request_envelope::Payload::CombatCreateNewCharacter(_))
+        ));
+    }
+
+    // ─── B2 全部 S2C envelope 多路复用 roundtrip ─────────────────
+
+    #[test]
+    fn b2_s2c_all_envelope_variants_roundtrip() {
+        let payloads: Vec<(server_data_envelope::Payload, &str)> = vec![
+            (
+                server_data_envelope::Payload::WoundsSnapshot(WoundsSnapshot { wounds: vec![] }),
+                "WoundsSnapshot",
+            ),
+            (
+                server_data_envelope::Payload::DefenseWindow(DefenseWindow {
+                    duration_ms: 100,
+                    started_at_ms: 0,
+                    expires_at_ms: 100,
+                }),
+                "DefenseWindow",
+            ),
+            (
+                server_data_envelope::Payload::CastSync(CastSync {
+                    phase: CastPhase::Idle as i32,
+                    slot: 0,
+                    duration_ms: 0,
+                    started_at_ms: 0,
+                    outcome: CastOutcome::None as i32,
+                }),
+                "CastSync",
+            ),
+            (
+                server_data_envelope::Payload::QuickSlotConfig(QuickSlotConfig {
+                    slots: vec![],
+                    cooldown_until_ms: vec![],
+                }),
+                "QuickSlotConfig",
+            ),
+            (
+                server_data_envelope::Payload::SkillBarConfig(SkillBarConfig {
+                    slots: vec![],
+                    cooldown_until_ms: vec![],
+                }),
+                "SkillBarConfig",
+            ),
+            (
+                server_data_envelope::Payload::TechniquesSnapshot(TechniquesSnapshot {
+                    entries: vec![],
+                }),
+                "TechniquesSnapshot",
+            ),
+            (
+                server_data_envelope::Payload::UnlocksSync(UnlocksSync {
+                    jiemai: false,
+                    tishi: false,
+                    jueling: false,
+                }),
+                "UnlocksSync",
+            ),
+            (
+                server_data_envelope::Payload::DerivedAttrsSync(DerivedAttrsSync {
+                    flying: false,
+                    flying_qi_remaining: 0.0,
+                    flying_force_descent_at_ms: 0,
+                    phasing: false,
+                    phasing_until_ms: 0,
+                    tribulation_locked: false,
+                    tribulation_stage: String::new(),
+                    throughput_peak_norm: 0.0,
+                    tuike_layers: 0,
+                    vortex_active: false,
+                }),
+                "DerivedAttrsSync",
+            ),
+            (
+                server_data_envelope::Payload::EventStreamPush(EventStreamPush {
+                    channel: EventChannel::Combat as i32,
+                    priority: EventPriority::P2Normal as i32,
+                    source_tag: "test".to_string(),
+                    text: "t".to_string(),
+                    color: 0,
+                    created_at_ms: 0,
+                }),
+                "EventStreamPush",
+            ),
+            (
+                server_data_envelope::Payload::WeaponEquipped(WeaponEquipped {
+                    slot: "main_hand".to_string(),
+                    weapon: None,
+                }),
+                "WeaponEquipped",
+            ),
+            (
+                server_data_envelope::Payload::WeaponBroken(WeaponBroken {
+                    instance_id: 1,
+                    template_id: "t".to_string(),
+                }),
+                "WeaponBroken",
+            ),
+            (
+                server_data_envelope::Payload::TreasureEquipped(TreasureEquipped {
+                    slot: "treasure_belt_0".to_string(),
+                    treasure: None,
+                }),
+                "TreasureEquipped",
+            ),
+            (
+                server_data_envelope::Payload::VortexState(VortexFieldState {
+                    caster: "a".to_string(),
+                    active: false,
+                    center_x: 0.0,
+                    center_y: 0.0,
+                    center_z: 0.0,
+                    radius: 0.0,
+                    delta: 0.0,
+                    env_qi_at_cast: 0.0,
+                    maintain_remaining_ticks: 0,
+                    intercepted_count: 0,
+                    active_skill_id: String::new(),
+                    charge_progress: 0.0,
+                    cooldown_until_ms: 0,
+                    backfire_level: String::new(),
+                    turbulence_radius: 0.0,
+                    turbulence_intensity: 0.0,
+                    turbulence_until_ms: 0,
+                }),
+                "VortexState",
+            ),
+            (
+                server_data_envelope::Payload::DuguPoisonState(DuguPoisonState {
+                    target: "t".to_string(),
+                    active: false,
+                    meridian_id: String::new(),
+                    attacker: String::new(),
+                    attached_at_tick: 0,
+                    poisoner_realm_tier: 0,
+                    loss_per_tick: 0.0,
+                    flow_capacity_after: 0.0,
+                    qi_max_after: 0.0,
+                    server_tick: 0,
+                }),
+                "DuguPoisonState",
+            ),
+            (
+                server_data_envelope::Payload::PoisonDoseEvent(PoisonDoseEvent {
+                    player_entity_id: 1,
+                    dose_amount: 0.0,
+                    side_effect_tag: PoisonSideEffectTag::QiFocusDrift2h as i32,
+                    poison_level_after: 0.0,
+                    digestion_after: 0.0,
+                    at_tick: 0,
+                }),
+                "PoisonDoseEvent",
+            ),
+            (
+                server_data_envelope::Payload::PoisonOverdoseEvent(PoisonOverdoseEvent {
+                    player_entity_id: 1,
+                    severity: PoisonOverdoseSeverity::Mild as i32,
+                    overflow: 0.0,
+                    lifespan_penalty_years: 0.0,
+                    micro_tear_probability: 0.0,
+                    at_tick: 0,
+                }),
+                "PoisonOverdoseEvent",
+            ),
+            (
+                server_data_envelope::Payload::PoisonTraitState(PoisonTraitState {
+                    player_entity_id: 1,
+                    poison_toxicity: 0.0,
+                    digestion_current: 0.0,
+                    digestion_capacity: 0.0,
+                    toxicity_tier_unlocked: false,
+                }),
+                "PoisonTraitState",
+            ),
+            (
+                server_data_envelope::Payload::CarrierState(CarrierState {
+                    carrier: "bone_chip".to_string(),
+                    phase: CarrierChargePhase::Idle as i32,
+                    progress: 0.0,
+                    sealed_qi: 0.0,
+                    sealed_qi_initial: 0.0,
+                    half_life_remaining_ticks: 0,
+                    item_instance_id: None,
+                }),
+                "CarrierState",
+            ),
+            (
+                server_data_envelope::Payload::FalseSkinState(FalseSkinState {
+                    target_id: "t".to_string(),
+                    kind: None,
+                    layers_remaining: 0,
+                    contam_capacity_per_layer: 0.0,
+                    absorbed_contam: 0.0,
+                    equipped_at_tick: 0,
+                    layers: vec![],
+                }),
+                "FalseSkinState",
+            ),
+            (
+                server_data_envelope::Payload::CombatEventFloater(CombatEventFloater {
+                    events: vec![],
+                }),
+                "CombatEventFloater",
+            ),
+            (
+                server_data_envelope::Payload::TechniqueProficiencyUpdate(
+                    TechniqueProficiencyUpdate {
+                        technique_id: "t".to_string(),
+                        proficiency: 0.0,
+                        gain: 0.0,
+                    },
+                ),
+                "TechniqueProficiencyUpdate",
+            ),
+            (
+                server_data_envelope::Payload::PillBuffStatus(PillBuffStatus {
+                    buff_id: "b".to_string(),
+                    remaining_ticks: 0,
+                    effect_multiplier: 0.0,
+                }),
+                "PillBuffStatus",
+            ),
+            (
+                server_data_envelope::Payload::SkillConfigSnapshot(SkillConfigSnapshotProto {
+                    configs: vec![],
+                }),
+                "SkillConfigSnapshot",
+            ),
+        ];
+
+        for (payload, name) in payloads {
+            let envelope = ServerDataEnvelope {
+                payload: Some(payload),
+            };
+            let bytes = envelope.encode_to_vec();
+            let decoded = ServerDataEnvelope::decode(bytes.as_slice())
+                .unwrap_or_else(|e| panic!("{name} envelope decode 失败: {e}"));
+            assert!(
+                decoded.payload.is_some(),
+                "{name} envelope roundtrip 后 payload 应为 Some"
+            );
+        }
+    }
+
+    // ─── B2 全部 C2S envelope 多路复用 roundtrip ─────────────────
+
+    #[test]
+    fn b2_c2s_all_envelope_variants_roundtrip() {
+        let payloads: Vec<(client_request_envelope::Payload, &str)> = vec![
+            (
+                client_request_envelope::Payload::Jiemai(Jiemai {}),
+                "Jiemai",
+            ),
+            (
+                client_request_envelope::Payload::ChargeCarrier(ChargeCarrier {
+                    slot: None,
+                    qi_target: 0.0,
+                }),
+                "ChargeCarrier",
+            ),
+            (
+                client_request_envelope::Payload::ThrowCarrier(ThrowCarrier {
+                    slot: AnqiCarrierSlot::MainHand as i32,
+                    dir_x: 1.0,
+                    dir_y: 0.0,
+                    dir_z: 0.0,
+                    power: 1.0,
+                }),
+                "ThrowCarrier",
+            ),
+            (
+                client_request_envelope::Payload::AnqiContainerSwitch(AnqiContainerSwitch {
+                    to: None,
+                }),
+                "AnqiContainerSwitch",
+            ),
+            (
+                client_request_envelope::Payload::UseQuickSlot(UseQuickSlot { slot: 0 }),
+                "UseQuickSlot",
+            ),
+            (
+                client_request_envelope::Payload::QuickSlotBind(QuickSlotBind {
+                    slot: 0,
+                    item_id: None,
+                }),
+                "QuickSlotBind",
+            ),
+            (
+                client_request_envelope::Payload::SkillBarCast(SkillBarCast {
+                    slot: 0,
+                    target: None,
+                }),
+                "SkillBarCast",
+            ),
+            (
+                client_request_envelope::Payload::SkillBarBind(SkillBarBind {
+                    slot: 0,
+                    binding: None,
+                }),
+                "SkillBarBind",
+            ),
+            (
+                client_request_envelope::Payload::SkillConfigIntent(SkillConfigIntent {
+                    skill_id: "x".to_string(),
+                    json_config: "{}".to_string(),
+                }),
+                "SkillConfigIntent",
+            ),
+            (
+                client_request_envelope::Payload::CombatReincarnate(CombatReincarnate {}),
+                "CombatReincarnate",
+            ),
+            (
+                client_request_envelope::Payload::CombatTerminate(CombatTerminate {}),
+                "CombatTerminate",
+            ),
+            (
+                client_request_envelope::Payload::CombatCreateNewCharacter(
+                    CombatCreateNewCharacter {},
+                ),
+                "CombatCreateNewCharacter",
+            ),
+        ];
+
+        for (payload, name) in payloads {
+            let envelope = ClientRequestEnvelope {
+                payload: Some(payload),
+            };
+            let bytes = envelope.encode_to_vec();
+            let decoded = ClientRequestEnvelope::decode(bytes.as_slice())
+                .unwrap_or_else(|e| panic!("{name} C2S envelope decode 失败: {e}"));
+            assert!(
+                decoded.payload.is_some(),
+                "{name} C2S envelope roundtrip 后 payload 应为 Some"
+            );
+        }
+    }
 }
