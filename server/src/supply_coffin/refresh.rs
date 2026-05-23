@@ -19,6 +19,7 @@ use crate::network::vfx_event_emit::VfxEventRequest;
 use crate::schema::vfx_event::VfxEventPayloadV1;
 use crate::world::dimension::DimensionLayers;
 use crate::world::entity_model::{BongVisualEntity, BongVisualState};
+use crate::world::terrain::{SurfaceProvider, TerrainProviders};
 
 use super::{current_wall_clock_secs, SupplyCoffinGrade, SupplyCoffinRegistry};
 
@@ -44,6 +45,7 @@ pub struct SupplyCoffinMarker {
 pub fn supply_coffin_refresh_tick(
     mut commands: Commands,
     layers: Option<Res<DimensionLayers>>,
+    providers: Option<Res<TerrainProviders>>,
     mut registry: ResMut<SupplyCoffinRegistry>,
     mut audio: EventWriter<PlaySoundRecipeRequest>,
     mut vfx: EventWriter<VfxEventRequest>,
@@ -72,7 +74,8 @@ pub fn supply_coffin_refresh_tick(
             continue;
         }
 
-        let Some(pos) = pick_valid_pos(&mut registry) else {
+        let terrain = providers.as_ref().map(|p| &p.overworld);
+        let Some(pos) = pick_valid_pos(&mut registry, terrain) else {
             if ready_cooldown {
                 registry.delay_oldest_cooldown(grade, RETRY_DELAY_SECS);
             }
@@ -144,14 +147,18 @@ pub fn supply_coffin_refresh_tick(
     }
 }
 
-/// 在 zone AABB 的 xz 区间 + 固定 `spawn_y` 随机选点，最多重试 `MAX_SPAWN_RETRY`
-/// 次，距已有棺位 < `MIN_SPACING_BLOCKS` 时拒绝。
+/// Coffin 漂浮在地表上方的偏移格数（+1 = 地面正上方一格）。
+const SURFACE_Y_OFFSET: f64 = 1.0;
+
+/// 在 zone AABB 的 xz 区间随机选点，查询 `TerrainProvider` 获取真实地表 y 坐标，
+/// 最多重试 `MAX_SPAWN_RETRY` 次，距已有棺位 < `MIN_SPACING_BLOCKS` 时拒绝。
 ///
-/// y 当前用 `registry.spawn_y` 常数（plan ChunkLayer ground-height 查询 deferred；
-/// 见 `## Finish Evidence` 遗留项）。
-fn pick_valid_pos(registry: &mut SupplyCoffinRegistry) -> Option<DVec3> {
+/// 当 `terrain` 为 `None`（raster 未加载）时回退到 `registry.spawn_y`。
+fn pick_valid_pos(
+    registry: &mut SupplyCoffinRegistry,
+    terrain: Option<&impl SurfaceProvider>,
+) -> Option<DVec3> {
     let (min, max) = registry.zone_aabb;
-    let y = registry.spawn_y;
     let span_x = (max.x - min.x).max(1.0);
     let span_z = (max.z - min.z).max(1.0);
 
@@ -161,7 +168,18 @@ fn pick_valid_pos(registry: &mut SupplyCoffinRegistry) -> Option<DVec3> {
         // u64::MAX → 1.0；这里允许 x/z 上下游 inclusive。
         let nx = (r_x as f64) / (u64::MAX as f64);
         let nz = (r_z as f64) / (u64::MAX as f64);
-        let candidate = DVec3::new(min.x + nx * span_x, y, min.z + nz * span_z);
+        let cx = min.x + nx * span_x;
+        let cz = min.z + nz * span_z;
+
+        let y = match terrain {
+            Some(t) => {
+                let info = t.query_surface(cx.floor() as i32, cz.floor() as i32);
+                f64::from(info.y) + SURFACE_Y_OFFSET
+            }
+            None => registry.spawn_y,
+        };
+
+        let candidate = DVec3::new(cx, y, cz);
 
         if registry.min_distance_to_active(candidate) >= MIN_SPACING_BLOCKS {
             return Some(candidate);
@@ -173,20 +191,91 @@ fn pick_valid_pos(registry: &mut SupplyCoffinRegistry) -> Option<DVec3> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::world::terrain::SurfaceInfo;
     use valence::prelude::Entity;
 
+    /// Mock terrain provider that returns a fixed surface y for all queries.
+    struct FlatSurface(i32);
+
+    impl SurfaceProvider for FlatSurface {
+        fn query_surface(&self, _x: i32, _z: i32) -> SurfaceInfo {
+            SurfaceInfo {
+                y: self.0,
+                passable: true,
+            }
+        }
+    }
+
+    /// Mock terrain provider where surface y = abs(x) + abs(z) (varied terrain).
+    struct SlopeSurface;
+
+    impl SurfaceProvider for SlopeSurface {
+        fn query_surface(&self, x: i32, z: i32) -> SurfaceInfo {
+            SurfaceInfo {
+                y: 75 + (x.abs() + z.abs()) % 50,
+                passable: true,
+            }
+        }
+    }
+
     #[test]
-    fn pick_valid_pos_returns_some_for_empty_registry() {
+    fn pick_valid_pos_uses_terrain_surface_height() {
+        let surface_y = 120;
+        let terrain = FlatSurface(surface_y);
+        let mut r = SupplyCoffinRegistry::new(
+            (DVec3::new(0.0, 0.0, 0.0), DVec3::new(100.0, 0.0, 100.0)),
+            65.0, // fallback — should NOT be used when terrain is provided
+            42,
+        );
+        let pos = pick_valid_pos(&mut r, Some(&terrain));
+        assert!(pos.is_some(), "空 registry 任何 xz 位置都合法");
+        let pos = pos.unwrap();
+        let expected_y = f64::from(surface_y) + SURFACE_Y_OFFSET;
+        assert!(
+            (pos.y - expected_y).abs() < 1e-6,
+            "y 应为地表高度({surface_y}) + 偏移({SURFACE_Y_OFFSET}) = {expected_y}，实际 {}",
+            pos.y
+        );
+        assert!(
+            (0.0..=100.0).contains(&pos.x) && (0.0..=100.0).contains(&pos.z),
+            "pos xz 必须落在 AABB 内：{:?}",
+            pos
+        );
+    }
+
+    #[test]
+    fn pick_valid_pos_falls_back_to_spawn_y_without_terrain() {
         let mut r = SupplyCoffinRegistry::new(
             (DVec3::new(0.0, 0.0, 0.0), DVec3::new(100.0, 0.0, 100.0)),
             65.0,
             42,
         );
-        let pos = pick_valid_pos(&mut r);
+        let pos = pick_valid_pos(&mut r, None::<&FlatSurface>);
         assert!(pos.is_some(), "空 registry 任何 xz 位置都合法");
         let pos = pos.unwrap();
         assert!(
-            (0.0..=100.0).contains(&pos.x) && pos.y == 65.0 && (0.0..=100.0).contains(&pos.z),
+            (pos.y - 65.0).abs() < 1e-6,
+            "terrain 不可用时应 fallback 到 spawn_y=65.0，实际 {}",
+            pos.y
+        );
+    }
+
+    #[test]
+    fn pick_valid_pos_returns_some_for_empty_registry() {
+        let terrain = FlatSurface(65);
+        let mut r = SupplyCoffinRegistry::new(
+            (DVec3::new(0.0, 0.0, 0.0), DVec3::new(100.0, 0.0, 100.0)),
+            65.0,
+            42,
+        );
+        let pos = pick_valid_pos(&mut r, Some(&terrain));
+        assert!(pos.is_some(), "空 registry 任何 xz 位置都合法");
+        let pos = pos.unwrap();
+        let expected_y = 65.0 + SURFACE_Y_OFFSET;
+        assert!(
+            (0.0..=100.0).contains(&pos.x)
+                && (pos.y - expected_y).abs() < 1e-6
+                && (0.0..=100.0).contains(&pos.z),
             "pos 必须落在 AABB 内：{:?}",
             pos
         );
@@ -194,21 +283,23 @@ mod tests {
 
     #[test]
     fn pick_valid_pos_returns_none_when_zone_saturated() {
+        let terrain = FlatSurface(65);
         // AABB = 5x5；如果整个区域用 0.5 格密度填满 active，无论怎么 roll 都
-        // 不可能找到 ≥10 块远的位置 → 返回 None
+        // 不可能找到 >=10 块远的位置 → 返回 None
         let mut r = SupplyCoffinRegistry::new(
             (DVec3::new(0.0, 0.0, 0.0), DVec3::new(5.0, 0.0, 5.0)),
             65.0,
             42,
         );
+        let y = 65.0 + SURFACE_Y_OFFSET;
         // 在 AABB 中心放一个 active，整个 AABB 都在 5*1.41 ≈ 7 < 10 范围内
         r.insert_active(
             Entity::from_raw(1),
             SupplyCoffinGrade::Common,
-            DVec3::new(2.5, 65.0, 2.5),
+            DVec3::new(2.5, y, 2.5),
             0,
         );
-        let pos = pick_valid_pos(&mut r);
+        let pos = pick_valid_pos(&mut r, Some(&terrain));
         assert!(
             pos.is_none(),
             "5x5 AABB 中心已占据时不可能找到 >=10 块远的点；实际 {:?}",
@@ -218,25 +309,60 @@ mod tests {
 
     #[test]
     fn pick_valid_pos_respects_min_spacing_when_solvable() {
+        let terrain = FlatSurface(65);
         // AABB 100x100，center 已占；新点必须距 center >= 10
         let mut r = SupplyCoffinRegistry::new(
             (DVec3::new(0.0, 0.0, 0.0), DVec3::new(100.0, 0.0, 100.0)),
             65.0,
             42,
         );
+        let y = 65.0 + SURFACE_Y_OFFSET;
         r.insert_active(
             Entity::from_raw(1),
             SupplyCoffinGrade::Common,
-            DVec3::new(50.0, 65.0, 50.0),
+            DVec3::new(50.0, y, 50.0),
             0,
         );
-        let pos = pick_valid_pos(&mut r).expect("100x100 AABB 应能找到 >=10 远的点");
-        let d = pos.distance(DVec3::new(50.0, 65.0, 50.0));
+        let pos =
+            pick_valid_pos(&mut r, Some(&terrain)).expect("100x100 AABB 应能找到 >=10 远的点");
+        let d = pos.distance(DVec3::new(50.0, y, 50.0));
         assert!(
             d >= MIN_SPACING_BLOCKS,
             "pick_valid_pos 必须遵守最小间距 {}：实际距离 {}",
             MIN_SPACING_BLOCKS,
             d
         );
+    }
+
+    #[test]
+    fn pick_valid_pos_uses_per_column_height_on_varied_terrain() {
+        let terrain = SlopeSurface;
+        let mut r = SupplyCoffinRegistry::new(
+            (DVec3::new(0.0, 0.0, 0.0), DVec3::new(200.0, 0.0, 200.0)),
+            65.0,
+            42,
+        );
+        // Spawn several positions and verify each y matches the terrain query
+        for _ in 0..5 {
+            let pos =
+                pick_valid_pos(&mut r, Some(&terrain)).expect("200x200 空 registry 必能选到点");
+            let expected_info = terrain.query_surface(pos.x.floor() as i32, pos.z.floor() as i32);
+            let expected_y = f64::from(expected_info.y) + SURFACE_Y_OFFSET;
+            assert!(
+                (pos.y - expected_y).abs() < 1e-6,
+                "y 应匹配 terrain.query_surface 返回值 + 偏移：期望 {expected_y}，实际 {}，\
+                 at xz=({:.0}, {:.0})",
+                pos.y,
+                pos.x,
+                pos.z
+            );
+            // Insert to vary subsequent picks
+            r.insert_active(
+                Entity::from_raw(r.active.len() as u32 + 1),
+                SupplyCoffinGrade::Common,
+                pos,
+                0,
+            );
+        }
     }
 }
