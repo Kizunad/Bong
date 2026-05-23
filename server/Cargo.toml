@@ -29,6 +29,11 @@ rusqlite = { version = "0.31", features = ["bundled"] }
 uuid = { version = "1", features = ["v5", "v7", "serde"] }
 zstd = "0.13"
 dotenvy = "0.15"
+prost = "0.13"
+prost-types = "0.13"
+
+[build-dependencies]
+prost-build = "0.13"
 
 [dev-dependencies]
 wiremock = "0.6"

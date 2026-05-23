@@ -1,0 +1,104 @@
+// Server↔Client IPC 信封 — 替代现有 JSON tagged union。
+//
+// P0 阶段只放少量占位 message 证明 codegen pipeline 跑通。
+// 完整的 106 S2C + 88 C2S payload 在 P1/P2 阶段逐步填充。
+syntax = "proto3";
+
+package bong;
+
+import "bong/common.proto";
+
+// ─── S2C 信封（Server → Client） ────────────────────────────────
+
+message ServerDataEnvelope {
+  oneof payload {
+    Welcome          welcome           = 1;
+    Heartbeat        heartbeat         = 2;
+    NarrationBatch   narration         = 3;
+    ZoneInfo         zone_info         = 4;
+    PlayerState      player_state      = 5;
+    CultivationDetail cultivation_detail = 6;
+    // P1/P2 阶段继续追加 field 7..N。
+    // 字段编号一旦分配永不复用（buf breaking 检测保证）。
+  }
+}
+
+// ─── C2S 信封（Client → Server） ────────────────────────────────
+
+message ClientRequestEnvelope {
+  oneof payload {
+    SetMeridianTarget   set_meridian_target   = 1;
+    BreakthroughRequest breakthrough_request  = 2;
+    // P1/P2 阶段继续追加。
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════
+// 以下为占位 message 定义（P0 验证 codegen pipeline，非最终形态）
+// ═══════════════════════════════════════════════════════════════
+
+// ─── S2C payloads ──────────────────────────────────────────────
+
+message Welcome {
+  string message = 1;
+}
+
+message Heartbeat {
+  string message = 1;
+}
+
+message NarrationEntry {
+  string text  = 1;
+  string scope = 2; // broadcast / zone / player
+  string style = 3; // perception / narrative / dialogue
+}
+
+message NarrationBatch {
+  repeated NarrationEntry narrations = 1;
+}
+
+message ZoneInfo {
+  string zone       = 1;
+  double spirit_qi   = 2;
+  uint32 danger_level = 3;
+  string status      = 4;
+  repeated string active_events  = 5;
+  optional string perception_text = 6;
+}
+
+message PlayerState {
+  optional string player        = 1;
+  Realm           realm         = 2;
+  double          spirit_qi     = 3;
+  double          karma         = 4;
+  double          composite_power = 5;
+  string          zone          = 6;
+  optional float  local_neg_pressure = 7;
+}
+
+// 经脉状态：替代并行数组，每条经脉一个 message（plan §8.1 #5 决议）。
+message MeridianState {
+  MeridianId id            = 1;
+  bool       opened        = 2;
+  double     flow_rate     = 3;
+  double     flow_capacity = 4;
+  double     integrity     = 5;
+  double     open_progress = 6;
+  uint32     cracks_count  = 7;
+}
+
+message CultivationDetail {
+  Realm                   realm     = 1;
+  repeated MeridianState  meridians = 2;
+  optional uint32         target_meridian = 3;
+}
+
+// ─── C2S payloads ──────────────────────────────────────────────
+
+message SetMeridianTarget {
+  MeridianId meridian = 1;
+}
+
+message BreakthroughRequest {
+  // 无额外字段，仅触发。
+}

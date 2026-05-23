@@ -1,6 +1,7 @@
 plugins {
     id 'fabric-loom' version '1.6-SNAPSHOT'
     id 'maven-publish'
+    id 'com.google.protobuf' version '0.9.4'
 }
 
 import groovy.json.JsonSlurper
@@ -74,6 +75,9 @@ dependencies {
     // 其他装了 GeckoLib 的 mod 共存，应去掉 include 改成纯 modImplementation 让用户单装。
     include modImplementation("software.bernie.geckolib:geckolib-fabric-${project.minecraft_version}:${project.geckolib_version}")
 
+    // protobuf-java: server↔client IPC protobuf codec（plan-protobuf-ipc-v1）
+    implementation 'com.google.protobuf:protobuf-java:4.28.3'
+
     testImplementation 'org.junit.jupiter:junit-jupiter-api:5.10.0'
     testRuntimeOnly 'org.junit.jupiter:junit-jupiter-engine:5.10.0'
 }
@@ -81,6 +85,23 @@ dependencies {
 java {
     sourceCompatibility = JavaVersion.VERSION_17
     targetCompatibility = JavaVersion.VERSION_17
+}
+
+// ─── Protobuf codegen（plan-protobuf-ipc-v1）──────────────────────
+// proto 源在仓库根 proto/，server 和 client 共用。
+protobuf {
+    protoc {
+        // protobuf-gradle-plugin 自动下载 protoc，无需系统安装。
+        artifact = 'com.google.protobuf:protoc:4.28.3'
+    }
+}
+
+sourceSets {
+    main {
+        proto {
+            srcDir "${rootProject.projectDir}/../proto"
+        }
+    }
 }
 
 def bongBlockManifest = file('../bong_blocks.json')

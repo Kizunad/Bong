@@ -1,0 +1,18 @@
+# buf lint + breaking change 检测配置。
+# codegen 仍用 prost-build（Rust）+ protobuf-gradle-plugin（Java），
+# buf 只负责 lint 和 CI 阶段的 breaking change 拦截。
+version: v2
+
+modules:
+  - path: .
+
+lint:
+  use:
+    - STANDARD
+  except:
+    # Bong 项目不使用包版本后缀（如 bong.v1）。
+    - PACKAGE_VERSION_SUFFIX
+
+breaking:
+  use:
+    - FILE

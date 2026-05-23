@@ -1,0 +1,94 @@
+// 共享基础类型 — server↔client protobuf IPC 的公共依赖。
+//
+// 命名遵循 worldview.md 正典（六境界、20 经脉、10 真元色）。
+// enum 值名采用 SCREAMING_SNAKE_CASE + 类型前缀（protobuf 惯例）。
+syntax = "proto3";
+
+package bong;
+
+// ─── 境界（worldview §三：醒灵/引气/凝脉/固元/通灵/化虚） ────────
+
+enum Realm {
+  REALM_UNSPECIFIED = 0;
+  REALM_AWAKEN      = 1; // 醒灵
+  REALM_INDUCE      = 2; // 引气
+  REALM_CONDENSE    = 3; // 凝脉
+  REALM_SOLIDIFY    = 4; // 固元
+  REALM_SPIRIT      = 5; // 通灵
+  REALM_VOID        = 6; // 化虚
+}
+
+// ─── 经脉（20 条：12 正经 + 8 奇经） ────────────────────────────
+
+enum MeridianId {
+  MERIDIAN_ID_UNSPECIFIED      = 0;
+  // 12 正经
+  MERIDIAN_ID_LUNG             = 1;
+  MERIDIAN_ID_LARGE_INTESTINE  = 2;
+  MERIDIAN_ID_STOMACH          = 3;
+  MERIDIAN_ID_SPLEEN           = 4;
+  MERIDIAN_ID_HEART            = 5;
+  MERIDIAN_ID_SMALL_INTESTINE  = 6;
+  MERIDIAN_ID_BLADDER          = 7;
+  MERIDIAN_ID_KIDNEY           = 8;
+  MERIDIAN_ID_PERICARDIUM      = 9;
+  MERIDIAN_ID_TRIPLE_ENERGIZER = 10;
+  MERIDIAN_ID_GALLBLADDER      = 11;
+  MERIDIAN_ID_LIVER            = 12;
+  // 8 奇经
+  MERIDIAN_ID_REN              = 13;
+  MERIDIAN_ID_DU               = 14;
+  MERIDIAN_ID_CHONG            = 15;
+  MERIDIAN_ID_DAI              = 16;
+  MERIDIAN_ID_YIN_QIAO         = 17;
+  MERIDIAN_ID_YANG_QIAO        = 18;
+  MERIDIAN_ID_YIN_WEI          = 19;
+  MERIDIAN_ID_YANG_WEI         = 20;
+}
+
+// ─── 技能 ───────────────────────────────────────────────────────
+
+enum SkillId {
+  SKILL_ID_UNSPECIFIED = 0;
+  SKILL_ID_HERBALISM   = 1;
+  SKILL_ID_ALCHEMY     = 2;
+  SKILL_ID_FORGING     = 3;
+  SKILL_ID_COMBAT      = 4;
+  SKILL_ID_MINERAL     = 5;
+  SKILL_ID_CULTIVATION = 6;
+}
+
+// ─── 真元色（10 种，worldview §六） ─────────────────────────────
+
+enum ColorKind {
+  COLOR_KIND_UNSPECIFIED = 0;
+  COLOR_KIND_SHARP       = 1;  // 锐
+  COLOR_KIND_HEAVY       = 2;  // 厚
+  COLOR_KIND_MELLOW      = 3;  // 醇
+  COLOR_KIND_SOLID       = 4;  // 实
+  COLOR_KIND_LIGHT       = 5;  // 轻
+  COLOR_KIND_INTRICATE   = 6;  // 巧
+  COLOR_KIND_GENTLE      = 7;  // 柔
+  COLOR_KIND_INSIDIOUS   = 8;  // 阴
+  COLOR_KIND_VIOLENT     = 9;  // 烈
+  COLOR_KIND_TURBID      = 10; // 浊
+}
+
+// ─── 几何 ───────────────────────────────────────────────────────
+
+message Vec3 {
+  double x = 1;
+  double y = 2;
+  double z = 3;
+}
+
+// ─── 物品槽 ─────────────────────────────────────────────────────
+
+message ItemSlot {
+  uint32 slot_index  = 1;
+  string template_id = 2;
+  uint32 count       = 3;
+  // 可选扩展字段（锻造色、耐久等）在 P1/P2 按需补充。
+  optional ColorKind forge_color = 4;
+  optional uint32 durability     = 5;
+}
