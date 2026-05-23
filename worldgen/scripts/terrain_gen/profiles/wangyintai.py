@@ -70,7 +70,7 @@ class WangyintaiGenerator(TerrainProfileGenerator):
             "mofa_decay elevated (~0.55) from millennium of vortex erosion.",
             "surface: smooth_basalt / deepslate / calcite / gray_concrete.",
             "compound_flatten_radius=48 applied by stitcher for layout placement site.",
-            "flora_density uses local ids 1..2 (silent_rubble, cracked_disc_fragment).",
+            "flora_variant_id uses local ids 1..2 (silent_rubble, cracked_disc_fragment).",
             "no water features. Architectural layout: wangyintai_compound.",
         )
 
