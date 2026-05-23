@@ -69,7 +69,19 @@ message ServerDataEnvelope {
     TechniqueProficiencyUpdate technique_proficiency_update = 52;
     PillBuffStatus          pill_buff_status          = 53;
     SkillConfigSnapshotProto skill_config_snapshot    = 54;
-    // P2/P3 阶段继续追加 field 55..N。
+    // ─── P2 B3：社交 / NPC / 身份 / 交易 / 领地 ────────────────
+    SocialAnonymity       social_anonymity        = 55;
+    SocialExposure        social_exposure         = 56;
+    SocialPact            social_pact             = 57;
+    SocialFeud            social_feud             = 58;
+    SocialRenownDelta     social_renown_delta     = 59;
+    IdentityPanelState    identity_panel_state    = 60;
+    NicheIntrusion        niche_intrusion         = 61;
+    NicheGuardianFatigue  niche_guardian_fatigue   = 62;
+    NicheGuardianBroken   niche_guardian_broken    = 63;
+    SparringInvite        sparring_invite         = 64;
+    TradeOffer            trade_offer             = 65;
+    // P2/P3 阶段继续追加 field 66..N。
     // 字段编号一旦分配永不复用（buf breaking 检测保证）。
   }
 }
@@ -120,7 +132,18 @@ message ClientRequestEnvelope {
     CombatReincarnate         combat_reincarnate          = 38;
     CombatTerminate           combat_terminate            = 39;
     CombatCreateNewCharacter  combat_create_new_character = 40;
-    // P2/P3 阶段继续追加 field 41..N。
+    // ─── P2 B3：社交 / NPC / 身份 / 交易 / 领地 C2S ──────────
+    SpiritNichePlace            spirit_niche_place            = 41;
+    SpiritNicheGaze             spirit_niche_gaze             = 42;
+    SpiritNicheMarkCoordinate   spirit_niche_mark_coordinate  = 43;
+    SpiritNicheActivateGuardian spirit_niche_activate_guardian = 44;
+    SparringInviteResponse      sparring_invite_response      = 45;
+    TradeOfferRequest           trade_offer_request           = 46;
+    TradeOfferResponse          trade_offer_response          = 47;
+    NpcInspectRequest           npc_inspect_request           = 48;
+    NpcDialogueChoice           npc_dialogue_choice           = 49;
+    NpcTradeRequest             npc_trade_request             = 50;
+    // P2/P3 阶段继续追加 field 51..N。
   }
 }
 
@@ -1724,4 +1747,255 @@ message CombatTerminate {
 // 与 Rust ClientRequestV1::CombatCreateNewCharacter 精确对应。
 message CombatCreateNewCharacter {
   // 无额外字段，仅触发。
+}
+
+// ═══════════════════════════════════════════════════════════════
+// P2 B3 — 社交 / NPC / 身份 / 交易 / 领地 S2C
+// ═══════════════════════════════════════════════════════════════
+
+// ─── ExposureKind enum ─────────────────────────────────────────
+// 与 Rust ExposureKindV1 精确对应。
+enum ExposureKind {
+  EXPOSURE_KIND_UNSPECIFIED = 0;
+  EXPOSURE_KIND_CHAT        = 1;
+  EXPOSURE_KIND_TRADE       = 2;
+  EXPOSURE_KIND_DIVINE      = 3;
+  EXPOSURE_KIND_DEATH       = 4;
+}
+
+// ─── GuardianKind enum ─────────────────────────────────────────
+// 与 Rust GuardianKindV1 精确对应。
+enum GuardianKind {
+  GUARDIAN_KIND_UNSPECIFIED   = 0;
+  GUARDIAN_KIND_PUPPET        = 1;
+  GUARDIAN_KIND_ZHENFA_TRAP   = 2;
+  GUARDIAN_KIND_BONDED_DAOXIANG = 3;
+}
+
+// ─── RevealedTagKind enum ──────────────────────────────────────
+// 与 Rust RevealedTagKindV1 精确对应。
+enum RevealedTagKind {
+  REVEALED_TAG_KIND_UNSPECIFIED   = 0;
+  REVEALED_TAG_KIND_DUGU_REVEALED = 1;
+  REVEALED_TAG_KIND_ANQI_MASTER   = 2;
+  REVEALED_TAG_KIND_ZHENFA_MASTER = 3;
+  REVEALED_TAG_KIND_BAOMAI_USER   = 4;
+  REVEALED_TAG_KIND_TUIKE_USER    = 5;
+  REVEALED_TAG_KIND_WOLIU_MASTER  = 6;
+  REVEALED_TAG_KIND_ZHENMAI_USER  = 7;
+  REVEALED_TAG_KIND_SWORD_MASTER  = 8;
+  REVEALED_TAG_KIND_FORGE_MASTER  = 9;
+  REVEALED_TAG_KIND_ALCHEMY_MASTER = 10;
+}
+
+// ─── SocialAnonymity S2C ───────────────────────────────────────
+// 与 Rust SocialAnonymityPayloadV1 精确对应。
+
+message SocialRemoteIdentity {
+  string          player_uuid  = 1;
+  bool            anonymous    = 2;
+  optional string display_name = 3;
+  optional string realm_band   = 4;
+  optional string breath_hint  = 5;
+  repeated string renown_tags  = 6;
+}
+
+message SocialAnonymity {
+  string                        viewer  = 1;
+  repeated SocialRemoteIdentity remotes = 2;
+}
+
+// ─── SocialExposure S2C ────────────────────────────────────────
+// 与 Rust SocialExposureEventV1 精确对应（wire 不含 v 字段）。
+
+message SocialExposure {
+  string           actor     = 1;
+  ExposureKind     kind      = 2;
+  repeated string  witnesses = 3;
+  uint64           tick      = 4;
+  optional string  zone      = 5;
+}
+
+// ─── SocialPact S2C ────────────────────────────────────────────
+// 与 Rust SocialPactEventV1 精确对应（wire 不含 v 字段）。
+
+message SocialPact {
+  string left   = 1;
+  string right  = 2;
+  string terms  = 3;
+  uint64 tick   = 4;
+  bool   broken = 5;
+}
+
+// ─── SocialFeud S2C ────────────────────────────────────────────
+// 与 Rust SocialFeudEventV1 精确对应（wire 不含 v 字段）。
+
+message SocialFeud {
+  string          left  = 1;
+  string          right = 2;
+  uint64          tick  = 3;
+  optional string place = 4;
+}
+
+// ─── SocialRenownDelta S2C ─────────────────────────────────────
+// 与 Rust SocialRenownDeltaV1 精确对应（wire 不含 v 字段）。
+
+message SocialRenownDelta {
+  string            char_id         = 1;
+  int32             fame_delta      = 2;
+  int32             notoriety_delta = 3;
+  repeated RenownTag tags_added     = 4;
+  uint64            tick            = 5;
+  string            reason          = 6;
+}
+
+// ─── IdentityPanelState S2C ────────────────────────────────────
+// 与 Rust IdentityPanelStateV1 / IdentityPanelEntryV1 精确对应。
+
+message IdentityPanelEntry {
+  uint32                   identity_id        = 1;
+  string                   display_name       = 2;
+  int32                    reputation_score   = 3;
+  bool                     frozen             = 4;
+  repeated RevealedTagKind revealed_tag_kinds = 5;
+}
+
+message IdentityPanelState {
+  uint32                       active_identity_id       = 1;
+  uint64                       last_switch_tick         = 2;
+  uint64                       cooldown_remaining_ticks = 3;
+  repeated IdentityPanelEntry  identities               = 4;
+}
+
+// ─── NicheIntrusion S2C ────────────────────────────────────────
+// 与 Rust NicheIntrusionEventV1 精确对应（wire 不含 v 字段）。
+
+message NicheIntrusion {
+  int32           niche_pos_x  = 1; // Rust [i32;3] 拆三字段
+  int32           niche_pos_y  = 2;
+  int32           niche_pos_z  = 3;
+  string          intruder_id  = 4;
+  repeated uint64 items_taken  = 5;
+  float           taint_delta  = 6;
+}
+
+// ─── NicheGuardianFatigue S2C ──────────────────────────────────
+// 与 Rust NicheGuardianFatigueV1 精确对应（wire 不含 v 字段）。
+
+message NicheGuardianFatigue {
+  GuardianKind guardian_kind     = 1;
+  uint32       charges_remaining = 2; // Rust u8
+}
+
+// ─── NicheGuardianBroken S2C ───────────────────────────────────
+// 与 Rust NicheGuardianBrokenV1 精确对应（wire 不含 v 字段）。
+
+message NicheGuardianBroken {
+  GuardianKind guardian_kind = 1;
+  string       intruder_id  = 2;
+}
+
+// ─── SparringInvite S2C ────────────────────────────────────────
+// 与 Rust SparringInvitePayloadV1 精确对应。
+
+message SparringInvite {
+  string invite_id    = 1;
+  string initiator    = 2;
+  string target       = 3;
+  string realm_band   = 4;
+  string breath_hint  = 5;
+  string terms        = 6;
+  uint64 expires_at_ms = 7;
+}
+
+// ─── TradeOffer S2C ────────────────────────────────────────────
+// 与 Rust TradeOfferPayloadV1 / TradeItemSummaryV1 精确对应。
+
+message TradeItemSummary {
+  uint64 instance_id   = 1;
+  string item_id       = 2;
+  string display_name  = 3;
+  uint32 stack_count   = 4;
+}
+
+message TradeOffer {
+  string                     offer_id        = 1;
+  string                     initiator       = 2;
+  string                     target          = 3;
+  TradeItemSummary           offered_item    = 4;
+  repeated TradeItemSummary  requested_items = 5;
+  uint64                     expires_at_ms   = 6;
+}
+
+// ═══════════════════════════════════════════════════════════════
+// P2 B3 — 社交 / NPC / 身份 / 交易 / 领地 C2S
+// ═══════════════════════════════════════════════════════════════
+
+// 与 Rust ClientRequestV1::SpiritNichePlace 精确对应。
+message SpiritNichePlace {
+  int32  x                = 1;
+  int32  y                = 2;
+  int32  z                = 3;
+  uint64 item_instance_id = 4;
+}
+
+// 与 Rust ClientRequestV1::SpiritNicheGaze 精确对应。
+message SpiritNicheGaze {
+  int32 x = 1;
+  int32 y = 2;
+  int32 z = 3;
+}
+
+// 与 Rust ClientRequestV1::SpiritNicheMarkCoordinate 精确对应。
+message SpiritNicheMarkCoordinate {
+  int32 x = 1;
+  int32 y = 2;
+  int32 z = 3;
+}
+
+// 与 Rust ClientRequestV1::SpiritNicheActivateGuardian 精确对应。
+message SpiritNicheActivateGuardian {
+  int32            niche_pos_x    = 1; // Rust [i32;3] 拆三字段
+  int32            niche_pos_y    = 2;
+  int32            niche_pos_z    = 3;
+  GuardianKind     guardian_kind  = 4;
+  repeated string  materials      = 5;
+}
+
+// 与 Rust ClientRequestV1::SparringInviteResponse 精确对应。
+message SparringInviteResponse {
+  string invite_id = 1;
+  bool   accepted  = 2;
+  bool   timed_out = 3;
+}
+
+// 与 Rust ClientRequestV1::TradeOfferRequest 精确对应。
+message TradeOfferRequest {
+  string target             = 1;
+  uint64 offered_instance_id = 2;
+}
+
+// 与 Rust ClientRequestV1::TradeOfferResponse 精确对应。
+message TradeOfferResponse {
+  string          offer_id              = 1;
+  bool            accepted              = 2;
+  optional uint64 requested_instance_id = 3;
+}
+
+// 与 Rust ClientRequestV1::NpcInspectRequest 精确对应。
+message NpcInspectRequest {
+  int32 npc_entity_id = 1;
+}
+
+// 与 Rust ClientRequestV1::NpcDialogueChoice 精确对应。
+message NpcDialogueChoice {
+  int32  npc_entity_id = 1;
+  string option_id     = 2;
+}
+
+// 与 Rust ClientRequestV1::NpcTradeRequest 精确对应。
+message NpcTradeRequest {
+  int32           npc_entity_id     = 1;
+  repeated uint64 offered_items     = 2;
+  string          requested_item_id = 3;
 }

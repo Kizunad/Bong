@@ -5339,4 +5339,1020 @@ mod tests {
             );
         }
     }
+
+    // ═══════════════════════════════════════════════════════════════
+    // P2 B3 — 社交 / NPC / 身份 / 交易 / 领地 roundtrip 测试
+    // ═══════════════════════════════════════════════════════════════
+
+    // ─── ExposureKind enum pin ──────────────────────────────────
+
+    #[test]
+    fn exposure_kind_enum_has_all_4_variants_plus_unspecified() {
+        let expected = [
+            (ExposureKind::Unspecified, 0),
+            (ExposureKind::Chat, 1),
+            (ExposureKind::Trade, 2),
+            (ExposureKind::Divine, 3),
+            (ExposureKind::Death, 4),
+        ];
+        for (variant, wire) in expected {
+            assert_eq!(
+                variant as i32, wire,
+                "ExposureKind::{variant:?} wire value 应为 {wire}"
+            );
+        }
+    }
+
+    // ─── GuardianKind enum pin ──────────────────────────────────
+
+    #[test]
+    fn guardian_kind_enum_has_all_3_variants_plus_unspecified() {
+        let expected = [
+            (GuardianKind::Unspecified, 0),
+            (GuardianKind::Puppet, 1),
+            (GuardianKind::ZhenfaTrap, 2),
+            (GuardianKind::BondedDaoxiang, 3),
+        ];
+        for (variant, wire) in expected {
+            assert_eq!(
+                variant as i32, wire,
+                "GuardianKind::{variant:?} wire value 应为 {wire}"
+            );
+        }
+    }
+
+    // ─── RevealedTagKind enum pin ───────────────────────────────
+
+    #[test]
+    fn revealed_tag_kind_enum_has_all_10_variants_plus_unspecified() {
+        let expected = [
+            (RevealedTagKind::Unspecified, 0),
+            (RevealedTagKind::DuguRevealed, 1),
+            (RevealedTagKind::AnqiMaster, 2),
+            (RevealedTagKind::ZhenfaMaster, 3),
+            (RevealedTagKind::BaomaiUser, 4),
+            (RevealedTagKind::TuikeUser, 5),
+            (RevealedTagKind::WoliuMaster, 6),
+            (RevealedTagKind::ZhenmaiUser, 7),
+            (RevealedTagKind::SwordMaster, 8),
+            (RevealedTagKind::ForgeMaster, 9),
+            (RevealedTagKind::AlchemyMaster, 10),
+        ];
+        for (variant, wire) in expected {
+            assert_eq!(
+                variant as i32, wire,
+                "RevealedTagKind::{variant:?} wire value 应为 {wire}"
+            );
+        }
+        assert_eq!(
+            expected.len(),
+            11,
+            "RevealedTagKind 应有 11 个变体（含 UNSPECIFIED）"
+        );
+    }
+
+    // ─── SocialAnonymity S2C ────────────────────────────────────
+
+    #[test]
+    fn social_anonymity_roundtrip_with_remotes() {
+        let msg = SocialAnonymity {
+            viewer: "offline:kiz".to_string(),
+            remotes: vec![
+                SocialRemoteIdentity {
+                    player_uuid: "11111111-1111-1111-1111-111111111111".to_string(),
+                    anonymous: false,
+                    display_name: Some("玄锋".to_string()),
+                    realm_band: Some("condense".to_string()),
+                    breath_hint: Some("cold".to_string()),
+                    renown_tags: vec!["sword_master".to_string()],
+                },
+                SocialRemoteIdentity {
+                    player_uuid: "22222222-2222-2222-2222-222222222222".to_string(),
+                    anonymous: true,
+                    display_name: None,
+                    realm_band: None,
+                    breath_hint: None,
+                    renown_tags: vec![],
+                },
+            ],
+        };
+        let bytes = msg.encode_to_vec();
+        let decoded =
+            SocialAnonymity::decode(bytes.as_slice()).expect("SocialAnonymity decode 失败");
+        assert_eq!(decoded.viewer, "offline:kiz");
+        assert_eq!(decoded.remotes.len(), 2);
+        assert_eq!(decoded.remotes[0].display_name, Some("玄锋".to_string()));
+        assert!(!decoded.remotes[0].anonymous);
+        assert!(decoded.remotes[1].anonymous);
+        assert_eq!(decoded.remotes[1].display_name, None);
+    }
+
+    #[test]
+    fn social_anonymity_roundtrip_empty_remotes() {
+        let msg = SocialAnonymity {
+            viewer: "test".to_string(),
+            remotes: vec![],
+        };
+        let bytes = msg.encode_to_vec();
+        let decoded =
+            SocialAnonymity::decode(bytes.as_slice()).expect("SocialAnonymity empty decode 失败");
+        assert_eq!(decoded.viewer, "test");
+        assert!(decoded.remotes.is_empty());
+    }
+
+    // ─── SocialExposure S2C ─────────────────────────────────────
+
+    #[test]
+    fn social_exposure_roundtrip_all_exposure_kinds() {
+        for kind in [
+            ExposureKind::Chat,
+            ExposureKind::Trade,
+            ExposureKind::Divine,
+            ExposureKind::Death,
+        ] {
+            let msg = SocialExposure {
+                actor: "char:alice".to_string(),
+                kind: kind as i32,
+                witnesses: vec!["char:bob".to_string()],
+                tick: 42,
+                zone: Some("spawn".to_string()),
+            };
+            let bytes = msg.encode_to_vec();
+            let decoded = SocialExposure::decode(bytes.as_slice())
+                .unwrap_or_else(|e| panic!("SocialExposure kind={kind:?} decode 失败: {e}"));
+            assert_eq!(decoded.kind, kind as i32);
+            assert_eq!(decoded.actor, "char:alice");
+            assert_eq!(decoded.witnesses, vec!["char:bob".to_string()]);
+        }
+    }
+
+    #[test]
+    fn social_exposure_roundtrip_no_zone() {
+        let msg = SocialExposure {
+            actor: "a".to_string(),
+            kind: ExposureKind::Chat as i32,
+            witnesses: vec![],
+            tick: 0,
+            zone: None,
+        };
+        let bytes = msg.encode_to_vec();
+        let decoded =
+            SocialExposure::decode(bytes.as_slice()).expect("SocialExposure no zone decode 失败");
+        assert_eq!(decoded.zone, None);
+        assert!(decoded.witnesses.is_empty());
+    }
+
+    // ─── SocialPact S2C ─────────────────────────────────────────
+
+    #[test]
+    fn social_pact_roundtrip_broken_and_intact() {
+        for broken in [true, false] {
+            let msg = SocialPact {
+                left: "char:alice".to_string(),
+                right: "char:bob".to_string(),
+                terms: "non-aggression".to_string(),
+                tick: 1000,
+                broken,
+            };
+            let bytes = msg.encode_to_vec();
+            let decoded = SocialPact::decode(bytes.as_slice())
+                .unwrap_or_else(|e| panic!("SocialPact broken={broken} decode 失败: {e}"));
+            assert_eq!(decoded.broken, broken);
+            assert_eq!(decoded.terms, "non-aggression");
+        }
+    }
+
+    // ─── SocialFeud S2C ─────────────────────────────────────────
+
+    #[test]
+    fn social_feud_roundtrip_with_and_without_place() {
+        let with_place = SocialFeud {
+            left: "a".to_string(),
+            right: "b".to_string(),
+            tick: 500,
+            place: Some("blood_valley".to_string()),
+        };
+        let bytes = with_place.encode_to_vec();
+        let decoded =
+            SocialFeud::decode(bytes.as_slice()).expect("SocialFeud with place decode 失败");
+        assert_eq!(decoded.place, Some("blood_valley".to_string()));
+
+        let no_place = SocialFeud {
+            left: "a".to_string(),
+            right: "b".to_string(),
+            tick: 500,
+            place: None,
+        };
+        let bytes = no_place.encode_to_vec();
+        let decoded =
+            SocialFeud::decode(bytes.as_slice()).expect("SocialFeud no place decode 失败");
+        assert_eq!(decoded.place, None);
+    }
+
+    // ─── SocialRenownDelta S2C ──────────────────────────────────
+
+    #[test]
+    fn social_renown_delta_roundtrip_with_tags() {
+        let msg = SocialRenownDelta {
+            char_id: "char:kiz".to_string(),
+            fame_delta: 100,
+            notoriety_delta: -50,
+            tags_added: vec![RenownTag {
+                tag: "sword_master".to_string(),
+                weight: 1.5,
+                last_seen_tick: 9999,
+                permanent: true,
+            }],
+            tick: 42000,
+            reason: "defeated_elite".to_string(),
+        };
+        let bytes = msg.encode_to_vec();
+        let decoded = SocialRenownDelta::decode(bytes.as_slice())
+            .expect("SocialRenownDelta decode 失败");
+        assert_eq!(decoded.fame_delta, 100);
+        assert_eq!(decoded.notoriety_delta, -50);
+        assert_eq!(decoded.tags_added.len(), 1);
+        assert_eq!(decoded.tags_added[0].tag, "sword_master");
+        assert!(decoded.tags_added[0].permanent);
+    }
+
+    #[test]
+    fn social_renown_delta_roundtrip_no_tags() {
+        let msg = SocialRenownDelta {
+            char_id: "char:test".to_string(),
+            fame_delta: 0,
+            notoriety_delta: 0,
+            tags_added: vec![],
+            tick: 0,
+            reason: "none".to_string(),
+        };
+        let bytes = msg.encode_to_vec();
+        let decoded = SocialRenownDelta::decode(bytes.as_slice())
+            .expect("SocialRenownDelta empty tags decode 失败");
+        assert!(decoded.tags_added.is_empty());
+    }
+
+    // ─── IdentityPanelState S2C ─────────────────────────────────
+
+    #[test]
+    fn identity_panel_state_roundtrip_with_entries() {
+        let msg = IdentityPanelState {
+            active_identity_id: 1,
+            last_switch_tick: 12000,
+            cooldown_remaining_ticks: 12000,
+            identities: vec![
+                IdentityPanelEntry {
+                    identity_id: 0,
+                    display_name: "kiz".to_string(),
+                    reputation_score: -50,
+                    frozen: true,
+                    revealed_tag_kinds: vec![RevealedTagKind::DuguRevealed as i32],
+                },
+                IdentityPanelEntry {
+                    identity_id: 1,
+                    display_name: "alt".to_string(),
+                    reputation_score: 0,
+                    frozen: false,
+                    revealed_tag_kinds: vec![],
+                },
+            ],
+        };
+        let bytes = msg.encode_to_vec();
+        let decoded = IdentityPanelState::decode(bytes.as_slice())
+            .expect("IdentityPanelState decode 失败");
+        assert_eq!(decoded.active_identity_id, 1);
+        assert_eq!(decoded.identities.len(), 2);
+        assert_eq!(decoded.identities[0].display_name, "kiz");
+        assert!(decoded.identities[0].frozen);
+        assert_eq!(
+            decoded.identities[0].revealed_tag_kinds,
+            vec![RevealedTagKind::DuguRevealed as i32]
+        );
+        assert!(!decoded.identities[1].frozen);
+        assert!(decoded.identities[1].revealed_tag_kinds.is_empty());
+    }
+
+    #[test]
+    fn identity_panel_state_roundtrip_empty() {
+        let msg = IdentityPanelState {
+            active_identity_id: 0,
+            last_switch_tick: 0,
+            cooldown_remaining_ticks: 0,
+            identities: vec![],
+        };
+        let bytes = msg.encode_to_vec();
+        let decoded = IdentityPanelState::decode(bytes.as_slice())
+            .expect("IdentityPanelState empty decode 失败");
+        assert!(decoded.identities.is_empty());
+    }
+
+    // ─── NicheIntrusion S2C ─────────────────────────────────────
+
+    #[test]
+    fn niche_intrusion_roundtrip_with_items() {
+        let msg = NicheIntrusion {
+            niche_pos_x: 10,
+            niche_pos_y: 64,
+            niche_pos_z: -20,
+            intruder_id: "char:thief".to_string(),
+            items_taken: vec![1001, 1002, 1003],
+            taint_delta: 0.25,
+        };
+        let bytes = msg.encode_to_vec();
+        let decoded =
+            NicheIntrusion::decode(bytes.as_slice()).expect("NicheIntrusion decode 失败");
+        assert_eq!(decoded.niche_pos_x, 10);
+        assert_eq!(decoded.niche_pos_y, 64);
+        assert_eq!(decoded.niche_pos_z, -20);
+        assert_eq!(decoded.intruder_id, "char:thief");
+        assert_eq!(decoded.items_taken, vec![1001, 1002, 1003]);
+        assert!((decoded.taint_delta - 0.25).abs() < 1e-6);
+    }
+
+    #[test]
+    fn niche_intrusion_roundtrip_no_items() {
+        let msg = NicheIntrusion {
+            niche_pos_x: 0,
+            niche_pos_y: 0,
+            niche_pos_z: 0,
+            intruder_id: "t".to_string(),
+            items_taken: vec![],
+            taint_delta: 0.0,
+        };
+        let bytes = msg.encode_to_vec();
+        let decoded =
+            NicheIntrusion::decode(bytes.as_slice()).expect("NicheIntrusion empty decode 失败");
+        assert!(decoded.items_taken.is_empty());
+    }
+
+    // ─── NicheGuardianFatigue S2C ───────────────────────────────
+
+    #[test]
+    fn niche_guardian_fatigue_roundtrip_all_guardian_kinds() {
+        for kind in [
+            GuardianKind::Puppet,
+            GuardianKind::ZhenfaTrap,
+            GuardianKind::BondedDaoxiang,
+        ] {
+            let msg = NicheGuardianFatigue {
+                guardian_kind: kind as i32,
+                charges_remaining: 3,
+            };
+            let bytes = msg.encode_to_vec();
+            let decoded = NicheGuardianFatigue::decode(bytes.as_slice())
+                .unwrap_or_else(|e| {
+                    panic!("NicheGuardianFatigue kind={kind:?} decode 失败: {e}")
+                });
+            assert_eq!(decoded.guardian_kind, kind as i32);
+            assert_eq!(decoded.charges_remaining, 3);
+        }
+    }
+
+    // ─── NicheGuardianBroken S2C ────────────────────────────────
+
+    #[test]
+    fn niche_guardian_broken_roundtrip() {
+        let msg = NicheGuardianBroken {
+            guardian_kind: GuardianKind::Puppet as i32,
+            intruder_id: "char:raider".to_string(),
+        };
+        let bytes = msg.encode_to_vec();
+        let decoded =
+            NicheGuardianBroken::decode(bytes.as_slice()).expect("NicheGuardianBroken decode 失败");
+        assert_eq!(decoded.guardian_kind, GuardianKind::Puppet as i32);
+        assert_eq!(decoded.intruder_id, "char:raider");
+    }
+
+    // ─── SparringInvite S2C ─────────────────────────────────────
+
+    #[test]
+    fn sparring_invite_roundtrip() {
+        let msg = SparringInvite {
+            invite_id: "sparring:1:a:b".to_string(),
+            initiator: "char:alice".to_string(),
+            target: "char:bob".to_string(),
+            realm_band: "condense".to_string(),
+            breath_hint: "fire".to_string(),
+            terms: "first_blood".to_string(),
+            expires_at_ms: 1700000000000,
+        };
+        let bytes = msg.encode_to_vec();
+        let decoded =
+            SparringInvite::decode(bytes.as_slice()).expect("SparringInvite decode 失败");
+        assert_eq!(decoded.invite_id, "sparring:1:a:b");
+        assert_eq!(decoded.initiator, "char:alice");
+        assert_eq!(decoded.target, "char:bob");
+        assert_eq!(decoded.expires_at_ms, 1700000000000);
+    }
+
+    // ─── TradeOffer S2C ─────────────────────────────────────────
+
+    #[test]
+    fn trade_offer_roundtrip_with_requested_items() {
+        let msg = TradeOffer {
+            offer_id: "trade:abc".to_string(),
+            initiator: "char:alice".to_string(),
+            target: "char:bob".to_string(),
+            offered_item: Some(TradeItemSummary {
+                instance_id: 1001,
+                item_id: "iron_sword".to_string(),
+                display_name: "铁剑".to_string(),
+                stack_count: 1,
+            }),
+            requested_items: vec![TradeItemSummary {
+                instance_id: 2002,
+                item_id: "spirit_grass".to_string(),
+                display_name: "灵草".to_string(),
+                stack_count: 5,
+            }],
+            expires_at_ms: 1700000000000,
+        };
+        let bytes = msg.encode_to_vec();
+        let decoded = TradeOffer::decode(bytes.as_slice()).expect("TradeOffer decode 失败");
+        assert_eq!(decoded.offer_id, "trade:abc");
+        assert!(decoded.offered_item.is_some());
+        let offered = decoded.offered_item.unwrap();
+        assert_eq!(offered.item_id, "iron_sword");
+        assert_eq!(offered.display_name, "铁剑");
+        assert_eq!(decoded.requested_items.len(), 1);
+        assert_eq!(decoded.requested_items[0].stack_count, 5);
+    }
+
+    #[test]
+    fn trade_offer_roundtrip_no_requested_items() {
+        let msg = TradeOffer {
+            offer_id: "trade:def".to_string(),
+            initiator: "a".to_string(),
+            target: "b".to_string(),
+            offered_item: Some(TradeItemSummary {
+                instance_id: 1,
+                item_id: "x".to_string(),
+                display_name: "x".to_string(),
+                stack_count: 1,
+            }),
+            requested_items: vec![],
+            expires_at_ms: 0,
+        };
+        let bytes = msg.encode_to_vec();
+        let decoded =
+            TradeOffer::decode(bytes.as_slice()).expect("TradeOffer empty requested decode 失败");
+        assert!(decoded.requested_items.is_empty());
+    }
+
+    // ─── SpiritNichePlace C2S ───────────────────────────────────
+
+    #[test]
+    fn spirit_niche_place_c2s_roundtrip() {
+        let envelope = ClientRequestEnvelope {
+            payload: Some(client_request_envelope::Payload::SpiritNichePlace(
+                SpiritNichePlace {
+                    x: 11,
+                    y: 64,
+                    z: 10,
+                    item_instance_id: 4242,
+                },
+            )),
+        };
+        let bytes = envelope.encode_to_vec();
+        let decoded = ClientRequestEnvelope::decode(bytes.as_slice())
+            .expect("SpiritNichePlace C2S decode 失败");
+        match decoded.payload {
+            Some(client_request_envelope::Payload::SpiritNichePlace(p)) => {
+                assert_eq!((p.x, p.y, p.z), (11, 64, 10));
+                assert_eq!(p.item_instance_id, 4242);
+            }
+            other => panic!("expected SpiritNichePlace, got {other:?}"),
+        }
+    }
+
+    // ─── SpiritNicheGaze C2S ────────────────────────────────────
+
+    #[test]
+    fn spirit_niche_gaze_c2s_roundtrip() {
+        let envelope = ClientRequestEnvelope {
+            payload: Some(client_request_envelope::Payload::SpiritNicheGaze(
+                SpiritNicheGaze {
+                    x: 11,
+                    y: 64,
+                    z: 10,
+                },
+            )),
+        };
+        let bytes = envelope.encode_to_vec();
+        let decoded = ClientRequestEnvelope::decode(bytes.as_slice())
+            .expect("SpiritNicheGaze C2S decode 失败");
+        match decoded.payload {
+            Some(client_request_envelope::Payload::SpiritNicheGaze(p)) => {
+                assert_eq!((p.x, p.y, p.z), (11, 64, 10));
+            }
+            other => panic!("expected SpiritNicheGaze, got {other:?}"),
+        }
+    }
+
+    // ─── SpiritNicheMarkCoordinate C2S ──────────────────────────
+
+    #[test]
+    fn spirit_niche_mark_coordinate_c2s_roundtrip() {
+        let envelope = ClientRequestEnvelope {
+            payload: Some(
+                client_request_envelope::Payload::SpiritNicheMarkCoordinate(
+                    SpiritNicheMarkCoordinate {
+                        x: 11,
+                        y: 64,
+                        z: 10,
+                    },
+                ),
+            ),
+        };
+        let bytes = envelope.encode_to_vec();
+        let decoded = ClientRequestEnvelope::decode(bytes.as_slice())
+            .expect("SpiritNicheMarkCoordinate C2S decode 失败");
+        assert!(matches!(
+            decoded.payload,
+            Some(client_request_envelope::Payload::SpiritNicheMarkCoordinate(_))
+        ));
+    }
+
+    // ─── SpiritNicheActivateGuardian C2S ────────────────────────
+
+    #[test]
+    fn spirit_niche_activate_guardian_c2s_roundtrip_all_kinds() {
+        for kind in [
+            GuardianKind::Puppet,
+            GuardianKind::ZhenfaTrap,
+            GuardianKind::BondedDaoxiang,
+        ] {
+            let envelope = ClientRequestEnvelope {
+                payload: Some(
+                    client_request_envelope::Payload::SpiritNicheActivateGuardian(
+                        SpiritNicheActivateGuardian {
+                            niche_pos_x: 1,
+                            niche_pos_y: 64,
+                            niche_pos_z: -2,
+                            guardian_kind: kind as i32,
+                            materials: vec!["bone_powder".to_string()],
+                        },
+                    ),
+                ),
+            };
+            let bytes = envelope.encode_to_vec();
+            let decoded = ClientRequestEnvelope::decode(bytes.as_slice()).unwrap_or_else(|e| {
+                panic!("SpiritNicheActivateGuardian kind={kind:?} C2S decode 失败: {e}")
+            });
+            match decoded.payload {
+                Some(client_request_envelope::Payload::SpiritNicheActivateGuardian(p)) => {
+                    assert_eq!(p.guardian_kind, kind as i32);
+                    assert_eq!(p.materials, vec!["bone_powder".to_string()]);
+                }
+                other => panic!("expected SpiritNicheActivateGuardian, got {other:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn spirit_niche_activate_guardian_c2s_empty_materials() {
+        let envelope = ClientRequestEnvelope {
+            payload: Some(
+                client_request_envelope::Payload::SpiritNicheActivateGuardian(
+                    SpiritNicheActivateGuardian {
+                        niche_pos_x: 0,
+                        niche_pos_y: 0,
+                        niche_pos_z: 0,
+                        guardian_kind: GuardianKind::Puppet as i32,
+                        materials: vec![],
+                    },
+                ),
+            ),
+        };
+        let bytes = envelope.encode_to_vec();
+        let decoded = ClientRequestEnvelope::decode(bytes.as_slice())
+            .expect("SpiritNicheActivateGuardian empty materials C2S decode 失败");
+        match decoded.payload {
+            Some(client_request_envelope::Payload::SpiritNicheActivateGuardian(p)) => {
+                assert!(p.materials.is_empty());
+            }
+            other => panic!("expected SpiritNicheActivateGuardian, got {other:?}"),
+        }
+    }
+
+    // ─── SparringInviteResponse C2S ─────────────────────────────
+
+    #[test]
+    fn sparring_invite_response_c2s_roundtrip_accept_and_decline() {
+        for (accepted, timed_out) in [(true, false), (false, false), (false, true)] {
+            let envelope = ClientRequestEnvelope {
+                payload: Some(client_request_envelope::Payload::SparringInviteResponse(
+                    SparringInviteResponse {
+                        invite_id: "sparring:1:a:b".to_string(),
+                        accepted,
+                        timed_out,
+                    },
+                )),
+            };
+            let bytes = envelope.encode_to_vec();
+            let decoded = ClientRequestEnvelope::decode(bytes.as_slice()).unwrap_or_else(|e| {
+                panic!("SparringInviteResponse accepted={accepted} timed_out={timed_out} C2S decode 失败: {e}")
+            });
+            match decoded.payload {
+                Some(client_request_envelope::Payload::SparringInviteResponse(p)) => {
+                    assert_eq!(p.accepted, accepted);
+                    assert_eq!(p.timed_out, timed_out);
+                    assert_eq!(p.invite_id, "sparring:1:a:b");
+                }
+                other => panic!("expected SparringInviteResponse, got {other:?}"),
+            }
+        }
+    }
+
+    // ─── TradeOfferRequest C2S ──────────────────────────────────
+
+    #[test]
+    fn trade_offer_request_c2s_roundtrip() {
+        let envelope = ClientRequestEnvelope {
+            payload: Some(client_request_envelope::Payload::TradeOfferRequest(
+                TradeOfferRequest {
+                    target: "entity:42".to_string(),
+                    offered_instance_id: 1001,
+                },
+            )),
+        };
+        let bytes = envelope.encode_to_vec();
+        let decoded = ClientRequestEnvelope::decode(bytes.as_slice())
+            .expect("TradeOfferRequest C2S decode 失败");
+        match decoded.payload {
+            Some(client_request_envelope::Payload::TradeOfferRequest(p)) => {
+                assert_eq!(p.target, "entity:42");
+                assert_eq!(p.offered_instance_id, 1001);
+            }
+            other => panic!("expected TradeOfferRequest, got {other:?}"),
+        }
+    }
+
+    // ─── TradeOfferResponse C2S ─────────────────────────────────
+
+    #[test]
+    fn trade_offer_response_c2s_roundtrip_accepted_and_declined() {
+        // Accepted with requested item
+        let envelope = ClientRequestEnvelope {
+            payload: Some(client_request_envelope::Payload::TradeOfferResponse(
+                TradeOfferResponse {
+                    offer_id: "trade:abc".to_string(),
+                    accepted: true,
+                    requested_instance_id: Some(2002),
+                },
+            )),
+        };
+        let bytes = envelope.encode_to_vec();
+        let decoded = ClientRequestEnvelope::decode(bytes.as_slice())
+            .expect("TradeOfferResponse accepted C2S decode 失败");
+        match decoded.payload {
+            Some(client_request_envelope::Payload::TradeOfferResponse(p)) => {
+                assert!(p.accepted);
+                assert_eq!(p.requested_instance_id, Some(2002));
+            }
+            other => panic!("expected TradeOfferResponse, got {other:?}"),
+        }
+
+        // Declined (no requested item)
+        let envelope = ClientRequestEnvelope {
+            payload: Some(client_request_envelope::Payload::TradeOfferResponse(
+                TradeOfferResponse {
+                    offer_id: "trade:abc".to_string(),
+                    accepted: false,
+                    requested_instance_id: None,
+                },
+            )),
+        };
+        let bytes = envelope.encode_to_vec();
+        let decoded = ClientRequestEnvelope::decode(bytes.as_slice())
+            .expect("TradeOfferResponse declined C2S decode 失败");
+        match decoded.payload {
+            Some(client_request_envelope::Payload::TradeOfferResponse(p)) => {
+                assert!(!p.accepted);
+                assert_eq!(p.requested_instance_id, None);
+            }
+            other => panic!("expected TradeOfferResponse, got {other:?}"),
+        }
+    }
+
+    // ─── NpcInspectRequest C2S ──────────────────────────────────
+
+    #[test]
+    fn npc_inspect_request_c2s_roundtrip() {
+        let envelope = ClientRequestEnvelope {
+            payload: Some(client_request_envelope::Payload::NpcInspectRequest(
+                NpcInspectRequest { npc_entity_id: 42 },
+            )),
+        };
+        let bytes = envelope.encode_to_vec();
+        let decoded = ClientRequestEnvelope::decode(bytes.as_slice())
+            .expect("NpcInspectRequest C2S decode 失败");
+        match decoded.payload {
+            Some(client_request_envelope::Payload::NpcInspectRequest(p)) => {
+                assert_eq!(p.npc_entity_id, 42);
+            }
+            other => panic!("expected NpcInspectRequest, got {other:?}"),
+        }
+    }
+
+    // ─── NpcDialogueChoice C2S ──────────────────────────────────
+
+    #[test]
+    fn npc_dialogue_choice_c2s_roundtrip() {
+        let envelope = ClientRequestEnvelope {
+            payload: Some(client_request_envelope::Payload::NpcDialogueChoice(
+                NpcDialogueChoice {
+                    npc_entity_id: 42,
+                    option_id: "trade".to_string(),
+                },
+            )),
+        };
+        let bytes = envelope.encode_to_vec();
+        let decoded = ClientRequestEnvelope::decode(bytes.as_slice())
+            .expect("NpcDialogueChoice C2S decode 失败");
+        match decoded.payload {
+            Some(client_request_envelope::Payload::NpcDialogueChoice(p)) => {
+                assert_eq!(p.npc_entity_id, 42);
+                assert_eq!(p.option_id, "trade");
+            }
+            other => panic!("expected NpcDialogueChoice, got {other:?}"),
+        }
+    }
+
+    // ─── NpcTradeRequest C2S ────────────────────────────────────
+
+    #[test]
+    fn npc_trade_request_c2s_roundtrip_with_and_without_offers() {
+        // With offered items
+        let envelope = ClientRequestEnvelope {
+            payload: Some(client_request_envelope::Payload::NpcTradeRequest(
+                NpcTradeRequest {
+                    npc_entity_id: 42,
+                    offered_items: vec![1001, 1002],
+                    requested_item_id: "spirit_grass".to_string(),
+                },
+            )),
+        };
+        let bytes = envelope.encode_to_vec();
+        let decoded = ClientRequestEnvelope::decode(bytes.as_slice())
+            .expect("NpcTradeRequest with offers C2S decode 失败");
+        match decoded.payload {
+            Some(client_request_envelope::Payload::NpcTradeRequest(p)) => {
+                assert_eq!(p.npc_entity_id, 42);
+                assert_eq!(p.offered_items, vec![1001, 1002]);
+                assert_eq!(p.requested_item_id, "spirit_grass");
+            }
+            other => panic!("expected NpcTradeRequest, got {other:?}"),
+        }
+
+        // Without offered items
+        let envelope = ClientRequestEnvelope {
+            payload: Some(client_request_envelope::Payload::NpcTradeRequest(
+                NpcTradeRequest {
+                    npc_entity_id: 42,
+                    offered_items: vec![],
+                    requested_item_id: "spirit_grass".to_string(),
+                },
+            )),
+        };
+        let bytes = envelope.encode_to_vec();
+        let decoded = ClientRequestEnvelope::decode(bytes.as_slice())
+            .expect("NpcTradeRequest no offers C2S decode 失败");
+        match decoded.payload {
+            Some(client_request_envelope::Payload::NpcTradeRequest(p)) => {
+                assert!(p.offered_items.is_empty());
+            }
+            other => panic!("expected NpcTradeRequest, got {other:?}"),
+        }
+    }
+
+    // ─── B3 全部 S2C envelope 多路复用 roundtrip ─────────────────
+
+    #[test]
+    fn b3_s2c_all_envelope_variants_roundtrip() {
+        let payloads: Vec<(server_data_envelope::Payload, &str)> = vec![
+            (
+                server_data_envelope::Payload::SocialAnonymity(SocialAnonymity {
+                    viewer: "test".to_string(),
+                    remotes: vec![],
+                }),
+                "SocialAnonymity",
+            ),
+            (
+                server_data_envelope::Payload::SocialExposure(SocialExposure {
+                    actor: "a".to_string(),
+                    kind: ExposureKind::Chat as i32,
+                    witnesses: vec![],
+                    tick: 0,
+                    zone: None,
+                }),
+                "SocialExposure",
+            ),
+            (
+                server_data_envelope::Payload::SocialPact(SocialPact {
+                    left: "a".to_string(),
+                    right: "b".to_string(),
+                    terms: "t".to_string(),
+                    tick: 0,
+                    broken: false,
+                }),
+                "SocialPact",
+            ),
+            (
+                server_data_envelope::Payload::SocialFeud(SocialFeud {
+                    left: "a".to_string(),
+                    right: "b".to_string(),
+                    tick: 0,
+                    place: None,
+                }),
+                "SocialFeud",
+            ),
+            (
+                server_data_envelope::Payload::SocialRenownDelta(SocialRenownDelta {
+                    char_id: "c".to_string(),
+                    fame_delta: 0,
+                    notoriety_delta: 0,
+                    tags_added: vec![],
+                    tick: 0,
+                    reason: "r".to_string(),
+                }),
+                "SocialRenownDelta",
+            ),
+            (
+                server_data_envelope::Payload::IdentityPanelState(IdentityPanelState {
+                    active_identity_id: 0,
+                    last_switch_tick: 0,
+                    cooldown_remaining_ticks: 0,
+                    identities: vec![],
+                }),
+                "IdentityPanelState",
+            ),
+            (
+                server_data_envelope::Payload::NicheIntrusion(NicheIntrusion {
+                    niche_pos_x: 0,
+                    niche_pos_y: 0,
+                    niche_pos_z: 0,
+                    intruder_id: "t".to_string(),
+                    items_taken: vec![],
+                    taint_delta: 0.0,
+                }),
+                "NicheIntrusion",
+            ),
+            (
+                server_data_envelope::Payload::NicheGuardianFatigue(NicheGuardianFatigue {
+                    guardian_kind: GuardianKind::Puppet as i32,
+                    charges_remaining: 0,
+                }),
+                "NicheGuardianFatigue",
+            ),
+            (
+                server_data_envelope::Payload::NicheGuardianBroken(NicheGuardianBroken {
+                    guardian_kind: GuardianKind::Puppet as i32,
+                    intruder_id: "t".to_string(),
+                }),
+                "NicheGuardianBroken",
+            ),
+            (
+                server_data_envelope::Payload::SparringInvite(SparringInvite {
+                    invite_id: "i".to_string(),
+                    initiator: "a".to_string(),
+                    target: "b".to_string(),
+                    realm_band: "r".to_string(),
+                    breath_hint: "h".to_string(),
+                    terms: "t".to_string(),
+                    expires_at_ms: 0,
+                }),
+                "SparringInvite",
+            ),
+            (
+                server_data_envelope::Payload::TradeOffer(TradeOffer {
+                    offer_id: "o".to_string(),
+                    initiator: "a".to_string(),
+                    target: "b".to_string(),
+                    offered_item: Some(TradeItemSummary {
+                        instance_id: 1,
+                        item_id: "x".to_string(),
+                        display_name: "x".to_string(),
+                        stack_count: 1,
+                    }),
+                    requested_items: vec![],
+                    expires_at_ms: 0,
+                }),
+                "TradeOffer",
+            ),
+        ];
+
+        for (payload, name) in payloads {
+            let envelope = ServerDataEnvelope {
+                payload: Some(payload),
+            };
+            let bytes = envelope.encode_to_vec();
+            let decoded = ServerDataEnvelope::decode(bytes.as_slice())
+                .unwrap_or_else(|e| panic!("{name} B3 S2C envelope decode 失败: {e}"));
+            assert!(
+                decoded.payload.is_some(),
+                "{name} B3 S2C envelope roundtrip 后 payload 应为 Some"
+            );
+        }
+    }
+
+    // ─── B3 全部 C2S envelope 多路复用 roundtrip ─────────────────
+
+    #[test]
+    fn b3_c2s_all_envelope_variants_roundtrip() {
+        let payloads: Vec<(client_request_envelope::Payload, &str)> = vec![
+            (
+                client_request_envelope::Payload::SpiritNichePlace(SpiritNichePlace {
+                    x: 0,
+                    y: 0,
+                    z: 0,
+                    item_instance_id: 0,
+                }),
+                "SpiritNichePlace",
+            ),
+            (
+                client_request_envelope::Payload::SpiritNicheGaze(SpiritNicheGaze {
+                    x: 0,
+                    y: 0,
+                    z: 0,
+                }),
+                "SpiritNicheGaze",
+            ),
+            (
+                client_request_envelope::Payload::SpiritNicheMarkCoordinate(
+                    SpiritNicheMarkCoordinate { x: 0, y: 0, z: 0 },
+                ),
+                "SpiritNicheMarkCoordinate",
+            ),
+            (
+                client_request_envelope::Payload::SpiritNicheActivateGuardian(
+                    SpiritNicheActivateGuardian {
+                        niche_pos_x: 0,
+                        niche_pos_y: 0,
+                        niche_pos_z: 0,
+                        guardian_kind: GuardianKind::Puppet as i32,
+                        materials: vec![],
+                    },
+                ),
+                "SpiritNicheActivateGuardian",
+            ),
+            (
+                client_request_envelope::Payload::SparringInviteResponse(SparringInviteResponse {
+                    invite_id: "i".to_string(),
+                    accepted: false,
+                    timed_out: false,
+                }),
+                "SparringInviteResponse",
+            ),
+            (
+                client_request_envelope::Payload::TradeOfferRequest(TradeOfferRequest {
+                    target: "t".to_string(),
+                    offered_instance_id: 0,
+                }),
+                "TradeOfferRequest",
+            ),
+            (
+                client_request_envelope::Payload::TradeOfferResponse(TradeOfferResponse {
+                    offer_id: "o".to_string(),
+                    accepted: false,
+                    requested_instance_id: None,
+                }),
+                "TradeOfferResponse",
+            ),
+            (
+                client_request_envelope::Payload::NpcInspectRequest(NpcInspectRequest {
+                    npc_entity_id: 0,
+                }),
+                "NpcInspectRequest",
+            ),
+            (
+                client_request_envelope::Payload::NpcDialogueChoice(NpcDialogueChoice {
+                    npc_entity_id: 0,
+                    option_id: "o".to_string(),
+                }),
+                "NpcDialogueChoice",
+            ),
+            (
+                client_request_envelope::Payload::NpcTradeRequest(NpcTradeRequest {
+                    npc_entity_id: 0,
+                    offered_items: vec![],
+                    requested_item_id: "r".to_string(),
+                }),
+                "NpcTradeRequest",
+            ),
+        ];
+
+        for (payload, name) in payloads {
+            let envelope = ClientRequestEnvelope {
+                payload: Some(payload),
+            };
+            let bytes = envelope.encode_to_vec();
+            let decoded = ClientRequestEnvelope::decode(bytes.as_slice())
+                .unwrap_or_else(|e| panic!("{name} B3 C2S envelope decode 失败: {e}"));
+            assert!(
+                decoded.payload.is_some(),
+                "{name} B3 C2S envelope roundtrip 后 payload 应为 Some"
+            );
+        }
+    }
 }
