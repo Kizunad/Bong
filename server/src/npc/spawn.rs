@@ -2014,6 +2014,176 @@ mod tests {
         );
     }
 
+    /// Helper: build a real (non-fallback) SignedSkin for testing.
+    fn real_signed_skin(label: &str) -> crate::skin::SignedSkin {
+        crate::skin::SignedSkin {
+            value: format!("value-{label}"),
+            signature: format!("sig-{label}"),
+            source: crate::skin::SkinSource::MineSkinRandom {
+                hash: label.to_string(),
+            },
+        }
+    }
+
+    /// Helper: create a SkinPool pre-loaded with real skins for every
+    /// PREFETCH_KEYS bucket so that `next_for_profile` returns a non-fallback
+    /// skin regardless of the resolved pool key.
+    fn pool_with_real_skins() -> SkinPool {
+        let mut pool = SkinPool::default();
+        for key in crate::skin::npc_skin_selector::NpcSkinPoolKey::PREFETCH_KEYS {
+            for i in 0..3 {
+                pool.insert_for_key(key, real_signed_skin(&format!("{}-{i}", key.as_str())));
+            }
+        }
+        pool
+    }
+
+    #[test]
+    fn spawn_disciple_with_real_skin_attaches_npc_player_skin_and_player_kind() {
+        let mut app = App::new();
+        app.add_systems(
+            valence::prelude::Startup,
+            (
+                setup_test_layer,
+                spawn_test_disciple_with_skin.after(setup_test_layer),
+            ),
+        );
+        app.update();
+        app.update();
+
+        let disciple = only_spawned_npc(&mut app);
+
+        let kind = *app
+            .world()
+            .get::<EntityKind>(disciple)
+            .expect("disciple should have EntityKind");
+        assert_eq!(
+            kind,
+            EntityKind::PLAYER,
+            "disciple spawned with a real skin should use PLAYER entity kind, got {:?}",
+            kind
+        );
+
+        let npc_skin = app
+            .world()
+            .get::<NpcPlayerSkin>(disciple)
+            .expect("disciple spawned with real skin must have NpcPlayerSkin component");
+        assert!(
+            !npc_skin.skin.is_fallback(),
+            "NpcPlayerSkin.skin should be a real (non-fallback) skin"
+        );
+        assert!(
+            !npc_skin.name.is_empty(),
+            "NpcPlayerSkin.name should be non-empty"
+        );
+    }
+
+    #[test]
+    fn spawn_disciple_without_skin_pool_falls_back_to_villager() {
+        let mut app = App::new();
+        app.add_systems(
+            valence::prelude::Startup,
+            (
+                setup_test_layer,
+                spawn_test_disciple.after(setup_test_layer),
+            ),
+        );
+        app.update();
+        app.update();
+
+        let disciple = only_spawned_npc(&mut app);
+
+        let kind = *app
+            .world()
+            .get::<EntityKind>(disciple)
+            .expect("disciple should have EntityKind");
+        assert_eq!(
+            kind,
+            EntityKind::VILLAGER,
+            "disciple spawned without skin pool should fall back to VILLAGER, got {:?}",
+            kind
+        );
+
+        assert!(
+            app.world().get::<NpcPlayerSkin>(disciple).is_none(),
+            "disciple spawned without skin pool must NOT have NpcPlayerSkin component"
+        );
+    }
+
+    #[test]
+    fn spawn_disciple_with_empty_skin_pool_falls_back_to_villager() {
+        let mut app = App::new();
+        app.add_systems(
+            valence::prelude::Startup,
+            (
+                setup_test_layer,
+                spawn_test_disciple_with_empty_pool.after(setup_test_layer),
+            ),
+        );
+        app.update();
+        app.update();
+
+        let disciple = only_spawned_npc(&mut app);
+
+        let kind = *app
+            .world()
+            .get::<EntityKind>(disciple)
+            .expect("disciple should have EntityKind");
+        assert_eq!(
+            kind,
+            EntityKind::VILLAGER,
+            "disciple spawned with empty skin pool should fall back to VILLAGER because draw_npc_skin returns a fallback skin, got {:?}",
+            kind
+        );
+
+        assert!(
+            app.world().get::<NpcPlayerSkin>(disciple).is_none(),
+            "disciple spawned with empty (fallback) skin pool must NOT have NpcPlayerSkin — fallback skins are filtered out"
+        );
+    }
+
+    fn spawn_test_disciple_with_skin(mut commands: Commands, layer: Res<TestLayer>) {
+        let mut pool = pool_with_real_skins();
+        spawn_disciple_npc_at(
+            &mut commands,
+            NpcSkinSpawnContext::new(Some(&mut pool), NpcSkinFallbackPolicy::AllowFallback),
+            layer.0,
+            DEFAULT_SPAWN_ZONE_NAME,
+            DVec3::new(42.0, 66.0, 42.0),
+            DVec3::new(42.0, 66.0, 42.0),
+            FactionId::Attack,
+            FactionRank::Disciple,
+            Realm::Awaken,
+            None,
+            0.0,
+        );
+    }
+
+    fn spawn_test_disciple_with_empty_pool(mut commands: Commands, layer: Res<TestLayer>) {
+        let mut pool = SkinPool::default();
+        // Mark fallback_mode so `ready_for_spawn()` returns true — but no actual skins,
+        // so `next_for_profile` yields `SignedSkin::fallback()`.
+        pool.insert_for_key(
+            crate::skin::npc_skin_selector::NpcSkinPoolKey(
+                crate::skin::npc_skin_selector::NpcSkinTier::Other,
+            ),
+            crate::skin::SignedSkin::fallback(),
+        );
+        spawn_disciple_npc_at(
+            &mut commands,
+            NpcSkinSpawnContext::new(Some(&mut pool), NpcSkinFallbackPolicy::AllowFallback),
+            layer.0,
+            DEFAULT_SPAWN_ZONE_NAME,
+            DVec3::new(42.0, 66.0, 42.0),
+            DVec3::new(42.0, 66.0, 42.0),
+            FactionId::Attack,
+            FactionRank::Disciple,
+            Realm::Awaken,
+            None,
+            0.0,
+        );
+    }
+
     fn spawn_test_relic_guard(mut commands: Commands, layer: Res<TestLayer>) {
         spawn_relic_guard_npc_at(
             &mut commands,
