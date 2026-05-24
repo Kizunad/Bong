@@ -2831,6 +2831,17 @@ impl ServerDataV1 {
 
         Ok(bytes)
     }
+
+    /// Encode the payload as a protobuf `ServerDataEnvelope`.
+    pub fn to_proto_bytes(&self) -> Vec<u8> {
+        use super::proto_convert::server_data_to_proto_payload;
+        use prost::Message;
+
+        let envelope = super::proto_gen::bong::ServerDataEnvelope {
+            payload: Some(server_data_to_proto_payload(&self.payload)),
+        };
+        envelope.encode_to_vec()
+    }
 }
 
 impl ServerDataPayloadV1 {
