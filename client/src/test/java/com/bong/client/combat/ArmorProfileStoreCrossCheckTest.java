@@ -1,6 +1,7 @@
 package com.bong.client.combat;
 
 import com.bong.client.inventory.model.EquipSlotType;
+import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import org.junit.jupiter.api.Test;
@@ -48,6 +49,11 @@ class ArmorProfileStoreCrossCheckTest {
         assertEquals(EquipSlotType.CHEST, ArmorProfileStore.equipSlotForItemId(" IRON_PLATE_CHEST "));
     }
 
+    private static float floatOrZero(JsonObject obj, String key) {
+        JsonElement e = obj.get(key);
+        return (e != null && !e.isJsonNull()) ? e.getAsFloat() : 0f;
+    }
+
     private void assertMatchesClient(Path jsonFile) {
         JsonObject root;
         try {
@@ -64,15 +70,15 @@ class ArmorProfileStoreCrossCheckTest {
             "ArmorProfileStore mirror is missing template_id '" + templateId + "' from " + jsonFile.getFileName()
                 + " — add it to BY_ITEM_ID or remove the server JSON.");
 
-        assertEquals(mitigation.get("cut").getAsFloat(), client.cut(), TOLERANCE,
+        assertEquals(floatOrZero(mitigation, "cut"), client.cut(), TOLERANCE,
             "cut mismatch for " + templateId);
-        assertEquals(mitigation.get("blunt").getAsFloat(), client.blunt(), TOLERANCE,
+        assertEquals(floatOrZero(mitigation, "blunt"), client.blunt(), TOLERANCE,
             "blunt mismatch for " + templateId);
-        assertEquals(mitigation.get("pierce").getAsFloat(), client.pierce(), TOLERANCE,
+        assertEquals(floatOrZero(mitigation, "pierce"), client.pierce(), TOLERANCE,
             "pierce mismatch for " + templateId);
-        assertEquals(mitigation.get("burn").getAsFloat(), client.burn(), TOLERANCE,
+        assertEquals(floatOrZero(mitigation, "burn"), client.burn(), TOLERANCE,
             "burn mismatch for " + templateId);
-        assertEquals(mitigation.get("concussion").getAsFloat(), client.concussion(), TOLERANCE,
+        assertEquals(floatOrZero(mitigation, "concussion"), client.concussion(), TOLERANCE,
             "concussion mismatch for " + templateId);
     }
 }

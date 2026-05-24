@@ -1,11 +1,17 @@
 package com.bong.client.network;
 
 import bong.Envelope;
+import com.google.gson.JsonArray;
+import com.google.gson.JsonElement;
+import com.google.gson.JsonObject;
+import com.google.gson.JsonParser;
+import com.google.gson.JsonPrimitive;
 import com.google.protobuf.MessageOrBuilder;
 import com.google.protobuf.util.JsonFormat;
 
 import java.util.EnumMap;
 import java.util.Map;
+import java.util.regex.Pattern;
 
 /**
  * Proto→legacy-JSON bridge for the {@code bong:server_data} channel.
@@ -26,6 +32,7 @@ public final class ProtoServerDataBridge {
 
     private static final JsonFormat.Printer PRINTER = JsonFormat.printer()
             .preservingProtoFieldNames()
+            .includingDefaultValueFields()
             .omittingInsignificantWhitespace();
 
     /** PayloadCase → handler type string used by {@link ServerDataRouter}. */
@@ -205,6 +212,36 @@ public final class ProtoServerDataBridge {
             return BridgeResult.error("unmapped PayloadCase: " + payloadCase.name());
         }
 
+        // Payloads with oneof/wrapper structures that need flattening to match legacy handlers.
+        if (payloadCase == Envelope.ServerDataEnvelope.PayloadCase.INVENTORY_EVENT) {
+            return bridgeOneofFlat(envelope.getInventoryEvent(), typeString,
+                    ie -> switch (ie.getEventCase()) {
+                        case MOVED -> new OneofVariant("moved", ie.getMoved());
+                        case DROPPED -> new OneofVariant("dropped", ie.getDropped());
+                        case STACK_CHANGED -> new OneofVariant("stack_changed", ie.getStackChanged());
+                        case DURABILITY_CHANGED -> new OneofVariant("durability_changed", ie.getDurabilityChanged());
+                        default -> null;
+                    });
+        }
+        if (payloadCase == Envelope.ServerDataEnvelope.PayloadCase.CRAFT_OUTCOME) {
+            return bridgeOneofFlat(envelope.getCraftOutcome(), typeString,
+                    co -> switch (co.getOutcomeCase()) {
+                        case COMPLETED -> new OneofVariant("completed", co.getCompleted());
+                        case FAILED -> new OneofVariant("failed", co.getFailed());
+                        default -> null;
+                    });
+        }
+        if (payloadCase == Envelope.ServerDataEnvelope.PayloadCase.QUICK_SLOT_CONFIG) {
+            return bridgeSlotConfig(envelope.getQuickSlotConfig(), typeString, "entry", null);
+        }
+        if (payloadCase == Envelope.ServerDataEnvelope.PayloadCase.SKILL_BAR_CONFIG) {
+            return bridgeSlotConfig(envelope.getSkillBarConfig(), typeString, "entry",
+                    ProtoServerDataBridge::flattenSkillBarOneof);
+        }
+        if (payloadCase == Envelope.ServerDataEnvelope.PayloadCase.FORGE_SESSION) {
+            return bridgeForgeSession(envelope.getForgeSession(), typeString);
+        }
+
         // Extract the inner oneof message.
         MessageOrBuilder inner = extractInner(envelope, payloadCase);
         if (inner == null) {
@@ -212,19 +249,12 @@ public final class ProtoServerDataBridge {
         }
 
         try {
-            // Convert the inner message to JSON, preserving proto field names (snake_case).
-            String innerJson = PRINTER.print((com.google.protobuf.MessageOrBuilder) inner);
+            String innerJson = printAndNormalize(inner);
 
-            // Build the legacy envelope: merge "v" and "type" into the inner JSON object.
-            // The inner JSON is "{...}" — we inject "v" and "type" at the front.
             String legacyJson;
             if (innerJson.equals("{}")) {
-                // Empty inner message — just add v and type.
                 legacyJson = "{\"v\":1,\"type\":\"" + typeString + "\"}";
             } else {
-                // Insert "v" and "type" before the existing fields.
-                // innerJson = "{field1:..., field2:...}"
-                // result   = {"v":1,"type":"xxx","field1":..., "field2":...}
                 legacyJson = "{\"v\":1,\"type\":\"" + typeString + "\"," + innerJson.substring(1);
             }
 
@@ -358,5 +388,179 @@ public final class ProtoServerDataBridge {
      */
     static int mappedCaseCount() {
         return CASE_TO_TYPE.size();
+    }
+
+    private record OneofVariant(String kind, MessageOrBuilder inner) {}
+
+    @FunctionalInterface
+    private interface OneofExtractor<T> {
+        OneofVariant extract(T msg);
+    }
+
+    private static <T> BridgeResult bridgeOneofFlat(
+            T msg, String typeString, OneofExtractor<T> extractor) {
+        OneofVariant v = extractor.extract(msg);
+        if (v == null) {
+            return BridgeResult.error(typeString + " has no oneof variant set");
+        }
+        try {
+            String variantJson = printAndNormalize(v.inner());
+            String legacyJson;
+            if (variantJson.equals("{}")) {
+                legacyJson = "{\"v\":1,\"type\":\"" + typeString
+                        + "\",\"kind\":\"" + v.kind() + "\"}";
+            } else {
+                legacyJson = "{\"v\":1,\"type\":\"" + typeString
+                        + "\",\"kind\":\"" + v.kind() + "\"," + variantJson.substring(1);
+            }
+            return BridgeResult.success(legacyJson);
+        } catch (com.google.protobuf.InvalidProtocolBufferException e) {
+            return BridgeResult.error("proto→JSON conversion failed for "
+                    + typeString + "/" + v.kind() + ": " + e.getMessage());
+        }
+    }
+
+    @FunctionalInterface
+    private interface SlotTransformer {
+        void transform(JsonObject slotObj);
+    }
+
+    private static BridgeResult bridgeSlotConfig(
+            MessageOrBuilder msg, String typeString,
+            String wrapperField, SlotTransformer slotTransformer) {
+        try {
+            String raw = printAndNormalize(msg);
+            JsonObject root = JsonParser.parseString(raw).getAsJsonObject();
+            JsonArray slots = root.has("slots") ? root.getAsJsonArray("slots") : null;
+            if (slots != null) {
+                for (int i = 0; i < slots.size(); i++) {
+                    JsonElement el = slots.get(i);
+                    if (!el.isJsonObject()) continue;
+                    JsonObject wrapper = el.getAsJsonObject();
+                    if (wrapper.size() == 0) {
+                        slots.set(i, com.google.gson.JsonNull.INSTANCE);
+                        continue;
+                    }
+                    if (wrapper.has(wrapperField) && wrapper.get(wrapperField).isJsonObject()) {
+                        JsonObject inner = wrapper.getAsJsonObject(wrapperField);
+                        if (slotTransformer != null) {
+                            slotTransformer.transform(inner);
+                        }
+                        slots.set(i, inner);
+                    }
+                }
+            }
+            String innerJson = root.toString();
+            String legacyJson = "{\"v\":1,\"type\":\"" + typeString + "\"," + innerJson.substring(1);
+            return BridgeResult.success(legacyJson);
+        } catch (com.google.protobuf.InvalidProtocolBufferException e) {
+            return BridgeResult.error("proto→JSON conversion failed for " + typeString + ": " + e.getMessage());
+        }
+    }
+
+    private static final String[] FORGE_STEP_VARIANTS =
+            {"billet", "tempering", "inscription", "consecration"};
+
+    private static BridgeResult bridgeForgeSession(
+            MessageOrBuilder msg, String typeString) {
+        try {
+            String raw = printAndNormalize(msg);
+            JsonObject root = JsonParser.parseString(raw).getAsJsonObject();
+            if (root.has("step_state") && root.get("step_state").isJsonObject()) {
+                JsonObject stepState = root.getAsJsonObject("step_state");
+                flattenOneofInPlace(stepState, FORGE_STEP_VARIANTS, "step");
+            }
+            String innerJson = root.toString();
+            String legacyJson = "{\"v\":1,\"type\":\"" + typeString + "\"," + innerJson.substring(1);
+            return BridgeResult.success(legacyJson);
+        } catch (com.google.protobuf.InvalidProtocolBufferException e) {
+            return BridgeResult.error("proto→JSON conversion failed for " + typeString + ": " + e.getMessage());
+        }
+    }
+
+    private static void flattenOneofInPlace(
+            JsonObject obj, String[] variantNames, String tagField) {
+        for (String variant : variantNames) {
+            if (obj.has(variant) && obj.get(variant).isJsonObject()) {
+                JsonObject inner = obj.getAsJsonObject(variant);
+                obj.remove(variant);
+                obj.addProperty(tagField, variant);
+                for (Map.Entry<String, JsonElement> field : inner.entrySet()) {
+                    obj.add(field.getKey(), field.getValue());
+                }
+                return;
+            }
+        }
+        if (obj.has("none_state")) {
+            obj.remove("none_state");
+            obj.addProperty("step", "none");
+        }
+    }
+
+    private static void flattenSkillBarOneof(JsonObject entryObj) {
+        for (String variant : new String[]{"item", "skill"}) {
+            if (entryObj.has(variant) && entryObj.get(variant).isJsonObject()) {
+                JsonObject inner = entryObj.getAsJsonObject(variant);
+                entryObj.remove(variant);
+                entryObj.addProperty("kind", variant);
+                for (Map.Entry<String, JsonElement> field : inner.entrySet()) {
+                    entryObj.add(field.getKey(), field.getValue());
+                }
+                return;
+            }
+        }
+    }
+
+    private static final Pattern INT64_STRING = Pattern.compile("-?\\d{1,20}");
+
+    /**
+     * Print proto message to JSON and convert proto3 string-encoded int64/uint64
+     * back to JSON numbers so legacy handlers' {@code isNumber()} checks pass.
+     */
+    private static String printAndNormalize(MessageOrBuilder msg)
+            throws com.google.protobuf.InvalidProtocolBufferException {
+        String raw = PRINTER.print(msg);
+        if (raw.equals("{}")) return raw;
+        JsonElement tree = JsonParser.parseString(raw);
+        normalizeNumericStrings(tree);
+        return tree.toString();
+    }
+
+    private static void normalizeNumericStrings(JsonElement element) {
+        if (element.isJsonObject()) {
+            JsonObject obj = element.getAsJsonObject();
+            for (Map.Entry<String, JsonElement> e : obj.entrySet()) {
+                JsonElement val = e.getValue();
+                if (val.isJsonPrimitive() && val.getAsJsonPrimitive().isString()) {
+                    String s = val.getAsJsonPrimitive().getAsString();
+                    if (INT64_STRING.matcher(s).matches()) {
+                        try {
+                            e.setValue(new JsonPrimitive(Long.parseLong(s)));
+                        } catch (NumberFormatException ignored) {
+                            // overflow — keep as string
+                        }
+                    }
+                } else {
+                    normalizeNumericStrings(val);
+                }
+            }
+        } else if (element.isJsonArray()) {
+            JsonArray arr = element.getAsJsonArray();
+            for (int i = 0; i < arr.size(); i++) {
+                JsonElement val = arr.get(i);
+                if (val.isJsonPrimitive() && val.getAsJsonPrimitive().isString()) {
+                    String s = val.getAsJsonPrimitive().getAsString();
+                    if (INT64_STRING.matcher(s).matches()) {
+                        try {
+                            arr.set(i, new JsonPrimitive(Long.parseLong(s)));
+                        } catch (NumberFormatException ignored) {
+                            // overflow — keep as string
+                        }
+                    }
+                } else {
+                    normalizeNumericStrings(val);
+                }
+            }
+        }
     }
 }
