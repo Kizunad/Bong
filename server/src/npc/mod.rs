@@ -11,6 +11,8 @@ pub mod faction;
 pub mod farming_brain;
 pub mod hunger;
 pub mod hydrate;
+#[cfg(test)]
+mod integration_tests;
 pub mod intel;
 pub mod interaction_memory;
 pub mod intrusion_npc;
