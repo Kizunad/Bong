@@ -5,9 +5,12 @@ import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
+import com.google.gson.JsonNull;
 import com.google.gson.JsonPrimitive;
 import com.google.protobuf.MessageOrBuilder;
 import com.google.protobuf.util.JsonFormat;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.util.EnumMap;
 import java.util.Map;
@@ -29,6 +32,8 @@ import java.util.regex.Pattern;
  * This avoids rewriting all handlers while the wire format has been flipped to proto.
  */
 public final class ProtoServerDataBridge {
+
+    private static final Logger LOG = LoggerFactory.getLogger(ProtoServerDataBridge.class);
 
     private static final JsonFormat.Printer PRINTER = JsonFormat.printer()
             .preservingProtoFieldNames()
@@ -438,7 +443,7 @@ public final class ProtoServerDataBridge {
                     if (!el.isJsonObject()) continue;
                     JsonObject wrapper = el.getAsJsonObject();
                     if (wrapper.size() == 0) {
-                        slots.set(i, com.google.gson.JsonNull.INSTANCE);
+                        slots.set(i, JsonNull.INSTANCE);
                         continue;
                     }
                     if (wrapper.has(wrapperField) && wrapper.get(wrapperField).isJsonObject()) {
@@ -494,11 +499,16 @@ public final class ProtoServerDataBridge {
         if (obj.has("none_state")) {
             obj.remove("none_state");
             obj.addProperty("step", "none");
+            return;
         }
+        LOG.warn("flattenOneofInPlace: no known variant matched for tag '{}', keys: {}",
+                tagField, obj.keySet());
     }
 
+    private static final String[] SKILL_BAR_VARIANTS = {"item", "skill"};
+
     private static void flattenSkillBarOneof(JsonObject entryObj) {
-        for (String variant : new String[]{"item", "skill"}) {
+        for (String variant : SKILL_BAR_VARIANTS) {
             if (entryObj.has(variant) && entryObj.get(variant).isJsonObject()) {
                 JsonObject inner = entryObj.getAsJsonObject(variant);
                 entryObj.remove(variant);
