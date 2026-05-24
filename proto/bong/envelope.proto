@@ -93,7 +93,51 @@ message ServerDataEnvelope {
     QiColorObserved         qi_color_observed       = 74;
     RealmVisionParams       realm_vision_params     = 75;
     SpiritualSenseTargets   spiritual_sense_targets = 76;
-    // P2/P3 阶段继续追加 field 77..N。
+    // ─── P2 B5：VFX / 音频 / 区域 / 杂项 / 专用 channel ────────────
+    EventAlert              event_alert             = 77;
+    CoffinState             coffin_state            = 78;
+    UiOpen                  ui_open                 = 79;
+    InventoryEvent          inventory_event         = 80;
+    DroppedLootSync         dropped_loot_sync       = 81;
+    RiftPortalState         rift_portal_state       = 82;
+    RiftPortalRemoved       rift_portal_removed     = 83;
+    ExtractStarted          extract_started         = 84;
+    ExtractProgress         extract_progress        = 85;
+    ExtractCompleted        extract_completed       = 86;
+    ExtractAborted          extract_aborted         = 87;
+    ExtractFailed           extract_failed          = 88;
+    TsyCollapseStartedIpc   tsy_collapse_started    = 89;
+    ContainerStateProto     container_state         = 90;
+    SearchStarted           search_started          = 91;
+    SearchProgress          search_progress         = 92;
+    SearchCompleted         search_completed        = 93;
+    SearchAborted           search_aborted          = 94;
+    SkillLvUp               skill_lv_up             = 95;
+    SkillCapChanged         skill_cap_changed       = 96;
+    SkillScrollUsed         skill_scroll_used       = 97;
+    SkillSnapshotProto      skill_snapshot          = 98;
+    FullPowerChargingState  full_power_charging     = 99;
+    FullPowerRelease        full_power_release      = 100;
+    FullPowerExhaustedState full_power_exhausted    = 101;
+    HealerNpcAiState        healer_npc_ai_state     = 102;
+    YidaoHudState           yidao_hud_state         = 103;
+    MovementStateProto      movement_state          = 104;
+    SpiritTreasureStateProto  spirit_treasure_state  = 105;
+    SpiritTreasureDialogueProto spirit_treasure_dialogue = 106;
+    // ─── 专用 channel payloads ───────────────────────────────────
+    VfxEvent                vfx_event               = 107;
+    AudioPlayEvent          audio_play_event        = 108;
+    AudioStopEvent          audio_stop_event        = 109;
+    AmbientZoneEvent        ambient_zone_event      = 110;
+    ZoneEnvironmentState    zone_environment_state  = 111;
+    MutationStateProto      mutation_state          = 112;
+    MutationEventProto      mutation_event          = 113;
+    DandaoStyleProto        dandao_style            = 114;
+    TsyEnterEvent           tsy_enter_event         = 115;
+    TsyExitEvent            tsy_exit_event          = 116;
+    TsyNpcSpawned           tsy_npc_spawned         = 117;
+    TsySentinelPhaseChanged tsy_sentinel_phase_changed = 118;
+    // P2/P3 阶段继续追加 field 119..N。
     // 字段编号一旦分配永不复用（buf breaking 检测保证）。
   }
 }
@@ -162,7 +206,36 @@ message ClientRequestEnvelope {
     DuoSheRequest               duo_she_request               = 54;
     QiColorInspect              qi_color_inspect              = 55;
     UseLifeCore                 use_life_core                 = 56;
-    // P2/P3 阶段继续追加 field 57..N。
+    // ─── P2 B5：杂项 C2S ────────────────────────────────────────────
+    VoidAction                  void_action                   = 57;
+    MovementActionRequest       movement_action               = 58;
+    ForgeRequestC2s             forge_request                 = 59;
+    InsightDecision             insight_decision              = 60;
+    AlchemyFurnacePlace         alchemy_furnace_place         = 61;
+    CoffinOpen                  coffin_open                   = 62;
+    CoffinPlace                 coffin_place                  = 63;
+    CoffinEnter                 coffin_enter                  = 64;
+    CoffinLeave                 coffin_leave                  = 65;
+    ZhenfaPlace                 zhenfa_place                  = 66;
+    ZhenfaTrigger               zhenfa_trigger                = 67;
+    ZhenfaDisarm                zhenfa_disarm                 = 68;
+    LearnSkillScroll            learn_skill_scroll            = 69;
+    TechniqueScrollUse          technique_scroll_use          = 70;
+    InventoryMoveIntent         inventory_move_intent         = 71;
+    EquipFalseSkin              equip_false_skin              = 72;
+    ForgeFalseSkinC2s           forge_false_skin              = 73;
+    InventoryDiscardItem        inventory_discard_item        = 74;
+    DropWeaponIntent            drop_weapon_intent            = 75;
+    RepairWeaponIntent          repair_weapon_intent          = 76;
+    PickupDroppedItem           pickup_dropped_item           = 77;
+    ApplyPill                   apply_pill                    = 78;
+    SelfAntidote                self_antidote                 = 79;
+    StartExtractRequest         start_extract_request         = 80;
+    CancelExtractRequest        cancel_extract_request        = 81;
+    StartSearch                 start_search                  = 82;
+    CancelSearch                cancel_search                 = 83;
+    ForgeStationPlace           forge_station_place           = 84;
+    // P2/P3 阶段继续追加 field 85..N。
   }
 }
 
@@ -2328,4 +2401,1154 @@ message QiColorInspect {
 // 与 Rust ClientRequestV1::UseLifeCore 精确对应。
 message UseLifeCore {
   uint64 instance_id = 1;
+}
+
+// ═══════════════════════════════════════════════════════════════
+// P2 B5 — 杂项 S2C
+// ═══════════════════════════════════════════════════════════════
+
+// ─── EventKind enum ──────────────────────────────────────────────
+// 与 Rust EventKind 精确对应（common.rs）。
+enum EventKindProto {
+  EVENT_KIND_UNSPECIFIED       = 0;
+  EVENT_KIND_THUNDER_TRIBULATION = 1;
+  EVENT_KIND_BEAST_TIDE        = 2;
+  EVENT_KIND_REALM_COLLAPSE    = 3;
+  EVENT_KIND_KARMA_BACKLASH    = 4;
+  EVENT_KIND_POISON_MIASMA     = 5;
+  EVENT_KIND_MERIDIAN_SEAL     = 6;
+  EVENT_KIND_DAOXIANG_WAVE     = 7;
+  EVENT_KIND_HEAVENLY_FIRE     = 8;
+  EVENT_KIND_PRESSURE_INVERT   = 9;
+  EVENT_KIND_ALL_WITHER        = 10;
+}
+
+// 与 Rust ServerDataPayloadV1::EventAlert 精确对应。
+message EventAlert {
+  EventKindProto  event          = 1;
+  string          message        = 2;
+  optional string zone           = 3;
+  optional uint64 duration_ticks = 4;
+}
+
+// 与 Rust CoffinStateV1 精确对应。
+message CoffinState {
+  bool   in_coffin                 = 1;
+  double lifespan_rate_multiplier  = 2;
+}
+
+// 与 Rust ServerDataPayloadV1::UiOpen 精确对应。
+message UiOpen {
+  optional string ui  = 1;
+  string          xml = 2;
+}
+
+// ─── InventoryEvent ──────────────────────────────────────────────
+// 与 Rust InventoryEventV1 tagged union 精确对应。
+
+// 与 Rust InventoryLocationV1 tagged union 精确对应。
+message InventoryLocationContainer {
+  string container_id = 1;
+  uint64 row          = 2;
+  uint64 col          = 3;
+}
+
+// 与 Rust EquipSlotV1 精确对应。
+enum EquipSlot {
+  EQUIP_SLOT_UNSPECIFIED     = 0;
+  EQUIP_SLOT_HEAD            = 1;
+  EQUIP_SLOT_CHEST           = 2;
+  EQUIP_SLOT_LEGS            = 3;
+  EQUIP_SLOT_FEET            = 4;
+  EQUIP_SLOT_FALSE_SKIN      = 5;
+  EQUIP_SLOT_MAIN_HAND       = 6;
+  EQUIP_SLOT_OFF_HAND        = 7;
+  EQUIP_SLOT_TWO_HAND        = 8;
+  EQUIP_SLOT_TREASURE_BELT_0 = 9;
+  EQUIP_SLOT_TREASURE_BELT_1 = 10;
+  EQUIP_SLOT_TREASURE_BELT_2 = 11;
+  EQUIP_SLOT_TREASURE_BELT_3 = 12;
+  EQUIP_SLOT_BACK_PACK       = 13;
+  EQUIP_SLOT_WAIST_POUCH     = 14;
+  EQUIP_SLOT_CHEST_SATCHEL   = 15;
+  EQUIP_SLOT_EXTRA_HAND_0    = 16;
+  EQUIP_SLOT_EXTRA_HAND_1    = 17;
+}
+
+message InventoryLocationEquip {
+  EquipSlot slot = 1;
+}
+
+message InventoryLocationHotbar {
+  uint32 index = 1; // Rust u8
+}
+
+message InventoryLocation {
+  oneof location {
+    InventoryLocationContainer container = 1;
+    InventoryLocationEquip     equip     = 2;
+    InventoryLocationHotbar    hotbar    = 3;
+  }
+}
+
+// 与 Rust InventoryEventV1 variants 精确对应。
+message InventoryEventMoved {
+  uint64            revision    = 1;
+  uint64            instance_id = 2;
+  InventoryLocation from        = 3;
+  InventoryLocation to          = 4;
+}
+
+message InventoryEventDropped {
+  uint64            revision    = 1;
+  uint64            instance_id = 2;
+  InventoryLocation from        = 3;
+  double            world_pos_x = 4; // Rust [f64;3] 拆三字段
+  double            world_pos_y = 5;
+  double            world_pos_z = 6;
+  InventoryItemView item        = 7;
+}
+
+message InventoryEventStackChanged {
+  uint64 revision    = 1;
+  uint64 instance_id = 2;
+  uint64 stack_count  = 3;
+}
+
+message InventoryEventDurabilityChanged {
+  uint64 revision    = 1;
+  uint64 instance_id = 2;
+  double durability   = 3;
+}
+
+message InventoryEvent {
+  oneof event {
+    InventoryEventMoved              moved              = 1;
+    InventoryEventDropped            dropped            = 2;
+    InventoryEventStackChanged       stack_changed      = 3;
+    InventoryEventDurabilityChanged  durability_changed = 4;
+  }
+}
+
+// ─── DroppedLootSync ─────────────────────────────────────────────
+// 与 Rust DroppedLootEntryV1 / Vec<DroppedLootEntryV1> 精确对应。
+
+message DroppedLootEntry {
+  uint64            instance_id        = 1;
+  string            source_container_id = 2;
+  uint64            source_row         = 3;
+  uint64            source_col         = 4;
+  double            world_pos_x        = 5; // Rust [f64;3] 拆三字段
+  double            world_pos_y        = 6;
+  double            world_pos_z        = 7;
+  InventoryItemView item               = 8;
+}
+
+message DroppedLootSync {
+  repeated DroppedLootEntry drops = 1;
+}
+
+// ─── Rift Portal ─────────────────────────────────────────────────
+// 与 Rust RiftPortalKindV1 / RiftPortalDirectionV1 / RiftPortalStateV1 / RiftPortalRemovedV1 精确对应。
+
+enum RiftPortalKind {
+  RIFT_PORTAL_KIND_UNSPECIFIED  = 0;
+  RIFT_PORTAL_KIND_MAIN_RIFT    = 1;
+  RIFT_PORTAL_KIND_DEEP_RIFT    = 2;
+  RIFT_PORTAL_KIND_COLLAPSE_TEAR = 3;
+}
+
+enum RiftPortalDirection {
+  RIFT_PORTAL_DIRECTION_UNSPECIFIED = 0;
+  RIFT_PORTAL_DIRECTION_ENTRY       = 1;
+  RIFT_PORTAL_DIRECTION_EXIT        = 2;
+}
+
+message RiftPortalState {
+  uint64              entity_id                = 1;
+  RiftPortalKind      kind                     = 2;
+  RiftPortalDirection direction                = 3;
+  string              family_id                = 4;
+  double              world_pos_x              = 5; // Rust [f64;3] 拆三字段
+  double              world_pos_y              = 6;
+  double              world_pos_z              = 7;
+  double              trigger_radius           = 8;
+  uint32              current_extract_ticks    = 9;
+  optional uint64     activation_window_end    = 10;
+}
+
+message RiftPortalRemoved {
+  uint64 entity_id = 1;
+}
+
+// ─── Extract ─────────────────────────────────────────────────────
+// 与 Rust Extract{Started,Progress,Completed,Aborted,Failed}V1 精确对应。
+
+message ExtractStarted {
+  string         player_id        = 1;
+  uint64         portal_entity_id = 2;
+  RiftPortalKind portal_kind      = 3;
+  uint32         required_ticks   = 4;
+  uint64         at_tick          = 5;
+}
+
+message ExtractProgress {
+  string player_id        = 1;
+  uint64 portal_entity_id = 2;
+  uint32 elapsed_ticks    = 3;
+  uint32 required_ticks   = 4;
+}
+
+message ExtractCompleted {
+  string         player_id      = 1;
+  RiftPortalKind portal_kind    = 2;
+  string         family_id      = 3;
+  double         exit_pos_x     = 4; // Rust [f64;3] 拆三字段
+  double         exit_pos_y     = 5;
+  double         exit_pos_z     = 6;
+  uint64         at_tick        = 7;
+}
+
+enum ExtractAbortedReason {
+  EXTRACT_ABORTED_REASON_UNSPECIFIED    = 0;
+  EXTRACT_ABORTED_REASON_MOVED          = 1;
+  EXTRACT_ABORTED_REASON_COMBAT         = 2;
+  EXTRACT_ABORTED_REASON_DAMAGED        = 3;
+  EXTRACT_ABORTED_REASON_CANCELLED      = 4;
+  EXTRACT_ABORTED_REASON_PORTAL_EXPIRED = 5;
+  EXTRACT_ABORTED_REASON_OUT_OF_RANGE   = 6;
+  EXTRACT_ABORTED_REASON_NOT_IN_TSY     = 7;
+  EXTRACT_ABORTED_REASON_ALREADY_BUSY   = 8;
+  EXTRACT_ABORTED_REASON_PORTAL_OCCUPIED = 9;
+  EXTRACT_ABORTED_REASON_CANNOT_EXIT    = 10;
+}
+
+message ExtractAborted {
+  string               player_id = 1;
+  ExtractAbortedReason reason    = 2;
+}
+
+enum ExtractFailedReason {
+  EXTRACT_FAILED_REASON_UNSPECIFIED       = 0;
+  EXTRACT_FAILED_REASON_SPIRIT_QI_DRAINED = 1;
+}
+
+message ExtractFailed {
+  string              player_id = 1;
+  ExtractFailedReason reason    = 2;
+}
+
+// ─── TsyCollapseStartedIpc ──────────────────────────────────────
+// 与 Rust TsyCollapseStartedIpcV1 精确对应。
+
+message TsyCollapseStartedIpc {
+  string          family_id                  = 1;
+  uint64          at_tick                    = 2;
+  uint64          remaining_ticks            = 3;
+  repeated uint64 collapse_tear_entity_ids   = 4;
+}
+
+// ─── Container / Search ──────────────────────────────────────────
+// 与 Rust ContainerKindV1 / KeyKindV1 / SearchAbortReasonV1 / ContainerStateV1 精确对应。
+
+enum ContainerKindProto {
+  CONTAINER_KIND_UNSPECIFIED   = 0;
+  CONTAINER_KIND_DRY_CORPSE    = 1;
+  CONTAINER_KIND_SKELETON      = 2;
+  CONTAINER_KIND_STORAGE_POUCH = 3;
+  CONTAINER_KIND_STONE_CASKET  = 4;
+  CONTAINER_KIND_RELIC_CORE    = 5;
+  CONTAINER_KIND_SURFACE_STASH = 6;
+}
+
+enum KeyKindProto {
+  KEY_KIND_UNSPECIFIED      = 0;
+  KEY_KIND_STONE_CASKET_KEY = 1;
+  KEY_KIND_JADE_COFFIN_SEAL = 2;
+  KEY_KIND_ARRAY_CORE_SIGIL = 3;
+}
+
+enum SearchAbortReason {
+  SEARCH_ABORT_REASON_UNSPECIFIED = 0;
+  SEARCH_ABORT_REASON_MOVED       = 1;
+  SEARCH_ABORT_REASON_COMBAT      = 2;
+  SEARCH_ABORT_REASON_DAMAGED     = 3;
+  SEARCH_ABORT_REASON_CANCELLED   = 4;
+}
+
+message ContainerStateProto {
+  uint64             entity_id             = 1;
+  ContainerKindProto kind                  = 2;
+  string             family_id             = 3;
+  double             world_pos_x           = 4; // Rust [f64;3] 拆三字段
+  double             world_pos_y           = 5;
+  double             world_pos_z           = 6;
+  optional KeyKindProto locked             = 7;
+  bool               depleted              = 8;
+  optional string    searched_by_player_id = 9;
+}
+
+message SearchStarted {
+  string player_id            = 1;
+  uint64 container_entity_id  = 2;
+  uint32 required_ticks       = 3;
+  uint64 at_tick              = 4;
+}
+
+message SearchProgress {
+  string player_id            = 1;
+  uint64 container_entity_id  = 2;
+  uint32 elapsed_ticks        = 3;
+  uint32 required_ticks       = 4;
+}
+
+message LootPreviewItem {
+  string template_id  = 1;
+  string display_name = 2;
+  uint32 stack_count   = 3;
+}
+
+message SearchCompleted {
+  string                   player_id           = 1;
+  uint64                   container_entity_id = 2;
+  string                   family_id           = 3;
+  repeated LootPreviewItem loot_preview        = 4;
+  uint64                   at_tick             = 5;
+}
+
+message SearchAborted {
+  string            player_id           = 1;
+  uint64            container_entity_id = 2;
+  SearchAbortReason reason              = 3;
+  uint64            at_tick             = 4;
+}
+
+// ─── Skill payloads ──────────────────────────────────────────────
+// 与 Rust SkillLvUpPayloadV1 / SkillCapChangedPayloadV1 / SkillScrollUsedPayloadV1 / SkillSnapshotPayloadV1 精确对应。
+
+message SkillLvUp {
+  uint64  char_id = 1;
+  SkillId skill   = 2;
+  uint32  new_lv  = 3; // Rust u8
+}
+
+message SkillCapChanged {
+  uint64  char_id = 1;
+  SkillId skill   = 2;
+  uint32  new_cap = 3; // Rust u8
+}
+
+message SkillScrollUsed {
+  uint64  char_id       = 1;
+  string  scroll_id     = 2;
+  SkillId skill         = 3;
+  uint32  xp_granted    = 4;
+  bool    was_duplicate = 5;
+}
+
+message SkillEntrySnapshot {
+  uint32 lv             = 1; // Rust u8
+  uint32 xp             = 2;
+  uint32 xp_to_next     = 3;
+  uint64 total_xp       = 4;
+  uint32 cap            = 5; // Rust u8
+  uint32 recent_gain_xp = 6;
+}
+
+message SkillSnapshotEntry {
+  string             skill_name = 1;
+  SkillEntrySnapshot entry      = 2;
+}
+
+message SkillSnapshotProto {
+  uint64                       char_id          = 1;
+  repeated SkillSnapshotEntry  skills           = 2;
+  repeated string              consumed_scrolls = 3;
+}
+
+// ─── FullPower ───────────────────────────────────────────────────
+// 与 Rust FullPowerChargingStateV1 / FullPowerReleaseV1 / FullPowerExhaustedStateV1 精确对应。
+
+message FullPowerChargingState {
+  string caster_uuid   = 1;
+  bool   active        = 2;
+  double qi_committed  = 3;
+  double target_qi     = 4;
+  uint64 started_tick  = 5;
+}
+
+message FullPowerRelease {
+  string          caster_uuid   = 1;
+  optional string target_uuid   = 2;
+  double          qi_released   = 3;
+  uint64          tick          = 4;
+  optional double hit_pos_x     = 5; // Rust Option<[f64;3]> 拆三字段
+  optional double hit_pos_y     = 6;
+  optional double hit_pos_z     = 7;
+}
+
+message FullPowerExhaustedState {
+  string caster_uuid      = 1;
+  bool   active           = 2;
+  uint64 started_tick     = 3;
+  uint64 recovery_at_tick = 4;
+}
+
+// ─── HealerNpcAiState / YidaoHudState ────────────────────────────
+// 与 Rust HealerNpcAiStateV1 / YidaoHudStateV1 精确对应。
+
+// 与 Rust YidaoSkillIdV1 精确对应。
+enum YidaoSkillId {
+  YIDAO_SKILL_ID_UNSPECIFIED            = 0;
+  YIDAO_SKILL_ID_MERIDIAN_REPAIR        = 1;
+  YIDAO_SKILL_ID_CONTAM_PURGE           = 2;
+  YIDAO_SKILL_ID_EMERGENCY_RESUSCITATE  = 3;
+  YIDAO_SKILL_ID_LIFE_EXTENSION         = 4;
+  YIDAO_SKILL_ID_MASS_MERIDIAN_REPAIR   = 5;
+}
+
+message HealerNpcAiState {
+  string healer_id     = 1;
+  string active_action = 2;
+  uint32 queue_len     = 3;
+  int32  reputation    = 4;
+  bool   retreating    = 5;
+}
+
+message YidaoHudState {
+  string              healer_id             = 1;
+  int32               reputation            = 2;
+  float               peace_mastery         = 3;
+  double              karma                 = 4;
+  optional YidaoSkillId active_skill        = 5;
+  repeated string     patient_ids           = 6;
+  optional float      patient_hp_percent    = 7;
+  optional double     patient_contam_total  = 8;
+  uint32              severed_meridian_count = 9;
+  uint32              contract_count        = 10;
+  uint32              mass_preview_count    = 11;
+}
+
+// ─── MovementState ───────────────────────────────────────────────
+// 与 Rust MovementStateV1 / MovementActionV1 / MovementZoneKindV1 / MovementActionRequestV1 精确对应。
+
+enum MovementAction {
+  MOVEMENT_ACTION_UNSPECIFIED = 0;
+  MOVEMENT_ACTION_NONE        = 1;
+  MOVEMENT_ACTION_DASHING     = 2;
+}
+
+enum MovementZoneKind {
+  MOVEMENT_ZONE_KIND_UNSPECIFIED = 0;
+  MOVEMENT_ZONE_KIND_NORMAL      = 1;
+  MOVEMENT_ZONE_KIND_DEAD        = 2;
+  MOVEMENT_ZONE_KIND_NEGATIVE    = 3;
+  MOVEMENT_ZONE_KIND_RESIDUE_ASH = 4;
+}
+
+enum MovementActionRequestKind {
+  MOVEMENT_ACTION_REQUEST_KIND_UNSPECIFIED = 0;
+  MOVEMENT_ACTION_REQUEST_KIND_DASH        = 1;
+}
+
+message MovementStateProto {
+  float                      current_speed_multiplier         = 1;
+  bool                       stamina_cost_active              = 2;
+  MovementAction             movement_action                  = 3;
+  MovementZoneKind           zone_kind                        = 4;
+  uint64                     dash_cooldown_remaining_ticks    = 5;
+  float                      hitbox_height_blocks             = 6;
+  float                      stamina_current                  = 7;
+  float                      stamina_max                      = 8;
+  bool                       low_stamina                      = 9;
+  optional uint64            last_action_tick                 = 10;
+  optional MovementActionRequestKind rejected_action          = 11;
+}
+
+// ─── SpiritTreasure ──────────────────────────────────────────────
+// 与 Rust SpiritTreasureStatePayloadV1 / SpiritTreasureDialoguePayloadV1 精确对应。
+
+message SpiritTreasurePassive {
+  string kind        = 1;
+  double value       = 2;
+  string description = 3;
+}
+
+message SpiritTreasureClientState {
+  string                          template_id     = 1;
+  string                          display_name    = 2;
+  uint64                          instance_id     = 3;
+  bool                            equipped        = 4;
+  bool                            passive_active  = 5;
+  double                          affinity        = 6;
+  bool                            sleeping        = 7;
+  optional string                 source_sect     = 8;
+  string                          icon_texture    = 9;
+  repeated SpiritTreasurePassive  passive_effects = 10;
+}
+
+message SpiritTreasureStateProto {
+  repeated SpiritTreasureClientState treasures = 1;
+}
+
+// 与 Rust SpiritTreasureDialogueToneV1 精确对应。
+enum SpiritTreasureDialogueTone {
+  SPIRIT_TREASURE_DIALOGUE_TONE_UNSPECIFIED = 0;
+  SPIRIT_TREASURE_DIALOGUE_TONE_COLD        = 1;
+  SPIRIT_TREASURE_DIALOGUE_TONE_CURIOUS     = 2;
+  SPIRIT_TREASURE_DIALOGUE_TONE_WARNING     = 3;
+  SPIRIT_TREASURE_DIALOGUE_TONE_AMUSED      = 4;
+  SPIRIT_TREASURE_DIALOGUE_TONE_SILENT      = 5;
+}
+
+message SpiritTreasureDialogueData {
+  string                      request_id     = 1;
+  string                      character_id   = 2;
+  string                      treasure_id    = 3;
+  string                      text           = 4;
+  SpiritTreasureDialogueTone  tone           = 5;
+  double                      affinity_delta = 6;
+}
+
+message SpiritTreasureDialogueProto {
+  SpiritTreasureDialogueData dialogue     = 1;
+  string                     display_name = 2;
+  string                     zone         = 3;
+}
+
+// ═══════════════════════════════════════════════════════════════
+// P2 B5 — 专用 channel S2C payloads
+// ═══════════════════════════════════════════════════════════════
+
+// ─── VFX Event ───────────────────────────────────────────────────
+// 与 Rust VfxEventPayloadV1 tagged union 精确对应。
+
+message VfxPlayAnim {
+  string          target_player  = 1;
+  string          anim_id        = 2;
+  uint32          priority       = 3; // Rust u16
+  optional uint32 fade_in_ticks  = 4; // Rust u8
+}
+
+message VfxPlayAnimInline {
+  string          target_player  = 1;
+  string          anim_id        = 2;
+  string          anim_json      = 3;
+  uint32          priority       = 4; // Rust u16
+  optional uint32 fade_in_ticks  = 5; // Rust u8
+}
+
+message VfxStopAnim {
+  string          target_player  = 1;
+  string          anim_id        = 2;
+  optional uint32 fade_out_ticks = 3; // Rust u8
+}
+
+message VfxSpawnParticle {
+  string          event_id        = 1;
+  double          origin_x        = 2; // Rust [f64;3] 拆三字段
+  double          origin_y        = 3;
+  double          origin_z        = 4;
+  optional double direction_x     = 5; // Rust Option<[f64;3]> 拆三字段
+  optional double direction_y     = 6;
+  optional double direction_z     = 7;
+  optional string color           = 8; // #RRGGBB
+  optional float  strength        = 9;
+  optional uint32 count           = 10; // Rust u16
+  optional uint32 duration_ticks  = 11; // Rust u16
+}
+
+message VfxEvent {
+  oneof payload {
+    VfxPlayAnim       play_anim        = 1;
+    VfxPlayAnimInline play_anim_inline = 2;
+    VfxStopAnim       stop_anim        = 3;
+    VfxSpawnParticle  spawn_particle   = 4;
+  }
+}
+
+// ─── Audio ───────────────────────────────────────────────────────
+// 与 Rust PlaySoundRecipePayload / StopSoundRecipePayload / AmbientZoneS2c 精确对应。
+
+// 与 Rust AudioAttenuation 精确对应。
+enum AudioAttenuationProto {
+  AUDIO_ATTENUATION_UNSPECIFIED    = 0;
+  AUDIO_ATTENUATION_PLAYER_LOCAL   = 1;
+  AUDIO_ATTENUATION_WORLD_3D       = 2;
+  AUDIO_ATTENUATION_GLOBAL_HINT    = 3;
+  AUDIO_ATTENUATION_ZONE_BROADCAST = 4;
+  AUDIO_ATTENUATION_SELF           = 5;
+  AUDIO_ATTENUATION_MELEE          = 6;
+  AUDIO_ATTENUATION_AREA           = 7;
+  AUDIO_ATTENUATION_WORLD          = 8;
+}
+
+// 与 Rust AudioSoundCategory 精确对应。
+enum AudioSoundCategoryProto {
+  AUDIO_SOUND_CATEGORY_UNSPECIFIED = 0;
+  AUDIO_SOUND_CATEGORY_MASTER      = 1;
+  AUDIO_SOUND_CATEGORY_PLAYERS     = 2;
+  AUDIO_SOUND_CATEGORY_HOSTILE     = 3;
+  AUDIO_SOUND_CATEGORY_AMBIENT     = 4;
+  AUDIO_SOUND_CATEGORY_VOICE       = 5;
+  AUDIO_SOUND_CATEGORY_BLOCKS      = 6;
+}
+
+// 与 Rust AudioBus 精确对应。
+enum AudioBusProto {
+  AUDIO_BUS_UNSPECIFIED  = 0;
+  AUDIO_BUS_COMBAT       = 1;
+  AUDIO_BUS_ENVIRONMENT  = 2;
+  AUDIO_BUS_UI           = 3;
+}
+
+message SoundLayerProto {
+  string sound       = 1;
+  float  volume      = 2;
+  float  pitch       = 3;
+  uint32 delay_ticks = 4;
+}
+
+message LoopConfigProto {
+  uint32 interval_ticks = 1;
+  string while_flag     = 2;
+}
+
+message SoundRecipeProto {
+  string                      id          = 1;
+  repeated SoundLayerProto    layers      = 2;
+  optional LoopConfigProto    loop_config = 3;
+  uint32                      priority    = 4; // Rust u8
+  AudioAttenuationProto       attenuation = 5;
+  AudioSoundCategoryProto     category    = 6;
+  optional AudioBusProto      bus         = 7;
+}
+
+message AudioPlayEvent {
+  string           recipe_id   = 1;
+  uint64           instance_id = 2;
+  optional int32   pos_x       = 3; // Rust Option<[i32;3]> 拆三字段
+  optional int32   pos_y       = 4;
+  optional int32   pos_z       = 5;
+  optional string  flag        = 6;
+  float            volume_mul  = 7;
+  float            pitch_shift = 8;
+  SoundRecipeProto recipe      = 9;
+}
+
+message AudioStopEvent {
+  uint64 instance_id    = 1;
+  uint32 fade_out_ticks = 2;
+}
+
+message AmbientZoneEvent {
+  string           zone_name          = 1;
+  string           ambient_recipe_id  = 2;
+  string           music_state        = 3;
+  bool             is_night           = 4;
+  string           season             = 5;
+  optional string  tsy_depth          = 6;
+  uint32           fade_ticks         = 7;
+  optional int32   pos_x              = 8; // Rust Option<[i32;3]> 拆三字段
+  optional int32   pos_y              = 9;
+  optional int32   pos_z              = 10;
+  float            volume_mul         = 11;
+  float            pitch_shift        = 12;
+  SoundRecipeProto recipe             = 13;
+}
+
+// ─── ZoneEnvironmentState ────────────────────────────────────────
+// 与 Rust ZoneEnvironmentStateV1 / EnvironmentEffect 精确对应。
+// EnvironmentEffect is a tagged union with 8 variants。
+
+message EffectTornadoColumn {
+  double center_x         = 1;
+  double center_y         = 2;
+  double center_z         = 3;
+  double radius           = 4;
+  double height           = 5;
+  float  particle_density = 6;
+}
+
+message EffectLightningPillar {
+  double center_x            = 1;
+  double center_y            = 2;
+  double center_z            = 3;
+  double radius              = 4;
+  float  strike_rate_per_min = 5;
+}
+
+message EffectAshFall {
+  double aabb_min_x = 1;
+  double aabb_min_y = 2;
+  double aabb_min_z = 3;
+  double aabb_max_x = 4;
+  double aabb_max_y = 5;
+  double aabb_max_z = 6;
+  float  density    = 7;
+}
+
+message EffectFogVeil {
+  double aabb_min_x = 1;
+  double aabb_min_y = 2;
+  double aabb_min_z = 3;
+  double aabb_max_x = 4;
+  double aabb_max_y = 5;
+  double aabb_max_z = 6;
+  uint32 tint_r     = 7; // Rust [u8;3] 拆三字段
+  uint32 tint_g     = 8;
+  uint32 tint_b     = 9;
+  float  density    = 10;
+}
+
+message EffectDustDevil {
+  double center_x = 1;
+  double center_y = 2;
+  double center_z = 3;
+  double radius   = 4;
+  double height   = 5;
+}
+
+message EffectEmberDrift {
+  double aabb_min_x = 1;
+  double aabb_min_y = 2;
+  double aabb_min_z = 3;
+  double aabb_max_x = 4;
+  double aabb_max_y = 5;
+  double aabb_max_z = 6;
+  float  density    = 7;
+  float  glow       = 8;
+}
+
+message EffectHeatHaze {
+  double aabb_min_x          = 1;
+  double aabb_min_y          = 2;
+  double aabb_min_z          = 3;
+  double aabb_max_x          = 4;
+  double aabb_max_y          = 5;
+  double aabb_max_z          = 6;
+  float  distortion_strength = 7;
+}
+
+message EffectSnowDrift {
+  double aabb_min_x = 1;
+  double aabb_min_y = 2;
+  double aabb_min_z = 3;
+  double aabb_max_x = 4;
+  double aabb_max_y = 5;
+  double aabb_max_z = 6;
+  float  density    = 7;
+  float  wind_dir_x = 8; // Rust [f32;3] 拆三字段
+  float  wind_dir_y = 9;
+  float  wind_dir_z = 10;
+}
+
+message EnvironmentEffectProto {
+  oneof effect {
+    EffectTornadoColumn   tornado_column   = 1;
+    EffectLightningPillar lightning_pillar = 2;
+    EffectAshFall         ash_fall         = 3;
+    EffectFogVeil         fog_veil         = 4;
+    EffectDustDevil       dust_devil       = 5;
+    EffectEmberDrift      ember_drift      = 6;
+    EffectHeatHaze        heat_haze        = 7;
+    EffectSnowDrift       snow_drift       = 8;
+  }
+}
+
+message ZoneEnvironmentState {
+  string                          dimension  = 1;
+  string                          zone_id    = 2;
+  repeated EnvironmentEffectProto effects    = 3;
+  uint64                          generation = 4;
+}
+
+// ─── 丹道变异 ────────────────────────────────────────────────────
+// 与 Rust MutationStageV1 / MutationKindV1 / MutationStateV1 / MutationEventV1 / DandaoStyleV1 精确对应。
+
+enum MutationStage {
+  MUTATION_STAGE_UNSPECIFIED = 0;
+  MUTATION_STAGE_NONE        = 1;
+  MUTATION_STAGE_SUBTLE      = 2;
+  MUTATION_STAGE_VISIBLE     = 3;
+  MUTATION_STAGE_HEAVY       = 4;
+  MUTATION_STAGE_BESTIAL     = 5;
+}
+
+enum MutationKind {
+  MUTATION_KIND_UNSPECIFIED   = 0;
+  MUTATION_KIND_GOLDEN_IRIS   = 1;
+  MUTATION_KIND_HARDENED_NAILS = 2;
+  MUTATION_KIND_TOUGH_SKIN    = 3;
+  MUTATION_KIND_BONE_RIDGE    = 4;
+  MUTATION_KIND_FOREARM_SCALES = 5;
+  MUTATION_KIND_SPINE_SPURS   = 6;
+  MUTATION_KIND_HORNS         = 7;
+  MUTATION_KIND_TAIL          = 8;
+  MUTATION_KIND_BACK_CARAPACE = 9;
+  MUTATION_KIND_EXTRA_ARMS    = 10;
+  MUTATION_KIND_BODY_ENLARGE  = 11;
+  MUTATION_KIND_BEAST_FACE    = 12;
+}
+
+message ActiveMutation {
+  MutationKind kind          = 1;
+  string       body_slot     = 2;
+  uint32       level         = 3; // Rust u8
+  uint64       acquired_tick = 4;
+}
+
+message MutationStateProto {
+  string                  entity           = 1;
+  MutationStage           stage            = 2;
+  repeated ActiveMutation slots            = 3;
+  double                  meridian_penalty = 4;
+  double                  cumulative_toxin = 5;
+  int32                   social_penalty   = 6;
+  uint64                  server_tick      = 7;
+}
+
+message MutationEventProto {
+  string        entity              = 1;
+  MutationStage from_stage          = 2;
+  MutationStage to_stage            = 3;
+  double        cumulative_toxin    = 4;
+  double        new_meridian_penalty = 5;
+  uint64        server_tick         = 6;
+}
+
+message DandaoStyleProto {
+  string        entity            = 1;
+  uint32        brew_count        = 2;
+  uint32        pill_intake_count = 3;
+  double        cumulative_toxin  = 4;
+  MutationStage mutation_stage    = 5;
+  uint64        mastery_ticks     = 6;
+  uint64        server_tick       = 7;
+}
+
+// ─── TSY 专用 channel ────────────────────────────────────────────
+// 与 Rust TsyEnterEventV1 / TsyExitEventV1 / TsyNpcSpawnedV1 / TsySentinelPhaseChangedV1 精确对应。
+
+message TsyDimensionAnchor {
+  string dimension = 1;
+  double pos_x     = 2; // Rust [f64;3] 拆三字段
+  double pos_y     = 3;
+  double pos_z     = 4;
+}
+
+message TsyFilteredItem {
+  uint64 instance_id = 1;
+  string template_id = 2;
+  string reason      = 3;
+}
+
+message TsyEnterEvent {
+  string                     kind           = 1;
+  uint64                     tick           = 2;
+  string                     player_id      = 3;
+  string                     family_id      = 4;
+  TsyDimensionAnchor         return_to      = 5;
+  repeated TsyFilteredItem   filtered_items = 6;
+}
+
+message TsyExitEvent {
+  string kind              = 1;
+  uint64 tick              = 2;
+  string player_id         = 3;
+  string family_id         = 4;
+  uint64 duration_ticks    = 5;
+  double qi_drained_total  = 6;
+}
+
+// 与 Rust TsyHostileArchetypeV1 精确对应。
+enum TsyHostileArchetype {
+  TSY_HOSTILE_ARCHETYPE_UNSPECIFIED             = 0;
+  TSY_HOSTILE_ARCHETYPE_DAOXIANG                = 1;
+  TSY_HOSTILE_ARCHETYPE_ZHINIAN                 = 2;
+  TSY_HOSTILE_ARCHETYPE_GUARDIAN_RELIC_SENTINEL  = 3;
+  TSY_HOSTILE_ARCHETYPE_FUYA                    = 4;
+  TSY_HOSTILE_ARCHETYPE_SKULL_FIEND             = 5;
+}
+
+message TsyNpcSpawned {
+  string               kind       = 1;
+  string               family_id  = 2;
+  TsyHostileArchetype  archetype  = 3;
+  uint32               count      = 4;
+  uint64               at_tick    = 5;
+}
+
+message TsySentinelPhaseChanged {
+  string kind                = 1;
+  string family_id           = 2;
+  uint64 container_entity_id = 3;
+  uint32 phase               = 4; // Rust u8
+  uint32 max_phase           = 5; // Rust u8
+  uint64 at_tick             = 6;
+}
+
+// ═══════════════════════════════════════════════════════════════
+// P2 B5 — 杂项 C2S
+// ═══════════════════════════════════════════════════════════════
+
+// ─── VoidAction ──────────────────────────────────────────────────
+// 与 Rust VoidActionRequestV1 tagged union 精确对应。
+
+message VoidActionSuppressTsy {
+  string zone_id = 1;
+}
+
+message VoidActionExplodeZone {
+  string zone_id = 1;
+}
+
+message VoidActionBarrier {
+  string zone_id  = 1;
+  double center_x = 2; // BarrierGeometry::Circle 拆三字段
+  double center_y = 3;
+  double center_z = 4;
+  double radius   = 5;
+}
+
+message VoidActionLegacyAssign {
+  string          inheritor_id     = 1;
+  repeated uint64 item_instance_ids = 2;
+  optional string message          = 3;
+}
+
+message VoidAction {
+  oneof request {
+    VoidActionSuppressTsy suppress_tsy  = 1;
+    VoidActionExplodeZone explode_zone  = 2;
+    VoidActionBarrier     barrier       = 3;
+    VoidActionLegacyAssign legacy_assign = 4;
+  }
+}
+
+// 与 Rust ClientRequestV1::MovementAction 精确对应。
+message MovementActionRequest {
+  MovementActionRequestKind action      = 1;
+  optional float            yaw_degrees = 2;
+}
+
+// 与 Rust ClientRequestV1::ForgeRequest 精确对应。
+// ForgeAxis = Rate / Capacity。
+enum ForgeAxis {
+  FORGE_AXIS_UNSPECIFIED = 0;
+  FORGE_AXIS_RATE        = 1;
+  FORGE_AXIS_CAPACITY    = 2;
+}
+
+message ForgeRequestC2s {
+  MeridianId meridian = 1;
+  ForgeAxis  axis     = 2;
+}
+
+// 与 Rust ClientRequestV1::InsightDecision 精确对应。
+message InsightDecision {
+  string          trigger_id = 1;
+  optional uint32 choice_idx = 2;
+}
+
+// 与 Rust ClientRequestV1::AlchemyFurnacePlace 精确对应。
+message AlchemyFurnacePlace {
+  int32  x                = 1;
+  int32  y                = 2;
+  int32  z                = 3;
+  uint64 item_instance_id = 4;
+}
+
+// 与 Rust ClientRequestV1::CoffinOpen 精确对应。
+message CoffinOpen {
+  int32 x = 1;
+  int32 y = 2;
+  int32 z = 3;
+}
+
+// 与 Rust ClientRequestV1::CoffinPlace 精确对应。
+message CoffinPlace {
+  int32  x                = 1;
+  int32  y                = 2;
+  int32  z                = 3;
+  uint64 item_instance_id = 4;
+}
+
+// 与 Rust ClientRequestV1::CoffinEnter 精确对应。
+message CoffinEnter {
+  int32 x = 1;
+  int32 y = 2;
+  int32 z = 3;
+}
+
+// 与 Rust ClientRequestV1::CoffinLeave 精确对应。
+message CoffinLeave {
+  // 无额外字段。
+}
+
+// ─── Zhenfa C2S ──────────────────────────────────────────────────
+// 与 Rust ZhenfaKind / ZhenfaCarrierKind / ZhenfaDisarmMode / TrapTargetFace 精确对应。
+
+enum ZhenfaKindProto {
+  ZHENFA_KIND_UNSPECIFIED    = 0;
+  ZHENFA_KIND_TRAP           = 1;
+  ZHENFA_KIND_WARD           = 2;
+  ZHENFA_KIND_WARNING_TRAP   = 3;
+  ZHENFA_KIND_BLAST_TRAP     = 4;
+  ZHENFA_KIND_SLOW_TRAP      = 5;
+  ZHENFA_KIND_SHRINE_WARD    = 6;
+  ZHENFA_KIND_LINGJU         = 7;
+  ZHENFA_KIND_DECEIVE_HEAVEN = 8;
+  ZHENFA_KIND_ILLUSION       = 9;
+}
+
+enum ZhenfaCarrierKindProto {
+  ZHENFA_CARRIER_KIND_UNSPECIFIED      = 0;
+  ZHENFA_CARRIER_KIND_COMMON_STONE     = 1;
+  ZHENFA_CARRIER_KIND_LINGQI_BLOCK     = 2;
+  ZHENFA_CARRIER_KIND_NIGHT_WITHERED_VINE = 3;
+  ZHENFA_CARRIER_KIND_BEAST_CORE_INLAID = 4;
+}
+
+enum ZhenfaDisarmModeProto {
+  ZHENFA_DISARM_MODE_UNSPECIFIED = 0;
+  ZHENFA_DISARM_MODE_DISARM      = 1;
+  ZHENFA_DISARM_MODE_FORCE_BREAK = 2;
+}
+
+enum TrapTargetFaceProto {
+  TRAP_TARGET_FACE_UNSPECIFIED = 0;
+  TRAP_TARGET_FACE_TOP         = 1;
+  TRAP_TARGET_FACE_BOTTOM      = 2;
+  TRAP_TARGET_FACE_NORTH       = 3;
+  TRAP_TARGET_FACE_SOUTH       = 4;
+  TRAP_TARGET_FACE_EAST        = 5;
+  TRAP_TARGET_FACE_WEST        = 6;
+}
+
+// 与 Rust ClientRequestV1::ZhenfaPlace 精确对应。
+message ZhenfaPlace {
+  int32                            x                = 1;
+  int32                            y                = 2;
+  int32                            z                = 3;
+  ZhenfaKindProto                  kind             = 4;
+  optional ZhenfaCarrierKindProto  carrier          = 5;
+  double                           qi_invest_ratio  = 6;
+  optional string                  trigger          = 7;
+  optional uint64                  item_instance_id = 8;
+  optional TrapTargetFaceProto     target_face      = 9;
+}
+
+// 与 Rust ClientRequestV1::ZhenfaTrigger 精确对应。
+message ZhenfaTrigger {
+  optional uint64 instance_id = 1;
+}
+
+// 与 Rust ClientRequestV1::ZhenfaDisarm 精确对应。
+message ZhenfaDisarm {
+  int32                x    = 1;
+  int32                y    = 2;
+  int32                z    = 3;
+  ZhenfaDisarmModeProto mode = 4;
+}
+
+// 与 Rust ClientRequestV1::LearnSkillScroll 精确对应。
+message LearnSkillScroll {
+  uint64 instance_id = 1;
+}
+
+// 与 Rust ClientRequestV1::TechniqueScrollUse 精确对应。
+message TechniqueScrollUse {
+  uint64 instance_id = 1;
+}
+
+// 与 Rust ClientRequestV1::InventoryMoveIntent 精确对应。
+message InventoryMoveIntent {
+  uint64            instance_id = 1;
+  InventoryLocation from        = 2;
+  InventoryLocation to          = 3;
+}
+
+// 与 Rust ClientRequestV1::EquipFalseSkin 精确对应。
+message EquipFalseSkin {
+  EquipSlot slot              = 1;
+  uint64    item_instance_id  = 2;
+}
+
+// 与 Rust ClientRequestV1::ForgeFalseSkin 精确对应。
+message ForgeFalseSkinC2s {
+  FalseSkinKind kind = 1;
+}
+
+// 与 Rust ClientRequestV1::InventoryDiscardItem 精确对应。
+message InventoryDiscardItem {
+  uint64            instance_id = 1;
+  InventoryLocation from        = 2;
+}
+
+// 与 Rust ClientRequestV1::DropWeaponIntent 精确对应。
+message DropWeaponIntent {
+  uint64            instance_id = 1;
+  InventoryLocation from        = 2;
+}
+
+// 与 Rust ClientRequestV1::RepairWeaponIntent 精确对应。
+message RepairWeaponIntent {
+  uint64 instance_id  = 1;
+  int32  station_pos_x = 2; // Rust [i32;3] 拆三字段
+  int32  station_pos_y = 3;
+  int32  station_pos_z = 4;
+}
+
+// 与 Rust ClientRequestV1::PickupDroppedItem 精确对应。
+message PickupDroppedItem {
+  uint64 instance_id = 1;
+}
+
+// 与 Rust ClientRequestV1::ApplyPill 精确对应。
+// ApplyPillTargetV1 tagged union。
+enum ApplyPillTargetKind {
+  APPLY_PILL_TARGET_KIND_UNSPECIFIED = 0;
+  APPLY_PILL_TARGET_KIND_SELF        = 1;
+  APPLY_PILL_TARGET_KIND_MERIDIAN    = 2;
+}
+
+message ApplyPill {
+  uint64                instance_id = 1;
+  ApplyPillTargetKind   target_kind = 2;
+  optional MeridianId   meridian_id = 3; // 仅 target_kind == MERIDIAN 时有值
+}
+
+// 与 Rust ClientRequestV1::SelfAntidote 精确对应。
+message SelfAntidote {
+  uint64 instance_id = 1;
+}
+
+// 与 Rust ClientRequestV1::StartExtractRequest 精确对应。
+message StartExtractRequest {
+  uint64 portal_entity_id = 1;
+}
+
+// 与 Rust ClientRequestV1::CancelExtractRequest 精确对应。
+message CancelExtractRequest {
+  // 无额外字段。
+}
+
+// 与 Rust ClientRequestV1::StartSearch 精确对应。
+message StartSearch {
+  uint64 container_entity_id = 1;
+}
+
+// 与 Rust ClientRequestV1::CancelSearch 精确对应。
+message CancelSearch {
+  // 无额外字段。
+}
+
+// 与 Rust ClientRequestV1::ForgeStationPlace 精确对应。
+message ForgeStationPlace {
+  int32  x                = 1;
+  int32  y                = 2;
+  int32  z                = 3;
+  uint64 item_instance_id = 4;
+  uint32 station_tier     = 5; // Rust u8
 }
