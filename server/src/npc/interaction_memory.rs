@@ -12,7 +12,7 @@ use crate::combat::events::CombatEvent;
 use crate::npc::lifecycle::NpcArchetype;
 use crate::npc::spawn::NpcMarker;
 
-pub const MAX_NPC_MEMORY_ENTRIES: usize = 8;
+pub const MAX_NPC_MEMORY_ENTRIES: usize = 16;
 
 #[derive(Component, Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct NpcMemoryComponent {
@@ -34,6 +34,9 @@ pub enum NpcInteractionType {
     Attack,
     Theft,
     Help,
+    TradeRefused,
+    Ambushed,
+    FledFrom,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -45,17 +48,64 @@ pub enum NpcInteractionOutcome {
     Helped,
 }
 
+/// Returns true if the interaction type is pinned (resistant to eviction).
+///
+/// Pinned types: Attack, Theft, Ambushed — these are dangerous encounters
+/// that the NPC should remember for a long time.
+pub fn is_pinned(interaction_type: NpcInteractionType) -> bool {
+    matches!(
+        interaction_type,
+        NpcInteractionType::Attack | NpcInteractionType::Theft | NpcInteractionType::Ambushed
+    )
+}
+
 impl NpcMemoryComponent {
     pub fn remember(&mut self, entry: NpcMemoryEntry) {
         self.interactions.push(entry);
         self.trim_to_limit();
     }
 
+    /// Weighted eviction: pinned entries (Attack/Theft/Ambushed) resist eviction.
+    /// Unpinned entries are evicted oldest-first. If all slots are pinned,
+    /// the oldest pinned entry is downgraded (effectively evicted).
     fn trim_to_limit(&mut self) {
-        if self.interactions.len() > MAX_NPC_MEMORY_ENTRIES {
-            let overflow = self.interactions.len() - MAX_NPC_MEMORY_ENTRIES;
-            self.interactions.drain(0..overflow);
+        while self.interactions.len() > MAX_NPC_MEMORY_ENTRIES {
+            // Find oldest unpinned entry
+            if let Some(idx) = self
+                .interactions
+                .iter()
+                .position(|e| !is_pinned(e.interaction_type))
+            {
+                self.interactions.remove(idx);
+            } else {
+                // All pinned: evict the oldest (first) entry
+                self.interactions.remove(0);
+            }
         }
+    }
+
+    /// Check if this NPC has been attacked by a specific player.
+    #[allow(dead_code)]
+    pub fn has_been_attacked_by(&self, player_uuid: &str) -> bool {
+        self.interactions.iter().any(|e| {
+            e.player_uuid == player_uuid && e.interaction_type == NpcInteractionType::Attack
+        })
+    }
+
+    /// Check if this NPC has successfully traded with a specific player.
+    #[allow(dead_code)]
+    pub fn has_traded_with(&self, player_uuid: &str) -> bool {
+        self.interactions.iter().any(|e| {
+            e.player_uuid == player_uuid && e.interaction_type == NpcInteractionType::Trade
+        })
+    }
+
+    /// Check if this NPC has been robbed by a specific player.
+    #[allow(dead_code)]
+    pub fn has_been_robbed_by(&self, player_uuid: &str) -> bool {
+        self.interactions.iter().any(|e| {
+            e.player_uuid == player_uuid && e.interaction_type == NpcInteractionType::Theft
+        })
     }
 }
 
@@ -175,18 +225,237 @@ mod tests {
         }
     }
 
+    fn entry_with_type(i: u64, ty: NpcInteractionType) -> NpcMemoryEntry {
+        NpcMemoryEntry {
+            player_uuid: "offline:Azure".to_string(),
+            interaction_type: ty,
+            timestamp: i,
+            outcome: NpcInteractionOutcome::Friendly,
+        }
+    }
+
+    fn entry_for_player(i: u64, player: &str, ty: NpcInteractionType) -> NpcMemoryEntry {
+        NpcMemoryEntry {
+            player_uuid: player.to_string(),
+            interaction_type: ty,
+            timestamp: i,
+            outcome: NpcInteractionOutcome::Friendly,
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Slot expansion
+    // -----------------------------------------------------------------------
+
     #[test]
-    fn memory_component_fifo_8() {
+    fn slot_expansion_16() {
+        assert_eq!(
+            MAX_NPC_MEMORY_ENTRIES, 16,
+            "MAX_NPC_MEMORY_ENTRIES should be 16 (expanded from 8)"
+        );
+    }
+
+    #[test]
+    fn memory_component_trims_to_16() {
         let mut memory = NpcMemoryComponent::default();
-        for i in 0..10 {
-            memory.interactions.push(entry(i));
-            memory.trim_to_limit();
+        for i in 0..20 {
+            memory.remember(entry_with_type(i, NpcInteractionType::Trade));
         }
 
-        assert_eq!(memory.interactions.len(), 8);
-        assert_eq!(memory.interactions[0].timestamp, 2);
-        assert_eq!(memory.interactions[7].timestamp, 9);
+        assert_eq!(
+            memory.interactions.len(),
+            16,
+            "should trim to 16 entries, got {}",
+            memory.interactions.len()
+        );
+        // Oldest unpinned (Trade) entries should be evicted first
+        assert_eq!(
+            memory.interactions[0].timestamp, 4,
+            "oldest remaining entry should be timestamp 4 (first 4 evicted)"
+        );
     }
+
+    // -----------------------------------------------------------------------
+    // Pinned eviction
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn pinned_not_evicted() {
+        let mut memory = NpcMemoryComponent::default();
+        // Fill with 14 Trade entries (unpinned) and 2 Attack entries (pinned)
+        for i in 0..14 {
+            memory.remember(entry_with_type(i, NpcInteractionType::Trade));
+        }
+        memory.remember(entry_with_type(100, NpcInteractionType::Attack));
+        memory.remember(entry_with_type(101, NpcInteractionType::Theft));
+        assert_eq!(memory.interactions.len(), 16);
+
+        // Add 2 more unpinned -> should evict oldest unpinned, not pinned
+        memory.remember(entry_with_type(200, NpcInteractionType::Help));
+        memory.remember(entry_with_type(201, NpcInteractionType::Help));
+
+        assert_eq!(memory.interactions.len(), 16);
+        // Pinned entries should still be present
+        assert!(
+            memory
+                .interactions
+                .iter()
+                .any(|e| e.timestamp == 100 && e.interaction_type == NpcInteractionType::Attack),
+            "Attack (pinned) entry at t=100 should survive eviction"
+        );
+        assert!(
+            memory
+                .interactions
+                .iter()
+                .any(|e| e.timestamp == 101 && e.interaction_type == NpcInteractionType::Theft),
+            "Theft (pinned) entry at t=101 should survive eviction"
+        );
+    }
+
+    #[test]
+    fn oldest_pinned_downgrades_when_full() {
+        let mut memory = NpcMemoryComponent::default();
+        // Fill all 16 slots with pinned entries (Attack)
+        for i in 0..16 {
+            memory.remember(entry_with_type(i, NpcInteractionType::Attack));
+        }
+        assert_eq!(memory.interactions.len(), 16);
+
+        // Add one more -> no unpinned to evict, so oldest pinned (t=0) is evicted
+        memory.remember(entry_with_type(100, NpcInteractionType::Attack));
+        assert_eq!(
+            memory.interactions.len(),
+            16,
+            "should still be 16 after adding to full pinned list"
+        );
+        assert!(
+            !memory.interactions.iter().any(|e| e.timestamp == 0),
+            "oldest pinned entry (t=0) should be evicted when all slots are pinned"
+        );
+        assert!(
+            memory.interactions.iter().any(|e| e.timestamp == 100),
+            "newly added entry (t=100) should be present"
+        );
+    }
+
+    #[test]
+    fn ambushed_is_pinned() {
+        assert!(
+            is_pinned(NpcInteractionType::Ambushed),
+            "Ambushed should be a pinned interaction type"
+        );
+    }
+
+    #[test]
+    fn trade_help_fled_not_pinned() {
+        assert!(
+            !is_pinned(NpcInteractionType::Trade),
+            "Trade should not be pinned"
+        );
+        assert!(
+            !is_pinned(NpcInteractionType::Help),
+            "Help should not be pinned"
+        );
+        assert!(
+            !is_pinned(NpcInteractionType::FledFrom),
+            "FledFrom should not be pinned"
+        );
+        assert!(
+            !is_pinned(NpcInteractionType::TradeRefused),
+            "TradeRefused should not be pinned"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // New variant serde roundtrip
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn new_variants_serde_roundtrip() {
+        for ty in [
+            NpcInteractionType::TradeRefused,
+            NpcInteractionType::Ambushed,
+            NpcInteractionType::FledFrom,
+        ] {
+            let entry = entry_with_type(42, ty);
+            let json = serde_json::to_string(&entry)
+                .unwrap_or_else(|e| panic!("serialize {:?} failed: {}", ty, e));
+            let deserialized: NpcMemoryEntry = serde_json::from_str(&json)
+                .unwrap_or_else(|e| panic!("deserialize {:?} failed: {}", ty, e));
+            assert_eq!(
+                deserialized.interaction_type, ty,
+                "serde roundtrip for {:?} should preserve interaction_type",
+                ty
+            );
+            assert_eq!(deserialized.timestamp, 42);
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Helper method tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn has_been_attacked_by_returns_true_for_matching_player() {
+        let mut memory = NpcMemoryComponent::default();
+        memory.remember(entry_for_player(
+            1,
+            "player:abc",
+            NpcInteractionType::Attack,
+        ));
+        memory.remember(entry_for_player(2, "player:def", NpcInteractionType::Trade));
+
+        assert!(
+            memory.has_been_attacked_by("player:abc"),
+            "should find attack by player:abc"
+        );
+        assert!(
+            !memory.has_been_attacked_by("player:def"),
+            "player:def traded, not attacked"
+        );
+        assert!(
+            !memory.has_been_attacked_by("player:nonexistent"),
+            "nonexistent player should return false"
+        );
+    }
+
+    #[test]
+    fn has_traded_with_returns_true_for_matching_player() {
+        let mut memory = NpcMemoryComponent::default();
+        memory.remember(entry_for_player(1, "player:abc", NpcInteractionType::Trade));
+
+        assert!(
+            memory.has_traded_with("player:abc"),
+            "should find trade with player:abc"
+        );
+        assert!(
+            !memory.has_traded_with("player:def"),
+            "player:def has no trade record"
+        );
+    }
+
+    #[test]
+    fn has_been_robbed_by_returns_true_for_matching_player() {
+        let mut memory = NpcMemoryComponent::default();
+        memory.remember(entry_for_player(
+            1,
+            "player:thief",
+            NpcInteractionType::Theft,
+        ));
+
+        assert!(
+            memory.has_been_robbed_by("player:thief"),
+            "should find theft by player:thief"
+        );
+        assert!(
+            !memory.has_been_robbed_by("player:innocent"),
+            "innocent player should return false"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // Existing tests (updated for MAX=16)
+    // -----------------------------------------------------------------------
 
     #[test]
     fn memory_bubble_probability() {
@@ -217,14 +486,18 @@ mod tests {
     }
 
     #[test]
-    fn remember_trims_to_fifo_limit() {
+    fn remember_trims_to_max_limit() {
         let mut memory = NpcMemoryComponent::default();
-        for i in 0..10 {
-            memory.remember(entry(i));
+        // With mixed pinned/unpinned, only unpinned (Trade) get evicted
+        for i in 0..20 {
+            memory.remember(entry(i)); // alternates Trade (even) and Attack (odd, pinned)
         }
 
-        assert_eq!(memory.interactions.len(), MAX_NPC_MEMORY_ENTRIES);
-        assert_eq!(memory.interactions[0].timestamp, 2);
-        assert_eq!(memory.interactions[7].timestamp, 9);
+        assert_eq!(
+            memory.interactions.len(),
+            MAX_NPC_MEMORY_ENTRIES,
+            "should trim to MAX_NPC_MEMORY_ENTRIES={}",
+            MAX_NPC_MEMORY_ENTRIES
+        );
     }
 }

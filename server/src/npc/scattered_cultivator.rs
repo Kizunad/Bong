@@ -12,7 +12,8 @@ use crate::npc::movement::GameTick;
 use crate::social::components::SpiritNiche;
 use crate::social::events::NicheIntrusionAttempt;
 
-use super::spawn::NpcMarker;
+use super::brain::threat::SelfInterestDecision;
+use super::spawn::{NpcBlackboard, NpcMarker};
 
 pub type PlotId = BlockPos;
 
@@ -20,7 +21,7 @@ pub const PLAYER_PLOT_REACTION_RADIUS: f64 = 5.0;
 pub const PLAYER_PLOT_LINGER_TICKS: u32 = 600;
 pub const MIGRATION_COOLDOWN_TICKS: u64 = 12_000;
 
-type CultivatorPlotQueryItem<'a> = (Entity, &'a ScatteredCultivator);
+type CultivatorPlotQueryItem<'a> = (Entity, &'a ScatteredCultivator, &'a NpcBlackboard);
 type CultivatorPlotQueryFilter = (With<NpcMarker>, With<Position>);
 
 #[derive(Debug, Clone, Component)]
@@ -132,6 +133,8 @@ impl FarmingTemperament {
     }
 }
 
+#[deprecated(note = "use npc::brain::threat::SelfInterestDecision instead (P2 migration)")]
+#[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CultivatorPlayerReaction {
     Flee,
@@ -169,6 +172,8 @@ pub fn trade_price_for_reputation(
     Ok(((base_price_bone_coin as f64) * multiplier).ceil().max(1.0) as u64)
 }
 
+#[deprecated(note = "use npc::brain::threat::decide_self_interest instead (P2 migration)")]
+#[allow(dead_code, deprecated)]
 pub fn choose_player_reaction(
     temperament: FarmingTemperament,
     player_realm: Realm,
@@ -191,6 +196,7 @@ pub fn choose_player_reaction(
     CultivatorPlayerReaction::RespectfulTrade
 }
 
+#[allow(dead_code)]
 fn realm_rank(realm: Realm) -> u8 {
     match realm {
         Realm::Awaken => 1,
@@ -217,7 +223,7 @@ pub fn detect_scattered_cultivator_plot_trespass(
     mut attempts: EventWriter<NicheIntrusionAttempt>,
 ) {
     let now = tick.as_deref().map(|tick| tick.0).unwrap_or(0);
-    for (cultivator, scattered) in &cultivators {
+    for (cultivator, scattered, blackboard) in &cultivators {
         let Some(plot) = scattered.home_plot else {
             continue;
         };
@@ -233,20 +239,21 @@ pub fn detect_scattered_cultivator_plot_trespass(
                 continue;
             }
 
+            // P2 migration: use blackboard self_interest_decision instead of
+            // choose_player_reaction(). Ambush decision + player in NPC home_plot
+            // range replaces the old StealPlot reaction.
+            let is_ambush = blackboard.self_interest_decision == Some(SelfInterestDecision::Ambush);
+            // Fallback for Aggressive temperament lingering (legacy behavior):
+            // if no blackboard decision, use linger threshold as before.
             let started = *memory
                 .linger_started_at
                 .entry((cultivator, player))
                 .or_insert(now);
             let linger_ticks = now.saturating_sub(started);
-            if choose_player_reaction(
-                scattered.temperament,
-                Realm::Awaken,
-                Realm::Awaken,
-                1.0,
-                false,
-                linger_ticks,
-            ) != CultivatorPlayerReaction::StealPlot
-            {
+            let linger_triggered = matches!(scattered.temperament, FarmingTemperament::Aggressive)
+                && linger_ticks >= PLAYER_PLOT_LINGER_TICKS;
+
+            if !is_ambush && !linger_triggered {
                 continue;
             }
             if memory
@@ -285,6 +292,7 @@ pub fn register(app: &mut App) {
 }
 
 #[cfg(test)]
+#[allow(deprecated)]
 mod tests {
     use super::*;
 
@@ -339,6 +347,7 @@ mod tests {
         let plot = BlockPos::new(4, 64, 4);
         app.world_mut().spawn((
             NpcMarker,
+            NpcBlackboard::default(),
             Position::new([4.5, 65.0, 4.5]),
             ScatteredCultivator::new(FarmingTemperament::Aggressive).with_home_for_test(plot),
         ));
@@ -386,6 +395,7 @@ mod tests {
             .world_mut()
             .spawn((
                 NpcMarker,
+                NpcBlackboard::default(),
                 Position::new([4.5, 65.0, 4.5]),
                 ScatteredCultivator::new(FarmingTemperament::Aggressive).with_home_for_test(plot),
             ))

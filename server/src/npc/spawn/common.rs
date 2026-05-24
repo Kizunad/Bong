@@ -9,6 +9,7 @@ use valence::prelude::{
 
 use crate::combat::components::WoundKind;
 use crate::combat::events::{AttackReach, FIST_REACH, SPEAR_REACH, SWORD_REACH};
+use crate::npc::brain::threat::{SelfInterestDecision, ThreatAssessment};
 use crate::npc::brain::{canonical_npc_id, GoToPoiState, RestState, StallState};
 use crate::npc::lifecycle::{NpcArchetype, NpcSpawnNotice, NpcSpawnSource};
 use crate::npc::lod::NpcLodTier;
@@ -172,6 +173,10 @@ pub struct NpcBlackboard {
     pub target_position: Option<DVec3>,
     /// GameTick of the last melee attack (for cooldown tracking).
     pub last_melee_tick: u32,
+    /// Composite threat assessment for the nearest player (P2).
+    pub threat_assessment: Option<ThreatAssessment>,
+    /// Self-interest decision derived from threat assessment + memory (P2).
+    pub self_interest_decision: Option<SelfInterestDecision>,
 }
 
 impl Default for NpcBlackboard {
@@ -181,6 +186,8 @@ impl Default for NpcBlackboard {
             player_distance: f32::INFINITY,
             target_position: None,
             last_melee_tick: 0,
+            threat_assessment: None,
+            self_interest_decision: None,
         }
     }
 }
