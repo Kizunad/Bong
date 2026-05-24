@@ -1147,8 +1147,10 @@ pub fn handle_client_request_payloads(
                         continue;
                     }
                     crate::npc::trade::TradeEligibility::RefuseRare => {
-                        // Low tier: apply markup, allow common items
-                        (base_price as f64 * 1.3).ceil().max(1.0) as u64
+                        let config = crate::npc::trade::TradePricingConfig::default();
+                        (base_price as f64 * config.rep_low_markup as f64)
+                            .ceil()
+                            .max(1.0) as u64
                     }
                     crate::npc::trade::TradeEligibility::Allowed { price_modifier } => {
                         (base_price as f64 * price_modifier as f64).ceil().max(1.0) as u64
