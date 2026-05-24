@@ -9,6 +9,7 @@ use crate::npc::brain::{
 };
 use crate::npc::hunger::Hunger;
 use crate::npc::lifecycle::{npc_runtime_bundle_with_age, NpcArchetype};
+use crate::npc::trade::NpcPlayerReputation;
 use crate::skin::{initial_age_ratio, select_npc_visual_profile};
 
 use super::common::{
@@ -79,6 +80,7 @@ pub fn spawn_commoner_npc_at(
         Hunger::default(),
         WanderState::default(),
         commoner_npc_thinker(),
+        NpcPlayerReputation::default(),
     ));
 
     let runtime = npc_runtime_bundle_with_age(entity, NpcArchetype::Commoner, initial_age_ticks);

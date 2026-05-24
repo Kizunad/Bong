@@ -21,7 +21,7 @@ use crate::npc::scattered_cultivator::{FarmingTemperament, ScatteredCultivator};
 use crate::npc::technique::{
     assign_npc_techniques, NpcLastTechniqueTick, NpcTechniqueAction, NpcTechniqueScorer,
 };
-use crate::npc::trade::assign_npc_trade_inventory;
+use crate::npc::trade::{assign_npc_trade_inventory, NpcPlayerReputation};
 use crate::skin::{initial_age_ratio, select_npc_visual_profile, NpcSkinFallbackPolicy, SkinPool};
 use crate::world::mob_spawn::{MobSpawnFilter, NaturalMobKind};
 use crate::world::zone::{Zone, ZoneRegistry};
@@ -283,9 +283,12 @@ pub fn spawn_rogue_npc_at(
         entity.index() as u64,
     );
     let trade_inv = assign_npc_trade_inventory(NpcArchetype::Rogue, realm, entity.index() as u64);
-    commands
-        .entity(entity)
-        .insert((known_techniques, NpcLastTechniqueTick::default(), trade_inv));
+    commands.entity(entity).insert((
+        known_techniques,
+        NpcLastTechniqueTick::default(),
+        trade_inv,
+        NpcPlayerReputation::default(),
+    ));
 
     let runtime = npc_runtime_bundle_with_age(entity, NpcArchetype::Rogue, initial_age_ticks);
     commands.entity(entity).insert(runtime);
