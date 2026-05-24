@@ -46,7 +46,15 @@ public final class ArmorProfileStore {
         Map.entry("cloth_robe", new ArmorMitigation(0.10f, 0.20f, 0.05f, 0.00f, 0.10f)),
         Map.entry("fake_spirit_hide", new ArmorMitigation(0.25f, 0.30f, 0.20f, 0.10f, 0.15f)),
         Map.entry("spirit_weave_robe", new ArmorMitigation(0.35f, 0.35f, 0.35f, 0.40f, 0.35f)),
-        Map.entry("iron_plate_chest", new ArmorMitigation(0.50f, 0.40f, 0.55f, 0.15f, 0.20f))
+        Map.entry("iron_plate_chest", new ArmorMitigation(0.50f, 0.40f, 0.55f, 0.15f, 0.20f)),
+        Map.entry("armor_bone_boots", new ArmorMitigation(0.15f, 0.15f, 0.20f, 0.00f, 0.10f)),
+        Map.entry("armor_bone_chestplate", new ArmorMitigation(0.25f, 0.15f, 0.30f, 0.00f, 0.20f)),
+        Map.entry("armor_bone_helmet", new ArmorMitigation(0.15f, 0.10f, 0.20f, 0.00f, 0.15f)),
+        Map.entry("armor_bone_leggings", new ArmorMitigation(0.20f, 0.10f, 0.25f, 0.00f, 0.15f)),
+        Map.entry("armor_iron_boots", new ArmorMitigation(0.35f, 0.40f, 0.25f, 0.00f, 0.20f)),
+        Map.entry("armor_iron_chestplate", new ArmorMitigation(0.55f, 0.40f, 0.45f, 0.15f, 0.35f)),
+        Map.entry("armor_iron_helmet", new ArmorMitigation(0.45f, 0.30f, 0.35f, 0.00f, 0.40f)),
+        Map.entry("armor_iron_leggings", new ArmorMitigation(0.40f, 0.35f, 0.30f, 0.00f, 0.25f))
     );
 
     private ArmorProfileStore() {

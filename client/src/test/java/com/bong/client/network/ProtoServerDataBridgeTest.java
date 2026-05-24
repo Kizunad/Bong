@@ -2,6 +2,7 @@ package com.bong.client.network;
 
 import bong.Common;
 import bong.Envelope;
+import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import org.junit.jupiter.api.Test;
@@ -335,5 +336,461 @@ class ProtoServerDataBridgeTest {
         assertEquals("player_state", json.get("type").getAsString());
         assertEquals("offline:Steve", json.get("player").getAsString());
         assertEquals("blood_valley", json.get("zone").getAsString());
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // printAndNormalize: proto3 uint64 string → JSON number
+    // ═══════════════════════════════════════════════════════════════════
+
+    @Test
+    void uint64FieldsAreNormalizedToJsonNumbers() {
+        Envelope.ServerDataEnvelope envelope = Envelope.ServerDataEnvelope.newBuilder()
+                .setInventorySnapshot(Envelope.InventorySnapshot.newBuilder()
+                        .setRevision(999)
+                        .setBoneCoins(12345))
+                .build();
+
+        JsonObject json = bridgeAndParse(envelope);
+        assertTrue(json.get("revision").isJsonPrimitive(), "revision should be a primitive");
+        assertTrue(json.get("revision").getAsJsonPrimitive().isNumber(),
+                "revision should be a number (not string) after normalization");
+        assertEquals(999, json.get("revision").getAsLong());
+        assertEquals(12345, json.get("bone_coins").getAsLong());
+    }
+
+    @Test
+    void zeroValueUint64IsPreservedByIncludingDefaultValueFields() {
+        Envelope.ServerDataEnvelope envelope = Envelope.ServerDataEnvelope.newBuilder()
+                .setInventorySnapshot(Envelope.InventorySnapshot.newBuilder()
+                        .setRevision(0)
+                        .setBoneCoins(0))
+                .build();
+
+        JsonObject json = bridgeAndParse(envelope);
+        assertTrue(json.has("revision"),
+                "revision=0 must be present (includingDefaultValueFields)");
+        assertEquals(0, json.get("revision").getAsLong());
+        assertTrue(json.has("bone_coins"),
+                "bone_coins=0 must be present (includingDefaultValueFields)");
+        assertEquals(0, json.get("bone_coins").getAsLong());
+    }
+
+    @Test
+    void negativeInt64NormalizedToNumber() {
+        Envelope.ServerDataEnvelope envelope = Envelope.ServerDataEnvelope.newBuilder()
+                .setZoneInfo(Envelope.ZoneInfo.newBuilder()
+                        .setZone("test")
+                        .setSpiritQi(-3.14)
+                        .setDangerLevel(-1))
+                .build();
+
+        JsonObject json = bridgeAndParse(envelope);
+        assertTrue(json.get("danger_level").getAsJsonPrimitive().isNumber(),
+                "negative int should be a JSON number");
+        assertEquals(-1, json.get("danger_level").getAsInt());
+    }
+
+    @Test
+    void largeUint64NearMaxLongNormalizedCorrectly() {
+        long nearMax = Long.MAX_VALUE - 1;
+        Envelope.ServerDataEnvelope envelope = Envelope.ServerDataEnvelope.newBuilder()
+                .setInventorySnapshot(Envelope.InventorySnapshot.newBuilder()
+                        .setRevision(nearMax))
+                .build();
+
+        JsonObject json = bridgeAndParse(envelope);
+        assertTrue(json.get("revision").getAsJsonPrimitive().isNumber(),
+                "near-max long should still be a JSON number");
+        assertEquals(nearMax, json.get("revision").getAsLong());
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // bridgeOneofFlat: InventoryEvent — all 4 variants
+    // ═══════════════════════════════════════════════════════════════════
+
+    @Test
+    void inventoryEventMovedFlattensOneof() {
+        Envelope.ServerDataEnvelope envelope = Envelope.ServerDataEnvelope.newBuilder()
+                .setInventoryEvent(Envelope.InventoryEvent.newBuilder()
+                        .setMoved(Envelope.InventoryEventMoved.newBuilder()
+                                .setRevision(7)
+                                .setInstanceId(42)
+                                .setFrom(Envelope.InventoryLocation.newBuilder()
+                                        .setContainer(Envelope.InventoryLocationContainer.newBuilder()
+                                                .setContainerId("backpack").setRow(0).setCol(1)))
+                                .setTo(Envelope.InventoryLocation.newBuilder()
+                                        .setEquip(Envelope.InventoryLocationEquip.newBuilder()
+                                                .setSlot(Envelope.EquipSlot.EQUIP_SLOT_CHEST)))))
+                .build();
+
+        JsonObject json = bridgeAndParse(envelope);
+        assertEquals("inventory_event", json.get("type").getAsString());
+        assertEquals("moved", json.get("kind").getAsString(),
+                "oneof variant name should become 'kind' field");
+        assertEquals(7, json.get("revision").getAsLong(),
+                "inner fields should be flattened to top level");
+        assertEquals(42, json.get("instance_id").getAsLong());
+        assertTrue(json.has("from"), "from location should be present");
+        assertTrue(json.has("to"), "to location should be present");
+    }
+
+    @Test
+    void inventoryEventDroppedFlattensOneof() {
+        Envelope.ServerDataEnvelope envelope = Envelope.ServerDataEnvelope.newBuilder()
+                .setInventoryEvent(Envelope.InventoryEvent.newBuilder()
+                        .setDropped(Envelope.InventoryEventDropped.newBuilder()
+                                .setRevision(3)
+                                .setInstanceId(10)
+                                .setWorldPosX(100.0).setWorldPosY(64.0).setWorldPosZ(200.0)))
+                .build();
+
+        JsonObject json = bridgeAndParse(envelope);
+        assertEquals("dropped", json.get("kind").getAsString());
+        assertEquals(3, json.get("revision").getAsLong());
+        assertEquals(100.0, json.get("world_pos_x").getAsDouble(), 0.01);
+    }
+
+    @Test
+    void inventoryEventStackChangedFlattensOneof() {
+        Envelope.ServerDataEnvelope envelope = Envelope.ServerDataEnvelope.newBuilder()
+                .setInventoryEvent(Envelope.InventoryEvent.newBuilder()
+                        .setStackChanged(Envelope.InventoryEventStackChanged.newBuilder()
+                                .setRevision(5).setInstanceId(99).setStackCount(64)))
+                .build();
+
+        JsonObject json = bridgeAndParse(envelope);
+        assertEquals("stack_changed", json.get("kind").getAsString());
+        assertEquals(64, json.get("stack_count").getAsLong());
+    }
+
+    @Test
+    void inventoryEventDurabilityChangedFlattensOneof() {
+        Envelope.ServerDataEnvelope envelope = Envelope.ServerDataEnvelope.newBuilder()
+                .setInventoryEvent(Envelope.InventoryEvent.newBuilder()
+                        .setDurabilityChanged(Envelope.InventoryEventDurabilityChanged.newBuilder()
+                                .setRevision(8).setInstanceId(50).setDurability(0.75)))
+                .build();
+
+        JsonObject json = bridgeAndParse(envelope);
+        assertEquals("durability_changed", json.get("kind").getAsString());
+        assertEquals(0.75, json.get("durability").getAsDouble(), 0.001);
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // bridgeOneofFlat: CraftOutcome — completed / failed
+    // ═══════════════════════════════════════════════════════════════════
+
+    @Test
+    void craftOutcomeCompletedFlattensOneof() {
+        Envelope.ServerDataEnvelope envelope = Envelope.ServerDataEnvelope.newBuilder()
+                .setCraftOutcome(Envelope.CraftOutcome.newBuilder()
+                        .setCompleted(Envelope.CraftOutcomeCompleted.newBuilder()
+                                .setRecipeId("iron_sword")
+                                .setOutputTemplate("iron_sword_basic")
+                                .setOutputCount(1)
+                                .setCompletedAtTick(1000)))
+                .build();
+
+        JsonObject json = bridgeAndParse(envelope);
+        assertEquals("craft_outcome", json.get("type").getAsString());
+        assertEquals("completed", json.get("kind").getAsString());
+        assertEquals("iron_sword", json.get("recipe_id").getAsString());
+        assertEquals(1, json.get("output_count").getAsInt());
+        assertEquals(1000, json.get("completed_at_tick").getAsLong());
+    }
+
+    @Test
+    void craftOutcomeFailedFlattensOneof() {
+        Envelope.ServerDataEnvelope envelope = Envelope.ServerDataEnvelope.newBuilder()
+                .setCraftOutcome(Envelope.CraftOutcome.newBuilder()
+                        .setFailed(Envelope.CraftOutcomeFailed.newBuilder()
+                                .setRecipeId("spirit_pill")
+                                .setMaterialReturned(2)
+                                .setQiRefunded(50.5)))
+                .build();
+
+        JsonObject json = bridgeAndParse(envelope);
+        assertEquals("failed", json.get("kind").getAsString());
+        assertEquals("spirit_pill", json.get("recipe_id").getAsString());
+        assertEquals(2, json.get("material_returned").getAsInt());
+        assertEquals(50.5, json.get("qi_refunded").getAsDouble(), 0.01);
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // bridgeSlotConfig: QuickSlotConfig — wrapper unwrap + empty slots
+    // ═══════════════════════════════════════════════════════════════════
+
+    @Test
+    void quickSlotConfigUnwrapsEntryAndNullifiesEmpty() {
+        Envelope.QuickSlotConfig.Builder qsc = Envelope.QuickSlotConfig.newBuilder();
+        // slot 0: filled
+        qsc.addSlots(Envelope.OptionalQuickSlotEntry.newBuilder()
+                .setEntry(Envelope.QuickSlotEntry.newBuilder()
+                        .setItemId("healing_pill")
+                        .setDisplayName("灵息丸")
+                        .setCastDurationMs(500)));
+        // slots 1-8: empty
+        for (int i = 1; i < 9; i++) {
+            qsc.addSlots(Envelope.OptionalQuickSlotEntry.newBuilder());
+        }
+        for (int i = 0; i < 9; i++) {
+            qsc.addCooldownUntilMs(0);
+        }
+
+        Envelope.ServerDataEnvelope envelope = Envelope.ServerDataEnvelope.newBuilder()
+                .setQuickSlotConfig(qsc).build();
+
+        JsonObject json = bridgeAndParse(envelope);
+        assertEquals("quickslot_config", json.get("type").getAsString());
+
+        JsonArray slots = json.getAsJsonArray("slots");
+        assertEquals(9, slots.size(), "should have 9 slots");
+
+        // slot 0: unwrapped from wrapper — should have item_id directly
+        assertTrue(slots.get(0).isJsonObject(), "filled slot should be an object");
+        JsonObject slot0 = slots.get(0).getAsJsonObject();
+        assertEquals("healing_pill", slot0.get("item_id").getAsString(),
+                "item_id should be at top level (not nested under 'entry')");
+        assertFalse(slot0.has("entry"),
+                "wrapper 'entry' field should be removed after unwrapping");
+
+        // slots 1-8: empty wrapper {} → JsonNull
+        for (int i = 1; i < 9; i++) {
+            assertTrue(slots.get(i).isJsonNull(),
+                    "empty slot " + i + " should be null (not empty object {})");
+        }
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // bridgeSlotConfig: SkillBarConfig — wrapper + oneof flatten
+    // ═══════════════════════════════════════════════════════════════════
+
+    @Test
+    void skillBarConfigUnwrapsAndFlattensOneof() {
+        Envelope.SkillBarConfig.Builder sbc = Envelope.SkillBarConfig.newBuilder();
+        // slot 0: item type
+        sbc.addSlots(Envelope.OptionalSkillBarEntry.newBuilder()
+                .setEntry(Envelope.SkillBarEntry.newBuilder()
+                        .setItem(Envelope.SkillBarEntryItem.newBuilder()
+                                .setTemplateId("iron_sword")
+                                .setDisplayName("铁剑")
+                                .setCastDurationMs(0)
+                                .setCooldownMs(1000))));
+        // slot 1: skill type
+        sbc.addSlots(Envelope.OptionalSkillBarEntry.newBuilder()
+                .setEntry(Envelope.SkillBarEntry.newBuilder()
+                        .setSkill(Envelope.SkillBarEntrySkill.newBuilder()
+                                .setSkillId("fireball")
+                                .setDisplayName("火球术")
+                                .setCastDurationMs(2000)
+                                .setCooldownMs(5000))));
+        // slots 2-8: empty
+        for (int i = 2; i < 9; i++) {
+            sbc.addSlots(Envelope.OptionalSkillBarEntry.newBuilder());
+        }
+        for (int i = 0; i < 9; i++) {
+            sbc.addCooldownUntilMs(0);
+        }
+
+        Envelope.ServerDataEnvelope envelope = Envelope.ServerDataEnvelope.newBuilder()
+                .setSkillBarConfig(sbc).build();
+
+        JsonObject json = bridgeAndParse(envelope);
+        assertEquals("skillbar_config", json.get("type").getAsString());
+
+        JsonArray slots = json.getAsJsonArray("slots");
+
+        // slot 0: item — kind should be "item", template_id at top level
+        JsonObject slot0 = slots.get(0).getAsJsonObject();
+        assertEquals("item", slot0.get("kind").getAsString(),
+                "oneof variant 'item' should become kind='item'");
+        assertEquals("iron_sword", slot0.get("template_id").getAsString(),
+                "inner fields should be flattened to slot level");
+        assertFalse(slot0.has("item"), "oneof variant key 'item' should be removed");
+        assertFalse(slot0.has("entry"), "wrapper key 'entry' should be removed");
+
+        // slot 1: skill
+        JsonObject slot1 = slots.get(1).getAsJsonObject();
+        assertEquals("skill", slot1.get("kind").getAsString());
+        assertEquals("fireball", slot1.get("skill_id").getAsString());
+
+        // slots 2-8: null
+        for (int i = 2; i < 9; i++) {
+            assertTrue(slots.get(i).isJsonNull(),
+                    "empty slot " + i + " should be null");
+        }
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // bridgeForgeSession: step_state oneof flatten
+    // ═══════════════════════════════════════════════════════════════════
+
+    @Test
+    void forgeSessionInscriptionFlattenedWithStepTag() {
+        Envelope.ServerDataEnvelope envelope = Envelope.ServerDataEnvelope.newBuilder()
+                .setForgeSession(Envelope.ForgeSessionData.newBuilder()
+                        .setSessionId(1)
+                        .setBlueprintId("iron_sword_bp")
+                        .setBlueprintName("铁剑图纸")
+                        .setActive(true)
+                        .setCurrentStep(Envelope.ForgeStep.FORGE_STEP_INSCRIPTION)
+                        .setStepState(Envelope.ForgeStepState.newBuilder()
+                                .setInscription(Envelope.ForgeStepStateInscription.newBuilder()
+                                        .setFilledSlots(3)
+                                        .setMaxSlots(5)
+                                        .setFailed(false))))
+                .build();
+
+        JsonObject json = bridgeAndParse(envelope);
+        assertEquals("forge_session", json.get("type").getAsString());
+        assertEquals(1, json.get("session_id").getAsLong());
+
+        JsonObject stepState = json.getAsJsonObject("step_state");
+        assertNotNull(stepState, "step_state should be present");
+        assertEquals("inscription", stepState.get("step").getAsString(),
+                "oneof variant should become step='inscription'");
+        assertEquals(3, stepState.get("filled_slots").getAsInt(),
+                "inner fields should be flattened into step_state");
+        assertEquals(5, stepState.get("max_slots").getAsInt());
+        assertFalse(stepState.has("inscription"),
+                "oneof variant key 'inscription' should be removed after flatten");
+    }
+
+    @Test
+    void forgeSessionTemperingFlattenedWithStepTag() {
+        Envelope.ServerDataEnvelope envelope = Envelope.ServerDataEnvelope.newBuilder()
+                .setForgeSession(Envelope.ForgeSessionData.newBuilder()
+                        .setSessionId(2)
+                        .setCurrentStep(Envelope.ForgeStep.FORGE_STEP_TEMPERING)
+                        .setStepState(Envelope.ForgeStepState.newBuilder()
+                                .setTempering(Envelope.ForgeStepStateTempering.newBuilder()
+                                        .setBeatCursor(4)
+                                        .setHits(3)
+                                        .setMisses(1))))
+                .build();
+
+        JsonObject json = bridgeAndParse(envelope);
+        JsonObject stepState = json.getAsJsonObject("step_state");
+        assertEquals("tempering", stepState.get("step").getAsString());
+        assertEquals(4, stepState.get("beat_cursor").getAsInt());
+        assertEquals(3, stepState.get("hits").getAsInt());
+    }
+
+    @Test
+    void forgeSessionNoneStateFlattenedToStepNone() {
+        Envelope.ServerDataEnvelope envelope = Envelope.ServerDataEnvelope.newBuilder()
+                .setForgeSession(Envelope.ForgeSessionData.newBuilder()
+                        .setSessionId(3)
+                        .setCurrentStep(Envelope.ForgeStep.FORGE_STEP_DONE)
+                        .setStepState(Envelope.ForgeStepState.newBuilder()
+                                .setNoneState(true)))
+                .build();
+
+        JsonObject json = bridgeAndParse(envelope);
+        JsonObject stepState = json.getAsJsonObject("step_state");
+        assertEquals("none", stepState.get("step").getAsString(),
+                "none_state=true should become step='none'");
+        assertFalse(stepState.has("none_state"),
+                "none_state field should be removed after conversion");
+    }
+
+    @Test
+    void forgeSessionBilletFlattenedWithStepTag() {
+        Envelope.ServerDataEnvelope envelope = Envelope.ServerDataEnvelope.newBuilder()
+                .setForgeSession(Envelope.ForgeSessionData.newBuilder()
+                        .setSessionId(4)
+                        .setCurrentStep(Envelope.ForgeStep.FORGE_STEP_BILLET)
+                        .setStepState(Envelope.ForgeStepState.newBuilder()
+                                .setBillet(Envelope.ForgeStepStateBillet.newBuilder()
+                                        .setResolvedTierCap(3))))
+                .build();
+
+        JsonObject json = bridgeAndParse(envelope);
+        JsonObject stepState = json.getAsJsonObject("step_state");
+        assertEquals("billet", stepState.get("step").getAsString());
+        assertEquals(3, stepState.get("resolved_tier_cap").getAsInt());
+    }
+
+    @Test
+    void forgeSessionConsecrationFlattenedWithStepTag() {
+        Envelope.ServerDataEnvelope envelope = Envelope.ServerDataEnvelope.newBuilder()
+                .setForgeSession(Envelope.ForgeSessionData.newBuilder()
+                        .setSessionId(5)
+                        .setCurrentStep(Envelope.ForgeStep.FORGE_STEP_CONSECRATION)
+                        .setStepState(Envelope.ForgeStepState.newBuilder()
+                                .setConsecration(Envelope.ForgeStepStateConsecration.newBuilder()
+                                        .setQiInjected(50.0)
+                                        .setQiRequired(100.0))))
+                .build();
+
+        JsonObject json = bridgeAndParse(envelope);
+        JsonObject stepState = json.getAsJsonObject("step_state");
+        assertEquals("consecration", stepState.get("step").getAsString());
+        assertEquals(50.0, stepState.get("qi_injected").getAsDouble(), 0.01);
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // normalizeNumericStrings: nested objects and arrays
+    // ═══════════════════════════════════════════════════════════════════
+
+    @Test
+    void nestedUint64InSubObjectsAreNormalized() {
+        Envelope.ServerDataEnvelope envelope = Envelope.ServerDataEnvelope.newBuilder()
+                .setInventoryEvent(Envelope.InventoryEvent.newBuilder()
+                        .setMoved(Envelope.InventoryEventMoved.newBuilder()
+                                .setRevision(123456789)
+                                .setInstanceId(987654321)
+                                .setFrom(Envelope.InventoryLocation.newBuilder()
+                                        .setContainer(Envelope.InventoryLocationContainer.newBuilder()
+                                                .setContainerId("backpack")
+                                                .setRow(5).setCol(3)))))
+                .build();
+
+        JsonObject json = bridgeAndParse(envelope);
+        assertEquals(123456789, json.get("revision").getAsLong());
+        assertEquals(987654321, json.get("instance_id").getAsLong());
+
+        JsonObject from = json.getAsJsonObject("from");
+        assertNotNull(from);
+        JsonObject container = from.getAsJsonObject("container");
+        assertNotNull(container);
+        assertTrue(container.get("row").getAsJsonPrimitive().isNumber(),
+                "nested uint64 'row' should be a JSON number after normalization");
+        assertEquals(5, container.get("row").getAsLong());
+    }
+
+    @Test
+    void uint64InRepeatedFieldsAreNormalized() {
+        Envelope.QuickSlotConfig.Builder qsc = Envelope.QuickSlotConfig.newBuilder();
+        for (int i = 0; i < 9; i++) {
+            qsc.addSlots(Envelope.OptionalQuickSlotEntry.newBuilder());
+        }
+        qsc.addCooldownUntilMs(1000);
+        qsc.addCooldownUntilMs(0);
+        qsc.addCooldownUntilMs(5000);
+        for (int i = 3; i < 9; i++) {
+            qsc.addCooldownUntilMs(0);
+        }
+
+        Envelope.ServerDataEnvelope envelope = Envelope.ServerDataEnvelope.newBuilder()
+                .setQuickSlotConfig(qsc).build();
+
+        JsonObject json = bridgeAndParse(envelope);
+        JsonArray cooldowns = json.getAsJsonArray("cooldown_until_ms");
+        assertEquals(9, cooldowns.size());
+        assertTrue(cooldowns.get(0).getAsJsonPrimitive().isNumber(),
+                "uint64 elements in repeated field should be JSON numbers");
+        assertEquals(1000, cooldowns.get(0).getAsLong());
+        assertEquals(5000, cooldowns.get(2).getAsLong());
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Helper
+    // ═══════════════════════════════════════════════════════════════════
+
+    private static JsonObject bridgeAndParse(Envelope.ServerDataEnvelope envelope) {
+        ProtoServerDataBridge.BridgeResult result = ProtoServerDataBridge.bridge(envelope.toByteArray());
+        assertTrue(result.isSuccess(), "bridge should succeed: " + result.errorMessage());
+        return JsonParser.parseString(result.legacyJson()).getAsJsonObject();
     }
 }

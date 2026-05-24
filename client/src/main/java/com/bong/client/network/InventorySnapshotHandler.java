@@ -219,13 +219,7 @@ public final class InventorySnapshotHandler implements ServerDataHandler {
         EnumMap<EquipSlotType, InventoryItem> equipped = new EnumMap<>(EquipSlotType.class);
         for (Map.Entry<String, EquipSlotType> slotEntry : EQUIP_SLOT_BY_WIRE_NAME.entrySet()) {
             JsonElement itemElement = equippedObject.get(slotEntry.getKey());
-            if (itemElement == null) {
-                if (slotEntry.getValue() == EquipSlotType.FALSE_SKIN) {
-                    continue;
-                }
-                return null;
-            }
-            if (itemElement.isJsonNull()) {
+            if (itemElement == null || itemElement.isJsonNull()) {
                 continue;
             }
             if (!itemElement.isJsonObject()) {
