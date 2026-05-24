@@ -10513,4 +10513,779 @@ mod tests {
             );
         }
     }
+
+    // ═══════════════════════════════════════════════════════════════
+    // P4.2 — Schema evolution 测试
+    // ═══════════════════════════════════════════════════════════════
+
+    /// 验证 prost decode 忽略末尾多余字节（模拟新 schema 增加字段）。
+    /// proto wire format 天然跳过未知 field tag，所以追加有效 field bytes
+    /// 到一个已编码消息末尾，decode 旧 schema 时应静默忽略。
+    #[test]
+    fn schema_evolution_extra_trailing_fields_are_silently_ignored() {
+        let original = Welcome {
+            message: "hello".to_string(),
+        };
+        let mut bytes = original.encode_to_vec();
+
+        // 追加一个合法但 Welcome 未定义的 field (tag=99, varint 42)。
+        // tag = (99 << 3) | 0 = 792 → varint 编码 [0xF8, 0x06]
+        // value = 42 → varint [0x2A]
+        bytes.extend_from_slice(&[0xF8, 0x06, 0x2A]);
+
+        let decoded =
+            Welcome::decode(bytes.as_slice()).expect("Welcome decode 应忽略未知 field，不应失败");
+        assert_eq!(
+            decoded.message, "hello",
+            "decode 后已知 field 'message' 应保持原值 'hello'，实际 '{}'",
+            decoded.message
+        );
+    }
+
+    /// 验证追加多个未知 field（length-delimited + varint）后仍能正确 decode。
+    #[test]
+    fn schema_evolution_multiple_unknown_fields_ignored() {
+        let state = PlayerState {
+            player: Some("tester".to_string()),
+            realm: Realm::Condense as i32,
+            spirit_qi: 100.0,
+            karma: 0.5,
+            composite_power: 50.0,
+            zone: "spawn".to_string(),
+            local_neg_pressure: None,
+            breakdown: None,
+            season_state: None,
+            social: None,
+        };
+        let mut bytes = state.encode_to_vec();
+
+        // 追加未知 field 100 (varint): tag = (100 << 3) | 0 = 800 → [0xA0, 0x06], value=99 → [0x63]
+        bytes.extend_from_slice(&[0xA0, 0x06, 0x63]);
+        // 追加未知 field 101 (length-delimited string): tag = (101 << 3) | 2 = 810 → [0xAA, 0x06],
+        // len=5 → [0x05], data = "extra"
+        bytes.extend_from_slice(&[0xAA, 0x06, 0x05, b'e', b'x', b't', b'r', b'a']);
+
+        let decoded = PlayerState::decode(bytes.as_slice())
+            .expect("PlayerState decode 应忽略 2 个未知 field，不应失败");
+        assert_eq!(
+            decoded.player.as_deref(),
+            Some("tester"),
+            "追加未知 field 后 player 应保持 'tester'，实际 {:?}",
+            decoded.player
+        );
+        assert_eq!(
+            decoded.realm,
+            Realm::Condense as i32,
+            "追加未知 field 后 realm 应保持 Condense ({}), 实际 {}",
+            Realm::Condense as i32,
+            decoded.realm
+        );
+        assert_eq!(
+            decoded.zone, "spawn",
+            "追加未知 field 后 zone 应保持 'spawn'，实际 '{}'",
+            decoded.zone
+        );
+    }
+
+    /// 验证 minimal message（仅 proto3 默认值）decode 后各 field 拿到正确默认值。
+    /// 空 bytes → 全 default（空串、0、false、None for optional）。
+    #[test]
+    fn schema_evolution_missing_fields_get_defaults() {
+        // 空 bytes 在 proto3 中完全合法——所有 field 都是默认值。
+        let decoded = CultivationDetail::decode(&[] as &[u8])
+            .expect("空 bytes decode 为 CultivationDetail 应成功");
+        assert_eq!(
+            decoded.realm,
+            Realm::Unspecified as i32,
+            "缺失 realm 应默认为 UNSPECIFIED (0)，实际 {}",
+            decoded.realm
+        );
+        assert!(
+            decoded.meridians.is_empty(),
+            "缺失 meridians 应为空 vec，实际 len={}",
+            decoded.meridians.len()
+        );
+        assert_eq!(
+            decoded.target_meridian, None,
+            "缺失 optional target_meridian 应为 None，实际 {:?}",
+            decoded.target_meridian
+        );
+        assert_eq!(
+            decoded.contamination_total, 0.0,
+            "缺失 contamination_total 应为 0.0，实际 {}",
+            decoded.contamination_total
+        );
+        assert!(
+            decoded.lifespan.is_none(),
+            "缺失 optional lifespan 应为 None"
+        );
+        assert!(
+            decoded.recent_skill_milestones_summary.is_empty(),
+            "缺失 string 应为空串，实际 '{}'",
+            decoded.recent_skill_milestones_summary
+        );
+        assert!(
+            decoded.skill_milestones.is_empty(),
+            "缺失 repeated 应为空 vec"
+        );
+        assert_eq!(
+            decoded.qi_color_main,
+            ColorKind::Unspecified as i32,
+            "缺失 enum 应为 UNSPECIFIED (0)"
+        );
+        assert_eq!(
+            decoded.qi_color_secondary, None,
+            "缺失 optional enum 应为 None"
+        );
+        assert!(!decoded.qi_color_chaotic, "缺失 bool 应为 false");
+        assert!(!decoded.qi_color_hunyuan, "缺失 bool 应为 false");
+        assert!(
+            decoded.practice_weights.is_empty(),
+            "缺失 repeated 应为空 vec"
+        );
+    }
+
+    /// 验证 enum field 设为未定义的 i32 值时 prost 保留原始值不 panic。
+    #[test]
+    fn schema_evolution_enum_unrecognized_i32_preserved() {
+        // CultivationDetail.realm 是 i32（proto Realm enum），设为 999。
+        let detail = CultivationDetail {
+            realm: 999, // 不存在的 Realm 值
+            meridians: vec![],
+            target_meridian: None,
+            contamination_total: 0.0,
+            lifespan: None,
+            recent_skill_milestones_summary: String::new(),
+            skill_milestones: vec![],
+            qi_color_main: 888, // 不存在的 ColorKind 值
+            qi_color_secondary: Some(777),
+            qi_color_chaotic: false,
+            qi_color_hunyuan: false,
+            practice_weights: vec![],
+        };
+        let bytes = detail.encode_to_vec();
+        let decoded = CultivationDetail::decode(bytes.as_slice())
+            .expect("含未知 enum 值的 CultivationDetail decode 不应 panic");
+        assert_eq!(
+            decoded.realm, 999,
+            "未知 Realm 值 999 应原样保留，实际 {}",
+            decoded.realm
+        );
+        assert_eq!(
+            decoded.qi_color_main, 888,
+            "未知 ColorKind 值 888 应原样保留，实际 {}",
+            decoded.qi_color_main
+        );
+        assert_eq!(
+            decoded.qi_color_secondary,
+            Some(777),
+            "未知 optional ColorKind 值 777 应原样保留，实际 {:?}",
+            decoded.qi_color_secondary
+        );
+
+        // 验证 Realm::try_from(999) 返回 Err（prost 的 enum try_from）。
+        let try_realm = Realm::try_from(999);
+        assert!(
+            try_realm.is_err(),
+            "Realm::try_from(999) 应返回 Err，因为 999 不是有效变体"
+        );
+    }
+
+    /// 验证 oneof envelope 在新增 variant 时旧 decoder 仍能 decode（payload = None）。
+    /// 构造一个 ServerDataEnvelope 的 bytes，oneof field tag 超出已知范围，
+    /// prost 应将 payload 解码为 None（因为没有匹配的 variant）。
+    #[test]
+    fn schema_evolution_unknown_oneof_variant_decodes_as_none() {
+        // ServerDataEnvelope 的 oneof 最高 field 号是 118 (tsy_sentinel_phase_changed)。
+        // 模拟 field 200 (length-delimited): tag = (200 << 3) | 2 = 1602 → varint [0xC2, 0x0C]
+        // len = 3, data = [0x0a, 0x01, 0x42]（内嵌一条 string field tag=1 value="B"）
+        let fake_bytes: &[u8] = &[0xC2, 0x0C, 0x03, 0x0a, 0x01, 0x42];
+        let decoded = ServerDataEnvelope::decode(fake_bytes)
+            .expect("含未知 oneof variant 的 ServerDataEnvelope decode 不应失败");
+        assert!(
+            decoded.payload.is_none(),
+            "未知 oneof field 200 应导致 payload = None（旧 decoder 不识别），实际 {:?}",
+            decoded.payload
+        );
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // P4.3 — Proto vs JSON 性能 benchmark
+    // ═══════════════════════════════════════════════════════════════
+
+    /// 对比 proto (prost) 与 JSON (serde_json) 的编解码性能和体积。
+    ///
+    /// 运行：`cargo test proto_vs_json_benchmark -- --ignored --nocapture`
+    #[test]
+    #[ignore]
+    fn proto_vs_json_benchmark() {
+        use crate::schema::server_data::ServerDataV1;
+        use std::time::Instant;
+
+        const ITERS: u32 = 1000;
+
+        // ── 构造 proto 测试载荷 ──────────────────────────────────
+
+        let proto_welcome = ServerDataEnvelope {
+            payload: Some(server_data_envelope::Payload::Welcome(Welcome {
+                message: "欢迎来到末法残土！灵气衰退的时代，修仙之路危机四伏。".to_string(),
+            })),
+        };
+
+        let proto_player_state = ServerDataEnvelope {
+            payload: Some(server_data_envelope::Payload::PlayerState(PlayerState {
+                player: Some("散修·张三".to_string()),
+                realm: Realm::Condense as i32,
+                spirit_qi: 1234.567,
+                karma: 0.42,
+                composite_power: 8765.4321,
+                zone: "qingyun_peaks".to_string(),
+                local_neg_pressure: Some(0.15),
+                breakdown: Some(PlayerPowerBreakdown {
+                    combat: 3000.0,
+                    wealth: 1500.0,
+                    social: 800.0,
+                    karma: 420.0,
+                    territory: 200.0,
+                }),
+                season_state: Some(SeasonState {
+                    season: Season::Winter as i32,
+                    tick_into_phase: 5000,
+                    phase_total_ticks: 24000,
+                    year_index: 3,
+                }),
+                social: None,
+            })),
+        };
+
+        let proto_cultivation = ServerDataEnvelope {
+            payload: Some(server_data_envelope::Payload::CultivationDetail(
+                CultivationDetail {
+                    realm: Realm::Solidify as i32,
+                    meridians: (1..=20)
+                        .map(|i| MeridianState {
+                            id: i,
+                            opened: i <= 12,
+                            flow_rate: if i <= 12 { 0.8 } else { 0.0 },
+                            flow_capacity: if i <= 12 { 1.0 } else { 0.5 },
+                            integrity: 0.95 - (i as f64 * 0.01),
+                            open_progress: if i <= 12 { 1.0 } else { 0.3 + i as f64 * 0.02 },
+                            cracks_count: if i > 15 { 1 } else { 0 },
+                        })
+                        .collect(),
+                    target_meridian: Some(MeridianId::Ren as i32),
+                    contamination_total: 12.5,
+                    lifespan: Some(LifespanPreview {
+                        years_lived: 45.3,
+                        cap_by_realm: 200,
+                        remaining_years: 154.7,
+                        death_penalty_years: 5,
+                        tick_rate_multiplier: 1.0,
+                        is_wind_candle: false,
+                    }),
+                    recent_skill_milestones_summary: "采药 Lv.5, 战斗 Lv.3".to_string(),
+                    skill_milestones: vec![
+                        SkillMilestoneSnapshot {
+                            skill: "herbalism".to_string(),
+                            new_lv: 5,
+                            achieved_at: 120000,
+                            narration: "你的采药技艺更加纯熟".to_string(),
+                            total_xp_at: 15000,
+                        },
+                        SkillMilestoneSnapshot {
+                            skill: "combat".to_string(),
+                            new_lv: 3,
+                            achieved_at: 80000,
+                            narration: "你的战斗本能有所觉醒".to_string(),
+                            total_xp_at: 5000,
+                        },
+                    ],
+                    qi_color_main: ColorKind::Sharp as i32,
+                    qi_color_secondary: Some(ColorKind::Heavy as i32),
+                    qi_color_chaotic: false,
+                    qi_color_hunyuan: false,
+                    practice_weights: vec![
+                        PracticeWeight {
+                            color: ColorKind::Sharp as i32,
+                            weight: 0.6,
+                            ratio: 0.6,
+                        },
+                        PracticeWeight {
+                            color: ColorKind::Heavy as i32,
+                            weight: 0.4,
+                            ratio: 0.4,
+                        },
+                    ],
+                },
+            )),
+        };
+
+        let proto_inventory = ServerDataEnvelope {
+            payload: Some(server_data_envelope::Payload::InventorySnapshot(
+                InventorySnapshot {
+                    revision: 42,
+                    containers: vec![
+                        ContainerSnapshot {
+                            id: "main_pack".to_string(),
+                            name: "行囊".to_string(),
+                            rows: 4,
+                            cols: 6,
+                        },
+                        ContainerSnapshot {
+                            id: "waist_pouch".to_string(),
+                            name: "腰包".to_string(),
+                            rows: 2,
+                            cols: 3,
+                        },
+                    ],
+                    placed_items: (0..8)
+                        .map(|i| PlacedInventoryItem {
+                            container_id: "main_pack".to_string(),
+                            row: i / 6,
+                            col: i % 6,
+                            item: Some(InventoryItemView {
+                                instance_id: 1000 + i,
+                                item_id: format!("item_{i}"),
+                                display_name: format!("物品{i}"),
+                                grid_width: 1,
+                                grid_height: 1,
+                                weight: 0.5 + i as f64 * 0.1,
+                                rarity: "common".to_string(),
+                                description: format!("一件普通的物品，编号{i}"),
+                                stack_count: 1 + i,
+                                spirit_quality: 0.0,
+                                durability: 100.0,
+                                mineral_id: None,
+                                scroll_kind: None,
+                                scroll_skill_id: None,
+                                scroll_xp_grant: None,
+                                charges: None,
+                                forge_quality: None,
+                                forge_color: None,
+                                forge_side_effects: vec![],
+                                forge_achieved_tier: None,
+                            }),
+                        })
+                        .collect(),
+                    equipped: Some(EquippedInventorySnapshot {
+                        head: None,
+                        chest: None,
+                        legs: None,
+                        feet: None,
+                        false_skin: None,
+                        main_hand: Some(InventoryItemView {
+                            instance_id: 999,
+                            item_id: "iron_sword".to_string(),
+                            display_name: "铁剑".to_string(),
+                            grid_width: 1,
+                            grid_height: 3,
+                            weight: 2.5,
+                            rarity: "uncommon".to_string(),
+                            description: "一柄略有灵气的铁剑".to_string(),
+                            stack_count: 1,
+                            spirit_quality: 0.3,
+                            durability: 85.0,
+                            mineral_id: None,
+                            scroll_kind: None,
+                            scroll_skill_id: None,
+                            scroll_xp_grant: None,
+                            charges: None,
+                            forge_quality: Some(0.7),
+                            forge_color: Some(ColorKind::Sharp as i32),
+                            forge_side_effects: vec!["锋锐".to_string()],
+                            forge_achieved_tier: Some(2),
+                        }),
+                        off_hand: None,
+                        two_hand: None,
+                        treasure_belt_0: None,
+                        treasure_belt_1: None,
+                        treasure_belt_2: None,
+                        treasure_belt_3: None,
+                        back_pack: None,
+                        waist_pouch: None,
+                        chest_satchel: None,
+                        extra_hand_0: None,
+                        extra_hand_1: None,
+                    }),
+                    hotbar: (0..9)
+                        .map(|i| HotbarSlot {
+                            item: if i < 3 {
+                                Some(InventoryItemView {
+                                    instance_id: 2000 + i as u64,
+                                    item_id: format!("hotbar_{i}"),
+                                    display_name: format!("快捷栏{i}"),
+                                    grid_width: 1,
+                                    grid_height: 1,
+                                    weight: 0.1,
+                                    rarity: "common".to_string(),
+                                    description: String::new(),
+                                    stack_count: 1,
+                                    spirit_quality: 0.0,
+                                    durability: 100.0,
+                                    mineral_id: None,
+                                    scroll_kind: None,
+                                    scroll_skill_id: None,
+                                    scroll_xp_grant: None,
+                                    charges: None,
+                                    forge_quality: None,
+                                    forge_color: None,
+                                    forge_side_effects: vec![],
+                                    forge_achieved_tier: None,
+                                })
+                            } else {
+                                None
+                            },
+                        })
+                        .collect(),
+                    bone_coins: 12345,
+                    weight: Some(InventoryWeight {
+                        current: 15.3,
+                        max: 50.0,
+                    }),
+                    realm: "Condense".to_string(),
+                    qi_current: 800.0,
+                    qi_max: 1200.0,
+                    body_level: 3.5,
+                },
+            )),
+        };
+
+        let proto_combat_hud = ServerDataEnvelope {
+            payload: Some(server_data_envelope::Payload::CombatHudState(
+                CombatHudState {
+                    hp_percent: 0.85,
+                    qi_percent: 0.67,
+                    stamina_percent: 0.92,
+                    derived: Some(DerivedAttrFlags {
+                        flying: false,
+                        phasing: false,
+                        tribulation_locked: true,
+                    }),
+                },
+            )),
+        };
+
+        // ── 构造对应的 JSON 载荷 ─────────────────────────────────
+
+        let json_welcome =
+            ServerDataV1::welcome("欢迎来到末法残土！灵气衰退的时代，修仙之路危机四伏。");
+
+        let json_combat_hud = serde_json::json!({
+            "v": 1,
+            "type": "CombatHudState",
+            "hp_percent": 0.85,
+            "qi_percent": 0.67,
+            "stamina_percent": 0.92,
+            "derived": {
+                "flying": false,
+                "phasing": false,
+                "tribulation_locked": true
+            }
+        });
+
+        // ── 跑 benchmark ────────────────────────────────────────
+
+        struct BenchResult {
+            name: &'static str,
+            proto_encode_ns: u128,
+            proto_decode_ns: u128,
+            proto_bytes: usize,
+            json_encode_ns: u128,
+            json_bytes: usize,
+        }
+
+        let mut results = Vec::new();
+
+        // Helper: benchmark one proto payload
+        macro_rules! bench_proto {
+            ($name:expr, $payload:expr) => {{
+                let payload = &$payload;
+                // warm up
+                let _ = payload.encode_to_vec();
+
+                // encode
+                let start = Instant::now();
+                let mut encoded = Vec::new();
+                for _ in 0..ITERS {
+                    encoded = payload.encode_to_vec();
+                }
+                let proto_encode_ns = start.elapsed().as_nanos() / ITERS as u128;
+                let proto_bytes = encoded.len();
+
+                // decode
+                let start = Instant::now();
+                for _ in 0..ITERS {
+                    let _ = ServerDataEnvelope::decode(encoded.as_slice()).unwrap();
+                }
+                let proto_decode_ns = start.elapsed().as_nanos() / ITERS as u128;
+
+                (proto_encode_ns, proto_decode_ns, proto_bytes)
+            }};
+        }
+
+        // 1. Welcome
+        {
+            let (pe, pd, pb) = bench_proto!("Welcome", proto_welcome);
+
+            let start = Instant::now();
+            let mut jb = Vec::new();
+            for _ in 0..ITERS {
+                jb = serde_json::to_vec(&json_welcome).unwrap();
+            }
+            let je = start.elapsed().as_nanos() / ITERS as u128;
+
+            results.push(BenchResult {
+                name: "Welcome",
+                proto_encode_ns: pe,
+                proto_decode_ns: pd,
+                proto_bytes: pb,
+                json_encode_ns: je,
+                json_bytes: jb.len(),
+            });
+        }
+
+        // 2. PlayerState
+        {
+            let (pe, pd, pb) = bench_proto!("PlayerState", proto_player_state);
+            // JSON: use raw json! for comparable payload
+            let json_ps = serde_json::json!({
+                "v": 1,
+                "type": "PlayerState",
+                "player": "散修·张三",
+                "realm": "Condense",
+                "spirit_qi": 1234.567,
+                "karma": 0.42,
+                "composite_power": 8765.4321,
+                "zone": "qingyun_peaks",
+                "local_neg_pressure": 0.15,
+                "breakdown": { "combat": 3000.0, "wealth": 1500.0, "social": 800.0, "karma": 420.0, "territory": 200.0 },
+                "season_state": { "season": "winter", "tick_into_phase": 5000, "phase_total_ticks": 24000, "year_index": 3 }
+            });
+            let start = Instant::now();
+            let mut jb = Vec::new();
+            for _ in 0..ITERS {
+                jb = serde_json::to_vec(&json_ps).unwrap();
+            }
+            let je = start.elapsed().as_nanos() / ITERS as u128;
+            results.push(BenchResult {
+                name: "PlayerState",
+                proto_encode_ns: pe,
+                proto_decode_ns: pd,
+                proto_bytes: pb,
+                json_encode_ns: je,
+                json_bytes: jb.len(),
+            });
+        }
+
+        // 3. CultivationDetail (heavy payload)
+        {
+            let (pe, pd, pb) = bench_proto!("CultivationDetail", proto_cultivation);
+            // JSON: construct comparable
+            let json_cd = serde_json::json!({
+                "v": 1,
+                "type": "CultivationDetail",
+                "realm": "Solidify",
+                "meridians": (1..=20).map(|i| serde_json::json!({
+                    "id": i,
+                    "opened": i <= 12,
+                    "flow_rate": if i <= 12 { 0.8 } else { 0.0 },
+                    "flow_capacity": if i <= 12 { 1.0 } else { 0.5 },
+                    "integrity": 0.95 - (i as f64 * 0.01),
+                    "open_progress": if i <= 12 { 1.0 } else { 0.3 + i as f64 * 0.02 },
+                    "cracks_count": if i > 15 { 1 } else { 0 }
+                })).collect::<Vec<_>>(),
+                "target_meridian": 13,
+                "contamination_total": 12.5,
+                "lifespan": {
+                    "years_lived": 45.3,
+                    "cap_by_realm": 200,
+                    "remaining_years": 154.7,
+                    "death_penalty_years": 5,
+                    "tick_rate_multiplier": 1.0,
+                    "is_wind_candle": false
+                },
+                "recent_skill_milestones_summary": "采药 Lv.5, 战斗 Lv.3",
+                "skill_milestones": [
+                    { "skill": "herbalism", "new_lv": 5, "achieved_at": 120000, "narration": "你的采药技艺更加纯熟", "total_xp_at": 15000 },
+                    { "skill": "combat", "new_lv": 3, "achieved_at": 80000, "narration": "你的战斗本能有所觉醒", "total_xp_at": 5000 }
+                ],
+                "qi_color_main": "Sharp",
+                "qi_color_secondary": "Heavy",
+                "qi_color_chaotic": false,
+                "qi_color_hunyuan": false,
+                "practice_weights": [
+                    { "color": "Sharp", "weight": 0.6, "ratio": 0.6 },
+                    { "color": "Heavy", "weight": 0.4, "ratio": 0.4 }
+                ]
+            });
+            let start = Instant::now();
+            let mut jb = Vec::new();
+            for _ in 0..ITERS {
+                jb = serde_json::to_vec(&json_cd).unwrap();
+            }
+            let je = start.elapsed().as_nanos() / ITERS as u128;
+            results.push(BenchResult {
+                name: "CultivationDetail",
+                proto_encode_ns: pe,
+                proto_decode_ns: pd,
+                proto_bytes: pb,
+                json_encode_ns: je,
+                json_bytes: jb.len(),
+            });
+        }
+
+        // 4. InventorySnapshot (heaviest payload)
+        {
+            let (pe, pd, pb) = bench_proto!("InventorySnapshot", proto_inventory);
+            // JSON: simplified comparable
+            let json_inv = serde_json::json!({
+                "v": 1,
+                "type": "InventorySnapshot",
+                "revision": 42,
+                "containers": [
+                    { "id": "main_pack", "name": "行囊", "rows": 4, "cols": 6 },
+                    { "id": "waist_pouch", "name": "腰包", "rows": 2, "cols": 3 }
+                ],
+                "placed_items": (0..8).map(|i| serde_json::json!({
+                    "container_id": "main_pack",
+                    "row": i / 6,
+                    "col": i % 6,
+                    "item": {
+                        "instance_id": 1000 + i,
+                        "item_id": format!("item_{i}"),
+                        "display_name": format!("物品{i}"),
+                        "grid_width": 1,
+                        "grid_height": 1,
+                        "weight": 0.5 + i as f64 * 0.1,
+                        "rarity": "common",
+                        "description": format!("一件普通的物品，编号{i}"),
+                        "stack_count": 1 + i,
+                        "spirit_quality": 0.0,
+                        "durability": 100.0
+                    }
+                })).collect::<Vec<_>>(),
+                "bone_coins": 12345,
+                "realm": "Condense",
+                "qi_current": 800.0,
+                "qi_max": 1200.0,
+                "body_level": 3.5
+            });
+            let start = Instant::now();
+            let mut jb = Vec::new();
+            for _ in 0..ITERS {
+                jb = serde_json::to_vec(&json_inv).unwrap();
+            }
+            let je = start.elapsed().as_nanos() / ITERS as u128;
+            results.push(BenchResult {
+                name: "InventorySnapshot",
+                proto_encode_ns: pe,
+                proto_decode_ns: pd,
+                proto_bytes: pb,
+                json_encode_ns: je,
+                json_bytes: jb.len(),
+            });
+        }
+
+        // 5. CombatHudState (small, high-frequency)
+        {
+            let (pe, pd, pb) = bench_proto!("CombatHudState", proto_combat_hud);
+            let start = Instant::now();
+            let mut jb = Vec::new();
+            for _ in 0..ITERS {
+                jb = serde_json::to_vec(&json_combat_hud).unwrap();
+            }
+            let je = start.elapsed().as_nanos() / ITERS as u128;
+            results.push(BenchResult {
+                name: "CombatHudState",
+                proto_encode_ns: pe,
+                proto_decode_ns: pd,
+                proto_bytes: pb,
+                json_encode_ns: je,
+                json_bytes: jb.len(),
+            });
+        }
+
+        // ── 输出比较表 ──────────────────────────────────────────
+
+        println!();
+        println!("╔══════════════════════╦═══════════════╦═══════════════╦══════════════╦═══════════════╦══════════════╦══════════╗");
+        println!("║ Payload              ║ Proto Enc(ns) ║ Proto Dec(ns) ║ Proto Bytes  ║ JSON Enc(ns)  ║ JSON Bytes   ║ Size Δ   ║");
+        println!("╠══════════════════════╬═══════════════╬═══════════════╬══════════════╬═══════════════╬══════════════╬══════════╣");
+        for r in &results {
+            let ratio = if r.json_bytes > 0 {
+                format!("{:.1}x", r.json_bytes as f64 / r.proto_bytes as f64)
+            } else {
+                "N/A".to_string()
+            };
+            println!(
+                "║ {:<20} ║ {:>13} ║ {:>13} ║ {:>12} ║ {:>13} ║ {:>12} ║ {:>8} ║",
+                r.name,
+                r.proto_encode_ns,
+                r.proto_decode_ns,
+                r.proto_bytes,
+                r.json_encode_ns,
+                r.json_bytes,
+                ratio
+            );
+        }
+        println!("╚══════════════════════╩═══════════════╩═══════════════╩══════════════╩═══════════════╩══════════════╩══════════╝");
+        println!();
+        println!("Proto 优势: 编码通常更快，体积更小（尤其重型嵌套消息如 InventorySnapshot）。");
+        println!("JSON 优势: 人类可读，调试方便。");
+        println!("（{ITERS} 次迭代取平均值）");
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // P4.4 — buf breaking CI 配置 pin 测试
+    // ═══════════════════════════════════════════════════════════════
+
+    /// 验证 buf breaking CI 配置存在且内容正确。
+    /// 防止 CI 配置被意外移除或修改导致 proto 兼容性保护失效。
+    #[test]
+    fn buf_breaking_ci_is_configured() {
+        // 1. 验证 e2e.yml 包含 buf breaking 步骤
+        let e2e_yml = std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .parent()
+                .unwrap()
+                .join(".github/workflows/e2e.yml"),
+        )
+        .expect("应能读取 .github/workflows/e2e.yml — CI 配置缺失");
+
+        assert!(
+            e2e_yml.contains("buf breaking"),
+            "e2e.yml 应包含 'buf breaking' 步骤 — proto 兼容性 CI 保护缺失"
+        );
+        assert!(
+            e2e_yml.contains("Install buf") || e2e_yml.contains("bufbuild/buf-action"),
+            "e2e.yml 应包含 buf 安装步骤（'Install buf' 或 'bufbuild/buf-action'）"
+        );
+        assert!(
+            e2e_yml.contains("buf lint"),
+            "e2e.yml 应包含 'buf lint' 步骤 — proto lint CI 保护缺失"
+        );
+
+        // 2. 验证 proto/buf.yaml 配置
+        let buf_yaml = std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .parent()
+                .unwrap()
+                .join("proto/buf.yaml"),
+        )
+        .expect("应能读取 proto/buf.yaml — buf 配置文件缺失");
+
+        assert!(
+            buf_yaml.contains("breaking:"),
+            "buf.yaml 应包含 'breaking:' 配置块"
+        );
+        assert!(
+            buf_yaml.contains("- FILE"),
+            "buf.yaml breaking.use 应包含 '- FILE'（文件级兼容性策略），实际内容中未找到"
+        );
+        assert!(buf_yaml.contains("lint:"), "buf.yaml 应包含 'lint:' 配置块");
+        assert!(
+            buf_yaml.contains("- STANDARD"),
+            "buf.yaml lint.use 应包含 '- STANDARD'"
+        );
+    }
 }
