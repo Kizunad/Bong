@@ -194,8 +194,22 @@ public class BongNetworkHandler {
             byte[] bytes = new byte[readableBytes];
             buf.readBytes(bytes);
 
-            String jsonPayload = ServerDataEnvelope.decodeUtf8(bytes);
             markConnectionPayload();
+
+            // P3: wire format is now protobuf. Use ProtoServerDataBridge to decode proto
+            // and convert back to legacy JSON for existing handlers.
+            // Fallback to raw JSON for payloads not yet migrated to proto (e.g. status_snapshot).
+            String jsonPayload;
+            com.bong.client.network.ProtoServerDataBridge.BridgeResult bridgeResult =
+                    com.bong.client.network.ProtoServerDataBridge.bridge(bytes);
+            if (bridgeResult.isSuccess()) {
+                jsonPayload = bridgeResult.legacyJson();
+            } else {
+                // Proto parse failed — try legacy JSON fallback (for payloads like
+                // status_snapshot that still send raw JSON).
+                jsonPayload = ServerDataEnvelope.decodeUtf8(bytes);
+            }
+
             ServerDataRouter.RouteResult result = ROUTER.route(jsonPayload, readableBytes);
 
             if (result.isParseError()) {

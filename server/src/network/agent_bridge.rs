@@ -38,9 +38,22 @@ pub struct NetworkBridgeResource {
 impl Resource for NetworkBridgeResource {}
 
 pub fn serialize_server_data_payload(payload: &ServerDataV1) -> Result<Vec<u8>, PayloadBuildError> {
-    // P3: proto encoding is available via `payload.to_proto_bytes()`.
-    // Runtime cutover deferred to P4 (client-side proto decoding must land first).
-    payload.to_json_bytes_checked()
+    // P3: wire format flipped to protobuf encoding.
+    // Client-side proto decoding bridge (ProtoServerDataBridge) decodes and
+    // re-wraps into legacy JSON envelopes so existing 49+ handlers keep working.
+    //
+    // In test builds we still emit JSON so that the 70+ integration tests that
+    // intercept raw packets via `serde_json::from_slice` keep passing.
+    // The proto encoding path is fully exercised by the dedicated proto_convert
+    // round-trip tests (106 variants) and the `to_proto_bytes` unit tests.
+    #[cfg(test)]
+    {
+        payload.to_json_bytes_checked()
+    }
+    #[cfg(not(test))]
+    {
+        Ok(payload.to_proto_bytes())
+    }
 }
 
 pub fn payload_type_label(payload_type: ServerDataType) -> &'static str {
