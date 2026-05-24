@@ -469,7 +469,6 @@ pub(crate) fn seed_initial_rogue_population_on_startup(
         let zone_name = job.zone.name.clone();
         let zone_bounds = job.zone.bounds;
         let zone_spirit_qi = job.zone.spirit_qi;
-        let zone_count = job.count;
         let global_index = progress.spawned_total;
 
         // plan-npc-overhaul-v1 §P1.3 — 使用 PoissonSpawnSampler 替代 anchor+jitter。
@@ -543,9 +542,6 @@ pub(crate) fn seed_initial_rogue_population_on_startup(
         progress.spawned_in_job += 1;
         progress.spawned_total += 1;
         spawned_this_tick += 1;
-
-        // Suppress unused variables if needed.
-        let _ = (zone_count, zone_spirit_qi);
     }
 
     if progress.job_index >= progress.jobs.len() {
