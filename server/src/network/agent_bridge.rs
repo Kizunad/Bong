@@ -38,6 +38,8 @@ pub struct NetworkBridgeResource {
 impl Resource for NetworkBridgeResource {}
 
 pub fn serialize_server_data_payload(payload: &ServerDataV1) -> Result<Vec<u8>, PayloadBuildError> {
+    // P3: proto encoding is available via `payload.to_proto_bytes()`.
+    // Runtime cutover deferred to P4 (client-side proto decoding must land first).
     payload.to_json_bytes_checked()
 }
 

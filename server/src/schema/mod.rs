@@ -69,3 +69,6 @@ pub mod zong_formation;
 
 // Protobuf codegen (prost) — `proto/bong/*.proto` → Rust types.
 pub mod proto_gen;
+
+// Protobuf conversion: Rust domain types ↔ prost-generated types.
+pub mod proto_convert;
