@@ -1,26 +1,26 @@
 use bevy_transform::components::{GlobalTransform, Transform};
 use big_brain::prelude::{FirstToScore, Thinker, ThinkerBuilder};
 use valence::entity::zombie::ZombieEntityBundle;
-use valence::prelude::{
-    Commands, DVec3, Entity, EntityKind, EntityLayerId, EventWriter, Position, Query, Res, With,
-};
+use valence::prelude::{Commands, DVec3, Entity, EntityKind, EntityLayerId, Position};
 
 use crate::npc::brain::{
     AgeingScorer, ChaseAction, ChaseTargetScorer, DashAction, DashScorer, MeleeAttackAction,
     MeleeRangeScorer, RetireAction,
 };
-use crate::npc::lifecycle::{npc_runtime_bundle, NpcArchetype, NpcSpawnNotice, NpcSpawnSource};
+use crate::npc::lifecycle::{npc_runtime_bundle, NpcArchetype};
 use crate::npc::movement::{MovementController, MovementCooldowns};
 use crate::npc::navigator::Navigator;
 use crate::npc::patrol::NpcPatrol;
 use crate::world::zone::DEFAULT_SPAWN_ZONE_NAME;
 
-use super::common::{spawn_notice, NpcBlackboard, NpcCombatLoadout, NpcMarker};
+use super::common::{NpcBlackboard, NpcCombatLoadout, NpcMarker};
 
 // ---------------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------------
 
+/// 仅用于测试 —— 生产启动路径已移除 (plan-npc-overhaul-v1 §P1.4)。
+#[allow(dead_code)]
 pub(crate) const NPC_SPAWN_POSITION: [f64; 3] = [14.0, 66.0, 14.0];
 
 // ---------------------------------------------------------------------------
@@ -83,6 +83,8 @@ pub fn spawn_zombie_npc_at(
     entity
 }
 
+/// 仅用于测试 —— 生产启动路径已移除 (plan-npc-overhaul-v1 §P1.4)。
+#[allow(dead_code)]
 pub(crate) fn spawn_single_zombie_npc(commands: &mut Commands, layer: Entity) -> Entity {
     spawn_zombie_npc_at(
         commands,
@@ -101,40 +103,5 @@ pub(crate) fn spawn_single_zombie_npc(commands: &mut Commands, layer: Entity) ->
     )
 }
 
-pub(crate) fn spawn_single_zombie_npc_on_startup(
-    mut commands: Commands,
-    dimension_layers: Option<Res<crate::world::dimension::DimensionLayers>>,
-    mut notices: EventWriter<NpcSpawnNotice>,
-) {
-    let Some(dimension_layers) = dimension_layers else {
-        return;
-    };
-    let layer = dimension_layers.overworld;
-    let npc_entity = spawn_single_zombie_npc(&mut commands, layer);
-    notices.send(spawn_notice(
-        npc_entity,
-        NpcArchetype::Zombie,
-        NpcSpawnSource::Startup,
-        DEFAULT_SPAWN_ZONE_NAME,
-        DVec3::new(
-            NPC_SPAWN_POSITION[0],
-            NPC_SPAWN_POSITION[1],
-            NPC_SPAWN_POSITION[2],
-        ),
-        0.0,
-    ));
-
-    tracing::info!(
-        "[bong][npc] spawned zombie npc entity {npc_entity:?} at [{}, {}, {}]",
-        NPC_SPAWN_POSITION[0],
-        NPC_SPAWN_POSITION[1],
-        NPC_SPAWN_POSITION[2]
-    );
-}
-
-pub(crate) fn log_npc_marker_count(query: Query<Entity, With<NpcMarker>>) {
-    tracing::info!(
-        "[bong][npc] startup marker count with NpcMarker: {}",
-        query.iter().count()
-    );
-}
+// plan-npc-overhaul-v1 §P1.4 — spawn_single_zombie_npc_on_startup 和
+// log_npc_marker_count 已移除。启动时不再自动生成僵尸 NPC。

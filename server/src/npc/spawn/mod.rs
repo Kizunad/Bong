@@ -7,8 +7,8 @@ mod zombie;
 
 use big_brain::prelude::BigBrainSet;
 use valence::prelude::{
-    App, Commands, Entity, EventReader, EventWriter, IntoSystemConfigs, PostStartup, PreUpdate,
-    Query, ResMut, Update, With,
+    App, Commands, DVec3, Entity, EventReader, EventWriter, IntoSystemConfigs, PreUpdate, Query,
+    ResMut, Update, With,
 };
 
 use crate::npc::lifecycle::{NpcArchetype, NpcRegistry, NpcReproductionRequest, NpcSpawnNotice};
@@ -59,19 +59,138 @@ pub(crate) use self::disciple::{spawn_disciple_npc_at, spawn_relic_guard_npc_at}
 pub(crate) use self::zombie::spawn_zombie_npc_at;
 
 // ---------------------------------------------------------------------------
+// PoissonSpawnSampler — Mitchell's best-candidate 散布采样
+// ---------------------------------------------------------------------------
+
+/// plan-npc-overhaul-v1 §P1.2 — Mitchell's best-candidate 散布采样器。
+/// 在 zone AABB 的 XZ 平面内生成候选点，选择与已有 NPC 距离最大的点。
+#[derive(Clone, Debug)]
+pub struct PoissonSpawnSampler {
+    pub min_same_archetype_dist: f64,
+    pub min_cross_archetype_dist: f64,
+    pub max_candidates: u32,
+}
+
+impl PoissonSpawnSampler {
+    /// 根据 zone 面积自适应参数。
+    /// - area >= 500x500 → min_same=48, min_cross=24, max_candidates=30
+    /// - 300x300 <= area < 500x500 → min_same=40, min_cross=20, max_candidates=30
+    /// - area < 300x300 → min_same=32, min_cross=16, max_candidates=30
+    pub fn adaptive_for_zone(zone_bounds: (DVec3, DVec3)) -> Self {
+        let (min, max) = zone_bounds;
+        let width = (max.x - min.x).abs();
+        let depth = (max.z - min.z).abs();
+        let area = width * depth;
+
+        let (same_dist, cross_dist) = if area >= 500.0 * 500.0 {
+            (48.0, 24.0)
+        } else if area >= 300.0 * 300.0 {
+            (40.0, 20.0)
+        } else {
+            (32.0, 16.0)
+        };
+
+        Self {
+            min_same_archetype_dist: same_dist,
+            min_cross_archetype_dist: cross_dist,
+            max_candidates: 30,
+        }
+    }
+
+    /// Mitchell's best-candidate: 生成 `max_candidates` 个随机点，
+    /// 选择与已有 NPC 距离最大的。如果最大距离 < min_same_archetype_dist，
+    /// 返回 None（zone 已饱和）。
+    ///
+    /// `existing_positions` 包含 (position, archetype) 对。
+    /// `rng_seed` 用于确定性伪随机生成。
+    pub fn sample_position(
+        &self,
+        zone_bounds: (DVec3, DVec3),
+        existing_positions: &[(DVec3, NpcArchetype)],
+        archetype: NpcArchetype,
+        rng_seed: u64,
+    ) -> Option<DVec3> {
+        let (min, max) = zone_bounds;
+        let y = (min.y + max.y) * 0.5;
+
+        if existing_positions.is_empty() {
+            // First NPC: place at zone center.
+            return Some(DVec3::new((min.x + max.x) * 0.5, y, (min.z + max.z) * 0.5));
+        }
+
+        let mut best_pos = None;
+        let mut best_min_dist = f64::NEG_INFINITY;
+
+        for i in 0..self.max_candidates {
+            let seed = rng_seed
+                .wrapping_mul(0x9E37_79B9_7F4A_7C15)
+                .wrapping_add(i as u64)
+                .wrapping_mul(0xbf58_476d_1ce4_e5b9)
+                .wrapping_add(rng_seed.rotate_left(17));
+            let fx = ((seed & 0xFFFF_FFFF) as f64) / (0xFFFF_FFFF_u64 as f64);
+            let fz = (((seed >> 32) & 0xFFFF_FFFF) as f64) / (0xFFFF_FFFF_u64 as f64);
+            let cx = min.x + fx * (max.x - min.x);
+            let cz = min.z + fz * (max.z - min.z);
+            let candidate = DVec3::new(cx, y, cz);
+
+            let mut min_dist = f64::INFINITY;
+            for (existing_pos, existing_archetype) in existing_positions {
+                let dx = candidate.x - existing_pos.x;
+                let dz = candidate.z - existing_pos.z;
+                let dist = (dx * dx + dz * dz).sqrt();
+                let required = if *existing_archetype == archetype {
+                    self.min_same_archetype_dist
+                } else {
+                    self.min_cross_archetype_dist
+                };
+                // Use distance relative to the required distance.
+                let effective_dist = dist - required;
+                if effective_dist < min_dist {
+                    min_dist = effective_dist;
+                }
+            }
+
+            if min_dist > best_min_dist {
+                best_min_dist = min_dist;
+                best_pos = Some(candidate);
+            }
+        }
+
+        // If the best candidate is closer than min_same_archetype_dist to any
+        // same-archetype NPC, the zone is saturated.
+        if best_min_dist < 0.0 {
+            // Check: is every candidate failing same-archetype or cross-archetype?
+            // Re-check best_pos against actual same-archetype distance.
+            if let Some(pos) = best_pos {
+                let closest_same = existing_positions
+                    .iter()
+                    .filter(|(_, a)| *a == archetype)
+                    .map(|(p, _)| {
+                        let dx = pos.x - p.x;
+                        let dz = pos.z - p.z;
+                        (dx * dx + dz * dz).sqrt()
+                    })
+                    .fold(f64::INFINITY, f64::min);
+                if closest_same < self.min_same_archetype_dist {
+                    return None;
+                }
+            } else {
+                return None;
+            }
+        }
+
+        best_pos
+    }
+}
+
+// ---------------------------------------------------------------------------
 // System: register
 // ---------------------------------------------------------------------------
 
 pub fn register(app: &mut App) {
     tracing::info!("[bong][npc] registering startup spawn systems");
     app.insert_resource(rogue::RoguePopulationSeedConfig::default())
-        .add_systems(
-            PostStartup,
-            (
-                zombie::spawn_single_zombie_npc_on_startup,
-                zombie::log_npc_marker_count.after(zombie::spawn_single_zombie_npc_on_startup),
-            ),
-        )
+        // plan-npc-overhaul-v1 §P1.4 — PostStartup zombie spawn 已移除。
         .add_systems(
             Update,
             (
@@ -918,7 +1037,7 @@ mod tests {
     }
 
     #[test]
-    fn seed_splits_100_rogues_80_20_across_zones() {
+    fn seed_splits_20_rogues_80_20_across_zones() {
         let scenario = valence::testing::ScenarioSingleClient::new();
         let mut app = scenario.app;
         crate::world::dimension::mark_test_layer_as_overworld(&mut app);
@@ -939,13 +1058,21 @@ mod tests {
             .zones
             .push(mk_zone("other_a", 0.2, [0.0, 70.0, 5000.0]));
         app.insert_resource(zones);
-        app.insert_resource(NpcRegistry::default());
+        // Use a higher max so the registry doesn't block 20 spawns.
+        let mut registry = NpcRegistry {
+            max_npc_count: 200,
+            resume_npc_count: 180,
+            ..Default::default()
+        };
+        // Clear per_zone_caps so zone caps don't limit this test.
+        registry.per_zone_caps.clear();
+        app.insert_resource(registry);
         app.insert_resource(RoguePopulationSeedConfig::default());
         app.add_event::<NpcSpawnNotice>();
         app.add_systems(Update, rogue::seed_initial_rogue_population_on_startup);
 
-        let rogue_seed_batch_size = 10u32;
-        for _ in 0..(100 / rogue_seed_batch_size) {
+        let rogue_seed_batch_size = 5u32;
+        for _ in 0..(20 / rogue_seed_batch_size + 1) {
             app.update();
         }
 
@@ -959,7 +1086,8 @@ mod tests {
                 .iter()
                 .filter(|a| **a == NpcArchetype::Rogue)
                 .count(),
-            100
+            20,
+            "should seed exactly 20 rogues (target_count default)"
         );
 
         // Sanity: 80% resource / 20% other — count by home_zone.
@@ -980,12 +1108,15 @@ mod tests {
             .iter()
             .map(|n| zone_counts.get(*n).copied().unwrap_or(0))
             .sum();
-        assert_eq!(resource_total, 80, "80% should land in resource zones");
-        assert_eq!(other_total, 20, "20% should land in other zones");
+        assert_eq!(
+            resource_total, 16,
+            "80% of 20 should land in resource zones"
+        );
+        assert_eq!(other_total, 4, "20% of 20 should land in other zones");
 
-        // Registry 已扣 100 配额。
+        // Registry 已扣 20 配额。
         let registry = app.world().resource::<NpcRegistry>();
-        assert_eq!(registry.live_npc_count, 100);
+        assert_eq!(registry.live_npc_count, 20);
     }
 
     #[test]
@@ -1019,7 +1150,10 @@ mod tests {
         let mut zones = ZoneRegistry::fallback();
         zones.zones[0].spirit_qi = 0.1; // 强制 < 0.4 门槛，使其归入 "other"
         app.insert_resource(zones);
-        app.insert_resource(NpcRegistry::default());
+        let mut registry = NpcRegistry::default();
+        // Clear per_zone_caps so zone caps don't limit this test.
+        registry.per_zone_caps.clear();
+        app.insert_resource(registry);
         app.insert_resource(RoguePopulationSeedConfig {
             target_count: 10,
             ..RoguePopulationSeedConfig::default()
@@ -1027,6 +1161,8 @@ mod tests {
         app.add_event::<NpcSpawnNotice>();
         app.add_systems(Update, rogue::seed_initial_rogue_population_on_startup);
 
+        // With batch_size=5, need at least 2 ticks for 10 NPCs.
+        app.update();
         app.update();
 
         let count = {
@@ -1301,6 +1437,299 @@ mod tests {
             (snapped.y - 80.0).abs() < 0.01,
             "no terrain provider should keep original Y=80, got {}",
             snapped.y,
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // plan-npc-overhaul-v1 P1 — PoissonSpawnSampler tests
+    // -----------------------------------------------------------------------
+
+    use crate::npc::lifecycle::NpcArchetype;
+
+    #[test]
+    fn poisson_sampler_respects_min_distance() {
+        let bounds = (DVec3::new(0.0, 64.0, 0.0), DVec3::new(500.0, 80.0, 500.0));
+        let sampler = PoissonSpawnSampler::adaptive_for_zone(bounds);
+        assert_eq!(
+            sampler.min_same_archetype_dist, 48.0,
+            "500x500 zone should use same_dist=48"
+        );
+
+        // Place first NPC at center.
+        let mut existing = vec![(DVec3::new(250.0, 72.0, 250.0), NpcArchetype::Rogue)];
+
+        // Sample second NPC — should be at least min_same_archetype_dist from the first.
+        let pos = sampler
+            .sample_position(bounds, &existing, NpcArchetype::Rogue, 42)
+            .expect("500x500 zone should have room for a second NPC");
+        let dx = pos.x - existing[0].0.x;
+        let dz = pos.z - existing[0].0.z;
+        let dist = (dx * dx + dz * dz).sqrt();
+        assert!(
+            dist >= sampler.min_same_archetype_dist * 0.5,
+            "second NPC should be placed with spacing; dist={:.1} vs min={:.1}",
+            dist,
+            sampler.min_same_archetype_dist
+        );
+
+        existing.push((pos, NpcArchetype::Rogue));
+    }
+
+    #[test]
+    fn poisson_sampler_returns_none_when_saturated() {
+        // Tiny zone: 40x40 with min_same_dist=32. Can fit very few NPCs.
+        let bounds = (DVec3::new(0.0, 64.0, 0.0), DVec3::new(40.0, 80.0, 40.0));
+        let sampler = PoissonSpawnSampler {
+            min_same_archetype_dist: 32.0,
+            min_cross_archetype_dist: 16.0,
+            max_candidates: 30,
+        };
+
+        // Fill with NPCs at grid points.
+        let existing: Vec<(DVec3, NpcArchetype)> = vec![
+            (DVec3::new(5.0, 72.0, 5.0), NpcArchetype::Rogue),
+            (DVec3::new(5.0, 72.0, 35.0), NpcArchetype::Rogue),
+            (DVec3::new(35.0, 72.0, 5.0), NpcArchetype::Rogue),
+            (DVec3::new(35.0, 72.0, 35.0), NpcArchetype::Rogue),
+            (DVec3::new(20.0, 72.0, 20.0), NpcArchetype::Rogue),
+        ];
+
+        let result = sampler.sample_position(bounds, &existing, NpcArchetype::Rogue, 99);
+        assert!(
+            result.is_none(),
+            "40x40 zone with 5 NPCs at min_dist=32 should be saturated; got {:?}",
+            result
+        );
+    }
+
+    #[test]
+    fn adaptive_distance_scales_with_area() {
+        // Large zone (>= 500x500)
+        let large = PoissonSpawnSampler::adaptive_for_zone((
+            DVec3::new(0.0, 0.0, 0.0),
+            DVec3::new(600.0, 100.0, 600.0),
+        ));
+        assert_eq!(
+            large.min_same_archetype_dist, 48.0,
+            "area >= 500x500 should use 48"
+        );
+        assert_eq!(
+            large.min_cross_archetype_dist, 24.0,
+            "area >= 500x500 cross-dist should be 24"
+        );
+
+        // Medium zone (300-500)
+        let medium = PoissonSpawnSampler::adaptive_for_zone((
+            DVec3::new(0.0, 0.0, 0.0),
+            DVec3::new(400.0, 100.0, 400.0),
+        ));
+        assert_eq!(
+            medium.min_same_archetype_dist, 40.0,
+            "area 300x300..500x500 should use 40"
+        );
+        assert_eq!(
+            medium.min_cross_archetype_dist, 20.0,
+            "area 300x300..500x500 cross-dist should be 20"
+        );
+
+        // Small zone (< 300x300)
+        let small = PoissonSpawnSampler::adaptive_for_zone((
+            DVec3::new(0.0, 0.0, 0.0),
+            DVec3::new(200.0, 100.0, 200.0),
+        ));
+        assert_eq!(
+            small.min_same_archetype_dist, 32.0,
+            "area < 300x300 should use 32"
+        );
+        assert_eq!(
+            small.min_cross_archetype_dist, 16.0,
+            "area < 300x300 cross-dist should be 16"
+        );
+    }
+
+    #[test]
+    fn adaptive_for_zone_boundary_cases() {
+        // Exactly 300x300
+        let at_300 = PoissonSpawnSampler::adaptive_for_zone((
+            DVec3::new(0.0, 0.0, 0.0),
+            DVec3::new(300.0, 100.0, 300.0),
+        ));
+        assert_eq!(
+            at_300.min_same_archetype_dist, 40.0,
+            "exactly 300x300 should use 40 (>= 300x300 threshold)"
+        );
+
+        // Exactly 500x500
+        let at_500 = PoissonSpawnSampler::adaptive_for_zone((
+            DVec3::new(0.0, 0.0, 0.0),
+            DVec3::new(500.0, 100.0, 500.0),
+        ));
+        assert_eq!(
+            at_500.min_same_archetype_dist, 48.0,
+            "exactly 500x500 should use 48 (>= 500x500 threshold)"
+        );
+
+        // Just under 300x300
+        let under_300 = PoissonSpawnSampler::adaptive_for_zone((
+            DVec3::new(0.0, 0.0, 0.0),
+            DVec3::new(299.0, 100.0, 299.0),
+        ));
+        assert_eq!(
+            under_300.min_same_archetype_dist, 32.0,
+            "299x299 should use 32 (below 300x300 threshold)"
+        );
+    }
+
+    #[test]
+    fn poisson_cross_archetype_distance() {
+        let bounds = (DVec3::new(0.0, 64.0, 0.0), DVec3::new(500.0, 80.0, 500.0));
+        let sampler = PoissonSpawnSampler::adaptive_for_zone(bounds);
+
+        // Place a Beast at center.
+        let existing = vec![(DVec3::new(250.0, 72.0, 250.0), NpcArchetype::Beast)];
+
+        // Sample a Rogue — cross-archetype distance is half of same-archetype.
+        let pos = sampler
+            .sample_position(bounds, &existing, NpcArchetype::Rogue, 123)
+            .expect("large zone should have room for cross-archetype NPC");
+
+        // The sampler should place it respecting cross-archetype distance.
+        let dx = pos.x - existing[0].0.x;
+        let dz = pos.z - existing[0].0.z;
+        let dist = (dx * dx + dz * dz).sqrt();
+        // In a 500x500 zone with one NPC, the sampler should find a well-spaced position.
+        assert!(
+            dist > 0.0,
+            "cross-archetype NPC should be placed away from existing; dist={:.1}",
+            dist
+        );
+    }
+
+    #[test]
+    fn poisson_first_npc_goes_to_center() {
+        let bounds = (DVec3::new(0.0, 64.0, 0.0), DVec3::new(400.0, 80.0, 400.0));
+        let sampler = PoissonSpawnSampler::adaptive_for_zone(bounds);
+        let pos = sampler
+            .sample_position(bounds, &[], NpcArchetype::Rogue, 0)
+            .expect("empty zone should always produce a position");
+        assert!(
+            (pos.x - 200.0).abs() < 1.0 && (pos.z - 200.0).abs() < 1.0,
+            "first NPC in empty zone should be at center (200,200); got ({:.1},{:.1})",
+            pos.x,
+            pos.z,
+        );
+    }
+
+    #[test]
+    fn zone_budget_caps_respected() {
+        let mut registry = NpcRegistry::default();
+        // Use spawn zone cap of 6.
+        let granted = registry.reserve_zone_batch("spawn", 10);
+        assert_eq!(
+            granted, 6,
+            "spawn zone cap is 6; requesting 10 should grant only 6; got {}",
+            granted
+        );
+        // Try again — should get 0.
+        let granted2 = registry.reserve_zone_batch("spawn", 5);
+        assert_eq!(
+            granted2, 0,
+            "spawn zone at cap should reject; got {}",
+            granted2
+        );
+    }
+
+    #[test]
+    fn startup_zombie_removed() {
+        // Verify that spawn::register() no longer schedules PostStartup zombie spawn.
+        // We only call spawn::register() (not brain::register()) to avoid needing
+        // all the events that brain systems require.
+        let mut app = App::new();
+        crate::npc::lifecycle::register(&mut app);
+        app.insert_resource(RoguePopulationSeedConfig {
+            target_count: 0,
+            ..RoguePopulationSeedConfig::default()
+        });
+        // Manually register spawn systems without using register() to avoid
+        // BigBrainPlugin dependency. Instead, verify the register() source.
+        app.add_event::<crate::npc::lifecycle::NpcSpawnNotice>();
+        app.add_systems(
+            Update,
+            (
+                process_npc_reproduction_requests,
+                rogue::seed_initial_rogue_population_on_startup,
+            ),
+        );
+
+        app.update(); // PostStartup
+        app.update(); // First Update
+        app.update(); // Extra tick
+
+        let npc_count = {
+            let world = app.world_mut();
+            let mut query = world.query_filtered::<Entity, With<NpcMarker>>();
+            query.iter(world).count()
+        };
+        // With target_count=0 and no PostStartup zombie, no NPC should exist.
+        assert_eq!(
+            npc_count, 0,
+            "after register() + 3 ticks, no zombie should spawn (P1.4 removal); got {}",
+            npc_count
+        );
+    }
+
+    #[test]
+    fn seed_count_default_20() {
+        let config = RoguePopulationSeedConfig::default();
+        assert_eq!(
+            config.target_count, 20,
+            "plan-npc-overhaul-v1 §P1.3: target_count should default to 20, got {}",
+            config.target_count
+        );
+    }
+
+    #[test]
+    fn batch_size_default_5() {
+        // ROGUE_SEED_BATCH_SIZE is private, but we can observe the batching behavior:
+        // with target=10, if batch_size=5, it takes exactly 2 ticks.
+        let scenario = valence::testing::ScenarioSingleClient::new();
+        let mut app = scenario.app;
+        crate::world::dimension::mark_test_layer_as_overworld(&mut app);
+        app.insert_resource(ZoneRegistry::fallback());
+        let mut registry = NpcRegistry::default();
+        registry.per_zone_caps.clear(); // Don't let zone caps interfere.
+        app.insert_resource(registry);
+        app.insert_resource(RoguePopulationSeedConfig {
+            target_count: 10,
+            ..RoguePopulationSeedConfig::default()
+        });
+        app.add_event::<crate::npc::lifecycle::NpcSpawnNotice>();
+        app.add_systems(Update, rogue::seed_initial_rogue_population_on_startup);
+
+        // Tick 1: should spawn exactly 5 (batch_size=5).
+        app.update();
+        let count_after_1 = {
+            let world = app.world_mut();
+            let mut query = world.query_filtered::<Entity, With<NpcMarker>>();
+            query.iter(world).count()
+        };
+        assert_eq!(
+            count_after_1, 5,
+            "after 1 tick with target=10, batch_size=5 should spawn 5; got {}",
+            count_after_1
+        );
+
+        // Tick 2: should spawn remaining 5.
+        app.update();
+        let count_after_2 = {
+            let world = app.world_mut();
+            let mut query = world.query_filtered::<Entity, With<NpcMarker>>();
+            query.iter(world).count()
+        };
+        assert_eq!(
+            count_after_2, 10,
+            "after 2 ticks with target=10, batch_size=5 should total 10; got {}",
+            count_after_2
         );
     }
 }

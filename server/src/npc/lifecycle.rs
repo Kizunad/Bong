@@ -104,7 +104,51 @@ pub enum NpcArchetype {
     SkullFiend,
 }
 
+/// plan-npc-overhaul-v1 §P1.1 — 三桶预算系统，按 NPC 类型族群分组限额。
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum NpcBudgetBucket {
+    /// 散修 + 凡人（Zombie/Commoner/Rogue/Disciple/Daoxiang/Zhinian）
+    Humanoid,
+    /// 野兽 / 鼠群 / 异变兽（Beast/Fuya）
+    Beast,
+    /// 稀有大型（GuardianRelic/SkullFiend）
+    Special,
+}
+
+impl NpcBudgetBucket {
+    /// 所有 bucket 变体，用于遍历。
+    pub const ALL: [NpcBudgetBucket; 3] = [
+        NpcBudgetBucket::Humanoid,
+        NpcBudgetBucket::Beast,
+        NpcBudgetBucket::Special,
+    ];
+
+    pub const fn default_cap(self) -> usize {
+        match self {
+            Self::Humanoid => 26,
+            Self::Beast => 20,
+            Self::Special => 4,
+        }
+    }
+}
+
 impl NpcArchetype {
+    /// 所有变体，用于遍历和 exhaustiveness 测试。
+    #[allow(dead_code)]
+    pub const ALL: [NpcArchetype; 10] = [
+        NpcArchetype::Zombie,
+        NpcArchetype::Commoner,
+        NpcArchetype::Rogue,
+        NpcArchetype::Beast,
+        NpcArchetype::Disciple,
+        NpcArchetype::GuardianRelic,
+        NpcArchetype::Daoxiang,
+        NpcArchetype::Zhinian,
+        NpcArchetype::Fuya,
+        NpcArchetype::SkullFiend,
+    ];
+
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::Zombie => "zombie",
@@ -117,6 +161,20 @@ impl NpcArchetype {
             Self::Zhinian => "zhinian",
             Self::Fuya => "fuya",
             Self::SkullFiend => "skull_fiend",
+        }
+    }
+
+    /// plan-npc-overhaul-v1 §P1.1 — 映射 archetype 到预算桶。
+    pub const fn budget_bucket(self) -> NpcBudgetBucket {
+        match self {
+            Self::Zombie
+            | Self::Commoner
+            | Self::Rogue
+            | Self::Disciple
+            | Self::Daoxiang
+            | Self::Zhinian => NpcBudgetBucket::Humanoid,
+            Self::Beast | Self::Fuya => NpcBudgetBucket::Beast,
+            Self::GuardianRelic | Self::SkullFiend => NpcBudgetBucket::Special,
         }
     }
 
@@ -192,18 +250,38 @@ pub struct NpcRegistry {
     pub counts_by_archetype: HashMap<NpcArchetype, usize>,
     pub per_zone_caps: HashMap<String, usize>,
     pub counts_by_zone: HashMap<String, usize>,
+    /// plan-npc-overhaul-v1 §P1.1 — 当前各桶实际 NPC 数。
+    pub counts_by_bucket: HashMap<NpcBudgetBucket, usize>,
+    /// plan-npc-overhaul-v1 §P1.1 — 各桶上限。
+    #[allow(dead_code)]
+    pub bucket_caps: HashMap<NpcBudgetBucket, usize>,
 }
 
 impl Default for NpcRegistry {
     fn default() -> Self {
+        let mut per_zone_caps = HashMap::new();
+        per_zone_caps.insert("spawn".to_string(), 6);
+        per_zone_caps.insert("qingyun_peaks".to_string(), 5);
+        per_zone_caps.insert("spring_marsh".to_string(), 4);
+        per_zone_caps.insert("rift_valley".to_string(), 5);
+        per_zone_caps.insert("north_wastes".to_string(), 2);
+        per_zone_caps.insert("lingquan_marsh".to_string(), 4);
+
+        let mut bucket_caps = HashMap::new();
+        for bucket in NpcBudgetBucket::ALL {
+            bucket_caps.insert(bucket, bucket.default_cap());
+        }
+
         Self {
             live_npc_count: 0,
-            max_npc_count: 200,
-            resume_npc_count: 180,
+            max_npc_count: 50,
+            resume_npc_count: 40,
             spawn_paused: false,
             counts_by_archetype: HashMap::new(),
-            per_zone_caps: HashMap::new(),
+            per_zone_caps,
             counts_by_zone: HashMap::new(),
+            counts_by_bucket: HashMap::new(),
+            bucket_caps,
         }
     }
 }
@@ -216,6 +294,16 @@ impl NpcRegistry {
         counts_by_zone: HashMap<String, usize>,
     ) {
         self.live_npc_count = live_npc_count;
+
+        // Tally bucket counts from archetype counts.
+        self.counts_by_bucket.clear();
+        for (&archetype, &count) in &counts_by_archetype {
+            *self
+                .counts_by_bucket
+                .entry(archetype.budget_bucket())
+                .or_default() += count;
+        }
+
         self.counts_by_archetype = counts_by_archetype;
         self.counts_by_zone = counts_by_zone;
 
@@ -240,6 +328,35 @@ impl NpcRegistry {
         self.live_npc_count = self.live_npc_count.saturating_add(granted);
         if self.live_npc_count >= self.max_npc_count {
             self.spawn_paused = true;
+        }
+        granted
+    }
+
+    /// plan-npc-overhaul-v1 §P1.1 — 同时检查全局上限和桶上限的预留。
+    /// 返回实际批准数（受两者中较低的 remaining 限制）。
+    #[allow(dead_code)]
+    pub fn reserve_bucket_spawn(&mut self, bucket: NpcBudgetBucket, desired: usize) -> usize {
+        if desired == 0 {
+            return 0;
+        }
+
+        // Bucket remaining
+        let bucket_cap = self
+            .bucket_caps
+            .get(&bucket)
+            .copied()
+            .unwrap_or(bucket.default_cap());
+        let bucket_current = self.counts_by_bucket.get(&bucket).copied().unwrap_or(0);
+        let bucket_remaining = bucket_cap.saturating_sub(bucket_current);
+        let clamped = desired.min(bucket_remaining);
+        if clamped == 0 {
+            return 0;
+        }
+
+        // Global reserve
+        let granted = self.reserve_spawn_batch(clamped);
+        if granted > 0 {
+            *self.counts_by_bucket.entry(bucket).or_default() += granted;
         }
         granted
     }
@@ -669,27 +786,36 @@ mod tests {
     fn registry_hysteresis_pauses_at_cap_and_resumes_below_low_watermark() {
         let mut registry = NpcRegistry::default();
 
-        registry.refresh_from_counts(200, HashMap::new(), HashMap::new());
-        assert!(registry.spawn_paused);
-
-        registry.refresh_from_counts(190, HashMap::new(), HashMap::new());
+        registry.refresh_from_counts(50, HashMap::new(), HashMap::new());
         assert!(
             registry.spawn_paused,
-            "should remain paused until low watermark"
+            "should pause when live_npc_count reaches max_npc_count (50)"
         );
 
-        registry.refresh_from_counts(179, HashMap::new(), HashMap::new());
-        assert!(!registry.spawn_paused, "should resume below low watermark");
+        registry.refresh_from_counts(45, HashMap::new(), HashMap::new());
+        assert!(
+            registry.spawn_paused,
+            "should remain paused between resume (40) and max (50)"
+        );
+
+        registry.refresh_from_counts(39, HashMap::new(), HashMap::new());
+        assert!(
+            !registry.spawn_paused,
+            "should resume below low watermark (40)"
+        );
     }
 
     #[test]
     fn reserve_spawn_batch_clamps_to_remaining_capacity() {
         let mut registry = NpcRegistry::default();
-        registry.refresh_from_counts(198, HashMap::new(), HashMap::new());
+        registry.refresh_from_counts(48, HashMap::new(), HashMap::new());
 
         let granted = registry.reserve_spawn_batch(8);
-        assert_eq!(granted, 2);
-        assert_eq!(registry.live_npc_count, 200);
+        assert_eq!(
+            granted, 2,
+            "only 2 slots remaining (50-48), should clamp desired=8 to 2"
+        );
+        assert_eq!(registry.live_npc_count, 50);
         assert!(registry.spawn_paused);
     }
 
@@ -1095,5 +1221,220 @@ mod tests {
         );
 
         let _ = std::fs::remove_dir_all(root);
+    }
+
+    // -----------------------------------------------------------------------
+    // plan-npc-overhaul-v1 P1 tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn registry_defaults_50() {
+        let registry = NpcRegistry::default();
+        assert_eq!(
+            registry.max_npc_count, 50,
+            "plan-npc-overhaul-v1 §P1.1: max_npc_count should default to 50, got {}",
+            registry.max_npc_count
+        );
+    }
+
+    #[test]
+    fn registry_defaults_resume_40() {
+        let registry = NpcRegistry::default();
+        assert_eq!(
+            registry.resume_npc_count, 40,
+            "plan-npc-overhaul-v1 §P1.1: resume_npc_count should default to 40, got {}",
+            registry.resume_npc_count
+        );
+    }
+
+    #[test]
+    fn bucket_independence_beast_full_does_not_block_humanoid() {
+        let mut registry = NpcRegistry::default();
+        // Fill beast bucket to cap.
+        registry.counts_by_bucket.insert(NpcBudgetBucket::Beast, 20);
+        registry.live_npc_count = 20;
+
+        // Try to reserve humanoid — should succeed since humanoid bucket is empty.
+        let granted = registry.reserve_bucket_spawn(NpcBudgetBucket::Humanoid, 5);
+        assert_eq!(
+            granted, 5,
+            "beast bucket full should not block humanoid reservation; got {}",
+            granted
+        );
+
+        // Try to reserve beast — should fail since beast bucket is full.
+        let beast_granted = registry.reserve_bucket_spawn(NpcBudgetBucket::Beast, 1);
+        assert_eq!(
+            beast_granted, 0,
+            "beast bucket at cap (20) should reject new beast reservation; got {}",
+            beast_granted
+        );
+    }
+
+    #[test]
+    fn total_cap_50_three_buckets_sum() {
+        let registry = NpcRegistry::default();
+        let total_bucket_cap: usize = NpcBudgetBucket::ALL
+            .iter()
+            .map(|b| registry.bucket_caps.get(b).copied().unwrap_or(0))
+            .sum();
+        assert_eq!(
+            total_bucket_cap, 50,
+            "sum of all bucket caps (humanoid:26 + beast:20 + special:4) should equal global cap 50, got {}",
+            total_bucket_cap
+        );
+    }
+
+    #[test]
+    fn bucket_mapping_covers_all_archetypes() {
+        // Ensure every NpcArchetype variant maps to a bucket (compiler enforces
+        // exhaustive match, but this test locks the mapping for regression).
+        for archetype in NpcArchetype::ALL {
+            let bucket = archetype.budget_bucket();
+            assert!(
+                NpcBudgetBucket::ALL.contains(&bucket),
+                "archetype {:?} mapped to unknown bucket {:?}",
+                archetype,
+                bucket
+            );
+        }
+        // Verify count matches known variant count.
+        assert_eq!(
+            NpcArchetype::ALL.len(),
+            10,
+            "NpcArchetype::ALL should contain exactly 10 variants (update if enum grows)"
+        );
+    }
+
+    #[test]
+    fn reserve_bucket_respects_cap() {
+        let mut registry = NpcRegistry::default();
+        // Set humanoid bucket close to cap.
+        registry
+            .counts_by_bucket
+            .insert(NpcBudgetBucket::Humanoid, 24);
+        registry.live_npc_count = 24;
+
+        let granted = registry.reserve_bucket_spawn(NpcBudgetBucket::Humanoid, 5);
+        assert_eq!(
+            granted, 2,
+            "humanoid bucket at 24/26 should only grant 2 more; got {}",
+            granted
+        );
+        assert_eq!(
+            registry.counts_by_bucket[&NpcBudgetBucket::Humanoid],
+            26,
+            "humanoid bucket count should now be at cap 26"
+        );
+
+        // Try again — should get 0.
+        let granted = registry.reserve_bucket_spawn(NpcBudgetBucket::Humanoid, 1);
+        assert_eq!(
+            granted, 0,
+            "humanoid bucket at cap should reject; got {}",
+            granted
+        );
+    }
+
+    #[test]
+    fn reserve_bucket_respects_global_cap() {
+        let mut registry = NpcRegistry {
+            live_npc_count: 49,
+            ..Default::default()
+        };
+        registry
+            .counts_by_bucket
+            .insert(NpcBudgetBucket::Humanoid, 0);
+
+        let granted = registry.reserve_bucket_spawn(NpcBudgetBucket::Humanoid, 5);
+        assert_eq!(
+            granted, 1,
+            "global cap at 49/50 should clamp to 1 even though bucket has room; got {}",
+            granted
+        );
+    }
+
+    #[test]
+    fn reserve_bucket_zero_desired_returns_zero() {
+        let mut registry = NpcRegistry::default();
+        let granted = registry.reserve_bucket_spawn(NpcBudgetBucket::Humanoid, 0);
+        assert_eq!(
+            granted, 0,
+            "requesting 0 should always return 0; got {}",
+            granted
+        );
+    }
+
+    #[test]
+    fn refresh_from_counts_tallies_buckets() {
+        let mut registry = NpcRegistry::default();
+        let mut counts = HashMap::new();
+        counts.insert(NpcArchetype::Rogue, 5);
+        counts.insert(NpcArchetype::Beast, 3);
+        counts.insert(NpcArchetype::GuardianRelic, 1);
+        registry.refresh_from_counts(9, counts, HashMap::new());
+
+        assert_eq!(
+            registry
+                .counts_by_bucket
+                .get(&NpcBudgetBucket::Humanoid)
+                .copied()
+                .unwrap_or(0),
+            5,
+            "Rogue (humanoid) count should be 5"
+        );
+        assert_eq!(
+            registry
+                .counts_by_bucket
+                .get(&NpcBudgetBucket::Beast)
+                .copied()
+                .unwrap_or(0),
+            3,
+            "Beast (beast) count should be 3"
+        );
+        assert_eq!(
+            registry
+                .counts_by_bucket
+                .get(&NpcBudgetBucket::Special)
+                .copied()
+                .unwrap_or(0),
+            1,
+            "GuardianRelic (special) count should be 1"
+        );
+    }
+
+    #[test]
+    fn per_zone_caps_defaults() {
+        let registry = NpcRegistry::default();
+        assert_eq!(
+            registry.per_zone_caps.get("spawn").copied(),
+            Some(6),
+            "spawn zone cap should be 6"
+        );
+        assert_eq!(
+            registry.per_zone_caps.get("qingyun_peaks").copied(),
+            Some(5),
+            "qingyun_peaks zone cap should be 5"
+        );
+        assert_eq!(
+            registry.per_zone_caps.get("spring_marsh").copied(),
+            Some(4),
+            "spring_marsh zone cap should be 4"
+        );
+        assert_eq!(
+            registry.per_zone_caps.get("rift_valley").copied(),
+            Some(5),
+            "rift_valley zone cap should be 5"
+        );
+        assert_eq!(
+            registry.per_zone_caps.get("north_wastes").copied(),
+            Some(2),
+            "north_wastes zone cap should be 2"
+        );
+        assert_eq!(
+            registry.per_zone_caps.get("lingquan_marsh").copied(),
+            Some(4),
+            "lingquan_marsh zone cap should be 4"
+        );
     }
 }
