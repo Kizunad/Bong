@@ -77,6 +77,8 @@ dependencies {
 
     // protobuf-java: server↔client IPC protobuf codec（plan-protobuf-ipc-v1）
     implementation 'com.google.protobuf:protobuf-java:4.28.3'
+    // protobuf-java-util: JsonFormat for proto→JSON bridge（plan-protobuf-ipc-v1 P3）
+    implementation 'com.google.protobuf:protobuf-java-util:4.28.3'
 
     testImplementation 'org.junit.jupiter:junit-jupiter-api:5.10.0'
     testRuntimeOnly 'org.junit.jupiter:junit-jupiter-engine:5.10.0'
