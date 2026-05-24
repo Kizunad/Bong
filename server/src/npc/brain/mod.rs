@@ -4,8 +4,7 @@ mod scorers_combat;
 mod scorers_cultivation;
 mod scorers_social;
 mod scorers_survival;
-#[allow(dead_code)]
-mod threat;
+pub mod threat;
 
 // ---- Re-exports: scorer types (pub) ----
 // Allow unused: these are the full API surface matching original brain.rs;
@@ -356,6 +355,8 @@ fn horizontal_distance(a: DVec3, b: DVec3) -> f64 {
 
 pub fn register(app: &mut App) {
     tracing::info!("[bong][npc] registering brain systems");
+    // P2: threat assessment + self-interest decision
+    threat::register(app);
     // Tribulation event producer: idempotent with cultivation::register; harmless for isolated
     // tests that only register brain but not cultivation.
     app.add_event::<InitiateXuhuaTribulation>();

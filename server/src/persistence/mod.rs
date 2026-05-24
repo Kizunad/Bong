@@ -9239,6 +9239,8 @@ mod persistence_tests {
                 player_distance: 6.5,
                 target_position: Some(DVec3::new(8.0, 66.0, 8.0)),
                 last_melee_tick: 77,
+                threat_assessment: None,
+                self_interest_decision: None,
             },
             Some("offline:Azure"),
             &NpcCombatLoadout::fighter(NpcMeleeArchetype::Sword),
