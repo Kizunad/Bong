@@ -84,6 +84,7 @@ pub fn register(app: &mut App) {
     social::register(app);
     intrusion_npc::register(app);
     interaction_memory::register(app);
+    trade::register(app);
     relic::register(app);
     lod::register(app);
     zong_keeper::register(app);

@@ -11,6 +11,7 @@ use crate::combat::components::Lifecycle;
 use crate::combat::events::CombatEvent;
 use crate::npc::lifecycle::NpcArchetype;
 use crate::npc::spawn::NpcMarker;
+use crate::npc::trade::NpcPlayerReputation;
 
 pub const MAX_NPC_MEMORY_ENTRIES: usize = 16;
 
@@ -114,6 +115,7 @@ pub fn register(app: &mut App) {
         Update,
         (
             attach_npc_memory_components,
+            attach_npc_reputation_components,
             record_attack_memories,
             trim_npc_memory_components,
         ),
@@ -126,6 +128,16 @@ fn attach_npc_memory_components(
 ) {
     for npc in &npcs {
         commands.entity(npc).insert(NpcMemoryComponent::default());
+    }
+}
+
+/// P3.8 catch-all: 为缺少 NpcPlayerReputation 的 NPC 补上默认组件。
+fn attach_npc_reputation_components(
+    mut commands: Commands,
+    npcs: Query<Entity, (With<NpcMarker>, Without<NpcPlayerReputation>)>,
+) {
+    for npc in &npcs {
+        commands.entity(npc).insert(NpcPlayerReputation::default());
     }
 }
 

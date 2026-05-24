@@ -1119,20 +1119,18 @@ pub fn handle_client_request_payloads(
                     );
                     continue;
                 }
-                let price = match crate::npc::scattered_cultivator::trade_price_for_reputation(
-                    base_price,
-                    target.reputation_to_player,
-                ) {
-                    Ok(price) => price,
-                    Err(_) => {
-                        let attack_hint =
-                            if crate::npc::scattered_cultivator::should_attack_for_reputation(
-                                target.reputation_to_player,
-                            ) {
-                                "，已经起了杀心"
-                            } else {
-                                ""
-                            };
+                // P3: 将旧 i32 信誉转为 0.0-1.0 范围用于新定价系统。
+                let rep_f32 =
+                    ((target.reputation_to_player as f32 + 100.0) / 200.0).clamp(0.0, 1.0);
+                let rep_tier = crate::npc::trade::RepTier::from_score(rep_f32);
+                let eligibility = crate::npc::trade::check_trade_eligibility(rep_tier);
+                let price = match eligibility {
+                    crate::npc::trade::TradeEligibility::Refused => {
+                        let attack_hint = if rep_f32 <= 0.05 {
+                            "，已经起了杀心"
+                        } else {
+                            ""
+                        };
                         emit_npc_refuse_audio(
                             &mut npc_engagement_params.audio_events,
                             ev.client,
@@ -1147,6 +1145,15 @@ pub fn handle_client_request_payloads(
                             ),
                         );
                         continue;
+                    }
+                    crate::npc::trade::TradeEligibility::RefuseRare => {
+                        let config = crate::npc::trade::TradePricingConfig::default();
+                        (base_price as f64 * config.rep_low_markup as f64)
+                            .ceil()
+                            .max(1.0) as u64
+                    }
+                    crate::npc::trade::TradeEligibility::Allowed { price_modifier } => {
+                        (base_price as f64 * price_modifier as f64).ceil().max(1.0) as u64
                     }
                 };
                 let Ok(mut inventory) = inventories.get_mut(ev.client) else {
