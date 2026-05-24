@@ -2409,7 +2409,7 @@ message UseLifeCore {
 
 // ─── EventKind enum ──────────────────────────────────────────────
 // 与 Rust EventKind 精确对应（common.rs）。
-enum EventKindProto {
+enum EventKind {
   EVENT_KIND_UNSPECIFIED       = 0;
   EVENT_KIND_THUNDER_TRIBULATION = 1;
   EVENT_KIND_BEAST_TIDE        = 2;
@@ -2425,7 +2425,7 @@ enum EventKindProto {
 
 // 与 Rust ServerDataPayloadV1::EventAlert 精确对应。
 message EventAlert {
-  EventKindProto  event          = 1;
+  EventKind  event          = 1;
   string          message        = 2;
   optional string zone           = 3;
   optional uint64 duration_ticks = 4;
@@ -2651,7 +2651,7 @@ message TsyCollapseStartedIpc {
 // ─── Container / Search ──────────────────────────────────────────
 // 与 Rust ContainerKindV1 / KeyKindV1 / SearchAbortReasonV1 / ContainerStateV1 精确对应。
 
-enum ContainerKindProto {
+enum ContainerKind {
   CONTAINER_KIND_UNSPECIFIED   = 0;
   CONTAINER_KIND_DRY_CORPSE    = 1;
   CONTAINER_KIND_SKELETON      = 2;
@@ -2661,7 +2661,7 @@ enum ContainerKindProto {
   CONTAINER_KIND_SURFACE_STASH = 6;
 }
 
-enum KeyKindProto {
+enum KeyKind {
   KEY_KIND_UNSPECIFIED      = 0;
   KEY_KIND_STONE_CASKET_KEY = 1;
   KEY_KIND_JADE_COFFIN_SEAL = 2;
@@ -2678,12 +2678,12 @@ enum SearchAbortReason {
 
 message ContainerStateProto {
   uint64             entity_id             = 1;
-  ContainerKindProto kind                  = 2;
+  ContainerKind kind                  = 2;
   string             family_id             = 3;
   double             world_pos_x           = 4; // Rust [f64;3] 拆三字段
   double             world_pos_y           = 5;
   double             world_pos_z           = 6;
-  optional KeyKindProto locked             = 7;
+  optional KeyKind locked             = 7;
   bool               depleted              = 8;
   optional string    searched_by_player_id = 9;
 }
@@ -2971,7 +2971,7 @@ message VfxEvent {
 // 与 Rust PlaySoundRecipePayload / StopSoundRecipePayload / AmbientZoneS2c 精确对应。
 
 // 与 Rust AudioAttenuation 精确对应。
-enum AudioAttenuationProto {
+enum AudioAttenuation {
   AUDIO_ATTENUATION_UNSPECIFIED    = 0;
   AUDIO_ATTENUATION_PLAYER_LOCAL   = 1;
   AUDIO_ATTENUATION_WORLD_3D       = 2;
@@ -2984,7 +2984,7 @@ enum AudioAttenuationProto {
 }
 
 // 与 Rust AudioSoundCategory 精确对应。
-enum AudioSoundCategoryProto {
+enum AudioSoundCategory {
   AUDIO_SOUND_CATEGORY_UNSPECIFIED = 0;
   AUDIO_SOUND_CATEGORY_MASTER      = 1;
   AUDIO_SOUND_CATEGORY_PLAYERS     = 2;
@@ -2995,7 +2995,7 @@ enum AudioSoundCategoryProto {
 }
 
 // 与 Rust AudioBus 精确对应。
-enum AudioBusProto {
+enum AudioBus {
   AUDIO_BUS_UNSPECIFIED  = 0;
   AUDIO_BUS_COMBAT       = 1;
   AUDIO_BUS_ENVIRONMENT  = 2;
@@ -3019,9 +3019,9 @@ message SoundRecipeProto {
   repeated SoundLayerProto    layers      = 2;
   optional LoopConfigProto    loop_config = 3;
   uint32                      priority    = 4; // Rust u8
-  AudioAttenuationProto       attenuation = 5;
-  AudioSoundCategoryProto     category    = 6;
-  optional AudioBusProto      bus         = 7;
+  AudioAttenuation       attenuation = 5;
+  AudioSoundCategory     category    = 6;
+  optional AudioBus      bus         = 7;
 }
 
 message AudioPlayEvent {
@@ -3389,7 +3389,7 @@ message CoffinLeave {
 // ─── Zhenfa C2S ──────────────────────────────────────────────────
 // 与 Rust ZhenfaKind / ZhenfaCarrierKind / ZhenfaDisarmMode / TrapTargetFace 精确对应。
 
-enum ZhenfaKindProto {
+enum ZhenfaKind {
   ZHENFA_KIND_UNSPECIFIED    = 0;
   ZHENFA_KIND_TRAP           = 1;
   ZHENFA_KIND_WARD           = 2;
@@ -3402,7 +3402,7 @@ enum ZhenfaKindProto {
   ZHENFA_KIND_ILLUSION       = 9;
 }
 
-enum ZhenfaCarrierKindProto {
+enum ZhenfaCarrierKind {
   ZHENFA_CARRIER_KIND_UNSPECIFIED      = 0;
   ZHENFA_CARRIER_KIND_COMMON_STONE     = 1;
   ZHENFA_CARRIER_KIND_LINGQI_BLOCK     = 2;
@@ -3410,13 +3410,13 @@ enum ZhenfaCarrierKindProto {
   ZHENFA_CARRIER_KIND_BEAST_CORE_INLAID = 4;
 }
 
-enum ZhenfaDisarmModeProto {
+enum ZhenfaDisarmMode {
   ZHENFA_DISARM_MODE_UNSPECIFIED = 0;
   ZHENFA_DISARM_MODE_DISARM      = 1;
   ZHENFA_DISARM_MODE_FORCE_BREAK = 2;
 }
 
-enum TrapTargetFaceProto {
+enum TrapTargetFace {
   TRAP_TARGET_FACE_UNSPECIFIED = 0;
   TRAP_TARGET_FACE_TOP         = 1;
   TRAP_TARGET_FACE_BOTTOM      = 2;
@@ -3431,12 +3431,12 @@ message ZhenfaPlace {
   int32                            x                = 1;
   int32                            y                = 2;
   int32                            z                = 3;
-  ZhenfaKindProto                  kind             = 4;
-  optional ZhenfaCarrierKindProto  carrier          = 5;
+  ZhenfaKind                  kind             = 4;
+  optional ZhenfaCarrierKind  carrier          = 5;
   double                           qi_invest_ratio  = 6;
   optional string                  trigger          = 7;
   optional uint64                  item_instance_id = 8;
-  optional TrapTargetFaceProto     target_face      = 9;
+  optional TrapTargetFace     target_face      = 9;
 }
 
 // 与 Rust ClientRequestV1::ZhenfaTrigger 精确对应。
@@ -3449,7 +3449,7 @@ message ZhenfaDisarm {
   int32                x    = 1;
   int32                y    = 2;
   int32                z    = 3;
-  ZhenfaDisarmModeProto mode = 4;
+  ZhenfaDisarmMode mode = 4;
 }
 
 // 与 Rust ClientRequestV1::LearnSkillScroll 精确对应。

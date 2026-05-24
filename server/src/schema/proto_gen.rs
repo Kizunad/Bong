@@ -8113,7 +8113,7 @@ mod tests {
     fn event_alert_envelope_roundtrip() {
         let envelope = ServerDataEnvelope {
             payload: Some(server_data_envelope::Payload::EventAlert(EventAlert {
-                event: EventKindProto::EventKindThunderTribulation.into(),
+                event: EventKind::ThunderTribulation.into(),
                 message: "雷劫降临".to_string(),
                 zone: Some("spawn".to_string()),
                 duration_ticks: Some(200),
@@ -8123,7 +8123,7 @@ mod tests {
         let decoded = ServerDataEnvelope::decode(bytes.as_slice()).expect("EventAlert decode 失败");
         match decoded.payload {
             Some(server_data_envelope::Payload::EventAlert(e)) => {
-                assert_eq!(e.event, EventKindProto::EventKindThunderTribulation as i32);
+                assert_eq!(e.event, EventKind::ThunderTribulation as i32);
                 assert_eq!(e.message, "雷劫降临");
                 assert_eq!(e.zone, Some("spawn".to_string()));
                 assert_eq!(e.duration_ticks, Some(200));
@@ -8501,12 +8501,12 @@ mod tests {
             payload: Some(server_data_envelope::Payload::ContainerState(
                 ContainerStateProto {
                     entity_id: 99,
-                    kind: ContainerKindProto::ContainerKindRelicCore.into(),
+                    kind: ContainerKind::RelicCore.into(),
                     family_id: "tsy_01".to_string(),
                     world_pos_x: 0.0,
                     world_pos_y: 60.0,
                     world_pos_z: 0.0,
-                    locked: Some(KeyKindProto::KeyKindJadeCoffinSeal.into()),
+                    locked: Some(KeyKind::JadeCoffinSeal.into()),
                     depleted: false,
                     searched_by_player_id: None,
                 },
@@ -8517,8 +8517,8 @@ mod tests {
             ServerDataEnvelope::decode(bytes.as_slice()).expect("ContainerState decode 失败");
         match decoded.payload {
             Some(server_data_envelope::Payload::ContainerState(c)) => {
-                assert_eq!(c.kind, ContainerKindProto::ContainerKindRelicCore as i32);
-                assert_eq!(c.locked, Some(KeyKindProto::KeyKindJadeCoffinSeal as i32));
+                assert_eq!(c.kind, ContainerKind::RelicCore as i32);
+                assert_eq!(c.locked, Some(KeyKind::JadeCoffinSeal as i32));
             }
             other => panic!("expected ContainerState, got {other:?}"),
         }
@@ -9037,8 +9037,8 @@ mod tests {
                         }],
                         loop_config: None,
                         priority: 40,
-                        attenuation: AudioAttenuationProto::AudioAttenuationPlayerLocal.into(),
-                        category: AudioSoundCategoryProto::AudioSoundCategoryVoice.into(),
+                        attenuation: AudioAttenuation::PlayerLocal.into(),
+                        category: AudioSoundCategory::Voice.into(),
                         bus: None,
                     }),
                 },
@@ -9100,9 +9100,9 @@ mod tests {
                         layers: vec![],
                         loop_config: None,
                         priority: 10,
-                        attenuation: AudioAttenuationProto::AudioAttenuationZoneBroadcast.into(),
-                        category: AudioSoundCategoryProto::AudioSoundCategoryAmbient.into(),
-                        bus: Some(AudioBusProto::AudioBusEnvironment.into()),
+                        attenuation: AudioAttenuation::ZoneBroadcast.into(),
+                        category: AudioSoundCategory::Ambient.into(),
+                        bus: Some(AudioBus::Environment.into()),
                     }),
                 },
             )),
@@ -9527,12 +9527,12 @@ mod tests {
                 x: 10,
                 y: 64,
                 z: -5,
-                kind: ZhenfaKindProto::ZhenfaKindTrap.into(),
-                carrier: Some(ZhenfaCarrierKindProto::ZhenfaCarrierKindCommonStone.into()),
+                kind: ZhenfaKind::Trap.into(),
+                carrier: Some(ZhenfaCarrierKind::CommonStone.into()),
                 qi_invest_ratio: 0.5,
                 trigger: Some("proximity".to_string()),
                 item_instance_id: Some(42),
-                target_face: Some(TrapTargetFaceProto::TrapTargetFaceTop.into()),
+                target_face: Some(TrapTargetFace::Top.into()),
             })),
         };
         let bytes = envelope.encode_to_vec();
@@ -9540,15 +9540,9 @@ mod tests {
             ClientRequestEnvelope::decode(bytes.as_slice()).expect("ZhenfaPlace decode 失败");
         match decoded.payload {
             Some(client_request_envelope::Payload::ZhenfaPlace(z)) => {
-                assert_eq!(z.kind, ZhenfaKindProto::ZhenfaKindTrap as i32);
-                assert_eq!(
-                    z.carrier,
-                    Some(ZhenfaCarrierKindProto::ZhenfaCarrierKindCommonStone as i32)
-                );
-                assert_eq!(
-                    z.target_face,
-                    Some(TrapTargetFaceProto::TrapTargetFaceTop as i32)
-                );
+                assert_eq!(z.kind, ZhenfaKind::Trap as i32);
+                assert_eq!(z.carrier, Some(ZhenfaCarrierKind::CommonStone as i32));
+                assert_eq!(z.target_face, Some(TrapTargetFace::Top as i32));
             }
             other => panic!("expected ZhenfaPlace, got {other:?}"),
         }
@@ -9582,7 +9576,7 @@ mod tests {
                     x: 1,
                     y: 64,
                     z: -1,
-                    mode: ZhenfaDisarmModeProto::ZhenfaDisarmModeForceBreak.into(),
+                    mode: ZhenfaDisarmMode::ForceBreak.into(),
                 },
             )),
         };
@@ -9591,10 +9585,7 @@ mod tests {
             ClientRequestEnvelope::decode(bytes.as_slice()).expect("ZhenfaDisarm decode 失败");
         match decoded.payload {
             Some(client_request_envelope::Payload::ZhenfaDisarm(z)) => {
-                assert_eq!(
-                    z.mode,
-                    ZhenfaDisarmModeProto::ZhenfaDisarmModeForceBreak as i32
-                );
+                assert_eq!(z.mode, ZhenfaDisarmMode::ForceBreak as i32);
             }
             other => panic!("expected ZhenfaDisarm, got {other:?}"),
         }
@@ -9874,7 +9865,7 @@ mod tests {
         let payloads: Vec<(server_data_envelope::Payload, &str)> = vec![
             (
                 server_data_envelope::Payload::EventAlert(EventAlert {
-                    event: EventKindProto::EventKindBeastTide.into(),
+                    event: EventKind::BeastTide.into(),
                     message: "m".to_string(),
                     zone: None,
                     duration_ticks: None,
