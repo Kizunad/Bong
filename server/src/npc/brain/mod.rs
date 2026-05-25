@@ -322,6 +322,27 @@ pub fn update_npc_blackboard(
             }
         }
 
+        // Expire stale retaliation targets.
+        let current_tick = game_tick.as_deref().map(|t| t.0 as u64).unwrap_or(u64::MAX);
+        if let Some((_, expire)) = blackboard.retaliation_target {
+            if current_tick >= expire {
+                blackboard.retaliation_target = None;
+            }
+        }
+
+        // Retaliation override: track attacker instead of nearest player.
+        if let Some((attacker, _)) = blackboard.retaliation_target {
+            if let Ok(attacker_pos) = all_positions.get(attacker) {
+                let dist = horizontal_distance(npc_pos, attacker_pos.get());
+                blackboard.nearest_player = Some(attacker);
+                blackboard.player_distance = dist as f32;
+                blackboard.target_position =
+                    Some(DVec3::new(attacker_pos.get().x, npc_pos.y, attacker_pos.get().z));
+                continue;
+            }
+            blackboard.retaliation_target = None;
+        }
+
         if nearest_player.is_some() {
             blackboard.nearest_player = nearest_player;
             blackboard.player_distance = nearest_distance as f32;

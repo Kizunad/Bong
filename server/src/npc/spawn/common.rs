@@ -177,6 +177,9 @@ pub struct NpcBlackboard {
     pub threat_assessment: Option<ThreatAssessment>,
     /// Self-interest decision derived from threat assessment + memory (P2).
     pub self_interest_decision: Option<SelfInterestDecision>,
+    /// Immediate retaliation: (attacker entity, expire tick).
+    /// Set when the NPC takes damage; overrides chase/melee scorers until it expires.
+    pub retaliation_target: Option<(Entity, u64)>,
 }
 
 impl Default for NpcBlackboard {
@@ -188,6 +191,7 @@ impl Default for NpcBlackboard {
             last_melee_tick: 0,
             threat_assessment: None,
             self_interest_decision: None,
+            retaliation_target: None,
         }
     }
 }

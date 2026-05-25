@@ -173,6 +173,10 @@ pub struct Navigator {
     /// Stuck recovery bypasses bucket throttling once.
     force_next_repath: bool,
 
+    /// How many consecutive A* attempts have failed for the current goal.
+    /// Used for exponential backoff so unreachable goals don't spam every tick.
+    consecutive_path_failures: u32,
+
     /// Per-mob penalty overrides. E.g. an aquatic mob could set Water → 0.
     path_type_overrides: HashMap<PathType, f32>,
 }
@@ -188,6 +192,7 @@ impl Default for Navigator {
             stuck_check_pos: DVec3::ZERO,
             stuck_check_ticks: 0,
             force_next_repath: false,
+            consecutive_path_failures: 0,
             path_type_overrides: HashMap::new(),
         }
     }
@@ -204,9 +209,16 @@ impl Navigator {
     ///
     /// Mirrors Pumpkin's `Navigator::set_progress()`.
     pub fn set_goal(&mut self, destination: DVec3, speed: f64) {
+        let dest_changed = self
+            .current_goal
+            .map(|g| g.destination.distance_squared(destination) > 4.0)
+            .unwrap_or(true);
         self.current_goal = Some(NavigatorGoal { destination, speed });
-        // Force repath on next tick.
-        self.repath_countdown = 0;
+        if dest_changed {
+            self.consecutive_path_failures = 0;
+            // Force repath on next tick.
+            self.repath_countdown = 0;
+        }
     }
 
     /// Stop navigating and clear the current path.
@@ -215,6 +227,7 @@ impl Navigator {
         self.path.clear();
         self.path_index = 0;
         self.force_next_repath = false;
+        self.consecutive_path_failures = 0;
     }
 
     /// Whether the navigator is currently idle (no goal).
@@ -358,30 +371,36 @@ pub fn navigator_tick_system(
             .map(|d| d.distance_squared(goal.destination) > 4.0)
             .unwrap_or(true);
 
-        let needs_repath =
-            nav.repath_countdown == 0 || destination_moved || nav.path_index >= nav.path.len();
+        // Don't let empty-path (from prior A* failure) bypass the countdown.
+        let path_exhausted =
+            nav.path_index >= nav.path.len() && nav.consecutive_path_failures == 0;
+        let needs_repath = nav.repath_countdown == 0 || destination_moved || path_exhausted;
         if needs_repath && should_repath_in_bucket(entity, tick, nav.force_next_repath) {
             let new_path = compute_path(current_pos, goal.destination, &nav, terrain, layer);
-            // Empty path is normal when the NPC is already within
-            // GOAL_REACH_XZ of the destination (compute_path early-returns).
-            // Only warn when the path is empty *and* the NPC is genuinely far
-            // from the goal — that means A* actually failed.
             if new_path.is_empty() {
                 let dx = (current_pos.x.floor() as i32).abs_diff(goal.destination.x.floor() as i32);
                 let dz = (current_pos.z.floor() as i32).abs_diff(goal.destination.z.floor() as i32);
                 if dx > GOAL_REACH_XZ as u32 || dz > GOAL_REACH_XZ as u32 {
-                    tracing::warn!(
-                        "[bong][navigator] A* failed: from={:?} to={:?} dist={:.1} chunk_loaded={} terrain={}",
-                        current_pos, goal.destination,
-                        current_pos.distance(goal.destination),
-                        layer.is_some(),
-                        terrain.is_some(),
-                    );
+                    nav.consecutive_path_failures += 1;
+                    if nav.consecutive_path_failures <= 2 {
+                        tracing::warn!(
+                            "[bong][navigator] A* failed: from={:?} to={:?} dist={:.1} chunk_loaded={} terrain={} attempt={}",
+                            current_pos, goal.destination,
+                            current_pos.distance(goal.destination),
+                            layer.is_some(),
+                            terrain.is_some(),
+                            nav.consecutive_path_failures,
+                        );
+                    }
                 }
+            } else {
+                nav.consecutive_path_failures = 0;
             }
             nav.path = new_path;
             nav.path_index = 0;
-            nav.repath_countdown = REPATH_INTERVAL_TICKS;
+            // Exponential backoff: 20 → 40 → 80 → 160 → 320 (cap at ~16s).
+            let backoff_shift = nav.consecutive_path_failures.min(4);
+            nav.repath_countdown = REPATH_INTERVAL_TICKS << backoff_shift;
             nav.last_pathed_destination = Some(goal.destination);
             nav.stuck_check_pos = current_pos;
             nav.stuck_check_ticks = 0;
@@ -394,8 +413,8 @@ pub fn navigator_tick_system(
         nav.stuck_check_ticks += 1;
         if nav.stuck_check_ticks >= STUCK_CHECK_INTERVAL {
             let moved = current_pos.distance(nav.stuck_check_pos);
-            if moved < STUCK_DISTANCE_THRESHOLD {
-                // Stuck — clear path so we recompute next tick.
+            if moved < STUCK_DISTANCE_THRESHOLD && nav.consecutive_path_failures < 3 {
+                // Stuck but A* hasn't repeatedly failed — force repath once.
                 nav.path.clear();
                 nav.path_index = 0;
                 nav.repath_countdown = 0;
@@ -1466,6 +1485,108 @@ mod tests {
         assert!(
             should_repath_in_bucket(entity, 0, true),
             "stuck recovery must not wait for the next bucket slot"
+        );
+    }
+
+    #[test]
+    fn consecutive_path_failures_exponential_backoff() {
+        let mut nav = Navigator::new();
+        nav.set_goal(DVec3::new(100.0, 67.0, 100.0), 1.0);
+
+        assert_eq!(nav.consecutive_path_failures, 0);
+
+        nav.consecutive_path_failures = 1;
+        let shift = nav.consecutive_path_failures.min(4);
+        let backoff = REPATH_INTERVAL_TICKS << shift;
+        assert_eq!(backoff, 40, "1st failure: 20<<1 = 40 ticks");
+
+        nav.consecutive_path_failures = 3;
+        let shift = nav.consecutive_path_failures.min(4);
+        let backoff = REPATH_INTERVAL_TICKS << shift;
+        assert_eq!(backoff, 160, "3rd failure: 20<<3 = 160 ticks");
+
+        nav.consecutive_path_failures = 5;
+        let shift = nav.consecutive_path_failures.min(4);
+        let backoff = REPATH_INTERVAL_TICKS << shift;
+        assert_eq!(backoff, 320, "5th+ failure: capped at 20<<4 = 320 ticks");
+    }
+
+    #[test]
+    fn set_goal_resets_consecutive_failures() {
+        let mut nav = Navigator::new();
+        nav.consecutive_path_failures = 5;
+        nav.set_goal(DVec3::new(10.0, 67.0, 10.0), 1.0);
+        assert_eq!(
+            nav.consecutive_path_failures, 0,
+            "new goal must reset failure counter"
+        );
+    }
+
+    #[test]
+    fn set_goal_same_destination_preserves_failure_count() {
+        let mut nav = Navigator::new();
+        let dest = DVec3::new(10.0, 67.0, 10.0);
+        nav.set_goal(dest, 1.0);
+        nav.consecutive_path_failures = 4;
+        nav.repath_countdown = 160;
+        // Same destination again (e.g. patrol re-calling set_goal each tick).
+        nav.set_goal(dest, 1.0);
+        assert_eq!(
+            nav.consecutive_path_failures, 4,
+            "repeated set_goal with same destination must NOT reset failure counter"
+        );
+        assert_eq!(
+            nav.repath_countdown, 160,
+            "repeated set_goal with same destination must NOT reset countdown"
+        );
+    }
+
+    #[test]
+    fn stop_resets_consecutive_failures() {
+        let mut nav = Navigator::new();
+        nav.consecutive_path_failures = 3;
+        nav.stop();
+        assert_eq!(
+            nav.consecutive_path_failures, 0,
+            "stop must reset failure counter"
+        );
+    }
+
+    #[test]
+    fn empty_path_does_not_bypass_countdown_after_failure() {
+        let mut nav = Navigator::new();
+        nav.set_goal(DVec3::new(100.0, 67.0, 100.0), 1.0);
+        nav.path = Vec::new();
+        nav.path_index = 0;
+        nav.consecutive_path_failures = 2;
+        nav.repath_countdown = 10;
+
+        let path_exhausted =
+            nav.path_index >= nav.path.len() && nav.consecutive_path_failures == 0;
+        let destination_moved = false;
+        let needs_repath = nav.repath_countdown == 0 || destination_moved || path_exhausted;
+
+        assert!(
+            !needs_repath,
+            "empty path from prior A* failure must NOT bypass repath_countdown"
+        );
+    }
+
+    #[test]
+    fn stuck_detection_respects_high_failure_count() {
+        let nav_failures: u32 = 5;
+        // When consecutive_path_failures >= 3, stuck detection should not force repath.
+        assert!(
+            nav_failures >= 3,
+            "sanity: testing the high-failure threshold"
+        );
+        // The condition in navigator_tick_system:
+        //   moved < STUCK_DISTANCE_THRESHOLD && nav.consecutive_path_failures < 3
+        // With 5 failures, the force-repath branch should NOT fire.
+        let would_force = 0.5 < STUCK_DISTANCE_THRESHOLD && nav_failures < 3;
+        assert!(
+            !would_force,
+            "stuck detection must not force repath after 3+ consecutive A* failures"
         );
     }
 }

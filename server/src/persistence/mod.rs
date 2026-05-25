@@ -9241,6 +9241,7 @@ mod persistence_tests {
                 last_melee_tick: 77,
                 threat_assessment: None,
                 self_interest_decision: None,
+                retaliation_target: None,
             },
             Some("offline:Azure"),
             &NpcCombatLoadout::fighter(NpcMeleeArchetype::Sword),

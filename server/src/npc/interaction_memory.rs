@@ -147,9 +147,13 @@ fn trim_npc_memory_components(mut memories: Query<&mut NpcMemoryComponent>) {
     }
 }
 
+/// How long (in ticks) an NPC stays hostile after being hit.
+const RETALIATION_DURATION_TICKS: u64 = 200;
+
 fn record_attack_memories(
     mut events: EventReader<CombatEvent>,
     mut memories: Query<&mut NpcMemoryComponent, With<NpcMarker>>,
+    mut blackboards: Query<&mut crate::npc::spawn::NpcBlackboard, With<NpcMarker>>,
     lifecycles: Query<&Lifecycle>,
     clients: Query<(), With<Client>>,
 ) {
@@ -166,6 +170,12 @@ fn record_attack_memories(
             NpcInteractionOutcome::Harmed,
             event.resolved_at_tick,
         );
+        if let Ok(mut bb) = blackboards.get_mut(event.target) {
+            bb.retaliation_target = Some((
+                event.attacker,
+                event.resolved_at_tick.saturating_add(RETALIATION_DURATION_TICKS),
+            ));
+        }
     }
 }
 

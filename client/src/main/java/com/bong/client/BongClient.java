@@ -4,6 +4,7 @@ import com.bong.client.animation.BongAnimationPlayer;
 import com.bong.client.animation.BongAnimations;
 import com.bong.client.animation.BongPunchCombo;
 import com.bong.client.armor.ArmorRenderBootstrap;
+import com.bong.client.compat.SodiumChunkReload;
 import com.bong.client.atmosphere.ZoneAtmosphereRenderer;
 import com.bong.client.audio.NpcFootstepAudioController;
 import com.bong.client.audio.SoundRecipePlayer;
@@ -129,6 +130,7 @@ public class BongClient implements ClientModInitializer {
         WeaponScreenshotHarness.install();
         PreviewHarnessClient.install();
         IrisBootstrap.register();
+        SodiumChunkReload.register();
 
         LOGGER.info("Bong Client bootstrap ready: network, HUD, keybinding scheduler, /vfx /anim /bonghud /bong_shader commands active.");
     }

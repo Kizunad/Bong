@@ -493,20 +493,22 @@ fn spawn_fallback_flat_world(
     dimensions: &DimensionTypeRegistry,
     biomes: &BiomeRegistry,
 ) -> Entity {
-    tracing::info!("[bong][world] creating overworld test area (16x16 chunks)");
+    tracing::info!("[bong][world] creating overworld test area (16x16 chunks centered on spawn)");
 
     let mut layer = LayerBundle::new(ident!("overworld"), dimensions, biomes, server);
 
-    for chunk_z in 0..TEST_AREA_CHUNKS {
-        for chunk_x in 0..TEST_AREA_CHUNKS {
+    let half = TEST_AREA_CHUNKS / 2;
+    for chunk_z in -half..half {
+        for chunk_x in -half..half {
             layer
                 .chunk
                 .insert_chunk([chunk_x, chunk_z], UnloadedChunk::new());
         }
     }
 
-    for z in 0..TEST_AREA_BLOCK_EXTENT {
-        for x in 0..TEST_AREA_BLOCK_EXTENT {
+    let block_half = half * CHUNK_WIDTH;
+    for z in -block_half..block_half {
+        for x in -block_half..block_half {
             layer
                 .chunk
                 .set_block([x, BEDROCK_Y, z], BlockState::BEDROCK);
