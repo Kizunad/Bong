@@ -22,8 +22,12 @@ import java.lang.reflect.Method;
  * onChunkStatusAdded for any chunk the vanilla manager has but Sodium's
  * tracker doesn't.  Once all chunks are synced it stops polling.
  */
+// Compat: Sodium 0.5.x — ChunkTrackerHolder.get(), chunkStatus field, onChunkStatusAdded(cx, cz, 3).
+// Sodium 0.6+ may rename/remove these; check on upgrade.
 public class SodiumChunkReload {
     private static final Logger LOGGER = LoggerFactory.getLogger("bong-client");
+    // Sodium 0.5.x FLAG_HAS_BLOCK_DATA — chunk fully loaded with block data.
+    private static final int SODIUM_FLAG_HAS_BLOCK_DATA = 3;
     private static boolean sodiumPresent;
     private static int ticksSinceLastSync = 0;
     private static boolean fullySynced = false;
@@ -73,8 +77,8 @@ public class SodiumChunkReload {
                     if (chunk == null) continue;
                     long key = net.minecraft.util.math.ChunkPos.toLong(cx, cz);
                     int status = statusMap.getOrDefault(key, 0);
-                    if (status == 3) continue;
-                    addStatus.invoke(tracker, cx, cz, 3);
+                    if (status == SODIUM_FLAG_HAS_BLOCK_DATA) continue;
+                    addStatus.invoke(tracker, cx, cz, SODIUM_FLAG_HAS_BLOCK_DATA);
                     synced++;
                 }
             }

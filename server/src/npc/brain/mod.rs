@@ -323,7 +323,7 @@ pub fn update_npc_blackboard(
         }
 
         // Expire stale retaliation targets.
-        let current_tick = game_tick.as_deref().map(|t| t.0 as u64).unwrap_or(0);
+        let current_tick = game_tick.as_deref().map(|t| t.0 as u64).unwrap_or(u64::MAX);
         if let Some((_, expire)) = blackboard.retaliation_target {
             if current_tick >= expire {
                 blackboard.retaliation_target = None;

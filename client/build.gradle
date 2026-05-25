@@ -200,7 +200,6 @@ tasks.named('runClient').configure {
     // 生产 jar 不会注册这些 examples；runClient 需显式关闭，保持本地验证对齐 server。
     jvmArgs '-Dgeckolib.disable_examples=true'
     jvmArgs '-Dsodium.checks.issue2561=false'
-    args '--quickPlayMultiplayer', '127.0.0.1:25565'
 
     def isPreviewRun = gradle.startParameter.taskNames.any {
         it == 'runClientPreview' || it.endsWith(':runClientPreview')
