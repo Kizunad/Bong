@@ -789,6 +789,7 @@ mod tests {
             last_melee_tick: 0,
             threat_assessment: None,
             self_interest_decision: None,
+            retaliation_target: None,
         };
         assert!(skull_fiend_aggro_score(&bb, &config, &SkullFiendState::Idle) > 0.4);
         bb.player_distance = 25.0;

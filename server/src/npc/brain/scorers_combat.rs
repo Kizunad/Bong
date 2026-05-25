@@ -115,6 +115,9 @@ pub(crate) fn chase_target_scorer_system(
     for (Actor(actor), mut score) in &mut scorers {
         let value = if let Ok((bb, profile, tier)) = npcs.get(*actor) {
             match lod_gated_score_by_kind(tier, tick, &cfg, ScorerKind::Cosmetic, || {
+                if bb.retaliation_target.is_some() {
+                    return 1.0;
+                }
                 if bb
                     .nearest_player
                     .and_then(|player| players.get(player).ok())
