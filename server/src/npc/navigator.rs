@@ -209,10 +209,16 @@ impl Navigator {
     ///
     /// Mirrors Pumpkin's `Navigator::set_progress()`.
     pub fn set_goal(&mut self, destination: DVec3, speed: f64) {
+        let dest_changed = self
+            .current_goal
+            .map(|g| g.destination.distance_squared(destination) > 4.0)
+            .unwrap_or(true);
         self.current_goal = Some(NavigatorGoal { destination, speed });
-        self.consecutive_path_failures = 0;
-        // Force repath on next tick.
-        self.repath_countdown = 0;
+        if dest_changed {
+            self.consecutive_path_failures = 0;
+            // Force repath on next tick.
+            self.repath_countdown = 0;
+        }
     }
 
     /// Stop navigating and clear the current path.
@@ -1513,6 +1519,25 @@ mod tests {
         assert_eq!(
             nav.consecutive_path_failures, 0,
             "new goal must reset failure counter"
+        );
+    }
+
+    #[test]
+    fn set_goal_same_destination_preserves_failure_count() {
+        let mut nav = Navigator::new();
+        let dest = DVec3::new(10.0, 67.0, 10.0);
+        nav.set_goal(dest, 1.0);
+        nav.consecutive_path_failures = 4;
+        nav.repath_countdown = 160;
+        // Same destination again (e.g. patrol re-calling set_goal each tick).
+        nav.set_goal(dest, 1.0);
+        assert_eq!(
+            nav.consecutive_path_failures, 4,
+            "repeated set_goal with same destination must NOT reset failure counter"
+        );
+        assert_eq!(
+            nav.repath_countdown, 160,
+            "repeated set_goal with same destination must NOT reset countdown"
         );
     }
 

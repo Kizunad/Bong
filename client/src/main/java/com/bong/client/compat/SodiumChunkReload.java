@@ -42,8 +42,14 @@ public class SodiumChunkReload {
         }
 
         ClientTickEvents.END_CLIENT_TICK.register(client -> {
-            if (!sodiumPresent || fullySynced) return;
-            if (client.world == null) return;
+            if (!sodiumPresent) return;
+            if (client.world == null) {
+                // World unloaded (disconnect / dimension change) — reset for next join.
+                fullySynced = false;
+                ticksSinceLastSync = 0;
+                return;
+            }
+            if (fullySynced) return;
             ticksSinceLastSync++;
             if (ticksSinceLastSync < 20) return;
             ticksSinceLastSync = 0;

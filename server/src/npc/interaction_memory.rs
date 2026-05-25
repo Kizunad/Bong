@@ -173,7 +173,7 @@ fn record_attack_memories(
         if let Ok(mut bb) = blackboards.get_mut(event.target) {
             bb.retaliation_target = Some((
                 event.attacker,
-                event.resolved_at_tick + RETALIATION_DURATION_TICKS,
+                event.resolved_at_tick.saturating_add(RETALIATION_DURATION_TICKS),
             ));
         }
     }
