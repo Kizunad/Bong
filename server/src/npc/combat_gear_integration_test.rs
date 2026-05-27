@@ -21,6 +21,7 @@ mod tests {
     use crate::npc::lifecycle::NpcArchetype;
     use crate::npc::technique::{
         assign_npc_techniques, npc_meridian_system_for_realm, select_technique, NpcCooldownMap,
+        NpcSkillScoringContext,
     };
     use crate::npc::trade::assign_npc_trade_inventory;
     use crate::skin::npc_skin_selector::select_npc_visual_profile;
@@ -30,6 +31,17 @@ mod tests {
 
     fn empty_deps() -> SkillMeridianDependencies {
         SkillMeridianDependencies::default()
+    }
+
+    fn default_ctx() -> NpcSkillScoringContext {
+        NpcSkillScoringContext {
+            hp_ratio: 1.0,
+            qi_ratio: 1.0,
+            target_distance: 3.0,
+            target_hp_ratio: 1.0,
+            has_active_buff: false,
+            in_combat: true,
+        }
     }
 
     // ─────────────────────────────────────────────────────────────────────────────
@@ -241,6 +253,7 @@ mod tests {
             entity,
             3.0,
             100,
+            &default_ctx(),
         );
         assert!(
             selected.is_some(),
@@ -303,17 +316,17 @@ mod tests {
     /// P3.1 - 经脉 SEVERED 集成: MeridianSeveredPermanent → select_technique 排除
     #[test]
     fn integration_severed_meridian_excludes_dependent_technique() {
-        // Setup: NPC with a technique that depends on Lung meridian
+        // woliu.burst depends on Lung and is Attack category (not excluded by Defense filter)
         let known = KnownTechniques {
             entries: vec![KnownTechnique {
-                id: "zhenmai.parry".to_string(),
+                id: "woliu.burst".to_string(),
                 proficiency: 0.7,
                 active: true,
             }],
         };
 
         let mut deps = SkillMeridianDependencies::default();
-        deps.declare("zhenmai.parry", vec![MeridianId::Lung]);
+        deps.declare("woliu.burst", vec![MeridianId::Lung]);
 
         let cultivation = Cultivation {
             realm: Realm::Condense,
@@ -334,6 +347,7 @@ mod tests {
             entity,
             3.0,
             100,
+            &default_ctx(),
         );
         assert!(
             result_ok.is_some(),
@@ -353,14 +367,14 @@ mod tests {
             entity,
             3.0,
             200,
+            &default_ctx(),
         );
         assert!(
             result_severed.is_none(),
             "with SEVERED Lung, technique depending on Lung should be excluded"
         );
 
-        // Verify the underlying check_meridian_dependencies also catches it
-        let dep_ids = deps.lookup("zhenmai.parry");
+        let dep_ids = deps.lookup("woliu.burst");
         let check_result = check_meridian_dependencies(dep_ids, Some(&severed));
         assert!(
             check_result.is_err(),
@@ -413,6 +427,7 @@ mod tests {
                 entity,
                 3.0,
                 tick,
+                &default_ctx(),
             ) {
                 selected_ids.insert(tid);
             }
@@ -696,6 +711,7 @@ mod tests {
                     entity,
                     3.0,
                     current_tick,
+                    &default_ctx(),
                 );
                 if selected.is_some() {
                     technique_uses += 1;
@@ -774,6 +790,7 @@ mod tests {
                     entity,
                     3.0,
                     current_tick,
+                    &default_ctx(),
                 );
                 if selected.is_some() {
                     technique_uses += 1;
@@ -852,6 +869,7 @@ mod tests {
                     entity,
                     3.0,
                     current_tick,
+                    &default_ctx(),
                 );
                 if selected.is_some() {
                     technique_uses += 1;
@@ -932,6 +950,7 @@ mod tests {
                     entity,
                     3.0,
                     current_tick,
+                    &default_ctx(),
                 );
                 if selected.is_some() {
                     technique_uses += 1;

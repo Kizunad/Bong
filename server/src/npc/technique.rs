@@ -17,7 +17,7 @@ use valence::prelude::{bevy_ecs, Commands, Component, Entity, Query, Res, Resour
 
 use crate::cultivation::components::{Cultivation, MeridianSystem, Realm};
 use crate::cultivation::known_techniques::{
-    technique_definition, KnownTechnique, KnownTechniques, TechniqueDefinition,
+    technique_definition, KnownTechnique, KnownTechniques, SkillCategory, TechniqueDefinition,
     TECHNIQUE_DEFINITIONS,
 };
 use crate::cultivation::meridian::severed::{
@@ -239,12 +239,40 @@ pub fn assign_npc_techniques(
     KnownTechniques { entries }
 }
 
+// ─── NpcSkillScoringContext ──────────────────────────────────────────────────
+
+pub struct NpcSkillScoringContext {
+    pub hp_ratio: f32,
+    pub qi_ratio: f32,
+    pub target_distance: f32,
+    pub target_hp_ratio: f32,
+    pub has_active_buff: bool,
+    pub in_combat: bool,
+}
+
+pub fn category_weight(category: SkillCategory, ctx: &NpcSkillScoringContext) -> f32 {
+    match category {
+        SkillCategory::Heal => (1.0 - ctx.hp_ratio).powf(2.0) * 0.9,
+        SkillCategory::Buff => {
+            if !ctx.has_active_buff && ctx.in_combat {
+                0.6
+            } else {
+                0.05
+            }
+        }
+        SkillCategory::Attack => 0.8,
+        SkillCategory::Control => 0.4,
+        SkillCategory::Defense => 0.0,
+    }
+}
+
 // ─── select_technique ────────────────────────────────────────────────────────
 
 /// NPC 战斗中选择功法。
 ///
 /// 过滤逻辑：active → 经脉 SEVERED 排除 → 冷却排除 → qi 不足排除 →
-/// range 匹配 → 按 proficiency 加权随机选一个。全部不可用返回 None。
+/// qi_ratio < 0.15 排除高 qi_cost 50% → Defense 排除（走独立 NpcDefenseAction）→
+/// 按 `category_weight(ctx) * proficiency` 加权随机选一个。全部不可用返回 None。
 #[allow(clippy::too_many_arguments)]
 pub fn select_technique(
     known: &KnownTechniques,
@@ -255,33 +283,30 @@ pub fn select_technique(
     npc_entity: Entity,
     _target_distance: f32,
     current_tick: u64,
+    ctx: &NpcSkillScoringContext,
 ) -> Option<String> {
     let mut candidates: Vec<(&KnownTechnique, &TechniqueDefinition)> = Vec::new();
 
     for entry in &known.entries {
-        // 1. active
         if !entry.active {
             continue;
         }
-        // 2. has definition
         let Some(def) = technique_definition(&entry.id) else {
             continue;
         };
-        // 3. 经脉 SEVERED 排除
         let deps = meridian_deps.lookup(&entry.id);
         if check_meridian_dependencies(deps, severed).is_err() {
             continue;
         }
-        // 4. 冷却排除
         if cooldowns.is_on_cooldown(npc_entity, &entry.id, current_tick) {
             continue;
         }
-        // 5. qi 不足排除
         if f64::from(def.qi_cost) > cultivation.qi_current {
             continue;
         }
-        // 6. range 过滤（range 0 = 自身 buff，始终可用）
-        // NPC 简化：不做精确 range check，让 SkillFn 自行处理
+        if def.category == SkillCategory::Defense {
+            continue;
+        }
 
         candidates.push((entry, def));
     }
@@ -290,10 +315,24 @@ pub fn select_technique(
         return None;
     }
 
-    // 按 proficiency 加权随机
+    if ctx.qi_ratio < 0.15 {
+        let mut qi_costs: Vec<f32> = candidates.iter().map(|(_, def)| def.qi_cost).collect();
+        qi_costs.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+        let median_idx = qi_costs.len().saturating_sub(1) / 2;
+        let median_cost = qi_costs[median_idx];
+        candidates.retain(|(_, def)| def.qi_cost <= median_cost);
+    }
+
+    if candidates.is_empty() {
+        return None;
+    }
+
     let total_weight: f32 = candidates
         .iter()
-        .map(|(entry, _)| entry.proficiency.max(0.01))
+        .map(|(entry, def)| {
+            let cw = category_weight(def.category, ctx);
+            (cw * entry.proficiency).max(0.001)
+        })
         .sum();
     let roll = splitmix64_unit(
         current_tick
@@ -302,14 +341,14 @@ pub fn select_technique(
     ) * total_weight;
 
     let mut accum = 0.0_f32;
-    for (entry, _) in &candidates {
-        accum += entry.proficiency.max(0.01);
+    for (entry, def) in &candidates {
+        let cw = category_weight(def.category, ctx);
+        accum += (cw * entry.proficiency).max(0.001);
         if roll < accum {
             return Some(entry.id.clone());
         }
     }
 
-    // fallback: 选最后一个
     candidates.last().map(|(entry, _)| entry.id.clone())
 }
 
@@ -357,6 +396,35 @@ pub struct NpcLastTechniqueTick(pub u64);
 
 // ─── Scorer system ───────────────────────────────────────────────────────────
 
+pub fn build_npc_skill_scoring_context(
+    cultivation: &Cultivation,
+    wounds: Option<&crate::combat::components::Wounds>,
+    bb: &NpcBlackboard,
+) -> NpcSkillScoringContext {
+    let hp_ratio = wounds
+        .map(|w| {
+            if w.health_max > 0.0 {
+                w.health_current / w.health_max
+            } else {
+                1.0
+            }
+        })
+        .unwrap_or(1.0);
+    let qi_ratio = if cultivation.qi_max > 0.0 {
+        (cultivation.qi_current / cultivation.qi_max) as f32
+    } else {
+        1.0
+    };
+    NpcSkillScoringContext {
+        hp_ratio,
+        qi_ratio,
+        target_distance: bb.player_distance,
+        target_hp_ratio: 1.0,
+        has_active_buff: false,
+        in_combat: bb.nearest_player.is_some(),
+    }
+}
+
 #[allow(clippy::type_complexity)]
 pub fn npc_technique_scorer_system(
     npcs: Query<
@@ -366,6 +434,7 @@ pub fn npc_technique_scorer_system(
             Option<&KnownTechniques>,
             Option<&NpcLastTechniqueTick>,
             Option<&MeridianSeveredPermanent>,
+            Option<&crate::combat::components::Wounds>,
         ),
         With<crate::npc::spawn::NpcMarker>,
     >,
@@ -381,7 +450,9 @@ pub fn npc_technique_scorer_system(
     let deps = meridian_deps.as_deref().unwrap_or(&empty_deps);
 
     for (Actor(actor), mut score) in &mut scorers {
-        let Ok((bb, cultivation, known_opt, last_tick_opt, severed_opt)) = npcs.get(*actor) else {
+        let Ok((bb, cultivation, known_opt, last_tick_opt, severed_opt, wounds_opt)) =
+            npcs.get(*actor)
+        else {
             score.set(0.0);
             continue;
         };
@@ -396,7 +467,6 @@ pub fn npc_technique_scorer_system(
             continue;
         }
 
-        // 最小间隔检查
         let min_interval = 60 + realm_rank(cultivation.realm) as u64 * 10;
         let last_tick = last_tick_opt.map(|t| t.0).unwrap_or(0);
         if current_tick > 0 && current_tick.saturating_sub(last_tick) < min_interval {
@@ -404,13 +474,13 @@ pub fn npc_technique_scorer_system(
             continue;
         }
 
-        // 需要有目标
         if bb.nearest_player.is_none() {
             score.set(0.0);
             continue;
         }
 
-        // 检查是否有可用功法（含经脉 SEVERED 过滤）
+        let ctx = build_npc_skill_scoring_context(cultivation, wounds_opt, bb);
+
         let has_usable = select_technique(
             known,
             cultivation,
@@ -420,6 +490,7 @@ pub fn npc_technique_scorer_system(
             *actor,
             bb.player_distance,
             current_tick,
+            &ctx,
         )
         .is_some();
 
@@ -486,6 +557,11 @@ pub fn npc_technique_action_system(world: &mut valence::prelude::bevy_ecs::world
                     let clock = world.get_resource::<crate::cultivation::tick::CultivationClock>();
                     let current_tick = clock.map(|c| c.tick).unwrap_or(0);
 
+                    let default_bb = NpcBlackboard::default();
+                    let bb_ref = bb.unwrap_or(&default_bb);
+                    let wounds = world.get::<crate::combat::components::Wounds>(actor_entity);
+                    let ctx = build_npc_skill_scoring_context(cultivation, wounds, bb_ref);
+
                     match select_technique(
                         known,
                         cultivation,
@@ -495,6 +571,7 @@ pub fn npc_technique_action_system(world: &mut valence::prelude::bevy_ecs::world
                         actor_entity,
                         target_distance,
                         current_tick,
+                        &ctx,
                     ) {
                         Some(tid) => {
                             // Look up the definition for cooldown info
@@ -653,6 +730,17 @@ mod tests {
 
     fn empty_deps() -> SkillMeridianDependencies {
         SkillMeridianDependencies::default()
+    }
+
+    fn default_ctx() -> NpcSkillScoringContext {
+        NpcSkillScoringContext {
+            hp_ratio: 1.0,
+            qi_ratio: 1.0,
+            target_distance: 3.0,
+            target_hp_ratio: 1.0,
+            has_active_buff: false,
+            in_combat: true,
+        }
     }
 
     // === assign_npc_techniques: archetype coverage ===
@@ -938,6 +1026,7 @@ mod tests {
             entity,
             3.0,
             100,
+            &default_ctx(),
         );
         assert!(result.is_some(), "should select a technique");
         assert_eq!(result.unwrap(), "sword.cleave");
@@ -971,6 +1060,7 @@ mod tests {
             entity,
             3.0,
             100,
+            &default_ctx(),
         );
         assert!(result.is_none(), "inactive technique should be excluded");
     }
@@ -1004,6 +1094,7 @@ mod tests {
             entity,
             3.0,
             100,
+            &default_ctx(),
         );
         assert!(result.is_none(), "technique on cooldown should be excluded");
     }
@@ -1037,6 +1128,7 @@ mod tests {
             entity,
             3.0,
             100,
+            &default_ctx(),
         );
         assert!(result.is_some(), "expired cooldown should allow technique");
     }
@@ -1069,6 +1161,7 @@ mod tests {
             entity,
             3.0,
             100,
+            &default_ctx(),
         );
         assert!(
             result.is_none(),
@@ -1080,7 +1173,7 @@ mod tests {
     fn select_technique_severed_meridian_excluded() {
         let known = KnownTechniques {
             entries: vec![KnownTechnique {
-                id: "zhenmai.parry".to_string(), // depends on Lung
+                id: "woliu.burst".to_string(),
                 proficiency: 0.5,
                 active: true,
             }],
@@ -1091,9 +1184,8 @@ mod tests {
             qi_max: 100.0,
             ..Default::default()
         };
-        // Declare Lung dependency for zhenmai.parry
         let mut deps = SkillMeridianDependencies::default();
-        deps.declare("zhenmai.parry", vec![MeridianId::Lung]);
+        deps.declare("woliu.burst", vec![MeridianId::Lung]);
 
         let mut severed = MeridianSeveredPermanent::default();
         severed.insert(MeridianId::Lung, SeveredSource::CombatWound, 50);
@@ -1110,6 +1202,7 @@ mod tests {
             entity,
             3.0,
             100,
+            &default_ctx(),
         );
         assert!(
             result.is_none(),
@@ -1154,6 +1247,7 @@ mod tests {
             entity,
             3.0,
             100,
+            &default_ctx(),
         );
         assert!(
             result.is_none(),
@@ -1180,6 +1274,7 @@ mod tests {
             entity,
             3.0,
             100,
+            &default_ctx(),
         );
         assert!(
             result.is_none(),
@@ -1293,6 +1388,7 @@ mod tests {
                 entity,
                 3.0,
                 tick,
+                &default_ctx(),
             ) {
                 if id == "sword.thrust" {
                     thrust_count += 1;
@@ -1419,5 +1515,214 @@ mod tests {
         assert_eq!(parse_realm("Void"), Some(Realm::Void));
         assert_eq!(parse_realm("invalid"), None);
         assert_eq!(parse_realm(""), None);
+    }
+
+    // === category_weight ===
+
+    #[test]
+    fn category_weight_heal_scales_with_missing_hp() {
+        let ctx_full = NpcSkillScoringContext {
+            hp_ratio: 1.0,
+            ..default_ctx()
+        };
+        let ctx_half = NpcSkillScoringContext {
+            hp_ratio: 0.5,
+            ..default_ctx()
+        };
+        let ctx_low = NpcSkillScoringContext {
+            hp_ratio: 0.3,
+            ..default_ctx()
+        };
+        let ctx_zero = NpcSkillScoringContext {
+            hp_ratio: 0.0,
+            ..default_ctx()
+        };
+
+        let w_full = category_weight(SkillCategory::Heal, &ctx_full);
+        let w_half = category_weight(SkillCategory::Heal, &ctx_half);
+        let w_low = category_weight(SkillCategory::Heal, &ctx_low);
+        let w_zero = category_weight(SkillCategory::Heal, &ctx_zero);
+
+        assert!(
+            w_full < f32::EPSILON,
+            "full HP should yield ~0 heal weight, got {w_full}"
+        );
+        assert!(
+            w_half > w_full,
+            "half HP should yield higher heal weight than full"
+        );
+        assert!(
+            w_low > w_half,
+            "low HP should yield higher heal weight than half"
+        );
+        assert!(
+            (w_zero - 0.9).abs() < f32::EPSILON,
+            "zero HP should yield 0.9 heal weight, got {w_zero}"
+        );
+    }
+
+    #[test]
+    fn category_weight_buff_in_combat_no_active() {
+        let ctx = NpcSkillScoringContext {
+            has_active_buff: false,
+            in_combat: true,
+            ..default_ctx()
+        };
+        assert!(
+            (category_weight(SkillCategory::Buff, &ctx) - 0.6).abs() < f32::EPSILON,
+            "buff in combat without active buff should be 0.6"
+        );
+    }
+
+    #[test]
+    fn category_weight_buff_already_buffed() {
+        let ctx = NpcSkillScoringContext {
+            has_active_buff: true,
+            in_combat: true,
+            ..default_ctx()
+        };
+        assert!(
+            (category_weight(SkillCategory::Buff, &ctx) - 0.05).abs() < f32::EPSILON,
+            "buff with active buff should be 0.05"
+        );
+    }
+
+    #[test]
+    fn category_weight_buff_out_of_combat() {
+        let ctx = NpcSkillScoringContext {
+            has_active_buff: false,
+            in_combat: false,
+            ..default_ctx()
+        };
+        assert!(
+            (category_weight(SkillCategory::Buff, &ctx) - 0.05).abs() < f32::EPSILON,
+            "buff out of combat should be 0.05"
+        );
+    }
+
+    #[test]
+    fn category_weight_attack_constant() {
+        let ctx = default_ctx();
+        assert!(
+            (category_weight(SkillCategory::Attack, &ctx) - 0.8).abs() < f32::EPSILON,
+            "attack weight should be 0.8"
+        );
+    }
+
+    #[test]
+    fn category_weight_control_constant() {
+        let ctx = default_ctx();
+        assert!(
+            (category_weight(SkillCategory::Control, &ctx) - 0.4).abs() < f32::EPSILON,
+            "control weight should be 0.4"
+        );
+    }
+
+    #[test]
+    fn category_weight_defense_zero() {
+        let ctx = default_ctx();
+        assert!(
+            category_weight(SkillCategory::Defense, &ctx) < f32::EPSILON,
+            "defense weight should be 0.0"
+        );
+    }
+
+    #[test]
+    fn select_technique_defense_excluded() {
+        let known = KnownTechniques {
+            entries: vec![KnownTechnique {
+                id: "sword.parry".to_string(),
+                proficiency: 0.9,
+                active: true,
+            }],
+        };
+        let cultivation = Cultivation {
+            realm: Realm::Awaken,
+            qi_current: 100.0,
+            qi_max: 100.0,
+            ..Default::default()
+        };
+        let deps = empty_deps();
+        let cooldowns = NpcCooldownMap::default();
+        let entity = Entity::from_raw(1);
+
+        let result = select_technique(
+            &known,
+            &cultivation,
+            &deps,
+            None,
+            &cooldowns,
+            entity,
+            3.0,
+            100,
+            &default_ctx(),
+        );
+        assert!(
+            result.is_none(),
+            "Defense category techniques should be excluded from select_technique"
+        );
+    }
+
+    #[test]
+    fn select_technique_low_qi_filters_high_cost() {
+        let known = KnownTechniques {
+            entries: vec![
+                KnownTechnique {
+                    id: "sword.cleave".to_string(), // qi_cost = 0.0
+                    proficiency: 0.5,
+                    active: true,
+                },
+                KnownTechnique {
+                    id: "woliu.heart".to_string(), // qi_cost = 50.0
+                    proficiency: 0.5,
+                    active: true,
+                },
+            ],
+        };
+        let cultivation = Cultivation {
+            realm: Realm::Condense,
+            qi_current: 100.0,
+            qi_max: 100.0,
+            ..Default::default()
+        };
+        let deps = empty_deps();
+        let cooldowns = NpcCooldownMap::default();
+        let entity = Entity::from_raw(1);
+
+        let low_qi_ctx = NpcSkillScoringContext {
+            qi_ratio: 0.1,
+            ..default_ctx()
+        };
+
+        let mut cleave_selected = false;
+        let mut heart_selected = false;
+        for tick in 0..500u64 {
+            if let Some(id) = select_technique(
+                &known,
+                &cultivation,
+                &deps,
+                None,
+                &cooldowns,
+                entity,
+                3.0,
+                tick,
+                &low_qi_ctx,
+            ) {
+                match id.as_str() {
+                    "sword.cleave" => cleave_selected = true,
+                    "woliu.heart" => heart_selected = true,
+                    _ => {}
+                }
+            }
+        }
+
+        assert!(
+            cleave_selected,
+            "low qi_cost technique should be selectable at low qi_ratio"
+        );
+        assert!(
+            !heart_selected,
+            "high qi_cost technique should be filtered at qi_ratio < 0.15"
+        );
     }
 }
