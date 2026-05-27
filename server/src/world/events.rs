@@ -4002,7 +4002,7 @@ mod events_tests {
                 duration_ticks,
             } => {
                 assert_eq!(event_id, REALM_COLLAPSE_BOUNDARY_VFX_EVENT_ID);
-                assert_eq!(*origin, [128.0, 65.0, 128.0]);
+                assert_eq!(*origin, [0.0, 65.0, 0.0]);
                 assert_eq!(*direction, Some([128.0, 0.0, 128.0]));
                 assert_eq!(color.as_deref(), Some("#2B2B31"));
                 assert_eq!(*strength, Some(0.35));

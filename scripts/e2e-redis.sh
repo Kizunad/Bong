@@ -888,6 +888,8 @@ echo "=== [$TASK_ID][$SCRIPT_TAG][3/7] Server startup ==="
   # NPC perf v1：e2e 默认恢复 100 rogue seed，并用 TickRateProbe 日志作为
   # CI 回归门禁。低负载调试可手动覆盖 BONG_ROGUE_SEED_COUNT=0。
   export BONG_ROGUE_SEED_COUNT="${BONG_ROGUE_SEED_COUNT:-100}"
+  # CI 无 MINESKIN_API_KEY，跳过皮肤预取（NPC 回退 villager 实体）。
+  export BONG_SKIP_SKIN_PREFETCH="${BONG_SKIP_SKIN_PREFETCH:-1}"
   cd "$ROOT/server"
   cargo run --release
 ) >"$SERVER_LOG" 2>&1 &

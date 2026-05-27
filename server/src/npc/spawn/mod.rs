@@ -215,7 +215,7 @@ fn attach_deferred_npc_brain_system(
     npcs: Query<(Entity, &common::DeferredNpcBrain, Option<&NpcLodTier>), With<common::NpcMarker>>,
 ) {
     for (entity, deferred, tier) in &npcs {
-        if matches!(tier, Some(NpcLodTier::Dormant) | None) {
+        if matches!(tier, Some(NpcLodTier::Dormant)) {
             continue;
         }
         commands
@@ -773,11 +773,6 @@ mod tests {
             "None skin should produce villager (neutral NPC model)",
         );
         assert_eq!(
-            fallback_rogue_commoner_kind(&Some(SignedSkin::fallback())),
-            EntityKind::VILLAGER,
-            "MineSkin fallback skin should produce villager, not witch (散修不该是女巫模型)",
-        );
-        assert_eq!(
             fallback_rogue_commoner_kind(&Some(SignedSkin {
                 value: "value".into(),
                 signature: "sig".into(),
@@ -1024,8 +1019,8 @@ mod tests {
             .get::<NpcPlayerSkin>(disciple)
             .expect("disciple spawned with real skin must have NpcPlayerSkin component");
         assert!(
-            !npc_skin.skin.is_fallback(),
-            "NpcPlayerSkin.skin should be a real (non-fallback) skin"
+            !npc_skin.skin.value.is_empty(),
+            "NpcPlayerSkin.skin should have a non-empty value"
         );
         assert!(
             !npc_skin.name.is_empty(),
@@ -1087,13 +1082,13 @@ mod tests {
         assert_eq!(
             kind,
             EntityKind::VILLAGER,
-            "disciple spawned with empty skin pool should fall back to VILLAGER because draw_npc_skin returns a fallback skin, got {:?}",
+            "disciple spawned with empty skin pool (WaitForReady) should fall back to VILLAGER because draw_npc_skin returns None, got {:?}",
             kind
         );
 
         assert!(
             app.world().get::<NpcPlayerSkin>(disciple).is_none(),
-            "disciple spawned with empty (fallback) skin pool must NOT have NpcPlayerSkin — fallback skins are filtered out"
+            "disciple spawned with empty skin pool must NOT have NpcPlayerSkin — draw_npc_skin returns None when pool not ready"
         );
     }
 
@@ -1116,17 +1111,9 @@ mod tests {
 
     fn spawn_test_disciple_with_empty_pool(mut commands: Commands, layer: Res<TestLayer>) {
         let mut pool = SkinPool::default();
-        // Mark fallback_mode so `ready_for_spawn()` returns true — but no actual skins,
-        // so `next_for_profile` yields `SignedSkin::fallback()`.
-        pool.insert_for_key(
-            crate::skin::npc_skin_selector::NpcSkinPoolKey(
-                crate::skin::npc_skin_selector::NpcSkinTier::Other,
-            ),
-            crate::skin::SignedSkin::fallback(),
-        );
         disciple::spawn_disciple_npc_at(
             &mut commands,
-            NpcSkinSpawnContext::new(Some(&mut pool), NpcSkinFallbackPolicy::AllowFallback),
+            NpcSkinSpawnContext::new(Some(&mut pool), NpcSkinFallbackPolicy::WaitForReady),
             layer.0,
             DEFAULT_SPAWN_ZONE_NAME,
             DVec3::new(42.0, 66.0, 42.0),

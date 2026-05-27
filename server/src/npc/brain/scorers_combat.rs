@@ -1101,10 +1101,7 @@ mod tests {
     fn dash_scorer_alive_npc_scores_normally() {
         let mut app = App::new();
         app.insert_resource(crate::npc::movement::GameTick(0));
-        app.add_systems(
-            PreUpdate,
-            dash_scorer_system.in_set(BigBrainSet::Scorers),
-        );
+        app.add_systems(PreUpdate, dash_scorer_system.in_set(BigBrainSet::Scorers));
 
         let npc = app
             .world_mut()
@@ -1144,10 +1141,7 @@ mod tests {
     fn dash_scorer_near_death_npc_scores_zero() {
         let mut app = App::new();
         app.insert_resource(crate::npc::movement::GameTick(0));
-        app.add_systems(
-            PreUpdate,
-            dash_scorer_system.in_set(BigBrainSet::Scorers),
-        );
+        app.add_systems(PreUpdate, dash_scorer_system.in_set(BigBrainSet::Scorers));
 
         let mut lifecycle = Lifecycle {
             character_id: "npc_near_death".to_string(),
@@ -1190,10 +1184,7 @@ mod tests {
     fn dash_scorer_no_lifecycle_component_fallback() {
         let mut app = App::new();
         app.insert_resource(crate::npc::movement::GameTick(0));
-        app.add_systems(
-            PreUpdate,
-            dash_scorer_system.in_set(BigBrainSet::Scorers),
-        );
+        app.add_systems(PreUpdate, dash_scorer_system.in_set(BigBrainSet::Scorers));
 
         // NPC without Lifecycle — should score normally.
         let npc = app

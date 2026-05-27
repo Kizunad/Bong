@@ -13,14 +13,20 @@ import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
-/**
- * plan-botany-v1 §1.3：鼠标左键按下若落在采集浮窗范围内，开始拖拽并阻止事件继续向世界交互层传播
- * （避免挥拳 / 破坏方块）。
- *
- * <p>只在活动 session 且浮窗已渲染时才拦截；其他情况（浮窗不显示、未激活、currentScreen 打开）全部放行。
- */
 @Mixin(Mouse.class)
 public class MixinMouse {
+
+    @Inject(
+        method = "updateMouse",
+        at = @At("HEAD"),
+        cancellable = true
+    )
+    private void bong$guardNullPlayerOnUpdate(CallbackInfo ci) {
+        MinecraftClient client = MinecraftClient.getInstance();
+        if (client == null || client.player == null) {
+            ci.cancel();
+        }
+    }
 
     @Inject(
         method = "onMouseButton(JIII)V",

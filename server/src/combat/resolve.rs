@@ -2505,10 +2505,9 @@ mod tests {
 
     #[test]
     fn attacker_near_death_skips_intent() {
-        assert_attacker_lifecycle_skips_intent(
-            "NearDeath",
-            |lifecycle| lifecycle.enter_near_death(40),
-        );
+        assert_attacker_lifecycle_skips_intent("NearDeath", |lifecycle| {
+            lifecycle.enter_near_death(40)
+        });
     }
 
     #[test]
@@ -2563,12 +2562,7 @@ mod tests {
             enter_state(&mut lifecycle);
         }
 
-        let target_wounds_before = app
-            .world()
-            .entity(target)
-            .get::<Wounds>()
-            .unwrap()
-            .clone();
+        let target_wounds_before = app.world().entity(target).get::<Wounds>().unwrap().clone();
         let attacker_qi_before = app
             .world()
             .entity(attacker)

@@ -266,8 +266,6 @@ fn generate_chunks_around_players(
             if client_budget == 0 {
                 break;
             }
-            // 已生成的列直接 return（也快），不消耗 budget；只对真正新生成
-            // 的列收 budget。
             let already = generated.loaded.contains(&pos) || layer.chunk(pos).is_some();
             ensure_chunk_generated(
                 &mut layer,

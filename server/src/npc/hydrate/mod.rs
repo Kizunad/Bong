@@ -3,7 +3,7 @@
 //! This module moves live NPCs into [`NpcDormantStore`] when they are far away
 //! from all players, and spawns them back when someone comes near again.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 
 use valence::client::ClientMarker;
 use valence::prelude::bevy_ecs::system::SystemParam;
@@ -87,6 +87,7 @@ pub fn hydrate_dormant_near_players_system(
     pois: Option<Res<PoiNoviceRegistry>>,
     mut skin_pool: Option<ResMut<SkinPool>>,
     mut tribulations: EventWriter<InitiateXuhuaTribulation>,
+    zone_registry: Option<Res<ZoneRegistry>>,
 ) {
     let tick = crate::npc::dormant::current_tick(game_tick.as_deref());
     if !crate::npc::dormant::should_run_interval(tick, config.transition_interval_ticks) {
@@ -101,6 +102,8 @@ pub fn hydrate_dormant_near_players_system(
         return;
     };
 
+    let player_zones = player_zone_names(zone_registry.as_deref(), &player_positions);
+
     let mut to_hydrate = BTreeMap::<String, bool>::new();
     for (char_id, snapshot) in &store.snapshots {
         let tribulation_ready = dormant_tribulation_ready(snapshot);
@@ -109,7 +112,8 @@ pub fn hydrate_dormant_near_players_system(
             snapshot.dimension,
             &player_positions,
         ) <= config.hydrate_radius_blocks;
-        if tribulation_ready || near_player {
+        let in_player_zone = player_zones.contains(snapshot.zone_name.as_str());
+        if tribulation_ready || near_player || in_player_zone {
             to_hydrate.insert(char_id.clone(), tribulation_ready);
         }
     }
@@ -195,7 +199,8 @@ pub fn dehydrate_far_npcs_system(
         return;
     }
 
-    let zone_registry = zone_registry.as_deref();
+    let zone_reg = zone_registry.as_deref();
+    let player_zones = player_zone_names(zone_reg, &player_positions);
     let mut candidates = Vec::new();
     for (
         entity,
@@ -224,11 +229,14 @@ pub fn dehydrate_far_npcs_system(
         if !player_positions.is_empty() && nearest <= config.dehydrate_radius_blocks {
             continue;
         }
-        let zone_name = zone_registry
+        let zone_name = zone_reg
             .and_then(|zones| zones.find_zone(dimension, position.get()))
             .map(|zone| zone.name.clone())
             .or_else(|| patrol.map(|patrol| patrol.home_zone.clone()))
             .unwrap_or_else(|| "spawn".to_string());
+        if player_zones.contains(zone_name.as_str()) {
+            continue;
+        }
         let patrol_snapshot = patrol.map(|patrol| DormantPatrolSnapshot {
             home_zone: patrol.home_zone.clone(),
             anchor_index: patrol.anchor_index,
@@ -405,6 +413,20 @@ fn nearest_same_dimension_player_distance(
         .filter(|(player_dimension, _)| *player_dimension == dimension)
         .map(|(_, player_pos)| planar_distance(position, *player_pos))
         .fold(f64::INFINITY, f64::min)
+}
+
+fn player_zone_names(
+    zone_registry: Option<&ZoneRegistry>,
+    player_positions: &[PlayerPosition],
+) -> HashSet<String> {
+    let Some(zones) = zone_registry else {
+        return HashSet::new();
+    };
+    player_positions
+        .iter()
+        .filter_map(|(dim, pos)| zones.find_zone(*dim, *pos))
+        .map(|zone| zone.name.clone())
+        .collect()
 }
 
 fn spawn_from_snapshot(
@@ -658,6 +680,7 @@ mod tests {
     use valence::prelude::{DVec3, Events};
 
     use crate::cultivation::components::Realm;
+    use crate::npc::dormant::{DEHYDRATE_RADIUS_BLOCKS, HYDRATE_RADIUS_BLOCKS};
     use crate::world::zone::{Zone, DEFAULT_SPAWN_ZONE_NAME};
 
     fn zone_registry() -> ZoneRegistry {
@@ -1081,75 +1104,6 @@ mod tests {
     }
 
     #[test]
-    fn hydrate_disciple_with_empty_skin_pool_allow_fallback_produces_villager() {
-        let mut app = App::new();
-        app.add_event::<InitiateXuhuaTribulation>();
-
-        let overworld = app.world_mut().spawn_empty().id();
-        let tsy = app.world_mut().spawn_empty().id();
-        app.insert_resource(DimensionLayers { overworld, tsy });
-        app.insert_resource(NpcVirtualizationConfig::default());
-
-        let snap = disciple_snapshot("disciple_empty_pool", DVec3::new(10.0, 64.0, 10.0));
-        let mut store = NpcDormantStore::default();
-        store.insert(snap);
-        app.insert_resource(store);
-
-        // Insert an empty SkinPool — next_for_profile returns fallback skin,
-        // and AllowFallback is used in spawn_from_snapshot.
-        app.insert_resource(crate::skin::SkinPool::default());
-
-        app.world_mut().spawn((
-            valence::client::ClientMarker,
-            Position(DVec3::new(10.0, 64.0, 10.0)),
-        ));
-
-        app.add_systems(Update, hydrate_dormant_near_players_system);
-        app.update();
-
-        // The hydrate system does NOT gate on `pool.ready_for_spawn()`.
-        // With AllowFallback policy, `draw_npc_skin` calls `pool.next_for_profile`
-        // which returns `SignedSkin::fallback()`. The spawn code filters out
-        // fallback skins (`!skin.is_fallback()`), so `attach_player_skin` is NOT
-        // called. The NPC is hydrated as VILLAGER without NpcPlayerSkin.
-        assert!(
-            app.world().resource::<NpcDormantStore>().is_empty(),
-            "disciple snapshot should have been consumed from dormant store even with empty pool"
-        );
-
-        let results = {
-            let world = app.world_mut();
-            let mut query = world.query::<(
-                &valence::prelude::EntityKind,
-                Option<&crate::skin::NpcPlayerSkin>,
-                &NpcArchetype,
-            )>();
-            query
-                .iter(world)
-                .filter(|(_, _, arch)| **arch == NpcArchetype::Disciple)
-                .map(|(kind, skin, _)| (*kind, skin.is_some()))
-                .collect::<Vec<_>>()
-        };
-        assert_eq!(
-            results.len(),
-            1,
-            "expected exactly one hydrated disciple entity, got {}",
-            results.len()
-        );
-        let (kind, has_skin) = results[0];
-        assert_eq!(
-            kind,
-            valence::prelude::EntityKind::VILLAGER,
-            "hydrated disciple with empty pool should be VILLAGER, got {:?}",
-            kind
-        );
-        assert!(
-            !has_skin,
-            "hydrated disciple with empty pool must NOT have NpcPlayerSkin"
-        );
-    }
-
-    #[test]
     fn tribulation_ready_dormant_hydrates_without_player_distance_gate() {
         let mut app = App::new();
         app.add_event::<InitiateXuhuaTribulation>();
@@ -1184,5 +1138,125 @@ mod tests {
         let all = events.iter_current_update_events().collect::<Vec<_>>();
         assert_eq!(all.len(), 1);
         assert_eq!(all[0].waves_total, NPC_TRIBULATION_WAVES_DEFAULT);
+    }
+
+    fn multi_zone_registry() -> ZoneRegistry {
+        ZoneRegistry {
+            zones: vec![
+                Zone {
+                    name: "zone_a".to_string(),
+                    dimension: DimensionKind::Overworld,
+                    bounds: (
+                        DVec3::new(4000.0, -64.0, 1000.0),
+                        DVec3::new(5200.0, 320.0, 2200.0),
+                    ),
+                    spirit_qi: 0.5,
+                    danger_level: 2,
+                    active_events: Vec::new(),
+                    patrol_anchors: vec![DVec3::new(4600.0, 128.0, 1600.0)],
+                    blocked_tiles: Vec::new(),
+                },
+                Zone {
+                    name: "zone_b".to_string(),
+                    dimension: DimensionKind::Overworld,
+                    bounds: (
+                        DVec3::new(-3000.0, -64.0, -3000.0),
+                        DVec3::new(-2000.0, 320.0, -2000.0),
+                    ),
+                    spirit_qi: 0.6,
+                    danger_level: 3,
+                    active_events: Vec::new(),
+                    patrol_anchors: vec![DVec3::new(-2500.0, 64.0, -2500.0)],
+                    blocked_tiles: Vec::new(),
+                },
+            ],
+        }
+    }
+
+    fn snapshot_in_zone(char_id: &str, pos: DVec3, zone: &str) -> NpcDormantSnapshot {
+        let mut s = snapshot(char_id, pos);
+        s.zone_name = zone.to_string();
+        s
+    }
+
+    #[test]
+    fn zone_based_hydration_wakes_distant_npcs_in_same_zone() {
+        let player_positions: Vec<PlayerPosition> =
+            vec![(DimensionKind::Overworld, DVec3::new(4600.0, 128.0, 1600.0))];
+        let zones = multi_zone_registry();
+
+        let player_zones = player_zone_names(Some(&zones), &player_positions);
+        assert!(
+            player_zones.contains("zone_a"),
+            "player at zone_a center must resolve to zone_a"
+        );
+
+        let far_npc = snapshot_in_zone("npc_far", DVec3::new(4100.0, 64.0, 1100.0), "zone_a");
+        let dist =
+            crate::npc::dormant::planar_distance(far_npc.position_vec(), player_positions[0].1);
+        assert!(
+            dist > HYDRATE_RADIUS_BLOCKS,
+            "NPC must be beyond hydrate_radius ({dist:.0} > {HYDRATE_RADIUS_BLOCKS})"
+        );
+        assert!(
+            player_zones.contains(far_npc.zone_name.as_str()),
+            "NPC in zone_a should match player's zone"
+        );
+    }
+
+    #[test]
+    fn zone_based_hydration_ignores_npcs_in_other_zones() {
+        let player_positions: Vec<PlayerPosition> =
+            vec![(DimensionKind::Overworld, DVec3::new(4600.0, 128.0, 1600.0))];
+        let zones = multi_zone_registry();
+        let player_zones = player_zone_names(Some(&zones), &player_positions);
+
+        let other_zone_npc =
+            snapshot_in_zone("npc_other", DVec3::new(-2500.0, 64.0, -2500.0), "zone_b");
+        assert!(
+            !player_zones.contains(other_zone_npc.zone_name.as_str()),
+            "NPC in zone_b should NOT match player in zone_a"
+        );
+    }
+
+    #[test]
+    fn player_zone_names_returns_empty_without_registry() {
+        let positions: Vec<PlayerPosition> =
+            vec![(DimensionKind::Overworld, DVec3::new(0.0, 64.0, 0.0))];
+        let result = player_zone_names(None, &positions);
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn dehydrate_skips_npcs_in_player_zone() {
+        let player_positions: Vec<PlayerPosition> =
+            vec![(DimensionKind::Overworld, DVec3::new(4600.0, 128.0, 1600.0))];
+        let zones = multi_zone_registry();
+        let player_zones = player_zone_names(Some(&zones), &player_positions);
+
+        let far_same_zone_npc =
+            snapshot_in_zone("npc_far_same", DVec3::new(4100.0, 64.0, 1100.0), "zone_a");
+        let dist = crate::npc::dormant::planar_distance(
+            far_same_zone_npc.position_vec(),
+            player_positions[0].1,
+        );
+        assert!(
+            dist > DEHYDRATE_RADIUS_BLOCKS,
+            "test NPC must exceed dehydrate_radius to verify zone exemption"
+        );
+        assert!(
+            player_zones.contains(far_same_zone_npc.zone_name.as_str()),
+            "same-zone NPC should be protected from dehydration"
+        );
+
+        let far_other_zone_npc = snapshot_in_zone(
+            "npc_far_other",
+            DVec3::new(-2500.0, 64.0, -2500.0),
+            "zone_b",
+        );
+        assert!(
+            !player_zones.contains(far_other_zone_npc.zone_name.as_str()),
+            "different-zone NPC should be eligible for dehydration"
+        );
     }
 }

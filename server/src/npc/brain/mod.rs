@@ -121,13 +121,13 @@ pub(super) const FLEE_CULTIVATOR_SUCCESS_DISTANCE: f64 = 40.0;
 pub(super) const FLEE_CULTIVATOR_SPEED_FACTOR: f64 = 1.3;
 pub(super) const FLEE_CULTIVATOR_WAYPOINT_DISTANCE: f64 = 12.0;
 /// Wander 动作的目标选择半径 + 到达判定。
-pub(super) const WANDER_MIN_RADIUS: f64 = 4.0;
-pub(super) const WANDER_MAX_RADIUS: f64 = 10.0;
+pub(super) const WANDER_MIN_RADIUS: f64 = 16.0;
+pub(super) const WANDER_MAX_RADIUS: f64 = 48.0;
 pub(super) const WANDER_ARRIVAL_DISTANCE: f64 = 1.6;
-pub(super) const WANDER_SPEED_FACTOR: f64 = 0.6;
-pub(super) const WANDER_MAX_TICKS: u32 = 200;
+pub(super) const WANDER_SPEED_FACTOR: f64 = 0.85;
+pub(super) const WANDER_MAX_TICKS: u32 = 300;
 pub(super) const GO_TO_POI_ARRIVAL_DISTANCE: f64 = 1.8;
-pub(super) const GO_TO_POI_MAX_TICKS: u32 = 400;
+pub(super) const GO_TO_POI_MAX_TICKS: u32 = 240;
 pub(super) const REST_MAX_TICKS: u32 = 20 * 120;
 pub(super) const REST_RECOVERY_RATE_PER_TICK: f64 = 1.0 / 120.0;
 pub(super) const STALL_MIN_TICKS: u32 = 20 * 60;
@@ -141,7 +141,10 @@ pub(super) const CURIOSITY_BASELINE_SCORE: f32 = 0.15;
 /// Cultivate Action 在 zone_qi 低于此值时放弃（与 meridian_open `MIN_ZONE_QI_TO_OPEN` 一致）。
 pub(super) const CULTIVATE_MIN_ZONE_QI: f64 = 0.3;
 /// Cultivate Action 连续 N tick 无突破即 Success（让 Curiosity/Wander 接手）。
-pub(super) const CULTIVATE_MAX_TICKS: u32 = 600;
+pub(super) const CULTIVATE_MAX_TICKS: u32 = 300;
+/// 修炼时的缓慢游走速度（冥想步行，避免完全静止）。
+pub(super) const CULTIVATE_DRIFT_SPEED: f64 = 0.25;
+pub(super) const CULTIVATE_DRIFT_RADIUS: f64 = 5.0;
 /// 散修（Rogue）突破时的材料加成常数（plan §2 "CultivateAction 自动突破，无 UI"）。
 pub(super) const ROGUE_BREAKTHROUGH_MATERIAL_BONUS: f64 = 0.0;
 /// 渡劫起劫所需的 drive 维持阈值（plan §7 "CultivationDrive > 0.6 持续 30 min"）。
@@ -376,10 +379,6 @@ fn horizontal_distance(a: DVec3, b: DVec3) -> f64 {
     let dz = a.z - b.z;
     (dx * dx + dz * dz).sqrt()
 }
-
-// ---------------------------------------------------------------------------
-// register()
-// ---------------------------------------------------------------------------
 
 pub fn register(app: &mut App) {
     tracing::info!("[bong][npc] registering brain systems");

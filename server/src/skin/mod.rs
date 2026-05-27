@@ -18,27 +18,12 @@ pub struct SignedSkin {
     pub source: SkinSource,
 }
 
-impl SignedSkin {
-    pub fn fallback() -> Self {
-        Self {
-            value: String::new(),
-            signature: String::new(),
-            source: SkinSource::Fallback,
-        }
-    }
-
-    pub fn is_fallback(&self) -> bool {
-        matches!(self.source, SkinSource::Fallback)
-    }
-}
-
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[allow(dead_code)]
 pub enum SkinSource {
     MineSkinGenerate { uuid: String, timestamp: u64 },
     MineSkinRandom { hash: String },
     LocalPack { path: PathBuf },
-    Fallback,
 }
 
 pub fn register(app: &mut App) {

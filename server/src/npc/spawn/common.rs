@@ -31,6 +31,7 @@ pub struct NpcMarker;
 
 pub struct NpcSkinSpawnContext<'a> {
     pub pool: Option<&'a mut SkinPool>,
+    #[allow(dead_code)]
     pub policy: NpcSkinFallbackPolicy,
 }
 
@@ -219,7 +220,7 @@ pub(crate) fn draw_npc_skin(
     spawn_position: DVec3,
 ) -> Option<SignedSkin> {
     let pool = skin_context.pool?;
-    if skin_context.policy == NpcSkinFallbackPolicy::WaitForReady && !pool.ready_for_spawn() {
+    if !pool.ready_for_spawn() {
         return None;
     }
 
@@ -261,7 +262,7 @@ pub(crate) fn attach_player_skin(
 }
 
 pub fn fallback_rogue_commoner_kind(skin: &Option<SignedSkin>) -> EntityKind {
-    if skin.as_ref().is_some_and(|skin| !skin.is_fallback()) {
+    if skin.is_some() {
         EntityKind::PLAYER
     } else {
         EntityKind::VILLAGER

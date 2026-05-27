@@ -86,7 +86,7 @@ public final class WorkbenchScreen extends BaseOwoScreen<FlowLayout> {
         columns.gap(4);
         recipeList = new CraftRecipeListWidget(id -> {
             selectedId = id;
-            refreshAll();
+            refreshRightPanel();
         });
         materialGrid = new CraftMaterialGrid();
         outputPreview = new CraftOutputPreview();
@@ -182,6 +182,26 @@ public final class WorkbenchScreen extends BaseOwoScreen<FlowLayout> {
         CraftRecipe selected = currentRecipe();
         recipeList.setSelectedId(selectedId);
         recipeList.refresh(inventory);
+        CraftSessionStateView session = CraftStore.sessionState();
+        actionBar.refresh(selected, inventory, session);
+        materialGrid.refresh(selected, inventory, session, actionBar.quantity());
+        outputPreview.refresh(selected, flashTicks);
+        if (subtitle != null) {
+            List<CraftRecipe> wb = workbenchRecipes();
+            int known = wb.size();
+            int craftable = selected == null ? 0
+                : CraftInventoryCounter.maxCraftable(selected, inventory);
+            subtitle.text(Text.literal(
+                "Esc 关闭 · 配方 " + known + " · 当前可做 x" + craftable));
+        }
+    }
+
+    private void refreshRightPanel() {
+        if (materialGrid == null || outputPreview == null || actionBar == null) {
+            return;
+        }
+        InventoryModel inventory = InventoryStateStore.snapshot();
+        CraftRecipe selected = currentRecipe();
         CraftSessionStateView session = CraftStore.sessionState();
         actionBar.refresh(selected, inventory, session);
         materialGrid.refresh(selected, inventory, session, actionBar.quantity());
