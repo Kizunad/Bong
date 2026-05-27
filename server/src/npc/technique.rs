@@ -270,9 +270,11 @@ pub fn category_weight(category: SkillCategory, ctx: &NpcSkillScoringContext) ->
 
 /// NPC 战斗中选择功法。
 ///
-/// 过滤逻辑：active → 经脉 SEVERED 排除 → 冷却排除 → qi 不足排除 →
+/// 过滤逻辑：active → category_filter 限定 → 经脉 SEVERED 排除 → 冷却排除 → qi 不足排除 →
 /// qi_ratio < 0.15 排除高 qi_cost 50% → Defense 排除（走独立 NpcDefenseAction）→
 /// 按 `category_weight(ctx) * proficiency` 加权随机选一个。全部不可用返回 None。
+///
+/// `category_filter` 为 Some 时，只保留该类别的功法（NpcHealAction 用 Some(Heal)）。
 #[allow(clippy::too_many_arguments)]
 pub fn select_technique(
     known: &KnownTechniques,
@@ -284,6 +286,7 @@ pub fn select_technique(
     _target_distance: f32,
     current_tick: u64,
     ctx: &NpcSkillScoringContext,
+    category_filter: Option<SkillCategory>,
 ) -> Option<String> {
     let mut candidates: Vec<(&KnownTechnique, &TechniqueDefinition)> = Vec::new();
 
@@ -294,6 +297,11 @@ pub fn select_technique(
         let Some(def) = technique_definition(&entry.id) else {
             continue;
         };
+        if let Some(filter) = category_filter {
+            if def.category != filter {
+                continue;
+            }
+        }
         let deps = meridian_deps.lookup(&entry.id);
         if check_meridian_dependencies(deps, severed).is_err() {
             continue;
@@ -304,7 +312,7 @@ pub fn select_technique(
         if f64::from(def.qi_cost) > cultivation.qi_current {
             continue;
         }
-        if def.category == SkillCategory::Defense {
+        if category_filter.is_none() && def.category == SkillCategory::Defense {
             continue;
         }
 
@@ -394,6 +402,168 @@ impl ActionBuilder for NpcTechniqueAction {
 #[derive(Clone, Copy, Debug, Default, Component)]
 pub struct NpcLastTechniqueTick(pub u64);
 
+// ─── NpcHealScorer ──────────────────────────────────────────────────────────
+
+/// hp_ratio < 0.3 + has Heal technique + not on heal cooldown -> 0.9.
+///
+/// 在 thinker 中注册于 NpcTechniqueScorer 之前（FirstToScore 优先），
+/// 触发时 paired NpcHealAction 只选 Heal 类别功法。
+#[derive(Clone, Copy, Debug, Component)]
+pub struct NpcHealScorer;
+
+impl ScorerBuilder for NpcHealScorer {
+    fn build(&self, cmd: &mut Commands, scorer: Entity, _actor: Entity) {
+        cmd.entity(scorer).insert(*self);
+    }
+
+    fn label(&self) -> Option<&str> {
+        Some("NpcHealScorer")
+    }
+}
+
+/// NPC 治疗 Action（big-brain Action）。
+///
+/// 与 NpcTechniqueAction 共享 exclusive action system，
+/// 但 select_technique 使用 category_filter = Some(Heal)。
+#[derive(Clone, Copy, Debug, Component)]
+pub struct NpcHealAction;
+
+impl ActionBuilder for NpcHealAction {
+    fn build(&self, cmd: &mut Commands, action: Entity, _actor: Entity) {
+        cmd.entity(action).insert(*self);
+    }
+
+    fn label(&self) -> Option<&str> {
+        Some("NpcHealAction")
+    }
+}
+
+// ─── NpcHealScorer system ────────────────────────────────────────────────────
+
+/// hp_ratio < 0.3 + has Heal-category technique + heal not on cooldown -> 0.9.
+#[allow(clippy::type_complexity)]
+pub fn npc_heal_scorer_system(
+    npcs: Query<
+        (
+            &NpcBlackboard,
+            &Cultivation,
+            Option<&KnownTechniques>,
+            Option<&MeridianSeveredPermanent>,
+            Option<&crate::combat::components::Wounds>,
+            Option<&crate::npc::lod::NpcLodTier>,
+        ),
+        With<crate::npc::spawn::NpcMarker>,
+    >,
+    cooldowns: Option<Res<NpcCooldownMap>>,
+    meridian_deps: Option<Res<SkillMeridianDependencies>>,
+    mut scorers: Query<(&Actor, &mut Score), With<NpcHealScorer>>,
+    clock: Option<Res<crate::cultivation::tick::CultivationClock>>,
+    lod_config: Option<Res<crate::npc::lod::NpcLodConfig>>,
+    lod_tick: Option<Res<crate::npc::lod::NpcLodTick>>,
+) {
+    let current_tick = clock.as_deref().map(|c| c.tick).unwrap_or(0);
+    let empty_cooldowns = NpcCooldownMap::default();
+    let cooldowns = cooldowns.as_deref().unwrap_or(&empty_cooldowns);
+    let empty_deps = SkillMeridianDependencies::default();
+    let deps = meridian_deps.as_deref().unwrap_or(&empty_deps);
+    let cfg = lod_config.as_deref().cloned().unwrap_or_default();
+    let tick = lod_tick.as_deref().map(|t| t.0).unwrap_or(0);
+
+    for (Actor(actor), mut score) in &mut scorers {
+        let Ok((_bb, cultivation, known_opt, severed_opt, wounds_opt, tier)) = npcs.get(*actor)
+        else {
+            score.set(0.0);
+            continue;
+        };
+
+        let value = match crate::npc::lod::lod_gated_score(tier, tick, &cfg, || {
+            let hp_ratio = wounds_opt
+                .map(|w| {
+                    if w.health_max > 0.0 {
+                        w.health_current / w.health_max
+                    } else {
+                        1.0
+                    }
+                })
+                .unwrap_or(1.0);
+
+            if hp_ratio >= 0.3 {
+                return 0.0;
+            }
+
+            let Some(known) = known_opt else {
+                return 0.0;
+            };
+
+            let has_usable_heal = known.entries.iter().any(|entry| {
+                if !entry.active {
+                    return false;
+                }
+                let Some(def) = technique_definition(&entry.id) else {
+                    return false;
+                };
+                if def.category != SkillCategory::Heal {
+                    return false;
+                }
+                if check_meridian_dependencies(deps.lookup(&entry.id), severed_opt).is_err() {
+                    return false;
+                }
+                if cooldowns.is_on_cooldown(*actor, &entry.id, current_tick) {
+                    return false;
+                }
+                if f64::from(def.qi_cost) > cultivation.qi_current {
+                    return false;
+                }
+                true
+            });
+
+            if has_usable_heal {
+                0.9
+            } else {
+                0.0
+            }
+        }) {
+            Some(v) => v,
+            None => continue,
+        };
+
+        score.set(value);
+    }
+}
+
+/// 检查 NPC 是否有可用的 Heal 类别功法（供 unit test 使用）。
+pub fn has_usable_heal_technique(
+    known: &KnownTechniques,
+    cultivation: &Cultivation,
+    deps: &SkillMeridianDependencies,
+    severed: Option<&MeridianSeveredPermanent>,
+    cooldowns: &NpcCooldownMap,
+    npc_entity: Entity,
+    current_tick: u64,
+) -> bool {
+    known.entries.iter().any(|entry| {
+        if !entry.active {
+            return false;
+        }
+        let Some(def) = technique_definition(&entry.id) else {
+            return false;
+        };
+        if def.category != SkillCategory::Heal {
+            return false;
+        }
+        if check_meridian_dependencies(deps.lookup(&entry.id), severed).is_err() {
+            return false;
+        }
+        if cooldowns.is_on_cooldown(npc_entity, &entry.id, current_tick) {
+            return false;
+        }
+        if f64::from(def.qi_cost) > cultivation.qi_current {
+            return false;
+        }
+        true
+    })
+}
+
 // ─── Scorer system ───────────────────────────────────────────────────────────
 
 pub fn build_npc_skill_scoring_context(
@@ -435,6 +605,7 @@ pub fn npc_technique_scorer_system(
             Option<&NpcLastTechniqueTick>,
             Option<&MeridianSeveredPermanent>,
             Option<&crate::combat::components::Wounds>,
+            Option<&crate::npc::lod::NpcLodTier>,
         ),
         With<crate::npc::spawn::NpcMarker>,
     >,
@@ -442,87 +613,99 @@ pub fn npc_technique_scorer_system(
     meridian_deps: Option<Res<SkillMeridianDependencies>>,
     mut scorers: Query<(&Actor, &mut Score), With<NpcTechniqueScorer>>,
     clock: Option<Res<crate::cultivation::tick::CultivationClock>>,
+    lod_config: Option<Res<crate::npc::lod::NpcLodConfig>>,
+    lod_tick: Option<Res<crate::npc::lod::NpcLodTick>>,
 ) {
     let current_tick = clock.as_deref().map(|c| c.tick).unwrap_or(0);
     let empty_cooldowns = NpcCooldownMap::default();
     let cooldowns = cooldowns.as_deref().unwrap_or(&empty_cooldowns);
     let empty_deps = SkillMeridianDependencies::default();
     let deps = meridian_deps.as_deref().unwrap_or(&empty_deps);
+    let cfg = lod_config.as_deref().cloned().unwrap_or_default();
+    let lod_t = lod_tick.as_deref().map(|t| t.0).unwrap_or(0);
 
     for (Actor(actor), mut score) in &mut scorers {
-        let Ok((bb, cultivation, known_opt, last_tick_opt, severed_opt, wounds_opt)) =
+        let Ok((bb, cultivation, known_opt, last_tick_opt, severed_opt, wounds_opt, tier)) =
             npcs.get(*actor)
         else {
             score.set(0.0);
             continue;
         };
 
-        let Some(known) = known_opt else {
-            score.set(0.0);
-            continue;
+        let value = match crate::npc::lod::lod_gated_score(tier, lod_t, &cfg, || {
+            let Some(known) = known_opt else {
+                return 0.0;
+            };
+
+            if known.entries.is_empty() {
+                return 0.0;
+            }
+
+            let min_interval = 60 + realm_rank(cultivation.realm) as u64 * 10;
+            let last_tick = last_tick_opt.map(|t| t.0).unwrap_or(0);
+            if current_tick > 0 && current_tick.saturating_sub(last_tick) < min_interval {
+                return 0.0;
+            }
+
+            if bb.nearest_player.is_none() {
+                return 0.0;
+            }
+
+            let ctx = build_npc_skill_scoring_context(cultivation, wounds_opt, bb);
+
+            let has_usable = select_technique(
+                known,
+                cultivation,
+                deps,
+                severed_opt,
+                cooldowns,
+                *actor,
+                bb.player_distance,
+                current_tick,
+                &ctx,
+                None,
+            )
+            .is_some();
+
+            if has_usable {
+                0.85
+            } else {
+                0.0
+            }
+        }) {
+            Some(v) => v,
+            None => continue,
         };
 
-        if known.entries.is_empty() {
-            score.set(0.0);
-            continue;
-        }
-
-        let min_interval = 60 + realm_rank(cultivation.realm) as u64 * 10;
-        let last_tick = last_tick_opt.map(|t| t.0).unwrap_or(0);
-        if current_tick > 0 && current_tick.saturating_sub(last_tick) < min_interval {
-            score.set(0.0);
-            continue;
-        }
-
-        if bb.nearest_player.is_none() {
-            score.set(0.0);
-            continue;
-        }
-
-        let ctx = build_npc_skill_scoring_context(cultivation, wounds_opt, bb);
-
-        let has_usable = select_technique(
-            known,
-            cultivation,
-            deps,
-            severed_opt,
-            cooldowns,
-            *actor,
-            bb.player_distance,
-            current_tick,
-            &ctx,
-        )
-        .is_some();
-
-        score.set(if has_usable { 0.85 } else { 0.0 });
+        score.set(value);
     }
 }
 
 // ─── Action system (exclusive) ───────────────────────────────────────────────
 
-/// Exclusive system 驱动 NpcTechniqueAction。
-///
-/// 与玩家功法调用路径一致：`SkillRegistry.lookup(technique_id)` → `SkillFn(&mut World, ...)`。
-/// Requested → select_technique → skill_fn → CastResult → Success/Failure。
+/// Exclusive system 驱动 NpcTechniqueAction（通用功法释放，category_filter = None）。
 pub fn npc_technique_action_system(world: &mut valence::prelude::bevy_ecs::world::World) {
+    run_technique_action::<NpcTechniqueAction>(world, None);
+}
+
+/// Exclusive system 驱动 NpcHealAction（category_filter = Some(Heal)）。
+pub fn npc_heal_action_system(world: &mut valence::prelude::bevy_ecs::world::World) {
+    run_technique_action::<NpcHealAction>(world, Some(SkillCategory::Heal));
+}
+
+/// 通用功法 Action 驱动逻辑。
+///
+/// `T` 为 Action marker component（NpcTechniqueAction 或 NpcHealAction）。
+/// `category_filter` 为 Some 时只选该类别功法。
+fn run_technique_action<T: Component>(
+    world: &mut valence::prelude::bevy_ecs::world::World,
+    category_filter: Option<SkillCategory>,
+) {
     use crate::cultivation::skill_registry::{CastResult, SkillRegistry};
 
-    // Step 1: Collect all Requested NPC entities
-    let mut requested: Vec<(Entity, Entity)> = Vec::new(); // (action_entity, actor_entity)
-    {
-        let mut query = world.query::<(&Actor, &ActionState, &NpcTechniqueAction)>();
-        for (actor, state, _action) in query.iter(world) {
-            if *state == ActionState::Requested {
-                requested.push((Entity::PLACEHOLDER, actor.0));
-            }
-        }
-    }
-
-    // We need a different approach: query action entities with their state
     let mut actions_to_process: Vec<(Entity, Entity, ActionState)> = Vec::new();
     {
-        let mut query =
-            world.query_filtered::<(Entity, &Actor, &ActionState), With<NpcTechniqueAction>>();
+        let mut query = world.query_filtered::<(Entity, &Actor, &ActionState), With<T>>();
         for (action_entity, actor, state) in query.iter(world) {
             actions_to_process.push((action_entity, actor.0, state.clone()));
         }
@@ -531,7 +714,6 @@ pub fn npc_technique_action_system(world: &mut valence::prelude::bevy_ecs::world
     for (action_entity, actor_entity, state) in actions_to_process {
         match state {
             ActionState::Requested => {
-                // Read NPC data
                 let (technique_id, _cooldown_ticks) = {
                     let Some(known) = world.get::<KnownTechniques>(actor_entity) else {
                         set_action_state(world, action_entity, ActionState::Failure);
@@ -572,9 +754,9 @@ pub fn npc_technique_action_system(world: &mut valence::prelude::bevy_ecs::world
                         target_distance,
                         current_tick,
                         &ctx,
+                        category_filter,
                     ) {
                         Some(tid) => {
-                            // Look up the definition for cooldown info
                             let cd = technique_definition(&tid)
                                 .map(|d| d.cooldown_ticks as u64)
                                 .unwrap_or(60);
@@ -587,7 +769,6 @@ pub fn npc_technique_action_system(world: &mut valence::prelude::bevy_ecs::world
                     }
                 };
 
-                // Lookup skill_fn
                 let skill_fn = {
                     let Some(registry) = world.get_resource::<SkillRegistry>() else {
                         set_action_state(world, action_entity, ActionState::Failure);
@@ -601,19 +782,16 @@ pub fn npc_technique_action_system(world: &mut valence::prelude::bevy_ecs::world
                     continue;
                 };
 
-                // Get target
                 let target = world
                     .get::<NpcBlackboard>(actor_entity)
                     .and_then(|bb| bb.nearest_player);
 
-                // Call skill_fn
                 let result = skill_fn(world, actor_entity, 0, target);
 
                 match result {
                     CastResult::Started {
                         cooldown_ticks: cd, ..
                     } => {
-                        // Write cooldown
                         let clock =
                             world.get_resource::<crate::cultivation::tick::CultivationClock>();
                         let current_tick = clock.map(|c| c.tick).unwrap_or(0);
@@ -623,7 +801,6 @@ pub fn npc_technique_action_system(world: &mut valence::prelude::bevy_ecs::world
                             cooldowns.set(actor_entity, &technique_id, current_tick + cd);
                         }
 
-                        // Update last technique tick
                         if let Some(mut last_tick) =
                             world.get_mut::<NpcLastTechniqueTick>(actor_entity)
                         {
@@ -1027,6 +1204,7 @@ mod tests {
             3.0,
             100,
             &default_ctx(),
+            None,
         );
         assert!(result.is_some(), "should select a technique");
         assert_eq!(result.unwrap(), "sword.cleave");
@@ -1061,6 +1239,7 @@ mod tests {
             3.0,
             100,
             &default_ctx(),
+            None,
         );
         assert!(result.is_none(), "inactive technique should be excluded");
     }
@@ -1095,6 +1274,7 @@ mod tests {
             3.0,
             100,
             &default_ctx(),
+            None,
         );
         assert!(result.is_none(), "technique on cooldown should be excluded");
     }
@@ -1129,6 +1309,7 @@ mod tests {
             3.0,
             100,
             &default_ctx(),
+            None,
         );
         assert!(result.is_some(), "expired cooldown should allow technique");
     }
@@ -1162,6 +1343,7 @@ mod tests {
             3.0,
             100,
             &default_ctx(),
+            None,
         );
         assert!(
             result.is_none(),
@@ -1203,6 +1385,7 @@ mod tests {
             3.0,
             100,
             &default_ctx(),
+            None,
         );
         assert!(
             result.is_none(),
@@ -1248,6 +1431,7 @@ mod tests {
             3.0,
             100,
             &default_ctx(),
+            None,
         );
         assert!(
             result.is_none(),
@@ -1275,6 +1459,7 @@ mod tests {
             3.0,
             100,
             &default_ctx(),
+            None,
         );
         assert!(
             result.is_none(),
@@ -1389,6 +1574,7 @@ mod tests {
                 3.0,
                 tick,
                 &default_ctx(),
+                None,
             ) {
                 if id == "sword.thrust" {
                     thrust_count += 1;
@@ -1656,6 +1842,7 @@ mod tests {
             3.0,
             100,
             &default_ctx(),
+            None,
         );
         assert!(
             result.is_none(),
@@ -1707,6 +1894,7 @@ mod tests {
                 3.0,
                 tick,
                 &low_qi_ctx,
+                None,
             ) {
                 match id.as_str() {
                     "sword.cleave" => cleave_selected = true,
@@ -1723,6 +1911,312 @@ mod tests {
         assert!(
             !heart_selected,
             "high qi_cost technique should be filtered at qi_ratio < 0.15"
+        );
+    }
+
+    // === category_filter: select_technique with filter ===
+
+    #[test]
+    fn select_technique_category_filter_heal_only() {
+        let known = KnownTechniques {
+            entries: vec![
+                KnownTechnique {
+                    id: "sword.cleave".to_string(),
+                    proficiency: 0.5,
+                    active: true,
+                },
+                KnownTechnique {
+                    id: "zhenmai.neutralize".to_string(),
+                    proficiency: 0.5,
+                    active: true,
+                },
+            ],
+        };
+        let cultivation = Cultivation {
+            realm: Realm::Condense,
+            qi_current: 100.0,
+            qi_max: 100.0,
+            ..Default::default()
+        };
+        let deps = empty_deps();
+        let cooldowns = NpcCooldownMap::default();
+        let entity = Entity::from_raw(1);
+
+        let result = select_technique(
+            &known,
+            &cultivation,
+            &deps,
+            None,
+            &cooldowns,
+            entity,
+            3.0,
+            100,
+            &default_ctx(),
+            Some(SkillCategory::Heal),
+        );
+        assert_eq!(
+            result.as_deref(),
+            Some("zhenmai.neutralize"),
+            "with Heal filter, only zhenmai.neutralize should be selectable"
+        );
+    }
+
+    #[test]
+    fn select_technique_category_filter_returns_none_when_no_match() {
+        let known = KnownTechniques {
+            entries: vec![KnownTechnique {
+                id: "sword.cleave".to_string(),
+                proficiency: 0.5,
+                active: true,
+            }],
+        };
+        let cultivation = Cultivation {
+            realm: Realm::Condense,
+            qi_current: 100.0,
+            qi_max: 100.0,
+            ..Default::default()
+        };
+        let deps = empty_deps();
+        let cooldowns = NpcCooldownMap::default();
+        let entity = Entity::from_raw(1);
+
+        let result = select_technique(
+            &known,
+            &cultivation,
+            &deps,
+            None,
+            &cooldowns,
+            entity,
+            3.0,
+            100,
+            &default_ctx(),
+            Some(SkillCategory::Heal),
+        );
+        assert!(
+            result.is_none(),
+            "no Heal techniques available, should return None"
+        );
+    }
+
+    #[test]
+    fn select_technique_category_filter_defense_selectable_when_explicit() {
+        let known = KnownTechniques {
+            entries: vec![KnownTechnique {
+                id: "sword.parry".to_string(),
+                proficiency: 0.5,
+                active: true,
+            }],
+        };
+        let cultivation = Cultivation {
+            realm: Realm::Condense,
+            qi_current: 100.0,
+            qi_max: 100.0,
+            ..Default::default()
+        };
+        let deps = empty_deps();
+        let cooldowns = NpcCooldownMap::default();
+        let entity = Entity::from_raw(1);
+
+        let result = select_technique(
+            &known,
+            &cultivation,
+            &deps,
+            None,
+            &cooldowns,
+            entity,
+            3.0,
+            100,
+            &default_ctx(),
+            Some(SkillCategory::Defense),
+        );
+        assert_eq!(
+            result.as_deref(),
+            Some("sword.parry"),
+            "Defense filter should override the default Defense exclusion"
+        );
+    }
+
+    // === has_usable_heal_technique ===
+
+    #[test]
+    fn has_usable_heal_with_heal_technique() {
+        let known = KnownTechniques {
+            entries: vec![KnownTechnique {
+                id: "zhenmai.neutralize".to_string(),
+                proficiency: 0.5,
+                active: true,
+            }],
+        };
+        let cultivation = Cultivation {
+            realm: Realm::Condense,
+            qi_current: 100.0,
+            qi_max: 100.0,
+            ..Default::default()
+        };
+        let deps = empty_deps();
+        let cooldowns = NpcCooldownMap::default();
+        let entity = Entity::from_raw(1);
+        assert!(
+            has_usable_heal_technique(&known, &cultivation, &deps, None, &cooldowns, entity, 100),
+            "NPC with active heal technique should have usable heal"
+        );
+    }
+
+    #[test]
+    fn has_usable_heal_without_heal_technique() {
+        let known = KnownTechniques {
+            entries: vec![KnownTechnique {
+                id: "sword.cleave".to_string(),
+                proficiency: 0.5,
+                active: true,
+            }],
+        };
+        let cultivation = Cultivation {
+            realm: Realm::Condense,
+            qi_current: 100.0,
+            qi_max: 100.0,
+            ..Default::default()
+        };
+        let deps = empty_deps();
+        let cooldowns = NpcCooldownMap::default();
+        let entity = Entity::from_raw(1);
+        assert!(
+            !has_usable_heal_technique(&known, &cultivation, &deps, None, &cooldowns, entity, 100),
+            "NPC with only Attack techniques should not have usable heal"
+        );
+    }
+
+    #[test]
+    fn has_usable_heal_on_cooldown() {
+        let known = KnownTechniques {
+            entries: vec![KnownTechnique {
+                id: "zhenmai.neutralize".to_string(),
+                proficiency: 0.5,
+                active: true,
+            }],
+        };
+        let cultivation = Cultivation {
+            realm: Realm::Condense,
+            qi_current: 100.0,
+            qi_max: 100.0,
+            ..Default::default()
+        };
+        let deps = empty_deps();
+        let mut cooldowns = NpcCooldownMap::default();
+        let entity = Entity::from_raw(1);
+        cooldowns.set(entity, "zhenmai.neutralize", 200);
+        assert!(
+            !has_usable_heal_technique(&known, &cultivation, &deps, None, &cooldowns, entity, 100),
+            "heal technique on cooldown should not be usable"
+        );
+    }
+
+    #[test]
+    fn has_usable_heal_inactive_technique() {
+        let known = KnownTechniques {
+            entries: vec![KnownTechnique {
+                id: "zhenmai.neutralize".to_string(),
+                proficiency: 0.5,
+                active: false,
+            }],
+        };
+        let cultivation = Cultivation {
+            realm: Realm::Condense,
+            qi_current: 100.0,
+            qi_max: 100.0,
+            ..Default::default()
+        };
+        let deps = empty_deps();
+        let cooldowns = NpcCooldownMap::default();
+        let entity = Entity::from_raw(1);
+        assert!(
+            !has_usable_heal_technique(&known, &cultivation, &deps, None, &cooldowns, entity, 100),
+            "inactive heal technique should not be usable"
+        );
+    }
+
+    #[test]
+    fn has_usable_heal_insufficient_qi() {
+        let known = KnownTechniques {
+            entries: vec![KnownTechnique {
+                id: "zhenmai.neutralize".to_string(),
+                proficiency: 0.5,
+                active: true,
+            }],
+        };
+        let cultivation = Cultivation {
+            realm: Realm::Condense,
+            qi_current: 0.0,
+            qi_max: 100.0,
+            ..Default::default()
+        };
+        let deps = empty_deps();
+        let cooldowns = NpcCooldownMap::default();
+        let entity = Entity::from_raw(1);
+        let def = technique_definition("zhenmai.neutralize").unwrap();
+        if def.qi_cost > 0.0 {
+            assert!(
+                !has_usable_heal_technique(
+                    &known,
+                    &cultivation,
+                    &deps,
+                    None,
+                    &cooldowns,
+                    entity,
+                    100
+                ),
+                "heal technique should not be usable with 0 qi when qi_cost > 0"
+            );
+        }
+    }
+
+    // === NpcCooldownMap cleanup on death ===
+
+    #[test]
+    fn cooldown_map_remove_all_for_clears_entity_entries() {
+        let mut map = NpcCooldownMap::default();
+        let npc_a = Entity::from_raw(10);
+        let npc_b = Entity::from_raw(20);
+        map.set(npc_a, "sword.cleave", 200);
+        map.set(npc_a, "sword.thrust", 300);
+        map.set(npc_b, "woliu.burst", 200);
+
+        assert_eq!(map.len(), 3, "should have 3 entries before cleanup");
+
+        map.remove_all_for(npc_a);
+
+        assert_eq!(
+            map.len(),
+            1,
+            "only npc_b's entry should remain after removing npc_a"
+        );
+        assert!(
+            !map.is_on_cooldown(npc_a, "sword.cleave", 100),
+            "npc_a cleave cooldown should be removed"
+        );
+        assert!(
+            !map.is_on_cooldown(npc_a, "sword.thrust", 100),
+            "npc_a thrust cooldown should be removed"
+        );
+        assert!(
+            map.is_on_cooldown(npc_b, "woliu.burst", 100),
+            "npc_b burst cooldown should remain intact"
+        );
+    }
+
+    #[test]
+    fn cooldown_map_remove_all_for_noop_on_unknown_entity() {
+        let mut map = NpcCooldownMap::default();
+        let npc_a = Entity::from_raw(10);
+        let npc_b = Entity::from_raw(20);
+        map.set(npc_a, "sword.cleave", 200);
+
+        map.remove_all_for(npc_b);
+
+        assert_eq!(
+            map.len(),
+            1,
+            "removing unknown entity should not affect existing entries"
         );
     }
 }

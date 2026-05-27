@@ -336,8 +336,11 @@ pub fn update_npc_blackboard(
                 let dist = horizontal_distance(npc_pos, attacker_pos.get());
                 blackboard.nearest_player = Some(attacker);
                 blackboard.player_distance = dist as f32;
-                blackboard.target_position =
-                    Some(DVec3::new(attacker_pos.get().x, npc_pos.y, attacker_pos.get().z));
+                blackboard.target_position = Some(DVec3::new(
+                    attacker_pos.get().x,
+                    npc_pos.y,
+                    attacker_pos.get().z,
+                ));
                 continue;
             }
             blackboard.retaliation_target = None;
@@ -411,6 +414,7 @@ pub fn register(app: &mut App) {
                 curiosity_scorer_system,
                 tribulation_ready_scorer_system,
                 seclusion_scorer_system,
+                crate::npc::technique::npc_heal_scorer_system,
                 crate::npc::technique::npc_technique_scorer_system,
             )
                 .in_set(BigBrainSet::Scorers),
@@ -444,7 +448,11 @@ pub fn register(app: &mut App) {
         )
         .add_systems(
             PreUpdate,
-            crate::npc::technique::npc_technique_action_system.in_set(BigBrainSet::Actions),
+            (
+                crate::npc::technique::npc_technique_action_system,
+                crate::npc::technique::npc_heal_action_system,
+            )
+                .in_set(BigBrainSet::Actions),
         )
         // Must run before `process_npc_retire_requests` (also in Update) so
         // the request is consumed in the same tick it's emitted. Without this

@@ -19,7 +19,8 @@ use crate::npc::lifecycle::{
 };
 use crate::npc::scattered_cultivator::{FarmingTemperament, ScatteredCultivator};
 use crate::npc::technique::{
-    assign_npc_techniques, NpcLastTechniqueTick, NpcTechniqueAction, NpcTechniqueScorer,
+    assign_npc_techniques, NpcHealAction, NpcHealScorer, NpcLastTechniqueTick, NpcTechniqueAction,
+    NpcTechniqueScorer,
 };
 use crate::npc::trade::{assign_npc_trade_inventory, NpcPlayerReputation};
 use crate::skin::{initial_age_ratio, select_npc_visual_profile, NpcSkinFallbackPolicy, SkinPool};
@@ -168,6 +169,7 @@ pub(crate) fn rogue_npc_thinker() -> ThinkerBuilder {
         .when(AgeingScorer, RetireAction)
         .when(SeclusionScorer, SeclusionAction)
         .when(TribulationReadyScorer, StartDuXuAction)
+        .when(NpcHealScorer, NpcHealAction)
         .when(NpcTechniqueScorer, NpcTechniqueAction)
         .when(MeleeRangeScorer, MeleeAttackAction)
         .when(PlayerProximityScorer, FleeAction)

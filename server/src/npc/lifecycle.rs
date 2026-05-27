@@ -24,6 +24,7 @@ use crate::npc::brain::canonical_npc_id;
 use crate::npc::faction::{FactionId, FactionMembership};
 use crate::npc::patrol::NpcPatrol;
 use crate::npc::spawn::NpcMarker;
+use crate::npc::technique::NpcCooldownMap;
 
 type RegistryNpcQuery<'w, 's> = Query<
     'w,
@@ -695,7 +696,9 @@ fn handle_npc_terminated(
     mut terminated: EventReader<PlayerTerminated>,
     npcs: TerminatedNpcQuery<'_, '_>,
     mut notices: EventWriter<NpcDeathNotice>,
+    cooldowns: Option<ResMut<NpcCooldownMap>>,
 ) {
+    let mut cooldowns = cooldowns;
     for event in terminated.read() {
         let Ok((archetype, lifespan, pending_retirement, shared_lifespan, faction, life_record)) =
             npcs.get(event.entity)
@@ -720,6 +723,10 @@ fn handle_npc_terminated(
             life_record,
             reason,
         ));
+
+        if let Some(ref mut cd) = cooldowns {
+            cd.remove_all_for(event.entity);
+        }
 
         if let Some(mut entity_commands) = commands.get_entity(event.entity) {
             entity_commands.insert((Despawned, NpcDeathNoticeEmitted));

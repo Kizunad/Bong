@@ -254,6 +254,7 @@ mod tests {
             3.0,
             100,
             &default_ctx(),
+            None,
         );
         assert!(
             selected.is_some(),
@@ -348,6 +349,7 @@ mod tests {
             3.0,
             100,
             &default_ctx(),
+            None,
         );
         assert!(
             result_ok.is_some(),
@@ -368,6 +370,7 @@ mod tests {
             3.0,
             200,
             &default_ctx(),
+            None,
         );
         assert!(
             result_severed.is_none(),
@@ -428,6 +431,7 @@ mod tests {
                 3.0,
                 tick,
                 &default_ctx(),
+                None,
             ) {
                 selected_ids.insert(tid);
             }
@@ -712,6 +716,7 @@ mod tests {
                     3.0,
                     current_tick,
                     &default_ctx(),
+                    None,
                 );
                 if selected.is_some() {
                     technique_uses += 1;
@@ -791,6 +796,7 @@ mod tests {
                     3.0,
                     current_tick,
                     &default_ctx(),
+                    None,
                 );
                 if selected.is_some() {
                     technique_uses += 1;
@@ -870,6 +876,7 @@ mod tests {
                     3.0,
                     current_tick,
                     &default_ctx(),
+                    None,
                 );
                 if selected.is_some() {
                     technique_uses += 1;
@@ -951,6 +958,7 @@ mod tests {
                     3.0,
                     current_tick,
                     &default_ctx(),
+                    None,
                 );
                 if selected.is_some() {
                     technique_uses += 1;
