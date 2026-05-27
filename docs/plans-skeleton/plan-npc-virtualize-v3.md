@@ -5,7 +5,7 @@ NPC 虚拟化**派系战争批量推演**——在 v1 二态框架基础上，�
 **前置条件**（派生自 plan-npc-virtualize-v1 §8 决策门 #6 选项 C）：v1/v2 上线后以下情况激活：
 - 运营数据显示 dormant 派系势力长期静止（agent 推演无法覆盖批量战争叙事）
 - worldview §十一 散修江湖"各派系势力消长"需要 dormant 内部真实死亡作为物理基础
-- plan-faction-wars（待立）启动时需要 dormant 批量结算支撑
+- `plan-faction-wars-v1` ⬜ 骨架 — 启动时需要 dormant 批量结算支撑
 
 **交叉引用**：`plan-npc-virtualize-v1.md` ✅（dormant SoA + NpcDormantStore + 守恒律底盘）· `plan-npc-ai-v1.md` ✅（FactionStore + FactionMembership + `faction::hostile_encounters`）· `plan-qi-physics-v1.md` P1 ✅（ledger + release）· `plan-agent-v2.md` ✅（NpcDigest + 天道长期推演）
 
@@ -26,7 +26,7 @@ NPC 虚拟化**派系战争批量推演**——在 v1 二态框架基础上，�
 
 **反向被依赖**：
 - `plan-narrative-political-v1` — 派系战争叙事（agent 以死亡数据为素材生成 narration）
-- `plan-faction-wars`（待立）— 玩家可参与的派系战争需要 dormant 批量结算作为 NPC 死亡基础
+- `plan-faction-wars-v1` ⬜ 骨架 — 玩家可参与的派系战争需要 dormant 批量结算作为 NPC 死亡基础
 
 ---
 
