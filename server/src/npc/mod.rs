@@ -1,3 +1,4 @@
+pub mod abstract_combat;
 pub mod brain;
 pub mod brain_rat;
 pub mod brain_whale;
