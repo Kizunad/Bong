@@ -6,6 +6,11 @@ use crate::cultivation::components::{Cultivation, MeridianId};
 use crate::cultivation::meridian::severed::SkillMeridianDependencies;
 use crate::cultivation::skill_registry::{CastRejectReason, CastResult, SkillRegistry};
 use crate::cultivation::technique_scroll::realm_rank;
+use crate::npc::patrol::NpcPatrol;
+use crate::qi_physics::constants::{QI_EPSILON, QI_ZONE_UNIT_CAPACITY};
+use crate::qi_physics::ledger::{QiAccountId, QiTransfer, QiTransferReason};
+use crate::qi_physics::release::qi_release_to_zone;
+use crate::world::zone::ZoneRegistry;
 
 pub const HEAL_QI_COST: f64 = 8.0;
 pub const HEAL_BASE_AMOUNT: f64 = 5.0;
@@ -17,6 +22,106 @@ pub const BUFF_DEFENSE_QI_COST: f64 = 6.0;
 pub const BUFF_DEFENSE_MAGNITUDE: f32 = 0.2;
 pub const BUFF_DURATION_TICKS: u64 = 200;
 pub const BUFF_COOLDOWN_TICKS: u64 = 400;
+
+/// Emit QiTransfer events to return spent qi to the NPC's home zone (qi conservation).
+/// Follows the same pattern as `tuike_v2::skills::release_spent_qi_to_zone`.
+fn release_npc_qi_to_zone(world: &mut bevy_ecs::world::World, caster: Entity, amount: f64) {
+    if amount <= QI_EPSILON {
+        return;
+    }
+
+    let home_zone = match world.get::<NpcPatrol>(caster) {
+        Some(patrol) => patrol.home_zone.clone(),
+        None => {
+            // No patrol component — route to overflow so qi is not lost.
+            let from = QiAccountId::npc(format!("npc_{}v{}", caster.index(), caster.generation()));
+            let to = QiAccountId::overflow(format!("npc_skill_no_zone:{}", caster.to_bits()));
+            if let Ok(transfer) = QiTransfer::new(from, to, amount, QiTransferReason::ReleaseToZone)
+            {
+                if let Some(mut events) = world.get_resource_mut::<Events<QiTransfer>>() {
+                    events.send(transfer);
+                }
+            }
+            return;
+        }
+    };
+
+    let from = QiAccountId::npc(format!("npc_{}v{}", caster.index(), caster.generation()));
+    let to = QiAccountId::zone(home_zone.clone());
+
+    let mut transfers = Vec::new();
+
+    if let Some(mut zones) = world.get_resource_mut::<ZoneRegistry>() {
+        if let Some(zone) = zones.find_zone_mut(&home_zone) {
+            let zone_current = zone.spirit_qi.max(0.0) * QI_ZONE_UNIT_CAPACITY;
+            match qi_release_to_zone(
+                amount,
+                from.clone(),
+                to,
+                zone_current,
+                QI_ZONE_UNIT_CAPACITY,
+            ) {
+                Ok(outcome) => {
+                    zone.spirit_qi = (outcome.zone_after / QI_ZONE_UNIT_CAPACITY).clamp(-1.0, 1.0);
+                    if let Some(transfer) = outcome.transfer {
+                        transfers.push(transfer);
+                    }
+                    if outcome.overflow > QI_EPSILON {
+                        let overflow_to = QiAccountId::overflow(format!(
+                            "npc_skill_overflow:{}",
+                            caster.to_bits()
+                        ));
+                        if let Ok(t) = QiTransfer::new(
+                            from.clone(),
+                            overflow_to,
+                            outcome.overflow,
+                            QiTransferReason::ReleaseToZone,
+                        ) {
+                            transfers.push(t);
+                        }
+                    }
+                }
+                Err(error) => {
+                    tracing::warn!(
+                        ?error,
+                        "[bong][npc_skill] invalid qi release for {:?}; route to overflow",
+                        caster
+                    );
+                    let overflow_to =
+                        QiAccountId::overflow(format!("npc_skill_overflow:{}", caster.to_bits()));
+                    if let Ok(t) = QiTransfer::new(
+                        from.clone(),
+                        overflow_to,
+                        amount,
+                        QiTransferReason::ReleaseToZone,
+                    ) {
+                        transfers.push(t);
+                    }
+                }
+            }
+        } else {
+            // Zone not found in registry — overflow.
+            let overflow_to =
+                QiAccountId::overflow(format!("npc_skill_no_zone:{}", caster.to_bits()));
+            if let Ok(t) = QiTransfer::new(
+                from.clone(),
+                overflow_to,
+                amount,
+                QiTransferReason::ReleaseToZone,
+            ) {
+                transfers.push(t);
+            }
+        }
+    }
+
+    if !transfers.is_empty() {
+        if let Some(mut events) = world.get_resource_mut::<Events<QiTransfer>>() {
+            for t in transfers {
+                events.send(t);
+            }
+        }
+    }
+}
 
 pub fn register_npc_skills(registry: &mut SkillRegistry) {
     registry.register("npc.heal_basic", npc_heal_basic);
@@ -67,6 +172,8 @@ fn npc_heal_basic(
         cult.qi_current = (cult.qi_current - HEAL_QI_COST).max(0.0);
     }
 
+    release_npc_qi_to_zone(world, caster, HEAL_QI_COST);
+
     if let Some(mut wounds) = world.get_mut::<Wounds>(caster) {
         crate::alchemy::pill::apply_wound_heal(&mut wounds, None, heal_grades);
     }
@@ -101,6 +208,8 @@ fn npc_buff_speed(
     if let Some(mut cult) = world.get_mut::<Cultivation>(caster) {
         cult.qi_current = (cult.qi_current - BUFF_SPEED_QI_COST).max(0.0);
     }
+
+    release_npc_qi_to_zone(world, caster, BUFF_SPEED_QI_COST);
 
     let clock = world
         .get_resource::<crate::cultivation::tick::CultivationClock>()
@@ -148,6 +257,8 @@ fn npc_buff_defense(
         cult.qi_current = (cult.qi_current - BUFF_DEFENSE_QI_COST).max(0.0);
     }
 
+    release_npc_qi_to_zone(world, caster, BUFF_DEFENSE_QI_COST);
+
     let clock = world
         .get_resource::<crate::cultivation::tick::CultivationClock>()
         .map(|c| c.tick)
@@ -174,10 +285,13 @@ mod tests {
     use super::*;
     use crate::combat::components::{BodyPart, Wound, WoundKind, Wounds};
     use crate::cultivation::components::{Cultivation, Realm};
+    use crate::qi_physics::ledger::QiAccountKind;
+    use valence::prelude::DVec3;
 
     fn world_with_events() -> bevy_ecs::world::World {
         let mut world = bevy_ecs::world::World::new();
         world.insert_resource(Events::<ApplyStatusEffectIntent>::default());
+        world.insert_resource(Events::<QiTransfer>::default());
         world
     }
 
@@ -531,6 +645,153 @@ mod tests {
         assert!(
             cult.qi_current.abs() < f64::EPSILON,
             "qi should be exactly 0"
+        );
+    }
+
+    // === qi conservation: QiTransfer events ===
+
+    fn world_with_zone_registry() -> bevy_ecs::world::World {
+        let mut world = world_with_events();
+        world.insert_resource(ZoneRegistry::default());
+        world
+    }
+
+    #[test]
+    fn heal_basic_emits_qi_transfer_to_zone() {
+        let mut world = world_with_zone_registry();
+        let wounds = make_wounds(50.0, 100.0, vec![]);
+        let entity = world
+            .spawn((
+                make_cultivation(Realm::Induce, 50.0),
+                wounds,
+                NpcPatrol::new("spawn", DVec3::new(14.0, 66.0, 14.0)),
+            ))
+            .id();
+
+        npc_heal_basic(&mut world, entity, 0, None);
+
+        let events = world.resource::<Events<QiTransfer>>();
+        let mut reader = events.get_reader();
+        let transfers: Vec<_> = reader.read(events).collect();
+        assert!(
+            !transfers.is_empty(),
+            "heal_basic should emit QiTransfer event for qi conservation"
+        );
+        let total: f64 = transfers.iter().map(|t| t.amount).sum();
+        assert!(
+            (total - HEAL_QI_COST).abs() < f64::EPSILON,
+            "total transfer amount should equal qi cost {}, got {} across {} transfers",
+            HEAL_QI_COST,
+            total,
+            transfers.len()
+        );
+        assert!(
+            transfers
+                .iter()
+                .all(|t| t.reason == QiTransferReason::ReleaseToZone),
+            "all transfers should have reason ReleaseToZone"
+        );
+    }
+
+    #[test]
+    fn buff_speed_emits_qi_transfer_to_zone() {
+        let mut world = world_with_zone_registry();
+        let entity = world
+            .spawn((
+                make_cultivation(Realm::Condense, 50.0),
+                NpcPatrol::new("spawn", DVec3::new(14.0, 66.0, 14.0)),
+            ))
+            .id();
+
+        npc_buff_speed(&mut world, entity, 0, None);
+
+        let events = world.resource::<Events<QiTransfer>>();
+        let mut reader = events.get_reader();
+        let transfers: Vec<_> = reader.read(events).collect();
+        assert!(
+            !transfers.is_empty(),
+            "buff_speed should emit QiTransfer event for qi conservation"
+        );
+        let total: f64 = transfers.iter().map(|t| t.amount).sum();
+        assert!(
+            (total - BUFF_SPEED_QI_COST).abs() < f64::EPSILON,
+            "total transfer amount should equal qi cost {}, got {} across {} transfers",
+            BUFF_SPEED_QI_COST,
+            total,
+            transfers.len()
+        );
+    }
+
+    #[test]
+    fn buff_defense_emits_qi_transfer_to_zone() {
+        let mut world = world_with_zone_registry();
+        let entity = world
+            .spawn((
+                make_cultivation(Realm::Condense, 50.0),
+                NpcPatrol::new("spawn", DVec3::new(14.0, 66.0, 14.0)),
+            ))
+            .id();
+
+        npc_buff_defense(&mut world, entity, 0, None);
+
+        let events = world.resource::<Events<QiTransfer>>();
+        let mut reader = events.get_reader();
+        let transfers: Vec<_> = reader.read(events).collect();
+        assert!(
+            !transfers.is_empty(),
+            "buff_defense should emit QiTransfer event for qi conservation"
+        );
+        let total: f64 = transfers.iter().map(|t| t.amount).sum();
+        assert!(
+            (total - BUFF_DEFENSE_QI_COST).abs() < f64::EPSILON,
+            "total transfer amount should equal qi cost {}, got {} across {} transfers",
+            BUFF_DEFENSE_QI_COST,
+            total,
+            transfers.len()
+        );
+    }
+
+    #[test]
+    fn skill_without_patrol_routes_to_overflow() {
+        let mut world = world_with_zone_registry();
+        let entity = world.spawn(make_cultivation(Realm::Condense, 50.0)).id();
+
+        npc_buff_speed(&mut world, entity, 0, None);
+
+        let events = world.resource::<Events<QiTransfer>>();
+        let mut reader = events.get_reader();
+        let transfers: Vec<_> = reader.read(events).collect();
+        assert!(
+            !transfers.is_empty(),
+            "skill without NpcPatrol should still emit overflow QiTransfer"
+        );
+        assert_eq!(
+            transfers[0].to.kind,
+            QiAccountKind::Overflow,
+            "should route to overflow account, got {:?}",
+            transfers[0].to
+        );
+    }
+
+    #[test]
+    fn rejected_skill_does_not_emit_qi_transfer() {
+        let mut world = world_with_zone_registry();
+        let entity = world
+            .spawn((
+                make_cultivation(Realm::Induce, 1.0),
+                NpcPatrol::new("spawn", DVec3::new(14.0, 66.0, 14.0)),
+            ))
+            .id();
+
+        npc_heal_basic(&mut world, entity, 0, None);
+
+        let events = world.resource::<Events<QiTransfer>>();
+        let mut reader = events.get_reader();
+        let transfers: Vec<_> = reader.read(events).collect();
+        assert!(
+            transfers.is_empty(),
+            "rejected skill (qi insufficient) should not emit QiTransfer, got {} events",
+            transfers.len()
         );
     }
 }

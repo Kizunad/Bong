@@ -277,19 +277,20 @@ fn emit_qi_transfer(
 #[allow(clippy::type_complexity)]
 fn lod_transition_cleanup_system(
     mut npcs: Query<
-        (&NpcLodTier, &mut CombatState, &mut NpcBlackboard),
+        (Entity, &NpcLodTier, &mut CombatState, &mut NpcBlackboard),
         (With<NpcMarker>, Without<LodTransitionCleaned>),
     >,
     cleaned: Query<(Entity, &NpcLodTier), (With<NpcMarker>, With<LodTransitionCleaned>)>,
     mut commands: Commands,
 ) {
-    for (tier, mut combat_state, mut blackboard) in &mut npcs {
+    for (entity, tier, mut combat_state, mut blackboard) in &mut npcs {
         match tier {
             NpcLodTier::Far | NpcLodTier::Dormant => {
                 combat_state.incoming_window = None;
                 if matches!(tier, NpcLodTier::Dormant) {
                     blackboard.retaliation_target = None;
                 }
+                commands.entity(entity).insert(LodTransitionCleaned);
             }
             NpcLodTier::Near => {}
         }
