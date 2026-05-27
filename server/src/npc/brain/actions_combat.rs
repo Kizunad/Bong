@@ -5,7 +5,7 @@ use valence::prelude::{
     With, Without,
 };
 
-use crate::combat::components::StatusEffects;
+use crate::combat::components::{Lifecycle, LifecycleState, StatusEffects};
 use crate::combat::events::{AttackIntent, AttackSource, DefenseIntent, StatusEffectKind};
 use crate::combat::jiemai::jiemai_qi_cost_for_realm;
 use crate::combat::status::has_active_status;
@@ -241,6 +241,7 @@ impl ActionBuilder for MeleeAttackAction {
     }
 }
 
+#[allow(clippy::type_complexity)]
 pub(crate) fn melee_attack_action_system(
     mut actions: Query<(&Actor, &mut ActionState), With<MeleeAttackAction>>,
     mut npcs: Query<
@@ -249,6 +250,7 @@ pub(crate) fn melee_attack_action_system(
             &mut NpcBlackboard,
             &NpcMeleeProfile,
             &mut Navigator,
+            Option<&Lifecycle>,
         ),
         With<NpcMarker>,
     >,
@@ -260,16 +262,22 @@ pub(crate) fn melee_attack_action_system(
     for (Actor(actor), mut state) in &mut actions {
         match *state {
             ActionState::Requested => {
-                if let Ok((_, _, _, mut nav)) = npcs.get_mut(*actor) {
+                if let Ok((_, _, _, mut nav, _)) = npcs.get_mut(*actor) {
                     nav.stop();
                 }
                 *state = ActionState::Executing;
             }
             ActionState::Executing => {
-                let Ok((_npc_pos, mut bb, profile, _)) = npcs.get_mut(*actor) else {
+                let Ok((_npc_pos, mut bb, profile, _, lifecycle)) = npcs.get_mut(*actor) else {
                     *state = ActionState::Failure;
                     continue;
                 };
+
+                // NPC is not alive — abort attack action.
+                if lifecycle.is_some_and(|lc| lc.state != LifecycleState::Alive) {
+                    *state = ActionState::Failure;
+                    continue;
+                }
 
                 if bb.player_distance > profile.disengage_distance {
                     *state = ActionState::Success;

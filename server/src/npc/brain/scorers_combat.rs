@@ -2,7 +2,7 @@ use big_brain::prelude::{Actor, Score, ScorerBuilder};
 use valence::client::ClientMarker;
 use valence::prelude::{bevy_ecs, Commands, Component, Entity, With};
 
-use crate::combat::components::StatusEffects;
+use crate::combat::components::{Lifecycle, LifecycleState, StatusEffects};
 use crate::combat::events::StatusEffectKind;
 use crate::combat::status::has_active_status;
 use crate::cultivation::components::{Cultivation, Realm};
@@ -107,8 +107,17 @@ impl ScorerBuilder for ChaseTargetScorer {
     }
 }
 
+#[allow(clippy::type_complexity)]
 pub(crate) fn chase_target_scorer_system(
-    npcs: Query<(&NpcBlackboard, &NpcMeleeProfile, Option<&NpcLodTier>), With<NpcMarker>>,
+    npcs: Query<
+        (
+            &NpcBlackboard,
+            &NpcMeleeProfile,
+            Option<&NpcLodTier>,
+            Option<&Lifecycle>,
+        ),
+        With<NpcMarker>,
+    >,
     players: Query<&PlayerIdentities, With<ClientMarker>>,
     mut scorers: Query<(&Actor, &mut Score), With<ChaseTargetScorer>>,
     lod_config: Option<valence::prelude::Res<NpcLodConfig>>,
@@ -117,7 +126,12 @@ pub(crate) fn chase_target_scorer_system(
     let cfg = lod_config.as_deref().cloned().unwrap_or_default();
     let tick = lod_tick.as_deref().map(|t| t.0).unwrap_or(0);
     for (Actor(actor), mut score) in &mut scorers {
-        let value = if let Ok((bb, profile, tier)) = npcs.get(*actor) {
+        let value = if let Ok((bb, profile, tier, lifecycle)) = npcs.get(*actor) {
+            // NPC is not alive — suppress all chase scoring.
+            if lifecycle.is_some_and(|lc| lc.state != LifecycleState::Alive) {
+                score.set(0.0);
+                continue;
+            }
             match lod_gated_score_by_kind(tier, tick, &cfg, ScorerKind::Cosmetic, || {
                 if bb.retaliation_target.is_some() {
                     return 1.0;
@@ -170,8 +184,17 @@ impl ScorerBuilder for MeleeRangeScorer {
     }
 }
 
+#[allow(clippy::type_complexity)]
 pub(crate) fn melee_range_scorer_system(
-    npcs: Query<(&NpcBlackboard, &NpcMeleeProfile, Option<&NpcLodTier>), With<NpcMarker>>,
+    npcs: Query<
+        (
+            &NpcBlackboard,
+            &NpcMeleeProfile,
+            Option<&NpcLodTier>,
+            Option<&Lifecycle>,
+        ),
+        With<NpcMarker>,
+    >,
     mut scorers: Query<(&Actor, &mut Score), With<MeleeRangeScorer>>,
     lod_config: Option<valence::prelude::Res<NpcLodConfig>>,
     lod_tick: Option<valence::prelude::Res<NpcLodTick>>,
@@ -179,7 +202,12 @@ pub(crate) fn melee_range_scorer_system(
     let cfg = lod_config.as_deref().cloned().unwrap_or_default();
     let tick = lod_tick.as_deref().map(|t| t.0).unwrap_or(0);
     for (Actor(actor), mut score) in &mut scorers {
-        let value = if let Ok((bb, profile, tier)) = npcs.get(*actor) {
+        let value = if let Ok((bb, profile, tier, lifecycle)) = npcs.get(*actor) {
+            // NPC is not alive — suppress melee scoring.
+            if lifecycle.is_some_and(|lc| lc.state != LifecycleState::Alive) {
+                score.set(0.0);
+                continue;
+            }
             match lod_gated_score_by_kind(tier, tick, &cfg, ScorerKind::Cosmetic, || {
                 if bb.player_distance <= profile.reach.max {
                     1.0
@@ -224,6 +252,7 @@ pub(crate) fn dash_scorer_system(
             &MovementCooldowns,
             &MovementController,
             Option<&NpcLodTier>,
+            Option<&Lifecycle>,
         ),
         With<NpcMarker>,
     >,
@@ -237,7 +266,12 @@ pub(crate) fn dash_scorer_system(
     let lod_tick = lod_tick.as_deref().map(|t| t.0).unwrap_or(0);
 
     for (Actor(actor), mut score) in &mut scorers {
-        let value = if let Ok((bb, caps, cooldowns, ctrl, tier)) = npcs.get(*actor) {
+        let value = if let Ok((bb, caps, cooldowns, ctrl, tier, lifecycle)) = npcs.get(*actor) {
+            // NPC is not alive — suppress dash scoring.
+            if lifecycle.is_some_and(|lc| lc.state != LifecycleState::Alive) {
+                score.set(0.0);
+                continue;
+            }
             match lod_gated_score_by_kind(tier, lod_tick, &cfg, ScorerKind::Cosmetic, || {
                 dash_score(bb, caps, cooldowns, ctrl, tick)
             }) {

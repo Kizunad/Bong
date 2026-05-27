@@ -640,6 +640,10 @@ fn execute_spawn_npc(
                     .unwrap_or(FactionId::Neutral);
                 let entity = spawn_disciple_npc_at(
                     commands,
+                    NpcSkinSpawnContext::new(
+                        skin_pool.as_deref_mut(),
+                        NpcSkinFallbackPolicy::AllowFallback,
+                    ),
                     layer,
                     zone.name.as_str(),
                     spawn_position,

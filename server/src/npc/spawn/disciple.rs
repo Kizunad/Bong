@@ -6,11 +6,10 @@ use valence::prelude::{Commands, DVec3, Entity, EntityKind, EntityLayerId, Posit
 use crate::cultivation::components::Realm;
 use crate::npc::brain::{
     AgeingScorer, ChaseAction, CultivateAction, CultivateState, CultivationDriveHistory,
-    CultivationDriveScorer, CuriosityScorer, FleeAction, GoToPoiAction, GoToPoiState,
-    MeleeAttackAction, MeleeRangeScorer, PlayerProximityScorer, RestState, RetireAction,
-    ReturnHomeAction, ReturnHomeScorer, SeclusionAction, SeclusionScorer, StallAction, StallState,
-    StartDuXuAction, TradeStallScorer, TribulationReadyScorer, WanderAction, WanderScorer,
-    WanderState,
+    CultivationDriveScorer, CuriosityScorer, FleeAction, GoToPoiAction, MeleeAttackAction,
+    MeleeRangeScorer, PlayerProximityScorer, RetireAction, ReturnHomeAction, ReturnHomeScorer,
+    SeclusionAction, SeclusionScorer, StallAction, StartDuXuAction, TradeStallScorer,
+    TribulationReadyScorer, WanderAction, WanderScorer, WanderState,
 };
 use crate::npc::faction::{
     FactionId, FactionMembership, FactionRank, Lineage, MissionExecuteAction, MissionExecuteState,
@@ -25,16 +24,17 @@ use crate::npc::relic::{
     GuardAction, GuardState, GuardianDuty, GuardianDutyScorer, GuardianRelicTag, TrialAction,
     TrialEval, TrialEvalScorer, TrialState,
 };
-use crate::npc::schedule::{home_base_for_archetype, NpcDailySchedule};
 use crate::npc::social::{FactionDuelScorer, SocializeAction, SocializeScorer, SocializeState};
 use crate::npc::technique::{
     assign_npc_techniques, NpcLastTechniqueTick, NpcTechniqueAction, NpcTechniqueScorer,
 };
 use crate::npc::trade::assign_npc_trade_inventory;
-use crate::skin::faction_tint::visual_equipment;
 use crate::skin::{initial_age_ratio, select_npc_visual_profile};
 
-use super::common::{schedule_seed_for_entity, NpcBlackboard, NpcCombatLoadout, NpcMarker};
+use super::common::{
+    attach_player_skin, draw_npc_skin, spawn_rogue_commoner_base, NpcBlackboard, NpcCombatLoadout,
+    NpcMarker, NpcSkinSpawnContext,
+};
 
 // ---------------------------------------------------------------------------
 // Thinkers
@@ -82,6 +82,7 @@ pub(crate) fn relic_guard_thinker() -> ThinkerBuilder {
 #[allow(dead_code)]
 pub fn spawn_disciple_npc_at(
     commands: &mut Commands,
+    skin_context: NpcSkinSpawnContext<'_>,
     layer: Entity,
     home_zone: &str,
     spawn_position: DVec3,
@@ -100,45 +101,24 @@ pub fn spawn_disciple_npc_at(
         Some(rank),
         initial_age_ratio(NpcArchetype::Disciple, initial_age_ticks),
     );
-    let entity = commands
-        .spawn((
-            VillagerEntityBundle {
-                kind: EntityKind::VILLAGER,
-                layer: EntityLayerId(layer),
-                position: Position::new([spawn_position.x, spawn_position.y, spawn_position.z]),
-                ..Default::default()
-            },
-            Transform::from_xyz(
-                spawn_position.x as f32,
-                spawn_position.y as f32,
-                spawn_position.z as f32,
-            ),
-            GlobalTransform::default(),
-            NpcMarker,
-            NpcBlackboard::default(),
-            loadout.clone(),
-            loadout.melee_archetype,
-            loadout.melee_profile(),
-            NpcArchetype::Disciple,
-            NpcLodTier::Dormant,
-            Navigator::new(),
-            MovementController::new(),
-            loadout.movement_capabilities,
-            MovementCooldowns::default(),
-            NpcPatrol::new(home_zone, patrol_target),
-        ))
-        .id();
+    let skin = draw_npc_skin(skin_context, profile, spawn_position);
+    let entity = spawn_rogue_commoner_base(
+        commands,
+        layer,
+        spawn_position,
+        &skin,
+        profile,
+        loadout.clone(),
+        NpcArchetype::Disciple,
+        home_zone,
+        patrol_target,
+    );
 
-    commands
-        .entity(entity)
-        .insert((profile, visual_equipment(&profile)));
+    if let Some(skin) = skin.filter(|skin| !skin.is_fallback()) {
+        attach_player_skin(commands, entity, NpcArchetype::Disciple, skin);
+    }
 
     commands.entity(entity).insert((
-        NpcDailySchedule::for_archetype(NpcArchetype::Disciple, schedule_seed_for_entity(entity)),
-        home_base_for_archetype(NpcArchetype::Disciple, patrol_target),
-        GoToPoiState::default(),
-        StallState::default(),
-        RestState::default(),
         WanderState::default(),
         CultivateState::default(),
         CultivationDriveHistory::default(),

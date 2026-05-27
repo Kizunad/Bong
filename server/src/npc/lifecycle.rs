@@ -1073,11 +1073,10 @@ mod tests {
     }
 
     /// 端到端：致命 AttackIntent → resolve → DeathEvent → death_arbiter
-    /// → NearDeath → near_death_tick 过 deadline → PlayerTerminated
+    /// → NearDeath → near_death_tick 立即 Terminated（NPC 跳过等待窗口）
     /// → handle_npc_terminated → `Despawned`.
     #[test]
     fn npc_full_death_chain_from_attack_to_despawned() {
-        use crate::combat::components::NEAR_DEATH_WINDOW_TICKS;
         use crate::combat::events::{
             ApplyStatusEffectIntent, AttackIntent, CombatEvent, DeathCinematicPublished,
             DeathEvent, FIST_REACH,
@@ -1173,8 +1172,11 @@ mod tests {
             debug_command: None,
         });
 
-        // Tick 1: resolve 写 Wounds + DeathEvent；Tick 2: death_arbiter 消费
-        // DeathEvent，转 NearDeath + 设 deadline = clock.tick + 600。
+        // All NPCs skip the NearDeath wait window and terminate immediately.
+        // Tick 1: resolve 写 Wounds + DeathEvent
+        // Tick 2: death_arbiter → NearDeath → near_death_tick 立即 Terminated
+        // Tick 3: handle_npc_terminated 插 Despawned + 发 NpcDeathNotice
+        app.update();
         app.update();
         app.update();
 
@@ -1185,25 +1187,9 @@ mod tests {
             .expect("victim keeps Lifecycle");
         assert_eq!(
             victim_lifecycle.state,
-            crate::combat::components::LifecycleState::NearDeath,
-            "after first tick victim should be NearDeath"
+            crate::combat::components::LifecycleState::Terminated,
+            "NPC should skip NearDeath wait and go straight to Terminated"
         );
-        let deadline = victim_lifecycle
-            .near_death_deadline_tick
-            .expect("deadline should be set on NearDeath entry");
-        assert_eq!(deadline, 100 + NEAR_DEATH_WINDOW_TICKS);
-        assert!(app
-            .world()
-            .get::<valence::prelude::Despawned>(victim)
-            .is_none());
-
-        // 推进 CombatClock 过 deadline：NPC fortune_remaining=0 → 直接 Terminated。
-        app.world_mut().resource_mut::<CombatClock>().tick = deadline + 1;
-
-        // near_death_tick 发 PlayerTerminated；下一帧 handle_npc_terminated
-        // 插 Despawned + 发 NpcDeathNotice；普通战斗死亡标记为 combat。
-        app.update();
-        app.update();
 
         assert!(
             app.world()

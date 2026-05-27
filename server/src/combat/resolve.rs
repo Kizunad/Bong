@@ -145,6 +145,7 @@ type CombatAttackerItem<'a> = (
     Option<&'a mut AntiCheatCounter>,
     Option<&'a CombatState>,
     Option<&'a KnownTechniques>,
+    Option<&'a Lifecycle>,
 );
 type DefenseResponderItem<'a> = (
     &'a mut CombatState,
@@ -314,11 +315,30 @@ pub fn resolve_attack_intents(
 
         {
             let mut attacker_query = combatants.p0();
-            let Ok((attacker_cultivation, _, _, mut anticheat_counter, attacker_combat_state, _)) =
-                attacker_query.get_mut(intent.attacker)
+            let Ok((
+                attacker_cultivation,
+                _,
+                _,
+                mut anticheat_counter,
+                attacker_combat_state,
+                _,
+                attacker_lifecycle,
+            )) = attacker_query.get_mut(intent.attacker)
             else {
                 continue;
             };
+
+            // Attacker is dead / dying — skip this intent.
+            if attacker_lifecycle.is_some_and(|lc| {
+                matches!(
+                    lc.state,
+                    LifecycleState::NearDeath
+                        | LifecycleState::AwaitingRevival
+                        | LifecycleState::Terminated
+                )
+            }) {
+                continue;
+            }
 
             if intent.source == AttackSource::Melee
                 && intent.debug_command.is_none()
@@ -367,7 +387,7 @@ pub fn resolve_attack_intents(
         ) else {
             if intent.debug_command.is_none() {
                 let mut attacker_query = combatants.p0();
-                if let Ok((_, _, _, mut anticheat_counter, _, _)) =
+                if let Ok((_, _, _, mut anticheat_counter, _, _, _)) =
                     attacker_query.get_mut(intent.attacker)
                 {
                     record_anticheat_violation(
@@ -394,6 +414,7 @@ pub fn resolve_attack_intents(
                 _,
                 _,
                 attacker_known_techniques,
+                _,
             )) = attacker_query.get_mut(intent.attacker)
             else {
                 continue;
