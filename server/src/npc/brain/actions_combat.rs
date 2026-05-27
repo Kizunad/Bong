@@ -764,6 +764,80 @@ mod tests {
         );
     }
 
+    // ─── Melee action lifecycle guard test ────────────────────────────────────
+
+    #[test]
+    fn melee_attack_action_non_alive_fails() {
+        use crate::combat::components::Lifecycle;
+
+        let mut app = App::new();
+        app.insert_resource(GameTick(120));
+        app.insert_resource(CapturedAttackIntents::default());
+        app.add_event::<AttackIntent>();
+        app.add_systems(
+            PreUpdate,
+            (
+                melee_attack_action_system,
+                capture_attack_intents.after(melee_attack_action_system),
+            ),
+        );
+
+        let target = app
+            .world_mut()
+            .spawn((ClientMarker, Position::new([12.0, 66.0, 10.0])))
+            .id();
+
+        let mut lifecycle = Lifecycle {
+            character_id: "npc_near_death".to_string(),
+            ..Default::default()
+        };
+        lifecycle.enter_near_death(10);
+
+        let npc = app
+            .world_mut()
+            .spawn((
+                NpcMarker,
+                Position::new([10.0, 66.0, 10.0]),
+                NpcBlackboard {
+                    nearest_player: Some(target),
+                    player_distance: 2.0,
+                    target_position: Some(DVec3::new(12.0, 66.0, 10.0)),
+                    ..Default::default()
+                },
+                NpcMeleeProfile::spear(),
+                Navigator::new(),
+                lifecycle,
+            ))
+            .id();
+        let action_entity = app
+            .world_mut()
+            .spawn((Actor(npc), MeleeAttackAction, ActionState::Requested))
+            .id();
+
+        // First update: Requested -> Executing
+        app.update();
+        // Second update: Executing -> Failure (lifecycle != Alive)
+        app.update();
+
+        let action_state = app
+            .world()
+            .get::<ActionState>(action_entity)
+            .expect("melee action entity should still exist");
+        assert_eq!(
+            *action_state,
+            ActionState::Failure,
+            "NearDeath NPC melee action should transition to Failure, got {:?}",
+            action_state
+        );
+
+        let captured = &app.world().resource::<CapturedAttackIntents>().0;
+        assert!(
+            captured.is_empty(),
+            "NearDeath NPC must not emit any AttackIntent, got {} intents",
+            captured.len()
+        );
+    }
+
     // ─── NpcDefenseAction tests ─────────────────────────────────────────────
 
     #[derive(Default)]

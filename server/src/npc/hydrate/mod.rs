@@ -1107,49 +1107,46 @@ mod tests {
         app.add_systems(Update, hydrate_dormant_near_players_system);
         app.update();
 
-        // The hydrate system checks `pool.ready_for_spawn()` — an empty default
-        // pool returns false (not yet MIN_READY_BEFORE_SPAWN skins), so the NPC
-        // stays dormant. This validates AllowFallback path: the system correctly
-        // waits until the pool is ready.
-        let store = app.world().resource::<NpcDormantStore>();
-        let still_dormant = store.contains("disciple_empty_pool");
+        // The hydrate system does NOT gate on `pool.ready_for_spawn()`.
+        // With AllowFallback policy, `draw_npc_skin` calls `pool.next_for_profile`
+        // which returns `SignedSkin::fallback()`. The spawn code filters out
+        // fallback skins (`!skin.is_fallback()`), so `attach_player_skin` is NOT
+        // called. The NPC is hydrated as VILLAGER without NpcPlayerSkin.
+        assert!(
+            app.world().resource::<NpcDormantStore>().is_empty(),
+            "disciple snapshot should have been consumed from dormant store even with empty pool"
+        );
 
-        if still_dormant {
-            // Pool was not ready, NPC stayed dormant — this is the expected
-            // AllowFallback behavior when the pool has no skins yet.
-            assert!(
-                still_dormant,
-                "with empty pool (not ready), hydrate should not spawn the NPC"
-            );
-        } else {
-            // If the pool _did_ become ready (e.g. fallback_mode triggered),
-            // verify the entity falls back to VILLAGER without NpcPlayerSkin.
-            let results = {
-                let world = app.world_mut();
-                let mut query = world.query::<(
-                    &valence::prelude::EntityKind,
-                    Option<&crate::skin::NpcPlayerSkin>,
-                    &NpcArchetype,
-                )>();
-                query
-                    .iter(world)
-                    .filter(|(_, _, arch)| **arch == NpcArchetype::Disciple)
-                    .map(|(kind, skin, _)| (*kind, skin.is_some()))
-                    .collect::<Vec<_>>()
-            };
-            assert_eq!(results.len(), 1);
-            let (kind, has_skin) = results[0];
-            assert_eq!(
-                kind,
-                valence::prelude::EntityKind::VILLAGER,
-                "hydrated disciple with empty pool should be VILLAGER, got {:?}",
-                kind
-            );
-            assert!(
-                !has_skin,
-                "hydrated disciple with empty pool must NOT have NpcPlayerSkin"
-            );
-        }
+        let results = {
+            let world = app.world_mut();
+            let mut query = world.query::<(
+                &valence::prelude::EntityKind,
+                Option<&crate::skin::NpcPlayerSkin>,
+                &NpcArchetype,
+            )>();
+            query
+                .iter(world)
+                .filter(|(_, _, arch)| **arch == NpcArchetype::Disciple)
+                .map(|(kind, skin, _)| (*kind, skin.is_some()))
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            results.len(),
+            1,
+            "expected exactly one hydrated disciple entity, got {}",
+            results.len()
+        );
+        let (kind, has_skin) = results[0];
+        assert_eq!(
+            kind,
+            valence::prelude::EntityKind::VILLAGER,
+            "hydrated disciple with empty pool should be VILLAGER, got {:?}",
+            kind
+        );
+        assert!(
+            !has_skin,
+            "hydrated disciple with empty pool must NOT have NpcPlayerSkin"
+        );
     }
 
     #[test]

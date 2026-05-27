@@ -873,6 +873,359 @@ mod tests {
         );
     }
 
+    // ─── Lifecycle guard tests for chase/melee/dash scorers ────────────────
+
+    #[test]
+    fn chase_target_scorer_alive_npc_scores_normally() {
+        let mut app = App::new();
+        app.add_systems(
+            PreUpdate,
+            chase_target_scorer_system.in_set(BigBrainSet::Scorers),
+        );
+
+        let npc = app
+            .world_mut()
+            .spawn((
+                NpcMarker,
+                NpcBlackboard {
+                    player_distance: 10.0,
+                    ..Default::default()
+                },
+                NpcMeleeProfile::fist(),
+                Lifecycle {
+                    character_id: "npc_alive".to_string(),
+                    ..Default::default()
+                },
+            ))
+            .id();
+        let scorer = app
+            .world_mut()
+            .spawn((Actor(npc), Score::default(), ChaseTargetScorer))
+            .id();
+
+        app.update();
+
+        let actual = app.world().get::<Score>(scorer).unwrap().get();
+        assert!(
+            actual > 0.0,
+            "Alive NPC within chase range should score > 0, got {actual}"
+        );
+    }
+
+    #[test]
+    fn chase_target_scorer_near_death_npc_scores_zero() {
+        let mut app = App::new();
+        app.add_systems(
+            PreUpdate,
+            chase_target_scorer_system.in_set(BigBrainSet::Scorers),
+        );
+
+        let mut lifecycle = Lifecycle {
+            character_id: "npc_near_death".to_string(),
+            ..Default::default()
+        };
+        lifecycle.enter_near_death(10);
+
+        let npc = app
+            .world_mut()
+            .spawn((
+                NpcMarker,
+                NpcBlackboard {
+                    player_distance: 10.0,
+                    ..Default::default()
+                },
+                NpcMeleeProfile::fist(),
+                lifecycle,
+            ))
+            .id();
+        let scorer = app
+            .world_mut()
+            .spawn((Actor(npc), Score::default(), ChaseTargetScorer))
+            .id();
+
+        app.update();
+
+        assert_eq!(
+            app.world().get::<Score>(scorer).unwrap().get(),
+            0.0,
+            "NearDeath NPC should have chase score suppressed to 0.0"
+        );
+    }
+
+    #[test]
+    fn chase_target_scorer_no_lifecycle_component_fallback() {
+        let mut app = App::new();
+        app.add_systems(
+            PreUpdate,
+            chase_target_scorer_system.in_set(BigBrainSet::Scorers),
+        );
+
+        // NPC without Lifecycle component — should score normally (not suppressed).
+        let npc = app
+            .world_mut()
+            .spawn((
+                NpcMarker,
+                NpcBlackboard {
+                    player_distance: 10.0,
+                    ..Default::default()
+                },
+                NpcMeleeProfile::fist(),
+            ))
+            .id();
+        let scorer = app
+            .world_mut()
+            .spawn((Actor(npc), Score::default(), ChaseTargetScorer))
+            .id();
+
+        app.update();
+
+        let actual = app.world().get::<Score>(scorer).unwrap().get();
+        assert!(
+            actual > 0.0,
+            "NPC without Lifecycle component should score normally (not suppressed), got {actual}"
+        );
+    }
+
+    #[test]
+    fn melee_range_scorer_alive_npc_scores_normally() {
+        let mut app = App::new();
+        app.add_systems(
+            PreUpdate,
+            melee_range_scorer_system.in_set(BigBrainSet::Scorers),
+        );
+
+        let npc = app
+            .world_mut()
+            .spawn((
+                NpcMarker,
+                NpcBlackboard {
+                    player_distance: 2.8,
+                    ..Default::default()
+                },
+                NpcMeleeProfile::spear(), // reach.max = 3.0
+                Lifecycle {
+                    character_id: "npc_alive".to_string(),
+                    ..Default::default()
+                },
+            ))
+            .id();
+        let scorer = app
+            .world_mut()
+            .spawn((Actor(npc), Score::default(), MeleeRangeScorer))
+            .id();
+
+        app.update();
+
+        let actual = app.world().get::<Score>(scorer).unwrap().get();
+        assert_eq!(
+            actual, 1.0,
+            "Alive NPC within melee reach should score 1.0, got {actual}"
+        );
+    }
+
+    #[test]
+    fn melee_range_scorer_near_death_npc_scores_zero() {
+        let mut app = App::new();
+        app.add_systems(
+            PreUpdate,
+            melee_range_scorer_system.in_set(BigBrainSet::Scorers),
+        );
+
+        let mut lifecycle = Lifecycle {
+            character_id: "npc_near_death".to_string(),
+            ..Default::default()
+        };
+        lifecycle.enter_near_death(10);
+
+        let npc = app
+            .world_mut()
+            .spawn((
+                NpcMarker,
+                NpcBlackboard {
+                    player_distance: 2.8,
+                    ..Default::default()
+                },
+                NpcMeleeProfile::spear(),
+                lifecycle,
+            ))
+            .id();
+        let scorer = app
+            .world_mut()
+            .spawn((Actor(npc), Score::default(), MeleeRangeScorer))
+            .id();
+
+        app.update();
+
+        assert_eq!(
+            app.world().get::<Score>(scorer).unwrap().get(),
+            0.0,
+            "NearDeath NPC should have melee score suppressed to 0.0"
+        );
+    }
+
+    #[test]
+    fn melee_range_scorer_no_lifecycle_component_fallback() {
+        let mut app = App::new();
+        app.add_systems(
+            PreUpdate,
+            melee_range_scorer_system.in_set(BigBrainSet::Scorers),
+        );
+
+        // NPC without Lifecycle — should score normally.
+        let npc = app
+            .world_mut()
+            .spawn((
+                NpcMarker,
+                NpcBlackboard {
+                    player_distance: 2.8,
+                    ..Default::default()
+                },
+                NpcMeleeProfile::spear(),
+            ))
+            .id();
+        let scorer = app
+            .world_mut()
+            .spawn((Actor(npc), Score::default(), MeleeRangeScorer))
+            .id();
+
+        app.update();
+
+        let actual = app.world().get::<Score>(scorer).unwrap().get();
+        assert_eq!(
+            actual, 1.0,
+            "NPC without Lifecycle component should score normally for melee (not suppressed), got {actual}"
+        );
+    }
+
+    #[test]
+    fn dash_scorer_alive_npc_scores_normally() {
+        let mut app = App::new();
+        app.insert_resource(crate::npc::movement::GameTick(0));
+        app.add_systems(
+            PreUpdate,
+            dash_scorer_system.in_set(BigBrainSet::Scorers),
+        );
+
+        let npc = app
+            .world_mut()
+            .spawn((
+                NpcMarker,
+                NpcBlackboard {
+                    player_distance: 8.0, // within DASH_MIN..DASH_MAX
+                    ..Default::default()
+                },
+                MovementCapabilities {
+                    can_sprint: true,
+                    can_dash: true,
+                },
+                MovementCooldowns::default(),
+                MovementController::new(),
+                Lifecycle {
+                    character_id: "npc_alive".to_string(),
+                    ..Default::default()
+                },
+            ))
+            .id();
+        let scorer = app
+            .world_mut()
+            .spawn((Actor(npc), Score::default(), DashScorer))
+            .id();
+
+        app.update();
+
+        let actual = app.world().get::<Score>(scorer).unwrap().get();
+        assert!(
+            actual > 0.0,
+            "Alive NPC with dash capability in range should score > 0, got {actual}"
+        );
+    }
+
+    #[test]
+    fn dash_scorer_near_death_npc_scores_zero() {
+        let mut app = App::new();
+        app.insert_resource(crate::npc::movement::GameTick(0));
+        app.add_systems(
+            PreUpdate,
+            dash_scorer_system.in_set(BigBrainSet::Scorers),
+        );
+
+        let mut lifecycle = Lifecycle {
+            character_id: "npc_near_death".to_string(),
+            ..Default::default()
+        };
+        lifecycle.enter_near_death(10);
+
+        let npc = app
+            .world_mut()
+            .spawn((
+                NpcMarker,
+                NpcBlackboard {
+                    player_distance: 8.0,
+                    ..Default::default()
+                },
+                MovementCapabilities {
+                    can_sprint: true,
+                    can_dash: true,
+                },
+                MovementCooldowns::default(),
+                MovementController::new(),
+                lifecycle,
+            ))
+            .id();
+        let scorer = app
+            .world_mut()
+            .spawn((Actor(npc), Score::default(), DashScorer))
+            .id();
+
+        app.update();
+
+        assert_eq!(
+            app.world().get::<Score>(scorer).unwrap().get(),
+            0.0,
+            "NearDeath NPC should have dash score suppressed to 0.0"
+        );
+    }
+
+    #[test]
+    fn dash_scorer_no_lifecycle_component_fallback() {
+        let mut app = App::new();
+        app.insert_resource(crate::npc::movement::GameTick(0));
+        app.add_systems(
+            PreUpdate,
+            dash_scorer_system.in_set(BigBrainSet::Scorers),
+        );
+
+        // NPC without Lifecycle — should score normally.
+        let npc = app
+            .world_mut()
+            .spawn((
+                NpcMarker,
+                NpcBlackboard {
+                    player_distance: 8.0,
+                    ..Default::default()
+                },
+                MovementCapabilities {
+                    can_sprint: true,
+                    can_dash: true,
+                },
+                MovementCooldowns::default(),
+                MovementController::new(),
+            ))
+            .id();
+        let scorer = app
+            .world_mut()
+            .spawn((Actor(npc), Score::default(), DashScorer))
+            .id();
+
+        app.update();
+
+        let actual = app.world().get::<Score>(scorer).unwrap().get();
+        assert!(
+            actual > 0.0,
+            "NPC without Lifecycle component should score normally for dash (not suppressed), got {actual}"
+        );
+    }
+
     #[test]
     fn defense_scorer_system_lod_far_returns_zero() {
         use crate::cultivation::components::Cultivation;

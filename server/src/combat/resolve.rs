@@ -2501,6 +2501,128 @@ mod tests {
             .expect("Contamination should serialize for side-effect snapshot")
     }
 
+    // ─── Attacker lifecycle guard tests ─────────────────────────────────────
+
+    #[test]
+    fn attacker_near_death_skips_intent() {
+        assert_attacker_lifecycle_skips_intent(
+            "NearDeath",
+            |lifecycle| lifecycle.enter_near_death(40),
+        );
+    }
+
+    #[test]
+    fn attacker_awaiting_revival_skips_intent() {
+        assert_attacker_lifecycle_skips_intent("AwaitingRevival", |lifecycle| {
+            lifecycle.enter_near_death(40);
+            lifecycle.await_revival_decision(RevivalDecision::Fortune { chance: 1.0 }, 120);
+        });
+    }
+
+    #[test]
+    fn attacker_terminated_skips_intent() {
+        assert_attacker_lifecycle_skips_intent("Terminated", |lifecycle| {
+            lifecycle.terminate(40);
+        });
+    }
+
+    fn assert_attacker_lifecycle_skips_intent(
+        state_name: &str,
+        enter_state: impl FnOnce(&mut Lifecycle),
+    ) {
+        let mut app = App::new();
+        app.insert_resource(CombatClock { tick: 44 });
+        app.add_event::<AttackIntent>();
+        app.add_event::<ApplyStatusEffectIntent>();
+        app.add_event::<CombatEvent>();
+        app.add_event::<KnockbackEvent>();
+        app.add_event::<DeathEvent>();
+        app.add_event::<crate::combat::weapon::WeaponBroken>();
+        app.add_event::<InventoryDurabilityChangedEvent>();
+        app.add_systems(Update, resolve_attack_intents);
+
+        let attacker = spawn_player(
+            &mut app,
+            "Azure",
+            [0.0, 64.0, 0.0],
+            Wounds::default(),
+            Stamina::default(),
+        );
+        let target = spawn_player(
+            &mut app,
+            "Crimson",
+            [1.0, 64.0, 0.0],
+            Wounds::default(),
+            Stamina::default(),
+        );
+
+        // Move attacker into the target lifecycle state.
+        {
+            let mut attacker_entity = app.world_mut().entity_mut(attacker);
+            let mut lifecycle = attacker_entity.get_mut::<Lifecycle>().unwrap();
+            enter_state(&mut lifecycle);
+        }
+
+        let target_wounds_before = app
+            .world()
+            .entity(target)
+            .get::<Wounds>()
+            .unwrap()
+            .clone();
+        let attacker_qi_before = app
+            .world()
+            .entity(attacker)
+            .get::<Cultivation>()
+            .unwrap()
+            .qi_current;
+
+        app.world_mut().send_event(AttackIntent {
+            attacker,
+            target: Some(target),
+            issued_at_tick: 44,
+            reach: FIST_REACH,
+            qi_invest: 10.0,
+            wound_kind: WoundKind::Blunt,
+            source: AttackSource::Melee,
+            debug_command: None,
+        });
+        app.update();
+
+        // Assert: no wound written on target.
+        let target_wounds_after = app.world().entity(target).get::<Wounds>().unwrap();
+        assert_eq!(
+            target_wounds_after.health_current, target_wounds_before.health_current,
+            "{state_name} attacker must not deal damage to target"
+        );
+        assert_eq!(
+            target_wounds_after.entries.len(),
+            target_wounds_before.entries.len(),
+            "{state_name} attacker must not write new wound entries on target"
+        );
+
+        // Assert: no qi deducted from attacker.
+        let attacker_qi_after = app
+            .world()
+            .entity(attacker)
+            .get::<Cultivation>()
+            .unwrap()
+            .qi_current;
+        assert_eq!(
+            attacker_qi_after, attacker_qi_before,
+            "{state_name} attacker must not have qi deducted"
+        );
+
+        // Assert: no CombatEvent emitted.
+        assert!(
+            app.world()
+                .resource::<Events<CombatEvent>>()
+                .iter_current_update_events()
+                .next()
+                .is_none(),
+            "{state_name} attacker must not emit CombatEvent"
+        );
+    }
+
     #[test]
     fn attack_intent_uses_latest_game_mode_component() {
         let mut app = App::new();
