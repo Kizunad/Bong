@@ -266,6 +266,29 @@ pub fn category_weight(category: SkillCategory, ctx: &NpcSkillScoringContext) ->
     }
 }
 
+// ─── SkillTarget + SelectedTechnique ────────────────────────────────────────
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SkillTarget {
+    NearestEnemy,
+    SelfCast,
+}
+
+pub fn skill_target_for_category(category: SkillCategory) -> SkillTarget {
+    match category {
+        SkillCategory::Heal | SkillCategory::Buff => SkillTarget::SelfCast,
+        SkillCategory::Attack | SkillCategory::Control | SkillCategory::Defense => {
+            SkillTarget::NearestEnemy
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct SelectedTechnique {
+    pub technique_id: String,
+    pub target: SkillTarget,
+}
+
 // ─── select_technique ────────────────────────────────────────────────────────
 
 /// NPC 战斗中选择功法。
@@ -287,7 +310,7 @@ pub fn select_technique(
     current_tick: u64,
     ctx: &NpcSkillScoringContext,
     category_filter: Option<SkillCategory>,
-) -> Option<String> {
+) -> Option<SelectedTechnique> {
     let mut candidates: Vec<(&KnownTechnique, &TechniqueDefinition)> = Vec::new();
 
     for entry in &known.entries {
@@ -353,11 +376,17 @@ pub fn select_technique(
         let cw = category_weight(def.category, ctx);
         accum += (cw * entry.proficiency).max(0.001);
         if roll < accum {
-            return Some(entry.id.clone());
+            return Some(SelectedTechnique {
+                technique_id: entry.id.clone(),
+                target: skill_target_for_category(def.category),
+            });
         }
     }
 
-    candidates.last().map(|(entry, _)| entry.id.clone())
+    candidates.last().map(|(entry, def)| SelectedTechnique {
+        technique_id: entry.id.clone(),
+        target: skill_target_for_category(def.category),
+    })
 }
 
 // ─── NpcTechniqueScorer ──────────────────────────────────────────────────────
@@ -714,7 +743,7 @@ fn run_technique_action<T: Component>(
     for (action_entity, actor_entity, state) in actions_to_process {
         match state {
             ActionState::Requested => {
-                let (technique_id, _cooldown_ticks) = {
+                let selected = {
                     let Some(known) = world.get::<KnownTechniques>(actor_entity) else {
                         set_action_state(world, action_entity, ActionState::Failure);
                         continue;
@@ -756,18 +785,15 @@ fn run_technique_action<T: Component>(
                         &ctx,
                         category_filter,
                     ) {
-                        Some(tid) => {
-                            let cd = technique_definition(&tid)
-                                .map(|d| d.cooldown_ticks as u64)
-                                .unwrap_or(60);
-                            (tid, cd)
-                        }
+                        Some(sel) => sel,
                         None => {
                             set_action_state(world, action_entity, ActionState::Failure);
                             continue;
                         }
                     }
                 };
+
+                let technique_id = selected.technique_id.clone();
 
                 let skill_fn = {
                     let Some(registry) = world.get_resource::<SkillRegistry>() else {
@@ -782,9 +808,12 @@ fn run_technique_action<T: Component>(
                     continue;
                 };
 
-                let target = world
-                    .get::<NpcBlackboard>(actor_entity)
-                    .and_then(|bb| bb.nearest_player);
+                let target = match selected.target {
+                    SkillTarget::SelfCast => Some(actor_entity),
+                    SkillTarget::NearestEnemy => world
+                        .get::<NpcBlackboard>(actor_entity)
+                        .and_then(|bb| bb.nearest_player),
+                };
 
                 let result = skill_fn(world, actor_entity, 0, target);
 
@@ -1207,7 +1236,9 @@ mod tests {
             None,
         );
         assert!(result.is_some(), "should select a technique");
-        assert_eq!(result.unwrap(), "sword.cleave");
+        let sel = result.unwrap();
+        assert_eq!(sel.technique_id, "sword.cleave");
+        assert_eq!(sel.target, SkillTarget::NearestEnemy);
     }
 
     #[test]
@@ -1564,7 +1595,7 @@ mod tests {
 
         let mut thrust_count = 0;
         for tick in 0..1000u64 {
-            if let Some(id) = select_technique(
+            if let Some(sel) = select_technique(
                 &known,
                 &cultivation,
                 &deps,
@@ -1576,7 +1607,7 @@ mod tests {
                 &default_ctx(),
                 None,
             ) {
-                if id == "sword.thrust" {
+                if sel.technique_id == "sword.thrust" {
                     thrust_count += 1;
                 }
             }
@@ -1884,7 +1915,7 @@ mod tests {
         let mut cleave_selected = false;
         let mut heart_selected = false;
         for tick in 0..500u64 {
-            if let Some(id) = select_technique(
+            if let Some(sel) = select_technique(
                 &known,
                 &cultivation,
                 &deps,
@@ -1896,7 +1927,7 @@ mod tests {
                 &low_qi_ctx,
                 None,
             ) {
-                match id.as_str() {
+                match sel.technique_id.as_str() {
                     "sword.cleave" => cleave_selected = true,
                     "woliu.heart" => heart_selected = true,
                     _ => {}
@@ -1954,10 +1985,12 @@ mod tests {
             &default_ctx(),
             Some(SkillCategory::Heal),
         );
+        let sel = result.expect("with Heal filter, zhenmai.neutralize should be selectable");
+        assert_eq!(sel.technique_id, "zhenmai.neutralize");
         assert_eq!(
-            result.as_deref(),
-            Some("zhenmai.neutralize"),
-            "with Heal filter, only zhenmai.neutralize should be selectable"
+            sel.target,
+            SkillTarget::SelfCast,
+            "Heal should route to SelfCast"
         );
     }
 
@@ -2029,10 +2062,12 @@ mod tests {
             &default_ctx(),
             Some(SkillCategory::Defense),
         );
+        let sel = result.expect("Defense filter should override the default Defense exclusion");
+        assert_eq!(sel.technique_id, "sword.parry");
         assert_eq!(
-            result.as_deref(),
-            Some("sword.parry"),
-            "Defense filter should override the default Defense exclusion"
+            sel.target,
+            SkillTarget::NearestEnemy,
+            "Defense should route to NearestEnemy"
         );
     }
 

@@ -262,13 +262,13 @@ mod tests {
         );
 
         // Verify selected technique exists and has valid qi_cost
-        let tid = selected.unwrap();
-        let def = technique_definition(&tid)
-            .unwrap_or_else(|| panic!("selected technique {} should exist", tid));
+        let sel = selected.unwrap();
+        let def = technique_definition(&sel.technique_id)
+            .unwrap_or_else(|| panic!("selected technique {} should exist", sel.technique_id));
         assert!(
             f64::from(def.qi_cost) <= cultivation.qi_current,
             "selected technique {} qi_cost={} should be <= qi_current={}",
-            tid,
+            sel.technique_id,
             def.qi_cost,
             cultivation.qi_current
         );
@@ -421,7 +421,7 @@ mod tests {
         // Run many ticks to collect which techniques get selected
         let mut selected_ids = std::collections::HashSet::new();
         for tick in 0..500u64 {
-            if let Some(tid) = select_technique(
+            if let Some(sel) = select_technique(
                 &known,
                 &cultivation,
                 &deps,
@@ -433,7 +433,7 @@ mod tests {
                 &default_ctx(),
                 None,
             ) {
-                selected_ids.insert(tid);
+                selected_ids.insert(sel.technique_id);
             }
         }
 
