@@ -220,7 +220,7 @@ pub fn assign_npc_techniques(
         indices.swap(i, j);
     }
 
-    let entries: Vec<KnownTechnique> = indices
+    let mut entries: Vec<KnownTechnique> = indices
         .iter()
         .take(count)
         .enumerate()
@@ -236,7 +236,76 @@ pub fn assign_npc_techniques(
         })
         .collect();
 
+    inject_npc_utility_skills(
+        &mut entries,
+        realm,
+        &available,
+        prof_min,
+        prof_max,
+        entity_seed,
+    );
+
     KnownTechniques { entries }
+}
+
+fn inject_npc_utility_skills(
+    entries: &mut Vec<KnownTechnique>,
+    realm: Realm,
+    available: &[&TechniqueDefinition],
+    prof_min: f32,
+    prof_max: f32,
+    entity_seed: u64,
+) {
+    let npc_rank = realm_rank(realm);
+
+    if npc_rank >= realm_rank(Realm::Induce) {
+        try_inject_skill(
+            entries,
+            "npc.heal_basic",
+            available,
+            prof_min,
+            prof_max,
+            entity_seed.wrapping_add(0xA1B2_C3D4),
+        );
+    }
+
+    if npc_rank >= realm_rank(Realm::Condense) {
+        let buff_id = if splitmix64_unit(entity_seed.wrapping_add(0xD4C3_B2A1)) < 0.5 {
+            "npc.buff_speed"
+        } else {
+            "npc.buff_defense"
+        };
+        try_inject_skill(
+            entries,
+            buff_id,
+            available,
+            prof_min,
+            prof_max,
+            entity_seed.wrapping_add(0xE5F6_0718),
+        );
+    }
+}
+
+fn try_inject_skill(
+    entries: &mut Vec<KnownTechnique>,
+    skill_id: &str,
+    available: &[&TechniqueDefinition],
+    prof_min: f32,
+    prof_max: f32,
+    seed: u64,
+) {
+    if entries.iter().any(|e| e.id == skill_id) {
+        return;
+    }
+    if !available.iter().any(|def| def.id == skill_id) {
+        return;
+    }
+    let proficiency = prof_min + splitmix64_unit(seed) * (prof_max - prof_min);
+    entries.push(KnownTechnique {
+        id: skill_id.to_string(),
+        proficiency: proficiency.clamp(prof_min, prof_max),
+        active: true,
+    });
 }
 
 // ─── NpcSkillScoringContext ──────────────────────────────────────────────────
@@ -1024,7 +1093,7 @@ mod tests {
     }
 
     #[test]
-    fn assign_disciple_returns_2_to_4() {
+    fn assign_disciple_returns_2_to_6() {
         let sys = full_regular_meridians();
         let deps = empty_deps();
         for seed in 0..50u64 {
@@ -1037,8 +1106,8 @@ mod tests {
                 seed * 7,
             );
             assert!(
-                kt.entries.len() >= 2 && kt.entries.len() <= 4,
-                "disciple should have 2-4 techniques, got {} (seed={})",
+                kt.entries.len() >= 2 && kt.entries.len() <= 6,
+                "disciple Condense should have 2-6 techniques (base 2-4 + heal + buff), got {} (seed={})",
                 kt.entries.len(),
                 seed
             );
@@ -1053,7 +1122,7 @@ mod tests {
     }
 
     #[test]
-    fn assign_guardian_relic_returns_3_to_5() {
+    fn assign_guardian_relic_returns_3_to_7() {
         let sys = full_all_meridians();
         let deps = empty_deps();
         for seed in 0..50u64 {
@@ -1066,8 +1135,8 @@ mod tests {
                 seed * 13,
             );
             assert!(
-                kt.entries.len() >= 3 && kt.entries.len() <= 5,
-                "guardian relic should have 3-5 techniques, got {} (seed={})",
+                kt.entries.len() >= 3 && kt.entries.len() <= 7,
+                "guardian relic Spirit should have 3-7 techniques (base 3-5 + heal + buff), got {} (seed={})",
                 kt.entries.len(),
                 seed
             );
@@ -1082,7 +1151,7 @@ mod tests {
     }
 
     #[test]
-    fn assign_daoxiang_returns_1_to_2() {
+    fn assign_daoxiang_returns_1_to_3() {
         let sys = full_regular_meridians();
         let deps = empty_deps();
         for seed in 0..50u64 {
@@ -1095,8 +1164,8 @@ mod tests {
                 seed * 17,
             );
             assert!(
-                !kt.entries.is_empty() && kt.entries.len() <= 2,
-                "daoxiang should have 1-2 techniques, got {} (seed={})",
+                !kt.entries.is_empty() && kt.entries.len() <= 3,
+                "daoxiang Induce should have 1-3 techniques (base 1-2 + heal), got {} (seed={})",
                 kt.entries.len(),
                 seed
             );
@@ -1111,7 +1180,7 @@ mod tests {
     }
 
     #[test]
-    fn assign_zhinian_returns_2_to_3() {
+    fn assign_zhinian_returns_2_to_5() {
         let sys = full_regular_meridians();
         let deps = empty_deps();
         for seed in 0..50u64 {
@@ -1124,8 +1193,8 @@ mod tests {
                 seed * 19,
             );
             assert!(
-                kt.entries.len() >= 2 && kt.entries.len() <= 3,
-                "zhinian should have 2-3 techniques, got {} (seed={})",
+                kt.entries.len() >= 2 && kt.entries.len() <= 5,
+                "zhinian Condense should have 2-5 techniques (base 2-3 + heal + buff), got {} (seed={})",
                 kt.entries.len(),
                 seed
             );
@@ -1175,6 +1244,192 @@ mod tests {
                 def.required_meridians.is_empty(),
                 "technique {} requires meridians but NPC has none opened — should have been filtered",
                 entry.id
+            );
+        }
+    }
+
+    // === assign_npc_techniques: P1.4 NPC utility skill injection ===
+
+    #[test]
+    fn assign_induce_rogue_always_has_heal_basic() {
+        let sys = full_regular_meridians();
+        let deps = empty_deps();
+        for seed in 0..100u64 {
+            let kt =
+                assign_npc_techniques(NpcArchetype::Rogue, Realm::Induce, &sys, &deps, None, seed);
+            assert!(
+                kt.entries.iter().any(|e| e.id == "npc.heal_basic"),
+                "Induce+ Rogue should always have npc.heal_basic (seed={})",
+                seed
+            );
+        }
+    }
+
+    #[test]
+    fn assign_condense_rogue_always_has_heal_and_buff() {
+        let sys = full_regular_meridians();
+        let deps = empty_deps();
+        for seed in 0..100u64 {
+            let kt = assign_npc_techniques(
+                NpcArchetype::Rogue,
+                Realm::Condense,
+                &sys,
+                &deps,
+                None,
+                seed,
+            );
+            assert!(
+                kt.entries.iter().any(|e| e.id == "npc.heal_basic"),
+                "Condense+ Rogue should always have npc.heal_basic (seed={})",
+                seed
+            );
+            let has_buff = kt
+                .entries
+                .iter()
+                .any(|e| e.id == "npc.buff_speed" || e.id == "npc.buff_defense");
+            assert!(
+                has_buff,
+                "Condense+ Rogue should always have npc.buff_speed or npc.buff_defense (seed={})",
+                seed
+            );
+        }
+    }
+
+    #[test]
+    fn assign_awaken_rogue_never_has_npc_utility_skills() {
+        let sys = full_regular_meridians();
+        let deps = empty_deps();
+        for seed in 0..100u64 {
+            let kt =
+                assign_npc_techniques(NpcArchetype::Rogue, Realm::Awaken, &sys, &deps, None, seed);
+            for entry in &kt.entries {
+                assert!(
+                    !entry.id.starts_with("npc."),
+                    "Awaken NPC should not have NPC utility skill {}, got it at seed={}",
+                    entry.id,
+                    seed
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn assign_npc_utility_skills_no_duplicates() {
+        let sys = full_regular_meridians();
+        let deps = empty_deps();
+        for seed in 0..200u64 {
+            let kt = assign_npc_techniques(
+                NpcArchetype::Disciple,
+                Realm::Condense,
+                &sys,
+                &deps,
+                None,
+                seed,
+            );
+            let ids: Vec<&str> = kt.entries.iter().map(|e| e.id.as_str()).collect();
+            let unique: std::collections::HashSet<&str> = ids.iter().copied().collect();
+            assert_eq!(
+                ids.len(),
+                unique.len(),
+                "no duplicate technique IDs should exist, got {:?} (seed={})",
+                ids,
+                seed
+            );
+        }
+    }
+
+    #[test]
+    fn assign_npc_heal_blocked_when_meridians_closed() {
+        let sys = MeridianSystem::default();
+        let deps = empty_deps();
+        for seed in 0..50u64 {
+            let kt =
+                assign_npc_techniques(NpcArchetype::Rogue, Realm::Induce, &sys, &deps, None, seed);
+            assert!(
+                !kt.entries.iter().any(|e| e.id == "npc.heal_basic"),
+                "npc.heal_basic requires Spleen+Kidney meridians — should not appear with all closed (seed={})",
+                seed
+            );
+        }
+    }
+
+    #[test]
+    fn assign_buff_is_speed_or_defense_deterministic_per_seed() {
+        let sys = full_regular_meridians();
+        let deps = empty_deps();
+        for seed in 0..100u64 {
+            let a = assign_npc_techniques(
+                NpcArchetype::Rogue,
+                Realm::Condense,
+                &sys,
+                &deps,
+                None,
+                seed,
+            );
+            let b = assign_npc_techniques(
+                NpcArchetype::Rogue,
+                Realm::Condense,
+                &sys,
+                &deps,
+                None,
+                seed,
+            );
+            let buff_a: Vec<&str> = a
+                .entries
+                .iter()
+                .filter(|e| e.id == "npc.buff_speed" || e.id == "npc.buff_defense")
+                .map(|e| e.id.as_str())
+                .collect();
+            let buff_b: Vec<&str> = b
+                .entries
+                .iter()
+                .filter(|e| e.id == "npc.buff_speed" || e.id == "npc.buff_defense")
+                .map(|e| e.id.as_str())
+                .collect();
+            assert_eq!(
+                buff_a, buff_b,
+                "same seed should pick same buff variant (seed={})",
+                seed
+            );
+        }
+    }
+
+    #[test]
+    fn assign_all_combat_archetypes_get_heal_at_induce() {
+        let sys = full_regular_meridians();
+        let deps = empty_deps();
+        for archetype in [
+            NpcArchetype::Rogue,
+            NpcArchetype::Disciple,
+            NpcArchetype::GuardianRelic,
+            NpcArchetype::Daoxiang,
+            NpcArchetype::Zhinian,
+        ] {
+            let kt = assign_npc_techniques(archetype, Realm::Induce, &sys, &deps, None, 42);
+            assert!(
+                kt.entries.iter().any(|e| e.id == "npc.heal_basic"),
+                "{:?} at Induce should have npc.heal_basic",
+                archetype
+            );
+        }
+    }
+
+    #[test]
+    fn assign_non_combat_archetypes_never_get_npc_skills() {
+        let sys = full_regular_meridians();
+        let deps = empty_deps();
+        for archetype in [
+            NpcArchetype::Commoner,
+            NpcArchetype::Beast,
+            NpcArchetype::SkullFiend,
+            NpcArchetype::Fuya,
+            NpcArchetype::Zombie,
+        ] {
+            let kt = assign_npc_techniques(archetype, Realm::Void, &sys, &deps, None, 42);
+            assert!(
+                kt.entries.is_empty(),
+                "{:?} should have no techniques even at Void",
+                archetype
             );
         }
     }

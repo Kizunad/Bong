@@ -89,8 +89,8 @@ mod tests {
             "Rogue Condense should have at least 1 technique"
         );
         assert!(
-            techniques.entries.len() <= 3,
-            "Rogue should have at most 3 techniques, got {}",
+            techniques.entries.len() <= 5,
+            "Rogue Condense should have at most 5 techniques (base 1-3 + heal + buff), got {}",
             techniques.entries.len()
         );
 
