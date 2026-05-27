@@ -1,8 +1,14 @@
+pub mod abstract_combat;
+#[allow(dead_code)]
+pub mod abstract_combat_system;
 pub mod brain;
 pub mod brain_rat;
 pub mod brain_whale;
 #[cfg(test)]
+mod combat_ai_integration_test;
+#[cfg(test)]
 mod combat_gear_integration_test;
+pub mod combat_power;
 pub mod dormant;
 pub mod dying_master;
 #[allow(dead_code)]
@@ -22,6 +28,7 @@ pub mod lod;
 pub mod loot;
 pub mod movement;
 pub mod navigator;
+pub mod npc_skill;
 pub mod patrol;
 pub mod perf;
 pub mod poi_rogue_village;

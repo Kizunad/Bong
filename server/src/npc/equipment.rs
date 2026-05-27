@@ -102,6 +102,16 @@ impl NpcEquipment {
             .into_iter()
             .filter_map(|s| s.as_ref())
     }
+
+    pub fn total_quality_score(&self) -> f32 {
+        self.iter_slots()
+            .map(|(_, slot)| {
+                let tier_score = (slot.quality_tier as f32 + 1.0) * 3.0;
+                let durability_bonus = slot.durability_ratio.clamp(0.0, 1.0) * 2.0;
+                tier_score + durability_bonus
+            })
+            .sum()
+    }
 }
 
 // ─── Damage multiplier ────────────────────────────────────────────────────

@@ -211,6 +211,7 @@ pub fn register(app: &mut App) {
     crate::movement::dash_proficiency::declare_dash_meridian_dependencies(
         &mut skill_meridian_dependencies,
     );
+    crate::npc::npc_skill::declare_npc_skill_meridian_deps(&mut skill_meridian_dependencies);
 
     app.insert_resource(MeridianTopology::standard());
     app.insert_resource(CultivationClock::default());

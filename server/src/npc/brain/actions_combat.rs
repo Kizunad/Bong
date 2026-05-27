@@ -5,7 +5,13 @@ use valence::prelude::{
     With, Without,
 };
 
-use crate::combat::events::{AttackIntent, AttackSource};
+use crate::combat::components::StatusEffects;
+use crate::combat::events::{AttackIntent, AttackSource, DefenseIntent, StatusEffectKind};
+use crate::combat::jiemai::jiemai_qi_cost_for_realm;
+use crate::combat::status::has_active_status;
+use crate::combat::CombatClock;
+use crate::cultivation::components::Cultivation;
+use crate::cultivation::technique_scroll::realm_rank;
 use crate::npc::movement::{
     activate_dash, activate_sprint, GameTick, MovementCapabilities, MovementController,
     MovementCooldowns, MovementMode,
@@ -389,6 +395,113 @@ pub(crate) fn dash_action_system(
     }
 }
 
+// ---------------------------------------------------------------------------
+// NpcDefenseAction
+// ---------------------------------------------------------------------------
+
+#[derive(Clone, Copy, Debug, Default, Component)]
+pub struct NpcDefenseAction {
+    pub last_defense_tick: Option<u64>,
+}
+
+impl ActionBuilder for NpcDefenseAction {
+    fn build(&self, cmd: &mut Commands, action: Entity, _actor: Entity) {
+        cmd.entity(action).insert(*self);
+    }
+
+    fn label(&self) -> Option<&str> {
+        Some("NpcDefenseAction")
+    }
+}
+
+pub(crate) fn defense_interval_range(realm: crate::cultivation::components::Realm) -> (u64, u64) {
+    use crate::cultivation::components::Realm;
+    match realm {
+        Realm::Induce => (80, 120),
+        Realm::Condense => (60, 80),
+        Realm::Solidify => (40, 60),
+        Realm::Spirit | Realm::Void => (20, 40),
+        Realm::Awaken => (u64::MAX, u64::MAX),
+    }
+}
+
+fn deterministic_interval(entity_index: u32, tick: u64, min: u64, max: u64) -> u64 {
+    if min >= max {
+        return min;
+    }
+    let seed = (entity_index as u64)
+        .wrapping_mul(0x9E37_79B9_7F4A_7C15)
+        .wrapping_add(tick.wrapping_mul(0xBF58_476D_1CE4_E5B9));
+    let range = max - min + 1;
+    min + (seed % range)
+}
+
+#[allow(clippy::type_complexity)]
+pub(crate) fn npc_defense_action_system(
+    mut actions: Query<(&Actor, &mut ActionState, &mut NpcDefenseAction)>,
+    npcs: Query<(&Cultivation, Option<&StatusEffects>), With<NpcMarker>>,
+    mut defense_intents: EventWriter<DefenseIntent>,
+    combat_clock: Option<Res<CombatClock>>,
+) {
+    let now_tick = combat_clock.as_deref().map(|c| c.tick).unwrap_or(0);
+
+    for (Actor(actor), mut state, mut defense_action) in &mut actions {
+        let Ok((cultivation, statuses_opt)) = npcs.get(*actor) else {
+            if matches!(*state, ActionState::Requested | ActionState::Executing) {
+                *state = ActionState::Failure;
+            }
+            continue;
+        };
+
+        match *state {
+            ActionState::Requested => {
+                if realm_rank(cultivation.realm)
+                    < realm_rank(crate::cultivation::components::Realm::Induce)
+                {
+                    *state = ActionState::Failure;
+                    continue;
+                }
+                let Some(qi_cost) = jiemai_qi_cost_for_realm(cultivation.realm) else {
+                    *state = ActionState::Failure;
+                    continue;
+                };
+                if cultivation.qi_current < qi_cost {
+                    *state = ActionState::Failure;
+                    continue;
+                }
+                if let Some(statuses) = statuses_opt {
+                    if has_active_status(statuses, StatusEffectKind::ParryRecovery) {
+                        *state = ActionState::Failure;
+                        continue;
+                    }
+                }
+                *state = ActionState::Executing;
+            }
+            ActionState::Executing => {
+                let (min, max) = defense_interval_range(cultivation.realm);
+                let interval = deterministic_interval(actor.index(), now_tick, min, max);
+                let can_fire = match defense_action.last_defense_tick {
+                    Some(last) => now_tick.saturating_sub(last) >= interval,
+                    None => true,
+                };
+
+                if can_fire {
+                    defense_intents.send(DefenseIntent {
+                        defender: *actor,
+                        issued_at_tick: now_tick,
+                    });
+                    defense_action.last_defense_tick = Some(now_tick);
+                    *state = ActionState::Success;
+                }
+            }
+            ActionState::Cancelled => {
+                *state = ActionState::Failure;
+            }
+            ActionState::Init | ActionState::Success | ActionState::Failure => {}
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -641,5 +754,602 @@ mod tests {
             captured.is_empty(),
             "npc should hold range instead of swinging outside reach"
         );
+    }
+
+    // ─── NpcDefenseAction tests ─────────────────────────────────────────────
+
+    #[derive(Default)]
+    struct CapturedDefenseIntents(Vec<DefenseIntent>);
+
+    impl Resource for CapturedDefenseIntents {}
+
+    fn capture_defense_intents(
+        mut events: valence::prelude::EventReader<DefenseIntent>,
+        mut captured: valence::prelude::ResMut<CapturedDefenseIntents>,
+    ) {
+        captured.0.extend(events.read().cloned());
+    }
+
+    #[test]
+    fn defense_action_fails_for_awaken_realm() {
+        use crate::cultivation::components::Cultivation;
+
+        let mut app = App::new();
+        app.insert_resource(CombatClock { tick: 100 });
+        app.insert_resource(CapturedDefenseIntents::default());
+        app.add_event::<DefenseIntent>();
+        app.add_systems(
+            PreUpdate,
+            (
+                npc_defense_action_system,
+                capture_defense_intents.after(npc_defense_action_system),
+            ),
+        );
+
+        let npc = app
+            .world_mut()
+            .spawn((
+                NpcMarker,
+                Cultivation {
+                    realm: crate::cultivation::components::Realm::Awaken,
+                    qi_current: 100.0,
+                    ..Default::default()
+                },
+            ))
+            .id();
+
+        let action_entity = app
+            .world_mut()
+            .spawn((
+                Actor(npc),
+                NpcDefenseAction::default(),
+                ActionState::Requested,
+            ))
+            .id();
+
+        app.update();
+
+        assert_eq!(
+            *app.world().get::<ActionState>(action_entity).unwrap(),
+            ActionState::Failure,
+            "Awaken NPC should fail defense action (realm too low)"
+        );
+        assert!(
+            app.world()
+                .resource::<CapturedDefenseIntents>()
+                .0
+                .is_empty(),
+            "no DefenseIntent should be emitted for Awaken"
+        );
+    }
+
+    #[test]
+    fn defense_action_fails_with_insufficient_qi() {
+        use crate::cultivation::components::Cultivation;
+
+        let mut app = App::new();
+        app.insert_resource(CombatClock { tick: 100 });
+        app.insert_resource(CapturedDefenseIntents::default());
+        app.add_event::<DefenseIntent>();
+        app.add_systems(
+            PreUpdate,
+            (
+                npc_defense_action_system,
+                capture_defense_intents.after(npc_defense_action_system),
+            ),
+        );
+
+        let npc = app
+            .world_mut()
+            .spawn((
+                NpcMarker,
+                Cultivation {
+                    realm: crate::cultivation::components::Realm::Induce,
+                    qi_current: 1.0,
+                    ..Default::default()
+                },
+            ))
+            .id();
+
+        let action_entity = app
+            .world_mut()
+            .spawn((
+                Actor(npc),
+                NpcDefenseAction::default(),
+                ActionState::Requested,
+            ))
+            .id();
+
+        app.update();
+
+        assert_eq!(
+            *app.world().get::<ActionState>(action_entity).unwrap(),
+            ActionState::Failure,
+            "NPC with insufficient qi should fail defense action"
+        );
+    }
+
+    #[test]
+    fn defense_action_fails_during_parry_recovery() {
+        use crate::combat::components::{ActiveStatusEffect, StatusEffects};
+        use crate::cultivation::components::Cultivation;
+
+        let mut app = App::new();
+        app.insert_resource(CombatClock { tick: 100 });
+        app.insert_resource(CapturedDefenseIntents::default());
+        app.add_event::<DefenseIntent>();
+        app.add_systems(
+            PreUpdate,
+            (
+                npc_defense_action_system,
+                capture_defense_intents.after(npc_defense_action_system),
+            ),
+        );
+
+        let npc = app
+            .world_mut()
+            .spawn((
+                NpcMarker,
+                Cultivation {
+                    realm: crate::cultivation::components::Realm::Solidify,
+                    qi_current: 100.0,
+                    ..Default::default()
+                },
+                StatusEffects {
+                    active: vec![ActiveStatusEffect {
+                        kind: StatusEffectKind::ParryRecovery,
+                        magnitude: 1.0,
+                        remaining_ticks: 20,
+                        source_pill: None,
+                    }],
+                },
+            ))
+            .id();
+
+        let action_entity = app
+            .world_mut()
+            .spawn((
+                Actor(npc),
+                NpcDefenseAction::default(),
+                ActionState::Requested,
+            ))
+            .id();
+
+        app.update();
+
+        assert_eq!(
+            *app.world().get::<ActionState>(action_entity).unwrap(),
+            ActionState::Failure,
+            "NPC in ParryRecovery should fail defense action"
+        );
+    }
+
+    #[test]
+    fn defense_action_emits_intent_on_first_fire() {
+        use crate::cultivation::components::Cultivation;
+
+        let mut app = App::new();
+        app.insert_resource(CombatClock { tick: 200 });
+        app.insert_resource(CapturedDefenseIntents::default());
+        app.add_event::<DefenseIntent>();
+        app.add_systems(
+            PreUpdate,
+            (
+                npc_defense_action_system,
+                capture_defense_intents.after(npc_defense_action_system),
+            ),
+        );
+
+        let npc = app
+            .world_mut()
+            .spawn((
+                NpcMarker,
+                Cultivation {
+                    realm: crate::cultivation::components::Realm::Condense,
+                    qi_current: 100.0,
+                    ..Default::default()
+                },
+            ))
+            .id();
+
+        let action_entity = app
+            .world_mut()
+            .spawn((
+                Actor(npc),
+                NpcDefenseAction::default(),
+                ActionState::Requested,
+            ))
+            .id();
+
+        app.update();
+        app.update();
+
+        let state = app
+            .world()
+            .get::<ActionState>(action_entity)
+            .unwrap()
+            .clone();
+        let captured = &app.world().resource::<CapturedDefenseIntents>().0;
+
+        assert_eq!(
+            state,
+            ActionState::Success,
+            "defense action should succeed after emitting DefenseIntent"
+        );
+        assert_eq!(
+            captured.len(),
+            1,
+            "exactly one DefenseIntent should be emitted"
+        );
+        assert_eq!(
+            captured[0].defender, npc,
+            "DefenseIntent.defender should be the NPC entity"
+        );
+        assert_eq!(
+            captured[0].issued_at_tick, 200,
+            "DefenseIntent.issued_at_tick should match CombatClock"
+        );
+    }
+
+    #[test]
+    fn defense_action_cancelled_becomes_failure() {
+        use crate::cultivation::components::Cultivation;
+
+        let mut app = App::new();
+        app.insert_resource(CombatClock { tick: 100 });
+        app.insert_resource(CapturedDefenseIntents::default());
+        app.add_event::<DefenseIntent>();
+        app.add_systems(
+            PreUpdate,
+            (
+                npc_defense_action_system,
+                capture_defense_intents.after(npc_defense_action_system),
+            ),
+        );
+
+        let npc = app
+            .world_mut()
+            .spawn((
+                NpcMarker,
+                Cultivation {
+                    realm: crate::cultivation::components::Realm::Solidify,
+                    qi_current: 100.0,
+                    ..Default::default()
+                },
+            ))
+            .id();
+
+        let action_entity = app
+            .world_mut()
+            .spawn((
+                Actor(npc),
+                NpcDefenseAction::default(),
+                ActionState::Cancelled,
+            ))
+            .id();
+
+        app.update();
+
+        assert_eq!(
+            *app.world().get::<ActionState>(action_entity).unwrap(),
+            ActionState::Failure,
+            "cancelled defense action should transition to Failure"
+        );
+    }
+
+    #[test]
+    fn defense_action_void_realm_fails_because_qi_cost_is_none() {
+        use crate::cultivation::components::Cultivation;
+
+        let mut app = App::new();
+        app.insert_resource(CombatClock { tick: 100 });
+        app.insert_resource(CapturedDefenseIntents::default());
+        app.add_event::<DefenseIntent>();
+        app.add_systems(
+            PreUpdate,
+            (
+                npc_defense_action_system,
+                capture_defense_intents.after(npc_defense_action_system),
+            ),
+        );
+
+        let npc = app
+            .world_mut()
+            .spawn((
+                NpcMarker,
+                Cultivation {
+                    realm: crate::cultivation::components::Realm::Void,
+                    qi_current: 1000.0,
+                    ..Default::default()
+                },
+            ))
+            .id();
+
+        let action_entity = app
+            .world_mut()
+            .spawn((
+                Actor(npc),
+                NpcDefenseAction::default(),
+                ActionState::Requested,
+            ))
+            .id();
+
+        app.update();
+
+        assert_eq!(
+            *app.world().get::<ActionState>(action_entity).unwrap(),
+            ActionState::Failure,
+            "Void realm has no qi cost for jiemai defense, so action should fail"
+        );
+    }
+
+    // ─── defense_interval_range tests ───────────────────────────────────────
+
+    #[test]
+    fn defense_interval_induce_range() {
+        let (min, max) = defense_interval_range(crate::cultivation::components::Realm::Induce);
+        assert_eq!((min, max), (80, 120), "Induce interval should be 80..=120");
+    }
+
+    #[test]
+    fn defense_interval_condense_range() {
+        let (min, max) = defense_interval_range(crate::cultivation::components::Realm::Condense);
+        assert_eq!((min, max), (60, 80), "Condense interval should be 60..=80");
+    }
+
+    #[test]
+    fn defense_interval_solidify_range() {
+        let (min, max) = defense_interval_range(crate::cultivation::components::Realm::Solidify);
+        assert_eq!((min, max), (40, 60), "Solidify interval should be 40..=60");
+    }
+
+    #[test]
+    fn defense_interval_spirit_and_void_range() {
+        for realm in [
+            crate::cultivation::components::Realm::Spirit,
+            crate::cultivation::components::Realm::Void,
+        ] {
+            let (min, max) = defense_interval_range(realm);
+            assert_eq!(
+                (min, max),
+                (20, 40),
+                "realm {realm:?} interval should be 20..=40"
+            );
+        }
+    }
+
+    #[test]
+    fn defense_interval_awaken_is_max() {
+        let (min, max) = defense_interval_range(crate::cultivation::components::Realm::Awaken);
+        assert_eq!(
+            min,
+            u64::MAX,
+            "Awaken should have u64::MAX interval (never fires)"
+        );
+        assert_eq!(max, u64::MAX);
+    }
+
+    #[test]
+    fn deterministic_interval_stays_within_range() {
+        for entity_idx in 0..100u32 {
+            for tick in [0u64, 50, 100, 500, 1000] {
+                let interval = deterministic_interval(entity_idx, tick, 60, 80);
+                assert!(
+                    (60..=80).contains(&interval),
+                    "entity {entity_idx} tick {tick}: interval {interval} out of range 60..=80"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn deterministic_interval_min_equals_max() {
+        let interval = deterministic_interval(42, 100, 50, 50);
+        assert_eq!(interval, 50, "when min == max, interval should equal min");
+    }
+
+    #[test]
+    fn defense_action_respects_interval_cooldown() {
+        use crate::cultivation::components::Cultivation;
+
+        let mut app = App::new();
+        app.insert_resource(CombatClock { tick: 50 });
+        app.insert_resource(CapturedDefenseIntents::default());
+        app.add_event::<DefenseIntent>();
+        app.add_systems(
+            PreUpdate,
+            (
+                npc_defense_action_system,
+                capture_defense_intents.after(npc_defense_action_system),
+            ),
+        );
+
+        let npc = app
+            .world_mut()
+            .spawn((
+                NpcMarker,
+                Cultivation {
+                    realm: crate::cultivation::components::Realm::Solidify,
+                    qi_current: 100.0,
+                    ..Default::default()
+                },
+            ))
+            .id();
+
+        let action_entity = app
+            .world_mut()
+            .spawn((
+                Actor(npc),
+                NpcDefenseAction {
+                    last_defense_tick: Some(49),
+                },
+                ActionState::Executing,
+            ))
+            .id();
+
+        app.update();
+
+        let state = app
+            .world()
+            .get::<ActionState>(action_entity)
+            .unwrap()
+            .clone();
+        let captured = &app.world().resource::<CapturedDefenseIntents>().0;
+
+        assert_eq!(
+            state,
+            ActionState::Executing,
+            "defense action should remain Executing when interval not elapsed (50 - 49 = 1, need >= 40)"
+        );
+        assert!(
+            captured.is_empty(),
+            "no DefenseIntent should be emitted before interval expires"
+        );
+    }
+
+    #[test]
+    fn defense_action_fires_after_interval_elapsed() {
+        use crate::cultivation::components::Cultivation;
+
+        let mut app = App::new();
+        app.insert_resource(CombatClock { tick: 200 });
+        app.insert_resource(CapturedDefenseIntents::default());
+        app.add_event::<DefenseIntent>();
+        app.add_systems(
+            PreUpdate,
+            (
+                npc_defense_action_system,
+                capture_defense_intents.after(npc_defense_action_system),
+            ),
+        );
+
+        let npc = app
+            .world_mut()
+            .spawn((
+                NpcMarker,
+                Cultivation {
+                    realm: crate::cultivation::components::Realm::Solidify,
+                    qi_current: 100.0,
+                    ..Default::default()
+                },
+            ))
+            .id();
+
+        let action_entity = app
+            .world_mut()
+            .spawn((
+                Actor(npc),
+                NpcDefenseAction {
+                    last_defense_tick: Some(100),
+                },
+                ActionState::Executing,
+            ))
+            .id();
+
+        app.update();
+
+        let state = app
+            .world()
+            .get::<ActionState>(action_entity)
+            .unwrap()
+            .clone();
+        let captured = &app.world().resource::<CapturedDefenseIntents>().0;
+
+        assert_eq!(
+            state,
+            ActionState::Success,
+            "defense action should succeed when interval elapsed (200 - 100 = 100, need >= 40)"
+        );
+        assert_eq!(captured.len(), 1, "one DefenseIntent should be emitted");
+    }
+
+    #[test]
+    fn defense_action_fails_when_npc_entity_missing() {
+        let mut app = App::new();
+        app.insert_resource(CombatClock { tick: 100 });
+        app.insert_resource(CapturedDefenseIntents::default());
+        app.add_event::<DefenseIntent>();
+        app.add_systems(
+            PreUpdate,
+            (
+                npc_defense_action_system,
+                capture_defense_intents.after(npc_defense_action_system),
+            ),
+        );
+
+        let phantom_entity = app.world_mut().spawn_empty().id();
+
+        let action_entity = app
+            .world_mut()
+            .spawn((
+                Actor(phantom_entity),
+                NpcDefenseAction::default(),
+                ActionState::Requested,
+            ))
+            .id();
+
+        app.update();
+
+        assert_eq!(
+            *app.world().get::<ActionState>(action_entity).unwrap(),
+            ActionState::Failure,
+            "defense action should fail when actor entity lacks NpcMarker + Cultivation"
+        );
+    }
+
+    #[test]
+    fn defense_action_induce_emits_intent_for_valid_npc() {
+        use crate::cultivation::components::Cultivation;
+
+        let mut app = App::new();
+        app.insert_resource(CombatClock { tick: 300 });
+        app.insert_resource(CapturedDefenseIntents::default());
+        app.add_event::<DefenseIntent>();
+        app.add_systems(
+            PreUpdate,
+            (
+                npc_defense_action_system,
+                capture_defense_intents.after(npc_defense_action_system),
+            ),
+        );
+
+        let npc = app
+            .world_mut()
+            .spawn((
+                NpcMarker,
+                Cultivation {
+                    realm: crate::cultivation::components::Realm::Induce,
+                    qi_current: 50.0,
+                    ..Default::default()
+                },
+            ))
+            .id();
+
+        let action_entity = app
+            .world_mut()
+            .spawn((
+                Actor(npc),
+                NpcDefenseAction::default(),
+                ActionState::Requested,
+            ))
+            .id();
+
+        app.update();
+        app.update();
+
+        let state = app
+            .world()
+            .get::<ActionState>(action_entity)
+            .unwrap()
+            .clone();
+        let captured = &app.world().resource::<CapturedDefenseIntents>().0;
+
+        assert_eq!(
+            state,
+            ActionState::Success,
+            "Induce NPC with sufficient qi should succeed"
+        );
+        assert_eq!(captured.len(), 1);
+        assert_eq!(captured[0].defender, npc);
     }
 }

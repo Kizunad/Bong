@@ -10,7 +10,9 @@ pub mod threat;
 // Allow unused: these are the full API surface matching original brain.rs;
 // not all types are imported externally yet but must remain accessible.
 #[allow(unused_imports)]
-pub use scorers_combat::{ChaseTargetScorer, DashScorer, MeleeRangeScorer, PlayerProximityScorer};
+pub use scorers_combat::{
+    ChaseTargetScorer, DashScorer, MeleeRangeScorer, NpcDefenseScorer, PlayerProximityScorer,
+};
 #[allow(unused_imports)]
 pub use scorers_cultivation::{
     CultivationDriveScorer, CuriosityScorer, SeclusionScorer, TribulationReadyScorer,
@@ -24,7 +26,9 @@ pub use scorers_survival::{
 
 // ---- Re-exports: action types (pub) ----
 #[allow(unused_imports)]
-pub use actions_combat::{ChaseAction, DashAction, FleeAction, MeleeAttackAction};
+pub use actions_combat::{
+    ChaseAction, DashAction, FleeAction, MeleeAttackAction, NpcDefenseAction,
+};
 #[allow(unused_imports)]
 pub use actions_life::{
     CultivateAction, FarmAction, FleeCultivatorAction, RestAction, RetireAction, ReturnHomeAction,
@@ -35,7 +39,7 @@ pub use actions_life::{
 #[allow(unused_imports)]
 pub(crate) use scorers_combat::{
     chase_score, chase_target_scorer_system, dash_scorer_system, melee_range_scorer_system,
-    player_proximity_scorer_system,
+    npc_defense_score_for_realm, npc_defense_scorer_system, player_proximity_scorer_system,
 };
 #[allow(unused_imports)]
 pub(crate) use scorers_cultivation::{
@@ -54,8 +58,8 @@ pub(crate) use scorers_survival::{
 
 #[allow(unused_imports)]
 pub(crate) use actions_combat::{
-    chase_action_system, compute_flee_target, dash_action_system, flee_action_system,
-    melee_attack_action_system,
+    chase_action_system, compute_flee_target, dash_action_system, defense_interval_range,
+    flee_action_system, melee_attack_action_system, npc_defense_action_system,
 };
 #[allow(unused_imports)]
 pub(crate) use actions_life::{
@@ -336,8 +340,11 @@ pub fn update_npc_blackboard(
                 let dist = horizontal_distance(npc_pos, attacker_pos.get());
                 blackboard.nearest_player = Some(attacker);
                 blackboard.player_distance = dist as f32;
-                blackboard.target_position =
-                    Some(DVec3::new(attacker_pos.get().x, npc_pos.y, attacker_pos.get().z));
+                blackboard.target_position = Some(DVec3::new(
+                    attacker_pos.get().x,
+                    npc_pos.y,
+                    attacker_pos.get().z,
+                ));
                 continue;
             }
             blackboard.retaliation_target = None;
@@ -381,6 +388,7 @@ pub fn register(app: &mut App) {
     // Tribulation event producer: idempotent with cultivation::register; harmless for isolated
     // tests that only register brain but not cultivation.
     app.add_event::<InitiateXuhuaTribulation>();
+    app.add_event::<crate::combat::events::DefenseIntent>();
     app.insert_resource(NpcBehaviorConfig::default())
         .insert_resource(NpcCooldownMap::default())
         .add_plugins(BigBrainPlugin::new(PreUpdate))
@@ -411,6 +419,8 @@ pub fn register(app: &mut App) {
                 curiosity_scorer_system,
                 tribulation_ready_scorer_system,
                 seclusion_scorer_system,
+                npc_defense_scorer_system,
+                crate::npc::technique::npc_heal_scorer_system,
                 crate::npc::technique::npc_technique_scorer_system,
             )
                 .in_set(BigBrainSet::Scorers),
@@ -444,7 +454,12 @@ pub fn register(app: &mut App) {
         )
         .add_systems(
             PreUpdate,
-            crate::npc::technique::npc_technique_action_system.in_set(BigBrainSet::Actions),
+            (
+                crate::npc::technique::npc_technique_action_system,
+                crate::npc::technique::npc_heal_action_system,
+                npc_defense_action_system,
+            )
+                .in_set(BigBrainSet::Actions),
         )
         // Must run before `process_npc_retire_requests` (also in Update) so
         // the request is consumed in the same tick it's emitted. Without this

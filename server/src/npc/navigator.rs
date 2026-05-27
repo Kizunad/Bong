@@ -372,8 +372,7 @@ pub fn navigator_tick_system(
             .unwrap_or(true);
 
         // Don't let empty-path (from prior A* failure) bypass the countdown.
-        let path_exhausted =
-            nav.path_index >= nav.path.len() && nav.consecutive_path_failures == 0;
+        let path_exhausted = nav.path_index >= nav.path.len() && nav.consecutive_path_failures == 0;
         let needs_repath = nav.repath_countdown == 0 || destination_moved || path_exhausted;
         if needs_repath && should_repath_in_bucket(entity, tick, nav.force_next_repath) {
             let new_path = compute_path(current_pos, goal.destination, &nav, terrain, layer);
@@ -1561,8 +1560,7 @@ mod tests {
         nav.consecutive_path_failures = 2;
         nav.repath_countdown = 10;
 
-        let path_exhausted =
-            nav.path_index >= nav.path.len() && nav.consecutive_path_failures == 0;
+        let path_exhausted = nav.path_index >= nav.path.len() && nav.consecutive_path_failures == 0;
         let destination_moved = false;
         let needs_repath = nav.repath_countdown == 0 || destination_moved || path_exhausted;
 

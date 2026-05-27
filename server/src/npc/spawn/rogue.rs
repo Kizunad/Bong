@@ -7,9 +7,9 @@ use crate::cultivation::components::Realm;
 use crate::npc::brain::{
     AgeingScorer, CultivateAction, CultivateState, CultivationDriveHistory, CultivationDriveScorer,
     CuriosityScorer, FleeAction, GoToPoiAction, MeleeAttackAction, MeleeRangeScorer,
-    PlayerProximityScorer, ReturnHomeAction, ReturnHomeScorer, SeclusionAction, SeclusionScorer,
-    StallAction, StartDuXuAction, TradeStallScorer, TribulationReadyScorer, WanderScorer,
-    WanderState,
+    NpcDefenseAction, NpcDefenseScorer, PlayerProximityScorer, ReturnHomeAction, ReturnHomeScorer,
+    SeclusionAction, SeclusionScorer, StallAction, StartDuXuAction, TradeStallScorer,
+    TribulationReadyScorer, WanderScorer, WanderState,
 };
 use crate::npc::farming_brain::{
     HarvestAction, LingtianFarmingScorer, MigrateAction, PlantAction, ReplenishAction, TillAction,
@@ -19,7 +19,8 @@ use crate::npc::lifecycle::{
 };
 use crate::npc::scattered_cultivator::{FarmingTemperament, ScatteredCultivator};
 use crate::npc::technique::{
-    assign_npc_techniques, NpcLastTechniqueTick, NpcTechniqueAction, NpcTechniqueScorer,
+    assign_npc_techniques, NpcHealAction, NpcHealScorer, NpcLastTechniqueTick, NpcTechniqueAction,
+    NpcTechniqueScorer,
 };
 use crate::npc::trade::{assign_npc_trade_inventory, NpcPlayerReputation};
 use crate::skin::{initial_age_ratio, select_npc_visual_profile, NpcSkinFallbackPolicy, SkinPool};
@@ -168,8 +169,10 @@ pub(crate) fn rogue_npc_thinker() -> ThinkerBuilder {
         .when(AgeingScorer, RetireAction)
         .when(SeclusionScorer, SeclusionAction)
         .when(TribulationReadyScorer, StartDuXuAction)
+        .when(NpcHealScorer, NpcHealAction)
         .when(NpcTechniqueScorer, NpcTechniqueAction)
         .when(MeleeRangeScorer, MeleeAttackAction)
+        .when(NpcDefenseScorer, NpcDefenseAction::default())
         .when(PlayerProximityScorer, FleeAction)
         .when(ReturnHomeScorer, ReturnHomeAction)
         .when(TradeStallScorer, StallAction)
@@ -189,6 +192,7 @@ pub(crate) fn scattered_cultivator_thinker() -> ThinkerBuilder {
         .when(LingtianFarmingScorer::replenish(), ReplenishAction)
         .when(LingtianFarmingScorer::plant(), PlantAction)
         .when(LingtianFarmingScorer::till(), TillAction)
+        .when(NpcDefenseScorer, NpcDefenseAction::default())
         .when(PlayerProximityScorer, FleeAction)
         .when(ReturnHomeScorer, ReturnHomeAction)
         .when(TradeStallScorer, StallAction)

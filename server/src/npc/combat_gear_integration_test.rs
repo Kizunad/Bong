@@ -21,6 +21,7 @@ mod tests {
     use crate::npc::lifecycle::NpcArchetype;
     use crate::npc::technique::{
         assign_npc_techniques, npc_meridian_system_for_realm, select_technique, NpcCooldownMap,
+        NpcSkillScoringContext,
     };
     use crate::npc::trade::assign_npc_trade_inventory;
     use crate::skin::npc_skin_selector::select_npc_visual_profile;
@@ -30,6 +31,17 @@ mod tests {
 
     fn empty_deps() -> SkillMeridianDependencies {
         SkillMeridianDependencies::default()
+    }
+
+    fn default_ctx() -> NpcSkillScoringContext {
+        NpcSkillScoringContext {
+            hp_ratio: 1.0,
+            qi_ratio: 1.0,
+            target_distance: 3.0,
+            target_hp_ratio: 1.0,
+            has_active_buff: false,
+            in_combat: true,
+        }
     }
 
     // ─────────────────────────────────────────────────────────────────────────────
@@ -77,8 +89,8 @@ mod tests {
             "Rogue Condense should have at least 1 technique"
         );
         assert!(
-            techniques.entries.len() <= 3,
-            "Rogue should have at most 3 techniques, got {}",
+            techniques.entries.len() <= 5,
+            "Rogue Condense should have at most 5 techniques (base 1-3 + heal + buff), got {}",
             techniques.entries.len()
         );
 
@@ -241,6 +253,8 @@ mod tests {
             entity,
             3.0,
             100,
+            &default_ctx(),
+            None,
         );
         assert!(
             selected.is_some(),
@@ -248,13 +262,13 @@ mod tests {
         );
 
         // Verify selected technique exists and has valid qi_cost
-        let tid = selected.unwrap();
-        let def = technique_definition(&tid)
-            .unwrap_or_else(|| panic!("selected technique {} should exist", tid));
+        let sel = selected.unwrap();
+        let def = technique_definition(&sel.technique_id)
+            .unwrap_or_else(|| panic!("selected technique {} should exist", sel.technique_id));
         assert!(
             f64::from(def.qi_cost) <= cultivation.qi_current,
             "selected technique {} qi_cost={} should be <= qi_current={}",
-            tid,
+            sel.technique_id,
             def.qi_cost,
             cultivation.qi_current
         );
@@ -303,17 +317,17 @@ mod tests {
     /// P3.1 - 经脉 SEVERED 集成: MeridianSeveredPermanent → select_technique 排除
     #[test]
     fn integration_severed_meridian_excludes_dependent_technique() {
-        // Setup: NPC with a technique that depends on Lung meridian
+        // woliu.burst depends on Lung and is Attack category (not excluded by Defense filter)
         let known = KnownTechniques {
             entries: vec![KnownTechnique {
-                id: "zhenmai.parry".to_string(),
+                id: "woliu.burst".to_string(),
                 proficiency: 0.7,
                 active: true,
             }],
         };
 
         let mut deps = SkillMeridianDependencies::default();
-        deps.declare("zhenmai.parry", vec![MeridianId::Lung]);
+        deps.declare("woliu.burst", vec![MeridianId::Lung]);
 
         let cultivation = Cultivation {
             realm: Realm::Condense,
@@ -334,6 +348,8 @@ mod tests {
             entity,
             3.0,
             100,
+            &default_ctx(),
+            None,
         );
         assert!(
             result_ok.is_some(),
@@ -353,14 +369,15 @@ mod tests {
             entity,
             3.0,
             200,
+            &default_ctx(),
+            None,
         );
         assert!(
             result_severed.is_none(),
             "with SEVERED Lung, technique depending on Lung should be excluded"
         );
 
-        // Verify the underlying check_meridian_dependencies also catches it
-        let dep_ids = deps.lookup("zhenmai.parry");
+        let dep_ids = deps.lookup("woliu.burst");
         let check_result = check_meridian_dependencies(dep_ids, Some(&severed));
         assert!(
             check_result.is_err(),
@@ -404,7 +421,7 @@ mod tests {
         // Run many ticks to collect which techniques get selected
         let mut selected_ids = std::collections::HashSet::new();
         for tick in 0..500u64 {
-            if let Some(tid) = select_technique(
+            if let Some(sel) = select_technique(
                 &known,
                 &cultivation,
                 &deps,
@@ -413,8 +430,10 @@ mod tests {
                 entity,
                 3.0,
                 tick,
+                &default_ctx(),
+                None,
             ) {
-                selected_ids.insert(tid);
+                selected_ids.insert(sel.technique_id);
             }
         }
 
@@ -696,6 +715,8 @@ mod tests {
                     entity,
                     3.0,
                     current_tick,
+                    &default_ctx(),
+                    None,
                 );
                 if selected.is_some() {
                     technique_uses += 1;
@@ -774,6 +795,8 @@ mod tests {
                     entity,
                     3.0,
                     current_tick,
+                    &default_ctx(),
+                    None,
                 );
                 if selected.is_some() {
                     technique_uses += 1;
@@ -852,6 +875,8 @@ mod tests {
                     entity,
                     3.0,
                     current_tick,
+                    &default_ctx(),
+                    None,
                 );
                 if selected.is_some() {
                     technique_uses += 1;
@@ -932,6 +957,8 @@ mod tests {
                     entity,
                     3.0,
                     current_tick,
+                    &default_ctx(),
+                    None,
                 );
                 if selected.is_some() {
                     technique_uses += 1;
