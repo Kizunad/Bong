@@ -22,6 +22,7 @@ pub mod lod;
 pub mod loot;
 pub mod movement;
 pub mod navigator;
+pub mod npc_skill;
 pub mod patrol;
 pub mod perf;
 pub mod poi_rogue_village;
