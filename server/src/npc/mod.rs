@@ -1,4 +1,6 @@
 pub mod abstract_combat;
+#[allow(dead_code)]
+pub mod abstract_combat_system;
 pub mod brain;
 pub mod brain_rat;
 pub mod brain_whale;
