@@ -12,7 +12,7 @@ use crate::persistence::{ZoneOverlayRecord, ZoneRuntimeRecord, ZONE_OVERLAY_PAYL
 pub const DEFAULT_ZONES_PATH: &str = "zones.json";
 pub const DEFAULT_SPAWN_ZONE_NAME: &str = "spawn";
 
-const DEFAULT_SPAWN_BOUNDS_MIN: [f64; 3] = [0.0, 64.0, 0.0];
+const DEFAULT_SPAWN_BOUNDS_MIN: [f64; 3] = [-128.0, 64.0, -128.0];
 const DEFAULT_SPAWN_BOUNDS_MAX_Y: f64 = 80.0;
 const DEFAULT_SPAWN_SPIRIT_QI: f64 = 0.9;
 const DEFAULT_SPAWN_PATROL_ANCHORS: [[f64; 3]; 1] = [[14.0, 66.0, 14.0]];
@@ -595,9 +595,9 @@ pub fn default_spawn_bounds() -> (DVec3, DVec3) {
     (
         dvec3_from_array(DEFAULT_SPAWN_BOUNDS_MIN),
         DVec3::new(
-            f64::from(TEST_AREA_BLOCK_EXTENT),
+            f64::from(TEST_AREA_BLOCK_EXTENT / 2),
             DEFAULT_SPAWN_BOUNDS_MAX_Y,
-            f64::from(TEST_AREA_BLOCK_EXTENT),
+            f64::from(TEST_AREA_BLOCK_EXTENT / 2),
         ),
     )
 }

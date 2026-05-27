@@ -13,6 +13,8 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.util.EnumMap;
+import java.util.HashMap;
+import java.util.Locale;
 import java.util.Map;
 import java.util.regex.Pattern;
 
@@ -245,6 +247,24 @@ public final class ProtoServerDataBridge {
         }
         if (payloadCase == Envelope.ServerDataEnvelope.PayloadCase.FORGE_SESSION) {
             return bridgeForgeSession(envelope.getForgeSession(), typeString);
+        }
+        if (payloadCase == Envelope.ServerDataEnvelope.PayloadCase.INVENTORY_SNAPSHOT) {
+            return bridgeInventorySnapshot(envelope.getInventorySnapshot(), typeString);
+        }
+        if (payloadCase == Envelope.ServerDataEnvelope.PayloadCase.MOVEMENT_STATE) {
+            return bridgeMovementState(envelope.getMovementState(), typeString);
+        }
+        if (payloadCase == Envelope.ServerDataEnvelope.PayloadCase.SKILL_CONFIG_SNAPSHOT) {
+            return bridgeSkillConfigSnapshot(envelope.getSkillConfigSnapshot(), typeString);
+        }
+        if (payloadCase == Envelope.ServerDataEnvelope.PayloadCase.SKILL_SNAPSHOT) {
+            return bridgeSkillSnapshot(envelope.getSkillSnapshot(), typeString);
+        }
+        if (payloadCase == Envelope.ServerDataEnvelope.PayloadCase.CULTIVATION_DETAIL) {
+            return bridgeCultivationDetail(envelope.getCultivationDetail(), typeString);
+        }
+        if (payloadCase == Envelope.ServerDataEnvelope.PayloadCase.CRAFT_RECIPE_LIST) {
+            return bridgeCraftRecipeList(envelope.getCraftRecipeList(), typeString);
         }
 
         // Extract the inner oneof message.
@@ -521,12 +541,329 @@ public final class ProtoServerDataBridge {
         }
     }
 
+    // ─── inventory_snapshot: unwrap HotbarSlot wrappers ────────────
+
+    private static BridgeResult bridgeInventorySnapshot(
+            MessageOrBuilder msg, String typeString) {
+        try {
+            String raw = printAndNormalize(msg);
+            JsonObject root = JsonParser.parseString(raw).getAsJsonObject();
+            if (root.has("hotbar") && root.get("hotbar").isJsonArray()) {
+                JsonArray hotbar = root.getAsJsonArray("hotbar");
+                JsonArray unwrapped = new JsonArray(hotbar.size());
+                for (JsonElement slot : hotbar) {
+                    if (slot == null || !slot.isJsonObject()) {
+                        unwrapped.add(JsonNull.INSTANCE);
+                        continue;
+                    }
+                    JsonObject wrapper = slot.getAsJsonObject();
+                    if (wrapper.has("item") && wrapper.get("item").isJsonObject()) {
+                        unwrapped.add(wrapper.getAsJsonObject("item"));
+                    } else {
+                        unwrapped.add(JsonNull.INSTANCE);
+                    }
+                }
+                root.add("hotbar", unwrapped);
+            }
+            return wrapLegacy(root, typeString);
+        } catch (com.google.protobuf.InvalidProtocolBufferException e) {
+            return BridgeResult.error("proto→JSON conversion failed for " + typeString + ": " + e.getMessage());
+        }
+    }
+
+    // ─── movement_state: enum name normalization ────────────────────
+
+    private static BridgeResult bridgeMovementState(
+            MessageOrBuilder msg, String typeString) {
+        try {
+            String raw = printAndNormalize(msg);
+            JsonObject root = JsonParser.parseString(raw).getAsJsonObject();
+            stripEnumPrefix(root, "movement_action", "MOVEMENT_ACTION_");
+            stripEnumPrefix(root, "zone_kind", "MOVEMENT_ZONE_KIND_");
+            stripEnumPrefix(root, "rejected_action", "MOVEMENT_ACTION_REQUEST_KIND_");
+            return wrapLegacy(root, typeString);
+        } catch (com.google.protobuf.InvalidProtocolBufferException e) {
+            return BridgeResult.error("proto→JSON conversion failed for " + typeString + ": " + e.getMessage());
+        }
+    }
+
+    // ─── skill_config_snapshot: array→map + parse json_config ───────
+
+    private static BridgeResult bridgeSkillConfigSnapshot(
+            MessageOrBuilder msg, String typeString) {
+        try {
+            String raw = printAndNormalize(msg);
+            JsonObject root = JsonParser.parseString(raw).getAsJsonObject();
+            if (root.has("configs") && root.get("configs").isJsonArray()) {
+                JsonArray arr = root.getAsJsonArray("configs");
+                JsonObject map = new JsonObject();
+                for (JsonElement el : arr) {
+                    if (el == null || !el.isJsonObject()) continue;
+                    JsonObject entry = el.getAsJsonObject();
+                    String skillId = entry.has("skill_id")
+                            ? entry.get("skill_id").getAsString() : null;
+                    if (skillId == null || skillId.isEmpty()) continue;
+                    String jsonConfig = entry.has("json_config")
+                            ? entry.get("json_config").getAsString() : "{}";
+                    try {
+                        map.add(skillId, JsonParser.parseString(jsonConfig));
+                    } catch (Exception ignored) {
+                        map.add(skillId, new JsonObject());
+                    }
+                }
+                root.add("configs", map);
+            }
+            return wrapLegacy(root, typeString);
+        } catch (com.google.protobuf.InvalidProtocolBufferException e) {
+            return BridgeResult.error("proto→JSON conversion failed for " + typeString + ": " + e.getMessage());
+        }
+    }
+
+    // ─── skill_snapshot: array→map + unwrap entry ───────────────────
+
+    private static BridgeResult bridgeSkillSnapshot(
+            MessageOrBuilder msg, String typeString) {
+        try {
+            String raw = printAndNormalize(msg);
+            JsonObject root = JsonParser.parseString(raw).getAsJsonObject();
+            if (root.has("skills") && root.get("skills").isJsonArray()) {
+                JsonArray arr = root.getAsJsonArray("skills");
+                JsonObject map = new JsonObject();
+                for (JsonElement el : arr) {
+                    if (el == null || !el.isJsonObject()) continue;
+                    JsonObject wrapper = el.getAsJsonObject();
+                    String skillName = wrapper.has("skill_name")
+                            ? wrapper.get("skill_name").getAsString() : null;
+                    if (skillName == null || skillName.isEmpty()) continue;
+                    JsonObject entry = wrapper.has("entry") && wrapper.get("entry").isJsonObject()
+                            ? wrapper.getAsJsonObject("entry") : new JsonObject();
+                    map.add(skillName, entry);
+                }
+                root.add("skills", map);
+            }
+            return wrapLegacy(root, typeString);
+        } catch (com.google.protobuf.InvalidProtocolBufferException e) {
+            return BridgeResult.error("proto→JSON conversion failed for " + typeString + ": " + e.getMessage());
+        }
+    }
+
+    // ─── cultivation_detail: AoS→SoA + enum normalization ──────────
+
+    private static final Map<String, Integer> MERIDIAN_ID_TO_INDEX;
+    static {
+        Map<String, Integer> m = new HashMap<>();
+        m.put("MERIDIAN_ID_LUNG", 0);
+        m.put("MERIDIAN_ID_LARGE_INTESTINE", 1);
+        m.put("MERIDIAN_ID_STOMACH", 2);
+        m.put("MERIDIAN_ID_SPLEEN", 3);
+        m.put("MERIDIAN_ID_HEART", 4);
+        m.put("MERIDIAN_ID_SMALL_INTESTINE", 5);
+        m.put("MERIDIAN_ID_BLADDER", 6);
+        m.put("MERIDIAN_ID_KIDNEY", 7);
+        m.put("MERIDIAN_ID_PERICARDIUM", 8);
+        m.put("MERIDIAN_ID_TRIPLE_ENERGIZER", 9);
+        m.put("MERIDIAN_ID_GALLBLADDER", 10);
+        m.put("MERIDIAN_ID_LIVER", 11);
+        m.put("MERIDIAN_ID_REN", 12);
+        m.put("MERIDIAN_ID_DU", 13);
+        m.put("MERIDIAN_ID_CHONG", 14);
+        m.put("MERIDIAN_ID_DAI", 15);
+        m.put("MERIDIAN_ID_YIN_QIAO", 16);
+        m.put("MERIDIAN_ID_YANG_QIAO", 17);
+        m.put("MERIDIAN_ID_YIN_WEI", 18);
+        m.put("MERIDIAN_ID_YANG_WEI", 19);
+        MERIDIAN_ID_TO_INDEX = Map.copyOf(m);
+    }
+
+    private static BridgeResult bridgeCultivationDetail(
+            MessageOrBuilder msg, String typeString) {
+        try {
+            String raw = printAndNormalize(msg);
+            JsonObject root = JsonParser.parseString(raw).getAsJsonObject();
+
+            if (root.has("meridians") && root.get("meridians").isJsonArray()) {
+                JsonArray meridians = root.getAsJsonArray("meridians");
+                int size = 20;
+                JsonArray opened = initArray(size, false);
+                JsonArray flowRate = initDoubleArray(size);
+                JsonArray flowCapacity = initDoubleArray(size);
+                JsonArray integrity = initDoubleArray(size);
+                JsonArray openProgress = initDoubleArray(size);
+                JsonArray cracksCount = initArray(size, 0);
+
+                for (JsonElement el : meridians) {
+                    if (el == null || !el.isJsonObject()) continue;
+                    JsonObject m = el.getAsJsonObject();
+                    String idStr = m.has("id") ? m.get("id").getAsString() : null;
+                    Integer idx = idStr != null ? MERIDIAN_ID_TO_INDEX.get(idStr) : null;
+                    if (idx == null) continue;
+                    if (m.has("opened")) opened.set(idx, m.get("opened"));
+                    if (m.has("flow_rate")) flowRate.set(idx, m.get("flow_rate"));
+                    if (m.has("flow_capacity")) flowCapacity.set(idx, m.get("flow_capacity"));
+                    if (m.has("integrity")) integrity.set(idx, m.get("integrity"));
+                    if (m.has("open_progress")) openProgress.set(idx, m.get("open_progress"));
+                    if (m.has("cracks_count")) cracksCount.set(idx, m.get("cracks_count"));
+                }
+
+                root.remove("meridians");
+                root.add("opened", opened);
+                root.add("flow_rate", flowRate);
+                root.add("flow_capacity", flowCapacity);
+                root.add("integrity", integrity);
+                root.add("open_progress", openProgress);
+                root.add("cracks_count", cracksCount);
+            }
+
+            normalizeRealmField(root, "realm");
+
+            if (root.has("target_meridian") && root.get("target_meridian").isJsonPrimitive()
+                    && root.get("target_meridian").getAsJsonPrimitive().isString()) {
+                Integer idx = MERIDIAN_ID_TO_INDEX.get(root.get("target_meridian").getAsString());
+                if (idx != null) {
+                    root.addProperty("target_meridian", idx);
+                } else {
+                    root.remove("target_meridian");
+                }
+            }
+
+            stripEnumPrefix(root, "qi_color_main", "COLOR_KIND_");
+            stripEnumPrefix(root, "qi_color_secondary", "COLOR_KIND_");
+
+            if (root.has("practice_weights") && root.get("practice_weights").isJsonArray()) {
+                for (JsonElement el : root.getAsJsonArray("practice_weights")) {
+                    if (el != null && el.isJsonObject()) {
+                        stripEnumPrefix(el.getAsJsonObject(), "color", "COLOR_KIND_");
+                    }
+                }
+            }
+
+            return wrapLegacy(root, typeString);
+        } catch (com.google.protobuf.InvalidProtocolBufferException e) {
+            return BridgeResult.error("proto→JSON conversion failed for " + typeString + ": " + e.getMessage());
+        }
+    }
+
+    // ─── craft_recipe_list: material/output tuples + enum ────────────
+
+    private static BridgeResult bridgeCraftRecipeList(
+            MessageOrBuilder msg, String typeString) {
+        try {
+            String raw = printAndNormalize(msg);
+            JsonObject root = JsonParser.parseString(raw).getAsJsonObject();
+            if (root.has("recipes") && root.get("recipes").isJsonArray()) {
+                for (JsonElement recipeEl : root.getAsJsonArray("recipes")) {
+                    if (recipeEl == null || !recipeEl.isJsonObject()) continue;
+                    JsonObject recipe = recipeEl.getAsJsonObject();
+                    stripEnumPrefix(recipe, "category", "CRAFT_CATEGORY_");
+                    convertPairArrayToTuples(recipe, "materials");
+                    convertPairToTuple(recipe, "output");
+                    if (recipe.has("requirements") && recipe.get("requirements").isJsonObject()) {
+                        JsonObject req = recipe.getAsJsonObject("requirements");
+                        normalizeRealmField(req, "realm_min");
+                        convertPairToTuple(req, "qi_color_min");
+                        if (req.has("qi_color_min") && req.get("qi_color_min").isJsonArray()) {
+                            JsonArray qcArr = req.getAsJsonArray("qi_color_min");
+                            if (qcArr.size() >= 1 && qcArr.get(0).isJsonPrimitive()) {
+                                String colorVal = qcArr.get(0).getAsString();
+                                if (colorVal.startsWith("COLOR_KIND_")) {
+                                    qcArr.set(0, new JsonPrimitive(
+                                            colorVal.substring("COLOR_KIND_".length())
+                                                    .toLowerCase(Locale.ROOT)));
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            return wrapLegacy(root, typeString);
+        } catch (com.google.protobuf.InvalidProtocolBufferException e) {
+            return BridgeResult.error("proto→JSON conversion failed for " + typeString + ": " + e.getMessage());
+        }
+    }
+
+    private static void convertPairToTuple(JsonObject parent, String field) {
+        if (!parent.has(field) || !parent.get(field).isJsonObject()) return;
+        JsonObject obj = parent.getAsJsonObject(field);
+        JsonArray tuple = new JsonArray(2);
+        tuple.add(obj.has("template_id") ? obj.get("template_id").getAsString() : "");
+        tuple.add(obj.has("count") ? obj.get("count").getAsInt() : 0);
+        // qi_color_min uses "color" + "min_share" instead
+        if (!obj.has("template_id") && obj.has("color")) {
+            tuple = new JsonArray(2);
+            tuple.add(obj.get("color").getAsString());
+            tuple.add(obj.has("min_share") ? obj.get("min_share").getAsFloat() : 0f);
+        }
+        parent.add(field, tuple);
+    }
+
+    private static void convertPairArrayToTuples(JsonObject parent, String field) {
+        if (!parent.has(field) || !parent.get(field).isJsonArray()) return;
+        JsonArray arr = parent.getAsJsonArray(field);
+        JsonArray tuples = new JsonArray(arr.size());
+        for (JsonElement el : arr) {
+            if (el == null || !el.isJsonObject()) {
+                tuples.add(el);
+                continue;
+            }
+            JsonObject obj = el.getAsJsonObject();
+            JsonArray tuple = new JsonArray(2);
+            tuple.add(obj.has("template_id") ? obj.get("template_id").getAsString() : "");
+            tuple.add(obj.has("count") ? obj.get("count").getAsInt() : 0);
+            tuples.add(tuple);
+        }
+        parent.add(field, tuples);
+    }
+
+    // ─── Shared helpers ─────────────────────────────────────────────
+
+    private static BridgeResult wrapLegacy(JsonObject root, String typeString) {
+        String innerJson = root.toString();
+        String legacyJson;
+        if (innerJson.equals("{}")) {
+            legacyJson = "{\"v\":1,\"type\":\"" + typeString + "\"}";
+        } else {
+            legacyJson = "{\"v\":1,\"type\":\"" + typeString + "\"," + innerJson.substring(1);
+        }
+        return BridgeResult.success(legacyJson);
+    }
+
+    private static void stripEnumPrefix(JsonObject obj, String field, String prefix) {
+        if (!obj.has(field) || !obj.get(field).isJsonPrimitive()) return;
+        String value = obj.get(field).getAsString();
+        if (value.startsWith(prefix)) {
+            obj.addProperty(field, value.substring(prefix.length()).toLowerCase(Locale.ROOT));
+        }
+    }
+
+    private static void normalizeRealmField(JsonObject obj, String field) {
+        if (!obj.has(field) || !obj.get(field).isJsonPrimitive()) return;
+        String value = obj.get(field).getAsString();
+        if (value.startsWith("REALM_")) {
+            String suffix = value.substring("REALM_".length());
+            obj.addProperty(field,
+                    suffix.substring(0, 1).toUpperCase(Locale.ROOT)
+                    + suffix.substring(1).toLowerCase(Locale.ROOT));
+        }
+    }
+
+    private static JsonArray initDoubleArray(int size) {
+        JsonArray arr = new JsonArray(size);
+        for (int i = 0; i < size; i++) arr.add(0.0);
+        return arr;
+    }
+
+    private static JsonArray initArray(int size, Object defaultVal) {
+        JsonArray arr = new JsonArray(size);
+        for (int i = 0; i < size; i++) {
+            if (defaultVal instanceof Boolean b) arr.add(b);
+            else if (defaultVal instanceof Number n) arr.add(n);
+            else arr.add(JsonNull.INSTANCE);
+        }
+        return arr;
+    }
+
     private static final Pattern INT64_STRING = Pattern.compile("-?\\d{1,20}");
 
-    /**
-     * Print proto message to JSON and convert proto3 string-encoded int64/uint64
-     * back to JSON numbers so legacy handlers' {@code isNumber()} checks pass.
-     */
     private static String printAndNormalize(MessageOrBuilder msg)
             throws com.google.protobuf.InvalidProtocolBufferException {
         String raw = PRINTER.print(msg);
@@ -547,7 +884,6 @@ public final class ProtoServerDataBridge {
                         try {
                             e.setValue(new JsonPrimitive(Long.parseLong(s)));
                         } catch (NumberFormatException ignored) {
-                            // overflow — keep as string
                         }
                     }
                 } else {
@@ -564,7 +900,6 @@ public final class ProtoServerDataBridge {
                         try {
                             arr.set(i, new JsonPrimitive(Long.parseLong(s)));
                         } catch (NumberFormatException ignored) {
-                            // overflow — keep as string
                         }
                     }
                 } else {

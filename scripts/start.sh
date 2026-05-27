@@ -61,6 +61,7 @@ tmux send-keys -t "$SESSION:main.1" \
    export BONG_TERRAIN_RASTER_PATH='${BONG_TERRAIN_RASTER_PATH}' && \
    export BONG_ROGUE_SEED_COUNT='${BONG_ROGUE_SEED_COUNT:-100}' && \
    export BONG_DORMANT_ROGUE_SEED_COUNT='${BONG_DORMANT_ROGUE_SEED_COUNT:-1000}' && \
+   export BONG_NPC_NO_DORMANT='${BONG_NPC_NO_DORMANT:-0}' && \
    cd '$ROOT/server' && \
    echo '[bong] starting server (rogue seed='\$BONG_ROGUE_SEED_COUNT', dormant rogue seed='\$BONG_DORMANT_ROGUE_SEED_COUNT')...' && \
    cargo run --release 2>&1" Enter

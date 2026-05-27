@@ -5,11 +5,11 @@ use valence::prelude::{
 
 use crate::cultivation::components::Realm;
 use crate::npc::brain::{
-    AgeingScorer, CultivateAction, CultivateState, CultivationDriveHistory, CultivationDriveScorer,
-    CuriosityScorer, FleeAction, GoToPoiAction, MeleeAttackAction, MeleeRangeScorer,
-    NpcDefenseAction, NpcDefenseScorer, PlayerProximityScorer, ReturnHomeAction, ReturnHomeScorer,
-    SeclusionAction, SeclusionScorer, StallAction, StartDuXuAction, TradeStallScorer,
-    TribulationReadyScorer, WanderScorer, WanderState,
+    AgeingScorer, ChaseAction, ChaseTargetScorer, CultivateAction, CultivateState,
+    CultivationDriveHistory, CultivationDriveScorer, CuriosityScorer, FleeAction, GoToPoiAction,
+    MeleeAttackAction, MeleeRangeScorer, NpcDefenseAction, NpcDefenseScorer, PlayerProximityScorer,
+    ReturnHomeAction, ReturnHomeScorer, SeclusionAction, SeclusionScorer, StallAction,
+    StartDuXuAction, TradeStallScorer, TribulationReadyScorer, WanderScorer, WanderState,
 };
 use crate::npc::farming_brain::{
     HarvestAction, LingtianFarmingScorer, MigrateAction, PlantAction, ReplenishAction, TillAction,
@@ -173,10 +173,11 @@ pub(crate) fn rogue_npc_thinker() -> ThinkerBuilder {
         .when(NpcTechniqueScorer, NpcTechniqueAction)
         .when(MeleeRangeScorer, MeleeAttackAction)
         .when(NpcDefenseScorer, NpcDefenseAction::default())
+        .when(ChaseTargetScorer, ChaseAction)
         .when(PlayerProximityScorer, FleeAction)
-        .when(ReturnHomeScorer, ReturnHomeAction)
-        .when(TradeStallScorer, StallAction)
         .when(CultivationDriveScorer, CultivateAction)
+        .when(TradeStallScorer, StallAction)
+        .when(ReturnHomeScorer, ReturnHomeAction)
         .when(CuriosityScorer, GoToPoiAction::default())
         .when(WanderScorer, GoToPoiAction::default())
 }
@@ -193,10 +194,12 @@ pub(crate) fn scattered_cultivator_thinker() -> ThinkerBuilder {
         .when(LingtianFarmingScorer::plant(), PlantAction)
         .when(LingtianFarmingScorer::till(), TillAction)
         .when(NpcDefenseScorer, NpcDefenseAction::default())
+        .when(MeleeRangeScorer, MeleeAttackAction)
+        .when(ChaseTargetScorer, ChaseAction)
         .when(PlayerProximityScorer, FleeAction)
-        .when(ReturnHomeScorer, ReturnHomeAction)
-        .when(TradeStallScorer, StallAction)
         .when(CultivationDriveScorer, CultivateAction)
+        .when(TradeStallScorer, StallAction)
+        .when(ReturnHomeScorer, ReturnHomeAction)
         .when(CuriosityScorer, GoToPoiAction::default())
         .when(WanderScorer, GoToPoiAction::default())
 }
@@ -264,7 +267,7 @@ pub fn spawn_rogue_npc_at(
         patrol_target,
     );
 
-    if let Some(skin) = skin.filter(|skin| !skin.is_fallback()) {
+    if let Some(skin) = skin {
         attach_player_skin(commands, entity, NpcArchetype::Rogue, skin);
     }
 
@@ -334,7 +337,7 @@ pub fn spawn_scattered_cultivator_at(
         patrol_target,
     );
 
-    if let Some(skin) = skin.filter(|skin| !skin.is_fallback()) {
+    if let Some(skin) = skin {
         attach_player_skin(commands, entity, NpcArchetype::Rogue, skin);
     }
 
@@ -502,10 +505,16 @@ pub(crate) fn seed_initial_rogue_population_on_startup(
                 )
             }
             None => {
-                // Zone saturated by Poisson — fall back to seed_position_for_zone.
-                let job = &progress.jobs[progress.job_index];
-                let (fallback_pos, _) = seed_position_for_zone(&job.zone, global_index);
-                fallback_pos
+                // Zone saturated by Poisson — skip this job instead of
+                // falling back to jitter (which causes NPC clustering).
+                tracing::warn!(
+                    "[bong][npc] zone {} saturated by Poisson (spawned_in_job={}), skipping remaining",
+                    zone_name,
+                    progress.spawned_in_job,
+                );
+                progress.job_index += 1;
+                progress.spawned_in_job = 0;
+                continue;
             }
         };
         let patrol_center = DVec3::new(

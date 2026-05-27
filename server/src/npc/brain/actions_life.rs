@@ -6,7 +6,8 @@ use valence::prelude::{
 };
 
 use crate::cultivation::breakthrough::{
-    breakthrough_qi_cost, try_breakthrough, BreakthroughError, BreakthroughSuccess, XorshiftRoll,
+    breakthrough_qi_cost, try_breakthrough, BreakthroughError, BreakthroughSuccess, RollSource,
+    XorshiftRoll,
 };
 use crate::cultivation::components::{recover_current_qi, Cultivation, MeridianSystem, Realm};
 use crate::cultivation::meridian_open::MeridianTarget;
@@ -28,12 +29,13 @@ use crate::world::zone::ZoneRegistry;
 use super::scorers_cultivation::{next_realm, pick_next_meridian_to_open};
 use super::{
     CultivateState, GoToPoiAction, GoToPoiState, RestState, SeclusionState, StallState,
-    WanderState, CULTIVATE_MAX_TICKS, CULTIVATE_MIN_ZONE_QI, FLEE_CULTIVATOR_SPEED_FACTOR,
-    FLEE_CULTIVATOR_SUCCESS_DISTANCE, FLEE_CULTIVATOR_WAYPOINT_DISTANCE,
-    GO_TO_POI_ARRIVAL_DISTANCE, NPC_TRIBULATION_WAVES_DEFAULT, REST_MAX_TICKS,
-    REST_RECOVERY_RATE_PER_TICK, RETURN_HOME_ARRIVAL_DISTANCE, ROGUE_BREAKTHROUGH_MATERIAL_BONUS,
-    SECLUSION_CYCLE_TICKS, STALL_MAX_TICKS, STALL_MIN_TICKS, WANDER_ARRIVAL_DISTANCE,
-    WANDER_MAX_RADIUS, WANDER_MAX_TICKS, WANDER_MIN_RADIUS, WANDER_SPEED_FACTOR,
+    WanderState, CULTIVATE_DRIFT_RADIUS, CULTIVATE_DRIFT_SPEED, CULTIVATE_MAX_TICKS,
+    CULTIVATE_MIN_ZONE_QI, FLEE_CULTIVATOR_SPEED_FACTOR, FLEE_CULTIVATOR_SUCCESS_DISTANCE,
+    FLEE_CULTIVATOR_WAYPOINT_DISTANCE, GO_TO_POI_ARRIVAL_DISTANCE, NPC_TRIBULATION_WAVES_DEFAULT,
+    REST_MAX_TICKS, REST_RECOVERY_RATE_PER_TICK, RETURN_HOME_ARRIVAL_DISTANCE,
+    ROGUE_BREAKTHROUGH_MATERIAL_BONUS, SECLUSION_CYCLE_TICKS, STALL_MAX_TICKS, STALL_MIN_TICKS,
+    WANDER_ARRIVAL_DISTANCE, WANDER_MAX_RADIUS, WANDER_MAX_TICKS, WANDER_MIN_RADIUS,
+    WANDER_SPEED_FACTOR,
 };
 
 use crate::cultivation::tick::CultivationClock;
@@ -750,6 +752,7 @@ impl ActionBuilder for CultivateAction {
 }
 
 type CultivateNpcQueryItem<'a> = (
+    &'a Position,
     &'a mut Navigator,
     &'a mut Cultivation,
     &'a mut MeridianSystem,
@@ -783,6 +786,7 @@ pub(crate) fn cultivate_action_system(
 
     for (Actor(actor), mut state) in &mut actions {
         let Ok((
+            position,
             mut navigator,
             mut cultivation,
             mut meridians,
@@ -797,7 +801,6 @@ pub(crate) fn cultivate_action_system(
 
         match *state {
             ActionState::Requested => {
-                navigator.stop();
                 cultivate.elapsed_ticks = 0;
 
                 if matches!(cultivation.realm, Realm::Void) {
@@ -817,10 +820,17 @@ pub(crate) fn cultivate_action_system(
                         }
                     }
                 }
+                let drift = cultivate_drift_target(position.get(), &mut roll);
+                navigator.set_goal(drift, CULTIVATE_DRIFT_SPEED);
                 *state = ActionState::Executing;
             }
             ActionState::Executing => {
                 cultivate.elapsed_ticks = cultivate.elapsed_ticks.saturating_add(1);
+
+                if navigator.is_idle() {
+                    let drift = cultivate_drift_target(position.get(), &mut roll);
+                    navigator.set_goal(drift, CULTIVATE_DRIFT_SPEED);
+                }
 
                 let need_retarget = existing_target
                     .map(|t| meridians.get(t.0).opened)
@@ -851,10 +861,12 @@ pub(crate) fn cultivate_action_system(
                                     to
                                 );
                                 commands.entity(*actor).remove::<MeridianTarget>();
+                                navigator.stop();
                                 *state = ActionState::Success;
                                 continue;
                             }
                             Err(BreakthroughError::RolledFailure { .. }) => {
+                                navigator.stop();
                                 *state = ActionState::Failure;
                                 continue;
                             }
@@ -864,6 +876,7 @@ pub(crate) fn cultivate_action_system(
                 }
 
                 if cultivate.elapsed_ticks >= CULTIVATE_MAX_TICKS {
+                    navigator.stop();
                     *state = ActionState::Success;
                 }
             }
@@ -1070,4 +1083,14 @@ pub(crate) fn wander_target_for(
     } else {
         target
     }
+}
+
+fn cultivate_drift_target(origin: DVec3, roll: &mut XorshiftRoll) -> DVec3 {
+    let angle = roll.roll_unit() * std::f64::consts::TAU;
+    let radius = 2.0 + roll.roll_unit() * CULTIVATE_DRIFT_RADIUS;
+    DVec3::new(
+        origin.x + angle.cos() * radius,
+        origin.y,
+        origin.z + angle.sin() * radius,
+    )
 }

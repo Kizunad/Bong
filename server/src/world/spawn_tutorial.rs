@@ -10,7 +10,7 @@ use std::collections::BTreeSet;
 use serde::{Deserialize, Serialize};
 use valence::prelude::{
     bevy_ecs, Added, App, Client, Commands, Component, DVec3, Entity, EntityLayerId, Event,
-    EventReader, EventWriter, IntoSystemConfigs, Position, Query, Res, ResMut, Resource, Startup,
+    EventReader, EventWriter, IntoSystemConfigs, Local, Position, Query, Res, ResMut, Resource,
     Update, Username, With, Without,
 };
 
@@ -35,7 +35,6 @@ use crate::player::gameplay::PendingGameplayNarrations;
 use crate::schema::common::NarrationStyle;
 use crate::skin::{NpcSkinFallbackPolicy, SkinPool};
 use crate::world::dimension::DimensionLayers;
-use crate::world::setup_world;
 use crate::world::terrain::TerrainProviders;
 use crate::world::tsy_container::{ContainerKind, LootContainer};
 use crate::world::zone::TsyDepth;
@@ -182,7 +181,7 @@ pub fn register(app: &mut App) {
     app.insert_resource(TutorialTelemetry::default());
     app.add_event::<CoffinOpenRequest>();
     app.add_event::<TutorialHookEvent>();
-    app.add_systems(Startup, spawn_tutorial_poi_markers.after(setup_world));
+    app.add_systems(Update, spawn_tutorial_poi_markers);
     app.add_systems(
         Update,
         (
@@ -236,10 +235,20 @@ fn spawn_tutorial_poi_markers(
     mut skin_pool: Option<ResMut<SkinPool>>,
     providers: Option<Res<TerrainProviders>>,
     layers: Option<Res<DimensionLayers>>,
+    mut done: Local<bool>,
 ) {
+    if *done {
+        return;
+    }
     let (Some(providers), Some(layers)) = (providers, layers) else {
         return;
     };
+    if let Some(pool) = skin_pool.as_deref_mut() {
+        pool.drain_ready();
+        if !pool.ready_for_spawn() {
+            return;
+        }
+    }
 
     let mut coffin_count = 0usize;
     let mut lingquan_count = 0usize;
@@ -333,6 +342,7 @@ fn spawn_tutorial_poi_markers(
     tracing::info!(
         "[bong][spawn-tutorial] spawned {coffin_count} coffin marker(s), {lingquan_count} lingquan marker(s), {chest_count} chest marker(s), {rogue_count} rogue(s) from POIs; client channel={SERVER_DATA_CHANNEL}"
     );
+    *done = true;
 }
 
 fn handle_coffin_open_requests(

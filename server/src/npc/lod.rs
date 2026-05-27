@@ -1,9 +1,9 @@
 //! NPC LOD（plan-npc-ai-v1 §7 Phase 9）。
 //!
 //! 按最近玩家距离把 NPC 分三档：
-//! - **Near**（默认 0..=50 格）：每 tick 正常跑 scorer / action
-//! - **Far**（50..=150）：每 `far_skip_interval` tick 才跑一次（默认 10）
-//! - **Dormant**（>150）：scorer 阶段直接置 0，停止新行为决策；lifespan
+//! - **Near**（默认 0..=80 格）：每 tick 正常跑 scorer / action
+//! - **Far**（80..=512）：每 `far_skip_interval` tick 才跑一次（默认 10）
+//! - **Dormant**（>512）：scorer 阶段直接置 0，停止新行为决策；lifespan
 //!   继续 tick，方便老化/寿命清理
 //!
 //! 真正"卸载到 agent 代管"（plan §7 Phase 9 第 2 项）需要跨进程协作，属
@@ -50,16 +50,21 @@ pub struct NpcLodConfig {
     pub dormant_skip_interval: u32,
     /// 每 N tick 重新评估一次 tier（避免每 tick O(npc × player)）。
     pub reassess_interval: u32,
+    /// `BONG_NPC_NO_DORMANT=1` → 所有 NPC 最低降到 Far，不进 Dormant。
+    pub no_dormant: bool,
 }
 
 impl Default for NpcLodConfig {
     fn default() -> Self {
         Self {
-            near_radius: 50.0,
-            far_radius: 150.0,
+            near_radius: 80.0,
+            far_radius: 512.0,
             far_skip_interval: 10,
             dormant_skip_interval: 60,
             reassess_interval: 20,
+            no_dormant: std::env::var("BONG_NPC_NO_DORMANT")
+                .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+                .unwrap_or(false),
         }
     }
 }
@@ -76,7 +81,13 @@ pub fn register(app: &mut App) {
     // ccfbb458 曾把这一套 add_systems 和 brain.rs gate 整体撤回，误诊为 TPS 回归
     // 源；真正根因是 `seed_initial_rogue_population_on_startup` 默认 target=100
     // 让 brain.rs 20+ scorer × 100 actor 在 CI 单核上跑不动。LOD gate 是正解。
-    app.insert_resource(NpcLodConfig::default())
+    let lod_config = NpcLodConfig::default();
+    if lod_config.no_dormant {
+        tracing::warn!(
+            "[bong][npc] BONG_NPC_NO_DORMANT=1 — dormant tier disabled, all NPCs stay >= Far"
+        );
+    }
+    app.insert_resource(lod_config)
         .insert_resource(NpcLodTick::default())
         .add_systems(
             PreUpdate,
@@ -110,6 +121,7 @@ fn update_npc_lod_tier_system(
     let should_reassess_existing =
         counter.0 == 1 || counter.0 % config.reassess_interval.max(1) == 0;
     let player_positions: Vec<DVec3> = players.iter().map(|p| p.get()).collect();
+    let mut transitions = [0u32; 3]; // near, far, dormant
     for (entity, pos, current) in &npcs {
         if current.is_some() && !should_reassess_existing {
             continue;
@@ -120,16 +132,24 @@ fn update_npc_lod_tier_system(
             (Some(c), d) if c == d => {}
             _ => {
                 commands.entity(entity).insert(desired);
+                match desired {
+                    NpcLodTier::Near => transitions[0] += 1,
+                    NpcLodTier::Far => transitions[1] += 1,
+                    NpcLodTier::Dormant => transitions[2] += 1,
+                }
             }
         }
     }
 }
 
-/// 纯函数：给定 NPC 坐标 + 所有玩家坐标 + config → 期望 tier。
-/// 无玩家 → Dormant；距离取最近玩家。
+#[allow(clippy::if_same_then_else)]
 pub fn classify_tier(npc_pos: DVec3, players: &[DVec3], config: &NpcLodConfig) -> NpcLodTier {
     if players.is_empty() {
-        return NpcLodTier::Dormant;
+        return if config.no_dormant {
+            NpcLodTier::Far
+        } else {
+            NpcLodTier::Dormant
+        };
     }
     let min_d = players
         .iter()
@@ -142,6 +162,8 @@ pub fn classify_tier(npc_pos: DVec3, players: &[DVec3], config: &NpcLodConfig) -
     if min_d <= config.near_radius {
         NpcLodTier::Near
     } else if min_d <= config.far_radius {
+        NpcLodTier::Far
+    } else if config.no_dormant {
         NpcLodTier::Far
     } else {
         NpcLodTier::Dormant
@@ -280,7 +302,7 @@ mod tests {
         assert_eq!(
             classify_tier(
                 DVec3::new(0.0, 64.0, 0.0),
-                &[DVec3::new(500.0, 64.0, 0.0)],
+                &[DVec3::new(600.0, 64.0, 0.0)],
                 &cfg
             ),
             NpcLodTier::Dormant
@@ -308,7 +330,7 @@ mod tests {
             classify_tier(
                 DVec3::new(0.0, 64.0, 0.0),
                 &[
-                    DVec3::new(500.0, 64.0, 0.0),
+                    DVec3::new(600.0, 64.0, 0.0),
                     DVec3::new(20.0, 64.0, 0.0), // 这个是最近
                 ],
                 &cfg

@@ -261,7 +261,7 @@ pub(crate) fn attach_player_skin(
 }
 
 pub fn fallback_rogue_commoner_kind(skin: &Option<SignedSkin>) -> EntityKind {
-    if skin.as_ref().is_some_and(|skin| !skin.is_fallback()) {
+    if skin.is_some() {
         EntityKind::PLAYER
     } else {
         EntityKind::VILLAGER

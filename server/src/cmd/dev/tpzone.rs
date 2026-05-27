@@ -96,9 +96,9 @@ mod tests {
         run_update(&mut app);
 
         let position = app.world().get::<Position>(player).unwrap();
-        assert_eq!(position.get().x, 128.0);
+        assert_eq!(position.get().x, 0.0);
         assert_eq!(position.get().y, 96.0);
-        assert_eq!(position.get().z, 128.0);
+        assert_eq!(position.get().z, 0.0);
     }
 
     #[test]

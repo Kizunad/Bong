@@ -14,18 +14,23 @@ import io.wispforest.owo.ui.core.Surface;
 import io.wispforest.owo.ui.core.VerticalAlignment;
 import net.minecraft.text.Text;
 
+import java.util.HashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.function.Consumer;
 
 /** 左栏配方列表：搜索、分类 tab、收藏置顶、锁定配方提示。 */
 public final class CraftRecipeListWidget {
+    private static final Surface SELECTED_SURFACE = Surface.flat(0x403A6A3A);
+
     private final FlowLayout root;
     private final FlowLayout rows;
     private final TextBoxComponent searchBox;
     private final Consumer<String> onSelected;
     private final Set<String> favorites = new LinkedHashSet<>();
+    private final Map<String, FlowLayout> rowById = new HashMap<>();
 
     private CraftCategory category;
     private String selectedId;
@@ -68,13 +73,31 @@ public final class CraftRecipeListWidget {
     public void refresh(InventoryModel inventory) {
         lastInventory = inventory == null ? InventoryModel.empty() : inventory;
         rows.clearChildren();
+        rowById.clear();
         List<CraftRecipe> recipes = CraftRecipeFilter.filter(CraftStore.recipes(), category, query, favorites);
         if (recipes.isEmpty()) {
             rows.child(label("无匹配配方", 0xFF888888));
             return;
         }
         for (CraftRecipe recipe : recipes) {
-            rows.child(row(recipe, inventory));
+            FlowLayout r = row(recipe, inventory);
+            rowById.put(recipe.id(), r);
+            rows.child(r);
+        }
+    }
+
+    private void selectRow(String recipeId, InventoryModel inventory) {
+        FlowLayout prev = selectedId != null ? rowById.get(selectedId) : null;
+        if (prev != null) {
+            prev.surface(Surface.BLANK);
+        }
+        selectedId = recipeId;
+        FlowLayout next = rowById.get(recipeId);
+        if (next != null) {
+            next.surface(SELECTED_SURFACE);
+        }
+        if (onSelected != null) {
+            onSelected.accept(recipeId);
         }
     }
 
@@ -118,7 +141,7 @@ public final class CraftRecipeListWidget {
         row.verticalAlignment(VerticalAlignment.CENTER);
         row.padding(Insets.of(1, 2, 2, 2));
         if (recipe.id().equals(selectedId)) {
-            row.surface(Surface.flat(0x403A6A3A));
+            row.surface(SELECTED_SURFACE);
         }
         String fav = favorites.contains(recipe.id()) ? "★" : " ";
         String lock = recipe.unlocked() ? " " : "🔒";
@@ -134,11 +157,7 @@ public final class CraftRecipeListWidget {
             : "??? · " + CraftRecipeFilter.unlockHint(recipe)));
         row.mouseDown().subscribe((x, y, button) -> {
             if (button == 0) {
-                selectedId = recipe.id();
-                if (onSelected != null) {
-                    onSelected.accept(recipe.id());
-                }
-                refresh(inventory);
+                selectRow(recipe.id(), inventory);
                 return true;
             }
             if (button == 1) {

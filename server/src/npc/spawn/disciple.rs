@@ -114,7 +114,7 @@ pub fn spawn_disciple_npc_at(
         patrol_target,
     );
 
-    if let Some(skin) = skin.filter(|skin| !skin.is_fallback()) {
+    if let Some(skin) = skin {
         attach_player_skin(commands, entity, NpcArchetype::Disciple, skin);
     }
 

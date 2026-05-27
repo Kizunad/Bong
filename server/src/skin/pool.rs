@@ -42,7 +42,6 @@ pub struct SkinPool {
     sender: Sender<SkinFetchResult>,
     inflight: HashSet<NpcSkinPoolKey>,
     started_prefetch: bool,
-    fallback_mode: bool,
     ready_deadline: Instant,
     request_generation: AtomicU64,
 }
@@ -59,7 +58,6 @@ impl Default for SkinPool {
             sender,
             inflight: HashSet::new(),
             started_prefetch: false,
-            fallback_mode: false,
             ready_deadline: Instant::now() + PREFETCH_TIMEOUT,
             request_generation: AtomicU64::new(0),
         }
@@ -89,7 +87,10 @@ impl SkinPool {
     }
 
     pub fn ready_for_spawn(&self) -> bool {
-        self.fallback_mode || self.ready_count() >= MIN_READY_BEFORE_SPAWN
+        self.ready_count() >= MIN_READY_BEFORE_SPAWN
+            && NpcSkinPoolKey::PREFETCH_KEYS
+                .into_iter()
+                .all(|key| self.len_for_key(key) > 0)
     }
 
     pub fn next_for_profile(&mut self, profile: NpcVisualProfile, salt: u64) -> SignedSkin {
@@ -112,7 +113,11 @@ impl SkinPool {
             }
         }
 
-        SignedSkin::fallback()
+        tracing::error!(
+            "[bong][skin] SkinPool exhausted for key {} — no skins available and no fallback",
+            key.as_str()
+        );
+        panic!("[bong][skin] SkinPool exhausted: MINESKIN_API_KEY set? MineSkin API reachable?")
     }
 
     pub fn drain_ready(&mut self) {
@@ -126,9 +131,8 @@ impl SkinPool {
                 }
                 SkinFetchResult::Failed { key, error } => {
                     self.inflight.remove(&key);
-                    self.fallback_mode = true;
-                    tracing::warn!(
-                        "[bong][skin] MineSkin unavailable for pool {} (error={error}), falling back to vanilla entity kinds",
+                    tracing::error!(
+                        "[bong][skin] MineSkin fetch failed for pool {} (error={error})",
                         key.as_str()
                     );
                 }
@@ -146,50 +150,65 @@ impl SkinPool {
         let client = match MineSkinClient::from_env() {
             Ok(client) => client,
             Err(error) => {
-                self.fallback_mode = true;
-                tracing::warn!(
-                    "[bong][skin] MineSkin unavailable (error={error}), falling back to vanilla entity kinds for 100 rogues"
+                panic!(
+                    "[bong][skin] MineSkin unavailable (error={error}). Set MINESKIN_API_KEY in server/.env"
                 );
-                return;
             }
         };
 
-        for key in NpcSkinPoolKey::PREFETCH_KEYS {
-            self.spawn_fetch(key, PREFETCH_TARGET_PER_POOL_KEY, client.clone());
-        }
+        let keys: Vec<_> = NpcSkinPoolKey::PREFETCH_KEYS
+            .into_iter()
+            .filter(|key| self.inflight.insert(*key))
+            .collect();
+        self.spawn_fetch_serial(keys, PREFETCH_TARGET_PER_POOL_KEY, client);
     }
 
     fn maybe_mark_timeout(&mut self) {
-        if !self.fallback_mode
-            && self.started_prefetch
+        if self.started_prefetch
             && self.ready_count() < MIN_READY_BEFORE_SPAWN
             && Instant::now() >= self.ready_deadline
         {
-            self.fallback_mode = true;
-            tracing::warn!(
-                "[bong][skin] MineSkin prefetch timed out before {MIN_READY_BEFORE_SPAWN} skins, falling back to vanilla entity kinds for 100 rogues"
+            panic!(
+                "[bong][skin] MineSkin prefetch timed out before {MIN_READY_BEFORE_SPAWN} skins (got {}). Check MINESKIN_API_KEY and network.",
+                self.ready_count()
             );
         }
     }
 
     fn maybe_refill(&mut self) {
-        if self.fallback_mode {
+        let keys: Vec<_> = NpcSkinPoolKey::PREFETCH_KEYS
+            .into_iter()
+            .filter(|key| {
+                self.len_for_key(*key) <= REFILL_THRESHOLD && !self.inflight.contains(key)
+            })
+            .collect();
+        if keys.is_empty() {
             return;
         }
-        for key in NpcSkinPoolKey::PREFETCH_KEYS {
-            if self.len_for_key(key) <= REFILL_THRESHOLD && !self.inflight.contains(&key) {
-                if let Ok(client) = MineSkinClient::from_env() {
-                    self.spawn_fetch(key, PREFETCH_TARGET_PER_POOL_KEY, client);
-                }
+        for key in &keys {
+            self.inflight.insert(*key);
+        }
+        if let Ok(client) = MineSkinClient::from_env() {
+            self.spawn_fetch_serial(keys, PREFETCH_TARGET_PER_POOL_KEY, client);
+        } else {
+            for key in &keys {
+                self.inflight.remove(key);
             }
         }
     }
 
-    fn spawn_fetch(&mut self, key: NpcSkinPoolKey, count: usize, client: MineSkinClient) {
-        if !self.inflight.insert(key) {
+    fn spawn_fetch_serial(
+        &mut self,
+        keys: Vec<NpcSkinPoolKey>,
+        count: usize,
+        client: MineSkinClient,
+    ) {
+        if keys.is_empty() {
             return;
         }
         let sender = self.sender.clone();
+        let fail_sender = self.sender.clone();
+        let fail_keys = keys.clone();
         let request_id = self.request_generation.fetch_add(1, Ordering::Relaxed);
         std::thread::Builder::new()
             .name(format!("bong-skin-prefetch-{request_id}"))
@@ -197,33 +216,39 @@ impl SkinPool {
                 let runtime = match tokio::runtime::Runtime::new() {
                     Ok(runtime) => runtime,
                     Err(error) => {
-                        let _ = sender.send(SkinFetchResult::Failed {
-                            key,
-                            error: format!("tokio runtime: {error}"),
-                        });
+                        for key in &keys {
+                            let _ = sender.send(SkinFetchResult::Failed {
+                                key: *key,
+                                error: format!("tokio runtime: {error}"),
+                            });
+                        }
                         return;
                     }
                 };
 
-                let result = runtime.block_on(async move { client.fetch_random(count).await });
-                match result {
-                    Ok(skins) => {
-                        let _ = sender.send(SkinFetchResult::Ready { key, skins });
-                    }
-                    Err(error) => {
-                        let _ = sender.send(SkinFetchResult::Failed {
-                            key,
-                            error: error.to_string(),
-                        });
+                for key in keys {
+                    let result = runtime.block_on(async { client.fetch_random(count).await });
+                    match result {
+                        Ok(skins) => {
+                            let _ = sender.send(SkinFetchResult::Ready { key, skins });
+                        }
+                        Err(error) => {
+                            let _ = sender.send(SkinFetchResult::Failed {
+                                key,
+                                error: error.to_string(),
+                            });
+                        }
                     }
                 }
             })
             .map(std::mem::drop)
             .unwrap_or_else(|error| {
-                let _ = self.sender.send(SkinFetchResult::Failed {
-                    key,
-                    error: format!("thread spawn: {error}"),
-                });
+                for key in fail_keys {
+                    let _ = fail_sender.send(SkinFetchResult::Failed {
+                        key,
+                        error: format!("thread spawn: {error}"),
+                    });
+                }
             });
     }
 }
@@ -350,11 +375,10 @@ mod tests {
     }
 
     #[test]
-    fn next_for_empty_pool_returns_fallback() {
+    #[should_panic(expected = "SkinPool exhausted")]
+    fn next_for_empty_pool_panics() {
         let mut pool = SkinPool::default();
-        let skin = pool.next_for_profile(profile(NpcSkinPoolKey(NpcSkinTier::RogueLow)), 0);
-
-        assert!(skin.is_fallback());
+        let _skin = pool.next_for_profile(profile(NpcSkinPoolKey(NpcSkinTier::RogueLow)), 0);
     }
 
     #[test]

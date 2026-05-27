@@ -12,7 +12,7 @@ use crate::world::zone::{Zone, ZoneRegistry};
 const PATROL_TARGET_EPSILON: f64 = 2.0;
 
 /// Speed factor for patrol movement (slower than chase).
-const PATROL_SPEED_FACTOR: f64 = 0.6;
+const PATROL_SPEED_FACTOR: f64 = 0.8;
 
 type PatrolNpcItem<'a> = (
     Entity,

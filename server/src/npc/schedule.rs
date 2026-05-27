@@ -182,7 +182,7 @@ pub fn schedule_multiplier(
     let Some(schedule) = schedule else {
         return Some(1.0);
     };
-    if !matches!(tier.copied().unwrap_or(NpcLodTier::Near), NpcLodTier::Near) {
+    if matches!(tier, Some(NpcLodTier::Dormant)) {
         return Some(0.0);
     }
     Some(schedule.weight(schedule.phase(tick), activity))
@@ -198,8 +198,11 @@ pub fn scheduled_wander_score(
     let Some(schedule) = schedule else {
         return Some(baseline);
     };
-    if !matches!(tier.copied().unwrap_or(NpcLodTier::Near), NpcLodTier::Near) {
+    if matches!(tier, Some(NpcLodTier::Dormant)) {
         return Some(0.0);
+    }
+    if !matches!(tier.copied().unwrap_or(NpcLodTier::Near), NpcLodTier::Near) {
+        return Some(baseline);
     }
     let phase = schedule.phase(tick);
     if schedule.activity_for(tick, salt) == ScheduleActivity::Wander {
@@ -342,7 +345,7 @@ fn schedule_phase_event_system(
         return;
     };
     for (entity, schedule, tier, state) in &mut npcs {
-        if !matches!(tier.copied().unwrap_or(NpcLodTier::Near), NpcLodTier::Near) {
+        if matches!(tier, Some(NpcLodTier::Dormant)) {
             continue;
         }
         let next_phase = schedule.phase(tick);
