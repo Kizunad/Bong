@@ -7,6 +7,17 @@ use crate::cultivation::meridian::severed::SkillMeridianDependencies;
 use crate::cultivation::skill_registry::{CastRejectReason, CastResult, SkillRegistry};
 use crate::cultivation::technique_scroll::realm_rank;
 
+pub const HEAL_QI_COST: f64 = 8.0;
+pub const HEAL_BASE_AMOUNT: f64 = 5.0;
+pub const HEAL_PER_REALM_RANK: f64 = 3.0;
+pub const HEAL_COOLDOWN_TICKS: u64 = 200;
+pub const BUFF_SPEED_QI_COST: f64 = 5.0;
+pub const BUFF_SPEED_MAGNITUDE: f32 = 0.3;
+pub const BUFF_DEFENSE_QI_COST: f64 = 6.0;
+pub const BUFF_DEFENSE_MAGNITUDE: f32 = 0.2;
+pub const BUFF_DURATION_TICKS: u64 = 200;
+pub const BUFF_COOLDOWN_TICKS: u64 = 400;
+
 pub fn register_npc_skills(registry: &mut SkillRegistry) {
     registry.register("npc.heal_basic", npc_heal_basic);
     registry.register("npc.buff_speed", npc_buff_speed);
@@ -34,8 +45,6 @@ fn npc_heal_basic(
     _slot: u8,
     _target: Option<Entity>,
 ) -> CastResult {
-    let qi_cost = 8.0_f64;
-
     let cultivation = match world.get::<Cultivation>(caster) {
         Some(c) => c.clone(),
         None => {
@@ -45,17 +54,17 @@ fn npc_heal_basic(
         }
     };
 
-    if cultivation.qi_current < qi_cost {
+    if cultivation.qi_current < HEAL_QI_COST {
         return CastResult::Rejected {
             reason: CastRejectReason::QiInsufficient,
         };
     }
 
-    let heal_amount = 5.0 + realm_rank(cultivation.realm) as f64 * 3.0;
+    let heal_amount = HEAL_BASE_AMOUNT + realm_rank(cultivation.realm) as f64 * HEAL_PER_REALM_RANK;
     let heal_grades = (heal_amount / 0.25).round().clamp(0.0, f64::from(u8::MAX)) as u8;
 
     if let Some(mut cult) = world.get_mut::<Cultivation>(caster) {
-        cult.qi_current = (cult.qi_current - qi_cost).max(0.0);
+        cult.qi_current = (cult.qi_current - HEAL_QI_COST).max(0.0);
     }
 
     if let Some(mut wounds) = world.get_mut::<Wounds>(caster) {
@@ -63,7 +72,7 @@ fn npc_heal_basic(
     }
 
     CastResult::Started {
-        cooldown_ticks: 200,
+        cooldown_ticks: HEAL_COOLDOWN_TICKS,
         anim_duration_ticks: 20,
     }
 }
@@ -74,8 +83,6 @@ fn npc_buff_speed(
     _slot: u8,
     _target: Option<Entity>,
 ) -> CastResult {
-    let qi_cost = 5.0_f64;
-
     let cultivation = match world.get::<Cultivation>(caster) {
         Some(c) => c.clone(),
         None => {
@@ -85,14 +92,14 @@ fn npc_buff_speed(
         }
     };
 
-    if cultivation.qi_current < qi_cost {
+    if cultivation.qi_current < BUFF_SPEED_QI_COST {
         return CastResult::Rejected {
             reason: CastRejectReason::QiInsufficient,
         };
     }
 
     if let Some(mut cult) = world.get_mut::<Cultivation>(caster) {
-        cult.qi_current = (cult.qi_current - qi_cost).max(0.0);
+        cult.qi_current = (cult.qi_current - BUFF_SPEED_QI_COST).max(0.0);
     }
 
     let clock = world
@@ -104,14 +111,14 @@ fn npc_buff_speed(
         events.send(ApplyStatusEffectIntent {
             target: caster,
             kind: StatusEffectKind::SpeedBoost,
-            magnitude: 0.3,
-            duration_ticks: 200,
+            magnitude: BUFF_SPEED_MAGNITUDE,
+            duration_ticks: BUFF_DURATION_TICKS,
             issued_at_tick: clock,
         });
     }
 
     CastResult::Started {
-        cooldown_ticks: 400,
+        cooldown_ticks: BUFF_COOLDOWN_TICKS,
         anim_duration_ticks: 10,
     }
 }
@@ -122,8 +129,6 @@ fn npc_buff_defense(
     _slot: u8,
     _target: Option<Entity>,
 ) -> CastResult {
-    let qi_cost = 6.0_f64;
-
     let cultivation = match world.get::<Cultivation>(caster) {
         Some(c) => c.clone(),
         None => {
@@ -133,14 +138,14 @@ fn npc_buff_defense(
         }
     };
 
-    if cultivation.qi_current < qi_cost {
+    if cultivation.qi_current < BUFF_DEFENSE_QI_COST {
         return CastResult::Rejected {
             reason: CastRejectReason::QiInsufficient,
         };
     }
 
     if let Some(mut cult) = world.get_mut::<Cultivation>(caster) {
-        cult.qi_current = (cult.qi_current - qi_cost).max(0.0);
+        cult.qi_current = (cult.qi_current - BUFF_DEFENSE_QI_COST).max(0.0);
     }
 
     let clock = world
@@ -152,14 +157,14 @@ fn npc_buff_defense(
         events.send(ApplyStatusEffectIntent {
             target: caster,
             kind: StatusEffectKind::DamageReduction,
-            magnitude: 0.2,
-            duration_ticks: 200,
+            magnitude: BUFF_DEFENSE_MAGNITUDE,
+            duration_ticks: BUFF_DURATION_TICKS,
             issued_at_tick: clock,
         });
     }
 
     CastResult::Started {
-        cooldown_ticks: 400,
+        cooldown_ticks: BUFF_COOLDOWN_TICKS,
         anim_duration_ticks: 10,
     }
 }
@@ -220,9 +225,9 @@ mod tests {
             matches!(
                 result,
                 CastResult::Started {
-                    cooldown_ticks: 200,
+                    cooldown_ticks,
                     anim_duration_ticks: 20
-                }
+                } if cooldown_ticks == HEAL_COOLDOWN_TICKS
             ),
             "heal should succeed with started result, got {result:?}"
         );
@@ -235,9 +240,11 @@ mod tests {
         );
 
         let cult = world.get::<Cultivation>(entity).unwrap();
+        let expected_qi = 50.0 - HEAL_QI_COST;
         assert!(
-            (cult.qi_current - 42.0).abs() < f64::EPSILON,
-            "qi should decrease by 8.0, got {}",
+            (cult.qi_current - expected_qi).abs() < f64::EPSILON,
+            "qi should decrease by {}, got {}",
+            HEAL_QI_COST,
             cult.qi_current
         );
     }
@@ -298,7 +305,8 @@ mod tests {
                     reason: CastRejectReason::QiInsufficient,
                 }
             ),
-            "should reject when qi < 8.0, got {result:?}"
+            "should reject when qi < {}, got {result:?}",
+            HEAL_QI_COST
         );
 
         let cult = world.get::<Cultivation>(entity).unwrap();
@@ -324,8 +332,9 @@ mod tests {
         );
 
         let cult = world.get::<Cultivation>(entity).unwrap();
+        let expected_qi = 50.0 - HEAL_QI_COST;
         assert!(
-            (cult.qi_current - 42.0).abs() < f64::EPSILON,
+            (cult.qi_current - expected_qi).abs() < f64::EPSILON,
             "qi should still be consumed"
         );
     }
@@ -348,7 +357,7 @@ mod tests {
         let mut world = world_with_events();
         let wounds = make_wounds(50.0, 100.0, vec![]);
         let entity = world
-            .spawn((make_cultivation(Realm::Induce, 8.0), wounds))
+            .spawn((make_cultivation(Realm::Induce, HEAL_QI_COST), wounds))
             .id();
 
         let result = npc_heal_basic(&mut world, entity, 0, None);
@@ -361,7 +370,8 @@ mod tests {
         let cult = world.get::<Cultivation>(entity).unwrap();
         assert!(
             cult.qi_current.abs() < f64::EPSILON,
-            "qi should be exactly 0 after spending 8.0"
+            "qi should be exactly 0 after spending {}",
+            HEAL_QI_COST
         );
     }
 
@@ -378,9 +388,9 @@ mod tests {
             matches!(
                 result,
                 CastResult::Started {
-                    cooldown_ticks: 400,
+                    cooldown_ticks,
                     anim_duration_ticks: 10
-                }
+                } if cooldown_ticks == BUFF_COOLDOWN_TICKS
             ),
             "buff_speed should succeed, got {result:?}"
         );
@@ -391,13 +401,15 @@ mod tests {
         assert_eq!(intents.len(), 1, "should send exactly 1 intent");
         assert_eq!(intents[0].target, entity);
         assert_eq!(intents[0].kind, StatusEffectKind::SpeedBoost);
-        assert!((intents[0].magnitude - 0.3).abs() < f32::EPSILON);
-        assert_eq!(intents[0].duration_ticks, 200);
+        assert!((intents[0].magnitude - BUFF_SPEED_MAGNITUDE).abs() < f32::EPSILON);
+        assert_eq!(intents[0].duration_ticks, BUFF_DURATION_TICKS);
 
         let cult = world.get::<Cultivation>(entity).unwrap();
+        let expected_qi = 50.0 - BUFF_SPEED_QI_COST;
         assert!(
-            (cult.qi_current - 45.0).abs() < f64::EPSILON,
-            "qi should decrease by 5.0"
+            (cult.qi_current - expected_qi).abs() < f64::EPSILON,
+            "qi should decrease by {}",
+            BUFF_SPEED_QI_COST
         );
     }
 
@@ -410,7 +422,8 @@ mod tests {
 
         assert!(
             matches!(result, CastResult::Rejected { .. }),
-            "should reject when qi < 5.0"
+            "should reject when qi < {}",
+            BUFF_SPEED_QI_COST
         );
 
         let events = world.resource::<Events<ApplyStatusEffectIntent>>();
@@ -448,9 +461,9 @@ mod tests {
             matches!(
                 result,
                 CastResult::Started {
-                    cooldown_ticks: 400,
+                    cooldown_ticks,
                     anim_duration_ticks: 10
-                }
+                } if cooldown_ticks == BUFF_COOLDOWN_TICKS
             ),
             "buff_defense should succeed, got {result:?}"
         );
@@ -461,13 +474,15 @@ mod tests {
         assert_eq!(intents.len(), 1, "should send exactly 1 intent");
         assert_eq!(intents[0].target, entity);
         assert_eq!(intents[0].kind, StatusEffectKind::DamageReduction);
-        assert!((intents[0].magnitude - 0.2).abs() < f32::EPSILON);
-        assert_eq!(intents[0].duration_ticks, 200);
+        assert!((intents[0].magnitude - BUFF_DEFENSE_MAGNITUDE).abs() < f32::EPSILON);
+        assert_eq!(intents[0].duration_ticks, BUFF_DURATION_TICKS);
 
         let cult = world.get::<Cultivation>(entity).unwrap();
+        let expected_qi = 50.0 - BUFF_DEFENSE_QI_COST;
         assert!(
-            (cult.qi_current - 44.0).abs() < f64::EPSILON,
-            "qi should decrease by 6.0"
+            (cult.qi_current - expected_qi).abs() < f64::EPSILON,
+            "qi should decrease by {}",
+            BUFF_DEFENSE_QI_COST
         );
     }
 
@@ -480,7 +495,8 @@ mod tests {
 
         assert!(
             matches!(result, CastResult::Rejected { .. }),
-            "should reject when qi < 6.0"
+            "should reject when qi < {}",
+            BUFF_DEFENSE_QI_COST
         );
     }
 
@@ -500,7 +516,9 @@ mod tests {
     #[test]
     fn buff_defense_qi_exactly_equal_to_cost() {
         let mut world = world_with_events();
-        let entity = world.spawn(make_cultivation(Realm::Condense, 6.0)).id();
+        let entity = world
+            .spawn(make_cultivation(Realm::Condense, BUFF_DEFENSE_QI_COST))
+            .id();
 
         let result = npc_buff_defense(&mut world, entity, 0, None);
 
