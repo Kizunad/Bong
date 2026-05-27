@@ -10,11 +10,11 @@ NPC 战斗智能升级——技能多类型（回血/buff/控制/攻击）上下
 
 | 阶段 | 状态 | 主要交付物 | 验收标准 |
 |------|------|-----------|---------|
-| **P0** | ⬜ | SkillCategory + select_technique 上下文加权 + LOD 门控 + NpcHealScorer 紧急回血 | `select_technique()` 按 hp/qi/距离/状态对各 category 差异化加权随机；NpcTechniqueScorer 接 LOD 门控；NpcHealScorer 在 hp<30% 时硬覆盖 |
-| **P1** | ⬜ | 回血/buff/utility 技能实现 + 经脉依赖声明 | 3+ heal/buff SkillFn 注册到 SkillRegistry + `declare()` 经脉依赖；目标选择扩展（self/ally） |
-| **P2** | ⬜ | NPC 格挡防御行为（独立路径，不经 SkillRegistry） | `NpcDefenseScorer` + `NpcDefenseAction` 发 DefenseIntent；`select_technique()` 排除 Defense category 避免冲突 |
-| **P3** | ⬜ | 战斗 LOD 分层 + qi 守恒 + tier 过渡清理 | Near=完整模拟、Far=战力评分概率判定 + QiTransfer 记账、Dormant=不打；tier 变更清理 CombatState |
-| **P4** | ⬜ | 集成测试 + 数值校准 | e2e 全链路；Far tier NPC 互斗有胜负+qi记账；新增测试 ≥ 30 条 |
+| **P0** | ✅ 2026-05-27 | SkillCategory + select_technique 上下文加权 + LOD 门控 + NpcHealScorer 紧急回血 | `select_technique()` 按 hp/qi/距离/状态对各 category 差异化加权随机；NpcTechniqueScorer 接 LOD 门控；NpcHealScorer 在 hp<30% 时硬覆盖 |
+| **P1** | ✅ 2026-05-27 | 回血/buff/utility 技能实现 + 经脉依赖声明 | 3+ heal/buff SkillFn 注册到 SkillRegistry + `declare()` 经脉依赖；目标选择扩展（self/ally） |
+| **P2** | ✅ 2026-05-27 | NPC 格挡防御行为（独立路径，不经 SkillRegistry） | `NpcDefenseScorer` + `NpcDefenseAction` 发 DefenseIntent；`select_technique()` 排除 Defense category 避免冲突 |
+| **P3** | ✅ 2026-05-27 | 战斗 LOD 分层 + qi 守恒 + tier 过渡清理 | Near=完整模拟、Far=战力评分概率判定 + QiTransfer 记账、Dormant=不打；tier 变更清理 CombatState |
+| **P4** | ✅ 2026-05-27 | 集成测试 + 数值校准 | e2e 全链路；Far tier NPC 互斗有胜负+qi记账；新增测试 ≥ 30 条 |
 
 ---
 
@@ -546,3 +546,74 @@ Far tier NPC 被 despawn（LOD 切 Dormant 或被回收）时：
 2. NPC 技能释放/格挡的视听反馈推迟到后续 plan
 
 **落点**：`docs/CLAUDE.md` 视听规格排除条款 / plan 无需修改
+
+---
+
+## Finish Evidence
+
+### 落地清单
+
+| 阶段 | 模块 / 文件路径 |
+|------|----------------|
+| P0 | `server/src/cultivation/known_techniques.rs` — SkillCategory enum + 47 TechniqueDefinition 标注 |
+| P0 | `server/src/npc/technique.rs` — NpcSkillScoringContext + category_weight + select_technique 上下文加权 + NpcHealScorer/NpcHealAction + LOD 门控 |
+| P0 | `server/src/npc/lifecycle.rs` — NpcCooldownMap 死亡清理 |
+| P1 | `server/src/npc/npc_skill.rs` — npc_heal_basic / npc_buff_speed / npc_buff_defense SkillFn |
+| P1 | `server/src/cultivation/skill_registry.rs` — SkillRegistry 注册 |
+| P1 | `server/src/cultivation/mod.rs` — SkillMeridianDependencies 声明 |
+| P1 | `server/src/npc/technique.rs` — SelectedTechnique / SkillTarget / inject_npc_utility_skills |
+| P2 | `server/src/npc/brain/scorers_combat.rs` — NpcDefenseScorer |
+| P2 | `server/src/npc/brain/actions_combat.rs` — NpcDefenseAction |
+| P2 | `server/src/npc/spawn/rogue.rs` — thinker 接入 |
+| P3 | `server/src/npc/combat_power.rs` — CombatPowerScore + compute_combat_power |
+| P3 | `server/src/npc/abstract_combat.rs` — abstract_combat_resolve + apply_outcome + apply_qi_cost |
+| P3 | `server/src/npc/abstract_combat_system.rs` — LOD 战斗路由 + 过渡清理 + NPC-vs-NPC 触发 + despawn 安全 |
+| P3 | `server/src/qi_physics/ledger.rs` — QiTransferReason::AbstractCombat |
+| P4 | `server/src/npc/combat_ai_integration_test.rs` — 25 条 e2e 集成测试 |
+| P4 | `server/src/npc/npc_skill.rs` — 10 个校准常量提取 |
+
+### 关键 commit
+
+| Hash | 日期 | 描述 |
+|------|------|------|
+| `00b656eb8` | 2026-05-27 | docs: plan + §8.1 pre-P0 决议收口 |
+| `a4dd9500b` | 2026-05-27 | P0.1 SkillCategory 分类 — 44 技能逐条标注 |
+| `d6cdf8bb8` | 2026-05-27 | P0.2+P0.3 NpcSkillScoringContext + select_technique 上下文加权 |
+| `923780bde` | 2026-05-27 | P0.4+P0.5+P0.6 NpcHealScorer + LOD 门控 + 死亡冷却清理 |
+| `22b5d6efd` | 2026-05-27 | P1.1-P1.2 注册 3 个 NPC 功法 TechniqueDefinition |
+| `51a88f47a` | 2026-05-27 | P1.1-P1.2 NPC 回血/buff SkillFn 实现 + SkillRegistry/MeridianDeps 注册 |
+| `bf0727515` | 2026-05-27 | P1.3 SelectedTechnique + SkillTarget 目标路由 |
+| `858d8610b` | 2026-05-27 | P1.4 inject_npc_utility_skills 按境界注入技能 |
+| `4c72cd46a` | 2026-05-27 | P2 NPC 格挡防御行为 — NpcDefenseScorer + NpcDefenseAction |
+| `927d6579f` | 2026-05-27 | P3.1 CombatPowerScore 战力评分 |
+| `9eff9564e` | 2026-05-27 | P3.2 抽象战斗判定 + QiTransferReason::AbstractCombat |
+| `9f40f7350` | 2026-05-27 | P3.3-P3.6 LOD 战斗路由 + 过渡清理 + 触发 + despawn 安全 |
+| `86c19f33f` | 2026-05-27 | P4.1 集成测试 25 条 |
+| `aea233795` | 2026-05-27 | P4.2 数值校准常量提取 |
+
+### 测试结果
+
+```
+cd server && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test
+→ 6582 passed, 0 failed, 1 ignored
+NPC 战斗 AI 相关测试：161 条
+```
+
+### 跨仓库核验
+
+| 层 | symbol | 状态 |
+|----|--------|------|
+| server | `npc::technique::select_technique()` | ✅ 扩展签名 + 上下文加权 |
+| server | `npc::technique::NpcHealScorer` / `NpcHealAction` | ✅ 新增 |
+| server | `npc::brain::NpcDefenseScorer` / `NpcDefenseAction` | ✅ 新增 |
+| server | `npc::abstract_combat_system` | ✅ 新增 Far tier 判定 |
+| server | `qi_physics::ledger::QiTransferReason::AbstractCombat` | ✅ 新增守恒记账 |
+| server → client | `bong:vfx_event` | 不涉及（纯 server 逻辑 plan） |
+| server → agent | `bong:world_state` | 不涉及（NpcDigest 无结构变更） |
+
+### 遗留 / 后续
+
+- NPC 技能释放 / 格挡的视听反馈推迟到后续 plan（§8.1 #6 决议）
+- NPC buff 对玩家可见性推迟到后续 plan（§8.1 #2 决议，需扩展 bong:npc_metadata + client 渲染管线）
+- NPC 回血时的 WoundHeal HUD 标记推迟到 buff 可见性一并实装（§8.1 #1 决议）
+- NPC ally 目标选择（NearestAlly）暂未实装，P1.3 只做了 SelfCast / NearestEnemy 两路
