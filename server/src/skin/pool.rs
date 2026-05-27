@@ -42,6 +42,7 @@ pub struct SkinPool {
     sender: Sender<SkinFetchResult>,
     inflight: HashSet<NpcSkinPoolKey>,
     started_prefetch: bool,
+    skip_prefetch: bool,
     ready_deadline: Instant,
     request_generation: AtomicU64,
 }
@@ -51,6 +52,9 @@ impl Resource for SkinPool {}
 impl Default for SkinPool {
     fn default() -> Self {
         let (sender, receiver) = crossbeam_channel::unbounded();
+        let skip_prefetch = std::env::var("BONG_SKIP_SKIN_PREFETCH")
+            .map(|v| v == "1")
+            .unwrap_or(false);
         Self {
             by_pool_key: HashMap::new(),
             failover: VecDeque::new(),
@@ -58,6 +62,7 @@ impl Default for SkinPool {
             sender,
             inflight: HashSet::new(),
             started_prefetch: false,
+            skip_prefetch,
             ready_deadline: Instant::now() + PREFETCH_TIMEOUT,
             request_generation: AtomicU64::new(0),
         }
@@ -144,6 +149,13 @@ impl SkinPool {
         if self.started_prefetch {
             return;
         }
+        if self.skip_prefetch {
+            tracing::warn!(
+                "[bong][skin] BONG_SKIP_SKIN_PREFETCH=1 — skin prefetch disabled, NPCs will use villager fallback"
+            );
+            self.started_prefetch = true;
+            return;
+        }
         self.started_prefetch = true;
         self.ready_deadline = Instant::now() + PREFETCH_TIMEOUT;
 
@@ -165,6 +177,7 @@ impl SkinPool {
 
     fn maybe_mark_timeout(&mut self) {
         if self.started_prefetch
+            && !self.skip_prefetch
             && self.ready_count() < MIN_READY_BEFORE_SPAWN
             && Instant::now() >= self.ready_deadline
         {
@@ -176,6 +189,9 @@ impl SkinPool {
     }
 
     fn maybe_refill(&mut self) {
+        if self.skip_prefetch {
+            return;
+        }
         let keys: Vec<_> = NpcSkinPoolKey::PREFETCH_KEYS
             .into_iter()
             .filter(|key| {
@@ -393,6 +409,15 @@ mod tests {
         assert_eq!(pool.next_for_profile(profile(key), 0).value, "b");
         assert_eq!(pool.next_for_profile(profile(key), 1).value, "a");
         assert_eq!(pool.len_for_key(key), 3);
+    }
+
+    #[test]
+    fn skip_prefetch_keeps_pool_unready() {
+        let mut pool = SkinPool::default();
+        pool.skip_prefetch = true;
+        pool.start_prefetch_if_needed();
+        assert!(pool.started_prefetch, "started_prefetch should be set even when skipping");
+        assert!(!pool.ready_for_spawn(), "pool should not be ready when prefetch is skipped");
     }
 
     #[test]
