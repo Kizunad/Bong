@@ -83,6 +83,15 @@ const TECHNIQUE_IDS: [&str; 44] = [
     "sword_path.heaven_gate",
 ];
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum SkillCategory {
+    Attack,
+    Heal,
+    Buff,
+    Control,
+    Defense,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct TechniqueDefinition {
     pub id: &'static str,
@@ -97,6 +106,7 @@ pub struct TechniqueDefinition {
     pub cooldown_ticks: u32,
     pub range: f32,
     pub icon_texture: &'static str,
+    pub category: SkillCategory,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -130,6 +140,7 @@ pub const TECHNIQUE_DEFINITIONS: [TechniqueDefinition; 44] = [
         cooldown_ticks: 30,
         range: 3.0,
         icon_texture: "bong:textures/gui/skill/sword_cleave.png",
+        category: SkillCategory::Attack,
     },
     TechniqueDefinition {
         id: "sword.thrust",
@@ -144,6 +155,7 @@ pub const TECHNIQUE_DEFINITIONS: [TechniqueDefinition; 44] = [
         cooldown_ticks: 20,
         range: 3.5,
         icon_texture: "bong:textures/gui/skill/sword_thrust.png",
+        category: SkillCategory::Attack,
     },
     TechniqueDefinition {
         id: "sword.parry",
@@ -158,6 +170,7 @@ pub const TECHNIQUE_DEFINITIONS: [TechniqueDefinition; 44] = [
         cooldown_ticks: 40,
         range: 0.0,
         icon_texture: "bong:textures/gui/skill/sword_parry.png",
+        category: SkillCategory::Defense,
     },
     TechniqueDefinition {
         id: "sword.infuse",
@@ -172,6 +185,7 @@ pub const TECHNIQUE_DEFINITIONS: [TechniqueDefinition; 44] = [
         cooldown_ticks: 100,
         range: 0.0,
         icon_texture: "bong:textures/gui/skill/sword_infuse.png",
+        category: SkillCategory::Buff,
     },
     TechniqueDefinition {
         id: "movement.dash",
@@ -186,6 +200,7 @@ pub const TECHNIQUE_DEFINITIONS: [TechniqueDefinition; 44] = [
         cooldown_ticks: 40,
         range: 2.8,
         icon_texture: "bong:textures/gui/skill/movement_dash.png",
+        category: SkillCategory::Attack,
     },
     TechniqueDefinition {
         id: "burst_meridian.beng_quan",
@@ -213,6 +228,7 @@ pub const TECHNIQUE_DEFINITIONS: [TechniqueDefinition; 44] = [
         cooldown_ticks: 60,
         range: 1.3,
         icon_texture: "bong:textures/gui/skill/beng_quan.png",
+        category: SkillCategory::Attack,
     },
     TechniqueDefinition {
         id: "burst_meridian.tie_shan_kao",
@@ -230,6 +246,7 @@ pub const TECHNIQUE_DEFINITIONS: [TechniqueDefinition; 44] = [
         cooldown_ticks: 70,
         range: 1.5,
         icon_texture: "bong:textures/gui/skill/tie_shan_kao.png",
+        category: SkillCategory::Attack,
     },
     TechniqueDefinition {
         id: "burst_meridian.xue_beng_bu",
@@ -247,6 +264,7 @@ pub const TECHNIQUE_DEFINITIONS: [TechniqueDefinition; 44] = [
         cooldown_ticks: 50,
         range: 4.0,
         icon_texture: "bong:textures/gui/skill/xue_beng_bu.png",
+        category: SkillCategory::Attack,
     },
     TechniqueDefinition {
         id: "burst_meridian.ni_mai_hu_ti",
@@ -264,6 +282,7 @@ pub const TECHNIQUE_DEFINITIONS: [TechniqueDefinition; 44] = [
         cooldown_ticks: 120,
         range: 0.0,
         icon_texture: "bong:textures/gui/skill/ni_mai_hu_ti.png",
+        category: SkillCategory::Defense,
     },
     TechniqueDefinition {
         id: "bao_mai.full_power_charge",
@@ -278,6 +297,7 @@ pub const TECHNIQUE_DEFINITIONS: [TechniqueDefinition; 44] = [
         cooldown_ticks: 0,
         range: 0.0,
         icon_texture: "bong:textures/gui/skill/full_power_charge.png",
+        category: SkillCategory::Attack,
     },
     TechniqueDefinition {
         id: "bao_mai.full_power_release",
@@ -292,6 +312,7 @@ pub const TECHNIQUE_DEFINITIONS: [TechniqueDefinition; 44] = [
         cooldown_ticks: 20,
         range: 8.0,
         icon_texture: "bong:textures/gui/skill/full_power_release.png",
+        category: SkillCategory::Attack,
     },
     TechniqueDefinition {
         id: "zhenmai.parry",
@@ -309,6 +330,7 @@ pub const TECHNIQUE_DEFINITIONS: [TechniqueDefinition; 44] = [
         cooldown_ticks: 600,
         range: 0.0,
         icon_texture: "bong-client:textures/gui/skill/zhenmai_parry.png",
+        category: SkillCategory::Defense,
     },
     TechniqueDefinition {
         id: "zhenmai.neutralize",
@@ -326,6 +348,7 @@ pub const TECHNIQUE_DEFINITIONS: [TechniqueDefinition; 44] = [
         cooldown_ticks: 200,
         range: 0.0,
         icon_texture: "bong-client:textures/gui/skill/zhenmai_neutralize.png",
+        category: SkillCategory::Heal,
     },
     TechniqueDefinition {
         id: "zhenmai.multipoint",
@@ -340,6 +363,7 @@ pub const TECHNIQUE_DEFINITIONS: [TechniqueDefinition; 44] = [
         cooldown_ticks: 600,
         range: 0.0,
         icon_texture: "bong-client:textures/gui/skill/zhenmai_multipoint.png",
+        category: SkillCategory::Defense,
     },
     TechniqueDefinition {
         id: "zhenmai.harden",
@@ -357,6 +381,7 @@ pub const TECHNIQUE_DEFINITIONS: [TechniqueDefinition; 44] = [
         cooldown_ticks: 300,
         range: 0.0,
         icon_texture: "bong-client:textures/gui/skill/zhenmai_harden.png",
+        category: SkillCategory::Defense,
     },
     TechniqueDefinition {
         id: "zhenmai.sever_chain",
@@ -371,6 +396,7 @@ pub const TECHNIQUE_DEFINITIONS: [TechniqueDefinition; 44] = [
         cooldown_ticks: 1200,
         range: 1.0,
         icon_texture: "bong-client:textures/gui/skill/zhenmai_sever_chain.png",
+        category: SkillCategory::Buff,
     },
     TechniqueDefinition {
         id: "woliu.vortex",
@@ -388,6 +414,7 @@ pub const TECHNIQUE_DEFINITIONS: [TechniqueDefinition; 44] = [
         cooldown_ticks: 20,
         range: 0.0,
         icon_texture: "bong:textures/gui/skill/woliu_vortex.png",
+        category: SkillCategory::Buff,
     },
     TechniqueDefinition {
         id: "woliu.hold",
@@ -405,6 +432,7 @@ pub const TECHNIQUE_DEFINITIONS: [TechniqueDefinition; 44] = [
         cooldown_ticks: 10,
         range: 0.0,
         icon_texture: "bong:textures/gui/skill/woliu_hold.png",
+        category: SkillCategory::Buff,
     },
     TechniqueDefinition {
         id: "woliu.burst",
@@ -422,6 +450,7 @@ pub const TECHNIQUE_DEFINITIONS: [TechniqueDefinition; 44] = [
         cooldown_ticks: 100,
         range: 1.0,
         icon_texture: "bong:textures/gui/skill/woliu_burst.png",
+        category: SkillCategory::Attack,
     },
     TechniqueDefinition {
         id: "woliu.mouth",
@@ -439,6 +468,7 @@ pub const TECHNIQUE_DEFINITIONS: [TechniqueDefinition; 44] = [
         cooldown_ticks: 160,
         range: 30.0,
         icon_texture: "bong:textures/gui/skill/woliu_mouth.png",
+        category: SkillCategory::Attack,
     },
     TechniqueDefinition {
         id: "woliu.pull",
@@ -456,6 +486,7 @@ pub const TECHNIQUE_DEFINITIONS: [TechniqueDefinition; 44] = [
         cooldown_ticks: 600,
         range: 30.0,
         icon_texture: "bong:textures/gui/skill/woliu_pull.png",
+        category: SkillCategory::Attack,
     },
     TechniqueDefinition {
         id: "woliu.heart",
@@ -473,6 +504,7 @@ pub const TECHNIQUE_DEFINITIONS: [TechniqueDefinition; 44] = [
         cooldown_ticks: 400,
         range: 100.0,
         icon_texture: "bong:textures/gui/skill/woliu_heart.png",
+        category: SkillCategory::Attack,
     },
     TechniqueDefinition {
         id: "woliu.vacuum_palm",
@@ -487,6 +519,7 @@ pub const TECHNIQUE_DEFINITIONS: [TechniqueDefinition; 44] = [
         cooldown_ticks: 60,
         range: 8.0,
         icon_texture: "bong:textures/gui/skill/woliu_mouth.png",
+        category: SkillCategory::Attack,
     },
     TechniqueDefinition {
         id: "woliu.vortex_shield",
@@ -501,6 +534,7 @@ pub const TECHNIQUE_DEFINITIONS: [TechniqueDefinition; 44] = [
         cooldown_ticks: 240,
         range: 2.0,
         icon_texture: "bong:textures/gui/skill/woliu_hold.png",
+        category: SkillCategory::Defense,
     },
     TechniqueDefinition {
         id: "woliu.vacuum_lock",
@@ -515,6 +549,7 @@ pub const TECHNIQUE_DEFINITIONS: [TechniqueDefinition; 44] = [
         cooldown_ticks: 300,
         range: 12.0,
         icon_texture: "bong:textures/gui/skill/woliu_pull.png",
+        category: SkillCategory::Control,
     },
     TechniqueDefinition {
         id: "woliu.vortex_resonance",
@@ -529,6 +564,7 @@ pub const TECHNIQUE_DEFINITIONS: [TechniqueDefinition; 44] = [
         cooldown_ticks: 400,
         range: 6.0,
         icon_texture: "bong:textures/gui/skill/woliu_heart.png",
+        category: SkillCategory::Control,
     },
     TechniqueDefinition {
         id: "woliu.turbulence_burst",
@@ -543,6 +579,7 @@ pub const TECHNIQUE_DEFINITIONS: [TechniqueDefinition; 44] = [
         cooldown_ticks: 600,
         range: 6.0,
         icon_texture: "bong:textures/gui/skill/woliu_burst.png",
+        category: SkillCategory::Attack,
     },
     TechniqueDefinition {
         id: "dugu.shoot_needle",
@@ -557,6 +594,7 @@ pub const TECHNIQUE_DEFINITIONS: [TechniqueDefinition; 44] = [
         cooldown_ticks: 12,
         range: 50.0,
         icon_texture: "bong:textures/gui/skill/dugu_shoot_needle.png",
+        category: SkillCategory::Attack,
     },
     TechniqueDefinition {
         id: "dugu.infuse_poison",
@@ -571,6 +609,7 @@ pub const TECHNIQUE_DEFINITIONS: [TechniqueDefinition; 44] = [
         cooldown_ticks: 40,
         range: 0.0,
         icon_texture: "bong:textures/gui/skill/dugu_infuse_poison.png",
+        category: SkillCategory::Buff,
     },
     TechniqueDefinition {
         id: "tuike.don",
@@ -585,6 +624,7 @@ pub const TECHNIQUE_DEFINITIONS: [TechniqueDefinition; 44] = [
         cooldown_ticks: 20,
         range: 0.0,
         icon_texture: "bong-client:textures/gui/skill/tuike_don.png",
+        category: SkillCategory::Buff,
     },
     TechniqueDefinition {
         id: "tuike.shed",
@@ -599,6 +639,7 @@ pub const TECHNIQUE_DEFINITIONS: [TechniqueDefinition; 44] = [
         cooldown_ticks: 160,
         range: 0.0,
         icon_texture: "bong-client:textures/gui/skill/tuike_shed.png",
+        category: SkillCategory::Buff,
     },
     TechniqueDefinition {
         id: "tuike.transfer_taint",
@@ -613,6 +654,7 @@ pub const TECHNIQUE_DEFINITIONS: [TechniqueDefinition; 44] = [
         cooldown_ticks: 100,
         range: 0.0,
         icon_texture: "bong-client:textures/gui/skill/tuike_transfer_taint.png",
+        category: SkillCategory::Buff,
     },
     TechniqueDefinition {
         id: "anqi.charge_carrier",
@@ -630,6 +672,7 @@ pub const TECHNIQUE_DEFINITIONS: [TechniqueDefinition; 44] = [
         cooldown_ticks: 400,
         range: 0.0,
         icon_texture: "bong:textures/gui/skill/anqi_charge_carrier.png",
+        category: SkillCategory::Buff,
     },
     TechniqueDefinition {
         id: "anqi.single_snipe",
@@ -657,6 +700,7 @@ pub const TECHNIQUE_DEFINITIONS: [TechniqueDefinition; 44] = [
         cooldown_ticks: 60,
         range: 80.0,
         icon_texture: "bong:textures/gui/skill/anqi_single_snipe.png",
+        category: SkillCategory::Attack,
     },
     TechniqueDefinition {
         id: "anqi.multi_shot",
@@ -674,6 +718,7 @@ pub const TECHNIQUE_DEFINITIONS: [TechniqueDefinition; 44] = [
         cooldown_ticks: 240,
         range: 30.0,
         icon_texture: "bong:textures/gui/skill/anqi_multi_shot.png",
+        category: SkillCategory::Attack,
     },
     TechniqueDefinition {
         id: "anqi.soul_inject",
@@ -691,6 +736,7 @@ pub const TECHNIQUE_DEFINITIONS: [TechniqueDefinition; 44] = [
         cooldown_ticks: 360,
         range: 50.0,
         icon_texture: "bong:textures/gui/skill/anqi_soul_inject.png",
+        category: SkillCategory::Attack,
     },
     TechniqueDefinition {
         id: "anqi.armor_pierce",
@@ -708,6 +754,7 @@ pub const TECHNIQUE_DEFINITIONS: [TechniqueDefinition; 44] = [
         cooldown_ticks: 500,
         range: 80.0,
         icon_texture: "bong:textures/gui/skill/anqi_armor_pierce.png",
+        category: SkillCategory::Attack,
     },
     TechniqueDefinition {
         id: "anqi.echo_fractal",
@@ -725,6 +772,7 @@ pub const TECHNIQUE_DEFINITIONS: [TechniqueDefinition; 44] = [
         cooldown_ticks: 6000,
         range: 150.0,
         icon_texture: "bong:textures/gui/skill/anqi_echo_fractal.png",
+        category: SkillCategory::Attack,
     },
     TechniqueDefinition {
         id: "body.guangbo_ticao",
@@ -739,6 +787,7 @@ pub const TECHNIQUE_DEFINITIONS: [TechniqueDefinition; 44] = [
         cooldown_ticks: 200,
         range: 0.0,
         icon_texture: "bong:textures/gui/skill/body_guangbo_ticao.png",
+        category: SkillCategory::Buff,
     },
     // plan-sword-path-v2 P0：剑道五招纳入官方技能注册表，使残卷可被
     // `read_combat_technique_scroll` / `learn_technique_if_allowed` 识别。
@@ -755,6 +804,7 @@ pub const TECHNIQUE_DEFINITIONS: [TechniqueDefinition; 44] = [
         cooldown_ticks: 40,
         range: 4.0,
         icon_texture: "bong:textures/gui/skill/sword_condense_edge.png",
+        category: SkillCategory::Attack,
     },
     TechniqueDefinition {
         id: "sword_path.qi_slash",
@@ -769,6 +819,7 @@ pub const TECHNIQUE_DEFINITIONS: [TechniqueDefinition; 44] = [
         cooldown_ticks: 60,
         range: 8.0,
         icon_texture: "bong:textures/gui/skill/sword_qi_slash.png",
+        category: SkillCategory::Attack,
     },
     TechniqueDefinition {
         id: "sword_path.resonance",
@@ -783,6 +834,7 @@ pub const TECHNIQUE_DEFINITIONS: [TechniqueDefinition; 44] = [
         cooldown_ticks: 120,
         range: 6.0,
         icon_texture: "bong:textures/gui/skill/sword_resonance.png",
+        category: SkillCategory::Control,
     },
     TechniqueDefinition {
         id: "sword_path.manifest",
@@ -797,6 +849,7 @@ pub const TECHNIQUE_DEFINITIONS: [TechniqueDefinition; 44] = [
         cooldown_ticks: 200,
         range: 5.0,
         icon_texture: "bong:textures/gui/skill/sword_manifest.png",
+        category: SkillCategory::Attack,
     },
     TechniqueDefinition {
         id: "sword_path.heaven_gate",
@@ -811,6 +864,7 @@ pub const TECHNIQUE_DEFINITIONS: [TechniqueDefinition; 44] = [
         cooldown_ticks: u32::MAX,
         range: 100.0,
         icon_texture: "bong:textures/gui/skill/sword_heaven_gate.png",
+        category: SkillCategory::Attack,
     },
 ];
 
@@ -1005,6 +1059,139 @@ mod tests {
                 .map(|meridian| meridian.channel)
                 .collect::<Vec<_>>();
             assert_eq!(channels, ["Lung", "Heart"]);
+        }
+    }
+
+    #[test]
+    fn skill_category_pin_attack() {
+        for id in [
+            "sword.cleave",
+            "sword.thrust",
+            "movement.dash",
+            "burst_meridian.beng_quan",
+            "burst_meridian.tie_shan_kao",
+            "burst_meridian.xue_beng_bu",
+            "bao_mai.full_power_charge",
+            "bao_mai.full_power_release",
+            "woliu.burst",
+            "woliu.mouth",
+            "woliu.pull",
+            "woliu.heart",
+            "woliu.vacuum_palm",
+            "woliu.turbulence_burst",
+            "dugu.shoot_needle",
+            "anqi.single_snipe",
+            "anqi.multi_shot",
+            "anqi.soul_inject",
+            "anqi.armor_pierce",
+            "anqi.echo_fractal",
+            "sword_path.condense_edge",
+            "sword_path.qi_slash",
+            "sword_path.manifest",
+            "sword_path.heaven_gate",
+        ] {
+            let def = technique_definition(id).unwrap();
+            assert_eq!(def.category, SkillCategory::Attack, "{id} should be Attack");
+        }
+    }
+
+    #[test]
+    fn skill_category_pin_defense() {
+        for id in [
+            "sword.parry",
+            "zhenmai.parry",
+            "zhenmai.multipoint",
+            "zhenmai.harden",
+            "burst_meridian.ni_mai_hu_ti",
+            "woliu.vortex_shield",
+        ] {
+            let def = technique_definition(id).unwrap();
+            assert_eq!(
+                def.category,
+                SkillCategory::Defense,
+                "{id} should be Defense"
+            );
+        }
+    }
+
+    #[test]
+    fn skill_category_pin_buff() {
+        for id in [
+            "sword.infuse",
+            "woliu.vortex",
+            "woliu.hold",
+            "tuike.don",
+            "tuike.shed",
+            "tuike.transfer_taint",
+            "body.guangbo_ticao",
+            "anqi.charge_carrier",
+            "dugu.infuse_poison",
+            "zhenmai.sever_chain",
+        ] {
+            let def = technique_definition(id).unwrap();
+            assert_eq!(def.category, SkillCategory::Buff, "{id} should be Buff");
+        }
+    }
+
+    #[test]
+    fn skill_category_pin_control() {
+        for id in [
+            "woliu.vacuum_lock",
+            "woliu.vortex_resonance",
+            "sword_path.resonance",
+        ] {
+            let def = technique_definition(id).unwrap();
+            assert_eq!(
+                def.category,
+                SkillCategory::Control,
+                "{id} should be Control"
+            );
+        }
+    }
+
+    #[test]
+    fn skill_category_pin_heal() {
+        let def = technique_definition("zhenmai.neutralize").unwrap();
+        assert_eq!(
+            def.category,
+            SkillCategory::Heal,
+            "zhenmai.neutralize should be Heal"
+        );
+    }
+
+    #[test]
+    fn skill_category_all_variants_covered() {
+        use std::collections::HashSet;
+        let categories: HashSet<SkillCategory> = TECHNIQUE_DEFINITIONS
+            .iter()
+            .map(|def| def.category)
+            .collect();
+        assert!(
+            categories.contains(&SkillCategory::Attack),
+            "Attack must have at least one technique"
+        );
+        assert!(
+            categories.contains(&SkillCategory::Defense),
+            "Defense must have at least one technique"
+        );
+        assert!(
+            categories.contains(&SkillCategory::Buff),
+            "Buff must have at least one technique"
+        );
+        assert!(
+            categories.contains(&SkillCategory::Control),
+            "Control must have at least one technique"
+        );
+        assert!(
+            categories.contains(&SkillCategory::Heal),
+            "Heal must have at least one technique"
+        );
+    }
+
+    #[test]
+    fn every_technique_has_category() {
+        for def in &TECHNIQUE_DEFINITIONS {
+            let _ = def.category;
         }
     }
 }
