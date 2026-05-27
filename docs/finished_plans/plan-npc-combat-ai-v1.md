@@ -590,13 +590,14 @@ Far tier NPC 被 despawn（LOD 切 Dormant 或被回收）时：
 | `9f40f7350` | 2026-05-27 | P3.3-P3.6 LOD 战斗路由 + 过渡清理 + 触发 + despawn 安全 |
 | `86c19f33f` | 2026-05-27 | P4.1 集成测试 25 条 |
 | `aea233795` | 2026-05-27 | P4.2 数值校准常量提取 |
+| `2042835c0` | 2026-05-27 | fix: NPC SkillFn qi 守恒 + LodTransitionCleaned marker（review 修复） |
 
 ### 测试结果
 
 ```
 cd server && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test
-→ 6582 passed, 0 failed, 1 ignored
-NPC 战斗 AI 相关测试：161 条
+→ 6587 passed, 0 failed, 1 ignored
+NPC 战斗 AI 相关测试：166 条（含 5 条 qi 守恒 pin 测试）
 ```
 
 ### 跨仓库核验
