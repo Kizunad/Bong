@@ -7,9 +7,9 @@ use crate::cultivation::components::Realm;
 use crate::npc::brain::{
     AgeingScorer, CultivateAction, CultivateState, CultivationDriveHistory, CultivationDriveScorer,
     CuriosityScorer, FleeAction, GoToPoiAction, MeleeAttackAction, MeleeRangeScorer,
-    PlayerProximityScorer, ReturnHomeAction, ReturnHomeScorer, SeclusionAction, SeclusionScorer,
-    StallAction, StartDuXuAction, TradeStallScorer, TribulationReadyScorer, WanderScorer,
-    WanderState,
+    NpcDefenseAction, NpcDefenseScorer, PlayerProximityScorer, ReturnHomeAction, ReturnHomeScorer,
+    SeclusionAction, SeclusionScorer, StallAction, StartDuXuAction, TradeStallScorer,
+    TribulationReadyScorer, WanderScorer, WanderState,
 };
 use crate::npc::farming_brain::{
     HarvestAction, LingtianFarmingScorer, MigrateAction, PlantAction, ReplenishAction, TillAction,
@@ -172,6 +172,7 @@ pub(crate) fn rogue_npc_thinker() -> ThinkerBuilder {
         .when(NpcHealScorer, NpcHealAction)
         .when(NpcTechniqueScorer, NpcTechniqueAction)
         .when(MeleeRangeScorer, MeleeAttackAction)
+        .when(NpcDefenseScorer, NpcDefenseAction::default())
         .when(PlayerProximityScorer, FleeAction)
         .when(ReturnHomeScorer, ReturnHomeAction)
         .when(TradeStallScorer, StallAction)
@@ -191,6 +192,7 @@ pub(crate) fn scattered_cultivator_thinker() -> ThinkerBuilder {
         .when(LingtianFarmingScorer::replenish(), ReplenishAction)
         .when(LingtianFarmingScorer::plant(), PlantAction)
         .when(LingtianFarmingScorer::till(), TillAction)
+        .when(NpcDefenseScorer, NpcDefenseAction::default())
         .when(PlayerProximityScorer, FleeAction)
         .when(ReturnHomeScorer, ReturnHomeAction)
         .when(TradeStallScorer, StallAction)
