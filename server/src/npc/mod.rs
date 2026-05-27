@@ -5,6 +5,8 @@ pub mod brain;
 pub mod brain_rat;
 pub mod brain_whale;
 #[cfg(test)]
+mod combat_ai_integration_test;
+#[cfg(test)]
 mod combat_gear_integration_test;
 pub mod combat_power;
 pub mod dormant;
