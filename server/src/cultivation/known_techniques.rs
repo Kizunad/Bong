@@ -36,7 +36,7 @@ impl KnownTechniques {
     }
 }
 
-const TECHNIQUE_IDS: [&str; 44] = [
+const TECHNIQUE_IDS: [&str; 47] = [
     "sword.cleave",
     "sword.thrust",
     "sword.parry",
@@ -81,6 +81,9 @@ const TECHNIQUE_IDS: [&str; 44] = [
     "sword_path.resonance",
     "sword_path.manifest",
     "sword_path.heaven_gate",
+    "npc.heal_basic",
+    "npc.buff_speed",
+    "npc.buff_defense",
 ];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -126,7 +129,7 @@ const WOLIU_V3_REQUIRED_MERIDIANS: [TechniqueRequiredMeridian; 2] = [
     },
 ];
 
-pub const TECHNIQUE_DEFINITIONS: [TechniqueDefinition; 44] = [
+pub const TECHNIQUE_DEFINITIONS: [TechniqueDefinition; 47] = [
     TechniqueDefinition {
         id: "sword.cleave",
         display_name: "劈",
@@ -866,6 +869,84 @@ pub const TECHNIQUE_DEFINITIONS: [TechniqueDefinition; 44] = [
         icon_texture: "bong:textures/gui/skill/sword_heaven_gate.png",
         category: SkillCategory::Attack,
     },
+    TechniqueDefinition {
+        id: "npc.heal_basic",
+        display_name: "基础回血",
+        grade: "common",
+        description: "NPC 真元调理伤势，降低伤口严重度并恢复生命值。",
+        required_realm: "Induce",
+        required_meridians: &NPC_HEAL_REQUIRED_MERIDIANS,
+        qi_cost: 8.0,
+        stamina_cost: 0.0,
+        cast_ticks: 20,
+        cooldown_ticks: 200,
+        range: 0.0,
+        icon_texture: "bong:textures/gui/skill/npc_heal_basic.png",
+        category: SkillCategory::Heal,
+    },
+    TechniqueDefinition {
+        id: "npc.buff_speed",
+        display_name: "疾行术",
+        grade: "common",
+        description: "NPC 以真元加速经脉运转，短时提升移动速度。",
+        required_realm: "Condense",
+        required_meridians: &NPC_BUFF_SPEED_REQUIRED_MERIDIANS,
+        qi_cost: 5.0,
+        stamina_cost: 0.0,
+        cast_ticks: 10,
+        cooldown_ticks: 400,
+        range: 0.0,
+        icon_texture: "bong:textures/gui/skill/npc_buff_speed.png",
+        category: SkillCategory::Buff,
+    },
+    TechniqueDefinition {
+        id: "npc.buff_defense",
+        display_name: "护体术",
+        grade: "common",
+        description: "NPC 以真元凝护周身，短时减免受到的伤害。",
+        required_realm: "Condense",
+        required_meridians: &NPC_BUFF_DEFENSE_REQUIRED_MERIDIANS,
+        qi_cost: 6.0,
+        stamina_cost: 0.0,
+        cast_ticks: 10,
+        cooldown_ticks: 400,
+        range: 0.0,
+        icon_texture: "bong:textures/gui/skill/npc_buff_defense.png",
+        category: SkillCategory::Buff,
+    },
+];
+
+const NPC_HEAL_REQUIRED_MERIDIANS: [TechniqueRequiredMeridian; 2] = [
+    TechniqueRequiredMeridian {
+        channel: "Spleen",
+        min_health: 0.01,
+    },
+    TechniqueRequiredMeridian {
+        channel: "Kidney",
+        min_health: 0.01,
+    },
+];
+
+const NPC_BUFF_SPEED_REQUIRED_MERIDIANS: [TechniqueRequiredMeridian; 2] = [
+    TechniqueRequiredMeridian {
+        channel: "Stomach",
+        min_health: 0.01,
+    },
+    TechniqueRequiredMeridian {
+        channel: "Bladder",
+        min_health: 0.01,
+    },
+];
+
+const NPC_BUFF_DEFENSE_REQUIRED_MERIDIANS: [TechniqueRequiredMeridian; 2] = [
+    TechniqueRequiredMeridian {
+        channel: "Lung",
+        min_health: 0.01,
+    },
+    TechniqueRequiredMeridian {
+        channel: "Heart",
+        min_health: 0.01,
+    },
 ];
 
 const SWORD_PATH_BASE_MERIDIANS: [TechniqueRequiredMeridian; 2] = [
@@ -964,9 +1045,9 @@ mod tests {
     }
 
     #[test]
-    fn dev_default_has_all_44() {
+    fn dev_default_has_all_47() {
         let dev = KnownTechniques::dev_default();
-        assert_eq!(dev.entries.len(), 44);
+        assert_eq!(dev.entries.len(), 47);
         assert!(dev
             .entries
             .iter()
@@ -1127,6 +1208,8 @@ mod tests {
             "anqi.charge_carrier",
             "dugu.infuse_poison",
             "zhenmai.sever_chain",
+            "npc.buff_speed",
+            "npc.buff_defense",
         ] {
             let def = technique_definition(id).unwrap();
             assert_eq!(def.category, SkillCategory::Buff, "{id} should be Buff");
@@ -1151,12 +1234,10 @@ mod tests {
 
     #[test]
     fn skill_category_pin_heal() {
-        let def = technique_definition("zhenmai.neutralize").unwrap();
-        assert_eq!(
-            def.category,
-            SkillCategory::Heal,
-            "zhenmai.neutralize should be Heal"
-        );
+        for id in ["zhenmai.neutralize", "npc.heal_basic"] {
+            let def = technique_definition(id).unwrap();
+            assert_eq!(def.category, SkillCategory::Heal, "{id} should be Heal");
+        }
     }
 
     #[test]
@@ -1193,5 +1274,42 @@ mod tests {
         for def in &TECHNIQUE_DEFINITIONS {
             let _ = def.category;
         }
+    }
+
+    #[test]
+    fn npc_heal_basic_definition_pin() {
+        let def = technique_definition("npc.heal_basic").expect("npc.heal_basic must exist");
+        assert_eq!(def.category, SkillCategory::Heal);
+        assert_eq!(def.required_realm, "Induce");
+        assert_eq!(def.qi_cost, 8.0);
+        assert_eq!(def.cooldown_ticks, 200);
+        assert_eq!(def.cast_ticks, 20);
+        assert_eq!(def.range, 0.0);
+        let channels: Vec<&str> = def.required_meridians.iter().map(|m| m.channel).collect();
+        assert_eq!(channels, ["Spleen", "Kidney"]);
+    }
+
+    #[test]
+    fn npc_buff_speed_definition_pin() {
+        let def = technique_definition("npc.buff_speed").expect("npc.buff_speed must exist");
+        assert_eq!(def.category, SkillCategory::Buff);
+        assert_eq!(def.required_realm, "Condense");
+        assert_eq!(def.qi_cost, 5.0);
+        assert_eq!(def.cooldown_ticks, 400);
+        assert_eq!(def.cast_ticks, 10);
+        let channels: Vec<&str> = def.required_meridians.iter().map(|m| m.channel).collect();
+        assert_eq!(channels, ["Stomach", "Bladder"]);
+    }
+
+    #[test]
+    fn npc_buff_defense_definition_pin() {
+        let def = technique_definition("npc.buff_defense").expect("npc.buff_defense must exist");
+        assert_eq!(def.category, SkillCategory::Buff);
+        assert_eq!(def.required_realm, "Condense");
+        assert_eq!(def.qi_cost, 6.0);
+        assert_eq!(def.cooldown_ticks, 400);
+        assert_eq!(def.cast_ticks, 10);
+        let channels: Vec<&str> = def.required_meridians.iter().map(|m| m.channel).collect();
+        assert_eq!(channels, ["Lung", "Heart"]);
     }
 }
