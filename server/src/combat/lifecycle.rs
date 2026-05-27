@@ -25,7 +25,7 @@ use crate::cultivation::{
     color::PracticeLog,
     components::{Karma, QiColor},
 };
-use crate::fauna::components::{BeastKind, FaunaTag};
+use crate::fauna::components::FaunaTag;
 use crate::inventory::{
     instantiate_inventory_from_loadout, DeathDropAnchor, DefaultLoadout,
     InventoryInstanceIdAllocator, PlayerInventory,
@@ -786,9 +786,11 @@ pub fn near_death_tick(
 
 fn should_terminate_npc_without_near_death_wait(
     npc_marker: Option<&NpcMarker>,
-    fauna_tag: Option<&FaunaTag>,
+    _fauna_tag: Option<&FaunaTag>,
 ) -> bool {
-    npc_marker.is_some() && fauna_tag.is_some_and(|tag| matches!(tag.beast_kind, BeastKind::Rat))
+    // All NPCs skip the NearDeath wait window and go straight to Terminated.
+    // NearDeath is only meaningful for players who need a revival decision window.
+    npc_marker.is_some()
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -2624,9 +2626,10 @@ mod tests {
     }
 
     #[test]
-    fn near_death_non_rat_npc_waits_for_deadline() {
+    fn near_death_non_rat_npc_terminates_immediately() {
+        // All NPCs skip the NearDeath wait window — only players use it.
         let mut app = App::new();
-        let (settings, root) = persistence_settings("spider-near-death-waits");
+        let (settings, root) = persistence_settings("spider-near-death-immediate");
         app.insert_resource(settings);
         app.insert_resource(CombatClock { tick: 200 });
         app.add_event::<PlayerRevived>();
@@ -2639,7 +2642,7 @@ mod tests {
             .world_mut()
             .spawn((
                 Lifecycle {
-                    character_id: "spider-waits".to_string(),
+                    character_id: "spider-immediate".to_string(),
                     state: LifecycleState::NearDeath,
                     near_death_deadline_tick: Some(
                         200 + crate::combat::components::NEAR_DEATH_WINDOW_TICKS,
@@ -2662,11 +2665,11 @@ mod tests {
         app.update();
 
         let lifecycle = app.world().entity(entity).get::<Lifecycle>().unwrap();
-        assert_eq!(lifecycle.state, LifecycleState::NearDeath);
+        assert_eq!(lifecycle.state, LifecycleState::Terminated);
         assert_eq!(
             app.world().resource::<Events<PlayerTerminated>>().len(),
-            0,
-            "non-rat NPC should wait for normal near-death deadline"
+            1,
+            "all NPCs should terminate immediately without near-death wait"
         );
 
         let _ = fs::remove_dir_all(root);

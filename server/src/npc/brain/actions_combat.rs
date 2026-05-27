@@ -5,7 +5,7 @@ use valence::prelude::{
     With, Without,
 };
 
-use crate::combat::components::StatusEffects;
+use crate::combat::components::{Lifecycle, LifecycleState, StatusEffects};
 use crate::combat::events::{AttackIntent, AttackSource, DefenseIntent, StatusEffectKind};
 use crate::combat::jiemai::jiemai_qi_cost_for_realm;
 use crate::combat::status::has_active_status;
@@ -241,6 +241,7 @@ impl ActionBuilder for MeleeAttackAction {
     }
 }
 
+#[allow(clippy::type_complexity)]
 pub(crate) fn melee_attack_action_system(
     mut actions: Query<(&Actor, &mut ActionState), With<MeleeAttackAction>>,
     mut npcs: Query<
@@ -249,6 +250,7 @@ pub(crate) fn melee_attack_action_system(
             &mut NpcBlackboard,
             &NpcMeleeProfile,
             &mut Navigator,
+            Option<&Lifecycle>,
         ),
         With<NpcMarker>,
     >,
@@ -260,16 +262,22 @@ pub(crate) fn melee_attack_action_system(
     for (Actor(actor), mut state) in &mut actions {
         match *state {
             ActionState::Requested => {
-                if let Ok((_, _, _, mut nav)) = npcs.get_mut(*actor) {
+                if let Ok((_, _, _, mut nav, _)) = npcs.get_mut(*actor) {
                     nav.stop();
                 }
                 *state = ActionState::Executing;
             }
             ActionState::Executing => {
-                let Ok((_npc_pos, mut bb, profile, _)) = npcs.get_mut(*actor) else {
+                let Ok((_npc_pos, mut bb, profile, _, lifecycle)) = npcs.get_mut(*actor) else {
                     *state = ActionState::Failure;
                     continue;
                 };
+
+                // NPC is not alive — abort attack action.
+                if lifecycle.is_some_and(|lc| lc.state != LifecycleState::Alive) {
+                    *state = ActionState::Failure;
+                    continue;
+                }
 
                 if bb.player_distance > profile.disengage_distance {
                     *state = ActionState::Success;
@@ -753,6 +761,80 @@ mod tests {
         assert!(
             captured.is_empty(),
             "npc should hold range instead of swinging outside reach"
+        );
+    }
+
+    // ─── Melee action lifecycle guard test ────────────────────────────────────
+
+    #[test]
+    fn melee_attack_action_non_alive_fails() {
+        use crate::combat::components::Lifecycle;
+
+        let mut app = App::new();
+        app.insert_resource(GameTick(120));
+        app.insert_resource(CapturedAttackIntents::default());
+        app.add_event::<AttackIntent>();
+        app.add_systems(
+            PreUpdate,
+            (
+                melee_attack_action_system,
+                capture_attack_intents.after(melee_attack_action_system),
+            ),
+        );
+
+        let target = app
+            .world_mut()
+            .spawn((ClientMarker, Position::new([12.0, 66.0, 10.0])))
+            .id();
+
+        let mut lifecycle = Lifecycle {
+            character_id: "npc_near_death".to_string(),
+            ..Default::default()
+        };
+        lifecycle.enter_near_death(10);
+
+        let npc = app
+            .world_mut()
+            .spawn((
+                NpcMarker,
+                Position::new([10.0, 66.0, 10.0]),
+                NpcBlackboard {
+                    nearest_player: Some(target),
+                    player_distance: 2.0,
+                    target_position: Some(DVec3::new(12.0, 66.0, 10.0)),
+                    ..Default::default()
+                },
+                NpcMeleeProfile::spear(),
+                Navigator::new(),
+                lifecycle,
+            ))
+            .id();
+        let action_entity = app
+            .world_mut()
+            .spawn((Actor(npc), MeleeAttackAction, ActionState::Requested))
+            .id();
+
+        // First update: Requested -> Executing
+        app.update();
+        // Second update: Executing -> Failure (lifecycle != Alive)
+        app.update();
+
+        let action_state = app
+            .world()
+            .get::<ActionState>(action_entity)
+            .expect("melee action entity should still exist");
+        assert_eq!(
+            *action_state,
+            ActionState::Failure,
+            "NearDeath NPC melee action should transition to Failure, got {:?}",
+            action_state
+        );
+
+        let captured = &app.world().resource::<CapturedAttackIntents>().0;
+        assert!(
+            captured.is_empty(),
+            "NearDeath NPC must not emit any AttackIntent, got {} intents",
+            captured.len()
         );
     }
 
