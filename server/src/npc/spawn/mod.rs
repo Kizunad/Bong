@@ -1525,6 +1525,7 @@ mod tests {
                 SurfaceInfo {
                     y: 66,
                     passable: true,
+                    water_y: i32::MIN,
                 }
             }
         }
@@ -1551,6 +1552,7 @@ mod tests {
                 SurfaceInfo {
                     y: 66,
                     passable: true,
+                    water_y: i32::MIN,
                 }
             }
         }
@@ -1573,6 +1575,7 @@ mod tests {
                 SurfaceInfo {
                     y: 66,
                     passable: false,
+                    water_y: i32::MIN,
                 }
             }
         }

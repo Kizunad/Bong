@@ -45,6 +45,7 @@ pub struct RemainsItemRecord {
 
 // plan-tsy-loot-v1 §1.2 — 上古遗物模板池。
 pub mod ancient_relics;
+pub mod external_container;
 // plan-tsy-loot-v1 §4 — 干尸 component。
 pub mod corpse;
 // plan-lingtian-process-v1 P1 — 在线 tick freshness cache + season/anqi multiplier.
@@ -1302,7 +1303,7 @@ fn f64_values_match(left: f64, right: f64) -> bool {
     (left - right).abs() <= f64::EPSILON
 }
 
-fn footprint_probe(row: u8, col: u8, grid_w: u8, grid_h: u8) -> PlacedItemState {
+pub(crate) fn footprint_probe(row: u8, col: u8, grid_w: u8, grid_h: u8) -> PlacedItemState {
     PlacedItemState {
         row,
         col,
@@ -4038,7 +4039,10 @@ fn equip_slot_wire_from_runtime(slot: &str) -> crate::schema::inventory::EquipSl
     }
 }
 
-fn placed_item_footprints_overlap(left: &PlacedItemState, right: &PlacedItemState) -> bool {
+pub(crate) fn placed_item_footprints_overlap(
+    left: &PlacedItemState,
+    right: &PlacedItemState,
+) -> bool {
     let left_row_start = u16::from(left.row);
     let left_row_end = left_row_start + u16::from(left.instance.grid_h);
     let left_col_start = u16::from(left.col);

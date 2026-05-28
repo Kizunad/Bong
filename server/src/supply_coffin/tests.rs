@@ -107,6 +107,44 @@ fn grade_from_str_rejects_unknown_and_empty() {
     assert_eq!(SupplyCoffinGrade::from_str("legendary"), None);
 }
 
+#[test]
+fn grade_loot_grid_matches_plan_spec() {
+    assert_eq!(
+        SupplyCoffinGrade::Common.loot_grid(),
+        (4, 3),
+        "Common loot grid should be 4×3"
+    );
+    assert_eq!(
+        SupplyCoffinGrade::Rare.loot_grid(),
+        (5, 4),
+        "Rare loot grid should be 5×4"
+    );
+    assert_eq!(
+        SupplyCoffinGrade::Precious.loot_grid(),
+        (6, 5),
+        "Precious loot grid should be 6×5"
+    );
+}
+
+#[test]
+fn grade_loot_timeout_secs_matches_plan_spec() {
+    assert_eq!(
+        SupplyCoffinGrade::Common.loot_timeout_secs(),
+        45,
+        "Common loot timeout should be 45s"
+    );
+    assert_eq!(
+        SupplyCoffinGrade::Rare.loot_timeout_secs(),
+        60,
+        "Rare loot timeout should be 60s"
+    );
+    assert_eq!(
+        SupplyCoffinGrade::Precious.loot_timeout_secs(),
+        90,
+        "Precious loot timeout should be 90s"
+    );
+}
+
 // =============================================================================
 // Loot table 静态校验
 // =============================================================================

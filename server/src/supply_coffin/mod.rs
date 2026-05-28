@@ -65,6 +65,26 @@ impl SupplyCoffinGrade {
         }
     }
 
+    /// Loot 格子尺寸（cols, rows）。P2 接入 ExternalContainer 后使用。
+    #[allow(dead_code)]
+    pub const fn loot_grid(self) -> (u8, u8) {
+        match self {
+            Self::Common => (4, 3),
+            Self::Rare => (5, 4),
+            Self::Precious => (6, 5),
+        }
+    }
+
+    /// 开棺后搜刮超时（秒，wall-clock）。P2 接入 ExternalContainer 后使用。
+    #[allow(dead_code)]
+    pub const fn loot_timeout_secs(self) -> u64 {
+        match self {
+            Self::Common => 45,
+            Self::Rare => 60,
+            Self::Precious => 90,
+        }
+    }
+
     /// schema / 日志 / dev 命令用的 snake_case 名。
     /// P3 dev cmd 实装前仅测试调用，故 `#[allow(dead_code)]`。
     #[allow(dead_code)]
@@ -125,7 +145,9 @@ pub struct SupplyCoffinRegistry {
     pub cooldowns: Vec<CoffinCooldown>,
     /// 刷新选点的 zone AABB（含 y 高度区间，y 用于将来 ChunkLayer 接入时的搜索上下界）。
     pub zone_aabb: (DVec3, DVec3),
-    /// 选点 fallback y 高度（ChunkLayer 集成前的默认地表 y）。
+    /// 历史遗留：raster 未加载时曾用此 y 做 fallback。当前 `pick_valid_pos`
+    /// 要求 terrain 必须存在，此字段仅保留 API 兼容。
+    #[allow(dead_code)]
     pub spawn_y: f64,
     /// splitmix64 内部状态——刷新选点 / loot 抽样用，确保单测可重放。
     pub rng_state: u64,
@@ -232,7 +254,7 @@ pub fn register(app: &mut App) {
 
     let ((min_x, min_z), (max_x, max_z)) = sword_sea_xz_bounds();
     // y 区间：sea_level 上下各留 16 格 buffer，给将来 ChunkLayer ground-height
-    // 查询用；当前刷新选点用 `spawn_y` 单 y。
+    // 查询用；刷新选点的 y 从 TerrainProvider 实时查询。
     let zone_aabb = (
         DVec3::new(f64::from(min_x), 48.0, f64::from(min_z)),
         DVec3::new(f64::from(max_x), 96.0, f64::from(max_z)),
