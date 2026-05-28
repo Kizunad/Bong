@@ -1894,4 +1894,126 @@ mod tests {
             other => panic!("expected ExternalContainerMove, got {other:?}"),
         }
     }
+
+    #[test]
+    fn external_container_move_with_max_ids() {
+        let json = format!(
+            r#"{{
+                "type": "external_container_move",
+                "v": 1,
+                "session_id": {max},
+                "instance_id": {max},
+                "from": {{"kind": "container", "container_id": "ext_1", "row": 0, "col": 0}},
+                "to": {{"kind": "container", "container_id": "body_pocket", "row": 0, "col": 0}}
+            }}"#,
+            max = u64::MAX
+        );
+        let req: ClientRequestV1 = serde_json::from_str(&json)
+            .expect("u64::MAX session_id/instance_id should be valid at schema level");
+        match req {
+            ClientRequestV1::ExternalContainerMove {
+                session_id,
+                instance_id,
+                ..
+            } => {
+                assert_eq!(session_id, u64::MAX, "session_id should be u64::MAX");
+                assert_eq!(instance_id, u64::MAX, "instance_id should be u64::MAX");
+            }
+            other => panic!("expected ExternalContainerMove, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn external_container_close_with_max_session_id() {
+        let json = format!(
+            r#"{{"type": "external_container_close", "v": 1, "session_id": {max}}}"#,
+            max = u64::MAX
+        );
+        let req: ClientRequestV1 = serde_json::from_str(&json)
+            .expect("u64::MAX session_id should be valid at schema level");
+        match req {
+            ClientRequestV1::ExternalContainerClose { session_id, .. } => {
+                assert_eq!(session_id, u64::MAX, "session_id should be u64::MAX");
+            }
+            other => panic!("expected ExternalContainerClose, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn external_container_move_rejects_invalid_location_kind() {
+        let json = r#"{
+            "type": "external_container_move",
+            "v": 1,
+            "session_id": 1,
+            "instance_id": 1,
+            "from": {"kind": "wormhole", "container_id": "ext_1", "row": 0, "col": 0},
+            "to": {"kind": "container", "container_id": "body_pocket", "row": 0, "col": 0}
+        }"#;
+        assert!(
+            serde_json::from_str::<ClientRequestV1>(json).is_err(),
+            "invalid location kind 'wormhole' should fail deserialization"
+        );
+    }
+
+    #[test]
+    fn external_container_move_equip_to_container() {
+        let json = r#"{
+            "type": "external_container_move",
+            "v": 1,
+            "session_id": 10,
+            "instance_id": 50,
+            "from": {"kind": "equip", "slot": "main_hand"},
+            "to": {"kind": "container", "container_id": "ext_10", "row": 1, "col": 2}
+        }"#;
+        let req: ClientRequestV1 =
+            serde_json::from_str(json).expect("equip→container should deserialize");
+        match req {
+            ClientRequestV1::ExternalContainerMove { from, to, .. } => {
+                assert!(
+                    matches!(from, InventoryLocationV1::Equip { .. }),
+                    "from should be Equip, got {from:?}"
+                );
+                match to {
+                    InventoryLocationV1::Container {
+                        container_id,
+                        row,
+                        col,
+                    } => {
+                        assert_eq!(container_id, "ext_10", "to container_id");
+                        assert_eq!(row, 1, "to row");
+                        assert_eq!(col, 2, "to col");
+                    }
+                    other => panic!("expected Container, got {other:?}"),
+                }
+            }
+            other => panic!("expected ExternalContainerMove, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn external_container_move_equip_to_equip() {
+        let json = r#"{
+            "type": "external_container_move",
+            "v": 1,
+            "session_id": 1,
+            "instance_id": 1,
+            "from": {"kind": "equip", "slot": "main_hand"},
+            "to": {"kind": "equip", "slot": "off_hand"}
+        }"#;
+        let req: ClientRequestV1 =
+            serde_json::from_str(json).expect("equip→equip should deserialize");
+        match req {
+            ClientRequestV1::ExternalContainerMove { from, to, .. } => {
+                assert!(
+                    matches!(from, InventoryLocationV1::Equip { .. }),
+                    "from should be Equip"
+                );
+                assert!(
+                    matches!(to, InventoryLocationV1::Equip { .. }),
+                    "to should be Equip"
+                );
+            }
+            other => panic!("expected ExternalContainerMove, got {other:?}"),
+        }
+    }
 }
