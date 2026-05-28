@@ -188,9 +188,9 @@ pub fn handle_supply_coffin_interact(
         commands.entity(ev.entity).insert(ext);
 
         let open_recipe = match active.grade {
-            SupplyCoffinGrade::Common => "supply_coffin_break_common",
-            SupplyCoffinGrade::Rare => "supply_coffin_break_rare",
-            SupplyCoffinGrade::Precious => "supply_coffin_break_precious",
+            SupplyCoffinGrade::Common => "supply_coffin_open_common",
+            SupplyCoffinGrade::Rare => "supply_coffin_open_rare",
+            SupplyCoffinGrade::Precious => "supply_coffin_open_precious",
         };
         audio.send(PlaySoundRecipeRequest {
             recipe_id: open_recipe.to_string(),
