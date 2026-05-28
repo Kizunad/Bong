@@ -73,6 +73,7 @@ pub const COMMAND_TREE_PATHS: &[&str] = &[
     "supply_coffin list",
     "supply_coffin reset",
     "supply_coffin spawn <grade:string>",
+    "supply_coffin tp",
     "technique active <id:string> <value:bool>",
     "technique add <id:string>",
     "technique give <id:string>",
