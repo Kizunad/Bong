@@ -137,7 +137,11 @@ message ServerDataEnvelope {
     TsyExitEvent            tsy_exit_event          = 116;
     TsyNpcSpawned           tsy_npc_spawned         = 117;
     TsySentinelPhaseChanged tsy_sentinel_phase_changed = 118;
-    // P2/P3 阶段继续追加 field 119..N。
+    // ─── plan-supply-coffin-loot-ui P1：外部容器 S2C ──────────────
+    LootContainerOpen       loot_container_open     = 119;
+    LootContainerUpdate     loot_container_update   = 120;
+    LootContainerClose      loot_container_close    = 121;
+    // P2/P3 阶段继续追加 field 122..N。
     // 字段编号一旦分配永不复用（buf breaking 检测保证）。
   }
 }
@@ -235,7 +239,10 @@ message ClientRequestEnvelope {
     StartSearch                 start_search                  = 82;
     CancelSearch                cancel_search                 = 83;
     ForgeStationPlace           forge_station_place           = 84;
-    // P2/P3 阶段继续追加 field 85..N。
+    // ─── plan-supply-coffin-loot-ui P1：外部容器 C2S ──────────────
+    ExternalContainerMove       external_container_move       = 85;
+    ExternalContainerCloseReq   external_container_close      = 86;
+    // P2/P3 阶段继续追加 field 87..N。
   }
 }
 
@@ -3551,4 +3558,40 @@ message ForgeStationPlace {
   int32  z                = 3;
   uint64 item_instance_id = 4;
   uint32 station_tier     = 5; // Rust u8
+}
+
+// ═══════════════════════════════════════════════════════════════
+// plan-supply-coffin-loot-ui P1：外部容器 S2C / C2S
+// ═══════════════════════════════════════════════════════════════
+
+message LootContainerOpen {
+  uint64                    session_id        = 1;
+  string                    source_kind       = 2; // JSON-encoded LootContainerSourceKindV1
+  uint32                    rows              = 3;
+  uint32                    cols              = 4;
+  repeated PlacedInventoryItem placed_items   = 5;
+  uint64                    timeout_wall_secs = 6;
+}
+
+message LootContainerUpdate {
+  uint64                    session_id    = 1;
+  repeated PlacedInventoryItem placed_items = 2;
+}
+
+message LootContainerClose {
+  uint64 session_id = 1;
+  string reason     = 2; // "timeout" / "distance" / "player_closed" / "coffin_destroyed"
+}
+
+// 与 Rust ClientRequestV1::ExternalContainerMove 精确对应。
+message ExternalContainerMove {
+  uint64            session_id  = 1;
+  uint64            instance_id = 2;
+  InventoryLocation from        = 3;
+  InventoryLocation to          = 4;
+}
+
+// 与 Rust ClientRequestV1::ExternalContainerClose 精确对应。
+message ExternalContainerCloseReq {
+  uint64 session_id = 1;
 }

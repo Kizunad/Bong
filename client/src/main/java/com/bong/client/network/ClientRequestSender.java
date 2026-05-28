@@ -455,6 +455,20 @@ public final class ClientRequestSender {
         dispatch(ClientRequestProtocol.encodeCraftCancel());
     }
 
+    // ─── plan-supply-coffin-loot-ui P1：外部容器 C2S ──────────────
+
+    public static void sendExternalContainerMove(
+        long sessionId, long instanceId,
+        ClientRequestProtocol.InvLocation from,
+        ClientRequestProtocol.InvLocation to
+    ) {
+        dispatch(ClientRequestProtocol.encodeExternalContainerMove(sessionId, instanceId, from, to));
+    }
+
+    public static void sendExternalContainerClose(long sessionId) {
+        dispatch(ClientRequestProtocol.encodeExternalContainerClose(sessionId));
+    }
+
     private static void dispatch(String json) {
         backend.send(CHANNEL, json.getBytes(StandardCharsets.UTF_8));
     }

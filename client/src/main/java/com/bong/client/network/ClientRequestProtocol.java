@@ -1174,6 +1174,25 @@ public final class ClientRequestProtocol {
         return obj.toString();
     }
 
+    // ─── plan-supply-coffin-loot-ui P1：外部容器 C2S ──────────────────
+
+    public static String encodeExternalContainerMove(
+        long sessionId, long instanceId, InvLocation from, InvLocation to
+    ) {
+        JsonObject obj = envelope("external_container_move");
+        obj.addProperty("session_id", sessionId);
+        obj.addProperty("instance_id", instanceId);
+        obj.add("from", from.toJson());
+        obj.add("to", to.toJson());
+        return obj.toString();
+    }
+
+    public static String encodeExternalContainerClose(long sessionId) {
+        JsonObject obj = envelope("external_container_close");
+        obj.addProperty("session_id", sessionId);
+        return obj.toString();
+    }
+
     private static String requireNonBlank(String value, String field) {
         if (value == null || value.isBlank()) {
             throw new IllegalArgumentException(field + " must not be blank");

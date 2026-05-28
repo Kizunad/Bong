@@ -199,6 +199,8 @@ pub struct CombatRequestParams<'w, 's> {
     pub age_bonus_rolls: Option<ResMut<'w, Events<AgeBonusRoll>>>,
     pub season_state: Option<Res<'w, WorldSeasonState>>,
     pub poison_pill_tx: Option<ResMut<'w, Events<ConsumePoisonPillIntent>>>,
+    pub ext_containers:
+        Query<'w, 's, &'static mut crate::inventory::external_container::ExternalContainer>,
 }
 
 #[derive(SystemParam)]
@@ -280,6 +282,9 @@ pub struct ClientRequestDispatchParams<'w> {
     // ─── plan-craft-v1 P2：通用手搓 intent ──────────────────
     pub craft_start_tx: Option<ResMut<'w, Events<crate::craft::CraftStartIntent>>>,
     pub craft_cancel_tx: Option<ResMut<'w, Events<crate::craft::CraftCancelIntent>>>,
+    // ─── plan-supply-coffin-loot-ui P2：外部容器 ──────────────────
+    pub ext_container_registry:
+        Option<ResMut<'w, crate::inventory::external_container::ExternalContainerRegistry>>,
 }
 
 #[derive(SystemParam)]
@@ -493,7 +498,9 @@ pub fn handle_client_request_payloads(
             | ClientRequestV1::ThrowCarrier { v, .. }
             | ClientRequestV1::AnqiContainerSwitch { v, .. }
             | ClientRequestV1::CraftStart { v, .. }
-            | ClientRequestV1::CraftCancel { v } => *v,
+            | ClientRequestV1::CraftCancel { v }
+            | ClientRequestV1::ExternalContainerMove { v, .. }
+            | ClientRequestV1::ExternalContainerClose { v, .. } => *v,
         };
         if v != SUPPORTED_VERSION {
             tracing::warn!(
@@ -1812,6 +1819,42 @@ pub fn handle_client_request_payloads(
                     continue;
                 };
                 cancel_search_tx.send(CancelSearchRequestEvent { player: ev.client });
+            }
+            // ── 外部容器 move / close ─────────────
+            ClientRequestV1::ExternalContainerMove {
+                session_id,
+                instance_id,
+                from,
+                to,
+                ..
+            } => {
+                handle_external_container_move(
+                    ev.client,
+                    session_id,
+                    instance_id,
+                    &from,
+                    &to,
+                    &mut dispatch,
+                    &mut combat_params,
+                    &mut inventories,
+                    &player_states,
+                    &skill_scroll_params.cultivations,
+                    &mut clients,
+                    &mut commands,
+                );
+            }
+            ClientRequestV1::ExternalContainerClose { session_id, .. } => {
+                handle_external_container_close(
+                    ev.client,
+                    session_id,
+                    &mut dispatch,
+                    &mut combat_params,
+                    &mut inventories,
+                    &player_states,
+                    &skill_scroll_params.cultivations,
+                    &mut clients,
+                    &mut commands,
+                );
             }
             // ── 灵田请求 ECS dispatch（plan-lingtian-v1 §1.2-§1.7）─────────
             ClientRequestV1::LingtianStartTill {
@@ -8888,6 +8931,543 @@ fn emit_shelflife_consume_events(
             bonus_strength: *bonus_strength,
         });
     }
+}
+
+// ── plan-supply-coffin-loot-ui P2：外部容器跨容器 move / close ──
+
+#[allow(clippy::too_many_arguments, clippy::needless_borrow)]
+fn handle_external_container_move(
+    player_entity: Entity,
+    session_id: u64,
+    instance_id: u64,
+    from: &crate::schema::inventory::InventoryLocationV1,
+    to: &crate::schema::inventory::InventoryLocationV1,
+    dispatch: &mut ClientRequestDispatchParams,
+    combat_params: &mut CombatRequestParams,
+    inventories: &mut Query<&mut PlayerInventory>,
+    player_states: &Query<&PlayerState>,
+    cultivations: &Query<&Cultivation>,
+    clients: &mut Query<(&Username, &mut Client)>,
+    _commands: &mut Commands,
+) {
+    use crate::inventory::external_container::{
+        place_item_into_container, remove_item_from_container,
+    };
+    use crate::network::inventory_snapshot_emit::item_view_from_instance;
+    use crate::schema::inventory::{InventoryLocationV1, PlacedInventoryItemV1};
+    use crate::schema::server_data::{LootContainerUpdateV1, ServerDataPayloadV1, ServerDataV1};
+
+    let Some(ext_reg) = dispatch.ext_container_registry.as_deref_mut() else {
+        tracing::warn!("[bong][network] external_container_move: registry missing");
+        return;
+    };
+
+    let Some(&coffin_entity) = ext_reg.sessions.get(&session_id) else {
+        tracing::warn!(
+            "[bong][network] external_container_move: unknown session {session_id} from {player_entity:?}"
+        );
+        return;
+    };
+
+    let Ok(mut ext) = combat_params.ext_containers.get_mut(coffin_entity) else {
+        tracing::warn!(
+            "[bong][network] external_container_move: ExternalContainer component missing on {coffin_entity:?}"
+        );
+        return;
+    };
+
+    if ext.opened_by != Some(player_entity) {
+        tracing::warn!(
+            "[bong][network] external_container_move: session {session_id} not owned by {player_entity:?}"
+        );
+        return;
+    }
+
+    let ext_container_id =
+        crate::inventory::external_container::ExternalContainer::container_id(session_id);
+
+    let is_from_ext = matches!(from, InventoryLocationV1::Container { container_id, .. } if *container_id == ext_container_id);
+    let is_to_ext = matches!(to, InventoryLocationV1::Container { container_id, .. } if *container_id == ext_container_id);
+
+    if is_from_ext == is_to_ext {
+        tracing::warn!(
+            "[bong][network] external_container_move: both endpoints on same side (from_ext={is_from_ext})"
+        );
+        resync_ext_and_inventory(
+            player_entity,
+            &ext,
+            inventories,
+            player_states,
+            cultivations,
+            clients,
+        );
+        return;
+    }
+
+    if is_from_ext {
+        // 外部容器 → 玩家背包
+        let InventoryLocationV1::Container {
+            row: to_row,
+            col: to_col,
+            container_id: to_container_id,
+            ..
+        } = to
+        else {
+            tracing::warn!(
+                "[bong][network] external_container_move: target must be container slot"
+            );
+            resync_ext_and_inventory(
+                player_entity,
+                &ext,
+                inventories,
+                player_states,
+                cultivations,
+                clients,
+            );
+            return;
+        };
+
+        let Some(removed) = remove_item_from_container(&mut ext.container, instance_id) else {
+            tracing::warn!(
+                "[bong][network] external_container_move: instance {instance_id} not found in ext container"
+            );
+            resync_ext_and_inventory(
+                player_entity,
+                &ext,
+                inventories,
+                player_states,
+                cultivations,
+                clients,
+            );
+            return;
+        };
+
+        let Ok(mut inventory) = inventories.get_mut(player_entity) else {
+            place_item_into_container(
+                &mut ext.container,
+                removed.row,
+                removed.col,
+                removed.instance,
+            )
+            .ok();
+            return;
+        };
+
+        let target_container = inventory
+            .containers
+            .iter()
+            .find(|c| c.id == *to_container_id);
+        let Some(target_container) = target_container else {
+            tracing::warn!(
+                "[bong][network] external_container_move: player container `{to_container_id}` not found"
+            );
+            place_item_into_container(
+                &mut ext.container,
+                removed.row,
+                removed.col,
+                removed.instance,
+            )
+            .ok();
+            resync_ext_and_inventory(
+                player_entity,
+                &ext,
+                inventories,
+                player_states,
+                cultivations,
+                clients,
+            );
+            return;
+        };
+
+        let (to_row, to_col) = match (u8::try_from(*to_row), u8::try_from(*to_col)) {
+            (Ok(r), Ok(c)) => (r, c),
+            _ => {
+                tracing::warn!(
+                    "[bong][network] external_container_move: row/col overflow (row={}, col={})",
+                    to_row,
+                    to_col
+                );
+                place_item_into_container(
+                    &mut ext.container,
+                    removed.row,
+                    removed.col,
+                    removed.instance,
+                )
+                .ok();
+                resync_ext_and_inventory(
+                    player_entity,
+                    &ext,
+                    inventories,
+                    player_states,
+                    cultivations,
+                    clients,
+                );
+                return;
+            }
+        };
+
+        if to_row + removed.instance.grid_h > target_container.rows
+            || to_col + removed.instance.grid_w > target_container.cols
+        {
+            place_item_into_container(
+                &mut ext.container,
+                removed.row,
+                removed.col,
+                removed.instance,
+            )
+            .ok();
+            resync_ext_and_inventory(
+                player_entity,
+                &ext,
+                inventories,
+                player_states,
+                cultivations,
+                clients,
+            );
+            return;
+        }
+
+        let probe = crate::inventory::footprint_probe(
+            to_row,
+            to_col,
+            removed.instance.grid_w,
+            removed.instance.grid_h,
+        );
+        let target_container = inventory
+            .containers
+            .iter()
+            .find(|c| c.id == *to_container_id)
+            .unwrap();
+        let overlaps = target_container
+            .items
+            .iter()
+            .any(|existing| crate::inventory::placed_item_footprints_overlap(&probe, existing));
+        if overlaps {
+            place_item_into_container(
+                &mut ext.container,
+                removed.row,
+                removed.col,
+                removed.instance,
+            )
+            .ok();
+            resync_ext_and_inventory(
+                player_entity,
+                &ext,
+                inventories,
+                player_states,
+                cultivations,
+                clients,
+            );
+            return;
+        }
+
+        let container_mut = inventory
+            .containers
+            .iter_mut()
+            .find(|c| c.id == *to_container_id)
+            .unwrap();
+        container_mut.items.push(crate::inventory::PlacedItemState {
+            row: to_row,
+            col: to_col,
+            instance: removed.instance,
+        });
+        inventory.revision.0 = inventory.revision.0.saturating_add(1);
+    } else {
+        // 玩家背包 → 外部容器
+        let InventoryLocationV1::Container {
+            row: to_row,
+            col: to_col,
+            ..
+        } = to
+        else {
+            tracing::warn!(
+                "[bong][network] external_container_move: ext target must be container slot"
+            );
+            resync_ext_and_inventory(
+                player_entity,
+                &ext,
+                inventories,
+                player_states,
+                cultivations,
+                clients,
+            );
+            return;
+        };
+
+        let Ok(mut inventory) = inventories.get_mut(player_entity) else {
+            return;
+        };
+
+        let mut found_item = None;
+        for container in inventory.containers.iter_mut() {
+            if let Some(idx) = container
+                .items
+                .iter()
+                .position(|p| p.instance.instance_id == instance_id)
+            {
+                found_item = Some(container.items.remove(idx));
+                break;
+            }
+        }
+
+        let Some(removed) = found_item else {
+            tracing::warn!(
+                "[bong][network] external_container_move: instance {instance_id} not in player inventory"
+            );
+            resync_ext_and_inventory(
+                player_entity,
+                &ext,
+                inventories,
+                player_states,
+                cultivations,
+                clients,
+            );
+            return;
+        };
+
+        let (to_row, to_col) = match (u8::try_from(*to_row), u8::try_from(*to_col)) {
+            (Ok(r), Ok(c)) => (r, c),
+            _ => {
+                tracing::warn!(
+                    "[bong][network] external_container_move: row/col overflow (row={}, col={})",
+                    to_row,
+                    to_col
+                );
+                // restore to player
+                let orig_container = inventory.containers.iter_mut().find(|c| {
+                    if let InventoryLocationV1::Container { container_id, .. } = from {
+                        c.id == *container_id
+                    } else {
+                        false
+                    }
+                });
+                if let Some(container) = orig_container {
+                    container.items.push(removed);
+                }
+                resync_ext_and_inventory(
+                    player_entity,
+                    &ext,
+                    inventories,
+                    player_states,
+                    cultivations,
+                    clients,
+                );
+                return;
+            }
+        };
+
+        match place_item_into_container(
+            &mut ext.container,
+            to_row,
+            to_col,
+            removed.instance.clone(),
+        ) {
+            Ok(()) => {
+                inventory.revision.0 = inventory.revision.0.saturating_add(1);
+            }
+            Err(reason) => {
+                tracing::warn!(
+                    "[bong][network] external_container_move: place into ext failed: {reason}"
+                );
+                // restore to player
+                let orig_container = inventory.containers.iter_mut().find(|c| {
+                    if let InventoryLocationV1::Container { container_id, .. } = from {
+                        c.id == *container_id
+                    } else {
+                        false
+                    }
+                });
+                if let Some(container) = orig_container {
+                    container.items.push(removed);
+                }
+                resync_ext_and_inventory(
+                    player_entity,
+                    &ext,
+                    inventories,
+                    player_states,
+                    cultivations,
+                    clients,
+                );
+                return;
+            }
+        }
+    }
+
+    // 成功——发 LootContainerUpdate + InventorySnapshot
+    let placed_items: Vec<PlacedInventoryItemV1> = ext
+        .container
+        .items
+        .iter()
+        .map(|p| PlacedInventoryItemV1 {
+            container_id: ext.container.id.clone(),
+            row: u64::from(p.row),
+            col: u64::from(p.col),
+            item: item_view_from_instance(&p.instance),
+        })
+        .collect();
+
+    let update_payload = ServerDataV1::new(ServerDataPayloadV1::LootContainerUpdate(
+        LootContainerUpdateV1 {
+            session_id,
+            placed_items,
+        },
+    ));
+
+    if let Ok(bytes) = serialize_server_data_payload(&update_payload) {
+        if let Ok((_username, mut client)) = clients.get_mut(player_entity) {
+            send_server_data_payload(&mut client, bytes.as_slice());
+        }
+    }
+
+    resync_inventory_only(
+        player_entity,
+        inventories,
+        player_states,
+        cultivations,
+        clients,
+    );
+}
+
+#[allow(clippy::too_many_arguments)]
+fn handle_external_container_close(
+    player_entity: Entity,
+    session_id: u64,
+    dispatch: &mut ClientRequestDispatchParams,
+    combat_params: &mut CombatRequestParams,
+    inventories: &mut Query<&mut PlayerInventory>,
+    player_states: &Query<&PlayerState>,
+    cultivations: &Query<&Cultivation>,
+    clients: &mut Query<(&Username, &mut Client)>,
+    _commands: &mut Commands,
+) {
+    use crate::schema::server_data::{
+        LootContainerCloseReasonV1, LootContainerCloseV1, ServerDataPayloadV1, ServerDataV1,
+    };
+
+    let Some(ext_reg) = dispatch.ext_container_registry.as_deref_mut() else {
+        return;
+    };
+
+    let Some(&coffin_entity) = ext_reg.sessions.get(&session_id) else {
+        tracing::warn!("[bong][network] external_container_close: unknown session {session_id}");
+        return;
+    };
+
+    let Ok(mut ext) = combat_params.ext_containers.get_mut(coffin_entity) else {
+        return;
+    };
+
+    if ext.opened_by != Some(player_entity) {
+        tracing::warn!(
+            "[bong][network] external_container_close: session {session_id} not owned by {player_entity:?}"
+        );
+        return;
+    }
+
+    let close_payload = ServerDataV1::new(ServerDataPayloadV1::LootContainerClose(
+        LootContainerCloseV1 {
+            session_id,
+            reason: LootContainerCloseReasonV1::PlayerClosed,
+        },
+    ));
+
+    if let Ok(bytes) = serialize_server_data_payload(&close_payload) {
+        if let Ok((_username, mut client)) = clients.get_mut(player_entity) {
+            send_server_data_payload(&mut client, bytes.as_slice());
+        }
+    }
+
+    // 释放锁——棺不碎，等 lifecycle tick 超时后碎裂
+    ext.opened_by = None;
+
+    resync_inventory_only(
+        player_entity,
+        inventories,
+        player_states,
+        cultivations,
+        clients,
+    );
+
+    tracing::info!(
+        "[bong][network] external_container_close: session {session_id} closed by player {player_entity:?}"
+    );
+}
+
+fn resync_ext_and_inventory(
+    player_entity: Entity,
+    ext: &crate::inventory::external_container::ExternalContainer,
+    inventories: &mut Query<&mut PlayerInventory>,
+    player_states: &Query<&PlayerState>,
+    cultivations: &Query<&Cultivation>,
+    clients: &mut Query<(&Username, &mut Client)>,
+) {
+    use crate::network::inventory_snapshot_emit::item_view_from_instance;
+    use crate::schema::inventory::PlacedInventoryItemV1;
+    use crate::schema::server_data::{LootContainerUpdateV1, ServerDataPayloadV1, ServerDataV1};
+
+    let placed_items: Vec<PlacedInventoryItemV1> = ext
+        .container
+        .items
+        .iter()
+        .map(|p| PlacedInventoryItemV1 {
+            container_id: ext.container.id.clone(),
+            row: u64::from(p.row),
+            col: u64::from(p.col),
+            item: item_view_from_instance(&p.instance),
+        })
+        .collect();
+
+    let update_payload = ServerDataV1::new(ServerDataPayloadV1::LootContainerUpdate(
+        LootContainerUpdateV1 {
+            session_id: ext.session_id,
+            placed_items,
+        },
+    ));
+
+    if let Ok(bytes) = serialize_server_data_payload(&update_payload) {
+        if let Ok((_username, mut client)) = clients.get_mut(player_entity) {
+            send_server_data_payload(&mut client, bytes.as_slice());
+        }
+    }
+
+    resync_inventory_only(
+        player_entity,
+        inventories,
+        player_states,
+        cultivations,
+        clients,
+    );
+}
+
+#[allow(clippy::needless_borrow)]
+fn resync_inventory_only(
+    player_entity: Entity,
+    inventories: &Query<&mut PlayerInventory>,
+    player_states: &Query<&PlayerState>,
+    cultivations: &Query<&Cultivation>,
+    clients: &mut Query<(&Username, &mut Client)>,
+) {
+    let Ok(inventory) = inventories.get(player_entity) else {
+        return;
+    };
+    let Ok(player_state) = player_states.get(player_entity) else {
+        return;
+    };
+    let Ok(cultivation) = cultivations.get(player_entity) else {
+        return;
+    };
+    let Ok((username, mut client)) = clients.get_mut(player_entity) else {
+        return;
+    };
+    send_inventory_snapshot_to_client(
+        player_entity,
+        &mut client,
+        username.as_str(),
+        &inventory,
+        player_state,
+        cultivation,
+        "external_container_resync",
+    );
 }
 
 #[cfg(test)]

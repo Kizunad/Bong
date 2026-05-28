@@ -700,4 +700,56 @@ public class ClientRequestProtocolTest {
         assertEquals(ClientRequestProtocol.MeridianId.TripleEnergizer,
             ClientRequestProtocol.toMeridianId(com.bong.client.inventory.model.MeridianChannel.TE));
     }
+
+    // ─── plan-supply-coffin-loot-ui P1：外部容器 C2S encode ──────────
+
+    @Test
+    void externalContainerMoveEncodesAllFields() {
+        String json = ClientRequestProtocol.encodeExternalContainerMove(
+            42, 100,
+            new ClientRequestProtocol.ContainerLoc("ext_42", 0, 1),
+            new ClientRequestProtocol.ContainerLoc("body_pocket", 2, 0)
+        );
+        com.google.gson.JsonObject obj = com.google.gson.JsonParser.parseString(json).getAsJsonObject();
+        assertEquals("external_container_move", obj.get("type").getAsString(),
+            "type should be external_container_move");
+        assertEquals(1, obj.get("v").getAsInt(), "version should be 1");
+        assertEquals(42, obj.get("session_id").getAsLong(), "session_id should be 42");
+        assertEquals(100, obj.get("instance_id").getAsLong(), "instance_id should be 100");
+
+        com.google.gson.JsonObject from = obj.getAsJsonObject("from");
+        assertEquals("container", from.get("kind").getAsString());
+        assertEquals("ext_42", from.get("container_id").getAsString());
+        assertEquals(0, from.get("row").getAsInt());
+        assertEquals(1, from.get("col").getAsInt());
+
+        com.google.gson.JsonObject to = obj.getAsJsonObject("to");
+        assertEquals("container", to.get("kind").getAsString());
+        assertEquals("body_pocket", to.get("container_id").getAsString());
+        assertEquals(2, to.get("row").getAsInt(), "to.row should be 2");
+        assertEquals(0, to.get("col").getAsInt(), "to.col should be 0");
+    }
+
+    @Test
+    void externalContainerCloseEncodesSessionId() {
+        String json = ClientRequestProtocol.encodeExternalContainerClose(99);
+        com.google.gson.JsonObject obj = com.google.gson.JsonParser.parseString(json).getAsJsonObject();
+        assertEquals("external_container_close", obj.get("type").getAsString(),
+            "type should be external_container_close");
+        assertEquals(1, obj.get("v").getAsInt(), "version should be 1");
+        assertEquals(99, obj.get("session_id").getAsLong(), "session_id should be 99");
+    }
+
+    @Test
+    void externalContainerMoveWithEquipLocation() {
+        String json = ClientRequestProtocol.encodeExternalContainerMove(
+            5, 200,
+            new ClientRequestProtocol.ContainerLoc("ext_5", 2, 3),
+            new ClientRequestProtocol.EquipLoc("main_hand")
+        );
+        com.google.gson.JsonObject obj = com.google.gson.JsonParser.parseString(json).getAsJsonObject();
+        com.google.gson.JsonObject to = obj.getAsJsonObject("to");
+        assertEquals("equip", to.get("kind").getAsString());
+        assertEquals("main_hand", to.get("slot").getAsString());
+    }
 }

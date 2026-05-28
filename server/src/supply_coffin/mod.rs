@@ -14,6 +14,7 @@ use serde::{Deserialize, Serialize};
 use valence::prelude::{bevy_ecs, App, DVec3, Entity, IntoSystemConfigs, Resource, Update};
 
 pub mod interact;
+pub mod lifecycle;
 pub mod loot;
 pub mod refresh;
 
@@ -22,6 +23,8 @@ mod tests;
 
 #[allow(unused_imports)]
 pub use interact::{handle_supply_coffin_interact, SupplyCoffinOpened};
+#[allow(unused_imports)]
+pub use lifecycle::external_container_lifecycle_tick;
 #[allow(unused_imports)]
 pub use loot::{loot_table, roll_count_range, roll_loot, SupplyCoffinLootEntry};
 #[allow(unused_imports)]
@@ -65,8 +68,6 @@ impl SupplyCoffinGrade {
         }
     }
 
-    /// Loot 格子尺寸（cols, rows）。P2 接入 ExternalContainer 后使用。
-    #[allow(dead_code)]
     pub const fn loot_grid(self) -> (u8, u8) {
         match self {
             Self::Common => (4, 3),
@@ -75,8 +76,6 @@ impl SupplyCoffinGrade {
         }
     }
 
-    /// 开棺后搜刮超时（秒，wall-clock）。P2 接入 ExternalContainer 后使用。
-    #[allow(dead_code)]
     pub const fn loot_timeout_secs(self) -> u64 {
         match self {
             Self::Common => 45,
@@ -85,9 +84,6 @@ impl SupplyCoffinGrade {
         }
     }
 
-    /// schema / 日志 / dev 命令用的 snake_case 名。
-    /// P3 dev cmd 实装前仅测试调用，故 `#[allow(dead_code)]`。
-    #[allow(dead_code)]
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::Common => "common",
@@ -246,10 +242,8 @@ pub fn current_wall_clock_secs() -> u64 {
         .unwrap_or(0)
 }
 
-/// 注册 Resource —— P2 systems 待 plan P2 阶段挂入 Update schedule。
-///
-/// 当前只 insert resource，让 P0 测试在主 binary 编译路径下也能运行。
 pub fn register(app: &mut App) {
+    use crate::inventory::external_container::ExternalContainerRegistry;
     use crate::world::terrain::sword_sea_xz_bounds;
 
     let ((min_x, min_z), (max_x, max_z)) = sword_sea_xz_bounds();
@@ -278,11 +272,13 @@ pub fn register(app: &mut App) {
         zone_aabb.1.z,
     );
     app.insert_resource(registry);
+    app.init_resource::<ExternalContainerRegistry>();
     app.add_event::<interact::SupplyCoffinOpened>();
     app.add_systems(
         Update,
         (
             interact::handle_supply_coffin_interact,
+            lifecycle::external_container_lifecycle_tick,
             refresh::supply_coffin_refresh_tick,
         )
             .chain(),

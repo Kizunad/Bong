@@ -1265,6 +1265,29 @@ impl From<&ServerDataPayloadV1> for Payload {
                     effect_multiplier: s.effect_multiplier,
                 })
             }
+            // ─── plan-supply-coffin-loot-ui P1：外部容器 ────────────
+            ServerDataPayloadV1::LootContainerOpen(o) => {
+                Payload::LootContainerOpen(bong::LootContainerOpen {
+                    session_id: o.session_id,
+                    source_kind: serde_json::to_string(&o.source_kind).unwrap_or_default(),
+                    rows: o.rows as u32,
+                    cols: o.cols as u32,
+                    placed_items: o.placed_items.iter().map(placed_item_to_proto).collect(),
+                    timeout_wall_secs: o.timeout_wall_secs,
+                })
+            }
+            ServerDataPayloadV1::LootContainerUpdate(u) => {
+                Payload::LootContainerUpdate(bong::LootContainerUpdate {
+                    session_id: u.session_id,
+                    placed_items: u.placed_items.iter().map(placed_item_to_proto).collect(),
+                })
+            }
+            ServerDataPayloadV1::LootContainerClose(c) => {
+                Payload::LootContainerClose(bong::LootContainerClose {
+                    session_id: c.session_id,
+                    reason: loot_container_close_reason_to_proto(&c.reason),
+                })
+            }
         }
     }
 }
@@ -1282,6 +1305,28 @@ fn botany_model_overlay_to_proto(o: &super::botany::BotanyModelOverlayV1) -> i32
     }
 }
 
+fn placed_item_to_proto(pi: &super::inventory::PlacedInventoryItemV1) -> bong::PlacedInventoryItem {
+    bong::PlacedInventoryItem {
+        container_id: pi.container_id.clone(),
+        row: pi.row,
+        col: pi.col,
+        item: Some(inventory_item_view_to_proto(&pi.item)),
+    }
+}
+
+fn loot_container_close_reason_to_proto(
+    r: &super::server_data::LootContainerCloseReasonV1,
+) -> String {
+    use super::server_data::LootContainerCloseReasonV1;
+    match r {
+        LootContainerCloseReasonV1::Timeout => "timeout",
+        LootContainerCloseReasonV1::Distance => "distance",
+        LootContainerCloseReasonV1::PlayerClosed => "player_closed",
+        LootContainerCloseReasonV1::CoffinDestroyed => "coffin_destroyed",
+    }
+    .to_string()
+}
+
 fn inventory_snapshot_to_proto(
     s: &super::inventory::InventorySnapshotV1,
 ) -> bong::InventorySnapshot {
@@ -1297,16 +1342,7 @@ fn inventory_snapshot_to_proto(
                 cols: c.cols as u32,
             })
             .collect(),
-        placed_items: s
-            .placed_items
-            .iter()
-            .map(|pi| bong::PlacedInventoryItem {
-                container_id: pi.container_id.clone(),
-                row: pi.row,
-                col: pi.col,
-                item: Some(inventory_item_view_to_proto(&pi.item)),
-            })
-            .collect(),
+        placed_items: s.placed_items.iter().map(placed_item_to_proto).collect(),
         equipped: Some(equipped_to_proto(&s.equipped)),
         hotbar: s
             .hotbar
@@ -3556,6 +3592,24 @@ impl From<&super::client_request::ClientRequestV1> for bong::client_request_enve
                 quantity: *quantity,
             }),
             ClientRequestV1::CraftCancel { .. } => Payload::CraftCancel(bong::CraftCancel {}),
+            // ─── plan-supply-coffin-loot-ui P1：外部容器 C2S ────────
+            ClientRequestV1::ExternalContainerMove {
+                session_id,
+                instance_id,
+                from,
+                to,
+                ..
+            } => Payload::ExternalContainerMove(bong::ExternalContainerMove {
+                session_id: *session_id,
+                instance_id: *instance_id,
+                from: Some(inventory_location_to_proto(from)),
+                to: Some(inventory_location_to_proto(to)),
+            }),
+            ClientRequestV1::ExternalContainerClose { session_id, .. } => {
+                Payload::ExternalContainerClose(bong::ExternalContainerCloseReq {
+                    session_id: *session_id,
+                })
+            }
         }
     }
 }
@@ -3779,5 +3833,145 @@ mod tests {
                 meridian_id: crate::cultivation::components::MeridianId::Heart,
             },
         });
+    }
+
+    // ─── plan-supply-coffin-loot-ui P1：外部容器 proto roundtrip ────
+
+    #[test]
+    fn s2c_loot_container_open_roundtrip() {
+        let payload = ServerDataPayloadV1::LootContainerOpen(
+            super::super::server_data::LootContainerOpenV1 {
+                session_id: 42,
+                source_kind: super::super::server_data::LootContainerSourceKindV1::SupplyCoffin {
+                    grade: "common".to_string(),
+                },
+                rows: 3,
+                cols: 4,
+                placed_items: vec![],
+                timeout_wall_secs: 1716872400,
+            },
+        );
+        s2c_encode_decode_roundtrip(payload.clone());
+
+        // Field-level verification on the decoded proto payload
+        let proto_payload = server_data_to_proto_payload(&payload);
+        let envelope = bong::ServerDataEnvelope {
+            payload: Some(proto_payload),
+        };
+        let bytes = envelope.encode_to_vec();
+        let decoded = bong::ServerDataEnvelope::decode(bytes.as_slice())
+            .expect("S2C proto decode should succeed");
+        match decoded.payload {
+            Some(bong::server_data_envelope::Payload::LootContainerOpen(open)) => {
+                assert_eq!(open.session_id, 42, "session_id should survive roundtrip");
+                assert_eq!(open.rows, 3, "rows should survive roundtrip");
+                assert_eq!(open.cols, 4, "cols should survive roundtrip");
+                assert!(
+                    open.placed_items.is_empty(),
+                    "empty placed_items should survive roundtrip"
+                );
+                assert_eq!(
+                    open.timeout_wall_secs, 1716872400,
+                    "timeout_wall_secs should survive roundtrip"
+                );
+                assert!(
+                    open.source_kind.contains("supply_coffin"),
+                    "source_kind should contain supply_coffin, got: {}",
+                    open.source_kind
+                );
+            }
+            other => panic!("expected LootContainerOpen payload, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn s2c_loot_container_update_roundtrip() {
+        let payload = ServerDataPayloadV1::LootContainerUpdate(
+            super::super::server_data::LootContainerUpdateV1 {
+                session_id: 7,
+                placed_items: vec![],
+            },
+        );
+        s2c_encode_decode_roundtrip(payload.clone());
+
+        // Field-level verification on the decoded proto payload
+        let proto_payload = server_data_to_proto_payload(&payload);
+        let envelope = bong::ServerDataEnvelope {
+            payload: Some(proto_payload),
+        };
+        let bytes = envelope.encode_to_vec();
+        let decoded = bong::ServerDataEnvelope::decode(bytes.as_slice())
+            .expect("S2C proto decode should succeed");
+        match decoded.payload {
+            Some(bong::server_data_envelope::Payload::LootContainerUpdate(upd)) => {
+                assert_eq!(upd.session_id, 7, "session_id should survive roundtrip");
+                assert!(
+                    upd.placed_items.is_empty(),
+                    "empty placed_items should survive roundtrip"
+                );
+            }
+            other => panic!("expected LootContainerUpdate payload, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn s2c_loot_container_close_roundtrip() {
+        let payload = ServerDataPayloadV1::LootContainerClose(
+            super::super::server_data::LootContainerCloseV1 {
+                session_id: 99,
+                reason: super::super::server_data::LootContainerCloseReasonV1::Timeout,
+            },
+        );
+        s2c_encode_decode_roundtrip(payload.clone());
+
+        // Field-level verification on the decoded proto payload
+        let proto_payload = server_data_to_proto_payload(&payload);
+        let envelope = bong::ServerDataEnvelope {
+            payload: Some(proto_payload),
+        };
+        let bytes = envelope.encode_to_vec();
+        let decoded = bong::ServerDataEnvelope::decode(bytes.as_slice())
+            .expect("S2C proto decode should succeed");
+        match decoded.payload {
+            Some(bong::server_data_envelope::Payload::LootContainerClose(close)) => {
+                assert_eq!(close.session_id, 99, "session_id should survive roundtrip");
+                assert_eq!(
+                    close.reason, "timeout",
+                    "reason should be 'timeout' after roundtrip"
+                );
+            }
+            other => panic!("expected LootContainerClose payload, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn c2s_external_container_move_roundtrip() {
+        c2s_encode_decode_roundtrip(
+            super::super::client_request::ClientRequestV1::ExternalContainerMove {
+                v: 1,
+                session_id: 42,
+                instance_id: 100,
+                from: super::super::inventory::InventoryLocationV1::Container {
+                    container_id: "ext_42".to_string(),
+                    row: 0,
+                    col: 1,
+                },
+                to: super::super::inventory::InventoryLocationV1::Container {
+                    container_id: "body_pocket".to_string(),
+                    row: 1,
+                    col: 0,
+                },
+            },
+        );
+    }
+
+    #[test]
+    fn c2s_external_container_close_roundtrip() {
+        c2s_encode_decode_roundtrip(
+            super::super::client_request::ClientRequestV1::ExternalContainerClose {
+                v: 1,
+                session_id: 99,
+            },
+        );
     }
 }
