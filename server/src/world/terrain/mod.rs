@@ -67,12 +67,13 @@ impl SurfaceProvider for TerrainProvider {
     fn query_surface(&self, world_x: i32, world_z: i32) -> SurfaceInfo {
         let sample = self.sample(world_x, world_z);
         let y = column::surface_y_for_sample(&sample, MIN_Y, WORLD_HEIGHT as i32);
-        let water_top = if sample.water_level < 0.0 {
-            MIN_Y - 1
-        } else {
+        let has_water = sample.water_level >= 0.0;
+        let water_top = if has_water {
             sample.water_level.round() as i32
+        } else {
+            i32::MIN
         };
-        let passable = water_top <= y && sample.surface_block != BlockState::LAVA;
+        let passable = (!has_water || water_top <= y) && sample.surface_block != BlockState::LAVA;
         SurfaceInfo {
             y,
             passable,

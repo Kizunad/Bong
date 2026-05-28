@@ -413,11 +413,19 @@ mod tests {
 
     #[test]
     fn skip_prefetch_keeps_pool_unready() {
-        let mut pool = SkinPool::default();
-        pool.skip_prefetch = true;
+        let mut pool = SkinPool {
+            skip_prefetch: true,
+            ..Default::default()
+        };
         pool.start_prefetch_if_needed();
-        assert!(pool.started_prefetch, "started_prefetch should be set even when skipping");
-        assert!(!pool.ready_for_spawn(), "pool should not be ready when prefetch is skipped");
+        assert!(
+            pool.started_prefetch,
+            "started_prefetch should be set even when skipping"
+        );
+        assert!(
+            !pool.ready_for_spawn(),
+            "pool should not be ready when prefetch is skipped"
+        );
     }
 
     #[test]

@@ -4039,7 +4039,10 @@ fn equip_slot_wire_from_runtime(slot: &str) -> crate::schema::inventory::EquipSl
     }
 }
 
-pub(crate) fn placed_item_footprints_overlap(left: &PlacedItemState, right: &PlacedItemState) -> bool {
+pub(crate) fn placed_item_footprints_overlap(
+    left: &PlacedItemState,
+    right: &PlacedItemState,
+) -> bool {
     let left_row_start = u16::from(left.row);
     let left_row_end = left_row_start + u16::from(left.instance.grid_h);
     let left_col_start = u16::from(left.col);

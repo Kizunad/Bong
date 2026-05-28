@@ -232,10 +232,17 @@ mod tests {
         let placed = pack_loot_into_grid(&mut container, &rolled, &reg, &mut alloc);
 
         assert_eq!(placed, 1, "should place 1 item type");
-        assert_eq!(container.items.len(), 1);
-        assert_eq!(container.items[0].instance.stack_count, 5);
-        assert_eq!(container.items[0].row, 0);
-        assert_eq!(container.items[0].col, 0);
+        assert_eq!(
+            container.items.len(),
+            1,
+            "container should hold exactly 1 item"
+        );
+        assert_eq!(
+            container.items[0].instance.stack_count, 5,
+            "stack_count should match rolled quantity"
+        );
+        assert_eq!(container.items[0].row, 0, "first item should be at row 0");
+        assert_eq!(container.items[0].col, 0, "first item should be at col 0");
     }
 
     #[test]
@@ -251,10 +258,13 @@ mod tests {
 
         let placed = pack_loot_into_grid(&mut container, &rolled, &reg, &mut alloc);
 
-        assert_eq!(placed, 3);
-        assert_eq!(container.items[0].col, 0); // ore_a at (0,0)
-        assert_eq!(container.items[1].col, 1); // ore_b 2-wide at (0,1)
-        assert_eq!(container.items[2].col, 3); // ore_a at (0,3)
+        assert_eq!(placed, 3, "all 3 rolled items should fit in 4x3 grid");
+        assert_eq!(container.items[0].col, 0, "ore_a should be at col 0");
+        assert_eq!(
+            container.items[1].col, 1,
+            "ore_b (2-wide) should be at col 1"
+        );
+        assert_eq!(container.items[2].col, 3, "second ore_a should be at col 3");
     }
 
     #[test]
@@ -266,8 +276,12 @@ mod tests {
 
         let placed = pack_loot_into_grid(&mut container, &rolled, &reg, &mut alloc);
 
-        assert_eq!(placed, 1, "only 1 of 2 big items should fit in 4x3 grid");
-        assert_eq!(container.items.len(), 1);
+        assert_eq!(placed, 1, "only 1 of 2 3x3 items should fit in 4x3 grid");
+        assert_eq!(
+            container.items.len(),
+            1,
+            "second 3x3 item should be dropped"
+        );
     }
 
     #[test]
@@ -275,15 +289,18 @@ mod tests {
         let reg = make_registry(vec![("ore_a", 1, 1)]);
         let mut alloc = make_allocator();
         let mut container = make_container(4, 3);
-        let rolled = vec![
-            ("nonexistent".to_string(), 1),
-            ("ore_a".to_string(), 1),
-        ];
+        let rolled = vec![("nonexistent".to_string(), 1), ("ore_a".to_string(), 1)];
 
         let placed = pack_loot_into_grid(&mut container, &rolled, &reg, &mut alloc);
 
-        assert_eq!(placed, 1, "unknown template should be skipped");
-        assert_eq!(container.items[0].instance.template_id, "ore_a");
+        assert_eq!(
+            placed, 1,
+            "unknown template 'nonexistent' should be skipped"
+        );
+        assert_eq!(
+            container.items[0].instance.template_id, "ore_a",
+            "surviving item should be ore_a, not the unknown template"
+        );
     }
 
     #[test]
@@ -295,8 +312,15 @@ mod tests {
 
         let placed = pack_loot_into_grid(&mut container, &rolled, &reg, &mut alloc);
 
-        assert_eq!(placed, 12, "4x3 grid fits exactly 12 1x1 items");
-        assert_eq!(container.items.len(), 12);
+        assert_eq!(
+            placed, 12,
+            "4x3 grid fits exactly 12 1x1 items; 3 overflow should be dropped"
+        );
+        assert_eq!(
+            container.items.len(),
+            12,
+            "container should hold all 12 placed items"
+        );
     }
 
     #[test]
@@ -342,11 +366,21 @@ mod tests {
         });
 
         let removed = remove_item_from_container(&mut container, 42);
-        assert!(removed.is_some());
-        assert_eq!(container.items.len(), 0);
+        assert!(
+            removed.is_some(),
+            "should find and remove item with instance_id 42"
+        );
+        assert_eq!(
+            container.items.len(),
+            0,
+            "container should be empty after removing the only item"
+        );
 
         let missing = remove_item_from_container(&mut container, 999);
-        assert!(missing.is_none());
+        assert!(
+            missing.is_none(),
+            "removing non-existent instance_id 999 should return None"
+        );
     }
 
     #[test]
@@ -375,17 +409,118 @@ mod tests {
             lingering_owner_qi: None,
         };
 
-        // Out of bounds
-        assert!(place_item_into_container(&mut container, 2, 3, instance.clone()).is_err());
+        // Out of bounds: 2x2 at (2,3) → row+h=4 > 3
+        assert!(
+            place_item_into_container(&mut container, 2, 3, instance.clone()).is_err(),
+            "2x2 item at (2,3) in 4x3 container should fail: row+grid_h=4 > rows=3"
+        );
 
         // Valid placement
-        assert!(place_item_into_container(&mut container, 0, 0, instance.clone()).is_ok());
-        assert_eq!(container.items.len(), 1);
+        assert!(
+            place_item_into_container(&mut container, 0, 0, instance.clone()).is_ok(),
+            "2x2 item at (0,0) in 4x3 container should succeed"
+        );
+        assert_eq!(
+            container.items.len(),
+            1,
+            "container should hold 1 item after valid placement"
+        );
 
         // Overlap
         let mut instance2 = instance.clone();
         instance2.instance_id = 2;
-        assert!(place_item_into_container(&mut container, 0, 1, instance2).is_err());
+        assert!(
+            place_item_into_container(&mut container, 0, 1, instance2).is_err(),
+            "2x2 item at (0,1) should fail: overlaps existing 2x2 item at (0,0)"
+        );
+    }
+
+    #[test]
+    fn pack_empty_rolled_array() {
+        let reg = make_registry(vec![("ore_a", 1, 1)]);
+        let mut alloc = make_allocator();
+        let mut container = make_container(4, 3);
+        let rolled: Vec<(String, u8)> = vec![];
+
+        let placed = pack_loot_into_grid(&mut container, &rolled, &reg, &mut alloc);
+
+        assert_eq!(placed, 0, "no items should be placed from empty roll");
+        assert_eq!(container.items.len(), 0, "container should remain empty");
+    }
+
+    #[test]
+    fn pack_skips_items_when_allocator_exhausted() {
+        use crate::inventory::JS_SAFE_INTEGER_MAX;
+
+        let reg = make_registry(vec![("ore_a", 1, 1)]);
+        let mut alloc = InventoryInstanceIdAllocator::new(JS_SAFE_INTEGER_MAX);
+        let mut container = make_container(4, 3);
+        let rolled = vec![
+            ("ore_a".to_string(), 1),
+            ("ore_a".to_string(), 1),
+            ("ore_a".to_string(), 1),
+        ];
+
+        let placed = pack_loot_into_grid(&mut container, &rolled, &reg, &mut alloc);
+
+        assert_eq!(
+            placed, 1,
+            "only the first item should be placed before allocator hits JS_SAFE_INTEGER_MAX"
+        );
+    }
+
+    #[test]
+    fn place_item_at_exact_boundary() {
+        let mut container = make_container(4, 3);
+        let instance = ItemInstance {
+            instance_id: 1,
+            template_id: "t".to_string(),
+            display_name: "T".to_string(),
+            grid_w: 2,
+            grid_h: 2,
+            weight: 1.0,
+            rarity: ItemRarity::Common,
+            description: String::new(),
+            stack_count: 1,
+            spirit_quality: 0.0,
+            durability: 1.0,
+            freshness: None,
+            mineral_id: None,
+            charges: None,
+            forge_quality: None,
+            forge_color: None,
+            forge_side_effects: Vec::new(),
+            forge_achieved_tier: None,
+            alchemy: None,
+            lingering_owner_qi: None,
+        };
+
+        // 2x2 at (1,2): row+h=3==rows, col+w=4==cols → exact boundary, should succeed
+        assert!(
+            place_item_into_container(&mut container, 1, 2, instance.clone()).is_ok(),
+            "2x2 item at (1,2) in 4x3 grid should fit exactly at boundary"
+        );
+        assert_eq!(
+            container.items.len(),
+            1,
+            "item should be placed at boundary"
+        );
+
+        // Off-by-one: 2x2 at (2,2): row+h=4 > rows=3
+        let mut i2 = instance.clone();
+        i2.instance_id = 2;
+        assert!(
+            place_item_into_container(&mut container, 2, 2, i2).is_err(),
+            "2x2 item at (2,2) should fail: row+grid_h=4 > rows=3"
+        );
+
+        // Off-by-one: 2x2 at (1,3): col+w=5 > cols=4
+        let mut i3 = instance;
+        i3.instance_id = 3;
+        assert!(
+            place_item_into_container(&mut container, 1, 3, i3).is_err(),
+            "2x2 item at (1,3) should fail: col+grid_w=5 > cols=4"
+        );
     }
 
     #[test]

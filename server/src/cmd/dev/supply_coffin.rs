@@ -9,6 +9,10 @@
 //! - `reset` — 清空 active + cooldown，让 refresh tick 重新初始化
 //! - `cooldown <grade> <secs>` — 临时把指定 grade 的首个冷却推迟到
 //!   `now - cooldown_secs + <secs>`（等价于"还剩 secs 秒"）
+//! - `tp` — 传送执行者到最近的活跃物资棺
+//!
+//! dev-only：以上命令均绕过 worldview natural cultivation rules 与
+//! qi_physics ledger conservation，不得复用到生产 gameplay 路径。
 
 use bevy_transform::components::{GlobalTransform, Transform};
 use valence::command::graph::CommandGraphBuilder;
@@ -227,15 +231,12 @@ pub fn handle_supply_coffin_cmd(
                     continue;
                 };
                 let player_pos = executor_pos.get();
-                let nearest = registry
-                    .active
-                    .values()
-                    .min_by(|a, b| {
-                        a.pos
-                            .distance(player_pos)
-                            .partial_cmp(&b.pos.distance(player_pos))
-                            .unwrap_or(std::cmp::Ordering::Equal)
-                    });
+                let nearest = registry.active.values().min_by(|a, b| {
+                    a.pos
+                        .distance(player_pos)
+                        .partial_cmp(&b.pos.distance(player_pos))
+                        .unwrap_or(std::cmp::Ordering::Equal)
+                });
                 match nearest {
                     Some(coffin) => {
                         let target = coffin.pos;
@@ -653,9 +654,13 @@ mod tests {
 
         let pos = app.world().entity(player).get::<Position>().unwrap().get();
         assert!(
-            (pos.x - 50.0).abs() < 0.01,
-            "tp with no active coffins should not move player; actual x={:.1}",
+            (pos.x - 50.0).abs() < 0.01
+                && (pos.y - 65.0).abs() < 0.01
+                && (pos.z - 50.0).abs() < 0.01,
+            "tp with no active coffins should not move player; actual=({:.1},{:.1},{:.1})",
             pos.x,
+            pos.y,
+            pos.z,
         );
     }
 }

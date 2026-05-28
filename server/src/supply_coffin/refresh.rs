@@ -530,4 +530,24 @@ mod tests {
             "所有邻居 surface=70 < ceiling=75 不应判定遮挡"
         );
     }
+
+    #[test]
+    fn adjacent_columns_block_boundary_at_ceiling_y() {
+        let terrain = FlatSurface::new(85);
+        // neighbor.y == ceiling_y → blocked (>= comparison)
+        assert!(
+            adjacent_columns_block(&terrain, 50, 50, 85),
+            "邻居 surface=85 == ceiling=85 应判定遮挡（>= 语义）"
+        );
+    }
+
+    #[test]
+    fn adjacent_columns_block_boundary_just_below_ceiling() {
+        let terrain = FlatSurface::new(84);
+        // neighbor.y == ceiling_y - 1 → not blocked
+        assert!(
+            !adjacent_columns_block(&terrain, 50, 50, 85),
+            "邻居 surface=84 < ceiling=85 不应判定遮挡"
+        );
+    }
 }
