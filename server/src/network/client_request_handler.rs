@@ -9453,8 +9453,9 @@ fn resync_inventory_only(
     let Ok(player_state) = player_states.get(player_entity) else {
         return;
     };
-    let fallback = Cultivation::default();
-    let cultivation = cultivations.get(player_entity).unwrap_or(&fallback);
+    let Ok(cultivation) = cultivations.get(player_entity) else {
+        return;
+    };
     let Ok((username, mut client)) = clients.get_mut(player_entity) else {
         return;
     };
