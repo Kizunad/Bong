@@ -1838,6 +1838,7 @@ pub fn handle_client_request_payloads(
                     &mut combat_params,
                     &mut inventories,
                     &player_states,
+                    &skill_scroll_params.cultivations,
                     &mut clients,
                     &mut commands,
                 );
@@ -1850,6 +1851,7 @@ pub fn handle_client_request_payloads(
                     &mut combat_params,
                     &mut inventories,
                     &player_states,
+                    &skill_scroll_params.cultivations,
                     &mut clients,
                     &mut commands,
                 );
@@ -8944,6 +8946,7 @@ fn handle_external_container_move(
     combat_params: &mut CombatRequestParams,
     inventories: &mut Query<&mut PlayerInventory>,
     player_states: &Query<&PlayerState>,
+    cultivations: &Query<&Cultivation>,
     clients: &mut Query<(&Username, &mut Client)>,
     _commands: &mut Commands,
 ) {
@@ -8990,7 +8993,14 @@ fn handle_external_container_move(
         tracing::warn!(
             "[bong][network] external_container_move: both endpoints on same side (from_ext={is_from_ext})"
         );
-        resync_ext_and_inventory(player_entity, &ext, inventories, player_states, clients);
+        resync_ext_and_inventory(
+            player_entity,
+            &ext,
+            inventories,
+            player_states,
+            cultivations,
+            clients,
+        );
         return;
     }
 
@@ -9006,7 +9016,14 @@ fn handle_external_container_move(
             tracing::warn!(
                 "[bong][network] external_container_move: target must be container slot"
             );
-            resync_ext_and_inventory(player_entity, &ext, inventories, player_states, clients);
+            resync_ext_and_inventory(
+                player_entity,
+                &ext,
+                inventories,
+                player_states,
+                cultivations,
+                clients,
+            );
             return;
         };
 
@@ -9014,7 +9031,14 @@ fn handle_external_container_move(
             tracing::warn!(
                 "[bong][network] external_container_move: instance {instance_id} not found in ext container"
             );
-            resync_ext_and_inventory(player_entity, &ext, inventories, player_states, clients);
+            resync_ext_and_inventory(
+                player_entity,
+                &ext,
+                inventories,
+                player_states,
+                cultivations,
+                clients,
+            );
             return;
         };
 
@@ -9044,7 +9068,14 @@ fn handle_external_container_move(
                 removed.instance,
             )
             .ok();
-            resync_ext_and_inventory(player_entity, &ext, inventories, player_states, clients);
+            resync_ext_and_inventory(
+                player_entity,
+                &ext,
+                inventories,
+                player_states,
+                cultivations,
+                clients,
+            );
             return;
         };
 
@@ -9061,7 +9092,14 @@ fn handle_external_container_move(
                 removed.instance,
             )
             .ok();
-            resync_ext_and_inventory(player_entity, &ext, inventories, player_states, clients);
+            resync_ext_and_inventory(
+                player_entity,
+                &ext,
+                inventories,
+                player_states,
+                cultivations,
+                clients,
+            );
             return;
         }
 
@@ -9088,7 +9126,14 @@ fn handle_external_container_move(
                 removed.instance,
             )
             .ok();
-            resync_ext_and_inventory(player_entity, &ext, inventories, player_states, clients);
+            resync_ext_and_inventory(
+                player_entity,
+                &ext,
+                inventories,
+                player_states,
+                cultivations,
+                clients,
+            );
             return;
         }
 
@@ -9114,7 +9159,14 @@ fn handle_external_container_move(
             tracing::warn!(
                 "[bong][network] external_container_move: ext target must be container slot"
             );
-            resync_ext_and_inventory(player_entity, &ext, inventories, player_states, clients);
+            resync_ext_and_inventory(
+                player_entity,
+                &ext,
+                inventories,
+                player_states,
+                cultivations,
+                clients,
+            );
             return;
         };
 
@@ -9138,7 +9190,14 @@ fn handle_external_container_move(
             tracing::warn!(
                 "[bong][network] external_container_move: instance {instance_id} not in player inventory"
             );
-            resync_ext_and_inventory(player_entity, &ext, inventories, player_states, clients);
+            resync_ext_and_inventory(
+                player_entity,
+                &ext,
+                inventories,
+                player_states,
+                cultivations,
+                clients,
+            );
             return;
         };
 
@@ -9169,7 +9228,14 @@ fn handle_external_container_move(
                 if let Some(container) = orig_container {
                     container.items.push(removed);
                 }
-                resync_ext_and_inventory(player_entity, &ext, inventories, player_states, clients);
+                resync_ext_and_inventory(
+                    player_entity,
+                    &ext,
+                    inventories,
+                    player_states,
+                    cultivations,
+                    clients,
+                );
                 return;
             }
         }
@@ -9201,7 +9267,13 @@ fn handle_external_container_move(
         }
     }
 
-    resync_inventory_only(player_entity, inventories, player_states, clients);
+    resync_inventory_only(
+        player_entity,
+        inventories,
+        player_states,
+        cultivations,
+        clients,
+    );
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -9212,6 +9284,7 @@ fn handle_external_container_close(
     combat_params: &mut CombatRequestParams,
     inventories: &mut Query<&mut PlayerInventory>,
     player_states: &Query<&PlayerState>,
+    cultivations: &Query<&Cultivation>,
     clients: &mut Query<(&Username, &mut Client)>,
     _commands: &mut Commands,
 ) {
@@ -9255,7 +9328,13 @@ fn handle_external_container_close(
     // 释放锁——棺不碎，等 lifecycle tick 超时后碎裂
     ext.opened_by = None;
 
-    resync_inventory_only(player_entity, inventories, player_states, clients);
+    resync_inventory_only(
+        player_entity,
+        inventories,
+        player_states,
+        cultivations,
+        clients,
+    );
 
     tracing::info!(
         "[bong][network] external_container_close: session {session_id} closed by player {player_entity:?}"
@@ -9267,6 +9346,7 @@ fn resync_ext_and_inventory(
     ext: &crate::inventory::external_container::ExternalContainer,
     inventories: &mut Query<&mut PlayerInventory>,
     player_states: &Query<&PlayerState>,
+    cultivations: &Query<&Cultivation>,
     clients: &mut Query<(&Username, &mut Client)>,
 ) {
     use crate::network::inventory_snapshot_emit::item_view_from_instance;
@@ -9298,7 +9378,13 @@ fn resync_ext_and_inventory(
         }
     }
 
-    resync_inventory_only(player_entity, inventories, player_states, clients);
+    resync_inventory_only(
+        player_entity,
+        inventories,
+        player_states,
+        cultivations,
+        clients,
+    );
 }
 
 #[allow(clippy::needless_borrow)]
@@ -9306,6 +9392,7 @@ fn resync_inventory_only(
     player_entity: Entity,
     inventories: &Query<&mut PlayerInventory>,
     player_states: &Query<&PlayerState>,
+    cultivations: &Query<&Cultivation>,
     clients: &mut Query<(&Username, &mut Client)>,
 ) {
     let Ok(inventory) = inventories.get(player_entity) else {
@@ -9314,7 +9401,8 @@ fn resync_inventory_only(
     let Ok(player_state) = player_states.get(player_entity) else {
         return;
     };
-    let cultivation = crate::cultivation::components::Cultivation::default();
+    let fallback = Cultivation::default();
+    let cultivation = cultivations.get(player_entity).unwrap_or(&fallback);
     let Ok((username, mut client)) = clients.get_mut(player_entity) else {
         return;
     };
@@ -9324,7 +9412,7 @@ fn resync_inventory_only(
         username.as_str(),
         &inventory,
         player_state,
-        &cultivation,
+        cultivation,
         "external_container_resync",
     );
 }

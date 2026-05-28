@@ -50,6 +50,7 @@ public final class LootContainerScreen extends BaseOwoScreen<FlowLayout> {
     private final int lootRows;
     private final int lootCols;
     private final long timeoutWallSecs;
+    private final long openedAtSecs;
     private final String extContainerId;
 
     private final DragState dragState = new DragState();
@@ -70,6 +71,7 @@ public final class LootContainerScreen extends BaseOwoScreen<FlowLayout> {
         this.lootRows = session.rows();
         this.lootCols = session.cols();
         this.timeoutWallSecs = session.timeoutWallSecs();
+        this.openedAtSecs = System.currentTimeMillis() / 1000;
         this.extContainerId = "ext_" + sessionId;
     }
 
@@ -207,12 +209,7 @@ public final class LootContainerScreen extends BaseOwoScreen<FlowLayout> {
         if (timerLabel == null || timerBarFill == null) return;
         long now = System.currentTimeMillis() / 1000;
         long remaining = Math.max(0, timeoutWallSecs - now);
-
-        long totalDuration = switch (grade) {
-            case "rare" -> 60;
-            case "precious" -> 90;
-            default -> 45;
-        };
+        long totalDuration = Math.max(1, timeoutWallSecs - openedAtSecs);
 
         timerLabel.text(Text.literal(String.format("剩余 %d 秒", remaining)));
 
