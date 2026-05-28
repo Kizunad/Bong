@@ -33,6 +33,7 @@ import com.bong.client.input.DefaultInteractionHandlers;
 import com.bong.client.input.InteractionKeybindings;
 import com.bong.client.inventory.DroppedItemPickupBootstrap;
 import com.bong.client.inventory.InspectScreenBootstrap;
+import com.bong.client.inventory.LootContainerScreenBootstrap;
 import com.bong.client.cultivation.voidaction.VoidActionScreenBootstrap;
 import com.bong.client.craft.CraftScreenBootstrap;
 import com.bong.client.lingtian.LingtianActionScreenBootstrap;
@@ -83,6 +84,7 @@ public class BongClient implements ClientModInitializer {
         DefaultInteractionHandlers.registerDefaults();
         CultivationScreenBootstrap.register();
         InspectScreenBootstrap.register();
+        LootContainerScreenBootstrap.register();
         DroppedItemPickupBootstrap.register();
         com.bong.client.inventory.render.DroppedItemWorldRenderer.register();
         AlchemyScreenBootstrap.register();

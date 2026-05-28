@@ -1,5 +1,8 @@
 package com.bong.client.hud;
 
+import com.bong.client.inventory.model.InventoryItem;
+import com.bong.client.inventory.model.InventoryModel;
+
 import java.util.List;
 import java.util.concurrent.CopyOnWriteArrayList;
 
@@ -13,7 +16,8 @@ public final class LootContainerStateStore {
         String grade,
         int rows,
         int cols,
-        long timeoutWallSecs
+        long timeoutWallSecs,
+        List<InventoryModel.GridEntry> placedItems
     ) implements Session {}
 
     public record Closed(long sessionId, String reason) implements Session {}
@@ -39,6 +43,19 @@ public final class LootContainerStateStore {
     public static void open(OpenSession session) {
         current = session;
         notifyListeners(session);
+    }
+
+    public static void update(long sessionId, List<InventoryModel.GridEntry> placedItems) {
+        Session prev = current;
+        if (prev instanceof OpenSession open && open.sessionId() == sessionId) {
+            OpenSession updated = new OpenSession(
+                open.sessionId(), open.sourceKind(), open.grade(),
+                open.rows(), open.cols(), open.timeoutWallSecs(),
+                placedItems
+            );
+            current = updated;
+            notifyListeners(updated);
+        }
     }
 
     public static void close(long sessionId, String reason) {

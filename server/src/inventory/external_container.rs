@@ -14,25 +14,23 @@ use crate::supply_coffin::SupplyCoffinGrade;
 
 /// 外部容器的来源类型。
 #[derive(Debug, Clone, PartialEq)]
-#[allow(dead_code)]
 pub enum ExternalContainerKind {
     SupplyCoffin { grade: SupplyCoffinGrade },
 }
 
 /// 附加到 world entity 上的外部容器 ECS 组件。
 #[derive(Debug, Clone, Component)]
-#[allow(dead_code)]
 pub struct ExternalContainer {
     pub session_id: u64,
     pub container: ContainerState,
     pub opened_by: Option<Entity>,
     /// 绝对 wall-clock 截止时间（秒）。
     pub timeout_wall_secs: u64,
+    #[allow(dead_code)]
     pub source_kind: ExternalContainerKind,
 }
 
 impl ExternalContainer {
-    #[allow(dead_code)]
     pub fn container_id(session_id: u64) -> String {
         format!("ext_{session_id}")
     }
@@ -40,14 +38,12 @@ impl ExternalContainer {
 
 /// 全局 session 注册表。
 #[derive(Debug, Resource, Default)]
-#[allow(dead_code)]
 pub struct ExternalContainerRegistry {
     pub next_session_id: u64,
     pub sessions: HashMap<u64, Entity>,
 }
 
 impl ExternalContainerRegistry {
-    #[allow(dead_code)]
     pub fn allocate_session(&mut self, entity: Entity) -> u64 {
         let id = self.next_session_id;
         self.next_session_id += 1;
@@ -55,13 +51,11 @@ impl ExternalContainerRegistry {
         id
     }
 
-    #[allow(dead_code)]
     pub fn remove_session(&mut self, session_id: u64) {
         self.sessions.remove(&session_id);
     }
 }
 
-#[allow(dead_code)]
 /// 把 loot roll 结果装入 grid 容器。返回成功放入的物品数。
 ///
 /// 物品按 roll 顺序 row-major first-fit 放置。放不下的 warn 跳过。
@@ -105,7 +99,6 @@ pub fn pack_loot_into_grid(
     placed
 }
 
-#[allow(dead_code)]
 fn item_instance_from_template(
     template: &ItemTemplate,
     instance_id: u64,

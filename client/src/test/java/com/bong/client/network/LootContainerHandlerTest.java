@@ -41,7 +41,7 @@ class LootContainerHandlerTest {
     @Test
     void closeClearsStateStoreForMatchingSession() {
         LootContainerStateStore.open(new LootContainerStateStore.OpenSession(
-            42, "supply_coffin", "common", 3, 4, 1716872400L
+            42, "supply_coffin", "common", 3, 4, 1716872400L, java.util.List.of()
         ));
         assertTrue(LootContainerStateStore.isOpen());
 
@@ -59,7 +59,7 @@ class LootContainerHandlerTest {
     @Test
     void closeIgnoresMismatchedSessionId() {
         LootContainerStateStore.open(new LootContainerStateStore.OpenSession(
-            42, "supply_coffin", "rare", 4, 5, 1716872500L
+            42, "supply_coffin", "rare", 4, 5, 1716872500L, java.util.List.of()
         ));
 
         String json = """
@@ -74,6 +74,10 @@ class LootContainerHandlerTest {
 
     @Test
     void updateHandledWithoutError() {
+        LootContainerStateStore.open(new LootContainerStateStore.OpenSession(
+            42, "supply_coffin", "common", 3, 4, 1716872400L, java.util.List.of()
+        ));
+
         String json = """
             {"type":"loot_container_update","v":1,"session_id":42,"placed_items":[]}
             """;
@@ -103,7 +107,7 @@ class LootContainerHandlerTest {
 
         try {
             LootContainerStateStore.open(new LootContainerStateStore.OpenSession(
-                7, "supply_coffin", "precious", 5, 6, 1716872600L
+                7, "supply_coffin", "precious", 5, 6, 1716872600L, java.util.List.of()
             ));
             assertInstanceOf(LootContainerStateStore.OpenSession.class, received.get(),
                 "listener should receive OpenSession on open");
@@ -123,7 +127,7 @@ class LootContainerHandlerTest {
         String[] reasons = {"timeout", "distance", "player_closed", "coffin_destroyed"};
         for (String reason : reasons) {
             LootContainerStateStore.open(new LootContainerStateStore.OpenSession(
-                1, "supply_coffin", "common", 3, 4, 0L
+                1, "supply_coffin", "common", 3, 4, 0L, java.util.List.of()
             ));
             String json = """
                 {"type":"loot_container_close","v":1,"session_id":1,"reason":"%s"}
