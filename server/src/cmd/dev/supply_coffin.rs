@@ -53,6 +53,7 @@ pub enum SupplyCoffinCmd {
     List,
     Reset,
     Cooldown { grade: SupplyCoffinGrade, secs: u64 },
+    Tp,
 }
 
 impl Command for SupplyCoffinCmd {
@@ -90,6 +91,11 @@ impl Command for SupplyCoffinCmd {
                 let secs = i32::parse_arg(input).unwrap().max(0) as u64;
                 SupplyCoffinCmd::Cooldown { grade, secs }
             });
+
+        graph
+            .at(root)
+            .literal("tp")
+            .with_executable(|_| SupplyCoffinCmd::Tp);
     }
 }
 
@@ -105,7 +111,7 @@ pub fn handle_supply_coffin_cmd(
     registry: Option<ResMut<SupplyCoffinRegistry>>,
     mut clients: Query<&mut Client>,
     layers: Option<valence::prelude::Res<crate::world::dimension::DimensionLayers>>,
-    positions: Query<&Position>,
+    mut positions: Query<&mut Position>,
     despawnable_markers: Query<(valence::prelude::Entity, &SupplyCoffinMarker)>,
 ) {
     // SupplyCoffinRegistry resource 仅在 supply_coffin::register() 注入。dev cmd
@@ -127,7 +133,7 @@ pub fn handle_supply_coffin_cmd(
                     );
                     continue;
                 };
-                let Ok(executor_pos) = positions.get(event.executor) else {
+                let Ok(executor_pos) = positions.get_mut(event.executor) else {
                     reply(
                         &mut clients,
                         event.executor,
@@ -210,6 +216,50 @@ pub fn handle_supply_coffin_cmd(
                         cleared_active, cleared_cooldowns
                     ),
                 );
+            }
+            SupplyCoffinCmd::Tp => {
+                let Ok(mut executor_pos) = positions.get_mut(event.executor) else {
+                    reply(
+                        &mut clients,
+                        event.executor,
+                        "[dev] executor lacks Position",
+                    );
+                    continue;
+                };
+                let player_pos = executor_pos.get();
+                let nearest = registry
+                    .active
+                    .values()
+                    .min_by(|a, b| {
+                        a.pos
+                            .distance(player_pos)
+                            .partial_cmp(&b.pos.distance(player_pos))
+                            .unwrap_or(std::cmp::Ordering::Equal)
+                    });
+                match nearest {
+                    Some(coffin) => {
+                        let target = coffin.pos;
+                        executor_pos.set([target.x, target.y, target.z]);
+                        reply(
+                            &mut clients,
+                            event.executor,
+                            format!(
+                                "[dev] tp to {} at ({:.1},{:.1},{:.1})",
+                                coffin.grade.as_str(),
+                                target.x,
+                                target.y,
+                                target.z,
+                            ),
+                        );
+                    }
+                    None => {
+                        reply(
+                            &mut clients,
+                            event.executor,
+                            "[dev] no active supply coffins",
+                        );
+                    }
+                }
             }
             SupplyCoffinCmd::Cooldown { grade, secs } => {
                 // Re-target first matching cooldown so its `is_ready(now)` becomes true
@@ -556,6 +606,56 @@ mod tests {
             r.active.len(),
             0,
             "缺 DimensionLayers 时不应插入 active（dev 命令应平稳报错）"
+        );
+    }
+
+    #[test]
+    fn tp_teleports_to_nearest_active_coffin() {
+        let mut app = setup_app(false);
+        let player = spawn_test_client(&mut app, "Alice", [0.0, 65.0, 0.0]);
+
+        {
+            let mut r = app.world_mut().resource_mut::<SupplyCoffinRegistry>();
+            r.insert_active(
+                Entity::from_raw(100),
+                SupplyCoffinGrade::Common,
+                DVec3::new(100.0, 65.0, 100.0),
+                0,
+            );
+            r.insert_active(
+                Entity::from_raw(101),
+                SupplyCoffinGrade::Rare,
+                DVec3::new(10.0, 65.0, 10.0),
+                0,
+            );
+        }
+
+        send(&mut app, player, SupplyCoffinCmd::Tp);
+        run_update(&mut app);
+
+        let pos = app.world().entity(player).get::<Position>().unwrap().get();
+        assert!(
+            (pos.x - 10.0).abs() < 0.01 && (pos.z - 10.0).abs() < 0.01,
+            "tp should teleport to nearest coffin at (10,65,10); actual=({:.1},{:.1},{:.1})",
+            pos.x,
+            pos.y,
+            pos.z,
+        );
+    }
+
+    #[test]
+    fn tp_noop_when_no_active_coffins() {
+        let mut app = setup_app(false);
+        let player = spawn_test_client(&mut app, "Alice", [50.0, 65.0, 50.0]);
+
+        send(&mut app, player, SupplyCoffinCmd::Tp);
+        run_update(&mut app);
+
+        let pos = app.world().entity(player).get::<Position>().unwrap().get();
+        assert!(
+            (pos.x - 50.0).abs() < 0.01,
+            "tp with no active coffins should not move player; actual x={:.1}",
+            pos.x,
         );
     }
 }

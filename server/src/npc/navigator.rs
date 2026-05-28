@@ -1021,6 +1021,7 @@ mod tests {
             SurfaceInfo {
                 y: self.0,
                 passable: true,
+                water_y: i32::MIN,
             }
         }
     }
@@ -1358,6 +1359,7 @@ mod tests {
                 crate::world::terrain::SurfaceInfo {
                     y: 60,
                     passable: false,
+                    water_y: i32::MIN,
                 }
             }
         }

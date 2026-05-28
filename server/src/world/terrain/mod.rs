@@ -41,7 +41,8 @@ pub use giant_sword::sword_sea_xz_bounds;
 pub const WORLD_HEIGHT: u32 = 496;
 pub const MIN_Y: i32 = -64;
 
-/// Surface information for a single world column, used by NPC navigation.
+/// Surface information for a single world column, used by NPC navigation and
+/// supply coffin spawn validation.
 #[derive(Clone, Copy, Debug)]
 #[allow(dead_code)]
 pub struct SurfaceInfo {
@@ -49,6 +50,8 @@ pub struct SurfaceInfo {
     pub y: i32,
     /// Whether an NPC can stand on this column (no deep water or lava).
     pub passable: bool,
+    /// Per-column water top Y. `i32::MIN` when no water body exists in this column.
+    pub water_y: i32,
 }
 
 /// Trait for querying terrain surface height and walkability.
@@ -70,7 +73,11 @@ impl SurfaceProvider for TerrainProvider {
             sample.water_level.round() as i32
         };
         let passable = water_top <= y && sample.surface_block != BlockState::LAVA;
-        SurfaceInfo { y, passable }
+        SurfaceInfo {
+            y,
+            passable,
+            water_y: water_top,
+        }
     }
 }
 
