@@ -41,8 +41,12 @@ public final class LootContainerStateStore {
     }
 
     public static void open(OpenSession session) {
-        current = session;
-        notifyListeners(session);
+        current = new OpenSession(
+            session.sessionId(), session.sourceKind(), session.grade(),
+            session.rows(), session.cols(), session.timeoutWallSecs(),
+            List.copyOf(session.placedItems())
+        );
+        notifyListeners(current);
     }
 
     public static void update(long sessionId, List<InventoryModel.GridEntry> placedItems) {
@@ -51,7 +55,7 @@ public final class LootContainerStateStore {
             OpenSession updated = new OpenSession(
                 open.sessionId(), open.sourceKind(), open.grade(),
                 open.rows(), open.cols(), open.timeoutWallSecs(),
-                placedItems
+                List.copyOf(placedItems)
             );
             current = updated;
             notifyListeners(updated);

@@ -111,7 +111,7 @@ public final class LootContainerHandler implements ServerDataHandler {
             if (row == null || col == null || itemObj == null) continue;
             InventoryItem item = InventorySnapshotHandler.parseInventoryItem(itemObj);
             if (item == null) continue;
-            if (row + item.gridHeight() > maxRows || col + item.gridWidth() > maxCols) continue;
+            if (row < 0 || col < 0 || row + item.gridHeight() > maxRows || col + item.gridWidth() > maxCols) continue;
             entries.add(new InventoryModel.GridEntry(item, containerId, row, col));
         }
         return entries;
@@ -128,12 +128,18 @@ public final class LootContainerHandler implements ServerDataHandler {
 
     private static int readInt(JsonObject obj, String field, int defaultValue) {
         Long value = readLong(obj, field);
-        return value != null ? value.intValue() : defaultValue;
+        if (value == null) return defaultValue;
+        if (value < Integer.MIN_VALUE || value > Integer.MAX_VALUE) return defaultValue;
+        return value.intValue();
     }
 
     private static Integer readIntOrNull(JsonObject obj, String field) {
         Long value = readLong(obj, field);
-        return value != null ? value.intValue() : null;
+        if (value != null) {
+            if (value < Integer.MIN_VALUE || value > Integer.MAX_VALUE) return null;
+            return value.intValue();
+        }
+        return null;
     }
 
     private static String readString(JsonObject obj, String field, String defaultValue) {

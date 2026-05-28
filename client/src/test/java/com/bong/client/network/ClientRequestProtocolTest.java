@@ -726,6 +726,8 @@ public class ClientRequestProtocolTest {
         com.google.gson.JsonObject to = obj.getAsJsonObject("to");
         assertEquals("container", to.get("kind").getAsString());
         assertEquals("body_pocket", to.get("container_id").getAsString());
+        assertEquals(2, to.get("row").getAsInt(), "to.row should be 2");
+        assertEquals(0, to.get("col").getAsInt(), "to.col should be 0");
     }
 
     @Test

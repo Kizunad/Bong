@@ -101,13 +101,15 @@ pub fn handle_supply_coffin_interact(
             continue;
         }
 
-        if ext_containers.get(ev.entity).is_ok() {
-            tracing::debug!(
-                "[bong][supply_coffin] interact rejected (already occupied): grade={:?}",
-                active.grade,
-            );
-            client.send_chat_message("§c[物资棺] 有人正在翻找。");
-            continue;
+        if let Ok(ext) = ext_containers.get(ev.entity) {
+            if ext.opened_by.is_some() {
+                tracing::debug!(
+                    "[bong][supply_coffin] interact rejected (already occupied): grade={:?}",
+                    active.grade,
+                );
+                client.send_chat_message("§c[物资棺] 有人正在翻找。");
+                continue;
+            }
         }
 
         let seed = registry.next_rand_u64();

@@ -9079,8 +9079,32 @@ fn handle_external_container_move(
             return;
         };
 
-        let to_row = *to_row as u8;
-        let to_col = *to_col as u8;
+        let (to_row, to_col) = match (u8::try_from(*to_row), u8::try_from(*to_col)) {
+            (Ok(r), Ok(c)) => (r, c),
+            _ => {
+                tracing::warn!(
+                    "[bong][network] external_container_move: row/col overflow (row={}, col={})",
+                    to_row,
+                    to_col
+                );
+                place_item_into_container(
+                    &mut ext.container,
+                    removed.row,
+                    removed.col,
+                    removed.instance,
+                )
+                .ok();
+                resync_ext_and_inventory(
+                    player_entity,
+                    &ext,
+                    inventories,
+                    player_states,
+                    cultivations,
+                    clients,
+                );
+                return;
+            }
+        };
 
         if to_row + removed.instance.grid_h > target_container.rows
             || to_col + removed.instance.grid_w > target_container.cols
@@ -9201,8 +9225,36 @@ fn handle_external_container_move(
             return;
         };
 
-        let to_row = *to_row as u8;
-        let to_col = *to_col as u8;
+        let (to_row, to_col) = match (u8::try_from(*to_row), u8::try_from(*to_col)) {
+            (Ok(r), Ok(c)) => (r, c),
+            _ => {
+                tracing::warn!(
+                    "[bong][network] external_container_move: row/col overflow (row={}, col={})",
+                    to_row,
+                    to_col
+                );
+                // restore to player
+                let orig_container = inventory.containers.iter_mut().find(|c| {
+                    if let InventoryLocationV1::Container { container_id, .. } = from {
+                        c.id == *container_id
+                    } else {
+                        false
+                    }
+                });
+                if let Some(container) = orig_container {
+                    container.items.push(removed);
+                }
+                resync_ext_and_inventory(
+                    player_entity,
+                    &ext,
+                    inventories,
+                    player_states,
+                    cultivations,
+                    clients,
+                );
+                return;
+            }
+        };
 
         match place_item_into_container(
             &mut ext.container,

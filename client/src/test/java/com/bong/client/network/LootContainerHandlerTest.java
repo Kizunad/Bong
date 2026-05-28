@@ -73,7 +73,7 @@ class LootContainerHandlerTest {
     }
 
     @Test
-    void updateHandledWithoutError() {
+    void updateHandledAndStateReflectsEmptyItems() {
         LootContainerStateStore.open(new LootContainerStateStore.OpenSession(
             42, "supply_coffin", "common", 3, 4, 1716872400L, java.util.List.of()
         ));
@@ -85,6 +85,14 @@ class LootContainerHandlerTest {
             .route(json, json.getBytes(StandardCharsets.UTF_8).length);
 
         assertTrue(result.isHandled(), "loot_container_update should be handled");
+        assertTrue(LootContainerStateStore.isOpen(),
+            "store should remain open after update");
+        LootContainerStateStore.OpenSession session =
+            assertInstanceOf(LootContainerStateStore.OpenSession.class, LootContainerStateStore.current());
+        assertTrue(session.placedItems().isEmpty(),
+            "placedItems should be empty after update with empty placed_items");
+        assertEquals(42, session.sessionId(),
+            "sessionId should still match after update");
     }
 
     @Test

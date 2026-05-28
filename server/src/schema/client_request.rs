@@ -1750,14 +1750,30 @@ mod tests {
                 assert_eq!(v, 1, "version should be 1");
                 assert_eq!(session_id, 42, "session_id should be 42");
                 assert_eq!(instance_id, 100, "instance_id should be 100");
-                assert!(
-                    matches!(from, InventoryLocationV1::Container { .. }),
-                    "from should be Container"
-                );
-                assert!(
-                    matches!(to, InventoryLocationV1::Container { .. }),
-                    "to should be Container"
-                );
+                match from {
+                    InventoryLocationV1::Container {
+                        container_id,
+                        row,
+                        col,
+                    } => {
+                        assert_eq!(container_id, "ext_42", "from container_id");
+                        assert_eq!(row, 0, "from row");
+                        assert_eq!(col, 1, "from col");
+                    }
+                    other => panic!("expected Container, got {other:?}"),
+                }
+                match to {
+                    InventoryLocationV1::Container {
+                        container_id,
+                        row,
+                        col,
+                    } => {
+                        assert_eq!(container_id, "body_pocket", "to container_id");
+                        assert_eq!(row, 1, "to row");
+                        assert_eq!(col, 0, "to col");
+                    }
+                    other => panic!("expected Container, got {other:?}"),
+                }
             }
             other => panic!("expected ExternalContainerMove, got {other:?}"),
         }
@@ -1810,6 +1826,70 @@ mod tests {
                     matches!(to, InventoryLocationV1::Equip { .. }),
                     "to should be Equip, got {to:?}"
                 );
+            }
+            other => panic!("expected ExternalContainerMove, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn external_container_close_rejects_missing_session_id() {
+        let json = r#"{"type": "external_container_close", "v": 1}"#;
+        assert!(
+            serde_json::from_str::<ClientRequestV1>(json).is_err(),
+            "missing session_id should fail"
+        );
+    }
+
+    #[test]
+    fn external_container_move_rejects_missing_from() {
+        let json = r#"{
+            "type": "external_container_move",
+            "v": 1,
+            "session_id": 1,
+            "instance_id": 100,
+            "to": {"kind": "container", "container_id": "body_pocket", "row": 0, "col": 0}
+        }"#;
+        assert!(
+            serde_json::from_str::<ClientRequestV1>(json).is_err(),
+            "missing from should fail"
+        );
+    }
+
+    #[test]
+    fn external_container_move_rejects_missing_to() {
+        let json = r#"{
+            "type": "external_container_move",
+            "v": 1,
+            "session_id": 1,
+            "instance_id": 100,
+            "from": {"kind": "container", "container_id": "ext_1", "row": 0, "col": 0}
+        }"#;
+        assert!(
+            serde_json::from_str::<ClientRequestV1>(json).is_err(),
+            "missing to should fail"
+        );
+    }
+
+    #[test]
+    fn external_container_move_with_zero_session_id() {
+        let json = r#"{
+            "type": "external_container_move",
+            "v": 1,
+            "session_id": 0,
+            "instance_id": 0,
+            "from": {"kind": "container", "container_id": "ext_0", "row": 0, "col": 0},
+            "to": {"kind": "container", "container_id": "body_pocket", "row": 0, "col": 0}
+        }"#;
+        let req: ClientRequestV1 = serde_json::from_str(json)
+            .expect("zero session_id/instance_id should be valid at the schema level");
+        match req {
+            ClientRequestV1::ExternalContainerMove {
+                session_id,
+                instance_id,
+                ..
+            } => {
+                assert_eq!(session_id, 0, "session_id should be 0");
+                assert_eq!(instance_id, 0, "instance_id should be 0");
             }
             other => panic!("expected ExternalContainerMove, got {other:?}"),
         }

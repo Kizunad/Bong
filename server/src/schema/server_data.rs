@@ -4176,8 +4176,10 @@ mod tests {
             placed_items: vec![],
             timeout_wall_secs: 0,
         };
-        let json = serde_json::to_string(&open).unwrap();
-        let back: LootContainerOpenV1 = serde_json::from_str(&json).unwrap();
+        let json = serde_json::to_string(&open)
+            .expect("LootContainerOpenV1 with empty items should serialize");
+        let back: LootContainerOpenV1 = serde_json::from_str(&json)
+            .expect("LootContainerOpenV1 with empty items should deserialize");
         assert!(
             back.placed_items.is_empty(),
             "empty placed_items must survive roundtrip"
@@ -4246,7 +4248,8 @@ mod tests {
         let kind = LootContainerSourceKindV1::SupplyCoffin {
             grade: "common".to_string(),
         };
-        let json = serde_json::to_string(&kind).unwrap();
+        let json = serde_json::to_string(&kind)
+            .expect("LootContainerSourceKindV1::SupplyCoffin should serialize");
         assert!(
             json.contains("\"supply_coffin\""),
             "source_kind wire should use snake_case tag, got: {json}"
@@ -4272,7 +4275,8 @@ mod tests {
             ),
         ];
         for (reason, expected) in cases {
-            let json = serde_json::to_string(&reason).unwrap();
+            let json = serde_json::to_string(&reason)
+                .expect("LootContainerCloseReasonV1 variant should serialize");
             assert_eq!(
                 json, expected,
                 "LootContainerCloseReasonV1::{reason:?} wire value mismatch"
@@ -4293,6 +4297,51 @@ mod tests {
         assert_eq!(
             payload_type_label(ServerDataType::LootContainerClose),
             "loot_container_close"
+        );
+    }
+
+    #[test]
+    fn loot_container_open_rejects_missing_session_id() {
+        let json = r#"{"source_kind":{"kind":"supply_coffin","grade":"common"},"rows":3,"cols":4,"placed_items":[],"timeout_wall_secs":0}"#;
+        assert!(
+            serde_json::from_str::<LootContainerOpenV1>(json).is_err(),
+            "LootContainerOpenV1 missing session_id should fail deserialization"
+        );
+    }
+
+    #[test]
+    fn loot_container_close_rejects_missing_reason() {
+        let json = r#"{"session_id":1}"#;
+        assert!(
+            serde_json::from_str::<LootContainerCloseV1>(json).is_err(),
+            "LootContainerCloseV1 missing reason should fail deserialization"
+        );
+    }
+
+    #[test]
+    fn loot_container_close_rejects_unknown_reason() {
+        let json = r#"{"session_id":1,"reason":"alien_abduction"}"#;
+        assert!(
+            serde_json::from_str::<LootContainerCloseV1>(json).is_err(),
+            "LootContainerCloseV1 unknown reason should fail deserialization"
+        );
+    }
+
+    #[test]
+    fn loot_container_open_rejects_missing_placed_items() {
+        let json = r#"{"session_id":1,"source_kind":{"kind":"supply_coffin","grade":"rare"},"rows":5,"cols":4,"timeout_wall_secs":100}"#;
+        assert!(
+            serde_json::from_str::<LootContainerOpenV1>(json).is_err(),
+            "LootContainerOpenV1 missing placed_items should fail deserialization"
+        );
+    }
+
+    #[test]
+    fn loot_container_update_rejects_missing_session_id() {
+        let json = r#"{"placed_items":[]}"#;
+        assert!(
+            serde_json::from_str::<LootContainerUpdateV1>(json).is_err(),
+            "LootContainerUpdateV1 missing session_id should fail deserialization"
         );
     }
 }

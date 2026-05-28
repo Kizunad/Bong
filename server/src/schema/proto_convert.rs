@@ -3839,7 +3839,7 @@ mod tests {
 
     #[test]
     fn s2c_loot_container_open_roundtrip() {
-        s2c_encode_decode_roundtrip(ServerDataPayloadV1::LootContainerOpen(
+        let payload = ServerDataPayloadV1::LootContainerOpen(
             super::super::server_data::LootContainerOpenV1 {
                 session_id: 42,
                 source_kind: super::super::server_data::LootContainerSourceKindV1::SupplyCoffin {
@@ -3850,27 +3850,98 @@ mod tests {
                 placed_items: vec![],
                 timeout_wall_secs: 1716872400,
             },
-        ));
+        );
+        s2c_encode_decode_roundtrip(payload.clone());
+
+        // Field-level verification on the decoded proto payload
+        let proto_payload = server_data_to_proto_payload(&payload);
+        let envelope = bong::ServerDataEnvelope {
+            payload: Some(proto_payload),
+        };
+        let bytes = envelope.encode_to_vec();
+        let decoded = bong::ServerDataEnvelope::decode(bytes.as_slice())
+            .expect("S2C proto decode should succeed");
+        match decoded.payload {
+            Some(bong::server_data_envelope::Payload::LootContainerOpen(open)) => {
+                assert_eq!(open.session_id, 42, "session_id should survive roundtrip");
+                assert_eq!(open.rows, 3, "rows should survive roundtrip");
+                assert_eq!(open.cols, 4, "cols should survive roundtrip");
+                assert!(
+                    open.placed_items.is_empty(),
+                    "empty placed_items should survive roundtrip"
+                );
+                assert_eq!(
+                    open.timeout_wall_secs, 1716872400,
+                    "timeout_wall_secs should survive roundtrip"
+                );
+                assert!(
+                    open.source_kind.contains("supply_coffin"),
+                    "source_kind should contain supply_coffin, got: {}",
+                    open.source_kind
+                );
+            }
+            other => panic!("expected LootContainerOpen payload, got {other:?}"),
+        }
     }
 
     #[test]
     fn s2c_loot_container_update_roundtrip() {
-        s2c_encode_decode_roundtrip(ServerDataPayloadV1::LootContainerUpdate(
+        let payload = ServerDataPayloadV1::LootContainerUpdate(
             super::super::server_data::LootContainerUpdateV1 {
                 session_id: 7,
                 placed_items: vec![],
             },
-        ));
+        );
+        s2c_encode_decode_roundtrip(payload.clone());
+
+        // Field-level verification on the decoded proto payload
+        let proto_payload = server_data_to_proto_payload(&payload);
+        let envelope = bong::ServerDataEnvelope {
+            payload: Some(proto_payload),
+        };
+        let bytes = envelope.encode_to_vec();
+        let decoded = bong::ServerDataEnvelope::decode(bytes.as_slice())
+            .expect("S2C proto decode should succeed");
+        match decoded.payload {
+            Some(bong::server_data_envelope::Payload::LootContainerUpdate(upd)) => {
+                assert_eq!(upd.session_id, 7, "session_id should survive roundtrip");
+                assert!(
+                    upd.placed_items.is_empty(),
+                    "empty placed_items should survive roundtrip"
+                );
+            }
+            other => panic!("expected LootContainerUpdate payload, got {other:?}"),
+        }
     }
 
     #[test]
     fn s2c_loot_container_close_roundtrip() {
-        s2c_encode_decode_roundtrip(ServerDataPayloadV1::LootContainerClose(
+        let payload = ServerDataPayloadV1::LootContainerClose(
             super::super::server_data::LootContainerCloseV1 {
                 session_id: 99,
                 reason: super::super::server_data::LootContainerCloseReasonV1::Timeout,
             },
-        ));
+        );
+        s2c_encode_decode_roundtrip(payload.clone());
+
+        // Field-level verification on the decoded proto payload
+        let proto_payload = server_data_to_proto_payload(&payload);
+        let envelope = bong::ServerDataEnvelope {
+            payload: Some(proto_payload),
+        };
+        let bytes = envelope.encode_to_vec();
+        let decoded = bong::ServerDataEnvelope::decode(bytes.as_slice())
+            .expect("S2C proto decode should succeed");
+        match decoded.payload {
+            Some(bong::server_data_envelope::Payload::LootContainerClose(close)) => {
+                assert_eq!(close.session_id, 99, "session_id should survive roundtrip");
+                assert_eq!(
+                    close.reason, "timeout",
+                    "reason should be 'timeout' after roundtrip"
+                );
+            }
+            other => panic!("expected LootContainerClose payload, got {other:?}"),
+        }
     }
 
     #[test]

@@ -87,11 +87,12 @@ pub fn external_container_lifecycle_tick(
             continue;
         };
 
-        let coffin_pos = coffin_registry
-            .active
-            .get(&coffin_entity)
-            .map(|a| a.pos)
-            .unwrap_or_default();
+        let Some(coffin_pos) = coffin_registry.active.get(&coffin_entity).map(|a| a.pos) else {
+            tracing::warn!(
+                "[bong][supply_coffin] session {session_id} coffin entity {coffin_entity:?} not in active registry, skipping distance check"
+            );
+            continue;
+        };
 
         let dist = coffin_pos.distance(player_pos.get());
         if dist > CLOSE_DISTANCE_BLOCKS + CLOSE_DISTANCE_TOLERANCE {

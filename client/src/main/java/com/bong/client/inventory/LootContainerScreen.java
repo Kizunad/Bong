@@ -75,6 +75,8 @@ public final class LootContainerScreen extends BaseOwoScreen<FlowLayout> {
         this.extContainerId = "ext_" + sessionId;
     }
 
+    long sessionId() { return sessionId; }
+
     @Override
     protected OwoUIAdapter<FlowLayout> createAdapter() {
         return OwoUIAdapter.create(this, Containers::verticalFlow);

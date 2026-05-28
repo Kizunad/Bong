@@ -13,9 +13,11 @@ public final class LootContainerScreenBootstrap {
             MinecraftClient client = MinecraftClient.getInstance();
             client.execute(() -> {
                 if (session instanceof LootContainerStateStore.OpenSession open) {
-                    if (!(client.currentScreen instanceof LootContainerScreen)) {
-                        client.setScreen(new LootContainerScreen(open));
+                    if (client.currentScreen instanceof LootContainerScreen existing
+                        && existing.sessionId() == open.sessionId()) {
+                        return; // same session already open
                     }
+                    client.setScreen(new LootContainerScreen(open));
                 } else if (session instanceof LootContainerStateStore.Closed) {
                     if (client.currentScreen instanceof LootContainerScreen) {
                         client.setScreen(null);
