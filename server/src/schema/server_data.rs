@@ -212,6 +212,10 @@ pub enum ServerDataType {
     KnockbackSync,
     TechniqueProficiencyUpdate,
     PillBuffStatus,
+    // ─── plan-supply-coffin-loot-ui P1：外部容器 IPC ────────────────
+    LootContainerOpen,
+    LootContainerUpdate,
+    LootContainerClose,
 }
 
 #[derive(Debug, Clone)]
@@ -447,6 +451,10 @@ pub enum ServerDataPayloadV1 {
     KnockbackSync(KnockbackSyncV1),
     TechniqueProficiencyUpdate(TechniqueProficiencyUpdateV1),
     PillBuffStatus(PillBuffStatusV1),
+    // ─── plan-supply-coffin-loot-ui P1：外部容器 IPC ────────────────
+    LootContainerOpen(LootContainerOpenV1),
+    LootContainerUpdate(LootContainerUpdateV1),
+    LootContainerClose(LootContainerCloseV1),
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -493,6 +501,48 @@ pub struct PillBuffStatusV1 {
     pub buff_id: String,
     pub remaining_ticks: u32,
     pub effect_multiplier: f64,
+}
+
+// ─── plan-supply-coffin-loot-ui P1：外部容器 S2C payloads ──────────
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields, rename_all = "snake_case")]
+pub enum LootContainerSourceKindV1 {
+    SupplyCoffin { grade: String },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct LootContainerOpenV1 {
+    pub session_id: u64,
+    pub source_kind: LootContainerSourceKindV1,
+    pub rows: u8,
+    pub cols: u8,
+    pub placed_items: Vec<super::inventory::PlacedInventoryItemV1>,
+    pub timeout_wall_secs: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct LootContainerUpdateV1 {
+    pub session_id: u64,
+    pub placed_items: Vec<super::inventory::PlacedInventoryItemV1>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields, rename_all = "snake_case")]
+pub enum LootContainerCloseReasonV1 {
+    Timeout,
+    Distance,
+    PlayerClosed,
+    CoffinDestroyed,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct LootContainerCloseV1 {
+    pub session_id: u64,
+    pub reason: LootContainerCloseReasonV1,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -1304,6 +1354,19 @@ enum ServerDataPayloadWireV1 {
     PillBuffStatus {
         #[serde(flatten)]
         status: PillBuffStatusV1,
+    },
+    // ─── plan-supply-coffin-loot-ui P1：外部容器 ────────────────
+    LootContainerOpen {
+        #[serde(flatten)]
+        data: LootContainerOpenV1,
+    },
+    LootContainerUpdate {
+        #[serde(flatten)]
+        data: LootContainerUpdateV1,
+    },
+    LootContainerClose {
+        #[serde(flatten)]
+        data: LootContainerCloseV1,
     },
 }
 
@@ -2127,6 +2190,15 @@ impl TryFrom<ServerDataPayloadWireV1> for ServerDataPayloadV1 {
                 Ok(Self::TechniqueProficiencyUpdate(update))
             }
             ServerDataPayloadWireV1::PillBuffStatus { status } => Ok(Self::PillBuffStatus(status)),
+            ServerDataPayloadWireV1::LootContainerOpen { data } => {
+                Ok(Self::LootContainerOpen(data))
+            }
+            ServerDataPayloadWireV1::LootContainerUpdate { data } => {
+                Ok(Self::LootContainerUpdate(data))
+            }
+            ServerDataPayloadWireV1::LootContainerClose { data } => {
+                Ok(Self::LootContainerClose(data))
+            }
         }
     }
 }
@@ -2647,6 +2719,15 @@ impl From<&ServerDataPayloadV1> for ServerDataPayloadWireV1 {
             ServerDataPayloadV1::PillBuffStatus(status) => Self::PillBuffStatus {
                 status: status.clone(),
             },
+            ServerDataPayloadV1::LootContainerOpen(data) => {
+                Self::LootContainerOpen { data: data.clone() }
+            }
+            ServerDataPayloadV1::LootContainerUpdate(data) => {
+                Self::LootContainerUpdate { data: data.clone() }
+            }
+            ServerDataPayloadV1::LootContainerClose(data) => {
+                Self::LootContainerClose { data: data.clone() }
+            }
         }
     }
 }
@@ -2953,6 +3034,9 @@ impl ServerDataPayloadV1 {
             Self::KnockbackSync(..) => ServerDataType::KnockbackSync,
             Self::TechniqueProficiencyUpdate(..) => ServerDataType::TechniqueProficiencyUpdate,
             Self::PillBuffStatus(..) => ServerDataType::PillBuffStatus,
+            Self::LootContainerOpen(..) => ServerDataType::LootContainerOpen,
+            Self::LootContainerUpdate(..) => ServerDataType::LootContainerUpdate,
+            Self::LootContainerClose(..) => ServerDataType::LootContainerClose,
         }
     }
 }
@@ -3998,5 +4082,217 @@ mod tests {
         let back: PillBuffStatusV1 =
             serde_json::from_str(&json).expect("zero-tick should deserialize");
         assert_eq!(zero, back);
+    }
+
+    // ─── plan-supply-coffin-loot-ui P1：外部容器 S2C tests ──────────
+
+    fn sample_placed_item() -> super::super::inventory::PlacedInventoryItemV1 {
+        super::super::inventory::PlacedInventoryItemV1 {
+            container_id: "ext_42".to_string(),
+            row: 0,
+            col: 1,
+            item: super::super::inventory::InventoryItemViewV1 {
+                instance_id: 100,
+                item_id: "iron_sword".to_string(),
+                display_name: "铁剑".to_string(),
+                grid_width: 1,
+                grid_height: 2,
+                weight: 2.5,
+                rarity: super::super::inventory::ItemRarityV1::Common,
+                description: String::new(),
+                stack_count: 1,
+                spirit_quality: 0.0,
+                durability: 1.0,
+                freshness: None,
+                freshness_current: None,
+                mineral_id: None,
+                scroll_kind: None,
+                scroll_skill_id: None,
+                scroll_xp_grant: None,
+                charges: None,
+                forge_quality: None,
+                forge_color: None,
+                forge_side_effects: vec![],
+                forge_achieved_tier: None,
+                alchemy: None,
+                lingering_owner_qi: None,
+            },
+        }
+    }
+
+    #[test]
+    fn loot_container_open_serde_roundtrip() {
+        let original = LootContainerOpenV1 {
+            session_id: 42,
+            source_kind: LootContainerSourceKindV1::SupplyCoffin {
+                grade: "common".to_string(),
+            },
+            rows: 3,
+            cols: 4,
+            placed_items: vec![sample_placed_item()],
+            timeout_wall_secs: 1716872400,
+        };
+        let json = serde_json::to_string(&original).expect("LootContainerOpenV1 should serialize");
+        let back: LootContainerOpenV1 =
+            serde_json::from_str(&json).expect("LootContainerOpenV1 should deserialize");
+        assert_eq!(
+            original, back,
+            "LootContainerOpenV1 roundtrip must be lossless"
+        );
+    }
+
+    #[test]
+    fn loot_container_open_envelope_roundtrip() {
+        let payload = ServerDataPayloadV1::LootContainerOpen(LootContainerOpenV1 {
+            session_id: 7,
+            source_kind: LootContainerSourceKindV1::SupplyCoffin {
+                grade: "rare".to_string(),
+            },
+            rows: 4,
+            cols: 5,
+            placed_items: vec![],
+            timeout_wall_secs: 1716872500,
+        });
+        let envelope = ServerDataV1::new(payload.clone());
+        let bytes = serde_json::to_vec(&envelope).expect("envelope should serialize");
+        let round: ServerDataV1 =
+            serde_json::from_slice(&bytes).expect("envelope should roundtrip");
+        assert_eq!(
+            round.payload.payload_type(),
+            ServerDataType::LootContainerOpen,
+            "deserialized type must be LootContainerOpen"
+        );
+    }
+
+    #[test]
+    fn loot_container_open_empty_items_roundtrips() {
+        let open = LootContainerOpenV1 {
+            session_id: 0,
+            source_kind: LootContainerSourceKindV1::SupplyCoffin {
+                grade: "precious".to_string(),
+            },
+            rows: 5,
+            cols: 6,
+            placed_items: vec![],
+            timeout_wall_secs: 0,
+        };
+        let json = serde_json::to_string(&open).unwrap();
+        let back: LootContainerOpenV1 = serde_json::from_str(&json).unwrap();
+        assert!(
+            back.placed_items.is_empty(),
+            "empty placed_items must survive roundtrip"
+        );
+    }
+
+    #[test]
+    fn loot_container_update_serde_roundtrip() {
+        let original = LootContainerUpdateV1 {
+            session_id: 42,
+            placed_items: vec![sample_placed_item()],
+        };
+        let json =
+            serde_json::to_string(&original).expect("LootContainerUpdateV1 should serialize");
+        let back: LootContainerUpdateV1 =
+            serde_json::from_str(&json).expect("LootContainerUpdateV1 should deserialize");
+        assert_eq!(
+            original, back,
+            "LootContainerUpdateV1 roundtrip must be lossless"
+        );
+    }
+
+    #[test]
+    fn loot_container_close_all_reasons_roundtrip() {
+        let reasons = [
+            LootContainerCloseReasonV1::Timeout,
+            LootContainerCloseReasonV1::Distance,
+            LootContainerCloseReasonV1::PlayerClosed,
+            LootContainerCloseReasonV1::CoffinDestroyed,
+        ];
+        for reason in reasons {
+            let close = LootContainerCloseV1 {
+                session_id: 99,
+                reason: reason.clone(),
+            };
+            let json =
+                serde_json::to_string(&close).expect("LootContainerCloseV1 should serialize");
+            let back: LootContainerCloseV1 =
+                serde_json::from_str(&json).expect("LootContainerCloseV1 should deserialize");
+            assert_eq!(
+                close, back,
+                "LootContainerCloseV1 roundtrip must be lossless for reason {reason:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn loot_container_close_envelope_roundtrip() {
+        let payload = ServerDataPayloadV1::LootContainerClose(LootContainerCloseV1 {
+            session_id: 5,
+            reason: LootContainerCloseReasonV1::Timeout,
+        });
+        let envelope = ServerDataV1::new(payload);
+        let bytes = serde_json::to_vec(&envelope).expect("envelope should serialize");
+        let round: ServerDataV1 =
+            serde_json::from_slice(&bytes).expect("envelope should roundtrip");
+        assert_eq!(
+            round.payload.payload_type(),
+            ServerDataType::LootContainerClose,
+            "deserialized type must be LootContainerClose"
+        );
+    }
+
+    #[test]
+    fn loot_container_source_kind_supply_coffin_wire_format() {
+        let kind = LootContainerSourceKindV1::SupplyCoffin {
+            grade: "common".to_string(),
+        };
+        let json = serde_json::to_string(&kind).unwrap();
+        assert!(
+            json.contains("\"supply_coffin\""),
+            "source_kind wire should use snake_case tag, got: {json}"
+        );
+        assert!(
+            json.contains("\"grade\":\"common\""),
+            "source_kind wire should contain grade field, got: {json}"
+        );
+    }
+
+    #[test]
+    fn loot_container_close_reason_wire_values() {
+        let cases = [
+            (LootContainerCloseReasonV1::Timeout, "\"timeout\""),
+            (LootContainerCloseReasonV1::Distance, "\"distance\""),
+            (
+                LootContainerCloseReasonV1::PlayerClosed,
+                "\"player_closed\"",
+            ),
+            (
+                LootContainerCloseReasonV1::CoffinDestroyed,
+                "\"coffin_destroyed\"",
+            ),
+        ];
+        for (reason, expected) in cases {
+            let json = serde_json::to_string(&reason).unwrap();
+            assert_eq!(
+                json, expected,
+                "LootContainerCloseReasonV1::{reason:?} wire value mismatch"
+            );
+        }
+    }
+
+    #[test]
+    fn payload_type_label_matches_for_loot_container_types() {
+        assert_eq!(
+            payload_type_label(ServerDataType::LootContainerOpen),
+            "loot_container_open"
+        );
+        assert_eq!(
+            payload_type_label(ServerDataType::LootContainerUpdate),
+            "loot_container_update"
+        );
+        assert_eq!(
+            payload_type_label(ServerDataType::LootContainerClose),
+            "loot_container_close"
+        );
     }
 }

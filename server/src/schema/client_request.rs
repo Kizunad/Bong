@@ -422,6 +422,18 @@ pub enum ClientRequestV1 {
     CancelSearch {
         v: u8,
     },
+    // ─── plan-supply-coffin-loot-ui P1：外部容器 C2S ────────────────
+    ExternalContainerMove {
+        v: u8,
+        session_id: u64,
+        instance_id: u64,
+        from: InventoryLocationV1,
+        to: InventoryLocationV1,
+    },
+    ExternalContainerClose {
+        v: u8,
+        session_id: u64,
+    },
     // ─── 灵田（plan-lingtian-v1 §1.2 / §1.4 / §1.5 / §1.6 / §1.7） ────
     /// plan §1.2.2 — 起开垦 session。terrain / environment 由 server 从
     /// chunk_layer 读 BlockKind 自动派生（避免客户端伪造）。
@@ -1711,5 +1723,95 @@ mod tests {
                 choice_idx: None
             }
         ));
+    }
+
+    // ─── plan-supply-coffin-loot-ui P1：外部容器 C2S tests ──────────
+
+    #[test]
+    fn external_container_move_roundtrip() {
+        let json = r#"{
+            "type": "external_container_move",
+            "v": 1,
+            "session_id": 42,
+            "instance_id": 100,
+            "from": {"kind": "container", "container_id": "ext_42", "row": 0, "col": 1},
+            "to": {"kind": "container", "container_id": "body_pocket", "row": 1, "col": 0}
+        }"#;
+        let req: ClientRequestV1 =
+            serde_json::from_str(json).expect("external_container_move should deserialize");
+        match req {
+            ClientRequestV1::ExternalContainerMove {
+                v,
+                session_id,
+                instance_id,
+                from,
+                to,
+            } => {
+                assert_eq!(v, 1, "version should be 1");
+                assert_eq!(session_id, 42, "session_id should be 42");
+                assert_eq!(instance_id, 100, "instance_id should be 100");
+                assert!(
+                    matches!(from, InventoryLocationV1::Container { .. }),
+                    "from should be Container"
+                );
+                assert!(
+                    matches!(to, InventoryLocationV1::Container { .. }),
+                    "to should be Container"
+                );
+            }
+            other => panic!("expected ExternalContainerMove, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn external_container_close_roundtrip() {
+        let json = r#"{"type": "external_container_close", "v": 1, "session_id": 99}"#;
+        let req: ClientRequestV1 =
+            serde_json::from_str(json).expect("external_container_close should deserialize");
+        match req {
+            ClientRequestV1::ExternalContainerClose { v, session_id } => {
+                assert_eq!(v, 1, "version should be 1");
+                assert_eq!(session_id, 99, "session_id should be 99");
+            }
+            other => panic!("expected ExternalContainerClose, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn external_container_move_rejects_missing_session_id() {
+        let json = r#"{
+            "type": "external_container_move",
+            "v": 1,
+            "instance_id": 100,
+            "from": {"kind": "container", "container_id": "ext_1", "row": 0, "col": 0},
+            "to": {"kind": "container", "container_id": "body_pocket", "row": 0, "col": 0}
+        }"#;
+        assert!(
+            serde_json::from_str::<ClientRequestV1>(json).is_err(),
+            "missing session_id should fail"
+        );
+    }
+
+    #[test]
+    fn external_container_move_with_equip_slot() {
+        let json = r#"{
+            "type": "external_container_move",
+            "v": 1,
+            "session_id": 5,
+            "instance_id": 200,
+            "from": {"kind": "container", "container_id": "ext_5", "row": 2, "col": 3},
+            "to": {"kind": "equip", "slot": "main_hand"}
+        }"#;
+        let req: ClientRequestV1 =
+            serde_json::from_str(json).expect("move to equip slot should deserialize");
+        match req {
+            ClientRequestV1::ExternalContainerMove { to, .. } => {
+                assert!(
+                    matches!(to, InventoryLocationV1::Equip { .. }),
+                    "to should be Equip, got {to:?}"
+                );
+            }
+            other => panic!("expected ExternalContainerMove, got {other:?}"),
+        }
     }
 }

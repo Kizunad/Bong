@@ -165,6 +165,9 @@ pub fn payload_type_label(payload_type: ServerDataType) -> &'static str {
         ServerDataType::KnockbackSync => "knockback_sync",
         ServerDataType::TechniqueProficiencyUpdate => "technique_proficiency_update",
         ServerDataType::PillBuffStatus => "pill_buff_status",
+        ServerDataType::LootContainerOpen => "loot_container_open",
+        ServerDataType::LootContainerUpdate => "loot_container_update",
+        ServerDataType::LootContainerClose => "loot_container_close",
     }
 }
 

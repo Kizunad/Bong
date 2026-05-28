@@ -151,7 +151,11 @@ public class ServerDataRouterTest {
             "craft_outcome",
             "recipe_unlocked",
             // plan-workbench-recipes-v1 P3.1 — 制作台 UI 打开
-            "workbench_open"
+            "workbench_open",
+            // plan-supply-coffin-loot-ui P1 — 外部容器（物资棺搜刮 UI）
+            "loot_container_open",
+            "loot_container_update",
+            "loot_container_close"
         ), router.registeredTypes());
     }
 

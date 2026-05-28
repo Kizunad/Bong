@@ -493,7 +493,9 @@ pub fn handle_client_request_payloads(
             | ClientRequestV1::ThrowCarrier { v, .. }
             | ClientRequestV1::AnqiContainerSwitch { v, .. }
             | ClientRequestV1::CraftStart { v, .. }
-            | ClientRequestV1::CraftCancel { v } => *v,
+            | ClientRequestV1::CraftCancel { v }
+            | ClientRequestV1::ExternalContainerMove { v, .. }
+            | ClientRequestV1::ExternalContainerClose { v, .. } => *v,
         };
         if v != SUPPORTED_VERSION {
             tracing::warn!(
@@ -1812,6 +1814,19 @@ pub fn handle_client_request_payloads(
                     continue;
                 };
                 cancel_search_tx.send(CancelSearchRequestEvent { player: ev.client });
+            }
+            // ── 外部容器（plan-supply-coffin-loot-ui P2 接入）─────────────
+            ClientRequestV1::ExternalContainerMove { .. } => {
+                tracing::info!(
+                    "[bong][network] external_container_move from {:?} (stub — P2 接入)",
+                    ev.client
+                );
+            }
+            ClientRequestV1::ExternalContainerClose { .. } => {
+                tracing::info!(
+                    "[bong][network] external_container_close from {:?} (stub — P2 接入)",
+                    ev.client
+                );
             }
             // ── 灵田请求 ECS dispatch（plan-lingtian-v1 §1.2-§1.7）─────────
             ClientRequestV1::LingtianStartTill {

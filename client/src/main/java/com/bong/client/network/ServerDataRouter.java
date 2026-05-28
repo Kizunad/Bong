@@ -227,6 +227,11 @@ public final class ServerDataRouter {
         handlers.put("craft_session_state", new CraftSessionStateHandler());
         handlers.put("craft_outcome", new CraftOutcomeHandler());
         handlers.put("recipe_unlocked", new RecipeUnlockedHandler());
+        // plan-supply-coffin-loot-ui P1 — 外部容器（物资棺搜刮 UI）
+        LootContainerHandler lootContainerHandler = new LootContainerHandler();
+        handlers.put("loot_container_open", lootContainerHandler);
+        handlers.put("loot_container_update", lootContainerHandler);
+        handlers.put("loot_container_close", lootContainerHandler);
         // plan-workbench-recipes-v1 P3.1 — 制作台 UI 打开
         handlers.put("workbench_open",
             com.bong.client.craft.WorkbenchScreenBootstrap.handler());
