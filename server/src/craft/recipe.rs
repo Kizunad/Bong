@@ -513,7 +513,9 @@ mod tests {
     }
 
     #[test]
-    fn validate_accepts_empty_unlock_sources_as_default_unlocked() {
+    fn validate_accepts_empty_unlock_sources_for_material_discovery() {
+        // 空 unlock_sources 合法 = 材料发现路径（持有任一原料才解锁），
+        // 而非旧语义的"默认全解锁"。
         let mut r = ok_recipe();
         r.unlock_sources.clear();
         assert!(r.validate().is_ok());

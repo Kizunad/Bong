@@ -24,8 +24,8 @@ use std::{
 };
 
 use valence::prelude::{
-    bevy_ecs, Client, Commands, Component, Entity, EventReader, EventWriter, Local, Position,
-    Query, Res, ResMut, Username, With,
+    bevy_ecs, Changed, Client, Commands, Component, Entity, EventReader, EventWriter, Local,
+    Position, Query, Res, ResMut, Username, With,
 };
 
 use crate::combat::CombatClock;
@@ -695,19 +695,20 @@ pub fn build_recipe_list_payload(
 
 /// plan-craft-material-discovery — 被动材料发现解锁。
 ///
-/// 每 tick 扫描在线玩家背包：对【无显式解锁来源】且【原料含背包中任一物品】的
-/// 配方，自动解锁、刷新该玩家配方列表、推一条 narration。残卷/师承/顿悟门控的
-/// 秘传配方不受影响（`unlock_via_material` 内部跳过）。
+/// 对【无显式解锁来源】且【原料含背包中任一物品】的配方，自动解锁、刷新该玩家
+/// 配方列表、推一条 narration。残卷/师承/顿悟门控的秘传配方不受影响
+/// （`unlock_via_material` 内部跳过）。
 ///
-/// 性能：复杂度 O(|在线玩家| · |配方|)，对已解锁配方与秘传配方提前 `continue`
-/// 短路。当前配方数（~20）与在线量级下每帧遍历成本可忽略；仅在玩家新得材料、
-/// 确有新解锁时才构造并下发一次 `RecipeListV1`。若配方原料种类未来暴增，可一次性
-/// 预计算背包内 `template_id` 的 HashSet 复用到全配方遍历（当前规模无需）。
+/// 性能：Query 用 `Changed<PlayerInventory>` 过滤 —— 只在玩家背包**有变动**的
+/// tick 才扫描该玩家（背包不变时整玩家跳过，稳态零成本）。`Added` ⊆ `Changed`，
+/// 故玩家进场 / 持久化加载那 tk 背包被 attach 时也会命中一次，覆盖"开局已有原料
+/// 的初始解锁"。单次扫描复杂度 O(|配方|)，对已解锁/秘传配方提前 `continue` 短路；
+/// 仅确有新解锁时才构造并下发一次 `RecipeListV1`。
 pub fn apply_material_discovery_unlock(
     registry: Res<CraftRegistry>,
     mut unlock_state: ResMut<RecipeUnlockState>,
     mut narrations: Option<ResMut<PendingGameplayNarrations>>,
-    mut players: Query<(&Username, &PlayerInventory, &mut Client)>,
+    mut players: Query<(&Username, &PlayerInventory, &mut Client), Changed<PlayerInventory>>,
 ) {
     for (username, inventory, mut client) in players.iter_mut() {
         let player_id = canonical_player_id(username.0.as_str());
@@ -1353,6 +1354,57 @@ mod tests {
         assert!(
             !unlock_state.is_unlocked(&bob_id, &RecipeId::new("craft.open.alpha")),
             "Bob 无 fan_tie 不应解锁 alpha"
+        );
+    }
+
+    #[test]
+    fn material_discovery_narrates_multiple_recipes_in_one_frame() {
+        // 边界：同帧背包同时持有多种空源配方原料 → 命中 newly.len() > 1 的
+        // 多配方 narration 分支「悟得 N 种新制法：…」，合并为一条定向 narration。
+        let mut app = App::new();
+        let mut registry = CraftRegistry::new();
+        registry
+            .register(make_recipe("craft.open.alpha", &[("fan_tie", 1)], vec![]))
+            .unwrap();
+        registry
+            .register(make_recipe("craft.open.beta", &[("zhu_pi", 1)], vec![]))
+            .unwrap();
+        app.insert_resource(registry);
+        app.insert_resource(RecipeUnlockState::new());
+        app.insert_resource(PendingGameplayNarrations::default());
+        app.add_systems(Update, apply_material_discovery_unlock);
+
+        let (client_bundle, _helper) = create_mock_client("Duke");
+        let entity = app.world_mut().spawn(client_bundle).id();
+        app.world_mut()
+            .entity_mut(entity)
+            .insert(inv_with(&[("fan_tie", 1), ("zhu_pi", 1)]));
+
+        app.update();
+
+        let narr = app
+            .world_mut()
+            .resource_mut::<PendingGameplayNarrations>()
+            .drain();
+        assert_eq!(narr.len(), 1, "同帧多配方解锁应合并为恰好一条 narration");
+        assert_eq!(
+            narr[0].target.as_deref(),
+            Some("Duke"),
+            "narration 应定向到该玩家"
+        );
+        let text = &narr[0].text;
+        assert!(
+            text.starts_with("悟得 2 种新制法："),
+            "应走多配方分支并带数量，实际={text:?}"
+        );
+        // registry 迭代顺序不定，故只断言两个配方名都在（不绑定顺序）。
+        assert!(
+            text.contains("craft.open.alpha") && text.contains("craft.open.beta"),
+            "应列出两个解锁配方名，实际={text:?}"
+        );
+        assert!(
+            text.ends_with("。"),
+            "narration 文案应以句号收尾，实际={text:?}"
         );
     }
 }
