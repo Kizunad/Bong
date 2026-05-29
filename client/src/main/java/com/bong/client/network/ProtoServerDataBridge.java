@@ -154,6 +154,9 @@ public final class ProtoServerDataBridge {
         m.put(Envelope.ServerDataEnvelope.PayloadCase.MOVEMENT_STATE, "movement_state");
         m.put(Envelope.ServerDataEnvelope.PayloadCase.SPIRIT_TREASURE_STATE, "spirit_treasure_state");
         m.put(Envelope.ServerDataEnvelope.PayloadCase.SPIRIT_TREASURE_DIALOGUE, "spirit_treasure_dialogue");
+        m.put(Envelope.ServerDataEnvelope.PayloadCase.LOOT_CONTAINER_OPEN, "loot_container_open");
+        m.put(Envelope.ServerDataEnvelope.PayloadCase.LOOT_CONTAINER_UPDATE, "loot_container_update");
+        m.put(Envelope.ServerDataEnvelope.PayloadCase.LOOT_CONTAINER_CLOSE, "loot_container_close");
         CASE_TO_TYPE = m;
     }
 
@@ -403,6 +406,9 @@ public final class ProtoServerDataBridge {
             case MOVEMENT_STATE: return envelope.getMovementState();
             case SPIRIT_TREASURE_STATE: return envelope.getSpiritTreasureState();
             case SPIRIT_TREASURE_DIALOGUE: return envelope.getSpiritTreasureDialogue();
+            case LOOT_CONTAINER_OPEN: return envelope.getLootContainerOpen();
+            case LOOT_CONTAINER_UPDATE: return envelope.getLootContainerUpdate();
+            case LOOT_CONTAINER_CLOSE: return envelope.getLootContainerClose();
             default: return null;
         }
     }

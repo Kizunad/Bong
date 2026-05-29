@@ -205,8 +205,9 @@ public class BongNetworkHandler {
             if (bridgeResult.isSuccess()) {
                 jsonPayload = bridgeResult.legacyJson();
             } else {
-                // Proto parse failed — try legacy JSON fallback (for payloads like
-                // status_snapshot that still send raw JSON).
+                // Proto bridge failed — log the reason, then try legacy JSON fallback
+                // (for payloads like status_snapshot that still send raw JSON).
+                BongClient.LOGGER.warn("[bong][network] proto bridge failed: {}", bridgeResult.errorMessage());
                 jsonPayload = ServerDataEnvelope.decodeUtf8(bytes);
             }
 
