@@ -24,7 +24,7 @@
 - `plan-qi-physics-v1` P1 ✅ — ledger API 冻结
 
 **反向被依赖**：
-- `plan-anqi-v2` ⬜ — 骨刺暗器 v2（蛛骨刺/蛛丝改进版来自活蛛剥取，本 plan 留 `SpiderTrapAlive` 接口）
+- `plan-anqi-v2` ✅ — 骨刺暗器 v2（蛛骨刺/蛛丝改进版来自活蛛剥取，本 plan 留 `SpiderTrapAlive` 接口）
 - `plan-botany-v2` — 植物区危险因子（MimicSpider 在 botany hazard registry 已注册，行为升级后危险度提升）
 
 ---
