@@ -69,6 +69,11 @@ public final class BongModeledEntity extends Entity implements GeoEntity {
     }
 
     @Override
+    public boolean canHit() {
+        return true;
+    }
+
+    @Override
     protected void initDataTracker() {
         dataTracker.startTracking(VISUAL_STATE, 0);
     }
