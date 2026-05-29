@@ -3989,4 +3989,21 @@ mod tests {
             },
         );
     }
+
+    #[test]
+    fn c2s_supply_coffin_open_zero_entity_id_roundtrip() {
+        c2s_encode_decode_roundtrip(
+            super::super::client_request::ClientRequestV1::SupplyCoffinOpen { v: 1, entity_id: 0 },
+        );
+    }
+
+    #[test]
+    fn c2s_supply_coffin_open_max_entity_id_roundtrip() {
+        c2s_encode_decode_roundtrip(
+            super::super::client_request::ClientRequestV1::SupplyCoffinOpen {
+                v: 1,
+                entity_id: i32::MAX,
+            },
+        );
+    }
 }
