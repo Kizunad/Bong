@@ -183,7 +183,9 @@ pub struct CraftRecipe {
     /// 产出 `(template_id, count)`。count >= 1。
     pub output: (String, u32),
     pub requirements: CraftRequirements,
-    /// 解锁来源（残卷 / 师承 / 顿悟 任一）。注册时 invariant：非空。
+    /// 显式解锁来源（残卷 / 师承 / 顿悟，命中任一即解锁）。
+    /// **空 Vec = 材料发现路径**（持有任一原料即被动解锁，见 `UnlockSource` 文档
+    /// 与 `unlock::unlock_via_material`）；非空 = 秘传配方，只能走列出的显式渠道。
     pub unlock_sources: Vec<UnlockSource>,
     /// plan-workbench-recipes-v1 §P2.1 — 制作站约束。
     /// `None` = 手搓（不需要制作台），`Some(Workbench)` = 需 3 格内制作台。
@@ -295,6 +297,9 @@ pub enum RecipeValidationError {
     ZeroTimeTicks {
         id: RecipeId,
     },
+    /// 历史遗留 variant：早期语义下"空 unlock_sources = 永远学不会"。
+    /// plan-craft-material-discovery 起空源 = 材料发现路径（合法），`validate`
+    /// 不再构造本错误；保留 variant 仅为 API 稳定，永不返回。
     #[allow(dead_code)]
     NoUnlockSources {
         id: RecipeId,
@@ -334,7 +339,7 @@ impl std::fmt::Display for RecipeValidationError {
             Self::ZeroTimeTicks { id } => write!(f, "recipe `{id}` time_ticks is 0"),
             Self::NoUnlockSources { id } => write!(
                 f,
-                "recipe `{id}` has no unlock_sources (would be permanently unlearnable)"
+                "recipe `{id}` has no unlock_sources (legacy; empty now means material-discovery path)"
             ),
             Self::InvalidQiColorMinShare { id, color, share } => write!(
                 f,

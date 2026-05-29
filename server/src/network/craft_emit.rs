@@ -680,6 +680,8 @@ pub fn build_recipe_list_payload(
                 qi_color_min: r.requirements.qi_color_min,
                 skill_lv_min: r.requirements.skill_lv_min,
             },
+            // 过滤后此处恒为 true；保留显式赋值作 safeguard——若未来移除上面的
+            // filter（改为灰显锁定配方），这一行能继续如实反映解锁态而不至于语义破裂。
             unlocked: unlock_state.is_unlocked(player_id, &r.id),
         })
         .collect();
@@ -697,9 +699,10 @@ pub fn build_recipe_list_payload(
 /// 配方，自动解锁、刷新该玩家配方列表、推一条 narration。残卷/师承/顿悟门控的
 /// 秘传配方不受影响（`unlock_via_material` 内部跳过）。
 ///
-/// 性能：对已解锁配方与秘传配方提前 `continue` 短路 —— 稳态（应发现的都发现完）
-/// 下每帧只是一遍 registry 遍历 + 命中即跳，几乎零成本；仅在玩家新得材料、确有
-/// 新解锁时才构造并下发一次 `RecipeListV1`。
+/// 性能：复杂度 O(|在线玩家| · |配方|)，对已解锁配方与秘传配方提前 `continue`
+/// 短路。当前配方数（~20）与在线量级下每帧遍历成本可忽略；仅在玩家新得材料、
+/// 确有新解锁时才构造并下发一次 `RecipeListV1`。若配方原料种类未来暴增，可一次性
+/// 预计算背包内 `template_id` 的 HashSet 复用到全配方遍历（当前规模无需）。
 pub fn apply_material_discovery_unlock(
     registry: Res<CraftRegistry>,
     mut unlock_state: ResMut<RecipeUnlockState>,
@@ -1248,6 +1251,108 @@ mod tests {
         assert!(
             !unlock_state.is_unlocked(&player_id, &RecipeId::new("craft.secret.tool")),
             "scroll 门控的秘传配方不应因持有原料而解锁"
+        );
+    }
+
+    #[test]
+    fn material_discovery_idempotent_across_ticks_and_narrates_once() {
+        // A→A 转移：每 tick 跑的系统，首帧解锁并推列表 + 一条 narration；
+        // 第二帧已解锁，不应重复推 CraftRecipeList、也不应重复写 narration。
+        let mut app = App::new();
+        let mut registry = CraftRegistry::new();
+        register_basic_processing_recipes(&mut registry).unwrap();
+        app.insert_resource(registry);
+        app.insert_resource(RecipeUnlockState::new());
+        app.insert_resource(PendingGameplayNarrations::default());
+        app.add_systems(Update, apply_material_discovery_unlock);
+
+        let (client_bundle, mut helper) = create_mock_client("Azure");
+        let entity = app.world_mut().spawn(client_bundle).id();
+        app.world_mut()
+            .entity_mut(entity)
+            .insert(inv_with(&[("crude_wood", 3)]));
+
+        // ── tick 1：首次解锁 ──
+        app.update();
+        flush_client_packets(&mut app);
+        let lists_1 = collect_recipe_lists(&mut helper);
+        assert_eq!(lists_1.len(), 1, "首帧应推一次 CraftRecipeList");
+        let narr_1 = app
+            .world_mut()
+            .resource_mut::<PendingGameplayNarrations>()
+            .drain();
+        assert_eq!(narr_1.len(), 1, "首次解锁应恰好产生一条 narration");
+        assert_eq!(
+            narr_1[0].target.as_deref(),
+            Some("Azure"),
+            "narration 应定向到该玩家"
+        );
+        assert!(
+            narr_1[0].text.contains("削木柄"),
+            "narration 应点名解锁的配方，实际={:?}",
+            narr_1[0].text
+        );
+
+        // ── tick 2：A→A，已解锁不重复 ──
+        app.update();
+        flush_client_packets(&mut app);
+        assert!(
+            collect_recipe_lists(&mut helper).is_empty(),
+            "第二帧不应重复推送 CraftRecipeList"
+        );
+        let narr_2 = app
+            .world_mut()
+            .resource_mut::<PendingGameplayNarrations>()
+            .drain();
+        assert!(narr_2.is_empty(), "第二帧不应重复写 narration");
+    }
+
+    #[test]
+    fn material_discovery_isolates_unlocks_per_player() {
+        // 两个在线玩家持不同原料，各自只解锁与自己原料匹配的空源配方，互不污染。
+        let mut app = App::new();
+        let mut registry = CraftRegistry::new();
+        registry
+            .register(make_recipe("craft.open.alpha", &[("fan_tie", 1)], vec![]))
+            .unwrap();
+        registry
+            .register(make_recipe("craft.open.beta", &[("zhu_pi", 1)], vec![]))
+            .unwrap();
+        app.insert_resource(registry);
+        app.insert_resource(RecipeUnlockState::new());
+        app.add_systems(Update, apply_material_discovery_unlock);
+
+        let (alice_bundle, _h1) = create_mock_client("Alice");
+        let alice = app.world_mut().spawn(alice_bundle).id();
+        app.world_mut()
+            .entity_mut(alice)
+            .insert(inv_with(&[("fan_tie", 2)]));
+        let (bob_bundle, _h2) = create_mock_client("Bob");
+        let bob = app.world_mut().spawn(bob_bundle).id();
+        app.world_mut()
+            .entity_mut(bob)
+            .insert(inv_with(&[("zhu_pi", 2)]));
+
+        app.update();
+
+        let unlock_state = app.world().resource::<RecipeUnlockState>();
+        let alice_id = canonical_player_id("Alice");
+        let bob_id = canonical_player_id("Bob");
+        assert!(
+            unlock_state.is_unlocked(&alice_id, &RecipeId::new("craft.open.alpha")),
+            "Alice 持 fan_tie 应解锁 alpha"
+        );
+        assert!(
+            !unlock_state.is_unlocked(&alice_id, &RecipeId::new("craft.open.beta")),
+            "Alice 无 zhu_pi 不应解锁 beta"
+        );
+        assert!(
+            unlock_state.is_unlocked(&bob_id, &RecipeId::new("craft.open.beta")),
+            "Bob 持 zhu_pi 应解锁 beta"
+        );
+        assert!(
+            !unlock_state.is_unlocked(&bob_id, &RecipeId::new("craft.open.alpha")),
+            "Bob 无 fan_tie 不应解锁 alpha"
         );
     }
 }
