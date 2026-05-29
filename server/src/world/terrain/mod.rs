@@ -12,13 +12,13 @@ mod spatial;
 pub(super) mod structures;
 mod wilderness;
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 
 use valence::prelude::{
     ident, App, BiomeRegistry, BlockState, Chunk, ChunkLayer, ChunkPos, ChunkView, Client,
-    Commands, DimensionTypeRegistry, Entity, IntoSystemConfigs, Query, Res, ResMut, Resource,
-    Server, UnloadedChunk, Update, View, VisibleChunkLayer, With,
+    Commands, DimensionTypeRegistry, Entity, IntoSystemConfigs, Local, Position, Query, Res,
+    ResMut, Resource, Server, UnloadedChunk, Update, View, VisibleChunkLayer, With,
 };
 
 use crate::mineral::{MineralOreIndex, MineralOreNode};
@@ -107,7 +107,131 @@ pub fn register(app: &mut App) {
             Update,
             remove_unviewed_chunks.after(generate_chunks_around_players),
         )
-        .add_systems(Update, log_tick_rate);
+        .add_systems(Update, log_tick_rate)
+        // 修复"非 spawn 位置穿地坠落"：会话中途 ViewDistance 变化让原版客户端重建
+        // 区块存储、丢掉已加载 chunk，而 Valence 只补发视野差集 → 客户端缺脚下 chunk
+        // 的碰撞 → 穿地。本系统检测并恢复（重发 chunk + 弹回地表，真虚空则回 spawn）。
+        .add_systems(Update, recover_fall_through);
+}
+
+/// 玩家穿过自己脚下方块（即客户端丢失了服务端仍持有的 chunk 碰撞）时低于地板多少
+/// 才判定为"掉出世界"、传回 spawn。方块最低只能落在 `min_y`（基岩），低于它必为虚空。
+const VOID_RESCUE_MARGIN: i32 = 16;
+
+/// [`recover_fall_through`] 的恢复决策（纯函数，便于饱和单测）。
+#[derive(Debug, PartialEq, Eq)]
+enum FallRecovery {
+    /// 正常站立 / 合法地下（脚下无碰撞空间）—— 不处理。
+    None,
+    /// 脚下是服务端固体方块（有碰撞箱）= 客户端缺这块 chunk、正穿过它 ——
+    /// 重发该 chunk 给客户端 + 把人弹回地表。
+    ResendAndBounce,
+    /// 真·掉出世界底（脚下无碰撞且已低于地板 - margin）—— 传回 spawn 兜底。
+    Spawn,
+}
+
+/// 纯决策：合法的挖矿/洞穴/游泳玩家所在处是无碰撞空间（air/water/植物碰撞箱为空），
+/// 永远不会命中 `ResendAndBounce`；只有"身体重叠服务端固体方块"才判为穿地。
+fn decide_fall_recovery(
+    feet_obstructed: bool,
+    player_y: f64,
+    dimension_floor_y: i32,
+) -> FallRecovery {
+    if feet_obstructed {
+        FallRecovery::ResendAndBounce
+    } else if player_y < f64::from(dimension_floor_y - VOID_RESCUE_MARGIN) {
+        FallRecovery::Spawn
+    } else {
+        FallRecovery::None
+    }
+}
+
+/// 修复"进服/传送到非 spawn 位置后穿地无限坠落"。
+///
+/// 根因：会话中途 ViewDistance 变化（玩家客户端的渲染距离设置在登录后 ~2s 到达 →
+/// 服务端 VD 跳变）会让原版 MC 客户端**重建区块存储、丢掉已加载的 chunk**，而 Valence
+/// 的 `update_view_and_layers` 在 VD 变化时只补发"视野差集"（新增外圈），不重发客户端
+/// 丢掉的（含玩家脚下那块）→ 客户端没了脚下 chunk 的碰撞 → 穿过实心地表无限坠落。
+/// （spawn 不受影响：chunk 被反复进出焐热，且玩家从高空落向近地表先落地。）
+///
+/// 修法（服务端 workaround，无需 fork valence_server）：每 tick 检查玩家身体是否重叠
+/// 服务端的固体方块——若是，说明客户端缺这块 chunk，于是 `remove_chunk`+`insert_chunk`
+/// 重新插入它产生 LOAD layer-message，`handle_layer_messages` 据此把整块重发给在场
+/// 客户端（此时 `OldView` 已追上玩家位置，消息不会被过滤），客户端重新拿到 → 恢复碰撞；
+/// 同时把玩家弹回该列地表上方落稳。真·掉出世界底（脚下无 chunk）则传回 spawn 兜底。
+#[allow(clippy::type_complexity)]
+fn recover_fall_through(
+    providers: Option<Res<TerrainProviders>>,
+    dimension_layers: Option<Res<DimensionLayers>>,
+    mut layers: Query<&mut ChunkLayer>,
+    mut clients: Query<(Entity, &mut Position, &VisibleChunkLayer), With<Client>>,
+    server: Res<Server>,
+    mut last_resend_tick: Local<HashMap<Entity, i64>>,
+) {
+    let (Some(providers), Some(dimension_layers)) = (providers, dimension_layers) else {
+        return;
+    };
+    let overworld = dimension_layers.overworld;
+    let tick = server.current_tick();
+    let Ok(mut layer) = layers.get_mut(overworld) else {
+        return;
+    };
+    let floor_y = layer.min_y();
+    for (entity, mut position, visible_chunk_layer) in &mut clients {
+        if visible_chunk_layer.0 != overworld {
+            continue;
+        }
+        let p = position.get();
+        let bx = p.x.floor() as i32;
+        let by = p.y.floor() as i32;
+        let bz = p.z.floor() as i32;
+        // 玩家身体所在方块在服务端有碰撞箱 = 重叠固体 = 客户端缺这块 chunk、正穿过它。
+        let feet_obstructed = layer
+            .block([bx, by, bz])
+            .map(|b| b.state.collision_shapes().len() > 0)
+            .unwrap_or(false);
+        match decide_fall_recovery(feet_obstructed, p.y, floor_y) {
+            FallRecovery::None => {
+                last_resend_tick.remove(&entity);
+            }
+            FallRecovery::Spawn => {
+                position.set(crate::player::spawn_position());
+                last_resend_tick.remove(&entity);
+                tracing::warn!(
+                    "[bong][world] {:?} fell out of world (y={:.1} < floor {} - {}) → rescued to spawn",
+                    entity,
+                    p.y,
+                    floor_y,
+                    VOID_RESCUE_MARGIN
+                );
+            }
+            FallRecovery::ResendAndBounce => {
+                // 节流：一次重发 + 弹回通常就能让客户端落稳；10 tick 内不重复，避免
+                // 在客户端尚未处理完重发时反复 remove/insert。
+                if last_resend_tick
+                    .get(&entity)
+                    .is_some_and(|&t| tick - t < 10)
+                {
+                    continue;
+                }
+                let cp = ChunkPos::new(bx.div_euclid(16), bz.div_euclid(16));
+                if let Some(chunk) = layer.remove_chunk(cp) {
+                    layer.insert_chunk(cp, chunk);
+                }
+                let surface = providers.overworld.query_surface(bx, bz).y;
+                position.set([p.x, f64::from(surface + 2), p.z]);
+                last_resend_tick.insert(entity, tick);
+                tracing::debug!(
+                    "[bong][world] {:?} phased through chunk ({},{}) at y={:.1} → re-sent chunk + bounced to surface {}",
+                    entity,
+                    cp.x,
+                    cp.z,
+                    p.y,
+                    surface
+                );
+            }
+        }
+    }
 }
 
 struct TickRateProbe {
@@ -536,6 +660,53 @@ mod tests {
         let view = ChunkView::new(ChunkPos::new(0, 0), 2);
 
         assert!(!chunk_is_visible_in_any_view(ChunkPos::new(64, 64), [view]));
+    }
+
+    #[test]
+    fn fall_recovery_resends_when_feet_overlap_server_solid() {
+        // 脚下是服务端固体方块（有碰撞箱）= 客户端缺该 chunk、正穿过它，必须重发 +
+        // 弹回，无论 y 高低（这是 VD 跳变穿地的核心修复路径）。
+        assert_eq!(
+            decide_fall_recovery(true, 80.0, MIN_Y),
+            FallRecovery::ResendAndBounce,
+            "脚下重叠服务端固体方块时必须走重发+弹回，不论玩家 y"
+        );
+        assert_eq!(
+            decide_fall_recovery(true, -1000.0, MIN_Y),
+            FallRecovery::ResendAndBounce,
+            "即便已掉到地板下，只要脚下仍有服务端固体方块就重发（说明 chunk 还在，客户端丢了）"
+        );
+    }
+
+    #[test]
+    fn fall_recovery_spawns_only_on_true_void_below_floor() {
+        // 脚下无碰撞（真空洞）且已低于地板 - margin → 掉出世界，回 spawn 兜底。
+        assert_eq!(
+            decide_fall_recovery(false, f64::from(MIN_Y - VOID_RESCUE_MARGIN) - 0.1, MIN_Y),
+            FallRecovery::Spawn,
+            "脚下无固体且低于 floor-margin 即真·掉出世界，应回 spawn"
+        );
+    }
+
+    #[test]
+    fn fall_recovery_none_for_legit_underground_and_standing() {
+        // 合法挖矿/洞穴（脚下是无碰撞空间）+ 在地板以上 → 绝不处理，杜绝误把矿工弹上地表。
+        assert_eq!(
+            decide_fall_recovery(false, 80.0, MIN_Y),
+            FallRecovery::None,
+            "地表站立（脚下无碰撞）不应触发恢复"
+        );
+        assert_eq!(
+            decide_fall_recovery(false, -50.0, MIN_Y),
+            FallRecovery::None,
+            "深处洞穴（y=-50，仍在 floor-16=-80 以上，脚下无碰撞）属合法地下，不应触发"
+        );
+        // 边界：正好等于 floor - margin 不算掉出世界（用 < 而非 <=）。
+        assert_eq!(
+            decide_fall_recovery(false, f64::from(MIN_Y - VOID_RESCUE_MARGIN), MIN_Y),
+            FallRecovery::None,
+            "y == floor-margin 的边界不应判定为掉出世界"
+        );
     }
 
     #[test]
