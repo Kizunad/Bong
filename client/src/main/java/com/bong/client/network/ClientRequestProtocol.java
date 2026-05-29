@@ -1174,6 +1174,15 @@ public final class ClientRequestProtocol {
         return obj.toString();
     }
 
+    // ─── plan-supply-coffin-loot-ui P2：supply coffin open (entity-based) ──
+
+    /** 玩家右键物资棺实体，发送 entity_id 让 server 校验并开棺。 */
+    public static String encodeSupplyCoffinOpen(int entityId) {
+        JsonObject obj = envelope("supply_coffin_open");
+        obj.addProperty("entity_id", entityId);
+        return obj.toString();
+    }
+
     // ─── plan-supply-coffin-loot-ui P1：外部容器 C2S ──────────────────
 
     public static String encodeExternalContainerMove(

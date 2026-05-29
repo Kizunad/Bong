@@ -451,4 +451,18 @@ public class ClientRequestSenderTest {
             sent.get(0).body()
         );
     }
+
+    // ─── plan-supply-coffin-loot-ui P2：supply_coffin_open ──────────
+
+    @Test
+    void sendSupplyCoffinOpenUsesCorrectChannelAndJson() {
+        install();
+        ClientRequestSender.sendSupplyCoffinOpen(42);
+        assertEquals(1, sent.size());
+        assertEquals(new Identifier("bong", "client_request"), sent.get(0).channel());
+        assertEquals(
+            "{\"type\":\"supply_coffin_open\",\"v\":1,\"entity_id\":42}",
+            sent.get(0).body()
+        );
+    }
 }

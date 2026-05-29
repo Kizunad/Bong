@@ -1,6 +1,7 @@
 package com.bong.client.input;
 
 import com.bong.client.inventory.DroppedItemPickupIntentHandler;
+import com.bong.client.inventory.SupplyCoffinInteractIntentHandler;
 import com.bong.client.npc.NpcEngagementIntentHandler;
 import com.bong.client.social.TradeOfferIntentHandler;
 import com.bong.client.tsy.TsyContainerSearchIntentHandler;
@@ -13,6 +14,7 @@ public final class DefaultInteractionHandlers {
         InteractKeyRouter router = InteractKeyRouter.global();
         router.register(new TsyContainerSearchIntentHandler());
         router.register(new NpcEngagementIntentHandler());
+        router.register(new SupplyCoffinInteractIntentHandler());
         router.register(new TradeOfferIntentHandler());
         router.register(new DroppedItemPickupIntentHandler());
     }

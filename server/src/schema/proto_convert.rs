@@ -3610,6 +3610,11 @@ impl From<&super::client_request::ClientRequestV1> for bong::client_request_enve
                     session_id: *session_id,
                 })
             }
+            ClientRequestV1::SupplyCoffinOpen { entity_id, .. } => {
+                Payload::SupplyCoffinOpen(bong::SupplyCoffinOpenReq {
+                    entity_id: *entity_id,
+                })
+            }
         }
     }
 }
@@ -3971,6 +3976,33 @@ mod tests {
             super::super::client_request::ClientRequestV1::ExternalContainerClose {
                 v: 1,
                 session_id: 99,
+            },
+        );
+    }
+
+    #[test]
+    fn c2s_supply_coffin_open_roundtrip() {
+        c2s_encode_decode_roundtrip(
+            super::super::client_request::ClientRequestV1::SupplyCoffinOpen {
+                v: 1,
+                entity_id: 42,
+            },
+        );
+    }
+
+    #[test]
+    fn c2s_supply_coffin_open_zero_entity_id_roundtrip() {
+        c2s_encode_decode_roundtrip(
+            super::super::client_request::ClientRequestV1::SupplyCoffinOpen { v: 1, entity_id: 0 },
+        );
+    }
+
+    #[test]
+    fn c2s_supply_coffin_open_max_entity_id_roundtrip() {
+        c2s_encode_decode_roundtrip(
+            super::super::client_request::ClientRequestV1::SupplyCoffinOpen {
+                v: 1,
+                entity_id: i32::MAX,
             },
         );
     }
