@@ -57,7 +57,8 @@ pub use session::{
 };
 #[allow(unused_imports)]
 pub use unlock::{
-    unlock_via_insight, unlock_via_mentor, unlock_via_scroll, RecipeUnlockState, UnlockOutcome,
+    find_recipes_unlockable_by_material, unlock_via_insight, unlock_via_material,
+    unlock_via_mentor, unlock_via_scroll, MaterialUnlockOutcome, RecipeUnlockState, UnlockOutcome,
 };
 #[allow(unused_imports)]
 pub use workbench::{
@@ -805,8 +806,9 @@ pub fn register_gathering_tool_recipes(registry: &mut CraftRegistry) -> Result<(
 
 /// 基础加工配方：把采集掉落的粗原料加工成中间材料。
 ///
-/// 这些配方无境界 / 真元色门槛、0 qi 消耗、空 unlock_sources（默认解锁，
-/// 不需要残卷 / 师承 / 顿悟）。产出物接入现有高级配方的材料链。
+/// 这些配方无境界 / 真元色门槛、0 qi 消耗、空 unlock_sources（材料发现路径：
+/// 玩家持有其任一原料即被动解锁，不需要残卷 / 师承 / 顿悟，见
+/// unlock::unlock_via_material）。产出物接入现有高级配方的材料链。
 pub fn register_basic_processing_recipes(
     registry: &mut CraftRegistry,
 ) -> Result<(), RegistryError> {
@@ -976,7 +978,7 @@ mod tests {
     }
 
     #[test]
-    fn register_examples_early_dugu_recipes_are_default_unlocked() {
+    fn register_examples_early_dugu_recipes_use_material_discovery_path() {
         let mut registry = CraftRegistry::new();
         register_examples(&mut registry).unwrap();
         for id in [
@@ -986,9 +988,11 @@ mod tests {
             let recipe = registry
                 .get(&RecipeId::new(id))
                 .expect("early Dugu recipe must register");
+            // 空 unlock_sources = 材料发现路径（持有任一原料即解锁），
+            // 而非残卷/师承/顿悟门控。
             assert!(
                 recipe.unlock_sources.is_empty(),
-                "`{id}` should be visible in hand-craft UI by default"
+                "`{id}` 应留空 unlock_sources（走材料发现解锁，而非显式渠道门控）"
             );
         }
     }
@@ -1305,13 +1309,13 @@ mod tests {
     }
 
     #[test]
-    fn basic_processing_unlock_sources_empty_means_default_unlocked() {
+    fn basic_processing_unlock_sources_empty_for_material_discovery() {
         let mut registry = CraftRegistry::new();
         register_basic_processing_recipes(&mut registry).unwrap();
         for recipe in registry.iter() {
             assert!(
                 recipe.unlock_sources.is_empty(),
-                "`{}` should have empty unlock_sources (default unlocked)",
+                "`{}` 应留空 unlock_sources（走材料发现解锁）",
                 recipe.id
             );
         }

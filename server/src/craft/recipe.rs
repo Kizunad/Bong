@@ -145,11 +145,13 @@ pub struct CraftRequirements {
     pub skill_lv_min: Option<u8>,
 }
 
-/// §3 解锁来源。每条配方关联 `Vec<UnlockSource>`，玩家命中任一即解锁。
+/// §3 显式解锁来源。每条配方关联 `Vec<UnlockSource>`，玩家命中任一即解锁。
 ///
-/// **强 invariant**：每条配方 `unlock_sources.is_empty() == false` —
-/// 没有解锁来源等于"永远学不会"，应通过 §5 决策门 #1 改类别或者
-/// 直接默认 unlocked（用空 Vec + 显式默认 unlocked flag 表示，本 plan 暂未实装）。
+/// **空 `unlock_sources` 语义（plan-craft-material-discovery）**：不再是"默认全
+/// 解锁"，而是**材料发现路径** —— 玩家持有该配方任一原料即被动解锁
+/// （`unlock::unlock_via_material` + `craft_emit::apply_material_discovery_unlock`）。
+/// 因此无显式来源 ≠ 永远学不会：基础凡器/加工链留空源，靠采集到原料解锁；
+/// 残卷/师承/顿悟门控的秘传配方才显式列来源（材料发现对它们不生效）。
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum UnlockSource {
     /// 残卷掉落（worldview §十）。玩家 use 该 item 即触发 unlock_via_scroll。
@@ -233,7 +235,8 @@ impl CraftRecipe {
                 id: self.id.clone(),
             });
         }
-        // 空 unlock_sources = 默认解锁（凡器基础加工链等无门槛配方）。
+        // 空 unlock_sources = 材料发现路径（凡器基础加工链等，靠持有原料解锁，
+        // 见 unlock::unlock_via_material）；validate 允许为空，不视为错误。
         // qi_color_min share 范围 [0.0, 1.0]，finite
         if let Some((kind, share)) = self.requirements.qi_color_min {
             if !share.is_finite() || !(0.0..=1.0).contains(&share) {
