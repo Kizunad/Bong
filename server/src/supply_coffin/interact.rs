@@ -78,7 +78,7 @@ pub fn handle_supply_coffin_interact(
     mut audio: EventWriter<PlaySoundRecipeRequest>,
     mut opened: EventWriter<SupplyCoffinOpened>,
     mut players: Query<PlayerQueryItem<'_>>,
-    ext_containers: Query<&ExternalContainer>,
+    mut ext_containers: Query<&mut ExternalContainer>,
 ) {
     for ev in interactions.read() {
         let Some(active) = registry.active.get(&ev.target).cloned() else {
@@ -101,7 +101,7 @@ pub fn handle_supply_coffin_interact(
             continue;
         }
 
-        if let Ok(ext) = ext_containers.get(ev.target) {
+        if let Ok(mut ext) = ext_containers.get_mut(ev.target) {
             if ext.opened_by.is_some() {
                 tracing::debug!(
                     "[bong][supply_coffin] interact rejected (already occupied): grade={:?}",
@@ -110,6 +110,56 @@ pub fn handle_supply_coffin_interact(
                 client.send_chat_message("§c[物资棺] 有人正在翻找。");
                 continue;
             }
+            // Re-lock released coffin — send existing items, don't re-roll
+            ext.opened_by = Some(ev.client);
+            let placed_items: Vec<PlacedInventoryItemV1> = ext
+                .container
+                .items
+                .iter()
+                .map(|p| PlacedInventoryItemV1 {
+                    container_id: ext.container.id.clone(),
+                    row: u64::from(p.row),
+                    col: u64::from(p.col),
+                    item: item_view_from_instance(&p.instance),
+                })
+                .collect();
+            let open_payload = ServerDataV1::new(ServerDataPayloadV1::LootContainerOpen(
+                LootContainerOpenV1 {
+                    session_id: ext.session_id,
+                    source_kind: LootContainerSourceKindV1::SupplyCoffin {
+                        grade: active.grade.as_str().to_string(),
+                    },
+                    rows: ext.container.rows,
+                    cols: ext.container.cols,
+                    placed_items,
+                    timeout_wall_secs: ext.timeout_wall_secs,
+                },
+            ));
+            let payload_type = payload_type_label(open_payload.payload_type());
+            match serialize_server_data_payload(&open_payload) {
+                Ok(bytes) => send_server_data_payload(&mut client, bytes.as_slice()),
+                Err(e) => {
+                    log_payload_build_error(payload_type, &e);
+                    ext.opened_by = None;
+                    continue;
+                }
+            }
+            send_inventory_snapshot_to_client(
+                ev.client,
+                &mut client,
+                username.as_str(),
+                &inventory,
+                player_state,
+                cultivation,
+                "supply_coffin_reopen",
+            );
+            tracing::info!(
+                "[bong][supply_coffin] session {} re-opened {:?} by {:?}",
+                ext.session_id,
+                active.grade,
+                ev.client
+            );
+            continue;
         }
 
         let seed = registry.next_rand_u64();
