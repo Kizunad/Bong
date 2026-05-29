@@ -274,10 +274,12 @@ pub fn start_craft(
         .get(request.recipe_id)
         .ok_or_else(|| StartCraftError::UnknownRecipe(request.recipe_id.clone()))?;
 
-    // 空 unlock_sources = 默认解锁（凡器基础加工链等无门槛配方）。
-    if !recipe.unlock_sources.is_empty()
-        && !deps.unlock_state.is_unlocked(request.player_id, &recipe.id)
-    {
+    // plan-craft-material-discovery：所有配方都必须先解锁才能制作。
+    // 无显式 unlock_sources 的基础配方不再"空源即默认解锁"，而是通过
+    // "持有任一原料"被动解锁（unlock::unlock_via_material +
+    // craft_emit::apply_material_discovery_unlock）；残卷/师承/顿悟门控的
+    // 秘传配方仍走对应渠道写入 unlock_state。两者最终都收敛到 is_unlocked。
+    if !deps.unlock_state.is_unlocked(request.player_id, &recipe.id) {
         return Err(StartCraftError::NotUnlocked(recipe.id.clone()));
     }
 
@@ -1558,7 +1560,10 @@ mod tests {
     }
 
     #[test]
-    fn start_craft_allows_empty_unlock_sources_without_unlock_state() {
+    fn start_craft_rejects_empty_source_recipe_before_material_discovery() {
+        // plan-craft-material-discovery：空 unlock_sources 不再"默认解锁"。
+        // 即使背包里有原料、其它前置都满足，未经材料发现写入 unlock_state 前
+        // start_craft 必须 reject（材料发现解锁由 craft_emit 系统在 tick 中完成）。
         let mut registry = CraftRegistry::new();
         let mut recipe = simple_recipe("default_unlocked");
         recipe.unlock_sources = vec![];
@@ -1566,6 +1571,50 @@ mod tests {
         registry.register(recipe).unwrap();
 
         let unlock = RecipeUnlockState::new();
+        let mut inv = make_inventory(&[("herb_a", 5), ("iron_needle", 5)]);
+        let mut cult = Cultivation {
+            qi_current: 50.0,
+            qi_max: 80.0,
+            ..Default::default()
+        };
+        let color = QiColor::default();
+        let mut ledger = WorldQiAccount::default();
+        ledger
+            .set_balance(QiAccountId::player("offline:Alice"), 50.0)
+            .unwrap();
+
+        let err = start_craft(
+            StartCraftRequest {
+                caster: caster_entity(),
+                player_id: "offline:Alice",
+                recipe_id: &RecipeId::new("default_unlocked"),
+                current_tick: 0,
+                zone_id: "spawn",
+                quantity: 1,
+            },
+            ok_deps_for_player(&registry, &unlock, &mut inv, &mut cult, &color, &mut ledger),
+        )
+        .expect_err("empty-source recipe must be locked until material-discovery unlock");
+        assert!(
+            matches!(err, StartCraftError::NotUnlocked(_)),
+            "期望 NotUnlocked（空源配方需先经材料发现解锁），实际={err:?}"
+        );
+        // reject 不应扣材料
+        assert_eq!(count_template_in_inventory(&inv, "herb_a"), 5);
+    }
+
+    #[test]
+    fn start_craft_allows_empty_source_recipe_after_material_unlock() {
+        // 材料发现解锁后（unlock_state 已写入），空源配方应正常可造。
+        let mut registry = CraftRegistry::new();
+        let mut recipe = simple_recipe("default_unlocked");
+        recipe.unlock_sources = vec![];
+        recipe.qi_cost = 0.0;
+        registry.register(recipe).unwrap();
+
+        let mut unlock = RecipeUnlockState::new();
+        // 模拟 apply_material_discovery_unlock 已把该配方解锁
+        unlock.unlock("offline:Alice", RecipeId::new("default_unlocked"));
         let mut inv = make_inventory(&[("herb_a", 5), ("iron_needle", 5)]);
         let mut cult = Cultivation {
             qi_current: 50.0,
@@ -1589,10 +1638,7 @@ mod tests {
             },
             ok_deps_for_player(&registry, &unlock, &mut inv, &mut cult, &color, &mut ledger),
         );
-        assert!(
-            result.is_ok(),
-            "recipe with empty unlock_sources should be craftable without unlock: {result:?}"
-        );
+        assert!(result.is_ok(), "材料发现解锁后空源配方应可造: {result:?}");
     }
 
     // ============= station validation =============

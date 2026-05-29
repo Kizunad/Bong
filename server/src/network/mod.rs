@@ -642,6 +642,9 @@ pub fn register(app: &mut App) {
             craft_emit::emit_recipe_unlocked_payloads.after(craft_emit::apply_unlock_intents),
             craft_emit::emit_recipe_list_on_join
                 .after(crate::inventory::attach_inventory_to_joined_clients),
+            // plan-craft-material-discovery：持有任一原料被动解锁空源配方 + 重推列表
+            craft_emit::apply_material_discovery_unlock
+                .after(crate::inventory::attach_inventory_to_joined_clients),
             // P3 server → agent Redis bridge
             craft_event_bridge::publish_craft_completed_to_redis
                 .after(craft_emit::tick_craft_sessions),

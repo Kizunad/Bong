@@ -87,6 +87,22 @@ pub enum UnlockOutcome {
     SourceMismatch,
 }
 
+/// 材料发现解锁结果（plan-craft-material-discovery）。
+///
+/// 与三渠道 [`UnlockOutcome`] 分开：材料发现是**被动发现路径**，不挂
+/// `UnlockEventSource`、不走 wire/agent 的解锁广播（避免为它扩 proto / 客户端
+/// tagged union）。调用方据此决定是否刷新配方列表 + 推 narration。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MaterialUnlockOutcome {
+    /// 实际新增解锁 — 调用方应刷新该玩家配方列表并提示
+    Newly,
+    /// 已解锁，noop
+    Already,
+    /// 不适用：配方有显式解锁来源（秘传，材料不该泄露），
+    /// 或 `acquired_template` 不是该配方原料
+    NotApplicable,
+}
+
 /// §3 渠道一：残卷解锁。
 ///
 /// 调用方：玩家 use ScrollItem 时由上层（inventory 物品使用 hook）调用。
@@ -177,6 +193,40 @@ pub fn unlock_via_insight(
     }
 }
 
+/// 渠道四：材料发现解锁（plan-craft-material-discovery）。
+///
+/// 把原先"空 `unlock_sources` = 默认全解锁"改为"**持有任一原料才解锁**"：
+///   * **仅对无显式解锁来源的配方生效** —— 残卷/师承/顿悟门控的秘传配方
+///     不因玩家手里有某种常见材料而泄露（worldview §九 信息差）。
+///   * `acquired_template` 必须是 `recipe.materials` 中任意一项（持有任一即可，
+///     不要求集齐全部原料；集齐与否由 `start_craft` 的材料校验另行把关）。
+///
+/// 调用方：[`crate::network::craft_emit::apply_material_discovery_unlock`] 扫描
+/// 玩家背包后调用。本函数只改 `RecipeUnlockState`，不发事件 / 不刷 UI（由调用方负责）。
+pub fn unlock_via_material(
+    state: &mut RecipeUnlockState,
+    player: &str,
+    recipe: &super::recipe::CraftRecipe,
+    acquired_template: &str,
+) -> MaterialUnlockOutcome {
+    // 秘传配方（有显式 unlock_sources）不走材料发现路径。
+    if !recipe.unlock_sources.is_empty() {
+        return MaterialUnlockOutcome::NotApplicable;
+    }
+    let is_ingredient = recipe
+        .materials
+        .iter()
+        .any(|(template, _)| template == acquired_template);
+    if !is_ingredient {
+        return MaterialUnlockOutcome::NotApplicable;
+    }
+    if state.is_unlocked(player, &recipe.id) {
+        return MaterialUnlockOutcome::Already;
+    }
+    state.unlock(player.to_string(), recipe.id.clone());
+    MaterialUnlockOutcome::Newly
+}
+
 /// plan-craft-v1 P3 — 配方查询辅助：哪些配方可以由"使用残卷 X"解锁。
 ///
 /// 各 source plan（inventory ItemUse hook）调用本函数把"使用一卷 scroll_X"
@@ -230,6 +280,22 @@ pub fn find_recipes_unlockable_by_insight(
         .collect()
 }
 
+/// plan-craft-material-discovery — 配方查询：哪些配方可由"获得材料 X"被动解锁。
+///
+/// 只含**无显式解锁来源**、且原料含 `item_template` 的配方（与 [`unlock_via_material`]
+/// 的判定一致）。秘传配方即使原料里有 X 也不会出现在这里。
+pub fn find_recipes_unlockable_by_material<'a>(
+    registry: &'a super::registry::CraftRegistry,
+    item_template: &str,
+) -> Vec<&'a super::recipe::CraftRecipe> {
+    registry
+        .iter()
+        .filter(|r| {
+            r.unlock_sources.is_empty() && r.materials.iter().any(|(t, _)| t == item_template)
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::super::recipe::{CraftCategory, CraftRecipe, CraftRequirements};
@@ -246,6 +312,25 @@ mod tests {
             output: ("test_out".into(), 1),
             requirements: CraftRequirements::default(),
             unlock_sources: sources,
+            station: None,
+        }
+    }
+
+    /// 无显式解锁来源（材料发现路径）的配方，可指定 id + 原料清单。
+    fn empty_source_recipe(id: &str, materials: &[(&str, u32)]) -> CraftRecipe {
+        CraftRecipe {
+            id: RecipeId::new(id),
+            category: CraftCategory::Tool,
+            display_name: id.into(),
+            materials: materials
+                .iter()
+                .map(|(t, c)| ((*t).to_string(), *c))
+                .collect(),
+            qi_cost: 0.0,
+            time_ticks: 60,
+            output: ("test_out".into(), 1),
+            requirements: CraftRequirements::default(),
+            unlock_sources: vec![],
             station: None,
         }
     }
@@ -454,5 +539,125 @@ mod tests {
         // breakthrough 没人注册 → 空
         let bt = find_recipes_unlockable_by_insight(&registry, InsightTrigger::Breakthrough);
         assert!(bt.is_empty());
+    }
+
+    // ── plan-craft-material-discovery — unlock_via_material ──────────
+
+    #[test]
+    fn material_unlock_succeeds_when_ingredient_present_and_empty_source() {
+        let mut state = RecipeUnlockState::new();
+        let recipe = empty_source_recipe("craft.tool.knife", &[("fan_tie", 2)]);
+        let outcome = unlock_via_material(&mut state, "offline:Alice", &recipe, "fan_tie");
+        assert_eq!(
+            outcome,
+            MaterialUnlockOutcome::Newly,
+            "持有空源配方的原料应触发新解锁"
+        );
+        assert!(state.is_unlocked("offline:Alice", &recipe.id));
+    }
+
+    #[test]
+    fn material_unlock_unlocks_via_any_one_of_multiple_ingredients() {
+        // 多原料配方：持有其中任一即解锁（不要求集齐）
+        let recipe = empty_source_recipe("craft.tool.multi", &[("fan_tie", 2), ("crude_wood", 1)]);
+        for trigger in ["fan_tie", "crude_wood"] {
+            let mut state = RecipeUnlockState::new();
+            assert_eq!(
+                unlock_via_material(&mut state, "offline:Alice", &recipe, trigger),
+                MaterialUnlockOutcome::Newly,
+                "持有原料 `{trigger}` 应足以解锁多原料配方"
+            );
+        }
+    }
+
+    #[test]
+    fn material_unlock_not_applicable_for_recipe_with_explicit_source() {
+        // 秘传配方（有 Scroll 源）即使持有其原料也不解锁 —— worldview §九 信息差
+        let mut state = RecipeUnlockState::new();
+        let mut recipe = empty_source_recipe("craft.secret.poison", &[("herb_a", 1)]);
+        recipe.unlock_sources = vec![UnlockSource::Scroll {
+            item_template: "scroll_secret".into(),
+        }];
+        let outcome = unlock_via_material(&mut state, "offline:Alice", &recipe, "herb_a");
+        assert_eq!(
+            outcome,
+            MaterialUnlockOutcome::NotApplicable,
+            "有显式解锁来源的秘传配方不应被材料发现解锁"
+        );
+        assert!(!state.is_unlocked("offline:Alice", &recipe.id));
+    }
+
+    #[test]
+    fn material_unlock_not_applicable_when_template_not_ingredient() {
+        let mut state = RecipeUnlockState::new();
+        let recipe = empty_source_recipe("craft.tool.knife", &[("fan_tie", 2)]);
+        let outcome = unlock_via_material(&mut state, "offline:Alice", &recipe, "zhu_pi");
+        assert_eq!(
+            outcome,
+            MaterialUnlockOutcome::NotApplicable,
+            "非该配方原料的物品不应解锁该配方"
+        );
+        assert!(!state.is_unlocked("offline:Alice", &recipe.id));
+    }
+
+    #[test]
+    fn material_unlock_already_when_repeated() {
+        let mut state = RecipeUnlockState::new();
+        let recipe = empty_source_recipe("craft.tool.knife", &[("fan_tie", 2)]);
+        unlock_via_material(&mut state, "offline:Alice", &recipe, "fan_tie");
+        let again = unlock_via_material(&mut state, "offline:Alice", &recipe, "fan_tie");
+        assert_eq!(
+            again,
+            MaterialUnlockOutcome::Already,
+            "已解锁配方重复发现应返回 Already（noop，避免重复刷 UI）"
+        );
+    }
+
+    #[test]
+    fn material_unlock_is_player_scoped() {
+        let mut state = RecipeUnlockState::new();
+        let recipe = empty_source_recipe("craft.tool.knife", &[("fan_tie", 2)]);
+        unlock_via_material(&mut state, "offline:Alice", &recipe, "fan_tie");
+        assert!(state.is_unlocked("offline:Alice", &recipe.id));
+        assert!(
+            !state.is_unlocked("offline:Bob", &recipe.id),
+            "材料发现解锁应 per-player，不应泄露给其他玩家"
+        );
+    }
+
+    // ── find_recipes_unlockable_by_material ──────────────────────────
+
+    #[test]
+    fn find_by_material_returns_only_empty_source_with_matching_ingredient() {
+        let mut registry = super::super::registry::CraftRegistry::new();
+        registry
+            .register(empty_source_recipe("craft.tool.a", &[("fan_tie", 1)]))
+            .unwrap();
+        registry
+            .register(empty_source_recipe("craft.tool.b", &[("zhu_pi", 1)]))
+            .unwrap();
+        // 秘传配方：原料含 fan_tie，但有 Scroll 源 → 不应出现
+        let mut secret = empty_source_recipe("craft.secret.c", &[("fan_tie", 1)]);
+        secret.unlock_sources = vec![UnlockSource::Scroll {
+            item_template: "scroll_c".into(),
+        }];
+        registry.register(secret).unwrap();
+
+        let matches = find_recipes_unlockable_by_material(&registry, "fan_tie");
+        assert_eq!(
+            matches.len(),
+            1,
+            "fan_tie 只应匹配空源的 craft.tool.a，秘传 craft.secret.c 被排除，实际={matches:?}"
+        );
+        assert_eq!(matches[0].id.as_str(), "craft.tool.a");
+    }
+
+    #[test]
+    fn find_by_material_returns_empty_when_no_recipe_uses_it() {
+        let mut registry = super::super::registry::CraftRegistry::new();
+        registry
+            .register(empty_source_recipe("craft.tool.a", &[("fan_tie", 1)]))
+            .unwrap();
+        assert!(find_recipes_unlockable_by_material(&registry, "unobtainium").is_empty());
     }
 }
