@@ -117,7 +117,7 @@ public final class DragState {
 
     public CancelResult cancel() {
         CancelResult result = new CancelResult(
-            draggedItem, sourceKind, sourceRow, sourceCol, sourceEquipSlot, sourceHotbarIndex, sourceQuickUseIndex, sourceMeridianChannel, sourceBodyPart
+            draggedItem, sourceKind, sourceContainerId, sourceRow, sourceCol, sourceEquipSlot, sourceHotbarIndex, sourceQuickUseIndex, sourceMeridianChannel, sourceBodyPart
         );
         reset();
         return result;
@@ -163,6 +163,7 @@ public final class DragState {
     public record CancelResult(
         InventoryItem item,
         SourceKind sourceKind,
+        String sourceContainerId,
         int sourceRow,
         int sourceCol,
         EquipSlotType sourceEquipSlot,

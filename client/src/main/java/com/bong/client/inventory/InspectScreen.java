@@ -13,6 +13,7 @@ import com.bong.client.cultivation.QiColorVectorHud;
 import com.bong.client.cultivation.QiColorObservedState;
 import com.bong.client.cultivation.QiColorObservedStore;
 import com.bong.client.hud.BongToast;
+import com.bong.client.hud.LootContainerStateStore;
 import com.bong.client.inspect.ItemInspectLongPressTracker;
 import com.bong.client.inspect.ItemInspectScreen;
 import com.bong.client.inventory.component.*;
@@ -135,6 +136,12 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
     // Discard
     private FlowLayout discardStrip;
 
+    // Loot panel (supply coffin — mounted into outerRow when session active)
+    private FlowLayout outerRow;
+    private LootContainerPanel lootPanel;
+    private FlowLayout lootPanelLayout;
+    private LootContainerStateStore.Listener lootStoreListener;
+
     // Body inspect (cultivation tab) — dual-layer: physical + meridian
     private BodyInspectComponent bodyInspect;
     private QiColorVectorHud qiColorVectorHud;
@@ -201,6 +208,15 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
             techniquesTabPanel.close();
             techniquesTabPanel = null;
         }
+        // Loot panel cleanup — send close to server if still active
+        if (lootPanel != null && !lootPanel.isClosed()) {
+            lootPanel.sendClose();
+        }
+        unmountLootPanel();
+        if (lootStoreListener != null) {
+            LootContainerStateStore.removeListener(lootStoreListener);
+            lootStoreListener = null;
+        }
         super.removed();
     }
 
@@ -216,7 +232,7 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
         root.verticalAlignment(VerticalAlignment.CENTER);
 
         // Outermost: [hotbar] [main] [discard]
-        FlowLayout outerRow = Containers.horizontalFlow(Sizing.content(), Sizing.content());
+        outerRow = Containers.horizontalFlow(Sizing.content(), Sizing.content());
         outerRow.gap(2);
         outerRow.verticalAlignment(VerticalAlignment.CENTER);
 
@@ -592,6 +608,21 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
         // === FAR RIGHT: Discard ===
         discardStrip = buildDiscardStrip();
         outerRow.child(discardStrip);
+
+        // Mount loot panel if a coffin session is already active
+        mountLootPanelIfActive();
+
+        // Listen for loot container state changes (open/close)
+        lootStoreListener = session -> {
+            MinecraftClient.getInstance().execute(() -> {
+                if (session instanceof LootContainerStateStore.OpenSession) {
+                    mountLootPanelIfActive();
+                } else if (session instanceof LootContainerStateStore.Closed) {
+                    unmountLootPanel();
+                }
+            });
+        };
+        LootContainerStateStore.addListener(lootStoreListener);
 
         root.child(outerRow);
         populateFromModel();
@@ -1665,6 +1696,12 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
         if (ready != null && client != null) {
             client.setScreen(new ItemInspectScreen(ready));
         }
+        // Loot panel timer tick
+        if (lootPanel != null && !lootPanel.isClosed()) {
+            if (lootPanel.tickTimer()) {
+                unmountLootPanel();
+            }
+        }
     }
 
     @Override
@@ -1840,6 +1877,26 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
                 }
                 return true;
             }
+
+            // Loot grid (supply coffin)
+            if (lootPanel != null && !lootPanel.isClosed()) {
+                BackpackGridPanel lg = lootPanel.lootGrid();
+                if (lg.containsPoint(mouseX, mouseY)) {
+                    var pos = lg.screenToGrid(mouseX, mouseY);
+                    if (pos != null) {
+                        InventoryItem item = lg.itemAt(pos.row(), pos.col());
+                        if (item != null && dragState.phase() == DragState.Phase.IDLE) {
+                            var anchor = lg.anchorOf(item);
+                            if (anchor != null) {
+                                dragState.pickup(item, lootPanel.extContainerId(),
+                                    anchor.row(), anchor.col());
+                                lg.remove(item);
+                                return true;
+                            }
+                        }
+                    }
+                }
+            }
         }
 
         return super.mouseClicked(mouseX, mouseY, button);
@@ -1885,6 +1942,16 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
         if (hIdx >= 0 && hotbarItems[hIdx] != null) return hotbarItems[hIdx];
         int qIdx = quickUseSlotAtScreen(mouseX, mouseY);
         if (qIdx >= 0 && quickUseItems[qIdx] != null) return quickUseItems[qIdx];
+        if (lootPanel != null && !lootPanel.isClosed()) {
+            BackpackGridPanel lg = lootPanel.lootGrid();
+            if (lg.containsPoint(mouseX, mouseY)) {
+                var pos = lg.screenToGrid(mouseX, mouseY);
+                if (pos != null) {
+                    InventoryItem item = lg.itemAt(pos.row(), pos.col());
+                    if (item != null) return item;
+                }
+            }
+        }
         return null;
     }
 
@@ -1931,6 +1998,49 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
             }
             clearAllHighlights();
             return;
+        }
+
+        // Loot grid drop (supply coffin) — handle both directions
+        if (lootPanel != null && !lootPanel.isClosed()) {
+            boolean fromLoot = lootPanel.extContainerId().equals(dragState.sourceContainerId());
+
+            // Drop onto loot grid (from player container)
+            BackpackGridPanel lg = lootPanel.lootGrid();
+            if (lg.containsPoint(mouseX, mouseY)) {
+                var pos = lg.screenToGrid(mouseX, mouseY);
+                if (pos != null && lg.canPlace(dragged, pos.row(), pos.col())) {
+                    lg.place(dragged, pos.row(), pos.col());
+                    String srcCid = dragState.sourceContainerId();
+                    int srcRow = dragState.sourceRow();
+                    int srcCol = dragState.sourceCol();
+                    dragState.drop();
+                    lootPanel.sendMove(dragged.instanceId(),
+                        srcCid != null ? srcCid : "", srcRow, srcCol,
+                        lootPanel.extContainerId(), pos.row(), pos.col());
+                    clearAllHighlights();
+                    return;
+                }
+            }
+
+            // Drop from loot grid onto active player grid
+            if (fromLoot) {
+                BackpackGridPanel destGrid = activeGrid();
+                if (destGrid != null && destGrid.containsPoint(mouseX, mouseY)) {
+                    var pos = destGrid.screenToGrid(mouseX, mouseY);
+                    if (pos != null && destGrid.canPlace(dragged, pos.row(), pos.col())) {
+                        destGrid.place(dragged, pos.row(), pos.col());
+                        String srcCid = dragState.sourceContainerId();
+                        int srcRow = dragState.sourceRow();
+                        int srcCol = dragState.sourceCol();
+                        dragState.drop();
+                        lootPanel.sendMove(dragged.instanceId(),
+                            srcCid, srcRow, srcCol,
+                            destGrid.containerId(), pos.row(), pos.col());
+                        clearAllHighlights();
+                        return;
+                    }
+                }
+            }
         }
 
         // Active grid
@@ -2358,11 +2468,25 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
         if (r.sourceKind() == null) { placeItemAnywhere(item); return; }
         switch (r.sourceKind()) {
             case GRID -> {
-                // Try return to the active grid (user may have switched containers)
-                BackpackGridPanel grid = activeGrid();
-                if (grid != null && grid.canPlace(item, r.sourceRow(), r.sourceCol()))
-                    grid.place(item, r.sourceRow(), r.sourceCol());
-                else placeItemAnywhere(item);
+                // If source was the loot grid, return there
+                if (lootPanel != null && !lootPanel.isClosed()
+                        && lootPanel.extContainerId().equals(r.sourceContainerId())) {
+                    BackpackGridPanel lg = lootPanel.lootGrid();
+                    if (lg.canPlace(item, r.sourceRow(), r.sourceCol())) {
+                        lg.place(item, r.sourceRow(), r.sourceCol());
+                    } else {
+                        // loot grid position taken — find free space
+                        var freePos = lg.findFreeSpace(item);
+                        if (freePos != null) lg.place(item, freePos.row(), freePos.col());
+                        else placeItemAnywhere(item);
+                    }
+                } else {
+                    // Try return to the active grid (user may have switched containers)
+                    BackpackGridPanel grid = activeGrid();
+                    if (grid != null && grid.canPlace(item, r.sourceRow(), r.sourceCol()))
+                        grid.place(item, r.sourceRow(), r.sourceCol());
+                    else placeItemAnywhere(item);
+                }
             }
             case EQUIP -> {
                 if (r.sourceEquipSlot() != null) {
@@ -2485,6 +2609,19 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
         }
 
         discardStrip.surface(Surface.flat(isOverDiscard(mouseX, mouseY) ? 0xFF331111 : 0xFF201010));
+
+        // Loot grid highlight
+        if (lootPanel != null && !lootPanel.isClosed()) {
+            BackpackGridPanel lg = lootPanel.lootGrid();
+            if (lg.containsPoint(mouseX, mouseY)) {
+                var pos = lg.screenToGrid(mouseX, mouseY);
+                if (pos != null) {
+                    boolean valid = lg.canPlace(dragged, pos.row(), pos.col());
+                    lg.highlightArea(pos.row(), pos.col(), dragged.gridWidth(), dragged.gridHeight(),
+                        valid ? GridSlotComponent.HighlightState.VALID : GridSlotComponent.HighlightState.INVALID);
+                }
+            }
+        }
     }
 
     private void clearAllHighlights() {
@@ -2495,6 +2632,7 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
             if (quickUseSlots[i] != null) quickUseSlots[i].setHighlightState(GridSlotComponent.HighlightState.NONE);
         }
         if (bodyInspect != null) bodyInspect.clearHighlight();
+        if (lootPanel != null && lootPanel.lootGrid() != null) lootPanel.lootGrid().clearHighlights();
         discardStrip.surface(Surface.flat(0xFF201010));
         setSkillScrollDropZoneState(SkillScrollDropState.IDLE);
     }
@@ -3065,6 +3203,36 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
             sy,
             sz
         ));
+    }
+
+    // ==================== Loot panel mount/unmount ====================
+
+    private void mountLootPanelIfActive() {
+        LootContainerStateStore.Session session = LootContainerStateStore.current();
+        if (!(session instanceof LootContainerStateStore.OpenSession open)) return;
+        if (lootPanel != null && !lootPanel.isClosed()) return; // already mounted
+
+        unmountLootPanel(); // clean up any stale panel
+        lootPanel = new LootContainerPanel(open);
+        lootPanelLayout = lootPanel.build();
+        // Insert before discardStrip
+        int discardIdx = outerRow.children().indexOf(discardStrip);
+        if (discardIdx >= 0) {
+            outerRow.child(discardIdx, lootPanelLayout);
+        } else {
+            outerRow.child(lootPanelLayout);
+        }
+    }
+
+    private void unmountLootPanel() {
+        if (lootPanel != null) {
+            lootPanel.dispose();
+            lootPanel = null;
+        }
+        if (lootPanelLayout != null && outerRow != null) {
+            outerRow.removeChild(lootPanelLayout);
+            lootPanelLayout = null;
+        }
     }
 
     private double mouseX() {
