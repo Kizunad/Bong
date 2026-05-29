@@ -455,6 +455,12 @@ public final class ClientRequestSender {
         dispatch(ClientRequestProtocol.encodeCraftCancel());
     }
 
+    // ─── plan-supply-coffin-loot-ui P2：supply coffin open (entity-based) ──
+
+    public static void sendSupplyCoffinOpen(int entityId) {
+        dispatch(ClientRequestProtocol.encodeSupplyCoffinOpen(entityId));
+    }
+
     // ─── plan-supply-coffin-loot-ui P1：外部容器 C2S ──────────────
 
     public static void sendExternalContainerMove(

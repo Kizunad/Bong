@@ -282,9 +282,11 @@ pub struct ClientRequestDispatchParams<'w> {
     // ─── plan-craft-v1 P2：通用手搓 intent ──────────────────
     pub craft_start_tx: Option<ResMut<'w, Events<crate::craft::CraftStartIntent>>>,
     pub craft_cancel_tx: Option<ResMut<'w, Events<crate::craft::CraftCancelIntent>>>,
-    // ─── plan-supply-coffin-loot-ui P2：外部容器 ──────────────────
+    // ─── plan-supply-coffin-loot-ui P2：外部容器 + entity-based open ──────
     pub ext_container_registry:
         Option<ResMut<'w, crate::inventory::external_container::ExternalContainerRegistry>>,
+    pub supply_coffin_open_tx:
+        Option<ResMut<'w, Events<crate::supply_coffin::interact::SupplyCoffinOpenRequest>>>,
 }
 
 #[derive(SystemParam)]
@@ -499,6 +501,7 @@ pub fn handle_client_request_payloads(
             | ClientRequestV1::AnqiContainerSwitch { v, .. }
             | ClientRequestV1::CraftStart { v, .. }
             | ClientRequestV1::CraftCancel { v }
+            | ClientRequestV1::SupplyCoffinOpen { v, .. }
             | ClientRequestV1::ExternalContainerMove { v, .. }
             | ClientRequestV1::ExternalContainerClose { v, .. } => *v,
         };
@@ -1819,6 +1822,40 @@ pub fn handle_client_request_payloads(
                     continue;
                 };
                 cancel_search_tx.send(CancelSearchRequestEvent { player: ev.client });
+            }
+            // ── 物资棺 entity-based open（plan-supply-coffin-loot-ui P2）──
+            ClientRequestV1::SupplyCoffinOpen { entity_id, .. } => {
+                tracing::info!(
+                    "[bong][network] client_request supply_coffin_open entity={:?} target_id={entity_id}",
+                    ev.client
+                );
+                let Some(entity_manager) = combat_params.entity_manager.as_deref() else {
+                    tracing::warn!(
+                        "[bong][network] dropped supply_coffin_open because EntityManager resource is missing"
+                    );
+                    continue;
+                };
+                let Some(target) = entity_manager.get_by_id(entity_id) else {
+                    tracing::debug!(
+                        "[bong][network] supply_coffin_open rejected: no entity for protocol id {entity_id}"
+                    );
+                    if let Ok((_username, mut client)) = clients.get_mut(ev.client) {
+                        client.send_chat_message("§c[物资棺] 目标不存在。");
+                    }
+                    continue;
+                };
+                if let Some(supply_coffin_open_tx) = dispatch.supply_coffin_open_tx.as_deref_mut() {
+                    supply_coffin_open_tx.send(
+                        crate::supply_coffin::interact::SupplyCoffinOpenRequest {
+                            client: ev.client,
+                            target,
+                        },
+                    );
+                } else {
+                    tracing::warn!(
+                        "[bong][network] dropped supply_coffin_open because SupplyCoffinOpenRequest event resource is missing"
+                    );
+                }
             }
             // ── 外部容器 move / close ─────────────
             ClientRequestV1::ExternalContainerMove {

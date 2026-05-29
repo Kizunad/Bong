@@ -1,6 +1,7 @@
 package com.bong.client.input;
 
 public final class ReservedInteractionIntents {
+    public static final int OPEN_CONTAINER_PRIORITY = 100;
     public static final int SEARCH_CONTAINER_PRIORITY = 100;
     public static final int TRADE_PLAYER_PRIORITY = 90;
     public static final int TALK_NPC_PRIORITY = 90;

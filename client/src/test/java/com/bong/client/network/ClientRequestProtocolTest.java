@@ -752,4 +752,37 @@ public class ClientRequestProtocolTest {
         assertEquals("equip", to.get("kind").getAsString());
         assertEquals("main_hand", to.get("slot").getAsString());
     }
+
+    // ─── plan-supply-coffin-loot-ui P2：supply_coffin_open ──────────
+
+    @Test
+    void encodesSupplyCoffinOpen() {
+        String json = ClientRequestProtocol.encodeSupplyCoffinOpen(42);
+        assertEquals(
+            "{\"type\":\"supply_coffin_open\",\"v\":1,\"entity_id\":42}",
+            json,
+            "supply_coffin_open should encode type + v + entity_id"
+        );
+    }
+
+    @Test
+    void encodesSupplyCoffinOpenWithZeroId() {
+        String json = ClientRequestProtocol.encodeSupplyCoffinOpen(0);
+        assertEquals(
+            "{\"type\":\"supply_coffin_open\",\"v\":1,\"entity_id\":0}",
+            json,
+            "entity_id 0 is a valid MC protocol entity id"
+        );
+    }
+
+    @Test
+    void encodesSupplyCoffinOpenWithNegativeId() {
+        // Negative entity_id passes the protocol layer; server rejects at runtime.
+        String json = ClientRequestProtocol.encodeSupplyCoffinOpen(-1);
+        assertEquals(
+            "{\"type\":\"supply_coffin_open\",\"v\":1,\"entity_id\":-1}",
+            json,
+            "negative entity_id should be encoded without client-side validation"
+        );
+    }
 }

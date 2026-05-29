@@ -422,6 +422,15 @@ pub enum ClientRequestV1 {
     CancelSearch {
         v: u8,
     },
+    // ─── plan-supply-coffin-loot-ui P2：entity-based supply coffin open ────
+    /// 玩家右键物资棺实体（Marker entity，无 server hitbox → InteractEntityEvent
+    /// 不会触发）。客户端通过 crosshair 检测到 COFFIN_* 模型实体后发送此请求，
+    /// server 用 `EntityManager::get_by_id` 解析 MC protocol entity_id → ECS Entity，
+    /// 再 forward 到 `handle_supply_coffin_interact` 逻辑。
+    SupplyCoffinOpen {
+        v: u8,
+        entity_id: i32,
+    },
     // ─── plan-supply-coffin-loot-ui P1：外部容器 C2S ────────────────
     ExternalContainerMove {
         v: u8,
@@ -1726,6 +1735,55 @@ mod tests {
     }
 
     // ─── plan-supply-coffin-loot-ui P1：外部容器 C2S tests ──────────
+
+    // ─── plan-supply-coffin-loot-ui P2：supply_coffin_open C2S tests ──
+
+    #[test]
+    fn supply_coffin_open_roundtrip() {
+        let json = r#"{"type":"supply_coffin_open","v":1,"entity_id":42}"#;
+        let req: ClientRequestV1 = serde_json::from_str(json).unwrap();
+        match req {
+            ClientRequestV1::SupplyCoffinOpen { v, entity_id } => {
+                assert_eq!(v, 1, "version should be 1");
+                assert_eq!(entity_id, 42, "entity_id should be 42");
+            }
+            other => panic!("expected SupplyCoffinOpen, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn supply_coffin_open_negative_entity_id() {
+        let json = r#"{"type":"supply_coffin_open","v":1,"entity_id":-1}"#;
+        let req: ClientRequestV1 =
+            serde_json::from_str(json).expect("negative entity_id is valid i32 at schema level");
+        match req {
+            ClientRequestV1::SupplyCoffinOpen { entity_id, .. } => {
+                assert_eq!(
+                    entity_id, -1,
+                    "negative entity_id should pass schema (rejected at runtime)"
+                );
+            }
+            other => panic!("expected SupplyCoffinOpen, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn supply_coffin_open_rejects_missing_entity_id() {
+        let json = r#"{"type":"supply_coffin_open","v":1}"#;
+        assert!(
+            serde_json::from_str::<ClientRequestV1>(json).is_err(),
+            "missing entity_id should fail"
+        );
+    }
+
+    #[test]
+    fn supply_coffin_open_rejects_extra_fields() {
+        let json = r#"{"type":"supply_coffin_open","v":1,"entity_id":42,"extra":true}"#;
+        assert!(
+            serde_json::from_str::<ClientRequestV1>(json).is_err(),
+            "extra field should fail due to deny_unknown_fields"
+        );
+    }
 
     #[test]
     fn external_container_move_roundtrip() {

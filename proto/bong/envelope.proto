@@ -242,7 +242,8 @@ message ClientRequestEnvelope {
     // ─── plan-supply-coffin-loot-ui P1：外部容器 C2S ──────────────
     ExternalContainerMove       external_container_move       = 85;
     ExternalContainerCloseReq   external_container_close      = 86;
-    // P2/P3 阶段继续追加 field 87..N。
+    SupplyCoffinOpenReq         supply_coffin_open            = 87;
+    // P2/P3 阶段继续追加 field 88..N。
   }
 }
 
@@ -3594,4 +3595,9 @@ message ExternalContainerMove {
 // 与 Rust ClientRequestV1::ExternalContainerClose 精确对应。
 message ExternalContainerCloseReq {
   uint64 session_id = 1;
+}
+
+// 与 Rust ClientRequestV1::SupplyCoffinOpen 精确对应。
+message SupplyCoffinOpenReq {
+  int32 entity_id = 1;
 }

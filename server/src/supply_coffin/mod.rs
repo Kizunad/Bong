@@ -22,7 +22,7 @@ pub mod refresh;
 mod tests;
 
 #[allow(unused_imports)]
-pub use interact::{handle_supply_coffin_interact, SupplyCoffinOpened};
+pub use interact::{handle_supply_coffin_interact, SupplyCoffinOpenRequest, SupplyCoffinOpened};
 #[allow(unused_imports)]
 pub use lifecycle::external_container_lifecycle_tick;
 #[allow(unused_imports)]
@@ -273,6 +273,7 @@ pub fn register(app: &mut App) {
     );
     app.insert_resource(registry);
     app.init_resource::<ExternalContainerRegistry>();
+    app.add_event::<interact::SupplyCoffinOpenRequest>();
     app.add_event::<interact::SupplyCoffinOpened>();
     app.add_systems(
         Update,

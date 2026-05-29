@@ -5,6 +5,7 @@ public enum InteractIntent {
     TradePlayer,
     TalkNpc,
     ActivateShrine,
+    OpenContainer,
     PickupDroppedItem,
     HarvestResource,
     None

@@ -10,8 +10,7 @@
 use bevy_ecs::event::EventReader;
 use valence::message::SendMessage;
 use valence::prelude::{
-    bevy_ecs, Client, Commands, Entity, EntityInteraction, Event, EventWriter, Hand,
-    InteractEntityEvent, Position, Query, Res, ResMut, Username,
+    bevy_ecs, Client, Commands, Entity, Event, EventWriter, Position, Query, Res, ResMut, Username,
 };
 
 use crate::cultivation::components::Cultivation;
@@ -38,6 +37,15 @@ use super::{current_wall_clock_secs, loot::roll_loot, SupplyCoffinGrade, SupplyC
 const OPEN_RANGE_BLOCKS: f64 = 4.0;
 const OPEN_RANGE_TOLERANCE: f64 = 0.5;
 
+/// C2S request emitted by `client_request_handler` when the client sends
+/// `supply_coffin_open`. The handler resolves the MC protocol entity_id to an
+/// ECS `Entity` and produces this event for the interact system to consume.
+#[derive(Debug, Clone, Event)]
+pub struct SupplyCoffinOpenRequest {
+    pub client: Entity,
+    pub target: Entity,
+}
+
 #[derive(Debug, Clone, Event)]
 pub struct SupplyCoffinOpened {
     #[allow(dead_code)]
@@ -62,7 +70,7 @@ type PlayerQueryItem<'a> = (
 #[allow(clippy::too_many_arguments)]
 pub fn handle_supply_coffin_interact(
     mut commands: Commands,
-    mut interactions: EventReader<InteractEntityEvent>,
+    mut interactions: EventReader<SupplyCoffinOpenRequest>,
     mut registry: ResMut<SupplyCoffinRegistry>,
     mut ext_registry: ResMut<ExternalContainerRegistry>,
     item_registry: Res<ItemRegistry>,
@@ -73,15 +81,7 @@ pub fn handle_supply_coffin_interact(
     ext_containers: Query<&ExternalContainer>,
 ) {
     for ev in interactions.read() {
-        match ev.interact {
-            EntityInteraction::Interact(Hand::Main)
-            | EntityInteraction::InteractAt {
-                hand: Hand::Main, ..
-            } => {}
-            _ => continue,
-        }
-
-        let Some(active) = registry.active.get(&ev.entity).cloned() else {
+        let Some(active) = registry.active.get(&ev.target).cloned() else {
             continue;
         };
 
@@ -101,7 +101,7 @@ pub fn handle_supply_coffin_interact(
             continue;
         }
 
-        if let Ok(ext) = ext_containers.get(ev.entity) {
+        if let Ok(ext) = ext_containers.get(ev.target) {
             if ext.opened_by.is_some() {
                 tracing::debug!(
                     "[bong][supply_coffin] interact rejected (already occupied): grade={:?}",
@@ -127,7 +127,7 @@ pub fn handle_supply_coffin_interact(
 
         let now = current_wall_clock_secs();
         let timeout_wall_secs = now + active.grade.loot_timeout_secs();
-        let session_id = ext_registry.allocate_session(ev.entity);
+        let session_id = ext_registry.allocate_session(ev.target);
         container.id = ExternalContainer::container_id(session_id);
 
         let ext = ExternalContainer {
@@ -185,7 +185,7 @@ pub fn handle_supply_coffin_interact(
             "supply_coffin_open",
         );
 
-        commands.entity(ev.entity).insert(ext);
+        commands.entity(ev.target).insert(ext);
 
         let open_recipe = match active.grade {
             SupplyCoffinGrade::Common => "supply_coffin_open_common",
