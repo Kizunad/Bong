@@ -28,7 +28,7 @@ use crate::npc::loot::default_loot_for_archetype;
 use crate::npc::loot::NpcLootTable;
 use crate::npc::movement::GameTick;
 use crate::npc::schedule::schedule_seed_from_char_id;
-use crate::npc::spawn::{classify_zones_by_qi, initial_age_for_index, seed_position_for_zone};
+use crate::npc::spawn::{classify_zones_by_qi, initial_age_for_index};
 use crate::qi_physics::{
     constants::{QI_EPSILON, QI_ZONE_UNIT_CAPACITY},
     qi_release_to_zone, regen_from_zone, QiAccountId, QiTransfer, QiTransferReason, WorldQiAccount,
@@ -554,6 +554,10 @@ fn seed_initial_dormant_population_on_startup(
         ((target_count as f32) * seed_config.resource_fraction.clamp(0.0, 1.0)).round() as u32;
     let tick = current_tick(game_tick.as_deref());
 
+    // Per-zone running counter: each zone gets a *dense* low-discrepancy
+    // sequence index so its dormant snapshots tile evenly across the zone AABB
+    // instead of piling onto shared patrol anchors (the old ±2 block jitter).
+    let mut zone_local_counts: HashMap<String, u32> = HashMap::new();
     for index in 0..target_count {
         let zone_candidates = if index < resource_target && !resource_zones.is_empty() {
             &resource_zones
@@ -567,8 +571,19 @@ fn seed_initial_dormant_population_on_startup(
         }
 
         let zone = zone_candidates[(index as usize) % zone_candidates.len()];
-        let snapshot =
-            dormant_rogue_seed_snapshot(zone, index, tick, seed_config.max_initial_age_ratio);
+        let zone_local_index = {
+            let counter = zone_local_counts.entry(zone.name.clone()).or_insert(0);
+            let current = *counter;
+            *counter += 1;
+            current
+        };
+        let snapshot = dormant_rogue_seed_snapshot(
+            zone,
+            index,
+            zone_local_index,
+            tick,
+            seed_config.max_initial_age_ratio,
+        );
         store.snapshots.insert(snapshot.char_id.clone(), snapshot);
     }
     store.rebuild_indexes();
@@ -579,14 +594,41 @@ fn seed_initial_dormant_population_on_startup(
     );
 }
 
+/// Plastic-number (R2) low-discrepancy sequence constants — Roberts 2018.
+/// `α_x = 1/g`, `α_z = 1/g²` where g ≈ 1.32472 is the plastic number (the
+/// unique real root of x³ = x + 1). Stepping `frac(0.5 + αₙ·n)` over n yields
+/// near-uniform 2D coverage for *any* point count, so a zone's dormant
+/// snapshots stay spread out no matter how many seed into it.
+const DORMANT_SCATTER_ALPHA_X: f64 = 0.754_877_666_246_692_8;
+const DORMANT_SCATTER_ALPHA_Z: f64 = 0.569_840_290_998_053_2;
+
+/// Deterministically scatter a dormant rogue across `zone`'s XZ footprint using
+/// its per-zone sequence index. Y matches the hydrated `PoissonSpawnSampler`
+/// path (`(min.y + max.y) / 2`) — both feed the same `spawn_rogue_npc_at` on
+/// hydrate, where gravity grounds the entity, so only the XZ spread is visible.
+fn dormant_seed_scatter_position(zone: &crate::world::zone::Zone, zone_local_index: u32) -> DVec3 {
+    let (min, max) = zone.bounds;
+    let n = (zone_local_index as f64) + 1.0;
+    let fx = (0.5 + DORMANT_SCATTER_ALPHA_X * n).fract();
+    let fz = (0.5 + DORMANT_SCATTER_ALPHA_Z * n).fract();
+    let raw = DVec3::new(
+        min.x + fx * (max.x - min.x),
+        (min.y + max.y) * 0.5,
+        min.z + fz * (max.z - min.z),
+    );
+    zone.clamp_position(raw)
+}
+
 fn dormant_rogue_seed_snapshot(
     zone: &crate::world::zone::Zone,
     index: u32,
+    zone_local_index: u32,
     tick: u64,
     max_initial_age_ratio: f64,
 ) -> NpcDormantSnapshot {
     let archetype = NpcArchetype::Rogue;
-    let (position, patrol_target) = seed_position_for_zone(zone, index);
+    let position = dormant_seed_scatter_position(zone, zone_local_index);
+    let patrol_target = zone.center();
     let char_id = format!("dormant:rogue:{index}");
     let cultivation = Cultivation::default();
     let mut meridian_system = MeridianSystem::default();
@@ -985,6 +1027,89 @@ mod tests {
         for id in MeridianId::REGULAR.into_iter().take(count) {
             let meridian = snapshot.meridian_system.get_mut(id);
             meridian.opened = true;
+        }
+    }
+
+    #[test]
+    fn dormant_scatter_stays_in_zone_bounds() {
+        // Hydration spawns the entity at exactly this position, so an
+        // out-of-bounds seed would leak NPCs outside their home zone. Every
+        // R2 sample (fx,fz ∈ [0,1)) plus clamp must land inside the AABB.
+        let zone = zone();
+        for idx in 0..256u32 {
+            let pos = dormant_seed_scatter_position(&zone, idx);
+            assert!(
+                zone.contains(pos),
+                "zone_local_index {idx} produced out-of-bound pos {pos:?} for bounds {:?}",
+                zone.bounds
+            );
+        }
+    }
+
+    #[test]
+    fn dormant_scatter_spreads_across_zone_instead_of_clustering() {
+        // Regression for the old anchor + ±2 block jitter: 64 snapshots seeded
+        // into one zone must tile the whole footprint, not pile onto one anchor.
+        let zone = zone();
+        let (min, max) = zone.bounds;
+        let width = max.x - min.x; // 100
+        let depth = max.z - min.z; // 100
+        let positions: Vec<DVec3> = (0..64u32)
+            .map(|i| dormant_seed_scatter_position(&zone, i))
+            .collect();
+
+        // (a) Footprint span: the R2 sequence covers most of each axis.
+        let span_x = positions
+            .iter()
+            .map(|p| p.x)
+            .fold(f64::NEG_INFINITY, f64::max)
+            - positions.iter().map(|p| p.x).fold(f64::INFINITY, f64::min);
+        let span_z = positions
+            .iter()
+            .map(|p| p.z)
+            .fold(f64::NEG_INFINITY, f64::max)
+            - positions.iter().map(|p| p.z).fold(f64::INFINITY, f64::min);
+        assert!(
+            span_x > width * 0.8 && span_z > depth * 0.8,
+            "64 snapshots should span >80% of the {width}x{depth} zone \
+             (got span_x={span_x:.1}, span_z={span_z:.1}); the old ±2 jitter spanned <5",
+        );
+
+        // (b) No stacking: closest pair on the XZ plane stays well separated.
+        let mut min_pair = f64::INFINITY;
+        for (i, a) in positions.iter().enumerate() {
+            for b in positions.iter().skip(i + 1) {
+                let d = ((a.x - b.x).powi(2) + (a.z - b.z).powi(2)).sqrt();
+                min_pair = min_pair.min(d);
+            }
+        }
+        assert!(
+            min_pair > 4.0,
+            "closest pair of 64 scattered snapshots is {min_pair:.2} blocks apart; \
+             expected > 4 (old jitter stacked many inside a 4-block box)",
+        );
+    }
+
+    #[test]
+    fn dormant_scatter_is_deterministic_and_distinct() {
+        // Same index → same position (Redis restore / re-seed stays stable);
+        // distinct indices → distinct positions (no silent collisions / stacking).
+        let zone = zone();
+        assert_eq!(
+            dormant_seed_scatter_position(&zone, 7),
+            dormant_seed_scatter_position(&zone, 7),
+            "scatter must be a pure function of (zone, index)"
+        );
+        let mut seen: Vec<DVec3> = Vec::new();
+        for i in 0..128u32 {
+            let pos = dormant_seed_scatter_position(&zone, i);
+            assert!(
+                !seen
+                    .iter()
+                    .any(|p| (p.x - pos.x).abs() < 1e-9 && (p.z - pos.z).abs() < 1e-9),
+                "index {i} collided with an earlier snapshot at {pos:?}"
+            );
+            seen.push(pos);
         }
     }
 

@@ -120,22 +120,6 @@ pub(crate) fn distribute_counts_evenly(total: u32, buckets: usize) -> Vec<u32> {
         .collect()
 }
 
-pub(crate) fn seed_position_for_zone(zone: &Zone, index: u32) -> (DVec3, DVec3) {
-    let anchor = if zone.patrol_anchors.is_empty() {
-        zone.center()
-    } else {
-        zone.patrol_anchors[(index as usize) % zone.patrol_anchors.len()]
-    };
-    // 确定性伪随机 jitter（entity-independent，仅靠 index）。
-    let seed = (index as u64)
-        .wrapping_mul(0x9E37_79B9_7F4A_7C15)
-        .wrapping_add(0xbf58_476d_1ce4_e5b9);
-    let jx = (((seed & 0xFFF) as f64) / 4096.0 - 0.5) * 4.0;
-    let jz = ((((seed >> 16) & 0xFFF) as f64) / 4096.0 - 0.5) * 4.0;
-    let raw = DVec3::new(anchor.x + jx, anchor.y, anchor.z + jz);
-    (zone.clamp_position(raw), zone.center())
-}
-
 pub(crate) fn initial_age_for_index(index: u32, max_age_ticks: f64, max_ratio: f64) -> f64 {
     let bucket = ((index % 10) as f64) / 10.0;
     (bucket * max_ratio).clamp(0.0, 1.0) * max_age_ticks
