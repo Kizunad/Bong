@@ -280,6 +280,12 @@ impl NpcDormantStore {
         self.dirty = true;
     }
 
+    /// Read-only dirty accessor. The production publish path consumes the flag
+    /// via [`Self::take_dirty`] (read-and-clear in one step), so this is only
+    /// used by tests to assert the gate's state without mutating it. Kept as a
+    /// stable accessor alongside [`Self::restore_failed`]; `allow(dead_code)`
+    /// because non-test builds have no caller.
+    #[allow(dead_code)]
     pub fn is_dirty(&self) -> bool {
         self.dirty
     }
