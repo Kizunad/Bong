@@ -1,13 +1,15 @@
 ---
-description: 开 worktree → 实施 docs/plan-<name>.md → PR → 查 merge conflict → 等 CI+codex review → 自行判定 → 自动 merge → 清理。全自动；测试/CI 失败允许有限修复（≤2 轮）、review 意见自行判断采纳，仅严重设计问题/反复修不过才交人工。
+description: 开 worktree → Workflow 多 agent 实施 docs/plan-<name>.md（设计收口→逐阶段实施→对抗审查，全程在 worktree 内）→ PR → 查 merge conflict → 等 CI+codex review → 自行判定 → 自动 merge → 清理。全自动；测试/CI 失败允许有限修复（≤2 轮）、review 意见自行判断采纳，仅严重设计问题/反复修不过才交人工。无 Workflow 工具的 harness（如 Codex）退化为线性实施。
 argument-hint: <plan-name>
 ---
 
 # consume-plan $ARGUMENTS
 
-线性消费 `docs/plan-$ARGUMENTS.md`。**全自动到 merge**——PR 创建后**独立发 comment** mention `@codex` 触发 review（写在 PR body 里不生效，bot 只捕获 issue comment / review comment），step 6 等 Codex 给评论后 step 7 自行判定（严重必修、nit 忽略并写理由），无严重问题即 step 8 自动 squash merge。
+消费 `docs/plan-$ARGUMENTS.md`：**step 3 实施由 Workflow 多 agent 编排**（设计收口→逐阶段实施→对抗审查，全程在 worktree 内），其余步骤线性。**全自动到 merge**——PR 创建后**独立发 comment** mention `@codex` 触发 review（写在 PR body 里不生效，bot 只捕获 issue comment / review comment），step 6 等 Codex 给评论后 step 7 自行判定（严重必修、nit 忽略并写理由），无严重问题即 step 8 自动 squash merge。
 
 实施期测试/CI 失败允许**有限次本地修复（≤2 轮）**；review 意见自行判断采纳；merge conflict 先尝试 rebase（≤2 轮），拿不准交人工。不自动跳过失败 TODO。
+
+> **Workflow 是 Claude Code 专有工具**。当前 harness 没有 Workflow 工具（如 Codex）时，step 3 退化为 §3.5 线性逐 TODO 实施，其余不变。
 
 ---
 
@@ -19,6 +21,7 @@ argument-hint: <plan-name>
 4. 严禁 `--no-verify` / `--no-gpg-sign` / `git reset --hard` / `git push --force` 等绕过或破坏操作。**唯一例外**：step 4.2 rebase 解决冲突后允许 `git push --force-with-lease origin "$BRANCH"`（远端 head 校验，不会覆盖他人 commit）。
 5. **`docs/` 写权限严格限于本次消费的 plan**：仅允许在 `docs/plan-$PLAN.md` 末尾追加 `## Finish Evidence` 章节，并最终 `git mv` 入 `docs/finished_plans/`（详见 step 3 末尾"全 P 完成后"）。其他 `docs/` 文件 / `CLAUDE.md` / `worldview.md` 严禁自动改——遇到必须改的情况停下交人工。
 6. 严禁用注释掉测试 / `#[ignore]` / skip case / 改断言数值等方式"让测试过"。
+7. **Workflow 编排约束（step 3）**：Workflow 起的 subagent **继承会话 cwd = 主仓库根 `$REPO_ROOT`，不会自动进 `$WT_ABS`**。因此 ① 必须把 `$WT_ABS` 绝对路径经 `args` 传入 workflow，并在**每个 agent prompt** 里强制"只在 `$WT_ABS` 内操作（`cd "$WT_ABS"` 或 `git -C "$WT_ABS"`），严禁碰主 checkout / `cd` 离开 / 动 main"；② **禁用** agent 的 `isolation:'worktree'`（会给每个 agent 各自开新 worktree，与本流程单一 `$WT_ABS` 冲突）；③ 实施 agent 同样严禁 `push` / 开 PR / `merge`（归主流程 step 4+），不写 plan 文档正文（Finish Evidence 归主流程）。
 
 ---
 
@@ -62,41 +65,114 @@ echo "[ok] cwd=$WT_ABS branch=$BRANCH"
 
 **`$WT_ABS` 和 `$BRANCH` 从这里起为固定值**。后续任一 bash block 都先 `cd "$WT_ABS"` 并在必要时重算这两个变量。
 
-## 3. 实施 plan
+## 3. 实施 plan（Workflow 多 agent 编排）
 
-- 把 `docs/plan-$PLAN.md` 作为 source of truth，按 P0/P1/§N 顺序推进
-- 每个 TODO / 逻辑单元一个 **atomic commit**，消息风格照 `CLAUDE.md`（fix/feat/refactor 中文前缀）
-- 每次 commit 后在 `$WT_ABS` 内跑对应子项目测试，必须全绿才能进下一个 TODO：
+实施交给 **Workflow 工具**编排，三段流水：**设计收口（并行只读）→ 逐阶段实施（按 P 依赖顺序，串行）→ 对抗审查（并行只读）**，全程在 `$WT_ABS` 内。Workflow 是 slash command 显式授权的合法入口（满足 Workflow 工具的 opt-in 条件）。
 
-  ```bash
-  cd "$WT_ABS"
-  # Rust（server/ 改动）：
-  cd server && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test
-  # Java（client/ 改动）：
-  cd client && ./gradlew test build
-  # TypeScript（agent/ 改动）：
-  cd agent && npm run build && (cd packages/tiandao && npm test) && (cd packages/schema && npm test)
-  # Python 改动：ruff PostToolUse hook 会自动格式化
-  ```
+> 当前 harness 无 Workflow 工具（如 Codex）→ 跳到 **§3.5 线性 fallback**，其余步骤不变。
 
-### 测试/编译失败处理（有限修复循环，≤2 轮）
+### 3.1 准备 workflow 输入
 
-1. **读错误输出，判定归属**：
-   - 本 TODO 的 patch 引入（typo、漏 import、新增代码小 bug、forget `?` / borrow）→ 走 2
-   - plan 本身问题 / 需要扩大改动面超出当前 TODO → 走 3
-   - 明显 flaky / 环境抖动 → 在 `$WT_ABS` 内重跑一次，仍挂走 3
-2. **本 TODO 自修**：允许**最多 2 次**修复尝试（每次一个独立 atomic fix commit，如 `fix(test): 补 XX import`），每次 commit 后重跑对应测试。2 次仍不过 → 走 3
-3. **停**：保留 `$WT_ABS` 内所有 commit 和未提交改动，输出失败命令 + 错误原文 + `$WT_ABS`，**不继续后续 TODO、不试图跳过、不 `cd` 离开**，交人工
+```bash
+cd "$WT_ABS"
+# 从 plan 头部"阶段总览"解析 P 列表（按依赖顺序）；无显式分阶段的简单 plan 用单一伪阶段 "ALL"
+PHASES=$(grep -oE '\| (P[0-9]+) \|' "docs/plan-$PLAN.md" | grep -oE 'P[0-9]+' | sort -u | tr '\n' ' ')
+[ -n "$PHASES" ] || PHASES="ALL"
+echo "[workflow-in] WT_ABS=$WT_ABS PLAN=$PLAN PHASES=$PHASES"
+```
 
-**修复范围严格限于"当前 TODO patch 引入的明显错误"**——禁止顺手修其他模块、重构、改 plan 范围外代码。
+### 3.2 调 Workflow（下方模板，按 plan 实际阶段裁剪）
 
-### 全 P 完成后：写 Finish Evidence + 归档（提 PR 前最后一步）
+用 Workflow 工具传 `args: { wtAbs: "<$WT_ABS 绝对路径>", plan: "$PLAN", phases: [<P 列表>] }`。**每个 agent prompt 都内联"只在 wtAbs 内操作"约束（核心约束 #7）**。
 
-所有 P0/P1/§N 实施 + 测试都通过后，**提 PR 之前**做以下动作（plan 格式见 `CLAUDE.md` "Plan 工作流"）：
+```js
+export const meta = {
+  name: 'consume-plan-impl',
+  description: 'Workflow 实施 docs/plan-<PLAN>：设计收口→逐阶段实施→对抗审查（全程 worktree 内）',
+  phases: [
+    { title: 'Design', detail: '并行只读：收口开放问题 + 接入面 + 逐阶段工作项' },
+    { title: 'Implement', detail: '按 P 依赖顺序逐阶段实施 + atomic commit + 测试矩阵' },
+    { title: 'Verify', detail: '并行对抗审查累积 diff：契约/饱和测试/CLAUDE.md/回归' },
+  ],
+}
+const WT = args.wtAbs, PLAN = args.plan, PHASES = args.phases
+// 每个 agent 都带这条硬约束（核心约束 #7）
+const GUARD = `**只在 ${WT} 内操作**：bash 以 \`cd ${WT}\` 开头或用 \`git -C ${WT}\`；严禁 cd 离开 / 碰主 checkout / 动 main / push / 开 PR / merge / --no-verify / #[ignore] / 注释测试 / 改断言蒙混 / 改 plan 范围外代码。不写 plan 文档正文。`
+const PLAN_DESIGN = { type:'object', required:['summary','decisions','workItems'], properties:{
+  summary:{type:'string'},
+  decisions:{type:'array',items:{type:'object',required:['question','decision','landing'],properties:{question:{type:'string'},decision:{type:'string'},landing:{type:'string'}}}},
+  workItems:{type:'array',items:{type:'object',required:['phase','what','files'],properties:{phase:{type:'string'},what:{type:'string'},files:{type:'array',items:{type:'string'}}}}} }}
+const IMPL = { type:'object', required:['phase','commits','testsPassed','testsFailed','fmtClippyPass','blocked','summary'], properties:{
+  phase:{type:'string'},commits:{type:'array',items:{type:'string'}},testsPassed:{type:'integer'},testsFailed:{type:'integer'},fmtClippyPass:{type:'boolean'},blocked:{type:'string',description:'空=通过；非空=失败命令+错误原文'},summary:{type:'string'} }}
+const VERDICT = { type:'object', required:['dimension','passed','issues'], properties:{
+  dimension:{type:'string'},passed:{type:'boolean'},
+  issues:{type:'array',items:{type:'object',required:['severity','location','desc'],properties:{severity:{type:'string',enum:['blocker','major','minor']},location:{type:'string'},desc:{type:'string'}}}} }}
+
+phase('Design')
+const design = await agent(`读 ${WT}/docs/plan-${PLAN}.md + 相关代码（只读，不改不 commit）。${GUARD}
+产出：① 收口 plan 所有"§N 开放问题"——每条给决议 + file:line 落点（决议只在本次 context 用，**不写回 plan 文档**）；② 接入面（进料/出料/共享类型/跨仓库契约 symbol）；③ 把实施拆成按 P 依赖排序的 workItems（每项标 phase + 改哪些文件）。按 schema 输出。`,
+  { phase:'Design', schema: PLAN_DESIGN })
+
+phase('Implement')
+// 串行：同一 worktree 不能并行写；后阶段依赖前阶段
+const implResults = []
+for (const ph of PHASES) {
+  const r = await agent(`你在 ${WT} 实施 docs/plan-${PLAN}.md 的 ${ph} 阶段。设计决议（已收口）：${JSON.stringify(design)}
+${GUARD}
+- 按 plan ${ph} 交付物实施，每个逻辑单元一个 atomic commit（fix/feat/refactor 中文前缀，照 CLAUDE.md）。
+- **饱和测试**（CLAUDE.md「饱和化测试」）：happy / 边界(empty/max/off-by-one) / 错误分支 / 状态转换都覆盖；测契约不测实现；plan 点名的测试必须实现。
+- 每次 commit 后在 ${WT} 内跑对应子项目测试矩阵（见下），必须全绿。
+- 失败：本阶段 patch 引入的明显错误自修（≤2 个独立 fix commit），仍不过则把"失败命令 + 错误原文"写进 blocked 字段并停（不跳过、不继续后阶段）。
+按 schema 输出（blocked 空=通过）。ultrathink`,
+    { phase:'Implement', schema: IMPL })
+  implResults.push(r)
+  if (r.blocked) break   // 某阶段卡住即停，保留 worktree commit
+}
+
+phase('Verify')
+let verdicts = []
+if (!implResults.some(r => r.blocked)) {
+  const DIMS = [
+    '契约与回归：本 PR 是否破坏外部可观察行为/IO/协议/现有运行时？散布/序列化/状态机有无回归？',
+    '饱和测试完整性：happy/边界/错误/状态转换有无漏 case？有无 #[ignore]/注释测试/改断言蒙混？',
+    'plan 目标对齐 + CLAUDE.md/worldview/qi_physics 守恒合规',
+  ]
+  verdicts = (await parallel(DIMS.map(d => () =>
+    agent(`对抗审查 ${WT} 内本次累积 diff（\`git -C ${WT} diff origin/main...HEAD\`）。只读，不改不 commit。${GUARD}
+维度：${d}。**尽力证伪**——默认有问题，找不到才放行。按 schema 给 verdict + issues(blocker/major/minor + location + desc)。`,
+      { phase:'Verify', schema: VERDICT })))).filter(Boolean)
+}
+
+return { design, implResults, verdicts, blocked: (implResults.find(r => r.blocked) || {}).blocked || null }
+```
+
+**测试矩阵**（实施 agent 与 §3.5 fallback 共用；agent 把 `$WT_ABS` 换成 `${WT}`）：
+
+```bash
+cd "$WT_ABS"
+# Rust（server/ 改动）：
+cd server && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test
+# Java（client/ 改动）：
+cd client && ./gradlew test build
+# TypeScript（agent/ 改动）：
+cd agent && npm run build && (cd packages/tiandao && npm test) && (cd packages/schema && npm test)
+# Python 改动：ruff PostToolUse hook 会自动格式化
+```
+
+### 3.3 读 workflow 结果
+
+- `blocked` 非空（某阶段实施卡住）→ 按"失败统一行为"停：保留 `$WT_ABS` 内 commit，输出失败命令 + 原文 + `$WT_ABS`，交人工。**不**继续后续阶段、**不** `cd` 离开。
+- `verdicts` 含 `blocker` / `major` → 在 `$WT_ABS` 内修复（可再起一个 fix agent，或主流程直接改）+ 重跑对应测试矩阵 + 重新审查该维度；**≤2 轮**仍不过交人工。修复范围严格限于审查指向的具体问题。
+- `verdicts` 仅 `minor`（nit/主观）→ 记录不强改，最终输出里说明。
+- 全过 → 进 §3.4。
+
+### 3.4 全 P 完成后：写 Finish Evidence + 归档（提 PR 前最后一步）
+
+实施 + 审查全过后，**提 PR 之前**由**主流程**（非 workflow agent）按 workflow 返回的 `implResults` / `design` 写 evidence（docs 写权限仅限于此，见核心约束 #5）。所有 P0/P1/§N 都通过后：
 
 1. 在 `$WT_ABS/docs/plan-$PLAN.md` 末尾追加 `## Finish Evidence` 章节，至少包含：
    - **落地清单**：每个 P 对应的真实模块/文件路径
-   - **关键 commit**：本 worktree 内的实施 commit hash + 日期 + 消息
+   - **关键 commit**：本 worktree 内的实施 commit hash + 日期 + 消息（取自 `implResults[].commits`）
    - **测试结果**：跑过的命令 + 数量（如 `cargo test cultivation:: → 94 passed`）
    - **跨仓库核验**：server / agent / client 各命中的 symbol（plan 跨仓库时）
    - **遗留 / 后续**：未在本 plan 范围、依赖其他 plan 的待办（若有）
@@ -115,6 +191,18 @@ echo "[ok] cwd=$WT_ABS branch=$BRANCH"
 PR 内已包含归档动作——merge 后 plan 自动就在 `finished_plans/`，**不另开 PR**。
 
 **review 阶段若 step 7 修改了实施**：相应更新 evidence（已 mv 后路径下的文件 `docs/finished_plans/plan-$PLAN.md`），保持文档与代码一致。
+
+### 3.5 Fallback：无 Workflow 工具时线性实施
+
+按 `docs/plan-$PLAN.md`（source of truth）的 P0/P1/§N 顺序推进，每个 TODO / 逻辑单元一个 **atomic commit**（fix/feat/refactor 中文前缀），每次 commit 后在 `$WT_ABS` 内跑上方**测试矩阵**全绿才进下一个 TODO。**饱和测试**要求同 §3.2 实施 agent。
+
+测试/编译失败处理（有限修复循环，≤2 轮）：
+
+1. **判归属**：本 TODO patch 引入（typo / 漏 import / 小 bug / 漏 `?` / borrow）→ 自修；plan 本身问题 / 需扩大改动面 → 停；明显 flaky → 重跑一次仍挂则停。
+2. **自修**：最多 2 次独立 atomic fix commit（如 `fix(test): 补 XX import`），每次重跑对应测试。2 次仍不过 → 停。
+3. **停**：保留 `$WT_ABS` 内所有 commit 和未提交改动，输出失败命令 + 错误原文 + `$WT_ABS`，**不继续 / 不跳过 / 不 `cd` 离开**，交人工。
+
+修复范围严格限于"当前 TODO patch 引入的明显错误"——禁止顺手修其他模块、重构、改 plan 范围外代码。完成后同样走 §3.4。
 
 ## 4. 提 PR（不 auto-merge）
 
