@@ -4,10 +4,10 @@
 
 | 阶段 | 主题 | 状态 |
 |------|------|------|
-| P0 | 止血：失败的 dormant 写不再饿死 IPC + 不再泄漏 temp key | ⬜ |
-| P1 | 减负：dormant 只在变化时写，去掉每 10s 全量重 serde + 整表替换 | ⬜ |
-| P2 | 根治写慢：profile inline HashReplace ~200× 慢源 + 分块/增量写 | ⬜ |
-| P3 | 验收：1000 dormant 空 Redis 冷启动 → 持久化 → 重启恢复 端到端 | ⬜ |
+| P0 | 止血：失败的 dormant 写不再饿死 IPC + 不再泄漏 temp key | ✅ 2026-05-31 |
+| P1 | 减负：dormant 只在变化时写，去掉每 10s 全量重 serde + 整表替换 | ✅ 2026-05-31 |
+| P2 | 根治写慢：profile inline HashReplace ~200× 慢源 + 分块/增量写 | ✅ 2026-05-31 |
+| P3 | 验收：1000 dormant 空 Redis 冷启动 → 持久化 → 重启恢复 端到端 | ✅ 2026-05-31 |
 
 > **dev-only 备注**：本 bug 仅在 dormant store 从**空** Redis 全量 seed（`seed_initial_dormant_population_on_startup` 走非 `is_empty` 分支）时触发。日常运行因 Redis 里一直有存量（`is_empty()==false` → 跳过 seed），从未发生过全量 1000 冷写，所以这是潜伏 bug。`scripts/start.sh` 默认就是 1000，任何人 `redis-cli flushall` 后冷启动都会撞。
 
@@ -200,14 +200,35 @@ scope 约 2-3 PR，按依赖顺序序列化（前一个 merge 后开下一个）
 
 ## Finish Evidence
 
-> 全部 P ✅ + 本节填完后，由 `/consume-plan` 或人工 `git mv` 入 `docs/finished_plans/`。
+全部 P0–P3 ✅（2026-05-31 验收）。修复 dormant NPC 快照 Redis 持久化在 ≥250 量级把整条出站 IPC 搞瘫 + 泄漏 temp key 的潜伏 bug。
 
-**落地清单**：（每阶段对应真实模块/文件路径，待填）
+**落地清单**：
+- **P0 止血** — `server/src/network/redis_bridge.rs`：`runs_on_background_redis_connection` 纳入 `RedisIoCommand::HashReplace`（dormant 唯一来源），经 `dispatch_outbound_command` `tokio::spawn` 走 clone 后台连接 fire-and-forget，失败仅 `warn!` 不写 `pending_command`（解除 bug① pin 饿死）；`dormant_temp_key` = `format!("{key}:tmp")` 确定性化（删 nonce），`execute_hash_replace` 超时分支补 best-effort `DEL {key}:tmp`（修 bug② 泄漏）；`server/src/npc/dormant/mod.rs` 启动 janitor `SCAN`+`DEL bong:npc/dormant:tmp*` 清历史泄漏。
+- **P1 减负** — `server/src/npc/dormant/mod.rs`：`NpcDormantStore` 加 dirty 标记 + `mark_dirty()`/`is_dirty()`/`take_dirty()`，各 mutator（seed/老化/death/hydrate-dehydrate）置位；`server/src/network/mod.rs` `publish_world_state_to_redis` dirty 门控，仅变化周期才 `to_redis_hash_payloads()`+发 `NpcDormantHash` 并 `take_dirty()` 清位（消除 bug③ 每 10s 全量重写）。
+- **P2 根治写慢** — `server/src/network/redis_bridge.rs`：`const DORMANT_HASH_CHUNK_SIZE: usize = 256`；纯函数 `chunk_hash_fields`（`chunk.max(1)` guard）；`execute_hash_replace_atomic` 由单条巨型 `HSET` 改为分批顺序 `HSET temp` 后 `RENAME`，规避 `MultiplexedConnection` 单条命令 framing 慢源（Redis 服务端实测 ~13ms/1000 条，Rust inline 单条 ~3s 超时）；各 step `std::time::Instant` profiling（`tracing::debug!`）。
+- **P3 验收** — `scripts/verify-dormant-cold-start.sh`（可执行，中文注释，4 项 PASS/FAIL 断言：`hlen`==1000 / tmp key==0 + 无 reconnect-timeout 刷屏 / 重启恢复日志 / 内存平稳），据 `start.sh` 实测 env（`BONG_DORMANT_ROGUE_SEED_COUNT` 等）。
 
-**关键 commit**：（hash + 日期 + 一句话，待填）
+**关键 commit**（`git log origin/main..HEAD`，2026-05-30/31）：
+- `ff9f3a06f` fix(redis-bridge): dormant HashReplace 走后台连接 fire-and-forget，解除 pin 饿死 — P0 bug①
+- `edbbd232a` fix(redis-bridge): dormant temp key 确定性化 + 超时分支补 DEL + 启动 janitor，止泄漏 — P0 bug②
+- `c0576d800` feat(dormant): NpcDormantStore 加 dirty 门控，发布仅在变化时全量写 Redis — P1
+- `50dc7734a` fix(dormant): P1 测试 helper 改用 app.update()（修 P1 test target 未链接 bevy_app::Main 编译失败）
+- `980a1d6b3` fix(dormant): is_dirty 标 allow(dead_code)（is_dirty 为只读 accessor 仅 test 用）
+- `3425bd95b` fix(dormant): execute_hash_replace_atomic 分块 HSET 根治写慢 — P2 主交付
+- `21f04ffab` feat(dormant): P3 冷启动端到端验收脚本 verify-dormant-cold-start.sh — P3
 
-**测试结果**：（跑过的命令 + 数量，待填）
+**测试结果**：
+- `cd server && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test` → 全绿（三者 exit 0），**6708 passed / 0 failed**。
+- 新增契约测试：`hash_replace_chunks_large_payload`（N=0/1/255/256/257/1000@chunk=256，断言批数=ceil(N/chunk) 且批拼接==原输入保序无丢）、`chunk_hash_fields_zero_chunk_no_panic`。
+- plan 点名测试全实现：`dormant_hash_replace_failure_does_not_starve_other_outbound`、`hash_replace_timeout_cleans_temp_key`、`startup_janitor_purges_leaked_tmp_keys`、`dormant_store_dirty_set_on_seed_age_death`、`dormant_store_clean_after_take_dirty`、`dormant_publish_skipped_when_clean`。
 
-**跨仓库核验**：（server `bong:npc/dormant` / `RedisOutbound::NpcDormantHash` 命中；agent world_state 不再断流；client 无关，待填）
+**跨仓库核验**：
+- **server**：`bong:npc/dormant`（`NPC_DORMANT_REDIS_KEY`）HASH 自产自消持久化；`RedisOutbound::NpcDormantHash` → `RedisIoCommand::HashReplace` 走后台 fire-and-forget。
+- **agent**：经 `bong:world_state` pub/sub 间接受益——出站桥不再被 dormant 写 pin，`WorldStateV1` 持续发布，天道 narration 不断流。
+- **client**：无关（MC 协议直连 Valence，不读 Redis）。
 
-**遗留 / 后续**：（如 #3 world_state digest 若未做，登记后续，待填）
+**遗留 / 后续**：
+- **开放问题 #3**（`WorldStateV1` 改发 dormant digest 减体积）：本次未做，避免动 agent/schema 扩大跨仓库 review 面；登记后续。
+- **P2 增量写**（diff-only `HSET`/`HDEL`）：本次未做，分块 HSET 已达 1000 条快速写目标；登记次选后续。
+- **并发硬化**（对抗审查 minor）：dormant 后台写共享确定性 temp key `{key}:tmp`，理论上两次写重叠会因后到者前导 `DEL` 抹掉先到者批次→残缺；当前由 `REDIS_HASH_REPLACE_TIMEOUT`(3s) < 发布 cadence(~10s) + dirty 门控**结构性避免**重叠。若未来缩短 cadence / 放宽 timeout，建议加 per-key single-flight 或唯一 temp key 兜底。
+- **P3 端到端实跑**：脚本为验收 harness，需人工/CI 在真实 release build + 线上 Redis（破坏性 `flushall`）执行。

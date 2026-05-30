@@ -1,7 +1,7 @@
 use crossbeam_channel::{Receiver, Sender, TryRecvError};
 use serde_json::{Map, Value};
 use std::fmt;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant};
 
 use crate::cultivation::void::components::VoidActionKind;
 use crate::fauna::rat_phase::RatPhaseChangeEvent;
@@ -1405,12 +1405,21 @@ async fn dispatch_outbound_command(
 }
 
 fn runs_on_background_redis_connection(command: &RedisIoCommand) -> bool {
+    // Both world_state Publish and dormant HashReplace must never block the
+    // primary outbound connection: a slow / timing-out dormant write previously
+    // pinned `pending_command` and starved every other channel (world_state,
+    // combat, chat). Routing them onto the cloned background connection makes
+    // them fire-and-forget — failures only `warn!` and never become a
+    // `pending_command`. `HashReplace` is exclusively produced by
+    // `RedisOutbound::NpcDormantHash` (see `prepare_outbound_command`), so the
+    // sole key it ever targets is `NPC_DORMANT_REDIS_KEY`; matching the variant
+    // is equivalent to "only dormant runs in the background".
     matches!(
         command,
         RedisIoCommand::Publish {
             channel: CH_WORLD_STATE,
             ..
-        }
+        } | RedisIoCommand::HashReplace { .. }
     )
 }
 
@@ -1476,11 +1485,57 @@ async fn execute_hash_replace(
             Ok(())
         }
         Ok(Err(error)) => Err(format!("failed to replace hash {key}: {error}")),
-        Err(_) => Err(format!(
-            "timed out replacing hash {key} after {:?}",
-            REDIS_HASH_REPLACE_TIMEOUT
-        )),
+        Err(_) => {
+            // `tokio::timeout` cancels (drops) the in-flight future instead of
+            // returning Err, so `execute_hash_replace_atomic`'s inline cleanup
+            // never runs and the deterministic temp key may be left behind
+            // mid-write. Issue a best-effort DEL (bounded by REDIS_IO_TIMEOUT)
+            // so a timed-out write does not leak the temp key. Failure here is
+            // tolerated: the next attempt's leading DEL also clears it, and the
+            // startup janitor sweeps any survivor.
+            let temp_key = dormant_temp_key(key);
+            let _ = tokio::time::timeout(
+                REDIS_IO_TIMEOUT,
+                redis::cmd("DEL")
+                    .arg(temp_key.as_str())
+                    .query_async::<i64>(pub_conn),
+            )
+            .await;
+            Err(format!(
+                "timed out replacing hash {key} after {:?}",
+                REDIS_HASH_REPLACE_TIMEOUT
+            ))
+        }
     }
+}
+
+/// Max field count per `HSET` command when writing the dormant hash.
+///
+/// Root cause this guards against: `MultiplexedConnection` serialises a single
+/// command's whole argument list into one frame before sending. One giant
+/// `HSET` carrying ~1000+ fields degraded to ~3s of client-side framing and
+/// tripped [`REDIS_HASH_REPLACE_TIMEOUT`] — even though Redis itself writes the
+/// same 1000 fields in ~13ms when they arrive as several commands. So the cost
+/// is the inline framing of one huge command, not the Redis server. Splitting
+/// the write into sequential `HSET`s of this many fields each sidesteps it.
+const DORMANT_HASH_CHUNK_SIZE: usize = 256;
+
+/// Split `(field, value)` pairs into sub-slices of at most `chunk` each, for
+/// batched `HSET`.
+///
+/// Pure (no Redis), so a pin test can lock "batch count == ceil(N / chunk) and
+/// the batches concatenate back to the original input" without a live server.
+///
+/// `chunk == 0` is treated as 1 (one pair per batch) to avoid the panic from
+/// `slice::chunks(0)`.
+fn chunk_hash_fields<'a>(
+    pairs: &'a [(&'a str, &'a str)],
+    chunk: usize,
+) -> Vec<&'a [(&'a str, &'a str)]> {
+    // `slice::chunks(0)` panics; clamp to 1 so the "split into batches" contract
+    // still holds (degenerate one-per-batch) instead of crashing.
+    let chunk = chunk.max(1);
+    pairs.chunks(chunk).collect()
 }
 
 async fn execute_hash_replace_atomic(
@@ -1493,28 +1548,52 @@ async fn execute_hash_replace_atomic(
         return Ok(());
     }
 
-    let temp_key = format!("{key}:tmp:{}", redis_temp_key_nonce());
+    // Deterministic temp key (single `{key}:tmp` per logical key) instead of a
+    // per-call nanosecond nonce. A nonce produced a brand-new key on every
+    // retry, so a `tokio::timeout` that *drops* the in-flight future (rather
+    // than returning Err — the drop path skips the inline cleanup below) leaked
+    // an ever-growing pile of `{key}:tmp:<nonce>` blobs and snowballed Redis
+    // memory. With a fixed name, every attempt overwrites the same key: the
+    // leading DEL clears any stale leftover, and the timeout branch in
+    // `execute_hash_replace` issues a best-effort DEL of this exact key.
+    let temp_key = dormant_temp_key(key);
+    let del_start = Instant::now();
     let _: i64 = redis::cmd("DEL")
         .arg(temp_key.as_str())
         .query_async(pub_conn)
         .await?;
+    let del_elapsed = del_start.elapsed();
+
     let field_pairs = entries
         .iter()
         .map(|(field, value)| (field.as_str(), value.as_str()))
         .collect::<Vec<_>>();
-    let write_result = redis::cmd("HSET")
-        .arg(temp_key.as_str())
-        .arg(field_pairs)
-        .query_async::<i64>(pub_conn)
-        .await;
-    if let Err(error) = write_result {
-        let _: Result<i64, _> = redis::cmd("DEL")
-            .arg(temp_key.as_str())
-            .query_async(pub_conn)
-            .await;
-        return Err(error);
-    }
 
+    // Sequential chunked HSET instead of one giant command: a single HSET with
+    // ~1000+ fields stalls in `MultiplexedConnection`'s inline framing (~3s),
+    // while several smaller commands let Redis finish in ~13ms. See
+    // [`DORMANT_HASH_CHUNK_SIZE`].
+    let batches = chunk_hash_fields(&field_pairs, DORMANT_HASH_CHUNK_SIZE);
+    let chunk_count = batches.len();
+    let hset_start = Instant::now();
+    for batch in batches {
+        let mut hset_cmd = redis::cmd("HSET");
+        hset_cmd.arg(temp_key.as_str());
+        for (field, value) in batch {
+            hset_cmd.arg(*field).arg(*value);
+        }
+        if let Err(error) = hset_cmd.query_async::<i64>(pub_conn).await {
+            // HSET failed mid-write: drop the partial temp key, then propagate.
+            let _: Result<i64, _> = redis::cmd("DEL")
+                .arg(temp_key.as_str())
+                .query_async(pub_conn)
+                .await;
+            return Err(error);
+        }
+    }
+    let hset_elapsed = hset_start.elapsed();
+
+    let rename_start = Instant::now();
     let rename_result = redis::cmd("RENAME")
         .arg(temp_key.as_str())
         .arg(key)
@@ -1527,14 +1606,28 @@ async fn execute_hash_replace_atomic(
             .await;
         return Err(error);
     }
+    let rename_elapsed = rename_start.elapsed();
+
+    tracing::debug!(
+        "[bong][redis] hash_replace timing: del={:?} hset_total={:?} rename={:?} chunks={} entries={}",
+        del_elapsed,
+        hset_elapsed,
+        rename_elapsed,
+        chunk_count,
+        entries.len(),
+    );
+
     Ok(())
 }
 
-fn redis_temp_key_nonce() -> u128 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_nanos()
+/// Deterministic temporary hash key for the atomic replace dance.
+///
+/// One stable name per logical key (`{key}:tmp`) so retries overwrite the
+/// same key instead of leaking a fresh nonce-suffixed blob each time. A
+/// `tokio::timeout` that drops the in-flight future skips the inline
+/// cleanup, so the caller's timeout branch DELs exactly this key.
+fn dormant_temp_key(key: &str) -> String {
+    format!("{key}:tmp")
 }
 
 async fn execute_publish(
@@ -2334,6 +2427,258 @@ mod redis_bridge_tests {
             }
             other => panic!("expected hash replace command, got {other:?}"),
         }
+    }
+
+    /// Build `field_count` owned `(field, value)` pairs for chunking tests.
+    fn dormant_field_pairs(field_count: usize) -> Vec<(String, String)> {
+        (0..field_count)
+            .map(|i| (format!("field{i}"), format!("value{i}")))
+            .collect()
+    }
+
+    /// Borrow owned `(String, String)` pairs as `(&str, &str)` for
+    /// [`chunk_hash_fields`].
+    fn borrow_field_pairs(owned: &[(String, String)]) -> Vec<(&str, &str)> {
+        owned
+            .iter()
+            .map(|(f, v)| (f.as_str(), v.as_str()))
+            .collect()
+    }
+
+    #[test]
+    fn hash_replace_chunks_large_payload() {
+        // Contract (named by the plan): `chunk_hash_fields` must guarantee
+        //   1. batch count == ceil(N / chunk)
+        //   2. concatenating the batches in order reproduces the input exactly
+        //      (no dropped, reordered, or duplicated fields)
+        // Saturated boundaries: N = 0, 1, chunk-1, chunk, chunk+1, 1000@256.
+        let chunk = 256usize;
+
+        // (N, expected batch count). Expected counts are hand-computed
+        // ceil(N/256) and cross-checked below, so the case table cannot silently
+        // agree with a buggy implementation.
+        let cases: &[(usize, usize)] = &[
+            (0, 0),         // empty -> 0 batches
+            (1, 1),         // single element -> 1 batch
+            (chunk - 1, 1), // 255 -> still 1 batch
+            (chunk, 1),     // 256 -> exactly 1 full batch
+            (chunk + 1, 2), // 257 -> remainder spills into a 2nd batch
+            (1000, 4),      // 1000 / 256 = 3.9 -> ceil = 4 batches
+        ];
+
+        for &(n, expected_batches) in cases {
+            // Independently recompute ceil to catch a typo in the case table.
+            let ceil_div = n.div_ceil(chunk);
+            assert_eq!(
+                expected_batches, ceil_div,
+                "case table self-check failed: for N={n} chunk={chunk} the \
+                 expected batch count should be ceil={ceil_div}, but the table \
+                 says {expected_batches}"
+            );
+
+            let owned = dormant_field_pairs(n);
+            let borrowed = borrow_field_pairs(&owned);
+            let batches = chunk_hash_fields(&borrowed, chunk);
+
+            // 1. batch count == ceil(N/chunk)
+            assert_eq!(
+                batches.len(),
+                expected_batches,
+                "wrong batch count: expected ceil(N/chunk)={expected_batches} \
+                 (N={n} chunk={chunk}) because that many HSETs are needed, got \
+                 {}",
+                batches.len(),
+            );
+
+            // Every non-final batch must be exactly `chunk`; the final batch is
+            // 1..=chunk (when N>0). Pins the split granularity so an off-by-one
+            // in chunking is caught.
+            for (i, batch) in batches.iter().enumerate() {
+                if i + 1 < batches.len() {
+                    assert_eq!(
+                        batch.len(),
+                        chunk,
+                        "batch {i} is not the last, so it should be full \
+                         (chunk={chunk}) but had {} (N={n})",
+                        batch.len(),
+                    );
+                } else {
+                    assert!(
+                        (1..=chunk).contains(&batch.len()),
+                        "the final batch size should be in 1..={chunk}, got {} \
+                         (N={n})",
+                        batch.len(),
+                    );
+                }
+            }
+
+            // 2. concatenation == input (order-preserving, lossless).
+            let flattened: Vec<(&str, &str)> =
+                batches.iter().flat_map(|b| b.iter().copied()).collect();
+            assert_eq!(
+                flattened.len(),
+                n,
+                "concatenated element count should equal the input N={n} \
+                 because no field may be dropped or duplicated, got {}",
+                flattened.len(),
+            );
+            assert_eq!(
+                flattened, borrowed,
+                "concatenated batches should equal the input element-for-element \
+                 (N={n} chunk={chunk}); a mismatch means chunking reordered or \
+                 corrupted the field sequence"
+            );
+        }
+    }
+
+    #[test]
+    fn chunk_hash_fields_zero_chunk_no_panic() {
+        // Contract: chunk==0 must not hit the `slice::chunks(0)` panic; it is
+        // treated as one pair per batch.
+        let owned = dormant_field_pairs(3);
+        let borrowed = borrow_field_pairs(&owned);
+        let batches = chunk_hash_fields(&borrowed, 0);
+        assert_eq!(
+            batches.len(),
+            3,
+            "chunk==0 should degrade to one pair per batch -> N=3 yields 3 \
+             batches, got {} (chunks(0) guard likely missing)",
+            batches.len(),
+        );
+        for (i, batch) in batches.iter().enumerate() {
+            assert_eq!(
+                batch.len(),
+                1,
+                "with chunk==0, batch {i} should hold exactly 1 element, got {}",
+                batch.len(),
+            );
+        }
+        // Still must reproduce the input in order.
+        let flattened: Vec<(&str, &str)> = batches.iter().flat_map(|b| b.iter().copied()).collect();
+        assert_eq!(
+            flattened, borrowed,
+            "chunk==0 batches should still concatenate back to the input"
+        );
+    }
+
+    /// P0 bug① contract: a dormant `HashReplace` (which may be arbitrarily slow
+    /// or time out) must NEVER be able to starve other outbound IPC. The
+    /// starvation mechanism was `dispatch_outbound_command` returning `Err` on
+    /// an inline command, which `drain_outbound_messages` stored into the
+    /// cross-reconnect `pending_command` and retried first forever. The fix
+    /// routes `HashReplace` onto the background (fire-and-forget) connection, so
+    /// it is structurally impossible for it to occupy `pending_command`. A
+    /// regular Publish queued after it still routes inline and is unaffected.
+    #[test]
+    fn dormant_hash_replace_failure_does_not_starve_other_outbound() {
+        // The would-be slow / failing dormant write.
+        let dormant = prepare_outbound_command(RedisOutbound::NpcDormantHash(vec![(
+            "npc_slow".to_string(),
+            serde_json::json!({"char_id": "npc_slow"}).to_string(),
+        )]))
+        .expect("dormant payload should produce a HashReplace command");
+        assert!(
+            runs_on_background_redis_connection(&dormant),
+            "expected dormant HashReplace to be fire-and-forget on the background connection so a slow write cannot pin pending_command; got inline routing which is exactly the starvation bug"
+        );
+
+        // A subsequently-queued non-world-state Publish still routes inline and
+        // is therefore drained / dispatched independently of the dormant write.
+        let other = RedisIoCommand::Publish {
+            channel: CH_AGENT_COMMAND,
+            payload: "{}".to_string(),
+        };
+        assert!(
+            !runs_on_background_redis_connection(&other),
+            "expected a non-world_state Publish to stay on the primary inline path (it does not depend on dormant write completion); got background routing"
+        );
+    }
+
+    /// Per-variant pin of the inline-vs-background routing decision, the single
+    /// switch that determines whether a command can ever occupy
+    /// `pending_command`. Every `RedisIoCommand` variant is exercised so a new
+    /// variant or a routing regression flips a red test instead of silently
+    /// re-introducing head-of-line blocking.
+    #[test]
+    fn outbound_routing_background_vs_inline_per_variant() {
+        // world_state Publish -> background (must not block other channels).
+        assert!(
+            runs_on_background_redis_connection(&RedisIoCommand::Publish {
+                channel: CH_WORLD_STATE,
+                payload: "{}".to_string(),
+            }),
+            "expected world_state Publish on background connection because a large snapshot must not stall other IPC"
+        );
+        // dormant HashReplace (only HashReplace producer) -> background.
+        assert!(
+            runs_on_background_redis_connection(&RedisIoCommand::HashReplace {
+                key: NPC_DORMANT_REDIS_KEY,
+                entries: vec![("a".to_string(), "b".to_string())],
+            }),
+            "expected dormant HashReplace on background connection so a slow / failing write cannot pin pending_command"
+        );
+        // Non-world_state Publish -> inline (small, latency-sensitive narration/cmd channels).
+        assert!(
+            !runs_on_background_redis_connection(&RedisIoCommand::Publish {
+                channel: CH_AGENT_COMMAND,
+                payload: "{}".to_string(),
+            }),
+            "expected non-world_state Publish to stay inline; only world_state is large enough to warrant the background connection"
+        );
+        // ListPush (e.g. player_chat) -> inline.
+        assert!(
+            !runs_on_background_redis_connection(&RedisIoCommand::ListPush {
+                key: CH_PLAYER_CHAT,
+                payload: "{}".to_string(),
+            }),
+            "expected ListPush to stay inline; chat pushes are small and ordered"
+        );
+        // PublishFanout -> inline.
+        assert!(
+            !runs_on_background_redis_connection(&RedisIoCommand::PublishFanout {
+                channels: vec![CH_AGENT_COMMAND],
+                payload: "{}".to_string(),
+            }),
+            "expected PublishFanout to stay inline; it is not a bulk dormant/world_state write"
+        );
+    }
+
+    /// P0 bug② contract: a timed-out hash replace must not leak its temp key.
+    ///
+    /// The leak only matters because `tokio::timeout` *drops* the in-flight
+    /// `execute_hash_replace_atomic` future (skipping its inline `DEL temp`
+    /// cleanup), so the cleanup the timeout branch issues and the leading `DEL`
+    /// of the next attempt can only ever clear the leak if every attempt targets
+    /// the *same* deterministic temp key. The previous nanosecond-nonce scheme
+    /// minted a fresh `{key}:tmp:<nonce>` per call, so no later DEL could name a
+    /// dropped key and they accumulated without bound. This pins the contract
+    /// that makes cleanup possible: one stable `{key}:tmp` name, identical
+    /// across calls, never carrying the old `:tmp:<nonce>` suffix.
+    #[test]
+    fn hash_replace_timeout_cleans_temp_key() {
+        let temp = dormant_temp_key(NPC_DORMANT_REDIS_KEY);
+        assert_eq!(
+            temp, "bong:npc/dormant:tmp",
+            "expected the dormant temp key to be the deterministic `{{key}}:tmp` so a timed-out write's best-effort DEL targets the exact leaked key; got `{temp}`"
+        );
+        assert!(
+            !temp.contains(":tmp:"),
+            "expected NO `:tmp:` nonce segment because a per-call nonce makes every retry mint a brand-new key that later DELs can never name (the exact temp-key leak this fix removes); got `{temp}`"
+        );
+        // Idempotent across calls: two replaces of the same logical key reuse
+        // the one temp key, so a retry's leading DEL overwrites rather than
+        // accumulates.
+        assert_eq!(
+            dormant_temp_key(NPC_DORMANT_REDIS_KEY),
+            dormant_temp_key(NPC_DORMANT_REDIS_KEY),
+            "expected dormant_temp_key to be deterministic for a given key so retries overwrite the same temp key; got differing names which would re-introduce leakage"
+        );
+        // Distinct logical keys still get distinct temp keys (no cross-key clobber).
+        assert_ne!(
+            dormant_temp_key("bong:npc/dormant"),
+            dormant_temp_key("bong:other/store"),
+            "expected distinct logical keys to map to distinct temp keys so unrelated replaces never collide; got identical temp keys"
+        );
     }
 
     #[test]
@@ -3811,9 +4156,18 @@ mod redis_bridge_tests {
             REDIS_HASH_REPLACE_TIMEOUT > REDIS_IO_TIMEOUT,
             "dormant HASH replace writes batches and should not share the tiny per-command timeout"
         );
-        assert!(!runs_on_background_redis_connection(
-            &prepare_outbound_command(RedisOutbound::NpcDormantHash(Vec::new())).unwrap()
-        ));
+        // P0: dormant HashReplace now runs on the background connection
+        // (fire-and-forget) so a slow / failing dormant write can never pin
+        // `pending_command` and starve world_state. Expected: background == true
+        // because NpcDormantHash -> HashReplace must NOT block the primary
+        // outbound connection (the old behaviour, asserting !background, was the
+        // exact bug this plan fixes).
+        assert!(
+            runs_on_background_redis_connection(
+                &prepare_outbound_command(RedisOutbound::NpcDormantHash(Vec::new())).unwrap()
+            ),
+            "expected dormant HashReplace to run on the background connection so it cannot starve other outbound IPC; got inline routing"
+        );
     }
 
     #[tokio::test]
