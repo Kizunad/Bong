@@ -51,15 +51,17 @@ tmux new-session -d -s "$SESSION" -n main
 tmux send-keys -t "$SESSION:main" "if redis-cli ping >/dev/null 2>&1; then printf '[bong] redis already running on :6379\n'; else redis-server --loglevel warning; fi" Enter
 
 # Pane 1: Server
-# BONG_ROGUE_SEED_COUNT 默认 100 hydrated；BONG_DORMANT_ROGUE_SEED_COUNT
-# 默认 1000 dormant。需要低负载本地调试时可手动覆盖：
+# BONG_ROGUE_SEED_COUNT 默认 20 hydrated（真实 ECS 实体，有 AI/碰撞/客户端下发，真负载）。
+# BONG_DORMANT_ROGUE_SEED_COUNT 默认 1000 dormant（虚拟化快照，HashMap 数据条目，
+#   每 60s 批 tick 一次，≈零成本；玩家走进 64 格才 hydrate 成实体）。dormant 用 R2 低差异
+#   序列在各 zone 内均匀铺点，hydrate 时不再一坨叠一起。需要更低负载可手动覆盖：
 # BONG_ROGUE_SEED_COUNT=10 BONG_DORMANT_ROGUE_SEED_COUNT=0 bash start.sh
 tmux split-window -h -t "$SESSION:main"
 tmux send-keys -t "$SESSION:main.1" \
   "export PATH='${RUNTIME_PATH}' && \
    export CARGO_TARGET_DIR='${CARGO_TARGET_DIR}' && \
    export BONG_TERRAIN_RASTER_PATH='${BONG_TERRAIN_RASTER_PATH}' && \
-   export BONG_ROGUE_SEED_COUNT='${BONG_ROGUE_SEED_COUNT:-100}' && \
+   export BONG_ROGUE_SEED_COUNT='${BONG_ROGUE_SEED_COUNT:-20}' && \
    export BONG_DORMANT_ROGUE_SEED_COUNT='${BONG_DORMANT_ROGUE_SEED_COUNT:-1000}' && \
    export BONG_NPC_NO_DORMANT='${BONG_NPC_NO_DORMANT:-0}' && \
    cd '$ROOT/server' && \

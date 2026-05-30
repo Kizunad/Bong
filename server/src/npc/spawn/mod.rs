@@ -42,8 +42,7 @@ pub(crate) use self::common::{
 #[allow(unused_imports)]
 pub(crate) use self::rogue::{
     classify_zones_by_qi, distribute_counts_evenly, initial_age_for_index,
-    reserve_zone_distribution, seed_position_for_zone, spawn_rogue_npc_at,
-    spawn_scattered_cultivator_at,
+    reserve_zone_distribution, spawn_rogue_npc_at, spawn_scattered_cultivator_at,
 };
 
 #[allow(unused_imports)]
@@ -371,7 +370,7 @@ mod tests {
     };
     use super::rogue::{
         classify_zones_by_qi, distribute_counts_evenly, initial_age_for_index,
-        seed_position_for_zone, RoguePopulationSeedConfig,
+        RoguePopulationSeedConfig,
     };
 
     use crate::npc::lifecycle::NpcRegistry;
@@ -1166,18 +1165,6 @@ mod tests {
         assert_eq!(distribute_counts_evenly(10, 10), vec![1; 10]);
         assert_eq!(distribute_counts_evenly(0, 3), vec![0, 0, 0]);
         assert_eq!(distribute_counts_evenly(5, 0), Vec::<u32>::new());
-    }
-
-    #[test]
-    fn seed_position_clamps_to_zone_bounds() {
-        let zone = mk_zone("z", 0.5, [0.0, 66.0, 0.0]);
-        for idx in 0..64u32 {
-            let (pos, _) = seed_position_for_zone(&zone, idx);
-            assert!(
-                zone.contains(pos),
-                "idx {idx} produced out-of-bound pos {pos:?}"
-            );
-        }
     }
 
     #[test]
