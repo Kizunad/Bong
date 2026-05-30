@@ -873,7 +873,7 @@ fn publish_world_state_to_redis(
         ),
         With<NpcMarker>,
     >,
-    dormant_store: Option<Res<NpcDormantStore>>,
+    mut dormant_store: Option<ResMut<NpcDormantStore>>,
     rat_density_q: Query<(&RatBlackboard, &RatPhase), With<NpcMarker>>,
     flee_actions: Query<(&Actor, &ActionState), With<FleeAction>>,
     chase_actions: Query<(&Actor, &ActionState), With<ChaseAction>>,
@@ -916,21 +916,29 @@ fn publish_world_state_to_redis(
     );
 
     let _ = redis.tx_outbound.send(RedisOutbound::WorldState(state));
-    if let Some(dormant_store) = dormant_store.as_deref() {
-        match dormant_store.to_redis_hash_payloads() {
-            Ok(entries) => {
-                tracing::debug!(
-                    "[bong][network] syncing {} dormant NPC snapshots to Redis HASH",
-                    dormant_store.len()
-                );
-                let _ = redis
-                    .tx_outbound
-                    .send(RedisOutbound::NpcDormantHash(entries));
-            }
-            Err(error) => {
-                tracing::warn!(
-                    "[bong][network] failed to serialize dormant NPC Redis HASH payloads: {error}"
-                );
+    // dormant persistence is dirty-gated: dormant changes are sparse (aging is
+    // a 60 s batch tick), so only re-serialize the whole hash and push it when
+    // something actually changed since the last publish. A clean cycle skips the
+    // full serde + hash replace entirely. `take_dirty` clears the flag so the
+    // next clean cycle is skipped; we clear it regardless of serialize outcome
+    // (a serialize failure is logged and retried on the next genuine change).
+    if let Some(dormant_store) = dormant_store.as_mut() {
+        if dormant_store.take_dirty() {
+            match dormant_store.to_redis_hash_payloads() {
+                Ok(entries) => {
+                    tracing::debug!(
+                        "[bong][network] syncing {} dormant NPC snapshots to Redis HASH",
+                        dormant_store.len()
+                    );
+                    let _ = redis
+                        .tx_outbound
+                        .send(RedisOutbound::NpcDormantHash(entries));
+                }
+                Err(error) => {
+                    tracing::warn!(
+                        "[bong][network] failed to serialize dormant NPC Redis HASH payloads: {error}"
+                    );
+                }
             }
         }
     }
@@ -3158,6 +3166,83 @@ mod tests {
             let payload: serde_json::Value =
                 serde_json::from_str(&entries[0].1).expect("dormant payload should be JSON");
             assert_eq!(payload["char_id"], "npc_dormant_a");
+        }
+
+        /// P1 contract: the dormant Redis hash sync is dirty-gated. The first
+        /// publish after a change emits an `NpcDormantHash`; a later publish
+        /// cycle with no intervening dormant change emits the `WorldState` but
+        /// NO `NpcDormantHash`. This is the whole point of P1 — stop the every
+        /// 200-tick full serde + hash replace when nothing changed.
+        #[test]
+        fn dormant_publish_skipped_when_clean() {
+            let (mut app, rx_outbound) = setup_publish_app(true);
+            let mut dormant_store = NpcDormantStore::default();
+            dormant_store.insert(dormant_snapshot("npc_dormant_a", [32.0, 66.0, 32.0]));
+            app.insert_resource(dormant_store);
+
+            // Force every cycle onto a publishing tick so the gate, not the
+            // 200-tick interval, decides whether dormant is written. Draining
+            // the emitted messages is the caller's job via `rx_outbound`.
+            fn force_publish_cycle(app: &mut App) {
+                app.world_mut().resource_mut::<WorldStateTimer>().ticks =
+                    WORLD_STATE_PUBLISH_INTERVAL_TICKS - 1;
+                app.world_mut().run_schedule(bevy_app::Main);
+            }
+
+            // Cycle 1: store is dirty from the insert -> WorldState + dormant hash.
+            force_publish_cycle(&mut app);
+            let mut cycle1 = Vec::new();
+            while let Ok(msg) = rx_outbound.try_recv() {
+                cycle1.push(msg);
+            }
+            assert!(
+                cycle1
+                    .iter()
+                    .any(|m| matches!(m, RedisOutbound::WorldState(_))),
+                "cycle 1 must publish a WorldState; got {cycle1:?}"
+            );
+            assert!(
+                cycle1
+                    .iter()
+                    .any(|m| matches!(m, RedisOutbound::NpcDormantHash(_))),
+                "cycle 1 must emit an NpcDormantHash because the store was dirtied by the insert; got {cycle1:?}"
+            );
+
+            // Cycle 2: nothing changed -> WorldState only, NO dormant hash.
+            force_publish_cycle(&mut app);
+            let mut cycle2 = Vec::new();
+            while let Ok(msg) = rx_outbound.try_recv() {
+                cycle2.push(msg);
+            }
+            assert!(
+                cycle2
+                    .iter()
+                    .any(|m| matches!(m, RedisOutbound::WorldState(_))),
+                "cycle 2 must still publish a WorldState (world_state is not dirty-gated); got {cycle2:?}"
+            );
+            assert!(
+                !cycle2
+                    .iter()
+                    .any(|m| matches!(m, RedisOutbound::NpcDormantHash(_))),
+                "expected cycle 2 to skip the dormant hash because nothing changed since cycle 1 cleared the dirty flag; an NpcDormantHash was emitted: {cycle2:?}"
+            );
+
+            // Cycle 3: dirty the store again (a real mutation) -> dormant hash
+            // returns, proving the gate re-arms.
+            app.world_mut()
+                .resource_mut::<NpcDormantStore>()
+                .insert(dormant_snapshot("npc_dormant_b", [33.0, 66.0, 33.0]));
+            force_publish_cycle(&mut app);
+            let mut cycle3 = Vec::new();
+            while let Ok(msg) = rx_outbound.try_recv() {
+                cycle3.push(msg);
+            }
+            assert!(
+                cycle3
+                    .iter()
+                    .any(|m| matches!(m, RedisOutbound::NpcDormantHash(_))),
+                "expected cycle 3 to emit an NpcDormantHash again after a new insert re-dirtied the store; the gate did not re-arm: {cycle3:?}"
+            );
         }
 
         #[test]

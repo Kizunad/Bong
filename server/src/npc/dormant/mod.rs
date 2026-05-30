@@ -244,6 +244,16 @@ pub struct NpcDormantStore {
     pub by_zone: HashMap<String, Vec<CharId>>,
     #[serde(skip, default)]
     restore_failed: bool,
+    /// Persistence dirty flag. Set by every mutator that changes a snapshot
+    /// (seed, dormant aging tick, death/release, hydrate/dehydrate). The Redis
+    /// publish path (`network::publish_world_state_to_redis`) only re-serializes
+    /// and re-pushes the whole hash when this is set, then clears it via
+    /// [`Self::take_dirty`]. dormant changes are sparse (aging is a 60 s batch),
+    /// so a clean publish cycle skips the full serde + hash replace entirely.
+    /// NOT set by the Redis restore path: a snapshot just loaded from Redis is
+    /// already persisted and must not trigger an immediate write-back.
+    #[serde(skip, default)]
+    dirty: bool,
 }
 
 impl NpcDormantStore {
@@ -263,9 +273,29 @@ impl NpcDormantStore {
         self.restore_failed
     }
 
+    /// Mark the store as needing a Redis hash write on the next publish cycle.
+    /// Every code path that mutates a snapshot must call this so persistence
+    /// never silently drops a change.
+    pub fn mark_dirty(&mut self) {
+        self.dirty = true;
+    }
+
+    pub fn is_dirty(&self) -> bool {
+        self.dirty
+    }
+
+    /// Read-and-clear the dirty flag in one step. Returns the value the flag
+    /// had on entry; leaves the flag `false`. The publish path uses this so a
+    /// successful (or attempted) write resets the gate and a subsequent clean
+    /// cycle is skipped.
+    pub fn take_dirty(&mut self) -> bool {
+        std::mem::take(&mut self.dirty)
+    }
+
     pub fn insert(&mut self, snapshot: NpcDormantSnapshot) -> Option<NpcDormantSnapshot> {
         let previous = self.snapshots.insert(snapshot.char_id.clone(), snapshot);
         self.rebuild_indexes();
+        self.dirty = true;
         previous
     }
 
@@ -273,6 +303,7 @@ impl NpcDormantStore {
         let removed = self.snapshots.remove(char_id);
         if removed.is_some() {
             self.rebuild_indexes();
+            self.dirty = true;
         }
         removed
     }
@@ -531,6 +562,11 @@ fn dormant_global_tick_system(
 
     let mut expired = Vec::new();
     let mut indexes_dirty = false;
+    // Whether this tick actually advanced any snapshot (position / aging / regen
+    // / breakthrough) or removed an expired one. Drives the persistence dirty
+    // flag so a tick that touched nothing (all `elapsed_ticks == 0`) does not
+    // schedule a redundant full hash write.
+    let mut mutated_any = false;
     for char_id in ids {
         let Some(snapshot) = store.snapshots.get_mut(&char_id) else {
             continue;
@@ -540,6 +576,7 @@ fn dormant_global_tick_system(
         if elapsed_ticks == 0 {
             continue;
         }
+        mutated_any = true;
         advance_dormant_position(snapshot, elapsed_ticks, tick);
         if let Some(zones) = zones.as_deref() {
             indexes_dirty |= refresh_snapshot_zone_name(snapshot, zones);
@@ -578,6 +615,11 @@ fn dormant_global_tick_system(
     }
     if removed_expired || indexes_dirty {
         store.rebuild_indexes();
+    }
+    // Any advanced or removed snapshot changed persisted state; schedule a
+    // Redis write on the next publish cycle.
+    if mutated_any || removed_expired {
+        store.mark_dirty();
     }
 }
 
@@ -656,6 +698,8 @@ fn seed_initial_dormant_population_on_startup(
         store.snapshots.insert(snapshot.char_id.clone(), snapshot);
     }
     store.rebuild_indexes();
+    // Freshly seeded population must be persisted on the next publish cycle.
+    store.mark_dirty();
     *seeded = true;
     tracing::info!(
         "[bong][npc] seeded {} dormant rogue NPC snapshots",
@@ -1250,6 +1294,208 @@ mod tests {
         assert_eq!(
             store.ids_by_zone(DEFAULT_SPAWN_ZONE_NAME),
             &["npc_a".to_string(), "npc_b".to_string()]
+        );
+    }
+
+    /// P1 contract: a fresh store is clean, and the three real mutator
+    /// categories the publish gate cares about — seed, dormant aging tick, and
+    /// death/removal — each flip `is_dirty()` so the next publish cycle writes
+    /// the change to Redis. A change that never raises the flag would be
+    /// silently dropped by the dirty-gated publish path.
+    #[test]
+    fn dormant_store_dirty_set_on_seed_age_death() {
+        // A default store has nothing to persist yet.
+        assert!(
+            !NpcDormantStore::default().is_dirty(),
+            "expected a freshly constructed store to be clean because no snapshot has changed; it reported dirty"
+        );
+
+        // (1) seed: the real startup seed system populates the store and must
+        // mark it dirty so the seeded population reaches Redis.
+        let mut seed_app = App::new();
+        seed_app.insert_resource(NpcVirtualizationConfig::default());
+        seed_app.insert_resource(DormantRoguePopulationSeedConfig {
+            target_count: 4,
+            resource_fraction: 0.0,
+            resource_spirit_qi_threshold: 0.4,
+            max_initial_age_ratio: 0.0,
+        });
+        seed_app.insert_resource(ZoneRegistry {
+            zones: vec![zone()],
+        });
+        seed_app.init_resource::<NpcDormantStore>();
+        seed_app.add_systems(Update, seed_initial_dormant_population_on_startup);
+        seed_app.update();
+        let seeded = seed_app.world().resource::<NpcDormantStore>();
+        assert!(
+            !seeded.is_empty(),
+            "seed system precondition failed: expected snapshots to be seeded before checking dirty"
+        );
+        assert!(
+            seeded.is_dirty(),
+            "expected the store to be dirty after the startup seed populated {} snapshots, so the seeded population is persisted; it stayed clean",
+            seeded.len()
+        );
+
+        // (2) dormant aging tick: advancing an existing snapshot mutates its
+        // age/position and must mark dirty.
+        let mut age_app = App::new();
+        age_app.add_event::<NpcDeathNotice>();
+        age_app.insert_resource(NpcVirtualizationConfig {
+            dormant_tick_interval_ticks: 1,
+            ..Default::default()
+        });
+        age_app.insert_resource(GameTick(2400));
+        age_app.insert_resource(ZoneRegistry {
+            zones: vec![zone()],
+        });
+        age_app.insert_resource(WorldQiAccount::default());
+        let mut store = NpcDormantStore::default();
+        store.insert(snapshot("npc_age", DVec3::new(10.0, 64.0, 10.0)));
+        // Clear the insert's dirty so we isolate the aging tick's effect.
+        store.take_dirty();
+        assert!(
+            !store.is_dirty(),
+            "test setup invariant: store must be clean before the aging tick so the tick is the only thing that can re-dirty it"
+        );
+        age_app.insert_resource(store);
+        age_app.add_systems(Update, dormant_global_tick_system);
+        age_app.update();
+        assert!(
+            age_app.world().resource::<NpcDormantStore>().is_dirty(),
+            "expected the store to be dirty after a dormant aging tick advanced a snapshot (age/position changed), so the new state is persisted; it stayed clean"
+        );
+
+        // (3) death/removal: an expired snapshot whose qi is fully released is
+        // removed by the tick; that removal must mark dirty.
+        let mut death_app = App::new();
+        death_app.add_event::<NpcDeathNotice>();
+        death_app.insert_resource(NpcVirtualizationConfig {
+            dormant_tick_interval_ticks: 1,
+            ..Default::default()
+        });
+        death_app.insert_resource(GameTick(1));
+        death_app.insert_resource(ZoneRegistry {
+            zones: vec![zone()],
+        });
+        death_app.insert_resource(WorldQiAccount::default());
+        let mut expired = snapshot("npc_dead", DVec3::new(10.0, 64.0, 10.0));
+        expired.cultivation.qi_current = 0.0;
+        expired.lifespan.age_ticks = expired.lifespan.max_age_ticks + 1.0;
+        let mut death_store = NpcDormantStore::default();
+        death_store.insert(expired);
+        death_store.take_dirty();
+        death_app.insert_resource(death_store);
+        death_app.add_systems(Update, dormant_global_tick_system);
+        death_app.update();
+        let after_death = death_app.world().resource::<NpcDormantStore>();
+        assert!(
+            after_death.is_empty(),
+            "death tick precondition failed: expired zero-qi snapshot should have been removed before checking dirty"
+        );
+        assert!(
+            after_death.is_dirty(),
+            "expected the store to be dirty after death removed an expired snapshot, so the deletion is persisted; it stayed clean"
+        );
+    }
+
+    /// P1 contract: `take_dirty` reads-and-clears in one step. After taking, an
+    /// unchanged store reports clean and a second take returns false — the gate
+    /// will not re-write Redis on a cycle where nothing changed.
+    #[test]
+    fn dormant_store_clean_after_take_dirty() {
+        let mut store = NpcDormantStore::default();
+        store.insert(snapshot("npc_a", DVec3::new(10.0, 64.0, 10.0)));
+        assert!(
+            store.is_dirty(),
+            "expected the store to be dirty right after an insert because the snapshot is unpersisted; it was clean"
+        );
+
+        assert!(
+            store.take_dirty(),
+            "expected take_dirty to return the prior dirty value (true) because an insert had occurred; it returned false"
+        );
+        assert!(
+            !store.is_dirty(),
+            "expected the store to be clean immediately after take_dirty consumed the flag; it still reported dirty"
+        );
+        assert!(
+            !store.take_dirty(),
+            "expected a second take_dirty with no intervening mutation to return false because the gate was already cleared; it returned true"
+        );
+    }
+
+    /// P1 saturation: every store mutator raises dirty (insert AND remove), and
+    /// the Redis restore path does NOT (loaded snapshots are already
+    /// persisted). Also pins the de-dup behaviour: many mutations before one
+    /// take still need only a single take to clear.
+    #[test]
+    fn dormant_store_dirty_per_mutator_and_clean_on_restore() {
+        // insert raises dirty.
+        let mut store = NpcDormantStore::default();
+        store.insert(snapshot("npc_a", DVec3::new(10.0, 64.0, 10.0)));
+        assert!(
+            store.is_dirty(),
+            "expected insert to mark the store dirty so the new snapshot is persisted; it did not"
+        );
+
+        // remove raises dirty (after clearing the insert's flag).
+        store.take_dirty();
+        let removed = store.remove("npc_a");
+        assert!(
+            removed.is_some(),
+            "test setup invariant: the snapshot inserted above must exist so remove actually deletes it"
+        );
+        assert!(
+            store.is_dirty(),
+            "expected remove of an existing snapshot to mark the store dirty so the deletion is persisted; it did not"
+        );
+
+        // remove of a missing id must NOT raise dirty (nothing changed).
+        store.take_dirty();
+        let missing = store.remove("nope");
+        assert!(
+            missing.is_none(),
+            "test setup invariant: removing an absent id must report None"
+        );
+        assert!(
+            !store.is_dirty(),
+            "expected removing an absent id to leave the store clean because nothing changed; it falsely marked dirty"
+        );
+
+        // Many mutations before a single take: one take clears them all.
+        store.insert(snapshot("npc_b", DVec3::new(11.0, 64.0, 10.0)));
+        store.insert(snapshot("npc_c", DVec3::new(12.0, 64.0, 10.0)));
+        store.mark_dirty();
+        assert!(
+            store.take_dirty(),
+            "expected take_dirty to return true after several mutations accumulated under one flag; it returned false"
+        );
+        assert!(
+            !store.is_dirty(),
+            "expected one take_dirty to clear the flag regardless of how many mutations preceded it; it stayed dirty"
+        );
+
+        // Redis restore path must NOT dirty the store: snapshots loaded from
+        // Redis are already persisted, so writing them straight back would be a
+        // wasteful no-op churn (the very thing P1 removes).
+        let source = snapshot("npc_loaded", DVec3::new(10.0, 64.0, 10.0));
+        let payload = serde_json::to_string(&source).expect("serialize dormant snapshot");
+        let entries = HashMap::from([(source.char_id.clone(), payload)]);
+        let mut restore_store = NpcDormantStore::default();
+        let count =
+            load_dormant_snapshots_from_hash_entries(&mut restore_store, entries).expect("load");
+        assert_eq!(
+            count, 1,
+            "restore precondition: exactly one snapshot should have loaded"
+        );
+        assert!(
+            restore_store.contains("npc_loaded"),
+            "restore precondition: the loaded snapshot should be present"
+        );
+        assert!(
+            !restore_store.is_dirty(),
+            "expected a store restored from Redis to be CLEAN because the data is already persisted; restoring marked it dirty and would trigger a redundant write-back"
         );
     }
 
