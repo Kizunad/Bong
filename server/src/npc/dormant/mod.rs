@@ -22,7 +22,7 @@ use crate::cultivation::lifespan::{
     DeathRegistry, LifespanCapTable, LifespanComponent, LifespanExtensionLedger,
 };
 use crate::cultivation::meridian::severed::MeridianSeveredPermanent;
-use crate::npc::faction::FactionMembership;
+use crate::npc::faction::{FactionId, FactionMembership, FactionRank, MissionQueue, Reputation};
 use crate::npc::lifecycle::{NpcArchetype, NpcDeathNotice, NpcDeathReason, NpcLifespan};
 use crate::npc::loot::default_loot_for_archetype;
 use crate::npc::loot::NpcLootTable;
@@ -679,6 +679,28 @@ fn dormant_seed_scatter_position(zone: &crate::world::zone::Zone, zone_local_ind
     zone.clamp_position(raw)
 }
 
+/// plan-offscreen-war-v1 P0 #1：给 seeded dormant rogue 按 char_id 哈希分派系。
+///
+/// `is_hostile_pair` 当前只认 Attack↔Defend（Neutral 对谁都不敌对），所以这里
+/// 把散修二分到 Attack / Defend，保证后续阶段（P1 配对 / P2 战死）一定能在同 zone
+/// 内凑出敌对对，否则 `faction: None` 让所有阶段空转。具名多宗留 P5 的关系矩阵。
+///
+/// 用与 RNG 同源的 `deterministic_hash`（salt=0），保证同 char_id 跨重启稳定分派。
+fn seed_rogue_faction(char_id: &str) -> FactionMembership {
+    let faction_id = if deterministic_hash(char_id, 0) % 2 == 0 {
+        FactionId::Attack
+    } else {
+        FactionId::Defend
+    };
+    FactionMembership {
+        faction_id,
+        rank: FactionRank::Disciple,
+        reputation: Reputation::default(),
+        lineage: None,
+        mission_queue: MissionQueue::default(),
+    }
+}
+
 fn dormant_rogue_seed_snapshot(
     zone: &crate::world::zone::Zone,
     index: u32,
@@ -723,8 +745,10 @@ fn dormant_rogue_seed_snapshot(
         shared_lifespan: LifespanComponent::for_realm(cultivation.realm),
         lifespan_extension_ledger: LifespanExtensionLedger::default(),
         death_registry: DeathRegistry::new(char_id.clone()),
-        life_record: LifeRecord::new(char_id),
-        faction: None,
+        life_record: LifeRecord::new(char_id.clone()),
+        // plan-offscreen-war-v1 P0 #1：赋派系（Attack/Defend 二分），保证 is_hostile_pair
+        // 在 P1/P2 能配出敌对对。具名势力留 P5。
+        faction: Some(seed_rogue_faction(char_id.as_str())),
         patrol,
         loot_table: Some(default_loot_for_archetype(archetype)),
         guardian_relic: None,
@@ -1633,5 +1657,80 @@ mod tests {
                 "非法 seed {garbage:?} 期望回退 0 而非 panic"
             );
         }
+    }
+
+    // ── plan-offscreen-war-v1 P0 #1：派系数据化 bootstrap ─────────────────
+
+    #[test]
+    fn seed_rogue_faction_is_deterministic_per_char_id() {
+        // 同 char_id 跨调用必须分到同一派系（重启后 dormant 派系稳定）。
+        let a = seed_rogue_faction("dormant:rogue:42");
+        let b = seed_rogue_faction("dormant:rogue:42");
+        assert_eq!(
+            a.faction_id, b.faction_id,
+            "同 char_id 必须确定性分派，否则重启后敌对关系漂移"
+        );
+        assert_eq!(a.rank, FactionRank::Disciple);
+    }
+
+    #[test]
+    fn seed_rogue_faction_distribution_yields_both_attack_and_defend() {
+        // 哈希分布必须同时产出 Attack 与 Defend，否则 is_hostile_pair 永远配不出对。
+        let mut seen_attack = false;
+        let mut seen_defend = false;
+        for index in 0..256u32 {
+            match seed_rogue_faction(&format!("dormant:rogue:{index}")).faction_id {
+                FactionId::Attack => seen_attack = true,
+                FactionId::Defend => seen_defend = true,
+                FactionId::Neutral => {
+                    panic!("seed 派系绝不应分到 Neutral（Neutral 对谁都不敌对，会让战斗空转）")
+                }
+            }
+            if seen_attack && seen_defend {
+                break;
+            }
+        }
+        assert!(
+            seen_attack && seen_defend,
+            "256 个 char_id 必须同时出现 Attack 与 Defend，保证 is_hostile_pair 有敌对对"
+        );
+    }
+
+    #[test]
+    fn seed_rogue_faction_pairs_are_hostile_across_factions() {
+        // 端到端契约：分到不同派系的两个 rogue，FactionStore::is_hostile_pair 必须为真。
+        use crate::npc::faction::FactionStore;
+        let store = FactionStore::default();
+        let attacker = seed_rogue_faction("seed:attack-fixture");
+        let defender = (0..64u32)
+            .map(|i| seed_rogue_faction(&format!("seed:defend-fixture:{i}")))
+            .find(|m| m.faction_id != attacker.faction_id)
+            .expect("应能找到一个异派系成员");
+        assert!(
+            store.is_hostile_pair(attacker.faction_id, defender.faction_id),
+            "Attack↔Defend 必须敌对，否则 P1/P2 战斗无候选对"
+        );
+        // 同派系不敌对（确认二分不会把同派系也当敌对）。
+        assert!(
+            !store.is_hostile_pair(attacker.faction_id, attacker.faction_id),
+            "同派系不应敌对"
+        );
+    }
+
+    #[test]
+    fn dormant_rogue_seed_snapshot_assigns_non_none_faction() {
+        // 防回归：seed 出来的 dormant rogue 的 faction 字段必须非 None
+        // （否则 e2e HGETALL 看到 faction=null，所有后续阶段空转）。
+        let zone = zone();
+        let snapshot = dormant_rogue_seed_snapshot(&zone, 0, 0, 0, 0.8);
+        let membership = snapshot
+            .faction
+            .as_ref()
+            .expect("seeded dormant rogue 必须带 FactionMembership，不能是 None");
+        assert!(
+            matches!(membership.faction_id, FactionId::Attack | FactionId::Defend),
+            "seed 派系必须是 Attack 或 Defend（非 Neutral），实际 {:?}",
+            membership.faction_id
+        );
     }
 }
