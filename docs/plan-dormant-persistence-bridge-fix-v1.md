@@ -86,8 +86,8 @@ redis-cli info memory | grep used_memory_human   # → 实测涨到 467MB
 |------|-----------|------|
 | `server/src/network/redis_bridge.rs` | `REDIS_HASH_REPLACE_TIMEOUT`（:106，3s）、`REDIS_IO_TIMEOUT`（:104，100ms）、`OUTBOUND_DRAIN_BUDGET`（:109，16） | 超时 / 预算常量 |
 | 同上 | `RedisOutbound`（:123）/ `NpcDormantHash`（:125）；`RedisIoCommand`（:228）/ `HashReplace`（:241） | 出站消息 / IO 命令 enum |
-| 同上 | `pending_command`（:343 声明，跨重连持久）；`drain_outbound_messages`（:376，:383-389 先重试 pending） | **bug ① 落点** |
-| 同上 | `runs_on_background_redis_connection`（仅 `CH_WORLD_STATE`）；`dispatch_outbound_command`（~:1389） | inline vs 后台分派 |
+| 同上 | `pending_command`（:342 声明，跨重连持久）；`drain_outbound_messages`（:376，:383-389 先重试 pending） | **bug ① 落点** |
+| 同上 | `prepare_outbound_command`（:430，`RedisOutbound`→`RedisIoCommand` 翻译；`NpcDormantHash`→`HashReplace` 在 :444）；`runs_on_background_redis_connection`（:1407，仅 `CH_WORLD_STATE` 返回 true）；`dispatch_outbound_command`（:1388，分 inline / 后台 clone 连接） | inline vs 后台分派（**bug ① 关键开关**：HashReplace 现走 inline） |
 | 同上 | `execute_hash_replace`（:1460，timeout 包裹）；`execute_hash_replace_atomic`（:1486，DEL/HSET/RENAME，清理仅在 op `Err` 时跑）；`redis_temp_key_nonce`（:1533） | **bug ② 落点** |
 | 同上 | `connect_bridge_session`（:1574）：`pub_conn` multiplexed（:1590）+ 独立 `pubsub`（:1600） | 连接拓扑（pub/sub 已分离，排除共用干扰） |
 | `server/src/network/mod.rs` | `WORLD_STATE_PUBLISH_INTERVAL_TICKS`（:164，200≈10s）；`publish_world_state_to_redis`（:841，dormant 发布 :918-928） | **bug ③ 落点** |
