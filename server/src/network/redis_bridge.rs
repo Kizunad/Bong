@@ -1,7 +1,7 @@
 use crossbeam_channel::{Receiver, Sender, TryRecvError};
 use serde_json::{Map, Value};
 use std::fmt;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use crate::cultivation::void::components::VoidActionKind;
 use crate::fauna::rat_phase::RatPhaseChangeEvent;
@@ -1509,6 +1509,35 @@ async fn execute_hash_replace(
     }
 }
 
+/// Max field count per `HSET` command when writing the dormant hash.
+///
+/// Root cause this guards against: `MultiplexedConnection` serialises a single
+/// command's whole argument list into one frame before sending. One giant
+/// `HSET` carrying ~1000+ fields degraded to ~3s of client-side framing and
+/// tripped [`REDIS_HASH_REPLACE_TIMEOUT`] — even though Redis itself writes the
+/// same 1000 fields in ~13ms when they arrive as several commands. So the cost
+/// is the inline framing of one huge command, not the Redis server. Splitting
+/// the write into sequential `HSET`s of this many fields each sidesteps it.
+const DORMANT_HASH_CHUNK_SIZE: usize = 256;
+
+/// Split `(field, value)` pairs into sub-slices of at most `chunk` each, for
+/// batched `HSET`.
+///
+/// Pure (no Redis), so a pin test can lock "batch count == ceil(N / chunk) and
+/// the batches concatenate back to the original input" without a live server.
+///
+/// `chunk == 0` is treated as 1 (one pair per batch) to avoid the panic from
+/// `slice::chunks(0)`.
+fn chunk_hash_fields<'a>(
+    pairs: &'a [(&'a str, &'a str)],
+    chunk: usize,
+) -> Vec<&'a [(&'a str, &'a str)]> {
+    // `slice::chunks(0)` panics; clamp to 1 so the "split into batches" contract
+    // still holds (degenerate one-per-batch) instead of crashing.
+    let chunk = chunk.max(1);
+    pairs.chunks(chunk).collect()
+}
+
 async fn execute_hash_replace_atomic(
     pub_conn: &mut redis::aio::MultiplexedConnection,
     key: &'static str,
@@ -1528,27 +1557,43 @@ async fn execute_hash_replace_atomic(
     // leading DEL clears any stale leftover, and the timeout branch in
     // `execute_hash_replace` issues a best-effort DEL of this exact key.
     let temp_key = dormant_temp_key(key);
+    let del_start = Instant::now();
     let _: i64 = redis::cmd("DEL")
         .arg(temp_key.as_str())
         .query_async(pub_conn)
         .await?;
+    let del_elapsed = del_start.elapsed();
+
     let field_pairs = entries
         .iter()
         .map(|(field, value)| (field.as_str(), value.as_str()))
         .collect::<Vec<_>>();
-    let write_result = redis::cmd("HSET")
-        .arg(temp_key.as_str())
-        .arg(field_pairs)
-        .query_async::<i64>(pub_conn)
-        .await;
-    if let Err(error) = write_result {
-        let _: Result<i64, _> = redis::cmd("DEL")
-            .arg(temp_key.as_str())
-            .query_async(pub_conn)
-            .await;
-        return Err(error);
-    }
 
+    // Sequential chunked HSET instead of one giant command: a single HSET with
+    // ~1000+ fields stalls in `MultiplexedConnection`'s inline framing (~3s),
+    // while several smaller commands let Redis finish in ~13ms. See
+    // [`DORMANT_HASH_CHUNK_SIZE`].
+    let batches = chunk_hash_fields(&field_pairs, DORMANT_HASH_CHUNK_SIZE);
+    let chunk_count = batches.len();
+    let hset_start = Instant::now();
+    for batch in batches {
+        let mut hset_cmd = redis::cmd("HSET");
+        hset_cmd.arg(temp_key.as_str());
+        for (field, value) in batch {
+            hset_cmd.arg(*field).arg(*value);
+        }
+        if let Err(error) = hset_cmd.query_async::<i64>(pub_conn).await {
+            // HSET failed mid-write: drop the partial temp key, then propagate.
+            let _: Result<i64, _> = redis::cmd("DEL")
+                .arg(temp_key.as_str())
+                .query_async(pub_conn)
+                .await;
+            return Err(error);
+        }
+    }
+    let hset_elapsed = hset_start.elapsed();
+
+    let rename_start = Instant::now();
     let rename_result = redis::cmd("RENAME")
         .arg(temp_key.as_str())
         .arg(key)
@@ -1561,6 +1606,17 @@ async fn execute_hash_replace_atomic(
             .await;
         return Err(error);
     }
+    let rename_elapsed = rename_start.elapsed();
+
+    tracing::debug!(
+        "[bong][redis] hash_replace timing: del={:?} hset_total={:?} rename={:?} chunks={} entries={}",
+        del_elapsed,
+        hset_elapsed,
+        rename_elapsed,
+        chunk_count,
+        entries.len(),
+    );
+
     Ok(())
 }
 
@@ -2371,6 +2427,138 @@ mod redis_bridge_tests {
             }
             other => panic!("expected hash replace command, got {other:?}"),
         }
+    }
+
+    /// Build `field_count` owned `(field, value)` pairs for chunking tests.
+    fn dormant_field_pairs(field_count: usize) -> Vec<(String, String)> {
+        (0..field_count)
+            .map(|i| (format!("field{i}"), format!("value{i}")))
+            .collect()
+    }
+
+    /// Borrow owned `(String, String)` pairs as `(&str, &str)` for
+    /// [`chunk_hash_fields`].
+    fn borrow_field_pairs(owned: &[(String, String)]) -> Vec<(&str, &str)> {
+        owned
+            .iter()
+            .map(|(f, v)| (f.as_str(), v.as_str()))
+            .collect()
+    }
+
+    #[test]
+    fn hash_replace_chunks_large_payload() {
+        // Contract (named by the plan): `chunk_hash_fields` must guarantee
+        //   1. batch count == ceil(N / chunk)
+        //   2. concatenating the batches in order reproduces the input exactly
+        //      (no dropped, reordered, or duplicated fields)
+        // Saturated boundaries: N = 0, 1, chunk-1, chunk, chunk+1, 1000@256.
+        let chunk = 256usize;
+
+        // (N, expected batch count). Expected counts are hand-computed
+        // ceil(N/256) and cross-checked below, so the case table cannot silently
+        // agree with a buggy implementation.
+        let cases: &[(usize, usize)] = &[
+            (0, 0),         // empty -> 0 batches
+            (1, 1),         // single element -> 1 batch
+            (chunk - 1, 1), // 255 -> still 1 batch
+            (chunk, 1),     // 256 -> exactly 1 full batch
+            (chunk + 1, 2), // 257 -> remainder spills into a 2nd batch
+            (1000, 4),      // 1000 / 256 = 3.9 -> ceil = 4 batches
+        ];
+
+        for &(n, expected_batches) in cases {
+            // Independently recompute ceil to catch a typo in the case table.
+            let ceil_div = n.div_ceil(chunk);
+            assert_eq!(
+                expected_batches, ceil_div,
+                "case table self-check failed: for N={n} chunk={chunk} the \
+                 expected batch count should be ceil={ceil_div}, but the table \
+                 says {expected_batches}"
+            );
+
+            let owned = dormant_field_pairs(n);
+            let borrowed = borrow_field_pairs(&owned);
+            let batches = chunk_hash_fields(&borrowed, chunk);
+
+            // 1. batch count == ceil(N/chunk)
+            assert_eq!(
+                batches.len(),
+                expected_batches,
+                "wrong batch count: expected ceil(N/chunk)={expected_batches} \
+                 (N={n} chunk={chunk}) because that many HSETs are needed, got \
+                 {}",
+                batches.len(),
+            );
+
+            // Every non-final batch must be exactly `chunk`; the final batch is
+            // 1..=chunk (when N>0). Pins the split granularity so an off-by-one
+            // in chunking is caught.
+            for (i, batch) in batches.iter().enumerate() {
+                if i + 1 < batches.len() {
+                    assert_eq!(
+                        batch.len(),
+                        chunk,
+                        "batch {i} is not the last, so it should be full \
+                         (chunk={chunk}) but had {} (N={n})",
+                        batch.len(),
+                    );
+                } else {
+                    assert!(
+                        (1..=chunk).contains(&batch.len()),
+                        "the final batch size should be in 1..={chunk}, got {} \
+                         (N={n})",
+                        batch.len(),
+                    );
+                }
+            }
+
+            // 2. concatenation == input (order-preserving, lossless).
+            let flattened: Vec<(&str, &str)> =
+                batches.iter().flat_map(|b| b.iter().copied()).collect();
+            assert_eq!(
+                flattened.len(),
+                n,
+                "concatenated element count should equal the input N={n} \
+                 because no field may be dropped or duplicated, got {}",
+                flattened.len(),
+            );
+            assert_eq!(
+                flattened, borrowed,
+                "concatenated batches should equal the input element-for-element \
+                 (N={n} chunk={chunk}); a mismatch means chunking reordered or \
+                 corrupted the field sequence"
+            );
+        }
+    }
+
+    #[test]
+    fn chunk_hash_fields_zero_chunk_no_panic() {
+        // Contract: chunk==0 must not hit the `slice::chunks(0)` panic; it is
+        // treated as one pair per batch.
+        let owned = dormant_field_pairs(3);
+        let borrowed = borrow_field_pairs(&owned);
+        let batches = chunk_hash_fields(&borrowed, 0);
+        assert_eq!(
+            batches.len(),
+            3,
+            "chunk==0 should degrade to one pair per batch -> N=3 yields 3 \
+             batches, got {} (chunks(0) guard likely missing)",
+            batches.len(),
+        );
+        for (i, batch) in batches.iter().enumerate() {
+            assert_eq!(
+                batch.len(),
+                1,
+                "with chunk==0, batch {i} should hold exactly 1 element, got {}",
+                batch.len(),
+            );
+        }
+        // Still must reproduce the input in order.
+        let flattened: Vec<(&str, &str)> = batches.iter().flat_map(|b| b.iter().copied()).collect();
+        assert_eq!(
+            flattened, borrowed,
+            "chunk==0 batches should still concatenate back to the input"
+        );
     }
 
     /// P0 bug① contract: a dormant `HashReplace` (which may be arbitrarily slow
