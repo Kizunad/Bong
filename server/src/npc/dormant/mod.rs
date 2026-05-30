@@ -1014,6 +1014,10 @@ fn dormant_death_notice(snapshot: &NpcDormantSnapshot) -> NpcDeathNotice {
         life_record_snapshot,
         age_ticks: snapshot.lifespan.age_ticks,
         max_age_ticks: snapshot.lifespan.max_age_ticks,
+        // P0：dormant 自然老死路径仍 false（NaturalAging→Combat 分支留 P2）；
+        // 坐标可从 snapshot 取，带上供 agent 派系战报定位 / e2e 断言。
+        from_dormant_combat: false,
+        pos: Some(snapshot.position),
     }
 }
 

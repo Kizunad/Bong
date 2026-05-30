@@ -1,0 +1,10 @@
+{
+  "v": 1,
+  "kind": "npc_death",
+  "npc_id": "npc_legacy",
+  "archetype": "commoner",
+  "cause": "natural_aging",
+  "age_ticks": 10.0,
+  "max_age_ticks": 20.0,
+  "at_tick": 3
+}

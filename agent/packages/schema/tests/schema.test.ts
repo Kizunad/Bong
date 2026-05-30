@@ -59,6 +59,7 @@ import {
   FactionEventV1,
   NpcDeathV1,
   NpcSpawnedV1,
+  validateNpcDeathV1Contract,
 } from "../src/npc.js";
 import {
   PseudoVeinDissipateEventV1,
@@ -763,6 +764,59 @@ describe("sample files pass schema validation", () => {
       mission_queue_size: 1,
       at_tick: 0,
     }).ok).toBe(true);
+  });
+
+  // plan-offscreen-war-v1 P0：NpcDeathV1 双端加 from_dormant_combat + pos。
+  // 正反对拍：离屏战死 sample / 自然老死 sample / 旧 payload（缺新字段）/ 非法类型。
+  it("npc_death_v2_sample_pin", () => {
+    // 正：离屏 dormant 派系互殴 sample 必须带 from_dormant_combat=true + pos 且过校验。
+    const dormantCombat = loadObjectSample("npc-death.dormant-combat.sample.json");
+    expectContractAccepts(
+      "npc-death.dormant-combat",
+      validateNpcDeathV1Contract,
+      dormantCombat,
+    );
+    expect(dormantCombat.from_dormant_combat).toBe(true);
+    expect(dormantCombat.cause).toBe("combat");
+    expect(dormantCombat.pos).toEqual([12.5, 64.0, -8.0]);
+    expect(dormantCombat.faction_id).toBe("attack");
+
+    // 正：自然老死 sample（from_dormant_combat=false，无 pos）。
+    const natural = loadObjectSample("npc-death.sample.json");
+    expectContractAccepts("npc-death", validateNpcDeathV1Contract, natural);
+    expect(natural.from_dormant_combat).toBe(false);
+    expect(natural.pos).toBeUndefined();
+
+    // 正：旧 payload 不带 from_dormant_combat/pos 仍过校验（向后兼容 = Optional）。
+    const legacy = loadObjectSample("npc-death.legacy-no-new-fields.sample.json");
+    expectContractAccepts(
+      "npc-death.legacy",
+      validateNpcDeathV1Contract,
+      legacy,
+    );
+    expect(legacy.from_dormant_combat).toBeUndefined();
+
+    // 反：from_dormant_combat 类型错（string 非 bool）必须被拒。
+    const invalidType = loadObjectSample(
+      "npc-death.invalid-from-dormant-combat-type.sample.json",
+    );
+    expectContractRejects(
+      "npc-death.invalid-from-dormant-combat-type",
+      validateNpcDeathV1Contract,
+      invalidType,
+    );
+
+    // 反：pos 非 3-tuple（多一个分量）必须被拒，锁住 Tuple 形状。
+    expectContractRejects("npc-death.pos-wrong-arity", validateNpcDeathV1Contract, {
+      ...dormantCombat,
+      pos: [1, 2, 3, 4],
+    });
+
+    // 反：additionalProperties:false 仍生效，未知字段被拒。
+    expectContractRejects("npc-death.unknown-field", validateNpcDeathV1Contract, {
+      ...natural,
+      bogus_field: 1,
+    });
   });
 
   it("server-data.botany-harvest-progress.sample.json", () => {

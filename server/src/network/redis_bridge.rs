@@ -2581,6 +2581,8 @@ mod redis_bridge_tests {
             age_ticks: 10.0,
             max_age_ticks: 10.0,
             at_tick: 0,
+            from_dormant_combat: false,
+            pos: None,
         }))
         .expect("NPC death payload should serialize");
         match death {

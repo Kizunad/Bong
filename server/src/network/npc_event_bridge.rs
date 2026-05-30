@@ -51,6 +51,8 @@ pub fn publish_npc_death_events(
             age_ticks: ev.age_ticks,
             max_age_ticks: ev.max_age_ticks,
             at_tick,
+            from_dormant_combat: ev.from_dormant_combat,
+            pos: ev.pos,
         };
         if let Err(error) = redis.tx_outbound.send(RedisOutbound::NpcDeath(wire)) {
             tracing::warn!("[bong][npc_event_bridge] dropped NpcDeath: {error}");
@@ -156,6 +158,8 @@ mod tests {
             life_record_snapshot: None,
             age_ticks: 10.0,
             max_age_ticks: 20.0,
+            from_dormant_combat: false,
+            pos: None,
         });
         app.update();
 

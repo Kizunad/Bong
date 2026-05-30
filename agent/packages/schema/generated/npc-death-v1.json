@@ -118,6 +118,26 @@
     "at_tick": {
       "minimum": 0,
       "type": "number"
+    },
+    "from_dormant_combat": {
+      "type": "boolean"
+    },
+    "pos": {
+      "type": "array",
+      "items": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "number"
+        },
+        {
+          "type": "number"
+        }
+      ],
+      "additionalItems": false,
+      "minItems": 3,
+      "maxItems": 3
     }
   }
 }

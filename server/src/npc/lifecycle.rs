@@ -508,6 +508,12 @@ pub struct NpcDeathNotice {
     pub life_record_snapshot: Option<String>,
     pub age_ticks: f64,
     pub max_age_ticks: f64,
+    /// plan-offscreen-war-v1 P0：是否为离屏 dormant 派系互殴所致（区别于自然老死 / 在场战斗）。
+    /// P0 全部构造点回填 `false`；P2 dormant 战死闭环落地后才会出现 `true`。
+    pub from_dormant_combat: bool,
+    /// plan-offscreen-war-v1 P0：死亡坐标（有则带，无则 None）。dormant 死亡用 snapshot.position，
+    /// 实体死亡当前无坐标上下文回填 None（后续阶段可补）。
+    pub pos: Option<[f64; 3]>,
 }
 
 pub fn register(app: &mut App) {
@@ -780,6 +786,9 @@ fn build_npc_death_notice(
             .filter(|summary| !summary.is_empty()),
         age_ticks: lifespan.age_ticks,
         max_age_ticks: lifespan.max_age_ticks,
+        // 在场（hydrated）实体死亡不是离屏 dormant 互殴；坐标无 Position 上下文可取，留 None。
+        from_dormant_combat: false,
+        pos: None,
     }
 }
 
@@ -999,6 +1008,8 @@ mod tests {
             life_record_snapshot: Some("少时醒灵".to_string()),
             age_ticks: 120.0,
             max_age_ticks: 100.0,
+            from_dormant_combat: false,
+            pos: None,
         };
 
         assert_eq!(notice.npc_id, "npc_1v1");
@@ -1009,6 +1020,8 @@ mod tests {
         assert_eq!(notice.life_record_snapshot.as_deref(), Some("少时醒灵"));
         assert_eq!(notice.age_ticks, 120.0);
         assert_eq!(notice.max_age_ticks, 100.0);
+        assert!(!notice.from_dormant_combat, "默认构造点不是离屏 dormant 互殴");
+        assert_eq!(notice.pos, None);
     }
 
     #[test]
