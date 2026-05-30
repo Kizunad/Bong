@@ -25,7 +25,9 @@ pub const FAR_TIER_ENCOUNTER_RADIUS_SQ: f64 = 64.0 * 64.0;
 pub struct AbstractCombatSeed(pub u64);
 
 pub fn register(app: &mut App) {
-    app.insert_resource(AbstractCombatSeed::default())
+    // plan-offscreen-war-v1 P0：`BONG_SIM_SEED` 注入离屏战斗 RNG 初值，让战死结果可复现。
+    // 仅决定随机种子，不绕过 qi_physics 守恒（真元流动仍走 ledger）。
+    app.insert_resource(AbstractCombatSeed(crate::npc::dormant::sim_seed_from_env()))
         .add_systems(
             Update,
             (abstract_combat_system, lod_transition_cleanup_system),

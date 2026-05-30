@@ -46,6 +46,44 @@ pub const DEHYDRATE_RADIUS_BLOCKS: f64 = 256.0;
 pub const DORMANT_ZONE_ABSORPTION_RADIUS_BLOCKS: f64 = 64.0;
 pub const DORMANT_LIFECYCLE_TICK_INTERVAL: u32 = 20 * 60;
 
+/// plan-offscreen-war-v1 P0：覆盖 `DORMANT_LIFECYCLE_TICK_INTERVAL` 的离屏快进 env。
+///
+/// **dev/test-only 节流旋钮**——只改 dormant batch tick 的间隔（让真服 e2e 能把
+/// 一轮 60s 离屏 tick 压到秒级），**绝不**绕过 worldview 修炼规则或 qi_physics
+/// 守恒律。值落非法（非数字 / 0）时回退默认 1200。
+pub const DORMANT_TICK_INTERVAL_ENV: &str = "BONG_DORMANT_TICK_INTERVAL";
+
+/// plan-offscreen-war-v1 P0：离屏战争 RNG 种子 env，用于 P1/P2 让战死结果可复现。
+///
+/// **dev/test-only 随机种子旋钮**——只决定 `AbstractCombatSeed` 与未来 dormant 战斗
+/// RNG 的初值，**不**改变守恒：真元流动仍走 `release_dormant_qi_to_zone` →
+/// `ledger.transfer(ReleaseToZone)`。env 未设时保持现状默认（种子 0）。
+pub const SIM_SEED_ENV: &str = "BONG_SIM_SEED";
+
+/// 纯解析：`BONG_DORMANT_TICK_INTERVAL` 原始值 → tick 间隔。
+/// 合法（可解析 u32 且 > 0）才覆盖，否则回退 `default`（零 / 负 / 垃圾值 graceful fallback）。
+fn parse_dormant_tick_interval(raw: Option<&str>, default: u32) -> u32 {
+    raw.and_then(|value| value.trim().parse::<u32>().ok())
+        .filter(|value| *value > 0)
+        .unwrap_or(default)
+}
+
+/// 纯解析：`BONG_SIM_SEED` 原始值 → u64 种子。可解析才采用，否则回退默认种子 0。
+fn parse_sim_seed(raw: Option<&str>) -> u64 {
+    raw.and_then(|value| value.trim().parse::<u64>().ok())
+        .unwrap_or(0)
+}
+
+/// 读取 `BONG_DORMANT_TICK_INTERVAL`：合法（可解析 u32 且 > 0）才覆盖，否则回退默认。
+fn dormant_tick_interval_from_env(default: u32) -> u32 {
+    parse_dormant_tick_interval(std::env::var(DORMANT_TICK_INTERVAL_ENV).ok().as_deref(), default)
+}
+
+/// 读取 `BONG_SIM_SEED`：可解析 u64 才采用，否则回退默认种子 0（= 现有行为）。
+pub fn sim_seed_from_env() -> u64 {
+    parse_sim_seed(std::env::var(SIM_SEED_ENV).ok().as_deref())
+}
+
 #[derive(Clone, Debug, Resource)]
 pub struct NpcVirtualizationConfig {
     pub hydrate_radius_blocks: f64,
@@ -58,6 +96,11 @@ pub struct NpcVirtualizationConfig {
     /// Test and batch-run escape hatch. Runtime keeps no-player worlds hydrated
     /// until seed paths can create dormant NPCs directly.
     pub dehydrate_without_players: bool,
+    /// plan-offscreen-war-v1 P0：离屏战争 RNG 种子。P1/P2 dormant 战斗 roll 读此值，
+    /// 由 `BONG_SIM_SEED` 注入（默认 0 = 现有行为）。**只影响随机种子，不绕守恒。**
+    // P0 只是铺线：种子已注入但消费点（dormant 配对/胜负 roll）在 P1/P2 才落地。
+    #[allow(dead_code)]
+    pub sim_seed: u64,
 }
 
 impl Default for NpcVirtualizationConfig {
@@ -71,6 +114,23 @@ impl Default for NpcVirtualizationConfig {
             max_hydrated_count: 200,
             max_dormant_count: 5000,
             dehydrate_without_players: false,
+            sim_seed: 0,
+        }
+    }
+}
+
+impl NpcVirtualizationConfig {
+    /// 运行时配置：以默认值为底，套用 `BONG_DORMANT_TICK_INTERVAL` /
+    /// `BONG_SIM_SEED` 两个 dev/test env 覆盖。两个 env 都只动节流间隔与随机种子，
+    /// 不触碰 worldview 修炼规则或 qi_physics 守恒律。
+    pub fn from_env() -> Self {
+        let default = Self::default();
+        Self {
+            dormant_tick_interval_ticks: dormant_tick_interval_from_env(
+                default.dormant_tick_interval_ticks,
+            ),
+            sim_seed: sim_seed_from_env(),
+            ..default
         }
     }
 }
@@ -343,7 +403,7 @@ pub struct DormantSeveredAt {
 pub fn register(app: &mut App) {
     tracing::info!("[bong][npc] registering dormant NPC store and batch tick");
     app.init_resource::<NpcDormantStore>()
-        .insert_resource(NpcVirtualizationConfig::default())
+        .insert_resource(NpcVirtualizationConfig::from_env())
         .insert_resource(DormantRoguePopulationSeedConfig::default())
         .add_event::<DormantSeveredAt>()
         .add_systems(Startup, load_dormant_store_from_redis_system)
@@ -1473,5 +1533,101 @@ mod tests {
 
         assert!(error.contains("all 1 dormant Redis snapshot"));
         assert!(store.is_empty());
+    }
+
+    // ── plan-offscreen-war-v1 P0：确定性 env 旋钮 ─────────────────────────
+    //
+    // 解析逻辑用纯函数 `parse_*` 测，避免 `std::env::set_var` 在并行测试间互相污染
+    // 全局进程状态（vitest/cargo test 默认多线程）。env 通路本身由真服 e2e 覆盖。
+
+    #[test]
+    fn bong_dormant_tick_interval_env_overrides_default() {
+        // 合法正值覆盖默认 1200，让离屏 tick 快进到秒级（e2e 用此把 60s 压到 1 tick）。
+        assert_eq!(
+            parse_dormant_tick_interval(Some("5"), DORMANT_LIFECYCLE_TICK_INTERVAL),
+            5,
+            "正值 BONG_DORMANT_TICK_INTERVAL 必须覆盖默认 1200，否则 e2e 无法快进离屏 tick"
+        );
+        assert_eq!(
+            parse_dormant_tick_interval(Some("  42  "), DORMANT_LIFECYCLE_TICK_INTERVAL),
+            42,
+            "首尾空白应被 trim 后解析，期望 42"
+        );
+    }
+
+    #[test]
+    fn bong_dormant_tick_interval_unset_keeps_default() {
+        assert_eq!(
+            parse_dormant_tick_interval(None, DORMANT_LIFECYCLE_TICK_INTERVAL),
+            DORMANT_LIFECYCLE_TICK_INTERVAL,
+            "env 未设时必须保持默认 1200（= 现有运行时行为）"
+        );
+        // from_env 默认（未注入 env 旋钮的字段）应与 default 一致。
+        let cfg = NpcVirtualizationConfig::default();
+        assert_eq!(cfg.dormant_tick_interval_ticks, DORMANT_LIFECYCLE_TICK_INTERVAL);
+        assert_eq!(cfg.sim_seed, 0, "默认 sim_seed 必须为 0 = 现有 AbstractCombatSeed 行为");
+    }
+
+    #[test]
+    fn bong_dormant_tick_interval_zero_and_garbage_fall_back_gracefully() {
+        // 0 非法（会造成 is_multiple_of(0) panic / 除零语义），必须回退默认而非采纳。
+        assert_eq!(
+            parse_dormant_tick_interval(Some("0"), DORMANT_LIFECYCLE_TICK_INTERVAL),
+            DORMANT_LIFECYCLE_TICK_INTERVAL,
+            "0 是非法 tick 间隔，期望 graceful 回退默认 1200"
+        );
+        // 垃圾 / 负数 / 溢出均无法 parse 为 u32，回退默认。
+        for garbage in ["", "abc", "-3", "3.5", "99999999999999999999"] {
+            assert_eq!(
+                parse_dormant_tick_interval(Some(garbage), DORMANT_LIFECYCLE_TICK_INTERVAL),
+                DORMANT_LIFECYCLE_TICK_INTERVAL,
+                "非法值 {garbage:?} 期望回退默认 1200 而非 panic"
+            );
+        }
+    }
+
+    #[test]
+    fn bong_sim_seed_makes_combat_deterministic() {
+        // P0 是 plumbing 层：相同 BONG_SIM_SEED 解析出相同 u64，注入 AbstractCombatSeed
+        // 后即可让 P1/P2 的 RNG 序列复现（同 seed → 同战死结果）。
+        let seed_a = parse_sim_seed(Some("123456789"));
+        let seed_b = parse_sim_seed(Some("123456789"));
+        assert_eq!(
+            seed_a, seed_b,
+            "同一 BONG_SIM_SEED 必须解析出同值，否则离屏战争结果不可复现"
+        );
+        assert_eq!(seed_a, 123_456_789);
+
+        // 不同 seed 必须区分（让 e2e 能跑出不同 RNG 序列）。
+        assert_ne!(
+            parse_sim_seed(Some("1")),
+            parse_sim_seed(Some("2")),
+            "不同 seed 必须解析为不同值"
+        );
+
+        // 注入路径：AbstractCombatSeed(seed) 与 NpcVirtualizationConfig.sim_seed
+        // 必须携带同一个解析出的 seed，P1/P2 才能读同一个种子。
+        let parsed = parse_sim_seed(Some("777"));
+        let combat_seed = crate::npc::abstract_combat_system::AbstractCombatSeed(parsed);
+        let cfg = NpcVirtualizationConfig {
+            sim_seed: parsed,
+            ..NpcVirtualizationConfig::default()
+        };
+        assert_eq!(
+            combat_seed.0, cfg.sim_seed,
+            "AbstractCombatSeed 与 config.sim_seed 必须同源，否则 abstract 与 dormant 战斗 RNG 不同步"
+        );
+    }
+
+    #[test]
+    fn bong_sim_seed_unset_or_garbage_defaults_to_zero() {
+        assert_eq!(parse_sim_seed(None), 0, "env 未设时默认种子 0 = 现有行为");
+        for garbage in ["", "abc", "-1", "1.0"] {
+            assert_eq!(
+                parse_sim_seed(Some(garbage)),
+                0,
+                "非法 seed {garbage:?} 期望回退 0 而非 panic"
+            );
+        }
     }
 }
