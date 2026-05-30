@@ -230,6 +230,13 @@ impl WorldQiAccount {
     pub fn transfers(&self) -> &[QiTransfer] {
         &self.transfers
     }
+
+    /// plan-offscreen-war-v1 P0：守恒 telemetry 用——按 `QiAccountId` 升序（BTreeMap
+    /// 天然有序）迭代每个账户的余额，供 `bong:qi/ledger` 把 per-zone / per-npc
+    /// 账本暴露给外部脚本做精确守恒断言。只读，不改账本。
+    pub fn iter_balances(&self) -> impl Iterator<Item = (&QiAccountId, f64)> {
+        self.balances.iter().map(|(account, balance)| (account, *balance))
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -262,6 +269,51 @@ pub fn snapshot_for_ipc(snapshot: &WorldQiSnapshot) -> QiPhysicsIpcSnapshot {
         budget_current_total: snapshot.budget_current_total,
         era_decay_accum: snapshot.era_decay_accum,
     }
+}
+
+/// plan-offscreen-war-v1 P0：`bong:qi/ledger` HASH 字段前缀——per-account 余额行。
+/// 字段形如 `account:Zone:spawn`，值是该账户当前 balance（字符串化 f64）。
+pub const QI_LEDGER_ACCOUNT_FIELD_PREFIX: &str = "account:";
+
+/// plan-offscreen-war-v1 P0：把全服守恒快照 + ledger 各账户余额拍平成
+/// `bong:qi/ledger` HASH 的 (field, value) 列表，供外部脚本做**精确**守恒断言。
+///
+/// 顶层聚合字段：
+/// - `total_observed`：player+zone+container+ledger 全服真元，起服后应 ≈ DEFAULT_SPIRIT_QI_TOTAL；
+/// - `player_qi` / `zone_qi` / `container_qi` / `ledger_qi`：守恒分量明细；
+/// - `budget_initial_total` / `budget_current_total` / `era_decay_accum`：天道预算与时代衰减。
+///
+/// per-account 字段：每个被 ledger 记账过的账户一行 `account:<id>` → balance。
+///
+/// 纯函数（只读快照 + 账本），无副作用，方便单测精确锁字段。
+pub fn build_qi_ledger_hash_fields(
+    snapshot: &WorldQiSnapshot,
+    accounts: &WorldQiAccount,
+) -> Vec<(String, String)> {
+    let mut fields = vec![
+        ("total_observed".to_string(), snapshot.total_observed().to_string()),
+        ("player_qi".to_string(), snapshot.player_qi.to_string()),
+        ("zone_qi".to_string(), snapshot.zone_qi.to_string()),
+        ("container_qi".to_string(), snapshot.container_qi.to_string()),
+        ("ledger_qi".to_string(), snapshot.ledger_qi.to_string()),
+        (
+            "budget_initial_total".to_string(),
+            snapshot.budget_initial_total.to_string(),
+        ),
+        (
+            "budget_current_total".to_string(),
+            snapshot.budget_current_total.to_string(),
+        ),
+        ("era_decay_accum".to_string(), snapshot.era_decay_accum.to_string()),
+    ];
+    // BTreeMap 有序迭代 → per-account 字段确定性排序，外部脚本可稳定 diff。
+    for (account, balance) in accounts.iter_balances() {
+        fields.push((
+            format!("{QI_LEDGER_ACCOUNT_FIELD_PREFIX}{account}"),
+            balance.to_string(),
+        ));
+    }
+    fields
 }
 
 pub fn summarize_world_qi(world: &mut bevy_ecs::world::World) -> WorldQiSnapshot {
@@ -583,6 +635,90 @@ mod tests {
         assert_eq!(before.budget_current_total, 100.0);
         assert_eq!(after.budget_current_total, 100.0);
         assert!(assert_conservation(&before, &after, 0.0).is_ok());
+    }
+
+    // ── plan-offscreen-war-v1 P0：bong:qi/ledger telemetry builder ────────
+
+    fn field<'a>(fields: &'a [(String, String)], name: &str) -> &'a str {
+        fields
+            .iter()
+            .find(|(key, _)| key == name)
+            .map(|(_, value)| value.as_str())
+            .unwrap_or_else(|| panic!("expected ledger HASH to carry field {name:?}, got {fields:?}"))
+    }
+
+    #[test]
+    fn qi_ledger_hash_fields_carry_conservation_aggregates() {
+        // 顶层守恒分量必须可被外部脚本精确读出：total_observed == player+zone+container+ledger。
+        let snap = WorldQiSnapshot {
+            player_qi: 40.0,
+            zone_qi: 35.0,
+            container_qi: 15.0,
+            ledger_qi: 10.0,
+            era_decay_accum: 0.0,
+            budget_initial_total: DEFAULT_SPIRIT_QI_TOTAL,
+            budget_current_total: DEFAULT_SPIRIT_QI_TOTAL,
+        };
+        let accounts = WorldQiAccount::default();
+        let fields = build_qi_ledger_hash_fields(&snap, &accounts);
+
+        assert_eq!(
+            field(&fields, "total_observed"),
+            "100",
+            "total_observed 必须等于四个分量之和（40+35+15+10），外部 e2e 据此做精确守恒断言"
+        );
+        assert_eq!(field(&fields, "player_qi"), "40");
+        assert_eq!(field(&fields, "zone_qi"), "35");
+        assert_eq!(field(&fields, "container_qi"), "15");
+        assert_eq!(field(&fields, "ledger_qi"), "10");
+        assert_eq!(
+            field(&fields, "budget_initial_total"),
+            DEFAULT_SPIRIT_QI_TOTAL.to_string(),
+            "预算字段取 const，不写字面 100"
+        );
+        assert_eq!(field(&fields, "budget_current_total"), DEFAULT_SPIRIT_QI_TOTAL.to_string());
+        assert_eq!(field(&fields, "era_decay_accum"), "0");
+    }
+
+    #[test]
+    fn qi_ledger_hash_fields_emit_one_row_per_account() {
+        // per-zone / per-npc 账户余额各占一行 account:<id>，外部脚本可逐账户对账。
+        let mut accounts = WorldQiAccount::default();
+        accounts.set_balance(QiAccountId::zone("spawn"), 25.0).unwrap();
+        accounts.set_balance(QiAccountId::npc("dormant:rogue:7"), 3.5).unwrap();
+        let fields = build_qi_ledger_hash_fields(&snapshot(0.0), &accounts);
+
+        assert_eq!(
+            field(&fields, "account:Zone:spawn"),
+            "25",
+            "zone 账户余额必须以 account:Zone:spawn 行暴露"
+        );
+        assert_eq!(
+            field(&fields, "account:Npc:dormant:rogue:7"),
+            "3.5",
+            "npc 账户余额必须以 account:Npc:<char_id> 行暴露，供 P2 战死还灵气对账"
+        );
+
+        let account_rows = fields
+            .iter()
+            .filter(|(key, _)| key.starts_with(QI_LEDGER_ACCOUNT_FIELD_PREFIX))
+            .count();
+        assert_eq!(account_rows, 2, "两个账户应产出两行 account: 字段，不多不少");
+    }
+
+    #[test]
+    fn qi_ledger_hash_fields_empty_ledger_has_only_aggregates() {
+        // 起服后 ledger 尚未记账：无 account: 行，但 total_observed 已可读（来自 zone/player 快照）。
+        let fields = build_qi_ledger_hash_fields(&snapshot(100.0), &WorldQiAccount::default());
+        assert!(
+            fields.iter().all(|(key, _)| !key.starts_with(QI_LEDGER_ACCOUNT_FIELD_PREFIX)),
+            "空账本不应有 account: 行"
+        );
+        assert_eq!(
+            field(&fields, "total_observed"),
+            "100",
+            "空账本下 total_observed 仍来自 player/zone 快照，起服后应 ≈ DEFAULT_SPIRIT_QI_TOTAL"
+        );
     }
 
     fn snapshot(total: f64) -> WorldQiSnapshot {

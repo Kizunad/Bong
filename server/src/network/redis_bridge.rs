@@ -29,6 +29,7 @@ use crate::schema::channels::{
     CH_INSIGHT_OFFER, CH_INSIGHT_REQUEST, CH_LIFESPAN_EVENT, CH_NPC_DEATH, CH_NPC_SPAWN,
     CH_PLAYER_CHAT, CH_POISON_DOSE_EVENT, CH_POISON_OVERDOSE_EVENT, CH_POI_NOVICE_EVENT,
     CH_PRICE_INDEX, CH_PSEUDO_VEIN_ACTIVE, CH_PSEUDO_VEIN_DISSIPATE, CH_RAT_PHASE_EVENT,
+    QI_LEDGER_REDIS_KEY,
     CH_REBIRTH, CH_SEASON_CHANGED, CH_SKILL_CAP_CHANGED, CH_SKILL_LV_UP, CH_SKILL_SCROLL_USED,
     CH_SKILL_XP_GAIN, CH_SOCIAL_EXPOSURE, CH_SOCIAL_FEUD, CH_SOCIAL_NICHE_INTRUSION,
     CH_SOCIAL_PACT, CH_SOCIAL_RENOWN_DELTA, CH_SPIRIT_EYE_DISCOVERED, CH_SPIRIT_EYE_MIGRATE,
@@ -123,6 +124,8 @@ pub enum RedisInbound {
 pub enum RedisOutbound {
     WorldState(WorldStateV1),
     NpcDormantHash(Vec<(String, String)>),
+    /// plan-offscreen-war-v1 P0：守恒 telemetry HASH（`bong:qi/ledger`）。
+    QiLedgerHash(Vec<(String, String)>),
     SeasonChanged(SeasonChangedV1),
     BoneCoinTick(BoneCoinTickV1),
     PriceIndex(PriceIndexV1),
@@ -443,6 +446,10 @@ fn prepare_outbound_command(message: RedisOutbound) -> Result<RedisIoCommand, Va
         }
         RedisOutbound::NpcDormantHash(entries) => Ok(RedisIoCommand::HashReplace {
             key: NPC_DORMANT_REDIS_KEY,
+            entries,
+        }),
+        RedisOutbound::QiLedgerHash(entries) => Ok(RedisIoCommand::HashReplace {
+            key: QI_LEDGER_REDIS_KEY,
             entries,
         }),
         RedisOutbound::SeasonChanged(evt) => {
@@ -2330,6 +2337,28 @@ mod redis_bridge_tests {
         match command {
             RedisIoCommand::HashReplace { key, entries: got } => {
                 assert_eq!(key, NPC_DORMANT_REDIS_KEY);
+                assert_eq!(got, entries);
+            }
+            other => panic!("expected hash replace command, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn replaces_qi_ledger_hash_on_dedicated_key() {
+        // plan-offscreen-war-v1 P0：守恒 telemetry 必须落到 bong:qi/ledger（非 dormant key）。
+        let entries = vec![
+            ("total_observed".to_string(), "100".to_string()),
+            ("account:Zone:spawn".to_string(), "50".to_string()),
+        ];
+        let command = prepare_outbound_command(RedisOutbound::QiLedgerHash(entries.clone()))
+            .expect("qi ledger payload should produce a hash replace command");
+
+        match command {
+            RedisIoCommand::HashReplace { key, entries: got } => {
+                assert_eq!(
+                    key, QI_LEDGER_REDIS_KEY,
+                    "守恒 telemetry 必须发到 bong:qi/ledger，不能错写到 dormant key"
+                );
                 assert_eq!(got, entries);
             }
             other => panic!("expected hash replace command, got {other:?}"),

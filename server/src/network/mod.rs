@@ -96,7 +96,7 @@ use chat_collector::{collect_player_chat, ChatCollectorRateLimit};
 use command_executor::{execute_agent_commands, CommandExecutorResource};
 use redis_bridge::{RedisInbound, RedisOutbound};
 use valence::prelude::{
-    ident, Added, App, Changed, Client, Commands, DVec3, Entity, EntityKind, EventReader,
+    bevy_ecs, ident, Added, App, Changed, Client, Commands, DVec3, Entity, EntityKind, EventReader,
     EventWriter, Events, IntoSystemConfigs, Or, Position, Query, Res, ResMut, Resource, Startup,
     Update, Username, With,
 };
@@ -123,6 +123,7 @@ use crate::persistence::{
     AgentWorldModelSnapshotRecord, PersistenceSettings, WORLD_MODEL_STATE_KEY,
 };
 use crate::player::gameplay::PendingGameplayNarrations;
+use crate::qi_physics::{build_qi_ledger_hash_fields, summarize_world_qi, WorldQiAccount};
 use crate::player::state::{canonical_player_id, PlayerState};
 use crate::schema::agent_world_model::{AgentWorldModelEnvelopeV1, AgentWorldModelSnapshotV1};
 use crate::schema::common::{
@@ -211,6 +212,19 @@ pub struct WorldStateTimer {
 
 impl Resource for WorldStateTimer {}
 
+/// plan-offscreen-war-v1 P0：守恒 telemetry（`bong:qi/ledger`）独立 tick 计数器。
+///
+/// 用独立 timer 而非复用 `WorldStateTimer`：`bong:qi/ledger` publish 是 exclusive
+/// system（`summarize_world_qi` 需 `&mut World`），与 world_state 普通 system 不在
+/// 同一调度阶段，复用计数器会因执行顺序产生相位偏差。两者都按
+/// `WORLD_STATE_PUBLISH_INTERVAL_TICKS` 周期，节奏一致但各自计数。
+#[derive(Default)]
+pub struct QiLedgerTimer {
+    ticks: u64,
+}
+
+impl Resource for QiLedgerTimer {}
+
 #[derive(Default)]
 struct ZoneTransitionTracker {
     last_zone_by_entity: HashMap<Entity, String>,
@@ -298,6 +312,7 @@ pub fn register(app: &mut App) {
         });
     app.insert_resource(runtime_mirror_redis);
     app.insert_resource(WorldStateTimer::default());
+    app.insert_resource(QiLedgerTimer::default());
     app.insert_resource(ZoneTransitionTracker::default());
     app.insert_resource(ChatCollectorRateLimit::default());
     app.insert_resource(CommandExecutorResource::default());
@@ -359,6 +374,8 @@ pub fn register(app: &mut App) {
         Update,
         publish_season_changed_events.after(crate::world::season::season_tick),
     );
+    // plan-offscreen-war-v1 P0：守恒 telemetry exclusive system，与 world_state 同节奏。
+    app.add_systems(Update, publish_qi_ledger_to_redis);
     app.add_systems(
         Update,
         anticheat_bridge::publish_anticheat_violation_events
@@ -934,6 +951,41 @@ fn publish_world_state_to_redis(
             }
         }
     }
+}
+
+/// plan-offscreen-war-v1 P0：把全服守恒账本周期性发布到 `bong:qi/ledger` HASH。
+///
+/// 这是 **exclusive system**（取 `&mut World`），因为 `summarize_world_qi` 需要遍历
+/// 全 World（zone / player / container / ledger 四类真元分量）才能算出权威
+/// `total_observed`。普通参数化 system 无法一次拿全这些来源，故走 exclusive 入口。
+///
+/// 节奏：与 `publish_world_state_to_redis` 同为 `WORLD_STATE_PUBLISH_INTERVAL_TICKS`，
+/// 但用独立 `QiLedgerTimer` 计数（见其 doc-comment）。外部脚本可 `HGETALL bong:qi/ledger`
+/// 做**精确**守恒断言：起服后 `total_observed` 应 ≈ `DEFAULT_SPIRIT_QI_TOTAL`。
+///
+/// **只读发布，零真元流动**——不调 `WorldQiAccount::transfer`，不改任何 balance。
+fn publish_qi_ledger_to_redis(world: &mut bevy_ecs::world::World) {
+    {
+        let mut timer = world.resource_mut::<QiLedgerTimer>();
+        timer.ticks += 1;
+        if !timer.ticks.is_multiple_of(WORLD_STATE_PUBLISH_INTERVAL_TICKS) {
+            return;
+        }
+    }
+
+    // 没有 redis bridge（部分测试 app）时静默跳过。
+    if world.get_resource::<RedisBridgeResource>().is_none() {
+        return;
+    }
+
+    let snapshot = summarize_world_qi(world);
+    let fields = {
+        let accounts = world.resource::<WorldQiAccount>();
+        build_qi_ledger_hash_fields(&snapshot, accounts)
+    };
+
+    let redis = world.resource::<RedisBridgeResource>();
+    let _ = redis.tx_outbound.send(RedisOutbound::QiLedgerHash(fields));
 }
 
 fn collect_cultivation_snapshots(

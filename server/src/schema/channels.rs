@@ -65,6 +65,10 @@ pub const CH_NPC_SPAWN: &str = "bong:npc/spawn";
 pub const CH_NPC_DEATH: &str = "bong:npc/death";
 pub const CH_FACTION_EVENT: &str = "bong:faction/event";
 
+// plan-offscreen-war-v1 P0：守恒 telemetry。周期性 HASH（非 pub/sub），落 WorldQiAccount
+// 各账户余额 + total_observed，让真服 e2e 能 `HGETALL bong:qi/ledger` 做精确守恒断言。
+pub const QI_LEDGER_REDIS_KEY: &str = "bong:qi/ledger";
+
 // 玩家社交 / 匿名 / 声名（plan-social-v1 §7）。server 为权威，agent 只消费事件流水。
 pub const CH_SOCIAL_EXPOSURE: &str = "bong:social/exposure";
 pub const CH_SOCIAL_PACT: &str = "bong:social/pact";
@@ -300,5 +304,7 @@ mod tests {
         // plan-craft-v1 P3 — 通用手搓 server → agent 频道
         assert_eq!(CH_CRAFT_OUTCOME, "bong:craft/outcome");
         assert_eq!(CH_CRAFT_RECIPE_UNLOCKED, "bong:craft/recipe_unlocked");
+        // plan-offscreen-war-v1 P0 — 守恒 telemetry HASH key
+        assert_eq!(QI_LEDGER_REDIS_KEY, "bong:qi/ledger");
     }
 }
