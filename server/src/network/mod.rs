@@ -3186,7 +3186,11 @@ mod tests {
             fn force_publish_cycle(app: &mut App) {
                 app.world_mut().resource_mut::<WorldStateTimer>().ticks =
                     WORLD_STATE_PUBLISH_INTERVAL_TICKS - 1;
-                app.world_mut().run_schedule(bevy_app::Main);
+                // `app.update()` runs the `Main` schedule (where the publish
+                // system lives) exactly like every other test in this crate;
+                // `run_schedule(bevy_app::Main)` referenced a crate that is not
+                // a dependency and never compiled under `--all-targets`.
+                app.update();
             }
 
             // Cycle 1: store is dirty from the insert -> WorldState + dormant hash.
