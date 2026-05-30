@@ -2,6 +2,13 @@
 
 **兽潮（大迁徙）生态事件**——实装 worldview §七 生态联动中的"大迁徙"机制：当某区域灵气被吸干临近死域时，该 zone 内所有野生生物疯狂向最近正数灵气区迁移，形成"兽潮"。玩家可以逆着兽潮走找到即将干涸的死域、或顺着走遭遇领地争夺战。大规模实体迁移使用 Flow Field（流场寻路），避免百只野兽同时跑个体 A* 拖垮 20 TPS。
 
+## 目标
+
+- 实装 worldview §七「大迁徙」：zone 灵气耗尽触发野兽集体迁移，玩家可逆向定位将涸死域 / 顺向遭遇领地争夺战
+- 工程目标：用 Flow Field 流场寻路支撑百只级野兽并发迁移（迁移子系统 ≤ 5ms/tick），不拖垮 20 TPS
+- 形成生态链式反应：兽潮加速目标 zone 灵气消耗，可能引发相邻 zone 连锁塌缩
+- 验收：`ZoneDepletionEvent → BeastHordeEvent` e2e 打通，负压灭杀 + 领地争夺 + agent 叙事闭环
+
 **来源**：worldview §七 生态联动 §"大迁徙" + docs/scribble.md §"流场寻路 (Flow Field)" 技术方案
 
 **前置条件**：
@@ -51,7 +58,7 @@
 | 阶段 | 状态 | 主要交付物 | 验收标准 |
 |------|------|-----------|---------|
 | **P0** | ⬜ | 触发条件 + `BeastHordeEvent` 数据模型 + Flow Field 原型 | 10 单测 green；`ZoneDepletionEvent` → `BeastHordeEvent` e2e |
-| **P1** | ⬜ | `FlowField` 计算 + 野兽批量迁移行为 + 性能验收 | 200 野兽迁移不超 5ms/tick；流场方向向量正确朝目标 zone |
+| **P1** | ⬜ | `FlowField` 计算 + 野兽批量迁移行为 + 性能验收 | **主指标**：FlowField + 野兽迁移子系统 ≤ 5ms/tick（200 兽）；**补充指标（总帧预算）**：server 整帧 tick ≤ 50ms；流场方向向量正确朝目标 zone |
 | **P2** | ⬜ | 负压灭杀（误入负灵域 → 枯萎飞灰）+ 领地争夺战 | 野兽进入 spirit_qi<0 区域触发枯萎；两个 zone 兽潮汇聚 → 野兽互殴 |
 | **P3** | ⬜ | Agent narration + client 大规模迁移 VFX + dormant 同步 | agent 发出"大批野兽正向东逃窜"类叙事；client 能感知兽潮方向 |
 
@@ -74,7 +81,7 @@
 - [ ] `FlowFieldComputeTask`（`AsyncComputeTaskPool`）：以 target_zone 入口为目标，BFS source_zone block graph → 每格 Vec2 方向；避开 spirit_qi < 0 的格子
 - [ ] `HordeMigrationComponent { target_zone, flow_field_ref }` 附加到迁徙野兽 entity
 - [ ] `horde_migration_system`：每 tick 读 `HordeMigrationComponent.flow_field_ref[pos]` → 移动；到达 target_zone 边界 → 移除 component（恢复正常 AI）
-- [ ] 性能验收：200 野兽同时迁移 + flow field 计算期间，server tick 时间 ≤ 50ms（`bevy_diagnostic` 采样）
+- [ ] 性能验收 **主指标**：FlowField + 野兽迁移子系统 ≤ 5ms/tick（200 兽同时迁移，`bevy_diagnostic` 采样子系统耗时）；**补充指标（总帧预算）**：server 整帧 tick ≤ 50ms（20 TPS，本子系统不得挤爆整帧）
 - [ ] ≥ 15 单测（flow field 方向正确朝目标 / 障碍物绕行 / 跨 chunk 边界移动 / 多 horde 独立 flow field 互不干扰 / 性能 mock 200 entity 5ms 内）
 
 ---

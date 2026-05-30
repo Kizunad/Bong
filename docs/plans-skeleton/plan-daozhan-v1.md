@@ -2,6 +2,13 @@
 
 **道伥实装**——给主世界幽暗地穴与野外散布地点实装 `DaoZhang` 实体：它是死在活坍缩渊（§十六）或被天劫击杀的高境修士遗骸，保留生前战斗本能，会模仿玩家日常行为来诱近猎物，在玩家背对或真元跌破 20% 时切入绝杀模式。击杀是获取「残卷」和「破碎法宝」的唯一途径。
 
+## 目标
+
+- 实装 worldview §七 道伥：以伪装日常行为诱近 + 背对/低真元绝杀的欺骗性敌对实体
+- 作为「残卷 / 破碎法宝」的唯一获取途径，绑定坍缩渊死亡与天道清理程序的来源链
+- 工程目标：复用 big-brain 框架实现两态行为（Mimicry/Ambush），伪装态走 fake player 渲染，绝杀走真元吸取（守恒律）
+- 验收：spawn → 伪装 → 绝杀 → 神识识破 → 死亡掉落 全链路 e2e，QiTransfer 守恒全程通过
+
 **来源**：worldview §七 天道的清理程序 + §八 天道运维博弈（高灵气聚集区刷出高阶道伥）+ §十六.六（活坍缩渊内死亡遗骸化道伥）+ §十二 世界地图表（幽暗地穴：道伥 / 残卷 / 稀有丹方）
 
 **前置条件**：
@@ -13,7 +20,7 @@
 - `plan-skill-v1` ✅ — 残卷 item 框架（道伥掉落）
 - `plan-spirit-treasure-v1` ✅ — 破碎法宝 item 框架（道伥掉落）
 
-**交叉引用**：`plan-tsy-dimension-v1` ✅（活坍缩渊位面：主要 spawn 源头）· `plan-spirit-eye-v1` ✅（神识可远程识破伪装，P2 功能）· `plan-rat-v1` ✅（RatPhase 三态参考：Disguised/Ambush/Retreat 同源模式）
+**交叉引用**：`plan-tsy-dimension-v1` ✅（活坍缩渊位面：主要 spawn 源头）· `plan-spirit-eye-v1` ✅（神识可远程识破伪装，P3 功能）· `plan-rat-v1` ✅（RatPhase 三态参考：Disguised/Ambush/Retreat 同源模式）
 
 **worldview 锚点**：
 - **§七:729 道伥**：行为模仿逻辑（砍树/挖矿/蹲伏）；触发条件（背对 or 真元 < 20%）；掉落（残卷/破碎法宝）；主要来源为坍缩渊死亡
@@ -22,8 +29,8 @@
 - **§十六.六 坍缩渊死亡规则**：秘境内死亡 → 遗骸干尸化 → 可能变道伥（不是 100%，高境界修士遗骸概率高）
 
 **qi_physics 锚点**：
-- 道伥攻击扣玩家真元（不扣 HP）：`QiTransfer { from: player, to: environment, reason: DaoZhangDrain }`
-- 道伥死亡：`qi_physics::qi_release_to_zone`（含生前剩余储量）
+- 道伥攻击扣玩家真元（不扣 HP）：`QiTransfer { from: player, to: daozhan_qi, reason: DaoZhangDrain }`（吸取的真元累积进道伥自身储量，不直接逸散到环境）
+- 道伥死亡：`qi_physics::qi_release_to_zone`（含生前剩余储量 + 吸取累积的 `daozhan_qi`，一并归还 zone）
 - 天道新刷道伥时：不创生灵气，从该区块高浓度灵气中"凝结"（`QiTransfer { from: zone, to: daozhan_spawn, reason: TiandaoCondense }`）
 
 ---
@@ -31,7 +38,7 @@
 ## 接入面 Checklist
 
 - **进料**：`PlayerDeathEvent { cause: CollapseZone }` / `TribulationDeathEvent`（道伥 spawn 触发）+ zone `spirit_qi > TIANDAO_CONDENSE_THRESHOLD`（天道刷出条件）+ `FaunaKind::DaoZhang` 注册 + 玩家 `qi_current / qi_max` 比例（触发绝杀检测）
-- **出料**：`DaoZhangState` component（三态：Mimicry / Ambush / Dead）+ `DaoZhangBehaviorBlackboard` + `DaoZhangDeathEvent { zone, qi_released, loot_table }`（掉落 残卷/破碎法宝）
+- **出料**：`DaoZhangState` component（两态：Mimicry / Ambush；`Dead` 为事件终态，经 `DaoZhangDeathEvent` 处理，不入枚举）+ `DaoZhangBehaviorBlackboard` + `DaoZhangDeathEvent { zone, qi_released, loot_table }`（掉落 残卷/破碎法宝）
 - **共享类型**：复用 big-brain 框架 / `QiTransfer` / `bong:vfx_event` 通道；新增 `DaoZhangState` / `DaoZhangBehaviorBlackboard` / `DaoZhangDrainEvent`；掉落复用 skill-v1 残卷 item + spirit-treasure-v1 法宝 item
 - **跨仓库契约**：server `bong:vfx/daozhan_reveal`（Mimicry → Ambush 时 VFX）；client 渲染 Mimicry 态时使用"无名玩家皮肤"（fake player entity，名字标签 hidden）；agent 可从 `world_state.npc_digest` 感知道伥存在（无新 schema 字段）
 - **worldview 锚点**：§七 道伥 + §八 天道运维 + §十六.六 坍缩渊死亡
