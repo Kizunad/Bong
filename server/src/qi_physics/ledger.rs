@@ -281,9 +281,11 @@ pub const QI_LEDGER_ACCOUNT_FIELD_PREFIX: &str = "account:";
 /// `bong:qi/ledger` HASH 的 (field, value) 列表，供外部脚本做**精确**守恒断言。
 ///
 /// 顶层聚合字段：
-/// - `total_observed`：player+zone+container+ledger 全服真元，起服后应 ≈ DEFAULT_SPIRIT_QI_TOTAL；
-/// - `player_qi` / `zone_qi` / `container_qi` / `ledger_qi`：守恒分量明细；
-/// - `budget_initial_total` / `budget_current_total` / `era_decay_accum`：天道预算与时代衰减。
+/// - `total_observed`：player+zone+container+ledger 的**已落位**真元（≤ 预算；minimal
+///   世界起服后 zone qi 很低，远小于预算，勿误当 == DEFAULT_SPIRIT_QI_TOTAL）；
+/// - `player_qi` / `zone_qi` / `container_qi` / `ledger_qi`：已落位分量明细；
+/// - `budget_initial_total` / `budget_current_total` / `era_decay_accum`：天道预算（守恒总量
+///   恒定的真锚点 = `DEFAULT_SPIRIT_QI_TOTAL`，仅被时代衰减拉低）与已累计衰减。
 ///
 /// per-account 字段：每个被 ledger 记账过的账户一行 `account:<id>` → balance。
 ///

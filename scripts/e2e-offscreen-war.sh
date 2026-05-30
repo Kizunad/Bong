@@ -8,10 +8,12 @@ set -euo pipefail
 #   1. agent_command_spawn_then_death_roundtrip
 #      - redis-cli publish bong:agent_command（注意是 agent_command 不是 agent_cmd）
 #        注入 SpawnNpc → SUB bong:npc/spawn 断言收到 + zone 匹配。
-#      - 路径 B：起服前 HSET bong:npc/dormant 种两个敌对派系 dormant（Attack/Defend，
-#        is_hostile_pair=true）→ HGETALL 确认 seed 起效 + faction 非 None。
-#   2. bong:qi/ledger 起服后非空且 total_observed ≈ DEFAULT_SPIRIT_QI_TOTAL（精确守恒；
-#      断言取 server const 引用，不写字面 100）。
+#      - dormant 派系：清空 bong:npc/dormant 后 server 默认 seed 8 个 rogue，commit D
+#        按 char_id 哈希赋 Attack/Defend → HGETALL 确认 seed 起效 + faction 非 None
+#        + attack/defend 双方都在（保证 is_hostile_pair 后续能配对）。
+#   2. bong:qi/ledger 起服后非空；守恒断言锁**天道预算**（budget_initial_total ==
+#      DEFAULT_SPIRIT_QI_TOTAL，zero-sum 真锚点），并校 total_observed（已落位真元）
+#      在预算内（不凭空造真元）。断言取 server const 引用，不写字面 100。
 #
 # 确定性：BONG_SIM_SEED 固定 + BONG_DORMANT_TICK_INTERVAL 小值（免 sleep 60s）。
 #
@@ -123,34 +125,21 @@ catch { try { client.disconnect(); } catch {} process.exit(1); }
 NODE
 }
 
-# 路径 B：起服前 HSET 两个敌对派系 dormant（基于 schema-accurate 模板 mutate）。
-seed_hostile_dormant() {
+# 清空 bong:npc/dormant，让 server 在起服时按 `BONG_DORMANT_ROGUE_SEED_COUNT`
+# 默认 seed（commit D 给每个 rogue 按 char_id 哈希赋 Attack/Defend）。
+#
+# 为何不用 plan §11 的 path-B 手写 HSET：手写 schema-accurate 快照极易随
+# NpcDormantSnapshot 结构漂移（meridian_system.regular 是 [Meridian;12] 等），
+# 且 P0 只需"有派系的 dormant"而非"同 zone 敌对对"（后者是 P2 战斗的需求）。
+# 用 server 自种 8 个（小值，避免 1000 条全量 HASH 替换触发 3s redis 超时），
+# 直接走真实 seed 路径，端到端验证 commit D 的派系 bootstrap。P2 再引 path-B 控制对。
+clear_dormant_key() {
   redis_node <<'NODE'
 import Redis from "ioredis";
 const IORedis = Redis.default ?? Redis;
 const client = new IORedis(process.env.REDIS_URL, { maxRetriesPerRequest: 2 });
-
-// schema-accurate dormant snapshot 模板（由 server serde dump 得到，对齐 NpcDormantSnapshot）。
-const base = {"char_id":"dormant:e2e:attacker","archetype":"rogue","dimension":"overworld","zone_name":"spawn","position":[16.3,64.0,4.4],"schedule_seed":11220119909606146934,"cultivation":{"realm":"Awaken","qi_current":5.0,"qi_max":10.0,"qi_max_frozen":null,"last_qi_zero_at":null,"pending_material_bonus":0.0,"composure":1.0,"composure_recover_rate":0.001},"meridian_system":{"regular":[{"id":"Lung","opened":true,"open_progress":0.0,"flow_rate":1.0,"flow_capacity":10.0,"rate_tier":0,"capacity_tier":0,"throughput_current":0.0,"integrity":1.0,"cracks":[],"opened_at":0}],"extraordinary":[]},"meridian_severed":{"severed_meridians":[],"severed_at":{},"dead_meridians":[]},"contamination":{"entries":[]},"lifespan":{"age_ticks":0.0,"max_age_ticks":110000.0},"shared_lifespan":{"born_at_tick":0,"years_lived":0.0,"cap_by_realm":120,"offline_pause_tick":null},"lifespan_extension_ledger":{"accumulated_years":0.0,"enlightenment_used":false},"death_registry":{"char_id":"dormant:e2e:attacker","death_count":0,"last_death_tick":null,"prev_death_tick":null,"last_death_zone":null},"life_record":{"character_id":"dormant:e2e:attacker","created_at":0,"biography":[],"insights_taken":[],"death_insights":[],"skill_milestones":[],"void_actions":[],"legacy_inheritor":null,"legacy_items":[],"legacy_letterbox":null,"spirit_root_first":null},"faction":{"faction_id":"attack","rank":"disciple","reputation":{"loyalty":0.5}},"patrol":{"home_zone":"spawn","anchor_index":0,"current_target":[32.0,64.0,32.0]},"loot_table":{"archetype":"rogue","entries":[{"template_id":"item.bone_coin","chance":0.5,"min_stack":3,"max_stack":12}]},"intent":{"cultivate":{"zone":"spawn"}},"dormant_since_tick":0,"last_dormant_tick_processed":0,"initial_qi":5.0,"qi_ledger_net":0.0};
-
-function variant(id, faction, pos) {
-  const s = structuredClone(base);
-  s.char_id = id;
-  s.faction.faction_id = faction;
-  s.position = pos;
-  s.death_registry.char_id = id;
-  s.life_record.character_id = id;
-  return s;
-}
-
-const attacker = variant("dormant:e2e:attacker", "attack", [16.3, 64.0, 4.4]);
-const defender = variant("dormant:e2e:defender", "defend", [18.0, 64.0, 6.0]);
-
 await client.del("bong:npc/dormant");
-await client.hset("bong:npc/dormant", attacker.char_id, JSON.stringify(attacker));
-await client.hset("bong:npc/dormant", defender.char_id, JSON.stringify(defender));
-const got = await client.hlen("bong:npc/dormant").catch(() => null);
-console.log(`[observe] seeded hostile dormant pair (hlen=${got})`);
+console.log("[observe] cleared bong:npc/dormant → server will default-seed factioned rogues");
 await client.quit();
 process.exit(0);
 NODE
@@ -186,7 +175,8 @@ const client = new IORedis(process.env.REDIS_URL, { maxRetriesPerRequest: 2 });
 const cmd = {
   v: 1,
   id: `e2e_spawn_${Date.now()}`,
-  source: "deduction",
+  // AgentCommandV1.source 只接受 arbiter|calamity|mutation|era（schema/agent_command.rs:48）。
+  source: "arbiter",
   commands: [ { type: "spawn_npc", target: "spawn", params: { archetype: "rogue" } } ],
 };
 const delivered = await client.publish("bong:agent_command", JSON.stringify(cmd));
@@ -196,7 +186,15 @@ process.exit(0);
 NODE
 }
 
-# 读 bong:qi/ledger HASH 并断言 total_observed ≈ EXPECTED_TOTAL（精确守恒）。
+# 读 bong:qi/ledger HASH 做守恒可观测断言。
+#
+# 关键纠正：`total_observed = player+zone+container+ledger` 是**已落位**真元（minimal
+# 测试世界起服后 zone spirit_qi 很低，实测 ≈7），而**守恒总量恒定的 100 是天道预算
+# `budget_*`**（zero-sum 的真锚点，worldview §十）。二者不是一回事——plan 原文把"已落位"
+# 误当"预算"。这里断言真正守恒量：
+#   ① budget_initial_total 必须严格 == DEFAULT_SPIRIT_QI_TOTAL（全服灵气恒定）；
+#   ② budget_current_total 只被时代衰减拉低 → ∈ (0, initial]；
+#   ③ total_observed（已落位）必须 ≥0 且 ≤ 预算（不能凭空多出真元 = 吞/造真元红线）。
 assert_qi_ledger() {
   local expected="$1"
   EXPECTED_TOTAL="$expected" redis_node <<'NODE'
@@ -209,13 +207,23 @@ await client.quit();
 const keys = Object.keys(hash);
 if (keys.length === 0) { console.error("[observe] bong:qi/ledger is EMPTY post-boot"); process.exit(2); }
 const total = Number(hash.total_observed);
-console.log(`[observe] bong:qi/ledger fields=${keys.length} total_observed=${total} expected≈${expected}`);
-// 守恒容差：起服后无 EraDecay，total_observed 应 ≈ DEFAULT_SPIRIT_QI_TOTAL。
-// 容差放宽到 1.0 吸收 dormant seed/regen 在 zone↔npc 间的小幅再分配（仍是守恒内转移）。
-if (!Number.isFinite(total)) { console.error("[observe] total_observed not finite"); process.exit(3); }
-if (Math.abs(total - expected) > 1.0) {
-  console.error(`[observe] total_observed=${total} drifted from expected ${expected} by >1.0`);
-  process.exit(4);
+const budgetInit = Number(hash.budget_initial_total);
+const budgetCur = Number(hash.budget_current_total);
+console.log(`[observe] bong:qi/ledger fields=${keys.length} total_observed=${total} budget_initial=${budgetInit} budget_current=${budgetCur} (守恒总量=budget≈${expected})`);
+if (![total, budgetInit, budgetCur].every(Number.isFinite)) {
+  console.error("[observe] ledger numbers not finite"); process.exit(3);
+}
+// ① 守恒预算 == DEFAULT_SPIRIT_QI_TOTAL（严格，全服灵气恒定）。
+if (Math.abs(budgetInit - expected) > 1e-6) {
+  console.error(`[observe] budget_initial_total=${budgetInit} != DEFAULT_SPIRIT_QI_TOTAL ${expected}`); process.exit(4);
+}
+// ② current 只被时代衰减拉低：∈ (0, initial]。
+if (budgetCur <= 0 || budgetCur > budgetInit + 1e-6) {
+  console.error(`[observe] budget_current_total=${budgetCur} 越界 (应 ∈ (0, ${budgetInit}])`); process.exit(5);
+}
+// ③ 已落位真元 ≥0 且不得超过预算（超过 = 凭空造真元，吞/造真元红线）。
+if (total < 0 || total > budgetCur + 1e-6) {
+  console.error(`[observe] total_observed=${total} 超出守恒预算 ${budgetCur}（凭空多出真元）`); process.exit(6);
 }
 process.exit(0);
 NODE
@@ -330,11 +338,11 @@ pass "redis ready"
 
 echo ""
 CURRENT_STAGE="seed"
-echo "=== [2/6] Path-B seed hostile dormant (HSET before boot) ==="
-if seed_hostile_dormant >>"$OBSERVE_LOG" 2>&1; then
-  pass "seeded hostile dormant pair via HSET"
+echo "=== [2/6] Clean dormant slate (server default-seeds factioned rogues on boot) ==="
+if clear_dormant_key >>"$OBSERVE_LOG" 2>&1; then
+  pass "cleared bong:npc/dormant (server will default-seed factioned rogues)"
 else
-  finalize_failure "seed" "failed to HSET hostile dormant pair; see $OBSERVE_LOG"
+  finalize_failure "seed" "failed to clear bong:npc/dormant; see $OBSERVE_LOG"
 fi
 
 echo ""
@@ -352,8 +360,9 @@ echo "=== [4/6] Server startup (deterministic env) ==="
 (
   export PATH="$RUST_PATH"
   export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-/tmp/bong-target}"
-  # store 非空（path-B HSET 已种）→ 默认 seed 跳过；但仍设小值防 0。
-  export BONG_ROGUE_SEED_COUNT="${BONG_ROGUE_SEED_COUNT:-0}"
+  # 默认 seed 8 个 dormant rogue（commit D 按 char_id 哈希赋 Attack/Defend）。小值避免
+  # 1000 条全量 bong:npc/dormant HASH 替换触发 redis 3s 超时（实测 1000 必超时、8 秒级完成）。
+  export BONG_DORMANT_ROGUE_SEED_COUNT="${BONG_DORMANT_ROGUE_SEED_COUNT:-8}"
   export BONG_SKIP_SKIN_PREFETCH="${BONG_SKIP_SKIN_PREFETCH:-1}"
   export BONG_SIM_SEED="$SIM_SEED"
   export BONG_DORMANT_TICK_INTERVAL="$DORMANT_TICK_INTERVAL"
@@ -374,11 +383,11 @@ else
   finalize_failure "server" "missing redis subscribed anchor in $SERVER_LOG"
 fi
 
-# dormant store restore anchor（path-B seed 起效）。
-if wait_for_pattern "$SERVER_LOG" "loaded [0-9]+ dormant NPC snapshot" 60; then
-  pass "dormant store restored from path-B HSET"
+# dormant 默认 seed anchor（commit D 赋派系起效）。
+if wait_for_pattern "$SERVER_LOG" "seeded [0-9]+ dormant rogue NPC snapshots" 120; then
+  pass "server default-seeded factioned dormant rogues"
 else
-  echo "[observe] note: dormant restore log anchor not found (continuing; HGETALL will verify)"
+  echo "[observe] note: seed log anchor not found (continuing; HGETALL will verify)"
 fi
 
 echo ""
@@ -399,11 +408,19 @@ else
   finalize_failure "observe" "did not observe bong:npc/spawn with zone=spawn after agent_command publish; see $REDIS_SUB_LOG"
 fi
 
-# (b) HGETALL bong:npc/dormant → seed took effect + faction non-None (attack+defend).
-if assert_seeded_factions >>"$OBSERVE_LOG" 2>&1; then
-  pass "HGETALL bong:npc/dormant confirms seeded hostile factions (attack+defend, no null)"
+# (b) HGETALL bong:npc/dormant → seed took effect + faction non-None (attack+defend)。
+# dormant→redis HASH 同步挂在周期 world_state publish 上（network/mod.rs:936，每
+# WORLD_STATE_PUBLISH_INTERVAL_TICKS=200 tick ≈ 10s 一次，且是 debug 日志不打 info）。
+# 起服后首个 publish 周期前 HASH 仍空，故轮询重试等首次同步落地。
+FACTIONS_OK=0
+for _ in $(seq 1 30); do
+  if assert_seeded_factions >>"$OBSERVE_LOG" 2>&1; then FACTIONS_OK=1; break; fi
+  sleep 1
+done
+if [ "$FACTIONS_OK" -eq 1 ]; then
+  pass "HGETALL bong:npc/dormant confirms seeded factions (attack+defend, no null)"
 else
-  finalize_failure "observe" "seeded dormant faction assertion failed; see $OBSERVE_LOG"
+  finalize_failure "observe" "seeded dormant faction assertion failed after 30s; see $OBSERVE_LOG"
 fi
 
 # (c) bong:qi/ledger non-empty + total_observed ≈ DEFAULT_SPIRIT_QI_TOTAL (exact conservation).
@@ -422,9 +439,9 @@ for _ in $(seq 1 30); do
   sleep 1
 done
 if [ "$LEDGER_OK" -eq 1 ]; then
-  pass "bong:qi/ledger non-empty + total_observed ≈ DEFAULT_SPIRIT_QI_TOTAL ($EXPECTED_TOTAL)"
+  pass "bong:qi/ledger non-empty + budget==DEFAULT_SPIRIT_QI_TOTAL ($EXPECTED_TOTAL) + 已落位真元在预算内"
 else
-  finalize_failure "observe" "bong:qi/ledger empty or total_observed drifted from $EXPECTED_TOTAL; see $OBSERVE_LOG"
+  finalize_failure "observe" "bong:qi/ledger empty / budget!=$EXPECTED_TOTAL / 已落位真元超预算; see $OBSERVE_LOG"
 fi
 
 echo ""

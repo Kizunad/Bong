@@ -81,14 +81,13 @@ catch { try { client.disconnect(); } catch {} process.exit(1); }
 NODE
 }
 
-seed_one_dormant() {
+clear_dormant_key() {
   redis_node <<'NODE'
 import Redis from "ioredis";
 const IORedis = Redis.default ?? Redis;
 const client = new IORedis(process.env.REDIS_URL, { maxRetriesPerRequest: 2 });
-const snap = {"char_id":"dormant:smoke:1","archetype":"rogue","dimension":"overworld","zone_name":"spawn","position":[16.3,64.0,4.4],"schedule_seed":11220119909606146934,"cultivation":{"realm":"Awaken","qi_current":5.0,"qi_max":10.0,"qi_max_frozen":null,"last_qi_zero_at":null,"pending_material_bonus":0.0,"composure":1.0,"composure_recover_rate":0.001},"meridian_system":{"regular":[{"id":"Lung","opened":true,"open_progress":0.0,"flow_rate":1.0,"flow_capacity":10.0,"rate_tier":0,"capacity_tier":0,"throughput_current":0.0,"integrity":1.0,"cracks":[],"opened_at":0}],"extraordinary":[]},"meridian_severed":{"severed_meridians":[],"severed_at":{},"dead_meridians":[]},"contamination":{"entries":[]},"lifespan":{"age_ticks":0.0,"max_age_ticks":110000.0},"shared_lifespan":{"born_at_tick":0,"years_lived":0.0,"cap_by_realm":120,"offline_pause_tick":null},"lifespan_extension_ledger":{"accumulated_years":0.0,"enlightenment_used":false},"death_registry":{"char_id":"dormant:smoke:1","death_count":0,"last_death_tick":null,"prev_death_tick":null,"last_death_zone":null},"life_record":{"character_id":"dormant:smoke:1","created_at":0,"biography":[],"insights_taken":[],"death_insights":[],"skill_milestones":[],"void_actions":[],"legacy_inheritor":null,"legacy_items":[],"legacy_letterbox":null,"spirit_root_first":null},"faction":{"faction_id":"attack","rank":"disciple","reputation":{"loyalty":0.5}},"patrol":{"home_zone":"spawn","anchor_index":0,"current_target":[32.0,64.0,32.0]},"loot_table":{"archetype":"rogue","entries":[{"template_id":"item.bone_coin","chance":0.5,"min_stack":3,"max_stack":12}]},"intent":{"cultivate":{"zone":"spawn"}},"dormant_since_tick":0,"last_dormant_tick_processed":0,"initial_qi":5.0,"qi_ledger_net":0.0};
 await client.del("bong:npc/dormant");
-await client.hset("bong:npc/dormant", snap.char_id, JSON.stringify(snap));
+console.log("[smoke] cleared bong:npc/dormant → server default-seeds factioned rogues");
 await client.quit();
 process.exit(0);
 NODE
@@ -163,14 +162,14 @@ echo "[redis] provider: $REDIS_PROVIDER"
 pass "redis ready"
 
 CURRENT_STAGE="seed"
-seed_one_dormant >>"$OBSERVE_LOG" 2>&1 || finalize_failure "seed" "HSET dormant failed; see $OBSERVE_LOG"
-pass "seeded one factioned dormant via HSET"
+clear_dormant_key >>"$OBSERVE_LOG" 2>&1 || finalize_failure "seed" "clear dormant failed; see $OBSERVE_LOG"
+pass "cleared bong:npc/dormant (server default-seeds factioned rogues)"
 
 CURRENT_STAGE="server"
 (
   export PATH="$RUST_PATH"
   export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-/tmp/bong-target}"
-  export BONG_ROGUE_SEED_COUNT="${BONG_ROGUE_SEED_COUNT:-0}"
+  export BONG_DORMANT_ROGUE_SEED_COUNT="${BONG_DORMANT_ROGUE_SEED_COUNT:-8}"
   export BONG_SKIP_SKIN_PREFETCH="${BONG_SKIP_SKIN_PREFETCH:-1}"
   export BONG_SIM_SEED="$SIM_SEED"
   export BONG_DORMANT_TICK_INTERVAL="$DORMANT_TICK_INTERVAL"
