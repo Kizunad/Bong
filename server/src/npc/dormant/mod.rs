@@ -379,11 +379,80 @@ fn load_dormant_snapshots_from_redis(store: &mut NpcDormantStore) -> Result<usiz
     let mut connection = client
         .get_connection()
         .map_err(|error| format!("failed to connect Redis for {NPC_DORMANT_REDIS_KEY}: {error}"))?;
+    // One-time startup janitor: sweep any `{key}:tmp*` blobs left behind by an
+    // earlier session whose hash-replace timed out (the bug this plan fixes
+    // could leak hundreds of MB of nonce-suffixed temp keys). Best-effort — a
+    // failed sweep must never block dormant restore.
+    purge_leaked_dormant_temp_keys(&mut connection);
     let entries: HashMap<String, String> = redis::cmd("HGETALL")
         .arg(NPC_DORMANT_REDIS_KEY)
         .query(&mut connection)
         .map_err(|error| format!("failed to HGETALL {NPC_DORMANT_REDIS_KEY}: {error}"))?;
     load_dormant_snapshots_from_hash_entries(store, entries)
+}
+
+/// SCAN glob that matches every temporary key the hash-replace dance can
+/// create for the dormant store. Both the current deterministic `{key}:tmp`
+/// and any legacy `{key}:tmp:<nonce>` survivors are covered by the trailing `*`.
+fn dormant_tmp_scan_pattern() -> String {
+    format!("{NPC_DORMANT_REDIS_KEY}:tmp*")
+}
+
+/// Given the raw keys returned by a SCAN, keep only the dormant temp keys that
+/// are safe to delete. The live hash `bong:npc/dormant` itself shares the
+/// `{key}` prefix but is NOT a temp key (it lacks the `:tmp` segment), so it
+/// must be excluded — deleting it would wipe the persisted snapshots. Any key
+/// that genuinely starts with `{key}:tmp` (the deterministic temp key or a
+/// legacy nonce-suffixed leak) is purgeable.
+fn tmp_keys_to_purge(scanned: &[String]) -> Vec<String> {
+    let tmp_prefix = format!("{NPC_DORMANT_REDIS_KEY}:tmp");
+    scanned
+        .iter()
+        .filter(|key| key.starts_with(&tmp_prefix))
+        .cloned()
+        .collect()
+}
+
+/// Best-effort sweep of leaked dormant temp keys on a blocking connection.
+/// Never returns an error: persistence restore must proceed even if the
+/// janitor cannot run (e.g. SCAN unsupported by a proxy).
+fn purge_leaked_dormant_temp_keys(connection: &mut redis::Connection) {
+    let pattern = dormant_tmp_scan_pattern();
+    // `Cmd::iter` takes `self` by value, so the builder must be owned (not the
+    // `&mut Cmd` the chained `.arg(..)` calls return) before iterating.
+    let mut scan_cmd = redis::cmd("SCAN");
+    scan_cmd
+        .cursor_arg(0)
+        .arg("MATCH")
+        .arg(pattern.as_str())
+        .arg("COUNT")
+        .arg(512);
+    let scanned: Vec<String> = match scan_cmd.iter::<String>(connection) {
+        Ok(iter) => iter.collect(),
+        Err(error) => {
+            tracing::warn!(
+                "[bong][npc] dormant temp-key janitor SCAN failed (skipping cleanup): {error}"
+            );
+            return;
+        }
+    };
+    let purgeable = tmp_keys_to_purge(&scanned);
+    if purgeable.is_empty() {
+        return;
+    }
+    let mut del = redis::cmd("DEL");
+    for key in &purgeable {
+        del.arg(key.as_str());
+    }
+    match del.query::<i64>(connection) {
+        Ok(deleted) => tracing::info!(
+            "[bong][npc] dormant temp-key janitor purged {deleted} leaked `{NPC_DORMANT_REDIS_KEY}:tmp*` key(s)"
+        ),
+        Err(error) => tracing::warn!(
+            "[bong][npc] dormant temp-key janitor DEL failed (left {} key(s)): {error}",
+            purgeable.len()
+        ),
+    }
 }
 
 fn load_dormant_snapshots_from_hash_entries(
@@ -964,6 +1033,61 @@ mod tests {
     use crate::world::dimension::DimensionKind;
     use crate::world::zone::{Zone, DEFAULT_SPAWN_ZONE_NAME};
     use valence::prelude::Events;
+
+    /// P0 bug② contract: the startup janitor purges leaked `{key}:tmp*` keys
+    /// but must never delete the live persisted hash. The deletion target is
+    /// decided by `tmp_keys_to_purge` over the SCAN results, so this pins that
+    /// decision directly (the SCAN/DEL I/O wrapper is best-effort glue around
+    /// it). Covers: empty input, mixed real-leak + legacy-nonce-leak, the
+    /// off-by-one where the live key shares the prefix but is NOT a temp key,
+    /// and an unrelated key.
+    #[test]
+    fn startup_janitor_purges_leaked_tmp_keys() {
+        // Empty SCAN -> nothing to purge.
+        assert!(
+            tmp_keys_to_purge(&[]).is_empty(),
+            "expected no purge targets from an empty SCAN because there is nothing leaked; got a non-empty list"
+        );
+
+        // The glob the janitor hands to SCAN must be anchored on the dormant key
+        // and end in `:tmp*` so it catches both the deterministic temp key and
+        // legacy nonce-suffixed survivors, and nothing outside the dormant key.
+        assert_eq!(
+            dormant_tmp_scan_pattern(),
+            "bong:npc/dormant:tmp*",
+            "expected the janitor SCAN glob to be `{{key}}:tmp*` so it matches every dormant temp key (deterministic + legacy nonce) and only those; got a different glob"
+        );
+
+        let scanned = vec![
+            // Deterministic temp key from the current code path -> purge.
+            "bong:npc/dormant:tmp".to_string(),
+            // Legacy nonce-suffixed leak from the old code path -> purge.
+            "bong:npc/dormant:tmp:1780000000000000000".to_string(),
+            // The live persisted hash: shares the `bong:npc/dormant` prefix but
+            // has NO `:tmp` segment -> must be KEPT (off-by-one boundary).
+            NPC_DORMANT_REDIS_KEY.to_string(),
+            // Unrelated key -> kept.
+            "bong:world_state".to_string(),
+        ];
+        let purge = tmp_keys_to_purge(&scanned);
+
+        assert_eq!(
+            purge,
+            vec![
+                "bong:npc/dormant:tmp".to_string(),
+                "bong:npc/dormant:tmp:1780000000000000000".to_string(),
+            ],
+            "expected exactly the two `{{key}}:tmp...` leaks to be purged because they are dead temp blobs, while the live `{NPC_DORMANT_REDIS_KEY}` hash and the unrelated key are preserved; got {purge:?}"
+        );
+        assert!(
+            !purge.contains(&NPC_DORMANT_REDIS_KEY.to_string()),
+            "expected the live persisted dormant hash to NEVER be a purge target (deleting it wipes all snapshots); it was selected for deletion"
+        );
+        assert!(
+            !purge.contains(&"bong:world_state".to_string()),
+            "expected unrelated keys to be left untouched by the dormant janitor; an unrelated key was selected for deletion"
+        );
+    }
 
     fn zone() -> Zone {
         Zone {

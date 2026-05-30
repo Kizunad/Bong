@@ -1,7 +1,7 @@
 use crossbeam_channel::{Receiver, Sender, TryRecvError};
 use serde_json::{Map, Value};
 use std::fmt;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::Duration;
 
 use crate::cultivation::void::components::VoidActionKind;
 use crate::fauna::rat_phase::RatPhaseChangeEvent;
@@ -1485,10 +1485,27 @@ async fn execute_hash_replace(
             Ok(())
         }
         Ok(Err(error)) => Err(format!("failed to replace hash {key}: {error}")),
-        Err(_) => Err(format!(
-            "timed out replacing hash {key} after {:?}",
-            REDIS_HASH_REPLACE_TIMEOUT
-        )),
+        Err(_) => {
+            // `tokio::timeout` cancels (drops) the in-flight future instead of
+            // returning Err, so `execute_hash_replace_atomic`'s inline cleanup
+            // never runs and the deterministic temp key may be left behind
+            // mid-write. Issue a best-effort DEL (bounded by REDIS_IO_TIMEOUT)
+            // so a timed-out write does not leak the temp key. Failure here is
+            // tolerated: the next attempt's leading DEL also clears it, and the
+            // startup janitor sweeps any survivor.
+            let temp_key = dormant_temp_key(key);
+            let _ = tokio::time::timeout(
+                REDIS_IO_TIMEOUT,
+                redis::cmd("DEL")
+                    .arg(temp_key.as_str())
+                    .query_async::<i64>(pub_conn),
+            )
+            .await;
+            Err(format!(
+                "timed out replacing hash {key} after {:?}",
+                REDIS_HASH_REPLACE_TIMEOUT
+            ))
+        }
     }
 }
 
@@ -1502,7 +1519,15 @@ async fn execute_hash_replace_atomic(
         return Ok(());
     }
 
-    let temp_key = format!("{key}:tmp:{}", redis_temp_key_nonce());
+    // Deterministic temp key (single `{key}:tmp` per logical key) instead of a
+    // per-call nanosecond nonce. A nonce produced a brand-new key on every
+    // retry, so a `tokio::timeout` that *drops* the in-flight future (rather
+    // than returning Err — the drop path skips the inline cleanup below) leaked
+    // an ever-growing pile of `{key}:tmp:<nonce>` blobs and snowballed Redis
+    // memory. With a fixed name, every attempt overwrites the same key: the
+    // leading DEL clears any stale leftover, and the timeout branch in
+    // `execute_hash_replace` issues a best-effort DEL of this exact key.
+    let temp_key = dormant_temp_key(key);
     let _: i64 = redis::cmd("DEL")
         .arg(temp_key.as_str())
         .query_async(pub_conn)
@@ -1539,11 +1564,14 @@ async fn execute_hash_replace_atomic(
     Ok(())
 }
 
-fn redis_temp_key_nonce() -> u128 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_nanos()
+/// Deterministic temporary hash key for the atomic replace dance.
+///
+/// One stable name per logical key (`{key}:tmp`) so retries overwrite the
+/// same key instead of leaking a fresh nonce-suffixed blob each time. A
+/// `tokio::timeout` that drops the in-flight future skips the inline
+/// cleanup, so the caller's timeout branch DELs exactly this key.
+fn dormant_temp_key(key: &str) -> String {
+    format!("{key}:tmp")
 }
 
 async fn execute_publish(
@@ -2424,6 +2452,44 @@ mod redis_bridge_tests {
                 payload: "{}".to_string(),
             }),
             "expected PublishFanout to stay inline; it is not a bulk dormant/world_state write"
+        );
+    }
+
+    /// P0 bug② contract: a timed-out hash replace must not leak its temp key.
+    ///
+    /// The leak only matters because `tokio::timeout` *drops* the in-flight
+    /// `execute_hash_replace_atomic` future (skipping its inline `DEL temp`
+    /// cleanup), so the cleanup the timeout branch issues and the leading `DEL`
+    /// of the next attempt can only ever clear the leak if every attempt targets
+    /// the *same* deterministic temp key. The previous nanosecond-nonce scheme
+    /// minted a fresh `{key}:tmp:<nonce>` per call, so no later DEL could name a
+    /// dropped key and they accumulated without bound. This pins the contract
+    /// that makes cleanup possible: one stable `{key}:tmp` name, identical
+    /// across calls, never carrying the old `:tmp:<nonce>` suffix.
+    #[test]
+    fn hash_replace_timeout_cleans_temp_key() {
+        let temp = dormant_temp_key(NPC_DORMANT_REDIS_KEY);
+        assert_eq!(
+            temp, "bong:npc/dormant:tmp",
+            "expected the dormant temp key to be the deterministic `{{key}}:tmp` so a timed-out write's best-effort DEL targets the exact leaked key; got `{temp}`"
+        );
+        assert!(
+            !temp.contains(":tmp:"),
+            "expected NO `:tmp:` nonce segment because a per-call nonce makes every retry mint a brand-new key that later DELs can never name (the exact temp-key leak this fix removes); got `{temp}`"
+        );
+        // Idempotent across calls: two replaces of the same logical key reuse
+        // the one temp key, so a retry's leading DEL overwrites rather than
+        // accumulates.
+        assert_eq!(
+            dormant_temp_key(NPC_DORMANT_REDIS_KEY),
+            dormant_temp_key(NPC_DORMANT_REDIS_KEY),
+            "expected dormant_temp_key to be deterministic for a given key so retries overwrite the same temp key; got differing names which would re-introduce leakage"
+        );
+        // Distinct logical keys still get distinct temp keys (no cross-key clobber).
+        assert_ne!(
+            dormant_temp_key("bong:npc/dormant"),
+            dormant_temp_key("bong:other/store"),
+            "expected distinct logical keys to map to distinct temp keys so unrelated replaces never collide; got identical temp keys"
         );
     }
 
