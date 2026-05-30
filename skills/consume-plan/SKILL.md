@@ -47,6 +47,7 @@ The source command was written for slash-command systems. In Codex:
 
 - Interpret `$ARGUMENTS` as the normalized `PLAN`.
 - Use Codex tools for edits and command execution.
+- **Step 3 is orchestrated via the Claude Code `Workflow` tool, which Codex does not have.** In Codex, implement via the command's **§3.5 linear fallback** (per-TODO atomic commits + the test matrix, ≤2 fix rounds, saturating tests); steps 1–2 and 4–9 are unchanged. Do not attempt to call a `Workflow` tool.
 - Use subagents only when the user explicitly authorizes delegation, or when active session instructions permit it.
 - Respect the active dangerous-operation policy. If the current session requires explicit confirmation for `git commit`, `git push`, `gh pr merge`, branch deletion, or worktree cleanup, ask before running those commands even if the source command is written as a zero-interaction flow.
 
