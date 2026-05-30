@@ -1020,7 +1020,10 @@ mod tests {
         assert_eq!(notice.life_record_snapshot.as_deref(), Some("少时醒灵"));
         assert_eq!(notice.age_ticks, 120.0);
         assert_eq!(notice.max_age_ticks, 100.0);
-        assert!(!notice.from_dormant_combat, "默认构造点不是离屏 dormant 互殴");
+        assert!(
+            !notice.from_dormant_combat,
+            "默认构造点不是离屏 dormant 互殴"
+        );
         assert_eq!(notice.pos, None);
     }
 

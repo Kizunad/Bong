@@ -76,7 +76,10 @@ fn parse_sim_seed(raw: Option<&str>) -> u64 {
 
 /// 读取 `BONG_DORMANT_TICK_INTERVAL`：合法（可解析 u32 且 > 0）才覆盖，否则回退默认。
 fn dormant_tick_interval_from_env(default: u32) -> u32 {
-    parse_dormant_tick_interval(std::env::var(DORMANT_TICK_INTERVAL_ENV).ok().as_deref(), default)
+    parse_dormant_tick_interval(
+        std::env::var(DORMANT_TICK_INTERVAL_ENV).ok().as_deref(),
+        default,
+    )
 }
 
 /// 读取 `BONG_SIM_SEED`：可解析 u64 才采用，否则回退默认种子 0（= 现有行为）。
@@ -1592,8 +1595,14 @@ mod tests {
         );
         // from_env 默认（未注入 env 旋钮的字段）应与 default 一致。
         let cfg = NpcVirtualizationConfig::default();
-        assert_eq!(cfg.dormant_tick_interval_ticks, DORMANT_LIFECYCLE_TICK_INTERVAL);
-        assert_eq!(cfg.sim_seed, 0, "默认 sim_seed 必须为 0 = 现有 AbstractCombatSeed 行为");
+        assert_eq!(
+            cfg.dormant_tick_interval_ticks,
+            DORMANT_LIFECYCLE_TICK_INTERVAL
+        );
+        assert_eq!(
+            cfg.sim_seed, 0,
+            "默认 sim_seed 必须为 0 = 现有 AbstractCombatSeed 行为"
+        );
     }
 
     #[test]

@@ -123,8 +123,8 @@ use crate::persistence::{
     AgentWorldModelSnapshotRecord, PersistenceSettings, WORLD_MODEL_STATE_KEY,
 };
 use crate::player::gameplay::PendingGameplayNarrations;
-use crate::qi_physics::{build_qi_ledger_hash_fields, summarize_world_qi, WorldQiAccount};
 use crate::player::state::{canonical_player_id, PlayerState};
+use crate::qi_physics::{build_qi_ledger_hash_fields, summarize_world_qi, WorldQiAccount};
 use crate::schema::agent_world_model::{AgentWorldModelEnvelopeV1, AgentWorldModelSnapshotV1};
 use crate::schema::common::{
     CommandType, EventKind, NarrationKind, NarrationScope, NarrationStyle, NpcStateKind,
@@ -968,7 +968,10 @@ fn publish_qi_ledger_to_redis(world: &mut bevy_ecs::world::World) {
     {
         let mut timer = world.resource_mut::<QiLedgerTimer>();
         timer.ticks += 1;
-        if !timer.ticks.is_multiple_of(WORLD_STATE_PUBLISH_INTERVAL_TICKS) {
+        if !timer
+            .ticks
+            .is_multiple_of(WORLD_STATE_PUBLISH_INTERVAL_TICKS)
+        {
             return;
         }
     }

@@ -235,7 +235,9 @@ impl WorldQiAccount {
     /// 天然有序）迭代每个账户的余额，供 `bong:qi/ledger` 把 per-zone / per-npc
     /// 账本暴露给外部脚本做精确守恒断言。只读，不改账本。
     pub fn iter_balances(&self) -> impl Iterator<Item = (&QiAccountId, f64)> {
-        self.balances.iter().map(|(account, balance)| (account, *balance))
+        self.balances
+            .iter()
+            .map(|(account, balance)| (account, *balance))
     }
 }
 
@@ -291,10 +293,16 @@ pub fn build_qi_ledger_hash_fields(
     accounts: &WorldQiAccount,
 ) -> Vec<(String, String)> {
     let mut fields = vec![
-        ("total_observed".to_string(), snapshot.total_observed().to_string()),
+        (
+            "total_observed".to_string(),
+            snapshot.total_observed().to_string(),
+        ),
         ("player_qi".to_string(), snapshot.player_qi.to_string()),
         ("zone_qi".to_string(), snapshot.zone_qi.to_string()),
-        ("container_qi".to_string(), snapshot.container_qi.to_string()),
+        (
+            "container_qi".to_string(),
+            snapshot.container_qi.to_string(),
+        ),
         ("ledger_qi".to_string(), snapshot.ledger_qi.to_string()),
         (
             "budget_initial_total".to_string(),
@@ -304,7 +312,10 @@ pub fn build_qi_ledger_hash_fields(
             "budget_current_total".to_string(),
             snapshot.budget_current_total.to_string(),
         ),
-        ("era_decay_accum".to_string(), snapshot.era_decay_accum.to_string()),
+        (
+            "era_decay_accum".to_string(),
+            snapshot.era_decay_accum.to_string(),
+        ),
     ];
     // BTreeMap 有序迭代 → per-account 字段确定性排序，外部脚本可稳定 diff。
     for (account, balance) in accounts.iter_balances() {
@@ -644,7 +655,9 @@ mod tests {
             .iter()
             .find(|(key, _)| key == name)
             .map(|(_, value)| value.as_str())
-            .unwrap_or_else(|| panic!("expected ledger HASH to carry field {name:?}, got {fields:?}"))
+            .unwrap_or_else(|| {
+                panic!("expected ledger HASH to carry field {name:?}, got {fields:?}")
+            })
     }
 
     #[test]
@@ -676,7 +689,10 @@ mod tests {
             DEFAULT_SPIRIT_QI_TOTAL.to_string(),
             "预算字段取 const，不写字面 100"
         );
-        assert_eq!(field(&fields, "budget_current_total"), DEFAULT_SPIRIT_QI_TOTAL.to_string());
+        assert_eq!(
+            field(&fields, "budget_current_total"),
+            DEFAULT_SPIRIT_QI_TOTAL.to_string()
+        );
         assert_eq!(field(&fields, "era_decay_accum"), "0");
     }
 
@@ -684,8 +700,12 @@ mod tests {
     fn qi_ledger_hash_fields_emit_one_row_per_account() {
         // per-zone / per-npc 账户余额各占一行 account:<id>，外部脚本可逐账户对账。
         let mut accounts = WorldQiAccount::default();
-        accounts.set_balance(QiAccountId::zone("spawn"), 25.0).unwrap();
-        accounts.set_balance(QiAccountId::npc("dormant:rogue:7"), 3.5).unwrap();
+        accounts
+            .set_balance(QiAccountId::zone("spawn"), 25.0)
+            .unwrap();
+        accounts
+            .set_balance(QiAccountId::npc("dormant:rogue:7"), 3.5)
+            .unwrap();
         let fields = build_qi_ledger_hash_fields(&snapshot(0.0), &accounts);
 
         assert_eq!(
@@ -703,7 +723,10 @@ mod tests {
             .iter()
             .filter(|(key, _)| key.starts_with(QI_LEDGER_ACCOUNT_FIELD_PREFIX))
             .count();
-        assert_eq!(account_rows, 2, "两个账户应产出两行 account: 字段，不多不少");
+        assert_eq!(
+            account_rows, 2,
+            "两个账户应产出两行 account: 字段，不多不少"
+        );
     }
 
     #[test]
@@ -711,7 +734,9 @@ mod tests {
         // 起服后 ledger 尚未记账：无 account: 行，但 total_observed 已可读（来自 zone/player 快照）。
         let fields = build_qi_ledger_hash_fields(&snapshot(100.0), &WorldQiAccount::default());
         assert!(
-            fields.iter().all(|(key, _)| !key.starts_with(QI_LEDGER_ACCOUNT_FIELD_PREFIX)),
+            fields
+                .iter()
+                .all(|(key, _)| !key.starts_with(QI_LEDGER_ACCOUNT_FIELD_PREFIX)),
             "空账本不应有 account: 行"
         );
         assert_eq!(

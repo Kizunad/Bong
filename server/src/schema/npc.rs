@@ -74,7 +74,10 @@ mod tests {
         assert!(value.get("faction_id").is_none());
         assert!(value.get("life_record_snapshot").is_none());
         // pos 为 None 时不上线（skip_serializing_if）。
-        assert!(value.get("pos").is_none(), "pos=None 应被 skip，不出现在 wire JSON");
+        assert!(
+            value.get("pos").is_none(),
+            "pos=None 应被 skip，不出现在 wire JSON"
+        );
         // from_dormant_combat 是 bool（非 Option），始终上线，默认场景为 false。
         assert_eq!(
             value.get("from_dormant_combat"),
