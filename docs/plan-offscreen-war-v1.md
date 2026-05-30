@@ -50,7 +50,10 @@
   - **server**：`bong:npc/death`（加 `from_dormant_combat:bool` + `pos`）、新 `bong:npc/combat`、新 `bong:qi/ledger`、P5 `bong:faction_state`、P6 `bong:faction_war`
   - **agent**：`agent/packages/schema/src/npc.ts`（`NpcDeathV1` TypeBox，`additionalProperties:false` → **必须双端同步加字段**，见 §10.1 #4）；`redis-ipc.ts` 消费 `from_dormant_combat` 聚合派系叙事
   - **client**：P6 `FactionWarHudLayer` / P7 `npc_lod` 远视野渲染（仅这两层涉及 client）
-- **worldview 锚点**：§二 守恒律（`SPIRIT_QI_TOTAL`）/ §三 NPC 与玩家平等（死亡同规则）/ §十一 散修江湖派系势力消长。**注意 §十一 行号可能漂移，写死锚点前需人工重定位，见 §10.1 #6**。
+- **worldview 锚点**（已实地重定位，2026-05-30）：
+  - **守恒律** → §十「资源与匮乏」→「灵气是零和的」（行 864-872，正典原句"全服灵气总量固定（`SPIRIT_QI_TOTAL` = 100），且天道会缓慢回收（每个时代衰减 1-3%）"）。**不是 §二**——§二 是「灵压环境」。
+  - **离屏散修互殴的正典依据** → §七「智能 NPC（散修）」（行 731-752，NPC 是"利己主义者"竞争者、按威胁度决策、灵气枯竭时「枯骨休眠」）+ §十「灵气是零和的」「和其他修士抢」+ §七:750「领地争夺战」。即"散修因灵气/资源争夺而互相致死"是正典；用玩家同一套物理（§七 竞争者算计同份真元）。
+  - ⚠️ **「组织化派系战争 / 派系势力消长」worldview 无专节**：NPC 在正典里是**个体散修**，仅 §十一:937-940「身份与信誉」提到"NPC 信誉度按派系 / 区域维护"（派系仅作信誉分组，非交战势力）。**P5 具名势力 / P6 派系战争层缺正典锚点——实施前须人工补 worldview 或将派系层 reframe 为"散修群体涌现行为"。见 §10.1 #6**。
 - **qi_physics 锚点**：唯一真灵气流动点 = 败者 `release_dormant_qi_to_zone` → `qi_release_to_zone` → `ledger.transfer(QiTransferReason::ReleaseToZone)`（**不新增 QiTransferReason 变体**，复用既有）。胜者真元不变（dormant 简化，仍守恒）。遗物默认 `spirit_quality=0`（零真元生成）。详见 §10.1 #5 守恒自检。
 
 ---
@@ -243,7 +246,7 @@
 **#5 守恒律红线自检（5 个流动点）** — 决议：①配对/roll = 只读 `qi_current` 算战力，零流动 ✅；②败者 release = `release_dormant_qi_to_zone`→`ledger.transfer(ReleaseToZone)`，clamp `QI_ZONE_UNIT_CAPACITY=50.0`（`constants.rs:72`），overflow 留 npc 账户不丢 ✅；③胜者真元不变（dormant 简化，未流动即未失衡）✅；④遗物 `spirit_quality=0` 不调 ledger ✅；⑤agent 叙事只读 death event ✅。**不新增 `QiTransferReason` 变体**（复用 `ReleaseToZone`）。**红线警示**：`abstract_combat_system` 的 `AbstractCombat` transfer 全仓无人 apply（真元蒸发，`abstract_combat_system.rs:261`），离屏战争**绝不能照抄 emit-only**，必须直接调 `release_dormant_qi_to_zone`。`WorldQiAccount::transfer` 真正记账入口在 `ledger.rs:197`（不是 `:145` 的构造器）。落点：P2 守恒集成测试 `assert_conservation`（`ledger.rs:326`）。
 
 **#6 worldview 锚点 + 胜者真元对称性 + 遗物持久层** —
-- worldview §十一 "派系势力消长" 行号可能已漂移（实读 947-970 是别的段）→ **写死锚点前人工重定位**；worldview 修改必须单独人工 PR，**consume-plan 不得自动改 worldview.md / CLAUDE.md / docs/CLAUDE.md**。"dormant 战斗吞真元红旗"想加进 `docs/CLAUDE.md §四` 也须人工 PR，本 plan 仅在此登记需求。
+- worldview 锚点已实地重定位（2026-05-30，见接入面）：守恒律真锚点是 **§十「灵气是零和的」(864-872)** 非 §二；离屏散修互殴有正典依据（§七 散修利己竞争 + §十 零和 + §七:750 领地争夺战）。**但核查发现"组织化派系战争 / 派系势力消长" worldview 根本无专节**——NPC 正典是个体散修，§十一:937-940 的"派系"仅是信誉分组。**结论：脊柱 P0-P4（散修资源争夺致死）正典可锚；P5 具名势力 / P6 派系战争层是孤岛红旗（无 worldview 锚点），实施 P5 前必须二选一**：(a) 人工补 worldview 加"散修势力 / 派系消长"节（单独人工 PR，consume 不得自动改 worldview）；(b) 把派系层 reframe 为"散修个体因零和争夺涌现的群体消长"（不引入"组织化宗门交战"叙事，纯用 §七/§十 现有正典）。**倾向 (b)**——更贴末法"散修江湖、无宗门收你"基调（worldview §一:4）。`docs/CLAUDE.md §四` 的"离屏 / 抽象战斗吞真元"红旗已于本轮人工补入。
 - 胜者真元不扣（vs hydrated abstract_combat 扣双方）的观感不一致 → **决议：dormant 简化不扣胜者**（少一次 ledger 操作 + 不写胜者快照），观感差异可接受（离屏本就抽象）；若后续要对齐，再走增量。
 - `PendingDormantRelic` 持久层 → **决议：persistence sqlite 表 + TTL sweep**（仿 `npc_digests` `persistence/mod.rs:949` + sweep `:541`），不用 Resource（避免 relic 与已 remove 的死者生命周期耦合成孤儿）。
 - 玩家命令测试入口（P6）→ **决议：优先 (a) 引入最小 headless MC bot 作为 PR-8 子项**；若 bot 引入成本过高，退 (b) `bong:agent_command` 等价注入 + 人工 client checklist。consume 实施时据 bot 引入难度二选一并在 PR 描述说明。
@@ -301,5 +304,6 @@ PR-1(P0 底盘+bootstrap) → PR-2(P1 纯逻辑) → PR-3(P2 战死闭环+真服
 
 **遗留 / 后续**：
 - `git rm docs/plan-npc-overhaul-v1.md` + `docs/plan-npc-combat-gear-v1.md`（两个 untracked 孤儿副本，真本已在 finished_plans/，#323/#300 已完成）——本 plan 范围外的清理项，可顺手或单独处理。
-- worldview §十一 派系消长行号重定位 + `docs/CLAUDE.md §四` 加"dormant 战斗吞真元"红旗——**人工 PR**，consume 不自动改。
+- ✅ worldview 锚点重定位 + `docs/CLAUDE.md §四` 加"离屏 / 抽象战斗吞真元"红旗——已于人工 PR 处理（2026-05-30）。
+- ⚠️ **遗留（实施 P5 前必决）**：P5 具名势力 / P6 派系战争缺 worldview 正典锚点（§10.1 #6）。倾向方案 (b) reframe 为"散修群体涌现消长"，沿用 §七/§十 现有正典，不补 worldview；若坚持"组织化宗门交战"叙事则须先人工补 worldview。脊柱 P0-P4 不受此阻塞。
 - `git rm` 四份被本 plan 取代的 skeleton（virtualize-v2/v3、faction-wars、faction-expansion）——归档本 plan 时一并处理。
