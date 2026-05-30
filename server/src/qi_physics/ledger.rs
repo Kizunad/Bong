@@ -68,6 +68,25 @@ pub enum QiAccountKind {
     Overflow,
 }
 
+impl QiAccountKind {
+    /// plan-offscreen-war-v1 P0：`bong:qi/ledger` per-account 字段 key 的**稳定** wire 串。
+    ///
+    /// 不能用 `{:?}`（Debug）——那会把外部 Redis schema 绑死到 Rust 变体名，重命名
+    /// 变体会静默改掉 wire 契约。这里显式锁定 lowercase 串，改名变体编译期 exhaustive
+    /// 检查会逼着同步更新此处（即 wire 变更必须是有意识的）。
+    fn as_wire_str(self) -> &'static str {
+        match self {
+            QiAccountKind::Player => "player",
+            QiAccountKind::Npc => "npc",
+            QiAccountKind::Zone => "zone",
+            QiAccountKind::Container => "container",
+            QiAccountKind::Rift => "rift",
+            QiAccountKind::Tiandao => "tiandao",
+            QiAccountKind::Overflow => "overflow",
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct QiAccountId {
     pub kind: QiAccountKind,
@@ -113,7 +132,8 @@ impl QiAccountId {
 
 impl std::fmt::Display for QiAccountId {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{:?}:{}", self.kind, self.id)
+        // 用稳定 wire 串而非 Debug，锁住 `account:<kind>:<id>` 的外部契约。
+        write!(f, "{}:{}", self.kind.as_wire_str(), self.id)
     }
 }
 
@@ -230,6 +250,15 @@ impl WorldQiAccount {
     pub fn transfers(&self) -> &[QiTransfer] {
         &self.transfers
     }
+
+    /// plan-offscreen-war-v1 P0：守恒 telemetry 用——按 `QiAccountId` 升序（BTreeMap
+    /// 天然有序）迭代每个账户的余额，供 `bong:qi/ledger` 把 per-zone / per-npc
+    /// 账本暴露给外部脚本做精确守恒断言。只读，不改账本。
+    pub fn iter_balances(&self) -> impl Iterator<Item = (&QiAccountId, f64)> {
+        self.balances
+            .iter()
+            .map(|(account, balance)| (account, *balance))
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -262,6 +291,63 @@ pub fn snapshot_for_ipc(snapshot: &WorldQiSnapshot) -> QiPhysicsIpcSnapshot {
         budget_current_total: snapshot.budget_current_total,
         era_decay_accum: snapshot.era_decay_accum,
     }
+}
+
+/// plan-offscreen-war-v1 P0：`bong:qi/ledger` HASH 字段前缀——per-account 余额行。
+/// 字段形如 `account:zone:spawn`（kind 为 `QiAccountKind::as_wire_str` 稳定 lowercase 串），
+/// 值是该账户当前 balance（字符串化 f64）。
+pub const QI_LEDGER_ACCOUNT_FIELD_PREFIX: &str = "account:";
+
+/// plan-offscreen-war-v1 P0：把全服守恒快照 + ledger 各账户余额拍平成
+/// `bong:qi/ledger` HASH 的 (field, value) 列表，供外部脚本做**精确**守恒断言。
+///
+/// 顶层聚合字段：
+/// - `total_observed`：player+zone+container+ledger 的**已落位**真元（≤ 预算；minimal
+///   世界起服后 zone qi 很低，远小于预算，勿误当 == DEFAULT_SPIRIT_QI_TOTAL）；
+/// - `player_qi` / `zone_qi` / `container_qi` / `ledger_qi`：已落位分量明细；
+/// - `budget_initial_total` / `budget_current_total` / `era_decay_accum`：天道预算（守恒总量
+///   恒定的真锚点 = `DEFAULT_SPIRIT_QI_TOTAL`，仅被时代衰减拉低）与已累计衰减。
+///
+/// per-account 字段：每个被 ledger 记账过的账户一行 `account:<id>` → balance。
+///
+/// 纯函数（只读快照 + 账本），无副作用，方便单测精确锁字段。
+pub fn build_qi_ledger_hash_fields(
+    snapshot: &WorldQiSnapshot,
+    accounts: &WorldQiAccount,
+) -> Vec<(String, String)> {
+    let mut fields = vec![
+        (
+            "total_observed".to_string(),
+            snapshot.total_observed().to_string(),
+        ),
+        ("player_qi".to_string(), snapshot.player_qi.to_string()),
+        ("zone_qi".to_string(), snapshot.zone_qi.to_string()),
+        (
+            "container_qi".to_string(),
+            snapshot.container_qi.to_string(),
+        ),
+        ("ledger_qi".to_string(), snapshot.ledger_qi.to_string()),
+        (
+            "budget_initial_total".to_string(),
+            snapshot.budget_initial_total.to_string(),
+        ),
+        (
+            "budget_current_total".to_string(),
+            snapshot.budget_current_total.to_string(),
+        ),
+        (
+            "era_decay_accum".to_string(),
+            snapshot.era_decay_accum.to_string(),
+        ),
+    ];
+    // BTreeMap 有序迭代 → per-account 字段确定性排序，外部脚本可稳定 diff。
+    for (account, balance) in accounts.iter_balances() {
+        fields.push((
+            format!("{QI_LEDGER_ACCOUNT_FIELD_PREFIX}{account}"),
+            balance.to_string(),
+        ));
+    }
+    fields
 }
 
 pub fn summarize_world_qi(world: &mut bevy_ecs::world::World) -> WorldQiSnapshot {
@@ -583,6 +669,127 @@ mod tests {
         assert_eq!(before.budget_current_total, 100.0);
         assert_eq!(after.budget_current_total, 100.0);
         assert!(assert_conservation(&before, &after, 0.0).is_ok());
+    }
+
+    // ── plan-offscreen-war-v1 P0：bong:qi/ledger telemetry builder ────────
+
+    fn field<'a>(fields: &'a [(String, String)], name: &str) -> &'a str {
+        fields
+            .iter()
+            .find(|(key, _)| key == name)
+            .map(|(_, value)| value.as_str())
+            .unwrap_or_else(|| {
+                panic!("expected ledger HASH to carry field {name:?}, got {fields:?}")
+            })
+    }
+
+    #[test]
+    fn qi_ledger_hash_fields_carry_conservation_aggregates() {
+        // 顶层守恒分量必须可被外部脚本精确读出：total_observed == player+zone+container+ledger。
+        let snap = WorldQiSnapshot {
+            player_qi: 40.0,
+            zone_qi: 35.0,
+            container_qi: 15.0,
+            ledger_qi: 10.0,
+            era_decay_accum: 0.0,
+            budget_initial_total: DEFAULT_SPIRIT_QI_TOTAL,
+            budget_current_total: DEFAULT_SPIRIT_QI_TOTAL,
+        };
+        let accounts = WorldQiAccount::default();
+        let fields = build_qi_ledger_hash_fields(&snap, &accounts);
+
+        assert_eq!(
+            field(&fields, "total_observed"),
+            "100",
+            "total_observed 必须等于四个分量之和（40+35+15+10），外部 e2e 据此做精确守恒断言"
+        );
+        assert_eq!(field(&fields, "player_qi"), "40");
+        assert_eq!(field(&fields, "zone_qi"), "35");
+        assert_eq!(field(&fields, "container_qi"), "15");
+        assert_eq!(field(&fields, "ledger_qi"), "10");
+        assert_eq!(
+            field(&fields, "budget_initial_total"),
+            DEFAULT_SPIRIT_QI_TOTAL.to_string(),
+            "预算字段取 const，不写字面 100"
+        );
+        assert_eq!(
+            field(&fields, "budget_current_total"),
+            DEFAULT_SPIRIT_QI_TOTAL.to_string()
+        );
+        assert_eq!(field(&fields, "era_decay_accum"), "0");
+    }
+
+    #[test]
+    fn qi_ledger_hash_fields_emit_one_row_per_account() {
+        // per-zone / per-npc 账户余额各占一行 account:<id>，外部脚本可逐账户对账。
+        let mut accounts = WorldQiAccount::default();
+        accounts
+            .set_balance(QiAccountId::zone("spawn"), 25.0)
+            .unwrap();
+        accounts
+            .set_balance(QiAccountId::npc("dormant:rogue:7"), 3.5)
+            .unwrap();
+        let fields = build_qi_ledger_hash_fields(&snapshot(0.0), &accounts);
+
+        assert_eq!(
+            field(&fields, "account:zone:spawn"),
+            "25",
+            "zone 账户余额必须以 account:zone:spawn 行暴露（kind 为稳定 lowercase wire 串）"
+        );
+        assert_eq!(
+            field(&fields, "account:npc:dormant:rogue:7"),
+            "3.5",
+            "npc 账户余额必须以 account:npc:<char_id> 行暴露，供 P2 战死还灵气对账"
+        );
+
+        let account_rows = fields
+            .iter()
+            .filter(|(key, _)| key.starts_with(QI_LEDGER_ACCOUNT_FIELD_PREFIX))
+            .count();
+        assert_eq!(
+            account_rows, 2,
+            "两个账户应产出两行 account: 字段，不多不少"
+        );
+    }
+
+    #[test]
+    fn qi_account_id_display_uses_stable_lowercase_wire_strings() {
+        // wire 契约 pin：`bong:qi/ledger` 的 `account:<kind>:<id>` key 形如 `zone:spawn`。
+        // 任一变体的 Display 串改动都会撞红——防止 Debug rename 静默漂移外部 schema。
+        let cases: [(QiAccountId, &str); 7] = [
+            (QiAccountId::player("alice"), "player:alice"),
+            (QiAccountId::npc("dormant:rogue:7"), "npc:dormant:rogue:7"),
+            (QiAccountId::zone("spawn"), "zone:spawn"),
+            (QiAccountId::container("chest:3"), "container:chest:3"),
+            (QiAccountId::rift("rift:north"), "rift:rift:north"),
+            (QiAccountId::tiandao(), "tiandao:tiandao"),
+            (QiAccountId::overflow("sink"), "overflow:sink"),
+        ];
+        for (account, expected) in cases {
+            assert_eq!(
+                account.to_string(),
+                expected,
+                "QiAccountId Display 必须输出稳定 lowercase wire 串 `{expected}`，\
+                 因为外部 Redis schema 据此 diff；若此处红了说明改动了 wire 契约（须有意为之）"
+            );
+        }
+    }
+
+    #[test]
+    fn qi_ledger_hash_fields_empty_ledger_has_only_aggregates() {
+        // 起服后 ledger 尚未记账：无 account: 行，但 total_observed 已可读（来自 zone/player 快照）。
+        let fields = build_qi_ledger_hash_fields(&snapshot(100.0), &WorldQiAccount::default());
+        assert!(
+            fields
+                .iter()
+                .all(|(key, _)| !key.starts_with(QI_LEDGER_ACCOUNT_FIELD_PREFIX)),
+            "空账本不应有 account: 行"
+        );
+        assert_eq!(
+            field(&fields, "total_observed"),
+            "100",
+            "空账本下 total_observed 仍来自 player/zone 快照，起服后应 ≈ DEFAULT_SPIRIT_QI_TOTAL"
+        );
     }
 
     fn snapshot(total: f64) -> WorldQiSnapshot {

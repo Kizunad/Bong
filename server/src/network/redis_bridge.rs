@@ -41,6 +41,7 @@ use crate::schema::channels::{
     CH_WOLIU_PROJECTILE_DRAINED, CH_WOLIU_V2_BACKFIRE, CH_WOLIU_V2_CAST, CH_WOLIU_V2_TURBULENCE,
     CH_WORLD_STATE, CH_YIDAO_EVENT, CH_ZHENFA_V2_EVENT, CH_ZHENMAI_SKILL_EVENT,
     CH_ZONE_ENVIRONMENT_UPDATE, CH_ZONE_PRESSURE_CROSSED, CH_ZONG_CORE_ACTIVATED,
+    QI_LEDGER_REDIS_KEY,
 };
 use crate::schema::chat_message::ChatMessageV1;
 use crate::schema::combat_carrier::{
@@ -123,6 +124,8 @@ pub enum RedisInbound {
 pub enum RedisOutbound {
     WorldState(WorldStateV1),
     NpcDormantHash(Vec<(String, String)>),
+    /// plan-offscreen-war-v1 P0：守恒 telemetry HASH（`bong:qi/ledger`）。
+    QiLedgerHash(Vec<(String, String)>),
     SeasonChanged(SeasonChangedV1),
     BoneCoinTick(BoneCoinTickV1),
     PriceIndex(PriceIndexV1),
@@ -443,6 +446,10 @@ fn prepare_outbound_command(message: RedisOutbound) -> Result<RedisIoCommand, Va
         }
         RedisOutbound::NpcDormantHash(entries) => Ok(RedisIoCommand::HashReplace {
             key: NPC_DORMANT_REDIS_KEY,
+            entries,
+        }),
+        RedisOutbound::QiLedgerHash(entries) => Ok(RedisIoCommand::HashReplace {
+            key: QI_LEDGER_REDIS_KEY,
             entries,
         }),
         RedisOutbound::SeasonChanged(evt) => {
@@ -2682,6 +2689,52 @@ mod redis_bridge_tests {
     }
 
     #[test]
+    fn replaces_qi_ledger_hash_on_dedicated_key() {
+        // plan-offscreen-war-v1 P0：守恒 telemetry 必须落到 bong:qi/ledger（非 dormant key）。
+        let entries = vec![
+            ("total_observed".to_string(), "100".to_string()),
+            ("account:zone:spawn".to_string(), "50".to_string()),
+        ];
+        let command = prepare_outbound_command(RedisOutbound::QiLedgerHash(entries.clone()))
+            .expect("qi ledger payload should produce a hash replace command");
+
+        match command {
+            RedisIoCommand::HashReplace { key, entries: got } => {
+                assert_eq!(
+                    key, QI_LEDGER_REDIS_KEY,
+                    "守恒 telemetry 必须发到 bong:qi/ledger，不能错写到 dormant key"
+                );
+                assert_eq!(got, entries);
+            }
+            other => panic!("expected hash replace command, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn replaces_qi_ledger_hash_with_empty_entries_deletes_key() {
+        // 边界：空 entries（全服无任何已落位真元 / 账户）必须仍产出 HashReplace（key 不变），
+        // 由下游 HASHSET-replace 语义对空 entries 退化为 DEL——即 bong:qi/ledger 被清空，
+        // 不会残留上一帧的 stale 行。绝不能因为空就 swallow 命令。
+        let command = prepare_outbound_command(RedisOutbound::QiLedgerHash(vec![])).expect(
+            "空 entries 的 qi ledger payload 仍须产出 HashReplace（触发 DEL 语义），不能被吞",
+        );
+
+        match command {
+            RedisIoCommand::HashReplace { key, entries } => {
+                assert_eq!(
+                    key, QI_LEDGER_REDIS_KEY,
+                    "空账本 telemetry 也必须落到 bong:qi/ledger，键不能漂移"
+                );
+                assert!(
+                    entries.is_empty(),
+                    "空 entries 必须原样传给 HashReplace（触发 DEL 清键），实际 entries={entries:?}"
+                );
+            }
+            other => panic!("空 entries 期望 HashReplace（DEL 语义），实际得到 {other:?}"),
+        }
+    }
+
+    #[test]
     fn publishes_zhenmai_skill_event_on_skill_channel() {
         let mut event =
             ZhenmaiSkillEventV1::new(ZhenmaiSkillIdV1::SeverChain, "entity:7".to_string(), 42);
@@ -2897,6 +2950,8 @@ mod redis_bridge_tests {
             age_ticks: 10.0,
             max_age_ticks: 10.0,
             at_tick: 0,
+            from_dormant_combat: false,
+            pos: None,
         }))
         .expect("NPC death payload should serialize");
         match death {

@@ -77,6 +77,12 @@ export const NpcDeathV1 = Type.Object(
     age_ticks: Type.Number({ minimum: 0 }),
     max_age_ticks: Type.Number({ minimum: 0 }),
     at_tick: Type.Number({ minimum: 0 }),
+    // plan-offscreen-war-v1 P0：是否离屏 dormant 派系互殴所致。
+    // 字段名匹配 server serde wire key（snake_case，无 rename）。Optional 让旧
+    // payload（无此字段）仍过校验，新 server 永远带 false/true。
+    from_dormant_combat: Type.Optional(Type.Boolean()),
+    // plan-offscreen-war-v1 P0：死亡坐标 [x,y,z]，server pos=None 时不上线 → Optional。
+    pos: Type.Optional(Type.Tuple([Type.Number(), Type.Number(), Type.Number()])),
   },
   { additionalProperties: false },
 );

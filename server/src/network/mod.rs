@@ -96,7 +96,7 @@ use chat_collector::{collect_player_chat, ChatCollectorRateLimit};
 use command_executor::{execute_agent_commands, CommandExecutorResource};
 use redis_bridge::{RedisInbound, RedisOutbound};
 use valence::prelude::{
-    ident, Added, App, Changed, Client, Commands, DVec3, Entity, EntityKind, EventReader,
+    bevy_ecs, ident, Added, App, Changed, Client, Commands, DVec3, Entity, EntityKind, EventReader,
     EventWriter, Events, IntoSystemConfigs, Or, Position, Query, Res, ResMut, Resource, Startup,
     Update, Username, With,
 };
@@ -124,6 +124,7 @@ use crate::persistence::{
 };
 use crate::player::gameplay::PendingGameplayNarrations;
 use crate::player::state::{canonical_player_id, PlayerState};
+use crate::qi_physics::{build_qi_ledger_hash_fields, summarize_world_qi, WorldQiAccount};
 use crate::schema::agent_world_model::{AgentWorldModelEnvelopeV1, AgentWorldModelSnapshotV1};
 use crate::schema::common::{
     CommandType, EventKind, NarrationKind, NarrationScope, NarrationStyle, NpcStateKind,
@@ -210,6 +211,19 @@ pub struct WorldStateTimer {
 }
 
 impl Resource for WorldStateTimer {}
+
+/// plan-offscreen-war-v1 P0：守恒 telemetry（`bong:qi/ledger`）独立 tick 计数器。
+///
+/// 用独立 timer 而非复用 `WorldStateTimer`：`bong:qi/ledger` publish 是 exclusive
+/// system（`summarize_world_qi` 需 `&mut World`），与 world_state 普通 system 不在
+/// 同一调度阶段，复用计数器会因执行顺序产生相位偏差。两者都按
+/// `WORLD_STATE_PUBLISH_INTERVAL_TICKS` 周期，节奏一致但各自计数。
+#[derive(Default)]
+pub struct QiLedgerTimer {
+    ticks: u64,
+}
+
+impl Resource for QiLedgerTimer {}
 
 #[derive(Default)]
 struct ZoneTransitionTracker {
@@ -298,6 +312,7 @@ pub fn register(app: &mut App) {
         });
     app.insert_resource(runtime_mirror_redis);
     app.insert_resource(WorldStateTimer::default());
+    app.insert_resource(QiLedgerTimer::default());
     app.insert_resource(ZoneTransitionTracker::default());
     app.insert_resource(ChatCollectorRateLimit::default());
     app.insert_resource(CommandExecutorResource::default());
@@ -359,6 +374,8 @@ pub fn register(app: &mut App) {
         Update,
         publish_season_changed_events.after(crate::world::season::season_tick),
     );
+    // plan-offscreen-war-v1 P0：守恒 telemetry exclusive system，与 world_state 同节奏。
+    app.add_systems(Update, publish_qi_ledger_to_redis);
     app.add_systems(
         Update,
         anticheat_bridge::publish_anticheat_violation_events
@@ -942,6 +959,47 @@ fn publish_world_state_to_redis(
             }
         }
     }
+}
+
+/// plan-offscreen-war-v1 P0：把全服守恒账本周期性发布到 `bong:qi/ledger` HASH。
+///
+/// 这是 **exclusive system**（取 `&mut World`），因为 `summarize_world_qi` 需要遍历
+/// 全 World（zone / player / container / ledger 四类真元分量）才能算出权威
+/// `total_observed`。普通参数化 system 无法一次拿全这些来源，故走 exclusive 入口。
+///
+/// 节奏：与 `publish_world_state_to_redis` 同为 `WORLD_STATE_PUBLISH_INTERVAL_TICKS`，
+/// 但用独立 `QiLedgerTimer` 计数（见其 doc-comment）。外部脚本可 `HGETALL bong:qi/ledger`
+/// 做守恒断言：守恒总量恒定的真锚点是 `budget_initial_total`（== `DEFAULT_SPIRIT_QI_TOTAL`），
+/// 而 `total_observed` 是**已落位**真元（≤ 预算，minimal 世界起服后远小于预算）。
+///
+/// **只读发布，零真元流动**——不调 `WorldQiAccount::transfer`，不改任何 balance。
+fn publish_qi_ledger_to_redis(world: &mut bevy_ecs::world::World) {
+    {
+        let mut timer = world.resource_mut::<QiLedgerTimer>();
+        timer.ticks += 1;
+        if !timer
+            .ticks
+            .is_multiple_of(WORLD_STATE_PUBLISH_INTERVAL_TICKS)
+        {
+            return;
+        }
+    }
+
+    // 没有 redis bridge（部分测试 app）时静默跳过。
+    if world.get_resource::<RedisBridgeResource>().is_none() {
+        return;
+    }
+
+    let snapshot = summarize_world_qi(world);
+    // `summarize_world_qi` 已容忍缺失 `WorldQiAccount`（ledger_qi=0），发布路径也必须容忍：
+    // 缺资源时用空账本算聚合字段（无 per-account 行），绝不 panic。
+    let fields = world
+        .get_resource::<WorldQiAccount>()
+        .map(|accounts| build_qi_ledger_hash_fields(&snapshot, accounts))
+        .unwrap_or_else(|| build_qi_ledger_hash_fields(&snapshot, &WorldQiAccount::default()));
+
+    let redis = world.resource::<RedisBridgeResource>();
+    let _ = redis.tx_outbound.send(RedisOutbound::QiLedgerHash(fields));
 }
 
 fn collect_cultivation_snapshots(
@@ -3650,6 +3708,193 @@ mod tests {
             assert!(factions
                 .iter()
                 .all(|summary| summary.mission_queue.is_none()));
+        }
+    }
+
+    /// plan-offscreen-war-v1 P0：`publish_qi_ledger_to_redis`（exclusive system）饱和测试。
+    ///
+    /// 锁住可观察行为：① cadence 节流（非整周期不发）② 整周期 + bridge 在场 → 恰好一条
+    /// `RedisOutbound::QiLedgerHash`，聚合字段齐全 ③ 无 bridge → 静默 no-op（不 panic）
+    /// ④ 无 `WorldQiAccount`（FIX-1 graceful 路径）→ 仍发布，聚合字段在场（不 panic）。
+    mod qi_ledger_publish_tests {
+        use super::*;
+        use crate::qi_physics::{QiAccountId, WorldQiAccount, WorldQiBudget};
+
+        /// 构建只挂 `publish_qi_ledger_to_redis` 的最小 App。
+        /// `at_cadence=true` 时把 `QiLedgerTimer` 预置到 `INTERVAL-1`，一次 update 后命中整周期。
+        /// `with_bridge=false` 时不插 `RedisBridgeResource`，验证缺 bridge 静默路径。
+        /// `with_account=false` 时不插 `WorldQiAccount`，验证 FIX-1 graceful 路径。
+        fn setup_qi_ledger_app(
+            at_cadence: bool,
+            with_bridge: bool,
+            with_account: bool,
+        ) -> (App, Option<Receiver<RedisOutbound>>) {
+            let mut app = App::new();
+
+            let initial_ticks = if at_cadence {
+                WORLD_STATE_PUBLISH_INTERVAL_TICKS - 1
+            } else {
+                0
+            };
+            app.insert_resource(QiLedgerTimer {
+                ticks: initial_ticks,
+            });
+
+            let rx = if with_bridge {
+                let (tx_outbound, rx_outbound) = unbounded();
+                let (_tx_inbound, rx_inbound) = unbounded();
+                app.insert_resource(RedisBridgeResource {
+                    tx_outbound,
+                    rx_inbound,
+                });
+                Some(rx_outbound)
+            } else {
+                None
+            };
+
+            if with_account {
+                app.insert_resource(WorldQiAccount::default());
+            }
+            // WorldQiBudget 缺省时 summarize_world_qi 会 unwrap_or_default()，
+            // budget_initial_total 回退 DEFAULT_SPIRIT_QI_TOTAL——这里显式插入更贴近真服。
+            app.insert_resource(WorldQiBudget::default());
+
+            app.add_systems(Update, publish_qi_ledger_to_redis);
+
+            (app, rx)
+        }
+
+        /// 在 fields 列表里取某 key 的值（缺则 panic 带修复线索）。
+        fn field<'a>(fields: &'a [(String, String)], key: &str) -> &'a str {
+            fields
+                .iter()
+                .find(|(k, _)| k == key)
+                .map(|(_, v)| v.as_str())
+                .unwrap_or_else(|| {
+                    panic!(
+                        "qi/ledger HASH 应含聚合字段 `{key}`（外部 e2e 守恒断言依赖它），实际字段集 {:?}",
+                        fields.iter().map(|(k, _)| k.as_str()).collect::<Vec<_>>()
+                    )
+                })
+        }
+
+        fn drain_qi_ledger(rx: &Receiver<RedisOutbound>) -> Option<Vec<(String, String)>> {
+            match rx.try_recv() {
+                Ok(RedisOutbound::QiLedgerHash(fields)) => Some(fields),
+                Ok(other) => panic!("期望 RedisOutbound::QiLedgerHash，实际得到 {other:?}"),
+                Err(_) => None,
+            }
+        }
+
+        #[test]
+        fn below_cadence_emits_nothing() {
+            // ticks 从 0 → 1（非 INTERVAL 整数倍）：节流，绝不发 QiLedgerHash。
+            let (mut app, rx) = setup_qi_ledger_app(false, true, true);
+            let rx = rx.expect("bridge 在场时 rx 必须存在");
+
+            app.update();
+
+            assert!(
+                drain_qi_ledger(&rx).is_none(),
+                "非整周期（tick=1）必须节流不发 QiLedgerHash，外部脚本不应收到本帧 telemetry"
+            );
+            assert_eq!(
+                app.world().resource::<QiLedgerTimer>().ticks,
+                1,
+                "节流分支也必须推进 timer（0→1），否则永远到不了下一个整周期"
+            );
+        }
+
+        #[test]
+        fn at_cadence_with_bridge_emits_exactly_one_hash_with_aggregates() {
+            let (mut app, rx) = setup_qi_ledger_app(true, true, true);
+            let rx = rx.expect("bridge 在场时 rx 必须存在");
+
+            app.update();
+
+            let fields = drain_qi_ledger(&rx)
+                .expect("整周期 + bridge 在场必须发恰好一条 QiLedgerHash，外部脚本据此对账");
+            // 聚合字段必须齐全——外部 e2e 守恒断言锚点。
+            assert!(
+                !field(&fields, "total_observed").is_empty(),
+                "total_observed 必须有值（已落位真元总量），供 e2e 精确守恒断言"
+            );
+            assert_eq!(
+                field(&fields, "budget_initial_total"),
+                crate::qi_physics::constants::DEFAULT_SPIRIT_QI_TOTAL.to_string(),
+                "budget_initial_total 是守恒预算锚点，须等于 DEFAULT_SPIRIT_QI_TOTAL"
+            );
+
+            // 同一周期内只发一条，不重复。
+            assert!(
+                drain_qi_ledger(&rx).is_none(),
+                "单个整周期 update 必须恰好发一条 QiLedgerHash，不能重复 enqueue"
+            );
+        }
+
+        #[test]
+        fn at_cadence_emits_per_account_rows_when_account_present() {
+            // 有账户余额时，per-account 行须随聚合字段一起上线（稳定 lowercase wire key）。
+            let (mut app, rx) = setup_qi_ledger_app(true, true, true);
+            app.world_mut()
+                .resource_mut::<WorldQiAccount>()
+                .set_balance(QiAccountId::zone("spawn"), 12.0)
+                .expect("set_balance 应接受有限非负值");
+            let rx = rx.expect("bridge 在场时 rx 必须存在");
+
+            app.update();
+
+            let fields = drain_qi_ledger(&rx).expect("整周期 + bridge 在场必须发 QiLedgerHash");
+            assert_eq!(
+                field(&fields, "account:zone:spawn"),
+                "12",
+                "zone 账户余额须以稳定 lowercase wire key `account:zone:spawn` 上线"
+            );
+        }
+
+        #[test]
+        fn at_cadence_without_bridge_is_silent_noop() {
+            // 无 RedisBridgeResource（部分测试 app）：必须静默跳过，绝不 panic。
+            let (mut app, rx) = setup_qi_ledger_app(true, false, true);
+            assert!(rx.is_none(), "本用例不挂 bridge");
+
+            // 不 panic 即通过；timer 仍推进到整周期。
+            app.update();
+
+            assert!(
+                app.world()
+                    .resource::<QiLedgerTimer>()
+                    .ticks
+                    .is_multiple_of(WORLD_STATE_PUBLISH_INTERVAL_TICKS),
+                "缺 bridge 路径也必须推进 timer 到整周期（仅跳过发布），否则计数与真服不一致"
+            );
+        }
+
+        #[test]
+        fn at_cadence_without_world_qi_account_still_publishes() {
+            // FIX-1 graceful 路径：缺 WorldQiAccount 时不得 panic（旧码 world.resource:: 会炸），
+            // 仍须发布聚合字段（per-account 行为空，因为没有账本）。
+            let (mut app, rx) = setup_qi_ledger_app(true, true, false);
+            let rx = rx.expect("bridge 在场时 rx 必须存在");
+            assert!(
+                app.world().get_resource::<WorldQiAccount>().is_none(),
+                "本用例刻意不插 WorldQiAccount，复现 FIX-1 缺资源场景"
+            );
+
+            // 不 panic 即跨过 FIX-1 关口。
+            app.update();
+
+            let fields = drain_qi_ledger(&rx)
+                .expect("缺 WorldQiAccount 时仍须发布聚合 telemetry（FIX-1：graceful 而非 panic）");
+            assert!(
+                !field(&fields, "total_observed").is_empty(),
+                "缺账本时 total_observed 仍来自 zone/player 快照，必须有值"
+            );
+            assert!(
+                fields.iter().all(|(key, _)| !key.starts_with("account:")),
+                "缺 WorldQiAccount 时不应有任何 account: 行（无账本可枚举），实际 {:?}",
+                fields.iter().map(|(k, _)| k.as_str()).collect::<Vec<_>>()
+            );
         }
     }
 

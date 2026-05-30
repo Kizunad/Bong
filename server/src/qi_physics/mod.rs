@@ -51,9 +51,9 @@ pub use knockback::{
     WallCollisionResult, MAX_BLOCK_PENETRATION, MAX_KNOCKBACK_DISTANCE,
 };
 pub use ledger::{
-    assert_conservation, snapshot_for_ipc, summarize_world_qi, QiAccountId, QiAccountKind,
-    QiPhysicsIpcSnapshot, QiTransfer, QiTransferReason, WorldQiAccount, WorldQiBudget,
-    WorldQiSnapshot,
+    assert_conservation, build_qi_ledger_hash_fields, snapshot_for_ipc, summarize_world_qi,
+    QiAccountId, QiAccountKind, QiPhysicsIpcSnapshot, QiTransfer, QiTransferReason, WorldQiAccount,
+    WorldQiBudget, WorldQiSnapshot, QI_LEDGER_ACCOUNT_FIELD_PREFIX,
 };
 pub use projectile::{
     armor_penetrate, cone_dispersion, high_density_inject, ArmorPenetrationOutcome,

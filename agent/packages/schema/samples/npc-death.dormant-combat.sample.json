@@ -1,0 +1,14 @@
+{
+  "v": 1,
+  "kind": "npc_death",
+  "npc_id": "dormant:rogue:7",
+  "archetype": "rogue",
+  "cause": "combat",
+  "faction_id": "attack",
+  "life_record_snapshot": "残灰谷争脉",
+  "age_ticks": 50.0,
+  "max_age_ticks": 200.0,
+  "at_tick": 1234,
+  "from_dormant_combat": true,
+  "pos": [12.5, 64.0, -8.0]
+}
