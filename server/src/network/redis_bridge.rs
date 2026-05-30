@@ -1405,12 +1405,21 @@ async fn dispatch_outbound_command(
 }
 
 fn runs_on_background_redis_connection(command: &RedisIoCommand) -> bool {
+    // Both world_state Publish and dormant HashReplace must never block the
+    // primary outbound connection: a slow / timing-out dormant write previously
+    // pinned `pending_command` and starved every other channel (world_state,
+    // combat, chat). Routing them onto the cloned background connection makes
+    // them fire-and-forget — failures only `warn!` and never become a
+    // `pending_command`. `HashReplace` is exclusively produced by
+    // `RedisOutbound::NpcDormantHash` (see `prepare_outbound_command`), so the
+    // sole key it ever targets is `NPC_DORMANT_REDIS_KEY`; matching the variant
+    // is equivalent to "only dormant runs in the background".
     matches!(
         command,
         RedisIoCommand::Publish {
             channel: CH_WORLD_STATE,
             ..
-        }
+        } | RedisIoCommand::HashReplace { .. }
     )
 }
 
@@ -2334,6 +2343,88 @@ mod redis_bridge_tests {
             }
             other => panic!("expected hash replace command, got {other:?}"),
         }
+    }
+
+    /// P0 bug① contract: a dormant `HashReplace` (which may be arbitrarily slow
+    /// or time out) must NEVER be able to starve other outbound IPC. The
+    /// starvation mechanism was `dispatch_outbound_command` returning `Err` on
+    /// an inline command, which `drain_outbound_messages` stored into the
+    /// cross-reconnect `pending_command` and retried first forever. The fix
+    /// routes `HashReplace` onto the background (fire-and-forget) connection, so
+    /// it is structurally impossible for it to occupy `pending_command`. A
+    /// regular Publish queued after it still routes inline and is unaffected.
+    #[test]
+    fn dormant_hash_replace_failure_does_not_starve_other_outbound() {
+        // The would-be slow / failing dormant write.
+        let dormant = prepare_outbound_command(RedisOutbound::NpcDormantHash(vec![(
+            "npc_slow".to_string(),
+            serde_json::json!({"char_id": "npc_slow"}).to_string(),
+        )]))
+        .expect("dormant payload should produce a HashReplace command");
+        assert!(
+            runs_on_background_redis_connection(&dormant),
+            "expected dormant HashReplace to be fire-and-forget on the background connection so a slow write cannot pin pending_command; got inline routing which is exactly the starvation bug"
+        );
+
+        // A subsequently-queued non-world-state Publish still routes inline and
+        // is therefore drained / dispatched independently of the dormant write.
+        let other = RedisIoCommand::Publish {
+            channel: CH_AGENT_COMMAND,
+            payload: "{}".to_string(),
+        };
+        assert!(
+            !runs_on_background_redis_connection(&other),
+            "expected a non-world_state Publish to stay on the primary inline path (it does not depend on dormant write completion); got background routing"
+        );
+    }
+
+    /// Per-variant pin of the inline-vs-background routing decision, the single
+    /// switch that determines whether a command can ever occupy
+    /// `pending_command`. Every `RedisIoCommand` variant is exercised so a new
+    /// variant or a routing regression flips a red test instead of silently
+    /// re-introducing head-of-line blocking.
+    #[test]
+    fn outbound_routing_background_vs_inline_per_variant() {
+        // world_state Publish -> background (must not block other channels).
+        assert!(
+            runs_on_background_redis_connection(&RedisIoCommand::Publish {
+                channel: CH_WORLD_STATE,
+                payload: "{}".to_string(),
+            }),
+            "expected world_state Publish on background connection because a large snapshot must not stall other IPC"
+        );
+        // dormant HashReplace (only HashReplace producer) -> background.
+        assert!(
+            runs_on_background_redis_connection(&RedisIoCommand::HashReplace {
+                key: NPC_DORMANT_REDIS_KEY,
+                entries: vec![("a".to_string(), "b".to_string())],
+            }),
+            "expected dormant HashReplace on background connection so a slow / failing write cannot pin pending_command"
+        );
+        // Non-world_state Publish -> inline (small, latency-sensitive narration/cmd channels).
+        assert!(
+            !runs_on_background_redis_connection(&RedisIoCommand::Publish {
+                channel: CH_AGENT_COMMAND,
+                payload: "{}".to_string(),
+            }),
+            "expected non-world_state Publish to stay inline; only world_state is large enough to warrant the background connection"
+        );
+        // ListPush (e.g. player_chat) -> inline.
+        assert!(
+            !runs_on_background_redis_connection(&RedisIoCommand::ListPush {
+                key: CH_PLAYER_CHAT,
+                payload: "{}".to_string(),
+            }),
+            "expected ListPush to stay inline; chat pushes are small and ordered"
+        );
+        // PublishFanout -> inline.
+        assert!(
+            !runs_on_background_redis_connection(&RedisIoCommand::PublishFanout {
+                channels: vec![CH_AGENT_COMMAND],
+                payload: "{}".to_string(),
+            }),
+            "expected PublishFanout to stay inline; it is not a bulk dormant/world_state write"
+        );
     }
 
     #[test]
@@ -3811,9 +3902,18 @@ mod redis_bridge_tests {
             REDIS_HASH_REPLACE_TIMEOUT > REDIS_IO_TIMEOUT,
             "dormant HASH replace writes batches and should not share the tiny per-command timeout"
         );
-        assert!(!runs_on_background_redis_connection(
-            &prepare_outbound_command(RedisOutbound::NpcDormantHash(Vec::new())).unwrap()
-        ));
+        // P0: dormant HashReplace now runs on the background connection
+        // (fire-and-forget) so a slow / failing dormant write can never pin
+        // `pending_command` and starve world_state. Expected: background == true
+        // because NpcDormantHash -> HashReplace must NOT block the primary
+        // outbound connection (the old behaviour, asserting !background, was the
+        // exact bug this plan fixes).
+        assert!(
+            runs_on_background_redis_connection(
+                &prepare_outbound_command(RedisOutbound::NpcDormantHash(Vec::new())).unwrap()
+            ),
+            "expected dormant HashReplace to run on the background connection so it cannot starve other outbound IPC; got inline routing"
+        );
     }
 
     #[tokio::test]
