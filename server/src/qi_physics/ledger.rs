@@ -68,6 +68,25 @@ pub enum QiAccountKind {
     Overflow,
 }
 
+impl QiAccountKind {
+    /// plan-offscreen-war-v1 P0：`bong:qi/ledger` per-account 字段 key 的**稳定** wire 串。
+    ///
+    /// 不能用 `{:?}`（Debug）——那会把外部 Redis schema 绑死到 Rust 变体名，重命名
+    /// 变体会静默改掉 wire 契约。这里显式锁定 lowercase 串，改名变体编译期 exhaustive
+    /// 检查会逼着同步更新此处（即 wire 变更必须是有意识的）。
+    fn as_wire_str(self) -> &'static str {
+        match self {
+            QiAccountKind::Player => "player",
+            QiAccountKind::Npc => "npc",
+            QiAccountKind::Zone => "zone",
+            QiAccountKind::Container => "container",
+            QiAccountKind::Rift => "rift",
+            QiAccountKind::Tiandao => "tiandao",
+            QiAccountKind::Overflow => "overflow",
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct QiAccountId {
     pub kind: QiAccountKind,
@@ -113,7 +132,8 @@ impl QiAccountId {
 
 impl std::fmt::Display for QiAccountId {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{:?}:{}", self.kind, self.id)
+        // 用稳定 wire 串而非 Debug，锁住 `account:<kind>:<id>` 的外部契约。
+        write!(f, "{}:{}", self.kind.as_wire_str(), self.id)
     }
 }
 
@@ -274,7 +294,8 @@ pub fn snapshot_for_ipc(snapshot: &WorldQiSnapshot) -> QiPhysicsIpcSnapshot {
 }
 
 /// plan-offscreen-war-v1 P0：`bong:qi/ledger` HASH 字段前缀——per-account 余额行。
-/// 字段形如 `account:Zone:spawn`，值是该账户当前 balance（字符串化 f64）。
+/// 字段形如 `account:zone:spawn`（kind 为 `QiAccountKind::as_wire_str` 稳定 lowercase 串），
+/// 值是该账户当前 balance（字符串化 f64）。
 pub const QI_LEDGER_ACCOUNT_FIELD_PREFIX: &str = "account:";
 
 /// plan-offscreen-war-v1 P0：把全服守恒快照 + ledger 各账户余额拍平成
@@ -711,14 +732,14 @@ mod tests {
         let fields = build_qi_ledger_hash_fields(&snapshot(0.0), &accounts);
 
         assert_eq!(
-            field(&fields, "account:Zone:spawn"),
+            field(&fields, "account:zone:spawn"),
             "25",
-            "zone 账户余额必须以 account:Zone:spawn 行暴露"
+            "zone 账户余额必须以 account:zone:spawn 行暴露（kind 为稳定 lowercase wire 串）"
         );
         assert_eq!(
-            field(&fields, "account:Npc:dormant:rogue:7"),
+            field(&fields, "account:npc:dormant:rogue:7"),
             "3.5",
-            "npc 账户余额必须以 account:Npc:<char_id> 行暴露，供 P2 战死还灵气对账"
+            "npc 账户余额必须以 account:npc:<char_id> 行暴露，供 P2 战死还灵气对账"
         );
 
         let account_rows = fields
@@ -729,6 +750,29 @@ mod tests {
             account_rows, 2,
             "两个账户应产出两行 account: 字段，不多不少"
         );
+    }
+
+    #[test]
+    fn qi_account_id_display_uses_stable_lowercase_wire_strings() {
+        // wire 契约 pin：`bong:qi/ledger` 的 `account:<kind>:<id>` key 形如 `zone:spawn`。
+        // 任一变体的 Display 串改动都会撞红——防止 Debug rename 静默漂移外部 schema。
+        let cases: [(QiAccountId, &str); 7] = [
+            (QiAccountId::player("alice"), "player:alice"),
+            (QiAccountId::npc("dormant:rogue:7"), "npc:dormant:rogue:7"),
+            (QiAccountId::zone("spawn"), "zone:spawn"),
+            (QiAccountId::container("chest:3"), "container:chest:3"),
+            (QiAccountId::rift("rift:north"), "rift:rift:north"),
+            (QiAccountId::tiandao(), "tiandao:tiandao"),
+            (QiAccountId::overflow("sink"), "overflow:sink"),
+        ];
+        for (account, expected) in cases {
+            assert_eq!(
+                account.to_string(),
+                expected,
+                "QiAccountId Display 必须输出稳定 lowercase wire 串 `{expected}`，\
+                 因为外部 Redis schema 据此 diff；若此处红了说明改动了 wire 契约（须有意为之）"
+            );
+        }
     }
 
     #[test]

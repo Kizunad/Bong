@@ -2348,7 +2348,7 @@ mod redis_bridge_tests {
         // plan-offscreen-war-v1 P0：守恒 telemetry 必须落到 bong:qi/ledger（非 dormant key）。
         let entries = vec![
             ("total_observed".to_string(), "100".to_string()),
-            ("account:Zone:spawn".to_string(), "50".to_string()),
+            ("account:zone:spawn".to_string(), "50".to_string()),
         ];
         let command = prepare_outbound_command(RedisOutbound::QiLedgerHash(entries.clone()))
             .expect("qi ledger payload should produce a hash replace command");
@@ -2362,6 +2362,30 @@ mod redis_bridge_tests {
                 assert_eq!(got, entries);
             }
             other => panic!("expected hash replace command, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn replaces_qi_ledger_hash_with_empty_entries_deletes_key() {
+        // 边界：空 entries（全服无任何已落位真元 / 账户）必须仍产出 HashReplace（key 不变），
+        // 由下游 HASHSET-replace 语义对空 entries 退化为 DEL——即 bong:qi/ledger 被清空，
+        // 不会残留上一帧的 stale 行。绝不能因为空就 swallow 命令。
+        let command = prepare_outbound_command(RedisOutbound::QiLedgerHash(vec![])).expect(
+            "空 entries 的 qi ledger payload 仍须产出 HashReplace（触发 DEL 语义），不能被吞",
+        );
+
+        match command {
+            RedisIoCommand::HashReplace { key, entries } => {
+                assert_eq!(
+                    key, QI_LEDGER_REDIS_KEY,
+                    "空账本 telemetry 也必须落到 bong:qi/ledger，键不能漂移"
+                );
+                assert!(
+                    entries.is_empty(),
+                    "空 entries 必须原样传给 HashReplace（触发 DEL 清键），实际 entries={entries:?}"
+                );
+            }
+            other => panic!("空 entries 期望 HashReplace（DEL 语义），实际得到 {other:?}"),
         }
     }
 

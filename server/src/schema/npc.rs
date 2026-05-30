@@ -110,9 +110,71 @@ mod tests {
         assert_eq!(parsed, payload, "新字段必须无损 roundtrip");
 
         let value: serde_json::Value = serde_json::from_str(&json).unwrap();
-        assert_eq!(value["from_dormant_combat"], serde_json::json!(true));
-        assert_eq!(value["pos"], serde_json::json!([12.5, 64.0, -8.0]));
-        assert_eq!(value["cause"], serde_json::json!("combat"));
+        assert_eq!(
+            value["from_dormant_combat"],
+            serde_json::json!(true),
+            "from_dormant_combat 应序列化为 wire bool true（因为本 payload 是离屏战死），实际 {}",
+            value["from_dormant_combat"]
+        );
+        assert_eq!(
+            value["pos"],
+            serde_json::json!([12.5, 64.0, -8.0]),
+            "pos 应序列化为 3 元 [x,y,z] 数组（agent 据此定位战场），实际 {}",
+            value["pos"]
+        );
+        assert_eq!(
+            value["cause"],
+            serde_json::json!("combat"),
+            "cause 应为 \"combat\"（区别于 natural_aging，让 agent 分辨战死 vs 老死），实际 {}",
+            value["cause"]
+        );
+    }
+
+    #[test]
+    fn npc_death_v1_rejects_non_bool_from_dormant_combat() {
+        // 反：from_dormant_combat 类型错（string 非 bool）必须解析失败。
+        // serde 对 bool 字段拒绝错误类型——锁住 wire 类型契约，agent 端 TypeBox 同步拒。
+        let bad = serde_json::json!({
+            "v": 1,
+            "kind": "npc_death",
+            "npc_id": "dormant:rogue:9",
+            "archetype": "rogue",
+            "cause": "combat",
+            "age_ticks": 50.0,
+            "max_age_ticks": 200.0,
+            "at_tick": 1234,
+            "from_dormant_combat": "yes"
+        });
+        let parsed = serde_json::from_value::<NpcDeathV1>(bad);
+        assert!(
+            parsed.is_err(),
+            "from_dormant_combat 为 string \"yes\" 应被 serde 拒绝（字段是 bool），\
+             实际解析成功得到 {parsed:?}"
+        );
+    }
+
+    #[test]
+    fn npc_death_v1_rejects_pos_with_wrong_arity() {
+        // 反：pos 非 3 元数组（这里 2 元，缺 z）必须解析失败。
+        // [f64; 3] 是定长 tuple，serde 对元数不符拒绝——锁住坐标形状契约。
+        let bad = serde_json::json!({
+            "v": 1,
+            "kind": "npc_death",
+            "npc_id": "dormant:rogue:9",
+            "archetype": "rogue",
+            "cause": "combat",
+            "age_ticks": 50.0,
+            "max_age_ticks": 200.0,
+            "at_tick": 1234,
+            "from_dormant_combat": true,
+            "pos": [12.5, 64.0]
+        });
+        let parsed = serde_json::from_value::<NpcDeathV1>(bad);
+        assert!(
+            parsed.is_err(),
+            "pos 为 2 元数组（缺 z）应被 serde 拒绝（pos 是定长 [f64; 3]），\
+             实际解析成功得到 {parsed:?}"
+        );
     }
 
     #[test]

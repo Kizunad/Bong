@@ -812,6 +812,17 @@ describe("sample files pass schema validation", () => {
       pos: [1, 2, 3, 4],
     });
 
+    // 反：pos 元数不足（2 元缺 z）从磁盘 sample 加载并拒——与 server serde
+    // npc_death_v1_rejects_pos_with_wrong_arity 双端对拍，Type.Tuple 必须拒非 3 元。
+    const invalidPosArity = loadObjectSample(
+      "npc-death.invalid-pos-arity.sample.json",
+    );
+    expectContractRejects(
+      "npc-death.invalid-pos-arity",
+      validateNpcDeathV1Contract,
+      invalidPosArity,
+    );
+
     // 反：additionalProperties:false 仍生效，未知字段被拒。
     expectContractRejects("npc-death.unknown-field", validateNpcDeathV1Contract, {
       ...natural,
