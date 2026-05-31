@@ -46,7 +46,7 @@ public class ZoneStateTest {
 
         assertEquals("The Extremely Long An...", snapshot.zoneLabel());
         assertEquals(1.0d, snapshot.spiritQi());
-        assertEquals(5, snapshot.dangerLevel());
+        assertEquals(7, snapshot.dangerLevel());
         assertFalse(snapshot.noCadence());
         assertEquals(5_000L, snapshot.changedAtMs());
     }

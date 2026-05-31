@@ -5,7 +5,7 @@ import java.util.Set;
 
 public final class ZoneState {
     private static final int MIN_DANGER_LEVEL = 0;
-    private static final int MAX_DANGER_LEVEL = 5;
+    private static final int MAX_DANGER_LEVEL = 7;
 
     private final String zoneId;
     private final String zoneLabel;

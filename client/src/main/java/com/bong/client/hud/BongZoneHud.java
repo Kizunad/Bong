@@ -14,7 +14,7 @@ public final class BongZoneHud {
     static final long TITLE_FULL_ALPHA_MILLIS = 2_000L;
     static final long DIMENSION_BLACKOUT_MILLIS = 500L;
     static final int QI_BAR_SEGMENTS = 10;
-    static final int MAX_DANGER_SYMBOLS = 5;
+    static final int MAX_DANGER_SYMBOLS = 7;
 
     private BongZoneHud() {
     }

@@ -42,7 +42,7 @@ export type ClientNarrationPayloadV1 = Static<typeof ClientNarrationPayloadV1>;
 export const ZoneInfoPayload = Type.Object({
   zone: ZoneName,
   spirit_qi: Type.Number({ minimum: 0, maximum: 1 }),
-  danger_level: Type.Integer({ minimum: 0, maximum: 5 }),
+  danger_level: Type.Integer({ minimum: 0, maximum: 7 }),
   active_events: Type.Optional(Type.Array(Type.String({ minLength: 1, maxLength: 64 }), { maxItems: 4 })),
 });
 export type ZoneInfoPayload = Static<typeof ZoneInfoPayload>;
