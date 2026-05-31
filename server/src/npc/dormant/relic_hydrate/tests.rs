@@ -265,7 +265,10 @@ fn relic_loot_entry_carries_zone_dimension_and_pos() {
     let record = relic_record(NpcArchetype::GuardianRelic, 42, "rift_valley");
 
     let entries = materialize_relic_loot(&record, DimensionKind::Tsy, &registry, &mut alloc);
-    assert!(!entries.is_empty());
+    assert!(
+        !entries.is_empty(),
+        "a GuardianRelic with a valid template must materialize at least one loot entry (so the relic actually drops something on hydrate); got an empty vec"
+    );
     let entry = &entries[0];
     assert_eq!(
         entry.dimension,
@@ -311,7 +314,11 @@ fn relic_reveal_narration_picks_one_of_two_by_seed_parity() {
         "odd-seed narration should be the rogue-remnant line, got `{odd}`"
     );
     // 同 seed 稳定（不随调用变）。
-    assert_eq!(relic_reveal_narration(42), relic_reveal_narration(42));
+    assert_eq!(
+        relic_reveal_narration(42),
+        relic_reveal_narration(42),
+        "relic_reveal_narration must be deterministic per seed (same seed → same narration line) so the reveal text is stable across hydrate retries; two calls with seed=42 differed"
+    );
 }
 
 #[test]
