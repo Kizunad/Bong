@@ -48,7 +48,12 @@ public final class OffscreenRelicRevealPlayer implements VfxPlayer {
         float r = ((rgb >> 16) & 0xFF) / 255f;
         float g = ((rgb >> 8) & 0xFF) / 255f;
         float b = (rgb & 0xFF) / 255f;
-        double strength = payload.strength().orElse(DEFAULT_STRENGTH);
+        // 先把服务端来的 strength 规范化成有限的 [0,1]（CodeRabbit）：负值/超大值/NaN 会算出
+        // 负数或超大的贴花尺寸，NaN 还会污染后续渲染参数。规范化后同时驱动 size 和 alpha。
+        double rawStrength = payload.strength().orElse(DEFAULT_STRENGTH);
+        double strength = Double.isFinite(rawStrength)
+            ? Math.max(0.0, Math.min(1.0, rawStrength))
+            : DEFAULT_STRENGTH;
         int maxAge = payload.durationTicks().orElse(DEFAULT_MAX_AGE);
         double halfSize = HALF_SIZE_BASE + HALF_SIZE_PER_STRENGTH * strength;
 
