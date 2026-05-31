@@ -7,6 +7,7 @@ import { DuguNarrationRuntime } from "./dugu-narration.js";
 import { DuguV2NarrationRuntime } from "./dugu_v2_runtime.js";
 import { HeartDemonRuntime } from "./heart-demon-runtime.js";
 import { InsightRuntime } from "./insight-runtime.js";
+import { OffscreenWarNarrationRuntime } from "./offscreen-war-narration.js";
 import { PoliticalNarrationRuntime } from "./political-narration.js";
 import { PoisonTraitNarrationRuntime } from "./poison-trait-runtime.js";
 import { ScatteredCultivatorNarrationRuntime } from "./scattered-cultivator-narration.js";
@@ -204,6 +205,11 @@ async function startAuxiliaryRuntimes(config: RuntimeConfig): Promise<RuntimeCle
   const scatteredCultivatorCleanup = await startScatteredCultivatorRuntime({
     redisUrl: config.redisUrl,
   });
+  // plan-offscreen-war-v1 P4：离屏派系消长叙事（订阅 bong:npc/death，聚合 dormant 互殴
+  // 战死 → emit broadcast 散修消长 narration）。事件驱动，独立于 tick loop。
+  const offscreenWarCleanup = await startOffscreenWarRuntime({
+    redisUrl: config.redisUrl,
+  });
 
   const heartDemonCleanup = await startHeartDemonRuntime({
     ...runtimeOpts,
@@ -235,6 +241,7 @@ async function startAuxiliaryRuntimes(config: RuntimeConfig): Promise<RuntimeCle
     duguCleanup,
     poisonTraitCleanup,
     scatteredCultivatorCleanup,
+    offscreenWarCleanup,
     woliuV2Cleanup,
     woliuCleanup,
     voidActionCleanup,
@@ -533,6 +540,35 @@ async function startScatteredCultivatorRuntime(opts: {
       await Promise.race([runtime.disconnect(), timeout]);
     } catch (error) {
       console.warn("[tiandao] scattered cultivator runtime disconnect error:", error);
+    }
+  };
+}
+
+async function startOffscreenWarRuntime(opts: {
+  redisUrl: string;
+}): Promise<() => Promise<void>> {
+  const IORedisCtor = ((Redis as unknown as { default?: unknown }).default ??
+    Redis) as new (url: string) => unknown;
+  const sub = new IORedisCtor(opts.redisUrl) as ConstructorParameters<
+    typeof OffscreenWarNarrationRuntime
+  >[0]["sub"];
+  const pub = new IORedisCtor(opts.redisUrl) as ConstructorParameters<
+    typeof OffscreenWarNarrationRuntime
+  >[0]["pub"];
+
+  const runtime = new OffscreenWarNarrationRuntime({ sub, pub });
+  runtime
+    .connect()
+    .then(() => console.log("[tiandao] offscreen war runtime online"))
+    .catch((error) =>
+      console.warn("[tiandao] offscreen war runtime failed to start:", error),
+    );
+  return async () => {
+    const timeout = new Promise<void>((resolve) => setTimeout(resolve, 500));
+    try {
+      await Promise.race([runtime.disconnect(), timeout]);
+    } catch (error) {
+      console.warn("[tiandao] offscreen war runtime disconnect error:", error);
     }
   };
 }

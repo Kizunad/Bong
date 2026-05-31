@@ -219,6 +219,10 @@ export class RedisIpc {
   private latestState: WorldStateV1 | null = null;
   private latestTsyHostileEvents: TsyHostileEventV1[] = [];
   private latestNpcEvents: NpcRuntimeEventV1[] = [];
+  // plan-offscreen-war-v1 P4：仅 death 事件的 drain 队列（喂 offscreenWarBlock context）。
+  // 与 latestNpcEvents（spawn+death+faction 混合，供 getLatestNpcEvents/callback）分开，
+  // drain 语义不互相清空。
+  private latestNpcDeathEvents: NpcDeathV1[] = [];
   private latestAlchemyEvents: AlchemyRuntimeEventV1[] = [];
   private latestPoiNoviceEvents: PoiNoviceRuntimeEventV1[] = [];
   private latestRatPhaseEvents: RatPhaseChangeEventV1[] = [];
@@ -419,6 +423,13 @@ export class RedisIpc {
     this.latestNpcEvents.push(event);
     if (this.latestNpcEvents.length > NPC_EVENT_BUFFER_LIMIT) {
       this.latestNpcEvents = this.latestNpcEvents.slice(-NPC_EVENT_BUFFER_LIMIT);
+    }
+    // plan-offscreen-war-v1 P4：death 事件单独入 drain 队列喂 offscreenWarBlock。
+    if (event.kind === "npc_death") {
+      this.latestNpcDeathEvents.push(event);
+      if (this.latestNpcDeathEvents.length > NPC_EVENT_BUFFER_LIMIT) {
+        this.latestNpcDeathEvents = this.latestNpcDeathEvents.slice(-NPC_EVENT_BUFFER_LIMIT);
+      }
     }
     for (const cb of this.npcEventCallbacks) {
       cb(event);
@@ -666,6 +677,16 @@ export class RedisIpc {
 
   onNpcRuntimeEvent(cb: (event: NpcRuntimeEventV1) => void): void {
     this.npcEventCallbacks.push(cb);
+  }
+
+  /**
+   * plan-offscreen-war-v1 P4：drain 自上次 drain 以来累积的 bong:npc/death 事件（含非
+   * combat，由下游 offscreenWarBlock 的 aggregateOffscreenWarReport 过滤）。
+   */
+  drainNpcDeathEvents(): NpcDeathV1[] {
+    const events = [...this.latestNpcDeathEvents];
+    this.latestNpcDeathEvents = [];
+    return events;
   }
 
   getLatestAlchemyEvents(): AlchemyRuntimeEventV1[] {

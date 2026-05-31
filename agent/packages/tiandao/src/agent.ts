@@ -7,7 +7,7 @@ import { readFileSync } from "node:fs";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { WorldStateV1 } from "@bong/schema";
-import type { ChatSignal } from "@bong/schema";
+import type { ChatSignal, NpcDeathV1 } from "@bong/schema";
 import { type ContextRecipe, assembleContext, createContextInput } from "./context.js";
 import { normalizeLlmChatResult, type LlmClient, type LlmToolUsage } from "./llm.js";
 import { type AgentDecision, parseDecision } from "./parse.js";
@@ -68,6 +68,7 @@ export class TiandaoAgent {
   private lastRunTs = 0;
   readonly intervalMs: number;
   private latestChatSignals: ChatSignal[] = [];
+  private latestNpcDeathEvents: NpcDeathV1[] = [];
   private worldModel?: WorldModel;
   private readonly now: () => number;
   private readonly tools: readonly AgentTool[];
@@ -87,6 +88,11 @@ export class TiandaoAgent {
 
   setChatSignals(signals: ChatSignal[]): void {
     this.latestChatSignals = signals;
+  }
+
+  /** plan-offscreen-war-v1 P4：注入本窗口离屏 death 事件，供 offscreenWarBlock 聚合喂推演。 */
+  setNpcDeathEvents(events: NpcDeathV1[]): void {
+    this.latestNpcDeathEvents = events;
   }
 
   setWorldModel(worldModel: WorldModel): void {
@@ -113,6 +119,7 @@ export class TiandaoAgent {
       createContextInput(state, this.latestChatSignals, nowSeconds, {
         agentName: this.name,
         worldModel: this.worldModel,
+        npcDeathEvents: this.latestNpcDeathEvents,
       }),
     );
     const userPrompt = `${context}\n\n---\n\n请基于以上信息决策。输出 JSON。如果不需要行动，返回空数组。`;

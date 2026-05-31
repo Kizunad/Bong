@@ -4,8 +4,13 @@ import type {
   ZoneSnapshot,
   GameEvent,
   ChatSignal,
+  NpcDeathV1,
 } from "@bong/schema";
 import { buildChatSignalsBlock } from "./chat-processor.js";
+import {
+  aggregateOffscreenWarReport,
+  describeRegion,
+} from "./offscreen-war-narration.js";
 import type { WorldModel, TrendDirection } from "./world-model.js";
 
 export interface ContextInput {
@@ -14,6 +19,13 @@ export interface ContextInput {
   nowSeconds?: number;
   agentName?: string;
   worldModel?: WorldModel;
+  /**
+   * plan-offscreen-war-v1 P4：本推演窗口内收到的 bong:npc/death 事件（含非 combat）。
+   * Context Assembler 的 offscreenWarBlock 会按 (region, faction_id) 聚合出离屏派系战报喂
+   * 变化 / 演绎时代——让"远方战事"既驱动 narration（OffscreenWarNarrationRuntime）也进三
+   * Agent 推演上下文。默认空数组（无事件 → 不渲染该块）。
+   */
+  npcDeathEvents?: NpcDeathV1[];
 }
 
 export interface ContextBlock {
@@ -37,7 +49,11 @@ export function createContextInput(
   state: WorldStateV1,
   chatSignals: ChatSignal[] = [],
   nowSeconds?: number,
-  options: { agentName?: string; worldModel?: WorldModel } = {},
+  options: {
+    agentName?: string;
+    worldModel?: WorldModel;
+    npcDeathEvents?: NpcDeathV1[];
+  } = {},
 ): ContextInput {
   return {
     state,
@@ -45,6 +61,7 @@ export function createContextInput(
     nowSeconds,
     agentName: options.agentName,
     worldModel: options.worldModel,
+    npcDeathEvents: options.npcDeathEvents,
   };
 }
 
@@ -219,6 +236,36 @@ export const chatSignalsBlock: ContextBlock = {
   },
 };
 
+export const offscreenWarBlock: ContextBlock = {
+  name: "offscreen_war",
+  priority: 3,
+  required: false,
+  render({ npcDeathEvents }) {
+    if (!npcDeathEvents || npcDeathEvents.length === 0) {
+      return "";
+    }
+    // 复用 narration runtime 的同一纯函数聚合（过滤非 combat、按 region+faction group_by）。
+    const report = aggregateOffscreenWarReport(npcDeathEvents);
+    if (report.totalCombatDeaths === 0) {
+      return "";
+    }
+    // 全匿名散修框架（无具名宗门，worldview §七/§十，见 plan §10.1 #6）：只给天道
+    // "某方位散修折损 N 人"的方位级感知，不暴露 region cell 索引 / 具名势力。
+    const lines = report.factionTallies.map((tally) => {
+      const where = describeRegion(tally.regionKey);
+      // faction_id 是匿名三档（attack/defend/neutral）的内部分组标记，对天道叙事呈现为
+      // "一方散修势力"——绝不映射成具名宗门。
+      return `- ${where}：一方散修势力折损 ${tally.deaths} 人`;
+    });
+    return [
+      "## 离屏散修消长（远方战事感知）",
+      `近窗共 ${report.totalCombatDeaths} 名散修于争脉互殴中横尸，灵气零和复归当地。`,
+      ...lines,
+      "提示：此乃散修群体自利争夺的涌现消长，非组织化势力交战；叙事须保持匿名群体框架，不得指认任何具名势力。",
+    ].join("\n");
+  },
+};
+
 export const peerDecisionsBlock: ContextBlock = {
   name: "peer_decisions",
   priority: 3,
@@ -386,11 +433,13 @@ export const MUTATION_RECIPE: ContextRecipe = {
     { ...worldSnapshotBlock, priority: 0, required: true },
     { ...playerProfilesBlock, priority: 1, required: true },
     { ...perceptionEnvelopeBlock, priority: 2, required: true },
-    { ...balanceBlock, priority: 3, required: false },
-    { ...recentNarrationsBlock, priority: 4, required: false },
-    { ...peerDecisionsBlock, priority: 5, required: false },
-    { ...chatSignalsBlock, priority: 6, required: false },
-    { ...recentEventsBlock, priority: 7, required: false },
+    // P4：离屏散修消长喂变化时代（感知世界格局变化），紧跟 perception。
+    { ...offscreenWarBlock, priority: 3, required: false },
+    { ...balanceBlock, priority: 4, required: false },
+    { ...recentNarrationsBlock, priority: 5, required: false },
+    { ...peerDecisionsBlock, priority: 6, required: false },
+    { ...chatSignalsBlock, priority: 7, required: false },
+    { ...recentEventsBlock, priority: 8, required: false },
   ],
 };
 
@@ -402,12 +451,14 @@ export const ERA_RECIPE: ContextRecipe = {
     { ...peerDecisionsBlock, priority: 1, required: true },
     { ...worldTrendBlock, priority: 2, required: true },
     { ...perceptionEnvelopeBlock, priority: 3, required: true },
-    { ...balanceBlock, priority: 4, required: false },
-    { ...recentNarrationsBlock, priority: 5, required: false },
-    { ...playerProfilesBlock, priority: 6, required: true },
-    { ...recentEventsBlock, priority: 7, required: true },
-    { ...keyPlayerBlock, priority: 8, required: false },
-    { ...chatSignalsBlock, priority: 9, required: false },
+    // P4：离屏散修消长喂演绎时代（总结历史走势），紧跟 perception。
+    { ...offscreenWarBlock, priority: 4, required: false },
+    { ...balanceBlock, priority: 5, required: false },
+    { ...recentNarrationsBlock, priority: 6, required: false },
+    { ...playerProfilesBlock, priority: 7, required: true },
+    { ...recentEventsBlock, priority: 8, required: true },
+    { ...keyPlayerBlock, priority: 9, required: false },
+    { ...chatSignalsBlock, priority: 10, required: false },
   ],
 };
 

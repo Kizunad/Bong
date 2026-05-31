@@ -5,6 +5,7 @@ import type {
   ChatSignal,
   Command,
   Narration,
+  NpcDeathV1,
   PriceIndexV1,
   RatPhaseChangeEventV1,
   WeatherEventUpdateV1,
@@ -122,6 +123,8 @@ export interface TickAgent {
   tick(client: LlmClient, model: string, state: WorldStateV1): Promise<AgentDecision | null>;
   setChatSignals?(signals: ChatSignal[]): void;
   setWorldModel?(worldModel: WorldModel): void;
+  /** plan-offscreen-war-v1 P4：注入本窗口离屏 death 事件（喂 offscreenWarBlock）。 */
+  setNpcDeathEvents?(events: NpcDeathV1[]): void;
 }
 
 export interface RuntimeRedis {
@@ -129,6 +132,8 @@ export interface RuntimeRedis {
   getLatestState(): WorldStateV1 | null;
   loadWorldModelState?(options?: { logger?: Pick<typeof console, "warn"> }): Promise<WorldModelSnapshot | null>;
   drainRatPhaseEvents?(): RatPhaseChangeEventV1[];
+  /** plan-offscreen-war-v1 P4：drain 本窗口 bong:npc/death 事件喂 offscreenWarBlock（context）。 */
+  drainNpcDeathEvents?(): NpcDeathV1[];
   drainPriceIndexEvents?(): PriceIndexV1[];
   drainWeatherEventUpdates?(): WeatherEventUpdateV1[];
   drainBotanyEcologyEvents?(): BotanyEcologySnapshotV1[];
@@ -170,6 +175,8 @@ export interface TickDeps {
   llmClientsByRole?: RuntimeRoleClients;
   modelOverrides?: RuntimeModelOverrides;
   chatSignals?: ChatSignal[];
+  /** plan-offscreen-war-v1 P4：本窗口离屏 death 事件，喂 offscreenWarBlock（变化/演绎时代）。 */
+  npcDeathEvents?: NpcDeathV1[];
   worldModel?: WorldModel;
   publishCommands: (request: CommandPublishRequest) => Promise<void>;
   publishNarrations: (request: NarrationPublishRequest) => Promise<void>;
@@ -405,6 +412,7 @@ export async function runTick(state: WorldStateV1, deps: TickDeps): Promise<Tick
     llmClientsByRole,
     modelOverrides,
     chatSignals,
+    npcDeathEvents,
     worldModel,
     publishCommands,
     publishNarrations,
@@ -441,6 +449,7 @@ export async function runTick(state: WorldStateV1, deps: TickDeps): Promise<Tick
   worldModel?.updateState(state);
   applyWorldModelToAgents(agents, worldModel);
   applyChatSignalsToAgents(agents, chatSignals ?? []);
+  applyNpcDeathEventsToAgents(agents, npcDeathEvents ?? []);
   logger.log("[tiandao] === tick start ===");
   logger.log(
     `[tiandao] tick: ${state.tick}, players: ${state.players.length}, zones: ${state.zones.length}, correlation_id: ${metadata.correlationId}`,
@@ -680,6 +689,14 @@ function applyChatSignalsToAgents(agents: TickAgent[], chatSignals: ChatSignal[]
   for (const agent of agents) {
     if (typeof agent.setChatSignals === "function") {
       agent.setChatSignals(chatSignals);
+    }
+  }
+}
+
+function applyNpcDeathEventsToAgents(agents: TickAgent[], events: NpcDeathV1[]): void {
+  for (const agent of agents) {
+    if (typeof agent.setNpcDeathEvents === "function") {
+      agent.setNpcDeathEvents(events);
     }
   }
 }
@@ -1066,6 +1083,14 @@ export async function runRuntime(
           }
         }
 
+        // plan-offscreen-war-v1 P4：drain 本窗口离屏 death 事件喂 offscreenWarBlock（变化/
+        // 演绎时代推演上下文）。narration emit 由独立 OffscreenWarNarrationRuntime 经各自
+        // bong:npc/death 订阅完成，与此 drain 互不干扰（同 channel 多订阅广播）。
+        const drainedNpcDeaths = redis.drainNpcDeathEvents?.() ?? [];
+        if (drainedNpcDeaths.length > 0) {
+          logger.log(`[tiandao] npc death drain: events=${drainedNpcDeaths.length}`);
+        }
+
         const state = redis.getLatestState();
         await processEcologyEvents({
           redis,
@@ -1107,6 +1132,7 @@ export async function runRuntime(
                   llmClientsByRole,
                   modelOverrides,
                   chatSignals: latestChatSignals,
+                  npcDeathEvents: drainedNpcDeaths,
                   worldModel,
                   publishCommands: (request) => redis.publishCommands(request),
                   publishNarrations: (request) => redis.publishNarrations(request),

@@ -22,7 +22,7 @@ import { LlmBackoffError, LlmTimeoutError, type LlmClient } from "../src/llm.js"
 import type { TelemetrySink } from "../src/telemetry.js";
 import { WorldModel, type WorldModelSnapshot } from "../src/world-model.js";
 import { FakeAgent, createTestWorldState } from "./support/fakes.js";
-import type { AgentWorldModelEnvelopeV1, ChatMessageV1, Command, Narration, RatPhaseChangeEventV1 } from "@bong/schema";
+import type { AgentWorldModelEnvelopeV1, ChatMessageV1, Command, Narration, NpcDeathV1, RatPhaseChangeEventV1 } from "@bong/schema";
 
 function createStructuredChatResult(content: string, model: string) {
   return {
@@ -46,6 +46,16 @@ class ChatAwareFakeAgent extends FakeAgent {
 
   setChatSignals(signals: { player: string }[]): void {
     this.receivedChatSignalsCount = signals.length;
+  }
+}
+
+class DeathAwareFakeAgent extends FakeAgent {
+  public receivedNpcDeathCount = 0;
+  public lastReceivedNpcDeaths: NpcDeathV1[] = [];
+
+  setNpcDeathEvents(events: NpcDeathV1[]): void {
+    this.receivedNpcDeathCount = events.length;
+    this.lastReceivedNpcDeaths = events;
   }
 }
 
@@ -524,6 +534,54 @@ describe("runTick", () => {
     });
 
     expect(chatAwareAgent.receivedChatSignalsCount).toBe(1);
+  });
+
+  it("injects drained npc death events to agents before ticking (P4 offscreen war context)", async () => {
+    const publishCommands = vi.fn(async () => {});
+    const publishNarrations = vi.fn(async () => {});
+    const deathAwareAgent = new DeathAwareFakeAgent("mutation", null);
+
+    const deaths: NpcDeathV1[] = [
+      {
+        v: 1,
+        kind: "npc_death",
+        npc_id: "dormant:combat:1",
+        archetype: "rogue",
+        cause: "combat",
+        faction_id: "attack",
+        age_ticks: 10_000,
+        max_age_ticks: 200_000,
+        at_tick: 84_000,
+        from_dormant_combat: true,
+        pos: [12, 64, -30],
+      },
+    ];
+
+    await runTick(createTestWorldState(), {
+      agents: [deathAwareAgent],
+      llmClient: new StructuredFakeLlmClient("{}"),
+      model: DEFAULT_MODEL,
+      npcDeathEvents: deaths,
+      publishCommands,
+      publishNarrations,
+      logger: { log: vi.fn(), error: vi.fn() },
+    });
+
+    expect(deathAwareAgent.receivedNpcDeathCount).toBe(1);
+    expect(deathAwareAgent.lastReceivedNpcDeaths[0]?.npc_id).toBe("dormant:combat:1");
+  });
+
+  it("defaults npc death events to empty when none supplied", async () => {
+    const deathAwareAgent = new DeathAwareFakeAgent("mutation", null);
+    await runTick(createTestWorldState(), {
+      agents: [deathAwareAgent],
+      llmClient: new StructuredFakeLlmClient("{}"),
+      model: DEFAULT_MODEL,
+      publishCommands: vi.fn(async () => {}),
+      publishNarrations: vi.fn(async () => {}),
+      logger: { log: vi.fn(), error: vi.fn() },
+    });
+    expect(deathAwareAgent.receivedNpcDeathCount).toBe(0);
   });
 
   it("persists current era from arbiter output into the shared world model", async () => {
