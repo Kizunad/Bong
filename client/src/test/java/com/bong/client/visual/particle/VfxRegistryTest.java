@@ -110,6 +110,61 @@ public class VfxRegistryTest {
     }
 
     @Test
+    void relicRevealEventIdRoutesToRegisteredPlayer() {
+        // plan-offscreen-war-v1 P3 二修（CodeRabbit Major）：本测试**确定性**锁住「event_id ->
+        // registry/bridge -> player」这一段可观察路由——不再用 `if (ok) {...} else {...}` 的逃逸分支
+        // （headless 下 MinecraftClient.getInstance()==null → bridge 返回 false → 旧测试无条件走 else
+        // 通过，成功路由从未被真正验证 = 假过）。
+        //
+        // 可测性边界（与 e2e「玩家靠近物化」同一界）：bridge 派发的最后一步 OffscreenRelicRevealPlayer
+        // .play() 解引用 client.world / particleManager / world.random / BongParticles，**必须**已初始化
+        // 的 MinecraftClient，headless JVM 下不可达。故贴花尺寸/alpha 裁剪、sprite 选取、world==null 早退
+        // 等**渲染副作用**属人工 runClient checklist，绝不在此用静默分支冒充验证。headless 可确定验证的
+        // 是 bridge 派发前的解析路由：`registry.lookup(payload.eventId())`（即 bridge.lookupPlayer 内部
+        // 第一步）必命中真实 bootstrap 绑定的 OffscreenRelicRevealPlayer。
+        VfxBootstrap.registerDefaults();
+        VfxRegistry registry = VfxRegistry.instance();
+
+        // 真实 relic payload（双色 + strength + count + lifetime），用它的 eventId 走解析路由。
+        VfxEventPayload.SpawnParticle payload = new VfxEventPayload.SpawnParticle(
+            OffscreenRelicRevealPlayer.EVENT_ID,
+            new double[] { 12.0, 64.0, -8.0 },
+            Optional.empty(),
+            OptionalInt.of(0xB8AFA0), // 骨堆灰白（宗门信物叙事）
+            Optional.of(0.7),         // strength
+            OptionalInt.of(1),        // count（burst-once）
+            OptionalInt.of(200)       // lifetime 拉满
+        );
+
+        // bridge.spawnParticle 派发前的解析步骤，headless 完全确定可测：用 payload 自己的 eventId 查。
+        Optional<VfxPlayer> routed = registry.lookup(payload.eventId());
+        assertTrue(routed.isPresent(),
+            "the relic SpawnParticle's event_id (offscreen_relic_reveal) must resolve to a registered "
+                + "VfxPlayer through the registry — this is exactly what BongVfxParticleBridge.lookupPlayer "
+                + "does before dispatching; a miss here means relic reveals would silently never render");
+        assertTrue(routed.get() instanceof OffscreenRelicRevealPlayer,
+            "registerDefaults() must bind offscreen_relic_reveal to an OffscreenRelicRevealPlayer (the "
+                + "player whose play() renders the bone-relic decal), not some other player; got "
+                + routed.get().getClass().getName());
+
+        // 对照：bridge 对**未注册** event_id 必拒（headless 确定可测，不依赖 MinecraftClient）——把
+        // 「命中 vs 未命中」两侧都钉死，证明上面的命中不是因为 bridge 对一切都放行。
+        BongVfxParticleBridge bridge = new BongVfxParticleBridge(registry);
+        VfxEventPayload.SpawnParticle unknown = new VfxEventPayload.SpawnParticle(
+            new Identifier("bong", "no_such_relic_event"),
+            new double[] { 0, 0, 0 },
+            Optional.empty(),
+            OptionalInt.empty(),
+            Optional.empty(),
+            OptionalInt.empty(),
+            OptionalInt.empty()
+        );
+        assertFalse(bridge.spawnParticle(unknown),
+            "an unregistered event_id must make the bridge decline (return false) — proves the relic "
+                + "route above succeeds because it is genuinely registered, not because the bridge admits all");
+    }
+
+    @Test
     void registerDefaultsBindsSwordQiSlash() {
         VfxBootstrap.registerDefaults();
         assertTrue(VfxRegistry.instance().contains(SwordQiSlashPlayer.EVENT_ID),
@@ -136,6 +191,8 @@ public class VfxRegistryTest {
             "bootstrap should register npc_death_smoke");
         assertTrue(VfxRegistry.instance().contains(NpcDeathQiBurstPlayer.EVENT_ID),
             "bootstrap should register npc_death_qi_burst");
+        assertTrue(VfxRegistry.instance().contains(OffscreenRelicRevealPlayer.EVENT_ID),
+            "bootstrap should register offscreen_relic_reveal (plan-offscreen-war-v1 P3 battlefield relic decal)");
         assertTrue(VfxRegistry.instance().contains(NpcRankAuraPlayer.ELDER),
             "bootstrap should register npc_rank_aura_elder");
         assertTrue(VfxRegistry.instance().contains(NpcRankAuraPlayer.MASTER),

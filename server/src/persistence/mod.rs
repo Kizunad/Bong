@@ -12,8 +12,8 @@ use uuid::Uuid;
 use valence::prelude::bevy_ecs;
 use valence::prelude::bevy_ecs::schedule::SystemSet;
 use valence::prelude::{
-    App, Client, Commands, Component, DVec3, Entity, EntityKind, IntoSystemConfigs, Position,
-    Query, Res, ResMut, Resource, Startup, Update, Username, With,
+    App, Client, Commands, Component, DVec3, Entity, EntityKind, EventReader, IntoSystemConfigs,
+    Position, Query, Res, ResMut, Resource, Startup, Update, Username, With,
 };
 
 use crate::combat::components::{Lifecycle, LifecycleState};
@@ -37,7 +37,7 @@ pub mod identity;
 pub const DEFAULT_DATABASE_PATH: &str = "data/bong.db";
 pub const SQLITE_BUSY_TIMEOUT_MS: u64 = 15_000;
 const DEFAULT_DECEASED_PUBLIC_DIR: &str = "../library-web/public/deceased";
-const CURRENT_USER_VERSION: i32 = 25;
+const CURRENT_USER_VERSION: i32 = 26;
 const AGENT_WORLD_MODEL_ROW_ID: i64 = 1;
 const ASCENSION_QUOTA_ROW_ID: i64 = 1;
 const TRIBULATION_KIND_DU_XU: &str = "du_xu";
@@ -57,6 +57,16 @@ pub const ZONE_OVERLAY_PAYLOAD_VERSION: i32 = 2;
 const NPC_ROW_SCHEMA_VERSION: i32 = 1;
 const NPC_DIGEST_RETENTION_SECS: i64 = 180 * 24 * 60 * 60;
 const NPC_DIGEST_SWEEP_INTERVAL_SECS: i64 = 7 * 24 * 60 * 60;
+/// plan-offscreen-war-v1 P3：未被玩家到访的离屏战场遗物的留存窗口（墙钟秒）。
+///
+/// 战死结算时把待物化遗物写进 `pending_dormant_relics`，玩家靠近 hydrate 才物化成 ground
+/// loot。但末法残土处处战场——若**永无玩家**到访，这些 pending 行会无限堆积。TTL sweep
+/// 在 `created_wall` 早于 `now - PENDING_RELIC_RETENTION_SECS`（默认 30 分钟）时清掉它们：
+/// 那片战场玩家半小时没来，散落的骨片残卷也就随风化去了（叙事自洽 + 不留数据库孤儿）。
+const PENDING_RELIC_RETENTION_SECS: i64 = 30 * 60;
+/// 遗物 TTL sweep 的最小重跑间隔（墙钟秒，仿 [`NPC_DIGEST_SWEEP_INTERVAL_SECS`] 的手动限频）。
+/// 比 digest 的 7 天短得多——遗物留存窗口本就只有 30 分钟，sweep 每 5 分钟扫一次足够及时。
+const PENDING_RELIC_SWEEP_INTERVAL_SECS: i64 = 5 * 60;
 const AGENT_WORLD_MODEL_APPEND_ONLY_RETENTION_SECS: i64 = 180 * 24 * 60 * 60;
 const NPC_SNAPSHOT_INTERVAL_TICKS: u32 = 20 * 60;
 const ZONE_RUNTIME_SNAPSHOT_INTERVAL_SECS: i64 = 5 * 60;
@@ -87,6 +97,14 @@ struct NpcDigestSweepState {
 }
 
 impl Resource for NpcDigestSweepState {}
+
+/// plan-offscreen-war-v1 P3：战场遗物 TTL sweep 的手动限频状态（仿 [`NpcDigestSweepState`]）。
+#[derive(Debug, Default)]
+struct DormantRelicSweepState {
+    last_sweep_wall: i64,
+}
+
+impl Resource for DormantRelicSweepState {}
 
 #[derive(Debug, Default)]
 struct DailyBackupState {
@@ -275,6 +293,27 @@ pub struct NpcDigestRecord {
     pub faction_id: Option<String>,
     pub recent_summary: String,
     pub last_referenced_wall: i64,
+}
+
+/// plan-offscreen-war-v1 P3：`pending_dormant_relics` 表的一行——一名克制判定通过的离屏
+/// 战死者待物化的战场遗物。与列 1:1 映射（仿 [`NpcDigestRecord`]）。
+///
+/// **零真元不变量**：本记录**不含**任何真元字段——遗物 loot 物化时显式 `spirit_quality=0`，
+/// 持久层完全不碰 `WorldQiAccount` / ledger（§10.1 #5 ④红线）。`loot_seed` 是 u64
+/// deterministic 种子，但 sqlite 无 u64 → 存取走 `loot_seed as i64` / `i64 as u64` 位投影
+/// （无损往返，见 [`upsert_pending_dormant_relic`] / [`load_pending_dormant_relics_for_zone`]）。
+#[derive(Debug, Clone, PartialEq)]
+pub struct PendingDormantRelicRecord {
+    pub relic_id: String,
+    pub char_id: String,
+    pub zone: String,
+    pub pos_x: f64,
+    pub pos_y: f64,
+    pub pos_z: f64,
+    pub archetype: String,
+    pub loot_seed: u64,
+    pub created_tick: i64,
+    pub created_wall: i64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -528,6 +567,7 @@ pub fn register(app: &mut App) {
     app.init_resource::<PersistenceSettings>()
         .init_resource::<NpcSnapshotTracker>()
         .init_resource::<NpcDigestSweepState>()
+        .init_resource::<DormantRelicSweepState>()
         .init_resource::<DailyBackupState>()
         .init_resource::<ZoneRuntimeSnapshotState>()
         .add_systems(
@@ -539,6 +579,8 @@ pub fn register(app: &mut App) {
             (
                 persist_npc_runtime_state_system,
                 sweep_npc_digest_retention_system,
+                persist_pending_dormant_relics_system,
+                sweep_dormant_relic_retention_system,
                 daily_midnight_backup_system,
                 persist_zone_runtime_system,
             ),
@@ -1620,6 +1662,42 @@ fn apply_migrations(connection: &mut Connection) -> rusqlite::Result<()> {
         transaction.commit()?;
     }
 
+    let current_version: i32 =
+        connection.query_row("PRAGMA user_version;", [], |row| row.get(0))?;
+    if current_version < 26 {
+        // plan-offscreen-war-v1 P3：克制式战场遗物（deferred-on-hydrate）的待物化持久层。
+        // 不走 worldgen 静态布局（战场 chunk 未加载），改用 sqlite + TTL sweep（§10.1 #6
+        // 决议：选 sqlite 而非 Resource，避免遗物与已 remove 的死者生命周期耦合成孤儿）。
+        // relic_id = UUID TEXT PK（同 char_id 款）；position 拆三列 REAL（同 npc_state pos_x/y/z）；
+        // loot_seed 是 u64 deterministic 种子，sqlite 无 u64 → 以 i64 位投影存（读回再投影回来）；
+        // created_tick 给 deferred-on-hydrate 时序校验；created_wall 给 TTL sweep（墙钟，不依赖逻辑 tick）。
+        let transaction = connection.transaction()?;
+        transaction.execute_batch(
+            "
+            CREATE TABLE IF NOT EXISTS pending_dormant_relics (
+                relic_id     TEXT PRIMARY KEY,
+                char_id      TEXT NOT NULL,
+                zone         TEXT NOT NULL,
+                pos_x        REAL NOT NULL,
+                pos_y        REAL NOT NULL,
+                pos_z        REAL NOT NULL,
+                archetype    TEXT NOT NULL,
+                loot_seed    INTEGER NOT NULL,
+                created_tick INTEGER NOT NULL CHECK (created_tick >= 0),
+                created_wall INTEGER NOT NULL CHECK (created_wall >= 0),
+                schema_version INTEGER NOT NULL DEFAULT 1 CHECK (schema_version >= 1)
+            );
+            CREATE INDEX IF NOT EXISTS idx_pending_dormant_relics_zone
+            ON pending_dormant_relics (zone, created_wall);
+            CREATE INDEX IF NOT EXISTS idx_pending_dormant_relics_created_wall
+            ON pending_dormant_relics (created_wall);
+            ",
+        )?;
+        assert_pending_dormant_relics_schema_ready(&transaction)?;
+        transaction.execute_batch("PRAGMA user_version = 26;")?;
+        transaction.commit()?;
+    }
+
     let final_version: i32 = connection.query_row("PRAGMA user_version;", [], |row| row.get(0))?;
     if final_version != CURRENT_USER_VERSION {
         return Err(rusqlite::Error::ToSqlConversionFailure(Box::new(
@@ -1813,6 +1891,57 @@ fn assert_player_known_techniques_schema_ready(
         return Err(rusqlite::Error::ToSqlConversionFailure(Box::new(
             io::Error::other(format!(
                 "v25 migration completed but player_known_techniques primary key mismatch: expected username got {primary_key:?}"
+            )),
+        )));
+    }
+    Ok(())
+}
+
+/// plan-offscreen-war-v1 P3：v26 迁移后验，确保 `pending_dormant_relics` 列与 PK 完整。
+/// 仿 [`assert_player_known_techniques_schema_ready`]——迁移完成但列 / PK 漂移则直接报错，
+/// 不让一个残缺表静默上线（遗物 upsert/load 会在运行时撞列名错误反而更难定位）。
+fn assert_pending_dormant_relics_schema_ready(
+    transaction: &rusqlite::Transaction<'_>,
+) -> rusqlite::Result<()> {
+    let columns = table_columns(transaction, "pending_dormant_relics")?;
+    let required = [
+        "relic_id",
+        "char_id",
+        "zone",
+        "pos_x",
+        "pos_y",
+        "pos_z",
+        "archetype",
+        "loot_seed",
+        "created_tick",
+        "created_wall",
+        "schema_version",
+    ];
+    if let Some(missing) = required
+        .iter()
+        .find(|column| !columns.iter().any(|name| name == **column))
+    {
+        return Err(rusqlite::Error::ToSqlConversionFailure(Box::new(
+            io::Error::other(format!(
+                "v26 migration completed but pending_dormant_relics column {missing} missing"
+            )),
+        )));
+    }
+
+    let mut statement = transaction.prepare("PRAGMA table_info(pending_dormant_relics)")?;
+    let primary_key = statement
+        .query_map([], |row| {
+            Ok((row.get::<_, String>(1)?, row.get::<_, i32>(5)?))
+        })?
+        .collect::<Result<Vec<_>, _>>()?
+        .into_iter()
+        .filter(|(_, pk_ordinal)| *pk_ordinal > 0)
+        .collect::<Vec<_>>();
+    let expected_primary_key = [("relic_id".to_owned(), 1)];
+    if primary_key.as_slice() != expected_primary_key.as_slice() {
+        return Err(rusqlite::Error::ToSqlConversionFailure(Box::new(
+            io::Error::other(format!(
+                "v26 migration completed but pending_dormant_relics primary key mismatch: expected relic_id got {primary_key:?}"
             )),
         )));
     }
@@ -3427,6 +3556,100 @@ fn sweep_npc_digest_retention_system(
     }
 }
 
+/// plan-offscreen-war-v1 P3：消费 [`PendingDormantRelicCreated`](crate::npc::dormant::PendingDormantRelicCreated)
+/// → 把待物化战场遗物落盘进 `pending_dormant_relics`。
+///
+/// 事件由 `run_dormant_combat_phase` 在败者真元**已守恒释放完毕**且克制判定通过时 emit
+/// （严格在 `release_dormant_qi_to_zone` 之后、`store.remove` 之前——无吞真元窗口）。本 system
+/// 只把 event 持久化，**不碰任何真元 / ledger**（遗物零真元，§10.1 #5 ④红线）。现开连接同步写
+/// （仿 `persist_npc_runtime_state_system` 范式，无 deferred channel）。
+///
+/// `relic_id` 用**确定性**复合键（char_id + created_tick + loot_seed）而非随机 UUID（CodeRabbit）：
+/// 一个逻辑战死对应唯一 (char_id, created_tick)，loot_seed 由 (char_id, tick, sim_seed) 确定，
+/// 故同一逻辑死亡始终映射到同一 relic_id。配合 `upsert_pending_dormant_relic` 的
+/// `ON CONFLICT(relic_id) DO UPDATE`，**重复 emit 同一遗物天然幂等**（覆盖而非插重复行），
+/// 也让未来若加重试路径能靠 relic_id 去重。
+/// 注：遗物是**零真元** telemetry/cosmetic loot 占位，持久化失败仅丢一处遗物 ground loot、
+/// **不违反守恒**（不像 dormant qi 快照丢失=吞真元）；故此处失败 warn+drop 而非引入重型重试
+/// 队列子系统——确定性 relic_id 已消除「随机 id 无法去重」这一真正的回归隐患。
+/// 由战场遗物 event 的**逻辑标识字段**（char_id + created_tick + loot_seed）构造确定性
+/// `relic_id`。同一逻辑战死无论 emit / persist 多少次都得到同一 id，配合 PK `ON CONFLICT`
+/// upsert 实现幂等。created_wall（墙钟）**不**进 id（它随重试漂移、会破坏幂等）。
+fn deterministic_relic_id(event: &crate::npc::dormant::PendingDormantRelicCreated) -> String {
+    format!(
+        "relic:{}:{}:{:016x}",
+        event.char_id, event.created_tick, event.loot_seed
+    )
+}
+
+fn persist_pending_dormant_relics_system(
+    settings: Res<PersistenceSettings>,
+    mut events: EventReader<crate::npc::dormant::PendingDormantRelicCreated>,
+) {
+    let pending: Vec<&crate::npc::dormant::PendingDormantRelicCreated> = events.read().collect();
+    if pending.is_empty() {
+        return;
+    }
+    let created_wall = current_unix_seconds();
+    for event in pending {
+        let record = PendingDormantRelicRecord {
+            relic_id: deterministic_relic_id(event),
+            char_id: event.char_id.clone(),
+            zone: event.zone.clone(),
+            pos_x: event.position[0],
+            pos_y: event.position[1],
+            pos_z: event.position[2],
+            archetype: event.archetype.as_str().to_string(),
+            loot_seed: event.loot_seed,
+            created_tick: event.created_tick as i64,
+            created_wall,
+        };
+        if let Err(error) = persist_pending_dormant_relic(&settings, &record) {
+            tracing::warn!(
+                "[bong][persistence] failed to persist pending dormant relic for {}: {error}",
+                event.char_id
+            );
+            continue;
+        }
+        tracing::debug!(
+            "[bong][persistence] persisted pending battlefield relic {} (char={} zone={} archetype={})",
+            record.relic_id,
+            record.char_id,
+            record.zone,
+            record.archetype,
+        );
+    }
+}
+
+/// plan-offscreen-war-v1 P3：战场遗物 TTL retention sweep（仿 [`sweep_npc_digest_retention_system`]）。
+/// 墙钟手动限频（[`PENDING_RELIC_SWEEP_INTERVAL_SECS`]）；每次清掉 `created_wall` 早于
+/// `now - PENDING_RELIC_RETENTION_SECS` 的陈旧遗物，避免无人到访的战场遗物永久堆积。
+fn sweep_dormant_relic_retention_system(
+    settings: Res<PersistenceSettings>,
+    mut sweep_state: ResMut<DormantRelicSweepState>,
+) {
+    let now_wall = current_unix_seconds();
+    if sweep_state.last_sweep_wall > 0
+        && now_wall.saturating_sub(sweep_state.last_sweep_wall) < PENDING_RELIC_SWEEP_INTERVAL_SECS
+    {
+        return;
+    }
+
+    match sweep_stale_dormant_relics(&settings, now_wall) {
+        Ok(removed) => {
+            sweep_state.last_sweep_wall = now_wall;
+            if removed > 0 {
+                tracing::debug!(
+                    "[bong][persistence] swept {removed} stale battlefield relic(s) (older than {PENDING_RELIC_RETENTION_SECS}s)"
+                );
+            }
+        }
+        Err(error) => {
+            tracing::warn!("[bong][persistence] failed dormant relic retention sweep: {error}");
+        }
+    }
+}
+
 fn effective_npc_state(
     entity: Entity,
     lifecycle: &Lifecycle,
@@ -3765,6 +3988,156 @@ fn upsert_npc_digest(
         )
         .map_err(io::Error::other)?;
     Ok(())
+}
+
+/// plan-offscreen-war-v1 P3：把一行待物化战场遗物 upsert 进 `pending_dormant_relics`
+/// （仿 [`upsert_npc_digest`] 签名）。`loot_seed: u64` 经 `as i64` 位投影存（sqlite 无 u64）。
+/// `relic_id` 是 UUID PK，正常情况下每个 event 唯一；用 upsert 是为幂等（同一 event 万一被
+/// 重复消费也不双写）。**不碰 ledger / WorldQiAccount**——遗物零真元（§10.1 #5 ④）。
+fn upsert_pending_dormant_relic(
+    transaction: &rusqlite::Transaction<'_>,
+    record: &PendingDormantRelicRecord,
+) -> io::Result<()> {
+    transaction
+        .execute(
+            "
+            INSERT INTO pending_dormant_relics (
+                relic_id,
+                char_id,
+                zone,
+                pos_x,
+                pos_y,
+                pos_z,
+                archetype,
+                loot_seed,
+                created_tick,
+                created_wall,
+                schema_version
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
+            ON CONFLICT(relic_id) DO UPDATE SET
+                char_id = excluded.char_id,
+                zone = excluded.zone,
+                pos_x = excluded.pos_x,
+                pos_y = excluded.pos_y,
+                pos_z = excluded.pos_z,
+                archetype = excluded.archetype,
+                loot_seed = excluded.loot_seed,
+                created_tick = excluded.created_tick,
+                -- plan-offscreen-war-v1 P3 review-fix（CodeRabbit Major）：冲突时**保留更早的**
+                -- created_wall。它是 TTL retention sweep 与 hydrate 排序的墙钟锚点；若覆盖成新事件
+                -- 的墙钟，同一逻辑死亡重发 / 重试会刷新 TTL（陈旧遗物被无限续命）、并打乱 hydrate
+                -- 排序。幂等必须对**可观察 TTL** 也成立，而不只对去重成立——故取两者的最小值。
+                created_wall = MIN(pending_dormant_relics.created_wall, excluded.created_wall),
+                schema_version = excluded.schema_version
+            ",
+            params![
+                record.relic_id,
+                record.char_id,
+                record.zone,
+                record.pos_x,
+                record.pos_y,
+                record.pos_z,
+                record.archetype,
+                record.loot_seed as i64,
+                record.created_tick,
+                record.created_wall,
+                NPC_ROW_SCHEMA_VERSION,
+            ],
+        )
+        .map_err(io::Error::other)?;
+    Ok(())
+}
+
+/// plan-offscreen-war-v1 P3：写入一行待物化战场遗物（现开连接 + 显式事务，仿 npc_digest
+/// 写路径）。战死结算 emit 的 [`PendingDormantRelicCreated`](crate::npc::dormant::PendingDormantRelicCreated)
+/// 由 `persist_pending_dormant_relics_system` 消费后调本函数落盘。
+pub fn persist_pending_dormant_relic(
+    settings: &PersistenceSettings,
+    record: &PendingDormantRelicRecord,
+) -> io::Result<()> {
+    let mut connection = open_persistence_connection(settings)?;
+    let transaction = connection.transaction().map_err(io::Error::other)?;
+    upsert_pending_dormant_relic(&transaction, record)?;
+    transaction.commit().map_err(io::Error::other)?;
+    Ok(())
+}
+
+/// plan-offscreen-war-v1 P3：读出某个 zone 全部待物化战场遗物（按 created_wall 稳定排序，
+/// 让 deferred-on-hydrate 物化顺序确定性）。`loot_seed` 从 i64 投影回 u64（无损往返）。
+/// 消费方：`npc::dormant::relic_hydrate::hydrate_pending_dormant_relics_system`（交付物 3）。
+pub fn load_pending_dormant_relics_for_zone(
+    settings: &PersistenceSettings,
+    zone: &str,
+) -> io::Result<Vec<PendingDormantRelicRecord>> {
+    let connection = open_persistence_connection(settings)?;
+    let mut statement = connection
+        .prepare(
+            "
+            SELECT relic_id, char_id, zone, pos_x, pos_y, pos_z, archetype,
+                   loot_seed, created_tick, created_wall
+            FROM pending_dormant_relics
+            WHERE zone = ?1
+            ORDER BY created_wall ASC, relic_id ASC
+            ",
+        )
+        .map_err(io::Error::other)?;
+    let rows = statement
+        .query_map(params![zone], |row| {
+            Ok(PendingDormantRelicRecord {
+                relic_id: row.get(0)?,
+                char_id: row.get(1)?,
+                zone: row.get(2)?,
+                pos_x: row.get(3)?,
+                pos_y: row.get(4)?,
+                pos_z: row.get(5)?,
+                archetype: row.get(6)?,
+                loot_seed: row.get::<_, i64>(7)? as u64,
+                created_tick: row.get(8)?,
+                created_wall: row.get(9)?,
+            })
+        })
+        .map_err(io::Error::other)?;
+
+    let mut relics = Vec::new();
+    for row in rows {
+        relics.push(row.map_err(io::Error::other)?);
+    }
+    Ok(relics)
+}
+
+/// plan-offscreen-war-v1 P3：删一行已物化（hydrate 消费完）的战场遗物。消费后立刻删，
+/// 保证同一遗物不被二次物化（玩家拾走后再次靠近不再凭空再生一份 loot）。
+/// 消费方：`npc::dormant::relic_hydrate::hydrate_pending_dormant_relics_system`（交付物 3）。
+pub fn delete_pending_dormant_relic(
+    settings: &PersistenceSettings,
+    relic_id: &str,
+) -> io::Result<()> {
+    let connection = open_persistence_connection(settings)?;
+    connection
+        .execute(
+            "DELETE FROM pending_dormant_relics WHERE relic_id = ?1",
+            params![relic_id],
+        )
+        .map_err(io::Error::other)?;
+    Ok(())
+}
+
+/// plan-offscreen-war-v1 P3：清掉 `created_wall` 早于 `now - PENDING_RELIC_RETENTION_SECS`
+/// 的陈旧战场遗物（仿 [`sweep_stale_npc_digests`]，但无 zstd 归档——遗物只是 ground loot
+/// 占位，过期即风化，不值得归档）。返回被清掉的行数（telemetry / 测试断言用）。
+pub fn sweep_stale_dormant_relics(
+    settings: &PersistenceSettings,
+    now_wall: i64,
+) -> io::Result<usize> {
+    let threshold = now_wall.saturating_sub(PENDING_RELIC_RETENTION_SECS);
+    let connection = open_persistence_connection(settings)?;
+    let removed = connection
+        .execute(
+            "DELETE FROM pending_dormant_relics WHERE created_wall < ?1",
+            params![threshold],
+        )
+        .map_err(io::Error::other)?;
+    Ok(removed)
 }
 
 fn upsert_archetype_registry_entry(
@@ -11231,6 +11604,507 @@ mod persistence_tests {
                 "active row {i} 应被事务删除（granted/denied 都删）"
             );
         }
+        let _ = fs::remove_dir_all(root);
+    }
+
+    // ── plan-offscreen-war-v1 P3：战场遗物 pending_dormant_relics 持久层（交付物 2） ──
+
+    fn pending_relic_record(
+        relic_id: &str,
+        char_id: &str,
+        zone: &str,
+        loot_seed: u64,
+        created_wall: i64,
+    ) -> PendingDormantRelicRecord {
+        PendingDormantRelicRecord {
+            relic_id: relic_id.to_string(),
+            char_id: char_id.to_string(),
+            zone: zone.to_string(),
+            pos_x: 12.5,
+            pos_y: 64.0,
+            pos_z: -8.25,
+            archetype: crate::npc::lifecycle::NpcArchetype::Disciple
+                .as_str()
+                .to_string(),
+            loot_seed,
+            created_tick: 7,
+            created_wall,
+        }
+    }
+
+    #[test]
+    fn pending_relic_persisted_to_sqlite_round_trips_all_fields() {
+        // 交付物 2 happy path：upsert 一行 → load 回来字段逐一相等。重点锁 loot_seed 的
+        // u64→i64→u64 位投影**无损**（用一个 high-bit-set 的 u64，i64 会变负，必须能投影回来）。
+        let (settings, root) = persistence_settings("pending-relic-roundtrip");
+        bootstrap_sqlite(settings.db_path(), settings.server_run_id())
+            .expect("bootstrap should succeed");
+
+        let high_bit_seed = 0xFFFF_FFFF_0000_0001u64; // as i64 为负，验证投影往返
+        let record = pending_relic_record(
+            "relic-uuid-1",
+            "dormant:fallen:disciple",
+            "rift_valley",
+            high_bit_seed,
+            1_000,
+        );
+        persist_pending_dormant_relic(&settings, &record).expect("persist should succeed");
+
+        let loaded = load_pending_dormant_relics_for_zone(&settings, "rift_valley")
+            .expect("load should succeed");
+        assert_eq!(
+            loaded.len(),
+            1,
+            "exactly one pending relic should be persisted for the zone, got {}",
+            loaded.len()
+        );
+        assert_eq!(
+            loaded[0], record,
+            "the loaded pending relic must field-for-field equal what was persisted \
+             (including the high-bit u64 loot_seed surviving the i64 round-trip); got {:?}",
+            loaded[0]
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn pending_relic_load_filters_by_zone() {
+        // load_pending_dormant_relics_for_zone 只返回**该 zone** 的遗物——玩家在 A zone 不该
+        // 物化 B zone 的战场遗物。
+        let (settings, root) = persistence_settings("pending-relic-zone-filter");
+        bootstrap_sqlite(settings.db_path(), settings.server_run_id())
+            .expect("bootstrap should succeed");
+
+        persist_pending_dormant_relic(
+            &settings,
+            &pending_relic_record("r-a1", "c1", "rift_valley", 11, 100),
+        )
+        .unwrap();
+        persist_pending_dormant_relic(
+            &settings,
+            &pending_relic_record("r-a2", "c2", "rift_valley", 22, 200),
+        )
+        .unwrap();
+        persist_pending_dormant_relic(
+            &settings,
+            &pending_relic_record("r-b1", "c3", "north_wastes", 33, 150),
+        )
+        .unwrap();
+
+        let rift = load_pending_dormant_relics_for_zone(&settings, "rift_valley").unwrap();
+        assert_eq!(
+            rift.len(),
+            2,
+            "rift_valley must return exactly its 2 relics, not the north_wastes one, got {}",
+            rift.len()
+        );
+        // 排序确定性：按 created_wall ASC（r-a1 created_wall=100 在 r-a2 created_wall=200 前）。
+        assert_eq!(
+            rift[0].relic_id, "r-a1",
+            "relics must come back ordered by created_wall ASC for deterministic hydrate, got first={}",
+            rift[0].relic_id
+        );
+        let north = load_pending_dormant_relics_for_zone(&settings, "north_wastes").unwrap();
+        assert_eq!(north.len(), 1, "north_wastes must return only its 1 relic");
+        let empty = load_pending_dormant_relics_for_zone(&settings, "spawn").unwrap();
+        assert!(
+            empty.is_empty(),
+            "a zone with no relics must return an empty vec, got {} rows",
+            empty.len()
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn pending_relic_delete_removes_only_target_row() {
+        // 消费后删除：玩家拾走遗物 → delete 该 relic_id → 它不再被 load（不二次物化），
+        // 但同 zone 其它遗物保留。
+        let (settings, root) = persistence_settings("pending-relic-delete");
+        bootstrap_sqlite(settings.db_path(), settings.server_run_id())
+            .expect("bootstrap should succeed");
+
+        persist_pending_dormant_relic(
+            &settings,
+            &pending_relic_record("keep", "c1", "rift_valley", 1, 100),
+        )
+        .unwrap();
+        persist_pending_dormant_relic(
+            &settings,
+            &pending_relic_record("drop", "c2", "rift_valley", 2, 100),
+        )
+        .unwrap();
+
+        delete_pending_dormant_relic(&settings, "drop").expect("delete should succeed");
+
+        let remaining = load_pending_dormant_relics_for_zone(&settings, "rift_valley").unwrap();
+        assert_eq!(
+            remaining.len(),
+            1,
+            "after deleting one relic, exactly one must remain, got {}",
+            remaining.len()
+        );
+        assert_eq!(
+            remaining[0].relic_id, "keep",
+            "delete must remove only the targeted relic_id, leaving 'keep'; got {}",
+            remaining[0].relic_id
+        );
+        // 删一个不存在的 relic_id 必须无害（幂等：玩家重复拾取请求不应炸）。
+        delete_pending_dormant_relic(&settings, "nonexistent")
+            .expect("deleting a missing relic must be a no-op, not an error");
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn relic_ttl_swept_after_expiry_off_by_one() {
+        // TTL sweep 边界（off-by-one）：阈值 = now - PENDING_RELIC_RETENTION_SECS。
+        //   - created_wall == threshold-1（早于阈值 1 秒，已过期）→ 必被清；
+        //   - created_wall == threshold（恰好等于阈值，DELETE 条件是 `< threshold`）→ 必保留；
+        //   - created_wall == threshold+1（晚于阈值，更新鲜）→ 必保留。
+        let (settings, root) = persistence_settings("pending-relic-ttl-sweep");
+        bootstrap_sqlite(settings.db_path(), settings.server_run_id())
+            .expect("bootstrap should succeed");
+
+        let now_wall = 1_000_000i64;
+        let threshold = now_wall - PENDING_RELIC_RETENTION_SECS;
+        persist_pending_dormant_relic(
+            &settings,
+            &pending_relic_record("expired", "c1", "rift_valley", 1, threshold - 1),
+        )
+        .unwrap();
+        persist_pending_dormant_relic(
+            &settings,
+            &pending_relic_record("boundary", "c2", "rift_valley", 2, threshold),
+        )
+        .unwrap();
+        persist_pending_dormant_relic(
+            &settings,
+            &pending_relic_record("fresh", "c3", "rift_valley", 3, threshold + 1),
+        )
+        .unwrap();
+
+        let removed =
+            sweep_stale_dormant_relics(&settings, now_wall).expect("sweep should succeed");
+        assert_eq!(
+            removed, 1,
+            "exactly the one relic created strictly before the threshold must be swept, got {removed}"
+        );
+
+        let remaining = load_pending_dormant_relics_for_zone(&settings, "rift_valley").unwrap();
+        let ids: HashSet<&str> = remaining.iter().map(|r| r.relic_id.as_str()).collect();
+        assert!(
+            !ids.contains("expired"),
+            "the expired relic (created_wall < threshold) must be swept, but it survived"
+        );
+        assert!(
+            ids.contains("boundary"),
+            "the boundary relic (created_wall == threshold) must NOT be swept — DELETE is strict `< threshold`, off-by-one would wrongly drop it"
+        );
+        assert!(
+            ids.contains("fresh"),
+            "the fresh relic (created_wall > threshold) must survive the sweep"
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn persist_pending_relic_system_consumes_event_into_sqlite() {
+        // 端到端 system 级：emit 一个 PendingDormantRelicCreated event → 跑 persist system →
+        // sqlite 出现对应行（zone/pos/archetype/loot_seed 正确）。这把"combat phase emit"与
+        // "持久层落盘"之间的消费契约锁住，真实 impl 只换 emit 源不动这条断言。
+        let (settings, root) = persistence_settings("pending-relic-system");
+        bootstrap_sqlite(settings.db_path(), settings.server_run_id())
+            .expect("bootstrap should succeed");
+
+        let mut app = App::new();
+        app.insert_resource(settings.clone());
+        app.add_event::<crate::npc::dormant::PendingDormantRelicCreated>();
+        app.add_systems(Update, persist_pending_dormant_relics_system);
+
+        app.world_mut()
+            .send_event(crate::npc::dormant::PendingDormantRelicCreated {
+                char_id: "dormant:fallen:elder".to_string(),
+                zone: "qingyun_peaks".to_string(),
+                position: [42.0, 70.0, -13.5],
+                archetype: crate::npc::lifecycle::NpcArchetype::GuardianRelic,
+                loot_seed: 0xABCD_1234_5678_9F00,
+                created_tick: 99,
+            });
+        app.update();
+
+        let loaded = load_pending_dormant_relics_for_zone(&settings, "qingyun_peaks")
+            .expect("load should succeed");
+        assert_eq!(
+            loaded.len(),
+            1,
+            "the persist system must write exactly one sqlite row from one event, got {}",
+            loaded.len()
+        );
+        let row = &loaded[0];
+        assert_eq!(row.char_id, "dormant:fallen:elder");
+        assert_eq!(
+            row.archetype,
+            crate::npc::lifecycle::NpcArchetype::GuardianRelic.as_str(),
+            "system must store archetype via as_str() so hydrate can from_str() it back"
+        );
+        assert_eq!(
+            row.loot_seed, 0xABCD_1234_5678_9F00,
+            "loot_seed must survive the event→sqlite path losslessly for deterministic re-roll"
+        );
+        assert_eq!(
+            (row.pos_x, row.pos_y, row.pos_z),
+            (42.0, 70.0, -13.5),
+            "relic position must be stored exactly (split into pos_x/y/z)"
+        );
+        assert_eq!(
+            row.created_tick, 99,
+            "created_tick must carry the settlement tick for deferred-on-hydrate ordering"
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn persist_pending_relic_system_is_idempotent_for_same_logical_death() {
+        // plan-offscreen-war-v1 P3 review-fix（CodeRabbit）：relic_id 现为确定性复合键
+        // （char_id + created_tick + loot_seed）。同一逻辑战死的事件即便 emit / persist 两次
+        // （重发、重试），也只产出**一行**（ON CONFLICT(relic_id) DO UPDATE 覆盖而非插重复），
+        // 不再像随机 UUID 那样每次造一行孤儿。
+        let (settings, root) = persistence_settings("pending-relic-idempotent");
+        bootstrap_sqlite(settings.db_path(), settings.server_run_id())
+            .expect("bootstrap should succeed");
+
+        let make_event = || crate::npc::dormant::PendingDormantRelicCreated {
+            char_id: "dormant:fallen:disciple".to_string(),
+            zone: "rift_valley".to_string(),
+            position: [1.0, 64.0, 2.0],
+            archetype: crate::npc::lifecycle::NpcArchetype::Disciple,
+            loot_seed: 0xDEAD_BEEF_0000_0001,
+            created_tick: 123,
+        };
+        // 先确认确定性 relic_id 对同一逻辑死亡稳定（与 created_wall 墙钟无关）。
+        assert_eq!(
+            deterministic_relic_id(&make_event()),
+            deterministic_relic_id(&make_event()),
+            "deterministic_relic_id must be stable for the same logical death (char_id+created_tick+loot_seed) so re-emits dedupe via the PK; two calls differed"
+        );
+
+        // 跑两次 persist system（两帧），各 emit 同一逻辑死亡事件。
+        for _ in 0..2 {
+            let mut app = App::new();
+            app.insert_resource(settings.clone());
+            app.add_event::<crate::npc::dormant::PendingDormantRelicCreated>();
+            app.add_systems(Update, persist_pending_dormant_relics_system);
+            app.world_mut().send_event(make_event());
+            app.update();
+        }
+
+        let loaded = load_pending_dormant_relics_for_zone(&settings, "rift_valley")
+            .expect("load should succeed");
+        assert_eq!(
+            loaded.len(),
+            1,
+            "persisting the SAME logical death twice must leave exactly ONE row (deterministic relic_id + ON CONFLICT upsert dedupe), not duplicate orphans; got {} rows",
+            loaded.len()
+        );
+        // plan-offscreen-war-v1 P3 二修（CodeRabbit Major）：只断言**可观察行为**，不绑死 relic_id
+        // 的精确编码格式。换一种等价 id 编码不该让本测试无谓变红——去重契约由上面的 len==1 锁住，
+        // id 的稳定性已由开头的 `deterministic_relic_id(a)==deterministic_relic_id(a)` 锁住。这里只
+        // 要求落库行带一个**非空** relic_id（PK 不能空）且**业务字段**与发出的事件一致。
+        let row = &loaded[0];
+        assert!(
+            !row.relic_id.is_empty(),
+            "the single persisted row must carry a non-empty relic_id (it is the primary key); got an empty string"
+        );
+        let event = make_event();
+        assert_eq!(
+            row.char_id, event.char_id,
+            "the persisted row's char_id must match the emitted logical death's char_id; got {} expected {}",
+            row.char_id, event.char_id
+        );
+        assert_eq!(
+            row.created_tick as u64, event.created_tick,
+            "the persisted row's created_tick must match the emitted event's settlement tick; got {} expected {}",
+            row.created_tick, event.created_tick
+        );
+        assert_eq!(
+            row.loot_seed, event.loot_seed,
+            "the persisted row's loot_seed must match the emitted event's loot_seed (drives deterministic re-roll); got {:#x} expected {:#x}",
+            row.loot_seed, event.loot_seed
+        );
+        assert_eq!(
+            row.zone, event.zone,
+            "the persisted row's zone must match the emitted event's zone; got {} expected {}",
+            row.zone, event.zone
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn pending_relic_reupsert_keeps_earliest_created_wall() {
+        // plan-offscreen-war-v1 P3 二修（CodeRabbit Major）：同一 relic_id 二次 persist（第二次
+        // created_wall 更晚，模拟重发 / 重试），落库的 created_wall 必须仍是**更早**那个。
+        //
+        // 回归面：`upsert_pending_dormant_relic` 的 ON CONFLICT 旧 `created_wall = excluded.created_wall`
+        // 会把墙钟覆盖成新事件的（更晚）值。created_wall 是 TTL retention sweep 的判定锚点
+        // （`sweep_stale_dormant_relics` 删 `created_wall < now - RETENTION`）：覆盖成更晚墙钟 =
+        // 给陈旧遗物无限续命，「幂等」只对去重成立、不对可观察 TTL 成立。本测试固定 created_wall
+        // 走 `persist_pending_dormant_relic`（精确控制，不依赖 current_unix_seconds），断言取 MIN。
+        let (settings, root) = persistence_settings("pending-relic-reupsert-earliest-wall");
+        bootstrap_sqlite(settings.db_path(), settings.server_run_id())
+            .expect("bootstrap should succeed");
+
+        const EARLY_WALL: i64 = 1_000;
+        const LATE_WALL: i64 = 5_000;
+        // 首次 persist：早墙钟。
+        persist_pending_dormant_relic(
+            &settings,
+            &pending_relic_record("relic-ttl", "c1", "rift_valley", 7, EARLY_WALL),
+        )
+        .expect("first persist should succeed");
+        // 同一 relic_id 二次 persist：晚墙钟（重发 / 重试场景）。
+        persist_pending_dormant_relic(
+            &settings,
+            &pending_relic_record("relic-ttl", "c1", "rift_valley", 7, LATE_WALL),
+        )
+        .expect("re-persist should succeed");
+
+        let loaded = load_pending_dormant_relics_for_zone(&settings, "rift_valley")
+            .expect("load should succeed");
+        assert_eq!(
+            loaded.len(),
+            1,
+            "二次 upsert 同一 relic_id 必须仍只有一行（ON CONFLICT 覆盖、不插重复），got {}",
+            loaded.len()
+        );
+        assert_eq!(
+            loaded[0].created_wall, EARLY_WALL,
+            "二次 persist（晚墙钟 {LATE_WALL}）后 created_wall 必须仍是更早的 {EARLY_WALL}——\
+             ON CONFLICT 取 MIN(existing, excluded)，绝不刷新 TTL（否则陈旧遗物被无限续命，sweep \
+             永远删不掉）；实际落库 {}",
+            loaded[0].created_wall
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn v26_migration_rejects_pending_dormant_relics_with_missing_column() {
+        // plan-offscreen-war-v1 P3 review-fix（CodeRabbit）：v26 迁移护栏必须拒绝**列残缺**的
+        // 已有 pending_dormant_relics 表（仿 v20 high_renown 护栏失败用例）。预置一个缺
+        // schema_version/loot_seed/created_tick 的部分表 + user_version=25，跑迁移必拒绝放行残表
+        // （残表会让运行时 upsert/load 撞列名错误）。保留 zone/created_wall 让两个 CREATE INDEX
+        // 先建成功，从而精确命中 assert_pending_dormant_relics_schema_ready 的「column ... missing」
+        // 护栏（而非更早的 CREATE INDEX 列缺失错误）。
+        let db_path = database_path("v26-relic-missing-column");
+        fs::create_dir_all(db_path.parent().expect("db path should have parent"))
+            .expect("temp db parent should be created");
+        let mut connection = Connection::open(&db_path).expect("db should open");
+        connection
+            .execute_batch(
+                "
+                CREATE TABLE pending_dormant_relics (
+                    relic_id TEXT NOT NULL,
+                    char_id TEXT NOT NULL,
+                    zone TEXT NOT NULL,
+                    pos_x REAL NOT NULL,
+                    pos_y REAL NOT NULL,
+                    pos_z REAL NOT NULL,
+                    archetype TEXT NOT NULL,
+                    created_wall INTEGER NOT NULL,
+                    PRIMARY KEY (relic_id)
+                );
+                PRAGMA user_version = 25;
+                ",
+            )
+            .expect("partial-schema relic fixture should be created");
+
+        let error = apply_migrations(&mut connection).expect_err(
+            "v26 migration must reject a pending_dormant_relics table missing required columns",
+        );
+        let message = error.to_string();
+        assert!(
+            message.contains("pending_dormant_relics column") && message.contains("missing"),
+            "expected a 'pending_dormant_relics column ... missing' guard error because the pre-existing table lacks required columns (loot_seed/created_tick/schema_version); got: {message}"
+        );
+        let _ = fs::remove_dir_all(db_path.parent().expect("db path should have parent"));
+    }
+
+    #[test]
+    fn v26_migration_rejects_pending_dormant_relics_with_wrong_primary_key() {
+        // plan-offscreen-war-v1 P3 review-fix（CodeRabbit）：v26 迁移护栏必须拒绝**主键错误**的
+        // 已有 pending_dormant_relics 表。预置全列齐但 PK 设成 (char_id) 而非 (relic_id) +
+        // user_version=25，跑迁移必报「primary key mismatch」——错 PK 会让确定性 relic_id 的
+        // ON CONFLICT 去重失效。
+        let db_path = database_path("v26-relic-wrong-pk");
+        fs::create_dir_all(db_path.parent().expect("db path should have parent"))
+            .expect("temp db parent should be created");
+        let mut connection = Connection::open(&db_path).expect("db should open");
+        connection
+            .execute_batch(
+                "
+                CREATE TABLE pending_dormant_relics (
+                    relic_id TEXT NOT NULL,
+                    char_id TEXT NOT NULL,
+                    zone TEXT NOT NULL,
+                    pos_x REAL NOT NULL,
+                    pos_y REAL NOT NULL,
+                    pos_z REAL NOT NULL,
+                    archetype TEXT NOT NULL,
+                    loot_seed INTEGER NOT NULL,
+                    created_tick INTEGER NOT NULL,
+                    created_wall INTEGER NOT NULL,
+                    schema_version INTEGER NOT NULL,
+                    PRIMARY KEY (char_id)
+                );
+                PRAGMA user_version = 25;
+                ",
+            )
+            .expect("wrong-PK relic fixture should be created");
+
+        let error = apply_migrations(&mut connection)
+            .expect_err("v26 migration must reject a pending_dormant_relics table whose primary key is not relic_id");
+        let message = error.to_string();
+        assert!(
+            message.contains("pending_dormant_relics primary key mismatch"),
+            "expected a 'pending_dormant_relics primary key mismatch' guard error because the pre-existing table keys on char_id not relic_id (which would break ON CONFLICT dedupe); got: {message}"
+        );
+        let _ = fs::remove_dir_all(db_path.parent().expect("db path should have parent"));
+    }
+
+    #[test]
+    fn sweep_relic_system_throttles_between_intervals_then_sweeps() {
+        // sweep system 限频契约：首次跑（last_sweep_wall==0）必执行；紧接着再跑（间隔 < 阈值）
+        // 必跳过（不重复扫）。这把"每帧都开连接 DELETE"的浪费挡住，同时保证首扫一定发生。
+        let (settings, root) = persistence_settings("pending-relic-sweep-throttle");
+        bootstrap_sqlite(settings.db_path(), settings.server_run_id())
+            .expect("bootstrap should succeed");
+
+        let mut app = App::new();
+        app.insert_resource(settings.clone());
+        app.insert_resource(DormantRelicSweepState::default());
+        app.add_systems(Update, sweep_dormant_relic_retention_system);
+
+        // 首帧：last_sweep_wall 从 0 起，sweep 必执行 → state 被更新成非 0。
+        app.update();
+        let after_first = app
+            .world()
+            .resource::<DormantRelicSweepState>()
+            .last_sweep_wall;
+        assert!(
+            after_first > 0,
+            "first sweep must run and stamp last_sweep_wall (>0), got {after_first}"
+        );
+
+        // 紧接着第二帧（墙钟几乎没动，间隔 < PENDING_RELIC_SWEEP_INTERVAL_SECS）：必跳过 →
+        // last_sweep_wall 不变（throttle 生效）。
+        app.update();
+        let after_second = app
+            .world()
+            .resource::<DormantRelicSweepState>()
+            .last_sweep_wall;
+        assert_eq!(
+            after_first, after_second,
+            "second consecutive sweep within the throttle window must be skipped (last_sweep_wall unchanged); \
+             got {after_first} then {after_second}"
+        );
         let _ = fs::remove_dir_all(root);
     }
 }

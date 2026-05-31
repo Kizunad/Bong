@@ -176,11 +176,16 @@ mod tests {
             SoundRecipeRegistry::load_default().expect("default audio recipes should load");
         assert_eq!(
             registry.len(),
-            211,
+            212,
             "audio registry should exclude removed slide and double-jump movement recipes \
              plus include 7 supply_coffin recipes (break + open common/rare/precious + emerge) \
              plus 1 ambient_dan_zong recipe \
-             plus 1 ambient_wangyintai recipe"
+             plus 1 ambient_wangyintai recipe \
+             plus 1 offscreen_relic_reveal recipe (plan-offscreen-war-v1 P3)"
+        );
+        assert!(
+            registry.get("offscreen_relic_reveal").is_some(),
+            "plan-offscreen-war-v1 P3 battlefield relic reveal audio recipe must load"
         );
         assert!(registry.get("coffin_enter").is_some());
         assert!(registry.get("coffin_exit").is_some());

@@ -57,6 +57,31 @@ pub struct DormantCombatOutcomeV1 {
     pub at_tick: u64,
 }
 
+/// plan-offscreen-war-v1 P3：克制式战场遗物创建 telemetry（`bong:npc/relic`）。
+///
+/// **纯观测 payload**——一名克制判定通过的离屏战死者在战场留下了一处待物化遗物（已落盘进
+/// sqlite `pending_dormant_relics`）。**零真元**：遗物不携带任何真元（loot 物化时 spirit_quality=0），
+/// 本结构同样不含真元字段。真服 e2e 据此 headless 断言"知名战死 → 遗物创建"（不便直接读 sqlite
+/// 时的 redis 可观测面，§11）。`char_id` == 对应 `NpcDeathV1.npc_id`（cause=combat）。
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct PendingDormantRelicV1 {
+    pub v: u8,
+    pub kind: String,
+    /// 战死者 char_id（== 对应 `NpcDeathV1.npc_id`）。
+    pub char_id: String,
+    /// 遗物所在 zone（玩家靠近此 zone 时物化成地面 loot）。
+    pub zone: String,
+    /// 遗物落点 [x,y,z]。
+    pub pos: [f64; 3],
+    /// 战死者 archetype（as_str()）——hydrate 时按它 roll loot 表。
+    pub archetype: String,
+    /// deterministic loot 种子（hydrate 用它复现 loot）。
+    pub loot_seed: u64,
+    /// 逻辑结算 tick（deferred-on-hydrate 时序校验用）。
+    pub created_tick: u64,
+    pub at_tick: u64,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct FactionEventV1 {
     pub v: u8,
@@ -278,6 +303,102 @@ mod tests {
         assert!(
             parsed.is_err(),
             "loser 为 number 7 应被 serde 拒绝（字段是 String char_id），实际解析成功得到 {parsed:?}"
+        );
+    }
+
+    fn sample_pending_relic() -> PendingDormantRelicV1 {
+        PendingDormantRelicV1 {
+            v: 1,
+            kind: "pending_dormant_relic".to_string(),
+            char_id: "dormant:fallen:disciple".to_string(),
+            zone: "rift_valley".to_string(),
+            pos: [12.0, 64.0, -8.0],
+            archetype: "disciple".to_string(),
+            loot_seed: 0xFFFF_FFFF_0000_0001,
+            created_tick: 42,
+            at_tick: 4321,
+        }
+    }
+
+    #[test]
+    fn pending_dormant_relic_v1_roundtrips() {
+        // plan-offscreen-war-v1 P3（CodeRabbit）：战场遗物 telemetry wire 必须无损 roundtrip——
+        // e2e 据此把 char_id 与 bong:npc/death 对账、读 zone/pos/loot_seed 校验物化契约。
+        // loot_seed 取含 high-bit 的 u64 边界值，确认 u64 不被截断。
+        let payload = sample_pending_relic();
+        let json = serde_json::to_string(&payload).expect("serialize");
+        let parsed: PendingDormantRelicV1 = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(
+            parsed, payload,
+            "PendingDormantRelicV1 must round-trip losslessly, otherwise external relic observation reads wrong values"
+        );
+
+        let value: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(
+            value["char_id"],
+            serde_json::json!("dormant:fallen:disciple"),
+            "char_id must serialize as the fallen NPC's char_id string (== matching NpcDeathV1.npc_id); got {}",
+            value["char_id"]
+        );
+        assert_eq!(
+            value["pos"],
+            serde_json::json!([12.0, 64.0, -8.0]),
+            "pos must serialize as a [f64;3] array (hydrate spawns loot there); got {}",
+            value["pos"]
+        );
+        assert_eq!(
+            value["loot_seed"].as_u64(),
+            Some(0xFFFF_FFFF_0000_0001),
+            "loot_seed must serialize as a lossless u64 including the high bit (deterministic loot depends on it); got {}",
+            value["loot_seed"]
+        );
+    }
+
+    #[test]
+    fn pending_dormant_relic_v1_rejects_pos_with_wrong_arity() {
+        // 反：pos 元数错（2 元而非 [f64;3]）必须解析失败——锁住落点 3 元契约。
+        let mut bad = serde_json::to_value(sample_pending_relic()).unwrap();
+        bad["pos"] = serde_json::json!([12.0, 64.0]);
+        let parsed = serde_json::from_value::<PendingDormantRelicV1>(bad);
+        assert!(
+            parsed.is_err(),
+            "a 2-element pos must be rejected because pos is a fixed [f64;3] landing point; serde accepted it: {parsed:?}"
+        );
+    }
+
+    #[test]
+    fn pending_dormant_relic_v1_rejects_non_string_char_id() {
+        // 反：char_id 类型错（number 非 string）必须解析失败——锁住 char_id 字符串契约。
+        let mut bad = serde_json::to_value(sample_pending_relic()).unwrap();
+        bad["char_id"] = serde_json::json!(7);
+        let parsed = serde_json::from_value::<PendingDormantRelicV1>(bad);
+        assert!(
+            parsed.is_err(),
+            "a numeric char_id must be rejected (the field is a String char_id == NpcDeathV1.npc_id); serde accepted it: {parsed:?}"
+        );
+    }
+
+    #[test]
+    fn pending_dormant_relic_v1_rejects_non_u64_loot_seed() {
+        // 反：loot_seed 类型错（string 非 u64）必须解析失败——锁住 deterministic 种子的 u64 契约。
+        let mut bad = serde_json::to_value(sample_pending_relic()).unwrap();
+        bad["loot_seed"] = serde_json::json!("not-a-number");
+        let parsed = serde_json::from_value::<PendingDormantRelicV1>(bad);
+        assert!(
+            parsed.is_err(),
+            "a string loot_seed must be rejected because the field is a u64 deterministic seed; serde accepted it: {parsed:?}"
+        );
+    }
+
+    #[test]
+    fn pending_dormant_relic_v1_rejects_non_u64_created_tick() {
+        // 反：created_tick 类型错（负数无法解析成 u64）必须解析失败——锁住结算 tick 的 u64 契约。
+        let mut bad = serde_json::to_value(sample_pending_relic()).unwrap();
+        bad["created_tick"] = serde_json::json!(-1);
+        let parsed = serde_json::from_value::<PendingDormantRelicV1>(bad);
+        assert!(
+            parsed.is_err(),
+            "a negative created_tick must be rejected because the field is a u64 settlement tick; serde accepted it: {parsed:?}"
         );
     }
 }

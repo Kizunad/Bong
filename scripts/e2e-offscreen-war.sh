@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# plan-offscreen-war-v1 P0+P2 真服 headless e2e。
+# plan-offscreen-war-v1 P0+P2+P3 真服 headless e2e。
 #
 # P0（底盘通路 + 守恒 telemetry + 派系 bootstrap）：
 #   1. agent_command_spawn_then_death_roundtrip
@@ -23,6 +23,14 @@ set -euo pipefail
 #      ③ 战死方 zone spirit_qi 上升（qi/ledger 的 account:zone:spawn > 0，败者真元守恒回灌）；
 #      ④ bong:qi/ledger budget==DEFAULT_SPIRIT_QI_TOTAL 且 total_observed ≤ budget（精确守恒）；
 #      ⑤ bong:npc/combat 的 outcome.loser 与战死 npc_id 一致。
+#
+# P3（克制式战场遗物，deferred-on-hydrate）：
+#   5. 受控对 archetype 设 Disciple（克制判定通过）→ 战死 emit PendingDormantRelicCreated →
+#      persistence 落盘 sqlite pending_dormant_relics + bong:npc/relic telemetry。读 P2 专属
+#      日志断言：① 受控对 bong:npc/relic 遗物事件；② archetype=disciple（知名战死者）；
+#      ③ 遗物 char_id 对应真战死者。遗物零真元（持久层不碰 ledger），守恒由 P2④锁住。
+#      「模拟玩家靠近 → loot marker」需 client（hydrate 无玩家不触发，侦察B 确认）→ 转人工
+#      checklist；deferred 物化路径由 relic_hydrate 12 单测（含 3 system 级）锁死，不假过。
 #
 # 确定性：BONG_SIM_SEED 固定 + BONG_DORMANT_TICK_INTERVAL 小值（免 sleep 60s）。
 #
@@ -168,7 +176,7 @@ start_redis_subscriber() {
     PATH="$NODE_BIN:$PATH" REDIS_URL="$REDIS_URL" node --input-type=module <<'NODE'
 import Redis from "ioredis";
 const IORedis = Redis.default ?? Redis;
-const channels = ["bong:npc/spawn", "bong:npc/death", "bong:world_state", "bong:npc/combat"];
+const channels = ["bong:npc/spawn", "bong:npc/death", "bong:world_state", "bong:npc/combat", "bong:npc/relic"];
 const sub = new IORedis(process.env.REDIS_URL, { maxRetriesPerRequest: 1 });
 const shutdown = async () => { try { await sub.quit(); } catch { try { sub.disconnect(); } catch {} } process.exit(0); };
 process.on("SIGINT", shutdown); process.on("SIGTERM", shutdown);
@@ -327,6 +335,11 @@ function makeCombatant(charId, factionId, pos) {
   } else {
     snap.faction.faction_id = factionId;
   }
+  // P3：archetype 设 Disciple，让战死者**克制判定通过**（should_leave_relic 经 archetype 分支）→
+  // 战死 emit PendingDormantRelicCreated → 持久层落盘 + bong:npc/relic telemetry。
+  // （这对也有 faction，本就经 faction 分支 eligible；显式设 Disciple 对齐 plan §150 "含
+  // relic-eligible Disciple" 且让 relic.archetype=="disciple" 可断言。）
+  snap.archetype = "disciple";
   // 低正真元（combat-eligible 且战死后能守恒回灌让 zone spirit_qi 上升）。
   snap.cultivation.qi_current = 5.0;
   if (snap.cultivation.qi_max < 5.0) snap.cultivation.qi_max = 60.0;
@@ -549,6 +562,91 @@ process.exit(0);
 NODE
 }
 
+# plan-offscreen-war-v1 P3 主断言：克制式战场遗物创建（headless redis 可观测）。
+# 受控对（Disciple + faction）战死 → should_leave_relic 通过 → 战死结算 emit
+# PendingDormantRelicCreated → persistence 落盘 sqlite pending_dormant_relics + bong:npc/relic
+# telemetry。这里读 P2 专属订阅日志（已含 bong:npc/relic）轮询，断言：
+#   ① 至少一条 bong:npc/relic 的 pending_dormant_relic 事件，char_id 属于受控对（dormant:combat:*）；
+#   ② 该遗物 archetype=="disciple"（克制判定通过的知名战死者）；
+#   ③ 该遗物 char_id 与某个受控对 cause=combat 战死的 npc_id 一致（遗物属于真战死者，非凭空造）。
+# 守恒：遗物零真元（loot 物化时 spirit_quality=0，持久层不碰 ledger），故 ④ 守恒断言已由
+# assert_combat_closure 锁住（total_observed 全程 ≤ budget），遗物不引入任何真元。
+assert_relic_created() {
+  local sub_log="$1"
+  SUB_LOG="$sub_log" redis_node <<'NODE'
+import { readFileSync } from "node:fs";
+
+const PAIR_PREFIX = "dormant:combat:";
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+function parseLog() {
+  const lines = readFileSync(process.env.SUB_LOG, "utf8").split("\n");
+  const relics = [];
+  const combatDeaths = [];
+  for (const line of lines) {
+    const m = line.match(/channel=(bong:npc\/relic|bong:npc\/death) payload=(.*)$/);
+    if (!m) continue;
+    let payload;
+    try { payload = JSON.parse(m[2].replace(/\.\.\.$/, "")); } catch { continue; }
+    if (m[1] === "bong:npc/relic") relics.push(payload);
+    else if (payload.cause === "combat" && payload.from_dormant_combat === true) combatDeaths.push(payload);
+  }
+  return { relics, combatDeaths };
+}
+
+// 遗物 event 在战死结算同帧 emit，但 redis publish + 订阅落日志有少量延迟 → 轮询。
+const POLL_TIMEOUT_SECS = 60;
+const POLL_INTERVAL_MS = 2000;
+const deadlineMs = Date.now() + POLL_TIMEOUT_SECS * 1000;
+let pairRelics = [];
+let pairDeathIds = new Set();
+let matchedRelic = null;
+let attempt = 0;
+while (Date.now() <= deadlineMs) {
+  attempt += 1;
+  const { relics, combatDeaths } = parseLog();
+  pairRelics = relics.filter((r) => typeof r.char_id === "string" && r.char_id.startsWith(PAIR_PREFIX));
+  pairDeathIds = new Set(combatDeaths.filter((d) => d.npc_id.startsWith(PAIR_PREFIX)).map((d) => d.npc_id));
+  // 收紧退出条件（CodeRabbit / §11 不假过）：bong:npc/relic 与对应的 bong:npc/death 落日志
+  // 有先后延迟。若只要见到任意 pair relic 就 break，可能在其 char_id 的 combat death 还没写
+  // 日志时退出 → ③（遗物对应真战死者）的前置 pairDeathIds 仍空被跳过 → 脚本在「未证明遗物
+  // 对应真战死者」时假过。改为：必须存在 r ∈ pairRelics 且 pairDeathIds.has(r.char_id) 才 break。
+  matchedRelic = pairRelics.find((r) => pairDeathIds.has(r.char_id)) ?? null;
+  console.log(`[observe] (relic try ${attempt}) all_relics=${relics.length} pair_relics=${pairRelics.length} pair_combat_deaths=${pairDeathIds.size} matched=${matchedRelic ? matchedRelic.char_id : "none"}`);
+  if (matchedRelic != null) break;
+  await sleep(POLL_INTERVAL_MS);
+}
+
+// ① 受控对至少一处遗物创建（克制判定通过的知名战死者）**且**该遗物 char_id 已出现在受控对
+// combat 战死集里——遗物确实对应真战死者，不是凭空造、也不是 death 日志还没到就提前判过。
+if (matchedRelic == null) {
+  console.error(`[observe] FAIL P3①: 轮询 ${POLL_TIMEOUT_SECS}s 后没有「char_id 同时出现在 bong:npc/relic 与受控对 cause=combat bong:npc/death」的遗物（pair_relics=${pairRelics.length} pair_combat_deaths=${pairDeathIds.size}）——克制式战场遗物未创建或未对应真战死者（should_leave_relic / emit / telemetry 断链）`);
+  process.exit(2);
+}
+
+const relic = matchedRelic;
+// ② archetype=="disciple"（克制判定通过的知名战死者；e2e 把受控对 archetype 设成 Disciple）。
+if (relic.archetype !== "disciple") {
+  console.error(`[observe] FAIL P3②: 遗物 archetype 期望 disciple（relic-eligible 知名战死者），实际 ${relic.archetype}; relic=${JSON.stringify(relic)}`);
+  process.exit(3);
+}
+// 遗物字段完整性：必须有 zone / pos / loot_seed（hydrate 物化所需，deterministic）。
+if (typeof relic.zone !== "string" || !Array.isArray(relic.pos) || relic.pos.length !== 3 || typeof relic.loot_seed !== "number") {
+  console.error(`[observe] FAIL P3②: 遗物字段不完整（zone/pos/loot_seed），relic=${JSON.stringify(relic)}`);
+  process.exit(3);
+}
+// ③ 遗物 char_id 与受控对 cause=combat 战死一致（遗物属于真战死者，不是凭空造）。
+// matchedRelic 的退出条件已保证 pairDeathIds.has(relic.char_id)，此处无条件再核一遍（防御）。
+if (!pairDeathIds.has(relic.char_id)) {
+  console.error(`[observe] FAIL P3③: 遗物 char_id=${relic.char_id} 不在受控对 combat 死亡集 ${[...pairDeathIds].join(",")} 内（遗物未对应真战死者）`);
+  process.exit(4);
+}
+
+console.log(`[observe] P3 relic assertions PASS: pair_relic char_id=${relic.char_id} archetype=${relic.archetype} zone=${relic.zone} loot_seed=${relic.loot_seed} pos=${JSON.stringify(relic.pos)}`);
+process.exit(0);
+NODE
+}
+
 start_local_redis_binary() {
   "$REDIS_SERVER_BIN" --save "" --appendonly no --bind 127.0.0.1 --port 6379 --loglevel warning >"$REDIS_LOG" 2>&1 &
   REDIS_PID="$!"
@@ -694,7 +792,7 @@ stop_server() {
 
 echo ""
 CURRENT_STAGE="server"
-echo "=== [4/7] Server startup (deterministic env) ==="
+echo "=== [4/8] Server startup (deterministic env) ==="
 # 默认 seed 8 个 dormant rogue（commit D 按 char_id 哈希赋 Attack/Defend）。
 start_server "$SERVER_LOG" "${BONG_DORMANT_ROGUE_SEED_COUNT:-8}"
 
@@ -707,7 +805,7 @@ fi
 
 echo ""
 CURRENT_STAGE="observe"
-echo "=== [5/7] Observe: agent_command_spawn_then_death_roundtrip + qi/ledger ==="
+echo "=== [5/8] Observe: agent_command_spawn_then_death_roundtrip + qi/ledger ==="
 start_redis_subscriber "$REDIS_SUB_LOG"
 REDIS_SUB_PID="$!"
 if wait_for_pattern "$REDIS_SUB_LOG" "\\[observe\\] subscribed" 30; then
@@ -762,7 +860,7 @@ fi
 
 echo ""
 CURRENT_STAGE="combat"
-echo "=== [6/7] Combat closure: controlled hostile pair → 离屏战死闭环 ==="
+echo "=== [6/8] Combat closure: controlled hostile pair → 离屏战死闭环 ==="
 # (1) 停掉 P0 server，从 redis 仍存的 HASH 抓一个真实快照作模板（schema-accurate）。
 stop_server
 COMBAT_SERVER_LOG="$RUN_DIR/server-combat.log"
@@ -826,8 +924,25 @@ else
 fi
 
 echo ""
+CURRENT_STAGE="relic"
+echo "=== [7/8] Battlefield relic: 克制式战场遗物创建（P3 主断言） ==="
+# 受控对是 Disciple + faction → 战死 should_leave_relic 通过 → emit PendingDormantRelicCreated
+# → persistence 落盘 sqlite + bong:npc/relic telemetry。读 P2 专属日志（已含 bong:npc/relic）断言
+# 受控对遗物创建 + archetype=disciple + char_id 对应真战死者。遗物零真元（持久层不碰 ledger），
+# 守恒已由 combat closure ④锁住。
+# NOTE：「模拟玩家靠近 → 战场坐标出现 loot marker」需已连接 client（hydrate 触发守卫无玩家
+# 不激活，dossier 侦察B 确认纯 headless 不触发），故该断言转**人工 client checklist**（见 PR 描述），
+# 此处不静默跳过、不假过——deferred-on-hydrate 物化路径由 relic_hydrate 12 条单测（含 3 条 system
+# 级：玩家在 zone 物化 / 无玩家不物化 / zone 隔离）锁死。
+if assert_relic_created "$REDIS_SUB_P2_LOG" >>"$OBSERVE_LOG" 2>&1; then
+  pass "relic created ①受控对 bong:npc/relic 遗物事件 ②archetype=disciple(克制判定通过) ③char_id 对应真战死者（零真元，守恒已由④锁）"
+else
+  finalize_failure "relic" "battlefield relic creation assertion failed; see $OBSERVE_LOG / $REDIS_SUB_P2_LOG"
+fi
+
+echo ""
 CURRENT_STAGE="summary"
-echo "=== [7/7] Evidence ==="
+echo "=== [8/8] Evidence ==="
 echo "  log: $LOG_FILE"
 echo "  server: $SERVER_LOG"
 echo "  observe: $OBSERVE_LOG"

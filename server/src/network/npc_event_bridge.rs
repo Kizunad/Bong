@@ -2,11 +2,13 @@ use valence::prelude::{EventReader, Res};
 
 use super::redis_bridge::RedisOutbound;
 use super::RedisBridgeResource;
-use crate::npc::dormant::DormantCombatOutcome;
+use crate::npc::dormant::{DormantCombatOutcome, PendingDormantRelicCreated};
 use crate::npc::faction::FactionEventNotice;
 use crate::npc::lifecycle::{NpcDeathNotice, NpcSpawnNotice};
 use crate::npc::movement::GameTick;
-use crate::schema::npc::{DormantCombatOutcomeV1, FactionEventV1, NpcDeathV1, NpcSpawnedV1};
+use crate::schema::npc::{
+    DormantCombatOutcomeV1, FactionEventV1, NpcDeathV1, NpcSpawnedV1, PendingDormantRelicV1,
+};
 
 const NPC_EVENT_VERSION: u8 = 1;
 
@@ -87,6 +89,38 @@ pub fn publish_dormant_combat_events(
             .send(RedisOutbound::DormantCombatOutcome(wire))
         {
             tracing::warn!("[bong][npc_event_bridge] dropped DormantCombatOutcome: {error}");
+        }
+    }
+}
+
+/// plan-offscreen-war-v1 P3：把克制式战场遗物创建 `PendingDormantRelicCreated` 转成
+/// `PendingDormantRelicV1` 发到 `bong:npc/relic`（纯 telemetry，镜像
+/// `publish_dormant_combat_events`）。**零真元**——遗物 loot 物化时 spirit_quality=0，持久层
+/// 不碰 ledger；本系统只搬运观测字段，让真服 e2e 在不便直接读 sqlite 时仍能 headless 断言
+/// "知名战死 → 遗物创建"（§11）。同一 event 也被 persistence 消费落盘 sqlite，两条消费互不干扰。
+pub fn publish_pending_dormant_relic_events(
+    redis: Res<RedisBridgeResource>,
+    game_tick: Option<Res<GameTick>>,
+    mut events: EventReader<PendingDormantRelicCreated>,
+) {
+    let at_tick = current_game_tick(game_tick.as_deref());
+    for ev in events.read() {
+        let wire = PendingDormantRelicV1 {
+            v: NPC_EVENT_VERSION,
+            kind: "pending_dormant_relic".to_string(),
+            char_id: ev.char_id.clone(),
+            zone: ev.zone.clone(),
+            pos: ev.position,
+            archetype: ev.archetype.as_str().to_string(),
+            loot_seed: ev.loot_seed,
+            created_tick: ev.created_tick,
+            at_tick,
+        };
+        if let Err(error) = redis
+            .tx_outbound
+            .send(RedisOutbound::PendingDormantRelic(wire))
+        {
+            tracing::warn!("[bong][npc_event_bridge] dropped PendingDormantRelic: {error}");
         }
     }
 }
@@ -206,5 +240,113 @@ mod tests {
             outbound,
             RedisOutbound::NpcDeath(payload) if payload.at_tick == 654
         )));
+    }
+
+    #[test]
+    fn publish_pending_dormant_relic_uses_dedicated_outbound_variant() {
+        // plan-offscreen-war-v1 P3：PendingDormantRelicCreated event → bong:npc/relic 观测旁路。
+        let (mut app, rx) = setup_app();
+        app.add_event::<PendingDormantRelicCreated>();
+        app.insert_resource(GameTick(777));
+        app.add_systems(Update, publish_pending_dormant_relic_events);
+
+        app.world_mut().send_event(PendingDormantRelicCreated {
+            char_id: "dormant:fallen:disciple".to_string(),
+            zone: "rift_valley".to_string(),
+            position: [12.0, 64.0, -8.0],
+            archetype: NpcArchetype::Disciple,
+            loot_seed: 0xDEAD_BEEF,
+            created_tick: 42,
+        });
+        app.update();
+
+        let outbound = rx.try_recv().expect("expected pending relic outbound");
+        let RedisOutbound::PendingDormantRelic(payload) = outbound else {
+            panic!("expected PendingDormantRelic outbound, got a different variant");
+        };
+        assert_eq!(payload.char_id, "dormant:fallen:disciple");
+        assert_eq!(payload.zone, "rift_valley");
+        assert_eq!(payload.archetype, "disciple");
+        assert_eq!(payload.loot_seed, 0xDEAD_BEEF);
+        assert_eq!(payload.created_tick, 42);
+        assert_eq!(payload.at_tick, 777);
+        assert_eq!(payload.kind, "pending_dormant_relic");
+    }
+
+    #[test]
+    fn publish_pending_dormant_relic_defaults_at_tick_to_zero_without_game_tick() {
+        // 边界（CodeRabbit）：缺 GameTick 资源时 at_tick 必须回退 0（current_game_tick 的
+        // unwrap_or_default 分支），而非 panic / 读到脏值——否则 telemetry 时间戳错乱。
+        let (mut app, rx) = setup_app();
+        app.add_event::<PendingDormantRelicCreated>();
+        // 故意**不** insert GameTick。
+        app.add_systems(Update, publish_pending_dormant_relic_events);
+
+        app.world_mut().send_event(PendingDormantRelicCreated {
+            char_id: "dormant:no_tick".to_string(),
+            zone: "spawn".to_string(),
+            position: [0.0, 64.0, 0.0],
+            archetype: NpcArchetype::Disciple,
+            loot_seed: 1,
+            created_tick: 5,
+        });
+        app.update();
+
+        let outbound = rx
+            .try_recv()
+            .expect("expected pending relic outbound even without GameTick");
+        let RedisOutbound::PendingDormantRelic(payload) = outbound else {
+            panic!("expected PendingDormantRelic outbound, got a different variant");
+        };
+        assert_eq!(
+            payload.at_tick, 0,
+            "without a GameTick resource, at_tick must default to 0 (current_game_tick falls back to u64::default), got {}",
+            payload.at_tick
+        );
+        // created_tick 来自 event 本身、与 GameTick 无关，仍应原样透传。
+        assert_eq!(
+            payload.created_tick, 5,
+            "created_tick comes from the event, not GameTick, and must pass through unchanged; got {}",
+            payload.created_tick
+        );
+    }
+
+    #[test]
+    fn publish_pending_dormant_relic_drops_on_closed_channel_without_panic() {
+        // 错误分支（CodeRabbit）：outbound channel 已关闭（接收端 drop）时，send 返回 Err，
+        // 系统必须 warn + drop 该 event、**不 panic**（否则一个掉线的 Redis 桥会拖垮整个 tick）。
+        let mut app = App::new();
+        let (tx_outbound, rx_outbound) = unbounded::<RedisOutbound>();
+        let (_tx_inbound, rx_inbound) = unbounded();
+        app.insert_resource(RedisBridgeResource {
+            tx_outbound,
+            rx_inbound,
+        });
+        // 关闭接收端 → 后续 send 必返回 SendError。
+        drop(rx_outbound);
+        app.add_event::<PendingDormantRelicCreated>();
+        app.insert_resource(GameTick(9));
+        app.add_systems(Update, publish_pending_dormant_relic_events);
+
+        app.world_mut().send_event(PendingDormantRelicCreated {
+            char_id: "dormant:dropped".to_string(),
+            zone: "spawn".to_string(),
+            position: [0.0, 64.0, 0.0],
+            archetype: NpcArchetype::Disciple,
+            loot_seed: 2,
+            created_tick: 9,
+        });
+        // 不 panic 即通过该分支的核心契约（系统吞下 SendError、记 warn 继续）。
+        app.update();
+        // 二次 update 仍不 panic（确认 channel 关闭是稳定可重入的 drop 路径）。
+        app.world_mut().send_event(PendingDormantRelicCreated {
+            char_id: "dormant:dropped_again".to_string(),
+            zone: "spawn".to_string(),
+            position: [0.0, 64.0, 0.0],
+            archetype: NpcArchetype::Disciple,
+            loot_seed: 3,
+            created_tick: 10,
+        });
+        app.update();
     }
 }

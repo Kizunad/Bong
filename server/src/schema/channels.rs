@@ -75,6 +75,12 @@ pub const CH_FACTION_EVENT: &str = "bong:faction/event";
 // 的吞真元红线，§10.1 #5）。agent 派系叙事 P4 复用 `bong:npc/death`，**不**订阅本通道。
 pub const CH_NPC_COMBAT: &str = "bong:npc/combat";
 
+// plan-offscreen-war-v1 P3：克制式战场遗物创建 telemetry（纯观测旁路）。一名知名战死者
+// 在战场留下待物化遗物（已落盘 sqlite pending_dormant_relics）时 publish 一条
+// `PendingDormantRelicV1`。**零真元**——遗物不携带真元（持久层不碰 ledger），本通道只搬观测
+// 字段，让真服 e2e 在不便直接读 sqlite 时仍能 headless 断言"知名战死 → 遗物创建"（§11）。
+pub const CH_NPC_RELIC: &str = "bong:npc/relic";
+
 // plan-offscreen-war-v1 P0：守恒 telemetry。周期性 HASH（非 pub/sub），落 WorldQiAccount
 // 各账户余额 + total_observed，让真服 e2e 能 `HGETALL bong:qi/ledger` 做精确守恒断言。
 pub const QI_LEDGER_REDIS_KEY: &str = "bong:qi/ledger";
@@ -236,6 +242,8 @@ mod tests {
         assert_eq!(CH_FACTION_EVENT, "bong:faction/event");
         // plan-offscreen-war-v1 P2 — 离屏战果 telemetry channel
         assert_eq!(CH_NPC_COMBAT, "bong:npc/combat");
+        // plan-offscreen-war-v1 P3 — 战场遗物创建 telemetry channel
+        assert_eq!(CH_NPC_RELIC, "bong:npc/relic");
         assert_eq!(CH_SOCIAL_EXPOSURE, "bong:social/exposure");
         assert_eq!(CH_SOCIAL_PACT, "bong:social/pact");
         assert_eq!(CH_SOCIAL_FEUD, "bong:social/feud");

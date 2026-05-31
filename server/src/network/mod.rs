@@ -388,7 +388,16 @@ pub fn register(app: &mut App) {
             npc_event_bridge::publish_npc_death_events,
             // plan-offscreen-war-v1 P2：离屏战果 telemetry → bong:npc/combat。
             npc_event_bridge::publish_dormant_combat_events,
-            npc_event_bridge::publish_faction_events.after(execute_agent_commands),
+            // plan-offscreen-war-v1 P3：战场遗物创建 telemetry → bong:npc/relic。
+            // Bevy 0.14 tuple 内系统**顺序不保证执行先后**（默认并行/机会式），故用显式
+            // .after()/.before() 锁死「combat → relic → faction」语义先后（CodeRabbit）：战果
+            // 先于遗物、遗物先于派系 telemetry，bong:npc/relic 发送时序与注释一致。
+            npc_event_bridge::publish_pending_dormant_relic_events
+                .after(npc_event_bridge::publish_dormant_combat_events)
+                .before(npc_event_bridge::publish_faction_events),
+            npc_event_bridge::publish_faction_events
+                .after(execute_agent_commands)
+                .after(npc_event_bridge::publish_pending_dormant_relic_events),
             rat_phase_bridge::publish_rat_phase_events
                 .after(crate::fauna::rat_phase::pressure_sensor_tick_system),
             zone_pressure_bridge::publish_zone_pressure_crossed_events
@@ -3139,6 +3148,7 @@ mod tests {
                 last_dormant_tick_processed: 0,
                 initial_qi: cultivation.qi_current,
                 qi_ledger_net: 0.0,
+                combat_dead_pending_release: false,
             }
         }
 

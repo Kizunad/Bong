@@ -27,7 +27,7 @@ use crate::schema::channels::{
     CH_DUGU_V2_SELF_CURE, CH_DUO_SHE_EVENT, CH_FACTION_EVENT, CH_FORGE_EVENT, CH_FORGE_OUTCOME,
     CH_FORGE_START, CH_HEART_DEMON_OFFER, CH_HEART_DEMON_REQUEST, CH_HIGH_RENOWN_MILESTONE,
     CH_INSIGHT_OFFER, CH_INSIGHT_REQUEST, CH_LIFESPAN_EVENT, CH_NPC_COMBAT, CH_NPC_DEATH,
-    CH_NPC_SPAWN, CH_PLAYER_CHAT, CH_POISON_DOSE_EVENT, CH_POISON_OVERDOSE_EVENT,
+    CH_NPC_RELIC, CH_NPC_SPAWN, CH_PLAYER_CHAT, CH_POISON_DOSE_EVENT, CH_POISON_OVERDOSE_EVENT,
     CH_POI_NOVICE_EVENT, CH_PRICE_INDEX, CH_PSEUDO_VEIN_ACTIVE, CH_PSEUDO_VEIN_DISSIPATE,
     CH_RAT_PHASE_EVENT, CH_REBIRTH, CH_SEASON_CHANGED, CH_SKILL_CAP_CHANGED, CH_SKILL_LV_UP,
     CH_SKILL_SCROLL_USED, CH_SKILL_XP_GAIN, CH_SOCIAL_EXPOSURE, CH_SOCIAL_FEUD,
@@ -66,7 +66,9 @@ use crate::schema::forge_bridge::{ForgeOutcomePayloadV1, ForgeStartPayloadV1};
 use crate::schema::identity::WantedPlayerEventV1;
 use crate::schema::lingtian_weather::WeatherEventUpdateV1;
 use crate::schema::narration::NarrationV1;
-use crate::schema::npc::{DormantCombatOutcomeV1, FactionEventV1, NpcDeathV1, NpcSpawnedV1};
+use crate::schema::npc::{
+    DormantCombatOutcomeV1, FactionEventV1, NpcDeathV1, NpcSpawnedV1, PendingDormantRelicV1,
+};
 use crate::schema::poi_novice::{PoiSpawnedEventV1, TrespassEventV1};
 use crate::schema::poison_trait::{PoisonDoseEventV1, PoisonOverdoseEventV1};
 use crate::schema::pseudo_vein::{PseudoVeinDissipateEventV1, PseudoVeinSnapshotV1};
@@ -169,6 +171,8 @@ pub enum RedisOutbound {
     NpcDeath(NpcDeathV1),
     /// plan-offscreen-war-v1 P2：离屏 dormant 互殴战果 telemetry（`bong:npc/combat`）。
     DormantCombatOutcome(DormantCombatOutcomeV1),
+    /// plan-offscreen-war-v1 P3：克制式战场遗物创建 telemetry（`bong:npc/relic`，零真元）。
+    PendingDormantRelic(PendingDormantRelicV1),
     FactionEvent(FactionEventV1),
     ZonePressureCrossed(ZonePressureCrossedV1),
     RatPhaseEvent(RatPhaseChangeEvent),
@@ -900,6 +904,17 @@ fn prepare_outbound_command(message: RedisOutbound) -> Result<RedisIoCommand, Va
             })?;
             Ok(RedisIoCommand::Publish {
                 channel: CH_NPC_COMBAT,
+                payload,
+            })
+        }
+        RedisOutbound::PendingDormantRelic(evt) => {
+            let payload = serde_json::to_string(&evt).map_err(|error| {
+                ValidationError::new(format!(
+                    "failed to serialize PendingDormantRelicV1: {error}"
+                ))
+            })?;
+            Ok(RedisIoCommand::Publish {
+                channel: CH_NPC_RELIC,
                 payload,
             })
         }
@@ -3069,6 +3084,86 @@ mod redis_bridge_tests {
             other => panic!(
                 "DormantCombatOutcome 应产出 Publish 命令，实际得到 {other:?}——\
                  路由分支若改成 HashReplace/Fanout 会让战果观测断链"
+            ),
+        }
+    }
+
+    #[test]
+    fn publishes_pending_dormant_relic_on_npc_relic_channel() {
+        // plan-offscreen-war-v1 P3（CodeRabbit）：克制式战场遗物 telemetry 必须落在专属
+        // CH_NPC_RELIC（bong:npc/relic）频道，且 payload 无损 roundtrip——e2e 验收门靠它把
+        // relic.char_id 与 bong:npc/death.npc_id 对账。频道名或 match 分支回退都会让 P3 观测静默
+        // 失守。loot_seed 取含 high-bit 的 u64 边界值，验证 u64 序列化不被截断/丢精度。
+        const HIGH_BIT_SEED: u64 = 0xFFFF_FFFF_0000_0001;
+        let relic =
+            prepare_outbound_command(RedisOutbound::PendingDormantRelic(PendingDormantRelicV1 {
+                v: 1,
+                kind: "pending_dormant_relic".to_string(),
+                char_id: "dormant:fallen:disciple".to_string(),
+                zone: "rift_valley".to_string(),
+                pos: [12.0, 64.0, -8.0],
+                archetype: "disciple".to_string(),
+                loot_seed: HIGH_BIT_SEED,
+                created_tick: 42,
+                at_tick: 4321,
+            }))
+            .expect("PendingDormantRelicV1 payload should serialize");
+        match relic {
+            RedisIoCommand::Publish { channel, payload } => {
+                assert_eq!(
+                    channel, CH_NPC_RELIC,
+                    "battlefield relic telemetry must route to bong:npc/relic (CH_NPC_RELIC); a wrong channel would make the e2e P3① relic subscription silently miss every event"
+                );
+                let v: Value = serde_json::from_str(payload.as_str())
+                    .expect("relic publish payload must be valid JSON");
+                assert_eq!(
+                    v["kind"], "pending_dormant_relic",
+                    "kind tag must survive so the downstream parser can discriminate payload type; got {}",
+                    v["kind"]
+                );
+                assert_eq!(
+                    v["char_id"], "dormant:fallen:disciple",
+                    "char_id must round-trip unchanged (e2e ③ matches it against NpcDeathV1.npc_id); got {}",
+                    v["char_id"]
+                );
+                assert_eq!(
+                    v["zone"], "rift_valley",
+                    "zone must round-trip (hydrate materialization reads it); got {}",
+                    v["zone"]
+                );
+                assert_eq!(
+                    v["pos"],
+                    serde_json::json!([12.0, 64.0, -8.0]),
+                    "pos must round-trip as a [f64;3] (hydrate spawns the decal/loot there); got {}",
+                    v["pos"]
+                );
+                assert_eq!(
+                    v["archetype"], "disciple",
+                    "archetype must round-trip (e2e ② asserts disciple = relic-eligible); got {}",
+                    v["archetype"]
+                );
+                // loot_seed 是 u64：serde_json 以数值输出，high-bit 值不得被截断成 i64 或丢精度。
+                assert_eq!(
+                    v["loot_seed"].as_u64(),
+                    Some(HIGH_BIT_SEED),
+                    "loot_seed must round-trip losslessly as a u64 including the high bit (deterministic loot depends on it); got {}",
+                    v["loot_seed"]
+                );
+                assert_eq!(
+                    v["created_tick"].as_u64(),
+                    Some(42),
+                    "created_tick must round-trip as u64; got {}",
+                    v["created_tick"]
+                );
+                assert_eq!(
+                    v["at_tick"].as_u64(),
+                    Some(4321),
+                    "at_tick must round-trip as u64; got {}",
+                    v["at_tick"]
+                );
+            }
+            other => panic!(
+                "PendingDormantRelic must produce a Publish command; got {other:?} — switching the route to HashReplace/Fanout would break P3 relic observation"
             ),
         }
     }

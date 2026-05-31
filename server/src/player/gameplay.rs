@@ -117,6 +117,18 @@ impl PendingGameplayNarrations {
             kind: None,
         });
     }
+
+    /// plan-offscreen-war-v1 P3：zone-scope 叙事（`target` = zone 名，路由给该 zone 内的
+    /// client，见 `network::mod::narration_selector`）。战场遗物揭示用感知体（perception）。
+    pub fn push_zone(&mut self, zone: &str, text: impl Into<String>, style: NarrationStyle) {
+        self.pending.push(Narration {
+            scope: NarrationScope::Zone,
+            target: Some(zone.to_string()),
+            text: text.into(),
+            style,
+            kind: None,
+        });
+    }
 }
 
 #[derive(Default)]
@@ -571,5 +583,132 @@ mod tests {
         assert_eq!(gained, 0.1 * QI_ZONE_UNIT_CAPACITY);
         assert_eq!(cultivation.qi_current, 75.0);
         assert_eq!(zone_after, 0.0);
+    }
+
+    // ── plan-offscreen-war-v1 P3（CodeRabbit）：push_zone 可观察行为 ──
+    // 断言外部可观察的入队 Narration（经 drain()），不碰私有 pending 内部细节。
+
+    fn drained_one(narrations: &mut PendingGameplayNarrations) -> Narration {
+        let drained = narrations.drain();
+        assert_eq!(
+            drained.len(),
+            1,
+            "push_zone must enqueue exactly one Narration, got {}",
+            drained.len()
+        );
+        drained.into_iter().next().unwrap()
+    }
+
+    #[test]
+    fn push_zone_enqueues_zone_scoped_narration() {
+        // happy path：scope=Zone、target=Some(zone)、text/style 原样入队（路由给该 zone 内 client）。
+        let mut narrations = PendingGameplayNarrations::default();
+        narrations.push_zone("rift_valley", "战场余烬未散", NarrationStyle::Perception);
+        let n = drained_one(&mut narrations);
+        assert!(
+            matches!(n.scope, NarrationScope::Zone),
+            "push_zone must set scope=Zone so narration_selector routes it to the zone's players; got {:?}",
+            n.scope
+        );
+        assert_eq!(
+            n.target.as_deref(),
+            Some("rift_valley"),
+            "target must carry the zone name verbatim (network::narration_selector routes on it); got {:?}",
+            n.target
+        );
+        assert_eq!(
+            n.text, "战场余烬未散",
+            "text must pass through unchanged; got {}",
+            n.text
+        );
+        assert!(
+            matches!(n.style, NarrationStyle::Perception),
+            "style must pass through unchanged (Perception); got {:?}",
+            n.style
+        );
+        assert!(
+            n.kind.is_none(),
+            "push_zone leaves kind unset (None); got {:?}",
+            n.kind
+        );
+    }
+
+    #[test]
+    fn push_zone_preserves_empty_and_whitespace_zone_for_routing() {
+        // 边界：zone="" / 全空白——push_zone 不做校验/裁剪，原样保留供 narration_selector 决定路由
+        // （契约是"保留 zone 字符串"，过滤是 selector 的责任，不在此入队层）。
+        let mut narrations = PendingGameplayNarrations::default();
+        narrations.push_zone("", "empty zone", NarrationStyle::Narration);
+        let empty = drained_one(&mut narrations);
+        assert_eq!(
+            empty.target.as_deref(),
+            Some(""),
+            "an empty zone name must be preserved verbatim as target (push_zone does not validate; routing is the selector's job); got {:?}",
+            empty.target
+        );
+
+        narrations.push_zone("   ", "whitespace zone", NarrationStyle::Narration);
+        let ws = drained_one(&mut narrations);
+        assert_eq!(
+            ws.target.as_deref(),
+            Some("   "),
+            "a whitespace-only zone name must be preserved verbatim as target; got {:?}",
+            ws.target
+        );
+    }
+
+    #[test]
+    fn push_zone_preserves_overlong_text_payload() {
+        // 边界：超长 text 仍原样入队（不截断），下游负责呈现。
+        let mut narrations = PendingGameplayNarrations::default();
+        let long_text = "残".repeat(4096);
+        narrations.push_zone("spawn", long_text.clone(), NarrationStyle::Perception);
+        let n = drained_one(&mut narrations);
+        assert_eq!(
+            n.text.chars().count(),
+            4096,
+            "an overlong narration text must be enqueued intact (no truncation at the push layer); got {} chars",
+            n.text.chars().count()
+        );
+        assert_eq!(
+            n.text, long_text,
+            "the overlong text must be byte-for-byte preserved"
+        );
+    }
+
+    #[test]
+    fn push_zone_does_not_clobber_other_scoped_narrations() {
+        // 状态：zone / player / broadcast 三种 scope 同队共存、互不串扰，drain 顺序保留。
+        let mut narrations = PendingGameplayNarrations::default();
+        narrations.push_zone("rift_valley", "zone line", NarrationStyle::Perception);
+        narrations.push_player("Azure", "player line", NarrationStyle::Narration);
+        narrations.push_broadcast("broadcast line", NarrationStyle::EraDecree);
+        let drained = narrations.drain();
+        assert_eq!(
+            drained.len(),
+            3,
+            "all three differently-scoped narrations must coexist in the queue; got {}",
+            drained.len()
+        );
+        assert!(
+            matches!(drained[0].scope, NarrationScope::Zone)
+                && drained[0].target.as_deref() == Some("rift_valley"),
+            "the zone-scoped narration must remain intact and first; got scope={:?} target={:?}",
+            drained[0].scope,
+            drained[0].target
+        );
+        assert!(
+            matches!(drained[1].scope, NarrationScope::Player)
+                && drained[1].target.as_deref() == Some("Azure"),
+            "the player-scoped narration must be unaffected by push_zone; got scope={:?} target={:?}",
+            drained[1].scope,
+            drained[1].target
+        );
+        assert!(
+            matches!(drained[2].scope, NarrationScope::Broadcast) && drained[2].target.is_none(),
+            "the broadcast narration must keep target=None; got scope={:?} target={:?}",
+            drained[2].scope,
+            drained[2].target
+        );
     }
 }
