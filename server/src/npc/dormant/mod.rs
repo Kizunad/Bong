@@ -797,12 +797,24 @@ fn dormant_global_tick_system(
     // timer 会与本系统抢 store/ledger 可变借用）。借用安全走 collect-then-index
     // （`collect_zone_combat_pairs` 先返回 owned `Vec<(CharId,CharId)>`，再逐 id 索引结算），
     // 规避 per-char_id 单可变借用与两两对战冲突。faction_store 是只读 `Res`。
+    // Whether the combat phase mutated any persisted snapshot state without
+    // removing the snapshot — i.e. flipped `combat_dead_pending_release` on a
+    // retained loser, or partially released residual qi on a retry pass. Such
+    // ticks change persisted state (the flag + the reduced `qi_current`) yet
+    // remove nothing, so they must drive `mark_dirty` even when this tick's
+    // aging pass touched nothing (`mutated_any == false`, e.g. all snapshots
+    // already processed at this tick). Without this signal the pending-release
+    // flag could sit un-persisted until a later dirty tick — a restart inside
+    // that window would reload the loser with `flag == false` and re-roll it,
+    // re-emitting death notice / outcome (the exact regression the retain
+    // branch exists to prevent). See `CombatPhaseOutcome`.
+    let mut combat_mutated = false;
     if let (Some(faction_store), Some(zones), Some(ledger)) = (
         faction_store.as_deref(),
         zones.as_deref_mut(),
         ledger.as_deref_mut(),
     ) {
-        let combat_removed = run_dormant_combat_phase(
+        let combat = run_dormant_combat_phase(
             &mut store,
             faction_store,
             &config,
@@ -813,17 +825,46 @@ fn dormant_global_tick_system(
             &mut combat_outcomes,
             &mut pending_relics,
         );
-        if combat_removed {
+        combat_mutated = combat.mutated;
+        if combat.removed {
+            // Only a removal changes zone membership; rebuild the spatial
+            // indexes. A retain / partial-release mutation leaves `by_zone`
+            // intact, so it must NOT force a rebuild (just a dirty write).
             removed_expired = true;
             store.rebuild_indexes();
         }
     }
 
-    // Any advanced or removed snapshot changed persisted state; schedule a
-    // Redis write on the next publish cycle.
-    if mutated_any || removed_expired {
+    // Any advanced or removed snapshot — or any combat mutation that only
+    // flipped the retain flag / partially released qi — changed persisted
+    // state; schedule a Redis write on the next publish cycle.
+    if mutated_any || removed_expired || combat_mutated {
         store.mark_dirty();
     }
+}
+
+/// Outcome of one combat phase (`run_dormant_combat_phase`), reported back to
+/// `dormant_global_tick_system` so it can drive the two distinct follow-ups
+/// correctly:
+///
+/// - [`Self::removed`] — at least one snapshot left the store (combat death
+///   fully released its qi, or a retry pass finalized one). Drives an index
+///   rebuild (zone membership changed) **and** the dirty write.
+/// - [`Self::mutated`] — the phase changed persisted snapshot state without
+///   removing anything: it set `combat_dead_pending_release` on a retained
+///   loser (zone full) or partially released residual qi on a retry pass.
+///   Drives **only** the dirty write (membership unchanged, no rebuild). This
+///   is the signal that closes the flag-persistence window: a retain-only tick
+///   where the aging pass touched nothing still marks the store dirty so the
+///   pending-release flag and reduced `qi_current` reach Redis before any
+///   restart could re-roll the (logically dead) loser.
+///
+/// `removed` implies a mutation, but the two are tracked independently because
+/// only `removed` warrants an index rebuild.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+struct CombatPhaseOutcome {
+    removed: bool,
+    mutated: bool,
 }
 
 /// plan-offscreen-war-v1 P2：离屏派系互殴战死结算（脊柱核心）。
@@ -840,9 +881,13 @@ fn dormant_global_tick_system(
 /// 移除。同 zone 多败者**顺序** release（先 release 抬高 zone_qi，后者读更高基线，order-
 /// independent、不溢出，与 `release.rs accumulate_zone_release` 同源）。
 ///
-/// 返回是否有败者被移除（调用方据此 rebuild 索引 + mark dirty）。借用安全：本函数独占
-/// `&mut store` / `&mut ledger`，配对用 immutable snapshot 读，结算用 char_id 索引 get_mut，
-/// 任一时刻只持一个 snapshot 的可变借用。
+/// 返回 [`CombatPhaseOutcome`]：`removed`（有败者被移除 → rebuild 索引 + mark dirty）与
+/// `mutated`（仅翻了 retain flag / partial-release 真元 → **只** mark dirty，不 rebuild）。
+/// 关键：retain 分支与 retry partial-release 都会改持久化快照状态（flag + 减少的 `qi_current`）
+/// 却不移除任何快照——它们必须置 `mutated`，否则在 `mutated_any==false` 的 tick 下
+/// `mark_dirty` 被跳过，pending-release flag 不落 Redis，重启即重新 roll 败者重发死亡事件
+/// （正是 retain 要堵的回归）。借用安全：本函数独占 `&mut store` / `&mut ledger`，配对用
+/// immutable snapshot 读，结算用 char_id 索引 get_mut，任一时刻只持一个 snapshot 的可变借用。
 #[allow(clippy::too_many_arguments)]
 fn run_dormant_combat_phase(
     store: &mut NpcDormantStore,
@@ -854,13 +899,13 @@ fn run_dormant_combat_phase(
     death_notices: &mut EventWriter<NpcDeathNotice>,
     combat_outcomes: &mut EventWriter<DormantCombatOutcome>,
     pending_relics: &mut EventWriter<PendingDormantRelicCreated>,
-) -> bool {
+) -> CombatPhaseOutcome {
     // ⓪ 先重试上轮 retain（zone 满、真元未释放完）的战死者——它们已是「逻辑死亡」
     // （死亡 notice / outcome 上轮已 emit 过一次），本轮**只**重试守恒释放，释放完才造遗物
     // + remove。优先于本轮新战斗结算：腾出 zone 容量给「积压的死者」，且绝不让它们再被
     // `collect_zone_combat_pairs` 选中重新 roll（plan-offscreen-war-v1 P3 review-fix /
     // CodeRabbit Major：retained loser 重复 emit death notice/outcome 会污染 P4 派系死亡聚合）。
-    let mut removed_any =
+    let mut outcome =
         run_pending_combat_release_retry(store, config, tick, zones, ledger, pending_relics);
 
     // ① 配对：immutable 只读 → owned id 对（§10.1 #3 collect-then-index）。
@@ -868,7 +913,7 @@ fn run_dormant_combat_phase(
     // 释放完的败者本轮不会被选中参战。
     let pairs = combat::collect_zone_combat_pairs(store, faction_store, config);
     if pairs.is_empty() {
-        return removed_any;
+        return outcome;
     }
 
     for (a_id, b_id) in pairs {
@@ -922,6 +967,10 @@ fn run_dormant_combat_phase(
             // `run_pending_combat_release_retry` 每轮重试，释放完才造遗物 + remove。
             // 标记随 Redis 持久化（`#[serde(default)]` flag），server 重启后真元仍不丢、仍不重复参战。
             loser.combat_dead_pending_release = true;
+            // 翻了 retain flag + 上面 release 已减过 `qi_current` —— 持久化状态变了但没移除任何
+            // 快照，标记 `mutated` 让本 tick 必 mark_dirty（哪怕 aging pass 没动东西），堵住
+            // pending-release flag 不落 Redis、重启重 roll 的窗口（见 CombatPhaseOutcome）。
+            outcome.mutated = true;
             tracing::warn!(
                 "[bong][npc] retained combat-dead dormant NPC `{}` until {:.6} residual qi releases (zone full); marked pending-release, excluded from further combat",
                 loser_id,
@@ -932,11 +981,12 @@ fn run_dormant_combat_phase(
             // （与 retry pass 同一入口，保证遗物只在真元释放完毕的此刻 emit 一次）。
             let _ = loser;
             finalize_released_combat_death(store, &loser_id, tick, config, pending_relics);
-            removed_any = true;
+            // 移除 → 索引变了 → 调用方据 `removed` rebuild；`removed` 自然蕴含 mutated。
+            outcome.removed = true;
         }
     }
 
-    removed_any
+    outcome
 }
 
 /// plan-offscreen-war-v1 P3 review-fix：重试上轮 retain（zone 满、真元未释放完）的离屏战死者。
@@ -947,7 +997,10 @@ fn run_dormant_combat_phase(
 /// 走 `finalize_released_combat_death`（造遗物 + remove）。借用安全：先 collect owned id 列表，
 /// 再逐 id `get_mut` 结算（任一时刻只持一个 snapshot 可变借用），与配对结算同源。
 ///
-/// 返回是否移除了任何快照（调用方据此 rebuild 索引 + mark dirty）。
+/// 返回 [`CombatPhaseOutcome`]：`removed`（释放完成→remove 了快照→rebuild + dirty）与
+/// `mutated`（本轮 partial release 真实减了某败者的 `qi_current`，但未移除→**只** dirty）。
+/// partial release 也改持久化真元，必须置 `mutated`，否则 `mutated_any==false` 的 tick 跳过
+/// `mark_dirty`、减少的真元不落 Redis（重启会读回旧的更高真元，守恒账面与持久化漂移）。
 fn run_pending_combat_release_retry(
     store: &mut NpcDormantStore,
     config: &NpcVirtualizationConfig,
@@ -955,7 +1008,8 @@ fn run_pending_combat_release_retry(
     zones: &mut ZoneRegistry,
     ledger: &mut WorldQiAccount,
     pending_relics: &mut EventWriter<PendingDormantRelicCreated>,
-) -> bool {
+) -> CombatPhaseOutcome {
+    let mut outcome = CombatPhaseOutcome::default();
     // collect-then-index：先取出所有待释放败者的 owned id（升序，确定性），再逐个结算。
     let mut pending_ids: Vec<CharId> = store
         .snapshots
@@ -964,17 +1018,20 @@ fn run_pending_combat_release_retry(
         .map(|(id, _)| id.clone())
         .collect();
     if pending_ids.is_empty() {
-        return false;
+        return outcome;
     }
     pending_ids.sort();
 
-    let mut removed_any = false;
     for loser_id in pending_ids {
         let Some(loser) = store.snapshots.get_mut(&loser_id) else {
             continue;
         };
         // 重试守恒释放（唯一真元流动点；zone 仍满则继续 retain，绝不丢弃真元）。
-        let _ = release_dormant_qi_to_zone(loser, zones, ledger);
+        // `Some(_)` == 本轮真实移动了真元（`qi_current` 被改写）→ 持久化状态变了，须 dirty；
+        // `None` == zone 仍满、一点没动 → 不算 mutation（避免每空转 tick 都触发冗余 hash 写）。
+        if release_dormant_qi_to_zone(loser, zones, ledger).is_some() {
+            outcome.mutated = true;
+        }
         let residual = loser.cultivation.qi_current;
         let _ = loser;
         if residual > QI_EPSILON {
@@ -983,9 +1040,9 @@ fn run_pending_combat_release_retry(
         }
         // 真元终于释放完 → 此刻才造遗物 + remove（与初次死亡路径同一收尾入口）。
         finalize_released_combat_death(store, &loser_id, tick, config, pending_relics);
-        removed_any = true;
+        outcome.removed = true;
     }
-    removed_any
+    outcome
 }
 
 /// plan-offscreen-war-v1 P3：离屏战死者**真元已守恒释放完毕此刻**的收尾——造零真元遗物
@@ -2909,6 +2966,92 @@ mod tests {
         assert!(
             retained.combat_dead_pending_release,
             "expected retained loser `{loser}` to be flagged combat_dead_pending_release (logically dead, must not re-enter combat) because re-selection would re-emit death notice/outcome; actual flag=false"
+        );
+    }
+
+    #[test]
+    fn retain_only_tick_marks_store_dirty_for_redis_persistence() {
+        // plan-offscreen-war-v1 P3 二修（CodeRabbit Major persistence gap）：
+        // 锁住「retain 翻 combat_dead_pending_release → 本 tick 必 mark_dirty → Redis 写」契约。
+        //
+        // 回归面：retain 分支改持久化快照状态（置 flag + release 减 qi）却不移除任何快照。
+        // `dormant_global_tick_system` 的 mark_dirty 旧条件是 `mutated_any || removed_expired`：
+        // 当本 tick 的 aging pass 一点没动（所有快照 last_dormant_tick_processed == tick →
+        // elapsed_ticks==0），`mutated_any=false`；retain 不移除 → `removed_expired=false`。
+        // 旧代码会跳过 mark_dirty → flag 不落 Redis，server 在此窗口重启会读回 flag=false 的
+        // 败者、重新 roll、重发 death notice/outcome（正是 retain 要堵的回归）。本测试复现该
+        // 「aging 空转 + 仅 retain」的 tick，断言 store 仍被标 dirty。
+        //
+        // 构造：zone 满（spirit_qi=1.0）→ 败者真元无处可去 → retain；两个战斗候选的
+        // last_dormant_tick_processed 预置成 == 运行 tick → aging pass 对二者 elapsed_ticks==0、
+        // 不推进任何状态 → mutated_any 必为 false，把 mark_dirty 的责任完全压到 combat 的
+        // mutated 信号上。
+        const RUN_TICK: u64 = 9;
+
+        let mut full_zone = zone();
+        full_zone.spirit_qi = 1.0; // 满到 QI_ZONE_UNIT_CAPACITY，拒绝任何回灌 → 必 retain
+        let mut atk = combat_snapshot("atk", FactionId::Attack, 5.0, DVec3::new(10.0, 64.0, 10.0));
+        let mut def = combat_snapshot("def", FactionId::Defend, 5.0, DVec3::new(11.0, 64.0, 11.0));
+        // 关键：预置成已在本 tick 处理过 → aging 的 elapsed_ticks==0 → mutated_any=false。
+        atk.last_dormant_tick_processed = RUN_TICK;
+        def.last_dormant_tick_processed = RUN_TICK;
+
+        let mut store = NpcDormantStore::default();
+        store.insert(atk);
+        store.insert(def);
+
+        let mut app = App::new();
+        app.add_event::<NpcDeathNotice>();
+        app.add_event::<DormantCombatOutcome>();
+        app.add_event::<PendingDormantRelicCreated>();
+        app.insert_resource(NpcVirtualizationConfig {
+            dormant_tick_interval_ticks: 1,
+            ..NpcVirtualizationConfig::default()
+        });
+        app.insert_resource(GameTick(RUN_TICK as u32));
+        app.insert_resource(FactionStore::default());
+        app.insert_resource(ZoneRegistry {
+            zones: vec![full_zone],
+        });
+        app.insert_resource(WorldQiAccount::default());
+        // insert 会把 dirty 置 true；先清掉，让断言只反映「本 tick 是否重新标脏」。
+        store.take_dirty();
+        assert!(
+            !store.is_dirty(),
+            "precondition: store must be clean before the tick so the assertion isolates whether the combat phase re-marks it; it was still dirty"
+        );
+        app.insert_resource(store);
+        app.add_systems(Update, dormant_global_tick_system);
+
+        app.update();
+
+        let mut store = app
+            .world_mut()
+            .remove_resource::<NpcDormantStore>()
+            .expect("store resource must survive the tick");
+
+        // 守住前置：本 tick 确实是「aging 空转 + 仅 retain」——败者被 retain（仍在 store、被标
+        // 逻辑死亡），且无任何快照被移除。否则就不是我们要复现的 mutated_any==false 窗口。
+        assert_eq!(
+            store.len(),
+            2,
+            "both combatants must still be present (loser retained, not removed) so this is the retain-only window the bug lived in; got {}",
+            store.len()
+        );
+        let retained_loser = store
+            .snapshots
+            .values()
+            .find(|snap| snap.combat_dead_pending_release);
+        assert!(
+            retained_loser.is_some(),
+            "exactly the retain path must have fired this tick (a loser flagged combat_dead_pending_release); none was flagged, so the scenario did not reproduce"
+        );
+
+        // 核心契约：retain-only（mutated_any==false、removed_expired==false）的 tick 仍把 store
+        // 标 dirty，flag 才会随下个 publish 周期落 Redis，重启不会重 roll 已逻辑死亡的败者。
+        assert!(
+            store.take_dirty(),
+            "a retain-only tick (aging advanced nothing; loser flagged combat_dead_pending_release but not removed) MUST mark the store dirty so the pending-release flag persists to Redis before any restart could re-roll the loser; the store was left clean (the persistence gap regressed)"
         );
     }
 

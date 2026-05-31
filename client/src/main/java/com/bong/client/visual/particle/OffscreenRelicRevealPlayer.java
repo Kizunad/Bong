@@ -44,18 +44,11 @@ public final class OffscreenRelicRevealPlayer implements VfxPlayer {
         ClientWorld world = client.world;
         if (world == null) return;
 
-        int rgb = payload.colorRgb().orElse(FALLBACK_RGB);
-        float r = ((rgb >> 16) & 0xFF) / 255f;
-        float g = ((rgb >> 8) & 0xFF) / 255f;
-        float b = (rgb & 0xFF) / 255f;
-        // 先把服务端来的 strength 规范化成有限的 [0,1]（CodeRabbit）：负值/超大值/NaN 会算出
-        // 负数或超大的贴花尺寸，NaN 还会污染后续渲染参数。规范化后同时驱动 size 和 alpha。
-        double rawStrength = payload.strength().orElse(DEFAULT_STRENGTH);
-        double strength = Double.isFinite(rawStrength)
-            ? Math.max(0.0, Math.min(1.0, rawStrength))
-            : DEFAULT_STRENGTH;
-        int maxAge = payload.durationTicks().orElse(DEFAULT_MAX_AGE);
-        double halfSize = HALF_SIZE_BASE + HALF_SIZE_PER_STRENGTH * strength;
+        // 全部「服务端 payload -> 渲染标量」的规范化 / clamp 算术抽到纯 {@link #resolveDecalSpec}
+        // （headless 可测：strength NaN/负/超大/边界、durationTicks 越界、缺省兜底都在那里锁住）。
+        // play() 只剩需要 MinecraftClient/ClientWorld 的渲染副作用（建粒子、随机朝向、选 sprite、
+        // 提交 particleManager）—— 这部分留在人工 runClient checklist（headless JVM 不可达）。
+        DecalSpec spec = resolveDecalSpec(payload);
 
         BongGroundDecalParticle decal = new BongGroundDecalParticle(
             world,
@@ -63,15 +56,57 @@ public final class OffscreenRelicRevealPlayer implements VfxPlayer {
             payload.origin()[1],
             payload.origin()[2]
         );
-        decal.setDecalShape(halfSize, Y_LIFT);
+        decal.setDecalShape(spec.halfSize(), Y_LIFT);
         // 战场遗骸是静止的——不自转（radPerTick=0），随机初始角度避免每处朝向雷同。
         decal.setSpin(world.random.nextDouble() * Math.PI * 2.0, 0.0);
-        decal.setColor(r, g, b);
-        decal.setAlphaPublic((float) Math.max(ALPHA_MIN, Math.min(ALPHA_MAX, strength)));
-        decal.setMaxAgePublic(Math.max(MAX_AGE_MIN, Math.min(MAX_AGE_MAX, maxAge)));
+        decal.setColor(spec.red(), spec.green(), spec.blue());
+        decal.setAlphaPublic(spec.alpha());
+        decal.setMaxAgePublic(spec.maxAge());
         if (BongParticles.ningJiaCrustSprites != null) {
             decal.setSpritePublic(BongParticles.ningJiaCrustSprites.getSprite(world.random));
         }
         client.particleManager.addParticle(decal);
     }
+
+    /**
+     * 纯函数：把服务端 {@link VfxEventPayload.SpawnParticle} 规范化成贴花的最终渲染标量。
+     * 不解引用 {@code MinecraftClient} / {@code ClientWorld}，可在 headless 单测里直接断言
+     * （与 sibling {@link VortexSpiralPlayer#effectSpec} 同款抽法，把回归面从 {@code play()}
+     * 里挪出来）。
+     *
+     * <p>规范化规则（CodeRabbit 加固点都在这里锁死）：
+     * <ul>
+     *   <li>颜色：缺省兜底 {@link #FALLBACK_RGB}（骨堆灰白）；payload.color 原样拆 RGB；</li>
+     *   <li>strength：先 {@link Double#isFinite}——NaN / ±Inf 一律退回 {@link #DEFAULT_STRENGTH}
+     *       （否则 NaN 会污染 halfSize/alpha、Inf 会算出超大贴花），有限值再 clamp 到 {@code [0,1]}；
+     *       规范化后的 strength 同时驱动 halfSize 与 alpha；</li>
+     *   <li>halfSize：{@code BASE + PER_STRENGTH * strength}，因 strength∈[0,1] 故恒在
+     *       {@code [BASE, BASE+PER_STRENGTH]}，永不为负 / 超大；</li>
+     *   <li>alpha：把规范化 strength clamp 到 {@code [ALPHA_MIN, ALPHA_MAX]}；</li>
+     *   <li>maxAge：缺省兜底 {@link #DEFAULT_MAX_AGE}，再 clamp 到 {@code [MAX_AGE_MIN, MAX_AGE_MAX]}
+     *       （负 / 0 / 超大 lifetime 都被收口）。</li>
+     * </ul>
+     */
+    static DecalSpec resolveDecalSpec(VfxEventPayload.SpawnParticle payload) {
+        int rgb = payload.colorRgb().orElse(FALLBACK_RGB);
+        float r = ((rgb >> 16) & 0xFF) / 255f;
+        float g = ((rgb >> 8) & 0xFF) / 255f;
+        float b = (rgb & 0xFF) / 255f;
+
+        double rawStrength = payload.strength().orElse(DEFAULT_STRENGTH);
+        double strength = Double.isFinite(rawStrength)
+            ? Math.max(0.0, Math.min(1.0, rawStrength))
+            : DEFAULT_STRENGTH;
+
+        double halfSize = HALF_SIZE_BASE + HALF_SIZE_PER_STRENGTH * strength;
+        float alpha = (float) Math.max(ALPHA_MIN, Math.min(ALPHA_MAX, strength));
+
+        int rawMaxAge = payload.durationTicks().orElse(DEFAULT_MAX_AGE);
+        int maxAge = Math.max(MAX_AGE_MIN, Math.min(MAX_AGE_MAX, rawMaxAge));
+
+        return new DecalSpec(r, g, b, halfSize, alpha, maxAge);
+    }
+
+    /** {@link #resolveDecalSpec} 的输出：贴花最终渲染标量（已规范化 / clamp，无需再处理）。 */
+    record DecalSpec(float red, float green, float blue, double halfSize, float alpha, int maxAge) {}
 }
