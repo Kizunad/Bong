@@ -165,6 +165,30 @@ impl NpcArchetype {
         }
     }
 
+    /// [`as_str`](Self::as_str) 的逆——把持久化 / 序列化字符串还原成 archetype。
+    ///
+    /// plan-offscreen-war-v1 P3：战场遗物把 archetype 以 [`as_str`](Self::as_str) 文本存进
+    /// sqlite `pending_dormant_relics.archetype`，玩家靠近 hydrate 时读回这个字符串重建
+    /// archetype 喂 `default_loot_for_archetype`。与 `as_str` 严格对称（每个变体一条），
+    /// 未知串返回 `None`（让调用方显式处理脏数据而非静默吞成默认 archetype）。
+    // deferred-on-hydrate 遗物消费方（交付物 3）接入；交付物 2 仅持久层 + 测试用。
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub fn from_str(value: &str) -> Option<Self> {
+        Some(match value {
+            "zombie" => Self::Zombie,
+            "commoner" => Self::Commoner,
+            "rogue" => Self::Rogue,
+            "beast" => Self::Beast,
+            "disciple" => Self::Disciple,
+            "guardian_relic" => Self::GuardianRelic,
+            "daoxiang" => Self::Daoxiang,
+            "zhinian" => Self::Zhinian,
+            "fuya" => Self::Fuya,
+            "skull_fiend" => Self::SkullFiend,
+            _ => return None,
+        })
+    }
+
     /// plan-npc-overhaul-v1 §P1.1 — 映射 archetype 到预算桶。
     pub const fn budget_bucket(self) -> NpcBudgetBucket {
         match self {
@@ -1312,6 +1336,43 @@ mod tests {
             NpcArchetype::ALL.len(),
             10,
             "NpcArchetype::ALL should contain exactly 10 variants (update if enum grows)"
+        );
+    }
+
+    #[test]
+    fn archetype_from_str_round_trips_every_variant() {
+        // plan-offscreen-war-v1 P3：sqlite `pending_dormant_relics.archetype` 存 as_str()，
+        // hydrate 时 from_str() 还原。任一变体 round-trip 失败 = 战场遗物 loot 会 roll 错表。
+        for archetype in NpcArchetype::ALL {
+            let restored = NpcArchetype::from_str(archetype.as_str());
+            assert_eq!(
+                restored,
+                Some(archetype),
+                "NpcArchetype::from_str(as_str({archetype:?})) must round-trip to the same variant; \
+                 a missing from_str arm would silently mis-roll battlefield relic loot on hydrate"
+            );
+        }
+    }
+
+    #[test]
+    fn archetype_from_str_rejects_unknown_string() {
+        // 脏数据（旧 schema / 手写 sqlite）必须返回 None 让调用方显式跳过，绝不静默吞成
+        // 默认 Zombie（那会让一个无来历的串掉出僵尸 loot）。
+        assert_eq!(
+            NpcArchetype::from_str("not_a_real_archetype"),
+            None,
+            "unknown archetype string must return None, not silently coerce to a default variant"
+        );
+        assert_eq!(
+            NpcArchetype::from_str(""),
+            None,
+            "empty archetype string must return None"
+        );
+        // 大小写 / 旧 PascalCase 不接受（存的就是 snake_case as_str）。
+        assert_eq!(
+            NpcArchetype::from_str("Disciple"),
+            None,
+            "from_str must match the exact snake_case as_str() form, not PascalCase"
         );
     }
 
