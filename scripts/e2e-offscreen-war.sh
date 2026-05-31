@@ -320,8 +320,9 @@ function makeCombatant(charId, factionId, pos) {
   // 长寿命 + 0 年龄：本轮绝不自然老死，让"死人"唯一来源是离屏战斗。
   snap.lifespan.age_ticks = 0.0;
   snap.lifespan.max_age_ticks = 100000000.0;
-  // 同 zone、Cultivate 意图（位置不漂移），两者靠近但不同坐标。
-  snap.intent = { Cultivate: { zone: snap.zone_name } };
+  // 同 zone、cultivate 意图（位置不漂移），两者靠近但不同坐标。
+  // 注意：DormantBehaviorIntent 是 #[serde(rename_all = "snake_case")]，variant 键必须小写。
+  snap.intent = { cultivate: { zone: snap.zone_name } };
   snap.position = pos;
   // 让本 tick 必结算（last_processed 落后于快进后的 tick）。
   snap.dormant_since_tick = 0;
@@ -387,48 +388,49 @@ if (combatDeaths.length === 0) {
   process.exit(2);
 }
 
-// ② 人口降 == 观测到的 combat 死亡数（去重 loser，retain 路径下死亡事件可能重复 emit）。
-const deadIds = new Set(combatDeaths.map((d) => d.npc_id));
+// 注：① 接受**任意** combat 死亡（既证受控对，也证 P0 默认 seed 的 8 个 factioned rogue
+// 也会互殴——离屏战争机制在两种场景都成立）。但 ②③⑤ 的"种群守恒 / 还灵气 / 对账"必须
+// scope 到受控对（dormant:combat:*）才有确定性——P0 默认 rogue 的死亡是另一个独立种群。
+const PAIR_PREFIX = "dormant:combat:";
+const pairCombatDeaths = combatDeaths.filter((d) => d.npc_id.startsWith(PAIR_PREFIX));
+const pairDeadIds = new Set(pairCombatDeaths.map((d) => d.npc_id));
+
+// ② 受控对人口降（2 - HLEN，仅数受控对快照）== 受控对去重 combat 死亡数。
 const remaining = await client.hlen("bong:npc/dormant");
-const popDrop = 2 - remaining; // setup 种了 2 个
-console.log(`[observe] t0_pop=2 t1_pop=${remaining} pop_drop=${popDrop} unique_combat_dead=${deadIds.size}`);
-if (popDrop !== deadIds.size) {
-  console.error(`[observe] FAIL ②: population drop ${popDrop} != unique combat-death count ${deadIds.size} (NPC vanished or double-counted)`);
+const popDrop = 2 - remaining; // setup 只种了 2 个受控对（dormant:combat:atk/def）
+console.log(`[observe] t0_pop=2 t1_pop=${remaining} pop_drop=${popDrop} pair_combat_dead=${pairDeadIds.size} (all_combat_dead=${combatDeaths.length})`);
+if (pairDeadIds.size < 1) {
+  console.error(`[observe] FAIL ②: 受控对（${PAIR_PREFIX}*）至少应有 1 个 combat 死亡，实际 ${pairDeadIds.size}; combat deaths: ${JSON.stringify(combatDeaths.map((d)=>d.npc_id))}`);
   await client.quit();
   process.exit(3);
 }
-if (popDrop < 1) {
-  console.error(`[observe] FAIL ②: expected at least 1 combat death to drop population, drop=${popDrop}`);
+if (popDrop !== pairDeadIds.size) {
+  console.error(`[observe] FAIL ②: 受控对人口降 ${popDrop} != 受控对去重 combat 死亡数 ${pairDeadIds.size}（NPC 凭空消失或重复计数）t0=2 t1=${remaining}`);
   await client.quit();
   process.exit(3);
 }
 
-// ③ 战死方 zone spirit_qi 上升（还灵气）：从 world_state 日志取首末 spawn zone spirit_qi。
-const zoneSeries = [];
-for (const line of lines) {
-  const m = line.match(/channel=bong:world_state payload=(.*)$/);
-  if (!m) continue;
-  let payload;
-  try { payload = JSON.parse(m[1].replace(/\.\.\.$/, "")); } catch { continue; }
-  const zones = payload.zones ?? payload.zone ?? [];
-  const arr = Array.isArray(zones) ? zones : [zones];
-  const spawn = arr.find((z) => z && (z.name === "spawn"));
-  if (spawn && Number.isFinite(Number(spawn.spirit_qi))) zoneSeries.push(Number(spawn.spirit_qi));
+// ③ 战死方 zone spirit_qi 上升（还灵气）：受控对 outcome 的 zone 对应的 ledger 账户应 > 0。
+//   受控对模板来自任意 seeded rogue，zone 不一定是 spawn，故从 outcome.zone 取实际 zone。
+const pairOutcomes = outcomes.filter((o) => o.loser.startsWith(PAIR_PREFIX) || o.winner.startsWith(PAIR_PREFIX));
+const hash = await client.hgetall("bong:qi/ledger");
+const pairZones = [...new Set(pairOutcomes.map((o) => o.zone))];
+let zoneRoseOk = false;
+for (const z of pairZones) {
+  const acct = Number(hash[`account:zone:${z}`]);
+  console.log(`[observe] account:zone:${z} balance=${acct}`);
+  if (Number.isFinite(acct) && acct > 0) { zoneRoseOk = true; }
 }
-// world_state payload 被 sub 截断到 320 字符，zone 数组可能不完整 → 退而求其次直接读 qi/ledger
-// 的 account:zone:spawn 行（更可靠）。这里若拿到了序列就校上升，否则跳过 ③ 的 world_state 源。
-if (zoneSeries.length >= 2) {
-  const rose = zoneSeries[zoneSeries.length - 1] >= zoneSeries[0];
-  console.log(`[observe] zone spirit_qi series first=${zoneSeries[0]} last=${zoneSeries[zoneSeries.length-1]} (from world_state)`);
-  if (!rose) {
-    console.error(`[observe] FAIL ③: spawn zone spirit_qi did not rise after combat death (${zoneSeries[0]} -> ${zoneSeries[zoneSeries.length-1]})`);
-    await client.quit();
-    process.exit(4);
-  }
+// 受控对带 qi_current=5、zone 未满 → 必有正回灌，对应 zone 账户应 > 0。
+const pairReleased = pairOutcomes.reduce((s, o) => s + Number(o.qi_released || 0), 0);
+console.log(`[observe] pair zones=${pairZones.join(",")} pair_total_released=${pairReleased}`);
+if (!zoneRoseOk || pairReleased <= 0) {
+  console.error(`[observe] FAIL ③: 受控对战死后 zone 账户未上升 / 无真元回灌（zoneRoseOk=${zoneRoseOk} pairReleased=${pairReleased}）——还灵气未发生`);
+  await client.quit();
+  process.exit(4);
 }
 
 // ④ ledger budget==DEFAULT 且 total_observed ≤ budget（精确守恒不凭空造真元）。
-const hash = await client.hgetall("bong:qi/ledger");
 const expected = Number(process.env.EXPECTED_TOTAL);
 const total = Number(hash.total_observed);
 const budgetInit = Number(hash.budget_initial_total);
@@ -445,37 +447,18 @@ if (!Number.isFinite(total) || total < 0 || total > budgetCur + 1e-6) {
   process.exit(5);
 }
 
-// ⑤ bong:npc/combat outcome 的 loser 与 death 一致。
-const outcomeLosers = new Set(outcomes.map((o) => o.loser));
-const matched = [...deadIds].some((id) => outcomeLosers.has(id));
-console.log(`[observe] outcome_losers=${[...outcomeLosers].join(",")} death_ids=${[...deadIds].join(",")}`);
-if (outcomes.length === 0 || !matched) {
-  console.error(`[observe] FAIL ⑤: bong:npc/combat outcome loser does not match a combat death id`);
+// ⑤ bong:npc/combat 受控对 outcome 的 loser 与受控对 combat 死亡一致。
+const outcomeLosers = new Set(pairOutcomes.map((o) => o.loser));
+const matched = [...pairDeadIds].every((id) => outcomeLosers.has(id));
+console.log(`[observe] pair_outcome_losers=${[...outcomeLosers].join(",")} pair_death_ids=${[...pairDeadIds].join(",")}`);
+if (pairOutcomes.length === 0 || !matched) {
+  console.error(`[observe] FAIL ⑤: 受控对 bong:npc/combat outcome.loser 与战死 npc_id 不一致`);
   await client.quit();
   process.exit(6);
 }
 
 await client.quit();
 console.log("[observe] combat closure assertions ①②③④⑤ all PASS");
-process.exit(0);
-NODE
-}
-
-# 直接从 qi/ledger HASH 读 spawn zone 账户余额（world_state 被 sub 截断时的可靠回退源）。
-assert_zone_qi_rose_via_ledger() {
-  redis_node <<'NODE'
-import Redis from "ioredis";
-const IORedis = Redis.default ?? Redis;
-const client = new IORedis(process.env.REDIS_URL, { maxRetriesPerRequest: 2 });
-const hash = await client.hgetall("bong:qi/ledger");
-await client.quit();
-const zoneAcct = Number(hash["account:zone:spawn"]);
-console.log(`[observe] account:zone:spawn balance=${zoneAcct}`);
-// 战死回灌后 spawn zone 账户应 > 0（败者真元守恒进 zone）。
-if (!Number.isFinite(zoneAcct) || zoneAcct <= 0) {
-  console.error(`[observe] FAIL ③(ledger): spawn zone account balance ${zoneAcct} should be > 0 after combat qi返灌`);
-  process.exit(2);
-}
 process.exit(0);
 NODE
 }
@@ -721,19 +704,12 @@ fi
 # 等一个 world_state/dormant HASH publish 周期让 HLEN / qi/ledger 反映战死后状态。
 sleep 12
 
-# (4) 全套 combat closure 断言 ①②③④⑤。
+# (4) 全套 combat closure 断言 ①②③④⑤（③ 已内含：从受控对 outcome.zone 读 ledger 账户 > 0）。
 EXPECTED_TOTAL="${EXPECTED_TOTAL:-$(read_default_spirit_qi_total)}"
 if assert_combat_closure "$REDIS_SUB_LOG" "$EXPECTED_TOTAL" >>"$OBSERVE_LOG" 2>&1; then
-  pass "combat closure ①cause=combat ②人口降==战死数 ③zone还灵气 ④守恒 ⑤outcome对账"
+  pass "combat closure ①cause=combat ②受控对人口降==战死数 ③zone还灵气 ④守恒 ⑤outcome对账"
 else
   finalize_failure "combat" "combat closure assertions failed; see $OBSERVE_LOG / $REDIS_SUB_LOG"
-fi
-
-# (5) ③ 的可靠回退源：直接读 qi/ledger 的 spawn zone 账户余额 > 0（还灵气精确锁）。
-if assert_zone_qi_rose_via_ledger >>"$OBSERVE_LOG" 2>&1; then
-  pass "qi/ledger spawn zone account > 0 (败者真元守恒回灌精确锁)"
-else
-  finalize_failure "combat" "spawn zone ledger account not positive after combat 还灵气; see $OBSERVE_LOG"
 fi
 
 echo ""
