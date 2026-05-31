@@ -110,6 +110,46 @@ public class VfxRegistryTest {
     }
 
     @Test
+    void bridgeDispatchesOffscreenRelicRevealByEventId() {
+        // plan-offscreen-war-v1 P3（CodeRabbit）：端到端分发 —— 把 OffscreenRelicRevealPlayer.EVENT_ID
+        // 经 BongVfxParticleBridge 分发，验证「event_id -> bridge -> player」路由命中（用真实
+        // relic payload：双色 + strength + lifetime）。
+        // 说明：OffscreenRelicRevealPlayer.play() 解引用 client.world / particleManager / world.random /
+        // BongParticles，需要已初始化的 MinecraftClient，headless 测试 JVM 下不可达（同 bridge 测试，
+        // MinecraftClient.getInstance() 为 null 时 bridge 返回 false 不调 player）。贴花尺寸/alpha 裁剪、
+        // sprite 选取、world==null 早退等渲染内部行为属**人工 runClient checklist**（与 e2e「玩家靠近物化」
+        // 同一可测性边界）。本测试锁住 headless 可测的那一段：注册命中 + bridge 分发契约。
+        RecordingPlayer recorder = new RecordingPlayer();
+        VfxRegistry registry = VfxRegistry.instance();
+        registry.register(OffscreenRelicRevealPlayer.EVENT_ID, recorder);
+
+        BongVfxParticleBridge bridge = new BongVfxParticleBridge(registry);
+        VfxEventPayload.SpawnParticle payload = new VfxEventPayload.SpawnParticle(
+            OffscreenRelicRevealPlayer.EVENT_ID,
+            new double[] { 12.0, 64.0, -8.0 },
+            Optional.empty(),
+            OptionalInt.of(0xB8AFA0), // 骨堆灰白（宗门信物叙事）
+            Optional.of(0.7),         // strength
+            OptionalInt.of(1),        // count（burst-once）
+            OptionalInt.of(200)       // lifetime 拉满
+        );
+
+        boolean ok = bridge.spawnParticle(payload);
+        // 与 bridgeDispatchesToRegisteredPlayer 同款 dual-branch 契约（headless MC 可达性不确定）：
+        if (ok) {
+            assertEquals(1, recorder.calls.size(),
+                "when MC is initialized, the relic reveal event must dispatch exactly once to its player");
+            assertSame(payload, recorder.calls.get(0),
+                "the dispatched payload must be the exact relic SpawnParticle sent through the bridge");
+            assertSame(OffscreenRelicRevealPlayer.EVENT_ID, recorder.calls.get(0).eventId(),
+                "the dispatched payload must carry the offscreen_relic_reveal event id");
+        } else {
+            assertTrue(recorder.calls.isEmpty(),
+                "when MC is uninitialized, bridge must decline the relic reveal without invoking the player");
+        }
+    }
+
+    @Test
     void registerDefaultsBindsSwordQiSlash() {
         VfxBootstrap.registerDefaults();
         assertTrue(VfxRegistry.instance().contains(SwordQiSlashPlayer.EVENT_ID),
