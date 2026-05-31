@@ -314,6 +314,37 @@ fn relic_reveal_narration_picks_one_of_two_by_seed_parity() {
     assert_eq!(relic_reveal_narration(42), relic_reveal_narration(42));
 }
 
+#[test]
+fn relic_decal_color_matches_narration_variant_by_seed_parity() {
+    // 视觉叙事一致性（round 3）：贴花色与 narration 必须同源——偶 seed=骨堆灰白+宗门信物，
+    // 奇 seed=残卷暗黄+散修残经，视觉与文字讲同一个故事。
+    // 偶 seed → 骨堆灰白 + 宗门信物文案。
+    assert_eq!(
+        relic_decal_color(0),
+        RELIC_DECAL_COLOR_BONE,
+        "even loot_seed must use the bone-heap decal color"
+    );
+    assert!(
+        relic_reveal_narration(0).contains("宗门信物"),
+        "even-seed narration must be the sect-token line so it matches the bone-heap decal"
+    );
+    // 奇 seed → 残卷暗黄 + 散修残经文案。
+    assert_eq!(
+        relic_decal_color(1),
+        RELIC_DECAL_COLOR_SCROLL,
+        "odd loot_seed must use the scroll-remnant decal color"
+    );
+    assert!(
+        relic_reveal_narration(1).contains("残经") || relic_reveal_narration(1).contains("散修"),
+        "odd-seed narration must be the rogue-remnant line so it matches the scroll-remnant decal"
+    );
+    // 两色不同（否则"两种叙事"在视觉上无区分）。
+    assert_ne!(
+        RELIC_DECAL_COLOR_BONE, RELIC_DECAL_COLOR_SCROLL,
+        "bone vs scroll decal colors must differ to visually distinguish the two narration variants"
+    );
+}
+
 // ───────────────────── system 级（deferred-on-hydrate 触发语义） ─────────────────────
 
 fn test_zone(name: &str, dim: DimensionKind) -> Zone {

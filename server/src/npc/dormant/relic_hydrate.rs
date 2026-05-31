@@ -57,8 +57,21 @@ pub const OFFSCREEN_RELIC_REVEAL_VFX: &str = "offscreen_relic_reveal";
 /// `audio_recipe` ID：战场遗物揭示音效（plan §146，两层：低沉 levelup + 骨裂）。
 pub const OFFSCREEN_RELIC_REVEAL_AUDIO: &str = "offscreen_relic_reveal";
 
-/// 骨堆遗骸贴花色（灰白，plan §145）。残卷暗黄留给 client 按 loot 内容细分，server 默认发骨堆色。
+/// 骨堆遗骸贴花色（灰白，plan §145）——对应"宗门信物"叙事变体（战死者遗骸为主）。
 pub const RELIC_DECAL_COLOR_BONE: &str = "#B8AFA0";
+
+/// 残卷遗骸贴花色（暗黄，plan §145）——对应"散修残经"叙事变体（半卷残经为主）。
+pub const RELIC_DECAL_COLOR_SCROLL: &str = "#7A6A3C";
+
+/// 按 `loot_seed` 奇偶选贴花色，**与 [`relic_reveal_narration`] 同源**——同一遗物的贴花颜色
+/// 与叙事文案一致（偶=骨堆灰白 + 宗门信物；奇=残卷暗黄 + 散修残经），视觉与文字讲同一个故事。
+fn relic_decal_color(loot_seed: u64) -> &'static str {
+    if loot_seed & 1 == 0 {
+        RELIC_DECAL_COLOR_BONE
+    } else {
+        RELIC_DECAL_COLOR_SCROLL
+    }
+}
 
 /// 战场遗物 loot 的**零真元**常量——物化每件 `ItemInstance` 时显式写入 `spirit_quality`。
 ///
@@ -289,11 +302,13 @@ fn hydrate_pending_dormant_relics_system(
                         OFFSCREEN_RELIC_REVEAL_VFX,
                         reveal_pos,
                         None,
-                        RELIC_DECAL_COLOR_BONE,
+                        // 贴花色与 narration 同源（loot_seed 奇偶）：骨堆灰白 / 残卷暗黄，
+                        // 视觉与文字讲同一个故事。
+                        relic_decal_color(record.loot_seed),
                         0.7,
                         1,
                         // lifetime 拉满（200 tick，BongGroundDecalParticle 上限）——遗物贴花"持续
-                        // 到拾取"的感知近似（client decal maxAge clamp 到 140，足够长）。
+                        // 到拾取"的感知近似（client decal maxAge clamp 到 200，足够长）。
                         200,
                     ),
                 );

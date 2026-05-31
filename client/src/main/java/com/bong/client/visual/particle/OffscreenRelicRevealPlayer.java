@@ -16,8 +16,9 @@ import net.minecraft.util.Identifier;
  * <ul>
  *   <li>贴图：复用现成 {@link BongParticles#ningJiaCrustSprites}（凝甲 crust——散碎角片，
  *       视觉上正是"骨片 / 残骸碎屑散落地面"，比 lingqi 涟漪环更贴战场遗骸语义），不新建贴图；</li>
- *   <li>颜色：骨堆灰白（payload 默认 {@code #B8AFA0}），残卷暗黄 {@code #7A6A3C} 留给 server
- *       按 loot 细分时改 color hex（本 player 纯按 payload.color 上色，两种叙事同一套渲染）；</li>
+ *   <li>颜色：由 server 按 loot_seed 奇偶发来——骨堆灰白 {@code #B8AFA0}（宗门信物叙事）/
+ *       残卷暗黄 {@code #7A6A3C}（散修残经叙事），贴花色与 zone narration 同源讲同一故事。
+ *       本 player 纯按 {@code payload.color} 上色（兜底 {@code #B8AFA0}），两种叙事共用一套渲染；</li>
  *   <li>形态：radial 静态**单**贴花（不自转、不漂移），lifetime 拉满 ~ 持续到拾取的感知近似；</li>
  *   <li>spawn 模式：burst-once-on-hydrate（每次 hydrate 物化一处，不连续刷）。</li>
  * </ul>
