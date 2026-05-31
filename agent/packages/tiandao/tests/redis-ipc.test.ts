@@ -406,6 +406,73 @@ describe("redis-ipc", () => {
     ]);
   });
 
+  it("drainNpcDeathEvents returns only death events and clears after drain (P4 offscreen war)", async () => {
+    const pub = new FakeRedisListClient();
+    const sub = new FakeRedisListClient();
+    const createClient = vi
+      .fn<(url: string) => FakeRedisListClient>()
+      .mockReturnValueOnce(sub)
+      .mockReturnValueOnce(pub);
+    const ipc = new RedisIpc({ url: "redis://fake" }, { createClient });
+    await ipc.connect();
+
+    // spawn + faction 不进 death drain
+    await sub.publish(
+      NPC_SPAWN,
+      JSON.stringify({
+        v: 1,
+        kind: "npc_spawned",
+        npc_id: "npc_spawn",
+        archetype: "rogue",
+        source: "seed",
+        zone: "spawn",
+        pos: [1, 66, 2],
+        initial_age_ticks: 0,
+        at_tick: 0,
+      }),
+    );
+    await sub.publish(
+      NPC_DEATH,
+      JSON.stringify({
+        v: 1,
+        kind: "npc_death",
+        npc_id: "dormant:combat:1",
+        archetype: "rogue",
+        cause: "combat",
+        faction_id: "attack",
+        age_ticks: 1,
+        max_age_ticks: 100,
+        at_tick: 1,
+        from_dormant_combat: true,
+        pos: [12, 64, -30],
+      }),
+    );
+    await sub.publish(
+      NPC_DEATH,
+      JSON.stringify({
+        v: 1,
+        kind: "npc_death",
+        npc_id: "npc:elder:1",
+        archetype: "commoner",
+        cause: "natural_aging",
+        age_ticks: 100,
+        max_age_ticks: 100,
+        at_tick: 2,
+        from_dormant_combat: false,
+      }),
+    );
+
+    const drained = ipc.drainNpcDeathEvents();
+    expect(drained).toEqual([
+      expect.objectContaining({ kind: "npc_death", npc_id: "dormant:combat:1", cause: "combat" }),
+      expect.objectContaining({ kind: "npc_death", npc_id: "npc:elder:1", cause: "natural_aging" }),
+    ]);
+    // 第二次 drain 为空（drain 语义清空）
+    expect(ipc.drainNpcDeathEvents()).toEqual([]);
+    // 但混合 NPC buffer（getLatestNpcEvents）不被 death drain 清空
+    expect(ipc.getLatestNpcEvents()).toHaveLength(3);
+  });
+
   it("observes alchemy session_end events for narration triggers", async () => {
     const pub = new FakeRedisListClient();
     const sub = new FakeRedisListClient();
