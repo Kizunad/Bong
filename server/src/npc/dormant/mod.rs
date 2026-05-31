@@ -743,6 +743,19 @@ fn dormant_global_tick_system(
         let Some(snapshot) = store.snapshots.get_mut(&char_id) else {
             continue;
         };
+        // plan-offscreen-war-v1 P3 review-fix（CodeRabbit Major）：已离屏战死、真元待释放的败者
+        // （`combat_dead_pending_release`）是**逻辑死亡**——它不该再移动 / 吸气 / 突破 / 自然老死。
+        // `collect_zone_combat_pairs` 只把它排除出**配对**，但这条 per-char 推进循环若仍处理它，
+        // 一个「已死」NPC 会在待释放期间继续 `advance_dormant_position`、`apply_dormant_regen`
+        // （从 zone 拉真元进死者账户）、`advance_dormant_breakthrough` 甚至触发自然老死分支——语义
+        // 错误，且 regen↔release 在满 zone 下来回 churn（吸进来又被 retry 释放回去）。直接 early-
+        // continue 让它时钟冻结（连 `last_dormant_tick_processed` 也不推进），真元释放完全交给
+        // `run_pending_combat_release_retry`（每 tick 重试 release，释放完才造遗物 + remove）。
+        // 注意：不置 `mutated_any`——本循环对它零状态变更，dirty 由 combat phase 的 `mutated`
+        // 信号负责（retain 翻 flag / retry partial-release 都已置 `mutated`，见 `CombatPhaseOutcome`）。
+        if snapshot.combat_dead_pending_release {
+            continue;
+        }
         let elapsed_ticks = tick.saturating_sub(snapshot.last_dormant_tick_processed);
         snapshot.last_dormant_tick_processed = tick;
         if elapsed_ticks == 0 {
@@ -3557,6 +3570,97 @@ mod tests {
             still.combat_dead_pending_release,
             still.cultivation.qi_current
         );
+    }
+
+    #[test]
+    fn pending_release_loser_frozen_in_per_char_tick_loop() {
+        // plan-offscreen-war-v1 P3 二修（CodeRabbit Major，真实 bug）：被标记
+        // `combat_dead_pending_release` 的离屏战死者是**逻辑死亡**，`dormant_global_tick_system`
+        // 的 per-char 推进循环必须把它**完全冻结**——不 `advance_dormant_position`、不
+        // `apply_dormant_regen`、不 `advance_dormant_breakthrough`、不推进 aging / 自然老死。
+        //
+        // 回归面：旧代码只在 `collect_zone_combat_pairs`（配对阶段）排除 flagged 死者，但 per-char
+        // 循环仍每 tick 处理它——一个「已死」NPC 会继续移动、从 zone 吸气进死者账户、甚至突破，且
+        // regen↔release 在满 zone 下来回 churn。本测试构造一个 flagged 死者（会漂移的 Wander intent
+        // + 满 zone 让 retry release 被拒、死者跨 tick 留存），连跑两个 aging 跨度极大的 tick，断言
+        // 它的 position / qi_current / realm / age_ticks **一格都不动**，唯一归宿是
+        // `run_pending_combat_release_retry`（满 zone 下 no-op，等 zone 腾空再释放 + remove）。
+        //
+        // 修复前：Wander 让 position 漂移、age_ticks += elapsed*0.3、满 zone regen 拉真元抬高
+        // qi_current —— 任一变化都撞红。修复后：early-continue 冻结全部，全等于初始值。
+        let mut frozen = combat_snapshot(
+            "frozen_dead",
+            FactionId::Attack,
+            20.0, // < qi_max(60) 留 room 给（bug 下的）regen；> QI_EPSILON 让满 zone retry retain 它
+            DVec3::new(10.0, 64.0, 10.0),
+        );
+        // Wander：若 per-char 循环误处理它，`advance_dormant_position` 会按 elapsed 漂移 position。
+        frozen.intent = DormantBehaviorIntent::Wander { drift_radius: 50.0 };
+        frozen.combat_dead_pending_release = true; // 逻辑死亡，待释放
+        let initial_pos = frozen.position;
+        let initial_qi = frozen.cultivation.qi_current;
+        let initial_realm = frozen.cultivation.realm;
+        let initial_age = frozen.lifespan.age_ticks;
+
+        // zone 满到 capacity → retry 的 release 被拒（room=0）→ 死者跨 tick 留存、qi 不被释放掉，
+        // 让我们能在多 tick 后观测它是否被 per-char 循环改动过。
+        let mut full_zone = zone();
+        full_zone.spirit_qi = 1.0;
+        let mut zones = ZoneRegistry {
+            zones: vec![full_zone],
+        };
+        let mut ledger = WorldQiAccount::default();
+        let mut store = NpcDormantStore::default();
+        store.insert(frozen);
+        let config = NpcVirtualizationConfig::default();
+
+        // 连跑两个 tick，aging 跨度极大（last_dormant_tick_processed=0 → elapsed=500 then 1000）。
+        for run_tick in [500u64, 1000u64] {
+            let events = run_combat_tick(&mut store, &mut zones, &mut ledger, &config, run_tick);
+            // flagged 死者无对手 + 已逻辑死亡 → 既不参战也不重复 emit 任何死亡事件。
+            assert!(
+                events.deaths.is_empty() && events.outcomes.is_empty() && events.relics.is_empty(),
+                "tick {run_tick}: a lone flagged pending-release loser must emit NO death / outcome / relic \
+                 (it is already logically dead and has no opponent); got {} deaths, {} outcomes, {} relics",
+                events.deaths.len(),
+                events.outcomes.len(),
+                events.relics.len()
+            );
+            let still = store.snapshots.get("frozen_dead").unwrap_or_else(|| {
+                panic!("tick {run_tick}: flagged loser must stay retained (zone full, qi unreleased), but it was removed")
+            });
+            assert_eq!(
+                still.position, initial_pos,
+                "tick {run_tick}: a flagged pending-release loser MUST NOT move — the per-char loop must \
+                 skip `advance_dormant_position` for logically-dead NPCs (Wander intent would have drifted \
+                 it). expected {initial_pos:?}, got {:?}",
+                still.position
+            );
+            assert_eq!(
+                still.cultivation.qi_current, initial_qi,
+                "tick {run_tick}: a flagged pending-release loser MUST NOT regen — the per-char loop must \
+                 skip `apply_dormant_regen` (else a dead NPC siphons qi from a full zone into its own \
+                 account, and regen↔release churns). expected {initial_qi}, got {}",
+                still.cultivation.qi_current
+            );
+            assert_eq!(
+                still.cultivation.realm, initial_realm,
+                "tick {run_tick}: a flagged pending-release loser MUST NOT break through — the per-char loop \
+                 must skip `advance_dormant_breakthrough` for a logically-dead NPC. expected {initial_realm:?}, got {:?}",
+                still.cultivation.realm
+            );
+            assert_eq!(
+                still.lifespan.age_ticks, initial_age,
+                "tick {run_tick}: a flagged pending-release loser's clock MUST be frozen — the per-char loop \
+                 must not advance `age_ticks` (it would have added elapsed*0.3) nor trip the natural-death \
+                 branch. expected {initial_age}, got {}",
+                still.lifespan.age_ticks
+            );
+            assert!(
+                still.combat_dead_pending_release,
+                "tick {run_tick}: the loser must stay flagged pending-release across ticks while zone is full; flag was cleared"
+            );
+        }
     }
 
     #[test]

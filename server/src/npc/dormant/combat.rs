@@ -449,6 +449,54 @@ mod tests {
     }
 
     #[test]
+    fn pending_release_loser_excluded_from_pairs() {
+        // plan-offscreen-war-v1 P3 review-fix（CodeRabbit Major）：`collect_zone_combat_pairs` 的
+        // `!combat_dead_pending_release` 过滤分支的专属纯函数单测。已离屏战死、真元待释放的败者
+        // （逻辑死亡）绝不再被选中参战——否则会被重新 roll、重复 emit death notice / outcome。
+        //
+        // 构造：升序 a(Attack, flagged) < b(Defend, alive) < c(Attack, alive)。若**不**过滤 flagged，
+        // 升序两两扫会先把 a-b 配成敌对对（a<b 先命中）；过滤掉 a 后只剩 b-c，配出 (b,c)。
+        // 故断言结果恰为 (b,c) 同时排除 a，精确锁住"配出 alive 的、跳过 flagged 的"。
+        let mut a = snapshot("a", "z", Realm::Induce, Some(FactionId::Attack));
+        a.combat_dead_pending_release = true; // 逻辑死亡，待释放
+        let b = snapshot("b", "z", Realm::Induce, Some(FactionId::Defend));
+        let c = snapshot("c", "z", Realm::Induce, Some(FactionId::Attack));
+        let store = store_with(vec![a, b, c]);
+        let factions = FactionStore::default();
+        let pairs = collect_zone_combat_pairs(&store, &factions, &config_with_max(3));
+        assert_eq!(
+            pairs,
+            vec![("b".to_string(), "c".to_string())],
+            "the flagged (pending-release) loser `a` must be skipped before pairing — without the \
+             filter, ascending scan would match a-b first; with it, only the two alive NPCs (b,c) \
+             pair up. got {pairs:?}"
+        );
+        assert!(
+            !pairs.iter().any(|(x, y)| x == "a" || y == "a"),
+            "the pending-release loser `a` must NOT appear in any combat pair (re-selecting it would \
+             re-emit a death for an already-dead NPC); got {pairs:?}"
+        );
+    }
+
+    #[test]
+    fn all_candidates_flagged_yields_no_pairs() {
+        // 边界：候选全部 `combat_dead_pending_release=true` → 过滤后空候选 → 零对。
+        // （满 zone 下多败者积压全待释放时不会再凭空冒出新战斗。）
+        let mut a = snapshot("a", "z", Realm::Induce, Some(FactionId::Attack));
+        let mut b = snapshot("b", "z", Realm::Induce, Some(FactionId::Defend));
+        a.combat_dead_pending_release = true;
+        b.combat_dead_pending_release = true;
+        let store = store_with(vec![a, b]);
+        let factions = FactionStore::default();
+        let pairs = collect_zone_combat_pairs(&store, &factions, &config_with_max(3));
+        assert!(
+            pairs.is_empty(),
+            "when every hostile candidate is flagged pending-release (all logically dead), the \
+             filter must leave no candidates and produce zero pairs; got {pairs:?}"
+        );
+    }
+
+    #[test]
     fn pairs_do_not_cross_zone_boundaries() {
         // 两个敌对 NPC 在不同 zone ⇒ 不成对（配对只在 zone 内）。
         let store = store_with(vec![

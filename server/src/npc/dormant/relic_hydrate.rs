@@ -198,16 +198,19 @@ fn zones_with_players(
     zone_registry: &ZoneRegistry,
     players: &Query<(&Position, Option<&CurrentDimension>), With<ClientMarker>>,
 ) -> Vec<String> {
-    let mut zones = Vec::new();
-    for (pos, dim) in players.iter() {
-        let dimension = dim.map(|d| d.0).unwrap_or(DimensionKind::Overworld);
-        if let Some(zone) = zone_registry.find_zone(dimension, pos.get()) {
-            if !zones.contains(&zone.name) {
-                zones.push(zone.name.clone());
-            }
-        }
-    }
-    zones
+    // plan-offscreen-war-v1 P3 二修（Pi agent 非阻塞优化）：用 BTreeSet 去重，把旧
+    // `Vec::contains` 的 O(n²) 去重降到 O(n log n)（高密度服务器多玩家挤同一 zone 时不再二次方），
+    // 同时 BTreeSet 给出**确定性有序**输出（下游只迭代/`is_empty`，不依赖顺序，但稳定输出便于日志/测试）。
+    let zones: std::collections::BTreeSet<String> = players
+        .iter()
+        .filter_map(|(pos, dim)| {
+            let dimension = dim.map(|d| d.0).unwrap_or(DimensionKind::Overworld);
+            zone_registry
+                .find_zone(dimension, pos.get())
+                .map(|zone| zone.name.clone())
+        })
+        .collect();
+    zones.into_iter().collect()
 }
 
 /// plan-offscreen-war-v1 P3 交付物 3+4：deferred-on-hydrate 遗物物化 system。

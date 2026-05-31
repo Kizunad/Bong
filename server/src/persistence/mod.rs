@@ -4023,7 +4023,11 @@ fn upsert_pending_dormant_relic(
                 archetype = excluded.archetype,
                 loot_seed = excluded.loot_seed,
                 created_tick = excluded.created_tick,
-                created_wall = excluded.created_wall,
+                -- plan-offscreen-war-v1 P3 review-fix（CodeRabbit Major）：冲突时**保留更早的**
+                -- created_wall。它是 TTL retention sweep 与 hydrate 排序的墙钟锚点；若覆盖成新事件
+                -- 的墙钟，同一逻辑死亡重发 / 重试会刷新 TTL（陈旧遗物被无限续命）、并打乱 hydrate
+                -- 排序。幂等必须对**可观察 TTL** 也成立，而不只对去重成立——故取两者的最小值。
+                created_wall = MIN(pending_dormant_relics.created_wall, excluded.created_wall),
                 schema_version = excluded.schema_version
             ",
             params![
@@ -11901,11 +11905,82 @@ mod persistence_tests {
             "persisting the SAME logical death twice must leave exactly ONE row (deterministic relic_id + ON CONFLICT upsert dedupe), not duplicate orphans; got {} rows",
             loaded.len()
         );
+        // plan-offscreen-war-v1 P3 二修（CodeRabbit Major）：只断言**可观察行为**，不绑死 relic_id
+        // 的精确编码格式。换一种等价 id 编码不该让本测试无谓变红——去重契约由上面的 len==1 锁住，
+        // id 的稳定性已由开头的 `deterministic_relic_id(a)==deterministic_relic_id(a)` 锁住。这里只
+        // 要求落库行带一个**非空** relic_id（PK 不能空）且**业务字段**与发出的事件一致。
+        let row = &loaded[0];
+        assert!(
+            !row.relic_id.is_empty(),
+            "the single persisted row must carry a non-empty relic_id (it is the primary key); got an empty string"
+        );
+        let event = make_event();
         assert_eq!(
-            loaded[0].relic_id,
-            deterministic_relic_id(&make_event()),
-            "the single persisted row must carry the deterministic relic_id; got {}",
-            loaded[0].relic_id
+            row.char_id, event.char_id,
+            "the persisted row's char_id must match the emitted logical death's char_id; got {} expected {}",
+            row.char_id, event.char_id
+        );
+        assert_eq!(
+            row.created_tick as u64, event.created_tick,
+            "the persisted row's created_tick must match the emitted event's settlement tick; got {} expected {}",
+            row.created_tick, event.created_tick
+        );
+        assert_eq!(
+            row.loot_seed, event.loot_seed,
+            "the persisted row's loot_seed must match the emitted event's loot_seed (drives deterministic re-roll); got {:#x} expected {:#x}",
+            row.loot_seed, event.loot_seed
+        );
+        assert_eq!(
+            row.zone, event.zone,
+            "the persisted row's zone must match the emitted event's zone; got {} expected {}",
+            row.zone, event.zone
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn pending_relic_reupsert_keeps_earliest_created_wall() {
+        // plan-offscreen-war-v1 P3 二修（CodeRabbit Major）：同一 relic_id 二次 persist（第二次
+        // created_wall 更晚，模拟重发 / 重试），落库的 created_wall 必须仍是**更早**那个。
+        //
+        // 回归面：`upsert_pending_dormant_relic` 的 ON CONFLICT 旧 `created_wall = excluded.created_wall`
+        // 会把墙钟覆盖成新事件的（更晚）值。created_wall 是 TTL retention sweep 的判定锚点
+        // （`sweep_stale_dormant_relics` 删 `created_wall < now - RETENTION`）：覆盖成更晚墙钟 =
+        // 给陈旧遗物无限续命，「幂等」只对去重成立、不对可观察 TTL 成立。本测试固定 created_wall
+        // 走 `persist_pending_dormant_relic`（精确控制，不依赖 current_unix_seconds），断言取 MIN。
+        let (settings, root) = persistence_settings("pending-relic-reupsert-earliest-wall");
+        bootstrap_sqlite(settings.db_path(), settings.server_run_id())
+            .expect("bootstrap should succeed");
+
+        const EARLY_WALL: i64 = 1_000;
+        const LATE_WALL: i64 = 5_000;
+        // 首次 persist：早墙钟。
+        persist_pending_dormant_relic(
+            &settings,
+            &pending_relic_record("relic-ttl", "c1", "rift_valley", 7, EARLY_WALL),
+        )
+        .expect("first persist should succeed");
+        // 同一 relic_id 二次 persist：晚墙钟（重发 / 重试场景）。
+        persist_pending_dormant_relic(
+            &settings,
+            &pending_relic_record("relic-ttl", "c1", "rift_valley", 7, LATE_WALL),
+        )
+        .expect("re-persist should succeed");
+
+        let loaded = load_pending_dormant_relics_for_zone(&settings, "rift_valley")
+            .expect("load should succeed");
+        assert_eq!(
+            loaded.len(),
+            1,
+            "二次 upsert 同一 relic_id 必须仍只有一行（ON CONFLICT 覆盖、不插重复），got {}",
+            loaded.len()
+        );
+        assert_eq!(
+            loaded[0].created_wall, EARLY_WALL,
+            "二次 persist（晚墙钟 {LATE_WALL}）后 created_wall 必须仍是更早的 {EARLY_WALL}——\
+             ON CONFLICT 取 MIN(existing, excluded)，绝不刷新 TTL（否则陈旧遗物被无限续命，sweep \
+             永远删不掉）；实际落库 {}",
+            loaded[0].created_wall
         );
         let _ = fs::remove_dir_all(root);
     }
