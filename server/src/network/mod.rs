@@ -3141,6 +3141,7 @@ mod tests {
                 last_dormant_tick_processed: 0,
                 initial_qi: cultivation.qi_current,
                 qi_ledger_net: 0.0,
+                combat_dead_pending_release: false,
             }
         }
 

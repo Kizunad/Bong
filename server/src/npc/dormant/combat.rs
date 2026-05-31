@@ -101,9 +101,14 @@ pub fn collect_zone_combat_pairs(
         }
 
         // 取出本 zone 候选快照 + 战力，按战力降序截断到 candidate_cap。
+        // 过滤 `combat_dead_pending_release`：已离屏战死、真元待释放的败者**不再参战**
+        // （plan-offscreen-war-v1 P3 review-fix）。它仍留在 `store.snapshots`（防吞真元 +
+        // 随 Redis 持久化），但若再被选中重新 roll，死亡 notice / outcome 会重复 emit、污染
+        // P4 派系死亡聚合。retry release 由 `run_pending_combat_release_retry` 单独负责。
         let mut scored: Vec<(&NpcDormantSnapshot, f32)> = zone_ids
             .iter()
             .filter_map(|id| store.snapshots.get(id))
+            .filter(|snap| !snap.combat_dead_pending_release)
             .map(|snap| (snap, synthesize_dormant_power(snap).0))
             .collect();
         // 战力降序；战力相等时按 char_id 升序兜底，保证 cap 边界确定（无 NaN：power finite）。
@@ -303,6 +308,7 @@ mod tests {
             last_dormant_tick_processed: 0,
             initial_qi: cultivation.qi_current,
             qi_ledger_net: 0.0,
+            combat_dead_pending_release: false,
         }
     }
 

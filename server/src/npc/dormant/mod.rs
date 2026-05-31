@@ -298,6 +298,26 @@ pub struct NpcDormantSnapshot {
     pub last_dormant_tick_processed: u64,
     pub initial_qi: f64,
     pub qi_ledger_net: f64,
+    /// plan-offscreen-war-v1 P3 review-fix：「已离屏战死、真元待释放」标记。
+    ///
+    /// 当 [`run_dormant_combat_phase`] roll 出败者但 zone 已满（残余真元 `> QI_EPSILON` 无法
+    /// 全额回灌）时置 `true`，败者**仍留在 `store.snapshots`**（防吞真元红线：携带真元的快照
+    /// 绝不丢弃；随 Redis 持久化，server 重启不丢真元）。置 `true` 后：
+    /// - [`combat::collect_zone_combat_pairs`] 跳过该快照，**不再被选中参战**——故 death notice /
+    ///   `DormantCombatOutcome` 每个逻辑死亡只 emit 一次（初次 roll 时），不再重复污染 P4 派系
+    ///   死亡聚合（CodeRabbit Major：retained loser 重复 emit）。
+    /// - 每 tick 的 [`run_pending_combat_release_retry`] 重试 `release_dormant_qi_to_zone`，真元
+    ///   全释放（`<= QI_EPSILON`）后才 emit 遗物（若 `should_leave_relic`）+ 从 store 移除。
+    ///
+    /// `#[serde(default)]` 向后兼容旧 Redis 快照（缺字段 → `false`）；`skip_serializing_if`
+    /// 让绝大多数（未战死）快照不写这个字段，不算 §10.1 #2 所禁的快照膨胀。
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub combat_dead_pending_release: bool,
+}
+
+/// serde `skip_serializing_if` helper：`false`（默认值）时不序列化，避免快照膨胀。
+fn is_false(value: &bool) -> bool {
+    !*value
 }
 
 impl NpcDormantSnapshot {
@@ -835,13 +855,22 @@ fn run_dormant_combat_phase(
     combat_outcomes: &mut EventWriter<DormantCombatOutcome>,
     pending_relics: &mut EventWriter<PendingDormantRelicCreated>,
 ) -> bool {
+    // ⓪ 先重试上轮 retain（zone 满、真元未释放完）的战死者——它们已是「逻辑死亡」
+    // （死亡 notice / outcome 上轮已 emit 过一次），本轮**只**重试守恒释放，释放完才造遗物
+    // + remove。优先于本轮新战斗结算：腾出 zone 容量给「积压的死者」，且绝不让它们再被
+    // `collect_zone_combat_pairs` 选中重新 roll（plan-offscreen-war-v1 P3 review-fix /
+    // CodeRabbit Major：retained loser 重复 emit death notice/outcome 会污染 P4 派系死亡聚合）。
+    let mut removed_any =
+        run_pending_combat_release_retry(store, config, tick, zones, ledger, pending_relics);
+
     // ① 配对：immutable 只读 → owned id 对（§10.1 #3 collect-then-index）。
+    // `collect_zone_combat_pairs` 已跳过 `combat_dead_pending_release` 的快照，故上面 retry 没
+    // 释放完的败者本轮不会被选中参战。
     let pairs = combat::collect_zone_combat_pairs(store, faction_store, config);
     if pairs.is_empty() {
-        return false;
+        return removed_any;
     }
 
-    let mut removed_any = false;
     for (a_id, b_id) in pairs {
         // 防御：上一对的结算可能已移除本对成员（理论上 collect 保证每个 NPC 一轮至多一次，
         // 但 retain-until-released 让 store 在结算中变动，索引取不到就跳过，绝不 panic）。
@@ -885,42 +914,108 @@ fn run_dormant_combat_phase(
         // ⑥ 人口回写 + 防吞真元：真元全释放才移除；zone 满残余 overflow > ε 则本轮保留、下轮重试。
         // 先把后续唯一需要的标量（残余真元）从 `&mut loser` 借用里拷出。
         let residual = loser.cultivation.qi_current;
-        // 随即显式终结 `&mut loser` 借用：NLL 本会在这里结束，但显式 `let _ = loser;`（`drop`
-        // 对引用是 no-op，会触发 clippy::dropping_references）让下方 retain/remove 决策对未来
-        // 编辑（如在此块内再次借用 `store`）防御性免疫——后续只用早已 owned 的标量
-        // （`loser_id` / `zone_name` / `released` / `residual`），行为不变。
-        let _ = loser;
         if residual > QI_EPSILON {
+            // zone 满 → 残余真元无处可去 → **保留**败者（携带真元的快照绝不丢弃 = 防吞真元
+            // 红线，§10.1 #5 ④ / docs/CLAUDE.md §四）。标记 `combat_dead_pending_release`：
+            // 它已是逻辑死亡（death notice / outcome 本轮已 emit 一次，下方不再 emit），
+            // 此后 `collect_zone_combat_pairs` 跳过它、绝不再被选中重新 roll；真元释放由
+            // `run_pending_combat_release_retry` 每轮重试，释放完才造遗物 + remove。
+            // 标记随 Redis 持久化（`#[serde(default)]` flag），server 重启后真元仍不丢、仍不重复参战。
+            loser.combat_dead_pending_release = true;
             tracing::warn!(
-                "[bong][npc] retained combat-dead dormant NPC `{}` until {:.6} residual qi releases (zone full)",
+                "[bong][npc] retained combat-dead dormant NPC `{}` until {:.6} residual qi releases (zone full); marked pending-release, excluded from further combat",
                 loser_id,
                 residual
             );
         } else {
-            // ⑦ 克制式战场遗物（P3）：**真元已守恒释放完毕（residual <= QI_EPSILON）此刻**，
-            // 且 should_leave_relic 通过的知名战死者，emit 一个零真元遗物 event 给持久层。
-            // 严格在 release 之后、remove 之前——「先把残余真元守恒还给 zone，再用快照创建
-            // 零真元遗物，最后 remove」，绝无吞真元窗口（§10.1 #5 ④ / docs/CLAUDE.md §四红线）。
-            // 重新 immutable 借用 store 读快照字段（单一只读借用，与上方早已 drop 的 &mut 不冲突）。
-            if let Some(dead) = store.snapshots.get(&loser_id) {
-                if combat::should_leave_relic(dead) {
-                    let loot_seed = combat::relic_loot_seed(&loser_id, tick, config.sim_seed);
-                    pending_relics.send(PendingDormantRelicCreated {
-                        char_id: loser_id.clone(),
-                        zone: dead.zone_name.clone(),
-                        position: dead.position,
-                        archetype: dead.archetype,
-                        loot_seed,
-                        created_tick: tick,
-                    });
-                }
-            }
-            store.snapshots.remove(&loser_id);
+            // 显式终结 `&mut loser` 借用后，走共享的「释放完成 → 造遗物 + remove」收尾
+            // （与 retry pass 同一入口，保证遗物只在真元释放完毕的此刻 emit 一次）。
+            let _ = loser;
+            finalize_released_combat_death(store, &loser_id, tick, config, pending_relics);
             removed_any = true;
         }
     }
 
     removed_any
+}
+
+/// plan-offscreen-war-v1 P3 review-fix：重试上轮 retain（zone 满、真元未释放完）的离屏战死者。
+///
+/// 这些败者已被标记 `combat_dead_pending_release`（逻辑死亡，death notice / outcome 已 emit
+/// 过一次，**本函数绝不重发**），`collect_zone_combat_pairs` 已跳过它们不再参战。本函数每 tick
+/// 遍历所有被标记的快照，重试 `release_dormant_qi_to_zone`；真元全释放（`<= QI_EPSILON`）后才
+/// 走 `finalize_released_combat_death`（造遗物 + remove）。借用安全：先 collect owned id 列表，
+/// 再逐 id `get_mut` 结算（任一时刻只持一个 snapshot 可变借用），与配对结算同源。
+///
+/// 返回是否移除了任何快照（调用方据此 rebuild 索引 + mark dirty）。
+fn run_pending_combat_release_retry(
+    store: &mut NpcDormantStore,
+    config: &NpcVirtualizationConfig,
+    tick: u64,
+    zones: &mut ZoneRegistry,
+    ledger: &mut WorldQiAccount,
+    pending_relics: &mut EventWriter<PendingDormantRelicCreated>,
+) -> bool {
+    // collect-then-index：先取出所有待释放败者的 owned id（升序，确定性），再逐个结算。
+    let mut pending_ids: Vec<CharId> = store
+        .snapshots
+        .iter()
+        .filter(|(_, snap)| snap.combat_dead_pending_release)
+        .map(|(id, _)| id.clone())
+        .collect();
+    if pending_ids.is_empty() {
+        return false;
+    }
+    pending_ids.sort();
+
+    let mut removed_any = false;
+    for loser_id in pending_ids {
+        let Some(loser) = store.snapshots.get_mut(&loser_id) else {
+            continue;
+        };
+        // 重试守恒释放（唯一真元流动点；zone 仍满则继续 retain，绝不丢弃真元）。
+        let _ = release_dormant_qi_to_zone(loser, zones, ledger);
+        let residual = loser.cultivation.qi_current;
+        let _ = loser;
+        if residual > QI_EPSILON {
+            // zone 仍满 → 继续保留，下轮再试（保持 flag=true，不重发任何 death 事件）。
+            continue;
+        }
+        // 真元终于释放完 → 此刻才造遗物 + remove（与初次死亡路径同一收尾入口）。
+        finalize_released_combat_death(store, &loser_id, tick, config, pending_relics);
+        removed_any = true;
+    }
+    removed_any
+}
+
+/// plan-offscreen-war-v1 P3：离屏战死者**真元已守恒释放完毕此刻**的收尾——造零真元遗物
+/// （若 `should_leave_relic` 通过）+ 从 store 移除。
+///
+/// **守恒时序红线**（§10.1 #5 ④ / docs/CLAUDE.md §四）：调用方必须保证已经 `release_dormant_qi_to_zone`
+/// 且 `qi_current <= QI_EPSILON`——「先把残余真元守恒还给 zone，再用快照创建零真元遗物，最后
+/// remove」，绝无吞真元窗口。遗物 event 在此 emit 一次（每个逻辑死亡至多一次：初次死亡释放完 or
+/// retry 释放完，二者互斥）。
+fn finalize_released_combat_death(
+    store: &mut NpcDormantStore,
+    loser_id: &CharId,
+    tick: u64,
+    config: &NpcVirtualizationConfig,
+    pending_relics: &mut EventWriter<PendingDormantRelicCreated>,
+) {
+    if let Some(dead) = store.snapshots.get(loser_id) {
+        if combat::should_leave_relic(dead) {
+            let loot_seed = combat::relic_loot_seed(loser_id, tick, config.sim_seed);
+            pending_relics.send(PendingDormantRelicCreated {
+                char_id: loser_id.clone(),
+                zone: dead.zone_name.clone(),
+                position: dead.position,
+                archetype: dead.archetype,
+                loot_seed,
+                created_tick: tick,
+            });
+        }
+    }
+    store.snapshots.remove(loser_id);
 }
 
 fn seed_initial_dormant_population_on_startup(
@@ -1111,6 +1206,7 @@ fn dormant_rogue_seed_snapshot(
         last_dormant_tick_processed: tick,
         initial_qi: cultivation.qi_current,
         qi_ledger_net: 0.0,
+        combat_dead_pending_release: false,
     }
 }
 
@@ -1528,6 +1624,7 @@ mod tests {
             last_dormant_tick_processed: 0,
             initial_qi: 0.1,
             qi_ledger_net: 0.0,
+            combat_dead_pending_release: false,
         }
     }
 
@@ -2154,10 +2251,61 @@ mod tests {
 
         let payloads = store.to_redis_hash_payloads().expect("serialize");
         assert_eq!(payloads[0].0, "npc_a");
+        // 默认（非战死）快照：`combat_dead_pending_release=false` 必须被 skip_serializing_if
+        // 省略，不写进 Redis payload（不膨胀，§10.1 #2）。
+        assert!(
+            !payloads[0].1.contains("combat_dead_pending_release"),
+            "a normal (not combat-dead) snapshot must OMIT combat_dead_pending_release from its Redis payload (skip_serializing_if avoids snapshot bloat), but the field was present: {}",
+            payloads[0].1
+        );
         let decoded: NpcDormantSnapshot =
             serde_json::from_str(payloads[0].1.as_str()).expect("deserialize");
         assert_eq!(decoded.char_id, "npc_a");
         assert_eq!(decoded.position, [10.0, 64.0, 10.0]);
+        assert!(
+            !decoded.combat_dead_pending_release,
+            "a roundtripped normal snapshot must decode combat_dead_pending_release=false; got true"
+        );
+    }
+
+    #[test]
+    fn redis_payload_roundtrips_pending_release_flag() {
+        // plan-offscreen-war-v1 P3 review-fix（守恒持久化安全）：被标记「战死待释放真元」的败者
+        // 必须随 Redis 持久化——flag=true 往返不丢，server 重启后仍 pending-release（真元不丢、
+        // 仍被 collect 跳过、绝不重复参战）。
+        let mut snap = snapshot("trapped", DVec3::new(10.0, 64.0, 10.0));
+        snap.combat_dead_pending_release = true;
+        let payload = serde_json::to_string(&snap).expect("serialize flagged snapshot");
+        assert!(
+            payload.contains("combat_dead_pending_release"),
+            "a flagged (combat-dead-pending-release) snapshot MUST serialize the field so it survives a Redis restart, but it was omitted: {payload}"
+        );
+        let decoded: NpcDormantSnapshot =
+            serde_json::from_str(&payload).expect("deserialize flagged snapshot");
+        assert!(
+            decoded.combat_dead_pending_release,
+            "flag=true must roundtrip through Redis JSON (restart safety: pending-release loser keeps its qi and stays out of combat); got false"
+        );
+    }
+
+    #[test]
+    fn legacy_redis_snapshot_without_flag_defaults_to_false() {
+        // 向后兼容：升级前写入 Redis 的旧快照没有 `combat_dead_pending_release` 字段，
+        // `#[serde(default)]` 必须把它解码成 `false`（不 panic、不报错），否则升级即丢全部 dormant。
+        // 用一份完整的旧快照 JSON（先 serialize 一个普通快照得到字段名，再手动删掉 flag 字段，
+        // 这里因为默认快照本就不写该字段，直接复用其 payload 即「缺字段」样本）。
+        let source = snapshot("legacy_npc", DVec3::new(5.0, 64.0, 5.0));
+        let legacy_payload = serde_json::to_string(&source).expect("serialize");
+        assert!(
+            !legacy_payload.contains("combat_dead_pending_release"),
+            "precondition: the synthesized legacy payload must lack the flag field"
+        );
+        let decoded: NpcDormantSnapshot =
+            serde_json::from_str(&legacy_payload).expect("legacy snapshot (no flag field) must deserialize via serde default");
+        assert!(
+            !decoded.combat_dead_pending_release,
+            "a legacy Redis snapshot missing combat_dead_pending_release must default to false (serde default), so upgrades never lose or mis-flag dormant NPCs; got true"
+        );
     }
 
     #[test]
@@ -2445,6 +2593,7 @@ mod tests {
             last_dormant_tick_processed: 0,
             initial_qi: qi_current,
             qi_ledger_net: 0.0,
+            combat_dead_pending_release: false,
         }
     }
 
@@ -2753,6 +2902,13 @@ mod tests {
             retained.cultivation.qi_current > QI_EPSILON,
             "保留的败者必须仍携带未释放真元（{}），下轮 zone 腾出空间再释放",
             retained.cultivation.qi_current
+        );
+        // plan-offscreen-war-v1 P3 review-fix（CodeRabbit Major）：retain 的败者必须被标记
+        // `combat_dead_pending_release`——它是逻辑死亡、不再参战，否则下轮会被 collect 重新
+        // 选中、重复 emit death notice/outcome（污染 P4 派系死亡聚合）。真元仍在快照里（未丢弃）。
+        assert!(
+            retained.combat_dead_pending_release,
+            "expected retained loser `{loser}` to be flagged combat_dead_pending_release (logically dead, must not re-enter combat) because re-selection would re-emit death notice/outcome; actual flag=false"
         );
     }
 
@@ -3168,11 +3324,304 @@ mod tests {
             "retained loser must still carry unreleased residual qi (> QI_EPSILON), got {}",
             retained.cultivation.qi_current
         );
+        // retain 的败者被标记 pending-release（逻辑死亡，下轮不再参战）。
+        assert!(
+            retained.combat_dead_pending_release,
+            "expected retained loser `{loser_id}` flagged combat_dead_pending_release because it is logically dead and must be excluded from further combat rolls; actual flag=false"
+        );
         // 关键守恒红线：真元未释放完 ⇒ 本轮**绝不**造遗物（防"先留遗物/先 remove、qi 没释放"窗口）。
         assert!(
             events.relics.is_empty(),
             "NO relic may be emitted while the loser is retained for unreleased qi — emitting one would open the qi-eating window (relic created before residual qi is conserved back to zone); got {} relic events",
             events.relics.len()
+        );
+    }
+
+    #[test]
+    fn retained_loser_excluded_from_combat_next_tick() {
+        // plan-offscreen-war-v1 P3 review-fix（CodeRabbit Major）：zone 满 → tick 1 战死者被
+        // retain + flag pending-release。tick 2 zone 仍满 → 该 flagged 败者**绝不**再被
+        // `collect_zone_combat_pairs` 选中重新 roll：无新 death notice / 无新 outcome / 无新 relic。
+        // （否则同一逻辑死亡被重复 emit，污染 P4 派系死亡聚合 → 虚高战损叙事。）
+        let mut full_zone = zone();
+        full_zone.spirit_qi = 1.0; // 顶到容量，任何回灌都 overflow → 必 retain
+        let mut zones = ZoneRegistry {
+            zones: vec![full_zone],
+        };
+        let mut ledger = WorldQiAccount::default();
+        let mut store = NpcDormantStore::default();
+        store.insert(combat_snapshot_named(
+            "trapped_disciple",
+            NpcArchetype::Disciple,
+            Some(FactionId::Attack),
+            5.0,
+            DVec3::new(10.0, 64.0, 10.0),
+        ));
+        store.insert(combat_snapshot_named(
+            "trapped_rival",
+            NpcArchetype::Disciple,
+            Some(FactionId::Defend),
+            5.0,
+            DVec3::new(11.0, 64.0, 11.0),
+        ));
+        store.take_dirty();
+        let config = NpcVirtualizationConfig::default();
+
+        // tick 1：一场战死 → retain + flag。
+        let t1 = run_combat_tick(&mut store, &mut zones, &mut ledger, &config, 7);
+        assert_eq!(
+            t1.deaths.len(),
+            1,
+            "tick 1 must produce exactly one combat death (one of two hostile disciples rolled dead), got {}",
+            t1.deaths.len()
+        );
+        let loser_id = t1.deaths[0].npc_id.clone();
+        let flagged = store
+            .snapshots
+            .get(&loser_id)
+            .expect("loser must be retained (zone full, qi not released)");
+        assert!(
+            flagged.combat_dead_pending_release,
+            "tick-1 retained loser `{loser_id}` must be flagged pending-release; actual flag=false"
+        );
+
+        // tick 2：zone 仍满 → flagged 败者被 collect 跳过 → **不重新参战** → 无任何新 death/outcome/relic。
+        let t2 = run_combat_tick(&mut store, &mut zones, &mut ledger, &config, 8);
+        assert!(
+            t2.deaths.is_empty(),
+            "tick 2 must emit NO new death notice — the only remaining hostile pair member is the flagged pending-release loser, which collect_zone_combat_pairs must skip; re-rolling it would re-emit a death for an already-dead NPC. got {} deaths: {:?}",
+            t2.deaths.len(),
+            t2.deaths.iter().map(|d| &d.npc_id).collect::<Vec<_>>()
+        );
+        assert!(
+            t2.outcomes.is_empty(),
+            "tick 2 must emit NO new combat outcome (no new combat happened), got {}",
+            t2.outcomes.len()
+        );
+        assert!(
+            t2.relics.is_empty(),
+            "tick 2 must emit NO relic — the retained loser's qi is still unreleased (zone full), so finalize never runs; got {} relics",
+            t2.relics.len()
+        );
+        // 败者仍在 store、仍带真元、仍 flagged（zone 没腾空，retry 没成功）。
+        let still = store
+            .snapshots
+            .get(&loser_id)
+            .expect("loser still retained on tick 2 (zone still full)");
+        assert!(
+            still.combat_dead_pending_release && still.cultivation.qi_current > QI_EPSILON,
+            "loser `{loser_id}` must remain flagged + still carry unreleased qi across ticks while zone is full; flag={} qi={}",
+            still.combat_dead_pending_release,
+            still.cultivation.qi_current
+        );
+    }
+
+    #[test]
+    fn death_notice_and_outcome_emitted_once_per_death() {
+        // plan-offscreen-war-v1 P3 review-fix：跨多 tick，**同一个逻辑死亡** death notice +
+        // outcome 累计各只 emit 一次（即便 zone 满、败者被 retain 多轮）。这是 CodeRabbit Major
+        // 的核心不变量②——retained loser 绝不重复 emit。
+        let mut full_zone = zone();
+        full_zone.spirit_qi = 1.0;
+        let mut zones = ZoneRegistry {
+            zones: vec![full_zone],
+        };
+        let mut ledger = WorldQiAccount::default();
+        let mut store = NpcDormantStore::default();
+        store.insert(combat_snapshot_named(
+            "fighter_a",
+            NpcArchetype::Disciple,
+            Some(FactionId::Attack),
+            5.0,
+            DVec3::new(10.0, 64.0, 10.0),
+        ));
+        store.insert(combat_snapshot_named(
+            "fighter_b",
+            NpcArchetype::Disciple,
+            Some(FactionId::Defend),
+            5.0,
+            DVec3::new(11.0, 64.0, 11.0),
+        ));
+        store.take_dirty();
+        let config = NpcVirtualizationConfig::default();
+
+        let mut death_count = 0usize;
+        let mut outcome_count = 0usize;
+        // 跑 5 轮，zone 全程满（永远 retain，永不释放完）。
+        for round in 0..5u64 {
+            let events = run_combat_tick(&mut store, &mut zones, &mut ledger, &config, round + 1);
+            death_count += events.deaths.len();
+            outcome_count += events.outcomes.len();
+        }
+        assert_eq!(
+            death_count, 1,
+            "across 5 ticks with a permanently-full zone, exactly ONE death notice may be emitted for the single logical combat death — duplicates would mean the retained loser was re-selected and re-rolled, inflating P4 faction death aggregation. got {death_count} total death notices"
+        );
+        assert_eq!(
+            outcome_count, 1,
+            "across 5 ticks, exactly ONE DormantCombatOutcome may be emitted for the single logical death; got {outcome_count}"
+        );
+    }
+
+    #[test]
+    fn retained_loser_release_retried_until_zone_frees_then_relic_and_remove() {
+        // plan-offscreen-war-v1 P3 review-fix（CodeRabbit Major 不变量③④）：retain 的败者每轮
+        // 重试释放，zone 腾空后真元守恒释放完 → 此刻才造遗物 + 从 store 移除。败者是 Disciple
+        // （should_leave_relic 通过），验证「待释放真元最终释放、绝不丢弃」+「relic 只在释放完成
+        // 后 emit 一次」。
+        let mut full_zone = zone();
+        full_zone.spirit_qi = 1.0; // tick 1 满 → retain
+        let mut zones = ZoneRegistry {
+            zones: vec![full_zone],
+        };
+        let mut ledger = WorldQiAccount::default();
+        let mut store = NpcDormantStore::default();
+        store.insert(combat_snapshot_named(
+            "doomed_disciple",
+            NpcArchetype::Disciple,
+            Some(FactionId::Attack),
+            5.0,
+            DVec3::new(10.0, 64.0, 10.0),
+        ));
+        store.insert(combat_snapshot_named(
+            "doomed_rival",
+            NpcArchetype::Disciple,
+            Some(FactionId::Defend),
+            5.0,
+            DVec3::new(11.0, 64.0, 11.0),
+        ));
+        store.take_dirty();
+        let config = NpcVirtualizationConfig::default();
+
+        // tick 1：战死 + retain（zone 满）。遗物本轮**不**造（真元未释放完）。
+        let t1 = run_combat_tick(&mut store, &mut zones, &mut ledger, &config, 7);
+        assert_eq!(t1.deaths.len(), 1, "tick 1 one combat death, got {}", t1.deaths.len());
+        let loser_id = t1.deaths[0].npc_id.clone();
+        assert!(
+            t1.relics.is_empty(),
+            "tick 1: relic must NOT be emitted while qi is unreleased (zone full); got {} relics",
+            t1.relics.len()
+        );
+        let retained_qi = store
+            .snapshots
+            .get(&loser_id)
+            .expect("loser retained on tick 1")
+            .cultivation
+            .qi_current;
+        assert!(
+            retained_qi > QI_EPSILON,
+            "tick-1 retained loser must still carry unreleased qi, got {retained_qi}"
+        );
+
+        // 腾空 zone（玩家/天道让 zone 灵气回落，或其它消耗）→ 现在容量足够接收败者残余真元。
+        zones.zones[0].spirit_qi = 0.0;
+
+        // tick 2：retry release 成功（qi <= ε）→ 此刻 finalize：造遗物 + remove。
+        let t2 = run_combat_tick(&mut store, &mut zones, &mut ledger, &config, 8);
+        assert!(
+            t2.deaths.is_empty(),
+            "tick 2 must NOT re-emit a death notice for the already-dead loser (retry pass only releases qi, never re-rolls death); got {} deaths",
+            t2.deaths.len()
+        );
+        assert_eq!(
+            t2.relics.len(),
+            1,
+            "tick 2: once the retained Disciple's qi fully releases, exactly ONE battlefield relic must be emitted at that moment; got {} relics",
+            t2.relics.len()
+        );
+        assert_eq!(
+            &t2.relics[0].char_id, &loser_id,
+            "the relic must belong to the loser that actually died ({loser_id}), got {}",
+            t2.relics[0].char_id
+        );
+        assert!(
+            !store.snapshots.contains_key(&loser_id),
+            "loser `{loser_id}` must be removed from the store after its qi released and relic was emitted (no qi-carrying snapshot left behind, no orphan)"
+        );
+        // 守恒：zone 接收了败者真元（spirit_qi 从 0 上升）。
+        assert!(
+            zones.zones[0].spirit_qi > 0.0,
+            "the freed zone must have absorbed the retained loser's residual qi on retry (spirit_qi rose from 0), got {}",
+            zones.zones[0].spirit_qi
+        );
+    }
+
+    #[test]
+    fn only_named_npc_leaves_relic() {
+        // plan-offscreen-war-v1 §150 gate 契约（精确锚点名）：克制式遗物**只**给知名/有来历者
+        // （Disciple/GuardianRelic/有派系 ∨ realm≥固元）留下，普通无名 rogue 战死**不**留遗物
+        // （末法基调："遍地尸体"被积极防止）。两段同 tick 同构造，对照验证 gate 两侧。
+        let config = NpcVirtualizationConfig::default();
+
+        // ── ① 知名 NPC（Disciple，有派系）战死 → 留遗物 ──
+        let mut zones = ZoneRegistry {
+            zones: vec![zone()],
+        }; // spirit_qi=0.8，真元充足 → 全额释放 → 本轮 remove + 造遗物
+        let mut store = NpcDormantStore::default();
+        store.insert(combat_snapshot_named(
+            "named_disciple",
+            NpcArchetype::Disciple,
+            Some(FactionId::Attack),
+            5.0,
+            DVec3::new(10.0, 64.0, 10.0),
+        ));
+        store.insert(combat_snapshot_named(
+            "named_rival",
+            NpcArchetype::Disciple,
+            Some(FactionId::Defend),
+            5.0,
+            DVec3::new(11.0, 64.0, 11.0),
+        ));
+        store.take_dirty();
+        let mut ledger = WorldQiAccount::default();
+        let named = run_combat_tick(&mut store, &mut zones, &mut ledger, &config, 7);
+        assert_eq!(
+            named.deaths.len(),
+            1,
+            "named branch: exactly one Disciple must die, got {}",
+            named.deaths.len()
+        );
+        assert_eq!(
+            named.relics.len(),
+            1,
+            "a NAMED fallen NPC (Disciple + faction) MUST leave exactly one battlefield relic (should_leave_relic gate = true side); got {} relics",
+            named.relics.len()
+        );
+
+        // ── ② 普通无名 rogue（无派系、低境界）战死 → 不留遗物 ──
+        // 用「有派系才配对、但 should_leave_relic 看 archetype/realm」无法直接构造"无派系却开战"，
+        // 故复用既有反例锁：两名无派系 Rogue 根本无法配对 ⇒ 不开战 ⇒ 0 遗物（plain rogue 永不
+        // 凭空留遗物）。这与 combat.rs `plain_rogue_leaves_no_relic` 纯函数单测（gate=false 侧）
+        // 互补：纯函数锁 should_leave_relic 判定本身，这里锁端到端"无名者 0 遗物"。
+        let mut zones2 = ZoneRegistry {
+            zones: vec![zone()],
+        };
+        let mut store2 = NpcDormantStore::default();
+        let mut plain_a = combat_snapshot_named(
+            "plain_rogue_a",
+            NpcArchetype::Rogue,
+            None,
+            5.0,
+            DVec3::new(10.0, 64.0, 10.0),
+        );
+        plain_a.cultivation.realm = Realm::Awaken; // < 固元，且无派系 → should_leave_relic=false
+        let mut plain_b = combat_snapshot_named(
+            "plain_rogue_b",
+            NpcArchetype::Rogue,
+            None,
+            5.0,
+            DVec3::new(11.0, 64.0, 11.0),
+        );
+        plain_b.cultivation.realm = Realm::Awaken;
+        store2.insert(plain_a);
+        store2.insert(plain_b);
+        store2.take_dirty();
+        let mut ledger2 = WorldQiAccount::default();
+        let plain = run_combat_tick(&mut store2, &mut zones2, &mut ledger2, &config, 7);
+        assert!(
+            plain.relics.is_empty(),
+            "a plain factionless low-realm Rogue must NEVER leave a battlefield relic (should_leave_relic gate = false side); got {} relics",
+            plain.relics.len()
         );
     }
 
