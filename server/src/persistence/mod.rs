@@ -3561,9 +3561,27 @@ fn sweep_npc_digest_retention_system(
 ///
 /// 事件由 `run_dormant_combat_phase` 在败者真元**已守恒释放完毕**且克制判定通过时 emit
 /// （严格在 `release_dormant_qi_to_zone` 之后、`store.remove` 之前——无吞真元窗口）。本 system
-/// 只把 event 持久化，**不碰任何真元 / ledger**（遗物零真元，§10.1 #5 ④红线）。每个 event 分配
-/// 一个 UUID `relic_id`（v7，时间有序，便于 created_wall 排序时稳定）。现开连接同步写（仿
-/// `persist_npc_runtime_state_system` 范式，无 deferred channel）。
+/// 只把 event 持久化，**不碰任何真元 / ledger**（遗物零真元，§10.1 #5 ④红线）。现开连接同步写
+/// （仿 `persist_npc_runtime_state_system` 范式，无 deferred channel）。
+///
+/// `relic_id` 用**确定性**复合键（char_id + created_tick + loot_seed）而非随机 UUID（CodeRabbit）：
+/// 一个逻辑战死对应唯一 (char_id, created_tick)，loot_seed 由 (char_id, tick, sim_seed) 确定，
+/// 故同一逻辑死亡始终映射到同一 relic_id。配合 `upsert_pending_dormant_relic` 的
+/// `ON CONFLICT(relic_id) DO UPDATE`，**重复 emit 同一遗物天然幂等**（覆盖而非插重复行），
+/// 也让未来若加重试路径能靠 relic_id 去重。
+/// 注：遗物是**零真元** telemetry/cosmetic loot 占位，持久化失败仅丢一处遗物 ground loot、
+/// **不违反守恒**（不像 dormant qi 快照丢失=吞真元）；故此处失败 warn+drop 而非引入重型重试
+/// 队列子系统——确定性 relic_id 已消除「随机 id 无法去重」这一真正的回归隐患。
+/// 由战场遗物 event 的**逻辑标识字段**（char_id + created_tick + loot_seed）构造确定性
+/// `relic_id`。同一逻辑战死无论 emit / persist 多少次都得到同一 id，配合 PK `ON CONFLICT`
+/// upsert 实现幂等。created_wall（墙钟）**不**进 id（它随重试漂移、会破坏幂等）。
+fn deterministic_relic_id(event: &crate::npc::dormant::PendingDormantRelicCreated) -> String {
+    format!(
+        "relic:{}:{}:{:016x}",
+        event.char_id, event.created_tick, event.loot_seed
+    )
+}
+
 fn persist_pending_dormant_relics_system(
     settings: Res<PersistenceSettings>,
     mut events: EventReader<crate::npc::dormant::PendingDormantRelicCreated>,
@@ -3575,7 +3593,7 @@ fn persist_pending_dormant_relics_system(
     let created_wall = current_unix_seconds();
     for event in pending {
         let record = PendingDormantRelicRecord {
-            relic_id: Uuid::now_v7().to_string(),
+            relic_id: deterministic_relic_id(event),
             char_id: event.char_id.clone(),
             zone: event.zone.clone(),
             pos_x: event.position[0],
@@ -11838,6 +11856,141 @@ mod persistence_tests {
             "created_tick must carry the settlement tick for deferred-on-hydrate ordering"
         );
         let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn persist_pending_relic_system_is_idempotent_for_same_logical_death() {
+        // plan-offscreen-war-v1 P3 review-fix（CodeRabbit）：relic_id 现为确定性复合键
+        // （char_id + created_tick + loot_seed）。同一逻辑战死的事件即便 emit / persist 两次
+        // （重发、重试），也只产出**一行**（ON CONFLICT(relic_id) DO UPDATE 覆盖而非插重复），
+        // 不再像随机 UUID 那样每次造一行孤儿。
+        let (settings, root) = persistence_settings("pending-relic-idempotent");
+        bootstrap_sqlite(settings.db_path(), settings.server_run_id())
+            .expect("bootstrap should succeed");
+
+        let make_event = || crate::npc::dormant::PendingDormantRelicCreated {
+            char_id: "dormant:fallen:disciple".to_string(),
+            zone: "rift_valley".to_string(),
+            position: [1.0, 64.0, 2.0],
+            archetype: crate::npc::lifecycle::NpcArchetype::Disciple,
+            loot_seed: 0xDEAD_BEEF_0000_0001,
+            created_tick: 123,
+        };
+        // 先确认确定性 relic_id 对同一逻辑死亡稳定（与 created_wall 墙钟无关）。
+        assert_eq!(
+            deterministic_relic_id(&make_event()),
+            deterministic_relic_id(&make_event()),
+            "deterministic_relic_id must be stable for the same logical death (char_id+created_tick+loot_seed) so re-emits dedupe via the PK; two calls differed"
+        );
+
+        // 跑两次 persist system（两帧），各 emit 同一逻辑死亡事件。
+        for _ in 0..2 {
+            let mut app = App::new();
+            app.insert_resource(settings.clone());
+            app.add_event::<crate::npc::dormant::PendingDormantRelicCreated>();
+            app.add_systems(Update, persist_pending_dormant_relics_system);
+            app.world_mut().send_event(make_event());
+            app.update();
+        }
+
+        let loaded = load_pending_dormant_relics_for_zone(&settings, "rift_valley")
+            .expect("load should succeed");
+        assert_eq!(
+            loaded.len(),
+            1,
+            "persisting the SAME logical death twice must leave exactly ONE row (deterministic relic_id + ON CONFLICT upsert dedupe), not duplicate orphans; got {} rows",
+            loaded.len()
+        );
+        assert_eq!(
+            loaded[0].relic_id,
+            deterministic_relic_id(&make_event()),
+            "the single persisted row must carry the deterministic relic_id; got {}",
+            loaded[0].relic_id
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn v26_migration_rejects_pending_dormant_relics_with_missing_column() {
+        // plan-offscreen-war-v1 P3 review-fix（CodeRabbit）：v26 迁移护栏必须拒绝**列残缺**的
+        // 已有 pending_dormant_relics 表（仿 v20 high_renown 护栏失败用例）。预置一个缺
+        // schema_version/loot_seed/created_tick 的部分表 + user_version=25，跑迁移必拒绝放行残表
+        // （残表会让运行时 upsert/load 撞列名错误）。保留 zone/created_wall 让两个 CREATE INDEX
+        // 先建成功，从而精确命中 assert_pending_dormant_relics_schema_ready 的「column ... missing」
+        // 护栏（而非更早的 CREATE INDEX 列缺失错误）。
+        let db_path = database_path("v26-relic-missing-column");
+        fs::create_dir_all(db_path.parent().expect("db path should have parent"))
+            .expect("temp db parent should be created");
+        let mut connection = Connection::open(&db_path).expect("db should open");
+        connection
+            .execute_batch(
+                "
+                CREATE TABLE pending_dormant_relics (
+                    relic_id TEXT NOT NULL,
+                    char_id TEXT NOT NULL,
+                    zone TEXT NOT NULL,
+                    pos_x REAL NOT NULL,
+                    pos_y REAL NOT NULL,
+                    pos_z REAL NOT NULL,
+                    archetype TEXT NOT NULL,
+                    created_wall INTEGER NOT NULL,
+                    PRIMARY KEY (relic_id)
+                );
+                PRAGMA user_version = 25;
+                ",
+            )
+            .expect("partial-schema relic fixture should be created");
+
+        let error = apply_migrations(&mut connection)
+            .expect_err("v26 migration must reject a pending_dormant_relics table missing required columns");
+        let message = error.to_string();
+        assert!(
+            message.contains("pending_dormant_relics column") && message.contains("missing"),
+            "expected a 'pending_dormant_relics column ... missing' guard error because the pre-existing table lacks required columns (loot_seed/created_tick/schema_version); got: {message}"
+        );
+        let _ = fs::remove_dir_all(db_path.parent().expect("db path should have parent"));
+    }
+
+    #[test]
+    fn v26_migration_rejects_pending_dormant_relics_with_wrong_primary_key() {
+        // plan-offscreen-war-v1 P3 review-fix（CodeRabbit）：v26 迁移护栏必须拒绝**主键错误**的
+        // 已有 pending_dormant_relics 表。预置全列齐但 PK 设成 (char_id) 而非 (relic_id) +
+        // user_version=25，跑迁移必报「primary key mismatch」——错 PK 会让确定性 relic_id 的
+        // ON CONFLICT 去重失效。
+        let db_path = database_path("v26-relic-wrong-pk");
+        fs::create_dir_all(db_path.parent().expect("db path should have parent"))
+            .expect("temp db parent should be created");
+        let mut connection = Connection::open(&db_path).expect("db should open");
+        connection
+            .execute_batch(
+                "
+                CREATE TABLE pending_dormant_relics (
+                    relic_id TEXT NOT NULL,
+                    char_id TEXT NOT NULL,
+                    zone TEXT NOT NULL,
+                    pos_x REAL NOT NULL,
+                    pos_y REAL NOT NULL,
+                    pos_z REAL NOT NULL,
+                    archetype TEXT NOT NULL,
+                    loot_seed INTEGER NOT NULL,
+                    created_tick INTEGER NOT NULL,
+                    created_wall INTEGER NOT NULL,
+                    schema_version INTEGER NOT NULL,
+                    PRIMARY KEY (char_id)
+                );
+                PRAGMA user_version = 25;
+                ",
+            )
+            .expect("wrong-PK relic fixture should be created");
+
+        let error = apply_migrations(&mut connection)
+            .expect_err("v26 migration must reject a pending_dormant_relics table whose primary key is not relic_id");
+        let message = error.to_string();
+        assert!(
+            message.contains("pending_dormant_relics primary key mismatch"),
+            "expected a 'pending_dormant_relics primary key mismatch' guard error because the pre-existing table keys on char_id not relic_id (which would break ON CONFLICT dedupe); got: {message}"
+        );
+        let _ = fs::remove_dir_all(db_path.parent().expect("db path should have parent"));
     }
 
     #[test]
