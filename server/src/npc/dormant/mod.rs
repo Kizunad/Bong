@@ -3,6 +3,13 @@
 //! v1 keeps a deliberately small two-state model: live ECS entities stay
 //! hydrated, far NPCs move into this resource and are advanced in batches.
 
+/// plan-offscreen-war-v1 P1：离屏 dormant 战斗的纯逻辑核心（配对 + 胜负 roll）。
+///
+/// 全部纯函数（只接 `&` 入参、返回 owned 数据），零 store mutation / 零 ledger /
+/// 零真元流动——把"谁打谁、谁赢"从结算解耦出来，可被饱和单测完全锁住。真正的
+/// 战死结算（release qi / emit death / 人口回写）在 P2 接进 `dormant_global_tick_system`。
+pub mod combat;
+
 use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
@@ -104,6 +111,13 @@ pub struct NpcVirtualizationConfig {
     // P0 只是铺线：种子已注入但消费点（dormant 配对/胜负 roll）在 P1/P2 才落地。
     #[allow(dead_code)]
     pub sim_seed: u64,
+    /// plan-offscreen-war-v1 P1：每 zone 每轮离屏战斗对数上限。
+    ///
+    /// `collect_zone_combat_pairs`（`dormant/combat.rs`）按此值截断每个 zone 配出的
+    /// 敌对对数量，防 5000 dormant 规模下一个高密度 zone 在单 tick 内引爆过多战斗。
+    /// 候选集先按战力 cap 到 `2 * max_combats_per_zone`，再两两配对，再 cap 到本值。
+    /// 默认 3。**纯节流上限，不绕守恒**：P2 结算仍逐败者走 `release_dormant_qi_to_zone`。
+    pub max_combats_per_zone: u32,
 }
 
 impl Default for NpcVirtualizationConfig {
@@ -118,6 +132,7 @@ impl Default for NpcVirtualizationConfig {
             max_dormant_count: 5000,
             dehydrate_without_players: false,
             sim_seed: 0,
+            max_combats_per_zone: 3,
         }
     }
 }
@@ -391,6 +406,19 @@ impl NpcDormantStore {
 
     #[cfg(test)]
     pub fn ids_by_zone(&self, zone_name: &str) -> &[CharId] {
+        self.by_zone
+            .get(zone_name)
+            .map(Vec::as_slice)
+            .unwrap_or(&[])
+    }
+
+    /// plan-offscreen-war-v1 P1：production-visible 读取某 zone 的 dormant char_ids。
+    ///
+    /// `ids_by_zone`（上）是 `#[cfg(test)]` only，离屏战斗配对（`combat.rs`
+    /// `collect_zone_combat_pairs`）需要在非 test build 里枚举一个 zone 的候选集，
+    /// 故新增本只读访问器。返回 `by_zone` 索引里已排序（`rebuild_indexes` 对每个
+    /// zone 的 id 列表做了 `sort`）的 slice，空 zone 返回空 slice，不分配。
+    pub fn char_ids_in_zone(&self, zone_name: &str) -> &[CharId] {
         self.by_zone
             .get(zone_name)
             .map(Vec::as_slice)
