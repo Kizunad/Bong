@@ -26,13 +26,13 @@ use crate::schema::channels::{
     CH_DEATH_INSIGHT, CH_DUGU_POISON_PROGRESS, CH_DUGU_V2_CAST, CH_DUGU_V2_REVERSE,
     CH_DUGU_V2_SELF_CURE, CH_DUO_SHE_EVENT, CH_FACTION_EVENT, CH_FORGE_EVENT, CH_FORGE_OUTCOME,
     CH_FORGE_START, CH_HEART_DEMON_OFFER, CH_HEART_DEMON_REQUEST, CH_HIGH_RENOWN_MILESTONE,
-    CH_INSIGHT_OFFER, CH_INSIGHT_REQUEST, CH_LIFESPAN_EVENT, CH_NPC_DEATH, CH_NPC_SPAWN,
-    CH_PLAYER_CHAT, CH_POISON_DOSE_EVENT, CH_POISON_OVERDOSE_EVENT, CH_POI_NOVICE_EVENT,
-    CH_PRICE_INDEX, CH_PSEUDO_VEIN_ACTIVE, CH_PSEUDO_VEIN_DISSIPATE, CH_RAT_PHASE_EVENT,
-    CH_REBIRTH, CH_SEASON_CHANGED, CH_SKILL_CAP_CHANGED, CH_SKILL_LV_UP, CH_SKILL_SCROLL_USED,
-    CH_SKILL_XP_GAIN, CH_SOCIAL_EXPOSURE, CH_SOCIAL_FEUD, CH_SOCIAL_NICHE_INTRUSION,
-    CH_SOCIAL_PACT, CH_SOCIAL_RENOWN_DELTA, CH_SPIRIT_EYE_DISCOVERED, CH_SPIRIT_EYE_MIGRATE,
-    CH_SPIRIT_EYE_USED_FOR_BREAKTHROUGH, CH_SPIRIT_TREASURE_DIALOGUE,
+    CH_INSIGHT_OFFER, CH_INSIGHT_REQUEST, CH_LIFESPAN_EVENT, CH_NPC_COMBAT, CH_NPC_DEATH,
+    CH_NPC_SPAWN, CH_PLAYER_CHAT, CH_POISON_DOSE_EVENT, CH_POISON_OVERDOSE_EVENT,
+    CH_POI_NOVICE_EVENT, CH_PRICE_INDEX, CH_PSEUDO_VEIN_ACTIVE, CH_PSEUDO_VEIN_DISSIPATE,
+    CH_RAT_PHASE_EVENT, CH_REBIRTH, CH_SEASON_CHANGED, CH_SKILL_CAP_CHANGED, CH_SKILL_LV_UP,
+    CH_SKILL_SCROLL_USED, CH_SKILL_XP_GAIN, CH_SOCIAL_EXPOSURE, CH_SOCIAL_FEUD,
+    CH_SOCIAL_NICHE_INTRUSION, CH_SOCIAL_PACT, CH_SOCIAL_RENOWN_DELTA, CH_SPIRIT_EYE_DISCOVERED,
+    CH_SPIRIT_EYE_MIGRATE, CH_SPIRIT_EYE_USED_FOR_BREAKTHROUGH, CH_SPIRIT_TREASURE_DIALOGUE,
     CH_SPIRIT_TREASURE_DIALOGUE_REQUEST, CH_STYLE_BALANCE_TELEMETRY, CH_TRIBULATION,
     CH_TRIBULATION_COLLAPSE, CH_TRIBULATION_LOCK, CH_TRIBULATION_OMEN, CH_TRIBULATION_SETTLE,
     CH_TRIBULATION_WAVE, CH_TSY_EVENT, CH_TUIKE_SHED, CH_TUIKE_V2_SKILL_EVENT,
@@ -66,7 +66,7 @@ use crate::schema::forge_bridge::{ForgeOutcomePayloadV1, ForgeStartPayloadV1};
 use crate::schema::identity::WantedPlayerEventV1;
 use crate::schema::lingtian_weather::WeatherEventUpdateV1;
 use crate::schema::narration::NarrationV1;
-use crate::schema::npc::{FactionEventV1, NpcDeathV1, NpcSpawnedV1};
+use crate::schema::npc::{DormantCombatOutcomeV1, FactionEventV1, NpcDeathV1, NpcSpawnedV1};
 use crate::schema::poi_novice::{PoiSpawnedEventV1, TrespassEventV1};
 use crate::schema::poison_trait::{PoisonDoseEventV1, PoisonOverdoseEventV1};
 use crate::schema::pseudo_vein::{PseudoVeinDissipateEventV1, PseudoVeinSnapshotV1};
@@ -167,6 +167,8 @@ pub enum RedisOutbound {
     SkillScrollUsed(SkillScrollUsedPayloadV1),
     NpcSpawned(NpcSpawnedV1),
     NpcDeath(NpcDeathV1),
+    /// plan-offscreen-war-v1 P2：离屏 dormant 互殴战果 telemetry（`bong:npc/combat`）。
+    DormantCombatOutcome(DormantCombatOutcomeV1),
     FactionEvent(FactionEventV1),
     ZonePressureCrossed(ZonePressureCrossedV1),
     RatPhaseEvent(RatPhaseChangeEvent),
@@ -887,6 +889,17 @@ fn prepare_outbound_command(message: RedisOutbound) -> Result<RedisIoCommand, Va
             })?;
             Ok(RedisIoCommand::Publish {
                 channel: CH_NPC_DEATH,
+                payload,
+            })
+        }
+        RedisOutbound::DormantCombatOutcome(evt) => {
+            let payload = serde_json::to_string(&evt).map_err(|error| {
+                ValidationError::new(format!(
+                    "failed to serialize DormantCombatOutcomeV1: {error}"
+                ))
+            })?;
+            Ok(RedisIoCommand::Publish {
+                channel: CH_NPC_COMBAT,
                 payload,
             })
         }
@@ -3003,6 +3016,60 @@ mod redis_bridge_tests {
                 assert_eq!(v["level"], "high");
             }
             other => panic!("expected publish, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn publishes_dormant_combat_outcome_on_npc_combat_channel() {
+        // plan-offscreen-war-v1 P2：离屏战果 telemetry 必须落在专属 CH_NPC_COMBAT
+        // （bong:npc/combat）频道，且 payload 无损 roundtrip——e2e 验收门靠它把
+        // outcome.loser 与 bong:npc/death.npc_id 对账，路由错频道或字段丢失都会让验收假过。
+        let outcome = prepare_outbound_command(RedisOutbound::DormantCombatOutcome(
+            DormantCombatOutcomeV1 {
+                v: 1,
+                kind: "dormant_combat_outcome".to_string(),
+                winner: "dormant:combat:atk".to_string(),
+                loser: "dormant:combat:def".to_string(),
+                zone: "spawn".to_string(),
+                qi_released: 4.5,
+                at_tick: 4321,
+            },
+        ))
+        .expect("DormantCombatOutcomeV1 payload should serialize");
+        match outcome {
+            RedisIoCommand::Publish { channel, payload } => {
+                assert_eq!(
+                    channel, CH_NPC_COMBAT,
+                    "战果 telemetry 必须路由到 bong:npc/combat（CH_NPC_COMBAT），\
+                     否则 e2e 的 ⑤ outcome 对账订阅不到、验收假过"
+                );
+                let v: Value = serde_json::from_str(payload.as_str()).unwrap();
+                // payload 必须无损 roundtrip：e2e 读 winner/loser/zone/qi_released 做守恒对账。
+                assert_eq!(
+                    v["kind"], "dormant_combat_outcome",
+                    "kind 标签丢失，下游解析器无法区分 payload 类型"
+                );
+                assert_eq!(
+                    v["winner"], "dormant:combat:atk",
+                    "winner 字段须原样上线，否则对账读到错值"
+                );
+                assert_eq!(
+                    v["loser"], "dormant:combat:def",
+                    "loser 字段须 == 对应 NpcDeathV1.npc_id，e2e ⑤ 据此对账"
+                );
+                assert_eq!(
+                    v["zone"], "spawn",
+                    "zone 字段须原样上线，e2e ③ 据此读 ledger 账户"
+                );
+                assert_eq!(
+                    v["qi_released"], 4.5,
+                    "qi_released 须原样上线，e2e ③ 用它对齐 zone 回灌增量"
+                );
+            }
+            other => panic!(
+                "DormantCombatOutcome 应产出 Publish 命令，实际得到 {other:?}——\
+                 路由分支若改成 HashReplace/Fanout 会让战果观测断链"
+            ),
         }
     }
 

@@ -36,6 +36,27 @@ pub struct NpcDeathV1 {
     pub pos: Option<[f64; 3]>,
 }
 
+/// plan-offscreen-war-v1 P2：离屏 dormant 派系互殴战果 telemetry（`bong:npc/combat`）。
+///
+/// **纯观测 payload**——记录一场离屏战死的胜者 / 败者 / 所在 zone / 守恒回灌给 zone 的
+/// 真元量。真元流动本身走 `release_dormant_qi_to_zone` → `ledger.transfer`，本结构不参与
+/// 任何 balance 变动；外部 e2e 用它把战果与 `bong:npc/death` 对账（loser == death.npc_id）。
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct DormantCombatOutcomeV1 {
+    pub v: u8,
+    pub kind: String,
+    /// 胜者 char_id（真元不变，dormant 简化未流动即未失衡）。
+    pub winner: String,
+    /// 败者 char_id（== 对应 `NpcDeathV1.npc_id`，cause=combat）。
+    pub loser: String,
+    /// 战斗发生的 zone 名（败者残余真元守恒回灌此 zone）。
+    pub zone: String,
+    /// 本场战死实际守恒回灌给 zone 的真元量（== `release_dormant_qi_to_zone` 的
+    /// `transfer.amount`；zone 满则可能 < 败者全部真元，余量本轮留败者账户等下轮重试）。
+    pub qi_released: f64,
+    pub at_tick: u64,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct FactionEventV1 {
     pub v: u8,
@@ -198,5 +219,65 @@ mod tests {
             "缺字段时 from_dormant_combat 必须 default 为 false（向后兼容）"
         );
         assert_eq!(parsed.pos, None, "缺字段时 pos 必须 default 为 None");
+    }
+
+    #[test]
+    fn dormant_combat_outcome_v1_roundtrips() {
+        // plan-offscreen-war-v1 P2：离屏战果 telemetry wire 必须无损 roundtrip，
+        // 外部 e2e 据此把 loser 与 bong:npc/death 对账、读 qi_released 校验还灵气。
+        let payload = DormantCombatOutcomeV1 {
+            v: 1,
+            kind: "dormant_combat_outcome".to_string(),
+            winner: "dormant:rogue:3".to_string(),
+            loser: "dormant:rogue:7".to_string(),
+            zone: "spawn".to_string(),
+            qi_released: 0.4,
+            at_tick: 1234,
+        };
+        let json = serde_json::to_string(&payload).expect("serialize");
+        let parsed: DormantCombatOutcomeV1 = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(
+            parsed, payload,
+            "DormantCombatOutcomeV1 必须无损 roundtrip，否则外部观测对账会读到错值"
+        );
+
+        let value: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(
+            value["loser"],
+            serde_json::json!("dormant:rogue:7"),
+            "loser 必须序列化为 char_id 字符串（== 对应 NpcDeathV1.npc_id），实际 {}",
+            value["loser"]
+        );
+        assert_eq!(
+            value["winner"],
+            serde_json::json!("dormant:rogue:3"),
+            "winner 必须序列化为 char_id 字符串，实际 {}",
+            value["winner"]
+        );
+        assert_eq!(
+            value["qi_released"],
+            serde_json::json!(0.4),
+            "qi_released 必须序列化为守恒回灌量 f64（外部据此校验 zone spirit_qi 上升），实际 {}",
+            value["qi_released"]
+        );
+    }
+
+    #[test]
+    fn dormant_combat_outcome_v1_rejects_non_string_loser() {
+        // 反：loser 类型错（number 非 string）必须解析失败——锁住 char_id 字符串契约。
+        let bad = serde_json::json!({
+            "v": 1,
+            "kind": "dormant_combat_outcome",
+            "winner": "dormant:rogue:3",
+            "loser": 7,
+            "zone": "spawn",
+            "qi_released": 0.4,
+            "at_tick": 1234
+        });
+        let parsed = serde_json::from_value::<DormantCombatOutcomeV1>(bad);
+        assert!(
+            parsed.is_err(),
+            "loser 为 number 7 应被 serde 拒绝（字段是 String char_id），实际解析成功得到 {parsed:?}"
+        );
     }
 }

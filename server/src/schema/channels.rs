@@ -65,6 +65,16 @@ pub const CH_NPC_SPAWN: &str = "bong:npc/spawn";
 pub const CH_NPC_DEATH: &str = "bong:npc/death";
 pub const CH_FACTION_EVENT: &str = "bong:faction/event";
 
+// plan-offscreen-war-v1 P2：离屏 dormant 派系互殴战果 telemetry。
+//
+// 纯**遥测**通道（server → 外部观测脚本 / 调试）：每场离屏战死发一条
+// `DormantCombatOutcomeV1`（winner/loser/zone/qi_released），让真服 e2e 能把战果与
+// `bong:npc/death` 对账。**真元流动不走这里**——败者残余真元守恒回灌唯一走
+// `release_dormant_qi_to_zone` → `ledger.transfer(ReleaseToZone)`（真实改 balance），
+// 本通道只是观测旁路（区别于 abstract_combat_system 那种「只 emit QiTransfer 无人 apply」
+// 的吞真元红线，§10.1 #5）。agent 派系叙事 P4 复用 `bong:npc/death`，**不**订阅本通道。
+pub const CH_NPC_COMBAT: &str = "bong:npc/combat";
+
 // plan-offscreen-war-v1 P0：守恒 telemetry。周期性 HASH（非 pub/sub），落 WorldQiAccount
 // 各账户余额 + total_observed，让真服 e2e 能 `HGETALL bong:qi/ledger` 做精确守恒断言。
 pub const QI_LEDGER_REDIS_KEY: &str = "bong:qi/ledger";
@@ -224,6 +234,8 @@ mod tests {
         assert_eq!(CH_NPC_SPAWN, "bong:npc/spawn");
         assert_eq!(CH_NPC_DEATH, "bong:npc/death");
         assert_eq!(CH_FACTION_EVENT, "bong:faction/event");
+        // plan-offscreen-war-v1 P2 — 离屏战果 telemetry channel
+        assert_eq!(CH_NPC_COMBAT, "bong:npc/combat");
         assert_eq!(CH_SOCIAL_EXPOSURE, "bong:social/exposure");
         assert_eq!(CH_SOCIAL_PACT, "bong:social/pact");
         assert_eq!(CH_SOCIAL_FEUD, "bong:social/feud");

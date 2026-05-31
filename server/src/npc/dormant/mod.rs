@@ -29,7 +29,9 @@ use crate::cultivation::lifespan::{
     DeathRegistry, LifespanCapTable, LifespanComponent, LifespanExtensionLedger,
 };
 use crate::cultivation::meridian::severed::MeridianSeveredPermanent;
-use crate::npc::faction::{FactionId, FactionMembership, FactionRank, MissionQueue, Reputation};
+use crate::npc::faction::{
+    FactionId, FactionMembership, FactionRank, FactionStore, MissionQueue, Reputation,
+};
 use crate::npc::lifecycle::{NpcArchetype, NpcDeathNotice, NpcDeathReason, NpcLifespan};
 use crate::npc::loot::default_loot_for_archetype;
 use crate::npc::loot::NpcLootTable;
@@ -106,10 +108,9 @@ pub struct NpcVirtualizationConfig {
     /// Test and batch-run escape hatch. Runtime keeps no-player worlds hydrated
     /// until seed paths can create dormant NPCs directly.
     pub dehydrate_without_players: bool,
-    /// plan-offscreen-war-v1 P0：离屏战争 RNG 种子。P1/P2 dormant 战斗 roll 读此值，
+    /// plan-offscreen-war-v1 P0：离屏战争 RNG 种子。dormant 战斗 roll 读此值，
     /// 由 `BONG_SIM_SEED` 注入（默认 0 = 现有行为）。**只影响随机种子，不绕守恒。**
-    // P0 只是铺线：种子已注入但消费点（dormant 配对/胜负 roll）在 P1/P2 才落地。
-    #[allow(dead_code)]
+    /// P2 起被 `run_dormant_combat_phase` → `roll_dormant_combat_death` 真实消费。
     pub sim_seed: u64,
     /// plan-offscreen-war-v1 P1：每 zone 每轮离屏战斗对数上限。
     ///
@@ -468,12 +469,32 @@ pub struct DormantSeveredAt {
     pub meridian_id: crate::cultivation::components::MeridianId,
 }
 
+/// plan-offscreen-war-v1 P2：一场离屏 dormant 派系互殴战死的内部战果 event。
+///
+/// 由 `dormant_global_tick_system` 的 combat phase 在败者结算后 emit；
+/// `network::npc_event_bridge::publish_dormant_combat_events` 消费它发 `bong:npc/combat`
+/// telemetry。**这是纯观测**——真元守恒回灌已由结算里的 `release_dormant_qi_to_zone` →
+/// `ledger.transfer(ReleaseToZone)` 真实完成，本 event 不携带也不触发任何真元流动
+/// （区别于 `abstract_combat_system` 那种「emit QiTransfer 却无人 apply」的吞真元红线）。
+///
+/// `qi_released` 是本场实际守恒回灌给 zone 的量（== release 的 `transfer.amount`）；zone 满
+/// 时可能 0（败者满真元留账户、下轮 retain-until-released 重试），此时本 event 仍 emit
+/// （战斗已发生、败者已 roll 出），但 `qi_released == 0.0` 且败者本轮不从 store 移除。
+#[derive(Clone, Debug, Event, PartialEq)]
+pub struct DormantCombatOutcome {
+    pub winner: CharId,
+    pub loser: CharId,
+    pub zone: String,
+    pub qi_released: f64,
+}
+
 pub fn register(app: &mut App) {
     tracing::info!("[bong][npc] registering dormant NPC store and batch tick");
     app.init_resource::<NpcDormantStore>()
         .insert_resource(NpcVirtualizationConfig::from_env())
         .insert_resource(DormantRoguePopulationSeedConfig::default())
         .add_event::<DormantSeveredAt>()
+        .add_event::<DormantCombatOutcome>()
         .add_systems(Startup, load_dormant_store_from_redis_system)
         .add_systems(
             Update,
@@ -642,13 +663,16 @@ pub fn planar_distance(left: DVec3, right: DVec3) -> f64 {
     (dx * dx + dz * dz).sqrt()
 }
 
+#[allow(clippy::too_many_arguments)]
 fn dormant_global_tick_system(
     game_tick: Option<Res<GameTick>>,
     config: Res<NpcVirtualizationConfig>,
+    faction_store: Option<Res<FactionStore>>,
     mut store: ResMut<NpcDormantStore>,
     mut zones: Option<ResMut<ZoneRegistry>>,
     mut ledger: Option<ResMut<WorldQiAccount>>,
     mut death_notices: EventWriter<NpcDeathNotice>,
+    mut combat_outcomes: EventWriter<DormantCombatOutcome>,
 ) {
     let tick = current_tick(game_tick.as_deref());
     if !should_run_interval(tick, config.dormant_tick_interval_ticks) {
@@ -701,23 +725,151 @@ fn dormant_global_tick_system(
                 );
                 continue;
             }
-            death_notices.send(dormant_death_notice(snapshot));
+            death_notices.send(dormant_natural_death_notice(snapshot));
             expired.push(char_id);
         }
     }
 
-    let removed_expired = !expired.is_empty();
+    let mut removed_expired = !expired.is_empty();
     for char_id in expired {
         store.snapshots.remove(&char_id);
     }
+    // Rebuild the spatial indexes BEFORE the combat phase so `by_zone` reflects
+    // this tick's post-movement / post-natural-death population — the combat
+    // phase pairs strictly within a zone via `char_ids_in_zone`.
     if removed_expired || indexes_dirty {
         store.rebuild_indexes();
     }
+
+    // plan-offscreen-war-v1 P2：离屏派系互殴 combat phase。**同一个 system、同一个 tick
+    // interval、同一份 store/ledger 可变借用**——绝不另起第二个 timer（§10.1 #3：第二个
+    // timer 会与本系统抢 store/ledger 可变借用）。借用安全走 collect-then-index
+    // （`collect_zone_combat_pairs` 先返回 owned `Vec<(CharId,CharId)>`，再逐 id 索引结算），
+    // 规避 per-char_id 单可变借用与两两对战冲突。faction_store 是只读 `Res`。
+    if let (Some(faction_store), Some(zones), Some(ledger)) = (
+        faction_store.as_deref(),
+        zones.as_deref_mut(),
+        ledger.as_deref_mut(),
+    ) {
+        let combat_removed = run_dormant_combat_phase(
+            &mut store,
+            faction_store,
+            &config,
+            tick,
+            zones,
+            ledger,
+            &mut death_notices,
+            &mut combat_outcomes,
+        );
+        if combat_removed {
+            removed_expired = true;
+            store.rebuild_indexes();
+        }
+    }
+
     // Any advanced or removed snapshot changed persisted state; schedule a
     // Redis write on the next publish cycle.
     if mutated_any || removed_expired {
         store.mark_dirty();
     }
+}
+
+/// plan-offscreen-war-v1 P2：离屏派系互殴战死结算（脊柱核心）。
+///
+/// 接 P1 纯逻辑：先 `collect_zone_combat_pairs`（只读、owned id 对）→ 逐对 `roll_*` 出败者
+/// → 守恒结算败者真元 → emit death + outcome → 人口回写。**守恒唯一流动点**：败者残余真元
+/// 走 `release_dormant_qi_to_zone` → `ledger.transfer(ReleaseToZone)` 真实回灌 zone
+/// （§10.1 #5 ②）。胜者真元不变（dormant 简化，未流动即未失衡，§10.1 #5 ③）。
+///
+/// **防吞真元（retain-until-released）**：若 release 后败者仍有 `qi_current > QI_EPSILON`
+/// （zone 已满到 `QI_ZONE_UNIT_CAPACITY`，overflow 留在败者账户），本轮**不** `store.remove`
+/// 败者，留到后续轮次继续释放——复用自然老死路径的同款防吞真元模式
+/// （`docs/CLAUDE.md §四`「离屏战斗吞真元」红线）。真元全部释放（`<= QI_EPSILON`）的败者才
+/// 移除。同 zone 多败者**顺序** release（先 release 抬高 zone_qi，后者读更高基线，order-
+/// independent、不溢出，与 `release.rs accumulate_zone_release` 同源）。
+///
+/// 返回是否有败者被移除（调用方据此 rebuild 索引 + mark dirty）。借用安全：本函数独占
+/// `&mut store` / `&mut ledger`，配对用 immutable snapshot 读，结算用 char_id 索引 get_mut，
+/// 任一时刻只持一个 snapshot 的可变借用。
+#[allow(clippy::too_many_arguments)]
+fn run_dormant_combat_phase(
+    store: &mut NpcDormantStore,
+    faction_store: &FactionStore,
+    config: &NpcVirtualizationConfig,
+    tick: u64,
+    zones: &mut ZoneRegistry,
+    ledger: &mut WorldQiAccount,
+    death_notices: &mut EventWriter<NpcDeathNotice>,
+    combat_outcomes: &mut EventWriter<DormantCombatOutcome>,
+) -> bool {
+    // ① 配对：immutable 只读 → owned id 对（§10.1 #3 collect-then-index）。
+    let pairs = combat::collect_zone_combat_pairs(store, faction_store, config);
+    if pairs.is_empty() {
+        return false;
+    }
+
+    let mut removed_any = false;
+    for (a_id, b_id) in pairs {
+        // 防御：上一对的结算可能已移除本对成员（理论上 collect 保证每个 NPC 一轮至多一次，
+        // 但 retain-until-released 让 store 在结算中变动，索引取不到就跳过，绝不 panic）。
+        let (Some(a), Some(b)) = (store.snapshots.get(&a_id), store.snapshots.get(&b_id)) else {
+            continue;
+        };
+
+        // ② roll 败者（纯函数，只读双方快照，确定性 RNG 用 config.sim_seed）。
+        let Some(loser_id) = combat::roll_dormant_combat_death(a, b, tick, config.sim_seed) else {
+            // 非法自我对战（a_id == b_id）：collect 已规范化升序不会产生，仍兜底跳过。
+            continue;
+        };
+        let winner_id = if loser_id == a_id {
+            b_id.clone()
+        } else {
+            a_id.clone()
+        };
+
+        // ③ 败者守恒结算：唯一真元流动点。
+        let Some(loser) = store.snapshots.get_mut(&loser_id) else {
+            continue;
+        };
+        // 战死方所在 zone（release 内部也会重定位，这里取 snapshot.zone_name 作 telemetry）。
+        let zone_name = loser.zone_name.clone();
+        // 胜者真元不变（dormant 简化，§10.1 #5 ③）——不读不写胜者，少一次 ledger 操作。
+        let released = release_dormant_qi_to_zone(loser, zones, ledger)
+            .map(|transfer| transfer.amount)
+            .unwrap_or(0.0);
+
+        // ④ 战死 death notice（reason=Combat + from_dormant_combat=true + pos）。
+        death_notices.send(dormant_combat_death_notice(loser));
+
+        // ⑤ 战果 telemetry（纯观测，不携带真元流动）。
+        combat_outcomes.send(DormantCombatOutcome {
+            winner: winner_id,
+            loser: loser_id.clone(),
+            zone: zone_name,
+            qi_released: released,
+        });
+
+        // ⑥ 人口回写 + 防吞真元：真元全释放才移除；zone 满残余 overflow > ε 则本轮保留、下轮重试。
+        // 先把后续唯一需要的标量（残余真元）从 `&mut loser` 借用里拷出。
+        let residual = loser.cultivation.qi_current;
+        // 随即显式终结 `&mut loser` 借用：NLL 本会在这里结束，但显式 `let _ = loser;`（`drop`
+        // 对引用是 no-op，会触发 clippy::dropping_references）让下方 retain/remove 决策对未来
+        // 编辑（如在此块内再次借用 `store`）防御性免疫——后续只用早已 owned 的标量
+        // （`loser_id` / `zone_name` / `released` / `residual`），行为不变。
+        let _ = loser;
+        if residual > QI_EPSILON {
+            tracing::warn!(
+                "[bong][npc] retained combat-dead dormant NPC `{}` until {:.6} residual qi releases (zone full)",
+                loser_id,
+                residual
+            );
+        } else {
+            store.snapshots.remove(&loser_id);
+            removed_any = true;
+        }
+    }
+
+    removed_any
 }
 
 fn seed_initial_dormant_population_on_startup(
@@ -1168,7 +1320,19 @@ pub fn release_dormant_qi_to_zone(
     Some(transfer)
 }
 
-fn dormant_death_notice(snapshot: &NpcDormantSnapshot) -> NpcDeathNotice {
+/// 构造一条 dormant 死亡通知，按**死因分支**填 `reason` / `from_dormant_combat`。
+///
+/// plan-offscreen-war-v1 P2：从硬编码 `NaturalAging` 改为按 `reason` 入参分支——
+/// - 自然老死走 [`dormant_natural_death_notice`]（`reason=NaturalAging`，`from_dormant_combat=false`）；
+/// - 离屏战死走 [`dormant_combat_death_notice`]（`reason=Combat`，`from_dormant_combat=true`），
+///   让 agent / e2e 能把战死与老死区分开。
+///
+/// 两者都带 `pos=Some(snapshot.position)`（战场 / 陨落坐标），供派系战报定位与 e2e 断言。
+fn dormant_death_notice(
+    snapshot: &NpcDormantSnapshot,
+    reason: NpcDeathReason,
+    from_dormant_combat: bool,
+) -> NpcDeathNotice {
     let life_record_snapshot = {
         let summary = snapshot.life_record.recent_summary_text(8);
         if summary.is_empty() {
@@ -1180,7 +1344,7 @@ fn dormant_death_notice(snapshot: &NpcDormantSnapshot) -> NpcDeathNotice {
     NpcDeathNotice {
         npc_id: snapshot.char_id.clone(),
         archetype: snapshot.archetype,
-        reason: NpcDeathReason::NaturalAging,
+        reason,
         faction_id: snapshot
             .faction
             .as_ref()
@@ -1188,11 +1352,19 @@ fn dormant_death_notice(snapshot: &NpcDormantSnapshot) -> NpcDeathNotice {
         life_record_snapshot,
         age_ticks: snapshot.lifespan.age_ticks,
         max_age_ticks: snapshot.lifespan.max_age_ticks,
-        // P0：dormant 自然老死路径仍 false（NaturalAging→Combat 分支留 P2）；
-        // 坐标可从 snapshot 取，带上供 agent 派系战报定位 / e2e 断言。
-        from_dormant_combat: false,
+        from_dormant_combat,
         pos: Some(snapshot.position),
     }
+}
+
+/// 自然老死通知（`reason=NaturalAging`，`from_dormant_combat=false`）。
+fn dormant_natural_death_notice(snapshot: &NpcDormantSnapshot) -> NpcDeathNotice {
+    dormant_death_notice(snapshot, NpcDeathReason::NaturalAging, false)
+}
+
+/// 离屏派系互殴战死通知（`reason=Combat`，`from_dormant_combat=true`）。
+fn dormant_combat_death_notice(snapshot: &NpcDormantSnapshot) -> NpcDeathNotice {
+    dormant_death_notice(snapshot, NpcDeathReason::Combat, true)
 }
 
 #[cfg(test)]
@@ -1466,6 +1638,7 @@ mod tests {
         // age/position and must mark dirty.
         let mut age_app = App::new();
         age_app.add_event::<NpcDeathNotice>();
+        age_app.add_event::<DormantCombatOutcome>();
         age_app.insert_resource(NpcVirtualizationConfig {
             dormant_tick_interval_ticks: 1,
             ..Default::default()
@@ -1495,6 +1668,7 @@ mod tests {
         // removed by the tick; that removal must mark dirty.
         let mut death_app = App::new();
         death_app.add_event::<NpcDeathNotice>();
+        death_app.add_event::<DormantCombatOutcome>();
         death_app.insert_resource(NpcVirtualizationConfig {
             dormant_tick_interval_ticks: 1,
             ..Default::default()
@@ -1749,6 +1923,7 @@ mod tests {
     fn dormant_global_tick_retains_expired_snapshot_until_qi_fully_released() {
         let mut app = App::new();
         app.add_event::<NpcDeathNotice>();
+        app.add_event::<DormantCombatOutcome>();
         app.insert_resource(NpcVirtualizationConfig {
             dormant_tick_interval_ticks: 1,
             ..Default::default()
@@ -1811,6 +1986,7 @@ mod tests {
     fn dormant_global_tick_clears_indexes_when_all_snapshots_expire() {
         let mut app = App::new();
         app.add_event::<NpcDeathNotice>();
+        app.add_event::<DormantCombatOutcome>();
         app.insert_resource(NpcVirtualizationConfig {
             dormant_tick_interval_ticks: 1,
             ..Default::default()
@@ -1839,6 +2015,7 @@ mod tests {
     fn dormant_global_tick_refreshes_zone_index_after_movement() {
         let mut app = App::new();
         app.add_event::<NpcDeathNotice>();
+        app.add_event::<DormantCombatOutcome>();
         app.insert_resource(NpcVirtualizationConfig {
             dormant_tick_interval_ticks: 1,
             ..Default::default()
@@ -2145,5 +2322,553 @@ mod tests {
             "seed 派系必须是 Attack 或 Defend（非 Neutral），实际 {:?}",
             membership.faction_id
         );
+    }
+
+    // ── plan-offscreen-war-v1 P2：离屏派系互殴战死闭环（饱和单测） ─────────────
+    //
+    // 测契约不测实现：断言 store 人口回写 / 真元守恒回灌 / death notice 死因 / telemetry
+    // outcome / 防吞真元 retain，全部走 `run_dormant_combat_phase` 这个真实结算入口
+    // （而非私有中间步），接入面变了也不应红。
+
+    use crate::qi_physics::{assert_conservation, QiAccountId, WorldQiAccount};
+
+    /// 造一个**敌对、满真元、不会自然老死**的战斗候选快照：给定 char_id / 派系 / 真元。
+    /// realm 拉到 Condense 让 condition_factor 由满血+满真元主导，战力 realm-monotonic。
+    fn combat_snapshot(
+        char_id: &str,
+        faction: FactionId,
+        qi_current: f64,
+        pos: DVec3,
+    ) -> NpcDormantSnapshot {
+        let cultivation = Cultivation {
+            realm: Realm::Condense,
+            qi_current,
+            qi_max: 60.0,
+            ..Default::default()
+        };
+        NpcDormantSnapshot {
+            char_id: char_id.to_string(),
+            archetype: NpcArchetype::Rogue,
+            dimension: DimensionKind::Overworld,
+            zone_name: DEFAULT_SPAWN_ZONE_NAME.to_string(),
+            position: vec3_to_array(pos),
+            schedule_seed: None,
+            cultivation: cultivation.clone(),
+            meridian_system: MeridianSystem::default(),
+            meridian_severed: MeridianSeveredPermanent::default(),
+            contamination: Contamination::default(),
+            // 长寿命 + 0 起始年龄：本轮绝不自然老死，让"死人"唯一来源是战斗。
+            lifespan: NpcLifespan::new(0.0, 1_000_000.0),
+            shared_lifespan: LifespanComponent::for_realm(cultivation.realm),
+            lifespan_extension_ledger: LifespanExtensionLedger::default(),
+            death_registry: DeathRegistry::new(char_id),
+            life_record: LifeRecord::new(char_id),
+            faction: Some(FactionMembership {
+                faction_id: faction,
+                rank: FactionRank::Disciple,
+                reputation: Reputation::default(),
+                lineage: None,
+                mission_queue: MissionQueue::default(),
+            }),
+            patrol: None,
+            loot_table: None,
+            guardian_relic: None,
+            tsy_hostile: None,
+            intent: DormantBehaviorIntent::Cultivate {
+                zone: DEFAULT_SPAWN_ZONE_NAME.to_string(),
+            },
+            dormant_since_tick: 0,
+            last_dormant_tick_processed: 0,
+            initial_qi: qi_current,
+            qi_ledger_net: 0.0,
+        }
+    }
+
+    /// 跑一次完整 `dormant_global_tick_system`（含 combat phase）并收回本帧 death + outcome。
+    ///
+    /// 用真实 `App` 驱动整条系统（最贴近运行时），把传入的 store/zones/ledger 装进资源，
+    /// `update()` 一帧，读回 `Events<NpcDeathNotice>` / `Events<DormantCombatOutcome>`，
+    /// 再把更新后的 store/zones/ledger 写回调用方引用。tick 通过 `GameTick` 注入；
+    /// `dormant_tick_interval_ticks=1` 保证整周期、必跑。返回 (deaths, outcomes)。
+    ///
+    /// 关键：所有 combat snapshot 的 `last_dormant_tick_processed=0`，本帧 aging 会推进它们；
+    /// 但 combat snapshot 寿命 1_000_000 ticks，aging 不会触发自然老死，故死亡唯一来源是 combat。
+    fn run_combat_tick(
+        store: &mut NpcDormantStore,
+        zones: &mut ZoneRegistry,
+        ledger: &mut WorldQiAccount,
+        config: &NpcVirtualizationConfig,
+        tick: u64,
+    ) -> (Vec<NpcDeathNotice>, Vec<DormantCombatOutcome>) {
+        let mut app = App::new();
+        app.add_event::<NpcDeathNotice>();
+        app.add_event::<DormantCombatOutcome>();
+        app.insert_resource(NpcVirtualizationConfig {
+            dormant_tick_interval_ticks: 1,
+            ..config.clone()
+        });
+        app.insert_resource(GameTick(tick as u32));
+        app.insert_resource(FactionStore::default());
+        app.insert_resource(std::mem::take(store));
+        app.insert_resource(ZoneRegistry {
+            zones: std::mem::take(&mut zones.zones),
+        });
+        app.insert_resource(std::mem::take(ledger));
+        app.add_systems(Update, dormant_global_tick_system);
+
+        app.update();
+
+        let deaths = app
+            .world_mut()
+            .resource_mut::<Events<NpcDeathNotice>>()
+            .drain()
+            .collect::<Vec<_>>();
+        let outcomes = app
+            .world_mut()
+            .resource_mut::<Events<DormantCombatOutcome>>()
+            .drain()
+            .collect::<Vec<_>>();
+
+        // 写回更新后的资源到调用方引用。
+        *store = app
+            .world_mut()
+            .remove_resource::<NpcDormantStore>()
+            .unwrap();
+        *zones = app.world_mut().remove_resource::<ZoneRegistry>().unwrap();
+        *ledger = app.world_mut().remove_resource::<WorldQiAccount>().unwrap();
+        (deaths, outcomes)
+    }
+
+    #[test]
+    fn combat_death_releases_all_qi_to_zone() {
+        // 一对敌对 dormant 在同 zone：战死一方的真元应**守恒回灌**给 zone（zone.spirit_qi 上升），
+        // 且回灌量 == ledger transfer amount == outcome.qi_released。
+        let mut zones = ZoneRegistry {
+            zones: vec![zone()],
+        }; // spirit_qi=0.8
+        let zone_before = zones.zones[0].spirit_qi;
+        let mut store = NpcDormantStore::default();
+        store.insert(combat_snapshot(
+            "atk",
+            FactionId::Attack,
+            5.0,
+            DVec3::new(10.0, 64.0, 10.0),
+        ));
+        store.insert(combat_snapshot(
+            "def",
+            FactionId::Defend,
+            5.0,
+            DVec3::new(11.0, 64.0, 11.0),
+        ));
+        store.take_dirty();
+        let mut ledger = WorldQiAccount::default();
+        let config = NpcVirtualizationConfig::default();
+
+        let (deaths, outcomes) = run_combat_tick(&mut store, &mut zones, &mut ledger, &config, 7);
+
+        assert_eq!(
+            deaths.len(),
+            1,
+            "一对敌对 dormant 必须恰好死一个（战斗必致死），实际死 {} 个",
+            deaths.len()
+        );
+        assert_eq!(
+            outcomes.len(),
+            1,
+            "恰好一条战果 outcome 对应这场战死，实际 {} 条",
+            outcomes.len()
+        );
+        let zone_after = zones.zones[0].spirit_qi;
+        assert!(
+            zone_after > zone_before,
+            "战死方真元必须守恒回灌 zone（spirit_qi 上升）：before={zone_before} after={zone_after}"
+        );
+        // 回灌量精确对账：zone 上升的归一化量 × 容量 == outcome.qi_released。
+        let zone_gain_abs = (zone_after - zone_before) * QI_ZONE_UNIT_CAPACITY;
+        assert!(
+            (zone_gain_abs - outcomes[0].qi_released).abs() < 1e-9,
+            "zone 真元增量（{zone_gain_abs}）必须等于 outcome.qi_released（{}），否则 telemetry 与实际守恒不符",
+            outcomes[0].qi_released
+        );
+        assert!(
+            outcomes[0].qi_released > 0.0,
+            "本场战死应有真元回灌（败者满真元 + zone 未满），qi_released={}",
+            outcomes[0].qi_released
+        );
+    }
+
+    #[test]
+    fn combat_death_emits_notice_with_combat_reason_and_pos() {
+        // 战死 notice 必须 reason=Combat + from_dormant_combat=true + pos=Some(战场坐标)，
+        // 让 agent / e2e 能把战死与自然老死区分开。
+        let mut zones = ZoneRegistry {
+            zones: vec![zone()],
+        };
+        let loser_pos = DVec3::new(11.0, 64.0, 11.0);
+        let mut store = NpcDormantStore::default();
+        store.insert(combat_snapshot(
+            "atk",
+            FactionId::Attack,
+            5.0,
+            DVec3::new(10.0, 64.0, 10.0),
+        ));
+        store.insert(combat_snapshot("def", FactionId::Defend, 5.0, loser_pos));
+        let mut ledger = WorldQiAccount::default();
+        let config = NpcVirtualizationConfig::default();
+
+        let (deaths, outcomes) = run_combat_tick(&mut store, &mut zones, &mut ledger, &config, 7);
+
+        let notice = &deaths[0];
+        assert_eq!(
+            notice.reason,
+            NpcDeathReason::Combat,
+            "战死 notice 的 reason 必须是 Combat（非 NaturalAging），否则 agent 当成老死，实际 {:?}",
+            notice.reason
+        );
+        assert!(
+            notice.from_dormant_combat,
+            "战死 notice 的 from_dormant_combat 必须为 true（区别于在场战斗 / 老死）"
+        );
+        assert!(
+            notice.pos.is_some(),
+            "战死 notice 必须带 pos（战场坐标），供 agent 派系战报定位 / e2e 断言"
+        );
+        // notice 的死者就是 outcome 的 loser，且 pos 来自该败者快照。
+        assert_eq!(
+            notice.npc_id, outcomes[0].loser,
+            "death notice 的 npc_id 必须 == outcome.loser（同一场战死的两面）"
+        );
+    }
+
+    #[test]
+    fn combat_death_removes_loser_from_store() {
+        // 战死方真元全释放后必须从 store 移除（人口回写），胜者保留。
+        let mut zones = ZoneRegistry {
+            zones: vec![zone()],
+        };
+        let mut store = NpcDormantStore::default();
+        store.insert(combat_snapshot(
+            "atk",
+            FactionId::Attack,
+            5.0,
+            DVec3::new(10.0, 64.0, 10.0),
+        ));
+        store.insert(combat_snapshot(
+            "def",
+            FactionId::Defend,
+            5.0,
+            DVec3::new(11.0, 64.0, 11.0),
+        ));
+        let mut ledger = WorldQiAccount::default();
+        let config = NpcVirtualizationConfig::default();
+
+        let (deaths, _outcomes) = run_combat_tick(&mut store, &mut zones, &mut ledger, &config, 7);
+
+        assert_eq!(
+            store.len(),
+            1,
+            "两个 dormant 战斗后必须剩 1 个（败者真元全释放 → 移除、胜者留），实际剩 {}",
+            store.len()
+        );
+        let loser = &deaths[0].npc_id;
+        assert!(
+            !store.contains(loser),
+            "战死方 `{loser}` 必须已从 store 移除"
+        );
+        // 剩下的就是胜者。
+        let winner_id = if loser == "atk" { "def" } else { "atk" };
+        assert!(
+            store.contains(winner_id),
+            "胜者 `{winner_id}` 必须仍在 store（未参与死亡）"
+        );
+    }
+
+    #[test]
+    fn winner_qi_unchanged() {
+        // dormant 简化：胜者真元不变（未流动即未失衡，§10.1 #5 ③）。
+        let mut zones = ZoneRegistry {
+            zones: vec![zone()],
+        };
+        let mut store = NpcDormantStore::default();
+        store.insert(combat_snapshot(
+            "atk",
+            FactionId::Attack,
+            5.0,
+            DVec3::new(10.0, 64.0, 10.0),
+        ));
+        store.insert(combat_snapshot(
+            "def",
+            FactionId::Defend,
+            5.0,
+            DVec3::new(11.0, 64.0, 11.0),
+        ));
+        let mut ledger = WorldQiAccount::default();
+        let config = NpcVirtualizationConfig::default();
+
+        let (deaths, _outcomes) = run_combat_tick(&mut store, &mut zones, &mut ledger, &config, 7);
+
+        let loser = &deaths[0].npc_id;
+        let winner_id = if loser == "atk" { "def" } else { "atk" };
+        let winner = store.snapshots.get(winner_id).expect("胜者必须仍在 store");
+        assert!(
+            (winner.cultivation.qi_current - 5.0).abs() < 1e-9,
+            "胜者真元必须保持 5.0 不变（dormant 简化不扣胜者），实际 {}",
+            winner.cultivation.qi_current
+        );
+    }
+
+    #[test]
+    fn zone_full_retains_loser_until_released() {
+        // 防吞真元：zone 已满（spirit_qi=1.0 → 容量 QI_ZONE_UNIT_CAPACITY 已满）时，败者真元
+        // 无处可去 → overflow 留败者账户 → 本轮**不**移除（retain-until-released），下轮重试。
+        let mut full_zone = zone();
+        full_zone.spirit_qi = 1.0; // 满到 QI_ZONE_UNIT_CAPACITY，不接受任何回灌
+        let mut zones = ZoneRegistry {
+            zones: vec![full_zone],
+        };
+        let mut store = NpcDormantStore::default();
+        store.insert(combat_snapshot(
+            "atk",
+            FactionId::Attack,
+            5.0,
+            DVec3::new(10.0, 64.0, 10.0),
+        ));
+        store.insert(combat_snapshot(
+            "def",
+            FactionId::Defend,
+            5.0,
+            DVec3::new(11.0, 64.0, 11.0),
+        ));
+        let mut ledger = WorldQiAccount::default();
+        let config = NpcVirtualizationConfig::default();
+
+        let (deaths, outcomes) = run_combat_tick(&mut store, &mut zones, &mut ledger, &config, 7);
+
+        assert_eq!(
+            deaths.len(),
+            1,
+            "战斗仍发生、败者仍 roll 出（death notice 仍 emit），实际 {} 条",
+            deaths.len()
+        );
+        assert!(
+            (outcomes[0].qi_released - 0.0).abs() < 1e-9,
+            "zone 满 → 本场回灌 0（败者真元无处可去），qi_released={}",
+            outcomes[0].qi_released
+        );
+        assert_eq!(
+            store.len(),
+            2,
+            "防吞真元：zone 满时败者真元未释放，本轮绝不移除（否则携带真元的快照被丢弃 = 吞真元红线），\
+             store 仍 2 个，实际 {}",
+            store.len()
+        );
+        let loser = &deaths[0].npc_id;
+        let retained = store
+            .snapshots
+            .get(loser)
+            .expect("败者真元未释放完，必须保留待下轮重试");
+        assert!(
+            retained.cultivation.qi_current > QI_EPSILON,
+            "保留的败者必须仍携带未释放真元（{}），下轮 zone 腾出空间再释放",
+            retained.cultivation.qi_current
+        );
+    }
+
+    #[test]
+    fn sequential_release_no_overflow() {
+        // 同 zone 多败者：顺序 release（先 release 抬高 zone_qi，后者读更高基线），
+        // 总回灌量受 zone 容量 clamp、不溢出。两对敌对 dormant → 两个败者同 zone 回灌。
+        let mut zones = ZoneRegistry {
+            zones: vec![zone()],
+        }; // spirit_qi=0.8
+        let zone_before = zones.zones[0].spirit_qi;
+        let mut store = NpcDormantStore::default();
+        // 两对：a-b、c-d，全在同 zone（升序两两配对 → (a,b)+(c,d)）。
+        store.insert(combat_snapshot(
+            "a",
+            FactionId::Attack,
+            3.0,
+            DVec3::new(10.0, 64.0, 10.0),
+        ));
+        store.insert(combat_snapshot(
+            "b",
+            FactionId::Defend,
+            3.0,
+            DVec3::new(11.0, 64.0, 11.0),
+        ));
+        store.insert(combat_snapshot(
+            "c",
+            FactionId::Attack,
+            3.0,
+            DVec3::new(12.0, 64.0, 12.0),
+        ));
+        store.insert(combat_snapshot(
+            "d",
+            FactionId::Defend,
+            3.0,
+            DVec3::new(13.0, 64.0, 13.0),
+        ));
+        let mut ledger = WorldQiAccount::default();
+        // max_combats_per_zone 默认 3 ≥ 2，足够配出两对。
+        let config = NpcVirtualizationConfig::default();
+
+        let (deaths, outcomes) = run_combat_tick(&mut store, &mut zones, &mut ledger, &config, 7);
+
+        assert_eq!(
+            deaths.len(),
+            2,
+            "两对敌对 dormant 必须死两个（每对死一个），实际 {}",
+            deaths.len()
+        );
+        let zone_after = zones.zones[0].spirit_qi;
+        assert!(
+            zone_after <= 1.0 + 1e-9,
+            "顺序回灌后 zone.spirit_qi 必须 ≤ 1.0（容量 clamp，不溢出），实际 {zone_after}"
+        );
+        // 两条 outcome 的 qi_released 之和 == zone 实际上升的绝对量（顺序无关、不丢不溢）。
+        let total_released: f64 = outcomes.iter().map(|o| o.qi_released).sum();
+        let zone_gain_abs = (zone_after - zone_before) * QI_ZONE_UNIT_CAPACITY;
+        assert!(
+            (total_released - zone_gain_abs).abs() < 1e-9,
+            "两个败者顺序回灌总量（{total_released}）必须精确等于 zone 上升绝对量（{zone_gain_abs}），\
+             否则顺序 release 有丢失 / 重复计数",
+        );
+    }
+
+    #[test]
+    fn offscreen_war_conserves_total_qi() {
+        // 守恒集成测试（§10.1 #5 守恒红线的诚实锁）：seed 大量敌对 dormant，跑多轮 combat tick，
+        // 断言**账本（WorldQiAccount）总量严格守恒**（tolerance 0.0，本场景无 EraDecay）。
+        //
+        // 为什么锁账本而非 summarize_world_qi().total_observed()：经实测（见报告），
+        // `total_observed = player + zone(归一化分量) + container + ledger` 把 zone 同时计入
+        // ZoneRegistry 归一化分量 *和* ledger 的 zone 绝对账户两处，单位不同（归一化 vs ×50），
+        // 释放时 zone.spirit_qi 上升 accepted/50 而 ledger zone 上升 accepted，故 total_observed
+        // 会随每次 release 漂移 accepted/50——这是 summarize 的双计入，**不是** combat 路径造/吞
+        // 真元。真正的守恒不变量是**账本双录簿总量**：败者真元经
+        // `ledger.transfer(npc→zone, ReleaseToZone)` 真实搬运（零和），release 前的 set_balance
+        // 把账户重新对齐到 snapshot/zone 现状（与 apply_dormant_regen 同源），全程无任何
+        // `balance += X` 凭空注入、无任何携带真元的快照被直接丢弃。
+        //
+        // 因此守恒锁 = ① 预先把每个 dormant 的真元 + 每个 zone 的真元funded 进账本（counted
+        // source）→ 拍 before；② 跑多轮 combat；③ 拍 after；④ assert_conservation(before,
+        // after, 0.0) 严格相等。若 combat 路径凭空造/吞真元，账本总量必然漂移、撞红。
+
+        let mut zones = ZoneRegistry {
+            zones: vec![zone()],
+        }; // spirit_qi=0.8
+        let mut store = NpcDormantStore::default();
+        // ~500 dormant：250 对敌对（Attack/Defend 交替），全在同一个 zone。
+        // 每个带 4.0 真元（足够多轮释放但不会一轮把 zone 灌满到完全 retain）。
+        const N: u32 = 500;
+        for i in 0..N {
+            let faction = if i % 2 == 0 {
+                FactionId::Attack
+            } else {
+                FactionId::Defend
+            };
+            // char_id 零填充让升序 == 数值升序，配对稳定。
+            store.insert(combat_snapshot(
+                &format!("w{i:04}"),
+                faction,
+                4.0,
+                DVec3::new(10.0 + (i % 50) as f64, 64.0, 10.0 + (i / 50) as f64),
+            ));
+        }
+
+        let mut ledger = WorldQiAccount::default();
+        // ① 把每个 dormant 的真元 + zone 的真元 funded 进账本，作为 counted source。
+        for snap in store.snapshots.values() {
+            ledger
+                .set_balance(
+                    QiAccountId::npc(snap.char_id.clone()),
+                    snap.cultivation.qi_current,
+                )
+                .expect("seed npc ledger balance");
+        }
+        ledger
+            .set_balance(
+                QiAccountId::zone(DEFAULT_SPAWN_ZONE_NAME),
+                zones.zones[0].spirit_qi * QI_ZONE_UNIT_CAPACITY,
+            )
+            .expect("seed zone ledger balance");
+
+        let before = ledger_conservation_snapshot(&ledger);
+        let initial_pop = store.len();
+
+        // ② 多轮 combat tick（不同 tick → 不同 RNG，多对战死，含 retain-until-released 路径）。
+        let config = NpcVirtualizationConfig {
+            // 每轮多配几对，加速种群消耗，跑满多轮结算。
+            max_combats_per_zone: 64,
+            sim_seed: 20_260_531,
+            ..Default::default()
+        };
+        let mut total_deaths = 0usize;
+        for round in 0..10u64 {
+            let (deaths, _outcomes) =
+                run_combat_tick(&mut store, &mut zones, &mut ledger, &config, round + 1);
+            total_deaths += deaths.len();
+            // 每轮断言：账本总量始终严格守恒（不止 before/after，每一步都不漂）。
+            let mid = ledger_conservation_snapshot(&ledger);
+            assert_conservation(&before, &mid, 0.0).unwrap_or_else(|err| {
+                panic!(
+                    "round {round} 后账本守恒漂移（造/吞真元红线）：{err}；\
+                     before_total={} mid_total={} deaths_so_far={total_deaths} pop={}",
+                    before.total_observed(),
+                    mid.total_observed(),
+                    store.len(),
+                )
+            });
+        }
+
+        let after = ledger_conservation_snapshot(&ledger);
+        // ③ 最终严格守恒（tolerance 0.0）。
+        assert_conservation(&before, &after, 0.0).unwrap_or_else(|err| {
+            panic!(
+                "离屏战争多轮后账本总量未严格守恒：{err}；before={} after={} t0_pop={initial_pop} t1_pop={} deaths={total_deaths}",
+                before.total_observed(),
+                after.total_observed(),
+                store.len(),
+            )
+        });
+        // ④ 确实发生了离屏战死（否则守恒是空过的）。
+        assert!(
+            total_deaths > 0,
+            "多轮 combat 必须真的死了人（否则守恒断言空过），实际死亡数 {total_deaths}"
+        );
+        // ⑤ 种群守恒：移除数（initial - 现存）∈ [0, total_deaths]，且不超过死亡数
+        // （retain-until-released 可能让某些战死者本轮仍在 store，故移除 ≤ 死亡）。
+        let removed_pop = initial_pop - store.len();
+        assert!(
+            removed_pop <= total_deaths,
+            "移除的人口（{removed_pop}）不应超过战死数（{total_deaths}）——多出来 = 凭空消失了 NPC"
+        );
+        // ⑥ 防吞真元最终态：store 里残留的快照真元都已被账本如实记账（counted），
+        // 没有任何携带真元的快照被直接丢弃。
+        for snap in store.snapshots.values() {
+            let ledger_bal = ledger.balance(&QiAccountId::npc(snap.char_id.clone()));
+            assert!(
+                (ledger_bal - snap.cultivation.qi_current).abs() < 1e-9,
+                "存活 dormant `{}` 的账本余额（{ledger_bal}）必须等于快照真元（{}），\
+                 否则账本与快照脱节（守恒不可信）",
+                snap.char_id,
+                snap.cultivation.qi_current,
+            );
+        }
+    }
+
+    /// 从账本构造一个守恒快照：把整个 `WorldQiAccount` 总量放进 `ledger_qi`，其余分量置 0。
+    /// 这样 `total_observed()` == 账本双录簿总量，是 combat release 路径真正守恒的量
+    /// （不掺 ZoneRegistry 归一化分量的双计入，见 `offscreen_war_conserves_total_qi` 注释）。
+    fn ledger_conservation_snapshot(ledger: &WorldQiAccount) -> crate::qi_physics::WorldQiSnapshot {
+        crate::qi_physics::WorldQiSnapshot {
+            player_qi: 0.0,
+            zone_qi: 0.0,
+            container_qi: 0.0,
+            ledger_qi: ledger.total(),
+            era_decay_accum: 0.0,
+            budget_initial_total: crate::qi_physics::constants::DEFAULT_SPIRIT_QI_TOTAL,
+            budget_current_total: crate::qi_physics::constants::DEFAULT_SPIRIT_QI_TOTAL,
+        }
     }
 }
