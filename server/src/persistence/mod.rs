@@ -11941,8 +11941,9 @@ mod persistence_tests {
             )
             .expect("partial-schema relic fixture should be created");
 
-        let error = apply_migrations(&mut connection)
-            .expect_err("v26 migration must reject a pending_dormant_relics table missing required columns");
+        let error = apply_migrations(&mut connection).expect_err(
+            "v26 migration must reject a pending_dormant_relics table missing required columns",
+        );
         let message = error.to_string();
         assert!(
             message.contains("pending_dormant_relics column") && message.contains("missing"),

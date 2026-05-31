@@ -2300,8 +2300,8 @@ mod tests {
             !legacy_payload.contains("combat_dead_pending_release"),
             "precondition: the synthesized legacy payload must lack the flag field"
         );
-        let decoded: NpcDormantSnapshot =
-            serde_json::from_str(&legacy_payload).expect("legacy snapshot (no flag field) must deserialize via serde default");
+        let decoded: NpcDormantSnapshot = serde_json::from_str(&legacy_payload)
+            .expect("legacy snapshot (no flag field) must deserialize via serde default");
         assert!(
             !decoded.combat_dead_pending_release,
             "a legacy Redis snapshot missing combat_dead_pending_release must default to false (serde default), so upgrades never lose or mis-flag dormant NPCs; got true"
@@ -3495,7 +3495,12 @@ mod tests {
 
         // tick 1：战死 + retain（zone 满）。遗物本轮**不**造（真元未释放完）。
         let t1 = run_combat_tick(&mut store, &mut zones, &mut ledger, &config, 7);
-        assert_eq!(t1.deaths.len(), 1, "tick 1 one combat death, got {}", t1.deaths.len());
+        assert_eq!(
+            t1.deaths.len(),
+            1,
+            "tick 1 one combat death, got {}",
+            t1.deaths.len()
+        );
         let loser_id = t1.deaths[0].npc_id.clone();
         assert!(
             t1.relics.is_empty(),

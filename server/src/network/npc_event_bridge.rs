@@ -292,7 +292,9 @@ mod tests {
         });
         app.update();
 
-        let outbound = rx.try_recv().expect("expected pending relic outbound even without GameTick");
+        let outbound = rx
+            .try_recv()
+            .expect("expected pending relic outbound even without GameTick");
         let RedisOutbound::PendingDormantRelic(payload) = outbound else {
             panic!("expected PendingDormantRelic outbound, got a different variant");
         };

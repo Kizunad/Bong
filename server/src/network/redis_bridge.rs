@@ -3095,8 +3095,8 @@ mod redis_bridge_tests {
         // relic.char_id 与 bong:npc/death.npc_id 对账。频道名或 match 分支回退都会让 P3 观测静默
         // 失守。loot_seed 取含 high-bit 的 u64 边界值，验证 u64 序列化不被截断/丢精度。
         const HIGH_BIT_SEED: u64 = 0xFFFF_FFFF_0000_0001;
-        let relic = prepare_outbound_command(RedisOutbound::PendingDormantRelic(
-            PendingDormantRelicV1 {
+        let relic =
+            prepare_outbound_command(RedisOutbound::PendingDormantRelic(PendingDormantRelicV1 {
                 v: 1,
                 kind: "pending_dormant_relic".to_string(),
                 char_id: "dormant:fallen:disciple".to_string(),
@@ -3106,9 +3106,8 @@ mod redis_bridge_tests {
                 loot_seed: HIGH_BIT_SEED,
                 created_tick: 42,
                 at_tick: 4321,
-            },
-        ))
-        .expect("PendingDormantRelicV1 payload should serialize");
+            }))
+            .expect("PendingDormantRelicV1 payload should serialize");
         match relic {
             RedisIoCommand::Publish { channel, payload } => {
                 assert_eq!(
