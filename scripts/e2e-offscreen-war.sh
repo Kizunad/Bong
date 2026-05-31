@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# plan-offscreen-war-v1 P0+P2+P3 真服 headless e2e。
+# plan-offscreen-war-v1 P0+P2+P3+P4 真服 headless e2e。
 #
 # P0（底盘通路 + 守恒 telemetry + 派系 bootstrap）：
 #   1. agent_command_spawn_then_death_roundtrip
@@ -32,6 +32,18 @@ set -euo pipefail
 #      「模拟玩家靠近 → loot marker」需 client（hydrate 无玩家不触发，侦察B 确认）→ 转人工
 #      checklist；deferred 物化路径由 relic_hydrate 12 单测（含 3 system 级）锁死，不假过。
 #
+# P4（天道派系消长叙事，agent 消费离屏战死）：
+#   6. 起**真实生产** OffscreenWarNarrationRuntime（从 dist/ import main.ts 注册的同一个 class，
+#      非重写）连到本 e2e redis，订阅 bong:npc/death；同时起 bong:agent_narrate subscriber。
+#      二者就绪后种**新一对**受控 combat dormant + 重启 server → 触发 fresh combat death →
+#      runtime 聚合 → emit bong:agent_narrate。断言收到 broadcast/perception/scattered_cultivator
+#      narration（匿名散修消长，无具名宗门）。
+#      复用 bong:npc/death，**不新建 telemetry channel**（孤岛红旗，见 docs/CLAUDE.md §四）。
+#      为何不起全 agent（npm run start:mock）：全 agent 含 LLM tick loop + 依赖 bong:world_state +
+#      ~25 个 auxiliary runtime，headless 重且 flaky；P4 契约面只有 bong:npc/death→bong:agent_narrate，
+#      单起这一个生产 runtime 即可端到端验真，且更确定。Context Assembler 喂三 Agent 路径由
+#      agent 单测（offscreen-war-context / runtime drain / redis-ipc drain）锁死，不在此 e2e 重复。
+#
 # 确定性：BONG_SIM_SEED 固定 + BONG_DORMANT_TICK_INTERVAL 小值（免 sleep 60s）。
 #
 # fork 自 scripts/e2e-redis.sh：同款 redis 三级 fallback + cargo run 起服 +
@@ -61,6 +73,9 @@ REDIS_SUB_LOG="$RUN_DIR/redis-sub.log"
 # 让"重启后是否真有受控对战死"的等待 / 断言只看 P2 新事件，绝不被 P0 默认 seed 阶段
 # 早已记下的 cause=combat 历史行短路假过。
 REDIS_SUB_P2_LOG="$RUN_DIR/redis-sub-p2.log"
+# P4 narration 阶段专属：bong:agent_narrate 订阅日志 + 生产 OffscreenWarNarrationRuntime 日志。
+NARRATE_SUB_LOG="$RUN_DIR/agent-narrate-sub.log"
+OFFSCREEN_WAR_RT_LOG="$RUN_DIR/offscreen-war-runtime.log"
 OBSERVE_LOG="$RUN_DIR/observe.log"
 
 # 确定性旋钮（P0 交付物 1）。
@@ -74,6 +89,8 @@ REDIS_PID=""
 SERVER_PID=""
 REDIS_SUB_PID=""
 REDIS_SUB_P2_PID=""
+NARRATE_SUB_PID=""
+OFFSCREEN_WAR_RT_PID=""
 REDIS_PROVIDER=""
 REDIS_SERVER_BIN=""
 DOCKER_CONTAINER_NAME="bong-${TASK_ID}-redis-${RUN_ID}"
@@ -189,6 +206,115 @@ sub.on("message", (channel, message) => {
 setInterval(() => {}, 1000);
 NODE
   ) >"$out_log" 2>&1 &
+}
+
+# plan-offscreen-war-v1 P4：起一个 bong:agent_narrate 订阅者写到 $1 日志（默认 $NARRATE_SUB_LOG）。
+# 天道 narration 都发这个 channel；P4 只关心 scattered_cultivator broadcast 那条。
+start_agent_narrate_subscriber() {
+  local out_log="${1:-$NARRATE_SUB_LOG}"
+  (
+    cd "$ROOT/agent/packages/tiandao"
+    PATH="$NODE_BIN:$PATH" REDIS_URL="$REDIS_URL" node --input-type=module <<'NODE'
+import Redis from "ioredis";
+const IORedis = Redis.default ?? Redis;
+const sub = new IORedis(process.env.REDIS_URL, { maxRetriesPerRequest: 1 });
+const shutdown = async () => { try { await sub.quit(); } catch { try { sub.disconnect(); } catch {} } process.exit(0); };
+process.on("SIGINT", shutdown); process.on("SIGTERM", shutdown);
+await sub.subscribe("bong:agent_narrate");
+console.log("[narrate] subscribed bong:agent_narrate");
+sub.on("message", (channel, message) => {
+  console.log(`[narrate] channel=${channel} payload=${message}`);
+});
+setInterval(() => {}, 1000);
+NODE
+  ) >"$out_log" 2>&1 &
+}
+
+# plan-offscreen-war-v1 P4：起**真实生产** OffscreenWarNarrationRuntime（main.ts 注册的同一
+# class，从 dist/ import，非重写），连到本 e2e redis：订阅 bong:npc/death → 聚合 dormant 互殴
+# 战死 → emit bong:agent_narrate。flushWindowMs 设短值（确定性，免等默认 3s 窗口太久）。
+# $1 = 输出日志（默认 $OFFSCREEN_WAR_RT_LOG）。
+start_offscreen_war_runtime() {
+  local out_log="${1:-$OFFSCREEN_WAR_RT_LOG}"
+  (
+    cd "$ROOT/agent/packages/tiandao"
+    PATH="$NODE_BIN:$PATH" REDIS_URL="$REDIS_URL" node --input-type=module <<'NODE'
+import Redis from "ioredis";
+import { OffscreenWarNarrationRuntime } from "./dist/offscreen-war-narration.js";
+const IORedis = Redis.default ?? Redis;
+const sub = new IORedis(process.env.REDIS_URL, { maxRetriesPerRequest: 1 });
+const pub = new IORedis(process.env.REDIS_URL, { maxRetriesPerRequest: 1 });
+// 用本 e2e 的真实生产 runtime（与 main.ts startOffscreenWarRuntime 同一构造），窗口 800ms
+// 让一窗内多笔战死聚合成一条战报又不至于等太久。
+const runtime = new OffscreenWarNarrationRuntime({ sub, pub, flushWindowMs: 800 });
+const shutdown = async () => { try { await runtime.disconnect(); } catch {} process.exit(0); };
+process.on("SIGINT", shutdown); process.on("SIGTERM", shutdown);
+await runtime.connect();
+console.log("[offscreen-war-rt] connected (subscribed bong:npc/death → emit bong:agent_narrate)");
+setInterval(() => {
+  // 周期打 stats，便于诊断（received / combatDeaths / published）。
+  const s = runtime.stats;
+  console.log(`[offscreen-war-rt] stats received=${s.received} combat=${s.combatDeaths} ignored=${s.ignoredNonCombat} published=${s.published} emptyFlush=${s.emptyFlush} rejected=${s.rejectedContract}`);
+}, 5000);
+NODE
+  ) >"$out_log" 2>&1 &
+}
+
+# plan-offscreen-war-v1 P4 断言：bong:agent_narrate 日志里出现一条由离屏战死驱动的
+# broadcast / perception / scattered_cultivator narration（匿名散修消长，无具名宗门）。
+assert_offscreen_war_narration() {
+  local narrate_log="$1"
+  NARRATE_LOG="$narrate_log" redis_node <<'NODE'
+import { readFileSync } from "node:fs";
+
+const BANNED_SECTS = ["玄岭", "断魂", "青云", "沧渊", "宗门"];
+const lines = (() => {
+  try { return readFileSync(process.env.NARRATE_LOG, "utf8").split("\n"); } catch { return []; }
+})();
+
+const narrations = [];
+for (const line of lines) {
+  const m = line.match(/channel=bong:agent_narrate payload=(.*)$/);
+  if (!m) continue;
+  let payload;
+  try { payload = JSON.parse(m[1]); } catch { continue; }
+  if (payload && Array.isArray(payload.narrations)) narrations.push(...payload.narrations);
+}
+
+console.log(`[narrate] total narrations observed on bong:agent_narrate: ${narrations.length}`);
+
+// 找出 scattered_cultivator broadcast/perception 那条（P4 离屏战事叙事的确定性签名）。
+const warNarrations = narrations.filter(
+  (n) => n.kind === "scattered_cultivator" && n.scope === "broadcast" && n.style === "perception",
+);
+if (warNarrations.length === 0) {
+  console.error(`[narrate] FAIL: no broadcast/perception/scattered_cultivator narration observed; all kinds: ${JSON.stringify(narrations.map((n) => n.kind))}`);
+  process.exit(2);
+}
+
+const sample = warNarrations[0];
+console.log(`[narrate] PASS ①: offscreen-war narration emitted: scope=${sample.scope} style=${sample.style} kind=${sample.kind} text="${sample.text}"`);
+
+// ② 匿名散修框架：绝不出现具名宗门 token。
+for (const n of warNarrations) {
+  for (const banned of BANNED_SECTS) {
+    if (typeof n.text === "string" && n.text.includes(banned)) {
+      console.error(`[narrate] FAIL ②: narration leaked named sect '${banned}': ${n.text}`);
+      process.exit(3);
+    }
+  }
+}
+console.log(`[narrate] PASS ②: ${warNarrations.length} war narration(s) stay anonymous (no named sect)`);
+
+// ③ 散修群体涌现语义锚点（散修 / 无名 / 派系 / 修士 之一）。
+const anchored = warNarrations.every((n) => /散修|无名|派系|修士/.test(n.text ?? ""));
+if (!anchored) {
+  console.error(`[narrate] FAIL ③: some war narration missing scattered-cultivator semantic anchor`);
+  process.exit(4);
+}
+console.log(`[narrate] PASS ③: war narration(s) carry scattered-cultivator emergence framing`);
+process.exit(0);
+NODE
 }
 
 publish_spawn_npc() {
@@ -697,6 +823,12 @@ cleanup() {
   if [ -n "$REDIS_SUB_P2_PID" ] && kill -0 "$REDIS_SUB_P2_PID" 2>/dev/null; then
     kill "$REDIS_SUB_P2_PID" 2>/dev/null || true; wait "$REDIS_SUB_P2_PID" 2>/dev/null || true
   fi
+  if [ -n "$NARRATE_SUB_PID" ] && kill -0 "$NARRATE_SUB_PID" 2>/dev/null; then
+    kill "$NARRATE_SUB_PID" 2>/dev/null || true; wait "$NARRATE_SUB_PID" 2>/dev/null || true
+  fi
+  if [ -n "$OFFSCREEN_WAR_RT_PID" ] && kill -0 "$OFFSCREEN_WAR_RT_PID" 2>/dev/null; then
+    kill "$OFFSCREEN_WAR_RT_PID" 2>/dev/null || true; wait "$OFFSCREEN_WAR_RT_PID" 2>/dev/null || true
+  fi
   if [ -n "$SERVER_PID" ] && kill -0 "$SERVER_PID" 2>/dev/null; then
     kill "$SERVER_PID" 2>/dev/null || true; wait "$SERVER_PID" 2>/dev/null || true
   fi
@@ -721,20 +853,20 @@ echo "sim_seed: $SIM_SEED  dormant_tick_interval: $DORMANT_TICK_INTERVAL"
 
 echo ""
 CURRENT_STAGE="pre-cleanup"
-echo "=== [0/6] Pre-cleanup ==="
+echo "=== [0/9] Pre-cleanup ==="
 bash "$ROOT/scripts/stop.sh" >/dev/null 2>&1 || true
 pass "pre-cleanup complete"
 
 echo ""
 CURRENT_STAGE="redis"
-echo "=== [1/6] Redis provider ==="
+echo "=== [1/9] Redis provider ==="
 ensure_redis
 echo "[redis] provider: $REDIS_PROVIDER"
 pass "redis ready"
 
 echo ""
 CURRENT_STAGE="seed"
-echo "=== [2/6] Clean dormant slate (server default-seeds factioned rogues on boot) ==="
+echo "=== [2/9] Clean dormant slate (server default-seeds factioned rogues on boot) ==="
 if clear_dormant_key >>"$OBSERVE_LOG" 2>&1; then
   pass "cleared bong:npc/dormant (server will default-seed factioned rogues)"
 else
@@ -743,11 +875,17 @@ fi
 
 echo ""
 CURRENT_STAGE="schema"
-echo "=== [3/6] Schema build ==="
+echo "=== [3/9] Schema + tiandao build ==="
 if (cd "$ROOT/agent/packages/schema" && PATH="$NODE_BIN:$PATH" npm run build) >>"$REDIS_LOG" 2>&1; then
   pass "schema build"
 else
   finalize_failure "schema" "schema build failed; see $REDIS_LOG"
+fi
+# P4 需要 tiandao dist/（生产 OffscreenWarNarrationRuntime 从 dist/ import）。
+if (cd "$ROOT/agent/packages/tiandao" && PATH="$NODE_BIN:$PATH" npm run build) >>"$REDIS_LOG" 2>&1; then
+  pass "tiandao build (dist/ for P4 production runtime)"
+else
+  finalize_failure "schema" "tiandao build failed; see $REDIS_LOG"
 fi
 
 # 起一个确定性 server：$1=日志文件、$2=seed_count。设置 SERVER_PID 全局，等 world +
@@ -792,7 +930,7 @@ stop_server() {
 
 echo ""
 CURRENT_STAGE="server"
-echo "=== [4/8] Server startup (deterministic env) ==="
+echo "=== [4/9] Server startup (deterministic env) ==="
 # 默认 seed 8 个 dormant rogue（commit D 按 char_id 哈希赋 Attack/Defend）。
 start_server "$SERVER_LOG" "${BONG_DORMANT_ROGUE_SEED_COUNT:-8}"
 
@@ -805,7 +943,7 @@ fi
 
 echo ""
 CURRENT_STAGE="observe"
-echo "=== [5/8] Observe: agent_command_spawn_then_death_roundtrip + qi/ledger ==="
+echo "=== [5/9] Observe: agent_command_spawn_then_death_roundtrip + qi/ledger ==="
 start_redis_subscriber "$REDIS_SUB_LOG"
 REDIS_SUB_PID="$!"
 if wait_for_pattern "$REDIS_SUB_LOG" "\\[observe\\] subscribed" 30; then
@@ -860,7 +998,7 @@ fi
 
 echo ""
 CURRENT_STAGE="combat"
-echo "=== [6/8] Combat closure: controlled hostile pair → 离屏战死闭环 ==="
+echo "=== [6/9] Combat closure: controlled hostile pair → 离屏战死闭环 ==="
 # (1) 停掉 P0 server，从 redis 仍存的 HASH 抓一个真实快照作模板（schema-accurate）。
 stop_server
 COMBAT_SERVER_LOG="$RUN_DIR/server-combat.log"
@@ -900,6 +1038,27 @@ else
   finalize_failure "combat" "P2-fresh observer did not start; see $REDIS_SUB_P2_LOG"
 fi
 
+# (2.7) P4：在重启 server **之前**起 bong:agent_narrate 订阅者 + 真实生产
+# OffscreenWarNarrationRuntime（订阅 bong:npc/death）。pub/sub 非持久——必须在受控对 combat
+# 战死被 publish 之前就 subscribe，才能让同一笔离屏战死同时驱动 P2 守恒断言（P2 日志）和 P4
+# narration 断言（agent_narrate 日志）。复用 bong:npc/death，不新建 channel。
+: >"$NARRATE_SUB_LOG"
+start_agent_narrate_subscriber "$NARRATE_SUB_LOG"
+NARRATE_SUB_PID="$!"
+if wait_for_pattern "$NARRATE_SUB_LOG" "\\[narrate\\] subscribed bong:agent_narrate" 30; then
+  pass "P4 agent_narrate observer subscribed (before combat death publish)"
+else
+  finalize_failure "combat" "P4 agent_narrate observer did not start; see $NARRATE_SUB_LOG"
+fi
+: >"$OFFSCREEN_WAR_RT_LOG"
+start_offscreen_war_runtime "$OFFSCREEN_WAR_RT_LOG"
+OFFSCREEN_WAR_RT_PID="$!"
+if wait_for_pattern "$OFFSCREEN_WAR_RT_LOG" "\\[offscreen-war-rt\\] connected" 30; then
+  pass "P4 production OffscreenWarNarrationRuntime connected (subscribed bong:npc/death)"
+else
+  finalize_failure "combat" "P4 offscreen-war runtime did not connect; see $OFFSCREEN_WAR_RT_LOG"
+fi
+
 # (3) 重启 server（seed_count=0 → 不默认 seed；store 由 redis 还原非空 → 跑受控对）。
 start_server "$COMBAT_SERVER_LOG" 0
 # 等受控对（dormant:combat:*）真的战死出现在 **P2 专属日志**。pattern scope 到受控对 npc_id
@@ -925,7 +1084,7 @@ fi
 
 echo ""
 CURRENT_STAGE="relic"
-echo "=== [7/8] Battlefield relic: 克制式战场遗物创建（P3 主断言） ==="
+echo "=== [7/9] Battlefield relic: 克制式战场遗物创建（P3 主断言） ==="
 # 受控对是 Disciple + faction → 战死 should_leave_relic 通过 → emit PendingDormantRelicCreated
 # → persistence 落盘 sqlite + bong:npc/relic telemetry。读 P2 专属日志（已含 bong:npc/relic）断言
 # 受控对遗物创建 + archetype=disciple + char_id 对应真战死者。遗物零真元（持久层不碰 ledger），
@@ -941,12 +1100,34 @@ else
 fi
 
 echo ""
+CURRENT_STAGE="narration"
+echo "=== [8/9] 天道派系消长叙事: agent 消费离屏战死 → bong:agent_narrate（P4 主断言） ==="
+# 生产 OffscreenWarNarrationRuntime 自 [6/9] 起就订阅了 bong:npc/death，受控对 combat 战死
+# 已被它聚合 → emit bong:agent_narrate。先给 runtime 的窗口（flushWindowMs=800）+ publish 一点
+# 裕量，再断言 narrate 日志出现 broadcast/perception/scattered_cultivator 匿名散修消长 narration。
+# 复用 bong:npc/death，不碰 bong:npc/combat、不新建 channel（孤岛红旗，docs/CLAUDE.md §四）。
+echo "[narrate] waiting for offscreen-war narration on bong:agent_narrate ..."
+if wait_for_pattern "$NARRATE_SUB_LOG" "channel=bong:agent_narrate .*scattered_cultivator" 60; then
+  pass "observed scattered_cultivator narration on bong:agent_narrate (天道因离屏战死产出叙事)"
+else
+  finalize_failure "narration" "no scattered_cultivator narration on bong:agent_narrate within 60s; see $NARRATE_SUB_LOG / $OFFSCREEN_WAR_RT_LOG"
+fi
+if assert_offscreen_war_narration "$NARRATE_SUB_LOG" >>"$OBSERVE_LOG" 2>&1; then
+  pass "offscreen-war narration ①broadcast/perception/scattered_cultivator ②匿名(无具名宗门) ③散修群体涌现 framing"
+else
+  finalize_failure "narration" "offscreen-war narration assertions failed; see $OBSERVE_LOG / $NARRATE_SUB_LOG"
+fi
+
+echo ""
 CURRENT_STAGE="summary"
-echo "=== [8/8] Evidence ==="
+echo "=== [9/9] Evidence ==="
 echo "  log: $LOG_FILE"
 echo "  server: $SERVER_LOG"
 echo "  observe: $OBSERVE_LOG"
 echo "  redis-sub: $REDIS_SUB_LOG"
+echo "  redis-sub-p2: $REDIS_SUB_P2_LOG"
+echo "  agent-narrate-sub: $NARRATE_SUB_LOG"
+echo "  offscreen-war-runtime: $OFFSCREEN_WAR_RT_LOG"
 echo ""
 echo "Result: $PASS passed, $FAIL failed"
 
