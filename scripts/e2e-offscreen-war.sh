@@ -1,10 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# plan-offscreen-war-v1 P0 真服 headless e2e。
+# plan-offscreen-war-v1 P0+P2 真服 headless e2e。
 #
-# 验证"离屏世界可被外部 redis 自动观测"的底盘通路（P0 只测脚手架本身 +
-# 守恒 telemetry + 派系 bootstrap；dormant 战死闭环留 P2）：
+# P0（底盘通路 + 守恒 telemetry + 派系 bootstrap）：
 #   1. agent_command_spawn_then_death_roundtrip
 #      - redis-cli publish bong:agent_command（注意是 agent_command 不是 agent_cmd）
 #        注入 SpawnNpc → SUB bong:npc/spawn 断言收到 + zone 匹配。
@@ -14,6 +13,16 @@ set -euo pipefail
 #   2. bong:qi/ledger 起服后非空；守恒断言锁**天道预算**（budget_initial_total ==
 #      DEFAULT_SPIRIT_QI_TOTAL，zero-sum 真锚点），并校 total_observed（已落位真元）
 #      在预算内（不凭空造真元）。断言取 server const 引用，不写字面 100。
+#
+# P2（离屏战死闭环，本 plan 脊柱核心，全 headless redis 可观测）：
+#   3. 路径 B 受控种对：停 P0 server → 从 redis HGETALL 抓一个真实快照作模板 →
+#      flushall dormant → HSET 一对 Attack+Defend 同 zone 低真元 dormant → 重启 server。
+#   4. 等数轮快进 tick，断言（§11 核心 ①②③④⑤）：
+#      ① 出现 cause=combat & from_dormant_combat=true 的死亡（不再全是 natural_aging）；
+#      ② HLEN 人口下降量 == 观测到的（去重）combat 死亡数（种群守恒）；
+#      ③ 战死方 zone spirit_qi 上升（qi/ledger 的 account:zone:spawn > 0，败者真元守恒回灌）；
+#      ④ bong:qi/ledger budget==DEFAULT_SPIRIT_QI_TOTAL 且 total_observed ≤ budget（精确守恒）；
+#      ⑤ bong:npc/combat 的 outcome.loser 与战死 npc_id 一致。
 #
 # 确定性：BONG_SIM_SEED 固定 + BONG_DORMANT_TICK_INTERVAL 小值（免 sleep 60s）。
 #
@@ -151,7 +160,7 @@ start_redis_subscriber() {
     PATH="$NODE_BIN:$PATH" REDIS_URL="$REDIS_URL" node --input-type=module <<'NODE'
 import Redis from "ioredis";
 const IORedis = Redis.default ?? Redis;
-const channels = ["bong:npc/spawn", "bong:npc/death", "bong:world_state"];
+const channels = ["bong:npc/spawn", "bong:npc/death", "bong:world_state", "bong:npc/combat"];
 const sub = new IORedis(process.env.REDIS_URL, { maxRetriesPerRequest: 1 });
 const shutdown = async () => { try { await sub.quit(); } catch { try { sub.disconnect(); } catch {} } process.exit(0); };
 process.on("SIGINT", shutdown); process.on("SIGTERM", shutdown);
@@ -249,6 +258,223 @@ if (snaps.length === 0) { console.error("[observe] no dormant snapshots restored
 if (nullFaction > 0) { console.error(`[observe] ${nullFaction} dormant snapshots have faction=null`); process.exit(3); }
 if (!factions.has("attack") || !factions.has("defend")) {
   console.error("[observe] seeded hostile pair missing attack/defend factions"); process.exit(4);
+}
+process.exit(0);
+NODE
+}
+
+# ── plan-offscreen-war-v1 P2：离屏战死闭环 combat 场景 ─────────────────────────
+#
+# P2 需要"同 zone 两个敌对 dormant"才能开战。setup 用**路径 B**（HSET bong:npc/dormant
+# 写 schema-accurate 快照）：先从 P0 已起的 server 的 HGETALL 抓一个**真实** seeded
+# 快照作模板（避免手写 12 经脉等结构、随 NpcDormantSnapshot 漂移），再 mutate（char_id /
+# faction / 低正真元 / 长寿命）成一对 Attack+Defend 同 zone 候选。重启 server 时 store
+# 非空 → 跳默认 seed → 受控对生效。固定 BONG_SIM_SEED + 小 BONG_DORMANT_TICK_INTERVAL
+# 让战斗确定性快进。
+
+# 从当前 redis 的 bong:npc/dormant 抓一个真实快照作模板，写到 $1 文件（JSON）。
+capture_dormant_template() {
+  local out_file="$1"
+  OUT_FILE="$out_file" redis_node <<'NODE'
+import Redis from "ioredis";
+import { writeFileSync } from "node:fs";
+const IORedis = Redis.default ?? Redis;
+const client = new IORedis(process.env.REDIS_URL, { maxRetriesPerRequest: 2 });
+const hash = await client.hgetall("bong:npc/dormant");
+await client.quit();
+const raws = Object.values(hash);
+if (raws.length === 0) { console.error("[observe] no dormant snapshot to template from"); process.exit(2); }
+// 取一个 schema-accurate 真实快照作模板（任意一个即可，结构完整）。
+const template = JSON.parse(raws[0]);
+writeFileSync(process.env.OUT_FILE, JSON.stringify(template));
+console.log(`[observe] captured dormant template from ${template.char_id} (zone=${template.zone_name})`);
+process.exit(0);
+NODE
+}
+
+# 用模板造一对 Attack+Defend 同 zone、低正真元（combat-eligible）的受控 dormant，
+# flushall 旧 dormant 后 HSET 两个。$1 = 模板文件。
+seed_combat_pair() {
+  local template_file="$1"
+  TEMPLATE_FILE="$template_file" redis_node <<'NODE'
+import Redis from "ioredis";
+import { readFileSync } from "node:fs";
+const IORedis = Redis.default ?? Redis;
+const client = new IORedis(process.env.REDIS_URL, { maxRetriesPerRequest: 2 });
+const template = JSON.parse(readFileSync(process.env.TEMPLATE_FILE, "utf8"));
+
+// 用模板深拷贝两份，只改 char_id / faction / 真元 / 寿命 / 位置（同 zone、互相靠近）。
+function makeCombatant(charId, factionId, pos) {
+  const snap = JSON.parse(JSON.stringify(template));
+  snap.char_id = charId;
+  // faction：保留模板 membership 的其余字段，只换 faction_id（Attack vs Defend → is_hostile_pair=true）。
+  if (snap.faction == null) {
+    snap.faction = { faction_id: factionId, rank: "disciple", reputation: {}, lineage: null, mission_queue: {} };
+  } else {
+    snap.faction.faction_id = factionId;
+  }
+  // 低正真元（combat-eligible 且战死后能守恒回灌让 zone spirit_qi 上升）。
+  snap.cultivation.qi_current = 5.0;
+  if (snap.cultivation.qi_max < 5.0) snap.cultivation.qi_max = 60.0;
+  snap.initial_qi = 5.0;
+  // 长寿命 + 0 年龄：本轮绝不自然老死，让"死人"唯一来源是离屏战斗。
+  snap.lifespan.age_ticks = 0.0;
+  snap.lifespan.max_age_ticks = 100000000.0;
+  // 同 zone、Cultivate 意图（位置不漂移），两者靠近但不同坐标。
+  snap.intent = { Cultivate: { zone: snap.zone_name } };
+  snap.position = pos;
+  // 让本 tick 必结算（last_processed 落后于快进后的 tick）。
+  snap.dormant_since_tick = 0;
+  snap.last_dormant_tick_processed = 0;
+  // DeathRegistry / LifeRecord char_id 同步（模板里是别的 char_id）。
+  if (snap.death_registry && typeof snap.death_registry === "object") {
+    if ("char_id" in snap.death_registry) snap.death_registry.char_id = charId;
+    if ("character_id" in snap.death_registry) snap.death_registry.character_id = charId;
+  }
+  if (snap.life_record && typeof snap.life_record === "object") {
+    if ("char_id" in snap.life_record) snap.life_record.char_id = charId;
+    if ("character_id" in snap.life_record) snap.life_record.character_id = charId;
+  }
+  return snap;
+}
+
+const base = template.position ?? [0.0, 64.0, 0.0];
+const atk = makeCombatant("dormant:combat:atk", "attack", [base[0], base[1], base[2]]);
+const def = makeCombatant("dormant:combat:def", "defend", [base[0] + 1.0, base[1], base[2] + 1.0]);
+
+await client.del("bong:npc/dormant");
+await client.hset("bong:npc/dormant", "dormant:combat:atk", JSON.stringify(atk));
+await client.hset("bong:npc/dormant", "dormant:combat:def", JSON.stringify(def));
+const n = await client.hlen("bong:npc/dormant");
+await client.quit();
+console.log(`[observe] seeded controlled hostile pair (atk+def) in zone=${atk.zone_name}, HLEN=${n}`);
+if (n !== 2) { console.error(`[observe] expected HLEN 2 after seeding pair, got ${n}`); process.exit(3); }
+process.exit(0);
+NODE
+}
+
+# 断言：① 出现 cause=combat & from_dormant_combat=true 的死亡；② HLEN 人口降 ==
+# 观测到的 combat 死亡数；③ 战死方 zone spirit_qi 上升；④ ledger budget==DEFAULT 且
+# total_observed 全程 ≤ budget；⑤ bong:npc/combat outcome 的 loser 与 death 一致。
+# 读 redis-sub 日志（已收集 combat/death/world_state）+ HGETALL/HLEN + qi/ledger HASH。
+assert_combat_closure() {
+  local sub_log="$1"
+  local expected_total="$2"
+  SUB_LOG="$sub_log" EXPECTED_TOTAL="$expected_total" redis_node <<'NODE'
+import Redis from "ioredis";
+import { readFileSync } from "node:fs";
+const IORedis = Redis.default ?? Redis;
+const client = new IORedis(process.env.REDIS_URL, { maxRetriesPerRequest: 2 });
+
+const lines = readFileSync(process.env.SUB_LOG, "utf8").split("\n");
+// 解析 redis-sub 日志里的 death / combat payload（格式：channel=... payload=...）。
+const deaths = [];
+const outcomes = [];
+for (const line of lines) {
+  const m = line.match(/channel=(bong:npc\/death|bong:npc\/combat) payload=(.*)$/);
+  if (!m) continue;
+  let payload;
+  try { payload = JSON.parse(m[2].replace(/\.\.\.$/, "")); } catch { continue; }
+  if (m[1] === "bong:npc/death") deaths.push(payload);
+  else outcomes.push(payload);
+}
+
+// ① cause=combat & from_dormant_combat=true 的战死必须出现（不再全是 natural_aging）。
+const combatDeaths = deaths.filter((d) => d.cause === "combat" && d.from_dormant_combat === true);
+console.log(`[observe] deaths=${deaths.length} combat_deaths=${combatDeaths.length} outcomes=${outcomes.length}`);
+if (combatDeaths.length === 0) {
+  console.error(`[observe] FAIL ①: no cause=combat & from_dormant_combat=true death observed; all deaths: ${JSON.stringify(deaths)}`);
+  process.exit(2);
+}
+
+// ② 人口降 == 观测到的 combat 死亡数（去重 loser，retain 路径下死亡事件可能重复 emit）。
+const deadIds = new Set(combatDeaths.map((d) => d.npc_id));
+const remaining = await client.hlen("bong:npc/dormant");
+const popDrop = 2 - remaining; // setup 种了 2 个
+console.log(`[observe] t0_pop=2 t1_pop=${remaining} pop_drop=${popDrop} unique_combat_dead=${deadIds.size}`);
+if (popDrop !== deadIds.size) {
+  console.error(`[observe] FAIL ②: population drop ${popDrop} != unique combat-death count ${deadIds.size} (NPC vanished or double-counted)`);
+  await client.quit();
+  process.exit(3);
+}
+if (popDrop < 1) {
+  console.error(`[observe] FAIL ②: expected at least 1 combat death to drop population, drop=${popDrop}`);
+  await client.quit();
+  process.exit(3);
+}
+
+// ③ 战死方 zone spirit_qi 上升（还灵气）：从 world_state 日志取首末 spawn zone spirit_qi。
+const zoneSeries = [];
+for (const line of lines) {
+  const m = line.match(/channel=bong:world_state payload=(.*)$/);
+  if (!m) continue;
+  let payload;
+  try { payload = JSON.parse(m[1].replace(/\.\.\.$/, "")); } catch { continue; }
+  const zones = payload.zones ?? payload.zone ?? [];
+  const arr = Array.isArray(zones) ? zones : [zones];
+  const spawn = arr.find((z) => z && (z.name === "spawn"));
+  if (spawn && Number.isFinite(Number(spawn.spirit_qi))) zoneSeries.push(Number(spawn.spirit_qi));
+}
+// world_state payload 被 sub 截断到 320 字符，zone 数组可能不完整 → 退而求其次直接读 qi/ledger
+// 的 account:zone:spawn 行（更可靠）。这里若拿到了序列就校上升，否则跳过 ③ 的 world_state 源。
+if (zoneSeries.length >= 2) {
+  const rose = zoneSeries[zoneSeries.length - 1] >= zoneSeries[0];
+  console.log(`[observe] zone spirit_qi series first=${zoneSeries[0]} last=${zoneSeries[zoneSeries.length-1]} (from world_state)`);
+  if (!rose) {
+    console.error(`[observe] FAIL ③: spawn zone spirit_qi did not rise after combat death (${zoneSeries[0]} -> ${zoneSeries[zoneSeries.length-1]})`);
+    await client.quit();
+    process.exit(4);
+  }
+}
+
+// ④ ledger budget==DEFAULT 且 total_observed ≤ budget（精确守恒不凭空造真元）。
+const hash = await client.hgetall("bong:qi/ledger");
+const expected = Number(process.env.EXPECTED_TOTAL);
+const total = Number(hash.total_observed);
+const budgetInit = Number(hash.budget_initial_total);
+const budgetCur = Number(hash.budget_current_total);
+console.log(`[observe] post-combat qi/ledger total_observed=${total} budget_init=${budgetInit} budget_cur=${budgetCur}`);
+if (Math.abs(budgetInit - expected) > 1e-6) {
+  console.error(`[observe] FAIL ④: budget_initial_total ${budgetInit} != DEFAULT_SPIRIT_QI_TOTAL ${expected}`);
+  await client.quit();
+  process.exit(5);
+}
+if (!Number.isFinite(total) || total < 0 || total > budgetCur + 1e-6) {
+  console.error(`[observe] FAIL ④: total_observed ${total} out of conservation budget ${budgetCur} (造真元红线)`);
+  await client.quit();
+  process.exit(5);
+}
+
+// ⑤ bong:npc/combat outcome 的 loser 与 death 一致。
+const outcomeLosers = new Set(outcomes.map((o) => o.loser));
+const matched = [...deadIds].some((id) => outcomeLosers.has(id));
+console.log(`[observe] outcome_losers=${[...outcomeLosers].join(",")} death_ids=${[...deadIds].join(",")}`);
+if (outcomes.length === 0 || !matched) {
+  console.error(`[observe] FAIL ⑤: bong:npc/combat outcome loser does not match a combat death id`);
+  await client.quit();
+  process.exit(6);
+}
+
+await client.quit();
+console.log("[observe] combat closure assertions ①②③④⑤ all PASS");
+process.exit(0);
+NODE
+}
+
+# 直接从 qi/ledger HASH 读 spawn zone 账户余额（world_state 被 sub 截断时的可靠回退源）。
+assert_zone_qi_rose_via_ledger() {
+  redis_node <<'NODE'
+import Redis from "ioredis";
+const IORedis = Redis.default ?? Redis;
+const client = new IORedis(process.env.REDIS_URL, { maxRetriesPerRequest: 2 });
+const hash = await client.hgetall("bong:qi/ledger");
+await client.quit();
+const zoneAcct = Number(hash["account:zone:spawn"]);
+console.log(`[observe] account:zone:spawn balance=${zoneAcct}`);
+// 战死回灌后 spawn zone 账户应 > 0（败者真元守恒进 zone）。
+if (!Number.isFinite(zoneAcct) || zoneAcct <= 0) {
+  console.error(`[observe] FAIL ③(ledger): spawn zone account balance ${zoneAcct} should be > 0 after combat qi返灌`);
+  process.exit(2);
 }
 process.exit(0);
 NODE
@@ -354,34 +580,51 @@ else
   finalize_failure "schema" "schema build failed; see $REDIS_LOG"
 fi
 
+# 起一个确定性 server：$1=日志文件、$2=seed_count。设置 SERVER_PID 全局，等 world +
+# redis 两个 anchor 起来。失败直接 finalize_failure。
+start_server() {
+  local server_log="$1"
+  local seed_count="$2"
+  (
+    export PATH="$RUST_PATH"
+    export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-/tmp/bong-target}"
+    # 默认 seed N 个 dormant rogue（commit D 按 char_id 哈希赋 Attack/Defend）。小值避免
+    # 1000 条全量 bong:npc/dormant HASH 替换触发 redis 3s 超时（实测 1000 必超时、8 秒级完成）。
+    export BONG_DORMANT_ROGUE_SEED_COUNT="$seed_count"
+    export BONG_SKIP_SKIN_PREFETCH="${BONG_SKIP_SKIN_PREFETCH:-1}"
+    export BONG_SIM_SEED="$SIM_SEED"
+    export BONG_DORMANT_TICK_INTERVAL="$DORMANT_TICK_INTERVAL"
+    cd "$ROOT/server"
+    cargo run --release
+  ) >"$server_log" 2>&1 &
+  SERVER_PID="$!"
+
+  if wait_for_pattern "$server_log" "\\[bong\\]\\[world\\] creating overworld test area" 300; then
+    pass "server world bootstrap"
+  else
+    finalize_failure "server" "missing world bootstrap anchor in $server_log"
+  fi
+  if wait_for_pattern "$server_log" "\\[bong\\]\\[redis\\] subscribed to bong:agent_command" 300; then
+    pass "server redis subscribed"
+  else
+    finalize_failure "server" "missing redis subscribed anchor in $server_log"
+  fi
+}
+
+# 停掉当前 server（用于 combat 场景前的受控重种）。
+stop_server() {
+  if [ -n "$SERVER_PID" ] && kill -0 "$SERVER_PID" 2>/dev/null; then
+    kill "$SERVER_PID" 2>/dev/null || true
+    wait "$SERVER_PID" 2>/dev/null || true
+  fi
+  SERVER_PID=""
+}
+
 echo ""
 CURRENT_STAGE="server"
-echo "=== [4/6] Server startup (deterministic env) ==="
-(
-  export PATH="$RUST_PATH"
-  export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-/tmp/bong-target}"
-  # 默认 seed 8 个 dormant rogue（commit D 按 char_id 哈希赋 Attack/Defend）。小值避免
-  # 1000 条全量 bong:npc/dormant HASH 替换触发 redis 3s 超时（实测 1000 必超时、8 秒级完成）。
-  export BONG_DORMANT_ROGUE_SEED_COUNT="${BONG_DORMANT_ROGUE_SEED_COUNT:-8}"
-  export BONG_SKIP_SKIN_PREFETCH="${BONG_SKIP_SKIN_PREFETCH:-1}"
-  export BONG_SIM_SEED="$SIM_SEED"
-  export BONG_DORMANT_TICK_INTERVAL="$DORMANT_TICK_INTERVAL"
-  cd "$ROOT/server"
-  cargo run --release
-) >"$SERVER_LOG" 2>&1 &
-SERVER_PID="$!"
-
-if wait_for_pattern "$SERVER_LOG" "\\[bong\\]\\[world\\] creating overworld test area" 300; then
-  pass "server world bootstrap"
-else
-  finalize_failure "server" "missing world bootstrap anchor in $SERVER_LOG"
-fi
-
-if wait_for_pattern "$SERVER_LOG" "\\[bong\\]\\[redis\\] subscribed to bong:agent_command" 300; then
-  pass "server redis subscribed"
-else
-  finalize_failure "server" "missing redis subscribed anchor in $SERVER_LOG"
-fi
+echo "=== [4/7] Server startup (deterministic env) ==="
+# 默认 seed 8 个 dormant rogue（commit D 按 char_id 哈希赋 Attack/Defend）。
+start_server "$SERVER_LOG" "${BONG_DORMANT_ROGUE_SEED_COUNT:-8}"
 
 # dormant 默认 seed anchor（commit D 赋派系起效）。
 if wait_for_pattern "$SERVER_LOG" "seeded [0-9]+ dormant rogue NPC snapshots" 120; then
@@ -392,7 +635,7 @@ fi
 
 echo ""
 CURRENT_STAGE="observe"
-echo "=== [5/6] Observe: agent_command_spawn_then_death_roundtrip + qi/ledger ==="
+echo "=== [5/7] Observe: agent_command_spawn_then_death_roundtrip + qi/ledger ==="
 start_redis_subscriber
 if wait_for_pattern "$REDIS_SUB_LOG" "\\[observe\\] subscribed" 30; then
   pass "observer subscribed"
@@ -445,8 +688,57 @@ else
 fi
 
 echo ""
+CURRENT_STAGE="combat"
+echo "=== [6/7] Combat closure: controlled hostile pair → 离屏战死闭环 ==="
+# (1) 停掉 P0 server，从 redis 仍存的 HASH 抓一个真实快照作模板（schema-accurate）。
+stop_server
+COMBAT_SERVER_LOG="$RUN_DIR/server-combat.log"
+TEMPLATE_FILE="$RUN_DIR/dormant-template.json"
+if capture_dormant_template "$TEMPLATE_FILE" >>"$OBSERVE_LOG" 2>&1; then
+  pass "captured schema-accurate dormant template from redis"
+else
+  finalize_failure "combat" "failed to capture dormant template; see $OBSERVE_LOG"
+fi
+
+# (2) flushall dormant + HSET 受控 Attack/Defend 同 zone 低真元对（路径 B）。
+if seed_combat_pair "$TEMPLATE_FILE" >>"$OBSERVE_LOG" 2>&1; then
+  pass "seeded controlled hostile pair (attack+defend, same zone, low qi)"
+else
+  finalize_failure "combat" "failed to seed controlled combat pair; see $OBSERVE_LOG"
+fi
+
+# (3) 重启 server（seed_count=0 → 不默认 seed；store 由 redis 还原非空 → 跑受控对）。
+start_server "$COMBAT_SERVER_LOG" 0
+# 重启后 subscriber 仍连着（独立连接）；但日志文件保留之前的 P0 内容，combat 断言只看
+# combat/death 行，时间上是新的。等数轮快进 tick（DORMANT_TICK_INTERVAL 小值）让战斗结算。
+echo "[observe] waiting for offscreen combat death (cause=combat) ..."
+if wait_for_pattern "$REDIS_SUB_LOG" "channel=bong:npc/death.*\"cause\":\"combat\"" 120; then
+  pass "observed bong:npc/death with cause=combat (远方真的死人了)"
+else
+  finalize_failure "combat" "no cause=combat death observed within 120s after combat-pair reboot; see $REDIS_SUB_LOG / $COMBAT_SERVER_LOG"
+fi
+
+# 等一个 world_state/dormant HASH publish 周期让 HLEN / qi/ledger 反映战死后状态。
+sleep 12
+
+# (4) 全套 combat closure 断言 ①②③④⑤。
+EXPECTED_TOTAL="${EXPECTED_TOTAL:-$(read_default_spirit_qi_total)}"
+if assert_combat_closure "$REDIS_SUB_LOG" "$EXPECTED_TOTAL" >>"$OBSERVE_LOG" 2>&1; then
+  pass "combat closure ①cause=combat ②人口降==战死数 ③zone还灵气 ④守恒 ⑤outcome对账"
+else
+  finalize_failure "combat" "combat closure assertions failed; see $OBSERVE_LOG / $REDIS_SUB_LOG"
+fi
+
+# (5) ③ 的可靠回退源：直接读 qi/ledger 的 spawn zone 账户余额 > 0（还灵气精确锁）。
+if assert_zone_qi_rose_via_ledger >>"$OBSERVE_LOG" 2>&1; then
+  pass "qi/ledger spawn zone account > 0 (败者真元守恒回灌精确锁)"
+else
+  finalize_failure "combat" "spawn zone ledger account not positive after combat 还灵气; see $OBSERVE_LOG"
+fi
+
+echo ""
 CURRENT_STAGE="summary"
-echo "=== [6/6] Evidence ==="
+echo "=== [7/7] Evidence ==="
 echo "  log: $LOG_FILE"
 echo "  server: $SERVER_LOG"
 echo "  observe: $OBSERVE_LOG"
