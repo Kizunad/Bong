@@ -171,8 +171,7 @@ impl NpcArchetype {
     /// sqlite `pending_dormant_relics.archetype`，玩家靠近 hydrate 时读回这个字符串重建
     /// archetype 喂 `default_loot_for_archetype`。与 `as_str` 严格对称（每个变体一条），
     /// 未知串返回 `None`（让调用方显式处理脏数据而非静默吞成默认 archetype）。
-    // deferred-on-hydrate 遗物消费方（交付物 3）接入；交付物 2 仅持久层 + 测试用。
-    #[cfg_attr(not(test), allow(dead_code))]
+    /// 消费方：`npc::dormant::relic_hydrate::materialize_relic_loot`（交付物 3）。
     pub fn from_str(value: &str) -> Option<Self> {
         Some(match value {
             "zombie" => Self::Zombie,

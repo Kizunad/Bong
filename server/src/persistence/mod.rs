@@ -4042,8 +4042,7 @@ pub fn persist_pending_dormant_relic(
 
 /// plan-offscreen-war-v1 P3：读出某个 zone 全部待物化战场遗物（按 created_wall 稳定排序，
 /// 让 deferred-on-hydrate 物化顺序确定性）。`loot_seed` 从 i64 投影回 u64（无损往返）。
-// deferred-on-hydrate 消费方（交付物 3）接入；交付物 2 仅持久层 + 测试用。
-#[cfg_attr(not(test), allow(dead_code))]
+/// 消费方：`npc::dormant::relic_hydrate::hydrate_pending_dormant_relics_system`（交付物 3）。
 pub fn load_pending_dormant_relics_for_zone(
     settings: &PersistenceSettings,
     zone: &str,
@@ -4086,8 +4085,7 @@ pub fn load_pending_dormant_relics_for_zone(
 
 /// plan-offscreen-war-v1 P3：删一行已物化（hydrate 消费完）的战场遗物。消费后立刻删，
 /// 保证同一遗物不被二次物化（玩家拾走后再次靠近不再凭空再生一份 loot）。
-// deferred-on-hydrate 消费方（交付物 3）接入；交付物 2 仅持久层 + 测试用。
-#[cfg_attr(not(test), allow(dead_code))]
+/// 消费方：`npc::dormant::relic_hydrate::hydrate_pending_dormant_relics_system`（交付物 3）。
 pub fn delete_pending_dormant_relic(
     settings: &PersistenceSettings,
     relic_id: &str,

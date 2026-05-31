@@ -117,6 +117,18 @@ impl PendingGameplayNarrations {
             kind: None,
         });
     }
+
+    /// plan-offscreen-war-v1 P3：zone-scope 叙事（`target` = zone 名，路由给该 zone 内的
+    /// client，见 `network::mod::narration_selector`）。战场遗物揭示用感知体（perception）。
+    pub fn push_zone(&mut self, zone: &str, text: impl Into<String>, style: NarrationStyle) {
+        self.pending.push(Narration {
+            scope: NarrationScope::Zone,
+            target: Some(zone.to_string()),
+            text: text.into(),
+            style,
+            kind: None,
+        });
+    }
 }
 
 #[derive(Default)]

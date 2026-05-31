@@ -1,0 +1,11 @@
+{
+  "id": "offscreen_relic_reveal",
+  "layers": [
+    { "sound": "minecraft:entity.player.levelup", "volume": 0.4, "pitch": 0.6, "delay_ticks": 0 },
+    { "sound": "minecraft:block.bone_block.break", "volume": 0.5, "pitch": 0.8, "delay_ticks": 2 }
+  ],
+  "priority": 42,
+  "attenuation": "world_3d",
+  "category": "AMBIENT",
+  "bus": "ENVIRONMENT"
+}

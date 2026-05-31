@@ -10,6 +10,10 @@
 /// 战死结算（release qi / emit death / 人口回写）在 P2 接进 `dormant_global_tick_system`。
 pub mod combat;
 
+/// plan-offscreen-war-v1 P3 交付物 3+4：克制式战场遗物的 deferred-on-hydrate 物化
+/// （玩家靠近 zone → 读 sqlite pending relic → 零真元物化成地面 loot + VFX/audio/narration）。
+pub mod relic_hydrate;
+
 use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
@@ -528,6 +532,7 @@ pub fn register(app: &mut App) {
                 dormant_global_tick_system,
             ),
         );
+    relic_hydrate::register(app);
 }
 
 fn load_dormant_store_from_redis_system(mut store: ResMut<NpcDormantStore>) {
