@@ -386,6 +386,8 @@ pub fn register(app: &mut App) {
         (
             npc_event_bridge::publish_npc_spawn_events,
             npc_event_bridge::publish_npc_death_events,
+            // plan-offscreen-war-v1 P2：离屏战果 telemetry → bong:npc/combat。
+            npc_event_bridge::publish_dormant_combat_events,
             npc_event_bridge::publish_faction_events.after(execute_agent_commands),
             rat_phase_bridge::publish_rat_phase_events
                 .after(crate::fauna::rat_phase::pressure_sensor_tick_system),

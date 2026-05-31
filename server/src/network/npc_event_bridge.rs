@@ -2,10 +2,11 @@ use valence::prelude::{EventReader, Res};
 
 use super::redis_bridge::RedisOutbound;
 use super::RedisBridgeResource;
+use crate::npc::dormant::DormantCombatOutcome;
 use crate::npc::faction::FactionEventNotice;
 use crate::npc::lifecycle::{NpcDeathNotice, NpcSpawnNotice};
 use crate::npc::movement::GameTick;
-use crate::schema::npc::{FactionEventV1, NpcDeathV1, NpcSpawnedV1};
+use crate::schema::npc::{DormantCombatOutcomeV1, FactionEventV1, NpcDeathV1, NpcSpawnedV1};
 
 const NPC_EVENT_VERSION: u8 = 1;
 
@@ -56,6 +57,36 @@ pub fn publish_npc_death_events(
         };
         if let Err(error) = redis.tx_outbound.send(RedisOutbound::NpcDeath(wire)) {
             tracing::warn!("[bong][npc_event_bridge] dropped NpcDeath: {error}");
+        }
+    }
+}
+
+/// plan-offscreen-war-v1 P2：把离屏 dormant 互殴战果 `DormantCombatOutcome` 转成
+/// `DormantCombatOutcomeV1` 发到 `bong:npc/combat`（纯 telemetry，镜像
+/// `publish_npc_death_events`）。**真元流动不经此**——已由 dormant 战死结算的
+/// `release_dormant_qi_to_zone` → `ledger.transfer(ReleaseToZone)` 真实记账完成；本系统
+/// 只搬运观测字段，外部 e2e 据此把 outcome 与 `bong:npc/death` 对账。
+pub fn publish_dormant_combat_events(
+    redis: Res<RedisBridgeResource>,
+    game_tick: Option<Res<GameTick>>,
+    mut events: EventReader<DormantCombatOutcome>,
+) {
+    let at_tick = current_game_tick(game_tick.as_deref());
+    for ev in events.read() {
+        let wire = DormantCombatOutcomeV1 {
+            v: NPC_EVENT_VERSION,
+            kind: "dormant_combat_outcome".to_string(),
+            winner: ev.winner.clone(),
+            loser: ev.loser.clone(),
+            zone: ev.zone.clone(),
+            qi_released: ev.qi_released,
+            at_tick,
+        };
+        if let Err(error) = redis
+            .tx_outbound
+            .send(RedisOutbound::DormantCombatOutcome(wire))
+        {
+            tracing::warn!("[bong][npc_event_bridge] dropped DormantCombatOutcome: {error}");
         }
     }
 }

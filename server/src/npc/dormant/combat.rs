@@ -19,11 +19,9 @@
 //! 注意：`KnownTechniques::default()` 在 `dev-techniques` feature 下会返回**全功法**而非空，
 //! 为让合成战力与 feature flag 无关、保持 realm 单调，这里显式构造 `{ entries: vec![] }`。
 
-// P1 是纯逻辑先行 PR：本模块导出的函数（配对 / 胜负 roll / 战力合成）的运行时消费点是
-// P2 的 `dormant_global_tick_system` combat phase，本 PR 尚未接线，故非 test build 暂无
-// caller。与同仓 `combat_power.rs` / P0 `sim_seed` 字段同样的 `dead_code` 豁免约定——
-// 接口先于实现锁定，饱和单测已全面覆盖；P2 接入后移除本豁免不会改测试。
-#![allow(dead_code)]
+// plan-offscreen-war-v1 P2：本模块的配对 / 胜负 roll 已被 `dormant_global_tick_system` 的
+// combat phase（`run_dormant_combat_phase`）真实消费，P1 时期的 `#![allow(dead_code)]` 豁免
+// 已移除——接口先于实现锁定，饱和单测全面覆盖，接入后未改任何测试。
 
 use super::{deterministic_hash, NpcDormantSnapshot, NpcDormantStore, NpcVirtualizationConfig};
 use crate::combat::components::{DerivedAttrs, Wounds};
