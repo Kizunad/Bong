@@ -136,6 +136,8 @@ public class VfxRegistryTest {
             "bootstrap should register npc_death_smoke");
         assertTrue(VfxRegistry.instance().contains(NpcDeathQiBurstPlayer.EVENT_ID),
             "bootstrap should register npc_death_qi_burst");
+        assertTrue(VfxRegistry.instance().contains(OffscreenRelicRevealPlayer.EVENT_ID),
+            "bootstrap should register offscreen_relic_reveal (plan-offscreen-war-v1 P3 battlefield relic decal)");
         assertTrue(VfxRegistry.instance().contains(NpcRankAuraPlayer.ELDER),
             "bootstrap should register npc_rank_aura_elder");
         assertTrue(VfxRegistry.instance().contains(NpcRankAuraPlayer.MASTER),

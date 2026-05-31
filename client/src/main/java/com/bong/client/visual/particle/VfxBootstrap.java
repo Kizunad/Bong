@@ -49,6 +49,7 @@ public final class VfxBootstrap {
         registry.register(DeathSoulDissipatePlayer.EVENT_ID,     new DeathSoulDissipatePlayer());
         registry.register(NpcDeathSmokePlayer.EVENT_ID,          new NpcDeathSmokePlayer());
         registry.register(NpcDeathQiBurstPlayer.EVENT_ID,        new NpcDeathQiBurstPlayer());
+        registry.register(OffscreenRelicRevealPlayer.EVENT_ID,   new OffscreenRelicRevealPlayer());
         NpcRankAuraPlayer npcRankAura = new NpcRankAuraPlayer();
         registry.register(NpcRankAuraPlayer.ELDER,               npcRankAura);
         registry.register(NpcRankAuraPlayer.MASTER,              npcRankAura);
