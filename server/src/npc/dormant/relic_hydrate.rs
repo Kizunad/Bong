@@ -277,21 +277,26 @@ fn hydrate_pending_dormant_relics_system(
 
         for record in relics {
             let entries = materialize_relic_loot(&record, dimension, item_registry, allocator);
-
-            // 即便 entries 为空（脏 archetype / 全部模板缺失），也删掉该 pending 行——它无法
-            // 物化成任何东西，留着只会每次玩家来都重试失败。删后发 narration 仍合理（"曾有厮杀"）。
             let reveal_pos = DVec3::new(record.pos_x, record.pos_y, record.pos_z);
-            for entry in entries {
-                loot_registry.entries.insert(entry.instance_id, entry);
-            }
 
+            // **先删 sqlite pending 行确认消费，再插入 loot registry**（CodeRabbit Critical /
+            // Pi agent）：loot entry 的 instance_id 来自运行时 allocator，每次物化都不同 → 若
+            // 先插 registry 后删行、且 delete 失败，下轮 hydrate 会重新物化同一行、拿到新
+            // instance_id，造成**重复** loot（非幂等）。改为「先删后插」：delete 失败则 continue
+            // 跳过本行的 insert + 视听（至多丢一次遗物 loot，优于稳定复制）。即便 delete 成功后
+            // 后续 crash，sqlite 行已删也不会二次物化。
+            // 注：entries 为空（脏 archetype / 全部模板缺失）时也要删——它无法物化成任何东西，
+            // 留着只会每次玩家来都重试失败；删除成功后照常发 narration（"曾有厮杀"）。
             if let Err(error) = delete_pending_dormant_relic(settings, &record.relic_id) {
                 tracing::warn!(
-                    "[bong][npc] failed to delete consumed pending relic {}: {error}",
+                    "[bong][npc] failed to delete consumed pending relic {}: {error}; skipping materialization this round to avoid duplicate loot (will retry next time the player enters)",
                     record.relic_id
                 );
-                // 删失败仍继续——下次玩家来会重新物化（registry 用 instance_id 去重不会爆，
-                // 但会多发一份 loot；删失败是 IO 异常路径，记日志即可，不阻塞）。
+                continue;
+            }
+
+            for entry in entries {
+                loot_registry.entries.insert(entry.instance_id, entry);
             }
 
             // 视听：发现遗物的地表贴花 + 低沉揭示音效 + zone 感知叙事。
