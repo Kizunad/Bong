@@ -26,9 +26,11 @@
 use super::{deterministic_hash, NpcDormantSnapshot, NpcDormantStore, NpcVirtualizationConfig};
 use crate::combat::components::{DerivedAttrs, Wounds};
 use crate::cultivation::breakthrough::{RollSource, XorshiftRoll};
+use crate::cultivation::components::Realm;
 use crate::cultivation::known_techniques::KnownTechniques;
-use crate::npc::combat_power::{compute_combat_power, CombatPowerScore};
+use crate::npc::combat_power::{compute_combat_power, realm_ordinal, CombatPowerScore};
 use crate::npc::faction::FactionStore;
+use crate::npc::lifecycle::NpcArchetype;
 use crate::social::components::CharId;
 
 /// 合成一份 dormant 快照的离屏战力（§10.1 #2）。
@@ -198,6 +200,47 @@ pub fn roll_dormant_combat_death(
     } else {
         Some(b.char_id.clone())
     }
+}
+
+/// 固元境（`Realm::Solidify`）的 realm ordinal——遗物克制判定的境界门槛（plan-offscreen-war-v1
+/// P3 §139）。提取为具名 const 而非裸字面 `3`：境界 ordinal 是 [`realm_ordinal`] 的契约，
+/// 写死字面会在 enum 重排时静默漂移。`debug_assert` 在测试 / debug build 锁死该等价关系。
+const RELIC_REALM_THRESHOLD: u8 = 3; // realm_ordinal(Realm::Solidify)
+
+/// 「这名战死者值不值得在战场留下遗物」——**克制判定**（plan-offscreen-war-v1 P3 §139）。
+///
+/// 末法基调下遍地尸体违和，故只有"知名 / 有来历"的战死者才留遗物：
+/// - `Disciple` / `GuardianRelic` archetype（有宗门 / 是护道遗灵 → 必有信物）；**或**
+/// - 任意 `faction.is_some()`（结派散修，身上带派系信物）；**或**
+/// - 境界 ≥ 固元（`realm_ordinal(realm) >= 3`，固元及以上是真正的高手，殒落值得记载）。
+///
+/// 普通无派系低境 `Rogue` / `Commoner` / `Beast` 等 ⇒ `false`，不留遗物、不淹没世界。
+///
+/// 纯只读判定：只看 archetype / faction / realm 三个快照字段，零副作用、绝不 panic。
+/// **守恒无关**：本函数不碰真元——它只决定"要不要后续创建一个零真元遗物"，真元守恒
+/// 已由调用方在判定**之前**的 `release_dormant_qi_to_zone` 完成（§10.1 #5 ④红线）。
+pub fn should_leave_relic(snapshot: &NpcDormantSnapshot) -> bool {
+    debug_assert_eq!(
+        realm_ordinal(Realm::Solidify),
+        RELIC_REALM_THRESHOLD,
+        "RELIC_REALM_THRESHOLD must stay == realm_ordinal(Solidify); realm enum reordered without updating the relic threshold const"
+    );
+    matches!(
+        snapshot.archetype,
+        NpcArchetype::Disciple | NpcArchetype::GuardianRelic
+    ) || snapshot.faction.is_some()
+        || realm_ordinal(snapshot.cultivation.realm) >= RELIC_REALM_THRESHOLD
+}
+
+/// 战场遗物的 **deterministic loot 种子**（plan-offscreen-war-v1 P3 §141/§142）。
+///
+/// 遗物 loot 必须可复现：战死结算时算出该种子并持久化进 `pending_dormant_relics`，玩家
+/// 靠近 hydrate 时用同一种子 `roll_loot(default_loot_for_archetype(archetype), seed)`，保证
+/// "同一具战场遗骸每次掉同一批战利品"。种子由 `(char_id, tick)` 经 [`deterministic_hash`]
+/// 混合后再 `^ sim_seed`——与 [`roll_dormant_combat_death`] 同源的确定性 RNG 输入构造，
+/// 让 `BONG_SIM_SEED` 一并控制 loot 结果，真服 e2e 可复现。纯整数运算、确定性。
+pub fn relic_loot_seed(char_id: &CharId, tick: u64, sim_seed: u64) -> u64 {
+    deterministic_hash(char_id, tick) ^ sim_seed
 }
 
 #[cfg(test)]
@@ -691,6 +734,161 @@ mod tests {
         assert!(
             diverged,
             "varying the tick must be able to change the loser (tick is mixed into deterministic_hash); no tick in 1..200 diverged from baseline {baseline:?}"
+        );
+    }
+
+    // ───────────────────────── 克制式遗物判定 should_leave_relic（P3 §139） ────────
+
+    /// 造一个指定 archetype 的快照（faction / realm 可选），用于遗物克制判定测试。
+    fn relic_snapshot(
+        archetype: NpcArchetype,
+        realm: Realm,
+        faction: Option<FactionId>,
+    ) -> NpcDormantSnapshot {
+        let mut snap = snapshot("relic_subject", "z", realm, faction);
+        snap.archetype = archetype;
+        snap
+    }
+
+    #[test]
+    fn plain_rogue_leaves_no_relic() {
+        // 普通无派系低境 Rogue（末法的"无名散修"）⇒ 不留遗物，避免遍地尸体违和。
+        let snap = relic_snapshot(NpcArchetype::Rogue, Realm::Awaken, None);
+        assert!(
+            !should_leave_relic(&snap),
+            "a plain factionless low-realm Rogue must NOT leave a relic (末法基调 restraint); should_leave_relic returned true"
+        );
+    }
+
+    #[test]
+    fn commoner_and_beast_leave_no_relic() {
+        // 其它低境无派系 archetype（凡人 / 妖兽）同样不留——遗物只给"知名 / 有来历"者。
+        for archetype in [NpcArchetype::Commoner, NpcArchetype::Beast] {
+            let snap = relic_snapshot(archetype, Realm::Induce, None);
+            assert!(
+                !should_leave_relic(&snap),
+                "{archetype:?} (low realm, no faction) must not leave a relic; only named/factioned/high-realm dead do"
+            );
+        }
+    }
+
+    #[test]
+    fn disciple_archetype_leaves_relic_even_low_realm() {
+        // Disciple 有宗门 → 身上必带派系信物 ⇒ 即便最低境也留遗物。
+        let snap = relic_snapshot(NpcArchetype::Disciple, Realm::Awaken, None);
+        assert!(
+            should_leave_relic(&snap),
+            "a Disciple carries a sect token by archetype, so even an Awaken-realm one must leave a relic"
+        );
+    }
+
+    #[test]
+    fn guardian_relic_archetype_leaves_relic_even_low_realm() {
+        // GuardianRelic 是护道遗灵 → 必留遗物（engraved_plaque chance=1.0）。
+        let snap = relic_snapshot(NpcArchetype::GuardianRelic, Realm::Awaken, None);
+        assert!(
+            should_leave_relic(&snap),
+            "a GuardianRelic is a relic-guardian by nature and must leave a relic regardless of realm"
+        );
+    }
+
+    #[test]
+    fn factioned_low_realm_rogue_leaves_relic() {
+        // 关键正例：低境 Rogue 但**有派系** ⇒ 留遗物（结派散修带信物）。
+        // 单测同时锁住"faction.is_some() 这一支独立于 archetype/realm 生效"。
+        let snap = relic_snapshot(NpcArchetype::Rogue, Realm::Awaken, Some(FactionId::Attack));
+        assert!(
+            should_leave_relic(&snap),
+            "a factioned Rogue (even Awaken realm) must leave a relic because faction membership implies a sect token; faction branch failed"
+        );
+    }
+
+    #[test]
+    fn neutral_faction_low_realm_rogue_still_leaves_relic() {
+        // faction.is_some() 不区分 faction_id：Neutral 也算"结派"⇒ 留遗物。
+        // （worldview：带派系信物即可，敌对与否是战斗判定的事，不是遗物判定。）
+        let snap = relic_snapshot(NpcArchetype::Rogue, Realm::Awaken, Some(FactionId::Neutral));
+        assert!(
+            should_leave_relic(&snap),
+            "any faction membership (incl. Neutral) implies a token ⇒ relic; should_leave_relic only checks faction.is_some()"
+        );
+    }
+
+    #[test]
+    fn solidify_realm_rogue_leaves_relic_boundary() {
+        // 境界门槛 off-by-one 边界：恰好固元（ordinal==3）⇒ 留遗物（>= 门槛）。
+        let snap = relic_snapshot(NpcArchetype::Rogue, Realm::Solidify, None);
+        assert!(
+            should_leave_relic(&snap),
+            "a Solidify-realm Rogue is exactly at the threshold (ordinal 3 >= 3) and must leave a relic; off-by-one in realm gate"
+        );
+    }
+
+    #[test]
+    fn condense_realm_rogue_leaves_no_relic_just_below_threshold() {
+        // 境界门槛 off-by-one 边界：凝脉（ordinal==2，固元下一档）⇒ 不留遗物（< 门槛）。
+        let snap = relic_snapshot(NpcArchetype::Rogue, Realm::Condense, None);
+        assert!(
+            !should_leave_relic(&snap),
+            "a Condense-realm Rogue (ordinal 2 < 3) is just below the relic threshold and must NOT leave a relic; gate must be >= Solidify not >= Condense"
+        );
+    }
+
+    #[test]
+    fn high_realm_factionless_rogue_leaves_relic() {
+        // 高境（化虚 ordinal==5）无派系 Rogue ⇒ realm 支撑留遗物（独立于 faction/archetype）。
+        let snap = relic_snapshot(NpcArchetype::Rogue, Realm::Void, None);
+        assert!(
+            should_leave_relic(&snap),
+            "a Void-realm factionless Rogue must leave a relic via the realm>=Solidify branch alone"
+        );
+    }
+
+    #[test]
+    fn relic_threshold_const_matches_solidify_ordinal() {
+        // 锁死 const 与 realm_ordinal(Solidify) 的等价——enum 重排即撞红（不靠 debug_assert）。
+        assert_eq!(
+            RELIC_REALM_THRESHOLD,
+            realm_ordinal(Realm::Solidify),
+            "RELIC_REALM_THRESHOLD must equal realm_ordinal(Solidify); a realm enum reorder silently broke the relic gate"
+        );
+    }
+
+    // ───────────────────────── 遗物 loot 种子 relic_loot_seed（P3 §142） ──────────
+
+    #[test]
+    fn relic_loot_seed_is_deterministic_for_same_inputs() {
+        let id = "dormant:fallen:disciple".to_string();
+        let first = relic_loot_seed(&id, 1234, 42);
+        let second = relic_loot_seed(&id, 1234, 42);
+        assert_eq!(
+            first, second,
+            "identical (char_id, tick, sim_seed) must yield an identical loot seed so a relic re-rolls the same loot on hydrate; got {first} then {second}"
+        );
+    }
+
+    #[test]
+    fn relic_loot_seed_varies_with_sim_seed() {
+        // BONG_SIM_SEED 必须真的影响 loot 种子（确定性可控，不同 sim_seed 不同 loot）。
+        let id = "dormant:fallen:disciple".to_string();
+        let baseline = relic_loot_seed(&id, 1234, 0);
+        let diverged = (1..200u64).any(|sim| relic_loot_seed(&id, 1234, sim) != baseline);
+        assert!(
+            diverged,
+            "varying sim_seed must change the loot seed (sim_seed is XORed in); no sim_seed in 1..200 diverged from baseline {baseline}"
+        );
+    }
+
+    #[test]
+    fn relic_loot_seed_varies_with_char_id() {
+        // 不同战死者（char_id）应得不同 loot 种子，避免全场遗物掉一样的东西。
+        let tick = 1234u64;
+        let sim = 42u64;
+        let a = relic_loot_seed(&"dormant:a".to_string(), tick, sim);
+        let b = relic_loot_seed(&"dormant:b".to_string(), tick, sim);
+        assert_ne!(
+            a, b,
+            "different fallen NPCs (char_id) should get different loot seeds; deterministic_hash collapsed distinct ids to the same seed"
         );
     }
 }

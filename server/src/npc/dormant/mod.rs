@@ -488,6 +488,30 @@ pub struct DormantCombatOutcome {
     pub qi_released: f64,
 }
 
+/// plan-offscreen-war-v1 P3：一名**克制判定通过**的离屏战死者要在战场留下的待物化遗物
+/// （deferred-on-hydrate）的内部 event。
+///
+/// 由 `run_dormant_combat_phase` 在败者**真元已守恒释放完毕**（`release_dormant_qi_to_zone`
+/// 之后、`store.snapshots.remove` 之前）且 [`combat::should_leave_relic`] 为真时 emit；
+/// `persistence::persist_pending_dormant_relics_system` 消费它写进 sqlite `pending_dormant_relics`
+/// 表。**守恒红线（§10.1 #5 ④）**：本 event 不携带任何真元——遗物 loot 物化时 `spirit_quality=0`，
+/// 持久层完全不碰 `WorldQiAccount` / ledger。emit 时机严格在 release 之后保证「先把残余真元
+/// 守恒还给 zone，再用快照创建零真元遗物」，绝无「先留遗物 / 先 remove、qi 没释放」的吞真元窗口。
+///
+/// `loot_seed` 是 [`combat::relic_loot_seed`] 算出的 deterministic 种子；玩家靠近 hydrate 时
+/// 用它 `roll_loot(default_loot_for_archetype(archetype), loot_seed)`，保证遗物 loot 可复现。
+/// `created_tick` 是逻辑结算 tick（deferred-on-hydrate 时序校验用）；`created_wall` 留给持久层
+/// 填墙钟（TTL sweep 阈值用 wall-clock，不依赖逻辑 tick）。
+#[derive(Clone, Debug, Event, PartialEq)]
+pub struct PendingDormantRelicCreated {
+    pub char_id: CharId,
+    pub zone: String,
+    pub position: [f64; 3],
+    pub archetype: NpcArchetype,
+    pub loot_seed: u64,
+    pub created_tick: u64,
+}
+
 pub fn register(app: &mut App) {
     tracing::info!("[bong][npc] registering dormant NPC store and batch tick");
     app.init_resource::<NpcDormantStore>()
@@ -495,6 +519,7 @@ pub fn register(app: &mut App) {
         .insert_resource(DormantRoguePopulationSeedConfig::default())
         .add_event::<DormantSeveredAt>()
         .add_event::<DormantCombatOutcome>()
+        .add_event::<PendingDormantRelicCreated>()
         .add_systems(Startup, load_dormant_store_from_redis_system)
         .add_systems(
             Update,
@@ -673,6 +698,7 @@ fn dormant_global_tick_system(
     mut ledger: Option<ResMut<WorldQiAccount>>,
     mut death_notices: EventWriter<NpcDeathNotice>,
     mut combat_outcomes: EventWriter<DormantCombatOutcome>,
+    mut pending_relics: EventWriter<PendingDormantRelicCreated>,
 ) {
     let tick = current_tick(game_tick.as_deref());
     if !should_run_interval(tick, config.dormant_tick_interval_ticks) {
@@ -760,6 +786,7 @@ fn dormant_global_tick_system(
             ledger,
             &mut death_notices,
             &mut combat_outcomes,
+            &mut pending_relics,
         );
         if combat_removed {
             removed_expired = true;
@@ -801,6 +828,7 @@ fn run_dormant_combat_phase(
     ledger: &mut WorldQiAccount,
     death_notices: &mut EventWriter<NpcDeathNotice>,
     combat_outcomes: &mut EventWriter<DormantCombatOutcome>,
+    pending_relics: &mut EventWriter<PendingDormantRelicCreated>,
 ) -> bool {
     // ① 配对：immutable 只读 → owned id 对（§10.1 #3 collect-then-index）。
     let pairs = combat::collect_zone_combat_pairs(store, faction_store, config);
@@ -864,6 +892,24 @@ fn run_dormant_combat_phase(
                 residual
             );
         } else {
+            // ⑦ 克制式战场遗物（P3）：**真元已守恒释放完毕（residual <= QI_EPSILON）此刻**，
+            // 且 should_leave_relic 通过的知名战死者，emit 一个零真元遗物 event 给持久层。
+            // 严格在 release 之后、remove 之前——「先把残余真元守恒还给 zone，再用快照创建
+            // 零真元遗物，最后 remove」，绝无吞真元窗口（§10.1 #5 ④ / docs/CLAUDE.md §四红线）。
+            // 重新 immutable 借用 store 读快照字段（单一只读借用，与上方早已 drop 的 &mut 不冲突）。
+            if let Some(dead) = store.snapshots.get(&loser_id) {
+                if combat::should_leave_relic(dead) {
+                    let loot_seed = combat::relic_loot_seed(&loser_id, tick, config.sim_seed);
+                    pending_relics.send(PendingDormantRelicCreated {
+                        char_id: loser_id.clone(),
+                        zone: dead.zone_name.clone(),
+                        position: dead.position,
+                        archetype: dead.archetype,
+                        loot_seed,
+                        created_tick: tick,
+                    });
+                }
+            }
             store.snapshots.remove(&loser_id);
             removed_any = true;
         }
@@ -1639,6 +1685,7 @@ mod tests {
         let mut age_app = App::new();
         age_app.add_event::<NpcDeathNotice>();
         age_app.add_event::<DormantCombatOutcome>();
+        age_app.add_event::<PendingDormantRelicCreated>();
         age_app.insert_resource(NpcVirtualizationConfig {
             dormant_tick_interval_ticks: 1,
             ..Default::default()
@@ -1669,6 +1716,7 @@ mod tests {
         let mut death_app = App::new();
         death_app.add_event::<NpcDeathNotice>();
         death_app.add_event::<DormantCombatOutcome>();
+        death_app.add_event::<PendingDormantRelicCreated>();
         death_app.insert_resource(NpcVirtualizationConfig {
             dormant_tick_interval_ticks: 1,
             ..Default::default()
@@ -1924,6 +1972,7 @@ mod tests {
         let mut app = App::new();
         app.add_event::<NpcDeathNotice>();
         app.add_event::<DormantCombatOutcome>();
+        app.add_event::<PendingDormantRelicCreated>();
         app.insert_resource(NpcVirtualizationConfig {
             dormant_tick_interval_ticks: 1,
             ..Default::default()
@@ -1987,6 +2036,7 @@ mod tests {
         let mut app = App::new();
         app.add_event::<NpcDeathNotice>();
         app.add_event::<DormantCombatOutcome>();
+        app.add_event::<PendingDormantRelicCreated>();
         app.insert_resource(NpcVirtualizationConfig {
             dormant_tick_interval_ticks: 1,
             ..Default::default()
@@ -2016,6 +2066,7 @@ mod tests {
         let mut app = App::new();
         app.add_event::<NpcDeathNotice>();
         app.add_event::<DormantCombatOutcome>();
+        app.add_event::<PendingDormantRelicCreated>();
         app.insert_resource(NpcVirtualizationConfig {
             dormant_tick_interval_ticks: 1,
             ..Default::default()
@@ -2332,6 +2383,14 @@ mod tests {
 
     use crate::qi_physics::{assert_conservation, QiAccountId, WorldQiAccount};
 
+    /// 一帧 `dormant_global_tick_system` 后收回的全部相关 event（P2 死亡/战果 + P3 待物化遗物）。
+    /// 用具名 struct 而非裸三元组，让断言读起来是 `events.relics` 而非 `.2`。
+    struct CombatTickEvents {
+        deaths: Vec<NpcDeathNotice>,
+        outcomes: Vec<DormantCombatOutcome>,
+        relics: Vec<PendingDormantRelicCreated>,
+    }
+
     /// 造一个**敌对、满真元、不会自然老死**的战斗候选快照：给定 char_id / 派系 / 真元。
     /// realm 拉到 Condense 让 condition_factor 由满血+满真元主导，战力 realm-monotonic。
     fn combat_snapshot(
@@ -2399,10 +2458,11 @@ mod tests {
         ledger: &mut WorldQiAccount,
         config: &NpcVirtualizationConfig,
         tick: u64,
-    ) -> (Vec<NpcDeathNotice>, Vec<DormantCombatOutcome>) {
+    ) -> CombatTickEvents {
         let mut app = App::new();
         app.add_event::<NpcDeathNotice>();
         app.add_event::<DormantCombatOutcome>();
+        app.add_event::<PendingDormantRelicCreated>();
         app.insert_resource(NpcVirtualizationConfig {
             dormant_tick_interval_ticks: 1,
             ..config.clone()
@@ -2428,6 +2488,11 @@ mod tests {
             .resource_mut::<Events<DormantCombatOutcome>>()
             .drain()
             .collect::<Vec<_>>();
+        let relics = app
+            .world_mut()
+            .resource_mut::<Events<PendingDormantRelicCreated>>()
+            .drain()
+            .collect::<Vec<_>>();
 
         // 写回更新后的资源到调用方引用。
         *store = app
@@ -2436,7 +2501,11 @@ mod tests {
             .unwrap();
         *zones = app.world_mut().remove_resource::<ZoneRegistry>().unwrap();
         *ledger = app.world_mut().remove_resource::<WorldQiAccount>().unwrap();
-        (deaths, outcomes)
+        CombatTickEvents {
+            deaths,
+            outcomes,
+            relics,
+        }
     }
 
     #[test]
@@ -2464,7 +2533,9 @@ mod tests {
         let mut ledger = WorldQiAccount::default();
         let config = NpcVirtualizationConfig::default();
 
-        let (deaths, outcomes) = run_combat_tick(&mut store, &mut zones, &mut ledger, &config, 7);
+        let CombatTickEvents {
+            deaths, outcomes, ..
+        } = run_combat_tick(&mut store, &mut zones, &mut ledger, &config, 7);
 
         assert_eq!(
             deaths.len(),
@@ -2516,7 +2587,9 @@ mod tests {
         let mut ledger = WorldQiAccount::default();
         let config = NpcVirtualizationConfig::default();
 
-        let (deaths, outcomes) = run_combat_tick(&mut store, &mut zones, &mut ledger, &config, 7);
+        let CombatTickEvents {
+            deaths, outcomes, ..
+        } = run_combat_tick(&mut store, &mut zones, &mut ledger, &config, 7);
 
         let notice = &deaths[0];
         assert_eq!(
@@ -2562,7 +2635,8 @@ mod tests {
         let mut ledger = WorldQiAccount::default();
         let config = NpcVirtualizationConfig::default();
 
-        let (deaths, _outcomes) = run_combat_tick(&mut store, &mut zones, &mut ledger, &config, 7);
+        let CombatTickEvents { deaths, .. } =
+            run_combat_tick(&mut store, &mut zones, &mut ledger, &config, 7);
 
         assert_eq!(
             store.len(),
@@ -2605,7 +2679,8 @@ mod tests {
         let mut ledger = WorldQiAccount::default();
         let config = NpcVirtualizationConfig::default();
 
-        let (deaths, _outcomes) = run_combat_tick(&mut store, &mut zones, &mut ledger, &config, 7);
+        let CombatTickEvents { deaths, .. } =
+            run_combat_tick(&mut store, &mut zones, &mut ledger, &config, 7);
 
         let loser = &deaths[0].npc_id;
         let winner_id = if loser == "atk" { "def" } else { "atk" };
@@ -2642,7 +2717,9 @@ mod tests {
         let mut ledger = WorldQiAccount::default();
         let config = NpcVirtualizationConfig::default();
 
-        let (deaths, outcomes) = run_combat_tick(&mut store, &mut zones, &mut ledger, &config, 7);
+        let CombatTickEvents {
+            deaths, outcomes, ..
+        } = run_combat_tick(&mut store, &mut zones, &mut ledger, &config, 7);
 
         assert_eq!(
             deaths.len(),
@@ -2712,7 +2789,9 @@ mod tests {
         // max_combats_per_zone 默认 3 ≥ 2，足够配出两对。
         let config = NpcVirtualizationConfig::default();
 
-        let (deaths, outcomes) = run_combat_tick(&mut store, &mut zones, &mut ledger, &config, 7);
+        let CombatTickEvents {
+            deaths, outcomes, ..
+        } = run_combat_tick(&mut store, &mut zones, &mut ledger, &config, 7);
 
         assert_eq!(
             deaths.len(),
@@ -2805,7 +2884,7 @@ mod tests {
         };
         let mut total_deaths = 0usize;
         for round in 0..10u64 {
-            let (deaths, _outcomes) =
+            let CombatTickEvents { deaths, .. } =
                 run_combat_tick(&mut store, &mut zones, &mut ledger, &config, round + 1);
             total_deaths += deaths.len();
             // 每轮断言：账本总量始终严格守恒（不止 before/after，每一步都不漂）。
@@ -2855,6 +2934,241 @@ mod tests {
                 snap.cultivation.qi_current,
             );
         }
+    }
+
+    // ── plan-offscreen-war-v1 P3：克制式战场遗物结算（守恒 + 克制 + 时序窗口） ────
+
+    /// 造一个**指定 archetype** 的战斗候选快照（其余同 `combat_snapshot`）。
+    /// 用于 P3 区分"知名战死者（Disciple/GuardianRelic/有派系）留遗物 vs 普通 rogue 不留"。
+    fn combat_snapshot_named(
+        char_id: &str,
+        archetype: NpcArchetype,
+        faction: Option<FactionId>,
+        qi_current: f64,
+        pos: DVec3,
+    ) -> NpcDormantSnapshot {
+        // faction=None 时仍需 is_hostile 才能配对 → 用一个有 faction 的对手开打；这里允许
+        // None（测试里始终配一个有派系的对手保证开战）。
+        let mut snap = combat_snapshot(
+            char_id,
+            faction.unwrap_or(FactionId::Attack),
+            qi_current,
+            pos,
+        );
+        snap.archetype = archetype;
+        snap.faction = faction.map(|faction_id| FactionMembership {
+            faction_id,
+            rank: FactionRank::Disciple,
+            reputation: Reputation::default(),
+            lineage: None,
+            mission_queue: MissionQueue::default(),
+        });
+        snap
+    }
+
+    #[test]
+    fn combat_death_emits_pending_relic_for_named_disciple() {
+        // 一对敌对 dormant，败者是 Disciple（必留遗物）。真元充足 zone（spirit_qi=0.8）→ 全额
+        // 释放 → 败者本轮移除 → 遗物 event 必 emit。遗物字段（zone/pos/archetype/seed）正确。
+        let mut zones = ZoneRegistry {
+            zones: vec![zone()],
+        };
+        let mut store = NpcDormantStore::default();
+        store.insert(combat_snapshot_named(
+            "fallen_disciple",
+            NpcArchetype::Disciple,
+            Some(FactionId::Attack),
+            5.0,
+            DVec3::new(10.0, 64.0, 10.0),
+        ));
+        store.insert(combat_snapshot_named(
+            "rival",
+            NpcArchetype::Disciple,
+            Some(FactionId::Defend),
+            5.0,
+            DVec3::new(11.0, 64.0, 11.0),
+        ));
+        store.take_dirty();
+        let mut ledger = WorldQiAccount::default();
+        let config = NpcVirtualizationConfig::default();
+
+        let events = run_combat_tick(&mut store, &mut zones, &mut ledger, &config, 7);
+
+        assert_eq!(
+            events.deaths.len(),
+            1,
+            "exactly one of the two hostile disciples must die per round, got {}",
+            events.deaths.len()
+        );
+        // 两名都是 Disciple ⇒ 无论谁死都该留遗物。
+        assert_eq!(
+            events.relics.len(),
+            1,
+            "a fallen Disciple (named, factioned) must emit exactly one PendingDormantRelicCreated; got {} relic events",
+            events.relics.len()
+        );
+        let relic = &events.relics[0];
+        let loser_id = &events.deaths[0].npc_id;
+        assert_eq!(
+            &relic.char_id, loser_id,
+            "the relic must belong to the NPC that actually died ({loser_id}), got {}",
+            relic.char_id
+        );
+        assert_eq!(
+            relic.archetype,
+            NpcArchetype::Disciple,
+            "relic archetype must match the fallen NPC's archetype for deterministic loot rolling, got {:?}",
+            relic.archetype
+        );
+        assert_eq!(
+            relic.created_tick, 7,
+            "relic created_tick must be the settlement tick (7) for deferred-on-hydrate ordering, got {}",
+            relic.created_tick
+        );
+        // loot_seed 必须 == relic_loot_seed(loser, tick, sim_seed)（确定性可复现）。
+        let expected_seed = combat::relic_loot_seed(loser_id, 7, config.sim_seed);
+        assert_eq!(
+            relic.loot_seed, expected_seed,
+            "relic loot_seed must equal relic_loot_seed(loser, tick, sim_seed) so hydrate re-rolls identical loot; got {} expected {}",
+            relic.loot_seed, expected_seed
+        );
+    }
+
+    #[test]
+    fn combat_death_emits_no_relic_for_plain_factionless_rogue_pair() {
+        // 一对**无派系、低境（Awaken）** Rogue。它们无 faction 无法用 faction 配对——为强制
+        // 开打，给二者一个共同敌对关系：通过 FactionStore 让 Attack↔Defend 敌对，但 archetype
+        // 仍是 Rogue。这里走"有 faction 才配对"的现实约束：给二者 Attack/Defend faction 会
+        // 触发 should_leave_relic 的 faction 支。故本测试改测"realm 太低 + 仍有 faction"不成立，
+        // 转而锁住真正的"普通无名散修"：Awaken Rogue **无 faction**，用直接调结算函数验证
+        // should_leave_relic=false（配对需 faction 是 collect 层的事，与遗物判定解耦）。
+        let plain = combat_snapshot_named(
+            "nameless_rogue",
+            NpcArchetype::Rogue,
+            None,
+            5.0,
+            DVec3::new(10.0, 64.0, 10.0),
+        );
+        // 降到最低境，确保 realm 支也不成立。
+        let mut plain = plain;
+        plain.cultivation.realm = Realm::Awaken;
+        assert!(
+            !combat::should_leave_relic(&plain),
+            "a nameless factionless Awaken-realm Rogue must NOT leave a relic; the combat settlement must skip relic emission for it"
+        );
+    }
+
+    #[test]
+    fn no_relic_emitted_for_factionless_rogue_through_full_combat_tick() {
+        // 端到端：两名 **Awaken 无派系** Rogue 无法用 faction 配对开打。为让它们真的开战且
+        // 验证"打死了但不留遗物"，借 collect 的现实：配对需 faction。故构造"一名有派系的
+        // 高手 vs 一名普通无名 rogue"会让无名方有概率活/死，难确定性断言无名方一定死。
+        // 改为更干净的契约锁：两名 **有派系但凝脉（ordinal 2 < 固元）** 的 Rogue 互殴——
+        // 它们因 faction 而配对 + 因 faction 而**留**遗物（faction 支）。这验证 faction 支生效。
+        // 真正"普通 rogue 不留"由上一条 should_leave_relic 单测 + combat.rs 饱和单测锁死。
+        //
+        // 这里专门验证一个**反向**端到端事实：把一对 Rogue 的 faction 都设成 None 后，即便
+        // 直接喂进 store，combat phase 因无法配对而**根本不开战** ⇒ 0 死亡 0 遗物（绝不
+        // 凭空给无派系者造遗物）。
+        let mut zones = ZoneRegistry {
+            zones: vec![zone()],
+        };
+        let mut store = NpcDormantStore::default();
+        let mut a = combat_snapshot_named(
+            "rogue_a",
+            NpcArchetype::Rogue,
+            None,
+            5.0,
+            DVec3::new(10.0, 64.0, 10.0),
+        );
+        a.cultivation.realm = Realm::Awaken;
+        let mut b = combat_snapshot_named(
+            "rogue_b",
+            NpcArchetype::Rogue,
+            None,
+            5.0,
+            DVec3::new(11.0, 64.0, 11.0),
+        );
+        b.cultivation.realm = Realm::Awaken;
+        store.insert(a);
+        store.insert(b);
+        store.take_dirty();
+        let mut ledger = WorldQiAccount::default();
+        let config = NpcVirtualizationConfig::default();
+
+        let events = run_combat_tick(&mut store, &mut zones, &mut ledger, &config, 7);
+
+        assert!(
+            events.deaths.is_empty(),
+            "two factionless Rogues cannot be paired (no hostile faction) ⇒ no combat ⇒ no deaths, got {}",
+            events.deaths.len()
+        );
+        assert!(
+            events.relics.is_empty(),
+            "no combat ⇒ no relics; factionless Rogues must never produce a battlefield relic, got {}",
+            events.relics.len()
+        );
+    }
+
+    #[test]
+    fn no_relic_emitted_while_loser_retained_for_unreleased_qi() {
+        // **守恒时序窗口红线**：zone 满 → 败者残余真元无法全额释放 → retain-until-released
+        // 本轮**不**移除败者 → 此刻**绝不能** emit 遗物（必须等真元先守恒还完才允许造零真元
+        // 遗物）。构造法同 `zone_full_retains_loser_until_released`：spirit_qi=1.0（顶到
+        // QI_ZONE_UNIT_CAPACITY，不接受任何回灌）→ overflow 全留败者账户 → 本轮 retain。
+        // 败者必是必留遗物的 Disciple，确保"本轮 0 遗物"不是因为 should_leave_relic=false，
+        // 而是因为"真元未释放完不许造遗物"——精确锁住吞真元窗口红线。
+        let mut full_zone = zone();
+        full_zone.spirit_qi = 1.0;
+        let mut zones = ZoneRegistry {
+            zones: vec![full_zone],
+        };
+        let mut ledger = WorldQiAccount::default();
+        let mut store = NpcDormantStore::default();
+        store.insert(combat_snapshot_named(
+            "trapped_disciple",
+            NpcArchetype::Disciple,
+            Some(FactionId::Attack),
+            5.0,
+            DVec3::new(10.0, 64.0, 10.0),
+        ));
+        store.insert(combat_snapshot_named(
+            "trapped_rival",
+            NpcArchetype::Disciple,
+            Some(FactionId::Defend),
+            5.0,
+            DVec3::new(11.0, 64.0, 11.0),
+        ));
+        store.take_dirty();
+        let config = NpcVirtualizationConfig::default();
+
+        let events = run_combat_tick(&mut store, &mut zones, &mut ledger, &config, 7);
+
+        // 战斗确实发生（有 death notice + outcome），但败者真元未全释放 ⇒ 本轮保留 + 0 遗物。
+        assert_eq!(
+            events.deaths.len(),
+            1,
+            "combat still happens (one disciple is rolled dead), got {} deaths",
+            events.deaths.len()
+        );
+        let loser_id = events.deaths[0].npc_id.clone();
+        // 败者本轮应仍在 store（retain-until-released），且残余真元 > ε。
+        let retained = store.snapshots.get(&loser_id).unwrap_or_else(|| {
+            panic!(
+                "loser {loser_id} must be RETAINED this round (zone full, qi not fully released), but it was removed"
+            )
+        });
+        assert!(
+            retained.cultivation.qi_current > QI_EPSILON,
+            "retained loser must still carry unreleased residual qi (> QI_EPSILON), got {}",
+            retained.cultivation.qi_current
+        );
+        // 关键守恒红线：真元未释放完 ⇒ 本轮**绝不**造遗物（防"先留遗物/先 remove、qi 没释放"窗口）。
+        assert!(
+            events.relics.is_empty(),
+            "NO relic may be emitted while the loser is retained for unreleased qi — emitting one would open the qi-eating window (relic created before residual qi is conserved back to zone); got {} relic events",
+            events.relics.len()
+        );
     }
 
     /// 从账本构造一个守恒快照：把整个 `WorldQiAccount` 总量放进 `ledger_qi`，其余分量置 0。
