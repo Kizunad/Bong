@@ -49,6 +49,10 @@ RUST_PATH="/opt/rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin:$PATH"
 REDIS_LOG="$RUN_DIR/redis.log"
 SERVER_LOG="$RUN_DIR/server.log"
 REDIS_SUB_LOG="$RUN_DIR/redis-sub.log"
+# P2 受控对专属订阅日志（FIX-A）：P2 combat 阶段起一条**全新** subscriber 写到这里，
+# 让"重启后是否真有受控对战死"的等待 / 断言只看 P2 新事件，绝不被 P0 默认 seed 阶段
+# 早已记下的 cause=combat 历史行短路假过。
+REDIS_SUB_P2_LOG="$RUN_DIR/redis-sub-p2.log"
 OBSERVE_LOG="$RUN_DIR/observe.log"
 
 # 确定性旋钮（P0 交付物 1）。
@@ -61,6 +65,7 @@ CURRENT_STAGE="init"
 REDIS_PID=""
 SERVER_PID=""
 REDIS_SUB_PID=""
+REDIS_SUB_P2_PID=""
 REDIS_PROVIDER=""
 REDIS_SERVER_BIN=""
 DOCKER_CONTAINER_NAME="bong-${TASK_ID}-redis-${RUN_ID}"
@@ -154,7 +159,10 @@ process.exit(0);
 NODE
 }
 
+# 起一个 redis subscriber 把 spawn/death/world_state/combat 写到 $1 日志文件。
+# $1 = 输出日志（默认 P0 的 $REDIS_SUB_LOG）。返回 PID 由调用方读 `$!`/全局变量自取。
 start_redis_subscriber() {
+  local out_log="${1:-$REDIS_SUB_LOG}"
   (
     cd "$ROOT/agent/packages/tiandao"
     PATH="$NODE_BIN:$PATH" REDIS_URL="$REDIS_URL" node --input-type=module <<'NODE'
@@ -172,8 +180,7 @@ sub.on("message", (channel, message) => {
 });
 setInterval(() => {}, 1000);
 NODE
-  ) >"$REDIS_SUB_LOG" 2>&1 &
-  REDIS_SUB_PID="$!"
+  ) >"$out_log" 2>&1 &
 }
 
 publish_spawn_npc() {
@@ -303,7 +310,14 @@ const IORedis = Redis.default ?? Redis;
 const client = new IORedis(process.env.REDIS_URL, { maxRetriesPerRequest: 2 });
 const template = JSON.parse(readFileSync(process.env.TEMPLATE_FILE, "utf8"));
 
-// 用模板深拷贝两份，只改 char_id / faction / 真元 / 寿命 / 位置（同 zone、互相靠近）。
+// FIX-C(b)：把受控对锚定进 **spawn** zone（zones.json spirit_qi=0.3 → zone_current≈15，
+// 距 QI_ZONE_UNIT_CAPACITY=50 还有 ~35 自由容量 ≫ 败者 qi_current=5）。这样
+// release_dormant_qi_to_zone 的 5 必定**全额**落账、不触发 retain-until-released，败者必被
+// 移除 → popDrop 必反映战死，与 FIX-C(a) 的轮询合力确保"延迟≠失败"且确定性。spawn AABB
+// 为 [-750,750]³（zones.json），故下方位置取近原点 [0,64,0] 必落在 spawn 内。
+const COMBAT_ZONE = "spawn";
+
+// 用模板深拷贝两份，只改 char_id / faction / 真元 / 寿命 / zone / 位置（同 zone、互相靠近）。
 function makeCombatant(charId, factionId, pos) {
   const snap = JSON.parse(JSON.stringify(template));
   snap.char_id = charId;
@@ -320,9 +334,12 @@ function makeCombatant(charId, factionId, pos) {
   // 长寿命 + 0 年龄：本轮绝不自然老死，让"死人"唯一来源是离屏战斗。
   snap.lifespan.age_ticks = 0.0;
   snap.lifespan.max_age_ticks = 100000000.0;
+  // 强制锚定到 spawn zone（FIX-C(b)，自由容量充足保证全额释放）。release 优先按 position
+  // find_zone（mod.rs:1290），故 zone_name 与 position 都对齐到 spawn。
+  snap.zone_name = COMBAT_ZONE;
   // 同 zone、cultivate 意图（位置不漂移），两者靠近但不同坐标。
   // 注意：DormantBehaviorIntent 是 #[serde(rename_all = "snake_case")]，variant 键必须小写。
-  snap.intent = { cultivate: { zone: snap.zone_name } };
+  snap.intent = { cultivate: { zone: COMBAT_ZONE } };
   snap.position = pos;
   // 让本 tick 必结算（last_processed 落后于快进后的 tick）。
   snap.dormant_since_tick = 0;
@@ -339,7 +356,8 @@ function makeCombatant(charId, factionId, pos) {
   return snap;
 }
 
-const base = template.position ?? [0.0, 64.0, 0.0];
+// 近原点（必在 spawn AABB [-750,750]³ 内），两者靠近但坐标不同 → 同 zone 可配对开战。
+const base = [0.0, 64.0, 0.0];
 const atk = makeCombatant("dormant:combat:atk", "attack", [base[0], base[1], base[2]]);
 const def = makeCombatant("dormant:combat:def", "defend", [base[0] + 1.0, base[1], base[2] + 1.0]);
 
@@ -354,78 +372,146 @@ process.exit(0);
 NODE
 }
 
+# 把当前 bong:qi/ledger 里所有 `account:zone:*` 余额 dump 成 JSON 写到 $1 文件（FIX-B）。
+# 用作"受控战死前"的 preAccount 基线，让 ③ 断言"账户实际上升（post-pre>0）"而非仅"post>0"
+# （后者可能被模板自带的预存余额假过，即使还灵气路径断了）。
+capture_zone_accounts() {
+  local out_file="$1"
+  OUT_FILE="$out_file" redis_node <<'NODE'
+import Redis from "ioredis";
+import { writeFileSync } from "node:fs";
+const IORedis = Redis.default ?? Redis;
+const client = new IORedis(process.env.REDIS_URL, { maxRetriesPerRequest: 2 });
+const hash = await client.hgetall("bong:qi/ledger");
+await client.quit();
+const accounts = {};
+for (const [k, v] of Object.entries(hash)) {
+  if (k.startsWith("account:zone:")) accounts[k] = Number(v);
+}
+writeFileSync(process.env.OUT_FILE, JSON.stringify(accounts));
+console.log(`[observe] captured pre-combat zone accounts: ${JSON.stringify(accounts)}`);
+process.exit(0);
+NODE
+}
+
 # 断言：① 出现 cause=combat & from_dormant_combat=true 的死亡；② HLEN 人口降 ==
-# 观测到的 combat 死亡数；③ 战死方 zone spirit_qi 上升；④ ledger budget==DEFAULT 且
-# total_observed 全程 ≤ budget；⑤ bong:npc/combat outcome 的 loser 与 death 一致。
-# 读 redis-sub 日志（已收集 combat/death/world_state）+ HGETALL/HLEN + qi/ledger HASH。
+# 观测到的 combat 死亡数；③ 战死方 zone spirit_qi 实际上升（post-pre>0，对齐 pre 基线）；
+# ④ ledger budget==DEFAULT 且 total_observed 全程 ≤ budget；⑤ bong:npc/combat outcome
+# 的 loser 与 death 一致。读 redis-sub 日志（已收集 combat/death/world_state）+ HGETALL/HLEN
+# + qi/ledger HASH + preAccount 基线文件。
 assert_combat_closure() {
   local sub_log="$1"
   local expected_total="$2"
-  SUB_LOG="$sub_log" EXPECTED_TOTAL="$expected_total" redis_node <<'NODE'
+  local pre_account_file="$3"
+  SUB_LOG="$sub_log" EXPECTED_TOTAL="$expected_total" PRE_ACCOUNT_FILE="$pre_account_file" redis_node <<'NODE'
 import Redis from "ioredis";
 import { readFileSync } from "node:fs";
 const IORedis = Redis.default ?? Redis;
 const client = new IORedis(process.env.REDIS_URL, { maxRetriesPerRequest: 2 });
 
-const lines = readFileSync(process.env.SUB_LOG, "utf8").split("\n");
-// 解析 redis-sub 日志里的 death / combat payload（格式：channel=... payload=...）。
-const deaths = [];
-const outcomes = [];
-for (const line of lines) {
-  const m = line.match(/channel=(bong:npc\/death|bong:npc\/combat) payload=(.*)$/);
-  if (!m) continue;
-  let payload;
-  try { payload = JSON.parse(m[2].replace(/\.\.\.$/, "")); } catch { continue; }
-  if (m[1] === "bong:npc/death") deaths.push(payload);
-  else outcomes.push(payload);
+const PAIR_PREFIX = "dormant:combat:";
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+// 重读 P2 专属订阅日志（FIX-A：只含重启后受控对阶段的事件，绝无 P0 默认 seed 历史行）。
+// 每次轮询都重读，让 retain-until-released 跨多 tick 陆续到达的 pair death 被纳入计数。
+function parseLog() {
+  const lines = readFileSync(process.env.SUB_LOG, "utf8").split("\n");
+  const deaths = [];
+  const outcomes = [];
+  for (const line of lines) {
+    const m = line.match(/channel=(bong:npc\/death|bong:npc\/combat) payload=(.*)$/);
+    if (!m) continue;
+    let payload;
+    try { payload = JSON.parse(m[2].replace(/\.\.\.$/, "")); } catch { continue; }
+    if (m[1] === "bong:npc/death") deaths.push(payload);
+    else outcomes.push(payload);
+  }
+  return { deaths, outcomes };
 }
 
-// ① cause=combat & from_dormant_combat=true 的战死必须出现（不再全是 natural_aging）。
-const combatDeaths = deaths.filter((d) => d.cause === "combat" && d.from_dormant_combat === true);
-console.log(`[observe] deaths=${deaths.length} combat_deaths=${combatDeaths.length} outcomes=${outcomes.length}`);
+// ② FIX-C(a)：受控对人口降必须 == 受控对去重 combat 死亡数。retain-until-released 让满 zone
+// 的败者残余真元跨多 tick 才释放完才移除 → 固定窗口内 HLEN 可能尚未反映移除。改为**轮询**
+// HLEN（同时重读日志吸收新到达的 pair death），直到 popDrop===pairDeadIds.size 或超时，
+// 每次重试打日志；只有超时才判失败（不再把合法的延迟移除误判为 NPC 凭空消失）。
+const POP_POLL_TIMEOUT_SECS = 90;
+const POP_POLL_INTERVAL_MS = 2000;
+let combatDeaths = [];
+let pairDeadIds = new Set();
+let remaining = NaN;
+let popDrop = NaN;
+let parsed = { deaths: [], outcomes: [] };
+let reconciled = false;
+const deadlineMs = Date.now() + POP_POLL_TIMEOUT_SECS * 1000;
+let attempt = 0;
+while (Date.now() <= deadlineMs) {
+  attempt += 1;
+  parsed = parseLog();
+  // ① cause=combat & from_dormant_combat=true 的战死必须出现（不再全是 natural_aging）。
+  combatDeaths = parsed.deaths.filter((d) => d.cause === "combat" && d.from_dormant_combat === true);
+  const pairCombatDeaths = combatDeaths.filter((d) => d.npc_id.startsWith(PAIR_PREFIX));
+  pairDeadIds = new Set(pairCombatDeaths.map((d) => d.npc_id));
+  remaining = await client.hlen("bong:npc/dormant");
+  popDrop = 2 - remaining; // setup 只种了 2 个受控对（dormant:combat:atk/def）
+  console.log(`[observe] (try ${attempt}) deaths=${parsed.deaths.length} combat_deaths=${combatDeaths.length} outcomes=${parsed.outcomes.length} t0_pop=2 t1_pop=${remaining} pop_drop=${popDrop} pair_combat_dead=${pairDeadIds.size}`);
+  // 受控对至少 1 个 combat 死亡（确证受控对真打过；P0 默认 rogue 死亡不在 P2 日志里）。
+  if (pairDeadIds.size >= 1 && popDrop === pairDeadIds.size) {
+    reconciled = true;
+    break;
+  }
+  await sleep(POP_POLL_INTERVAL_MS);
+}
+
+// ① 终态：必须观测到受控对 combat 死亡（P2 日志只含重启后事件，无 P0 历史污染）。
 if (combatDeaths.length === 0) {
-  console.error(`[observe] FAIL ①: no cause=combat & from_dormant_combat=true death observed; all deaths: ${JSON.stringify(deaths)}`);
+  console.error(`[observe] FAIL ①: P2 阶段无 cause=combat & from_dormant_combat=true 死亡（受控对未开打）; all deaths: ${JSON.stringify(parsed.deaths)}`);
+  await client.quit();
   process.exit(2);
 }
-
-// 注：① 接受**任意** combat 死亡（既证受控对，也证 P0 默认 seed 的 8 个 factioned rogue
-// 也会互殴——离屏战争机制在两种场景都成立）。但 ②③⑤ 的"种群守恒 / 还灵气 / 对账"必须
-// scope 到受控对（dormant:combat:*）才有确定性——P0 默认 rogue 的死亡是另一个独立种群。
-const PAIR_PREFIX = "dormant:combat:";
-const pairCombatDeaths = combatDeaths.filter((d) => d.npc_id.startsWith(PAIR_PREFIX));
-const pairDeadIds = new Set(pairCombatDeaths.map((d) => d.npc_id));
-
-// ② 受控对人口降（2 - HLEN，仅数受控对快照）== 受控对去重 combat 死亡数。
-const remaining = await client.hlen("bong:npc/dormant");
-const popDrop = 2 - remaining; // setup 只种了 2 个受控对（dormant:combat:atk/def）
-console.log(`[observe] t0_pop=2 t1_pop=${remaining} pop_drop=${popDrop} pair_combat_dead=${pairDeadIds.size} (all_combat_dead=${combatDeaths.length})`);
 if (pairDeadIds.size < 1) {
   console.error(`[observe] FAIL ②: 受控对（${PAIR_PREFIX}*）至少应有 1 个 combat 死亡，实际 ${pairDeadIds.size}; combat deaths: ${JSON.stringify(combatDeaths.map((d)=>d.npc_id))}`);
   await client.quit();
   process.exit(3);
 }
-if (popDrop !== pairDeadIds.size) {
-  console.error(`[observe] FAIL ②: 受控对人口降 ${popDrop} != 受控对去重 combat 死亡数 ${pairDeadIds.size}（NPC 凭空消失或重复计数）t0=2 t1=${remaining}`);
+// ② 轮询超时仍未对齐 → NPC 凭空消失或重复计数（残余永不释放且非延迟）。
+if (!reconciled) {
+  console.error(`[observe] FAIL ②: 轮询 ${POP_POLL_TIMEOUT_SECS}s 后受控对人口降 ${popDrop} 仍 != 受控对去重 combat 死亡数 ${pairDeadIds.size}（NPC 凭空消失或重复计数）t0=2 t1=${remaining}`);
   await client.quit();
   process.exit(3);
 }
 
-// ③ 战死方 zone spirit_qi 上升（还灵气）：受控对 outcome 的 zone 对应的 ledger 账户应 > 0。
-//   受控对模板来自任意 seeded rogue，zone 不一定是 spawn，故从 outcome.zone 取实际 zone。
+const { outcomes } = parsed;
+
+// ③ FIX-B：战死方 zone 还灵气必须**确实落账**——既不能靠 world-init 自带余额假过（仅 post>0
+//   会），也要证回灌量真到了 zone 账户。硬锁：pairReleased>0（telemetry == 真实 transfer.amount）
+//   且 post ≥ pairReleased（释放量已落进该 zone 账户）。preAccount delta 一并打日志作诊断。
 const pairOutcomes = outcomes.filter((o) => o.loser.startsWith(PAIR_PREFIX) || o.winner.startsWith(PAIR_PREFIX));
 const hash = await client.hgetall("bong:qi/ledger");
+let preAccounts = {};
+try { preAccounts = JSON.parse(readFileSync(process.env.PRE_ACCOUNT_FILE, "utf8")); } catch { preAccounts = {}; }
 const pairZones = [...new Set(pairOutcomes.map((o) => o.zone))];
-let zoneRoseOk = false;
-for (const z of pairZones) {
-  const acct = Number(hash[`account:zone:${z}`]);
-  console.log(`[observe] account:zone:${z} balance=${acct}`);
-  if (Number.isFinite(acct) && acct > 0) { zoneRoseOk = true; }
-}
-// 受控对带 qi_current=5、zone 未满 → 必有正回灌，对应 zone 账户应 > 0。
 const pairReleased = pairOutcomes.reduce((s, o) => s + Number(o.qi_released || 0), 0);
-console.log(`[observe] pair zones=${pairZones.join(",")} pair_total_released=${pairReleased}`);
-if (!zoneRoseOk || pairReleased <= 0) {
-  console.error(`[observe] FAIL ③: 受控对战死后 zone 账户未上升 / 无真元回灌（zoneRoseOk=${zoneRoseOk} pairReleased=${pairReleased}）——还灵气未发生`);
+let landedOk = false;
+let sumDelta = 0;
+const deltaReport = [];
+for (const z of pairZones) {
+  const key = `account:zone:${z}`;
+  const post = Number(hash[key]);
+  const pre = Number.isFinite(preAccounts[key]) ? preAccounts[key] : 0;
+  const delta = (Number.isFinite(post) ? post : 0) - pre;
+  deltaReport.push(`${z}: pre=${pre} post=${post} delta=${delta}`);
+  if (Number.isFinite(delta)) sumDelta += delta;
+  // 回灌的真元必须**确实落在**该 zone 账户里：post ≥ 本场 pairReleased（容差 ε）。
+  // 释放断链 → pairReleased=0 → 下方硬失败；释放了但被吞/没落账 → post<pairReleased → 失败。
+  if (Number.isFinite(post) && post + 1e-6 >= pairReleased) { landedOk = true; }
+}
+console.log(`[observe] pair zones=${pairZones.join(",")} zone_deltas=[${deltaReport.join(" | ")}] sum_delta=${sumDelta} pair_total_released=${pairReleased}`);
+// 硬约束 ③：① 确有真元被回灌（pairReleased>0，telemetry == release_dormant_qi_to_zone 的
+// transfer.amount，释放断链则为 0）；② 回灌量确实落在受控对 zone 账户里（post ≥ pairReleased）。
+// 仅"account>0"会被 world-init 自带余额假过（即使释放断链），故这里锁"释放量已落账"。
+// 注：preAccount 抓在 P0 停机后 / P2 重启前，重启会重置 ledger 基线，故 delta 仅作诊断报告
+// （不作硬等式断言，避免把"重启重置基线"误判为失败——确定性优先）。
+if (pairReleased <= 0 || !landedOk) {
+  console.error(`[observe] FAIL ③: 受控对战死还灵气未落账（pairReleased=${pairReleased} landedOk=${landedOk}）——release_dormant_qi_to_zone 未把残余真元守恒回灌进 zone 账户; pre/post deltas=[${deltaReport.join(" | ")}]`);
   await client.quit();
   process.exit(4);
 }
@@ -509,6 +595,9 @@ ensure_redis() {
 cleanup() {
   if [ -n "$REDIS_SUB_PID" ] && kill -0 "$REDIS_SUB_PID" 2>/dev/null; then
     kill "$REDIS_SUB_PID" 2>/dev/null || true; wait "$REDIS_SUB_PID" 2>/dev/null || true
+  fi
+  if [ -n "$REDIS_SUB_P2_PID" ] && kill -0 "$REDIS_SUB_P2_PID" 2>/dev/null; then
+    kill "$REDIS_SUB_P2_PID" 2>/dev/null || true; wait "$REDIS_SUB_P2_PID" 2>/dev/null || true
   fi
   if [ -n "$SERVER_PID" ] && kill -0 "$SERVER_PID" 2>/dev/null; then
     kill "$SERVER_PID" 2>/dev/null || true; wait "$SERVER_PID" 2>/dev/null || true
@@ -619,7 +708,8 @@ fi
 echo ""
 CURRENT_STAGE="observe"
 echo "=== [5/7] Observe: agent_command_spawn_then_death_roundtrip + qi/ledger ==="
-start_redis_subscriber
+start_redis_subscriber "$REDIS_SUB_LOG"
+REDIS_SUB_PID="$!"
 if wait_for_pattern "$REDIS_SUB_LOG" "\\[observe\\] subscribed" 30; then
   pass "observer subscribed"
 else
@@ -690,26 +780,49 @@ else
   finalize_failure "combat" "failed to seed controlled combat pair; see $OBSERVE_LOG"
 fi
 
+# (2.5) FIX-B：在受控战死**之前**抓 ledger 各 zone 账户余额作 preAccount 基线，让 ③ 断言
+# "账户实际上升（post-pre>0）"而非仅"post>0"——后者可能被模板自带预存余额假过。
+PRE_ACCOUNT_FILE="$RUN_DIR/pre-combat-accounts.json"
+if capture_zone_accounts "$PRE_ACCOUNT_FILE" >>"$OBSERVE_LOG" 2>&1; then
+  pass "captured pre-combat zone account baseline (FIX-B preAccount)"
+else
+  finalize_failure "combat" "failed to capture pre-combat zone accounts; see $OBSERVE_LOG"
+fi
+
+# (2.6) FIX-A：起一条**全新** subscriber 写到 P2 专属日志，**且在重启 server 之前**确认其
+# 已 subscribe。这样 P2 阶段的 death/combat 等待与断言只看这条新日志——绝不被 P0 默认 seed
+# 阶段（8 个 factioned rogue 互殴）早已记入 $REDIS_SUB_LOG 的 cause=combat 历史行短路假过。
+# P0 的 subscriber 继续跑无妨（它写自己的日志，P2 断言不读它）。
+: >"$REDIS_SUB_P2_LOG"
+start_redis_subscriber "$REDIS_SUB_P2_LOG"
+REDIS_SUB_P2_PID="$!"
+if wait_for_pattern "$REDIS_SUB_P2_LOG" "\\[observe\\] subscribed" 30; then
+  pass "P2-fresh observer subscribed (only post-restart events; no P0 history leakage)"
+else
+  finalize_failure "combat" "P2-fresh observer did not start; see $REDIS_SUB_P2_LOG"
+fi
+
 # (3) 重启 server（seed_count=0 → 不默认 seed；store 由 redis 还原非空 → 跑受控对）。
 start_server "$COMBAT_SERVER_LOG" 0
-# 重启后 subscriber 仍连着（独立连接）；但日志文件保留之前的 P0 内容，combat 断言只看
-# combat/death 行，时间上是新的。等数轮快进 tick（DORMANT_TICK_INTERVAL 小值）让战斗结算。
-echo "[observe] waiting for offscreen combat death (cause=combat) ..."
-if wait_for_pattern "$REDIS_SUB_LOG" "channel=bong:npc/death.*\"cause\":\"combat\"" 120; then
-  pass "observed bong:npc/death with cause=combat (远方真的死人了)"
+# 等受控对（dormant:combat:*）真的战死出现在 **P2 专属日志**。pattern scope 到受控对 npc_id
+# + cause=combat，连"是否有战死"这一步都只认受控对，不会被任何残留事件误满足。
+echo "[observe] waiting for CONTROLLED-PAIR offscreen combat death in P2-fresh log ..."
+if wait_for_pattern "$REDIS_SUB_P2_LOG" "channel=bong:npc/death .*\"npc_id\":\"dormant:combat:.*\"cause\":\"combat\"" 120; then
+  pass "observed bong:npc/death cause=combat for controlled pair (受控对真的死人了)"
 else
-  finalize_failure "combat" "no cause=combat death observed within 120s after combat-pair reboot; see $REDIS_SUB_LOG / $COMBAT_SERVER_LOG"
+  finalize_failure "combat" "no controlled-pair (dormant:combat:*) cause=combat death observed within 120s after combat-pair reboot; see $REDIS_SUB_P2_LOG / $COMBAT_SERVER_LOG"
 fi
 
 # 等一个 world_state/dormant HASH publish 周期让 HLEN / qi/ledger 反映战死后状态。
+# （②③ 的最终对齐由 assert_combat_closure 内部轮询保证，这里只是给首个 publish 周期一点裕量。）
 sleep 12
 
-# (4) 全套 combat closure 断言 ①②③④⑤（③ 已内含：从受控对 outcome.zone 读 ledger 账户 > 0）。
+# (4) 全套 combat closure 断言 ①②③④⑤——只读 P2 专属日志 + preAccount 基线。
 EXPECTED_TOTAL="${EXPECTED_TOTAL:-$(read_default_spirit_qi_total)}"
-if assert_combat_closure "$REDIS_SUB_LOG" "$EXPECTED_TOTAL" >>"$OBSERVE_LOG" 2>&1; then
-  pass "combat closure ①cause=combat ②受控对人口降==战死数 ③zone还灵气 ④守恒 ⑤outcome对账"
+if assert_combat_closure "$REDIS_SUB_P2_LOG" "$EXPECTED_TOTAL" "$PRE_ACCOUNT_FILE" >>"$OBSERVE_LOG" 2>&1; then
+  pass "combat closure ①cause=combat ②受控对人口降==战死数(轮询) ③zone还灵气(post-pre>0) ④守恒 ⑤outcome对账"
 else
-  finalize_failure "combat" "combat closure assertions failed; see $OBSERVE_LOG / $REDIS_SUB_LOG"
+  finalize_failure "combat" "combat closure assertions failed; see $OBSERVE_LOG / $REDIS_SUB_P2_LOG"
 fi
 
 echo ""

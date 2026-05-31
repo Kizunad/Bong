@@ -850,7 +850,13 @@ fn run_dormant_combat_phase(
         });
 
         // ⑥ 人口回写 + 防吞真元：真元全释放才移除；zone 满残余 overflow > ε 则本轮保留、下轮重试。
+        // 先把后续唯一需要的标量（残余真元）从 `&mut loser` 借用里拷出。
         let residual = loser.cultivation.qi_current;
+        // 随即显式终结 `&mut loser` 借用：NLL 本会在这里结束，但显式 `let _ = loser;`（`drop`
+        // 对引用是 no-op，会触发 clippy::dropping_references）让下方 retain/remove 决策对未来
+        // 编辑（如在此块内再次借用 `store`）防御性免疫——后续只用早已 owned 的标量
+        // （`loser_id` / `zone_name` / `released` / `residual`），行为不变。
+        let _ = loser;
         if residual > QI_EPSILON {
             tracing::warn!(
                 "[bong][npc] retained combat-dead dormant NPC `{}` until {:.6} residual qi releases (zone full)",
