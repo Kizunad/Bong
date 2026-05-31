@@ -286,7 +286,7 @@ export const ServerDataZoneInfoV1 = Type.Object(
     type: Type.Literal("zone_info"),
     zone: Type.String(),
     spirit_qi: Type.Number({ minimum: -1, maximum: 1 }),
-    danger_level: Type.Integer({ minimum: 0, maximum: 5 }),
+    danger_level: Type.Integer({ minimum: 0, maximum: 7 }),
     status: Type.Optional(ZoneStatusV1),
     active_events: Type.Optional(Type.Array(Type.String())),
     perception_text: Type.Optional(Type.String({ minLength: 1 })),

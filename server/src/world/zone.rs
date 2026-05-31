@@ -16,7 +16,7 @@ const DEFAULT_SPAWN_BOUNDS_MIN: [f64; 3] = [-128.0, 64.0, -128.0];
 const DEFAULT_SPAWN_BOUNDS_MAX_Y: f64 = 80.0;
 const DEFAULT_SPAWN_SPIRIT_QI: f64 = 0.9;
 const DEFAULT_SPAWN_PATROL_ANCHORS: [[f64; 3]; 1] = [[14.0, 66.0, 14.0]];
-const MAX_ZONE_DANGER_LEVEL: u8 = 5;
+const MAX_ZONE_DANGER_LEVEL: u8 = 7;
 const MIN_ZONE_SPIRIT_QI: f64 = -1.0;
 const MAX_ZONE_SPIRIT_QI: f64 = 1.0;
 const COLLAPSED_ZONE_EVENT_NAME: &str = "realm_collapse";
@@ -81,6 +81,13 @@ impl Zone {
             && pos.y <= max.y
             && pos.z >= min.z
             && pos.z <= max.z
+    }
+
+    /// AABB 空间体积。嵌套 / 重叠 zone 命中时用于挑选最小（最具体）的 zone，
+    /// 让内嵌小 zone（渊口荒丘、九宗故地等）不会被外层大 zone 永久遮蔽。
+    pub fn aabb_volume(&self) -> f64 {
+        let (min, max) = self.bounds;
+        (max.x - min.x).max(0.0) * (max.y - min.y).max(0.0) * (max.z - min.z).max(0.0)
     }
 
     pub fn clamp_position(&self, pos: DVec3) -> DVec3 {
@@ -256,9 +263,17 @@ impl ZoneRegistry {
     /// are skipped even if their AABB happens to overlap on the same XYZ in their
     /// own coordinate system.
     pub fn find_zone(&self, dim: DimensionKind, pos: DVec3) -> Option<&Zone> {
+        // 嵌套 / 重叠 zone 命中时返回 AABB 体积最小（最具体）的那个：
+        // 例如玩家站在嵌入 blood_valley 的 rift_mouth_blood_001 内，应解析为渊口
+        // 而非外层血谷。否则按注册顺序取第一个命中者，内嵌小 zone 会被遮蔽。
         self.zones
             .iter()
-            .find(|zone| zone.dimension == dim && zone.contains(pos))
+            .filter(|zone| zone.dimension == dim && zone.contains(pos))
+            .min_by(|a, b| {
+                a.aabb_volume()
+                    .partial_cmp(&b.aabb_volume())
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            })
     }
 
     pub fn find_zone_mut(&mut self, name: &str) -> Option<&mut Zone> {
@@ -1066,21 +1081,22 @@ mod zone_tests {
             .find_zone_by_name("wangyintai")
             .expect("wangyintai zone should exist");
 
+        // plan-zone-registry-coverage-v1 §P2 — moved off the blood_valley AABB overlap.
         let (min, max) = zone.bounds;
         assert!(
-            (min.x - 3200.0).abs() < f64::EPSILON
+            (min.x - 3500.0).abs() < f64::EPSILON
                 && (min.y - 40.0).abs() < f64::EPSILON
-                && (min.z - (-2800.0)).abs() < f64::EPSILON,
-            "wangyintai min bounds should be (3200, 40, -2800), got ({}, {}, {})",
+                && (min.z - (-2150.0)).abs() < f64::EPSILON,
+            "wangyintai min bounds should be (3500, 40, -2150), got ({}, {}, {})",
             min.x,
             min.y,
             min.z
         );
         assert!(
-            (max.x - 4200.0).abs() < f64::EPSILON
+            (max.x - 4500.0).abs() < f64::EPSILON
                 && (max.y - 200.0).abs() < f64::EPSILON
-                && (max.z - (-1800.0)).abs() < f64::EPSILON,
-            "wangyintai max bounds should be (4200, 200, -1800), got ({}, {}, {})",
+                && (max.z - (-1150.0)).abs() < f64::EPSILON,
+            "wangyintai max bounds should be (4500, 200, -1150), got ({}, {}, {})",
             max.x,
             max.y,
             max.z
@@ -1118,8 +1134,8 @@ mod zone_tests {
         let registry =
             ZoneRegistry::load_from_path(Path::new(env!("CARGO_MANIFEST_DIR")).join("zones.json"));
 
-        // Center of the zone AABB
-        let center = DVec3::new(3700.0, 120.0, -2300.0);
+        // Center of the zone AABB (moved off blood_valley overlap, plan-zone-registry-coverage-v1).
+        let center = DVec3::new(4000.0, 120.0, -1650.0);
         let found = registry
             .find_zone(crate::world::dimension::DimensionKind::Overworld, center)
             .expect("center point should resolve to wangyintai zone");
@@ -1134,6 +1150,103 @@ mod zone_tests {
             .find_zone_by_name("wangyintai")
             .expect("wangyintai zone should exist");
         assert!(!zone.is_tsy(), "wangyintai is an overworld zone, not TSY");
+    }
+
+    // ----- plan-zone-registry-coverage-v1 — coverage + nested-zone resolution -----
+
+    /// zones.json 必须覆盖全部 overworld 蓝图 zone。任一缺失即撞红，提醒同步
+    /// `server/zones.worldview.example.json` 的漂移（运行时权威源是 zones.json）。
+    #[test]
+    fn zones_json_covers_all_overworld_blueprint_zones() {
+        let registry =
+            ZoneRegistry::load_from_path(Path::new(env!("CARGO_MANIFEST_DIR")).join("zones.json"));
+        let expected = [
+            "spawn",
+            "qingyun_peaks",
+            "lingquan_marsh",
+            "blood_valley",
+            "youan_depths",
+            "north_wastes",
+            "giant_sword_sea",
+            "dan_zong_yi_yuan",
+            "wangyintai",
+            "baolongwang_cavern_deep",
+            "celestial_isles",
+            "south_ash_dead_zone",
+            "zhanhun_plain",
+            "wuxing_abyss",
+            "blood_valley_east_scorch",
+            "north_waste_east_scorch",
+            "drift_scorch_001",
+            "rift_mouth_north_001",
+            "rift_mouth_north_002",
+            "rift_mouth_blood_001",
+            "rift_mouth_west_001",
+            "jiuzong_bloodstream_ruin",
+            "jiuzong_beiling_ruin",
+            "jiuzong_nanyuan_ruin",
+            "jiuzong_chixia_ruin",
+            "jiuzong_xuanshui_ruin",
+            "jiuzong_taichu_ruin",
+            "jiuzong_youan_ruin",
+        ];
+        for name in expected {
+            assert!(
+                registry.find_zone_by_name(name).is_some(),
+                "zones.json must contain overworld zone `{name}` (regen from blueprint if missing)"
+            );
+        }
+        assert_eq!(
+            registry.zones.len(),
+            expected.len(),
+            "zones.json overworld zone count should match the pinned blueprint set"
+        );
+    }
+
+    /// find_zone 在嵌套 / 重叠 zone 命中时返回 AABB 体积最小（最具体）的 zone。
+    #[test]
+    fn find_zone_returns_smallest_containing_zone() {
+        use super::Zone;
+        use crate::world::dimension::DimensionKind;
+        let big = Zone {
+            name: "big".to_string(),
+            dimension: DimensionKind::Overworld,
+            bounds: (DVec3::new(0.0, 0.0, 0.0), DVec3::new(100.0, 100.0, 100.0)),
+            spirit_qi: 0.0,
+            danger_level: 1,
+            active_events: Vec::new(),
+            patrol_anchors: Vec::new(),
+            blocked_tiles: Vec::new(),
+        };
+        let small = Zone {
+            name: "small".to_string(),
+            dimension: DimensionKind::Overworld,
+            bounds: (DVec3::new(40.0, 40.0, 40.0), DVec3::new(60.0, 60.0, 60.0)),
+            spirit_qi: 0.0,
+            danger_level: 1,
+            active_events: Vec::new(),
+            patrol_anchors: Vec::new(),
+            blocked_tiles: Vec::new(),
+        };
+        // `big` is registered first; without smallest-AABB selection, find_zone
+        // would return it for points inside the nested `small` zone.
+        let registry = ZoneRegistry {
+            zones: vec![big, small],
+        };
+        assert_eq!(
+            registry
+                .find_zone(DimensionKind::Overworld, DVec3::new(50.0, 50.0, 50.0))
+                .map(|z| z.name.as_str()),
+            Some("small"),
+            "nested overlap must resolve to the smaller (more specific) zone"
+        );
+        assert_eq!(
+            registry
+                .find_zone(DimensionKind::Overworld, DVec3::new(10.0, 10.0, 10.0))
+                .map(|z| z.name.as_str()),
+            Some("big"),
+            "a point only inside the larger zone must resolve to it"
+        );
     }
 
     // ----- plan-tsy-zone-v1 §1.2 / §-1 helper unit tests -----

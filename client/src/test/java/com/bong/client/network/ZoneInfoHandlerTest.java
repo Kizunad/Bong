@@ -21,7 +21,7 @@ public class ZoneInfoHandlerTest {
         assertEquals("blood_valley", zoneState.zoneId());
         assertEquals("Blood Valley", zoneState.zoneLabel());
         assertEquals(1.0, zoneState.spiritQiNormalized(), 0.0001);
-        assertEquals(5, zoneState.dangerLevel());
+        assertEquals(7, zoneState.dangerLevel());
         assertEquals("collapsed", zoneState.status());
         assertEquals(4_242L, zoneState.changedAtMillis());
     }

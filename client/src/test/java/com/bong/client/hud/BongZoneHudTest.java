@@ -83,7 +83,7 @@ public class BongZoneHudTest {
     void qiBarAndDangerTextClampSafely() {
         assertEquals("[██████████]", BongZoneHud.qiBar(5.0));
         assertEquals("[░░░░░░░░░░]", BongZoneHud.qiBar(-1.0));
-        assertEquals("☠☠☠☠☠", BongZoneHud.dangerSymbols(99));
+        assertEquals("☠☠☠☠☠☠☠", BongZoneHud.dangerSymbols(99));
         assertEquals("无", BongZoneHud.dangerText(0));
     }
 

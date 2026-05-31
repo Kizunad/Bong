@@ -31,7 +31,7 @@ public class ZoneStateTest {
         assertEquals("blood_valley", state.zoneId());
         assertEquals("blood_valley", state.zoneLabel());
         assertEquals(1.0, state.spiritQiNormalized());
-        assertEquals(5, state.dangerLevel());
+        assertEquals(7, state.dangerLevel());
         assertEquals("normal", state.status());
         assertEquals(0L, state.changedAtMillis());
     }

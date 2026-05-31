@@ -6,7 +6,7 @@ import java.util.Objects;
 public final class ZoneState {
     static final double MIN_SPIRIT_QI = 0.0d;
     static final double MAX_SPIRIT_QI = 1.0d;
-    static final int MAX_DANGER_LEVEL = 5;
+    static final int MAX_DANGER_LEVEL = 7;
     static final int MAX_ZONE_LABEL_LENGTH = 24;
 
     private static ZoneHudState currentZone;
