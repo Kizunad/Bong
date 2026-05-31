@@ -14,8 +14,10 @@ import net.minecraft.util.Identifier;
  *
  * <p>视觉规格（plan §145）：
  * <ul>
- *   <li>贴图：复用现成地面 decal sprite（{@link BongParticles#lingqiRippleSprites}），不新建贴图；</li>
- *   <li>颜色：骨堆灰白（payload 默认 {@code #B8AFA0}），残卷暗黄留给 server 按 loot 细分时改 color hex；</li>
+ *   <li>贴图：复用现成 {@link BongParticles#ningJiaCrustSprites}（凝甲 crust——散碎角片，
+ *       视觉上正是"骨片 / 残骸碎屑散落地面"，比 lingqi 涟漪环更贴战场遗骸语义），不新建贴图；</li>
+ *   <li>颜色：骨堆灰白（payload 默认 {@code #B8AFA0}），残卷暗黄 {@code #7A6A3C} 留给 server
+ *       按 loot 细分时改 color hex（本 player 纯按 payload.color 上色，两种叙事同一套渲染）；</li>
  *   <li>形态：radial 静态**单**贴花（不自转、不漂移），lifetime 拉满 ~ 持续到拾取的感知近似；</li>
  *   <li>spawn 模式：burst-once-on-hydrate（每次 hydrate 物化一处，不连续刷）。</li>
  * </ul>
@@ -25,6 +27,16 @@ public final class OffscreenRelicRevealPlayer implements VfxPlayer {
 
     /** 骨堆灰白兜底色（与 server RELIC_DECAL_COLOR_BONE 对齐）。 */
     private static final int FALLBACK_RGB = 0xB8AFA0;
+    /** decal 渲染参数：半径基数 / 随 strength 增量 / 抬高防 z-fighting / alpha 上下限 / lifetime 上下限。 */
+    private static final double HALF_SIZE_BASE = 0.55;
+    private static final double HALF_SIZE_PER_STRENGTH = 0.30;
+    private static final double Y_LIFT = 0.02;
+    private static final float ALPHA_MIN = 0.30f;
+    private static final float ALPHA_MAX = 0.80f;
+    private static final int MAX_AGE_MIN = 60;
+    private static final int MAX_AGE_MAX = 200;
+    private static final int DEFAULT_MAX_AGE = 200;
+    private static final double DEFAULT_STRENGTH = 0.7;
 
     @Override
     public void play(MinecraftClient client, VfxEventPayload.SpawnParticle payload) {
@@ -35,9 +47,9 @@ public final class OffscreenRelicRevealPlayer implements VfxPlayer {
         float r = ((rgb >> 16) & 0xFF) / 255f;
         float g = ((rgb >> 8) & 0xFF) / 255f;
         float b = (rgb & 0xFF) / 255f;
-        double strength = payload.strength().orElse(0.7);
-        int maxAge = payload.durationTicks().orElse(200);
-        double halfSize = 0.55 + 0.3 * strength;
+        double strength = payload.strength().orElse(DEFAULT_STRENGTH);
+        int maxAge = payload.durationTicks().orElse(DEFAULT_MAX_AGE);
+        double halfSize = HALF_SIZE_BASE + HALF_SIZE_PER_STRENGTH * strength;
 
         BongGroundDecalParticle decal = new BongGroundDecalParticle(
             world,
@@ -45,14 +57,14 @@ public final class OffscreenRelicRevealPlayer implements VfxPlayer {
             payload.origin()[1],
             payload.origin()[2]
         );
-        decal.setDecalShape(halfSize, 0.02);
+        decal.setDecalShape(halfSize, Y_LIFT);
         // 战场遗骸是静止的——不自转（radPerTick=0），随机初始角度避免每处朝向雷同。
         decal.setSpin(world.random.nextDouble() * Math.PI * 2.0, 0.0);
         decal.setColor(r, g, b);
-        decal.setAlphaPublic((float) Math.max(0.3, Math.min(0.8, strength)));
-        decal.setMaxAgePublic(Math.max(60, Math.min(200, maxAge)));
-        if (BongParticles.lingqiRippleSprites != null) {
-            decal.setSpritePublic(BongParticles.lingqiRippleSprites.getSprite(world.random));
+        decal.setAlphaPublic((float) Math.max(ALPHA_MIN, Math.min(ALPHA_MAX, strength)));
+        decal.setMaxAgePublic(Math.max(MAX_AGE_MIN, Math.min(MAX_AGE_MAX, maxAge)));
+        if (BongParticles.ningJiaCrustSprites != null) {
+            decal.setSpritePublic(BongParticles.ningJiaCrustSprites.getSprite(world.random));
         }
         client.particleManager.addParticle(decal);
     }
