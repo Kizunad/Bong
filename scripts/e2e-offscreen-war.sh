@@ -30,7 +30,7 @@ set -euo pipefail
 #      日志断言：① 受控对 bong:npc/relic 遗物事件；② archetype=disciple（知名战死者）；
 #      ③ 遗物 char_id 对应真战死者。遗物零真元（持久层不碰 ledger），守恒由 P2④锁住。
 #      「模拟玩家靠近 → loot marker」需 client（hydrate 无玩家不触发，侦察B 确认）→ 转人工
-#      checklist；deferred 物化路径由 relic_hydrate 11 单测（含 3 system 级）锁死，不假过。
+#      checklist；deferred 物化路径由 relic_hydrate 12 单测（含 3 system 级）锁死，不假过。
 #
 # 确定性：BONG_SIM_SEED 固定 + BONG_DORMANT_TICK_INTERVAL 小值（免 sleep 60s）。
 #
@@ -600,24 +600,31 @@ const POLL_INTERVAL_MS = 2000;
 const deadlineMs = Date.now() + POLL_TIMEOUT_SECS * 1000;
 let pairRelics = [];
 let pairDeathIds = new Set();
+let matchedRelic = null;
 let attempt = 0;
 while (Date.now() <= deadlineMs) {
   attempt += 1;
   const { relics, combatDeaths } = parseLog();
   pairRelics = relics.filter((r) => typeof r.char_id === "string" && r.char_id.startsWith(PAIR_PREFIX));
   pairDeathIds = new Set(combatDeaths.filter((d) => d.npc_id.startsWith(PAIR_PREFIX)).map((d) => d.npc_id));
-  console.log(`[observe] (relic try ${attempt}) all_relics=${relics.length} pair_relics=${pairRelics.length} pair_combat_deaths=${pairDeathIds.size}`);
-  if (pairRelics.length >= 1) break;
+  // 收紧退出条件（CodeRabbit / §11 不假过）：bong:npc/relic 与对应的 bong:npc/death 落日志
+  // 有先后延迟。若只要见到任意 pair relic 就 break，可能在其 char_id 的 combat death 还没写
+  // 日志时退出 → ③（遗物对应真战死者）的前置 pairDeathIds 仍空被跳过 → 脚本在「未证明遗物
+  // 对应真战死者」时假过。改为：必须存在 r ∈ pairRelics 且 pairDeathIds.has(r.char_id) 才 break。
+  matchedRelic = pairRelics.find((r) => pairDeathIds.has(r.char_id)) ?? null;
+  console.log(`[observe] (relic try ${attempt}) all_relics=${relics.length} pair_relics=${pairRelics.length} pair_combat_deaths=${pairDeathIds.size} matched=${matchedRelic ? matchedRelic.char_id : "none"}`);
+  if (matchedRelic != null) break;
   await sleep(POLL_INTERVAL_MS);
 }
 
-// ① 受控对至少一处遗物创建（克制判定通过的知名战死者）。
-if (pairRelics.length === 0) {
-  console.error(`[observe] FAIL P3①: 轮询 ${POLL_TIMEOUT_SECS}s 后无受控对（${PAIR_PREFIX}*）的 bong:npc/relic 遗物事件——克制式战场遗物未创建（should_leave_relic / emit / telemetry 断链）`);
+// ① 受控对至少一处遗物创建（克制判定通过的知名战死者）**且**该遗物 char_id 已出现在受控对
+// combat 战死集里——遗物确实对应真战死者，不是凭空造、也不是 death 日志还没到就提前判过。
+if (matchedRelic == null) {
+  console.error(`[observe] FAIL P3①: 轮询 ${POLL_TIMEOUT_SECS}s 后没有「char_id 同时出现在 bong:npc/relic 与受控对 cause=combat bong:npc/death」的遗物（pair_relics=${pairRelics.length} pair_combat_deaths=${pairDeathIds.size}）——克制式战场遗物未创建或未对应真战死者（should_leave_relic / emit / telemetry 断链）`);
   process.exit(2);
 }
 
-const relic = pairRelics[0];
+const relic = matchedRelic;
 // ② archetype=="disciple"（克制判定通过的知名战死者；e2e 把受控对 archetype 设成 Disciple）。
 if (relic.archetype !== "disciple") {
   console.error(`[observe] FAIL P3②: 遗物 archetype 期望 disciple（relic-eligible 知名战死者），实际 ${relic.archetype}; relic=${JSON.stringify(relic)}`);
@@ -629,7 +636,8 @@ if (typeof relic.zone !== "string" || !Array.isArray(relic.pos) || relic.pos.len
   process.exit(3);
 }
 // ③ 遗物 char_id 与受控对 cause=combat 战死一致（遗物属于真战死者，不是凭空造）。
-if (pairDeathIds.size > 0 && !pairDeathIds.has(relic.char_id)) {
+// matchedRelic 的退出条件已保证 pairDeathIds.has(relic.char_id)，此处无条件再核一遍（防御）。
+if (!pairDeathIds.has(relic.char_id)) {
   console.error(`[observe] FAIL P3③: 遗物 char_id=${relic.char_id} 不在受控对 combat 死亡集 ${[...pairDeathIds].join(",")} 内（遗物未对应真战死者）`);
   process.exit(4);
 }
@@ -924,7 +932,7 @@ echo "=== [7/8] Battlefield relic: 克制式战场遗物创建（P3 主断言）
 # 守恒已由 combat closure ④锁住。
 # NOTE：「模拟玩家靠近 → 战场坐标出现 loot marker」需已连接 client（hydrate 触发守卫无玩家
 # 不激活，dossier 侦察B 确认纯 headless 不触发），故该断言转**人工 client checklist**（见 PR 描述），
-# 此处不静默跳过、不假过——deferred-on-hydrate 物化路径由 relic_hydrate 11 条单测（含 3 条 system
+# 此处不静默跳过、不假过——deferred-on-hydrate 物化路径由 relic_hydrate 12 条单测（含 3 条 system
 # 级：玩家在 zone 物化 / 无玩家不物化 / zone 隔离）锁死。
 if assert_relic_created "$REDIS_SUB_P2_LOG" >>"$OBSERVE_LOG" 2>&1; then
   pass "relic created ①受控对 bong:npc/relic 遗物事件 ②archetype=disciple(克制判定通过) ③char_id 对应真战死者（零真元，守恒已由④锁）"
