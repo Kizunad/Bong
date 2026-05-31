@@ -3089,6 +3089,87 @@ mod redis_bridge_tests {
     }
 
     #[test]
+    fn publishes_pending_dormant_relic_on_npc_relic_channel() {
+        // plan-offscreen-war-v1 P3（CodeRabbit）：克制式战场遗物 telemetry 必须落在专属
+        // CH_NPC_RELIC（bong:npc/relic）频道，且 payload 无损 roundtrip——e2e 验收门靠它把
+        // relic.char_id 与 bong:npc/death.npc_id 对账。频道名或 match 分支回退都会让 P3 观测静默
+        // 失守。loot_seed 取含 high-bit 的 u64 边界值，验证 u64 序列化不被截断/丢精度。
+        const HIGH_BIT_SEED: u64 = 0xFFFF_FFFF_0000_0001;
+        let relic = prepare_outbound_command(RedisOutbound::PendingDormantRelic(
+            PendingDormantRelicV1 {
+                v: 1,
+                kind: "pending_dormant_relic".to_string(),
+                char_id: "dormant:fallen:disciple".to_string(),
+                zone: "rift_valley".to_string(),
+                pos: [12.0, 64.0, -8.0],
+                archetype: "disciple".to_string(),
+                loot_seed: HIGH_BIT_SEED,
+                created_tick: 42,
+                at_tick: 4321,
+            },
+        ))
+        .expect("PendingDormantRelicV1 payload should serialize");
+        match relic {
+            RedisIoCommand::Publish { channel, payload } => {
+                assert_eq!(
+                    channel, CH_NPC_RELIC,
+                    "battlefield relic telemetry must route to bong:npc/relic (CH_NPC_RELIC); a wrong channel would make the e2e P3① relic subscription silently miss every event"
+                );
+                let v: Value = serde_json::from_str(payload.as_str())
+                    .expect("relic publish payload must be valid JSON");
+                assert_eq!(
+                    v["kind"], "pending_dormant_relic",
+                    "kind tag must survive so the downstream parser can discriminate payload type; got {}",
+                    v["kind"]
+                );
+                assert_eq!(
+                    v["char_id"], "dormant:fallen:disciple",
+                    "char_id must round-trip unchanged (e2e ③ matches it against NpcDeathV1.npc_id); got {}",
+                    v["char_id"]
+                );
+                assert_eq!(
+                    v["zone"], "rift_valley",
+                    "zone must round-trip (hydrate materialization reads it); got {}",
+                    v["zone"]
+                );
+                assert_eq!(
+                    v["pos"],
+                    serde_json::json!([12.0, 64.0, -8.0]),
+                    "pos must round-trip as a [f64;3] (hydrate spawns the decal/loot there); got {}",
+                    v["pos"]
+                );
+                assert_eq!(
+                    v["archetype"], "disciple",
+                    "archetype must round-trip (e2e ② asserts disciple = relic-eligible); got {}",
+                    v["archetype"]
+                );
+                // loot_seed 是 u64：serde_json 以数值输出，high-bit 值不得被截断成 i64 或丢精度。
+                assert_eq!(
+                    v["loot_seed"].as_u64(),
+                    Some(HIGH_BIT_SEED),
+                    "loot_seed must round-trip losslessly as a u64 including the high bit (deterministic loot depends on it); got {}",
+                    v["loot_seed"]
+                );
+                assert_eq!(
+                    v["created_tick"].as_u64(),
+                    Some(42),
+                    "created_tick must round-trip as u64; got {}",
+                    v["created_tick"]
+                );
+                assert_eq!(
+                    v["at_tick"].as_u64(),
+                    Some(4321),
+                    "at_tick must round-trip as u64; got {}",
+                    v["at_tick"]
+                );
+            }
+            other => panic!(
+                "PendingDormantRelic must produce a Publish command; got {other:?} — switching the route to HashReplace/Fanout would break P3 relic observation"
+            ),
+        }
+    }
+
+    #[test]
     fn publishes_rat_phase_event_on_correct_channel() {
         let command = prepare_outbound_command(RedisOutbound::RatPhaseEvent(RatPhaseChangeEvent {
             chunk: [8, 8],

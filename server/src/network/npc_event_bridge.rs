@@ -272,4 +272,79 @@ mod tests {
         assert_eq!(payload.at_tick, 777);
         assert_eq!(payload.kind, "pending_dormant_relic");
     }
+
+    #[test]
+    fn publish_pending_dormant_relic_defaults_at_tick_to_zero_without_game_tick() {
+        // 边界（CodeRabbit）：缺 GameTick 资源时 at_tick 必须回退 0（current_game_tick 的
+        // unwrap_or_default 分支），而非 panic / 读到脏值——否则 telemetry 时间戳错乱。
+        let (mut app, rx) = setup_app();
+        app.add_event::<PendingDormantRelicCreated>();
+        // 故意**不** insert GameTick。
+        app.add_systems(Update, publish_pending_dormant_relic_events);
+
+        app.world_mut().send_event(PendingDormantRelicCreated {
+            char_id: "dormant:no_tick".to_string(),
+            zone: "spawn".to_string(),
+            position: [0.0, 64.0, 0.0],
+            archetype: NpcArchetype::Disciple,
+            loot_seed: 1,
+            created_tick: 5,
+        });
+        app.update();
+
+        let outbound = rx.try_recv().expect("expected pending relic outbound even without GameTick");
+        let RedisOutbound::PendingDormantRelic(payload) = outbound else {
+            panic!("expected PendingDormantRelic outbound, got a different variant");
+        };
+        assert_eq!(
+            payload.at_tick, 0,
+            "without a GameTick resource, at_tick must default to 0 (current_game_tick falls back to u64::default), got {}",
+            payload.at_tick
+        );
+        // created_tick 来自 event 本身、与 GameTick 无关，仍应原样透传。
+        assert_eq!(
+            payload.created_tick, 5,
+            "created_tick comes from the event, not GameTick, and must pass through unchanged; got {}",
+            payload.created_tick
+        );
+    }
+
+    #[test]
+    fn publish_pending_dormant_relic_drops_on_closed_channel_without_panic() {
+        // 错误分支（CodeRabbit）：outbound channel 已关闭（接收端 drop）时，send 返回 Err，
+        // 系统必须 warn + drop 该 event、**不 panic**（否则一个掉线的 Redis 桥会拖垮整个 tick）。
+        let mut app = App::new();
+        let (tx_outbound, rx_outbound) = unbounded::<RedisOutbound>();
+        let (_tx_inbound, rx_inbound) = unbounded();
+        app.insert_resource(RedisBridgeResource {
+            tx_outbound,
+            rx_inbound,
+        });
+        // 关闭接收端 → 后续 send 必返回 SendError。
+        drop(rx_outbound);
+        app.add_event::<PendingDormantRelicCreated>();
+        app.insert_resource(GameTick(9));
+        app.add_systems(Update, publish_pending_dormant_relic_events);
+
+        app.world_mut().send_event(PendingDormantRelicCreated {
+            char_id: "dormant:dropped".to_string(),
+            zone: "spawn".to_string(),
+            position: [0.0, 64.0, 0.0],
+            archetype: NpcArchetype::Disciple,
+            loot_seed: 2,
+            created_tick: 9,
+        });
+        // 不 panic 即通过该分支的核心契约（系统吞下 SendError、记 warn 继续）。
+        app.update();
+        // 二次 update 仍不 panic（确认 channel 关闭是稳定可重入的 drop 路径）。
+        app.world_mut().send_event(PendingDormantRelicCreated {
+            char_id: "dormant:dropped_again".to_string(),
+            zone: "spawn".to_string(),
+            position: [0.0, 64.0, 0.0],
+            archetype: NpcArchetype::Disciple,
+            loot_seed: 3,
+            created_tick: 10,
+        });
+        app.update();
+    }
 }
