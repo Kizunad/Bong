@@ -57,6 +57,31 @@ pub struct DormantCombatOutcomeV1 {
     pub at_tick: u64,
 }
 
+/// plan-offscreen-war-v1 P3：克制式战场遗物创建 telemetry（`bong:npc/relic`）。
+///
+/// **纯观测 payload**——一名克制判定通过的离屏战死者在战场留下了一处待物化遗物（已落盘进
+/// sqlite `pending_dormant_relics`）。**零真元**：遗物不携带任何真元（loot 物化时 spirit_quality=0），
+/// 本结构同样不含真元字段。真服 e2e 据此 headless 断言"知名战死 → 遗物创建"（不便直接读 sqlite
+/// 时的 redis 可观测面，§11）。`char_id` == 对应 `NpcDeathV1.npc_id`（cause=combat）。
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct PendingDormantRelicV1 {
+    pub v: u8,
+    pub kind: String,
+    /// 战死者 char_id（== 对应 `NpcDeathV1.npc_id`）。
+    pub char_id: String,
+    /// 遗物所在 zone（玩家靠近此 zone 时物化成地面 loot）。
+    pub zone: String,
+    /// 遗物落点 [x,y,z]。
+    pub pos: [f64; 3],
+    /// 战死者 archetype（as_str()）——hydrate 时按它 roll loot 表。
+    pub archetype: String,
+    /// deterministic loot 种子（hydrate 用它复现 loot）。
+    pub loot_seed: u64,
+    /// 逻辑结算 tick（deferred-on-hydrate 时序校验用）。
+    pub created_tick: u64,
+    pub at_tick: u64,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct FactionEventV1 {
     pub v: u8,
