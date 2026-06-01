@@ -16,6 +16,8 @@ import com.bong.client.network.ServerDataDispatch;
 import com.bong.client.network.ServerDataEnvelope;
 import com.bong.client.network.ServerDataRouter;
 import com.bong.client.network.VfxEventRouter;
+import com.bong.client.npc.NpcLodHandler;
+import com.bong.client.npc.NpcLodStore;
 import com.bong.client.npc.NpcMetadataHandler;
 import com.bong.client.npc.NpcMetadataStore;
 import com.bong.client.npc.NpcBubbleHandler;
@@ -72,6 +74,7 @@ public class BongNetworkHandler {
     public static void register() {
         registerServerDataChannel();
         registerNpcMetadataChannel();
+        registerNpcLodChannel();
         registerNpcBubbleChannel();
         registerNpcMoodChannel();
         registerTsyBossHealthChannel();
@@ -90,6 +93,7 @@ public class BongNetworkHandler {
             (handler, client) -> client.execute(() -> {
                 RealmCollapseHudStateStore.clearOnDisconnect();
                 NpcMetadataStore.clearAll();
+                NpcLodStore.clearAll();
                 NpcMoodStore.clearAll();
                 NpcDialogueBubbleRenderer.clear();
                 TsyBossHealthStore.reset();
@@ -119,6 +123,22 @@ public class BongNetworkHandler {
                 boolean handled = NpcMetadataHandler.handle(jsonPayload, readableBytes);
                 if (!handled) {
                     BongClient.LOGGER.warn("Ignoring bong:npc_metadata payload");
+                }
+            });
+        });
+    }
+
+    private static void registerNpcLodChannel() {
+        ClientPlayNetworking.registerGlobalReceiver(new Identifier(NpcLodHandler.CHANNEL_NAMESPACE, NpcLodHandler.CHANNEL_PATH), (client, handler, buf, responseSender) -> {
+            int readableBytes = buf.readableBytes();
+            byte[] bytes = new byte[readableBytes];
+            buf.readBytes(bytes);
+
+            String jsonPayload = ServerDataEnvelope.decodeUtf8(bytes);
+            client.execute(() -> {
+                boolean handled = NpcLodHandler.handle(jsonPayload, readableBytes);
+                if (!handled) {
+                    BongClient.LOGGER.warn("Ignoring bong:npc_lod payload");
                 }
             });
         });
