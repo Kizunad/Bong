@@ -14,6 +14,10 @@ pub mod combat;
 /// （玩家靠近 zone → 读 sqlite pending relic → 零真元物化成地面 loot + VFX/audio/narration）。
 pub mod relic_hydrate;
 
+/// plan-offscreen-war-v1 P5：散修群体消长 census（纯逻辑：人口 / 众数 zone / 涌现强者 / 消长态）。
+/// 全只读 store + faction store，零真元流动——telemetry publish 在 network 层消费其产出。
+pub mod census;
+
 use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
@@ -550,6 +554,8 @@ pub fn register(app: &mut App) {
     app.init_resource::<NpcDormantStore>()
         .insert_resource(NpcVirtualizationConfig::from_env())
         .insert_resource(DormantRoguePopulationSeedConfig::default())
+        // plan-offscreen-war-v1 P5：群体消长 census 的上轮人口历史（telemetry publish 写回）。
+        .init_resource::<census::LastFactionCensus>()
         .add_event::<DormantSeveredAt>()
         .add_event::<DormantCombatOutcome>()
         .add_event::<PendingDormantRelicCreated>()
