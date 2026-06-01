@@ -38,6 +38,7 @@ import com.bong.client.cultivation.voidaction.VoidActionScreenBootstrap;
 import com.bong.client.craft.CraftScreenBootstrap;
 import com.bong.client.lingtian.LingtianActionScreenBootstrap;
 import com.bong.client.movement.MovementKeybindings;
+import com.bong.client.npc.NpcLodWorldRenderer;
 import com.bong.client.npc.NpcNametagRenderer;
 import com.bong.client.npc.NpcDialogueBubbleRenderer;
 import com.bong.client.npc.NpcInteractionLogControls;
@@ -73,6 +74,7 @@ public class BongClient implements ClientModInitializer {
         BongBlocks.register();
         BongNetworkHandler.register();
         NpcNametagRenderer.register();
+        NpcLodWorldRenderer.register();
         NpcDialogueBubbleRenderer.register();
         NpcMoodIcon.register();
         HudRenderCallback.EVENT.register(BongHud::render);
