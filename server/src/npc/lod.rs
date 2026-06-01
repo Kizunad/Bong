@@ -2113,8 +2113,7 @@ mod tests {
         );
 
         // 玩家移到 150 格 → Mid（80..256）
-        *app.world_mut().get_mut::<Position>(player).unwrap() =
-            Position::new([150.0, 64.0, 0.0]);
+        *app.world_mut().get_mut::<Position>(player).unwrap() = Position::new([150.0, 64.0, 0.0]);
         app.update();
         assert_eq!(
             app.world().get::<NpcLodTier>(npc).copied(),
@@ -2167,8 +2166,7 @@ mod tests {
         );
 
         // 玩家靠近到 20 格 → Near（<80）
-        *app.world_mut().get_mut::<Position>(player).unwrap() =
-            Position::new([20.0, 64.0, 0.0]);
+        *app.world_mut().get_mut::<Position>(player).unwrap() = Position::new([20.0, 64.0, 0.0]);
         app.update();
         assert_eq!(
             app.world().get::<NpcLodTier>(npc).copied(),
@@ -2220,8 +2218,7 @@ mod tests {
         );
 
         // 玩家退到 400 格 → Far（256..512）
-        *app.world_mut().get_mut::<Position>(player).unwrap() =
-            Position::new([400.0, 64.0, 0.0]);
+        *app.world_mut().get_mut::<Position>(player).unwrap() = Position::new([400.0, 64.0, 0.0]);
         app.update();
         assert_eq!(
             app.world().get::<NpcLodTier>(npc).copied(),
@@ -2273,8 +2270,7 @@ mod tests {
         );
 
         // 玩家退到 1000 格 → Dormant（>512）
-        *app.world_mut().get_mut::<Position>(player).unwrap() =
-            Position::new([1000.0, 64.0, 0.0]);
+        *app.world_mut().get_mut::<Position>(player).unwrap() = Position::new([1000.0, 64.0, 0.0]);
         app.update();
         assert_eq!(
             app.world().get::<NpcLodTier>(npc).copied(),
@@ -2417,8 +2413,7 @@ mod tests {
         }
 
         // 玩家移到 2000 格（全部 NPC → Dormant）
-        *app.world_mut().get_mut::<Position>(player).unwrap() =
-            Position::new([2000.0, 64.0, 0.0]);
+        *app.world_mut().get_mut::<Position>(player).unwrap() = Position::new([2000.0, 64.0, 0.0]);
         app.update();
 
         for (&(id, _, i), _) in npcs.iter().zip(expected_initial.iter()) {
@@ -2478,7 +2473,9 @@ mod tests {
             .id();
 
         // 振荡序列：近 → 中 → 远 → 休眠 → 近 → ... 共 5 轮
-        let oscillation_positions: &[f64] = &[10.0, 150.0, 400.0, 1000.0, 10.0, 150.0, 400.0, 1000.0, 10.0, 150.0];
+        let oscillation_positions: &[f64] = &[
+            10.0, 150.0, 400.0, 1000.0, 10.0, 150.0, 400.0, 1000.0, 10.0, 150.0,
+        ];
         for &dist in oscillation_positions {
             *app.world_mut().get_mut::<Position>(player).unwrap() =
                 Position::new([dist, 64.0, 0.0]);
