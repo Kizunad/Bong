@@ -71,8 +71,8 @@ pub const CH_FACTION_EVENT: &str = "bong:faction/event";
 // `DormantCombatOutcomeV1`（winner/loser/zone/qi_released），让真服 e2e 能把战果与
 // `bong:npc/death` 对账。**真元流动不走这里**——败者残余真元守恒回灌唯一走
 // `release_dormant_qi_to_zone` → `ledger.transfer(ReleaseToZone)`（真实改 balance），
-// 本通道只是观测旁路（区别于 abstract_combat_system 那种「只 emit QiTransfer 无人 apply」
-// 的吞真元红线，§10.1 #5）。agent 派系叙事 P4 复用 `bong:npc/death`，**不**订阅本通道。
+// 本通道只是观测旁路（绝不学「只 emit QiTransfer 无人 apply」的吞真元红线——那会让真元
+// 凭空蒸发，§10.1 #5）。agent 派系叙事 P4 复用 `bong:npc/death`，**不**订阅本通道。
 pub const CH_NPC_COMBAT: &str = "bong:npc/combat";
 
 // plan-offscreen-war-v1 P3：克制式战场遗物创建 telemetry（纯观测旁路）。一名知名战死者

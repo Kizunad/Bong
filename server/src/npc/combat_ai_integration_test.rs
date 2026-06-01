@@ -1,31 +1,19 @@
 #[cfg(test)]
 mod tests {
-    use valence::prelude::{App, Entity, Events};
+    use valence::prelude::Entity;
 
-    use crate::combat::components::{CombatState, DefenseWindow, DerivedAttrs, Wounds};
+    use crate::combat::components::{DerivedAttrs, Wounds};
     use crate::cultivation::components::{Cultivation, Realm};
     use crate::cultivation::known_techniques::{
         technique_definition, KnownTechnique, KnownTechniques, SkillCategory,
     };
     use crate::cultivation::meridian::severed::SkillMeridianDependencies;
-    use crate::npc::abstract_combat::{
-        abstract_combat_resolve, apply_outcome_to_loser, apply_qi_cost, AbstractCombatOutcome,
-    };
-    use crate::npc::abstract_combat_system::ABSTRACT_COMBAT_INTERVAL_TICKS;
-    use crate::npc::combat_power::{compute_combat_power, CombatPowerScore};
-    use crate::npc::faction::{
-        FactionId, FactionMembership, FactionRank, FactionStore, Reputation,
-    };
+    use crate::npc::combat_power::compute_combat_power;
     use crate::npc::lifecycle::NpcArchetype;
-    use crate::npc::lod::NpcLodTier;
-    use crate::npc::movement::GameTick;
-    use crate::npc::patrol::NpcPatrol;
-    use crate::npc::spawn::{NpcBlackboard, NpcMarker};
     use crate::npc::technique::{
         assign_npc_techniques, category_weight, has_usable_heal_technique,
         npc_meridian_system_for_realm, select_technique, NpcCooldownMap, NpcSkillScoringContext,
     };
-    use crate::qi_physics::ledger::QiTransfer;
 
     fn empty_deps() -> SkillMeridianDependencies {
         SkillMeridianDependencies::default()
@@ -40,60 +28,6 @@ mod tests {
             has_active_buff: false,
             in_combat: true,
         }
-    }
-
-    fn build_test_app() -> App {
-        let mut app = App::new();
-        app.insert_resource(GameTick(0));
-        app.insert_resource(FactionStore::default());
-        app.add_event::<QiTransfer>();
-        crate::npc::abstract_combat_system::register(&mut app);
-        app
-    }
-
-    fn spawn_far_npc(
-        app: &mut App,
-        realm: Realm,
-        faction: FactionId,
-        qi_current: f64,
-        hp_current: f32,
-        attack_power: f32,
-    ) -> Entity {
-        app.world_mut()
-            .spawn((
-                NpcMarker,
-                NpcLodTier::Far,
-                Wounds {
-                    entries: Vec::new(),
-                    health_current: hp_current,
-                    health_max: 100.0,
-                },
-                Cultivation {
-                    realm,
-                    qi_current,
-                    qi_max: 100.0,
-                    ..Default::default()
-                },
-                DerivedAttrs {
-                    attack_power,
-                    defense_power: 3.0,
-                    ..Default::default()
-                },
-                KnownTechniques {
-                    entries: Vec::new(),
-                },
-                FactionMembership {
-                    faction_id: faction,
-                    rank: FactionRank::Disciple,
-                    reputation: Reputation::default(),
-                    lineage: None,
-                    mission_queue: Default::default(),
-                },
-                NpcPatrol::new("spawn", valence::prelude::DVec3::ZERO),
-                NpcBlackboard::default(),
-                CombatState::default(),
-            ))
-            .id()
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -325,256 +259,6 @@ mod tests {
         assert!(
             buff_ever_selected,
             "buff technique should be selected at least once across 200 NPC seeds x 500 ticks"
-        );
-    }
-
-    // ─────────────────────────────────────────────────────────────────────────
-    // P4.1.2 Far tier 抽象战斗
-    // ─────────────────────────────────────────────────────────────────────────
-
-    #[test]
-    fn far_tier_abstract_combat_produces_outcome() {
-        let attacker = CombatPowerScore(50.0);
-        let defender = CombatPowerScore(50.0);
-
-        let mut attacker_wins = 0;
-        let mut defender_wins = 0;
-        for seed in 0..1000u64 {
-            match abstract_combat_resolve(
-                attacker,
-                defender,
-                Realm::Condense,
-                Realm::Condense,
-                seed * 31 + 42,
-            ) {
-                AbstractCombatOutcome::AttackerWins { .. } => attacker_wins += 1,
-                AbstractCombatOutcome::DefenderWins { .. } => defender_wins += 1,
-            }
-        }
-        assert!(
-            attacker_wins > 0 && defender_wins > 0,
-            "equal power should produce both outcomes: a_wins={attacker_wins}, d_wins={defender_wins}"
-        );
-    }
-
-    #[test]
-    fn far_tier_loser_hp_deducted() {
-        let mut wounds = Wounds {
-            entries: Vec::new(),
-            health_current: 100.0,
-            health_max: 100.0,
-        };
-        apply_outcome_to_loser(&mut wounds, 0.15);
-        assert!(
-            (wounds.health_current - 85.0).abs() < 0.01,
-            "loser should lose 15% of max HP, got {}",
-            wounds.health_current
-        );
-    }
-
-    #[test]
-    fn far_tier_qi_cost_deducted_from_both() {
-        let mut a_cult = Cultivation {
-            realm: Realm::Condense,
-            qi_current: 50.0,
-            qi_max: 100.0,
-            ..Default::default()
-        };
-        let mut d_cult = Cultivation {
-            realm: Realm::Induce,
-            qi_current: 30.0,
-            qi_max: 100.0,
-            ..Default::default()
-        };
-
-        let a_actual = apply_qi_cost(&mut a_cult, 8.0);
-        let d_actual = apply_qi_cost(&mut d_cult, 5.0);
-
-        assert!(
-            (a_actual - 8.0).abs() < 1e-9,
-            "attacker should spend 8.0 qi, actual={a_actual}"
-        );
-        assert!(
-            (d_actual - 5.0).abs() < 1e-9,
-            "defender should spend 5.0 qi, actual={d_actual}"
-        );
-        assert!(
-            (a_cult.qi_current - 42.0).abs() < 1e-9,
-            "attacker qi should be 42.0, got {}",
-            a_cult.qi_current
-        );
-        assert!(
-            (d_cult.qi_current - 25.0).abs() < 1e-9,
-            "defender qi should be 25.0, got {}",
-            d_cult.qi_current
-        );
-    }
-
-    #[test]
-    fn far_tier_qi_transfer_emitted_in_ecs() {
-        let mut app = build_test_app();
-        app.insert_resource(GameTick(ABSTRACT_COMBAT_INTERVAL_TICKS));
-
-        spawn_far_npc(
-            &mut app,
-            Realm::Condense,
-            FactionId::Attack,
-            50.0,
-            100.0,
-            5.0,
-        );
-        spawn_far_npc(
-            &mut app,
-            Realm::Condense,
-            FactionId::Defend,
-            50.0,
-            100.0,
-            5.0,
-        );
-
-        app.update();
-
-        let events = app.world().resource::<Events<QiTransfer>>();
-        let transfers: Vec<_> = events.iter_current_update_events().collect();
-        assert!(
-            !transfers.is_empty(),
-            "QiTransfer events should be emitted after far-tier abstract combat"
-        );
-    }
-
-    #[test]
-    fn far_tier_death_when_hp_below_zero() {
-        let mut wounds = Wounds {
-            entries: Vec::new(),
-            health_current: 3.0,
-            health_max: 100.0,
-        };
-        apply_outcome_to_loser(&mut wounds, 0.30);
-        assert!(
-            wounds.health_current <= 0.0,
-            "HP 3.0 - 30% of 100 = -27.0 should clamp to 0, got {}",
-            wounds.health_current
-        );
-    }
-
-    // ─────────────────────────────────────────────────────────────────────────
-    // P4.1.3 LOD 过渡
-    // ─────────────────────────────────────────────────────────────────────────
-
-    #[test]
-    fn lod_near_to_far_clears_incoming_window() {
-        let mut app = build_test_app();
-
-        let entity = app
-            .world_mut()
-            .spawn((
-                NpcMarker,
-                NpcLodTier::Far,
-                CombatState {
-                    in_combat_until_tick: Some(1000),
-                    last_attack_at_tick: Some(500),
-                    incoming_window: Some(DefenseWindow {
-                        opened_at_tick: 400,
-                        duration_ms: 200,
-                    }),
-                },
-                NpcBlackboard::default(),
-            ))
-            .id();
-
-        app.update();
-
-        let cs = app.world().get::<CombatState>(entity).unwrap();
-        assert!(
-            cs.incoming_window.is_none(),
-            "incoming_window should be cleared when transitioning to Far tier"
-        );
-    }
-
-    #[test]
-    fn lod_transition_hp_qi_preserved() {
-        let mut app = build_test_app();
-
-        let entity = app
-            .world_mut()
-            .spawn((
-                NpcMarker,
-                NpcLodTier::Far,
-                CombatState {
-                    in_combat_until_tick: Some(1000),
-                    last_attack_at_tick: Some(500),
-                    incoming_window: Some(DefenseWindow {
-                        opened_at_tick: 400,
-                        duration_ms: 200,
-                    }),
-                },
-                Wounds {
-                    entries: Vec::new(),
-                    health_current: 42.5,
-                    health_max: 100.0,
-                },
-                Cultivation {
-                    realm: Realm::Condense,
-                    qi_current: 33.7,
-                    qi_max: 100.0,
-                    ..Default::default()
-                },
-                NpcBlackboard::default(),
-            ))
-            .id();
-
-        app.update();
-
-        let wounds = app.world().get::<Wounds>(entity).unwrap();
-        assert!(
-            (wounds.health_current - 42.5).abs() < 1e-4,
-            "HP should be preserved across LOD transition, got {}",
-            wounds.health_current
-        );
-
-        let cult = app.world().get::<Cultivation>(entity).unwrap();
-        assert!(
-            (cult.qi_current - 33.7).abs() < 1e-9,
-            "qi should be preserved across LOD transition, got {}",
-            cult.qi_current
-        );
-    }
-
-    #[test]
-    fn lod_dormant_clears_both_window_and_retaliation() {
-        let mut app = build_test_app();
-
-        let entity = app
-            .world_mut()
-            .spawn((
-                NpcMarker,
-                NpcLodTier::Dormant,
-                CombatState {
-                    in_combat_until_tick: Some(1000),
-                    last_attack_at_tick: Some(500),
-                    incoming_window: Some(DefenseWindow {
-                        opened_at_tick: 400,
-                        duration_ms: 200,
-                    }),
-                },
-                NpcBlackboard {
-                    retaliation_target: Some((Entity::PLACEHOLDER, 999)),
-                    ..Default::default()
-                },
-            ))
-            .id();
-
-        app.update();
-
-        let cs = app.world().get::<CombatState>(entity).unwrap();
-        assert!(
-            cs.incoming_window.is_none(),
-            "incoming_window should be cleared for Dormant"
-        );
-        let bb = app.world().get::<NpcBlackboard>(entity).unwrap();
-        assert!(
-            bb.retaliation_target.is_none(),
-            "retaliation_target should be cleared for Dormant"
         );
     }
 
@@ -881,14 +565,6 @@ mod tests {
     }
 
     #[test]
-    fn calibration_abstract_combat_interval_200_ticks() {
-        assert_eq!(
-            ABSTRACT_COMBAT_INTERVAL_TICKS, 200,
-            "far tier combat interval should be 200 ticks (10 seconds)"
-        );
-    }
-
-    #[test]
     fn calibration_buff_duration_200_ticks() {
         let def_speed = technique_definition("npc.buff_speed");
         let def_defense = technique_definition("npc.buff_defense");
@@ -900,84 +576,6 @@ mod tests {
         assert!(
             def_defense.is_some(),
             "npc.buff_defense should exist in TECHNIQUE_DEFINITIONS"
-        );
-    }
-
-    #[test]
-    fn calibration_npc_pair_different_realms() {
-        let low_wounds = Wounds {
-            entries: Vec::new(),
-            health_current: 100.0,
-            health_max: 100.0,
-        };
-        let high_wounds = low_wounds.clone();
-
-        let low_cult = Cultivation {
-            realm: Realm::Induce,
-            qi_current: 30.0,
-            qi_max: 30.0,
-            ..Default::default()
-        };
-        let high_cult = Cultivation {
-            realm: Realm::Spirit,
-            qi_current: 200.0,
-            qi_max: 200.0,
-            ..Default::default()
-        };
-
-        let derived = DerivedAttrs {
-            attack_power: 5.0,
-            defense_power: 3.0,
-            ..Default::default()
-        };
-        let techniques = KnownTechniques {
-            entries: Vec::new(),
-        };
-
-        let low_power = compute_combat_power(
-            Realm::Induce,
-            &low_cult,
-            &low_wounds,
-            &derived,
-            &techniques,
-            None,
-        );
-        let high_power = compute_combat_power(
-            Realm::Spirit,
-            &high_cult,
-            &high_wounds,
-            &derived,
-            &techniques,
-            None,
-        );
-
-        assert!(
-            high_power.0 > low_power.0 * 2.0,
-            "Spirit power ({}) should be >2x Induce power ({})",
-            high_power.0,
-            low_power.0
-        );
-
-        let mut high_wins = 0;
-        let trials = 1000;
-        for seed in 0..trials {
-            match abstract_combat_resolve(
-                high_power,
-                low_power,
-                Realm::Spirit,
-                Realm::Induce,
-                seed * 7919 + 42,
-            ) {
-                AbstractCombatOutcome::AttackerWins { .. } => high_wins += 1,
-                AbstractCombatOutcome::DefenderWins { .. } => {}
-            }
-        }
-
-        let win_rate = high_wins as f64 / trials as f64;
-        assert!(
-            win_rate > 0.65,
-            "Spirit vs Induce: Spirit should win >65% of the time, got {:.1}%",
-            win_rate * 100.0
         );
     }
 
@@ -1101,51 +699,6 @@ mod tests {
             categories_seen.len() >= 2,
             "combat cycle should see multiple categories across 50 seeds, saw: {:?}",
             categories_seen
-        );
-    }
-
-    #[test]
-    fn integration_far_tier_repeated_combat_drains_resources() {
-        let mut app = build_test_app();
-
-        let a = spawn_far_npc(
-            &mut app,
-            Realm::Condense,
-            FactionId::Attack,
-            50.0,
-            100.0,
-            5.0,
-        );
-        let d = spawn_far_npc(
-            &mut app,
-            Realm::Condense,
-            FactionId::Defend,
-            50.0,
-            100.0,
-            5.0,
-        );
-
-        for round in 0..5u32 {
-            let tick = (round + 1) * ABSTRACT_COMBAT_INTERVAL_TICKS;
-            app.insert_resource(GameTick(tick));
-            app.update();
-        }
-
-        let a_wounds = app.world().get::<Wounds>(a).unwrap();
-        let d_wounds = app.world().get::<Wounds>(d).unwrap();
-        let a_cult = app.world().get::<Cultivation>(a).unwrap();
-        let d_cult = app.world().get::<Cultivation>(d).unwrap();
-
-        let total_hp_lost = (100.0 - a_wounds.health_current) + (100.0 - d_wounds.health_current);
-        assert!(
-            total_hp_lost > 5.0,
-            "after 5 rounds of combat, total HP lost should be >5.0, got {total_hp_lost:.2}"
-        );
-
-        let total_qi_lost = (50.0 - a_cult.qi_current) + (50.0 - d_cult.qi_current);
-        assert!(
-            total_qi_lost > 5.0,
-            "after 5 rounds of combat, total qi lost should be >5.0, got {total_qi_lost:.2}"
         );
     }
 }
