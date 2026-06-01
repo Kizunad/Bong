@@ -235,6 +235,8 @@ public final class ServerDataRouter {
         // plan-workbench-recipes-v1 P3.1 — 制作台 UI 打开
         handlers.put("workbench_open",
             com.bong.client.craft.WorkbenchScreenBootstrap.handler());
+        // plan-offscreen-war-v1 P9：战事 HUD 状态（双色血条 + WarPhase 文字）。
+        handlers.put("faction_war_state", new FactionWarHudHandler());
         return new ServerDataRouter(handlers);
     }
 
