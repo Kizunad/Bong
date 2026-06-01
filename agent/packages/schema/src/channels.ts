@@ -98,6 +98,9 @@ export const CHANNELS = {
   /** Server → Agent: 派系状态变更事件（plan-npc-ai-v1 §6） */
   FACTION_EVENT: "bong:faction/event",
 
+  /** Server → Agent: 散修群体消长盘面快照（plan-offscreen-war-v1 P5，reframe b） */
+  FACTION_STATE: "bong:faction_state",
+
   /** Server → Agent: 玩家社交暴露事件（plan-social-v1 §7） */
   SOCIAL_EXPOSURE: "bong:social/exposure",
 
@@ -364,6 +367,7 @@ export const REDIS_V1_CHANNELS = [
   CHANNELS.NPC_SPAWN,
   CHANNELS.NPC_DEATH,
   CHANNELS.FACTION_EVENT,
+  CHANNELS.FACTION_STATE,
   CHANNELS.SOCIAL_EXPOSURE,
   CHANNELS.SOCIAL_PACT,
   CHANNELS.SOCIAL_FEUD,

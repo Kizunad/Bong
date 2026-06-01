@@ -1,0 +1,11 @@
+{
+  "v": 1,
+  "kind": "faction_state",
+  "group_id": 2,
+  "region_descriptor": "rift_valley一带散修",
+  "status": "rising",
+  "dominant_zone": "rift_valley",
+  "strongest_realm": "Solidify",
+  "strongest_char_id": "dormant:rogue:3",
+  "at_tick": 4321
+}

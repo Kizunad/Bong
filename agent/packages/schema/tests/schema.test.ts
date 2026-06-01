@@ -57,8 +57,11 @@ import * as SchemaPackage from "../src/index.js";
 import { NarrationV1, validateNarrationV1Contract } from "../src/narration.js";
 import {
   FactionEventV1,
+  FactionStateV1,
+  GroupStatusV1,
   NpcDeathV1,
   NpcSpawnedV1,
+  validateFactionStateV1Contract,
   validateNpcDeathV1Contract,
 } from "../src/npc.js";
 import {
@@ -2184,5 +2187,82 @@ describe("plan-zone-environment-v1 schema", () => {
       validateZoneEnvironmentStateV1Contract,
       data,
     );
+  });
+
+  // plan-offscreen-war-v1 P5：FactionStateV1 双端锁（GroupStatusV1 + FactionStateV1 schema + sample 对拍）。
+  it("declares FACTION_STATE Redis channel", () => {
+    expect(CHANNELS.FACTION_STATE).toBe("bong:faction_state");
+    expect(REDIS_V1_CHANNELS).toContain(CHANNELS.FACTION_STATE);
+  });
+
+  it("faction-state.sample.json passes FactionStateV1 contract", () => {
+    // 正样本：合法的散修群体消长盘面快照，三字段对齐 server FactionStateV1 serde wire。
+    const data = loadSample("faction-state.sample.json");
+    const result = validate(FactionStateV1, data);
+    expect(result.ok, `faction-state.sample.json should be accepted: ${result.errors.join("; ")}`).toBe(true);
+    expectContractAccepts("FactionStateV1", validateFactionStateV1Contract, data);
+  });
+
+  it("faction_state_v1_sample_pin — all three GroupStatusV1 variants", () => {
+    // GroupStatusV1 三变体各自正向对拍——每个 wire string 都必须被接受。
+    // 与 server faction_state_v1_each_status_variant_roundtrips 双端对齐。
+    const base = loadObjectSample("faction-state.sample.json");
+    for (const status of ["rising", "stable", "waning"] as const) {
+      const payload = { ...base, status };
+      const result = validate(GroupStatusV1, status);
+      expect(result.ok, `GroupStatusV1 variant "${status}" must be accepted by GroupStatusV1 union`).toBe(true);
+      expectContractAccepts(
+        `FactionStateV1 status=${status}`,
+        validateFactionStateV1Contract,
+        payload,
+      );
+    }
+  });
+
+  it("faction-state.invalid-status.sample.json is rejected", () => {
+    // 反：非法 status 字符串（ascending 不属于 rising/stable/waning）必须被拒——
+    // 锁住 GroupStatusV1 enum 契约，与 server faction_state_v1_rejects_unknown_status 双端对齐。
+    const data = loadSample("faction-state.invalid-status.sample.json");
+    expectContractRejects(
+      "FactionStateV1 invalid status",
+      validateFactionStateV1Contract,
+      data,
+    );
+  });
+
+  it("faction-state.invalid-missing-field.sample.json is rejected", () => {
+    // 反：缺必填字段（population 被删掉）必须被拒——
+    // FactionStateV1 additionalProperties:false 无 serde default，缺字段不能静默归零，
+    // 与 server faction_state_v1_rejects_missing_field 双端对齐。
+    const data = loadSample("faction-state.invalid-missing-field.sample.json");
+    expectContractRejects(
+      "FactionStateV1 missing population",
+      validateFactionStateV1Contract,
+      data,
+    );
+  });
+
+  it("FactionStateV1 rejects unknown additional property", () => {
+    // 反：additionalProperties:false 生效——注入未知字段 bogus_field 必须被拒。
+    const base = loadObjectSample("faction-state.sample.json");
+    expectContractRejects(
+      "FactionStateV1 additional property",
+      validateFactionStateV1Contract,
+      { ...base, bogus_field: "nope" },
+    );
+  });
+
+  it("FactionStateV1 group_id boundary — minimum 0 accepted, negative rejected", () => {
+    // 边界：group_id=0 合法（u16 最小值），负数 group_id 必须被拒（Integer {minimum:0}）。
+    const base = loadObjectSample("faction-state.sample.json");
+    expectContractAccepts("FactionStateV1 group_id=0", validateFactionStateV1Contract, { ...base, group_id: 0 });
+    expectContractRejects("FactionStateV1 group_id=-1", validateFactionStateV1Contract, { ...base, group_id: -1 });
+  });
+
+  it("FactionStateV1 is exported from index", () => {
+    // 锁住 index 导出——tiandao 侧 import { FactionStateV1 } from "@bong/schema" 必须可用。
+    expect(SchemaPackage.FactionStateV1).toBe(FactionStateV1);
+    expect(SchemaPackage.GroupStatusV1).toBe(GroupStatusV1);
+    expect(typeof SchemaPackage.validateFactionStateV1Contract).toBe("function");
   });
 });
