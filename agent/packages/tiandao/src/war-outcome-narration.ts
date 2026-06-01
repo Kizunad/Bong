@@ -135,6 +135,17 @@ export class WarOutcomeNarrationRuntime {
     } catch (_e) {
       // ignore
     }
+    // 关闭 Redis 连接（Pi review 2026-06-01 bug fix：防止热重载泄漏 socket）
+    try {
+      this.sub.disconnect();
+    } catch (_e) {
+      // ignore
+    }
+    try {
+      this.pub.disconnect();
+    } catch (_e) {
+      // ignore
+    }
     this.connected = false;
   }
 

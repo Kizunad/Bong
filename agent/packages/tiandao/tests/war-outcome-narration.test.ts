@@ -368,3 +368,29 @@ describe("WarOutcomeNarrationRuntime — subscribed to correct channel", () => {
     expect(pub.published).toHaveLength(0);
   });
 });
+
+describe("WarOutcomeNarrationRuntime — disconnect closes Redis connections", () => {
+  it("disconnect calls sub.disconnect() and pub.disconnect() to prevent socket leak", async () => {
+    // Pi review 2026-06-01 bug fix：热重载时必须关闭 Redis 连接，否则 socket 累计泄漏
+    const sub = new FakePubSub();
+    const pub = new FakePubSub();
+    let subDisconnected = false;
+    let pubDisconnected = false;
+    sub.disconnect = () => { subDisconnected = true; };
+    pub.disconnect = () => { pubDisconnected = true; };
+
+    const runtime = new WarOutcomeNarrationRuntime({ sub, pub, logger: silent });
+    await runtime.connect();
+    await runtime.disconnect();
+
+    expect(subDisconnected).toBe(true);
+    expect(pubDisconnected).toBe(true);
+  });
+
+  it("disconnect is idempotent (second call does nothing)", async () => {
+    const { runtime } = await makeConnectedRuntime();
+    await runtime.disconnect();
+    // should not throw on second call
+    await expect(runtime.disconnect()).resolves.toBeUndefined();
+  });
+});
