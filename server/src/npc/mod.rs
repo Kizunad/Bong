@@ -51,6 +51,7 @@ pub mod territory;
 pub mod trade;
 pub mod tribulation;
 pub mod tsy_hostile;
+pub mod war;
 pub mod whale_narration;
 pub mod zong_keeper;
 

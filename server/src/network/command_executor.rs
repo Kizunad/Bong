@@ -12,7 +12,7 @@ use crate::cultivation::components::Realm;
 use crate::cultivation::tick::CultivationClock;
 use crate::npc::brain::{canonical_npc_id, NpcBehaviorConfig};
 use crate::npc::faction::{
-    FactionEventApplied, FactionEventCommand, FactionEventError, FactionEventKind,
+    EmergentGroupId, FactionEventApplied, FactionEventCommand, FactionEventError, FactionEventKind,
     FactionEventNotice, FactionId, FactionRank, FactionStore,
 };
 use crate::npc::lifecycle::{NpcArchetype, NpcRegistry, NpcSpawnNotice, NpcSpawnSource};
@@ -22,6 +22,7 @@ use crate::npc::spawn::{
     NpcSkinSpawnContext,
 };
 use crate::npc::territory::Territory;
+use crate::npc::war::{WarParticipateIntent, WarRole};
 use crate::qi_physics::ledger::QiTransfer;
 use crate::schema::agent_command::{AgentCommandV1, Command};
 use crate::schema::common::{CommandType, GameEventType, MAX_COMMANDS_PER_TICK};
@@ -181,6 +182,8 @@ pub fn execute_agent_commands(
     mut npc_spawn_notices: EventWriter<NpcSpawnNotice>,
     mut faction_notices: EventWriter<FactionEventNotice>,
     mut qi_transfers: EventWriter<QiTransfer>,
+    // plan-offscreen-war-v1 P6：headless 玩家参与涌现冲突（路径 B，汇聚到与 brigadier 同一 handler）。
+    mut war_intents: EventWriter<WarParticipateIntent>,
     layers: LayerQuery<'_, '_>,
     npc_entities: LiveNpcQuery<'_, '_>,
     pseudo_vein_runtimes: Query<&PseudoVeinRuntime>,
@@ -221,6 +224,7 @@ pub fn execute_agent_commands(
                 &mut npc_spawn_notices,
                 &mut faction_notices,
                 &mut qi_transfers,
+                &mut war_intents,
                 &layers,
                 &npc_entities,
                 &pseudo_vein_runtimes,
@@ -267,6 +271,8 @@ fn execute_single_command(
     npc_spawn_notices: &mut EventWriter<NpcSpawnNotice>,
     faction_notices: &mut EventWriter<FactionEventNotice>,
     qi_transfers: &mut EventWriter<QiTransfer>,
+    // plan-offscreen-war-v1 P6：headless 路径 B 注入的战争参与 intent。
+    war_intents: &mut EventWriter<WarParticipateIntent>,
     layers: &LayerQuery<'_, '_>,
     npc_entities: &LiveNpcQuery<'_, '_>,
     pseudo_vein_runtimes: &Query<&PseudoVeinRuntime>,
@@ -298,9 +304,13 @@ fn execute_single_command(
         CommandType::DespawnNpc => {
             execute_despawn_npc(command, commands, npc_entities, pending_despawn_targets)
         }
-        CommandType::FactionEvent => {
-            execute_faction_event(command, faction_store, active_events, faction_notices)
-        }
+        CommandType::FactionEvent => execute_faction_event(
+            command,
+            faction_store,
+            active_events,
+            faction_notices,
+            war_intents,
+        ),
         CommandType::NpcBehavior => {
             execute_npc_behavior(command, npc_behavior, npc_entities, pending_despawn_targets)
         }
@@ -375,7 +385,20 @@ fn execute_faction_event(
     faction_store: &mut Option<ResMut<FactionStore>>,
     active_events: &mut Option<ResMut<ActiveEventsResource>>,
     faction_notices: &mut EventWriter<FactionEventNotice>,
+    // plan-offscreen-war-v1 P6：路径 B headless 注入出口（`war_participate=true` 分支）。
+    war_intents: &mut EventWriter<WarParticipateIntent>,
 ) -> &'static str {
+    // plan-offscreen-war-v1 P6：前置分支——`war_participate=true` 时走涌现冲突参与路径（路径 B），
+    // 不走原 faction 逻辑。约定：target == zone_name，params 含 player_id/role/group。
+    if command
+        .params
+        .get("war_participate")
+        .and_then(Value::as_bool)
+        == Some(true)
+    {
+        return execute_war_participate_headless(command, war_intents);
+    }
+
     let Some(faction_store) = faction_store.as_deref_mut() else {
         tracing::warn!(
             "[bong][network] cannot execute faction_event for `{}` because FactionStore resource is missing",
@@ -407,6 +430,73 @@ fn execute_faction_event(
             | FactionEventError::MissingLoyaltyDelta => "rejected_invalid_faction_event",
         },
     }
+}
+
+/// plan-offscreen-war-v1 P6：路径 B headless 参与入口（`execute_faction_event` 前置分支）。
+///
+/// params 约定：
+/// - `"war_participate": true`（触发此分支）
+/// - `"player_id": "offline:e2e_merc"`
+/// - `"role": "mercenary"` / `"enlist"` / `"intercept"` / `"spectate"`
+/// - `"group": 2`（Enlist/Mercenary 必填；Intercept/Spectate 忽略）
+///
+/// target == zone_name。完全 headless（无 Client entity）；错误直接返回 label。
+fn execute_war_participate_headless(
+    command: &Command,
+    war_intents: &mut EventWriter<WarParticipateIntent>,
+) -> &'static str {
+    let zone = command.target.clone();
+
+    let Some(player_id) = command
+        .params
+        .get("player_id")
+        .and_then(Value::as_str)
+        .map(str::to_string)
+    else {
+        tracing::warn!(
+            "[bong][network][war] war_participate missing player_id for zone={}",
+            zone
+        );
+        return "rejected_missing_player_id";
+    };
+
+    let role_str = command
+        .params
+        .get("role")
+        .and_then(Value::as_str)
+        .unwrap_or("spectate");
+
+    let role =
+        match role_str {
+            "enlist" => WarRole::Enlist,
+            "mercenary" => WarRole::Mercenary,
+            "intercept" => WarRole::Intercept,
+            "spectate" => WarRole::Spectate,
+            unknown => {
+                tracing::warn!(
+                "[bong][network][war] war_participate unknown role \"{}\" for zone={} player_id={}",
+                unknown, zone, player_id
+            );
+                return "rejected_invalid_war_role";
+            }
+        };
+
+    let allied_group = command
+        .params
+        .get("group")
+        .and_then(Value::as_u64)
+        .and_then(|g| u16::try_from(g).ok())
+        .map(EmergentGroupId);
+
+    war_intents.send(WarParticipateIntent {
+        player_id,
+        zone,
+        role,
+        allied_group,
+        at_tick: 0, // headless 无 GameTick 访问权，0 是合理默认（handle_war_participate_intent 不依赖此值做业务判断）
+    });
+
+    "ok"
 }
 
 fn execute_despawn_npc(
@@ -1157,6 +1247,8 @@ mod command_executor_tests {
         app.add_event::<NpcSpawnNotice>();
         app.add_event::<FactionEventNotice>();
         app.add_event::<QiTransfer>();
+        // plan-offscreen-war-v1 P6：headless 路径 B 出口
+        app.add_event::<WarParticipateIntent>();
         app.add_systems(Update, execute_agent_commands);
         app
     }
@@ -2277,6 +2369,317 @@ mod command_executor_tests {
             query.iter(world).count()
         };
         assert_eq!(npc_count, 0);
+    }
+
+    // ─────────── plan-offscreen-war-v1 P6：路径 B（headless 玩家参与）─────────────
+    //
+    // 与 brigadier 路径 A（cmd/gameplay/war.rs 的 4 个 test）对拍：
+    // 同一 zone/role/group 输入下，路径 B 必须发出与路径 A 同形的 WarParticipateIntent，
+    // 且错误分支（缺 player_id / 非法 role）必须返回与生产一致的 label 且不发 intent。
+
+    /// 捕获 `execute_war_participate_headless` 返回的 label，供错误分支断言。
+    #[derive(Resource, Default)]
+    struct WarLabelCapture(&'static str);
+
+    #[derive(Resource)]
+    struct HeadlessParticipateCommand(Command);
+
+    /// 一次性 wrapper system：用 Bevy 提供的真实 EventWriter 跑生产 fn，
+    /// 把返回 label 落进 WarLabelCapture，让错误分支 label 可观测（不绑实现细节）。
+    fn run_headless_participate(app: &mut App, command: Command) -> &'static str {
+        app.insert_resource(WarLabelCapture::default());
+        app.insert_resource(HeadlessParticipateCommand(command));
+
+        fn capture_system(
+            cmd: Res<HeadlessParticipateCommand>,
+            mut label: ResMut<WarLabelCapture>,
+            mut war_intents: EventWriter<WarParticipateIntent>,
+        ) {
+            label.0 = super::execute_war_participate_headless(&cmd.0, &mut war_intents);
+        }
+
+        let mut schedule = bevy_ecs::schedule::Schedule::default();
+        schedule.add_systems(capture_system);
+        schedule.run(app.world_mut());
+
+        app.world().resource::<WarLabelCapture>().0
+    }
+
+    /// 通过完整 `execute_agent_commands` 管线跑路径 B（war_participate=true），
+    /// drain 出 WarParticipateIntent 断言形状——这是与路径 A "同效" 的对拍口。
+    fn drain_war_intents_after_pipeline(app: &App) -> Vec<WarParticipateIntent> {
+        app.world()
+            .resource::<Events<WarParticipateIntent>>()
+            .iter_current_update_events()
+            .cloned()
+            .collect()
+    }
+
+    fn war_participate_params(role: &str, group: Option<u64>) -> HashMap<String, Value> {
+        let mut params = HashMap::new();
+        params.insert("war_participate".to_string(), json!(true));
+        params.insert("player_id".to_string(), json!("offline:e2e_merc"));
+        params.insert("role".to_string(), json!(role));
+        if let Some(g) = group {
+            params.insert("group".to_string(), json!(g));
+        }
+        params
+    }
+
+    #[test]
+    fn war_participate_headless_emits_enlist_intent_matching_brigadier_shape() {
+        // happy path：war_participate=true + role=enlist + group=2 →
+        // 与 brigadier `/faction join 2`（路径 A）同形的 WarParticipateIntent。
+        let mut app = setup_executor_app();
+
+        {
+            let mut executor = app.world_mut().resource_mut::<CommandExecutorResource>();
+            let outcome = executor.enqueue_batch(batch(
+                "cmd_war_participate_enlist",
+                vec![command(
+                    CommandType::FactionEvent,
+                    "remnant_ash_valley",
+                    war_participate_params("enlist", Some(2)),
+                )],
+            ));
+            assert!(outcome.accepted);
+            assert!(!outcome.dedupe_drop);
+        }
+
+        app.update();
+
+        let intents = drain_war_intents_after_pipeline(&app);
+        assert_eq!(
+            intents.len(),
+            1,
+            "期望路径 B war_participate 发出 1 条 WarParticipateIntent 因 happy path 应汇聚到同一队列，实际 {}",
+            intents.len()
+        );
+        let intent = &intents[0];
+        assert_eq!(
+            intent.zone, "remnant_ash_valley",
+            "期望 zone=target(remnant_ash_valley) 因路径 B 约定 target==zone，实际 {}",
+            intent.zone
+        );
+        assert_eq!(
+            intent.player_id, "offline:e2e_merc",
+            "期望 player_id 透传自 params 因路径 B 必须保留参与者身份，实际 {}",
+            intent.player_id
+        );
+        assert_eq!(
+            intent.role,
+            WarRole::Enlist,
+            "期望 role=Enlist 因 \"enlist\" 字符串映射，实际 {:?}",
+            intent.role
+        );
+        assert_eq!(
+            intent.allied_group,
+            Some(EmergentGroupId(2)),
+            "期望 allied_group=Some(EmergentGroupId(2)) 因 group=2 应解析为裸匿名群体 id，实际 {:?}",
+            intent.allied_group
+        );
+    }
+
+    #[test]
+    fn war_participate_headless_role_string_maps_all_four_variants() {
+        // role 字符串四态全覆盖：enlist/mercenary/intercept/spectate 各自映射正确，
+        // 且默认（缺 role）退化为 Spectate。每条都通过管线 drain 断言。
+        let cases = [
+            (
+                "enlist",
+                WarRole::Enlist,
+                Some(3u64),
+                Some(EmergentGroupId(3)),
+            ),
+            (
+                "mercenary",
+                WarRole::Mercenary,
+                Some(7),
+                Some(EmergentGroupId(7)),
+            ),
+            ("intercept", WarRole::Intercept, None, None),
+            ("spectate", WarRole::Spectate, None, None),
+        ];
+
+        for (role_str, expected_role, group, expected_group) in cases {
+            let mut app = setup_executor_app();
+            {
+                let mut executor = app.world_mut().resource_mut::<CommandExecutorResource>();
+                let outcome = executor.enqueue_batch(batch(
+                    &format!("cmd_war_role_{role_str}"),
+                    vec![command(
+                        CommandType::FactionEvent,
+                        "remnant_ash_valley",
+                        war_participate_params(role_str, group),
+                    )],
+                ));
+                assert!(outcome.accepted);
+            }
+            app.update();
+
+            let intents = drain_war_intents_after_pipeline(&app);
+            assert_eq!(
+                intents.len(),
+                1,
+                "期望 role={role_str} 发出 1 条 intent 因合法 role 应入队，实际 {}",
+                intents.len()
+            );
+            assert_eq!(
+                intents[0].role, expected_role,
+                "期望 role 字符串 \"{role_str}\" 映射为 {expected_role:?} 因四态映射表，实际 {:?}",
+                intents[0].role
+            );
+            assert_eq!(
+                intents[0].allied_group, expected_group,
+                "期望 role={role_str} 的 allied_group={expected_group:?} 因仅 Enlist/Mercenary 带 group，实际 {:?}",
+                intents[0].allied_group
+            );
+        }
+    }
+
+    #[test]
+    fn war_participate_headless_missing_role_defaults_to_spectate() {
+        // 缺 role 字段 → 默认 Spectate（不报错、发 intent）。
+        let mut app = setup_executor_app();
+        let mut params = HashMap::new();
+        params.insert("war_participate".to_string(), json!(true));
+        params.insert("player_id".to_string(), json!("offline:lurker"));
+
+        let label = run_headless_participate(
+            &mut app,
+            command(CommandType::FactionEvent, "remnant_ash_valley", params),
+        );
+        assert_eq!(
+            label, "ok",
+            "期望缺 role 返回 ok 因 role 默认为 spectate，实际 {label}"
+        );
+
+        let intents = drain_war_intents_after_pipeline(&app);
+        assert_eq!(
+            intents.len(),
+            1,
+            "期望缺 role 仍发 1 条 intent，实际 {}",
+            intents.len()
+        );
+        assert_eq!(
+            intents[0].role,
+            WarRole::Spectate,
+            "期望缺 role 默认 Spectate 因 unwrap_or(\"spectate\")，实际 {:?}",
+            intents[0].role
+        );
+    }
+
+    #[test]
+    fn war_participate_headless_missing_player_id_rejects_and_emits_nothing() {
+        // 错误分支①：缺 player_id → label=rejected_missing_player_id，不发 intent。
+        let mut app = setup_executor_app();
+        let mut params = HashMap::new();
+        params.insert("war_participate".to_string(), json!(true));
+        params.insert("role".to_string(), json!("enlist"));
+        params.insert("group".to_string(), json!(1));
+
+        let label = run_headless_participate(
+            &mut app,
+            command(CommandType::FactionEvent, "remnant_ash_valley", params),
+        );
+        assert_eq!(
+            label, "rejected_missing_player_id",
+            "期望缺 player_id 返回 rejected_missing_player_id 因路径 B 必须有参与者身份，实际 {label}"
+        );
+
+        let intents = drain_war_intents_after_pipeline(&app);
+        assert!(
+            intents.is_empty(),
+            "期望缺 player_id 不发任何 intent 因前置校验失败应 early return，实际发出 {}",
+            intents.len()
+        );
+    }
+
+    #[test]
+    fn war_participate_headless_invalid_role_rejects_and_emits_nothing() {
+        // 错误分支②：非法 role 字符串 → label=rejected_invalid_war_role，不发 intent。
+        let mut app = setup_executor_app();
+        let mut params = HashMap::new();
+        params.insert("war_participate".to_string(), json!(true));
+        params.insert("player_id".to_string(), json!("offline:e2e_merc"));
+        params.insert("role".to_string(), json!("declare_war_on_sect"));
+
+        let label = run_headless_participate(
+            &mut app,
+            command(CommandType::FactionEvent, "remnant_ash_valley", params),
+        );
+        assert_eq!(
+            label, "rejected_invalid_war_role",
+            "期望非法 role 返回 rejected_invalid_war_role 因只接受四态枚举，实际 {label}"
+        );
+
+        let intents = drain_war_intents_after_pipeline(&app);
+        assert!(
+            intents.is_empty(),
+            "期望非法 role 不发任何 intent 因 role 解析失败应 early return，实际发出 {}",
+            intents.len()
+        );
+    }
+
+    #[test]
+    fn war_participate_headless_group_overflow_clamps_to_none() {
+        // 边界：group 超出 u16 范围 → u16::try_from 失败 → allied_group=None（不 panic）。
+        let mut app = setup_executor_app();
+
+        {
+            let mut executor = app.world_mut().resource_mut::<CommandExecutorResource>();
+            let outcome = executor.enqueue_batch(batch(
+                "cmd_war_group_overflow",
+                vec![command(
+                    CommandType::FactionEvent,
+                    "remnant_ash_valley",
+                    war_participate_params("mercenary", Some(70_000)),
+                )],
+            ));
+            assert!(outcome.accepted);
+        }
+        app.update();
+
+        let intents = drain_war_intents_after_pipeline(&app);
+        assert_eq!(
+            intents.len(),
+            1,
+            "期望溢出 group 仍发 intent，实际 {}",
+            intents.len()
+        );
+        assert_eq!(
+            intents[0].allied_group, None,
+            "期望 group=70000(超 u16) 解析为 None 因 u16::try_from 失败应 drop 而非 panic，实际 {:?}",
+            intents[0].allied_group
+        );
+    }
+
+    #[test]
+    fn faction_event_without_war_participate_flag_emits_no_war_intent() {
+        // 状态转换守卫：war_participate 缺失/非 true 时不得误入路径 B，
+        // 仍走原 faction 逻辑且不发 WarParticipateIntent。
+        let mut app = setup_executor_app();
+        let mut params = HashMap::new();
+        params.insert("kind".to_string(), json!("enqueue_mission"));
+        params.insert("faction_id".to_string(), json!("neutral"));
+        params.insert("mission_id".to_string(), json!("mission:hold_spawn_gate"));
+
+        {
+            let mut executor = app.world_mut().resource_mut::<CommandExecutorResource>();
+            let outcome = executor.enqueue_batch(batch(
+                "cmd_faction_event_no_war_flag",
+                vec![command(CommandType::FactionEvent, "neutral", params)],
+            ));
+            assert!(outcome.accepted);
+        }
+        app.update();
+
+        let intents = drain_war_intents_after_pipeline(&app);
+        assert!(
+            intents.is_empty(),
+            "期望无 war_participate flag 的 faction_event 不发 WarParticipateIntent 因不应误入路径 B，实际发出 {}",
+            intents.len()
+        );
     }
 
     #[test]

@@ -24,8 +24,8 @@ use crate::schema::channels::{
     CH_BONE_COIN_TICK, CH_BOTANY_ECOLOGY, CH_BREAKTHROUGH_CINEMATIC, CH_BREAKTHROUGH_EVENT,
     CH_COMBAT_REALTIME, CH_COMBAT_SUMMARY, CH_CULTIVATION_DEATH, CH_DEATH_CINEMATIC,
     CH_DEATH_INSIGHT, CH_DUGU_POISON_PROGRESS, CH_DUGU_V2_CAST, CH_DUGU_V2_REVERSE,
-    CH_DUGU_V2_SELF_CURE, CH_DUO_SHE_EVENT, CH_FACTION_EVENT, CH_FACTION_STATE, CH_FORGE_EVENT,
-    CH_FORGE_OUTCOME, CH_FORGE_START, CH_HEART_DEMON_OFFER, CH_HEART_DEMON_REQUEST,
+    CH_DUGU_V2_SELF_CURE, CH_DUO_SHE_EVENT, CH_FACTION_EVENT, CH_FACTION_STATE, CH_FACTION_WAR,
+    CH_FORGE_EVENT, CH_FORGE_OUTCOME, CH_FORGE_START, CH_HEART_DEMON_OFFER, CH_HEART_DEMON_REQUEST,
     CH_HIGH_RENOWN_MILESTONE, CH_INSIGHT_OFFER, CH_INSIGHT_REQUEST, CH_LIFESPAN_EVENT,
     CH_NPC_COMBAT, CH_NPC_DEATH, CH_NPC_RELIC, CH_NPC_SPAWN, CH_PLAYER_CHAT, CH_POISON_DOSE_EVENT,
     CH_POISON_OVERDOSE_EVENT, CH_POI_NOVICE_EVENT, CH_PRICE_INDEX, CH_PSEUDO_VEIN_ACTIVE,
@@ -68,8 +68,8 @@ use crate::schema::identity::WantedPlayerEventV1;
 use crate::schema::lingtian_weather::WeatherEventUpdateV1;
 use crate::schema::narration::NarrationV1;
 use crate::schema::npc::{
-    DormantCombatOutcomeV1, FactionEventV1, FactionStateV1, NpcDeathV1, NpcSpawnedV1,
-    PendingDormantRelicV1,
+    DormantCombatOutcomeV1, FactionEventV1, FactionStateV1, FactionWarEventV1, NpcDeathV1,
+    NpcSpawnedV1, PendingDormantRelicV1,
 };
 use crate::schema::poi_novice::{PoiSpawnedEventV1, TrespassEventV1};
 use crate::schema::poison_trait::{PoisonDoseEventV1, PoisonOverdoseEventV1};
@@ -178,6 +178,8 @@ pub enum RedisOutbound {
     FactionEvent(FactionEventV1),
     /// plan-offscreen-war-v1 P5：散修群体消长盘面 telemetry（`bong:faction_state`，纯观测、零真元）。
     FactionState(FactionStateV1),
+    /// plan-offscreen-war-v1 P6：涌现冲突生命周期 telemetry（`bong:faction/war`，纯观测、零真元）。
+    FactionWar(FactionWarEventV1),
     ZonePressureCrossed(ZonePressureCrossedV1),
     RatPhaseEvent(RatPhaseChangeEvent),
     BotanyEcology(BotanyEcologySnapshotV1),
@@ -937,6 +939,15 @@ fn prepare_outbound_command(message: RedisOutbound) -> Result<RedisIoCommand, Va
             })?;
             Ok(RedisIoCommand::Publish {
                 channel: CH_FACTION_STATE,
+                payload,
+            })
+        }
+        RedisOutbound::FactionWar(evt) => {
+            let payload = serde_json::to_string(&evt).map_err(|error| {
+                ValidationError::new(format!("failed to serialize FactionWarEventV1: {error}"))
+            })?;
+            Ok(RedisIoCommand::Publish {
+                channel: CH_FACTION_WAR,
                 payload,
             })
         }

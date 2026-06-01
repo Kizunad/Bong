@@ -1,6 +1,8 @@
 pub const COMMAND_NAMES: &[&str] = &[
     "bong",
     "clearinv",
+    // plan-offscreen-war-v1 P6：玩家参与涌现冲突（/faction join|mercenary|intercept）
+    "faction",
     "give",
     "gm",
     "health",
@@ -42,6 +44,10 @@ pub const COMMAND_TREE_PATHS: &[&str] = &[
     "bong gather <resource:string>",
     "clearinv",
     "clearinv <scope:string>",
+    // plan-offscreen-war-v1 P6：/faction 玩家参与涌现冲突
+    "faction intercept",
+    "faction join <group:integer>",
+    "faction mercenary <group:integer>",
     "give <id:string>",
     "give <id:string> <count:integer>",
     "gm <mode:string>",
@@ -114,6 +120,7 @@ mod tests {
             &[
                 "bong",
                 "clearinv",
+                "faction",
                 "give",
                 "gm",
                 "health",

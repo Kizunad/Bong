@@ -1,6 +1,8 @@
 pub mod breakthrough;
 pub mod combat;
 pub mod gather;
+/// plan-offscreen-war-v1 P6：/faction 玩家参与涌现冲突
+pub mod war;
 
 use valence::command::graph::CommandGraphBuilder;
 use valence::command::handler::CommandResultEvent;
@@ -54,6 +56,7 @@ impl Command for BongCmd {
 pub fn register(app: &mut App) {
     app.add_command::<BongCmd>()
         .add_systems(Update, handle_bong_gameplay);
+    war::register(app);
 }
 
 fn into_gameplay_action(command: &BongCmd) -> GameplayAction {

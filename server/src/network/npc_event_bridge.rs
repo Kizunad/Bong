@@ -1,16 +1,19 @@
-use valence::prelude::{EventReader, Res, ResMut};
+use valence::prelude::{EventReader, EventWriter, Res, ResMut};
 
 use super::redis_bridge::RedisOutbound;
 use super::RedisBridgeResource;
 use crate::npc::dormant::census::{assign_status, compute_faction_census, LastFactionCensus};
-use crate::npc::dormant::{DormantCombatOutcome, NpcDormantStore, PendingDormantRelicCreated};
+use crate::npc::dormant::{
+    effective_group, DormantCombatOutcome, NpcDormantStore, PendingDormantRelicCreated,
+};
 use crate::npc::faction::{FactionEventNotice, FactionStore};
 use crate::npc::lifecycle::{NpcDeathNotice, NpcSpawnNotice};
 use crate::npc::movement::GameTick;
+use crate::npc::war::{WarConflictStore, WarPhaseChanged, ZoneConflictPressure};
 use crate::schema::cultivation::realm_to_string;
 use crate::schema::npc::{
-    DormantCombatOutcomeV1, FactionEventV1, FactionStateV1, NpcDeathV1, NpcSpawnedV1,
-    PendingDormantRelicV1,
+    DormantCombatOutcomeV1, FactionEventV1, FactionStateV1, FactionWarEventV1, NpcDeathV1,
+    NpcSpawnedV1, PendingDormantRelicV1,
 };
 
 const NPC_EVENT_VERSION: u8 = 1;
@@ -196,6 +199,133 @@ pub fn publish_faction_state(
     }
     // 整体替换：消失的群体（本轮无 entry）也从历史里清掉，下次重新涌现时按「新涌现」判 Rising。
     last_census.0 = next_history;
+}
+
+/// plan-offscreen-war-v1 P6：把离屏战果压力累积到 `ZoneConflictPressure`，并在越阈时创建/升级
+/// `WarConflictStore` 里的涌现冲突。**纯计数**（`pressure += 1.0`/条），切断真元语义关联；
+/// 真元流动仍唯一走 P2 `release_dormant_qi_to_zone`。
+///
+/// - 每条 `DormantCombatOutcome` 读 zone + winner/loser char_id → 查 dormant store 反查
+///   `effective_group`（有则取，无则跳过 group 累积但仍更新 pressure/casualties）。
+/// - 越阈且 ≥2 group 后调 `WarConflictStore::escalate_or_create`，每次相变 emit `WarPhaseChanged`。
+pub fn accumulate_zone_conflict_pressure(
+    mut combat_events: EventReader<DormantCombatOutcome>,
+    dormant_store: Res<NpcDormantStore>,
+    faction_store: Res<FactionStore>,
+    mut pressure: ResMut<ZoneConflictPressure>,
+    mut war_store: ResMut<WarConflictStore>,
+    mut phase_changed: EventWriter<WarPhaseChanged>,
+    game_tick: Option<Res<GameTick>>,
+) {
+    let now = current_game_tick(game_tick.as_deref());
+
+    for ev in combat_events.read() {
+        let entry = pressure.entry(&ev.zone);
+        // 反查 winner/loser 的 effective_group（dormant store + faction store 联查）。
+        // 查不到的 char_id 不阻止 pressure 累积，只是该群体不被计入 groups。
+        let winner_group = dormant_store
+            .snapshots
+            .get(ev.winner.as_str())
+            .and_then(|snap| effective_group(snap, &faction_store));
+        let loser_group = dormant_store
+            .snapshots
+            .get(ev.loser.as_str())
+            .and_then(|snap| effective_group(snap, &faction_store));
+
+        match (winner_group, loser_group) {
+            (Some(w), Some(l)) => entry.accumulate(w, l, now),
+            (Some(g), None) | (None, Some(g)) => {
+                // 只有一侧有 group：仍累积 pressure/casualties，但 groups 只加一个
+                entry.pressure += 1.0;
+                entry.casualties += 1;
+                entry.last_tick = now;
+                if !entry.groups.contains(&g) {
+                    entry.groups.push(g);
+                    entry.groups.sort();
+                }
+            }
+            (None, None) => {
+                // 两侧都无 group（纯 NPC，无 faction）：仍累积计数
+                entry.pressure += 1.0;
+                entry.casualties += 1;
+                entry.last_tick = now;
+            }
+        }
+
+        // 每次 outcome 后检查该 zone 是否需要升级 war
+        let entry_snapshot = pressure.get(&ev.zone).cloned().unwrap_or_default();
+        for (war_id, new_phase, war_snapshot) in
+            war_store.escalate_or_create(&ev.zone, &entry_snapshot, now)
+        {
+            let counts = war_snapshot.role_counts();
+            phase_changed.send(WarPhaseChanged {
+                war_id,
+                zone: war_snapshot.zone.clone(),
+                region_descriptor: war_snapshot.region_descriptor.clone(),
+                phase: new_phase,
+                groups: war_snapshot.groups.clone(),
+                outcome: war_snapshot.outcome.clone(),
+                player_role_counts: counts,
+                at_tick: now,
+            });
+        }
+    }
+}
+
+/// plan-offscreen-war-v1 P6：tick 推进 Settling war 的冷却（无 outcome 驱动也要走）。
+/// 遍历所有 Settling war，到冷却时升 Aftermath + 清 zone_active + emit。
+pub fn advance_idle_wars(
+    mut war_store: ResMut<WarConflictStore>,
+    mut phase_changed: EventWriter<WarPhaseChanged>,
+    game_tick: Option<Res<GameTick>>,
+) {
+    let now = current_game_tick(game_tick.as_deref());
+    for (war_id, new_phase, war_snapshot) in war_store.advance_settling_wars(now) {
+        let counts = war_snapshot.role_counts();
+        phase_changed.send(WarPhaseChanged {
+            war_id,
+            zone: war_snapshot.zone.clone(),
+            region_descriptor: war_snapshot.region_descriptor.clone(),
+            phase: new_phase,
+            groups: war_snapshot.groups.clone(),
+            outcome: war_snapshot.outcome.clone(),
+            player_role_counts: counts,
+            at_tick: now,
+        });
+    }
+}
+
+/// plan-offscreen-war-v1 P6：把 `WarPhaseChanged` 转为 `FactionWarEventV1` publish 到
+/// `bong:faction/war`（纯观测、零真元）。
+pub fn publish_faction_war(
+    redis: Res<RedisBridgeResource>,
+    game_tick: Option<Res<GameTick>>,
+    mut events: EventReader<WarPhaseChanged>,
+) {
+    let at_tick = current_game_tick(game_tick.as_deref());
+    for evt in events.read() {
+        let counts = evt.player_role_counts;
+        let wire = FactionWarEventV1 {
+            v: 1,
+            kind: "faction_war".to_string(),
+            war_id: evt.war_id.0,
+            zone: evt.zone.clone(),
+            region_descriptor: evt.region_descriptor.clone(),
+            phase: evt.phase,
+            groups: evt.groups.iter().map(|g| g.0).collect(),
+            enlist_count: counts.enlist,
+            mercenary_count: counts.mercenary,
+            intercept_count: counts.intercept,
+            spectate_count: counts.spectate,
+            winner_group: evt.outcome.as_ref().map(|o| o.winner_group.0),
+            loser_group: evt.outcome.as_ref().map(|o| o.loser_group.0),
+            total_casualties: evt.outcome.as_ref().map(|o| o.total_casualties),
+            at_tick,
+        };
+        if let Err(error) = redis.tx_outbound.send(RedisOutbound::FactionWar(wire)) {
+            tracing::warn!("[bong][npc_event_bridge] dropped FactionWarEventV1: {error}");
+        }
+    }
 }
 
 fn current_game_tick(game_tick: Option<&GameTick>) -> u64 {

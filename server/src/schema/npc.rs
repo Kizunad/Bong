@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::npc::faction::GroupStatus;
+use crate::npc::war::WarPhase;
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct NpcSpawnedV1 {
@@ -126,6 +127,45 @@ pub struct FactionEventV1 {
     pub leader_id: Option<String>,
     pub loyalty_bias: f64,
     pub mission_queue_size: u32,
+    pub at_tick: u64,
+}
+
+/// plan-offscreen-war-v1 P6：涌现区域冲突生命周期 telemetry（`bong:faction/war`，reframe b）。
+///
+/// **纯观测、零真元**——末法残土无宣战 / 无具名宗门。离屏 dormant 群体在某 zone 累积互殴越阈值
+/// → 自发升级成「战事」（Emerging→Skirmish→Settling→Aftermath）。本结构记录一场涌现冲突的
+/// war_id / zone / 匿名区域描述符 / 当前阶段 / 关联裸 group_id / 玩家立场计数 / 结算。
+/// 守恒红线：本 payload **不含任何真元字段**；真元流动仍唯一走 P2 release_dormant_qi_to_zone。
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct FactionWarEventV1 {
+    pub v: u8,
+    pub kind: String,
+    /// war 唯一 id（单调递增，per zone 重置）。
+    pub war_id: u64,
+    pub zone: String,
+    /// `"{zone}一带散修"`——禁具名宗门。
+    pub region_descriptor: String,
+    /// 涌现冲突阶段（snake_case：emerging / skirmish / settling / aftermath）。
+    pub phase: WarPhase,
+    /// 参与群体裸 id（去重升序，无专名）。
+    pub groups: Vec<u16>,
+    /// 投靠玩家计数。
+    pub enlist_count: u32,
+    /// 佣兵玩家计数。
+    pub mercenary_count: u32,
+    /// 截胡玩家计数。
+    pub intercept_count: u32,
+    /// 旁观玩家计数。
+    pub spectate_count: u32,
+    /// 胜方 group_id（Settling/Aftermath 才 Some）。
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub winner_group: Option<u16>,
+    /// 败方 group_id（Settling/Aftermath 才 Some）。
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub loser_group: Option<u16>,
+    /// 累积战死计数（Settling/Aftermath 才 Some）。
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub total_casualties: Option<u32>,
     pub at_tick: u64,
 }
 
@@ -558,6 +598,151 @@ mod tests {
             parsed.is_err(),
             "a group_id of 70000 must be rejected because the field is a u16 (== EmergentGroupId.0, \
              max 65535); serde accepted it: {parsed:?}"
+        );
+    }
+
+    // ─────────────── FactionWarEventV1 (plan-offscreen-war-v1 P6) ───────────────
+
+    fn sample_faction_war(phase: WarPhase, with_outcome: bool) -> FactionWarEventV1 {
+        FactionWarEventV1 {
+            v: 1,
+            kind: "faction_war".to_string(),
+            war_id: 7,
+            zone: "残灰谷".to_string(),
+            region_descriptor: "残灰谷一带散修".to_string(),
+            phase,
+            groups: vec![0, 1],
+            enlist_count: 2,
+            mercenary_count: 1,
+            intercept_count: 0,
+            spectate_count: 3,
+            winner_group: if with_outcome { Some(0) } else { None },
+            loser_group: if with_outcome { Some(1) } else { None },
+            total_casualties: if with_outcome { Some(6) } else { None },
+            at_tick: 999,
+        }
+    }
+
+    #[test]
+    fn faction_war_v1_roundtrips() {
+        // plan-offscreen-war-v1 P6：FactionWarEventV1 含 outcome 字段的完整无损 roundtrip。
+        let payload = sample_faction_war(WarPhase::Settling, true);
+        let json = serde_json::to_string(&payload).expect("serialize");
+        let parsed: FactionWarEventV1 = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(
+            parsed, payload,
+            "FactionWarEventV1 must roundtrip losslessly"
+        );
+
+        let value: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(value["v"], serde_json::json!(1));
+        assert_eq!(value["kind"], serde_json::json!("faction_war"));
+        assert_eq!(value["war_id"], serde_json::json!(7));
+        assert_eq!(value["zone"], serde_json::json!("残灰谷"));
+        assert_eq!(
+            value["region_descriptor"],
+            serde_json::json!("残灰谷一带散修")
+        );
+        assert_eq!(value["phase"], serde_json::json!("settling"));
+        assert_eq!(value["groups"], serde_json::json!([0, 1]));
+        assert_eq!(value["enlist_count"], serde_json::json!(2));
+        assert_eq!(value["mercenary_count"], serde_json::json!(1));
+        assert_eq!(value["winner_group"], serde_json::json!(0));
+        assert_eq!(value["loser_group"], serde_json::json!(1));
+        assert_eq!(value["total_casualties"], serde_json::json!(6));
+    }
+
+    #[test]
+    fn faction_war_v1_each_phase_variant_roundtrips() {
+        // plan-offscreen-war-v1 P6：四 WarPhase 变体各一条正向 roundtrip。
+        for (phase, name) in [
+            (WarPhase::Emerging, "emerging"),
+            (WarPhase::Skirmish, "skirmish"),
+            (WarPhase::Settling, "settling"),
+            (WarPhase::Aftermath, "aftermath"),
+        ] {
+            let payload = sample_faction_war(
+                phase,
+                matches!(phase, WarPhase::Settling | WarPhase::Aftermath),
+            );
+            let json = serde_json::to_string(&payload).unwrap();
+            let parsed: FactionWarEventV1 = serde_json::from_str(&json).unwrap();
+            assert_eq!(parsed.phase, phase, "phase={name} must survive roundtrip");
+
+            let value: serde_json::Value = serde_json::from_str(&json).unwrap();
+            assert_eq!(
+                value["phase"],
+                serde_json::json!(name),
+                "期望 phase={name} 序列化为 snake_case 字符串，实际 {}",
+                value["phase"]
+            );
+        }
+    }
+
+    #[test]
+    fn faction_war_v1_outcome_none_omits_fields() {
+        // plan-offscreen-war-v1 P6：outcome=None 时 winner/loser/casualties 不出现在 wire。
+        let payload = sample_faction_war(WarPhase::Emerging, false);
+        let value = serde_json::to_value(&payload).unwrap();
+        assert!(
+            value.get("winner_group").is_none(),
+            "期望 winner_group=None 时不出现在 wire JSON（skip_serializing_if），实际 key 存在"
+        );
+        assert!(
+            value.get("loser_group").is_none(),
+            "期望 loser_group=None 时不出现在 wire JSON（skip_serializing_if），实际 key 存在"
+        );
+        assert!(
+            value.get("total_casualties").is_none(),
+            "期望 total_casualties=None 时不出现在 wire JSON（skip_serializing_if），实际 key 存在"
+        );
+    }
+
+    #[test]
+    fn faction_war_v1_rejects_non_u16_group_id() {
+        // 反：groups 数组中含 > u16::MAX 的值，serde 应拒绝（Vec<u16> 不接受越界 number）。
+        let bad = serde_json::json!({
+            "v": 1,
+            "kind": "faction_war",
+            "war_id": 7,
+            "zone": "残灰谷",
+            "region_descriptor": "残灰谷一带散修",
+            "phase": "emerging",
+            "groups": [0, 70000],
+            "enlist_count": 0,
+            "mercenary_count": 0,
+            "intercept_count": 0,
+            "spectate_count": 0,
+            "at_tick": 1
+        });
+        let parsed = serde_json::from_value::<FactionWarEventV1>(bad);
+        assert!(
+            parsed.is_err(),
+            "期望 group_id=70000 > u16::MAX 被 serde 拒绝（因 groups 是 Vec<u16>，裸匿名 id 上限 65535），\
+             实际解析成功: {parsed:?}"
+        );
+    }
+
+    #[test]
+    fn faction_war_v1_rejects_missing_war_id() {
+        // 反：缺必填字段 war_id 时必须解析失败。
+        let bad = serde_json::json!({
+            "v": 1,
+            "kind": "faction_war",
+            "zone": "残灰谷",
+            "region_descriptor": "残灰谷一带散修",
+            "phase": "emerging",
+            "groups": [0, 1],
+            "enlist_count": 0,
+            "mercenary_count": 0,
+            "intercept_count": 0,
+            "spectate_count": 0,
+            "at_tick": 1
+        });
+        let parsed = serde_json::from_value::<FactionWarEventV1>(bad);
+        assert!(
+            parsed.is_err(),
+            "期望缺 war_id 字段时 serde 报错（必填），实际解析成功: {parsed:?}"
         );
     }
 }
