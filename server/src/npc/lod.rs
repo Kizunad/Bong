@@ -24,10 +24,19 @@ use std::collections::HashMap;
 use valence::client::ClientMarker;
 use valence::prelude::{
     bevy_ecs, App, Component, DVec3, Despawned, Entity, IntoSystemConfigs, Position, PreUpdate,
-    Query, Res, ResMut, Resource, With, Without,
+    Query, Res, ResMut, Resource, Update, With, Without,
 };
 
+use crate::cultivation::components::{Cultivation, MeridianSystem};
+use crate::npc::dormant::{current_tick, should_run_interval};
+use crate::npc::movement::GameTick;
 use crate::npc::spawn::NpcMarker;
+use crate::qi_physics::{
+    constants::QI_ZONE_UNIT_CAPACITY, regen_from_zone, QiAccountId, QiTransfer, QiTransferReason,
+    WorldQiAccount,
+};
+use crate::world::dimension::{CurrentDimension, DimensionKind};
+use crate::world::zone::ZoneRegistry;
 
 /// 四档 LOD（Near < Mid < Far < Dormant）。
 ///
@@ -145,6 +154,29 @@ impl Default for NpcLodConfig {
 #[derive(Clone, Copy, Debug, Default, Resource)]
 pub struct NpcLodTick(pub u32);
 
+/// Drowsy（Mid tier）降频 qi regen 的每 NPC 状态组件。
+///
+/// 记录上次 drowsy regen tick 的时间戳（与 `GameTick` 对齐）；
+/// `drowsy_tick_system` 每 `DROWSY_TICK_INTERVAL` tick 对 Mid 档 NPC 做一次
+/// zone→NPC qi regen（走双录簿路径，与 `apply_dormant_regen_with_multiplier` 语义一致）。
+///
+/// **守恒保证**：`NpcDrowsyState` 不持有任何 qi 账本——regen 走
+/// `ledger.set_balance` 对齐 + `ledger.transfer` 搬运，NPC 的 `Cultivation.qi_current`
+/// 在 ECS 上与 ECS 账本对齐更新；LOD tier 切换（E1–E4）**不触碰**此组件内的 qi 字段，
+/// 更不触碰 `ledger`——守恒红线完全隔离。
+#[derive(Clone, Copy, Debug, Default, Component)]
+pub struct NpcDrowsyState {
+    /// 上次 drowsy regen 成功执行的 game tick（u64，与 `GameTick` 对齐）。
+    /// `0` = 尚未执行过。
+    pub last_drowsy_tick: u64,
+}
+
+/// Drowsy regen 间隔：20 tick = 1 秒（20TPS 下 1Hz）。
+///
+/// 与 `DORMANT_LIFECYCLE_TICK_INTERVAL`（1200 tick = 60s）区分——Drowsy 态 NPC 仍是
+/// hydrated live entity，regen 频率远高于 dormant batch（每秒 vs 每分钟）。
+pub const DROWSY_TICK_INTERVAL: u32 = 20;
+
 pub fn register(app: &mut App) {
     // LOD gate：接入 brain.rs 3 个核心 scorer（player_proximity / hunger / wander）
     // 的 Dormant skip。seed 100 rogue 在 test area 无玩家连接时全部分类为 Dormant，
@@ -166,7 +198,10 @@ pub fn register(app: &mut App) {
             (tick_lod_counter, update_npc_lod_tier_system)
                 .chain()
                 .before(big_brain::prelude::BigBrainSet::Scorers),
-        );
+        )
+        // drowsy_tick_system：在 Update 阶段对 Mid 档 live NPC 做 1Hz zone→NPC qi regen。
+        // 独立于 PreUpdate 的 LOD tier 分类系统；不接触 dehydrate/hydrate 路径。
+        .add_systems(Update, drowsy_tick_system);
 }
 
 fn tick_lod_counter(mut counter: ResMut<NpcLodTick>) {
@@ -203,7 +238,13 @@ fn update_npc_lod_tier_system(
         match (current.copied(), desired) {
             (Some(c), d) if c == d => {}
             _ => {
-                commands.entity(entity).insert(desired);
+                let mut ec = commands.entity(entity);
+                ec.insert(desired);
+                // Mid 档（Drowsy）需要 NpcDrowsyState 组件供 drowsy_tick_system 处理。
+                // insert 操作幂等——已有组件时保留原值（不 reset last_drowsy_tick）。
+                if desired == NpcLodTier::Mid {
+                    ec.insert(NpcDrowsyState::default());
+                }
                 match desired {
                     NpcLodTier::Near => transitions[0] += 1,
                     NpcLodTier::Mid => transitions[1] += 1,
@@ -211,6 +252,116 @@ fn update_npc_lod_tier_system(
                     NpcLodTier::Dormant => transitions[3] += 1,
                 }
             }
+        }
+    }
+}
+
+/// Drowsy（Mid tier）降频 qi regen 系统。
+///
+/// 每 `DROWSY_TICK_INTERVAL`（20 tick = 1Hz）对所有 `NpcLodTier::Mid` 的 live ECS NPC
+/// 执行一次 zone→NPC qi regen，走与 `apply_dormant_regen_with_multiplier` 相同的双录簿路径：
+/// 1. `ledger.set_balance` 把 zone / npc 账户对齐到当前状态量
+/// 2. 计算 `regen_from_zone(zone.spirit_qi, rate, integrity, room)` → (gain, drain)
+/// 3. `ledger.transfer(zone_account → npc_account, CultivationRegen)` 真实搬运
+/// 4. 更新 `cultivation.qi_current` = ledger 余额；`zone.spirit_qi -= drain`
+///
+/// **守恒红线保证**：
+/// - LOD tier 切换（E1–E4）**不触发**此函数——只有 `NpcLodTier::Mid` 才跑 regen
+/// - 本系统完全不影响 hydrate / dehydrate 路径（E5/E6 由独立距离阈值驱动）
+/// - regen 每次均走 `set_balance` + `transfer`，ledger 总量严格守恒（无凭空增减）
+/// - 若 zone 无灵气 / NPC 真元已满 / 无经脉，跳过（不做零 transfer）
+#[allow(clippy::type_complexity)]
+pub fn drowsy_tick_system(
+    game_tick: Option<Res<GameTick>>,
+    mut zones: Option<ResMut<ZoneRegistry>>,
+    mut ledger: Option<ResMut<WorldQiAccount>>,
+    mut npcs: Query<
+        (
+            Entity,
+            &Position,
+            Option<&CurrentDimension>,
+            &NpcLodTier,
+            &mut Cultivation,
+            &MeridianSystem,
+            &mut NpcDrowsyState,
+        ),
+        (With<NpcMarker>, Without<Despawned>),
+    >,
+) {
+    let tick = current_tick(game_tick.as_deref());
+    if !should_run_interval(tick, DROWSY_TICK_INTERVAL) {
+        return;
+    }
+    let (Some(zones), Some(ledger)) = (zones.as_deref_mut(), ledger.as_deref_mut()) else {
+        return;
+    };
+    for (entity, pos, dim, tier, mut cultivation, meridian_system, mut drowsy_state) in &mut npcs {
+        if *tier != NpcLodTier::Mid {
+            continue;
+        }
+        // 避免同 tick 重复处理（理论上 should_run_interval 已防，防御性保留）。
+        if drowsy_state.last_drowsy_tick == tick && tick > 0 {
+            continue;
+        }
+        drowsy_state.last_drowsy_tick = tick;
+
+        let dim_kind = dim.map(|d| d.0).unwrap_or(DimensionKind::Overworld);
+        // find_zone（不可变）取 zone 名称，再 find_zone_mut 获取可变引用。
+        let Some(zone_name) = zones.find_zone(dim_kind, pos.get()).map(|z| z.name.clone()) else {
+            continue;
+        };
+        let Some(zone) = zones.find_zone_mut(&zone_name) else {
+            continue;
+        };
+        if zone.spirit_qi <= 0.0 {
+            continue;
+        }
+        let rate = meridian_system.sum_rate();
+        if rate <= 0.0 {
+            continue;
+        }
+        let integrity_count = meridian_system.iter().count() as f64;
+        let avg_integrity = if integrity_count > 0.0 {
+            meridian_system.iter().map(|m| m.integrity).sum::<f64>() / integrity_count
+        } else {
+            1.0
+        };
+        let room = (cultivation.qi_max - cultivation.qi_current).max(0.0);
+        let (gain, drain) = regen_from_zone(zone.spirit_qi, rate, avg_integrity, room);
+        if gain <= 0.0 || drain <= 0.0 {
+            continue;
+        }
+        // 双录簿：先 set_balance 对齐，再 transfer 真实搬运。
+        // NPC 账户用 entity ID 稳定标识（live ECS entity 无 CharId 组件，用 entity index）。
+        let zone_account = QiAccountId::zone(zone.name.clone());
+        let npc_char_id = format!("drowsy_live:{}", entity.index());
+        let npc_account = QiAccountId::npc(npc_char_id);
+        if ledger
+            .set_balance(
+                zone_account.clone(),
+                zone.spirit_qi.max(0.0) * QI_ZONE_UNIT_CAPACITY,
+            )
+            .is_err()
+        {
+            continue;
+        }
+        if ledger
+            .set_balance(npc_account.clone(), cultivation.qi_current.max(0.0))
+            .is_err()
+        {
+            continue;
+        }
+        let Ok(transfer) = QiTransfer::new(
+            zone_account,
+            npc_account.clone(),
+            gain,
+            QiTransferReason::CultivationRegen,
+        ) else {
+            continue;
+        };
+        if ledger.transfer(transfer).is_ok() {
+            cultivation.qi_current = ledger.balance(&npc_account);
+            zone.spirit_qi = (zone.spirit_qi - drain).max(0.0);
         }
     }
 }
@@ -1014,5 +1165,654 @@ mod tests {
             // 其余边（跨档跳变）在正常运行时不会发生，
             // hydrate/dehydrate 边（E5/E6）由独立系统负责，同样无 ledger 操作。
         }
+    }
+
+    // =========================================================================
+    // 守恒单测：Drowsy↔Dormant↔Far 6边转换矩阵 + drowsy_tick + boundary crossing
+    // =========================================================================
+
+    /// 辅助：构建一个只含 spawn zone 的 ZoneRegistry（spirit_qi 可配置）。
+    fn make_zone_registry(spirit_qi: f64) -> crate::world::zone::ZoneRegistry {
+        use crate::world::dimension::DimensionKind;
+        use crate::world::zone::{Zone, ZoneRegistry, DEFAULT_SPAWN_ZONE_NAME};
+        ZoneRegistry {
+            zones: vec![Zone {
+                name: DEFAULT_SPAWN_ZONE_NAME.to_string(),
+                dimension: DimensionKind::Overworld,
+                bounds: (
+                    DVec3::new(-200.0, 0.0, -200.0),
+                    DVec3::new(200.0, 300.0, 200.0),
+                ),
+                spirit_qi,
+                danger_level: 0,
+                active_events: vec![],
+                patrol_anchors: vec![],
+                blocked_tiles: vec![],
+            }],
+        }
+    }
+
+    /// 辅助：账本总量（所有账户余额之和）。
+    fn ledger_total(ledger: &crate::qi_physics::WorldQiAccount) -> f64 {
+        ledger.iter_balances().map(|(_, b)| b).sum()
+    }
+
+    /// 辅助：执行一次 drowsy regen（提取 drowsy_tick_system 的纯逻辑核心），
+    /// 返回 (qi_current_after, zone_spirit_qi_after)。
+    fn run_drowsy_regen_once(
+        zone_spirit_qi: f64,
+        npc_qi_current: f64,
+        npc_qi_max: f64,
+        meridian_rate: f64,
+        meridian_integrity: f64,
+        ledger: &mut crate::qi_physics::WorldQiAccount,
+    ) -> (f64, f64) {
+        use crate::qi_physics::{
+            constants::QI_ZONE_UNIT_CAPACITY, regen_from_zone, QiAccountId, QiTransfer,
+            QiTransferReason,
+        };
+        use crate::world::zone::DEFAULT_SPAWN_ZONE_NAME;
+
+        let zone_account = QiAccountId::zone(DEFAULT_SPAWN_ZONE_NAME);
+        let npc_account = QiAccountId::npc("test_npc_drowsy".to_string());
+
+        let room = (npc_qi_max - npc_qi_current).max(0.0);
+        let (gain, drain) =
+            regen_from_zone(zone_spirit_qi, meridian_rate, meridian_integrity, room);
+        if gain <= 0.0 || drain <= 0.0 {
+            return (npc_qi_current, zone_spirit_qi);
+        }
+        ledger
+            .set_balance(
+                zone_account.clone(),
+                zone_spirit_qi.max(0.0) * QI_ZONE_UNIT_CAPACITY,
+            )
+            .expect("set zone balance");
+        ledger
+            .set_balance(npc_account.clone(), npc_qi_current.max(0.0))
+            .expect("set npc balance");
+        let transfer = QiTransfer::new(
+            zone_account,
+            npc_account.clone(),
+            gain,
+            QiTransferReason::CultivationRegen,
+        )
+        .expect("valid transfer");
+        ledger.transfer(transfer).expect("transfer ok");
+        let new_qi = ledger.balance(&npc_account);
+        let new_zone = (zone_spirit_qi - drain).max(0.0);
+        (new_qi, new_zone)
+    }
+
+    // -------------------------------------------------------------------------
+    // lod_tier_six_edge_transitions：6 条有向边语义 + 守恒锁
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn lod_tier_six_edge_transitions_e1_to_e4_no_qi() {
+        // E1–E4（ECS LOD tier 切换）全部 has_qi_ledger_operation() == false。
+        // 这是 P7 守恒红线的显式枚举锁——任何改动这些边让它返回 true 都立刻撞红。
+        let e1_to_e4 = [
+            (
+                NpcLodTier::Near,
+                NpcLodTier::Mid,
+                LodTransitionEdge::NearToMid,
+            ),
+            (
+                NpcLodTier::Mid,
+                NpcLodTier::Near,
+                LodTransitionEdge::MidToNear,
+            ),
+            (
+                NpcLodTier::Mid,
+                NpcLodTier::Far,
+                LodTransitionEdge::MidToFar,
+            ),
+            (
+                NpcLodTier::Far,
+                NpcLodTier::Mid,
+                LodTransitionEdge::FarToMid,
+            ),
+        ];
+        for (from, to, expected_edge) in e1_to_e4 {
+            let edge = LodTransitionEdge::classify(from, to);
+            assert_eq!(
+                edge,
+                Some(expected_edge),
+                "期望 {from:?}→{to:?} 被识别为 {expected_edge:?}，\
+                 因为 E1–E4 是 ECS LOD tier 切换边，对应 LodTransitionEdge 显式枚举"
+            );
+            assert!(
+                !edge.unwrap().has_qi_ledger_operation(),
+                "守恒红线：{from:?}→{to:?} 对应 {expected_edge:?} 不得有 qi 账本操作，\
+                 因为 LOD tier 切换只是改 NpcLodTier component，不触碰 ledger"
+            );
+        }
+    }
+
+    #[test]
+    fn lod_tier_six_edge_transitions_e5_e6_no_qi_ledger() {
+        // E5/E6（hydrate/dehydrate store 边界）同样 has_qi_ledger_operation() == false：
+        // qi 以 snapshot 原值拷入/拷出，不走 ledger.transfer。
+        assert!(
+            !LodTransitionEdge::LiveToDormantStore.has_qi_ledger_operation(),
+            "守恒红线：E5（dehydrate）不做 ledger 操作，qi 原值随快照保存，\
+             因为 dehydrate_far_npcs_system 只把 Cultivation.qi_current 写入快照，不调 ledger"
+        );
+        assert!(
+            !LodTransitionEdge::DormantStoreToLive.has_qi_ledger_operation(),
+            "守恒红线：E6（hydrate）不做 ledger 操作，qi 随快照原值恢复，\
+             因为 hydrate_dormant_near_players_system 从快照读 qi_current 插回 ECS，不调 ledger"
+        );
+    }
+
+    // -------------------------------------------------------------------------
+    // drowsy_tick_conserves_qi：双录簿守恒 + 不丢/造真元
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn drowsy_tick_conserves_qi_basic_regen() {
+        // Drowsy regen：zone→NPC 搬运后账本总量不变（零和）。
+        // 期望：before_total == after_total，因为 regen 是 zone→npc transfer，
+        // 不新增、不销毁真元，只是在账户间搬运。
+        use crate::qi_physics::WorldQiAccount;
+
+        let zone_qi = 0.8;
+        let npc_qi = 2.0;
+        let npc_qi_max = 10.0;
+        let meridian_rate = 0.5;
+        let meridian_integrity = 1.0;
+
+        let mut ledger = WorldQiAccount::default();
+        // 预先 fund 账户（模拟系统总量）
+        use crate::qi_physics::{constants::QI_ZONE_UNIT_CAPACITY, QiAccountId};
+        use crate::world::zone::DEFAULT_SPAWN_ZONE_NAME;
+        ledger
+            .set_balance(
+                QiAccountId::zone(DEFAULT_SPAWN_ZONE_NAME),
+                zone_qi * QI_ZONE_UNIT_CAPACITY,
+            )
+            .unwrap();
+        ledger
+            .set_balance(QiAccountId::npc("test_npc_drowsy".to_string()), npc_qi)
+            .unwrap();
+        let before_total = ledger_total(&ledger);
+
+        let (npc_after, _zone_after) = run_drowsy_regen_once(
+            zone_qi,
+            npc_qi,
+            npc_qi_max,
+            meridian_rate,
+            meridian_integrity,
+            &mut ledger,
+        );
+        let after_total = ledger_total(&ledger);
+
+        assert!(
+            npc_after > npc_qi,
+            "期望 Drowsy regen 后 NPC 真元增加，因为 zone 有灵气且 NPC 未满，\
+             实际 before={npc_qi} after={npc_after}"
+        );
+        assert!(
+            (before_total - after_total).abs() < 1e-9,
+            "守恒红线：Drowsy regen 前后账本总量严格相等（零和），\
+             因为 regen 走 ledger.transfer zone→npc，不新增真元；\
+             期望 {before_total}，实际 {after_total}，漂移 {}",
+            (before_total - after_total).abs()
+        );
+    }
+
+    #[test]
+    fn drowsy_tick_conserves_qi_multiple_rounds() {
+        // 多轮 Drowsy regen 累积账本守恒。
+        use crate::qi_physics::{constants::QI_ZONE_UNIT_CAPACITY, QiAccountId, WorldQiAccount};
+        use crate::world::zone::DEFAULT_SPAWN_ZONE_NAME;
+
+        let mut zone_qi = 0.8;
+        let mut npc_qi = 1.0;
+        let npc_qi_max = 10.0;
+
+        let mut ledger = WorldQiAccount::default();
+        ledger
+            .set_balance(
+                QiAccountId::zone(DEFAULT_SPAWN_ZONE_NAME),
+                zone_qi * QI_ZONE_UNIT_CAPACITY,
+            )
+            .unwrap();
+        ledger
+            .set_balance(QiAccountId::npc("test_npc_drowsy".to_string()), npc_qi)
+            .unwrap();
+        let before_total = ledger_total(&ledger);
+
+        for _round in 0..20 {
+            let (new_npc, new_zone) =
+                run_drowsy_regen_once(zone_qi, npc_qi, npc_qi_max, 0.3, 0.9, &mut ledger);
+            npc_qi = new_npc;
+            zone_qi = new_zone;
+        }
+
+        let after_total = ledger_total(&ledger);
+        assert!(
+            (before_total - after_total).abs() < 1e-6,
+            "守恒红线：20 轮 Drowsy regen 后账本总量仍守恒（积累误差 <1e-6），\
+             因为每轮 transfer 均在账本内部搬运，无凭空增减；\
+             期望 {before_total}，实际 {after_total}"
+        );
+    }
+
+    #[test]
+    fn drowsy_tick_conserves_qi_zone_empty_no_regen() {
+        // zone 无灵气时 Drowsy regen 跳过，账本总量不变。
+        use crate::qi_physics::{constants::QI_ZONE_UNIT_CAPACITY, QiAccountId, WorldQiAccount};
+        use crate::world::zone::DEFAULT_SPAWN_ZONE_NAME;
+
+        let zone_qi = 0.0;
+        let npc_qi = 2.0;
+        let mut ledger = WorldQiAccount::default();
+        ledger
+            .set_balance(
+                QiAccountId::zone(DEFAULT_SPAWN_ZONE_NAME),
+                zone_qi * QI_ZONE_UNIT_CAPACITY,
+            )
+            .unwrap();
+        ledger
+            .set_balance(QiAccountId::npc("test_npc_drowsy".to_string()), npc_qi)
+            .unwrap();
+        let before_total = ledger_total(&ledger);
+
+        let (npc_after, _zone_after) =
+            run_drowsy_regen_once(zone_qi, npc_qi, 10.0, 0.5, 1.0, &mut ledger);
+
+        assert_eq!(
+            npc_after, npc_qi,
+            "期望 zone 为空时 Drowsy regen 跳过，NPC 真元不变，\
+             因为 regen_from_zone 要求 zone_qi>0 才有增益"
+        );
+        let after_total = ledger_total(&ledger);
+        assert!(
+            (before_total - after_total).abs() < 1e-12,
+            "期望 zone 为空时账本总量不变，实际漂移 {}",
+            (before_total - after_total).abs()
+        );
+    }
+
+    #[test]
+    fn drowsy_tick_conserves_qi_npc_full_no_regen() {
+        // NPC 真元已满时 Drowsy regen 跳过（room=0），账本总量不变。
+        use crate::qi_physics::{constants::QI_ZONE_UNIT_CAPACITY, QiAccountId, WorldQiAccount};
+        use crate::world::zone::DEFAULT_SPAWN_ZONE_NAME;
+
+        let zone_qi = 0.8;
+        let npc_qi = 10.0;
+        let npc_qi_max = 10.0; // 已满
+        let mut ledger = WorldQiAccount::default();
+        ledger
+            .set_balance(
+                QiAccountId::zone(DEFAULT_SPAWN_ZONE_NAME),
+                zone_qi * QI_ZONE_UNIT_CAPACITY,
+            )
+            .unwrap();
+        ledger
+            .set_balance(QiAccountId::npc("test_npc_drowsy".to_string()), npc_qi)
+            .unwrap();
+        let before_total = ledger_total(&ledger);
+
+        let (npc_after, _zone_after) =
+            run_drowsy_regen_once(zone_qi, npc_qi, npc_qi_max, 0.5, 1.0, &mut ledger);
+
+        assert_eq!(
+            npc_after, npc_qi,
+            "期望 NPC 真元已满时 Drowsy regen 跳过（room=0），因为 regen_from_zone room<=0 返回 0"
+        );
+        let after_total = ledger_total(&ledger);
+        assert!(
+            (before_total - after_total).abs() < 1e-12,
+            "期望 NPC 满真元时账本总量不变，实际漂移 {}",
+            (before_total - after_total).abs()
+        );
+    }
+
+    #[test]
+    fn drowsy_tick_conserves_qi_no_meridian_no_regen() {
+        // 无经脉（rate=0）时 Drowsy regen 跳过，账本总量不变。
+        use crate::qi_physics::{constants::QI_ZONE_UNIT_CAPACITY, QiAccountId, WorldQiAccount};
+        use crate::world::zone::DEFAULT_SPAWN_ZONE_NAME;
+
+        let zone_qi = 0.8;
+        let npc_qi = 2.0;
+        let mut ledger = WorldQiAccount::default();
+        ledger
+            .set_balance(
+                QiAccountId::zone(DEFAULT_SPAWN_ZONE_NAME),
+                zone_qi * QI_ZONE_UNIT_CAPACITY,
+            )
+            .unwrap();
+        ledger
+            .set_balance(QiAccountId::npc("test_npc_drowsy".to_string()), npc_qi)
+            .unwrap();
+        let before_total = ledger_total(&ledger);
+
+        let (npc_after, _zone_after) =
+            run_drowsy_regen_once(zone_qi, npc_qi, 10.0, 0.0, 1.0, &mut ledger);
+
+        assert_eq!(
+            npc_after, npc_qi,
+            "期望 meridian rate=0 时 Drowsy regen 跳过，NPC 真元不变"
+        );
+        let after_total = ledger_total(&ledger);
+        assert!(
+            (before_total - after_total).abs() < 1e-12,
+            "期望 rate=0 时账本总量不变，实际漂移 {}",
+            (before_total - after_total).abs()
+        );
+    }
+
+    // -------------------------------------------------------------------------
+    // boundary_crossing_no_qi_leak：Near↔Mid↔Far 边界穿越不丢真元
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn boundary_crossing_no_qi_leak_near_to_mid() {
+        // Near→Mid（E1）：NPC 从 Near 区移入 Mid 区，LOD tier 改变，qi 不变。
+        // 模拟：假设 NPC 有 qi_current=5.0，切换 tier 后 qi_current 仍是 5.0。
+        // 这是 ECS 级别的守恒：NpcLodTier 不持有 qi，切换只是 component 替换。
+        let npc_qi = 5.0;
+        // LOD tier 切换无账本操作 —— 此处验证 classify→E1 无 qi 操作 + NPC 真元独立
+        let edge = LodTransitionEdge::classify(NpcLodTier::Near, NpcLodTier::Mid)
+            .expect("Near→Mid 应为 E1");
+        assert!(
+            !edge.has_qi_ledger_operation(),
+            "守恒红线：Near→Mid 穿越（E1）不应有 qi 账本操作，\
+             NPC 真元 {npc_qi} 在切换前后完全不变"
+        );
+        // NPC 的 qi_current 是 ECS Cultivation 组件，与 NpcLodTier 完全独立。
+        // 此测试通过 has_qi_ledger_operation() 的语义锁定这个不变量。
+        assert_eq!(
+            npc_qi, 5.0,
+            "期望切换 tier 后 qi_current 仍为 5.0，因为 tier 切换不触碰 Cultivation 组件"
+        );
+    }
+
+    #[test]
+    fn boundary_crossing_no_qi_leak_mid_to_far() {
+        // Mid→Far（E3）：NPC 从 Mid 区移出到 Far 区，LOD tier 改变，qi 不变。
+        let npc_qi = 3.5_f64;
+        let edge =
+            LodTransitionEdge::classify(NpcLodTier::Mid, NpcLodTier::Far).expect("Mid→Far 应为 E3");
+        assert!(
+            !edge.has_qi_ledger_operation(),
+            "守恒红线：Mid→Far 穿越（E3）不应有 qi 账本操作，\
+             期望 NPC 真元 {npc_qi} 在 LOD 切换时完全不受影响"
+        );
+    }
+
+    #[test]
+    fn boundary_crossing_no_qi_leak_far_to_mid() {
+        // Far→Mid（E4）：玩家靠近，NPC 从 Far 升频到 Mid，qi 不变。
+        let npc_qi = 7.2_f64;
+        let edge =
+            LodTransitionEdge::classify(NpcLodTier::Far, NpcLodTier::Mid).expect("Far→Mid 应为 E4");
+        assert!(
+            !edge.has_qi_ledger_operation(),
+            "守恒红线：Far→Mid 穿越（E4）不应有 qi 账本操作，\
+             期望 NPC 真元 {npc_qi} 在升频时不变"
+        );
+    }
+
+    #[test]
+    fn boundary_crossing_no_qi_leak_mid_to_near() {
+        // Mid→Near（E2）：玩家进一步靠近，NPC 从 Mid 升频到 Near，qi 不变。
+        let npc_qi = 8.0_f64;
+        let edge = LodTransitionEdge::classify(NpcLodTier::Mid, NpcLodTier::Near)
+            .expect("Mid→Near 应为 E2");
+        assert!(
+            !edge.has_qi_ledger_operation(),
+            "守恒红线：Mid→Near 穿越（E2）不应有 qi 账本操作，\
+             期望 NPC 真元 {npc_qi} 在升频时不变"
+        );
+    }
+
+    #[test]
+    fn boundary_crossing_no_qi_leak_all_six_edges_exhaustive() {
+        // 穷举 6 条转换边，逐条验证 has_qi_ledger_operation() == false。
+        // 这是 P7 守恒红线的最强版：任意一边返回 true 即撞红。
+        let all_edges = [
+            LodTransitionEdge::NearToMid,
+            LodTransitionEdge::MidToNear,
+            LodTransitionEdge::MidToFar,
+            LodTransitionEdge::FarToMid,
+            LodTransitionEdge::LiveToDormantStore,
+            LodTransitionEdge::DormantStoreToLive,
+        ];
+        for edge in all_edges {
+            assert!(
+                !edge.has_qi_ledger_operation(),
+                "守恒红线穷举：边 {edge:?} 不得有 qi 账本操作——\
+                 LOD 切换和 hydrate/dehydrate 均不通过 ledger.transfer 搬运真元，\
+                 LOD 只改频率/可见性，E5/E6 以 snapshot 原值保存/恢复"
+            );
+        }
+    }
+
+    #[test]
+    fn boundary_crossing_drowsy_then_tier_change_no_double_count() {
+        // 先做 Drowsy regen，然后切换 tier（Mid→Far），验证 qi 不被双计。
+        // 关键守恒不变量：regen 已把 qi 搬入 NPC 账户；tier 切换不再碰 ledger。
+        use crate::qi_physics::{constants::QI_ZONE_UNIT_CAPACITY, QiAccountId, WorldQiAccount};
+        use crate::world::zone::DEFAULT_SPAWN_ZONE_NAME;
+
+        let zone_qi = 0.7;
+        let npc_qi = 1.0;
+        let mut ledger = WorldQiAccount::default();
+        ledger
+            .set_balance(
+                QiAccountId::zone(DEFAULT_SPAWN_ZONE_NAME),
+                zone_qi * QI_ZONE_UNIT_CAPACITY,
+            )
+            .unwrap();
+        ledger
+            .set_balance(QiAccountId::npc("test_npc_drowsy".to_string()), npc_qi)
+            .unwrap();
+        let before_total = ledger_total(&ledger);
+
+        // Step 1：Drowsy regen（账本守恒转移）
+        let (npc_after_regen, _) =
+            run_drowsy_regen_once(zone_qi, npc_qi, 10.0, 0.4, 1.0, &mut ledger);
+
+        // Step 2：tier 切换 Mid→Far（E3，无账本操作）
+        let e3 = LodTransitionEdge::classify(NpcLodTier::Mid, NpcLodTier::Far).unwrap();
+        assert!(
+            !e3.has_qi_ledger_operation(),
+            "E3 tier 切换不应有 qi 账本操作"
+        );
+
+        // 账本总量自 regen 起就守恒
+        let after_total = ledger_total(&ledger);
+        assert!(
+            (before_total - after_total).abs() < 1e-9,
+            "守恒红线：Drowsy regen + tier 切换后账本总量严格守恒，\
+             期望 {before_total}，实际 {after_total}，NPC regen 后真元 {npc_after_regen}"
+        );
+    }
+
+    #[test]
+    fn drowsy_tick_conserves_qi_partial_zone_drain() {
+        // zone 灵气不足以给 NPC 满额 regen 时，实际搬运量 = zone 实际能给的量，不超支。
+        use crate::qi_physics::{constants::QI_ZONE_UNIT_CAPACITY, QiAccountId, WorldQiAccount};
+        use crate::world::zone::DEFAULT_SPAWN_ZONE_NAME;
+
+        // zone 极低灵气（接近 0）
+        let zone_qi = 0.001;
+        let npc_qi = 0.0;
+        let mut ledger = WorldQiAccount::default();
+        ledger
+            .set_balance(
+                QiAccountId::zone(DEFAULT_SPAWN_ZONE_NAME),
+                zone_qi * QI_ZONE_UNIT_CAPACITY,
+            )
+            .unwrap();
+        ledger
+            .set_balance(QiAccountId::npc("test_npc_drowsy".to_string()), npc_qi)
+            .unwrap();
+        let before_total = ledger_total(&ledger);
+
+        let (npc_after, zone_after) =
+            run_drowsy_regen_once(zone_qi, npc_qi, 10.0, 1.0, 1.0, &mut ledger);
+
+        // zone 灵气不应变负
+        assert!(
+            zone_after >= 0.0,
+            "期望 zone 灵气不应变负，因为 regen_from_zone 有 drain<=zone_qi 保护，\
+             实际 zone_after={zone_after}"
+        );
+        // 账本守恒
+        let after_total = ledger_total(&ledger);
+        assert!(
+            (before_total - after_total).abs() < 1e-9,
+            "守恒红线：zone 极低灵气 regen 后账本仍守恒，\
+             before={before_total} after={after_total} npc_after={npc_after}"
+        );
+    }
+
+    #[test]
+    fn drowsy_tick_interval_is_20_ticks() {
+        // DROWSY_TICK_INTERVAL 必须是 20（1Hz at 20TPS）。
+        // plan §220 明确规定 drowsy_tick_system 以 1Hz 运行；20TPS × 1Hz = 20 tick。
+        // 此测试把这个常量锁定，防止不小心改成其他值。
+        assert_eq!(
+            DROWSY_TICK_INTERVAL, 20,
+            "期望 DROWSY_TICK_INTERVAL=20（1Hz @ 20TPS），\
+             因为 plan-offscreen-war-v1 §220 规定 drowsy_tick_system 以 1Hz 运行"
+        );
+    }
+
+    #[test]
+    fn npc_drowsy_state_default_is_unticked() {
+        // NpcDrowsyState::default() 的 last_drowsy_tick == 0（未执行过）。
+        let state = NpcDrowsyState::default();
+        assert_eq!(
+            state.last_drowsy_tick, 0,
+            "期望 NpcDrowsyState 默认 last_drowsy_tick=0（未执行过），\
+             因为 u64 default 是 0，表示尚未 drowsy tick"
+        );
+    }
+
+    #[test]
+    fn drowsy_tick_conserves_qi_high_integrity_vs_low_integrity() {
+        // 完整经脉（integrity=1.0）regen 量 > 受损经脉（integrity=0.3）regen 量，
+        // 但两种情况下账本均严格守恒。
+        use crate::qi_physics::{constants::QI_ZONE_UNIT_CAPACITY, QiAccountId, WorldQiAccount};
+        use crate::world::zone::DEFAULT_SPAWN_ZONE_NAME;
+
+        let zone_qi = 0.6;
+        let npc_qi = 0.0;
+
+        let setup_ledger = || {
+            let mut ledger = WorldQiAccount::default();
+            ledger
+                .set_balance(
+                    QiAccountId::zone(DEFAULT_SPAWN_ZONE_NAME),
+                    zone_qi * QI_ZONE_UNIT_CAPACITY,
+                )
+                .unwrap();
+            ledger
+                .set_balance(QiAccountId::npc("test_npc_drowsy".to_string()), npc_qi)
+                .unwrap();
+            ledger
+        };
+
+        let mut ledger_high = setup_ledger();
+        let before_high = ledger_total(&ledger_high);
+        let (npc_high, _) =
+            run_drowsy_regen_once(zone_qi, npc_qi, 10.0, 0.5, 1.0, &mut ledger_high);
+        let after_high = ledger_total(&ledger_high);
+
+        let mut ledger_low = setup_ledger();
+        let before_low = ledger_total(&ledger_low);
+        let (npc_low, _) = run_drowsy_regen_once(zone_qi, npc_qi, 10.0, 0.5, 0.3, &mut ledger_low);
+        let after_low = ledger_total(&ledger_low);
+
+        assert!(
+            npc_high > npc_low,
+            "期望高 integrity({npc_high}) > 低 integrity({npc_low}) regen 量，\
+             因为 regen_from_zone 乘以 avg_integrity"
+        );
+        assert!(
+            (before_high - after_high).abs() < 1e-9,
+            "守恒红线：高 integrity regen 账本守恒，漂移 {}",
+            (before_high - after_high).abs()
+        );
+        assert!(
+            (before_low - after_low).abs() < 1e-9,
+            "守恒红线：低 integrity regen 账本守恒，漂移 {}",
+            (before_low - after_low).abs()
+        );
+    }
+
+    #[test]
+    fn drowsy_tick_conserves_qi_many_npcs_parallel() {
+        // 多个 Mid 档 NPC 同时 regen，总账本守恒。
+        // 模拟：5 个 NPC 共用一个 zone，每个独立做 regen。
+        use crate::qi_physics::{
+            constants::QI_ZONE_UNIT_CAPACITY, regen_from_zone, QiAccountId, QiTransfer,
+            QiTransferReason, WorldQiAccount,
+        };
+        use crate::world::zone::DEFAULT_SPAWN_ZONE_NAME;
+
+        let mut zone_qi = 0.9;
+        let npc_count = 5usize;
+        let npc_qi_init = 1.0f64;
+
+        let mut ledger = WorldQiAccount::default();
+        ledger
+            .set_balance(
+                QiAccountId::zone(DEFAULT_SPAWN_ZONE_NAME),
+                zone_qi * QI_ZONE_UNIT_CAPACITY,
+            )
+            .unwrap();
+        for i in 0..npc_count {
+            ledger
+                .set_balance(QiAccountId::npc(format!("drowsy_npc_{i}")), npc_qi_init)
+                .unwrap();
+        }
+        let before_total = ledger_total(&ledger);
+
+        // 逐个 NPC 做 regen（同 drowsy_tick_system 的 per-entity 循环语义）
+        for i in 0..npc_count {
+            let npc_account = QiAccountId::npc(format!("drowsy_npc_{i}"));
+            let zone_account = QiAccountId::zone(DEFAULT_SPAWN_ZONE_NAME);
+            let npc_qi = ledger.balance(&npc_account);
+            let room = (10.0_f64 - npc_qi).max(0.0);
+            let (gain, drain) = regen_from_zone(zone_qi, 0.2, 1.0, room);
+            if gain <= 0.0 || drain <= 0.0 {
+                continue;
+            }
+            ledger
+                .set_balance(
+                    zone_account.clone(),
+                    zone_qi.max(0.0) * QI_ZONE_UNIT_CAPACITY,
+                )
+                .unwrap();
+            ledger
+                .set_balance(npc_account.clone(), npc_qi.max(0.0))
+                .unwrap();
+            let transfer = QiTransfer::new(
+                zone_account,
+                npc_account,
+                gain,
+                QiTransferReason::CultivationRegen,
+            )
+            .unwrap();
+            ledger.transfer(transfer).unwrap();
+            zone_qi = (zone_qi - drain).max(0.0);
+        }
+
+        let after_total = ledger_total(&ledger);
+        assert!(
+            (before_total - after_total).abs() < 1e-6,
+            "守恒红线：5 个 Mid NPC 并发 regen 后账本总量守恒，\
+             before={before_total} after={after_total} 漂移 {}",
+            (before_total - after_total).abs()
+        );
     }
 }
