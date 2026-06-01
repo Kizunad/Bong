@@ -1342,11 +1342,16 @@ if (mercEvts.length > 0) {
   console.log(`[war] PASS ③: mercenary_count≥1 出现在 ${mercEvts.length} 条 war 事件（headless 路径 B 玩家参与生效）`);
 } else {
   // 参与注入在 war 存在后才有效（EmergingOrSkirmish phase）；若注入时 war 尚未产出或已
-  // Settling/Aftermath，则 mercenary_count 可能仍为 0。记录提示，不断言失败——该路径由
-  // server 单测 §25/§26 锁死（e2e 时序敏感，主线 takeover 实跑补确认）。
+  // Settling/Aftermath，则 mercenary_count 可能仍为 0。记录提示，不断言失败——该路径的
+  // 确定性由 server 单测锁死：
+  //   - command_executor.rs::war_participate_headless_*（路径 B intent 形状 + 错误 label，
+  //     与 cmd/gameplay/war.rs::faction_* brigadier 路径 A 同效对拍）
+  //   - npc/war/mod.rs::handle_participate_intent_*（两路汇聚点 Ok→emit / Err→静默 drop）
+  // e2e 此处仅作时序敏感的软确认。
   console.log(
     `[war] NOTE ③: mercenary_count=0（headless 注入早于 war 涌现 或 phase 不可 join 时注入——` +
-    `路径 B 由 server 单测§25/§26 锁死；时序确定性由主线 takeover 实跑验证）`
+    `路径 B 确定性由 server 单测 war_participate_headless_* + handle_participate_intent_* 锁死；` +
+    `时序确定性由主线 takeover 实跑验证）`
   );
 }
 

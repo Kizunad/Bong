@@ -1373,4 +1373,180 @@ mod tests {
         assert_eq!(counts.intercept, 1);
         assert_eq!(counts.spectate, 1);
     }
+
+    // ─────────── I. handle_war_participate_intent 汇聚点 system ───────────────
+    //
+    // 两路 intent（brigadier 路径 A + headless 路径 B）的唯一收口。
+    // Ok 分支：participate 成功 → emit WarPhaseChanged（phase 不变、counts 刷新）。
+    // Err 分支：participate 失败 → debug log 吞掉、不 emit（运行时静默 drop 的地方）。
+
+    use bevy_ecs::event::Events;
+    use bevy_ecs::schedule::Schedule;
+    use bevy_ecs::world::World;
+
+    /// 构建一个装好 WarConflictStore（含一场 zone 的 active Skirmish war）+ 事件队列的 World，
+    /// 把若干 WarParticipateIntent 灌进去后跑一次 handle_war_participate_intent，
+    /// 返回该 update 周期内 emit 的 WarPhaseChanged。
+    fn run_participate_intents(
+        store: WarConflictStore,
+        intents: Vec<WarParticipateIntent>,
+    ) -> Vec<WarPhaseChanged> {
+        let mut world = World::new();
+        world.insert_resource(store);
+        world.insert_resource(Events::<WarParticipateIntent>::default());
+        world.insert_resource(Events::<WarPhaseChanged>::default());
+
+        {
+            let mut queue = world.resource_mut::<Events<WarParticipateIntent>>();
+            for intent in intents {
+                queue.send(intent);
+            }
+        }
+
+        let mut schedule = Schedule::default();
+        schedule.add_systems(handle_war_participate_intent);
+        schedule.run(&mut world);
+
+        world
+            .resource::<Events<WarPhaseChanged>>()
+            .iter_current_update_events()
+            .cloned()
+            .collect()
+    }
+
+    /// 装一个 zone="残灰谷" 的 active Skirmish war 进 store（zone_active 已挂）。
+    fn store_with_active_war() -> WarConflictStore {
+        let mut store = WarConflictStore::default();
+        let war = make_skirmish_war(vec![EmergentGroupId(0), EmergentGroupId(1)]);
+        let war_id = war.war_id;
+        let zone = war.zone.clone();
+        store.wars.insert(war_id, war);
+        store.zone_active.insert(zone, war_id);
+        store
+    }
+
+    fn intent(zone: &str, player: &str, role: WarRole, group: Option<u16>) -> WarParticipateIntent {
+        WarParticipateIntent {
+            player_id: player.to_string(),
+            zone: zone.to_string(),
+            role,
+            allied_group: group.map(EmergentGroupId),
+            at_tick: 5,
+        }
+    }
+
+    #[test]
+    fn handle_participate_intent_ok_emits_phase_changed_with_refreshed_counts() {
+        // Ok 分支：合法 Enlist intent → participate 成功 → emit 1 条 WarPhaseChanged，
+        // phase 不变（仍 Skirmish），counts 反映新 Enlist。
+        let store = store_with_active_war();
+        let emitted = run_participate_intents(
+            store,
+            vec![intent("残灰谷", "p_enlist", WarRole::Enlist, Some(0))],
+        );
+
+        assert_eq!(
+            emitted.len(),
+            1,
+            "期望参与成功 emit 1 条 WarPhaseChanged 因 telemetry 需即时反映新 role，实际 {}",
+            emitted.len()
+        );
+        let ev = &emitted[0];
+        assert_eq!(
+            ev.phase,
+            WarPhase::Skirmish,
+            "期望 phase 不变（仍 Skirmish）因 participate 不推进阶段，实际 {:?}",
+            ev.phase
+        );
+        assert_eq!(ev.zone, "残灰谷", "期望 zone 透传，实际 {}", ev.zone);
+        assert_eq!(
+            ev.region_descriptor, "残灰谷一带散修",
+            "期望 region_descriptor 为匿名区域描述符 因 reframe b 禁具名宗门，实际 {}",
+            ev.region_descriptor
+        );
+        assert_eq!(
+            ev.player_role_counts.enlist, 1,
+            "期望 counts.enlist=1 因刚投靠一名 Enlist，实际 {}",
+            ev.player_role_counts.enlist
+        );
+        assert_eq!(
+            ev.at_tick, 5,
+            "期望 at_tick 透传自 intent，实际 {}",
+            ev.at_tick
+        );
+    }
+
+    #[test]
+    fn handle_participate_intent_err_war_not_found_emits_nothing() {
+        // Err 分支①：zone 无 active war → WarNotFound → 不 emit（静默 drop）。
+        let store = store_with_active_war();
+        let emitted = run_participate_intents(
+            store,
+            vec![intent("无战事的zone", "p", WarRole::Enlist, Some(0))],
+        );
+        assert!(
+            emitted.is_empty(),
+            "期望 zone 无 active war 时不 emit 任何 WarPhaseChanged 因 participate 失败应静默 drop，实际 emit {}",
+            emitted.len()
+        );
+    }
+
+    #[test]
+    fn handle_participate_intent_err_invalid_group_emits_nothing() {
+        // Err 分支②：Enlist 到不在 war.groups 的 group → GroupNotInWar → 不 emit。
+        let store = store_with_active_war();
+        let emitted = run_participate_intents(
+            store,
+            vec![intent("残灰谷", "p", WarRole::Enlist, Some(99))],
+        );
+        assert!(
+            emitted.is_empty(),
+            "期望非法 allied_group 时不 emit 因 participate 返回 GroupNotInWar 应静默 drop，实际 emit {}",
+            emitted.len()
+        );
+    }
+
+    #[test]
+    fn handle_participate_intent_err_settling_phase_not_joinable_emits_nothing() {
+        // Err 分支③：Settling 阶段不可加入 → PhaseNotJoinable → 不 emit。
+        let mut store = WarConflictStore::default();
+        let mut war = make_skirmish_war(vec![EmergentGroupId(0), EmergentGroupId(1)]);
+        war.phase = WarPhase::Settling;
+        let war_id = war.war_id;
+        let zone = war.zone.clone();
+        store.wars.insert(war_id, war);
+        store.zone_active.insert(zone, war_id);
+
+        let emitted =
+            run_participate_intents(store, vec![intent("残灰谷", "p", WarRole::Spectate, None)]);
+        assert!(
+            emitted.is_empty(),
+            "期望 Settling 阶段参与被拒时不 emit 因 PhaseNotJoinable 应静默 drop，实际 emit {}",
+            emitted.len()
+        );
+    }
+
+    #[test]
+    fn handle_participate_intent_mixed_ok_and_err_only_emits_for_ok() {
+        // 混合：一条合法 + 一条非法 intent 同周期 → 只为合法那条 emit 1 条。
+        let store = store_with_active_war();
+        let emitted = run_participate_intents(
+            store,
+            vec![
+                intent("无战事的zone", "p_bad", WarRole::Enlist, Some(0)), // Err
+                intent("残灰谷", "p_ok", WarRole::Mercenary, Some(1)),     // Ok
+            ],
+        );
+        assert_eq!(
+            emitted.len(),
+            1,
+            "期望仅合法 intent emit（1 条）因失败的静默 drop、成功的 emit，实际 {}",
+            emitted.len()
+        );
+        assert_eq!(
+            emitted[0].player_role_counts.mercenary, 1,
+            "期望 counts.mercenary=1 因唯一成功的是 Mercenary，实际 {}",
+            emitted[0].player_role_counts.mercenary
+        );
+    }
 }
