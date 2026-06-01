@@ -1674,6 +1674,241 @@ mod tests {
         );
     }
 
+    // -------------------------------------------------------------------------
+    // ECS App 驱动的 drowsy_tick_system 守恒测试
+    // 锁真系统接线——防止 drowsy_tick_system 与 run_drowsy_regen_once 脱节导致
+    // 守恒回归被静默漏过（饱和测试纪律：不假设单元拼起来就是对的）。
+    // -------------------------------------------------------------------------
+
+    /// 辅助：构造一个有一条打通经脉（rate=0.5, integrity=1.0）的 MeridianSystem。
+    fn make_meridian_system_with_one_open() -> MeridianSystem {
+        let mut ms = MeridianSystem::default();
+        // 打通第一条正经脉，设置 flow_rate=0.5，integrity=1.0
+        ms.regular[0].opened = true;
+        ms.regular[0].flow_rate = 0.5;
+        ms.regular[0].integrity = 1.0;
+        ms
+    }
+
+    #[test]
+    fn drowsy_tick_system_ecs_app_conserves_qi_single_npc() {
+        // ECS App 驱动的 drowsy_tick_system 守恒测试（单 NPC）。
+        //
+        // 构建真实 Bevy App，插入 drowsy_tick_system 系统，
+        // 验证一帧后账本总量严格守恒（零和），且 NPC qi 确实增长（系统没空转）。
+        //
+        // 不变量：
+        // - regen 是 zone→npc transfer，不新增/不销毁真元
+        // - `|total_before - total_after| < 1e-6`
+        // - `cultivation.qi_current > qi_initial`（证明系统真的跑了 regen）
+        use crate::qi_physics::{constants::QI_ZONE_UNIT_CAPACITY, QiAccountId, WorldQiAccount};
+        use crate::world::zone::DEFAULT_SPAWN_ZONE_NAME;
+
+        let zone_qi_initial = 0.8_f64;
+        let npc_qi_initial = 2.0_f64;
+        let npc_qi_max = 10.0_f64;
+
+        // 构建 App
+        let mut app = App::new();
+
+        // 插入 drowsy_tick_system 需要的 Resources
+        // GameTick(20)：20 % DROWSY_TICK_INTERVAL(20) == 0，触发 regen
+        app.insert_resource(crate::npc::movement::GameTick(20));
+
+        let zone_registry = make_zone_registry(zone_qi_initial);
+        app.insert_resource(zone_registry);
+
+        let mut ledger = WorldQiAccount::default();
+        // 预先建立账户初始余额（set_balance 幂等，先 fund zone）
+        ledger
+            .set_balance(
+                QiAccountId::zone(DEFAULT_SPAWN_ZONE_NAME),
+                zone_qi_initial * QI_ZONE_UNIT_CAPACITY,
+            )
+            .expect("zone set_balance");
+        // NPC 账户此时尚未存在，drowsy_tick_system 会在 transfer 前 set_balance；
+        // 这里不预注册 npc account，测试真实系统路径（set_balance 在系统内部调用）
+        app.insert_resource(ledger);
+
+        // spawn Mid 档 NPC entity，位于 zone 范围内（[-200,200]×[0,300]×[-200,200]）
+        let cultivation = crate::cultivation::components::Cultivation {
+            qi_current: npc_qi_initial,
+            qi_max: npc_qi_max,
+            ..Default::default()
+        };
+
+        let meridian_system = make_meridian_system_with_one_open();
+
+        // 验证经脉确实打通且有 rate > 0
+        assert!(
+            meridian_system.sum_rate() > 0.0,
+            "期望测试用 MeridianSystem 有 sum_rate>0，否则 drowsy regen 会跳过；\
+             实际 sum_rate={}",
+            meridian_system.sum_rate()
+        );
+
+        let npc_entity = app
+            .world_mut()
+            .spawn((
+                NpcMarker,
+                Position::new([0.0, 64.0, 0.0]),
+                NpcLodTier::Mid,
+                NpcDrowsyState::default(),
+                cultivation,
+                meridian_system,
+            ))
+            .id();
+
+        // 注册 drowsy_tick_system（真实系统，非 run_drowsy_regen_once 复刻）
+        app.add_systems(Update, drowsy_tick_system);
+
+        // drowsy_tick_system 内部先 set_balance 对齐 npc 账户到 ECS 状态，再 transfer。
+        // 为让 total_before 包含 npc 的初始 qi，提前在 ledger 注册 npc 账户。
+        // 账户 ID 与系统内部逻辑一致：`drowsy_live:{entity.index()}`
+        {
+            let npc_entity_index = npc_entity.index();
+            let npc_account_id = QiAccountId::npc(format!("drowsy_live:{npc_entity_index}"));
+            app.world_mut()
+                .resource_mut::<WorldQiAccount>()
+                .set_balance(npc_account_id, npc_qi_initial)
+                .expect("pre-register npc account");
+        }
+
+        // 记录 regen 前账本总量（zone + npc 两个账户均已注册）
+        let total_before = {
+            let ledger = app.world().resource::<WorldQiAccount>();
+            ledger.iter_balances().map(|(_, b)| b).sum::<f64>()
+        };
+
+        // 跑一帧（触发 drowsy_tick_system）
+        app.update();
+
+        // 读出 regen 后状态
+        let cultivation_after = app
+            .world()
+            .get::<crate::cultivation::components::Cultivation>(npc_entity)
+            .expect("npc Cultivation 组件应存在");
+        let qi_after = cultivation_after.qi_current;
+
+        let npc_entity_index = npc_entity.index();
+        let npc_account_id = QiAccountId::npc(format!("drowsy_live:{npc_entity_index}"));
+        let (total_after, ledger_npc_qi) = {
+            let ledger = app.world().resource::<WorldQiAccount>();
+            let total = ledger.iter_balances().map(|(_, b)| b).sum::<f64>();
+            let npc_qi = ledger.balance(&npc_account_id);
+            (total, npc_qi)
+        };
+
+        // 断言 NPC qi 确实增长（证明 drowsy_tick_system 真的跑了 regen，不是空转）
+        assert!(
+            qi_after > npc_qi_initial,
+            "期望 drowsy_tick_system 运行后 NPC qi 增长（regen 零和搬运），\
+             因为 zone 有灵气且 NPC 未满且经脉有 rate；\
+             before={npc_qi_initial} after={qi_after}"
+        );
+
+        // 断言 ECS Cultivation.qi_current 与 ledger NPC 账户余额一致
+        assert!(
+            (qi_after - ledger_npc_qi).abs() < 1e-9,
+            "期望 Cultivation.qi_current 与 ledger NPC 账户余额一致，\
+             因为 drowsy_tick_system 在 transfer 后 cultivation.qi_current = ledger.balance(npc)；\
+             cultivation={qi_after} ledger={ledger_npc_qi}"
+        );
+
+        // 守恒断言：regen 前后账本总量严格不变（零和）
+        assert!(
+            (total_before - total_after).abs() < 1e-6,
+            "守恒红线：drowsy_tick_system 真实系统驱动一帧后账本总量严格守恒（零和），\
+             因为 regen 走 ledger.transfer zone→npc，不新增真元；\
+             期望 total 守恒，before={total_before} after={total_after} \
+             漂移={}",
+            (total_before - total_after).abs()
+        );
+    }
+
+    #[test]
+    fn drowsy_tick_system_ecs_app_no_regen_when_near_tier() {
+        // ECS App 驱动的 drowsy_tick_system：Near 档 NPC 不触发 drowsy regen。
+        //
+        // drowsy_tick_system 内部检查 `*tier != NpcLodTier::Mid` 即跳过。
+        // 本测试验证：同 App 内 Near 档 NPC 的 qi 不被修改，账本总量不变。
+        // 这锁住"只有 Mid 档 NPC 才做 drowsy regen"这条接线契约。
+        use crate::qi_physics::{constants::QI_ZONE_UNIT_CAPACITY, QiAccountId, WorldQiAccount};
+        use crate::world::zone::DEFAULT_SPAWN_ZONE_NAME;
+
+        let zone_qi_initial = 0.8_f64;
+        let npc_qi_initial = 2.0_f64;
+
+        let mut app = App::new();
+        app.insert_resource(crate::npc::movement::GameTick(20));
+        app.insert_resource(make_zone_registry(zone_qi_initial));
+
+        let mut ledger = WorldQiAccount::default();
+        ledger
+            .set_balance(
+                QiAccountId::zone(DEFAULT_SPAWN_ZONE_NAME),
+                zone_qi_initial * QI_ZONE_UNIT_CAPACITY,
+            )
+            .expect("zone set_balance");
+        app.insert_resource(ledger);
+
+        let cultivation = crate::cultivation::components::Cultivation {
+            qi_current: npc_qi_initial,
+            qi_max: 10.0,
+            ..Default::default()
+        };
+
+        // Near 档 NPC（不应触发 drowsy regen）
+        let npc_entity = app
+            .world_mut()
+            .spawn((
+                NpcMarker,
+                Position::new([0.0, 64.0, 0.0]),
+                NpcLodTier::Near, // 关键：Near 而非 Mid
+                NpcDrowsyState::default(),
+                cultivation,
+                make_meridian_system_with_one_open(),
+            ))
+            .id();
+
+        app.add_systems(Update, drowsy_tick_system);
+
+        let total_before = {
+            let ledger = app.world().resource::<WorldQiAccount>();
+            ledger.iter_balances().map(|(_, b)| b).sum::<f64>()
+        };
+
+        app.update();
+
+        let qi_after = app
+            .world()
+            .get::<crate::cultivation::components::Cultivation>(npc_entity)
+            .expect("Cultivation 组件应存在")
+            .qi_current;
+
+        let total_after = {
+            let ledger = app.world().resource::<WorldQiAccount>();
+            ledger.iter_balances().map(|(_, b)| b).sum::<f64>()
+        };
+
+        // Near 档不做 regen：qi 不变
+        assert_eq!(
+            qi_after, npc_qi_initial,
+            "期望 Near 档 NPC 的 qi 不被 drowsy_tick_system 修改，\
+             因为 drowsy_tick_system 检查 tier != Mid 即跳过；\
+             before={npc_qi_initial} after={qi_after}"
+        );
+
+        // 账本总量同样不变
+        assert!(
+            (total_before - total_after).abs() < 1e-12,
+            "期望 Near 档 NPC 一帧后账本总量不变（系统跳过无操作），\
+             before={total_before} after={total_after} \
+             漂移={}",
+            (total_before - total_after).abs()
+        );
+    }
+
     #[test]
     fn drowsy_tick_interval_is_20_ticks() {
         // DROWSY_TICK_INTERVAL 必须是 20（1Hz at 20TPS）。
