@@ -40,6 +40,7 @@ pub mod inventory_snapshot_emit;
 pub mod knockback_sync_emit;
 pub mod npc_bubble;
 pub mod npc_event_bridge;
+pub mod npc_lod_emit;
 pub mod npc_metadata;
 pub mod npc_mood;
 pub mod poi_novice_bridge;
@@ -660,6 +661,7 @@ pub fn register(app: &mut App) {
                 .after(crate::combat::resolve::resolve_attack_intents),
             npc_bubble::emit_npc_bubble_payloads,
             npc_mood::emit_npc_mood_payloads,
+            npc_lod_emit::emit_npc_lod_payloads,
             tsy_polish::emit_tsy_boss_health_payloads,
             tsy_polish::emit_tsy_death_vfx_payloads
                 .after(crate::combat::lifecycle::death_arbiter_tick),
@@ -864,6 +866,7 @@ pub fn register(app: &mut App) {
     app.init_resource::<npc_metadata::NpcMetadataSyncState>();
     app.init_resource::<npc_bubble::NpcBubbleSyncState>();
     app.init_resource::<npc_mood::NpcMoodSyncState>();
+    app.init_resource::<npc_lod_emit::NpcLodEmitState>();
     app.init_resource::<tsy_polish::TsyBossHealthSyncState>();
     app.add_event::<audio_event_emit::PlaySoundRecipeRequest>();
     app.add_event::<audio_event_emit::StopSoundRecipeRequest>();

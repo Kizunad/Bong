@@ -241,7 +241,10 @@ fn update_npc_lod_tier_system(
                 let mut ec = commands.entity(entity);
                 ec.insert(desired);
                 // Mid 档（Drowsy）需要 NpcDrowsyState 组件供 drowsy_tick_system 处理。
-                // insert 操作幂等——已有组件时保留原值（不 reset last_drowsy_tick）。
+                // Bevy `insert` 是**覆盖**语义（非幂等保留）。但此分支仅在 tier 发生变化时
+                // 执行（同档 same-tier 走上方 `(Some(c), d) if c == d => {}` short-circuit 跳过），
+                // 所以 NPC 稳定停在 Mid 时不会反复执行此插入，`last_drowsy_tick` 不会被意外重置。
+                // Mid 重入时（从 Near/Far 进入 Mid）`default()` 重置是正确行为——开启新一轮 drowsy 时钟。
                 if desired == NpcLodTier::Mid {
                     ec.insert(NpcDrowsyState::default());
                 }
