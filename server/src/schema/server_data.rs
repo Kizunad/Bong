@@ -216,6 +216,8 @@ pub enum ServerDataType {
     LootContainerOpen,
     LootContainerUpdate,
     LootContainerClose,
+    // ─── plan-offscreen-war-v1 P9：战事 HUD 广播 ───────────────────
+    FactionWarState,
 }
 
 #[derive(Debug, Clone)]
@@ -455,6 +457,9 @@ pub enum ServerDataPayloadV1 {
     LootContainerOpen(LootContainerOpenV1),
     LootContainerUpdate(LootContainerUpdateV1),
     LootContainerClose(LootContainerCloseV1),
+    // ─── plan-offscreen-war-v1 P9：战事 HUD 广播 ───────────────────
+    /// 战事 HUD 状态广播（守恒红线：零真元；reframe b：零具名宗门）。
+    FactionWarState(FactionWarStateV1),
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -543,6 +548,31 @@ pub enum LootContainerCloseReasonV1 {
 pub struct LootContainerCloseV1 {
     pub session_id: u64,
     pub reason: LootContainerCloseReasonV1,
+}
+
+/// plan-offscreen-war-v1 P9：战事 HUD 广播 payload（server → client）。
+///
+/// 守恒红线：**不含任何真元字段**（零真元）。
+/// reframe b：zone 用匿名 `region_descriptor`（无具名宗门）。
+/// - `winner_group` / `loser_group`：`None` = 尚无结算结果（Emerging/Skirmish 阶段）。
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct FactionWarStateV1 {
+    pub war_id: u64,
+    pub zone: String,
+    pub region_descriptor: String,
+    pub phase: String,
+    pub groups: Vec<u16>,
+    pub enlist_count: u32,
+    pub mercenary_count: u32,
+    pub intercept_count: u32,
+    pub spectate_count: u32,
+    /// 胜方 group_id，无结算结果时为 `None`。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub winner_group: Option<u16>,
+    /// 败方 group_id，无结算结果时为 `None`。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub loser_group: Option<u16>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -1367,6 +1397,11 @@ enum ServerDataPayloadWireV1 {
     LootContainerClose {
         #[serde(flatten)]
         data: LootContainerCloseV1,
+    },
+    // ─── plan-offscreen-war-v1 P9：战事 HUD 广播 ───────────────────
+    FactionWarState {
+        #[serde(flatten)]
+        data: FactionWarStateV1,
     },
 }
 
@@ -2199,6 +2234,7 @@ impl TryFrom<ServerDataPayloadWireV1> for ServerDataPayloadV1 {
             ServerDataPayloadWireV1::LootContainerClose { data } => {
                 Ok(Self::LootContainerClose(data))
             }
+            ServerDataPayloadWireV1::FactionWarState { data } => Ok(Self::FactionWarState(data)),
         }
     }
 }
@@ -2728,6 +2764,9 @@ impl From<&ServerDataPayloadV1> for ServerDataPayloadWireV1 {
             ServerDataPayloadV1::LootContainerClose(data) => {
                 Self::LootContainerClose { data: data.clone() }
             }
+            ServerDataPayloadV1::FactionWarState(data) => {
+                Self::FactionWarState { data: data.clone() }
+            }
         }
     }
 }
@@ -3037,6 +3076,7 @@ impl ServerDataPayloadV1 {
             Self::LootContainerOpen(..) => ServerDataType::LootContainerOpen,
             Self::LootContainerUpdate(..) => ServerDataType::LootContainerUpdate,
             Self::LootContainerClose(..) => ServerDataType::LootContainerClose,
+            Self::FactionWarState(..) => ServerDataType::FactionWarState,
         }
     }
 }
@@ -4342,6 +4382,130 @@ mod tests {
         assert!(
             serde_json::from_str::<LootContainerUpdateV1>(json).is_err(),
             "LootContainerUpdateV1 missing session_id should fail deserialization"
+        );
+    }
+
+    // ─── plan-offscreen-war-v1 P9：FactionWarState payload 测试 ─────────────
+
+    #[test]
+    fn faction_war_state_v1_roundtrips_with_outcome() {
+        // 有 winner/loser 的 Settling 阶段 payload 完整无损 roundtrip。
+        let payload = FactionWarStateV1 {
+            war_id: 42,
+            zone: "残灰谷".to_string(),
+            region_descriptor: "残灰谷一带散修".to_string(),
+            phase: "settling".to_string(),
+            groups: vec![0, 1],
+            enlist_count: 3,
+            mercenary_count: 1,
+            intercept_count: 0,
+            spectate_count: 2,
+            winner_group: Some(0),
+            loser_group: Some(1),
+        };
+        let json = serde_json::to_string(&payload).expect("FactionWarStateV1 should serialize");
+        let back: FactionWarStateV1 =
+            serde_json::from_str(&json).expect("FactionWarStateV1 should deserialize");
+        assert_eq!(
+            payload, back,
+            "FactionWarStateV1 roundtrip must be lossless"
+        );
+        // winner_group/loser_group Some 时 JSON 应包含这两个字段
+        let v: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert!(
+            v.get("winner_group").is_some(),
+            "winner_group should be in JSON when Some"
+        );
+        assert!(
+            v.get("loser_group").is_some(),
+            "loser_group should be in JSON when Some"
+        );
+    }
+
+    #[test]
+    fn faction_war_state_v1_roundtrips_without_outcome() {
+        // 无 winner/loser 的 Skirmish 阶段：winner_group/loser_group 字段应被 skip_serializing。
+        let payload = FactionWarStateV1 {
+            war_id: 7,
+            zone: "残灰谷".to_string(),
+            region_descriptor: "残灰谷一带散修".to_string(),
+            phase: "skirmish".to_string(),
+            groups: vec![0, 1],
+            enlist_count: 1,
+            mercenary_count: 0,
+            intercept_count: 0,
+            spectate_count: 0,
+            winner_group: None,
+            loser_group: None,
+        };
+        let json = serde_json::to_string(&payload).expect("serialize");
+        let back: FactionWarStateV1 = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(
+            payload, back,
+            "FactionWarStateV1 no-outcome roundtrip must be lossless"
+        );
+        // None 时 JSON 不含 winner_group/loser_group（skip_serializing_if）
+        let v: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert!(
+            v.get("winner_group").is_none(),
+            "winner_group should be absent when None"
+        );
+        assert!(
+            v.get("loser_group").is_none(),
+            "loser_group should be absent when None"
+        );
+    }
+
+    #[test]
+    fn faction_war_state_wire_type_label_is_faction_war_state() {
+        // payload_type_label → "faction_war_state"（确保 client ServerDataRouter 能正确路由）
+        let label = payload_type_label(ServerDataType::FactionWarState);
+        assert_eq!(
+            label, "faction_war_state",
+            "期望 FactionWarState 的 label 为 'faction_war_state'（client 路由键），实际 {label}"
+        );
+    }
+
+    #[test]
+    fn faction_war_state_serializes_type_field_as_faction_war_state() {
+        // wire type tag "faction_war_state" 能正确序列化和反序列化。
+        // ServerDataV1 用 #[serde(flatten)]，所以 type + fields 全在顶层（无 "payload" 嵌套）。
+        let inner = FactionWarStateV1 {
+            war_id: 1,
+            zone: "血谷".to_string(),
+            region_descriptor: "血谷一带散修".to_string(),
+            phase: "emerging".to_string(),
+            groups: vec![2, 3],
+            enlist_count: 0,
+            mercenary_count: 0,
+            intercept_count: 0,
+            spectate_count: 0,
+            winner_group: None,
+            loser_group: None,
+        };
+        let wrapper = ServerDataV1::new(ServerDataPayloadV1::FactionWarState(inner));
+        let json = serde_json::to_string(&wrapper).expect("serialize wrapper");
+        let v: serde_json::Value = serde_json::from_str(&json).unwrap();
+        // payload 字段 flatten 到顶层，type 字段在顶层
+        assert_eq!(
+            v["type"],
+            serde_json::json!("faction_war_state"),
+            "期望 wire type = 'faction_war_state'（守恒：payload 零真元，reframe b 零宗门），实际 {}",
+            v["type"]
+        );
+        // 守恒红线：不含任何真元字段名（qi 在字段名中不应出现）
+        assert!(
+            !json.contains("\"qi\"") && !json.contains("_qi\"") && !json.contains("\"qi_"),
+            "期望 faction_war_state JSON 不含 qi 字段（零真元），实际 JSON: {json}"
+        );
+        // reframe b：region_descriptor 含「散修」
+        assert!(
+            v["region_descriptor"]
+                .as_str()
+                .unwrap_or("")
+                .contains("散修"),
+            "期望 region_descriptor 含「散修」（匿名散修描述符），实际 {}",
+            v["region_descriptor"]
         );
     }
 }

@@ -415,7 +415,7 @@ pub fn register(app: &mut App) {
                 .after(npc_event_bridge::accumulate_zone_conflict_pressure),
             crate::npc::war::handle_war_participate_intent
                 .after(npc_event_bridge::advance_idle_wars),
-            // plan-offscreen-war-v1 P9：settle 三 system（ZoneSpiritBonus + Renown + 未来 HUD）
+            // plan-offscreen-war-v1 P9：settle 四 system（ZoneSpiritBonus + Renown + HUD 广播）
             // 读 WarPhaseChanged 事件沿，排在 advance_idle_wars 之后、publish_faction_war 之前。
             crate::npc::war::settle::apply_war_zone_spirit_bonus
                 .after(npc_event_bridge::advance_idle_wars)
@@ -423,11 +423,15 @@ pub fn register(app: &mut App) {
             crate::npc::war::settle::award_war_winner_renown
                 .after(npc_event_bridge::advance_idle_wars)
                 .after(npc_event_bridge::accumulate_zone_conflict_pressure),
+            crate::npc::war::settle::broadcast_faction_war_hud
+                .after(npc_event_bridge::advance_idle_wars)
+                .after(npc_event_bridge::accumulate_zone_conflict_pressure),
             npc_event_bridge::publish_faction_war
                 .after(npc_event_bridge::advance_idle_wars)
                 .after(crate::npc::war::handle_war_participate_intent)
                 .after(crate::npc::war::settle::apply_war_zone_spirit_bonus)
                 .after(crate::npc::war::settle::award_war_winner_renown)
+                .after(crate::npc::war::settle::broadcast_faction_war_hud)
                 .after(npc_event_bridge::publish_faction_state),
             rat_phase_bridge::publish_rat_phase_events
                 .after(crate::fauna::rat_phase::pressure_sensor_tick_system),

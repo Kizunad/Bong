@@ -168,6 +168,7 @@ pub fn payload_type_label(payload_type: ServerDataType) -> &'static str {
         ServerDataType::LootContainerOpen => "loot_container_open",
         ServerDataType::LootContainerUpdate => "loot_container_update",
         ServerDataType::LootContainerClose => "loot_container_close",
+        ServerDataType::FactionWarState => "faction_war_state",
     }
 }
 
