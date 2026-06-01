@@ -85,6 +85,12 @@ pub const CH_NPC_RELIC: &str = "bong:npc/relic";
 // 各账户余额 + total_observed，让真服 e2e 能 `HGETALL bong:qi/ledger` 做精确守恒断言。
 pub const QI_LEDGER_REDIS_KEY: &str = "bong:qi/ledger";
 
+// plan-offscreen-war-v1 P5：散修群体消长 telemetry（纯观测旁路）。周期性 publish 每个
+// 涌现群体一条 `FactionStateV1`（人口 / 消长 status / 涌现强者），让真服 e2e / 调试脚本能
+// headless 观测「{zone}一带散修」群体的此消彼长。**零真元流动**——census 全只读 dormant
+// store + faction store，强者陨落仍走 P2 的 release_dormant_qi_to_zone，本通道不碰 ledger。
+pub const CH_FACTION_STATE: &str = "bong:faction_state";
+
 // 玩家社交 / 匿名 / 声名（plan-social-v1 §7）。server 为权威，agent 只消费事件流水。
 pub const CH_SOCIAL_EXPOSURE: &str = "bong:social/exposure";
 pub const CH_SOCIAL_PACT: &str = "bong:social/pact";
@@ -326,5 +332,7 @@ mod tests {
         assert_eq!(CH_CRAFT_RECIPE_UNLOCKED, "bong:craft/recipe_unlocked");
         // plan-offscreen-war-v1 P0 — 守恒 telemetry HASH key
         assert_eq!(QI_LEDGER_REDIS_KEY, "bong:qi/ledger");
+        // plan-offscreen-war-v1 P5 — 散修群体消长 telemetry channel
+        assert_eq!(CH_FACTION_STATE, "bong:faction_state");
     }
 }
