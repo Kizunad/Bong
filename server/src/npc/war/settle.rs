@@ -656,3 +656,263 @@ mod tests {
             .all(|e| e.fame_delta == 5 && e.notoriety_delta == 0));
     }
 }
+
+// ──────────────────────────── e2e 集成测试 ───────────────────────────────────
+//
+// 用 Bevy World + Schedule 验证完整系统链路：
+// apply_war_zone_spirit_bonus + award_war_winner_renown 在 WarPhaseChanged 事件驱动下的行为。
+// 守恒验证走 regen_from_zone 纯函数（不需要真实 tick loop 即可验证 zone+player 零和不变）。
+
+#[cfg(test)]
+mod e2e_tests {
+    use bevy_ecs::event::Events;
+    use bevy_ecs::schedule::Schedule;
+    use bevy_ecs::world::World;
+
+    use crate::npc::faction::EmergentGroupId;
+    use crate::npc::war::{
+        FactionWarOutcome, PlayerFactionRole, PlayerRoleCounts, WarId, WarPhase, WarPhaseChanged,
+        WarRole,
+    };
+    use crate::qi_physics::{
+        constants::{QI_ZONE_UNIT_CAPACITY, WAR_WINNER_ZONE_REGEN_MULTIPLIER},
+        excretion::regen_from_zone,
+    };
+    use crate::social::events::SocialRenownDeltaEvent;
+
+    use super::*;
+
+    const ZONE: &str = "残灰谷";
+
+    fn make_e2e_world() -> World {
+        let mut world = World::new();
+        world.insert_resource(ZoneSpiritBonusStore::default());
+        world.insert_resource(Events::<WarPhaseChanged>::default());
+        world.insert_resource(Events::<SocialRenownDeltaEvent>::default());
+        world
+    }
+
+    fn make_e2e_schedule() -> Schedule {
+        let mut schedule = Schedule::default();
+        schedule.add_systems(apply_war_zone_spirit_bonus);
+        schedule.add_systems(award_war_winner_renown);
+        schedule
+    }
+
+    fn settling_ev(
+        winner: u16,
+        loser: u16,
+        player_roles: Vec<PlayerFactionRole>,
+    ) -> WarPhaseChanged {
+        WarPhaseChanged {
+            war_id: WarId(10),
+            zone: ZONE.to_string(),
+            region_descriptor: "残灰谷一带散修".to_string(),
+            phase: WarPhase::Settling,
+            groups: vec![EmergentGroupId(winner), EmergentGroupId(loser)],
+            outcome: Some(FactionWarOutcome {
+                winner_group: EmergentGroupId(winner),
+                loser_group: EmergentGroupId(loser),
+                total_casualties: 8,
+                settled_tick: 100,
+            }),
+            player_role_counts: PlayerRoleCounts::default(),
+            war_snapshot_player_roles: player_roles,
+            at_tick: 100,
+        }
+    }
+
+    fn aftermath_ev(winner: u16, loser: u16) -> WarPhaseChanged {
+        WarPhaseChanged {
+            war_id: WarId(10),
+            zone: ZONE.to_string(),
+            region_descriptor: "残灰谷一带散修".to_string(),
+            phase: WarPhase::Aftermath,
+            groups: vec![EmergentGroupId(winner), EmergentGroupId(loser)],
+            outcome: Some(FactionWarOutcome {
+                winner_group: EmergentGroupId(winner),
+                loser_group: EmergentGroupId(loser),
+                total_casualties: 8,
+                settled_tick: 100,
+            }),
+            player_role_counts: PlayerRoleCounts::default(),
+            war_snapshot_player_roles: vec![],
+            at_tick: 300,
+        }
+    }
+
+    // ── e2e 1: Settling → ZoneSpiritBonus 写入 ──
+
+    #[test]
+    fn e2e_settling_writes_zone_spirit_bonus() {
+        let mut world = make_e2e_world();
+        let mut schedule = make_e2e_schedule();
+
+        {
+            let mut events = world.resource_mut::<Events<WarPhaseChanged>>();
+            events.send(settling_ev(1, 2, vec![]));
+        }
+        schedule.run(&mut world);
+
+        let bonus = world.resource::<ZoneSpiritBonusStore>();
+        assert_eq!(
+            bonus.multiplier_for(ZONE),
+            WAR_WINNER_ZONE_REGEN_MULTIPLIER,
+            "期望 Settling 后 ZoneSpiritBonusStore[\"{}\"] == 1.10（胜方 zone regen 加速），实际 {}",
+            ZONE, bonus.multiplier_for(ZONE)
+        );
+    }
+
+    // ── e2e 2: Aftermath → ZoneSpiritBonus 清除 ──
+
+    #[test]
+    fn e2e_aftermath_clears_zone_spirit_bonus() {
+        let mut world = make_e2e_world();
+        let mut schedule = make_e2e_schedule();
+
+        // 预先写入倍率
+        world
+            .resource_mut::<ZoneSpiritBonusStore>()
+            .multipliers
+            .insert(ZONE.to_string(), WAR_WINNER_ZONE_REGEN_MULTIPLIER);
+
+        {
+            let mut events = world.resource_mut::<Events<WarPhaseChanged>>();
+            events.send(aftermath_ev(1, 2));
+        }
+        schedule.run(&mut world);
+
+        let bonus = world.resource::<ZoneSpiritBonusStore>();
+        assert_eq!(
+            bonus.multiplier_for(ZONE),
+            1.0,
+            "期望 Aftermath 后倍率恢复 1.0（余波消散后 store 条目被移除），实际 {}",
+            bonus.multiplier_for(ZONE)
+        );
+    }
+
+    // ── e2e 3: regen_from_zone 守恒（带 war 倍率）──
+
+    #[test]
+    fn e2e_regen_with_war_multiplier_conserves_total() {
+        let zone_qi_before = 0.7_f64;
+        let player_qi_before = 8.0_f64;
+        let rate = 0.4_f64;
+        let integrity = 0.9_f64;
+        let room = 20.0_f64;
+
+        let (gain, drain) = regen_from_zone(
+            zone_qi_before,
+            rate * WAR_WINNER_ZONE_REGEN_MULTIPLIER,
+            integrity,
+            room,
+        );
+
+        // zone + player 总量守恒
+        let before_total = zone_qi_before * QI_ZONE_UNIT_CAPACITY + player_qi_before;
+        let after_total =
+            (zone_qi_before - drain) * QI_ZONE_UNIT_CAPACITY + player_qi_before + gain;
+        assert!(
+            (before_total - after_total).abs() < 1e-10,
+            "期望 war 倍率下 zone+player 总量守恒（倍率仅改 regen 速率不铸造真元），\
+             before={:.8} after={:.8} diff={:.2e}",
+            before_total,
+            after_total,
+            (before_total - after_total).abs()
+        );
+        // 内生不变量
+        assert!(
+            (gain - drain * QI_ZONE_UNIT_CAPACITY).abs() < 1e-12,
+            "期望 regen_from_zone 内生守恒 gain==drain*UNIT_CAPACITY，gain={} drain*CAP={}",
+            gain,
+            drain * QI_ZONE_UNIT_CAPACITY
+        );
+        // 倍率线性提升
+        let (gain_base, _) = regen_from_zone(zone_qi_before, rate, integrity, room);
+        let ratio = gain / gain_base;
+        assert!(
+            (ratio - WAR_WINNER_ZONE_REGEN_MULTIPLIER).abs() < 1e-9,
+            "期望 war 倍率(1.10) 线性，ratio={ratio:.8}",
+        );
+    }
+
+    // ── e2e 4: Settling + Enlist 胜方 → fame_delta=5 + notoriety=0 ──
+
+    #[test]
+    fn e2e_settling_enlist_winner_gets_fame_5_zero_qi() {
+        let mut world = make_e2e_world();
+        let mut schedule = make_e2e_schedule();
+
+        let roles = vec![
+            PlayerFactionRole {
+                player_id: "P_winner".to_string(),
+                role: WarRole::Enlist,
+                allied_group: Some(EmergentGroupId(1)), // winner
+                joined_tick: 0,
+            },
+            PlayerFactionRole {
+                player_id: "P_loser".to_string(),
+                role: WarRole::Enlist,
+                allied_group: Some(EmergentGroupId(2)), // loser
+                joined_tick: 0,
+            },
+        ];
+
+        {
+            let mut events = world.resource_mut::<Events<WarPhaseChanged>>();
+            events.send(settling_ev(1, 2, roles));
+        }
+        schedule.run(&mut world);
+
+        let renown: Vec<_> = world
+            .resource::<Events<SocialRenownDeltaEvent>>()
+            .iter_current_update_events()
+            .cloned()
+            .collect();
+
+        assert_eq!(
+            renown.len(),
+            1,
+            "期望仅胜方 Enlist emit 1 条 SocialRenownDeltaEvent（败方不奖励），实际 {}",
+            renown.len()
+        );
+        let ev = &renown[0];
+        assert_eq!(ev.char_id, "P_winner");
+        assert_eq!(
+            ev.fame_delta, 5,
+            "期望 Enlist 胜方 fame_delta=5，实际 {}",
+            ev.fame_delta
+        );
+        assert_eq!(
+            ev.notoriety_delta, 0,
+            "期望 notoriety_delta=0（守恒：renown 纯叙事整数，零真元），实际 {}",
+            ev.notoriety_delta
+        );
+    }
+
+    // ── e2e 5: Aftermath 不重复奖励 ──
+
+    #[test]
+    fn e2e_aftermath_does_not_reaward_renown() {
+        let mut world = make_e2e_world();
+        let mut schedule = make_e2e_schedule();
+
+        {
+            let mut events = world.resource_mut::<Events<WarPhaseChanged>>();
+            events.send(aftermath_ev(1, 2));
+        }
+        schedule.run(&mut world);
+
+        let renown: Vec<_> = world
+            .resource::<Events<SocialRenownDeltaEvent>>()
+            .iter_current_update_events()
+            .cloned()
+            .collect();
+
+        assert!(
+            renown.is_empty(),
+            "期望 Aftermath 不奖励（仅 Settling 触发，防重复），实际 {} 条",
+            renown.len()
+        );
+    }
+}
