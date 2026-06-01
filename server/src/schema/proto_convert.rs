@@ -1288,6 +1288,22 @@ impl From<&ServerDataPayloadV1> for Payload {
                     reason: loot_container_close_reason_to_proto(&c.reason),
                 })
             }
+            // plan-offscreen-war-v1 P9：战事 HUD 广播（守恒红线：零真元）
+            ServerDataPayloadV1::FactionWarState(s) => {
+                Payload::FactionWarState(bong::FactionWarState {
+                    war_id: s.war_id,
+                    zone: s.zone.clone(),
+                    region_descriptor: s.region_descriptor.clone(),
+                    phase: s.phase.clone(),
+                    groups: s.groups.iter().map(|g| u32::from(*g)).collect(),
+                    enlist_count: s.enlist_count,
+                    mercenary_count: s.mercenary_count,
+                    intercept_count: s.intercept_count,
+                    spectate_count: s.spectate_count,
+                    winner_group: s.winner_group.map(i32::from).unwrap_or(-1),
+                    loser_group: s.loser_group.map(i32::from).unwrap_or(-1),
+                })
+            }
         }
     }
 }

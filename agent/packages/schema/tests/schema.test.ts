@@ -58,10 +58,13 @@ import { NarrationV1, validateNarrationV1Contract } from "../src/narration.js";
 import {
   FactionEventV1,
   FactionStateV1,
+  FactionWarEventV1,
   GroupStatusV1,
   NpcDeathV1,
   NpcSpawnedV1,
+  WarPhaseV1,
   validateFactionStateV1Contract,
+  validateFactionWarEventV1Contract,
   validateNpcDeathV1Contract,
 } from "../src/npc.js";
 import {
@@ -2264,5 +2267,136 @@ describe("plan-zone-environment-v1 schema", () => {
     expect(SchemaPackage.FactionStateV1).toBe(FactionStateV1);
     expect(SchemaPackage.GroupStatusV1).toBe(GroupStatusV1);
     expect(typeof SchemaPackage.validateFactionStateV1Contract).toBe("function");
+  });
+
+  // plan-offscreen-war-v1 P9：FactionWarEventV1 双端锁（WarPhaseV1 + FactionWarEventV1 schema + sample 对拍）。
+  it("declares FACTION_WAR Redis channel", () => {
+    expect(CHANNELS.FACTION_WAR).toBe("bong:faction/war");
+    expect(REDIS_V1_CHANNELS).toContain(CHANNELS.FACTION_WAR);
+  });
+
+  it("faction-war.sample.json passes FactionWarEventV1 contract (settling with outcome)", () => {
+    // 正样本：settling 阶段 + winner/loser + total_casualties — 对齐 server FactionWarEventV1 serde。
+    const data = loadSample("faction-war.sample.json");
+    expectContractAccepts("FactionWarEventV1 settling", validateFactionWarEventV1Contract, data);
+    const obj = data as Record<string, unknown>;
+    expect(obj["winner_group"]).toBe(0);
+    expect(obj["loser_group"]).toBe(1);
+    expect(obj["region_descriptor"]).toContain("一带散修");
+    // reframe b：region_descriptor 无具名宗门（简单检查不含"宗"/"盟"）
+    expect(String(obj["region_descriptor"])).not.toMatch(/宗|盟|[A-Z]/);
+  });
+
+  it("faction-war.no-outcome.sample.json passes FactionWarEventV1 contract (skirmish, no outcome)", () => {
+    // 正样本：skirmish 阶段，winner_group/loser_group/total_casualties 均 absent（Optional）。
+    const data = loadSample("faction-war.no-outcome.sample.json");
+    expectContractAccepts("FactionWarEventV1 skirmish", validateFactionWarEventV1Contract, data);
+    const obj = data as Record<string, unknown>;
+    expect(obj["winner_group"]).toBeUndefined();
+    expect(obj["loser_group"]).toBeUndefined();
+    expect(obj["total_casualties"]).toBeUndefined();
+  });
+
+  it("faction-war.invalid-missing-region.sample.json is rejected", () => {
+    // 反样本：缺 region_descriptor 必须被拒。
+    const data = loadSample("faction-war.invalid-missing-region.sample.json");
+    expectContractRejects("FactionWarEventV1 missing region_descriptor", validateFactionWarEventV1Contract, data);
+  });
+
+  it("faction-war.invalid-bad-phase.sample.json is rejected", () => {
+    // 反样本：phase="invalid_phase" 不在 WarPhaseV1 union 内，必须被拒。
+    const data = loadSample("faction-war.invalid-bad-phase.sample.json");
+    expectContractRejects("FactionWarEventV1 bad phase", validateFactionWarEventV1Contract, data);
+  });
+
+  it("WarPhaseV1 all four variants accepted", () => {
+    // 每个 WarPhaseV1 变体专属 pin——对应 server WarPhase serde snake_case。
+    for (const phase of ["emerging", "skirmish", "settling", "aftermath"] as const) {
+      const result = validateFactionWarEventV1Contract({
+        v: 1,
+        kind: "faction_war_event",
+        war_id: 1,
+        zone: "残灰谷",
+        region_descriptor: "残灰谷一带散修",
+        phase,
+        groups: [0, 1],
+        enlist_count: 0,
+        mercenary_count: 0,
+        intercept_count: 0,
+        spectate_count: 0,
+        at_tick: 100,
+      });
+      expect(result.ok, `WarPhaseV1 variant "${phase}" must be accepted, errors: ${result.errors.join("; ")}`).toBe(true);
+    }
+  });
+
+  it("FactionWarEventV1 winner_group Some vs None both valid", () => {
+    // winner_group = 0 (Some)
+    const base = {
+      v: 1,
+      kind: "faction_war_event",
+      war_id: 1,
+      zone: "残灰谷",
+      region_descriptor: "残灰谷一带散修",
+      phase: "settling",
+      groups: [0, 1],
+      enlist_count: 0,
+      mercenary_count: 0,
+      intercept_count: 0,
+      spectate_count: 0,
+      winner_group: 0,
+      loser_group: 1,
+      total_casualties: 8,
+      at_tick: 200,
+    };
+    expectContractAccepts("FactionWarEventV1 winner=0", validateFactionWarEventV1Contract, base);
+    // winner_group absent (None)
+    const noOutcome = { ...base, phase: "skirmish" as const };
+    const { winner_group, loser_group, total_casualties, ...noOutcomeClean } = noOutcome;
+    expectContractAccepts("FactionWarEventV1 winner=absent", validateFactionWarEventV1Contract, noOutcomeClean);
+  });
+
+  it("FactionWarEventV1 is exported from index", () => {
+    expect(SchemaPackage.FactionWarEventV1).toBe(FactionWarEventV1);
+    expect(SchemaPackage.WarPhaseV1).toBe(WarPhaseV1);
+    expect(typeof SchemaPackage.validateFactionWarEventV1Contract).toBe("function");
+  });
+
+  it("FactionWarEventV1 rejects non-integer war_id", () => {
+    // war_id 必须是整数（u64），小数应被拒绝（CodeRabbit review fix）
+    const payload = {
+      v: 1,
+      kind: "faction_war_event",
+      war_id: 1.5,  // 非整数
+      zone: "残灰谷",
+      region_descriptor: "残灰谷一带散修",
+      phase: "skirmish",
+      groups: [0, 1],
+      enlist_count: 0,
+      mercenary_count: 0,
+      intercept_count: 0,
+      spectate_count: 0,
+      at_tick: 100,
+    };
+    expectContractRejects("FactionWarEventV1 non-integer war_id", validateFactionWarEventV1Contract, payload);
+  });
+
+  it("FactionWarEventV1 rejects non-integer at_tick", () => {
+    // at_tick 必须是整数（u64），小数应被拒绝（CodeRabbit review fix）
+    const payload = {
+      v: 1,
+      kind: "faction_war_event",
+      war_id: 1,
+      zone: "残灰谷",
+      region_descriptor: "残灰谷一带散修",
+      phase: "skirmish",
+      groups: [0, 1],
+      enlist_count: 0,
+      mercenary_count: 0,
+      intercept_count: 0,
+      spectate_count: 0,
+      at_tick: 42.25,  // 非整数
+    };
+    expectContractRejects("FactionWarEventV1 non-integer at_tick", validateFactionWarEventV1Contract, payload);
   });
 });

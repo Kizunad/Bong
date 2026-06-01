@@ -98,6 +98,12 @@ pub const QI_ZHENMAI_PARRY_RECOVERY_TICKS: u64 = 10;
 pub const QI_ZHENMAI_PARRY_RECOVERY_MOVE_SPEED_MULTIPLIER: f32 = 0.7;
 /// 数值断言默认容忍度。
 pub const QI_EPSILON: f64 = 1e-6;
+/// plan-offscreen-war-v1 P9：战事胜方主导 zone 的 regen 速率倍率（+10%）。
+/// 仅作用于 regen_from_zone 的 rate 参数，不铸造/销毁真元，守恒安全。
+pub const WAR_WINNER_ZONE_REGEN_MULTIPLIER: f64 = 1.10;
+/// plan-offscreen-war-v1 P9：战事败方主导 zone 的 regen 速率倍率（−5%）。
+/// 仅作用于 regen_from_zone 的 rate 参数，不铸造/销毁真元，守恒安全。
+pub const WAR_LOSER_ZONE_REGEN_MULTIPLIER: f64 = 0.95;
 
 // ── plan-baomai-v4 §1.3 疤纹回路（经脉 integrity 物理阈值）──
 /// 回路形成所需经脉 integrity 下限（含）。

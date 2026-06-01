@@ -141,7 +141,9 @@ message ServerDataEnvelope {
     LootContainerOpen       loot_container_open     = 119;
     LootContainerUpdate     loot_container_update   = 120;
     LootContainerClose      loot_container_close    = 121;
-    // P2/P3 阶段继续追加 field 122..N。
+    // ─── plan-offscreen-war-v1 P9：战事 HUD 广播 S2C ─────────────
+    FactionWarState         faction_war_state       = 122;
+    // P2/P3 阶段继续追加 field 123..N。
     // 字段编号一旦分配永不复用（buf breaking 检测保证）。
   }
 }
@@ -3582,6 +3584,22 @@ message LootContainerUpdate {
 message LootContainerClose {
   uint64 session_id = 1;
   string reason     = 2; // "timeout" / "distance" / "player_closed" / "coffin_destroyed"
+}
+
+// ─── plan-offscreen-war-v1 P9：战事 HUD 广播 S2C ────────────────
+// 守恒红线：不含任何真元字段（零真元）。reframe b：无具名宗门。
+message FactionWarState {
+  uint64            war_id             = 1;
+  string            zone               = 2;
+  string            region_descriptor  = 3;
+  string            phase              = 4; // emerging / skirmish / settling / aftermath
+  repeated uint32   groups             = 5;
+  uint32            enlist_count       = 6;
+  uint32            mercenary_count    = 7;
+  uint32            intercept_count    = 8;
+  uint32            spectate_count     = 9;
+  int32             winner_group       = 10; // -1 表示无 outcome
+  int32             loser_group        = 11; // -1 表示无 outcome
 }
 
 // 与 Rust ClientRequestV1::ExternalContainerMove 精确对应。

@@ -250,6 +250,10 @@
                       {
                         "const": "political_jianghu",
                         "type": "string"
+                      },
+                      {
+                        "const": "war_outcome",
+                        "type": "string"
                       }
                     ]
                   }

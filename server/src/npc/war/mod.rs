@@ -14,6 +14,8 @@ use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
 use valence::prelude::{bevy_ecs, Event, EventReader, EventWriter, ResMut, Resource};
 
+pub mod settle;
+
 use crate::npc::faction::EmergentGroupId;
 
 // ─────────────────────────── 阈值常量 ────────────────────────────────────────
@@ -126,6 +128,9 @@ pub struct FactionWar {
     pub last_update_tick: u64,
     /// Settling/Aftermath 才 Some
     pub outcome: Option<FactionWarOutcome>,
+    /// plan-offscreen-war-v1 P9：从 ZonePressureEntry 同步过来的 per-group 胜场数，
+    /// 供 determine_winner_loser 取 max 用。key=group, value=wins。
+    pub wins_by_group: HashMap<EmergentGroupId, u32>,
 }
 
 impl FactionWar {
@@ -193,25 +198,39 @@ impl FactionWar {
         }
     }
 
-    /// 确定 winner/loser（winner = 压力贡献最大群体）。
-    /// 当前实现：groups 按字典序取前两个，压力均摊——此处简化为「平票取最小 group_id」。
-    /// spec 说 winner = 压力贡献最大群体，平票取最小 group_id；本 commit 先实现平票决胜逻辑，
-    /// 后续 accumulate 系统传入每组 pressure 贡献时可精化。
+    /// plan-offscreen-war-v1 P9：确定 winner/loser（winner = wins_by_group 最多群体）。
+    /// 精化规则：按各群体累积胜场数取 max；平票取最小 group_id（确定性）。
+    /// wins_by_group 由 ZonePressureEntry.accumulate 维护，escalate_or_create 同步到 war。
     fn determine_winner_loser(
         &self,
         mut groups: Vec<EmergentGroupId>,
     ) -> (EmergentGroupId, EmergentGroupId) {
         groups.sort();
         groups.dedup();
-        if groups.len() >= 2 {
-            // 平票取最小 group_id 为 winner（确定性）
-            (groups[0], groups[1])
-        } else if groups.len() == 1 {
+        if groups.len() < 2 {
             // 理论上不应到达（WAR_MIN_GROUPS ≥ 2），兜底
-            (groups[0], groups[0])
-        } else {
-            (EmergentGroupId(0), EmergentGroupId(1))
+            let g = groups.first().copied().unwrap_or(EmergentGroupId(0));
+            return (g, g);
         }
+        // winner = wins 最多；平票取最小 group_id
+        // max_by_key：相等时返回最后一个 → 为确保取最小 id，平票用 Reverse(g.0)
+        let winner = *groups
+            .iter()
+            .max_by_key(|g| {
+                let wins = self.wins_by_group.get(g).copied().unwrap_or(0);
+                (wins, std::cmp::Reverse(g.0))
+            })
+            .unwrap();
+        // loser = 非 winner 中 wins 最少；平票取最小 group_id（正序）
+        let loser = *groups
+            .iter()
+            .filter(|g| **g != winner)
+            .min_by_key(|g| {
+                let wins = self.wins_by_group.get(g).copied().unwrap_or(0);
+                (wins, g.0)
+            })
+            .unwrap_or(&groups[1]);
+        (winner, loser)
     }
 
     /// 应用玩家参与 intent。
@@ -309,16 +328,22 @@ pub struct ZonePressureEntry {
     /// 累积 loser 计数
     pub casualties: u32,
     pub last_tick: u64,
+    /// plan-offscreen-war-v1 P9：每组累积「赢的场次」，determine_winner_loser 取 max。
+    /// key = winner 群体，value = 赢场数；loser 侧不计入。
+    pub wins_by_group: HashMap<EmergentGroupId, u32>,
 }
 
 impl ZonePressureEntry {
     /// 从一条 outcome 累加 pressure（纯计数，+1/条）+ 更新 groups + casualties。
-    pub fn accumulate(&mut self, group_a: EmergentGroupId, group_b: EmergentGroupId, tick: u64) {
+    /// winner 侧 wins_by_group +1；loser 侧不计 win。
+    pub fn accumulate(&mut self, winner: EmergentGroupId, loser: EmergentGroupId, tick: u64) {
         self.pressure += 1.0; // 纯计数，切断真元语义
         self.casualties += 1;
         self.last_tick = tick;
-        // 合并 groups，去重升序
-        for g in [group_a, group_b] {
+        // winner 侧 wins +1
+        *self.wins_by_group.entry(winner).or_insert(0) += 1;
+        // 合并 groups，去重升序（winner + loser 均计入）
+        for g in [winner, loser] {
             if !self.groups.contains(&g) {
                 self.groups.push(g);
             }
@@ -378,7 +403,7 @@ impl WarConflictStore {
         let mut changes = vec![];
 
         if let Some(&war_id) = self.zone_active.get(zone) {
-            // 已有 active war：更新 pressure/casualties/groups
+            // 已有 active war：更新 pressure/casualties/groups/wins_by_group
             if let Some(war) = self.wars.get_mut(&war_id) {
                 war.pressure = entry.pressure;
                 war.last_update_tick = now;
@@ -389,21 +414,32 @@ impl WarConflictStore {
                     }
                 }
                 war.groups.sort();
-                // 更新 casualties（累积到 outcome）
+                // 同步 wins_by_group（逐字段拷贝，plan-offscreen-war-v1 P9）
+                war.wins_by_group = entry.wins_by_group.clone();
+                // casualties 先同步到既有 outcome（若已有）
                 if let Some(ref mut outcome) = war.outcome {
                     outcome.total_casualties = entry.casualties;
-                } else if war.phase == WarPhase::Skirmish {
-                    // Skirmish 阶段有 casualties 但 outcome 还未 Some → 创建 placeholder
-                    let (winner, loser) = war.determine_winner_loser(war.groups.clone());
-                    war.outcome = Some(FactionWarOutcome {
-                        winner_group: winner,
-                        loser_group: loser,
-                        total_casualties: entry.casualties,
-                        settled_tick: now,
-                    });
                 }
                 // 连跳多级直到稳定
+                // 注意：在每次 try_advance 之前确保 Skirmish 阶段有 outcome，
+                // 这样从 Emerging 一跳到 Skirmish 后能继续升 Settling（修复 CR#405 bug）。
                 loop {
+                    // 每次循环前：若已在 Skirmish 且 outcome 还未 Some，补上 placeholder
+                    if war.phase == WarPhase::Skirmish
+                        && war.outcome.is_none()
+                        && entry.casualties > 0
+                    {
+                        let (winner, loser) = war.determine_winner_loser(war.groups.clone());
+                        war.outcome = Some(FactionWarOutcome {
+                            winner_group: winner,
+                            loser_group: loser,
+                            total_casualties: entry.casualties,
+                            settled_tick: now,
+                        });
+                    } else if let Some(ref mut outcome) = war.outcome {
+                        // 保持 casualties 最新
+                        outcome.total_casualties = entry.casualties;
+                    }
                     let prev_phase = war.phase;
                     if let Some(new_phase) = war.try_advance(now) {
                         let snapshot = war.clone();
@@ -436,15 +472,28 @@ impl WarConflictStore {
                 started_tick: now,
                 last_update_tick: now,
                 outcome: None,
+                wins_by_group: entry.wins_by_group.clone(),
             };
             let snapshot = war.clone();
             self.wars.insert(war_id, war);
             self.zone_active.insert(zone.to_string(), war_id);
             changes.push((war_id, WarPhase::Emerging, snapshot));
 
-            // 新建后立即尝试连跳
+            // 新建后立即尝试连跳（同样需要在循环内补 placeholder，CR#405 fix）
             loop {
                 let w = self.wars.get_mut(&war_id).unwrap();
+                // 每次循环前：若已在 Skirmish 且 outcome 还未 Some，补上 placeholder
+                if w.phase == WarPhase::Skirmish && w.outcome.is_none() && entry.casualties > 0 {
+                    let (winner, loser) = w.determine_winner_loser(w.groups.clone());
+                    w.outcome = Some(FactionWarOutcome {
+                        winner_group: winner,
+                        loser_group: loser,
+                        total_casualties: entry.casualties,
+                        settled_tick: now,
+                    });
+                } else if let Some(ref mut outcome) = w.outcome {
+                    outcome.total_casualties = entry.casualties;
+                }
                 if let Some(new_phase) = w.try_advance(now) {
                     let snapshot = w.clone();
                     changes.push((war_id, new_phase, snapshot));
@@ -547,6 +596,9 @@ pub struct WarPhaseChanged {
     pub groups: Vec<EmergentGroupId>,
     pub outcome: Option<FactionWarOutcome>,
     pub player_role_counts: PlayerRoleCounts,
+    /// plan-offscreen-war-v1 P9：战事 settle 时的玩家角色快照，供 Renown 授予 system 用。
+    /// 非 Settling/Aftermath 阶段为空 vec。
+    pub war_snapshot_player_roles: Vec<PlayerFactionRole>,
     pub at_tick: u64,
 }
 
@@ -582,6 +634,7 @@ pub fn handle_war_participate_intent(
                         groups: war.groups.clone(),
                         outcome: war.outcome.clone(),
                         player_role_counts: counts,
+                        war_snapshot_player_roles: war.player_roles.clone(),
                         at_tick: intent.at_tick,
                     });
                 }
@@ -616,6 +669,7 @@ mod tests {
             started_tick: 0,
             last_update_tick: 0,
             outcome: None,
+            wins_by_group: HashMap::new(),
         }
     }
 
@@ -644,6 +698,7 @@ mod tests {
                 total_casualties: casualties,
                 settled_tick: 0,
             }),
+            wins_by_group: HashMap::new(),
         }
     }
 
@@ -668,6 +723,7 @@ mod tests {
                 total_casualties: WAR_SETTLE_CASUALTIES,
                 settled_tick,
             }),
+            wins_by_group: HashMap::new(),
         }
     }
 
@@ -865,6 +921,7 @@ mod tests {
                 total_casualties: 10,
                 settled_tick: 0,
             }),
+            wins_by_group: HashMap::new(),
         };
         let result = war.try_advance(9999);
         assert_eq!(
@@ -989,6 +1046,7 @@ mod tests {
             started_tick: 0,
             last_update_tick: 0,
             outcome: None,
+            wins_by_group: HashMap::new(),
         }
     }
 
@@ -1183,6 +1241,7 @@ mod tests {
                 total_casualties: 6,
                 settled_tick: 0,
             }),
+            wins_by_group: HashMap::new(),
         };
         let r2 = war2.apply_participation("p", WarRole::Enlist, Some(EmergentGroupId(0)), 2);
         assert_eq!(
@@ -1216,23 +1275,25 @@ mod tests {
 
     #[test]
     fn outcome_winner_is_max_pressure_group() {
-        // winner = 最小 group_id（平票取最小，确定性）
-        let groups = vec![EmergentGroupId(0), EmergentGroupId(1)];
+        // winner = wins_by_group 最大群体；G1 赢 3 场 > G2 赢 1 场 → G1 为 winner
+        let g1 = EmergentGroupId(1);
+        let g2 = EmergentGroupId(2);
+        let groups = vec![g1, g2];
         let mut war = war_skirmish_with_casualties("残灰谷", WAR_SETTLE_CASUALTIES, groups);
+        // 为 G1 设置更多 wins（3 vs 1）
+        war.wins_by_group.insert(g1, 3);
+        war.wins_by_group.insert(g2, 1);
         war.try_advance(100);
         assert_eq!(war.phase, WarPhase::Settling);
         let outcome = war.outcome.as_ref().unwrap();
-        // 平票取最小 group_id 为 winner
         assert_eq!(
-            outcome.winner_group,
-            EmergentGroupId(0),
-            "平票（两组）取最小 group_id(0) 为 winner，实际 {:?}",
+            outcome.winner_group, g1,
+            "期望 winner=G1 因其 wins=3 > G2 wins=1，实际 {:?}",
             outcome.winner_group
         );
         assert_eq!(
-            outcome.loser_group,
-            EmergentGroupId(1),
-            "loser 应是 EmergentGroupId(1)，实际 {:?}",
+            outcome.loser_group, g2,
+            "期望 loser=G2 因其 wins=1 最少，实际 {:?}",
             outcome.loser_group
         );
     }
@@ -1278,6 +1339,7 @@ mod tests {
                 total_casualties: WAR_SETTLE_CASUALTIES,
                 settled_tick: 0,
             });
+            // wins_by_group 已有默认空 HashMap
             war.try_advance(0);
         }
         // Settling → Aftermath 冷却到期
@@ -1506,12 +1568,111 @@ mod tests {
         );
     }
 
+    // ─────────── J. P9 winner 精化（wins_by_group per-group 贡献）───────────
+
+    #[test]
+    fn winsbygroup_accumulate_increments_winner_only() {
+        // accumulate(G1, G2) → wins_by_group[G1]==1，G2 不计 win
+        let g1 = EmergentGroupId(1);
+        let g2 = EmergentGroupId(2);
+        let mut entry = ZonePressureEntry::default();
+        entry.accumulate(g1, g2, 10);
+        assert_eq!(
+            entry.wins_by_group.get(&g1).copied().unwrap_or(0),
+            1,
+            "期望 winner=G1 侧 wins_by_group[G1]==1 因 accumulate 只计 winner，实际 {:?}",
+            entry.wins_by_group.get(&g1)
+        );
+        assert_eq!(
+            entry.wins_by_group.get(&g2),
+            None,
+            "期望 loser=G2 侧 wins_by_group 无 G2 条目（不计 loser win），实际 {:?}",
+            entry.wins_by_group.get(&g2)
+        );
+    }
+
+    #[test]
+    fn determine_winner_loser_tie_breaks_to_min_group_id() {
+        // G1、G2 各赢 2 场 → 平票取最小 id → winner=G1（id 小）
+        let g1 = EmergentGroupId(1);
+        let g2 = EmergentGroupId(2);
+        let groups = vec![g1, g2];
+        let mut war = make_skirmish_war(groups.clone());
+        war.wins_by_group.insert(g1, 2);
+        war.wins_by_group.insert(g2, 2);
+        let (winner, loser) = war.determine_winner_loser(groups);
+        assert_eq!(
+            winner, g1,
+            "期望平票时取最小 group_id G1(1) 为 winner，实际 {:?}",
+            winner
+        );
+        assert_eq!(loser, g2, "期望平票 loser 为 G2(2)，实际 {:?}", loser);
+    }
+
+    #[test]
+    fn single_side_group_loser_does_not_count_win() {
+        // (None, Some(G2)) 路径：G2 是 loser，wins_by_group 不应记 G2
+        // 此测试通过直接调 ZonePressureEntry 来覆盖 npc_event_bridge 的 (None, Some) 分支语义：
+        // 仅调 accumulate(winner, loser) 时 loser 不计 win，(None, Some(g)) 路径手动模拟。
+        let g2 = EmergentGroupId(2);
+        // 模拟 "只有 loser 侧有 group" 路径（手动压 entry，不经 accumulate）
+        let mut entry = ZonePressureEntry::default();
+        entry.pressure += 1.0;
+        entry.casualties += 1;
+        entry.last_tick = 5;
+        if !entry.groups.contains(&g2) {
+            entry.groups.push(g2);
+            entry.groups.sort();
+        }
+        // 关键：不调 wins_by_group.insert(g2, ...)
+        assert_eq!(
+            entry.wins_by_group.get(&g2),
+            None,
+            "期望 loser-only 路径不计入 wins_by_group（loser 不赢），实际 {:?}",
+            entry.wins_by_group.get(&g2)
+        );
+    }
+
+    #[test]
+    fn escalate_propagates_wins_by_group_to_war() {
+        // accumulate 后 escalate_or_create → war.wins_by_group 同步
+        let g1 = EmergentGroupId(0);
+        let g2 = EmergentGroupId(1);
+        let mut entry = ZonePressureEntry::default();
+        // 积到足够触发 Emerging
+        for _ in 0..WAR_PRESSURE_THRESHOLD as u32 {
+            entry.accumulate(g1, g2, 1);
+        }
+        assert_eq!(
+            entry.wins_by_group.get(&g1).copied().unwrap_or(0),
+            WAR_PRESSURE_THRESHOLD as u32,
+            "期望 G1 wins == WAR_PRESSURE_THRESHOLD 因每次 accumulate 都计 G1"
+        );
+        let mut store = WarConflictStore::default();
+        let changes = store.escalate_or_create("残灰谷", &entry, 1);
+        assert!(!changes.is_empty(), "期望创建 war");
+        let war_id = changes[0].0;
+        let war = store.wars.get(&war_id).expect("war 应存在");
+        assert_eq!(
+            war.wins_by_group, entry.wins_by_group,
+            "期望 war.wins_by_group 与 entry.wins_by_group 相等（escalate 逐字段同步），实际 {:?}",
+            war.wins_by_group
+        );
+    }
+
     #[test]
     fn handle_participate_intent_err_settling_phase_not_joinable_emits_nothing() {
         // Err 分支③：Settling 阶段不可加入 → PhaseNotJoinable → 不 emit。
         let mut store = WarConflictStore::default();
         let mut war = make_skirmish_war(vec![EmergentGroupId(0), EmergentGroupId(1)]);
         war.phase = WarPhase::Settling;
+        // 手动设置 outcome（Settling 需要 Some outcome）
+        war.outcome = Some(FactionWarOutcome {
+            winner_group: EmergentGroupId(0),
+            loser_group: EmergentGroupId(1),
+            total_casualties: WAR_SETTLE_CASUALTIES,
+            settled_tick: 0,
+        });
         let war_id = war.war_id;
         let zone = war.zone.clone();
         store.wars.insert(war_id, war);
@@ -1547,6 +1708,101 @@ mod tests {
             emitted[0].player_role_counts.mercenary, 1,
             "期望 counts.mercenary=1 因唯一成功的是 Mercenary，实际 {}",
             emitted[0].player_role_counts.mercenary
+        );
+    }
+
+    // ─────────── H. escalate_or_create bug 回归（CR#405） ───────────────────
+
+    /// 回归测试（CodeRabbit review，`escalate_or_create` lines 405-446 bug）：
+    /// 当 entry.casualties 在第一次调用时已达 WAR_SETTLE_CASUALTIES（从 Emerging 快速升到 Settling），
+    /// outcome placeholder 必须在连跳循环内补上，否则 Emerging→Skirmish 一跳后
+    /// `try_advance` 会因 outcome=None 而把 casualties 当 0，卡在 Skirmish。
+    #[test]
+    fn escalate_high_casualties_from_emerging_reaches_settling_in_one_call() {
+        let mut store = WarConflictStore::default();
+        let mut entry = ZonePressureEntry {
+            pressure: WAR_SKIRMISH_PRESSURE + 10.0, // 已过 Skirmish 阈
+            groups: vec![EmergentGroupId(0), EmergentGroupId(1)],
+            casualties: WAR_SETTLE_CASUALTIES, // 已过 Settle 阈
+            last_tick: 1,
+            ..Default::default()
+        };
+        // 给 G0 设一些 wins 让 winner 确定
+        entry
+            .wins_by_group
+            .insert(EmergentGroupId(0), WAR_SETTLE_CASUALTIES);
+
+        let changes = store.escalate_or_create("残灰谷", &entry, 1);
+
+        // 期望至少有一条 Settling 变化（Emerging → Skirmish → Settling 连跳）
+        let phases: Vec<WarPhase> = changes.iter().map(|(_, p, _)| *p).collect();
+        assert!(
+            phases.contains(&WarPhase::Settling),
+            "期望 entry.casualties 达阈时从 Emerging 连跳到 Settling（新建 war 一次调用）\
+             因 placeholder outcome 在循环内补齐，实际 phases: {:?}",
+            phases
+        );
+        // winner 应是 G0（wins 最多）
+        let settling_war = changes
+            .iter()
+            .find(|(_, p, _)| *p == WarPhase::Settling)
+            .map(|(_, _, w)| w)
+            .expect("settling war snapshot");
+        let outcome = settling_war
+            .outcome
+            .as_ref()
+            .expect("outcome must be Some after Settling");
+        assert_eq!(
+            outcome.winner_group,
+            EmergentGroupId(0),
+            "期望 winner=G0 因其 wins 最多，实际 {:?}",
+            outcome.winner_group
+        );
+    }
+
+    /// 已有 Skirmish war 的 escalate 也应正确连跳（无 outcome 情形下补 placeholder）。
+    #[test]
+    fn escalate_existing_skirmish_war_with_casualties_reaches_settling() {
+        let mut store = WarConflictStore::default();
+        // 先建一个 Skirmish war（outcome=None）
+        let war_id = WarId(0);
+        let war = FactionWar {
+            war_id,
+            zone: "残灰谷".to_string(),
+            region_descriptor: "残灰谷一带散修".to_string(),
+            phase: WarPhase::Skirmish,
+            groups: vec![EmergentGroupId(0), EmergentGroupId(1)],
+            player_roles: vec![],
+            pressure: WAR_SKIRMISH_PRESSURE + 5.0,
+            started_tick: 0,
+            last_update_tick: 0,
+            outcome: None, // 未有 outcome
+            wins_by_group: [(EmergentGroupId(0), 3), (EmergentGroupId(1), 1)]
+                .iter()
+                .cloned()
+                .collect(),
+        };
+        store.wars.insert(war_id, war);
+        store.zone_active.insert("残灰谷".to_string(), war_id);
+
+        let entry = ZonePressureEntry {
+            pressure: WAR_SKIRMISH_PRESSURE + 5.0,
+            groups: vec![EmergentGroupId(0), EmergentGroupId(1)],
+            casualties: WAR_SETTLE_CASUALTIES,
+            last_tick: 10,
+            wins_by_group: [(EmergentGroupId(0), 3), (EmergentGroupId(1), 1)]
+                .iter()
+                .cloned()
+                .collect(),
+        };
+
+        let changes = store.escalate_or_create("残灰谷", &entry, 10);
+
+        let phases: Vec<WarPhase> = changes.iter().map(|(_, p, _)| *p).collect();
+        assert!(
+            phases.contains(&WarPhase::Settling),
+            "期望 Skirmish+outcome=None+高 casualties → 补 placeholder 后升 Settling，实际 {:?}",
+            phases
         );
     }
 }

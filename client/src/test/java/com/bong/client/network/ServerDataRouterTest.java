@@ -155,7 +155,9 @@ public class ServerDataRouterTest {
             // plan-supply-coffin-loot-ui P1 — 外部容器（物资棺搜刮 UI）
             "loot_container_open",
             "loot_container_update",
-            "loot_container_close"
+            "loot_container_close",
+            // plan-offscreen-war-v1 P9 — 战事 HUD 状态
+            "faction_war_state"
         ), router.registeredTypes());
     }
 

@@ -116,6 +116,7 @@ use crate::npc::lifecycle::{NpcArchetype, NpcLifespan};
 use crate::npc::patrol::NpcPatrol;
 use crate::npc::spawn::{NpcBlackboard, NpcMarker};
 use crate::npc::spawn_rat::RatBlackboard;
+use crate::npc::war::settle::ZoneSpiritBonusStore;
 use crate::npc::war::{
     WarConflictStore, WarParticipateIntent, WarPhaseChanged, ZoneConflictPressure,
 };
@@ -414,9 +415,23 @@ pub fn register(app: &mut App) {
                 .after(npc_event_bridge::accumulate_zone_conflict_pressure),
             crate::npc::war::handle_war_participate_intent
                 .after(npc_event_bridge::advance_idle_wars),
+            // plan-offscreen-war-v1 P9：settle 四 system（ZoneSpiritBonus + Renown + HUD 广播）
+            // 读 WarPhaseChanged 事件沿，排在 advance_idle_wars 之后、publish_faction_war 之前。
+            crate::npc::war::settle::apply_war_zone_spirit_bonus
+                .after(npc_event_bridge::advance_idle_wars)
+                .after(npc_event_bridge::accumulate_zone_conflict_pressure),
+            crate::npc::war::settle::award_war_winner_renown
+                .after(npc_event_bridge::advance_idle_wars)
+                .after(npc_event_bridge::accumulate_zone_conflict_pressure),
+            crate::npc::war::settle::broadcast_faction_war_hud
+                .after(npc_event_bridge::advance_idle_wars)
+                .after(npc_event_bridge::accumulate_zone_conflict_pressure),
             npc_event_bridge::publish_faction_war
                 .after(npc_event_bridge::advance_idle_wars)
                 .after(crate::npc::war::handle_war_participate_intent)
+                .after(crate::npc::war::settle::apply_war_zone_spirit_bonus)
+                .after(crate::npc::war::settle::award_war_winner_renown)
+                .after(crate::npc::war::settle::broadcast_faction_war_hud)
                 .after(npc_event_bridge::publish_faction_state),
             rat_phase_bridge::publish_rat_phase_events
                 .after(crate::fauna::rat_phase::pressure_sensor_tick_system),
@@ -839,6 +854,8 @@ pub fn register(app: &mut App) {
     app.init_resource::<WarConflictStore>();
     app.add_event::<WarParticipateIntent>();
     app.add_event::<WarPhaseChanged>();
+    // plan-offscreen-war-v1 P9：战事结算 resource（ZoneSpiritBonus 倍率表）。
+    app.init_resource::<ZoneSpiritBonusStore>();
 
     app.init_resource::<cultivation_detail_emit::CultivationDetailEmitState>();
     app.init_resource::<client_request_handler::AlchemyMockState>();

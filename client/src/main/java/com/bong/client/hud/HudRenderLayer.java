@@ -49,5 +49,7 @@ public enum HudRenderLayer {
     DUGU_SHROUD,
     POISON_TRAIT,
     DANDAO_MUTATION,
-    SWORD_BOND
+    SWORD_BOND,
+    /** plan-offscreen-war-v1 P9：战事双色血条 + WarPhase 文字。 */
+    FACTION_WAR
 }

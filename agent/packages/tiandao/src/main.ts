@@ -8,6 +8,7 @@ import { DuguV2NarrationRuntime } from "./dugu_v2_runtime.js";
 import { HeartDemonRuntime } from "./heart-demon-runtime.js";
 import { InsightRuntime } from "./insight-runtime.js";
 import { OffscreenWarNarrationRuntime } from "./offscreen-war-narration.js";
+import { WarOutcomeNarrationRuntime } from "./war-outcome-narration.js";
 import { PoliticalNarrationRuntime } from "./political-narration.js";
 import { PoisonTraitNarrationRuntime } from "./poison-trait-runtime.js";
 import { ScatteredCultivatorNarrationRuntime } from "./scattered-cultivator-narration.js";
@@ -210,6 +211,10 @@ async function startAuxiliaryRuntimes(config: RuntimeConfig): Promise<RuntimeCle
   const offscreenWarCleanup = await startOffscreenWarRuntime({
     redisUrl: config.redisUrl,
   });
+  // plan-offscreen-war-v1 P9：战事结算匿名叙事（订阅 bong:faction/war，settling 阶段播报）。
+  const warOutcomeCleanup = await startWarOutcomeNarrationRuntime({
+    redisUrl: config.redisUrl,
+  });
 
   const heartDemonCleanup = await startHeartDemonRuntime({
     ...runtimeOpts,
@@ -242,6 +247,7 @@ async function startAuxiliaryRuntimes(config: RuntimeConfig): Promise<RuntimeCle
     poisonTraitCleanup,
     scatteredCultivatorCleanup,
     offscreenWarCleanup,
+    warOutcomeCleanup,
     woliuV2Cleanup,
     woliuCleanup,
     voidActionCleanup,
@@ -1082,6 +1088,35 @@ async function startSkillLvUpRuntime(opts: {
       await Promise.race([runtime.disconnect(), timeout]);
     } catch (error) {
       console.warn("[tiandao] skill lv up runtime disconnect error:", error);
+    }
+  };
+}
+
+async function startWarOutcomeNarrationRuntime(opts: {
+  redisUrl: string;
+}): Promise<() => Promise<void>> {
+  const IORedisCtor = ((Redis as unknown as { default?: unknown }).default ??
+    Redis) as new (url: string) => unknown;
+  const sub = new IORedisCtor(opts.redisUrl) as ConstructorParameters<
+    typeof WarOutcomeNarrationRuntime
+  >[0]["sub"];
+  const pub = new IORedisCtor(opts.redisUrl) as ConstructorParameters<
+    typeof WarOutcomeNarrationRuntime
+  >[0]["pub"];
+
+  const runtime = new WarOutcomeNarrationRuntime({ sub, pub });
+  runtime
+    .connect()
+    .then(() => console.log("[tiandao] war outcome narration runtime online"))
+    .catch((error) =>
+      console.warn("[tiandao] war outcome narration runtime failed to start:", error),
+    );
+  return async () => {
+    const timeout = new Promise<void>((resolve) => setTimeout(resolve, 500));
+    try {
+      await Promise.race([runtime.disconnect(), timeout]);
+    } catch (error) {
+      console.warn("[tiandao] war outcome narration runtime disconnect error:", error);
     }
   };
 }

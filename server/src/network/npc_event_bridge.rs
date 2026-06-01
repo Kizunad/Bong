@@ -234,13 +234,24 @@ pub fn accumulate_zone_conflict_pressure(
 
         match (winner_group, loser_group) {
             (Some(w), Some(l)) => entry.accumulate(w, l, now),
-            (Some(g), None) | (None, Some(g)) => {
-                // 只有一侧有 group：仍累积 pressure/casualties，但 groups 只加一个
+            (Some(w), None) => {
+                // winner 侧有 group，loser 侧无：累积 pressure/casualties + wins_by_group[w]+1
                 entry.pressure += 1.0;
                 entry.casualties += 1;
                 entry.last_tick = now;
-                if !entry.groups.contains(&g) {
-                    entry.groups.push(g);
+                *entry.wins_by_group.entry(w).or_insert(0) += 1;
+                if !entry.groups.contains(&w) {
+                    entry.groups.push(w);
+                    entry.groups.sort();
+                }
+            }
+            (None, Some(l)) => {
+                // loser 侧有 group，winner 侧无：累积 pressure/casualties，不计 wins
+                entry.pressure += 1.0;
+                entry.casualties += 1;
+                entry.last_tick = now;
+                if !entry.groups.contains(&l) {
+                    entry.groups.push(l);
                     entry.groups.sort();
                 }
             }
@@ -266,6 +277,7 @@ pub fn accumulate_zone_conflict_pressure(
                 groups: war_snapshot.groups.clone(),
                 outcome: war_snapshot.outcome.clone(),
                 player_role_counts: counts,
+                war_snapshot_player_roles: war_snapshot.player_roles.clone(),
                 at_tick: now,
             });
         }
@@ -290,6 +302,7 @@ pub fn advance_idle_wars(
             groups: war_snapshot.groups.clone(),
             outcome: war_snapshot.outcome.clone(),
             player_role_counts: counts,
+            war_snapshot_player_roles: war_snapshot.player_roles.clone(),
             at_tick: now,
         });
     }
@@ -307,7 +320,7 @@ pub fn publish_faction_war(
         let counts = evt.player_role_counts;
         let wire = FactionWarEventV1 {
             v: 1,
-            kind: "faction_war".to_string(),
+            kind: "faction_war_event".to_string(),
             war_id: evt.war_id.0,
             zone: evt.zone.clone(),
             region_descriptor: evt.region_descriptor.clone(),

@@ -1,0 +1,17 @@
+{
+  "v": 1,
+  "kind": "faction_war_event",
+  "war_id": 7,
+  "zone": "残灰谷",
+  "region_descriptor": "残灰谷一带散修",
+  "phase": "settling",
+  "groups": [0, 1],
+  "enlist_count": 2,
+  "mercenary_count": 0,
+  "intercept_count": 1,
+  "spectate_count": 0,
+  "winner_group": 0,
+  "loser_group": 1,
+  "total_casualties": 8,
+  "at_tick": 10000
+}

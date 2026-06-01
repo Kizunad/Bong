@@ -606,7 +606,7 @@ mod tests {
     fn sample_faction_war(phase: WarPhase, with_outcome: bool) -> FactionWarEventV1 {
         FactionWarEventV1 {
             v: 1,
-            kind: "faction_war".to_string(),
+            kind: "faction_war_event".to_string(),
             war_id: 7,
             zone: "残灰谷".to_string(),
             region_descriptor: "残灰谷一带散修".to_string(),
@@ -636,7 +636,7 @@ mod tests {
 
         let value: serde_json::Value = serde_json::from_str(&json).unwrap();
         assert_eq!(value["v"], serde_json::json!(1));
-        assert_eq!(value["kind"], serde_json::json!("faction_war"));
+        assert_eq!(value["kind"], serde_json::json!("faction_war_event"));
         assert_eq!(value["war_id"], serde_json::json!(7));
         assert_eq!(value["zone"], serde_json::json!("残灰谷"));
         assert_eq!(
@@ -703,7 +703,7 @@ mod tests {
         // 反：groups 数组中含 > u16::MAX 的值，serde 应拒绝（Vec<u16> 不接受越界 number）。
         let bad = serde_json::json!({
             "v": 1,
-            "kind": "faction_war",
+            "kind": "faction_war_event",
             "war_id": 7,
             "zone": "残灰谷",
             "region_descriptor": "残灰谷一带散修",
@@ -728,7 +728,7 @@ mod tests {
         // 反：缺必填字段 war_id 时必须解析失败。
         let bad = serde_json::json!({
             "v": 1,
-            "kind": "faction_war",
+            "kind": "faction_war_event",
             "zone": "残灰谷",
             "region_descriptor": "残灰谷一带散修",
             "phase": "emerging",
