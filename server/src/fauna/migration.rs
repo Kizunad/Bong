@@ -228,6 +228,16 @@ pub fn migration_move_system(
                     ));
                 }
             }
+            // Mid（Drowsy）：hydrated live entity，降频步进（同 Far 语义，稍快）
+            NpcLodTier::Mid => {
+                if now % 600 == 0 {
+                    position.set(step_toward_xz_preserving_y(
+                        current,
+                        target.target_pos,
+                        MIGRATION_FAR_STEP_BLOCKS,
+                    ));
+                }
+            }
             NpcLodTier::Near => {
                 if let Some(mut navigator) = navigator {
                     navigator.set_goal(target.target_pos, target.speed_multiplier);
