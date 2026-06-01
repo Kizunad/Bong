@@ -104,6 +104,10 @@ public final class FactionWarHudPlanner {
     /**
      * 计算甲方（groups[0]）侧的血条比例（0.0–1.0）。
      * 来源：enlist+mercenary 玩家总数；无玩家时 50/50。
+     *
+     * <p>TODO P7+：当前 {@code FactionWarStateV1} 只有总玩家计数，缺少 per-group 分拆；
+     * 实装后替换此处逻辑以渲染真实的攻守力量对比。
+     * （CodeRabbit review 2026-06-01 suggestion，已确认为 future work。）
      */
     static float computeSideRatio(FactionWarHudStore.State state, int sideIndex) {
         // 简化：当前 store 中没有 per-group 玩家计数（只有总计），50/50 占位

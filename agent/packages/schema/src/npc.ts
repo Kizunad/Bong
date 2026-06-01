@@ -189,7 +189,7 @@ export const FactionWarEventV1 = Type.Object(
   {
     v: Type.Literal(1),
     kind: Type.Literal("faction_war_event"),
-    war_id: Type.Number({ minimum: 0 }),
+    war_id: Type.Integer({ minimum: 0 }),
     zone: Type.String({ minLength: 1 }),
     region_descriptor: Type.String({ minLength: 1 }),
     phase: WarPhaseV1,
@@ -201,7 +201,7 @@ export const FactionWarEventV1 = Type.Object(
     winner_group: Type.Optional(Type.Integer({ minimum: 0 })),
     loser_group: Type.Optional(Type.Integer({ minimum: 0 })),
     total_casualties: Type.Optional(Type.Integer({ minimum: 0 })),
-    at_tick: Type.Number({ minimum: 0 }),
+    at_tick: Type.Integer({ minimum: 0 }),
   },
   { additionalProperties: false },
 );

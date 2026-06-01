@@ -2361,4 +2361,42 @@ describe("plan-zone-environment-v1 schema", () => {
     expect(SchemaPackage.WarPhaseV1).toBe(WarPhaseV1);
     expect(typeof SchemaPackage.validateFactionWarEventV1Contract).toBe("function");
   });
+
+  it("FactionWarEventV1 rejects non-integer war_id", () => {
+    // war_id 必须是整数（u64），小数应被拒绝（CodeRabbit review fix）
+    const payload = {
+      v: 1,
+      kind: "faction_war_event",
+      war_id: 1.5,  // 非整数
+      zone: "残灰谷",
+      region_descriptor: "残灰谷一带散修",
+      phase: "skirmish",
+      groups: [0, 1],
+      enlist_count: 0,
+      mercenary_count: 0,
+      intercept_count: 0,
+      spectate_count: 0,
+      at_tick: 100,
+    };
+    expectContractRejects("FactionWarEventV1 non-integer war_id", validateFactionWarEventV1Contract, payload);
+  });
+
+  it("FactionWarEventV1 rejects non-integer at_tick", () => {
+    // at_tick 必须是整数（u64），小数应被拒绝（CodeRabbit review fix）
+    const payload = {
+      v: 1,
+      kind: "faction_war_event",
+      war_id: 1,
+      zone: "残灰谷",
+      region_descriptor: "残灰谷一带散修",
+      phase: "skirmish",
+      groups: [0, 1],
+      enlist_count: 0,
+      mercenary_count: 0,
+      intercept_count: 0,
+      spectate_count: 0,
+      at_tick: 42.25,  // 非整数
+    };
+    expectContractRejects("FactionWarEventV1 non-integer at_tick", validateFactionWarEventV1Contract, payload);
+  });
 });

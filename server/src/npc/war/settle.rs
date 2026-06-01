@@ -60,6 +60,14 @@ fn current_game_tick(game_tick: Option<&GameTick>) -> u64 {
 /// - Aftermath：清除 zone 条目，恢复到默认 1.0（余波消散）。
 /// - 其他阶段：不触碰 store。
 ///
+/// ## 设计决策：loser 倍率暂不接入
+///
+/// `WAR_LOSER_ZONE_REGEN_MULTIPLIER(0.95)` 已定义（constants.rs）并在 store 接口测试中 pin 住，
+/// 但**当前单 zone 战争模型**下，winner/loser 共享同一 zone，胜方已获 +10%，loser 侧额外 -5%
+/// 会导致同 zone 内部冲突（玩家在该 zone 修炼时倍率不明确）。
+/// 待 P7+ 多 zone 战争模型引入时，可将 loser zone 单独接入 0.95 倍率。
+/// （CodeRabbit review 2026-06-01 flagged，非阻塞，此注释为决议说明。）
+///
 /// 守恒安全：store 只存倍率整数，不触任何真元账户。
 pub fn apply_war_zone_spirit_bonus(
     mut phase_events: EventReader<WarPhaseChanged>,

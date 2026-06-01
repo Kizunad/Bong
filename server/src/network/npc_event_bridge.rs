@@ -320,7 +320,7 @@ pub fn publish_faction_war(
         let counts = evt.player_role_counts;
         let wire = FactionWarEventV1 {
             v: 1,
-            kind: "faction_war".to_string(),
+            kind: "faction_war_event".to_string(),
             war_id: evt.war_id.0,
             zone: evt.zone.clone(),
             region_descriptor: evt.region_descriptor.clone(),
