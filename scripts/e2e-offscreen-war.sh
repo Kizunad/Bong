@@ -911,7 +911,6 @@ assert_faction_state_closure() {
   FACTION_STATE_LOG="$sub_log" INITIAL_POP="$initial_pop" redis_node <<'NODE'
 import { readFileSync } from "node:fs";
 
-const BANNED_SECTS = ["青云", "沧渊", "玄岭", "断魂", "宗门"];
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 function parseLog() {

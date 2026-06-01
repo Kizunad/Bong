@@ -480,6 +480,77 @@ mod tests {
     }
 
     #[test]
+    fn publish_faction_state_defaults_at_tick_to_zero_without_game_tick() {
+        // 边界（CodeRabbit）：缺 GameTick 资源时 at_tick 必须回退 0（current_game_tick 的
+        // unwrap_or_default 分支），而非 panic / 脏值——与同文件其他 telemetry publisher 同契约。
+        let (mut app, rx) = setup_app();
+        let mut store = NpcDormantStore::default();
+        store.snapshots.insert(
+            "dormant:no_tick".to_string(),
+            dormant_snapshot(
+                "dormant:no_tick",
+                "spawn",
+                Realm::Awaken,
+                EmergentGroupId(0),
+            ),
+        );
+        store.rebuild_indexes();
+        app.insert_resource(store);
+        app.insert_resource(FactionStore::default());
+        app.init_resource::<LastFactionCensus>();
+        // 故意**不** insert GameTick。
+        app.add_systems(Update, publish_faction_state);
+        app.update();
+
+        let states = drain_faction_states(&rx);
+        assert_eq!(
+            states.len(),
+            1,
+            "single living group must publish exactly one FactionStateV1, got {}",
+            states.len()
+        );
+        assert_eq!(
+            states[0].at_tick, 0,
+            "without a GameTick resource, at_tick must default to 0 (current_game_tick falls back to u64::default), got {}",
+            states[0].at_tick
+        );
+    }
+
+    #[test]
+    fn publish_faction_state_drops_on_closed_channel_without_panic() {
+        // 错误分支（CodeRabbit）：outbound channel 关闭（接收端 drop）时 send 返回 SendError，
+        // 系统必须 warn + 吞掉、**不 panic**（一个掉线的 Redis 桥不能拖垮整个 tick）。
+        let mut app = App::new();
+        let (tx_outbound, rx_outbound) = unbounded::<RedisOutbound>();
+        let (_tx_inbound, rx_inbound) = unbounded();
+        app.insert_resource(RedisBridgeResource {
+            tx_outbound,
+            rx_inbound,
+        });
+        // 关闭接收端 → 后续 send 必返回 SendError。
+        drop(rx_outbound);
+        let mut store = NpcDormantStore::default();
+        store.snapshots.insert(
+            "dormant:dropped".to_string(),
+            dormant_snapshot(
+                "dormant:dropped",
+                "spawn",
+                Realm::Awaken,
+                EmergentGroupId(0),
+            ),
+        );
+        store.rebuild_indexes();
+        app.insert_resource(store);
+        app.insert_resource(FactionStore::default());
+        app.init_resource::<LastFactionCensus>();
+        app.insert_resource(GameTick(9));
+        app.add_systems(Update, publish_faction_state);
+        // 不 panic 即通过该分支核心契约；二次 update 确认稳定可重入。
+        app.update();
+        app.update();
+    }
+
+    #[test]
     fn publish_faction_state_emits_one_payload_per_group() {
         // happy 链路：store→system→publish。两组分别 publish 一条 FactionStateV1，
         // population / dominant_zone / region_descriptor / strongest_realm / status 全正确。
