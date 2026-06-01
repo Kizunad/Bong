@@ -47,6 +47,54 @@ impl FactionId {
     }
 }
 
+/// 离屏散修「群体」的匿名稳定 id（plan-offscreen-war-v1 P5 reframe b）。
+///
+/// 末法残土**无具名宗门**：散修在某 zone 自发聚成涌现集体，集体身份由「区域涌现 + 描述符」
+/// 标识（如「{zone}一带散修」），而非「青云猎盟」式专名。同 id ⇒ 同一涌现群体（同进退、
+/// 不内斗）；不同 id ⇒ 争夺有限灵气的敌对群体（§七散修利己 + §十灵气零和）。
+///
+/// `#[serde(transparent)]`：序列化成裸数字（`3` 而非 `{"0":3}`），与 Redis 快照紧凑对齐。
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct EmergentGroupId(pub u16);
+
+/// 散修群体消长三态（plan-offscreen-war-v1 P5 reframe b）。
+///
+/// 涌现集体不是静态势力，会随灵气争夺胜负此消彼长：`Rising`（新涌现、正壮大）→ `Stable`
+/// （稳固，人口/势力均衡）→ `Waning`（式微，被压制 / 人口流失）。本 commit 仅定义 enum 与
+/// 序列化契约，消长状态的 telemetry / census 推进留 commit 2。
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum GroupStatus {
+    Rising,
+    Stable,
+    Waning,
+}
+
+impl GroupStatus {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Rising => "rising",
+            Self::Stable => "stable",
+            Self::Waning => "waning",
+        }
+    }
+
+    pub fn from_str_name(value: &str) -> Option<Self> {
+        match value {
+            "rising" => Some(Self::Rising),
+            "stable" => Some(Self::Stable),
+            "waning" => Some(Self::Waning),
+            _ => None,
+        }
+    }
+}
+
+/// seed 阶段把散修分布到的涌现群体数（plan-offscreen-war-v1 P5 reframe b）。
+///
+/// `> 2` 解锁多群体互殴——取代 P1 `is_hostile_pair` 的 Attack↔Defend 2-faction 硬上限。
+pub const EMERGENT_GROUP_COUNT: u16 = 4;
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum FactionRank {
@@ -270,6 +318,33 @@ impl FactionStore {
             (left, right),
             (FactionId::Attack, FactionId::Defend) | (FactionId::Defend, FactionId::Attack)
         )
+    }
+
+    /// 离屏散修群体敌对判定（plan-offscreen-war-v1 P5 reframe b §十灵气零和）。
+    ///
+    /// 同 zone 内**不同涌现群体**争夺有限灵气即敌对（§七散修利己）；同群体散修不内斗。
+    /// 取代离屏路径 `is_hostile_pair` 的 Attack↔Defend 2-faction 硬上限（§10.1 #1），
+    /// 因为「不同 id 即敌对」天然支持 `> 2` 个群体两两互殴。
+    ///
+    /// 注：hydrated AI 的 `is_hostile_pair(FactionId)`（big-brain `DuelTarget`，本文件
+    /// `assign_hostile_encounters` / `abstract_combat_system`）是**另一层身份模型，保持不变**——
+    /// 本方法只服务离屏 dormant 战斗的群体身份。
+    pub fn are_hostile(&self, a: EmergentGroupId, b: EmergentGroupId) -> bool {
+        a != b
+    }
+
+    /// 从旧 `FactionId` 派生涌现群体 id（plan-offscreen-war-v1 P5 reframe b 非破坏迁移）。
+    ///
+    /// 旧持久化快照只有 `faction` 没有显式 `emergent_group`，反序列化后用本方法回退派生：
+    /// `Attack → 群体 0`、`Defend → 群体 1`、`Neutral → None`。**Neutral → None 关键**：保
+    /// 中立散修离屏仍非战斗（既有 `no_hostile_pair_yields_no_combat` 测试依赖——None 群体
+    /// 进不了 `are_hostile` 配对）。
+    pub fn emergent_group_from_faction(&self, faction_id: FactionId) -> Option<EmergentGroupId> {
+        match faction_id {
+            FactionId::Attack => Some(EmergentGroupId(0)),
+            FactionId::Defend => Some(EmergentGroupId(1)),
+            FactionId::Neutral => None,
+        }
     }
 }
 
@@ -781,6 +856,143 @@ mod tests {
         assert!(!store.is_hostile_pair(FactionId::Neutral, FactionId::Attack));
         assert!(!store.is_hostile_pair(FactionId::Neutral, FactionId::Defend));
         assert!(!store.is_hostile_pair(FactionId::Attack, FactionId::Attack));
+    }
+
+    // ── plan-offscreen-war-v1 P5 reframe b：涌现群体身份 + 群体敌对 ──────────────
+
+    #[test]
+    fn are_hostile_distinct_groups_are_hostile() {
+        // §十灵气零和：不同涌现群体争同 zone 灵气 ⇒ 敌对。
+        let store = FactionStore::default();
+        assert!(
+            store.are_hostile(EmergentGroupId(0), EmergentGroupId(1)),
+            "distinct emergent groups must be hostile (different groups compete for the same finite qi); 0 vs 1 returned false"
+        );
+        // 验证 > 2 群体：2 与 3 也敌对（解锁多群体互殴，不止 Attack↔Defend 两家）。
+        assert!(
+            store.are_hostile(EmergentGroupId(2), EmergentGroupId(3)),
+            "any two distinct group ids must be hostile to support >2-group melee; 2 vs 3 returned false"
+        );
+    }
+
+    #[test]
+    fn are_hostile_same_group_is_not_hostile() {
+        // §七散修利己仅指向异群体——同一涌现群体的散修同进退，不内斗。
+        let store = FactionStore::default();
+        assert!(
+            !store.are_hostile(EmergentGroupId(2), EmergentGroupId(2)),
+            "same emergent group must NOT be hostile to itself (members of one group do not fight each other); 2 vs 2 returned true"
+        );
+    }
+
+    #[test]
+    fn are_hostile_is_symmetric() {
+        // 敌对是对称关系：are_hostile(a,b) == are_hostile(b,a)，不区分先后。
+        let store = FactionStore::default();
+        let a = EmergentGroupId(0);
+        let b = EmergentGroupId(3);
+        assert_eq!(
+            store.are_hostile(a, b),
+            store.are_hostile(b, a),
+            "are_hostile must be symmetric: hostility does not depend on argument order"
+        );
+    }
+
+    #[test]
+    fn emergent_group_from_faction_attack_maps_to_group_zero() {
+        let store = FactionStore::default();
+        assert_eq!(
+            store.emergent_group_from_faction(FactionId::Attack),
+            Some(EmergentGroupId(0)),
+            "non-breaking migration: legacy Attack faction must derive to emergent group 0"
+        );
+    }
+
+    #[test]
+    fn emergent_group_from_faction_defend_maps_to_group_one() {
+        let store = FactionStore::default();
+        assert_eq!(
+            store.emergent_group_from_faction(FactionId::Defend),
+            Some(EmergentGroupId(1)),
+            "non-breaking migration: legacy Defend faction must derive to emergent group 1"
+        );
+    }
+
+    #[test]
+    fn emergent_group_from_faction_neutral_is_none() {
+        // 关键非破坏点：Neutral → None，保中立散修离屏仍非战斗（None 进不了 are_hostile）。
+        let store = FactionStore::default();
+        assert_eq!(
+            store.emergent_group_from_faction(FactionId::Neutral),
+            None,
+            "Neutral must derive to None (not a group) so neutral rogues stay non-combatant offscreen, as no_hostile_pair_yields_no_combat depends on"
+        );
+    }
+
+    #[test]
+    fn group_status_each_variant_roundtrips_via_serde() {
+        // 每个 GroupStatus 变体一条专属 serde 往返 + as_str / from_str_name 双向对拍。
+        for (status, name) in [
+            (GroupStatus::Rising, "rising"),
+            (GroupStatus::Stable, "stable"),
+            (GroupStatus::Waning, "waning"),
+        ] {
+            assert_eq!(
+                status.as_str(),
+                name,
+                "GroupStatus::{status:?}.as_str() must equal {name:?}"
+            );
+            assert_eq!(
+                GroupStatus::from_str_name(name),
+                Some(status),
+                "GroupStatus::from_str_name({name:?}) must roundtrip back to {status:?}"
+            );
+            let value = serde_json::to_value(status).expect("GroupStatus should serialize");
+            assert_eq!(
+                value,
+                json!(name),
+                "GroupStatus::{status:?} must serialize to snake_case string {name:?}, got {value}"
+            );
+            let back: GroupStatus =
+                serde_json::from_value(value).expect("GroupStatus should deserialize");
+            assert_eq!(
+                back, status,
+                "GroupStatus serde roundtrip must return the same variant {status:?}, got {back:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn group_status_from_str_name_rejects_unknown() {
+        // 错误分支：非法字符串 → None（不 panic、不静默归到某变体）。
+        assert_eq!(
+            GroupStatus::from_str_name("ascending"),
+            None,
+            "an unknown status string must yield None, not silently map to a variant"
+        );
+        assert_eq!(
+            GroupStatus::from_str_name(""),
+            None,
+            "an empty status string must yield None"
+        );
+    }
+
+    #[test]
+    fn emergent_group_id_serializes_as_transparent_bare_number() {
+        // serde(transparent)：序列化成裸数字 `3`（不是 `{"0":3}`），与紧凑 Redis 快照对齐。
+        let id = EmergentGroupId(3);
+        let value = serde_json::to_value(id).expect("EmergentGroupId should serialize");
+        assert_eq!(
+            value,
+            json!(3),
+            "EmergentGroupId must serialize transparently as a bare number `3`, not a wrapper object like {{\"0\":3}}; got {value}"
+        );
+        let back: EmergentGroupId = serde_json::from_value(value)
+            .expect("EmergentGroupId should deserialize from bare number");
+        assert_eq!(
+            back, id,
+            "EmergentGroupId must roundtrip through transparent serde back to the same id, got {back:?}"
+        );
     }
 
     #[test]

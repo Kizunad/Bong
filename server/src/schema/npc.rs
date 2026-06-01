@@ -1,5 +1,7 @@
 use serde::{Deserialize, Serialize};
 
+use crate::npc::faction::GroupStatus;
+
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct NpcSpawnedV1 {
     pub v: u8,
@@ -79,6 +81,38 @@ pub struct PendingDormantRelicV1 {
     pub loot_seed: u64,
     /// 逻辑结算 tick（deferred-on-hydrate 时序校验用）。
     pub created_tick: u64,
+    pub at_tick: u64,
+}
+
+/// plan-offscreen-war-v1 P5：散修群体消长盘面 telemetry（`bong:faction_state`，reframe b）。
+///
+/// **纯观测 payload**——末法残土无具名宗门，离屏散修在某 zone 自发聚成匿名涌现集体；本结构记录
+/// 一个涌现群体周期性的人口盘面：匿名 `group_id`（裸数字，无「青云猎盟」式专名）+ `region_descriptor`
+/// （`"{zone}一带散修"` 式区域描述符）+ `population`（存活成员计数）+ `status`（消长三态）+ 该群体
+/// 当前的**涌现强者**（`strongest_*`，最高境界活体；Q2 派生焦点，**无号令权**——不是宗主 / 掌门，
+/// 只是恰好境界最高的散修）。
+///
+/// **守恒红线（§10.1 #5）**：census 全只读 dormant store + faction store，不触碰 `WorldQiAccount`
+/// / ledger；强者陨落不在此特殊处理真元（仍走 P2 的 `release_dormant_qi_to_zone`）。本结构与
+/// `DormantCombatOutcomeV1` 同为观测旁路，绝不携带也不触发任何真元流动。
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct FactionStateV1 {
+    pub v: u8,
+    pub kind: String,
+    /// 匿名涌现群体 id（== `EmergentGroupId.0`，裸数字，无具名宗门）。
+    pub group_id: u16,
+    /// 区域描述符（`"{zone}一带散修"`，dominant_zone 派生）——群体的可读匿名标识。
+    pub region_descriptor: String,
+    /// 该群体存活成员数（不含已离屏战死待释放的 `combat_dead_pending_release` 快照）。
+    pub population: u32,
+    /// 消长三态：相对上轮 census 的人口变化（rising / stable / waning）。
+    pub status: GroupStatus,
+    /// 该群体成员最集中的 zone（众数；平票取字典序最小，确定性）。
+    pub dominant_zone: String,
+    /// 涌现强者境界（最高 realm 活体，`realm_to_string` 形式，如 `"Solidify"`）。
+    pub strongest_realm: String,
+    /// 涌现强者 char_id（最高 realm 活体；平局取 char_id 字典序最小）。
+    pub strongest_char_id: String,
     pub at_tick: u64,
 }
 
@@ -399,6 +433,131 @@ mod tests {
         assert!(
             parsed.is_err(),
             "a negative created_tick must be rejected because the field is a u64 settlement tick; serde accepted it: {parsed:?}"
+        );
+    }
+
+    fn sample_faction_state() -> FactionStateV1 {
+        FactionStateV1 {
+            v: 1,
+            kind: "faction_state".to_string(),
+            group_id: 2,
+            region_descriptor: "rift_valley一带散修".to_string(),
+            population: 7,
+            status: GroupStatus::Rising,
+            dominant_zone: "rift_valley".to_string(),
+            strongest_realm: "Solidify".to_string(),
+            strongest_char_id: "dormant:rogue:3".to_string(),
+            at_tick: 4321,
+        }
+    }
+
+    #[test]
+    fn faction_state_v1_roundtrips() {
+        // plan-offscreen-war-v1 P5：散修群体消长盘面 telemetry wire 必须无损 roundtrip——
+        // e2e / 调试脚本据此读 group_id / population / status / strongest_* 观测群体此消彼长。
+        // status 取 Rising 这条变体，确认 GroupStatus 嵌入字段也无损 roundtrip。
+        let payload = sample_faction_state();
+        let json = serde_json::to_string(&payload).expect("serialize");
+        let parsed: FactionStateV1 = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(
+            parsed, payload,
+            "FactionStateV1 must round-trip losslessly, otherwise群体消长观测会读到错值"
+        );
+
+        let value: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(
+            value["group_id"].as_u64(),
+            Some(2),
+            "group_id must serialize as a bare u16 number (anonymous emergent group id, no named sect); got {}",
+            value["group_id"]
+        );
+        assert_eq!(
+            value["status"],
+            serde_json::json!("rising"),
+            "status must serialize as the snake_case GroupStatus string (rising/stable/waning); got {}",
+            value["status"]
+        );
+        assert_eq!(
+            value["region_descriptor"],
+            serde_json::json!("rift_valley一带散修"),
+            "region_descriptor must serialize as the anonymous \"{{zone}}一带散修\" descriptor (no named sect); got {}",
+            value["region_descriptor"]
+        );
+        assert_eq!(
+            value["strongest_realm"],
+            serde_json::json!("Solidify"),
+            "strongest_realm must serialize as the realm_to_string label of the emergent strongest (highest-realm living member); got {}",
+            value["strongest_realm"]
+        );
+    }
+
+    #[test]
+    fn faction_state_v1_each_status_variant_roundtrips() {
+        // 状态转换饱和：三个 GroupStatus 变体各一条专属 case，确认嵌入 FactionStateV1 后
+        // 每个变体都无损 roundtrip（不仅 Rising，Stable / Waning 同样锁住）。
+        for (status, wire) in [
+            (GroupStatus::Rising, "rising"),
+            (GroupStatus::Stable, "stable"),
+            (GroupStatus::Waning, "waning"),
+        ] {
+            let mut payload = sample_faction_state();
+            payload.status = status;
+            let json = serde_json::to_string(&payload).expect("serialize");
+            let value: serde_json::Value = serde_json::from_str(&json).unwrap();
+            assert_eq!(
+                value["status"],
+                serde_json::json!(wire),
+                "FactionStateV1 with status {status:?} must serialize status to {wire:?}, got {}",
+                value["status"]
+            );
+            let parsed: FactionStateV1 = serde_json::from_str(&json).expect("deserialize");
+            assert_eq!(
+                parsed.status, status,
+                "FactionStateV1 status must round-trip back to {status:?}, got {:?}",
+                parsed.status
+            );
+        }
+    }
+
+    #[test]
+    fn faction_state_v1_rejects_unknown_status() {
+        // 反：非法 status 字符串（不属于 rising/stable/waning）必须解析失败——锁住 GroupStatus
+        // 的 enum 契约，agent 端 TypeBox 同步拒。
+        let mut bad = serde_json::to_value(sample_faction_state()).unwrap();
+        bad["status"] = serde_json::json!("ascending");
+        let parsed = serde_json::from_value::<FactionStateV1>(bad);
+        assert!(
+            parsed.is_err(),
+            "an unknown status string \"ascending\" must be rejected because status is a GroupStatus \
+             enum (rising/stable/waning only); serde accepted it: {parsed:?}"
+        );
+    }
+
+    #[test]
+    fn faction_state_v1_rejects_missing_field() {
+        // 反：缺必填字段（这里删掉 population）必须解析失败——FactionStateV1 无 serde default，
+        // 每个字段都是观测契约的一部分，缺字段不能静默归零。
+        let mut bad = serde_json::to_value(sample_faction_state()).unwrap();
+        bad.as_object_mut().unwrap().remove("population");
+        let parsed = serde_json::from_value::<FactionStateV1>(bad);
+        assert!(
+            parsed.is_err(),
+            "a payload missing the required `population` field must be rejected (no serde default); \
+             serde accepted it: {parsed:?}"
+        );
+    }
+
+    #[test]
+    fn faction_state_v1_rejects_non_u16_group_id() {
+        // 反：group_id 超出 u16 范围（这里 70000 > u16::MAX）必须解析失败——锁住 group_id 的
+        // u16 契约（== EmergentGroupId.0），防 wire 端塞进越界 id。
+        let mut bad = serde_json::to_value(sample_faction_state()).unwrap();
+        bad["group_id"] = serde_json::json!(70000);
+        let parsed = serde_json::from_value::<FactionStateV1>(bad);
+        assert!(
+            parsed.is_err(),
+            "a group_id of 70000 must be rejected because the field is a u16 (== EmergentGroupId.0, \
+             max 65535); serde accepted it: {parsed:?}"
         );
     }
 }

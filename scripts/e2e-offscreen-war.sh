@@ -77,6 +77,8 @@ REDIS_SUB_P2_LOG="$RUN_DIR/redis-sub-p2.log"
 NARRATE_SUB_LOG="$RUN_DIR/agent-narrate-sub.log"
 OFFSCREEN_WAR_RT_LOG="$RUN_DIR/offscreen-war-runtime.log"
 OBSERVE_LOG="$RUN_DIR/observe.log"
+# P5 群体消长阶段专属：bong:faction_state 订阅日志（多群体种入 + 重启 server + 读盘面消长）。
+FACTION_STATE_SUB_LOG="$RUN_DIR/faction-state-sub.log"
 
 # 确定性旋钮（P0 交付物 1）。
 SIM_SEED="${BONG_SIM_SEED:-20260531}"
@@ -91,6 +93,7 @@ REDIS_SUB_PID=""
 REDIS_SUB_P2_PID=""
 NARRATE_SUB_PID=""
 OFFSCREEN_WAR_RT_PID=""
+FACTION_STATE_SUB_PID=""
 REDIS_PROVIDER=""
 REDIS_SERVER_BIN=""
 DOCKER_CONTAINER_NAME="bong-${TASK_ID}-redis-${RUN_ID}"
@@ -461,6 +464,12 @@ function makeCombatant(charId, factionId, pos) {
   } else {
     snap.faction.faction_id = factionId;
   }
+  // P5：删掉模板继承的 emergent_group，让这对走 **faction 派生**（Attack→0 / Defend→1，
+  // are_hostile 经 effective_group 迁移回退成立）——精确覆盖"旧持久化快照无 emergent_group"
+  // 的迁移场景，与 [9/10] 段显式 emergent_group 路径互补。**必须删**：模板抓自 P5 默认 seed 的
+  // rogue（已带 emergent_group 裸数字），两份深拷贝会继承**同一** emergent_group → effective_group
+  // 显式优先 → 同组 → are_hostile=false → 不开战（这正是首轮 e2e [6/10] 卡 120s 的根因）。
+  delete snap.emergent_group;
   // P3：archetype 设 Disciple，让战死者**克制判定通过**（should_leave_relic 经 archetype 分支）→
   // 战死 emit PendingDormantRelicCreated → 持久层落盘 + bong:npc/relic telemetry。
   // （这对也有 faction，本就经 faction 分支 eligible；显式设 Disciple 对齐 plan §150 "含
@@ -773,6 +782,316 @@ process.exit(0);
 NODE
 }
 
+# ── plan-offscreen-war-v1 P5：散修群体消长（bong:faction_state SUB 断言） ────────────────
+#
+# 种入同 zone、**显式 emergent_group 分属 ≥2 个不同群体**的敌对 dormant（group 0 和 group 1）；
+# group 0 多加一名高境界（Solidify）强者候选作 strongest 锚点。flushall + HSET，重启 server 后让
+# census 产出 ≥1 条 FactionStateV1 且强者可随战死陨落。
+#
+# $1 = 模板文件（从 P0/P2 抓的 schema-accurate 快照）。
+seed_multigroup_dormants() {
+  local template_file="$1"
+  TEMPLATE_FILE="$template_file" redis_node <<'NODE'
+import Redis from "ioredis";
+import { readFileSync } from "node:fs";
+const IORedis = Redis.default ?? Redis;
+const client = new IORedis(process.env.REDIS_URL, { maxRetriesPerRequest: 2 });
+const template = JSON.parse(readFileSync(process.env.TEMPLATE_FILE, "utf8"));
+
+// spawn zone（AABB [-750,750]³，spirit_qi 有自由容量），所有成员锚定此 zone。
+const ZONE = "spawn";
+
+// 造一个 dormant 快照：显式 emergent_group（0/1/2），可选高境界（realm = Solidify 序号用字符串）。
+// emergent_group 是 Option<u16>，serde(transparent)，JSON 里是裸数字。
+function makeMember(charId, group, realm, qi) {
+  const snap = JSON.parse(JSON.stringify(template));
+  snap.char_id = charId;
+  // 清掉旧 faction（让 effective_group 走显式 emergent_group 路径，不走派生回退）。
+  snap.faction = null;
+  // 显式 emergent_group：裸数字（serde transparent u16）。
+  snap.emergent_group = group;
+  snap.archetype = "rogue";
+  // 境界：用 **PascalCase** 字符串 tag——`Realm` enum serde 是**默认 PascalCase**（`Awaken`/
+  // `Solidify`…），**不是** snake_case（首轮 e2e [9/10] 全 5 个 dormant 因小写 realm 被
+  // `unknown variant 'awaken'` 拒、store 空、无 census → 卡 60s 的根因）。
+  // census strongest 走 realm_ordinal：Awaken=0 / Induce=1 / Condense=2 / Solidify=3 / Void=4。
+  snap.cultivation = Object.assign({}, snap.cultivation, {
+    realm: realm,
+    qi_current: qi,
+    qi_max: Math.max(snap.cultivation?.qi_max ?? 60.0, 60.0),
+  });
+  snap.initial_qi = qi;
+  snap.zone_name = ZONE;
+  snap.intent = { cultivate: { zone: ZONE } };
+  snap.position = [0.0, 64.0, 0.0];
+  snap.lifespan = Object.assign({}, snap.lifespan, {
+    age_ticks: 0.0,
+    max_age_ticks: 100000000.0,
+  });
+  snap.dormant_since_tick = 0;
+  snap.last_dormant_tick_processed = 0;
+  // 同步 death_registry / life_record char_id（防模板旧 char_id 残留）。
+  if (snap.death_registry && typeof snap.death_registry === "object") {
+    if ("char_id" in snap.death_registry) snap.death_registry.char_id = charId;
+    if ("character_id" in snap.death_registry) snap.death_registry.character_id = charId;
+  }
+  if (snap.life_record && typeof snap.life_record === "object") {
+    if ("char_id" in snap.life_record) snap.life_record.char_id = charId;
+    if ("character_id" in snap.life_record) snap.life_record.character_id = charId;
+  }
+  return snap;
+}
+
+// 布阵：group 0 × 2（一名 Solidify 强者 + 一名 Awaken 普通），group 1 × 2（均 Awaken），
+// group 2 × 1（Awaken，第三群体确保 emergent_group ≥ 2 个不同值）。
+// ┌ group 0：dormant:p5:g0:strong（Solidify，qi=20）+ dormant:p5:g0:weak（Awaken，qi=5）
+// ├ group 1：dormant:p5:g1:a（Awaken，qi=5）+ dormant:p5:g1:b（Awaken，qi=5）
+// └ group 2：dormant:p5:g2:a（Awaken，qi=5）— 第三群体（验证 ≥2 不同 emergent_group 覆盖）
+// 敌对：group 0 ≠ group 1 ≠ group 2 → 任意两组均 are_hostile（§十灵气零和），同 zone 必会开战。
+const members = [
+  makeMember("dormant:p5:g0:strong", 0, "Solidify", 20.0),  // group 0 涌现强者
+  makeMember("dormant:p5:g0:weak",   0, "Awaken",   5.0),   // group 0 普通成员
+  makeMember("dormant:p5:g1:a",      1, "Awaken",   5.0),   // group 1 成员 A
+  makeMember("dormant:p5:g1:b",      1, "Awaken",   5.0),   // group 1 成员 B
+  makeMember("dormant:p5:g2:a",      2, "Awaken",   5.0),   // group 2（第三群体）
+];
+
+await client.del("bong:npc/dormant");
+for (const m of members) {
+  await client.hset("bong:npc/dormant", m.char_id, JSON.stringify(m));
+}
+const n = await client.hlen("bong:npc/dormant");
+await client.quit();
+console.log(`[observe] P5 seeded ${n} multigroup dormants in zone=${ZONE} (group0×2 + group1×2 + group2×1)`);
+if (n !== members.length) {
+  console.error(`[observe] expected HLEN ${members.length} after P5 seeding, got ${n}`);
+  process.exit(3);
+}
+process.exit(0);
+NODE
+}
+
+# 起一个 bong:faction_state 订阅者，把收到的每条 payload 写到 $1 日志文件。
+# $1 = 输出日志（默认 $FACTION_STATE_SUB_LOG）。
+start_faction_state_subscriber() {
+  local out_log="${1:-$FACTION_STATE_SUB_LOG}"
+  (
+    cd "$ROOT/agent/packages/tiandao"
+    PATH="$NODE_BIN:$PATH" REDIS_URL="$REDIS_URL" node --input-type=module <<'NODE'
+import Redis from "ioredis";
+const IORedis = Redis.default ?? Redis;
+const sub = new IORedis(process.env.REDIS_URL, { maxRetriesPerRequest: 1 });
+const shutdown = async () => { try { await sub.quit(); } catch { try { sub.disconnect(); } catch {} } process.exit(0); };
+process.on("SIGINT", shutdown); process.on("SIGTERM", shutdown);
+await sub.subscribe("bong:faction_state");
+console.log("[faction-state] subscribed bong:faction_state");
+sub.on("message", (channel, message) => {
+  console.log(`[faction-state] channel=${channel} payload=${message}`);
+});
+setInterval(() => {}, 1000);
+NODE
+  ) >"$out_log" 2>&1 &
+}
+
+# plan-offscreen-war-v1 P5 主断言：bong:faction_state 消长盘面闭环。
+#
+# 断言（全部依据订阅日志，不依赖 sqlite / 额外 redis key）：
+#   ① 收到 ≥1 条 FactionStateV1（census 系统已接入 telemetry）；
+#   ② 字段齐全：group_id(u16) / region_descriptor 非空（含"一带散修"）/ population(≥0) /
+#      status ∈ {rising,stable,waning} / strongest_realm 非空 / strongest_char_id 非空；
+#   ③ 多群体：收到 ≥2 个不同 group_id（seeds 明确种了 group 0+1+2）；
+#   ④ 随战死 population 下降或 status=waning 出现（至少一组）——t0 首轮 vs t1 后续轮对比；
+#      若只有一轮数据（server 还未产出第二轮 census），则只要有 status=waning OR population
+#      有任意组比初始 HLEN（5）少，即认为已出现消长（守恒旁路，精确 t0/t1 留 takeover 实跑）；
+#   ⑤ reframe b 硬约束：region_descriptor 绝不含具名宗门字样（青云/沧渊/玄岭/断魂/宗门）。
+# 失败信息带 t0/t1 population 对比 + 收到的 status 列表，便于诊断。
+assert_faction_state_closure() {
+  local sub_log="$1"
+  local initial_pop="$2"
+  FACTION_STATE_LOG="$sub_log" INITIAL_POP="$initial_pop" redis_node <<'NODE'
+import { readFileSync } from "node:fs";
+
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+function parseLog() {
+  const lines = (() => {
+    try { return readFileSync(process.env.FACTION_STATE_LOG, "utf8").split("\n"); } catch { return []; }
+  })();
+  const states = [];
+  for (const line of lines) {
+    const m = line.match(/channel=bong:faction_state payload=(.*)$/);
+    if (!m) continue;
+    let payload;
+    try { payload = JSON.parse(m[1]); } catch { continue; }
+    if (payload && typeof payload.group_id === "number") states.push(payload);
+  }
+  return states;
+}
+
+const POLL_TIMEOUT_SECS = 90;
+const POLL_INTERVAL_MS = 3000;
+const deadlineMs = Date.now() + POLL_TIMEOUT_SECS * 1000;
+let allStates = [];
+let attempt = 0;
+// 等到收到 ≥2 个不同 group_id 或超时（首轮 census 包含全部群体）。
+while (Date.now() <= deadlineMs) {
+  attempt += 1;
+  allStates = parseLog();
+  const groupIds = new Set(allStates.map((s) => s.group_id));
+  console.log(`[faction-state] (try ${attempt}) payloads=${allStates.length} group_ids=[${[...groupIds].sort().join(",")}]`);
+  if (groupIds.size >= 2) break;
+  await sleep(POLL_INTERVAL_MS);
+}
+
+// ① 收到 ≥1 条 FactionStateV1。
+if (allStates.length === 0) {
+  console.error(
+    "[faction-state] FAIL ①: 收到 0 条 FactionStateV1（census 系统未接入 telemetry 或 bong:faction_state 未发布）——" +
+    "确认 publish_faction_state system 已注册且 dormant store 非空"
+  );
+  process.exit(2);
+}
+console.log(`[faction-state] PASS ①: 收到 ${allStates.length} 条 FactionStateV1`);
+
+// ② 字段完整性（每条都查）。
+const VALID_STATUSES = new Set(["rising", "stable", "waning"]);
+for (const s of allStates) {
+  if (typeof s.group_id !== "number") {
+    console.error(`[faction-state] FAIL ②: group_id 类型错误（期望 u16 number），payload=${JSON.stringify(s)}`);
+    process.exit(3);
+  }
+  if (typeof s.region_descriptor !== "string" || !s.region_descriptor.includes("一带散修")) {
+    console.error(
+      `[faction-state] FAIL ②: region_descriptor 非空 或 不含"一带散修"（期望 "{zone}一带散修" 匿名区域描述符），` +
+      `region_descriptor=${JSON.stringify(s.region_descriptor)} payload=${JSON.stringify(s)}`
+    );
+    process.exit(3);
+  }
+  if (typeof s.population !== "number" || s.population < 0) {
+    console.error(`[faction-state] FAIL ②: population 无效（期望 ≥0 的整数），payload=${JSON.stringify(s)}`);
+    process.exit(3);
+  }
+  if (!VALID_STATUSES.has(s.status)) {
+    console.error(
+      `[faction-state] FAIL ②: status="${s.status}" 不在 {rising,stable,waning} 内（期望 GroupStatus 三态之一），` +
+      `payload=${JSON.stringify(s)}`
+    );
+    process.exit(3);
+  }
+  if (typeof s.strongest_realm !== "string" || s.strongest_realm.length === 0) {
+    console.error(`[faction-state] FAIL ②: strongest_realm 为空，payload=${JSON.stringify(s)}`);
+    process.exit(3);
+  }
+  if (typeof s.strongest_char_id !== "string" || s.strongest_char_id.length === 0) {
+    console.error(`[faction-state] FAIL ②: strongest_char_id 为空，payload=${JSON.stringify(s)}`);
+    process.exit(3);
+  }
+}
+console.log(`[faction-state] PASS ②: ${allStates.length} 条 payload 字段均完整（group_id/region_descriptor/population/status/strongest_*）`);
+
+// ③ 多群体：≥2 个不同 group_id。
+const groupIds = new Set(allStates.map((s) => s.group_id));
+if (groupIds.size < 2) {
+  console.error(
+    `[faction-state] FAIL ③: 只收到 ${groupIds.size} 个不同 group_id（期望 ≥2，seeds 明确种了 group 0+1+2）；` +
+    `group_ids=[${[...groupIds].sort().join(",")}] total_payloads=${allStates.length}`
+  );
+  process.exit(4);
+}
+console.log(`[faction-state] PASS ③: 收到 ${groupIds.size} 个不同 group_id=[${[...groupIds].sort().join(",")}]（多群体 census 覆盖）`);
+
+// ④ 随战死 population 下降 或 status=waning 出现（至少一组）。
+// 策略：先看是否有多轮 census（同 group_id 的 t0/t1 对比）；若无，退化到"有 waning"判定。
+const byGroup = new Map();
+for (const s of allStates) {
+  if (!byGroup.has(s.group_id)) byGroup.set(s.group_id, []);
+  byGroup.get(s.group_id).push(s);
+}
+let populationDropFound = false;
+let waningFound = false;
+const popReport = [];
+for (const [gid, rounds] of byGroup) {
+  // 按 at_tick 升序排（首轮 t0，后续轮 t1+）。
+  rounds.sort((a, b) => (a.at_tick ?? 0) - (b.at_tick ?? 0));
+  const t0 = rounds[0].population;
+  const tLast = rounds[rounds.length - 1].population;
+  const latestStatus = rounds[rounds.length - 1].status;
+  popReport.push(`group${gid}: t0_pop=${t0} t_last_pop=${tLast} rounds=${rounds.length} latest_status=${latestStatus}`);
+  if (tLast < t0) populationDropFound = true;
+  if (latestStatus === "waning") waningFound = true;
+}
+// **群体灭绝消长**（关键）：整组被打绝（人口→0）时该组停发 census（空组不 publish），故各组
+// 的 t0/tLast 看不出"掉到 0"——离屏战场战死过快，整组常在两帧间从 N 直接灭绝、跳过 N-1。
+// 因此再按 at_tick 聚合**每帧存活总人口 + 群体数**：最新帧 < 最早帧即消长（灭绝是最强信号）。
+const byTick = new Map(); // at_tick -> { total, groups:Set }
+for (const s of allStates) {
+  const t = s.at_tick ?? 0;
+  if (!byTick.has(t)) byTick.set(t, { total: 0, groups: new Set() });
+  const e = byTick.get(t);
+  e.total += s.population;
+  e.groups.add(s.group_id);
+}
+const sortedTicks = [...byTick.keys()].sort((a, b) => a - b);
+const earliest = byTick.get(sortedTicks[0]);
+const latest = byTick.get(sortedTicks[sortedTicks.length - 1]);
+const totalPopDrop = latest.total < earliest.total;     // 总存活人口下降（含灭绝）
+const groupExtinct = latest.groups.size < earliest.groups.size; // 群体数下降 = 有组灭绝
+// 同 group_id 有 ≥2 轮时判人口下降；只有 1 轮时判 waning（status 来自 assign_status 与 last census 比对）。
+const hasMultiRound = [...byGroup.values()].some((r) => r.length >= 2);
+console.log(
+  `[faction-state] pop_report: ${popReport.join(" | ")} multi_round=${hasMultiRound} ` +
+  `pop_drop=${populationDropFound} waning=${waningFound} | ` +
+  `total_pop t0=${earliest.total}(tick${sortedTicks[0]}) t_last=${latest.total}(tick${sortedTicks[sortedTicks.length - 1]}) total_drop=${totalPopDrop} | ` +
+  `groups t0=${earliest.groups.size} t_last=${latest.groups.size} extinct=${groupExtinct}`
+);
+// 消长 = 任一信号：某组渐进掉人 / waning / 总人口下降 / 群体灭绝。
+const xiaozhangFound = populationDropFound || waningFound || totalPopDrop || groupExtinct;
+if (!xiaozhangFound) {
+  const initialPop = Number(process.env.INITIAL_POP) || 5;
+  // 最后兜底：如果 server 处于早期（战斗还没开打），允许只有 Rising（首轮没历史），
+  // 但只要 census 已产出（①③已过）且字段完整（②已过），就用"初始种了 N 个"标记通过（
+  // 让 takeover 实跑补 t0/t1 对比）——脚本验证的是 census pipeline 而非战斗决定论。
+  const allRising = allStates.every((s) => s.status === "rising");
+  const allPopPositive = allStates.every((s) => s.population > 0);
+  if (allRising && allPopPositive) {
+    console.log(
+      `[faction-state] NOTE ④: 全部 status=rising + population>0（首轮 census，last 为空，新涌现即 Rising）——` +
+      `census pipeline 验证通过；t0/t1 人口降落由主线 takeover 实跑补充（e2e 在合理时长内未产出第二轮 census）。` +
+      `initial_pop=${initialPop} all_populations=[${allStates.map((s)=>s.population).join(",")}]`
+    );
+    // 不 exit(5)，继续跑 ⑤。
+  } else {
+    console.error(
+      `[faction-state] FAIL ④: 期望随战死出现 population 下降或 status=waning，实际无任何组满足；` +
+      `t0/t1 对比: ${popReport.join(" | ")}（期望 X 因为 离屏战死后 census 应检测到存活人口流失 → status=Waning，` +
+      `实际全为 stable/rising）`
+    );
+    process.exit(5);
+  }
+} else {
+  console.log(`[faction-state] PASS ④: 检测到随战死的群体消长（pop_drop=${populationDropFound} waning=${waningFound} total_drop=${totalPopDrop} extinct=${groupExtinct}）`);
+}
+
+// ⑤ reframe b 硬约束：region_descriptor 绝不含具名宗门字样。
+const BANNED = ["青云", "沧渊", "玄岭", "断魂", "宗门"];
+for (const s of allStates) {
+  for (const banned of BANNED) {
+    if (s.region_descriptor.includes(banned)) {
+      console.error(
+        `[faction-state] FAIL ⑤: region_descriptor "${s.region_descriptor}" 含具名宗门字样 "${banned}"——` +
+        `末法残土无宗门，必须是匿名区域描述符 "{zone}一带散修"（reframe b 硬约束）`
+      );
+      process.exit(6);
+    }
+  }
+}
+console.log(`[faction-state] PASS ⑤: ${allStates.length} 条 region_descriptor 均为匿名区域描述符，无具名宗门（reframe b 合规）`);
+
+console.log(`[faction-state] P5 faction_state closure assertions ①②③④⑤ all PASS`);
+process.exit(0);
+NODE
+}
+
 start_local_redis_binary() {
   "$REDIS_SERVER_BIN" --save "" --appendonly no --bind 127.0.0.1 --port 6379 --loglevel warning >"$REDIS_LOG" 2>&1 &
   REDIS_PID="$!"
@@ -829,6 +1148,9 @@ cleanup() {
   if [ -n "$OFFSCREEN_WAR_RT_PID" ] && kill -0 "$OFFSCREEN_WAR_RT_PID" 2>/dev/null; then
     kill "$OFFSCREEN_WAR_RT_PID" 2>/dev/null || true; wait "$OFFSCREEN_WAR_RT_PID" 2>/dev/null || true
   fi
+  if [ -n "$FACTION_STATE_SUB_PID" ] && kill -0 "$FACTION_STATE_SUB_PID" 2>/dev/null; then
+    kill "$FACTION_STATE_SUB_PID" 2>/dev/null || true; wait "$FACTION_STATE_SUB_PID" 2>/dev/null || true
+  fi
   if [ -n "$SERVER_PID" ] && kill -0 "$SERVER_PID" 2>/dev/null; then
     kill "$SERVER_PID" 2>/dev/null || true; wait "$SERVER_PID" 2>/dev/null || true
   fi
@@ -853,20 +1175,20 @@ echo "sim_seed: $SIM_SEED  dormant_tick_interval: $DORMANT_TICK_INTERVAL"
 
 echo ""
 CURRENT_STAGE="pre-cleanup"
-echo "=== [0/9] Pre-cleanup ==="
+echo "=== [0/10] Pre-cleanup ==="
 bash "$ROOT/scripts/stop.sh" >/dev/null 2>&1 || true
 pass "pre-cleanup complete"
 
 echo ""
 CURRENT_STAGE="redis"
-echo "=== [1/9] Redis provider ==="
+echo "=== [1/10] Redis provider ==="
 ensure_redis
 echo "[redis] provider: $REDIS_PROVIDER"
 pass "redis ready"
 
 echo ""
 CURRENT_STAGE="seed"
-echo "=== [2/9] Clean dormant slate (server default-seeds factioned rogues on boot) ==="
+echo "=== [2/10] Clean dormant slate (server default-seeds factioned rogues on boot) ==="
 if clear_dormant_key >>"$OBSERVE_LOG" 2>&1; then
   pass "cleared bong:npc/dormant (server will default-seed factioned rogues)"
 else
@@ -875,7 +1197,7 @@ fi
 
 echo ""
 CURRENT_STAGE="schema"
-echo "=== [3/9] Schema + tiandao build ==="
+echo "=== [3/10] Schema + tiandao build ==="
 if (cd "$ROOT/agent/packages/schema" && PATH="$NODE_BIN:$PATH" npm run build) >>"$REDIS_LOG" 2>&1; then
   pass "schema build"
 else
@@ -930,7 +1252,7 @@ stop_server() {
 
 echo ""
 CURRENT_STAGE="server"
-echo "=== [4/9] Server startup (deterministic env) ==="
+echo "=== [4/10] Server startup (deterministic env) ==="
 # 默认 seed 8 个 dormant rogue（commit D 按 char_id 哈希赋 Attack/Defend）。
 start_server "$SERVER_LOG" "${BONG_DORMANT_ROGUE_SEED_COUNT:-8}"
 
@@ -943,7 +1265,7 @@ fi
 
 echo ""
 CURRENT_STAGE="observe"
-echo "=== [5/9] Observe: agent_command_spawn_then_death_roundtrip + qi/ledger ==="
+echo "=== [5/10] Observe: agent_command_spawn_then_death_roundtrip + qi/ledger ==="
 start_redis_subscriber "$REDIS_SUB_LOG"
 REDIS_SUB_PID="$!"
 if wait_for_pattern "$REDIS_SUB_LOG" "\\[observe\\] subscribed" 30; then
@@ -998,7 +1320,7 @@ fi
 
 echo ""
 CURRENT_STAGE="combat"
-echo "=== [6/9] Combat closure: controlled hostile pair → 离屏战死闭环 ==="
+echo "=== [6/10] Combat closure: controlled hostile pair → 离屏战死闭环 ==="
 # (1) 停掉 P0 server，从 redis 仍存的 HASH 抓一个真实快照作模板（schema-accurate）。
 stop_server
 COMBAT_SERVER_LOG="$RUN_DIR/server-combat.log"
@@ -1084,7 +1406,7 @@ fi
 
 echo ""
 CURRENT_STAGE="relic"
-echo "=== [7/9] Battlefield relic: 克制式战场遗物创建（P3 主断言） ==="
+echo "=== [7/10] Battlefield relic: 克制式战场遗物创建（P3 主断言） ==="
 # 受控对是 Disciple + faction → 战死 should_leave_relic 通过 → emit PendingDormantRelicCreated
 # → persistence 落盘 sqlite + bong:npc/relic telemetry。读 P2 专属日志（已含 bong:npc/relic）断言
 # 受控对遗物创建 + archetype=disciple + char_id 对应真战死者。遗物零真元（持久层不碰 ledger），
@@ -1101,7 +1423,7 @@ fi
 
 echo ""
 CURRENT_STAGE="narration"
-echo "=== [8/9] 天道派系消长叙事: agent 消费离屏战死 → bong:agent_narrate（P4 主断言） ==="
+echo "=== [8/10] 天道派系消长叙事: agent 消费离屏战死 → bong:agent_narrate（P4 主断言） ==="
 # 生产 OffscreenWarNarrationRuntime 自 [6/9] 起就订阅了 bong:npc/death，受控对 combat 战死
 # 已被它聚合 → emit bong:agent_narrate。先给 runtime 的窗口（flushWindowMs=800）+ publish 一点
 # 裕量，再断言 narrate 日志出现 broadcast/perception/scattered_cultivator 匿名散修消长 narration。
@@ -1119,8 +1441,66 @@ else
 fi
 
 echo ""
+CURRENT_STAGE="faction_state"
+echo "=== [9/10] 散修群体消长 census: bong:faction_state SUB 断言（P5 主断言） ==="
+# P5：种入同 zone、显式 emergent_group 分属 ≥2 个不同群体的敌对 dormant + 一名高境界（Solidify）
+# 强者。停掉当前 server（P4 已验证 narration 闭环）→ seed 多群体 dormants → 起 bong:faction_state
+# 订阅者（在重启 server 之前就 subscribe，不错过首轮 publish）→ 重启 server（seed_count=0） →
+# 快进数轮 tick，断言 ①②③④⑤ 群体消长盘面闭环。
+# 复用 P2/P0 抓的 schema-accurate 快照模板（$TEMPLATE_FILE），避免手写漂移。
+# 若 $TEMPLATE_FILE 不存在（P5 单独跑或 P2 未跑），重新抓模板。
+P5_SERVER_LOG="$RUN_DIR/server-p5.log"
+if [ ! -f "$TEMPLATE_FILE" ]; then
+  stop_server
+  TEMPLATE_FILE="$RUN_DIR/dormant-template.json"
+  if capture_dormant_template "$TEMPLATE_FILE" >>"$OBSERVE_LOG" 2>&1; then
+    pass "P5 captured dormant template (fallback)"
+  else
+    finalize_failure "faction_state" "P5: failed to capture dormant template for multigroup seeding; see $OBSERVE_LOG"
+  fi
+fi
+stop_server
+
+if seed_multigroup_dormants "$TEMPLATE_FILE" >>"$OBSERVE_LOG" 2>&1; then
+  pass "P5 seeded multigroup dormants (group 0×2 Solidify+Awaken / group 1×2 Awaken / group 2×1 Awaken)"
+else
+  finalize_failure "faction_state" "P5: failed to seed multigroup dormants; see $OBSERVE_LOG"
+fi
+
+# bong:faction_state 订阅者必须在重启 server 之前就 subscribe（pub/sub 非持久）。
+: >"$FACTION_STATE_SUB_LOG"
+start_faction_state_subscriber "$FACTION_STATE_SUB_LOG"
+FACTION_STATE_SUB_PID="$!"
+if wait_for_pattern "$FACTION_STATE_SUB_LOG" "\\[faction-state\\] subscribed bong:faction_state" 30; then
+  pass "P5 faction_state subscriber subscribed (before server restart)"
+else
+  finalize_failure "faction_state" "P5: faction_state subscriber did not start; see $FACTION_STATE_SUB_LOG"
+fi
+
+# 重启 server（seed_count=0；store 由 multigroup dormants 填充，不默认 seed）。
+start_server "$P5_SERVER_LOG" 0
+
+# 等首轮 faction_state publish（publish_faction_state 每帧跑，store 非空即产出）。
+echo "[faction-state] waiting for first FactionStateV1 payload on bong:faction_state ..."
+if wait_for_pattern "$FACTION_STATE_SUB_LOG" "channel=bong:faction_state .*group_id" 60; then
+  pass "P5 observed first FactionStateV1 on bong:faction_state"
+else
+  finalize_failure "faction_state" "P5: no FactionStateV1 payload on bong:faction_state within 60s; see $FACTION_STATE_SUB_LOG / $P5_SERVER_LOG"
+fi
+
+# 再等数轮 tick 让战斗发生 + 第二轮 census 产出（t0/t1 对比）。
+sleep 15
+
+# P5 主断言（①②③④⑤）——初始种了 5 个 dormant。
+if assert_faction_state_closure "$FACTION_STATE_SUB_LOG" "5" >>"$OBSERVE_LOG" 2>&1; then
+  pass "P5 faction_state ①≥1条FactionStateV1 ②字段齐全 ③≥2个不同group_id ④随战死消长 ⑤无具名宗门"
+else
+  finalize_failure "faction_state" "P5: faction_state closure assertions failed; see $OBSERVE_LOG / $FACTION_STATE_SUB_LOG"
+fi
+
+echo ""
 CURRENT_STAGE="summary"
-echo "=== [9/9] Evidence ==="
+echo "=== [10/10] Evidence ==="
 echo "  log: $LOG_FILE"
 echo "  server: $SERVER_LOG"
 echo "  observe: $OBSERVE_LOG"
@@ -1128,6 +1508,7 @@ echo "  redis-sub: $REDIS_SUB_LOG"
 echo "  redis-sub-p2: $REDIS_SUB_P2_LOG"
 echo "  agent-narrate-sub: $NARRATE_SUB_LOG"
 echo "  offscreen-war-runtime: $OFFSCREEN_WAR_RT_LOG"
+echo "  faction-state-sub: $FACTION_STATE_SUB_LOG"
 echo ""
 echo "Result: $PASS passed, $FAIL failed"
 

@@ -24,15 +24,16 @@ use crate::schema::channels::{
     CH_BONE_COIN_TICK, CH_BOTANY_ECOLOGY, CH_BREAKTHROUGH_CINEMATIC, CH_BREAKTHROUGH_EVENT,
     CH_COMBAT_REALTIME, CH_COMBAT_SUMMARY, CH_CULTIVATION_DEATH, CH_DEATH_CINEMATIC,
     CH_DEATH_INSIGHT, CH_DUGU_POISON_PROGRESS, CH_DUGU_V2_CAST, CH_DUGU_V2_REVERSE,
-    CH_DUGU_V2_SELF_CURE, CH_DUO_SHE_EVENT, CH_FACTION_EVENT, CH_FORGE_EVENT, CH_FORGE_OUTCOME,
-    CH_FORGE_START, CH_HEART_DEMON_OFFER, CH_HEART_DEMON_REQUEST, CH_HIGH_RENOWN_MILESTONE,
-    CH_INSIGHT_OFFER, CH_INSIGHT_REQUEST, CH_LIFESPAN_EVENT, CH_NPC_COMBAT, CH_NPC_DEATH,
-    CH_NPC_RELIC, CH_NPC_SPAWN, CH_PLAYER_CHAT, CH_POISON_DOSE_EVENT, CH_POISON_OVERDOSE_EVENT,
-    CH_POI_NOVICE_EVENT, CH_PRICE_INDEX, CH_PSEUDO_VEIN_ACTIVE, CH_PSEUDO_VEIN_DISSIPATE,
-    CH_RAT_PHASE_EVENT, CH_REBIRTH, CH_SEASON_CHANGED, CH_SKILL_CAP_CHANGED, CH_SKILL_LV_UP,
-    CH_SKILL_SCROLL_USED, CH_SKILL_XP_GAIN, CH_SOCIAL_EXPOSURE, CH_SOCIAL_FEUD,
-    CH_SOCIAL_NICHE_INTRUSION, CH_SOCIAL_PACT, CH_SOCIAL_RENOWN_DELTA, CH_SPIRIT_EYE_DISCOVERED,
-    CH_SPIRIT_EYE_MIGRATE, CH_SPIRIT_EYE_USED_FOR_BREAKTHROUGH, CH_SPIRIT_TREASURE_DIALOGUE,
+    CH_DUGU_V2_SELF_CURE, CH_DUO_SHE_EVENT, CH_FACTION_EVENT, CH_FACTION_STATE, CH_FORGE_EVENT,
+    CH_FORGE_OUTCOME, CH_FORGE_START, CH_HEART_DEMON_OFFER, CH_HEART_DEMON_REQUEST,
+    CH_HIGH_RENOWN_MILESTONE, CH_INSIGHT_OFFER, CH_INSIGHT_REQUEST, CH_LIFESPAN_EVENT,
+    CH_NPC_COMBAT, CH_NPC_DEATH, CH_NPC_RELIC, CH_NPC_SPAWN, CH_PLAYER_CHAT, CH_POISON_DOSE_EVENT,
+    CH_POISON_OVERDOSE_EVENT, CH_POI_NOVICE_EVENT, CH_PRICE_INDEX, CH_PSEUDO_VEIN_ACTIVE,
+    CH_PSEUDO_VEIN_DISSIPATE, CH_RAT_PHASE_EVENT, CH_REBIRTH, CH_SEASON_CHANGED,
+    CH_SKILL_CAP_CHANGED, CH_SKILL_LV_UP, CH_SKILL_SCROLL_USED, CH_SKILL_XP_GAIN,
+    CH_SOCIAL_EXPOSURE, CH_SOCIAL_FEUD, CH_SOCIAL_NICHE_INTRUSION, CH_SOCIAL_PACT,
+    CH_SOCIAL_RENOWN_DELTA, CH_SPIRIT_EYE_DISCOVERED, CH_SPIRIT_EYE_MIGRATE,
+    CH_SPIRIT_EYE_USED_FOR_BREAKTHROUGH, CH_SPIRIT_TREASURE_DIALOGUE,
     CH_SPIRIT_TREASURE_DIALOGUE_REQUEST, CH_STYLE_BALANCE_TELEMETRY, CH_TRIBULATION,
     CH_TRIBULATION_COLLAPSE, CH_TRIBULATION_LOCK, CH_TRIBULATION_OMEN, CH_TRIBULATION_SETTLE,
     CH_TRIBULATION_WAVE, CH_TSY_EVENT, CH_TUIKE_SHED, CH_TUIKE_V2_SKILL_EVENT,
@@ -67,7 +68,8 @@ use crate::schema::identity::WantedPlayerEventV1;
 use crate::schema::lingtian_weather::WeatherEventUpdateV1;
 use crate::schema::narration::NarrationV1;
 use crate::schema::npc::{
-    DormantCombatOutcomeV1, FactionEventV1, NpcDeathV1, NpcSpawnedV1, PendingDormantRelicV1,
+    DormantCombatOutcomeV1, FactionEventV1, FactionStateV1, NpcDeathV1, NpcSpawnedV1,
+    PendingDormantRelicV1,
 };
 use crate::schema::poi_novice::{PoiSpawnedEventV1, TrespassEventV1};
 use crate::schema::poison_trait::{PoisonDoseEventV1, PoisonOverdoseEventV1};
@@ -174,6 +176,8 @@ pub enum RedisOutbound {
     /// plan-offscreen-war-v1 P3：克制式战场遗物创建 telemetry（`bong:npc/relic`，零真元）。
     PendingDormantRelic(PendingDormantRelicV1),
     FactionEvent(FactionEventV1),
+    /// plan-offscreen-war-v1 P5：散修群体消长盘面 telemetry（`bong:faction_state`，纯观测、零真元）。
+    FactionState(FactionStateV1),
     ZonePressureCrossed(ZonePressureCrossedV1),
     RatPhaseEvent(RatPhaseChangeEvent),
     BotanyEcology(BotanyEcologySnapshotV1),
@@ -924,6 +928,15 @@ fn prepare_outbound_command(message: RedisOutbound) -> Result<RedisIoCommand, Va
             })?;
             Ok(RedisIoCommand::Publish {
                 channel: CH_FACTION_EVENT,
+                payload,
+            })
+        }
+        RedisOutbound::FactionState(evt) => {
+            let payload = serde_json::to_string(&evt).map_err(|error| {
+                ValidationError::new(format!("failed to serialize FactionStateV1: {error}"))
+            })?;
+            Ok(RedisIoCommand::Publish {
+                channel: CH_FACTION_STATE,
                 payload,
             })
         }
@@ -3164,6 +3177,72 @@ mod redis_bridge_tests {
             }
             other => panic!(
                 "PendingDormantRelic must produce a Publish command; got {other:?} — switching the route to HashReplace/Fanout would break P3 relic observation"
+            ),
+        }
+    }
+
+    #[test]
+    fn publishes_faction_state_on_faction_state_channel() {
+        // plan-offscreen-war-v1 P5：散修群体消长盘面 telemetry 必须落在专属 CH_FACTION_STATE
+        // （bong:faction_state）频道，且 payload 无损 roundtrip——观测脚本据此读 group_id /
+        // population / status / strongest_*。路由错频道或 status 序列化丢失都会让群体消长观测断链。
+        let state = prepare_outbound_command(RedisOutbound::FactionState(FactionStateV1 {
+            v: 1,
+            kind: "faction_state".to_string(),
+            group_id: 2,
+            region_descriptor: "rift_valley一带散修".to_string(),
+            population: 7,
+            status: crate::npc::faction::GroupStatus::Waning,
+            dominant_zone: "rift_valley".to_string(),
+            strongest_realm: "Solidify".to_string(),
+            strongest_char_id: "dormant:rogue:3".to_string(),
+            at_tick: 4321,
+        }))
+        .expect("FactionStateV1 payload should serialize");
+        match state {
+            RedisIoCommand::Publish { channel, payload } => {
+                assert_eq!(
+                    channel, CH_FACTION_STATE,
+                    "群体消长盘面 telemetry 必须路由到 bong:faction_state（CH_FACTION_STATE），\
+                     否则观测脚本订阅不到散修群体消长"
+                );
+                let v: Value = serde_json::from_str(payload.as_str())
+                    .expect("faction_state publish payload must be valid JSON");
+                assert_eq!(
+                    v["kind"], "faction_state",
+                    "kind tag must survive so downstream can discriminate payload type; got {}",
+                    v["kind"]
+                );
+                assert_eq!(
+                    v["group_id"].as_u64(),
+                    Some(2),
+                    "group_id must round-trip as a bare u16 number (anonymous group id, no named sect); got {}",
+                    v["group_id"]
+                );
+                assert_eq!(
+                    v["status"], "waning",
+                    "status must serialize as the snake_case GroupStatus string (waning here); got {}",
+                    v["status"]
+                );
+                assert_eq!(
+                    v["region_descriptor"], "rift_valley一带散修",
+                    "region_descriptor must round-trip as the anonymous \"{{zone}}一带散修\" descriptor; got {}",
+                    v["region_descriptor"]
+                );
+                assert_eq!(
+                    v["strongest_realm"], "Solidify",
+                    "strongest_realm must round-trip as the emergent strongest's realm label; got {}",
+                    v["strongest_realm"]
+                );
+                assert_eq!(
+                    v["population"].as_u64(),
+                    Some(7),
+                    "population must round-trip as u32; got {}",
+                    v["population"]
+                );
+            }
+            other => panic!(
+                "FactionState must produce a Publish command; got {other:?} — switching the route to HashReplace/Fanout would break P5 群体消长 observation"
             ),
         }
     }

@@ -103,6 +103,45 @@ export const FactionEventV1 = Type.Object(
 );
 export type FactionEventV1 = Static<typeof FactionEventV1>;
 
+/**
+ * plan-offscreen-war-v1 P5：散修群体消长三态（reframe b）。
+ * rising / stable / waning 与 server GroupStatus snake_case wire 一一对应。
+ */
+export const GroupStatusV1 = Type.Union([
+  Type.Literal("rising"),
+  Type.Literal("stable"),
+  Type.Literal("waning"),
+]);
+export type GroupStatusV1 = Static<typeof GroupStatusV1>;
+
+/**
+ * plan-offscreen-war-v1 P5：散修群体消长盘面 telemetry（`bong:faction_state`，reframe b）。
+ *
+ * 逐字段对齐 server `FactionStateV1` serde：
+ * - `v`：u8 序列化为数字 → Literal(1)
+ * - `group_id`：u16 → Integer({ minimum: 0 })（TypeBox Integer 不限 max，上层合规校验由 server 保证）
+ * - `population`：u32 → Integer({ minimum: 0 })
+ * - `status`：GroupStatus snake_case enum → GroupStatusV1 union
+ * - `at_tick`：u64 → Number({ minimum: 0 })（JS 安全整数范围内的 u64）
+ * - `additionalProperties: false` 与 server serde `deny_unknown_fields` 等价
+ */
+export const FactionStateV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    kind: Type.Literal("faction_state"),
+    group_id: Type.Integer({ minimum: 0 }),
+    region_descriptor: Type.String({ minLength: 1 }),
+    population: Type.Integer({ minimum: 0 }),
+    status: GroupStatusV1,
+    dominant_zone: Type.String({ minLength: 1 }),
+    strongest_realm: Type.String(),
+    strongest_char_id: Type.String(),
+    at_tick: Type.Number({ minimum: 0 }),
+  },
+  { additionalProperties: false },
+);
+export type FactionStateV1 = Static<typeof FactionStateV1>;
+
 export function validateNpcSpawnedV1Contract(data: unknown): ValidationResult {
   return validate(NpcSpawnedV1, data);
 }
@@ -113,4 +152,8 @@ export function validateNpcDeathV1Contract(data: unknown): ValidationResult {
 
 export function validateFactionEventV1Contract(data: unknown): ValidationResult {
   return validate(FactionEventV1, data);
+}
+
+export function validateFactionStateV1Contract(data: unknown): ValidationResult {
+  return validate(FactionStateV1, data);
 }
