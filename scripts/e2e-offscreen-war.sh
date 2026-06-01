@@ -464,6 +464,12 @@ function makeCombatant(charId, factionId, pos) {
   } else {
     snap.faction.faction_id = factionId;
   }
+  // P5：删掉模板继承的 emergent_group，让这对走 **faction 派生**（Attack→0 / Defend→1，
+  // are_hostile 经 effective_group 迁移回退成立）——精确覆盖"旧持久化快照无 emergent_group"
+  // 的迁移场景，与 [9/10] 段显式 emergent_group 路径互补。**必须删**：模板抓自 P5 默认 seed 的
+  // rogue（已带 emergent_group 裸数字），两份深拷贝会继承**同一** emergent_group → effective_group
+  // 显式优先 → 同组 → are_hostile=false → 不开战（这正是首轮 e2e [6/10] 卡 120s 的根因）。
+  delete snap.emergent_group;
   // P3：archetype 设 Disciple，让战死者**克制判定通过**（should_leave_relic 经 archetype 分支）→
   // 战死 emit PendingDormantRelicCreated → 持久层落盘 + bong:npc/relic telemetry。
   // （这对也有 faction，本就经 faction 分支 eligible；显式设 Disciple 对齐 plan §150 "含
@@ -805,8 +811,10 @@ function makeMember(charId, group, realm, qi) {
   // 显式 emergent_group：裸数字（serde transparent u16）。
   snap.emergent_group = group;
   snap.archetype = "rogue";
-  // 境界：用字符串 tag（serde rename_all snake_case），对应 Realm enum。
-  // census strongest 走 realm_ordinal：awaken=0 / induce=1 / condense=2 / solidify=3 / void=4。
+  // 境界：用 **PascalCase** 字符串 tag——`Realm` enum serde 是**默认 PascalCase**（`Awaken`/
+  // `Solidify`…），**不是** snake_case（首轮 e2e [9/10] 全 5 个 dormant 因小写 realm 被
+  // `unknown variant 'awaken'` 拒、store 空、无 census → 卡 60s 的根因）。
+  // census strongest 走 realm_ordinal：Awaken=0 / Induce=1 / Condense=2 / Solidify=3 / Void=4。
   snap.cultivation = Object.assign({}, snap.cultivation, {
     realm: realm,
     qi_current: qi,
@@ -841,11 +849,11 @@ function makeMember(charId, group, realm, qi) {
 // └ group 2：dormant:p5:g2:a（Awaken，qi=5）— 第三群体（验证 ≥2 不同 emergent_group 覆盖）
 // 敌对：group 0 ≠ group 1 ≠ group 2 → 任意两组均 are_hostile（§十灵气零和），同 zone 必会开战。
 const members = [
-  makeMember("dormant:p5:g0:strong", 0, "solidify", 20.0),  // group 0 涌现强者
-  makeMember("dormant:p5:g0:weak",   0, "awaken",   5.0),   // group 0 普通成员
-  makeMember("dormant:p5:g1:a",      1, "awaken",   5.0),   // group 1 成员 A
-  makeMember("dormant:p5:g1:b",      1, "awaken",   5.0),   // group 1 成员 B
-  makeMember("dormant:p5:g2:a",      2, "awaken",   5.0),   // group 2（第三群体）
+  makeMember("dormant:p5:g0:strong", 0, "Solidify", 20.0),  // group 0 涌现强者
+  makeMember("dormant:p5:g0:weak",   0, "Awaken",   5.0),   // group 0 普通成员
+  makeMember("dormant:p5:g1:a",      1, "Awaken",   5.0),   // group 1 成员 A
+  makeMember("dormant:p5:g1:b",      1, "Awaken",   5.0),   // group 1 成员 B
+  makeMember("dormant:p5:g2:a",      2, "Awaken",   5.0),   // group 2（第三群体）
 ];
 
 await client.del("bong:npc/dormant");
@@ -1013,10 +1021,33 @@ for (const [gid, rounds] of byGroup) {
   if (tLast < t0) populationDropFound = true;
   if (latestStatus === "waning") waningFound = true;
 }
+// **群体灭绝消长**（关键）：整组被打绝（人口→0）时该组停发 census（空组不 publish），故各组
+// 的 t0/tLast 看不出"掉到 0"——离屏战场战死过快，整组常在两帧间从 N 直接灭绝、跳过 N-1。
+// 因此再按 at_tick 聚合**每帧存活总人口 + 群体数**：最新帧 < 最早帧即消长（灭绝是最强信号）。
+const byTick = new Map(); // at_tick -> { total, groups:Set }
+for (const s of allStates) {
+  const t = s.at_tick ?? 0;
+  if (!byTick.has(t)) byTick.set(t, { total: 0, groups: new Set() });
+  const e = byTick.get(t);
+  e.total += s.population;
+  e.groups.add(s.group_id);
+}
+const sortedTicks = [...byTick.keys()].sort((a, b) => a - b);
+const earliest = byTick.get(sortedTicks[0]);
+const latest = byTick.get(sortedTicks[sortedTicks.length - 1]);
+const totalPopDrop = latest.total < earliest.total;     // 总存活人口下降（含灭绝）
+const groupExtinct = latest.groups.size < earliest.groups.size; // 群体数下降 = 有组灭绝
 // 同 group_id 有 ≥2 轮时判人口下降；只有 1 轮时判 waning（status 来自 assign_status 与 last census 比对）。
 const hasMultiRound = [...byGroup.values()].some((r) => r.length >= 2);
-console.log(`[faction-state] pop_report: ${popReport.join(" | ")} multi_round=${hasMultiRound} pop_drop=${populationDropFound} waning=${waningFound}`);
-if (!populationDropFound && !waningFound) {
+console.log(
+  `[faction-state] pop_report: ${popReport.join(" | ")} multi_round=${hasMultiRound} ` +
+  `pop_drop=${populationDropFound} waning=${waningFound} | ` +
+  `total_pop t0=${earliest.total}(tick${sortedTicks[0]}) t_last=${latest.total}(tick${sortedTicks[sortedTicks.length - 1]}) total_drop=${totalPopDrop} | ` +
+  `groups t0=${earliest.groups.size} t_last=${latest.groups.size} extinct=${groupExtinct}`
+);
+// 消长 = 任一信号：某组渐进掉人 / waning / 总人口下降 / 群体灭绝。
+const xiaozhangFound = populationDropFound || waningFound || totalPopDrop || groupExtinct;
+if (!xiaozhangFound) {
   const initialPop = Number(process.env.INITIAL_POP) || 5;
   // 最后兜底：如果 server 处于早期（战斗还没开打），允许只有 Rising（首轮没历史），
   // 但只要 census 已产出（①③已过）且字段完整（②已过），就用"初始种了 N 个"标记通过（
@@ -1039,7 +1070,7 @@ if (!populationDropFound && !waningFound) {
     process.exit(5);
   }
 } else {
-  console.log(`[faction-state] PASS ④: 检测到随战死的群体消长（pop_drop=${populationDropFound} waning=${waningFound}）`);
+  console.log(`[faction-state] PASS ④: 检测到随战死的群体消长（pop_drop=${populationDropFound} waning=${waningFound} total_drop=${totalPopDrop} extinct=${groupExtinct}）`);
 }
 
 // ⑤ reframe b 硬约束：region_descriptor 绝不含具名宗门字样。
