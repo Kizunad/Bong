@@ -34,7 +34,8 @@ use crate::cultivation::lifespan::{
 };
 use crate::cultivation::meridian::severed::MeridianSeveredPermanent;
 use crate::npc::faction::{
-    FactionId, FactionMembership, FactionRank, FactionStore, MissionQueue, Reputation,
+    EmergentGroupId, FactionId, FactionMembership, FactionRank, FactionStore, MissionQueue,
+    Reputation, EMERGENT_GROUP_COUNT,
 };
 use crate::npc::lifecycle::{NpcArchetype, NpcDeathNotice, NpcDeathReason, NpcLifespan};
 use crate::npc::loot::default_loot_for_archetype;
@@ -285,6 +286,14 @@ pub struct NpcDormantSnapshot {
     pub life_record: LifeRecord,
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub faction: Option<FactionMembership>,
+    /// plan-offscreen-war-v1 P5 reframe b：该 dormant 散修所属的涌现群体（匿名稳定 id）。
+    ///
+    /// 离屏战斗敌对判定的群体身份来源（§十灵气零和：不同群体争同 zone 灵气即敌对）。
+    /// `#[serde(default)]` 让缺此字段的**旧持久化快照**反序列化为 `None`——届时由
+    /// [`effective_group`] 回退 `faction` 派生（Attack→0 / Defend→1 / Neutral→None），
+    /// 保证非破坏迁移。
+    #[serde(default)]
+    pub emergent_group: Option<EmergentGroupId>,
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub patrol: Option<DormantPatrolSnapshot>,
     #[serde(skip_serializing_if = "Option::is_none", default)]
@@ -1219,6 +1228,38 @@ fn seed_rogue_faction(char_id: &str) -> FactionMembership {
     }
 }
 
+/// `deterministic_hash` 的固定 salt——把 char_id 散布到涌现群体（plan-offscreen-war-v1 P5
+/// reframe b）。与 `seed_rogue_faction` 的 salt=0 错开，让群体分派独立于 Attack/Defend 二分，
+/// 故同一批 char_id 能覆盖 ≥3 个不同群体（解锁多群体互殴），而非只塌成 2 组。
+const GROUP_SALT: u64 = 0x5052_4F47_5F47_5250; // "PROG_GRP" 字面，仅作具名常量避免裸 magic
+
+/// 把一个 char_id 确定性散布到某个涌现群体（plan-offscreen-war-v1 P5 reframe b）。
+///
+/// 用与 RNG 同源的 [`deterministic_hash`]（salt=[`GROUP_SALT`]）取模 [`EMERGENT_GROUP_COUNT`]，
+/// 保证同 char_id 跨重启稳定分到同一群体（否则重启后离屏敌对关系漂移）。
+fn seed_emergent_group(char_id: &str) -> EmergentGroupId {
+    let group = (deterministic_hash(char_id, GROUP_SALT) % EMERGENT_GROUP_COUNT as u64) as u16;
+    EmergentGroupId(group)
+}
+
+/// 离屏统一群体身份解析（plan-offscreen-war-v1 P5 reframe b）。
+///
+/// 显式 `emergent_group` 优先；缺失（旧持久化快照）时回退 `faction` 派生
+/// （`FactionStore::emergent_group_from_faction`：Attack→0 / Defend→1 / Neutral→None）。
+/// 非破坏迁移的单一入口——`collect_zone_combat_pairs` 与下游配对都经此解析群体身份，
+/// 既支持新快照的显式群体，也让旧快照零迁移仍能配对。
+pub(crate) fn effective_group(
+    snapshot: &NpcDormantSnapshot,
+    faction_store: &FactionStore,
+) -> Option<EmergentGroupId> {
+    snapshot.emergent_group.or_else(|| {
+        snapshot
+            .faction
+            .as_ref()
+            .and_then(|f| faction_store.emergent_group_from_faction(f.faction_id))
+    })
+}
+
 fn dormant_rogue_seed_snapshot(
     zone: &crate::world::zone::Zone,
     index: u32,
@@ -1265,8 +1306,11 @@ fn dormant_rogue_seed_snapshot(
         death_registry: DeathRegistry::new(char_id.clone()),
         life_record: LifeRecord::new(char_id.clone()),
         // plan-offscreen-war-v1 P0 #1：赋派系（Attack/Defend 二分），保证 is_hostile_pair
-        // 在 P1/P2 能配出敌对对。具名势力留 P5。
+        // 在 P1/P2 能配出敌对对。
         faction: Some(seed_rogue_faction(char_id.as_str())),
+        // plan-offscreen-war-v1 P5 reframe b：同时赋涌现群体（>2 群体散布），离屏战斗敌对
+        // 改走「不同群体即敌对」（§十灵气零和）。保留上面的 faction 二分不破坏 P0/P1 迁移路径。
+        emergent_group: Some(seed_emergent_group(char_id.as_str())),
         patrol,
         loot_table: Some(default_loot_for_archetype(archetype)),
         guardian_relic: None,
@@ -1683,6 +1727,9 @@ mod tests {
             death_registry: DeathRegistry::new(char_id),
             life_record: LifeRecord::new(char_id),
             faction: None,
+            // 显式群体留空：走 effective_group 的 faction 派生回退路径（这里 faction=None ⇒
+            // 群体 None ⇒ 不参战），顺带覆盖非破坏迁移分支。
+            emergent_group: None,
             patrol: None,
             loot_table: None,
             guardian_relic: None,
@@ -2598,6 +2645,57 @@ mod tests {
         );
     }
 
+    // ── plan-offscreen-war-v1 P5 reframe b：seed 涌现群体散布 ──────────────────
+
+    #[test]
+    fn seed_emergent_group_is_deterministic_per_char_id() {
+        // 同 char_id 跨调用必须分到同一群体（否则重启后离屏敌对关系漂移）。
+        let a = seed_emergent_group("dormant:rogue:42");
+        let b = seed_emergent_group("dormant:rogue:42");
+        assert_eq!(
+            a, b,
+            "同 char_id 必须确定性散布到同一涌现群体，否则重启后敌对关系漂移"
+        );
+    }
+
+    #[test]
+    fn seed_emergent_group_distribution_covers_at_least_three_groups() {
+        // reframe b 解锁 >2 群体互殴：256 个 char_id 的 emergent_group 必须覆盖 ≥3 个不同群体，
+        // 否则散修永远塌成 ≤2 组、退回 P1 的 2-faction 上限。同时每个群体 id < EMERGENT_GROUP_COUNT。
+        let mut groups = std::collections::BTreeSet::new();
+        for index in 0..256u32 {
+            let g = seed_emergent_group(&format!("dormant:rogue:{index}"));
+            assert!(
+                g.0 < EMERGENT_GROUP_COUNT,
+                "seed group id {} must be < EMERGENT_GROUP_COUNT {EMERGENT_GROUP_COUNT}",
+                g.0
+            );
+            groups.insert(g.0);
+        }
+        assert!(
+            groups.len() >= 3,
+            "256 char_ids must spread across at least 3 distinct emergent groups to unlock >2-group melee (reframe b §十); only saw {} group(s): {:?}",
+            groups.len(),
+            groups
+        );
+    }
+
+    #[test]
+    fn dormant_rogue_seed_snapshot_assigns_explicit_emergent_group() {
+        // 防回归：seed 出来的 dormant rogue 必须带显式 emergent_group（非 None），
+        // 否则离屏战斗回退 faction 派生、退化成 2 群体上限。
+        let zone = zone();
+        let snapshot = dormant_rogue_seed_snapshot(&zone, 0, 0, 0, 0.8);
+        let group = snapshot
+            .emergent_group
+            .expect("seeded dormant rogue 必须带显式 emergent_group，不能是 None");
+        assert!(
+            group.0 < EMERGENT_GROUP_COUNT,
+            "seed emergent group id {} must be < EMERGENT_GROUP_COUNT {EMERGENT_GROUP_COUNT}",
+            group.0
+        );
+    }
+
     // ── plan-offscreen-war-v1 P2：离屏派系互殴战死闭环（饱和单测） ─────────────
     //
     // 测契约不测实现：断言 store 人口回写 / 真元守恒回灌 / death notice 死因 / telemetry
@@ -2652,6 +2750,9 @@ mod tests {
                 lineage: None,
                 mission_queue: MissionQueue::default(),
             }),
+            // 显式群体留空：combat 候选默认走 faction 派生（Attack→0 / Defend→1），覆盖
+            // 非破坏迁移路径；需要显式群体的测试单独 set 该字段。
+            emergent_group: None,
             patrol: None,
             loot_table: None,
             guardian_relic: None,

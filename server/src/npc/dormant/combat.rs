@@ -23,7 +23,10 @@
 // combat phase（`run_dormant_combat_phase`）真实消费，P1 时期的 `#![allow(dead_code)]` 豁免
 // 已移除——接口先于实现锁定，饱和单测全面覆盖，接入后未改任何测试。
 
-use super::{deterministic_hash, NpcDormantSnapshot, NpcDormantStore, NpcVirtualizationConfig};
+use super::{
+    deterministic_hash, effective_group, NpcDormantSnapshot, NpcDormantStore,
+    NpcVirtualizationConfig,
+};
 use crate::combat::components::{DerivedAttrs, Wounds};
 use crate::cultivation::breakthrough::{RollSource, XorshiftRoll};
 use crate::cultivation::components::Realm;
@@ -131,10 +134,15 @@ pub fn collect_zone_combat_pairs(
         while index + 1 < candidates.len() && zone_pair_count < max_pairs {
             let a = candidates[index];
             let b = candidates[index + 1];
-            match (a.faction.as_ref(), b.faction.as_ref()) {
-                (Some(fa), Some(fb))
-                    if faction_store.is_hostile_pair(fa.faction_id, fb.faction_id) =>
-                {
+            // plan-offscreen-war-v1 P5 reframe b：敌对判定改走涌现群体身份——双方都解析出
+            // 群体（effective_group：显式优先、否则 faction 派生）且 `are_hostile`（不同群体）
+            // 才成对（§十灵气零和）。取代 P1 `is_hostile_pair` 的 Attack↔Defend 2-faction 上限，
+            // 天然支持 >2 群体互殴；群体 None（如旧 Neutral 散修）进不了配对、仍非战斗。
+            match (
+                effective_group(a, faction_store),
+                effective_group(b, faction_store),
+            ) {
+                (Some(ga), Some(gb)) if faction_store.are_hostile(ga, gb) => {
                     // 规范化为 char_id 升序（candidates 已升序，a < b 恒成立）。
                     pairs.push((a.char_id.clone(), b.char_id.clone()));
                     zone_pair_count += 1;
@@ -297,6 +305,9 @@ mod tests {
             death_registry: crate::cultivation::lifespan::DeathRegistry::new(char_id.to_string()),
             life_record: crate::cultivation::life_record::LifeRecord::new(char_id.to_string()),
             faction: faction.map(membership),
+            // 默认无显式群体：走 effective_group 的 faction 派生回退（Attack→0/Defend→1/
+            // Neutral→None），让既有配对测试零改动通过；显式群体测试单独 set 该字段。
+            emergent_group: None,
             patrol: None,
             loot_table: None,
             guardian_relic: None,
@@ -554,6 +565,87 @@ mod tests {
                 ("c".to_string(), "d".to_string()),
             ],
             "four alternating Attack/Defend should form two disjoint pairs (a,b)+(c,d), got {pairs:?}"
+        );
+    }
+
+    // ───────── plan-offscreen-war-v1 P5 reframe b：显式涌现群体（>2 群体互殴） ─────────
+
+    use crate::npc::faction::EmergentGroupId;
+
+    #[test]
+    fn three_explicit_groups_in_zone_all_cross_group_pairs_are_hostile() {
+        // 三个**显式** emergent_group（0/1/2）同 zone，验证 >2 群体互殴：跨组对全敌对。
+        // 升序 a(组0) b(组1) c(组2)：升序两两扫先配 a-b（异组成对，跳到 c），c 落单 ⇒ 一对。
+        // 关键：a-b 能成对**仅因为显式群体不同**——faction 全 None，若还走旧 is_hostile_pair
+        // 路径则永远配不出（None faction），故此测试同时锁住"敌对判定改走 emergent_group"。
+        let mut a = snapshot("a", "z", Realm::Induce, None);
+        let mut b = snapshot("b", "z", Realm::Induce, None);
+        let mut c = snapshot("c", "z", Realm::Induce, None);
+        a.emergent_group = Some(EmergentGroupId(0));
+        b.emergent_group = Some(EmergentGroupId(1));
+        c.emergent_group = Some(EmergentGroupId(2));
+        let store = store_with(vec![a, b, c]);
+        let factions = FactionStore::default();
+        let pairs = collect_zone_combat_pairs(&store, &factions, &config_with_max(5));
+        assert_eq!(
+            pairs,
+            vec![("a".to_string(), "b".to_string())],
+            "three distinct explicit emergent groups (0/1/2) with faction=None must still pair across groups via are_hostile (ascending scan binds a-b first, leaving c). got {pairs:?}"
+        );
+        // 把 max 提到能配多对，再确认跨组确实两两敌对：现在加一个组1的 d 让 c 有异组对手。
+        let mut a2 = snapshot("a", "z", Realm::Induce, None);
+        let mut b2 = snapshot("b", "z", Realm::Induce, None);
+        let mut c2 = snapshot("c", "z", Realm::Induce, None);
+        let mut d2 = snapshot("d", "z", Realm::Induce, None);
+        a2.emergent_group = Some(EmergentGroupId(0));
+        b2.emergent_group = Some(EmergentGroupId(1));
+        c2.emergent_group = Some(EmergentGroupId(2));
+        d2.emergent_group = Some(EmergentGroupId(0));
+        let store2 = store_with(vec![a2, b2, c2, d2]);
+        let pairs2 = collect_zone_combat_pairs(&store2, &factions, &config_with_max(5));
+        assert_eq!(
+            pairs2,
+            vec![
+                ("a".to_string(), "b".to_string()),
+                ("c".to_string(), "d".to_string()),
+            ],
+            "with groups 0,1,2,0 ascending (a,b,c,d), cross-group pairs (a∈0 vs b∈1)+(c∈2 vs d∈0) must both form — proving >2 groups all fight each other. got {pairs2:?}"
+        );
+    }
+
+    #[test]
+    fn explicit_group_overrides_faction_derivation() {
+        // 显式 emergent_group 优先于 faction 派生：两个 NPC 都 faction=Attack（派生同为组0，
+        // 旧路径 ⇒ 不敌对），但显式群体 2 vs 1（不同）⇒ are_hostile ⇒ 成对。
+        // 用群体 2（不用 0）确保不与 Attack 的派生值 0 巧合相等，精确锁住"显式覆盖派生"。
+        let mut a = snapshot("a", "z", Realm::Induce, Some(FactionId::Attack));
+        let mut b = snapshot("b", "z", Realm::Induce, Some(FactionId::Attack));
+        a.emergent_group = Some(EmergentGroupId(2));
+        b.emergent_group = Some(EmergentGroupId(1));
+        let store = store_with(vec![a, b]);
+        let factions = FactionStore::default();
+        let pairs = collect_zone_combat_pairs(&store, &factions, &config_with_max(3));
+        assert_eq!(
+            pairs,
+            vec![("a".to_string(), "b".to_string())],
+            "both NPCs have faction=Attack (would derive to group 0 ⇒ same ⇒ no fight), but explicit emergent_group 2 vs 1 must override the derivation and make them hostile. got {pairs:?}"
+        );
+    }
+
+    #[test]
+    fn same_explicit_group_is_not_hostile() {
+        // 同显式群体不敌对：两个 NPC 都 emergent_group=2（即便 faction 不同）⇒ 不成对。
+        // 用 Attack/Defend 不同 faction 故意制造"旧路径会敌对"的反差，确认现在按群体身份判定。
+        let mut a = snapshot("a", "z", Realm::Induce, Some(FactionId::Attack));
+        let mut b = snapshot("b", "z", Realm::Induce, Some(FactionId::Defend));
+        a.emergent_group = Some(EmergentGroupId(2));
+        b.emergent_group = Some(EmergentGroupId(2));
+        let store = store_with(vec![a, b]);
+        let factions = FactionStore::default();
+        let pairs = collect_zone_combat_pairs(&store, &factions, &config_with_max(3));
+        assert!(
+            pairs.is_empty(),
+            "two NPCs in the SAME explicit emergent group (both 2) must NOT be hostile even though their factions (Attack/Defend) would have been hostile under the old path; got {pairs:?}"
         );
     }
 

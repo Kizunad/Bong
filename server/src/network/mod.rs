@@ -3139,6 +3139,7 @@ mod tests {
                 death_registry: crate::cultivation::lifespan::DeathRegistry::new(char_id),
                 life_record: LifeRecord::new(char_id),
                 faction: None,
+                emergent_group: None,
                 patrol: None,
                 loot_table: None,
                 guardian_relic: None,

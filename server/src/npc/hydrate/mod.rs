@@ -291,6 +291,10 @@ pub fn dehydrate_far_npcs_system(
                     .cloned()
                     .unwrap_or_else(|| LifeRecord::new(lifecycle.character_id.clone())),
                 faction: faction.cloned(),
+                // plan-offscreen-war-v1 P5 reframe b：dehydration 暂不携带显式群体——离屏
+                // 战斗用 effective_group 回退 faction 派生（commit 1 范围）。ECS 层的群体身份
+                // 同步（live→dormant 往返）留后续；None 保非破坏。
+                emergent_group: None,
                 patrol: patrol_snapshot,
                 loot_table: loot_tables
                     .get(entity)
@@ -723,6 +727,7 @@ mod tests {
             death_registry: DeathRegistry::new(char_id),
             life_record: LifeRecord::new(char_id),
             faction: None,
+            emergent_group: None,
             patrol: None,
             loot_table: None,
             guardian_relic: None,
@@ -941,6 +946,7 @@ mod tests {
                 lineage: None,
                 mission_queue: crate::npc::faction::MissionQueue::default(),
             }),
+            emergent_group: None,
             patrol: None,
             loot_table: None,
             guardian_relic: None,
