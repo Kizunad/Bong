@@ -294,16 +294,40 @@ PR-1(P0 底盘+bootstrap) → PR-2(P1 纯逻辑) → PR-3(P2 战死闭环+真服
 
 > 全部 P ✅ + 本节填完后，由 `/consume-plan` 或人工 `git mv` 入 `docs/finished_plans/`。
 
-**落地清单**：（每阶段对应真实模块/文件路径，待填）
+**落地清单**：
+- **P0**（可观测+确定性+派系 bootstrap，PR-1）：`server/src/npc/dormant/mod.rs`（`BONG_DORMANT_TICK_INTERVAL`/`BONG_SIM_SEED` env、seed 赋 `FactionMembership`）；`server/src/schema/channels.rs` `bong:qi/ledger`；`NpcDeathNotice`+`from_dormant_combat`/`pos`（`lifecycle.rs`）+ `NpcDeathV1` 双端（server `schema/npc.rs` + agent `npc.ts`）+ samples；`scripts/e2e-offscreen-war.sh`。
+- **P1**（配对+胜负纯逻辑，PR-2）：`server/src/npc/dormant/combat.rs`（`collect_zone_combat_pairs`/`roll_dormant_combat_death`/`synthesize_dormant_power`）。
+- **P2**（战死闭环，PR-3）：`dormant/mod.rs` `run_dormant_combat_phase`（`release_dormant_qi_to_zone` 守恒还灵气 + emit `NpcDeathNotice` + 人口回写 + retain-until-released 防吞真元）；`DormantCombatOutcome`+`bong:npc/combat`（`DormantCombatOutcomeV1`）。
+- **P3**（克制式遗物，PR-4 #357）：`combat.rs` `should_leave_relic`/`relic_loot_seed`；`persistence/mod.rs` `pending_dormant_relics`(v26) deferred-on-hydrate；`bong:npc/relic`（`PendingDormantRelicV1`，零真元）。
+- **P4**（天道派系消长叙事，PR-5 #358）：`agent/packages/tiandao/src/offscreen-war-narration.ts`（`aggregateOffscreenWarReport`/`OffscreenWarNarrationRuntime`）；`NarrationKind` `scattered_cultivator`；复用 `bong:npc/death`。
+- **P5**（区域散修群体涌现 reframe b，PR-6+7 合并 #361）：`faction.rs`（`EmergentGroupId`/`GroupStatus`/`are_hostile`/`emergent_group_from_faction`）；`dormant/census.rs`（`compute_faction_census`/`LastFactionCensus`/`assign_status`）；`FactionStateV1`+`bong:faction_state`+`publish_faction_state`；agent `faction-census-store.ts`。
+- **P6 PR-8**（涌现冲突玩家参与 reframe b，#363）：`server/src/npc/war/mod.rs`（`WarPhase` 四态/`WarRole` 四态/`FactionWar`/`WarConflictStore`/`ZoneConflictPressure`/`handle_war_participate_intent`）；`bong:faction/war`（`FactionWarEventV1`）；`cmd/gameplay/war.rs` `/faction` + path-B 可注入入口。
+- **P6 PR-9**（settle+ZoneSpiritBonus+Renown+HUD+叙事，#364）：`settle_system` + winner per-group pressure 精化 + `ZoneSpiritBonus`（走 qi_physics `regen_from_zone` 倍率，守恒）+ Renown 联动 + client `FactionWarHudLayer` + agent war_outcome 匿名叙事。
+- **P7 PR-10**（Drowsy LOD 三态，#365）：`lod.rs`（`NpcLodTier::Mid`/`NpcDrowsyState`/`NpcLodConfig{near,mid,far}`/`drowsy_tick_system`/`LodTransitionEdge` E1-E6）。
+- **P7 PR-11**（远视野渲染+TPS，#366）：`network/npc_lod_emit.rs`（`NpcLodS2c`/`bong:npc_lod`/`emit_npc_lod_payloads`）；client `NpcLodWorldRenderer`/`NpcLodHandler`/`NpcLodStore`；e2e `[11/12]` TPS≥18 门禁 + ECS 边界穿越守恒测试。
 
-**关键 commit**：（hash + 日期 + 一句话，待填）
+**关键 commit**：
+- 脊柱 P0-P4：PR-1~5（#355/#357 P3/#358 P4，2026-05 末）。
+- P5 `7e3a340a9`（#361，reframe b 区域散修群体涌现）。
+- P6 PR-8 `75d90af86`（#363）；PR-9 `085390639`（#364）。
+- P7 PR-10 `6a55e5a75`（#365）；PR-11 `d63df4f6a`（#366）。
 
-**测试结果**：（`cargo test` / agent `npm test` / `e2e-offscreen-war.sh` 数量，待填）
+**测试结果**：
+- server `cargo test` **6968 passed / 0 failed**；`clippy --all-targets -- -D warnings` 0；`fmt` clean。含 `war::*`/`lod::*`(60)/`census`/`npc_lod_emit`(10)/`combat` 饱和单测 + ECS 边界穿越守恒。
+- agent `npm test`：schema **419** + tiandao **450**（含 P4 narration 46 + P5 faction-census-store 14）。
+- client `./gradlew test build`：+**64**（NpcLod* 4 test class）。
+- 真服 e2e `scripts/e2e-offscreen-war.sh`：脊柱 P0-P4 段历轮全绿；P5 census 消长、P6 war 涌现+玩家参与、P7 TPS≥18 各自 PR 阶段实跑硬过。**最终合并态全量 e2e 在 CI 绿**（#366 e2e job 全 `[0/12]` pass，clean 环境）。本地最终全量 e2e 因超长 session 资源压力致 redis 被 OOM-killer 中途杀（环境，非代码）；归档 PR 的 CI e2e 于 clean 环境复验。
 
-**跨仓库核验**：（server `bong:npc/combat` / `from_dormant_combat` / `DormantCombatOutcome` 命中；agent `NpcDeathV1` 双端 sample 对拍 + 派系叙事聚合；client `FactionWarHudLayer` / `npc_lod` 渲染，待填）
+**跨仓库核验**：
+- **server**：`bong:npc/death`(+`from_dormant_combat`/`pos`)、`bong:npc/combat`、`bong:qi/ledger`、`bong:npc/relic`、`bong:faction_state`、`bong:faction/war`、`bong:npc_lod`；`EmergentGroupId`/`are_hostile`、`FactionWar`/`WarPhase`/`WarRole`、`NpcLodTier::Mid`/`drowsy_tick_system`。
+- **agent**：`NpcDeathV1`/`DormantCombatOutcomeV1`/`FactionStateV1`/`FactionWarEventV1` TypeBox + samples 双端对拍；`OffscreenWarNarrationRuntime`/`FactionCensusStore`。
+- **client**：`FactionWarHudLayer`、`NpcLodWorldRenderer`/`NpcLodHandler`（消费 `bong:npc_lod`）。
 
 **遗留 / 后续**：
-- `git rm docs/plan-npc-overhaul-v1.md` + `docs/plan-npc-combat-gear-v1.md`（两个 untracked 孤儿副本，真本已在 finished_plans/，#323/#300 已完成）——本 plan 范围外的清理项，可顺手或单独处理。
-- ✅ worldview 锚点重定位 + `docs/CLAUDE.md §四` 加"离屏 / 抽象战斗吞真元"红旗——已于人工 PR 处理（2026-05-30）。
-- ⚠️ **遗留（实施 P5 前必决）**：P5 具名势力 / P6 派系战争缺 worldview 正典锚点（§10.1 #6）。倾向方案 (b) reframe 为"散修群体涌现消长"，沿用 §七/§十 现有正典，不补 worldview；若坚持"组织化宗门交战"叙事则须先人工补 worldview。脊柱 P0-P4 不受此阻塞。
-- `git rm` 四份被本 plan 取代的 skeleton（virtualize-v2/v3、faction-wars、faction-expansion）——归档本 plan 时一并处理。
+- ✅ **§10.1 #6 worldview 锚点（已决）**：采纳**方案 (b) 散修群体涌现 reframe**——P5-P7 全程匿名涌现群体 + 「{zone}一带散修」区域描述符，无具名宗门/组织化语义，纯 §七散修利己 + §十灵气零和正典，**未改 worldview.md**。
+- P4 聚合按 **pos 派生 region**（非字面 zone）——`NpcDeathV1` 无 zone 字段，agent 用 pos→region grid。
+- P6 PR-9 合并时 e2e CI 尚 pending（人工 admin merge）；最终合并态 e2e 由 #366 CI 全量 pass 复验。
+- P6 winner-determination：PR-8 占位"平票取最小 group_id"，PR-9 精化为 per-group pressure 贡献（Pi #363 finding）。
+- P6 dehydrate `emergent_group=None`（live↔dormant 往返丢群体身份）——离屏闭环不受影响，群体同步留 P6+（Pi/CR #363 非阻塞 finding）。
+- P7 Near/Mid 分档 TPS + 远视野低 LOD **视觉**：headless 无 client 无法测，需人工 `./gradlew runClient` 目视 checklist（§10.1 #6）。
+- **遗留（人工，consume docs 守护栏不自动改其他 docs）**：`git rm` 四份被取代 skeleton（virtualize-v2/v3、faction-wars、faction-expansion）+ 两份孤儿副本（npc-overhaul-v1、npc-combat-gear-v1）。
