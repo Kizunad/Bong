@@ -68,8 +68,8 @@ pub const DORMANT_TICK_INTERVAL_ENV: &str = "BONG_DORMANT_TICK_INTERVAL";
 
 /// plan-offscreen-war-v1 P0：离屏战争 RNG 种子 env，用于 P1/P2 让战死结果可复现。
 ///
-/// **dev/test-only 随机种子旋钮**——只决定 `AbstractCombatSeed` 与未来 dormant 战斗
-/// RNG 的初值，**不**改变守恒：真元流动仍走 `release_dormant_qi_to_zone` →
+/// **dev/test-only 随机种子旋钮**——只决定 dormant 战斗 RNG 的初值
+/// （`NpcVirtualizationConfig.sim_seed`），**不**改变守恒：真元流动仍走 `release_dormant_qi_to_zone` →
 /// `ledger.transfer(ReleaseToZone)`。env 未设时保持现状默认（种子 0）。
 pub const SIM_SEED_ENV: &str = "BONG_SIM_SEED";
 
@@ -499,7 +499,7 @@ pub struct DormantSeveredAt {
 /// `network::npc_event_bridge::publish_dormant_combat_events` 消费它发 `bong:npc/combat`
 /// telemetry。**这是纯观测**——真元守恒回灌已由结算里的 `release_dormant_qi_to_zone` →
 /// `ledger.transfer(ReleaseToZone)` 真实完成，本 event 不携带也不触发任何真元流动
-/// （区别于 `abstract_combat_system` 那种「emit QiTransfer 却无人 apply」的吞真元红线）。
+/// （绝不学「emit QiTransfer 却无人 apply」的吞真元红线——那等于真元凭空蒸发）。
 ///
 /// `qi_released` 是本场实际守恒回灌给 zone 的量（== release 的 `transfer.amount`）；zone 满
 /// 时可能 0（败者满真元留账户、下轮 retain-until-released 重试），此时本 event 仍 emit
@@ -2456,7 +2456,7 @@ mod tests {
         );
         assert_eq!(
             cfg.sim_seed, 0,
-            "默认 sim_seed 必须为 0 = 现有 AbstractCombatSeed 行为"
+            "默认 sim_seed 必须为 0 = 未注入 seed 时的确定性基线"
         );
     }
 
@@ -2480,7 +2480,7 @@ mod tests {
 
     #[test]
     fn bong_sim_seed_makes_combat_deterministic() {
-        // P0 是 plumbing 层：相同 BONG_SIM_SEED 解析出相同 u64，注入 AbstractCombatSeed
+        // P0 是 plumbing 层：相同 BONG_SIM_SEED 解析出相同 u64，注入 config.sim_seed
         // 后即可让 P1/P2 的 RNG 序列复现（同 seed → 同战死结果）。
         let seed_a = parse_sim_seed(Some("123456789"));
         let seed_b = parse_sim_seed(Some("123456789"));
@@ -2497,17 +2497,16 @@ mod tests {
             "不同 seed 必须解析为不同值"
         );
 
-        // 注入路径：AbstractCombatSeed(seed) 与 NpcVirtualizationConfig.sim_seed
-        // 必须携带同一个解析出的 seed，P1/P2 才能读同一个种子。
+        // 注入路径：解析出的 seed 直接落进 NpcVirtualizationConfig.sim_seed，
+        // dormant 战斗（P1/P2）即读这同一个种子，保证同 seed → 同战死结果。
         let parsed = parse_sim_seed(Some("777"));
-        let combat_seed = crate::npc::abstract_combat_system::AbstractCombatSeed(parsed);
         let cfg = NpcVirtualizationConfig {
             sim_seed: parsed,
             ..NpcVirtualizationConfig::default()
         };
         assert_eq!(
-            combat_seed.0, cfg.sim_seed,
-            "AbstractCombatSeed 与 config.sim_seed 必须同源，否则 abstract 与 dormant 战斗 RNG 不同步"
+            cfg.sim_seed, parsed,
+            "解析出的 seed 必须原样进入 config.sim_seed，否则 dormant 战斗 RNG 与配置不同步"
         );
     }
 
