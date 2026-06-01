@@ -91,6 +91,14 @@ pub const QI_LEDGER_REDIS_KEY: &str = "bong:qi/ledger";
 // store + faction store，强者陨落仍走 P2 的 release_dormant_qi_to_zone，本通道不碰 ledger。
 pub const CH_FACTION_STATE: &str = "bong:faction_state";
 
+// plan-offscreen-war-v1 P6：涌现区域冲突生命周期（纯观测旁路，零真元）。
+//
+// 每次 WarPhaseChanged（Emerging/Skirmish/Settling/Aftermath）或玩家参与改变 role 计数时
+// publish 一条 `FactionWarEventV1`。**末法残土无宣战 / 无具名宗门**——战事是离屏 dormant
+// 群体自发升级的涌现冲突；payload 仅携带裸 group_id（无专名）+ 匿名区域描述符
+// `"{zone}一带散修"`。守恒红线：本通道 **不含任何真元字段**；真元流动仍唯一走 P2。
+pub const CH_FACTION_WAR: &str = "bong:faction/war";
+
 // 玩家社交 / 匿名 / 声名（plan-social-v1 §7）。server 为权威，agent 只消费事件流水。
 pub const CH_SOCIAL_EXPOSURE: &str = "bong:social/exposure";
 pub const CH_SOCIAL_PACT: &str = "bong:social/pact";
@@ -334,5 +342,7 @@ mod tests {
         assert_eq!(QI_LEDGER_REDIS_KEY, "bong:qi/ledger");
         // plan-offscreen-war-v1 P5 — 散修群体消长 telemetry channel
         assert_eq!(CH_FACTION_STATE, "bong:faction_state");
+        // plan-offscreen-war-v1 P6 — 涌现区域冲突生命周期 telemetry channel（纯观测、零真元）
+        assert_eq!(CH_FACTION_WAR, "bong:faction/war");
     }
 }

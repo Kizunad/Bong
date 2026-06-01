@@ -12,7 +12,7 @@ use crate::cultivation::components::Realm;
 use crate::cultivation::tick::CultivationClock;
 use crate::npc::brain::{canonical_npc_id, NpcBehaviorConfig};
 use crate::npc::faction::{
-    FactionEventApplied, FactionEventCommand, FactionEventError, FactionEventKind,
+    EmergentGroupId, FactionEventApplied, FactionEventCommand, FactionEventError, FactionEventKind,
     FactionEventNotice, FactionId, FactionRank, FactionStore,
 };
 use crate::npc::lifecycle::{NpcArchetype, NpcRegistry, NpcSpawnNotice, NpcSpawnSource};
@@ -22,6 +22,7 @@ use crate::npc::spawn::{
     NpcSkinSpawnContext,
 };
 use crate::npc::territory::Territory;
+use crate::npc::war::{WarParticipateIntent, WarRole};
 use crate::qi_physics::ledger::QiTransfer;
 use crate::schema::agent_command::{AgentCommandV1, Command};
 use crate::schema::common::{CommandType, GameEventType, MAX_COMMANDS_PER_TICK};
@@ -181,6 +182,8 @@ pub fn execute_agent_commands(
     mut npc_spawn_notices: EventWriter<NpcSpawnNotice>,
     mut faction_notices: EventWriter<FactionEventNotice>,
     mut qi_transfers: EventWriter<QiTransfer>,
+    // plan-offscreen-war-v1 P6：headless 玩家参与涌现冲突（路径 B，汇聚到与 brigadier 同一 handler）。
+    mut war_intents: EventWriter<WarParticipateIntent>,
     layers: LayerQuery<'_, '_>,
     npc_entities: LiveNpcQuery<'_, '_>,
     pseudo_vein_runtimes: Query<&PseudoVeinRuntime>,
@@ -221,6 +224,7 @@ pub fn execute_agent_commands(
                 &mut npc_spawn_notices,
                 &mut faction_notices,
                 &mut qi_transfers,
+                &mut war_intents,
                 &layers,
                 &npc_entities,
                 &pseudo_vein_runtimes,
@@ -267,6 +271,8 @@ fn execute_single_command(
     npc_spawn_notices: &mut EventWriter<NpcSpawnNotice>,
     faction_notices: &mut EventWriter<FactionEventNotice>,
     qi_transfers: &mut EventWriter<QiTransfer>,
+    // plan-offscreen-war-v1 P6：headless 路径 B 注入的战争参与 intent。
+    war_intents: &mut EventWriter<WarParticipateIntent>,
     layers: &LayerQuery<'_, '_>,
     npc_entities: &LiveNpcQuery<'_, '_>,
     pseudo_vein_runtimes: &Query<&PseudoVeinRuntime>,
@@ -298,9 +304,13 @@ fn execute_single_command(
         CommandType::DespawnNpc => {
             execute_despawn_npc(command, commands, npc_entities, pending_despawn_targets)
         }
-        CommandType::FactionEvent => {
-            execute_faction_event(command, faction_store, active_events, faction_notices)
-        }
+        CommandType::FactionEvent => execute_faction_event(
+            command,
+            faction_store,
+            active_events,
+            faction_notices,
+            war_intents,
+        ),
         CommandType::NpcBehavior => {
             execute_npc_behavior(command, npc_behavior, npc_entities, pending_despawn_targets)
         }
@@ -375,7 +385,20 @@ fn execute_faction_event(
     faction_store: &mut Option<ResMut<FactionStore>>,
     active_events: &mut Option<ResMut<ActiveEventsResource>>,
     faction_notices: &mut EventWriter<FactionEventNotice>,
+    // plan-offscreen-war-v1 P6：路径 B headless 注入出口（`war_participate=true` 分支）。
+    war_intents: &mut EventWriter<WarParticipateIntent>,
 ) -> &'static str {
+    // plan-offscreen-war-v1 P6：前置分支——`war_participate=true` 时走涌现冲突参与路径（路径 B），
+    // 不走原 faction 逻辑。约定：target == zone_name，params 含 player_id/role/group。
+    if command
+        .params
+        .get("war_participate")
+        .and_then(Value::as_bool)
+        == Some(true)
+    {
+        return execute_war_participate_headless(command, war_intents);
+    }
+
     let Some(faction_store) = faction_store.as_deref_mut() else {
         tracing::warn!(
             "[bong][network] cannot execute faction_event for `{}` because FactionStore resource is missing",
@@ -407,6 +430,73 @@ fn execute_faction_event(
             | FactionEventError::MissingLoyaltyDelta => "rejected_invalid_faction_event",
         },
     }
+}
+
+/// plan-offscreen-war-v1 P6：路径 B headless 参与入口（`execute_faction_event` 前置分支）。
+///
+/// params 约定：
+/// - `"war_participate": true`（触发此分支）
+/// - `"player_id": "offline:e2e_merc"`
+/// - `"role": "mercenary"` / `"enlist"` / `"intercept"` / `"spectate"`
+/// - `"group": 2`（Enlist/Mercenary 必填；Intercept/Spectate 忽略）
+///
+/// target == zone_name。完全 headless（无 Client entity）；错误直接返回 label。
+fn execute_war_participate_headless(
+    command: &Command,
+    war_intents: &mut EventWriter<WarParticipateIntent>,
+) -> &'static str {
+    let zone = command.target.clone();
+
+    let Some(player_id) = command
+        .params
+        .get("player_id")
+        .and_then(Value::as_str)
+        .map(str::to_string)
+    else {
+        tracing::warn!(
+            "[bong][network][war] war_participate missing player_id for zone={}",
+            zone
+        );
+        return "rejected_missing_player_id";
+    };
+
+    let role_str = command
+        .params
+        .get("role")
+        .and_then(Value::as_str)
+        .unwrap_or("spectate");
+
+    let role =
+        match role_str {
+            "enlist" => WarRole::Enlist,
+            "mercenary" => WarRole::Mercenary,
+            "intercept" => WarRole::Intercept,
+            "spectate" => WarRole::Spectate,
+            unknown => {
+                tracing::warn!(
+                "[bong][network][war] war_participate unknown role \"{}\" for zone={} player_id={}",
+                unknown, zone, player_id
+            );
+                return "rejected_invalid_war_role";
+            }
+        };
+
+    let allied_group = command
+        .params
+        .get("group")
+        .and_then(Value::as_u64)
+        .and_then(|g| u16::try_from(g).ok())
+        .map(EmergentGroupId);
+
+    war_intents.send(WarParticipateIntent {
+        player_id,
+        zone,
+        role,
+        allied_group,
+        at_tick: 0, // headless 无 GameTick 访问权，0 是合理默认（handle_war_participate_intent 不依赖此值做业务判断）
+    });
+
+    "ok"
 }
 
 fn execute_despawn_npc(
@@ -1157,6 +1247,8 @@ mod command_executor_tests {
         app.add_event::<NpcSpawnNotice>();
         app.add_event::<FactionEventNotice>();
         app.add_event::<QiTransfer>();
+        // plan-offscreen-war-v1 P6：headless 路径 B 出口
+        app.add_event::<WarParticipateIntent>();
         app.add_systems(Update, execute_agent_commands);
         app
     }

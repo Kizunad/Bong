@@ -9,14 +9,10 @@
 //! 战事关联的对象是**匿名区域群体**（裸 `EmergentGroupId`，无「青云猎盟」式专名），
 //! 叙事沿用「{zone}一带散修」区域描述符。
 
-// PR-8 本 commit 只落 war 域核心逻辑 + 单测；telemetry/cmd 在后续 commit 接入。
-// `dead_code` 豁免：公开接口为下一 commit 的 system 层预留，此处尚无外部调用者。
-#![allow(dead_code)]
-
 use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
-use valence::prelude::{bevy_ecs, Event, Resource};
+use valence::prelude::{bevy_ecs, Event, EventReader, EventWriter, ResMut, Resource};
 
 use crate::npc::faction::EmergentGroupId;
 
@@ -51,6 +47,7 @@ pub enum WarPhase {
 }
 
 impl WarPhase {
+    #[allow(dead_code)]
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::Emerging => "emerging",
@@ -551,6 +548,52 @@ pub struct WarPhaseChanged {
     pub outcome: Option<FactionWarOutcome>,
     pub player_role_counts: PlayerRoleCounts,
     pub at_tick: u64,
+}
+
+// ─────────────────────────── Bevy systems ─────────────────────────────────────
+
+/// plan-offscreen-war-v1 P6：处理玩家参与意图（brigadier 路径 A + headless 路径 B 汇聚点）。
+///
+/// 从 `WarParticipateIntent` 队列读取，对每条 intent 调 `WarConflictStore::participate`，
+/// 成功时追加 emit 一条 `WarPhaseChanged`（phase 不变，仅 counts 刷新）让 telemetry 反映新 role；
+/// 失败时打 debug log（期望X因Y实际Z 格式）。
+pub fn handle_war_participate_intent(
+    mut intents: EventReader<WarParticipateIntent>,
+    mut war_store: ResMut<WarConflictStore>,
+    mut phase_changed: EventWriter<WarPhaseChanged>,
+) {
+    for intent in intents.read() {
+        match war_store.participate(
+            &intent.zone,
+            &intent.player_id,
+            intent.role,
+            intent.allied_group,
+            intent.at_tick,
+        ) {
+            Ok((war_id, _new_role)) => {
+                // 参与成功：emit phase-changed（phase 不变，counts 刷新）让 telemetry 即时反映
+                if let Some(war) = war_store.wars.get(&war_id) {
+                    let counts = war.role_counts();
+                    phase_changed.send(WarPhaseChanged {
+                        war_id,
+                        zone: war.zone.clone(),
+                        region_descriptor: war.region_descriptor.clone(),
+                        phase: war.phase,
+                        groups: war.groups.clone(),
+                        outcome: war.outcome.clone(),
+                        player_role_counts: counts,
+                        at_tick: intent.at_tick,
+                    });
+                }
+            }
+            Err(err) => {
+                tracing::debug!(
+                    "[bong][war] participate rejected: 期望 zone={} 有可加入 war 因 {:?}，player_id={} role={:?} 实际拒绝",
+                    intent.zone, err, intent.player_id, intent.role
+                );
+            }
+        }
+    }
 }
 
 // ─────────────────────────── 单测 ────────────────────────────────────────────

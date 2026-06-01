@@ -116,6 +116,9 @@ use crate::npc::lifecycle::{NpcArchetype, NpcLifespan};
 use crate::npc::patrol::NpcPatrol;
 use crate::npc::spawn::{NpcBlackboard, NpcMarker};
 use crate::npc::spawn_rat::RatBlackboard;
+use crate::npc::war::{
+    WarConflictStore, WarParticipateIntent, WarPhaseChanged, ZoneConflictPressure,
+};
 use crate::persistence::{
     bootstrap_agent_world_model_mirror, persist_agent_world_model_authority_state,
     persist_life_record_death_insight, world_model_snapshot_to_mirror_fields,
@@ -402,6 +405,19 @@ pub fn register(app: &mut App) {
             // 与 combat/relic/faction telemetry 同节奏 Update 旁路（不另起 timer，§10.1 #3）；
             // 纯只读 census，零真元——排在 faction telemetry 之后，盘面 publish 时序居于事件流末尾。
             npc_event_bridge::publish_faction_state.after(npc_event_bridge::publish_faction_events),
+            // plan-offscreen-war-v1 P6：涌现冲突生命周期（reframe b，纯观测、零真元）。
+            // 调度链：combat_events → accumulate → advance_idle → handle_participate → publish_war。
+            npc_event_bridge::accumulate_zone_conflict_pressure
+                .after(npc_event_bridge::publish_dormant_combat_events)
+                .before(npc_event_bridge::publish_faction_state),
+            npc_event_bridge::advance_idle_wars
+                .after(npc_event_bridge::accumulate_zone_conflict_pressure),
+            crate::npc::war::handle_war_participate_intent
+                .after(npc_event_bridge::advance_idle_wars),
+            npc_event_bridge::publish_faction_war
+                .after(npc_event_bridge::advance_idle_wars)
+                .after(crate::npc::war::handle_war_participate_intent)
+                .after(npc_event_bridge::publish_faction_state),
             rat_phase_bridge::publish_rat_phase_events
                 .after(crate::fauna::rat_phase::pressure_sensor_tick_system),
             zone_pressure_bridge::publish_zone_pressure_crossed_events
@@ -818,6 +834,12 @@ pub fn register(app: &mut App) {
                 .after(crate::world::tsy_container_search::handle_cancel_search),
         ),
     );
+    // plan-offscreen-war-v1 P6：涌现冲突 resources + events。
+    app.init_resource::<ZoneConflictPressure>();
+    app.init_resource::<WarConflictStore>();
+    app.add_event::<WarParticipateIntent>();
+    app.add_event::<WarPhaseChanged>();
+
     app.init_resource::<cultivation_detail_emit::CultivationDetailEmitState>();
     app.init_resource::<client_request_handler::AlchemyMockState>();
     app.init_resource::<audio_event_emit::AudioInstanceIdAllocator>();

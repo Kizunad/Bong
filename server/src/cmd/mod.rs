@@ -19,6 +19,7 @@ mod tests {
     use crate::cultivation::tribulation::StartDuXuRequest;
     use crate::fauna::rat_phase::RatPhaseChangeEvent;
     use crate::npc::scenario::PendingScenario;
+    use crate::npc::war::WarParticipateIntent;
     use crate::player::gameplay::GameplayActionQueue;
     use crate::shader::ShaderStatePayload;
     use crate::world::tsy_dev_command::TsySpawnRequested;
@@ -35,6 +36,8 @@ mod tests {
         app.add_event::<RatPhaseChangeEvent>();
         app.add_event::<TsySpawnRequested>();
         app.add_event::<StartDuXuRequest>();
+        // plan-offscreen-war-v1 P6：/faction 命令系统用 EventWriter<WarParticipateIntent>
+        app.add_event::<WarParticipateIntent>();
         app.insert_resource(PendingScenario::default());
         app.insert_resource(GameplayActionQueue::default());
         app.insert_resource(ShaderStatePayload::default());
