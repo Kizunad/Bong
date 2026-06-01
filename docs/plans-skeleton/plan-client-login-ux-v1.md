@@ -28,7 +28,7 @@
   - Fabric `ClientPlayNetworkingCallback`（监听 `ResourcePackSendPacket`）
   - Fabric `ScreenEvents` / `HudRenderCallback`（连接过程中的 HUD 覆盖）
 - **出料**：
-  - `LocalManifestCache.java`（`~/.bong/manifest_cache.json`）：存储上次已接受的 `{ sha1, version }`
+  - `LocalManifestCache.java`（`FabricLoader.getInstance().getConfigDir().resolve("bong/manifest_cache.json")`）：存储上次已接受的 `{ sha1, version }`
   - `BongConnectScreen.java`：主题化连接/加载屏幕，替换连接阶段 HUD
   - `ResourcePackProgressOverlay.java`：资源包下载进度条 HUD，在 `DownloadingPacketPhase` 期间覆盖显示
   - `ResourcePackErrorScreen.java`：下载失败时的末法风格提示屏幕
@@ -41,10 +41,10 @@
 
 ## §0 SHA1 缓存逻辑
 
-```
+```text
 连接服务器时：
 1. fetch GET http://<server-ip>:25580/api/manifest.json（200ms timeout）
-2. 读 LocalManifestCache（~/.bong/manifest_cache.json）
+2. 读 LocalManifestCache（FabricLoader.getInstance().getConfigDir().resolve("bong/manifest_cache.json")）
 3. if cache.sha1 == manifest.sha1 → 标记"已是最新"，Valence ResourcePackPrompt 来时静默接受，不重下
 4. if 不同 or 无缓存 → 允许正常下载；下载成功后更新 cache
 5. if fetch 超时 → 静默跳过（fallback 到原版 RP prompt 行为）
@@ -66,7 +66,7 @@
 ## §1 P0：SHA1 缓存 + server 端 HTTP endpoint
 
 - [ ] `server/src/network/manifest_http.rs`：启动 `tokio::runtime` HTTP 服务（port 25580，与 game 端口隔离），`GET /api/manifest.json` 读取 `ResourcePackConfig` 返回 JSON；托管在 game server startup 时并行启动
-- [ ] `client/.../LocalManifestCache.java`：`~/.bong/manifest_cache.json` 读写（Gson）；`checkAndCache(manifestUrl, sha1)` 返回 `CacheHit / CacheMiss / FetchTimeout`
+- [ ] `client/.../LocalManifestCache.java`：`FabricLoader.getInstance().getConfigDir().resolve("bong/manifest_cache.json")` 读写（Gson）；`checkAndCache(manifestUrl, sha1)` 返回 `CacheHit / CacheMiss / FetchTimeout`
 - [ ] Fabric `ClientLoginNetworkHandler` mixin：在 `ResourcePackSendPacket` 处理前插入 `LocalManifestCache.checkAndCache`；CacheHit → 直接发 `ResourcePackStatusPacket(ACCEPTED)` 跳过实际下载
 - [ ] ≥ 10 单测：CacheHit / CacheMiss / FetchTimeout 三路径 / SHA1 更新写入 / 并发访问不写坏缓存文件
 
@@ -117,5 +117,5 @@
 
 1. **server HTTP port**：25580 是否与现有端口冲突？需 Explore agent 检查 server 已用端口列表（game server 25565、可能的 Prometheus metrics port）
 2. **Fabric mixin 注入点**：`ClientLoginNetworkHandler` 的 `ResourcePackSendPacket` 处理方法在 1.20.1 的具体方法签名，需 grep `client/` 或查 Fabric decompile 确认 mixin target
-3. **SHA1 缓存文件位置**：`~/.bong/` 是否合理？Minecraft 通常把数据存 `.minecraft/`。需确认 Fabric 推荐的 config dir（`FabricLoader.getConfigDir()`）
+3. **SHA1 缓存文件位置**：~~`~/.bong/`~~ 已决策使用 `FabricLoader.getInstance().getConfigDir().resolve("bong/manifest_cache.json")`，符合 Fabric 跨平台约定（Windows/macOS/Linux 均适用）。文档各处已同步更新。
 4. **下载绕过是否安全**：CacheHit 时直接发 `ACCEPTED` 但不实际下载——如果服务器端 SHA1 与包内容不匹配（构建 bug），会导致玩家用旧包进入服务器。需要在 P0 决议中明确是否加 size 二次校验
