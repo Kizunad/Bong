@@ -1162,17 +1162,16 @@ function makeMember(charId, group, qi) {
   return snap;
 }
 
-// 4 group0 + 4 group1 = 8 散修（成员充足，保证多轮 outcome 快速累积压力越阈值）。
-const members = [
-  makeMember("dormant:p6:g0:a", 0, 10.0),
-  makeMember("dormant:p6:g0:b", 0, 10.0),
-  makeMember("dormant:p6:g0:c", 0, 10.0),
-  makeMember("dormant:p6:g0:d", 0, 10.0),
-  makeMember("dormant:p6:g1:a", 1, 10.0),
-  makeMember("dormant:p6:g1:b", 1, 10.0),
-  makeMember("dormant:p6:g1:c", 1, 10.0),
-  makeMember("dormant:p6:g1:d", 1, 10.0),
-];
+// 50 散修，**交错 char_id**（偶 group0 / 奇 group1）。关键：collect_zone_combat_pairs 先按战力
+// cap 候选到 top-6（同战力按 char_id 升序兜底），再升序两两配对。若种「全 g0 再全 g1」，top-6
+// 会全是 g0 → 同组 → 仅 ~1 跨组对/tick；交错后 top-6 跨组相邻 → 3 对/tick。
+// 低 qi=1.0（总 50 < 现 8×10=80 < SPIRIT_QI_TOTAL=100 预算，战死真元回灌不超 zone 容量、守恒安全）。
+// 3 战死/tick × ~10 tick → 30+ 战死 → pressure 越 WAR_PRESSURE_THRESHOLD=30（accumulate +1/条）→ 战事真涌现。
+const members = [];
+for (let i = 0; i < 50; i++) {
+  const group = i % 2; // 交错：偶 group0 / 奇 group1，使 char_id 升序后跨组相邻
+  members.push(makeMember(`dormant:p6:${String(i).padStart(2, "0")}`, group, 1.0));
+}
 
 await client.del("bong:npc/dormant");
 for (const m of members) {
@@ -1180,7 +1179,7 @@ for (const m of members) {
 }
 const n = await client.hlen("bong:npc/dormant");
 await client.quit();
-console.log(`[p6-observe] seeded ${n} hostile dormants in zone=${ZONE} (group0×4 + group1×4)`);
+console.log(`[p6-observe] seeded ${n} hostile dormants in zone=${ZONE} (交错 group0/group1 ×${members.length})`);
 if (n !== members.length) {
   console.error(`[p6-observe] expected HLEN ${members.length} after P6 seeding, got ${n}`);
   process.exit(3);
@@ -1876,7 +1875,7 @@ stop_server
 
 # seed 8 敌对散修（group0×4 + group1×4），足量让压力快速越阈。
 if seed_p6_hostile_dormants "$TEMPLATE_FILE" >>"$OBSERVE_LOG" 2>&1; then
-  pass "P6 seeded hostile dormants (group0×4 + group1×4, same zone)"
+  pass "P6 seeded hostile dormants (交错 group0/group1 ×50, same zone)"
 else
   finalize_failure "war_p6" "P6: failed to seed hostile dormants; see $OBSERVE_LOG"
 fi
@@ -1891,7 +1890,7 @@ else
   finalize_failure "war_p6" "P6: war subscriber did not start; see $WAR_SUB_LOG"
 fi
 
-# 重启 server（seed_count=0；store 由 P6 种的 8 个敌对 dormants 填充，快速累积 outcome）。
+# 重启 server（seed_count=0；store 由 P6 种的 50 个交错敌对 dormants 填充，快速累积 outcome）。
 start_server "$P6_SERVER_LOG" 0
 
 # 等首条 phase=emerging（WAR_PRESSURE_THRESHOLD 越过 → 战事涌现）。
@@ -1899,31 +1898,7 @@ echo "[war] waiting for phase=emerging on bong:faction/war ..."
 if wait_for_pattern "$WAR_SUB_LOG" '"phase":"emerging"' 120; then
   pass "P6 observed phase=emerging on bong:faction/war（战事涌现）"
 else
-  # 环境受限（无 P6 server impl）时记录 NOTE 而非 hard-fail，支持 bash -n 验证 + 主线 takeover。
-  echo "[war] NOTE: phase=emerging not yet observed within 120s (P6 server impl may not be deployed in this env; bash -n syntax verified; main-line takeover will run full e2e)"
-  pass "P6 war P6 syntax/logic verified (environment limited; phase=emerging check deferred to takeover)"
-  # 跳过后续依赖 war 状态的步骤，直接进 summary。
-  CURRENT_STAGE="summary"
-  echo ""
-  echo "=== [11/11] Evidence ==="
-  echo "  log: $LOG_FILE"
-  echo "  server: $SERVER_LOG"
-  echo "  observe: $OBSERVE_LOG"
-  echo "  redis-sub: $REDIS_SUB_LOG"
-  echo "  redis-sub-p2: $REDIS_SUB_P2_LOG"
-  echo "  agent-narrate-sub: $NARRATE_SUB_LOG"
-  echo "  offscreen-war-runtime: $OFFSCREEN_WAR_RT_LOG"
-  echo "  faction-state-sub: $FACTION_STATE_SUB_LOG"
-  echo "  faction-war-sub: $WAR_SUB_LOG"
-  echo ""
-  echo "Result: $PASS passed, $FAIL failed"
-  if [ "$FAIL" -eq 0 ]; then
-    printf "task=%s\nstatus=PASS\nrun_id=%s\nmessage=all-anchors-passed\n" "$TASK_ID" "$RUN_ID" >"$SUCCESS_FILE"
-    write_manifest "PASS" "complete" "all-anchors-passed"
-    echo "ALL PASS"
-    exit 0
-  fi
-  finalize_failure "$CURRENT_STAGE" "unexpected failure state"
+  finalize_failure "war_p6" "P6: phase=emerging 120s 内未观测到——50 个交错敌对 dormant 应在 ~15s 内越 WAR_PRESSURE_THRESHOLD=30（accumulate +1/条战死）起战事；查 accumulate_zone_conflict_pressure / escalate_or_create / publish_faction_war 或 server-p6.log"
 fi
 
 # headless 玩家参与注入（路径 B：FactionEvent.params.war_participate=true）。
