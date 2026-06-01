@@ -146,7 +146,8 @@ class FactionWarHudPlannerTest {
             if (!c.isText()) continue;
             String text = c.text();
             // reframe b：不含「青云」「盟」「宗主」等具名宗门字样
-            assertFalse(text.matches(".*[青云盟宗主].*"),
+            // 注意：使用分组 (a|b) 而非字符类 [abc]（后者会误匹配单字）
+            assertFalse(text.matches(".*(青云|盟|宗主|门派|宗门).*"),
                 "期望文字不含具名宗门字样（reframe b），实际: " + text);
         }
     }
