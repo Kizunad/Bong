@@ -739,6 +739,7 @@ fn dormant_global_tick_system(
     mut death_notices: EventWriter<NpcDeathNotice>,
     mut combat_outcomes: EventWriter<DormantCombatOutcome>,
     mut pending_relics: EventWriter<PendingDormantRelicCreated>,
+    war_bonus: Option<Res<crate::npc::war::settle::ZoneSpiritBonusStore>>,
 ) {
     let tick = current_tick(game_tick.as_deref());
     if !should_run_interval(tick, config.dormant_tick_interval_ticks) {
@@ -785,7 +786,12 @@ fn dormant_global_tick_system(
             elapsed_ticks as f64 * config.dormant_aging_rate_multiplier.max(0.0);
 
         if let (Some(zones), Some(ledger)) = (zones.as_deref_mut(), ledger.as_deref_mut()) {
-            apply_dormant_regen(snapshot, zones, ledger);
+            // plan-offscreen-war-v1 P9：从 ZoneSpiritBonusStore 查 zone 倍率（默认 1.0）
+            let war_multiplier = war_bonus
+                .as_deref()
+                .map(|s| s.multiplier_for(&snapshot.zone_name))
+                .unwrap_or(1.0);
+            apply_dormant_regen_with_multiplier(snapshot, zones, ledger, war_multiplier);
         }
         let zone_qi = zones
             .as_deref()
@@ -1401,10 +1407,25 @@ fn deterministic_hash(char_id: &str, salt: u64) -> u64 {
     hash
 }
 
+/// plan-offscreen-war-v1 P9：战事 zone regen 倍率（由调用方从 ZoneSpiritBonusStore 查询）。
+/// 默认 1.0（未参战 zone 不受影响）。仅乘在 `rate` 参数上，守恒安全（见 settle.rs 模块文档）。
+/// 内部委托给 `apply_dormant_regen_with_multiplier(1.0)`。测试和向后兼容路径使用。
+#[allow(dead_code)]
 pub fn apply_dormant_regen(
     snapshot: &mut NpcDormantSnapshot,
     zones: &mut ZoneRegistry,
     ledger: &mut WorldQiAccount,
+) -> Option<QiTransfer> {
+    apply_dormant_regen_with_multiplier(snapshot, zones, ledger, 1.0)
+}
+
+/// 带 war_multiplier 的 dormant regen（plan-offscreen-war-v1 P9 内部使用）。
+/// 调用方从 `ZoneSpiritBonusStore::multiplier_for` 查询 zone 倍率后传入。
+pub fn apply_dormant_regen_with_multiplier(
+    snapshot: &mut NpcDormantSnapshot,
+    zones: &mut ZoneRegistry,
+    ledger: &mut WorldQiAccount,
+    war_multiplier: f64,
 ) -> Option<QiTransfer> {
     let pos = snapshot.position_vec();
     let zone_name = zones
@@ -1432,7 +1453,18 @@ pub fn apply_dormant_regen(
         1.0
     };
     let room = (snapshot.cultivation.qi_max - snapshot.cultivation.qi_current).max(0.0);
-    let (gain, drain) = regen_from_zone(zone.spirit_qi, rate, avg_integrity, room);
+    // plan-offscreen-war-v1 P9：战事 zone 倍率乘在 rate 上（守恒安全，见 settle.rs 模块文档）
+    let effective_multiplier = if war_multiplier.is_finite() && war_multiplier > 0.0 {
+        war_multiplier
+    } else {
+        1.0
+    };
+    let (gain, drain) = regen_from_zone(
+        zone.spirit_qi,
+        rate * effective_multiplier,
+        avg_integrity,
+        room,
+    );
     if gain <= 0.0 || drain <= 0.0 {
         return None;
     }

@@ -10,7 +10,7 @@
 use std::collections::HashMap;
 
 use valence::prelude::{
-    bevy_ecs, Despawned, Entity, Events, Position, Query, ResMut, Resource, With, Without,
+    bevy_ecs, Despawned, Entity, Events, Position, Query, Res, ResMut, Resource, With, Without,
 };
 
 use crate::combat::components::StatusEffects;
@@ -88,6 +88,7 @@ pub fn compute_regen(zone_qi: f64, rate: f64, avg_integrity: f64, qi_room: f64) 
 pub fn qi_regen_and_zone_drain_tick(
     mut clock: ResMut<CultivationClock>,
     zone_registry: Option<ResMut<ZoneRegistry>>,
+    war_bonus: Option<Res<crate::npc::war::settle::ZoneSpiritBonusStore>>,
     mut practice_events: Option<ResMut<Events<CultivationSessionPracticeEvent>>>,
     mut practice_accumulator: Option<ResMut<CultivationSessionPracticeAccumulator>>,
     mut vfx_events: Option<ResMut<Events<VfxEventRequest>>>,
@@ -191,6 +192,10 @@ pub fn qi_regen_and_zone_drain_tick(
             .filter(|debuff| clock.tick <= debuff.until_tick)
             .map(|debuff| debuff.rhythm_multiplier.clamp(0.0, 1.0))
             .unwrap_or(1.0);
+        let war_zone_multiplier = war_bonus
+            .as_deref()
+            .map(|s| s.multiplier_for(&zone_name))
+            .unwrap_or(1.0);
         let (gain, drain) = compute_regen(
             zone.spirit_qi,
             rate * wind_candle_multiplier
@@ -200,7 +205,8 @@ pub fn qi_regen_and_zone_drain_tick(
                 * qi_regen_slowed
                 * exhausted_multiplier
                 * turbulence_multiplier
-                * juebi_aftershock_multiplier,
+                * juebi_aftershock_multiplier
+                * war_zone_multiplier,
             avg_integrity,
             qi_room,
         );
