@@ -157,3 +157,56 @@ export function validateFactionEventV1Contract(data: unknown): ValidationResult 
 export function validateFactionStateV1Contract(data: unknown): ValidationResult {
   return validate(FactionStateV1, data);
 }
+
+/**
+ * plan-offscreen-war-v1 P9：涌现冲突阶段（snake_case，对齐 server WarPhase serde）。
+ */
+export const WarPhaseV1 = Type.Union([
+  Type.Literal("emerging"),
+  Type.Literal("skirmish"),
+  Type.Literal("settling"),
+  Type.Literal("aftermath"),
+]);
+export type WarPhaseV1 = Static<typeof WarPhaseV1>;
+
+/**
+ * plan-offscreen-war-v1 P9：涌现区域冲突 telemetry 事件（`bong:faction/war`）。
+ *
+ * 逐字段对齐 server `FactionWarEventV1` serde（schema/npc.rs:140）：
+ * - `v`：u8 → Literal(1)
+ * - `kind`：固定 "faction_war_event"
+ * - `war_id`：u64 → Number({ minimum: 0 })
+ * - `zone`：String
+ * - `region_descriptor`：匿名描述符（无具名宗门）
+ * - `phase`：WarPhaseV1
+ * - `groups`：Array of u16 group_id
+ * - `winner_group` / `loser_group`：Optional u16（Settling/Aftermath 才 Some）
+ * - `total_casualties`：Optional u32
+ * - `at_tick`：u64 → Number({ minimum: 0 })
+ * - 守恒红线：**不含任何真元字段**（零真元）
+ */
+export const FactionWarEventV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    kind: Type.Literal("faction_war_event"),
+    war_id: Type.Number({ minimum: 0 }),
+    zone: Type.String({ minLength: 1 }),
+    region_descriptor: Type.String({ minLength: 1 }),
+    phase: WarPhaseV1,
+    groups: Type.Array(Type.Integer({ minimum: 0 }), { minItems: 0 }),
+    enlist_count: Type.Integer({ minimum: 0 }),
+    mercenary_count: Type.Integer({ minimum: 0 }),
+    intercept_count: Type.Integer({ minimum: 0 }),
+    spectate_count: Type.Integer({ minimum: 0 }),
+    winner_group: Type.Optional(Type.Integer({ minimum: 0 })),
+    loser_group: Type.Optional(Type.Integer({ minimum: 0 })),
+    total_casualties: Type.Optional(Type.Integer({ minimum: 0 })),
+    at_tick: Type.Number({ minimum: 0 }),
+  },
+  { additionalProperties: false },
+);
+export type FactionWarEventV1 = Static<typeof FactionWarEventV1>;
+
+export function validateFactionWarEventV1Contract(data: unknown): ValidationResult {
+  return validate(FactionWarEventV1, data);
+}

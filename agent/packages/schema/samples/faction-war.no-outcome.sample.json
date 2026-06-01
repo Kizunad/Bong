@@ -1,0 +1,14 @@
+{
+  "v": 1,
+  "kind": "faction_war_event",
+  "war_id": 3,
+  "zone": "残灰谷",
+  "region_descriptor": "残灰谷一带散修",
+  "phase": "skirmish",
+  "groups": [0, 1],
+  "enlist_count": 1,
+  "mercenary_count": 1,
+  "intercept_count": 0,
+  "spectate_count": 2,
+  "at_tick": 5000
+}

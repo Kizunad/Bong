@@ -74,6 +74,8 @@ export const NarrationKind = Type.Union([
   Type.Literal("npc_farm_pressure"),
   Type.Literal("scattered_cultivator"),
   Type.Literal("political_jianghu"),
+  /** plan-offscreen-war-v1 P9：战事结算匿名叙事（reframe b，无具名宗门）。 */
+  Type.Literal("war_outcome"),
 ]);
 export type NarrationKind = Static<typeof NarrationKind>;
 
