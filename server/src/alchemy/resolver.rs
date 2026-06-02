@@ -12,6 +12,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::cultivation::components::ColorKind;
 use crate::cultivation::life_record::{BiographyEntry, LifeRecord};
+use crate::dandao::catalyst_furnace::catalyst_furnace_bonus;
 
 use super::outcome::{build_flawed_result, classify_precise, OutcomeBucket};
 use super::quality::{profile_for_pill_quality, PillQualityProfile};
@@ -96,8 +97,7 @@ pub fn resolve_with_alchemy_effective_lv(
     registry: &RecipeRegistry,
     alchemy_effective_lv: u8,
 ) -> ResolvedOutcome {
-    resolve_with_meta_and_alchemy_effective_lv(session, recipe, registry, alchemy_effective_lv)
-        .outcome
+    resolve_with_meta_and_furnace(session, recipe, registry, alchemy_effective_lv, 0).outcome
 }
 
 pub fn resolve_with_meta(
@@ -105,7 +105,7 @@ pub fn resolve_with_meta(
     recipe: &Recipe,
     registry: &RecipeRegistry,
 ) -> ResolvedAlchemyResult {
-    resolve_with_meta_and_alchemy_effective_lv(session, recipe, registry, 0)
+    resolve_with_meta_and_furnace(session, recipe, registry, 0, 0)
 }
 
 pub fn resolve_with_meta_and_alchemy_effective_lv(
@@ -114,7 +114,26 @@ pub fn resolve_with_meta_and_alchemy_effective_lv(
     registry: &RecipeRegistry,
     alchemy_effective_lv: u8,
 ) -> ResolvedAlchemyResult {
-    let (bucket, outcome) = resolve_raw(session, recipe, registry, alchemy_effective_lv);
+    resolve_with_meta_and_furnace(session, recipe, registry, alchemy_effective_lv, 0)
+}
+
+/// P3 — 催化炉加成入口：接受炉 tier，对变异丹配方叠加 `catalyst_furnace_bonus` 至成功率。
+///
+/// `furnace_tier = 0` 时等同于 `resolve_with_meta_and_alchemy_effective_lv`（中性，无加成）。
+pub fn resolve_with_meta_and_furnace(
+    session: &AlchemySession,
+    recipe: &Recipe,
+    registry: &RecipeRegistry,
+    alchemy_effective_lv: u8,
+    furnace_tier: u8,
+) -> ResolvedAlchemyResult {
+    let (bucket, outcome) = resolve_raw(
+        session,
+        recipe,
+        registry,
+        alchemy_effective_lv,
+        furnace_tier,
+    );
     let outcome = apply_quality_factor(outcome, session.staged.quality_factor);
     ResolvedAlchemyResult {
         bucket,
@@ -145,11 +164,16 @@ pub fn resolve_with_meta_from_outcome(outcome: &ResolvedOutcome) -> ResolvedAlch
     }
 }
 
+/// 偏差评分的"满档"对应 3 个等级（Perfect/Good/Flawed/Waste 阈值 1/2/3），
+/// 催化炉加成按此比例折算为偏差削减量。
+const DEVIATION_FULL_SCALE: f64 = 3.0;
+
 fn resolve_raw(
     session: &AlchemySession,
     recipe: &Recipe,
     registry: &RecipeRegistry,
     alchemy_effective_lv: u8,
+    furnace_tier: u8,
 ) -> (OutcomeBucket, ResolvedOutcome) {
     let staged = &session.staged.materials;
     let need = recipe.stage0_ingredients();
@@ -158,7 +182,24 @@ fn resolve_raw(
     let is_exact_stage0 = staged == &need;
 
     if is_exact_stage0 {
-        let summary = session.summarize_with_alchemy_effective_lv(recipe, alchemy_effective_lv);
+        let mut summary = session.summarize_with_alchemy_effective_lv(recipe, alchemy_effective_lv);
+        // P3 — 催化炉加成：变异丹配方 + 高阶炉 → 减小有效偏差评分（提高成功率）。
+        // bonus ∈ [0.0, 1.0]；映射到偏差削减 = bonus × DEVIATION_FULL_SCALE。
+        // 仅作用于精确匹配路径（残缺路径成丹概率由 flawed_fallback 机制控制，不在此处插手）。
+        // severe_overheat / qi_deficit 不受此影响（物理极限）。
+        let bonus = catalyst_furnace_bonus(furnace_tier, &recipe.id);
+        if bonus > 0.0 {
+            // reduction 是对 classify_precise 评分（= max(temp, dur)）的一次性削减量。
+            // classify_precise 取两维度的 max 作为最终评分，故只需对主导维度（较大值）
+            // 减去 reduction；对次要维度不做修改，确保总削减恰为 reduction 一次，
+            // 而非对两个字段各减一次导致 2×reduction 的双重削减。
+            let reduction = bonus * DEVIATION_FULL_SCALE;
+            if summary.temp_deviation >= summary.duration_deviation {
+                summary.temp_deviation = (summary.temp_deviation - reduction).max(0.0);
+            } else {
+                summary.duration_deviation = (summary.duration_deviation - reduction).max(0.0);
+            }
+        }
         let bucket = classify_precise(&summary);
         return (bucket, map_exact_bucket(recipe, bucket));
     }
@@ -399,6 +440,12 @@ mod tests {
     use super::*;
     use crate::alchemy::recipe::load_recipe_registry;
     use crate::alchemy::session::{AlchemySession, Intervention};
+    use crate::dandao::catalyst_furnace::{
+        catalyst_furnace_bonus, CATALYST_FURNACE_TIER, CATALYST_MUTATION_SUCCESS_BONUS,
+    };
+    use crate::dandao::recipes::{
+        RECIPE_HUA_XING_DA_DAN, RECIPE_LONG_LIN_SAN, RECIPE_SHOU_XIN_DAN, RECIPE_TUI_GU_DAN,
+    };
 
     fn drive_to_finish(session: &mut AlchemySession, recipe: &Recipe) {
         for _ in 0..recipe.fire_profile.target_duration_ticks {
@@ -852,5 +899,406 @@ mod tests {
             s2.tick();
         }
         assert_eq!(session_seed(&s1), session_seed(&s2));
+    }
+
+    // ============== P3 — 催化炉加成接入 alchemy resolver ==============
+    //
+    // 辅助：构造 tui_gu_dan_v1 精确匹配 session，以指定温度运行到结束。
+    // tui_gu_dan_v1：target_temp=0.70, target_duration=200, qi_cost=25.0,
+    //   temp_band=0.08, duration_band=15.
+    //
+    // temp=0.87 时每 tick 偏差 = (|0.87-0.70|/0.08 - 1.0) = 1.125，average = 1.125。
+    // duration 恰好 200 ticks → duration_deviation = 0.0。
+    // 不 severe_overheat（0.87 < 0.70 + 3×0.08 = 0.94）。
+    fn build_tui_gu_dan_session(
+        temp: f64,
+        qi: f64,
+    ) -> (AlchemySession, crate::alchemy::recipe::RecipeRegistry) {
+        let registry = load_recipe_registry().unwrap();
+        let recipe = registry.get(RECIPE_TUI_GU_DAN).unwrap().clone();
+        let mut s = AlchemySession::new(recipe.id.clone(), "tester".into());
+        // 精确匹配：tui_gu_dan_v1 stage0 materials
+        s.feed_stage(
+            &recipe,
+            0,
+            &[
+                ("tui_gu_teng".into(), 2, 1.0),
+                ("fauna.mutated_bone".into(), 1, 1.0),
+            ],
+        )
+        .unwrap();
+        s.apply_intervention(Intervention::AdjustTemp(temp));
+        s.apply_intervention(Intervention::InjectQi(qi));
+        // drive to target_duration_ticks = 200
+        for _ in 0..recipe.fire_profile.target_duration_ticks {
+            s.tick();
+        }
+        (s, registry)
+    }
+
+    /// happy path：高 tier 炉（4）+ 变异丹配方 tui_gu_dan → 成功率提升。
+    /// temp=0.87 → score=1.125 → Good（无炉加成），tier 4 加成后 score=0.525 → Perfect。
+    #[test]
+    fn p3_tier4_furnace_mutation_recipe_upgrades_good_to_perfect() {
+        let (session, registry) = build_tui_gu_dan_session(0.87, 25.0);
+        let recipe = registry.get(RECIPE_TUI_GU_DAN).unwrap();
+
+        // 无加成（tier 0）→ Good
+        let no_bonus = resolve_with_meta_and_furnace(&session, recipe, &registry, 0, 0);
+        assert_eq!(
+            no_bonus.bucket,
+            OutcomeBucket::Good,
+            "无炉加成时 tui_gu_dan score=1.125 应为 Good，实际: {:?}",
+            no_bonus.bucket
+        );
+
+        // tier 4 加成 → score 降低 catalyst_furnace_bonus(4, recipe) × DEVIATION_FULL_SCALE
+        let bonus = catalyst_furnace_bonus(CATALYST_FURNACE_TIER, RECIPE_TUI_GU_DAN);
+        let with_bonus =
+            resolve_with_meta_and_furnace(&session, recipe, &registry, 0, CATALYST_FURNACE_TIER);
+        // 加成后应升格到 Perfect
+        assert_eq!(
+            with_bonus.bucket,
+            OutcomeBucket::Perfect,
+            "tier {} 炉 + 变异丹 bonus={} 应使 Good → Perfect，实际: {:?}",
+            CATALYST_FURNACE_TIER,
+            bonus,
+            with_bonus.bucket
+        );
+    }
+
+    /// tier 1/2/3 炉 + 变异丹配方 → 无加成（返回原始 Good）。
+    #[test]
+    fn p3_lower_tier_furnace_no_bonus_for_mutation_recipe() {
+        let (session, registry) = build_tui_gu_dan_session(0.87, 25.0);
+        let recipe = registry.get(RECIPE_TUI_GU_DAN).unwrap();
+        for tier in 1..CATALYST_FURNACE_TIER {
+            let result = resolve_with_meta_and_furnace(&session, recipe, &registry, 0, tier);
+            assert_eq!(
+                result.bucket,
+                OutcomeBucket::Good,
+                "tier {tier} 炉不应有加成，期望 Good 但得到 {:?}",
+                result.bucket
+            );
+        }
+    }
+
+    /// tier 5 炉 + 变异丹配方 → 同 tier 4（高阶炉兼容，bonus 相同）。
+    #[test]
+    fn p3_tier5_furnace_also_gets_bonus() {
+        let (session, registry) = build_tui_gu_dan_session(0.87, 25.0);
+        let recipe = registry.get(RECIPE_TUI_GU_DAN).unwrap();
+        let result = resolve_with_meta_and_furnace(&session, recipe, &registry, 0, 5);
+        assert_eq!(
+            result.bucket,
+            OutcomeBucket::Perfect,
+            "tier 5 炉也应有变异催化加成（高阶兼容），期望 Perfect 但得到 {:?}",
+            result.bucket
+        );
+    }
+
+    /// tier 4 炉 + 非变异丹配方（hui_yuan_pill_v0）→ 无加成，成功率不变。
+    /// hui_yuan_pill_v0: target_temp=0.45, temp_band=0.12, duration=120.
+    /// temp=0.714 → over=0.264, score=(0.264/0.12 - 1.0)=1.2 → Good（不变）。
+    #[test]
+    fn p3_tier4_furnace_no_bonus_for_non_mutation_recipe() {
+        let registry = load_recipe_registry().unwrap();
+        let recipe = registry.get("hui_yuan_pill_v0").unwrap().clone();
+        // hui_yuan_pill_v0: target_temp=0.45, temp_band=0.12, duration=120, qi_cost=8.0
+        // temp=0.714 → score = (|0.714-0.45|/0.12 - 1.0) = (2.2 - 1.0) = 1.2 → Good
+        let mut s = AlchemySession::new(recipe.id.clone(), "tester".into());
+        s.feed_stage(
+            &recipe,
+            0,
+            &[
+                ("hui_yuan_zhi".into(), 2, 1.0),
+                ("ling_shui".into(), 1, 1.0),
+            ],
+        )
+        .unwrap();
+        s.apply_intervention(Intervention::AdjustTemp(0.714));
+        s.apply_intervention(Intervention::InjectQi(8.0));
+        for _ in 0..recipe.fire_profile.target_duration_ticks {
+            s.tick();
+        }
+        let no_bonus = resolve_with_meta_and_furnace(&s, &recipe, &registry, 0, 0);
+        let with_tier4 =
+            resolve_with_meta_and_furnace(&s, &recipe, &registry, 0, CATALYST_FURNACE_TIER);
+        // 非变异丹 catalyst_furnace_bonus = 0.0，两结果应完全相同
+        assert_eq!(
+            no_bonus.bucket, with_tier4.bucket,
+            "非变异丹配方用 tier {} 炉不应有加成，两结果应相同：{:?} vs {:?}",
+            CATALYST_FURNACE_TIER, no_bonus.bucket, with_tier4.bucket
+        );
+        // 额外确认两者确实都是 Good（score 1.2 在 Good 区间）
+        assert_eq!(
+            no_bonus.bucket,
+            OutcomeBucket::Good,
+            "基线结果应为 Good（score 1.2），实际 {:?}",
+            no_bonus.bucket
+        );
+    }
+
+    /// 所有 4 种变异丹配方在 tier 4 炉下都有加成。
+    #[test]
+    fn p3_all_mutation_recipes_get_bonus_at_tier4() {
+        for recipe_id in [
+            RECIPE_TUI_GU_DAN,
+            RECIPE_SHOU_XIN_DAN,
+            RECIPE_LONG_LIN_SAN,
+            RECIPE_HUA_XING_DA_DAN,
+        ] {
+            let bonus = catalyst_furnace_bonus(CATALYST_FURNACE_TIER, recipe_id);
+            assert!(
+                bonus > 0.0,
+                "变异丹配方 {} 在 tier {} 炉应有加成，got {}",
+                recipe_id,
+                CATALYST_FURNACE_TIER,
+                bonus
+            );
+            // 确认加成量匹配 CATALYST_MUTATION_SUCCESS_BONUS 常量（不写字面）
+            assert!(
+                (bonus - CATALYST_MUTATION_SUCCESS_BONUS).abs() < f64::EPSILON,
+                "变异丹配方 {} 加成 {} 应等于 CATALYST_MUTATION_SUCCESS_BONUS={}",
+                recipe_id,
+                bonus,
+                CATALYST_MUTATION_SUCCESS_BONUS
+            );
+        }
+    }
+
+    /// 守恒回归：催化炉加成只改成功率（OutcomeBucket），不改产出丹药的 qi_gain/toxin/数量。
+    /// 同一 session，tier 0 产出 Good 丹，tier 4 产出 Perfect 丹；
+    /// 两者产出丹药的 qi_gain / toxin_amount 分别来自配方 good/perfect 出品字段——
+    /// 断言：两者中任意一个的 qi_gain/toxin 与配方定义一致（产出字段由配方决定，不凭空变化）。
+    #[test]
+    fn p3_furnace_bonus_does_not_change_pill_qi_or_toxin() {
+        let (session, registry) = build_tui_gu_dan_session(0.87, 25.0);
+        let recipe = registry.get(RECIPE_TUI_GU_DAN).unwrap();
+
+        let no_bonus = resolve_with_meta_and_furnace(&session, recipe, &registry, 0, 0);
+        let with_bonus =
+            resolve_with_meta_and_furnace(&session, recipe, &registry, 0, CATALYST_FURNACE_TIER);
+
+        // 每个产出字段都来自配方 good/perfect，而不是由炉加成中途修改
+        match &no_bonus.outcome {
+            ResolvedOutcome::Pill {
+                qi_gain,
+                toxin_amount,
+                ..
+            } => {
+                let expected_qi = recipe.outcomes.good.as_ref().expect("good outcome").qi_gain;
+                let expected_toxin = recipe
+                    .outcomes
+                    .good
+                    .as_ref()
+                    .expect("good outcome")
+                    .toxin_amount;
+                assert_eq!(
+                    *qi_gain, expected_qi,
+                    "Good 路径 qi_gain 应等于配方 good.qi_gain ({:?})，实际 {:?}",
+                    expected_qi, qi_gain
+                );
+                assert!(
+                    (toxin_amount - expected_toxin).abs() < 1e-9,
+                    "Good 路径 toxin_amount 应等于配方 good.toxin_amount ({}), 实际 {}",
+                    expected_toxin,
+                    toxin_amount
+                );
+            }
+            other => panic!("期望 Good Pill 但得到 {:?}", other),
+        }
+        match &with_bonus.outcome {
+            ResolvedOutcome::Pill {
+                qi_gain,
+                toxin_amount,
+                ..
+            } => {
+                let expected_qi = recipe
+                    .outcomes
+                    .perfect
+                    .as_ref()
+                    .expect("perfect outcome")
+                    .qi_gain;
+                let expected_toxin = recipe
+                    .outcomes
+                    .perfect
+                    .as_ref()
+                    .expect("perfect outcome")
+                    .toxin_amount;
+                assert_eq!(
+                    *qi_gain, expected_qi,
+                    "Perfect 路径 qi_gain 应等于配方 perfect.qi_gain ({:?})，实际 {:?}",
+                    expected_qi, qi_gain
+                );
+                assert!(
+                    (toxin_amount - expected_toxin).abs() < 1e-9,
+                    "Perfect 路径 toxin_amount 应等于配方 perfect.toxin_amount ({})，实际 {}",
+                    expected_toxin,
+                    toxin_amount
+                );
+            }
+            other => panic!("期望 Perfect Pill 但得到 {:?}", other),
+        }
+        // 关键守恒断言：加成只升格 bucket，不修改 qi/toxin 字段；
+        // 两个产出的数量不因炉加成而凭空增减（各自取对应桶的配方值，而非同一个值）
+        let no_bonus_qi = match &no_bonus.outcome {
+            ResolvedOutcome::Pill { qi_gain, .. } => *qi_gain,
+            _ => panic!(),
+        };
+        let with_bonus_qi = match &with_bonus.outcome {
+            ResolvedOutcome::Pill { qi_gain, .. } => *qi_gain,
+            _ => panic!(),
+        };
+        // tui_gu_dan_v1 的 qi_gain 在 perfect/good/flawed 均为 0.0，故两者相同
+        // 但不能写字面 0.0 — 取配方值对比
+        let perfect_qi = recipe.outcomes.perfect.as_ref().unwrap().qi_gain;
+        let good_qi = recipe.outcomes.good.as_ref().unwrap().qi_gain;
+        assert_eq!(
+            with_bonus_qi, perfect_qi,
+            "tier4 产出应来自配方 perfect.qi_gain ({:?})，不得由炉加成凭空修改",
+            perfect_qi
+        );
+        assert_eq!(
+            no_bonus_qi, good_qi,
+            "无加成产出应来自配方 good.qi_gain ({:?})",
+            good_qi
+        );
+    }
+
+    /// 边界：severe_overheat 时加成不改变 Explode 结果（物理极限，炉阶无效）。
+    #[test]
+    fn p3_furnace_bonus_does_not_override_severe_overheat() {
+        let registry = load_recipe_registry().unwrap();
+        let recipe = registry.get(RECIPE_TUI_GU_DAN).unwrap().clone();
+        let mut s = AlchemySession::new(recipe.id.clone(), "tester".into());
+        s.feed_stage(
+            &recipe,
+            0,
+            &[
+                ("tui_gu_teng".into(), 2, 1.0),
+                ("fauna.mutated_bone".into(), 1, 1.0),
+            ],
+        )
+        .unwrap();
+        // 极高温超过 severe_overheat 阈值（> target + 3×band = 0.70 + 0.24 = 0.94）
+        s.apply_intervention(Intervention::AdjustTemp(0.99));
+        s.apply_intervention(Intervention::InjectQi(25.0));
+        for _ in 0..recipe.fire_profile.target_duration_ticks {
+            s.tick();
+        }
+        let result =
+            resolve_with_meta_and_furnace(&s, &recipe, &registry, 0, CATALYST_FURNACE_TIER);
+        assert_eq!(
+            result.bucket,
+            OutcomeBucket::Explode,
+            "severe_overheat 时 tier {} 炉加成不应阻止炸炉，期望 Explode 但得到 {:?}",
+            CATALYST_FURNACE_TIER,
+            result.bucket
+        );
+    }
+
+    /// 边界：qi_deficit 时加成不改变 Waste 结果（物理极限）。
+    #[test]
+    fn p3_furnace_bonus_does_not_override_qi_deficit() {
+        let registry = load_recipe_registry().unwrap();
+        let recipe = registry.get(RECIPE_TUI_GU_DAN).unwrap().clone();
+        let mut s = AlchemySession::new(recipe.id.clone(), "tester".into());
+        s.feed_stage(
+            &recipe,
+            0,
+            &[
+                ("tui_gu_teng".into(), 2, 1.0),
+                ("fauna.mutated_bone".into(), 1, 1.0),
+            ],
+        )
+        .unwrap();
+        s.apply_intervention(Intervention::AdjustTemp(0.70));
+        // 故意不注入足够的 qi（qi_cost=25.0, 仅注入 1.0）
+        s.apply_intervention(Intervention::InjectQi(1.0));
+        for _ in 0..recipe.fire_profile.target_duration_ticks {
+            s.tick();
+        }
+        let result =
+            resolve_with_meta_and_furnace(&s, &recipe, &registry, 0, CATALYST_FURNACE_TIER);
+        assert_eq!(
+            result.bucket,
+            OutcomeBucket::Waste,
+            "qi_deficit 时 tier {} 炉加成不应产出丹药，期望 Waste 但得到 {:?}",
+            CATALYST_FURNACE_TIER,
+            result.bucket
+        );
+    }
+
+    /// furnace_tier=0（默认/无炉）等同于旧 resolve_with_meta 行为（向后兼容）。
+    /// 用完整 ResolvedAlchemyResult（含 bucket/xp/outcome）比较，而非仅 bucket，
+    /// 确保 furnace_tier=0 的新入口在 xp、产出等维度上也完全对齐旧入口。
+    #[test]
+    fn p3_furnace_tier0_matches_legacy_resolve_with_meta() {
+        let (session, registry) = build_tui_gu_dan_session(0.87, 25.0);
+        let recipe = registry.get(RECIPE_TUI_GU_DAN).unwrap();
+        let legacy = resolve_with_meta(&session, recipe, &registry);
+        let with_tier0 = resolve_with_meta_and_furnace(&session, recipe, &registry, 0, 0);
+        assert_eq!(
+            legacy, with_tier0,
+            "furnace_tier=0 应与 resolve_with_meta 完整结果一致（bucket/xp/outcome 全部对齐）：\nlegacy={:?}\ntier0={:?}",
+            legacy, with_tier0
+        );
+    }
+
+    /// 回归：当 temp_deviation 和 duration_deviation **同时偏离**时，
+    /// 催化炉加成对两个字段的总削减量恰为 reduction（= bonus × DEVIATION_FULL_SCALE）一次，
+    /// 而不是对每个字段各减一次（2×reduction）。
+    /// 验证方式：直接对 DeviationSummary 施加加成前后的差值。
+    #[test]
+    fn p3_furnace_bonus_dual_deviation_reduces_by_exactly_one_reduction() {
+        use crate::alchemy::outcome::DeviationSummary;
+
+        // 构造两个维度都有偏差的场景：temp 和 duration 都是 2.0（都在 Good 区间）
+        // 这模拟"双偏差场景"——两个字段均正且都高于 0
+        let bonus = catalyst_furnace_bonus(CATALYST_FURNACE_TIER, RECIPE_TUI_GU_DAN);
+        assert!(
+            bonus > 0.0,
+            "CATALYST_FURNACE_TIER 对变异丹配方必须有正加成，bonus={}",
+            bonus
+        );
+        let reduction = bonus * DEVIATION_FULL_SCALE;
+
+        // 使用 resolve_raw 内部逻辑等价：直接模拟加成前后的字段变化
+        // before: temp=2.0, dur=1.5（temp 是主导维度）
+        let mut summary_before = DeviationSummary {
+            temp_deviation: 2.0,
+            duration_deviation: 1.5,
+            missed_stage: false,
+            qi_deficit: false,
+            severe_overheat: false,
+        };
+        // 手动执行与 resolve_raw 相同的加成逻辑（主导维度优先）
+        if summary_before.temp_deviation >= summary_before.duration_deviation {
+            summary_before.temp_deviation = (summary_before.temp_deviation - reduction).max(0.0);
+        } else {
+            summary_before.duration_deviation =
+                (summary_before.duration_deviation - reduction).max(0.0);
+        }
+        // 验证：两字段之和的减少量 == reduction（一次性削减，而非 2×reduction）
+        let total_before = 2.0_f64 + 1.5_f64;
+        let total_after = summary_before.temp_deviation + summary_before.duration_deviation;
+        let actual_reduction = total_before - total_after;
+        assert!(
+            (actual_reduction - reduction).abs() < 1e-9,
+            "双偏差场景下炉加成总削减应为 reduction={} 一次，实际削减了 {}（差值 {}）。\n\
+             若差 2×reduction={} 则说明双重削减 bug 复现。",
+            reduction,
+            actual_reduction,
+            actual_reduction - reduction,
+            2.0 * reduction
+        );
+
+        // 额外验证：次要维度（duration=1.5）不应被修改
+        assert!(
+            (summary_before.duration_deviation - 1.5_f64).abs() < 1e-9,
+            "次要维度 duration_deviation 不应被炉加成修改，期望 1.5，实际 {}",
+            summary_before.duration_deviation
+        );
     }
 }

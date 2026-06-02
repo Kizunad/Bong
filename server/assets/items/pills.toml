@@ -525,3 +525,31 @@ spirit_quality_initial = 0.35
 description = "NPC 售卖的次品聚灵丹，灵气留存不足，效果仅正品六成，自炼更划算。"
 cast_duration_ms = 1500
 cooldown_ms = 6000
+
+# ── plan-dandao-runtime-wiring-v1 P3 蜕骨丹系列 ──
+
+[[item]]
+id = "tui_gu_dan"
+name = "蜕骨丹"
+category = "pill"
+grid_w = 1
+grid_h = 1
+base_weight = 0.25
+rarity = "rare"
+spirit_quality_initial = 1.0
+description = "蜕骨藤与变异骨骼合炼，催动骨骼重塑，修炼时脉络感知增强。"
+cast_duration_ms = 2000
+cooldown_ms = 10000
+
+[[item]]
+id = "tui_gu_dan_flawed"
+name = "蜕骨丹（次品）"
+category = "pill"
+grid_w = 1
+grid_h = 1
+base_weight = 0.25
+rarity = "uncommon"
+spirit_quality_initial = 0.4
+description = "炼制欠火候的次品蜕骨丹，药力残缺，毒副作用偏重。"
+cast_duration_ms = 2000
+cooldown_ms = 10000
