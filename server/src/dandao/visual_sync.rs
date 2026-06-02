@@ -32,11 +32,19 @@ pub struct MutationVisualSyncPayload {
     pub slots: Vec<MutationVisualSlot>,
     /// 经脉惩罚百分比。
     pub meridian_penalty: f64,
+    /// 累计丹毒总量（client MutationHudPlanner 丹毒条读取此字段）。
+    pub cumulative_toxin: f64,
 }
 
 impl MutationVisualSyncPayload {
-    /// 从 MutationState 构建 payload。
-    pub fn from_state(entity_id: &str, state: &MutationState) -> Self {
+    /// 从 MutationState + cumulative_toxin 构建 payload。
+    ///
+    /// # 大小写契约（server ↔ client）
+    /// - `kind`：保留 Rust Debug 的 CamelCase（如 "GoldenIris"）。
+    ///   client `MutationKind.fromServerName` 以 `([a-z])([A-Z])` 正则拆分后 `valueOf`。
+    /// - `body_slot`：保留 Rust Debug 的 PascalCase（如 "Head"）。
+    ///   client `translateBodySlot` 先 `.toUpperCase()` 再 switch，"Head" → "HEAD" → "头部" ✓。
+    pub fn from_state(entity_id: &str, state: &MutationState, cumulative_toxin: f64) -> Self {
         Self {
             entity: entity_id.to_string(),
             stage: state.stage as u8,
@@ -44,12 +52,15 @@ impl MutationVisualSyncPayload {
                 .slots
                 .iter()
                 .map(|s| MutationVisualSlot {
-                    kind: format!("{:?}", s.kind).to_ascii_lowercase(),
-                    body_slot: format!("{:?}", s.slot).to_ascii_lowercase(),
+                    // CamelCase 直接用 Debug fmt，不做任何大小写变换
+                    kind: format!("{:?}", s.kind),
+                    // PascalCase (e.g. "Head"), client 会 toUpperCase → "HEAD"
+                    body_slot: format!("{:?}", s.slot),
                     level: s.level,
                 })
                 .collect(),
             meridian_penalty: state.meridian_penalty,
+            cumulative_toxin,
         }
     }
 }
@@ -144,6 +155,7 @@ mod visual_sync_tests {
             stage: 0,
             slots: vec![],
             meridian_penalty: 0.0,
+            cumulative_toxin: 0.0,
         };
         let json = serde_json::to_string(&payload).expect("serialize");
         let back: MutationVisualSyncPayload = serde_json::from_str(&json).expect("deserialize");
@@ -157,21 +169,45 @@ mod visual_sync_tests {
             stage: 3,
             slots: vec![
                 MutationVisualSlot {
-                    kind: "horns".to_string(),
-                    body_slot: "head".to_string(),
+                    kind: "Horns".to_string(),
+                    body_slot: "Head".to_string(),
                     level: 2,
                 },
                 MutationVisualSlot {
-                    kind: "tail".to_string(),
-                    body_slot: "lower".to_string(),
+                    kind: "Tail".to_string(),
+                    body_slot: "Lower".to_string(),
                     level: 1,
                 },
             ],
             meridian_penalty: 0.15,
+            cumulative_toxin: 300.0,
         };
         let json = serde_json::to_string(&payload).expect("serialize");
         let back: MutationVisualSyncPayload = serde_json::from_str(&json).expect("deserialize");
         assert_eq!(payload, back);
+    }
+
+    /// 验证 JSON 中存在 cumulative_toxin 字段（client fallback 0.0 的前提是该 key 实际出现）。
+    #[test]
+    fn payload_json_contains_cumulative_toxin_key() {
+        let payload = MutationVisualSyncPayload {
+            entity: "p".to_string(),
+            stage: 1,
+            slots: vec![],
+            meridian_penalty: 0.03,
+            cumulative_toxin: 42.5,
+        };
+        let json = serde_json::to_string(&payload).expect("serialize");
+        let val: serde_json::Value = serde_json::from_str(&json).expect("parse");
+        assert!(
+            val.get("cumulative_toxin").is_some(),
+            "JSON 必须包含 cumulative_toxin key，client MutationHudPlanner 丹毒条依赖它"
+        );
+        assert_eq!(
+            val["cumulative_toxin"],
+            serde_json::json!(42.5),
+            "cumulative_toxin 序列化值应与原始值一致"
+        );
     }
 
     #[test]
@@ -186,20 +222,155 @@ mod visual_sync_tests {
             }],
             meridian_penalty: 0.15,
         };
-        let payload = MutationVisualSyncPayload::from_state("test_player", &state);
+        let payload = MutationVisualSyncPayload::from_state("test_player", &state, 300.0);
         assert_eq!(payload.entity, "test_player");
         assert_eq!(payload.stage, 3);
         assert_eq!(payload.slots.len(), 1);
         assert_eq!(payload.slots[0].level, 2);
         assert!((payload.meridian_penalty - 0.15).abs() < f64::EPSILON);
+        assert!(
+            (payload.cumulative_toxin - 300.0).abs() < f64::EPSILON,
+            "cumulative_toxin 应从 DandaoStyle 传入并透传"
+        );
     }
 
     #[test]
     fn from_state_empty_slots() {
         let state = MutationState::default();
-        let payload = MutationVisualSyncPayload::from_state("empty", &state);
+        let payload = MutationVisualSyncPayload::from_state("empty", &state, 0.0);
         assert_eq!(payload.stage, 0);
         assert!(payload.slots.is_empty());
+        assert_eq!(payload.cumulative_toxin, 0.0);
+    }
+
+    // --- 大小写契约（server ↔ client round-trip pin 测试）---
+
+    /// MutationKind Debug 输出 CamelCase，client fromServerName 需要此形态。
+    #[test]
+    fn from_state_kind_camel_case_golden_iris() {
+        let state = MutationState {
+            stage: MutationStage::Subtle,
+            slots: vec![ActiveMutation {
+                kind: MutationKind::GoldenIris,
+                slot: BodySlot::Head,
+                level: 1,
+                acquired_tick: 0,
+            }],
+            meridian_penalty: 0.03,
+        };
+        let payload = MutationVisualSyncPayload::from_state("p", &state, 30.0);
+        assert_eq!(
+            payload.slots[0].kind, "GoldenIris",
+            "kind 应为 CamelCase 'GoldenIris'，client fromServerName 依赖此格式"
+        );
+    }
+
+    #[test]
+    fn from_state_kind_camel_case_all_variants() {
+        use crate::dandao::mutation::BodySlot;
+
+        let cases: &[(MutationKind, BodySlot, &str)] = &[
+            (MutationKind::GoldenIris, BodySlot::Head, "GoldenIris"),
+            (
+                MutationKind::HardenedNails,
+                BodySlot::Forearm,
+                "HardenedNails",
+            ),
+            (MutationKind::ToughSkin, BodySlot::Torso, "ToughSkin"),
+            (MutationKind::BoneRidge, BodySlot::Head, "BoneRidge"),
+            (
+                MutationKind::ForearmScales,
+                BodySlot::Forearm,
+                "ForearmScales",
+            ),
+            (MutationKind::SpineSpurs, BodySlot::Back, "SpineSpurs"),
+            (MutationKind::Horns, BodySlot::Head, "Horns"),
+            (MutationKind::Tail, BodySlot::Lower, "Tail"),
+            (MutationKind::BackCarapace, BodySlot::Back, "BackCarapace"),
+            (MutationKind::ExtraArms, BodySlot::Forearm, "ExtraArms"),
+            (MutationKind::BodyEnlarge, BodySlot::Torso, "BodyEnlarge"),
+            (MutationKind::BeastFace, BodySlot::Head, "BeastFace"),
+        ];
+
+        for (kind, slot, expected_kind_str) in cases {
+            let state = MutationState {
+                stage: MutationStage::Subtle,
+                slots: vec![ActiveMutation {
+                    kind: *kind,
+                    slot: *slot,
+                    level: 1,
+                    acquired_tick: 0,
+                }],
+                meridian_penalty: 0.03,
+            };
+            let payload = MutationVisualSyncPayload::from_state("p", &state, 0.0);
+            assert_eq!(
+                payload.slots[0].kind, *expected_kind_str,
+                "MutationKind::{kind:?} 应序列化为 '{expected_kind_str}'"
+            );
+        }
+    }
+
+    #[test]
+    fn from_state_body_slot_pascal_case_all_variants() {
+        use crate::dandao::mutation::BodySlot;
+
+        let cases: &[(BodySlot, &str)] = &[
+            (BodySlot::Head, "Head"),
+            (BodySlot::Forearm, "Forearm"),
+            (BodySlot::Back, "Back"),
+            (BodySlot::Torso, "Torso"),
+            (BodySlot::Lower, "Lower"),
+        ];
+
+        for (slot, expected) in cases {
+            let state = MutationState {
+                stage: MutationStage::Subtle,
+                slots: vec![ActiveMutation {
+                    kind: MutationKind::GoldenIris,
+                    slot: *slot,
+                    level: 1,
+                    acquired_tick: 0,
+                }],
+                meridian_penalty: 0.0,
+            };
+            let payload = MutationVisualSyncPayload::from_state("p", &state, 0.0);
+            assert_eq!(
+                payload.slots[0].body_slot, *expected,
+                "BodySlot::{slot:?} 应序列化为 '{expected}'，client translateBodySlot 会 toUpperCase"
+            );
+        }
+    }
+
+    /// 验证 JSON 中 kind/body_slot 的字面与 client 期望字面完全吻合（payload 层面契约锁定）。
+    #[test]
+    fn json_literal_round_trip_contract_golden_iris_head() {
+        let state = MutationState {
+            stage: MutationStage::Subtle,
+            slots: vec![ActiveMutation {
+                kind: MutationKind::GoldenIris,
+                slot: BodySlot::Head,
+                level: 1,
+                acquired_tick: 0,
+            }],
+            meridian_penalty: 0.03,
+        };
+        let payload = MutationVisualSyncPayload::from_state("p", &state, 35.0);
+        let json = serde_json::to_string(&payload).expect("serialize");
+        let val: serde_json::Value = serde_json::from_str(&json).expect("parse");
+        let slot0 = &val["slots"][0];
+        assert_eq!(
+            slot0["kind"], "GoldenIris",
+            "JSON kind 字面必须为 'GoldenIris'，client MutationKind.fromServerName 依赖此值"
+        );
+        assert_eq!(
+            slot0["body_slot"], "Head",
+            "JSON body_slot 字面必须为 'Head'，client translateBodySlot(.toUpperCase()) 依赖此值"
+        );
+        assert!(
+            val["cumulative_toxin"].as_f64().unwrap() > 0.0,
+            "cumulative_toxin 应在 JSON 中且非零"
+        );
     }
 
     // --- HUD panel tests ---
