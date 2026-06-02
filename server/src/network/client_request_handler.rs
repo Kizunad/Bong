@@ -7879,7 +7879,14 @@ fn handle_alchemy_take_back(
                 return;
             };
             let elapsed_ticks = ended.elapsed_ticks;
-            let resolved = crate::alchemy::resolver::resolve_with_meta(&ended, recipe, registry);
+            // P3 — 催化炉加成：透传炉 tier 给 resolver，对变异丹配方叠加成功率加成。
+            let resolved = crate::alchemy::resolver::resolve_with_meta_and_furnace(
+                &ended,
+                recipe,
+                registry,
+                0,
+                furnace.tier,
+            );
             let bucket = resolved.bucket;
             let outcome = resolved.outcome;
             let event_recipe_id = Some(recipe.id.clone());
