@@ -185,6 +185,24 @@
         "soil_tint": "purple_grey",
         "alchemist_groan": "rare"
       }
+    },
+    "wangyintai": {
+      "height": { "base": [68, 86], "peak": 96, "compound_flatten_radius": 64 },
+      "boundary": { "mode": "soft", "width": 64 },
+      "surface": ["deepslate", "cobbled_deepslate", "gravel", "stone", "mossy_cobblestone"],
+      "water": { "level": "low", "coverage": 0.05 },
+      "passability": "medium",
+      "structure_density": {
+        "wild_herb_clump": 0.004,
+        "scattered_bone_fragment": 0.006,
+        "small_rubble": 0.012
+      },
+      "architectural_layout": "wangyintai_compound",
+      "ambient_hint": {
+        "vortex_hum": "continuous",
+        "stone_tint": "slate_grey",
+        "wind_moan": "rare"
+      }
     }
   }
 }
