@@ -5,10 +5,10 @@ mod disciple;
 mod rogue;
 mod zombie;
 
-use big_brain::prelude::BigBrainSet;
+use big_brain::prelude::{BigBrainSet, HasThinker, ThinkerBuilder};
 use valence::prelude::{
-    App, Commands, DVec3, Entity, EventReader, EventWriter, IntoSystemConfigs, PreUpdate, Query,
-    ResMut, Update, With,
+    App, Commands, DVec3, Despawned, Entity, EventReader, EventWriter, IntoSystemConfigs, Last,
+    PreUpdate, Query, ResMut, Update, With, Without, World,
 };
 
 use crate::npc::lifecycle::{NpcArchetype, NpcRegistry, NpcReproductionRequest, NpcSpawnNotice};
@@ -202,6 +202,12 @@ pub fn register(app: &mut App) {
         .add_systems(
             PreUpdate,
             attach_deferred_npc_brain_system.before(BigBrainSet::Scorers),
+        )
+        // B0003 竞态守卫：在 big_brain attach 之前剥掉将死 NPC 的 `ThinkerBuilder`。
+        // 根因与机制见 `strip_brain_from_despawning_npcs_system` 的 doc comment。
+        .add_systems(
+            Last,
+            strip_brain_from_despawning_npcs_system.before(BigBrainSet::Cleanup),
         );
 }
 
@@ -221,6 +227,48 @@ fn attach_deferred_npc_brain_system(
             .entity(entity)
             .remove::<common::DeferredNpcBrain>()
             .insert(deferred.build());
+    }
+}
+
+// ---------------------------------------------------------------------------
+// System: strip_brain_from_despawning_npcs_system
+// ---------------------------------------------------------------------------
+
+/// 「将死且未 attach」NPC 的精确过滤器：持 `NpcMarker` + 已标 `Despawned` + 持 `ThinkerBuilder`
+/// + 尚无 `HasThinker`。strip 系统与回归测试的 probe 共用，确保两侧锁的是同一不变量。
+type DespawningBareThinkerFilter = (
+    With<common::NpcMarker>,
+    With<Despawned>,
+    With<ThinkerBuilder>,
+    Without<HasThinker>,
+);
+
+/// 剥掉「已标记 `Despawned` 且尚未拿到 `HasThinker`」的 NPC 的 `ThinkerBuilder`。
+///
+/// big_brain 的 `thinker_component_attach_system`（`BigBrainSet::Cleanup`）和 valence 的
+/// `despawn_marked_entities` 都在 `Last` schedule。一旦某 NPC 同 tick 内既被
+/// `attach_deferred_npc_brain_system` 唤醒插上 `ThinkerBuilder`、又被 `dehydrate_far_npcs_system`
+/// 标记 `Despawned`，valence 在 `Last` 把它真正删除，而 big_brain 的 attach query 是
+/// `Without<HasThinker>` 但**不带** `Without<Despawned>`——仍会命中这个将死实体并对它
+/// `insert(HasThinker)` → Bevy `B0003` panic（“Could not insert a bundle … because it doesn't
+/// exist in this World”），整个 server 崩溃。
+///
+/// 本系统在 `BigBrainSet::Cleanup` 之前先移除 `ThinkerBuilder`，让 attach query 不再命中——
+/// 覆盖所有 despawn-mark 路径（dehydrate / scenario / war / …）。
+///
+/// **为何用 exclusive `&mut World` 系统**：`Commands::remove` 是延迟命令；虽然 Bevy 0.14 的
+/// `auto_insert_apply_deferred`（默认开）会在「有 deferred 的系统 → 下游系统」的依赖边上自动插入
+/// sync point（故 `.before(BigBrainSet::Cleanup)` 配 `Commands` 版本其实也正确），但这条 crash
+/// 关键路径不依赖那一层隐式行为。exclusive 系统直接改 `World`，移除**立即生效**，进入 Cleanup 时
+/// `ThinkerBuilder` 必已不在——与 `auto_insert_apply_deferred` 配置、线程数都无关。
+///
+/// 仅作用于 `Without<HasThinker>` 的将死实体：已 attach（持 `HasThinker`）的 NPC 走 big_brain
+/// `actor_gone_cleanup` 常规清理，不在此处干预。
+fn strip_brain_from_despawning_npcs_system(world: &mut World) {
+    let mut query = world.query_filtered::<Entity, DespawningBareThinkerFilter>();
+    let doomed: Vec<Entity> = query.iter(world).collect();
+    for entity in doomed {
+        world.entity_mut(entity).remove::<ThinkerBuilder>();
     }
 }
 
@@ -717,6 +765,166 @@ mod tests {
 
         assert!(app.world().get::<ThinkerBuilder>(npc).is_none());
         assert!(app.world().get::<DeferredNpcBrain>(npc).is_some());
+    }
+
+    // valence `despawn_marked_entities` 的等价复刻（同在 `Last`，真正移除 `Despawned` 实体）。
+    // 用于把 B0003 竞态的两侧（big_brain attach + valence despawn）拼到测试 app 里。
+    fn despawn_marked_entities_clone(
+        marked: Query<Entity, With<Despawned>>,
+        mut commands: Commands,
+    ) {
+        for entity in &marked {
+            commands.entity(entity).despawn();
+        }
+    }
+
+    // probe：与 big_brain 的 `thinker_component_attach_system` 同在 `BigBrainSet::Cleanup`。
+    // 累加「进入 Cleanup 时仍可被 attach query 命中的将死实体」数量，用于断言 strip 已在
+    // Cleanup 之前把 `ThinkerBuilder` 清掉。
+    #[derive(valence::prelude::Resource, Default)]
+    struct BareThinkerSeenInCleanup(usize);
+
+    fn probe_bare_thinker_in_cleanup(
+        mut seen: valence::prelude::ResMut<BareThinkerSeenInCleanup>,
+        bare: Query<Entity, DespawningBareThinkerFilter>,
+    ) {
+        seen.0 += bare.iter().count();
+    }
+
+    #[test]
+    fn strip_removal_visible_before_big_brain_cleanup_query() {
+        // 确定性回归锁（回应 Pi review 对「Commands 延迟生效 / 单线程虚假信心」的质疑）：
+        // strip 是 exclusive &mut World 系统，移除立即生效；probe 注册在
+        // .in_set(BigBrainSet::Cleanup)（与 thinker_component_attach_system 同一调度点），
+        // 进入 Cleanup 时不得再 query 到「Despawned + ThinkerBuilder + 无 HasThinker」实体——
+        // 否则 attach query 命中将死实体 → insert(HasThinker) → B0003。结论与线程数无关。
+        let mut app = App::new();
+        app.add_plugins(BigBrainPlugin::new(PreUpdate));
+        app.init_resource::<BareThinkerSeenInCleanup>();
+        app.add_systems(
+            Last,
+            strip_brain_from_despawning_npcs_system.before(BigBrainSet::Cleanup),
+        );
+        app.add_systems(
+            Last,
+            probe_bare_thinker_in_cleanup.in_set(BigBrainSet::Cleanup),
+        );
+
+        app.world_mut().spawn((
+            NpcMarker,
+            Despawned,
+            DeferredNpcBrain::ScatteredCultivator.build(),
+        ));
+
+        app.update();
+
+        assert_eq!(
+            app.world().resource::<BareThinkerSeenInCleanup>().0,
+            0,
+            "进入 BigBrainSet::Cleanup 时 strip 必须已移除将死 NPC 的 ThinkerBuilder（B0003 前置态须归零）"
+        );
+    }
+
+    #[test]
+    fn strip_removes_thinker_builder_from_despawning_npc_without_thinker() {
+        // 崩溃前置态：NPC 同 tick 被唤醒拿到 ThinkerBuilder + 被标 Despawned，但 big_brain 未 attach。
+        let mut app = App::new();
+        app.add_systems(Update, strip_brain_from_despawning_npcs_system);
+        let npc = app
+            .world_mut()
+            .spawn((
+                NpcMarker,
+                Despawned,
+                DeferredNpcBrain::ScatteredCultivator.build(),
+            ))
+            .id();
+
+        app.update();
+
+        assert!(
+            app.world().get::<ThinkerBuilder>(npc).is_none(),
+            "strip 必须移除将死 NPC（Despawned + 无 HasThinker）的 ThinkerBuilder，否则 big_brain \
+             attach 会对已 despawn 的 entity insert HasThinker → Bevy B0003 panic"
+        );
+    }
+
+    #[test]
+    fn strip_keeps_thinker_builder_on_live_npc() {
+        // 活体 NPC（未标 Despawned）的 ThinkerBuilder 必须保留给 big_brain 正常 attach。
+        let mut app = App::new();
+        app.add_systems(Update, strip_brain_from_despawning_npcs_system);
+        let npc = app
+            .world_mut()
+            .spawn((NpcMarker, DeferredNpcBrain::ScatteredCultivator.build()))
+            .id();
+
+        app.update();
+
+        assert!(
+            app.world().get::<ThinkerBuilder>(npc).is_some(),
+            "strip 只针对 Despawned 实体：活体 NPC 的 ThinkerBuilder 不应被动到"
+        );
+    }
+
+    #[test]
+    fn strip_leaves_already_attached_despawning_npc_for_big_brain_cleanup() {
+        // 已 attach（持 HasThinker）的将死 NPC 不归 strip 管——该路径由 big_brain actor_gone_cleanup
+        // 处理。用真实 big_brain 跑出 HasThinker 后再标 Despawned，验证 strip 的 Without<HasThinker>
+        // 守卫跳过它、ThinkerBuilder 保留。
+        let mut app = App::new();
+        app.add_plugins(BigBrainPlugin::new(PreUpdate));
+        app.add_systems(
+            Last,
+            strip_brain_from_despawning_npcs_system.before(BigBrainSet::Cleanup),
+        );
+        let npc = app
+            .world_mut()
+            .spawn((NpcMarker, DeferredNpcBrain::ScatteredCultivator.build()))
+            .id();
+        app.update();
+        assert!(
+            app.world().get::<HasThinker>(npc).is_some(),
+            "前置：big_brain 应已在 Last 把 HasThinker attach 上"
+        );
+
+        app.world_mut().entity_mut(npc).insert(Despawned);
+        app.update();
+
+        assert!(
+            app.world().get::<ThinkerBuilder>(npc).is_some(),
+            "strip 不应剥掉已 attach NPC 的 ThinkerBuilder（Without<HasThinker> 守卫）"
+        );
+    }
+
+    #[test]
+    fn despawning_woken_npc_does_not_panic_big_brain_attach_b0003() {
+        // 生产 wiring 复刻 + 回归锁：big_brain cleanup（含 thinker_component_attach_system）与
+        // valence 风格 despawn 同在 `Last`，strip 注册在 `.before(BigBrainSet::Cleanup)`。NPC 处于
+        // 「ThinkerBuilder + Despawned + 无 HasThinker」崩溃前置态——strip 在 Cleanup 之前剥掉
+        // ThinkerBuilder，big_brain attach 不再命中将死实体，整帧不得 panic，且实体被正常移除。
+        let mut app = App::new();
+        app.add_plugins(BigBrainPlugin::new(PreUpdate));
+        app.add_systems(
+            Last,
+            strip_brain_from_despawning_npcs_system.before(BigBrainSet::Cleanup),
+        );
+        app.add_systems(Last, despawn_marked_entities_clone);
+
+        let npc = app
+            .world_mut()
+            .spawn((
+                NpcMarker,
+                Despawned,
+                DeferredNpcBrain::ScatteredCultivator.build(),
+            ))
+            .id();
+
+        app.update(); // 修复前此处 B0003 panic 整服崩溃
+
+        assert!(
+            app.world().get_entity(npc).is_none(),
+            "将死 NPC 应在 Last 被 valence 风格 despawn 正常移除，且过程不触发 B0003"
+        );
     }
 
     #[test]
