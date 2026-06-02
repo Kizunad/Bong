@@ -8,13 +8,15 @@
 
 ## 阶段总览
 
-| 阶段 | 主题 | 断链 | 状态 |
-|------|------|------|------|
-| **P0** | `dandao::register` 接入 `run_server` + 生产服丹路径 emit `PillIntakeTracked`（总开关，解锁全链） | mutation-runtime-not-started / dandao-pill-intake-no-emitter | ⬜ |
-| **P1** | 变异视觉 server→client：`MutationAdvanceEvent` → `bong:mutation_visual` payload（变异肢体 GeckoLib 渲染 + 丹毒 HUD） | dandao-mutation-advance-event-no-reader / dandao-mutation-visual-no-emit / mutation-visual-server-emit-missing | ⬜ |
-| **P2** | 变异叙事 server→agent：新增 `RedisOutbound::MutationEvent` 发布 `bong:mutation_event` + 两端 schema 对齐 + agent `MutationNarrationRuntime` 启动 | mutation-runtime-not-started | ⬜ |
-| **P3** | 催化炉加成接入 alchemy resolver：`catalyst_furnace_bonus` 变异丹成功率加成 | dandao-catalyst-furnace-unused | ⬜ |
-| **P4** | 暴龙王 BOSS 端到端遭遇战：spawn + big-brain 集成层（包装现有评分函数）+ 掉落表 + 真元吸取光环（守恒） | dandao-boss-orphan | ⬜ |
+| 阶段 | 主题 | 断链 | 状态 | 验收日期 |
+|------|------|------|------|------|
+| **P0** | `dandao::register` 接入 `run_server` + 生产服丹路径 emit `PillIntakeTracked`（总开关，解锁全链） | mutation-runtime-not-started / dandao-pill-intake-no-emitter | ⬜ | — |
+| **P1** | 变异视觉 server→client：`MutationAdvanceEvent` → `bong:mutation_visual` payload（变异肢体 GeckoLib 渲染 + 丹毒 HUD） | dandao-mutation-advance-event-no-reader / dandao-mutation-visual-no-emit / mutation-visual-server-emit-missing | ⬜ | — |
+| **P2** | 变异叙事 server→agent：新增 `RedisOutbound::MutationEvent` 发布 `bong:mutation_event` + 两端 schema 对齐 + agent `MutationNarrationRuntime` 启动 | mutation-runtime-not-started | ⬜ | — |
+| **P3** | 催化炉加成接入 alchemy resolver：`catalyst_furnace_bonus` 变异丹成功率加成 | dandao-catalyst-furnace-unused | ⬜ | — |
+| **P4** | 暴龙王 BOSS 端到端遭遇战：spawn + big-brain 集成层（包装现有评分函数）+ 掉落表 + 真元吸取光环（守恒） | dandao-boss-orphan | ⬜ | — |
+
+> 阶段为 P0–P4 共 5 段（无 P5）；`验收日期` 各段在对应 PR merge 后填 `YYYY-MM-DD`，全段 ✅ 后迁入 `finished_plans/`。
 
 > 依赖顺序：**P0 是总开关**——缺它任何下游单点修复都因 `register` 未调而无效，必须最先 land。P1/P2 是 `MutationAdvanceEvent` 的两个独立 reader（视觉 / 叙事），可并行设计、独立成 PR。P3 独立于变异链（炼丹成功率）。P4 体量最大（BOSS 遭遇战 + big-brain 集成层新写），依赖 P0 的 register 但与 P1/P2/P3 解耦。验收日期迁入 `finished_plans/` 时填。
 
@@ -158,7 +160,7 @@
 
 > ⚠️ **偏离 docs/CLAUDE.md §6.4 的 `model:"opus"`**——依用户强约束（memory `feedback_workflow_model_routing` + `feedback_workflow_opus_concurrency_cap`）：**写代码（实施）一律 sonnet，opus 只用于验证且并发 ≤3**。
 
-```
+```text
 Agent(
   subagent_type: "claude",
   model: "sonnet",                   # 实施=sonnet（非 opus），无"精细/守恒关键"例外
