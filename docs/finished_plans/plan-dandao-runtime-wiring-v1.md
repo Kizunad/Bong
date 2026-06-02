@@ -10,11 +10,11 @@
 
 | 阶段 | 主题 | 断链 | 状态 | 验收日期 |
 |------|------|------|------|------|
-| **P0** | `dandao::register` 接入 `run_server` + 生产服丹路径 emit `PillIntakeTracked`（总开关，解锁全链） | mutation-runtime-not-started / dandao-pill-intake-no-emitter | ⬜ | — |
-| **P1** | 变异视觉 server→client：`MutationAdvanceEvent` → `bong:mutation_visual` payload（变异肢体 GeckoLib 渲染 + 丹毒 HUD） | dandao-mutation-advance-event-no-reader / dandao-mutation-visual-no-emit / mutation-visual-server-emit-missing | ⬜ | — |
-| **P2** | 变异叙事 server→agent：新增 `RedisOutbound::MutationEvent` 发布 `bong:mutation_event` + 两端 schema 对齐 + agent `MutationNarrationRuntime` 启动 | mutation-runtime-not-started | ⬜ | — |
-| **P3** | 催化炉加成接入 alchemy resolver：`catalyst_furnace_bonus` 变异丹成功率加成 | dandao-catalyst-furnace-unused | ⬜ | — |
-| **P4** | 暴龙王 BOSS 端到端遭遇战：spawn + big-brain 集成层（包装现有评分函数）+ 掉落表 + 真元吸取光环（守恒） | dandao-boss-orphan | ⬜ | — |
+| **P0** | `dandao::register` 接入 `run_server` + 生产服丹路径 emit `PillIntakeTracked`（总开关，解锁全链） | mutation-runtime-not-started / dandao-pill-intake-no-emitter | ✅ | 2026-06-03 |
+| **P1** | 变异视觉 server→client：`MutationAdvanceEvent` → `bong:mutation_visual` payload（变异肢体 GeckoLib 渲染 + 丹毒 HUD） | dandao-mutation-advance-event-no-reader / dandao-mutation-visual-no-emit / mutation-visual-server-emit-missing | ✅ | 2026-06-03 |
+| **P2** | 变异叙事 server→agent：新增 `RedisOutbound::MutationEvent` 发布 `bong:mutation_event` + 两端 schema 对齐 + agent `MutationNarrationRuntime` 启动 | mutation-runtime-not-started | ✅ | 2026-06-03 |
+| **P3** | 催化炉加成接入 alchemy resolver：`catalyst_furnace_bonus` 变异丹成功率加成 | dandao-catalyst-furnace-unused | ✅ | 2026-06-03 |
+| **P4** | 暴龙王 BOSS 端到端遭遇战：spawn + big-brain 集成层（包装现有评分函数）+ 掉落表 + 真元吸取光环（守恒） | dandao-boss-orphan | ✅ | 2026-06-03 |
 
 > 阶段为 P0–P4 共 5 段（无 P5）；`验收日期` 各段在对应 PR merge 后填 `YYYY-MM-DD`，全段 ✅ 后迁入 `finished_plans/`。
 
@@ -184,4 +184,39 @@ Agent(
 
 ## Finish Evidence
 
-> 迁入 `docs/finished_plans/` 前必填（落地清单 / 关键 commit / 测试结果 / 跨仓库核验 / 遗留）。当前 P0–P4 均 ⬜，未填。
+> P0–P4 全部 ✅（2026-06-03），经 `/consume-plan dandao-runtime-wiring-v1` 五 PR 序列自动实施 + 对抗式 review 后归档。
+
+### 落地清单
+
+- **P0** `dandao::register` 接入 `run_server`：`server/src/main.rs`（`run_server()` 增 `dandao::register(&mut app)`，接通 `PillIntakeTracked`/`MutationAdvanceEvent` 两事件 + `track_pill_intake_system`/`mutation_advance_system` 两 system）+ `server/src/network/client_request_handler.rs`（`handle_alchemy_take_pill` 服丹成功 emit `PillIntakeTracked`，toxin 取 `combat_pill_spec.toxin_amount`，>0 才发）→ `track_pill_intake_system` 记 `PracticeLog` Mellow。
+- **P1** 变异视觉 server→client：`server/src/network/mutation_visual_emit.rs`（`mutation_visual_emit_system` 读 `MutationAdvanceEvent` → `MutationVisualSyncPayload::from_state(entity_id, &state, cumulative_toxin)` → `send_custom_payload(bong:mutation_visual)`，排 `.after(mutation_advance_system)`）+ `visual_sync.rs`（payload 扩 `cumulative_toxin: f64`；`from_state` kind CamelCase / body_slot PascalCase 对齐 client `MutationKind.fromServerName` / `translateBodySlot`）。client 消费端 `MutationPayloadHandler`（已就绪，未改）。
+- **P2** 变异叙事 server→agent：`server/src/schema/dandao.rs`（`MutationEventV1` serde 对齐 agent TypeBox 权威形状 `{v:1, entity_id:u64, from_stage, to_stage, cumulative_toxin, at_tick}`）+ `server/src/network/mutation_event_publish.rs`（`mutation_event_publish_system` 读 `MutationAdvanceEvent` → publish `bong:mutation_event`）+ `redis_bridge.rs`（`RedisOutbound::MutationEvent`）+ `agent/packages/schema/samples/mutation-event.sample.json`（双端对拍）+ `agent/packages/tiandao/src/main.ts`（`startMutationNarrationRuntime` 入 `startAuxiliaryRuntimes` cleanupFns）。
+- **P3** 催化炉加成：`server/src/alchemy/resolver.rs`（`resolve_with_meta_and_furnace(.., furnace_tier)`，变异丹精确路径将 `catalyst_furnace_bonus(furnace_tier, recipe.id)` × `DEVIATION_FULL_SCALE` 作偏差削减叠入**主导维度**[max(temp,dur) 语义，避免双计]）+ `client_request_handler.rs`（`handle_alchemy_take_back` 透传 `furnace.tier`）。
+- **P4** 暴龙王 BOSS：`server/src/cmd/dev/baolongwang.rs`（dev 命令 `/baolongwang spawn` + `cmd/dev/mod.rs` 注册）+ `server/src/dandao/boss_spawn.rs`（`spawn_baolongwang_at` + big-brain 集成层 `BaolongwangScorer`/`BaolongwangAction` 包装 `boss_ai.rs` 裸 `score_*` 函数 + `baolongwang_thinker()` + `baolongwang_qi_drain_aura_system`[`QiTransfer{BossDrain}` 守恒：玩家 `qi_current -= actual_drain` ↔ zone `set_balance(+actual_drain)` 恰一次，event emit-only 审计无双计；`QI_DRAIN_BOSS_MULTIPLIER=1.5`] + `baolongwang_death_system` 调 `compute_loot`）+ `server/assets/items/dandao.toml`（6 个 loot ItemTemplate）+ `boss_ai.rs` `QiTransferReason::BossDrain` 变体。client 实体 `BaolongwangEntities`（raw_id 160）已就绪。
+
+### 关键 commit（2026-06-03）
+
+- P0：`03100bb22`（register + 服丹 emit）；test 补强 `e9b1ab53f`
+- P1：`4e825f8e3`（emit + payload 大小写/cumulative_toxin）；CR test 补强 `b367e2c0a`
+- P2：`3afab4c55`（schema 对齐 + Redis publish + agent runtime）
+- P3：`e7231d8da`（catalyst 接入）；CR 双计 bug 修 + 测试补强 `d22e9db84`
+- P4：`f86d5c199`（boss 全套）；category 修 `ce155621f`；CR 守恒核查 + 测试补强 `0ed34d53e`
+- PR：#372(P0) / #374(P1) / #376(P2) / #378(P3) / #379(P4)
+
+### 测试结果
+
+- server `cargo fmt --check` + `cargo clippy --all-targets -- -D warnings` + `cargo test` → **7083 passed / 0 failed / 1 ignored**（含 P0 18 + P1 emit/casing + P2 8 publish + P3 catalyst/双计回归 + P4 boss_spawn/守恒/Expel/集成 等新增测试）
+- agent `tiandao` → **479 passed**；`schema` → **446 passed**（含 `MutationEventV1` 双端 sample 对拍 + 缺/多字段拒绝）
+
+### 跨仓库核验
+
+- **server**：`dandao::register` / `PillIntakeTracked` / `MutationAdvanceEvent` / `MutationVisualSyncPayload`(MUTATION_VISUAL_CHANNEL=`bong:mutation_visual`) / `RedisOutbound::MutationEvent` / `catalyst_furnace_bonus` / `QiTransferReason::BossDrain` / `BaolongwangScorer`
+- **agent**：`MutationNarrationRuntime`（订阅 `MUTATION_EVENT`=`bong:mutation_event`）/ `startMutationNarrationRuntime` in `main.ts`
+- **client**：`MutationPayloadHandler` / `MutationVisualState` / `MutationFeatureRenderer` / `MutationHudPlanner` / `BaolongwangEntities`(raw_id 160)（消费端先就绪，本 plan 接通生产端）
+
+### 遗留 / 后续
+
+- **item 图标（8 个，/gen-image item follow-up）**：P4 `dandao.baolongwang_core` / `ancient_recipe_fragment` / `baolongwang_horn` / `baolongwang_scale` / `catalyst_furnace_remnant` / `xu_yuan_dan` + P3 `tui_gu_dan` / `tui_gu_dan_flawed`（当前 fallback 图标，逻辑无碍）。
+- **P4 视听 deferred**：① VFX 粒子触发未接入 action system（基础设施在，bong:vfx_event）；② 玩家被吸真元的 client HUD overlay payload（本 plan 范围外）；③ audio recipe `.json` 资产未配（9 个 SFX key 已在 `send_audio!`，recipe 文件缺则静默 no-op）——三项为可感知层 polish，核心 wiring + 守恒已落地。
+- **loot inventory spawn**：`baolongwang_death_system` 当前调 `compute_loot` 生成掉落表并 tracing log，**实际 inventory/掉落物 spawn 接入留下游**。
+- **review infra**：本 plan 多 PR 因 CodeRabbit credits / Codex / Pi usage-limit 耗尽，部分 PR 依 e2e（真集成门）+ 已修内容意见 + 0 CHANGES_REQUESTED 走 fallback merge（PR 内已注明）。
