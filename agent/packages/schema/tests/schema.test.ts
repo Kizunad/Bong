@@ -145,6 +145,7 @@ import {
   ZhenmaiSkillEventV1,
   validateZhenmaiSkillEventV1Contract,
 } from "../src/zhenmai-v2.js";
+import { validateMutationEventV1 } from "../src/mutation-event.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const samplesDir = join(__dirname, "..", "samples");
@@ -2398,5 +2399,193 @@ describe("plan-zone-environment-v1 schema", () => {
       at_tick: 42.25,  // 非整数
     };
     expectContractRejects("FactionWarEventV1 non-integer at_tick", validateFactionWarEventV1Contract, payload);
+  });
+});
+
+// ─── plan-dandao-runtime-wiring-v1 P2: MutationEventV1 schema pin tests ────────────────
+describe("MutationEventV1 schema pin tests (plan-dandao-runtime-wiring-v1 P2)", () => {
+  it("accepts shared sample mutation-event.sample.json", () => {
+    const sample = loadSample("mutation-event.sample.json");
+    const result = validateMutationEventV1(sample);
+    expect(result.ok).toBe(true);
+  });
+
+  it("rejects shared invalid sample mutation-event.invalid-extra-field.sample.json", () => {
+    const sample = loadSample("mutation-event.invalid-extra-field.sample.json");
+    const result = validateMutationEventV1(sample);
+    expect(result.ok).toBe(false);
+  });
+
+  it("accepts valid mutation event — subtle to visible transition", () => {
+    const result = validateMutationEventV1({
+      v: 1,
+      entity_id: 281474976710657,
+      from_stage: "subtle",
+      to_stage: "visible",
+      cumulative_toxin: 105.0,
+      at_tick: 50000,
+    });
+    expect(result.ok).toBe(true);
+  });
+
+  it("accepts heavy stage transition (narration-triggering)", () => {
+    const result = validateMutationEventV1({
+      v: 1,
+      entity_id: 42,
+      from_stage: "visible",
+      to_stage: "heavy",
+      cumulative_toxin: 260.0,
+      at_tick: 1200,
+    });
+    expect(result.ok).toBe(true);
+  });
+
+  it("accepts bestial stage transition (zone-scope narration)", () => {
+    const result = validateMutationEventV1({
+      v: 1,
+      entity_id: 99,
+      from_stage: "heavy",
+      to_stage: "bestial",
+      cumulative_toxin: 400.0,
+      at_tick: 9999,
+    });
+    expect(result.ok).toBe(true);
+  });
+
+  it("rejects wrong v value (v:2)", () => {
+    const result = validateMutationEventV1({
+      v: 2,
+      entity_id: 42,
+      from_stage: "subtle",
+      to_stage: "visible",
+      cumulative_toxin: 105.0,
+      at_tick: 50000,
+    });
+    expect(result.ok).toBe(false);
+  });
+
+  it("rejects entity_id as string (old entity field type)", () => {
+    const result = validateMutationEventV1({
+      v: 1,
+      entity_id: "player_old",
+      from_stage: "subtle",
+      to_stage: "visible",
+      cumulative_toxin: 105.0,
+      at_tick: 50000,
+    });
+    expect(result.ok).toBe(false);
+  });
+
+  it("rejects extra field (additionalProperties:false)", () => {
+    const result = validateMutationEventV1({
+      v: 1,
+      entity_id: 42,
+      from_stage: "subtle",
+      to_stage: "visible",
+      cumulative_toxin: 105.0,
+      at_tick: 50000,
+      extra_field: "fail",
+    });
+    expect(result.ok).toBe(false);
+  });
+
+  it("rejects old entity field name", () => {
+    const result = validateMutationEventV1({
+      v: 1,
+      entity: "player_456",
+      from_stage: "subtle",
+      to_stage: "visible",
+      cumulative_toxin: 105.0,
+      at_tick: 50000,
+    });
+    expect(result.ok).toBe(false);
+  });
+
+  it("rejects old server_tick field name", () => {
+    const result = validateMutationEventV1({
+      v: 1,
+      entity_id: 42,
+      from_stage: "subtle",
+      to_stage: "visible",
+      cumulative_toxin: 105.0,
+      server_tick: 50000,
+    });
+    expect(result.ok).toBe(false);
+  });
+
+  it("rejects old new_meridian_penalty field", () => {
+    const result = validateMutationEventV1({
+      v: 1,
+      entity_id: 42,
+      from_stage: "subtle",
+      to_stage: "visible",
+      cumulative_toxin: 105.0,
+      at_tick: 50000,
+      new_meridian_penalty: 0.08,
+    });
+    expect(result.ok).toBe(false);
+  });
+
+  it("rejects missing required field entity_id", () => {
+    const result = validateMutationEventV1({
+      v: 1,
+      from_stage: "subtle",
+      to_stage: "visible",
+      cumulative_toxin: 105.0,
+      at_tick: 50000,
+    });
+    expect(result.ok).toBe(false);
+  });
+
+  it("rejects missing required field at_tick", () => {
+    const result = validateMutationEventV1({
+      v: 1,
+      entity_id: 42,
+      from_stage: "subtle",
+      to_stage: "visible",
+      cumulative_toxin: 105.0,
+    });
+    expect(result.ok).toBe(false);
+  });
+
+  it("rejects invalid stage string", () => {
+    const result = validateMutationEventV1({
+      v: 1,
+      entity_id: 42,
+      from_stage: "mega",
+      to_stage: "visible",
+      cumulative_toxin: 105.0,
+      at_tick: 50000,
+    });
+    expect(result.ok).toBe(false);
+  });
+
+  it("rejects negative cumulative_toxin (minimum:0 constraint)", () => {
+    const result = validateMutationEventV1({
+      v: 1,
+      entity_id: 42,
+      from_stage: "subtle",
+      to_stage: "visible",
+      cumulative_toxin: -1.0,
+      at_tick: 50000,
+    });
+    expect(result.ok).toBe(false);
+  });
+
+  it("rejects negative at_tick (minimum:0 constraint)", () => {
+    const result = validateMutationEventV1({
+      v: 1,
+      entity_id: 42,
+      from_stage: "subtle",
+      to_stage: "visible",
+      cumulative_toxin: 105.0,
+      at_tick: -1,
+    });
+    expect(result.ok).toBe(false);
+  });
+
+  it("CHANNELS.MUTATION_EVENT equals bong:mutation_event", () => {
+    // 对齐 server CH_MUTATION_EVENT = "bong:mutation_event"
+    expect(CHANNELS.MUTATION_EVENT).toBe("bong:mutation_event");
   });
 });

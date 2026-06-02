@@ -208,6 +208,10 @@ pub const CH_WANTED_PLAYER: &str = "bong:wanted_player";
 pub const CH_CRAFT_OUTCOME: &str = "bong:craft/outcome";
 pub const CH_CRAFT_RECIPE_UNLOCKED: &str = "bong:craft/recipe_unlocked";
 
+// 丹道变异叙事（plan-dandao-runtime-wiring-v1 P2）—— server → agent 观测频道。
+/// 变异阶段推进事件，对齐 agent `CHANNELS.MUTATION_EVENT`。
+pub const CH_MUTATION_EVENT: &str = "bong:mutation_event";
+
 #[cfg(test)]
 mod tests {
     use super::*;

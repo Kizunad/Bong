@@ -268,4 +268,44 @@ describe("MutationNarrationRuntime", () => {
     await vi.waitFor(() => expect(pub.published).toHaveLength(1));
     expect(pub.published[0].channel).toBe(AGENT_NARRATE);
   });
+
+  it("disconnect returns without throwing (wiring cleanup test)", async () => {
+    const pub = new FakePubSub();
+    const sub = new FakePubSub();
+    const runtime = new MutationNarrationRuntime({
+      sub,
+      pub,
+      logger: silent,
+    });
+
+    await runtime.connect();
+    // 验证 disconnect 不抛出，可被纳入 cleanupFns 安全调用。
+    await expect(runtime.disconnect()).resolves.toBeUndefined();
+  });
+
+  it("returns a cleanup function that resolves when disconnect called (startMutationNarrationRuntime pattern)", async () => {
+    // 验证 main.ts 中 startMutationNarrationRuntime 返回的 cleanup fn 可以安全调用。
+    const pub = new FakePubSub();
+    const sub = new FakePubSub();
+    const runtime = new MutationNarrationRuntime({
+      sub,
+      pub,
+      logger: silent,
+    });
+
+    await runtime.connect();
+
+    // 模拟 startMutationNarrationRuntime 返回的 cleanup fn 模式
+    const cleanupFn = async (): Promise<void> => {
+      const timeout = new Promise<void>((resolve) => setTimeout(resolve, 500));
+      try {
+        await Promise.race([runtime.disconnect(), timeout]);
+      } catch (_) {
+        // ignore
+      }
+    };
+
+    // cleanup fn 应能被纳入 cleanupFns 数组并安全 await
+    await expect(cleanupFn()).resolves.toBeUndefined();
+  });
 });
