@@ -4,9 +4,53 @@ use std::path::{Path, PathBuf};
 
 use memmap2::Mmap;
 use serde::Deserialize;
-use valence::prelude::{BiomeId, BiomeRegistry, BlockState, Ident, Resource};
+use valence::prelude::{
+    BiomeId, BiomeRegistry, BlockPos, BlockState, ChunkPos, Ident, PropName, PropValue, Resource,
+};
 
 use super::wilderness;
+
+// ---------------------------------------------------------------------------
+// P1 — placement manifest serde structs (断链 #2, plan-terrain-wiring-v1)
+// ---------------------------------------------------------------------------
+//
+// These mirror the format produced by worldgen's export_placement_manifest():
+//   { "version": 1, "structures": [ { "nbt_path", "origin", "rotation",
+//       "blocks": [ { "pos": [x,y,z], "block": "minecraft:...",
+//                     "properties": { ... } } ] } ] }
+//
+// Server does NOT re-rotate (M3: worldgen rotates at export time).
+
+/// A single pre-flattened block from the worldgen placement manifest.
+#[allow(dead_code)]
+#[derive(Debug, Clone, Deserialize)]
+pub struct PlacementBlock {
+    /// Absolute world position [x, y, z].
+    pub pos: [i32; 3],
+    /// Minecraft block name, e.g. `"minecraft:stone_bricks"`.
+    pub block: String,
+    /// Blockstate properties already rotated by worldgen (M3).
+    #[serde(default)]
+    pub properties: HashMap<String, String>,
+}
+
+/// One authored structure (NBT paste or inline stamp) in the placement manifest.
+#[allow(dead_code)]
+#[derive(Debug, Clone, Deserialize)]
+pub struct PlacementStructure {
+    pub nbt_path: String,
+    pub origin: [i32; 3],
+    pub rotation: i32,
+    pub blocks: Vec<PlacementBlock>,
+}
+
+/// Top-level placement manifest written by worldgen's `export_placement_manifest`.
+#[allow(dead_code)]
+#[derive(Debug, Clone, Deserialize)]
+pub struct PlacementManifest {
+    pub version: u32,
+    pub structures: Vec<PlacementStructure>,
+}
 
 // Keep this Rust mirror in lockstep with
 // worldgen/scripts/terrain_gen/fields.py::LAYER_REGISTRY.
@@ -220,6 +264,11 @@ pub struct TerrainProvider {
     decoration_palette: Vec<Option<Decoration>>,
     abyssal_tier_floor_y: HashMap<u8, f32>,
     fossil_bboxes: Vec<FossilBbox>,
+    /// P1 — authored structure blocks pre-bucketed by ChunkPos (断链 #2).
+    /// Empty when no placement_manifest.json sidecar is present (向后兼容).
+    placement_index: HashMap<ChunkPos, Vec<(BlockPos, BlockState)>>,
+    /// Total number of authored placement blocks loaded (for startup logging).
+    placement_block_count: usize,
 }
 
 impl Resource for TerrainProvider {}
@@ -452,6 +501,22 @@ impl TerrainProvider {
             decoration_palette: Vec::new(),
             abyssal_tier_floor_y: HashMap::new(),
             fossil_bboxes: Vec::new(),
+            placement_index: HashMap::new(),
+            placement_block_count: 0,
+        }
+    }
+
+    /// Build a `TerrainProvider` that already has a populated placement index.
+    /// Used by P1 unit tests to verify bucket lookup without touching disk.
+    #[cfg(test)]
+    pub(crate) fn with_placement_index_for_tests(
+        index: HashMap<ChunkPos, Vec<(BlockPos, BlockState)>>,
+    ) -> Self {
+        let count: usize = index.values().map(|v| v.len()).sum();
+        Self {
+            placement_index: index,
+            placement_block_count: count,
+            ..Self::empty_for_tests()
         }
     }
 
@@ -576,6 +641,14 @@ impl TerrainProvider {
             })
             .collect::<Vec<_>>();
 
+        // P1 — load optional placement_manifest.json sidecar and build
+        // ChunkPos→blocks index (断链 #2, plan-terrain-wiring-v1).
+        // Sidecar lives next to manifest.json in the same raster dir.
+        let (placement_index, placement_block_count) = {
+            let sidecar_path = raster_dir.join("placement_manifest.json");
+            load_placement_index(&sidecar_path)
+        };
+
         Ok(Self {
             tiles,
             tile_size: manifest.tile_size,
@@ -595,6 +668,8 @@ impl TerrainProvider {
             decoration_palette,
             abyssal_tier_floor_y,
             fossil_bboxes,
+            placement_index,
+            placement_block_count,
         })
     }
 
@@ -602,6 +677,22 @@ impl TerrainProvider {
     #[allow(dead_code)]
     pub fn pois(&self) -> &[Poi] {
         &self.pois
+    }
+
+    /// P1 — authored structure blocks for the given chunk position.
+    ///
+    /// Returns a slice of `(BlockPos, BlockState)` pairs pre-bucketed at load
+    /// time. Empty when no placement manifest was found (向后兼容 / old manifests).
+    pub fn placement_blocks_for_chunk(&self, chunk_pos: ChunkPos) -> &[(BlockPos, BlockState)] {
+        self.placement_index
+            .get(&chunk_pos)
+            .map(Vec::as_slice)
+            .unwrap_or(&[])
+    }
+
+    /// Total authored placement blocks loaded from the sidecar (for logging).
+    pub fn placement_block_count(&self) -> usize {
+        self.placement_block_count
     }
 
     /// Look up a decoration by its global id (0 → None).
@@ -1049,6 +1140,105 @@ pub fn raster_dir_from_manifest_path(manifest_path: &Path) -> Result<PathBuf, St
         })
 }
 
+// ---------------------------------------------------------------------------
+// P1 — placement manifest loading helpers
+// ---------------------------------------------------------------------------
+
+/// Load `placement_manifest.json` sidecar and pre-bucket all blocks by
+/// `ChunkPos` for O(1) per-chunk lookup at chunk generation time.
+///
+/// Returns an empty index (not an error) when the sidecar is absent — this
+/// maintains backward compatibility with manifests generated before P0 landed.
+pub(crate) fn load_placement_index(
+    sidecar_path: &Path,
+) -> (HashMap<ChunkPos, Vec<(BlockPos, BlockState)>>, usize) {
+    let text = match std::fs::read_to_string(sidecar_path) {
+        Ok(t) => t,
+        Err(_) => {
+            // Sidecar absent is normal for pre-P0 manifests — not an error.
+            return (HashMap::new(), 0);
+        }
+    };
+
+    let pm: PlacementManifest = match serde_json::from_str(&text) {
+        Ok(m) => m,
+        Err(e) => {
+            tracing::warn!(
+                "[bong][world] failed to parse placement_manifest.json at {}: {e}",
+                sidecar_path.display()
+            );
+            return (HashMap::new(), 0);
+        }
+    };
+
+    build_placement_index(pm)
+}
+
+/// Convert a `PlacementManifest` into a `ChunkPos`-keyed lookup table.
+///
+/// Blocks with unknown `block` names are warned and skipped (no panic).
+/// Blocks with unrecognised property names/values are applied where possible;
+/// properties that fail to parse are silently dropped (best-effort).
+pub fn build_placement_index(
+    pm: PlacementManifest,
+) -> (HashMap<ChunkPos, Vec<(BlockPos, BlockState)>>, usize) {
+    let mut index: HashMap<ChunkPos, Vec<(BlockPos, BlockState)>> = HashMap::new();
+    let mut total: usize = 0;
+
+    for structure in pm.structures {
+        for pb in structure.blocks {
+            let [x, y, z] = pb.pos;
+            let block_state = match block_state_from_placement(&pb.block, &pb.properties) {
+                Some(bs) => bs,
+                None => {
+                    tracing::warn!(
+                        "[bong][world] placement_manifest: unknown block '{}' at [{x},{y},{z}] — skipped",
+                        pb.block
+                    );
+                    continue;
+                }
+            };
+            let block_pos = BlockPos::new(x, y, z);
+            let chunk_pos = ChunkPos::new(x.div_euclid(16), z.div_euclid(16));
+            index
+                .entry(chunk_pos)
+                .or_default()
+                .push((block_pos, block_state));
+            total += 1;
+        }
+    }
+
+    (index, total)
+}
+
+/// Resolve a Minecraft block name + blockstate properties map into a valence
+/// `BlockState`.  Returns `None` for names not in `blocks::block_from_name`.
+///
+/// Properties are applied one-by-one; any property whose name or value is not
+/// recognised by valence is silently ignored (best-effort).
+pub fn block_state_from_placement(
+    name: &str,
+    properties: &HashMap<String, String>,
+) -> Option<BlockState> {
+    // Strip optional "minecraft:" namespace prefix.
+    let bare = name.strip_prefix("minecraft:").unwrap_or(name);
+    let mut state = super::blocks::block_from_name(bare)?;
+
+    for (prop_name_str, prop_val_str) in properties {
+        if let (Some(pn), Some(pv)) = (
+            PropName::from_str(prop_name_str),
+            PropValue::from_str(prop_val_str),
+        ) {
+            // Only apply the property if it is valid for this block.
+            if state.get(pn).is_some() {
+                state = state.set(pn, pv);
+            }
+        }
+    }
+
+    Some(state)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1136,6 +1326,8 @@ mod tests {
             decoration_palette: Vec::new(),
             abyssal_tier_floor_y: HashMap::new(),
             fossil_bboxes: Vec::new(),
+            placement_index: HashMap::new(),
+            placement_block_count: 0,
         };
 
         RasterFixture {
@@ -1362,6 +1554,305 @@ mod tests {
         assert_eq!(
             provider.sample_layer(1, 1, "surface_id"),
             Some(f32::from(test_u8_value(surface_index)))
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // P1 — PlacementManifest serde contract tests (断链 #2,
+    //       plan-terrain-wiring-v1 §P1 "契约对拍" requirement)
+    // -----------------------------------------------------------------------
+
+    /// Fixture JSON matches worldgen export_placement_manifest format exactly.
+    /// This is the dual-pin test: changing either side must break this.
+    #[test]
+    fn placement_manifest_fixture_deserialises_correctly() {
+        let manifest: PlacementManifest =
+            serde_json::from_str(include_str!("placement_manifest_fixture.json"))
+                .expect("placement_manifest_fixture.json must be valid PlacementManifest JSON");
+
+        assert_eq!(manifest.version, 1, "manifest version should be 1");
+        assert_eq!(
+            manifest.structures.len(),
+            2,
+            "fixture should contain exactly 2 structures"
+        );
+
+        let s0 = &manifest.structures[0];
+        assert_eq!(s0.nbt_path, "server/structures/dan_zong/great_hall.nbt");
+        assert_eq!(s0.origin, [128, 82, 256]);
+        assert_eq!(s0.rotation, 0);
+        assert_eq!(s0.blocks.len(), 5);
+
+        // First block: no properties
+        let b0 = &s0.blocks[0];
+        assert_eq!(b0.pos, [128, 82, 256]);
+        assert_eq!(b0.block, "minecraft:stone_bricks");
+        assert!(b0.properties.is_empty(), "first block has no properties");
+
+        // Fourth block: has 'moisture' property
+        let b3 = &s0.blocks[3];
+        assert_eq!(b3.block, "minecraft:farmland");
+        assert_eq!(b3.properties.get("moisture"), Some(&"7".to_string()));
+
+        // stamp_radial structure
+        let s1 = &manifest.structures[1];
+        assert!(
+            s1.nbt_path.starts_with("<stamp_radial:"),
+            "second structure is a stamp_radial"
+        );
+        assert_eq!(s1.rotation, 90);
+    }
+
+    /// PlacementManifest with empty structures array must deserialise fine.
+    #[test]
+    fn placement_manifest_empty_structures_deserialises_ok() {
+        let json = r#"{"version":1,"structures":[]}"#;
+        let pm: PlacementManifest =
+            serde_json::from_str(json).expect("empty structures array must deserialise");
+        assert_eq!(pm.structures.len(), 0);
+    }
+
+    /// PlacementBlock without "properties" key must default to empty map.
+    #[test]
+    fn placement_block_missing_properties_defaults_to_empty_map() {
+        let json = r#"{"version":1,"structures":[{"nbt_path":"x","origin":[0,0,0],"rotation":0,"blocks":[{"pos":[1,2,3],"block":"minecraft:stone"}]}]}"#;
+        let pm: PlacementManifest = serde_json::from_str(json)
+            .expect("placement manifest missing properties key must deserialise");
+        let b = &pm.structures[0].blocks[0];
+        assert!(
+            b.properties.is_empty(),
+            "missing properties key must default to empty HashMap"
+        );
+    }
+
+    // ----- block_state_from_placement -------------------------------------------
+
+    /// Known block names resolve to a non-AIR BlockState.
+    #[test]
+    fn block_state_from_placement_resolves_known_bare_name() {
+        let result = block_state_from_placement("stone_bricks", &HashMap::new());
+        assert!(
+            result.is_some(),
+            "bare 'stone_bricks' must resolve to a BlockState"
+        );
+    }
+
+    /// `minecraft:` prefix is stripped automatically.
+    #[test]
+    fn block_state_from_placement_strips_minecraft_prefix() {
+        let with_prefix = block_state_from_placement("minecraft:stone_bricks", &HashMap::new());
+        let without_prefix = block_state_from_placement("stone_bricks", &HashMap::new());
+        assert_eq!(
+            with_prefix, without_prefix,
+            "minecraft: prefix must be stripped; result must match bare name"
+        );
+    }
+
+    /// Unknown block name returns None (warn-and-skip contract).
+    #[test]
+    fn block_state_from_placement_returns_none_for_unknown_block() {
+        let result = block_state_from_placement("minecraft:unknown_block_xyz", &HashMap::new());
+        assert!(
+            result.is_none(),
+            "unknown block name must return None so caller can warn+skip"
+        );
+    }
+
+    /// Valid properties are applied to the BlockState.
+    #[test]
+    fn block_state_from_placement_applies_valid_properties() {
+        let mut props = HashMap::new();
+        props.insert("axis".to_string(), "y".to_string());
+        let with_props = block_state_from_placement("oak_log", &props);
+        let without_props = block_state_from_placement("oak_log", &HashMap::new());
+        assert!(with_props.is_some());
+        // A log with axis=y should differ from the default (axis=y is the default
+        // for OAK_LOG, so also check axis=x differs from default)
+        let mut props_x = HashMap::new();
+        props_x.insert("axis".to_string(), "x".to_string());
+        let with_axis_x = block_state_from_placement("oak_log", &props_x);
+        assert_ne!(
+            with_axis_x, without_props,
+            "axis=x should produce a different BlockState from default"
+        );
+    }
+
+    /// Unknown property names/values are silently ignored (no panic).
+    #[test]
+    fn block_state_from_placement_ignores_unknown_properties_without_panic() {
+        let mut props = HashMap::new();
+        props.insert("nonexistent_prop".to_string(), "bad_value".to_string());
+        props.insert("moisture".to_string(), "999_out_of_range".to_string());
+        let result = block_state_from_placement("farmland", &props);
+        // Should still resolve the block (just without the bad property applied)
+        assert!(
+            result.is_some(),
+            "unknown properties must be silently ignored, not panic or return None"
+        );
+    }
+
+    // ----- build_placement_index ------------------------------------------------
+
+    /// A manifest with two blocks in different chunks produces a 2-bucket index.
+    #[test]
+    fn build_placement_index_buckets_blocks_by_chunk_pos() {
+        let manifest = PlacementManifest {
+            version: 1,
+            structures: vec![PlacementStructure {
+                nbt_path: "test.nbt".to_string(),
+                origin: [0, 64, 0],
+                rotation: 0,
+                blocks: vec![
+                    PlacementBlock {
+                        pos: [0, 64, 0],
+                        block: "stone_bricks".to_string(),
+                        properties: HashMap::new(),
+                    },
+                    PlacementBlock {
+                        pos: [16, 64, 0],
+                        block: "stone_bricks".to_string(),
+                        properties: HashMap::new(),
+                    },
+                ],
+            }],
+        };
+
+        let (index, total) = build_placement_index(manifest);
+        assert_eq!(total, 2, "two valid blocks must count as 2 total");
+        assert_eq!(
+            index.len(),
+            2,
+            "two blocks in different chunks must produce 2 buckets"
+        );
+        let cp0 = ChunkPos::new(0, 0);
+        let cp1 = ChunkPos::new(1, 0);
+        assert!(index.contains_key(&cp0), "chunk (0,0) must have an entry");
+        assert!(index.contains_key(&cp1), "chunk (1,0) must have an entry");
+        assert_eq!(index[&cp0].len(), 1);
+        assert_eq!(index[&cp1].len(), 1);
+    }
+
+    /// Blocks with unknown names are skipped; the index total does not count them.
+    #[test]
+    fn build_placement_index_skips_unknown_blocks() {
+        let manifest = PlacementManifest {
+            version: 1,
+            structures: vec![PlacementStructure {
+                nbt_path: "test.nbt".to_string(),
+                origin: [0, 64, 0],
+                rotation: 0,
+                blocks: vec![
+                    PlacementBlock {
+                        pos: [0, 64, 0],
+                        block: "minecraft:stone_bricks".to_string(),
+                        properties: HashMap::new(),
+                    },
+                    PlacementBlock {
+                        pos: [1, 64, 0],
+                        block: "minecraft:unknown_block_for_test".to_string(),
+                        properties: HashMap::new(),
+                    },
+                ],
+            }],
+        };
+
+        let (index, total) = build_placement_index(manifest);
+        assert_eq!(total, 1, "only the valid block must be counted");
+        let cp = ChunkPos::new(0, 0);
+        assert_eq!(
+            index.get(&cp).map(|v| v.len()),
+            Some(1),
+            "only the valid block must appear in the index"
+        );
+    }
+
+    /// load_placement_index with missing sidecar returns empty index without error.
+    #[test]
+    fn load_placement_index_returns_empty_for_missing_sidecar() {
+        let (index, total) =
+            load_placement_index(Path::new("/nonexistent/path/placement_manifest.json"));
+        assert!(index.is_empty(), "missing sidecar must yield empty index");
+        assert_eq!(total, 0, "missing sidecar must yield zero block count");
+    }
+
+    /// load_placement_index with malformed JSON returns empty index without panic.
+    #[test]
+    fn load_placement_index_returns_empty_for_malformed_json() {
+        let root = unique_temp_dir();
+        fs::create_dir_all(&root).expect("temp dir should be creatable");
+        let path = root.join("placement_manifest.json");
+        fs::write(&path, b"not valid json { { {").expect("should be writable");
+        let (index, total) = load_placement_index(&path);
+        let _ = fs::remove_dir_all(&root);
+        assert!(index.is_empty(), "malformed JSON must yield empty index");
+        assert_eq!(total, 0);
+    }
+
+    /// load_placement_index with valid fixture JSON produces a non-empty index.
+    #[test]
+    fn load_placement_index_from_valid_fixture_produces_non_empty_index() {
+        let root = unique_temp_dir();
+        fs::create_dir_all(&root).expect("temp dir should be creatable");
+        let path = root.join("placement_manifest.json");
+        let fixture = include_str!("placement_manifest_fixture.json");
+        fs::write(&path, fixture).expect("fixture should be writable");
+        let (index, total) = load_placement_index(&path);
+        let _ = fs::remove_dir_all(&root);
+        // The fixture has 5 + 2 = 7 blocks, but only known blocks count.
+        // stone_bricks × 3 + farmland × 1 + oak_log × 1 + farmland × 1 + wheat × 1 = 7
+        // All should be resolvable after our blocks.rs additions.
+        assert!(
+            total > 0,
+            "valid fixture should produce at least one indexed block; got {total}"
+        );
+        assert!(
+            !index.is_empty(),
+            "valid fixture should produce a non-empty index"
+        );
+    }
+
+    // ----- authored NBT palette zero-drop contract ------------------------------------------------
+
+    /// Every block name authored in dan_zong / wangyintai structures must be indexed
+    /// without any drops.  If block_from_name doesn't cover a name, build_placement_index
+    /// silently skips it, resulting in `total < authored_count` (a structural hole).
+    ///
+    /// This test creates a synthetic manifest containing one block entry for each name
+    /// in the authored palette and asserts that ALL are indexed (drop count == 0).
+    ///
+    /// The palette list is kept in sync with `blocks::tests::AUTHORED_STRUCTURE_BLOCKS`.
+    #[test]
+    fn authored_nbt_palette_zero_drop_in_build_placement_index() {
+        use super::super::blocks::tests::AUTHORED_STRUCTURE_BLOCKS;
+
+        let blocks: Vec<PlacementBlock> = AUTHORED_STRUCTURE_BLOCKS
+            .iter()
+            .enumerate()
+            .map(|(i, name)| PlacementBlock {
+                pos: [i as i32, 64, 0],
+                block: format!("minecraft:{name}"),
+                properties: HashMap::new(),
+            })
+            .collect();
+
+        let authored_count = blocks.len();
+        let manifest = PlacementManifest {
+            version: 1,
+            structures: vec![PlacementStructure {
+                nbt_path: "<test_authored_palette>".to_string(),
+                origin: [0, 64, 0],
+                rotation: 0,
+                blocks,
+            }],
+        };
+
+        let (_, total) = build_placement_index(manifest);
+        assert_eq!(
+            total,
+            authored_count,
+            "Authored NBT palette has {authored_count} distinct block names but only {total} \
+             resolved (drop count = {}). Add missing names to block_from_name in blocks.rs.",
+            authored_count.saturating_sub(total)
         );
     }
 }

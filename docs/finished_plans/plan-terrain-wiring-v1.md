@@ -10,10 +10,10 @@
 
 | 阶段 | 主题 | 断链 | 状态 |
 |------|------|------|------|
-| **P0** | Worldgen layout 子系统补完 + 主流程接线（桥接 + 实装 stub + flatten/mask + export pass） | #1 #8 | ⬜ |
-| **P1** | Server 读 placement_manifest 展平方块，按 ChunkPos stamp（链路另一端，与 P0 成对） | #2 | ⬜ |
-| **P2** | 丹宗遗源端到端激活（资产已就绪，首个消费者验证基础设施） | #3 #5 #10 | ⬜ |
-| **P3** | 王印台端到端激活（新造 4 NBT + 补蓝图/POI，证明可复用） | #4 #6 #10 | ⬜ |
+| **P0** | Worldgen layout 子系统补完 + 主流程接线（桥接 + 实装 stub + flatten/mask + export pass） | #1 #8 | ✅ 2026-06-03 |
+| **P1** | Server 读 placement_manifest 展平方块，按 ChunkPos stamp（链路另一端，与 P0 成对） | #2 | ✅ 2026-06-03 |
+| **P2** | 丹宗遗源端到端激活（资产已就绪，首个消费者验证基础设施） | #3 #5 #10 | ✅ 2026-06-03 |
+| **P3** | 王印台端到端激活（新造 4 NBT + 补蓝图/POI，证明可复用） | #4 #6 #10 | ✅ 2026-06-03 |
 
 > 依赖：**P0 与 P1 必须成对 land**（同一条 Python→Rust 链两端）→ P2 用已就绪的丹宗资产做首个端到端验证 → P3 造王印台资产证明可复用。
 
@@ -167,4 +167,58 @@ PR-1↔PR-2 是同一条链两端，必须都 land。
 
 ## Finish Evidence
 
-> 迁入 `docs/finished_plans/` 前必填（落地清单 / 关键 commit / 测试结果 / 跨仓库核验 / 遗留）。当前 P0–P3 均 ⬜，未填。
+> 由 `/consume-plan terrain-wiring-v1` 全自动消费落地（2026-06-03）。worktree `auto/plan-terrain-wiring-v1`，16 commit（11 实施 + 5 Verify 修复）/ 35 文件 / +5521 行。
+
+### 落地清单
+
+**P0 — Worldgen layout 补完 + 接线**（断链 #1 #8 + §11 B1/B2/B3/M2/M3）
+- `worldgen/scripts/terrain_gen/layouts/runner.py` — `run_layout` 累积 `NbtPasteResult` 经 `LayoutResult.paste_results` 暴露（B2 桥接）；`_stamp_radial`（farmland+wheat 网格）/ `_block_grid`（mossy_cobblestone 路径）实装（B3）；`_rotate_properties` facing/axis 旋转（M3）
+- `worldgen/scripts/terrain_gen/layouts/__init__.py` — `COMPOUND_LAYOUT_REGISTRY`
+- `blueprint.py` + `fields.py` + `profiles/base.py` — `architectural_layout`/`compound_flatten_radius` 透传 `BlueprintZone`→`ZoneFieldPlan`（M2）
+- `stitcher.py` — `synthesize_fields` 接 `apply_compound_flatten`(target=POI.y) + `compute_layout_density_mask`
+- `__main__.py` — `run_layout_pass` 产 `placement_manifest.json`（缺 poi_kind warn+skip）
+
+**P1 — Server placement 消费**（断链 #2 + §11 B1/M4）
+- `server/src/world/terrain/raster.rs` — `PlacementManifest`/`PlacementStructure`/`PlacementBlock` serde（对拍既有展平格式 `structures+blocks`）；`TerrainProvider.placement_index: HashMap<ChunkPos, Vec<..>>` 预分桶（M4）；sidecar 缺失向后兼容
+- `server/src/world/terrain/authored.rs` — `place_authored_structures`（zone-agnostic，按 ChunkPos stamp，decorate_chunk 后 / biome 前）
+- `server/src/world/terrain/blocks.rs` — `block_from_name` 补全 building 方块
+
+**P2 — 丹宗激活**（断链 #3 #5 #10）
+- `layouts/dan_zong_compound.py` — master_sarcophagus 接入 layout；旧大型园圃 git rm
+- `bakers/raster_export.py` — `BIOME_PALETTE` append 扩容 + bake-time 断言（idx12=plains / 13=old_growth_pine_taiga）
+- `profiles/dan_zong_yi_yuan.py` — biome_id 13；`runner.py`/`__main__.py` bare NBT 名 → `server/structures/<zone>/`
+
+**P3 — 王印台激活**（断链 #4 #6 #10）
+- `server/structures/wangyintai/` — 4 NBT（`scripts/nbt/gen_wangyintai_structures.py` 产，三轮 + PROMISE）：jingxuguan_side_hall / corridor_fragment / fallen_vortex_disc / guantiantai_ruins
+- `server/zones.worldview.example.json` — wangyintai zone + `architectural_layout` + `compound_flatten_radius:64` + `{kind:guantiantai}` POI
+- `bakers/raster_export.py` — `BIOME_PALETTE[17]=windswept_hills`
+
+**Verify 修复**（opus 对抗审查抓 1 blocker + 3 major → 5 fix commit）
+- FIX A `blocks.rs` 补 28 方块 + dual-pin 测试（server zero-drop 63 块 / palette⊆白名单）
+- FIX B BIOME index 12 防回归（rift_mouth_barrens/pseudo_vein_oasis 保 plains）
+- FIX C flatten/density-mask 集成测试 12 条
+- FIX D 死资产 git rm + 诚实化测试
+
+### 关键 commit
+- 实施（2026-06-02）：`9b60cd64a` B2/B3/M3 → `2695caaa8` M2 透传 → `e66c07de3` registry/stitcher/export → `b508f23ff` P0 75 测试 → `255c7a6a4` P1 server → `e70fc15aa`/`90f956705`/`bc8264272`/`cd32e5b53` P2 → `3d482dfd2`/`77e66bf74` P3
+- 修复（2026-06-03）：`189f6cc0d` FIX A → `59dba6ee1` FIX B → `6dbc30e07` FIX C → `aba196f32` FIX D → `c7576b062` clippy
+
+### 测试结果
+- worldgen：`python3 -m pytest tests/ scripts/terrain_gen/ -q` → **412 passed**
+- server：`cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test` → **6997 passed**，fmt/clippy clean
+- 关键 pin：server `authored_nbt_palette_zero_drop_in_build_placement_index`（63 块全 stamp，drop=0）/ `all_authored_structure_blocks_resolve`；worldgen `test_nbt_block_palette`（palette⊆白名单）/ `test_flatten_density_mask`（全链路集成）/ `test_rift_mouth_barrens` + `test_pseudo_vein_oasis`（biome 防回归）
+
+### 跨仓库核验
+- worldgen(Python)：`COMPOUND_LAYOUT_REGISTRY` / `run_layout`→`export_placement_manifest` / `apply_compound_flatten` / `_resolve_layout_target_height` / `BIOME_PALETTE`
+- server(Rust)：`PlacementManifest` / `place_authored_structures` / `block_from_name` / `TerrainProvider.placement_index`
+- 跨进程契约：`placement_manifest.json`（worldgen producer ↔ server consumer，展平 structures+blocks 格式）
+- **无 agent/client 改动**（建筑即 chunk 方块，原版同步）
+
+### 遗留 / 后续
+- **#5 重烤 + 游戏内 e2e（merge 后本地步骤）**：`bash scripts/dev-reload.sh` 重烤 + `/tpzone dan_zong_yi_yuan`/`wangyintai` 看建筑。worktree 无 venv + 需真服 + 产物 gitignored 不进 PR，故 PR 内未跑；单测已锁 placement 数据正确性（zero-drop 63 块全 resolve）。
+- **block-entity 降级**（§11 M5）：lectern/讲经台落空、skull 默认；后续扩 `load_structure` 读 nbt 子标签。
+- **iron_nugget→AIR**（Verify minor）：`fallen_alchemist_bone.nbt` 装饰矿渣（item 非方块）映 AIR 渲染成洞；后续改 NBT 授权用真方块再 dump。
+- **P3(b) 路线变更**：未改 wangyintai_compound.py payload（避开改 woliu 已落地文件），改由 `__main__._LAYOUT_NBT_SUBDIR` base_dir 解析，功能等价。
+- **stamp_radial 草药占位**：药圃用 wheat 占位，未实现差异化灵草（B3 自述 stand-in，范围内）。
+- **§遗留主题归其他 plan**：#7/#9 giant_sword/ambient → `plan-sword-path-v2`(active)；#11 corpse_mounds/ascension_pits → scorch；#12 ColumnSample 9 层 → layer-query/tsy-worldgen（已归档，需核验或新立）；#13 landmarks → cleanup。
+- **文档 hygiene**（独立）：plan-dandao-path-v1 阶段表虚报、plan-woliu/sword Finish Evidence 红旗、`rm docs/plan-cultivation-pacing-v1.md`。

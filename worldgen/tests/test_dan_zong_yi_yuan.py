@@ -388,10 +388,11 @@ class LayoutDefinitionTests(unittest.TestCase):
         )
 
     def test_total_placement_count(self):
-        """1 hall + 16 gardens + 16 furnaces + 1 path + 3 springs + 4 steles + 8 bones = 49"""
+        """1 hall + 1 sarcophagus + 16 gardens + 16 furnaces + 1 path + 3 springs + 4 steles + 8 bones = 50"""
         self.assertEqual(
-            len(DAN_ZONG_COMPOUND_LAYOUT.placements), 49,
-            f"Expected 49 placements, got {len(DAN_ZONG_COMPOUND_LAYOUT.placements)}",
+            len(DAN_ZONG_COMPOUND_LAYOUT.placements), 50,
+            f"Expected 50 placements (49 original + master_sarcophagus P2 #3), "
+            f"got {len(DAN_ZONG_COMPOUND_LAYOUT.placements)}",
         )
 
     def test_great_hall_at_origin(self):
@@ -577,12 +578,13 @@ class LayoutDeterminismTests(unittest.TestCase):
             self.assertEqual(pa.kind, pb.kind)
             self.assertEqual(pa.payload, pb.payload)
 
-    def test_all_49_placements_resolved(self):
+    def test_all_50_placements_resolved(self):
         zone = _make_dan_zong_zone()
         result = run_layout(DAN_ZONG_COMPOUND_LAYOUT, zone)
         self.assertEqual(
-            len(result.placed), 49,
-            f"Expected 49 placed structures, got {len(result.placed)}",
+            len(result.placed), 50,
+            f"Expected 50 placed structures (49 original + master_sarcophagus P2 #3), "
+            f"got {len(result.placed)}",
         )
 
     def test_poi_center_correct(self):

@@ -113,7 +113,7 @@ def fill_dan_zong_yi_yuan_tile(
     purple_terra_id = palette.ensure("purple_terracotta")
     mossy_cobble_id = palette.ensure("mossy_cobblestone")
     stone_id = palette.ensure("stone")
-    dandao_biome_id = 12
+    dandao_biome_id = 13  # index 13 = minecraft:old_growth_pine_taiga (plan-terrain-wiring-v1 FIX B)
 
     center_x, center_z = zone.center_xz
     half_w = max(zone.size_xz[0] * 0.5, 1.0)

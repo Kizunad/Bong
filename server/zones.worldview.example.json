@@ -1478,6 +1478,45 @@
       ]
     },
     {
+      "name": "wangyintai",
+      "display_name": "王印台",
+      "aabb": {
+        "min": [3500.0, 40.0, -2150.0],
+        "max": [4500.0, 200.0, -1150.0]
+      },
+      "center_xz": [4000.0, -1650.0],
+      "size_xz": [1000.0, 1000.0],
+      "spirit_qi": -0.15,
+      "danger_level": 3,
+      "active_events": [],
+      "patrol_anchors": [
+        [4000.0, 92.0, -1650.0],
+        [3800.0, 88.0, -1850.0]
+      ],
+      "blocked_tiles": [],
+      "worldgen": {
+        "terrain_profile": "wangyintai",
+        "shape": "ellipse",
+        "boundary": { "mode": "soft", "width": 64 },
+        "height_model": { "base": [68, 86], "peak": 98, "compound_flatten_radius": 64 },
+        "surface_palette": ["smooth_basalt", "deepslate", "calcite", "gray_concrete"],
+        "biome_mix": ["mofa:wangyintai"],
+        "architectural_layout": "wangyintai_compound",
+        "notes": "忘音台·观天台废墟：古星阵崩塌遗址，深板岩台地+方解石星象嵌花，旋涡盘残片散布。"
+      },
+      "pois": [
+        {
+          "kind": "guantiantai",
+          "name": "观天台",
+          "pos_xyz": [4000.0, 92.0, -1650.0],
+          "tags": ["wangyintai", "vortex_formation", "woliu_path"],
+          "unlock": "found_by_exploration",
+          "qi_affinity": -0.15,
+          "danger_bias": 1
+        }
+      ]
+    },
+    {
       "name": "baolongwang_cavern_deep",
       "display_name": "暴龙王巢穴",
       "aabb": {

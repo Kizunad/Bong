@@ -2,6 +2,7 @@
 
 Bagua (八卦) layout centered on the dan_zong_great_hall POI:
 - 1 central great hall (百草丹殿)
+- 1 master sarcophagus (大宗师石棺, great hall basement crypt)
 - 16 herb garden pens (内环 8 + 外环 8, 22.5deg offset)
 - 16 ruined furnaces (8 pairs along central axis)
 - 1 central path (中轴大道, 6-wide mossy_cobblestone)
@@ -9,7 +10,7 @@ Bagua (八卦) layout centered on the dan_zong_great_hall POI:
 - 4 fallen recipe steles (内外环间隙)
 - 8 fallen alchemist bones (中轴两侧)
 
-Total: 49 placements.
+Total: 50 placements.
 
 Herb garden planting rule (per plan S9.7):
   Inner ring 8 pens: N/NE/E/SE = tuigu_teng (蜕骨藤),
@@ -153,6 +154,12 @@ _GREAT_HALL = Placement(
     offset=(0, 0, 0), rotation=0, kind="nbt", payload="dan_zong_great_hall.nbt"
 )
 
+# Master sarcophagus — great hall basement crypt (plan-terrain-wiring-v1 P2 #3)
+# Placed at y-4 (sub-floor crypt level) directly beneath the hall entrance.
+_MASTER_SARCOPHAGUS = Placement(
+    offset=(0, -4, 8), rotation=0, kind="nbt", payload="master_sarcophagus.nbt"
+)
+
 # Central path (6-wide, z from -8 to +144)
 _CENTRAL_PATH = Placement(
     offset=(0, 0, 64), rotation=0, kind="block_grid", payload="central_path_6x152"
@@ -182,6 +189,8 @@ DAN_ZONG_COMPOUND_LAYOUT = LayoutSpec(
     placements=(
         # Central great hall
         _GREAT_HALL,
+        # Master sarcophagus (basement crypt, plan-terrain-wiring-v1 P2 #3)
+        _MASTER_SARCOPHAGUS,
         # Inner ring herb gardens (8)
         *_build_inner_herb_gardens(),
         # Outer ring herb gardens (8)
