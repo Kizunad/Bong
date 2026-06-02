@@ -1151,3 +1151,162 @@ mod p0_wiring_tests {
         );
     }
 }
+
+// ============================================================
+// P4 暴龙王 App 级集成测试（boss_spawn::register 端到端）
+// ============================================================
+
+#[cfg(test)]
+mod boss_spawn_integration {
+    use super::super::boss::{BaolongwangBoss, BossPhase};
+    use super::super::boss_spawn::{BaolongwangMarker, BOSS_HOME_ZONE};
+    use crate::cultivation::components::Cultivation;
+    use crate::qi_physics::ledger::{QiAccountId, QiTransferReason, WorldQiAccount};
+    use valence::prelude::{App, Position};
+
+    /// App 级集成测试：boss_spawn::register 注册的系统在真实 App 中端到端运行。
+    /// 覆盖链路：spawn boss + player → 运行 drain system → 验证 QiTransfer 事件 + zone 余额增加。
+    #[test]
+    fn boss_spawn_register_drain_system_runs_end_to_end() {
+        let mut app = App::new();
+
+        // 通过 boss_spawn::register 注册所有系统（含 baolongwang_qi_drain_aura_system）
+        super::super::boss_spawn::register(&mut app);
+
+        // 初始化 WorldQiAccount 资源
+        let zone_id = QiAccountId::zone(BOSS_HOME_ZONE);
+        let mut account = WorldQiAccount::default();
+        account.set_balance(zone_id.clone(), 0.0).unwrap();
+        app.insert_resource(account);
+
+        // Spawn boss（Rage 阶段，激活吸取）
+        let _boss = app
+            .world_mut()
+            .spawn((
+                BaolongwangMarker,
+                BaolongwangBoss {
+                    phase: BossPhase::Rage,
+                    hp_fraction: 0.5,
+                    ..BaolongwangBoss::default()
+                },
+                Position::new([0.0, 64.0, 0.0]),
+            ))
+            .id();
+
+        // Spawn 玩家，位于 boss 光环范围内
+        let initial_qi = 100.0f64;
+        let player = app
+            .world_mut()
+            .spawn((
+                Cultivation {
+                    qi_current: initial_qi,
+                    qi_max: initial_qi,
+                    ..Cultivation::default()
+                },
+                Position::new([0.0, 65.0, 0.0]), // 距离 1.0 < QI_DRAIN_AURA_RADIUS
+            ))
+            .id();
+
+        // 运行一帧（boss_spawn::register 注册的所有系统执行）
+        app.update();
+
+        // 验证：玩家真元减少，zone 余额增加，QiTransfer 事件被 emit
+        let player_qi_after = app
+            .world()
+            .get::<Cultivation>(player)
+            .expect("player Cultivation missing")
+            .qi_current;
+        let zone_balance = app.world().resource::<WorldQiAccount>().balance(&zone_id);
+        let player_decrease = initial_qi - player_qi_after;
+        let zone_increase = zone_balance;
+
+        assert!(
+            player_decrease > 0.0,
+            "期望 boss_spawn::register 注册的 drain system 在 Rage 阶段运行并扣除玩家真元，\
+             实际 player_qi before={initial_qi} after={player_qi_after}"
+        );
+        assert!(
+            (player_decrease - zone_increase).abs() < 1e-9,
+            "端到端守恒：玩家减少({player_decrease:.6}) 应 == zone 增加({zone_increase:.6})，\
+             差值 = {:.9}",
+            (player_decrease - zone_increase).abs()
+        );
+
+        // 审计轨迹：BossDrain 记录存在
+        let transfers = app
+            .world()
+            .resource::<WorldQiAccount>()
+            .transfers()
+            .to_vec();
+        assert!(
+            !transfers.is_empty(),
+            "期望 boss_spawn::register 注册的 system 产生至少 1 条 BossDrain 审计记录"
+        );
+        assert!(
+            transfers
+                .iter()
+                .any(|t| t.reason == QiTransferReason::BossDrain),
+            "审计轨迹中应包含 BossDrain 记录，实际 reasons: {:?}",
+            transfers.iter().map(|t| t.reason).collect::<Vec<_>>()
+        );
+    }
+
+    /// 集成测试：Expel 阶段 boss + drain system 运行 → 玩家真元和 zone 余额均不变。
+    #[test]
+    fn boss_spawn_register_expel_phase_no_drain() {
+        let mut app = App::new();
+        super::super::boss_spawn::register(&mut app);
+
+        let zone_id = QiAccountId::zone(BOSS_HOME_ZONE);
+        let initial_zone = 5.0f64;
+        let mut account = WorldQiAccount::default();
+        account.set_balance(zone_id.clone(), initial_zone).unwrap();
+        app.insert_resource(account);
+
+        let _boss = app
+            .world_mut()
+            .spawn((
+                BaolongwangMarker,
+                BaolongwangBoss {
+                    phase: BossPhase::Expel,
+                    hp_fraction: 0.9,
+                    ..BaolongwangBoss::default()
+                },
+                Position::new([0.0, 64.0, 0.0]),
+            ))
+            .id();
+
+        let initial_qi = 80.0f64;
+        let player = app
+            .world_mut()
+            .spawn((
+                Cultivation {
+                    qi_current: initial_qi,
+                    qi_max: initial_qi,
+                    ..Cultivation::default()
+                },
+                Position::new([0.0, 65.0, 0.0]),
+            ))
+            .id();
+
+        app.update();
+
+        let player_qi_after = app
+            .world()
+            .get::<Cultivation>(player)
+            .expect("player Cultivation missing")
+            .qi_current;
+        let zone_after = app.world().resource::<WorldQiAccount>().balance(&zone_id);
+
+        assert!(
+            (player_qi_after - initial_qi).abs() < 1e-9,
+            "期望 Expel 阶段 drain system 不扣玩家真元，\
+             实际 before={initial_qi} after={player_qi_after}"
+        );
+        assert!(
+            (zone_after - initial_zone).abs() < 1e-9,
+            "期望 Expel 阶段 zone 余额不变，\
+             实际 before={initial_zone} after={zone_after}"
+        );
+    }
+}

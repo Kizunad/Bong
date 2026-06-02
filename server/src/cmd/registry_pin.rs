@@ -1,4 +1,6 @@
 pub const COMMAND_NAMES: &[&str] = &[
+    // plan-dandao-runtime-wiring-v1 P4：暴龙王 BOSS dev spawn 命令
+    "baolongwang",
     "bong",
     "clearinv",
     // plan-offscreen-war-v1 P6：玩家参与涌现冲突（/faction join|mercenary|intercept）
@@ -39,6 +41,8 @@ pub const COMMAND_NAMES: &[&str] = &[
 
 #[cfg(test)]
 pub const COMMAND_TREE_PATHS: &[&str] = &[
+    // plan-dandao-runtime-wiring-v1 P4：暴龙王 BOSS dev spawn 命令
+    "baolongwang spawn",
     "bong breakthrough",
     "bong combat <target:string> <qi_invest:double>",
     "bong gather <resource:string>",
@@ -118,6 +122,7 @@ mod tests {
         assert_eq!(
             COMMAND_NAMES,
             &[
+                "baolongwang",
                 "bong",
                 "clearinv",
                 "faction",

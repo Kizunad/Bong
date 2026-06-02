@@ -9,6 +9,7 @@
 
 pub mod boss;
 pub mod boss_ai;
+pub mod boss_spawn;
 pub mod catalyst_furnace;
 pub mod components;
 pub mod herbs;
@@ -51,6 +52,9 @@ pub fn register(app: &mut App) {
         crate::network::mutation_event_publish::mutation_event_publish_system
             .after(mutation::mutation_advance_system),
     );
+    // P4 (plan-dandao-runtime-wiring-v1): 暴龙王 BOSS 遭遇战系统注册
+    // big-brain 集成层（scorer/action）+ 真元吸取光环 + 死亡掉落 + 天道旁白。
+    boss_spawn::register(app);
 }
 
 pub fn register_skills(registry: &mut SkillRegistry) {

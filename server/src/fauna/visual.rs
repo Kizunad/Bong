@@ -24,6 +24,9 @@ pub const LIVING_PILLAR_ENTITY_KIND: EntityKind = EntityKind::new(142);
 pub const POISON_DRAGON_ENTITY_KIND: EntityKind = EntityKind::new(143);
 pub const BONE_DRAGON_ENTITY_KIND: EntityKind = EntityKind::new(144);
 pub const HEIWUSHI_ENTITY_KIND: EntityKind = EntityKind::new(145);
+/// plan-dandao-runtime-wiring-v1 P4 — 暴龙王 BOSS。
+/// 客户端 `BaolongwangEntities.EXPECTED_RAW_ID = 160`，注册顺序与此处一致。
+pub const BAOLONGWANG_ENTITY_KIND: EntityKind = EntityKind::new(160);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Component)]
 pub enum FaunaVisualKind {
