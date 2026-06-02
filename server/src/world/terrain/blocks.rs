@@ -111,9 +111,13 @@ pub fn block_from_name(name: &str) -> Option<BlockState> {
         // --- deepslate bricks / stone bricks ---
         "chiseled_deepslate" => BlockState::CHISELED_DEEPSLATE,
         "deepslate_bricks" => BlockState::DEEPSLATE_BRICKS,
+        "stone_bricks" => BlockState::STONE_BRICKS,
         "chiseled_stone_bricks" => BlockState::CHISELED_STONE_BRICKS,
         "cracked_stone_bricks" => BlockState::CRACKED_STONE_BRICKS,
         "mossy_stone_bricks" => BlockState::MOSSY_STONE_BRICKS,
+        "smooth_stone_slab" => BlockState::SMOOTH_STONE_SLAB,
+        "stone_brick_slab" => BlockState::STONE_BRICK_SLAB,
+        "stone_brick_stairs" => BlockState::STONE_BRICK_STAIRS,
         "warped_planks" => BlockState::WARPED_PLANKS,
 
         // --- wool / concrete / lights ---
@@ -146,6 +150,44 @@ pub fn block_from_name(name: &str) -> Option<BlockState> {
         "spruce_sign" => BlockState::SPRUCE_SIGN,
         "birch_sign" => BlockState::BIRCH_SIGN,
         "dark_oak_sign" => BlockState::DARK_OAK_SIGN,
+
+        // --- agriculture / worldgen placement ---
+        "farmland" => BlockState::FARMLAND,
+        "wheat" => BlockState::WHEAT,
+        "potatoes" => BlockState::POTATOES,
+        "carrots" => BlockState::CARROTS,
+        "beetroots" => BlockState::BEETROOTS,
+
+        // --- misc structure blocks ---
+        "chiseled_polished_blackstone" => BlockState::CHISELED_POLISHED_BLACKSTONE,
+        "polished_blackstone" => BlockState::POLISHED_BLACKSTONE,
+        "polished_blackstone_bricks" => BlockState::POLISHED_BLACKSTONE_BRICKS,
+        "cracked_polished_blackstone_bricks" => BlockState::CRACKED_POLISHED_BLACKSTONE_BRICKS,
+        "nether_bricks" => BlockState::NETHER_BRICKS,
+        "red_nether_bricks" => BlockState::RED_NETHER_BRICKS,
+        "end_stone_bricks" => BlockState::END_STONE_BRICKS,
+        "purpur_block" => BlockState::PURPUR_BLOCK,
+        "lectern" => BlockState::LECTERN,
+        "wither_skeleton_skull" => BlockState::WITHER_SKELETON_SKULL,
+        "skeleton_skull" => BlockState::SKELETON_SKULL,
+        "barrel" => BlockState::BARREL,
+        "crafting_table" => BlockState::CRAFTING_TABLE,
+        "furnace" => BlockState::FURNACE,
+        "brewing_stand" => BlockState::BREWING_STAND,
+        "cauldron" => BlockState::CAULDRON,
+        "bookshelf" => BlockState::BOOKSHELF,
+        "chiseled_bookshelf" => BlockState::CHISELED_BOOKSHELF,
+        "chest" => BlockState::CHEST,
+        "trapped_chest" => BlockState::TRAPPED_CHEST,
+        "iron_bars" => BlockState::IRON_BARS,
+        "chain" => BlockState::CHAIN,
+        "lantern" => BlockState::LANTERN,
+        "end_rod" => BlockState::END_ROD,
+        "sea_lantern" => BlockState::SEA_LANTERN,
+        "glowstone" => BlockState::GLOWSTONE,
+        "glowshroom" => BlockState::SHROOMLIGHT,
+        "air" => BlockState::AIR,
+        "cave_air" => BlockState::CAVE_AIR,
 
         _ => return None,
     })

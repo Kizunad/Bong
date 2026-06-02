@@ -1,3 +1,4 @@
+mod authored;
 mod biome;
 mod blocks;
 pub mod broken_peaks;
@@ -279,10 +280,11 @@ pub fn spawn_raster_world(
     let provider = TerrainProvider::load(&config.manifest_path, &config.raster_dir, biomes)
         .unwrap_or_else(|error| panic!("failed to bootstrap raster terrain: {error}"));
     tracing::info!(
-        "[bong][world] loaded {} terrain tiles / {} POIs / {} decorations from {}",
+        "[bong][world] loaded {} terrain tiles / {} POIs / {} decorations / {} placements from {}",
         provider.tile_count(),
         provider.pois().len(),
         provider.decoration_count(),
+        provider.placement_block_count(),
         config.manifest_path.display()
     );
 
@@ -490,6 +492,10 @@ fn ensure_chunk_generated(
     decoration::decorate_chunk(&mut chunk, pos, min_y, terrain, &top_y_by_column);
     flora::decorate_chunk(&mut chunk, pos, min_y, terrain, &top_y_by_column);
     structures::decorate_chunk(&mut chunk, pos, min_y, terrain);
+    // P1 — stamp authored structures from placement_manifest.json sidecar.
+    // Runs after procedural decoration so authored buildings override them;
+    // density mask (P0 worldgen) already removed flora inside compound radius.
+    authored::place_authored_structures(&mut chunk, pos, min_y, terrain);
     giant_sword::decorate_chunk(&mut chunk, pos, min_y, terrain);
     overlay_mineral_ores(&mut chunk, pos, min_y, mineral_index, mineral_nodes);
     erase_harvested_spiritwood_logs(&mut chunk, pos, min_y, harvested_spiritwood);

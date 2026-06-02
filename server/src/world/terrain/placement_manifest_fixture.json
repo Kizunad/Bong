@@ -1,0 +1,26 @@
+{
+  "version": 1,
+  "structures": [
+    {
+      "nbt_path": "server/structures/dan_zong/great_hall.nbt",
+      "origin": [128, 82, 256],
+      "rotation": 0,
+      "blocks": [
+        {"pos": [128, 82, 256], "block": "minecraft:stone_bricks"},
+        {"pos": [128, 83, 256], "block": "minecraft:stone_bricks"},
+        {"pos": [144, 82, 272], "block": "minecraft:stone_bricks"},
+        {"pos": [143, 82, 256], "block": "minecraft:farmland", "properties": {"moisture": "7"}},
+        {"pos": [144, 83, 272], "block": "minecraft:oak_log", "properties": {"axis": "y"}}
+      ]
+    },
+    {
+      "nbt_path": "<stamp_radial:herb_garden_pen_6x6>",
+      "origin": [160, 82, 256],
+      "rotation": 90,
+      "blocks": [
+        {"pos": [160, 82, 253], "block": "minecraft:farmland", "properties": {"moisture": "7"}},
+        {"pos": [160, 83, 253], "block": "minecraft:wheat", "properties": {"age": "7"}}
+      ]
+    }
+  ]
+}
