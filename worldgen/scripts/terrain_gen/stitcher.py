@@ -543,6 +543,57 @@ def _build_zone_overlay_tile(
     return buffer
 
 
+def _resolve_layout_poi_center_xz(zone: BlueprintZone) -> tuple[int, int]:
+    """Return the (x, z) center for compound flatten/mask of *zone*.
+
+    Strategy (plan-terrain-wiring-v1 §11 M2):
+    1. Look up the layout in COMPOUND_LAYOUT_REGISTRY to get poi_kind.
+    2. Find the first POI in zone.pois matching that poi_kind.
+    3. Fall back to zone center_xz if no POI matches (warn).
+    """
+    from .layouts import COMPOUND_LAYOUT_REGISTRY
+
+    layout_name = zone.architectural_layout
+    if layout_name and layout_name in COMPOUND_LAYOUT_REGISTRY:
+        spec = COMPOUND_LAYOUT_REGISTRY[layout_name]
+        for poi in zone.pois:
+            if poi.kind == spec.poi_kind:
+                return (int(round(poi.pos_xyz[0])), int(round(poi.pos_xyz[2])))
+
+    # Fallback: zone center
+    import logging as _logging
+    _logging.getLogger(__name__).warning(
+        "Zone '%s': could not resolve POI center for compound flatten "
+        "(layout=%s), falling back to zone center_xz %s",
+        zone.name, zone.architectural_layout, zone.center_xz,
+    )
+    return zone.center_xz
+
+
+def _resolve_layout_target_height(zone: BlueprintZone) -> float:
+    """Return the target height for compound flatten of *zone*.
+
+    Strategy (plan-terrain-wiring-v1 §11 M2):
+    1. Look up poi_kind via COMPOUND_LAYOUT_REGISTRY.
+    2. Return POI.pos_xyz.y of the first matching POI.
+    3. Fall back to zone height_model base mid-point.
+    """
+    from .layouts import COMPOUND_LAYOUT_REGISTRY
+
+    layout_name = zone.architectural_layout
+    if layout_name and layout_name in COMPOUND_LAYOUT_REGISTRY:
+        spec = COMPOUND_LAYOUT_REGISTRY[layout_name]
+        for poi in zone.pois:
+            if poi.kind == spec.poi_kind:
+                return float(poi.pos_xyz[1])
+
+    # Fallback: mid-point of base height range
+    base = zone.worldgen.height_model.get("base", [64, 80])
+    if isinstance(base, list) and len(base) >= 2:
+        return float((base[0] + base[1]) / 2)
+    return 64.0
+
+
 def synthesize_fields(plan: TerrainGenerationPlan) -> GeneratedFieldSet:
     palette = SurfacePalette()
     palette.extend(("stone", "coarse_dirt", "gravel"))
@@ -563,6 +614,9 @@ def synthesize_fields(plan: TerrainGenerationPlan) -> GeneratedFieldSet:
         if any(_zone_intersects_tile(zone, tile) for zone in plan.blueprint_zones)
     ]
 
+    # plan-terrain-wiring-v1 P0 M2/#8: build a name→zone lookup for flatten/mask.
+    _zone_by_name: dict[str, BlueprintZone] = {z.name: z for z in plan.blueprint_zones}
+
     for tile in active_tiles:
         base_tile = fill_wilderness_tile(
             tile, plan.tile_size, palette, tuple(all_layers)
@@ -576,6 +630,28 @@ def synthesize_fields(plan: TerrainGenerationPlan) -> GeneratedFieldSet:
             _blend_tile_layers(base_tile, overlay_tile, zone)
             if zone.name in collapsed_zones:
                 _apply_realm_collapse_mask(base_tile, zone)
+
+            # plan-terrain-wiring-v1 P0 M2/#8 — compound flatten + density mask.
+            # Applied after blending, before compact, so layout platform is
+            # authoritative over any zone height variation.
+            if zone.compound_flatten_radius:
+                # Resolve POI center: use the first POI of the layout's poi_kind.
+                # We need the layout to find poi_kind; fall back to zone center_xz
+                # + average height if no POI matches.
+                poi_center_xz = _resolve_layout_poi_center_xz(zone)
+                target_height = _resolve_layout_target_height(zone)
+                apply_compound_flatten(
+                    base_tile,
+                    poi_center_xz=poi_center_xz,
+                    radius=zone.compound_flatten_radius,
+                    target_height=target_height,
+                )
+                compute_layout_density_mask(
+                    base_tile,
+                    poi_center_xz=poi_center_xz,
+                    radius=zone.compound_flatten_radius,
+                )
+
         base_tile.compact_layers()
         generated_tiles.append(base_tile)
 
