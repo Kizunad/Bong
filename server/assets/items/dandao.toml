@@ -1,0 +1,79 @@
+# plan-dandao-runtime-wiring-v1 P4 — 暴龙王 BOSS 掉落物 ItemTemplate 注册。
+#
+# 对应 boss.rs 中的 LOOT_* 常量：
+#   LOOT_BOSS_CORE         = "dandao.baolongwang_core"
+#   LOOT_ANCIENT_RECIPE    = "dandao.ancient_recipe_fragment"
+#   LOOT_BOSS_HORN         = "dandao.baolongwang_horn"
+#   LOOT_BOSS_SCALE        = "dandao.baolongwang_scale"
+#   LOOT_FURNACE_REMNANT   = "dandao.catalyst_furnace_remnant"
+#   LOOT_XU_YUAN_DAN       = "dandao.xu_yuan_dan"
+#
+# 图标：待 /gen-image item 批量生成（follow-up，连同 P3 的 tui_gu_dan / tui_gu_dan_flawed）。
+
+[[item]]
+id = "dandao.baolongwang_core"
+name = "暴龙王丹核"
+category = "material"
+grid_w = 1
+grid_h = 1
+base_weight = 2.5
+rarity = "legendary"
+spirit_quality_initial = 1.0
+description = "暴龙王体内凝聚千年丹意的核心，蕴含压缩的变异真元，是丹道最顶级的炼丹原料。100% 必掉。"
+
+[[item]]
+id = "dandao.ancient_recipe_fragment"
+name = "上古丹方残页"
+category = "scroll"
+grid_w = 1
+grid_h = 1
+base_weight = 0.1
+rarity = "epic"
+spirit_quality_initial = 0.8
+description = "暴龙王吞噬的上古丹宗遗留丹方碎片，拼合三页可还原一份失传丹方。100% 掉落×3。"
+
+[[item]]
+id = "dandao.baolongwang_horn"
+name = "暴龙王龙角"
+category = "material"
+grid_w = 1
+grid_h = 2
+base_weight = 5.0
+rarity = "legendary"
+spirit_quality_initial = 1.0
+description = "暴龙王进入暴怒阶段后方能长出的真元凝聚角，可作高阶法器镶嵌材料。50% 概率掉落，需经历 Rage 阶段。"
+
+[[item]]
+id = "dandao.baolongwang_scale"
+name = "暴龙王龙鳞"
+category = "material"
+grid_w = 1
+grid_h = 1
+base_weight = 1.2
+rarity = "rare"
+spirit_quality_initial = 0.9
+description = "暴龙王身上坚韧的变异鳞片，渗透丹毒而不腐，可制丹道防具。80% 概率掉落×3-8 片。"
+
+[[item]]
+id = "dandao.catalyst_furnace_remnant"
+name = "催化炉残骸碎片"
+category = "material"
+grid_w = 1
+grid_h = 1
+base_weight = 3.0
+rarity = "epic"
+spirit_quality_initial = 0.7
+description = "暴龙王体内的变异炼丹炉被摧毁后遗留的高温残骸，含有特殊催化晶格。炉毁后 100% 掉落。"
+
+[[item]]
+id = "dandao.xu_yuan_dan"
+name = "蓄元丹"
+category = "pill"
+grid_w = 1
+grid_h = 1
+base_weight = 0.2
+rarity = "rare"
+spirit_quality_initial = 1.0
+description = "暴龙王体内丹药储备残余——被末法残土污染但仍有效。服后恢复大量真元，有轻微变异副作用。70% 概率掉落×5-10 颗。"
+cast_duration_ms = 1500
+cooldown_ms = 8000

@@ -1,3 +1,4 @@
+pub mod baolongwang;
 pub mod clearinv;
 pub mod give;
 pub mod gm;
@@ -34,6 +35,7 @@ pub mod zones;
 use valence::prelude::App;
 
 pub fn register(app: &mut App) {
+    baolongwang::register(app);
     clearinv::register(app);
     give::register(app);
     heiwushi::register(app);

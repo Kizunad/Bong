@@ -159,6 +159,12 @@ pub enum QiTransferReason {
     /// 实际 qi_current 不变、SPIRIT_QI_TOTAL 不变。emit 为 event，不调 `WorldQiAccount::transfer`
     /// （后者会变动 balance）。
     HalfStepBuff,
+    /// plan-dandao-runtime-wiring-v1 P4 — 暴龙王真元吸取光环。
+    ///
+    /// worldview §十六:1572「负压畸变体」正典依据：负压畸变体通过真元吸取光环持续
+    /// 从附近修士真元库抽取 +50%。吸来的真元守恒转入 zone 账户（坍缩渊），
+    /// **不得凭空消失**。amount = 玩家实际被吸走量（经光环计算，已扣除 50% 加成）。
+    BossDrain,
 }
 
 #[derive(Debug, Clone, Event, PartialEq)]
