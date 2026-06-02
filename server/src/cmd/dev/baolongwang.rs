@@ -197,6 +197,83 @@ mod tests {
         let mut query = app
             .world_mut()
             .query_filtered::<Entity, With<BaolongwangMarker>>();
-        assert_eq!(query.iter(app.world()).count(), 0);
+        let count = query.iter(app.world()).count();
+        assert_eq!(
+            count, 0,
+            "期望 executor 无效（Entity::PLACEHOLDER）时不 spawn 任何 BaolongwangMarker 实体，\
+             因为 handle_baolongwang_cmd players.get_mut 会失败并 continue；\
+             实际 BaolongwangMarker 实体数量 = {count}"
+        );
+    }
+
+    #[test]
+    fn baolongwang_spawn_cmd_no_active_layer_does_not_spawn() {
+        // 玩家的 EntityLayerId 被移除 + 无 OverworldLayer 实体 → spawn 应走失败反馈路径，不 spawn BOSS。
+        // 对应 handle_baolongwang_cmd 中 player_layer.map(...).or_else(|| layers.iter().next()) 返回 None。
+        // 注意：ClientBundle 默认含 EntityLayerId(PLACEHOLDER)，测试需显式移除才能触发无 layer 路径。
+        let mut app = App::new();
+        app.add_event::<CommandResultEvent<BaolongwangCmd>>();
+        app.add_systems(Update, handle_baolongwang_cmd);
+        // 故意不 spawn 任何 OverworldLayer 实体
+        let player = spawn_test_client(&mut app, "NoLayerPlayer", [50.0, 70.0, 50.0]);
+        // 移除 ClientBundle 默认的 EntityLayerId —— 模拟玩家没有 active layer
+        app.world_mut().entity_mut(player).remove::<EntityLayerId>();
+
+        app.world_mut()
+            .resource_mut::<Events<CommandResultEvent<BaolongwangCmd>>>()
+            .send(CommandResultEvent {
+                result: BaolongwangCmd::Spawn,
+                executor: player,
+                modifiers: Default::default(),
+            });
+
+        run_update(&mut app);
+
+        let mut query = app
+            .world_mut()
+            .query_filtered::<Entity, With<BaolongwangMarker>>();
+        let count = query.iter(app.world()).count();
+        assert_eq!(
+            count,
+            0,
+            "期望无 active layer 时不 spawn BOSS（handle_baolongwang_cmd 走 continue 路径并发聊天警告），\
+             实际 BaolongwangMarker 实体数量 = {count}"
+        );
+    }
+
+    #[test]
+    fn baolongwang_spawn_cmd_falls_back_to_overworld_layer() {
+        // 玩家 EntityLayerId 被移除，但存在 OverworldLayer 实体 → 应 fallback 使用 OverworldLayer，spawn 成功。
+        // 对应 handle_baolongwang_cmd 中 `.or_else(|| layers.iter().next())` fallback 路径。
+        // 注意：ClientBundle 默认含 EntityLayerId(PLACEHOLDER)，需显式移除才能触发 fallback。
+        let mut app = App::new();
+        app.add_event::<CommandResultEvent<BaolongwangCmd>>();
+        app.add_systems(Update, handle_baolongwang_cmd);
+        // 创建 OverworldLayer 但不把它挂到玩家身上
+        let _layer = app.world_mut().spawn(OverworldLayer).id();
+        let player = spawn_test_client(&mut app, "FallbackPlayer", [50.0, 70.0, 50.0]);
+        // 移除 ClientBundle 默认的 EntityLayerId，触发 fallback 到 OverworldLayer
+        app.world_mut().entity_mut(player).remove::<EntityLayerId>();
+
+        app.world_mut()
+            .resource_mut::<Events<CommandResultEvent<BaolongwangCmd>>>()
+            .send(CommandResultEvent {
+                result: BaolongwangCmd::Spawn,
+                executor: player,
+                modifiers: Default::default(),
+            });
+
+        run_update(&mut app);
+
+        let mut query = app
+            .world_mut()
+            .query_filtered::<Entity, With<BaolongwangMarker>>();
+        let count = query.iter(app.world()).count();
+        assert_eq!(
+            count, 1,
+            "期望 fallback 到 OverworldLayer 时成功 spawn 恰好 1 个 BOSS，\
+             因为 handle_baolongwang_cmd 通过 layers.iter().next() 找到 OverworldLayer；\
+             实际 BaolongwangMarker 实体数量 = {count}"
+        );
     }
 }

@@ -256,6 +256,14 @@ impl WorldQiAccount {
         &self.transfers
     }
 
+    /// audit-only 记录：仅将 `transfer` 追加到审计轨迹，不修改任何账户余额。
+    ///
+    /// 用于「玩家真元存储在 Cultivation.qi_current（ECS 组件），不在此 ledger balances」
+    /// 的跨账本转账场景（如 BossDrain）——余额已在外部正确更新，此处仅留轨迹。
+    pub fn push_transfer_audit(&mut self, transfer: QiTransfer) {
+        self.transfers.push(transfer);
+    }
+
     /// plan-offscreen-war-v1 P0：守恒 telemetry 用——按 `QiAccountId` 升序（BTreeMap
     /// 天然有序）迭代每个账户的余额，供 `bong:qi/ledger` 把 per-zone / per-npc
     /// 账本暴露给外部脚本做精确守恒断言。只读，不改账本。

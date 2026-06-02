@@ -336,7 +336,11 @@ pub fn baolongwang_action_system(
 pub fn baolongwang_qi_drain_aura_system(
     bosses: Query<(&BaolongwangBoss, &Position), With<BaolongwangMarker>>,
     mut players: Query<
-        (&Position, &mut crate::cultivation::components::Cultivation),
+        (
+            Entity,
+            &Position,
+            &mut crate::cultivation::components::Cultivation,
+        ),
         Without<BaolongwangMarker>,
     >,
     mut qi_account: Option<bevy_ecs::system::ResMut<WorldQiAccount>>,
@@ -353,7 +357,8 @@ pub fn baolongwang_qi_drain_aura_system(
         }
         let boss_origin = boss_pos.get();
 
-        for (player_pos, mut cultivation) in &mut players {
+        for (player_entity, player_pos, mut cultivation) in &mut players {
+            let entity_id_bits = player_entity.to_bits();
             let dist = player_pos.get().distance(boss_origin);
             if dist > QI_DRAIN_AURA_RADIUS {
                 continue;
@@ -377,7 +382,12 @@ pub fn baolongwang_qi_drain_aura_system(
             cultivation.qi_current -= actual_drain;
 
             // 守恒：转入 zone 账户（ledger 记账）
-            let player_id = QiAccountId::player("baolongwang_drain_victim");
+            // 注意：玩家真元在 Cultivation.qi_current 中管理，不在 WorldQiAccount balances 里，
+            // 所以不走 WorldQiAccount::transfer（后者会检查 from 账户余额，而 player 余额未在 ledger 中）。
+            // 此处直接更新 zone 余额，同时将 QiTransfer 推入 transfers 向量以保留审计轨迹，
+            // 并 emit 事件供外部 telemetry 消费。
+            // player_id 使用 entity bits 作为唯一标识符，保证 audit trail 可追溯至具体实体。
+            let player_id = QiAccountId::player(format!("entity:{}", entity_id_bits));
             let zone_id = QiAccountId::zone(BOSS_HOME_ZONE);
 
             // 确保 zone 账户存在
@@ -385,17 +395,18 @@ pub fn baolongwang_qi_drain_aura_system(
                 let _ = account.set_balance(zone_id.clone(), 0.0);
             }
 
-            // 构造 QiTransfer 并 emit event（不走 WorldQiAccount::transfer 以避免余额检查，
-            // 因为玩家真元已在 Cultivation component 中直接扣除）
+            // 构造 QiTransfer 审计记录：推入 transfers 向量 + emit event
             let transfer = QiTransfer {
                 from: player_id,
                 to: zone_id.clone(),
                 amount: actual_drain,
                 reason: QiTransferReason::BossDrain,
             };
-            // 更新 zone 余额（增）
+            // 更新 zone 余额（增）：玩家侧已在 Cultivation.qi_current 扣除，zone 侧在 ledger 增加
             let zone_balance = account.balance(&zone_id);
             let _ = account.set_balance(zone_id, zone_balance + actual_drain);
+            // 将转账记录推入审计轨迹（不改 from 账户 balance，因为玩家余额不在此 ledger）
+            account.push_transfer_audit(transfer.clone());
             qi_transfer_events.send(transfer);
         }
     }
@@ -879,44 +890,109 @@ mod boss_spawn_tests {
         );
     }
 
-    // ── 守恒测试：吸取光环 ──────────────────────────────────────────────────
+    // ── 守恒测试：吸取光环（运行真实 system） ─────────────────────────────
 
     #[test]
     fn qi_drain_aura_is_conserved_using_spirit_qi_total_const() {
-        // 守恒断言：玩家减少量 == zone 增加量，total 不变。
+        // 守恒断言：构造 App + 真实 system，运行一 tick，断言玩家减少量 == zone 增加量。
         // 断言取 DEFAULT_SPIRIT_QI_TOTAL const 引用，不写字面。
-        let initial_player_qi = 50.0f64;
-        let mut player_qi = initial_player_qi;
-        let drain_amount = QI_DRAIN_BASE_PER_TICK * QI_DRAIN_BOSS_MULTIPLIER * 1.0; // proximity_factor=1.0
+        use crate::cultivation::components::Cultivation;
+        use valence::prelude::Position;
 
-        let mut account = WorldQiAccount::default();
+        let mut app = App::new();
+
+        // 注册 QiTransfer 事件和吸取 system
+        app.add_event::<QiTransfer>();
+        app.add_systems(Update, baolongwang_qi_drain_aura_system);
+
+        // 插入 WorldQiAccount 资源，初始化 zone 账户
         let zone_id = QiAccountId::zone(BOSS_HOME_ZONE);
-        account.set_balance(zone_id.clone(), 0.0).unwrap();
-
-        let actual_drain = drain_amount.min(player_qi);
-        player_qi -= actual_drain;
-        let zone_balance = account.balance(&zone_id);
+        let initial_zone_qi = 0.0f64;
+        let mut account = WorldQiAccount::default();
         account
-            .set_balance(zone_id.clone(), zone_balance + actual_drain)
+            .set_balance(zone_id.clone(), initial_zone_qi)
             .unwrap();
+        app.insert_resource(account);
 
-        let player_after = player_qi;
-        let zone_after = account.balance(&zone_id);
+        // Spawn boss（Rage 阶段，会触发吸取）在原点
+        let _boss = app
+            .world_mut()
+            .spawn((
+                BaolongwangMarker,
+                BaolongwangBoss {
+                    phase: BossPhase::Rage,
+                    hp_fraction: 0.5,
+                    ..BaolongwangBoss::default()
+                },
+                Position::new([0.0, 0.0, 0.0]),
+            ))
+            .id();
 
-        // 玩家减少 == zone 增加
+        // Spawn 玩家，位于 boss 正上方 1 格（距离 < 光环半径 16.0）
+        let initial_player_qi = DEFAULT_SPIRIT_QI_TOTAL.min(50.0);
+        let player = app
+            .world_mut()
+            .spawn((
+                Cultivation {
+                    qi_current: initial_player_qi,
+                    qi_max: initial_player_qi,
+                    ..Cultivation::default()
+                },
+                Position::new([0.0, 1.0, 0.0]),
+            ))
+            .id();
+
+        // 运行真实 system 一次
+        app.update();
+
+        // 读取结果
+        let player_qi_after = app
+            .world()
+            .get::<Cultivation>(player)
+            .expect("player Cultivation missing")
+            .qi_current;
+        let zone_qi_after = app.world().resource::<WorldQiAccount>().balance(&zone_id);
+
+        let player_decrease = initial_player_qi - player_qi_after;
+        let zone_increase = zone_qi_after - initial_zone_qi;
+
+        // 玩家减少量 == zone 增加量（守恒恰一次）
         assert!(
-            (initial_player_qi - player_after - zone_after).abs() < 1e-9,
-            "守恒：玩家减少({})应 == zone 增加({})，total 不变；\
-             断言取 DEFAULT_SPIRIT_QI_TOTAL={DEFAULT_SPIRIT_QI_TOTAL} const 不写字面",
-            initial_player_qi - player_after,
-            zone_after
+            (player_decrease - zone_increase).abs() < 1e-9,
+            "守恒：玩家减少({player_decrease:.6}) 应 == zone 增加({zone_increase:.6})，\
+             实际差值 = {:.9}；DEFAULT_SPIRIT_QI_TOTAL={DEFAULT_SPIRIT_QI_TOTAL}",
+            (player_decrease - zone_increase).abs()
         );
 
-        // total 不变（player + zone = 初始 player）
-        let total_after = player_after + zone_after;
+        // 吸取发生了（系统实际运行了）
         assert!(
-            (total_after - initial_player_qi).abs() < 1e-9,
-            "吸取前后 total 守恒：before={initial_player_qi} after={total_after}"
+            player_decrease > 0.0,
+            "期望吸取量 > 0 因为 boss 处于 Rage 阶段且玩家在光环范围内（距离 1.0 < {QI_DRAIN_AURA_RADIUS}），\
+             实际 player_decrease={player_decrease:.6}"
+        );
+
+        // 审计轨迹：transfers 向量应有 BossDrain 记录
+        let transfers = app
+            .world()
+            .resource::<WorldQiAccount>()
+            .transfers()
+            .to_vec();
+        assert_eq!(
+            transfers.len(),
+            1,
+            "期望恰好 1 条 BossDrain 审计记录，因为只有一个玩家在光环范围内，\
+             实际 transfers.len()={}",
+            transfers.len()
+        );
+        assert_eq!(
+            transfers[0].reason,
+            QiTransferReason::BossDrain,
+            "审计轨迹 reason 必须为 BossDrain"
+        );
+        assert!(
+            (transfers[0].amount - player_decrease).abs() < 1e-9,
+            "审计记录 amount({:.6}) 必须与玩家实际减少量({player_decrease:.6}) 一致",
+            transfers[0].amount
         );
     }
 
@@ -958,18 +1034,82 @@ mod boss_spawn_tests {
 
     #[test]
     fn qi_drain_zero_for_expel_phase() {
-        // 驱逐阶段不吸取（BOSS 此时只想跑）
-        let boss = BaolongwangBoss {
-            hp_fraction: 0.9,
-            phase: BossPhase::Expel,
-            furnace_intact: true,
-            ..BaolongwangBoss::default()
-        };
-        // 驱逐阶段 system 跳过（see baolongwang_qi_drain_aura_system: phase==Expel → continue）
+        // 驱逐阶段运行真实 system：断言玩家 qi_current 未变、zone 余额未变。
+        // 若 phase==Expel 的 early-return 被误删，此测试撞红。
+        use crate::cultivation::components::Cultivation;
+        use valence::prelude::Position;
+
+        let mut app = App::new();
+        app.add_event::<QiTransfer>();
+        app.add_systems(Update, baolongwang_qi_drain_aura_system);
+
+        let zone_id = QiAccountId::zone(BOSS_HOME_ZONE);
+        let initial_zone_qi = 10.0f64;
+        let mut account = WorldQiAccount::default();
+        account
+            .set_balance(zone_id.clone(), initial_zone_qi)
+            .unwrap();
+        app.insert_resource(account);
+
+        // Spawn boss：驱逐阶段（Expel），位于原点
+        let _boss = app
+            .world_mut()
+            .spawn((
+                BaolongwangMarker,
+                BaolongwangBoss {
+                    phase: BossPhase::Expel,
+                    hp_fraction: 0.9,
+                    furnace_intact: true,
+                    ..BaolongwangBoss::default()
+                },
+                Position::new([0.0, 0.0, 0.0]),
+            ))
+            .id();
+
+        // Spawn 玩家，在光环范围内（距离 1.0 < 16.0）
+        let initial_player_qi = 50.0f64;
+        let player = app
+            .world_mut()
+            .spawn((
+                Cultivation {
+                    qi_current: initial_player_qi,
+                    qi_max: initial_player_qi,
+                    ..Cultivation::default()
+                },
+                Position::new([0.0, 1.0, 0.0]),
+            ))
+            .id();
+
+        // 运行真实 system
+        app.update();
+
+        // 驱逐阶段：玩家 qi 不变
+        let player_qi_after = app
+            .world()
+            .get::<Cultivation>(player)
+            .expect("player Cultivation missing")
+            .qi_current;
+        assert!(
+            (player_qi_after - initial_player_qi).abs() < 1e-9,
+            "期望驱逐阶段(Expel) system 不吸取真元，因为 baolongwang_qi_drain_aura_system \
+             在 phase==Expel 时 continue 跳过；\
+             实际 player_qi before={initial_player_qi:.6} after={player_qi_after:.6}"
+        );
+
+        // zone 余额也不变
+        let zone_qi_after = app.world().resource::<WorldQiAccount>().balance(&zone_id);
+        assert!(
+            (zone_qi_after - initial_zone_qi).abs() < 1e-9,
+            "期望驱逐阶段 zone 余额不变，因为 system 对 Expel 阶段 boss 跳过；\
+             实际 zone_qi before={initial_zone_qi:.6} after={zone_qi_after:.6}"
+        );
+
+        // 无审计记录
+        let transfers = app.world().resource::<WorldQiAccount>().transfers().len();
         assert_eq!(
-            boss.phase,
-            BossPhase::Expel,
-            "驱逐阶段不吸真元，system 直接 continue"
+            transfers, 0,
+            "期望驱逐阶段产生 0 条 BossDrain 审计记录，因为 system 未运行，\
+             实际 transfers.len()={transfers}"
         );
     }
 
