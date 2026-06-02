@@ -1823,7 +1823,7 @@ mod tests {
     /// The palette list is kept in sync with `blocks::tests::AUTHORED_STRUCTURE_BLOCKS`.
     #[test]
     fn authored_nbt_palette_zero_drop_in_build_placement_index() {
-        use super::blocks::tests::AUTHORED_STRUCTURE_BLOCKS;
+        use super::super::blocks::tests::AUTHORED_STRUCTURE_BLOCKS;
 
         let blocks: Vec<PlacementBlock> = AUTHORED_STRUCTURE_BLOCKS
             .iter()

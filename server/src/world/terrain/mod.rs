@@ -1,6 +1,6 @@
 mod authored;
 mod biome;
-mod blocks;
+pub(crate) mod blocks;
 pub mod broken_peaks;
 mod column;
 mod decoration;

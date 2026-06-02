@@ -226,7 +226,7 @@ pub fn block_from_name(name: &str) -> Option<BlockState> {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::block_from_name;
 
     /// Full list of distinct block names authored in dan_zong and wangyintai NBT
@@ -303,11 +303,13 @@ mod tests {
     /// Every block name in the authored NBT palette must resolve in `block_from_name`.
     ///
     /// When a new structure is authored:
-    ///   1. Run the dump script (`cd <repo> && python3 -c "..."`) to get the new
-    ///      distinct block list.
-    ///   2. Add missing names to AUTHORED_STRUCTURE_BLOCKS above.
-    ///   3. Add missing names to `block_from_name` above.
-    ///   This test will then confirm both sides are aligned.
+    ///
+    /// 1. Run the dump script (`cd <repo> && python3 -c "..."`) to get the new
+    ///    distinct block list.
+    /// 2. Add missing names to AUTHORED_STRUCTURE_BLOCKS above.
+    /// 3. Add missing names to `block_from_name` above.
+    ///
+    /// This test will then confirm both sides are aligned.
     #[test]
     fn all_authored_structure_blocks_resolve() {
         let mut failures: Vec<&str> = Vec::new();
