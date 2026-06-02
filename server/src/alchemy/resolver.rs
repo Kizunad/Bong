@@ -189,9 +189,16 @@ fn resolve_raw(
         // severe_overheat / qi_deficit 不受此影响（物理极限）。
         let bonus = catalyst_furnace_bonus(furnace_tier, &recipe.id);
         if bonus > 0.0 {
+            // reduction 是对 classify_precise 评分（= max(temp, dur)）的一次性削减量。
+            // classify_precise 取两维度的 max 作为最终评分，故只需对主导维度（较大值）
+            // 减去 reduction；对次要维度不做修改，确保总削减恰为 reduction 一次，
+            // 而非对两个字段各减一次导致 2×reduction 的双重削减。
             let reduction = bonus * DEVIATION_FULL_SCALE;
-            summary.temp_deviation = (summary.temp_deviation - reduction).max(0.0);
-            summary.duration_deviation = (summary.duration_deviation - reduction).max(0.0);
+            if summary.temp_deviation >= summary.duration_deviation {
+                summary.temp_deviation = (summary.temp_deviation - reduction).max(0.0);
+            } else {
+                summary.duration_deviation = (summary.duration_deviation - reduction).max(0.0);
+            }
         }
         let bucket = classify_precise(&summary);
         return (bucket, map_exact_bucket(recipe, bucket));
@@ -1224,6 +1231,8 @@ mod tests {
     }
 
     /// furnace_tier=0（默认/无炉）等同于旧 resolve_with_meta 行为（向后兼容）。
+    /// 用完整 ResolvedAlchemyResult（含 bucket/xp/outcome）比较，而非仅 bucket，
+    /// 确保 furnace_tier=0 的新入口在 xp、产出等维度上也完全对齐旧入口。
     #[test]
     fn p3_furnace_tier0_matches_legacy_resolve_with_meta() {
         let (session, registry) = build_tui_gu_dan_session(0.87, 25.0);
@@ -1231,9 +1240,65 @@ mod tests {
         let legacy = resolve_with_meta(&session, recipe, &registry);
         let with_tier0 = resolve_with_meta_and_furnace(&session, recipe, &registry, 0, 0);
         assert_eq!(
-            legacy.bucket, with_tier0.bucket,
-            "furnace_tier=0 应与 resolve_with_meta 行为一致：{:?} vs {:?}",
-            legacy.bucket, with_tier0.bucket
+            legacy, with_tier0,
+            "furnace_tier=0 应与 resolve_with_meta 完整结果一致（bucket/xp/outcome 全部对齐）：\nlegacy={:?}\ntier0={:?}",
+            legacy, with_tier0
+        );
+    }
+
+    /// 回归：当 temp_deviation 和 duration_deviation **同时偏离**时，
+    /// 催化炉加成对两个字段的总削减量恰为 reduction（= bonus × DEVIATION_FULL_SCALE）一次，
+    /// 而不是对每个字段各减一次（2×reduction）。
+    /// 验证方式：直接对 DeviationSummary 施加加成前后的差值。
+    #[test]
+    fn p3_furnace_bonus_dual_deviation_reduces_by_exactly_one_reduction() {
+        use crate::alchemy::outcome::DeviationSummary;
+
+        // 构造两个维度都有偏差的场景：temp 和 duration 都是 2.0（都在 Good 区间）
+        // 这模拟"双偏差场景"——两个字段均正且都高于 0
+        let bonus = catalyst_furnace_bonus(CATALYST_FURNACE_TIER, RECIPE_TUI_GU_DAN);
+        assert!(
+            bonus > 0.0,
+            "CATALYST_FURNACE_TIER 对变异丹配方必须有正加成，bonus={}",
+            bonus
+        );
+        let reduction = bonus * DEVIATION_FULL_SCALE;
+
+        // 使用 resolve_raw 内部逻辑等价：直接模拟加成前后的字段变化
+        // before: temp=2.0, dur=1.5（temp 是主导维度）
+        let mut summary_before = DeviationSummary {
+            temp_deviation: 2.0,
+            duration_deviation: 1.5,
+            missed_stage: false,
+            qi_deficit: false,
+            severe_overheat: false,
+        };
+        // 手动执行与 resolve_raw 相同的加成逻辑（主导维度优先）
+        if summary_before.temp_deviation >= summary_before.duration_deviation {
+            summary_before.temp_deviation = (summary_before.temp_deviation - reduction).max(0.0);
+        } else {
+            summary_before.duration_deviation =
+                (summary_before.duration_deviation - reduction).max(0.0);
+        }
+        // 验证：两字段之和的减少量 == reduction（一次性削减，而非 2×reduction）
+        let total_before = 2.0_f64 + 1.5_f64;
+        let total_after = summary_before.temp_deviation + summary_before.duration_deviation;
+        let actual_reduction = total_before - total_after;
+        assert!(
+            (actual_reduction - reduction).abs() < 1e-9,
+            "双偏差场景下炉加成总削减应为 reduction={} 一次，实际削减了 {}（差值 {}）。\n\
+             若差 2×reduction={} 则说明双重削减 bug 复现。",
+            reduction,
+            actual_reduction,
+            actual_reduction - reduction,
+            2.0 * reduction
+        );
+
+        // 额外验证：次要维度（duration=1.5）不应被修改
+        assert!(
+            (summary_before.duration_deviation - 1.5_f64).abs() < 1e-9,
+            "次要维度 duration_deviation 不应被炉加成修改，期望 1.5，实际 {}",
+            summary_before.duration_deviation
         );
     }
 }

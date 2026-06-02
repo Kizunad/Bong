@@ -3786,6 +3786,200 @@ mod tests {
         assert!(app.world().get::<Wounds>(entity).is_none());
     }
 
+    /// P3 端到端：高阶炉（tier=4）炼 tui_gu_dan_v1 → AlchemyTakeBack → bucket=Perfect；
+    /// 低阶对照（tier=2，满足最低炉阶但无催化加成）→ bucket=Good。
+    ///
+    /// 覆盖边界：handler 中 `furnace.tier` 被透传至 `resolve_with_meta_and_furnace`，
+    /// 确保"改 furnace tier → resolver 接收到正确 tier → 分桶变化"这条 wiring 不被悄悄断掉。
+    /// （若改为传 0，tier-4 结果仍等于 tier-2 的 Good，测试立即红。）
+    #[test]
+    fn p3_take_back_high_tier_furnace_upgrades_bucket_vs_tier0_control() {
+        // tui_gu_dan_v1: target_temp=0.70, temp_band=0.08, qi_cost=25.0, duration=200
+        // temp=0.87 → over=0.17, score=(0.17/0.08 - 1.0)=1.125 → Good（无加成）
+        // tier=4 催化炉加成 → score 下降到 ≤1.0 → Perfect
+        use crate::alchemy::outcome::OutcomeBucket;
+
+        fn build_tui_gu_dan_app() -> (App, valence::prelude::Entity, valence::prelude::Entity) {
+            let mut app = App::new();
+            register_request_app(&mut app);
+            app.insert_resource(crate::alchemy::recipe::load_recipe_registry().unwrap());
+            app.insert_resource(crate::inventory::load_item_registry().unwrap());
+            app.insert_resource(crate::inventory::InventoryInstanceIdAllocator::default());
+
+            let (client_bundle, _helper) = create_mock_client("Alchemist");
+            let entity = app.world_mut().spawn(client_bundle).id();
+            app.world_mut().entity_mut(entity).insert((
+                crate::cultivation::components::Cultivation::default(),
+                PlayerState::default(),
+                // tui_gu_dan 需要 tui_gu_teng×2 + fauna.mutated_bone×1
+                PlayerInventory {
+                    revision: InventoryRevision(0),
+                    containers: vec![ContainerState {
+                        id: "main_pack".into(),
+                        name: "main_pack".into(),
+                        rows: 5,
+                        cols: 7,
+                        items: vec![
+                            PlacedItemState {
+                                row: 0,
+                                col: 0,
+                                instance: ItemInstance {
+                                    instance_id: 9001,
+                                    template_id: "tui_gu_teng".to_string(),
+                                    display_name: "tui_gu_teng".to_string(),
+                                    grid_w: 1,
+                                    grid_h: 1,
+                                    weight: 0.1,
+                                    rarity: ItemRarity::Common,
+                                    description: String::new(),
+                                    stack_count: 2,
+                                    spirit_quality: 1.0,
+                                    durability: 1.0,
+                                    freshness: None,
+                                    mineral_id: None,
+                                    charges: None,
+                                    forge_quality: None,
+                                    forge_color: None,
+                                    forge_side_effects: Vec::new(),
+                                    forge_achieved_tier: None,
+                                    alchemy: None,
+                                    lingering_owner_qi: None,
+                                },
+                            },
+                            PlacedItemState {
+                                row: 0,
+                                col: 1,
+                                instance: ItemInstance {
+                                    instance_id: 9002,
+                                    template_id: "fauna.mutated_bone".to_string(),
+                                    display_name: "fauna.mutated_bone".to_string(),
+                                    grid_w: 1,
+                                    grid_h: 1,
+                                    weight: 0.1,
+                                    rarity: ItemRarity::Common,
+                                    description: String::new(),
+                                    stack_count: 1,
+                                    spirit_quality: 1.0,
+                                    durability: 1.0,
+                                    freshness: None,
+                                    mineral_id: None,
+                                    charges: None,
+                                    forge_quality: None,
+                                    forge_color: None,
+                                    forge_side_effects: Vec::new(),
+                                    forge_achieved_tier: None,
+                                    alchemy: None,
+                                    lingering_owner_qi: None,
+                                },
+                            },
+                        ],
+                    }],
+                    equipped: Default::default(),
+                    hotbar: Default::default(),
+                    bone_coins: 0,
+                    max_weight: 50.0,
+                },
+            ));
+            let furnace_entity = app.world_mut().spawn_empty().id();
+            (app, entity, furnace_entity)
+        }
+
+        fn run_tui_gu_dan_brew(
+            app: &mut App,
+            entity: valence::prelude::Entity,
+            furnace_pos: [i32; 3],
+            furnace_tier: u8,
+        ) -> OutcomeBucket {
+            // 注册炉体
+            let mut furnace = AlchemyFurnace::placed(
+                valence::prelude::BlockPos::new(furnace_pos[0], furnace_pos[1], furnace_pos[2]),
+                furnace_tier,
+            );
+            furnace.owner = Some("offline:Alchemist".into());
+            app.world_mut().spawn(furnace);
+
+            let pos_json = format!("[{},{},{}]", furnace_pos[0], furnace_pos[1], furnace_pos[2]);
+            let requests: Vec<String> = vec![
+                format!(
+                    r#"{{"type":"alchemy_ignite","v":1,"furnace_pos":{pos_json},"recipe_id":"tui_gu_dan_v1"}}"#
+                ),
+                // stage 0: tui_gu_teng×2
+                format!(
+                    r#"{{"type":"alchemy_feed_slot","v":1,"furnace_pos":{pos_json},"slot_idx":0,"material":"tui_gu_teng","count":2}}"#
+                ),
+                // stage 0: fauna.mutated_bone×1
+                format!(
+                    r#"{{"type":"alchemy_feed_slot","v":1,"furnace_pos":{pos_json},"slot_idx":0,"material":"fauna.mutated_bone","count":1}}"#
+                ),
+                // temp=0.87 → score=1.125 (Good without bonus; Perfect with tier-4 bonus)
+                format!(
+                    r#"{{"type":"alchemy_intervention","v":1,"furnace_pos":{pos_json},"intervention":{{"kind":"adjust_temp","temp":0.87}}}}"#
+                ),
+                // qi_cost=25.0 → inject full amount
+                format!(
+                    r#"{{"type":"alchemy_intervention","v":1,"furnace_pos":{pos_json},"intervention":{{"kind":"inject_qi","qi":25.0}}}}"#
+                ),
+                format!(
+                    r#"{{"type":"alchemy_take_back","v":1,"furnace_pos":{pos_json},"slot_idx":0}}"#
+                ),
+            ];
+            for req in &requests {
+                app.world_mut()
+                    .resource_mut::<valence::prelude::Events<CustomPayloadEvent>>()
+                    .send(CustomPayloadEvent {
+                        client: entity,
+                        channel: ident!("bong:client_request").into(),
+                        data: req.as_bytes().to_vec().into_boxed_slice(),
+                    });
+            }
+            app.update();
+
+            // 读取 AlchemyOutcomeEvent 中的 bucket
+            let events = app
+                .world()
+                .resource::<valence::prelude::Events<crate::alchemy::AlchemyOutcomeEvent>>();
+            let mut reader = events.get_reader();
+            let evts: Vec<_> = reader.read(events).collect();
+            assert!(
+                !evts.is_empty(),
+                "furnace_tier={furnace_tier}: AlchemyTakeBack 应产生 AlchemyOutcomeEvent，但未收到任何事件"
+            );
+            evts.last().unwrap().bucket
+        }
+
+        // --- tier=2 对照组（无加成 → Good） ---
+        // tui_gu_dan_v1 的 furnace_tier_min=2，tier=2 满足最低炉阶要求但不触发催化加成。
+        // catalyst_furnace_bonus 仅在 tier >= CATALYST_FURNACE_TIER(4) 时返回正值，
+        // 故 tier=2 等价于"无加成"基线。
+        let (mut app2, entity2, _) = build_tui_gu_dan_app();
+        let bucket_tier2 = run_tui_gu_dan_brew(&mut app2, entity2, [10, 64, 10], 2);
+        assert_eq!(
+            bucket_tier2,
+            OutcomeBucket::Good,
+            "tier=2 炉 + tui_gu_dan_v1(temp=0.87) 应为 Good（无催化加成），实际 {:?}。\
+             若非 Good，说明 session 参数或配方数据发生变化，需更新测试基线。",
+            bucket_tier2
+        );
+
+        // --- tier=4 高阶炉（催化加成 → Perfect） ---
+        let (mut app4, entity4, _) = build_tui_gu_dan_app();
+        let bucket_tier4 = run_tui_gu_dan_brew(&mut app4, entity4, [20, 64, 20], 4);
+        assert_eq!(
+            bucket_tier4,
+            OutcomeBucket::Perfect,
+            "tier=4 炉 + 变异丹 tui_gu_dan_v1(temp=0.87) 应升格到 Perfect，实际 {:?}。\
+             若仍是 Good，说明 handle_alchemy_take_back 未将 furnace.tier 透传给 resolver（wiring 断裂）。",
+            bucket_tier4
+        );
+
+        // 核心断言：高阶炉结果优于低阶炉，证明 furnace.tier wiring 有效
+        assert_ne!(
+            bucket_tier4, bucket_tier2,
+            "tier=4 与 tier=2 的结果应不同（前者 Perfect，后者 Good），\
+             若相同说明 furnace.tier 没有被传入 resolver"
+        );
+    }
+
     #[test]
     fn unsupported_client_request_version_is_ignored_without_side_effects() {
         let mut app = App::new();
