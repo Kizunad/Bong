@@ -66,6 +66,12 @@ class BlueprintZone:
     #   Rust ZoneConfig 已支持 (server/src/world/zone.rs:347, 474)，
     #   实际值域对齐 DimensionKind serde rename_all = "snake_case"。
     dimension: str = "overworld"
+    # plan-terrain-wiring-v1 P0 M2 — layout fields passthrough.
+    # Sourced from TerrainProfileSpec (terrain-profiles.example.json) and
+    # propagated here so stitcher and export pass can read them without
+    # re-loading the profile catalog.
+    architectural_layout: str | None = None
+    compound_flatten_radius: int | None = None
 
 
 @dataclass(frozen=True)
@@ -188,6 +194,16 @@ def load_blueprint(path: Path) -> WorldBlueprint:
                     danger_bias=int(poi_raw.get("danger_bias", 0)),
                 )
             )
+        # plan-terrain-wiring-v1 P0 M2: read layout fields from worldgen section.
+        # architectural_layout lives at worldgen top level; compound_flatten_radius
+        # may be inside height_model or at worldgen top level.
+        _arch_layout: str | None = worldgen_raw.get("architectural_layout")
+        _flatten_radius: int | None = None
+        if "compound_flatten_radius" in worldgen_raw:
+            _flatten_radius = int(worldgen_raw["compound_flatten_radius"])
+        elif "compound_flatten_radius" in worldgen_raw.get("height_model", {}):
+            _flatten_radius = int(worldgen_raw["height_model"]["compound_flatten_radius"])
+
         zones.append(
             BlueprintZone(
                 name=str(zone_raw["name"]),
@@ -200,6 +216,8 @@ def load_blueprint(path: Path) -> WorldBlueprint:
                 worldgen=worldgen,
                 pois=tuple(pois),
                 dimension=str(zone_raw.get("dimension", "minecraft:overworld")),
+                architectural_layout=_arch_layout,
+                compound_flatten_radius=_flatten_radius,
             )
         )
 

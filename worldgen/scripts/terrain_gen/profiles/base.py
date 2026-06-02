@@ -78,6 +78,9 @@ class TerrainProfileGenerator(ABC):
             extra_layers=self.extra_layers,
             landmarks=context.zone.worldgen.landmarks,
             notes=self.build_notes(context),
+            # plan-terrain-wiring-v1 P0 M2 — passthrough from BlueprintZone.
+            architectural_layout=context.zone.architectural_layout,
+            compound_flatten_radius=context.zone.compound_flatten_radius,
         )
 
     @abstractmethod

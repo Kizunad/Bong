@@ -279,6 +279,10 @@ class ZoneFieldPlan:
     extra_layers: tuple[str, ...] = ()
     landmarks: tuple[str, ...] = ()
     notes: tuple[str, ...] = ()
+    # plan-terrain-wiring-v1 P0 M2 — layout fields passthrough from BlueprintZone.
+    # Used by stitcher (flatten + density mask) and __main__ export pass.
+    architectural_layout: str | None = None
+    compound_flatten_radius: int | None = None
 
 
 @dataclass
