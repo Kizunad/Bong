@@ -23,18 +23,21 @@ from ..structures.whale_fossil import fossil_bboxes_for_zone
 from ...poi_novice_selector import build_novice_poi_manifest_payload
 
 BIOME_PALETTE = (
-    "minecraft:plains",
-    "minecraft:stony_peaks",
-    "minecraft:swamp",
-    "minecraft:badlands",
-    "minecraft:meadow",
-    "minecraft:dripstone_caves",
-    "minecraft:desert",
-    "minecraft:forest",
-    "minecraft:river",
-    "minecraft:frozen_peaks",
-    "minecraft:mangrove_swamp",
-    "minecraft:flower_forest",
+    # ---- indices 0-11 (frozen — raster.rs hardcodes forest=7, river=8) ----
+    "minecraft:plains",           # 0  default wilderness fallback
+    "minecraft:stony_peaks",      # 1
+    "minecraft:swamp",            # 2
+    "minecraft:badlands",         # 3
+    "minecraft:meadow",           # 4
+    "minecraft:dripstone_caves",  # 5
+    "minecraft:desert",           # 6
+    "minecraft:forest",           # 7  (hardcoded in raster.rs forest_wilderness_biome)
+    "minecraft:river",            # 8  (hardcoded in raster.rs river_wilderness_biome)
+    "minecraft:frozen_peaks",     # 9
+    "minecraft:mangrove_swamp",   # 10
+    "minecraft:flower_forest",    # 11
+    # ---- indices 12+ (append-only, plan-terrain-wiring-v1 P2 #10) ----
+    "minecraft:old_growth_pine_taiga",  # 12  dan_zong_yi_yuan (丹宗遗园 alchemy toxin terrain)
 )
 
 # Derived from the central LAYER_REGISTRY — no need to maintain separate lists.
@@ -95,6 +98,17 @@ def export_rasters(
             if layer_name in FLOAT_LAYERS:
                 _write_float_layer(layer_path, values)
             elif layer_name in UINT8_LAYERS:
+                # plan-terrain-wiring-v1 P2 #10: bake-time guard — any biome_id
+                # that exceeds the palette bounds would silently degrade to
+                # default_wilderness_biome at runtime (raster.rs :775).  Fail fast.
+                if layer_name == "biome_id":
+                    max_biome_id = int(values.max()) if len(values) > 0 else 0
+                    palette_len = len(BIOME_PALETTE)
+                    assert max_biome_id < palette_len, (
+                        f"biome_id max={max_biome_id} >= len(BIOME_PALETTE)={palette_len} "
+                        f"in tile {tile.tile.tile_id}; "
+                        f"extend BIOME_PALETTE (append-only) to cover this id"
+                    )
                 _write_u8_layer(layer_path, values)
             else:
                 raise ValueError(f"unsupported raster layer '{layer_name}'")
