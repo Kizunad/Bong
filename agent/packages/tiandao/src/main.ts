@@ -25,6 +25,7 @@ import { ZhenmaiNarrationRuntime } from "./zhenmai-narration.js";
 import { ZhenfaV2NarrationRuntime } from "./zhenfa-v2-runtime.js";
 import { AnqiNarrationRuntime } from "./anqi-narration.js";
 import { BaomaiV3NarrationRuntime } from "./baomai-v3-runtime.js";
+import { MutationNarrationRuntime } from "./mutation-narration-runtime.js";
 import { BreakthroughCinematicNarrationRuntime } from "./breakthrough-cinematic-narration.js";
 import { createClient as createLlmClient, createMockClient, type LlmClient } from "./llm.js";
 import { createMockWorldState } from "./mock-state.js";
@@ -185,6 +186,10 @@ async function startAuxiliaryRuntimes(config: RuntimeConfig): Promise<RuntimeCle
   const baomaiV3Cleanup = await startBaomaiV3Runtime({
     redisUrl: config.redisUrl,
   });
+  // plan-dandao-runtime-wiring-v1 P2: 变异叙事 runtime（订阅 bong:mutation_event，stage 3+ 出 narration）。
+  const mutationNarrationCleanup = await startMutationNarrationRuntime({
+    redisUrl: config.redisUrl,
+  });
   const anqiCleanup = await startAnqiRuntime({
     ...runtimeOpts,
   });
@@ -236,6 +241,7 @@ async function startAuxiliaryRuntimes(config: RuntimeConfig): Promise<RuntimeCle
     heartDemonCleanup,
     craftCleanup,
     anqiCleanup,
+    mutationNarrationCleanup,
     baomaiV3Cleanup,
     yidaoCleanup,
     zhenmaiCleanup,
@@ -490,6 +496,33 @@ async function startBaomaiV3Runtime(opts: {
       await Promise.race([runtime.disconnect(), timeout]);
     } catch (error) {
       console.warn("[tiandao] baomai v3 runtime disconnect error:", error);
+    }
+  };
+}
+
+async function startMutationNarrationRuntime(opts: {
+  redisUrl: string;
+}): Promise<() => Promise<void>> {
+  const IORedisCtor = ((Redis as unknown as { default?: unknown }).default ??
+    Redis) as new (url: string) => unknown;
+  const sub = new IORedisCtor(opts.redisUrl) as ConstructorParameters<
+    typeof MutationNarrationRuntime
+  >[0]["sub"];
+  const pub = new IORedisCtor(opts.redisUrl) as ConstructorParameters<
+    typeof MutationNarrationRuntime
+  >[0]["pub"];
+
+  const runtime = new MutationNarrationRuntime({ sub, pub });
+  runtime
+    .connect()
+    .then(() => console.log("[tiandao] mutation narration runtime online"))
+    .catch((error) => console.warn("[tiandao] mutation narration runtime failed to start:", error));
+  return async () => {
+    const timeout = new Promise<void>((resolve) => setTimeout(resolve, 500));
+    try {
+      await Promise.race([runtime.disconnect(), timeout]);
+    } catch (error) {
+      console.warn("[tiandao] mutation narration runtime disconnect error:", error);
     }
   };
 }

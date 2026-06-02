@@ -1,0 +1,9 @@
+{
+  "v": 1,
+  "entity_id": 281474976710657,
+  "from_stage": "subtle",
+  "to_stage": "visible",
+  "cumulative_toxin": 105.0,
+  "at_tick": 50000,
+  "extra_field": "should_fail"
+}

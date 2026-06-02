@@ -44,6 +44,13 @@ pub fn register(app: &mut App) {
         crate::network::mutation_visual_emit::mutation_visual_emit_system
             .after(mutation::mutation_advance_system),
     );
+    // P2 (plan-dandao-runtime-wiring-v1): 变异叙事 server→agent Redis publish
+    // 读 MutationAdvanceEvent → 组 MutationEventV1 → publish bong:mutation_event。
+    app.add_systems(
+        Update,
+        crate::network::mutation_event_publish::mutation_event_publish_system
+            .after(mutation::mutation_advance_system),
+    );
 }
 
 pub fn register_skills(registry: &mut SkillRegistry) {

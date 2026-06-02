@@ -38,6 +38,7 @@ pub mod identity_panel_emit;
 pub mod inventory_event_emit;
 pub mod inventory_snapshot_emit;
 pub mod knockback_sync_emit;
+pub mod mutation_event_publish;
 pub mod mutation_visual_emit;
 pub mod npc_bubble;
 pub mod npc_event_bridge;
