@@ -480,3 +480,674 @@ fn biography_mutation_advanced_serde() {
         _ => panic!("反序列化后应为 MutationAdvanced"),
     }
 }
+
+// ============================================================
+// P0 runtime wiring — plan-dandao-runtime-wiring-v1
+// ============================================================
+
+// ===== register pin =====
+// 调 dandao::register 后，两个 Event 资源必须存在；
+// track_pill_intake_system 行为：emit PillIntakeTracked → update → PracticeLog 记到 Mellow。
+#[cfg(test)]
+mod p0_wiring_tests {
+    use valence::prelude::{App, Entity, Events, Update};
+
+    use crate::cultivation::color::PracticeLog;
+    use crate::cultivation::components::ColorKind;
+    use crate::cultivation::tick::CultivationClock;
+    use crate::dandao::components::{DandaoStyle, MutationStage, MUTATION_STAGE_THRESHOLDS};
+    use crate::dandao::mutation::{MutationAdvanceEvent, MutationState};
+    use crate::dandao::toxin_tracker::PillIntakeTracked;
+
+    // ── register pin: 两 event 资源存在 ────────────────────────────────────────
+
+    #[test]
+    fn register_adds_pill_intake_tracked_event_resource() {
+        let mut app = App::new();
+        crate::dandao::register(&mut app);
+        assert!(
+            app.world()
+                .get_resource::<Events<PillIntakeTracked>>()
+                .is_some(),
+            "dandao::register 应添加 Events::<PillIntakeTracked> 资源"
+        );
+    }
+
+    #[test]
+    fn register_adds_mutation_advance_event_resource() {
+        let mut app = App::new();
+        crate::dandao::register(&mut app);
+        assert!(
+            app.world()
+                .get_resource::<Events<MutationAdvanceEvent>>()
+                .is_some(),
+            "dandao::register 应添加 Events::<MutationAdvanceEvent> 资源"
+        );
+    }
+
+    // ── track_pill_intake_system 行为断言 ────────────────────────────────────
+
+    /// emit PillIntakeTracked(toxin>0) → update → entity PracticeLog 追加 Mellow 权重
+    #[test]
+    fn track_pill_intake_system_records_mellow_on_toxin_event() {
+        let mut app = App::new();
+        app.add_systems(
+            Update,
+            crate::dandao::toxin_tracker::track_pill_intake_system,
+        );
+        app.add_event::<PillIntakeTracked>();
+
+        let entity = app.world_mut().spawn(PracticeLog::default()).id();
+
+        // Emit a PillIntakeTracked with positive toxin
+        app.world_mut()
+            .resource_mut::<Events<PillIntakeTracked>>()
+            .send(PillIntakeTracked {
+                entity,
+                toxin_amount: 0.5,
+                new_stage: None,
+            });
+
+        app.update();
+
+        let log = app.world().entity(entity).get::<PracticeLog>().unwrap();
+        let mellow = log.weights.get(&ColorKind::Mellow).copied().unwrap_or(0.0);
+        assert!(
+            mellow > 0.0,
+            "track_pill_intake_system 应在 PracticeLog 记录 Mellow 权重，实际={mellow}"
+        );
+    }
+
+    /// toxin_amount <= 0.0 时 system 应跳过，不修改 PracticeLog
+    #[test]
+    fn track_pill_intake_system_skips_zero_toxin_event() {
+        let mut app = App::new();
+        app.add_systems(
+            Update,
+            crate::dandao::toxin_tracker::track_pill_intake_system,
+        );
+        app.add_event::<PillIntakeTracked>();
+
+        let entity = app.world_mut().spawn(PracticeLog::default()).id();
+
+        app.world_mut()
+            .resource_mut::<Events<PillIntakeTracked>>()
+            .send(PillIntakeTracked {
+                entity,
+                toxin_amount: 0.0,
+                new_stage: None,
+            });
+
+        app.update();
+
+        let log = app.world().entity(entity).get::<PracticeLog>().unwrap();
+        let mellow = log.weights.get(&ColorKind::Mellow).copied().unwrap_or(0.0);
+        assert_eq!(
+            mellow, 0.0,
+            "toxin_amount=0.0 时不应在 PracticeLog 记录 Mellow，实际={mellow}"
+        );
+    }
+
+    /// 多次服丹 → Mellow 严格累积：第二次 update 后的权重必须大于第一次 update 后
+    #[test]
+    fn track_pill_intake_system_accumulates_multiple_events() {
+        let mut app = App::new();
+        app.add_systems(
+            Update,
+            crate::dandao::toxin_tracker::track_pill_intake_system,
+        );
+        app.add_event::<PillIntakeTracked>();
+
+        let entity = app.world_mut().spawn(PracticeLog::default()).id();
+
+        // 第一次服丹
+        app.world_mut()
+            .resource_mut::<Events<PillIntakeTracked>>()
+            .send(PillIntakeTracked {
+                entity,
+                toxin_amount: 1.0,
+                new_stage: None,
+            });
+        app.update();
+
+        let mellow_after_first = app
+            .world()
+            .entity(entity)
+            .get::<PracticeLog>()
+            .unwrap()
+            .weights
+            .get(&ColorKind::Mellow)
+            .copied()
+            .unwrap_or(0.0);
+        assert!(
+            mellow_after_first > 0.0,
+            "第一次服丹后 Mellow 权重应 > 0，实际={mellow_after_first}"
+        );
+
+        // 第二次服丹
+        app.world_mut()
+            .resource_mut::<Events<PillIntakeTracked>>()
+            .send(PillIntakeTracked {
+                entity,
+                toxin_amount: 1.0,
+                new_stage: None,
+            });
+        app.update();
+
+        let mellow_after_second = app
+            .world()
+            .entity(entity)
+            .get::<PracticeLog>()
+            .unwrap()
+            .weights
+            .get(&ColorKind::Mellow)
+            .copied()
+            .unwrap_or(0.0);
+        assert!(
+            mellow_after_second > mellow_after_first,
+            "第二次服丹后 Mellow 权重应严格大于第一次（真正累积）：\
+            第一次={mellow_after_first:.4}，第二次={mellow_after_second:.4}"
+        );
+    }
+
+    /// entity 无 PracticeLog 时，system 应静默跳过（不 panic）
+    #[test]
+    fn track_pill_intake_system_no_practice_log_no_panic() {
+        let mut app = App::new();
+        app.add_systems(
+            Update,
+            crate::dandao::toxin_tracker::track_pill_intake_system,
+        );
+        app.add_event::<PillIntakeTracked>();
+
+        // Entity without PracticeLog
+        let entity = app.world_mut().spawn(()).id();
+
+        app.world_mut()
+            .resource_mut::<Events<PillIntakeTracked>>()
+            .send(PillIntakeTracked {
+                entity,
+                toxin_amount: 0.5,
+                new_stage: None,
+            });
+
+        // Should not panic
+        app.update();
+    }
+
+    // ── writer（生产路径）逻辑单测 ────────────────────────────────────────────
+    // handle_alchemy_take_pill 是 private fn，无法直接测。
+    // 测 toxin_for_intake 的来源：combat_pill_spec 对已知 pill 返回正 toxin_amount。
+
+    /// 已知 combat pill 有正 toxin_amount（代表 CombatPill 路径会 emit PillIntakeTracked）
+    #[test]
+    fn combat_pill_spec_toxin_amount_positive_for_known_pills() {
+        // 按 COMBAT_PILL_IDS 中每个 pill 验证 spec.toxin_amount > 0
+        for id in crate::alchemy::pill::COMBAT_PILL_IDS {
+            let spec = crate::alchemy::pill::combat_pill_spec(id)
+                .unwrap_or_else(|| panic!("combat_pill_spec({id}) 应返回 Some"));
+            assert!(
+                spec.toxin_amount > 0.0,
+                "CombatPill `{id}` 的 toxin_amount 应 > 0（代表服丹会 emit PillIntakeTracked），实际={:.3}",
+                spec.toxin_amount
+            );
+        }
+    }
+
+    /// 未知 pill_item_id → spec 返回 None → toxin_for_intake = 0.0 → 不 emit
+    #[test]
+    fn unknown_pill_id_gives_zero_toxin() {
+        let result = crate::alchemy::pill::combat_pill_spec("nonexistent_pill");
+        assert!(result.is_none(), "未知 pill id 应返回 None");
+        // toxin_for_intake = spec.map(...).unwrap_or(0.0) = 0.0
+    }
+
+    /// PillIntakeTracked 事件结构：toxin_amount=0.0 时 system 跳过（边界）
+    #[test]
+    fn pill_intake_tracked_zero_toxin_is_boundary_case() {
+        let event = PillIntakeTracked {
+            entity: Entity::PLACEHOLDER,
+            toxin_amount: 0.0,
+            new_stage: None,
+        };
+        assert_eq!(event.toxin_amount, 0.0);
+        // track_pill_intake_system 对 toxin_amount <= 0.0 跳过
+    }
+
+    /// PillIntakeTracked 携带 new_stage 字段（阶段跃迁路径）
+    #[test]
+    fn pill_intake_tracked_with_new_stage() {
+        let event = PillIntakeTracked {
+            entity: Entity::PLACEHOLDER,
+            toxin_amount: 1.5,
+            new_stage: Some(1),
+        };
+        assert_eq!(event.new_stage, Some(1));
+        assert!(event.toxin_amount > 0.0);
+    }
+
+    // ── 生产者路径端到端集成测试 ────────────────────────────────────────────────
+    // handle_alchemy_take_pill 是 private fn（位于 network::client_request_handler），
+    // 依赖 PlayerInventory / Client / Cultivation / ItemRegistry 等运行时参数，
+    // 无法在纯测试环境中直接调用。
+    //
+    // 覆盖范围：emit PillIntakeTracked{entity, toxin_amount>0} →
+    //            track_pill_intake_system（dandao::register 接入）→
+    //            PracticeLog.Mellow 增加。
+    // 未覆盖：handle_alchemy_take_pill 内部分支（消耗背包/spoil检查/ItemEffect分派），
+    //         这些分支由 consume_pill_* 守恒回归测试和 client_request_handler 侧的集成测试负责。
+
+    /// 集成测试：dandao::register 接通后，emit PillIntakeTracked{toxin>0}
+    /// → track_pill_intake_system → PracticeLog 追加 Mellow（完整消费者链路）
+    #[test]
+    fn integration_pill_intake_tracked_via_register_updates_practice_log() {
+        let mut app = App::new();
+        // 使用 dandao::register 接入完整系统（含 track_pill_intake_system + Events）
+        crate::dandao::register(&mut app);
+        // mutation_advance_system 需要 InsightRequest event 和 CultivationClock
+        app.add_event::<crate::cultivation::insight::InsightRequest>();
+        app.insert_resource(CultivationClock { tick: 0 });
+
+        // 构造带 PracticeLog 的实体（模拟已有丹道修炼记录的玩家）
+        let entity = app.world_mut().spawn(PracticeLog::default()).id();
+
+        // 模拟服丹成功产生 toxin > 0 → emit PillIntakeTracked
+        // （对应 handle_alchemy_take_pill 内 toxin_for_intake > 0.0 时的 emit 路径）
+        app.world_mut()
+            .resource_mut::<Events<PillIntakeTracked>>()
+            .send(PillIntakeTracked {
+                entity,
+                toxin_amount: 0.8, // 正 toxin，代表 CombatPill 路径产生的丹毒
+                new_stage: None,
+            });
+
+        app.update();
+
+        let log = app.world().entity(entity).get::<PracticeLog>().unwrap();
+        let mellow = log.weights.get(&ColorKind::Mellow).copied().unwrap_or(0.0);
+        assert!(
+            mellow > 0.0,
+            "集成路径：dandao::register + emit PillIntakeTracked(toxin=0.8) → \
+            track_pill_intake_system 应在 PracticeLog 记录 Mellow 权重，实际={mellow}"
+        );
+    }
+
+    /// 集成测试：toxin_amount=0.0 时，完整注册路径下 Mellow 仍为 0（边界守恒）
+    #[test]
+    fn integration_zero_toxin_pill_intake_does_not_update_practice_log() {
+        let mut app = App::new();
+        crate::dandao::register(&mut app);
+        app.add_event::<crate::cultivation::insight::InsightRequest>();
+        app.insert_resource(CultivationClock { tick: 0 });
+
+        let entity = app.world_mut().spawn(PracticeLog::default()).id();
+
+        // toxin_amount = 0.0 对应非 CombatPill（或未知 pill_id）路径，不应触发 Mellow 记录
+        app.world_mut()
+            .resource_mut::<Events<PillIntakeTracked>>()
+            .send(PillIntakeTracked {
+                entity,
+                toxin_amount: 0.0,
+                new_stage: None,
+            });
+
+        app.update();
+
+        let log = app.world().entity(entity).get::<PracticeLog>().unwrap();
+        let mellow = log.weights.get(&ColorKind::Mellow).copied().unwrap_or(0.0);
+        assert_eq!(
+            mellow,
+            0.0,
+            "集成路径：toxin_amount=0.0 时 track_pill_intake_system 应跳过，Mellow 应为 0，实际={mellow}"
+        );
+    }
+
+    // ── 变异链（register 接通后，advance_toxin 喂 toxin → mutation_advance_system）──
+
+    /// advance_toxin 越过 stage 1 阈值 → mutation_advance_system 推进 MutationState + emit MutationAdvanceEvent
+    #[test]
+    fn mutation_advance_system_advances_stage_on_threshold_cross() {
+        let mut app = App::new();
+        // 使用 register 确保系统和事件都就绪
+        crate::dandao::register(&mut app);
+        // mutation_advance_system 还需要 InsightRequest event（EventWriter）
+        app.add_event::<crate::cultivation::insight::InsightRequest>();
+        // mutation_advance_system 需要 CultivationClock（tick 必须整除 600）
+        app.insert_resource(CultivationClock { tick: 0 });
+
+        let mut style = DandaoStyle::default();
+        // 超过阶段 1 阈值
+        style.advance_toxin(MUTATION_STAGE_THRESHOLDS[0] + 1.0);
+
+        let entity = app.world_mut().spawn(style).id();
+
+        app.update();
+
+        // MutationState 应被插入且 stage = Subtle
+        let mutation_state = app.world().entity(entity).get::<MutationState>();
+        assert!(
+            mutation_state.is_some(),
+            "advance_toxin 跨越阈值后 mutation_advance_system 应插入 MutationState"
+        );
+        assert_eq!(
+            mutation_state.unwrap().stage,
+            MutationStage::Subtle,
+            "阶段 1 阈值后应为 Subtle"
+        );
+
+        // MutationAdvanceEvent 应被 emit
+        let events = app.world().resource::<Events<MutationAdvanceEvent>>();
+        let count = events.iter_current_update_events().count();
+        assert_eq!(
+            count, 1,
+            "跨越阈值应 emit 1 条 MutationAdvanceEvent，实际={count}"
+        );
+    }
+
+    /// 未越阈值 → mutation_advance_system 不插入 MutationState，不 emit 事件
+    #[test]
+    fn mutation_advance_system_does_not_advance_below_threshold() {
+        let mut app = App::new();
+        crate::dandao::register(&mut app);
+        app.add_event::<crate::cultivation::insight::InsightRequest>();
+        app.insert_resource(CultivationClock { tick: 0 });
+
+        let mut style = DandaoStyle::default();
+        // 不超过阶段 1 阈值
+        style.advance_toxin(MUTATION_STAGE_THRESHOLDS[0] - 1.0);
+
+        let entity = app.world_mut().spawn(style).id();
+        app.update();
+
+        let mutation_state = app.world().entity(entity).get::<MutationState>();
+        assert!(
+            mutation_state.is_none(),
+            "未跨越阈值时不应插入 MutationState"
+        );
+
+        let events = app.world().resource::<Events<MutationAdvanceEvent>>();
+        let count = events.iter_current_update_events().count();
+        assert_eq!(
+            count, 0,
+            "未跨越阈值时不应 emit MutationAdvanceEvent，实际={count}"
+        );
+    }
+
+    /// stage N → N+1 精确推进（阶段 1 → 2）
+    #[test]
+    fn mutation_advance_system_advances_stage1_to_stage2() {
+        let mut app = App::new();
+        crate::dandao::register(&mut app);
+        app.add_event::<crate::cultivation::insight::InsightRequest>();
+        app.insert_resource(CultivationClock { tick: 0 });
+
+        // 已处于阶段 1，cumulative_toxin 超过阶段 2 阈值
+        let style = DandaoStyle {
+            cumulative_toxin: MUTATION_STAGE_THRESHOLDS[1] + 1.0,
+            mutation_stage: 1,
+            ..DandaoStyle::default()
+        };
+        let existing_state = {
+            let mut s = MutationState::default();
+            s.advance_to(MutationStage::Subtle);
+            s
+        };
+        let entity = app.world_mut().spawn((style, existing_state)).id();
+
+        app.update();
+
+        let state = app.world().entity(entity).get::<MutationState>().unwrap();
+        assert_eq!(
+            state.stage,
+            MutationStage::Visible,
+            "阶段 1→2 推进后应为 Visible"
+        );
+    }
+
+    /// 系统驱动：stage 2 → 3（Heavy）迁移：MutationState 更新 + MutationAdvanceEvent emit
+    #[test]
+    fn mutation_advance_system_advances_stage2_to_stage3_heavy() {
+        let mut app = App::new();
+        crate::dandao::register(&mut app);
+        app.add_event::<crate::cultivation::insight::InsightRequest>();
+        app.insert_resource(CultivationClock { tick: 0 });
+
+        // 已处于阶段 2，cumulative_toxin 超过阶段 3 阈值
+        let style = DandaoStyle {
+            cumulative_toxin: MUTATION_STAGE_THRESHOLDS[2] + 1.0,
+            mutation_stage: 2,
+            ..DandaoStyle::default()
+        };
+        let existing_state = {
+            let mut s = MutationState::default();
+            s.advance_to(MutationStage::Visible);
+            s
+        };
+        let entity = app.world_mut().spawn((style, existing_state)).id();
+
+        app.update();
+
+        let state = app.world().entity(entity).get::<MutationState>().unwrap();
+        assert_eq!(
+            state.stage,
+            MutationStage::Heavy,
+            "阶段 2→3 推进后应精确为 Heavy（stage=3），实际={:?}",
+            state.stage
+        );
+
+        // MutationAdvanceEvent 应被 emit
+        let events = app.world().resource::<Events<MutationAdvanceEvent>>();
+        let count = events.iter_current_update_events().count();
+        assert_eq!(
+            count, 1,
+            "阶段 2→3 迁移应 emit 1 条 MutationAdvanceEvent，实际={count}"
+        );
+        let ev = events.iter_current_update_events().next().unwrap();
+        assert_eq!(
+            ev.from_stage,
+            MutationStage::Visible,
+            "MutationAdvanceEvent.from_stage 应为 Visible（阶段 2）"
+        );
+        assert_eq!(
+            ev.to_stage,
+            MutationStage::Heavy,
+            "MutationAdvanceEvent.to_stage 应为 Heavy（阶段 3）"
+        );
+    }
+
+    /// 系统驱动：stage 3 → 4（Bestial）迁移：MutationState 更新 + MutationAdvanceEvent emit
+    #[test]
+    fn mutation_advance_system_advances_stage3_to_stage4_bestial() {
+        let mut app = App::new();
+        crate::dandao::register(&mut app);
+        app.add_event::<crate::cultivation::insight::InsightRequest>();
+        app.insert_resource(CultivationClock { tick: 0 });
+
+        // 已处于阶段 3，cumulative_toxin 超过阶段 4 阈值
+        let style = DandaoStyle {
+            cumulative_toxin: MUTATION_STAGE_THRESHOLDS[3] + 1.0,
+            mutation_stage: 3,
+            ..DandaoStyle::default()
+        };
+        let existing_state = {
+            let mut s = MutationState::default();
+            s.advance_to(MutationStage::Heavy);
+            s
+        };
+        let entity = app.world_mut().spawn((style, existing_state)).id();
+
+        app.update();
+
+        let state = app.world().entity(entity).get::<MutationState>().unwrap();
+        assert_eq!(
+            state.stage,
+            MutationStage::Bestial,
+            "阶段 3→4 推进后应精确为 Bestial（stage=4），实际={:?}",
+            state.stage
+        );
+
+        // MutationAdvanceEvent 应被 emit
+        let events = app.world().resource::<Events<MutationAdvanceEvent>>();
+        let count = events.iter_current_update_events().count();
+        assert_eq!(
+            count, 1,
+            "阶段 3→4 迁移应 emit 1 条 MutationAdvanceEvent，实际={count}"
+        );
+        let ev = events.iter_current_update_events().next().unwrap();
+        assert_eq!(
+            ev.from_stage,
+            MutationStage::Heavy,
+            "MutationAdvanceEvent.from_stage 应为 Heavy（阶段 3）"
+        );
+        assert_eq!(
+            ev.to_stage,
+            MutationStage::Bestial,
+            "MutationAdvanceEvent.to_stage 应为 Bestial（阶段 4）"
+        );
+    }
+
+    /// 阈值边界：恰好在阈值上 → 应推进到 Subtle（不是 just-below）
+    #[test]
+    fn mutation_advance_system_advances_at_exact_threshold() {
+        let mut app = App::new();
+        crate::dandao::register(&mut app);
+        app.add_event::<crate::cultivation::insight::InsightRequest>();
+        app.insert_resource(CultivationClock { tick: 0 });
+
+        let mut style = DandaoStyle::default();
+        style.advance_toxin(MUTATION_STAGE_THRESHOLDS[0]); // 恰好在阈值
+
+        let entity = app.world_mut().spawn(style).id();
+        app.update();
+
+        let mutation_state = app.world().entity(entity).get::<MutationState>();
+        assert!(
+            mutation_state.is_some(),
+            "cumulative_toxin={} 恰好等于阈值 [0]={} 时应插入 MutationState",
+            MUTATION_STAGE_THRESHOLDS[0],
+            MUTATION_STAGE_THRESHOLDS[0]
+        );
+        assert_eq!(
+            mutation_state.unwrap().stage,
+            MutationStage::Subtle,
+            "阈值 [0]={} 对应 stage=1=Subtle，实际阶段不符",
+            MUTATION_STAGE_THRESHOLDS[0]
+        );
+    }
+
+    /// tick 节流：非整除 600 的 tick 时，mutation_advance_system 不运行
+    #[test]
+    fn mutation_advance_system_throttled_at_non_600_tick() {
+        let mut app = App::new();
+        crate::dandao::register(&mut app);
+        app.add_event::<crate::cultivation::insight::InsightRequest>();
+        // tick=1（非整除 600），system 应跳过
+        app.insert_resource(CultivationClock { tick: 1 });
+
+        let mut style = DandaoStyle::default();
+        style.advance_toxin(MUTATION_STAGE_THRESHOLDS[3] + 100.0); // 超越最高阈值
+
+        let entity = app.world_mut().spawn(style).id();
+        app.update();
+
+        // 因为 tick=1 不整除 600，系统不运行，MutationState 不被插入
+        let mutation_state = app.world().entity(entity).get::<MutationState>();
+        assert!(
+            mutation_state.is_none(),
+            "非 600 整除 tick 时 mutation_advance_system 应因节流跳过，不插入 MutationState"
+        );
+    }
+
+    // ── 守恒回归：consume_pill 既有 qi 恢复行为不变 ────────────────────────────
+
+    /// consume_pill 正常路径：qi 恢复 + contam 追加（守恒回归 — P0 不动 consume_pill）
+    #[test]
+    fn consume_pill_conserved_qi_recovery_regression() {
+        use crate::alchemy::pill::{consume_pill, PillEffect};
+        use crate::cultivation::components::ColorKind;
+        use crate::cultivation::components::{Contamination, Cultivation};
+        use crate::shelflife::{AgePeakCheck, SpoilCheckOutcome};
+
+        let mut contam = Contamination::default();
+        let mut cult = Cultivation {
+            qi_current: 0.0,
+            qi_max: 100.0,
+            ..Default::default()
+        };
+        let effect = PillEffect {
+            toxin_amount: 0.3,
+            toxin_color: ColorKind::Mellow,
+            qi_gain: Some(30.0),
+            meridian_progress_bonus: None,
+        };
+        let outcome = consume_pill(
+            &effect,
+            &mut contam,
+            &mut cult,
+            0,
+            SpoilCheckOutcome::NotApplicable,
+            false,
+            AgePeakCheck::NotApplicable,
+        );
+        assert_eq!(
+            outcome.qi_gained, 30.0,
+            "守恒回归: consume_pill qi 恢复应为 30.0（P0 未改动 consume_pill 逻辑）"
+        );
+        assert!(!outcome.blocked, "守恒回归: blocked 应为 false");
+        assert_eq!(
+            cult.qi_current, 30.0,
+            "守恒回归: qi_current 应等于 qi_gain=30.0"
+        );
+        assert_eq!(
+            contam.entries.len(),
+            1,
+            "守恒回归: 应 push 1 条 ContamSource"
+        );
+    }
+
+    /// consume_pill CriticalBlock + !force_consume → blocked，qi 不变（守恒回归）
+    #[test]
+    fn consume_pill_critical_block_no_force_is_blocked_regression() {
+        use crate::alchemy::pill::{consume_pill, PillEffect};
+        use crate::cultivation::components::ColorKind;
+        use crate::cultivation::components::{Contamination, Cultivation};
+        use crate::shelflife::{AgePeakCheck, SpoilCheckOutcome};
+
+        let mut contam = Contamination::default();
+        let mut cult = Cultivation {
+            qi_current: 50.0,
+            qi_max: 100.0,
+            ..Default::default()
+        };
+        let effect = PillEffect {
+            toxin_amount: 0.3,
+            toxin_color: ColorKind::Mellow,
+            qi_gain: Some(10.0),
+            meridian_progress_bonus: None,
+        };
+        let outcome = consume_pill(
+            &effect,
+            &mut contam,
+            &mut cult,
+            0,
+            SpoilCheckOutcome::CriticalBlock {
+                current_qi: 50.0,
+                spoil_threshold: 100.0,
+            },
+            false,
+            AgePeakCheck::NotApplicable,
+        );
+        assert!(
+            outcome.blocked,
+            "守恒回归: CriticalBlock+!force 应 blocked=true"
+        );
+        assert_eq!(
+            cult.qi_current, 50.0,
+            "守恒回归: blocked 时 qi_current 不应改变"
+        );
+        assert!(
+            contam.entries.is_empty(),
+            "守恒回归: blocked 时不应 push ContamSource"
+        );
+    }
+}

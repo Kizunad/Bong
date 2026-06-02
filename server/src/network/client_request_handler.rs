@@ -199,6 +199,7 @@ pub struct CombatRequestParams<'w, 's> {
     pub age_bonus_rolls: Option<ResMut<'w, Events<AgeBonusRoll>>>,
     pub season_state: Option<Res<'w, WorldSeasonState>>,
     pub poison_pill_tx: Option<ResMut<'w, Events<ConsumePoisonPillIntent>>>,
+    pub pill_intake_tx: Option<ResMut<'w, Events<crate::dandao::toxin_tracker::PillIntakeTracked>>>,
     pub ext_containers:
         Query<'w, 's, &'static mut crate::inventory::external_container::ExternalContainer>,
 }
@@ -8393,6 +8394,17 @@ fn handle_alchemy_take_pill(
         );
     }
 
+    // P0 dandao-runtime-wiring: 服丹丹毒增量，用于 emit PillIntakeTracked。
+    // CombatPill 路径走 consume_pill 产生真实丹毒；其他路径无丹毒产生（0.0 → 跳过 emit）。
+    let toxin_for_intake: f64 = match &effect {
+        ItemEffect::CombatPill { pill_item_id } => {
+            crate::alchemy::pill::combat_pill_spec(pill_item_id)
+                .map(|spec| spec.toxin_amount)
+                .unwrap_or(0.0)
+        }
+        _ => 0.0,
+    };
+
     let mut cultivation_snapshot_override = None;
     match effect {
         ItemEffect::BreakthroughBonus { magnitude } => {
@@ -8535,6 +8547,19 @@ fn handle_alchemy_take_pill(
             combat_params.insight_request_tx.as_mut(),
         ) {
             insight_request_tx.send(insight_request);
+        }
+    }
+
+    // P0 dandao-runtime-wiring: 服丹成功 → emit PillIntakeTracked（toxin > 0 时）。
+    // track_pill_intake_system 读此事件并追加 PracticeLog Mellow 权重。
+    // 无毒丹（toxin_for_intake == 0.0）不 emit，语义：仅当本次确实产生丹毒时才记录。
+    if toxin_for_intake > 0.0 {
+        if let Some(tx) = combat_params.pill_intake_tx.as_deref_mut() {
+            tx.send(crate::dandao::toxin_tracker::PillIntakeTracked {
+                entity,
+                toxin_amount: toxin_for_intake,
+                new_stage: None,
+            });
         }
     }
 
