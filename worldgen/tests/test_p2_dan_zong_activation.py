@@ -8,12 +8,13 @@ Dead assets (#3):
   - Every NBT file in server/structures/dan_zong/ is referenced by the layout
   - Every layout NBT payload has a corresponding file
 
-Biome fix (#10):
-  - BIOME_PALETTE has at least 13 entries (covers dan_zong biome_id=12)
+Biome fix (#10, FIX B):
+  - BIOME_PALETTE has at least 14 entries (covers dan_zong biome_id=13)
   - Indices 0-11 are frozen (forest=7, river=8 invariant for raster.rs)
-  - BIOME_PALETTE[12] is a valid minecraft biome name
+  - BIOME_PALETTE[12] = plains (rift_mouth_barrens / pseudo_vein_oasis hungry_ring)
+  - BIOME_PALETTE[13] = old_growth_pine_taiga (dan_zong_yi_yuan)
   - Bake-time assertion: biome_id.max() < len(BIOME_PALETTE)
-  - biome_id=12 does NOT silently fall back to plains (palette is large enough)
+  - dan_zong biome_id=13 resolves to old_growth_pine_taiga (not plains)
 
 Placement resolution (server startup check):
   - All nbt, stamp_radial, block_grid placements in DAN_ZONG_COMPOUND_LAYOUT
@@ -186,28 +187,56 @@ class DeadAssetTests(unittest.TestCase):
 
 
 class BiomePaletteTests(unittest.TestCase):
-    """BIOME_PALETTE covers dan_zong biome_id=12; frozen indices 0-11 unchanged."""
+    """BIOME_PALETTE covers dan_zong biome_id=13; frozen indices 0-11 unchanged.
 
-    def test_palette_length_covers_index_12(self):
-        """BIOME_PALETTE must have at least 13 entries to cover dan_zong biome_id=12."""
+    FIX B: index 12 is restored to plains (rift_mouth_barrens / hungry_ring);
+    dan_zong moves to index 13 = old_growth_pine_taiga.
+    """
+
+    def test_palette_length_covers_index_13(self):
+        """BIOME_PALETTE must have at least 14 entries to cover dan_zong biome_id=13."""
         self.assertGreaterEqual(
             len(BIOME_PALETTE),
-            13,
-            f"BIOME_PALETTE length={len(BIOME_PALETTE)} must be >= 13 "
-            f"to cover dan_zong biome_id=12",
+            14,
+            f"BIOME_PALETTE length={len(BIOME_PALETTE)} must be >= 14 "
+            f"to cover dan_zong biome_id=13",
         )
 
-    def test_index_12_is_valid_minecraft_biome(self):
-        """BIOME_PALETTE[12] must be a non-empty minecraft: biome name."""
-        biome_12 = BIOME_PALETTE[12]
+    def test_index_12_is_plains(self):
+        """BIOME_PALETTE[12] must be minecraft:plains.
+
+        FIX B: rift_mouth_barrens and pseudo_vein_oasis hungry_ring both
+        hardcode biome_id=12 and expect the default barren fallback (plains).
+        """
+        self.assertEqual(
+            BIOME_PALETTE[12],
+            "minecraft:plains",
+            f"BIOME_PALETTE[12]={BIOME_PALETTE[12]!r} must be 'minecraft:plains' "
+            f"(rift_mouth_barrens / hungry_ring contract — FIX B)",
+        )
+
+    def test_index_13_is_dan_zong_pine_taiga(self):
+        """BIOME_PALETTE[13] must be old_growth_pine_taiga (dan_zong biome)."""
+        self.assertGreater(len(BIOME_PALETTE), 13, "BIOME_PALETTE must have index 13")
+        self.assertEqual(
+            BIOME_PALETTE[13],
+            "minecraft:old_growth_pine_taiga",
+            f"BIOME_PALETTE[13]={BIOME_PALETTE[13]!r} must be 'minecraft:old_growth_pine_taiga' "
+            f"(dan_zong_yi_yuan biome — FIX B)",
+        )
+
+    def test_index_13_is_valid_minecraft_biome(self):
+        """BIOME_PALETTE[13] must be a non-empty minecraft: biome name (dan_zong)."""
+        self.assertGreater(len(BIOME_PALETTE), 13, "BIOME_PALETTE must have index 13")
+        biome_13 = BIOME_PALETTE[13]
         self.assertTrue(
-            biome_12.startswith("minecraft:"),
-            f"BIOME_PALETTE[12]={biome_12!r} must start with 'minecraft:'",
+            biome_13.startswith("minecraft:"),
+            f"BIOME_PALETTE[13]={biome_13!r} must start with 'minecraft:'",
         )
         self.assertGreater(
-            len(biome_12),
+            len(biome_13),
             len("minecraft:"),
-            f"BIOME_PALETTE[12]={biome_12!r} must have a non-empty biome name after 'minecraft:'",
+            f"BIOME_PALETTE[13]={biome_13!r} must have a non-empty biome name after 'minecraft:'",
         )
 
     def test_frozen_indices_0_to_11_unchanged(self):
@@ -250,16 +279,31 @@ class BiomePaletteTests(unittest.TestCase):
             "BIOME_PALETTE[8] must remain minecraft:river (raster.rs river_wilderness_biome)",
         )
 
-    def test_biome_id_12_does_not_fall_back_to_plains(self):
-        """biome_id=12 must NOT silently degrade to plains (palette must cover it)."""
-        # Simulate what raster.rs does: biome_palette.get(biome_id as usize)
+    def test_biome_id_12_resolves_to_plains_intentionally(self):
+        """biome_id=12 must resolve to plains (rift_mouth_barrens / hungry_ring contract).
+
+        FIX B: prior versions had dan_zong at index 12, which caused rift_mouth_barrens
+        and pseudo_vein_oasis (hungry_ring) to get pine_taiga instead of the intended
+        barren/plains terrain.  Index 12 is restored to plains.
+        """
         biome_id = 12
+        biome = BIOME_PALETTE[biome_id] if biome_id < len(BIOME_PALETTE) else BIOME_PALETTE[0]
+        self.assertEqual(
+            biome,
+            "minecraft:plains",
+            "biome_id=12 must resolve to 'minecraft:plains' "
+            "(rift_mouth_barrens / hungry_ring use this index — FIX B)",
+        )
+
+    def test_dan_zong_biome_id_13_does_not_fall_back_to_plains(self):
+        """dan_zong biome_id=13 must NOT silently degrade to plains (palette must cover it)."""
+        biome_id = 13
         biome = BIOME_PALETTE[biome_id] if biome_id < len(BIOME_PALETTE) else BIOME_PALETTE[0]
         self.assertNotEqual(
             biome,
             "minecraft:plains",
-            "biome_id=12 must NOT fall back to 'minecraft:plains'; "
-            "BIOME_PALETTE must cover index 12 with a distinct biome",
+            "dan_zong biome_id=13 must NOT resolve to 'minecraft:plains'; "
+            "BIOME_PALETTE[13] must be the dedicated alchemy biome",
         )
 
     def test_all_palette_entries_are_strings(self):
@@ -274,15 +318,30 @@ class BiomePaletteTests(unittest.TestCase):
                 f"BIOME_PALETTE[{i}] must not be empty",
             )
 
-    def test_no_duplicate_entries(self):
-        """No two indices should map to the same biome (unique assignments)."""
+    def test_no_duplicate_entries_among_zone_biomes(self):
+        """Zone-specific biomes (13, 17) must be unique; plains placeholders (0, 12, 14-16)
+        are allowed to repeat — they are intentional fallback/placeholder slots.
+
+        FIX B: index 12 and 14-16 are plains placeholders.  Checking uniqueness across
+        the whole palette would spuriously fail on those intentional duplicates.
+        """
+        # Indices with intentionally non-unique biomes (plains placeholder slots)
+        _PLAINS_PLACEHOLDER_INDICES = frozenset({0, 12, 14, 15, 16})
         seen: dict[str, int] = {}
         for i, entry in enumerate(BIOME_PALETTE):
+            if i in _PLAINS_PLACEHOLDER_INDICES:
+                self.assertEqual(
+                    entry,
+                    "minecraft:plains",
+                    f"BIOME_PALETTE[{i}] is a designated plains-placeholder index "
+                    f"but contains {entry!r}; must be 'minecraft:plains'",
+                )
+                continue
             self.assertNotIn(
                 entry,
                 seen,
                 f"BIOME_PALETTE[{i}]={entry!r} is a duplicate of index {seen.get(entry)}: "
-                f"each biome should appear at most once in the palette",
+                f"zone-specific indices must be unique",
             )
             seen[entry] = i
 
@@ -327,12 +386,12 @@ class BiomeBakeAssertionTests(unittest.TestCase):
         )
 
     def test_assertion_passes_for_dan_zong_biome_id(self):
-        """biome_id=12 (dan_zong) must pass the bake assertion."""
+        """biome_id=13 (dan_zong, FIX B) must pass the bake assertion."""
         palette_len = len(BIOME_PALETTE)
-        dan_zong_biome_id = 12
+        dan_zong_biome_id = 13
         # Must not raise
         assert dan_zong_biome_id < palette_len, (
-            f"dan_zong biome_id=12 must be < len(BIOME_PALETTE)={palette_len}; "
+            f"dan_zong biome_id=13 must be < len(BIOME_PALETTE)={palette_len}; "
             f"BIOME_PALETTE is too short"
         )
 

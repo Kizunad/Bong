@@ -140,5 +140,97 @@ class PseudoVeinOasisProfileTest(unittest.TestCase):
         self.assertGreater(fields.tiles[0].layers["qi_density"].max(), 0.55)
 
 
+class PseudoVeinOasisBiomePinTest(unittest.TestCase):
+    """FIX B regression guard: pseudo_vein_oasis hungry_ring biome_id=12 → plains.
+
+    The hungry_ring sub-region of pseudo_vein_oasis uses biome_id=12.
+    Prior to FIX B, BIOME_PALETTE[12] was old_growth_pine_taiga, making
+    the barren hunger-ring terrain look like a pine forest biome.
+    """
+
+    def setUp(self) -> None:
+        from scripts.terrain_gen.bakers.raster_export import BIOME_PALETTE
+
+        self.BIOME_PALETTE = BIOME_PALETTE
+
+    def test_hungry_ring_biome_id_12_resolves_to_plains(self) -> None:
+        """BIOME_PALETTE[12] must be minecraft:plains (hungry_ring hardcodes biome_id=12)."""
+        self.assertGreater(
+            len(self.BIOME_PALETTE),
+            12,
+            "BIOME_PALETTE must have index 12",
+        )
+        self.assertEqual(
+            self.BIOME_PALETTE[12],
+            "minecraft:plains",
+            f"BIOME_PALETTE[12]={self.BIOME_PALETTE[12]!r} must be 'minecraft:plains'; "
+            f"pseudo_vein_oasis hungry_ring hardcodes biome_id=12 and expects "
+            f"a barren/plains fallback (FIX B regression guard)",
+        )
+
+    def test_pseudo_vein_profile_hungry_ring_uses_biome_id_12(self) -> None:
+        """pseudo_vein_oasis profile source must still use hungry_ring_biome_id=12."""
+        from scripts.terrain_gen.profiles.pseudo_vein_oasis import fill_pseudo_vein_oasis_tile
+        import inspect
+
+        src = inspect.getsource(fill_pseudo_vein_oasis_tile)
+        self.assertIn(
+            "hungry_ring_biome_id = 12",
+            src,
+            "pseudo_vein_oasis.fill_pseudo_vein_oasis_tile must still assign "
+            "hungry_ring_biome_id = 12; if the profile changed, update this test "
+            "and verify BIOME_PALETTE[new_id] is appropriate",
+        )
+
+    def test_hungry_ring_biome_in_tile_output_resolves_to_plains(self) -> None:
+        """Run fill_pseudo_vein_oasis_tile; biome_id=12 in hungry ring → plains."""
+        zone = BlueprintZone(
+            name="pseudo_vein_unit",
+            display_name="Pseudo Vein Test",
+            bounds_xz=Bounds2D(min_x=-150, max_x=149, min_z=-150, max_z=149),
+            center_xz=(0, 0),
+            size_xz=(300, 300),
+            spirit_qi=0.65,
+            danger_level=3,
+            worldgen=ZoneWorldgenConfig(
+                terrain_profile="pseudo_vein_oasis",
+                shape="circular",
+                boundary=BoundarySpec(mode="soft", width=32),
+                height_model={"base": [68, 76], "peak": 80},
+                surface_palette=(
+                    "grass_block",
+                    "moss_block",
+                    "flowering_azalea_leaves",
+                    "warped_wart_block",
+                ),
+                extras={"core_radius": 60, "rim_radius": 120},
+            ),
+        )
+        tile = WorldTile(
+            tile_x=0, tile_z=0, min_x=-150, max_x=149, min_z=-150, max_z=149
+        )
+        buffer = fill_pseudo_vein_oasis_tile(zone, tile, 300, SurfacePalette())
+        biome_vals = buffer.layers.get("biome_id")
+        self.assertIsNotNone(biome_vals, "biome_id layer must be present in pseudo_vein tile")
+
+        unique_biomes = set(int(v) for v in biome_vals)
+        # hungry_ring should produce biome_id=12 somewhere in the tile
+        self.assertIn(
+            12,
+            unique_biomes,
+            f"pseudo_vein_oasis tile must contain biome_id=12 (hungry_ring); "
+            f"got biomes: {sorted(unique_biomes)}",
+        )
+        # Verify it resolves to plains via palette
+        resolved = (
+            self.BIOME_PALETTE[12] if 12 < len(self.BIOME_PALETTE) else self.BIOME_PALETTE[0]
+        )
+        self.assertEqual(
+            resolved,
+            "minecraft:plains",
+            f"biome_id=12 must resolve to 'minecraft:plains', got {resolved!r} (FIX B)",
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

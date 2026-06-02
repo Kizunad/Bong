@@ -36,13 +36,15 @@ BIOME_PALETTE = (
     "minecraft:frozen_peaks",     # 9
     "minecraft:mangrove_swamp",   # 10
     "minecraft:flower_forest",    # 11
-    # ---- indices 12+ (append-only, plan-terrain-wiring-v1 P2 #10) ----
-    "minecraft:old_growth_pine_taiga",  # 12  dan_zong_yi_yuan (丹宗遗园 alchemy toxin terrain)
-    # ---- indices 13-17 (append-only, plan-terrain-wiring-v1 P3 #10) ----
-    "minecraft:basalt_deltas",          # 13  reserved (volcanic terrain placeholder)
-    "minecraft:soul_sand_valley",       # 14  reserved (spirit-qi depleted terrain)
-    "minecraft:warm_ocean",             # 15  reserved (lingquan water zone placeholder)
-    "minecraft:snowy_slopes",           # 16  reserved (north_wastes high terrain)
+    # ---- indices 12+ (append-only, plan-terrain-wiring-v1 P2/P3 #10) ----
+    # index 12: restored to plains — rift_mouth_barrens and pseudo_vein_oasis
+    # hungry_ring both hardcode biome_id=12 and expect a barren/plains fallback.
+    "minecraft:plains",                 # 12  rift_mouth_barrens / pseudo_vein_oasis hungry_ring
+    "minecraft:old_growth_pine_taiga",  # 13  dan_zong_yi_yuan (丹宗遗园 alchemy toxin terrain)
+    # indices 14-16: plains placeholders (reserved for future zone biomes)
+    "minecraft:plains",                 # 14  reserved placeholder
+    "minecraft:plains",                 # 15  reserved placeholder
+    "minecraft:plains",                 # 16  reserved placeholder
     "minecraft:windswept_hills",        # 17  wangyintai (忘音台 windswept highland ruins)
 )
 

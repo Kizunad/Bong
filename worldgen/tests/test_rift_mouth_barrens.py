@@ -180,5 +180,104 @@ class RiftMouthBarrensProfileTest(unittest.TestCase):
         self.assertEqual(abyssal_buffer.layers["anomaly_kind"][center_idx], 1)
 
 
+class RiftMouthBarrensBiomePinTest(unittest.TestCase):
+    """FIX B regression guard: rift_mouth_barrens biome_id=12 must resolve to plains.
+
+    Prior to FIX B, BIOME_PALETTE[12] was old_growth_pine_taiga (dan_zong),
+    causing rift_mouth_barrens tiles to get the wrong biome visually.
+    """
+
+    def setUp(self) -> None:
+        from scripts.terrain_gen.bakers.raster_export import BIOME_PALETTE
+
+        self.BIOME_PALETTE = BIOME_PALETTE
+
+    def test_rift_mouth_biome_id_12_resolves_to_plains(self) -> None:
+        """BIOME_PALETTE[12] must be minecraft:plains (rift_mouth_barrens hardcodes biome_id=12)."""
+        self.assertGreater(
+            len(self.BIOME_PALETTE),
+            12,
+            "BIOME_PALETTE must have index 12",
+        )
+        self.assertEqual(
+            self.BIOME_PALETTE[12],
+            "minecraft:plains",
+            f"BIOME_PALETTE[12]={self.BIOME_PALETTE[12]!r} must be 'minecraft:plains'; "
+            f"rift_mouth_barrens profile hardcodes rift_mouth_biome_id=12 and expects "
+            f"a barren/plains fallback (FIX B regression guard)",
+        )
+
+    def test_rift_mouth_profile_uses_biome_id_12(self) -> None:
+        """rift_mouth_barrens profile source must still use biome_id=12 (not drifted)."""
+        from scripts.terrain_gen.profiles.rift_mouth_barrens import (
+            fill_rift_mouth_barrens_tile,
+        )
+        import inspect
+
+        src = inspect.getsource(fill_rift_mouth_barrens_tile)
+        self.assertIn(
+            "rift_mouth_biome_id = 12",
+            src,
+            "rift_mouth_barrens.fill_rift_mouth_barrens_tile must still assign "
+            "rift_mouth_biome_id = 12; if the profile changed, update this test "
+            "and verify BIOME_PALETTE[new_id] is appropriate",
+        )
+
+    def test_biome_id_12_produces_plains_in_tile_output(self) -> None:
+        """Running fill_rift_mouth_barrens_tile and checking biome_id layer yields 12 → plains."""
+        from scripts.terrain_gen.fields import SurfacePalette, WorldTile
+        from scripts.terrain_gen.blueprint import (
+            BlueprintZone,
+            BoundarySpec,
+            ZoneWorldgenConfig,
+        )
+        from scripts.terrain_gen.fields import Bounds2D
+        from scripts.terrain_gen.profiles.rift_mouth_barrens import fill_rift_mouth_barrens_tile
+
+        zone = BlueprintZone(
+            name="rift_test",
+            display_name="Rift Test",
+            bounds_xz=Bounds2D(min_x=-150, max_x=149, min_z=-150, max_z=149),
+            center_xz=(0, 0),
+            size_xz=(300, 300),
+            spirit_qi=0.05,
+            danger_level=5,
+            worldgen=ZoneWorldgenConfig(
+                terrain_profile="rift_mouth_barrens",
+                shape="circular",
+                boundary=BoundarySpec(mode="hard", width=48),
+                height_model={"base": [55, 65]},
+                surface_palette=("blackstone", "obsidian", "tuff"),
+                extras={
+                    "portal_anchor_xz": [0, 0],
+                    "core_radius": 30.0,
+                    "outer_radius": 150.0,
+                },
+            ),
+        )
+        tile = WorldTile(
+            tile_x=0, tile_z=0, min_x=-150, max_x=149, min_z=-150, max_z=149
+        )
+        buffer = fill_rift_mouth_barrens_tile(zone, tile, 300, SurfacePalette())
+        center_idx = (150 * 300) + 150
+        biome_at_center = int(buffer.layers["biome_id"][center_idx])
+        self.assertEqual(
+            biome_at_center,
+            12,
+            f"biome_id at center must be 12 (rift_mouth_barrens), got {biome_at_center}",
+        )
+        resolved = (
+            self.BIOME_PALETTE[biome_at_center]
+            if biome_at_center < len(self.BIOME_PALETTE)
+            else self.BIOME_PALETTE[0]
+        )
+        self.assertEqual(
+            resolved,
+            "minecraft:plains",
+            f"biome_id={biome_at_center} must resolve to 'minecraft:plains', "
+            f"got {resolved!r} (FIX B regression guard)",
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

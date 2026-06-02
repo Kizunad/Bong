@@ -21,13 +21,16 @@ Layout resolution (17 placements):
   - The guantiantai_ruins.nbt (central POI structure) is the largest by block count
   - layout is deterministic (two consecutive runs produce identical placed positions)
 
-Biome (#10 append-only):
+Biome (#10 append-only, FIX B):
   - BIOME_PALETTE has at least 18 entries (covers wangyintai biome_id=17)
   - Frozen indices 0-11 are unchanged
-  - BIOME_PALETTE[17] is a valid minecraft: biome name
+  - BIOME_PALETTE[12] = plains (rift_mouth_barrens / pseudo_vein_oasis hungry_ring)
+  - BIOME_PALETTE[13] = old_growth_pine_taiga (dan_zong_yi_yuan)
+  - BIOME_PALETTE[14-16] = plains placeholders (reserved)
+  - BIOME_PALETTE[17] = windswept_hills (wangyintai)
   - biome_id=17 does NOT fall back to plains
-  - No duplicate biome entries
-  - All new indices 12-17 are valid minecraft: biome strings
+  - Zone-specific indices (1-11, 13, 17) are unique; plains placeholders may repeat
+  - All indices 12-17 are valid minecraft: biome strings
 
 Reusability (P0/P1 zero-new-server-code contract):
   - COMPOUND_LAYOUT_REGISTRY["wangyintai_compound"] exists (P0 infrastructure)
@@ -513,13 +516,25 @@ class BiomePaletteP3Tests(unittest.TestCase):
                 f"indices 0-11 are frozen (raster.rs hardcodes forest=7, river=8)",
             )
 
-    def test_dan_zong_index_12_still_present(self):
-        """Index 12 must still map to dan_zong biome (P2 regression guard)."""
+    def test_dan_zong_index_13_still_present(self):
+        """Index 13 must map to dan_zong biome (FIX B: dan_zong moved from 12 → 13)."""
+        self.assertGreaterEqual(len(BIOME_PALETTE), 14)
+        self.assertEqual(
+            BIOME_PALETTE[13],
+            "minecraft:old_growth_pine_taiga",
+            "BIOME_PALETTE[13] must be minecraft:old_growth_pine_taiga (dan_zong FIX B: moved from 12→13)",
+        )
+
+    def test_index_12_is_plains_for_rift_mouth(self):
+        """Index 12 must be plains (rift_mouth_barrens / pseudo_vein_oasis hungry_ring contract).
+
+        FIX B: prior versions had dan_zong at 12, causing those zones to get pine_taiga.
+        """
         self.assertGreaterEqual(len(BIOME_PALETTE), 13)
         self.assertEqual(
             BIOME_PALETTE[12],
-            "minecraft:old_growth_pine_taiga",
-            "BIOME_PALETTE[12] must remain minecraft:old_growth_pine_taiga (P2 biome regression)",
+            "minecraft:plains",
+            "BIOME_PALETTE[12] must be 'minecraft:plains' (rift_mouth_barrens / hungry_ring — FIX B)",
         )
 
     def test_all_new_indices_13_to_17_are_valid_biomes(self):
@@ -536,14 +551,27 @@ class BiomePaletteP3Tests(unittest.TestCase):
                 f"BIOME_PALETTE[{i}]={entry!r} must be a 'minecraft:' biome string",
             )
 
-    def test_no_duplicate_entries(self):
-        """No two palette indices should map to the same biome."""
+    def test_no_duplicate_entries_among_zone_biomes(self):
+        """Zone-specific biomes must be unique; plains placeholders (0, 12, 14-16) may repeat.
+
+        FIX B: indices 12, 14-16 are intentional plains placeholders.  Only zone-specific
+        indices (1-11, 13, 17) must be unique.
+        """
+        _PLAINS_PLACEHOLDER_INDICES = frozenset({0, 12, 14, 15, 16})
         seen: dict[str, int] = {}
         for i, entry in enumerate(BIOME_PALETTE):
+            if i in _PLAINS_PLACEHOLDER_INDICES:
+                self.assertEqual(
+                    entry,
+                    "minecraft:plains",
+                    f"BIOME_PALETTE[{i}] is a plains-placeholder index but contains {entry!r}",
+                )
+                continue
             self.assertNotIn(
                 entry,
                 seen,
-                f"BIOME_PALETTE[{i}]={entry!r} duplicates index {seen.get(entry)}",
+                f"BIOME_PALETTE[{i}]={entry!r} duplicates index {seen.get(entry)}: "
+                f"zone-specific indices must be unique",
             )
             seen[entry] = i
 
