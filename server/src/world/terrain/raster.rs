@@ -1810,4 +1810,49 @@ mod tests {
             "valid fixture should produce a non-empty index"
         );
     }
+
+    // ----- authored NBT palette zero-drop contract ------------------------------------------------
+
+    /// Every block name authored in dan_zong / wangyintai structures must be indexed
+    /// without any drops.  If block_from_name doesn't cover a name, build_placement_index
+    /// silently skips it, resulting in `total < authored_count` (a structural hole).
+    ///
+    /// This test creates a synthetic manifest containing one block entry for each name
+    /// in the authored palette and asserts that ALL are indexed (drop count == 0).
+    ///
+    /// The palette list is kept in sync with `blocks::tests::AUTHORED_STRUCTURE_BLOCKS`.
+    #[test]
+    fn authored_nbt_palette_zero_drop_in_build_placement_index() {
+        use super::blocks::tests::AUTHORED_STRUCTURE_BLOCKS;
+
+        let blocks: Vec<PlacementBlock> = AUTHORED_STRUCTURE_BLOCKS
+            .iter()
+            .enumerate()
+            .map(|(i, name)| PlacementBlock {
+                pos: [i as i32, 64, 0],
+                block: format!("minecraft:{name}"),
+                properties: HashMap::new(),
+            })
+            .collect();
+
+        let authored_count = blocks.len();
+        let manifest = PlacementManifest {
+            version: 1,
+            structures: vec![PlacementStructure {
+                nbt_path: "<test_authored_palette>".to_string(),
+                origin: [0, 64, 0],
+                rotation: 0,
+                blocks,
+            }],
+        };
+
+        let (_, total) = build_placement_index(manifest);
+        assert_eq!(
+            total,
+            authored_count,
+            "Authored NBT palette has {authored_count} distinct block names but only {total} \
+             resolved (drop count = {}). Add missing names to block_from_name in blocks.rs.",
+            authored_count.saturating_sub(total)
+        );
+    }
 }
