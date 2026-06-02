@@ -40,6 +40,10 @@ if [ -f "$PID_FILE" ] && kill -0 "$(cat "$PID_FILE")" 2>/dev/null; then
   exit 1
 fi
 
+# CI / preview 无 MINESKIN_API_KEY，跳过皮肤预取（NPC 回退 villager 实体），
+# 否则 skin::pool::maintain_skin_pool 会因缺 key 直接 panic（对齐 e2e-redis.sh:892）。
+export BONG_SKIP_SKIN_PREFETCH="${BONG_SKIP_SKIN_PREFETCH:-1}"
+
 echo "[run-server-headless] 启动 server (cwd=$PWD profile=${PROFILE:-debug})..."
 # nohup + setsid 防 CI 上父进程退出后子进程被收割
 # stdout/stderr 都重定向到 LOG_FILE 方便失败时回看
