@@ -94,8 +94,12 @@ class LayoutResult:
         layout_name: Name of the LayoutSpec that was executed.
         poi_world_pos: The POI center used as anchor.
         placed: All structures that were successfully placed.
+        paste_results: NbtPasteResult (and equivalent for block_grid/stamp_radial)
+            for each resolved placement, in order.  Consumed by
+            ``export_placement_manifest`` to write the sidecar manifest.
     """
 
     layout_name: str
     poi_world_pos: tuple[int, int, int]
     placed: tuple[PlacedStructure, ...]
+    paste_results: tuple = ()  # tuple[NbtPasteResult, ...] — avoid circular import
