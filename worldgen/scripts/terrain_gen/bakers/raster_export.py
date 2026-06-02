@@ -38,6 +38,12 @@ BIOME_PALETTE = (
     "minecraft:flower_forest",    # 11
     # ---- indices 12+ (append-only, plan-terrain-wiring-v1 P2 #10) ----
     "minecraft:old_growth_pine_taiga",  # 12  dan_zong_yi_yuan (丹宗遗园 alchemy toxin terrain)
+    # ---- indices 13-17 (append-only, plan-terrain-wiring-v1 P3 #10) ----
+    "minecraft:basalt_deltas",          # 13  reserved (volcanic terrain placeholder)
+    "minecraft:soul_sand_valley",       # 14  reserved (spirit-qi depleted terrain)
+    "minecraft:warm_ocean",             # 15  reserved (lingquan water zone placeholder)
+    "minecraft:snowy_slopes",           # 16  reserved (north_wastes high terrain)
+    "minecraft:windswept_hills",        # 17  wangyintai (忘音台 windswept highland ruins)
 )
 
 # Derived from the central LAYER_REGISTRY — no need to maintain separate lists.
