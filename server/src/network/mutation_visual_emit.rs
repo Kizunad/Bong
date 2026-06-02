@@ -342,4 +342,87 @@ mod tests {
             "cumulative_toxin=0 时字段仍应出现在 JSON 中（client fallback 0.0 依赖 key 存在）"
         );
     }
+
+    #[test]
+    fn player_without_dandao_style_skips_gracefully() {
+        // entity 有 Client + MutationState，但缺 DandaoStyle → player_query 元组
+        // (&MutationState, &DandaoStyle) 失配 → 系统跳过、不发包（emit 前置条件分支）。
+        let mut app = App::new();
+        app.add_event::<MutationAdvanceEvent>();
+        app.add_systems(Update, mutation_visual_emit_system);
+
+        let (bundle, mut helper) = create_mock_client("NoStyle");
+        let state = MutationState {
+            stage: MutationStage::Subtle,
+            slots: vec![ActiveMutation {
+                kind: MutationKind::GoldenIris,
+                slot: BodySlot::Head,
+                level: 1,
+                acquired_tick: 10,
+            }],
+            meridian_penalty: 0.03,
+        };
+        // 仅 (bundle, state)，刻意不插 DandaoStyle
+        let entity = app.world_mut().spawn((bundle, state)).id();
+
+        app.world_mut().send_event(MutationAdvanceEvent {
+            entity,
+            from_stage: MutationStage::None,
+            to_stage: MutationStage::Subtle,
+        });
+        app.update();
+        flush_clients(&mut app);
+
+        let payloads = drain_mutation_visual_payloads(&mut helper);
+        assert!(
+            payloads.is_empty(),
+            "缺少 DandaoStyle 时元组查询失配，应跳过不发 payload，实际发了 {} 条",
+            payloads.len()
+        );
+    }
+
+    #[test]
+    fn non_client_entity_with_mutation_sends_nothing() {
+        // entity 有 MutationState + DandaoStyle 但不是在线 Client → payload 构建后
+        // clients.get_mut(entity) 失配 → 跳过 send（emit 的第二个前置条件分支）。
+        let mut app = App::new();
+        app.add_event::<MutationAdvanceEvent>();
+        app.add_systems(Update, mutation_visual_emit_system);
+
+        // 旁观在线 client（事件不发给它，用于断言无 spurious 发包）
+        let (_bystander, mut bystander_helper) = spawn_player_with_mutation(&mut app, 10.0);
+
+        // 目标：有 state+style 但无 Client 组件
+        let state = MutationState {
+            stage: MutationStage::Subtle,
+            slots: vec![ActiveMutation {
+                kind: MutationKind::GoldenIris,
+                slot: BodySlot::Head,
+                level: 1,
+                acquired_tick: 10,
+            }],
+            meridian_penalty: 0.03,
+        };
+        let style = DandaoStyle {
+            cumulative_toxin: 50.0,
+            ..DandaoStyle::default()
+        };
+        let non_client = app.world_mut().spawn((state, style)).id();
+
+        app.world_mut().send_event(MutationAdvanceEvent {
+            entity: non_client,
+            from_stage: MutationStage::None,
+            to_stage: MutationStage::Subtle,
+        });
+        app.update();
+        flush_clients(&mut app);
+
+        // 目标非 Client → 不发包；旁观 client 也不应收到任何包
+        let payloads = drain_mutation_visual_payloads(&mut bystander_helper);
+        assert!(
+            payloads.is_empty(),
+            "非 Client 实体触发的事件不应向任何 client 发包，旁观 client 实际收到 {} 条",
+            payloads.len()
+        );
+    }
 }
