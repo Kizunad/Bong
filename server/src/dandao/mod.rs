@@ -37,6 +37,13 @@ pub fn register(app: &mut App) {
     // P1: mutation advancement
     app.add_event::<mutation::MutationAdvanceEvent>();
     app.add_systems(Update, mutation::mutation_advance_system);
+    // P1 (plan-dandao-runtime-wiring-v1): 变异视觉 server→client emit
+    // mutation_advance_system 先推进 MutationState + emit event，emit system 再读 event 发包。
+    app.add_systems(
+        Update,
+        crate::network::mutation_visual_emit::mutation_visual_emit_system
+            .after(mutation::mutation_advance_system),
+    );
 }
 
 pub fn register_skills(registry: &mut SkillRegistry) {
