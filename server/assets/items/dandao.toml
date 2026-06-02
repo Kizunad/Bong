@@ -13,7 +13,7 @@
 [[item]]
 id = "dandao.baolongwang_core"
 name = "暴龙王丹核"
-category = "material"
+category = "misc"
 grid_w = 1
 grid_h = 1
 base_weight = 2.5
@@ -35,7 +35,7 @@ description = "暴龙王吞噬的上古丹宗遗留丹方碎片，拼合三页�
 [[item]]
 id = "dandao.baolongwang_horn"
 name = "暴龙王龙角"
-category = "material"
+category = "misc"
 grid_w = 1
 grid_h = 2
 base_weight = 5.0
@@ -46,7 +46,7 @@ description = "暴龙王进入暴怒阶段后方能长出的真元凝聚角，�
 [[item]]
 id = "dandao.baolongwang_scale"
 name = "暴龙王龙鳞"
-category = "material"
+category = "misc"
 grid_w = 1
 grid_h = 1
 base_weight = 1.2
@@ -57,7 +57,7 @@ description = "暴龙王身上坚韧的变异鳞片，渗透丹毒而不腐，�
 [[item]]
 id = "dandao.catalyst_furnace_remnant"
 name = "催化炉残骸碎片"
-category = "material"
+category = "misc"
 grid_w = 1
 grid_h = 1
 base_weight = 3.0
