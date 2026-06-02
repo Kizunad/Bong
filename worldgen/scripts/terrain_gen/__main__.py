@@ -8,6 +8,7 @@ from typing import Optional
 from .blueprint import (
     DEFAULT_BLUEPRINT_PATH,
     DEFAULT_PROFILES_PATH,
+    REPO_ROOT,
     WORLDGEN_ROOT,
     WorldBlueprint,
     load_blueprint,
@@ -39,6 +40,17 @@ DEFAULT_TSY_OUTPUT_DIR = WORLDGEN_ROOT / "generated" / "terrain-gen-tsy"
 TSY_ONLY_LAYERS = frozenset({"tsy_presence", "tsy_origin_id", "tsy_depth_tier"})
 
 
+_STRUCTURES_DIR = REPO_ROOT / "server" / "structures"
+
+# Map from layout name to NBT structures subdirectory under server/structures/.
+# Derived from the layout naming convention: "dan_zong_compound" → "dan_zong".
+# Add new entries here when new compound layouts are registered.
+_LAYOUT_NBT_SUBDIR: dict[str, str] = {
+    "dan_zong_compound": "dan_zong",
+    "wangyintai_compound": "wangyintai",
+}
+
+
 def run_layout_pass(blueprint: WorldBlueprint, output_dir: Path) -> Path | None:
     """Export pass: for each zone with an architectural_layout, run the layout
     and write a sidecar ``placement_manifest.json``.
@@ -50,6 +62,9 @@ def run_layout_pass(blueprint: WorldBlueprint, output_dir: Path) -> Path | None:
       warned about and skipped (M1 guard — prevents ValueError crashing the
       whole pass; the pipeline continues for other zones).
     - Output: ``<output_dir>/rasters/placement_manifest.json``.
+
+    plan-terrain-wiring-v1 P2: NBT bare filenames (e.g. ``"dan_zong_great_hall.nbt"``)
+    are resolved against ``server/structures/<subdir>/`` using ``_LAYOUT_NBT_SUBDIR``.
 
     Returns the output path on success, or None if no layouts were processed.
     """
@@ -86,8 +101,22 @@ def run_layout_pass(blueprint: WorldBlueprint, output_dir: Path) -> Path | None:
             )
             continue
 
+        # Resolve NBT base directory for this layout (P2 path wiring).
+        nbt_subdir = _LAYOUT_NBT_SUBDIR.get(layout_name)
+        nbt_base_dir: str | None = None
+        if nbt_subdir:
+            candidate = _STRUCTURES_DIR / nbt_subdir
+            if candidate.is_dir():
+                nbt_base_dir = str(candidate)
+            else:
+                logger.warning(
+                    "Zone '%s': NBT structures dir '%s' not found — "
+                    "NBT placements will produce empty blocks",
+                    zone.name, candidate,
+                )
+
         try:
-            layout_result = run_layout(spec, zone)
+            layout_result = run_layout(spec, zone, nbt_base_dir=nbt_base_dir)
         except ValueError as exc:
             logger.warning(
                 "Zone '%s': run_layout failed: %s — skipping",

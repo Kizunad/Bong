@@ -163,6 +163,21 @@ def _find_poi_center(
     return None
 
 
+def _resolve_nbt_path(payload: str, nbt_base_dir: str | None) -> str:
+    """Resolve an NBT payload string to an absolute (or CWD-relative) file path.
+
+    If *payload* already contains a path separator or is an absolute path it is
+    returned as-is.  Otherwise, when *nbt_base_dir* is given, the path
+    ``<nbt_base_dir>/<payload>`` is returned so that bare filenames like
+    ``"dan_zong_great_hall.nbt"`` can be found in ``server/structures/dan_zong/``.
+    """
+    if os.path.sep in payload or os.path.isabs(payload):
+        return payload
+    if nbt_base_dir:
+        return os.path.join(nbt_base_dir, payload)
+    return payload
+
+
 def _load_nbt_blocks(nbt_path: str) -> list[tuple[tuple[int, int, int], str, dict[str, str]]]:
     """Load blocks from an NBT file. Returns list of (pos, block_name, properties).
 
@@ -198,7 +213,10 @@ def _load_nbt_blocks(nbt_path: str) -> list[tuple[tuple[int, int, int], str, dic
 
 
 def _paste_nbt(
-    world_pos: tuple[int, int, int], rotation: int, nbt_path: str
+    world_pos: tuple[int, int, int],
+    rotation: int,
+    nbt_path: str,
+    nbt_base_dir: str | None = None,
 ) -> NbtPasteResult:
     """Paste an NBT structure at *world_pos* with rotation.
 
@@ -206,8 +224,13 @@ def _paste_nbt(
     to directional blockstate properties (M3), and produces BlockPlacement
     entries with world coordinates.  The manifest is already in final
     orientation — the Rust server stamps blocks as-is.
+
+    *nbt_base_dir* — optional directory prepended to bare filenames so that
+    payloads like ``"dan_zong_great_hall.nbt"`` resolve to
+    ``<nbt_base_dir>/dan_zong_great_hall.nbt``.
     """
-    raw_blocks = _load_nbt_blocks(nbt_path)
+    resolved_path = _resolve_nbt_path(nbt_path, nbt_base_dir)
+    raw_blocks = _load_nbt_blocks(resolved_path)
     placements: list[BlockPlacement] = []
 
     for local_pos, block_name, properties in raw_blocks:
@@ -392,7 +415,9 @@ def export_placement_manifest(
 
 
 def run_layout(
-    spec: LayoutSpec, zone: BlueprintZone
+    spec: LayoutSpec,
+    zone: BlueprintZone,
+    nbt_base_dir: str | None = None,
 ) -> LayoutResult:
     """Execute a LayoutSpec against a BlueprintZone, returning a LayoutResult.
 
@@ -407,6 +432,14 @@ def run_layout(
 
     B2 (plan-terrain-wiring-v1 P0): paste_results is now populated, so
     callers can feed it straight into export_placement_manifest().
+
+    Args:
+        spec: Layout specification to execute.
+        zone: BlueprintZone that provides the POI anchor.
+        nbt_base_dir: Optional directory prepended to bare NBT filenames
+            (e.g. ``"server/structures/dan_zong"``) so that payloads like
+            ``"dan_zong_great_hall.nbt"`` can be found on disk.  When None,
+            payloads are used as-is (full path or CWD-relative).
 
     Raises:
         ValueError: if no POI matching ``spec.poi_kind`` is found in the zone.
@@ -431,7 +464,8 @@ def run_layout(
         # Dispatch by kind — B3: all three kinds produce real blocks
         paste_result: NbtPasteResult | None = None
         if placement.kind == "nbt":
-            paste_result = _paste_nbt(world_pos, placement.rotation, placement.payload)
+            paste_result = _paste_nbt(world_pos, placement.rotation, placement.payload,
+                                       nbt_base_dir=nbt_base_dir)
         elif placement.kind == "block_grid":
             paste_result = _block_grid(world_pos, placement.rotation, placement.payload)
         elif placement.kind == "stamp_radial":
