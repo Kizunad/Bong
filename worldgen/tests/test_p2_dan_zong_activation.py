@@ -100,22 +100,20 @@ class DeadAssetTests(unittest.TestCase):
     """Every NBT in server/structures/dan_zong/ must be referenced; no orphans."""
 
     def _layout_nbt_payloads(self) -> set[str]:
-        """Return all .nbt filenames referenced in the layout (basename only).
+        """Return all .nbt filenames referenced by kind=nbt placements (basename only).
 
-        For kind=nbt, the payload IS the filename (possibly with a path prefix).
-        For kind=stamp_radial, the payload is a size name like 'herb_garden_pen_6x6'
-        that corresponds to an NBT file of the same base name + '.nbt' suffix.
-        Those NBT files serve as the canonical specification for the herb garden
-        pen footprint even though _stamp_radial generates inline blocks.
+        Only kind=nbt placements refer to real disk NBT files.
+        kind=stamp_radial and kind=block_grid generate inline blocks at runtime
+        (no disk .nbt file required or expected).  FIX D: prior version wrongly
+        included stamp_radial payloads as NBT references — that caused
+        herb_garden_pen_6x6.nbt and herb_garden_pen_8x8.nbt to be kept on disk
+        even though they are never loaded at runtime.
         """
         referenced: set[str] = set()
         for p in DAN_ZONG_COMPOUND_LAYOUT.placements:
             if p.kind == "nbt":
                 referenced.add(Path(p.payload).name)
-            elif p.kind == "stamp_radial":
-                # stamp_radial payload is a name like "herb_garden_pen_6x6"
-                # → corresponding NBT spec file is "herb_garden_pen_6x6.nbt"
-                referenced.add(p.payload + ".nbt")
+            # stamp_radial and block_grid are inline generators — no disk file needed
         return referenced
 
     def _disk_nbt_files(self) -> set[str]:

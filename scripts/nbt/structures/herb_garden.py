@@ -249,15 +249,14 @@ def build_outer() -> StructureBuilder:
 
 
 if __name__ == "__main__":
-    for name, builder in [("herb_garden_pen_inner", build_inner), ("herb_garden_pen_outer", build_outer)]:
-        sb = builder()
-        out = f"server/structures/dan_zong/{name}.nbt"
-        os.makedirs(os.path.dirname(out), exist_ok=True)
-        sb.save(out)
-        stats = sb.get_stats()
-        print(f"{name}: {stats['size'][0]}×{stats['size'][1]}×{stats['size'][2]}, {stats['total_blocks']} blocks")
-
-    # preview both
+    # NOTE (FIX D, plan-terrain-wiring-v1): herb_garden_pen_inner.nbt and
+    # herb_garden_pen_outer.nbt have been removed from server/structures/dan_zong/.
+    # The herb garden pens are now generated inline by _stamp_radial() in
+    # worldgen/scripts/terrain_gen/layouts/runner.py using the "herb_garden_pen_6x6"
+    # and "herb_garden_pen_8x8" stamp_radial payloads.
+    #
+    # This script is kept for reference / visual preview only.
+    # Do NOT re-add build_inner / build_outer NBT output here.
     sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
     from view_structures_3d import BLOCK_COLORS, DEFAULT_COLOR, generate_html
 
