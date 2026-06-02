@@ -588,7 +588,7 @@ mod p0_wiring_tests {
         );
     }
 
-    /// 多次服丹 → 每次都记录 Mellow（幂等累积）
+    /// 多次服丹 → Mellow 严格累积：第二次 update 后的权重必须大于第一次 update 后
     #[test]
     fn track_pill_intake_system_accumulates_multiple_events() {
         let mut app = App::new();
@@ -600,21 +600,54 @@ mod p0_wiring_tests {
 
         let entity = app.world_mut().spawn(PracticeLog::default()).id();
 
-        // Emit twice, update twice
-        for _ in 0..2 {
-            app.world_mut()
-                .resource_mut::<Events<PillIntakeTracked>>()
-                .send(PillIntakeTracked {
-                    entity,
-                    toxin_amount: 1.0,
-                    new_stage: None,
-                });
-            app.update();
-        }
+        // 第一次服丹
+        app.world_mut()
+            .resource_mut::<Events<PillIntakeTracked>>()
+            .send(PillIntakeTracked {
+                entity,
+                toxin_amount: 1.0,
+                new_stage: None,
+            });
+        app.update();
 
-        let log = app.world().entity(entity).get::<PracticeLog>().unwrap();
-        let mellow = log.weights.get(&ColorKind::Mellow).copied().unwrap_or(0.0);
-        assert!(mellow > 0.0, "多次服丹后 Mellow 权重应 > 0，实际={mellow}");
+        let mellow_after_first = app
+            .world()
+            .entity(entity)
+            .get::<PracticeLog>()
+            .unwrap()
+            .weights
+            .get(&ColorKind::Mellow)
+            .copied()
+            .unwrap_or(0.0);
+        assert!(
+            mellow_after_first > 0.0,
+            "第一次服丹后 Mellow 权重应 > 0，实际={mellow_after_first}"
+        );
+
+        // 第二次服丹
+        app.world_mut()
+            .resource_mut::<Events<PillIntakeTracked>>()
+            .send(PillIntakeTracked {
+                entity,
+                toxin_amount: 1.0,
+                new_stage: None,
+            });
+        app.update();
+
+        let mellow_after_second = app
+            .world()
+            .entity(entity)
+            .get::<PracticeLog>()
+            .unwrap()
+            .weights
+            .get(&ColorKind::Mellow)
+            .copied()
+            .unwrap_or(0.0);
+        assert!(
+            mellow_after_second > mellow_after_first,
+            "第二次服丹后 Mellow 权重应严格大于第一次（真正累积）：\
+            第一次={mellow_after_first:.4}，第二次={mellow_after_second:.4}"
+        );
     }
 
     /// entity 无 PracticeLog 时，system 应静默跳过（不 panic）
@@ -691,6 +724,82 @@ mod p0_wiring_tests {
         };
         assert_eq!(event.new_stage, Some(1));
         assert!(event.toxin_amount > 0.0);
+    }
+
+    // ── 生产者路径端到端集成测试 ────────────────────────────────────────────────
+    // handle_alchemy_take_pill 是 private fn（位于 network::client_request_handler），
+    // 依赖 PlayerInventory / Client / Cultivation / ItemRegistry 等运行时参数，
+    // 无法在纯测试环境中直接调用。
+    //
+    // 覆盖范围：emit PillIntakeTracked{entity, toxin_amount>0} →
+    //            track_pill_intake_system（dandao::register 接入）→
+    //            PracticeLog.Mellow 增加。
+    // 未覆盖：handle_alchemy_take_pill 内部分支（消耗背包/spoil检查/ItemEffect分派），
+    //         这些分支由 consume_pill_* 守恒回归测试和 client_request_handler 侧的集成测试负责。
+
+    /// 集成测试：dandao::register 接通后，emit PillIntakeTracked{toxin>0}
+    /// → track_pill_intake_system → PracticeLog 追加 Mellow（完整消费者链路）
+    #[test]
+    fn integration_pill_intake_tracked_via_register_updates_practice_log() {
+        let mut app = App::new();
+        // 使用 dandao::register 接入完整系统（含 track_pill_intake_system + Events）
+        crate::dandao::register(&mut app);
+        // mutation_advance_system 需要 InsightRequest event 和 CultivationClock
+        app.add_event::<crate::cultivation::insight::InsightRequest>();
+        app.insert_resource(CultivationClock { tick: 0 });
+
+        // 构造带 PracticeLog 的实体（模拟已有丹道修炼记录的玩家）
+        let entity = app.world_mut().spawn(PracticeLog::default()).id();
+
+        // 模拟服丹成功产生 toxin > 0 → emit PillIntakeTracked
+        // （对应 handle_alchemy_take_pill 内 toxin_for_intake > 0.0 时的 emit 路径）
+        app.world_mut()
+            .resource_mut::<Events<PillIntakeTracked>>()
+            .send(PillIntakeTracked {
+                entity,
+                toxin_amount: 0.8, // 正 toxin，代表 CombatPill 路径产生的丹毒
+                new_stage: None,
+            });
+
+        app.update();
+
+        let log = app.world().entity(entity).get::<PracticeLog>().unwrap();
+        let mellow = log.weights.get(&ColorKind::Mellow).copied().unwrap_or(0.0);
+        assert!(
+            mellow > 0.0,
+            "集成路径：dandao::register + emit PillIntakeTracked(toxin=0.8) → \
+            track_pill_intake_system 应在 PracticeLog 记录 Mellow 权重，实际={mellow}"
+        );
+    }
+
+    /// 集成测试：toxin_amount=0.0 时，完整注册路径下 Mellow 仍为 0（边界守恒）
+    #[test]
+    fn integration_zero_toxin_pill_intake_does_not_update_practice_log() {
+        let mut app = App::new();
+        crate::dandao::register(&mut app);
+        app.add_event::<crate::cultivation::insight::InsightRequest>();
+        app.insert_resource(CultivationClock { tick: 0 });
+
+        let entity = app.world_mut().spawn(PracticeLog::default()).id();
+
+        // toxin_amount = 0.0 对应非 CombatPill（或未知 pill_id）路径，不应触发 Mellow 记录
+        app.world_mut()
+            .resource_mut::<Events<PillIntakeTracked>>()
+            .send(PillIntakeTracked {
+                entity,
+                toxin_amount: 0.0,
+                new_stage: None,
+            });
+
+        app.update();
+
+        let log = app.world().entity(entity).get::<PracticeLog>().unwrap();
+        let mellow = log.weights.get(&ColorKind::Mellow).copied().unwrap_or(0.0);
+        assert_eq!(
+            mellow,
+            0.0,
+            "集成路径：toxin_amount=0.0 时 track_pill_intake_system 应跳过，Mellow 应为 0，实际={mellow}"
+        );
     }
 
     // ── 变异链（register 接通后，advance_toxin 喂 toxin → mutation_advance_system）──
@@ -795,7 +904,109 @@ mod p0_wiring_tests {
         );
     }
 
-    /// 阈值边界：恰好在阈值上 → 应推进（不是 just-below）
+    /// 系统驱动：stage 2 → 3（Heavy）迁移：MutationState 更新 + MutationAdvanceEvent emit
+    #[test]
+    fn mutation_advance_system_advances_stage2_to_stage3_heavy() {
+        let mut app = App::new();
+        crate::dandao::register(&mut app);
+        app.add_event::<crate::cultivation::insight::InsightRequest>();
+        app.insert_resource(CultivationClock { tick: 0 });
+
+        // 已处于阶段 2，cumulative_toxin 超过阶段 3 阈值
+        let style = DandaoStyle {
+            cumulative_toxin: MUTATION_STAGE_THRESHOLDS[2] + 1.0,
+            mutation_stage: 2,
+            ..DandaoStyle::default()
+        };
+        let existing_state = {
+            let mut s = MutationState::default();
+            s.advance_to(MutationStage::Visible);
+            s
+        };
+        let entity = app.world_mut().spawn((style, existing_state)).id();
+
+        app.update();
+
+        let state = app.world().entity(entity).get::<MutationState>().unwrap();
+        assert_eq!(
+            state.stage,
+            MutationStage::Heavy,
+            "阶段 2→3 推进后应精确为 Heavy（stage=3），实际={:?}",
+            state.stage
+        );
+
+        // MutationAdvanceEvent 应被 emit
+        let events = app.world().resource::<Events<MutationAdvanceEvent>>();
+        let count = events.iter_current_update_events().count();
+        assert_eq!(
+            count, 1,
+            "阶段 2→3 迁移应 emit 1 条 MutationAdvanceEvent，实际={count}"
+        );
+        let ev = events.iter_current_update_events().next().unwrap();
+        assert_eq!(
+            ev.from_stage,
+            MutationStage::Visible,
+            "MutationAdvanceEvent.from_stage 应为 Visible（阶段 2）"
+        );
+        assert_eq!(
+            ev.to_stage,
+            MutationStage::Heavy,
+            "MutationAdvanceEvent.to_stage 应为 Heavy（阶段 3）"
+        );
+    }
+
+    /// 系统驱动：stage 3 → 4（Bestial）迁移：MutationState 更新 + MutationAdvanceEvent emit
+    #[test]
+    fn mutation_advance_system_advances_stage3_to_stage4_bestial() {
+        let mut app = App::new();
+        crate::dandao::register(&mut app);
+        app.add_event::<crate::cultivation::insight::InsightRequest>();
+        app.insert_resource(CultivationClock { tick: 0 });
+
+        // 已处于阶段 3，cumulative_toxin 超过阶段 4 阈值
+        let style = DandaoStyle {
+            cumulative_toxin: MUTATION_STAGE_THRESHOLDS[3] + 1.0,
+            mutation_stage: 3,
+            ..DandaoStyle::default()
+        };
+        let existing_state = {
+            let mut s = MutationState::default();
+            s.advance_to(MutationStage::Heavy);
+            s
+        };
+        let entity = app.world_mut().spawn((style, existing_state)).id();
+
+        app.update();
+
+        let state = app.world().entity(entity).get::<MutationState>().unwrap();
+        assert_eq!(
+            state.stage,
+            MutationStage::Bestial,
+            "阶段 3→4 推进后应精确为 Bestial（stage=4），实际={:?}",
+            state.stage
+        );
+
+        // MutationAdvanceEvent 应被 emit
+        let events = app.world().resource::<Events<MutationAdvanceEvent>>();
+        let count = events.iter_current_update_events().count();
+        assert_eq!(
+            count, 1,
+            "阶段 3→4 迁移应 emit 1 条 MutationAdvanceEvent，实际={count}"
+        );
+        let ev = events.iter_current_update_events().next().unwrap();
+        assert_eq!(
+            ev.from_stage,
+            MutationStage::Heavy,
+            "MutationAdvanceEvent.from_stage 应为 Heavy（阶段 3）"
+        );
+        assert_eq!(
+            ev.to_stage,
+            MutationStage::Bestial,
+            "MutationAdvanceEvent.to_stage 应为 Bestial（阶段 4）"
+        );
+    }
+
+    /// 阈值边界：恰好在阈值上 → 应推进到 Subtle（不是 just-below）
     #[test]
     fn mutation_advance_system_advances_at_exact_threshold() {
         let mut app = App::new();
@@ -812,7 +1023,15 @@ mod p0_wiring_tests {
         let mutation_state = app.world().entity(entity).get::<MutationState>();
         assert!(
             mutation_state.is_some(),
-            "cumulative_toxin 恰好等于阈值时应推进 MutationState"
+            "cumulative_toxin={} 恰好等于阈值 [0]={} 时应插入 MutationState",
+            MUTATION_STAGE_THRESHOLDS[0],
+            MUTATION_STAGE_THRESHOLDS[0]
+        );
+        assert_eq!(
+            mutation_state.unwrap().stage,
+            MutationStage::Subtle,
+            "阈值 [0]={} 对应 stage=1=Subtle，实际阶段不符",
+            MUTATION_STAGE_THRESHOLDS[0]
         );
     }
 
