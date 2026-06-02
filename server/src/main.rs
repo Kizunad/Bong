@@ -14,6 +14,8 @@ mod combat;
 mod craft;
 #[allow(dead_code)]
 mod cultivation;
+// dandao: register() 接入 run_server（plan-dandao-runtime-wiring-v1 P0）；
+// boss/boss_ai/catalyst_furnace 等子模块 P4 前仍有 dead items，保留 allow。
 #[allow(dead_code)]
 mod dandao;
 #[allow(dead_code)]
@@ -136,6 +138,7 @@ fn run_server() {
     cultivation::register(&mut app);
     fauna::register(&mut app);
     alchemy::register(&mut app);
+    dandao::register(&mut app);
     craft::register(&mut app);
     coffin::register(&mut app);
     audio::register(&mut app);

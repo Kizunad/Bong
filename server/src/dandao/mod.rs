@@ -18,7 +18,7 @@ pub mod mutation_forge;
 pub mod progression;
 pub mod recipes;
 mod skills;
-mod toxin_tracker;
+pub mod toxin_tracker;
 pub mod visual_sync;
 
 #[cfg(test)]
