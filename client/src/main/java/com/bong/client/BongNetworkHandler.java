@@ -112,9 +112,15 @@ public class BongNetworkHandler {
             })
         );
         ClientPlayConnectionEvents.JOIN.register(
-            (handler, sender, client) -> client.execute(() ->
-                ClientConnectionStatusStore.markConnected(Util.getMeasuringTimeMs())
-            )
+            (handler, sender, client) -> client.execute(() -> {
+                ClientConnectionStatusStore.markConnected(Util.getMeasuringTimeMs());
+                // plan-combat-skill-feedback-bridges-v1 P1 — 初始化本玩家 wire id，
+                // 供 ResonanceLockHandler 区分 partner vs. self（格式：offline:<name>）。
+                if (client.player != null) {
+                    String localPlayerId = "offline:" + client.player.getName().getString();
+                    com.bong.client.combat.baomai.v4.ResonanceLockHandler.setLocalPlayerId(localPlayerId);
+                }
+            })
         );
     }
 

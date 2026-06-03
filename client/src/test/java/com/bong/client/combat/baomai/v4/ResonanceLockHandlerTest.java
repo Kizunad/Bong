@@ -156,4 +156,39 @@ public class ResonanceLockHandlerTest {
                     "remainingTicks on UNLOCKED state should be 0");
         });
     }
+
+    // ── setLocalPlayerId / partner-parsing 分支测试 ────────────────────────────
+
+    @Test
+    void handleLock_localPlayerIsA_partnerIsB() {
+        // 设 localPlayerId=fighter_a_id → partnerId 应为 fighter_b_id
+        ResonanceLockHandler.setLocalPlayerId("offline:PlayerA");
+        ResonanceLockHandler.handleLock(LOCK_PAYLOAD);
+        ResonanceLockHudStateStore.State state = ResonanceLockHudStateStore.snapshot();
+        assertTrue(state.locked, "lock should be active");
+        assertEquals("offline:PlayerB", state.partnerId,
+                "当 localPlayer=A 时，partnerId 应为 fighter_b_id=PlayerB");
+    }
+
+    @Test
+    void handleLock_localPlayerIsB_partnerIsA() {
+        // 设 localPlayerId=fighter_b_id → partnerId 应为 fighter_a_id
+        ResonanceLockHandler.setLocalPlayerId("offline:PlayerB");
+        ResonanceLockHandler.handleLock(LOCK_PAYLOAD);
+        ResonanceLockHudStateStore.State state = ResonanceLockHudStateStore.snapshot();
+        assertTrue(state.locked, "lock should be active");
+        assertEquals("offline:PlayerA", state.partnerId,
+                "当 localPlayer=B 时，partnerId 应为 fighter_a_id=PlayerA");
+    }
+
+    @Test
+    void handleLock_localPlayerIdNull_fallbackPartnerIsB() {
+        // null localPlayerId → fallback: 返回 fighter_a 作为 local，fighter_b 作为 partner
+        ResonanceLockHandler.setLocalPlayerId(null);
+        ResonanceLockHandler.handleLock(LOCK_PAYLOAD);
+        ResonanceLockHudStateStore.State state = ResonanceLockHudStateStore.snapshot();
+        assertTrue(state.locked, "lock should be active even with null localPlayerId");
+        assertEquals("offline:PlayerB", state.partnerId,
+                "null localPlayerId fallback 应以 fighter_a 为 local，fighter_b 为 partner");
+    }
 }
