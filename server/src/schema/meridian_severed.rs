@@ -2,9 +2,12 @@
 //!
 //! 与 agent `@bong/schema` `MeridianSeveredEventV1` TypeBox 定义 1:1 对应。
 //! `SeveredSource` 直接 use 自 `cultivation::meridian::severed`（已 derive Serialize/Deserialize）。
+//!
 //! serde 外部标签（默认）：
+//!
 //!   - 6 个单元变体序列化为纯字符串 `"VoluntarySever"` 等
 //!   - `Other(String)` 序列化为 `{"Other":"<reason>"}` 对象
+//!
 //! 与 TS `Type.Literal(...)` + `Type.Object({Other:Type.String(...)})` 完全对应。
 
 use serde::{Deserialize, Serialize};
