@@ -218,9 +218,22 @@ describe("MeridianSeveredNarrationRuntime", () => {
 
   it("disconnect 后不再处理消息", async () => {
     await runtime.disconnect();
-    // sub.off was called to remove onMessage
-    expect(sub.off).toHaveBeenCalled();
-    expect(sub.unsubscribe).toHaveBeenCalled();
+    // 验证 cleanup 完成（合理的实现约束）
+    expect(
+      sub.off,
+      "disconnect() 应调用 sub.off 移除 onMessage 监听器，否则消息仍会被处理",
+    ).toHaveBeenCalled();
+    expect(
+      sub.unsubscribe,
+      "disconnect() 应调用 sub.unsubscribe 退订频道，释放 Redis 订阅资源",
+    ).toHaveBeenCalled();
+    // 核心行为断言：disconnect 后触发消息，叙事不再被发布
+    sub.emit(MERIDIAN_SEVERED, makeSeveredPayload());
+    await new Promise((r) => setTimeout(r, 0));
+    expect(
+      pub.publish,
+      "disconnect() 后收到的断脉消息不应触发任何 publish，runtime 必须彻底停止处理",
+    ).not.toHaveBeenCalled();
   });
 
   it("stats 初始为 0", () => {
