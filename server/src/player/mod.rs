@@ -252,7 +252,8 @@ pub(crate) fn attach_player_state_to_joined_clients(
                 flags.set_invisible(true);
             }
             let coffin_lower = coffin_lower_from_player_position(persisted.position);
-            let grade = persisted.coffin_grade;
+            // coffin_grade = Option<CoffinGrade>；in_coffin=true 路径下 unwrap_or_default 安全
+            let grade = persisted.coffin_grade.unwrap_or_default();
             if let Some(registry) = coffin_registry.as_deref_mut() {
                 registry.reclaim_occupied(coffin_lower, entity, 0, grade);
             }

@@ -154,8 +154,8 @@ pub struct LoadedPlayerSlices {
     pub inventory: Option<PlayerInventory>,
     pub lifespan: Option<LifespanComponent>,
     pub in_coffin: bool,
-    /// 棺材档级（仅在 in_coffin=true 时有意义；None = 不在棺内，Some = 档级）
-    pub coffin_grade: CoffinGrade,
+    /// 棺材档级：Some(grade) = 在棺内 + 档级；None = 不在棺内（与 in_coffin=false 语义对齐）
+    pub coffin_grade: Option<CoffinGrade>,
     pub skill_set: SkillSet,
     pub known_techniques: KnownTechniques,
     pub(crate) ui_prefs: PlayerUiPrefs,
@@ -423,7 +423,7 @@ pub fn load_player_slices(
                 inventory: None,
                 lifespan: None,
                 in_coffin: false,
-                coffin_grade: CoffinGrade::default(),
+                coffin_grade: None,
                 skill_set: SkillSet::default(),
                 known_techniques: KnownTechniques::default(),
                 ui_prefs: PlayerUiPrefs::default(),
@@ -458,15 +458,19 @@ pub fn load_player_slices(
         &connection,
         username,
     ) {
-        Ok(Some((lifespan, in_coffin, coffin_grade))) => (Some(lifespan), in_coffin, coffin_grade),
-        Ok(None) => (None, false, CoffinGrade::default()),
+        Ok(Some((lifespan, in_coffin, grade))) => {
+            // coffin_grade = Some(grade) 当 in_coffin=true，None 当 in_coffin=false
+            let coffin_grade = if in_coffin { Some(grade) } else { None };
+            (Some(lifespan), in_coffin, coffin_grade)
+        }
+        Ok(None) => (None, false, None),
         Err(error) => {
             tracing::warn!(
                     "[bong][player] failed to load persisted lifespan for `{}` from sqlite {}: {error}; using runtime default",
                     username,
                     persistence.db_path().display()
                 );
-            (None, false, CoffinGrade::default())
+            (None, false, None)
         }
     };
     let skill_set = match load_player_skill_set_from_sqlite(&connection, username) {
@@ -564,6 +568,7 @@ pub fn save_player_slices(
     skill_set: &SkillSet,
 ) -> io::Result<PathBuf> {
     let mut connection = open_player_connection(persistence)?;
+    // grade=None → resolve_coffin_grade_for_persist 回读 DB 既有 grade
     persist_player_slices_in_sqlite(
         &mut connection,
         username,
@@ -574,7 +579,7 @@ pub fn save_player_slices(
         lifespan,
         skill_set,
         None,
-        CoffinGrade::default(),
+        None,
     )?;
     Ok(persistence.db_path().to_path_buf())
 }
@@ -602,7 +607,7 @@ pub fn save_player_slices_with_coffin(
         lifespan,
         skill_set,
         Some(grade.is_some()),
-        grade.unwrap_or_default(),
+        grade,
     )?;
     Ok(persistence.db_path().to_path_buf())
 }
@@ -613,13 +618,15 @@ pub fn save_player_lifespan_slice(
     lifespan: &LifespanComponent,
 ) -> io::Result<PathBuf> {
     let mut connection = open_player_connection(persistence)?;
+    // grade=None → resolve_coffin_grade_for_persist 回读 DB 既有 grade，
+    // 避免悟道延寿路径把 Jade/Stone/Bronze 洗成 Mundane。
     persist_player_lifespan_slice_in_sqlite(
         &mut connection,
         username,
         lifespan,
         None,
         None,
-        CoffinGrade::default(),
+        None,
     )?;
     Ok(persistence.db_path().to_path_buf())
 }
@@ -637,7 +644,7 @@ pub fn save_player_lifespan_slice_with_coffin(
         lifespan,
         None,
         Some(grade.is_some()),
-        grade.unwrap_or_default(),
+        grade,
     )?;
     Ok(persistence.db_path().to_path_buf())
 }
@@ -1307,11 +1314,13 @@ fn persist_player_lifespan_slice_in_sqlite(
     lifespan: &LifespanComponent,
     offline_pause_wall: Option<i64>,
     in_coffin: Option<bool>,
-    coffin_grade: CoffinGrade,
+    // None = 回读 DB 既有 grade（无棺上下文保存路径，防止洗掉 Jade/Stone/Bronze）
+    coffin_grade: Option<CoffinGrade>,
 ) -> io::Result<()> {
     let last_updated_wall = current_unix_seconds();
     let offline_pause_wall = offline_pause_wall.unwrap_or(last_updated_wall).max(0);
     let in_coffin = resolve_in_coffin_for_persist(connection, username, in_coffin)?;
+    let coffin_grade = resolve_coffin_grade_for_persist(connection, username, coffin_grade)?;
     connection
         .execute(
             "
@@ -1369,6 +1378,31 @@ fn resolve_in_coffin_for_persist(
         .optional()
         .map_err(io::Error::other)?;
     Ok(stored.unwrap_or(0) != 0)
+}
+
+/// 保护 coffin_grade 不被无棺上下文的保存路径洗掉。
+/// explicit=Some(g) 时直接返回 g；
+/// explicit=None 时回读 DB 既有 grade（例如悟道延寿保存路径），避免 ON CONFLICT 无条件覆成 mundane。
+fn resolve_coffin_grade_for_persist(
+    connection: &Connection,
+    username: &str,
+    explicit: Option<CoffinGrade>,
+) -> io::Result<CoffinGrade> {
+    if let Some(grade) = explicit {
+        return Ok(grade);
+    }
+    let stored: Option<String> = connection
+        .query_row(
+            "SELECT coffin_grade FROM player_lifespan WHERE username = ?1",
+            params![username],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(io::Error::other)?;
+    Ok(stored
+        .as_deref()
+        .map(CoffinGrade::from_db_str)
+        .unwrap_or_default())
 }
 
 fn load_player_skill_set_from_sqlite(
@@ -1459,7 +1493,7 @@ fn persist_player_core_slice_in_sqlite(
             None,
             &SkillSet::default(),
             None,
-            CoffinGrade::default(),
+            None,
         )?;
     }
 
@@ -1653,7 +1687,8 @@ fn persist_player_slices_in_sqlite(
     lifespan: Option<&LifespanComponent>,
     skill_set: &SkillSet,
     in_coffin: Option<bool>,
-    coffin_grade: CoffinGrade,
+    // None = 回读 DB 既有 grade（无棺上下文保存路径，防止洗掉 Jade/Stone/Bronze）
+    coffin_grade: Option<CoffinGrade>,
 ) -> io::Result<()> {
     let normalized = state.normalized();
     let karma = normalized.karma;
@@ -1665,6 +1700,7 @@ fn persist_player_slices_in_sqlite(
     let last_updated_wall = current_unix_seconds();
     let prefs_json = default_ui_prefs_json()?;
     let in_coffin_value = resolve_in_coffin_for_persist(connection, username, in_coffin)?;
+    let coffin_grade_value = resolve_coffin_grade_for_persist(connection, username, coffin_grade)?;
 
     let transaction = connection.transaction().map_err(io::Error::other)?;
     let current_char_id: Option<String> = transaction
@@ -1850,7 +1886,7 @@ fn persist_player_slices_in_sqlite(
                     lifespan.cap_by_realm,
                     offline_pause_wall,
                     i64::from(in_coffin_value),
-                    coffin_grade.as_db_str(),
+                    coffin_grade_value.as_db_str(),
                     PLAYER_ROW_SCHEMA_VERSION,
                     last_updated_wall
                 ],
@@ -1996,7 +2032,7 @@ fn migrate_legacy_player_json_to_sqlite(
         None,
         &SkillSet::default(),
         None,
-        CoffinGrade::default(),
+        None,
     )?;
     fs::rename(&path, persistence.migrated_path_for_username(username))?;
     Ok(Some(state))
@@ -2584,7 +2620,11 @@ mod player_state_tests {
 
         assert!(loaded.in_coffin);
         // in_coffin=true 且无 coffin_grade → 默认凡木档 0.09
-        assert_eq!(loaded.coffin_grade, CoffinGrade::Mundane);
+        assert_eq!(
+            loaded.coffin_grade,
+            Some(CoffinGrade::Mundane),
+            "in_coffin=true + no explicit grade should load as Some(Mundane)"
+        );
         assert!(
             (offline_lifespan_multiplier(Some(CoffinGrade::Mundane)) - 0.09).abs() < 1e-9,
             "mundane offline multiplier should be 0.09, got {}",
@@ -3312,6 +3352,291 @@ mod player_state_tests {
                 (index as f64 / writer_count as f64).clamp(0.0, 1.0)
             );
         }
+
+        let _ = fs::remove_dir_all(&data_dir);
+    }
+
+    // ─── plan-coffin-tiers-v1 P0 charge #2/#13 ──────────────────────────
+    // save_player_lifespan_slice（无棺上下文）不能把已存的 Jade/Stone/Bronze grade 洗成 Mundane
+
+    #[test]
+    fn save_player_lifespan_slice_preserves_jade_grade_on_no_coffin_context_save() {
+        let (persistence, data_dir) = sqlite_persistence("lifespan-jade-grade-preserve");
+        save_player_state(&persistence, "Azure", &PlayerState::default())
+            .expect("baseline player state should persist");
+
+        // 先存一个 Jade 棺玩家
+        let lifespan = crate::cultivation::lifespan::LifespanComponent {
+            born_at_tick: 0,
+            years_lived: 10.0,
+            cap_by_realm: 100,
+            offline_pause_tick: None,
+        };
+        save_player_lifespan_slice_with_coffin(
+            &persistence,
+            "Azure",
+            &lifespan,
+            Some(CoffinGrade::Jade),
+        )
+        .expect("save with jade coffin should succeed");
+
+        // 验证 DB 里 grade=jade
+        {
+            let conn = Connection::open(persistence.db_path()).expect("db should open");
+            let grade: String = conn
+                .query_row(
+                    "SELECT coffin_grade FROM player_lifespan WHERE username = ?1",
+                    params!["Azure"],
+                    |row| row.get(0),
+                )
+                .expect("grade row should exist");
+            assert_eq!(grade, "jade", "grade should be jade after save_with_coffin");
+        }
+
+        // 触发无棺上下文保存（模拟悟道延寿路径）
+        save_player_lifespan_slice(&persistence, "Azure", &lifespan)
+            .expect("save_player_lifespan_slice should succeed");
+
+        // 验证 grade 没有被洗成 mundane
+        {
+            let conn = Connection::open(persistence.db_path()).expect("db should open");
+            let grade: String = conn
+                .query_row(
+                    "SELECT coffin_grade FROM player_lifespan WHERE username = ?1",
+                    params!["Azure"],
+                    |row| row.get(0),
+                )
+                .expect("grade row should exist after no-coffin save");
+            assert_eq!(
+                grade, "jade",
+                "save_player_lifespan_slice (无棺上下文) 不应把 jade 洗成 mundane，\
+                 期望 jade，实际 {grade}"
+            );
+        }
+
+        let _ = fs::remove_dir_all(&data_dir);
+    }
+
+    #[test]
+    fn save_player_lifespan_slice_preserves_stone_grade() {
+        let (persistence, data_dir) = sqlite_persistence("lifespan-stone-grade-preserve");
+        save_player_state(&persistence, "Azure", &PlayerState::default())
+            .expect("baseline player state should persist");
+
+        let lifespan = crate::cultivation::lifespan::LifespanComponent {
+            born_at_tick: 0,
+            years_lived: 5.0,
+            cap_by_realm: 100,
+            offline_pause_tick: None,
+        };
+        save_player_lifespan_slice_with_coffin(
+            &persistence,
+            "Azure",
+            &lifespan,
+            Some(CoffinGrade::Stone),
+        )
+        .expect("save with stone coffin should succeed");
+        save_player_lifespan_slice(&persistence, "Azure", &lifespan)
+            .expect("save without coffin context should succeed");
+
+        let conn = Connection::open(persistence.db_path()).expect("db should open");
+        let grade: String = conn
+            .query_row(
+                "SELECT coffin_grade FROM player_lifespan WHERE username = ?1",
+                params!["Azure"],
+                |row| row.get(0),
+            )
+            .expect("grade row should exist");
+        assert_eq!(
+            grade, "stone",
+            "save_player_lifespan_slice 不应洗掉 stone grade，期望 stone，实际 {grade}"
+        );
+
+        let _ = fs::remove_dir_all(&data_dir);
+    }
+
+    #[test]
+    fn save_player_lifespan_slice_preserves_bronze_grade() {
+        let (persistence, data_dir) = sqlite_persistence("lifespan-bronze-grade-preserve");
+        save_player_state(&persistence, "Azure", &PlayerState::default())
+            .expect("baseline player state should persist");
+
+        let lifespan = crate::cultivation::lifespan::LifespanComponent {
+            born_at_tick: 0,
+            years_lived: 5.0,
+            cap_by_realm: 100,
+            offline_pause_tick: None,
+        };
+        save_player_lifespan_slice_with_coffin(
+            &persistence,
+            "Azure",
+            &lifespan,
+            Some(CoffinGrade::Bronze),
+        )
+        .expect("save with bronze coffin should succeed");
+        save_player_lifespan_slice(&persistence, "Azure", &lifespan)
+            .expect("save without coffin context should succeed");
+
+        let conn = Connection::open(persistence.db_path()).expect("db should open");
+        let grade: String = conn
+            .query_row(
+                "SELECT coffin_grade FROM player_lifespan WHERE username = ?1",
+                params!["Azure"],
+                |row| row.get(0),
+            )
+            .expect("grade row should exist");
+        assert_eq!(
+            grade, "bronze",
+            "save_player_lifespan_slice 不应洗掉 bronze grade，期望 bronze，实际 {grade}"
+        );
+
+        let _ = fs::remove_dir_all(&data_dir);
+    }
+
+    // ─── plan-coffin-tiers-v1 P0 charge #6 — 非 mundane DB 全链路 ─────────
+    // save_player_lifespan_slice_with_coffin(Jade/Stone/Bronze) → DB → load → offline 回算正确
+
+    #[test]
+    fn db_full_chain_jade_coffin_offline_multiplier() {
+        let (persistence, data_dir) = sqlite_persistence("db-full-chain-jade");
+        save_player_state(&persistence, "Azure", &PlayerState::default())
+            .expect("baseline player state should persist");
+
+        // 玩家在 Jade 棺内，离线 10 年等效真实秒
+        let offline_seconds = crate::cultivation::lifespan::LIFESPAN_SECONDS_PER_YEAR as i64 * 10;
+        let offline_pause_wall = current_unix_seconds() - offline_seconds;
+
+        let conn = Connection::open(persistence.db_path()).expect("db should open");
+        conn.execute(
+            "INSERT INTO player_lifespan (
+                username, born_at_tick, years_lived, cap_by_realm,
+                offline_pause_wall, in_coffin, coffin_grade, schema_version, last_updated_wall
+             ) VALUES (?1, ?2, ?3, ?4, ?5, 1, 'jade', ?6, ?7)",
+            params![
+                "Azure", 0_u64, 6.0_f64, 100_u32,
+                offline_pause_wall, PLAYER_ROW_SCHEMA_VERSION, offline_pause_wall
+            ],
+        )
+        .expect("jade lifespan fixture should insert");
+        drop(conn);
+
+        let loaded = load_player_slices(&persistence, "Azure");
+        let loaded_lifespan = loaded.lifespan.expect("lifespan should reload");
+
+        assert!(loaded.in_coffin, "should be in_coffin");
+        assert_eq!(
+            loaded.coffin_grade,
+            Some(CoffinGrade::Jade),
+            "loaded grade should be Some(Jade), got {:?}",
+            loaded.coffin_grade
+        );
+        // jade 倍率 0.07 → 10 年 × 0.07 = 0.7 年
+        assert!(
+            (offline_lifespan_multiplier(Some(CoffinGrade::Jade)) - 0.07).abs() < 1e-9,
+            "jade offline multiplier should be 0.07"
+        );
+        assert!(
+            (6.69..=6.71).contains(&loaded_lifespan.years_lived),
+            "expected 10 offline years in jade coffin at x0.07 to add ~0.7 years, \
+             started at 6.0, got {}",
+            loaded_lifespan.years_lived
+        );
+
+        let _ = fs::remove_dir_all(&data_dir);
+    }
+
+    #[test]
+    fn db_full_chain_stone_coffin_offline_multiplier() {
+        let (persistence, data_dir) = sqlite_persistence("db-full-chain-stone");
+        save_player_state(&persistence, "Azure", &PlayerState::default())
+            .expect("baseline player state should persist");
+
+        let offline_seconds = crate::cultivation::lifespan::LIFESPAN_SECONDS_PER_YEAR as i64 * 10;
+        let offline_pause_wall = current_unix_seconds() - offline_seconds;
+
+        let conn = Connection::open(persistence.db_path()).expect("db should open");
+        conn.execute(
+            "INSERT INTO player_lifespan (
+                username, born_at_tick, years_lived, cap_by_realm,
+                offline_pause_wall, in_coffin, coffin_grade, schema_version, last_updated_wall
+             ) VALUES (?1, ?2, ?3, ?4, ?5, 1, 'stone', ?6, ?7)",
+            params![
+                "Azure", 0_u64, 6.0_f64, 100_u32,
+                offline_pause_wall, PLAYER_ROW_SCHEMA_VERSION, offline_pause_wall
+            ],
+        )
+        .expect("stone lifespan fixture should insert");
+        drop(conn);
+
+        let loaded = load_player_slices(&persistence, "Azure");
+        let loaded_lifespan = loaded.lifespan.expect("lifespan should reload");
+
+        assert!(loaded.in_coffin, "should be in_coffin");
+        assert_eq!(
+            loaded.coffin_grade,
+            Some(CoffinGrade::Stone),
+            "loaded grade should be Some(Stone), got {:?}",
+            loaded.coffin_grade
+        );
+        // stone 倍率 0.05 → 10 年 × 0.05 = 0.5 年
+        assert!(
+            (offline_lifespan_multiplier(Some(CoffinGrade::Stone)) - 0.05).abs() < 1e-9,
+            "stone offline multiplier should be 0.05"
+        );
+        assert!(
+            (6.49..=6.51).contains(&loaded_lifespan.years_lived),
+            "expected 10 offline years in stone coffin at x0.05 to add ~0.5 years, \
+             started at 6.0, got {}",
+            loaded_lifespan.years_lived
+        );
+
+        let _ = fs::remove_dir_all(&data_dir);
+    }
+
+    #[test]
+    fn db_full_chain_bronze_coffin_offline_multiplier() {
+        let (persistence, data_dir) = sqlite_persistence("db-full-chain-bronze");
+        save_player_state(&persistence, "Azure", &PlayerState::default())
+            .expect("baseline player state should persist");
+
+        let offline_seconds = crate::cultivation::lifespan::LIFESPAN_SECONDS_PER_YEAR as i64 * 10;
+        let offline_pause_wall = current_unix_seconds() - offline_seconds;
+
+        let conn = Connection::open(persistence.db_path()).expect("db should open");
+        conn.execute(
+            "INSERT INTO player_lifespan (
+                username, born_at_tick, years_lived, cap_by_realm,
+                offline_pause_wall, in_coffin, coffin_grade, schema_version, last_updated_wall
+             ) VALUES (?1, ?2, ?3, ?4, ?5, 1, 'bronze', ?6, ?7)",
+            params![
+                "Azure", 0_u64, 6.0_f64, 100_u32,
+                offline_pause_wall, PLAYER_ROW_SCHEMA_VERSION, offline_pause_wall
+            ],
+        )
+        .expect("bronze lifespan fixture should insert");
+        drop(conn);
+
+        let loaded = load_player_slices(&persistence, "Azure");
+        let loaded_lifespan = loaded.lifespan.expect("lifespan should reload");
+
+        assert!(loaded.in_coffin, "should be in_coffin");
+        assert_eq!(
+            loaded.coffin_grade,
+            Some(CoffinGrade::Bronze),
+            "loaded grade should be Some(Bronze), got {:?}",
+            loaded.coffin_grade
+        );
+        // bronze 倍率 0.03 → 10 年 × 0.03 = 0.3 年
+        assert!(
+            (offline_lifespan_multiplier(Some(CoffinGrade::Bronze)) - 0.03).abs() < 1e-9,
+            "bronze offline multiplier should be 0.03"
+        );
+        assert!(
+            (6.29..=6.31).contains(&loaded_lifespan.years_lived),
+            "expected 10 offline years in bronze coffin at x0.03 to add ~0.3 years, \
+             started at 6.0, got {}",
+            loaded_lifespan.years_lived
+        );
 
         let _ = fs::remove_dir_all(&data_dir);
     }
