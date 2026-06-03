@@ -1,16 +1,10 @@
 name: Pi Plan-Aware Review
 
+# 按需触发：在 PR 上评论 @pi 才跑。去掉了 opened/synchronize 自动触发——每次 push 都重跑
+# 一个无轮数上限、high-thinking、每轮重发整本 worldview 的 reviewer，是 DeepSeek 账单主因。
 on:
-  pull_request:
-    types: [opened, synchronize]
-    paths:
-      - "server/**"
-      - "client/**"
-      - "agent/**"
-      - "worldgen/**"
-      - "scripts/**"
-      - "docs/plan-*.md"
-      - ".github/workflows/pi-plan-review.yml"
+  issue_comment:
+    types: [created]
   workflow_dispatch:
 
 permissions:
@@ -19,11 +13,18 @@ permissions:
   issues: write
 
 concurrency:
-  group: pi-plan-review-${{ github.event.pull_request.number || github.run_id }}
+  group: pi-plan-review-${{ github.event.issue.number || github.run_id }}
   cancel-in-progress: true
 
 jobs:
   review:
+    # 仅当 PR 评论里 @pi、且评论者有写权限（OWNER/MEMBER/COLLABORATOR）时运行——
+    # public 仓库下防止任意访客评论 @pi 触发跑、烧 DeepSeek key。
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.issue.pull_request != null &&
+       contains(github.event.comment.body, '@pi') &&
+       contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association))
     runs-on: ubuntu-latest
     timeout-minutes: 60
 
