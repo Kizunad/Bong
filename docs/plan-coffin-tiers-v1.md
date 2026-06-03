@@ -1,10 +1,10 @@
-# Bong · plan-coffin-tiers-v1（骨架）
+# Bong · plan-coffin-tiers-v1（Active）
 
 **延寿棺建模接入 + 灵材四档**——把延寿棺从双 `BlockState::CHEST` 占位换成 GeckoLib 建模实体（照搬物资棺渲染链），并落地正典 `plan-coffin-v1 §遗留` 的灵材分档：凡木 ×0.9 / 寒玉 ×0.7 / 玄石 ×0.5 / 青铜 ×0.3。源模型已就绪（`local_models/{Mundane,Jade,Stone,Bronze}Coffin.bbmodel`，**以 bbmodel 为基准**）。
 
 | 阶段 | 内容 | 状态 | 验收日期 |
 |------|------|------|----------|
-| P0 | 分档底盘：`CoffinGrade` enum + 倍率表 + item_id ×4 + schema tier 字段（双端 serde） | ⬜ | |
+| P0 | 分档底盘：`CoffinGrade` enum + 倍率表 + item_id ×4 + schema tier 字段（双端 serde） | ✅ | 2026-06-04 |
 | P1 | 资产管线：4 档 bbmodel → `geo.json` + 贴图 PNG + `animation.json`（**含 UV/贴图收尾，见 §视觉资产**） | ⬜ | |
 | P2 | Server 建模实体：放置时 spawn `BongVisual` marker（按 grade）替代双 CHEST；`CoffinEntity` 持有实体 id | ⬜ | |
 | P3 | Client 渲染 + 交互迁移：`BongEntityModelKind` ×4 + 渲染器壳 + bootstrap；进棺交互从右键 CHEST 迁到 marker-entity intent；HUD 档位徽章 | ⬜ | |
