@@ -8167,8 +8167,8 @@ mod tests {
             })),
         };
         let bytes2 = envelope_no_grade.encode_to_vec();
-        let decoded2 =
-            ServerDataEnvelope::decode(bytes2.as_slice()).expect("CoffinState no-grade decode 失败");
+        let decoded2 = ServerDataEnvelope::decode(bytes2.as_slice())
+            .expect("CoffinState no-grade decode 失败");
         match decoded2.payload {
             Some(server_data_envelope::Payload::CoffinState(c)) => {
                 assert!(!c.in_coffin);

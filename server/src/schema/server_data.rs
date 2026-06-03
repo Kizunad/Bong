@@ -97,6 +97,13 @@ impl From<crate::coffin::CoffinGrade> for CoffinGradeV1 {
     }
 }
 
+/// ⚠️ serde 兼容注意：
+/// `deny_unknown_fields` 在此 struct 单独反序列化时生效（拒绝多余字段）。
+/// 但 `ServerDataPayloadWireV1::CoffinState` 变体使用 `#[serde(flatten)]`（server_data.rs:914）
+/// 把此 struct 的字段展平到外层 enum 中——此时内层 `deny_unknown_fields` **对展平后的字段无效**；
+/// 未知字段的拒绝由外层 enum 的 `deny_unknown_fields`（server_data.rs:867）统一兜底。
+/// 此处的 `deny_unknown_fields` 保留是为了在 standalone 使用场景（如测试、部分解析）
+/// 仍能拒绝无效字段，不是多余的。
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct CoffinStateV1 {
@@ -3905,6 +3912,22 @@ mod tests {
             include_str!(
                 "../../../agent/packages/schema/samples/server-data.spirit-treasure-dialogue.sample.json"
             ),
+            // plan-coffin-tiers-v1 P0 charge #7：四档 + no-grade serde pin samples
+            include_str!(
+                "../../../agent/packages/schema/samples/server-data.coffin-state-mundane.sample.json"
+            ),
+            include_str!(
+                "../../../agent/packages/schema/samples/server-data.coffin-state-jade.sample.json"
+            ),
+            include_str!(
+                "../../../agent/packages/schema/samples/server-data.coffin-state-stone.sample.json"
+            ),
+            include_str!(
+                "../../../agent/packages/schema/samples/server-data.coffin-state-bronze.sample.json"
+            ),
+            include_str!(
+                "../../../agent/packages/schema/samples/server-data.coffin-state-no-grade.sample.json"
+            ),
         ];
 
         for json in samples {
@@ -3926,6 +3949,106 @@ mod tests {
                 "roundtrip must preserve typed payload content"
             );
         }
+    }
+
+    // ─── plan-coffin-tiers-v1 P0 charge #7：CoffinGradeV1/CoffinStateV1 serde pin ────
+
+    #[test]
+    fn coffin_grade_v1_all_variants_serde_roundtrip() {
+        // 每个 enum 变体至少一条专属正例
+        let cases: &[(&str, CoffinGradeV1)] = &[
+            ("\"mundane\"", CoffinGradeV1::Mundane),
+            ("\"jade\"", CoffinGradeV1::Jade),
+            ("\"stone\"", CoffinGradeV1::Stone),
+            ("\"bronze\"", CoffinGradeV1::Bronze),
+        ];
+        for (json_str, expected) in cases {
+            let parsed: CoffinGradeV1 = serde_json::from_str(json_str)
+                .unwrap_or_else(|e| panic!("{json_str} should parse as CoffinGradeV1: {e}"));
+            assert_eq!(
+                parsed, *expected,
+                "CoffinGradeV1 from {json_str} should equal {expected:?}"
+            );
+            let reserialized =
+                serde_json::to_string(&parsed).expect("CoffinGradeV1 should serialize back");
+            assert_eq!(
+                reserialized, *json_str,
+                "CoffinGradeV1::{expected:?} roundtrip should produce {json_str}"
+            );
+        }
+    }
+
+    #[test]
+    fn coffin_grade_v1_rejects_unknown_variant() {
+        // 反例：未知 variant 必须失败
+        let result = serde_json::from_str::<CoffinGradeV1>("\"diamond\"");
+        assert!(
+            result.is_err(),
+            "unknown grade 'diamond' should fail to deserialize"
+        );
+    }
+
+    #[test]
+    fn coffin_state_v1_all_grades_serde_pin() {
+        // 四档 + None（出棺）serde 正例
+        let cases: &[(&str, Option<CoffinGradeV1>, bool, f64)] = &[
+            ("mundane", Some(CoffinGradeV1::Mundane), true, 0.9),
+            ("jade", Some(CoffinGradeV1::Jade), true, 0.7),
+            ("stone", Some(CoffinGradeV1::Stone), true, 0.5),
+            ("bronze", Some(CoffinGradeV1::Bronze), true, 0.3),
+        ];
+        for (grade_str, expected_grade, in_coffin, multiplier) in cases {
+            let json = serde_json::json!({
+                "in_coffin": in_coffin,
+                "lifespan_rate_multiplier": multiplier,
+                "coffin_grade": grade_str
+            });
+            let state: CoffinStateV1 = serde_json::from_value(json.clone())
+                .unwrap_or_else(|e| panic!("grade={grade_str} json={json} should parse: {e}"));
+            assert_eq!(
+                state.coffin_grade, *expected_grade,
+                "grade={grade_str}: parsed coffin_grade should equal {expected_grade:?}"
+            );
+            assert_eq!(state.in_coffin, *in_coffin);
+            assert!((state.lifespan_rate_multiplier - multiplier).abs() < 1e-9);
+        }
+    }
+
+    #[test]
+    fn coffin_state_v1_none_grade_serde_pin() {
+        // None（出棺）：coffin_grade 字段缺失 → None（向后兼容）
+        let json = serde_json::json!({
+            "in_coffin": false,
+            "lifespan_rate_multiplier": 1.0
+        });
+        let state: CoffinStateV1 =
+            serde_json::from_value(json).expect("no-grade CoffinStateV1 should parse");
+        assert_eq!(
+            state.coffin_grade, None,
+            "missing coffin_grade should parse as None (向后兼容旧 payload)"
+        );
+        // 序列化时 skip_serializing_if = None → 字段不出现在 JSON
+        let reserialized =
+            serde_json::to_value(state).expect("CoffinStateV1 should serialize to JSON value");
+        assert!(
+            reserialized.get("coffin_grade").is_none(),
+            "coffin_grade=None should be omitted during serialization, got {reserialized}"
+        );
+    }
+
+    #[test]
+    fn coffin_state_v1_deny_unknown_fields_standalone() {
+        // standalone 反序列化：deny_unknown_fields 拒绝多余字段
+        let json = serde_json::json!({
+            "in_coffin": true,
+            "lifespan_rate_multiplier": 0.9,
+            "unknown_field": "oops"
+        });
+        let result = serde_json::from_value::<CoffinStateV1>(json);
+        assert!(
+            result.is_err(),
+            "CoffinStateV1 standalone deny_unknown_fields should reject extra fields"
+        );
     }
 
     #[test]

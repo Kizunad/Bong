@@ -620,14 +620,7 @@ pub fn save_player_lifespan_slice(
     let mut connection = open_player_connection(persistence)?;
     // grade=None → resolve_coffin_grade_for_persist 回读 DB 既有 grade，
     // 避免悟道延寿路径把 Jade/Stone/Bronze 洗成 Mundane。
-    persist_player_lifespan_slice_in_sqlite(
-        &mut connection,
-        username,
-        lifespan,
-        None,
-        None,
-        None,
-    )?;
+    persist_player_lifespan_slice_in_sqlite(&mut connection, username, lifespan, None, None, None)?;
     Ok(persistence.db_path().to_path_buf())
 }
 
@@ -3513,8 +3506,13 @@ mod player_state_tests {
                 offline_pause_wall, in_coffin, coffin_grade, schema_version, last_updated_wall
              ) VALUES (?1, ?2, ?3, ?4, ?5, 1, 'jade', ?6, ?7)",
             params![
-                "Azure", 0_u64, 6.0_f64, 100_u32,
-                offline_pause_wall, PLAYER_ROW_SCHEMA_VERSION, offline_pause_wall
+                "Azure",
+                0_u64,
+                6.0_f64,
+                100_u32,
+                offline_pause_wall,
+                PLAYER_ROW_SCHEMA_VERSION,
+                offline_pause_wall
             ],
         )
         .expect("jade lifespan fixture should insert");
@@ -3561,8 +3559,13 @@ mod player_state_tests {
                 offline_pause_wall, in_coffin, coffin_grade, schema_version, last_updated_wall
              ) VALUES (?1, ?2, ?3, ?4, ?5, 1, 'stone', ?6, ?7)",
             params![
-                "Azure", 0_u64, 6.0_f64, 100_u32,
-                offline_pause_wall, PLAYER_ROW_SCHEMA_VERSION, offline_pause_wall
+                "Azure",
+                0_u64,
+                6.0_f64,
+                100_u32,
+                offline_pause_wall,
+                PLAYER_ROW_SCHEMA_VERSION,
+                offline_pause_wall
             ],
         )
         .expect("stone lifespan fixture should insert");
@@ -3609,8 +3612,13 @@ mod player_state_tests {
                 offline_pause_wall, in_coffin, coffin_grade, schema_version, last_updated_wall
              ) VALUES (?1, ?2, ?3, ?4, ?5, 1, 'bronze', ?6, ?7)",
             params![
-                "Azure", 0_u64, 6.0_f64, 100_u32,
-                offline_pause_wall, PLAYER_ROW_SCHEMA_VERSION, offline_pause_wall
+                "Azure",
+                0_u64,
+                6.0_f64,
+                100_u32,
+                offline_pause_wall,
+                PLAYER_ROW_SCHEMA_VERSION,
+                offline_pause_wall
             ],
         )
         .expect("bronze lifespan fixture should insert");
