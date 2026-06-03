@@ -1,0 +1,23 @@
+[
+  {
+    "v": 1,
+    "fighter_a_id": "offline:PlayerA",
+    "fighter_b_id": "offline:PlayerB",
+    "reason": { "type": "expired" },
+    "tick": 1060
+  },
+  {
+    "v": 1,
+    "fighter_a_id": "offline:PlayerA",
+    "fighter_b_id": "char:999888777",
+    "reason": { "type": "retreated", "entity_id": "offline:PlayerA" },
+    "tick": 2030
+  },
+  {
+    "v": 1,
+    "fighter_a_id": "offline:PlayerA",
+    "fighter_b_id": "offline:PlayerB",
+    "reason": { "type": "death", "entity_id": "offline:PlayerB" },
+    "tick": 3010
+  }
+]

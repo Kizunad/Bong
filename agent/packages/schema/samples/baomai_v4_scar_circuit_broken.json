@@ -1,0 +1,16 @@
+[
+  {
+    "v": 1,
+    "entity_id": "offline:TestPlayer",
+    "circuit": "heart_lung",
+    "reason": "healed",
+    "tick": 200
+  },
+  {
+    "v": 1,
+    "entity_id": "char:987654321",
+    "circuit": "liver_kidney",
+    "reason": "severed",
+    "tick": 5555
+  }
+]

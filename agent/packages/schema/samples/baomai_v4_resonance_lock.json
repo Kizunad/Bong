@@ -1,0 +1,16 @@
+[
+  {
+    "v": 1,
+    "fighter_a_id": "offline:PlayerA",
+    "fighter_b_id": "offline:PlayerB",
+    "started_at": 1000,
+    "ends_at": 1060
+  },
+  {
+    "v": 1,
+    "fighter_a_id": "offline:PlayerA",
+    "fighter_b_id": "char:999888777",
+    "started_at": 2000,
+    "ends_at": 2060
+  }
+]
