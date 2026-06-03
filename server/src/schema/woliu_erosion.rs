@@ -339,4 +339,94 @@ mod woliu_erosion_schema_tests {
             );
         }
     }
+
+    // ────────────────────────────────────────────────────────
+    // P3 fix3: 共享 sample 双端对拍（Rust ↔ TS 同文件）
+    // agent/packages/schema/samples/woliu-erosion-*.sample.json
+    // ────────────────────────────────────────────────────────
+
+    #[test]
+    fn shared_sample_woliu_erosion_state_deserializes() {
+        // 与 TS woliu_erosion.test.ts 加载同一文件对拍，保证双端 wire 形态一致。
+        let json =
+            include_str!("../../../agent/packages/schema/samples/woliu-erosion-state.sample.json");
+        let state: VoidErosionStateV1 = serde_json::from_str(json)
+            .expect("woliu-erosion-state.sample.json 应能反序列化为 VoidErosionStateV1");
+        // 关键字段断言（与 TS 端 sample 对拍）
+        assert_eq!(
+            state.entity, "player_123",
+            "sample entity 应为 player_123，得 {}",
+            state.entity
+        );
+        assert_eq!(
+            state.stage,
+            VoidErosionStageV1::EchoBody,
+            "sample stage 应为 EchoBody，得 {:?}",
+            state.stage
+        );
+        assert!(
+            (state.cumulative_erosion - 250.0).abs() < 1e-6,
+            "sample cumulative_erosion 应为 250.0，得 {}",
+            state.cumulative_erosion
+        );
+        assert!(state.ambient_active, "sample ambient_active 应为 true");
+        assert!(
+            (state.contam_mult - 1.5).abs() < 1e-6,
+            "sample contam_mult 应为 1.5，得 {}",
+            state.contam_mult
+        );
+        assert_eq!(
+            state.server_tick, 99999,
+            "sample server_tick 应为 99999，得 {}",
+            state.server_tick
+        );
+    }
+
+    #[test]
+    fn shared_sample_woliu_erosion_event_deserializes() {
+        // 与 TS woliu_erosion.test.ts 加载同一文件对拍，保证双端 wire 形态一致。
+        let json =
+            include_str!("../../../agent/packages/schema/samples/woliu-erosion-event.sample.json");
+        let event: VoidErosionEventV1 = serde_json::from_str(json)
+            .expect("woliu-erosion-event.sample.json 应能反序列化为 VoidErosionEventV1");
+        // 关键字段断言
+        assert_eq!(
+            event.entity, "player_456",
+            "sample entity 应为 player_456，得 {}",
+            event.entity
+        );
+        assert_eq!(
+            event.from_stage,
+            VoidErosionStageV1::LowPressure,
+            "sample from_stage 应为 LowPressure，得 {:?}",
+            event.from_stage
+        );
+        assert_eq!(
+            event.to_stage,
+            VoidErosionStageV1::VoidShadow,
+            "sample to_stage 应为 VoidShadow，得 {:?}",
+            event.to_stage
+        );
+        assert!(
+            (event.cumulative_erosion - 80.0).abs() < 1e-6,
+            "sample cumulative_erosion 应为 80.0，得 {}",
+            event.cumulative_erosion
+        );
+        assert_eq!(
+            event.server_tick, 50000,
+            "sample server_tick 应为 50000，得 {}",
+            event.server_tick
+        );
+    }
+
+    #[test]
+    fn shared_sample_woliu_erosion_state_rejects_tamper() {
+        // 双端对拍负向测试：篡改 stage 值到非法字符串，反序列化应失败
+        let json = r#"{"entity":"player_123","stage":"invalid_stage","cumulative_erosion":250.0,"ambient_active":true,"contam_mult":1.5,"efficiency":0.8,"server_tick":99999}"#;
+        let result = serde_json::from_str::<VoidErosionStateV1>(json);
+        assert!(
+            result.is_err(),
+            "篡改 stage 为非法字符串应反序列化失败，但成功了"
+        );
+    }
 }
