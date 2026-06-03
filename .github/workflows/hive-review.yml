@@ -1,0 +1,58 @@
+name: Hive-Think Review
+
+# 按需触发:在 PR 上评论 @hive(或 @hive-think)才跑。
+# "hive-think" 不是单模型,而是 N× gpt-5.5 并行 debate(发现 → 对峙 → 总裁决)。
+# 走免费 GPT-5.5 端点(限时羊毛),不计 token;与 @pi / @claude_workflow_review 并存互不干扰。
+on:
+  issue_comment:
+    types: [created]
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: 要审核的 PR 号
+        required: true
+
+permissions:
+  contents: read # 只读 token:agent 天然无法 merge / push
+  pull-requests: write
+  issues: write
+
+concurrency:
+  # 含 comment.id 且不取消进行中:避免同一 PR 上后续 bot 评论把正在跑的 review 杀掉
+  group: hive-review-${{ github.event.issue.number || inputs.pr_number || github.run_id }}-${{ github.event.comment.id || github.run_id }}
+  cancel-in-progress: false
+
+jobs:
+  review:
+    # 仅当 PR 评论里 @hive、且评论者有写权限(OWNER/MEMBER/COLLABORATOR)时运行——
+    # public 仓库下防止任意访客评论 @hive 触发跑(虽是免费 key,也避免被刷)。
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.issue.pull_request != null &&
+       contains(github.event.comment.body, '@hive') &&
+       contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association))
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          # issue_comment 默认 checkout base,取 PR head 才看得到真改动(也能读到该 ref 上的 plan 文件)
+          ref: refs/pull/${{ github.event.issue.number || inputs.pr_number }}/head
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+
+      - name: Hive-Think Review (10× gpt-5.5 debate)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.issue.number || inputs.pr_number }}
+          # 端点/模型/规模都可被 repo variables / secrets 覆盖;默认即免费羊毛端点
+          HIVE_BASE_URL: ${{ vars.HIVE_BASE_URL || 'https://ai.hhhl.cc/v1' }}
+          HIVE_API_KEY: ${{ secrets.HIVE_API_KEY || 'sk-free' }}
+          HIVE_MODEL: ${{ vars.HIVE_MODEL || 'gpt-5.5' }}
+          HIVE_SWARM_SIZE: ${{ vars.HIVE_SWARM_SIZE || '10' }}
+          HIVE_CONCURRENCY: ${{ vars.HIVE_CONCURRENCY || '10' }}
+        run: node .github/scripts/hive-review.mjs
