@@ -9,7 +9,7 @@
 use std::collections::HashMap;
 
 use valence::prelude::{
-    ident, Client, Entity, EventReader, EventWriter, Local, Position, Query, Res, UniqueId, With,
+    ident, Client, Entity, EventReader, EventWriter, Local, Position, Query, Res, Username, With,
 };
 
 use crate::combat::components::TICKS_PER_SECOND;
@@ -37,11 +37,16 @@ pub struct VoidErosionVisualEmitCache {
 }
 
 /// Emits `bong:void_erosion_visual` payloads on stage change or ambient toggle.
+///
+/// entity_id 格式：`"offline:{username}"`（有 Username 组件时）或 `"char:{bits}"`（NPC/无名实体）。
+/// 仿 meridian_severed_emit.rs 的 resolve_entity_id，保证 client VoidErosionVisualStore 的
+/// ConcurrentHashMap key 与 resolveWireId 探测的 `"offline:{entityName}"` 键完全对齐，
+/// 消除 snapshotForEntity 恒返回 null 的串扰 bug。
 pub fn emit_void_erosion_visual_sync(
     clock: Res<CombatClock>,
     mut cache: Local<VoidErosionVisualEmitCache>,
     mut advance_events: EventReader<VoidErosionAdvanceEvent>,
-    erosion_query: Query<(Entity, &VoidErosion, &Position, Option<&UniqueId>)>,
+    erosion_query: Query<(Entity, &VoidErosion, &Position, Option<&Username>)>,
     mut clients: Query<(Entity, &mut Client, &Position), With<Client>>,
 ) {
     let periodic = clock.tick.is_multiple_of(PERIODIC_SYNC_INTERVAL_TICKS);
@@ -54,7 +59,7 @@ pub fn emit_void_erosion_visual_sync(
     }
 
     // Check for ambient toggle changes and periodic sync
-    for (entity, erosion, _pos, _uid) in &erosion_query {
+    for (entity, erosion, _pos, _username) in &erosion_query {
         let prev_ambient = cache.last_ambient.get(&entity).copied().unwrap_or(false);
         let prev_stage = cache
             .last_stage
@@ -77,12 +82,12 @@ pub fn emit_void_erosion_visual_sync(
 
     // Emit payloads
     for sync_entity in &entities_to_sync {
-        let Ok((_, erosion, erosion_pos, unique_id)) = erosion_query.get(*sync_entity) else {
+        let Ok((_, erosion, erosion_pos, username)) = erosion_query.get(*sync_entity) else {
             continue;
         };
-        let entity_id = unique_id
-            .map(|uid| uid.0.to_string())
-            .unwrap_or_else(|| format!("entity:{}", sync_entity.to_bits()));
+        let entity_id = username
+            .map(|u| format!("offline:{}", u.0))
+            .unwrap_or_else(|| format!("char:{}", sync_entity.to_bits()));
         let payload = VoidErosionVisualSyncPayloadV1 {
             entity_id,
             stage: erosion.stage.as_index() as u8,
