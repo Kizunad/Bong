@@ -25,6 +25,7 @@ import { ZhenmaiNarrationRuntime } from "./zhenmai-narration.js";
 import { ZhenfaV2NarrationRuntime } from "./zhenfa-v2-runtime.js";
 import { AnqiNarrationRuntime } from "./anqi-narration.js";
 import { BaomaiV3NarrationRuntime } from "./baomai-v3-runtime.js";
+import { MeridianSeveredNarrationRuntime } from "./meridian-severed-runtime.js";
 import { MutationNarrationRuntime } from "./mutation-narration-runtime.js";
 import { BreakthroughCinematicNarrationRuntime } from "./breakthrough-cinematic-narration.js";
 import { createClient as createLlmClient, createMockClient, type LlmClient } from "./llm.js";
@@ -186,6 +187,10 @@ async function startAuxiliaryRuntimes(config: RuntimeConfig): Promise<RuntimeCle
   const baomaiV3Cleanup = await startBaomaiV3Runtime({
     redisUrl: config.redisUrl,
   });
+  // plan-combat-skill-feedback-bridges-v1 P0: 经脉断脉叙事 runtime（订阅 bong:meridian_severed）。
+  const meridianSeveredCleanup = await startMeridianSeveredNarrationRuntimeInternal({
+    redisUrl: config.redisUrl,
+  });
   // plan-dandao-runtime-wiring-v1 P2: 变异叙事 runtime（订阅 bong:mutation_event，stage 3+ 出 narration）。
   const mutationNarrationCleanup = await startMutationNarrationRuntime({
     redisUrl: config.redisUrl,
@@ -242,6 +247,7 @@ async function startAuxiliaryRuntimes(config: RuntimeConfig): Promise<RuntimeCle
     craftCleanup,
     anqiCleanup,
     mutationNarrationCleanup,
+    meridianSeveredCleanup,
     baomaiV3Cleanup,
     yidaoCleanup,
     zhenmaiCleanup,
@@ -523,6 +529,43 @@ async function startMutationNarrationRuntime(opts: {
       await Promise.race([runtime.disconnect(), timeout]);
     } catch (error) {
       console.warn("[tiandao] mutation narration runtime disconnect error:", error);
+    }
+  };
+}
+
+async function startMeridianSeveredNarrationRuntimeInternal(opts: {
+  redisUrl: string;
+}): Promise<() => Promise<void>> {
+  const IORedisCtor = ((Redis as unknown as { default?: unknown }).default ??
+    Redis) as new (url: string) => unknown;
+  const sub = new IORedisCtor(opts.redisUrl) as ConstructorParameters<
+    typeof MeridianSeveredNarrationRuntime
+  >[0]["sub"];
+  const pub = new IORedisCtor(opts.redisUrl) as ConstructorParameters<
+    typeof MeridianSeveredNarrationRuntime
+  >[0]["pub"];
+
+  const runtime = new MeridianSeveredNarrationRuntime({ sub, pub });
+  runtime
+    .connect()
+    .then(() =>
+      console.log("[tiandao] meridian-severed narration runtime online"),
+    )
+    .catch((error) =>
+      console.warn(
+        "[tiandao] meridian-severed narration runtime failed to start:",
+        error,
+      ),
+    );
+  return async () => {
+    const timeout = new Promise<void>((resolve) => setTimeout(resolve, 500));
+    try {
+      await Promise.race([runtime.disconnect(), timeout]);
+    } catch (error) {
+      console.warn(
+        "[tiandao] meridian-severed narration runtime disconnect error:",
+        error,
+      );
     }
   };
 }
