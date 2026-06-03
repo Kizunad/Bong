@@ -64,11 +64,10 @@ export function renderBaomaiV3Narration(event: BaomaiSkillEventV1): Narration | 
       text = `${actor} 把蓄满的一拳递出去，真元没有绕路，整条脉线只剩一记直撞。`;
       break;
     case "mountain_shake":
-      text = `${actor} 一拳砸进地面，震波沿土石滚开，近处脚步全被抬乱。`;
-      break;
     case "blood_burn":
-      text = `${actor} 割开血线换一口猛劲，血雾贴着皮肤烧成沉红。`;
-      break;
+      // 专用富事件（BAOMAI_V3_MOUNTAIN_SHAKE / BAOMAI_V3_BLOOD_BURN channel）
+      // 已承担唯一叙事来源；skill_event channel 对这两招不叙事，防止双重叙事 UX 回归。
+      return null;
     case "disperse":
       text = event.flow_rate_multiplier >= 10
         ? `${actor} 烧去半池真元重铸凡躯，五息之内脉流暴涨十倍，却没有一分免伤余地。`

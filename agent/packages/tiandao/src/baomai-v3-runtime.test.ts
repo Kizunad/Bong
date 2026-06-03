@@ -239,6 +239,138 @@ describe("BaomaiV3NarrationRuntime — multi-channel routing table", () => {
   });
 });
 
+// ──── [fix-major] mountain_shake / blood_burn 双重叙事去重 integration pin ────
+//
+// 一次 mountain_shake cast → 两条 channel 消息（skill_event + 专用事件）经
+// onMessage 路由，最终恰好只产出 1 条 narration publish（来自专用渲染器）。
+// blood_burn 同理。
+// 锁住"单次 cast → 恰 1 条 narration"不发生 UX 回归（双重叙事）。
+
+describe("integration: mountain_shake cast → exactly 1 narration (no double-narration)", () => {
+  let sub: ReturnType<typeof makeMockClient>;
+  let pub: ReturnType<typeof makeMockClient>;
+  let runtime: BaomaiV3NarrationRuntime;
+  let pubMessages: { channel: string; message: string }[];
+
+  beforeEach(async () => {
+    sub = makeMockClient();
+    pub = makeMockClient();
+    pubMessages = [];
+    pub.publish = async (channel: string, message: string) => {
+      pubMessages.push({ channel, message });
+      return 1;
+    };
+    runtime = new BaomaiV3NarrationRuntime({ sub, pub });
+    await runtime.connect();
+  });
+
+  it("mountain_shake: skill_event → null（不叙事），专用事件 → 1 条叙事，合计恰 1 条", async () => {
+    // step 1: skill_event channel — skill_id=mountain_shake 应返回 null 不 publish
+    const skillEventPayload = JSON.stringify({
+      v: 1,
+      type: "baomai_skill_event",
+      skill_id: "mountain_shake",
+      caster_id: "offline:TestPlayer",
+      tick: 500,
+      qi_invested: 1200.0,
+      damage: 0.0,
+      blood_multiplier: 1.0,
+      flow_rate_multiplier: 1.0,
+      meridian_ids: ["Ren"],
+    });
+    sub.emitMessage(BAOMAI_V3_SKILL_EVENT, skillEventPayload);
+
+    // step 2: dedicated mountain_shake channel — 应 publish 1 条
+    sub.emitMessage(BAOMAI_V3_MOUNTAIN_SHAKE, makeMountainShakePayload(2));
+
+    await new Promise((resolve) => setImmediate(resolve));
+
+    expect(
+      pubMessages.length,
+      "一次 mountain_shake cast 经两条 channel 消息路由后，AGENT_NARRATE 应恰好收到 1 条 publish（来自专用渲染器，skill_event 对 mountain_shake 返回 null）",
+    ).toBe(1);
+
+    // 确认那 1 条来自专用渲染器（含命中数信息）
+    const narrationBody = JSON.parse(pubMessages[0]!.message) as { v: number; narrations: { text: string }[] };
+    expect(
+      narrationBody.narrations[0]?.text,
+      "专用叙事应含「掀翻」或「冲击」等山震专有词",
+    ).toMatch(/掀翻|冲击|无人被抬乱/u);
+  });
+
+  it("blood_burn: skill_event → null（不叙事），专用事件 → 1 条叙事，合计恰 1 条", async () => {
+    // step 1: skill_event channel — skill_id=blood_burn 应返回 null 不 publish
+    const skillEventPayload = JSON.stringify({
+      v: 1,
+      type: "baomai_skill_event",
+      skill_id: "blood_burn",
+      caster_id: "offline:TestPlayer",
+      tick: 600,
+      qi_invested: 0.0,
+      damage: 0.0,
+      blood_multiplier: 2.0,
+      flow_rate_multiplier: 1.0,
+      meridian_ids: [],
+    });
+    sub.emitMessage(BAOMAI_V3_SKILL_EVENT, skillEventPayload);
+
+    // step 2: dedicated blood_burn channel — 应 publish 1 条
+    sub.emitMessage(BAOMAI_V3_BLOOD_BURN, makeBloodBurnPayload(false));
+
+    await new Promise((resolve) => setImmediate(resolve));
+
+    expect(
+      pubMessages.length,
+      "一次 blood_burn cast 经两条 channel 消息路由后，AGENT_NARRATE 应恰好收到 1 条 publish（来自专用渲染器，skill_event 对 blood_burn 返回 null）",
+    ).toBe(1);
+
+    // 确认那 1 条来自专用渲染器（含 qi_multiplier 信息）
+    const narrationBody = JSON.parse(pubMessages[0]!.message) as { v: number; narrations: { text: string }[] };
+    expect(
+      narrationBody.narrations[0]?.text,
+      "专用叙事应含「膨涨」或「血量」等血燃专有词",
+    ).toMatch(/膨涨|血量|腥气|濒死/u);
+  });
+
+  it("renderBaomaiV3Narration: mountain_shake skill_event → null", () => {
+    const result = renderBaomaiV3Narration({
+      v: 1,
+      type: "baomai_skill_event",
+      skill_id: "mountain_shake",
+      caster_id: "offline:TestPlayer",
+      tick: 200,
+      qi_invested: 1200.0,
+      damage: 0.0,
+      blood_multiplier: 1.0,
+      flow_rate_multiplier: 1.0,
+      meridian_ids: [],
+    });
+    expect(
+      result,
+      "skill_event channel 上 mountain_shake 必须返回 null（叙事权已交给专用渲染器）",
+    ).toBeNull();
+  });
+
+  it("renderBaomaiV3Narration: blood_burn skill_event → null", () => {
+    const result = renderBaomaiV3Narration({
+      v: 1,
+      type: "baomai_skill_event",
+      skill_id: "blood_burn",
+      caster_id: "offline:TestPlayer",
+      tick: 600,
+      qi_invested: 0.0,
+      damage: 0.0,
+      blood_multiplier: 2.0,
+      flow_rate_multiplier: 1.0,
+      meridian_ids: [],
+    });
+    expect(
+      result,
+      "skill_event channel 上 blood_burn 必须返回 null（叙事权已交给专用渲染器）",
+    ).toBeNull();
+  });
+});
+
 // ──── disperse-failed pin test ────────────────────────────────────────────────
 
 describe("renderBaomaiV3Narration — disperse flow_rate_multiplier pin", () => {

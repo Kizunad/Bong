@@ -87,6 +87,8 @@ describe("BaomaiV3NarrationRuntime", () => {
   });
 
   it("publishes narration for baomai skill events", async () => {
+    // blood_burn / mountain_shake on BAOMAI_V3_SKILL_EVENT now return null（叙事权交给专用 channel）。
+    // 此处改用 beng_quan 验证 skill_event 路由仍正常 publish。
     const pub = new FakePubSub();
     const runtime = new BaomaiV3NarrationRuntime({
       sub: new FakePubSub(),
@@ -97,12 +99,12 @@ describe("BaomaiV3NarrationRuntime", () => {
     await runtime.handlePayload(BAOMAI_V3_SKILL_EVENT, JSON.stringify({
       v: 1,
       type: "baomai_skill_event",
-      skill_id: "blood_burn",
+      skill_id: "beng_quan",
       caster_id: "offline:Azure",
       tick: 121,
       qi_invested: 0,
       damage: 0,
-      blood_multiplier: 3,
+      blood_multiplier: 1,
       flow_rate_multiplier: 1,
       meridian_ids: ["Liver", "Ren", "Du"],
     }));
@@ -110,7 +112,7 @@ describe("BaomaiV3NarrationRuntime", () => {
     expect(pub.published).toHaveLength(1);
     expect(pub.published[0].channel).toBe(AGENT_NARRATE);
     const envelope = JSON.parse(pub.published[0].message);
-    expect(envelope.narrations[0].text).toContain("血雾");
+    expect(envelope.narrations[0].text).toContain("拳骨");
     expect(runtime.stats.published).toBe(1);
   });
 
