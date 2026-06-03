@@ -44,7 +44,10 @@ export function renderVoidErosionNarration(event: VoidErosionEventV1): Narration
     ?? `虚蚀推进至 ${event.to_stage}，灵压场域正在重塑。`;
   return {
     scope: "player",
-    target: `void_erosion:advance|entity:${event.entity}|from:${event.from_stage}|to:${event.to_stage}|tick:${event.server_tick}`,
+    // target 格式：entity_id 必须在 "|" 前缀之前，server normalize_player_target 取
+    // target.split('|')[0] 与玩家 username/char_id 比对进行路由（参 agent_bridge.rs）。
+    // 对齐已工作 runtime（meridian-severed-narration.ts、mutation-narration-runtime.ts）的格式。
+    target: `${event.entity}|void_erosion:advance|from:${event.from_stage}|to:${event.to_stage}|tick:${event.server_tick}`,
     text: stageText,
     style: "narration",
   };
