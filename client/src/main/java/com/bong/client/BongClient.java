@@ -55,6 +55,7 @@ import com.bong.client.visual.particle.BongParticles;
 import com.bong.client.visual.particle.VfxBootstrap;
 import com.bong.client.visual.particle.WorldVfxDemoBootstrap;
 import com.bong.client.visual.season.SeasonVisualBootstrap;
+import com.bong.client.visual.VoidErosionRenderBootstrap;
 import com.bong.client.weapon.WeaponRenderBootstrap;
 import com.bong.client.weapon.WeaponScreenshotHarness;
 import com.bong.client.whale.WhaleDebugCommand;
@@ -131,6 +132,8 @@ public class BongClient implements ClientModInitializer {
         SpiritTreasureScreenBootstrap.register();
         WeaponRenderBootstrap.register();
         ArmorRenderBootstrap.register();
+        // plan-combat-skill-feedback-bridges-v1 P3 fix — 虚蚀模型 alpha 渲染回路
+        VoidErosionRenderBootstrap.register();
         WeaponScreenshotHarness.install();
         PreviewHarnessClient.install();
         IrisBootstrap.register();
