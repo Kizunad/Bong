@@ -90,6 +90,8 @@ public class BongNetworkHandler {
         registerCrackReadingChannel();
         registerResonanceLockChannel();
         registerResonanceLockEndChannel();
+        // plan-combat-skill-feedback-bridges-v1 P3 — 我流虚蚀视觉同步
+        registerVoidErosionVisualChannel();
         // 旧 server 推过的 realm_collapse evac HUD 是 static volatile 字段倒计时，
         // 不会在断线 / 切服 / 重连时自清。Disconnect 时强制清掉，避免上一 server
         // 的 "域崩撤离 48s" 倒计时跨 session 续命。
@@ -109,6 +111,8 @@ public class BongNetworkHandler {
                 MutationVisualState.reset();
                 com.bong.client.combat.baomai.v4.CrackReadingHudStateStore.clear();
                 com.bong.client.combat.baomai.v4.ResonanceLockHudStateStore.clear();
+                // plan-combat-skill-feedback-bridges-v1 P3 — 断线时清理虚蚀视觉状态
+                com.bong.client.visual.VoidErosionVisualStore.reset();
             })
         );
         ClientPlayConnectionEvents.JOIN.register(
@@ -487,6 +491,34 @@ public class BongNetworkHandler {
                     BongClient.LOGGER.debug("Processed bong:resonance_lock_end payload ({} bytes)", readableBytes);
                 } catch (Exception e) {
                     BongClient.LOGGER.error("Failed to parse bong:resonance_lock_end payload: {}", e.getMessage());
+                }
+            });
+        });
+    }
+
+    // ── plan-combat-skill-feedback-bridges-v1 P3 — void erosion visual channel ─────────
+
+    /**
+     * 注册 {@code bong:void_erosion_visual} channel（仿 registerMutationVisualChannel）。
+     * payload JSON → {@link com.bong.client.visual.VoidErosionVisualHandler#handle} →
+     * {@link com.bong.client.visual.VoidErosionVisualStore}。
+     *
+     * <p>stage ≥ 3 时 {@code sound_distortion_active=true}，驱动
+     * {@link com.bong.client.visual.VoidErosionHudOverlay} 渲染声音扭曲 overlay。
+     */
+    private static void registerVoidErosionVisualChannel() {
+        ClientPlayNetworking.registerGlobalReceiver(new Identifier("bong", "void_erosion_visual"), (client, handler, buf, responseSender) -> {
+            int readableBytes = buf.readableBytes();
+            byte[] bytes = new byte[readableBytes];
+            buf.readBytes(bytes);
+            String jsonPayload = ServerDataEnvelope.decodeUtf8(bytes);
+            markConnectionPayload();
+            client.execute(() -> {
+                try {
+                    com.bong.client.visual.VoidErosionVisualHandler.handle(jsonPayload);
+                    BongClient.LOGGER.debug("Processed bong:void_erosion_visual payload ({} bytes)", readableBytes);
+                } catch (Exception e) {
+                    BongClient.LOGGER.error("Failed to parse bong:void_erosion_visual payload: {}", e.getMessage());
                 }
             });
         });
