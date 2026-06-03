@@ -4542,4 +4542,44 @@ mod redis_bridge_tests {
             }
         );
     }
+
+    /// plan-combat-skill-feedback-bridges-v1 P0 — MeridianSevered arm channel pin。
+    ///
+    /// `prepare_outbound_command(RedisOutbound::MeridianSevered(..))` 必须发到
+    /// `CH_MERIDIAN_SEVERED`（"bong:meridian_severed"）而非其他频道。
+    #[test]
+    fn publishes_meridian_severed_on_correct_channel() {
+        use crate::cultivation::meridian::severed::SeveredSource;
+
+        let evt = MeridianSeveredEventV1::new(
+            "offline:TestPlayer",
+            "Lung",
+            SeveredSource::CombatWound,
+            9_999,
+        );
+
+        let command = prepare_outbound_command(RedisOutbound::MeridianSevered(evt))
+            .expect("meridian severed payload should serialize");
+
+        match command {
+            RedisIoCommand::Publish { channel, payload } => {
+                assert_eq!(
+                    channel, CH_MERIDIAN_SEVERED,
+                    "MeridianSevered must publish to CH_MERIDIAN_SEVERED; got {channel:?} — \
+                     changing the channel would silently break agent narration subscription"
+                );
+                let v: serde_json::Value = serde_json::from_str(payload.as_str()).unwrap();
+                assert_eq!(v["v"], 1);
+                assert_eq!(v["type"], "meridian_severed");
+                assert_eq!(v["entity_id"], "offline:TestPlayer");
+                assert_eq!(v["meridian_id"], "Lung");
+                assert_eq!(v["source"], "CombatWound");
+                assert_eq!(v["at_tick"], 9_999);
+            }
+            other => panic!(
+                "expected Publish command for MeridianSevered, got {other:?} — \
+                 MeridianSevered must not fan-out; single-channel publish only"
+            ),
+        }
+    }
 }
