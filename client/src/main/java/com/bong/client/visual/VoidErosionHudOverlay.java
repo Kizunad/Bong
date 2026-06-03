@@ -1,5 +1,6 @@
 package com.bong.client.visual;
 
+import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.gui.DrawContext;
 import net.minecraft.client.font.TextRenderer;
 
@@ -89,11 +90,40 @@ public final class VoidErosionHudOverlay {
      * <p>fix4：vignette alpha 通过 {@code fadeProgress} lerp，
      * 进入时 fade-in，退出时 fade-out，而非二值切换。
      *
+     * <p>fix-per-entity：通过本地玩家名构造 wire ID（"offline:{name}"），
+     * 调用 {@link VoidErosionVisualStore#snapshotForEntity(String)} 只取
+     * 本机玩家的虚蚀状态，多人场景下其他玩家的虚蚀不串扰本地 HUD vignette。
+     *
      * @param context  DrawContext（Fabric 1.20.1）
      * @param renderer 字体渲染器
      */
     public static void render(DrawContext context, TextRenderer renderer) {
-        VoidErosionVisualStore.State state = VoidErosionVisualStore.snapshot();
+        // 取本机玩家 wire ID，与 server emit 的 "offline:{username}" 对齐
+        MinecraftClient mc = MinecraftClient.getInstance();
+        String localWireId = (mc.player != null)
+                ? "offline:" + mc.player.getEntityName()
+                : null;
+        VoidErosionVisualStore.State state = (localWireId != null)
+                ? VoidErosionVisualStore.snapshotForEntity(localWireId)
+                : null;
+        renderWithState(context, renderer, state);
+    }
+
+    /**
+     * 核心渲染逻辑，接受已解析的 per-entity State（可为 null）。
+     *
+     * <p>从 {@link #render} 中提取，方便单元测试直接注入 state，
+     * 绕过 {@link MinecraftClient#getInstance()}（测试环境无 MC 上下文）。
+     *
+     * <p><b>多人 HUD 只反映本机玩家虚蚀：</b> 调用方负责按本地玩家 wire ID
+     * 查 {@link VoidErosionVisualStore#snapshotForEntity} 后传入，其他玩家
+     * 的 erosion state 永远不应被传入此方法作为 "local state"。
+     *
+     * @param context  DrawContext（Fabric 1.20.1）
+     * @param renderer 字体渲染器
+     * @param state    本机玩家的虚蚀状态快照，或 null（无虚蚀时）
+     */
+    static void renderWithState(DrawContext context, TextRenderer renderer, VoidErosionVisualStore.State state) {
         int stage = (state != null) ? state.stage() : 0;
         // fix5: voidDistortionActive（原 soundDistortionActive）仅控制视觉扭曲 overlay
         boolean voidDistortionActive = (state != null) && state.voidDistortionActive();
