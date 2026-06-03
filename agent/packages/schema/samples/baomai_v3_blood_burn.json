@@ -1,0 +1,20 @@
+[
+  {
+    "v": 1,
+    "caster_id": "offline:TestPlayer",
+    "tick": 300,
+    "hp_burned": 150.0,
+    "qi_multiplier": 3.5,
+    "active_until_tick": 360,
+    "ended_in_near_death": false
+  },
+  {
+    "v": 1,
+    "caster_id": "offline:VoidMaster",
+    "tick": 500,
+    "hp_burned": 300.0,
+    "qi_multiplier": 5.0,
+    "active_until_tick": 500,
+    "ended_in_near_death": true
+  }
+]

@@ -587,23 +587,25 @@ pub fn cast_disperse(
             .then_some(now_tick.saturating_add(profile.duration_ticks)),
         failed_reason: (!profile.has_transcendence).then_some("凡躯不应".to_string()),
     });
-    if profile.has_transcendence {
-        emit_skill_event(
-            world,
-            BaomaiSkillEvent {
-                skill: BaomaiSkillId::Disperse,
-                caster,
-                target: None,
-                tick: now_tick,
-                qi_invested: outcome.qi_max_lost,
-                damage: 0.0,
-                radius_blocks: None,
-                blood_multiplier: active_blood_multiplier(world, caster, now_tick),
-                flow_rate_multiplier: outcome.flow_rate_multiplier,
-                meridian_dependencies: MeridianId::ALL.to_vec(),
-            },
-        );
-    }
+    // plan-combat-skill-feedback-bridges-v1 P2 disperse-failed:
+    // 无论是否超越档，一律 emit BaomaiSkillEvent；非超越档用 flow_rate_multiplier=1.0
+    // 命中 agent baomai-v3-runtime.ts 中 flow_rate_multiplier < 10 的 else 分支
+    // （「强行散功，凡躯没有应声」）。
+    emit_skill_event(
+        world,
+        BaomaiSkillEvent {
+            skill: BaomaiSkillId::Disperse,
+            caster,
+            target: None,
+            tick: now_tick,
+            qi_invested: outcome.qi_max_lost,
+            damage: 0.0,
+            radius_blocks: None,
+            blood_multiplier: active_blood_multiplier(world, caster, now_tick),
+            flow_rate_multiplier: outcome.flow_rate_multiplier,
+            meridian_dependencies: MeridianId::ALL.to_vec(),
+        },
+    );
     record_practice(world, caster, BaomaiSkillId::Disperse);
     if profile.has_transcendence {
         if let Some(position) = world.get::<Position>(caster).map(|p| p.get()) {

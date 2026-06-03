@@ -13,7 +13,10 @@ use crate::schema::alchemy::{
 };
 use crate::schema::anticheat::AntiCheatReportV1;
 use crate::schema::armor_event::ArmorDurabilityChangedV1;
-use crate::schema::baomai_v3::BaomaiSkillEventV1;
+use crate::schema::baomai_v3::{
+    BaomaiSkillEventV1, BaomaiV3BloodBurnV1, BaomaiV3MountainShakeV1, BaomaiV3OverloadRippleV1,
+    BaomaiV3TranscendenceExpiredV1,
+};
 use crate::schema::baomai_v4::{
     BaomaiV4IronCocoonStageUpV1, BaomaiV4ResonanceLockEndV1, BaomaiV4ResonanceLockV1,
     BaomaiV4ScarCircuitBrokenV1, BaomaiV4ScarCircuitFormedV1,
@@ -24,9 +27,10 @@ use crate::schema::channels::{
     CH_ALCHEMY_INTERVENTION_RESULT, CH_ALCHEMY_SESSION_END, CH_ALCHEMY_SESSION_START,
     CH_ANQI_CARRIER_ABRASION, CH_ANQI_CARRIER_CHARGED, CH_ANQI_CARRIER_IMPACT,
     CH_ANQI_CONTAINER_SWAP, CH_ANQI_ECHO_FRACTAL, CH_ANQI_MULTI_SHOT, CH_ANQI_PROJECTILE_DESPAWNED,
-    CH_ANQI_QI_INJECTION, CH_ANTICHEAT, CH_ARMOR_DURABILITY_CHANGED, CH_BAOMAI_V3_SKILL_EVENT,
-    CH_BAOMAI_V4_IRON_COCOON_STAGE_UP, CH_BAOMAI_V4_RESONANCE_LOCK,
-    CH_BAOMAI_V4_RESONANCE_LOCK_END, CH_BAOMAI_V4_SCAR_CIRCUIT_BROKEN,
+    CH_ANQI_QI_INJECTION, CH_ANTICHEAT, CH_ARMOR_DURABILITY_CHANGED, CH_BAOMAI_V3_BLOOD_BURN,
+    CH_BAOMAI_V3_MOUNTAIN_SHAKE, CH_BAOMAI_V3_OVERLOAD_RIPPLE, CH_BAOMAI_V3_SKILL_EVENT,
+    CH_BAOMAI_V3_TRANSCENDENCE_EXPIRED, CH_BAOMAI_V4_IRON_COCOON_STAGE_UP,
+    CH_BAOMAI_V4_RESONANCE_LOCK, CH_BAOMAI_V4_RESONANCE_LOCK_END, CH_BAOMAI_V4_SCAR_CIRCUIT_BROKEN,
     CH_BAOMAI_V4_SCAR_CIRCUIT_FORMED, CH_BONE_COIN_TICK, CH_BOTANY_ECOLOGY,
     CH_BREAKTHROUGH_CINEMATIC, CH_BREAKTHROUGH_EVENT, CH_COMBAT_REALTIME, CH_COMBAT_SUMMARY,
     CH_CULTIVATION_DEATH, CH_DEATH_CINEMATIC, CH_DEATH_INSIGHT, CH_DUGU_POISON_PROGRESS,
@@ -223,6 +227,14 @@ pub enum RedisOutbound {
     ZhenfaV2Event(ZhenfaV2EventV1),
     ZhenmaiSkillEvent(ZhenmaiSkillEventV1),
     BaomaiV3SkillEvent(BaomaiSkillEventV1),
+    /// plan-combat-skill-feedback-bridges-v1 P2 — 山震震波事件（bong:baomai_v3/mountain_shake）。
+    BaomaiV3MountainShake(BaomaiV3MountainShakeV1),
+    /// plan-combat-skill-feedback-bridges-v1 P2 — 血燃HP→真元事件（bong:baomai_v3/blood_burn）。
+    BaomaiV3BloodBurn(BaomaiV3BloodBurnV1),
+    /// plan-combat-skill-feedback-bridges-v1 P2 — 超越到期事件（bong:baomai_v3/transcendence_expired）。
+    BaomaiV3TranscendenceExpired(BaomaiV3TranscendenceExpiredV1),
+    /// plan-combat-skill-feedback-bridges-v1 P2 — 过载涟漪事件（bong:baomai_v3/overload_ripple）。
+    BaomaiV3OverloadRipple(BaomaiV3OverloadRippleV1),
     CarrierCharged(CarrierChargedEventV1),
     CarrierImpact(CarrierImpactEventV1),
     ProjectileDespawned(ProjectileDespawnedEventV1),
@@ -1211,6 +1223,49 @@ fn prepare_outbound_command(message: RedisOutbound) -> Result<RedisIoCommand, Va
             })?;
             Ok(RedisIoCommand::Publish {
                 channel: CH_BAOMAI_V3_SKILL_EVENT,
+                payload,
+            })
+        }
+        // plan-combat-skill-feedback-bridges-v1 P2 — 爆脉 v3 残余事件桥
+        RedisOutbound::BaomaiV3MountainShake(evt) => {
+            let payload = serde_json::to_string(&evt).map_err(|error| {
+                ValidationError::new(format!(
+                    "failed to serialize BaomaiV3MountainShakeV1: {error}"
+                ))
+            })?;
+            Ok(RedisIoCommand::Publish {
+                channel: CH_BAOMAI_V3_MOUNTAIN_SHAKE,
+                payload,
+            })
+        }
+        RedisOutbound::BaomaiV3BloodBurn(evt) => {
+            let payload = serde_json::to_string(&evt).map_err(|error| {
+                ValidationError::new(format!("failed to serialize BaomaiV3BloodBurnV1: {error}"))
+            })?;
+            Ok(RedisIoCommand::Publish {
+                channel: CH_BAOMAI_V3_BLOOD_BURN,
+                payload,
+            })
+        }
+        RedisOutbound::BaomaiV3TranscendenceExpired(evt) => {
+            let payload = serde_json::to_string(&evt).map_err(|error| {
+                ValidationError::new(format!(
+                    "failed to serialize BaomaiV3TranscendenceExpiredV1: {error}"
+                ))
+            })?;
+            Ok(RedisIoCommand::Publish {
+                channel: CH_BAOMAI_V3_TRANSCENDENCE_EXPIRED,
+                payload,
+            })
+        }
+        RedisOutbound::BaomaiV3OverloadRipple(evt) => {
+            let payload = serde_json::to_string(&evt).map_err(|error| {
+                ValidationError::new(format!(
+                    "failed to serialize BaomaiV3OverloadRippleV1: {error}"
+                ))
+            })?;
+            Ok(RedisIoCommand::Publish {
+                channel: CH_BAOMAI_V3_OVERLOAD_RIPPLE,
                 payload,
             })
         }
@@ -2937,6 +2992,122 @@ mod redis_bridge_tests {
                 assert_eq!(payload["meridian_ids"][0], "Ren");
             }
             other => panic!("expected baomai PUBLISH command, got {other:?}"),
+        }
+    }
+
+    // plan-combat-skill-feedback-bridges-v1 P2 — 爆脉 v3 残余事件桥 channel pin tests
+
+    #[test]
+    fn baomai_v3_mountain_shake_publishes_on_correct_channel() {
+        let mut evt = crate::schema::baomai_v3::BaomaiV3MountainShakeV1::new(
+            "offline:Player".to_string(),
+            3,
+            200,
+        );
+        evt.qi_spent = 1200.0;
+        evt.radius_blocks = 5.0;
+        evt.shock_damage = 420.0;
+
+        let command = prepare_outbound_command(RedisOutbound::BaomaiV3MountainShake(evt))
+            .expect("mountain shake payload should serialize");
+
+        match command {
+            RedisIoCommand::Publish { channel, payload } => {
+                assert_eq!(
+                    channel, CH_BAOMAI_V3_MOUNTAIN_SHAKE,
+                    "mountain_shake must publish to bong:baomai_v3/mountain_shake"
+                );
+                let json: Value =
+                    serde_json::from_str(&payload).expect("mountain shake should be valid JSON");
+                assert_eq!(json["v"], 1);
+                assert_eq!(json["affected_count"], 3);
+                assert_eq!(json["qi_spent"], 1200.0);
+                assert_eq!(json["radius_blocks"], 5.0);
+                assert_eq!(json["shock_damage"], 420.0);
+            }
+            other => panic!("expected mountain_shake PUBLISH, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn baomai_v3_blood_burn_publishes_near_death_on_correct_channel() {
+        let mut evt =
+            crate::schema::baomai_v3::BaomaiV3BloodBurnV1::new("offline:Player".to_string(), 300);
+        evt.hp_burned = 300.0;
+        evt.qi_multiplier = 5.0;
+        evt.active_until_tick = 300;
+        evt.ended_in_near_death = true;
+
+        let command = prepare_outbound_command(RedisOutbound::BaomaiV3BloodBurn(evt))
+            .expect("blood burn payload should serialize");
+
+        match command {
+            RedisIoCommand::Publish { channel, payload } => {
+                assert_eq!(
+                    channel, CH_BAOMAI_V3_BLOOD_BURN,
+                    "blood_burn must publish to bong:baomai_v3/blood_burn"
+                );
+                let json: Value =
+                    serde_json::from_str(&payload).expect("blood burn should be valid JSON");
+                assert_eq!(json["ended_in_near_death"], true);
+                assert_eq!(json["qi_multiplier"], 5.0);
+            }
+            other => panic!("expected blood_burn PUBLISH, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn baomai_v3_transcendence_expired_publishes_on_correct_channel() {
+        let evt = crate::schema::baomai_v3::BaomaiV3TranscendenceExpiredV1::new(
+            "offline:Player".to_string(),
+            700,
+        );
+
+        let command = prepare_outbound_command(RedisOutbound::BaomaiV3TranscendenceExpired(evt))
+            .expect("transcendence expired payload should serialize");
+
+        match command {
+            RedisIoCommand::Publish { channel, payload } => {
+                assert_eq!(
+                    channel, CH_BAOMAI_V3_TRANSCENDENCE_EXPIRED,
+                    "transcendence_expired must publish to bong:baomai_v3/transcendence_expired"
+                );
+                let json: Value = serde_json::from_str(&payload)
+                    .expect("transcendence expired should be valid JSON");
+                assert_eq!(json["v"], 1);
+                assert_eq!(json["tick"], 700);
+            }
+            other => panic!("expected transcendence_expired PUBLISH, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn baomai_v3_overload_ripple_publishes_on_correct_channel() {
+        let mut evt = crate::schema::baomai_v3::BaomaiV3OverloadRippleV1::new(
+            "offline:Player".to_string(),
+            150,
+            crate::schema::baomai_v3::BaomaiSkillIdV1::BengQuan,
+        );
+        evt.severity_delta = 0.05;
+        evt.total_severity = 0.35;
+        evt.meridian_ids = vec!["LargeIntestine".to_string()];
+
+        let command = prepare_outbound_command(RedisOutbound::BaomaiV3OverloadRipple(evt))
+            .expect("overload ripple payload should serialize");
+
+        match command {
+            RedisIoCommand::Publish { channel, payload } => {
+                assert_eq!(
+                    channel, CH_BAOMAI_V3_OVERLOAD_RIPPLE,
+                    "overload_ripple must publish to bong:baomai_v3/overload_ripple"
+                );
+                let json: Value =
+                    serde_json::from_str(&payload).expect("overload ripple should be valid JSON");
+                assert_eq!(json["skill_id"], "beng_quan");
+                assert_eq!(json["severity_delta"], 0.05);
+                assert_eq!(json["meridian_ids"][0], "LargeIntestine");
+            }
+            other => panic!("expected overload_ripple PUBLISH, got {other:?}"),
         }
     }
 
