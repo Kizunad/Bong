@@ -286,9 +286,27 @@ def generate_openai(
     images: list[bytes] = []
     for item in data.get("data", []):
         b64 = item.get("b64_json")
-        if not b64:
+        if b64:
+            images.append(base64.b64decode(b64))
             continue
-        images.append(base64.b64decode(b64))
+        # 部分渠道（如 image.daydream.wiki）返回 url（可能是相对路径）而非 b64
+        url = item.get("url")
+        if not url:
+            continue
+        full = url if url.startswith("http") else base_url.rstrip("/") + (
+            url if url.startswith("/") else "/" + url
+        )
+        dreq = urllib.request.Request(
+            full,
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "User-Agent": CLIPROXY_FAKE_UA,
+            },
+        )
+        with urllib.request.urlopen(dreq, timeout=180) as dresp:
+            if dresp.status != 200:
+                raise urllib.error.URLError(f"image fetch status {dresp.status} @ {full}")
+            images.append(dresp.read())
 
     usage = data.get("usage", {})
     if usage:
@@ -342,9 +360,27 @@ def generate_cliproxy_images(
     images: list[bytes] = []
     for item in data.get("data", []):
         b64 = item.get("b64_json")
-        if not b64:
+        if b64:
+            images.append(base64.b64decode(b64))
             continue
-        images.append(base64.b64decode(b64))
+        # 部分渠道（如 image.daydream.wiki）返回 url（可能是相对路径）而非 b64
+        url = item.get("url")
+        if not url:
+            continue
+        full = url if url.startswith("http") else base_url.rstrip("/") + (
+            url if url.startswith("/") else "/" + url
+        )
+        dreq = urllib.request.Request(
+            full,
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "User-Agent": CLIPROXY_FAKE_UA,
+            },
+        )
+        with urllib.request.urlopen(dreq, timeout=180) as dresp:
+            if dresp.status != 200:
+                raise urllib.error.URLError(f"image fetch status {dresp.status} @ {full}")
+            images.append(dresp.read())
 
     usage = data.get("usage", {})
     if usage:
