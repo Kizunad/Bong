@@ -1,4 +1,4 @@
-use valence::prelude::{EventReader, Query, Res, UniqueId};
+use valence::prelude::{EventReader, Query, Res, UniqueId, Username};
 
 use crate::combat::woliu::{
     projectile_drained_payload, vortex_backfire_payload, ProjectileQiDrainedEvent,
@@ -166,19 +166,23 @@ fn backfire_cause_wire(cause: BackfireCauseV2) -> &'static str {
 /// 仿 `publish_woliu_v2_backfire_events` 结构；读取 `VoidErosion.cumulative_erosion`
 /// 以填充 payload（如实体已消亡则跳过）。
 ///
+/// entity_id 格式：`"offline:{username}"`（有 Username 组件时）或 `"char:{bits}"`（NPC/无名实体）。
+/// 仿 meridian_severed_emit.rs:90 的 resolve_entity_id 逻辑，保证 agent narration 路由
+/// normalize_player_target 能命中真实玩家（UUID 格式永不命中）。
+///
 /// TODO(P3-ext): emit_echo_replay_vfx - ScheduledEcho tick system pending
 pub fn publish_void_erosion_advance_events(
     redis: Res<RedisBridgeResource>,
     mut events: EventReader<VoidErosionAdvanceEvent>,
-    unique_ids: Query<&UniqueId>,
+    usernames: Query<&Username>,
     erosion_query: Query<&crate::combat::woliu_v2::erosion::VoidErosion>,
     clock: Res<crate::combat::CombatClock>,
 ) {
     for event in events.read() {
-        let entity_id = match unique_ids.get(event.entity) {
-            Ok(uid) => uid.0.to_string(),
-            Err(_) => format!("entity:{}", event.entity.to_bits()),
-        };
+        let entity_id = usernames
+            .get(event.entity)
+            .map(|u| format!("offline:{}", u.0))
+            .unwrap_or_else(|_| format!("char:{}", event.entity.to_bits()));
         let cumulative_erosion = erosion_query
             .get(event.entity)
             .map(|e| e.cumulative_erosion)
