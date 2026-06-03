@@ -342,6 +342,10 @@ export const CHANNELS = {
   /** Server → Agent: 过载涟漪事件（baomai_v3 overload ripple，agent narration） */
   BAOMAI_V3_OVERLOAD_RIPPLE: "bong:baomai_v3/overload_ripple",
 
+  // ─── 我流虚蚀（plan-combat-skill-feedback-bridges-v1 P3） ────────────────────
+  /** Server → Agent: 虚蚀阶段推进事件（我流虚蚀整链激活，agent narration） */
+  VOID_EROSION_EVENT: "bong:void_erosion_event",
+
   // ─── 爆脉 v4（plan-combat-skill-feedback-bridges-v1 P1） ────────────────────
   /** Server → Agent: 疤纹回路形成（baomai_v4 scar_circuit formed，agent narration） */
   BAOMAI_V4_SCAR_CIRCUIT_FORMED: "bong:baomai_v4/scar_circuit_formed",
@@ -450,6 +454,8 @@ export const REDIS_V1_CHANNELS = [
   CHANNELS.CRAFT_OUTCOME,
   CHANNELS.CRAFT_RECIPE_UNLOCKED,
   CHANNELS.MUTATION_EVENT,
+  // plan-combat-skill-feedback-bridges-v1 P3 — 我流虚蚀阶段推进叙事通道
+  CHANNELS.VOID_EROSION_EVENT,
   // plan-combat-skill-feedback-bridges-v1 P1 — 爆脉 v4 叙事通道
   CHANNELS.BAOMAI_V4_SCAR_CIRCUIT_FORMED,
   CHANNELS.BAOMAI_V4_SCAR_CIRCUIT_BROKEN,
