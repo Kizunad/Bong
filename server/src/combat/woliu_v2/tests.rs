@@ -2350,3 +2350,174 @@ fn erosion_amount_for_skill_all_variants_positive_finite() {
         );
     }
 }
+
+// ────────────────────────────────────────────────────────────────────
+// plan-combat-skill-feedback-bridges-v1 P3 fix2 — App 级累积链集成测试
+// 证明 resolve_woliu_v2_skill → apply_skill_erosion 链路在 caster 带
+// VoidErosion component 时正确增加 cumulative_erosion。
+// ────────────────────────────────────────────────────────────────────
+
+/// spawn 带 VoidErosion 组件的 caster（修复 #2：apply_skill_erosion 只在组件存在时工作）。
+fn spawn_actor_with_erosion(app: &mut App, realm: Realm, qi_current: f64) -> Entity {
+    app.world_mut()
+        .spawn((
+            Cultivation {
+                realm,
+                qi_current,
+                qi_max: 1_000.0,
+                ..Default::default()
+            },
+            MeridianSystem::default(),
+            SkillBarBindings::default(),
+            Position::new([8.0, 66.0, 8.0]),
+            CurrentDimension(DimensionKind::Overworld),
+            VoidErosion::default(),
+        ))
+        .id()
+}
+
+#[test]
+fn resolve_woliu_skill_accumulates_erosion_on_cast() {
+    // P3 fix2 核心集成测试：
+    // spawn caster(带 VoidErosion::default) → resolve VoidVortex →
+    // 断言 cumulative_erosion 按 VOID_VORTEX_EROSION 增长
+    use super::erosion::VOID_VORTEX_EROSION;
+    let mut app = app_with_void_erosion(10);
+    let caster = spawn_actor_with_erosion(&mut app, Realm::Void, 200.0);
+    open_all_meridians(&mut app, caster, 10_000.0);
+
+    let result = resolve_woliu_v2_skill(app.world_mut(), caster, 0, None, WoliuSkillId::VoidVortex);
+    // CastResult::Started 或 Rejected(QiInsufficient) 都可以，只测试 erosion 副作用
+    // VoidVortex 需要足够 qi；actor 有 200.0 qi，VoidVortex qi cost = VOID_VORTEX_QI_COST(40.0)
+    assert!(
+        matches!(result, CastResult::Started { .. }),
+        "VoidVortex cast should succeed with 200 qi, got {result:?}"
+    );
+
+    let erosion = app
+        .world()
+        .get::<VoidErosion>(caster)
+        .expect("VoidErosion component should exist on caster after spawn_actor_with_erosion");
+    assert!(
+        (erosion.cumulative_erosion - VOID_VORTEX_EROSION).abs() < 1e-9,
+        "VoidVortex cast should accumulate exactly VOID_VORTEX_EROSION={VOID_VORTEX_EROSION}, \
+         got cumulative_erosion={}",
+        erosion.cumulative_erosion
+    );
+}
+
+#[test]
+fn resolve_woliu_skill_no_erosion_without_component() {
+    // P3 fix2 文档测试：
+    // apply_skill_erosion 在 caster 缺 VoidErosion 组件时静默 no-op（当前行为），
+    // 本测试锁住此行为，防止意外报错/panic。
+    // 注：生产路径中 caster 应始终带 VoidErosion（由 spawn_actor_with_erosion 保证），
+    // 但旧路径 spawn_actor 不带，测试要确保不 panic。
+    let mut app = app_with_void_erosion(10);
+    let caster = spawn_actor(&mut app, Realm::Void, 200.0);
+    open_all_meridians(&mut app, caster, 10_000.0);
+
+    // 不带 VoidErosion 组件 — apply_skill_erosion 应静默 no-op，不 panic
+    let result = resolve_woliu_v2_skill(app.world_mut(), caster, 0, None, WoliuSkillId::VoidVortex);
+    assert!(
+        matches!(result, CastResult::Started { .. }),
+        "cast without VoidErosion component should not panic and should succeed; got {result:?}"
+    );
+    // 确认组件确实不存在（不被自动插入）
+    assert!(
+        app.world().get::<VoidErosion>(caster).is_none(),
+        "VoidErosion component should NOT be auto-inserted by resolve_woliu_v2_skill"
+    );
+}
+
+#[test]
+fn resolve_erosion_skills_accumulate_correct_constants() {
+    // 各虚蚀路径招式（VoidVortex、SwallowingVortex、VortexEcho）分别核验 erosion 量
+    use super::erosion::{ECHO_EROSION, SWALLOWING_RELEASE_EROSION, VOID_VORTEX_EROSION};
+    struct Case {
+        skill: WoliuSkillId,
+        expected: f64,
+        qi_needed: f64,
+    }
+    let cases = [
+        Case {
+            skill: WoliuSkillId::VoidVortex,
+            expected: VOID_VORTEX_EROSION,
+            qi_needed: 200.0,
+        },
+        Case {
+            skill: WoliuSkillId::SwallowingVortex,
+            expected: SWALLOWING_RELEASE_EROSION,
+            qi_needed: 200.0,
+        },
+        Case {
+            skill: WoliuSkillId::VortexEcho,
+            expected: ECHO_EROSION,
+            qi_needed: 200.0,
+        },
+    ];
+    for case in &cases {
+        let mut app = app_with_void_erosion(10);
+        let caster = spawn_actor_with_erosion(&mut app, Realm::Void, case.qi_needed);
+        open_all_meridians(&mut app, caster, 10_000.0);
+        let result = resolve_woliu_v2_skill(app.world_mut(), caster, 0, None, case.skill);
+        assert!(
+            matches!(result, CastResult::Started { .. }),
+            "{:?} cast should succeed with {} qi; got {result:?}",
+            case.skill,
+            case.qi_needed
+        );
+        let erosion = app.world().get::<VoidErosion>(caster).unwrap();
+        assert!(
+            (erosion.cumulative_erosion - case.expected).abs() < 1e-9,
+            "{:?} expected erosion={}, got {}",
+            case.skill,
+            case.expected,
+            erosion.cumulative_erosion
+        );
+    }
+}
+
+#[test]
+fn erosion_path_does_not_produce_qi_transfer_events() {
+    // 守恒纠偏：erosion 路径（apply_skill_erosion）不生产 QiTransfer 事件，
+    // QiTransfer 只在 build_cast_qi_transfers → Channeling 路径产生。
+    // 本测试断言：VoidVortex cast 后 QiTransfer 事件数量等于基础施法路径（不因 erosion 增加）。
+    let mut app_with = app_with_void_erosion(10);
+    let caster_with = spawn_actor_with_erosion(&mut app_with, Realm::Void, 200.0);
+    open_all_meridians(&mut app_with, caster_with, 10_000.0);
+    resolve_woliu_v2_skill(
+        app_with.world_mut(),
+        caster_with,
+        0,
+        None,
+        WoliuSkillId::VoidVortex,
+    );
+    let count_with_erosion = app_with
+        .world()
+        .resource::<Events<QiTransfer>>()
+        .iter_current_update_events()
+        .count();
+
+    let mut app_without = app_with_void_erosion(10);
+    let caster_without = spawn_actor(&mut app_without, Realm::Void, 200.0);
+    open_all_meridians(&mut app_without, caster_without, 10_000.0);
+    resolve_woliu_v2_skill(
+        app_without.world_mut(),
+        caster_without,
+        0,
+        None,
+        WoliuSkillId::VoidVortex,
+    );
+    let count_without_erosion = app_without
+        .world()
+        .resource::<Events<QiTransfer>>()
+        .iter_current_update_events()
+        .count();
+
+    assert_eq!(
+        count_with_erosion, count_without_erosion,
+        "erosion path must not produce extra QiTransfer events: \
+         with_erosion={count_with_erosion} != without_erosion={count_without_erosion}"
+    );
+}
