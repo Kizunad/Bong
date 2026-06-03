@@ -18,12 +18,12 @@ public final class VoidErosionVisualStore {
     /**
      * 替换当前虚蚀视觉状态（由 VoidErosionVisualHandler 在 Minecraft 主线程调用）。
      *
-     * @param entityId          实体 UUID / wire id
-     * @param stage             虚蚀阶段（0-4）
-     * @param cumulativeErosion 累计虚蚀值
-     * @param ambientActive     常驻涡流是否激活
-     * @param modelAlpha        模型透明度（0.0~1.0，阶段 4 = 0.4）
-     * @param soundDistortion   声音扭曲 overlay 是否激活（阶段 3+）
+     * @param entityId           实体 UUID / wire id
+     * @param stage              虚蚀阶段（0-4）
+     * @param cumulativeErosion  累计虚蚀值
+     * @param ambientActive      常驻涡流是否激活
+     * @param modelAlpha         模型透明度（0.0~1.0，阶段 4 = 0.4）
+     * @param voidDistortion     虚蚀扭曲视觉 overlay 是否激活（阶段 3+，无音频逻辑）
      */
     public static void replace(
             String entityId,
@@ -31,9 +31,9 @@ public final class VoidErosionVisualStore {
             double cumulativeErosion,
             boolean ambientActive,
             float modelAlpha,
-            boolean soundDistortion
+            boolean voidDistortion
     ) {
-        CURRENT.set(new State(entityId, stage, cumulativeErosion, ambientActive, modelAlpha, soundDistortion));
+        CURRENT.set(new State(entityId, stage, cumulativeErosion, ambientActive, modelAlpha, voidDistortion));
     }
 
     /** 返回当前快照，或 null（如果尚未收到 server payload）。 */
@@ -56,7 +56,11 @@ public final class VoidErosionVisualStore {
             boolean ambientActive,
             /** 玩家模型透明度，1.0 = 完全不透明，0.4 = 阶段 4 最低值。 */
             float modelAlpha,
-            /** 声音扭曲 HUD overlay 是否激活（阶段 3+）。 */
-            boolean soundDistortionActive
+            /**
+             * 虚蚀扭曲视觉 HUD overlay 是否激活（阶段 3+）。
+             * 仅控制客户端视觉 vignette；音效经独立 bong:audio/play channel 触发，
+             * 不在本字段范围内（fix5：原 soundDistortionActive，去掉 sound 字样防名实不符）。
+             */
+            boolean voidDistortionActive
     ) {}
 }

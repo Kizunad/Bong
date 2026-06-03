@@ -50,7 +50,9 @@ public final class VoidErosionVisualHandler {
             float modelAlpha = root.has("model_alpha")
                     ? Math.max(0.0f, Math.min(1.0f, root.get("model_alpha").getAsFloat()))
                     : 1.0f;
-            boolean soundDistortionActive = root.has("sound_distortion_active")
+            // fix5: wire 字段名保持 sound_distortion_active（服务端 payload 不变），
+            // 仅客户端内部存储重命名为 voidDistortionActive（去掉 sound 字样，避免名实不符）
+            boolean voidDistortionActive = root.has("sound_distortion_active")
                     && root.get("sound_distortion_active").getAsBoolean();
 
             VoidErosionVisualStore.replace(
@@ -59,7 +61,7 @@ public final class VoidErosionVisualHandler {
                     cumulativeErosion,
                     ambientActive,
                     modelAlpha,
-                    soundDistortionActive
+                    voidDistortionActive
             );
         } catch (Exception e) {
             // 解析失败不崩游戏，静默跳过
