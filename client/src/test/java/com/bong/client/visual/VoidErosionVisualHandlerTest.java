@@ -100,7 +100,7 @@ class VoidErosionVisualHandlerTest {
     // ── replace / overwrite ──────────────────────────────────────────────────
 
     @Test
-    void secondHandleReplacesFirstState() {
+    void secondHandleStoresSecondEntityIndependently() {
         VoidErosionVisualHandler.handle("""
                 {"entity_id":"a","stage":1,"cumulative_erosion":25.0,"ambient_active":false,
                 "model_alpha":0.85,"sound_distortion_active":false,"server_tick":100}""");
@@ -108,11 +108,15 @@ class VoidErosionVisualHandlerTest {
                 {"entity_id":"b","stage":3,"cumulative_erosion":250.0,"ambient_active":true,
                 "model_alpha":0.55,"sound_distortion_active":true,"server_tick":200}""");
 
-        VoidErosionVisualStore.State state = VoidErosionVisualStore.snapshot();
-        assertNotNull(state);
-        assertEquals("b", state.entityId(),
-                "store should reflect the latest handle() call");
-        assertEquals(3, state.stage());
+        // per-entity store: 两个实体独立存储
+        VoidErosionVisualStore.State stateA = VoidErosionVisualStore.snapshotForEntity("a");
+        VoidErosionVisualStore.State stateB = VoidErosionVisualStore.snapshotForEntity("b");
+        assertNotNull(stateA, "entity 'a' 应有状态");
+        assertNotNull(stateB, "entity 'b' 应有状态");
+        assertEquals(1, stateA.stage(), "entity 'a' 应为阶段 1");
+        assertEquals(3, stateB.stage(), "entity 'b' 应为阶段 3");
+        assertEquals(0.85f, stateA.modelAlpha(), 0.001f, "entity 'a' modelAlpha 不应被 'b' 覆盖");
+        assertEquals(0.55f, stateB.modelAlpha(), 0.001f, "entity 'b' modelAlpha 应为 0.55");
     }
 
     // ── edge / error cases ───────────────────────────────────────────────────
