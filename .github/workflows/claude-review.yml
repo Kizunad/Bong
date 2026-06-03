@@ -15,16 +15,19 @@ permissions:
   actions: read
 
 concurrency:
-  group: claude-review-${{ github.event.issue.number || github.run_id }}
-  cancel-in-progress: true
+  # 含 comment.id + 不取消进行中：否则同一 PR 上后续的 bot 评论(CodeRabbit/claude)
+  # 会进同一组、用 cancel-in-progress 把正在跑的真 review 杀掉(实测 #388 踩到)。
+  group: claude-review-${{ github.event.issue.number || github.run_id }}-${{ github.event.comment.id || github.run_id }}
+  cancel-in-progress: false
 
 jobs:
   review:
-    # 仅当 PR 评论里 @claude、且评论者有写权限（OWNER/MEMBER/COLLABORATOR）时运行
+    # 仅当 PR 评论里 @claude_workflow_review、且评论者有写权限（OWNER/MEMBER/COLLABORATOR）时运行。
+    # 用独立触发词（不是裸 @claude）以免和通用 claude-mention.yml 响应器双触发。
     if: >-
       github.event_name == 'workflow_dispatch' ||
       (github.event.issue.pull_request != null &&
-       contains(github.event.comment.body, '@claude') &&
+       contains(github.event.comment.body, '@claude_workflow_review') &&
        contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association))
     runs-on: ubuntu-latest
     timeout-minutes: 30
