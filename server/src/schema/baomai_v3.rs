@@ -278,4 +278,118 @@ mod tests {
             );
         }
     }
+
+    // plan-combat-skill-feedback-bridges-v1 P2 — 双端 sample 对拍（Rust from_str）
+    // 与 TS 端 baomai-v3-p2.test.ts 消费同一批 samples/*.json 文件，确保双端一致。
+
+    #[test]
+    fn mountain_shake_v1_deserializes_from_shared_sample() {
+        // 反序列化共享 sample（与 TS 端 loadSamples 对拍同一文件）
+        const RAW: &str =
+            include_str!("../../../agent/packages/schema/samples/baomai_v3_mountain_shake.json");
+        let samples: Vec<BaomaiV3MountainShakeV1> =
+            serde_json::from_str(RAW).expect("baomai_v3_mountain_shake.json must deserialize");
+
+        assert_eq!(samples.len(), 2, "sample file should have 2 entries");
+
+        // entry 0: offline:TestPlayer, affected_count=3
+        let s0 = &samples[0];
+        assert_eq!(s0.v, 1);
+        assert_eq!(s0.caster_id, "offline:TestPlayer");
+        assert_eq!(s0.affected_count, 3);
+        assert!((s0.qi_spent - 1200.0).abs() < 1e-6, "qi_spent mismatch");
+        assert!(
+            (s0.radius_blocks - 5.0).abs() < 1e-3,
+            "radius_blocks mismatch"
+        );
+
+        // entry 1: char:9876543210, affected_count=0
+        let s1 = &samples[1];
+        assert_eq!(s1.caster_id, "char:9876543210");
+        assert_eq!(s1.affected_count, 0);
+    }
+
+    #[test]
+    fn blood_burn_v1_deserializes_from_shared_sample() {
+        const RAW: &str =
+            include_str!("../../../agent/packages/schema/samples/baomai_v3_blood_burn.json");
+        let samples: Vec<BaomaiV3BloodBurnV1> =
+            serde_json::from_str(RAW).expect("baomai_v3_blood_burn.json must deserialize");
+
+        assert_eq!(samples.len(), 2, "sample file should have 2 entries");
+
+        // entry 0: normal path, not near death
+        let s0 = &samples[0];
+        assert_eq!(s0.v, 1);
+        assert_eq!(s0.caster_id, "offline:TestPlayer");
+        assert!(!s0.ended_in_near_death, "entry 0 should not be near-death");
+        assert!(
+            (s0.qi_multiplier - 3.5).abs() < 1e-3,
+            "qi_multiplier mismatch"
+        );
+
+        // entry 1: near-death path
+        let s1 = &samples[1];
+        assert!(s1.ended_in_near_death, "entry 1 should be near-death");
+        assert!(
+            (s1.qi_multiplier - 5.0).abs() < 1e-3,
+            "qi_multiplier mismatch"
+        );
+    }
+
+    #[test]
+    fn transcendence_expired_v1_deserializes_from_shared_sample() {
+        const RAW: &str = include_str!(
+            "../../../agent/packages/schema/samples/baomai_v3_transcendence_expired.json"
+        );
+        let samples: Vec<BaomaiV3TranscendenceExpiredV1> = serde_json::from_str(RAW)
+            .expect("baomai_v3_transcendence_expired.json must deserialize");
+
+        assert_eq!(samples.len(), 2, "sample file should have 2 entries");
+
+        // entry 0
+        let s0 = &samples[0];
+        assert_eq!(s0.v, 1);
+        assert_eq!(s0.caster_id, "offline:TestPlayer");
+        assert_eq!(s0.tick, 700);
+
+        // entry 1
+        let s1 = &samples[1];
+        assert_eq!(s1.caster_id, "char:12345678901234567");
+        assert_eq!(s1.tick, 1200);
+    }
+
+    #[test]
+    fn overload_ripple_v1_deserializes_from_shared_sample() {
+        const RAW: &str =
+            include_str!("../../../agent/packages/schema/samples/baomai_v3_overload_ripple.json");
+        let samples: Vec<BaomaiV3OverloadRippleV1> =
+            serde_json::from_str(RAW).expect("baomai_v3_overload_ripple.json must deserialize");
+
+        assert_eq!(samples.len(), 2, "sample file should have 2 entries");
+
+        // entry 0: beng_quan, severity 0.35
+        let s0 = &samples[0];
+        assert_eq!(s0.v, 1);
+        assert_eq!(s0.caster_id, "offline:TestPlayer");
+        assert_eq!(s0.skill_id, BaomaiSkillIdV1::BengQuan);
+        assert!(
+            (s0.total_severity - 0.35).abs() < 1e-6,
+            "total_severity mismatch"
+        );
+        assert_eq!(
+            s0.meridian_ids.len(),
+            3,
+            "entry 0 should have 3 meridian_ids"
+        );
+
+        // entry 1: mountain_shake, severity 0.72
+        let s1 = &samples[1];
+        assert_eq!(s1.skill_id, BaomaiSkillIdV1::MountainShake);
+        assert!(
+            (s1.total_severity - 0.72).abs() < 1e-6,
+            "total_severity mismatch"
+        );
+        assert_eq!(s1.meridian_ids[0], "Stomach");
+    }
 }
