@@ -1,37 +1,38 @@
 name: Claude PR Review
 
+# 按需触发：在 PR 上评论 @claude 才跑。去掉了 opened/reopened/synchronize 自动触发——
+# 每次 push 都重跑一个 10min 的 opus 多代理审核会持续吃 Claude 订阅额度。
 on:
-  pull_request:
-    types: [opened, reopened, synchronize]
-    paths:
-      - "server/**"
-      - "client/**"
-      - "agent/**"
-      - "worldgen/**"
-      - "scripts/**"
-      - "docs/**"
-      - ".github/workflows/**"
-      - ".claude/agents/**"
+  issue_comment:
+    types: [created]
+  workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: read # 只读 → agent 无法 merge PR 或 push（天然挡住，不靠工具白名单）
   pull-requests: write
   issues: write
   id-token: write
   actions: read
 
 concurrency:
-  group: claude-review-${{ github.event.pull_request.number }}
+  group: claude-review-${{ github.event.issue.number || github.run_id }}
   cancel-in-progress: true
 
 jobs:
   review:
+    # 仅当 PR 评论里 @claude、且评论者有写权限（OWNER/MEMBER/COLLABORATOR）时运行
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.issue.pull_request != null &&
+       contains(github.event.comment.body, '@claude') &&
+       contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association))
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          ref: refs/pull/${{ github.event.issue.number }}/head # issue_comment 默认 checkout base，这里取 PR head 才看得到真改动
 
       - name: Ensure ~/.local/bin exists for Claude Code CLI install
         run: mkdir -p "$HOME/.local/bin"
@@ -41,17 +42,21 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
-          # 唯一的 opus 当总裁判;sonnet/haiku 子代理在 .claude/agents/ 里定义,按需派生。
-          # 不显式 --allowedTools,沿用 action 默认权限(原版即如此,保证留评机制不被收窄)。
-          claude_args: "--model claude-opus-4-8"
+          # 放开权限让对抗式子代理(Task)和 gh 都能跑——全在 ephemeral runner 上，风险可控。
+          # bypassPermissions = 允许全部，只用 --disallowedTools 禁掉文件改写；
+          # merge/push 已被上面 permissions.contents:read 的 token 权限天然挡住，不必再禁。
+          claude_args: >-
+            --model claude-opus-4-8
+            --permission-mode bypassPermissions
+            --disallowedTools Write,Edit,MultiEdit,NotebookEdit
           prompt: |
-            你是 Bong 项目 PR #${{ github.event.pull_request.number }} 的**总裁判——本次审核唯一的 opus**。
+            你是 Bong 项目 PR #${{ github.event.issue.number }} 的**总裁判——本次审核唯一的 opus**。
             用「发现 → 对峙 → 裁决」的对抗式多代理流程产出高质量审核,最后在 PR 上留**具体行内评论**。全程中文。
 
             ## 流程
 
             ### 1. 取 diff
-            先 `gh pr diff ${{ github.event.pull_request.number }}` 拿到完整改动,通读改动范围,心里有数再分派。
+            先 `gh pr diff ${{ github.event.issue.number }}` 拿到完整改动,通读改动范围,心里有数再分派。
 
             ### 2. 发现阶段(并发 sonnet)
             用 **review-finder** 子代理(Task 工具),**并发派出 5 个**,每个负责一个维度:
