@@ -391,8 +391,8 @@ mod woliu_erosion_schema_tests {
             .expect("woliu-erosion-event.sample.json 应能反序列化为 VoidErosionEventV1");
         // 关键字段断言
         assert_eq!(
-            event.entity, "player_456",
-            "sample entity 应为 player_456，得 {}",
+            event.entity, "offline:kiz",
+            "sample entity 应为 offline:kiz（修复后真实 wire 格式），得 {}",
             event.entity
         );
         assert_eq!(

@@ -91,7 +91,7 @@ describe("VoidErosionStateV1", () => {
 describe("VoidErosionEventV1", () => {
   it("should validate a valid event", () => {
     const event: VoidErosionEventV1 = {
-      entity: "player_456",
+      entity: "offline:kiz",
       from_stage: "low_pressure",
       to_stage: "void_shadow",
       cumulative_erosion: 80.0,
@@ -285,7 +285,7 @@ describe("shared sample pin: woliu-erosion-event.sample.json", () => {
       `woliu-erosion-event.sample.json failed TypeBox validation — update the sample when schema changes. Errors: ${JSON.stringify(result.ok ? [] : (result as { errors?: unknown }).errors)}`,
     );
     // Verify key fields match expected sample values (wire contract pin)
-    expect(raw.entity).toBe("player_456");
+    expect(raw.entity).toBe("offline:kiz");
     expect(raw.from_stage).toBe("low_pressure");
     expect(raw.to_stage).toBe("void_shadow");
     expect(raw.cumulative_erosion).toBeCloseTo(80.0, 3);

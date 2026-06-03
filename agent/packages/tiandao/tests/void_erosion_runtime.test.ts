@@ -69,7 +69,7 @@ function sampleAdvance(
   to: VoidErosionEventV1["to_stage"],
 ): VoidErosionEventV1 {
   return {
-    entity: "player:kiz",
+    entity: "offline:kiz",
     from_stage: from,
     to_stage: to,
     cumulative_erosion: 25.0,
@@ -90,7 +90,7 @@ describe("renderVoidErosionNarration", () => {
 
   it("EchoBody → VoidEroded 叙事提及虚蚀态", () => {
     const event: VoidErosionEventV1 = {
-      entity: "player:kiz",
+      entity: "offline:kiz",
       from_stage: "echo_body",
       to_stage: "void_eroded",
       cumulative_erosion: 400.0,
@@ -113,7 +113,7 @@ describe("renderVoidErosionNarration", () => {
   it("target 格式与 meridian-severed runtime 对齐（entityId 首段）", () => {
     // 参考：meridian-severed-narration.ts target = `meridian_severed:${entity_id}|...`
     // 对于 void_erosion 同样 entity_id 在 | 前（不带前缀）确保 server 路由能命中
-    const entities = ["offline:kiz", "char:12345", "player:alice"];
+    const entities = ["offline:kiz", "char:12345", "offline:alice"];
     for (const entity of entities) {
       const event: VoidErosionEventV1 = {
         entity,
@@ -204,7 +204,7 @@ describe("VoidErosionNarrationRuntime", () => {
     await runtime.connect();
 
     const event: VoidErosionEventV1 = {
-      entity: "player:test",
+      entity: "offline:test",
       from_stage: "echo_body",
       to_stage: "void_eroded",
       cumulative_erosion: 405.0,
