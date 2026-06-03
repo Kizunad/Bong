@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
 import {
@@ -11,7 +13,14 @@ import {
   validateVoidErosionVisualSyncV1Contract,
   validateVoidErosionTiandaoModifierV1Contract,
 } from "../src/woliu_erosion.js";
+import { CHANNELS, REDIS_V1_CHANNELS } from "../src/channels.js";
 import { Value } from "@sinclair/typebox/value";
+
+const samplesDir = join(new URL("..", import.meta.url).pathname, "samples");
+
+function loadSample<T>(name: string): T {
+  return JSON.parse(readFileSync(join(samplesDir, name), "utf-8")) as T;
+}
 
 describe("VoidErosionStateV1", () => {
   it("should validate a valid state", () => {
@@ -236,5 +245,64 @@ describe("VoidErosionTiandaoModifierV1", () => {
       server_tick: 0,
     });
     expect(result.ok).toBe(false);
+  });
+});
+
+// ── Channel pin tests ────────────────────────────────────────────────────────
+
+describe("CHANNELS.VOID_EROSION_EVENT channel pin", () => {
+  it("CHANNELS.VOID_EROSION_EVENT equals bong:void_erosion_event (对齐 server CH_VOID_EROSION_EVENT)", () => {
+    expect(CHANNELS.VOID_EROSION_EVENT).toBe("bong:void_erosion_event");
+  });
+
+  it("VOID_EROSION_EVENT is included in REDIS_V1_CHANNELS", () => {
+    expect(REDIS_V1_CHANNELS).toContain(CHANNELS.VOID_EROSION_EVENT);
+  });
+
+  it("validateVoidErosionEventV1Contract validates sample void erosion advance payload", () => {
+    const sample: VoidErosionEventV1 = {
+      entity: "offline:test_player",
+      from_stage: "none",
+      to_stage: "low_pressure",
+      cumulative_erosion: 25.0,
+      server_tick: 1200,
+    };
+    const result = validateVoidErosionEventV1Contract(sample);
+    expect(result.ok).toBe(true);
+  });
+});
+
+// ── Shared-sample pin tests (双端 wire 形态对齐) ─────────────────────────────
+// TS 端真加载 samples/*.json（与 Rust serde 共享），跑 validate 对拍。
+// 任何一端改动 schema 而不同步改 sample 都会撞红。
+
+describe("shared sample pin: woliu-erosion-event.sample.json", () => {
+  it("loads and validates shared sample file (Rust serde ↔ TS TypeBox 双端对齐)", () => {
+    const raw = loadSample<VoidErosionEventV1>("woliu-erosion-event.sample.json");
+    const result = validateVoidErosionEventV1Contract(raw);
+    expect(result.ok).toBe(
+      true,
+      `woliu-erosion-event.sample.json failed TypeBox validation — update the sample when schema changes. Errors: ${JSON.stringify(result.ok ? [] : (result as { errors?: unknown }).errors)}`,
+    );
+    // Verify key fields match expected sample values (wire contract pin)
+    expect(raw.entity).toBe("player_456");
+    expect(raw.from_stage).toBe("low_pressure");
+    expect(raw.to_stage).toBe("void_shadow");
+    expect(raw.cumulative_erosion).toBeCloseTo(80.0, 3);
+    expect(typeof raw.server_tick).toBe("number");
+  });
+});
+
+describe("shared sample pin: woliu-erosion-state.sample.json", () => {
+  it("loads and validates shared sample file (Rust serde ↔ TS TypeBox 双端对齐)", () => {
+    const raw = loadSample<VoidErosionStateV1>("woliu-erosion-state.sample.json");
+    const result = validateVoidErosionStateV1Contract(raw);
+    expect(result.ok).toBe(
+      true,
+      `woliu-erosion-state.sample.json failed TypeBox validation — update the sample when schema changes.`,
+    );
+    expect(raw.stage).toBe("echo_body");
+    expect(raw.cumulative_erosion).toBeCloseTo(250.0, 3);
+    expect(raw.ambient_active).toBe(true);
   });
 });
