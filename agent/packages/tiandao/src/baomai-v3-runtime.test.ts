@@ -371,6 +371,92 @@ describe("integration: mountain_shake cast → exactly 1 narration (no double-na
   });
 });
 
+// ──── [fix-minor-2] disperse-failed runtime integration ──────────────────────
+//
+// 真实 disperse 失败 payload（flow_rate_multiplier=1.0）经 handlePayload 路由，
+// 断言命中 else 失败文案「强行散功，凡躯没有应声」。
+
+describe("integration: disperse 凡躯失败 payload 经 handlePayload → else 失败文案", () => {
+  let sub: ReturnType<typeof makeMockClient>;
+  let pub: ReturnType<typeof makeMockClient>;
+  let runtime: BaomaiV3NarrationRuntime;
+  let pubMessages: { channel: string; message: string }[];
+
+  beforeEach(async () => {
+    sub = makeMockClient();
+    pub = makeMockClient();
+    pubMessages = [];
+    pub.publish = async (channel: string, message: string) => {
+      pubMessages.push({ channel, message });
+      return 1;
+    };
+    runtime = new BaomaiV3NarrationRuntime({ sub, pub });
+    await runtime.connect();
+  });
+
+  it("flow_rate_multiplier=1.0 经 handlePayload → publish 1 条含「强行散功」的叙事", async () => {
+    // 真实 disperse 失败 payload（physics 返回 flow_rate_multiplier=1.0，未达超越档）
+    const disperseFailedPayload = JSON.stringify({
+      v: 1,
+      type: "baomai_skill_event",
+      skill_id: "disperse",
+      caster_id: "offline:TestPlayer",
+      tick: 300,
+      qi_invested: 100.0,
+      damage: 0.0,
+      blood_multiplier: 1.0,
+      flow_rate_multiplier: 1.0, // 凡躯失败：未到 ≥10 超越档
+      meridian_ids: [],
+    });
+
+    await runtime.handlePayload(BAOMAI_V3_SKILL_EVENT, disperseFailedPayload);
+
+    expect(
+      runtime.stats.published,
+      "凡躯失败 disperse 应 publish 1 条叙事",
+    ).toBe(1);
+    expect(
+      pubMessages.length,
+      "pub.publish 应被调用 1 次",
+    ).toBe(1);
+
+    const narrationBody = JSON.parse(pubMessages[0]!.message) as { v: number; narrations: { text: string }[] };
+    expect(
+      narrationBody.narrations[0]?.text,
+      "flow_rate_multiplier=1.0 应命中 else 分支：文案含「强行散功，凡躯没有应声」",
+    ).toContain("强行散功");
+  });
+
+  it("flow_rate_multiplier=1.0 经 onMessage（sub.emitMessage）路由 → 同样命中 else 失败文案", async () => {
+    const disperseFailedPayload = JSON.stringify({
+      v: 1,
+      type: "baomai_skill_event",
+      skill_id: "disperse",
+      caster_id: "offline:TestPlayer",
+      tick: 400,
+      qi_invested: 100.0,
+      damage: 0.0,
+      blood_multiplier: 1.0,
+      flow_rate_multiplier: 1.0,
+      meridian_ids: ["Ren"],
+    });
+
+    sub.emitMessage(BAOMAI_V3_SKILL_EVENT, disperseFailedPayload);
+    await new Promise((resolve) => setImmediate(resolve));
+
+    expect(
+      pubMessages.length,
+      "凡躯失败 disperse 经 onMessage 路由应 publish 1 条叙事",
+    ).toBe(1);
+
+    const narrationBody = JSON.parse(pubMessages[0]!.message) as { v: number; narrations: { text: string }[] };
+    expect(
+      narrationBody.narrations[0]?.text,
+      "onMessage 路由：flow_rate_multiplier=1.0 应命中 else 分支：文案含「强行散功，凡躯没有应声」",
+    ).toContain("强行散功");
+  });
+});
+
 // ──── disperse-failed pin test ────────────────────────────────────────────────
 
 describe("renderBaomaiV3Narration — disperse flow_rate_multiplier pin", () => {
