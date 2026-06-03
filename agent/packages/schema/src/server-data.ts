@@ -1129,10 +1129,20 @@ export type ServerDataSpiritTreasureDialogueV1 = Static<
   typeof ServerDataSpiritTreasureDialogueV1
 >;
 
+export const CoffinGradeV1 = Type.Union([
+  Type.Literal("mundane"),
+  Type.Literal("jade"),
+  Type.Literal("stone"),
+  Type.Literal("bronze"),
+]);
+export type CoffinGradeV1 = Static<typeof CoffinGradeV1>;
+
 export const CoffinStateV1 = Type.Object(
   {
     in_coffin: Type.Boolean(),
     lifespan_rate_multiplier: Type.Number({ minimum: 0 }),
+    // plan-coffin-tiers-v1 P0: optional, 缺省 mundane，兼容旧 payload
+    coffin_grade: Type.Optional(CoffinGradeV1),
   },
   { additionalProperties: false },
 );

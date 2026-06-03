@@ -434,6 +434,26 @@ fn equip_slot_to_proto(s: &super::inventory::EquipSlotV1) -> i32 {
 
 type Payload = bong::server_data_envelope::Payload;
 
+/// CoffinGradeV1 → wire string（与 TS schema 和 DB 存储一致，全小写 snake_case）。
+fn coffin_grade_v1_to_proto_str(g: super::server_data::CoffinGradeV1) -> &'static str {
+    match g {
+        super::server_data::CoffinGradeV1::Mundane => "mundane",
+        super::server_data::CoffinGradeV1::Jade => "jade",
+        super::server_data::CoffinGradeV1::Stone => "stone",
+        super::server_data::CoffinGradeV1::Bronze => "bronze",
+    }
+}
+
+/// wire string → CoffinGradeV1（未知值 fallback Mundane，与 serde default 一致）。
+fn coffin_grade_v1_from_proto_str(s: &str) -> super::server_data::CoffinGradeV1 {
+    match s {
+        "jade" => super::server_data::CoffinGradeV1::Jade,
+        "stone" => super::server_data::CoffinGradeV1::Stone,
+        "bronze" => super::server_data::CoffinGradeV1::Bronze,
+        _ => super::server_data::CoffinGradeV1::Mundane,
+    }
+}
+
 /// Public entry point: convert a `ServerDataPayloadV1` to the prost oneof payload.
 pub fn server_data_to_proto_payload(p: &ServerDataPayloadV1) -> Payload {
     Payload::from(p)
@@ -522,6 +542,10 @@ impl From<&ServerDataPayloadV1> for Payload {
             ServerDataPayloadV1::CoffinState(s) => Payload::CoffinState(bong::CoffinState {
                 in_coffin: s.in_coffin,
                 lifespan_rate_multiplier: s.lifespan_rate_multiplier,
+                // coffin_grade: optional string；None → 省略（接收方按 mundane 兜底）
+                coffin_grade: s
+                    .coffin_grade
+                    .map(|g| coffin_grade_v1_to_proto_str(g).to_string()),
             }),
             ServerDataPayloadV1::UiOpen { ui, xml } => Payload::UiOpen(bong::UiOpen {
                 ui: ui.clone(),
@@ -3694,11 +3718,84 @@ mod tests {
 
     #[test]
     fn s2c_coffin_state_roundtrip() {
-        use super::super::server_data::CoffinStateV1;
+        use super::super::server_data::{CoffinGradeV1, CoffinStateV1};
+        // mundane grade (baseline)
         s2c_encode_decode_roundtrip(ServerDataPayloadV1::CoffinState(CoffinStateV1 {
             in_coffin: true,
             lifespan_rate_multiplier: 1.0,
+            coffin_grade: Some(CoffinGradeV1::Mundane),
         }));
+    }
+
+    /// Proto wire roundtrip must NOT drop coffin_grade for non-mundane grades.
+    /// Regression guard for blocker #1/#6：生产 wire 走 proto，grade 必须全程传递。
+    #[test]
+    fn s2c_coffin_state_grade_roundtrip_non_mundane() {
+        use super::super::server_data::{CoffinGradeV1, CoffinStateV1};
+        use bong::server_data_envelope::Payload;
+
+        let cases: &[(CoffinGradeV1, &str)] = &[
+            (CoffinGradeV1::Jade, "jade"),
+            (CoffinGradeV1::Stone, "stone"),
+            (CoffinGradeV1::Bronze, "bronze"),
+        ];
+        for (grade, expected_str) in cases {
+            let payload = ServerDataPayloadV1::CoffinState(CoffinStateV1 {
+                in_coffin: true,
+                lifespan_rate_multiplier: 0.5,
+                coffin_grade: Some(*grade),
+            });
+            let proto_payload = server_data_to_proto_payload(&payload);
+            let envelope = bong::ServerDataEnvelope {
+                payload: Some(proto_payload),
+            };
+            let bytes = envelope.encode_to_vec();
+            let decoded = bong::ServerDataEnvelope::decode(bytes.as_slice())
+                .expect("S2C proto decode should succeed");
+            match decoded.payload {
+                Some(Payload::CoffinState(ref c)) => {
+                    assert_eq!(
+                        c.coffin_grade.as_deref(),
+                        Some(*expected_str),
+                        "grade={expected_str} should survive proto encode/decode roundtrip, \
+                         but decoded coffin_grade={:?}",
+                        c.coffin_grade
+                    );
+                }
+                other => panic!("expected CoffinState payload, got {other:?}"),
+            }
+        }
+    }
+
+    /// Proto wire roundtrip: grade=None（出棺）→ coffin_grade 字段省略（不写入 wire）。
+    #[test]
+    fn s2c_coffin_state_grade_none_not_in_wire() {
+        use super::super::server_data::CoffinStateV1;
+        use bong::server_data_envelope::Payload;
+
+        let payload = ServerDataPayloadV1::CoffinState(CoffinStateV1 {
+            in_coffin: false,
+            lifespan_rate_multiplier: 1.0,
+            coffin_grade: None,
+        });
+        let proto_payload = server_data_to_proto_payload(&payload);
+        let envelope = bong::ServerDataEnvelope {
+            payload: Some(proto_payload),
+        };
+        let bytes = envelope.encode_to_vec();
+        let decoded = bong::ServerDataEnvelope::decode(bytes.as_slice())
+            .expect("S2C proto decode should succeed");
+        match decoded.payload {
+            Some(Payload::CoffinState(ref c)) => {
+                assert!(
+                    c.coffin_grade.is_none(),
+                    "grade=None (出棺) should not be present in decoded proto, \
+                     but decoded coffin_grade={:?}",
+                    c.coffin_grade
+                );
+            }
+            other => panic!("expected CoffinState payload, got {other:?}"),
+        }
     }
 
     #[test]

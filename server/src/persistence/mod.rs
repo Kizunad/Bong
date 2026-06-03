@@ -37,7 +37,7 @@ pub mod identity;
 pub const DEFAULT_DATABASE_PATH: &str = "data/bong.db";
 pub const SQLITE_BUSY_TIMEOUT_MS: u64 = 15_000;
 const DEFAULT_DECEASED_PUBLIC_DIR: &str = "../library-web/public/deceased";
-const CURRENT_USER_VERSION: i32 = 26;
+const CURRENT_USER_VERSION: i32 = 27;
 const AGENT_WORLD_MODEL_ROW_ID: i64 = 1;
 const ASCENSION_QUOTA_ROW_ID: i64 = 1;
 const TRIBULATION_KIND_DU_XU: &str = "du_xu";
@@ -1695,6 +1695,24 @@ fn apply_migrations(connection: &mut Connection) -> rusqlite::Result<()> {
         )?;
         assert_pending_dormant_relics_schema_ready(&transaction)?;
         transaction.execute_batch("PRAGMA user_version = 26;")?;
+        transaction.commit()?;
+    }
+
+    let current_version: i32 =
+        connection.query_row("PRAGMA user_version;", [], |row| row.get(0))?;
+    if current_version < 27 {
+        // plan-coffin-tiers-v1 P0：player_lifespan 加 coffin_grade 列（TEXT，default 'mundane'）
+        let transaction = connection.transaction()?;
+        let columns = table_columns(&transaction, "player_lifespan")?;
+        if !columns.is_empty() && !columns.iter().any(|col| col == "coffin_grade") {
+            transaction.execute_batch(
+                "
+                ALTER TABLE player_lifespan
+                ADD COLUMN coffin_grade TEXT NOT NULL DEFAULT 'mundane';
+                ",
+            )?;
+        }
+        transaction.execute_batch("PRAGMA user_version = 27;")?;
         transaction.commit()?;
     }
 
@@ -12106,5 +12124,86 @@ mod persistence_tests {
              got {after_first} then {after_second}"
         );
         let _ = fs::remove_dir_all(root);
+    }
+
+    // ─── plan-coffin-tiers-v1 P0 charge #5 — v27 migration test ──────────────
+
+    #[test]
+    fn v27_migration_adds_coffin_grade_to_legacy_player_lifespan_table() {
+        let db_path = database_path("v27-player-lifespan-coffin-grade");
+        fs::create_dir_all(db_path.parent().expect("db path should have parent"))
+            .expect("temp db parent should be created");
+        let mut connection = Connection::open(&db_path).expect("db should open");
+
+        // 建立 v26 前状态：player_lifespan 有 in_coffin 但无 coffin_grade，模拟真实升级场景
+        connection
+            .execute_batch(
+                "
+                CREATE TABLE player_lifespan (
+                    username TEXT PRIMARY KEY,
+                    born_at_tick INTEGER NOT NULL CHECK (born_at_tick >= 0),
+                    years_lived REAL NOT NULL CHECK (years_lived >= 0),
+                    cap_by_realm INTEGER NOT NULL CHECK (cap_by_realm > 0),
+                    offline_pause_wall INTEGER NOT NULL CHECK (offline_pause_wall >= 0),
+                    in_coffin INTEGER NOT NULL DEFAULT 0,
+                    schema_version INTEGER NOT NULL CHECK (schema_version >= 1),
+                    last_updated_wall INTEGER NOT NULL CHECK (last_updated_wall >= 0)
+                );
+                INSERT INTO player_lifespan (
+                    username, born_at_tick, years_lived, cap_by_realm,
+                    offline_pause_wall, in_coffin, schema_version, last_updated_wall
+                ) VALUES ('Azure', 0, 5.0, 80, 0, 1, 1, 0);
+                PRAGMA user_version = 26;
+                ",
+            )
+            .expect("legacy v26 player_lifespan fixture should create");
+
+        apply_migrations(&mut connection).expect("v27 migration should succeed");
+
+        // 1. coffin_grade 列已加
+        let mut statement = connection
+            .prepare("PRAGMA table_info(player_lifespan)")
+            .expect("player_lifespan table_info should prepare");
+        let columns = statement
+            .query_map([], |row| row.get::<_, String>(1))
+            .expect("player_lifespan table_info should query")
+            .collect::<Result<Vec<_>, _>>()
+            .expect("player_lifespan columns should collect");
+        assert!(
+            columns.iter().any(|col| col == "coffin_grade"),
+            "player_lifespan should have coffin_grade column after v27 migration, \
+             columns: {columns:?}"
+        );
+
+        // 2. 旧行默认 'mundane'
+        let grade: String = connection
+            .query_row(
+                "SELECT coffin_grade FROM player_lifespan WHERE username = 'Azure'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("legacy row should have default coffin_grade after migration");
+        assert_eq!(
+            grade, "mundane",
+            "legacy row (no coffin_grade) should default to 'mundane' after v27 migration, \
+             got '{grade}'"
+        );
+
+        // 3. columns.is_empty() 空表分支：再运行一次 v27 对空表不应报错
+        let db_path2 = database_path("v27-empty-table-branch");
+        fs::create_dir_all(db_path2.parent().expect("db path should have parent"))
+            .expect("temp db parent should be created");
+        let mut conn2 = Connection::open(&db_path2).expect("db2 should open");
+        conn2
+            .execute_batch("PRAGMA user_version = 26;")
+            .expect("set v26");
+        apply_migrations(&mut conn2).expect("v27 migration on fresh db should succeed");
+        let version2: i32 = conn2
+            .query_row("PRAGMA user_version;", [], |row| row.get(0))
+            .expect("user_version should be readable");
+        assert_eq!(
+            version2, CURRENT_USER_VERSION,
+            "user_version after v27 migration on fresh db should be CURRENT_USER_VERSION"
+        );
     }
 }

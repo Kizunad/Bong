@@ -8134,10 +8134,12 @@ mod tests {
 
     #[test]
     fn coffin_state_envelope_roundtrip() {
+        // 有 coffin_grade 字段
         let envelope = ServerDataEnvelope {
             payload: Some(server_data_envelope::Payload::CoffinState(CoffinState {
                 in_coffin: true,
                 lifespan_rate_multiplier: 0.5,
+                coffin_grade: Some("jade".to_string()),
             })),
         };
         let bytes = envelope.encode_to_vec();
@@ -8147,6 +8149,33 @@ mod tests {
             Some(server_data_envelope::Payload::CoffinState(c)) => {
                 assert!(c.in_coffin);
                 assert!((c.lifespan_rate_multiplier - 0.5).abs() < 1e-9);
+                assert_eq!(
+                    c.coffin_grade.as_deref(),
+                    Some("jade"),
+                    "coffin_grade should survive proto roundtrip"
+                );
+            }
+            other => panic!("expected CoffinState, got {other:?}"),
+        }
+
+        // 无 coffin_grade（旧 payload 兼容）
+        let envelope_no_grade = ServerDataEnvelope {
+            payload: Some(server_data_envelope::Payload::CoffinState(CoffinState {
+                in_coffin: false,
+                lifespan_rate_multiplier: 1.0,
+                coffin_grade: None,
+            })),
+        };
+        let bytes2 = envelope_no_grade.encode_to_vec();
+        let decoded2 = ServerDataEnvelope::decode(bytes2.as_slice())
+            .expect("CoffinState no-grade decode 失败");
+        match decoded2.payload {
+            Some(server_data_envelope::Payload::CoffinState(c)) => {
+                assert!(!c.in_coffin);
+                assert!(
+                    c.coffin_grade.is_none(),
+                    "coffin_grade=None should not appear in decoded proto"
+                );
             }
             other => panic!("expected CoffinState, got {other:?}"),
         }
@@ -9876,6 +9905,7 @@ mod tests {
                 server_data_envelope::Payload::CoffinState(CoffinState {
                     in_coffin: false,
                     lifespan_rate_multiplier: 1.0,
+                    coffin_grade: None,
                 }),
                 "CoffinState",
             ),
