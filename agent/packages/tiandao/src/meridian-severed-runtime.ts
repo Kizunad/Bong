@@ -141,38 +141,3 @@ export class MeridianSeveredNarrationRuntime {
   }
 }
 
-/**
- * 构造 MeridianSeveredNarrationRuntime 并 connect，返回 cleanup fn。
- * 供 main.ts `startAuxiliaryRuntimes` 调用。
- */
-export async function startMeridianSeveredNarrationRuntime(opts: {
-  sub: MeridianSeveredRuntimeClient;
-  pub: MeridianSeveredRuntimeClient;
-}): Promise<() => Promise<void>> {
-  const runtime = new MeridianSeveredNarrationRuntime({
-    sub: opts.sub,
-    pub: opts.pub,
-  });
-  runtime
-    .connect()
-    .then(() =>
-      console.log("[tiandao] meridian-severed narration runtime online"),
-    )
-    .catch((error) =>
-      console.warn(
-        "[tiandao] meridian-severed narration runtime failed to start:",
-        error,
-      ),
-    );
-  return async () => {
-    const timeout = new Promise<void>((resolve) => setTimeout(resolve, 500));
-    try {
-      await Promise.race([runtime.disconnect(), timeout]);
-    } catch (error) {
-      console.warn(
-        "[tiandao] meridian-severed narration runtime disconnect error:",
-        error,
-      );
-    }
-  };
-}
