@@ -2442,9 +2442,12 @@ message EventAlert {
 }
 
 // 与 Rust CoffinStateV1 精确对应。
+// coffin_grade: optional string，值域 "mundane"/"jade"/"stone"/"bronze"；
+//   缺失时 client 按 mundane 处理（向后兼容旧 payload）。
 message CoffinState {
-  bool   in_coffin                 = 1;
-  double lifespan_rate_multiplier  = 2;
+  bool            in_coffin                = 1;
+  double          lifespan_rate_multiplier = 2;
+  optional string coffin_grade             = 3;
 }
 
 // 与 Rust ServerDataPayloadV1::UiOpen 精确对应。
