@@ -35,11 +35,10 @@ jobs:
     timeout-minutes: 60
 
     steps:
+      # 签出默认分支(main):脚本与 docs/plan-*.md 都来自 main——issue_comment 触发的 workflow
+      # 本就只认 main 上的定义,而 PR head 分支里没有本脚本(会 MODULE_NOT_FOUND)。
+      # PR 的真实改动由脚本内 `gh pr diff <PR>` 经 API 取,不依赖本地签出 PR 代码。
       - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-          # issue_comment 默认 checkout base,取 PR head 才看得到真改动(也能读到该 ref 上的 plan 文件)
-          ref: refs/pull/${{ github.event.issue.number || inputs.pr_number }}/head
 
       - uses: actions/setup-node@v4
         with:
