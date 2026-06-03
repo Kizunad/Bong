@@ -212,6 +212,10 @@ pub const CH_CRAFT_RECIPE_UNLOCKED: &str = "bong:craft/recipe_unlocked";
 /// 变异阶段推进事件，对齐 agent `CHANNELS.MUTATION_EVENT`。
 pub const CH_MUTATION_EVENT: &str = "bong:mutation_event";
 
+// 经脉永久 SEVERED（plan-combat-skill-feedback-bridges-v1 P0）—— server → agent 叙事频道。
+/// 对齐 agent `CHANNELS.MERIDIAN_SEVERED`（channels.ts:323）。
+pub const CH_MERIDIAN_SEVERED: &str = "bong:meridian_severed";
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -348,5 +352,7 @@ mod tests {
         assert_eq!(CH_FACTION_STATE, "bong:faction_state");
         // plan-offscreen-war-v1 P6 — 涌现区域冲突生命周期 telemetry channel（纯观测、零真元）
         assert_eq!(CH_FACTION_WAR, "bong:faction/war");
+        // plan-combat-skill-feedback-bridges-v1 P0 — 经脉永久 SEVERED 叙事频道
+        assert_eq!(CH_MERIDIAN_SEVERED, "bong:meridian_severed");
     }
 }
