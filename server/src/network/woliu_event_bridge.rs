@@ -4,12 +4,14 @@ use crate::combat::woliu::{
     projectile_drained_payload, vortex_backfire_payload, ProjectileQiDrainedEvent,
     VortexBackfireEvent,
 };
+use crate::combat::woliu_v2::erosion::VoidErosionAdvanceEvent;
 use crate::combat::woliu_v2::{
     BackfireCauseV2, BackfireLevel, TurbulenceFieldSpawned, VortexBackfireEventV2, VortexCastEvent,
     WoliuSkillId,
 };
 use crate::network::redis_bridge::RedisOutbound;
 use crate::network::RedisBridgeResource;
+use crate::schema::woliu_erosion::{VoidErosionEventV1, VoidErosionStageV1};
 use crate::schema::woliu_v2::{
     TurbulenceFieldV1, WoliuBackfireLevelV1, WoliuBackfireV1, WoliuSkillCastV1, WoliuSkillIdV1,
 };
@@ -152,5 +154,57 @@ fn backfire_cause_wire(cause: BackfireCauseV2) -> &'static str {
         BackfireCauseV2::MeridianOverflow => "meridian_overflow",
         BackfireCauseV2::TsyNegativeField => "tsy_negative_field",
         BackfireCauseV2::VoidHeartTribulation => "void_heart_tribulation",
+    }
+}
+
+// ────────────────────────────────────────────────────────
+// plan-combat-skill-feedback-bridges-v1 P3 — 虚蚀阶段推进 → agent 叙事桥
+// ────────────────────────────────────────────────────────
+
+/// `VoidErosionAdvanceEvent` → `bong:void_erosion_event` Redis publish。
+///
+/// 仿 `publish_woliu_v2_backfire_events` 结构；读取 `VoidErosion.cumulative_erosion`
+/// 以填充 payload（如实体已消亡则跳过）。
+///
+/// TODO(P3-ext): emit_echo_replay_vfx - ScheduledEcho tick system pending
+pub fn publish_void_erosion_advance_events(
+    redis: Res<RedisBridgeResource>,
+    mut events: EventReader<VoidErosionAdvanceEvent>,
+    unique_ids: Query<&UniqueId>,
+    erosion_query: Query<&crate::combat::woliu_v2::erosion::VoidErosion>,
+    clock: Res<crate::combat::CombatClock>,
+) {
+    for event in events.read() {
+        let entity_id = match unique_ids.get(event.entity) {
+            Ok(uid) => uid.0.to_string(),
+            Err(_) => format!("entity:{}", event.entity.to_bits()),
+        };
+        let cumulative_erosion = erosion_query
+            .get(event.entity)
+            .map(|e| e.cumulative_erosion)
+            .unwrap_or(0.0);
+        let payload = VoidErosionEventV1 {
+            entity: entity_id,
+            from_stage: void_erosion_stage_v1(event.from),
+            to_stage: void_erosion_stage_v1(event.to),
+            cumulative_erosion,
+            server_tick: clock.tick,
+        };
+        let _ = redis
+            .tx_outbound
+            .send(RedisOutbound::VoidErosionEvent(payload));
+    }
+}
+
+fn void_erosion_stage_v1(
+    stage: crate::combat::woliu_v2::erosion::VoidErosionStage,
+) -> VoidErosionStageV1 {
+    use crate::combat::woliu_v2::erosion::VoidErosionStage;
+    match stage {
+        VoidErosionStage::None => VoidErosionStageV1::None,
+        VoidErosionStage::LowPressure => VoidErosionStageV1::LowPressure,
+        VoidErosionStage::VoidShadow => VoidErosionStageV1::VoidShadow,
+        VoidErosionStage::EchoBody => VoidErosionStageV1::EchoBody,
+        VoidErosionStage::VoidEroded => VoidErosionStageV1::VoidEroded,
     }
 }

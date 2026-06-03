@@ -460,6 +460,40 @@ pub fn tiandao_detection_modifier(stage: VoidErosionStage) -> f64 {
     }
 }
 
+// ────────────────────────────────────────────────────────
+// plan-combat-skill-feedback-bridges-v1 P3 — void_erosion_check_system
+// ────────────────────────────────────────────────────────
+
+use valence::prelude::{EventWriter, Query, Res};
+
+use crate::combat::CombatClock;
+
+/// 每 600 tick（30s）检测虚蚀阶段推进，emit `VoidErosionAdvanceEvent`。
+///
+/// 仅当 `computed_stage() > self.stage` 时推进（向上单调），同帧跨多阶时
+/// `to` 取 computed_stage()（最终档），不分拆多次 emit。
+pub fn void_erosion_check_system(
+    clock: Res<CombatClock>,
+    mut erosion_query: Query<(Entity, &mut VoidErosion)>,
+    mut advance_events: EventWriter<VoidErosionAdvanceEvent>,
+) {
+    if !clock.tick.is_multiple_of(VOID_EROSION_CHECK_INTERVAL) {
+        return;
+    }
+    for (entity, mut erosion) in &mut erosion_query {
+        let computed = erosion.computed_stage();
+        if computed > erosion.stage {
+            let from = erosion.stage;
+            erosion.stage = computed;
+            advance_events.send(VoidErosionAdvanceEvent {
+                entity,
+                from,
+                to: computed,
+            });
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -9,6 +9,7 @@ use self::state::{
 };
 use crate::coffin::{coffin_lower_from_player_position, CoffinComponent, CoffinRegistry};
 use crate::combat::components::{UnlockedStyles, TICKS_PER_SECOND};
+use crate::combat::woliu_v2::erosion::VoidErosion;
 use crate::cultivation::color::PracticeLog;
 use crate::cultivation::components::{Contamination, Cultivation, Karma, MeridianSystem, QiColor};
 use crate::cultivation::insight::InsightQuota;
@@ -261,6 +262,13 @@ pub(crate) fn attach_player_state_to_joined_clients(
             });
         }
         entity_commands.insert(persisted.skill_set);
+        // plan-combat-skill-feedback-bridges-v1 P3 — 虚蚀跨死亡保留，用 insert_if_absent 语义：
+        // 仅当实体不持有 VoidErosion 时才插入 default()，不覆盖已积累值。
+        // （Bevy 0.14 无原生 insert_if_absent，用 world 查询替代；此处在 Commands 阶段用
+        //   run_if 判断不可行，改为直接再次 insert 但在系统外仅 join 时执行 —— join 后第一次
+        //   必然不持有该 component，故直接 insert default() 无覆盖风险。
+        //   若未来 hot-rejoin 场景出现持久化后恢复，此处需配合 persisted.state 一同序列化。）
+        entity_commands.insert(VoidErosion::default());
         tracing::info!(
             "[bong][player] attached PlayerState to client entity {entity:?} for `{}` (composite_power={composite_power:.3}, restored_inventory={restored_inventory}, restored_lifespan={restored_lifespan}, restored_skill={restored_skill}, restored_technique={restored_technique}, last_dimension={last_dimension:?})",
             username.0,

@@ -221,6 +221,10 @@ pub const CH_MUTATION_EVENT: &str = "bong:mutation_event";
 /// 对齐 agent `CHANNELS.MERIDIAN_SEVERED`（channels.ts:323）。
 pub const CH_MERIDIAN_SEVERED: &str = "bong:meridian_severed";
 
+// 我流虚蚀整链（plan-combat-skill-feedback-bridges-v1 P3）—— server → agent 虚蚀阶段推进叙事频道。
+/// 对齐 agent `CHANNELS.VOID_EROSION_EVENT`（channels.ts P3 新增）。
+pub const CH_VOID_EROSION_EVENT: &str = "bong:void_erosion_event";
+
 // 爆脉 v4（plan-combat-skill-feedback-bridges-v1 P1）—— baomai_v4 反馈整桥。
 /// 疤纹回路形成事件，对齐 agent `CHANNELS.BAOMAI_V4_SCAR_CIRCUIT_FORMED`。
 pub const CH_BAOMAI_V4_SCAR_CIRCUIT_FORMED: &str = "bong:baomai_v4/scar_circuit_formed";
@@ -369,6 +373,8 @@ mod tests {
         assert_eq!(CH_FACTION_STATE, "bong:faction_state");
         // plan-offscreen-war-v1 P6 — 涌现区域冲突生命周期 telemetry channel（纯观测、零真元）
         assert_eq!(CH_FACTION_WAR, "bong:faction/war");
+        // plan-combat-skill-feedback-bridges-v1 P3 — 我流虚蚀阶段推进 agent 叙事频道
+        assert_eq!(CH_VOID_EROSION_EVENT, "bong:void_erosion_event");
         // plan-combat-skill-feedback-bridges-v1 P0 — 经脉永久 SEVERED 叙事频道
         assert_eq!(CH_MERIDIAN_SEVERED, "bong:meridian_severed");
         // plan-combat-skill-feedback-bridges-v1 P1 — baomai_v4 反馈整桥频道

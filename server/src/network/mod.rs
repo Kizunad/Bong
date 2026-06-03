@@ -537,6 +537,8 @@ pub fn register(app: &mut App) {
             woliu_event_bridge::publish_woliu_v2_cast_events,
             woliu_event_bridge::publish_woliu_v2_backfire_events,
             woliu_event_bridge::publish_woliu_v2_turbulence_events,
+            // plan-combat-skill-feedback-bridges-v1 P3 — 虚蚀阶段推进 → agent 叙事桥
+            woliu_event_bridge::publish_void_erosion_advance_events,
             dugu_v2_event_bridge::publish_dugu_v2_eclipse_events,
             dugu_v2_event_bridge::publish_dugu_v2_penetrate_events,
             dugu_v2_event_bridge::publish_dugu_v2_shroud_events,

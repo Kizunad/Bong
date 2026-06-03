@@ -32,6 +32,10 @@ use crate::world::zone::ZoneRegistry;
 use super::backfire::{
     apply_backfire_to_hand_meridians, backfire_level_for_overflow, forced_backfire,
 };
+use super::erosion::{
+    add_erosion_capped, VoidErosion, BASE_SKILL_EROSION, ECHO_EROSION, SWALLOWING_RELEASE_EROSION,
+    VOID_CORE_DURATION_TICKS, VOID_CORE_EROSION_PER_SEC, VOID_VORTEX_EROSION,
+};
 use super::events::{
     BackfireCauseV2, BackfireLevel, EntityDisplacedByVortexPull, TurbulenceFieldSpawned,
     VortexBackfireEventV2, VortexCastEvent, WoliuSkillId, WoliuSkillVisual,
@@ -464,6 +468,10 @@ pub fn resolve_woliu_v2_skill(
         emit_audio(world, audio_id, origin);
         emit_anim(world, caster, anim_id);
     }
+
+    // plan-combat-skill-feedback-bridges-v1 P3 — 虚蚀累积（守恒纠偏：仅写 cumulative_erosion+stage，
+    // 零 qi 字段操作；真元流动已在 build_cast_qi_transfers 走 QiTransfer{Channeling}，两路径正交）。
+    apply_skill_erosion(world, caster, skill, cultivation.realm);
 
     CastResult::Started {
         cooldown_ticks: spec.cooldown_ticks,
@@ -1765,6 +1773,42 @@ pub fn visual_for(skill: WoliuSkillId) -> WoliuSkillVisual {
             hud_hint: "void_core",
             icon_texture: "bong:textures/gui/skill/woliu_void_core.png",
         },
+    }
+}
+
+// ────────────────────────────────────────────────────────
+// plan-combat-skill-feedback-bridges-v1 P3 — 虚蚀 runtime 累积
+// ────────────────────────────────────────────────────────
+
+/// 各虚蚀路径招式对应的单次施放虚蚀量。
+///
+/// 守恒纠偏：本函数及 `apply_skill_erosion` 均**不操作 qi 字段**，
+/// 真元流动已在 `build_cast_qi_transfers` 走 `QiTransfer{Channeling}`，两路径正交。
+pub fn erosion_amount_for_skill(skill: WoliuSkillId) -> f64 {
+    match skill {
+        WoliuSkillId::VoidVortex => VOID_VORTEX_EROSION,
+        WoliuSkillId::SwallowingVortex => SWALLOWING_RELEASE_EROSION,
+        WoliuSkillId::VortexEcho => ECHO_EROSION,
+        WoliuSkillId::VoidCore => {
+            // 虚心持续 3s * VOID_CORE_EROSION_PER_SEC（5.0/s）
+            let duration_sec = VOID_CORE_DURATION_TICKS as f64 / 20.0;
+            VOID_CORE_EROSION_PER_SEC * duration_sec
+        }
+        // 基础涡流 v2 招式（含 AmbientVortex 开关类不在此路径单次累积）
+        _ => BASE_SKILL_EROSION,
+    }
+}
+
+/// 取 `VoidErosion`（若存在）并调用 `add_erosion_capped`，不操作 qi。
+fn apply_skill_erosion(
+    world: &mut bevy_ecs::world::World,
+    caster: Entity,
+    skill: WoliuSkillId,
+    realm: crate::cultivation::components::Realm,
+) {
+    let amount = erosion_amount_for_skill(skill);
+    if let Some(mut erosion) = world.get_mut::<VoidErosion>(caster) {
+        add_erosion_capped(&mut erosion, amount, realm);
     }
 }
 
