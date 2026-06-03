@@ -194,8 +194,6 @@ function ironCocoonStageCN(stage: string): string {
 
 // ── channel routing table ─────────────────────────────────────────────────────
 
-type ChannelHandler = (message: string) => Promise<Narration | null>;
-
 type RouteTable = Record<string, {
   validate: (data: unknown) => { ok: boolean };
   render: (data: unknown) => Narration | null;

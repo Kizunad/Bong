@@ -1,15 +1,12 @@
 package com.bong.client.combat.baomai.v4;
 
 import net.minecraft.client.MinecraftClient;
-import net.minecraft.client.particle.ParticleManager;
 
 /**
  * plan-combat-skill-feedback-bridges-v1 P1 — 共振锁定 VFX 触发器。
  *
- * 锁定开始时播放冲击波粒子（深紫 #7B2FBE），结束时播放散开粒子（浅紫 #D4AAFF）。
- * 与 crack_reading overlay（色阶文字）和 iron_cocoon event_flow（事件流文本）完全不同的视觉路径。
- *
- * 实现方式：直接调用 MinecraftClient 的粒子 API 在玩家周围生成粒子效果，
+ * 锁定开始时播放冲击波粒子（lock=CRIT 白星），结束时播放散开粒子（end=PORTAL 紫雾）。
+ * 两态可区分；使用 vanilla ParticleTypes 作为 skeleton 占位，
  * 不依赖服务端发 VFX event（客户端本地生成，仅本玩家可见）。
  */
 public final class ResonanceLockVfxTrigger {

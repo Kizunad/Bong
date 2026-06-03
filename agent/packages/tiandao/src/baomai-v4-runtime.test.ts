@@ -347,6 +347,32 @@ describe("BaomaiV4NarrationRuntime", () => {
       "disconnect 后不应再 publish",
     ).not.toHaveBeenCalled();
   });
+
+  // ── resonance lock → end 连续状态（同一 runtime 实例） ────────────────────
+
+  it("resonance_lock then resonance_lock_end on same runtime instance both produce narrations", async () => {
+    const spy = vi.spyOn(pub, "publish");
+
+    // 1) 锁定开始
+    await runtime.handleMessage(BAOMAI_V4_RESONANCE_LOCK, makeResonanceLockPayload());
+    expect(spy, "lock 事件应产生第一条 AGENT_NARRATE").toHaveBeenCalledTimes(1);
+    const [lockChannel, lockMsg] = spy.mock.calls[0] as [string, string];
+    expect(lockChannel).toBe(AGENT_NARRATE);
+    const lockEnvelope = JSON.parse(lockMsg) as { narrations: Array<{ text: string }> };
+    expect(lockEnvelope.narrations[0]?.text, "lock narration 应包含玩家名").toContain("PlayerA");
+
+    // 2) 锁定结束（同一实例）
+    await runtime.handleMessage(BAOMAI_V4_RESONANCE_LOCK_END, makeResonanceLockEndExpiredPayload());
+    expect(spy, "lock_end 事件应产生第二条 AGENT_NARRATE").toHaveBeenCalledTimes(2);
+    const [endChannel, endMsg] = spy.mock.calls[1] as [string, string];
+    expect(endChannel).toBe(AGENT_NARRATE);
+    const endEnvelope = JSON.parse(endMsg) as { narrations: Array<{ text: string }> };
+    expect(endEnvelope.narrations[0]?.text, "lock_end narration 应包含玩家名").toContain("PlayerA");
+
+    // 3) stats 正确积累
+    expect(runtime.stats.received, "两条消息应令 received=2").toBe(2);
+    expect(runtime.stats.published, "两条消息应令 published=2").toBe(2);
+  });
 });
 
 // import vitest globally (needed for vi.spyOn in beforeEach-based tests)
