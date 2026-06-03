@@ -544,7 +544,8 @@ pub fn register(app: &mut App) {
             baomai_v3_event_bridge::publish_baomai_v3_skill_events
                 .after(client_request_handler::handle_client_request_payloads),
             // plan-combat-skill-feedback-bridges-v1 P0 — 经脉断脉叙事+VFX 桥接
-            meridian_severed_emit::publish_meridian_severed_events,
+            meridian_severed_emit::publish_meridian_severed_events
+                .before(vfx_event_emit::emit_vfx_event_payloads),
         ),
     );
     app.add_systems(
