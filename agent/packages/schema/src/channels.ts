@@ -331,6 +331,18 @@ export const CHANNELS = {
   CRAFT_OUTCOME: "bong:craft/outcome",
   /** Server → Agent: 三渠道解锁广播（残卷=首学 / 师承 / 顿悟），narration 三类叙事的 trigger */
   CRAFT_RECIPE_UNLOCKED: "bong:craft/recipe_unlocked",
+
+  // ─── 爆脉 v4（plan-combat-skill-feedback-bridges-v1 P1） ────────────────────
+  /** Server → Agent: 疤纹回路形成（baomai_v4 scar_circuit formed，agent narration） */
+  BAOMAI_V4_SCAR_CIRCUIT_FORMED: "bong:baomai_v4/scar_circuit_formed",
+  /** Server → Agent: 疤纹回路断裂（baomai_v4 scar_circuit broken，agent narration） */
+  BAOMAI_V4_SCAR_CIRCUIT_BROKEN: "bong:baomai_v4/scar_circuit_broken",
+  /** Server → Agent: 活茧阶段提升（baomai_v4 iron_cocoon stage up，agent narration） */
+  BAOMAI_V4_IRON_COCOON_STAGE_UP: "bong:baomai_v4/iron_cocoon_stage_up",
+  /** Server → Agent: 共振锁定开始（baomai_v4 resonance lock started，agent narration） */
+  BAOMAI_V4_RESONANCE_LOCK: "bong:baomai_v4/resonance_lock",
+  /** Server → Agent: 共振锁定结束（baomai_v4 resonance lock ended，agent narration） */
+  BAOMAI_V4_RESONANCE_LOCK_END: "bong:baomai_v4/resonance_lock_end",
 } as const;
 
 export const REDIS_V1_CHANNELS = [
@@ -428,6 +440,12 @@ export const REDIS_V1_CHANNELS = [
   CHANNELS.CRAFT_OUTCOME,
   CHANNELS.CRAFT_RECIPE_UNLOCKED,
   CHANNELS.MUTATION_EVENT,
+  // plan-combat-skill-feedback-bridges-v1 P1 — 爆脉 v4 叙事通道
+  CHANNELS.BAOMAI_V4_SCAR_CIRCUIT_FORMED,
+  CHANNELS.BAOMAI_V4_SCAR_CIRCUIT_BROKEN,
+  CHANNELS.BAOMAI_V4_IRON_COCOON_STAGE_UP,
+  CHANNELS.BAOMAI_V4_RESONANCE_LOCK,
+  CHANNELS.BAOMAI_V4_RESONANCE_LOCK_END,
 ] as const;
 
 export type ChannelName = (typeof CHANNELS)[keyof typeof CHANNELS];

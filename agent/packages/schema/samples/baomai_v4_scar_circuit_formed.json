@@ -1,0 +1,14 @@
+[
+  {
+    "v": 1,
+    "entity_id": "offline:TestPlayer",
+    "circuit": "tiger_mouth",
+    "tick": 100
+  },
+  {
+    "v": 1,
+    "entity_id": "char:123456789",
+    "circuit": "ren_du_bridge",
+    "tick": 9999
+  }
+]

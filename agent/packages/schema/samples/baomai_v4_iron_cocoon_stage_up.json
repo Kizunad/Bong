@@ -1,0 +1,18 @@
+[
+  {
+    "v": 1,
+    "entity_id": "offline:TestPlayer",
+    "from": "none",
+    "to": "tough_skin",
+    "total_overloads": 50,
+    "tick": 300
+  },
+  {
+    "v": 1,
+    "entity_id": "char:111222333",
+    "from": "tough_skin",
+    "to": "iron_bone",
+    "total_overloads": 120,
+    "tick": 8000
+  }
+]

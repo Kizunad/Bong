@@ -11,6 +11,8 @@ import com.bong.client.combat.SpellVolumeStore;
 import com.bong.client.combat.UnifiedEventStore;
 import com.bong.client.combat.UnlockedStylesStore;
 import com.bong.client.combat.baomai.v3.BaomaiV3Hud;
+import com.bong.client.combat.baomai.v4.CrackReadingOverlay;
+import com.bong.client.combat.baomai.v4.ResonanceLockMeterHud;
 import com.bong.client.hud.BongHudOrchestrator;
 import com.bong.client.hud.BongHudStateStore;
 import com.bong.client.hud.BongToast;
@@ -169,6 +171,20 @@ public class BongHud {
             nowMillis,
             visibility
         );
+
+        // plan-combat-skill-feedback-bridges-v1 P1 — 爆脉 v4 HUD overlay 接入渲染回路
+        if (visibility == ScreenHudVisibility.FULL) {
+            CrackReadingOverlay.render(context, client.textRenderer, nowMillis);
+            long estimatedTick = nowMillis / 50L;
+            ResonanceLockMeterHud.render(
+                context,
+                client.textRenderer,
+                client.getWindow().getScaledWidth(),
+                client.getWindow().getScaledHeight(),
+                estimatedTick,
+                nowMillis
+            );
+        }
 
         int scaledWidth = client.getWindow().getScaledWidth();
         int scaledHeight = client.getWindow().getScaledHeight();
