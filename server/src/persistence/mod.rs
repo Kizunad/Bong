@@ -37,7 +37,7 @@ pub mod identity;
 pub const DEFAULT_DATABASE_PATH: &str = "data/bong.db";
 pub const SQLITE_BUSY_TIMEOUT_MS: u64 = 15_000;
 const DEFAULT_DECEASED_PUBLIC_DIR: &str = "../library-web/public/deceased";
-const CURRENT_USER_VERSION: i32 = 26;
+const CURRENT_USER_VERSION: i32 = 27;
 const AGENT_WORLD_MODEL_ROW_ID: i64 = 1;
 const ASCENSION_QUOTA_ROW_ID: i64 = 1;
 const TRIBULATION_KIND_DU_XU: &str = "du_xu";
@@ -1695,6 +1695,24 @@ fn apply_migrations(connection: &mut Connection) -> rusqlite::Result<()> {
         )?;
         assert_pending_dormant_relics_schema_ready(&transaction)?;
         transaction.execute_batch("PRAGMA user_version = 26;")?;
+        transaction.commit()?;
+    }
+
+    let current_version: i32 =
+        connection.query_row("PRAGMA user_version;", [], |row| row.get(0))?;
+    if current_version < 27 {
+        // plan-coffin-tiers-v1 P0：player_lifespan 加 coffin_grade 列（TEXT，default 'mundane'）
+        let transaction = connection.transaction()?;
+        let columns = table_columns(&transaction, "player_lifespan")?;
+        if !columns.is_empty() && !columns.iter().any(|col| col == "coffin_grade") {
+            transaction.execute_batch(
+                "
+                ALTER TABLE player_lifespan
+                ADD COLUMN coffin_grade TEXT NOT NULL DEFAULT 'mundane';
+                ",
+            )?;
+        }
+        transaction.execute_batch("PRAGMA user_version = 27;")?;
         transaction.commit()?;
     }
 

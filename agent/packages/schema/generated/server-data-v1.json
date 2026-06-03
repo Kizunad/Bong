@@ -14488,6 +14488,26 @@
         "lifespan_rate_multiplier": {
           "minimum": 0,
           "type": "number"
+        },
+        "coffin_grade": {
+          "anyOf": [
+            {
+              "const": "mundane",
+              "type": "string"
+            },
+            {
+              "const": "jade",
+              "type": "string"
+            },
+            {
+              "const": "stone",
+              "type": "string"
+            },
+            {
+              "const": "bronze",
+              "type": "string"
+            }
+          ]
         }
       }
     },

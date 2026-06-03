@@ -75,11 +75,36 @@ pub struct LifespanPreviewV1 {
     pub is_wind_candle: bool,
 }
 
+/// 棺材档级（schema 端：snake_case，optional + default mundane，兼容旧 payload）
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum CoffinGradeV1 {
+    #[default]
+    Mundane,
+    Jade,
+    Stone,
+    Bronze,
+}
+
+impl From<crate::coffin::CoffinGrade> for CoffinGradeV1 {
+    fn from(g: crate::coffin::CoffinGrade) -> Self {
+        match g {
+            crate::coffin::CoffinGrade::Mundane => CoffinGradeV1::Mundane,
+            crate::coffin::CoffinGrade::Jade => CoffinGradeV1::Jade,
+            crate::coffin::CoffinGrade::Stone => CoffinGradeV1::Stone,
+            crate::coffin::CoffinGrade::Bronze => CoffinGradeV1::Bronze,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct CoffinStateV1 {
     pub in_coffin: bool,
     pub lifespan_rate_multiplier: f64,
+    /// 棺材档级（optional，缺省 = mundane；新增字段，旧 client 不需要）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub coffin_grade: Option<CoffinGradeV1>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -3497,6 +3522,7 @@ mod tests {
             ServerDataPayloadV1::CoffinState(CoffinStateV1 {
                 in_coffin: true,
                 lifespan_rate_multiplier: 0.9,
+                coffin_grade: Some(CoffinGradeV1::Mundane),
             }),
             // ─── plan-craft-v1 P2 wire ↔ label drift guard ──────
             ServerDataPayloadV1::CraftRecipeList(Box::new(RecipeListV1 {

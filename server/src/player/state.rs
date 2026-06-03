@@ -9,6 +9,7 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 use valence::prelude::{bevy_ecs, Component, DVec3, Resource};
 
+use crate::coffin::CoffinGrade;
 use crate::combat::components::{QuickSlotBindings, SkillBarBindings, SkillSlot};
 use crate::cultivation::components::{Cultivation, Realm};
 use crate::cultivation::known_techniques::KnownTechniques;
@@ -153,6 +154,8 @@ pub struct LoadedPlayerSlices {
     pub inventory: Option<PlayerInventory>,
     pub lifespan: Option<LifespanComponent>,
     pub in_coffin: bool,
+    /// 棺材档级（仅在 in_coffin=true 时有意义；None = 不在棺内，Some = 档级）
+    pub coffin_grade: CoffinGrade,
     pub skill_set: SkillSet,
     pub known_techniques: KnownTechniques,
     pub(crate) ui_prefs: PlayerUiPrefs,
@@ -420,6 +423,7 @@ pub fn load_player_slices(
                 inventory: None,
                 lifespan: None,
                 in_coffin: false,
+                coffin_grade: CoffinGrade::default(),
                 skill_set: SkillSet::default(),
                 known_techniques: KnownTechniques::default(),
                 ui_prefs: PlayerUiPrefs::default(),
@@ -450,16 +454,19 @@ pub fn load_player_slices(
             None
         }
     };
-    let (lifespan, in_coffin) = match load_player_lifespan_from_sqlite(&connection, username) {
-        Ok(Some((lifespan, in_coffin))) => (Some(lifespan), in_coffin),
-        Ok(None) => (None, false),
+    let (lifespan, in_coffin, coffin_grade) = match load_player_lifespan_from_sqlite(
+        &connection,
+        username,
+    ) {
+        Ok(Some((lifespan, in_coffin, coffin_grade))) => (Some(lifespan), in_coffin, coffin_grade),
+        Ok(None) => (None, false, CoffinGrade::default()),
         Err(error) => {
             tracing::warn!(
-                "[bong][player] failed to load persisted lifespan for `{}` from sqlite {}: {error}; using runtime default",
-                username,
-                persistence.db_path().display()
-            );
-            (None, false)
+                    "[bong][player] failed to load persisted lifespan for `{}` from sqlite {}: {error}; using runtime default",
+                    username,
+                    persistence.db_path().display()
+                );
+            (None, false, CoffinGrade::default())
         }
     };
     let skill_set = match load_player_skill_set_from_sqlite(&connection, username) {
@@ -503,6 +510,7 @@ pub fn load_player_slices(
         inventory,
         lifespan,
         in_coffin,
+        coffin_grade,
         skill_set,
         known_techniques,
         ui_prefs,
@@ -566,6 +574,7 @@ pub fn save_player_slices(
         lifespan,
         skill_set,
         None,
+        CoffinGrade::default(),
     )?;
     Ok(persistence.db_path().to_path_buf())
 }
@@ -580,7 +589,7 @@ pub fn save_player_slices_with_coffin(
     inventory: Option<&PlayerInventory>,
     lifespan: Option<&LifespanComponent>,
     skill_set: &SkillSet,
-    in_coffin: bool,
+    grade: Option<CoffinGrade>,
 ) -> io::Result<PathBuf> {
     let mut connection = open_player_connection(persistence)?;
     persist_player_slices_in_sqlite(
@@ -592,7 +601,8 @@ pub fn save_player_slices_with_coffin(
         inventory,
         lifespan,
         skill_set,
-        Some(in_coffin),
+        Some(grade.is_some()),
+        grade.unwrap_or_default(),
     )?;
     Ok(persistence.db_path().to_path_buf())
 }
@@ -603,7 +613,14 @@ pub fn save_player_lifespan_slice(
     lifespan: &LifespanComponent,
 ) -> io::Result<PathBuf> {
     let mut connection = open_player_connection(persistence)?;
-    persist_player_lifespan_slice_in_sqlite(&mut connection, username, lifespan, None, None)?;
+    persist_player_lifespan_slice_in_sqlite(
+        &mut connection,
+        username,
+        lifespan,
+        None,
+        None,
+        CoffinGrade::default(),
+    )?;
     Ok(persistence.db_path().to_path_buf())
 }
 
@@ -611,7 +628,7 @@ pub fn save_player_lifespan_slice_with_coffin(
     persistence: &PlayerStatePersistence,
     username: &str,
     lifespan: &LifespanComponent,
-    in_coffin: bool,
+    grade: Option<CoffinGrade>,
 ) -> io::Result<PathBuf> {
     let mut connection = open_player_connection(persistence)?;
     persist_player_lifespan_slice_in_sqlite(
@@ -619,7 +636,8 @@ pub fn save_player_lifespan_slice_with_coffin(
         username,
         lifespan,
         None,
-        Some(in_coffin),
+        Some(grade.is_some()),
+        grade.unwrap_or_default(),
     )?;
     Ok(persistence.db_path().to_path_buf())
 }
@@ -1148,11 +1166,12 @@ fn persist_player_ui_prefs_slice_in_sqlite(
 fn load_player_lifespan_from_sqlite(
     connection: &Connection,
     username: &str,
-) -> io::Result<Option<(LifespanComponent, bool)>> {
-    let row: Option<(u64, f64, u32, i64, i64)> = connection
+) -> io::Result<Option<(LifespanComponent, bool, CoffinGrade)>> {
+    let row: Option<(u64, f64, u32, i64, i64, Option<String>)> = connection
         .query_row(
             "
-            SELECT born_at_tick, years_lived, cap_by_realm, offline_pause_wall, in_coffin
+            SELECT born_at_tick, years_lived, cap_by_realm, offline_pause_wall, in_coffin,
+                   coffin_grade
             FROM player_lifespan
             WHERE username = ?1
             ",
@@ -1164,16 +1183,25 @@ fn load_player_lifespan_from_sqlite(
                     row.get(2)?,
                     row.get(3)?,
                     row.get(4)?,
+                    row.get(5)?,
                 ))
             },
         )
         .optional()
         .map_err(io::Error::other)?;
 
-    let Some((born_at_tick, years_lived, cap_by_realm, offline_pause_wall, in_coffin)) = row else {
+    let Some((born_at_tick, years_lived, cap_by_realm, offline_pause_wall, in_coffin, grade_str)) =
+        row
+    else {
         return Ok(None);
     };
     let in_coffin = in_coffin != 0;
+    // coffin_grade 列可能在旧库中缺失（legacy 行 grade_str = None），默认 Mundane
+    let coffin_grade = grade_str
+        .as_deref()
+        .map(CoffinGrade::from_db_str)
+        .unwrap_or_default();
+    let grade_for_multiplier = if in_coffin { Some(coffin_grade) } else { None };
     let now_wall = current_unix_seconds();
     let offline_seconds = if offline_pause_wall > 0 {
         u64::try_from(now_wall.saturating_sub(offline_pause_wall)).unwrap_or(0)
@@ -1183,7 +1211,7 @@ fn load_player_lifespan_from_sqlite(
     let years_lived = years_lived
         + lifespan_delta_years_for_real_seconds(
             offline_seconds,
-            offline_lifespan_multiplier(in_coffin),
+            offline_lifespan_multiplier(grade_for_multiplier),
         );
     let mut lifespan = LifespanComponent {
         born_at_tick,
@@ -1192,14 +1220,14 @@ fn load_player_lifespan_from_sqlite(
         offline_pause_tick: None,
     };
     lifespan.apply_cap(cap_by_realm.max(1));
-    Ok(Some((lifespan, in_coffin)))
+    Ok(Some((lifespan, in_coffin, coffin_grade)))
 }
 
-pub(crate) fn offline_lifespan_multiplier(in_coffin: bool) -> f64 {
-    if in_coffin {
-        LIFESPAN_OFFLINE_MULTIPLIER * crate::coffin::COFFIN_LIFESPAN_FACTOR
-    } else {
-        LIFESPAN_OFFLINE_MULTIPLIER
+/// 离线寿元倍率：Some(grade) = 在棺内按档折减；None = 不在棺内，按基础 OFFLINE 速率衰减
+pub(crate) fn offline_lifespan_multiplier(grade: Option<CoffinGrade>) -> f64 {
+    match grade {
+        Some(g) => LIFESPAN_OFFLINE_MULTIPLIER * g.lifespan_factor(),
+        None => LIFESPAN_OFFLINE_MULTIPLIER,
     }
 }
 
@@ -1279,6 +1307,7 @@ fn persist_player_lifespan_slice_in_sqlite(
     lifespan: &LifespanComponent,
     offline_pause_wall: Option<i64>,
     in_coffin: Option<bool>,
+    coffin_grade: CoffinGrade,
 ) -> io::Result<()> {
     let last_updated_wall = current_unix_seconds();
     let offline_pause_wall = offline_pause_wall.unwrap_or(last_updated_wall).max(0);
@@ -1293,15 +1322,17 @@ fn persist_player_lifespan_slice_in_sqlite(
                 cap_by_realm,
                 offline_pause_wall,
                 in_coffin,
+                coffin_grade,
                 schema_version,
                 last_updated_wall
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
             ON CONFLICT(username) DO UPDATE SET
                 born_at_tick = excluded.born_at_tick,
                 years_lived = excluded.years_lived,
                 cap_by_realm = excluded.cap_by_realm,
                 offline_pause_wall = excluded.offline_pause_wall,
                 in_coffin = excluded.in_coffin,
+                coffin_grade = excluded.coffin_grade,
                 schema_version = excluded.schema_version,
                 last_updated_wall = excluded.last_updated_wall
             ",
@@ -1312,6 +1343,7 @@ fn persist_player_lifespan_slice_in_sqlite(
                 lifespan.cap_by_realm,
                 offline_pause_wall,
                 i64::from(in_coffin),
+                coffin_grade.as_db_str(),
                 PLAYER_ROW_SCHEMA_VERSION,
                 last_updated_wall
             ],
@@ -1427,6 +1459,7 @@ fn persist_player_core_slice_in_sqlite(
             None,
             &SkillSet::default(),
             None,
+            CoffinGrade::default(),
         )?;
     }
 
@@ -1620,6 +1653,7 @@ fn persist_player_slices_in_sqlite(
     lifespan: Option<&LifespanComponent>,
     skill_set: &SkillSet,
     in_coffin: Option<bool>,
+    coffin_grade: CoffinGrade,
 ) -> io::Result<()> {
     let normalized = state.normalized();
     let karma = normalized.karma;
@@ -1795,15 +1829,17 @@ fn persist_player_slices_in_sqlite(
                     cap_by_realm,
                     offline_pause_wall,
                     in_coffin,
+                    coffin_grade,
                     schema_version,
                     last_updated_wall
-                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
                 ON CONFLICT(username) DO UPDATE SET
                     born_at_tick = excluded.born_at_tick,
                     years_lived = excluded.years_lived,
                     cap_by_realm = excluded.cap_by_realm,
                     offline_pause_wall = excluded.offline_pause_wall,
                     in_coffin = excluded.in_coffin,
+                    coffin_grade = excluded.coffin_grade,
                     schema_version = excluded.schema_version,
                     last_updated_wall = excluded.last_updated_wall
                 ",
@@ -1814,6 +1850,7 @@ fn persist_player_slices_in_sqlite(
                     lifespan.cap_by_realm,
                     offline_pause_wall,
                     i64::from(in_coffin_value),
+                    coffin_grade.as_db_str(),
                     PLAYER_ROW_SCHEMA_VERSION,
                     last_updated_wall
                 ],
@@ -1959,6 +1996,7 @@ fn migrate_legacy_player_json_to_sqlite(
         None,
         &SkillSet::default(),
         None,
+        CoffinGrade::default(),
     )?;
     fs::rename(&path, persistence.migrated_path_for_username(username))?;
     Ok(Some(state))
@@ -2545,7 +2583,13 @@ mod player_state_tests {
         let loaded_lifespan = loaded.lifespan.expect("lifespan should reload");
 
         assert!(loaded.in_coffin);
-        assert!((offline_lifespan_multiplier(true) - 0.09).abs() < 1e-9);
+        // in_coffin=true 且无 coffin_grade → 默认凡木档 0.09
+        assert_eq!(loaded.coffin_grade, CoffinGrade::Mundane);
+        assert!(
+            (offline_lifespan_multiplier(Some(CoffinGrade::Mundane)) - 0.09).abs() < 1e-9,
+            "mundane offline multiplier should be 0.09, got {}",
+            offline_lifespan_multiplier(Some(CoffinGrade::Mundane))
+        );
         assert!(
             (6.89..=6.91).contains(&loaded_lifespan.years_lived),
             "expected ten offline real hours in coffin at x0.09 to add about 0.9 years, got {}",
@@ -2553,6 +2597,31 @@ mod player_state_tests {
         );
 
         let _ = fs::remove_dir_all(&data_dir);
+    }
+
+    #[test]
+    fn offline_lifespan_multiplier_all_grades() {
+        // 四档离线倍率 = OFFLINE(0.1) × lifespan_factor
+        assert!(
+            (offline_lifespan_multiplier(None) - 0.1).abs() < 1e-9,
+            "None → 0.1"
+        );
+        assert!(
+            (offline_lifespan_multiplier(Some(CoffinGrade::Mundane)) - 0.09).abs() < 1e-9,
+            "Mundane → 0.09"
+        );
+        assert!(
+            (offline_lifespan_multiplier(Some(CoffinGrade::Jade)) - 0.07).abs() < 1e-9,
+            "Jade → 0.07"
+        );
+        assert!(
+            (offline_lifespan_multiplier(Some(CoffinGrade::Stone)) - 0.05).abs() < 1e-9,
+            "Stone → 0.05"
+        );
+        assert!(
+            (offline_lifespan_multiplier(Some(CoffinGrade::Bronze)) - 0.03).abs() < 1e-9,
+            "Bronze → 0.03"
+        );
     }
 
     #[test]

@@ -3698,6 +3698,7 @@ mod tests {
         s2c_encode_decode_roundtrip(ServerDataPayloadV1::CoffinState(CoffinStateV1 {
             in_coffin: true,
             lifespan_rate_multiplier: 1.0,
+            coffin_grade: Some(super::super::server_data::CoffinGradeV1::Mundane),
         }));
     }
 

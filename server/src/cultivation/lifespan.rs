@@ -437,7 +437,7 @@ pub fn lifespan_aging_tick(
 
         let multiplier = lifespan_tick_rate_multiplier(position, zones)
             * season_aging_modifier(lifespan_season(position, zones, clock.tick))
-            * crate::coffin::coffin_lifespan_multiplier(coffin_component.is_some());
+            * crate::coffin::coffin_lifespan_multiplier(coffin_component.map(|c| c.grade));
         let delta_years = lifespan_delta_years_for_ticks(1, multiplier);
         lifespan.years_lived =
             (lifespan.years_lived + delta_years).min(lifespan.cap_by_realm as f64);

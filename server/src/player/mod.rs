@@ -252,12 +252,14 @@ pub(crate) fn attach_player_state_to_joined_clients(
                 flags.set_invisible(true);
             }
             let coffin_lower = coffin_lower_from_player_position(persisted.position);
+            let grade = persisted.coffin_grade;
             if let Some(registry) = coffin_registry.as_deref_mut() {
-                registry.reclaim_occupied(coffin_lower, entity, 0);
+                registry.reclaim_occupied(coffin_lower, entity, 0, grade);
             }
             entity_commands.insert(CoffinComponent {
                 entered_at_tick: 0,
                 coffin_lower,
+                grade,
             });
         }
         entity_commands.insert(persisted.skill_set);
@@ -395,7 +397,7 @@ pub(crate) fn despawn_disconnected_clients(
                 player_inventory,
                 lifespan,
                 skill_set.unwrap_or(&SkillSet::default()),
-                coffin.is_some(),
+                coffin.map(|c| c.grade),
             ) {
                 Ok(path) => tracing::info!(
                     "[bong][player] saved player slices for disconnected client `{}` to {} before cleanup",
@@ -544,7 +546,7 @@ fn flush_connected_players_on_shutdown(
             player_inventory,
             lifespan,
             skill_set.unwrap_or(&SkillSet::default()),
-            coffin.is_some(),
+            coffin.map(|c| c.grade),
         ) {
             Ok(path) => tracing::info!(
                 "[bong][player] saved player slices for shutdown flush `{}` to {}",
@@ -714,7 +716,7 @@ fn autosave_player_lifespan_slices(
             &persistence,
             username.0.as_str(),
             lifespan,
-            coffin.is_some(),
+            coffin.map(|c| c.grade),
         ) {
             Ok(_) => saved_count += 1,
             Err(error) => tracing::warn!(
