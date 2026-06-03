@@ -1,0 +1,58 @@
+[
+  {
+    "v": 1,
+    "type": "meridian_severed",
+    "entity_id": "offline:XiaoMing",
+    "meridian_id": "Lung",
+    "source": "VoluntarySever",
+    "at_tick": 1200
+  },
+  {
+    "v": 1,
+    "type": "meridian_severed",
+    "entity_id": "offline:DaguZhenren",
+    "meridian_id": "Heart",
+    "source": "BackfireOverload",
+    "at_tick": 3050
+  },
+  {
+    "v": 1,
+    "type": "meridian_severed",
+    "entity_id": "char:72057594037927936",
+    "meridian_id": "Du",
+    "source": "OverloadTear",
+    "at_tick": 5000
+  },
+  {
+    "v": 1,
+    "type": "meridian_severed",
+    "entity_id": "offline:WangFeng",
+    "meridian_id": "Bladder",
+    "source": "CombatWound",
+    "at_tick": 7777
+  },
+  {
+    "v": 1,
+    "type": "meridian_severed",
+    "entity_id": "offline:TianyunZhenren",
+    "meridian_id": "Ren",
+    "source": "TribulationFail",
+    "at_tick": 12000
+  },
+  {
+    "v": 1,
+    "type": "meridian_severed",
+    "entity_id": "offline:PoisonMaster",
+    "meridian_id": "Liver",
+    "source": "DuguDistortion",
+    "at_tick": 9999
+  },
+  {
+    "v": 1,
+    "type": "meridian_severed",
+    "entity_id": "char:144115188075855872",
+    "meridian_id": "Chong",
+    "source": {"Other": "上古遗物反噬"},
+    "at_tick": 88888
+  }
+]

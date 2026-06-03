@@ -40,7 +40,7 @@ export const MeridianSeveredEventV1 = Type.Object(
   {
     v: Type.Literal(1),
     type: Type.Literal("meridian_severed"),
-    /** 玩家或 NPC 的 wire id（"player:<uuid>" 或 "entity:<bits>"） */
+    /** 玩家或 NPC 的 wire id（"offline:{username}" 或 "char:{bits}"，与 baomai_v3/tuike/zhenmai 兄弟桥一致） */
     entity_id: Type.String({ minLength: 1, maxLength: 128 }),
     /** 哪条经脉断了 */
     meridian_id: MeridianId,
