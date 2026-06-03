@@ -86,19 +86,37 @@ describe("MeridianSeveredNarrationRuntime", () => {
   });
 
   it("subscribes to CHANNELS.MERIDIAN_SEVERED on connect", () => {
-    expect(sub.subscribe).toHaveBeenCalledWith(MERIDIAN_SEVERED);
+    expect(
+      sub.subscribe,
+      `connect() 应订阅 ${MERIDIAN_SEVERED} 频道以接收断脉事件，否则消息永远不会到达 runtime`,
+    ).toHaveBeenCalledWith(MERIDIAN_SEVERED);
   });
 
   it("CombatWound → 产出 AGENT_NARRATE publish", async () => {
     await runtime.handlePayload(MERIDIAN_SEVERED, makeSeveredPayload());
-    expect(pub.publish).toHaveBeenCalledOnce();
+    expect(
+      pub.publish,
+      "CombatWound 断脉事件应触发恰好一次 pub.publish，确保叙事不会重复发送",
+    ).toHaveBeenCalledOnce();
     const [channel, msg] = pub.publish.mock.calls[0] as [string, string];
-    expect(channel).toBe(AGENT_NARRATE);
+    expect(
+      channel,
+      `叙事应发布到 ${AGENT_NARRATE} 频道，而非其他频道`,
+    ).toBe(AGENT_NARRATE);
     const envelope = JSON.parse(msg) as { v: number; narrations: unknown[] };
-    expect(envelope.v).toBe(1);
-    expect(envelope.narrations).toHaveLength(1);
-    expect(runtime.stats.received).toBe(1);
-    expect(runtime.stats.published).toBe(1);
+    expect(envelope.v, "payload 版本必须是 v:1 以匹配 schema 约定").toBe(1);
+    expect(
+      envelope.narrations,
+      "每次断脉事件应产出恰好 1 条叙事，多了会淹没玩家，少了会漏叙事",
+    ).toHaveLength(1);
+    expect(
+      runtime.stats.received,
+      "处理 1 条消息后 stats.received 应为 1",
+    ).toBe(1);
+    expect(
+      runtime.stats.published,
+      "成功 publish 叙事后 stats.published 应为 1",
+    ).toBe(1);
   });
 
   it("VoluntarySever → 也产出 AGENT_NARRATE（叙事层不过滤，VFX 由 server 层过滤）", async () => {
@@ -161,15 +179,27 @@ describe("MeridianSeveredNarrationRuntime", () => {
 
   it("无效 JSON → rejectedContract++, 不 publish", async () => {
     await runtime.handlePayload(MERIDIAN_SEVERED, "not-json");
-    expect(pub.publish).not.toHaveBeenCalled();
-    expect(runtime.stats.rejectedContract).toBe(1);
+    expect(
+      pub.publish,
+      "无效 JSON 应被拒绝，不应触发任何 publish，防止乱码叙事下发给玩家",
+    ).not.toHaveBeenCalled();
+    expect(
+      runtime.stats.rejectedContract,
+      "无效 JSON 应令 rejectedContract 自增为 1，以便监控 schema 违规",
+    ).toBe(1);
   });
 
   it("schema 不符（缺 meridian_id）→ rejectedContract++, 不 publish", async () => {
     const bad = JSON.stringify({ v: 1, type: "meridian_severed" });
     await runtime.handlePayload(MERIDIAN_SEVERED, bad);
-    expect(pub.publish).not.toHaveBeenCalled();
-    expect(runtime.stats.rejectedContract).toBe(1);
+    expect(
+      pub.publish,
+      "缺 meridian_id 的 payload 应被 schema 校验拒绝，不应触发 publish",
+    ).not.toHaveBeenCalled();
+    expect(
+      runtime.stats.rejectedContract,
+      "schema 不符应令 rejectedContract 自增为 1",
+    ).toBe(1);
   });
 
   it("忽略非 MERIDIAN_SEVERED channel 消息（通过 onMessage 路径）", async () => {
