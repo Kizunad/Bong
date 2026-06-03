@@ -18,8 +18,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use valence::prelude::{ident, Client, Entity, EventReader, Query, Res, Username, With};
 
 use crate::combat::baomai_v4::events::{
-    CrackReadingResultEvent, IronCocoonStageUpEvent, LockEndReason, ResonanceLockEndEvent,
-    ResonanceLockEvent, ScarCircuitBrokenEvent, ScarCircuitFormedEvent,
+    CrackReadingResultEvent, IronCocoonStageUpEvent, ResonanceLockEndEvent, ResonanceLockEvent,
+    ScarCircuitBrokenEvent, ScarCircuitFormedEvent,
 };
 use crate::network::agent_bridge::{
     payload_type_label, serialize_server_data_payload, SERVER_DATA_CHANNEL,
@@ -244,8 +244,7 @@ pub fn emit_resonance_lock_payloads(
         let fighter_a_id = entity_wire_id(event.fighter_a, &usernames);
         let fighter_b_id = entity_wire_id(event.fighter_b, &usernames);
 
-        let reason_wire =
-            lock_end_reason_wire(event.reason.clone(), |e| entity_wire_id(e, &usernames));
+        let reason_wire = lock_end_reason_wire(event.reason, |e| entity_wire_id(e, &usernames));
 
         // 1. Redis → agent 叙事
         let redis_payload = BaomaiV4ResonanceLockEndV1::new(
@@ -285,7 +284,7 @@ pub fn emit_resonance_lock_payloads(
 mod tests {
     use super::*;
 
-    use valence::prelude::{App, Events, Update};
+    use valence::prelude::{App, Update};
 
     use crate::combat::baomai_v4::events::{CircuitBreakReason, LockEndReason};
     use crate::combat::baomai_v4::iron_cocoon::IronCocoonStage;
@@ -301,7 +300,7 @@ mod tests {
             tx_outbound,
             rx_inbound,
         });
-        app
+        (app, rx_outbound)
     }
 
     // ── ScarCircuitFormed ─────────────────────────────────────────────────────
