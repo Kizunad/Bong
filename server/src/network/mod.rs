@@ -38,6 +38,7 @@ pub mod identity_panel_emit;
 pub mod inventory_event_emit;
 pub mod inventory_snapshot_emit;
 pub mod knockback_sync_emit;
+pub mod meridian_severed_emit;
 pub mod mutation_event_publish;
 pub mod mutation_visual_emit;
 pub mod npc_bubble;
@@ -542,6 +543,8 @@ pub fn register(app: &mut App) {
             dugu_v2_event_bridge::publish_dugu_v2_reverse_events,
             baomai_v3_event_bridge::publish_baomai_v3_skill_events
                 .after(client_request_handler::handle_client_request_payloads),
+            // plan-combat-skill-feedback-bridges-v1 P0 — 经脉断脉叙事+VFX 桥接
+            meridian_severed_emit::publish_meridian_severed_events,
         ),
     );
     app.add_systems(
