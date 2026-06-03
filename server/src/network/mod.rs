@@ -8,6 +8,7 @@ pub mod ascension_quota_emit;
 pub mod audio_event_emit;
 pub mod audio_trigger;
 pub mod baomai_v3_event_bridge;
+pub mod baomai_v4_event_bridge;
 pub mod burst_event_emit;
 pub mod carrier_state_emit;
 pub mod cast_emit;
@@ -546,6 +547,11 @@ pub fn register(app: &mut App) {
             // plan-combat-skill-feedback-bridges-v1 P0 — 经脉断脉叙事+VFX 桥接
             meridian_severed_emit::publish_meridian_severed_events
                 .before(vfx_event_emit::emit_vfx_event_payloads),
+            // plan-combat-skill-feedback-bridges-v1 P1 — baomai_v4 反馈整桥
+            baomai_v4_event_bridge::publish_scar_circuit_events,
+            baomai_v4_event_bridge::push_iron_cocoon_stage_up,
+            baomai_v4_event_bridge::emit_crack_reading_payload,
+            baomai_v4_event_bridge::emit_resonance_lock_payloads,
         ),
     );
     app.add_systems(

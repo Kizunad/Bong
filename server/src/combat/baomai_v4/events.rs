@@ -11,8 +11,8 @@ use crate::cultivation::components::MeridianId;
 /// 疤纹回路形成事件。
 ///
 /// 消费方：agent narration（ScarCircuitFormed → player perception scope）。
+/// plan-combat-skill-feedback-bridges-v1 P1：baomai_v4_event_bridge::publish_scar_circuit_events 消费。
 #[derive(Debug, Clone, Event)]
-#[allow(dead_code)]
 pub struct ScarCircuitFormedEvent {
     pub entity: Entity,
     pub circuit: ScarCircuitKind,
@@ -35,8 +35,8 @@ pub enum CircuitBreakReason {
 /// 疤纹回路断裂事件。
 ///
 /// 消费方：agent narration（ScarCircuitBroken → player perception scope）。
+/// plan-combat-skill-feedback-bridges-v1 P1：baomai_v4_event_bridge::publish_scar_circuit_events 消费。
 #[derive(Debug, Clone, Event)]
-#[allow(dead_code)]
 pub struct ScarCircuitBrokenEvent {
     pub entity: Entity,
     pub circuit: ScarCircuitKind,
@@ -47,8 +47,8 @@ pub struct ScarCircuitBrokenEvent {
 /// 活茧阶段提升事件。
 ///
 /// 消费方：agent narration + client event_flow（IronCocoonStageUp → player perception scope）。
+/// plan-combat-skill-feedback-bridges-v1 P1：baomai_v4_event_bridge::push_iron_cocoon_stage_up 消费。
 #[derive(Debug, Clone, Event)]
-#[allow(dead_code)]
 pub struct IronCocoonStageUpEvent {
     pub entity: Entity,
     pub from: IronCocoonStage,
@@ -60,8 +60,8 @@ pub struct IronCocoonStageUpEvent {
 /// 裂读结果事件（plan-baomai-v4 §5.3）。
 ///
 /// 消费方：client HUD overlay（`bong:crack_reading` CustomPayload）。
+/// plan-combat-skill-feedback-bridges-v1 P1：baomai_v4_event_bridge::emit_crack_reading_payload 消费。
 #[derive(Debug, Clone, Event)]
-#[allow(dead_code)]
 pub struct CrackReadingResultEvent {
     pub reader: Entity,
     pub target: Entity,
@@ -72,6 +72,7 @@ pub struct CrackReadingResultEvent {
 /// 主动绝脉事件（plan-baomai-v4 §4.2）。
 ///
 /// 消费方：`MeridianSeveredPermanent` 写入 + `DeadMeridianArmor` 更新 + agent narration。
+/// Note: P0 已通过 meridian_severed_emit.rs 消费；VoluntarySeverEvent 自身走 dead_armor gameplay 路径。
 #[derive(Debug, Clone, Event)]
 #[allow(dead_code)]
 pub struct VoluntarySeverEvent {
@@ -94,8 +95,8 @@ pub enum LockEndReason {
 /// 共振锁定开始事件（plan-baomai-v4 §6.2/§7）。
 ///
 /// 消费方：client VFX + HUD meter（`bong:resonance_lock` CustomPayload）+ agent narration。
+/// plan-combat-skill-feedback-bridges-v1 P1：baomai_v4_event_bridge::emit_resonance_lock_payloads 消费。
 #[derive(Debug, Clone, Event)]
-#[allow(dead_code)]
 pub struct ResonanceLockEvent {
     pub fighter_a: Entity,
     pub fighter_b: Entity,
@@ -106,8 +107,8 @@ pub struct ResonanceLockEvent {
 /// 共振锁定结束事件（plan-baomai-v4 §6.5/§7）。
 ///
 /// 消费方：client VFX + HUD meter + agent narration。
+/// plan-combat-skill-feedback-bridges-v1 P1：baomai_v4_event_bridge::emit_resonance_lock_payloads 消费。
 #[derive(Debug, Clone, Event)]
-#[allow(dead_code)]
 pub struct ResonanceLockEndEvent {
     pub fighter_a: Entity,
     pub fighter_b: Entity,

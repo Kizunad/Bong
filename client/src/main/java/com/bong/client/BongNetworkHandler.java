@@ -86,6 +86,10 @@ public class BongNetworkHandler {
         registerAmbientZoneChannel();
         registerZoneEnvironmentChannel();
         registerMutationVisualChannel();
+        // plan-combat-skill-feedback-bridges-v1 P1 — baomai_v4 反馈整桥
+        registerCrackReadingChannel();
+        registerResonanceLockChannel();
+        registerResonanceLockEndChannel();
         // 旧 server 推过的 realm_collapse evac HUD 是 static volatile 字段倒计时，
         // 不会在断线 / 切服 / 重连时自清。Disconnect 时强制清掉，避免上一 server
         // 的 "域崩撤离 48s" 倒计时跨 session 续命。
@@ -103,6 +107,8 @@ public class BongNetworkHandler {
                 ClientConnectionStatusStore.markDisconnected(Util.getMeasuringTimeMs());
                 com.bong.client.audio.MusicStateMachine.instance().clear();
                 MutationVisualState.reset();
+                com.bong.client.combat.baomai.v4.CrackReadingHudStateStore.clear();
+                com.bong.client.combat.baomai.v4.ResonanceLockHudStateStore.clear();
             })
         );
         ClientPlayConnectionEvents.JOIN.register(
@@ -407,6 +413,74 @@ public class BongNetworkHandler {
                     BongClient.LOGGER.info("Processed bong:mutation_visual payload ({} bytes)", readableBytes);
                 } catch (Exception e) {
                     BongClient.LOGGER.error("Failed to parse bong:mutation_visual payload: {}", e.getMessage());
+                }
+            });
+        });
+    }
+
+    // ── plan-combat-skill-feedback-bridges-v1 P1 — baomai_v4 channels ──────────
+
+    /**
+     * 注册 {@code bong:crack_reading} channel（仿 registerMutationVisualChannel）。
+     * payload JSON → CrackReadingHandler.handle → CrackReadingHudStateStore。
+     */
+    private static void registerCrackReadingChannel() {
+        ClientPlayNetworking.registerGlobalReceiver(new Identifier("bong", "crack_reading"), (client, handler, buf, responseSender) -> {
+            int readableBytes = buf.readableBytes();
+            byte[] bytes = new byte[readableBytes];
+            buf.readBytes(bytes);
+            String jsonPayload = ServerDataEnvelope.decodeUtf8(bytes);
+            markConnectionPayload();
+            client.execute(() -> {
+                try {
+                    com.bong.client.combat.baomai.v4.CrackReadingHandler.handle(jsonPayload);
+                    BongClient.LOGGER.debug("Processed bong:crack_reading payload ({} bytes)", readableBytes);
+                } catch (Exception e) {
+                    BongClient.LOGGER.error("Failed to parse bong:crack_reading payload: {}", e.getMessage());
+                }
+            });
+        });
+    }
+
+    /**
+     * 注册 {@code bong:resonance_lock} channel。
+     * payload JSON → ResonanceLockHandler.handleLock → ResonanceLockHudStateStore + VFX。
+     */
+    private static void registerResonanceLockChannel() {
+        ClientPlayNetworking.registerGlobalReceiver(new Identifier("bong", "resonance_lock"), (client, handler, buf, responseSender) -> {
+            int readableBytes = buf.readableBytes();
+            byte[] bytes = new byte[readableBytes];
+            buf.readBytes(bytes);
+            String jsonPayload = ServerDataEnvelope.decodeUtf8(bytes);
+            markConnectionPayload();
+            client.execute(() -> {
+                try {
+                    com.bong.client.combat.baomai.v4.ResonanceLockHandler.handleLock(jsonPayload);
+                    BongClient.LOGGER.debug("Processed bong:resonance_lock payload ({} bytes)", readableBytes);
+                } catch (Exception e) {
+                    BongClient.LOGGER.error("Failed to parse bong:resonance_lock payload: {}", e.getMessage());
+                }
+            });
+        });
+    }
+
+    /**
+     * 注册 {@code bong:resonance_lock_end} channel。
+     * payload JSON → ResonanceLockHandler.handleLockEnd → 清空状态 + 解锁 VFX。
+     */
+    private static void registerResonanceLockEndChannel() {
+        ClientPlayNetworking.registerGlobalReceiver(new Identifier("bong", "resonance_lock_end"), (client, handler, buf, responseSender) -> {
+            int readableBytes = buf.readableBytes();
+            byte[] bytes = new byte[readableBytes];
+            buf.readBytes(bytes);
+            String jsonPayload = ServerDataEnvelope.decodeUtf8(bytes);
+            markConnectionPayload();
+            client.execute(() -> {
+                try {
+                    com.bong.client.combat.baomai.v4.ResonanceLockHandler.handleLockEnd(jsonPayload);
+                    BongClient.LOGGER.debug("Processed bong:resonance_lock_end payload ({} bytes)", readableBytes);
+                } catch (Exception e) {
+                    BongClient.LOGGER.error("Failed to parse bong:resonance_lock_end payload: {}", e.getMessage());
                 }
             });
         });

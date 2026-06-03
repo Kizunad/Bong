@@ -25,6 +25,7 @@ import { ZhenmaiNarrationRuntime } from "./zhenmai-narration.js";
 import { ZhenfaV2NarrationRuntime } from "./zhenfa-v2-runtime.js";
 import { AnqiNarrationRuntime } from "./anqi-narration.js";
 import { BaomaiV3NarrationRuntime } from "./baomai-v3-runtime.js";
+import { BaomaiV4NarrationRuntime } from "./baomai-v4-runtime.js";
 import { MeridianSeveredNarrationRuntime } from "./meridian-severed-runtime.js";
 import { MutationNarrationRuntime } from "./mutation-narration-runtime.js";
 import { BreakthroughCinematicNarrationRuntime } from "./breakthrough-cinematic-narration.js";
@@ -191,6 +192,10 @@ async function startAuxiliaryRuntimes(config: RuntimeConfig): Promise<RuntimeCle
   const meridianSeveredCleanup = await startMeridianSeveredNarrationRuntimeInternal({
     redisUrl: config.redisUrl,
   });
+  // plan-combat-skill-feedback-bridges-v1 P1: baomai_v4 叙事 runtime（psubscribe bong:baomai_v4/*）。
+  const baomaiV4Cleanup = await startBaomaiV4Runtime({
+    redisUrl: config.redisUrl,
+  });
   // plan-dandao-runtime-wiring-v1 P2: 变异叙事 runtime（订阅 bong:mutation_event，stage 3+ 出 narration）。
   const mutationNarrationCleanup = await startMutationNarrationRuntime({
     redisUrl: config.redisUrl,
@@ -248,6 +253,7 @@ async function startAuxiliaryRuntimes(config: RuntimeConfig): Promise<RuntimeCle
     anqiCleanup,
     mutationNarrationCleanup,
     meridianSeveredCleanup,
+    baomaiV4Cleanup,
     baomaiV3Cleanup,
     yidaoCleanup,
     zhenmaiCleanup,
@@ -566,6 +572,35 @@ async function startMeridianSeveredNarrationRuntimeInternal(opts: {
         "[tiandao] meridian-severed narration runtime disconnect error:",
         error,
       );
+    }
+  };
+}
+
+async function startBaomaiV4Runtime(opts: {
+  redisUrl: string;
+}): Promise<() => Promise<void>> {
+  const IORedisCtor = ((Redis as unknown as { default?: unknown }).default ??
+    Redis) as new (url: string) => unknown;
+  const sub = new IORedisCtor(opts.redisUrl) as ConstructorParameters<
+    typeof BaomaiV4NarrationRuntime
+  >[0]["sub"];
+  const pub = new IORedisCtor(opts.redisUrl) as ConstructorParameters<
+    typeof BaomaiV4NarrationRuntime
+  >[0]["pub"];
+
+  const runtime = new BaomaiV4NarrationRuntime({ sub, pub });
+  runtime
+    .connect()
+    .then(() => console.log("[tiandao] baomai-v4 narration runtime online"))
+    .catch((error) =>
+      console.warn("[tiandao] baomai-v4 narration runtime failed to start:", error),
+    );
+  return async () => {
+    const timeout = new Promise<void>((resolve) => setTimeout(resolve, 500));
+    try {
+      await Promise.race([runtime.disconnect(), timeout]);
+    } catch (error) {
+      console.warn("[tiandao] baomai-v4 narration runtime disconnect error:", error);
     }
   };
 }

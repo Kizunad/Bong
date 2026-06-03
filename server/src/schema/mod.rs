@@ -9,6 +9,7 @@ pub mod anticheat;
 pub mod armor_event;
 pub mod audio;
 pub mod baomai_v3;
+pub mod baomai_v4;
 pub mod botany;
 pub mod calamity;
 pub mod channels;

@@ -216,6 +216,18 @@ pub const CH_MUTATION_EVENT: &str = "bong:mutation_event";
 /// 对齐 agent `CHANNELS.MERIDIAN_SEVERED`（channels.ts:323）。
 pub const CH_MERIDIAN_SEVERED: &str = "bong:meridian_severed";
 
+// 爆脉 v4（plan-combat-skill-feedback-bridges-v1 P1）—— baomai_v4 反馈整桥。
+/// 疤纹回路形成事件，对齐 agent `CHANNELS.BAOMAI_V4_SCAR_CIRCUIT_FORMED`。
+pub const CH_BAOMAI_V4_SCAR_CIRCUIT_FORMED: &str = "bong:baomai_v4/scar_circuit_formed";
+/// 疤纹回路断裂事件，对齐 agent `CHANNELS.BAOMAI_V4_SCAR_CIRCUIT_BROKEN`。
+pub const CH_BAOMAI_V4_SCAR_CIRCUIT_BROKEN: &str = "bong:baomai_v4/scar_circuit_broken";
+/// 活茧阶段提升事件，对齐 agent `CHANNELS.BAOMAI_V4_IRON_COCOON_STAGE_UP`。
+pub const CH_BAOMAI_V4_IRON_COCOON_STAGE_UP: &str = "bong:baomai_v4/iron_cocoon_stage_up";
+/// 共振锁定开始事件，对齐 agent `CHANNELS.BAOMAI_V4_RESONANCE_LOCK`。
+pub const CH_BAOMAI_V4_RESONANCE_LOCK: &str = "bong:baomai_v4/resonance_lock";
+/// 共振锁定结束事件，对齐 agent `CHANNELS.BAOMAI_V4_RESONANCE_LOCK_END`。
+pub const CH_BAOMAI_V4_RESONANCE_LOCK_END: &str = "bong:baomai_v4/resonance_lock_end";
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -354,5 +366,23 @@ mod tests {
         assert_eq!(CH_FACTION_WAR, "bong:faction/war");
         // plan-combat-skill-feedback-bridges-v1 P0 — 经脉永久 SEVERED 叙事频道
         assert_eq!(CH_MERIDIAN_SEVERED, "bong:meridian_severed");
+        // plan-combat-skill-feedback-bridges-v1 P1 — baomai_v4 反馈整桥频道
+        assert_eq!(
+            CH_BAOMAI_V4_SCAR_CIRCUIT_FORMED,
+            "bong:baomai_v4/scar_circuit_formed"
+        );
+        assert_eq!(
+            CH_BAOMAI_V4_SCAR_CIRCUIT_BROKEN,
+            "bong:baomai_v4/scar_circuit_broken"
+        );
+        assert_eq!(
+            CH_BAOMAI_V4_IRON_COCOON_STAGE_UP,
+            "bong:baomai_v4/iron_cocoon_stage_up"
+        );
+        assert_eq!(CH_BAOMAI_V4_RESONANCE_LOCK, "bong:baomai_v4/resonance_lock");
+        assert_eq!(
+            CH_BAOMAI_V4_RESONANCE_LOCK_END,
+            "bong:baomai_v4/resonance_lock_end"
+        );
     }
 }

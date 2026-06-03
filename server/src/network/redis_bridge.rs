@@ -14,6 +14,10 @@ use crate::schema::alchemy::{
 use crate::schema::anticheat::AntiCheatReportV1;
 use crate::schema::armor_event::ArmorDurabilityChangedV1;
 use crate::schema::baomai_v3::BaomaiSkillEventV1;
+use crate::schema::baomai_v4::{
+    BaomaiV4IronCocoonStageUpV1, BaomaiV4ResonanceLockEndV1, BaomaiV4ResonanceLockV1,
+    BaomaiV4ScarCircuitBrokenV1, BaomaiV4ScarCircuitFormedV1,
+};
 use crate::schema::botany::BotanyEcologySnapshotV1;
 use crate::schema::channels::{
     CH_AGENT_COMMAND, CH_AGENT_NARRATE, CH_AGENT_WORLD_MODEL, CH_AGING, CH_ALCHEMY_INSIGHT,
@@ -21,19 +25,22 @@ use crate::schema::channels::{
     CH_ANQI_CARRIER_ABRASION, CH_ANQI_CARRIER_CHARGED, CH_ANQI_CARRIER_IMPACT,
     CH_ANQI_CONTAINER_SWAP, CH_ANQI_ECHO_FRACTAL, CH_ANQI_MULTI_SHOT, CH_ANQI_PROJECTILE_DESPAWNED,
     CH_ANQI_QI_INJECTION, CH_ANTICHEAT, CH_ARMOR_DURABILITY_CHANGED, CH_BAOMAI_V3_SKILL_EVENT,
-    CH_BONE_COIN_TICK, CH_BOTANY_ECOLOGY, CH_BREAKTHROUGH_CINEMATIC, CH_BREAKTHROUGH_EVENT,
-    CH_COMBAT_REALTIME, CH_COMBAT_SUMMARY, CH_CULTIVATION_DEATH, CH_DEATH_CINEMATIC,
-    CH_DEATH_INSIGHT, CH_DUGU_POISON_PROGRESS, CH_DUGU_V2_CAST, CH_DUGU_V2_REVERSE,
-    CH_DUGU_V2_SELF_CURE, CH_DUO_SHE_EVENT, CH_FACTION_EVENT, CH_FACTION_STATE, CH_FACTION_WAR,
-    CH_FORGE_EVENT, CH_FORGE_OUTCOME, CH_FORGE_START, CH_HEART_DEMON_OFFER, CH_HEART_DEMON_REQUEST,
-    CH_HIGH_RENOWN_MILESTONE, CH_INSIGHT_OFFER, CH_INSIGHT_REQUEST, CH_LIFESPAN_EVENT,
-    CH_MERIDIAN_SEVERED, CH_MUTATION_EVENT, CH_NPC_COMBAT, CH_NPC_DEATH, CH_NPC_RELIC,
-    CH_NPC_SPAWN, CH_PLAYER_CHAT, CH_POISON_DOSE_EVENT, CH_POISON_OVERDOSE_EVENT,
-    CH_POI_NOVICE_EVENT, CH_PRICE_INDEX, CH_PSEUDO_VEIN_ACTIVE, CH_PSEUDO_VEIN_DISSIPATE,
-    CH_RAT_PHASE_EVENT, CH_REBIRTH, CH_SEASON_CHANGED, CH_SKILL_CAP_CHANGED, CH_SKILL_LV_UP,
-    CH_SKILL_SCROLL_USED, CH_SKILL_XP_GAIN, CH_SOCIAL_EXPOSURE, CH_SOCIAL_FEUD,
-    CH_SOCIAL_NICHE_INTRUSION, CH_SOCIAL_PACT, CH_SOCIAL_RENOWN_DELTA, CH_SPIRIT_EYE_DISCOVERED,
-    CH_SPIRIT_EYE_MIGRATE, CH_SPIRIT_EYE_USED_FOR_BREAKTHROUGH, CH_SPIRIT_TREASURE_DIALOGUE,
+    CH_BAOMAI_V4_IRON_COCOON_STAGE_UP, CH_BAOMAI_V4_RESONANCE_LOCK,
+    CH_BAOMAI_V4_RESONANCE_LOCK_END, CH_BAOMAI_V4_SCAR_CIRCUIT_BROKEN,
+    CH_BAOMAI_V4_SCAR_CIRCUIT_FORMED, CH_BONE_COIN_TICK, CH_BOTANY_ECOLOGY,
+    CH_BREAKTHROUGH_CINEMATIC, CH_BREAKTHROUGH_EVENT, CH_COMBAT_REALTIME, CH_COMBAT_SUMMARY,
+    CH_CULTIVATION_DEATH, CH_DEATH_CINEMATIC, CH_DEATH_INSIGHT, CH_DUGU_POISON_PROGRESS,
+    CH_DUGU_V2_CAST, CH_DUGU_V2_REVERSE, CH_DUGU_V2_SELF_CURE, CH_DUO_SHE_EVENT, CH_FACTION_EVENT,
+    CH_FACTION_STATE, CH_FACTION_WAR, CH_FORGE_EVENT, CH_FORGE_OUTCOME, CH_FORGE_START,
+    CH_HEART_DEMON_OFFER, CH_HEART_DEMON_REQUEST, CH_HIGH_RENOWN_MILESTONE, CH_INSIGHT_OFFER,
+    CH_INSIGHT_REQUEST, CH_LIFESPAN_EVENT, CH_MERIDIAN_SEVERED, CH_MUTATION_EVENT, CH_NPC_COMBAT,
+    CH_NPC_DEATH, CH_NPC_RELIC, CH_NPC_SPAWN, CH_PLAYER_CHAT, CH_POISON_DOSE_EVENT,
+    CH_POISON_OVERDOSE_EVENT, CH_POI_NOVICE_EVENT, CH_PRICE_INDEX, CH_PSEUDO_VEIN_ACTIVE,
+    CH_PSEUDO_VEIN_DISSIPATE, CH_RAT_PHASE_EVENT, CH_REBIRTH, CH_SEASON_CHANGED,
+    CH_SKILL_CAP_CHANGED, CH_SKILL_LV_UP, CH_SKILL_SCROLL_USED, CH_SKILL_XP_GAIN,
+    CH_SOCIAL_EXPOSURE, CH_SOCIAL_FEUD, CH_SOCIAL_NICHE_INTRUSION, CH_SOCIAL_PACT,
+    CH_SOCIAL_RENOWN_DELTA, CH_SPIRIT_EYE_DISCOVERED, CH_SPIRIT_EYE_MIGRATE,
+    CH_SPIRIT_EYE_USED_FOR_BREAKTHROUGH, CH_SPIRIT_TREASURE_DIALOGUE,
     CH_SPIRIT_TREASURE_DIALOGUE_REQUEST, CH_STYLE_BALANCE_TELEMETRY, CH_TRIBULATION,
     CH_TRIBULATION_COLLAPSE, CH_TRIBULATION_LOCK, CH_TRIBULATION_OMEN, CH_TRIBULATION_SETTLE,
     CH_TRIBULATION_WAVE, CH_TSY_EVENT, CH_TUIKE_SHED, CH_TUIKE_V2_SKILL_EVENT,
@@ -243,6 +250,16 @@ pub enum RedisOutbound {
     MutationEvent(MutationEventV1),
     /// plan-combat-skill-feedback-bridges-v1 P0 — 经脉永久 SEVERED 叙事事件（bong:meridian_severed）。
     MeridianSevered(MeridianSeveredEventV1),
+    /// plan-combat-skill-feedback-bridges-v1 P1 — 疤纹回路形成（bong:baomai_v4/scar_circuit_formed）。
+    BaomaiV4ScarCircuitFormed(BaomaiV4ScarCircuitFormedV1),
+    /// plan-combat-skill-feedback-bridges-v1 P1 — 疤纹回路断裂（bong:baomai_v4/scar_circuit_broken）。
+    BaomaiV4ScarCircuitBroken(BaomaiV4ScarCircuitBrokenV1),
+    /// plan-combat-skill-feedback-bridges-v1 P1 — 活茧阶段提升（bong:baomai_v4/iron_cocoon_stage_up）。
+    BaomaiV4IronCocoonStageUp(BaomaiV4IronCocoonStageUpV1),
+    /// plan-combat-skill-feedback-bridges-v1 P1 — 共振锁定开始（bong:baomai_v4/resonance_lock）。
+    BaomaiV4ResonanceLock(BaomaiV4ResonanceLockV1),
+    /// plan-combat-skill-feedback-bridges-v1 P1 — 共振锁定结束（bong:baomai_v4/resonance_lock_end）。
+    BaomaiV4ResonanceLockEnd(BaomaiV4ResonanceLockEndV1),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -1408,6 +1425,61 @@ fn prepare_outbound_command(message: RedisOutbound) -> Result<RedisIoCommand, Va
             })?;
             Ok(RedisIoCommand::Publish {
                 channel: CH_MERIDIAN_SEVERED,
+                payload,
+            })
+        }
+        RedisOutbound::BaomaiV4ScarCircuitFormed(evt) => {
+            let payload = serde_json::to_string(&evt).map_err(|error| {
+                ValidationError::new(format!(
+                    "failed to serialize BaomaiV4ScarCircuitFormedV1: {error}"
+                ))
+            })?;
+            Ok(RedisIoCommand::Publish {
+                channel: CH_BAOMAI_V4_SCAR_CIRCUIT_FORMED,
+                payload,
+            })
+        }
+        RedisOutbound::BaomaiV4ScarCircuitBroken(evt) => {
+            let payload = serde_json::to_string(&evt).map_err(|error| {
+                ValidationError::new(format!(
+                    "failed to serialize BaomaiV4ScarCircuitBrokenV1: {error}"
+                ))
+            })?;
+            Ok(RedisIoCommand::Publish {
+                channel: CH_BAOMAI_V4_SCAR_CIRCUIT_BROKEN,
+                payload,
+            })
+        }
+        RedisOutbound::BaomaiV4IronCocoonStageUp(evt) => {
+            let payload = serde_json::to_string(&evt).map_err(|error| {
+                ValidationError::new(format!(
+                    "failed to serialize BaomaiV4IronCocoonStageUpV1: {error}"
+                ))
+            })?;
+            Ok(RedisIoCommand::Publish {
+                channel: CH_BAOMAI_V4_IRON_COCOON_STAGE_UP,
+                payload,
+            })
+        }
+        RedisOutbound::BaomaiV4ResonanceLock(evt) => {
+            let payload = serde_json::to_string(&evt).map_err(|error| {
+                ValidationError::new(format!(
+                    "failed to serialize BaomaiV4ResonanceLockV1: {error}"
+                ))
+            })?;
+            Ok(RedisIoCommand::Publish {
+                channel: CH_BAOMAI_V4_RESONANCE_LOCK,
+                payload,
+            })
+        }
+        RedisOutbound::BaomaiV4ResonanceLockEnd(evt) => {
+            let payload = serde_json::to_string(&evt).map_err(|error| {
+                ValidationError::new(format!(
+                    "failed to serialize BaomaiV4ResonanceLockEndV1: {error}"
+                ))
+            })?;
+            Ok(RedisIoCommand::Publish {
+                channel: CH_BAOMAI_V4_RESONANCE_LOCK_END,
                 payload,
             })
         }
@@ -4580,6 +4652,146 @@ mod redis_bridge_tests {
                 "expected Publish command for MeridianSevered, got {other:?} — \
                  MeridianSevered must not fan-out; single-channel publish only"
             ),
+        }
+    }
+
+    // ── plan-combat-skill-feedback-bridges-v1 P1 — baomai_v4 arm channel pins ──
+
+    /// BaomaiV4ScarCircuitFormed arm 发到正确 channel。
+    #[test]
+    fn publishes_baomai_v4_scar_circuit_formed_on_correct_channel() {
+        use crate::combat::baomai_v4::scar_circuit::ScarCircuitKind;
+
+        let evt = crate::schema::baomai_v4::BaomaiV4ScarCircuitFormedV1::new(
+            "offline:TestPlayer",
+            ScarCircuitKind::TigerMouth,
+            100,
+        );
+        let command = prepare_outbound_command(RedisOutbound::BaomaiV4ScarCircuitFormed(evt))
+            .expect("scar_circuit_formed should serialize");
+        match command {
+            RedisIoCommand::Publish { channel, payload } => {
+                assert_eq!(
+                    channel, CH_BAOMAI_V4_SCAR_CIRCUIT_FORMED,
+                    "BaomaiV4ScarCircuitFormed must publish to {CH_BAOMAI_V4_SCAR_CIRCUIT_FORMED}"
+                );
+                let v: serde_json::Value = serde_json::from_str(payload.as_str()).unwrap();
+                assert_eq!(v["v"], 1);
+                assert_eq!(v["circuit"], "tiger_mouth");
+                assert_eq!(v["tick"], 100);
+            }
+            other => panic!("expected Publish for ScarCircuitFormed, got {other:?}"),
+        }
+    }
+
+    /// BaomaiV4ScarCircuitBroken arm 发到正确 channel。
+    #[test]
+    fn publishes_baomai_v4_scar_circuit_broken_on_correct_channel() {
+        use crate::combat::baomai_v4::events::CircuitBreakReason;
+        use crate::combat::baomai_v4::scar_circuit::ScarCircuitKind;
+
+        let evt = crate::schema::baomai_v4::BaomaiV4ScarCircuitBrokenV1::new(
+            "char:999",
+            ScarCircuitKind::HeartLung,
+            CircuitBreakReason::Healed,
+            200,
+        );
+        let command = prepare_outbound_command(RedisOutbound::BaomaiV4ScarCircuitBroken(evt))
+            .expect("scar_circuit_broken should serialize");
+        match command {
+            RedisIoCommand::Publish { channel, payload } => {
+                assert_eq!(
+                    channel, CH_BAOMAI_V4_SCAR_CIRCUIT_BROKEN,
+                    "BaomaiV4ScarCircuitBroken must publish to {CH_BAOMAI_V4_SCAR_CIRCUIT_BROKEN}"
+                );
+                let v: serde_json::Value = serde_json::from_str(payload.as_str()).unwrap();
+                assert_eq!(v["reason"], "healed");
+                assert_eq!(v["circuit"], "heart_lung");
+            }
+            other => panic!("expected Publish for ScarCircuitBroken, got {other:?}"),
+        }
+    }
+
+    /// BaomaiV4IronCocoonStageUp arm 发到正确 channel。
+    #[test]
+    fn publishes_baomai_v4_iron_cocoon_stage_up_on_correct_channel() {
+        use crate::combat::baomai_v4::iron_cocoon::IronCocoonStage;
+
+        let evt = crate::schema::baomai_v4::BaomaiV4IronCocoonStageUpV1::new(
+            "offline:TestPlayer",
+            IronCocoonStage::None,
+            IronCocoonStage::ToughSkin,
+            50,
+            300,
+        );
+        let command = prepare_outbound_command(RedisOutbound::BaomaiV4IronCocoonStageUp(evt))
+            .expect("iron_cocoon_stage_up should serialize");
+        match command {
+            RedisIoCommand::Publish { channel, payload } => {
+                assert_eq!(
+                    channel, CH_BAOMAI_V4_IRON_COCOON_STAGE_UP,
+                    "BaomaiV4IronCocoonStageUp must publish to {CH_BAOMAI_V4_IRON_COCOON_STAGE_UP}"
+                );
+                let v: serde_json::Value = serde_json::from_str(payload.as_str()).unwrap();
+                assert_eq!(v["from"], "none");
+                assert_eq!(v["to"], "tough_skin");
+                assert_eq!(v["total_overloads"], 50);
+            }
+            other => panic!("expected Publish for IronCocoonStageUp, got {other:?}"),
+        }
+    }
+
+    /// BaomaiV4ResonanceLock arm 发到正确 channel。
+    #[test]
+    fn publishes_baomai_v4_resonance_lock_on_correct_channel() {
+        let evt = crate::schema::baomai_v4::BaomaiV4ResonanceLockV1::new(
+            "offline:PlayerA",
+            "offline:PlayerB",
+            1000,
+            1060,
+        );
+        let command = prepare_outbound_command(RedisOutbound::BaomaiV4ResonanceLock(evt))
+            .expect("resonance_lock should serialize");
+        match command {
+            RedisIoCommand::Publish { channel, payload } => {
+                assert_eq!(
+                    channel, CH_BAOMAI_V4_RESONANCE_LOCK,
+                    "BaomaiV4ResonanceLock must publish to {CH_BAOMAI_V4_RESONANCE_LOCK}"
+                );
+                let v: serde_json::Value = serde_json::from_str(payload.as_str()).unwrap();
+                assert_eq!(v["v"], 1);
+                assert_eq!(v["started_at"], 1000);
+                assert_eq!(v["ends_at"], 1060);
+            }
+            other => panic!("expected Publish for ResonanceLock, got {other:?}"),
+        }
+    }
+
+    /// BaomaiV4ResonanceLockEnd arm 发到正确 channel，expired 原因 wire 形态。
+    #[test]
+    fn publishes_baomai_v4_resonance_lock_end_expired_on_correct_channel() {
+        use crate::schema::baomai_v4::LockEndReasonWire;
+
+        let evt = crate::schema::baomai_v4::BaomaiV4ResonanceLockEndV1::new(
+            "offline:PlayerA",
+            "offline:PlayerB",
+            LockEndReasonWire::Expired,
+            1060,
+        );
+        let command = prepare_outbound_command(RedisOutbound::BaomaiV4ResonanceLockEnd(evt))
+            .expect("resonance_lock_end should serialize");
+        match command {
+            RedisIoCommand::Publish { channel, payload } => {
+                assert_eq!(
+                    channel, CH_BAOMAI_V4_RESONANCE_LOCK_END,
+                    "BaomaiV4ResonanceLockEnd must publish to {CH_BAOMAI_V4_RESONANCE_LOCK_END}"
+                );
+                let v: serde_json::Value = serde_json::from_str(payload.as_str()).unwrap();
+                assert_eq!(v["v"], 1);
+                assert_eq!(v["reason"]["type"], "expired");
+                assert_eq!(v["tick"], 1060);
+            }
+            other => panic!("expected Publish for ResonanceLockEnd, got {other:?}"),
         }
     }
 }

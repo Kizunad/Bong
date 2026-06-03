@@ -198,7 +198,8 @@ pub fn build_reading_result(
 // ── Client payload 序列化 ──
 
 /// `bong:crack_reading` CustomPayload 的 JSON 格式。
-#[allow(dead_code)]
+///
+/// plan-combat-skill-feedback-bridges-v1 P1：baomai_v4_event_bridge::emit_crack_reading_payload 使用。
 #[derive(Debug, Clone, Serialize)]
 pub struct CrackReadingPayload {
     pub target_entity_id: u64,
@@ -207,7 +208,6 @@ pub struct CrackReadingPayload {
     pub display_ticks: u64,
 }
 
-#[allow(dead_code)]
 #[derive(Debug, Clone, Serialize)]
 pub struct CrackReadingPayloadEntry {
     pub meridian: String,
@@ -217,7 +217,6 @@ pub struct CrackReadingPayloadEntry {
 }
 
 /// 将 CrackReadingResult 转换为 client payload JSON 格式。
-#[allow(dead_code)]
 pub fn to_client_payload(result: &CrackReadingResult, current_tick: u64) -> CrackReadingPayload {
     let entries = result
         .meridian_states
