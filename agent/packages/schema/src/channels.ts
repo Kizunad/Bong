@@ -332,6 +332,16 @@ export const CHANNELS = {
   /** Server → Agent: 三渠道解锁广播（残卷=首学 / 师承 / 顿悟），narration 三类叙事的 trigger */
   CRAFT_RECIPE_UNLOCKED: "bong:craft/recipe_unlocked",
 
+  // ─── 爆脉 v3 残余事件（plan-combat-skill-feedback-bridges-v1 P2） ──────────
+  /** Server → Agent: 山震 AoE 震波事件（baomai_v3 mountain_shake，agent narration） */
+  BAOMAI_V3_MOUNTAIN_SHAKE: "bong:baomai_v3/mountain_shake",
+  /** Server → Agent: 血燃 HP→真元事件（baomai_v3 blood_burn，agent narration） */
+  BAOMAI_V3_BLOOD_BURN: "bong:baomai_v3/blood_burn",
+  /** Server → Agent: 超越到期事件（baomai_v3 transcendence expired，agent narration） */
+  BAOMAI_V3_TRANSCENDENCE_EXPIRED: "bong:baomai_v3/transcendence_expired",
+  /** Server → Agent: 过载涟漪事件（baomai_v3 overload ripple，agent narration） */
+  BAOMAI_V3_OVERLOAD_RIPPLE: "bong:baomai_v3/overload_ripple",
+
   // ─── 爆脉 v4（plan-combat-skill-feedback-bridges-v1 P1） ────────────────────
   /** Server → Agent: 疤纹回路形成（baomai_v4 scar_circuit formed，agent narration） */
   BAOMAI_V4_SCAR_CIRCUIT_FORMED: "bong:baomai_v4/scar_circuit_formed",
@@ -446,6 +456,11 @@ export const REDIS_V1_CHANNELS = [
   CHANNELS.BAOMAI_V4_IRON_COCOON_STAGE_UP,
   CHANNELS.BAOMAI_V4_RESONANCE_LOCK,
   CHANNELS.BAOMAI_V4_RESONANCE_LOCK_END,
+  // plan-combat-skill-feedback-bridges-v1 P2 — 爆脉 v3 残余事件通道
+  CHANNELS.BAOMAI_V3_MOUNTAIN_SHAKE,
+  CHANNELS.BAOMAI_V3_BLOOD_BURN,
+  CHANNELS.BAOMAI_V3_TRANSCENDENCE_EXPIRED,
+  CHANNELS.BAOMAI_V3_OVERLOAD_RIPPLE,
 ] as const;
 
 export type ChannelName = (typeof CHANNELS)[keyof typeof CHANNELS];

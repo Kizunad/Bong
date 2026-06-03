@@ -1,0 +1,20 @@
+[
+  {
+    "v": 1,
+    "caster_id": "offline:TestPlayer",
+    "tick": 150,
+    "skill_id": "beng_quan",
+    "severity_delta": 0.05,
+    "total_severity": 0.35,
+    "meridian_ids": ["LargeIntestine", "Lung", "Pericardium"]
+  },
+  {
+    "v": 1,
+    "caster_id": "offline:VoidMaster",
+    "tick": 800,
+    "skill_id": "mountain_shake",
+    "severity_delta": 0.04,
+    "total_severity": 0.72,
+    "meridian_ids": ["Stomach", "Spleen"]
+  }
+]

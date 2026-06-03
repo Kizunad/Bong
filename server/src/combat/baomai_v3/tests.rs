@@ -511,3 +511,82 @@ fn disperse_event_records_no_immunity_concept() {
     assert_eq!(event.flow_rate_multiplier, 10.0);
     assert!(event.failed_reason.is_none());
 }
+
+// plan-combat-skill-feedback-bridges-v1 P2 — disperse-failed pin tests
+// 凡躯散功（!has_transcendence）必须 emit BaomaiSkillEvent，flow_rate_multiplier 等于
+// disperse_profile 非超越档返回值（当前 physics = 1.0），agent else 分支用此值路由叙事。
+#[test]
+fn disperse_lower_realm_emits_skill_event_with_non_transcendence_flow_rate() {
+    // Condense realm → has_transcendence=false → physics flow_rate_multiplier=1.0
+    // 修复前：!has_transcendence 分支不 emit BaomaiSkillEvent，agent 收不到叙事。
+    // 修复后：无条件 emit，flow_rate_multiplier 取 physics 返回值（1.0），
+    //         命中 agent renderBaomaiV3Narration disperse else 分支（< 10）。
+    let mut app = app();
+    let caster = spawn_actor(&mut app, Realm::Condense, 100.0, 100.0, DVec3::ZERO);
+    cast_disperse(app.world_mut(), caster, 0, None);
+
+    let skill_events: Vec<_> = app
+        .world()
+        .resource::<Events<BaomaiSkillEvent>>()
+        .iter_current_update_events()
+        .collect();
+    assert_eq!(
+        skill_events.len(),
+        1,
+        "凡躯 cast_disperse 必须 emit 恰好 1 条 BaomaiSkillEvent，\
+         供 agent baomai-v3-runtime 叙事路由；实际 emit {}",
+        skill_events.len()
+    );
+
+    let evt = skill_events[0];
+    assert_eq!(
+        evt.skill,
+        BaomaiSkillId::Disperse,
+        "emit 的 skill 字段应为 Disperse"
+    );
+
+    let expected_flow = disperse_profile(Realm::Condense, 0).flow_rate_multiplier;
+    assert_eq!(
+        evt.flow_rate_multiplier, expected_flow,
+        "flow_rate_multiplier 应等于 disperse_profile 非超越档返回值 ({expected_flow})；\
+         值 < 10 命中 agent else 分支「强行散功，凡躯没有应声」；\
+         值 >= 10 会走 transcendence 分支（回归错误），实际={:?}",
+        evt.flow_rate_multiplier
+    );
+    // schema minimum:1 守护：flow_rate_multiplier 不能为 0（会被 agent validateBaomaiSkillEventV1Contract 拒绝）
+    assert!(
+        evt.flow_rate_multiplier >= 1.0,
+        "flow_rate_multiplier={} 低于 schema minimum:1，agent 会 rejectedContract；\
+         非超越档 physics 应返回 1.0",
+        evt.flow_rate_multiplier
+    );
+}
+
+#[test]
+fn disperse_void_realm_still_emits_skill_event_with_transcendence_flow_rate() {
+    // 回归测试：Void 档超越 emit 不受影响
+    let mut app = app();
+    let caster = spawn_actor(&mut app, Realm::Void, 1_000.0, 1_000.0, DVec3::ZERO);
+    cast_disperse(app.world_mut(), caster, 0, None);
+
+    let skill_events: Vec<_> = app
+        .world()
+        .resource::<Events<BaomaiSkillEvent>>()
+        .iter_current_update_events()
+        .collect();
+    assert_eq!(
+        skill_events.len(),
+        1,
+        "Void 档 cast_disperse 也应 emit 恰好 1 条 BaomaiSkillEvent；实际 {}",
+        skill_events.len()
+    );
+
+    let evt = skill_events[0];
+    let expected_flow = disperse_profile(Realm::Void, 0).flow_rate_multiplier;
+    assert!(
+        evt.flow_rate_multiplier >= 10.0,
+        "Void 超越档 flow_rate_multiplier={} 应 >= 10.0，命中 agent transcendence 分支；\
+         期望 physics 返回值 {expected_flow}",
+        evt.flow_rate_multiplier
+    );
+}

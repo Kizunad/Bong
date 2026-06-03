@@ -554,6 +554,16 @@ pub fn register(app: &mut App) {
             baomai_v4_event_bridge::emit_resonance_lock_payloads,
         ),
     );
+    // plan-combat-skill-feedback-bridges-v1 P2 — 爆脉 v3 残余事件桥（单独 add_systems 避免超长 tuple）
+    app.add_systems(
+        Update,
+        (
+            baomai_v3_event_bridge::publish_mountain_shake_event,
+            baomai_v3_event_bridge::publish_blood_burn_event,
+            baomai_v3_event_bridge::publish_body_transcendence_expired,
+            baomai_v3_event_bridge::publish_overload_ripple_event,
+        ),
+    );
     app.add_systems(
         Update,
         (

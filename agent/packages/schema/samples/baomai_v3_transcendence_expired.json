@@ -1,0 +1,12 @@
+[
+  {
+    "v": 1,
+    "caster_id": "offline:TestPlayer",
+    "tick": 700
+  },
+  {
+    "v": 1,
+    "caster_id": "char:12345678901234567",
+    "tick": 1200
+  }
+]

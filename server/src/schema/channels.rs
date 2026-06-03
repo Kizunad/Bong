@@ -133,6 +133,11 @@ pub const CH_WOLIU_V2_BACKFIRE: &str = "bong:woliu_v2/backfire";
 pub const CH_WOLIU_V2_TURBULENCE: &str = "bong:woliu_v2/turbulence";
 pub const CH_ZHENMAI_SKILL_EVENT: &str = "bong:zhenmai/skill_event";
 pub const CH_BAOMAI_V3_SKILL_EVENT: &str = "bong:baomai_v3/skill_event";
+/// plan-combat-skill-feedback-bridges-v1 P2 — 爆脉 v3 残余事件通道
+pub const CH_BAOMAI_V3_MOUNTAIN_SHAKE: &str = "bong:baomai_v3/mountain_shake";
+pub const CH_BAOMAI_V3_BLOOD_BURN: &str = "bong:baomai_v3/blood_burn";
+pub const CH_BAOMAI_V3_TRANSCENDENCE_EXPIRED: &str = "bong:baomai_v3/transcendence_expired";
+pub const CH_BAOMAI_V3_OVERLOAD_RIPPLE: &str = "bong:baomai_v3/overload_ripple";
 pub const CH_ZHENFA_V2_EVENT: &str = "bong:zhenfa/v2_event";
 pub const CH_DUGU_POISON_PROGRESS: &str = "bong:dugu/poison_progress";
 pub const CH_POISON_DOSE_EVENT: &str = "bong:poison/dose";
@@ -383,6 +388,17 @@ mod tests {
         assert_eq!(
             CH_BAOMAI_V4_RESONANCE_LOCK_END,
             "bong:baomai_v4/resonance_lock_end"
+        );
+        // plan-combat-skill-feedback-bridges-v1 P2 — 爆脉 v3 残余事件通道 pin
+        assert_eq!(CH_BAOMAI_V3_MOUNTAIN_SHAKE, "bong:baomai_v3/mountain_shake");
+        assert_eq!(CH_BAOMAI_V3_BLOOD_BURN, "bong:baomai_v3/blood_burn");
+        assert_eq!(
+            CH_BAOMAI_V3_TRANSCENDENCE_EXPIRED,
+            "bong:baomai_v3/transcendence_expired"
+        );
+        assert_eq!(
+            CH_BAOMAI_V3_OVERLOAD_RIPPLE,
+            "bong:baomai_v3/overload_ripple"
         );
     }
 }
