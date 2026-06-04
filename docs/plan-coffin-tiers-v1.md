@@ -5,7 +5,7 @@
 | 阶段 | 内容 | 状态 | 验收日期 |
 |------|------|------|----------|
 | P0 | 分档底盘：`CoffinGrade` enum + 倍率表 + item_id ×4 + schema tier 字段（双端 serde） | ✅ | 2026-06-04 |
-| P1 | 资产管线：4 档 bbmodel → `geo.json` + 贴图 PNG + `animation.json`（**含 UV/贴图收尾，见 §视觉资产**） | ⬜ | |
+| P1 | 资产管线：4 档 bbmodel → `geo.json` + 贴图 PNG + `animation.json`（**含 UV/贴图收尾，见 §视觉资产**） | ✅ | 2026-06-04 |
 | P2 | Server 建模实体：放置时 spawn `BongVisual` marker（按 grade）替代双 CHEST；`CoffinEntity` 持有实体 id | ⬜ | |
 | P3 | Client 渲染 + 交互迁移：`BongEntityModelKind` ×4 + 渲染器壳 + bootstrap；进棺交互从右键 CHEST 迁到 marker-entity intent；HUD 档位徽章 | ⬜ | |
 | P4 | 三新档 item/recipe（灵材配方）+ 端到端集成 + dev 命令 + 平衡 | ⬜ | |
