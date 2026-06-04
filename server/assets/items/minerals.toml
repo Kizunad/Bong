@@ -78,3 +78,39 @@ base_weight = 0.3
 rarity = "common"
 spirit_quality_initial = 0.0
 description = "洞穴/尸骸产，驱邪解蛊。"
+
+# plan-coffin-tiers-v1 P4 — 寒玉棺材料
+[[item]]
+id = "yu_sui"
+name = "玉髓"
+category = "misc"
+grid_w = 1
+grid_h = 1
+base_weight = 0.6
+rarity = "uncommon"
+spirit_quality_initial = 0.8
+description = "青白温润，略似古玉。末法残土审美之代表，炼棺器磨细后冷灵内敛。"
+
+# plan-coffin-tiers-v1 P4 — 玄石棺材料
+[[item]]
+id = "wu_yao"
+name = "乌曜石"
+category = "misc"
+grid_w = 1
+grid_h = 1
+base_weight = 0.8
+rarity = "rare"
+spirit_quality_initial = 0.85
+description = "漆黑如墨，欺天阵之核，久存聚阴。玄石棺镇魂之基。"
+
+# plan-coffin-tiers-v1 P4 — 青铜棺材料（上古遗物碎块）
+[[item]]
+id = "gu_tong_pian"
+name = "古铜片"
+category = "misc"
+grid_w = 1
+grid_h = 1
+base_weight = 0.4
+rarity = "legendary"
+spirit_quality_initial = 0.6
+description = "坍缩渊深处上古礼器碎块，饕餮兽纹犹存，灵力已散。散修借壳不借力，二次激活。"

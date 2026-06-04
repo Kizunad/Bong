@@ -394,6 +394,38 @@ mod tests {
             .any(|entry| entry.template_id == "scroll_woliu_heart"));
     }
 
+    /// P4 §棺材掉落 — `relic_core_deep` 池必须含 gu_tong_pian 和 scroll_bronze_coffin。
+    /// 误删任一 entry 时立即报红（存在性 + weight > 0 双重锁）。
+    #[test]
+    fn relic_core_deep_contains_coffin_p4_drops() {
+        let pools = load_loot_pool_registry().expect("loot_pools.json must parse");
+        let deep = pools
+            .get("relic_core_deep")
+            .expect("relic_core_deep pool must exist");
+
+        let gu_tong = deep
+            .entries
+            .iter()
+            .find(|e| e.template_id == "gu_tong_pian")
+            .expect("relic_core_deep 应含 gu_tong_pian（P4 新增灵材掉落）");
+        assert!(
+            gu_tong.weight > 0,
+            "gu_tong_pian weight 必须 > 0，当前 = {}",
+            gu_tong.weight
+        );
+
+        let scroll_bronze = deep
+            .entries
+            .iter()
+            .find(|e| e.template_id == "scroll_bronze_coffin")
+            .expect("relic_core_deep 应含 scroll_bronze_coffin（P4 新增解锁卷）");
+        assert!(
+            scroll_bronze.weight > 0,
+            "scroll_bronze_coffin weight 必须 > 0，当前 = {}",
+            scroll_bronze.weight
+        );
+    }
+
     #[test]
     fn roll_loot_pool_returns_empty_for_unknown() {
         let reg = LootPoolRegistry::default();

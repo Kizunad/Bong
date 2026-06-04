@@ -127,8 +127,8 @@
 | 档 | id | 材料 | qi_cost | time | 解锁 | realm_min（craft 门控）|
 |----|----|------|---------|------|------|------|
 | 寒玉 ×0.7 | `coffin.jade_coffin` | ling_mu_ban×4 + yu_sui×3 + xue_po_lian×2 | 2.0 | 120s(2400t) | Scroll | None |
-| 玄石 ×0.5 | `coffin.stone_coffin` | xuan_iron×4 + zhen_shi_zhong×2 + wu_yao×2 | 4.0 | 150s(3000t) | Scroll + Mentor(地师流) | None |
-| 青铜 ×0.3 | `coffin.bronze_coffin` | xuan_iron×3 + ling_mu_jing×2 + gu_tong_pian×4 + zhen_shi_gao×1 | 6.0 | 180s(3600t) | Scroll + Mentor(炼器流) | **Some(Realm::Induce)** |
+| 玄石 ×0.5 | `coffin.stone_coffin` | xuan_iron×4 + zhen_shi_chu×2 + wu_yao×2 | 4.0 | 150s(3000t) | Scroll + Mentor(地师流) | None |
+| 青铜 ×0.3 | `coffin.bronze_coffin` | xuan_iron×3 + ling_mu_ban×3 + gu_tong_pian×4 + zhen_shi_chu×2 | 6.0 | 180s(3600t) | Scroll + Mentor(炼器流) | **Some(Realm::Induce)** |
 
 - **门控原则（用户拍板）**：门控只在**制作**端（青铜棺 craft 需引气境，首个 realm 硬门控配方先例）；**进棺/使用任何档棺材无境界门控**（不改 `coffin::handle_coffin_enter_requests` `:343`）
 - **灵质守恒**：三档已过 `workbench_recipes.rs` 守恒 pin test 估算（input×0.95 ≥ output，见 §8.1 #2）
@@ -157,7 +157,7 @@
 
 **决议**：
 1. 三档配方 + 材料梯度照 `coffin-tier-materials` workflow 提案落地，**完整规格见 P4 表**。难度单调递进 common→uncommon→rare→very_rare、qi 0→2→4→6、time 90→120→150→180s。
-2. **材料**：尽量复用现成（ling_mu_ban / xuan_iron / zhen_shi_zhong / zhen_shi_gao / ling_mu_jing / xue_po_lian）；`yu_sui`(玉髓)、`wu_yao`(乌曜石) 已在 `mineral/registry.rs:94-95` 注册仅补 toml；仅 `gu_tong_pian`(古铜片) 为全新 legendary 材料。
+2. **材料**：尽量复用现成；`yu_sui`(玉髓)、`wu_yao`(乌曜石) 已在 `mineral/registry.rs:94-95` 注册仅补 toml；仅 `gu_tong_pian`(古铜片) 为全新 legendary 材料。**P4 实施时修正**：`ling_mu_jing`（spiritwood §9 生产链未实装）/ `zhen_shi_gao`（全仓无玩家可达来源，仅被消耗）/ `zhen_shi_zhong`（同上，无产出来源）均已换为可得材料——玄石配方 `zhen_shi_zhong` → `zhen_shi_chu`（蜘蛛 5% 掉落）；青铜配方 `ling_mu_jing` → `ling_mu_ban`（锻造可得）、`zhen_shi_gao` → `zhen_shi_chu`（蜘蛛 5% 掉落）。
 3. **主题锚点**：玉髓=寒玉「玉·温润冷灵」(矿物录「青白温润略似古玉·末法审美代表」+ `shelflife/compute.rs:101` 玉盒 0.5 倍率类比)；玄铁+阵石+乌曜石=玄石「玄·阵·镇魂」(矿物录乌曜石「漆黑如墨·欺天阵之核·久存聚阴」)；古铜片=青铜「上古·饕餮·镇魂」(末法去上古自洽：坍缩渊深层上古礼器碎块，兽纹犹存灵力已散，散修「借壳不借力」二次激活——锚 worldview §十六.三 + 「上古遗物无灵易碎」`npc/social.rs:340`)。
 4. **门控（用户拍板）**：门控只加**制作**端——青铜棺 `realm_min: Some(Realm::Induce)`（首个 realm 硬门控配方先例）；jade/stone 仅 Scroll/Mentor 软门控；**进棺/使用任何棺无境界门控**。
 5. **古铜片 loot（用户「都行」→双挂）**：坍缩渊深层 `ancient_relic` 池 ~3-5% + 暴龙王据穴古迹层 ~1-2%。

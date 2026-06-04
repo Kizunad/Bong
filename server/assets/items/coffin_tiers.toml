@@ -1,0 +1,94 @@
+# plan-coffin-tiers-v1 P4 — 三档延寿棺物品模板 + 三张配方卷轴。
+# 凡物棺 mundane_coffin 已在 core.toml 定义，此处补三个高阶档位。
+
+# ──────────────────────────────────────────────
+# 延寿棺 item 模板（同 mundane_coffin：spirit_quality=0.0，放置即化器物）
+# ──────────────────────────────────────────────
+
+[[item]]
+id = "jade_coffin"
+name = "寒玉棺"
+category = "misc"
+grid_w = 2
+grid_h = 3
+max_stack_count = 1
+base_weight = 18.0
+rarity = "uncommon"
+spirit_quality_initial = 0.0
+description = "寒玉研磨内嵌，棺壁冷灵内敛。卧于其中寿火消耗减为七成。"
+
+[[item]]
+id = "stone_coffin"
+name = "玄石棺"
+category = "misc"
+grid_w = 2
+grid_h = 3
+max_stack_count = 1
+base_weight = 24.0
+rarity = "rare"
+spirit_quality_initial = 0.0
+description = "玄铁骨架，阵石镇魂，乌曜石封边。卧于其中寿火消耗减为五成。"
+
+[[item]]
+id = "bronze_coffin"
+name = "青铜棺"
+category = "misc"
+grid_w = 2
+grid_h = 3
+max_stack_count = 1
+base_weight = 32.0
+rarity = "rare"
+spirit_quality_initial = 0.0
+description = "上古饕餮纹青铜棺，以古铜片铸框，炼器之法激活沉睡兽纹。卧于其中寿火消耗减为三成。"
+
+# ──────────────────────────────────────────────
+# 配方卷轴（残卷，研读后解锁对应棺材配方）
+# ──────────────────────────────────────────────
+
+[[item]]
+id = "scroll_jade_coffin"
+name = "寒玉棺残卷"
+category = "scroll"
+grid_w = 1
+grid_h = 2
+base_weight = 0.05
+rarity = "rare"
+spirit_quality_initial = 0.5
+description = "泛白残页，记着以寒玉研粉内嵌棺壁冷却寿火的古法。字迹微蓝。"
+
+[[item]]
+id = "scroll_stone_coffin"
+name = "玄石棺残卷"
+category = "scroll"
+grid_w = 1
+grid_h = 2
+base_weight = 0.05
+rarity = "rare"
+spirit_quality_initial = 0.55
+description = "墨色旧卷，载有以阵石镇魂、乌曜石封边的棺器布阵之法。"
+
+[[item]]
+id = "scroll_bronze_coffin"
+name = "青铜棺残卷"
+category = "scroll"
+grid_w = 1
+grid_h = 2
+base_weight = 0.05
+rarity = "epic"
+spirit_quality_initial = 0.6
+description = "铜绿浸染的厚皮残卷，以上古炼器文字记载饕餮纹青铜棺的激活之法。"
+
+# scroll_mundane_coffin 已在 plan-coffin-v1 某处定义——若暂缺，在此补位。
+# 实际 plan-coffin-v1 并未建对应 toml；mundane 配方用 scroll_mundane_coffin
+# 作为 unlock_source，此处补全 item template 防止 ItemRegistry load 时
+# missing_template warning。
+[[item]]
+id = "scroll_mundane_coffin"
+name = "凡物棺残卷"
+category = "scroll"
+grid_w = 1
+grid_h = 2
+base_weight = 0.05
+rarity = "uncommon"
+spirit_quality_initial = 0.3
+description = "破损残卷，粗笔写着六块灵木板拼棺的诀法，勉强能看懂。"

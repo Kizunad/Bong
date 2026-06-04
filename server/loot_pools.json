@@ -1,107 +1,549 @@
 {
-  "_doc": "plan-tsy-container-v1 §1.4 — TSY 容器 loot pool 配置。__ancient_relic_random__ 由 roll_loot_pool 转发给 AncientRelicPool::sample（按 source_class）。entry template_id 必须存在于 ItemRegistry。",
-  "pools": {
-    "dry_corpse_shallow_common": {
-      "rolls": [1, 3],
-      "entries": [
-        { "template_id": "iron_sword",         "weight": 40, "count": [1, 1] },
-        { "template_id": "fengling_bone_coin", "weight": 30, "count": [1, 5] },
-        { "template_id": "spirit_grass",       "weight": 20, "count": [1, 3] },
-        { "template_id": "decoy_stake",        "weight": 10, "count": [1, 1] },
-        { "template_id": "scroll_woliu_burst", "weight": 2,  "count": [1, 1] },
-        { "template_id": "scroll_woliu_vacuum_palm", "weight": 2, "count": [1, 1] },
-        { "template_id": "scroll_woliu_vortex_shield", "weight": 2, "count": [1, 1] },
-        { "template_id": "scroll_gathering_axe_bone", "weight": 5, "count": [1, 1] },
-        { "template_id": "scroll_technique_burst_beng_quan", "weight": 1, "count": [1, 1] },
-        { "template_id": "scroll_technique_zhenmai_parry", "weight": 1, "count": [1, 1] }
-      ]
-    },
-    "skeleton_shallow_common": {
-      "rolls": [1, 2],
-      "entries": [
-        { "template_id": "bone_dagger",        "weight": 50, "count": [1, 3] },
-        { "template_id": "fengling_bone_coin", "weight": 30, "count": [1, 3] },
-        { "template_id": "bronze_saber",       "weight": 20, "count": [1, 1] }
-      ]
-    },
-    "storage_pouch_mid": {
-      "rolls": [1, 3],
-      "entries": [
-        { "template_id": "ningmai_powder",     "weight": 40, "count": [1, 2] },
-        { "template_id": "broken_artifact",    "weight": 25, "count": [1, 1] },
-        { "template_id": "broken_artifact_scroll", "weight": 20, "count": [1, 1] },
-        { "template_id": "starter_talisman",   "weight": 15, "count": [1, 1] }
-      ]
-    },
-    "tutorial_kaimai_chest": {
-      "rolls": [1, 1],
-      "entries": [
-        { "template_id": "kaimai_dan", "weight": 100, "count": [1, 1] }
-      ]
-    },
-    "stone_casket_mid": {
-      "rolls": [1, 2],
-      "entries": [
-        { "template_id": "spirit_sword",       "weight": 35, "count": [1, 1] },
-        { "template_id": "wooden_staff",       "weight": 25, "count": [1, 1] },
-        { "template_id": "skill_scroll_forging_duantie_can", "weight": 20, "count": [1, 1] },
-        { "template_id": "baomai_scripture",   "weight": 20, "count": [1, 1] },
-        { "template_id": "scroll_woliu_vortex", "weight": 1, "count": [1, 1] },
-        { "template_id": "scroll_woliu_hold", "weight": 1, "count": [1, 1] },
-        { "template_id": "scroll_woliu_mouth", "weight": 1, "count": [1, 1] },
-        { "template_id": "scroll_woliu_pull", "weight": 1, "count": [1, 1] },
-        { "template_id": "scroll_woliu_vacuum_lock", "weight": 1, "count": [1, 1] },
-        { "template_id": "scroll_woliu_vortex_resonance", "weight": 1, "count": [1, 1] },
-        { "template_id": "scroll_technique_burst_beng_quan", "weight": 3, "count": [1, 1] },
-        { "template_id": "scroll_technique_zhenmai_parry", "weight": 3, "count": [1, 1] }
-      ]
-    },
-    "relic_core_deep": {
-      "rolls": [1, 1],
-      "entries": [
-        { "template_id": "__ancient_relic_random__", "weight": 100, "count": [1, 1] },
-        { "template_id": "scroll_woliu_heart", "weight": 1, "count": [1, 1] },
-        { "template_id": "scroll_woliu_turbulence_burst", "weight": 1, "count": [1, 1] }
-      ]
-    },
-    "surface_stash_basic": {
-      "rolls": [1, 2],
-      "entries": [
-        { "template_id": "crude_wood",          "weight": 30, "count": [2, 4] },
-        { "template_id": "stone_chunk",         "weight": 25, "count": [1, 3] },
-        { "template_id": "grass_fiber",         "weight": 25, "count": [3, 6] },
-        { "template_id": "spirit_grass",        "weight": 10, "count": [1, 2] },
-        { "template_id": "fengling_bone_coin",  "weight": 8,  "count": [1, 3] },
-        { "template_id": "healing_herb_bundle", "weight": 2,  "count": [1, 1] }
-      ]
-    },
-    "surface_stash_scroll": {
-      "rolls": [1, 2],
-      "entries": [
-        { "template_id": "scroll_technique_sword_cleave",  "weight": 25, "count": [1, 1] },
-        { "template_id": "scroll_technique_sword_thrust",  "weight": 20, "count": [1, 1] },
-        { "template_id": "scroll_technique_movement_dash", "weight": 20, "count": [1, 1] },
-        { "template_id": "scroll_gathering_axe_bone",      "weight": 15, "count": [1, 1] },
-        { "template_id": "scroll_gathering_pickaxe_bone",  "weight": 10, "count": [1, 1] },
-        { "template_id": "ci_she_hao",                     "weight": 5,  "count": [1, 2] },
-        { "template_id": "fengling_bone_coin",             "weight": 5,  "count": [2, 5] }
-      ]
-    },
-    "surface_stash_craft": {
-      "rolls": [1, 3],
-      "entries": [
-        { "template_id": "scroll_technique_sword_parry",   "weight": 12, "count": [1, 1] },
-        { "template_id": "scroll_body_guangbo_ticao",      "weight": 8,  "count": [1, 1] },
-        { "template_id": "fragment_alchemy_hui_yuan_pill",  "weight": 12, "count": [1, 1] },
-        { "template_id": "blueprint_scroll_iron_sword",    "weight": 12, "count": [1, 1] },
-        { "template_id": "scroll_gathering_axe_iron",      "weight": 10, "count": [1, 1] },
-        { "template_id": "scroll_gathering_pickaxe_iron",  "weight": 10, "count": [1, 1] },
-        { "template_id": "hui_yuan_zhi",                   "weight": 10, "count": [1, 2] },
-        { "template_id": "ling_shui",                      "weight": 8,  "count": [1, 2] },
-        { "template_id": "ci_she_hao",                     "weight": 8,  "count": [1, 3] },
-        { "template_id": "ning_mai_cao",                   "weight": 5,  "count": [1, 1] },
-        { "template_id": "fengling_bone_coin",             "weight": 5,  "count": [3, 8] }
-      ]
+    "_doc": "plan-tsy-container-v1 §1.4 — TSY 容器 loot pool 配置。__ancient_relic_random__ 由 roll_loot_pool 转发给 AncientRelicPool::sample（按 source_class）。entry template_id 必须存在于 ItemRegistry。",
+    "pools": {
+        "dry_corpse_shallow_common": {
+            "rolls": [
+                1,
+                3
+            ],
+            "entries": [
+                {
+                    "template_id": "iron_sword",
+                    "weight": 40,
+                    "count": [
+                        1,
+                        1
+                    ]
+                },
+                {
+                    "template_id": "fengling_bone_coin",
+                    "weight": 30,
+                    "count": [
+                        1,
+                        5
+                    ]
+                },
+                {
+                    "template_id": "spirit_grass",
+                    "weight": 20,
+                    "count": [
+                        1,
+                        3
+                    ]
+                },
+                {
+                    "template_id": "decoy_stake",
+                    "weight": 10,
+                    "count": [
+                        1,
+                        1
+                    ]
+                },
+                {
+                    "template_id": "scroll_woliu_burst",
+                    "weight": 2,
+                    "count": [
+                        1,
+                        1
+                    ]
+                },
+                {
+                    "template_id": "scroll_woliu_vacuum_palm",
+                    "weight": 2,
+                    "count": [
+                        1,
+                        1
+                    ]
+                },
+                {
+                    "template_id": "scroll_woliu_vortex_shield",
+                    "weight": 2,
+                    "count": [
+                        1,
+                        1
+                    ]
+                },
+                {
+                    "template_id": "scroll_gathering_axe_bone",
+                    "weight": 5,
+                    "count": [
+                        1,
+                        1
+                    ]
+                },
+                {
+                    "template_id": "scroll_technique_burst_beng_quan",
+                    "weight": 1,
+                    "count": [
+                        1,
+                        1
+                    ]
+                },
+                {
+                    "template_id": "scroll_technique_zhenmai_parry",
+                    "weight": 1,
+                    "count": [
+                        1,
+                        1
+                    ]
+                }
+            ]
+        },
+        "skeleton_shallow_common": {
+            "rolls": [
+                1,
+                2
+            ],
+            "entries": [
+                {
+                    "template_id": "bone_dagger",
+                    "weight": 50,
+                    "count": [
+                        1,
+                        3
+                    ]
+                },
+                {
+                    "template_id": "fengling_bone_coin",
+                    "weight": 30,
+                    "count": [
+                        1,
+                        3
+                    ]
+                },
+                {
+                    "template_id": "bronze_saber",
+                    "weight": 20,
+                    "count": [
+                        1,
+                        1
+                    ]
+                }
+            ]
+        },
+        "storage_pouch_mid": {
+            "rolls": [
+                1,
+                3
+            ],
+            "entries": [
+                {
+                    "template_id": "ningmai_powder",
+                    "weight": 40,
+                    "count": [
+                        1,
+                        2
+                    ]
+                },
+                {
+                    "template_id": "broken_artifact",
+                    "weight": 25,
+                    "count": [
+                        1,
+                        1
+                    ]
+                },
+                {
+                    "template_id": "broken_artifact_scroll",
+                    "weight": 20,
+                    "count": [
+                        1,
+                        1
+                    ]
+                },
+                {
+                    "template_id": "starter_talisman",
+                    "weight": 15,
+                    "count": [
+                        1,
+                        1
+                    ]
+                }
+            ]
+        },
+        "tutorial_kaimai_chest": {
+            "rolls": [
+                1,
+                1
+            ],
+            "entries": [
+                {
+                    "template_id": "kaimai_dan",
+                    "weight": 100,
+                    "count": [
+                        1,
+                        1
+                    ]
+                }
+            ]
+        },
+        "stone_casket_mid": {
+            "rolls": [
+                1,
+                2
+            ],
+            "entries": [
+                {
+                    "template_id": "spirit_sword",
+                    "weight": 35,
+                    "count": [
+                        1,
+                        1
+                    ]
+                },
+                {
+                    "template_id": "wooden_staff",
+                    "weight": 25,
+                    "count": [
+                        1,
+                        1
+                    ]
+                },
+                {
+                    "template_id": "skill_scroll_forging_duantie_can",
+                    "weight": 20,
+                    "count": [
+                        1,
+                        1
+                    ]
+                },
+                {
+                    "template_id": "baomai_scripture",
+                    "weight": 20,
+                    "count": [
+                        1,
+                        1
+                    ]
+                },
+                {
+                    "template_id": "scroll_woliu_vortex",
+                    "weight": 1,
+                    "count": [
+                        1,
+                        1
+                    ]
+                },
+                {
+                    "template_id": "scroll_woliu_hold",
+                    "weight": 1,
+                    "count": [
+                        1,
+                        1
+                    ]
+                },
+                {
+                    "template_id": "scroll_woliu_mouth",
+                    "weight": 1,
+                    "count": [
+                        1,
+                        1
+                    ]
+                },
+                {
+                    "template_id": "scroll_woliu_pull",
+                    "weight": 1,
+                    "count": [
+                        1,
+                        1
+                    ]
+                },
+                {
+                    "template_id": "scroll_woliu_vacuum_lock",
+                    "weight": 1,
+                    "count": [
+                        1,
+                        1
+                    ]
+                },
+                {
+                    "template_id": "scroll_woliu_vortex_resonance",
+                    "weight": 1,
+                    "count": [
+                        1,
+                        1
+                    ]
+                },
+                {
+                    "template_id": "scroll_technique_burst_beng_quan",
+                    "weight": 3,
+                    "count": [
+                        1,
+                        1
+                    ]
+                },
+                {
+                    "template_id": "scroll_technique_zhenmai_parry",
+                    "weight": 3,
+                    "count": [
+                        1,
+                        1
+                    ]
+                }
+            ]
+        },
+        "relic_core_deep": {
+            "rolls": [
+                1,
+                1
+            ],
+            "entries": [
+                {
+                    "template_id": "__ancient_relic_random__",
+                    "weight": 100,
+                    "count": [
+                        1,
+                        1
+                    ]
+                },
+                {
+                    "template_id": "scroll_woliu_heart",
+                    "weight": 1,
+                    "count": [
+                        1,
+                        1
+                    ]
+                },
+                {
+                    "template_id": "scroll_woliu_turbulence_burst",
+                    "weight": 1,
+                    "count": [
+                        1,
+                        1
+                    ]
+                },
+                {
+                    "template_id": "gu_tong_pian",
+                    "weight": 4,
+                    "count": [
+                        1,
+                        2
+                    ]
+                },
+                {
+                    "template_id": "scroll_bronze_coffin",
+                    "weight": 2,
+                    "count": [
+                        1,
+                        1
+                    ]
+                }
+            ]
+        },
+        "surface_stash_basic": {
+            "rolls": [
+                1,
+                2
+            ],
+            "entries": [
+                {
+                    "template_id": "crude_wood",
+                    "weight": 30,
+                    "count": [
+                        2,
+                        4
+                    ]
+                },
+                {
+                    "template_id": "stone_chunk",
+                    "weight": 25,
+                    "count": [
+                        1,
+                        3
+                    ]
+                },
+                {
+                    "template_id": "grass_fiber",
+                    "weight": 25,
+                    "count": [
+                        3,
+                        6
+                    ]
+                },
+                {
+                    "template_id": "spirit_grass",
+                    "weight": 10,
+                    "count": [
+                        1,
+                        2
+                    ]
+                },
+                {
+                    "template_id": "fengling_bone_coin",
+                    "weight": 8,
+                    "count": [
+                        1,
+                        3
+                    ]
+                },
+                {
+                    "template_id": "healing_herb_bundle",
+                    "weight": 2,
+                    "count": [
+                        1,
+                        1
+                    ]
+                }
+            ]
+        },
+        "surface_stash_scroll": {
+            "rolls": [
+                1,
+                2
+            ],
+            "entries": [
+                {
+                    "template_id": "scroll_technique_sword_cleave",
+                    "weight": 25,
+                    "count": [
+                        1,
+                        1
+                    ]
+                },
+                {
+                    "template_id": "scroll_technique_sword_thrust",
+                    "weight": 20,
+                    "count": [
+                        1,
+                        1
+                    ]
+                },
+                {
+                    "template_id": "scroll_technique_movement_dash",
+                    "weight": 20,
+                    "count": [
+                        1,
+                        1
+                    ]
+                },
+                {
+                    "template_id": "scroll_gathering_axe_bone",
+                    "weight": 15,
+                    "count": [
+                        1,
+                        1
+                    ]
+                },
+                {
+                    "template_id": "scroll_gathering_pickaxe_bone",
+                    "weight": 10,
+                    "count": [
+                        1,
+                        1
+                    ]
+                },
+                {
+                    "template_id": "ci_she_hao",
+                    "weight": 5,
+                    "count": [
+                        1,
+                        2
+                    ]
+                },
+                {
+                    "template_id": "fengling_bone_coin",
+                    "weight": 5,
+                    "count": [
+                        2,
+                        5
+                    ]
+                }
+            ]
+        },
+        "surface_stash_craft": {
+            "rolls": [
+                1,
+                3
+            ],
+            "entries": [
+                {
+                    "template_id": "scroll_technique_sword_parry",
+                    "weight": 12,
+                    "count": [
+                        1,
+                        1
+                    ]
+                },
+                {
+                    "template_id": "scroll_body_guangbo_ticao",
+                    "weight": 8,
+                    "count": [
+                        1,
+                        1
+                    ]
+                },
+                {
+                    "template_id": "fragment_alchemy_hui_yuan_pill",
+                    "weight": 12,
+                    "count": [
+                        1,
+                        1
+                    ]
+                },
+                {
+                    "template_id": "blueprint_scroll_iron_sword",
+                    "weight": 12,
+                    "count": [
+                        1,
+                        1
+                    ]
+                },
+                {
+                    "template_id": "scroll_gathering_axe_iron",
+                    "weight": 10,
+                    "count": [
+                        1,
+                        1
+                    ]
+                },
+                {
+                    "template_id": "scroll_gathering_pickaxe_iron",
+                    "weight": 10,
+                    "count": [
+                        1,
+                        1
+                    ]
+                },
+                {
+                    "template_id": "hui_yuan_zhi",
+                    "weight": 10,
+                    "count": [
+                        1,
+                        2
+                    ]
+                },
+                {
+                    "template_id": "ling_shui",
+                    "weight": 8,
+                    "count": [
+                        1,
+                        2
+                    ]
+                },
+                {
+                    "template_id": "ci_she_hao",
+                    "weight": 8,
+                    "count": [
+                        1,
+                        3
+                    ]
+                },
+                {
+                    "template_id": "ning_mai_cao",
+                    "weight": 5,
+                    "count": [
+                        1,
+                        1
+                    ]
+                },
+                {
+                    "template_id": "fengling_bone_coin",
+                    "weight": 5,
+                    "count": [
+                        3,
+                        8
+                    ]
+                }
+            ]
+        }
     }
-  }
 }

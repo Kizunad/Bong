@@ -124,6 +124,8 @@ pub const LOOT_BOSS_HORN: &str = "dandao.baolongwang_horn";
 pub const LOOT_BOSS_SCALE: &str = "dandao.baolongwang_scale";
 pub const LOOT_FURNACE_REMNANT: &str = "dandao.catalyst_furnace_remnant";
 pub const LOOT_XU_YUAN_DAN: &str = "dandao.xu_yuan_dan";
+/// plan-coffin-tiers-v1 §8.1 #2 — 暴龙王据穴古迹层第二挂点（~2%）。
+pub const LOOT_GU_TONG_PIAN: &str = "gu_tong_pian";
 
 /// 掉落物计算（deterministic seed）。
 pub fn compute_loot(boss: &BaolongwangBoss, seed: u64) -> Vec<(&'static str, u32)> {
@@ -153,6 +155,11 @@ pub fn compute_loot(boss: &BaolongwangBoss, seed: u64) -> Vec<(&'static str, u32
     if seed % 100 < 70 {
         let count = 5 + ((seed / 1000) % 6) as u32;
         loot.push((LOOT_XU_YUAN_DAN, count));
+    }
+
+    // ~2% gu_tong_pian ×1 — plan-coffin-tiers-v1 §8.1 #2 暴龙王据穴古迹层第二挂点
+    if seed % 100 < 2 {
+        loot.push((LOOT_GU_TONG_PIAN, 1));
     }
 
     loot
@@ -341,5 +348,36 @@ mod boss_tests {
         assert_eq!(boss.phase, back.phase);
         assert_eq!(boss.pill_reserve, back.pill_reserve);
         assert_eq!(boss.age_years, back.age_years);
+    }
+
+    /// plan-coffin-tiers-v1 §8.1 #2 — 暴龙王第二挂点：gu_tong_pian ~2% 掉落。
+    /// 10000 次中应有 150-250 次命中（期望 200，±25% 容差）。
+    #[test]
+    fn compute_loot_gu_tong_pian_drops_at_boss_roughly_2_percent() {
+        let boss = BaolongwangBoss::default();
+        let count = (0u64..10000)
+            .filter(|&seed| {
+                compute_loot(&boss, seed)
+                    .iter()
+                    .any(|(id, _)| *id == LOOT_GU_TONG_PIAN)
+            })
+            .count();
+        assert!(
+            (150..=250).contains(&count),
+            "gu_tong_pian 暴龙王掉率应约 2%（10000 次期望 200），实得 {count}"
+        );
+    }
+
+    /// 锁定 gu_tong_pian boss 掉落固定量为 1 片。
+    #[test]
+    fn compute_loot_gu_tong_pian_quantity_is_one() {
+        // seed=0 → 0 % 100 = 0 < 2 → 命中
+        let boss = BaolongwangBoss::default();
+        let loot = compute_loot(&boss, 0);
+        let entry = loot
+            .iter()
+            .find(|(id, _)| *id == LOOT_GU_TONG_PIAN)
+            .expect("seed=0 应命中 gu_tong_pian（0 % 100 < 2）");
+        assert_eq!(entry.1, 1, "gu_tong_pian 掉落量固定为 1");
     }
 }

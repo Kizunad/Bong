@@ -12,6 +12,7 @@ use super::recipe::{
     CraftCategory, CraftRecipe, CraftRequirements, CraftStationKind, RecipeId, UnlockSource,
 };
 use super::registry::{CraftRegistry, RegistryError};
+use crate::cultivation::components::Realm;
 
 const WORKBENCH: Option<CraftStationKind> = Some(CraftStationKind::Workbench);
 
@@ -57,7 +58,8 @@ fn mentor(npc: &str) -> Vec<UnlockSource> {
     }]
 }
 
-/// 注册全部 100 条制作台配方 + 制作台自身手搓配方。
+/// 注册全部制作台配方 + 制作台自身手搓配方。
+/// plan-coffin-tiers-v1 P4 加入 3 档延寿棺后共 103 workbench + 1 self = 104 条。
 pub fn register_workbench_recipes(registry: &mut CraftRegistry) -> Result<(), RegistryError> {
     register_workbench_self_recipe(registry)?;
     register_survival_tools(registry)?; // #1-12
@@ -70,6 +72,7 @@ pub fn register_workbench_recipes(registry: &mut CraftRegistry) -> Result<(), Re
     register_economy(registry)?; // #83-90
     register_shelter(registry)?; // #91-98
     register_alchemy_forge_prep(registry)?; // #99-100
+    register_coffin_tiers(registry)?; // #101-103（plan-coffin-tiers-v1 P4）
     Ok(())
 }
 
@@ -1419,6 +1422,88 @@ fn register_alchemy_forge_prep(registry: &mut CraftRegistry) -> Result<(), Regis
     Ok(())
 }
 
+/// plan-coffin-tiers-v1 P4 §P4 — 三档延寿棺 workbench 配方（#101-103）。
+/// 凡木棺 mundane 保留在 `coffin::register_craft_recipes`（手搓 station=None）。
+fn register_coffin_tiers(registry: &mut CraftRegistry) -> Result<(), RegistryError> {
+    // #101 寒玉棺 ×0.7 — Scroll 解锁
+    registry.register(CraftRecipe {
+        id: RecipeId::new("coffin.jade_coffin"),
+        category: CraftCategory::Misc,
+        display_name: "寒玉棺".into(),
+        materials: vec![
+            ("ling_mu_ban".into(), 4),
+            ("yu_sui".into(), 3),
+            ("xue_po_lian".into(), 2),
+        ],
+        qi_cost: 2.0,
+        time_ticks: 120 * 20,
+        output: ("jade_coffin".into(), 1),
+        requirements: CraftRequirements::default(),
+        unlock_sources: vec![UnlockSource::Scroll {
+            item_template: "scroll_jade_coffin".into(),
+        }],
+        station: WORKBENCH,
+    })?;
+
+    // #102 玄石棺 ×0.5 — Scroll + 地师流 Mentor（array_scribe）
+    // P4 修正：zhen_shi_zhong 无玩家可达来源（仅被消耗，不产出），换为蜘蛛掉落 zhen_shi_chu×2（5% 稀有掉落）。
+    registry.register(CraftRecipe {
+        id: RecipeId::new("coffin.stone_coffin"),
+        category: CraftCategory::Misc,
+        display_name: "玄石棺".into(),
+        materials: vec![
+            ("xuan_iron".into(), 4),
+            ("zhen_shi_chu".into(), 2),
+            ("wu_yao".into(), 2),
+        ],
+        qi_cost: 4.0,
+        time_ticks: 150 * 20,
+        output: ("stone_coffin".into(), 1),
+        requirements: CraftRequirements::default(),
+        unlock_sources: vec![
+            UnlockSource::Scroll {
+                item_template: "scroll_stone_coffin".into(),
+            },
+            UnlockSource::Mentor {
+                npc_archetype: "array_scribe".into(),
+            },
+        ],
+        station: WORKBENCH,
+    })?;
+
+    // #103 青铜棺 ×0.3 — Scroll + 炼器流 Mentor（hermit_builder）+ 引气境下限
+    // P4 修正：ling_mu_jing 生产链未实装（spiritwood §9）；zhen_shi_gao 无玩家可达来源（仅被消耗）。
+    // 换为：ling_mu_jing×2 → ling_mu_ban×3（锻造产出，灵木主题保持）；
+    //       zhen_shi_gao×1 → zhen_shi_chu×2（蜘蛛 5% 掉落，阵石主题保持）。
+    registry.register(CraftRecipe {
+        id: RecipeId::new("coffin.bronze_coffin"),
+        category: CraftCategory::Misc,
+        display_name: "青铜棺".into(),
+        materials: vec![
+            ("xuan_iron".into(), 3),
+            ("ling_mu_ban".into(), 3),
+            ("gu_tong_pian".into(), 4),
+            ("zhen_shi_chu".into(), 2),
+        ],
+        qi_cost: 6.0,
+        time_ticks: 180 * 20,
+        output: ("bronze_coffin".into(), 1),
+        requirements: CraftRequirements {
+            realm_min: Some(Realm::Induce),
+            ..CraftRequirements::default()
+        },
+        unlock_sources: vec![
+            UnlockSource::Scroll {
+                item_template: "scroll_bronze_coffin".into(),
+            },
+            UnlockSource::Mentor {
+                npc_archetype: "hermit_builder".into(),
+            },
+        ],
+        station: WORKBENCH,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1427,11 +1512,11 @@ mod tests {
     fn register_workbench_recipes_succeeds() {
         let mut registry = CraftRegistry::new();
         register_workbench_recipes(&mut registry).unwrap();
-        // 100 workbench recipes + 1 workbench self recipe = 101
+        // 103 workbench recipes (100 + 3 coffin tiers P4) + 1 workbench self recipe = 104
         assert_eq!(
             registry.len(),
-            101,
-            "expected 101 recipes (100 workbench + 1 self craft), got {}",
+            104,
+            "expected 104 recipes (103 workbench + 1 self craft), got {}",
             registry.len()
         );
     }
@@ -1470,7 +1555,9 @@ mod tests {
     }
 
     #[test]
-    fn all_workbench_recipe_ids_start_with_workbench_prefix() {
+    fn all_workbench_recipe_ids_start_with_workbench_or_coffin_prefix() {
+        // plan-coffin-tiers-v1 P4: 三档延寿棺配方迁入 workbench_recipes 注册，
+        // 保留 `coffin.` 命名空间与 coffin 模块的 recipe_id 辅助函数对齐。
         let mut registry = CraftRegistry::new();
         register_workbench_recipes(&mut registry).unwrap();
         for recipe in registry.iter() {
@@ -1478,8 +1565,9 @@ mod tests {
                 continue; // self recipe uses craft. prefix
             }
             assert!(
-                recipe.id.as_str().starts_with("workbench."),
-                "recipe `{}` must start with 'workbench.' prefix",
+                recipe.id.as_str().starts_with("workbench.")
+                    || recipe.id.as_str().starts_with("coffin."),
+                "recipe `{}` must start with 'workbench.' or 'coffin.' prefix",
                 recipe.id
             );
         }
@@ -1615,7 +1703,7 @@ mod tests {
     }
 
     #[test]
-    fn all_100_workbench_recipes_individual_pin() {
+    fn all_103_workbench_recipes_individual_pin() {
         let mut registry = CraftRegistry::new();
         register_workbench_recipes(&mut registry).unwrap();
         let item_registry = crate::inventory::load_item_registry().expect("item registry loads");
@@ -1699,8 +1787,8 @@ mod tests {
             }
         }
         assert_eq!(
-            workbench_count, 100,
-            "expected exactly 100 workbench recipes"
+            workbench_count, 103,
+            "expected exactly 103 workbench recipes (100 original + 3 coffin tiers P4)"
         );
     }
 
@@ -1843,9 +1931,10 @@ mod tests {
                 );
             }
         }
+        // plan-coffin-tiers-v1 P4: +3 coffin 配方（jade qi=2 / stone qi=4 / bronze qi=6）
         assert_eq!(
-            qi_recipe_count, 18,
-            "expected exactly 18 recipes with qi_cost > 0 (pin count to detect accidental removal/addition)"
+            qi_recipe_count, 21,
+            "expected exactly 21 recipes with qi_cost > 0 (18 original + 3 coffin tiers P4)"
         );
     }
 }

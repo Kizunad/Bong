@@ -96,6 +96,7 @@ public final class ItemIconRegistry {
             || normalized.startsWith("recipe_scroll_")
             || normalized.startsWith("blueprint_scroll_")
             || normalized.startsWith("inscription_scroll_")
+            || normalized.startsWith("scroll_")
             || normalized.endsWith("_scroll");
     }
 
