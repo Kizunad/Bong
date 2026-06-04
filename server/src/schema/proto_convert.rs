@@ -1338,6 +1338,41 @@ impl From<&ServerDataPayloadV1> for Payload {
                 abrasion_qi_payload: s.abrasion_qi_payload,
                 tick: s.tick,
             }),
+            // plan-combat-skill-feedback-bridges-v1 P5：毒蛊 v2 HUD S2C（守恒红线：只读已扣量）
+            ServerDataPayloadV1::DuguV2SkillCast(s) => {
+                Payload::DuguV2SkillCast(bong::DuguV2SkillCast {
+                    kind: s.kind.clone(),
+                    caster: s.caster.clone(),
+                    target: s.target.clone().unwrap_or_default(),
+                    taint_tier: s.taint_tier.clone().unwrap_or_default(),
+                    reveal_probability: s.reveal_probability,
+                    tick: s.tick,
+                })
+            }
+            ServerDataPayloadV1::DuguV2SelfCure(s) => {
+                Payload::DuguV2SelfCure(bong::DuguV2SelfCure {
+                    caster: s.caster.clone(),
+                    gain_percent: s.gain_percent,
+                    self_revealed: s.self_revealed,
+                    tick: s.tick,
+                })
+            }
+            ServerDataPayloadV1::DuguV2ShroudActive(s) => {
+                Payload::DuguV2ShroudActive(bong::DuguV2ShroudActive {
+                    caster: s.caster.clone(),
+                    strength: s.strength,
+                    expires_at_tick: s.expires_at_tick,
+                    tick: s.tick,
+                })
+            }
+            ServerDataPayloadV1::PermanentQiMaxDecayApplied(s) => {
+                Payload::PermanentQiMaxDecayApplied(bong::PermanentQiMaxDecayApplied {
+                    target: s.target.clone(),
+                    loss: s.loss,
+                    qi_max_after: s.qi_max_after,
+                    tick: s.tick,
+                })
+            }
         }
     }
 }

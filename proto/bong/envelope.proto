@@ -145,6 +145,11 @@ message ServerDataEnvelope {
     FactionWarState         faction_war_state       = 122;
     // ─── plan-combat-skill-feedback-bridges-v1 P4：暗器 HUD S2C ──
     AnqiHud                 anqi_hud                = 123;
+    // ─── plan-combat-skill-feedback-bridges-v1 P5：毒蛊 v2 HUD S2C ─
+    DuguV2SkillCast         dugu_v2_skill_cast      = 124;
+    DuguV2SelfCure          dugu_v2_self_cure       = 125;
+    DuguV2ShroudActive      dugu_v2_shroud_active   = 126;
+    PermanentQiMaxDecayApplied permanent_qi_max_decay_applied = 127;
     // 字段编号一旦分配永不复用（buf breaking 检测保证）。
   }
 }
@@ -3616,6 +3621,43 @@ message AnqiHud {
   string abrasion_container   = 5;
   double abrasion_qi_payload  = 6;
   uint64 tick                 = 7;
+}
+
+// plan-combat-skill-feedback-bridges-v1 P5：毒蛊五招招式投放通知（server → client）。
+// kind: "eclipse" | "penetrate" | "shroud" | "self_cure" | "reverse"
+// taint_tier: "immediate" | "temporary" | "permanent"（Shroud/Reverse/SelfCure 为空串）
+message DuguV2SkillCast {
+  string kind              = 1;
+  string caster            = 2;
+  string target            = 3; // 空串表示无目标（shroud/reverse/self_cure）
+  string taint_tier        = 4; // 空串表示无
+  float  reveal_probability = 5;
+  uint64 tick              = 6;
+}
+
+// plan-combat-skill-feedback-bridges-v1 P5：自蕴进度与暴露状态推送（server → client）。
+message DuguV2SelfCure {
+  string caster        = 1;
+  float  gain_percent  = 2; // 0..=100
+  bool   self_revealed = 3; // once-set-stays-true sticky flag
+  uint64 tick          = 4;
+}
+
+// plan-combat-skill-feedback-bridges-v1 P5：幻影遮蔽激活状态推送（server → client）。
+message DuguV2ShroudActive {
+  string caster          = 1;
+  float  strength        = 2; // 0..=1
+  uint64 expires_at_tick = 3;
+  uint64 tick            = 4;
+}
+
+// plan-combat-skill-feedback-bridges-v1 P5：永久真元上限衰减通知（server → client，不走 Redis）。
+// 守恒红线：loss/qi_max_after 均只读自 ECS 已扣量。
+message PermanentQiMaxDecayApplied {
+  string target       = 1;
+  float  loss         = 2;
+  float  qi_max_after = 3;
+  uint64 tick         = 4;
 }
 
 // 与 Rust ClientRequestV1::ExternalContainerMove 精确对应。

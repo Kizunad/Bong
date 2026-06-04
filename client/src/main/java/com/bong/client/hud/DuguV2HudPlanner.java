@@ -65,6 +65,26 @@ public final class DuguV2HudPlanner {
         if (safeState.shroudActive() && safeState.shroudUntilMs() > nowMillis) {
             out.add(HudRenderCommand.screenTint(HudRenderLayer.DUGU_SHROUD, 0x20224516));
         }
+        // plan-combat-skill-feedback-bridges-v1 P5：永久真元上限衰减闪烁条。
+        // 闪烁窗口内（decayExpiryMs > nowMillis）且 qiMaxDecayLoss > 0 时显示。
+        // §视听精度文档待人工补（颜色/层级由此定，人工可后续调参）
+        if (safeState.qiMaxDecayLoss() > 0f && safeState.decayExpiryMs() > nowMillis) {
+            int x = Math.max(8, screenWidth / 2 - BAR_WIDTH / 2);
+            int y = Math.max(8, screenHeight / 2 - 30);
+            out.add(HudRenderCommand.rect(HudRenderLayer.DUGU_QI_DECAY, x, y, BAR_WIDTH, BAR_HEIGHT, 0x44202020));
+            // 衰减量占原上限（loss / (loss + qiMaxAfter)）比例着色，最低 1px
+            float totalBefore = safeState.qiMaxDecayLoss() + safeState.qiMaxAfter();
+            float ratio = totalBefore > 0f ? Math.min(1f, safeState.qiMaxDecayLoss() / totalBefore) : 0f;
+            int filled = Math.max(1, Math.round(BAR_WIDTH * ratio));
+            out.add(HudRenderCommand.rect(HudRenderLayer.DUGU_QI_DECAY, x, y, filled, BAR_HEIGHT, 0xCCB84B4B));
+            out.add(HudRenderCommand.text(
+                HudRenderLayer.DUGU_QI_DECAY,
+                String.format(Locale.ROOT, "真元上限 -%.1f → %.1f", safeState.qiMaxDecayLoss(), safeState.qiMaxAfter()),
+                x,
+                y - 10,
+                0xF0A07A
+            ));
+        }
         return List.copyOf(out);
     }
 }

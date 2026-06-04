@@ -159,7 +159,12 @@ public class ServerDataRouterTest {
             // plan-offscreen-war-v1 P9 — 战事 HUD 状态
             "faction_war_state",
             // plan-combat-skill-feedback-bridges-v1 P4 — 暗器 HUD 状态
-            "anqi_hud"
+            "anqi_hud",
+            // plan-combat-skill-feedback-bridges-v1 P5 — 毒蛊 v2 HUD S2C
+            "dugu_v2_skill_cast",
+            "dugu_v2_self_cure",
+            "dugu_v2_shroud_active",
+            "permanent_qi_max_decay_applied"
         ), router.registeredTypes());
     }
 
