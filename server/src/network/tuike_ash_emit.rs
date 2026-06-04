@@ -8,7 +8,7 @@
 //! 守恒红线：仅读取 event.output_item_id，不重算物品或扣 qi；add_item 失败时只记 warn，不 panic。
 //! Ancient tier 场景：FalseSkinTier::Ancient → output_item_id = FALSE_SKIN_ANCIENT_RELIC_SHARD_ITEM_ID。
 
-use valence::prelude::{EventReader, Query, Res, ResMut, Username};
+use valence::prelude::{DVec3, EventReader, EventWriter, Position, Query, Res, ResMut, Username};
 
 use crate::combat::tuike_v2::events::FalseSkinDecayedToAshEvent;
 use crate::combat::tuike_v2::FalseSkinTier;
@@ -16,9 +16,15 @@ use crate::inventory::{
     add_item_to_player_inventory, InventoryInstanceIdAllocator, ItemRegistry, PlayerInventory,
 };
 use crate::network::redis_bridge::RedisOutbound;
+use crate::network::vfx_event_emit::VfxEventRequest;
 use crate::network::RedisBridgeResource;
 use crate::schema::tuike_v2::{FalseSkinTierV1, TuikeAshDecayV1};
+use crate::schema::vfx_event::VfxEventPayloadV1;
 
+/// VFX 粒子 id —— 灰烬迸发效果（差异化于 AshFootprintTracker 的 ash_burst）。
+pub const TUIKE_ASH_BURST_VFX_ID: &str = "bong:tuike_ash_burst";
+
+#[allow(clippy::too_many_arguments)]
 pub fn publish_tuike_ash_events(
     redis: Res<RedisBridgeResource>,
     item_registry: Res<ItemRegistry>,
@@ -26,6 +32,8 @@ pub fn publish_tuike_ash_events(
     mut ash_events: EventReader<FalseSkinDecayedToAshEvent>,
     usernames: Query<&Username>,
     mut inventories: Query<&mut PlayerInventory>,
+    positions: Query<&Position>,
+    mut vfx_events: EventWriter<VfxEventRequest>,
 ) {
     for event in ash_events.read() {
         // 1. 回收灰烬物品到原主人背包（取 event.output_item_id，不写死，Ancient tier = relic shard）
@@ -56,7 +64,25 @@ pub fn publish_tuike_ash_events(
             }
         }
 
-        // 2. 发送 Redis 叙事事件（agent 叙事：「假皮化为灰烬，XXX 回收了 <item>」）
+        // 2. 向灰烬原主人位置发 VFX（bong:tuike_ash_burst）
+        let origin = positions
+            .get(event.owner)
+            .map(|p| p.get())
+            .unwrap_or(DVec3::ZERO);
+        vfx_events.send(VfxEventRequest::new(
+            origin,
+            VfxEventPayloadV1::SpawnParticle {
+                event_id: TUIKE_ASH_BURST_VFX_ID.to_string(),
+                origin: [origin.x, origin.y + 1.0, origin.z],
+                direction: Some([0.0, 0.1, 0.0]),
+                color: None,
+                strength: Some(1.0),
+                count: Some(1),
+                duration_ticks: Some(20),
+            },
+        ));
+
+        // 3. 发送 Redis 叙事事件（agent 叙事：「假皮化为灰烬，XXX 回收了 <item>」）
         let owner_id = usernames
             .get(event.owner)
             .map(|u| format!("offline:{}", u.0))
@@ -100,6 +126,7 @@ mod tests {
     };
     use crate::combat::tuike_v2::FalseSkinTier;
     use crate::network::redis_bridge::RedisOutbound;
+    use crate::network::vfx_event_emit::VfxEventRequest;
     use crate::network::RedisBridgeResource;
 
     fn setup_app() -> (App, Receiver<RedisOutbound>) {
@@ -107,6 +134,7 @@ mod tests {
         let (_tx_inbound, rx_inbound) = crossbeam_channel::unbounded();
         let mut app = App::new();
         app.add_event::<FalseSkinDecayedToAshEvent>();
+        app.add_event::<VfxEventRequest>();
         app.insert_resource(crate::inventory::ItemRegistry::default());
         app.insert_resource(crate::inventory::InventoryInstanceIdAllocator::default());
         app.insert_resource(RedisBridgeResource {
@@ -271,6 +299,116 @@ mod tests {
         assert_eq!(
             original, back,
             "Ancient tier TuikeAshDecayV1 roundtrip 必须无损"
+        );
+    }
+
+    // ── VFX emit 路径测试（red-when-reverted）────────────────────────────
+    //
+    // 本测试验证 publish_tuike_ash_events 在灰烬事件发生时必须 emit VfxEventRequest。
+    // 若删掉 system 中 vfx_events.send(...) 那行，此测试即红。
+
+    #[test]
+    fn vfx_event_emitted_on_ash_decay() {
+        let (mut app, _rx) = setup_app();
+        let owner = app.world_mut().spawn_empty().id();
+        app.world_mut()
+            .resource_mut::<Events<FalseSkinDecayedToAshEvent>>()
+            .send(FalseSkinDecayedToAshEvent {
+                owner,
+                tier: FalseSkinTier::Mid,
+                output_item_id: FALSE_SKIN_ASH_ITEM_ID.to_string(),
+                tick: 42,
+            });
+
+        app.update();
+
+        let vfx_events = app.world().resource::<Events<VfxEventRequest>>();
+        let count = vfx_events.len();
+        assert_eq!(
+            count, 1,
+            "FalseSkinDecayedToAshEvent 必须触发恰好 1 条 VfxEventRequest(bong:tuike_ash_burst)；\
+            实际发出 {count} 条。删掉 vfx_events.send(...) 会让此测试红。"
+        );
+
+        let mut reader = vfx_events.get_reader();
+        let vfx = reader
+            .read(vfx_events)
+            .next()
+            .expect("VFX event should exist");
+        match &vfx.payload {
+            VfxEventPayloadV1::SpawnParticle { event_id, .. } => {
+                assert_eq!(
+                    event_id, TUIKE_ASH_BURST_VFX_ID,
+                    "VFX event_id 必须为 bong:tuike_ash_burst，实际为 {event_id}"
+                );
+            }
+            other => panic!("期望 SpawnParticle，实际 payload 类型={other:?}"),
+        }
+    }
+
+    #[test]
+    fn vfx_event_uses_owner_position() {
+        // 有 Position 组件的 owner → VFX origin 与 Position 对齐
+        let (mut app, _rx) = setup_app();
+        use valence::prelude::DVec3;
+        let pos = valence::prelude::Position::new(DVec3::new(10.0, 64.0, -5.0));
+        let owner = app.world_mut().spawn(pos).id();
+        app.world_mut()
+            .resource_mut::<Events<FalseSkinDecayedToAshEvent>>()
+            .send(FalseSkinDecayedToAshEvent {
+                owner,
+                tier: FalseSkinTier::Fan,
+                output_item_id: FALSE_SKIN_ASH_ITEM_ID.to_string(),
+                tick: 10,
+            });
+
+        app.update();
+
+        let vfx_events = app.world().resource::<Events<VfxEventRequest>>();
+        let mut reader = vfx_events.get_reader();
+        let vfx = reader.read(vfx_events).next().expect("VFX event");
+        // origin 字段应与 owner Position 对齐（DVec3 level）
+        assert!(
+            (vfx.origin.x - 10.0_f64).abs() < 1e-9 && (vfx.origin.z - -5.0_f64).abs() < 1e-9,
+            "VFX origin 应与 owner Position 对齐；期望 x≈10 z≈-5，实际 origin={:?}",
+            vfx.origin
+        );
+    }
+
+    #[test]
+    fn no_events_means_zero_vfx() {
+        let (mut app, _rx) = setup_app();
+        app.update();
+        let vfx_events = app.world().resource::<Events<VfxEventRequest>>();
+        assert_eq!(
+            vfx_events.len(),
+            0,
+            "无 FalseSkinDecayedToAshEvent 时不应发出任何 VfxEventRequest"
+        );
+    }
+
+    #[test]
+    fn ancient_tier_also_emits_vfx() {
+        // Ancient tier 同样必须 emit VFX（non-tier-conditional）
+        let (mut app, _rx) = setup_app();
+        let owner = app.world_mut().spawn_empty().id();
+        app.world_mut()
+            .resource_mut::<Events<FalseSkinDecayedToAshEvent>>()
+            .send(FalseSkinDecayedToAshEvent {
+                owner,
+                tier: FalseSkinTier::Ancient,
+                output_item_id: FALSE_SKIN_ANCIENT_RELIC_SHARD_ITEM_ID.to_string(),
+                tick: 500,
+            });
+
+        app.update();
+
+        let vfx_events = app.world().resource::<Events<VfxEventRequest>>();
+        assert_eq!(
+            vfx_events.len(),
+            1,
+            "Ancient tier 蜕壳灰烬也必须发 VfxEventRequest；实际发出 {} 条",
+            vfx_events.len()
         );
     }
 }
