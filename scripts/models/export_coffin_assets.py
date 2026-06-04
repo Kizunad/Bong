@@ -149,16 +149,18 @@ def _assign_bone_names(groups_cubes: list[tuple[dict, list[dict]]]) -> list[str]
     if n == 3:
         order = sorted(range(3), key=lambda i: _mean_y(groups_cubes[i][1]))
         names = [""] * 3
+        # 约定对齐 client coffin 家族 + BongEntityModelAssetTest 白名单：
+        # root/base 小写，Body/Lid 大写（GeckoLib 大小写敏感，动画须命中同名骨骼）。
         names[order[0]] = "base"
-        names[order[1]] = "body"
-        names[order[2]] = "lid"
+        names[order[1]] = "Body"
+        names[order[2]] = "Lid"
         return names
-    # 非典型结构：用 group 名或 group_i，最高 Y 那组强制叫 lid
+    # 非典型结构：用 group 名或 group_i，最高 Y 那组强制叫 Lid
     names = []
     top = max(range(n), key=lambda i: _mean_y(groups_cubes[i][1])) if n else -1
     for i, (g, _) in enumerate(groups_cubes):
         if i == top:
-            names.append("lid")
+            names.append("Lid")
         elif g.get("name"):
             names.append(str(g["name"]).lower())
         else:
@@ -218,7 +220,7 @@ def build_geo(bb: dict, identifier: str) -> dict:
     # 后验：lid 骨骼（idle 唯一动画对象）pivot 的 X 必须等于其 cube X 中心，
     # 否则棺盖会绕偏轴侧摆 —— 把这类 bbmodel 脏 origin 在导出时撞红（对峙 major 守卫）。
     for b in bones:
-        if b["name"] == "lid" and b.get("cubes"):
+        if b["name"] == "Lid" and b.get("cubes"):
             lmn, lmx = _bbox(b["cubes"])
             cx = (lmn[0] + lmx[0]) / 2
             if abs(b["pivot"][0] - cx) > 1e-6:
@@ -283,7 +285,7 @@ def build_animation(tier: str) -> dict:
                 "loop": True,
                 "animation_length": length,
                 "bones": {
-                    "lid": {
+                    "Lid": {
                         "rotation": {
                             "0.0": [0, 0, 0],
                             str(mid): [0, 0, z_max],

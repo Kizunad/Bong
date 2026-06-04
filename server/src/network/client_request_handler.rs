@@ -272,6 +272,8 @@ pub struct ClientRequestDispatchParams<'w> {
     pub coffin_place_tx: Option<ResMut<'w, Events<CoffinPlaceRequest>>>,
     pub coffin_enter_tx: Option<ResMut<'w, Events<CoffinEnterRequest>>>,
     pub coffin_leave_tx: Option<ResMut<'w, Events<CoffinLeaveRequest>>>,
+    pub coffin_break_tx: Option<ResMut<'w, Events<crate::coffin::CoffinBreakRequest>>>,
+    pub coffin_menu_reclaim_tx: Option<ResMut<'w, Events<crate::coffin::CoffinMenuReclaimRequest>>>,
     pub sparring_invite_response_tx: Option<ResMut<'w, Events<SparringInviteResponseEvent>>>,
     pub trade_offer_request_tx: Option<ResMut<'w, Events<TradeOfferRequest>>>,
     pub trade_offer_response_tx: Option<ResMut<'w, Events<TradeOfferResponseEvent>>>,
@@ -442,6 +444,8 @@ pub fn handle_client_request_payloads(
             | ClientRequestV1::CoffinPlace { v, .. }
             | ClientRequestV1::CoffinEnter { v, .. }
             | ClientRequestV1::CoffinLeave { v }
+            | ClientRequestV1::CoffinBreak { v, .. }
+            | ClientRequestV1::CoffinMenuReclaim { v, .. }
             | ClientRequestV1::SpiritNichePlace { v, .. }
             | ClientRequestV1::SpiritNicheGaze { v, .. }
             | ClientRequestV1::SpiritNicheMarkCoordinate { v, .. }
@@ -834,6 +838,41 @@ pub fn handle_client_request_payloads(
                     continue;
                 };
                 coffin_leave_tx.send(CoffinLeaveRequest { player: ev.client });
+            }
+            ClientRequestV1::CoffinBreak { x, y, z, .. } => {
+                tracing::info!(
+                    "[bong][network][coffin] break entity={:?} pos=[{x},{y},{z}]",
+                    ev.client
+                );
+                let Some(coffin_break_tx) = dispatch.coffin_break_tx.as_deref_mut() else {
+                    tracing::warn!(
+                        "[bong][network] dropped coffin_break because CoffinBreakRequest event resource is missing"
+                    );
+                    continue;
+                };
+                coffin_break_tx.send(crate::coffin::CoffinBreakRequest {
+                    player: ev.client,
+                    pos: valence::prelude::BlockPos::new(x, y, z),
+                    tick: combat_clock.tick,
+                });
+            }
+            ClientRequestV1::CoffinMenuReclaim { x, y, z, .. } => {
+                tracing::info!(
+                    "[bong][network][coffin] menu_reclaim entity={:?} pos=[{x},{y},{z}]",
+                    ev.client
+                );
+                let Some(coffin_menu_reclaim_tx) = dispatch.coffin_menu_reclaim_tx.as_deref_mut()
+                else {
+                    tracing::warn!(
+                        "[bong][network] dropped coffin_menu_reclaim because CoffinMenuReclaimRequest event resource is missing"
+                    );
+                    continue;
+                };
+                coffin_menu_reclaim_tx.send(crate::coffin::CoffinMenuReclaimRequest {
+                    player: ev.client,
+                    pos: valence::prelude::BlockPos::new(x, y, z),
+                    tick: combat_clock.tick,
+                });
             }
             ClientRequestV1::SpiritNichePlace {
                 x,
@@ -2870,6 +2909,16 @@ mod tests {
     impl valence::prelude::Resource for CapturedCoffinOpenRequests {}
 
     #[derive(Default)]
+    struct CapturedCoffinBreakRequests(Vec<crate::coffin::CoffinBreakRequest>);
+
+    impl valence::prelude::Resource for CapturedCoffinBreakRequests {}
+
+    #[derive(Default)]
+    struct CapturedCoffinMenuReclaimRequests(Vec<crate::coffin::CoffinMenuReclaimRequest>);
+
+    impl valence::prelude::Resource for CapturedCoffinMenuReclaimRequests {}
+
+    #[derive(Default)]
     struct CapturedInscriptionScrolls(Vec<InscriptionScrollSubmit>);
 
     impl valence::prelude::Resource for CapturedInscriptionScrolls {}
@@ -2946,6 +2995,20 @@ mod tests {
     fn capture_coffin_open_requests(
         mut events: EventReader<CoffinOpenRequest>,
         mut captured: ResMut<CapturedCoffinOpenRequests>,
+    ) {
+        captured.0.extend(events.read().cloned());
+    }
+
+    fn capture_coffin_break_requests(
+        mut events: EventReader<crate::coffin::CoffinBreakRequest>,
+        mut captured: ResMut<CapturedCoffinBreakRequests>,
+    ) {
+        captured.0.extend(events.read().cloned());
+    }
+
+    fn capture_coffin_menu_reclaim_requests(
+        mut events: EventReader<crate::coffin::CoffinMenuReclaimRequest>,
+        mut captured: ResMut<CapturedCoffinMenuReclaimRequests>,
     ) {
         captured.0.extend(events.read().cloned());
     }
@@ -3305,6 +3368,8 @@ mod tests {
         app.add_event::<SpiritNichePlaceRequest>();
         app.add_event::<SpiritNicheCoordinateRevealRequest>();
         app.add_event::<CoffinOpenRequest>();
+        app.add_event::<crate::coffin::CoffinBreakRequest>();
+        app.add_event::<crate::coffin::CoffinMenuReclaimRequest>();
         app.add_event::<StartTillRequest>();
         app.add_event::<StartRenewRequest>();
         app.add_event::<StartPlantingRequest>();
@@ -4556,6 +4621,109 @@ mod tests {
         assert_eq!(captured.0[0].player, entity);
         assert_eq!(captured.0[0].pos, [0, 69, 0]);
         assert_eq!(captured.0[0].tick, 91);
+    }
+
+    // ─── plan-coffin-tiers-v1 P3：CoffinBreak/CoffinMenuReclaim decode→emit tests ───
+    // CodeRabbit major A: 补 C2S 协议分支 decode→emit 测试。
+
+    #[test]
+    fn coffin_break_request_emits_event_with_correct_player_and_pos() {
+        let mut app = App::new();
+        app.insert_resource(CapturedCoffinBreakRequests::default());
+        register_request_app(&mut app);
+        app.insert_resource(CombatClock { tick: 77 });
+        app.add_systems(
+            Update,
+            capture_coffin_break_requests.after(handle_client_request_payloads),
+        );
+
+        let (client_bundle, _helper) = create_mock_client("Azure");
+        let entity = app.world_mut().spawn(client_bundle).id();
+        app.world_mut()
+            .resource_mut::<valence::prelude::Events<CustomPayloadEvent>>()
+            .send(CustomPayloadEvent {
+                client: entity,
+                channel: ident!("bong:client_request").into(),
+                data: br#"{"type":"coffin_break","v":1,"x":10,"y":64,"z":-5}"#
+                    .to_vec()
+                    .into_boxed_slice(),
+            });
+
+        app.update();
+
+        let captured = app.world().resource::<CapturedCoffinBreakRequests>();
+        assert_eq!(
+            captured.0.len(),
+            1,
+            "coffin_break 请求应 emit 恰好 1 个 CoffinBreakRequest event；实得 {}",
+            captured.0.len()
+        );
+        assert_eq!(
+            captured.0[0].player, entity,
+            "CoffinBreakRequest.player 应等于发送玩家实体；期望 {entity:?}，实得 {:?}",
+            captured.0[0].player
+        );
+        assert_eq!(
+            captured.0[0].pos,
+            valence::prelude::BlockPos::new(10, 64, -5),
+            "CoffinBreakRequest.pos 应精确等于请求坐标 [10,64,-5]；期望 BlockPos(10,64,-5)，实得 {:?}",
+            captured.0[0].pos
+        );
+        assert_eq!(
+            captured.0[0].tick, 77,
+            "CoffinBreakRequest.tick 应等于 CombatClock.tick；期望 77，实得 {}",
+            captured.0[0].tick
+        );
+    }
+
+    #[test]
+    fn coffin_menu_reclaim_request_emits_event_with_correct_player_and_pos() {
+        let mut app = App::new();
+        app.insert_resource(CapturedCoffinMenuReclaimRequests::default());
+        register_request_app(&mut app);
+        app.insert_resource(CombatClock { tick: 88 });
+        app.add_systems(
+            Update,
+            capture_coffin_menu_reclaim_requests.after(handle_client_request_payloads),
+        );
+
+        let (client_bundle, _helper) = create_mock_client("Azure");
+        let entity = app.world_mut().spawn(client_bundle).id();
+        app.world_mut()
+            .resource_mut::<valence::prelude::Events<CustomPayloadEvent>>()
+            .send(CustomPayloadEvent {
+                client: entity,
+                channel: ident!("bong:client_request").into(),
+                data: br#"{"type":"coffin_menu_reclaim","v":1,"x":-8,"y":65,"z":3}"#
+                    .to_vec()
+                    .into_boxed_slice(),
+            });
+
+        app.update();
+
+        let captured = app.world().resource::<CapturedCoffinMenuReclaimRequests>();
+        assert_eq!(
+            captured.0.len(),
+            1,
+            "coffin_menu_reclaim 请求应 emit 恰好 1 个 CoffinMenuReclaimRequest event；实得 {}",
+            captured.0.len()
+        );
+        assert_eq!(
+            captured.0[0].player, entity,
+            "CoffinMenuReclaimRequest.player 应等于发送玩家实体；期望 {entity:?}，实得 {:?}",
+            captured.0[0].player
+        );
+        assert_eq!(
+            captured.0[0].pos,
+            valence::prelude::BlockPos::new(-8, 65, 3),
+            "CoffinMenuReclaimRequest.pos 应精确等于请求坐标 [-8,65,3]；期望 BlockPos(-8,65,3)，实得 {:?}",
+            captured.0[0].pos
+        );
+        assert_eq!(
+            captured.0[0].tick, 88,
+            "CoffinMenuReclaimRequest.tick 应等于 CombatClock.tick；期望 88，实得 {}",
+            captured.0[0].tick
+        );
     }
 
     #[test]

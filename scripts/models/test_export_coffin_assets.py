@@ -44,9 +44,9 @@ def _cube(uuid, name, frm, to, faces=None, **extra) -> dict:
 
 def _lid_pivot_x(geo: dict) -> float:
     for b in geo["minecraft:geometry"][0]["bones"]:
-        if b["name"] == "lid":
+        if b["name"] == "Lid":
             return b["pivot"][0]
-    raise AssertionError("无 lid 骨骼")
+    raise AssertionError("无 Lid 骨骼")
 
 
 class CubeConversionTest(unittest.TestCase):
@@ -102,7 +102,7 @@ class BoneAssignmentTest(unittest.TestCase):
     def test_three_unnamed_groups_named_base_body_lid_by_meanY(self) -> None:
         geo = export.build_geo(self._three_group_bb(), "geometry.bong.t_coffin")
         names = [b["name"] for b in geo["minecraft:geometry"][0]["bones"]]
-        self.assertEqual(["root", "base", "body", "lid"], names)
+        self.assertEqual(["root", "base", "Body", "Lid"], names)
         for b in geo["minecraft:geometry"][0]["bones"][1:]:
             self.assertEqual("root", b["parent"], "每根 bone 应挂在 root 下")
 
@@ -164,7 +164,7 @@ class BoneAssignmentTest(unittest.TestCase):
         outliner = [{"uuid": "g0", "children": ["lo"]}, {"uuid": "g1", "children": ["hi"]}]
         geo = export.build_geo(_bb(els, outliner), "geometry.bong.t_coffin")
         names = [b["name"] for b in geo["minecraft:geometry"][0]["bones"]]
-        self.assertIn("lid", names, "非 3 组时最高 Y 组仍须命名 lid")
+        self.assertIn("Lid", names, "非 3 组时最高 Y 组仍须命名 Lid")
 
 
 class GeoDescriptionTest(unittest.TestCase):
@@ -208,8 +208,8 @@ class AnimationTest(unittest.TestCase):
             self.assertIn(key, a["animations"], "动画 key 命名须含档位")
             anim = a["animations"][key]
             self.assertTrue(anim["loop"])
-            self.assertIn("lid", anim["bones"], "idle 须对 lid 骨骼")
-            z_max = max(v[2] for v in anim["bones"]["lid"]["rotation"].values())
+            self.assertIn("Lid", anim["bones"], "idle 须对 Lid 骨骼")
+            z_max = max(v[2] for v in anim["bones"]["Lid"]["rotation"].values())
             seen.append((anim["animation_length"], z_max))
         # 四档摆幅/时长应严格递增（越高级摆动越显），不得同质
         self.assertEqual(seen, sorted(seen), "四档 idle 梯度应单调递增")

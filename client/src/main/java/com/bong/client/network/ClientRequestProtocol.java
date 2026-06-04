@@ -454,6 +454,33 @@ public final class ClientRequestProtocol {
         return envelope("coffin_leave").toString();
     }
 
+    // ─── plan-coffin-tiers-v1 P3：延寿棺 marker 交互 C2S ───────────────────
+
+    /**
+     * plan-coffin-tiers-v1 P3 — 左键攻击延寿棺 marker 实体，破坏该棺（体验同破坏方块）。
+     *
+     * <p>pos 为 marker 实体坐标反算的棺 lower 格；server 端 registry 按 lower/upper 归一。</p>
+     */
+    public static String encodeCoffinBreak(BlockPos pos) {
+        JsonObject obj = envelope("coffin_break");
+        obj.addProperty("x", pos.getX());
+        obj.addProperty("y", pos.getY());
+        obj.addProperty("z", pos.getZ());
+        return obj.toString();
+    }
+
+    /**
+     * plan-coffin-tiers-v1 P3 — G 菜单 [回收] 按钮：玩家主动回收延寿棺，
+     * 较全返还合成材料（{@code ReclaimMode.Reclaim}，恒 >= Break 随机返还）。
+     */
+    public static String encodeCoffinMenuReclaim(BlockPos pos) {
+        JsonObject obj = envelope("coffin_menu_reclaim");
+        obj.addProperty("x", pos.getX());
+        obj.addProperty("y", pos.getY());
+        obj.addProperty("z", pos.getZ());
+        return obj.toString();
+    }
+
     public sealed interface ApplyPillTarget {
         JsonObject toJson();
     }

@@ -251,7 +251,9 @@ message ClientRequestEnvelope {
     ExternalContainerMove       external_container_move       = 85;
     ExternalContainerCloseReq   external_container_close      = 86;
     SupplyCoffinOpenReq         supply_coffin_open            = 87;
-    // P2/P3 阶段继续追加 field 88..N。
+    // plan-coffin-tiers-v1 P3 — 延寿棺 marker 交互 C2S。
+    CoffinBreak                 coffin_break                  = 88;
+    CoffinMenuReclaim           coffin_menu_reclaim           = 89;
   }
 }
 
@@ -3403,6 +3405,21 @@ message CoffinEnter {
 // 与 Rust ClientRequestV1::CoffinLeave 精确对应。
 message CoffinLeave {
   // 无额外字段。
+}
+
+// plan-coffin-tiers-v1 P3 — 左键攻击 marker 实体，破坏延寿棺（体验同破坏方块）。
+// pos 为 marker 实体坐标所在格（server 端 registry 按 lower/upper 归一）。
+message CoffinBreak {
+  int32 x = 1;
+  int32 y = 2;
+  int32 z = 3;
+}
+
+// plan-coffin-tiers-v1 P3 — G 菜单 [回收] 按钮：主动回收延寿棺，较全材料返还。
+message CoffinMenuReclaim {
+  int32 x = 1;
+  int32 y = 2;
+  int32 z = 3;
 }
 
 // ─── Zhenfa C2S ──────────────────────────────────────────────────

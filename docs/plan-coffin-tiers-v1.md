@@ -7,7 +7,7 @@
 | P0 | 分档底盘：`CoffinGrade` enum + 倍率表 + item_id ×4 + schema tier 字段（双端 serde） | ✅ | 2026-06-04 |
 | P1 | 资产管线：4 档 bbmodel → `geo.json` + 贴图 PNG + `animation.json`（**含 UV/贴图收尾，见 §视觉资产**） | ✅ | 2026-06-04 |
 | P2 | Server 建模实体：放置时 spawn `BongVisual` marker（按 grade）替代双 CHEST；`CoffinEntity` 持有实体 id | ✅ | 2026-06-04 |
-| P3 | Client 渲染 + 交互迁移：`BongEntityModelKind` ×4 + 渲染器壳 + bootstrap；**marker-entity 交互三件套 C2S intent 接线**（进棺→`CoffinEnterRequest`、攻击破坏→`CoffinBreakRequest`、G菜单→`CoffinMenuReclaimRequest`，server handler+event 已在 P2 就位，P3 只换 emit 源）；退役 CHEST 右键 mixin；HUD 档位徽章 | ⬜ | |
+| P3 | Client 渲染 + 交互迁移：`BongEntityModelKind` ×4 + 渲染器壳 + bootstrap；**marker-entity 交互三件套 C2S intent 接线**（进棺→`CoffinEnterRequest`、攻击破坏→`CoffinBreakRequest`、G菜单→`CoffinMenuReclaimRequest`，server handler+event 已在 P2 就位，P3 只换 emit 源）；退役 CHEST 右键 mixin；HUD 档位徽章 | ✅ | 2026-06-04 |
 | P4 | 三新档 item/recipe（灵材配方）+ 端到端集成 + dev 命令 + 平衡 | ⬜ | |
 
 **世界观锚点**：`worldview.md §十二 死亡重生与一生记录`（寿元上限 / 续命代价）+ `§十四 玩家循环`（灵龛挂机安全设施）。灵材等级越高、封存寿元越强 = 续命代价的被动梯度。

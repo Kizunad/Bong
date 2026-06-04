@@ -3230,6 +3230,21 @@ impl From<&super::client_request::ClientRequestV1> for bong::client_request_enve
                 })
             }
             ClientRequestV1::CoffinLeave { .. } => Payload::CoffinLeave(bong::CoffinLeave {}),
+            // plan-coffin-tiers-v1 P3 — 延寿棺 marker 交互 C2S。
+            ClientRequestV1::CoffinBreak { x, y, z, .. } => {
+                Payload::CoffinBreak(bong::CoffinBreak {
+                    x: *x,
+                    y: *y,
+                    z: *z,
+                })
+            }
+            ClientRequestV1::CoffinMenuReclaim { x, y, z, .. } => {
+                Payload::CoffinMenuReclaim(bong::CoffinMenuReclaim {
+                    x: *x,
+                    y: *y,
+                    z: *z,
+                })
+            }
             // ─── 灵龛 / 社交 C2S ──────────────────────────────────
             ClientRequestV1::SpiritNichePlace {
                 x,
@@ -4163,5 +4178,113 @@ mod tests {
                 entity_id: i32::MAX,
             },
         );
+    }
+
+    // ─── plan-coffin-tiers-v1 P3：延寿棺 C2S proto roundtrip ────────────────
+
+    #[test]
+    fn c2s_coffin_break_roundtrip() {
+        c2s_encode_decode_roundtrip(super::super::client_request::ClientRequestV1::CoffinBreak {
+            v: 1,
+            x: 10,
+            y: 64,
+            z: -5,
+        });
+    }
+
+    /// CodeRabbit major D: oneof variant + 坐标逐字段保真断言（非零/负坐标）。
+    #[test]
+    fn c2s_coffin_break_proto_roundtrip_asserts_variant_and_coords() {
+        use prost::Message;
+        let req = super::super::client_request::ClientRequestV1::CoffinBreak {
+            v: 1,
+            x: 10,
+            y: 64,
+            z: -5,
+        };
+        let proto_payload = bong::client_request_envelope::Payload::from(&req);
+        let envelope = bong::ClientRequestEnvelope {
+            payload: Some(proto_payload),
+        };
+        let bytes = envelope.encode_to_vec();
+        let decoded = bong::ClientRequestEnvelope::decode(bytes.as_slice())
+            .expect("C2S CoffinBreak proto decode should succeed");
+        match decoded.payload {
+            Some(bong::client_request_envelope::Payload::CoffinBreak(b)) => {
+                assert_eq!(
+                    b.x, 10,
+                    "CoffinBreak.x should survive roundtrip; expected 10, got {}",
+                    b.x
+                );
+                assert_eq!(
+                    b.y, 64,
+                    "CoffinBreak.y should survive roundtrip; expected 64, got {}",
+                    b.y
+                );
+                assert_eq!(
+                    b.z, -5,
+                    "CoffinBreak.z (negative) should survive roundtrip; expected -5, got {}",
+                    b.z
+                );
+            }
+            other => panic!(
+                "expected CoffinBreak oneof variant after roundtrip, got {other:?}; \
+                 confirms the payload is not silently mapped to another variant"
+            ),
+        }
+    }
+
+    #[test]
+    fn c2s_coffin_menu_reclaim_roundtrip() {
+        c2s_encode_decode_roundtrip(
+            super::super::client_request::ClientRequestV1::CoffinMenuReclaim {
+                v: 1,
+                x: 3,
+                y: 65,
+                z: 7,
+            },
+        );
+    }
+
+    /// CodeRabbit major D: oneof variant + 坐标逐字段保真断言（含负坐标）。
+    #[test]
+    fn c2s_coffin_menu_reclaim_proto_roundtrip_asserts_variant_and_coords() {
+        use prost::Message;
+        let req = super::super::client_request::ClientRequestV1::CoffinMenuReclaim {
+            v: 1,
+            x: -8,
+            y: 65,
+            z: 3,
+        };
+        let proto_payload = bong::client_request_envelope::Payload::from(&req);
+        let envelope = bong::ClientRequestEnvelope {
+            payload: Some(proto_payload),
+        };
+        let bytes = envelope.encode_to_vec();
+        let decoded = bong::ClientRequestEnvelope::decode(bytes.as_slice())
+            .expect("C2S CoffinMenuReclaim proto decode should succeed");
+        match decoded.payload {
+            Some(bong::client_request_envelope::Payload::CoffinMenuReclaim(r)) => {
+                assert_eq!(
+                    r.x, -8,
+                    "CoffinMenuReclaim.x (negative) should survive roundtrip; expected -8, got {}",
+                    r.x
+                );
+                assert_eq!(
+                    r.y, 65,
+                    "CoffinMenuReclaim.y should survive roundtrip; expected 65, got {}",
+                    r.y
+                );
+                assert_eq!(
+                    r.z, 3,
+                    "CoffinMenuReclaim.z should survive roundtrip; expected 3, got {}",
+                    r.z
+                );
+            }
+            other => panic!(
+                "expected CoffinMenuReclaim oneof variant after roundtrip, got {other:?}; \
+                 confirms the payload is not silently mapped to another variant"
+            ),
+        }
     }
 }
