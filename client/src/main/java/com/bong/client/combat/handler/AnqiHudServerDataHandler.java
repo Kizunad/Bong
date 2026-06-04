@@ -14,13 +14,16 @@ import com.google.gson.JsonPrimitive;
  * 处理 {@code anqi_hud} server-data payloads，将 server emit 的暗器 HUD 状态写入
  * {@link AnqiHudStateStore}，供 {@code AnqiHudPlanner.buildCommands()} 渲染。
  *
- * <p>payload.kind 路由：
+ * <p>payload.kind 路由（当前 server 实际发送的三路）：
  * <ul>
- *   <li>"echo" → {@link AnqiHudState#echo(int, long, long)}</li>
- *   <li>"aim"  → {@link AnqiHudState#aim(float, long, long)}</li>
- *   <li>"charge" → {@link AnqiHudState#charge(float, long, long)}</li>
- *   <li>"abrasion" → {@link AnqiHudState#abrasion(String, float, long, long)}</li>
+ *   <li>"echo"     → {@link AnqiHudState#echo(int, long, long)}（DecoyDeployEvent.echo_count）</li>
+ *   <li>"charge"   → {@link AnqiHudState#charge(float, long, long)}（QiInjectionEvent.overload_ratio 作蓄力度量）</li>
+ *   <li>"abrasion" → {@link AnqiHudState#abrasion(String, float, long, long)}（CarrierAbrasionEvent.after_qi）</li>
  * </ul>
+ *
+ * <p>"aim" 路由暂不实现：anqi_v2 当前无 aim 前摇/进度事件源，aim HUD 延后至未来
+ * 引入 aim-phase 事件的 plan。{@link AnqiHudState#aim} factory 及 {@code AnqiHudPlanner.appendAim}
+ * 留作预留接口，未来 plan 接入时无需改动 handler 以外的代码。
  *
  * <p>守恒红线：只读 payload 字段，不重算真元，不修改任何其他 store。
  */
@@ -40,10 +43,6 @@ public final class AnqiHudServerDataHandler implements ServerDataHandler {
                 int echoCount = (int) readLong(payload, "echo_count", 0L);
                 yield AnqiHudState.echo(echoCount, now, DISPLAY_DURATION_MS);
             }
-            case "aim" -> {
-                float aimProgress = (float) readDouble(payload, "aim_progress", 0.0);
-                yield AnqiHudState.aim(aimProgress, now, DISPLAY_DURATION_MS);
-            }
             case "charge" -> {
                 float chargeProgress = (float) readDouble(payload, "charge_progress", 0.0);
                 yield AnqiHudState.charge(chargeProgress, now, DISPLAY_DURATION_MS);
@@ -54,7 +53,7 @@ public final class AnqiHudServerDataHandler implements ServerDataHandler {
                 yield AnqiHudState.abrasion(container, qiPayload, now, DISPLAY_DURATION_MS);
             }
             default -> {
-                // 未知 kind 静默忽略，不修改 store
+                // 未知 kind（包括 "aim"——server 当前不发，预留给未来 aim-phase plan）静默忽略，不修改 store
                 yield null;
             }
         };

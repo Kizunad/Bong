@@ -62,36 +62,18 @@ class AnqiHudServerDataHandlerTest {
             "echo_count=0 应被接受；实际=" + AnqiHudStateStore.snapshot().echoCount());
     }
 
-    // ─── kind="aim" → aimProgress ────────────────────────────────
+    // ─── kind="aim" 是 server 未发送的预留 kind，handler 应 no-op ──
 
     @Test
-    void aimKindWritesAimProgressToStore() {
-        handler.handle(parse(
+    void aimKindIsNoOpBecauseServerDoesNotEmitAim() {
+        // anqi_v2 无 aim 前摇事件；server 不发 kind="aim"；handler 应 no-op 不修改 store
+        ServerDataDispatch dispatch = handler.handle(parse(
             "{\"v\":1,\"type\":\"anqi_hud\",\"kind\":\"aim\",\"aim_progress\":0.73}"
         ));
-        AnqiHudState state = AnqiHudStateStore.snapshot();
-        assertEquals(0.73f, state.aimProgress(), 0.001f,
-            "aim payload aimProgress 必须等于 0.73（overload_ratio 直接映射）；实际=" + state.aimProgress());
-        assertEquals(0, state.echoCount(),
-            "aim payload 不应设置 echoCount；实际=" + state.echoCount());
-    }
-
-    @Test
-    void aimProgressClampsAtOne() {
-        handler.handle(parse(
-            "{\"v\":1,\"type\":\"anqi_hud\",\"kind\":\"aim\",\"aim_progress\":1.5}"
-        ));
-        assertTrue(AnqiHudStateStore.snapshot().aimProgress() <= 1.0f,
-            "aimProgress >1 应被 clamp；实际=" + AnqiHudStateStore.snapshot().aimProgress());
-    }
-
-    @Test
-    void aimProgressClampsAtZero() {
-        handler.handle(parse(
-            "{\"v\":1,\"type\":\"anqi_hud\",\"kind\":\"aim\",\"aim_progress\":-0.1}"
-        ));
-        assertTrue(AnqiHudStateStore.snapshot().aimProgress() >= 0.0f,
-            "aimProgress <0 应被 clamp；实际=" + AnqiHudStateStore.snapshot().aimProgress());
+        assertFalse(dispatch.handled(),
+            "kind='aim' server 当前不发送，handler 应 no-op（延后至 aim-phase plan）；dispatch=" + dispatch.logMessage());
+        assertEquals(AnqiHudState.empty(), AnqiHudStateStore.snapshot(),
+            "kind='aim' 不应修改 store；实际=" + AnqiHudStateStore.snapshot());
     }
 
     // ─── kind="charge" → chargeProgress ─────────────────────────
@@ -215,11 +197,12 @@ class AnqiHudServerDataHandlerTest {
     }
 
     @Test
-    void protoAnqiHudAimRoundtripToLegacyJson() {
+    void protoAnqiHudChargeRoundtripToLegacyJson() {
+        // server emit QiInjection → kind="charge"，锁 charge_progress 字段 proto 链不丢
         Envelope.ServerDataEnvelope envelope = Envelope.ServerDataEnvelope.newBuilder()
                 .setAnqiHud(Envelope.AnqiHud.newBuilder()
-                        .setKind("aim")
-                        .setAimProgress(0.85)
+                        .setKind("charge")
+                        .setChargeProgress(0.85)
                         .setTick(200L))
                 .build();
 
@@ -227,13 +210,13 @@ class AnqiHudServerDataHandlerTest {
                 ProtoServerDataBridge.bridge(envelope.toByteArray());
 
         assertTrue(result.isSuccess(),
-            "proto AnqiHud aim bridge 必须成功；错误=" + result.errorMessage());
+            "proto AnqiHud charge bridge 必须成功；错误=" + result.errorMessage());
 
         JsonObject json = JsonParser.parseString(result.legacyJson()).getAsJsonObject();
-        assertEquals("aim", json.get("kind").getAsString(),
-            "kind 必须为 'aim'");
-        assertEquals(0.85, json.get("aim_progress").getAsDouble(), 0.001,
-            "aim_progress 必须为 0.85（proto 链不丢字段）");
+        assertEquals("charge", json.get("kind").getAsString(),
+            "kind 必须为 'charge'（server QiInjection → charge，非 aim）；实际=" + json.get("kind"));
+        assertEquals(0.85, json.get("charge_progress").getAsDouble(), 0.001,
+            "charge_progress 必须为 0.85（proto 链不丢字段）；实际=" + json.get("charge_progress"));
     }
 
     // ─── ServerDataRouter 路由测试 ───────────────────────────────
@@ -298,6 +281,48 @@ class AnqiHudServerDataHandlerTest {
                 com.bong.client.hud.AnqiHudPlanner.buildCommands(state, now, 800, 600);
         assertFalse(commands.isEmpty(),
             "e2e：echoCount=4 时 AnqiHudPlanner 必须产生非空命令列表（HUD 渲染回路通）；实际=空");
+    }
+
+    // ─── e2e：proto charge → bridge → router → store → planner ──
+
+    @Test
+    void e2eProtoChargeReachesAnqiHudPlanner() {
+        // 完整 charge 链路：proto bytes → ProtoServerDataBridge → ServerDataRouter → store → planner
+        // 验证 QiInjection→kind=charge 这条现在有 server producer 的路径端到端通
+        Envelope.ServerDataEnvelope envelope = Envelope.ServerDataEnvelope.newBuilder()
+                .setAnqiHud(Envelope.AnqiHud.newBuilder()
+                        .setKind("charge")
+                        .setChargeProgress(0.75f)
+                        .setTick(600L))
+                .build();
+
+        // 1. proto bridge
+        ProtoServerDataBridge.BridgeResult bridgeResult =
+                ProtoServerDataBridge.bridge(envelope.toByteArray());
+        assertTrue(bridgeResult.isSuccess(),
+            "e2e charge：proto bridge 必须成功；错误=" + bridgeResult.errorMessage());
+
+        // 2. router → handler → store
+        ServerDataRouter router = ServerDataRouter.createDefault();
+        String legacyJson = bridgeResult.legacyJson();
+        ServerDataRouter.RouteResult routeResult = router.route(
+                legacyJson, legacyJson.getBytes(java.nio.charset.StandardCharsets.UTF_8).length);
+        assertTrue(routeResult.isHandled(),
+            "e2e charge：router 必须 handle anqi_hud charge；实际=" + routeResult.logMessage());
+
+        // 3. store snapshot
+        AnqiHudState state = AnqiHudStateStore.snapshot();
+        assertEquals(0.75f, state.chargeProgress(), 0.001f,
+            "e2e charge：chargeProgress 必须为 0.75（overload_ratio→charge_progress）；实际=" + state.chargeProgress());
+        assertEquals(0f, state.aimProgress(), 0.001f,
+            "e2e charge：aimProgress 必须为 0（server 不发 aim）；实际=" + state.aimProgress());
+
+        // 4. planner produces non-empty commands (chargeProgress > 0)
+        long now = System.currentTimeMillis();
+        java.util.List<com.bong.client.hud.HudRenderCommand> commands =
+                com.bong.client.hud.AnqiHudPlanner.buildCommands(state, now, 800, 600);
+        assertFalse(commands.isEmpty(),
+            "e2e charge：chargeProgress=0.75 时 AnqiHudPlanner 必须产生非空命令列表（charge HUD 渲染回路通）；实际=空");
     }
 
     // ─── Helper ──────────────────────────────────────────────────
