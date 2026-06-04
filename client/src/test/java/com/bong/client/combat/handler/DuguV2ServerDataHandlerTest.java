@@ -149,30 +149,89 @@ class DuguV2ServerDataHandlerTest {
                 + "实际=" + DuguV2HudStateStore.snapshot().shroudActive());
     }
 
-    // ─── permanent_qi_max_decay_applied：守恒 pin ─────────────────
+    // ─── permanent_qi_max_decay_applied：守恒 pin + HUD 写入 ───────
 
     @Test
-    void permanentQiDecayHandledButDoesNotWriteQiFieldsToStore() {
-        // 守恒红线：loss/qi_max_after 只读，不应修改 DuguV2HudStateStore 的 qi 相关字段
-        // store 仅有 tainted/taintIntensity/selfCurePercent 等字段，无 qi 字段
-        // 本测试验证 handler 正常处理（不抛异常/不崩溃）且 store 状态不变
-        DuguV2HudStateStore.State before = DuguV2HudStateStore.snapshot();
+    void permanentQiDecayWritesDecayFieldsToStore() {
+        // red-when-reverted：把 handler 中写 qiMaxDecayLoss 那行删掉 → store.qiMaxDecayLoss=0 → 测试红
+        long before = System.currentTimeMillis();
         ServerDataDispatch dispatch = handler.handle(parse(
             "{\"v\":1,\"type\":\"permanent_qi_max_decay_applied\",\"target\":\"player:t\","
                 + "\"loss\":0.45,\"qi_max_after\":99.55,\"tick\":1000}"
         ));
         assertTrue(dispatch.handled(),
             "handler 应正常处理 permanent_qi_max_decay_applied；" + dispatch.logMessage());
-        DuguV2HudStateStore.State after = DuguV2HudStateStore.snapshot();
-        assertEquals(before.tainted(), after.tainted(),
-            "permanent_qi_decay 不应修改 store.tainted（守恒红线）；"
-                + "before=" + before.tainted() + " after=" + after.tainted());
-        assertEquals(before.selfCurePercent(), after.selfCurePercent(), 0.001f,
-            "permanent_qi_decay 不应修改 store.selfCurePercent（守恒红线）；"
-                + "before=" + before.selfCurePercent() + " after=" + after.selfCurePercent());
-        assertEquals(before.shroudActive(), after.shroudActive(),
-            "permanent_qi_decay 不应修改 store.shroudActive（守恒红线）；"
-                + "before=" + before.shroudActive() + " after=" + after.shroudActive());
+        DuguV2HudStateStore.State state = DuguV2HudStateStore.snapshot();
+        assertEquals(0.45f, state.qiMaxDecayLoss(), 0.001f,
+            "handler 应写入 store.qiMaxDecayLoss=0.45；实际=" + state.qiMaxDecayLoss()
+                + "（handler 未写则为 0）");
+        assertEquals(99.55f, state.qiMaxAfter(), 0.01f,
+            "handler 应写入 store.qiMaxAfter=99.55；实际=" + state.qiMaxAfter());
+        assertTrue(state.decayExpiryMs() > before,
+            "handler 应写入 store.decayExpiryMs > 当前时间（3s 闪烁窗口）；实际=" + state.decayExpiryMs());
+    }
+
+    @Test
+    void permanentQiDecayDoesNotOverwriteOtherDimensions() {
+        // 守恒红线：loss/qi_max_after 只读，不改 tainted/selfCurePercent/shroudActive（per-dimension merge）
+        // 先设置其他维度
+        handler.handle(parse(
+            "{\"v\":1,\"type\":\"dugu_v2_self_cure\",\"caster\":\"p\","
+                + "\"gain_percent\":60.0,\"self_revealed\":true,\"tick\":1}"
+        ));
+        handler.handle(parse(
+            "{\"v\":1,\"type\":\"dugu_v2_shroud_active\",\"caster\":\"p\","
+                + "\"strength\":0.8,\"expires_at_tick\":5000,\"tick\":100}"
+        ));
+        assertEquals(60.0f, DuguV2HudStateStore.snapshot().selfCurePercent(), 0.1f, "前置 selfCurePercent");
+        assertTrue(DuguV2HudStateStore.snapshot().selfRevealed(), "前置 selfRevealed");
+        assertTrue(DuguV2HudStateStore.snapshot().shroudActive(), "前置 shroudActive");
+
+        // 触发 qi_decay
+        handler.handle(parse(
+            "{\"v\":1,\"type\":\"permanent_qi_max_decay_applied\",\"target\":\"player:t\","
+                + "\"loss\":5.0,\"qi_max_after\":95.0,\"tick\":1000}"
+        ));
+
+        // qi_decay 维度写入
+        assertEquals(5.0f, DuguV2HudStateStore.snapshot().qiMaxDecayLoss(), 0.1f,
+            "qiMaxDecayLoss 应为 5.0；实际=" + DuguV2HudStateStore.snapshot().qiMaxDecayLoss());
+        // 其他维度不变
+        assertEquals(60.0f, DuguV2HudStateStore.snapshot().selfCurePercent(), 0.1f,
+            "qi_decay per-dimension merge 不应清零 selfCurePercent；实际=" + DuguV2HudStateStore.snapshot().selfCurePercent());
+        assertTrue(DuguV2HudStateStore.snapshot().selfRevealed(),
+            "qi_decay per-dimension merge 不应清零 selfRevealed；实际=" + DuguV2HudStateStore.snapshot().selfRevealed());
+        assertTrue(DuguV2HudStateStore.snapshot().shroudActive(),
+            "qi_decay per-dimension merge 不应清零 shroudActive；实际=" + DuguV2HudStateStore.snapshot().shroudActive());
+    }
+
+    @Test
+    void permanentQiDecayZeroLossWritesZeroToStore() {
+        // 边界：loss=0（理论上不应发生，但 handler 应鲁棒处理）
+        handler.handle(parse(
+            "{\"v\":1,\"type\":\"permanent_qi_max_decay_applied\",\"target\":\"p\","
+                + "\"loss\":0.0,\"qi_max_after\":100.0,\"tick\":10}"
+        ));
+        assertEquals(0.0f, DuguV2HudStateStore.snapshot().qiMaxDecayLoss(), 0.001f,
+            "loss=0 → qiMaxDecayLoss 应为 0（State clamp: max(0f,0f)=0）；"
+                + "实际=" + DuguV2HudStateStore.snapshot().qiMaxDecayLoss());
+    }
+
+    @Test
+    void routerDispatchesPermanentQiDecayWritesToStore() {
+        ServerDataRouter router = ServerDataRouter.createDefault();
+        String json = "{\"v\":1,\"type\":\"permanent_qi_max_decay_applied\","
+            + "\"target\":\"p\",\"loss\":3.5,\"qi_max_after\":96.5,\"tick\":200}";
+
+        ServerDataRouter.RouteResult result = router.route(
+            json, json.getBytes(java.nio.charset.StandardCharsets.UTF_8).length
+        );
+
+        assertFalse(result.isParseError(),
+            "router 应成功路由 permanent_qi_max_decay_applied；实际=" + (result.isParseError() ? result.logMessage() : "none"));
+        assertEquals(3.5f, DuguV2HudStateStore.snapshot().qiMaxDecayLoss(), 0.01f,
+            "e2e：router → handler → store.qiMaxDecayLoss 应为 3.5；"
+                + "实际=" + DuguV2HudStateStore.snapshot().qiMaxDecayLoss());
     }
 
     // ─── dugu_v2_skill_cast：招式投放（瞬态，不写 store 持久状态）─

@@ -52,7 +52,10 @@ public final class DuguV2ServerDataHandler implements ServerDataHandler {
                     cur.selfCurePercent(),
                     cur.selfRevealed(),
                     cur.shroudActive(),
-                    cur.shroudUntilMs()
+                    cur.shroudUntilMs(),
+                    cur.qiMaxDecayLoss(),        // qi_decay 维度透传
+                    cur.qiMaxAfter(),
+                    cur.decayExpiryMs()
                 ));
                 return ServerDataDispatch.handled(type, "dugu_v2 cast kind=" + kind + " revealRisk=" + revealProbability);
             }
@@ -69,7 +72,10 @@ public final class DuguV2ServerDataHandler implements ServerDataHandler {
                     gainPercent,
                     cur.selfRevealed() || selfRevealed,  // sticky: 一旦 true 不归零
                     cur.shroudActive(),
-                    cur.shroudUntilMs()
+                    cur.shroudUntilMs(),
+                    cur.qiMaxDecayLoss(),        // qi_decay 维度透传
+                    cur.qiMaxAfter(),
+                    cur.decayExpiryMs()
                 ));
                 return ServerDataDispatch.handled(
                     type,
@@ -92,7 +98,10 @@ public final class DuguV2ServerDataHandler implements ServerDataHandler {
                     cur.selfCurePercent(),
                     cur.selfRevealed(),
                     strength > 0f,
-                    shroudUntilMs
+                    shroudUntilMs,
+                    cur.qiMaxDecayLoss(),        // qi_decay 维度透传
+                    cur.qiMaxAfter(),
+                    cur.decayExpiryMs()
                 ));
                 return ServerDataDispatch.handled(
                     type,
@@ -100,12 +109,31 @@ public final class DuguV2ServerDataHandler implements ServerDataHandler {
                 );
             }
             case "permanent_qi_max_decay_applied" -> {
-                // 仅 HUD 通知用（loss/qi_max_after 只读，守恒红线：不在此处改 qi store）
+                // HUD 通知用（loss/qi_max_after 只读，守恒红线：不在此处改 qi store）。
+                // per-dimension merge：只写 qi_decay 三字段，不覆盖其他维度。
+                // 闪烁窗口固定 3s（60 tick × 50ms），衰减事件短暂高亮真元上限衰减。
+                // §视听精度文档待人工补
                 float loss = (float) readDouble(payload, "loss", 0.0);
                 float qiMaxAfter = (float) readDouble(payload, "qi_max_after", 0.0);
+                long decayExpiryMs = System.currentTimeMillis() + 3_000L;
+                DuguV2HudStateStore.State cur = DuguV2HudStateStore.snapshot();
+                DuguV2HudStateStore.replace(new DuguV2HudStateStore.State(
+                    cur.tainted(),
+                    cur.taintIntensity(),
+                    cur.taintHint(),
+                    cur.revealRisk(),
+                    cur.selfCurePercent(),
+                    cur.selfRevealed(),
+                    cur.shroudActive(),
+                    cur.shroudUntilMs(),
+                    loss,                        // ← per-dimension merge: 仅更新 qiMaxDecayLoss
+                    qiMaxAfter,                  // ← 仅更新 qiMaxAfter
+                    decayExpiryMs                // ← 闪烁窗口截止 ms
+                ));
                 return ServerDataDispatch.handled(
                     type,
                     "permanent qi decay loss=" + loss + " qi_max_after=" + qiMaxAfter
+                        + " expiryMs=" + decayExpiryMs
                 );
             }
             default -> {

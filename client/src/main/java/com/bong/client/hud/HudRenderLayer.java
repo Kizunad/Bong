@@ -47,6 +47,8 @@ public enum HudRenderLayer {
     DUGU_REVEAL_RISK,
     DUGU_SELF_CURE_PROGRESS,
     DUGU_SHROUD,
+    /** plan-combat-skill-feedback-bridges-v1 P5：永久真元上限衰减 HUD 闪烁条。§视听精度文档待人工补 */
+    DUGU_QI_DECAY,
     POISON_TRAIT,
     DANDAO_MUTATION,
     SWORD_BOND,
