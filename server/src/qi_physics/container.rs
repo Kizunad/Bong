@@ -9,6 +9,18 @@ pub enum AnqiContainerKind {
 }
 
 impl AnqiContainerKind {
+    /// 返回跨端 wire 契约字符串（snake_case，与 client `AnqiHudServerDataHandler` 期望一致）。
+    ///
+    /// **穷尽 match，无 catch-all**：新增变体时编译器强制处理，防止 wire 串静默漂移。
+    pub fn as_wire_str(self) -> &'static str {
+        match self {
+            Self::HandSlot => "hand_slot",
+            Self::Quiver => "quiver",
+            Self::PocketPouch => "pocket_pouch",
+            Self::Fenglinghe => "fenglinghe",
+        }
+    }
+
     pub fn capacity(self) -> u8 {
         match self {
             Self::HandSlot => 1,
@@ -65,6 +77,68 @@ pub fn abrasion_loss(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ── wire 契约 pin：as_wire_str 每变体显式锁定，不走 Debug ────
+
+    #[test]
+    fn wire_str_hand_slot() {
+        assert_eq!(
+            AnqiContainerKind::HandSlot.as_wire_str(),
+            "hand_slot",
+            "HandSlot wire 契约必须为 'hand_slot'（client AnqiHudServerDataHandler 期望值）；实际={}",
+            AnqiContainerKind::HandSlot.as_wire_str()
+        );
+    }
+
+    #[test]
+    fn wire_str_quiver() {
+        assert_eq!(
+            AnqiContainerKind::Quiver.as_wire_str(),
+            "quiver",
+            "Quiver wire 契约必须为 'quiver'；实际={}",
+            AnqiContainerKind::Quiver.as_wire_str()
+        );
+    }
+
+    #[test]
+    fn wire_str_pocket_pouch() {
+        assert_eq!(
+            AnqiContainerKind::PocketPouch.as_wire_str(),
+            "pocket_pouch",
+            "PocketPouch wire 契约必须为 'pocket_pouch'（非 'pocketpouch'，Debug 输出不可作契约）；实际={}",
+            AnqiContainerKind::PocketPouch.as_wire_str()
+        );
+    }
+
+    #[test]
+    fn wire_str_fenglinghe() {
+        assert_eq!(
+            AnqiContainerKind::Fenglinghe.as_wire_str(),
+            "fenglinghe",
+            "Fenglinghe wire 契约必须为 'fenglinghe'；实际={}",
+            AnqiContainerKind::Fenglinghe.as_wire_str()
+        );
+    }
+
+    /// Debug 输出与 wire_str 的偏差验证：
+    /// HandSlot/PocketPouch 的 Debug 会产生不含下划线的拼合串，
+    /// 此测试明确记录 Debug 不等于 wire_str，作为不可回退的保护网。
+    #[test]
+    fn debug_output_differs_from_wire_str_for_multiword_variants() {
+        // HandSlot: Debug="HandSlot", wire="hand_slot"
+        assert_ne!(
+            format!("{:?}", AnqiContainerKind::HandSlot).to_lowercase(),
+            AnqiContainerKind::HandSlot.as_wire_str(),
+            "HandSlot Debug 输出（无下划线）与 wire_str（有下划线）必须不同——\
+             此测试防止未来有人误用 Debug 作 wire 契约"
+        );
+        // PocketPouch: Debug="PocketPouch", wire="pocket_pouch"
+        assert_ne!(
+            format!("{:?}", AnqiContainerKind::PocketPouch).to_lowercase(),
+            AnqiContainerKind::PocketPouch.as_wire_str(),
+            "PocketPouch Debug 输出（无下划线）与 wire_str（有下划线）必须不同"
+        );
+    }
 
     #[test]
     fn quiver_taxes_five_percent_each_move() {

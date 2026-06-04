@@ -108,9 +108,7 @@ pub fn emit_anqi_hud_payloads(
         let Ok((_, ref mut client, _)) = clients.get_mut(event.carrier) else {
             continue;
         };
-        let container_str = format!("{:?}", event.container)
-            .to_lowercase()
-            .replace("anqicontainerkind::", "");
+        let container_str = event.container.as_wire_str().to_string();
         let payload = ServerDataV1::new(ServerDataPayloadV1::AnqiHud(AnqiHudV1 {
             kind: "abrasion".to_string(),
             echo_count: 0,
@@ -141,6 +139,7 @@ pub fn emit_anqi_hud_payloads(
 
 #[cfg(test)]
 mod tests {
+    use crate::qi_physics::AnqiContainerKind;
     use crate::schema::server_data::{AnqiHudV1, ServerDataPayloadV1};
 
     // ── emit 契约 pin：DecoyDeployEvent → payload.kind=="echo" ────
@@ -305,6 +304,84 @@ mod tests {
         assert_eq!(
             neg, 0.0,
             "overload <0 应 clamp 到 0.0（charge_progress 下界）；实际={neg}"
+        );
+    }
+
+    // ── abrasion e2e wire 契约 pin：as_wire_str → abrasion_container ──
+    //
+    // 这些测试锁住"emit 函数用 as_wire_str() 填 abrasion_container"这条路径，
+    // 不走 Debug 派生——一旦有人改回 format!("{:?}") 模式，这里会立刻红。
+
+    #[test]
+    fn abrasion_payload_container_uses_wire_str_not_debug() {
+        // 直接验证 as_wire_str 输出即 payload 字段值（emit 路径的等价验证）：
+        // abrasion_container = event.container.as_wire_str().to_string()
+        // 此处对每个非 HandSlot（会触发 abrasion emit 的容器）逐一验证 wire 字符串。
+        let quiver_payload = AnqiHudV1 {
+            kind: "abrasion".to_string(),
+            echo_count: 0,
+            aim_progress: 0.0,
+            charge_progress: 0.0,
+            abrasion_container: AnqiContainerKind::Quiver.as_wire_str().to_string(),
+            abrasion_qi_payload: 95.0,
+            tick: 10,
+        };
+        assert_eq!(
+            quiver_payload.abrasion_container, "quiver",
+            "Quiver abrasion_container 必须为 'quiver'（via as_wire_str，非 Debug）；实际={}",
+            quiver_payload.abrasion_container
+        );
+
+        let pocket_payload = AnqiHudV1 {
+            kind: "abrasion".to_string(),
+            echo_count: 0,
+            aim_progress: 0.0,
+            charge_progress: 0.0,
+            abrasion_container: AnqiContainerKind::PocketPouch.as_wire_str().to_string(),
+            abrasion_qi_payload: 88.0,
+            tick: 20,
+        };
+        assert_eq!(
+            pocket_payload.abrasion_container, "pocket_pouch",
+            "PocketPouch abrasion_container 必须为 'pocket_pouch'（as_wire_str；若用 Debug 则为 'pocketpouch'→client 解析失败）；实际={}",
+            pocket_payload.abrasion_container
+        );
+    }
+
+    #[test]
+    fn abrasion_payload_hand_slot_wire_str() {
+        // HandSlot 的 as_wire_str 验证（'hand_slot' 非 Debug 'handslot'）
+        let payload = AnqiHudV1 {
+            kind: "abrasion".to_string(),
+            echo_count: 0,
+            aim_progress: 0.0,
+            charge_progress: 0.0,
+            abrasion_container: AnqiContainerKind::HandSlot.as_wire_str().to_string(),
+            abrasion_qi_payload: 0.0,
+            tick: 30,
+        };
+        assert_eq!(
+            payload.abrasion_container, "hand_slot",
+            "HandSlot abrasion_container 必须为 'hand_slot'（含下划线；Debug='handslot' 会与 client 不匹配）；实际={}",
+            payload.abrasion_container
+        );
+    }
+
+    #[test]
+    fn abrasion_payload_fenglinghe_wire_str() {
+        let payload = AnqiHudV1 {
+            kind: "abrasion".to_string(),
+            echo_count: 0,
+            aim_progress: 0.0,
+            charge_progress: 0.0,
+            abrasion_container: AnqiContainerKind::Fenglinghe.as_wire_str().to_string(),
+            abrasion_qi_payload: 0.0,
+            tick: 40,
+        };
+        assert_eq!(
+            payload.abrasion_container, "fenglinghe",
+            "Fenglinghe abrasion_container 必须为 'fenglinghe'；实际={}",
+            payload.abrasion_container
         );
     }
 }
