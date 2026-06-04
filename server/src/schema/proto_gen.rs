@@ -11434,17 +11434,19 @@ mod tests {
     }
 
     #[test]
-    fn anqi_hud_proto_roundtrip_aim() {
+    fn anqi_hud_proto_roundtrip_charge() {
+        // server emit 现在发 kind="charge"（overload_ratio → charge_progress）；
+        // 此测试锁住 charge_progress 字段在 proto 链中不丢。
         use crate::schema::proto_convert::server_data_to_proto_payload;
         use crate::schema::proto_gen::bong::ServerDataEnvelope;
         use crate::schema::server_data::{AnqiHudV1, ServerDataPayloadV1};
         use prost::Message;
 
         let payload = ServerDataPayloadV1::AnqiHud(AnqiHudV1 {
-            kind: "aim".to_string(),
+            kind: "charge".to_string(),
             echo_count: 0,
-            aim_progress: 0.85,
-            charge_progress: 0.0,
+            aim_progress: 0.0,
+            charge_progress: 0.85,
             abrasion_container: String::new(),
             abrasion_qi_payload: 0.0,
             tick: 200,
@@ -11458,9 +11460,9 @@ mod tests {
         let mut buf = Vec::new();
         envelope
             .encode(&mut buf)
-            .expect("AnqiHud aim proto encode 不应失败");
-        let decoded =
-            ServerDataEnvelope::decode(buf.as_slice()).expect("AnqiHud aim proto decode 不应失败");
+            .expect("AnqiHud charge proto encode 不应失败");
+        let decoded = ServerDataEnvelope::decode(buf.as_slice())
+            .expect("AnqiHud charge proto decode 不应失败");
 
         let Some(super::bong::server_data_envelope::Payload::AnqiHud(inner)) = decoded.payload
         else {
@@ -11471,13 +11473,18 @@ mod tests {
         };
 
         assert_eq!(
-            inner.kind, "aim",
-            "kind 必须为 'aim'；实际='{}'",
+            inner.kind, "charge",
+            "kind 必须为 'charge'（server emit QiInjection → charge，不再是 aim）；实际='{}'",
             inner.kind
         );
         assert!(
-            (inner.aim_progress - 0.85).abs() < 1e-9,
-            "aim_progress 必须为 0.85；实际={}",
+            (inner.charge_progress - 0.85).abs() < 1e-9,
+            "charge_progress 必须为 0.85（proto 链不丢字段）；实际={}",
+            inner.charge_progress
+        );
+        assert_eq!(
+            inner.aim_progress, 0.0,
+            "charge payload aim_progress 应为 0.0（server 不发 aim）；实际={}",
             inner.aim_progress
         );
     }

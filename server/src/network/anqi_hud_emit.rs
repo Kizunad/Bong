@@ -6,8 +6,13 @@
 //! 守恒红线：
 //! - 全部字段只读自 ECS Event，不重算真元，不扣 qi。
 //! - DecoyDeployEvent.echo_count 直接使用，不重新计算。
-//! - QiInjectionEvent.outcome.overload_ratio 直接映射 aim_progress。
+//! - QiInjectionEvent.outcome.overload_ratio 直接映射 charge_progress（见下方说明）。
 //! - CarrierAbrasionEvent.after_qi 直接映射 abrasion_qi_payload。
+//!
+//! ## aim HUD 暂缺说明
+//! anqi_v2 当前 7 个事件全为结果型（MultiShot/QiInjection/ArmorPierce/EchoFractal/
+//! CarrierAbrasion/ContainerSwap/DecoyDeploy），无 aim 前摇/进度事件源。
+//! aim HUD 反馈延后至未来引入 aim-phase 事件的 plan；本阶段交付 echo/charge/abrasion 三路。
 
 use valence::prelude::{Client, Entity, EventReader, Query, UniqueId, With};
 
@@ -19,9 +24,9 @@ use crate::network::{log_payload_build_error, send_server_data_payload};
 use crate::schema::server_data::{AnqiHudV1, ServerDataPayloadV1, ServerDataV1};
 
 /// plan-combat-skill-feedback-bridges-v1 P4 断链修复：
-/// `DecoyDeployEvent` 零 reader → HUD echo count 推送。
-/// `QiInjectionEvent`               → HUD aim progress 推送。
-/// `CarrierAbrasionEvent`           → HUD abrasion 推送。
+/// `DecoyDeployEvent`    → HUD kind="echo" 推送（echo_count 直取）。
+/// `QiInjectionEvent`   → HUD kind="charge" 推送（overload_ratio 作为蓄力指示，见注释）。
+/// `CarrierAbrasionEvent` → HUD kind="abrasion" 推送（after_qi 直取）。
 pub fn emit_anqi_hud_payloads(
     mut decoys: EventReader<DecoyDeployEvent>,
     mut injections: EventReader<QiInjectionEvent>,
@@ -60,19 +65,21 @@ pub fn emit_anqi_hud_payloads(
         );
     }
 
-    // ── QiInjectionEvent → kind="aim" ─────────────────────────────
-    // overload_ratio 是高密注射后的过载比，直接作为 aim_progress 语义
-    // （高密注射是已命中目标的结果，overload_ratio 越高 = 瞄准精度越高）。
+    // ── QiInjectionEvent → kind="charge" ─────────────────────────
+    // overload_ratio = payload_qi / qi_max，表示本次注射的载荷比（0..1）。
+    // anqi_v2 无 aim 前摇/进度事件；此处以 overload_ratio 作蓄力度量（charge）
+    // 反馈注射强度：overload_ratio 越高 = 此次注射越接近上限，charge 条越满。
+    // 语义上与"瞄准进度"无关，故 kind="charge" 而非 "aim"。
     for event in injections.read() {
         let Ok((_, ref mut client, _)) = clients.get_mut(event.caster) else {
             continue;
         };
         let overload = event.outcome.overload_ratio.clamp(0.0, 1.0);
         let payload = ServerDataV1::new(ServerDataPayloadV1::AnqiHud(AnqiHudV1 {
-            kind: "aim".to_string(),
+            kind: "charge".to_string(),
             echo_count: 0,
-            aim_progress: overload,
-            charge_progress: 0.0,
+            aim_progress: 0.0,
+            charge_progress: overload,
             abrasion_container: String::new(),
             abrasion_qi_payload: 0.0,
             tick: event.tick,
@@ -87,7 +94,7 @@ pub fn emit_anqi_hud_payloads(
         };
         send_server_data_payload(client, payload_bytes.as_slice());
         tracing::debug!(
-            "[bong][network] sent {} {} aim payload caster={:?} overload_ratio={}",
+            "[bong][network] sent {} {} charge payload caster={:?} overload_ratio(=charge_progress)={}",
             SERVER_DATA_CHANNEL,
             payload_type,
             event.caster,
@@ -173,31 +180,37 @@ mod tests {
     }
 
     #[test]
-    fn anqi_hud_aim_payload_maps_overload_ratio() {
-        // QiInjectionEvent.outcome.overload_ratio → aim_progress（不重算）
+    fn anqi_hud_charge_payload_maps_overload_ratio() {
+        // QiInjectionEvent.outcome.overload_ratio → charge_progress（不重算）
+        // overload_ratio = payload_qi / qi_max，作蓄力度量；kind="charge" 不再是 "aim"
         let overload_ratio = 0.73_f64;
         let payload = AnqiHudV1 {
-            kind: "aim".to_string(),
+            kind: "charge".to_string(),
             echo_count: 0,
-            aim_progress: overload_ratio.clamp(0.0, 1.0),
-            charge_progress: 0.0,
+            aim_progress: 0.0,
+            charge_progress: overload_ratio.clamp(0.0, 1.0),
             abrasion_container: String::new(),
             abrasion_qi_payload: 0.0,
             tick: 100,
         };
         assert_eq!(
-            payload.kind, "aim",
-            "aim payload kind must be 'aim'；实际={}",
+            payload.kind, "charge",
+            "QiInjection payload kind 必须为 'charge'（非 'aim'，overload_ratio 是载荷比而非瞄准进度）；实际={}",
             payload.kind
         );
         assert!(
-            (payload.aim_progress - 0.73).abs() < 1e-9,
-            "aim_progress 必须等于 overload_ratio 0.73，不重算；实际={}",
+            (payload.charge_progress - 0.73).abs() < 1e-9,
+            "charge_progress 必须等于 overload_ratio 0.73，不重算；实际={}",
+            payload.charge_progress
+        );
+        assert_eq!(
+            payload.aim_progress, 0.0,
+            "charge payload aim_progress 应为 0.0（server 不发 aim）；实际={}",
             payload.aim_progress
         );
         assert_eq!(
             payload.echo_count, 0,
-            "aim payload echo_count 应为 0；实际={}",
+            "charge payload echo_count 应为 0；实际={}",
             payload.echo_count
         );
     }
@@ -281,11 +294,17 @@ mod tests {
     }
 
     #[test]
-    fn anqi_hud_aim_overload_clamp_boundary() {
-        // overload_ratio 超出 [0,1] 时必须 clamp 不 panic
+    fn anqi_hud_charge_overload_clamp_boundary() {
+        // overload_ratio 超出 [0,1] 时 clamp 后作为 charge_progress，不 panic
         let over = 1.5_f64.clamp(0.0, 1.0);
-        assert_eq!(over, 1.0, "overload >1 应 clamp 到 1.0；实际={over}");
+        assert_eq!(
+            over, 1.0,
+            "overload >1 应 clamp 到 1.0（charge_progress 上界）；实际={over}"
+        );
         let neg = (-0.1_f64).clamp(0.0, 1.0);
-        assert_eq!(neg, 0.0, "overload <0 应 clamp 到 0.0；实际={neg}");
+        assert_eq!(
+            neg, 0.0,
+            "overload <0 应 clamp 到 0.0（charge_progress 下界）；实际={neg}"
+        );
     }
 }
