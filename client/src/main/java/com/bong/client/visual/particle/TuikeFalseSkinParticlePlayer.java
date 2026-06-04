@@ -10,6 +10,8 @@ public final class TuikeFalseSkinParticlePlayer implements VfxPlayer {
     public static final Identifier DON_DUST = new Identifier("bong", "false_skin_don_dust");
     public static final Identifier SHED_BURST = new Identifier("bong", "false_skin_shed_burst");
     public static final Identifier ANCIENT_GLOW = new Identifier("bong", "ancient_skin_glow");
+    /** plan-combat-skill-feedback-bridges-v1 P6 — 蜕壳灰烬迸发粒子（server emit: bong:tuike_ash_burst）。 */
+    public static final Identifier TUIKE_ASH_BURST = new Identifier("bong", "tuike_ash_burst");
     private static final int MAX_AGE_TICKS = 200;
 
     private final Identifier eventId;
@@ -69,12 +71,12 @@ public final class TuikeFalseSkinParticlePlayer implements VfxPlayer {
 
     private net.minecraft.client.particle.SpriteProvider spriteProvider() {
         if (ANCIENT_GLOW.equals(eventId)) return BongParticles.enlightenmentDustSprites;
-        if (SHED_BURST.equals(eventId)) return BongParticles.tribulationSparkSprites;
+        if (SHED_BURST.equals(eventId) || TUIKE_ASH_BURST.equals(eventId)) return BongParticles.tribulationSparkSprites;
         return BongParticles.qiAuraSprites;
     }
 
     private int defaultCount() {
-        if (SHED_BURST.equals(eventId)) return 18;
+        if (SHED_BURST.equals(eventId) || TUIKE_ASH_BURST.equals(eventId)) return 18;
         if (ANCIENT_GLOW.equals(eventId)) return 16;
         return 10;
     }
@@ -85,23 +87,24 @@ public final class TuikeFalseSkinParticlePlayer implements VfxPlayer {
 
     private int defaultRgb() {
         if (ANCIENT_GLOW.equals(eventId)) return 0xBFD8FF;
+        if (TUIKE_ASH_BURST.equals(eventId)) return 0x8A7A6A; // 灰烬专属色：深灰棕
         if (SHED_BURST.equals(eventId)) return 0xB58B5A;
         return 0xD8C08A;
     }
 
     private double spreadRadius(double strength) {
-        if (SHED_BURST.equals(eventId)) return 0.9 + strength * 0.45;
+        if (SHED_BURST.equals(eventId) || TUIKE_ASH_BURST.equals(eventId)) return 0.9 + strength * 0.45;
         return 0.35 + strength * 0.35;
     }
 
     private double horizontalSpeed(double strength) {
-        if (SHED_BURST.equals(eventId)) return 0.025 + strength * 0.035;
+        if (SHED_BURST.equals(eventId) || TUIKE_ASH_BURST.equals(eventId)) return 0.025 + strength * 0.035;
         return 0.006 + strength * 0.012;
     }
 
     private double verticalSpeed(double strength) {
         if (ANCIENT_GLOW.equals(eventId)) return 0.018 + strength * 0.02;
-        if (SHED_BURST.equals(eventId)) return 0.008 + strength * 0.02;
+        if (SHED_BURST.equals(eventId) || TUIKE_ASH_BURST.equals(eventId)) return 0.008 + strength * 0.02;
         return 0.012 + strength * 0.018;
     }
 

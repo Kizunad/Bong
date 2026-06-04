@@ -108,6 +108,9 @@ public final class VfxBootstrap {
             new TuikeFalseSkinParticlePlayer(TuikeFalseSkinParticlePlayer.SHED_BURST));
         registry.register(TuikeFalseSkinParticlePlayer.ANCIENT_GLOW,
             new TuikeFalseSkinParticlePlayer(TuikeFalseSkinParticlePlayer.ANCIENT_GLOW));
+        // plan-combat-skill-feedback-bridges-v1 P6 — 灰烬迸发粒子，server emit: bong:tuike_ash_burst
+        registry.register(TuikeFalseSkinParticlePlayer.TUIKE_ASH_BURST,
+            new TuikeFalseSkinParticlePlayer(TuikeFalseSkinParticlePlayer.TUIKE_ASH_BURST));
         YidaoPeacePulsePlayer yidao = new YidaoPeacePulsePlayer();
         registry.register(YidaoPeacePulsePlayer.MERIDIAN_REPAIR,       yidao);
         registry.register(YidaoPeacePulsePlayer.CONTAM_PURGE,          yidao);
