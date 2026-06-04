@@ -132,8 +132,13 @@ pub const AMBIENT_STAGE_4_RANGE: f32 = 5.0;
 pub struct VoidErosion {
     /// 历史累计虚蚀值（只增不减）。
     pub cumulative_erosion: f64,
-    /// 当前阶段。
+    /// 当前已 cap（境界门控）阶段，由 `add_erosion_capped` 维护。
     pub stage: VoidErosionStage,
+    /// `void_erosion_check_system` 最近一次已上报的阶段。
+    /// 用于检测 `stage` 是否推进（而非 uncapped computed_stage），
+    /// 保证 check 不绕境界上限、事件准确反映实际 capped stage 推进。
+    /// 跨死亡保留语义同 `stage`。
+    pub last_reported_stage: VoidErosionStage,
     /// 常驻涡流是否启用。
     pub ambient_active: bool,
     /// 常驻涡流切换时刻。
@@ -145,6 +150,7 @@ impl Default for VoidErosion {
         Self {
             cumulative_erosion: 0.0,
             stage: VoidErosionStage::None,
+            last_reported_stage: VoidErosionStage::None,
             ambient_active: false,
             ambient_toggled_at: 0,
         }
@@ -470,8 +476,14 @@ use crate::combat::CombatClock;
 
 /// 每 600 tick（30s）检测虚蚀阶段推进，emit `VoidErosionAdvanceEvent`。
 ///
-/// 仅当 `computed_stage() > self.stage` 时推进（向上单调），同帧跨多阶时
-/// `to` 取 computed_stage()（最终档），不分拆多次 emit。
+/// 比较**当前 capped `stage`**（由 `add_erosion_capped` 维护）与
+/// `last_reported_stage`——两者相等则跳过，否则 emit 并更新 `last_reported_stage`。
+///
+/// 设计要点：
+/// - 不再调用 uncapped `computed_stage()` 重算（修复 major1：不绕境界上限）。
+/// - `stage` 已在 `add_erosion_capped` 被 cap，check 只需看它是否推进过
+///   `last_reported_stage`（修复 blocker：能检测到真实施法路径的 capped stage 推进）。
+/// - 同帧跨多阶时 `to` 取当前 `stage`（最终档），不分拆多次 emit。
 pub fn void_erosion_check_system(
     clock: Res<CombatClock>,
     mut erosion_query: Query<(Entity, &mut VoidErosion)>,
@@ -481,15 +493,11 @@ pub fn void_erosion_check_system(
         return;
     }
     for (entity, mut erosion) in &mut erosion_query {
-        let computed = erosion.computed_stage();
-        if computed > erosion.stage {
-            let from = erosion.stage;
-            erosion.stage = computed;
-            advance_events.send(VoidErosionAdvanceEvent {
-                entity,
-                from,
-                to: computed,
-            });
+        if erosion.stage > erosion.last_reported_stage {
+            let from = erosion.last_reported_stage;
+            let to = erosion.stage;
+            erosion.last_reported_stage = to;
+            advance_events.send(VoidErosionAdvanceEvent { entity, from, to });
         }
     }
 }
@@ -1037,6 +1045,7 @@ mod tests {
         let erosion = VoidErosion {
             cumulative_erosion: 123.456,
             stage: VoidErosionStage::VoidShadow,
+            last_reported_stage: VoidErosionStage::LowPressure,
             ambient_active: true,
             ambient_toggled_at: 9000,
         };
@@ -1045,6 +1054,40 @@ mod tests {
         assert_eq!(
             erosion, deserialized,
             "VoidErosion should roundtrip through serde"
+        );
+    }
+
+    #[test]
+    fn void_erosion_last_reported_stage_defaults_to_none() {
+        let erosion = VoidErosion::default();
+        assert_eq!(
+            erosion.last_reported_stage,
+            VoidErosionStage::None,
+            "last_reported_stage should default to None"
+        );
+    }
+
+    #[test]
+    fn void_erosion_serde_roundtrip_includes_last_reported_stage() {
+        // last_reported_stage must survive serde (跨死亡保留语义)
+        let erosion = VoidErosion {
+            cumulative_erosion: 200.0,
+            stage: VoidErosionStage::EchoBody,
+            last_reported_stage: VoidErosionStage::EchoBody,
+            ambient_active: false,
+            ambient_toggled_at: 0,
+        };
+        let json = serde_json::to_string(&erosion).unwrap();
+        assert!(
+            json.contains("last_reported_stage"),
+            "last_reported_stage must be present in serialized JSON for persistence: {}",
+            json
+        );
+        let back: VoidErosion = serde_json::from_str(&json).unwrap();
+        assert_eq!(
+            back.last_reported_stage,
+            VoidErosionStage::EchoBody,
+            "last_reported_stage should survive serde roundtrip"
         );
     }
 

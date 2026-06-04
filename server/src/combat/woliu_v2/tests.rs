@@ -2196,13 +2196,16 @@ fn add_erosion_capped_does_not_touch_qi_fields() {
 
 #[test]
 fn void_erosion_check_system_emits_advance_event_on_threshold_cross() {
+    // 不再使用手动 reset stage 的作弊模式：
+    // 用 add_erosion_capped（真实生产路径）累积越过阈值，stage 由 capped 路径更新到 LowPressure，
+    // last_reported_stage 保持 None（default）→ check_system 检测到推进并 emit 事件。
     let mut a = app_with_void_erosion(VOID_EROSION_CHECK_INTERVAL);
     let entity = {
         let mut erosion = VoidErosion::default();
-        // 累积 25.0 → computed_stage() = LowPressure, self.stage still None
-        add_erosion(&mut erosion, 25.0);
-        // 重置 stage 回 None 以模拟"还未被 check_system 推进"
-        erosion.stage = VoidErosionStage::None;
+        // 走真实生产路径 add_erosion_capped（Void realm：no cap）
+        add_erosion_capped(&mut erosion, 25.0, Realm::Void);
+        // stage = LowPressure（已 capped）, last_reported_stage = None（default）
+        // check_system 比较 stage(LowPressure) > last_reported_stage(None) → 应 emit
         a.world_mut().spawn(erosion).id()
     };
 
@@ -2229,7 +2232,7 @@ fn void_erosion_check_system_emits_advance_event_on_threshold_cross() {
     assert_eq!(
         events[0].from,
         VoidErosionStage::None,
-        "from should be None"
+        "from should be None (last_reported_stage before first check)"
     );
     assert_eq!(
         events[0].to,
@@ -2237,12 +2240,17 @@ fn void_erosion_check_system_emits_advance_event_on_threshold_cross() {
         "to should be LowPressure after crossing 20.0 threshold"
     );
 
-    // After system runs, stage should be updated in component
+    // After system runs, last_reported_stage should be updated
     let updated_erosion = a.world().get::<VoidErosion>(entity).unwrap();
+    assert_eq!(
+        updated_erosion.last_reported_stage,
+        VoidErosionStage::LowPressure,
+        "VoidErosion.last_reported_stage should be updated to LowPressure after check_system"
+    );
     assert_eq!(
         updated_erosion.stage,
         VoidErosionStage::LowPressure,
-        "VoidErosion.stage should be updated to LowPressure after check_system"
+        "VoidErosion.stage should remain LowPressure (unchanged by check_system)"
     );
 }
 
@@ -2279,11 +2287,9 @@ fn void_erosion_check_system_not_fires_on_off_tick() {
     let off_tick = VOID_EROSION_CHECK_INTERVAL + 1;
     let mut a = app_with_void_erosion(off_tick);
     {
-        let erosion = VoidErosion {
-            cumulative_erosion: 25.0,
-            stage: VoidErosionStage::None,
-            ..VoidErosion::default()
-        };
+        let mut erosion = VoidErosion::default();
+        // stage=LowPressure, last_reported_stage=None → would emit if tick matched
+        add_erosion_capped(&mut erosion, 25.0, Realm::Void);
         a.world_mut().spawn(erosion);
     }
     a.add_systems(Update, void_erosion_check_system);
@@ -2304,13 +2310,14 @@ fn void_erosion_check_system_not_fires_on_off_tick() {
 
 #[test]
 fn void_erosion_check_system_same_frame_multi_stage_emits_final_stage() {
-    // 如果 cumulative_erosion 一次跨多阶（e.g. None → EchoBody），
-    // to 取最终阶段（EchoBody），不分拆成多次 emit。
+    // 如果 stage 一次跨多阶（e.g. None → EchoBody），
+    // to 取当前 stage（最终档），不分拆成多次 emit。
+    // 使用真实生产路径 add_erosion_capped（Void realm）。
     let mut a = app_with_void_erosion(VOID_EROSION_CHECK_INTERVAL);
     {
         let mut erosion = VoidErosion::default();
-        add_erosion(&mut erosion, 250.0); // pushes to EchoBody
-        erosion.stage = VoidErosionStage::None; // reset to None to simulate "not yet detected"
+        add_erosion_capped(&mut erosion, 250.0, Realm::Void); // → stage=EchoBody
+        // last_reported_stage = None（default）→ check_system 会检测到 EchoBody > None
         a.world_mut().spawn(erosion);
     }
     a.add_systems(Update, void_erosion_check_system);
@@ -2331,12 +2338,154 @@ fn void_erosion_check_system_same_frame_multi_stage_emits_final_stage() {
     assert_eq!(
         events[0].from,
         VoidErosionStage::None,
-        "from should be None (the stored stage before check)"
+        "from should be None (last_reported_stage before first check)"
     );
     assert_eq!(
         events[0].to,
         VoidErosionStage::EchoBody,
-        "to should be EchoBody (the final computed stage)"
+        "to should be EchoBody (the capped stage)"
+    );
+}
+
+/// 真实整链测试（不作弊）：
+/// `resolve_woliu_v2_skill` → `apply_skill_erosion` → `add_erosion_capped` 更新 `stage` →
+/// `void_erosion_check_system` 检测到 `stage > last_reported_stage` → emit `VoidErosionAdvanceEvent`。
+///
+/// 这是 blocker+major1 修复的核心验证：生产路径不再需要手动 reset stage，
+/// 且 check_system 只比较 capped stage，不绕境界上限。
+#[test]
+fn real_path_resolve_skill_then_check_system_emits_event_without_cheat() {
+    use super::erosion::VOID_VORTEX_EROSION;
+    // 虚涡 erosion = 3.0，LowPressure 阈值 = 20.0，需多次施放越过阈值
+    // 为简化：直接用 add_erosion_capped 推到阈值之下，再 resolve 一次越过
+    let tick = VOID_EROSION_CHECK_INTERVAL;
+    let mut a = app_with_void_erosion(tick);
+    let caster = spawn_actor_with_erosion(&mut a, Realm::Void, 500.0);
+    open_all_meridians(&mut a, caster, 10_000.0);
+
+    // 先推到阈值之下（18.0 < 20.0 → stage 仍 None）
+    {
+        let mut erosion = a.world_mut().get_mut::<VoidErosion>(caster).unwrap();
+        add_erosion_capped(&mut *erosion, 18.0, Realm::Void);
+        // stage = None（cumulative=18 < 20），last_reported_stage = None
+        assert_eq!(
+            erosion.stage, VoidErosionStage::None,
+            "pre-condition: 18.0 erosion should not yet reach LowPressure"
+        );
+    }
+
+    // 施法一次（VoidVortex erosion=3.0 → cumulative=21.0 → stage=LowPressure）
+    // 使用真实生产路径，不手动修改 stage
+    let result = resolve_woliu_v2_skill(a.world_mut(), caster, 0, None, WoliuSkillId::VoidVortex);
+    assert!(
+        matches!(result, CastResult::Started { .. }),
+        "VoidVortex should succeed with 500 qi; got {result:?}"
+    );
+
+    // 验证 add_erosion_capped 已将 stage 推进到 LowPressure（无作弊）
+    {
+        let erosion = a.world().get::<VoidErosion>(caster).unwrap();
+        assert_eq!(
+            erosion.stage,
+            VoidErosionStage::LowPressure,
+            "after VoidVortex cast, stage should be LowPressure \
+             (cumulative={:.1} >= 20.0); no manual reset needed",
+            erosion.cumulative_erosion
+        );
+        assert_eq!(
+            erosion.last_reported_stage,
+            VoidErosionStage::None,
+            "last_reported_stage should still be None before check_system runs"
+        );
+    }
+
+    // 跑 check_system（tick = VOID_EROSION_CHECK_INTERVAL 整除点）
+    a.add_systems(Update, void_erosion_check_system);
+    a.update();
+
+    let events: Vec<VoidErosionAdvanceEvent> = a
+        .world()
+        .resource::<Events<VoidErosionAdvanceEvent>>()
+        .iter_current_update_events()
+        .cloned()
+        .collect();
+
+    assert_eq!(
+        events.len(),
+        1,
+        "check_system should emit exactly 1 VoidErosionAdvanceEvent via real production path; got {}",
+        events.len()
+    );
+    assert_eq!(events[0].entity, caster, "event entity should be the caster");
+    assert_eq!(events[0].from, VoidErosionStage::None, "from = None (last_reported before check)");
+    assert_eq!(events[0].to, VoidErosionStage::LowPressure, "to = LowPressure (capped stage)");
+
+    // last_reported_stage 必须被更新
+    let erosion = a.world().get::<VoidErosion>(caster).unwrap();
+    assert_eq!(
+        erosion.last_reported_stage,
+        VoidErosionStage::LowPressure,
+        "last_reported_stage should be updated to LowPressure after check_system"
+    );
+}
+
+/// 境界上限不被绕过：低境界（引气）多次施法累积超过阶段 2 阈值，
+/// `stage` 不超过 `realm_erosion_cap(Induce) = LowPressure`，
+/// `check_system` 也不越上限 emit 更高阶段。
+#[test]
+fn check_system_respects_realm_cap_does_not_bypass_with_uncapped_stage() {
+    let tick = VOID_EROSION_CHECK_INTERVAL;
+    let mut a = app_with_void_erosion(tick);
+    let entity = {
+        let mut erosion = VoidErosion::default();
+        // 引气境界 cap = LowPressure：cumulative 可超过 80 但 stage 不超过 LowPressure
+        add_erosion_capped(&mut erosion, 100.0, Realm::Induce);
+        assert_eq!(
+            erosion.stage,
+            VoidErosionStage::LowPressure,
+            "pre-condition: Induce realm caps stage at LowPressure even with cumulative=100"
+        );
+        assert!(
+            erosion.cumulative_erosion > 80.0,
+            "pre-condition: cumulative_erosion should exceed VoidShadow threshold"
+        );
+        a.world_mut().spawn(erosion).id()
+    };
+
+    a.add_systems(Update, void_erosion_check_system);
+    a.update();
+
+    let events: Vec<VoidErosionAdvanceEvent> = a
+        .world()
+        .resource::<Events<VoidErosionAdvanceEvent>>()
+        .iter_current_update_events()
+        .cloned()
+        .collect();
+
+    assert_eq!(
+        events.len(),
+        1,
+        "should emit 1 event (None→LowPressure), not more; got {} events",
+        events.len()
+    );
+    assert_eq!(
+        events[0].to,
+        VoidErosionStage::LowPressure,
+        "check_system must not bypass realm cap and emit VoidShadow or higher; \
+         event.to={:?}",
+        events[0].to
+    );
+
+    let erosion = a.world().get::<VoidErosion>(entity).unwrap();
+    assert_eq!(
+        erosion.last_reported_stage,
+        VoidErosionStage::LowPressure,
+        "last_reported_stage should be LowPressure after check"
+    );
+    assert_eq!(
+        erosion.stage,
+        VoidErosionStage::LowPressure,
+        "stage should remain at realm cap LowPressure"
     );
 }
 
