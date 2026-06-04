@@ -3232,10 +3232,18 @@ impl From<&super::client_request::ClientRequestV1> for bong::client_request_enve
             ClientRequestV1::CoffinLeave { .. } => Payload::CoffinLeave(bong::CoffinLeave {}),
             // plan-coffin-tiers-v1 P3 — 延寿棺 marker 交互 C2S。
             ClientRequestV1::CoffinBreak { x, y, z, .. } => {
-                Payload::CoffinBreak(bong::CoffinBreak { x: *x, y: *y, z: *z })
+                Payload::CoffinBreak(bong::CoffinBreak {
+                    x: *x,
+                    y: *y,
+                    z: *z,
+                })
             }
             ClientRequestV1::CoffinMenuReclaim { x, y, z, .. } => {
-                Payload::CoffinMenuReclaim(bong::CoffinMenuReclaim { x: *x, y: *y, z: *z })
+                Payload::CoffinMenuReclaim(bong::CoffinMenuReclaim {
+                    x: *x,
+                    y: *y,
+                    z: *z,
+                })
             }
             // ─── 灵龛 / 社交 C2S ──────────────────────────────────
             ClientRequestV1::SpiritNichePlace {
