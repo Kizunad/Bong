@@ -8,6 +8,8 @@ import net.minecraft.client.gui.widget.ButtonWidget;
 import net.minecraft.text.Text;
 import net.minecraft.util.math.BlockPos;
 
+import java.util.Objects;
+
 /**
  * 延寿棺 G 菜单（plan-coffin-tiers-v1 P3）。
  *
@@ -29,7 +31,7 @@ public final class CoffinMenuScreen extends Screen {
 
     public CoffinMenuScreen(BlockPos coffinPos) {
         super(Text.literal("延寿棺"));
-        this.coffinPos = coffinPos;
+        this.coffinPos = Objects.requireNonNull(coffinPos, "coffinPos must not be null");
     }
 
     @Override

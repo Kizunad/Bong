@@ -87,7 +87,8 @@ public final class CoffinEnterIntentHandler implements IntentHandler {
             || kind == BongEntityModelKind.COFFIN_BRONZE;
     }
 
-    private static int candidateEntityId(InteractCandidate candidate) {
+    /** Package-private for testing the label-parsing contract. */
+    static int candidateEntityId(InteractCandidate candidate) {
         if (candidate == null || candidate.debugLabel() == null) {
             return -1;
         }

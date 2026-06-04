@@ -1727,7 +1727,8 @@ mod tests {
         MAIN_PACK_CONTAINER_ID,
     };
     use std::collections::HashMap;
-    use valence::testing::ScenarioSingleClient;
+    use valence::protocol::packets::play::GameMessageS2c;
+    use valence::testing::{MockClientHelper, ScenarioSingleClient};
 
     /// 构造只含 ling_mu_ban 和 ling_mu_gun 的 ItemRegistry（mundane 棺配方原料）。
     fn make_coffin_item_registry() -> ItemRegistry {
@@ -2200,6 +2201,122 @@ mod tests {
         assert!(
             granted,
             "空背包发还 ling_mu_ban×3 应成功，grant_reclaim_drops_to_inventory 应返回 true"
+        );
+    }
+
+    /// app_with_reclaim_system 的变体：同时返回 MockClientHelper 以便断言 S2C chat 消息。
+    fn app_with_reclaim_system_and_helper() -> (
+        valence::prelude::App,
+        valence::prelude::Entity,
+        MockClientHelper,
+    ) {
+        let scenario = ScenarioSingleClient::new();
+        let mut app = scenario.app;
+        let client_entity = scenario.client;
+        let helper = scenario.helper;
+
+        app.add_event::<CoffinMenuReclaimRequest>();
+        app.add_event::<CoffinStateChanged>();
+        app.add_event::<PlaySoundRecipeRequest>();
+
+        app.insert_resource(CoffinRegistry::default());
+        let mut craft = CraftRegistry::new();
+        register_craft_recipes(&mut craft).expect("coffin recipes should register");
+        app.insert_resource(craft);
+
+        app.insert_resource(make_coffin_item_registry());
+        app.insert_resource(InventoryInstanceIdAllocator::default());
+
+        app.world_mut()
+            .entity_mut(client_entity)
+            .insert(empty_player_inventory());
+
+        app.add_systems(valence::prelude::Update, handle_coffin_menu_reclaim);
+
+        (app, client_entity, helper)
+    }
+
+    // ─── CodeRabbit major B: 满包 → chat 提示非静默路径 ────────────────────────────
+
+    #[test]
+    fn ecs_coffin_reclaim_full_inventory_sends_chat_message_and_removes_coffin() {
+        // 满背包回收 mundane 棺：
+        //   (a) 棺仍被移除（marker despawn + registry 清除）；
+        //   (b) 客户端收到 chat 提示（§e[棺] 背包已满…）——锁定"非静默丢失"契约；
+        //   (c) 不 panic。
+        let lower = BlockPos::new(0, 0, 0);
+        let (mut app, client_entity, mut helper) = app_with_reclaim_system_and_helper();
+
+        let (_lower, marker) = register_mundane_coffin_with_marker(app.world_mut(), lower);
+
+        // 把背包填满：用一个只有 1 格的容器并塞满它（ling_mu_ban×64 占满唯一格）。
+        // 然后换掉 empty_player_inventory，让 reclaim drops 无处落脚。
+        let item_registry = make_coffin_item_registry();
+        let mut allocator = InventoryInstanceIdAllocator::default();
+        let mut full_inv = PlayerInventory {
+            revision: InventoryRevision(0),
+            containers: vec![ContainerState {
+                id: MAIN_PACK_CONTAINER_ID.to_string(),
+                name: "主背包".to_string(),
+                rows: 1,
+                cols: 1,
+                items: vec![],
+            }],
+            equipped: HashMap::new(),
+            hotbar: Default::default(),
+            bone_coins: 0,
+            max_weight: 9999.0,
+        };
+        crate::inventory::add_item_to_player_inventory(
+            &mut full_inv,
+            &item_registry,
+            &mut allocator,
+            "ling_mu_ban",
+            64,
+        )
+        .expect("should fill the single slot");
+        app.world_mut().entity_mut(client_entity).insert(full_inv);
+
+        app.world_mut().send_event(CoffinMenuReclaimRequest {
+            player: client_entity,
+            pos: lower,
+            tick: 0,
+        });
+
+        app.update();
+
+        // (a) 棺 marker 已 despawn，不因满包中断。
+        assert!(
+            app.world().get_entity(marker).is_none(),
+            "满包回收后 marker 实体仍应被 despawn；期望：满包只影响 grant，不阻断 despawn 路径"
+        );
+        // registry 也已移除。
+        assert!(
+            app.world()
+                .resource::<CoffinRegistry>()
+                .lookup(lower)
+                .is_none(),
+            "满包回收后 registry 仍应移除 lower={lower:?}；期望：remove_by_pos 先于 inventory 检查"
+        );
+
+        // (b) 客户端收到聊天提示。
+        let messages: Vec<String> = helper
+            .collect_received()
+            .0
+            .into_iter()
+            .filter_map(|frame| {
+                frame
+                    .decode::<GameMessageS2c>()
+                    .ok()
+                    .map(|p| p.chat.to_legacy_lossy())
+            })
+            .collect();
+        assert!(
+            messages
+                .iter()
+                .any(|m| m.contains("[棺]") && m.contains("背包已满")),
+            "满包回收时客户端应收到包含 '[棺]' 和 '背包已满' 的 chat 提示，\
+             锁定非静默材料丢失契约；实际 messages={messages:?}"
         );
     }
 

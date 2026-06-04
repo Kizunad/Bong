@@ -872,6 +872,29 @@ mod tests {
         );
     }
 
+    /// CodeRabbit minor G: coffin_menu_reclaim 对称负坐标测试。
+    #[test]
+    fn coffin_menu_reclaim_negative_coords_accepted() {
+        // 负坐标合法（世界有负 XZ），与 coffin_break_negative_coords_accepted 对称。
+        let json = r#"{"type":"coffin_menu_reclaim","v":1,"x":-64,"y":0,"z":-128}"#;
+        let req: ClientRequestV1 = serde_json::from_str(json).unwrap_or_else(|e| {
+            panic!("coffin_menu_reclaim with negative coords should parse: {e}")
+        });
+        assert!(
+            matches!(
+                req,
+                ClientRequestV1::CoffinMenuReclaim {
+                    v: 1,
+                    x: -64,
+                    y: 0,
+                    z: -128
+                }
+            ),
+            "coffin_menu_reclaim negative coords should parse correctly; \
+             期望 CoffinMenuReclaim{{x:-64,y:0,z:-128}}，实得 {req:?}"
+        );
+    }
+
     #[test]
     fn forge_request_roundtrip() {
         let json = r#"{"type":"forge_request","v":1,"meridian":"Ren","axis":"Rate"}"#;

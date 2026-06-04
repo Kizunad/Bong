@@ -1,11 +1,17 @@
 package com.bong.client.coffin;
 
 import com.bong.client.entity.BongEntityModelKind;
+import com.bong.client.input.InteractCandidate;
+import com.bong.client.input.InteractIntent;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.EnumSource;
 
+import java.util.Optional;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -91,6 +97,90 @@ class CoffinEnterIntentHandlerTest {
         assertFalse(
             CoffinEnterIntentHandler.isCoffinKind(kind),
             kind + " must not pass isCoffinKind — only longevity coffins (MUNDANE/JADE/STONE/BRONZE) should"
+        );
+    }
+
+    // ─── CodeRabbit major C: candidate() null-client + dispatch label-parsing ──
+
+    /**
+     * candidate(null) 应立即返回 Optional.empty()（防御 null client，无 NPE）。
+     * 期望：entityHit(null) 在 client==null 分支返回 null，candidate 提前退出。
+     */
+    @Test
+    void candidateReturnsEmptyWhenClientIsNull() {
+        Optional<InteractCandidate> result =
+            new CoffinEnterIntentHandler().candidate(null);
+        assertFalse(
+            result.isPresent(),
+            "candidate(null) should return Optional.empty() because MinecraftClient is null; " +
+            "expected empty but got: " + result
+        );
+    }
+
+    // ─── candidateEntityId label-parsing（package-private 访问）──────────────
+
+    /**
+     * 有效 label "coffin_enter:42" → 解析 entity id = 42。
+     * 期望：startsWith("coffin_enter:") 通过，parseInt("42") = 42。
+     */
+    @Test
+    void candidateEntityIdParsesValidLabel() {
+        InteractCandidate candidate = InteractCandidate.of(
+            InteractIntent.OpenContainer, 10, 1.0, "coffin_enter:42"
+        );
+        int id = CoffinEnterIntentHandler.candidateEntityId(candidate);
+        assertEquals(
+            42, id,
+            "candidateEntityId should parse id=42 from label 'coffin_enter:42'; " +
+            "期望 42，实得 " + id
+        );
+    }
+
+    /**
+     * label 前缀不匹配（supply_coffin: 前缀）→ 返回 -1（不命中）。
+     * 期望：startsWith("coffin_enter:") = false → return -1。
+     */
+    @Test
+    void candidateEntityIdRejectsWrongPrefix() {
+        InteractCandidate candidate = InteractCandidate.of(
+            InteractIntent.OpenContainer, 10, 1.0, "supply_coffin:99"
+        );
+        int id = CoffinEnterIntentHandler.candidateEntityId(candidate);
+        assertEquals(
+            -1, id,
+            "candidateEntityId should return -1 for non-coffin label 'supply_coffin:99'; " +
+            "期望 -1（wrong prefix），实得 " + id
+        );
+    }
+
+    /**
+     * null candidate → 返回 -1（防御 NPE）。
+     * 期望：candidate == null 分支提前返回 -1。
+     */
+    @Test
+    void candidateEntityIdRejectsNullCandidate() {
+        int id = CoffinEnterIntentHandler.candidateEntityId(null);
+        assertEquals(
+            -1, id,
+            "candidateEntityId(null) should return -1 (null-safe guard); " +
+            "期望 -1，实得 " + id
+        );
+    }
+
+    /**
+     * label 前缀正确但后缀为非数字 → 返回 -1（NumberFormatException 被捕获）。
+     * 期望：parseInt 抛 NumberFormatException → catch → return -1。
+     */
+    @Test
+    void candidateEntityIdRejectsNonNumericSuffix() {
+        InteractCandidate candidate = InteractCandidate.of(
+            InteractIntent.OpenContainer, 10, 1.0, "coffin_enter:not_a_number"
+        );
+        int id = CoffinEnterIntentHandler.candidateEntityId(candidate);
+        assertEquals(
+            -1, id,
+            "candidateEntityId should return -1 when suffix is non-numeric 'not_a_number'; " +
+            "期望 -1（NumberFormatException caught），实得 " + id
         );
     }
 }
