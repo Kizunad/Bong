@@ -252,6 +252,11 @@ pub enum ServerDataType {
     FactionWarState,
     // ─── plan-combat-skill-feedback-bridges-v1 P4：暗器 HUD ────────
     AnqiHud,
+    // ─── plan-combat-skill-feedback-bridges-v1 P5：毒蛊 v2 HUD S2C ─
+    DuguV2SkillCast,
+    DuguV2SelfCure,
+    DuguV2ShroudActive,
+    PermanentQiMaxDecayApplied,
 }
 
 #[derive(Debug, Clone)]
@@ -497,6 +502,16 @@ pub enum ServerDataPayloadV1 {
     // ─── plan-combat-skill-feedback-bridges-v1 P4：暗器 HUD S2C ───
     /// 暗器分身 HUD 状态推送（守恒红线：只读事件字段，不重算真元）。
     AnqiHud(AnqiHudV1),
+    // ─── plan-combat-skill-feedback-bridges-v1 P5：毒蛊 v2 HUD S2C ─
+    /// 毒蛊五招招式投放事件（eclipse/penetrate/shroud/self_cure/reverse）→ client HUD 反馈。
+    /// 守恒红线：只读事件字段，不重算真元，不扣 qi。
+    DuguV2SkillCast(DuguV2HudSkillCastV1),
+    /// 自蕴进度与暴露状态推送（守恒红线：只读 SelfCureProgressEvent 字段）。
+    DuguV2SelfCure(DuguV2HudSelfCureV1),
+    /// 幻影遮蔽激活状态推送（守恒红线：只读 ShroudActivatedEvent 字段）。
+    DuguV2ShroudActive(DuguV2HudShroudActiveV1),
+    /// 永久真元上限衰减通知（守恒红线：只读 PermanentQiMaxDecayApplied 字段，不走 Redis）。
+    PermanentQiMaxDecayApplied(DuguV2HudQiDecayV1),
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -625,6 +640,62 @@ pub struct AnqiHudV1 {
     pub charge_progress: f64,
     pub abrasion_container: String,
     pub abrasion_qi_payload: f64,
+    pub tick: u64,
+}
+
+// ─── plan-combat-skill-feedback-bridges-v1 P5：毒蛊 v2 HUD S2C structs ──────
+
+/// 毒蛊五招招式投放通知。kind 取值："eclipse"|"penetrate"|"shroud"|"self_cure"|"reverse"。
+/// 守恒红线：全部字段只读自 ECS Event，不重算真元，不扣 qi。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DuguV2HudSkillCastV1 {
+    /// 招式种类（wire 名：eclipse / penetrate / shroud / self_cure / reverse）
+    pub kind: String,
+    pub caster: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub target: Option<String>,
+    /// 即时/临时/永久 毒蛊层级（wire 名：immediate/temporary/permanent；Shroud/SelfCure/Reverse 为 None）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub taint_tier: Option<String>,
+    pub reveal_probability: f32,
+    pub tick: u64,
+}
+
+/// 自蕴进度与暴露状态推送（来自 SelfCureProgressEvent）。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DuguV2HudSelfCureV1 {
+    pub caster: String,
+    /// 当前自蕴百分比（0..=100）
+    pub gain_percent: f32,
+    /// 形貌是否已暴露（once-set-stays-true sticky flag）
+    pub self_revealed: bool,
+    pub tick: u64,
+}
+
+/// 幻影遮蔽激活状态推送（来自 ShroudActivatedEvent）。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DuguV2HudShroudActiveV1 {
+    pub caster: String,
+    /// 遮蔽强度（0..=1，强度越高遮蔽效果越好）
+    pub strength: f32,
+    /// 遮蔽到期 tick（用于 client 计算 shroudUntilMs）
+    pub expires_at_tick: u64,
+    pub tick: u64,
+}
+
+/// 永久真元上限衰减通知（来自 PermanentQiMaxDecayApplied，仅 S2C，不走 Redis）。
+/// 守恒红线：loss/qi_max_after 均只读自 ECS 已扣量，不在此处重算。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DuguV2HudQiDecayV1 {
+    pub target: String,
+    /// 本 tick 衰减量（只读）
+    pub loss: f32,
+    /// 衰减后真元上限（只读）
+    pub qi_max_after: f32,
     pub tick: u64,
 }
 
@@ -1461,6 +1532,23 @@ enum ServerDataPayloadWireV1 {
         #[serde(flatten)]
         data: AnqiHudV1,
     },
+    // ─── plan-combat-skill-feedback-bridges-v1 P5：毒蛊 v2 HUD S2C ─
+    DuguV2SkillCast {
+        #[serde(flatten)]
+        data: DuguV2HudSkillCastV1,
+    },
+    DuguV2SelfCure {
+        #[serde(flatten)]
+        data: DuguV2HudSelfCureV1,
+    },
+    DuguV2ShroudActive {
+        #[serde(flatten)]
+        data: DuguV2HudShroudActiveV1,
+    },
+    PermanentQiMaxDecayApplied {
+        #[serde(flatten)]
+        data: DuguV2HudQiDecayV1,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -2294,6 +2382,15 @@ impl TryFrom<ServerDataPayloadWireV1> for ServerDataPayloadV1 {
             }
             ServerDataPayloadWireV1::FactionWarState { data } => Ok(Self::FactionWarState(data)),
             ServerDataPayloadWireV1::AnqiHud { data } => Ok(Self::AnqiHud(data)),
+            // ─── plan-combat-skill-feedback-bridges-v1 P5 ──────────
+            ServerDataPayloadWireV1::DuguV2SkillCast { data } => Ok(Self::DuguV2SkillCast(data)),
+            ServerDataPayloadWireV1::DuguV2SelfCure { data } => Ok(Self::DuguV2SelfCure(data)),
+            ServerDataPayloadWireV1::DuguV2ShroudActive { data } => {
+                Ok(Self::DuguV2ShroudActive(data))
+            }
+            ServerDataPayloadWireV1::PermanentQiMaxDecayApplied { data } => {
+                Ok(Self::PermanentQiMaxDecayApplied(data))
+            }
         }
     }
 }
@@ -2827,6 +2924,19 @@ impl From<&ServerDataPayloadV1> for ServerDataPayloadWireV1 {
                 Self::FactionWarState { data: data.clone() }
             }
             ServerDataPayloadV1::AnqiHud(data) => Self::AnqiHud { data: data.clone() },
+            // ─── plan-combat-skill-feedback-bridges-v1 P5 ──────────
+            ServerDataPayloadV1::DuguV2SkillCast(data) => {
+                Self::DuguV2SkillCast { data: data.clone() }
+            }
+            ServerDataPayloadV1::DuguV2SelfCure(data) => {
+                Self::DuguV2SelfCure { data: data.clone() }
+            }
+            ServerDataPayloadV1::DuguV2ShroudActive(data) => {
+                Self::DuguV2ShroudActive { data: data.clone() }
+            }
+            ServerDataPayloadV1::PermanentQiMaxDecayApplied(data) => {
+                Self::PermanentQiMaxDecayApplied { data: data.clone() }
+            }
         }
     }
 }
@@ -3138,6 +3248,11 @@ impl ServerDataPayloadV1 {
             Self::LootContainerClose(..) => ServerDataType::LootContainerClose,
             Self::FactionWarState(..) => ServerDataType::FactionWarState,
             Self::AnqiHud(..) => ServerDataType::AnqiHud,
+            // ─── plan-combat-skill-feedback-bridges-v1 P5 ──────────
+            Self::DuguV2SkillCast(..) => ServerDataType::DuguV2SkillCast,
+            Self::DuguV2SelfCure(..) => ServerDataType::DuguV2SelfCure,
+            Self::DuguV2ShroudActive(..) => ServerDataType::DuguV2ShroudActive,
+            Self::PermanentQiMaxDecayApplied(..) => ServerDataType::PermanentQiMaxDecayApplied,
         }
     }
 }

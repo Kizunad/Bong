@@ -545,6 +545,8 @@ pub fn register(app: &mut App) {
             dugu_v2_event_bridge::publish_dugu_v2_shroud_events,
             dugu_v2_event_bridge::publish_dugu_v2_self_cure_events,
             dugu_v2_event_bridge::publish_dugu_v2_reverse_events,
+            // plan-combat-skill-feedback-bridges-v1 P5：永久真元上限衰减 S2C（不走 Redis）
+            dugu_v2_event_bridge::publish_permanent_qi_max_decay_to_client,
             baomai_v3_event_bridge::publish_baomai_v3_skill_events
                 .after(client_request_handler::handle_client_request_payloads),
             // plan-combat-skill-feedback-bridges-v1 P0 — 经脉断脉叙事+VFX 桥接

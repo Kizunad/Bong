@@ -11488,4 +11488,286 @@ mod tests {
             inner.aim_progress
         );
     }
+
+    // ─── plan-combat-skill-feedback-bridges-v1 P5：DuguV2 proto pin ─
+
+    /// proto 链 pin 测试：DuguV2SkillCast encode → decode 字段不丢失。
+    /// 锁住 proto 链三处（envelope.proto field 124 + proto_convert.rs arm + ProtoServerDataBridge CASE_TO_TYPE）。
+    #[test]
+    fn dugu_v2_skill_cast_proto_roundtrip_eclipse() {
+        use crate::schema::proto_convert::server_data_to_proto_payload;
+        use crate::schema::proto_gen::bong::ServerDataEnvelope;
+        use crate::schema::server_data::{DuguV2HudSkillCastV1, ServerDataPayloadV1};
+        use prost::Message;
+
+        let payload = ServerDataPayloadV1::DuguV2SkillCast(DuguV2HudSkillCastV1 {
+            kind: "eclipse".to_string(),
+            caster: "player:a".to_string(),
+            target: Some("player:b".to_string()),
+            taint_tier: Some("temporary".to_string()),
+            reveal_probability: 0.0042,
+            tick: 42,
+        });
+
+        let proto_payload = server_data_to_proto_payload(&payload);
+        let envelope = ServerDataEnvelope {
+            payload: Some(proto_payload),
+        };
+
+        let mut buf = Vec::new();
+        envelope
+            .encode(&mut buf)
+            .expect("DuguV2SkillCast proto encode 不应失败");
+        let decoded = ServerDataEnvelope::decode(buf.as_slice())
+            .expect("DuguV2SkillCast proto decode 不应失败");
+
+        let Some(super::bong::server_data_envelope::Payload::DuguV2SkillCast(inner)) =
+            decoded.payload
+        else {
+            panic!(
+                "decoded payload 应为 DuguV2SkillCast 变体（proto field 124）；实际={:?}",
+                decoded.payload
+            );
+        };
+
+        assert_eq!(
+            inner.kind, "eclipse",
+            "kind 不应丢失；实际='{}'",
+            inner.kind
+        );
+        assert_eq!(
+            inner.caster, "player:a",
+            "caster 不应丢失；实际='{}'",
+            inner.caster
+        );
+        assert_eq!(
+            inner.target, "player:b",
+            "target 不应丢失；实际='{}'",
+            inner.target
+        );
+        assert_eq!(
+            inner.taint_tier, "temporary",
+            "taint_tier 应为 'temporary'（snake_case wire）；实际='{}'",
+            inner.taint_tier
+        );
+        assert!(
+            (inner.reveal_probability - 0.0042).abs() < 1e-5,
+            "reveal_probability 不应丢失；实际={}",
+            inner.reveal_probability
+        );
+        assert_eq!(inner.tick, 42, "tick 不应丢失；实际={}", inner.tick);
+    }
+
+    #[test]
+    fn dugu_v2_skill_cast_proto_roundtrip_shroud_no_target() {
+        use crate::schema::proto_convert::server_data_to_proto_payload;
+        use crate::schema::proto_gen::bong::ServerDataEnvelope;
+        use crate::schema::server_data::{DuguV2HudSkillCastV1, ServerDataPayloadV1};
+        use prost::Message;
+
+        let payload = ServerDataPayloadV1::DuguV2SkillCast(DuguV2HudSkillCastV1 {
+            kind: "shroud".to_string(),
+            caster: "player:x".to_string(),
+            target: None,
+            taint_tier: None,
+            reveal_probability: 0.0,
+            tick: 100,
+        });
+
+        let proto_payload = server_data_to_proto_payload(&payload);
+        let envelope = ServerDataEnvelope {
+            payload: Some(proto_payload),
+        };
+        let mut buf = Vec::new();
+        envelope
+            .encode(&mut buf)
+            .expect("DuguV2SkillCast shroud encode 不应失败");
+        let decoded = ServerDataEnvelope::decode(buf.as_slice())
+            .expect("DuguV2SkillCast shroud decode 不应失败");
+
+        let Some(super::bong::server_data_envelope::Payload::DuguV2SkillCast(inner)) =
+            decoded.payload
+        else {
+            panic!("应为 DuguV2SkillCast；实际={:?}", decoded.payload);
+        };
+
+        assert_eq!(inner.kind, "shroud");
+        assert_eq!(
+            inner.target, "",
+            "shroud 无目标应序列化为空串（proto string default）"
+        );
+        assert_eq!(inner.taint_tier, "", "shroud 无 taint_tier 应为空串");
+    }
+
+    #[test]
+    fn dugu_v2_self_cure_proto_roundtrip_self_revealed_true() {
+        use crate::schema::proto_convert::server_data_to_proto_payload;
+        use crate::schema::proto_gen::bong::ServerDataEnvelope;
+        use crate::schema::server_data::{DuguV2HudSelfCureV1, ServerDataPayloadV1};
+        use prost::Message;
+
+        let payload = ServerDataPayloadV1::DuguV2SelfCure(DuguV2HudSelfCureV1 {
+            caster: "player:c".to_string(),
+            gain_percent: 37.2,
+            self_revealed: true,
+            tick: 300,
+        });
+
+        let proto_payload = server_data_to_proto_payload(&payload);
+        let envelope = ServerDataEnvelope {
+            payload: Some(proto_payload),
+        };
+        let mut buf = Vec::new();
+        envelope
+            .encode(&mut buf)
+            .expect("DuguV2SelfCure encode 不应失败");
+        let decoded =
+            ServerDataEnvelope::decode(buf.as_slice()).expect("DuguV2SelfCure decode 不应失败");
+
+        let Some(super::bong::server_data_envelope::Payload::DuguV2SelfCure(inner)) =
+            decoded.payload
+        else {
+            panic!(
+                "decoded payload 应为 DuguV2SelfCure（proto field 125）；实际={:?}",
+                decoded.payload
+            );
+        };
+
+        assert_eq!(inner.caster, "player:c");
+        assert!(
+            (inner.gain_percent - 37.2).abs() < 0.01,
+            "gain_percent 不应丢失；实际={}",
+            inner.gain_percent
+        );
+        assert!(
+            inner.self_revealed,
+            "self_revealed=true 必须通过 proto 链到达 client DuguV2HudStateStore"
+        );
+        assert_eq!(inner.tick, 300);
+    }
+
+    #[test]
+    fn dugu_v2_self_cure_proto_roundtrip_self_revealed_false() {
+        use crate::schema::proto_convert::server_data_to_proto_payload;
+        use crate::schema::proto_gen::bong::ServerDataEnvelope;
+        use crate::schema::server_data::{DuguV2HudSelfCureV1, ServerDataPayloadV1};
+        use prost::Message;
+
+        let payload = ServerDataPayloadV1::DuguV2SelfCure(DuguV2HudSelfCureV1 {
+            caster: "player:d".to_string(),
+            gain_percent: 0.0,
+            self_revealed: false,
+            tick: 0,
+        });
+
+        let proto_payload = server_data_to_proto_payload(&payload);
+        let envelope = ServerDataEnvelope {
+            payload: Some(proto_payload),
+        };
+        let mut buf = Vec::new();
+        envelope.encode(&mut buf).unwrap();
+        let decoded = ServerDataEnvelope::decode(buf.as_slice()).unwrap();
+
+        let Some(super::bong::server_data_envelope::Payload::DuguV2SelfCure(inner)) =
+            decoded.payload
+        else {
+            panic!("应为 DuguV2SelfCure；实际={:?}", decoded.payload);
+        };
+        assert!(!inner.self_revealed, "self_revealed=false 边界 case");
+    }
+
+    #[test]
+    fn dugu_v2_shroud_active_proto_roundtrip() {
+        use crate::schema::proto_convert::server_data_to_proto_payload;
+        use crate::schema::proto_gen::bong::ServerDataEnvelope;
+        use crate::schema::server_data::{DuguV2HudShroudActiveV1, ServerDataPayloadV1};
+        use prost::Message;
+
+        let payload = ServerDataPayloadV1::DuguV2ShroudActive(DuguV2HudShroudActiveV1 {
+            caster: "player:s".to_string(),
+            strength: 0.8,
+            expires_at_tick: 2000,
+            tick: 1500,
+        });
+
+        let proto_payload = server_data_to_proto_payload(&payload);
+        let envelope = ServerDataEnvelope {
+            payload: Some(proto_payload),
+        };
+        let mut buf = Vec::new();
+        envelope
+            .encode(&mut buf)
+            .expect("DuguV2ShroudActive encode 不应失败");
+        let decoded =
+            ServerDataEnvelope::decode(buf.as_slice()).expect("DuguV2ShroudActive decode 不应失败");
+
+        let Some(super::bong::server_data_envelope::Payload::DuguV2ShroudActive(inner)) =
+            decoded.payload
+        else {
+            panic!(
+                "decoded payload 应为 DuguV2ShroudActive（proto field 126）；实际={:?}",
+                decoded.payload
+            );
+        };
+
+        assert!(
+            (inner.strength - 0.8).abs() < 1e-5,
+            "strength 不应丢失；实际={}",
+            inner.strength
+        );
+        assert_eq!(
+            inner.expires_at_tick, 2000,
+            "expires_at_tick 不应丢失（client 需要此字段计算 shroudUntilMs）；实际={}",
+            inner.expires_at_tick
+        );
+        assert_eq!(inner.tick, 1500);
+    }
+
+    #[test]
+    fn permanent_qi_max_decay_applied_proto_roundtrip() {
+        use crate::schema::proto_convert::server_data_to_proto_payload;
+        use crate::schema::proto_gen::bong::ServerDataEnvelope;
+        use crate::schema::server_data::{DuguV2HudQiDecayV1, ServerDataPayloadV1};
+        use prost::Message;
+
+        let payload = ServerDataPayloadV1::PermanentQiMaxDecayApplied(DuguV2HudQiDecayV1 {
+            target: "player:t".to_string(),
+            loss: 0.45,
+            qi_max_after: 99.55,
+            tick: 1000,
+        });
+
+        let proto_payload = server_data_to_proto_payload(&payload);
+        let envelope = ServerDataEnvelope {
+            payload: Some(proto_payload),
+        };
+        let mut buf = Vec::new();
+        envelope
+            .encode(&mut buf)
+            .expect("PermanentQiMaxDecayApplied encode 不应失败");
+        let decoded = ServerDataEnvelope::decode(buf.as_slice())
+            .expect("PermanentQiMaxDecayApplied decode 不应失败");
+
+        let Some(super::bong::server_data_envelope::Payload::PermanentQiMaxDecayApplied(inner)) =
+            decoded.payload
+        else {
+            panic!(
+                "decoded payload 应为 PermanentQiMaxDecayApplied（proto field 127）；实际={:?}",
+                decoded.payload
+            );
+        };
+
+        assert_eq!(inner.target, "player:t");
+        assert!(
+            (inner.loss - 0.45).abs() < 1e-4,
+            "loss 不应丢失（守恒红线：只读已扣量）；实际={}",
+            inner.loss
+        );
+        assert!(
+            (inner.qi_max_after - 99.55).abs() < 0.01,
+            "qi_max_after 不应丢失；实际={}",
+            inner.qi_max_after
+        );
+        assert_eq!(inner.tick, 1000);
+    }
 }
