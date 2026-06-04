@@ -49,11 +49,11 @@ use crate::schema::channels::{
     CH_TRIBULATION_COLLAPSE, CH_TRIBULATION_LOCK, CH_TRIBULATION_OMEN, CH_TRIBULATION_SETTLE,
     CH_TRIBULATION_WAVE, CH_TSY_EVENT, CH_TUIKE_SHED, CH_TUIKE_V2_SKILL_EVENT,
     CH_VOID_ACTION_BARRIER, CH_VOID_ACTION_EXPLODE_ZONE, CH_VOID_ACTION_LEGACY_ASSIGN,
-    CH_VOID_ACTION_SUPPRESS_TSY, CH_WANTED_PLAYER, CH_WEATHER_EVENT_UPDATE, CH_WOLIU_BACKFIRE,
-    CH_WOLIU_PROJECTILE_DRAINED, CH_WOLIU_V2_BACKFIRE, CH_WOLIU_V2_CAST, CH_WOLIU_V2_TURBULENCE,
-    CH_WORLD_STATE, CH_YIDAO_EVENT, CH_ZHENFA_V2_EVENT, CH_ZHENMAI_SKILL_EVENT,
-    CH_ZONE_ENVIRONMENT_UPDATE, CH_ZONE_PRESSURE_CROSSED, CH_ZONG_CORE_ACTIVATED,
-    QI_LEDGER_REDIS_KEY,
+    CH_VOID_ACTION_SUPPRESS_TSY, CH_VOID_EROSION_EVENT, CH_WANTED_PLAYER, CH_WEATHER_EVENT_UPDATE,
+    CH_WOLIU_BACKFIRE, CH_WOLIU_PROJECTILE_DRAINED, CH_WOLIU_V2_BACKFIRE, CH_WOLIU_V2_CAST,
+    CH_WOLIU_V2_TURBULENCE, CH_WORLD_STATE, CH_YIDAO_EVENT, CH_ZHENFA_V2_EVENT,
+    CH_ZHENMAI_SKILL_EVENT, CH_ZONE_ENVIRONMENT_UPDATE, CH_ZONE_PRESSURE_CROSSED,
+    CH_ZONG_CORE_ACTIVATED, QI_LEDGER_REDIS_KEY,
 };
 use crate::schema::chat_message::ChatMessageV1;
 use crate::schema::combat_carrier::{
@@ -109,6 +109,7 @@ use crate::schema::tuike::ShedEventV1;
 use crate::schema::tuike_v2::TuikeSkillEventV1;
 use crate::schema::void_actions::VoidActionBroadcastV1;
 use crate::schema::woliu::{ProjectileQiDrainedEventV1, VortexBackfireEventV1};
+use crate::schema::woliu_erosion::VoidErosionEventV1;
 use crate::schema::woliu_v2::{TurbulenceFieldV1, WoliuBackfireV1, WoliuSkillCastV1};
 use crate::schema::world_state::WorldStateV1;
 use crate::schema::yidao::YidaoEventV1;
@@ -272,6 +273,8 @@ pub enum RedisOutbound {
     BaomaiV4ResonanceLock(BaomaiV4ResonanceLockV1),
     /// plan-combat-skill-feedback-bridges-v1 P1 — 共振锁定结束（bong:baomai_v4/resonance_lock_end）。
     BaomaiV4ResonanceLockEnd(BaomaiV4ResonanceLockEndV1),
+    /// plan-combat-skill-feedback-bridges-v1 P3 — 虚蚀阶段推进叙事事件（bong:void_erosion_event）。
+    VoidErosionEvent(VoidErosionEventV1),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -1535,6 +1538,15 @@ fn prepare_outbound_command(message: RedisOutbound) -> Result<RedisIoCommand, Va
             })?;
             Ok(RedisIoCommand::Publish {
                 channel: CH_BAOMAI_V4_RESONANCE_LOCK_END,
+                payload,
+            })
+        }
+        RedisOutbound::VoidErosionEvent(evt) => {
+            let payload = serde_json::to_string(&evt).map_err(|error| {
+                ValidationError::new(format!("failed to serialize VoidErosionEventV1: {error}"))
+            })?;
+            Ok(RedisIoCommand::Publish {
+                channel: CH_VOID_EROSION_EVENT,
                 payload,
             })
         }
@@ -4963,6 +4975,59 @@ mod redis_bridge_tests {
                 assert_eq!(v["tick"], 1060);
             }
             other => panic!("expected Publish for ResonanceLockEnd, got {other:?}"),
+        }
+    }
+
+    // ── plan-combat-skill-feedback-bridges-v1 P3 — VoidErosionEvent arm channel pin ──
+
+    /// `prepare_outbound_command(RedisOutbound::VoidErosionEvent(..))` 必须发布到
+    /// `CH_VOID_EROSION_EVENT`（`"bong:void_erosion_event"`）。
+    ///
+    /// agent 天道层订阅 `bong:void_erosion_event` 以触发虚蚀叙事；若 arm 被误改为其他
+    /// channel 或 arm 匹配顺序变化，agent 端将静默收不到事件。本测试锁住该契约。
+    #[test]
+    fn publishes_void_erosion_event_on_correct_channel() {
+        use crate::schema::woliu_erosion::{VoidErosionEventV1, VoidErosionStageV1};
+
+        let evt = VoidErosionEventV1 {
+            entity: "offline:Azure".to_string(),
+            from_stage: VoidErosionStageV1::LowPressure,
+            to_stage: VoidErosionStageV1::VoidShadow,
+            cumulative_erosion: 55.0,
+            server_tick: 1234,
+        };
+
+        let command = prepare_outbound_command(RedisOutbound::VoidErosionEvent(evt))
+            .expect("VoidErosionEvent payload should serialize without error");
+
+        match command {
+            RedisIoCommand::Publish { channel, payload } => {
+                assert_eq!(
+                    channel, CH_VOID_EROSION_EVENT,
+                    "VoidErosionEvent must publish to CH_VOID_EROSION_EVENT \
+                     (\"bong:void_erosion_event\"); got {channel:?} — \
+                     changing the channel silently breaks agent narration subscription"
+                );
+                assert_eq!(
+                    channel, "bong:void_erosion_event",
+                    "channel literal must stay 'bong:void_erosion_event' for agent IPC contract"
+                );
+                let v: serde_json::Value =
+                    serde_json::from_str(payload.as_str()).expect("payload must be valid JSON");
+                assert_eq!(
+                    v["entity"], "offline:Azure",
+                    "entity_id round-trips through payload serialization"
+                );
+                assert_eq!(
+                    v["cumulative_erosion"], 55.0,
+                    "cumulative_erosion round-trips"
+                );
+                assert_eq!(v["server_tick"], 1234, "server_tick round-trips");
+            }
+            other => panic!(
+                "expected RedisIoCommand::Publish for VoidErosionEvent, got {other:?} — \
+                 VoidErosionEvent must not fan-out; single-channel publish only"
+            ),
         }
     }
 }

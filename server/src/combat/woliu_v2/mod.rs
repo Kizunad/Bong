@@ -36,6 +36,8 @@ pub fn register(app: &mut App) {
             tick::vortex_v2_state_lifecycle_tick.after(tick::heart_active_backfire_tick),
         ),
     );
+    // plan-combat-skill-feedback-bridges-v1 P3 — 每 600 tick 检测虚蚀阶段推进。
+    app.add_systems(Update, erosion::void_erosion_check_system);
 }
 
 #[cfg(test)]

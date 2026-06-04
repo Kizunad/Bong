@@ -2090,3 +2090,595 @@ fn erosion_placeholder_spec_qi_costs_match_constants() {
         echo_spec.startup_qi
     );
 }
+
+// ────────────────────────────────────────────────────────────────────
+// plan-combat-skill-feedback-bridges-v1 P3 — 虚蚀 runtime 积累 + check_system
+// ────────────────────────────────────────────────────────────────────
+
+use super::erosion::{
+    add_erosion_capped, void_erosion_check_system, VoidErosion, VoidErosionAdvanceEvent,
+    VoidErosionStage, VOID_EROSION_CHECK_INTERVAL,
+};
+use super::skills::erosion_amount_for_skill;
+
+/// 创建带 VoidErosionAdvanceEvent 的最小 App。
+fn app_with_void_erosion(tick: u64) -> App {
+    let mut a = app(tick);
+    a.add_event::<VoidErosionAdvanceEvent>();
+    a
+}
+
+#[test]
+fn erosion_amount_for_skill_returns_correct_constants() {
+    use super::erosion::{
+        BASE_SKILL_EROSION, ECHO_EROSION, SWALLOWING_RELEASE_EROSION, VOID_CORE_DURATION_TICKS,
+        VOID_CORE_EROSION_PER_SEC, VOID_VORTEX_EROSION,
+    };
+    assert!(
+        (erosion_amount_for_skill(WoliuSkillId::VoidVortex) - VOID_VORTEX_EROSION).abs() < 1e-9,
+        "VoidVortex erosion amount should equal VOID_VORTEX_EROSION={VOID_VORTEX_EROSION}"
+    );
+    assert!(
+        (erosion_amount_for_skill(WoliuSkillId::SwallowingVortex) - SWALLOWING_RELEASE_EROSION)
+            .abs()
+            < 1e-9,
+        "SwallowingVortex erosion should equal SWALLOWING_RELEASE_EROSION"
+    );
+    assert!(
+        (erosion_amount_for_skill(WoliuSkillId::VortexEcho) - ECHO_EROSION).abs() < 1e-9,
+        "VortexEcho erosion should equal ECHO_EROSION"
+    );
+    let expected_void_core =
+        VOID_CORE_EROSION_PER_SEC * (VOID_CORE_DURATION_TICKS as f64 / TICKS_PER_SECOND as f64);
+    assert!(
+        (erosion_amount_for_skill(WoliuSkillId::VoidCore) - expected_void_core).abs() < 1e-9,
+        "VoidCore erosion amount should be erosion_per_sec * duration_sec = {expected_void_core}"
+    );
+    // 基础招式使用 BASE_SKILL_EROSION
+    for skill in [
+        WoliuSkillId::Hold,
+        WoliuSkillId::Burst,
+        WoliuSkillId::Mouth,
+        WoliuSkillId::Pull,
+        WoliuSkillId::Heart,
+        WoliuSkillId::VacuumPalm,
+        WoliuSkillId::VortexShield,
+        WoliuSkillId::VacuumLock,
+        WoliuSkillId::VortexResonance,
+        WoliuSkillId::TurbulenceBurst,
+        WoliuSkillId::AmbientVortex,
+    ] {
+        assert!(
+            (erosion_amount_for_skill(skill) - BASE_SKILL_EROSION).abs() < 1e-9,
+            "skill {skill:?} should use BASE_SKILL_EROSION={BASE_SKILL_EROSION}, got {}",
+            erosion_amount_for_skill(skill)
+        );
+    }
+}
+
+#[test]
+fn add_erosion_capped_does_not_exceed_realm_cap() {
+    let mut erosion = VoidErosion::default();
+    // 引气境界 cap = LowPressure，累积到 400 也不应推进到 VoidEroded
+    add_erosion_capped(&mut erosion, 500.0, Realm::Induce);
+    assert!(
+        erosion.cumulative_erosion > 400.0,
+        "cumulative_erosion should increase even past cap"
+    );
+    assert_eq!(
+        erosion.stage,
+        VoidErosionStage::LowPressure,
+        "引气境界 cap=LowPressure，stage 不应超过 LowPressure; got {:?}",
+        erosion.stage
+    );
+}
+
+#[test]
+fn add_erosion_capped_does_not_touch_qi_fields() {
+    // 守恒纠偏：add_erosion_capped 只写 cumulative_erosion+stage，不动任何 qi 字段
+    // 此测试通过结构体字段访问证明零 qi 字段读写
+    let mut erosion = VoidErosion::default();
+    let before = erosion.cumulative_erosion; // only erosion field
+    add_erosion_capped(&mut erosion, 5.0, Realm::Void);
+    assert!(
+        erosion.cumulative_erosion > before,
+        "cumulative_erosion should increase after add_erosion_capped"
+    );
+    assert!(
+        !erosion.ambient_active,
+        "add_erosion_capped should not touch ambient_active"
+    );
+    assert!(
+        erosion.ambient_toggled_at == 0,
+        "add_erosion_capped should not touch ambient_toggled_at, got {}",
+        erosion.ambient_toggled_at
+    );
+}
+
+#[test]
+fn void_erosion_check_system_emits_advance_event_on_threshold_cross() {
+    // 不再使用手动 reset stage 的作弊模式：
+    // 用 add_erosion_capped（真实生产路径）累积越过阈值，stage 由 capped 路径更新到 LowPressure，
+    // last_reported_stage 保持 None（default）→ check_system 检测到推进并 emit 事件。
+    let mut a = app_with_void_erosion(VOID_EROSION_CHECK_INTERVAL);
+    let entity = {
+        let mut erosion = VoidErosion::default();
+        // 走真实生产路径 add_erosion_capped（Void realm：no cap）
+        add_erosion_capped(&mut erosion, 25.0, Realm::Void);
+        // stage = LowPressure（已 capped）, last_reported_stage = None（default）
+        // check_system 比较 stage(LowPressure) > last_reported_stage(None) → 应 emit
+        a.world_mut().spawn(erosion).id()
+    };
+
+    a.add_systems(Update, void_erosion_check_system);
+    a.update();
+
+    let events: Vec<VoidErosionAdvanceEvent> = a
+        .world()
+        .resource::<Events<VoidErosionAdvanceEvent>>()
+        .iter_current_update_events()
+        .cloned()
+        .collect();
+
+    assert_eq!(
+        events.len(),
+        1,
+        "should emit exactly 1 VoidErosionAdvanceEvent; got {}",
+        events.len()
+    );
+    assert_eq!(
+        events[0].entity, entity,
+        "event entity should match spawned entity"
+    );
+    assert_eq!(
+        events[0].from,
+        VoidErosionStage::None,
+        "from should be None (last_reported_stage before first check)"
+    );
+    assert_eq!(
+        events[0].to,
+        VoidErosionStage::LowPressure,
+        "to should be LowPressure after crossing 20.0 threshold"
+    );
+
+    // After system runs, last_reported_stage should be updated
+    let updated_erosion = a.world().get::<VoidErosion>(entity).unwrap();
+    assert_eq!(
+        updated_erosion.last_reported_stage,
+        VoidErosionStage::LowPressure,
+        "VoidErosion.last_reported_stage should be updated to LowPressure after check_system"
+    );
+    assert_eq!(
+        updated_erosion.stage,
+        VoidErosionStage::LowPressure,
+        "VoidErosion.stage should remain LowPressure (unchanged by check_system)"
+    );
+}
+
+#[test]
+fn void_erosion_check_system_no_emit_when_below_threshold() {
+    let mut a = app_with_void_erosion(VOID_EROSION_CHECK_INTERVAL);
+    {
+        let erosion = VoidErosion {
+            cumulative_erosion: 10.0, // below LowPressure threshold (20.0)
+            stage: VoidErosionStage::None,
+            ..VoidErosion::default()
+        };
+        a.world_mut().spawn(erosion);
+    }
+    a.add_systems(Update, void_erosion_check_system);
+    a.update();
+
+    let events: Vec<VoidErosionAdvanceEvent> = a
+        .world()
+        .resource::<Events<VoidErosionAdvanceEvent>>()
+        .iter_current_update_events()
+        .cloned()
+        .collect();
+    assert!(
+        events.is_empty(),
+        "no event should be emitted when erosion does not cross next threshold; got {} events",
+        events.len()
+    );
+}
+
+#[test]
+fn void_erosion_check_system_not_fires_on_off_tick() {
+    // tick not a multiple of VOID_EROSION_CHECK_INTERVAL → no emit
+    let off_tick = VOID_EROSION_CHECK_INTERVAL + 1;
+    let mut a = app_with_void_erosion(off_tick);
+    {
+        let mut erosion = VoidErosion::default();
+        // stage=LowPressure, last_reported_stage=None → would emit if tick matched
+        add_erosion_capped(&mut erosion, 25.0, Realm::Void);
+        a.world_mut().spawn(erosion);
+    }
+    a.add_systems(Update, void_erosion_check_system);
+    a.update();
+
+    let events: Vec<VoidErosionAdvanceEvent> = a
+        .world()
+        .resource::<Events<VoidErosionAdvanceEvent>>()
+        .iter_current_update_events()
+        .cloned()
+        .collect();
+    assert!(
+        events.is_empty(),
+        "check_system should not fire at off-tick {off_tick}; got {} events",
+        events.len()
+    );
+}
+
+#[test]
+fn void_erosion_check_system_same_frame_multi_stage_emits_final_stage() {
+    // 如果 stage 一次跨多阶（e.g. None → EchoBody），
+    // to 取当前 stage（最终档），不分拆成多次 emit。
+    // 使用真实生产路径 add_erosion_capped（Void realm）。
+    let mut a = app_with_void_erosion(VOID_EROSION_CHECK_INTERVAL);
+    {
+        let mut erosion = VoidErosion::default();
+        add_erosion_capped(&mut erosion, 250.0, Realm::Void); // → stage=EchoBody
+                                                              // last_reported_stage = None（default）→ check_system 会检测到 EchoBody > None
+        a.world_mut().spawn(erosion);
+    }
+    a.add_systems(Update, void_erosion_check_system);
+    a.update();
+
+    let events: Vec<VoidErosionAdvanceEvent> = a
+        .world()
+        .resource::<Events<VoidErosionAdvanceEvent>>()
+        .iter_current_update_events()
+        .cloned()
+        .collect();
+    assert_eq!(
+        events.len(),
+        1,
+        "should emit exactly 1 event even crossing multiple stages at once; got {}",
+        events.len()
+    );
+    assert_eq!(
+        events[0].from,
+        VoidErosionStage::None,
+        "from should be None (last_reported_stage before first check)"
+    );
+    assert_eq!(
+        events[0].to,
+        VoidErosionStage::EchoBody,
+        "to should be EchoBody (the capped stage)"
+    );
+}
+
+/// 真实整链测试（不作弊）：
+/// `resolve_woliu_v2_skill` → `apply_skill_erosion` → `add_erosion_capped` 更新 `stage` →
+/// `void_erosion_check_system` 检测到 `stage > last_reported_stage` → emit `VoidErosionAdvanceEvent`。
+///
+/// 这是 blocker+major1 修复的核心验证：生产路径不再需要手动 reset stage，
+/// 且 check_system 只比较 capped stage，不绕境界上限。
+#[test]
+fn real_path_resolve_skill_then_check_system_emits_event_without_cheat() {
+    // 虚涡 erosion = 3.0 (VOID_VORTEX_EROSION)，LowPressure 阈值 = 20.0，需多次施放越过阈值
+    // 为简化：直接用 add_erosion_capped 推到阈值之下，再 resolve 一次越过
+    let tick = VOID_EROSION_CHECK_INTERVAL;
+    let mut a = app_with_void_erosion(tick);
+    let caster = spawn_actor_with_erosion(&mut a, Realm::Void, 500.0);
+    open_all_meridians(&mut a, caster, 10_000.0);
+
+    // 先推到阈值之下（18.0 < 20.0 → stage 仍 None）
+    {
+        let mut erosion = a.world_mut().get_mut::<VoidErosion>(caster).unwrap();
+        add_erosion_capped(&mut erosion, 18.0, Realm::Void);
+        // stage = None（cumulative=18 < 20），last_reported_stage = None
+        assert_eq!(
+            erosion.stage,
+            VoidErosionStage::None,
+            "pre-condition: 18.0 erosion should not yet reach LowPressure"
+        );
+    }
+
+    // 施法一次（VoidVortex erosion=3.0 → cumulative=21.0 → stage=LowPressure）
+    // 使用真实生产路径，不手动修改 stage
+    let result = resolve_woliu_v2_skill(a.world_mut(), caster, 0, None, WoliuSkillId::VoidVortex);
+    assert!(
+        matches!(result, CastResult::Started { .. }),
+        "VoidVortex should succeed with 500 qi; got {result:?}"
+    );
+
+    // 验证 add_erosion_capped 已将 stage 推进到 LowPressure（无作弊）
+    {
+        let erosion = a.world().get::<VoidErosion>(caster).unwrap();
+        assert_eq!(
+            erosion.stage,
+            VoidErosionStage::LowPressure,
+            "after VoidVortex cast, stage should be LowPressure \
+             (cumulative={:.1} >= 20.0); no manual reset needed",
+            erosion.cumulative_erosion
+        );
+        assert_eq!(
+            erosion.last_reported_stage,
+            VoidErosionStage::None,
+            "last_reported_stage should still be None before check_system runs"
+        );
+    }
+
+    // 跑 check_system（tick = VOID_EROSION_CHECK_INTERVAL 整除点）
+    a.add_systems(Update, void_erosion_check_system);
+    a.update();
+
+    let events: Vec<VoidErosionAdvanceEvent> = a
+        .world()
+        .resource::<Events<VoidErosionAdvanceEvent>>()
+        .iter_current_update_events()
+        .cloned()
+        .collect();
+
+    assert_eq!(
+        events.len(),
+        1,
+        "check_system should emit exactly 1 VoidErosionAdvanceEvent via real production path; got {}",
+        events.len()
+    );
+    assert_eq!(
+        events[0].entity, caster,
+        "event entity should be the caster"
+    );
+    assert_eq!(
+        events[0].from,
+        VoidErosionStage::None,
+        "from = None (last_reported before check)"
+    );
+    assert_eq!(
+        events[0].to,
+        VoidErosionStage::LowPressure,
+        "to = LowPressure (capped stage)"
+    );
+
+    // last_reported_stage 必须被更新
+    let erosion = a.world().get::<VoidErosion>(caster).unwrap();
+    assert_eq!(
+        erosion.last_reported_stage,
+        VoidErosionStage::LowPressure,
+        "last_reported_stage should be updated to LowPressure after check_system"
+    );
+}
+
+/// 境界上限不被绕过：低境界（引气）多次施法累积超过阶段 2 阈值，
+/// `stage` 不超过 `realm_erosion_cap(Induce) = LowPressure`，
+/// `check_system` 也不越上限 emit 更高阶段。
+#[test]
+fn check_system_respects_realm_cap_does_not_bypass_with_uncapped_stage() {
+    let tick = VOID_EROSION_CHECK_INTERVAL;
+    let mut a = app_with_void_erosion(tick);
+    let entity = {
+        let mut erosion = VoidErosion::default();
+        // 引气境界 cap = LowPressure：cumulative 可超过 80 但 stage 不超过 LowPressure
+        add_erosion_capped(&mut erosion, 100.0, Realm::Induce);
+        assert_eq!(
+            erosion.stage,
+            VoidErosionStage::LowPressure,
+            "pre-condition: Induce realm caps stage at LowPressure even with cumulative=100"
+        );
+        assert!(
+            erosion.cumulative_erosion > 80.0,
+            "pre-condition: cumulative_erosion should exceed VoidShadow threshold"
+        );
+        a.world_mut().spawn(erosion).id()
+    };
+
+    a.add_systems(Update, void_erosion_check_system);
+    a.update();
+
+    let events: Vec<VoidErosionAdvanceEvent> = a
+        .world()
+        .resource::<Events<VoidErosionAdvanceEvent>>()
+        .iter_current_update_events()
+        .cloned()
+        .collect();
+
+    assert_eq!(
+        events.len(),
+        1,
+        "should emit 1 event (None→LowPressure), not more; got {} events",
+        events.len()
+    );
+    assert_eq!(
+        events[0].to,
+        VoidErosionStage::LowPressure,
+        "check_system must not bypass realm cap and emit VoidShadow or higher; \
+         event.to={:?}",
+        events[0].to
+    );
+
+    let erosion = a.world().get::<VoidErosion>(entity).unwrap();
+    assert_eq!(
+        erosion.last_reported_stage,
+        VoidErosionStage::LowPressure,
+        "last_reported_stage should be LowPressure after check"
+    );
+    assert_eq!(
+        erosion.stage,
+        VoidErosionStage::LowPressure,
+        "stage should remain at realm cap LowPressure"
+    );
+}
+
+#[test]
+fn erosion_amount_for_skill_all_variants_positive_finite() {
+    for &skill in WoliuSkillId::ALL.iter() {
+        let amount = erosion_amount_for_skill(skill);
+        assert!(
+            amount.is_finite() && amount > 0.0,
+            "erosion_amount_for_skill({skill:?}) should be positive finite, got {amount}"
+        );
+    }
+}
+
+// ────────────────────────────────────────────────────────────────────
+// plan-combat-skill-feedback-bridges-v1 P3 fix2 — App 级累积链集成测试
+// 证明 resolve_woliu_v2_skill → apply_skill_erosion 链路在 caster 带
+// VoidErosion component 时正确增加 cumulative_erosion。
+// ────────────────────────────────────────────────────────────────────
+
+/// spawn 带 VoidErosion 组件的 caster（修复 #2：apply_skill_erosion 只在组件存在时工作）。
+fn spawn_actor_with_erosion(app: &mut App, realm: Realm, qi_current: f64) -> Entity {
+    app.world_mut()
+        .spawn((
+            Cultivation {
+                realm,
+                qi_current,
+                qi_max: 1_000.0,
+                ..Default::default()
+            },
+            MeridianSystem::default(),
+            SkillBarBindings::default(),
+            Position::new([8.0, 66.0, 8.0]),
+            CurrentDimension(DimensionKind::Overworld),
+            VoidErosion::default(),
+        ))
+        .id()
+}
+
+#[test]
+fn resolve_woliu_skill_accumulates_erosion_on_cast() {
+    // P3 fix2 核心集成测试：
+    // spawn caster(带 VoidErosion::default) → resolve VoidVortex →
+    // 断言 cumulative_erosion 按 VOID_VORTEX_EROSION 增长
+    use super::erosion::VOID_VORTEX_EROSION;
+    let mut app = app_with_void_erosion(10);
+    let caster = spawn_actor_with_erosion(&mut app, Realm::Void, 200.0);
+    open_all_meridians(&mut app, caster, 10_000.0);
+
+    let result = resolve_woliu_v2_skill(app.world_mut(), caster, 0, None, WoliuSkillId::VoidVortex);
+    // CastResult::Started 或 Rejected(QiInsufficient) 都可以，只测试 erosion 副作用
+    // VoidVortex 需要足够 qi；actor 有 200.0 qi，VoidVortex qi cost = VOID_VORTEX_QI_COST(40.0)
+    assert!(
+        matches!(result, CastResult::Started { .. }),
+        "VoidVortex cast should succeed with 200 qi, got {result:?}"
+    );
+
+    let erosion = app
+        .world()
+        .get::<VoidErosion>(caster)
+        .expect("VoidErosion component should exist on caster after spawn_actor_with_erosion");
+    assert!(
+        (erosion.cumulative_erosion - VOID_VORTEX_EROSION).abs() < 1e-9,
+        "VoidVortex cast should accumulate exactly VOID_VORTEX_EROSION={VOID_VORTEX_EROSION}, \
+         got cumulative_erosion={}",
+        erosion.cumulative_erosion
+    );
+}
+
+#[test]
+fn resolve_woliu_skill_no_erosion_without_component() {
+    // P3 fix2 文档测试：
+    // apply_skill_erosion 在 caster 缺 VoidErosion 组件时静默 no-op（当前行为），
+    // 本测试锁住此行为，防止意外报错/panic。
+    // 注：生产路径中 caster 应始终带 VoidErosion（由 spawn_actor_with_erosion 保证），
+    // 但旧路径 spawn_actor 不带，测试要确保不 panic。
+    let mut app = app_with_void_erosion(10);
+    let caster = spawn_actor(&mut app, Realm::Void, 200.0);
+    open_all_meridians(&mut app, caster, 10_000.0);
+
+    // 不带 VoidErosion 组件 — apply_skill_erosion 应静默 no-op，不 panic
+    let result = resolve_woliu_v2_skill(app.world_mut(), caster, 0, None, WoliuSkillId::VoidVortex);
+    assert!(
+        matches!(result, CastResult::Started { .. }),
+        "cast without VoidErosion component should not panic and should succeed; got {result:?}"
+    );
+    // 确认组件确实不存在（不被自动插入）
+    assert!(
+        app.world().get::<VoidErosion>(caster).is_none(),
+        "VoidErosion component should NOT be auto-inserted by resolve_woliu_v2_skill"
+    );
+}
+
+#[test]
+fn resolve_erosion_skills_accumulate_correct_constants() {
+    // 各虚蚀路径招式（VoidVortex、SwallowingVortex、VortexEcho）分别核验 erosion 量
+    use super::erosion::{ECHO_EROSION, SWALLOWING_RELEASE_EROSION, VOID_VORTEX_EROSION};
+    struct Case {
+        skill: WoliuSkillId,
+        expected: f64,
+        qi_needed: f64,
+    }
+    let cases = [
+        Case {
+            skill: WoliuSkillId::VoidVortex,
+            expected: VOID_VORTEX_EROSION,
+            qi_needed: 200.0,
+        },
+        Case {
+            skill: WoliuSkillId::SwallowingVortex,
+            expected: SWALLOWING_RELEASE_EROSION,
+            qi_needed: 200.0,
+        },
+        Case {
+            skill: WoliuSkillId::VortexEcho,
+            expected: ECHO_EROSION,
+            qi_needed: 200.0,
+        },
+    ];
+    for case in &cases {
+        let mut app = app_with_void_erosion(10);
+        let caster = spawn_actor_with_erosion(&mut app, Realm::Void, case.qi_needed);
+        open_all_meridians(&mut app, caster, 10_000.0);
+        let result = resolve_woliu_v2_skill(app.world_mut(), caster, 0, None, case.skill);
+        assert!(
+            matches!(result, CastResult::Started { .. }),
+            "{:?} cast should succeed with {} qi; got {result:?}",
+            case.skill,
+            case.qi_needed
+        );
+        let erosion = app.world().get::<VoidErosion>(caster).unwrap();
+        assert!(
+            (erosion.cumulative_erosion - case.expected).abs() < 1e-9,
+            "{:?} expected erosion={}, got {}",
+            case.skill,
+            case.expected,
+            erosion.cumulative_erosion
+        );
+    }
+}
+
+#[test]
+fn erosion_path_does_not_produce_qi_transfer_events() {
+    // 守恒纠偏：erosion 路径（apply_skill_erosion）不生产 QiTransfer 事件，
+    // QiTransfer 只在 build_cast_qi_transfers → Channeling 路径产生。
+    // 本测试断言：VoidVortex cast 后 QiTransfer 事件数量等于基础施法路径（不因 erosion 增加）。
+    let mut app_with = app_with_void_erosion(10);
+    let caster_with = spawn_actor_with_erosion(&mut app_with, Realm::Void, 200.0);
+    open_all_meridians(&mut app_with, caster_with, 10_000.0);
+    resolve_woliu_v2_skill(
+        app_with.world_mut(),
+        caster_with,
+        0,
+        None,
+        WoliuSkillId::VoidVortex,
+    );
+    let count_with_erosion = app_with
+        .world()
+        .resource::<Events<QiTransfer>>()
+        .iter_current_update_events()
+        .count();
+
+    let mut app_without = app_with_void_erosion(10);
+    let caster_without = spawn_actor(&mut app_without, Realm::Void, 200.0);
+    open_all_meridians(&mut app_without, caster_without, 10_000.0);
+    resolve_woliu_v2_skill(
+        app_without.world_mut(),
+        caster_without,
+        0,
+        None,
+        WoliuSkillId::VoidVortex,
+    );
+    let count_without_erosion = app_without
+        .world()
+        .resource::<Events<QiTransfer>>()
+        .iter_current_update_events()
+        .count();
+
+    assert_eq!(
+        count_with_erosion, count_without_erosion,
+        "erosion path must not produce extra QiTransfer events: \
+         with_erosion={count_with_erosion} != without_erosion={count_without_erosion}"
+    );
+}

@@ -9,6 +9,7 @@ use self::state::{
 };
 use crate::coffin::{coffin_lower_from_player_position, CoffinComponent, CoffinRegistry};
 use crate::combat::components::{UnlockedStyles, TICKS_PER_SECOND};
+use crate::combat::woliu_v2::erosion::VoidErosion;
 use crate::cultivation::color::PracticeLog;
 use crate::cultivation::components::{Contamination, Cultivation, Karma, MeridianSystem, QiColor};
 use crate::cultivation::insight::InsightQuota;
@@ -264,6 +265,17 @@ pub(crate) fn attach_player_state_to_joined_clients(
             });
         }
         entity_commands.insert(persisted.skill_set);
+        // plan-combat-skill-feedback-bridges-v1 P3 — 虚蚀组件初始化。
+        //
+        // 此处 `insert(VoidErosion::default())` 是正确且无副作用的：
+        // - 系统仅在 JoinedClientsWithoutStateQueryFilter 过滤后的实体上运行，
+        //   即每次 join 时才执行，不会对已有 state 的实体重复触发。
+        // - VoidErosion 目前**不在持久化路径**（persisted 结构体不包含该字段），
+        //   每次 join 从 default() 开始是有意为之的当前设计。
+        // - 跨死亡保留 cumulative_erosion 的语义由 last_reported_stage 字段
+        //   在 session 内（不跨重启）由 ECS 组件生命周期保证；
+        //   若未来需要跨 server 重启持久化，需同时修改 PlayerStateAutosave 序列化路径。
+        entity_commands.insert(VoidErosion::default());
         tracing::info!(
             "[bong][player] attached PlayerState to client entity {entity:?} for `{}` (composite_power={composite_power:.3}, restored_inventory={restored_inventory}, restored_lifespan={restored_lifespan}, restored_skill={restored_skill}, restored_technique={restored_technique}, last_dimension={last_dimension:?})",
             username.0,

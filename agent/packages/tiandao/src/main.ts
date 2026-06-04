@@ -27,6 +27,7 @@ import { AnqiNarrationRuntime } from "./anqi-narration.js";
 import { BaomaiV3NarrationRuntime } from "./baomai-v3-runtime.js";
 import { BaomaiV4NarrationRuntime } from "./baomai-v4-runtime.js";
 import { MeridianSeveredNarrationRuntime } from "./meridian-severed-runtime.js";
+import { VoidErosionNarrationRuntime } from "./void_erosion_runtime.js";
 import { MutationNarrationRuntime } from "./mutation-narration-runtime.js";
 import { BreakthroughCinematicNarrationRuntime } from "./breakthrough-cinematic-narration.js";
 import { createClient as createLlmClient, createMockClient, type LlmClient } from "./llm.js";
@@ -192,6 +193,10 @@ async function startAuxiliaryRuntimes(config: RuntimeConfig): Promise<RuntimeCle
   const meridianSeveredCleanup = await startMeridianSeveredNarrationRuntimeInternal({
     redisUrl: config.redisUrl,
   });
+  // plan-combat-skill-feedback-bridges-v1 P3: 我流虚蚀阶段推进叙事 runtime（订阅 bong:void_erosion_event）。
+  const voidErosionCleanup = await startVoidErosionRuntime({
+    ...runtimeOpts,
+  });
   // plan-combat-skill-feedback-bridges-v1 P1: baomai_v4 叙事 runtime（psubscribe bong:baomai_v4/*）。
   const baomaiV4Cleanup = await startBaomaiV4Runtime({
     redisUrl: config.redisUrl,
@@ -253,6 +258,7 @@ async function startAuxiliaryRuntimes(config: RuntimeConfig): Promise<RuntimeCle
     anqiCleanup,
     mutationNarrationCleanup,
     meridianSeveredCleanup,
+    voidErosionCleanup,
     baomaiV4Cleanup,
     baomaiV3Cleanup,
     yidaoCleanup,
@@ -601,6 +607,41 @@ async function startBaomaiV4Runtime(opts: {
       await Promise.race([runtime.disconnect(), timeout]);
     } catch (error) {
       console.warn("[tiandao] baomai-v4 narration runtime disconnect error:", error);
+    }
+  };
+}
+
+// plan-combat-skill-feedback-bridges-v1 P3 — 我流虚蚀阶段推进叙事 runtime 启动函数
+async function startVoidErosionRuntime(opts: {
+  redisUrl: string;
+  baseUrl?: string;
+  apiKey?: string;
+  model: string;
+}): Promise<() => Promise<void>> {
+  const IORedisCtor = ((Redis as unknown as { default?: unknown }).default ??
+    Redis) as new (url: string) => unknown;
+  const sub = new IORedisCtor(opts.redisUrl) as ConstructorParameters<
+    typeof VoidErosionNarrationRuntime
+  >[0]["sub"];
+  const pub = new IORedisCtor(opts.redisUrl) as ConstructorParameters<
+    typeof VoidErosionNarrationRuntime
+  >[0]["pub"];
+  const llm: import("./llm.js").LlmClient = opts.baseUrl && opts.apiKey
+    ? createLlmClient({ baseURL: opts.baseUrl, apiKey: opts.apiKey, model: opts.model })
+    : createMockClient();
+  const runtime = new VoidErosionNarrationRuntime({ llm, model: opts.model, sub, pub });
+  runtime
+    .connect()
+    .then(() => console.log("[tiandao] void-erosion narration runtime online"))
+    .catch((error) =>
+      console.warn("[tiandao] void-erosion narration runtime failed to start:", error),
+    );
+  return async () => {
+    const timeout = new Promise<void>((resolve) => setTimeout(resolve, 500));
+    try {
+      await Promise.race([runtime.disconnect(), timeout]);
+    } catch (error) {
+      console.warn("[tiandao] void-erosion narration runtime disconnect error:", error);
     }
   };
 }

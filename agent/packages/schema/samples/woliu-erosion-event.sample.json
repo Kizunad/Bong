@@ -1,5 +1,5 @@
 {
-  "entity": "player_456",
+  "entity": "offline:kiz",
   "from_stage": "low_pressure",
   "to_stage": "void_shadow",
   "cumulative_erosion": 80.0,

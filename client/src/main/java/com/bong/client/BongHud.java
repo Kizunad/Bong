@@ -12,6 +12,7 @@ import com.bong.client.combat.UnifiedEventStore;
 import com.bong.client.combat.UnlockedStylesStore;
 import com.bong.client.combat.baomai.v3.BaomaiV3Hud;
 import com.bong.client.combat.baomai.v4.CrackReadingOverlay;
+import com.bong.client.visual.VoidErosionHudOverlay;
 import com.bong.client.combat.baomai.v4.ResonanceLockMeterHud;
 import com.bong.client.hud.BongHudOrchestrator;
 import com.bong.client.hud.BongHudStateStore;
@@ -173,8 +174,10 @@ public class BongHud {
         );
 
         // plan-combat-skill-feedback-bridges-v1 P1 — 爆脉 v4 HUD overlay 接入渲染回路
+        // plan-combat-skill-feedback-bridges-v1 P3 — 我流虚蚀视觉 HUD overlay（声音扭曲+阶段文字）
         if (visibility == ScreenHudVisibility.FULL) {
             CrackReadingOverlay.render(context, client.textRenderer, nowMillis);
+            VoidErosionHudOverlay.render(context, client.textRenderer);
             long estimatedTick = nowMillis / 50L;
             ResonanceLockMeterHud.render(
                 context,

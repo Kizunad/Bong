@@ -1,15 +1,17 @@
-use valence::prelude::{EventReader, Query, Res, UniqueId};
+use valence::prelude::{EventReader, Query, Res, UniqueId, Username};
 
 use crate::combat::woliu::{
     projectile_drained_payload, vortex_backfire_payload, ProjectileQiDrainedEvent,
     VortexBackfireEvent,
 };
+use crate::combat::woliu_v2::erosion::VoidErosionAdvanceEvent;
 use crate::combat::woliu_v2::{
     BackfireCauseV2, BackfireLevel, TurbulenceFieldSpawned, VortexBackfireEventV2, VortexCastEvent,
     WoliuSkillId,
 };
 use crate::network::redis_bridge::RedisOutbound;
 use crate::network::RedisBridgeResource;
+use crate::schema::woliu_erosion::{VoidErosionEventV1, VoidErosionStageV1};
 use crate::schema::woliu_v2::{
     TurbulenceFieldV1, WoliuBackfireLevelV1, WoliuBackfireV1, WoliuSkillCastV1, WoliuSkillIdV1,
 };
@@ -152,5 +154,258 @@ fn backfire_cause_wire(cause: BackfireCauseV2) -> &'static str {
         BackfireCauseV2::MeridianOverflow => "meridian_overflow",
         BackfireCauseV2::TsyNegativeField => "tsy_negative_field",
         BackfireCauseV2::VoidHeartTribulation => "void_heart_tribulation",
+    }
+}
+
+// ────────────────────────────────────────────────────────
+// plan-combat-skill-feedback-bridges-v1 P3 — 虚蚀阶段推进 → agent 叙事桥
+// ────────────────────────────────────────────────────────
+
+/// `VoidErosionAdvanceEvent` → `bong:void_erosion_event` Redis publish。
+///
+/// 仿 `publish_woliu_v2_backfire_events` 结构；读取 `VoidErosion.cumulative_erosion`
+/// 以填充 payload（如实体已消亡则跳过）。
+///
+/// entity_id 格式：`"offline:{username}"`（有 Username 组件时）或 `"char:{bits}"`（NPC/无名实体）。
+/// 仿 meridian_severed_emit.rs:90 的 resolve_entity_id 逻辑，保证 agent narration 路由
+/// normalize_player_target 能命中真实玩家（UUID 格式永不命中）。
+///
+/// TODO(P3-ext): emit_echo_replay_vfx - ScheduledEcho tick system pending
+pub fn publish_void_erosion_advance_events(
+    redis: Res<RedisBridgeResource>,
+    mut events: EventReader<VoidErosionAdvanceEvent>,
+    usernames: Query<&Username>,
+    erosion_query: Query<&crate::combat::woliu_v2::erosion::VoidErosion>,
+    clock: Res<crate::combat::CombatClock>,
+) {
+    for event in events.read() {
+        // 实体消亡（已 despawn）时 erosion_query.get 失败 → 跳过，不伪造 0.0。
+        // cumulative_erosion 必须来自真实组件，确保 agent narration 数值准确。
+        let Ok(erosion) = erosion_query.get(event.entity) else {
+            continue;
+        };
+        let entity_id = usernames
+            .get(event.entity)
+            .map(|u| format!("offline:{}", u.0))
+            .unwrap_or_else(|_| format!("char:{}", event.entity.to_bits()));
+        let payload = VoidErosionEventV1 {
+            entity: entity_id,
+            from_stage: void_erosion_stage_v1(event.from),
+            to_stage: void_erosion_stage_v1(event.to),
+            cumulative_erosion: erosion.cumulative_erosion,
+            server_tick: clock.tick,
+        };
+        let _ = redis
+            .tx_outbound
+            .send(RedisOutbound::VoidErosionEvent(payload));
+    }
+}
+
+fn void_erosion_stage_v1(
+    stage: crate::combat::woliu_v2::erosion::VoidErosionStage,
+) -> VoidErosionStageV1 {
+    use crate::combat::woliu_v2::erosion::VoidErosionStage;
+    match stage {
+        VoidErosionStage::None => VoidErosionStageV1::None,
+        VoidErosionStage::LowPressure => VoidErosionStageV1::LowPressure,
+        VoidErosionStage::VoidShadow => VoidErosionStageV1::VoidShadow,
+        VoidErosionStage::EchoBody => VoidErosionStageV1::EchoBody,
+        VoidErosionStage::VoidEroded => VoidErosionStageV1::VoidEroded,
+    }
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// P3 回归测试 — publish_void_erosion_advance_events entity_id 格式
+// ────────────────────────────────────────────────────────────────────────────
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use valence::prelude::{App, Update};
+
+    use crate::combat::woliu_v2::erosion::{
+        VoidErosion, VoidErosionAdvanceEvent, VoidErosionStage,
+    };
+    use crate::network::RedisBridgeResource;
+
+    fn app_with_bridge() -> (App, crossbeam_channel::Receiver<RedisOutbound>) {
+        let mut app = App::new();
+        let (tx_outbound, rx_outbound) = crossbeam_channel::unbounded();
+        let (_tx_inbound, rx_inbound) = crossbeam_channel::unbounded();
+        app.insert_resource(RedisBridgeResource {
+            tx_outbound,
+            rx_inbound,
+        });
+        app.insert_resource(crate::combat::CombatClock::default());
+        app.add_event::<VoidErosionAdvanceEvent>();
+        app.add_systems(Update, publish_void_erosion_advance_events);
+        (app, rx_outbound)
+    }
+
+    /// 有 Username 组件的实体 → entity_id 必须写成 `"offline:{username}"`,
+    /// 保证 agent narration 路由 `normalize_player_target` 能命中真实玩家。
+    ///
+    /// 若将来 Username 组件漏挂，publish_void_erosion_advance_events 会静默降回
+    /// `"char:{bits}"` 而 CI 不红 —— 本测试锁住该回归。
+    #[test]
+    fn publishes_offline_username_entity_id_for_player() {
+        let (mut app, rx_outbound) = app_with_bridge();
+
+        let entity = app
+            .world_mut()
+            .spawn((
+                Username("Azure".to_string()),
+                VoidErosion {
+                    cumulative_erosion: 55.0,
+                    ..Default::default()
+                },
+            ))
+            .id();
+
+        app.world_mut().send_event(VoidErosionAdvanceEvent {
+            entity,
+            from: VoidErosionStage::LowPressure,
+            to: VoidErosionStage::VoidShadow,
+        });
+
+        app.update();
+
+        match rx_outbound
+            .try_recv()
+            .expect("publish_void_erosion_advance_events should emit one outbound message")
+        {
+            RedisOutbound::VoidErosionEvent(payload) => {
+                assert_eq!(
+                    payload.entity, "offline:Azure",
+                    "player entity_id must be 'offline:{{username}}' so agent \
+                     normalize_player_target routes correctly; got {:?}",
+                    payload.entity,
+                );
+                assert_eq!(
+                    payload.from_stage,
+                    crate::schema::woliu_erosion::VoidErosionStageV1::LowPressure,
+                    "from_stage must reflect event.from"
+                );
+                assert_eq!(
+                    payload.to_stage,
+                    crate::schema::woliu_erosion::VoidErosionStageV1::VoidShadow,
+                    "to_stage must reflect event.to"
+                );
+                assert!(
+                    (payload.cumulative_erosion - 55.0).abs() < f64::EPSILON,
+                    "cumulative_erosion must come from VoidErosion component, got {}",
+                    payload.cumulative_erosion,
+                );
+            }
+            other => panic!("expected RedisOutbound::VoidErosionEvent, got {other:?}"),
+        }
+
+        assert!(
+            rx_outbound.try_recv().is_err(),
+            "exactly one outbound message expected per event"
+        );
+    }
+
+    /// 无 Username 组件的实体（NPC / 未注册实体）→ entity_id 回退到 `"char:{bits}"`。
+    /// 确保回退路径不会 panic 且格式符合 IPC 约定。
+    #[test]
+    fn fallback_char_bits_entity_id_for_npc() {
+        let (mut app, rx_outbound) = app_with_bridge();
+
+        let entity = app
+            .world_mut()
+            .spawn(VoidErosion {
+                cumulative_erosion: 10.0,
+                ..Default::default()
+            })
+            .id();
+        let expected_prefix = format!("char:{}", entity.to_bits());
+
+        app.world_mut().send_event(VoidErosionAdvanceEvent {
+            entity,
+            from: VoidErosionStage::None,
+            to: VoidErosionStage::LowPressure,
+        });
+
+        app.update();
+
+        match rx_outbound
+            .try_recv()
+            .expect("publish_void_erosion_advance_events should emit for NPC entity")
+        {
+            RedisOutbound::VoidErosionEvent(payload) => {
+                assert_eq!(
+                    payload.entity, expected_prefix,
+                    "NPC without Username must produce 'char:{{bits}}' entity_id; \
+                     got {:?}",
+                    payload.entity,
+                );
+            }
+            other => panic!("expected RedisOutbound::VoidErosionEvent for NPC, got {other:?}"),
+        }
+    }
+
+    /// major2 修复验证：entity 无 VoidErosion 组件（已 despawn / 消亡）→ 跳过，不发布伪造 payload。
+    /// 原来 `.unwrap_or(0.0)` 会发出 cumulative_erosion=0.0 的错误 payload；
+    /// 修复后 `let Ok(erosion) = ... else { continue; }` 直接跳过。
+    #[test]
+    fn skips_event_when_entity_missing_void_erosion_component() {
+        let (mut app, rx_outbound) = app_with_bridge();
+
+        // spawn 一个没有 VoidErosion 组件的实体（模拟 despawn 后仍有遗留事件）
+        let entity = app.world_mut().spawn(()).id();
+
+        app.world_mut().send_event(VoidErosionAdvanceEvent {
+            entity,
+            from: VoidErosionStage::None,
+            to: VoidErosionStage::LowPressure,
+        });
+
+        app.update();
+
+        assert!(
+            rx_outbound.try_recv().is_err(),
+            "no outbound message should be emitted when entity lacks VoidErosion component \
+             (entity may have been despawned); got a message instead"
+        );
+    }
+
+    /// major2 修复验证：cumulative_erosion 必须来自真实 VoidErosion 组件，不可伪造。
+    #[test]
+    fn cumulative_erosion_comes_from_real_component_not_zero() {
+        let (mut app, rx_outbound) = app_with_bridge();
+
+        let expected_cumulative = 123.45;
+        let entity = app
+            .world_mut()
+            .spawn((
+                Username("Kiz".to_string()),
+                VoidErosion {
+                    cumulative_erosion: expected_cumulative,
+                    stage: VoidErosionStage::VoidShadow,
+                    ..Default::default()
+                },
+            ))
+            .id();
+
+        app.world_mut().send_event(VoidErosionAdvanceEvent {
+            entity,
+            from: VoidErosionStage::LowPressure,
+            to: VoidErosionStage::VoidShadow,
+        });
+
+        app.update();
+
+        match rx_outbound.try_recv().expect("should emit payload") {
+            RedisOutbound::VoidErosionEvent(payload) => {
+                assert!(
+                    (payload.cumulative_erosion - expected_cumulative).abs() < f64::EPSILON,
+                    "cumulative_erosion must come from VoidErosion component={expected_cumulative}, \
+                     got {} (must not be hardcoded 0.0)",
+                    payload.cumulative_erosion
+                );
+            }
+            other => panic!("expected VoidErosionEvent, got {other:?}"),
+        }
     }
 }

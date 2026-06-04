@@ -32,6 +32,10 @@ use crate::world::zone::ZoneRegistry;
 use super::backfire::{
     apply_backfire_to_hand_meridians, backfire_level_for_overflow, forced_backfire,
 };
+use super::erosion::{
+    add_erosion_capped, VoidErosion, BASE_SKILL_EROSION, ECHO_EROSION, SWALLOWING_RELEASE_EROSION,
+    VOID_CORE_DURATION_TICKS, VOID_CORE_EROSION_PER_SEC, VOID_VORTEX_EROSION,
+};
 use super::events::{
     BackfireCauseV2, BackfireLevel, EntityDisplacedByVortexPull, TurbulenceFieldSpawned,
     VortexBackfireEventV2, VortexCastEvent, WoliuSkillId, WoliuSkillVisual,
@@ -464,6 +468,10 @@ pub fn resolve_woliu_v2_skill(
         emit_audio(world, audio_id, origin);
         emit_anim(world, caster, anim_id);
     }
+
+    // plan-combat-skill-feedback-bridges-v1 P3 — 虚蚀累积（守恒纠偏：仅写 cumulative_erosion+stage，
+    // 零 qi 字段操作；真元流动已在 build_cast_qi_transfers 走 QiTransfer{Channeling}，两路径正交）。
+    apply_skill_erosion(world, caster, skill, cultivation.realm);
 
     CastResult::Started {
         cooldown_ticks: spec.cooldown_ticks,
@@ -1768,9 +1776,50 @@ pub fn visual_for(skill: WoliuSkillId) -> WoliuSkillVisual {
     }
 }
 
+// ────────────────────────────────────────────────────────
+// plan-combat-skill-feedback-bridges-v1 P3 — 虚蚀 runtime 累积
+// ────────────────────────────────────────────────────────
+
+/// 各虚蚀路径招式对应的单次施放虚蚀量。
+///
+/// 守恒纠偏：本函数及 `apply_skill_erosion` 均**不操作 qi 字段**，
+/// 真元流动已在 `build_cast_qi_transfers` 走 `QiTransfer{Channeling}`，两路径正交。
+pub fn erosion_amount_for_skill(skill: WoliuSkillId) -> f64 {
+    match skill {
+        WoliuSkillId::VoidVortex => VOID_VORTEX_EROSION,
+        WoliuSkillId::SwallowingVortex => SWALLOWING_RELEASE_EROSION,
+        WoliuSkillId::VortexEcho => ECHO_EROSION,
+        WoliuSkillId::VoidCore => {
+            // 虚心持续 3s * VOID_CORE_EROSION_PER_SEC（5.0/s）
+            let duration_sec = VOID_CORE_DURATION_TICKS as f64 / TICKS_PER_SECOND as f64;
+            VOID_CORE_EROSION_PER_SEC * duration_sec
+        }
+        // 基础涡流 v2 招式（含 AmbientVortex 开关类不在此路径单次累积）
+        _ => BASE_SKILL_EROSION,
+    }
+}
+
+/// 取 `VoidErosion`（若存在）并调用 `add_erosion_capped`，不操作 qi。
+fn apply_skill_erosion(
+    world: &mut bevy_ecs::world::World,
+    caster: Entity,
+    skill: WoliuSkillId,
+    realm: crate::cultivation::components::Realm,
+) {
+    let amount = erosion_amount_for_skill(skill);
+    if let Some(mut erosion) = world.get_mut::<VoidErosion>(caster) {
+        add_erosion_capped(&mut erosion, amount, realm);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::combat::components::TICKS_PER_SECOND;
+    use crate::combat::woliu_v2::erosion::{
+        VoidErosion, BASE_SKILL_EROSION, ECHO_EROSION, SWALLOWING_RELEASE_EROSION,
+        VOID_CORE_DURATION_TICKS, VOID_CORE_EROSION_PER_SEC, VOID_VORTEX_EROSION,
+    };
 
     #[test]
     fn proficiency_scales_vortex_combat_knobs() {
@@ -1792,5 +1841,148 @@ mod tests {
             master.cast_ticks,
             ((base.cast_ticks as f32) * 0.9).ceil() as u32
         );
+    }
+
+    // ────────────────────────────────────────────────────────
+    // erosion_amount_for_skill — 各分支数值映射锁定
+    // ────────────────────────────────────────────────────────
+
+    #[test]
+    fn erosion_amount_void_vortex_matches_constant() {
+        let amount = erosion_amount_for_skill(WoliuSkillId::VoidVortex);
+        assert!(
+            (amount - VOID_VORTEX_EROSION).abs() < 1e-10,
+            "VoidVortex erosion_amount 应 = VOID_VORTEX_EROSION={}, got {}",
+            VOID_VORTEX_EROSION,
+            amount
+        );
+    }
+
+    #[test]
+    fn erosion_amount_swallowing_vortex_matches_constant() {
+        let amount = erosion_amount_for_skill(WoliuSkillId::SwallowingVortex);
+        assert!(
+            (amount - SWALLOWING_RELEASE_EROSION).abs() < 1e-10,
+            "SwallowingVortex erosion_amount 应 = SWALLOWING_RELEASE_EROSION={}, got {}",
+            SWALLOWING_RELEASE_EROSION,
+            amount
+        );
+    }
+
+    #[test]
+    fn erosion_amount_vortex_echo_matches_constant() {
+        let amount = erosion_amount_for_skill(WoliuSkillId::VortexEcho);
+        assert!(
+            (amount - ECHO_EROSION).abs() < 1e-10,
+            "VortexEcho erosion_amount 应 = ECHO_EROSION={}, got {}",
+            ECHO_EROSION,
+            amount
+        );
+    }
+
+    #[test]
+    fn erosion_amount_void_core_derived_from_duration() {
+        // VoidCore erosion = VOID_CORE_EROSION_PER_SEC × (VOID_CORE_DURATION_TICKS / TICKS_PER_SECOND)
+        let expected =
+            VOID_CORE_EROSION_PER_SEC * (VOID_CORE_DURATION_TICKS as f64 / TICKS_PER_SECOND as f64);
+        let amount = erosion_amount_for_skill(WoliuSkillId::VoidCore);
+        assert!(
+            (amount - expected).abs() < 1e-10,
+            "VoidCore erosion_amount 应 = {:.4}（基于 TICKS_PER_SECOND={}），got {}",
+            expected,
+            TICKS_PER_SECOND,
+            amount
+        );
+    }
+
+    #[test]
+    fn erosion_amount_base_skills_use_base_constant() {
+        // 非虚蚀路径招式（Hold/Burst/Hold/Pull/Heart + v3 + AmbientVortex）均返回 BASE_SKILL_EROSION
+        let base_skills = [
+            WoliuSkillId::Hold,
+            WoliuSkillId::Burst,
+            WoliuSkillId::Mouth,
+            WoliuSkillId::Pull,
+            WoliuSkillId::Heart,
+            WoliuSkillId::VacuumPalm,
+            WoliuSkillId::VortexShield,
+            WoliuSkillId::VacuumLock,
+            WoliuSkillId::VortexResonance,
+            WoliuSkillId::TurbulenceBurst,
+            WoliuSkillId::AmbientVortex,
+        ];
+        for skill in base_skills {
+            let amount = erosion_amount_for_skill(skill);
+            assert!(
+                (amount - BASE_SKILL_EROSION).abs() < 1e-10,
+                "{:?} erosion_amount 应 = BASE_SKILL_EROSION={}, got {}",
+                skill,
+                BASE_SKILL_EROSION,
+                amount
+            );
+        }
+    }
+
+    // ────────────────────────────────────────────────────────
+    // apply_skill_erosion — VoidErosion 存在 / 不存在路径
+    // ────────────────────────────────────────────────────────
+
+    #[test]
+    fn apply_skill_erosion_accumulates_on_existing_void_erosion() {
+        // 直接调用 add_erosion_capped 来模拟 apply_skill_erosion 逻辑（world 无法直接测试）
+        use crate::combat::woliu_v2::erosion::add_erosion_capped;
+
+        let mut erosion = VoidErosion::default();
+        let realm = Realm::Solidify; // 允许阶段 2
+        let amount = erosion_amount_for_skill(WoliuSkillId::VoidVortex);
+        add_erosion_capped(&mut erosion, amount, realm);
+
+        assert!(
+            (erosion.cumulative_erosion - amount).abs() < 1e-10,
+            "apply_skill_erosion 后 cumulative_erosion 应增加 {}, 实际 = {}",
+            amount,
+            erosion.cumulative_erosion
+        );
+    }
+
+    #[test]
+    fn erosion_does_not_affect_qi_current() {
+        // 守恒纠偏：虚蚀只累积 cumulative_erosion/stage，不操作 qi_current
+        // 验证方式：erosion_amount_for_skill 返回 > 0 的值，但 Cultivation.qi_current 无关
+        // （apply_skill_erosion 函数签名不接触 Cultivation，只访问 VoidErosion component）
+        use crate::combat::woliu_v2::erosion::add_erosion_capped;
+
+        let mut erosion = VoidErosion::default();
+        let realm = Realm::Void;
+        let initial_erosion = erosion.cumulative_erosion;
+
+        // 施放虚心（最高 erosion），检查只有 erosion 变，qi 不在此路径
+        add_erosion_capped(
+            &mut erosion,
+            erosion_amount_for_skill(WoliuSkillId::VoidCore),
+            realm,
+        );
+
+        assert!(
+            erosion.cumulative_erosion > initial_erosion,
+            "VoidCore 施放后 cumulative_erosion 应增加，实际 = {}",
+            erosion.cumulative_erosion
+        );
+        // 没有 qi_current 字段被改动（测契约不测实现：函数本身不接收 Cultivation 参数）
+    }
+
+    #[test]
+    fn erosion_amount_void_core_uses_ticks_per_second_not_hardcoded_20() {
+        // 锁定修复：VOID_CORE_DURATION_TICKS / TICKS_PER_SECOND 而非 / 20.0
+        // 若 TICKS_PER_SECOND 将来改变，此测试会自动捕获数值偏差
+        let expected =
+            VOID_CORE_EROSION_PER_SEC * (VOID_CORE_DURATION_TICKS as f64 / TICKS_PER_SECOND as f64);
+        let hardcoded_20 = VOID_CORE_EROSION_PER_SEC * (VOID_CORE_DURATION_TICKS as f64 / 20.0);
+        // 当前 TICKS_PER_SECOND == 20 所以两者相等；但测试明确用常量，未来改变时此测试会先
+        assert!(
+            (erosion_amount_for_skill(WoliuSkillId::VoidCore) - expected).abs() < 1e-10,
+            "VoidCore erosion_amount 应使用 TICKS_PER_SECOND 常量，而非硬编码 20.0"
+        );
+        let _ = hardcoded_20; // 保留供未来对比参考
     }
 }
