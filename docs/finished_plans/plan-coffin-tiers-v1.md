@@ -1,4 +1,4 @@
-# Bong · plan-coffin-tiers-v1（Active）
+# Bong · plan-coffin-tiers-v1（已完成 2026-06-04，全 5 PR P0-P4 merged，见 ## Finish Evidence）
 
 **延寿棺建模接入 + 灵材四档**——把延寿棺从双 `BlockState::CHEST` 占位换成 GeckoLib 建模实体（照搬物资棺渲染链），并落地正典 `plan-coffin-v1 §遗留` 的灵材分档：凡木 ×0.9 / 寒玉 ×0.7 / 玄石 ×0.5 / 青铜 ×0.3。源模型已就绪（`local_models/{Mundane,Jade,Stone,Bronze}Coffin.bbmodel`，**以 bbmodel 为基准**）。
 
@@ -8,7 +8,7 @@
 | P1 | 资产管线：4 档 bbmodel → `geo.json` + 贴图 PNG + `animation.json`（**含 UV/贴图收尾，见 §视觉资产**） | ✅ | 2026-06-04 |
 | P2 | Server 建模实体：放置时 spawn `BongVisual` marker（按 grade）替代双 CHEST；`CoffinEntity` 持有实体 id | ✅ | 2026-06-04 |
 | P3 | Client 渲染 + 交互迁移：`BongEntityModelKind` ×4 + 渲染器壳 + bootstrap；**marker-entity 交互三件套 C2S intent 接线**（进棺→`CoffinEnterRequest`、攻击破坏→`CoffinBreakRequest`、G菜单→`CoffinMenuReclaimRequest`，server handler+event 已在 P2 就位，P3 只换 emit 源）；退役 CHEST 右键 mixin；HUD 档位徽章 | ✅ | 2026-06-04 |
-| P4 | 三新档 item/recipe（灵材配方）+ 端到端集成 + dev 命令 + 平衡 | ⬜ | |
+| P4 | 三新档 item/recipe（灵材配方）+ 端到端集成 + dev 命令 + 平衡 | ✅ | 2026-06-04 |
 
 **世界观锚点**：`worldview.md §十二 死亡重生与一生记录`（寿元上限 / 续命代价）+ `§十四 玩家循环`（灵龛挂机安全设施）。灵材等级越高、封存寿元越强 = 续命代价的被动梯度。
 
