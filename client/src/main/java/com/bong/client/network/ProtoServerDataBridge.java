@@ -164,6 +164,8 @@ public final class ProtoServerDataBridge {
         m.put(Envelope.ServerDataEnvelope.PayloadCase.DUGU_V2_SELF_CURE, "dugu_v2_self_cure");
         m.put(Envelope.ServerDataEnvelope.PayloadCase.DUGU_V2_SHROUD_ACTIVE, "dugu_v2_shroud_active");
         m.put(Envelope.ServerDataEnvelope.PayloadCase.PERMANENT_QI_MAX_DECAY_APPLIED, "permanent_qi_max_decay_applied");
+        // plan-combat-skill-feedback-bridges-v1 P6：人剑共生 HUD S2C
+        m.put(Envelope.ServerDataEnvelope.PayloadCase.SWORD_BOND_HUD_STATE, "sword_bond_hud_state");
         CASE_TO_TYPE = m;
     }
 
@@ -423,6 +425,8 @@ public final class ProtoServerDataBridge {
             case DUGU_V2_SELF_CURE: return envelope.getDuguV2SelfCure();
             case DUGU_V2_SHROUD_ACTIVE: return envelope.getDuguV2ShroudActive();
             case PERMANENT_QI_MAX_DECAY_APPLIED: return envelope.getPermanentQiMaxDecayApplied();
+            // plan-combat-skill-feedback-bridges-v1 P6：人剑共生 HUD S2C
+            case SWORD_BOND_HUD_STATE: return envelope.getSwordBondHudState();
             default: return null;
         }
     }

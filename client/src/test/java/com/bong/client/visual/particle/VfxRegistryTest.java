@@ -225,6 +225,10 @@ public class VfxRegistryTest {
             "bootstrap should register false_skin_shed_burst");
         assertTrue(VfxRegistry.instance().contains(TuikeFalseSkinParticlePlayer.ANCIENT_GLOW),
             "bootstrap should register ancient_skin_glow");
+        assertTrue(VfxRegistry.instance().contains(TuikeFalseSkinParticlePlayer.TUIKE_ASH_BURST),
+            "bootstrap should register bong:tuike_ash_burst (plan-combat-skill-feedback-bridges-v1 P6 "
+                + "灰烬迸发粒子 — server tuike_ash_emit.rs emits this event_id; missing registration "
+                + "causes VfxParticleBridge bridgeMiss, player sees no ash-burst VFX on skin decay)");
         assertTrue(VfxRegistry.instance().contains(YidaoPeacePulsePlayer.MERIDIAN_REPAIR),
             "bootstrap should register yidao_meridian_repair");
         assertTrue(VfxRegistry.instance().contains(YidaoPeacePulsePlayer.CONTAM_PURGE),

@@ -176,6 +176,8 @@ pub fn payload_type_label(payload_type: ServerDataType) -> &'static str {
         ServerDataType::DuguV2SelfCure => "dugu_v2_self_cure",
         ServerDataType::DuguV2ShroudActive => "dugu_v2_shroud_active",
         ServerDataType::PermanentQiMaxDecayApplied => "permanent_qi_max_decay_applied",
+        // ─── plan-combat-skill-feedback-bridges-v1 P6 ─────────────
+        ServerDataType::SwordBondHudState => "sword_bond_hud_state",
     }
 }
 

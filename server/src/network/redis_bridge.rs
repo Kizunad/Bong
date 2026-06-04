@@ -47,7 +47,7 @@ use crate::schema::channels::{
     CH_SPIRIT_EYE_USED_FOR_BREAKTHROUGH, CH_SPIRIT_TREASURE_DIALOGUE,
     CH_SPIRIT_TREASURE_DIALOGUE_REQUEST, CH_STYLE_BALANCE_TELEMETRY, CH_TRIBULATION,
     CH_TRIBULATION_COLLAPSE, CH_TRIBULATION_LOCK, CH_TRIBULATION_OMEN, CH_TRIBULATION_SETTLE,
-    CH_TRIBULATION_WAVE, CH_TSY_EVENT, CH_TUIKE_SHED, CH_TUIKE_V2_SKILL_EVENT,
+    CH_TRIBULATION_WAVE, CH_TSY_EVENT, CH_TUIKE_ASH_DECAY, CH_TUIKE_SHED, CH_TUIKE_V2_SKILL_EVENT,
     CH_VOID_ACTION_BARRIER, CH_VOID_ACTION_EXPLODE_ZONE, CH_VOID_ACTION_LEGACY_ASSIGN,
     CH_VOID_ACTION_SUPPRESS_TSY, CH_VOID_EROSION_EVENT, CH_WANTED_PLAYER, CH_WEATHER_EVENT_UPDATE,
     CH_WOLIU_BACKFIRE, CH_WOLIU_PROJECTILE_DRAINED, CH_WOLIU_V2_BACKFIRE, CH_WOLIU_V2_CAST,
@@ -106,7 +106,7 @@ use crate::schema::tribulation::{TribulationEventV1, TribulationKindV1, Tribulat
 use crate::schema::tsy::{TsyEnterEventV1, TsyExitEventV1};
 use crate::schema::tsy_hostile::{TsyNpcSpawnedV1, TsySentinelPhaseChangedV1};
 use crate::schema::tuike::ShedEventV1;
-use crate::schema::tuike_v2::TuikeSkillEventV1;
+use crate::schema::tuike_v2::{TuikeAshDecayV1, TuikeSkillEventV1};
 use crate::schema::void_actions::VoidActionBroadcastV1;
 use crate::schema::woliu::{ProjectileQiDrainedEventV1, VortexBackfireEventV1};
 use crate::schema::woliu_erosion::VoidErosionEventV1;
@@ -246,6 +246,8 @@ pub enum RedisOutbound {
     AnqiContainerSwap(ContainerSwapEventV1),
     TuikeShed(ShedEventV1),
     TuikeV2SkillEvent(TuikeSkillEventV1),
+    /// plan-combat-skill-feedback-bridges-v1 P6 — 蜕壳灰烬入包叙事事件（bong:tuike_v2/ash_decay）。
+    TuikeAshDecay(TuikeAshDecayV1),
     YidaoEvent(YidaoEventV1),
     StyleBalanceTelemetry(StyleBalanceTelemetryEventV1),
     WantedPlayer(WantedPlayerEventV1),
@@ -1463,6 +1465,16 @@ fn prepare_outbound_command(message: RedisOutbound) -> Result<RedisIoCommand, Va
             })?;
             Ok(RedisIoCommand::Publish {
                 channel: CH_TUIKE_V2_SKILL_EVENT,
+                payload,
+            })
+        }
+        // plan-combat-skill-feedback-bridges-v1 P6 — 蜕壳灰烬入包叙事事件
+        RedisOutbound::TuikeAshDecay(evt) => {
+            let payload = serde_json::to_string(&evt).map_err(|error| {
+                ValidationError::new(format!("failed to serialize TuikeAshDecayV1: {error}"))
+            })?;
+            Ok(RedisIoCommand::Publish {
+                channel: CH_TUIKE_ASH_DECAY,
                 payload,
             })
         }

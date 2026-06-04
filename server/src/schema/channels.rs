@@ -156,6 +156,8 @@ pub const CH_ANQI_CONTAINER_SWAP: &str = "bong:anqi/container_swap";
 pub const CH_TUIKE_SHED: &str = "bong:tuike/shed";
 pub const CH_TUIKE_FALSE_SKIN_STATE: &str = "bong:tuike/false_skin_state";
 pub const CH_TUIKE_V2_SKILL_EVENT: &str = "bong:tuike_v2/skill_event";
+/// plan-combat-skill-feedback-bridges-v1 P6 — 蜕壳灰烬入包事件（server → agent）。
+pub const CH_TUIKE_ASH_DECAY: &str = "bong:tuike_v2/ash_decay";
 pub const CH_YIDAO_EVENT: &str = "bong:yidao/event";
 
 // 伪灵脉（plan-terrain-pseudo-vein-v1 §6.1）
@@ -326,6 +328,7 @@ mod tests {
         assert_eq!(CH_TUIKE_SHED, "bong:tuike/shed");
         assert_eq!(CH_TUIKE_FALSE_SKIN_STATE, "bong:tuike/false_skin_state");
         assert_eq!(CH_TUIKE_V2_SKILL_EVENT, "bong:tuike_v2/skill_event");
+        assert_eq!(CH_TUIKE_ASH_DECAY, "bong:tuike_v2/ash_decay");
         assert_eq!(CH_YIDAO_EVENT, "bong:yidao/event");
         assert_eq!(CH_PSEUDO_VEIN_ACTIVE, "bong:pseudo_vein:active");
         assert_eq!(CH_PSEUDO_VEIN_DISSIPATE, "bong:pseudo_vein:dissipate");

@@ -248,6 +248,9 @@ public final class ServerDataRouter {
         handlers.put("dugu_v2_self_cure", duguV2Handler);
         handlers.put("dugu_v2_shroud_active", duguV2Handler);
         handlers.put("permanent_qi_max_decay_applied", duguV2Handler);
+        // plan-combat-skill-feedback-bridges-v1 P6：人剑共生 HUD（SwordBondHudState → SwordBondHudStateStore → SwordPathHudPlanner）
+        handlers.put("sword_bond_hud_state",
+            new com.bong.client.combat.handler.SwordBondHudStateHandler());
         return new ServerDataRouter(handlers);
     }
 

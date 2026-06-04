@@ -1373,6 +1373,17 @@ impl From<&ServerDataPayloadV1> for Payload {
                     tick: s.tick,
                 })
             }
+            // plan-combat-skill-feedback-bridges-v1 P6：剑道人剑共生 HUD（守恒红线：stored_qi 只读）
+            ServerDataPayloadV1::SwordBondHudState(s) => {
+                Payload::SwordBondHudState(bong::SwordBondHud {
+                    active: s.active,
+                    grade_index: s.grade_index as i32,
+                    grade_name: s.grade_name.clone(),
+                    stored_qi_ratio: s.stored_qi_ratio,
+                    bond_strength: s.bond_strength,
+                    heaven_gate_ready: s.heaven_gate_ready,
+                })
+            }
         }
     }
 }

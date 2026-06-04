@@ -1,0 +1,32 @@
+[
+  {
+    "owner_id": "offline:XiaoMing",
+    "output_item_id": "bong:false_skin_ash",
+    "tier": "mid",
+    "tick": 1000
+  },
+  {
+    "owner_id": "offline:Azure",
+    "output_item_id": "bong:false_skin_ash",
+    "tier": "fan",
+    "tick": 50
+  },
+  {
+    "owner_id": "offline:Azure",
+    "output_item_id": "bong:false_skin_ash",
+    "tier": "light",
+    "tick": 200
+  },
+  {
+    "owner_id": "offline:Azure",
+    "output_item_id": "bong:false_skin_ash",
+    "tier": "heavy",
+    "tick": 3000
+  },
+  {
+    "owner_id": "offline:Azure",
+    "output_item_id": "bong:false_skin_ancient_relic_shard",
+    "tier": "ancient",
+    "tick": 9999
+  }
+]
