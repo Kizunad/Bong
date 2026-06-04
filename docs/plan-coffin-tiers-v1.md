@@ -6,8 +6,8 @@
 |------|------|------|----------|
 | P0 | 分档底盘：`CoffinGrade` enum + 倍率表 + item_id ×4 + schema tier 字段（双端 serde） | ✅ | 2026-06-04 |
 | P1 | 资产管线：4 档 bbmodel → `geo.json` + 贴图 PNG + `animation.json`（**含 UV/贴图收尾，见 §视觉资产**） | ✅ | 2026-06-04 |
-| P2 | Server 建模实体：放置时 spawn `BongVisual` marker（按 grade）替代双 CHEST；`CoffinEntity` 持有实体 id | ⬜ | |
-| P3 | Client 渲染 + 交互迁移：`BongEntityModelKind` ×4 + 渲染器壳 + bootstrap；进棺交互从右键 CHEST 迁到 marker-entity intent；HUD 档位徽章 | ⬜ | |
+| P2 | Server 建模实体：放置时 spawn `BongVisual` marker（按 grade）替代双 CHEST；`CoffinEntity` 持有实体 id | ✅ | 2026-06-04 |
+| P3 | Client 渲染 + 交互迁移：`BongEntityModelKind` ×4 + 渲染器壳 + bootstrap；**marker-entity 交互三件套 C2S intent 接线**（进棺→`CoffinEnterRequest`、攻击破坏→`CoffinBreakRequest`、G菜单→`CoffinMenuReclaimRequest`，server handler+event 已在 P2 就位，P3 只换 emit 源）；退役 CHEST 右键 mixin；HUD 档位徽章 | ⬜ | |
 | P4 | 三新档 item/recipe（灵材配方）+ 端到端集成 + dev 命令 + 平衡 | ⬜ | |
 
 **世界观锚点**：`worldview.md §十二 死亡重生与一生记录`（寿元上限 / 续命代价）+ `§十四 玩家循环`（灵龛挂机安全设施）。灵材等级越高、封存寿元越强 = 续命代价的被动梯度。
@@ -103,8 +103,8 @@
 - `client/.../entity/BongEntityRenderBootstrap.java`（`:18-34` BINDINGS）：加 4 行绑定
 - **交互模型**（用户拍板，参 memory `feedback_no_vanilla_hacks`：marker entity 交互走 C2S IntentHandler）：
   - **G 键 → 棺材菜单**（仿 `client/.../cultivation/voidaction/VoidActionScreen` 动作选择屏）：选项 **[入眠]**（= `coffin_enter` 延寿）/ **[回收]**（返还材料 + despawn）/ 预留扩展位。G → C2S `CoffinMenuRequest` → server 发菜单 payload → client 开 `CoffinMenuScreen`；各选项走 C2S intent（`CoffinMenuActionRequest`）
-  - **破坏**：左键攻击棺（**体验同破坏方块**）→ 随机返还材料（§8.1 #3）。放置仍 item-use；出棺仍 server 读 sneak
-  - 退役 `MixinClientPlayerInteractionManagerAlchemy` 的右键-CHEST-进棺路径（双 CHEST 已废）
+  - **破坏**：左键攻击棺 marker 实体（**体验同破坏方块**）→ client 发 C2S intent → server emit **`CoffinBreakRequest`**（P2 已就位的 server handler `handle_coffin_breaks` 消费它）→ 随机返还材料（§8.1 #3）。⚠️ **棺已是 marker 实体无方块，不能走 `DiggingEvent`/挖方块**——必须走实体攻击 intent（P2 已把 break handler 从 DiggingEvent 改为 `CoffinBreakRequest`，P3 只补 client 攻击→intent 这一段）。放置仍 item-use；出棺仍 server 读 sneak
+  - 退役 `MixinClientPlayerInteractionManagerAlchemy` 的右键-CHEST-进棺路径（双 CHEST 已废）；进棺改为 client 与 marker 实体交互 → 发 `CoffinEnterRequest`（server handler 已就位）。三件套 C2S intent（`CoffinEnterRequest`/`CoffinBreakRequest`/`CoffinMenuReclaimRequest`）server 端 event+handler 均 P2 落地，P3 只换 client emit 源
   - `CoffinStateHandler` / `CoffinStateStore`：读新 `coffin_grade`
   - `CoffinHudPlanner`：HUD「卧棺·寿火徐燃」面板加档位徽章 + 对应倍率文字
 - **测试**：`CoffinStateHandlerTest` 加 grade 解析；G→菜单→[入眠]/[回收] e2e；`BongEntityModelKind` raw_id 1:1 对齐 server（pin 测试）；HUD planner 4 档徽章
