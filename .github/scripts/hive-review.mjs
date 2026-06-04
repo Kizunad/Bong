@@ -27,6 +27,8 @@ const KEYS = [
   .filter(Boolean)
   .filter((k, i, a) => a.indexOf(k) === i);
 let keyCursor = 0;
+// 累计 token 消耗(按模型),从每次响应的 usage 字段取
+const usageByModel = {};
 // 多模型混合 hive:成员在这几个模型间轮转,同台 debate(HIVE_MODEL 单数仍兼容)。
 const MODELS = (process.env.HIVE_MODELS || process.env.HIVE_MODEL || "deepseek-v4-flash,sensenova-6.7-flash-lite")
   .split(",")
@@ -142,6 +144,14 @@ async function chat(content, { label = "", model = MODELS[0], retries = Math.max
         throw new Error(`HTTP ${res.status} ${body}`);
       }
       const data = await res.json();
+      const u = data?.usage;
+      if (u) {
+        const m = usageByModel[model] || (usageByModel[model] = { prompt: 0, completion: 0, total: 0, calls: 0 });
+        m.prompt += u.prompt_tokens || 0;
+        m.completion += u.completion_tokens || 0;
+        m.total += u.total_tokens || (u.prompt_tokens || 0) + (u.completion_tokens || 0);
+        m.calls += 1;
+      }
       const text = data?.choices?.[0]?.message?.content;
       if (!text || !text.trim()) throw new Error("空响应");
       return text;
@@ -440,7 +450,24 @@ const header =
   `> 本审核由多模型自动 debate 生成,**不可 100% 信赖**——快模型可能幻觉/误报/漏报。\n` +
   `> 请保持批判性思维,务必自行核对 file:line 与上下文,再决定是否采纳。\n\n`;
 
-const body = header + finalReview + debateTable;
+// token 消耗页脚(末尾)——从各响应 usage 累加
+const grand = Object.values(usageByModel).reduce(
+  (a, m) => ({ prompt: a.prompt + m.prompt, completion: a.completion + m.completion, total: a.total + m.total, calls: a.calls + m.calls }),
+  { prompt: 0, completion: 0, total: 0, calls: 0 },
+);
+const num = (n) => n.toLocaleString("en-US");
+const perModel = Object.entries(usageByModel)
+  .sort((a, b) => b[1].total - a[1].total)
+  .map(([m, u]) => `\`${m}\` ${num(u.total)}(${u.calls} 次)`)
+  .join(" · ");
+const tokenFooter =
+  `\n\n---\n` +
+  `📊 **本次 token 消耗**:总 **${num(grand.total)}**` +
+  `(prompt ${num(grand.prompt)} + completion ${num(grand.completion)})· ${grand.calls} 次模型调用` +
+  (perModel ? `\n> ${perModel}` : "") +
+  `\n`;
+
+const body = header + finalReview + debateTable + tokenFooter;
 
 writeFileSync("/tmp/hive-review.md", body);
 if (process.env.HIVE_DRY_RUN) {
