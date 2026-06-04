@@ -4179,4 +4179,28 @@ mod tests {
             },
         );
     }
+
+    // ─── plan-coffin-tiers-v1 P3：延寿棺 C2S proto roundtrip ────────────────
+
+    #[test]
+    fn c2s_coffin_break_roundtrip() {
+        c2s_encode_decode_roundtrip(super::super::client_request::ClientRequestV1::CoffinBreak {
+            v: 1,
+            x: 10,
+            y: 64,
+            z: -5,
+        });
+    }
+
+    #[test]
+    fn c2s_coffin_menu_reclaim_roundtrip() {
+        c2s_encode_decode_roundtrip(
+            super::super::client_request::ClientRequestV1::CoffinMenuReclaim {
+                v: 1,
+                x: 3,
+                y: 65,
+                z: 7,
+            },
+        );
+    }
 }

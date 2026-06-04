@@ -17,8 +17,9 @@ import java.util.Optional;
  *
  * <p>玩家准星瞄准四档延寿棺 marker（COFFIN_MUNDANE/JADE/STONE/BRONZE）时：
  * <ul>
- *   <li><b>右键 / G 键</b> → {@link #dispatch} 打开 {@link CoffinMenuScreen}，
- *       玩家在菜单内选 [入眠]（→ {@code coffin_enter}）或 [回收]（→ {@code coffin_menu_reclaim}）。</li>
+ *   <li><b>G 键</b> → {@link #dispatch} 打开 {@link CoffinMenuScreen}，
+ *       玩家在菜单内选 [入眠]（→ {@code coffin_enter}）或 [回收]（→ {@code coffin_menu_reclaim}）。
+ *       右键（interactEntity）仅更新 TargetInfoStateStore，不触发菜单。</li>
  * </ul>
  *
  * <p><b>左键攻击（break）</b>：通过
