@@ -87,10 +87,14 @@ export class VoidErosionNarrationRuntime {
     published: 0,
     rejectedContract: 0,
     fallbackUsed: 0,
+    publishFailed: 0,
   };
 
   private readonly onMessage = (channel: string, message: string): void => {
-    void this.handlePayload(channel, message);
+    this.handlePayload(channel, message).catch((err: unknown) => {
+      this.stats.publishFailed += 1;
+      this.logger.warn("[void-erosion-runtime] unhandled error in handlePayload:", err);
+    });
   };
 
   constructor(config: VoidErosionRuntimeConfig) {
@@ -153,7 +157,12 @@ export class VoidErosionNarrationRuntime {
       this.stats.fallbackUsed += 1;
     }
 
-    await this.pub.publish(AGENT_NARRATE, JSON.stringify({ v: 1, narrations: [narration] }));
-    this.stats.published += 1;
+    try {
+      await this.pub.publish(AGENT_NARRATE, JSON.stringify({ v: 1, narrations: [narration] }));
+      this.stats.published += 1;
+    } catch (err: unknown) {
+      this.stats.publishFailed += 1;
+      this.logger.warn("[void-erosion-runtime] publish failed:", err);
+    }
   }
 }

@@ -357,4 +357,63 @@ describe("VoidErosionNarrationRuntime", () => {
     expect(pub.published).toHaveLength(0);
     expect(runtime.stats.received).toBe(0);
   });
+
+  // ── major3 修复验证 ──────────────────────────────────────────────────────────
+
+  it("major3: publish 抛错 → runtime 不崩溃 + publishFailed 递增", async () => {
+    // 原始 bug: onMessage 用 void this.handlePayload(...)，publish 抛错变 unhandled rejection。
+    // 修复后: onMessage 挂 .catch()，publish 包 try/catch，publishFailed stat 递增。
+    const sub = new FakeRedis();
+    // pub.publish 总是抛错
+    const brokenPub: VoidErosionRuntimeClient = {
+      async subscribe() {},
+      on() {},
+      off() {},
+      async unsubscribe() {},
+      disconnect() {},
+      async publish(): Promise<number> {
+        throw new Error("Redis connection refused");
+      },
+    };
+    const runtime = new VoidErosionNarrationRuntime({
+      llm: createMockClient(),
+      model: "mock",
+      sub,
+      pub: brokenPub,
+      logger: { info: () => {}, warn: () => {} },
+    });
+    await runtime.connect();
+
+    // 发送有效 payload — handlePayload 会走到 publish 并抛错
+    sub.emit(CHANNELS.VOID_EROSION_EVENT, sampleAdvance("none", "low_pressure"));
+
+    // 等待异步链完成（LLM → publish → catch）
+    await new Promise((r) => setTimeout(r, 100));
+
+    // 没有崩溃 (test 到这里就证明 no unhandled rejection)
+    expect(runtime.stats.publishFailed).toBe(1);
+    // received 递增（payload 验证通过）
+    expect(runtime.stats.received).toBe(1);
+    // published 未递增（因为 publish 抛错）
+    expect(runtime.stats.published).toBe(0);
+  });
+
+  it("major3: publishFailed stat 在 publish 成功时不递增", async () => {
+    // 基线测试：正常 publish 不影响 publishFailed
+    const sub = new FakeRedis();
+    const pub = new FakeRedis();
+    const runtime = new VoidErosionNarrationRuntime({
+      llm: createMockClient(),
+      model: "mock",
+      sub,
+      pub,
+    });
+    await runtime.connect();
+
+    sub.emit(CHANNELS.VOID_EROSION_EVENT, sampleAdvance("none", "low_pressure"));
+    await waitForPublish(pub, 1);
+
+    expect(runtime.stats.publishFailed).toBe(0);
+    expect(runtime.stats.published).toBe(1);
+  });
 });
