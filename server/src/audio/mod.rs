@@ -176,12 +176,13 @@ mod tests {
             SoundRecipeRegistry::load_default().expect("default audio recipes should load");
         assert_eq!(
             registry.len(),
-            212,
+            213,
             "audio registry should exclude removed slide and double-jump movement recipes \
              plus include 7 supply_coffin recipes (break + open common/rare/precious + emerge) \
              plus 1 ambient_dan_zong recipe \
              plus 1 ambient_wangyintai recipe \
-             plus 1 offscreen_relic_reveal recipe (plan-offscreen-war-v1 P3)"
+             plus 1 offscreen_relic_reveal recipe (plan-offscreen-war-v1 P3) \
+             plus 1 coffin_reclaim recipe (plan-coffin-tiers-v1 P2 对峙修复)"
         );
         assert!(
             registry.get("offscreen_relic_reveal").is_some(),
@@ -191,6 +192,10 @@ mod tests {
         assert!(registry.get("coffin_exit").is_some());
         assert!(registry.get("coffin_ambient").is_some());
         assert!(registry.get("coffin_break").is_some());
+        assert!(
+            registry.get("coffin_reclaim").is_some(),
+            "plan-coffin-tiers-v1 P2 对峙修复：reclaim 专属音效 recipe 必须加载"
+        );
         // plan-supply-coffin-v1 P2.2 audio
         assert!(registry.get("supply_coffin_break_common").is_some());
         assert!(registry.get("supply_coffin_break_rare").is_some());

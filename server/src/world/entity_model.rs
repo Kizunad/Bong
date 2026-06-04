@@ -8,6 +8,8 @@
 //!
 //! `146..=148`: plan-supply-coffin-v1 — 巨剑沧海 物资棺 (Common/Rare/Precious).
 //! `149..=159`: plan-entity-model-v1 / tsy-container entries.
+//! `161..=164`: plan-coffin-tiers-v1 — 延寿棺四档 (Mundane/Jade/Stone/Bronze)。
+//!              `160` 已被 boss_spawn / visual 双重占用（见 plan §8.1 #1），故从 161 起。
 
 use std::collections::{HashMap, HashSet};
 
@@ -47,6 +49,14 @@ pub const BONE_SKELETON_ENTITY_KIND: EntityKind = EntityKind::new(157);
 pub const STORAGE_POUCH_ENTITY_KIND: EntityKind = EntityKind::new(158);
 pub const STONE_CASKET_ENTITY_KIND: EntityKind = EntityKind::new(159);
 
+// plan-coffin-tiers-v1 P2 — 延寿棺四档建模实体。客户端 BongEntityModelKind 同步注册
+// （raw_id 1:1 对齐，P3 落地）。`160` 已被 boss_spawn/visual 双重占用，故从 161 起
+// （见 plan §8.1 #1）。
+pub const COFFIN_MUNDANE_ENTITY_KIND: EntityKind = EntityKind::new(161);
+pub const COFFIN_JADE_ENTITY_KIND: EntityKind = EntityKind::new(162);
+pub const COFFIN_STONE_ENTITY_KIND: EntityKind = EntityKind::new(163);
+pub const COFFIN_BRONZE_ENTITY_KIND: EntityKind = EntityKind::new(164);
+
 const BONG_VISUAL_STATE_INDEX: u8 = 8;
 const TRACKED_DATA_TYPE_INTEGER: u8 = 1;
 
@@ -69,6 +79,14 @@ pub enum BongVisualKind {
     CoffinCommon,
     CoffinRare,
     CoffinPrecious,
+    // plan-coffin-tiers-v1 P2 — 延寿棺四档建模实体（替换旧双 CHEST 占位）。
+    // spawn / despawn 由 coffin::handle_coffin_place_requests / breaks / menu_reclaim
+    // 命令式驱动（CoffinRegistry 是 source-of-truth，非 ECS 组件同步）；
+    // 视觉 state 暂用 0 (intact)，掀盖/在棺 state 待 P3 接入。
+    CoffinMundane,
+    CoffinJade,
+    CoffinStone,
+    CoffinBronze,
 }
 
 impl BongVisualKind {
@@ -88,6 +106,23 @@ impl BongVisualKind {
             Self::CoffinCommon => COFFIN_COMMON_ENTITY_KIND,
             Self::CoffinRare => COFFIN_RARE_ENTITY_KIND,
             Self::CoffinPrecious => COFFIN_PRECIOUS_ENTITY_KIND,
+            Self::CoffinMundane => COFFIN_MUNDANE_ENTITY_KIND,
+            Self::CoffinJade => COFFIN_JADE_ENTITY_KIND,
+            Self::CoffinStone => COFFIN_STONE_ENTITY_KIND,
+            Self::CoffinBronze => COFFIN_BRONZE_ENTITY_KIND,
+        }
+    }
+}
+
+impl crate::coffin::CoffinGrade {
+    /// 延寿棺档级 → `BongVisualKind` 渲染壳映射（plan-coffin-tiers-v1 P2）。
+    /// 仿 `SupplyCoffinGrade::visual_kind`，让 coffin 模块放置时按档选 marker。
+    pub const fn visual_kind(self) -> BongVisualKind {
+        match self {
+            Self::Mundane => BongVisualKind::CoffinMundane,
+            Self::Jade => BongVisualKind::CoffinJade,
+            Self::Stone => BongVisualKind::CoffinStone,
+            Self::Bronze => BongVisualKind::CoffinBronze,
         }
     }
 }
@@ -173,7 +208,15 @@ pub fn register(app: &mut App) {
     );
 }
 
-fn spawn_visual_marker(
+/// 在指定 layer 上 spawn 一个自定义 marker 渲染实体，返回其 `Entity` id。
+///
+/// 这是 server 视觉桥的底层 primitive：内部 sync 系统通过 `upsert_attached_visual`
+/// 复用它，外部模块（如 plan-coffin-tiers-v1 的延寿棺，`CoffinRegistry` 命令式驱动）
+/// 直接调用并自行记录返回的 `Entity` id 用于后续 despawn / 重建。
+///
+/// `source` = 关联的 gameplay 源实体（用于 `cleanup_orphan_visual_entities` 孤儿回收）；
+/// `CoffinRegistry` 非 ECS 组件，故传 `None`，despawn 由 coffin 模块自管。
+pub fn spawn_visual_marker(
     commands: &mut Commands,
     layer: Entity,
     source: Option<Entity>,
@@ -573,12 +616,48 @@ mod tests {
             BONE_SKELETON_ENTITY_KIND,
             STORAGE_POUCH_ENTITY_KIND,
             STONE_CASKET_ENTITY_KIND,
+            // plan-coffin-tiers-v1 P2 — 延寿棺四档（160 已占用，从 161 起）。
+            COFFIN_MUNDANE_ENTITY_KIND,
+            COFFIN_JADE_ENTITY_KIND,
+            COFFIN_STONE_ENTITY_KIND,
+            COFFIN_BRONZE_ENTITY_KIND,
         ]
         .map(|kind| kind.get());
 
         assert_eq!(
             ids,
-            [146, 147, 148, 149, 150, 151, 152, 153, 154, 155, 156, 157, 158, 159]
+            [
+                146, 147, 148, 149, 150, 151, 152, 153, 154, 155, 156, 157, 158, 159, 161, 162,
+                163, 164
+            ],
+            "entity raw_id contract drifted: client BongEntityModelKind must stay 1:1; \
+             延寿棺四档锁定 161-164（160 被 boss_spawn/visual 占用，见 plan §8.1 #1）"
+        );
+    }
+
+    #[test]
+    fn coffin_grade_maps_to_visual_kind() {
+        use crate::coffin::CoffinGrade;
+        // 四档延寿棺 grade → BongVisualKind → EntityKind 全链对齐（client P3 渲染绑定依赖）。
+        assert_eq!(
+            CoffinGrade::Mundane.visual_kind().entity_kind(),
+            COFFIN_MUNDANE_ENTITY_KIND,
+            "Mundane 应映射到 raw_id 161"
+        );
+        assert_eq!(
+            CoffinGrade::Jade.visual_kind().entity_kind(),
+            COFFIN_JADE_ENTITY_KIND,
+            "Jade 应映射到 raw_id 162"
+        );
+        assert_eq!(
+            CoffinGrade::Stone.visual_kind().entity_kind(),
+            COFFIN_STONE_ENTITY_KIND,
+            "Stone 应映射到 raw_id 163"
+        );
+        assert_eq!(
+            CoffinGrade::Bronze.visual_kind().entity_kind(),
+            COFFIN_BRONZE_ENTITY_KIND,
+            "Bronze 应映射到 raw_id 164"
         );
     }
 

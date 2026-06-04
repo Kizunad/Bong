@@ -28,6 +28,7 @@
 
 pub mod events;
 pub mod recipe;
+pub mod reclaim;
 pub mod registry;
 pub mod session;
 pub mod unlock;
@@ -46,6 +47,8 @@ pub use recipe::{
     CraftCategory, CraftRecipe, CraftRequirements, CraftStationKind, RecipeId,
     RecipeValidationError, UnlockSource,
 };
+#[allow(unused_imports)]
+pub use reclaim::{recipe_reclaim_drops, recipe_reclaim_drops_seeded, ReclaimMode};
 #[allow(unused_imports)]
 pub use registry::{CraftRegistry, RegistryError};
 #[allow(unused_imports)]

@@ -1,0 +1,10 @@
+{
+  "id": "coffin_reclaim",
+  "layers": [
+    { "sound": "minecraft:block.chest.open", "volume": 0.40, "pitch": 1.10, "delay_ticks": 0 },
+    { "sound": "minecraft:block.wood.place", "volume": 0.25, "pitch": 1.20, "delay_ticks": 2 }
+  ],
+  "priority": 48,
+  "attenuation": "world_3d",
+  "category": "VOICE"
+}
