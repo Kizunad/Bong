@@ -4977,4 +4977,57 @@ mod redis_bridge_tests {
             other => panic!("expected Publish for ResonanceLockEnd, got {other:?}"),
         }
     }
+
+    // ── plan-combat-skill-feedback-bridges-v1 P3 — VoidErosionEvent arm channel pin ──
+
+    /// `prepare_outbound_command(RedisOutbound::VoidErosionEvent(..))` 必须发布到
+    /// `CH_VOID_EROSION_EVENT`（`"bong:void_erosion_event"`）。
+    ///
+    /// agent 天道层订阅 `bong:void_erosion_event` 以触发虚蚀叙事；若 arm 被误改为其他
+    /// channel 或 arm 匹配顺序变化，agent 端将静默收不到事件。本测试锁住该契约。
+    #[test]
+    fn publishes_void_erosion_event_on_correct_channel() {
+        use crate::schema::woliu_erosion::{VoidErosionEventV1, VoidErosionStageV1};
+
+        let evt = VoidErosionEventV1 {
+            entity: "offline:Azure".to_string(),
+            from_stage: VoidErosionStageV1::LowPressure,
+            to_stage: VoidErosionStageV1::VoidShadow,
+            cumulative_erosion: 55.0,
+            server_tick: 1234,
+        };
+
+        let command = prepare_outbound_command(RedisOutbound::VoidErosionEvent(evt))
+            .expect("VoidErosionEvent payload should serialize without error");
+
+        match command {
+            RedisIoCommand::Publish { channel, payload } => {
+                assert_eq!(
+                    channel, CH_VOID_EROSION_EVENT,
+                    "VoidErosionEvent must publish to CH_VOID_EROSION_EVENT \
+                     (\"bong:void_erosion_event\"); got {channel:?} — \
+                     changing the channel silently breaks agent narration subscription"
+                );
+                assert_eq!(
+                    channel, "bong:void_erosion_event",
+                    "channel literal must stay 'bong:void_erosion_event' for agent IPC contract"
+                );
+                let v: serde_json::Value =
+                    serde_json::from_str(payload.as_str()).expect("payload must be valid JSON");
+                assert_eq!(
+                    v["entity"], "offline:Azure",
+                    "entity_id round-trips through payload serialization"
+                );
+                assert_eq!(
+                    v["cumulative_erosion"], 55.0,
+                    "cumulative_erosion round-trips"
+                );
+                assert_eq!(v["server_tick"], 1234, "server_tick round-trips");
+            }
+            other => panic!(
+                "expected RedisIoCommand::Publish for VoidErosionEvent, got {other:?} — \
+                 VoidErosionEvent must not fan-out; single-channel publish only"
+            ),
+        }
+    }
 }
