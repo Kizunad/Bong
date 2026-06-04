@@ -7,13 +7,25 @@
 //   3) 裁决:一个成员(HIVE_ARBITER_MODEL)综合存活项产出最终中文 review,贴 PR 评论
 //
 // 自包含:只用 Node 内置 fetch + gh CLI,无 npm 依赖。默认走 SenseNova OpenAI 兼容端点
-// (deepseek-v4-flash + sensenova-6.7-flash-lite 混合),key 从 secrets 注入;端点/模型/规模均可覆盖。
+// (deepseek-v4-flash + sensenova-6.7-flash-lite 混合),key 从 secrets 注入(支持多 key 轮询);
+// 端点/模型/规模均可覆盖。
 
 import { execSync } from "node:child_process";
 import { readFileSync, writeFileSync, existsSync } from "node:fs";
 
 const BASE_URL = (process.env.HIVE_BASE_URL || "https://token.sensenova.cn/v1").replace(/\/+$/, "");
-const API_KEY = process.env.HIVE_API_KEY || "";
+// 多 key 轮询:HIVE_API_KEYS(逗号分隔)优先,否则收集 HIVE_API_KEY / HIVE_API_KEY_2/3...
+// 去重 + 去空,每次请求 round-robin 摊负载,重试时自动切下一把(跳过被限流/失效的 key)。
+const KEYS = [
+  ...(process.env.HIVE_API_KEYS || "").split(","),
+  process.env.HIVE_API_KEY,
+  process.env.HIVE_API_KEY_2,
+  process.env.HIVE_API_KEY_3,
+]
+  .map((s) => (s || "").trim())
+  .filter(Boolean)
+  .filter((k, i, a) => a.indexOf(k) === i);
+let keyCursor = 0;
 // 多模型混合 hive:成员在这几个模型间轮转,同台 debate(HIVE_MODEL 单数仍兼容)。
 const MODELS = (process.env.HIVE_MODELS || process.env.HIVE_MODEL || "deepseek-v4-flash,sensenova-6.7-flash-lite")
   .split(",")
@@ -29,10 +41,13 @@ if (!PR) {
   console.error("PR_NUMBER 未设置");
   process.exit(1);
 }
-if (!API_KEY) {
-  console.error("HIVE_API_KEY 未设置(在 repo secrets 添加 HIVE_API_KEY)");
+if (KEYS.length === 0) {
+  console.error("没有可用 key(在 repo secrets 添加 HIVE_API_KEY,多 key 再加 HIVE_API_KEY_2 或用 HIVE_API_KEYS 逗号分隔)");
   process.exit(1);
 }
+console.error(
+  `hive-think: PR #${PR} · ${SWARM} 成员 · 模型 [${MODELS.join(", ")}] · 裁决 ${ARBITER_MODEL} · ${KEYS.length} key 轮询`,
+);
 
 // ── 项目准则(精简版,塞进每个成员的上下文,让它知道该查什么)──────────────
 const GUIDELINES = `
@@ -99,15 +114,16 @@ async function mapLimit(items, limit, fn) {
   return out;
 }
 
-// 单次 chat,带超时 + 429/网络错误重试退避
-async function chat(content, { label = "", model = MODELS[0], retries = 4 } = {}) {
+// 单次 chat,带超时 + 429/网络错误重试退避;每次尝试 round-robin 换一把 key(失败自动切下一把)
+async function chat(content, { label = "", model = MODELS[0], retries = Math.max(4, KEYS.length * 2) } = {}) {
   for (let attempt = 1; attempt <= retries; attempt++) {
+    const key = KEYS[keyCursor++ % KEYS.length];
     const ctrl = new AbortController();
     const timer = setTimeout(() => ctrl.abort(), 300_000);
     try {
       const res = await fetch(`${BASE_URL}/chat/completions`, {
         method: "POST",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${API_KEY}` },
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${key}` },
         body: JSON.stringify({ model, messages: [{ role: "user", content }] }),
         signal: ctrl.signal,
       });
@@ -122,7 +138,8 @@ async function chat(content, { label = "", model = MODELS[0], retries = 4 } = {}
       return text;
     } catch (e) {
       clearTimeout(timer);
-      console.error(`[${label}] 第 ${attempt}/${retries} 次失败: ${e.message}`);
+      // key 只露尾 4 位,不泄全量
+      console.error(`[${label}] 第 ${attempt}/${retries} 次失败(key …${key.slice(-4)}): ${e.message}`);
       if (attempt === retries) return null;
       await sleep(2500 * attempt);
     }
