@@ -44,14 +44,17 @@ jobs:
         with:
           node-version: "24"
 
-      - name: Hive-Think Review (10× gpt-5.5 debate)
+      - name: Hive-Think Review (10× 混合模型 debate)
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PR_NUMBER: ${{ github.event.issue.number || inputs.pr_number }}
-          # 端点/模型/规模都可被 repo variables / secrets 覆盖;默认即免费羊毛端点
-          HIVE_BASE_URL: ${{ vars.HIVE_BASE_URL || 'https://ai.hhhl.cc/v1' }}
-          HIVE_API_KEY: ${{ secrets.HIVE_API_KEY || 'sk-free' }}
-          HIVE_MODEL: ${{ vars.HIVE_MODEL || 'gpt-5.5' }}
+          # 端点/模型/规模都可被 repo variables / secrets 覆盖。
+          # key 必须在 repo secrets 配 HIVE_API_KEY(SenseNova 端点需鉴权,无默认)。
+          HIVE_BASE_URL: ${{ vars.HIVE_BASE_URL || 'https://token.sensenova.cn/v1' }}
+          HIVE_API_KEY: ${{ secrets.HIVE_API_KEY }}
+          # 逗号分隔,成员在这些模型间轮转,同台 debate(一次把两个都试了)
+          HIVE_MODELS: ${{ vars.HIVE_MODELS || 'deepseek-v4-flash,sensenova-6.7-flash-lite' }}
+          HIVE_ARBITER_MODEL: ${{ vars.HIVE_ARBITER_MODEL || 'deepseek-v4-flash' }}
           HIVE_SWARM_SIZE: ${{ vars.HIVE_SWARM_SIZE || '10' }}
           HIVE_CONCURRENCY: ${{ vars.HIVE_CONCURRENCY || '10' }}
         run: node .github/scripts/hive-review.mjs

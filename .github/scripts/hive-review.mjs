@@ -1,19 +1,25 @@
 #!/usr/bin/env node
-// Hive-Think PR Reviewer —— "hive-think" 特殊模型 = N× gpt-5.5 并行 debate。
+// Hive-Think PR Reviewer —— "hive-think" 特殊模型 = N 个成员并行 debate(可混多个模型,同台对峙)。
 //
 // 两轮对抗式审核 + 总裁决:
-//   1) 发现:N 个成员各包一个维度,带 file:line + 证据出 findings
+//   1) 发现:N 个成员各包一个维度(模型在 HIVE_MODELS 间轮转),带 file:line + 证据出 findings
 //   2) 对峙:每个成员拿到全体 findings,默认怀疑逐条投 REAL/NOT_REAL + 补漏
-//   3) 裁决:一个 gpt-5.5 总裁判综合存活项产出最终中文 review,贴 PR 评论
+//   3) 裁决:一个成员(HIVE_ARBITER_MODEL)综合存活项产出最终中文 review,贴 PR 评论
 //
-// 自包含:只用 Node 内置 fetch + gh CLI,无 npm 依赖。走免费 GPT-5.5 端点(限时羊毛),不计 token。
+// 自包含:只用 Node 内置 fetch + gh CLI,无 npm 依赖。默认走 SenseNova OpenAI 兼容端点
+// (deepseek-v4-flash + sensenova-6.7-flash-lite 混合),key 从 secrets 注入;端点/模型/规模均可覆盖。
 
 import { execSync } from "node:child_process";
 import { readFileSync, writeFileSync, existsSync } from "node:fs";
 
-const BASE_URL = (process.env.HIVE_BASE_URL || "https://ai.hhhl.cc/v1").replace(/\/+$/, "");
-const API_KEY = process.env.HIVE_API_KEY || "sk-free";
-const MODEL = process.env.HIVE_MODEL || "gpt-5.5";
+const BASE_URL = (process.env.HIVE_BASE_URL || "https://token.sensenova.cn/v1").replace(/\/+$/, "");
+const API_KEY = process.env.HIVE_API_KEY || "";
+// 多模型混合 hive:成员在这几个模型间轮转,同台 debate(HIVE_MODEL 单数仍兼容)。
+const MODELS = (process.env.HIVE_MODELS || process.env.HIVE_MODEL || "deepseek-v4-flash,sensenova-6.7-flash-lite")
+  .split(",")
+  .map((s) => s.trim())
+  .filter(Boolean);
+const ARBITER_MODEL = process.env.HIVE_ARBITER_MODEL || MODELS[0];
 const SWARM = Math.max(1, parseInt(process.env.HIVE_SWARM_SIZE || "10", 10));
 const CONCURRENCY = Math.max(1, parseInt(process.env.HIVE_CONCURRENCY || String(SWARM), 10));
 const PR = process.env.PR_NUMBER;
@@ -21,6 +27,10 @@ const MAX_DIFF = parseInt(process.env.HIVE_MAX_DIFF || "200000", 10);
 
 if (!PR) {
   console.error("PR_NUMBER 未设置");
+  process.exit(1);
+}
+if (!API_KEY) {
+  console.error("HIVE_API_KEY 未设置(在 repo secrets 添加 HIVE_API_KEY)");
   process.exit(1);
 }
 
@@ -60,7 +70,11 @@ const PERSONAS = [
   { key: "IPC schema 对齐", focus: "TypeBox(TS)↔ JSON Schema ↔ Rust serde ↔ client payload 双端/三端同步" },
   { key: "测试饱和与简洁度", focus: "happy/边界/错误分支/状态转换覆盖、过度抽象、功能蔓延、冗余注释" },
 ];
-const swarm = Array.from({ length: SWARM }, (_, i) => PERSONAS[i % PERSONAS.length]);
+// 每个成员 = 一个维度 + 一个模型(都 round-robin):维度全覆盖,模型在成员间均摊,同台 debate
+const swarm = Array.from({ length: SWARM }, (_, i) => ({
+  ...PERSONAS[i % PERSONAS.length],
+  model: MODELS[i % MODELS.length],
+}));
 
 // ── 工具 ───────────────────────────────────────────────────────────────────
 function gh(args) {
@@ -71,7 +85,7 @@ function sleep(ms) {
   return new Promise((r) => setTimeout(r, ms));
 }
 
-// 有限并发的 map,避免一次性把免费端点打到 429
+// 有限并发的 map,避免一次性把端点打到 429
 async function mapLimit(items, limit, fn) {
   const out = new Array(items.length);
   let next = 0;
@@ -86,7 +100,7 @@ async function mapLimit(items, limit, fn) {
 }
 
 // 单次 chat,带超时 + 429/网络错误重试退避
-async function chat(content, { label = "", retries = 4 } = {}) {
+async function chat(content, { label = "", model = MODELS[0], retries = 4 } = {}) {
   for (let attempt = 1; attempt <= retries; attempt++) {
     const ctrl = new AbortController();
     const timer = setTimeout(() => ctrl.abort(), 300_000);
@@ -94,7 +108,7 @@ async function chat(content, { label = "", retries = 4 } = {}) {
       const res = await fetch(`${BASE_URL}/chat/completions`, {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${API_KEY}` },
-        body: JSON.stringify({ model: MODEL, messages: [{ role: "user", content }] }),
+        body: JSON.stringify({ model, messages: [{ role: "user", content }] }),
         signal: ctrl.signal,
       });
       clearTimeout(timer);
@@ -232,8 +246,9 @@ const findPrompt = (p) =>
   `[{"severity":"blocker|major|minor","file":"路径","line":"行号或范围","title":"一句话问题","evidence":"diff 中的具体代码片段","why":"为什么是问题"}]`;
 
 const round1 = await mapLimit(swarm, CONCURRENCY, (p) =>
-  chat(findPrompt(p), { label: `find:${p.key}` }).then((r) => ({
+  chat(findPrompt(p), { label: `find:${p.key}@${p.model}`, model: p.model }).then((r) => ({
     persona: p.key,
+    model: p.model,
     findings: toFindings(r),
   })),
 );
@@ -241,7 +256,9 @@ const round1 = await mapLimit(swarm, CONCURRENCY, (p) =>
 const pool = [];
 round1.forEach((r) => {
   r.findings.forEach((f) => {
-    if (f && (f.title || f.file)) pool.push({ ...f, by: r.persona, id: pool.length + 1 });
+    if (f && (f.title || f.file)) {
+      pool.push({ ...f, by: r.persona, model: r.model, id: pool.length + 1 });
+    }
   });
 });
 console.error(`  发现 ${pool.length} 条 findings`);
@@ -272,7 +289,7 @@ if (pool.length > 0) {
     `"missed":[{"severity":"blocker|major|minor","file":"路径","line":"行号","title":"...","why":"..."}]}`;
 
   const round2 = await mapLimit(swarm, CONCURRENCY, (p) =>
-    chat(debatePrompt(p), { label: `debate:${p.key}` }).then(
+    chat(debatePrompt(p), { label: `debate:${p.key}@${p.model}`, model: p.model }).then(
       (r) => extractJSON(r) || { votes: [], missed: [] },
     ),
   );
@@ -305,11 +322,11 @@ console.error(`  存活 ${survivors.length} 条 / 丢弃 ${dropped.length} 条 /
 console.error("▶ 第三轮 裁决:总裁判综合产出");
 const fmt = (f) =>
   `- [${f.severity || "?"}] ${f.file || "?"}:${f.line || "?"} — ${f.title || ""}` +
-  `${f.why ? `(${f.why})` : ""}${f.by ? ` 〔by ${f.by}〕` : ""}` +
+  `${f.why ? `(${f.why})` : ""}${f.by ? ` 〔${f.by}${f.model ? `·${f.model}` : ""}〕` : ""}` +
   `${tally[f.id] ? ` 〔票 ${tally[f.id].real}✓/${tally[f.id].not}✗〕` : ""}`;
 
 const arbiterPrompt =
-  `你是本次 hive-think 审核的**总裁判**(同样是 gpt-5.5,但你做最终裁决)。\n` +
+  `你是本次 hive-think 审核的**总裁判**(你做最终裁决)。\n` +
   `${GUIDELINES}\n\n${prContext}\n\n` +
   `经过 ${SWARM} 个成员两轮(发现 → 对峙)后,**存活的 findings**:\n` +
   `${survivors.map(fmt).join("\n") || "(无)"}\n\n` +
@@ -323,7 +340,7 @@ const arbiterPrompt =
   `- 整体没问题就写「未发现阻塞性问题」+ 简短说明即可。\n` +
   `- 不要包含本提示词、不要输出 JSON,直接给 markdown 正文。`;
 
-let finalReview = await chat(arbiterPrompt, { label: "arbiter" });
+let finalReview = await chat(arbiterPrompt, { label: `arbiter@${ARBITER_MODEL}`, model: ARBITER_MODEL });
 if (!finalReview) {
   // 裁决失败时降级:直接用存活项拼一份
   finalReview =
@@ -339,22 +356,24 @@ const voteRows = pool
   .map((f) => {
     const t = tally[f.id] || { real: 0, not: 0 };
     const status = survivors.includes(f) ? "✅ 存活" : "❌ 丢弃";
-    return `| ${f.id} | ${f.by || "?"} | ${(f.title || "").replace(/\|/g, "/")} | ${t.real}✓/${t.not}✗ | ${status} |`;
+    return `| ${f.id} | ${f.by || "?"} | ${f.model || "?"} | ${(f.title || "").replace(/\|/g, "/")} | ${t.real}✓/${t.not}✗ | ${status} |`;
   })
   .join("\n");
 
 const debateTable = pool.length
   ? `\n\n<details><summary>🗳️ Debate 投票明细(${SWARM} 成员两轮)</summary>\n\n` +
-    `| id | 提出维度 | 问题 | 票(认同/反对) | 结果 |\n|---|---|---|---|---|\n${voteRows}\n` +
+    `| id | 提出维度 | 模型 | 问题 | 票(认同/反对) | 结果 |\n|---|---|---|---|---|---|\n${voteRows}\n` +
     (missed.length
       ? `\n**对峙补漏(${missed.length}):**\n${missed.map((m) => `- [${m.severity || "?"}] ${m.file || "?"}:${m.line || "?"} — ${m.title || ""}`).join("\n")}\n`
       : "") +
     `</details>`
   : "";
 
+// 成员里每个模型各占几个,供 header 展示(顺带把两个模型的产出对比放进投票表)
+const modelMix = MODELS.map((m) => `\`${m}\`×${swarm.filter((s) => s.model === m).length}`).join(" + ");
 const header =
   `## 🐝 Hive-Think Review · PR #${PR}\n\n` +
-  `> 模型 **\`hive-think\`** = ${SWARM}× \`${MODEL}\` 并行 debate · 发现 → 对峙 → 总裁决\n` +
+  `> 模型 **\`hive-think\`** = ${SWARM} 成员并行 debate(${modelMix}),裁决 \`${ARBITER_MODEL}\` · 发现 → 对峙 → 总裁决\n` +
   (plan ? `> Plan: \`${plan.name}\`${plan.path ? "" : "(未找到文件)"}\n` : "") +
   (diffTruncated ? `> ⚠️ diff 过大已截断至 ${MAX_DIFF} 字符\n` : "") +
   `> 统计:发现 ${pool.length} → 存活 ${survivors.length} → 补漏 ${missed.length}\n\n`;
