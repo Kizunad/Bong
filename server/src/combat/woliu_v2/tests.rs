@@ -2355,8 +2355,7 @@ fn void_erosion_check_system_same_frame_multi_stage_emits_final_stage() {
 /// 且 check_system 只比较 capped stage，不绕境界上限。
 #[test]
 fn real_path_resolve_skill_then_check_system_emits_event_without_cheat() {
-    use super::erosion::VOID_VORTEX_EROSION;
-    // 虚涡 erosion = 3.0，LowPressure 阈值 = 20.0，需多次施放越过阈值
+    // 虚涡 erosion = 3.0 (VOID_VORTEX_EROSION)，LowPressure 阈值 = 20.0，需多次施放越过阈值
     // 为简化：直接用 add_erosion_capped 推到阈值之下，再 resolve 一次越过
     let tick = VOID_EROSION_CHECK_INTERVAL;
     let mut a = app_with_void_erosion(tick);
