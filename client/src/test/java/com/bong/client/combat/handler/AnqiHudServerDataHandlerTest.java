@@ -107,6 +107,26 @@ class AnqiHudServerDataHandlerTest {
             "abrasionQiPayload 必须等于 58.4（after_qi 直接映射，不重算）；实际=" + state.abrasionQiPayload());
     }
 
+    // ─── pocket_pouch：核心变体 e2e handler 覆盖 ──────────────────
+
+    @Test
+    void abrasionPocketPouchContainerReachesStore() {
+        // pocket_pouch 是本轮修复的核心变体（生产可达），确保 handler 路径端到端不丢
+        // server emit 写 as_wire_str()="pocket_pouch"；handler 应原样写入 store，不改写
+        handler.handle(parse(
+            "{\"v\":1,\"type\":\"anqi_hud\",\"kind\":\"abrasion\","
+            + "\"abrasion_container\":\"pocket_pouch\",\"abrasion_qi_payload\":72.0}"
+        ));
+        AnqiHudState state = AnqiHudStateStore.snapshot();
+        assertTrue(state.hasAbrasionContainer(),
+            "pocket_pouch abrasion 必须设置 abrasionContainer；实际=" + state.abrasionContainer());
+        assertEquals("pocket_pouch", state.abrasionContainer(),
+            "abrasionContainer 必须为 'pocket_pouch'（server as_wire_str 直送，不能被改写）；实际="
+                + state.abrasionContainer());
+        assertEquals(72.0f, state.abrasionQiPayload(), 0.01f,
+            "abrasionQiPayload 必须等于 72.0；实际=" + state.abrasionQiPayload());
+    }
+
     // ─── 未知 kind 静默 no-op ─────────────────────────────────────
 
     @Test
@@ -194,6 +214,40 @@ class AnqiHudServerDataHandlerTest {
             "abrasion_container 必须为 'quiver'（proto 链不丢字段）");
         assertEquals(23.5, json.get("abrasion_qi_payload").getAsDouble(), 0.001,
             "abrasion_qi_payload 必须为 23.5（proto 链不丢字段）");
+    }
+
+    @Test
+    void protoAnqiHudAbrasionPocketPouchRoundtrip() {
+        // pocket_pouch：核心变体 proto encode/decode 不丢 abrasion_container 值
+        // server 写 as_wire_str()="pocket_pouch" → proto → bridge → legacy JSON → handler
+        Envelope.ServerDataEnvelope envelope = Envelope.ServerDataEnvelope.newBuilder()
+                .setAnqiHud(Envelope.AnqiHud.newBuilder()
+                        .setKind("abrasion")
+                        .setEchoCount(0)
+                        .setAimProgress(0.0)
+                        .setChargeProgress(0.0)
+                        .setAbrasionContainer("pocket_pouch")
+                        .setAbrasionQiPayload(72.0)
+                        .setTick(300L))
+                .build();
+
+        ProtoServerDataBridge.BridgeResult result =
+                ProtoServerDataBridge.bridge(envelope.toByteArray());
+
+        assertTrue(result.isSuccess(),
+            "proto AnqiHud pocket_pouch bridge 必须成功；错误=" + result.errorMessage());
+
+        com.google.gson.JsonObject json = com.google.gson.JsonParser
+                .parseString(result.legacyJson()).getAsJsonObject();
+        assertEquals("abrasion", json.get("kind").getAsString(),
+            "kind 必须为 'abrasion'");
+        assertEquals("pocket_pouch", json.get("abrasion_container").getAsString(),
+            "abrasion_container 必须为 'pocket_pouch'（proto 链不丢 wire str；"
+                + "若 server 误用 Debug 则为 'PocketPouch'）；实际="
+                + json.get("abrasion_container"));
+        assertEquals(72.0, json.get("abrasion_qi_payload").getAsDouble(), 0.001,
+            "abrasion_qi_payload 必须为 72.0（proto 链不丢字段）；实际="
+                + json.get("abrasion_qi_payload"));
     }
 
     @Test
