@@ -9,7 +9,7 @@
  *   - cleanup fn 存在且可调用
  */
 
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { CHANNELS } from "@bong/schema";
 
@@ -26,27 +26,27 @@ function makeMockClient() {
   const listeners: Map<string, ((ch: string, msg: string) => void)[]> = new Map();
 
   return {
-    subscribe: async (channel: string) => {
+    subscribe: vi.fn(async (channel: string) => {
       listeners.set(channel, listeners.get(channel) ?? []);
-    },
-    on: (event: string, listener: (ch: string, msg: string) => void) => {
+    }),
+    on: vi.fn((event: string, listener: (ch: string, msg: string) => void) => {
       const arr = listeners.get(event) ?? [];
       arr.push(listener);
       listeners.set(event, arr);
-    },
-    off: (event: string, listener: (ch: string, msg: string) => void) => {
+    }),
+    off: vi.fn((event: string, listener: (ch: string, msg: string) => void) => {
       const arr = listeners.get(event) ?? [];
       const idx = arr.indexOf(listener);
       if (idx !== -1) arr.splice(idx, 1);
       listeners.set(event, arr);
-    },
-    unsubscribe: async () => {},
-    disconnect: () => {},
+    }),
+    unsubscribe: vi.fn(async () => {}),
+    disconnect: vi.fn(() => {}),
     published: [] as { channel: string; message: string }[],
-    publish: async (channel: string, message: string) => {
+    publish: vi.fn(async (channel: string, message: string) => {
       listeners.get("publish")?.forEach((l) => l(channel, message));
       return 1;
-    },
+    }),
 
     emit(channel: string, message: string) {
       (listeners.get("message") ?? []).forEach((l) => l(channel, message));
@@ -79,8 +79,11 @@ describe("TuikeAshDecayNarrationRuntime", () => {
   });
 
   it("subscribes to CHANNELS.TUIKE_V2_ASH_DECAY on connect", () => {
-    // Implicit: if subscribe wasn't called, messages would never arrive
-    expect(TUIKE_V2_ASH_DECAY).toBe("bong:tuike_v2/ash_decay");
+    expect(
+      sub.subscribe,
+      `connect() 必须订阅 ${TUIKE_V2_ASH_DECAY} 频道以接收灰烬事件，否则消息永远不会到达 runtime；` +
+        "删掉 connect() 里的 sub.subscribe(TUIKE_V2_ASH_DECAY) 这行，测试即红",
+    ).toHaveBeenCalledWith(TUIKE_V2_ASH_DECAY);
   });
 
   it("mid tier → 产出 AGENT_NARRATE publish", async () => {
@@ -92,11 +95,10 @@ describe("TuikeAshDecayNarrationRuntime", () => {
 
   it("AGENT_NARRATE publish channel 正确", async () => {
     let publishedChannel = "";
-    const origPub = pub.publish.bind(pub);
-    pub.publish = async (channel: string, message: string) => {
+    pub.publish.mockImplementation(async (channel: string, message: string) => {
       publishedChannel = channel;
-      return origPub(channel, message);
-    };
+      return 1;
+    });
     await runtime.handlePayload(TUIKE_V2_ASH_DECAY, makeAshPayload());
     expect(
       publishedChannel,
@@ -106,10 +108,10 @@ describe("TuikeAshDecayNarrationRuntime", () => {
 
   it("narration envelope v=1, narrations.length=1", async () => {
     const received: string[] = [];
-    pub.publish = async (_ch: string, message: string) => {
+    pub.publish.mockImplementation(async (_ch: string, message: string) => {
       received.push(message);
       return 1;
-    };
+    });
     await runtime.handlePayload(TUIKE_V2_ASH_DECAY, makeAshPayload());
     expect(received).toHaveLength(1);
     const envelope = JSON.parse(received[0] as string) as {
@@ -122,13 +124,13 @@ describe("TuikeAshDecayNarrationRuntime", () => {
 
   it("ancient tier → 叙事文本含「上古」（专属文案）", async () => {
     let narrationText = "";
-    pub.publish = async (_ch: string, message: string) => {
+    pub.publish.mockImplementation(async (_ch: string, message: string) => {
       const env = JSON.parse(message) as {
         narrations: Array<{ text: string }>;
       };
       narrationText = env.narrations[0]?.text ?? "";
       return 1;
-    };
+    });
     await runtime.handlePayload(
       TUIKE_V2_ASH_DECAY,
       makeAshPayload({
@@ -168,7 +170,7 @@ describe("TuikeAshDecayNarrationRuntime", () => {
 
   it("无效 JSON → rejectedContract++, 不 publish", async () => {
     let publishCalled = false;
-    pub.publish = async () => { publishCalled = true; return 1; };
+    pub.publish.mockImplementation(async () => { publishCalled = true; return 1; });
     await runtime.handlePayload(TUIKE_V2_ASH_DECAY, "not-json");
     expect(publishCalled).toBe(false);
     expect(runtime.stats.rejectedContract).toBe(1);
@@ -176,7 +178,7 @@ describe("TuikeAshDecayNarrationRuntime", () => {
 
   it("schema 不符（缺 owner_id）→ rejectedContract++, 不 publish", async () => {
     let publishCalled = false;
-    pub.publish = async () => { publishCalled = true; return 1; };
+    pub.publish.mockImplementation(async () => { publishCalled = true; return 1; });
     const bad = JSON.stringify({ output_item_id: "bong:ash", tier: "mid", tick: 1 });
     await runtime.handlePayload(TUIKE_V2_ASH_DECAY, bad);
     expect(publishCalled).toBe(false);
@@ -185,7 +187,7 @@ describe("TuikeAshDecayNarrationRuntime", () => {
 
   it("schema 不符（无效 tier）→ rejectedContract++, 不 publish", async () => {
     let publishCalled = false;
-    pub.publish = async () => { publishCalled = true; return 1; };
+    pub.publish.mockImplementation(async () => { publishCalled = true; return 1; });
     const bad = JSON.stringify({
       owner_id: "offline:X",
       output_item_id: "bong:ash",
@@ -199,7 +201,7 @@ describe("TuikeAshDecayNarrationRuntime", () => {
 
   it("忽略非 TUIKE_V2_ASH_DECAY channel 消息（via onMessage 路径）", async () => {
     let publishCalled = false;
-    pub.publish = async () => { publishCalled = true; return 1; };
+    pub.publish.mockImplementation(async () => { publishCalled = true; return 1; });
     sub.emit("bong:other_channel", makeAshPayload());
     await new Promise((r) => setTimeout(r, 0));
     expect(publishCalled).toBe(false);
@@ -207,7 +209,7 @@ describe("TuikeAshDecayNarrationRuntime", () => {
 
   it("onMessage via emit 走完整路径", async () => {
     let publishCalled = false;
-    pub.publish = async () => { publishCalled = true; return 1; };
+    pub.publish.mockImplementation(async () => { publishCalled = true; return 1; });
     sub.emit(TUIKE_V2_ASH_DECAY, makeAshPayload());
     await new Promise((r) => setTimeout(r, 0));
     expect(publishCalled).toBe(true);
