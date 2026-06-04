@@ -257,6 +257,8 @@ pub enum ServerDataType {
     DuguV2SelfCure,
     DuguV2ShroudActive,
     PermanentQiMaxDecayApplied,
+    // ─── plan-combat-skill-feedback-bridges-v1 P6：剑道人剑共生 HUD ─
+    SwordBondHudState,
 }
 
 #[derive(Debug, Clone)]
@@ -512,6 +514,9 @@ pub enum ServerDataPayloadV1 {
     DuguV2ShroudActive(DuguV2HudShroudActiveV1),
     /// 永久真元上限衰减通知（守恒红线：只读 PermanentQiMaxDecayApplied 字段，不走 Redis）。
     PermanentQiMaxDecayApplied(DuguV2HudQiDecayV1),
+    // ─── plan-combat-skill-feedback-bridges-v1 P6：剑道人剑共生 HUD S2C ─
+    /// 人剑共生 HUD 状态推送（守恒红线：stored_qi 只读展示，不二次扣 qi）。
+    SwordBondHudState(SwordBondHudStateV1),
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -697,6 +702,29 @@ pub struct DuguV2HudQiDecayV1 {
     /// 衰减后真元上限（只读）
     pub qi_max_after: f32,
     pub tick: u64,
+}
+
+// ─── plan-combat-skill-feedback-bridges-v1 P6：剑道人剑共生 HUD S2C structs ──
+
+/// 人剑共生 HUD 状态推送（server → client）。
+///
+/// 守恒红线：全部字段只读自 ECS SwordBondComponent，不重算真元，不扣 qi。
+/// heavenGateReady = can_store_qi() && stored_qi >= stored_qi_cap()（满储即可开天门）。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SwordBondHudStateV1 {
+    /// 是否处于激活状态（玩家持有 SwordBondComponent 时为 true）。
+    pub active: bool,
+    /// 剑品阶 tier（0=凡铁..6=化虚），与 SwordGrade::tier() 对应。
+    pub grade_index: u32,
+    /// 剑品阶汉字名（如 "凝脉"），与 SwordGrade::display_name() 对应。
+    pub grade_name: String,
+    /// 储真元比例 0..=1（stored_qi / cap，cap=0 时为 0）。
+    pub stored_qi_ratio: f32,
+    /// 人剑亲和度 0..=1（bond_strength 直接传递）。
+    pub bond_strength: f32,
+    /// 是否可开天门（stored_qi >= stored_qi_cap() && can_store_qi()）。
+    pub heaven_gate_ready: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -1549,6 +1577,11 @@ enum ServerDataPayloadWireV1 {
         #[serde(flatten)]
         data: DuguV2HudQiDecayV1,
     },
+    // ─── plan-combat-skill-feedback-bridges-v1 P6：剑道人剑共生 HUD ─
+    SwordBondHudState {
+        #[serde(flatten)]
+        data: SwordBondHudStateV1,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -2391,6 +2424,10 @@ impl TryFrom<ServerDataPayloadWireV1> for ServerDataPayloadV1 {
             ServerDataPayloadWireV1::PermanentQiMaxDecayApplied { data } => {
                 Ok(Self::PermanentQiMaxDecayApplied(data))
             }
+            // ─── plan-combat-skill-feedback-bridges-v1 P6 ──────────
+            ServerDataPayloadWireV1::SwordBondHudState { data } => {
+                Ok(Self::SwordBondHudState(data))
+            }
         }
     }
 }
@@ -2937,6 +2974,10 @@ impl From<&ServerDataPayloadV1> for ServerDataPayloadWireV1 {
             ServerDataPayloadV1::PermanentQiMaxDecayApplied(data) => {
                 Self::PermanentQiMaxDecayApplied { data: data.clone() }
             }
+            // ─── plan-combat-skill-feedback-bridges-v1 P6 ──────────
+            ServerDataPayloadV1::SwordBondHudState(data) => {
+                Self::SwordBondHudState { data: data.clone() }
+            }
         }
     }
 }
@@ -3253,6 +3294,8 @@ impl ServerDataPayloadV1 {
             Self::DuguV2SelfCure(..) => ServerDataType::DuguV2SelfCure,
             Self::DuguV2ShroudActive(..) => ServerDataType::DuguV2ShroudActive,
             Self::PermanentQiMaxDecayApplied(..) => ServerDataType::PermanentQiMaxDecayApplied,
+            // ─── plan-combat-skill-feedback-bridges-v1 P6 ──────────
+            Self::SwordBondHudState(..) => ServerDataType::SwordBondHudState,
         }
     }
 }

@@ -3,6 +3,7 @@
 use valence::prelude::{Entity, EventReader, Query, Res, Username};
 
 use crate::combat::tuike::ShedEvent;
+use crate::combat::tuike_v2::events::PermanentTaintAbsorbedEvent;
 use crate::combat::tuike_v2::{ContamTransferredEvent, DonFalseSkinEvent, FalseSkinSheddedEvent};
 use crate::network::redis_bridge::RedisOutbound;
 use crate::network::RedisBridgeResource;
@@ -26,6 +27,7 @@ pub fn publish_tuike_v2_skill_events(
     mut don_events: EventReader<DonFalseSkinEvent>,
     mut shed_events: EventReader<FalseSkinSheddedEvent>,
     mut transfer_events: EventReader<ContamTransferredEvent>,
+    mut permanent_taint_events: EventReader<PermanentTaintAbsorbedEvent>,
     usernames: Query<&Username>,
 ) {
     for event in don_events.read() {
@@ -75,6 +77,29 @@ pub fn publish_tuike_v2_skill_events(
         // Transfer events do not carry a post-transfer skin load snapshot. For this
         // narration/HUD event, reuse the moved percent as the compatibility load signal.
         payload.contam_load = Some(event.contam_moved_percent);
+        send_tuike_v2_payload(&redis, payload);
+    }
+
+    // plan-combat-skill-feedback-bridges-v1 P6 — 永久污浊被皮吸收（守恒叙事：衰败已被皮吸收，真元上限不再缩减）。
+    // PermanentQiMaxDecay 已在 skills.rs:232 removed；桥只转发 amount，不触 qi。
+    for event in permanent_taint_events.read() {
+        let default_visual = crate::combat::tuike_v2::TuikeSkillVisual::for_skill(
+            crate::combat::tuike_v2::TuikeSkillId::TransferTaint,
+            event.tier == crate::combat::tuike_v2::FalseSkinTier::Ancient,
+        );
+        let default_visual_payload: crate::combat::tuike_v2::events::TuikeSkillVisualPayload =
+            default_visual.into();
+        let mut payload = base_payload(
+            TuikeSkillIdV1::TransferTaint,
+            event.caster,
+            event.tier,
+            0,
+            event.tick,
+            &default_visual_payload,
+            &usernames,
+        );
+        // 守恒叙事：衰败已被皮吸收，真元上限不再缩减（PermanentQiMaxDecay already removed at skills.rs:232）
+        payload.permanent_absorbed = event.amount;
         send_tuike_v2_payload(&redis, payload);
     }
 }
@@ -142,6 +167,7 @@ mod tests {
         app.add_event::<DonFalseSkinEvent>();
         app.add_event::<FalseSkinSheddedEvent>();
         app.add_event::<ContamTransferredEvent>();
+        app.add_event::<PermanentTaintAbsorbedEvent>();
         app.insert_resource(RedisBridgeResource {
             tx_outbound,
             rx_inbound,
@@ -216,5 +242,77 @@ mod tests {
         assert_eq!(payload.permanent_absorbed, 0.4);
         assert_eq!(payload.particle_id, "bong:ancient_skin_glow");
         assert!(payload.caster_id.starts_with("char:"));
+    }
+
+    /// plan-combat-skill-feedback-bridges-v1 P6 — PermanentTaintAbsorbedEvent 补 reader 测试。
+    /// 验证：emit → TuikeV2SkillEvent(skill_id=TransferTaint, permanent_absorbed=X) 1 条。
+    /// 守恒叙事：PermanentQiMaxDecay already removed at skills.rs:232；桥只转发 amount，不触 qi。
+    #[test]
+    fn publishes_permanent_taint_absorbed_payload() {
+        let (mut app, rx) = setup_app();
+        let caster = app.world_mut().spawn_empty().id();
+        app.world_mut()
+            .resource_mut::<Events<PermanentTaintAbsorbedEvent>>()
+            .send(PermanentTaintAbsorbedEvent {
+                caster,
+                amount: 0.33,
+                tier: crate::combat::tuike_v2::FalseSkinTier::Mid,
+                tick: 77,
+            });
+
+        app.update();
+
+        let outbound = rx
+            .try_iter()
+            .find(|event| matches!(event, RedisOutbound::TuikeV2SkillEvent(_)))
+            .expect(
+                "期望 TuikeV2SkillEvent；PermanentTaintAbsorbedEvent 应产出 TuikeV2SkillEvent \
+                 (守恒叙事：衰败已被皮吸收，真元上限不再缩减)",
+            );
+        let RedisOutbound::TuikeV2SkillEvent(payload) = outbound else {
+            panic!("应为 TuikeV2SkillEvent");
+        };
+        assert_eq!(
+            payload.skill_id,
+            TuikeSkillIdV1::TransferTaint,
+            "PermanentTaintAbsorbed 应复用 TransferTaint skill_id"
+        );
+        assert_eq!(payload.tier, FalseSkinTierV1::Mid, "tier 应正确传递");
+        assert!(
+            (payload.permanent_absorbed - 0.33).abs() < 1e-9,
+            "permanent_absorbed 应为 0.33（守恒：只转发 amount，不重算）；实际={}",
+            payload.permanent_absorbed
+        );
+        assert_eq!(payload.tick, 77);
+    }
+
+    #[test]
+    fn permanent_taint_ancient_uses_ancient_particle() {
+        // Ancient tier PermanentTaintAbsorbedEvent 应使用 ancient_skin_glow 粒子（差异化叙事）
+        let (mut app, rx) = setup_app();
+        let caster = app.world_mut().spawn_empty().id();
+        app.world_mut()
+            .resource_mut::<Events<PermanentTaintAbsorbedEvent>>()
+            .send(PermanentTaintAbsorbedEvent {
+                caster,
+                amount: 1.0,
+                tier: crate::combat::tuike_v2::FalseSkinTier::Ancient,
+                tick: 88,
+            });
+
+        app.update();
+
+        let outbound = rx
+            .try_iter()
+            .find(|event| matches!(event, RedisOutbound::TuikeV2SkillEvent(_)))
+            .expect("期望 TuikeV2SkillEvent；Ancient PermanentTaintAbsorbed");
+        let RedisOutbound::TuikeV2SkillEvent(payload) = outbound else {
+            panic!("应为 TuikeV2SkillEvent");
+        };
+        assert_eq!(
+            payload.particle_id, "bong:ancient_skin_glow",
+            "Ancient tier 应使用 ancient_skin_glow（差异化 VFX）"
+        );
+        assert_eq!(payload.tier, FalseSkinTierV1::Ancient);
     }
 }

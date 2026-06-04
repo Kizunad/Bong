@@ -150,6 +150,8 @@ message ServerDataEnvelope {
     DuguV2SelfCure          dugu_v2_self_cure       = 125;
     DuguV2ShroudActive      dugu_v2_shroud_active   = 126;
     PermanentQiMaxDecayApplied permanent_qi_max_decay_applied = 127;
+    // ─── plan-combat-skill-feedback-bridges-v1 P6：剑道人剑共生 HUD S2C ─
+    SwordBondHud sword_bond_hud_state = 128;
     // 字段编号一旦分配永不复用（buf breaking 检测保证）。
   }
 }
@@ -3676,4 +3678,16 @@ message ExternalContainerCloseReq {
 // 与 Rust ClientRequestV1::SupplyCoffinOpen 精确对应。
 message SupplyCoffinOpenReq {
   int32 entity_id = 1;
+}
+
+// plan-combat-skill-feedback-bridges-v1 P6：人剑共生 HUD 状态推送（server → client）。
+// 守恒红线：stored_qi_ratio 只读展示，不二次扣 qi。
+// heaven_gate_ready = can_store_qi() && stored_qi >= stored_qi_cap()。
+message SwordBondHud {
+  bool   active             = 1;
+  int32  grade_index        = 2; // 0=凡铁..6=化虚（SwordGrade::tier()）
+  string grade_name         = 3; // 汉字名（如 "凝脉"，SwordGrade::display_name()）
+  float  stored_qi_ratio    = 4; // 0..=1（stored_qi / cap，cap=0 时为 0）
+  float  bond_strength      = 5; // 0..=1
+  bool   heaven_gate_ready  = 6; // stored_qi >= stored_qi_cap() && can_store_qi()
 }

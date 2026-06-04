@@ -149,6 +149,24 @@ pub struct FalseSkinLayerStateV1 {
     pub permanent_taint_load: f64,
 }
 
+/// plan-combat-skill-feedback-bridges-v1 P6 — 蜕壳灰烬入包事件（server → agent Redis）。
+///
+/// 触发条件：FalseSkinResidue 超时自然腐烂时产出灰烬物品，回收给皮的原主人。
+/// agent 叙事：「衰败的假皮化为灰烬，XXX 回收了 <output_item_id>」。
+/// 守恒说明：此事件只记录 add_item_to_player_inventory 已完成的结果，不重算真元。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TuikeAshDecayV1 {
+    /// 接收灰烬的玩家 id（offline:<username> 或 char:<bits>）
+    pub owner_id: String,
+    /// 产出物品 id（普通档 = FALSE_SKIN_ASH_ITEM_ID；上古档 = FALSE_SKIN_ANCIENT_RELIC_SHARD_ITEM_ID）
+    pub output_item_id: String,
+    /// 皮的档级（agent 叙事差异化：上古档有专属文案）
+    pub tier: FalseSkinTierV1,
+    /// 服务端 tick
+    pub tick: u64,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

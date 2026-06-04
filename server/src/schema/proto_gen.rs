@@ -11770,4 +11770,151 @@ mod tests {
         );
         assert_eq!(inner.tick, 1000);
     }
+
+    // ─── plan-combat-skill-feedback-bridges-v1 P6：SwordBondHud proto pin ─
+
+    /// proto 链 pin 测试：SwordBondHud encode → decode 字段不丢失。
+    /// 锁住 proto 链三处（envelope.proto field 128 + proto_convert.rs arm + ProtoServerDataBridge CASE_TO_TYPE）。
+    #[test]
+    fn sword_bond_hud_proto_roundtrip_active() {
+        use crate::schema::proto_convert::server_data_to_proto_payload;
+        use crate::schema::proto_gen::bong::ServerDataEnvelope;
+        use crate::schema::server_data::{ServerDataPayloadV1, SwordBondHudStateV1};
+        use prost::Message;
+
+        let payload = ServerDataPayloadV1::SwordBondHudState(SwordBondHudStateV1 {
+            active: true,
+            grade_index: 4,
+            grade_name: "固元".to_string(),
+            stored_qi_ratio: 0.75,
+            bond_strength: 0.9,
+            heaven_gate_ready: false,
+        });
+
+        let proto_payload = server_data_to_proto_payload(&payload);
+        let envelope = ServerDataEnvelope {
+            payload: Some(proto_payload),
+        };
+
+        let mut buf = Vec::new();
+        envelope
+            .encode(&mut buf)
+            .expect("SwordBondHud active proto encode 不应失败");
+        let decoded = ServerDataEnvelope::decode(buf.as_slice())
+            .expect("SwordBondHud active proto decode 不应失败");
+
+        let Some(super::bong::server_data_envelope::Payload::SwordBondHudState(inner)) =
+            decoded.payload
+        else {
+            panic!(
+                "decoded payload 应为 SwordBondHudState 变体（proto field 128）；实际={:?}",
+                decoded.payload
+            );
+        };
+
+        assert!(inner.active, "active 字段不应丢失");
+        assert_eq!(
+            inner.grade_index, 4,
+            "grade_index 字段不应丢失；期望 4，实际 {}",
+            inner.grade_index
+        );
+        assert_eq!(
+            inner.grade_name, "固元",
+            "grade_name 字段不应丢失；实际='{}'",
+            inner.grade_name
+        );
+        assert!(
+            (inner.stored_qi_ratio - 0.75).abs() < 1e-5,
+            "stored_qi_ratio 字段不应丢失（守恒红线：只读展示）；期望 0.75，实际 {}",
+            inner.stored_qi_ratio
+        );
+        assert!(
+            (inner.bond_strength - 0.9).abs() < 1e-5,
+            "bond_strength 字段不应丢失；期望 0.9，实际 {}",
+            inner.bond_strength
+        );
+        assert!(!inner.heaven_gate_ready, "heaven_gate_ready 字段不应丢失");
+    }
+
+    #[test]
+    fn sword_bond_hud_proto_roundtrip_heaven_gate_ready() {
+        // heavenGateReady=true 路径测试（化虚满储）
+        use crate::schema::proto_convert::server_data_to_proto_payload;
+        use crate::schema::proto_gen::bong::ServerDataEnvelope;
+        use crate::schema::server_data::{ServerDataPayloadV1, SwordBondHudStateV1};
+        use prost::Message;
+
+        let payload = ServerDataPayloadV1::SwordBondHudState(SwordBondHudStateV1 {
+            active: true,
+            grade_index: 6,
+            grade_name: "化虚".to_string(),
+            stored_qi_ratio: 1.0,
+            bond_strength: 1.0,
+            heaven_gate_ready: true,
+        });
+
+        let proto_payload = server_data_to_proto_payload(&payload);
+        let envelope = ServerDataEnvelope {
+            payload: Some(proto_payload),
+        };
+
+        let mut buf = Vec::new();
+        envelope
+            .encode(&mut buf)
+            .expect("SwordBondHud heavenGate encode 不应失败");
+        let decoded = ServerDataEnvelope::decode(buf.as_slice())
+            .expect("SwordBondHud heavenGate decode 不应失败");
+
+        let Some(super::bong::server_data_envelope::Payload::SwordBondHudState(inner)) =
+            decoded.payload
+        else {
+            panic!("应为 SwordBondHudState；实际={:?}", decoded.payload);
+        };
+
+        assert!(
+            inner.heaven_gate_ready,
+            "heaven_gate_ready=true 必须通过 proto 链到达 client SwordBondHudStateStore"
+        );
+        assert_eq!(inner.grade_index, 6, "化虚 grade_index=6 必须正确传递");
+    }
+
+    #[test]
+    fn sword_bond_hud_proto_roundtrip_inactive() {
+        // inactive 路径（无 SwordBondComponent）
+        use crate::schema::proto_convert::server_data_to_proto_payload;
+        use crate::schema::proto_gen::bong::ServerDataEnvelope;
+        use crate::schema::server_data::{ServerDataPayloadV1, SwordBondHudStateV1};
+        use prost::Message;
+
+        let payload = ServerDataPayloadV1::SwordBondHudState(SwordBondHudStateV1 {
+            active: false,
+            grade_index: 0,
+            grade_name: String::new(),
+            stored_qi_ratio: 0.0,
+            bond_strength: 0.0,
+            heaven_gate_ready: false,
+        });
+
+        let proto_payload = server_data_to_proto_payload(&payload);
+        let envelope = ServerDataEnvelope {
+            payload: Some(proto_payload),
+        };
+
+        let mut buf = Vec::new();
+        envelope
+            .encode(&mut buf)
+            .expect("SwordBondHud inactive encode 不应失败");
+        let decoded = ServerDataEnvelope::decode(buf.as_slice())
+            .expect("SwordBondHud inactive decode 不应失败");
+
+        let Some(super::bong::server_data_envelope::Payload::SwordBondHudState(inner)) =
+            decoded.payload
+        else {
+            panic!("应为 SwordBondHudState；实际={:?}", decoded.payload);
+        };
+
+        assert!(!inner.active, "inactive payload active 字段应为 false");
+        assert_eq!(inner.stored_qi_ratio, 0.0);
+        assert!(!inner.heaven_gate_ready);
+    }
 }

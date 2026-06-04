@@ -63,6 +63,7 @@ pub mod skillbar_config_emit;
 mod skillbar_config_emit_test;
 pub mod spirit_treasure_emit;
 pub mod status_snapshot_emit;
+pub mod sword_bond_state_emit;
 pub mod techniques_snapshot_emit;
 pub mod treasure_equipped_emit;
 pub mod tribulation_broadcast_emit;
@@ -71,6 +72,7 @@ pub mod tribulation_state_emit;
 pub mod tsy_container_search_emit;
 pub mod tsy_event_bridge;
 pub mod tsy_polish;
+pub mod tuike_ash_emit;
 pub mod tuike_event_bridge;
 pub mod unlocks_sync_emit;
 pub mod vfx_animation_trigger;
@@ -508,6 +510,8 @@ pub fn register(app: &mut App) {
         cultivation_bridge::publish_breakthrough_cinematic_events,
     );
     app.add_systems(Update, tuike_event_bridge::publish_tuike_v2_skill_events);
+    // plan-combat-skill-feedback-bridges-v1 P6：蜕壳灰烬入包 + VFX + Redis（FalseSkinDecayedToAshEvent）
+    app.add_systems(Update, tuike_ash_emit::publish_tuike_ash_events);
     app.add_systems(
         Update,
         (
@@ -836,6 +840,11 @@ pub fn register(app: &mut App) {
     app.add_systems(Update, dugu_state_emit::emit_dugu_poison_state_payloads);
     // plan-combat-skill-feedback-bridges-v1 P4：暗器 HUD S2C（DecoyDeploy/QiInjection/CarrierAbrasion）
     app.add_systems(Update, anqi_hud_emit::emit_anqi_hud_payloads);
+    // plan-combat-skill-feedback-bridges-v1 P6：人剑共生 HUD S2C（每秒推送 SwordBondHudState）
+    app.add_systems(
+        Update,
+        sword_bond_state_emit::emit_sword_bond_hud_state_payloads,
+    );
     app.add_systems(Update, carrier_state_emit::emit_carrier_state_payloads);
     app.add_systems(
         Update,
