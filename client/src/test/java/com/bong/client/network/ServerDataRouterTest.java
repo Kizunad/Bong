@@ -164,7 +164,9 @@ public class ServerDataRouterTest {
             "dugu_v2_skill_cast",
             "dugu_v2_self_cure",
             "dugu_v2_shroud_active",
-            "permanent_qi_max_decay_applied"
+            "permanent_qi_max_decay_applied",
+            // plan-combat-skill-feedback-bridges-v1 P6 — 人剑共生 HUD S2C
+            "sword_bond_hud_state"
         ), router.registeredTypes());
     }
 
