@@ -100,13 +100,24 @@ def _cube_from_element(e: dict) -> dict:
 
 
 def _group_cubes(group: dict, by_uuid: dict) -> list[dict]:
-    """递归收集 group 下所有 element uuid 对应的 cube。"""
+    """递归收集 group 下所有 element uuid 对应的 cube。
+
+    嵌套子 group 若带 rotation/非零 origin（功能性变换），本函数的展平会把该变换静默丢掉、
+    导出几何即错且不报错 —— 故显式拒绝（本导出器只对顶层 group 建 bone/施变换）。宁可撞红，
+    也不静默产出错误几何。本批 4 档棺均为扁平结构，不触发；守卫防的是未来嵌套模型。
+    """
     cubes = []
     for child in group.get("children", []):
         if isinstance(child, str):
             if child in by_uuid:
                 cubes.append(_cube_from_element(by_uuid[child]))
         elif isinstance(child, dict):
+            rot, org = child.get("rotation"), child.get("origin")
+            if (rot and any(rot)) or (org and any(org)):
+                raise ValueError(
+                    f"嵌套 group {child.get('name')!r} 带变换 rotation={rot}/origin={org}；"
+                    "导出器只支持顶层 group 变换，请在 Blockbench 展平或提升为顶层 group"
+                )
             cubes.extend(_group_cubes(child, by_uuid))
     return cubes
 
@@ -374,7 +385,7 @@ def main() -> None:
     tiers = [args.tier] if args.tier else list(TIERS)
     for tier in tiers:
         export_tier(tier)
-    print("\n完成。用 scripts/models/render_bbmodel.py 核验真长相，或进游戏实机比对。")
+    print("\n完成。进游戏实机比对核验渲染（或用本地预览脚本）。")
 
 
 if __name__ == "__main__":
