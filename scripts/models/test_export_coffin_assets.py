@@ -133,6 +133,28 @@ class BoneAssignmentTest(unittest.TestCase):
         loose_origins = [c["origin"] for c in bones["loose"]["cubes"]]
         self.assertIn([4, 4, 4], loose_origins)
 
+    def test_nested_group_with_transform_rejected(self) -> None:
+        # 嵌套子 group 带 rotation/origin 会被展平丢失变换 → 必须 fail-loud，不可静默出错几何
+        els = [_cube("a", "x", [0, 0, 0], [2, 2, 2], {"north": {"uv": [0, 0, 2, 2]}})]
+        outliner = [
+            {
+                "uuid": "g",
+                "children": [
+                    {"uuid": "sub", "rotation": [0, 30, 0], "origin": [1, 1, 1], "children": ["a"]}
+                ],
+            }
+        ]
+        with self.assertRaisesRegex(ValueError, "嵌套 group"):
+            export.build_geo(_bb(els, outliner), "geometry.bong.t_coffin")
+
+    def test_nested_group_without_transform_flattens_ok(self) -> None:
+        # 嵌套子 group 无变换：展平收集其 cube 不报错
+        els = [_cube("a", "x", [0, 0, 0], [2, 2, 2], {"north": {"uv": [0, 0, 2, 2]}})]
+        outliner = [{"uuid": "g", "children": [{"uuid": "sub", "children": ["a"]}]}]
+        geo = export.build_geo(_bb(els, outliner), "geometry.bong.t_coffin")
+        n_cubes = sum(len(b.get("cubes", [])) for b in geo["minecraft:geometry"][0]["bones"])
+        self.assertEqual(1, n_cubes, "无变换嵌套 group 的 cube 应被正常收集")
+
     def test_non_three_groups_highest_is_lid(self) -> None:
         # 非典型组数（2 组）：最高 Y 那组仍叫 lid，供动画定位
         els = [
