@@ -9,8 +9,8 @@ import java.util.List;
 import static org.junit.jupiter.api.Assertions.*;
 
 /**
- * plan-combat-skill-feedback-bridges-v1 P4 @hive blocker 修复：
- * 验证 AnqiHudStateStore 的按维度独立存储和并发合并语义。
+ * plan-combat-skill-feedback-bridges-v1 P4 @hive blocker+major 修复：
+ * 验证 AnqiHudStateStore 的按维度独立存储、并发合并语义和 tick 守序。
  *
  * <p>测试矩阵覆盖：
  * <ul>
@@ -26,6 +26,9 @@ import static org.junit.jupiter.api.Assertions.*;
  *   <li>updateAim() 接口正常写入</li>
  *   <li>Planner 对三维并存 state 产出三路命令</li>
  *   <li>Planner 对 echo+charge 并存产出两路命令</li>
+ *   <li>[major] tick 守序：同维度乱序旧包被丢弃（echo/charge/abrasion 各自验证）</li>
+ *   <li>[major] tick 守序：同维度相同 tick 第二次 update 被接受（允许 >=）</li>
+ *   <li>[major] tick 守序：同 tick 不同维度均被接受（同帧多维度）</li>
  * </ul>
  */
 class AnqiHudStateStoreTest {
@@ -249,5 +252,95 @@ class AnqiHudStateStoreTest {
             cmd.layer() == HudRenderLayer.CAST_BAR);
         assertTrue(hasCharge,
             "echo+charge 并存：Planner 应产生 charge bar 命令；commands=" + commands);
+    }
+
+    // ─── [major] tick 守序：同维度乱序旧包丢弃 ───────────────────────────
+
+    @Test
+    void staleTickEchoIsDropped() {
+        // 先 feed tick=5 echo=3，再 feed tick=2 echo=0（乱序旧包）→ snapshot 仍为 echoCount=3
+        AnqiHudStateStore.updateEcho(3, BASE_NOW, DUR, 5L);
+        AnqiHudStateStore.updateEcho(0, BASE_NOW, DUR, 2L); // stale：tick=2 < lastTick=5，丢弃
+
+        AnqiHudState state = AnqiHudStateStore.snapshot(BASE_NOW);
+
+        assertEquals(3, state.echoCount(),
+            "乱序旧包（echo tick=2 < lastTick=5）应被丢弃，echoCount 仍应为 3；实际=" + state.echoCount());
+    }
+
+    @Test
+    void staleTickChargeIsDropped() {
+        // charge 维度 tick 守序：旧 tick 包被拒绝
+        AnqiHudStateStore.updateCharge(0.9f, BASE_NOW, DUR, 10L);
+        AnqiHudStateStore.updateCharge(0.1f, BASE_NOW, DUR, 3L); // stale：tick=3 < lastTick=10
+
+        AnqiHudState state = AnqiHudStateStore.snapshot(BASE_NOW);
+
+        assertEquals(0.9f, state.chargeProgress(), 0.001f,
+            "charge 乱序旧包（tick=3 < lastTick=10）应被丢弃；实际=" + state.chargeProgress());
+    }
+
+    @Test
+    void staleTickAbrasionIsDropped() {
+        // abrasion 维度 tick 守序
+        AnqiHudStateStore.updateAbrasion("quiver", 30.0f, BASE_NOW, DUR, 20L);
+        AnqiHudStateStore.updateAbrasion("old_bag", 5.0f, BASE_NOW, DUR, 8L); // stale
+
+        AnqiHudState state = AnqiHudStateStore.snapshot(BASE_NOW);
+
+        assertEquals("quiver", state.abrasionContainer(),
+            "abrasion 乱序旧包（tick=8 < lastTick=20）应被丢弃，container 仍为 quiver；实际=" + state.abrasionContainer());
+        assertEquals(30.0f, state.abrasionQiPayload(), 0.01f,
+            "abrasion 乱序旧包丢弃后 qiPayload 仍应为 30.0；实际=" + state.abrasionQiPayload());
+    }
+
+    // ─── [major] tick 守序：相同 tick 允许 >= ─────────────────────────────
+
+    @Test
+    void sameTickSameDimIsAccepted() {
+        // 同 tick 相同维度第二次 update 被接受（tick >= lastTick 允许 =）
+        AnqiHudStateStore.updateEcho(3, BASE_NOW, DUR, 5L);
+        AnqiHudStateStore.updateEcho(7, BASE_NOW, DUR, 5L); // 相同 tick，应覆盖
+
+        AnqiHudState state = AnqiHudStateStore.snapshot(BASE_NOW);
+
+        assertEquals(7, state.echoCount(),
+            "相同 tick(=5) 第二次 update 应被接受（允许 >=），echoCount 应为 7；实际=" + state.echoCount());
+    }
+
+    // ─── [major] tick 守序：同 tick 不同维度均被接受 ─────────────────────
+
+    @Test
+    void sameTickDifferentDimsBothAccepted() {
+        // 同 tick 不同维度均被接受（同帧 server 可能发多 kind 同 tick）
+        AnqiHudStateStore.updateEcho(5, BASE_NOW, DUR, 42L);
+        AnqiHudStateStore.updateCharge(0.5f, BASE_NOW, DUR, 42L);
+        AnqiHudStateStore.updateAbrasion("hand_slot", 18.5f, BASE_NOW, DUR, 42L);
+
+        AnqiHudState state = AnqiHudStateStore.snapshot(BASE_NOW);
+
+        assertEquals(5, state.echoCount(),
+            "同帧同 tick：echoCount 必须为 5；实际=" + state.echoCount());
+        assertEquals(0.5f, state.chargeProgress(), 0.001f,
+            "同帧同 tick：chargeProgress 必须为 0.5；实际=" + state.chargeProgress());
+        assertEquals("hand_slot", state.abrasionContainer(),
+            "同帧同 tick：abrasionContainer 必须为 hand_slot；实际=" + state.abrasionContainer());
+        assertEquals(18.5f, state.abrasionQiPayload(), 0.01f,
+            "同帧同 tick：abrasionQiPayload 必须为 18.5；实际=" + state.abrasionQiPayload());
+    }
+
+    @Test
+    void staleTickDoesNotAffectOtherDimensions() {
+        // 验证：某维度乱序包被丢弃时，其他维度不受影响
+        AnqiHudStateStore.updateEcho(3, BASE_NOW, DUR, 10L);
+        AnqiHudStateStore.updateCharge(0.7f, BASE_NOW, DUR, 10L);
+        AnqiHudStateStore.updateEcho(0, BASE_NOW, DUR, 2L); // stale echo，被丢弃
+
+        AnqiHudState state = AnqiHudStateStore.snapshot(BASE_NOW);
+
+        assertEquals(3, state.echoCount(),
+            "echo stale 包被丢弃，echoCount 仍应为 3；实际=" + state.echoCount());
+        assertEquals(0.7f, state.chargeProgress(), 0.001f,
+            "echo stale 包丢弃不影响 charge，chargeProgress 仍应为 0.7；实际=" + state.chargeProgress());
     }
 }
