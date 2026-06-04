@@ -51,7 +51,9 @@ jobs:
           # 端点/模型/规模都可被 repo variables / secrets 覆盖。
           # key 必须在 repo secrets 配 HIVE_API_KEY(SenseNova 端点需鉴权,无默认)。
           HIVE_BASE_URL: ${{ vars.HIVE_BASE_URL || 'https://token.sensenova.cn/v1' }}
-          HIVE_API_KEY: ${{ secrets.HIVE_API_KEY }}
+          # 多 key 轮询:HIVE_API_KEY + HIVE_API_KEY_2 两个独立 secret 拼成逗号串,
+          # 脚本按 round-robin 摊负载、失败自动切下一把。空 secret 会被脚本去空过滤掉。
+          HIVE_API_KEYS: ${{ secrets.HIVE_API_KEY }},${{ secrets.HIVE_API_KEY_2 }}
           # 逗号分隔,成员在这些模型间轮转,同台 debate(一次把两个都试了)
           HIVE_MODELS: ${{ vars.HIVE_MODELS || 'deepseek-v4-flash,sensenova-6.7-flash-lite' }}
           HIVE_ARBITER_MODEL: ${{ vars.HIVE_ARBITER_MODEL || 'deepseek-v4-flash' }}
