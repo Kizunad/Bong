@@ -785,4 +785,70 @@ public class ClientRequestProtocolTest {
             "negative entity_id should be encoded without client-side validation"
         );
     }
+
+    // ─── plan-coffin-tiers-v1 P3：C2S coffin_break / coffin_menu_reclaim ────
+
+    @Test
+    void encodesCoffinBreak() {
+        String json = ClientRequestProtocol.encodeCoffinBreak(new BlockPos(10, 64, -5));
+        assertEquals(
+            "{\"type\":\"coffin_break\",\"v\":1,\"x\":10,\"y\":64,\"z\":-5}",
+            json,
+            "coffin_break should encode pos fields with correct type and negative z"
+        );
+    }
+
+    @Test
+    void encodesCoffinBreakOrigin() {
+        String json = ClientRequestProtocol.encodeCoffinBreak(new BlockPos(0, 0, 0));
+        assertEquals(
+            "{\"type\":\"coffin_break\",\"v\":1,\"x\":0,\"y\":0,\"z\":0}",
+            json,
+            "coffin_break at origin should encode all-zero coordinates"
+        );
+    }
+
+    @Test
+    void encodesCoffinMenuReclaim() {
+        String json = ClientRequestProtocol.encodeCoffinMenuReclaim(new BlockPos(3, 65, 7));
+        assertEquals(
+            "{\"type\":\"coffin_menu_reclaim\",\"v\":1,\"x\":3,\"y\":65,\"z\":7}",
+            json,
+            "coffin_menu_reclaim should encode pos fields with correct type"
+        );
+    }
+
+    @Test
+    void encodesCoffinMenuReclaimNegativeCoords() {
+        String json = ClientRequestProtocol.encodeCoffinMenuReclaim(new BlockPos(-128, 0, -256));
+        assertEquals(
+            "{\"type\":\"coffin_menu_reclaim\",\"v\":1,\"x\":-128,\"y\":0,\"z\":-256}",
+            json,
+            "coffin_menu_reclaim should handle negative coordinates (valid world coords)"
+        );
+    }
+
+    @Test
+    void coffinBreakIncludesVersionField() {
+        String json = ClientRequestProtocol.encodeCoffinBreak(new BlockPos(1, 64, 1));
+        com.google.gson.JsonObject obj = new com.google.gson.JsonParser()
+            .parse(json)
+            .getAsJsonObject();
+        assertEquals(1, obj.get("v").getAsInt(),
+            "coffin_break must include version field v=1 for server decode");
+        assertEquals("coffin_break", obj.get("type").getAsString(),
+            "coffin_break type field must match server ClientRequestV1::CoffinBreak serde tag");
+    }
+
+    @Test
+    void coffinMenuReclaimIncludesVersionField() {
+        String json = ClientRequestProtocol.encodeCoffinMenuReclaim(new BlockPos(1, 64, 1));
+        com.google.gson.JsonObject obj = new com.google.gson.JsonParser()
+            .parse(json)
+            .getAsJsonObject();
+        assertEquals(1, obj.get("v").getAsInt(),
+            "coffin_menu_reclaim must include version field v=1 for server decode");
+        assertEquals("coffin_menu_reclaim", obj.get("type").getAsString(),
+            "coffin_menu_reclaim type field must match server ClientRequestV1::CoffinMenuReclaim serde tag");
+    }
 }

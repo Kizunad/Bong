@@ -4,7 +4,10 @@ import com.bong.client.alchemy.AlchemyFurnaceItems;
 import com.bong.client.alchemy.AlchemyFurnaceInteractionRules;
 import com.bong.client.alchemy.AlchemyScreenBootstrap;
 import com.bong.client.alchemy.state.AlchemyFurnaceStore;
+import com.bong.client.coffin.CoffinEnterIntentHandler;
 import com.bong.client.combat.screen.ZhenfaLayoutScreen;
+import com.bong.client.entity.BongEntityModelKind;
+import com.bong.client.entity.BongModeledEntity;
 import com.bong.client.hud.TargetInfoStateStore;
 import com.bong.client.inventory.model.EquipSlotType;
 import com.bong.client.inventory.model.InventoryItem;
@@ -39,6 +42,15 @@ public abstract class MixinClientPlayerInteractionManagerAlchemy {
     @SuppressWarnings({"unused", "PMD.UnusedPrivateMethod"})
     private void bong$targetInfoAttack(PlayerEntity player, Entity target, CallbackInfo ci) {
         TargetInfoStateStore.observeEntity(target, System.currentTimeMillis());
+        // plan-coffin-tiers-v1 P3 — 左键攻击延寿棺 marker 实体 → coffin_break C2S。
+        // marker 实体无服务端碰撞箱，MC 客户端 attackEntity 照常触发；
+        // 在此截获并发 coffin_break，体验等同破坏方块。
+        if (target instanceof BongModeledEntity modeled
+            && CoffinEnterIntentHandler.isCoffinKind(modeled.modelKind())) {
+            // getBlockPos() = floor(entity.x, y, z)，对应 marker 坐标所在格
+            // （marker 位于 lower.x+1 即 upper half），server registry 按 lower/upper 归一。
+            ClientRequestSender.sendCoffinBreak(target.getBlockPos());
+        }
     }
 
     @Inject(method = "interactEntity", at = @At("TAIL"))
@@ -104,12 +116,11 @@ public abstract class MixinClientPlayerInteractionManagerAlchemy {
             return;
         }
 
+        // plan-coffin-tiers-v1 P3 — CHEST→coffin_enter 旧路径已退役。
+        // P2 起延寿棺改为 marker 实体（坐标 AIR，无 CHEST 方块），进棺统一由
+        // CoffinEnterIntentHandler 触发（右键/G → CoffinMenuScreen → [入眠]）。
         if (client.world == null) return;
         BlockPos pos = hit.getBlockPos();
-        if (client.world.getBlockState(pos).isOf(Blocks.CHEST)) {
-            ClientRequestSender.sendCoffinEnter(pos);
-            return;
-        }
         if (client.world.getBlockState(pos).isOf(Blocks.FURNACE)
             && AlchemyFurnaceInteractionRules.shouldOpenAlchemyFurnace(pos, AlchemyFurnaceStore.snapshot())) {
             AlchemyScreenBootstrap.requestOpenAlchemyScreen(client, pos);

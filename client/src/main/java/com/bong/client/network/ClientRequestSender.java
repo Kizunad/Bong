@@ -384,6 +384,18 @@ public final class ClientRequestSender {
         dispatch(ClientRequestProtocol.encodeCoffinLeave());
     }
 
+    // ─── plan-coffin-tiers-v1 P3：延寿棺 marker 交互 C2S ───────────────────
+
+    /** plan-coffin-tiers-v1 P3 — 左键攻击 marker 实体，破坏延寿棺（体验同破坏方块）。 */
+    public static void sendCoffinBreak(BlockPos pos) {
+        dispatch(ClientRequestProtocol.encodeCoffinBreak(pos));
+    }
+
+    /** plan-coffin-tiers-v1 P3 — G 菜单 [回收] 按钮，主动回收延寿棺（较全材料返还）。 */
+    public static void sendCoffinMenuReclaim(BlockPos pos) {
+        dispatch(ClientRequestProtocol.encodeCoffinMenuReclaim(pos));
+    }
+
     public static void sendAlchemyTakePill(String pillItemId) {
         dispatch(ClientRequestProtocol.encodeAlchemyTakePill(pillItemId));
     }

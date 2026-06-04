@@ -2,6 +2,7 @@ use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
 use valence::entity::entity::Flags;
+use valence::message::SendMessage;
 use valence::prelude::{
     apply_deferred, bevy_ecs, Added, App, BlockPos, BlockState, ChunkLayer, Client, Commands,
     Component, DVec3, Entity, Event, EventReader, EventWriter, IntoSystemConfigs, Position, Query,
@@ -780,6 +781,7 @@ fn handle_coffin_breaks(
                     allocator,
                     username.0.as_str(),
                     &drops,
+                    Some(&mut client),
                 );
                 if granted {
                     if let Some(player_state) = player_state {
@@ -916,6 +918,7 @@ fn handle_coffin_menu_reclaim(
                     allocator,
                     username.0.as_str(),
                     &drops,
+                    Some(&mut client),
                 );
                 if granted {
                     if let Some(player_state) = player_state {
@@ -985,24 +988,39 @@ fn rebuild_missing_coffin_markers(
     }
 }
 
-/// plan-coffin-tiers-v1 P2 — 把 reclaim 返还清单逐项发还玩家背包。返回 true 表示
-/// 至少发还了一项（用于决定是否推 inventory snapshot）。任一项失败只 warn 不中断
-/// （守恒：返还是合成投入的部分回收，发不下时丢弃不补偿，避免刷物）。
+/// plan-coffin-tiers-v1 P2/P3 — 把 reclaim 返还清单逐项发还玩家背包。返回 true 表示
+/// 至少发还了一项（用于决定是否推 inventory snapshot）。
+///
+/// P3 非静默修复（CodeRabbit P2 major #2）：发还失败时记录 warn 并通过聊天栏提示玩家
+/// "背包已满，X 份材料未能返还"，避免静默吞材料。真·地面掉落待 P4 或 item-entity
+/// 机制就位（`DroppedLootRegistry` 路径）后升级。
 fn grant_reclaim_drops_to_inventory(
     inventory: &mut PlayerInventory,
     item_registry: &ItemRegistry,
     allocator: &mut InventoryInstanceIdAllocator,
     username: &str,
     drops: &[(String, u32)],
+    client: Option<&mut Client>,
 ) -> bool {
     let mut granted_any = false;
+    let mut failed_count = 0u32;
     for (template_id, count) in drops {
         match add_item_to_player_inventory(inventory, item_registry, allocator, template_id, *count)
         {
             Ok(_) => granted_any = true,
-            Err(error) => tracing::warn!(
-                "[bong][coffin] failed to return reclaim drop {template_id}×{count} to `{username}`: {error}"
-            ),
+            Err(error) => {
+                tracing::warn!(
+                    "[bong][coffin] failed to return reclaim drop {template_id}×{count} to `{username}`: {error}"
+                );
+                failed_count = failed_count.saturating_add(*count);
+            }
+        }
+    }
+    if failed_count > 0 {
+        let msg = format!("§e[棺] 背包已满，{failed_count} 份材料未能返还（满包时材料不补偿）");
+        tracing::warn!("[bong][coffin] {username} 背包满，{failed_count} 份 reclaim 材料无法返还");
+        if let Some(c) = client {
+            c.send_chat_message(msg);
         }
     }
     granted_any
@@ -2089,6 +2107,99 @@ mod tests {
                 .is_none(),
             "无 inventory 时 break 仍应移除 registry lower={lower:?}；\
              期望：remove_by_pos 在 inventory 检查前执行"
+        );
+    }
+
+    // ─── plan-coffin-tiers-v1 P3 E 非静默修复：grant_reclaim_drops_to_inventory ────
+
+    #[test]
+    fn grant_reclaim_drops_to_full_inventory_returns_false_and_does_not_panic() {
+        // 满背包时 grant_reclaim_drops_to_inventory 应返回 false（无一成功发还）且不 panic。
+        // 填满背包：1×1 格 * 16 格 = 16 个 item，各占满 stack。
+        let item_registry = make_coffin_item_registry();
+        let mut allocator = InventoryInstanceIdAllocator::default();
+
+        // 构造一个只有 1 格的背包，然后填满它（stack 上限 64）。
+        let mut inventory = PlayerInventory {
+            revision: InventoryRevision(0),
+            containers: vec![ContainerState {
+                id: MAIN_PACK_CONTAINER_ID.to_string(),
+                name: "主背包".to_string(),
+                rows: 1,
+                cols: 1,
+                items: vec![],
+            }],
+            equipped: HashMap::new(),
+            hotbar: Default::default(),
+            bone_coins: 0,
+            max_weight: 9999.0,
+        };
+        // 先填满唯一的格（塞满 ling_mu_ban×64）。
+        add_item_to_player_inventory(
+            &mut inventory,
+            &item_registry,
+            &mut allocator,
+            "ling_mu_ban",
+            64,
+        )
+        .expect("should fit into empty slot");
+
+        // 再尝试发还更多 ling_mu_ban → 格已满，应失败。
+        let drops = vec![("ling_mu_ban".to_string(), 6u32)];
+        let granted = grant_reclaim_drops_to_inventory(
+            &mut inventory,
+            &item_registry,
+            &mut allocator,
+            "test_player",
+            &drops,
+            None, // 无 client，只测 return value + 不 panic
+        );
+        assert!(
+            !granted,
+            "背包满时 grant_reclaim_drops_to_inventory 应返回 false（无一成功发还），\
+             期望：ling_mu_ban 格已满（64/64），追加返回 Err，granted_any 保持 false"
+        );
+    }
+
+    #[test]
+    fn grant_reclaim_drops_empty_drops_returns_false() {
+        // 边界：空 drops slice → 返回 false（没有任何成功发还）。
+        let item_registry = make_coffin_item_registry();
+        let mut allocator = InventoryInstanceIdAllocator::default();
+        let mut inventory = empty_player_inventory();
+        let granted = grant_reclaim_drops_to_inventory(
+            &mut inventory,
+            &item_registry,
+            &mut allocator,
+            "test_player",
+            &[],
+            None,
+        );
+        assert!(
+            !granted,
+            "空 drops 时 grant_reclaim_drops_to_inventory 应返回 false（无成功项），\
+             期望：循环体未执行，granted_any 保持初始 false"
+        );
+    }
+
+    #[test]
+    fn grant_reclaim_drops_to_empty_inventory_returns_true() {
+        // happy path：空背包足够容纳 drops → 返回 true。
+        let item_registry = make_coffin_item_registry();
+        let mut allocator = InventoryInstanceIdAllocator::default();
+        let mut inventory = empty_player_inventory();
+        let drops = vec![("ling_mu_ban".to_string(), 3u32)];
+        let granted = grant_reclaim_drops_to_inventory(
+            &mut inventory,
+            &item_registry,
+            &mut allocator,
+            "test_player",
+            &drops,
+            None,
+        );
+        assert!(
+            granted,
+            "空背包发还 ling_mu_ban×3 应成功，grant_reclaim_drops_to_inventory 应返回 true"
         );
     }
 

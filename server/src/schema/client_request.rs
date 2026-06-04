@@ -159,6 +159,21 @@ pub enum ClientRequestV1 {
     CoffinLeave {
         v: u8,
     },
+    /// plan-coffin-tiers-v1 P3 — 左键攻击 marker 实体，破坏延寿棺（体验同破坏方块）。
+    /// pos 为 marker 实体坐标反算的棺 lower 格（client 可选任一半，server 归一）。
+    CoffinBreak {
+        v: u8,
+        x: i32,
+        y: i32,
+        z: i32,
+    },
+    /// plan-coffin-tiers-v1 P3 — G 菜单 [回收] 按钮：主动回收延寿棺，较全材料返还。
+    CoffinMenuReclaim {
+        v: u8,
+        x: i32,
+        y: i32,
+        z: i32,
+    },
     /// plan-social-v1 §2.1 — 消耗龛石，在目标坐标放置/替换当前角色唯一灵龛。
     SpiritNichePlace {
         v: u8,
@@ -775,6 +790,86 @@ mod tests {
         let leave = r#"{"type":"coffin_leave","v":1}"#;
         let req: ClientRequestV1 = serde_json::from_str(leave).unwrap();
         assert!(matches!(req, ClientRequestV1::CoffinLeave { v: 1 }));
+    }
+
+    // ─── plan-coffin-tiers-v1 P3：coffin_break / coffin_menu_reclaim C2S schema tests ───
+
+    #[test]
+    fn coffin_break_roundtrip() {
+        let json = r#"{"type":"coffin_break","v":1,"x":10,"y":64,"z":-5}"#;
+        let req: ClientRequestV1 =
+            serde_json::from_str(json).unwrap_or_else(|e| panic!("coffin_break should parse: {e}"));
+        assert!(
+            matches!(
+                req,
+                ClientRequestV1::CoffinBreak {
+                    v: 1,
+                    x: 10,
+                    y: 64,
+                    z: -5
+                }
+            ),
+            "coffin_break did not deserialize to expected variant, got: {req:?}"
+        );
+    }
+
+    #[test]
+    fn coffin_break_rejects_missing_coords() {
+        let json = r#"{"type":"coffin_break","v":1}"#;
+        let result: Result<ClientRequestV1, _> = serde_json::from_str(json);
+        assert!(
+            result.is_err(),
+            "coffin_break without coordinates should fail deserialization"
+        );
+    }
+
+    #[test]
+    fn coffin_menu_reclaim_roundtrip() {
+        let json = r#"{"type":"coffin_menu_reclaim","v":1,"x":3,"y":65,"z":7}"#;
+        let req: ClientRequestV1 = serde_json::from_str(json)
+            .unwrap_or_else(|e| panic!("coffin_menu_reclaim should parse: {e}"));
+        assert!(
+            matches!(
+                req,
+                ClientRequestV1::CoffinMenuReclaim {
+                    v: 1,
+                    x: 3,
+                    y: 65,
+                    z: 7
+                }
+            ),
+            "coffin_menu_reclaim did not deserialize to expected variant, got: {req:?}"
+        );
+    }
+
+    #[test]
+    fn coffin_menu_reclaim_rejects_missing_coords() {
+        let json = r#"{"type":"coffin_menu_reclaim","v":1}"#;
+        let result: Result<ClientRequestV1, _> = serde_json::from_str(json);
+        assert!(
+            result.is_err(),
+            "coffin_menu_reclaim without coordinates should fail deserialization"
+        );
+    }
+
+    #[test]
+    fn coffin_break_negative_coords_accepted() {
+        // 负坐标合法（世界有负 XZ）。
+        let json = r#"{"type":"coffin_break","v":1,"x":-128,"y":0,"z":-256}"#;
+        let req: ClientRequestV1 = serde_json::from_str(json)
+            .unwrap_or_else(|e| panic!("coffin_break with negative coords should parse: {e}"));
+        assert!(
+            matches!(
+                req,
+                ClientRequestV1::CoffinBreak {
+                    v: 1,
+                    x: -128,
+                    y: 0,
+                    z: -256
+                }
+            ),
+            "negative coords should parse correctly, got: {req:?}"
+        );
     }
 
     #[test]

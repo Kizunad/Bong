@@ -1,5 +1,6 @@
 package com.bong.client.input;
 
+import com.bong.client.coffin.CoffinEnterIntentHandler;
 import com.bong.client.inventory.DroppedItemPickupIntentHandler;
 import com.bong.client.inventory.SupplyCoffinInteractIntentHandler;
 import com.bong.client.npc.NpcEngagementIntentHandler;
@@ -15,6 +16,7 @@ public final class DefaultInteractionHandlers {
         router.register(new TsyContainerSearchIntentHandler());
         router.register(new NpcEngagementIntentHandler());
         router.register(new SupplyCoffinInteractIntentHandler());
+        router.register(new CoffinEnterIntentHandler());
         router.register(new TradeOfferIntentHandler());
         router.register(new DroppedItemPickupIntentHandler());
     }

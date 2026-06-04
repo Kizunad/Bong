@@ -272,6 +272,8 @@ pub struct ClientRequestDispatchParams<'w> {
     pub coffin_place_tx: Option<ResMut<'w, Events<CoffinPlaceRequest>>>,
     pub coffin_enter_tx: Option<ResMut<'w, Events<CoffinEnterRequest>>>,
     pub coffin_leave_tx: Option<ResMut<'w, Events<CoffinLeaveRequest>>>,
+    pub coffin_break_tx: Option<ResMut<'w, Events<crate::coffin::CoffinBreakRequest>>>,
+    pub coffin_menu_reclaim_tx: Option<ResMut<'w, Events<crate::coffin::CoffinMenuReclaimRequest>>>,
     pub sparring_invite_response_tx: Option<ResMut<'w, Events<SparringInviteResponseEvent>>>,
     pub trade_offer_request_tx: Option<ResMut<'w, Events<TradeOfferRequest>>>,
     pub trade_offer_response_tx: Option<ResMut<'w, Events<TradeOfferResponseEvent>>>,
@@ -442,6 +444,8 @@ pub fn handle_client_request_payloads(
             | ClientRequestV1::CoffinPlace { v, .. }
             | ClientRequestV1::CoffinEnter { v, .. }
             | ClientRequestV1::CoffinLeave { v }
+            | ClientRequestV1::CoffinBreak { v, .. }
+            | ClientRequestV1::CoffinMenuReclaim { v, .. }
             | ClientRequestV1::SpiritNichePlace { v, .. }
             | ClientRequestV1::SpiritNicheGaze { v, .. }
             | ClientRequestV1::SpiritNicheMarkCoordinate { v, .. }
@@ -834,6 +838,41 @@ pub fn handle_client_request_payloads(
                     continue;
                 };
                 coffin_leave_tx.send(CoffinLeaveRequest { player: ev.client });
+            }
+            ClientRequestV1::CoffinBreak { x, y, z, .. } => {
+                tracing::info!(
+                    "[bong][network][coffin] break entity={:?} pos=[{x},{y},{z}]",
+                    ev.client
+                );
+                let Some(coffin_break_tx) = dispatch.coffin_break_tx.as_deref_mut() else {
+                    tracing::warn!(
+                        "[bong][network] dropped coffin_break because CoffinBreakRequest event resource is missing"
+                    );
+                    continue;
+                };
+                coffin_break_tx.send(crate::coffin::CoffinBreakRequest {
+                    player: ev.client,
+                    pos: valence::prelude::BlockPos::new(x, y, z),
+                    tick: combat_clock.tick,
+                });
+            }
+            ClientRequestV1::CoffinMenuReclaim { x, y, z, .. } => {
+                tracing::info!(
+                    "[bong][network][coffin] menu_reclaim entity={:?} pos=[{x},{y},{z}]",
+                    ev.client
+                );
+                let Some(coffin_menu_reclaim_tx) = dispatch.coffin_menu_reclaim_tx.as_deref_mut()
+                else {
+                    tracing::warn!(
+                        "[bong][network] dropped coffin_menu_reclaim because CoffinMenuReclaimRequest event resource is missing"
+                    );
+                    continue;
+                };
+                coffin_menu_reclaim_tx.send(crate::coffin::CoffinMenuReclaimRequest {
+                    player: ev.client,
+                    pos: valence::prelude::BlockPos::new(x, y, z),
+                    tick: combat_clock.tick,
+                });
             }
             ClientRequestV1::SpiritNichePlace {
                 x,
