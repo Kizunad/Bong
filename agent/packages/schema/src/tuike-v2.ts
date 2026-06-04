@@ -73,3 +73,26 @@ export function validateTuikeV2SkillEventV1Contract(data: unknown): ValidationRe
 export function validateFalseSkinStackStateV1Contract(data: unknown): ValidationResult {
   return validate(FalseSkinStackStateV1, data);
 }
+
+/**
+ * plan-combat-skill-feedback-bridges-v1 P6 — 蜕壳灰烬入包叙事事件。
+ *
+ * server 侧：`bong:tuike_v2/ash_decay` channel 发布 `TuikeAshDecayV1`。
+ * agent 侧：`TuikeAshDecayNarrationRuntime` 订阅此 channel，产生天道叙事。
+ *
+ * 字段与 `server/src/schema/tuike_v2.rs:TuikeAshDecayV1` 1:1 对齐（serde → TypeBox）。
+ */
+export const TuikeAshDecayV1 = Type.Object(
+  {
+    owner_id: Type.String({ minLength: 1 }),
+    output_item_id: Type.String({ minLength: 1 }),
+    tier: FalseSkinTierV1,
+    tick: Type.Integer({ minimum: 0 }),
+  },
+  { additionalProperties: false },
+);
+export type TuikeAshDecayV1 = Static<typeof TuikeAshDecayV1>;
+
+export function validateTuikeAshDecayV1Contract(data: unknown): ValidationResult {
+  return validate(TuikeAshDecayV1, data);
+}

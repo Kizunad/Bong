@@ -230,6 +230,9 @@ export const CHANNELS = {
   /** Server → Agent: 替尸 v2 三招叙事事件 */
   TUIKE_V2_SKILL_EVENT: "bong:tuike_v2/skill_event",
 
+  /** Server → Agent: 蜕壳灰烬入包叙事事件（plan-combat-skill-feedback-bridges-v1 P6） */
+  TUIKE_V2_ASH_DECAY: "bong:tuike_v2/ash_decay",
+
   /** Server → Agent: 医道治疗 / 业力 / 医患结契事件（plan-yidao-v1） */
   YIDAO_EVENT: "bong:yidao/event",
 
@@ -456,6 +459,8 @@ export const REDIS_V1_CHANNELS = [
   CHANNELS.MUTATION_EVENT,
   // plan-combat-skill-feedback-bridges-v1 P3 — 我流虚蚀阶段推进叙事通道
   CHANNELS.VOID_EROSION_EVENT,
+  // plan-combat-skill-feedback-bridges-v1 P6 — 蜕壳灰烬入包叙事通道
+  CHANNELS.TUIKE_V2_ASH_DECAY,
   // plan-combat-skill-feedback-bridges-v1 P1 — 爆脉 v4 叙事通道
   CHANNELS.BAOMAI_V4_SCAR_CIRCUIT_FORMED,
   CHANNELS.BAOMAI_V4_SCAR_CIRCUIT_BROKEN,

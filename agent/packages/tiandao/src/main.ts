@@ -16,6 +16,7 @@ import { SkillLvUpNarrationRuntime } from "./skill-lv-up-runtime.js";
 import { SpiritTreasureDialogueRuntime } from "./spirit-treasure-dialogue-runtime.js";
 import { TribulationNarrationRuntime } from "./tribulation-runtime.js";
 import { TuikeNarrationRuntime } from "./tuike-narration.js";
+import { TuikeAshDecayNarrationRuntime } from "./tuike_ash_runtime.js";
 import { TuikeV2NarrationRuntime } from "./tuike_v2_runtime.js";
 import { VoidActionNarrationRuntime } from "./void-actions-runtime.js";
 import { WoliuNarrationRuntime } from "./woliu-narration.js";
@@ -214,6 +215,10 @@ async function startAuxiliaryRuntimes(config: RuntimeConfig): Promise<RuntimeCle
   const tuikeV2Cleanup = await startTuikeV2Runtime({
     ...runtimeOpts,
   });
+  // plan-combat-skill-feedback-bridges-v1 P6: 蜕壳灰烬入包叙事 runtime（订阅 bong:tuike_v2/ash_decay）。
+  const tuikeAshCleanup = await startTuikeAshRuntime({
+    redisUrl: config.redisUrl,
+  });
   const duguCleanup = await startDuguRuntime({
     ...runtimeOpts,
   });
@@ -265,6 +270,7 @@ async function startAuxiliaryRuntimes(config: RuntimeConfig): Promise<RuntimeCle
     zhenmaiCleanup,
     zhenfaV2Cleanup,
     tuikeV2Cleanup,
+    tuikeAshCleanup,
     tuikeCleanup,
     duguV2Cleanup,
     duguCleanup,
@@ -422,6 +428,34 @@ async function startTuikeV2Runtime(opts: {
       await Promise.race([runtime.disconnect(), timeout]);
     } catch (error) {
       console.warn("[tiandao] tuike v2 runtime disconnect error:", error);
+    }
+  };
+}
+
+async function startTuikeAshRuntime(opts: {
+  redisUrl: string;
+}): Promise<() => Promise<void>> {
+  const IORedisCtor = ((Redis as unknown as { default?: unknown }).default ??
+    Redis) as new (url: string) => unknown;
+  const sub = new IORedisCtor(opts.redisUrl) as ConstructorParameters<
+    typeof TuikeAshDecayNarrationRuntime
+  >[0]["sub"];
+  const pub = new IORedisCtor(opts.redisUrl) as ConstructorParameters<
+    typeof TuikeAshDecayNarrationRuntime
+  >[0]["pub"];
+  const runtime = new TuikeAshDecayNarrationRuntime({ sub, pub });
+  runtime
+    .connect()
+    .then(() => console.log("[tiandao] tuike ash decay runtime online"))
+    .catch((error) =>
+      console.warn("[tiandao] tuike ash decay runtime failed to start:", error),
+    );
+  return async () => {
+    const timeout = new Promise<void>((resolve) => setTimeout(resolve, 500));
+    try {
+      await Promise.race([runtime.disconnect(), timeout]);
+    } catch (error) {
+      console.warn("[tiandao] tuike ash decay runtime disconnect error:", error);
     }
   };
 }
