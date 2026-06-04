@@ -307,10 +307,13 @@ mod tests {
         );
     }
 
-    // ── abrasion e2e wire 契约 pin：as_wire_str → abrasion_container ──
+    // ── abrasion wire 契约 pin：as_wire_str 各变体输出值锁定 ──────
     //
-    // 这些测试锁住"emit 函数用 as_wire_str() 填 abrasion_container"这条路径，
-    // 不走 Debug 派生——一旦有人改回 format!("{:?}") 模式，这里会立刻红。
+    // 注意覆盖范围：这些测试只锁住 as_wire_str() 函数本身的输出值（AnqiContainerKind
+    // 各变体 → 对应字符串）。它们**不走** emit_anqi_hud_payloads，因此无法检测
+    // emit 调用点（emit:111）被改回 format!("{:?}") 的回归。
+    // emit 调用点的回归保护由下方的
+    // `emit_system_abrasion_pocket_pouch_uses_wire_str_not_debug` 集成测试负责。
 
     #[test]
     fn abrasion_payload_container_uses_wire_str_not_debug() {
@@ -382,6 +385,87 @@ mod tests {
             payload.abrasion_container, "fenglinghe",
             "Fenglinghe abrasion_container 必须为 'fenglinghe'；实际={}",
             payload.abrasion_container
+        );
+    }
+
+    // ── Bevy 集成测试：真跑 emit_anqi_hud_payloads，锁住 emit 调用点 ──
+    //
+    // 以下测试通过 valence::testing::create_mock_client 构造真实 Bevy App，
+    // 注入 CarrierAbrasionEvent，调用 emit_anqi_hud_payloads system，
+    // 从出站 CustomPayload 解析断言 abrasion_container 字段。
+    // 这样 emit:111（event.container.as_wire_str()）被真正执行——改回
+    // format!("{:?}") 此测试会红（PocketPouch Debug="PocketPouch" ≠ "pocket_pouch"）。
+    #[test]
+    fn emit_system_abrasion_pocket_pouch_uses_wire_str_not_debug() {
+        use valence::prelude::{App, Update};
+        use valence::protocol::packets::play::CustomPayloadS2c;
+        use valence::testing::create_mock_client;
+
+        use crate::combat::anqi_v2::{CarrierAbrasionEvent, DecoyDeployEvent, QiInjectionEvent};
+        use crate::network::agent_bridge::SERVER_DATA_CHANNEL;
+        use crate::qi_physics::AbrasionDirection;
+
+        let mut app = App::new();
+        // emit_anqi_hud_payloads 依赖三路 EventReader，全部需要 add_event
+        app.add_event::<DecoyDeployEvent>();
+        app.add_event::<QiInjectionEvent>();
+        app.add_event::<CarrierAbrasionEvent>();
+        app.add_systems(Update, super::emit_anqi_hud_payloads);
+
+        // spawn 一个带 Client 的实体，拿到 entity id 用于 event.carrier
+        let (client_bundle, mut helper) = create_mock_client("TestCarrier");
+        let entity = app.world_mut().spawn(client_bundle).id();
+
+        // 发送 PocketPouch 的 CarrierAbrasionEvent
+        app.world_mut().send_event(CarrierAbrasionEvent {
+            carrier: entity,
+            container: AnqiContainerKind::PocketPouch,
+            direction: AbrasionDirection::Draw,
+            lost_qi: 10.0,
+            after_qi: 88.0,
+            tick: 55,
+        });
+
+        app.update();
+
+        // flush 出站包
+        {
+            let mut client_query = app.world_mut().query::<&mut valence::prelude::Client>();
+            for mut client in client_query.iter_mut(app.world_mut()) {
+                client
+                    .flush_packets()
+                    .expect("mock client flush should succeed");
+            }
+        }
+
+        // 从 helper 里抓 AnqiHud abrasion payload
+        let mut found_container: Option<String> = None;
+        for frame in helper.collect_received().0 {
+            let Ok(packet) = frame.decode::<CustomPayloadS2c>() else {
+                continue;
+            };
+            if packet.channel.as_str() != SERVER_DATA_CHANNEL {
+                continue;
+            }
+            let payload: crate::schema::server_data::ServerDataV1 =
+                serde_json::from_slice(packet.data.0 .0)
+                    .expect("server_data payload should deserialize");
+            if let crate::schema::server_data::ServerDataPayloadV1::AnqiHud(hud) = payload.payload {
+                if hud.kind == "abrasion" {
+                    found_container = Some(hud.abrasion_container);
+                    break;
+                }
+            }
+        }
+
+        let container = found_container.expect(
+            "emit_anqi_hud_payloads 必须对 CarrierAbrasionEvent 发出 anqi_hud abrasion payload",
+        );
+        assert_eq!(
+            container, "pocket_pouch",
+            "emit 调用点（emit:111）必须用 as_wire_str()，不能用 Debug 格式；\
+             as_wire_str()='pocket_pouch'，Debug='PocketPouch'；实际={}",
+            container
         );
     }
 }
