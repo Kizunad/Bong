@@ -10,13 +10,13 @@
 
 | 阶段 | 主题（流派子域） | 断链数 | 范本 | 状态 | 验收日期 |
 |------|------|------|------|------|------|
-| **P0** | 经脉断脉整链发布（`meridian_severed`：Redis 叙事 + 非主动断脉 VFX；**复用价值最高，7+ emit 源全受益**） | 3 | `poison_trait_emit.rs` + `void_erosion_visual_emit.rs` | ⬜ | — |
-| **P1** | 爆脉 v4 反馈整桥（`baomai_v4`：scar circuit / iron cocoon / crack reading / resonance lock，server→agent + server→client） | 6 | `baomai_v3_event_bridge.rs` + `void_erosion_visual_emit.rs` | ⬜ | — |
-| **P2** | 爆脉 v3 残余事件补桥（`baomai_v3`：disperse 失败 / mountain shake / blood burn / 超越到期 / 过载裂纹） | 5 | `baomai_v3_event_bridge.rs`（扩展，金标准范本） | ⬜ | — |
-| **P3** | 我流虚蚀整链激活（`woliu_v2`：component insert + erosion writer + check_system + client receiver + agent runtime） | 4 | `void_erosion_visual_emit.rs` + `woliu_event_bridge.rs` | ⬜ | — |
-| **P4** | 暗器分身 HUD 喂数据（`anqi`：decoy deploy + aim/charge/abrasion → `AnqiHudStateStore`） | 2 | `dugu_state_emit.rs` + `DuguPoisonStateHandler.java` | ⬜ | — |
-| **P5** | 毒蛊 v2 HUD S2C 整链（`dugu_v2`：5 招 cast + 永久真元衰减 + 形貌暴露 → `DuguV2HudStateStore`） | 3 | `poison_trait_emit.rs`（Redis+S2C 双发） | ⬜ | — |
-| **P6** | 剑道人剑共生 HUD + 蜕壳灰烬回收（`sword_path` + `tuike`） | 3 | `dugu_state_emit.rs` / `yidao_state_emit.rs` + `tuike_event_bridge.rs` | ⬜ | — |
+| **P0** | 经脉断脉整链发布（`meridian_severed`：Redis 叙事 + 非主动断脉 VFX；**复用价值最高，7+ emit 源全受益**） | 3 | `poison_trait_emit.rs` + `void_erosion_visual_emit.rs` | ✅ | 2026-06-03 |
+| **P1** | 爆脉 v4 反馈整桥（`baomai_v4`：scar circuit / iron cocoon / crack reading / resonance lock，server→agent + server→client） | 6 | `baomai_v3_event_bridge.rs` + `void_erosion_visual_emit.rs` | ✅ | 2026-06-03 |
+| **P2** | 爆脉 v3 残余事件补桥（`baomai_v3`：disperse 失败 / mountain shake / blood burn / 超越到期 / 过载裂纹） | 5 | `baomai_v3_event_bridge.rs`（扩展，金标准范本） | ✅ | 2026-06-03 |
+| **P3** | 我流虚蚀整链激活（`woliu_v2`：component insert + erosion writer + check_system + client receiver + agent runtime） | 4 | `void_erosion_visual_emit.rs` + `woliu_event_bridge.rs` | ✅ | 2026-06-04 |
+| **P4** | 暗器分身 HUD 喂数据（`anqi`：decoy deploy + aim/charge/abrasion → `AnqiHudStateStore`） | 2 | `dugu_state_emit.rs` + `DuguPoisonStateHandler.java` | ✅ | 2026-06-04 |
+| **P5** | 毒蛊 v2 HUD S2C 整链（`dugu_v2`：5 招 cast + 永久真元衰减 + 形貌暴露 → `DuguV2HudStateStore`） | 3 | `poison_trait_emit.rs`（Redis+S2C 双发） | ✅ | 2026-06-04 |
+| **P6** | 剑道人剑共生 HUD + 蜕壳灰烬回收（`sword_path` + `tuike`） | 3 | `dugu_state_emit.rs` / `yidao_state_emit.rs` + `tuike_event_bridge.rs` | ✅ | 2026-06-05 |
 
 > 阶段为 P0–P6 共 7 段；`验收日期` 各段在对应 PR merge 后填 `YYYY-MM-DD`，全段 ✅ 后迁入 `finished_plans/`。**链数核对**：3(P0)+6(P1)+5(P2)+4(P3)+2(P4)+3(P5)+3(P6) = **26 条入 P0–P6**；其中 `baomai-v4-voluntary-sever`（emit `MeridianSeveredEvent`）**仅计入 P0 的 3 条、不重复计入 P1**（P1 的 6 条全为 baomai_v4 自有事件）。第 27 条 `jingmai-sever-yidao-hud-count`（low）因实为「yidao 患者诊断面板整块未接（hp/contam/severed 三字段全空 + 需患者 Entity 解析）」的子项，**列入 §8 遗留/开放问题**，不在本 plan 单独接（见 §8 #4）。
 
@@ -310,4 +310,55 @@ Agent(subagent_type: "claude", model: "sonnet",
 
 ## Finish Evidence
 
-> 迁入 `docs/finished_plans/` 前必填（落地清单 / 关键 commit / 测试结果 / 跨仓库核验 / 遗留）。当前 P0–P6 均 ⬜，未填。
+全 7 PR（P0–P6）已 land，26 条入 P0–P6 的断链全部消除（第 27 条 `jingmai-sever-yidao-hud-count` 见 §8 #4 遗留）。consume-plan 全自动消费：每 PR 独立 worktree subagent 实施 → **内部 opus 4.8 主审 + 多 sonnet 对峙自检（辩方胜才 push）** → `@hive` 异构外门复审 → e2e → merge，双门拦下多个会上线的真断链（见「双门拦截亮点」）。
+
+### 落地清单（每阶段真实文件路径）
+
+- **P0 经脉断脉整链发布**（3 链）：`server/src/network/meridian_severed_emit.rs`（`MeridianSeveredEvent` reader → Redis 叙事 `CH_MERIDIAN_SEVERED` + 非主动断脉 VFX），7+ emit 源共享；范本 `poison_trait_emit.rs` / `void_erosion_visual_emit.rs`。
+- **P1 爆脉 v4 反馈整桥**（6 链）：`server/src/network/baomai_v4_event_bridge.rs`（scar circuit / iron cocoon / crack reading / resonance lock，server→agent Redis + server→client VFX/HUD）。
+- **P2 爆脉 v3 残余事件补桥**（5 链）：`server/src/network/baomai_v3_event_bridge.rs` 扩展 5 个 publish fn（disperse 失败 / mountain shake / blood burn / 超越到期 / 过载裂纹）。
+- **P3 我流虚蚀整链激活**（4 链）：`server/src/combat/woliu_v2/` `void_erosion_check_system`（component insert + erosion writer + stage 推进，`last_reported_stage` 防漏报）+ `server/src/network/void_erosion_visual_emit.rs` + client `VoidErosionVisualHandler.java` + agent woliu runtime；entity_id wire 用 `offline:{username}` 非裸 UUID。
+- **P4 暗器分身 HUD 喂数据**（2 链）：`server/src/network/anqi_hud_emit.rs`（DecoyDeploy→echo / QiInjection.overload→charge / CarrierAbrasion→abrasion）+ client `AnqiHudStateStore`（**per-dimension 独立存储 + tick CAS 守序**，三路并发不互相清零）+ `AnqiHudServerDataHandler` + proto field 123；`AnqiContainerKind::as_wire_str()` 穷尽 match 取代 Debug-parse。
+- **P5 毒蛊 v2 HUD S2C 整链**（3 链）：`server/src/network/dugu_v2_event_bridge.rs` 5 招（eclipse/penetrate/shroud/self_cure/reverse）追加 `send_server_data_payload`（Redis+S2C 双发）+ `publish_permanent_qi_max_decay_to_client` + client `DuguV2ServerDataHandler`（per-dim merge：revealRisk/selfCure+selfRevealed sticky/shroud/qiMaxDecay）+ `DuguV2HudPlanner` DUGU_QI_DECAY 渲染 + proto field 124-127；self-revealed agent 半边复用既有 self_cure 叙事，仅补 client S2C。
+- **P6 剑道人剑共生 HUD + 蜕壳灰烬回收**（3 链）：`server/src/network/sword_bond_state_emit.rs`（每秒 Query `SwordBondComponent` → `SwordBondHudState` S2C，heavenGateReady=stored_qi≥grade.stored_qi_cap()）+ proto field 128 + client `SwordBondHudStateHandler`→`SwordBondHudStateStore`→`BongHudOrchestrator` 每帧 `SwordPathHudPlanner`；`server/src/network/tuike_ash_emit.rs`（`FalseSkinDecayedToAshEvent`→灰烬入包 `add_item_to_player_inventory(&event.output_item_id)` Ancient→relic shard + VFX `bong:tuike_ash_burst` + Redis `CH_TUIKE_ASH_DECAY`）+ client `VfxBootstrap` 注册 `TuikeFalseSkinParticlePlayer` 灰烬色 0x8A7A6A + agent `TuikeAshDecayNarrationRuntime` 订阅叙事；`tuike_event_bridge.rs` 加 `PermanentTaintAbsorbedEvent` reader（复用既有 `CH_TUIKE_V2_SKILL_EVENT`，守恒叙事明示衰败被皮吸收不再扣 qi_max）。
+
+### 关键 commit（squash to main）
+
+| PR | commit | 日期 | 阶段 |
+|----|--------|------|------|
+| #381 | `138b952a0` | 2026-06-03 | PR-1/7 P0 经脉断脉整链发布 |
+| #384 | `4ffca6c0a` | 2026-06-03 | PR-2/7 P1 爆脉 v4 反馈整桥 |
+| #385 | `cdb09d373` | 2026-06-03 | PR-3/7 P2 爆脉 v3 残余事件补桥 |
+| #390 | `a187b24eb` | 2026-06-04 | PR-4/7 P3 我流虚蚀整链激活 |
+| #400 | `1bed3a2dc` | 2026-06-04 | PR-5/7 P4 暗器分身 HUD |
+| #402 | `358e3e594` | 2026-06-04 | PR-6/7 P5 毒蛊 v2 HUD S2C |
+| #404 | （本 PR squash） | 2026-06-05 | PR-7/7 P6 剑道 HUD + 蜕壳灰烬 + 归档 |
+
+### 测试结果
+
+- **server**：`cargo fmt --check` + `cargo clippy --all-targets -- -D warnings` 通过；`cargo test` **7301 passed / 0 failed**（含各 emit system 真跑 + proto 双端 roundtrip pin + channel 冻结 pin + 守恒 pin）。
+- **client**：`./gradlew test build` **BUILD SUCCESSFUL**（含 per-dimension merge 不覆盖 / VfxRegistry red-when-reverted / sword_bond e2e proto→handler→store→planner）。
+- **agent**：`tiandao 574 passed` + `schema 530 passed`（含各 runtime 订阅真验证 + TuikeAshDecayV1 双端 sample-pin）。
+
+### 跨仓库核验（server / agent / client symbol）
+
+- **server emit / bridge**：`meridian_severed_emit` · `baomai_v4_event_bridge` · `baomai_v3_event_bridge` · `void_erosion_visual_emit` · `anqi_hud_emit` · `dugu_v2_event_bridge` · `sword_bond_state_emit` · `tuike_ash_emit` · `tuike_event_bridge`（PermanentTaintAbsorbed reader）。
+- **agent runtime**：woliu runtime · dugu_v2 self_cure 叙事 · `TuikeAshDecayNarrationRuntime`（订阅 `bong:tuike_v2/ash_decay`）· TuikeV2 narration（permanent_absorbed）。
+- **client handler / store / VFX**：`VoidErosionVisualHandler` · `AnqiHudServerDataHandler`+`AnqiHudStateStore`(per-dim) · `DuguV2ServerDataHandler`+`DuguV2HudStateStore` · `SwordBondHudStateHandler`+`SwordBondHudStateStore`+`SwordPathHudPlanner` · `VfxBootstrap`(`bong:tuike_ash_burst`)。
+- **proto 链**：`ServerDataPayloadV1` AnqiHud(123) / DuguV2{SkillCast,SelfCure,ShroudActive}+PermanentQiMaxDecayApplied(124-127) / SwordBondHudState(128) 三处齐补（`proto_gen.rs` prost + `proto_convert.rs` 穷尽 match arm + client `ProtoServerDataBridge` CASE_TO_TYPE）。
+
+### 双门拦截亮点（会上线的真断链 / 真隐患，被对峙 + @hive 拦在 main 外）
+
+- **P3**：narration entity_id 用裸 UUID 不可路由（玩家收不到叙事）；状态机 `add_erosion_capped` 推进 stage 但 `check_system` 检测不到（@hive 抓）。
+- **P4**：`AnqiContainerKind` Debug-parse 致 **PocketPouch 磨损 HUD 实际已坏**（"pocketpouch"≠"pocket_pouch"，@hive 抓）；三路 echo/charge/abrasion 互相 `replace` 清零、无法并存（Planner 明明逐字段并发渲染，@hive 抓）；"wire 契约 pin"测试**绕过 emit 函数**（改回 Debug 仍绿，对峙抓）。
+- **P5**：revealRisk / qi_max_decay 数据到 client 但 handler 不写 store / Planner 不渲染（渲染半边单方向 stub，对峙抓）。
+- **P6**：灰烬 VFX 注释声称发实际 never emit + agent ash_decay channel 零订阅虚空发布（对峙 round-1 抓）；VFX 只修 server emit 半边、client `VfxBootstrap` 未注册 → 玩家看不到粒子（对峙 round-2 玩家视角抓）。
+- **互补价值**：`@hive`（异构 deepseek/sensenova flash 集成）多次抓到 opus 对峙漏掉的真 bug（PocketPouch/三路覆盖），opus 对峙抓到 flash 看不深的测试作秀 / 渲染半边 stub——异构外门 + 对抗内门覆盖面互补，单一 reviewer 不够。
+
+### 遗留 / 后续（非本 plan 范围）
+
+- **aim HUD**：client `AnqiHudState.aim` + Planner appendAim 保留为预留接口，server 无 aim-phase 事件源（handler aim 分支 no-op，测试锁定），待后续招式补 aim 事件源。
+- **BongNetworkHandler OOM**：仓库级既有问题（非本 plan 引入），待独立修。
+- **§视听精度文档**：各新 overlay / 粒子（DUGU_QI_DECAY 闪烁条、tuike_ash_burst 灰烬色等）的 `docs/CLAUDE.md §视听精度` 规格待人工补（consume-plan 禁自动改 CLAUDE.md）。
+- **dugu reverse 招**：反噬招按设计无专属 HUD 闪烁（reveal_probability=0.0，走 agent 叙事），非断链。
+- **yidao 患者诊断面板**（第 27 条 `jingmai-sever-yidao-hud-count`）：hp/contam/severed 三字段全空 + 需患者 Entity 解析，整块未接，超本 plan 范围，见 §8 #4。
