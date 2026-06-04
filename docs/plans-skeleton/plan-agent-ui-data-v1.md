@@ -62,9 +62,10 @@
 
    终态（Completed/Dismissed/TimedOut/Replaced/Error）：
    - compare-and-remove：HashMap::remove(player_id) 幂等
-   - 重复终态事件静默丢弃（request_id 已不存在于 HashMap）
+   - 重复终态事件静默丢弃（player_id 已不存在于 HashMap）
+   - **过期 session 客户端请求**：`receive_agent_ui_response_system` 收到 button_click / dismissed 时，若 `HashMap::get(&player_id)` 返回 None（session 已达终态 compare-and-remove）→ 立即向 client 发 `#[close_channel]`（reason="session_expired"），防止 UI 悬空；不向 Agent 发布 Redis 事件（避免重复通知）
    - 所有终态均向 bong:agent_ui_response Redis 发布对应事件
-   - Redis 发布失败：重试 3 次（50ms/100ms/200ms backoff），全部失败则记录错误日志并保留 TimedOut 终态（防止 agent 等待孤儿 session）
+   - **Redis 发布异步化**（禁止 Bevy System 内 sleep/阻塞）：Bevy System 只做一次非阻塞 `try_publish`；失败时通过 `crossbeam_channel` 发送任务到独立 Tokio I/O 线程（`redis_retry_worker`）；该 worker 负责最多 3 次重试（50ms/100ms/200ms backoff）；Bevy System 不 sleep、不阻塞，TPS 不受影响；全部重试失败则记录错误日志，session 终态已落库不再重入
    - PlayerDisconnect：server 监听 `PlayerDisconnect` event → 若该玩家有 Open session → 转为 Dismissed 终态 + Redis 发布 dismissed event（清理孤儿 session）
    ```
 

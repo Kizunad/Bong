@@ -163,7 +163,7 @@ const ResourcePackManifestPayloadV1 = Type.Object({
 - `required=true`：下载失败 → 重试 2 次 → 全失败后发送 `ResourcePackDeclinedPacket` 并断开连接，显示 `ResourcePackErrorScreen`（required=true 专属文案）
 
 **降级模式**（仅当 `required=false` 时）：
-- [ ] `BongClientRuntimeFlags.resourcePackMissing`（Java 静态 boolean，**不是** Bevy Resource）：在 Fabric client Java 侧设置；VFX 渲染系统检测此 flag → 将 `bong:` 专属粒子贴图替换为最接近的 vanilla 粒子（smoke / portal / totem）
+- [ ] `BongClientRuntimeFlags.resourcePackMissing`（Java `static AtomicBoolean`，**不是** Bevy Resource；用 `AtomicBoolean` 而非普通 `boolean`，保证 MC RenderThread 与 Netty I/O 线程之间的 happens-before 可见性）：在 Fabric client Java 侧设置；VFX 渲染系统检测此 flag → 将 `bong:` 专属粒子贴图替换为最接近的 vanilla 粒子（smoke / portal / totem）
 - [ ] HUD 显示小图标 `⚠` 提示"资源包未加载，视觉效果已降级"
 - [ ] **降级自动重试**：降级模式下每 300s（5 分钟）自动尝试一次重新下载（不断开当前连接）；失败则维持降级，成功则清除 `BongClientRuntimeFlags.resourcePackMissing`，VFX 恢复，通知 HUD 撤销警告图标
 - [ ] **降级恢复（手动）**：玩家断开重连 + 成功加载资源包后，清除 `BongClientRuntimeFlags.resourcePackMissing`
