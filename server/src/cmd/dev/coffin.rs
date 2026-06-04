@@ -82,14 +82,23 @@ pub fn handle_coffin(
 
             // 同步 CoffinRegistry 档级记录（via pub set_grade）
             let lower: BlockPos = coffin_comp.coffin_lower;
-            coffin_registry.set_grade(lower, grade);
+            let synced = coffin_registry.set_grade(lower, grade);
 
             tracing::warn!(
                 "[dev-cmd] coffin grade bypass: entity={entity:?} lower={lower:?} {prev:?} -> {grade:?}"
             );
-            client.send_chat_message(format!(
-                "[dev] coffin grade {prev:?} -> {grade:?} (lower={lower:?})"
-            ));
+            if synced {
+                client.send_chat_message(format!(
+                    "[dev] coffin grade {prev:?} -> {grade:?} (lower={lower:?})"
+                ));
+            } else {
+                tracing::warn!(
+                    "[dev-cmd] coffin grade registry desync: entity={entity:?} lower={lower:?} not in registry; component updated but registry unchanged"
+                );
+                client.send_chat_message(format!(
+                    "[dev] coffin grade {prev:?} -> {grade:?} written to component only — registry desync at lower={lower:?} (no registry entry)"
+                ));
+            }
         } else if let Ok(mut client) = no_coffin.get_mut(event.executor) {
             client.send_chat_message("[dev] coffin grade: not in a coffin (no CoffinComponent)");
         }
@@ -112,7 +121,9 @@ mod tests {
     use super::*;
     use crate::cmd::dev::test_support::{run_update, spawn_test_client};
     use crate::coffin::CoffinComponent;
-    use valence::prelude::{BlockPos, Entity, Events};
+    use valence::prelude::{BlockPos, Entity, Events, Position};
+    use valence::protocol::packets::play::GameMessageS2c;
+    use valence::testing::{create_mock_client, MockClientHelper};
 
     fn setup_app() -> App {
         let mut app = App::new();
@@ -120,6 +131,39 @@ mod tests {
         app.insert_resource(CoffinRegistry::default());
         app.add_systems(Update, handle_coffin);
         app
+    }
+
+    /// Spawns a mock client and retains the helper for packet inspection.
+    fn spawn_with_helper(app: &mut App, username: &str) -> (Entity, MockClientHelper) {
+        let (mut client_bundle, helper) = create_mock_client(username);
+        client_bundle.player.position = Position::new([0.0, 64.0, 0.0]);
+        let entity = app.world_mut().spawn(client_bundle).id();
+        (entity, helper)
+    }
+
+    /// Flushes all pending outbound packets for every Client in the world so that
+    /// MockClientHelper.collect_received() can see them.
+    fn flush_all_client_packets(app: &mut App) {
+        let world = app.world_mut();
+        let mut query = world.query::<&mut Client>();
+        for mut client in query.iter_mut(world) {
+            client
+                .flush_packets()
+                .expect("mock client packets should flush successfully");
+        }
+    }
+
+    /// Drains outgoing packets and returns the text bodies of all GameMessageS2c frames.
+    fn collect_chat_texts(helper: &mut MockClientHelper) -> Vec<String> {
+        helper
+            .collect_received()
+            .0
+            .into_iter()
+            .filter_map(|frame| {
+                let pkt = frame.decode::<GameMessageS2c>().ok()?;
+                Some(pkt.chat.to_string())
+            })
+            .collect()
     }
 
     fn spawn_player_in_coffin(app: &mut App, grade: CoffinGrade, lower: BlockPos) -> Entity {
@@ -202,5 +246,128 @@ mod tests {
                 "/coffin grade {expected_label} should write grade={target:?}"
             );
         }
+    }
+
+    /// Registry-sync path: after `/coffin grade jade`, the registry entry at `lower` must also
+    /// reflect jade — not just the CoffinComponent.
+    #[test]
+    fn grade_cmd_syncs_registry_grade() {
+        let mut app = setup_app();
+        let lower = BlockPos::new(10, 64, 10);
+        // Pre-insert a registry entry so set_grade can find it.
+        app.world_mut()
+            .resource_mut::<CoffinRegistry>()
+            .insert(lower, 0, CoffinGrade::Mundane);
+        let player = spawn_player_in_coffin(&mut app, CoffinGrade::Mundane, lower);
+
+        send_grade(&mut app, player, CoffinGrade::Jade);
+        run_update(&mut app);
+
+        // Component grade updated.
+        assert_eq!(
+            app.world().get::<CoffinComponent>(player).unwrap().grade,
+            CoffinGrade::Jade,
+            "CoffinComponent.grade should be Jade after /coffin grade jade"
+        );
+        // Registry grade also updated — not just the component.
+        let registry_grade = app
+            .world()
+            .resource::<CoffinRegistry>()
+            .lookup(lower)
+            .expect("registry entry should still exist at lower after grade change")
+            .grade;
+        assert_eq!(
+            registry_grade,
+            CoffinGrade::Jade,
+            "CoffinRegistry.grade should be Jade after /coffin grade jade (registry desync check)"
+        );
+    }
+
+    /// No-coffin branch: executor has no CoffinComponent → must receive a "not in a coffin" chat
+    /// message and the registry must remain unmodified.
+    #[test]
+    fn grade_cmd_no_coffin_sends_error_chat() {
+        let mut app = setup_app();
+        // Pre-insert an unrelated registry entry to verify it is untouched.
+        let unrelated = BlockPos::new(99, 64, 99);
+        app.world_mut()
+            .resource_mut::<CoffinRegistry>()
+            .insert(unrelated, 0, CoffinGrade::Stone);
+
+        let (player, mut helper) = spawn_with_helper(&mut app, "Bob");
+
+        send_grade(&mut app, player, CoffinGrade::Jade);
+        run_update(&mut app);
+        flush_all_client_packets(&mut app);
+
+        // No CoffinComponent should be added by the command.
+        assert!(
+            app.world().get::<CoffinComponent>(player).is_none(),
+            "executor without CoffinComponent should not gain one from /coffin grade"
+        );
+        // Registry entry must be untouched.
+        assert_eq!(
+            app.world()
+                .resource::<CoffinRegistry>()
+                .lookup(unrelated)
+                .expect("unrelated registry entry should be untouched")
+                .grade,
+            CoffinGrade::Stone,
+            "registry must not be modified when executor is not in a coffin"
+        );
+        // Chat must contain the "not in a coffin" error.
+        let chats = collect_chat_texts(&mut helper);
+        assert!(
+            chats.iter().any(|msg| msg.contains("not in a coffin")),
+            "expected 'not in a coffin' chat message for executor without CoffinComponent, got: {chats:?}"
+        );
+    }
+
+    /// Desync branch: CoffinComponent says `lower` but registry has no matching entry →
+    /// set_grade returns false → must send a desync warning chat (not the normal success message).
+    /// Component grade IS still updated (by design).
+    #[test]
+    fn grade_cmd_registry_desync_sends_warning_chat() {
+        let mut app = setup_app();
+        let orphan_lower = BlockPos::new(20, 64, 20);
+        // Intentionally do NOT insert a registry entry for orphan_lower.
+        let (player, mut helper) = spawn_with_helper(&mut app, "Carol");
+        // Manually attach a CoffinComponent pointing to the orphan lower pos.
+        app.world_mut().entity_mut(player).insert(CoffinComponent {
+            entered_at_tick: 0,
+            coffin_lower: orphan_lower,
+            grade: CoffinGrade::Mundane,
+        });
+
+        send_grade(&mut app, player, CoffinGrade::Bronze);
+        run_update(&mut app);
+        flush_all_client_packets(&mut app);
+
+        // Component grade is still updated even under desync.
+        assert_eq!(
+            app.world().get::<CoffinComponent>(player).unwrap().grade,
+            CoffinGrade::Bronze,
+            "component grade should be written even when registry has no entry (desync scenario)"
+        );
+        // Registry must remain empty for orphan_lower.
+        assert!(
+            app.world()
+                .resource::<CoffinRegistry>()
+                .lookup(orphan_lower)
+                .is_none(),
+            "registry should remain empty for orphan_lower under desync"
+        );
+        // Chat must mention desync, not the normal success message.
+        let chats = collect_chat_texts(&mut helper);
+        assert!(
+            chats.iter().any(|msg| msg.contains("desync")),
+            "expected desync warning chat when registry has no entry for coffin_lower, got: {chats:?}"
+        );
+        assert!(
+            !chats.iter().any(|msg| {
+                msg.contains("-> Bronze") && !msg.contains("desync")
+            }),
+            "normal success message should NOT appear when registry desync occurred, got: {chats:?}"
+        );
     }
 }

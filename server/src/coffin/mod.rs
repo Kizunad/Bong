@@ -2427,6 +2427,19 @@ mod tests {
                 .any(|(id, cnt)| id == "xue_po_lian" && *cnt == 2),
             "jade 配方应含 xue_po_lian×2"
         );
+        assert!(
+            jade.materials
+                .iter()
+                .any(|(id, cnt)| id == "ling_mu_ban" && *cnt == 4),
+            "jade 配方应含 ling_mu_ban×4（主材，锁住别被改回不可得材料）"
+        );
+        assert!(
+            jade.unlock_sources.iter().any(|u| matches!(
+                u,
+                UnlockSource::Scroll { item_template } if item_template == "scroll_jade_coffin"
+            )),
+            "jade 解锁源应含 Scroll(scroll_jade_coffin)"
+        );
 
         // 玄石棺
         let stone = registry
@@ -2447,8 +2460,36 @@ mod tests {
             "stone 配方应含 wu_yao×2"
         );
         assert!(
+            stone
+                .materials
+                .iter()
+                .any(|(id, cnt)| id == "xuan_iron" && *cnt == 4),
+            "stone 配方应含 xuan_iron×4"
+        );
+        assert!(
+            stone
+                .materials
+                .iter()
+                .any(|(id, cnt)| id == "zhen_shi_chu" && *cnt == 2),
+            "stone 配方应含 zhen_shi_chu×2（fix-round-1 替换 zhen_shi_zhong，锁住可得材料）"
+        );
+        assert!(
             stone.requirements.realm_min.is_none(),
             "stone 配方无境界门控（realm_min=None）"
+        );
+        assert!(
+            stone.unlock_sources.iter().any(|u| matches!(
+                u,
+                UnlockSource::Scroll { item_template } if item_template == "scroll_stone_coffin"
+            )),
+            "stone 解锁源应含 Scroll(scroll_stone_coffin)"
+        );
+        assert!(
+            stone.unlock_sources.iter().any(|u| matches!(
+                u,
+                UnlockSource::Mentor { npc_archetype } if npc_archetype == "array_scribe"
+            )),
+            "stone 解锁源应含 Mentor(array_scribe)"
         );
 
         // 青铜棺
@@ -2469,10 +2510,45 @@ mod tests {
                 .any(|(id, cnt)| id == "gu_tong_pian" && *cnt == 4),
             "bronze 配方应含 gu_tong_pian×4"
         );
+        assert!(
+            bronze
+                .materials
+                .iter()
+                .any(|(id, cnt)| id == "xuan_iron" && *cnt == 3),
+            "bronze 配方应含 xuan_iron×3"
+        );
+        assert!(
+            bronze
+                .materials
+                .iter()
+                .any(|(id, cnt)| id == "ling_mu_ban" && *cnt == 3),
+            "bronze 配方应含 ling_mu_ban×3（fix-round-1 替换 ling_mu_jing，锁住可得材料）"
+        );
+        assert!(
+            bronze
+                .materials
+                .iter()
+                .any(|(id, cnt)| id == "zhen_shi_chu" && *cnt == 2),
+            "bronze 配方应含 zhen_shi_chu×2（fix-round-1 替换 zhen_shi_gao，锁住可得材料）"
+        );
         assert_eq!(
             bronze.requirements.realm_min,
             Some(crate::cultivation::components::Realm::Induce),
             "bronze 配方 realm_min 应为 Induce（引气境门控）"
+        );
+        assert!(
+            bronze.unlock_sources.iter().any(|u| matches!(
+                u,
+                UnlockSource::Scroll { item_template } if item_template == "scroll_bronze_coffin"
+            )),
+            "bronze 解锁源应含 Scroll(scroll_bronze_coffin)"
+        );
+        assert!(
+            bronze.unlock_sources.iter().any(|u| matches!(
+                u,
+                UnlockSource::Mentor { npc_archetype } if npc_archetype == "hermit_builder"
+            )),
+            "bronze 解锁源应含 Mentor(hermit_builder)（炼器流 archetype 防漂移）"
         );
     }
 

@@ -1446,13 +1446,14 @@ fn register_coffin_tiers(registry: &mut CraftRegistry) -> Result<(), RegistryErr
     })?;
 
     // #102 玄石棺 ×0.5 — Scroll + 地师流 Mentor（array_scribe）
+    // P4 修正：zhen_shi_zhong 无玩家可达来源（仅被消耗，不产出），换为蜘蛛掉落 zhen_shi_chu×2（5% 稀有掉落）。
     registry.register(CraftRecipe {
         id: RecipeId::new("coffin.stone_coffin"),
         category: CraftCategory::Misc,
         display_name: "玄石棺".into(),
         materials: vec![
             ("xuan_iron".into(), 4),
-            ("zhen_shi_zhong".into(), 2),
+            ("zhen_shi_chu".into(), 2),
             ("wu_yao".into(), 2),
         ],
         qi_cost: 4.0,
@@ -1471,15 +1472,18 @@ fn register_coffin_tiers(registry: &mut CraftRegistry) -> Result<(), RegistryErr
     })?;
 
     // #103 青铜棺 ×0.3 — Scroll + 炼器流 Mentor（hermit_builder）+ 引气境下限
+    // P4 修正：ling_mu_jing 生产链未实装（spiritwood §9）；zhen_shi_gao 无玩家可达来源（仅被消耗）。
+    // 换为：ling_mu_jing×2 → ling_mu_ban×3（锻造产出，灵木主题保持）；
+    //       zhen_shi_gao×1 → zhen_shi_chu×2（蜘蛛 5% 掉落，阵石主题保持）。
     registry.register(CraftRecipe {
         id: RecipeId::new("coffin.bronze_coffin"),
         category: CraftCategory::Misc,
         display_name: "青铜棺".into(),
         materials: vec![
             ("xuan_iron".into(), 3),
-            ("ling_mu_jing".into(), 2),
+            ("ling_mu_ban".into(), 3),
             ("gu_tong_pian".into(), 4),
-            ("zhen_shi_gao".into(), 1),
+            ("zhen_shi_chu".into(), 2),
         ],
         qi_cost: 6.0,
         time_ticks: 180 * 20,
@@ -1699,7 +1703,7 @@ mod tests {
     }
 
     #[test]
-    fn all_100_workbench_recipes_individual_pin() {
+    fn all_103_workbench_recipes_individual_pin() {
         let mut registry = CraftRegistry::new();
         register_workbench_recipes(&mut registry).unwrap();
         let item_registry = crate::inventory::load_item_registry().expect("item registry loads");

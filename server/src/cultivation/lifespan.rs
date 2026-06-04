@@ -1509,4 +1509,67 @@ mod tests {
 
         assert!(narrations.is_empty());
     }
+
+    /// plan-coffin-tiers-v1 MINOR — 4 档延寿棺 ECS 集成测试：
+    /// 放置→进棺→`lifespan_aging_tick` 跑 100 tick→断言寿元减缓倍率对应：
+    ///   无棺 ×1.0 / Mundane ×0.9 / Jade ×0.7 / Stone ×0.5 / Bronze ×0.3
+    ///
+    /// 测试不依赖 Position / ZoneRegistry（空时 tick_rate_multiplier 返回 1.0）；
+    /// season_aging_modifier 默认 1.0（无 CultivationClock 季节，返回正常季），
+    /// 故总乘数 = coffin_lifespan_multiplier(grade)。
+    #[test]
+    fn four_grade_coffin_lifespan_ecs_slowdown() {
+        use crate::coffin::{CoffinComponent, CoffinGrade};
+        use valence::prelude::BlockPos;
+
+        const TICKS: u64 = 100;
+
+        let cases: &[(Option<CoffinGrade>, f64)] = &[
+            (None, 1.0),
+            (Some(CoffinGrade::Mundane), 0.9),
+            (Some(CoffinGrade::Jade), 0.7),
+            (Some(CoffinGrade::Stone), 0.5),
+            (Some(CoffinGrade::Bronze), 0.3),
+        ];
+
+        for &(grade, expected_factor) in cases {
+            let mut app = App::new();
+            app.insert_resource(CultivationClock { tick: 1 });
+            app.add_event::<CultivationDeathTrigger>();
+            app.add_systems(Update, lifespan_aging_tick);
+
+            let initial_years_lived = 10.0_f64;
+            let mut lifespan = LifespanComponent::new(LifespanCapTable::MORTAL);
+            lifespan.years_lived = initial_years_lived;
+
+            let mut entity_cmd = app.world_mut().spawn(lifespan);
+            if let Some(g) = grade {
+                entity_cmd.insert(CoffinComponent {
+                    entered_at_tick: 0,
+                    coffin_lower: BlockPos::new(0, 60, 0),
+                    grade: g,
+                });
+            }
+            let entity = entity_cmd.id();
+
+            for _ in 0..TICKS {
+                app.update();
+            }
+
+            let lifespan_after = app
+                .world()
+                .entity(entity)
+                .get::<LifespanComponent>()
+                .unwrap();
+            let actual_delta = lifespan_after.years_lived - initial_years_lived;
+            let expected_delta = lifespan_delta_years_for_ticks(TICKS, expected_factor);
+
+            assert!(
+                (actual_delta - expected_delta).abs() < 1e-9,
+                "grade={grade:?} (×{expected_factor}): 期望寿元增量 {expected_delta:.6e}，\
+                 实际 {actual_delta:.6e}（偏差 {:.2e}）",
+                (actual_delta - expected_delta).abs()
+            );
+        }
+    }
 }

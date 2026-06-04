@@ -23,6 +23,8 @@ echo "[coffin-e2e] P4 四档倍率 / 配方 / 材料 / 平衡梯度"
   CARGO_BUILD_JOBS="${CARGO_BUILD_JOBS:-1}" cargo test supply_coffin::tests::loot_tables_have_no_duplicate_template_ids_within_grade -- --test-threads=1
   # P4: workbench 守恒 pin（含 coffin 配方）
   CARGO_BUILD_JOBS="${CARGO_BUILD_JOBS:-1}" cargo test coffin::tests::p4_spirit_quality_conservation_trivial -- --test-threads=1
+  # P4: 4 档寿元 ECS 减缓全链路（放置→进棺→aging_tick→倍率 ×1.0/0.9/0.7/0.5/0.3）
+  CARGO_BUILD_JOBS="${CARGO_BUILD_JOBS:-1}" cargo test cultivation::lifespan::tests::four_grade_coffin_lifespan_ecs_slowdown -- --test-threads=1
 )
 
 echo "[coffin-e2e] schema coffin wire contract"
