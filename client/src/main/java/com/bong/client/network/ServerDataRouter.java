@@ -241,6 +241,13 @@ public final class ServerDataRouter {
         com.bong.client.combat.handler.AnqiHudServerDataHandler anqiHudServerDataHandler =
             new com.bong.client.combat.handler.AnqiHudServerDataHandler();
         handlers.put("anqi_hud", anqiHudServerDataHandler);
+        // plan-combat-skill-feedback-bridges-v1 P5：毒蛊 v2 HUD（per-dimension merge → DuguV2HudStateStore）
+        com.bong.client.combat.handler.DuguV2ServerDataHandler duguV2Handler =
+            new com.bong.client.combat.handler.DuguV2ServerDataHandler();
+        handlers.put("dugu_v2_skill_cast", duguV2Handler);
+        handlers.put("dugu_v2_self_cure", duguV2Handler);
+        handlers.put("dugu_v2_shroud_active", duguV2Handler);
+        handlers.put("permanent_qi_max_decay_applied", duguV2Handler);
         return new ServerDataRouter(handlers);
     }
 

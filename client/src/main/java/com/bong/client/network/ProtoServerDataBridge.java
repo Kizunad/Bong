@@ -159,6 +159,11 @@ public final class ProtoServerDataBridge {
         m.put(Envelope.ServerDataEnvelope.PayloadCase.LOOT_CONTAINER_CLOSE, "loot_container_close");
         // plan-combat-skill-feedback-bridges-v1 P4：暗器 HUD
         m.put(Envelope.ServerDataEnvelope.PayloadCase.ANQI_HUD, "anqi_hud");
+        // plan-combat-skill-feedback-bridges-v1 P5：毒蛊 v2 HUD S2C
+        m.put(Envelope.ServerDataEnvelope.PayloadCase.DUGU_V2_SKILL_CAST, "dugu_v2_skill_cast");
+        m.put(Envelope.ServerDataEnvelope.PayloadCase.DUGU_V2_SELF_CURE, "dugu_v2_self_cure");
+        m.put(Envelope.ServerDataEnvelope.PayloadCase.DUGU_V2_SHROUD_ACTIVE, "dugu_v2_shroud_active");
+        m.put(Envelope.ServerDataEnvelope.PayloadCase.PERMANENT_QI_MAX_DECAY_APPLIED, "permanent_qi_max_decay_applied");
         CASE_TO_TYPE = m;
     }
 
@@ -413,6 +418,11 @@ public final class ProtoServerDataBridge {
             case LOOT_CONTAINER_CLOSE: return envelope.getLootContainerClose();
             // plan-combat-skill-feedback-bridges-v1 P4：暗器 HUD
             case ANQI_HUD: return envelope.getAnqiHud();
+            // plan-combat-skill-feedback-bridges-v1 P5：毒蛊 v2 HUD S2C
+            case DUGU_V2_SKILL_CAST: return envelope.getDuguV2SkillCast();
+            case DUGU_V2_SELF_CURE: return envelope.getDuguV2SelfCure();
+            case DUGU_V2_SHROUD_ACTIVE: return envelope.getDuguV2ShroudActive();
+            case PERMANENT_QI_MAX_DECAY_APPLIED: return envelope.getPermanentQiMaxDecayApplied();
             default: return null;
         }
     }

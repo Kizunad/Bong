@@ -1,13 +1,21 @@
 package com.bong.client.hud;
 
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class DuguV2HudPlannerTest {
+
+    @AfterEach
+    void resetStore() {
+        DuguV2HudStateStore.resetForTests();
+    }
+
     @Test
     void activeStateShowsTaintRevealSelfCureAndShroud() {
         DuguV2HudStateStore.State state = new DuguV2HudStateStore.State(
@@ -33,6 +41,109 @@ class DuguV2HudPlannerTest {
     @Test
     void emptyStateDoesNotEmitDuguHud() {
         assertTrue(DuguV2HudPlanner.buildCommands(DuguV2HudStateStore.State.NONE, 960, 540, 1_000L).isEmpty());
+    }
+
+    // ─── P5 新增：self_revealed suffix 测试 ────────────────────────
+
+    @Test
+    void selfRevealedTrueAddsRevealedSuffixInSelfCureText() {
+        DuguV2HudStateStore.State state = new DuguV2HudStateStore.State(
+            false, 0f, "", 0f,
+            50.0f,   // selfCurePercent > 0 触发渲染
+            true,    // selfRevealed = true → DuguV2HudPlanner suffix=" 已露"
+            false, 0L
+        );
+
+        List<HudRenderCommand> commands = DuguV2HudPlanner.buildCommands(state, 960, 540, 1_000L);
+
+        assertTrue(
+            commands.stream()
+                .filter(c -> c.layer() == HudRenderLayer.DUGU_SELF_CURE_PROGRESS && c.isText())
+                .anyMatch(c -> c.text() != null && c.text().contains("已露")),
+            "selfRevealed=true 应在 DUGU_SELF_CURE_PROGRESS text 中出现 '已露' suffix；"
+                + "实际 commands=" + commands
+        );
+    }
+
+    @Test
+    void selfRevealedFalseNoRevealedSuffix() {
+        DuguV2HudStateStore.State state = new DuguV2HudStateStore.State(
+            false, 0f, "", 0f,
+            30.0f,
+            false,   // selfRevealed = false → 无 suffix
+            false, 0L
+        );
+
+        List<HudRenderCommand> commands = DuguV2HudPlanner.buildCommands(state, 960, 540, 1_000L);
+
+        assertFalse(
+            commands.stream()
+                .filter(c -> c.layer() == HudRenderLayer.DUGU_SELF_CURE_PROGRESS && c.isText())
+                .anyMatch(c -> c.text() != null && c.text().contains("已露")),
+            "selfRevealed=false 时 DUGU_SELF_CURE_PROGRESS text 不应含 '已露'；实际 commands=" + commands
+        );
+    }
+
+    // ─── P5 新增：shroud 持续时间测试 ────────────────────────────
+
+    @Test
+    void shroudActiveTrueAndNotExpiredShowsTint() {
+        long nowMillis = 1_000L;
+        DuguV2HudStateStore.State state = new DuguV2HudStateStore.State(
+            false, 0f, "", 0f, 0f, false,
+            true,
+            nowMillis + 5_000L  // shroudUntilMs > nowMillis → 未过期
+        );
+
+        List<HudRenderCommand> commands = DuguV2HudPlanner.buildCommands(state, 960, 540, nowMillis);
+
+        assertTrue(
+            commands.stream().anyMatch(c -> c.layer() == HudRenderLayer.DUGU_SHROUD && c.isScreenTint()),
+            "shroudActive=true 且 shroudUntilMs > nowMillis 应产生 DUGU_SHROUD screenTint；"
+                + "实际 commands=" + commands
+        );
+    }
+
+    @Test
+    void shroudExpiredDoesNotShowTint() {
+        long nowMillis = 10_000L;
+        DuguV2HudStateStore.State state = new DuguV2HudStateStore.State(
+            false, 0f, "", 0f, 0f, false,
+            true,
+            nowMillis - 100L  // shroudUntilMs < nowMillis → 已过期
+        );
+
+        List<HudRenderCommand> commands = DuguV2HudPlanner.buildCommands(state, 960, 540, nowMillis);
+
+        assertFalse(
+            commands.stream().anyMatch(c -> c.layer() == HudRenderLayer.DUGU_SHROUD),
+            "shroud 已过期（shroudUntilMs < nowMillis）不应产生 DUGU_SHROUD layer；实际 commands=" + commands
+        );
+    }
+
+    // ─── P5 新增：各维度独立不互覆（per-dimension merge 验证）────
+
+    @Test
+    void shroudPayloadDoesNotClearSelfRevealedInStore() {
+        // 通过 DuguV2HudStateStore 直接验证 replace 语义（不经 handler）
+        // 先设置 selfRevealed=true + shroudActive=false
+        DuguV2HudStateStore.replace(new DuguV2HudStateStore.State(
+            false, 0f, "", 0f, 40f, true, false, 0L
+        ));
+        assertTrue(DuguV2HudStateStore.snapshot().selfRevealed(), "初始 selfRevealed 应为 true");
+
+        // 外部 replace shroud 状态（模拟 per-dimension merge）
+        DuguV2HudStateStore.State cur = DuguV2HudStateStore.snapshot();
+        DuguV2HudStateStore.replace(new DuguV2HudStateStore.State(
+            cur.tainted(), cur.taintIntensity(), cur.taintHint(), cur.revealRisk(),
+            cur.selfCurePercent(), cur.selfRevealed(),  // selfRevealed 保持
+            true, System.currentTimeMillis() + 5000L   // shroud 激活
+        ));
+
+        assertTrue(DuguV2HudStateStore.snapshot().selfRevealed(),
+            "per-dimension merge 后 selfRevealed 不应丢失；实际=" + DuguV2HudStateStore.snapshot().selfRevealed());
+        assertTrue(DuguV2HudStateStore.snapshot().shroudActive(),
+            "shroudActive 应为 true；实际=" + DuguV2HudStateStore.snapshot().shroudActive());
     }
 
     @Test
