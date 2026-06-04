@@ -3,6 +3,7 @@ pub mod alchemy_bridge;
 pub mod alchemy_snapshot_emit;
 pub mod animation_trigger;
 pub mod anqi_event_bridge;
+pub mod anqi_hud_emit;
 pub mod anticheat_bridge;
 pub mod ascension_quota_emit;
 pub mod audio_event_emit;
@@ -831,6 +832,8 @@ pub fn register(app: &mut App) {
         void_erosion_visual_emit::emit_void_erosion_visual_sync,
     );
     app.add_systems(Update, dugu_state_emit::emit_dugu_poison_state_payloads);
+    // plan-combat-skill-feedback-bridges-v1 P4：暗器 HUD S2C（DecoyDeploy/QiInjection/CarrierAbrasion）
+    app.add_systems(Update, anqi_hud_emit::emit_anqi_hud_payloads);
     app.add_systems(Update, carrier_state_emit::emit_carrier_state_payloads);
     app.add_systems(
         Update,

@@ -143,7 +143,8 @@ message ServerDataEnvelope {
     LootContainerClose      loot_container_close    = 121;
     // ─── plan-offscreen-war-v1 P9：战事 HUD 广播 S2C ─────────────
     FactionWarState         faction_war_state       = 122;
-    // P2/P3 阶段继续追加 field 123..N。
+    // ─── plan-combat-skill-feedback-bridges-v1 P4：暗器 HUD S2C ──
+    AnqiHud                 anqi_hud                = 123;
     // 字段编号一旦分配永不复用（buf breaking 检测保证）。
   }
 }
@@ -3603,6 +3604,18 @@ message FactionWarState {
   uint32            spectate_count     = 9;
   int32             winner_group       = 10; // -1 表示无 outcome
   int32             loser_group        = 11; // -1 表示无 outcome
+}
+
+// plan-combat-skill-feedback-bridges-v1 P4：暗器分身 HUD 推送（server → client）。
+// kind: "echo" | "aim" | "charge" | "abrasion"
+message AnqiHud {
+  string kind                 = 1;
+  uint32 echo_count           = 2;
+  double aim_progress         = 3;
+  double charge_progress      = 4;
+  string abrasion_container   = 5;
+  double abrasion_qi_payload  = 6;
+  uint64 tick                 = 7;
 }
 
 // 与 Rust ClientRequestV1::ExternalContainerMove 精确对应。

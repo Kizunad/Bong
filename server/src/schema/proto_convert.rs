@@ -1328,6 +1328,16 @@ impl From<&ServerDataPayloadV1> for Payload {
                     loser_group: s.loser_group.map(i32::from).unwrap_or(-1),
                 })
             }
+            // plan-combat-skill-feedback-bridges-v1 P4：暗器 HUD（守恒红线：只读事件字段）
+            ServerDataPayloadV1::AnqiHud(s) => Payload::AnqiHud(bong::AnqiHud {
+                kind: s.kind.clone(),
+                echo_count: s.echo_count,
+                aim_progress: s.aim_progress,
+                charge_progress: s.charge_progress,
+                abrasion_container: s.abrasion_container.clone(),
+                abrasion_qi_payload: s.abrasion_qi_payload,
+                tick: s.tick,
+            }),
         }
     }
 }

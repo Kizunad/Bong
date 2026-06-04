@@ -11318,4 +11318,167 @@ mod tests {
             "buf.yaml lint.use 应包含 '- STANDARD'"
         );
     }
+
+    // ─── plan-combat-skill-feedback-bridges-v1 P4：AnqiHud proto pin ─
+
+    /// proto 链 pin 测试：AnqiHud encode → decode 字段不丢失。
+    /// 锁住 proto 链三处（envelope.proto + proto_convert.rs arm + ProtoServerDataBridge CASE_TO_TYPE）。
+    #[test]
+    fn anqi_hud_proto_roundtrip_echo() {
+        use crate::schema::proto_convert::server_data_to_proto_payload;
+        use crate::schema::proto_gen::bong::ServerDataEnvelope;
+        use crate::schema::server_data::{AnqiHudV1, ServerDataPayloadV1};
+        use prost::Message;
+
+        let payload = ServerDataPayloadV1::AnqiHud(AnqiHudV1 {
+            kind: "echo".to_string(),
+            echo_count: 5,
+            aim_progress: 0.0,
+            charge_progress: 0.0,
+            abrasion_container: String::new(),
+            abrasion_qi_payload: 0.0,
+            tick: 42,
+        });
+
+        // proto_convert.rs arm への呼び出し
+        let proto_payload = server_data_to_proto_payload(&payload);
+        let envelope = ServerDataEnvelope {
+            payload: Some(proto_payload),
+        };
+
+        // prost encode → decode
+        let mut buf = Vec::new();
+        envelope
+            .encode(&mut buf)
+            .expect("AnqiHud proto encode 不应失败");
+        let decoded =
+            ServerDataEnvelope::decode(buf.as_slice()).expect("AnqiHud proto decode 不应失败");
+
+        let Some(super::bong::server_data_envelope::Payload::AnqiHud(inner)) = decoded.payload
+        else {
+            panic!(
+                "decoded payload 应为 AnqiHud 变体；实际={:?}",
+                decoded.payload
+            );
+        };
+
+        assert_eq!(
+            inner.kind, "echo",
+            "kind 字段不应丢失；期望 'echo'，实际 '{}'",
+            inner.kind
+        );
+        assert_eq!(
+            inner.echo_count, 5,
+            "echo_count 字段不应丢失；期望 5，实际 {}",
+            inner.echo_count
+        );
+        assert_eq!(
+            inner.tick, 42,
+            "tick 字段不应丢失；期望 42，实际 {}",
+            inner.tick
+        );
+    }
+
+    #[test]
+    fn anqi_hud_proto_roundtrip_abrasion() {
+        use crate::schema::proto_convert::server_data_to_proto_payload;
+        use crate::schema::proto_gen::bong::ServerDataEnvelope;
+        use crate::schema::server_data::{AnqiHudV1, ServerDataPayloadV1};
+        use prost::Message;
+
+        let payload = ServerDataPayloadV1::AnqiHud(AnqiHudV1 {
+            kind: "abrasion".to_string(),
+            echo_count: 0,
+            aim_progress: 0.0,
+            charge_progress: 0.0,
+            abrasion_container: "quiver".to_string(),
+            abrasion_qi_payload: 23.5,
+            tick: 100,
+        });
+
+        let proto_payload = server_data_to_proto_payload(&payload);
+        let envelope = ServerDataEnvelope {
+            payload: Some(proto_payload),
+        };
+
+        let mut buf = Vec::new();
+        envelope
+            .encode(&mut buf)
+            .expect("AnqiHud abrasion proto encode 不应失败");
+        let decoded = ServerDataEnvelope::decode(buf.as_slice())
+            .expect("AnqiHud abrasion proto decode 不应失败");
+
+        let Some(super::bong::server_data_envelope::Payload::AnqiHud(inner)) = decoded.payload
+        else {
+            panic!(
+                "decoded payload 应为 AnqiHud 变体；实际={:?}",
+                decoded.payload
+            );
+        };
+
+        assert_eq!(
+            inner.kind, "abrasion",
+            "kind 必须为 'abrasion'；实际='{}'",
+            inner.kind
+        );
+        assert_eq!(
+            inner.abrasion_container, "quiver",
+            "abrasion_container 必须为 'quiver'（proto 链不丢字段）；实际='{}'",
+            inner.abrasion_container
+        );
+        assert!(
+            (inner.abrasion_qi_payload - 23.5).abs() < 1e-9,
+            "abrasion_qi_payload 必须为 23.5（proto 链不丢字段）；实际={}",
+            inner.abrasion_qi_payload
+        );
+    }
+
+    #[test]
+    fn anqi_hud_proto_roundtrip_aim() {
+        use crate::schema::proto_convert::server_data_to_proto_payload;
+        use crate::schema::proto_gen::bong::ServerDataEnvelope;
+        use crate::schema::server_data::{AnqiHudV1, ServerDataPayloadV1};
+        use prost::Message;
+
+        let payload = ServerDataPayloadV1::AnqiHud(AnqiHudV1 {
+            kind: "aim".to_string(),
+            echo_count: 0,
+            aim_progress: 0.85,
+            charge_progress: 0.0,
+            abrasion_container: String::new(),
+            abrasion_qi_payload: 0.0,
+            tick: 200,
+        });
+
+        let proto_payload = server_data_to_proto_payload(&payload);
+        let envelope = ServerDataEnvelope {
+            payload: Some(proto_payload),
+        };
+
+        let mut buf = Vec::new();
+        envelope
+            .encode(&mut buf)
+            .expect("AnqiHud aim proto encode 不应失败");
+        let decoded =
+            ServerDataEnvelope::decode(buf.as_slice()).expect("AnqiHud aim proto decode 不应失败");
+
+        let Some(super::bong::server_data_envelope::Payload::AnqiHud(inner)) = decoded.payload
+        else {
+            panic!(
+                "decoded payload 应为 AnqiHud 变体；实际={:?}",
+                decoded.payload
+            );
+        };
+
+        assert_eq!(
+            inner.kind, "aim",
+            "kind 必须为 'aim'；实际='{}'",
+            inner.kind
+        );
+        assert!(
+            (inner.aim_progress - 0.85).abs() < 1e-9,
+            "aim_progress 必须为 0.85；实际={}",
+            inner.aim_progress
+        );
+    }
 }

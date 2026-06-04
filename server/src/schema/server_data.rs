@@ -250,6 +250,8 @@ pub enum ServerDataType {
     LootContainerClose,
     // ─── plan-offscreen-war-v1 P9：战事 HUD 广播 ───────────────────
     FactionWarState,
+    // ─── plan-combat-skill-feedback-bridges-v1 P4：暗器 HUD ────────
+    AnqiHud,
 }
 
 #[derive(Debug, Clone)]
@@ -492,6 +494,9 @@ pub enum ServerDataPayloadV1 {
     // ─── plan-offscreen-war-v1 P9：战事 HUD 广播 ───────────────────
     /// 战事 HUD 状态广播（守恒红线：零真元；reframe b：零具名宗门）。
     FactionWarState(FactionWarStateV1),
+    // ─── plan-combat-skill-feedback-bridges-v1 P4：暗器 HUD S2C ───
+    /// 暗器分身 HUD 状态推送（守恒红线：只读事件字段，不重算真元）。
+    AnqiHud(AnqiHudV1),
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -605,6 +610,22 @@ pub struct FactionWarStateV1 {
     /// 败方 group_id，无结算结果时为 `None`。
     #[serde(skip_serializing_if = "Option::is_none")]
     pub loser_group: Option<u16>,
+}
+
+/// plan-combat-skill-feedback-bridges-v1 P4：暗器分身 HUD 状态推送（server → client）。
+///
+/// `kind` 取值："echo" | "aim" | "charge" | "abrasion"
+/// 守恒红线：全部字段只读自 ECS Event，不重算真元，不扣 qi。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AnqiHudV1 {
+    pub kind: String,
+    pub echo_count: u32,
+    pub aim_progress: f64,
+    pub charge_progress: f64,
+    pub abrasion_container: String,
+    pub abrasion_qi_payload: f64,
+    pub tick: u64,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -1434,6 +1455,11 @@ enum ServerDataPayloadWireV1 {
     FactionWarState {
         #[serde(flatten)]
         data: FactionWarStateV1,
+    },
+    // ─── plan-combat-skill-feedback-bridges-v1 P4：暗器 HUD ────────
+    AnqiHud {
+        #[serde(flatten)]
+        data: AnqiHudV1,
     },
 }
 
@@ -2267,6 +2293,7 @@ impl TryFrom<ServerDataPayloadWireV1> for ServerDataPayloadV1 {
                 Ok(Self::LootContainerClose(data))
             }
             ServerDataPayloadWireV1::FactionWarState { data } => Ok(Self::FactionWarState(data)),
+            ServerDataPayloadWireV1::AnqiHud { data } => Ok(Self::AnqiHud(data)),
         }
     }
 }
@@ -2799,6 +2826,7 @@ impl From<&ServerDataPayloadV1> for ServerDataPayloadWireV1 {
             ServerDataPayloadV1::FactionWarState(data) => {
                 Self::FactionWarState { data: data.clone() }
             }
+            ServerDataPayloadV1::AnqiHud(data) => Self::AnqiHud { data: data.clone() },
         }
     }
 }
@@ -3109,6 +3137,7 @@ impl ServerDataPayloadV1 {
             Self::LootContainerUpdate(..) => ServerDataType::LootContainerUpdate,
             Self::LootContainerClose(..) => ServerDataType::LootContainerClose,
             Self::FactionWarState(..) => ServerDataType::FactionWarState,
+            Self::AnqiHud(..) => ServerDataType::AnqiHud,
         }
     }
 }
@@ -4655,6 +4684,76 @@ mod tests {
                 .contains("散修"),
             "期望 region_descriptor 含「散修」（匿名散修描述符），实际 {}",
             v["region_descriptor"]
+        );
+    }
+
+    // ─── plan-combat-skill-feedback-bridges-v1 P4：AnqiHud schema pin ─
+
+    #[test]
+    fn anqi_hud_v1_roundtrip() {
+        let original = crate::schema::server_data::AnqiHudV1 {
+            kind: "abrasion".to_string(),
+            echo_count: 3,
+            aim_progress: 0.5,
+            charge_progress: 0.25,
+            abrasion_container: "quiver".to_string(),
+            abrasion_qi_payload: 12.5,
+            tick: 999,
+        };
+        let json = serde_json::to_string(&original).expect("AnqiHudV1 应能序列化");
+        let back: crate::schema::server_data::AnqiHudV1 =
+            serde_json::from_str(&json).expect("AnqiHudV1 应能反序列化");
+        assert_eq!(
+            original, back,
+            "AnqiHudV1 JSON roundtrip 必须无损；JSON={json}"
+        );
+    }
+
+    #[test]
+    fn anqi_hud_payload_type_label_is_anqi_hud() {
+        let label = payload_type_label(ServerDataType::AnqiHud);
+        assert_eq!(
+            label, "anqi_hud",
+            "期望 AnqiHud 的 label 为 'anqi_hud'（client 路由键），实际 {label}"
+        );
+    }
+
+    #[test]
+    fn anqi_hud_wire_type_serializes_correctly() {
+        let inner = crate::schema::server_data::AnqiHudV1 {
+            kind: "echo".to_string(),
+            echo_count: 5,
+            aim_progress: 0.0,
+            charge_progress: 0.0,
+            abrasion_container: String::new(),
+            abrasion_qi_payload: 0.0,
+            tick: 42,
+        };
+        let wrapper = ServerDataV1::new(ServerDataPayloadV1::AnqiHud(inner));
+        let json = serde_json::to_string(&wrapper).expect("serialize AnqiHud wrapper");
+        let v: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(
+            v["type"],
+            serde_json::json!("anqi_hud"),
+            "期望 wire type = 'anqi_hud'（client 路由键），实际 {}",
+            v["type"]
+        );
+        assert_eq!(
+            v["kind"],
+            serde_json::json!("echo"),
+            "期望 kind = 'echo'，实际 {}",
+            v["kind"]
+        );
+        assert_eq!(
+            v["echo_count"],
+            serde_json::json!(5u32),
+            "期望 echo_count = 5，实际 {}",
+            v["echo_count"]
+        );
+        // 守恒红线：echo payload 不含 qi 字段（只读）
+        assert!(
+            !json.contains("\"qi_") || json.contains("abrasion_qi_payload"),
+            "echo payload 不应包含真元计算字段"
         );
     }
 }
