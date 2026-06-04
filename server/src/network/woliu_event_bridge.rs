@@ -179,19 +179,20 @@ pub fn publish_void_erosion_advance_events(
     clock: Res<crate::combat::CombatClock>,
 ) {
     for event in events.read() {
+        // 实体消亡（已 despawn）时 erosion_query.get 失败 → 跳过，不伪造 0.0。
+        // cumulative_erosion 必须来自真实组件，确保 agent narration 数值准确。
+        let Ok(erosion) = erosion_query.get(event.entity) else {
+            continue;
+        };
         let entity_id = usernames
             .get(event.entity)
             .map(|u| format!("offline:{}", u.0))
             .unwrap_or_else(|_| format!("char:{}", event.entity.to_bits()));
-        let cumulative_erosion = erosion_query
-            .get(event.entity)
-            .map(|e| e.cumulative_erosion)
-            .unwrap_or(0.0);
         let payload = VoidErosionEventV1 {
             entity: entity_id,
             from_stage: void_erosion_stage_v1(event.from),
             to_stage: void_erosion_stage_v1(event.to),
-            cumulative_erosion,
+            cumulative_erosion: erosion.cumulative_erosion,
             server_tick: clock.tick,
         };
         let _ = redis
@@ -341,6 +342,70 @@ mod tests {
                 );
             }
             other => panic!("expected RedisOutbound::VoidErosionEvent for NPC, got {other:?}"),
+        }
+    }
+
+    /// major2 修复验证：entity 无 VoidErosion 组件（已 despawn / 消亡）→ 跳过，不发布伪造 payload。
+    /// 原来 `.unwrap_or(0.0)` 会发出 cumulative_erosion=0.0 的错误 payload；
+    /// 修复后 `let Ok(erosion) = ... else { continue; }` 直接跳过。
+    #[test]
+    fn skips_event_when_entity_missing_void_erosion_component() {
+        let (mut app, rx_outbound) = app_with_bridge();
+
+        // spawn 一个没有 VoidErosion 组件的实体（模拟 despawn 后仍有遗留事件）
+        let entity = app.world_mut().spawn(()).id();
+
+        app.world_mut().send_event(VoidErosionAdvanceEvent {
+            entity,
+            from: VoidErosionStage::None,
+            to: VoidErosionStage::LowPressure,
+        });
+
+        app.update();
+
+        assert!(
+            rx_outbound.try_recv().is_err(),
+            "no outbound message should be emitted when entity lacks VoidErosion component \
+             (entity may have been despawned); got a message instead"
+        );
+    }
+
+    /// major2 修复验证：cumulative_erosion 必须来自真实 VoidErosion 组件，不可伪造。
+    #[test]
+    fn cumulative_erosion_comes_from_real_component_not_zero() {
+        let (mut app, rx_outbound) = app_with_bridge();
+
+        let expected_cumulative = 123.45;
+        let entity = app
+            .world_mut()
+            .spawn((
+                Username("Kiz".to_string()),
+                VoidErosion {
+                    cumulative_erosion: expected_cumulative,
+                    stage: VoidErosionStage::VoidShadow,
+                    ..Default::default()
+                },
+            ))
+            .id();
+
+        app.world_mut().send_event(VoidErosionAdvanceEvent {
+            entity,
+            from: VoidErosionStage::LowPressure,
+            to: VoidErosionStage::VoidShadow,
+        });
+
+        app.update();
+
+        match rx_outbound.try_recv().expect("should emit payload") {
+            RedisOutbound::VoidErosionEvent(payload) => {
+                assert!(
+                    (payload.cumulative_erosion - expected_cumulative).abs() < f64::EPSILON,
+                    "cumulative_erosion must come from VoidErosion component={expected_cumulative}, \
+                     got {} (must not be hardcoded 0.0)",
+                    payload.cumulative_erosion
+                );
+            }
+            other => panic!("expected VoidErosionEvent, got {other:?}"),
         }
     }
 }
