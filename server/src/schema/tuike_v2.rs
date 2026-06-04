@@ -171,6 +171,44 @@ pub struct TuikeAshDecayV1 {
 mod tests {
     use super::*;
 
+    // plan-combat-skill-feedback-bridges-v1 P6 — server↔TS 双端 sample-pin。
+    // 字段名漂移（如 owner_id → ownerId）会让此测试红，无需人工对比。
+    const SAMPLE_TUIKE_ASH_DECAY: &str =
+        include_str!("../../../agent/packages/schema/samples/tuike_v2_ash_decay.json");
+
+    #[test]
+    fn tuike_ash_decay_sample_pin_all_tiers() {
+        // sample 是 JSON array，每条均反序列化为 TuikeAshDecayV1 并 roundtrip。
+        let values: Vec<serde_json::Value> = serde_json::from_str(SAMPLE_TUIKE_ASH_DECAY)
+            .expect("tuike_v2_ash_decay.json 必须是合法 JSON array");
+        assert!(
+            !values.is_empty(),
+            "tuike_v2_ash_decay.json sample array 不能为空"
+        );
+        for (i, value) in values.iter().enumerate() {
+            let payload: TuikeAshDecayV1 =
+                serde_json::from_value(value.clone()).unwrap_or_else(|e| {
+                    panic!(
+                        "tuike_v2_ash_decay.json sample[{i}] 反序列化失败：{e}\n\
+                        原因通常是 TS↔Rust 字段名漂移或新增必填字段未同步。\n\
+                        value={value}"
+                    )
+                });
+            let back = serde_json::to_value(&payload).unwrap();
+            let _: TuikeAshDecayV1 = serde_json::from_value(back).unwrap_or_else(|e| {
+                panic!("sample[{i}] roundtrip 失败：{e}");
+            });
+        }
+        // 精确覆盖 5 档（fan/light/mid/heavy/ancient）
+        assert_eq!(
+            values.len(),
+            5,
+            "tuike_v2_ash_decay.json 应包含 5 条 sample（fan/light/mid/heavy/ancient 各 1 条）；\
+            实际 {} 条。新增或删减 tier 时必须同步更新 sample 文件。",
+            values.len()
+        );
+    }
+
     #[test]
     fn tuike_skill_event_roundtrip_preserves_visual_contract() {
         let event = TuikeSkillEventV1 {
