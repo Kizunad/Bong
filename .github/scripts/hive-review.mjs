@@ -1,10 +1,11 @@
 #!/usr/bin/env node
 // Hive-Think PR Reviewer —— "hive-think" 特殊模型 = N 个成员并行 debate(可混多个模型,同台对峙)。
 //
-// 两轮对抗式审核 + 总裁决:
-//   1) 发现:N 个成员各包一个维度(模型在 HIVE_MODELS 间轮转),带 file:line + 证据出 findings
-//   2) 对峙:每个成员拿到全体 findings,默认怀疑逐条投 REAL/NOT_REAL + 补漏
-//   3) 裁决:一个成员(HIVE_ARBITER_MODEL)综合存活项产出最终中文 review,贴 PR 评论
+// 发现 → 多轮严格裁定 → top-N 总裁决(少而准):
+//   1) 发现:SWARM 个 finders 各包一个维度(模型在 HIVE_MODELS 间轮转),带 file:line + 证据出 findings
+//   2) 裁定:VOTERS 个怀疑型投票者**默认 NOT_REAL** 多轮投票;累计 REAL 占比 ≥ACCEPT 接受、
+//      ≤REJECT 拒绝、中间(近 50/50)进下一轮追加投票,到 MAX_VOTE_ROUNDS 仍未决则拒绝
+//   3) 裁决:接受项按 严重度+占比 取 top-N,交一个成员(HIVE_ARBITER_MODEL)从严产出中文 review
 //
 // 自包含:只用 Node 内置 fetch + gh CLI,无 npm 依赖。默认走 SenseNova OpenAI 兼容端点
 // (deepseek-v4-flash + sensenova-6.7-flash-lite 混合),key 从 secrets 注入(支持多 key 轮询);
@@ -33,9 +34,16 @@ const MODELS = (process.env.HIVE_MODELS || process.env.HIVE_MODEL || "deepseek-v
   .filter(Boolean);
 const ARBITER_MODEL = process.env.HIVE_ARBITER_MODEL || MODELS[0];
 const SWARM = Math.max(1, parseInt(process.env.HIVE_SWARM_SIZE || "10", 10));
-const CONCURRENCY = Math.max(1, parseInt(process.env.HIVE_CONCURRENCY || String(SWARM), 10));
+const CONCURRENCY = Math.max(1, parseInt(process.env.HIVE_CONCURRENCY || "12", 10));
 const PR = process.env.PR_NUMBER;
 const MAX_DIFF = parseInt(process.env.HIVE_MAX_DIFF || "200000", 10);
+
+// 严格收敛裁定参数(少而准):默认 NOT_REAL 的投票者多轮裁定,累计占比分流
+const VOTERS = Math.max(1, parseInt(process.env.HIVE_VOTERS || "12", 10)); // 每轮投票者数量
+const ACCEPT_RATIO = parseFloat(process.env.HIVE_ACCEPT_RATIO || "0.7"); // 累计 REAL 占比 ≥ 此值 → 接受
+const REJECT_RATIO = parseFloat(process.env.HIVE_REJECT_RATIO || "0.35"); // ≤ 此值 → 拒绝;中间(近 50/50)→ 进下一轮
+const MAX_VOTE_ROUNDS = Math.max(1, parseInt(process.env.HIVE_MAX_VOTE_ROUNDS || "3", 10));
+const TOP_N = Math.max(1, parseInt(process.env.HIVE_TOP_N || "8", 10)); // 交总裁判的最多 finding 数
 
 if (!PR) {
   console.error("PR_NUMBER 未设置");
@@ -46,7 +54,8 @@ if (KEYS.length === 0) {
   process.exit(1);
 }
 console.error(
-  `hive-think: PR #${PR} · ${SWARM} 成员 · 模型 [${MODELS.join(", ")}] · 裁决 ${ARBITER_MODEL} · ${KEYS.length} key 轮询`,
+  `hive-think: PR #${PR} · ${SWARM} finders / ${VOTERS} voters×≤${MAX_VOTE_ROUNDS}轮 · ` +
+    `接受≥${ACCEPT_RATIO}/拒绝≤${REJECT_RATIO} · top${TOP_N} · 模型 [${MODELS.join(", ")}] · 裁决 ${ARBITER_MODEL} · ${KEYS.length} key`,
 );
 
 // ── 项目准则(精简版,塞进每个成员的上下文,让它知道该查什么)──────────────
@@ -280,120 +289,153 @@ round1.forEach((r) => {
 });
 console.error(`  发现 ${pool.length} 条 findings`);
 
-// ── 第二轮:对峙 ────────────────────────────────────────────────────────────
+// ── 多轮裁定:默认 NOT_REAL 的怀疑型投票者,累计 REAL 占比分流 ────────────────
+// 接受(≥ACCEPT)/ 拒绝(≤REJECT)/ 中间近 50/50 有争议 → 追加下一轮投票,到顶仍未决则拒绝。
+const foundCount = pool.length; // finder 原始数(missed 后续会进 pool)
 const tally = {};
+pool.forEach((f) => (tally[f.id] = { real: 0, not: 0 }));
+const decision = {}; // id -> 'accept' | 'reject'
+const roundsUsed = {}; // id -> 最后收到票的轮次
 let missed = [];
-if (pool.length > 0) {
-  console.error(`▶ 第二轮 对峙:${SWARM} 个成员并行投票`);
-  const poolView = pool.map(({ id, severity, file, line, title, why, by }) => ({
-    id,
-    severity,
-    file,
-    line,
-    title,
-    why,
-    by,
-  }));
-  const debatePrompt = (p) =>
-    `你仍是 Bong PR 审核 hive 的一员(本轮维度倾向【${p.key}】),现在进入【对峙 debate】环节。\n` +
-    `${GUIDELINES}\n\n${prContext}\n\n` +
-    `下面是全体成员第一轮提出的 findings(带 id)。请以**怀疑**的态度逐条裁断:\n` +
-    `这是不是真 bug?在该代码路径上是否可达?周围代码是否已经处理?行号是否对得上 diff?\n` +
-    `证据不足、无法定位、属于风格洁癖的,一律判 NOT_REAL。同时,如果发现大家都漏掉的真问题,补进 missed。\n\n` +
-    `findings:\n${JSON.stringify(poolView, null, 2)}\n\n` +
-    `只输出纯 JSON(不要解释文字):\n` +
-    `{"votes":[{"id":1,"verdict":"REAL|NOT_REAL","reason":"一句话理由"}],` +
-    `"missed":[{"severity":"blocker|major|minor","file":"路径","line":"行号","title":"...","why":"..."}]}`;
 
-  const round2 = await mapLimit(swarm, CONCURRENCY, (p) =>
-    chat(debatePrompt(p), { label: `debate:${p.key}@${p.model}`, model: p.model }).then(
+// 投票者:VOTERS 个,模型轮转(与 finder 各包维度不同,投票者只做裁断)
+const voters = Array.from({ length: VOTERS }, (_, i) => ({ model: MODELS[i % MODELS.length] }));
+
+const votePrompt = (activeFindings, askMissed) => {
+  const view = activeFindings.map(({ id, severity, file, line, title, why }) => ({ id, severity, file, line, title, why }));
+  return (
+    `你是 Bong PR 审核 hive 的**怀疑型投票者**。\n${GUIDELINES}\n\n${prContext}\n\n` +
+    `逐条裁断下面的 findings(带 id)。**默认判 NOT_REAL**——只有当你能在 diff 中明确确认全部四点:\n` +
+    `① 问题真实存在 ② 该代码路径可达 ③ 周围代码确实没有处理 ④ 行号对得上,才投 REAL。\n` +
+    `证据不足、无法定位、推测性、风格洁癖、"可能/也许/建议"一律 NOT_REAL。宁可漏过,也不要放过假阳性。\n\n` +
+    `findings:\n${JSON.stringify(view, null, 2)}\n\n` +
+    (askMissed ? `如确有**所有人都漏掉、且证据确凿**的真问题,补进 missed(没有就空数组,严禁硬凑)。\n` : ``) +
+    `只输出纯 JSON(不要解释文字):\n` +
+    `{"votes":[{"id":1,"verdict":"REAL|NOT_REAL"}]` +
+    (askMissed ? `,"missed":[{"severity":"blocker|major|minor","file":"路径","line":"行号","title":"...","why":"..."}]` : ``) +
+    `}`
+  );
+};
+
+let active = pool.map((f) => f.id);
+for (let round = 1; round <= MAX_VOTE_ROUNDS && active.length > 0; round++) {
+  const activeFindings = pool.filter((f) => active.includes(f.id));
+  console.error(`▶ 裁定第 ${round}/${MAX_VOTE_ROUNDS} 轮:${VOTERS} 投票者 × ${activeFindings.length} 条未决`);
+  const askMissed = round === 1; // 仅首轮收 missed,避免无限膨胀
+  const results = await mapLimit(voters, CONCURRENCY, (v, i) =>
+    chat(votePrompt(activeFindings, askMissed), { label: `vote.r${round}#${i}@${v.model}`, model: v.model }).then(
       (r) => extractJSON(r) || { votes: [], missed: [] },
     ),
   );
 
-  for (const r of round2) {
+  for (const r of results) {
     for (const v of r?.votes || []) {
-      const id = v?.id;
-      if (id == null) continue;
-      tally[id] = tally[id] || { real: 0, not: 0, reasons: [] };
-      if (String(v.verdict || "").toUpperCase().includes("NOT")) tally[id].not++;
-      else tally[id].real++;
-      if (v.reason) tally[id].reasons.push(v.reason);
+      const t = tally[v?.id];
+      if (!t) continue;
+      if (String(v.verdict || "").toUpperCase().includes("NOT")) t.not++;
+      else t.real++;
     }
-    for (const m of r?.missed || []) {
-      if (m && (m.title || m.file)) missed.push(m);
+    if (askMissed) {
+      for (const m of r?.missed || []) {
+        if (m && (m.title || m.file)) {
+          const f = { ...m, by: "补漏", model: "—", id: pool.length + 1 };
+          pool.push(f);
+          tally[f.id] = { real: 0, not: 0 };
+          active.push(f.id); // 下一轮起参与投票
+        }
+      }
     }
   }
+  missed = pool.filter((f) => f.by === "补漏");
+
+  // 累计占比分流
+  const stillActive = [];
+  for (const id of active) {
+    const t = tally[id];
+    const total = t.real + t.not;
+    if (total === 0) {
+      stillActive.push(id); // 本轮没票(如刚补漏的),下一轮再投
+      continue;
+    }
+    roundsUsed[id] = round;
+    const ratio = t.real / total;
+    if (ratio >= ACCEPT_RATIO) decision[id] = "accept";
+    else if (ratio <= REJECT_RATIO) decision[id] = "reject";
+    else stillActive.push(id); // 近 50/50,争议 → 下一轮追加投票
+  }
+  active = stillActive;
 }
+for (const id of active) decision[id] = "reject"; // 到顶仍未决 → 拒绝(拿不准就不报)
 
-// 存活规则:认同票 >= 反对票 且至少 2 票认同(投票缺失时按默认存活,保证降级有结果)
-const survivors = pool.filter((f) => {
-  const t = tally[f.id];
-  if (!t) return true;
-  return t.real >= t.not && t.real >= 2;
-});
-const dropped = pool.filter((f) => !survivors.includes(f));
-console.error(`  存活 ${survivors.length} 条 / 丢弃 ${dropped.length} 条 / 对峙补漏 ${missed.length} 条`);
+const ratioOf = (id) => {
+  const t = tally[id] || { real: 0, not: 0 };
+  const total = t.real + t.not;
+  return total ? t.real / total : 0;
+};
+const pct = (id) => Math.round(ratioOf(id) * 100);
 
-// ── 第三轮:总裁决 ──────────────────────────────────────────────────────────
-console.error("▶ 第三轮 裁决:总裁判综合产出");
+const accepted = pool.filter((f) => decision[f.id] === "accept");
+const sevRank = { blocker: 0, major: 1, minor: 2 };
+const ranked = accepted
+  .slice()
+  .sort((a, b) => (sevRank[a.severity] ?? 3) - (sevRank[b.severity] ?? 3) || ratioOf(b.id) - ratioOf(a.id));
+const survivors = ranked.slice(0, TOP_N); // 交总裁判的 top-N(高置信度)
+const overflow = ranked.slice(TOP_N); // 接受但超出 top-N
+console.error(
+  `  接受 ${accepted.length} / 拒绝 ${pool.length - accepted.length} / 交裁判 top${survivors.length}` +
+    (overflow.length ? `(另 ${overflow.length} 条接受但超 top-N)` : ""),
+);
+
+// ── 总裁决(从严,只就 top-N)────────────────────────────────────────────────
+console.error("▶ 总裁决:总裁判综合产出");
 const fmt = (f) =>
   `- [${f.severity || "?"}] ${f.file || "?"}:${f.line || "?"} — ${f.title || ""}` +
-  `${f.why ? `(${f.why})` : ""}${f.by ? ` 〔${f.by}${f.model ? `·${f.model}` : ""}〕` : ""}` +
-  `${tally[f.id] ? ` 〔票 ${tally[f.id].real}✓/${tally[f.id].not}✗〕` : ""}`;
+  `${f.why ? `(${f.why})` : ""} 〔认可 ${pct(f.id)}% · ${tally[f.id].real}✓/${tally[f.id].not}✗〕`;
 
 const arbiterPrompt =
-  `你是本次 hive-think 审核的**总裁判**(你做最终裁决)。\n` +
+  `你是本次 hive-think 审核的**总裁判**(最终裁决,从严,宁缺勿滥)。\n` +
   `${GUIDELINES}\n\n${prContext}\n\n` +
-  `经过 ${SWARM} 个成员两轮(发现 → 对峙)后,**存活的 findings**:\n` +
-  `${survivors.map(fmt).join("\n") || "(无)"}\n\n` +
-  `对峙轮**补充发现的 missed**:\n` +
-  `${missed.map((m) => `- [${m.severity || "?"}] ${m.file || "?"}:${m.line || "?"} — ${m.title || ""}`).join("\n") || "(无)"}\n\n` +
-  `请综合判断,产出**最终中文 PR review(markdown)**。要求:\n` +
-  `- 多数成员一致认同的问题优先级最高;仅个别提出的标注「少数意见」。\n` +
-  `- 只报真问题且带 file:line 与证据,不要为凑数写评论。\n` +
-  `- 你有最终决定权:成员可能误杀或漏放,必要时按你对 diff 的判断纠正。\n` +
-  `- 结构:**整体评级**(✅ 可合入 / ⚠️ 有阻塞)→ 🚫 阻塞项 → 🐛 主要问题 → 📐 次要/建议 → 🌍 世界观与守恒小结${plan?.text ? " → 📋 Plan 对齐度" : ""}。\n` +
-  `- 整体没问题就写「未发现阻塞性问题」+ 简短说明即可。\n` +
+  `经过 ${VOTERS} 个怀疑型投票者最多 ${MAX_VOTE_ROUNDS} 轮裁定(默认 NOT_REAL,累计 REAL 占比 ≥${ACCEPT_RATIO} 才接受),` +
+  `**高置信度存活的 top-${TOP_N} findings**:\n${survivors.map(fmt).join("\n") || "(无)"}\n\n` +
+  `据此产出**最终中文 PR review(markdown)**。硬要求:\n` +
+  `- **只就上面这些高置信度问题写**,严禁自行新增未列出的问题,严禁凑数。\n` +
+  `- 每条带 file:line 与证据;其中你判断明显不成立的可直接否决(从严)。\n` +
+  `- 结构:**整体评级**(✅ 可合入 / ⚠️ 有阻塞)→ 🚫 阻塞项 → 🐛 主要问题 → 📐 次要/建议${plan?.text ? " → 📋 Plan 对齐度" : ""}。\n` +
+  `- 没有高置信度问题就直接写「未发现高置信度阻塞问题」+ 一句说明,**不要硬找问题**。\n` +
   `- 不要包含本提示词、不要输出 JSON,直接给 markdown 正文。`;
 
 let finalReview = await chat(arbiterPrompt, { label: `arbiter@${ARBITER_MODEL}`, model: ARBITER_MODEL });
 if (!finalReview) {
-  // 裁决失败时降级:直接用存活项拼一份
   finalReview =
-    `_总裁决阶段无输出,以下为存活 findings 直出:_\n\n` +
-    (survivors.length
-      ? survivors.map(fmt).join("\n")
-      : "未发现存活问题。") +
-    (missed.length ? `\n\n**对峙补漏:**\n${missed.map((m) => `- ${m.file}:${m.line} — ${m.title}`).join("\n")}` : "");
+    `_总裁决阶段无输出,以下为高置信度 top-${TOP_N} 直出:_\n\n` +
+    (survivors.length ? survivors.map(fmt).join("\n") : "未发现高置信度问题。");
 }
 
 // ── 组装并发布 ──────────────────────────────────────────────────────────────
+const statusOf = (f) => (survivors.includes(f) ? "🎯 top" : decision[f.id] === "accept" ? "✅ 接受" : "❌ 拒绝");
 const voteRows = pool
+  .slice()
+  .sort((a, b) => ratioOf(b.id) - ratioOf(a.id))
   .map((f) => {
     const t = tally[f.id] || { real: 0, not: 0 };
-    const status = survivors.includes(f) ? "✅ 存活" : "❌ 丢弃";
-    return `| ${f.id} | ${f.by || "?"} | ${f.model || "?"} | ${(f.title || "").replace(/\|/g, "/")} | ${t.real}✓/${t.not}✗ | ${status} |`;
+    return `| ${f.id} | ${f.by || "?"} | ${f.model || "?"} | ${(f.title || "").replace(/\|/g, "/")} | ${pct(f.id)}% (${t.real}✓/${t.not}✗) | ${roundsUsed[f.id] || "-"} | ${statusOf(f)} |`;
   })
   .join("\n");
 
 const debateTable = pool.length
-  ? `\n\n<details><summary>🗳️ Debate 投票明细(${SWARM} 成员两轮)</summary>\n\n` +
-    `| id | 提出维度 | 模型 | 问题 | 票(认同/反对) | 结果 |\n|---|---|---|---|---|---|\n${voteRows}\n` +
-    (missed.length
-      ? `\n**对峙补漏(${missed.length}):**\n${missed.map((m) => `- [${m.severity || "?"}] ${m.file || "?"}:${m.line || "?"} — ${m.title || ""}`).join("\n")}\n`
-      : "") +
-    `</details>`
+  ? `\n\n<details><summary>🗳️ 裁定明细(${VOTERS} 投票者 ×≤${MAX_VOTE_ROUNDS} 轮 · 接受≥${Math.round(ACCEPT_RATIO * 100)}% / 拒绝≤${Math.round(REJECT_RATIO * 100)}%)</summary>\n\n` +
+    `| id | 提出 | 模型 | 问题 | 认可率 | 轮 | 结果 |\n|---|---|---|---|---|---|---|\n${voteRows}\n</details>`
   : "";
 
 // 成员里每个模型各占几个,供 header 展示(顺带把两个模型的产出对比放进投票表)
 const modelMix = MODELS.map((m) => `\`${m}\`×${swarm.filter((s) => s.model === m).length}`).join(" + ");
 const header =
   `## 🐝 Hive-Think Review · PR #${PR}\n\n` +
-  `> 模型 **\`hive-think\`** = ${SWARM} 成员并行 debate(${modelMix}),裁决 \`${ARBITER_MODEL}\` · 发现 → 对峙 → 总裁决\n` +
+  `> 模型 **\`hive-think\`** = ${SWARM} finders + ${VOTERS} 怀疑投票者(${modelMix}),裁决 \`${ARBITER_MODEL}\`\n` +
+  `> 流程:发现 → 默认 NOT_REAL 多轮投票(接受≥${Math.round(ACCEPT_RATIO * 100)}% / 拒绝≤${Math.round(REJECT_RATIO * 100)}% / 争议进下一轮)→ top-${TOP_N} 总裁决\n` +
   (plan ? `> Plan: \`${plan.name}\`${plan.path ? "" : "(未找到文件)"}\n` : "") +
   (diffTruncated ? `> ⚠️ diff 过大已截断至 ${MAX_DIFF} 字符\n` : "") +
-  `> 统计:发现 ${pool.length} → 存活 ${survivors.length} → 补漏 ${missed.length}\n\n` +
+  `> 统计:发现 ${foundCount}${missed.length ? `(+${missed.length} 补漏)` : ""} → 接受 ${accepted.length} → 交裁判 top-${survivors.length}\n\n` +
   `> [!WARNING]\n` +
   `> 本审核由多模型自动 debate 生成,**不可 100% 信赖**——快模型可能幻觉/误报/漏报。\n` +
   `> 请保持批判性思维,务必自行核对 file:line 与上下文,再决定是否采纳。\n\n`;
