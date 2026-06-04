@@ -5,7 +5,7 @@
       "loop": true,
       "animation_length": 2.8,
       "bones": {
-        "lid": {
+        "Lid": {
           "rotation": {
             "0.0": [
               0,

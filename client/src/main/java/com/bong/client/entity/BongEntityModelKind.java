@@ -187,6 +187,52 @@ public enum BongEntityModelKind {
         "intact",
         "searching",
         "looted"
+    ),
+    // plan-coffin-tiers-v1 P3 — 延寿棺四档。raw_id 161-164 对齐 server entity_model.rs。
+    // raw_id 160 已被 boss_spawn/visual 占用（见 plan §8.1 #1），故从 161 起。
+    COFFIN_MUNDANE(
+        "mundane_coffin",
+        "MundaneCoffin.bbmodel",
+        161,
+        1.0f,
+        0.6f,
+        64,
+        10,
+        0.15f,
+        "intact"
+    ),
+    COFFIN_JADE(
+        "jade_coffin",
+        "JadeCoffin.bbmodel",
+        162,
+        1.0f,
+        0.65f,
+        64,
+        10,
+        0.18f,
+        "intact"
+    ),
+    COFFIN_STONE(
+        "stone_coffin",
+        "StoneCoffin.bbmodel",
+        163,
+        1.1f,
+        0.65f,
+        64,
+        10,
+        0.20f,
+        "intact"
+    ),
+    COFFIN_BRONZE(
+        "bronze_coffin",
+        "BronzeCoffin.bbmodel",
+        164,
+        1.2f,
+        0.7f,
+        64,
+        10,
+        0.22f,
+        "intact"
     );
 
     private static final String MOD_ID = "bong";

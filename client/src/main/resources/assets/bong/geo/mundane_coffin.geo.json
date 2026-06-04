@@ -183,7 +183,7 @@
           ]
         },
         {
-          "name": "body",
+          "name": "Body",
           "parent": "root",
           "pivot": [
             0.0,
@@ -860,7 +860,7 @@
           ]
         },
         {
-          "name": "lid",
+          "name": "Lid",
           "parent": "root",
           "pivot": [
             0.0,
