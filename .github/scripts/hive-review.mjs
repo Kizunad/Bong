@@ -393,7 +393,10 @@ const header =
   `> 模型 **\`hive-think\`** = ${SWARM} 成员并行 debate(${modelMix}),裁决 \`${ARBITER_MODEL}\` · 发现 → 对峙 → 总裁决\n` +
   (plan ? `> Plan: \`${plan.name}\`${plan.path ? "" : "(未找到文件)"}\n` : "") +
   (diffTruncated ? `> ⚠️ diff 过大已截断至 ${MAX_DIFF} 字符\n` : "") +
-  `> 统计:发现 ${pool.length} → 存活 ${survivors.length} → 补漏 ${missed.length}\n\n`;
+  `> 统计:发现 ${pool.length} → 存活 ${survivors.length} → 补漏 ${missed.length}\n\n` +
+  `> [!WARNING]\n` +
+  `> 本审核由多模型自动 debate 生成,**不可 100% 信赖**——快模型可能幻觉/误报/漏报。\n` +
+  `> 请保持批判性思维,务必自行核对 file:line 与上下文,再决定是否采纳。\n\n`;
 
 const body = header + finalReview + debateTable;
 
