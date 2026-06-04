@@ -2096,8 +2096,8 @@ fn erosion_placeholder_spec_qi_costs_match_constants() {
 // ────────────────────────────────────────────────────────────────────
 
 use super::erosion::{
-    add_erosion, add_erosion_capped, void_erosion_check_system, VoidErosion,
-    VoidErosionAdvanceEvent, VoidErosionStage, VOID_EROSION_CHECK_INTERVAL,
+    add_erosion_capped, void_erosion_check_system, VoidErosion, VoidErosionAdvanceEvent,
+    VoidErosionStage, VOID_EROSION_CHECK_INTERVAL,
 };
 use super::skills::erosion_amount_for_skill;
 
@@ -2128,7 +2128,8 @@ fn erosion_amount_for_skill_returns_correct_constants() {
         (erosion_amount_for_skill(WoliuSkillId::VortexEcho) - ECHO_EROSION).abs() < 1e-9,
         "VortexEcho erosion should equal ECHO_EROSION"
     );
-    let expected_void_core = VOID_CORE_EROSION_PER_SEC * (VOID_CORE_DURATION_TICKS as f64 / 20.0);
+    let expected_void_core =
+        VOID_CORE_EROSION_PER_SEC * (VOID_CORE_DURATION_TICKS as f64 / TICKS_PER_SECOND as f64);
     assert!(
         (erosion_amount_for_skill(WoliuSkillId::VoidCore) - expected_void_core).abs() < 1e-9,
         "VoidCore erosion amount should be erosion_per_sec * duration_sec = {expected_void_core}"
@@ -2317,7 +2318,7 @@ fn void_erosion_check_system_same_frame_multi_stage_emits_final_stage() {
     {
         let mut erosion = VoidErosion::default();
         add_erosion_capped(&mut erosion, 250.0, Realm::Void); // → stage=EchoBody
-        // last_reported_stage = None（default）→ check_system 会检测到 EchoBody > None
+                                                              // last_reported_stage = None（default）→ check_system 会检测到 EchoBody > None
         a.world_mut().spawn(erosion);
     }
     a.add_systems(Update, void_erosion_check_system);
@@ -2365,10 +2366,11 @@ fn real_path_resolve_skill_then_check_system_emits_event_without_cheat() {
     // 先推到阈值之下（18.0 < 20.0 → stage 仍 None）
     {
         let mut erosion = a.world_mut().get_mut::<VoidErosion>(caster).unwrap();
-        add_erosion_capped(&mut *erosion, 18.0, Realm::Void);
+        add_erosion_capped(&mut erosion, 18.0, Realm::Void);
         // stage = None（cumulative=18 < 20），last_reported_stage = None
         assert_eq!(
-            erosion.stage, VoidErosionStage::None,
+            erosion.stage,
+            VoidErosionStage::None,
             "pre-condition: 18.0 erosion should not yet reach LowPressure"
         );
     }
@@ -2415,9 +2417,20 @@ fn real_path_resolve_skill_then_check_system_emits_event_without_cheat() {
         "check_system should emit exactly 1 VoidErosionAdvanceEvent via real production path; got {}",
         events.len()
     );
-    assert_eq!(events[0].entity, caster, "event entity should be the caster");
-    assert_eq!(events[0].from, VoidErosionStage::None, "from = None (last_reported before check)");
-    assert_eq!(events[0].to, VoidErosionStage::LowPressure, "to = LowPressure (capped stage)");
+    assert_eq!(
+        events[0].entity, caster,
+        "event entity should be the caster"
+    );
+    assert_eq!(
+        events[0].from,
+        VoidErosionStage::None,
+        "from = None (last_reported before check)"
+    );
+    assert_eq!(
+        events[0].to,
+        VoidErosionStage::LowPressure,
+        "to = LowPressure (capped stage)"
+    );
 
     // last_reported_stage 必须被更新
     let erosion = a.world().get::<VoidErosion>(caster).unwrap();
