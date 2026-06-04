@@ -32,7 +32,10 @@
 
 ## §0 设计约束（技术边界）
 
-1. **realm_gate 服务端强制**：`AgentUiRequestCommandV1.realm_gate` 由 Agent 按面板类型设置（天道启示=5，秘境发现=3，一般面板=0）；server 收到请求后，查询 `player.realm ≥ realm_gate` 才转发 CustomPayload；不满足时拒绝，向 `bong:agent_ui_response` Redis 发布错误事件 `{ type: "realm_gate_rejected", request_id, player_realm, required_realm }`。realm_gate 字段不下发给 client，防止客户端感知门控阈值。
+1. **realm_gate 服务端强制**：`AgentUiRequestCommandV1.realm_gate` 由 Agent 按面板类型设置（天道启示=5，秘境发现=3，一般面板=0）；server 收到请求后：
+   - 若 `target_player` 对应的 ECS Entity 不存在（玩家离线）→ 立即拒绝，向 `bong:agent_ui_response` Redis 发布 `{ error: "player_offline", request_id }`，不创建 session
+   - 若玩家在线但 `player.realm < realm_gate` → 拒绝，向 `bong:agent_ui_response` Redis 发布 `{ type: "realm_gate_rejected", request_id, player_realm, required_realm }`
+   - 两种情况 realm_gate 字段均不下发给 client，防止客户端感知门控阈值
 
 2. **XML 安全（全部在 server sanitize 阶段执行）**：
    - 白名单标签：`<label>` / `<button>` / `<flow-layout>` / `<grid-layout>` / `<texture>`；其余标签 strip（宽容解析，不整体拒绝）
@@ -42,7 +45,11 @@
    - 节点数上限：64 节点（超出拒绝）
    - Agent 模板参数插值前必须 XML-escape（`&→&amp;`, `<→&lt;`, `>→&gt;`, `"→&quot;`, `'→&apos;`）；server sanitize 时再次验证无裸 `<` / `&`
 
-3. **动作白名单**：`AgentUiRequestCommandV1.allowed_button_ids: string[]`（Agent 提供，最多 16 条）；server `AgentUiSession` 存储；client 发 `button_click` 时，server 校验 `params["button_id"] ∈ allowed_button_ids`，不在则拒绝并向 Agent 发 `error` 事件；allowed_button_ids 不下发给 client，防止客户端感知白名单
+3. **动作白名单**：`AgentUiRequestCommandV1.allowed_button_ids: string[]`（Agent 提供，最多 16 条）；server `AgentUiSession` 存储；client 发 `button_click` 时，server 校验 `params["button_id"] ∈ allowed_button_ids`，不在则：
+   - session 进入 `Error` 终态
+   - 向 Agent 发布 `bong:agent_ui_response` Redis `{ action: "error", params: { "reason": "invalid_button_id" }, request_id }`
+   - **同时**向 client 发送 `#[close_channel]`（见 §8 Q4）信号，携带 `{ request_id, reason: "invalid_button_id" }`，client 据此关闭面板并显示"天道拒绝了这次操作"提示
+   - allowed_button_ids 不下发给 client，防止客户端感知白名单
 
 4. **Session 状态机**：
 
@@ -198,7 +205,7 @@ const AgentUiResponsePayloadV1 = Type.Object({
 - [ ] 颜色样式：`<label style="color: #C8A060">` 支持 16 进制颜色（通过 OwoUI theme 机制）
 - [ ] 面板背景：`BongSpriteParticle` vignette + 半透明黑底 `#1A0D0D`
 - [ ] 倒计时：client 维护本地倒计时（`timeout_ticks`），到期后自动关闭面板并发 `dismissed`（server 为 timeout 权威来源，client 不发 timeout，server ticker 负责 TimedOut 终态）
-- [ ] Replaced close 信号（server → client 专属 CustomPayload `bong:agent_ui_close { request_id }`）：client 关闭当前面板，不发任何 response（server 已记录 Replaced 终态）
+- [ ] Replaced / Error close 信号（server → client，channel 格式待 §8 Q4 P0 决策，暂记为 `#[close_channel] { request_id, reason?: String }`）：client 收到后关闭当前面板；reason 为空表示 Replaced（不发 response），reason="invalid_button_id" 等表示 Error（显示"天道拒绝了这次操作"提示）；不发任何 bong:agent_ui_response（server 已在终态时完成 Redis 发布）
 - [ ] **parse_error 降级**：`OwoUIAdapter.createFromXML` 抛出异常时 → 关闭动态面板 → 显示静态 fallback 面板（"天道信号紊乱，法则碎片无法解析"+ error_code）→ 发 `parse_error` action；server 收到 parse_error → Error 终态 → Redis 发布 parse_error event → Agent 可选简化模板重试（最多 1 次）
 - [ ] ≥ 12 单测：各合法标签 parse / 非法标签被过滤 / 按钮点击发包正确 action+params / ESC 发 dismissed / 倒计时到期发 dismissed（不发 timeout）/ Replaced 信号 → 关闭不发包 / malformed XML → parse_error 回传 / 空 XML → parse_error / fallback 面板静态内容正确
 
@@ -207,7 +214,7 @@ const AgentUiResponsePayloadV1 = Type.Object({
 ## §3 P2：Agent 侧 XML 生成 + 响应消费
 
 - [ ] `agent/packages/tiandao/src/ui/xmlTemplates.ts`：模板字符串 + `xmlEscape(s: string): string`（转义 `& < > " '`，null/undefined 输入返回空字符串）+ 参数插值（所有 `{{ param }}` 替换点必须先经 `xmlEscape`）
-- [ ] `agent/packages/tiandao/src/ui/uiRenderer.ts`：根据 world state + player.realm 选择模板 + 填充；按面板类型设定 `realm_gate`（天道启示=5，秘境=3，一般=0）；player.realm < realm_gate 时生成"模糊感应版"XML（纯文字，无 button，仅供 Agent 体验降级，server 仍独立验证 realm_gate）；发布 `AgentUiRequestCommandV1` 到 `bong:agent_ui_cmd`
+- [ ] `agent/packages/tiandao/src/ui/uiRenderer.ts`：根据 world state + player.realm 选择模板 + 填充；按面板类型设定 `realm_gate`（天道启示=5，秘境=3，一般=0）；player.realm < realm_gate 时生成"模糊感应版"XML（纯文字，无 button，供低境界玩家体验降级渲染，server 仍独立验证 realm_gate）；发布 `AgentUiRequestCommandV1` 到 `bong:agent_ui_cmd`
 - [ ] `agent/packages/tiandao/src/ui/uiResponseConsumer.ts`：Redis `bong:agent_ui_response` 订阅；消费 Completed（button_click）→ 注入 Arbiter 下一轮推演；消费 realm_gate_rejected → emit narration 替代面板；消费 TimedOut / Dismissed → 标记当前面板上下文结束
 - [ ] Agent 不直接向 LLM 请求 XML 字符串（幻觉风险）；LLM 只决策"选哪个模板 + 填什么参数值"；模板库负责结构安全
 - [ ] **Agent 数据获取路径**：`player.realm` 和 `zone.spirit_qi` 等数据从 WorldModel Redis 中读取（`plan-agent-v2` 已实装 `player:{uuid}` / `zone:{id}` hash keys，每 tick 由 server 写入）；agent 在生成 XML 前 `await worldModel.getPlayer(targetPlayer)` 获取最新境界，无需单独 IPC 请求
@@ -287,4 +294,7 @@ const AgentUiResponsePayloadV1 = Type.Object({
 1. **OwoUI 动态 XML 能力边界**：`OwoUIAdapter.createFromXML` 是否支持运行时传入字符串还是只支持静态 resource 路径？需 Explore agent 查阅 owo-lib 0.11.2+1.20 源码或 README，确认是否需要 fork/patch。如需 fork，计入本 plan P1 前置。
 2. **多语言 / 字体**：OwoUI XML 内嵌中文字符串在 MC 1.20.1 资源包里可能有字体覆盖问题；建议 P1 阶段用资源包内嵌思源宋体 subset，或走 i18n key（`lang/zh_cn.json`）避免硬编码。P0 阶段暂用内嵌字符串，记为 tech debt。
 3. **realm_gate_rejected UX**：当 server 拒绝 agent_ui_request（realm_gate 不满足）时，`uiResponseConsumer.ts` 消费 `realm_gate_rejected` event → emit 一条 narration 替代面板（v1 推荐）。是否还需要 client 侧提示（"你感知到一丝天意，但无法触及"）？v1 先只走 narration，client 无额外提示。
-4. **`bong:agent_ui_close` CustomPayload 格式**：server 向 client 发 Replaced 信号需要一个单独的 CustomPayload channel（`bong:agent_ui_close`）还是复用 `bong:agent_ui_request` 带特殊 xml=""？v1 建议独立 channel，避免 client 误解析空 XML。需 P0 决策并在 schema 中注册。
+4. **`#[close_channel]` CustomPayload 格式（P0 必决）**：server 向 client 发 Replaced / Error 关闭信号的 channel 形式，候选方案：
+   - A. 独立 channel `bong:agent_ui_close { request_id, reason?: String }`（推荐，职责清晰）
+   - B. 复用 `bong:agent_ui_request` 带特殊 xml=""（节省注册一个 channel，但容易混淆）
+   **P1 阶段所有 `#[close_channel]` 占位符必须替换为此处 P0 选定的方案**；在 P0 决策未落地前，§2 P1 均以 `#[close_channel]` 表示，实施时依决策替换。
