@@ -39,10 +39,22 @@ public final class DuguV2ServerDataHandler implements ServerDataHandler {
 
         switch (type) {
             case "dugu_v2_skill_cast" -> {
-                // 瞬态事件，记录 kind（用于后续 HUD flash 扩展），不改 shroud/selfCure 维度
+                // 瞬态事件：读 reveal_probability（eclipse/penetrate 招式携带），per-dimension merge 写 revealRisk。
+                // 不改 shroud/selfCure/qi_decay 维度（P4 教训：只改本维度）。
                 String kind = readString(payload, "kind");
-                // 当前仅用于 HUD flash 触发（DuguV2HudPlanner 暂无 cast-flash 渲染，预留扩展点）
-                return ServerDataDispatch.handled(type, "dugu_v2 cast kind=" + kind);
+                float revealProbability = (float) readDouble(payload, "reveal_probability", 0.0);
+                DuguV2HudStateStore.State cur = DuguV2HudStateStore.snapshot();
+                DuguV2HudStateStore.replace(new DuguV2HudStateStore.State(
+                    cur.tainted(),
+                    cur.taintIntensity(),
+                    cur.taintHint(),
+                    revealProbability,           // ← per-dimension merge: 仅更新 revealRisk
+                    cur.selfCurePercent(),
+                    cur.selfRevealed(),
+                    cur.shroudActive(),
+                    cur.shroudUntilMs()
+                ));
+                return ServerDataDispatch.handled(type, "dugu_v2 cast kind=" + kind + " revealRisk=" + revealProbability);
             }
             case "dugu_v2_self_cure" -> {
                 float gainPercent = (float) readDouble(payload, "gain_percent", 0.0);

@@ -191,6 +191,123 @@ class DuguV2ServerDataHandlerTest {
         }
     }
 
+    // ─── dugu_v2_skill_cast：revealRisk per-dimension merge ────────
+
+    @Test
+    void skillCastPayloadWritesRevealRiskToStore() {
+        // red-when-reverted：如果 handler 不写 revealRisk，本测试必然红
+        ServerDataDispatch dispatch = handler.handle(parse(
+            "{\"v\":1,\"type\":\"dugu_v2_skill_cast\",\"caster\":\"p\","
+                + "\"kind\":\"eclipse\",\"taint_tier\":\"temporary\","
+                + "\"reveal_probability\":0.7,\"tick\":42}"
+        ));
+        assertTrue(dispatch.handled(),
+            "handler 应处理 dugu_v2_skill_cast；实际=" + dispatch.logMessage());
+        float actual = DuguV2HudStateStore.snapshot().revealRisk();
+        assertEquals(0.7f, actual, 0.001f,
+            "dugu_v2_skill_cast payload reveal_probability=0.7 → store.revealRisk 必须为 0.7；"
+                + "实际=" + actual + "（handler 未写 revealRisk 则为 0.0）");
+    }
+
+    @Test
+    void skillCastRevealRiskZeroWhenPayloadOmitsField() {
+        // reveal_probability 缺省时 revealRisk 应为 0（reverse 招式无暴露风险）
+        handler.handle(parse(
+            "{\"v\":1,\"type\":\"dugu_v2_skill_cast\",\"caster\":\"p\","
+                + "\"kind\":\"reverse\",\"tick\":10}"
+        ));
+        assertEquals(0.0f, DuguV2HudStateStore.snapshot().revealRisk(), 0.001f,
+            "reverse 招式 payload 无 reveal_probability 字段 → store.revealRisk 应为 0.0；"
+                + "实际=" + DuguV2HudStateStore.snapshot().revealRisk());
+    }
+
+    @Test
+    void skillCastRevealRiskDoesNotOverwriteShroudDimension() {
+        // 先设置 shroud，再 skill_cast → shroud 维度不应被清零（per-dimension merge 证据）
+        handler.handle(parse(
+            "{\"v\":1,\"type\":\"dugu_v2_shroud_active\",\"caster\":\"p\","
+                + "\"strength\":0.8,\"expires_at_tick\":500,\"tick\":100}"
+        ));
+        assertTrue(DuguV2HudStateStore.snapshot().shroudActive(),
+            "前置：shroudActive 应为 true");
+
+        handler.handle(parse(
+            "{\"v\":1,\"type\":\"dugu_v2_skill_cast\",\"caster\":\"p\","
+                + "\"kind\":\"eclipse\",\"reveal_probability\":0.5,\"tick\":200}"
+        ));
+        // shroud 维度不被 skill_cast 清零
+        assertTrue(DuguV2HudStateStore.snapshot().shroudActive(),
+            "skill_cast(revealRisk) per-dimension merge：不应清零 shroudActive；"
+                + "实际=" + DuguV2HudStateStore.snapshot().shroudActive());
+        assertEquals(0.5f, DuguV2HudStateStore.snapshot().revealRisk(), 0.001f,
+            "revealRisk 应为 0.5；实际=" + DuguV2HudStateStore.snapshot().revealRisk());
+    }
+
+    @Test
+    void skillCastRevealRiskDoesNotOverwriteSelfCureDimension() {
+        // 先设置 self_cure，再 skill_cast → selfCure 维度不应被清零
+        handler.handle(parse(
+            "{\"v\":1,\"type\":\"dugu_v2_self_cure\",\"caster\":\"p\","
+                + "\"gain_percent\":40.0,\"self_revealed\":true,\"tick\":10}"
+        ));
+        assertEquals(40.0f, DuguV2HudStateStore.snapshot().selfCurePercent(), 0.1f,
+            "前置：selfCurePercent 应为 40.0");
+        assertTrue(DuguV2HudStateStore.snapshot().selfRevealed(),
+            "前置：selfRevealed 应为 true");
+
+        handler.handle(parse(
+            "{\"v\":1,\"type\":\"dugu_v2_skill_cast\",\"caster\":\"p\","
+                + "\"kind\":\"penetrate\",\"reveal_probability\":0.3,\"tick\":50}"
+        ));
+        assertEquals(40.0f, DuguV2HudStateStore.snapshot().selfCurePercent(), 0.1f,
+            "skill_cast(revealRisk) per-dimension merge：不应清零 selfCurePercent；"
+                + "实际=" + DuguV2HudStateStore.snapshot().selfCurePercent());
+        assertTrue(DuguV2HudStateStore.snapshot().selfRevealed(),
+            "skill_cast(revealRisk) per-dimension merge：不应清零 selfRevealed；"
+                + "实际=" + DuguV2HudStateStore.snapshot().selfRevealed());
+        assertEquals(0.3f, DuguV2HudStateStore.snapshot().revealRisk(), 0.001f,
+            "revealRisk 应为 0.3；实际=" + DuguV2HudStateStore.snapshot().revealRisk());
+    }
+
+    @Test
+    void revealRiskBoundaryClampedToZeroOne() {
+        // reveal_probability > 1.0 应被 State 构造器 clamp 到 1.0
+        handler.handle(parse(
+            "{\"v\":1,\"type\":\"dugu_v2_skill_cast\",\"caster\":\"p\","
+                + "\"kind\":\"eclipse\",\"reveal_probability\":2.5,\"tick\":1}"
+        ));
+        assertEquals(1.0f, DuguV2HudStateStore.snapshot().revealRisk(), 0.001f,
+            "revealRisk 超出 1.0 应被 clamp01 截断为 1.0；实际=" + DuguV2HudStateStore.snapshot().revealRisk());
+
+        DuguV2HudStateStore.resetForTests();
+        // reveal_probability 负值应 clamp 到 0
+        handler.handle(parse(
+            "{\"v\":1,\"type\":\"dugu_v2_skill_cast\",\"caster\":\"p\","
+                + "\"kind\":\"eclipse\",\"reveal_probability\":-0.1,\"tick\":2}"
+        ));
+        assertEquals(0.0f, DuguV2HudStateStore.snapshot().revealRisk(), 0.001f,
+            "revealRisk 负值应被 clamp01 截断为 0；实际=" + DuguV2HudStateStore.snapshot().revealRisk());
+    }
+
+    // ─── e2e：router → handler → store revealRisk ─────────────────
+
+    @Test
+    void routerDispatchesSkillCastRevealRiskToStore() {
+        ServerDataRouter router = ServerDataRouter.createDefault();
+        String json = "{\"v\":1,\"type\":\"dugu_v2_skill_cast\","
+            + "\"caster\":\"p\",\"kind\":\"eclipse\",\"reveal_probability\":0.42,\"tick\":77}";
+
+        ServerDataRouter.RouteResult result = router.route(
+            json, json.getBytes(java.nio.charset.StandardCharsets.UTF_8).length
+        );
+
+        assertFalse(result.isParseError(),
+            "router 应成功路由 dugu_v2_skill_cast；实际=" + (result.isParseError() ? result.logMessage() : "none"));
+        assertEquals(0.42f, DuguV2HudStateStore.snapshot().revealRisk(), 0.001f,
+            "e2e：router → DuguV2ServerDataHandler → store.revealRisk 应为 0.42；"
+                + "实际=" + DuguV2HudStateStore.snapshot().revealRisk());
+    }
+
     // ─── proto 链双端对拍（server Envelope → ProtoServerDataBridge → legacy JSON）─
 
     @Test

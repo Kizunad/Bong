@@ -1,19 +1,40 @@
 package com.bong.client.hud;
 
+import com.bong.client.combat.handler.DuguV2ServerDataHandler;
+import com.bong.client.network.ServerDataEnvelope;
+import com.bong.client.network.ServerPayloadParseResult;
 import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class DuguV2HudPlannerTest {
 
+    private DuguV2ServerDataHandler handler;
+
+    @BeforeEach
+    void setUp() {
+        handler = new DuguV2ServerDataHandler();
+        DuguV2HudStateStore.resetForTests();
+    }
+
     @AfterEach
     void resetStore() {
         DuguV2HudStateStore.resetForTests();
+    }
+
+    // ─── helper ──────────────────────────────────────────────────
+
+    private static ServerDataEnvelope parse(String json) {
+        ServerPayloadParseResult r = ServerDataEnvelope.parse(json, json.getBytes(java.nio.charset.StandardCharsets.UTF_8).length);
+        assertTrue(r.isSuccess(), () -> "parse failed: " + r.errorMessage());
+        return r.envelope();
     }
 
     @Test
@@ -144,6 +165,78 @@ class DuguV2HudPlannerTest {
             "per-dimension merge 后 selfRevealed 不应丢失；实际=" + DuguV2HudStateStore.snapshot().selfRevealed());
         assertTrue(DuguV2HudStateStore.snapshot().shroudActive(),
             "shroudActive 应为 true；实际=" + DuguV2HudStateStore.snapshot().shroudActive());
+    }
+
+    // ─── P5 major fix 1：revealRisk handler→store→planner 全链 ────
+
+    @Test
+    void skillCastHandlerToStoreToPlannerRendersRevealRisk() {
+        // red-when-reverted：把 handler 中写 revealRisk 那行删掉 → store.revealRisk=0 → planner 无命令 → 测试红
+        handler.handle(parse(
+            "{\"v\":1,\"type\":\"dugu_v2_skill_cast\",\"caster\":\"p\","
+                + "\"kind\":\"eclipse\",\"reveal_probability\":0.7,\"tick\":42}"
+        ));
+
+        // 验证 store 确实被写入（handler→store）
+        assertEquals(0.7f, DuguV2HudStateStore.snapshot().revealRisk(), 0.001f,
+            "handler.handle(skill_cast reveal_probability=0.7) → store.revealRisk 必须为 0.7；"
+                + "实际=" + DuguV2HudStateStore.snapshot().revealRisk());
+
+        // 验证 planner 产出 DUGU_REVEAL_RISK 渲染命令（store→planner）
+        List<HudRenderCommand> commands = DuguV2HudPlanner.buildCommands(
+            DuguV2HudStateStore.snapshot(), 960, 540, 1000L
+        );
+        assertTrue(
+            commands.stream().anyMatch(c -> c.layer() == HudRenderLayer.DUGU_REVEAL_RISK && c.isRect()),
+            "handler→store→planner 全链：store.revealRisk=0.7 应产 DUGU_REVEAL_RISK rect 命令；"
+                + "实际 commands=" + commands
+        );
+        assertTrue(
+            commands.stream().anyMatch(c -> c.layer() == HudRenderLayer.DUGU_REVEAL_RISK && c.isText()),
+            "handler→store→planner 全链：store.revealRisk=0.7 应产 DUGU_REVEAL_RISK text 命令（暴露百分比）；"
+                + "实际 commands=" + commands
+        );
+    }
+
+    @Test
+    void skillCastRevealRiskZeroPlannerProducesNoRevealCommand() {
+        // reveal_probability=0 → planner 不渲染 DUGU_REVEAL_RISK
+        handler.handle(parse(
+            "{\"v\":1,\"type\":\"dugu_v2_skill_cast\",\"caster\":\"p\","
+                + "\"kind\":\"reverse\",\"reveal_probability\":0.0,\"tick\":5}"
+        ));
+        List<HudRenderCommand> commands = DuguV2HudPlanner.buildCommands(
+            DuguV2HudStateStore.snapshot(), 960, 540, 1000L
+        );
+        assertFalse(
+            commands.stream().anyMatch(c -> c.layer() == HudRenderLayer.DUGU_REVEAL_RISK),
+            "revealRisk=0 → planner 不应产 DUGU_REVEAL_RISK 命令；实际 commands=" + commands
+        );
+    }
+
+    @Test
+    void skillCastRevealRiskMergeDoesNotClearShroudInPlanner() {
+        // 先 shroud，再 skill_cast，planner 应同时渲染 DUGU_SHROUD + DUGU_REVEAL_RISK
+        long nowMs = 1000L;
+        handler.handle(parse(
+            "{\"v\":1,\"type\":\"dugu_v2_shroud_active\",\"caster\":\"p\","
+                + "\"strength\":0.8,\"expires_at_tick\":500,\"tick\":100}"
+        ));
+        handler.handle(parse(
+            "{\"v\":1,\"type\":\"dugu_v2_skill_cast\",\"caster\":\"p\","
+                + "\"kind\":\"eclipse\",\"reveal_probability\":0.5,\"tick\":200}"
+        ));
+        List<HudRenderCommand> commands = DuguV2HudPlanner.buildCommands(
+            DuguV2HudStateStore.snapshot(), 960, 540, nowMs
+        );
+        assertTrue(
+            commands.stream().anyMatch(c -> c.layer() == HudRenderLayer.DUGU_REVEAL_RISK),
+            "per-dimension merge 后 planner 应有 DUGU_REVEAL_RISK；实际 commands=" + commands
+        );
+        assertTrue(
+            commands.stream().anyMatch(c -> c.layer() == HudRenderLayer.DUGU_SHROUD),
+            "per-dimension merge 后 planner 应有 DUGU_SHROUD（shroud 维度未被清零）；实际 commands=" + commands
+        );
     }
 
     @Test
