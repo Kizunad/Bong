@@ -157,6 +157,8 @@ public final class ProtoServerDataBridge {
         m.put(Envelope.ServerDataEnvelope.PayloadCase.LOOT_CONTAINER_OPEN, "loot_container_open");
         m.put(Envelope.ServerDataEnvelope.PayloadCase.LOOT_CONTAINER_UPDATE, "loot_container_update");
         m.put(Envelope.ServerDataEnvelope.PayloadCase.LOOT_CONTAINER_CLOSE, "loot_container_close");
+        // plan-combat-skill-feedback-bridges-v1 P4：暗器 HUD
+        m.put(Envelope.ServerDataEnvelope.PayloadCase.ANQI_HUD, "anqi_hud");
         CASE_TO_TYPE = m;
     }
 
@@ -409,6 +411,8 @@ public final class ProtoServerDataBridge {
             case LOOT_CONTAINER_OPEN: return envelope.getLootContainerOpen();
             case LOOT_CONTAINER_UPDATE: return envelope.getLootContainerUpdate();
             case LOOT_CONTAINER_CLOSE: return envelope.getLootContainerClose();
+            // plan-combat-skill-feedback-bridges-v1 P4：暗器 HUD
+            case ANQI_HUD: return envelope.getAnqiHud();
             default: return null;
         }
     }

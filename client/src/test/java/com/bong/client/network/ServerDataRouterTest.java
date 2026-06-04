@@ -157,7 +157,9 @@ public class ServerDataRouterTest {
             "loot_container_update",
             "loot_container_close",
             // plan-offscreen-war-v1 P9 — 战事 HUD 状态
-            "faction_war_state"
+            "faction_war_state",
+            // plan-combat-skill-feedback-bridges-v1 P4 — 暗器 HUD 状态
+            "anqi_hud"
         ), router.registeredTypes());
     }
 
