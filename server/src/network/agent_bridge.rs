@@ -169,6 +169,8 @@ pub fn payload_type_label(payload_type: ServerDataType) -> &'static str {
         ServerDataType::LootContainerUpdate => "loot_container_update",
         ServerDataType::LootContainerClose => "loot_container_close",
         ServerDataType::FactionWarState => "faction_war_state",
+        // ─── plan-combat-skill-feedback-bridges-v1 P4 ─────────────
+        ServerDataType::AnqiHud => "anqi_hud",
     }
 }
 
