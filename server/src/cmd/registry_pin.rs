@@ -3,6 +3,8 @@ pub const COMMAND_NAMES: &[&str] = &[
     "baolongwang",
     "bong",
     "clearinv",
+    // plan-coffin-tiers-v1 P4：延寿棺档级直写 dev 命令
+    "coffin",
     // plan-offscreen-war-v1 P6：玩家参与涌现冲突（/faction join|mercenary|intercept）
     "faction",
     "give",
@@ -48,6 +50,8 @@ pub const COMMAND_TREE_PATHS: &[&str] = &[
     "bong gather <resource:string>",
     "clearinv",
     "clearinv <scope:string>",
+    // plan-coffin-tiers-v1 P4：延寿棺档级直写 dev 命令
+    "coffin grade <grade:string>",
     // plan-offscreen-war-v1 P6：/faction 玩家参与涌现冲突
     "faction intercept",
     "faction join <group:integer>",
@@ -125,6 +129,7 @@ mod tests {
                 "baolongwang",
                 "bong",
                 "clearinv",
+                "coffin",
                 "faction",
                 "give",
                 "gm",

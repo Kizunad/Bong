@@ -64,6 +64,7 @@ const COMMON_LOOT: &[SupplyCoffinLootEntry] = &[
 ];
 
 /// 漆棺（Rare）—— 中阶器修关键材料。
+/// plan-coffin-tiers-v1 P4：加入寒玉棺配方残卷（~6% 低概率）。
 const RARE_LOOT: &[SupplyCoffinLootEntry] = &[
     SupplyCoffinLootEntry {
         template_id: "xuan_iron",
@@ -95,10 +96,18 @@ const RARE_LOOT: &[SupplyCoffinLootEntry] = &[
         max_count: 1,
         weight: 15,
     },
+    // 寒玉棺配方残卷（plan-coffin-tiers-v1 P4 §8.1 #2 — jade 卷→漆棺 Rare）
+    SupplyCoffinLootEntry {
+        template_id: "scroll_jade_coffin",
+        min_count: 1,
+        max_count: 1,
+        weight: 7,
+    },
 ];
 
 /// 祭坛棺（Precious）—— 高阶器修珍稀材料；含 star_iron / ancient_sword_embryo /
 /// broken_sword_soul 等仅本档可见的项。
+/// plan-coffin-tiers-v1 P4：加入玄石棺配方残卷（~5% 低概率）。
 const PRECIOUS_LOOT: &[SupplyCoffinLootEntry] = &[
     SupplyCoffinLootEntry {
         template_id: "meteor_iron",
@@ -135,6 +144,13 @@ const PRECIOUS_LOOT: &[SupplyCoffinLootEntry] = &[
         min_count: 1,
         max_count: 1,
         weight: 15,
+    },
+    // 玄石棺配方残卷（plan-coffin-tiers-v1 P4 §8.1 #2 — stone 卷→祭坛棺 Precious）
+    SupplyCoffinLootEntry {
+        template_id: "scroll_stone_coffin",
+        min_count: 1,
+        max_count: 1,
+        weight: 6,
     },
 ];
 

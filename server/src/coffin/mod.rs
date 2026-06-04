@@ -150,6 +150,18 @@ impl CoffinRegistry {
         self.coffins.get(&pos).copied()
     }
 
+    /// plan-coffin-tiers-v1 P4 — `/coffin grade` dev 命令用：直写档级并同步双索引。
+    /// 棺不存在则忽略（返回 false）。
+    /// dev-only：绕过 worldview 修炼规则，不允许生产路径复用。
+    pub fn set_grade(&mut self, lower: BlockPos, grade: CoffinGrade) -> bool {
+        let Some(mut coffin) = self.lookup(lower) else {
+            return false;
+        };
+        coffin.grade = grade;
+        self.write_coffin(coffin);
+        true
+    }
+
     /// plan-coffin-tiers-v1 P2 — 记录某棺的渲染 marker 实体 id（放置 / recovery 重建后调）。
     /// 同步更新 lower / upper 两条索引。棺不存在则忽略（返回 false）。
     pub fn set_marker_entity(&mut self, lower: BlockPos, marker: Option<Entity>) -> bool {
@@ -341,6 +353,8 @@ pub fn register(app: &mut App) {
 }
 
 pub fn register_craft_recipes(registry: &mut CraftRegistry) -> Result<(), RegistryError> {
+    // 凡木棺 ×0.9 — 手搓（station: None），Scroll 解锁
+    // 寒玉/玄石/青铜棺 workbench 配方由 craft::workbench_recipes 统一注册（plan-coffin-tiers-v1 P4）
     registry.register(CraftRecipe {
         id: RecipeId::new("coffin.mundane_coffin"),
         category: CraftCategory::Misc,
@@ -1217,7 +1231,10 @@ mod tests {
 
     fn craft_registry_with_coffin() -> CraftRegistry {
         let mut registry = CraftRegistry::new();
-        register_craft_recipes(&mut registry).expect("coffin recipes should register");
+        register_craft_recipes(&mut registry).expect("coffin mundane recipe should register");
+        // P4: jade/stone/bronze 配方在 workbench_recipes 注册
+        crate::craft::register_workbench_recipes(&mut registry)
+            .expect("workbench recipes should register (includes P4 coffin tiers)");
         registry
     }
 
@@ -1337,17 +1354,25 @@ mod tests {
     }
 
     #[test]
-    fn compute_reclaim_drops_missing_recipe_grades_return_empty_graceful() {
-        // jade/stone/bronze 配方是 P4，P2 阶段查不到 → 空 vec graceful，不 panic。
+    fn compute_reclaim_drops_all_grades_have_recipes_after_p4() {
+        // plan-coffin-tiers-v1 P4 完成后，jade/stone/bronze 均已注册配方 →
+        // Reclaim 模式返还非空；Break 模式可能随机返还空，但不 panic。
         let registry = craft_registry_with_coffin();
         for grade in [CoffinGrade::Jade, CoffinGrade::Stone, CoffinGrade::Bronze] {
-            for mode in [ReclaimMode::Break, ReclaimMode::Reclaim] {
-                let drops = compute_coffin_reclaim_drops(&registry, grade, mode, 42);
-                assert!(
-                    drops.is_empty(),
-                    "{grade:?} 配方未注册（P4），{mode:?} 应返还空 vec，实得 {drops:?}"
-                );
-            }
+            // 配方应存在
+            assert!(
+                registry.get(&coffin_recipe_id(grade)).is_some(),
+                "{grade:?} 配方应在 P4 注册，registry 中找不到"
+            );
+            // Reclaim（全量）返还非空
+            let drops_reclaim =
+                compute_coffin_reclaim_drops(&registry, grade, ReclaimMode::Reclaim, 42);
+            assert!(
+                !drops_reclaim.is_empty(),
+                "{grade:?} Reclaim 模式应返还非空（配方已注册），实得空"
+            );
+            // Break（随机部分）不 panic（不校验非空，随机可能 0 项）
+            let _ = compute_coffin_reclaim_drops(&registry, grade, ReclaimMode::Break, 42);
         }
     }
 
@@ -2357,5 +2382,297 @@ mod tests {
             "无 inventory 时 reclaim 仍应移除 registry lower={lower:?}；\
              期望：remove_by_pos 在 inventory 检查前执行"
         );
+    }
+
+    // ─────────────────── plan-coffin-tiers-v1 P4 tests ──────────────────────
+
+    /// P4 §配方注册：3 档新配方全部可从 registry 查到，id 对齐 coffin_recipe_id。
+    #[test]
+    fn p4_jade_stone_bronze_recipes_registered() {
+        let registry = craft_registry_with_coffin();
+        for grade in [CoffinGrade::Jade, CoffinGrade::Stone, CoffinGrade::Bronze] {
+            let recipe_id = coffin_recipe_id(grade);
+            assert!(
+                registry.get(&recipe_id).is_some(),
+                "P4 配方 `{recipe_id}` 应已注册（grade={grade:?}）"
+            );
+        }
+    }
+
+    /// P4 §配方字段：材料 / qi_cost / time_ticks / station 按 plan §P4 表正确。
+    #[test]
+    fn p4_recipe_fields_match_plan_spec() {
+        let registry = craft_registry_with_coffin();
+
+        // 寒玉棺
+        let jade = registry
+            .get(&coffin_recipe_id(CoffinGrade::Jade))
+            .expect("jade recipe");
+        assert_eq!(jade.qi_cost, 2.0, "jade qi_cost");
+        assert_eq!(jade.time_ticks, 120 * TICKS_PER_SECOND, "jade time");
+        assert_eq!(
+            jade.station,
+            Some(crate::craft::CraftStationKind::Workbench),
+            "jade station"
+        );
+        assert!(
+            jade.materials
+                .iter()
+                .any(|(id, cnt)| id == "yu_sui" && *cnt == 3),
+            "jade 配方应含 yu_sui×3"
+        );
+        assert!(
+            jade.materials
+                .iter()
+                .any(|(id, cnt)| id == "xue_po_lian" && *cnt == 2),
+            "jade 配方应含 xue_po_lian×2"
+        );
+
+        // 玄石棺
+        let stone = registry
+            .get(&coffin_recipe_id(CoffinGrade::Stone))
+            .expect("stone recipe");
+        assert_eq!(stone.qi_cost, 4.0, "stone qi_cost");
+        assert_eq!(stone.time_ticks, 150 * TICKS_PER_SECOND, "stone time");
+        assert_eq!(
+            stone.station,
+            Some(crate::craft::CraftStationKind::Workbench),
+            "stone station"
+        );
+        assert!(
+            stone
+                .materials
+                .iter()
+                .any(|(id, cnt)| id == "wu_yao" && *cnt == 2),
+            "stone 配方应含 wu_yao×2"
+        );
+        assert!(
+            stone.requirements.realm_min.is_none(),
+            "stone 配方无境界门控（realm_min=None）"
+        );
+
+        // 青铜棺
+        let bronze = registry
+            .get(&coffin_recipe_id(CoffinGrade::Bronze))
+            .expect("bronze recipe");
+        assert_eq!(bronze.qi_cost, 6.0, "bronze qi_cost");
+        assert_eq!(bronze.time_ticks, 180 * TICKS_PER_SECOND, "bronze time");
+        assert_eq!(
+            bronze.station,
+            Some(crate::craft::CraftStationKind::Workbench),
+            "bronze station"
+        );
+        assert!(
+            bronze
+                .materials
+                .iter()
+                .any(|(id, cnt)| id == "gu_tong_pian" && *cnt == 4),
+            "bronze 配方应含 gu_tong_pian×4"
+        );
+        assert_eq!(
+            bronze.requirements.realm_min,
+            Some(crate::cultivation::components::Realm::Induce),
+            "bronze 配方 realm_min 应为 Induce（引气境门控）"
+        );
+    }
+
+    /// P4 §门控单调梯度：倍率/qi_cost/time_ticks 全部严格递增（难度梯度自洽）。
+    #[test]
+    fn p4_grade_monotonicity() {
+        // 倍率递减（越高档寿元消耗越少）
+        let factors = [
+            CoffinGrade::Mundane.lifespan_factor(),
+            CoffinGrade::Jade.lifespan_factor(),
+            CoffinGrade::Stone.lifespan_factor(),
+            CoffinGrade::Bronze.lifespan_factor(),
+        ];
+        for i in 0..3 {
+            assert!(
+                factors[i] > factors[i + 1],
+                "lifespan_factor 应严格递减：{:.1} > {:.1} (index {} vs {})",
+                factors[i],
+                factors[i + 1],
+                i,
+                i + 1
+            );
+        }
+
+        // qi_cost 递增
+        let registry = craft_registry_with_coffin();
+        let qi_costs = [
+            registry
+                .get(&coffin_recipe_id(CoffinGrade::Mundane))
+                .map(|r| r.qi_cost)
+                .unwrap_or(0.0),
+            registry
+                .get(&coffin_recipe_id(CoffinGrade::Jade))
+                .map(|r| r.qi_cost)
+                .unwrap_or(0.0),
+            registry
+                .get(&coffin_recipe_id(CoffinGrade::Stone))
+                .map(|r| r.qi_cost)
+                .unwrap_or(0.0),
+            registry
+                .get(&coffin_recipe_id(CoffinGrade::Bronze))
+                .map(|r| r.qi_cost)
+                .unwrap_or(0.0),
+        ];
+        for i in 0..3 {
+            assert!(
+                qi_costs[i] < qi_costs[i + 1],
+                "qi_cost 应严格递增：{} < {} (grade index {} vs {})",
+                qi_costs[i],
+                qi_costs[i + 1],
+                i,
+                i + 1
+            );
+        }
+
+        // time_ticks 递增
+        let times = [
+            registry
+                .get(&coffin_recipe_id(CoffinGrade::Mundane))
+                .map(|r| r.time_ticks)
+                .unwrap_or(0),
+            registry
+                .get(&coffin_recipe_id(CoffinGrade::Jade))
+                .map(|r| r.time_ticks)
+                .unwrap_or(0),
+            registry
+                .get(&coffin_recipe_id(CoffinGrade::Stone))
+                .map(|r| r.time_ticks)
+                .unwrap_or(0),
+            registry
+                .get(&coffin_recipe_id(CoffinGrade::Bronze))
+                .map(|r| r.time_ticks)
+                .unwrap_or(0),
+        ];
+        for i in 0..3 {
+            assert!(
+                times[i] < times[i + 1],
+                "time_ticks 应严格递增：{} < {} (grade index {} vs {})",
+                times[i],
+                times[i + 1],
+                i,
+                i + 1
+            );
+        }
+    }
+
+    /// P4 §守恒：3 档配方 output spirit_quality = 0.0，守恒律 trivially 通过。
+    #[test]
+    fn p4_spirit_quality_conservation_trivial() {
+        // coffin item spirit_quality_initial = 0.0 → output_sq = 0.0 → 守恒律不触发断言。
+        // 本 test 作为"已确认不触发"的 pin：若未来 coffin 改为有灵质产出，要重新核算。
+        let item_registry =
+            crate::inventory::load_item_registry().expect("item registry should load");
+        for grade in [CoffinGrade::Jade, CoffinGrade::Stone, CoffinGrade::Bronze] {
+            let output_id = grade.item_id();
+            let output_sq = item_registry
+                .get(output_id)
+                .map(|t| t.spirit_quality_initial)
+                .unwrap_or_else(|| panic!("item `{output_id}` must be in registry"));
+            assert_eq!(
+                output_sq,
+                0.0,
+                "coffin item `{output_id}` spirit_quality_initial 预期为 0.0（棺材器物无灵质产出），\
+                 若改为有灵质须重算守恒"
+            );
+        }
+    }
+
+    /// P4 §材料模板：yu_sui / wu_yao / gu_tong_pian 都能从 ItemRegistry 查到，
+    /// spirit_quality_initial 按 plan §8.1 #2。
+    #[test]
+    fn p4_new_material_templates_in_registry() {
+        let item_registry =
+            crate::inventory::load_item_registry().expect("item registry should load");
+        let checks = [("yu_sui", 0.8f64), ("wu_yao", 0.85), ("gu_tong_pian", 0.6)];
+        for (id, expected_sq) in checks {
+            let tmpl = item_registry
+                .get(id)
+                .unwrap_or_else(|| panic!("item `{id}` not found in registry（P4 新材料）"));
+            assert!(
+                (tmpl.spirit_quality_initial - expected_sq).abs() < 1e-9,
+                "item `{id}` spirit_quality_initial: expect {expected_sq}, got {}",
+                tmpl.spirit_quality_initial
+            );
+        }
+    }
+
+    /// P4 §卷轴模板：3 张配方卷轴在 ItemRegistry 中存在。
+    #[test]
+    fn p4_scroll_templates_in_registry() {
+        let item_registry =
+            crate::inventory::load_item_registry().expect("item registry should load");
+        for scroll_id in [
+            "scroll_jade_coffin",
+            "scroll_stone_coffin",
+            "scroll_bronze_coffin",
+        ] {
+            assert!(
+                item_registry.get(scroll_id).is_some(),
+                "scroll item `{scroll_id}` not found in registry（P4 配方卷轴）"
+            );
+        }
+    }
+
+    /// P4 §set_grade：CoffinRegistry.set_grade 正确更新档级（双索引）。
+    #[test]
+    fn p4_registry_set_grade_updates_both_indices() {
+        let mut registry = CoffinRegistry::default();
+        let lower = BlockPos::new(10, 64, 10);
+        let upper = coffin_upper_half(lower);
+        registry.insert(lower, 0, CoffinGrade::Mundane);
+
+        let ok = registry.set_grade(lower, CoffinGrade::Bronze);
+        assert!(ok, "set_grade 对已存在的棺应返回 true");
+        assert_eq!(
+            registry.lookup(lower).unwrap().grade,
+            CoffinGrade::Bronze,
+            "lower 索引档级应更新为 Bronze"
+        );
+        assert_eq!(
+            registry.lookup(upper).unwrap().grade,
+            CoffinGrade::Bronze,
+            "upper 索引档级应更新为 Bronze（双索引同步）"
+        );
+    }
+
+    /// P4 §set_grade：对不存在的棺返回 false。
+    #[test]
+    fn p4_registry_set_grade_on_missing_returns_false() {
+        let mut registry = CoffinRegistry::default();
+        assert!(
+            !registry.set_grade(BlockPos::new(99, 64, 99), CoffinGrade::Jade),
+            "对不存在的棺 set_grade 应返回 false"
+        );
+    }
+
+    /// P4 §reclaim：jade/stone/bronze 均有配方后，Break/Reclaim 不再返回空列表。
+    #[test]
+    fn p4_reclaim_drops_non_empty_for_new_grades() {
+        let registry = craft_registry_with_coffin();
+        for grade in [CoffinGrade::Jade, CoffinGrade::Stone, CoffinGrade::Bronze] {
+            // Reclaim 模式（全量返还）：至少有 1 项
+            let drops_reclaim =
+                compute_coffin_reclaim_drops(&registry, grade, ReclaimMode::Reclaim, 42);
+            assert!(
+                !drops_reclaim.is_empty(),
+                "{grade:?} Reclaim drops should be non-empty now that recipe is registered"
+            );
+            // 返还物种类 ⊆ 配方原料
+            let recipe = registry
+                .get(&coffin_recipe_id(grade))
+                .expect("recipe exists");
+            let material_ids: std::collections::HashSet<&str> =
+                recipe.materials.iter().map(|(id, _)| id.as_str()).collect();
+            for (tid, _) in &drops_reclaim {
+                assert!(
+                    material_ids.contains(tid.as_str()),
+                    "{grade:?} Reclaim 返还了配方外材料 `{tid}`"
+                );
+            }
+        }
     }
 }

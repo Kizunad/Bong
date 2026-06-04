@@ -151,10 +151,11 @@ fn grade_loot_timeout_secs_matches_plan_spec() {
 
 #[test]
 fn loot_tables_have_expected_entry_counts() {
-    // plan P0.3：Common 5 / Rare 5 / Precious 6（broken_sword_soul 是 Precious 独占第 6 条）
+    // plan P0.3 + plan-coffin-tiers-v1 P4（+1 scroll 各档）：
+    // Common 5 / Rare 6（+scroll_jade_coffin）/ Precious 7（+scroll_stone_coffin）
     assert_eq!(loot_table(SupplyCoffinGrade::Common).len(), 5);
-    assert_eq!(loot_table(SupplyCoffinGrade::Rare).len(), 5);
-    assert_eq!(loot_table(SupplyCoffinGrade::Precious).len(), 6);
+    assert_eq!(loot_table(SupplyCoffinGrade::Rare).len(), 6);
+    assert_eq!(loot_table(SupplyCoffinGrade::Precious).len(), 7);
 }
 
 #[test]

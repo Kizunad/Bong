@@ -1,5 +1,6 @@
 pub mod baolongwang;
 pub mod clearinv;
+pub mod coffin;
 pub mod give;
 pub mod gm;
 pub mod health;
@@ -36,6 +37,7 @@ use valence::prelude::App;
 
 pub fn register(app: &mut App) {
     baolongwang::register(app);
+    coffin::register(app);
     clearinv::register(app);
     give::register(app);
     heiwushi::register(app);

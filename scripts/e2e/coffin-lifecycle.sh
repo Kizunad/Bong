@@ -11,6 +11,20 @@ echo "[coffin-e2e] server coffin registry and lifecycle tests"
   CARGO_BUILD_JOBS="${CARGO_BUILD_JOBS:-1}" cargo test v23_migration_adds_in_coffin_to_legacy_player_lifespan_table -- --test-threads=1
 )
 
+echo "[coffin-e2e] P4 四档倍率 / 配方 / 材料 / 平衡梯度"
+(
+  cd "$ROOT/server"
+  # P4: 3 档新配方注册 + 材料 + 守恒 + set_grade + 梯度
+  CARGO_BUILD_JOBS="${CARGO_BUILD_JOBS:-1}" cargo test coffin::tests::p4_ -- --test-threads=1
+  # P4: /coffin grade dev 命令解析 + 档级直写
+  CARGO_BUILD_JOBS="${CARGO_BUILD_JOBS:-1}" cargo test cmd::dev::coffin::tests -- --test-threads=1
+  # P4: supply_coffin loot 表条数（含新增卷轴）
+  CARGO_BUILD_JOBS="${CARGO_BUILD_JOBS:-1}" cargo test supply_coffin::tests::loot_tables_have_expected_entry_counts -- --test-threads=1
+  CARGO_BUILD_JOBS="${CARGO_BUILD_JOBS:-1}" cargo test supply_coffin::tests::loot_tables_have_no_duplicate_template_ids_within_grade -- --test-threads=1
+  # P4: workbench 守恒 pin（含 coffin 配方）
+  CARGO_BUILD_JOBS="${CARGO_BUILD_JOBS:-1}" cargo test coffin::tests::p4_spirit_quality_conservation_trivial -- --test-threads=1
+)
+
 echo "[coffin-e2e] schema coffin wire contract"
 (
   cd "$ROOT/agent"
