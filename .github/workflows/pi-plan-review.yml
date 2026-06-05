@@ -1,139 +1,76 @@
 name: Pi Plan-Aware Review
 
-# 按需触发：在 PR 上评论 @pi 才跑。
-# 分层 reviewer（复用 hive-think 当 subagent，按 thinking 分档）：
-#   第零步 flash@low 整理资料（diff 摘要 + plan 交付物 + worldview 按主题切片）→ brief
-#   第一步 pro@xhigh 基于 brief 判断 + 对峙
-#   第二步 主 agent（medium）综合并发布 review
-# worldview 不再每轮重发整本（改由 flash 整理成 slice，下游只见 slice），这是旧版账单/超时主因。
+# 按需触发:在 PR 上评论 @pi 才跑。
+#
+# 引擎:确定性轮控脚本 .github/scripts/pi-review.mjs(自包含,只用 Node fetch + gh,无 npm 依赖)。
+# 旧版用 pi-coding-agent-action + hive-think 扩展——那是个【无界 agent 循环】(pi -p 无轮数上限,
+# 只在模型自己停手 / 30min 硬超时退出),一次 review 能烧 30+ 分钟。现改为脚本在外层做离散轮控:
+#   第零步 gather(flash,1 次):diff + plan 压成紧凑 brief
+#   第一步 debate 轮控(pro 面板 × 最多 PI_MAX_ROUNDS 轮):每轮单轮无工具调用(天生有界),
+#     轮间注入倒计时+语气,面板自信度中位数 ≥ 阈值则提前收敛,到上限强制收口
+#   低自信 fan-out:仍不达标且有弱项 → 每个弱维派一个专项成员并行深挖
+#   第二步 arbiter:综合去重后的 findings 产出中文 review 并发评论
+# 端点/模型/key/轮控参数全 env 可覆盖(repo variables / secrets)。
 on:
   issue_comment:
     types: [created]
   workflow_dispatch:
+    inputs:
+      pr_number:
+        description: 要审核的 PR 号
+        required: true
 
 permissions:
-  contents: read
+  contents: read # 只读 token:reviewer 天然无法 merge / push
   pull-requests: write
   issues: write
 
 concurrency:
-  group: pi-plan-review-${{ github.event.issue.number || github.run_id }}
-  cancel-in-progress: true
+  # 含 comment.id 且不取消进行中:避免同一 PR 上后续 bot 评论把正在跑的 review 杀掉
+  group: pi-plan-review-${{ github.event.issue.number || inputs.pr_number || github.run_id }}-${{ github.event.comment.id || github.run_id }}
+  cancel-in-progress: false
 
 jobs:
   review:
-    # 仅当 PR 评论里 @pi、且评论者有写权限（OWNER/MEMBER/COLLABORATOR）时运行——
-    # public 仓库下防止任意访客评论 @pi 触发跑、烧 DeepSeek key。
+    # 仅当 PR 评论里 @pi、且评论者有写权限(OWNER/MEMBER/COLLABORATOR)时运行——
+    # public 仓库下防止任意访客评论 @pi 触发跑、烧 key。
     if: >-
       github.event_name == 'workflow_dispatch' ||
       (github.event.issue.pull_request != null &&
        contains(github.event.comment.body, '@pi') &&
        contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association))
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    # 轮控已使一切有界(面板并发 × ≤PI_MAX_ROUNDS 轮 + fan-out,单次调用 ≤PI_CALL_TIMEOUT_MS)。
+    # 旧版 60min 是为无界 agent 循环兜底;现在 25min 绰绰有余,既是上限也是异常逃生阀。
+    timeout-minutes: 25
 
     steps:
+      # 签出默认分支(main):issue_comment 触发的 workflow 只认 main 上的定义,PR head 没有本脚本。
+      # PR 真实改动由脚本内 `gh pr diff <PR>` 经 API 取;脚本读取的补充文件是 main 版本(prompt 已注明)。
       - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
 
       - uses: actions/setup-node@v4
         with:
           node-version: "24"
 
-      - name: Pi Plan-Aware Review
-        uses: shaftoe/pi-coding-agent-action@v2
-        with:
-          github_token: ${{ secrets.GITHUB_TOKEN }}
-          provider: deepseek
-          model: deepseek-v4-pro
-          token: ${{ secrets.DEEPSEEK_API_KEY }}
-          # 主 agent 只做路由 + 综合，重思考下放给第一步 pro 对峙。medium 足够，且不再吃整本 worldview。
-          thinking_level: medium
-          extensions: |
-            git:github.com/Kizunad/hive-think
-          prompt: |
-            你是 Bong 项目的 Plan-Aware 代码审核员（主 agent，负责编排 + 综合 + 发布，不亲自啃大文件）。
-            本项目中 plan 是一等公民——每个 PR 通常对应 docs/plan-<name>-vN.md 中的一个或多个阶段（P0/P1/...）。
-            你的职责是验证 PR 是否忠实交付 plan 承诺，并守护世界观一致性与代码质量底线。
-
-            **硬性流程：严格按下面三步走。你自己不要去读整本 docs/worldview.md（很大）——worldview 的相关规则由第零步的 flash 整理成 slice 交给你。**
-
-            ---
-
-            ## 项目审核准则（精简版，供你综合 + 给子 agent 当判据）
-
-            ### 世界观锚定（docs/worldview.md 是正典，代码不得矛盾）
-            - 六境界：醒灵 → 引气 → 凝脉 → 固元 → 通灵 → 化虚。禁用"筑基/金丹/元婴"等传统称谓。
-            - 货币：骨币（通货）、灵石（燃料，非货币）。不得出现"灵石=钱"的逻辑。
-            - 灵气守恒律：全服灵气总量恒定。真元流动必须走 qi_physics::QiTransfer{from,to,amount}。红旗：
-              qi_current += X 无对应 zone 减 / zone.spirit_qi -= Y 无对应玩家增 / 衰变让真元凭空消失 / 招式只扣攻方不写环境。
-            - 物理常数唯一源：衰减/逸散/半衰常数必须来自 qi_physics，禁止各 plan 硬编 *_DECAY*/*_DRAIN*/0.0X_f64。
-            - 命名"末法去上古"，不要仙气飘飘。
-
-            ### 架构硬约束
-            - 三层架构 server(Rust/Bevy ECS) ↔ agent(TS/天道) ↔ client(Java/Fabric)，跨层只走 Redis IPC + CustomPayload。
-            - IPC schema：TypeBox(TS) 是 source of truth → JSON Schema → Rust serde，改 schema 必须双端同步。
-            - 新增 SkillRegistry::register 必须同步在 cultivation::meridian::severed::SkillMeridianDependencies::declare 注册依赖经脉。
-            - Bevy ECS：component 是数据、system 是逻辑，别在 component 里写逻辑方法。
-
-            ### 代码与测试
-            - 简单易懂 > 花里胡哨；过度抽象 / 无用注释 / 超出 plan 的功能蔓延都是减分项。
-            - 测契约不测实现；测试要饱和：happy path + 所有边界 + 所有错误分支 + 所有状态转换。
-
-            ---
-
-            ## 第零步：整理资料（flash 子 agent，廉价）
-
-            先用 get_pr_diff 工具取本 PR 的 diff。然后调用 **hive_think** 起一个 **flash@low** 整理 subagent，把 diff 和 PR 元信息作为 context 传进去：
-
-            ```
-            hive_think({
-              models: ["deepseek-v4-flash"],
-              thinking: "low",
-              context: "<PR 标题/正文/分支名 + 上一步取到的 diff>",
-              question: "你是 Bong PR 审核的资料整理 scout。**忽略你 system prompt 里的 decision-matrix / Approaches / Recommendation 输出格式——这是【整理】任务，不是决策，不要给建议或评分。** 只产出一份紧凑 brief，用 <ANSWER>...</ANSWER> 包裹，含且仅含三节：
-                1. **Diff 摘要（逐文件）**：每个改动文件做什么 + reviewer 必须看的 file:line 锚点；只引关键行，其余概述。
-                2. **Plan 交付物清单**：从 PR 标题/分支名识别 plan-<name>-vN，读 docs/plan-<name>-vN.md（→ docs/finished_plans/ → docs/plans-skeleton/），抽该阶段 PX 承诺的交付物（模块/文件路径、类型/函数名、测试声明、schema/Redis key、跨仓库 symbol）列成 checklist。找不到 plan 写 '非 plan PR'。
-                3. **适用世界观规则 slice**：先判断 diff 实际涉及哪些主题（境界命名 / 货币 / 灵气守恒 QiTransfer / 物理常数 / 招式经脉 SkillRegistry↔declare / IPC schema / Bevy ECS / 命名末法去上古），然后**只** grep docs/worldview.md 切出相关段（带行号），**禁止贴全文**。不涉及就写 '本次改动不涉及世界观约束'。
-                facts only，不下判断。"
-            })
-            ```
-
-            然后用 **hive_read** 取出这份 brief（<ANSWER> 段）。这份 brief 就是下游唯一要看的资料——**你和 pro 子 agent 都不要再去读整本 worldview.md**。
-
-            ## 第一步：判断 + 对峙（pro 子 agent）
-
-            把第零步的 brief 作为 context，调用 **hive_think** 起 **pro@xhigh** 对峙（多模型并发，各自独立判断）：
-
-            ```
-            hive_think({
-              models: ["deepseek-v4-pro", "deepseek-v4-pro", "deepseek-v4-pro"],
-              thinking: "xhigh",
-              context: "<第零步的 brief 全文>",
-              question: "你是 Bong PR 审核 hive 的一员。**仅基于下面已整理好的 brief**（diff 摘要 + plan 交付物清单 + 适用世界观规则 slice）审核本 PR，必要时可 read/grep 具体文件核实，但不要去读整本 worldview。逐项核对并给出结论：
-                a) plan 该阶段交付物是否逐项落地？对照 checklist 标 ✅已实现/❌缺失/⚠️部分。
-                b) 有无 plan 列出但 PR 缺失的模块/函数/测试/schema？
-                c) 正确性：逻辑错误、边界 off-by-one、并发、错误分支、IPC schema 对齐。
-                d) 世界观对齐：按 brief 的规则 slice 核（境界命名/货币/末法风格）。
-                e) 灵气守恒：有无绕过 qi_physics::QiTransfer 的真元凭空增减？物理常数来源是否唯一？
-                f) 测试饱和：happy + 边界 + 错误分支 + 状态转换覆盖否？
-                g) 简洁度：过度抽象 / 冗余注释 / 超出 plan 的功能蔓延？
-                每条问题必须带 file:line + 证据片段，没把握/推测性的不要报。没有问题就直说没有，**严禁凑数**。结论用 <ANSWER>...</ANSWER> 包裹。"
-            })
-            ```
-
-            然后用 **hive_read** 取出每个 pro 模型的结论。
-
-            ## 第二步：综合并发布 review
-
-            综合各 pro 模型意见：多数一致指出的优先级最高，仅个别提出的标"少数意见"。在 PR 上发布结构化中文 review（用 create_pull_request_review 对关键问题做行内评论，指出 file:line）：
-
-            **📋 Plan 对齐度**（仅 plan PR）—— 该阶段交付物逐项 ✅/❌/⚠️ + 整体评级（完全/基本对齐/显著偏差）
-            **🌍 世界观合规** —— 境界命名/货币/灵气守恒是否一致；无问题写"✅ 未发现世界观偏差"
-            **🐛 Bug 与正确性** —— 逻辑/边界/并发/守恒律
-            **📐 代码质量** —— 过度抽象/功能蔓延/冗余注释/测试不足
-            **⚠️ 缺失与风险** —— plan 承诺未实现项 + 回归风险
-            **💡 改进建议** —— 非阻塞优化
-
-            整体没问题且 plan 对齐良好就只写一条简短总结，不要为凑数写评论。全部用中文输出。
+      - name: Pi Plan-Aware Review (确定性轮控)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.issue.number || inputs.pr_number }}
+          # 端点/模型/key 全可覆盖。默认走已验证可用的 SenseNova OpenAI 兼容端点 + deepseek-v4-* 模型名。
+          PI_BASE_URL: ${{ vars.PI_BASE_URL || 'https://token.sensenova.cn/v1' }}
+          # key 轮询:DEEPSEEK_API_KEY 打头、HIVE_API_KEY(_2) 兜底(同端点的不同羊毛 key),失败自动切下一把。
+          PI_API_KEYS: ${{ secrets.DEEPSEEK_API_KEY }},${{ secrets.HIVE_API_KEY }},${{ secrets.HIVE_API_KEY_2 }}
+          # 分层模型:gather 廉价 flash 压缩;debate 面板可混多模型(逗号分隔,成员循环取用)。
+          # 待 deepseek-v4-pro 在端点上确认可用后,把 PI_DEBATE_MODELS 改成 'deepseek-v4-pro' 即升级 pro 档。
+          PI_GATHER_MODEL: ${{ vars.PI_GATHER_MODEL || 'deepseek-v4-flash' }}
+          PI_DEBATE_MODELS: ${{ vars.PI_DEBATE_MODELS || 'deepseek-v4-flash,sensenova-6.7-flash-lite,deepseek-v4-flash' }}
+          PI_ARBITER_MODEL: ${{ vars.PI_ARBITER_MODEL || 'deepseek-v4-flash' }}
+          # 轮控参数:面板 3 成员 × 最多 3 轮,自信度中位数 ≥80 提前收敛;低自信精准 fan-out ≤4 个弱维。
+          PI_MAX_ROUNDS: ${{ vars.PI_MAX_ROUNDS || '3' }}
+          PI_PANEL: ${{ vars.PI_PANEL || '3' }}
+          PI_CONFIDENCE_TARGET: ${{ vars.PI_CONFIDENCE_TARGET || '80' }}
+          PI_FANOUT_MAX: ${{ vars.PI_FANOUT_MAX || '4' }}
+          PI_CONCURRENCY: ${{ vars.PI_CONCURRENCY || '6' }}
+          PI_CALL_TIMEOUT_MS: ${{ vars.PI_CALL_TIMEOUT_MS || '300000' }}
+        run: node .github/scripts/pi-review.mjs

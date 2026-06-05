@@ -1,0 +1,661 @@
+#!/usr/bin/env node
+// @pi Plan-Aware Reviewer —— 确定性轮控 + 自信度门控 + 低自信精准 fan-out。
+//
+// 设计要点(为何不再用 pi-coding-agent-action / hive-think 扩展):
+//   旧版 @pi 是一个【无界 agent 循环】——pi -p 没有轮数上限,只在模型自己停手 /
+//   命中 30min 硬超时时退出,所以一次 review 能烧 30+ 分钟。本脚本把"轮"从 agent
+//   内部搬到 orchestrator 外部:每一"轮" = 一次【单轮、无工具】的模型调用(天生有界),
+//   轮与轮之间由本脚本(确定性代码)控制——这才是真的硬上限,模型给不了。
+//
+// 流程(分层 + 轮控):
+//   第零步 gather(flash,1 次):把 diff + plan 压成紧凑 brief(逐文件摘要 + plan 交付物 checklist)。
+//   第一步 debate 轮控(pro 档面板,最多 MAX_ROUNDS 轮):
+//     - 每轮 N 个面板成员并行,各自基于 brief + 累积上下文给 {confidence, findings, uncertain_dimensions, files_needed}
+//     - 轮间注入【倒计时 + 语气】:从容核查 → 还剩 N 轮 → ⚠️只剩 1 轮 → ⛔最终轮硬上限
+//     - 面板自信度中位数 ≥ 目标 → 提前收敛;否则把成员请求的文件抓进上下文,开下一轮
+//     - 到 MAX_ROUNDS 强制收口(标注未收敛)
+//   低自信 fan-out:轮控结束仍 < 目标且有 uncertain_dimensions → 每个弱维派一个【专项】成员并行深挖。
+//   第二步 arbiter:综合全池 findings(去重 + 共识计数)产出中文结构化 review,发评论。
+//
+// 自包含:只用 Node 内置 fetch + gh CLI,无 npm 依赖。端点/模型/key/轮控参数全 env 可覆盖。
+// 纯逻辑(computeCountdown / aggregateConfidence / dedupeFindings / extractJSON / normalizeConfidence)
+// 导出供 pi-review.test.mjs 用 `node --test` 锁行为;主流程仅在作为入口时执行。
+
+import { execSync } from "node:child_process";
+import { readFileSync, writeFileSync, existsSync } from "node:fs";
+
+// ── 配置(全部 env 可覆盖)────────────────────────────────────────────────────
+const BASE_URL = (process.env.PI_BASE_URL || "https://token.sensenova.cn/v1").replace(/\/+$/, "");
+// key 轮询:PI_API_KEYS(逗号分隔)优先,否则收集 DEEPSEEK_API_KEY / _2 / _3。
+// workflow 会把 DEEPSEEK_API_KEY 打头、HIVE_API_KEY(_2) 兜底拼进 PI_API_KEYS,失败自动切下一把。
+const KEYS = [
+  ...(process.env.PI_API_KEYS || "").split(","),
+  process.env.DEEPSEEK_API_KEY,
+  process.env.DEEPSEEK_API_KEY_2,
+  process.env.DEEPSEEK_API_KEY_3,
+]
+  .map((s) => (s || "").trim())
+  .filter(Boolean)
+  .filter((k, i, a) => a.indexOf(k) === i);
+let keyCursor = 0;
+const usageByModel = {};
+
+// 分层模型:gather 用便宜的 flash 压缩;debate 面板可混多个模型(逗号分隔,面板成员循环取用)。
+const GATHER_MODEL = process.env.PI_GATHER_MODEL || "deepseek-v4-flash";
+const DEBATE_MODELS = (process.env.PI_DEBATE_MODELS || "deepseek-v4-flash")
+  .split(",")
+  .map((s) => s.trim())
+  .filter(Boolean);
+const ARBITER_MODEL = process.env.PI_ARBITER_MODEL || DEBATE_MODELS[0];
+
+// 轮控参数
+const MAX_ROUNDS = Math.max(1, parseInt(process.env.PI_MAX_ROUNDS || "3", 10)); // debate 硬上限轮数
+const PANEL = Math.max(1, parseInt(process.env.PI_PANEL || "3", 10)); // 每轮面板成员数
+const CONFIDENCE_TARGET = clampPct(parseFloat(process.env.PI_CONFIDENCE_TARGET || "80"), 80); // 中位数 ≥ 此值即收敛
+const CONCURRENCY = Math.max(1, parseInt(process.env.PI_CONCURRENCY || "6", 10));
+const FANOUT_ENABLED = process.env.PI_FANOUT !== "0"; // 低自信精准 fan-out 开关
+const FANOUT_MAX = Math.max(1, parseInt(process.env.PI_FANOUT_MAX || "4", 10)); // 最多派几个专项成员
+const CALL_TIMEOUT_MS = Math.max(30_000, parseInt(process.env.PI_CALL_TIMEOUT_MS || "300000", 10)); // 单次调用硬超时
+const MAX_FILES = Math.max(0, parseInt(process.env.PI_MAX_FILES || "6", 10)); // 每轮最多抓几个补充文件
+const FILE_BYTES = Math.max(1000, parseInt(process.env.PI_FILE_BYTES || "8000", 10)); // 每个补充文件取多少字符
+const MAX_DIFF = parseInt(process.env.PI_MAX_DIFF || "200000", 10);
+
+const PR = process.env.PR_NUMBER;
+
+// ── 纯逻辑(导出供测试)────────────────────────────────────────────────────────
+
+// 把任意值收成 [0,100] 的整数百分比;非法返回 fallback(默认 null = 无效,不计入聚合)。
+export function normalizeConfidence(v, fallback = null) {
+  const n = typeof v === "string" ? parseFloat(v) : v;
+  if (typeof n !== "number" || !Number.isFinite(n)) return fallback;
+  return Math.max(0, Math.min(100, Math.round(n)));
+}
+
+function clampPct(v, fallback) {
+  const n = normalizeConfidence(v);
+  return n === null ? fallback : n;
+}
+
+// 面板自信度聚合:取中位数做收敛门控(避免单个离群值左右大局),同时给 min/max/n。
+export function aggregateConfidence(values) {
+  const nums = (values || []).map((v) => normalizeConfidence(v)).filter((n) => n !== null);
+  if (nums.length === 0) return { median: null, min: null, max: null, n: 0 };
+  const sorted = nums.slice().sort((a, b) => a - b);
+  const mid = Math.floor(sorted.length / 2);
+  const median = sorted.length % 2 ? sorted[mid] : Math.round((sorted[mid - 1] + sorted[mid]) / 2);
+  return { median, min: sorted[0], max: sorted[sorted.length - 1], n: sorted.length };
+}
+
+// 倒计时 + 语气:随剩余轮数逐级加码,最后一轮硬收口。round/maxRounds 均 1-indexed。
+export function computeCountdown(round, maxRounds) {
+  const left = maxRounds - round;
+  if (maxRounds <= 1) {
+    return {
+      left: 0,
+      label: "唯一一轮 · 硬上限",
+      text: "【唯一一轮 · ⛔ 硬上限】只有这一轮,直接给出最终 findings 与最终 confidence,不要留待下一轮。",
+    };
+  }
+  if (round <= 1) {
+    return {
+      left,
+      label: `第 1/${maxRounds} 轮 · 从容核查`,
+      text:
+        `【第 1/${maxRounds} 轮 · 从容核查】本轮全面排查,不急于下结论。把还没把握的点明确写进 ` +
+        `uncertain_dimensions,把还想看的代码写进 files_needed——后续轮会据此为你补充上下文。`,
+    };
+  }
+  if (left >= 2) {
+    return {
+      left,
+      label: `第 ${round}/${maxRounds} 轮 · 还剩 ${left} 轮`,
+      text:
+        `【第 ${round}/${maxRounds} 轮 · 还剩 ${left} 轮】已按你上一轮的 files_needed 补充了上下文(见下)。` +
+        `继续核查,优先攻克上一轮标记的弱项;仍不确定的继续写进 uncertain_dimensions / files_needed。`,
+    };
+  }
+  if (left === 1) {
+    return {
+      left,
+      label: `第 ${round}/${maxRounds} 轮 · ⚠️ 只剩 1 轮`,
+      text:
+        `【第 ${round}/${maxRounds} 轮 · ⚠️ 只剩 1 轮】下一轮就是硬上限。集中火力把最关键、最有把握的问题钉死,` +
+        `拿不准的明确标注,不要再铺新摊子。`,
+    };
+  }
+  return {
+    left: 0,
+    label: `第 ${maxRounds}/${maxRounds} 轮 · ⛔ 最终轮`,
+    text:
+      `【第 ${maxRounds}/${maxRounds} 轮 · ⛔ 最终轮 · 硬上限】这是最后一轮,之后强制收口。必须给出最终 findings 与` +
+      `最终 confidence——即便不完全确定,也要基于现有证据做出最佳判断,并把残余不确定项明确标注。`,
+  };
+}
+
+const SEV_RANK = { blocker: 0, major: 1, minor: 2 };
+const sevRank = (s) => (SEV_RANK[String(s || "").toLowerCase()] ?? 3);
+
+// 跨轮/跨成员去重:同 file|line|标题(归一化)合并,取最高严重度,累计 consensus(几个成员独立提出)。
+export function dedupeFindings(findings) {
+  const byKey = new Map();
+  for (const f of findings || []) {
+    if (!f || (!f.title && !f.file)) continue;
+    const file = String(f.file || "").trim();
+    const line = String(f.line ?? "").trim();
+    const title = String(f.title || "").trim();
+    const key = `${file}|${line}|${title.toLowerCase().replace(/\s+/g, " ")}`;
+    const existing = byKey.get(key);
+    if (!existing) {
+      byKey.set(key, {
+        severity: String(f.severity || "minor").toLowerCase(),
+        file,
+        line,
+        title,
+        evidence: String(f.evidence || ""),
+        why: String(f.why || ""),
+        consensus: 1,
+        sources: [f.by].filter(Boolean),
+      });
+      continue;
+    }
+    existing.consensus += 1;
+    if (f.by) existing.sources.push(f.by);
+    if (sevRank(f.severity) < sevRank(existing.severity)) existing.severity = String(f.severity).toLowerCase();
+    if (String(f.evidence || "").length > existing.evidence.length) existing.evidence = String(f.evidence);
+    if (String(f.why || "").length > existing.why.length) existing.why = String(f.why);
+  }
+  return [...byKey.values()].sort(
+    (a, b) => sevRank(a.severity) - sevRank(b.severity) || b.consensus - a.consensus,
+  );
+}
+
+// 从模型输出抠第一段完整 JSON(容忍 ```json 围栏 + 前后废话),balanced-bracket 扫描。
+export function extractJSON(text) {
+  if (!text) return null;
+  let t = String(text).trim();
+  const fence = t.match(/```(?:json)?\s*([\s\S]*?)```/i);
+  if (fence) t = fence[1].trim();
+  try {
+    return JSON.parse(t);
+  } catch {
+    /* fall through */
+  }
+  const open = t.search(/[[{]/);
+  if (open < 0) return null;
+  const stack = [];
+  let inStr = false;
+  let esc = false;
+  for (let i = open; i < t.length; i++) {
+    const c = t[i];
+    if (inStr) {
+      if (esc) esc = false;
+      else if (c === "\\") esc = true;
+      else if (c === '"') inStr = false;
+      continue;
+    }
+    if (c === '"') inStr = true;
+    else if (c === "[" || c === "{") stack.push(c);
+    else if (c === "]" || c === "}") {
+      stack.pop();
+      if (stack.length === 0) {
+        try {
+          return JSON.parse(t.slice(open, i + 1));
+        } catch {
+          return null;
+        }
+      }
+    }
+  }
+  return null;
+}
+
+// 把 debate/fanout 成员的原始输出解析成统一结构(缺字段给安全默认)。
+export function parseMember(raw) {
+  const j = extractJSON(raw) || {};
+  const findings = Array.isArray(j.findings) ? j.findings : Array.isArray(j) ? j : [];
+  return {
+    confidence: normalizeConfidence(j.confidence),
+    findings: findings.filter((f) => f && (f.title || f.file)),
+    uncertain: (Array.isArray(j.uncertain_dimensions) ? j.uncertain_dimensions : [])
+      .map((u) => (typeof u === "string" ? { dimension: u } : u))
+      .filter((u) => u && u.dimension),
+    filesNeeded: (Array.isArray(j.files_needed) ? j.files_needed : [])
+      .map((p) => String(p || "").trim())
+      .filter(Boolean),
+  };
+}
+
+// 合法的"待抓取"文件路径:相对仓库根、无 .. 穿越、无绝对路径。
+export function isSafeRepoPath(p) {
+  const s = String(p || "").trim();
+  if (!s || s.startsWith("/") || s.includes("..") || s.includes("\0")) return false;
+  return /^[\w./-]+$/.test(s);
+}
+
+// ── 项目审核准则(精简版,静态 worldview slice,塞进每个成员上下文)────────────────
+const GUIDELINES = `
+## Bong 项目审核准则(末法残土修仙沙盒,三层架构 server/Rust + agent/TS + client/Java)
+
+### 世界观锚定(docs/worldview.md 是正典,代码不得矛盾)
+- 六境界:醒灵 → 引气 → 凝脉 → 固元 → 通灵 → 化虚。禁用"筑基/金丹/元婴"等传统称谓。
+- 货币:骨币(通货)、灵石(燃料,非货币)。不得出现"灵石=钱"的逻辑。
+- 灵气守恒律:全服灵气总量恒定。真元流动必须走 qi_physics::QiTransfer{from,to,amount}。红旗:
+  qi_current += X 无对应 zone 减 / zone.spirit_qi -= Y 无对应玩家增 / 衰变让真元凭空消失 / 招式只扣攻方不写环境。
+- 物理常数唯一源:衰减/逸散/半衰常数必须来自 qi_physics,禁止各 plan 硬编 *_DECAY*/*_DRAIN*/0.0X_f64。
+- 命名"末法去上古",不要仙气飘飘。
+
+### 架构硬约束
+- 跨层通信只走 Redis IPC + CustomPayload。
+- IPC schema:TypeBox(TS)是 source of truth → JSON Schema → Rust serde,改 schema 必须双端同步。
+- 新增 SkillRegistry::register 必须同步在 cultivation::meridian::severed::SkillMeridianDependencies::declare 注册依赖经脉。
+- Bevy ECS:component 是数据、system 是逻辑,别在 component 写逻辑方法。
+
+### 代码与测试
+- 简单易懂 > 花里胡哨;过度抽象/无用注释/超出 plan 的功能蔓延都是减分项。
+- 测契约不测实现;测试要饱和:happy path + 所有边界 + 所有错误分支 + 所有状态转换。
+`.trim();
+
+// ── IO 工具 ──────────────────────────────────────────────────────────────────
+function gh(args) {
+  return execSync(`gh ${args}`, { encoding: "utf8", maxBuffer: 64 * 1024 * 1024 });
+}
+
+function sleep(ms) {
+  return new Promise((r) => setTimeout(r, ms));
+}
+
+async function mapLimit(items, limit, fn) {
+  const out = new Array(items.length);
+  let next = 0;
+  const worker = async () => {
+    while (next < items.length) {
+      const i = next++;
+      out[i] = await fn(items[i], i);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
+  return out;
+}
+
+// 单次 chat:无工具单轮调用(天生有界),带超时 + 重试退避;每次尝试 round-robin 换 key。
+async function chat(content, { label = "", model = DEBATE_MODELS[0], retries = Math.max(4, KEYS.length * 2) } = {}) {
+  for (let attempt = 1; attempt <= retries; attempt++) {
+    const key = KEYS[keyCursor++ % KEYS.length];
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), CALL_TIMEOUT_MS);
+    try {
+      const res = await fetch(`${BASE_URL}/chat/completions`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${key}` },
+        body: JSON.stringify({ model, messages: [{ role: "user", content }] }),
+        signal: ctrl.signal,
+      });
+      clearTimeout(timer);
+      if (!res.ok) {
+        const body = (await res.text()).slice(0, 300);
+        throw new Error(`HTTP ${res.status} ${body}`);
+      }
+      const data = await res.json();
+      const u = data?.usage;
+      if (u) {
+        const m = usageByModel[model] || (usageByModel[model] = { prompt: 0, completion: 0, total: 0, calls: 0 });
+        m.prompt += u.prompt_tokens || 0;
+        m.completion += u.completion_tokens || 0;
+        m.total += u.total_tokens || (u.prompt_tokens || 0) + (u.completion_tokens || 0);
+        m.calls += 1;
+      }
+      const text = data?.choices?.[0]?.message?.content;
+      if (!text || !text.trim()) throw new Error("空响应");
+      return text;
+    } catch (e) {
+      clearTimeout(timer);
+      console.error(`[${label}] 第 ${attempt}/${retries} 次失败(key …${(key || "").slice(-4)}): ${e.message}`);
+      if (attempt === retries) return null;
+      await sleep(2500 * attempt);
+    }
+  }
+  return null;
+}
+
+// 抓取成员请求的补充文件(本地 main 签出版本,带 caveat)。去重 + 上限 + 截断 + 路径安全过滤。
+function fetchFiles(paths, already) {
+  const picked = [];
+  for (const p of paths) {
+    if (picked.length >= MAX_FILES) break;
+    if (already.has(p) || !isSafeRepoPath(p) || !existsSync(p)) continue;
+    already.add(p);
+    let body = readFileSync(p, "utf8");
+    const truncated = body.length > FILE_BYTES;
+    if (truncated) body = body.slice(0, FILE_BYTES);
+    picked.push(`### ${p}${truncated ? `(前 ${FILE_BYTES} 字符)` : ""}\n\`\`\`\n${body}\n\`\`\``);
+  }
+  if (!picked.length) return "";
+  return (
+    `\n## 补充代码上下文(main 分支版本——PR 若改动了这些文件,以上面 diff 为准,此处仅供周边代码参考)\n` +
+    picked.join("\n\n")
+  );
+}
+
+// ── 提示词 ───────────────────────────────────────────────────────────────────
+const gatherPrompt = (prContext) =>
+  `你是 Bong PR 审核的资料整理 scout(廉价档)。**这是【整理】任务,不是决策——不要给评分/建议/结论。**\n` +
+  `${GUIDELINES}\n\n${prContext}\n\n` +
+  `产出一份紧凑 brief,只输出纯 JSON(不要解释文字):\n` +
+  `{\n` +
+  `  "diff_summary": [{"file":"路径","change":"这个文件改了什么(一句话)","anchors":["reviewer 必看的 file:line"]}],\n` +
+  `  "plan_checklist": [{"item":"plan 该阶段承诺的交付物(模块/函数/测试/schema/跨仓库 symbol)","where":"应落在哪个文件"}],\n` +
+  `  "worldview_topics": ["本 diff 实际涉及的世界观主题(境界命名/货币/灵气守恒/物理常数/招式经脉/IPC schema/命名风格),不涉及就空数组"]\n` +
+  `}\n` +
+  `facts only;plan 从 PR 标题/分支名识别 plan-<name>-vN,识别不到 plan_checklist 给空数组。`;
+
+const debatePrompt = (brief, extraContext, countdown, priorUncertain) =>
+  `你是 Bong 项目 PR 审核 hive 的一员(pro 档,深度推理,独立判断)。\n${GUIDELINES}\n\n` +
+  `## 已整理的审核 brief\n${brief}\n` +
+  (priorUncertain.length
+    ? `\n## 上一轮面板标记的弱项(请优先攻克)\n${priorUncertain.map((u) => `- ${u.dimension}: ${u.reason || ""} ${u.need ? `(需:${u.need})` : ""}`).join("\n")}\n`
+    : "") +
+  `${extraContext}\n\n` +
+  `${countdown.text}\n\n` +
+  `基于以上材料审核本 PR,逐项核对:\n` +
+  `a) plan 该阶段交付物是否逐项落地(对照 plan_checklist 标 ✅/❌/⚠️)\n` +
+  `b) plan 列出但 PR 缺失的模块/函数/测试/schema\n` +
+  `c) 正确性:逻辑、边界 off-by-one、并发、错误分支、IPC schema 对齐\n` +
+  `d) 世界观对齐:六境界命名 / 骨币灵石 / 末法风格\n` +
+  `e) 灵气守恒:真元增减是否走 qi_physics::QiTransfer、物理常数来源是否唯一\n` +
+  `f) 测试饱和:happy + 边界 + 错误分支 + 状态转换\n` +
+  `g) 简洁度:过度抽象 / 冗余注释 / 超出 plan 的功能蔓延\n\n` +
+  `每条 finding 必须带 file:line + diff 证据片段。**没把握 / 推测性的不要当 finding 报**,而是写进 ` +
+  `uncertain_dimensions 说明你还差什么、把想看的文件写进 files_needed(下一轮会补给你)。没问题就空数组,严禁凑数。\n\n` +
+  `只输出纯 JSON(不要解释文字):\n` +
+  `{\n` +
+  `  "confidence": 0-100,  // 你对"本轮审核已充分、结论可靠"的自信度;材料不足就给低分\n` +
+  `  "findings": [{"severity":"blocker|major|minor","file":"路径","line":"行号/范围","title":"一句话问题","evidence":"diff 中具体代码","why":"为什么是问题"}],\n` +
+  `  "uncertain_dimensions": [{"dimension":"a-g 之一或具体主题","reason":"为何还没把握","need":"还需要看什么才能定论"}],\n` +
+  `  "files_needed": ["还想查看的仓库文件路径(相对仓库根)"]\n` +
+  `}`;
+
+const fanoutPrompt = (brief, extraContext, dim) =>
+  `你是 Bong PR 审核的【${dim.dimension}】专项核查员。前几轮综合审核对该维度把握不足,现在只盯这一维度深挖到底。\n` +
+  `${GUIDELINES}\n\n## 审核 brief\n${brief}\n${extraContext}\n\n` +
+  `## 待澄清\n${dim.reason || ""}${dim.need ? `(还需:${dim.need})` : ""}\n\n` +
+  `只就【${dim.dimension}】给结论:有问题逐条带 file:line + 证据;确认无问题就明说"该维度核查通过"。\n` +
+  `只输出纯 JSON:\n` +
+  `{"dimension":"${dim.dimension}","confidence":0-100,"verdict":"问题|通过|仍不确定",` +
+  `"findings":[{"severity":"blocker|major|minor","file":"路径","line":"行号","title":"...","evidence":"...","why":"..."}]}`;
+
+const arbiterPrompt = (brief, deduped, status, planName) =>
+  `你是本次 @pi 审核的**总裁判**(综合 + 发布,从严,宁缺勿滥)。\n${GUIDELINES}\n\n` +
+  `## 审核 brief\n${brief}\n\n` +
+  `## 经轮控 + 自信度门控存活的 findings(已去重,consensus = 几个成员独立提出)\n` +
+  `${deduped.map((f) => `- [${f.severity}] ${f.file}:${f.line} — ${f.title}${f.why ? `(${f.why})` : ""} 〔consensus ${f.consensus}〕`).join("\n") || "(无)"}\n\n` +
+  `## 收敛状态\n${status}\n\n` +
+  `据此产出**最终中文 PR review(markdown)**。硬要求:\n` +
+  `- **只就上面这些 findings 写**,严禁自行新增未列出的问题,严禁凑数。明显不成立的可直接否决。\n` +
+  `- 每条带 file:line 与证据。\n` +
+  `- 结构(无内容的小节可省略):\n` +
+  `  **📋 Plan 对齐度**${planName ? `(${planName})` : ""} —— 交付物逐项 ✅/❌/⚠️ + 整体评级\n` +
+  `  **🌍 世界观合规** —— 境界命名/货币/灵气守恒;无问题写"✅ 未发现世界观偏差"\n` +
+  `  **🐛 Bug 与正确性** · **📐 代码质量** · **⚠️ 缺失与风险** · **💡 改进建议(非阻塞)**\n` +
+  `- 没有高置信度问题就只写一条简短总结 + "未发现阻塞问题",不要硬找。\n` +
+  `- 直接给 markdown 正文,不要输出 JSON、不要复述本提示词。`;
+
+// ── 主流程 ───────────────────────────────────────────────────────────────────
+async function main() {
+  if (!PR) {
+    console.error("PR_NUMBER 未设置");
+    process.exit(1);
+  }
+  if (KEYS.length === 0) {
+    console.error("没有可用 key(在 repo secrets 配 DEEPSEEK_API_KEY,或用 PI_API_KEYS 逗号分隔注入)");
+    process.exit(1);
+  }
+  console.error(
+    `@pi 轮控 review: PR #${PR} · 面板 ${PANEL}×≤${MAX_ROUNDS}轮 · 收敛阈值中位数≥${CONFIDENCE_TARGET} · ` +
+      `fan-out ${FANOUT_ENABLED ? `≤${FANOUT_MAX}` : "关"} · gather ${GATHER_MODEL} · debate [${DEBATE_MODELS.join(", ")}] · ${KEYS.length} key`,
+  );
+
+  // ── 收集 PR 上下文 ──
+  let meta;
+  try {
+    meta = JSON.parse(gh(`pr view ${PR} --json title,body,headRefName,files`));
+  } catch (e) {
+    console.error("取 PR 元信息失败:", e.message);
+    process.exit(1);
+  }
+  let diff = "";
+  try {
+    diff = gh(`pr diff ${PR}`);
+  } catch (e) {
+    console.error("取 diff 失败:", e.message);
+    process.exit(1);
+  }
+  let diffTruncated = false;
+  if (diff.length > MAX_DIFF) {
+    diff = diff.slice(0, MAX_DIFF);
+    diffTruncated = true;
+  }
+  const fileList = (meta.files || []).map((f) => `- ${f.path} (+${f.additions}/-${f.deletions})`).join("\n");
+
+  // plan 探测
+  const pm = `${meta.title} ${meta.headRefName}`.match(/plan-[a-z0-9-]+-v\d+/i);
+  let plan = null;
+  if (pm) {
+    plan = { name: pm[0], path: null, text: null };
+    for (const dir of ["docs", "docs/finished_plans", "docs/plans-skeleton"]) {
+      const p = `${dir}/${pm[0]}.md`;
+      if (existsSync(p)) {
+        plan.path = p;
+        plan.text = readFileSync(p, "utf8").slice(0, 40000);
+        break;
+      }
+    }
+  }
+  const planBlock = plan?.text
+    ? `\n## 关联 Plan(${plan.path})\n${plan.text}\n`
+    : plan
+      ? `\n## 关联 Plan: ${plan.name}(未在仓库找到文件,按非 plan PR 处理)\n`
+      : "";
+
+  const prContext = `
+## PR #${PR}: ${meta.title}
+${(meta.body || "").slice(0, 4000)}
+
+## 变更文件
+${fileList || "(无)"}
+${planBlock}
+## 完整 diff${diffTruncated ? `(已截断至 ${MAX_DIFF} 字符)` : ""}
+\`\`\`diff
+${diff}
+\`\`\`
+`.trim();
+
+  // ── 第零步:gather(flash 压成 brief)──
+  console.error(`▶ 第零步 gather(${GATHER_MODEL})`);
+  const gatherRaw = await chat(gatherPrompt(prContext), { label: `gather@${GATHER_MODEL}`, model: GATHER_MODEL });
+  const gather = extractJSON(gatherRaw);
+  let brief;
+  if (gather) {
+    const ds = (gather.diff_summary || [])
+      .map((d) => `- **${d.file}**:${d.change}${d.anchors?.length ? `〔锚点 ${d.anchors.join(", ")}〕` : ""}`)
+      .join("\n");
+    const pc = (gather.plan_checklist || []).map((c) => `- [ ] ${c.item}${c.where ? `(→ ${c.where})` : ""}`).join("\n");
+    const wt = (gather.worldview_topics || []).join("、");
+    brief =
+      `### Diff 摘要(逐文件)\n${ds || "(gather 未给)"}\n\n` +
+      `### Plan 交付物 checklist\n${pc || (plan ? "(gather 未抽到)" : "非 plan PR")}\n\n` +
+      `### 适用世界观主题\n${wt || "本次改动不涉及特定世界观主题(仍按准则通查)"}\n\n` +
+      `> 完整 diff 见下(如需逐行核对)。\n${prContext}`;
+  } else {
+    console.error("  gather 失败/解析空,降级:直接用原始 prContext 当 brief");
+    brief = prContext;
+  }
+
+  // ── 第一步:debate 轮控 ──
+  const pool = []; // 全部 findings(带来源标记)
+  const trajectory = []; // 每轮自信度中位数
+  let lastUncertain = [];
+  let extraContext = "";
+  const fetched = new Set();
+  let convergedRound = null;
+  let finalAgg = { median: null, min: null, max: null, n: 0 };
+
+  for (let round = 1; round <= MAX_ROUNDS; round++) {
+    const cd = computeCountdown(round, MAX_ROUNDS);
+    console.error(`▶ debate ${cd.label}`);
+    const members = Array.from({ length: PANEL }, (_, i) => DEBATE_MODELS[i % DEBATE_MODELS.length]);
+    const results = await mapLimit(members, CONCURRENCY, (model, i) =>
+      chat(debatePrompt(brief, extraContext, cd, lastUncertain), {
+        label: `debate.r${round}#${i}@${model}`,
+        model,
+      }).then(parseMember),
+    );
+
+    results.forEach((r, i) =>
+      r.findings.forEach((f) => pool.push({ ...f, by: `r${round}#${i}`, round })),
+    );
+    const agg = aggregateConfidence(results.map((r) => r.confidence));
+    finalAgg = agg;
+    trajectory.push(agg.median);
+    lastUncertain = dedupeUncertain(results.flatMap((r) => r.uncertain));
+    const filesNeeded = [...new Set(results.flatMap((r) => r.filesNeeded))];
+    console.error(
+      `  自信度中位数 ${agg.median ?? "—"}(${agg.min ?? "—"}~${agg.max ?? "—"}, n=${agg.n}) · 累计 findings ${pool.length} · 弱项 ${lastUncertain.length}`,
+    );
+
+    if (agg.median !== null && agg.median >= CONFIDENCE_TARGET) {
+      convergedRound = round;
+      console.error(`  ✅ 达收敛阈值,提前收口于第 ${round} 轮`);
+      break;
+    }
+    if (round === MAX_ROUNDS) {
+      console.error(`  ⛔ 命中硬上限 ${MAX_ROUNDS} 轮,强制收口`);
+      break;
+    }
+    if (MAX_FILES > 0 && filesNeeded.length) {
+      const block = fetchFiles(filesNeeded, fetched);
+      if (block) {
+        extraContext += block;
+        console.error(`  为下一轮补充了文件上下文(累计抓取 ${fetched.size} 个)`);
+      }
+    }
+  }
+
+  // ── 低自信精准 fan-out ──
+  let fanoutDims = [];
+  if (
+    FANOUT_ENABLED &&
+    lastUncertain.length &&
+    (finalAgg.median === null || finalAgg.median < CONFIDENCE_TARGET)
+  ) {
+    fanoutDims = lastUncertain.slice(0, FANOUT_MAX);
+    console.error(`▶ 低自信 fan-out:${fanoutDims.length} 个专项成员并行(${fanoutDims.map((d) => d.dimension).join(", ")})`);
+    const fr = await mapLimit(fanoutDims, CONCURRENCY, (dim, i) =>
+      chat(fanoutPrompt(brief, extraContext, dim), { label: `fanout#${i}:${dim.dimension}`, model: DEBATE_MODELS[i % DEBATE_MODELS.length] }).then(
+        parseMember,
+      ),
+    );
+    fr.forEach((r, i) => r.findings.forEach((f) => pool.push({ ...f, by: `fanout:${fanoutDims[i].dimension}`, round: "fanout" })));
+  }
+
+  const deduped = dedupeFindings(pool);
+
+  // ── 收敛状态文案 ──
+  const trajStr = trajectory.map((t) => (t === null ? "—" : `${t}`)).join(" → ");
+  const finalConf = finalAgg.median;
+  const converged = convergedRound !== null;
+  const statusLine = converged
+    ? `✅ 第 ${convergedRound} 轮收敛(自信度中位数 ${finalConf} ≥ 阈值 ${CONFIDENCE_TARGET})。轨迹:${trajStr}。`
+    : `⚠️ 跑满 ${MAX_ROUNDS} 轮仍未达收敛阈值(最终自信度中位数 ${finalConf ?? "—"} < ${CONFIDENCE_TARGET})` +
+      `${fanoutDims.length ? `,已对 ${fanoutDims.length} 个弱项做专项 fan-out` : ""}。轨迹:${trajStr}。**结论可靠性偏低,请人工重点复核。**`;
+
+  // ── 第二步:arbiter 综合 ──
+  console.error("▶ arbiter 综合产出 review");
+  let review = await chat(arbiterPrompt(brief, deduped, statusLine, plan?.name), {
+    label: `arbiter@${ARBITER_MODEL}`,
+    model: ARBITER_MODEL,
+  });
+  if (!review) {
+    review =
+      `_arbiter 阶段无输出,以下为存活 findings 直出:_\n\n` +
+      (deduped.length
+        ? deduped.map((f) => `- [${f.severity}] ${f.file}:${f.line} — ${f.title}${f.why ? `(${f.why})` : ""}`).join("\n")
+        : "未发现高置信度问题。");
+  }
+
+  // ── 组装并发布 ──
+  const num = (n) => n.toLocaleString("en-US");
+  const grand = Object.values(usageByModel).reduce(
+    (a, m) => ({ prompt: a.prompt + m.prompt, completion: a.completion + m.completion, total: a.total + m.total, calls: a.calls + m.calls }),
+    { prompt: 0, completion: 0, total: 0, calls: 0 },
+  );
+  const perModel = Object.entries(usageByModel)
+    .sort((a, b) => b[1].total - a[1].total)
+    .map(([m, u]) => `\`${m}\` ${num(u.total)}(${u.calls} 次)`)
+    .join(" · ");
+
+  const findingsTable = deduped.length
+    ? `\n\n<details><summary>🔎 findings 明细(${deduped.length} 条,已去重)</summary>\n\n` +
+      `| 严重度 | file:line | 问题 | consensus |\n|---|---|---|---|\n` +
+      deduped
+        .map((f) => `| ${f.severity} | ${f.file}:${f.line} | ${(f.title || "").replace(/\|/g, "/")} | ${f.consensus} |`)
+        .join("\n") +
+      `\n</details>`
+    : "";
+
+  const header =
+    `## 🤖 @pi Plan-Aware Review · PR #${PR}\n\n` +
+    `> 引擎:确定性轮控脚本(无界 agent 循环已退役)。面板 ${PANEL} 成员 × 最多 ${MAX_ROUNDS} 轮,自信度门控 + 低自信精准 fan-out。\n` +
+    `> ${statusLine}\n` +
+    (plan ? `> Plan: \`${plan.name}\`${plan.path ? "" : "(未找到文件)"}\n` : "") +
+    (diffTruncated ? `> ⚠️ diff 过大已截断至 ${MAX_DIFF} 字符\n` : "") +
+    `> 模型:gather \`${GATHER_MODEL}\` · debate \`${DEBATE_MODELS.join("/")}\` · arbiter \`${ARBITER_MODEL}\`\n\n` +
+    `> [!WARNING]\n` +
+    `> 本审核由多模型自动 debate 生成,**不可 100% 信赖**。请自行核对 file:line 与上下文再决定是否采纳。\n\n`;
+
+  const tokenFooter =
+    `\n\n---\n📊 **本次 token 消耗**:总 **${num(grand.total)}**` +
+    `(prompt ${num(grand.prompt)} + completion ${num(grand.completion)})· ${grand.calls} 次模型调用` +
+    (perModel ? `\n> ${perModel}` : "") +
+    `\n`;
+
+  const body = header + review + findingsTable + tokenFooter;
+  writeFileSync("/tmp/pi-review.md", body);
+  if (process.env.PI_DRY_RUN) {
+    console.error("— PI_DRY_RUN:不发评论,正文如下 —");
+    console.log(body);
+  } else {
+    try {
+      gh(`pr comment ${PR} --body-file /tmp/pi-review.md`);
+      console.error("✅ 已发布 review 评论");
+    } catch (e) {
+      console.error("发布评论失败:", e.message);
+      console.error(body);
+      process.exit(1);
+    }
+  }
+}
+
+// 弱项去重(按 dimension 文本归一),合并 reason/need。
+function dedupeUncertain(items) {
+  const byDim = new Map();
+  for (const u of items || []) {
+    if (!u || !u.dimension) continue;
+    const key = String(u.dimension).trim().toLowerCase();
+    const existing = byDim.get(key);
+    if (!existing) {
+      byDim.set(key, { dimension: String(u.dimension).trim(), reason: u.reason || "", need: u.need || "" });
+    } else {
+      if (u.reason && !existing.reason.includes(u.reason)) existing.reason += (existing.reason ? "; " : "") + u.reason;
+      if (u.need && !existing.need.includes(u.need)) existing.need += (existing.need ? "; " : "") + u.need;
+    }
+  }
+  return [...byDim.values()];
+}
+
+const isEntry = import.meta.url === `file://${process.argv[1]}`;
+if (isEntry) {
+  main().catch((e) => {
+    console.error(e);
+    process.exit(1);
+  });
+}
