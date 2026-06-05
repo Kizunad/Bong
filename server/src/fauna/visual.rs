@@ -25,8 +25,10 @@ pub const POISON_DRAGON_ENTITY_KIND: EntityKind = EntityKind::new(143);
 pub const BONE_DRAGON_ENTITY_KIND: EntityKind = EntityKind::new(144);
 pub const HEIWUSHI_ENTITY_KIND: EntityKind = EntityKind::new(145);
 /// plan-dandao-runtime-wiring-v1 P4 — 暴龙王 BOSS。
-/// 客户端 `BaolongwangEntities.EXPECTED_RAW_ID = 160`，注册顺序与此处一致。
-pub const BAOLONGWANG_ENTITY_KIND: EntityKind = EntityKind::new(160);
+/// 客户端 `BaolongwangEntities.EXPECTED_RAW_ID = 164`，注册顺序与此处一致：
+/// 客户端 BongEntityModelKind 把延寿棺四档并入同一注册循环（146..=163），
+/// Baolongwang 独立 bootstrap 在其之后注册得 164，故协议号紧随四档之后。
+pub const BAOLONGWANG_ENTITY_KIND: EntityKind = EntityKind::new(164);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Component)]
 pub enum FaunaVisualKind {

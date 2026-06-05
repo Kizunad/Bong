@@ -11,19 +11,21 @@ import org.slf4j.LoggerFactory;
 /**
  * plan-dandao-path-v1 P4 -- EntityType registry for Baolongwang BOSS.
  *
- * <p>Raw ID follows after fauna (126..=145) + BongEntityRegistry (146..=159).
- * Baolongwang gets raw_id 160. Registration order in BongClient matters.
+ * <p>Raw ID follows after fauna (126..=145) + BongEntityRegistry (146..=163,
+ * 含 plan-coffin-tiers-v1 延寿棺四档 160..=163). Baolongwang gets raw_id 164.
+ * Registration order in BongClient matters (此 bootstrap 必须在
+ * BongEntityRenderBootstrap 之后调用)。
  */
 public final class BaolongwangEntities {
     private static final Logger LOGGER = LoggerFactory.getLogger("bong/dandao/baolongwang");
     public static final Identifier BAOLONGWANG_ID = new Identifier("bong", "baolongwang");
 
     /**
-     * Expected raw id -- after BongEntityRegistry (146..=159).
-     * Fauna ends at 145, BongEntityModelKind has 14 entries (146..=159),
-     * so baolongwang = 160.
+     * Expected raw id -- after BongEntityRegistry.
+     * Fauna ends at 145, BongEntityModelKind now has 18 entries (146..=163,
+     * 含延寿棺四档 160..=163), so baolongwang registers last = 164.
      */
-    public static final int EXPECTED_RAW_ID = 160;
+    public static final int EXPECTED_RAW_ID = 164;
 
     private BaolongwangEntities() {}
 

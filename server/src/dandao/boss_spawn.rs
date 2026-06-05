@@ -606,20 +606,21 @@ mod boss_spawn_tests {
         assert_eq!(
             kind,
             Some(BAOLONGWANG_ENTITY_KIND),
-            "entity kind 必须为 160 (BAOLONGWANG)"
+            "entity kind 必须为 164 (BAOLONGWANG)"
         );
     }
 
     #[test]
-    fn baolongwang_entity_kind_is_160() {
+    fn baolongwang_entity_kind_is_164() {
         assert_eq!(
             BAOLONGWANG_ENTITY_KIND,
-            EntityKind::new(160),
-            "客户端 EXPECTED_RAW_ID=160，server 端必须对齐"
+            EntityKind::new(164),
+            "客户端 EXPECTED_RAW_ID=164，server 端必须对齐（延寿棺四档连号 160..=163，boss 在其后取 164）"
         );
-        // 160 不能与已知 entity kind 冲突（155=LingtianPlot, 159=StoneCasket）
-        use crate::world::entity_model::STONE_CASKET_ENTITY_KIND;
+        // 164 不能与已知 entity kind 冲突（159=StoneCasket, 160..=163=延寿棺四档）
+        use crate::world::entity_model::{COFFIN_BRONZE_ENTITY_KIND, STONE_CASKET_ENTITY_KIND};
         assert_ne!(BAOLONGWANG_ENTITY_KIND, STONE_CASKET_ENTITY_KIND);
+        assert_ne!(BAOLONGWANG_ENTITY_KIND, COFFIN_BRONZE_ENTITY_KIND);
     }
 
     // ── AI 状态机：阶段隔离 / phase_gate 不变量 ─────────────────────────────
