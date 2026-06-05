@@ -18,6 +18,8 @@ import {
   parseMember,
   isSafeRepoPath,
   fetchFiles,
+  expandModelList,
+  parseModel,
 } from "./pi-review.mjs";
 
 // ── normalizeConfidence ──────────────────────────────────────────────────────
@@ -294,4 +296,40 @@ test("fetchFiles: 超长文件按 FILE_BYTES 截断并标注", () => {
     process.chdir(cwd0);
     rmSync(dir, { recursive: true, force: true });
   }
+});
+
+// ── expandModelList(力大砖飞的 name*count 展开)────────────────────────────────
+test("expandModelList: name*count 展开 + 保序 + provider 限定名", () => {
+  assert.deepEqual(expandModelList("a*3, b, c*2"), ["a", "a", "a", "b", "c", "c"], "计数展开并保持顺序");
+  assert.deepEqual(
+    expandModelList("cliproxy/deepseek-v4-flash*2, deepseek/deepseek-v4-pro"),
+    ["cliproxy/deepseek-v4-flash", "cliproxy/deepseek-v4-flash", "deepseek/deepseek-v4-pro"],
+    "provider 限定名整体被当作模型名,只在末尾 *N 处展开",
+  );
+});
+
+test("expandModelList: 空白容忍 / *0→至少1 / 空与 undefined", () => {
+  assert.deepEqual(expandModelList("a * 3"), ["a", "a", "a"], "星号两侧空白容忍");
+  assert.deepEqual(expandModelList("x*0"), ["x"], "*0 兜底至少 1 个");
+  assert.deepEqual(expandModelList("  ,  , a ,"), ["a"], "空段被过滤、trim");
+  assert.deepEqual(expandModelList(""), [], "空串 → 空数组");
+  assert.deepEqual(expandModelList(undefined), [], "undefined → 空数组");
+});
+
+test("expandModelList: 力大砖飞配比总数正确", () => {
+  const list = expandModelList(
+    "cliproxy/deepseek-v4-flash*20,deepseek/deepseek-v4-pro*4,kiro/claude-sonnet-4-6*3,ollama/minimax-m3*3",
+  );
+  assert.equal(list.length, 30, "20+4+3+3 = 30 个面板成员");
+  assert.equal(list.filter((m) => m === "deepseek/deepseek-v4-pro").length, 4, "pro 恰好 4 个");
+  assert.equal(list.filter((m) => m === "cliproxy/deepseek-v4-flash").length, 20, "flash 恰好 20 个");
+});
+
+// ── parseModel(provider/id 路由解析)──────────────────────────────────────────
+test("parseModel: 拆 provider/id / 无前缀 / 多段只切首个斜杠", () => {
+  assert.deepEqual(parseModel("cliproxy/deepseek-v4-flash"), { provider: "cliproxy", id: "deepseek-v4-flash" });
+  assert.deepEqual(parseModel("deepseek-v4-flash"), { provider: null, id: "deepseek-v4-flash" }, "无前缀 → provider null");
+  assert.deepEqual(parseModel("kiro/claude-sonnet-4-6"), { provider: "kiro", id: "claude-sonnet-4-6" });
+  assert.deepEqual(parseModel("a/b/c"), { provider: "a", id: "b/c" }, "只在首个 / 切分,id 保留余下斜杠");
+  assert.deepEqual(parseModel("  "), { provider: null, id: "" }, "空白 → 空 id");
 });

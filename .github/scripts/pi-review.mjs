@@ -25,32 +25,32 @@ import { execSync } from "node:child_process";
 import { readFileSync, writeFileSync, existsSync } from "node:fs";
 
 // ── 配置(全部 env 可覆盖)────────────────────────────────────────────────────
-const BASE_URL = (process.env.PI_BASE_URL || "https://token.sensenova.cn/v1").replace(/\/+$/, "");
-// key 轮询:PI_API_KEYS(逗号分隔)优先,否则收集 DEEPSEEK_API_KEY / _2 / _3。
-// workflow 会把 DEEPSEEK_API_KEY 打头、HIVE_API_KEY(_2) 兜底拼进 PI_API_KEYS,失败自动切下一把。
-const KEYS = [
-  ...(process.env.PI_API_KEYS || "").split(","),
-  process.env.DEEPSEEK_API_KEY,
-  process.env.DEEPSEEK_API_KEY_2,
-  process.env.DEEPSEEK_API_KEY_3,
-]
-  .map((s) => (s || "").trim())
-  .filter(Boolean)
-  .filter((k, i, a) => a.indexOf(k) === i);
-let keyCursor = 0;
+// 多 provider 路由:模型名用 `provider/id`(如 cliproxy/deepseek-v4-flash、deepseek/deepseek-v4-pro、
+// kiro/claude-sonnet-4-6)。baseUrl 写死已知端点(可 env 覆盖),key 从 per-provider secret 注入,
+// api 区分 OpenAI(/chat/completions)与 Anthropic(/v1/messages)两种格式。这样"力大砖飞"才能在
+// 一次 review 里同时混免费队(cliproxy/kiro/ollama)+ 付费 pro(deepseek)。
+const PROVIDERS = {
+  cliproxy: { baseUrl: process.env.PI_CLIPROXY_BASE_URL || "https://proxy.kizun4.uk/v1", key: process.env.PI_CLIPROXY_KEY, api: "openai" },
+  deepseek: { baseUrl: process.env.PI_DEEPSEEK_BASE_URL || "https://api.deepseek.com", key: process.env.PI_DEEPSEEK_KEY, api: "openai" },
+  ollama: { baseUrl: process.env.PI_OLLAMA_BASE_URL || "https://ollama.com/v1", key: process.env.PI_OLLAMA_KEY, api: "openai" },
+  kiro: { baseUrl: process.env.PI_KIRO_BASE_URL || "https://kiro.kizunadesu.cc", key: process.env.PI_KIRO_KEY, api: "anthropic" },
+  anyrouter: { baseUrl: process.env.PI_ANYROUTER_BASE_URL || "https://anyrouter.top/v1", key: process.env.PI_ANYROUTER_KEY, api: "openai" },
+};
+const DEFAULT_PROVIDER = process.env.PI_DEFAULT_PROVIDER || "cliproxy";
+const ANTHROPIC_MAX_TOKENS = Math.max(1024, parseInt(process.env.PI_ANTHROPIC_MAX_TOKENS || "8000", 10));
+const RETRIES = Math.max(1, parseInt(process.env.PI_RETRIES || "4", 10));
 const usageByModel = {};
 
-// 分层模型:gather 用便宜的 flash 压缩;debate 面板可混多个模型(逗号分隔,面板成员循环取用)。
-const GATHER_MODEL = process.env.PI_GATHER_MODEL || "deepseek-v4-flash";
-const DEBATE_MODELS = (process.env.PI_DEBATE_MODELS || "deepseek-v4-flash")
-  .split(",")
-  .map((s) => s.trim())
-  .filter(Boolean);
+// 分层模型(全 provider 限定名):gather 廉价压缩;debate 面板混多模型(逗号分隔 + `name*count` 展开,
+// 如 cliproxy/deepseek-v4-flash*20,deepseek/deepseek-v4-pro*4);arbiter 单模型做最终综合。
+const GATHER_MODEL = process.env.PI_GATHER_MODEL || "cliproxy/deepseek-v4-flash";
+const DEBATE_MODELS = expandModelList(process.env.PI_DEBATE_MODELS || "cliproxy/deepseek-v4-flash*3");
 const ARBITER_MODEL = process.env.PI_ARBITER_MODEL || DEBATE_MODELS[0];
 
 // 轮控参数
 const MAX_ROUNDS = Math.max(1, parseInt(process.env.PI_MAX_ROUNDS || "3", 10)); // debate 硬上限轮数
-const PANEL = Math.max(1, parseInt(process.env.PI_PANEL || "3", 10)); // 每轮面板成员数
+// 每轮面板成员数:默认 = 展开后的 DEBATE_MODELS 长度(力大砖飞时即清单全员上场);PI_PANEL 可显式截断/扩展。
+const PANEL = process.env.PI_PANEL ? Math.max(1, parseInt(process.env.PI_PANEL, 10)) : DEBATE_MODELS.length;
 const CONFIDENCE_TARGET = clampPct(parseFloat(process.env.PI_CONFIDENCE_TARGET || "80"), 80); // 中位数 ≥ 此值即收敛
 const CONCURRENCY = Math.max(1, parseInt(process.env.PI_CONCURRENCY || "6", 10));
 const FANOUT_ENABLED = process.env.PI_FANOUT !== "0"; // 低自信精准 fan-out 开关
@@ -232,6 +232,29 @@ export function isSafeRepoPath(p) {
   return /^[\w./-]+$/.test(s);
 }
 
+// 展开 `name*count` 语法:`"a/x*3, b/y, c/z*2"` → ["a/x","a/x","a/x","b/y","c/z","c/z"]。
+// 这是"力大砖飞"的人体工学入口——`flash*20` 比手敲 20 遍清爽,PANEL 默认即取展开后长度。
+export function expandModelList(spec) {
+  return String(spec || "")
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean)
+    .flatMap((item) => {
+      const m = item.match(/^(.+?)\s*\*\s*(\d+)$/);
+      if (m) return Array.from({ length: Math.max(1, parseInt(m[2], 10)) }, () => m[1].trim());
+      return [item];
+    });
+}
+
+// 拆 `provider/id`:`"cliproxy/deepseek-v4-flash"` → {provider:"cliproxy", id:"deepseek-v4-flash"}。
+// 无前缀 → {provider:null, id} (调用方用 DEFAULT_PROVIDER 兜底)。只在首个 "/" 处切分。
+export function parseModel(full) {
+  const s = String(full || "").trim();
+  const i = s.indexOf("/");
+  if (i < 0) return { provider: null, id: s };
+  return { provider: s.slice(0, i), id: s.slice(i + 1) };
+}
+
 // ── 项目审核准则(精简版,静态 worldview slice,塞进每个成员上下文)────────────────
 const GUIDELINES = `
 ## Bong 项目审核准则(末法残土修仙沙盒,三层架构 server/Rust + agent/TS + client/Java)
@@ -277,41 +300,65 @@ async function mapLimit(items, limit, fn) {
   return out;
 }
 
-// 单次 chat:无工具单轮调用(天生有界),带超时 + 重试退避;每次尝试 round-robin 换 key。
-async function chat(content, { label = "", model = DEBATE_MODELS[0], retries = Math.max(4, KEYS.length * 2) } = {}) {
+// 单次 chat:无工具单轮调用(天生有界),按 model 的 `provider/id` 路由到对应端点/key/API 格式,带超时 + 重试退避。
+// 支持 OpenAI(/chat/completions)与 Anthropic(/v1/messages)两种格式;某 provider 无 key 直接跳过(返回 null,
+// 上层 graceful-degrade,死模型不阻断全局)。
+async function chat(content, { label = "", model = DEBATE_MODELS[0], retries = RETRIES } = {}) {
+  const { provider, id } = parseModel(model);
+  const prov = PROVIDERS[provider || DEFAULT_PROVIDER];
+  if (!prov || !prov.key) {
+    console.error(`[${label}] ${model}: provider「${provider || DEFAULT_PROVIDER}」无配置或无 key,跳过`);
+    return null;
+  }
+  const base = prov.baseUrl.replace(/\/+$/, "");
   for (let attempt = 1; attempt <= retries; attempt++) {
-    const key = KEYS[keyCursor++ % KEYS.length];
     const ctrl = new AbortController();
     const timer = setTimeout(() => ctrl.abort(), CALL_TIMEOUT_MS);
     try {
-      const res = await fetch(`${BASE_URL}/chat/completions`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${key}` },
-        body: JSON.stringify({ model, messages: [{ role: "user", content }] }),
-        signal: ctrl.signal,
-      });
+      let url, headers, body;
+      if (prov.api === "anthropic") {
+        url = `${base}/v1/messages`;
+        headers = { "Content-Type": "application/json", "x-api-key": prov.key, "anthropic-version": "2023-06-01" };
+        body = JSON.stringify({ model: id, max_tokens: ANTHROPIC_MAX_TOKENS, messages: [{ role: "user", content }] });
+      } else {
+        url = `${base}/chat/completions`;
+        headers = { "Content-Type": "application/json", Authorization: `Bearer ${prov.key}` };
+        body = JSON.stringify({ model: id, messages: [{ role: "user", content }] });
+      }
+      const res = await fetch(url, { method: "POST", headers, body, signal: ctrl.signal });
       clearTimeout(timer);
       if (!res.ok) {
-        const body = (await res.text()).slice(0, 300);
-        throw new Error(`HTTP ${res.status} ${body}`);
+        const b = (await res.text()).slice(0, 300);
+        throw new Error(`HTTP ${res.status} ${b}`);
       }
       const data = await res.json();
-      const u = data?.usage;
-      if (u) {
+      let text, promptTok, completionTok;
+      if (prov.api === "anthropic") {
+        text = (data?.content || [])
+          .filter((c) => c?.type === "text")
+          .map((c) => c.text)
+          .join("");
+        promptTok = data?.usage?.input_tokens || 0;
+        completionTok = data?.usage?.output_tokens || 0;
+      } else {
+        text = data?.choices?.[0]?.message?.content;
+        promptTok = data?.usage?.prompt_tokens || 0;
+        completionTok = data?.usage?.completion_tokens || 0;
+      }
+      if (promptTok || completionTok) {
         const m = usageByModel[model] || (usageByModel[model] = { prompt: 0, completion: 0, total: 0, calls: 0 });
-        m.prompt += u.prompt_tokens || 0;
-        m.completion += u.completion_tokens || 0;
-        m.total += u.total_tokens || (u.prompt_tokens || 0) + (u.completion_tokens || 0);
+        m.prompt += promptTok;
+        m.completion += completionTok;
+        m.total += promptTok + completionTok;
         m.calls += 1;
       }
-      const text = data?.choices?.[0]?.message?.content;
       if (!text || !text.trim()) throw new Error("空响应");
       return text;
     } catch (e) {
       clearTimeout(timer);
-      console.error(`[${label}] 第 ${attempt}/${retries} 次失败(key …${(key || "").slice(-4)}): ${e.message}`);
+      console.error(`[${label}] ${model} 第 ${attempt}/${retries} 次失败: ${e.message}`);
       if (attempt === retries) return null;
-      await sleep(2500 * attempt);
+      await sleep(2000 * attempt);
     }
   }
   return null;
@@ -406,13 +453,18 @@ async function main() {
     console.error("PR_NUMBER 未设置或非法(必须是纯数字)");
     process.exit(1);
   }
-  if (KEYS.length === 0) {
-    console.error("没有可用 key(在 repo secrets 配 DEEPSEEK_API_KEY,或用 PI_API_KEYS 逗号分隔注入)");
+  const liveProviders = Object.entries(PROVIDERS).filter(([, p]) => p.key).map(([n]) => n);
+  if (liveProviders.length === 0) {
+    console.error("没有可用 provider key(在 repo secrets 配 PI_CLIPROXY_KEY / PI_DEEPSEEK_KEY / PI_KIRO_KEY / PI_OLLAMA_KEY 等)");
     process.exit(1);
   }
+  // 统计面板里每个模型几票,供日志一眼看清"力大砖飞"的实际配比
+  const mix = DEBATE_MODELS.reduce((a, m) => ((a[m] = (a[m] || 0) + 1), a), {});
   console.error(
     `@pi 轮控 review: PR #${PR} · 面板 ${PANEL}×≤${MAX_ROUNDS}轮 · 收敛阈值中位数≥${CONFIDENCE_TARGET} · ` +
-      `fan-out ${FANOUT_ENABLED ? `≤${FANOUT_MAX}` : "关"} · gather ${GATHER_MODEL} · debate [${DEBATE_MODELS.join(", ")}] · ${KEYS.length} key`,
+      `fan-out ${FANOUT_ENABLED ? `≤${FANOUT_MAX}` : "关"} · gather ${GATHER_MODEL} · arbiter ${ARBITER_MODEL}\n` +
+      `  在线 provider: ${liveProviders.join(", ")}\n` +
+      `  debate 配比: ${Object.entries(mix).map(([m, n]) => `${m}×${n}`).join(", ")}`,
   );
 
   // ── 收集 PR 上下文 ──
@@ -609,7 +661,8 @@ ${diff}
     `> ${statusLine}\n` +
     (plan ? `> Plan: \`${plan.name}\`${plan.path ? "" : "(未找到文件)"}\n` : "") +
     (diffTruncated ? `> ⚠️ diff 过大已截断至 ${MAX_DIFF} 字符\n` : "") +
-    `> 模型:gather \`${GATHER_MODEL}\` · debate \`${DEBATE_MODELS.join("/")}\` · arbiter \`${ARBITER_MODEL}\`\n\n` +
+    `> 模型:gather \`${GATHER_MODEL}\` · arbiter \`${ARBITER_MODEL}\`\n` +
+    `> debate 面板配比(${PANEL} 成员):${Object.entries(mix).map(([m, n]) => `\`${m}\`×${n}`).join(" · ")}\n\n` +
     `> [!WARNING]\n` +
     `> 本审核由多模型自动 debate 生成,**不可 100% 信赖**。请自行核对 file:line 与上下文再决定是否采纳。\n\n`;
 
