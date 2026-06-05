@@ -318,7 +318,7 @@ async function chat(content, { label = "", model = DEBATE_MODELS[0], retries = M
 }
 
 // 抓取成员请求的补充文件(本地 main 签出版本,带 caveat)。去重 + 上限 + 截断 + 路径安全过滤。
-function fetchFiles(paths, already) {
+export function fetchFiles(paths, already) {
   const picked = [];
   for (const p of paths) {
     if (picked.length >= MAX_FILES) break;
@@ -401,8 +401,9 @@ const arbiterPrompt = (brief, deduped, status, planName) =>
 
 // ── 主流程 ───────────────────────────────────────────────────────────────────
 async function main() {
-  if (!PR) {
-    console.error("PR_NUMBER 未设置");
+  // PR 是唯一被插进 gh shell 命令的外部值——强制数字,杜绝命令注入(纵深防御;它本来源自 github.event.issue.number)。
+  if (!PR || !/^\d+$/.test(String(PR))) {
+    console.error("PR_NUMBER 未设置或非法(必须是纯数字)");
     process.exit(1);
   }
   if (KEYS.length === 0) {
@@ -636,7 +637,7 @@ ${diff}
 }
 
 // 弱项去重(按 dimension 文本归一),合并 reason/need。
-function dedupeUncertain(items) {
+export function dedupeUncertain(items) {
   const byDim = new Map();
   for (const u of items || []) {
     if (!u || !u.dimension) continue;

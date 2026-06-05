@@ -5,14 +5,19 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import {
   normalizeConfidence,
   aggregateConfidence,
   computeCountdown,
   dedupeFindings,
+  dedupeUncertain,
   extractJSON,
   parseMember,
   isSafeRepoPath,
+  fetchFiles,
 } from "./pi-review.mjs";
 
 // ── normalizeConfidence ──────────────────────────────────────────────────────
@@ -205,4 +210,88 @@ test("isSafeRepoPath: 拒绝绝对路径 / .. 穿越 / 空 / 异常字符", () =
   assert.equal(isSafeRepoPath(null), false, "null");
   assert.equal(isSafeRepoPath("a b.rs"), false, "含空格(非白名单字符)");
   assert.equal(isSafeRepoPath("a;rm -rf.rs"), false, "含 shell 元字符");
+});
+
+// ── dedupeUncertain(弱项跨成员归并,驱动 fan-out 选维)─────────────────────────
+test("dedupeUncertain: 同 dimension 归并、累计 reason/need、去重保序", () => {
+  const out = dedupeUncertain([
+    { dimension: "灵气守恒", reason: "没看到 zone 减", need: "qi_physics 调用处" },
+    { dimension: "灵气守恒", reason: "招式只扣攻方", need: "环境扣减逻辑" },
+    { dimension: "测试饱和", reason: "边界没覆盖" },
+  ]);
+  assert.equal(out.length, 2, "两个不同维度");
+  assert.equal(out[0].dimension, "灵气守恒", "保持首次出现顺序");
+  assert.match(out[0].reason, /没看到 zone 减/, "合并第一条 reason");
+  assert.match(out[0].reason, /招式只扣攻方/, "合并第二条 reason");
+  assert.match(out[0].need, /qi_physics 调用处/);
+  assert.match(out[0].need, /环境扣减逻辑/);
+});
+
+test("dedupeUncertain: 大小写归一同维 / 跳过无 dimension / 重复 reason 不叠加", () => {
+  const out = dedupeUncertain([
+    { dimension: "并发", reason: "锁顺序" },
+    { dimension: "并发", reason: "锁顺序" }, // 与上条同 reason → 不重复叠加
+    { dimension: "并发 ", reason: "" }, // 带空格 + 空 reason
+    null,
+    { reason: "无 dimension 应跳过" },
+  ]);
+  assert.equal(out.length, 1, "并发(大小写/空格归一)合并为一条,噪声跳过");
+  assert.equal(out[0].reason, "锁顺序", "相同 reason 不重复拼接");
+});
+
+test("dedupeUncertain: 空 / undefined 安全", () => {
+  assert.deepEqual(dedupeUncertain([]), []);
+  assert.deepEqual(dedupeUncertain(undefined), []);
+});
+
+// ── fetchFiles(补充上下文抓取:真实 IO + 去重 + 安全过滤 + 截断)────────────────
+test("fetchFiles: 读相对文件、跨调用去重、跳不安全/不存在路径", () => {
+  const dir = mkdtempSync(join(tmpdir(), "pi-fetch-"));
+  const cwd0 = process.cwd();
+  try {
+    writeFileSync(join(dir, "a.txt"), "hello-A");
+    writeFileSync(join(dir, "b.txt"), "hello-B");
+    process.chdir(dir);
+    const seen = new Set();
+    const block = fetchFiles(
+      ["a.txt", "a.txt", "../escape.txt", "/etc/passwd", "missing.txt", "b.txt"],
+      seen,
+    );
+    assert.match(block, /### a\.txt/, "读到 a.txt");
+    assert.match(block, /hello-A/, "含 a.txt 内容");
+    assert.match(block, /### b\.txt/, "读到 b.txt");
+    assert.match(block, /hello-B/, "含 b.txt 内容");
+    assert.doesNotMatch(block, /escape|passwd|missing/, "不安全/不存在路径被跳过");
+    assert.deepEqual([...seen].sort(), ["a.txt", "b.txt"], "已读集合只含成功读取的两个");
+    assert.match(block, /补充代码上下文/, "带 main-版本 caveat 头");
+
+    // 跨调用去重:already 已含 a.txt → 再请求 a.txt 被跳过 → 无新内容返回 ""
+    assert.equal(fetchFiles(["a.txt"], seen), "", "已抓过的文件不再重复抓");
+  } finally {
+    process.chdir(cwd0);
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("fetchFiles: 无任何有效文件返回空串", () => {
+  const seen = new Set();
+  assert.equal(fetchFiles(["/abs/path", "../x", "nope.txt"], seen), "", "全无效 → 空串");
+  assert.equal(seen.size, 0, "无文件被记入已读集合");
+});
+
+test("fetchFiles: 超长文件按 FILE_BYTES 截断并标注", () => {
+  const dir = mkdtempSync(join(tmpdir(), "pi-fetch-big-"));
+  const cwd0 = process.cwd();
+  try {
+    writeFileSync(join(dir, "big.txt"), "x".repeat(9000)); // > 默认 FILE_BYTES(8000)
+    process.chdir(dir);
+    const block = fetchFiles(["big.txt"], new Set());
+    assert.match(block, /前 \d+ 字符/, "标注已截断");
+    // 截断后正文长度应 ≈ FILE_BYTES(远小于 9000)
+    const fenced = block.split("```")[1] || "";
+    assert.ok(fenced.replace(/\n/g, "").length <= 8000, "正文被截到 FILE_BYTES 以内");
+  } finally {
+    process.chdir(cwd0);
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
