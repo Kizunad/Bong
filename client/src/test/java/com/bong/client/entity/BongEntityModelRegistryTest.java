@@ -29,18 +29,16 @@ public class BongEntityModelRegistryTest {
     @Test
     void rawIdsStayAfterFaunaWithoutShiftingExistingContract() {
         // raw_id 146-159: contiguous block (plan-entity-model-v1 / plan-supply-coffin-v1).
-        // raw_id 160: reserved for boss_spawn/visual (plan §8.1 #1) — not in enum yet.
-        // raw_id 161-164: plan-coffin-tiers-v1 延寿棺四档.
+        // raw_id 160-163: plan-coffin-tiers-v1 延寿棺四档，与上面同在一个注册循环里连号。
+        // Baolongwang BOSS（独立 bootstrap）在本枚举之后注册，取 164 —— 不在本枚举内，
+        // 故本枚举的 raw_id 必须是从 146 起一路连续无空位（早期"160 留给 boss"的设计
+        // 已废弃：单循环注册无法在中间插空）。
         int expectedRawId = 146;
         for (BongEntityModelKind kind : BongEntityRegistry.orderedKindsForTests()) {
-            if (expectedRawId == 160) {
-                // Skip raw_id 160: reserved by boss_spawn/visual, not yet registered.
-                expectedRawId++;
-            }
             assertEquals(
                 expectedRawId++,
                 kind.expectedRawId(),
-                "Entity model raw ids must start after fauna raw_id=145 and stay sequential (gap at 160 reserved)"
+                "Entity model raw ids must start after fauna raw_id=145 and stay strictly sequential (no gaps)"
             );
         }
     }
@@ -117,14 +115,14 @@ public class BongEntityModelRegistryTest {
      */
     @Test
     void coffinTiersRawIdsPinMatchServerConstants() {
-        assertEquals(161, BongEntityModelKind.COFFIN_MUNDANE.expectedRawId(),
-            "COFFIN_MUNDANE raw_id must match server COFFIN_MUNDANE_ENTITY_KIND=161");
-        assertEquals(162, BongEntityModelKind.COFFIN_JADE.expectedRawId(),
-            "COFFIN_JADE raw_id must match server COFFIN_JADE_ENTITY_KIND=162");
-        assertEquals(163, BongEntityModelKind.COFFIN_STONE.expectedRawId(),
-            "COFFIN_STONE raw_id must match server COFFIN_STONE_ENTITY_KIND=163");
-        assertEquals(164, BongEntityModelKind.COFFIN_BRONZE.expectedRawId(),
-            "COFFIN_BRONZE raw_id must match server COFFIN_BRONZE_ENTITY_KIND=164");
+        assertEquals(160, BongEntityModelKind.COFFIN_MUNDANE.expectedRawId(),
+            "COFFIN_MUNDANE raw_id must match server COFFIN_MUNDANE_ENTITY_KIND=160");
+        assertEquals(161, BongEntityModelKind.COFFIN_JADE.expectedRawId(),
+            "COFFIN_JADE raw_id must match server COFFIN_JADE_ENTITY_KIND=161");
+        assertEquals(162, BongEntityModelKind.COFFIN_STONE.expectedRawId(),
+            "COFFIN_STONE raw_id must match server COFFIN_STONE_ENTITY_KIND=162");
+        assertEquals(163, BongEntityModelKind.COFFIN_BRONZE.expectedRawId(),
+            "COFFIN_BRONZE raw_id must match server COFFIN_BRONZE_ENTITY_KIND=163");
     }
 
     @Test

@@ -8,8 +8,10 @@
 //!
 //! `146..=148`: plan-supply-coffin-v1 — 巨剑沧海 物资棺 (Common/Rare/Precious).
 //! `149..=159`: plan-entity-model-v1 / tsy-container entries.
-//! `161..=164`: plan-coffin-tiers-v1 — 延寿棺四档 (Mundane/Jade/Stone/Bronze)。
-//!              `160` 已被 boss_spawn / visual 双重占用（见 plan §8.1 #1），故从 161 起。
+//! `160..=163`: plan-coffin-tiers-v1 — 延寿棺四档 (Mundane/Jade/Stone/Bronze)，
+//!              紧随 STONE_CASKET=159 连号（与客户端 BongEntityModelKind 同一注册循环）。
+//! `164`:       Baolongwang BOSS（见 `fauna::visual::BAOLONGWANG_ENTITY_KIND`），
+//!              客户端独立 bootstrap 在四档之后注册，故取最高号 164。
 
 use std::collections::{HashMap, HashSet};
 
@@ -50,12 +52,13 @@ pub const STORAGE_POUCH_ENTITY_KIND: EntityKind = EntityKind::new(158);
 pub const STONE_CASKET_ENTITY_KIND: EntityKind = EntityKind::new(159);
 
 // plan-coffin-tiers-v1 P2 — 延寿棺四档建模实体。客户端 BongEntityModelKind 同步注册
-// （raw_id 1:1 对齐，P3 落地）。`160` 已被 boss_spawn/visual 双重占用，故从 161 起
-// （见 plan §8.1 #1）。
-pub const COFFIN_MUNDANE_ENTITY_KIND: EntityKind = EntityKind::new(161);
-pub const COFFIN_JADE_ENTITY_KIND: EntityKind = EntityKind::new(162);
-pub const COFFIN_STONE_ENTITY_KIND: EntityKind = EntityKind::new(163);
-pub const COFFIN_BRONZE_ENTITY_KIND: EntityKind = EntityKind::new(164);
+// （raw_id 1:1 对齐）。紧随 STONE_CASKET=159 连号 160..=163；Baolongwang BOSS 在四档
+// 之后注册，取 164。（修正：早期文档把 160 留给 boss，但客户端把四档并入同一注册
+// 循环，无法在中间为 boss 插空，故四档连号、boss 取最高号。）
+pub const COFFIN_MUNDANE_ENTITY_KIND: EntityKind = EntityKind::new(160);
+pub const COFFIN_JADE_ENTITY_KIND: EntityKind = EntityKind::new(161);
+pub const COFFIN_STONE_ENTITY_KIND: EntityKind = EntityKind::new(162);
+pub const COFFIN_BRONZE_ENTITY_KIND: EntityKind = EntityKind::new(163);
 
 const BONG_VISUAL_STATE_INDEX: u8 = 8;
 const TRACKED_DATA_TYPE_INTEGER: u8 = 1;
@@ -616,7 +619,7 @@ mod tests {
             BONE_SKELETON_ENTITY_KIND,
             STORAGE_POUCH_ENTITY_KIND,
             STONE_CASKET_ENTITY_KIND,
-            // plan-coffin-tiers-v1 P2 — 延寿棺四档（160 已占用，从 161 起）。
+            // plan-coffin-tiers-v1 P2 — 延寿棺四档，连号 160..=163（Baolongwang BOSS=164 在其后）。
             COFFIN_MUNDANE_ENTITY_KIND,
             COFFIN_JADE_ENTITY_KIND,
             COFFIN_STONE_ENTITY_KIND,
@@ -627,11 +630,11 @@ mod tests {
         assert_eq!(
             ids,
             [
-                146, 147, 148, 149, 150, 151, 152, 153, 154, 155, 156, 157, 158, 159, 161, 162,
-                163, 164
+                146, 147, 148, 149, 150, 151, 152, 153, 154, 155, 156, 157, 158, 159, 160, 161,
+                162, 163
             ],
             "entity raw_id contract drifted: client BongEntityModelKind must stay 1:1; \
-             延寿棺四档锁定 161-164（160 被 boss_spawn/visual 占用，见 plan §8.1 #1）"
+             延寿棺四档连号 160-163（Baolongwang BOSS 在四档之后注册取 164）"
         );
     }
 
@@ -642,22 +645,22 @@ mod tests {
         assert_eq!(
             CoffinGrade::Mundane.visual_kind().entity_kind(),
             COFFIN_MUNDANE_ENTITY_KIND,
-            "Mundane 应映射到 raw_id 161"
+            "Mundane 应映射到 raw_id 160"
         );
         assert_eq!(
             CoffinGrade::Jade.visual_kind().entity_kind(),
             COFFIN_JADE_ENTITY_KIND,
-            "Jade 应映射到 raw_id 162"
+            "Jade 应映射到 raw_id 161"
         );
         assert_eq!(
             CoffinGrade::Stone.visual_kind().entity_kind(),
             COFFIN_STONE_ENTITY_KIND,
-            "Stone 应映射到 raw_id 163"
+            "Stone 应映射到 raw_id 162"
         );
         assert_eq!(
             CoffinGrade::Bronze.visual_kind().entity_kind(),
             COFFIN_BRONZE_ENTITY_KIND,
-            "Bronze 应映射到 raw_id 164"
+            "Bronze 应映射到 raw_id 163"
         );
     }
 

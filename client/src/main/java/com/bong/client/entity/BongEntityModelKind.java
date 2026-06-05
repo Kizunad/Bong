@@ -188,12 +188,13 @@ public enum BongEntityModelKind {
         "searching",
         "looted"
     ),
-    // plan-coffin-tiers-v1 P3 — 延寿棺四档。raw_id 161-164 对齐 server entity_model.rs。
-    // raw_id 160 已被 boss_spawn/visual 占用（见 plan §8.1 #1），故从 161 起。
+    // plan-coffin-tiers-v1 — 延寿棺四档。raw_id 160-163 紧随 STONE_CASKET=159 连号，
+    // 对齐 server entity_model.rs。这四档与上面的 146-159 同在 BongEntityRegistry 单循环里
+    // 连续注册，无法在中间为 BOSS 插空，故 Baolongwang（独立 bootstrap，本枚举之后注册）取 164。
     COFFIN_MUNDANE(
         "mundane_coffin",
         "MundaneCoffin.bbmodel",
-        161,
+        160,
         1.0f,
         0.6f,
         64,
@@ -204,7 +205,7 @@ public enum BongEntityModelKind {
     COFFIN_JADE(
         "jade_coffin",
         "JadeCoffin.bbmodel",
-        162,
+        161,
         1.0f,
         0.65f,
         64,
@@ -215,7 +216,7 @@ public enum BongEntityModelKind {
     COFFIN_STONE(
         "stone_coffin",
         "StoneCoffin.bbmodel",
-        163,
+        162,
         1.1f,
         0.65f,
         64,
@@ -226,7 +227,7 @@ public enum BongEntityModelKind {
     COFFIN_BRONZE(
         "bronze_coffin",
         "BronzeCoffin.bbmodel",
-        164,
+        163,
         1.2f,
         0.7f,
         64,
