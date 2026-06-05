@@ -10,6 +10,9 @@ name: Pi Plan-Aware Review
 #     轮间注入倒计时+语气,面板自信度中位数 ≥ 阈值则提前收敛,到上限强制收口
 #   低自信 fan-out:仍不达标且有弱项 → 每个弱维派一个专项成员并行深挖
 #   第二步 arbiter:综合去重后的 findings 产出中文 review 并发评论
+# 多 provider 力大砖飞:模型名 `provider/id` 路由到各自端点/key/API 格式(OpenAI + Anthropic),
+#   一次 review 同时混免费队(cliproxy flash/lite、ollama minimax)+ 付费 pro(deepseek)。
+#   某 provider 宕机/无 key → 自动跳过(graceful degrade),不阻断全局。
 # 端点/模型/key/轮控参数全 env 可覆盖(repo variables / secrets)。
 on:
   issue_comment:
@@ -40,9 +43,9 @@ jobs:
        contains(github.event.comment.body, '@pi') &&
        contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association))
     runs-on: ubuntu-latest
-    # 轮控已使一切有界(面板并发 × ≤PI_MAX_ROUNDS 轮 + fan-out,单次调用 ≤PI_CALL_TIMEOUT_MS)。
-    # 旧版 60min 是为无界 agent 循环兜底;现在 25min 绰绰有余,既是上限也是异常逃生阀。
-    timeout-minutes: 25
+    # 力大砖飞:32 成员面板 × ≤2 轮 + fan-out,跨 3 个端点并发。每次调用 ≤PI_CALL_TIMEOUT_MS、
+    # 轮数硬上限,所以仍有界;45min 是大面板的逃生阀(实测一次约 7-15min)。
+    timeout-minutes: 45
 
     steps:
       # 签出默认分支(main):issue_comment 触发的 workflow 只认 main 上的定义,PR head 没有本脚本。
@@ -53,24 +56,25 @@ jobs:
         with:
           node-version: "24"
 
-      - name: Pi Plan-Aware Review (确定性轮控)
+      - name: Pi Plan-Aware Review (多 provider 力大砖飞 + 确定性轮控)
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PR_NUMBER: ${{ github.event.issue.number || inputs.pr_number }}
-          # 端点/模型/key 全可覆盖。默认走已验证可用的 SenseNova OpenAI 兼容端点 + deepseek-v4-* 模型名。
-          PI_BASE_URL: ${{ vars.PI_BASE_URL || 'https://token.sensenova.cn/v1' }}
-          # key 轮询:DEEPSEEK_API_KEY 打头、HIVE_API_KEY(_2) 兜底(同端点的不同羊毛 key),失败自动切下一把。
-          PI_API_KEYS: ${{ secrets.DEEPSEEK_API_KEY }},${{ secrets.HIVE_API_KEY }},${{ secrets.HIVE_API_KEY_2 }}
-          # 分层模型:gather 廉价 flash 压缩;debate 面板可混多模型(逗号分隔,成员循环取用)。
-          # 待 deepseek-v4-pro 在端点上确认可用后,把 PI_DEBATE_MODELS 改成 'deepseek-v4-pro' 即升级 pro 档。
-          PI_GATHER_MODEL: ${{ vars.PI_GATHER_MODEL || 'deepseek-v4-flash' }}
-          PI_DEBATE_MODELS: ${{ vars.PI_DEBATE_MODELS || 'deepseek-v4-flash,sensenova-6.7-flash-lite,deepseek-v4-flash' }}
-          PI_ARBITER_MODEL: ${{ vars.PI_ARBITER_MODEL || 'deepseek-v4-flash' }}
-          # 轮控参数:面板 3 成员 × 最多 3 轮,自信度中位数 ≥80 提前收敛;低自信精准 fan-out ≤4 个弱维。
-          PI_MAX_ROUNDS: ${{ vars.PI_MAX_ROUNDS || '3' }}
-          PI_PANEL: ${{ vars.PI_PANEL || '3' }}
+          # 多 provider key:模型名 `provider/id` 路由到各自端点。免费队(cliproxy/ollama)+ 付费 pro(deepseek)。
+          # kiro/anyrouter 的免费 claude 当前端点已宕(530/无效令牌),暂不入清单;救活后加进 PI_DEBATE_MODELS 即可。
+          PI_CLIPROXY_KEY: ${{ secrets.PI_CLIPROXY_KEY }}
+          PI_DEEPSEEK_KEY: ${{ secrets.PI_DEEPSEEK_KEY }}
+          PI_OLLAMA_KEY: ${{ secrets.PI_OLLAMA_KEY }}
+          PI_KIRO_KEY: ${{ secrets.PI_KIRO_KEY }}
+          # 力大砖飞配比:flash×20 + pro×4(付费)+ lite×4 + minimax×4 = 32 成员(全 env 可覆盖)。
+          # gather 廉价 flash 压缩;arbiter 用最强的 pro 做最终综合(1 次)。
+          PI_GATHER_MODEL: ${{ vars.PI_GATHER_MODEL || 'cliproxy/deepseek-v4-flash' }}
+          PI_DEBATE_MODELS: ${{ vars.PI_DEBATE_MODELS || 'cliproxy/deepseek-v4-flash*20,deepseek/deepseek-v4-pro*4,cliproxy/sensenova-6.7-flash-lite*4,ollama/minimax-m3*4' }}
+          PI_ARBITER_MODEL: ${{ vars.PI_ARBITER_MODEL || 'deepseek/deepseek-v4-pro' }}
+          # 轮控:面板默认 = 清单全员(32);最多 2 轮(大面板单轮信号已足);中位数 ≥80 提前收敛;低自信 fan-out ≤4。
+          PI_MAX_ROUNDS: ${{ vars.PI_MAX_ROUNDS || '2' }}
           PI_CONFIDENCE_TARGET: ${{ vars.PI_CONFIDENCE_TARGET || '80' }}
           PI_FANOUT_MAX: ${{ vars.PI_FANOUT_MAX || '4' }}
-          PI_CONCURRENCY: ${{ vars.PI_CONCURRENCY || '6' }}
+          PI_CONCURRENCY: ${{ vars.PI_CONCURRENCY || '16' }}
           PI_CALL_TIMEOUT_MS: ${{ vars.PI_CALL_TIMEOUT_MS || '300000' }}
         run: node .github/scripts/pi-review.mjs
