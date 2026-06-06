@@ -1275,6 +1275,34 @@ mod tests {
         }
     }
 
+    /// plan-exploration-probe-return-v1 P1 — FreshnessProbe C2S serde round-trip。
+    /// instance_id 字段：0 = 最小值，u64::MAX = 最大值，普通正整数 wire 对拍。
+    #[test]
+    fn freshness_probe_roundtrip() {
+        let json = r#"{"type":"freshness_probe","v":1,"instance_id":4096}"#;
+        let req: ClientRequestV1 = serde_json::from_str(json).unwrap();
+        match req {
+            ClientRequestV1::FreshnessProbe { v, instance_id } => {
+                assert_eq!(v, 1, "version byte should be 1");
+                assert_eq!(instance_id, 4096, "instance_id should round-trip as 4096");
+            }
+            other => panic!("expected FreshnessProbe, got {other:?}"),
+        }
+        // 边界：instance_id=0 合法
+        let json_zero = r#"{"type":"freshness_probe","v":1,"instance_id":0}"#;
+        let req_zero: ClientRequestV1 = serde_json::from_str(json_zero).unwrap();
+        match req_zero {
+            ClientRequestV1::FreshnessProbe { instance_id: 0, .. } => {}
+            other => panic!("expected FreshnessProbe{{instance_id=0}}, got {other:?}"),
+        }
+        // 负例：缺少 instance_id 应反序列化失败
+        let bad_json = r#"{"type":"freshness_probe","v":1}"#;
+        assert!(
+            serde_json::from_str::<ClientRequestV1>(bad_json).is_err(),
+            "FreshnessProbe without instance_id should be rejected"
+        );
+    }
+
     #[test]
     fn inventory_discard_item_roundtrip() {
         let json = r#"{"type":"inventory_discard_item","v":1,"instance_id":1001,"from":{"kind":"container","container_id":"main_pack","row":0,"col":0}}"#;

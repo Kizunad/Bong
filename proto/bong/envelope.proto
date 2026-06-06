@@ -3733,9 +3733,9 @@ message MineralProbeResult {
 
 // ─── plan-exploration-probe-return-v1 P1：神识感知保鲜 C2S ────────
 // 与 Rust ClientRequestV1::FreshnessProbe 精确对应。
-// slot = 玩家背包第一容器内 row-major 扁平槽位编号（0-indexed）。
+// instance_id = 玩家 inventory 中物品的实例 ID（直接定位，消除容器 tab 歧义）。
 message FreshnessProbe {
-  uint32 slot = 1;
+  uint64 instance_id = 1;
 }
 
 // ─── plan-exploration-probe-return-v1 P1：神识感知保鲜回执 S2C ────

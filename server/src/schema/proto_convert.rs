@@ -3495,8 +3495,8 @@ impl From<&super::client_request::ClientRequestV1> for bong::client_request_enve
                 })
             }
             // ─── plan-exploration-probe-return-v1 P1：神识感知保鲜 C2S ────────
-            ClientRequestV1::FreshnessProbe { slot, .. } => {
-                Payload::FreshnessProbe(bong::FreshnessProbe { slot: *slot as u32 })
+            ClientRequestV1::FreshnessProbe { instance_id, .. } => {
+                Payload::FreshnessProbe(bong::FreshnessProbe { instance_id: *instance_id })
             }
             // ─── 丹药 C2S ────────────────────────────────────────
             ClientRequestV1::ApplyPill {
