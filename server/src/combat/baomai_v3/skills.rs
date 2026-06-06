@@ -714,6 +714,10 @@ fn active_flow_multiplier(world: &bevy_ecs::world::World, caster: Entity, tick: 
 }
 
 fn heavy_color_multiplier(world: &bevy_ecs::world::World, caster: Entity) -> f64 {
+    // 杂色玩家专项加成清零（worldview §六.2「只剩基础真元属性」）
+    if world.get::<QiColor>(caster).is_some_and(|c| c.is_chaotic) {
+        return 1.0;
+    }
     let Some(log) = world.get::<PracticeLog>(caster) else {
         return 1.0;
     };

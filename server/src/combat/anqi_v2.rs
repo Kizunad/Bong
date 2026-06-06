@@ -460,6 +460,10 @@ fn resolve_anqi_skill(
         .map(|m| m.level(skill))
         .unwrap_or_default();
     let color_matched = world.get::<QiColor>(caster).is_some_and(|color| {
+        // 杂色玩家专项加成清零（worldview §六.2「只剩基础真元属性」）
+        if color.is_chaotic {
+            return false;
+        }
         // v2 凝实色匹配读 Cultivation/QiColor 现有主色；当前 ColorKind 没有独立档差，
         // 以 main color 存在视作匹配入口，后续 color plan 可细化。
         matches!(color.main, crate::cultivation::components::ColorKind::Solid)
@@ -1044,5 +1048,104 @@ mod tests {
         );
         let abrasions = world.resource::<bevy_ecs::event::Events<CarrierAbrasionEvent>>();
         assert_eq!(abrasions.get_reader().read(abrasions).count(), 0);
+    }
+
+    // P1: 杂色 guard ─ SoulInject color_matched 必须被清零 -------------------
+
+    /// SoulInject 用 high_density_inject(color_matched=true/false) 区分加成路径。
+    /// 杂色时必须强制 color_matched=false，否则违反 worldview §六.2「只剩基础真元属性」。
+    #[test]
+    fn soul_inject_color_matched_forced_false_when_chaotic() {
+        let mut world = bevy_ecs::world::World::new();
+        world.insert_resource(CombatClock { tick: 100 });
+        world.insert_resource(bevy_ecs::event::Events::<QiInjectionEvent>::default());
+        world.insert_resource(bevy_ecs::event::Events::<CarrierAbrasionEvent>::default());
+        let (inventory, store) =
+            charged_inventory_and_store(10, AnqiSkillId::SoulInject.carrier_kind());
+        let qi_color = QiColor {
+            main: crate::cultivation::components::ColorKind::Solid,
+            is_chaotic: true, // 主色是 Solid 但杂色=true
+            ..Default::default()
+        };
+        let target = world.spawn(()).id();
+        let caster = world
+            .spawn((
+                Cultivation {
+                    realm: Realm::Condense,
+                    qi_current: 100.0,
+                    qi_max: 100.0,
+                    ..Default::default()
+                },
+                SkillBarBindings::default(),
+                inventory,
+                store,
+                ContainerSlot {
+                    active: AnqiContainerKind::HandSlot,
+                    switching_until_tick: 0,
+                },
+                qi_color,
+            ))
+            .id();
+        resolve_anqi_skill(&mut world, caster, 0, Some(target), AnqiSkillId::SoulInject);
+        let injections = world.resource::<bevy_ecs::event::Events<QiInjectionEvent>>();
+        let events: Vec<_> = injections.get_reader().read(injections).cloned().collect();
+        assert_eq!(
+            events.len(),
+            1,
+            "期望触发 1 次 SoulInject，因为 Condense 境界且 qi 充足"
+        );
+        // color_matched=false 时 high_density_inject 不会产生额外 overload_ratio 加成
+        // 正常色 Solid 匹配时 overload_ratio 会因 color_matched=true 增大；
+        // 杂色时 overload_ratio 应等于 payload/max 基础值（无加成）
+        let base_overload = events[0].outcome.overload_ratio;
+        // 验证不超过基础（无加成时约等于 payload_qi/qi_max）
+        assert!(
+            base_overload <= 0.5,
+            "期望杂色时 SoulInject overload_ratio 不超过基础 0.5，实际={base_overload}（验证 color_matched=false 无加成）"
+        );
+    }
+
+    /// 正常 Solid 主色（非杂色）SoulInject 应传入 color_matched=true。
+    #[test]
+    fn soul_inject_color_matched_true_when_solid_non_chaotic() {
+        let mut world = bevy_ecs::world::World::new();
+        world.insert_resource(CombatClock { tick: 100 });
+        world.insert_resource(bevy_ecs::event::Events::<QiInjectionEvent>::default());
+        world.insert_resource(bevy_ecs::event::Events::<CarrierAbrasionEvent>::default());
+        let (inventory, store) =
+            charged_inventory_and_store(20, AnqiSkillId::SoulInject.carrier_kind());
+        let qi_color = QiColor {
+            main: crate::cultivation::components::ColorKind::Solid,
+            is_chaotic: false,
+            ..Default::default()
+        };
+        let target = world.spawn(()).id();
+        let caster = world
+            .spawn((
+                Cultivation {
+                    realm: Realm::Condense,
+                    qi_current: 100.0,
+                    qi_max: 100.0,
+                    ..Default::default()
+                },
+                SkillBarBindings::default(),
+                inventory,
+                store,
+                ContainerSlot {
+                    active: AnqiContainerKind::HandSlot,
+                    switching_until_tick: 0,
+                },
+                qi_color,
+            ))
+            .id();
+        resolve_anqi_skill(&mut world, caster, 0, Some(target), AnqiSkillId::SoulInject);
+        let injections = world.resource::<bevy_ecs::event::Events<QiInjectionEvent>>();
+        let events: Vec<_> = injections.get_reader().read(injections).cloned().collect();
+        assert_eq!(events.len(), 1, "期望触发 1 次 SoulInject");
+        // color_matched=true 允许更大 payload，overload_ratio 应比基础更高
+        assert!(
+            events[0].outcome.overload_ratio > 0.0,
+            "期望正常 Solid 色 SoulInject 成功触发注射（color_matched=true 路径）"
+        );
     }
 }

@@ -2303,7 +2303,10 @@ fn effective_duration_ticks(
         ZhenfaSpecialistLevel::Novice => 1.0 / 1.25,
         ZhenfaSpecialistLevel::Expert => 1.0,
     };
-    let color_factor = if color_matches(qi_color.main, qi_color.secondary, ColorKind::Solid) {
+    // 杂色玩家专项加成清零（worldview §六.2「只剩基础真元属性」）
+    let color_factor = if !qi_color.is_chaotic
+        && color_matches(qi_color.main, qi_color.secondary, ColorKind::Solid)
+    {
         2.0
     } else {
         1.0
@@ -2315,7 +2318,10 @@ fn active_trigger_range(cultivation: &Cultivation, qi_color: &QiColor) -> f64 {
     let base =
         crate::cultivation::spiritual_sense::scanner::scan_radius_for_realm(cultivation.realm);
     let base = if base <= 0.0 { 16.0 } else { base };
-    if color_matches(qi_color.main, qi_color.secondary, ColorKind::Intricate) {
+    // 杂色玩家专项加成清零（worldview §六.2「只剩基础真元属性」）
+    if !qi_color.is_chaotic
+        && color_matches(qi_color.main, qi_color.secondary, ColorKind::Intricate)
+    {
         base * 1.5
     } else {
         base
@@ -4387,6 +4393,90 @@ mod tests {
         assert_eq!(
             registry.anchor_visual_state(&ZhenfaAnchor { id: 999 }),
             ZHENFA_VISUAL_STATE_EXHAUSTED
+        );
+    }
+
+    // P1: 杂色 guard — effective_duration_ticks & active_trigger_range --------
+
+    fn cultivation_for_realm(realm: Realm) -> Cultivation {
+        Cultivation {
+            realm,
+            qi_current: 100.0,
+            qi_max: 100.0,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn effective_duration_no_color_bonus_when_chaotic() {
+        // 期望: 杂色时 Solid 主色不提供 2x 延时加成（worldview §六.2「只剩基础真元属性」）
+        let base_ticks: u64 = 200;
+        let chaotic = QiColor {
+            main: ColorKind::Solid,
+            is_chaotic: true,
+            ..Default::default()
+        };
+        let ticks_chaotic =
+            effective_duration_ticks(base_ticks, &chaotic, ZhenfaSpecialistLevel::Expert);
+        assert_eq!(
+            ticks_chaotic, base_ticks,
+            "期望杂色时 effective_duration_ticks={base_ticks}（无 2x 加成），实际={ticks_chaotic}"
+        );
+    }
+
+    #[test]
+    fn effective_duration_solid_color_bonus_when_non_chaotic() {
+        // 期望: 正常 Solid 主色时 Expert 级别延时翻倍 (base * 2.0)
+        let base_ticks: u64 = 200;
+        let solid = QiColor {
+            main: ColorKind::Solid,
+            ..Default::default() // is_chaotic=false by default
+        };
+        let ticks = effective_duration_ticks(base_ticks, &solid, ZhenfaSpecialistLevel::Expert);
+        assert_eq!(
+            ticks,
+            base_ticks * 2,
+            "期望正常 Solid 色 Expert 级别延时={expected}（2x 加成），实际={ticks}",
+            expected = base_ticks * 2
+        );
+    }
+
+    #[test]
+    fn active_trigger_range_no_bonus_when_chaotic() {
+        // 期望: 杂色时 Intricate 主色不提供 1.5x 范围加成（worldview §六.2「只剩基础真元属性」）
+        let cultivation = cultivation_for_realm(Realm::Condense);
+        let chaotic = QiColor {
+            main: ColorKind::Intricate,
+            is_chaotic: true,
+            ..Default::default()
+        };
+        let normal = QiColor {
+            main: ColorKind::Intricate,
+            ..Default::default() // is_chaotic=false
+        };
+        let range_chaotic = active_trigger_range(&cultivation, &chaotic);
+        let range_normal = active_trigger_range(&cultivation, &normal);
+        assert!(
+            range_chaotic < range_normal,
+            "期望杂色时 active_trigger_range={range_chaotic} < 正常 Intricate 色 range={range_normal}（杂色无 1.5x 加成）"
+        );
+    }
+
+    #[test]
+    fn active_trigger_range_intricate_bonus_when_non_chaotic() {
+        // 期望: 正常 Intricate 主色提供 1.5x 范围加成
+        let cultivation = cultivation_for_realm(Realm::Condense);
+        let intricate = QiColor {
+            main: ColorKind::Intricate,
+            ..Default::default() // is_chaotic=false
+        };
+        let mellow = QiColor::default(); // default non-Intricate
+        let base_range = active_trigger_range(&cultivation, &mellow);
+        let bonus_range = active_trigger_range(&cultivation, &intricate);
+        assert!(
+            (bonus_range - base_range * 1.5).abs() < 0.1,
+            "期望正常 Intricate 色 active_trigger_range={bonus_range} ≈ base*1.5={expected}",
+            expected = base_range * 1.5
         );
     }
 }

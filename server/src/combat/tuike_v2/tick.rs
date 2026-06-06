@@ -3,7 +3,7 @@ use valence::prelude::{Commands, Entity, EventWriter, Query, Res};
 use crate::combat::components::DerivedAttrs;
 use crate::combat::CombatClock;
 use crate::cultivation::color::PracticeLog;
-use crate::cultivation::components::Cultivation;
+use crate::cultivation::components::{Cultivation, QiColor};
 use crate::inventory::{consume_item_instance_once, PlayerInventory, EQUIP_SLOT_FALSE_SKIN};
 
 use super::events::{
@@ -26,6 +26,7 @@ type MaintenanceFalseSkinItem<'a> = (
     &'a mut Cultivation,
     &'a mut StackedFalseSkins,
     Option<&'a PracticeLog>,
+    Option<&'a QiColor>,
     Option<&'a mut DerivedAttrs>,
     Option<&'a mut PlayerInventory>,
 );
@@ -99,8 +100,8 @@ pub fn false_skin_maintenance_tick(
     if tick % crate::combat::components::TICKS_PER_SECOND != 0 {
         return;
     }
-    for (entity, mut cultivation, mut stack, practice, attrs, inventory) in &mut query {
-        let cost = maintenance_qi_per_sec(&stack, practice);
+    for (entity, mut cultivation, mut stack, practice, qi_color, attrs, inventory) in &mut query {
+        let cost = maintenance_qi_per_sec(&stack, practice, qi_color);
         if cost <= f64::EPSILON {
             continue;
         }
