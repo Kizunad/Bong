@@ -5,8 +5,9 @@ name: Pi Plan-Aware Review
 # 引擎:确定性轮控脚本 .github/scripts/pi-review.mjs(自包含,只用 Node fetch + gh,无 npm 依赖)。
 # 旧版用 pi-coding-agent-action + hive-think 扩展——那是个【无界 agent 循环】(pi -p 无轮数上限,
 # 只在模型自己停手 / 30min 硬超时退出),一次 review 能烧 30+ 分钟。现改为脚本在外层做离散轮控:
+#   动态分档:先按 diff 规模(变更行数+文件数)选档,定面板配比 + 轮数 + arbiter 档(小改省钱、大改力大砖飞)
 #   第零步 gather(flash,1 次):diff + plan 压成紧凑 brief
-#   第一步 debate 轮控(pro 面板 × 最多 PI_MAX_ROUNDS 轮):每轮单轮无工具调用(天生有界),
+#   第一步 debate 轮控(面板 × 最多 PI_MAX_ROUNDS 轮):每轮单轮无工具调用(天生有界),
 #     轮间注入倒计时+语气,面板自信度中位数 ≥ 阈值则提前收敛,到上限强制收口
 #   低自信 fan-out:仍不达标且有弱项 → 每个弱维派一个专项成员并行深挖
 #   第二步 arbiter:综合去重后的 findings 产出中文 review 并发评论
@@ -43,7 +44,7 @@ jobs:
        contains(github.event.comment.body, '@pi') &&
        contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association))
     runs-on: ubuntu-latest
-    # 力大砖飞:32 成员面板 × ≤2 轮 + fan-out,跨 cliproxy(免费)+ deepseek(pro)两端点并发。每次调用 ≤PI_CALL_TIMEOUT_MS、
+    # 动态分档:小改 6 成员/1 轮/零付费,大改力大砖飞 32 成员/2 轮,跨 cliproxy(免费)+ deepseek(pro)两端点并发。每次调用 ≤PI_CALL_TIMEOUT_MS、
     # 轮数硬上限,所以仍有界;45min 是大面板的逃生阀(实测一次约 7-15min)。
     timeout-minutes: 45
 
@@ -65,13 +66,18 @@ jobs:
           # 这几个 provider 的 registry 仍在脚本里——救活/加额度后把模型加回 PI_DEBATE_MODELS 即可,不动代码。
           PI_CLIPROXY_KEY: ${{ secrets.PI_CLIPROXY_KEY }}
           PI_DEEPSEEK_KEY: ${{ secrets.PI_DEEPSEEK_KEY }}
-          # 力大砖飞配比:flash×20 + pro×4(付费)+ lite×8 = 32 成员(全 env 可覆盖)。
-          # gather 廉价 flash 压缩;arbiter 用最强的 pro 做最终综合(1 次)。
+          # 动态分档:按 diff 规模自动选面板配比 + 轮数(脚本 TIERS,均衡档):
+          #   trivial ≤40 行 = flash4+lite2 / 1 轮 / 无 pro(零成本)
+          #   small   ≤250    = flash8+pro1+lite3 / 1 轮
+          #   medium  ≤1000   = flash14+pro2+lite5 / 2 轮
+          #   large   >1000   = flash20+pro4+lite8 / 2 轮(力大砖飞);文件≥15 升一档
+          # 这里只配【角色模型】(分档按角色拼面板);arbiter 在有 pro 的档用 pro、trivial 用免费 flash。
+          PI_FLASH_MODEL: ${{ vars.PI_FLASH_MODEL || 'cliproxy/deepseek-v4-flash' }}
+          PI_PRO_MODEL: ${{ vars.PI_PRO_MODEL || 'deepseek/deepseek-v4-pro' }}
+          PI_LITE_MODEL: ${{ vars.PI_LITE_MODEL || 'cliproxy/sensenova-6.7-flash-lite' }}
           PI_GATHER_MODEL: ${{ vars.PI_GATHER_MODEL || 'cliproxy/deepseek-v4-flash' }}
-          PI_DEBATE_MODELS: ${{ vars.PI_DEBATE_MODELS || 'cliproxy/deepseek-v4-flash*20,deepseek/deepseek-v4-pro*4,cliproxy/sensenova-6.7-flash-lite*8' }}
-          PI_ARBITER_MODEL: ${{ vars.PI_ARBITER_MODEL || 'deepseek/deepseek-v4-pro' }}
-          # 轮控:面板默认 = 清单全员(32);最多 2 轮(大面板单轮信号已足);中位数 ≥80 提前收敛;低自信 fan-out ≤4。
-          PI_MAX_ROUNDS: ${{ vars.PI_MAX_ROUNDS || '2' }}
+          # 要钉死面板/轮数(关掉 autoscale 那一维)就设 vars.PI_DEBATE_MODELS / PI_MAX_ROUNDS / PI_ARBITER_MODEL;
+          # 整体关掉 autoscale 设 vars.PI_AUTOSCALE=0。
           PI_CONFIDENCE_TARGET: ${{ vars.PI_CONFIDENCE_TARGET || '80' }}
           PI_FANOUT_MAX: ${{ vars.PI_FANOUT_MAX || '4' }}
           PI_CONCURRENCY: ${{ vars.PI_CONCURRENCY || '16' }}

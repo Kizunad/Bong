@@ -20,6 +20,9 @@ import {
   fetchFiles,
   expandModelList,
   parseModel,
+  pickTier,
+  buildTierPanel,
+  TIERS,
 } from "./pi-review.mjs";
 
 // ── normalizeConfidence ──────────────────────────────────────────────────────
@@ -332,4 +335,50 @@ test("parseModel: 拆 provider/id / 无前缀 / 多段只切首个斜杠", () =>
   assert.deepEqual(parseModel("kiro/claude-sonnet-4-6"), { provider: "kiro", id: "claude-sonnet-4-6" });
   assert.deepEqual(parseModel("a/b/c"), { provider: "a", id: "b/c" }, "只在首个 / 切分,id 保留余下斜杠");
   assert.deepEqual(parseModel("  "), { provider: null, id: "" }, "空白 → 空 id");
+});
+
+// ── pickTier(按改动规模动态分档)─────────────────────────────────────────────
+test("pickTier: 按总变更行数选档(含每个边界 off-by-one)", () => {
+  assert.equal(pickTier(0, 1).label, "trivial", "0 行 → trivial");
+  assert.equal(pickTier(40, 1).label, "trivial", "40 行(上界)→ trivial");
+  assert.equal(pickTier(41, 1).label, "small", "41 行 → small");
+  assert.equal(pickTier(250, 1).label, "small", "250 行(上界)→ small");
+  assert.equal(pickTier(251, 1).label, "medium", "251 行 → medium");
+  assert.equal(pickTier(1000, 1).label, "medium", "1000 行(上界)→ medium");
+  assert.equal(pickTier(1001, 1).label, "large", "1001 行 → large");
+  assert.equal(pickTier(999999, 3).label, "large", "超大 → large 兜底");
+});
+
+test("pickTier: 文件数 ≥15 升一档,且封顶 large 不溢出", () => {
+  assert.equal(pickTier(10, 14).label, "trivial", "14 文件不升档");
+  assert.equal(pickTier(10, 15).label, "small", "15 文件:trivial→small 升一档");
+  assert.equal(pickTier(200, 20).label, "medium", "small 行数 + 多文件 → medium");
+  assert.equal(pickTier(5000, 50).label, "large", "已是 large + 多文件 → 仍 large(不溢出)");
+});
+
+test("pickTier: 非法输入安全(NaN/负数当 0 → trivial)", () => {
+  assert.equal(pickTier(NaN, NaN).label, "trivial");
+  assert.equal(pickTier(-100, 0).label, "trivial", "负行数当 0");
+});
+
+test("pickTier: 每档的配比单调不减(flash/pro/lite/rounds 越大档越多)", () => {
+  for (let i = 1; i < TIERS.length; i++) {
+    assert.ok(TIERS[i].flash >= TIERS[i - 1].flash, `${TIERS[i].label} flash ≥ 前档`);
+    assert.ok(TIERS[i].pro >= TIERS[i - 1].pro, `${TIERS[i].label} pro ≥ 前档`);
+    assert.ok(TIERS[i].rounds >= TIERS[i - 1].rounds, `${TIERS[i].label} rounds ≥ 前档`);
+  }
+  assert.equal(TIERS[0].pro, 0, "trivial 档 0 付费 pro(零成本)");
+});
+
+// ── buildTierPanel(档 → 角色模型展开)────────────────────────────────────────
+test("buildTierPanel: 按角色模型 + 数量展开,pro=0 时不含 pro", () => {
+  const roles = { flashModel: "cliproxy/flash", proModel: "deepseek/pro", liteModel: "cliproxy/lite" };
+  const trivial = buildTierPanel({ flash: 4, pro: 0, lite: 2 }, roles);
+  assert.equal(trivial.length, 6, "4+0+2 = 6");
+  assert.ok(!trivial.includes("deepseek/pro"), "trivial 不含付费 pro");
+  assert.equal(trivial.filter((m) => m === "cliproxy/flash").length, 4);
+
+  const large = buildTierPanel({ flash: 20, pro: 4, lite: 8 }, roles);
+  assert.equal(large.length, 32, "20+4+8 = 32 力大砖飞");
+  assert.equal(large.filter((m) => m === "deepseek/pro").length, 4, "large 含 4 个 pro");
 });
