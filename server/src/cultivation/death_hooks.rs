@@ -439,7 +439,8 @@ pub fn log_death_trigger(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cultivation::components::MeridianId;
+    use crate::cultivation::color::PracticeLog;
+    use crate::cultivation::components::{ColorKind, MeridianId};
     use crate::cultivation::tick::CultivationClock;
     use crate::persistence::{
         complete_tribulation_ascension, load_ascension_quota, persist_active_tribulation,
@@ -1445,5 +1446,104 @@ mod tests {
             assert!(collected[0].to.id.starts_with("ctx-A:"));
             assert!(collected[1].to.id.starts_with("ctx-B:"));
         }
+    }
+
+    // ──────────────────────────────────────────────────────────────────────────
+    // P5: 死亡清零 — color 相关补充测试（plan-color-v1 P5 §②）
+    // ──────────────────────────────────────────────────────────────────────────
+
+    /// 死亡时 PracticeLog 中已有非零权重也被完全移除（清零不只是 default，是 remove component）
+    #[test]
+    fn terminated_player_with_nonempty_practice_log_is_removed() {
+        let mut app = App::new();
+        app.insert_resource(PersistenceSettings::default());
+        app.add_event::<PlayerTerminated>();
+        app.add_event::<AscensionQuotaOpened>();
+        app.add_event::<QiTransfer>();
+        app.add_systems(valence::prelude::Update, on_player_terminated);
+
+        // 构造非空 PracticeLog（Sharp 主色状态）
+        let mut log = PracticeLog::default();
+        log.add(ColorKind::Sharp, 70.0);
+        log.add(ColorKind::Heavy, 20.0);
+        let qi_color = QiColor {
+            main: ColorKind::Sharp,
+            secondary: Some(ColorKind::Heavy),
+            is_chaotic: false,
+            is_hunyuan: false,
+            permanent_lock_mask: Default::default(),
+        };
+
+        let entity = app
+            .world_mut()
+            .spawn((
+                Cultivation::default(),
+                MeridianSystem::default(),
+                Contamination::default(),
+                log,
+                qi_color,
+            ))
+            .id();
+
+        // 触发死亡清零
+        app.world_mut().send_event(PlayerTerminated { entity });
+        app.update();
+
+        // PracticeLog 应完全移除（不是置空，是 remove component）
+        assert!(
+            app.world().get::<PracticeLog>(entity).is_none(),
+            "期望死亡后 PracticeLog 从 entity 移除（非零权重也应被清除），因为 on_player_terminated 调用 e.remove::<PracticeLog>()；实际 component 仍存在"
+        );
+        // QiColor 也应移除
+        assert!(
+            app.world().get::<QiColor>(entity).is_none(),
+            "期望死亡后 QiColor 从 entity 移除（含已演化的 Sharp 主色），因为 on_player_terminated 调用 e.remove::<QiColor>()；实际 component 仍存在"
+        );
+    }
+
+    /// 死亡时杂色（is_chaotic=true）的 QiColor 也被正确移除（不因 is_chaotic 走不同路径）
+    #[test]
+    fn terminated_player_with_chaotic_qi_color_is_also_removed() {
+        let mut app = App::new();
+        app.insert_resource(PersistenceSettings::default());
+        app.add_event::<PlayerTerminated>();
+        app.add_event::<AscensionQuotaOpened>();
+        app.add_event::<QiTransfer>();
+        app.add_systems(valence::prelude::Update, on_player_terminated);
+
+        let mut log = PracticeLog::default();
+        log.add(ColorKind::Sharp, 40.0);
+        log.add(ColorKind::Heavy, 30.0);
+        log.add(ColorKind::Mellow, 30.0); // 三色各 > 15% → is_chaotic
+        let qi_color = QiColor {
+            main: ColorKind::Sharp,
+            secondary: None,
+            is_chaotic: true, // 杂色状态
+            is_hunyuan: false,
+            permanent_lock_mask: Default::default(),
+        };
+
+        let entity = app
+            .world_mut()
+            .spawn((
+                Cultivation::default(),
+                MeridianSystem::default(),
+                Contamination::default(),
+                log,
+                qi_color,
+            ))
+            .id();
+
+        app.world_mut().send_event(PlayerTerminated { entity });
+        app.update();
+
+        assert!(
+            app.world().get::<PracticeLog>(entity).is_none(),
+            "期望杂色死亡后 PracticeLog 移除（杂色不走特殊路径），实际 component 仍存在"
+        );
+        assert!(
+            app.world().get::<QiColor>(entity).is_none(),
+            "期望杂色死亡后 QiColor 移除（is_chaotic=true 不影响清零逻辑），实际 component 仍存在"
+        );
     }
 }

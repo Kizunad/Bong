@@ -5,7 +5,9 @@ use valence::prelude::{bevy_ecs, App, Entity, Events, Update};
 use crate::combat::components::{DerivedAttrs, SkillBarBindings, TICKS_PER_SECOND};
 use crate::combat::CombatClock;
 use crate::cultivation::color::PracticeLog;
-use crate::cultivation::components::{ColorKind, ContamSource, Contamination, Cultivation, Realm};
+use crate::cultivation::components::{
+    ColorKind, ContamSource, Contamination, Cultivation, QiColor, Realm,
+};
 use crate::cultivation::meridian::severed::SkillMeridianDependencies;
 use crate::cultivation::skill_registry::{CastRejectReason, CastResult};
 use crate::inventory::{
@@ -17,12 +19,12 @@ use super::events::{
     PermanentTaintAbsorbedEvent, TuikeSkillId, TuikeSkillVisual,
 };
 use super::physics::{
-    can_absorb_permanent_taint, can_wear_tier, maintenance_qi_per_sec, max_layers_for_realm,
-    max_tier_for_realm, naked_defense_damage_multiplier, residue_decay_ticks_for_tier,
-    shed_start_cost, shed_to_carrier, transfer_cooldown_ticks, transfer_limit_percent,
-    transfer_qi_per_contam_percent, transfer_taint_to_outer_skin, ACTIVE_SHED_COOLDOWN_TICKS,
-    RESIDUE_DECAY_MAX_TICKS, RESIDUE_DECAY_MIN_TICKS, TRANSFER_PERMANENT_COOLDOWN_TICKS,
-    TRANSFER_STANDARD_COOLDOWN_TICKS,
+    can_absorb_permanent_taint, can_wear_tier, maintenance_discount, maintenance_qi_per_sec,
+    max_layers_for_realm, max_tier_for_realm, naked_defense_damage_multiplier,
+    residue_decay_ticks_for_tier, shed_start_cost, shed_to_carrier, solid_color_share,
+    transfer_cooldown_ticks, transfer_limit_percent, transfer_qi_per_contam_percent,
+    transfer_taint_to_outer_skin, ACTIVE_SHED_COOLDOWN_TICKS, RESIDUE_DECAY_MAX_TICKS,
+    RESIDUE_DECAY_MIN_TICKS, TRANSFER_PERMANENT_COOLDOWN_TICKS, TRANSFER_STANDARD_COOLDOWN_TICKS,
 };
 use super::skills::{
     cast_don, cast_shed, cast_transfer_taint, declare_meridian_dependencies, shed_outer_layer,
@@ -560,7 +562,7 @@ fn residue_ancient_uses_max_decay() {
 fn maintenance_sums_layers() {
     let mut stack = stack_with(FalseSkinTier::Fan, 1.0);
     stack.push_outer(layer(FalseSkinTier::Mid, 1.0), 2);
-    assert!((maintenance_qi_per_sec(&stack, None) - 0.4).abs() < 1e-9);
+    assert!((maintenance_qi_per_sec(&stack, None, None) - 0.4).abs() < 1e-9);
 }
 
 #[test]
@@ -569,7 +571,7 @@ fn maintenance_discount_applies_for_solid_practice() {
     let mut log = PracticeLog::default();
     log.add(ColorKind::Solid, 3.0);
     log.add(ColorKind::Sharp, 1.0);
-    assert!((maintenance_qi_per_sec(&stack, Some(&log)) - 0.25).abs() < 1e-9);
+    assert!((maintenance_qi_per_sec(&stack, Some(&log), None) - 0.25).abs() < 1e-9);
 }
 
 #[test]
@@ -578,7 +580,7 @@ fn maintenance_discount_does_not_apply_below_threshold() {
     let mut log = PracticeLog::default();
     log.add(ColorKind::Solid, 1.0);
     log.add(ColorKind::Sharp, 3.0);
-    assert!((maintenance_qi_per_sec(&stack, Some(&log)) - 0.5).abs() < 1e-9);
+    assert!((maintenance_qi_per_sec(&stack, Some(&log), None) - 0.5).abs() < 1e-9);
 }
 
 #[test]
@@ -1302,5 +1304,74 @@ fn tuike_emit_anim_skips_without_unique_id() {
         app.world().resource::<Events<VfxEventRequest>>().len(),
         0,
         "emit_anim should skip PlayAnim when entity has no UniqueId"
+    );
+}
+
+// P1: 杂色 guard 测试 -------------------------------------------------------
+
+#[test]
+fn solid_color_share_returns_zero_for_chaotic_player() {
+    // 期望: 杂色玩家 solid_color_share 必须返回 0.0，因为专项加成清零（worldview §六.2）
+    let mut log = PracticeLog::default();
+    log.add(ColorKind::Solid, 5.0);
+    log.add(ColorKind::Sharp, 1.0);
+    let qi_color = QiColor {
+        is_chaotic: true,
+        ..Default::default()
+    };
+    let share = solid_color_share(Some(&log), Some(&qi_color));
+    assert!(
+        share < f64::EPSILON,
+        "期望杂色时 solid_color_share=0.0（专项加成清零），实际={share}"
+    );
+}
+
+#[test]
+fn solid_color_share_returns_correct_value_for_non_chaotic() {
+    // 期望: 正常色（非杂色）solid_color_share 正确反映 Solid 占比
+    let mut log = PracticeLog::default();
+    log.add(ColorKind::Solid, 3.0);
+    log.add(ColorKind::Sharp, 1.0);
+    let qi_color = QiColor::default(); // is_chaotic=false
+    let share = solid_color_share(Some(&log), Some(&qi_color));
+    let expected = 3.0 / 4.0;
+    assert!(
+        (share - expected).abs() < 1e-9,
+        "期望正常色 solid_color_share={expected}，实际={share}"
+    );
+}
+
+#[test]
+fn maintenance_discount_no_discount_for_chaotic_player_even_with_solid_practice() {
+    // 期望: 杂色玩家即使有大量 Solid 练习，maintenance_discount 仍返回 1.0（无折扣），
+    // 因为专项加成在杂色状态下清零（worldview §六.2）
+    let mut log = PracticeLog::default();
+    log.add(ColorKind::Solid, 10.0); // 远超 30% 阈值
+    let qi_color = QiColor {
+        is_chaotic: true,
+        ..Default::default()
+    };
+    let discount = maintenance_discount(Some(&log), Some(&qi_color));
+    assert!(
+        (discount - 1.0).abs() < f64::EPSILON,
+        "期望杂色时 maintenance_discount=1.0（无折扣），实际={discount}"
+    );
+}
+
+#[test]
+fn maintenance_qi_per_sec_no_discount_when_chaotic() {
+    // 期望: 杂色玩家的假皮维护消耗不享受 Solid 折扣（1.0 倍而非 0.5 倍）
+    let stack = stack_with(FalseSkinTier::Heavy, 1.0);
+    let mut log = PracticeLog::default();
+    log.add(ColorKind::Solid, 10.0);
+    let qi_color = QiColor {
+        is_chaotic: true,
+        ..Default::default()
+    };
+    // Heavy tier = 0.5 qi/sec；无折扣 = 0.5，有折扣 = 0.25
+    let cost = maintenance_qi_per_sec(&stack, Some(&log), Some(&qi_color));
+    assert!(
+        (cost - 0.5).abs() < 1e-9,
+        "期望杂色时维护费=0.5（无折扣，Heavy tier 基础费），实际={cost}"
     );
 }

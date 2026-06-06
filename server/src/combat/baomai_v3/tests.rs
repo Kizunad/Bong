@@ -17,7 +17,7 @@ use crate::combat::events::{ApplyStatusEffectIntent, AttackIntent, FIST_REACH};
 use crate::combat::CombatClock;
 use crate::cultivation::color::PracticeLog;
 use crate::cultivation::components::{
-    ColorKind, Contamination, Cultivation, MeridianId, MeridianSystem, Realm,
+    ColorKind, Contamination, Cultivation, MeridianId, MeridianSystem, QiColor, Realm,
 };
 use crate::cultivation::meridian::severed::{
     MeridianSeveredEvent, MeridianSeveredPermanent, SeveredSource, SkillMeridianDependencies,
@@ -588,5 +588,90 @@ fn disperse_void_realm_still_emits_skill_event_with_transcendence_flow_rate() {
         "Void 超越档 flow_rate_multiplier={} 应 >= 10.0，命中 agent transcendence 分支；\
          期望 physics 返回值 {expected_flow}",
         evt.flow_rate_multiplier
+    );
+}
+
+// P1: 杂色 guard ─ heavy_color_multiplier 在杂色时必须清零 -------------------
+
+/// Heavy 色练习量足够（>= 30%）时，非杂色玩家的崩拳 damage 应享有 1.05x 加成。
+/// 杂色玩家同等练习量下 damage 应等于无加成基础值（heavy multiplier=1.0）。
+/// worldview §六.2「只剩基础真元属性」。
+#[test]
+fn beng_quan_heavy_color_multiplier_cleared_when_chaotic() {
+    // 先测正常 Heavy 色（基准）
+    let mut app_normal = app();
+    let normal_caster = spawn_actor(&mut app_normal, Realm::Condense, 100.0, 100.0, DVec3::ZERO);
+    let mut log = PracticeLog::default();
+    log.add(ColorKind::Heavy, 3.0); // 75% Heavy => >= 30%
+    log.add(ColorKind::Sharp, 1.0);
+    app_normal
+        .world_mut()
+        .entity_mut(normal_caster)
+        .insert(log.clone());
+    let target_normal = spawn_target(&mut app_normal, DVec3::new(1.0, 0.0, 0.0));
+    cast_beng_quan(
+        app_normal.world_mut(),
+        normal_caster,
+        0,
+        Some(target_normal),
+    );
+    let normal_events: Vec<_> = app_normal
+        .world()
+        .resource::<Events<BaomaiSkillEvent>>()
+        .iter_current_update_events()
+        .collect();
+    let normal_damage = normal_events[0].damage;
+
+    // 再测杂色（Heavy practice 相同但 is_chaotic=true）
+    let mut app_chaotic = app();
+    let chaotic_caster = spawn_actor(&mut app_chaotic, Realm::Condense, 100.0, 100.0, DVec3::ZERO);
+    app_chaotic
+        .world_mut()
+        .entity_mut(chaotic_caster)
+        .insert(log);
+    app_chaotic
+        .world_mut()
+        .entity_mut(chaotic_caster)
+        .insert(QiColor {
+            main: ColorKind::Heavy,
+            is_chaotic: true,
+            ..Default::default()
+        });
+    let target_chaotic = spawn_target(&mut app_chaotic, DVec3::new(1.0, 0.0, 0.0));
+    cast_beng_quan(
+        app_chaotic.world_mut(),
+        chaotic_caster,
+        0,
+        Some(target_chaotic),
+    );
+    let chaotic_events: Vec<_> = app_chaotic
+        .world()
+        .resource::<Events<BaomaiSkillEvent>>()
+        .iter_current_update_events()
+        .collect();
+    let chaotic_damage = chaotic_events[0].damage;
+
+    // 杂色伤害 < 正常色伤害（heavy 加成清零）
+    assert!(
+        chaotic_damage < normal_damage,
+        "期望杂色时崩拳 damage={chaotic_damage} < 正常 Heavy 色 damage={normal_damage}（heavy_color_multiplier=1.0 vs 1.05），\
+         杂色应清零 Heavy 专项加成（worldview §六.2）"
+    );
+}
+
+/// 无 QiColor 组件时（旧实体）heavy_color_multiplier 正常返回 1.0，不 panic。
+#[test]
+fn beng_quan_heavy_multiplier_defaults_to_one_without_qi_color() {
+    let mut app = app();
+    let caster = spawn_actor(&mut app, Realm::Condense, 100.0, 100.0, DVec3::ZERO);
+    let mut log = PracticeLog::default();
+    log.add(ColorKind::Heavy, 3.0);
+    app.world_mut().entity_mut(caster).insert(log);
+    // 故意不插入 QiColor 组件
+    let target = spawn_target(&mut app, DVec3::new(1.0, 0.0, 0.0));
+    let result = cast_beng_quan(app.world_mut(), caster, 0, Some(target));
+    assert!(
+        matches!(result, CastResult::Started { .. }),
+        "期望无 QiColor 时 cast_beng_quan 正常完成，实际={result:?}"
     );
 }

@@ -338,7 +338,15 @@ impl Default for QiColor {
 }
 
 impl QiColor {
+    /// 永久锁定某色。
+    ///
+    /// **混元保护（plan-color-v1 P2）**：若 `is_hunyuan=true`，忽略写入——
+    /// 混元色的本质是「五色均衡、无主无从」，不允许任何色被永久锁定。
     pub fn lock_permanent(&mut self, color: ColorKind) {
+        if self.is_hunyuan {
+            // 混元状态不允许永久锁定任何色（§六.2 决议）
+            return;
+        }
         self.permanent_lock_mask.insert(color);
     }
 
@@ -465,6 +473,60 @@ mod tests {
         color.lock_permanent(ColorKind::Insidious);
         assert!(color.is_permanently_locked(ColorKind::Insidious));
         assert!(!color.is_permanently_locked(ColorKind::Mellow));
+    }
+
+    // P2: 混元状态下 lock_permanent 被忽略（混元「无主无从」约束）
+    #[test]
+    fn lock_permanent_ignored_when_is_hunyuan() {
+        let mut color = QiColor {
+            is_hunyuan: true,
+            ..QiColor::default()
+        };
+        color.lock_permanent(ColorKind::Sharp);
+        assert!(
+            !color.is_permanently_locked(ColorKind::Sharp),
+            "期望混元状态下 lock_permanent 被忽略（is_hunyuan=true 不允许写入 permanent_lock_mask），实际仍被写入"
+        );
+        assert!(
+            color.permanent_lock_mask.is_empty(),
+            "期望混元状态下 permanent_lock_mask 保持空，实际 {:?}",
+            color.permanent_lock_mask
+        );
+    }
+
+    // P2: 非混元时 lock_permanent 正常写入
+    #[test]
+    fn lock_permanent_works_when_not_hunyuan() {
+        let mut color = QiColor {
+            is_hunyuan: false,
+            ..QiColor::default()
+        };
+        color.lock_permanent(ColorKind::Violent);
+        assert!(
+            color.is_permanently_locked(ColorKind::Violent),
+            "期望非混元状态下 lock_permanent 正常写入 ColorKind::Violent，但未找到"
+        );
+    }
+
+    // P2: 混元状态下全部 10 色的 lock_permanent 均被忽略
+    #[test]
+    fn lock_permanent_ignored_for_all_colors_when_hunyuan() {
+        use ColorKind::*;
+        let all = [
+            Sharp, Heavy, Mellow, Solid, Light, Intricate, Gentle, Insidious, Violent, Turbid,
+        ];
+        let mut color = QiColor {
+            is_hunyuan: true,
+            ..QiColor::default()
+        };
+        for c in all {
+            color.lock_permanent(c);
+        }
+        assert!(
+            color.permanent_lock_mask.is_empty(),
+            "期望混元状态下对全 10 色调用 lock_permanent 后 mask 仍为空，实际 {:?}",
+            color.permanent_lock_mask
+        );
     }
 
     #[test]

@@ -4,7 +4,9 @@ use crate::combat::components::{CastSource, Casting, SkillBarBindings, WoundKind
 use crate::combat::events::{AttackIntent, AttackSource, FIST_REACH};
 use crate::combat::CombatClock;
 use crate::cultivation::color::{record_style_practice, PracticeLog};
-use crate::cultivation::components::{ColorKind, Cultivation, MeridianId, MeridianSystem, Realm};
+use crate::cultivation::components::{
+    ColorKind, Cultivation, MeridianId, MeridianSystem, QiColor, Realm,
+};
 use crate::cultivation::meridian::severed::{
     check_meridian_runtime_integrity, MeridianSeveredPermanent,
 };
@@ -166,8 +168,9 @@ pub fn resolve_beng_quan(
                 (meridian.integrity * BENG_QUAN_INTEGRITY_MULTIPLIER).clamp(0.0, 1.0);
         }
     }
+    let qi_color = world.get::<QiColor>(caster).cloned();
     if let Some(mut practice_log) = world.get_mut::<PracticeLog>(caster) {
-        record_style_practice(&mut practice_log, ColorKind::Heavy);
+        record_style_practice(&mut practice_log, ColorKind::Heavy, qi_color.as_ref());
     }
 
     world.send_event(AttackIntent {

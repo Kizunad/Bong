@@ -174,10 +174,17 @@ fn apply_eclipse(
     let Some(target_cultivation) = world.get::<Cultivation>(target).cloned() else {
         return Err(CastRejectReason::InvalidTarget);
     };
-    let self_cure_percent = world
-        .get::<DuguState>(caster)
-        .map(|state| state.insidious_color_percent)
-        .unwrap_or(0.0);
+    // 杂色玩家专项加成清零（worldview §六.2「只剩基础真元属性」）：
+    // 杂色时 insidious_color_percent 加成不传入 eclipse_effect
+    let is_caster_chaotic = world.get::<QiColor>(caster).is_some_and(|c| c.is_chaotic);
+    let self_cure_percent = if is_caster_chaotic {
+        0.0
+    } else {
+        world
+            .get::<DuguState>(caster)
+            .map(|state| state.insidious_color_percent)
+            .unwrap_or(0.0)
+    };
     let effect = eclipse_effect(target_cultivation.realm, self_cure_percent);
     let collision = dirty_qi_collision(
         f64::from(effect.qi_loss.max(1.0)),

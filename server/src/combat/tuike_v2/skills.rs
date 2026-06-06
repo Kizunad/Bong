@@ -3,7 +3,9 @@ use valence::prelude::{bevy_ecs, DVec3, Entity, Events, Position, UniqueId};
 use crate::combat::components::{DerivedAttrs, SkillBarBindings};
 use crate::combat::CombatClock;
 use crate::cultivation::color::{record_style_practice, PracticeLog};
-use crate::cultivation::components::{ColorKind, ContamSource, Contamination, Cultivation};
+use crate::cultivation::components::{
+    ColorKind, ContamSource, Contamination, Cultivation, QiColor,
+};
 use crate::cultivation::meridian::severed::SkillMeridianDependencies;
 use crate::cultivation::skill_registry::{CastRejectReason, CastResult, SkillRegistry};
 use crate::inventory::{consume_item_instance_once, PlayerInventory, EQUIP_SLOT_FALSE_SKIN};
@@ -567,9 +569,10 @@ fn record_practice(
     skill: TuikeSkillId,
     amount: u32,
 ) {
+    let qi_color = world.get::<QiColor>(caster).cloned();
     if let Some(mut log) = world.get_mut::<PracticeLog>(caster) {
         for _ in 0..amount {
-            record_style_practice(&mut log, ColorKind::Solid);
+            record_style_practice(&mut log, ColorKind::Solid, qi_color.as_ref());
         }
     }
     emit_if_present(

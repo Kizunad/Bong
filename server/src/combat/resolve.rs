@@ -868,7 +868,13 @@ pub fn resolve_attack_intents(
                         inflicted_by: Some(attacker_id.clone()),
                     });
                     if let Some(mut practice_log) = defender_practice_log {
-                        record_style_practice(&mut practice_log, ColorKind::Violent);
+                        // qi_colors 已存在于 weapon_break tuple（只读），直接复用
+                        let defender_qi_color = qi_colors.get(target_entity).ok();
+                        record_style_practice(
+                            &mut practice_log,
+                            ColorKind::Violent,
+                            defender_qi_color,
+                        );
                     }
                     jiemai_success = true;
                 }

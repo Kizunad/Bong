@@ -8,7 +8,7 @@ use crate::combat::CombatClock;
 use crate::cultivation::color::{record_style_practice, PracticeLog};
 use crate::cultivation::components::{
     ColorKind, ContamSource, Contamination, CrackCause, Cultivation, MeridianCrack, MeridianId,
-    MeridianSystem, Realm,
+    MeridianSystem, QiColor, Realm,
 };
 use crate::cultivation::full_power_strike;
 use crate::cultivation::meridian::severed::{
@@ -714,6 +714,10 @@ fn active_flow_multiplier(world: &bevy_ecs::world::World, caster: Entity, tick: 
 }
 
 fn heavy_color_multiplier(world: &bevy_ecs::world::World, caster: Entity) -> f64 {
+    // 杂色玩家专项加成清零（worldview §六.2「只剩基础真元属性」）
+    if world.get::<QiColor>(caster).is_some_and(|c| c.is_chaotic) {
+        return 1.0;
+    }
     let Some(log) = world.get::<PracticeLog>(caster) else {
         return 1.0;
     };
@@ -783,8 +787,9 @@ fn apply_transcendence_window(
 }
 
 fn record_practice(world: &mut bevy_ecs::world::World, caster: Entity, skill: BaomaiSkillId) {
+    let qi_color = world.get::<QiColor>(caster).cloned();
     if let Some(mut log) = world.get_mut::<PracticeLog>(caster) {
-        record_style_practice(&mut log, ColorKind::Heavy);
+        record_style_practice(&mut log, ColorKind::Heavy, qi_color.as_ref());
     }
     if let Some(mut mastery) = world.get_mut::<BaomaiMastery>(caster) {
         mastery.grant_cast_xp(skill);

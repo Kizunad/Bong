@@ -1,5 +1,5 @@
 use crate::cultivation::color::PracticeLog;
-use crate::cultivation::components::{ColorKind, Realm};
+use crate::cultivation::components::{ColorKind, QiColor, Realm};
 use crate::qi_physics;
 
 use super::state::{FalseSkinLayer, FalseSkinTier, StackedFalseSkins};
@@ -115,7 +115,11 @@ pub fn can_absorb_permanent_taint(realm: Realm, tier: FalseSkinTier) -> bool {
     realm == Realm::Void && tier == FalseSkinTier::Ancient
 }
 
-pub fn solid_color_share(log: Option<&PracticeLog>) -> f64 {
+pub fn solid_color_share(log: Option<&PracticeLog>, qi_color: Option<&QiColor>) -> f64 {
+    // 杂色玩家专项加成清零（worldview §六.2「只剩基础真元属性」）
+    if qi_color.is_some_and(|c| c.is_chaotic) {
+        return 0.0;
+    }
     let Some(log) = log else {
         return 0.0;
     };
@@ -126,21 +130,25 @@ pub fn solid_color_share(log: Option<&PracticeLog>) -> f64 {
     log.weights.get(&ColorKind::Solid).copied().unwrap_or(0.0) / total
 }
 
-pub fn maintenance_discount(log: Option<&PracticeLog>) -> f64 {
-    if solid_color_share(log) >= 0.30 {
+pub fn maintenance_discount(log: Option<&PracticeLog>, qi_color: Option<&QiColor>) -> f64 {
+    if solid_color_share(log, qi_color) >= 0.30 {
         0.5
     } else {
         1.0
     }
 }
 
-pub fn maintenance_qi_per_sec(stack: &StackedFalseSkins, log: Option<&PracticeLog>) -> f64 {
+pub fn maintenance_qi_per_sec(
+    stack: &StackedFalseSkins,
+    log: Option<&PracticeLog>,
+    qi_color: Option<&QiColor>,
+) -> f64 {
     stack
         .layers
         .iter()
         .map(|layer| layer.tier.maintain_qi_per_sec())
         .sum::<f64>()
-        * maintenance_discount(log)
+        * maintenance_discount(log, qi_color)
 }
 
 pub fn residue_decay_ticks_for_tier(tier: FalseSkinTier) -> u64 {
