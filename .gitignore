@@ -93,3 +93,9 @@ tmp/
 
 # Reference 3D 模型（Tripo / 素材站下载），只作本地建模参考不进 repo
 local_models/
+
+# pi-bench 产物（本地生成，含跑分结果，不入库）
+scripts/llm-bench/report.html
+scripts/llm-bench/report.json
+pi-bench-report.png
+.playwright-mcp/
