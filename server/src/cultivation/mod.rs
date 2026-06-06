@@ -60,6 +60,7 @@ pub mod meridian_open;
 pub mod neg_pressure;
 pub mod negative_zone;
 pub mod overload;
+pub mod perception;
 pub mod poison_trait;
 pub mod possession;
 pub mod practice_session;
@@ -139,6 +140,7 @@ use self::overload::{
     apply_meridian_crack_events, apply_meridian_overload_events, overload_detection_tick,
     MeridianCrackEvent, MeridianOverloadEvent,
 };
+use self::perception::passive_qi_color_scan_system;
 use self::poison_trait::{
     apply_poison_overdose_costs, consume_poison_pill_system, digestion_load_decay_tick,
     poison_toxicity_decay_tick, ConsumePoisonPillIntent, DigestionLoad, DigestionOverloadEvent,
@@ -361,6 +363,11 @@ pub fn register(app: &mut App) {
             .before(qi_color_evolution_tick),
     );
     app.add_systems(Update, track_woliu_proficiency_from_casts);
+    // plan-color-v1 P4: 被动神视感知 — Spirit/Void 境界玩家对范围内目标被动扫描 QiColor
+    app.add_systems(
+        Update,
+        passive_qi_color_scan_system.after(qi_color_evolution_tick),
+    );
     app.add_systems(
         Update,
         prune_cultivation_session_practice_accumulator.after(qi_regen_and_zone_drain_tick),
