@@ -48,11 +48,11 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PR_NUMBER: ${{ github.event.issue.number || inputs.pr_number }}
-          # 多端点 failover:@hive 跑限时免费 GPT-5.5。这些羊毛端点死活无常(luciferai 已宕),
-          # 故配三个 base|key 端点(muyuan / chybenzun / centos),脚本 round-robin、挂一个自动切下一个。
-          # base 是公开 URL 写明文,key 走 secrets。端点死光时回退老 HIVE_BASE_URL+HIVE_API_KEY(已留兜底)。
+          # @hive 跑免费 GPT-5.5,走自家代理 proxy.kizun4.uk(模型都汇总在此,比羊毛端点稳)。
+          # HIVE_ENDPOINTS="base|key;..." 支持多端点 round-robin failover——要加备用端点(muyuan/centos 等)
+          # 直接往后拼 ";https://muyuan.do/v1|<key>" 即可,脚本会挂一个自动切下一个。
           HIVE_ENDPOINTS: >-
-            https://muyuan.do/v1|${{ secrets.HIVE_GPT_KEY_1 }};https://chybenzun.top/v1|${{ secrets.HIVE_GPT_KEY_2 }};https://ai.centos.hk/v1|${{ secrets.HIVE_GPT_KEY_3 }}
+            https://proxy.kizun4.uk/v1|${{ secrets.HIVE_PROXY_KEY }}
           # 兜底:HIVE_ENDPOINTS 全空时才用(老 SenseNova 端点 + key)
           HIVE_BASE_URL: ${{ vars.HIVE_BASE_URL || 'https://token.sensenova.cn/v1' }}
           HIVE_API_KEYS: ${{ secrets.HIVE_API_KEY }},${{ secrets.HIVE_API_KEY_2 }}
