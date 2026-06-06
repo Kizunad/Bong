@@ -3857,6 +3857,29 @@ mod tests {
                 display_name_zh: Some("赤铜矿脉".to_string()),
                 denial_reason: None,
             }),
+            // ─── plan-exploration-probe-return-v1 P1: FreshnessUpdate wire/label guard ──
+            ServerDataPayloadV1::FreshnessUpdate(FreshnessUpdateV1 {
+                item_uuid: "42".to_string(),
+                freshness: 0.75,
+                profile_name: "test_decay".to_string(),
+            }),
+            // ─── plan-exploration-probe-return-v1 P2: InsightOffer wire/label guard ─────
+            ServerDataPayloadV1::InsightOffer(InsightOfferV1 {
+                offer_id: "insight:1:100".to_string(),
+                trigger_id: "insight:1:100".to_string(),
+                character_id: "offline:Kiz".to_string(),
+                choices: vec![crate::schema::cultivation::InsightChoiceV1 {
+                    category: "Qi".to_string(),
+                    effect_kind: "qi_max".to_string(),
+                    magnitude: 0.05,
+                    flavor_text: "气海微扩张。".to_string(),
+                    narrator_voice: None,
+                    alignment: None,
+                    cost_kind: None,
+                    cost_magnitude: None,
+                    cost_flavor: None,
+                }],
+            }),
         ];
 
         for payload in cases {
