@@ -11,7 +11,7 @@ name: Pi Plan-Aware Review
 #   低自信 fan-out:仍不达标且有弱项 → 每个弱维派一个专项成员并行深挖
 #   第二步 arbiter:综合去重后的 findings 产出中文 review 并发评论
 # 多 provider 力大砖飞:模型名 `provider/id` 路由到各自端点/key/API 格式(OpenAI + Anthropic),
-#   一次 review 同时混免费队(cliproxy flash/lite、ollama minimax)+ 付费 pro(deepseek)。
+#   一次 review 同时混免费队(cliproxy flash/lite)+ 付费 pro(deepseek)。
 #   某 provider 宕机/无 key → 自动跳过(graceful degrade),不阻断全局。
 # 端点/模型/key/轮控参数全 env 可覆盖(repo variables / secrets)。
 on:
@@ -43,7 +43,7 @@ jobs:
        contains(github.event.comment.body, '@pi') &&
        contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association))
     runs-on: ubuntu-latest
-    # 力大砖飞:32 成员面板 × ≤2 轮 + fan-out,跨 3 个端点并发。每次调用 ≤PI_CALL_TIMEOUT_MS、
+    # 力大砖飞:32 成员面板 × ≤2 轮 + fan-out,跨 cliproxy(免费)+ deepseek(pro)两端点并发。每次调用 ≤PI_CALL_TIMEOUT_MS、
     # 轮数硬上限,所以仍有界;45min 是大面板的逃生阀(实测一次约 7-15min)。
     timeout-minutes: 45
 
@@ -60,16 +60,15 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PR_NUMBER: ${{ github.event.issue.number || inputs.pr_number }}
-          # 多 provider key:模型名 `provider/id` 路由到各自端点。免费队(cliproxy/ollama)+ 付费 pro(deepseek)。
-          # kiro/anyrouter 的免费 claude 当前端点已宕(530/无效令牌),暂不入清单;救活后加进 PI_DEBATE_MODELS 即可。
+          # 多 provider key:模型名 `provider/id` 路由到各自端点。免费队(cliproxy)+ 付费 pro(deepseek)。
+          # ollama/minimax 已撤(免费额度太少);kiro/anyrouter 的免费 claude 端点当前已宕(530/无效令牌)。
+          # 这几个 provider 的 registry 仍在脚本里——救活/加额度后把模型加回 PI_DEBATE_MODELS 即可,不动代码。
           PI_CLIPROXY_KEY: ${{ secrets.PI_CLIPROXY_KEY }}
           PI_DEEPSEEK_KEY: ${{ secrets.PI_DEEPSEEK_KEY }}
-          PI_OLLAMA_KEY: ${{ secrets.PI_OLLAMA_KEY }}
-          PI_KIRO_KEY: ${{ secrets.PI_KIRO_KEY }}
-          # 力大砖飞配比:flash×20 + pro×4(付费)+ lite×4 + minimax×4 = 32 成员(全 env 可覆盖)。
+          # 力大砖飞配比:flash×20 + pro×4(付费)+ lite×8 = 32 成员(全 env 可覆盖)。
           # gather 廉价 flash 压缩;arbiter 用最强的 pro 做最终综合(1 次)。
           PI_GATHER_MODEL: ${{ vars.PI_GATHER_MODEL || 'cliproxy/deepseek-v4-flash' }}
-          PI_DEBATE_MODELS: ${{ vars.PI_DEBATE_MODELS || 'cliproxy/deepseek-v4-flash*20,deepseek/deepseek-v4-pro*4,cliproxy/sensenova-6.7-flash-lite*4,ollama/minimax-m3*4' }}
+          PI_DEBATE_MODELS: ${{ vars.PI_DEBATE_MODELS || 'cliproxy/deepseek-v4-flash*20,deepseek/deepseek-v4-pro*4,cliproxy/sensenova-6.7-flash-lite*8' }}
           PI_ARBITER_MODEL: ${{ vars.PI_ARBITER_MODEL || 'deepseek/deepseek-v4-pro' }}
           # 轮控:面板默认 = 清单全员(32);最多 2 轮(大面板单轮信号已足);中位数 ≥80 提前收敛;低自信 fan-out ≤4。
           PI_MAX_ROUNDS: ${{ vars.PI_MAX_ROUNDS || '2' }}
