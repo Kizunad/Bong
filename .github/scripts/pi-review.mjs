@@ -1,8 +1,9 @@
 #!/usr/bin/env node
-// @pi Plan-Aware Reviewer —— 确定性轮控 + 自信度门控 + 低自信精准 fan-out。
+// Pi Plan-Aware Reviewer —— 确定性轮控 + 自信度门控 + 低自信精准 fan-out。
+// 触发:在 PR 评论 `/review pi`(不用 @pi——那会 mention 到 GitHub 上的真实用户 github.com/pi)。
 //
 // 设计要点(为何不再用 pi-coding-agent-action / hive-think 扩展):
-//   旧版 @pi 是一个【无界 agent 循环】——pi -p 没有轮数上限,只在模型自己停手 /
+//   旧版 Pi 是一个【无界 agent 循环】——pi -p 没有轮数上限,只在模型自己停手 /
 //   命中 30min 硬超时时退出,所以一次 review 能烧 30+ 分钟。本脚本把"轮"从 agent
 //   内部搬到 orchestrator 外部:每一"轮" = 一次【单轮、无工具】的模型调用(天生有界),
 //   轮与轮之间由本脚本(确定性代码)控制——这才是真的硬上限,模型给不了。
@@ -467,7 +468,7 @@ const fanoutPrompt = (brief, extraContext, dim) =>
   `"findings":[{"severity":"blocker|major|minor","file":"路径","line":"行号","title":"...","evidence":"...","why":"..."}]}`;
 
 const arbiterPrompt = (brief, deduped, status, planName) =>
-  `你是本次 @pi 审核的**总裁判**(综合 + 发布,从严,宁缺勿滥)。\n${GUIDELINES}\n\n` +
+  `你是本次 Pi 审核的**总裁判**(综合 + 发布,从严,宁缺勿滥)。\n${GUIDELINES}\n\n` +
   `## 审核 brief\n${brief}\n\n` +
   `## 经轮控 + 自信度门控存活的 findings(已去重,consensus = 几个成员独立提出)\n` +
   `${deduped.map((f) => `- [${f.severity}] ${f.file}:${f.line} — ${f.title}${f.why ? `(${f.why})` : ""} 〔consensus ${f.consensus}〕`).join("\n") || "(无)"}\n\n` +
@@ -532,7 +533,7 @@ async function main() {
 
   const mix = DEBATE_MODELS.reduce((a, m) => ((a[m] = (a[m] || 0) + 1), a), {});
   console.error(
-    `@pi review: PR #${PR} · 档[${TIER_LABEL}] ${changedLines} 行/${changedFiles} 文件 · ` +
+    `Pi review: PR #${PR} · 档[${TIER_LABEL}] ${changedLines} 行/${changedFiles} 文件 · ` +
       `面板 ${PANEL}×≤${MAX_ROUNDS}轮 · 收敛≥${CONFIDENCE_TARGET} · fan-out ${FANOUT_ENABLED ? `≤${FANOUT_MAX}` : "关"}\n` +
       `  gather ${GATHER_MODEL} · arbiter ${ARBITER_MODEL} · 在线 provider: ${liveProviders.join(", ")}\n` +
       `  debate 配比: ${Object.entries(mix).map(([m, n]) => `${m}×${n}`).join(", ")}`,
@@ -705,7 +706,7 @@ ${diff}
     : "";
 
   const header =
-    `## 🤖 @pi Plan-Aware Review · PR #${PR}\n\n` +
+    `## 🤖 Pi Plan-Aware Review · PR #${PR}\n\n` +
     `> 引擎:确定性轮控脚本(无界 agent 循环已退役)。**动态分档 [${TIER_LABEL}]**(${changedLines} 行/${changedFiles} 文件)→ 面板 ${PANEL} 成员 × 最多 ${MAX_ROUNDS} 轮,自信度门控 + 低自信精准 fan-out。\n` +
     `> ${statusLine}\n` +
     (plan ? `> Plan: \`${plan.name}\`${plan.path ? "" : "(未找到文件)"}\n` : "") +

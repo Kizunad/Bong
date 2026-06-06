@@ -1,6 +1,6 @@
 name: Claude PR Review
 
-# 按需触发：在 PR 上评论 @claude 才跑。去掉了 opened/reopened/synchronize 自动触发——
+# 按需触发：在 PR 上评论 `/review claude` 才跑。去掉了 opened/reopened/synchronize 自动触发——
 # 每次 push 都重跑一个 10min 的 opus 多代理审核会持续吃 Claude 订阅额度。
 on:
   issue_comment:
@@ -22,12 +22,13 @@ concurrency:
 
 jobs:
   review:
-    # 仅当 PR 评论里 @claude_workflow_review、且评论者有写权限（OWNER/MEMBER/COLLABORATOR）时运行。
-    # 用独立触发词（不是裸 @claude）以免和通用 claude-mention.yml 响应器双触发。
+    # 仅当 PR 评论里 `/review claude`、且评论者有写权限（OWNER/MEMBER/COLLABORATOR）时运行。
+    # 触发词用 `/review claude`（不含 @）：天然不会和通用 claude-mention.yml（监听 @claude）双触发,
+    # 也不会把评论解析成 GitHub 真实用户 mention。
     if: >-
       github.event_name == 'workflow_dispatch' ||
       (github.event.issue.pull_request != null &&
-       contains(github.event.comment.body, '@claude_workflow_review') &&
+       contains(github.event.comment.body, '/review claude') &&
        contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association))
     runs-on: ubuntu-latest
     timeout-minutes: 30

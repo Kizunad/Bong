@@ -1,6 +1,6 @@
 name: Pi Plan-Aware Review
 
-# 按需触发:在 PR 上评论 @pi 才跑。
+# 按需触发:在 PR 上评论 `/review pi` 才跑。
 #
 # 引擎:确定性轮控脚本 .github/scripts/pi-review.mjs(自包含,只用 Node fetch + gh,无 npm 依赖)。
 # 旧版用 pi-coding-agent-action + hive-think 扩展——那是个【无界 agent 循环】(pi -p 无轮数上限,
@@ -36,12 +36,14 @@ concurrency:
 
 jobs:
   review:
-    # 仅当 PR 评论里 @pi、且评论者有写权限(OWNER/MEMBER/COLLABORATOR)时运行——
-    # public 仓库下防止任意访客评论 @pi 触发跑、烧 key。
+    # 仅当 PR 评论里 `/review pi`、且评论者有写权限(OWNER/MEMBER/COLLABORATOR)时运行——
+    # public 仓库下防止任意访客评论 `/review pi` 触发跑、烧 key。
+    # 触发词用 `/review pi`(不是 @pi):@pi 会解析成 GitHub 真实用户 mention 骚扰陌生人,
+    # 而 contains 是子串匹配,`/review pi` 既能触发又不 ping 任何账号。
     if: >-
       github.event_name == 'workflow_dispatch' ||
       (github.event.issue.pull_request != null &&
-       contains(github.event.comment.body, '@pi') &&
+       contains(github.event.comment.body, '/review pi') &&
        contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association))
     runs-on: ubuntu-latest
     # 动态分档:小改 6 成员/1 轮,大改力大砖飞 32 成员/2 轮,全走自家代理 proxy.kizun4.uk(免费)。每次调用 ≤PI_CALL_TIMEOUT_MS、
