@@ -134,6 +134,7 @@ pub(super) const STALL_MIN_TICKS: u32 = 20 * 60;
 pub(super) const STALL_MAX_TICKS: u32 = 20 * 300;
 pub(super) const TRADE_STALL_BASELINE_SCORE: f32 = 0.45;
 pub(super) const RETURN_HOME_ARRIVAL_DISTANCE: f64 = 1.8;
+pub(super) const RETURN_HOME_MAX_TICKS: u32 = 300;
 /// Wander 默认基线评分（作为最低优先级兜底）。
 pub(super) const WANDER_BASELINE_SCORE: f32 = 0.08;
 /// 散修好奇心基线（始终略高于 Wander baseline，鼓励周期性流浪）。

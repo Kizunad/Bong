@@ -33,9 +33,9 @@ use super::{
     CULTIVATE_MIN_ZONE_QI, FLEE_CULTIVATOR_SPEED_FACTOR, FLEE_CULTIVATOR_SUCCESS_DISTANCE,
     FLEE_CULTIVATOR_WAYPOINT_DISTANCE, GO_TO_POI_ARRIVAL_DISTANCE, NPC_TRIBULATION_WAVES_DEFAULT,
     REST_MAX_TICKS, REST_RECOVERY_RATE_PER_TICK, RETURN_HOME_ARRIVAL_DISTANCE,
-    ROGUE_BREAKTHROUGH_MATERIAL_BONUS, SECLUSION_CYCLE_TICKS, STALL_MAX_TICKS, STALL_MIN_TICKS,
-    WANDER_ARRIVAL_DISTANCE, WANDER_MAX_RADIUS, WANDER_MAX_TICKS, WANDER_MIN_RADIUS,
-    WANDER_SPEED_FACTOR,
+    RETURN_HOME_MAX_TICKS, ROGUE_BREAKTHROUGH_MATERIAL_BONUS, SECLUSION_CYCLE_TICKS,
+    STALL_MAX_TICKS, STALL_MIN_TICKS, WANDER_ARRIVAL_DISTANCE, WANDER_MAX_RADIUS, WANDER_MAX_TICKS,
+    WANDER_MIN_RADIUS, WANDER_SPEED_FACTOR,
 };
 
 use crate::cultivation::tick::CultivationClock;
@@ -671,6 +671,12 @@ pub(crate) fn return_home_action_system(
                         *state = ActionState::Success;
                     }
                 } else {
+                    rest.elapsed_ticks = rest.elapsed_ticks.saturating_add(1);
+                    if rest.elapsed_ticks >= RETURN_HOME_MAX_TICKS {
+                        navigator.stop();
+                        *state = ActionState::Failure;
+                        continue;
+                    }
                     navigator.set_goal(home_pos, WANDER_SPEED_FACTOR);
                 }
             }
@@ -1093,4 +1099,111 @@ fn cultivate_drift_target(origin: DVec3, roll: &mut XorshiftRoll) -> DVec3 {
         origin.y,
         origin.z + angle.sin() * radius,
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use valence::prelude::{App, Update};
+
+    fn make_return_home_app(
+        npc_pos: DVec3,
+        home_pos: DVec3,
+        initial_state: ActionState,
+    ) -> (App, Entity, Entity) {
+        let mut app = App::new();
+        app.add_systems(Update, return_home_action_system);
+        let actor = app
+            .world_mut()
+            .spawn((
+                NpcMarker,
+                Position(npc_pos),
+                Navigator::new(),
+                NpcHomeBase::from_world_pos(home_pos, 0.6),
+                RestState::default(),
+            ))
+            .id();
+        let action = app
+            .world_mut()
+            .spawn((ReturnHomeAction, Actor(actor), initial_state))
+            .id();
+        (app, actor, action)
+    }
+
+    fn action_state(app: &App, action: Entity) -> ActionState {
+        app.world()
+            .get::<ActionState>(action)
+            .expect("return-home action should keep ActionState")
+            .clone()
+    }
+
+    #[test]
+    fn return_home_succeeds_when_home_reachable() {
+        let home = DVec3::new(10.0, 64.0, 10.0);
+        let (mut app, actor, action) = make_return_home_app(home, home, ActionState::Requested);
+
+        app.update();
+        assert_eq!(action_state(&app, action), ActionState::Executing);
+
+        for _ in 0..REST_MAX_TICKS {
+            app.update();
+        }
+
+        assert_eq!(
+            action_state(&app, action),
+            ActionState::Success,
+            "reachable home should complete after the normal rest window"
+        );
+        assert!(
+            app.world().get::<Navigator>(actor).unwrap().is_idle(),
+            "successful ReturnHome should stop the navigator"
+        );
+    }
+
+    #[test]
+    fn return_home_times_out_when_home_unreachable() {
+        let (mut app, actor, action) = make_return_home_app(
+            DVec3::new(0.0, 64.0, 0.0),
+            DVec3::new(2_000.0, 64.0, 0.0),
+            ActionState::Requested,
+        );
+
+        app.update();
+        assert_eq!(action_state(&app, action), ActionState::Executing);
+
+        for _ in 0..RETURN_HOME_MAX_TICKS {
+            app.update();
+        }
+
+        assert_eq!(
+            action_state(&app, action),
+            ActionState::Failure,
+            "unreached home must release big-brain instead of executing forever"
+        );
+        assert!(
+            app.world().get::<Navigator>(actor).unwrap().is_idle(),
+            "timed-out ReturnHome should stop the navigator"
+        );
+    }
+
+    #[test]
+    fn return_home_cancelled_stops_navigation_and_fails() {
+        let (mut app, actor, action) = make_return_home_app(
+            DVec3::new(0.0, 64.0, 0.0),
+            DVec3::new(10.0, 64.0, 0.0),
+            ActionState::Cancelled,
+        );
+
+        app.world_mut()
+            .get_mut::<Navigator>(actor)
+            .unwrap()
+            .set_goal(DVec3::new(10.0, 64.0, 0.0), 1.0);
+        app.update();
+
+        assert_eq!(action_state(&app, action), ActionState::Failure);
+        assert!(
+            app.world().get::<Navigator>(actor).unwrap().is_idle(),
+            "cancelled ReturnHome should stop the navigator"
+        );
+    }
 }
