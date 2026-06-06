@@ -259,6 +259,8 @@ pub enum ServerDataType {
     PermanentQiMaxDecayApplied,
     // ─── plan-combat-skill-feedback-bridges-v1 P6：剑道人剑共生 HUD ─
     SwordBondHudState,
+    // ─── plan-exploration-probe-return-v1 P0：神识感知矿脉 S2C ───────
+    MineralProbeResult,
 }
 
 #[derive(Debug, Clone)]
@@ -517,6 +519,26 @@ pub enum ServerDataPayloadV1 {
     // ─── plan-combat-skill-feedback-bridges-v1 P6：剑道人剑共生 HUD S2C ─
     /// 人剑共生 HUD 状态推送（守恒红线：stored_qi 只读展示，不二次扣 qi）。
     SwordBondHudState(SwordBondHudStateV1),
+    // ─── plan-exploration-probe-return-v1 P0：神识感知矿脉 S2C ──────
+    /// 神识感知矿脉回执（只读传输，不涉及 qi_physics 守恒）。
+    MineralProbeResult(MineralProbeResultV1),
+}
+
+/// 神识感知矿脉回执 S2C。扁平化 `MineralProbeResult` 枚举。
+/// `kind = "found"` 时有 mineral_id / remaining_units / display_name_zh；
+/// `kind = "denied"` 时有 denial_reason（snake_case 5 变体）。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MineralProbeResultV1 {
+    pub kind: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mineral_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub remaining_units: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub display_name_zh: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub denial_reason: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -1582,6 +1604,11 @@ enum ServerDataPayloadWireV1 {
         #[serde(flatten)]
         data: SwordBondHudStateV1,
     },
+    // ─── plan-exploration-probe-return-v1 P0：神识感知矿脉 S2C ───────
+    MineralProbeResult {
+        #[serde(flatten)]
+        data: MineralProbeResultV1,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -2428,6 +2455,9 @@ impl TryFrom<ServerDataPayloadWireV1> for ServerDataPayloadV1 {
             ServerDataPayloadWireV1::SwordBondHudState { data } => {
                 Ok(Self::SwordBondHudState(data))
             }
+            ServerDataPayloadWireV1::MineralProbeResult { data } => {
+                Ok(Self::MineralProbeResult(data))
+            }
         }
     }
 }
@@ -2978,6 +3008,9 @@ impl From<&ServerDataPayloadV1> for ServerDataPayloadWireV1 {
             ServerDataPayloadV1::SwordBondHudState(data) => {
                 Self::SwordBondHudState { data: data.clone() }
             }
+            ServerDataPayloadV1::MineralProbeResult(data) => {
+                Self::MineralProbeResult { data: data.clone() }
+            }
         }
     }
 }
@@ -3296,6 +3329,8 @@ impl ServerDataPayloadV1 {
             Self::PermanentQiMaxDecayApplied(..) => ServerDataType::PermanentQiMaxDecayApplied,
             // ─── plan-combat-skill-feedback-bridges-v1 P6 ──────────
             Self::SwordBondHudState(..) => ServerDataType::SwordBondHudState,
+            // ─── plan-exploration-probe-return-v1 P0 ────────────────
+            Self::MineralProbeResult(..) => ServerDataType::MineralProbeResult,
         }
     }
 }
@@ -3783,6 +3818,14 @@ mod tests {
                 buff_id: "huo_xue_dan".to_string(),
                 remaining_ticks: 3000,
                 effect_multiplier: 1.0,
+            }),
+            // ─── plan-exploration-probe-return-v1 P0 ────────────────
+            ServerDataPayloadV1::MineralProbeResult(MineralProbeResultV1 {
+                kind: "found".to_string(),
+                mineral_id: Some("chi_tong_ore".to_string()),
+                remaining_units: Some(23),
+                display_name_zh: Some("赤铜矿脉".to_string()),
+                denial_reason: None,
             }),
         ];
 

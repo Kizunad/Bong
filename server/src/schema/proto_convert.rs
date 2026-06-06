@@ -1384,6 +1384,16 @@ impl From<&ServerDataPayloadV1> for Payload {
                     heaven_gate_ready: s.heaven_gate_ready,
                 })
             }
+            // plan-exploration-probe-return-v1 P0：神识感知矿脉 S2C（只读传输，不涉及 qi_physics）
+            ServerDataPayloadV1::MineralProbeResult(m) => {
+                Payload::MineralProbeResult(bong::MineralProbeResult {
+                    kind: m.kind.clone(),
+                    mineral_id: m.mineral_id.clone(),
+                    remaining_units: m.remaining_units,
+                    display_name_zh: m.display_name_zh.clone(),
+                    denial_reason: m.denial_reason.clone(),
+                })
+            }
         }
     }
 }

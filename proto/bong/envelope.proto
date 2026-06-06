@@ -152,6 +152,8 @@ message ServerDataEnvelope {
     PermanentQiMaxDecayApplied permanent_qi_max_decay_applied = 127;
     // ─── plan-combat-skill-feedback-bridges-v1 P6：剑道人剑共生 HUD S2C ─
     SwordBondHud sword_bond_hud_state = 128;
+    // ─── plan-exploration-probe-return-v1 P0：神识感知矿脉 S2C ────
+    MineralProbeResult mineral_probe_result = 129;
     // 字段编号一旦分配永不复用（buf breaking 检测保证）。
   }
 }
@@ -3707,4 +3709,16 @@ message SwordBondHud {
   float  stored_qi_ratio    = 4; // 0..=1（stored_qi / cap，cap=0 时为 0）
   float  bond_strength      = 5; // 0..=1
   bool   heaven_gate_ready  = 6; // stored_qi >= stored_qi_cap() && can_store_qi()
+}
+
+// ─── plan-exploration-probe-return-v1 P0：神识感知矿脉回执 ────────
+// 与 Rust MineralProbeResultV1 精确对应。
+// kind = "found" | "denied"；found 时含 mineral_id/remaining_units/display_name_zh；
+// denied 时含 denial_reason（snake_case 5 变体）。
+message MineralProbeResult {
+  string           kind              = 1; // "found" | "denied"
+  optional string  mineral_id        = 2; // found only
+  optional uint32  remaining_units   = 3; // found only
+  optional string  display_name_zh   = 4; // found only
+  optional string  denial_reason     = 5; // denied only: realm_too_low/out_of_range/not_mineral_ore/stale_ore_index/mineral_not_registered
 }
