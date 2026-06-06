@@ -1416,6 +1416,203 @@ mod tests {
         );
     }
 
+    // ── plan-food-v1 P2 (opus 补测) — tick_casts_or_interrupt 全链路 CriticalBlock 不扣库存 ──
+
+    /// 全链路：通过 tick_casts_or_interrupt system 验证极腐食物 CriticalBlock 不扣库存。
+    ///
+    /// 背景：headline fix 的 CriticalBlock 门控在 tick_casts_or_interrupt 内（cast_emit.rs:250-298）。
+    /// 原有 food_regen_critical_block_emits_no_intent 直接调 apply_cast_item_effect，绕过了
+    /// 真正的库存扣减路径。本测试走完整 system 链路：
+    ///   Casting 完成 → CriticalBlock 检测 → 不扣 hotbar slot stack → 不发 ApplyStatusEffectIntent。
+    #[test]
+    fn tick_casts_or_interrupt_critical_block_does_not_consume_inventory() {
+        use crate::combat::components::{
+            CastSource, Casting, QuickSlotBindings, SkillBarBindings, Wounds,
+        };
+        use crate::combat::CombatClock;
+        use crate::inventory::{
+            ContainerState, InventoryRevision, ItemEffect, ItemInstance, ItemRarity, ItemRegistry,
+            ItemTemplate, PlayerInventory, MAIN_PACK_CONTAINER_ID,
+        };
+        use crate::player::state::PlayerState;
+        use crate::shelflife::types::{DecayFormula, DecayProfile, DecayProfileId, Freshness};
+        use crate::shelflife::{DecayProfileRegistry, DecayTrack};
+        use std::collections::HashMap;
+        use valence::prelude::{DVec3, Position};
+        use valence::testing::create_mock_client;
+
+        const FOOD_ID: &str = "test.food.critical_rotten";
+        const INSTANCE_ID: u64 = 777;
+        const QUICK_SLOT: u8 = 0;
+        // clock.tick = 1000; started_at_tick = 0, duration_ticks = 1 → 完成条件 1000 >= 1
+        const CLOCK_TICK: u64 = 1000;
+
+        // 1) 构造极腐 decay profile：decay_per_tick = 1/100 → at tick=1000, current ≈ 0 → CriticalBlock
+        let fast_spoil = DecayProfile::Spoil {
+            id: DecayProfileId::new("crit_block_test_profile"),
+            formula: DecayFormula::Linear {
+                decay_per_tick: 1.0 / 100.0, // 耗尽需 100 ticks；1000 ticks 时已归零
+            },
+            spoil_threshold: 0.5, // CriticalBlock 阈值: current < 0.1 * 0.5 = 0.05
+        };
+        let mut decay_reg = DecayProfileRegistry::new();
+        decay_reg.insert(fast_spoil.clone()).unwrap();
+
+        // 2) 食物 ItemTemplate（有 FoodRegen effect + shelflife_profile）
+        let food_template = ItemTemplate {
+            id: FOOD_ID.to_string(),
+            display_name: "极腐食物".to_string(),
+            category: crate::inventory::ItemCategory::Food,
+            max_stack_count: 16,
+            grid_w: 1,
+            grid_h: 1,
+            base_weight: 0.1,
+            rarity: ItemRarity::Common,
+            spirit_quality_initial: 1.0,
+            description: String::new(),
+            effect: Some(ItemEffect::FoodRegen {
+                bonus_factor: 0.20,
+                duration_ticks: 48_000,
+            }),
+            cast_duration_ms: 1000,
+            cooldown_ms: 500,
+            weapon_spec: None,
+            forge_station_spec: None,
+            blueprint_scroll_spec: None,
+            inscription_scroll_spec: None,
+            technique_scroll_spec: None,
+            recipe_fragment_spec: None,
+            container_spec: None,
+            shelflife_profile: Some("crit_block_test_profile".to_string()),
+            shelflife_track: Some(DecayTrack::Spoil),
+        };
+        let mut templates = HashMap::new();
+        templates.insert(FOOD_ID.to_string(), food_template);
+        let item_registry = ItemRegistry::from_map(templates);
+
+        // 3) 食物 ItemInstance：created_at=0 → at tick=1000 freshness 已归零 → CriticalBlock
+        let food_freshness = Freshness::new(0, 1.0, &fast_spoil);
+        let food_item = ItemInstance {
+            instance_id: INSTANCE_ID,
+            template_id: FOOD_ID.to_string(),
+            display_name: "极腐食物".to_string(),
+            grid_w: 1,
+            grid_h: 1,
+            weight: 0.1,
+            rarity: ItemRarity::Common,
+            description: String::new(),
+            stack_count: 3, // 初始 3；CriticalBlock 路径不应扣减
+            spirit_quality: 0.0,
+            durability: 1.0,
+            freshness: Some(food_freshness),
+            mineral_id: None,
+            charges: None,
+            forge_quality: None,
+            forge_color: None,
+            forge_side_effects: Vec::new(),
+            forge_achieved_tier: None,
+            alchemy: None,
+            lingering_owner_qi: None,
+        };
+        let mut inventory = PlayerInventory {
+            revision: InventoryRevision(1),
+            containers: vec![ContainerState {
+                id: MAIN_PACK_CONTAINER_ID.to_string(),
+                name: "主背包".to_string(),
+                rows: 5,
+                cols: 7,
+                items: vec![],
+            }],
+            equipped: HashMap::new(),
+            hotbar: Default::default(),
+            bone_coins: 0,
+            max_weight: 50.0,
+        };
+        inventory.hotbar[QUICK_SLOT as usize] = Some(food_item);
+
+        // 4) 构造 Casting：QuickSlot，绑定食物 instance，已过完成时间
+        let mut quick_slot_bindings = QuickSlotBindings::default();
+        quick_slot_bindings.slots[QUICK_SLOT as usize] = Some(INSTANCE_ID);
+        let casting = Casting {
+            source: CastSource::QuickSlot,
+            slot: QUICK_SLOT,
+            started_at_tick: 0,
+            duration_ticks: 1, // clock.tick=1000 >> 0+1 → 自然完成
+            started_at_ms: 0,
+            duration_ms: 50,
+            bound_instance_id: Some(INSTANCE_ID),
+            start_position: DVec3::ZERO,
+            complete_cooldown_ticks: 20,
+            skill_id: None,
+            skill_config: None,
+        };
+
+        // 5) 搭 App
+        let mut app = App::new();
+        // Resources
+        app.insert_resource(CombatClock { tick: CLOCK_TICK });
+        app.insert_resource(item_registry);
+        app.insert_resource(decay_reg);
+        // AudioEmitWriter dependencies (all optional → skip if not needed, but
+        // PlaySoundRecipeRequest event is required by the SystemParam)
+        app.add_event::<crate::network::audio_event_emit::PlaySoundRecipeRequest>();
+        app.add_event::<crate::combat::yidao::YidaoCastCompleteEvent>();
+        app.add_event::<ApplyStatusEffectIntent>();
+        app.add_event::<crate::cultivation::lifespan::LifespanExtensionIntent>();
+        app.add_event::<crate::cultivation::poison_trait::ConsumePoisonPillIntent>();
+        // 注册 tick_casts_or_interrupt system
+        app.add_systems(Update, tick_casts_or_interrupt);
+
+        // 6) 生成 mock player entity（含 Client + Username）
+        let (client_bundle, _helper) = create_mock_client("TestPlayer");
+        let player = app
+            .world_mut()
+            .spawn(client_bundle)
+            .insert((
+                Position::new([0.0, 64.0, 0.0]),
+                casting,
+                Wounds::default(),
+                inventory,
+                PlayerState::default(),
+                quick_slot_bindings,
+                SkillBarBindings::default(),
+            ))
+            .id();
+
+        // 7) 跑 system
+        app.update();
+
+        // 8) 断言：hotbar slot 的 stack_count 不变（CriticalBlock 不扣库存）
+        let world = app.world_mut();
+        let inv = world
+            .entity(player)
+            .get::<PlayerInventory>()
+            .expect("PlayerInventory should still exist after tick_casts_or_interrupt");
+        let actual_stack = inv.hotbar[QUICK_SLOT as usize]
+            .as_ref()
+            .map(|item| item.stack_count)
+            .unwrap_or(0);
+        assert_eq!(
+            actual_stack, 3,
+            "期望 hotbar slot stack_count=3（不变），因为 CriticalBlock 拒食后库存不应扣减；实际 stack={actual_stack}"
+        );
+
+        // 9) 断言：无 CultivationAcceleration ApplyStatusEffectIntent 发出
+        let intents: Vec<_> = world
+            .resource_mut::<Events<ApplyStatusEffectIntent>>()
+            .drain()
+            .collect();
+        let culti_accel_count = intents
+            .iter()
+            .filter(|i| i.kind == StatusEffectKind::CultivationAcceleration)
+            .count();
+        assert_eq!(
+            culti_accel_count, 0,
+            "期望 0 条 CultivationAcceleration intent，因为 CriticalBlock 路径直接 continue 不调 apply_cast_item_effect；实际 {} 条",
+            culti_accel_count
+        );
+    }
+
     #[test]
     fn cast_interrupt_audio_uses_recipe_attenuation() {
         fn emit_for_test(targets: Query<Entity, With<Position>>, mut audio: AudioEmitWriter) {

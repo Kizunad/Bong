@@ -9547,4 +9547,103 @@ cols = 4
              shelflife_track defaults to Spoil"
         );
     }
+
+    // ── plan-food-v1 P1 (CodeRabbit 补测) — shelflife 半配置报错 ──
+
+    /// 负向：shelflife_track=Some 但 shelflife_profile=None → try_into_item_template 必须报错，
+    /// 且错误信息含 "shelflife_track"（防止半配置静默绕过 freshness gate）。
+    #[test]
+    fn shelflife_track_without_profile_is_rejected() {
+        use std::path::PathBuf;
+        let path = PathBuf::from("test_path.toml");
+
+        let raw = ItemTemplateToml {
+            id: "bad_food_half_config".to_string(),
+            name: "半配置食物".to_string(),
+            category: "food".to_string(),
+            grid_w: 1,
+            grid_h: 1,
+            base_weight: 0.1,
+            rarity: "common".to_string(),
+            spirit_quality_initial: 1.0,
+            description: "shelflife_track 有值但 profile 为 None".to_string(),
+            max_stack_count: None,
+            effect: None,
+            cast_duration_ms: None,
+            cooldown_ms: None,
+            weapon: None,
+            forge_station: None,
+            blueprint_scroll: None,
+            inscription_scroll: None,
+            technique_scroll: None,
+            recipe_fragment: None,
+            container: None,
+            shelflife_profile: None,                    // ← 故意缺失
+            shelflife_track: Some("spoil".to_string()), // ← 有值但 profile 为 None → 报错
+        };
+
+        let result = raw.try_into_item_template(&path);
+        assert!(
+            result.is_err(),
+            "shelflife_track 有值但 shelflife_profile=None 时 try_into_item_template 必须返回 Err，\
+             否则 freshness gate 会被静默绕过"
+        );
+        let err = result.unwrap_err();
+        assert!(
+            err.contains("shelflife_track"),
+            "错误信息应提到 shelflife_track 字段，方便定位半配置问题；实际错误：{err}"
+        );
+        assert!(
+            err.contains("shelflife_profile"),
+            "错误信息应同时提到 shelflife_profile 字段，方便定位半配置问题；实际错误：{err}"
+        );
+    }
+
+    /// 正向对照：shelflife_profile=Some + shelflife_track=Some("spoil") → 正常解析，
+    /// track=Spoil，不报错。
+    #[test]
+    fn shelflife_track_and_profile_both_some_is_accepted() {
+        use crate::shelflife::DecayTrack;
+        use std::path::PathBuf;
+        let path = PathBuf::from("test_path.toml");
+
+        let raw = ItemTemplateToml {
+            id: "good_food_full_config".to_string(),
+            name: "完整配置食物".to_string(),
+            category: "food".to_string(),
+            grid_w: 1,
+            grid_h: 1,
+            base_weight: 0.1,
+            rarity: "common".to_string(),
+            spirit_quality_initial: 1.0,
+            description: "shelflife_track + profile 均有值".to_string(),
+            max_stack_count: None,
+            effect: None,
+            cast_duration_ms: None,
+            cooldown_ms: None,
+            weapon: None,
+            forge_station: None,
+            blueprint_scroll: None,
+            inscription_scroll: None,
+            technique_scroll: None,
+            recipe_fragment: None,
+            container: None,
+            shelflife_profile: Some("my_spoil_profile_v1".to_string()), // ← 正确配对
+            shelflife_track: Some("spoil".to_string()),
+        };
+
+        let tpl = raw
+            .try_into_item_template(&path)
+            .expect("shelflife_profile + shelflife_track 均 Some 时应正常解析");
+        assert_eq!(
+            tpl.shelflife_profile.as_deref(),
+            Some("my_spoil_profile_v1"),
+            "shelflife_profile 应原样保留在解析结果中"
+        );
+        assert_eq!(
+            tpl.shelflife_track,
+            Some(DecayTrack::Spoil),
+            "shelflife_track='spoil' 应解析为 DecayTrack::Spoil"
+        );
+    }
 }
