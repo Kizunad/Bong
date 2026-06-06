@@ -10,9 +10,7 @@ use valence::prelude::{Client, Entity, EventReader, Query, With};
 use crate::mineral::events::{MineralProbeDenialReason, MineralProbeResponse, MineralProbeResult};
 use crate::network::agent_bridge::{payload_type_label, serialize_server_data_payload};
 use crate::network::{log_payload_build_error, send_server_data_payload};
-use crate::schema::server_data::{
-    MineralProbeResultV1, ServerDataPayloadV1, ServerDataV1,
-};
+use crate::schema::server_data::{MineralProbeResultV1, ServerDataPayloadV1, ServerDataV1};
 
 /// 每帧排空 `MineralProbeResponse` 事件队列，为每个触发者发送 S2C 回执。
 ///
@@ -156,7 +154,10 @@ mod tests {
         assert_eq!(r.mineral_id.as_deref(), Some("cu_tie"));
         assert_eq!(r.remaining_units, Some(42));
         assert_eq!(r.display_name_zh.as_deref(), Some("赤铜矿脉"));
-        assert!(r.denial_reason.is_none(), "found 时 denial_reason 应为 None");
+        assert!(
+            r.denial_reason.is_none(),
+            "found 时 denial_reason 应为 None"
+        );
     }
 
     /// 仅发给触发玩家，旁观者收不到包（镜像 heart_demon `*_is_sent_only_to_tribulator`）。

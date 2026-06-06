@@ -1603,6 +1603,34 @@ export const ServerDataSearchAbortedV1 = Type.Object(
 );
 export type ServerDataSearchAbortedV1 = Static<typeof ServerDataSearchAbortedV1>;
 
+// ── plan-exploration-probe-return-v1 P0 ── 神识感知矿脉回执 S2C ──────────────
+/**
+ * 矿脉感知回执。kind="found" 时附带矿脉信息，kind="denied" 时附带拒绝原因。
+ *
+ * denial_reason 枚举值（snake_case）：
+ *   realm_too_low / out_of_range / not_mineral_ore / stale_ore_index / mineral_not_registered
+ */
+export const ServerDataMineralProbeResultV1 = Type.Object(
+  {
+    type: Type.Literal("mineral_probe_result"),
+    kind: Type.Union([Type.Literal("found"), Type.Literal("denied")]),
+    mineral_id: Type.Optional(Type.String({ minLength: 1 })),
+    remaining_units: Type.Optional(Type.Integer({ minimum: 0 })),
+    display_name_zh: Type.Optional(Type.String({ maxLength: 64 })),
+    denial_reason: Type.Optional(
+      Type.Union([
+        Type.Literal("realm_too_low"),
+        Type.Literal("out_of_range"),
+        Type.Literal("not_mineral_ore"),
+        Type.Literal("stale_ore_index"),
+        Type.Literal("mineral_not_registered"),
+      ]),
+    ),
+  },
+  { additionalProperties: false },
+);
+export type ServerDataMineralProbeResultV1 = Static<typeof ServerDataMineralProbeResultV1>;
+
 export const ServerDataV1 = Type.Union([
   ServerDataWelcomeV1,
   ServerDataHeartbeatV1,
@@ -1695,5 +1723,7 @@ export const ServerDataV1 = Type.Union([
   ServerDataRealmVisionParamsV1,
   ServerDataSpiritualSenseTargetsV1,
   ServerDataKnockbackSyncV1,
+  // plan-exploration-probe-return-v1 P0
+  ServerDataMineralProbeResultV1,
 ]);
 export type ServerDataV1 = Static<typeof ServerDataV1>;

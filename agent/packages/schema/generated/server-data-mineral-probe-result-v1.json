@@ -1,0 +1,62 @@
+{
+  "additionalProperties": false,
+  "type": "object",
+  "required": [
+    "type",
+    "kind"
+  ],
+  "properties": {
+    "type": {
+      "const": "mineral_probe_result",
+      "type": "string"
+    },
+    "kind": {
+      "anyOf": [
+        {
+          "const": "found",
+          "type": "string"
+        },
+        {
+          "const": "denied",
+          "type": "string"
+        }
+      ]
+    },
+    "mineral_id": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "remaining_units": {
+      "minimum": 0,
+      "type": "integer"
+    },
+    "display_name_zh": {
+      "maxLength": 64,
+      "type": "string"
+    },
+    "denial_reason": {
+      "anyOf": [
+        {
+          "const": "realm_too_low",
+          "type": "string"
+        },
+        {
+          "const": "out_of_range",
+          "type": "string"
+        },
+        {
+          "const": "not_mineral_ore",
+          "type": "string"
+        },
+        {
+          "const": "stale_ore_index",
+          "type": "string"
+        },
+        {
+          "const": "mineral_not_registered",
+          "type": "string"
+        }
+      ]
+    }
+  }
+}

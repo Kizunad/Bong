@@ -96,7 +96,7 @@ import {
 import { ZongCoreActivationV1 } from "../src/zong-formation.js";
 import { RealmVisionParamsV1 } from "../src/realm-vision.js";
 import { ClientRequestV1 } from "../src/client-request.js";
-import { ServerDataV1 } from "../src/server-data.js";
+import { ServerDataV1, ServerDataMineralProbeResultV1 } from "../src/server-data.js";
 import {
   TsyNpcSpawnedV1,
   TsySentinelPhaseChangedV1,
@@ -972,6 +972,69 @@ describe("sample files pass schema validation", () => {
   it("server-data.heart-demon-offer.sample.json", () => {
     const data = loadSample("server-data.heart-demon-offer.sample.json");
     const result = validate(ServerDataV1, data);
+    expect(result.ok, result.errors.join("; ")).toBe(true);
+  });
+
+  // plan-exploration-probe-return-v1 P0 — 神识感知矿脉回执
+  it("server-data.mineral-probe-result-found.sample.json validates against ServerDataV1", () => {
+    const data = loadSample("server-data.mineral-probe-result-found.sample.json");
+    const result = validate(ServerDataV1, data);
+    expect(result.ok, result.errors.join("; ")).toBe(true);
+  });
+
+  it("server-data.mineral-probe-result-denied.sample.json validates against ServerDataV1", () => {
+    const data = loadSample("server-data.mineral-probe-result-denied.sample.json");
+    const result = validate(ServerDataV1, data);
+    expect(result.ok, result.errors.join("; ")).toBe(true);
+  });
+
+  it("mineral probe result found: inline schema pin", () => {
+    const found: ServerDataMineralProbeResultV1 = {
+      type: "mineral_probe_result",
+      kind: "found",
+      mineral_id: "yu_sui",
+      remaining_units: 12,
+      display_name_zh: "玉碎灵脉",
+    };
+    const result = validate(ServerDataMineralProbeResultV1, found);
+    expect(result.ok, result.errors.join("; ")).toBe(true);
+  });
+
+  it("mineral probe result denied: inline schema pin for all 5 denial reasons", () => {
+    const reasons = [
+      "realm_too_low",
+      "out_of_range",
+      "not_mineral_ore",
+      "stale_ore_index",
+      "mineral_not_registered",
+    ] as const;
+    for (const reason of reasons) {
+      const denied: ServerDataMineralProbeResultV1 = {
+        type: "mineral_probe_result",
+        kind: "denied",
+        denial_reason: reason,
+      };
+      const result = validate(ServerDataMineralProbeResultV1, denied);
+      expect(result.ok, `denial_reason=${reason}: ${result.errors.join("; ")}`).toBe(true);
+    }
+  });
+
+  it("mineral probe result: unknown kind is rejected", () => {
+    const bad = { type: "mineral_probe_result", kind: "unknown" };
+    const result = validate(ServerDataMineralProbeResultV1, bad);
+    expect(result.ok).toBe(false);
+  });
+
+  it("mineral probe result: found without optional fields is valid", () => {
+    // remaining_units and display_name_zh are optional
+    const found = { type: "mineral_probe_result", kind: "found", mineral_id: "cu_tie" };
+    const result = validate(ServerDataMineralProbeResultV1, found);
+    expect(result.ok, result.errors.join("; ")).toBe(true);
+  });
+
+  it("mineral probe result: denied without denial_reason is valid (server may omit)", () => {
+    const denied = { type: "mineral_probe_result", kind: "denied" };
+    const result = validate(ServerDataMineralProbeResultV1, denied);
     expect(result.ok, result.errors.join("; ")).toBe(true);
   });
 
