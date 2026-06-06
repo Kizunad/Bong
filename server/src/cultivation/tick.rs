@@ -724,9 +724,13 @@ mod tests {
         }
 
         let log = app.world().entity(entity).get::<PracticeLog>().unwrap();
-        assert_eq!(
-            log.weights.get(&ColorKind::Heavy).copied(),
-            Some(STYLE_PRACTICE_AMOUNT)
+        // P0 起 record_cultivation_session_practice 应用 color_style_bonus：
+        // active_color=Heavy，QiColor.main=Heavy → 主色匹配 → bonus=0.9
+        let expected = STYLE_PRACTICE_AMOUNT * 0.9;
+        let actual = log.weights.get(&ColorKind::Heavy).copied().unwrap_or(0.0);
+        assert!(
+            (actual - expected).abs() < 1e-9,
+            "期望 Heavy 主色匹配时 session practice amount={expected}（0.9x 加成），实际={actual}"
         );
     }
 
