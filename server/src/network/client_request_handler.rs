@@ -1594,12 +1594,11 @@ pub fn handle_client_request_payloads(
                     skill_scroll_params.freshness_probe_tx.as_deref_mut()
                 {
                     // client 直接传来 instance_id，server 只需校验该 instance_id
-                    // 确实属于该玩家 inventory（任意容器均可），避免容器 tab 歧义。
+                    // 确实属于该玩家 inventory（containers / equipped / hotbar 三处均扫）。
+                    // 使用 inventory_item_by_instance_borrow 与 resolver（shelflife/probe.rs）保持一致，
+                    // 避免 hotbar / 装备槽物品被 gate 误拒。
                     let belongs_to_player = inventories.get(ev.client).is_ok_and(|inv| {
-                        inv.containers
-                            .iter()
-                            .flat_map(|c| c.items.iter())
-                            .any(|p| p.instance.instance_id == instance_id)
+                        inventory_item_by_instance_borrow(inv, instance_id).is_some()
                     });
 
                     if belongs_to_player {
@@ -10475,6 +10474,114 @@ mod freshness_probe_handler_tests {
         assert_eq!(
             captured.0[0].instance_id, 1234,
             "instance_id 应匹配第二容器物品"
+        );
+    }
+
+    /// FreshnessProbe gate 扩展：instance_id 在 hotbar 中也应 emit（原 bug：只扫 containers）。
+    #[test]
+    fn freshness_probe_request_finds_item_in_hotbar() {
+        let (mut app, entity) = setup_freshness_probe_app();
+        let item = ItemInstance {
+            instance_id: 5555,
+            template_id: "zhi_xiang_cao".to_string(),
+            display_name: "止香草".to_string(),
+            grid_w: 1,
+            grid_h: 1,
+            weight: 0.05,
+            rarity: ItemRarity::Common,
+            description: String::new(),
+            stack_count: 1,
+            spirit_quality: 0.6,
+            durability: 1.0,
+            freshness: None,
+            mineral_id: None,
+            charges: None,
+            forge_quality: None,
+            forge_color: None,
+            forge_side_effects: Vec::new(),
+            forge_achieved_tier: None,
+            alchemy: None,
+            lingering_owner_qi: None,
+        };
+        // 放进 hotbar slot 3（容器为空）
+        let mut inv = empty_inventory();
+        inv.hotbar[3] = Some(item);
+        app.world_mut().entity_mut(entity).insert(inv);
+
+        app.world_mut()
+            .resource_mut::<valence::prelude::Events<CustomPayloadEvent>>()
+            .send(CustomPayloadEvent {
+                client: entity,
+                channel: ident!("bong:client_request").into(),
+                data: br#"{"type":"freshness_probe","v":1,"instance_id":5555}"#
+                    .to_vec()
+                    .into_boxed_slice(),
+            });
+        app.update();
+
+        let captured = app.world().resource::<CapturedFreshnessProbes>();
+        assert_eq!(
+            captured.0.len(),
+            1,
+            "hotbar 中的物品也应能通过 gate 并 emit FreshnessProbeIntent（修复前只扫 containers 导致误拒）"
+        );
+        assert_eq!(
+            captured.0[0].instance_id, 5555,
+            "instance_id 应匹配 hotbar 物品"
+        );
+    }
+
+    /// FreshnessProbe gate 扩展：instance_id 在 equipped 中也应 emit。
+    #[test]
+    fn freshness_probe_request_finds_item_in_equipped() {
+        let (mut app, entity) = setup_freshness_probe_app();
+        let item = ItemInstance {
+            instance_id: 6666,
+            template_id: "spirit_robe".to_string(),
+            display_name: "灵袍".to_string(),
+            grid_w: 2,
+            grid_h: 3,
+            weight: 1.5,
+            rarity: ItemRarity::Common,
+            description: String::new(),
+            stack_count: 1,
+            spirit_quality: 0.9,
+            durability: 0.8,
+            freshness: None,
+            mineral_id: None,
+            charges: None,
+            forge_quality: None,
+            forge_color: None,
+            forge_side_effects: Vec::new(),
+            forge_achieved_tier: None,
+            alchemy: None,
+            lingering_owner_qi: None,
+        };
+        // 放进 equipped（模拟穿戴槽），容器与 hotbar 均为空
+        let mut inv = empty_inventory();
+        inv.equipped.insert("body".to_string(), item);
+        app.world_mut().entity_mut(entity).insert(inv);
+
+        app.world_mut()
+            .resource_mut::<valence::prelude::Events<CustomPayloadEvent>>()
+            .send(CustomPayloadEvent {
+                client: entity,
+                channel: ident!("bong:client_request").into(),
+                data: br#"{"type":"freshness_probe","v":1,"instance_id":6666}"#
+                    .to_vec()
+                    .into_boxed_slice(),
+            });
+        app.update();
+
+        let captured = app.world().resource::<CapturedFreshnessProbes>();
+        assert_eq!(
+            captured.0.len(),
+            1,
+            "equipped 中的物品也应能通过 gate 并 emit FreshnessProbeIntent（修复前只扫 containers 导致误拒）"
+        );
+        assert_eq!(
+            captured.0[0].instance_id, 6666,
+            "instance_id 应匹配 equipped 物品"
         );
     }
 }
