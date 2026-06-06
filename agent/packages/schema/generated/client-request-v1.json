@@ -1161,7 +1161,7 @@
       "required": [
         "v",
         "type",
-        "slot"
+        "instance_id"
       ],
       "properties": {
         "v": {
@@ -1172,9 +1172,8 @@
           "const": "freshness_probe",
           "type": "string"
         },
-        "slot": {
+        "instance_id": {
           "minimum": 0,
-          "maximum": 255,
           "type": "integer"
         }
       }

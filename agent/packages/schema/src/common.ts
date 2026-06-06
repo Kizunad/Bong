@@ -48,6 +48,9 @@ export const EventKind = Type.Union([
   Type.Literal("heavenly_fire"),
   Type.Literal("pressure_invert"),
   Type.Literal("all_wither"),
+  // plan-exploration-probe-return-v1 P1 — freshness probe Denied 路径用
+  // EventKind::Generic（server proto EVENT_KIND_GENERIC=11）。与 server/proto 对齐。
+  Type.Literal("generic"),
 ]);
 export type EventKind = Static<typeof EventKind>;
 
