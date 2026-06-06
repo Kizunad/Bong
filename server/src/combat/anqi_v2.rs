@@ -549,7 +549,16 @@ fn emit_skill_event(
             if let Some(mut events) =
                 world.get_resource_mut::<bevy_ecs::event::Events<QiInjectionEvent>>()
             {
-                if let Ok(outcome) = high_density_inject(payload_qi, caster_qi_max, true, mastery) {
+                // P0 color plan §table.行60：凝实(Solid)主色非杂色时暗器距离衰减 -5%（payload ×1.05）。
+                // color_matched 在 resolve_anqi_skill 处读取真实 QiColor，此处直接用传入值。
+                let effective_payload = if color_matched {
+                    payload_qi * 1.05
+                } else {
+                    payload_qi
+                };
+                if let Ok(outcome) =
+                    high_density_inject(effective_payload, caster_qi_max, true, mastery)
+                {
                     events.send(QiInjectionEvent {
                         caster,
                         target,
@@ -1146,6 +1155,175 @@ mod tests {
         assert!(
             events[0].outcome.overload_ratio > 0.0,
             "期望正常 Solid 色 SoulInject 成功触发注射（color_matched=true 路径）"
+        );
+    }
+
+    // ── major1: SingleSnipe 凝实色距离衰减 -5% ──────────────────────────────
+
+    fn base_snipe_world_with_color(is_solid: bool, is_chaotic: bool) -> bevy_ecs::world::World {
+        use crate::cultivation::components::ColorKind;
+        let mut world = bevy_ecs::world::World::new();
+        world.insert_resource(CombatClock { tick: 100 });
+        world.insert_resource(bevy_ecs::event::Events::<QiInjectionEvent>::default());
+        world.insert_resource(bevy_ecs::event::Events::<CarrierAbrasionEvent>::default());
+        let (inventory, store) =
+            charged_inventory_and_store(30, AnqiSkillId::SingleSnipe.carrier_kind());
+        let qi_color = QiColor {
+            main: if is_solid {
+                ColorKind::Solid
+            } else {
+                ColorKind::Sharp
+            },
+            is_chaotic,
+            ..Default::default()
+        };
+        let _ = world.spawn((
+            Cultivation {
+                realm: Realm::Awaken,
+                qi_current: 100.0,
+                qi_max: 100.0,
+                ..Default::default()
+            },
+            SkillBarBindings::default(),
+            inventory,
+            store,
+            ContainerSlot {
+                active: AnqiContainerKind::HandSlot,
+                switching_until_tick: 0,
+            },
+            qi_color,
+        ));
+        world
+    }
+
+    /// P0 color plan §table.行60 — 凝实色 (Solid, !is_chaotic) 时 SingleSnipe
+    /// payload_qi 乘 1.05（距离衰减 -5%），wound_qi 因此更高。
+    #[test]
+    fn single_snipe_solid_color_applies_5pct_payload_boost() {
+        let mut world_solid = base_snipe_world_with_color(true, false);
+        let caster_solid = world_solid
+            .query::<bevy_ecs::prelude::Entity>()
+            .iter(&world_solid)
+            .next()
+            .unwrap();
+        let target = world_solid.spawn_empty().id();
+        resolve_anqi_skill(
+            &mut world_solid,
+            caster_solid,
+            0,
+            Some(target),
+            AnqiSkillId::SingleSnipe,
+        );
+        let solid_events: Vec<_> = world_solid
+            .resource::<bevy_ecs::event::Events<QiInjectionEvent>>()
+            .get_reader()
+            .read(world_solid.resource::<bevy_ecs::event::Events<QiInjectionEvent>>())
+            .cloned()
+            .collect();
+
+        let mut world_other = base_snipe_world_with_color(false, false);
+        let caster_other = world_other
+            .query::<bevy_ecs::prelude::Entity>()
+            .iter(&world_other)
+            .next()
+            .unwrap();
+        let target2 = world_other.spawn_empty().id();
+        resolve_anqi_skill(
+            &mut world_other,
+            caster_other,
+            0,
+            Some(target2),
+            AnqiSkillId::SingleSnipe,
+        );
+        let other_events: Vec<_> = world_other
+            .resource::<bevy_ecs::event::Events<QiInjectionEvent>>()
+            .get_reader()
+            .read(world_other.resource::<bevy_ecs::event::Events<QiInjectionEvent>>())
+            .cloned()
+            .collect();
+
+        assert_eq!(
+            solid_events.len(),
+            1,
+            "凝实色 SingleSnipe 应触发 1 次 QiInjectionEvent"
+        );
+        assert_eq!(
+            other_events.len(),
+            1,
+            "非凝实色 SingleSnipe 应触发 1 次 QiInjectionEvent"
+        );
+        assert!(
+            solid_events[0].outcome.wound_qi > other_events[0].outcome.wound_qi,
+            "凝实色距离衰减 -5% 应使 wound_qi 更高（凝实 {} > 非凝实 {}）",
+            solid_events[0].outcome.wound_qi,
+            other_events[0].outcome.wound_qi
+        );
+        // 精确验证 ×1.05 倍率：wound_qi = payload * wound_ratio * color_multiplier
+        // 相同载体基础 payload，solid × 1.05 后 wound_qi 比例严格一致
+        let ratio = solid_events[0].outcome.wound_qi / other_events[0].outcome.wound_qi;
+        assert!(
+            (ratio - 1.05).abs() < 1e-6,
+            "凝实色 wound_qi / 非凝实色 wound_qi 应精确等于 1.05，实际比值 {ratio}（验证 payload × 1.05）"
+        );
+    }
+
+    /// P0 color plan §table.行60 — 杂色时不得触发 -5% payload 加成，
+    /// 即使主色是 Solid（worldview §六.2「只剩基础真元属性」）。
+    #[test]
+    fn single_snipe_solid_chaotic_does_not_apply_boost() {
+        // 杂色 Solid：is_chaotic=true → color_matched=false → 无 1.05 加成
+        let mut world_chaotic = base_snipe_world_with_color(true, true);
+        let caster_chaotic = world_chaotic
+            .query::<bevy_ecs::prelude::Entity>()
+            .iter(&world_chaotic)
+            .next()
+            .unwrap();
+        let target = world_chaotic.spawn_empty().id();
+        resolve_anqi_skill(
+            &mut world_chaotic,
+            caster_chaotic,
+            0,
+            Some(target),
+            AnqiSkillId::SingleSnipe,
+        );
+        let chaotic_events: Vec<_> = world_chaotic
+            .resource::<bevy_ecs::event::Events<QiInjectionEvent>>()
+            .get_reader()
+            .read(world_chaotic.resource::<bevy_ecs::event::Events<QiInjectionEvent>>())
+            .cloned()
+            .collect();
+
+        // 非杂色 non-solid 作基准（也是 color_matched=false 路径）
+        let mut world_base = base_snipe_world_with_color(false, false);
+        let caster_base = world_base
+            .query::<bevy_ecs::prelude::Entity>()
+            .iter(&world_base)
+            .next()
+            .unwrap();
+        let target2 = world_base.spawn_empty().id();
+        resolve_anqi_skill(
+            &mut world_base,
+            caster_base,
+            0,
+            Some(target2),
+            AnqiSkillId::SingleSnipe,
+        );
+        let base_events: Vec<_> = world_base
+            .resource::<bevy_ecs::event::Events<QiInjectionEvent>>()
+            .get_reader()
+            .read(world_base.resource::<bevy_ecs::event::Events<QiInjectionEvent>>())
+            .cloned()
+            .collect();
+
+        assert_eq!(chaotic_events.len(), 1);
+        assert_eq!(base_events.len(), 1);
+        // 杂色时 payload 不加成，wound_qi 应与 non-solid 基准相等（在浮点误差内）
+        assert!(
+            (chaotic_events[0].outcome.wound_qi - base_events[0].outcome.wound_qi).abs() < 1e-6,
+            "杂色 Solid 不得触发 -5% 距离衰减加成（worldview §六.2）：\
+             期望 wound_qi 与非凝实基准相等（{}），实际 {}",
+            base_events[0].outcome.wound_qi,
+            chaotic_events[0].outcome.wound_qi
         );
     }
 }

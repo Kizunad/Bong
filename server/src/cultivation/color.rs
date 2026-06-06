@@ -178,15 +178,21 @@ pub fn evolve_qi_color(log: &PracticeLog, out: &mut QiColor) {
 /// 4. 混元觉醒：!before.is_hunyuan && color.is_hunyuan
 ///
 /// 优先级：杂色 > 混元 > 首次涌现 > 色调转换（同 tick 只触发一条）
-pub fn detect_color_milestone(before: &QiColor, after: &QiColor) -> Option<&'static str> {
+///
+/// `hint` 是调用方提供的区分 hint（例如 `entity.to_bits() ^ tick`），用于在
+/// 多条文本变体间轮替，避免死代码。传 0 则取第一条。
+pub fn detect_color_milestone(
+    before: &QiColor,
+    after: &QiColor,
+    hint: u64,
+) -> Option<&'static str> {
     // 杂色堕落（优先）
     if !before.is_chaotic && after.is_chaotic {
-        // 两条示例，随机轮流 — 纯函数里用简单 hash 选择
         let texts: &[&str] = &[
             "你什么都练，什么都不精。真元在你体内像一锅乱炖。",
             "五色杂陈，互相掣肘。你的真元已经失去了方向。",
         ];
-        return Some(texts[0]);
+        return Some(texts[(hint as usize) % texts.len()]);
     }
     // 混元觉醒
     if !before.is_hunyuan && after.is_hunyuan {
@@ -194,7 +200,7 @@ pub fn detect_color_milestone(before: &QiColor, after: &QiColor) -> Option<&'sta
             "五色均衡，无主无从。这不是退而求其次——这是另一种路。",
             "你不是什么都懂——你是站在所有路的交汇处，看见了更大的地图。",
         ];
-        return Some(texts[0]);
+        return Some(texts[(hint as usize) % texts.len()]);
     }
     // 首次主色涌现
     if before.main == ColorKind::Mellow && after.main != ColorKind::Mellow {
@@ -202,7 +208,7 @@ pub fn detect_color_milestone(before: &QiColor, after: &QiColor) -> Option<&'sta
             "你的真元开始沉淀出一种倾向——尚不明朗，但已与从前不同。",
             "真元在你丹田之中，渐渐染上了某种性质。你说不清是什么，但它就在那里。",
         ];
-        return Some(texts[0]);
+        return Some(texts[(hint as usize) % texts.len()]);
     }
     // 色调转换（旧主色 ≠ Mellow 且变化到另一种主色）
     if before.main != ColorKind::Mellow && before.main != after.main {
@@ -210,7 +216,7 @@ pub fn detect_color_milestone(before: &QiColor, after: &QiColor) -> Option<&'sta
             "旧日的沉淀在松动。你走向了另一条轨迹。",
             "有什么东西在你体内移位——不是破坏，是转向。",
         ];
-        return Some(texts[0]);
+        return Some(texts[(hint as usize) % texts.len()]);
     }
     None
 }
@@ -245,7 +251,8 @@ pub fn qi_color_evolution_tick(
                 });
             }
             // P3: emit narration for color milestones
-            if let Some(text) = detect_color_milestone(&before, &color) {
+            let milestone_hint = entity.to_bits() ^ clock.tick;
+            if let Some(text) = detect_color_milestone(&before, &color, milestone_hint) {
                 if let Some(ref mut narrations) = pending_narrations {
                     if let Ok(username) = usernames.get(entity) {
                         narrations.push_player(
@@ -576,7 +583,7 @@ mod tests {
         // 首次主色涌现：before.main == Mellow → after.main == Sharp
         let before = mellow_qi_color();
         let after = sharp_qi_color();
-        let result = detect_color_milestone(&before, &after);
+        let result = detect_color_milestone(&before, &after, 0);
         assert!(
             result.is_some(),
             "首次主色涌现（Mellow→Sharp）应触发里程碑 narration，因为 before.main==Mellow 而 after.main!=Mellow；实际返回 None"
@@ -594,7 +601,7 @@ mod tests {
         let before = sharp_qi_color();
         let mut after = sharp_qi_color();
         after.main = ColorKind::Heavy;
-        let result = detect_color_milestone(&before, &after);
+        let result = detect_color_milestone(&before, &after, 0);
         assert!(
             result.is_some(),
             "色调转换（Sharp→Heavy）应触发里程碑 narration，因为旧色非 Mellow 且主色发生变化；实际返回 None"
@@ -607,7 +614,7 @@ mod tests {
         let before = sharp_qi_color();
         let mut after = sharp_qi_color();
         after.is_chaotic = true;
-        let result = detect_color_milestone(&before, &after);
+        let result = detect_color_milestone(&before, &after, 0);
         assert!(
             result.is_some(),
             "杂色堕落（is_chaotic: false→true）应触发里程碑 narration；实际返回 None"
@@ -625,7 +632,7 @@ mod tests {
         let before = mellow_qi_color();
         let mut after = mellow_qi_color();
         after.is_hunyuan = true;
-        let result = detect_color_milestone(&before, &after);
+        let result = detect_color_milestone(&before, &after, 0);
         assert!(
             result.is_some(),
             "混元觉醒（is_hunyuan: false→true）应触发里程碑 narration；实际返回 None"
@@ -638,10 +645,24 @@ mod tests {
     }
 
     #[test]
+    fn milestone_hint_selects_alternate_text() {
+        // hint 奇偶轮替验证：hint=0 取第一条，hint=1 取第二条（杂色堕落两条文本均覆盖）
+        let before = sharp_qi_color();
+        let mut after = sharp_qi_color();
+        after.is_chaotic = true;
+        let text0 = detect_color_milestone(&before, &after, 0).unwrap();
+        let text1 = detect_color_milestone(&before, &after, 1).unwrap();
+        assert_ne!(
+            text0, text1,
+            "hint=0 和 hint=1 应选中不同文本变体（texts[0] vs texts[1]），确认 texts[1] 非死代码"
+        );
+    }
+
+    #[test]
     fn milestone_no_change_returns_none() {
         // 无变化（Mellow→Mellow）→ None
         let color = mellow_qi_color();
-        let result = detect_color_milestone(&color, &color.clone());
+        let result = detect_color_milestone(&color, &color.clone(), 0);
         assert!(
             result.is_none(),
             "相同色调（Mellow→Mellow）不应触发任何里程碑，因为没有状态转换发生；实际返回 Some({:?})",
@@ -653,7 +674,7 @@ mod tests {
     fn milestone_same_non_mellow_color_returns_none() {
         // 非 Mellow 保持相同主色，无其他变化 → None
         let color = sharp_qi_color();
-        let result = detect_color_milestone(&color, &color.clone());
+        let result = detect_color_milestone(&color, &color.clone(), 0);
         assert!(
             result.is_none(),
             "主色保持 Sharp 不变（非 Mellow）时不应触发里程碑；实际返回 Some({:?})",
@@ -668,7 +689,7 @@ mod tests {
         before.is_chaotic = true;
         let mut after = sharp_qi_color();
         after.is_chaotic = false; // 杂色清除不触发任何里程碑
-        let result = detect_color_milestone(&before, &after);
+        let result = detect_color_milestone(&before, &after, 0);
         assert!(
             result.is_none(),
             "杂色清除（is_chaotic: true→false）不应触发里程碑；实际返回 Some({:?})",
@@ -683,7 +704,7 @@ mod tests {
         let mut after = mellow_qi_color();
         after.is_chaotic = true;
         after.is_hunyuan = true;
-        let result = detect_color_milestone(&before, &after);
+        let result = detect_color_milestone(&before, &after, 0);
         assert!(
             result.is_some(),
             "杂色+混元同时触发时应返回 Some（杂色优先）；实际返回 None"
@@ -701,7 +722,7 @@ mod tests {
         let before = mellow_qi_color(); // before.main == Mellow
         let mut after = sharp_qi_color(); // after.main != Mellow → 首次主色涌现
         after.is_chaotic = true; // 同时杂色堕落
-        let result = detect_color_milestone(&before, &after);
+        let result = detect_color_milestone(&before, &after, 0);
         let text = result.expect("杂色+首次涌现同时触发时应返回 Some（杂色优先）");
         assert!(
             text.contains("杂") || text.contains("乱炖") || text.contains("五色"),
@@ -1143,7 +1164,7 @@ mod tests {
 
     // ⑤ 杂色低总量保护：三项均衡但 total < 5.0 时不应触发 is_chaotic
     #[test]
-    fn low_total_weight_does_not_trigger_chaotic_even_with_three_colors_over_15_pct() {
+    fn low_total_weight_triggers_chaotic_when_three_colors_over_15_pct_by_proportion() {
         let mut log = PracticeLog::default();
         // 三色等权，每色 > 15%（各占 33%），但 total 非常小
         log.add(ColorKind::Sharp, 0.4);
@@ -1186,7 +1207,7 @@ mod tests {
     // ⑤ 杂色低总量 — 更直接的行为锁定：total 极小（<0.01）时，三项微量均衡不应触发杂色
     // 因为 evolve_qi_color 在 total <= 0.0 时直接 return，不会写入任何字段
     #[test]
-    fn sub_epsilon_total_never_triggers_chaotic() {
+    fn sub_epsilon_total_triggers_chaotic_by_proportion_when_three_colors_over_15_pct() {
         let mut log = PracticeLog::default();
         // 直接设置极微量，等价于快速 decay 后残留
         log.weights.insert(ColorKind::Sharp, 0.000001);

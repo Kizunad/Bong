@@ -486,3 +486,137 @@ fn dugu_emit_anim_skips_without_unique_id() {
         "emit_anim should skip PlayAnim when entity has no UniqueId"
     );
 }
+
+// ── minor②: dugu is_chaotic guard 专项 case ─────────────────────────────
+
+/// 杂色玩家施放 Eclipse 时，insidious_color_percent 加成必须强制清零（worldview §六.2）。
+/// Eclipse 的 self_cure_percent 参数在杂色时应传 0.0，不管 DuguState 里记了多少。
+#[test]
+fn eclipse_chaotic_caster_zeroes_insidious_color_bonus() {
+    let mut app = setup_app();
+    let caster = actor(&mut app, Realm::Spirit, 100.0, 100.0, 0.0);
+    let target = actor(&mut app, Realm::Spirit, 200.0, 200.0, 1.0);
+
+    // 给 caster 挂上杂色 + 高 insidious_color_percent
+    app.world_mut().entity_mut(caster).insert(QiColor {
+        main: crate::cultivation::components::ColorKind::Insidious,
+        is_chaotic: true,
+        ..Default::default()
+    });
+    let state_with_bonus = super::state::DuguState {
+        insidious_color_percent: 50.0,
+        morphology_percent: 50.0,
+        ..Default::default()
+    };
+    app.world_mut().entity_mut(caster).insert(state_with_bonus);
+
+    // 先记录无加成时的 hp_loss（杂色玩家应等同于 insidious_color_percent=0 的效果）
+    let effect_no_bonus = super::physics::eclipse_effect(Realm::Spirit, 0.0);
+    let effect_with_bonus = super::physics::eclipse_effect(Realm::Spirit, 50.0);
+    // 确认两条效果确实有差异（验证 color_percent 确实影响 eclipse_effect 输出）
+    assert_ne!(
+        effect_no_bonus.hp_loss, effect_with_bonus.hp_loss,
+        "前提：insidious_color_percent 0 vs 50 应产生不同 hp_loss，否则 guard 测试无意义"
+    );
+
+    let result = resolve_dugu_v2_skill(
+        app.world_mut(),
+        caster,
+        0,
+        Some(target),
+        DuguSkillId::Eclipse,
+    );
+    assert!(
+        matches!(result, CastResult::Started { .. }),
+        "杂色 caster Eclipse 应正常完成 cast（guard 只清零加成，不拒绝 cast），实际 result={result:?}"
+    );
+
+    // 蚀针事件里 qi_loss 应反映「无加成」路径
+    let events_res = app.world().resource::<Events<EclipseNeedleEvent>>();
+    let event = events_res
+        .iter_current_update_events()
+        .next()
+        .expect("杂色 Eclipse 应发 EclipseNeedleEvent");
+    assert!(
+        (event.hp_loss - effect_no_bonus.hp_loss).abs() < 1e-3,
+        "杂色 caster Eclipse hp_loss 应等于 insidious_color_percent=0 时的效果（{}），\
+         实际 {}（杂色时必须强制清零 insidious_color_percent 加成，守 worldview §六.2）",
+        effect_no_bonus.hp_loss,
+        event.hp_loss
+    );
+}
+
+/// 非杂色 caster 的 insidious_color_percent 加成应正常传入 eclipse_effect。
+#[test]
+fn eclipse_non_chaotic_caster_uses_insidious_color_bonus() {
+    let mut app = setup_app();
+    let caster = actor(&mut app, Realm::Spirit, 100.0, 100.0, 0.0);
+    let target = actor(&mut app, Realm::Spirit, 200.0, 200.0, 1.0);
+
+    // 非杂色但有 insidious_color_percent
+    app.world_mut().entity_mut(caster).insert(QiColor {
+        main: crate::cultivation::components::ColorKind::Insidious,
+        is_chaotic: false,
+        ..Default::default()
+    });
+    app.world_mut()
+        .entity_mut(caster)
+        .insert(super::state::DuguState {
+            insidious_color_percent: 30.0,
+            morphology_percent: 30.0,
+            ..Default::default()
+        });
+
+    let effect_with_bonus = super::physics::eclipse_effect(Realm::Spirit, 30.0);
+    let result = resolve_dugu_v2_skill(
+        app.world_mut(),
+        caster,
+        0,
+        Some(target),
+        DuguSkillId::Eclipse,
+    );
+    assert!(matches!(result, CastResult::Started { .. }));
+
+    let event = app
+        .world()
+        .resource::<Events<EclipseNeedleEvent>>()
+        .iter_current_update_events()
+        .next()
+        .expect("非杂色 Eclipse 应发 EclipseNeedleEvent");
+    assert!(
+        (event.hp_loss - effect_with_bonus.hp_loss).abs() < 1e-3,
+        "非杂色 caster 的 insidious_color_percent=30 加成应生效：期望 hp_loss {}，\
+         实际 {} (保证非杂色路径不被误清零)",
+        effect_with_bonus.hp_loss,
+        event.hp_loss
+    );
+}
+
+/// 杂色 caster 施放其他 dugu 技能（SelfCure / Penetrate / Shroud / Reverse）也不应
+/// 因杂色被拒绝（guard 只清加成，不影响 cast 资格本身）。
+#[test]
+fn dugu_chaotic_caster_cast_not_rejected_for_non_eclipse_skills() {
+    let mut app = setup_app();
+    // Reverse 需要目标有 TaintMark，这里只测 SelfCure/Shroud
+    let caster = actor(&mut app, Realm::Spirit, 100.0, 100.0, 0.0);
+    app.world_mut().entity_mut(caster).insert(QiColor {
+        is_chaotic: true,
+        ..Default::default()
+    });
+
+    // SelfCure 不需目标
+    let result_self_cure =
+        resolve_dugu_v2_skill(app.world_mut(), caster, 0, None, DuguSkillId::SelfCure);
+    assert!(
+        matches!(result_self_cure, CastResult::Started { .. }),
+        "杂色时 SelfCure 不应被拒绝（杂色 guard 只清加成）：实际 result={result_self_cure:?}"
+    );
+
+    // Shroud 不需目标
+    let result_shroud =
+        resolve_dugu_v2_skill(app.world_mut(), caster, 1, None, DuguSkillId::Shroud);
+    assert!(
+        matches!(result_shroud, CastResult::Started { .. }),
+        "杂色时 Shroud 不应被拒绝：实际 result={result_shroud:?}"
+    );
+}
