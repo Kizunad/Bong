@@ -15,7 +15,7 @@ use crate::cultivation::known_techniques::KnownTechniques;
 use crate::identity::PlayerIdentities;
 use crate::network::audio_event_emit::{AudioRecipient, PlaySoundRecipeRequest};
 use crate::npc::equipment::NpcEquipment;
-use crate::npc::faction::{FactionId, FactionMembership, FactionRank};
+use crate::npc::faction::FactionMembership;
 use crate::npc::lifecycle::{NpcArchetype, NpcLifespan};
 use crate::npc::spawn::NpcMarker;
 use crate::npc::trade::NpcTradeInventory;
@@ -238,8 +238,8 @@ pub fn build_npc_metadata(input: NpcMetadataBuildInput<'_>) -> NpcMetadataS2c {
         .map(|cultivation| cultivation.realm)
         .unwrap_or(Realm::Awaken);
     let reputation_to_player = reputation_to_player_score_for_client(membership, player_identities);
-    let faction_name = membership.map(|membership| faction_name(membership.faction_id).to_string());
-    let faction_rank = membership.map(|membership| faction_rank_label(membership.rank).to_string());
+    let faction_name = None;
+    let faction_rank = None;
     let display_name = display_name(archetype, realm, membership);
     let qi_hint = player_cultivation.map(|player| qi_hint(player.realm, realm));
     let hp_ratio = wounds
@@ -343,15 +343,8 @@ pub fn build_npc_metadata(input: NpcMetadataBuildInput<'_>) -> NpcMetadataS2c {
 pub fn display_name(
     archetype: NpcArchetype,
     realm: Realm,
-    membership: Option<&FactionMembership>,
+    _membership: Option<&FactionMembership>,
 ) -> String {
-    if let Some(membership) = membership {
-        return format!(
-            "{}·{}",
-            faction_name(membership.faction_id),
-            faction_rank_label(membership.rank)
-        );
-    }
     format!("{}·{}", archetype_label(archetype), realm_label(realm))
 }
 
@@ -389,22 +382,6 @@ pub fn realm_rank(realm: Realm) -> i32 {
         Realm::Solidify => 3,
         Realm::Spirit => 4,
         Realm::Void => 5,
-    }
-}
-
-pub fn faction_name(faction: FactionId) -> &'static str {
-    match faction {
-        FactionId::Attack => "魔修派",
-        FactionId::Defend => "正道盟",
-        FactionId::Neutral => "中立盟",
-    }
-}
-
-pub fn faction_rank_label(rank: FactionRank) -> &'static str {
-    match rank {
-        FactionRank::Leader => "掌门",
-        FactionRank::Disciple => "真传弟子",
-        FactionRank::Ally => "客卿",
     }
 }
 
@@ -489,9 +466,17 @@ mod tests {
     use valence::prelude::ItemKind;
 
     fn membership(loyalty: f64) -> FactionMembership {
+        membership_with(FactionId::Attack, FactionRank::Disciple, loyalty)
+    }
+
+    fn membership_with(
+        faction_id: FactionId,
+        rank: FactionRank,
+        loyalty: f64,
+    ) -> FactionMembership {
         FactionMembership {
-            faction_id: FactionId::Attack,
-            rank: FactionRank::Disciple,
+            faction_id,
+            rank,
             reputation: Reputation { loyalty },
             lineage: Some(Lineage {
                 master_id: Some("npc:master".to_string()),
@@ -534,12 +519,79 @@ mod tests {
         assert!(json.contains(r#""entity_id":42"#));
         assert!(json.contains(r#""archetype":"disciple""#));
         assert!(json.contains(r#""realm":"凝脉""#));
-        assert!(json.contains(r#""display_name":"魔修派·真传弟子""#));
+        assert!(json.contains(r#""display_name":"宗门弟子·凝脉""#));
         assert!(json.contains(r#""greeting_text":"道友，可有灵草出让？""#));
         assert!(json.contains(r#""reputation_to_player":50"#));
         assert!(json.contains(r#""qi_hint":"你看不清此人深浅""#));
         assert!(json.contains(r#""hp_ratio":0.4"#));
         assert!(json.contains(r#""qi_ratio":0.0"#));
+        assert!(!json.contains("faction_name"));
+        assert!(!json.contains("faction_rank"));
+        assert_no_faction_words(&json, "npc_metadata_packet_serializes");
+    }
+
+    fn assert_no_faction_words(actual: &str, context: &str) {
+        for forbidden in ["魔修派", "正道盟", "中立盟", "掌门", "真传弟子", "客卿"]
+        {
+            assert!(
+                !actual.contains(forbidden),
+                "期望 NPC payload 不暴露具名派系（reframe b 对齐），context={context} actual={actual}"
+            );
+        }
+    }
+
+    #[test]
+    fn npc_metadata_hides_faction_fields_for_all_faction_rank_pairs() {
+        for faction_id in [FactionId::Attack, FactionId::Defend, FactionId::Neutral] {
+            for rank in [
+                FactionRank::Leader,
+                FactionRank::Disciple,
+                FactionRank::Ally,
+            ] {
+                let membership = membership_with(faction_id, rank, 0.9);
+                let payload = build_npc_metadata(NpcMetadataBuildInput {
+                    entity_id: 42,
+                    archetype: NpcArchetype::Disciple,
+                    cultivation: Some(&Cultivation {
+                        realm: Realm::Condense,
+                        ..Cultivation::default()
+                    }),
+                    membership: Some(&membership),
+                    lifespan: None,
+                    player_cultivation: None,
+                    player_identities: None,
+                    wounds: None,
+                    equipment: None,
+                    techniques: None,
+                    trade_inventory: None,
+                });
+                let json = String::from_utf8(payload.to_json_bytes_checked().expect("serialize"))
+                    .expect("metadata payload should be utf8 json");
+
+                assert_eq!(
+                    payload.faction_name, None,
+                    "expected faction_name None because NPC payload must not expose faction_id={faction_id:?} rank={rank:?}"
+                );
+                assert_eq!(
+                    payload.faction_rank, None,
+                    "expected faction_rank None because NPC payload must not expose faction_id={faction_id:?} rank={rank:?}"
+                );
+                assert_eq!(
+                    payload.display_name, "宗门弟子·凝脉",
+                    "期望 NPC payload 不暴露具名派系（reframe b 对齐），实际 display_name={} faction_id={faction_id:?} rank={rank:?}",
+                    payload.display_name
+                );
+                assert_no_faction_words(&json, "payload json");
+
+                let dialogue_name =
+                    display_name(NpcArchetype::Disciple, Realm::Condense, Some(&membership));
+                assert_eq!(
+                    dialogue_name, "宗门弟子·凝脉",
+                    "期望 NPC 互动文本 display_name 共用匿名身份，实际 display_name={dialogue_name} faction_id={faction_id:?} rank={rank:?}"
+                );
+                assert_no_faction_words(&dialogue_name, "dialogue display_name");
+            }
+        }
     }
 
     fn ratio_payload(wounds: Option<&Wounds>, cultivation: Option<&Cultivation>) -> NpcMetadataS2c {
