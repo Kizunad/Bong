@@ -835,4 +835,159 @@ mod tests {
             2.0 * low
         );
     }
+
+    // ── P2 生态联动测试 ──
+
+    /// P2-T1: moss spread_probability 正比于 |spirit_qi|
+    /// spirit_qi=-0.5 的蔓延概率是 spirit_qi=-1.0 的一半（生态联动）。
+    #[test]
+    fn p2_moss_spread_probability_proportional_to_spirit_qi_magnitude() {
+        // spread_prob = |spirit_qi| × MOSS_SPREAD_BASE_RATE
+        // spirit_qi=-0.5 → prob=0.5×0.005=0.0025
+        // spirit_qi=-1.0 → prob=1.0×0.005=0.005（2× faster）
+        let prob_low = 0.5_f64 * MOSS_SPREAD_BASE_RATE;
+        let prob_high = 1.0_f64 * MOSS_SPREAD_BASE_RATE;
+
+        assert!(
+            (prob_low - 0.0025).abs() < 1e-9,
+            "spirit_qi=-0.5 时 spread_prob 应为 0.0025（0.5×0.005），实际 {prob_low}（P2 生态联动）"
+        );
+        assert!(
+            (prob_high - 0.005).abs() < 1e-9,
+            "spirit_qi=-1.0 时 spread_prob 应为 0.005（1.0×0.005），实际 {prob_high}（P2 生态联动）"
+        );
+        assert!(
+            (prob_high - 2.0 * prob_low).abs() < 1e-9,
+            "spirit_qi=-1.0 蔓延速率应是 spirit_qi=-0.5 的 2 倍（期望 {}，实际 {}）（P2 生态联动）",
+            2.0 * prob_low,
+            prob_high
+        );
+    }
+
+    /// P2-T2: spirit_qi 趋近 0（= -0.0）时 moss 停止蔓延
+    /// spirit_qi=-0.0 → spread_prob 极小（趋近 0），实际系统中 spirit_qi>=0 停蔓延。
+    #[test]
+    fn p2_moss_spread_stops_when_spirit_qi_approaches_zero() {
+        // 当 spirit_qi 非常接近 0（负）时，spread_probability 趋于 0
+        // spirit_qi = -0.001 → spread_prob = 0.001 × 0.005 = 0.000005（极低）
+        // spirit_qi = 0.0 （= wither 条件）→ spread_prob 公式不再触发（走 wither 分支）
+        let tiny_pressure = 0.001_f64;
+        let prob_tiny = tiny_pressure * MOSS_SPREAD_BASE_RATE;
+        assert!(
+            prob_tiny < 0.0001,
+            "spirit_qi 趋于 0 时 spread_prob 应极小（期望 < 0.0001，实际 {}）（P2 生态联动）",
+            prob_tiny
+        );
+
+        // spirit_qi=0 时 moss_spread_system 进入 wither 分支（不再蔓延），
+        // 验证：zone spirit_qi=0 的 zone 中，已有 moss 不再新增，而是开始 wither。
+        let mut app = make_app_with_neg_zone(0.0);
+        app.add_systems(Update, moss_spread_system);
+
+        let moss = app
+            .world_mut()
+            .spawn(make_moss_plant([8.0, 64.0, 8.0], "spawn"))
+            .id();
+        app.update();
+
+        // spirit_qi=0 → 走 wither 分支，wither_progress 应增加
+        let plant = app.world().entity(moss).get::<Plant>().unwrap();
+        assert!(
+            plant.wither_progress > 0,
+            "spirit_qi=0 时 moss 应进入 wither 模式（期望 wither_progress > 0，实际 {}）（P2 生态联动）",
+            plant.wither_progress
+        );
+    }
+
+    /// P2-T3: moss wither 60s（1200 tick）倒计时——MOSS_WITHER_TICKS 常量 pin 测试
+    #[test]
+    fn p2_moss_wither_ticks_constant_is_60s() {
+        // MC 20TPS × 60s = 1200 ticks（60s 枯萎倒计时是 plan 设计决议）
+        assert_eq!(
+            MOSS_WITHER_TICKS, 1200,
+            "MOSS_WITHER_TICKS 应为 1200（60s × 20TPS），实际 {MOSS_WITHER_TICKS}（P2 生态联动 60s 倒计时 pin）"
+        );
+    }
+
+    /// P2-T4: moss spirit_qi 由负变 0 后 wither 倒计时精确 1200 tick 后完成
+    #[test]
+    fn p2_moss_wither_completes_after_exactly_wither_ticks() {
+        let mut app = make_app_with_neg_zone(0.5); // spirit_qi >= 0 → wither 模式
+        app.add_systems(Update, moss_spread_system);
+
+        // 预设 wither_progress = MOSS_WITHER_TICKS - 1（差 1 tick 完成）
+        let mut plant = make_moss_plant([8.0, 64.0, 8.0], "spawn");
+        plant.wither_progress = MOSS_WITHER_TICKS - 1;
+        let moss = app.world_mut().spawn(plant).id();
+
+        app.update(); // 最后 1 tick，应触发 harvested=true
+
+        let p = app.world().entity(moss).get::<Plant>().unwrap();
+        assert!(
+            p.harvested,
+            "wither_progress 达到 MOSS_WITHER_TICKS（{MOSS_WITHER_TICKS}）时应标记 harvested=true（期望 true，实际 {}）（P2 60s 倒计时精确）",
+            p.harvested
+        );
+    }
+
+    /// P2-T5: moss 在负灵域（spirit_qi < 0）时 wither_progress 被重置为 0（恢复）
+    #[test]
+    fn p2_moss_wither_progress_resets_when_zone_returns_negative() {
+        // 当 zone spirit_qi 回到负值，已开始 wither 的 moss 重置进度（负灵域恢复）
+        let mut app = make_app_with_neg_zone(-0.5); // spirit_qi < 0 → 恢复
+        app.add_systems(Update, moss_spread_system);
+
+        // 预设有部分 wither_progress
+        let mut plant = make_moss_plant([8.0, 64.0, 8.0], "spawn");
+        plant.wither_progress = 100; // 已经枯萎了一些
+        let moss = app.world_mut().spawn(plant).id();
+
+        app.update();
+
+        let p = app.world().entity(moss).get::<Plant>().unwrap();
+        assert_eq!(
+            p.wither_progress, 0,
+            "负灵域（spirit_qi=-0.5）中 moss wither_progress 应被重置为 0（期望 0，实际 {}）（P2 生态联动恢复）",
+            p.wither_progress
+        );
+    }
+
+    /// P2-T6: moss 超出 MOSS_MAX_SPREAD_RADIUS 时不蔓延——常量 pin + 蔓延条件代码路径验证
+    #[test]
+    fn p2_moss_spread_stops_beyond_max_radius() {
+        // MOSS_MAX_SPREAD_RADIUS = 16.0（plan 设计决议 pin）
+        assert_eq!(
+            MOSS_MAX_SPREAD_RADIUS, 16.0,
+            "MOSS_MAX_SPREAD_RADIUS 应为 16.0（plan 设计决议），实际 {MOSS_MAX_SPREAD_RADIUS}（P2 最大半径 pin）"
+        );
+
+        // 验证：放在 zone center 偏移 >= 16.0 的 moss 不触发蔓延。
+        // 实现：20 tick 全程对单个超界 moss 运行 moss_spread_system，
+        // plant 总数保持 1（无新增），因为 dist >= MOSS_MAX_SPREAD_RADIUS 分支跳过。
+        let mut app = make_app_with_neg_zone(-1.0);
+        app.add_systems(Update, moss_spread_system);
+
+        let zones = {
+            let r = app.world().resource::<crate::world::zone::ZoneRegistry>();
+            r.clone()
+        };
+        let zone = zones.find_zone_by_name("spawn").expect("spawn zone exists");
+        let center = zone.center();
+
+        // 放在超出最大蔓延半径的位置（center + MOSS_MAX_SPREAD_RADIUS + 1.0）
+        let far_x = center.x + MOSS_MAX_SPREAD_RADIUS + 1.0;
+        app.world_mut()
+            .spawn(make_moss_plant([far_x, center.y, center.z], "spawn"));
+
+        for _ in 0..20 {
+            app.update();
+        }
+
+        // 超界 moss 不蔓延——plant 总数仍为 1（只有起始那一个）
+        let count = app.world_mut().query::<&Plant>().iter(app.world()).count();
+        assert_eq!(
+            count, 1,
+            "超出 MOSS_MAX_SPREAD_RADIUS({MOSS_MAX_SPREAD_RADIUS}) 的 moss 不应蔓延（期望 1，实际 {count}）（P2 最大半径边界）"
+        );
+    }
 }

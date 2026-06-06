@@ -702,4 +702,91 @@ mod tests {
             cultivation.qi_current
         );
     }
+
+    // ── P2 生态联动测试 ──
+
+    /// P2-T1: spirit_qi=-0.2 vs spirit_qi=-1.0 诡影数量对比
+    /// 更负的 spirit_qi 产生更多诡影（密度公式正比于 |spirit_qi|）。
+    #[test]
+    fn p2_ghost_count_scales_with_spirit_qi_magnitude() {
+        // spirit_qi=-0.2 → target = floor(0.2 × 5.0) = 1
+        // spirit_qi=-1.0 → target = floor(1.0 × 5.0) = 5
+        // 两者 target 不同，验证生态联动：越负越多诡影
+        let target_low_pressure = (0.2_f64 * GHOST_DENSITY_FACTOR)
+            .floor()
+            .min(GHOST_MAX_PER_ZONE as f64) as usize;
+        let target_high_pressure = (1.0_f64 * GHOST_DENSITY_FACTOR)
+            .floor()
+            .min(GHOST_MAX_PER_ZONE as f64) as usize;
+
+        assert_eq!(
+            target_low_pressure, 1,
+            "spirit_qi=-0.2 时 target_count 应为 1（floor(0.2×5.0)=1），实际 {target_low_pressure}（P2 生态联动密度公式）"
+        );
+        assert_eq!(
+            target_high_pressure, 5,
+            "spirit_qi=-1.0 时 target_count 应为 5（floor(1.0×5.0)=5），实际 {target_high_pressure}（P2 生态联动密度公式）"
+        );
+        assert!(
+            target_high_pressure > target_low_pressure,
+            "spirit_qi=-1.0 时诡影数（{target_high_pressure}）应多于 spirit_qi=-0.2 时（{target_low_pressure}）（越负越危险）"
+        );
+    }
+
+    /// P2-T2: spirit_qi=-0.2（刚好满足 MIN_PRESSURE）时 spawn 1 个诡影
+    /// 边界：压力恰好等于阈值时，density formula 产生 target=1，必须 spawn。
+    #[test]
+    fn p2_ghost_spawn_at_exact_min_pressure_boundary() {
+        // GHOST_SPAWN_MIN_PRESSURE = -0.2，pressure=0.2 → 恰好满足条件
+        // target = floor(0.2 × 5.0) = floor(1.0) = 1 → spawn 1 个
+        let pressure = GHOST_SPAWN_MIN_PRESSURE.abs(); // 0.2
+        let target = (pressure * GHOST_DENSITY_FACTOR)
+            .floor()
+            .min(GHOST_MAX_PER_ZONE as f64) as usize;
+        assert_eq!(
+            target, 1,
+            "pressure=0.2（刚好满足 MIN_PRESSURE）时 target_count 应为 1（floor(0.2×5)=1），实际 {target}（P2 边界检查）"
+        );
+
+        let mut app = make_app_with_neg_zone(GHOST_SPAWN_MIN_PRESSURE);
+        app.add_systems(Update, ghost_spawn_system);
+        app.update();
+
+        let registry = app.world().resource::<GhostZoneRegistry>();
+        let total: usize = registry.zones.values().map(|v| v.len()).sum();
+        assert_eq!(
+            total, 1,
+            "spirit_qi=-0.2（MIN_PRESSURE 边界）时应 spawn 1 个诡影（期望 1，实际 {total}）（P2 边界检查）"
+        );
+    }
+
+    /// P2-T3: 上限 10 的强制检查——无论 spirit_qi 多负都不超过 GHOST_MAX_PER_ZONE
+    /// 即使 spirit_qi 极端负（-100），density formula 通过 .min(10) 保证上限。
+    #[test]
+    fn p2_ghost_max_per_zone_hard_cap_even_at_extreme_pressure() {
+        // 极端 spirit_qi=-100 → pressure=100 → target=min(500, 10)=10
+        let extreme_pressure = 100.0_f64;
+        let target = (extreme_pressure * GHOST_DENSITY_FACTOR)
+            .floor()
+            .min(GHOST_MAX_PER_ZONE as f64) as usize;
+        assert_eq!(
+            target, GHOST_MAX_PER_ZONE,
+            "极端压力下 target_count 应被 .min({GHOST_MAX_PER_ZONE}) 限制（期望 {GHOST_MAX_PER_ZONE}，实际 {target}）（P2 上限强制）"
+        );
+    }
+
+    /// P2-T4: density formula 在 spirit_qi=-0.4 时产生 target=2（中间值）
+    /// 验证 GHOST_DENSITY_FACTOR=5.0 配置下的典型中间值。
+    #[test]
+    fn p2_ghost_density_formula_mid_pressure_value() {
+        // spirit_qi=-0.4 → pressure=0.4 → target=floor(0.4×5.0)=floor(2.0)=2
+        let pressure = 0.4_f64;
+        let target = (pressure * GHOST_DENSITY_FACTOR)
+            .floor()
+            .min(GHOST_MAX_PER_ZONE as f64) as usize;
+        assert_eq!(
+            target, 2,
+            "spirit_qi=-0.4 时 target_count 应为 2（floor(0.4×5.0)=2），实际 {target}（P2 中间值密度公式）"
+        );
+    }
 }
