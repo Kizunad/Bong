@@ -1752,9 +1752,9 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
                 if (pos != null) {
                     InventoryItem item = grid.itemAt(pos.row(), pos.col());
                     // plan-exploration-probe-return-v1 P1 — Shift+右键槽位触发神识感知保鲜。
+                    // 直接发 instance_id 而非 flatSlot，消除多容器 tab 歧义。
                     if (item != null && hasShiftDown()) {
-                        int flatSlot = pos.row() * grid.cols() + pos.col();
-                        com.bong.client.network.ClientRequestSender.sendFreshnessProbe(flatSlot);
+                        com.bong.client.network.ClientRequestSender.sendFreshnessProbe(item.instanceId());
                         itemInspectLongPress.cancel();
                         return true;
                     }

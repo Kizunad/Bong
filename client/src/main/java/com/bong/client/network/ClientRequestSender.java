@@ -131,10 +131,10 @@ public final class ClientRequestSender {
     /**
      * plan-exploration-probe-return-v1 P1 — 神识感知保鲜 C2S 请求。
      *
-     * @param slot 背包容器内的扁平槽位序号（row * cols + col）
+     * @param instanceId 被查询物品的 inventory instance_id（来自 InventoryItem.getInstanceId()）
      */
-    public static void sendFreshnessProbe(int slot) {
-        dispatch(ClientRequestProtocol.encodeFreshnessProbe(slot));
+    public static void sendFreshnessProbe(long instanceId) {
+        dispatch(ClientRequestProtocol.encodeFreshnessProbe(instanceId));
     }
 
     public static void sendInventoryDiscardItem(long instanceId, ClientRequestProtocol.InvLocation from) {

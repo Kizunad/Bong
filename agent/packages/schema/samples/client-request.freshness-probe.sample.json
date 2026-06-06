@@ -1,5 +1,5 @@
 {
   "type": "freshness_probe",
   "v": 1,
-  "slot": 3
+  "instance_id": 4096
 }

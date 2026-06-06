@@ -606,11 +606,11 @@ public final class ClientRequestProtocol {
     /**
      * plan-exploration-probe-return-v1 P1 — 神识感知保鲜 C2S 请求。
      *
-     * @param slot 背包容器内的扁平槽位序号（row * cols + col）
+     * @param instanceId 被查询物品的 inventory instance_id（来自 InventoryItem.getInstanceId()）
      */
-    public static String encodeFreshnessProbe(int slot) {
+    public static String encodeFreshnessProbe(long instanceId) {
         JsonObject obj = envelope("freshness_probe");
-        obj.addProperty("slot", slot);
+        obj.addProperty("instance_id", instanceId);
         return obj.toString();
     }
 

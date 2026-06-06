@@ -1307,14 +1307,14 @@ describe("sample files pass schema validation", () => {
     expect(result.ok, result.errors.join("; ")).toBe(true);
   });
 
-  it("FreshnessProbeRequestV1 负样本：slot 缺失应拒绝", () => {
+  it("FreshnessProbeRequestV1 负样本：instance_id 缺失应拒绝", () => {
     const bad = { type: "freshness_probe", v: 1 };
     const result = validate(ClientRequestV1, bad);
     expect(result.ok).toBe(false);
   });
 
-  it("FreshnessProbeRequestV1 负样本：slot=-1 应拒绝", () => {
-    const bad = { type: "freshness_probe", v: 1, slot: -1 };
+  it("FreshnessProbeRequestV1 负样本：instance_id=-1 应拒绝", () => {
+    const bad = { type: "freshness_probe", v: 1, instance_id: -1 };
     const result = validate(ClientRequestV1, bad);
     expect(result.ok).toBe(false);
   });
