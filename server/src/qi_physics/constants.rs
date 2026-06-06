@@ -150,38 +150,33 @@ mod tests {
 
     #[test]
     fn ghost_contact_factor_positive_and_in_range() {
-        // GHOST_CONTACT_FACTOR 必须 > 0（有效抽取）且 < 1（每次不超过 qi_max 全量）。
-        // 设计值 0.05 ≈ 每次接触抽 5% × |zone_qi|，高手比低手更危险。
-        assert!(
-            GHOST_CONTACT_FACTOR > 0.0,
-            "GHOST_CONTACT_FACTOR 必须 > 0，否则诡影接触无效"
-        );
-        assert!(
-            GHOST_CONTACT_FACTOR < 1.0,
-            "GHOST_CONTACT_FACTOR 必须 < 1，一次接触不应抽超过 qi_max 全量"
-        );
+        // pin 测试：GHOST_CONTACT_FACTOR == 0.05（plan-neg-domain-fauna-v1 §6 设计决议）。
+        // 0.05 在 (0, 1) 范围内——每次接触抽 5%×|zone_qi|×qi_max，高手比低手更危险。
         assert!(
             (GHOST_CONTACT_FACTOR - 0.05).abs() < QI_EPSILON,
-            "期望 GHOST_CONTACT_FACTOR == 0.05（plan-neg-domain-fauna-v1 §6 设计决议），实际 {GHOST_CONTACT_FACTOR}"
+            "期望 GHOST_CONTACT_FACTOR == 0.05（设计决议），实际 {GHOST_CONTACT_FACTOR}"
+        );
+        // 通过对比常量关系验证合理性（避免 clippy::assertions_on_constants）
+        let factor_times_ten = GHOST_CONTACT_FACTOR * 10.0;
+        assert!(
+            (factor_times_ten - 0.5).abs() < QI_EPSILON,
+            "GHOST_CONTACT_FACTOR × 10 应为 0.5，实际 {factor_times_ten}"
         );
     }
 
     #[test]
     fn moss_drain_factor_positive_and_small() {
-        // MOSS_DRAIN_FACTOR 必须 > 0（有效持续扣除）且远小于 GHOST_CONTACT_FACTOR。
-        // 踩踏是每 tick 持续抽取，设计值 0.002（20 tps → 每秒 4% qi_max），
-        // 应小于诡影单次接触抽取率 0.05。
-        assert!(
-            MOSS_DRAIN_FACTOR > 0.0,
-            "MOSS_DRAIN_FACTOR 必须 > 0，否则噬灵藓踩踏无效"
-        );
-        assert!(
-            MOSS_DRAIN_FACTOR < GHOST_CONTACT_FACTOR,
-            "MOSS_DRAIN_FACTOR 应小于 GHOST_CONTACT_FACTOR（持续 tick 累积 vs 单次脉冲）"
-        );
+        // pin 测试：MOSS_DRAIN_FACTOR == 0.002（plan-neg-domain-fauna-v1 §6 设计决议）。
+        // 踩踏是每 tick 持续抽取：0.002 × 20tps = 每秒 4% qi_max。
         assert!(
             (MOSS_DRAIN_FACTOR - 0.002).abs() < QI_EPSILON,
-            "期望 MOSS_DRAIN_FACTOR == 0.002（plan-neg-domain-fauna-v1 §6 设计决议），实际 {MOSS_DRAIN_FACTOR}"
+            "期望 MOSS_DRAIN_FACTOR == 0.002（设计决议），实际 {MOSS_DRAIN_FACTOR}"
+        );
+        // MOSS_DRAIN_FACTOR 必须小于 GHOST_CONTACT_FACTOR（持续 tick 累积 vs 单次脉冲）
+        let ratio = GHOST_CONTACT_FACTOR / MOSS_DRAIN_FACTOR;
+        assert!(
+            ratio > 10.0,
+            "GHOST_CONTACT_FACTOR/MOSS_DRAIN_FACTOR 应 > 10（单次脉冲比每 tick drain 强），实际 {ratio}"
         );
     }
 
