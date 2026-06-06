@@ -358,16 +358,16 @@ mod tests {
             "实战释放已学涡流招式后应增长 proficiency"
         );
         let practice = app.world().get::<PracticeLog>(entity).unwrap();
-        // plan-color-v1 P0：QiColor.main = Intricate → 主色匹配 → 0.9x 加成，
-        // 因此 practice.weights[Intricate] = STYLE_PRACTICE_AMOUNT * 0.9 = 0.9
+        // plan-color-v1 P0：QiColor.main = Intricate → 主色匹配 → 1.1x 倍率（事半功倍，worldview §六.1），
+        // 因此 practice.weights[Intricate] = STYLE_PRACTICE_AMOUNT * 1.1 = 1.1
         let actual = practice
             .weights
             .get(&ColorKind::Intricate)
             .copied()
             .unwrap_or(0.0);
         assert!(
-            (actual - 0.9_f64).abs() < 1e-9,
-            "QiColor 主色 Intricate 匹配时 practice 权重应为 0.9（×0.9 加成），实际 {actual}"
+            (actual - 1.1_f64).abs() < 1e-9,
+            "QiColor 主色 Intricate 匹配时 practice 权重应为 1.1（×1.1 事半功倍，worldview §六.1），实际 {actual}"
         );
     }
 

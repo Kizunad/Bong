@@ -211,7 +211,13 @@ pub fn detect_color_milestone(
         return Some(texts[(hint as usize) % texts.len()]);
     }
     // 色调转换（旧主色 ≠ Mellow 且变化到另一种主色）
-    if before.main != ColorKind::Mellow && before.main != after.main {
+    // 额外排除：before 是杂色/混元时退出杂色/混元同 tick 换主色不触发「色调转换」narration，
+    // 避免混淆（真正的事件是「退出杂色/混元」，不是「色调转换」）
+    if !before.is_chaotic
+        && !before.is_hunyuan
+        && before.main != ColorKind::Mellow
+        && before.main != after.main
+    {
         let texts: &[&str] = &[
             "旧日的沉淀在松动。你走向了另一条轨迹。",
             "有什么东西在你体内移位——不是破坏，是转向。",
@@ -399,7 +405,7 @@ mod tests {
             is_hunyuan: false,
             permanent_lock_mask: Default::default(),
         };
-        // 主色匹配 Heavy → 0.9x 倍率
+        // 主色匹配 Heavy → 1.1x 倍率（事半功倍，积累+10%，worldview §六.1）
         let minutes = record_cultivation_session_practice(
             &mut log,
             ColorKind::Heavy,
@@ -407,11 +413,11 @@ mod tests {
             Some(&qi_color),
         );
         assert_eq!(minutes, 10, "期望 10 分钟，实际 {minutes}");
-        let expected = STYLE_PRACTICE_AMOUNT * 10.0 * 0.9;
+        let expected = STYLE_PRACTICE_AMOUNT * 10.0 * 1.1;
         let actual = log.weights.get(&ColorKind::Heavy).copied().unwrap_or(0.0);
         assert!(
             (actual - expected).abs() < 1e-9,
-            "主色匹配打坐 10 分钟期望权重 {expected:.4}（×0.9），实际 {actual:.4}"
+            "主色匹配打坐 10 分钟期望权重 {expected:.4}（×1.1，事半功倍），实际 {actual:.4}"
         );
     }
 
@@ -425,22 +431,22 @@ mod tests {
             is_hunyuan: false,
             permanent_lock_mask: Default::default(),
         };
-        // 杂色 → 1.1x 倍率（惩罚）
+        // 杂色 → 0.9x 倍率（专精失效，积累-10% 惩罚，worldview §六.2）
         record_cultivation_session_practice(
             &mut log,
             ColorKind::Heavy,
             CULTIVATION_SESSION_PRACTICE_TICKS_PER_MINUTE * 5,
             Some(&qi_color),
         );
-        let expected = STYLE_PRACTICE_AMOUNT * 5.0 * 1.1;
+        let expected = STYLE_PRACTICE_AMOUNT * 5.0 * 0.9;
         let actual = log.weights.get(&ColorKind::Heavy).copied().unwrap_or(0.0);
         assert!(
             (actual - expected).abs() < 1e-9,
-            "杂色打坐 5 分钟期望权重 {expected:.4}（×1.1），实际 {actual:.4}"
+            "杂色打坐 5 分钟期望权重 {expected:.4}（×0.9，专精失效惩罚），实际 {actual:.4}"
         );
     }
 
-    // P2: 混元状态打坐应用 0.95x 代价（博而不精）
+    // P2: 混元状态打坐应用 0.8x 代价（博而不精，worldview §六.2:644「修炼总效率永久 -20%」）
     #[test]
     fn cultivation_session_practice_applies_hunyuan_penalty() {
         let mut log = PracticeLog::default();
@@ -451,18 +457,18 @@ mod tests {
             is_hunyuan: true,
             permanent_lock_mask: Default::default(),
         };
-        // 混元 → 0.95x 倍率（博而不精，-5% 代价）
+        // 混元 → 0.8x 倍率（博而不精，-20% 修炼总效率代价，worldview §六.2:644）
         record_cultivation_session_practice(
             &mut log,
             ColorKind::Sharp,
             CULTIVATION_SESSION_PRACTICE_TICKS_PER_MINUTE * 10,
             Some(&qi_color),
         );
-        let expected = STYLE_PRACTICE_AMOUNT * 10.0 * 0.95;
+        let expected = STYLE_PRACTICE_AMOUNT * 10.0 * 0.8;
         let actual = log.weights.get(&ColorKind::Sharp).copied().unwrap_or(0.0);
         assert!(
             (actual - expected).abs() < 1e-9,
-            "混元打坐 10 分钟期望权重 {expected:.4}（×0.95 博而不精代价），实际 {actual:.4}"
+            "混元打坐 10 分钟期望权重 {expected:.4}（×0.8，博而不精 -20% 代价，worldview §六.2:644），实际 {actual:.4}"
         );
     }
 
@@ -509,11 +515,11 @@ mod tests {
             permanent_lock_mask: Default::default(),
         };
         record_style_practice(&mut log, ColorKind::Heavy, Some(&qi_color));
-        let expected = STYLE_PRACTICE_AMOUNT * 0.9;
+        let expected = STYLE_PRACTICE_AMOUNT * 1.1;
         let actual = log.weights.get(&ColorKind::Heavy).copied().unwrap_or(0.0);
         assert!(
             (actual - expected).abs() < 1e-9,
-            "主色匹配 record_style_practice 期望权重 {expected:.4}（×0.9），实际 {actual:.4}"
+            "主色匹配 record_style_practice 期望权重 {expected:.4}（×1.1，事半功倍），实际 {actual:.4}"
         );
     }
 
@@ -727,6 +733,66 @@ mod tests {
         assert!(
             text.contains("杂") || text.contains("乱炖") || text.contains("五色"),
             "杂色优先于首次涌现——模板应为杂色文本；实际文本：「{text}」"
+        );
+    }
+
+    #[test]
+    fn milestone_chaotic_to_hunyuan_triggers_hunyuan_awakening() {
+        // 杂色→混元转换（is_chaotic: true→false，is_hunyuan: false→true）
+        // 必须触发混元觉醒 narration，not 色调转换
+        let mut before = sharp_qi_color();
+        before.is_chaotic = true;
+        before.is_hunyuan = false;
+        let mut after = sharp_qi_color();
+        after.is_chaotic = false;
+        after.is_hunyuan = true;
+        let result = detect_color_milestone(&before, &after, 0);
+        assert!(
+            result.is_some(),
+            "杂色→混元转换（is_chaotic: true→false，is_hunyuan: false→true）应触发里程碑 narration；实际返回 None"
+        );
+        let text = result.unwrap();
+        assert!(
+            text.contains("均衡") || text.contains("交汇") || text.contains("五色"),
+            "杂色→混元应触发混元觉醒模板（含「均衡」/「交汇」/「五色」），不应触发色调转换模板；实际文本：「{text}」"
+        );
+    }
+
+    #[test]
+    fn milestone_no_false_color_shift_when_exiting_chaotic_with_main_change() {
+        // 退出杂色同 tick 主色变更不应误触「色调转换」narration
+        // before: Sharp 主色 + 杂色；after: Heavy 主色 + 非杂色
+        let mut before = sharp_qi_color();
+        before.is_chaotic = true;
+        let mut after = sharp_qi_color();
+        after.main = ColorKind::Heavy;
+        after.is_chaotic = false;
+        let result = detect_color_milestone(&before, &after, 0);
+        // 4 条 milestone 均不应触发：
+        // - !before.is_chaotic && after.is_chaotic → false（before 已是杂色）
+        // - !before.is_hunyuan && after.is_hunyuan → false（after 非混元）
+        // - before.main==Mellow → false（before.main=Sharp）
+        // - 色调转换新增 guard：before.is_chaotic=true → 排除
+        assert!(
+            result.is_none(),
+            "退出杂色同 tick 换主色（Sharp杂→Heavy清）不应触发『色调转换』narration，应返回 None；实际返回 Some(「{text}」)",
+            text = result.unwrap_or("")
+        );
+    }
+
+    #[test]
+    fn milestone_no_false_color_shift_when_exiting_hunyuan_with_main_change() {
+        // 退出混元同 tick 主色变更不应误触「色调转换」narration
+        let mut before = sharp_qi_color();
+        before.is_hunyuan = true;
+        let mut after = sharp_qi_color();
+        after.main = ColorKind::Heavy;
+        after.is_hunyuan = false;
+        let result = detect_color_milestone(&before, &after, 0);
+        assert!(
+            result.is_none(),
+            "退出混元同 tick 换主色不应触发『色调转换』narration，应返回 None；实际返回 Some(「{text}」)",
+            text = result.unwrap_or("")
         );
     }
 

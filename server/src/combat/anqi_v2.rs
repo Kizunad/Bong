@@ -1155,7 +1155,7 @@ mod tests {
         let expected_normal = 35.0_f64 * 1.5 * 1.3;
         assert!(
             (normal.wound_qi - expected_normal).abs() < 0.01,
-            "期望非杂色 wound_qi≈{expected_normal:.4}（8.75×1.5×1.3），\
+            "期望非杂色 wound_qi≈{expected_normal:.4}（35.0×1.5×1.3），\
              实际={:.4}",
             normal.wound_qi,
         );

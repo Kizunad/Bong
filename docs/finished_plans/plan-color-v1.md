@@ -25,7 +25,7 @@
 
 | 阶段 | 内容 | 状态 | 验收 |
 |------|------|------|------|
-| **P0** | 色-派对应加速规则（`color_style_bonus`）+ 接入 cultivation session 与 combat XP 累积 | ✅ 2026-06-07 | 单测：main 匹配 → 0.9x；secondary → 0.95x；chaotic → 1.1x；hunyuan → 1.0x |
+| **P0** | 色-派对应加速规则（`color_style_bonus`）+ 接入 cultivation session 与 combat XP 累积 | ✅ 2026-06-07 | 单测：main 匹配 → 1.1x（事半功倍）；secondary → 1.05x；unmatched → 1.0x；chaotic → 0.9x（惩罚）；hunyuan → 0.8x（-20%，worldview §六.2:644） |
 | **P1** | 杂色惩罚实装：`is_chaotic=true` 时关闭各流派专项效果 | ✅ 2026-06-07 | 单测：杂色玩家 combat bonus 归零；各流派 module guard 测试 |
 | **P2** | 混元色特效：`is_hunyuan=true` 时解锁全 10 色顿悟选项 + 通用 -5% 成本（0.95x） | ✅ 2026-06-07 | 单测：混元色 insight 池覆盖所有 ColorKind |
 | **P3** | 色调里程碑 narration（首次主色涌现 / 色调转换 / 杂色堕落 / 混元觉醒） | ✅ 2026-06-07 | 单测：4 个里程碑各触发一条 narration，scope=player |
@@ -40,11 +40,12 @@
 
 ```rust
 // server/src/cultivation/color_bonus.rs（新文件）
-pub fn color_style_bonus(qi_color: &QiColor, active_color: ColorKind) -> f32 {
-    if qi_color.is_chaotic { return 1.1; }    // 杂色惩罚：效率 -10%
-    if qi_color.is_hunyuan  { return 1.0; }   // 混元：不加速也不减速
-    if qi_color.main == active_color { return 0.9; }                         // 主色匹配：事半功倍 -10% 成本
-    if qi_color.secondary == Some(active_color) { return 0.95; }             // 次色匹配：-5%
+// 倍率语义：rate multiplier，higher = 积累更快 = 更好
+pub fn color_style_bonus(qi_color: &QiColor, active_color: ColorKind) -> f64 {
+    if qi_color.is_chaotic { return 0.9; }     // 杂色：专精失效，积累-10%（worldview §六.2）
+    if qi_color.is_hunyuan { return 0.8; }     // 混元：博而不精，-20%（worldview §六.2:644）
+    if qi_color.main == active_color { return 1.1; }                          // 主色匹配：事半功倍+10%（§六.1）
+    if qi_color.secondary == Some(active_color) { return 1.05; }              // 次色匹配：+5%
     1.0                                                                        // 不匹配：基线
 }
 ```
@@ -120,9 +121,9 @@ pub fn color_style_bonus(qi_color: &QiColor, active_color: ColorKind) -> f32 {
 
 ### 落地清单
 
-- **P0 色-派加速规则**：`server/src/cultivation/color_bonus.rs`（新）`color_style_bonus(qi_color, active_color) -> f32`（chaotic→1.1 / hunyuan→1.0 / main→0.9 / secondary→0.95 / else→1.0）；接入 `cultivation::color::record_style_practice` + `record_cultivation_session_practice`（作用于 PracticeLog 权重 + 打坐 regen 速率，**不进战斗伤害公式、不改 qi_current**，worldview §六.2 + 守恒律无关）。生产调用者：technique_proficiency / baomai / woliu / zhenmai / zhenfa / tuike / burst_meridian / dandao / resolve 等 11+ 模块。
+- **P0 色-派加速规则**：`server/src/cultivation/color_bonus.rs`（新）`color_style_bonus(qi_color, active_color) -> f64`（rate multiplier，higher=积累更快：main→1.1 / secondary→1.05 / else→1.0 / chaotic→0.9 / hunyuan→0.8）；接入 `cultivation::color::record_style_practice` + `record_cultivation_session_practice`（作用于 PracticeLog 权重 + 打坐 regen 速率，**不进战斗伤害公式、不改 qi_current**，worldview §六.2 + 守恒律无关）。生产调用者：technique_proficiency / baomai / woliu / zhenmai / zhenfa / tuike / burst_meridian / dandao / resolve 等 11+ 模块。
 - **P1 杂色 guard**：各流派专项加成在 `is_chaotic=true` 时清零——`combat/anqi_v2.rs`（SoulInject color_matched 强制 false）/ `dugu_v2/skills.rs`（eclipse insidious 加成）/ `tuike_v2/physics.rs`（solid_color_share→0）/ `baomai_v3/skills.rs` / `zhenfa/mod.rs`。guard 仅 gate 效率/成本/自愈类 utility，非伤害输出。
-- **P2 混元特效**：`color_affinity.rs` hunyuan_diverge_candidates 展开全 10 色 ColorCapAdd 顿悟池；`is_hunyuan` 时 `permanent_lock_mask` 防写；混元 0.95x 通用效率代价（0.9 专精 < 0.95 < 1.0，专精仍最优）。
+- **P2 混元特效**：`color_affinity.rs` hunyuan_diverge_candidates 展开全 10 色 ColorCapAdd 顿悟池；`is_hunyuan` 时 `permanent_lock_mask` 防写；混元 0.8x 通用效率代价（worldview §六.2:644「修炼总效率永久 -20%」；1.1 专精 > 1.05 次色 > 1.0 无加成 > 0.9 杂色 > 0.8 混元，专精仍最优）。
 - **P3 里程碑 narration**：`color.rs` `detect_color_milestone`（4 触发：首次主色涌现 / 色调转换 / 杂色堕落 / 混元觉醒，各 2 条文案 + `hint % len` 确定性轮替）经 `qi_color_evolution_tick` → `PendingGameplayNarrations::push_player`（scope=Player，style=Perception）。
 - **P4 神视观察**：`cultivation/perception.rs` `remote_color_sense_range(realm)`（通灵 Spirit=32 / 化虚 Void=128 / 其余 None）+ `passive_qi_color_scan_system`（mod.rs:369 注册，realm_diff 门控）复用既有 `QiColorInspectRequest → emit_qi_color_observed_payloads → QiColorObservedV1`，client `QiColorObservedHandler/Store` 已消费（进 InspectScreen）。
 - **P5 饱和测试**：色演化稳定 / 死亡清零（death_hooks remove PracticeLog+QiColor）/ PracticeLog 跨 session 衰减 / 低总量不误触杂色等 20+ case。
@@ -153,7 +154,7 @@ pub fn color_style_bonus(qi_color: &QiColor, active_color: ColorKind) -> f32 {
 ### 关键设计决议（实施中收口）
 
 - **凝实色暗器距离衰减**：走 qi_physics **正典传输层** `qi_physics::env::MediumKind::loss_bonus_per_block(ColorKind::Solid) = -0.004/block`，经 `qi_distance_atten` 消费、`AnqiStyleAttack::medium()` 喂入——这是「传输层减少每格真元损耗」，**非战斗伤害公式乘子**，与 worldview §六.2（染色不进战斗公式）和 §五（凝实色暗器距离衰减正典化）一致。实施中一度误实现为 flat ×1.05 payload 乘子（违反 §六.2），已删除并回归正典路径。
-- **hunyuan 效率值**：0.95x（plan P0 阶段表原写 1.0x，以 §3 P2 prose「通用 -5% 成本」为准；0.9 专精 < 0.95 保证专精仍最优）。
+- **hunyuan 效率值**：0.8x（worldview §六.2:644「修炼总效率永久 -20%」正典；rate multiplier 语义下 1.1 专精 > 0.8 混元，专精仍最优；PR#425 review @pi 指出原始方向反转并修正）。
 - **固元神视**：`remote_color_sense_range(Solidify)=None`（以 §5 prose 为准，固元不能被动感知同级；plan line 32「固元+可感知」为旧表述，实施以 §5 为准）。
 
 ### 遗留 / 后续

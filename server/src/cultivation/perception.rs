@@ -10,11 +10,15 @@
 //!   * 化虚（Void）→ 128 格
 //!   * 其他境界 → None（不感知）
 
+use valence::client::ClientMarker;
 use valence::prelude::{Entity, EventWriter, Position, Query, Res, With};
 
 use crate::cultivation::components::{Cultivation, Realm};
 use crate::cultivation::tick::CultivationClock;
 use crate::network::qi_color_observed_emit::QiColorInspectRequest;
+
+/// 玩家观察者过滤：必须带 `Cultivation` 且带 `ClientMarker`（真实玩家，排除 NPC）。
+type ObserverFilter = (With<Cultivation>, With<ClientMarker>);
 
 /// 被动色感知扫描间隔：每 60 ticks（= 3 秒 @20TPS）触发一次。
 pub const PASSIVE_COLOR_SCAN_INTERVAL_TICKS: u64 = 60;
@@ -36,10 +40,13 @@ pub fn remote_color_sense_range(realm: Realm) -> Option<u32> {
 ///
 /// 已有的 `emit_qi_color_observed_payloads` 系统会消费这些 request 并进行
 /// realm_diff 过滤（realm_diff ≤ 0 时不发包），因此本 system 无需额外过滤。
+///
+/// `With<ClientMarker>` 限制 observer_query 仅对真实玩家（联网客户端）生效，
+/// 排除 Spirit/Void 境界 NPC 触发被动扫描产生全量被丢弃事件（O(N²) 无效工作）。
 pub fn passive_qi_color_scan_system(
     clock: Res<CultivationClock>,
     mut qi_inspect_tx: EventWriter<QiColorInspectRequest>,
-    observer_query: Query<(Entity, &Position, &Cultivation), With<Cultivation>>,
+    observer_query: Query<(Entity, &Position, &Cultivation), ObserverFilter>,
     target_query: Query<(Entity, &Position, &Cultivation), With<Cultivation>>,
 ) {
     let now_tick = clock.tick;
@@ -80,6 +87,7 @@ mod tests {
     use super::*;
     use crate::cultivation::components::QiColor;
     use crate::network::qi_color_observed_emit::QiColorInspectRequest;
+    use valence::client::ClientMarker;
     use valence::math::DVec3;
     use valence::prelude::{App, Events, Position, Update};
 
@@ -91,7 +99,23 @@ mod tests {
         app
     }
 
+    /// 生成带 `ClientMarker` 的玩家实体，使其满足 observer_query 的 With<ClientMarker> 过滤。
     fn spawn_player(app: &mut App, realm: Realm, pos: [f64; 3]) -> Entity {
+        app.world_mut()
+            .spawn((
+                ClientMarker,
+                Position(DVec3::new(pos[0], pos[1], pos[2])),
+                Cultivation {
+                    realm,
+                    ..Default::default()
+                },
+                QiColor::default(),
+            ))
+            .id()
+    }
+
+    /// 生成不带 `ClientMarker` 的 NPC 实体，用于验证 NPC 不触发被动扫描。
+    fn spawn_npc(app: &mut App, realm: Realm, pos: [f64; 3]) -> Entity {
         app.world_mut()
             .spawn((
                 Position(DVec3::new(pos[0], pos[1], pos[2])),
@@ -359,6 +383,42 @@ mod tests {
             requests.len(),
             3,
             "期望 Void 范围内 3 个目标各产生 1 条 inspect request"
+        );
+    }
+
+    #[test]
+    fn npc_spirit_observer_does_not_trigger_scan() {
+        // NPC（无 ClientMarker）即使境界为 Spirit/Void 也不应触发被动扫描，
+        // 避免 Spirit/Void 境界 NPC 产生 O(N²) 全量被丢弃 inspect 事件
+        let mut app = make_app();
+        set_tick(&mut app, PASSIVE_COLOR_SCAN_INTERVAL_TICKS);
+        let _npc_observer = spawn_npc(&mut app, Realm::Spirit, [0.0, 64.0, 0.0]);
+        let _player_target = spawn_player(&mut app, Realm::Induce, [10.0, 64.0, 0.0]);
+        app.update();
+
+        let requests = drain_inspect_requests(&mut app);
+        assert!(
+            requests.is_empty(),
+            "期望无 ClientMarker 的 Spirit NPC 不触发被动扫描（With<ClientMarker> guard），\
+             实际发出 {} 条 QiColorInspectRequest（O(N²) 无效事件）",
+            requests.len()
+        );
+    }
+
+    #[test]
+    fn npc_void_observer_does_not_trigger_scan() {
+        // 化虚境 NPC 同样不应触发扫描
+        let mut app = make_app();
+        set_tick(&mut app, PASSIVE_COLOR_SCAN_INTERVAL_TICKS);
+        let _npc_observer = spawn_npc(&mut app, Realm::Void, [0.0, 64.0, 0.0]);
+        let _player_target = spawn_player(&mut app, Realm::Solidify, [50.0, 64.0, 0.0]);
+        app.update();
+
+        let requests = drain_inspect_requests(&mut app);
+        assert!(
+            requests.is_empty(),
+            "期望无 ClientMarker 的 Void NPC 不触发被动扫描，实际发出 {} 条",
+            requests.len()
         );
     }
 }
