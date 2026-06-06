@@ -400,6 +400,39 @@ public class InsightOfferHandlerTest {
             "第 2 个 choice id 应为 'insight_choice_2'");
     }
 
+    // ─── choices=4 截断到 3 的 off-by-one 边界 ──────────────────────────────────
+
+    @Test
+    void fourChoices_truncatedToThree() {
+        // plan §P2 choices maxItems=3；4 个 choice 时应截断，只保留前 3 个（off-by-one 守卫）
+        String json = """
+            {
+              "v": 1,
+              "type": "insight_offer",
+              "trigger_id": "quad_path",
+              "choices": [
+                {"category":"Qi",         "effect_kind":"qi_max",            "magnitude":0.05,"flavor_text":"气海扩张。"},
+                {"category":"Meridian",   "effect_kind":"meridian_rate",     "magnitude":0.08,"flavor_text":"经脉通畅。"},
+                {"category":"Composure",  "effect_kind":"composure_recover", "magnitude":0.03,"flavor_text":"心神平静。"},
+                {"category":"Perception", "effect_kind":"perception_bonus",  "magnitude":0.06,"flavor_text":"感知敏锐。"}
+              ]
+            }
+            """;
+        new InsightOfferHandler().handle(parse(json));
+
+        InsightOfferViewModel offer = InsightOfferStore.snapshot();
+        assertNotNull(offer, "4 个 choice 截断后 offer 不应为 null");
+        assertEquals(3, offer.choices().size(),
+            "choices=4 时应截断到 3（plan P2 maxItems=3），实际 size=" + offer.choices().size());
+        // 确保截断的是第 4 个，前 3 个保留
+        assertEquals(InsightCategory.QI,        offer.choices().get(0).category(),
+            "截断后第 0 个 category 应为 QI，实际=" + offer.choices().get(0).category());
+        assertEquals(InsightCategory.MERIDIAN,  offer.choices().get(1).category(),
+            "截断后第 1 个 category 应为 MERIDIAN，实际=" + offer.choices().get(1).category());
+        assertEquals(InsightCategory.COMPOSURE, offer.choices().get(2).category(),
+            "截断后第 2 个 category 应为 COMPOSURE（Perception 应被截掉），实际=" + offer.choices().get(2).category());
+    }
+
     @Test
     void defaultRouter_registersInsightOffer() {
         assertTrue(ServerDataRouter.createDefault().registeredTypes().contains("insight_offer"),

@@ -9,9 +9,12 @@ import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonPrimitive;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 
 /**
  * 修炼顿悟邀约处理器（plan-exploration-probe-return-v1 P2）。
@@ -37,6 +40,8 @@ import java.util.List;
  * </ul>
  */
 public final class InsightOfferHandler implements ServerDataHandler {
+
+    private static final Logger LOGGER = LoggerFactory.getLogger(InsightOfferHandler.class);
 
     /** 顿悟开屏 fallback：trigger_label 默认值（顿悟语境，区别心魔"危"）。 */
     private static final String DEFAULT_TRIGGER_LABEL = "顿悟临身";
@@ -99,6 +104,9 @@ public final class InsightOfferHandler implements ServerDataHandler {
             return List.of();
         }
         JsonArray array = choicesElement.getAsJsonArray();
+        if (array.size() > 3) {
+            LOGGER.warn("insight_offer: choices={} 超过 maxItems=3，截断到 3（server schema 应已限制）", array.size());
+        }
         List<InsightChoice> result = new ArrayList<>();
         int limit = Math.min(3, array.size());
         for (int i = 0; i < limit; i++) {
@@ -204,8 +212,8 @@ public final class InsightOfferHandler implements ServerDataHandler {
         if (magnitude == 0.0) {
             return effectKind + "（无幅度）";
         }
-        // 百分比格式（保留一位小数）
-        String pct = String.format("%.1f%%", magnitude * 100);
+        // 百分比格式（保留一位小数，Locale.ROOT 防地区漂移）
+        String pct = String.format(Locale.ROOT, "%.1f%%", magnitude * 100);
         return effectKind + " +" + pct;
     }
 
@@ -219,7 +227,7 @@ public final class InsightOfferHandler implements ServerDataHandler {
         if (costMagnitude == 0.0) {
             return costKind;
         }
-        String pct = String.format("%.1f%%", costMagnitude * 100);
+        String pct = String.format(Locale.ROOT, "%.1f%%", costMagnitude * 100);
         return costKind + " +" + pct;
     }
 
