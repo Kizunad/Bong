@@ -5,10 +5,13 @@
 //! | 状态 | 说明 | 倍率 |
 //! |------|------|------|
 //! | is_chaotic | 杂色 — 专精失效（worldview §六.2）| 1.1（-10% 效率惩罚） |
-//! | is_hunyuan | 混元 — 通达各色但无专精优势 | 1.0（无加速无惩罚） |
+//! | is_hunyuan | 混元 — 覆盖全色但博而不精（-5% 效率代价）| 0.95 |
 //! | main == active_color | 主色匹配 — 事半功倍 | 0.9 |
 //! | secondary == Some(active_color) | 次色匹配 | 0.95 |
 //! | 其他 | 非专色 | 1.0 |
+//!
+//! 注：0.9 < 0.95 < 1.0 确保专精主色依然最优（主色 0.9 < 混元 0.95），
+//! 混元的优势是覆盖全局而非单项最快，符合 §六.2 决议（博而不精的-5%代价）。
 //!
 //! **硬约束（worldview §六.2）**：
 //! 该倍率仅作用于 `PracticeLog.add(color, amount)` 的 amount 参数，
@@ -27,8 +30,9 @@ pub fn color_style_bonus(qi_color: &QiColor, active_color: ColorKind) -> f64 {
     if qi_color.is_chaotic {
         return 1.1;
     }
+    // 混元：博而不精，-5% 效率代价（§6 P2 决议）
     if qi_color.is_hunyuan {
-        return 1.0;
+        return 0.95;
     }
     if qi_color.main == active_color {
         return 0.9;
@@ -90,14 +94,14 @@ mod tests {
         );
     }
 
-    // ④ 混元 → 1.0（无加速无惩罚）
+    // ④ 混元 → 0.95（博而不精 -5% 代价，P2 决议）
     #[test]
-    fn hunyuan_returns_1_0() {
+    fn hunyuan_returns_0_95() {
         let qi_color = make_color(ColorKind::Mellow, None, false, true);
         let bonus = color_style_bonus(&qi_color, ColorKind::Sharp);
         assert_eq!(
-            bonus, 1.0,
-            "混元应返回 1.0（覆盖全局但无加速），实际得到 {bonus}"
+            bonus, 0.95,
+            "混元应返回 0.95（博而不精 -5% 效率代价），实际得到 {bonus}"
         );
     }
 
@@ -148,9 +152,9 @@ mod tests {
         }
     }
 
-    // ⑨ 混元时所有 active_color 都返回 1.0（混元对全色一视同仁）
+    // ⑨ 混元时所有 active_color 都返回 0.95（博而不精，全色一律 -5%）
     #[test]
-    fn hunyuan_returns_1_0_for_all_colors() {
+    fn hunyuan_returns_0_95_for_all_colors() {
         use ColorKind::*;
         let all = [
             Sharp, Heavy, Mellow, Solid, Light, Intricate, Gentle, Insidious, Violent, Turbid,
@@ -159,9 +163,35 @@ mod tests {
         for color in all {
             let bonus = color_style_bonus(&qi_color, color);
             assert_eq!(
-                bonus, 1.0,
-                "混元状态下 ColorKind::{color:?} 应返回 1.0，实际得到 {bonus}"
+                bonus, 0.95,
+                "混元状态下 ColorKind::{color:?} 应返回 0.95（-5% 代价），实际得到 {bonus}"
             );
         }
+    }
+
+    // ⑩ 混元 0.95 < 主色匹配 0.9? 不对 —— 专精依然最优（0.9 < 0.95）
+    // 验证三档顺序: main_match(0.9) < hunyuan(0.95) < unmatched(1.0) < chaotic(1.1)
+    #[test]
+    fn bonus_ordering_main_lt_hunyuan_lt_unmatched_lt_chaotic() {
+        let main_match = color_style_bonus(
+            &make_color(ColorKind::Sharp, None, false, false),
+            ColorKind::Sharp,
+        );
+        let hunyuan = color_style_bonus(
+            &make_color(ColorKind::Mellow, None, false, true),
+            ColorKind::Sharp,
+        );
+        let unmatched = color_style_bonus(
+            &make_color(ColorKind::Sharp, None, false, false),
+            ColorKind::Heavy,
+        );
+        let chaotic = color_style_bonus(
+            &make_color(ColorKind::Sharp, None, true, false),
+            ColorKind::Sharp,
+        );
+        assert!(
+            main_match < hunyuan && hunyuan < unmatched && unmatched < chaotic,
+            "期望顺序 main_match({main_match}) < hunyuan({hunyuan}) < unmatched({unmatched}) < chaotic({chaotic})"
+        );
     }
 }

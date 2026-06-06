@@ -364,6 +364,32 @@ mod tests {
         );
     }
 
+    // P2: 混元状态打坐应用 0.95x 代价（博而不精）
+    #[test]
+    fn cultivation_session_practice_applies_hunyuan_penalty() {
+        let mut log = PracticeLog::default();
+        let qi_color = QiColor {
+            main: ColorKind::Sharp,
+            secondary: None,
+            is_chaotic: false,
+            is_hunyuan: true,
+            permanent_lock_mask: Default::default(),
+        };
+        // 混元 → 0.95x 倍率（博而不精，-5% 代价）
+        record_cultivation_session_practice(
+            &mut log,
+            ColorKind::Sharp,
+            CULTIVATION_SESSION_PRACTICE_TICKS_PER_MINUTE * 10,
+            Some(&qi_color),
+        );
+        let expected = STYLE_PRACTICE_AMOUNT * 10.0 * 0.95;
+        let actual = log.weights.get(&ColorKind::Sharp).copied().unwrap_or(0.0);
+        assert!(
+            (actual - expected).abs() < 1e-9,
+            "混元打坐 10 分钟期望权重 {expected:.4}（×0.95 博而不精代价），实际 {actual:.4}"
+        );
+    }
+
     #[test]
     fn decay_drops_weights_to_zero() {
         let mut log = PracticeLog {

@@ -205,6 +205,48 @@ fn neutral_degrade_tradeoff(
     Some(candidate)
 }
 
+/// 构造全 10 色 `ColorCapAdd` 候选池，按练习权重降序排列（最强色优先）。
+///
+/// 用于混元顿悟 diverge 槽——调用方按序遍历，取第一个通过 `validate_offer` 的候选。
+pub fn hunyuan_diverge_candidates(
+    qi_color: &QiColor,
+    practice_log: &PracticeLog,
+) -> Vec<InsightTradeoff> {
+    // 按权重降序（相同权重按 ALL_COLORS 稳定顺序保证确定性）
+    let mut color_order: Vec<ColorKind> = ALL_COLORS.to_vec();
+    color_order.sort_by(|a, b| {
+        let aw = practice_log.weights.get(a).copied().unwrap_or(0.0);
+        let bw = practice_log.weights.get(b).copied().unwrap_or(0.0);
+        bw.partial_cmp(&aw)
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then_with(|| color_rank(*a).cmp(&color_rank(*b)))
+    });
+
+    color_order
+        .into_iter()
+        .map(|target| {
+            tradeoff(
+                InsightAlignment::Diverge,
+                InsightEffect::ColorCapAdd {
+                    color: target,
+                    add: 0.05,
+                },
+                InsightCost::MainColorPenalty {
+                    color: qi_color.main,
+                    penalty: 0.10,
+                },
+                format!(
+                    "打破混元，择{}色为锋——{}色染色上限 +5%",
+                    super::generic_talent::color_kind_to_chinese(target),
+                    super::generic_talent::color_kind_to_chinese(target)
+                ),
+                "混元旧稳被割开——主色效率 -10%".to_string(),
+                Some(target),
+            )
+        })
+        .collect()
+}
+
 fn hunyuan_tradeoffs(
     trigger_id: &str,
     qi_color: &QiColor,
@@ -212,8 +254,9 @@ fn hunyuan_tradeoffs(
     quota: &InsightQuota,
     realm: Realm,
 ) -> Vec<InsightTradeoff> {
-    let target = strongest_color(practice_log).unwrap_or(qi_color.main);
+    // 固定三个 alignment 槽：Converge / Neutral / Diverge（各取一条）
     let mut candidates = vec![
+        // Converge：压缩混元阈值，更难维持混元
         tradeoff(
             InsightAlignment::Converge,
             InsightEffect::HunyuanThreshold { mul: 0.964 },
@@ -222,6 +265,7 @@ fn hunyuan_tradeoffs(
             "越守归一，专精越钝——杂色容忍 -2%".to_string(),
             None,
         ),
+        // Neutral：心境恢复
         tradeoff(
             InsightAlignment::Neutral,
             InsightEffect::ComposureRecover { mul: 1.06 },
@@ -230,21 +274,27 @@ fn hunyuan_tradeoffs(
             "水面更易起波——心境冲击敏感 +3%".to_string(),
             None,
         ),
-        tradeoff(
-            InsightAlignment::Diverge,
-            InsightEffect::ColorCapAdd {
-                color: target,
-                add: 0.05,
-            },
-            InsightCost::MainColorPenalty {
-                color: qi_color.main,
-                penalty: 0.10,
-            },
-            "打破混元，择一色为锋——目标色染色上限 +5%".to_string(),
-            "混元旧稳被割开——主色效率 -10%".to_string(),
-            Some(target),
-        ),
     ];
+
+    // Diverge：从全 10 色 ColorCapAdd 候选池选出第一个通过 validate_offer 的（P2 §6 决议）。
+    // 候选池按练习权重降序——最强色优先被选中，体现「打破混元选最鲜明的一色为锋」。
+    let diverge_candidates = hunyuan_diverge_candidates(qi_color, practice_log);
+    for candidate in &diverge_candidates {
+        let mut candidate = candidate.clone();
+        candidate.gain_flavor = flavor_for(
+            trigger_id,
+            InsightAlignment::Diverge,
+            qi_color.main,
+            candidate.target_color,
+            candidate.gain_flavor.as_str(),
+        );
+        let choice = InsightChoice::from_tradeoff(candidate.clone());
+        if validate_offer(quota, &choice, realm).is_ok() {
+            candidates.push(candidate);
+            break; // 只取第一个有效 diverge，保持三选一呈现
+        }
+    }
+
     validate_specials(trigger_id, qi_color.main, quota, realm, &mut candidates)
 }
 
@@ -597,5 +647,180 @@ mod tests {
         assert_eq!(degraded.alignment, InsightAlignment::Neutral);
         assert!(degraded.gain_flavor.contains("此道已臻顶"));
         assert!(matches!(degraded.cost, InsightCost::SenseExposure { .. }));
+    }
+
+    // P2: hunyuan_diverge_candidates 候选池覆盖全 10 色（每种 ColorKind 各出现一次）
+    #[test]
+    fn hunyuan_diverge_candidates_covers_all_10_colors() {
+        let qi = QiColor {
+            is_hunyuan: true,
+            main: ColorKind::Mellow,
+            ..QiColor::default()
+        };
+        let log = PracticeLog::default();
+        let candidates = hunyuan_diverge_candidates(&qi, &log);
+        assert_eq!(
+            candidates.len(),
+            10,
+            "期望 hunyuan_diverge_candidates 产出恰好 10 条候选（每色一条），实际 {}",
+            candidates.len()
+        );
+        // 每条均为 ColorCapAdd，且 10 种色各出现一次
+        let colors: HashSet<_> = candidates
+            .iter()
+            .filter_map(|c| {
+                if let InsightEffect::ColorCapAdd { color, .. } = c.gain {
+                    Some(color)
+                } else {
+                    None
+                }
+            })
+            .collect();
+        assert_eq!(
+            colors.len(),
+            10,
+            "期望 10 种不同 ColorKind 各出现一次，实际去重后 {} 种: {colors:?}",
+            colors.len()
+        );
+        // 验证全 10 色均在候选池中
+        for color in ALL_COLORS {
+            assert!(
+                colors.contains(&color),
+                "期望 {color:?} 在 hunyuan_diverge_candidates 候选池中，但未找到"
+            );
+        }
+    }
+
+    // P2: hunyuan_diverge_candidates 中所有条目 alignment = Diverge
+    #[test]
+    fn hunyuan_diverge_candidates_alignment_all_diverge() {
+        let qi = QiColor {
+            is_hunyuan: true,
+            ..QiColor::default()
+        };
+        let log = PracticeLog::default();
+        let candidates = hunyuan_diverge_candidates(&qi, &log);
+        for c in &candidates {
+            assert_eq!(
+                c.alignment,
+                InsightAlignment::Diverge,
+                "期望所有 hunyuan diverge 候选 alignment = Diverge，实际 {:?}",
+                c.alignment
+            );
+        }
+    }
+
+    // P2: 有权重时，强权重色排在候选池前面
+    #[test]
+    fn hunyuan_diverge_candidates_strongest_first() {
+        let qi = QiColor {
+            is_hunyuan: true,
+            main: ColorKind::Mellow,
+            ..QiColor::default()
+        };
+        let mut log = PracticeLog::default();
+        log.add(ColorKind::Violent, 100.0); // 最强色
+        log.add(ColorKind::Sharp, 5.0);
+        let candidates = hunyuan_diverge_candidates(&qi, &log);
+        // 第一个候选应为 Violent（权重最高）
+        assert!(
+            matches!(
+                candidates[0].gain,
+                InsightEffect::ColorCapAdd {
+                    color: ColorKind::Violent,
+                    ..
+                }
+            ),
+            "期望权重最高的 Violent 排在候选池第一位，实际首位 gain={:?}",
+            candidates[0].gain
+        );
+    }
+
+    // P2: hunyuan_tradeoffs 返回 ≤ 3 条（不超过三选一呈现）
+    #[test]
+    fn hunyuan_tradeoffs_returns_at_most_3_choices() {
+        let qi = QiColor {
+            is_hunyuan: true,
+            ..QiColor::default()
+        };
+        let choices = select_aligned_choices(
+            "chaotic_to_hunyuan_pivot",
+            &qi,
+            &PracticeLog::default(),
+            &InsightQuota::default(),
+            Realm::Induce,
+            &registry(),
+        );
+        assert!(
+            choices.len() <= 3,
+            "期望混元顿悟最多 3 条选项（Converge/Neutral/Diverge 各一），实际 {} 条",
+            choices.len()
+        );
+    }
+
+    // P2: hunyuan_tradeoffs 的 diverge 槽包含 ColorCapAdd（10 色候选池中选出一条）
+    #[test]
+    fn hunyuan_tradeoffs_diverge_slot_is_color_cap_add() {
+        let qi = QiColor {
+            is_hunyuan: true,
+            ..QiColor::default()
+        };
+        let choices = select_aligned_choices(
+            "chaotic_to_hunyuan_pivot",
+            &qi,
+            &PracticeLog::default(),
+            &InsightQuota::default(),
+            Realm::Induce,
+            &registry(),
+        );
+        let has_color_cap_add = choices
+            .iter()
+            .any(|c| matches!(c.effect, InsightEffect::ColorCapAdd { .. }));
+        assert!(
+            has_color_cap_add,
+            "期望混元顿悟选项中包含 ColorCapAdd（从 10 色候选池选出），实际 choices={choices:?}"
+        );
+    }
+
+    // P2: hunyuan_tradeoffs 的 diverge 选出的色与练习日志最强色一致
+    #[test]
+    fn hunyuan_tradeoffs_diverge_picks_strongest_color() {
+        let qi = QiColor {
+            is_hunyuan: true,
+            main: ColorKind::Mellow,
+            ..QiColor::default()
+        };
+        let mut log = PracticeLog::default();
+        // 设置 Turbid 为最强色
+        for k in ALL_COLORS {
+            log.add(k, 10.0); // 均匀背景（维持混元）
+        }
+        log.add(ColorKind::Turbid, 40.0); // 但 Turbid 权重最高
+
+        let choices = select_aligned_choices(
+            "chaotic_to_hunyuan_pivot",
+            &qi,
+            &log,
+            &InsightQuota::default(),
+            Realm::Induce,
+            &registry(),
+        );
+        let diverge = choices
+            .iter()
+            .find(|c| c.alignment == InsightAlignment::Diverge);
+        if let Some(d) = diverge {
+            assert!(
+                matches!(
+                    d.effect,
+                    InsightEffect::ColorCapAdd {
+                        color: ColorKind::Turbid,
+                        ..
+                    }
+                ),
+                "期望 diverge 槽选出最强色 Turbid 的 ColorCapAdd，实际 effect={:?}",
+                d.effect
+            );
+        }
+        // 若没有 diverge 候选（极端情况），至少不 panic
     }
 }
