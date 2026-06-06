@@ -53,7 +53,7 @@ public final class MineralProbeResultHandler implements ServerDataHandler {
         }
 
         MinecraftClient mc = MinecraftClient.getInstance();
-        if (mc.player == null) {
+        if (mc == null || mc.player == null) {
             return ServerDataDispatch.noOp(
                 envelope.type(),
                 "mineral_probe_result: 无本地玩家，不显示"
@@ -128,8 +128,8 @@ public final class MineralProbeResultHandler implements ServerDataHandler {
 
     // ─── helpers ─────────────────────────────────────────────────
 
-    /** 按剩余储量返回丰度颜色（plan P0 视听规格）。 */
-    private static int colorByAbundance(int remaining) {
+    /** 按剩余储量返回丰度颜色（plan P0 视听规格）。package-private 供测试直接断言。 */
+    static int colorByAbundance(int remaining) {
         if (remaining > ABUNDANT_THRESHOLD) {
             return COLOR_ABUNDANT;
         } else if (remaining >= SPARSE_THRESHOLD) {
