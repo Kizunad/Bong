@@ -1055,19 +1055,21 @@ mod tests {
 
     // P1: 杂色 guard ─ SoulInject color_matched 必须被清零 -------------------
 
-    /// SoulInject 用 high_density_inject(color_matched=true/false) 区分加成路径。
-    /// 杂色时必须强制 color_matched=false，否则违反 worldview §六.2「只剩基础真元属性」。
-    #[test]
-    fn soul_inject_color_matched_forced_false_when_chaotic() {
+    /// 辅助：构造一个独立 World，对给定 is_chaotic 跑一次 SoulInject，
+    /// 返回 HighDensityInjectionOutcome。
+    fn run_soul_inject_with_chaotic(
+        is_chaotic: bool,
+    ) -> crate::qi_physics::projectile::HighDensityInjectionOutcome {
         let mut world = bevy_ecs::world::World::new();
         world.insert_resource(CombatClock { tick: 100 });
         world.insert_resource(bevy_ecs::event::Events::<QiInjectionEvent>::default());
         world.insert_resource(bevy_ecs::event::Events::<CarrierAbrasionEvent>::default());
+        // 固定 instance_id=10，两次调用用相同参数以确保差分仅来自 is_chaotic
         let (inventory, store) =
             charged_inventory_and_store(10, AnqiSkillId::SoulInject.carrier_kind());
         let qi_color = QiColor {
             main: crate::cultivation::components::ColorKind::Solid,
-            is_chaotic: true, // 主色是 Solid 但杂色=true
+            is_chaotic,
             ..Default::default()
         };
         let target = world.spawn(()).id();
@@ -1095,60 +1097,67 @@ mod tests {
         assert_eq!(
             events.len(),
             1,
-            "期望触发 1 次 SoulInject，因为 Condense 境界且 qi 充足"
+            "期望触发 1 次 SoulInject（is_chaotic={is_chaotic}）"
         );
-        // color_matched=false 时 high_density_inject 不会产生额外 overload_ratio 加成
-        // 正常色 Solid 匹配时 overload_ratio 会因 color_matched=true 增大；
-        // 杂色时 overload_ratio 应等于 payload/max 基础值（无加成）
-        let base_overload = events[0].outcome.overload_ratio;
-        // 验证不超过基础（无加成时约等于 payload_qi/qi_max）
+        events[0].outcome
+    }
+
+    /// SoulInject 用 high_density_inject(color_matched=true/false) 区分加成路径。
+    /// 杂色时 anqi_v2.rs:464-466 guard 强制 color_matched=false，
+    /// 导致 color_multiplier=0.6（vs 正常 Solid 的 1.3），wound_qi 严格缩小约 0.46x。
+    /// 断言：chaotic.wound_qi < non_chaotic.wound_qi，且比值在 [0.3, 0.55] 内（~0.6/1.3≈0.46）。
+    #[test]
+    fn soul_inject_color_matched_forced_false_when_chaotic() {
+        let chaotic = run_soul_inject_with_chaotic(true);
+        let normal = run_soul_inject_with_chaotic(false);
+
+        // 核心契约：杂色 wound_qi 必须严格小于非杂色（guard 强制 color_matched=false → 0.6x 乘子）
         assert!(
-            base_overload <= 0.5,
-            "期望杂色时 SoulInject overload_ratio 不超过基础 0.5，实际={base_overload}（验证 color_matched=false 无加成）"
+            chaotic.wound_qi < normal.wound_qi,
+            "期望杂色 wound_qi={} < 非杂色 wound_qi={}（chaotic guard 强制 color_matched=false \
+             致 color_multiplier=0.6，而非杂色 Solid 走 1.3x）",
+            chaotic.wound_qi,
+            normal.wound_qi,
+        );
+
+        // 比值验证：chaotic/normal ≈ 0.6/1.3 ≈ 0.46，允许浮点误差 ±0.05
+        let ratio = chaotic.wound_qi / normal.wound_qi;
+        assert!(
+            (0.40..=0.50).contains(&ratio),
+            "期望 chaotic/normal wound_qi 比值≈0.46（0.6/1.3），实际={ratio:.4}（\
+             chaotic={}, normal={}）",
+            chaotic.wound_qi,
+            normal.wound_qi,
         );
     }
 
-    /// 正常 Solid 主色（非杂色）SoulInject 应传入 color_matched=true。
+    /// 正常 Solid 主色（非杂色）SoulInject 走 color_matched=true 路径，
+    /// wound_qi = payload × wound_ratio × 1.3，严格大于杂色的 0.6x 路径。
+    /// 同时验证 wound_qi 符合 high_density_inject 公式期望值（wound_ratio=1.5，mastery=0）。
     #[test]
     fn soul_inject_color_matched_true_when_solid_non_chaotic() {
-        let mut world = bevy_ecs::world::World::new();
-        world.insert_resource(CombatClock { tick: 100 });
-        world.insert_resource(bevy_ecs::event::Events::<QiInjectionEvent>::default());
-        world.insert_resource(bevy_ecs::event::Events::<CarrierAbrasionEvent>::default());
-        let (inventory, store) =
-            charged_inventory_and_store(20, AnqiSkillId::SoulInject.carrier_kind());
-        let qi_color = QiColor {
-            main: crate::cultivation::components::ColorKind::Solid,
-            is_chaotic: false,
-            ..Default::default()
-        };
-        let target = world.spawn(()).id();
-        let caster = world
-            .spawn((
-                Cultivation {
-                    realm: Realm::Condense,
-                    qi_current: 100.0,
-                    qi_max: 100.0,
-                    ..Default::default()
-                },
-                SkillBarBindings::default(),
-                inventory,
-                store,
-                ContainerSlot {
-                    active: AnqiContainerKind::HandSlot,
-                    switching_until_tick: 0,
-                },
-                qi_color,
-            ))
-            .id();
-        resolve_anqi_skill(&mut world, caster, 0, Some(target), AnqiSkillId::SoulInject);
-        let injections = world.resource::<bevy_ecs::event::Events<QiInjectionEvent>>();
-        let events: Vec<_> = injections.get_reader().read(injections).cloned().collect();
-        assert_eq!(events.len(), 1, "期望触发 1 次 SoulInject");
-        // color_matched=true 允许更大 payload，overload_ratio 应比基础更高
+        let chaotic = run_soul_inject_with_chaotic(true);
+        let normal = run_soul_inject_with_chaotic(false);
+
+        // 积极路径：非杂色 wound_qi 必须大于杂色（已由 forced_false 测试保证，此处再次锁定方向）
         assert!(
-            events[0].outcome.overload_ratio > 0.0,
-            "期望正常 Solid 色 SoulInject 成功触发注射（color_matched=true 路径）"
+            normal.wound_qi > chaotic.wound_qi,
+            "期望非杂色 wound_qi={} > 杂色 wound_qi={}（color_matched=true 走 1.3x 乘子，\
+             color_matched=false 走 0.6x）",
+            normal.wound_qi,
+            chaotic.wound_qi,
+        );
+
+        // 公式精度验证：wound_qi = payload × (1.5 + 0.3×0/100) × 1.3
+        // payload 经 draw_payload_after_abrasion(HandSlot) 后无磨损（HandSlot.tax_rate=0.0），
+        // qi_cost = qi_max × qi_ratio = 100.0 × 0.35 = 35.0，payload=35.0
+        // wound_qi = 35.0 × 1.5 × 1.3 = 68.25（mastery=0，wound_ratio=1.5，color_multiplier=1.3）
+        let expected_normal = 35.0_f64 * 1.5 * 1.3;
+        assert!(
+            (normal.wound_qi - expected_normal).abs() < 0.01,
+            "期望非杂色 wound_qi≈{expected_normal:.4}（8.75×1.5×1.3），\
+             实际={:.4}",
+            normal.wound_qi,
         );
     }
 }
