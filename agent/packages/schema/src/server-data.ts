@@ -80,6 +80,7 @@ import {
   TradeOfferPayloadV1,
 } from "./social.js";
 import { SpiritualSenseTargetsV1 } from "./spiritual-sense.js";
+import { InsightChoiceV1 } from "./insight-offer.js";
 import { FalseSkinStateV1 } from "./tuike.js";
 import { HealerNpcAiStateV1, YidaoHudStateV1 } from "./yidao.js";
 import { MovementStateV1 } from "./movement.js";
@@ -247,6 +248,7 @@ export const ServerDataType = Type.Union([
   Type.Literal("spirit_treasure_dialogue"),
   Type.Literal("knockback_sync"),
   Type.Literal("coffin_state"),
+  Type.Literal("insight_offer"),
 ]);
 export type ServerDataType = Static<typeof ServerDataType>;
 
@@ -1603,6 +1605,25 @@ export const ServerDataSearchAbortedV1 = Type.Object(
 );
 export type ServerDataSearchAbortedV1 = Static<typeof ServerDataSearchAbortedV1>;
 
+// ── plan-exploration-probe-return-v1 P2 ── 修炼顿悟邀约 S2C ──────────────────
+/**
+ * 顿悟选择邀约（server → client）。
+ * discriminator: type="insight_offer"
+ * 字段形状镜像 server InsightOfferV1（cultivation.rs）+ InsightChoiceV1。
+ * 可选字段缺省时省略（不写 null）。
+ */
+export const ServerDataInsightOfferV1 = Type.Object(
+  {
+    type: Type.Literal("insight_offer"),
+    offer_id: Type.String({ minLength: 1, maxLength: 128 }),
+    trigger_id: Type.String({ minLength: 1, maxLength: 128 }),
+    character_id: Type.String({ minLength: 1 }),
+    choices: Type.Array(InsightChoiceV1, { minItems: 1, maxItems: 3 }),
+  },
+  { additionalProperties: false },
+);
+export type ServerDataInsightOfferV1 = Static<typeof ServerDataInsightOfferV1>;
+
 // ── plan-exploration-probe-return-v1 P0 ── 神识感知矿脉回执 S2C ──────────────
 /**
  * 矿脉感知回执。kind="found" 时附带矿脉信息，kind="denied" 时附带拒绝原因。
@@ -1725,5 +1746,7 @@ export const ServerDataV1 = Type.Union([
   ServerDataKnockbackSyncV1,
   // plan-exploration-probe-return-v1 P0
   ServerDataMineralProbeResultV1,
+  // plan-exploration-probe-return-v1 P2
+  ServerDataInsightOfferV1,
 ]);
 export type ServerDataV1 = Static<typeof ServerDataV1>;

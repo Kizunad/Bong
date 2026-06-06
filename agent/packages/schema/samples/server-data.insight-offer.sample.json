@@ -1,5 +1,4 @@
 {
-  "v": 1,
   "type": "insight_offer",
   "offer_id": "insight:12:4800",
   "trigger_id": "insight:12:4800",
@@ -7,29 +6,25 @@
   "choices": [
     {
       "category": "Meridian",
-      "effect_kind": "meridian_open_rate",
+      "effect_kind": "meridian_rate",
       "magnitude": 0.12,
       "flavor_text": "气机在督脉尾闾一处静静等候，轻轻一推便可贯通。",
       "narrator_voice": "平稳",
-      "alignment": "converge",
-      "cost_kind": null,
-      "cost_magnitude": null,
-      "cost_flavor": null
+      "alignment": "converge"
     },
     {
       "category": "Qi",
-      "effect_kind": "qi_max_recover",
+      "effect_kind": "unfreeze_qi_max",
       "magnitude": 0.08,
       "flavor_text": "真元潮汐涌上，潜藏上限若隐若现。",
-      "narrator_voice": null,
       "alignment": "converge",
       "cost_kind": "qi_current",
       "cost_magnitude": 0.05,
       "cost_flavor": "以少量真元换取上限的松动。"
     },
     {
-      "category": "Perception",
-      "effect_kind": "perception_enlightenment",
+      "category": "Qi",
+      "effect_kind": "qi_regen_factor",
       "magnitude": 0.15,
       "flavor_text": "幻象如镜，镜中所映皆是道机——你看见了，就不会再忘记。",
       "narrator_voice": "悠远",

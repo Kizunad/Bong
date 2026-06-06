@@ -96,7 +96,7 @@ import {
 import { ZongCoreActivationV1 } from "../src/zong-formation.js";
 import { RealmVisionParamsV1 } from "../src/realm-vision.js";
 import { ClientRequestV1 } from "../src/client-request.js";
-import { ServerDataV1, ServerDataMineralProbeResultV1 } from "../src/server-data.js";
+import { ServerDataV1, ServerDataMineralProbeResultV1, ServerDataInsightOfferV1 } from "../src/server-data.js";
 import {
   TsyNpcSpawnedV1,
   TsySentinelPhaseChangedV1,
@@ -1036,6 +1036,67 @@ describe("sample files pass schema validation", () => {
     const denied = { type: "mineral_probe_result", kind: "denied" };
     const result = validate(ServerDataMineralProbeResultV1, denied);
     expect(result.ok, result.errors.join("; ")).toBe(true);
+  });
+
+  // plan-exploration-probe-return-v1 P2 — 顿悟邀约 S2C schema pin
+  it("server-data.insight-offer.sample.json validates against ServerDataV1", () => {
+    const data = loadSample("server-data.insight-offer.sample.json");
+    const result = validate(ServerDataV1, data);
+    expect(result.ok, result.errors.join("; ")).toBe(true);
+  });
+
+  it("insight offer: inline schema pin — 最简 1 choice 无可选字段", () => {
+    const offer: ServerDataInsightOfferV1 = {
+      type: "insight_offer",
+      offer_id: "insight:1:100",
+      trigger_id: "insight:1:100",
+      character_id: "player_azure",
+      choices: [
+        {
+          category: "Qi",
+          effect_kind: "qi_regen_factor",
+          magnitude: 0.1,
+          flavor_text: "真元流速微微提升。",
+        },
+      ],
+    };
+    const result = validate(ServerDataInsightOfferV1, offer);
+    expect(result.ok, result.errors.join("; ")).toBe(true);
+  });
+
+  it("insight offer: 全字段 choice（含所有可选）通过", () => {
+    const offer: ServerDataInsightOfferV1 = {
+      type: "insight_offer",
+      offer_id: "insight:2:200",
+      trigger_id: "insight:2:200",
+      character_id: "player_azure",
+      choices: [
+        {
+          category: "Meridian",
+          effect_kind: "meridian_rate",
+          magnitude: 0.12,
+          flavor_text: "经脉共鸣。",
+          narrator_voice: "平稳",
+          alignment: "converge",
+          cost_kind: "qi_current",
+          cost_magnitude: 0.05,
+          cost_flavor: "需消耗部分真元。",
+        },
+      ],
+    };
+    const result = validate(ServerDataInsightOfferV1, offer);
+    expect(result.ok, result.errors.join("; ")).toBe(true);
+  });
+
+  it("insight offer: 缺少 required offer_id 应拒绝（负例）", () => {
+    const bad = {
+      type: "insight_offer",
+      trigger_id: "insight:1:100",
+      character_id: "player_azure",
+      choices: [{ category: "Qi", effect_kind: "qi_regen_factor", magnitude: 0.1, flavor_text: "x" }],
+    };
+    const result = validate(ServerDataInsightOfferV1, bad);
+    expect(result.ok, `应拒绝缺少 offer_id，实际: ${result.errors.join("; ")}`).toBe(false);
   });
 
   it("accepts heart demon pregen request and offer draft", () => {

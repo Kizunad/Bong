@@ -17053,6 +17053,133 @@
           ]
         }
       }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "type",
+        "offer_id",
+        "trigger_id",
+        "character_id",
+        "choices"
+      ],
+      "properties": {
+        "type": {
+          "const": "insight_offer",
+          "type": "string"
+        },
+        "offer_id": {
+          "minLength": 1,
+          "maxLength": 128,
+          "type": "string"
+        },
+        "trigger_id": {
+          "minLength": 1,
+          "maxLength": 128,
+          "type": "string"
+        },
+        "character_id": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "choices": {
+          "minItems": 1,
+          "maxItems": 3,
+          "type": "array",
+          "items": {
+            "additionalProperties": false,
+            "type": "object",
+            "required": [
+              "category",
+              "effect_kind",
+              "magnitude",
+              "flavor_text"
+            ],
+            "properties": {
+              "category": {
+                "description": "A–G 七类白名单",
+                "anyOf": [
+                  {
+                    "const": "Meridian",
+                    "type": "string"
+                  },
+                  {
+                    "const": "Qi",
+                    "type": "string"
+                  },
+                  {
+                    "const": "Composure",
+                    "type": "string"
+                  },
+                  {
+                    "const": "Coloring",
+                    "type": "string"
+                  },
+                  {
+                    "const": "Breakthrough",
+                    "type": "string"
+                  },
+                  {
+                    "const": "Style",
+                    "type": "string"
+                  },
+                  {
+                    "const": "Perception",
+                    "type": "string"
+                  }
+                ]
+              },
+              "effect_kind": {
+                "minLength": 1,
+                "maxLength": 64,
+                "description": "apply_choice 支持的 InsightEffect variant 名，例如 `MeridianIntegrityBoost`",
+                "type": "string"
+              },
+              "magnitude": {
+                "type": "number"
+              },
+              "flavor_text": {
+                "maxLength": 500,
+                "type": "string"
+              },
+              "narrator_voice": {
+                "maxLength": 64,
+                "type": "string"
+              },
+              "alignment": {
+                "anyOf": [
+                  {
+                    "const": "converge",
+                    "type": "string"
+                  },
+                  {
+                    "const": "neutral",
+                    "type": "string"
+                  },
+                  {
+                    "const": "diverge",
+                    "type": "string"
+                  }
+                ]
+              },
+              "cost_kind": {
+                "minLength": 1,
+                "maxLength": 64,
+                "type": "string"
+              },
+              "cost_magnitude": {
+                "type": "number"
+              },
+              "cost_flavor": {
+                "minLength": 1,
+                "maxLength": 500,
+                "type": "string"
+              }
+            }
+          }
+        }
+      }
     }
   ]
 }
