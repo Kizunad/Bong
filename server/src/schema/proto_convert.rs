@@ -3916,6 +3916,125 @@ mod tests {
         }
     }
 
+    // ─── plan-exploration-probe-return-v1 S2C proto round-trip ─────────────────
+
+    /// P0: MineralProbeResult found — wire round-trip + 逐字段保真。
+    #[test]
+    fn s2c_mineral_probe_result_found_proto_roundtrip() {
+        use bong::server_data_envelope::Payload;
+        use prost::Message;
+        let data = super::super::server_data::MineralProbeResultV1 {
+            kind: "found".to_string(),
+            mineral_id: Some("cu_tie".to_string()),
+            remaining_units: Some(42),
+            display_name_zh: Some("赤铜矿脉".to_string()),
+            denial_reason: None,
+        };
+        let payload = ServerDataPayloadV1::MineralProbeResult(data);
+        let proto = server_data_to_proto_payload(&payload);
+        let envelope = bong::ServerDataEnvelope {
+            payload: Some(proto),
+        };
+        let bytes = envelope.encode_to_vec();
+        let decoded = bong::ServerDataEnvelope::decode(bytes.as_slice())
+            .expect("MineralProbeResult proto decode");
+        match decoded.payload {
+            Some(Payload::MineralProbeResult(r)) => {
+                assert_eq!(r.kind, "found", "kind should be 'found'");
+                assert_eq!(
+                    r.mineral_id.as_deref(),
+                    Some("cu_tie"),
+                    "mineral_id should round-trip"
+                );
+                assert_eq!(
+                    r.remaining_units,
+                    Some(42),
+                    "remaining_units should round-trip"
+                );
+                assert_eq!(
+                    r.display_name_zh.as_deref(),
+                    Some("赤铜矿脉"),
+                    "display_name_zh should round-trip"
+                );
+                assert!(
+                    r.denial_reason.is_none(),
+                    "denial_reason should be None for found"
+                );
+            }
+            other => panic!("expected MineralProbeResult payload, got {other:?}"),
+        }
+    }
+
+    /// P0: MineralProbeResult denied — denial_reason 字段保真。
+    #[test]
+    fn s2c_mineral_probe_result_denied_proto_roundtrip() {
+        use bong::server_data_envelope::Payload;
+        use prost::Message;
+        let data = super::super::server_data::MineralProbeResultV1 {
+            kind: "denied".to_string(),
+            mineral_id: None,
+            remaining_units: None,
+            display_name_zh: None,
+            denial_reason: Some("realm_too_low".to_string()),
+        };
+        let payload = ServerDataPayloadV1::MineralProbeResult(data);
+        let proto = server_data_to_proto_payload(&payload);
+        let envelope = bong::ServerDataEnvelope {
+            payload: Some(proto),
+        };
+        let bytes = envelope.encode_to_vec();
+        let decoded = bong::ServerDataEnvelope::decode(bytes.as_slice())
+            .expect("MineralProbeResult denied proto decode");
+        match decoded.payload {
+            Some(Payload::MineralProbeResult(r)) => {
+                assert_eq!(r.kind, "denied", "kind should be 'denied'");
+                assert_eq!(
+                    r.denial_reason.as_deref(),
+                    Some("realm_too_low"),
+                    "denial_reason should round-trip"
+                );
+                assert!(
+                    r.mineral_id.is_none(),
+                    "mineral_id should be None for denied"
+                );
+            }
+            other => panic!("expected MineralProbeResult payload, got {other:?}"),
+        }
+    }
+
+    /// P1: FreshnessUpdate — item_uuid + freshness + profile_name 字段保真。
+    #[test]
+    fn s2c_freshness_update_proto_roundtrip() {
+        use super::super::processing::FreshnessUpdateV1;
+        s2c_encode_decode_roundtrip(ServerDataPayloadV1::FreshnessUpdate(FreshnessUpdateV1 {
+            item_uuid: "99".to_string(),
+            freshness: 0.65,
+            profile_name: "ling_cao".to_string(),
+        }));
+    }
+
+    /// P2: InsightOffer — round-trip via helper（含 choice fields）。
+    #[test]
+    fn s2c_insight_offer_proto_roundtrip() {
+        use super::super::cultivation::{InsightChoiceV1, InsightOfferV1};
+        s2c_encode_decode_roundtrip(ServerDataPayloadV1::InsightOffer(InsightOfferV1 {
+            offer_id: "insight:1:100".to_string(),
+            trigger_id: "insight:1:100".to_string(),
+            character_id: "offline:Kiz".to_string(),
+            choices: vec![InsightChoiceV1 {
+                category: "Qi".to_string(),
+                effect_kind: "qi_max".to_string(),
+                magnitude: 0.05,
+                flavor_text: "气海微扩张。".to_string(),
+                narrator_voice: None,
+                alignment: None,
+                cost_kind: None,
+                cost_magnitude: None,
+                cost_flavor: None,
+            }],
+        }));
+    }
+
     #[test]
     fn s2c_ui_open_roundtrip() {
         s2c_encode_decode_roundtrip(ServerDataPayloadV1::UiOpen {
@@ -4300,6 +4419,98 @@ mod tests {
                 x: 3,
                 y: 65,
                 z: 7,
+            },
+        );
+    }
+
+    // ─── plan-exploration-probe-return-v1 P0/P1 C2S proto round-trip ─────────
+
+    /// P0: MineralProbe C2S proto round-trip + 坐标逐字段保真（含负坐标边界）。
+    #[test]
+    fn c2s_mineral_probe_proto_roundtrip_asserts_variant_and_coords() {
+        use prost::Message;
+        let req = super::super::client_request::ClientRequestV1::MineralProbe {
+            v: 1,
+            x: -16,
+            y: 48,
+            z: 255,
+        };
+        let proto_payload = bong::client_request_envelope::Payload::from(&req);
+        let envelope = bong::ClientRequestEnvelope {
+            payload: Some(proto_payload),
+        };
+        let bytes = envelope.encode_to_vec();
+        let decoded = bong::ClientRequestEnvelope::decode(bytes.as_slice())
+            .expect("C2S MineralProbe proto decode should succeed");
+        match decoded.payload {
+            Some(bong::client_request_envelope::Payload::MineralProbe(r)) => {
+                assert_eq!(
+                    r.x, -16,
+                    "MineralProbe.x (negative) should survive roundtrip; expected -16, got {}",
+                    r.x
+                );
+                assert_eq!(
+                    r.y, 48,
+                    "MineralProbe.y should survive roundtrip; expected 48, got {}",
+                    r.y
+                );
+                assert_eq!(
+                    r.z, 255,
+                    "MineralProbe.z should survive roundtrip; expected 255, got {}",
+                    r.z
+                );
+            }
+            other => panic!("expected MineralProbe oneof variant after roundtrip, got {other:?}"),
+        }
+    }
+
+    /// P1: FreshnessProbe C2S proto round-trip + instance_id 逐字段保真（含边界值）。
+    #[test]
+    fn c2s_freshness_probe_proto_roundtrip_asserts_variant_and_instance_id() {
+        use prost::Message;
+        let req = super::super::client_request::ClientRequestV1::FreshnessProbe {
+            v: 1,
+            instance_id: 9_999_999_999u64,
+        };
+        let proto_payload = bong::client_request_envelope::Payload::from(&req);
+        let envelope = bong::ClientRequestEnvelope {
+            payload: Some(proto_payload),
+        };
+        let bytes = envelope.encode_to_vec();
+        let decoded = bong::ClientRequestEnvelope::decode(bytes.as_slice())
+            .expect("C2S FreshnessProbe proto decode should succeed");
+        match decoded.payload {
+            Some(bong::client_request_envelope::Payload::FreshnessProbe(r)) => {
+                assert_eq!(
+                    r.instance_id, 9_999_999_999u64,
+                    "FreshnessProbe.instance_id large value should survive roundtrip; expected 9_999_999_999, got {}",
+                    r.instance_id
+                );
+            }
+            other => panic!("expected FreshnessProbe oneof variant after roundtrip, got {other:?}"),
+        }
+    }
+
+    /// P1: FreshnessProbe instance_id=0 边界（最小合法值）。
+    #[test]
+    fn c2s_freshness_probe_zero_instance_id_roundtrip() {
+        c2s_encode_decode_roundtrip(
+            super::super::client_request::ClientRequestV1::FreshnessProbe {
+                v: 1,
+                instance_id: 0,
+            },
+        );
+    }
+
+    /// P0: MineralProbe basic round-trip（全走 helper）。
+    #[test]
+    fn c2s_mineral_probe_basic_roundtrip() {
+        c2s_encode_decode_roundtrip(
+            super::super::client_request::ClientRequestV1::MineralProbe {
+                v: 1,
+                x: 10,
+                y: 64,
+                z: -8,
             },
         );
     }
