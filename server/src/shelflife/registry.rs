@@ -123,7 +123,7 @@ pub fn build_default_registry() -> DecayProfileRegistry {
         })
         .expect("built-in food_spoil_ling_guo profile should validate");
 
-    // plan-food-v1 MAJOR3: 干饼 Spoil（30 游戏日；陈饼是晒干品，远比生肉耐储）
+    // plan-food-v1 P0: 干饼 Spoil（30 游戏日；陈饼是晒干品，远比生肉耐储）
     registry
         .insert(DecayProfile::Spoil {
             id: DecayProfileId::new("food_spoil_mundane_dry_v1"),
@@ -576,6 +576,16 @@ mod tests {
                     id: DecayProfileId::new("food_spoil_ling_guo_v1"),
                     formula: DecayFormula::Linear {
                         decay_per_tick: 1.0 / (GAME_DAY_TICKS as f32 * 2.0),
+                    },
+                    spoil_threshold: 0.01,
+                },
+            ),
+            (
+                "food_spoil_mundane_dry_v1",
+                DecayProfile::Spoil {
+                    id: DecayProfileId::new("food_spoil_mundane_dry_v1"),
+                    formula: DecayFormula::Linear {
+                        decay_per_tick: 1.0 / (GAME_DAY_TICKS as f32 * 30.0),
                     },
                     spoil_threshold: 0.01,
                 },

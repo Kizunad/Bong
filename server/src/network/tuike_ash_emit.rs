@@ -45,7 +45,7 @@ pub fn publish_tuike_ash_events(
                     &mut allocator,
                     &event.output_item_id,
                     1,
-                    0,
+                    event.tick,
                 ) {
                     tracing::warn!(
                         "[bong][tuike-ash] add_item_to_player_inventory failed \

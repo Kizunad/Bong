@@ -1722,6 +1722,14 @@ impl ItemTemplateToml {
         };
 
         // plan-food-v1 P1：解析 shelflife_track 字符串 → DecayTrack。
+        // CodeRabbit fix：shelflife_track 只写而 shelflife_profile=None 时报错，
+        // 防止半配置静默绕过 freshness gate。
+        if self.shelflife_profile.is_none() && self.shelflife_track.is_some() {
+            return Err(format!(
+                "{} item `{id}` has shelflife_track set but missing shelflife_profile; both must be specified together",
+                source_path.display()
+            ));
+        }
         let shelflife_track = match self.shelflife_profile.as_deref() {
             Some(_) => {
                 // shelflife_profile 存在时必须有合法 track（默认 spoil）。

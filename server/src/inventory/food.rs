@@ -19,8 +19,9 @@ use crate::combat::components::StatusEffects;
 use crate::combat::events::StatusEffectKind;
 use crate::combat::status::push_status_effect;
 use crate::inventory::freshness::GAME_DAY_TICKS;
+use crate::shelflife::compute::compute_current_qi;
 use crate::shelflife::consume::{age_peak_check, spoil_check, AgePeakCheck, SpoilCheckOutcome};
-use crate::shelflife::types::{DecayProfile, Freshness};
+use crate::shelflife::types::{DecayProfile, Freshness, TrackState};
 
 // ─────────────────────────────────────────────────────────────────────────────
 // 公共常量
@@ -145,6 +146,41 @@ pub fn consume_food(
     }
 
     // ── 检查 Age 路径峰值（陈酒 / 老坛丹是 Age profile）──
+    // plan-food-v1 review fix：Age 过峰腐烂（AgePostPeakSpoiled）需同 Spoil 门控一致。
+    // age_peak_check 只返回 Peaking / NotPeaking；通过 compute_track_state 检测 AgePostPeakSpoiled。
+    if let DecayProfile::Age {
+        post_peak_spoil_threshold,
+        ..
+    } = profile
+    {
+        let track_state = crate::shelflife::compute::compute_track_state(
+            freshness,
+            profile,
+            now_tick,
+            storage_multiplier,
+        );
+        if track_state == TrackState::AgePostPeakSpoiled {
+            // 过峰腐烂期：current_qi 跌破 post_peak_spoil_threshold，走 Spoil 门控语义
+            let current = compute_current_qi(freshness, profile, now_tick, storage_multiplier);
+            let threshold = *post_peak_spoil_threshold;
+            return if current < crate::shelflife::consume::CRITICAL_BLOCK_RATIO * threshold {
+                ConsumeFoodResult::CriticalBlock {
+                    current_qi: current,
+                    spoil_threshold: threshold,
+                }
+            } else {
+                // Warn 区间：线性折算
+                let ratio = (current / threshold).clamp(0.0, 1.0);
+                ConsumeFoodResult::SpoiledWarn {
+                    current_qi: current,
+                    spoil_threshold: threshold,
+                    reduced_bonus_factor: base_bonus_factor * ratio,
+                    duration_ticks,
+                }
+            };
+        }
+    }
+
     let age = age_peak_check(freshness, profile, now_tick, storage_multiplier);
     let (final_bonus, is_peak) = match age {
         AgePeakCheck::Peaking { bonus_strength } => {
@@ -589,6 +625,105 @@ mod tests {
         assert!(
             matches!(r_cold, ConsumeFoodResult::FoodApplied { .. }),
             "冰窖容器，新鲜食物应 FoodApplied（bonus 不变，只是衰减更慢）"
+        );
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // consume_food — Age 路径过峰腐烂门控（review fix：AgePostPeakSpoiled 补 Spoil 语义）
+    // ─────────────────────────────────────────────────────────────────────────
+
+    /// 陈酒进入 AgePostPeakSpoiled（Warn 区间）→ SpoiledWarn，reduced_bonus < base
+    #[test]
+    fn consume_food_age_post_peak_spoiled_warn_returns_spoiled_warn() {
+        // peak_at=1000, peak_window_ratio=0.1 → peak_window=[900,1100], post_half=500, spoil_th=30
+        // initial=100, tick=2200: effective_dt>1100(peak_hi),
+        // current = initial * 0.5^((2200-1100)/500) = 100 * 0.5^2.2 ≈ 21.7 < 30 → AgePostPeakSpoiled
+        // 21.7 > 0.1*30=3.0 → Warn
+        let p = age_profile(1000, 0.5, 500, 30.0);
+        let f = fresh_item(&p, 100.0);
+        let result = consume_food(Some((&f, &p)), 0.20, LING_GUO_DURATION_TICKS, 2200, 1.0);
+        match result {
+            ConsumeFoodResult::SpoiledWarn {
+                reduced_bonus_factor,
+                spoil_threshold,
+                ..
+            } => {
+                assert!(
+                    (spoil_threshold - 30.0).abs() < 1e-2,
+                    "过峰腐烂期 spoil_threshold 应=post_peak_spoil_threshold(30.0)，实际 {spoil_threshold}"
+                );
+                assert!(
+                    reduced_bonus_factor < 0.20,
+                    "过峰腐烂期 reduced_bonus_factor 应 < base 0.20，实际 {reduced_bonus_factor}"
+                );
+                assert!(
+                    reduced_bonus_factor > 0.0,
+                    "Warn 区间 reduced_bonus_factor 应 > 0，实际 {reduced_bonus_factor}"
+                );
+            }
+            other => panic!("陈酒过峰腐烂（Warn 区间）应 SpoiledWarn，实际 {other:?}"),
+        }
+    }
+
+    /// 陈酒进入 AgePostPeakSpoiled（CriticalBlock 区间）→ CriticalBlock，不给 bonus
+    #[test]
+    fn consume_food_age_post_peak_spoiled_critical_block_returns_critical_block() {
+        // initial=100, spoil_th=30, post_half=500
+        // tick=4000: current = 100 * 0.5^((4000-1100)/500) ≈ 100 * 0.5^5.8 ≈ 1.77
+        // 1.77 < 0.1*30=3.0 → AgePostPeakSpoiled + CriticalBlock
+        let p = age_profile(1000, 0.5, 500, 30.0);
+        let f = fresh_item(&p, 100.0);
+        let result = consume_food(Some((&f, &p)), 0.20, LING_GUO_DURATION_TICKS, 4000, 1.0);
+        assert!(
+            matches!(result, ConsumeFoodResult::CriticalBlock { .. }),
+            "陈酒过峰极度腐烂应 CriticalBlock，实际 {result:?}"
+        );
+    }
+
+    /// CriticalBlock 端到端锁定：consume_food 返回 CriticalBlock → apply_food_status_effect 不写入
+    /// 覆盖 cast_emit 门控语义：若上游未拦截物品消费，至少 status effect 不写入
+    #[test]
+    fn consume_food_critical_block_end_to_end_no_status_effect() {
+        // 极腐败食物
+        let p = spoil_profile(GAME_DAY_TICKS * 3, 0.5);
+        let f = fresh_item(&p, 1.0);
+        let result = consume_food(
+            Some((&f, &p)),
+            0.20,
+            LING_GUO_DURATION_TICKS,
+            GAME_DAY_TICKS * 100,
+            1.0,
+        );
+        // 1. 确认是 CriticalBlock
+        assert!(
+            matches!(result, ConsumeFoodResult::CriticalBlock { .. }),
+            "前提：极腐败食物应 CriticalBlock，实际 {result:?}"
+        );
+        // 2. 确认 apply_food_status_effect 不写入 CultivationAcceleration
+        let mut se = StatusEffects::default();
+        let pushed = apply_food_status_effect(&mut se, &result, "food.spirit_fruit.ling_guo");
+        assert!(
+            !pushed,
+            "CriticalBlock 后 apply_food_status_effect 应返回 false（不写 status effect）"
+        );
+        assert!(
+            se.active.is_empty(),
+            "CriticalBlock 后 StatusEffects.active 应为空，实际 {:?}",
+            se.active
+        );
+        // 3. cast_emit 门控语义：CriticalBlock 时不应扣除库存
+        // （消费代码在 cast_emit.rs 中，此处验证纯函数语义正确）
+        let no_effect = apply_food_status_effect(
+            &mut se,
+            &ConsumeFoodResult::CriticalBlock {
+                current_qi: 0.001,
+                spoil_threshold: 0.5,
+            },
+            "food.spirit_fruit.ling_guo",
+        );
+        assert!(
+            !no_effect,
+            "CriticalBlock 变体直接传入 apply_food_status_effect 应返回 false"
         );
     }
 

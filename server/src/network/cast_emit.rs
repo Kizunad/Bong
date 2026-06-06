@@ -246,6 +246,57 @@ pub fn tick_casts_or_interrupt(
                     }
                 }
             }
+
+            // plan-food-v1 P2 CriticalBlock 门控：FoodRegen 食物在扣库存前先判 freshness。
+            // CriticalBlock → 不扣库存，给玩家"太腐败无法食用"日志反馈，直接跳过 cast 完成。
+            if let Some(ItemEffect::FoodRegen {
+                bonus_factor,
+                duration_ticks,
+            }) = effect_to_apply.as_ref()
+            {
+                let freshness_pair = cast_item_freshness.as_ref().and_then(|f| {
+                    decay_profiles
+                        .as_deref()
+                        .and_then(|reg| reg.get(&f.profile))
+                        .map(|profile| (f, profile))
+                });
+                let pre_check = consume_food(
+                    freshness_pair,
+                    *bonus_factor,
+                    *duration_ticks,
+                    clock.tick,
+                    1.0,
+                );
+                if matches!(pre_check, ConsumeFoodResult::CriticalBlock { .. }) {
+                    tracing::warn!(
+                        "[bong][network][cast] FoodRegen CriticalBlock: 食物已极度腐败，拒绝消费（库存不扣）for `{}` ({:?})",
+                        username.0,
+                        entity
+                    );
+                    // 不扣库存，不应用效果，直接结束本次 cast（进入冷却）。
+                    set_cast_cooldown(
+                        casting,
+                        &mut bindings,
+                        &mut skillbar_bindings,
+                        casting.slot,
+                        clock.tick.saturating_add(casting.complete_cooldown_ticks),
+                    );
+                    push_cast_sync(
+                        &mut client,
+                        CastSyncV1 {
+                            phase: CastPhaseV1::Complete,
+                            slot: casting.slot,
+                            duration_ms: casting.duration_ms,
+                            started_at_ms: casting.started_at_ms,
+                            outcome: CastOutcomeV1::Completed,
+                        },
+                        username.0.as_str(),
+                        entity,
+                    );
+                    continue;
+                }
+            }
+
             let consumed = if casting.source == CastSource::QuickSlot {
                 casting
                     .bound_instance_id
@@ -591,13 +642,14 @@ fn apply_cast_item_effect(
                     current_qi,
                     spoil_threshold,
                 } => {
+                    // plan-food-v1 P2：CriticalBlock 路径已在 tick_casts_or_interrupt 的
+                    // 前置门控拦截（不扣库存，直接 continue）。
+                    // apply_cast_item_effect 不应再收到 CriticalBlock；若到此分支是防御性保底。
                     tracing::warn!(
-                        "[bong][network][cast] FoodRegen CriticalBlock: current_qi={current_qi:.3} < 0.1×spoil_threshold={spoil_threshold:.3} for `{}` ({:?}) — 拒绝消费，不写 CultivationAcceleration",
+                        "[bong][network][cast] FoodRegen CriticalBlock（漏网）: current_qi={current_qi:.3} < 0.1×spoil_threshold={spoil_threshold:.3} for `{}` ({:?}) — 不写 CultivationAcceleration",
                         context.username,
                         context.entity
                     );
-                    // 注意：BLOCKER 2 要求此处不写 status effect。物品已在 consume_one_stack 扣除；
-                    // 若需"腐败食物退回"逻辑，留 P3 TODO。
                 }
                 ConsumeFoodResult::SpoiledWarn {
                     reduced_bonus_factor,
