@@ -70,6 +70,9 @@ fn denial_reason_snake_case(reason: &MineralProbeDenialReason) -> String {
         MineralProbeDenialReason::NotMineralOre => "not_mineral_ore",
         MineralProbeDenialReason::StaleOreIndex => "stale_ore_index",
         MineralProbeDenialReason::MineralNotRegistered => "mineral_not_registered",
+        // 兜底臂：防 enum 新增变体时 match 未穷举导致编译错误以外的静默行为。
+        #[allow(unreachable_patterns)]
+        _ => "unknown_denial",
     }
     .to_string()
 }
