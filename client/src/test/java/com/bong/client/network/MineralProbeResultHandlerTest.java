@@ -207,6 +207,58 @@ public class MineralProbeResultHandlerTest {
         });
     }
 
+    // ─── buildFoundText / buildDeniedText：overlay Text 内容断言 ─────────────────
+
+    @Test
+    void buildFoundText_containsNameAndRemaining() {
+        // buildFoundText 返回的 Text 字面内容应含矿名和余量（plan P0 Found 显示规格）
+        net.minecraft.text.Text text = MineralProbeResultHandler.buildFoundText("赤铜矿脉", 30);
+        String str = text.getString();
+        assertTrue(str.contains("赤铜矿脉"),
+            "Found overlay text 应包含矿名 '赤铜矿脉'，实际=" + str);
+        assertTrue(str.contains("30"),
+            "Found overlay text 应包含余量 '30'，实际=" + str);
+    }
+
+    @Test
+    void buildFoundText_nullName_fallsBackToDefault() {
+        // displayNameZh 为 null 时退回 "灵脉" 兜底
+        net.minecraft.text.Text text = MineralProbeResultHandler.buildFoundText(null, 5);
+        String str = text.getString();
+        assertTrue(str.contains("灵脉"),
+            "displayNameZh=null 时 Found overlay 应含兜底 '灵脉'，实际=" + str);
+    }
+
+    @Test
+    void buildFoundText_aboveAbundantThreshold_hasAbundantColor() {
+        // remaining=100 → COLOR_ABUNDANT=0x6EE7B7
+        net.minecraft.text.Text text = MineralProbeResultHandler.buildFoundText("玉髓", 100);
+        // Text.style().getColor() 为 TextColor 对象，.getRgb() 取整数颜色
+        var color = text.getStyle().getColor();
+        assertNotNull(color, "Found text 颜色不应为 null");
+        assertEquals(0x6EE7B7, color.getRgb(),
+            "remaining=100 Found overlay 颜色应为 COLOR_ABUNDANT=0x6EE7B7，实际=0x" + Integer.toHexString(color.getRgb()));
+    }
+
+    @Test
+    void buildDeniedText_containsDenialMessage() {
+        // buildDeniedText 返回的 Text 内容应含对应文案（plan P0 Denied 显示规格）
+        net.minecraft.text.Text text = MineralProbeResultHandler.buildDeniedText("realm_too_low");
+        String str = text.getString();
+        assertEquals("神识未及，凝脉方可感矿脉", str,
+            "Denied overlay text=realm_too_low 应为 '神识未及，凝脉方可感矿脉'，实际=" + str);
+    }
+
+    @Test
+    void buildDeniedText_hasGrayColor() {
+        // Denied overlay 颜色应为 COLOR_DENIED=0x9CA3AF
+        net.minecraft.text.Text text = MineralProbeResultHandler.buildDeniedText("out_of_range");
+        var color = text.getStyle().getColor();
+        assertNotNull(color, "Denied text 颜色不应为 null");
+        assertEquals(0x9CA3AF, color.getRgb(),
+            "Denied overlay 颜色应为 COLOR_DENIED=0x9CA3AF（灰字），实际=0x" + Integer.toHexString(color.getRgb()));
+    }
+
     // ─── colorByAbundance 三档边界完整覆盖（参数化概要）────────────────────────
 
     @ParameterizedTest(name = "remaining={0} → 期望颜色类别={1}")

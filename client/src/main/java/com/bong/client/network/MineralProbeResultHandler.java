@@ -22,7 +22,7 @@ import net.minecraft.util.Formatting;
  * <ul>
  *   <li>Found 颜色：remaining_units &gt; 50 → #6EE7B7（青）；10-50 → #FCD34D（琥珀）；&lt;10 → #F87171（赤）</li>
  *   <li>Found SFX：{@code block.amethyst_block.chime} pitch=1.4 / volume=0.3</li>
- *   <li>Denied SFX：{@code block.anvil.land} pitch=0.6 / volume=0.2</li>
+ *   <li>Denied SFX：{@code block.note_block.bass} pitch=0.6 / volume=0.2</li>
  * </ul>
  */
 public final class MineralProbeResultHandler implements ServerDataHandler {
@@ -111,10 +111,10 @@ public final class MineralProbeResultHandler implements ServerDataHandler {
         Text text = Text.literal(message).styled(s -> s.withColor(COLOR_DENIED));
         mc.inGameHud.setOverlayMessage(text, true);
 
-        // SFX：block.anvil.land pitch=0.6 / volume=0.2（用 BLOCK_ANVIL_LAND 代替 BLOCK_NOTE_BLOCK_BASS，
-        // 后者在 MC 1.20.1 Fabric 反混淆后是 Reference<SoundEvent> 而非 SoundEvent）
+        // SFX: block.note_block.bass pitch=0.6 / vol=0.2 (plan P0 spec).
+        // MC 1.20.1 Yarn: BLOCK_NOTE_BLOCK_BASS is RegistryEntry$Reference<SoundEvent>; call .value() to get SoundEvent.
         mc.player.playSound(
-            SoundEvents.BLOCK_ANVIL_LAND,
+            SoundEvents.BLOCK_NOTE_BLOCK_BASS.value(),
             SoundCategory.PLAYERS,
             0.2f,
             0.6f
@@ -137,6 +137,24 @@ public final class MineralProbeResultHandler implements ServerDataHandler {
         } else {
             return COLOR_SPARSE;
         }
+    }
+
+    /**
+     * Found overlay 文本（含颜色格式化），package-private 供测试断言。
+     * 格式："「{displayNameZh}」灵脉 · 余 {remainingUnits} 缕"
+     */
+    static net.minecraft.text.Text buildFoundText(String displayNameZh, int remainingUnits) {
+        String name = (displayNameZh != null && !displayNameZh.isBlank()) ? displayNameZh : "灵脉";
+        String overlayText = "「" + name + "」灵脉 · 余 " + remainingUnits + " 缕";
+        int color = colorByAbundance(remainingUnits);
+        return net.minecraft.text.Text.literal(overlayText).styled(s -> s.withColor(color));
+    }
+
+    /**
+     * Denied overlay 文本（灰字），package-private 供测试断言。
+     */
+    static net.minecraft.text.Text buildDeniedText(String reason) {
+        return net.minecraft.text.Text.literal(denialMessage(reason)).styled(s -> s.withColor(COLOR_DENIED));
     }
 
     /**
