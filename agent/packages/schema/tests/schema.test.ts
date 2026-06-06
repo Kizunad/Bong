@@ -96,7 +96,7 @@ import {
 import { ZongCoreActivationV1 } from "../src/zong-formation.js";
 import { RealmVisionParamsV1 } from "../src/realm-vision.js";
 import { ClientRequestV1 } from "../src/client-request.js";
-import { ServerDataV1 } from "../src/server-data.js";
+import { ServerDataV1, ServerDataMineralProbeResultV1, ServerDataInsightOfferV1 } from "../src/server-data.js";
 import {
   TsyNpcSpawnedV1,
   TsySentinelPhaseChangedV1,
@@ -975,6 +975,156 @@ describe("sample files pass schema validation", () => {
     expect(result.ok, result.errors.join("; ")).toBe(true);
   });
 
+  // plan-exploration-probe-return-v1 P0 — 神识感知矿脉回执
+  it("server-data.mineral-probe-result-found.sample.json validates against ServerDataV1", () => {
+    const data = loadSample("server-data.mineral-probe-result-found.sample.json");
+    const result = validate(ServerDataV1, data);
+    expect(result.ok, result.errors.join("; ")).toBe(true);
+  });
+
+  it("server-data.mineral-probe-result-denied.sample.json validates against ServerDataV1", () => {
+    const data = loadSample("server-data.mineral-probe-result-denied.sample.json");
+    const result = validate(ServerDataV1, data);
+    expect(result.ok, result.errors.join("; ")).toBe(true);
+  });
+
+  it("mineral probe result found: inline schema pin", () => {
+    const found: ServerDataMineralProbeResultV1 = {
+      type: "mineral_probe_result",
+      kind: "found",
+      mineral_id: "yu_sui",
+      remaining_units: 12,
+      display_name_zh: "玉碎灵脉",
+    };
+    const result = validate(ServerDataMineralProbeResultV1, found);
+    expect(result.ok, result.errors.join("; ")).toBe(true);
+  });
+
+  it("mineral probe result denied: inline schema pin for all 5 denial reasons", () => {
+    const reasons = [
+      "realm_too_low",
+      "out_of_range",
+      "not_mineral_ore",
+      "stale_ore_index",
+      "mineral_not_registered",
+    ] as const;
+    for (const reason of reasons) {
+      const denied: ServerDataMineralProbeResultV1 = {
+        type: "mineral_probe_result",
+        kind: "denied",
+        denial_reason: reason,
+      };
+      const result = validate(ServerDataMineralProbeResultV1, denied);
+      expect(result.ok, `denial_reason=${reason}: ${result.errors.join("; ")}`).toBe(true);
+    }
+  });
+
+  it("mineral probe result: unknown kind is rejected", () => {
+    const bad = { type: "mineral_probe_result", kind: "unknown" };
+    const result = validate(ServerDataMineralProbeResultV1, bad);
+    expect(result.ok).toBe(false);
+  });
+
+  it("mineral probe result: found without optional fields is valid", () => {
+    // remaining_units and display_name_zh are optional
+    const found = { type: "mineral_probe_result", kind: "found", mineral_id: "cu_tie" };
+    const result = validate(ServerDataMineralProbeResultV1, found);
+    expect(result.ok, result.errors.join("; ")).toBe(true);
+  });
+
+  it("mineral probe result: denied without denial_reason is valid (server may omit)", () => {
+    const denied = { type: "mineral_probe_result", kind: "denied" };
+    const result = validate(ServerDataMineralProbeResultV1, denied);
+    expect(result.ok, result.errors.join("; ")).toBe(true);
+  });
+
+  // plan-exploration-probe-return-v1 P2 — 顿悟邀约 S2C schema pin
+  it("server-data.insight-offer.sample.json validates against ServerDataV1", () => {
+    const data = loadSample("server-data.insight-offer.sample.json");
+    const result = validate(ServerDataV1, data);
+    expect(result.ok, result.errors.join("; ")).toBe(true);
+  });
+
+  it("insight offer: inline schema pin — 最简 1 choice 无可选字段", () => {
+    const offer: ServerDataInsightOfferV1 = {
+      type: "insight_offer",
+      offer_id: "insight:1:100",
+      trigger_id: "insight:1:100",
+      character_id: "player_azure",
+      choices: [
+        {
+          category: "Qi",
+          effect_kind: "qi_regen_factor",
+          magnitude: 0.1,
+          flavor_text: "真元流速微微提升。",
+        },
+      ],
+    };
+    const result = validate(ServerDataInsightOfferV1, offer);
+    expect(result.ok, result.errors.join("; ")).toBe(true);
+  });
+
+  it("insight offer: 全字段 choice（含所有可选）通过", () => {
+    const offer: ServerDataInsightOfferV1 = {
+      type: "insight_offer",
+      offer_id: "insight:2:200",
+      trigger_id: "insight:2:200",
+      character_id: "player_azure",
+      choices: [
+        {
+          category: "Meridian",
+          effect_kind: "meridian_rate",
+          magnitude: 0.12,
+          flavor_text: "经脉共鸣。",
+          narrator_voice: "平稳",
+          alignment: "converge",
+          cost_kind: "qi_current",
+          cost_magnitude: 0.05,
+          cost_flavor: "需消耗部分真元。",
+        },
+      ],
+    };
+    const result = validate(ServerDataInsightOfferV1, offer);
+    expect(result.ok, result.errors.join("; ")).toBe(true);
+  });
+
+  it("insight offer: 缺少 required offer_id 应拒绝（负例）", () => {
+    const bad = {
+      type: "insight_offer",
+      trigger_id: "insight:1:100",
+      character_id: "player_azure",
+      choices: [{ category: "Qi", effect_kind: "qi_regen_factor", magnitude: 0.1, flavor_text: "x" }],
+    };
+    const result = validate(ServerDataInsightOfferV1, bad);
+    expect(result.ok, `应拒绝缺少 offer_id，实际: ${result.errors.join("; ")}`).toBe(false);
+  });
+
+  // plan-exploration-probe-return-v1 P2 — choices 边界负例（S3 补充）
+  it("insight offer: choices=[] 空数组违反 minItems=1 应拒绝", () => {
+    const bad = {
+      type: "insight_offer",
+      offer_id: "insight:1:100",
+      trigger_id: "insight:1:100",
+      character_id: "player_azure",
+      choices: [],
+    };
+    const result = validate(ServerDataInsightOfferV1, bad);
+    expect(result.ok, `choices=[] 应违反 minItems=1 被拒绝，但通过了: ${result.errors.join("; ")}`).toBe(false);
+  });
+
+  it("insight offer: choices=4 违反 maxItems=3 应拒绝（off-by-one 守卫）", () => {
+    const oneChoice = { category: "Qi", effect_kind: "qi_max", magnitude: 0.05, flavor_text: "x" };
+    const bad = {
+      type: "insight_offer",
+      offer_id: "insight:1:100",
+      trigger_id: "insight:1:100",
+      character_id: "player_azure",
+      choices: [oneChoice, oneChoice, oneChoice, oneChoice], // 4 个，超出 maxItems=3
+    };
+    const result = validate(ServerDataInsightOfferV1, bad);
+    expect(result.ok, `choices=4 应违反 maxItems=3 被拒绝，但通过了: ${result.errors.join("; ")}`).toBe(false);
+  });
+
   it("accepts heart demon pregen request and offer draft", () => {
     const request = {
       trigger_id: "heart_demon:1:1000",
@@ -1235,6 +1385,25 @@ describe("sample files pass schema validation", () => {
     const data = loadSample("client-request.mineral-probe.sample.json");
     const result = validate(ClientRequestV1, data);
     expect(result.ok, result.errors.join("; ")).toBe(true);
+  });
+
+  // plan-exploration-probe-return-v1 P1 — 神识感知保鲜 C2S schema pin
+  it("client-request.freshness-probe.sample.json 正样本通过", () => {
+    const data = loadSample("client-request.freshness-probe.sample.json");
+    const result = validate(ClientRequestV1, data);
+    expect(result.ok, result.errors.join("; ")).toBe(true);
+  });
+
+  it("FreshnessProbeRequestV1 负样本：instance_id 缺失应拒绝", () => {
+    const bad = { type: "freshness_probe", v: 1 };
+    const result = validate(ClientRequestV1, bad);
+    expect(result.ok).toBe(false);
+  });
+
+  it("FreshnessProbeRequestV1 负样本：instance_id=-1 应拒绝", () => {
+    const bad = { type: "freshness_probe", v: 1, instance_id: -1 };
+    const result = validate(ClientRequestV1, bad);
+    expect(result.ok).toBe(false);
   });
 
   it("client-request.movement-action.sample.json", () => {

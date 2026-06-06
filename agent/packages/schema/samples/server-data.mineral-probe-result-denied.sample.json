@@ -1,0 +1,5 @@
+{
+  "type": "mineral_probe_result",
+  "kind": "denied",
+  "denial_reason": "not_mineral_ore"
+}

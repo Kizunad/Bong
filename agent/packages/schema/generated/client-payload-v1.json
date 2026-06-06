@@ -278,6 +278,10 @@
                 {
                   "const": "all_wither",
                   "type": "string"
+                },
+                {
+                  "const": "generic",
+                  "type": "string"
                 }
               ]
             },

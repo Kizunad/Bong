@@ -24,6 +24,8 @@ import com.bong.client.inventory.state.MeridianStateStore;
 import com.bong.client.util.RealmLabel;
 import com.bong.client.inventory.state.PhysicalBodyStore;
 import net.minecraft.client.MinecraftClient;
+import net.minecraft.sound.SoundCategory;
+import net.minecraft.sound.SoundEvents;
 import com.mojang.blaze3d.systems.RenderSystem;
 import io.wispforest.owo.ui.base.BaseOwoScreen;
 import io.wispforest.owo.ui.component.Components;
@@ -1746,11 +1748,37 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
                 }
             }
 
+            // plan-exploration-probe-return-v1 P1 fix(M1-②): 先清理 pendingMeridianUse 状态，
+            // 防止 Shift+右键触发保鲜探针时残留旧的「待选经脉外敷���状态导致后续误触发。
+            if (pendingMeridianUse != null) {
+                pendingMeridianUse = null;
+                itemInspectLongPress.cancel();
+                return true;
+            }
+
             BackpackGridPanel grid = activeGrid();
             if (grid != null && grid.containsPoint(mouseX, mouseY)) {
                 var pos = grid.screenToGrid(mouseX, mouseY);
                 if (pos != null) {
                     InventoryItem item = grid.itemAt(pos.row(), pos.col());
+                    // plan-exploration-probe-return-v1 P1 — Shift+右键（button==1）槽位触发神识感知保鲜。
+                    // button==1 已由外层 if(button==1) 块保证，此处仅补 Shift 判定。
+                    // 直接发 instance_id 而非 flatSlot，消除多容器 tab 歧义。
+                    if (item != null && hasShiftDown()) {
+                        com.bong.client.network.ClientRequestSender.sendFreshnessProbe(item.instanceId());
+                        // S2: plan §P1 触发音效 block.amethyst_block.chime pitch=1.2 / vol=0.25
+                        MinecraftClient mc = MinecraftClient.getInstance();
+                        if (mc != null && mc.player != null) {
+                            mc.player.playSound(
+                                SoundEvents.BLOCK_AMETHYST_BLOCK_CHIME,
+                                SoundCategory.PLAYERS,
+                                0.25f,
+                                1.2f
+                            );
+                        }
+                        itemInspectLongPress.cancel();
+                        return true;
+                    }
                     if (item != null && openPillContextMenu(item, (int) mouseX, (int) mouseY)) {
                         itemInspectLongPress.cancel();
                         return true;
@@ -1761,12 +1789,6 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
             int hIdx = hotbarSlotAtScreen(mouseX, mouseY);
             if (hIdx >= 0 && hotbarItems[hIdx] != null
                     && openPillContextMenu(hotbarItems[hIdx], (int) mouseX, (int) mouseY)) {
-                itemInspectLongPress.cancel();
-                return true;
-            }
-
-            if (pendingMeridianUse != null) {
-                pendingMeridianUse = null;
                 itemInspectLongPress.cancel();
                 return true;
             }

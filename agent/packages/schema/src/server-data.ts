@@ -80,6 +80,7 @@ import {
   TradeOfferPayloadV1,
 } from "./social.js";
 import { SpiritualSenseTargetsV1 } from "./spiritual-sense.js";
+import { InsightChoiceV1 } from "./insight-offer.js";
 import { FalseSkinStateV1 } from "./tuike.js";
 import { HealerNpcAiStateV1, YidaoHudStateV1 } from "./yidao.js";
 import { MovementStateV1 } from "./movement.js";
@@ -247,6 +248,9 @@ export const ServerDataType = Type.Union([
   Type.Literal("spirit_treasure_dialogue"),
   Type.Literal("knockback_sync"),
   Type.Literal("coffin_state"),
+  Type.Literal("insight_offer"),
+  // plan-exploration-probe-return-v1 P0 — 神识感知矿脉回执（补���：原始 union 遗漏此字面量）
+  Type.Literal("mineral_probe_result"),
 ]);
 export type ServerDataType = Static<typeof ServerDataType>;
 
@@ -1603,6 +1607,53 @@ export const ServerDataSearchAbortedV1 = Type.Object(
 );
 export type ServerDataSearchAbortedV1 = Static<typeof ServerDataSearchAbortedV1>;
 
+// ── plan-exploration-probe-return-v1 P2 ── 修炼顿悟邀约 S2C ──────────────────
+/**
+ * 顿悟选择邀约（server → client）。
+ * discriminator: type="insight_offer"
+ * 字段形状镜像 server InsightOfferV1（cultivation.rs）+ InsightChoiceV1。
+ * 可选字段缺省时省略（不写 null）。
+ */
+export const ServerDataInsightOfferV1 = Type.Object(
+  {
+    type: Type.Literal("insight_offer"),
+    offer_id: Type.String({ minLength: 1, maxLength: 128 }),
+    trigger_id: Type.String({ minLength: 1, maxLength: 128 }),
+    character_id: Type.String({ minLength: 1 }),
+    choices: Type.Array(InsightChoiceV1, { minItems: 1, maxItems: 3 }),
+  },
+  { additionalProperties: false },
+);
+export type ServerDataInsightOfferV1 = Static<typeof ServerDataInsightOfferV1>;
+
+// ── plan-exploration-probe-return-v1 P0 ── 神识感知矿脉回执 S2C ──────────────
+/**
+ * 矿脉感知回执。kind="found" 时附带矿脉信息，kind="denied" 时附带拒绝原因。
+ *
+ * denial_reason 枚举值（snake_case）：
+ *   realm_too_low / out_of_range / not_mineral_ore / stale_ore_index / mineral_not_registered
+ */
+export const ServerDataMineralProbeResultV1 = Type.Object(
+  {
+    type: Type.Literal("mineral_probe_result"),
+    kind: Type.Union([Type.Literal("found"), Type.Literal("denied")]),
+    mineral_id: Type.Optional(Type.String({ minLength: 1 })),
+    remaining_units: Type.Optional(Type.Integer({ minimum: 0 })),
+    display_name_zh: Type.Optional(Type.String({ maxLength: 64 })),
+    denial_reason: Type.Optional(
+      Type.Union([
+        Type.Literal("realm_too_low"),
+        Type.Literal("out_of_range"),
+        Type.Literal("not_mineral_ore"),
+        Type.Literal("stale_ore_index"),
+        Type.Literal("mineral_not_registered"),
+      ]),
+    ),
+  },
+  { additionalProperties: false },
+);
+export type ServerDataMineralProbeResultV1 = Static<typeof ServerDataMineralProbeResultV1>;
+
 export const ServerDataV1 = Type.Union([
   ServerDataWelcomeV1,
   ServerDataHeartbeatV1,
@@ -1695,5 +1746,9 @@ export const ServerDataV1 = Type.Union([
   ServerDataRealmVisionParamsV1,
   ServerDataSpiritualSenseTargetsV1,
   ServerDataKnockbackSyncV1,
+  // plan-exploration-probe-return-v1 P0
+  ServerDataMineralProbeResultV1,
+  // plan-exploration-probe-return-v1 P2
+  ServerDataInsightOfferV1,
 ]);
 export type ServerDataV1 = Static<typeof ServerDataV1>;

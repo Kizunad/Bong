@@ -73,6 +73,7 @@ import {
   ForgeBlueprintTurnPageRequestV1,
   ForgeLearnBlueprintRequestV1,
   ForgeStationPlaceRequestV1,
+  FreshnessProbeRequestV1,
   InsightDecisionRequestV1,
   MineralProbeRequestV1,
   NpcDialogueChoiceRequestV1,
@@ -332,6 +333,8 @@ import {
   WeaponBrokenV1,
   WeaponEquippedV1,
   WeaponViewV1,
+  // plan-exploration-probe-return-v1 P0
+  ServerDataMineralProbeResultV1,
 } from "./server-data.js";
 import {
   MovementActionRequestV1,
@@ -606,6 +609,7 @@ export const SCHEMA_REGISTRY = {
   clientRequestForgeFalseSkinV1: ForgeFalseSkinRequestV1,
   clientRequestUseLifeCoreV1: UseLifeCoreRequestV1,
   clientRequestMineralProbeV1: MineralProbeRequestV1,
+  clientRequestFreshnessProbeV1: FreshnessProbeRequestV1,
   clientRequestBotanyHarvestV1: BotanyHarvestRequestV1,
   clientRequestCombatReincarnateV1: CombatReincarnateRequestV1,
   clientRequestCombatTerminateV1: CombatTerminateRequestV1,
@@ -800,6 +804,8 @@ export const SCHEMA_REGISTRY = {
   serverDataSpiritTreasureDialogueV1: ServerDataSpiritTreasureDialogueV1,
   serverDataSpiritualSenseTargetsV1: ServerDataSpiritualSenseTargetsV1,
   serverDataKnockbackSyncV1: ServerDataKnockbackSyncV1,
+  // plan-exploration-probe-return-v1 P0 — 神识感知矿脉回执 S2C
+  serverDataMineralProbeResultV1: ServerDataMineralProbeResultV1,
   tutorialHookV1: TutorialHookV1,
   tutorialHookEventV1: TutorialHookEventV1,
   coffinOpenedV1: CoffinOpenedV1,
@@ -1057,6 +1063,8 @@ export const GENERATED_SCHEMA_FILES = {
   "client-request-use-life-core-v1.json":
     SCHEMA_REGISTRY.clientRequestUseLifeCoreV1,
   "client-request-mineral-probe-v1.json": SCHEMA_REGISTRY.clientRequestMineralProbeV1,
+  "client-request-freshness-probe-v1.json":
+    SCHEMA_REGISTRY.clientRequestFreshnessProbeV1,
   "client-request-botany-harvest-v1.json":
     SCHEMA_REGISTRY.clientRequestBotanyHarvestV1,
   "client-request-combat-reincarnate-v1.json":
@@ -1403,6 +1411,8 @@ export const GENERATED_SCHEMA_FILES = {
   // plan-identity-v1 §7
   "wanted-player-event-v1.json": SCHEMA_REGISTRY.wantedPlayerEventV1,
   "identity-panel-state-v1.json": SCHEMA_REGISTRY.identityPanelStateV1,
+  // plan-exploration-probe-return-v1 P0 — 神识感知矿脉回执 S2C
+  "server-data-mineral-probe-result-v1.json": SCHEMA_REGISTRY.serverDataMineralProbeResultV1,
 } as const satisfies Record<string, TSchema>;
 
 export type SchemaRegistryKey = keyof typeof SCHEMA_REGISTRY;

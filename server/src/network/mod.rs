@@ -23,6 +23,7 @@ pub mod craft_emit;
 pub mod craft_event_bridge;
 pub mod cultivation_bridge;
 pub mod cultivation_detail_emit;
+pub mod cultivation_insight_offer_emit;
 pub mod defense_window_emit;
 pub mod derived_attrs_emit;
 pub mod dropped_loot_sync_emit;
@@ -34,6 +35,7 @@ pub mod extract_emit;
 pub mod false_skin_state_emit;
 pub mod forge_bridge;
 pub mod forge_snapshot_emit;
+pub mod freshness_probe_emit;
 pub mod full_power_emit;
 pub mod gameplay_vfx;
 pub mod identity_panel_emit;
@@ -41,6 +43,7 @@ pub mod inventory_event_emit;
 pub mod inventory_snapshot_emit;
 pub mod knockback_sync_emit;
 pub mod meridian_severed_emit;
+pub mod mineral_probe_emit;
 pub mod mutation_event_publish;
 pub mod mutation_visual_emit;
 pub mod npc_bubble;
@@ -508,6 +511,15 @@ pub fn register(app: &mut App) {
     app.add_systems(
         Update,
         cultivation_bridge::publish_breakthrough_cinematic_events,
+    );
+    // plan-exploration-probe-return-v1 P0：神识感知矿脉 S2C 回执。
+    app.add_systems(Update, mineral_probe_emit::emit_mineral_probe_results);
+    // plan-exploration-probe-return-v1 P1：神识感知保鲜 S2C 回执。
+    app.add_systems(Update, freshness_probe_emit::emit_freshness_probe_results);
+    // plan-exploration-probe-return-v1 P2：修炼顿悟 S2C 回执。
+    app.add_systems(
+        Update,
+        cultivation_insight_offer_emit::emit_cultivation_insight_offers,
     );
     app.add_systems(Update, tuike_event_bridge::publish_tuike_v2_skill_events);
     // plan-combat-skill-feedback-bridges-v1 P6：蜕壳灰烬入包 + VFX + Redis（FalseSkinDecayedToAshEvent）

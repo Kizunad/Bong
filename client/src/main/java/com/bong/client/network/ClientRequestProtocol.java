@@ -603,6 +603,20 @@ public final class ClientRequestProtocol {
         return obj.toString();
     }
 
+    /**
+     * plan-exploration-probe-return-v1 P1 — 神识感知保鲜 C2S 请求。
+     *
+     * @param instanceId 被查询物品的 inventory instance_id（来自 InventoryItem.getInstanceId()）
+     */
+    public static String encodeFreshnessProbe(long instanceId) {
+        if (instanceId < 0) {
+            throw new IllegalArgumentException("instanceId must be >= 0, got " + instanceId);
+        }
+        JsonObject obj = envelope("freshness_probe");
+        obj.addProperty("instance_id", instanceId);
+        return obj.toString();
+    }
+
     public static String encodeInventoryDiscardItem(long instanceId, InvLocation from) {
         JsonObject obj = envelope("inventory_discard_item");
         obj.addProperty("instance_id", instanceId);

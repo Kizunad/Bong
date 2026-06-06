@@ -6,9 +6,9 @@
 
 | 阶段 | 内容 | 状态 | 验收日期 |
 |------|------|------|----------|
-| P0 | 神识感知矿脉 S2C 回执 + 右键矿块触发 + 结果显示（actionbar + SFX） | ⬜ | — |
-| P1 | 神识感知保鲜 C2S 触发 + S2C 回执（复用 `freshness_update` 链） | ⬜ | — |
-| P2 | 修炼顿悟 `InsightOffer` S2C 桥（突破/濒死/炼器，复用 InsightOfferScreen） | ⬜ | — |
+| P0 | 神识感知矿脉 S2C 回执 + 右键矿块触发 + 结果显示（actionbar + SFX） | ✅ | 2026-06-07 |
+| P1 | 神识感知保鲜 C2S 触发 + S2C 回执（复用 `freshness_update` 链） | ✅ | 2026-06-07 |
+| P2 | 修炼顿悟 `InsightOffer` S2C 桥（突破/濒死/炼器，复用 InsightOfferScreen） | ✅ | 2026-06-07 |
 
 来源：`project_broken_links_audit`（2026-06-02 全仓玩法断链审计，主题 4「exploration-probe-return-paths」）经 `find-gameplay-broken-links` workflow（2026-06-07）逐条对当前代码 grep 复核，三条均 `stillBroken:true`。
 
@@ -209,4 +209,56 @@
 
 ## Finish Evidence
 
-> （归档前填：落地清单 / 关键 commit / 测试结果 / 跨仓库核验 / 遗留。当前 ⬜ 未实施。）
+实施于 2026-06-07，单次 `/consume-plan exploration-probe-return-v1` 全自动消费（worktree `auto/plan-exploration-probe-return-v1`，17 atomic commits + 设计收口 + 3 维 opus 对抗审查 + 2 轮 fix）。
+
+### 落地清单
+
+**P0 神识感知矿脉 S2C 回执（✅）**
+- proto：`proto/bong/envelope.proto` — `MineralProbeResult` message + `ServerDataEnvelope` oneof field
+- server schema：`server/src/schema/server_data.rs` — `ServerDataType::MineralProbeResult` + `ServerDataPayloadV1::MineralProbeResult(MineralProbeResultV1)` + Wire 变体 + 双向 From + `payload_type()` + `agent_bridge.rs` `payload_type_label`→`"mineral_probe_result"` + `proto_convert.rs` 穷尽 match
+- server emit：`server/src/network/mineral_probe_emit.rs`（读 `EventReader<MineralProbeResponse>`，只发触发者；含 ≥6 单测）+ `network/mod.rs` 注册
+- client：`MineralProbeResultHandler.java`（actionbar overlay：Found 按丰度上色 #6EE7B7/#FCD34D/#F87171 + `amethyst_block.chime`，Denied 灰字 per 5 reason + `note_block.bass`）+ `MixinClientPlayerInteractionManagerMineralProbe.java`（右键矿块→`sendMineralProbe`）+ `ProtoServerDataBridge` CASE_TO_TYPE + `ServerDataRouter` 路由 + `bong-client.mixins.json`
+- agent schema：`server-data.ts` `ServerDataMineralProbeResultV1` + 正反 sample + `schema.test.ts` pin
+
+**P1 神识感知保鲜 C2S 触发 + S2C 回执（✅）**
+- C2S：`server/src/schema/client_request.rs` `ClientRequestV1::FreshnessProbe { instance_id }`（**经审查从 slot 改为 instance_id**，镜像 ApplyPill 约定，消除多容器 tab 歧义）+ proto + round-trip pin；`client_request_handler.rs` 臂（用 canonical `inventory_item_by_instance_borrow` 校验归属 containers+equipped+hotbar→`FreshnessProbeIntent`）
+- client：`ClientRequestProtocol.encodeFreshnessProbe(instanceId)` + `ClientRequestSender.sendFreshnessProbe` + `InspectScreen` Shift+右键槽位→`sendFreshnessProbe(item.instanceId())`
+- server emit：`server/src/network/freshness_probe_emit.rs`（`ProbeResult::Precise`→`FreshnessUpdateV1`：freshness=current_qi/initial_qi clamp，profile_name 由 instance_id 反查；复用既有 `"freshness_update"` 类型串，无新 client handler；Denied 走 actionbar EventAlert）
+- agent schema：`client-request.ts` `FreshnessProbeRequestV1` + sample
+
+**P2 修炼顿悟 InsightOffer S2C 桥（✅）**
+- server：`ServerDataPayloadV1::InsightOffer(InsightOfferV1)`（复用 `schema/cultivation.rs` 既有 InsightOfferV1）走整条 proto 链，type 串 `"insight_offer"`（与 `heart_demon_offer` 隔离）；`server/src/network/cultivation_insight_offer_emit.rs`（单 `EventReader<InsightOffer>` 一并排空 `insight_flow.rs:212` fallback + `network/mod.rs:2263` agent-fed 两路；character_id 由 entity 反查）
+- client：`InsightOfferHandler.java`（`InsightChoiceV1`→`InsightOfferViewModel` 合成 deriveTitle/deriveEffectSummary/categoryZh，fallback 默认）+ `InsightOfferScreenBootstrap` 开屏 SFX `beacon.activate`(0.4/1.0)+`player.levelup`(0.3/1.2) + CASE_TO_TYPE + ServerDataRouter
+- agent schema：`server-data.ts` `ServerDataInsightOfferV1` + 修正 sample（去 v 包装、真实 effect_kind、省略缺省 optional）+ pin
+
+**跨切关联**：`EventKind::Generic`（freshness Denied 走 EventAlert）三端对齐——server serde `"generic"` + proto `EVENT_KIND_GENERIC=11` + agent TypeBox `common.ts` `"generic"`。
+
+### 关键 commit（worktree `auto/plan-exploration-probe-return-v1`，2026-06-07）
+
+- `82098bf18` P0 MineralProbeResultV1 整条 proto 链 + emit system
+- `65c6dc322` P0 client handler + mixin + agent schema 整条链路
+- `b73cc9d2a` P1 神识感知保鲜 C2S 触发 + S2C 回执
+- `d56963a60` / `a779c2627` / `0e6953c5d` P2 InsightOffer proto 链 + emit / client S2C 桥 / schema sample
+- `132703ce0` / `77054f7dd` fix(D) FreshnessProbe slot→instance_id 消歧 + round-trip pin
+- `3c5e4ad50` test(C) FreshnessProbe handler 测试 ；`512418ce8` fix(A) ServerDataInsightOfferV1 + sample pin ；`9ea5524af` fix(E) EventKind "generic" 对齐 ；`e88fa8297` feat(F) 顿悟开屏 SFX
+- `eb98aabf4` fix(server) FreshnessProbe gate 扩至 containers+equipped+hotbar 对齐 resolver
+- `e4075cd24` test(client) MineralProbeResultHandler/InsightOfferHandler/encodeFreshnessProbe 饱和测试
+
+### 测试结果
+
+- `cd server && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test` → **7371 passed, 0 failed**（含 mineral/freshness/insight emit 各饱和单测 + FreshnessProbe handler 5 测 + client_request round-trip pin）
+- `cd agent && npm run build && (cd packages/schema && npm test)` → **544 passed**（含 insight_offer/mineral sample union pin + FreshnessProbe C2S + EventKind generated 快照）
+- `cd client && ./gradlew test build` → **2076 tests, 1 failed**（唯一失败 `BongEntityModelAssetTest.blockbenchSourcesExistForEveryGameEntity` 系 pre-existing：gitignored `local_models/*.bbmodel` 缺失，本 PR 未触及任何 entity-model 资产，origin/main 同样失败）。新增 client 测试 44 例（MineralProbeResultHandlerTest 22 / InsightOfferHandlerTest 17 / ClientRequestProtocolTest 5）全绿
+
+### 跨仓库核验
+
+- **server**：`ServerDataPayloadV1::{MineralProbeResult, InsightOffer}`、`ClientRequestV1::FreshnessProbe{instance_id}`、`EventKind::Generic`、emit systems `{mineral,freshness,cultivation_insight_offer}_probe_emit` / `_emit`
+- **agent**：`ServerDataV1` union + `ServerDataMineralProbeResultV1` / `ServerDataInsightOfferV1` / `FreshnessProbeRequestV1`、`EventKind` `"generic"`
+- **client**：type 串 `mineral_probe_result` / `insight_offer`（新 handler）+ `freshness_update`（复用）；`ProtoServerDataBridge` PayloadCase `MINERAL_PROBE_RESULT` / `INSIGHT_OFFER`
+- **proto**：`proto/bong/envelope.proto` `MineralProbeResult` / `InsightOffer` / `FreshnessProbe` message + oneof
+
+### 遗留 / 后续
+
+- qi_physics 不涉及（三条均只读传输，无 `QiTransfer`，符合守恒律红线）。
+- 顿悟 narration（plan §P2 可选项）未接：需 agent 端订阅 insight 通道后产出个性化文案，属 `agent-observation-feeds` 主题（断链审计 runner-up，待立 plan）范围。
+- `FreshnessProbe.slot`→`instance_id` 的容器 tab 修复同时覆盖了原 plan §P1「slot」措辞——以 instance_id 为最终契约。

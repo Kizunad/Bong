@@ -38,6 +38,8 @@ pub enum EventKind {
     HeavenlyFire,
     PressureInvert,
     AllWither,
+    /// plan-exploration-probe-return-v1 P1 — 通用提示（探针 Denied 等非灾事件通知）。
+    Generic,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

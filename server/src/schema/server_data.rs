@@ -14,7 +14,7 @@ use super::combat_hud::{
 };
 use super::common::{EventKind, MAX_PAYLOAD_BYTES};
 use super::craft::{CraftOutcomeV1, CraftSessionStateV1, RecipeListV1, RecipeUnlockedV1};
-use super::cultivation::SkillMilestoneSnapshotV1;
+use super::cultivation::{InsightOfferV1, SkillMilestoneSnapshotV1};
 use super::death_cinematic::DeathCinematicS2cV1;
 use super::dugu::DuguPoisonStateV1;
 use super::forge::{
@@ -26,6 +26,7 @@ use super::lingtian::LingtianSessionDataV1;
 use super::movement::MovementStateV1;
 use super::narration::Narration;
 use super::poison_trait::{PoisonDoseEventV1, PoisonOverdoseEventV1, PoisonTraitStateV1};
+use super::processing::FreshnessUpdateV1;
 use super::realm_vision::{RealmVisionParamsV1, SpiritualSenseTargetsV1};
 use super::skill::{
     SkillCapChangedPayloadV1, SkillEntrySnapshotV1, SkillIdV1, SkillLvUpPayloadV1,
@@ -259,6 +260,12 @@ pub enum ServerDataType {
     PermanentQiMaxDecayApplied,
     // ─── plan-combat-skill-feedback-bridges-v1 P6：剑道人剑共生 HUD ─
     SwordBondHudState,
+    // ─── plan-exploration-probe-return-v1 P0：神识感知矿脉 S2C ───────
+    MineralProbeResult,
+    // ─── plan-exploration-probe-return-v1 P1：神识感知保鲜 S2C ──────
+    FreshnessUpdate,
+    // ─── plan-exploration-probe-return-v1 P2：修炼顿悟 S2C ──────────
+    InsightOffer,
 }
 
 #[derive(Debug, Clone)]
@@ -517,6 +524,32 @@ pub enum ServerDataPayloadV1 {
     // ─── plan-combat-skill-feedback-bridges-v1 P6：剑道人剑共生 HUD S2C ─
     /// 人剑共生 HUD 状态推送（守恒红线：stored_qi 只读展示，不二次扣 qi）。
     SwordBondHudState(SwordBondHudStateV1),
+    // ─── plan-exploration-probe-return-v1 P0：神识感知矿脉 S2C ──────
+    /// 神识感知矿脉回执（只读传输，不涉及 qi_physics 守恒）。
+    MineralProbeResult(MineralProbeResultV1),
+    // ─── plan-exploration-probe-return-v1 P1：神识感知保鲜 S2C ──────
+    /// 神识感知保鲜回执（只读传输，复用 freshness_update 类型串）。
+    FreshnessUpdate(FreshnessUpdateV1),
+    // ─── plan-exploration-probe-return-v1 P2：修炼顿悟 S2C ──────────
+    /// 修炼顿悟邀约（只读传输，不涉及 qi_physics 守恒）。复用 InsightOfferV1。
+    InsightOffer(InsightOfferV1),
+}
+
+/// 神识感知矿脉回执 S2C。扁平化 `MineralProbeResult` 枚举。
+/// `kind = "found"` 时有 mineral_id / remaining_units / display_name_zh；
+/// `kind = "denied"` 时有 denial_reason（snake_case 5 变体）。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MineralProbeResultV1 {
+    pub kind: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mineral_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub remaining_units: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub display_name_zh: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub denial_reason: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -1582,6 +1615,21 @@ enum ServerDataPayloadWireV1 {
         #[serde(flatten)]
         data: SwordBondHudStateV1,
     },
+    // ─── plan-exploration-probe-return-v1 P0：神识感知矿脉 S2C ───────
+    MineralProbeResult {
+        #[serde(flatten)]
+        data: MineralProbeResultV1,
+    },
+    // ─── plan-exploration-probe-return-v1 P1：神识感知保鲜 S2C ──────
+    FreshnessUpdate {
+        #[serde(flatten)]
+        data: FreshnessUpdateV1,
+    },
+    // ─── plan-exploration-probe-return-v1 P2：修炼顿悟 S2C ──────────
+    InsightOffer {
+        #[serde(flatten)]
+        data: InsightOfferV1,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -2428,6 +2476,11 @@ impl TryFrom<ServerDataPayloadWireV1> for ServerDataPayloadV1 {
             ServerDataPayloadWireV1::SwordBondHudState { data } => {
                 Ok(Self::SwordBondHudState(data))
             }
+            ServerDataPayloadWireV1::MineralProbeResult { data } => {
+                Ok(Self::MineralProbeResult(data))
+            }
+            ServerDataPayloadWireV1::FreshnessUpdate { data } => Ok(Self::FreshnessUpdate(data)),
+            ServerDataPayloadWireV1::InsightOffer { data } => Ok(Self::InsightOffer(data)),
         }
     }
 }
@@ -2978,6 +3031,13 @@ impl From<&ServerDataPayloadV1> for ServerDataPayloadWireV1 {
             ServerDataPayloadV1::SwordBondHudState(data) => {
                 Self::SwordBondHudState { data: data.clone() }
             }
+            ServerDataPayloadV1::MineralProbeResult(data) => {
+                Self::MineralProbeResult { data: data.clone() }
+            }
+            ServerDataPayloadV1::FreshnessUpdate(data) => {
+                Self::FreshnessUpdate { data: data.clone() }
+            }
+            ServerDataPayloadV1::InsightOffer(data) => Self::InsightOffer { data: data.clone() },
         }
     }
 }
@@ -3296,6 +3356,11 @@ impl ServerDataPayloadV1 {
             Self::PermanentQiMaxDecayApplied(..) => ServerDataType::PermanentQiMaxDecayApplied,
             // ─── plan-combat-skill-feedback-bridges-v1 P6 ──────────
             Self::SwordBondHudState(..) => ServerDataType::SwordBondHudState,
+            // ─── plan-exploration-probe-return-v1 P0 ────────────────
+            Self::MineralProbeResult(..) => ServerDataType::MineralProbeResult,
+            Self::FreshnessUpdate(..) => ServerDataType::FreshnessUpdate,
+            // ─── plan-exploration-probe-return-v1 P2 ────────────────
+            Self::InsightOffer(..) => ServerDataType::InsightOffer,
         }
     }
 }
@@ -3783,6 +3848,37 @@ mod tests {
                 buff_id: "huo_xue_dan".to_string(),
                 remaining_ticks: 3000,
                 effect_multiplier: 1.0,
+            }),
+            // ─── plan-exploration-probe-return-v1 P0 ────────────────
+            ServerDataPayloadV1::MineralProbeResult(MineralProbeResultV1 {
+                kind: "found".to_string(),
+                mineral_id: Some("chi_tong_ore".to_string()),
+                remaining_units: Some(23),
+                display_name_zh: Some("赤铜矿脉".to_string()),
+                denial_reason: None,
+            }),
+            // ─── plan-exploration-probe-return-v1 P1: FreshnessUpdate wire/label guard ──
+            ServerDataPayloadV1::FreshnessUpdate(FreshnessUpdateV1 {
+                item_uuid: "42".to_string(),
+                freshness: 0.75,
+                profile_name: "test_decay".to_string(),
+            }),
+            // ─── plan-exploration-probe-return-v1 P2: InsightOffer wire/label guard ─────
+            ServerDataPayloadV1::InsightOffer(InsightOfferV1 {
+                offer_id: "insight:1:100".to_string(),
+                trigger_id: "insight:1:100".to_string(),
+                character_id: "offline:Kiz".to_string(),
+                choices: vec![crate::schema::cultivation::InsightChoiceV1 {
+                    category: "Qi".to_string(),
+                    effect_kind: "qi_max".to_string(),
+                    magnitude: 0.05,
+                    flavor_text: "气海微扩张。".to_string(),
+                    narrator_voice: None,
+                    alignment: None,
+                    cost_kind: None,
+                    cost_magnitude: None,
+                    cost_flavor: None,
+                }],
             }),
         ];
 

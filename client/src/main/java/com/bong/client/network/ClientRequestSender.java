@@ -128,6 +128,15 @@ public final class ClientRequestSender {
         dispatch(ClientRequestProtocol.encodeMineralProbe(x, y, z));
     }
 
+    /**
+     * plan-exploration-probe-return-v1 P1 — 神识感知保鲜 C2S 请求。
+     *
+     * @param instanceId 被查询物品的 inventory instance_id（来自 InventoryItem.getInstanceId()）
+     */
+    public static void sendFreshnessProbe(long instanceId) {
+        dispatch(ClientRequestProtocol.encodeFreshnessProbe(instanceId));
+    }
+
     public static void sendInventoryDiscardItem(long instanceId, ClientRequestProtocol.InvLocation from) {
         dispatch(ClientRequestProtocol.encodeInventoryDiscardItem(instanceId, from));
     }

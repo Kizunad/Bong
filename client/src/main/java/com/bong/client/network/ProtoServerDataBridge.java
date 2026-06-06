@@ -166,6 +166,12 @@ public final class ProtoServerDataBridge {
         m.put(Envelope.ServerDataEnvelope.PayloadCase.PERMANENT_QI_MAX_DECAY_APPLIED, "permanent_qi_max_decay_applied");
         // plan-combat-skill-feedback-bridges-v1 P6：人剑共生 HUD S2C
         m.put(Envelope.ServerDataEnvelope.PayloadCase.SWORD_BOND_HUD_STATE, "sword_bond_hud_state");
+        // plan-exploration-probe-return-v1 P0：神识感知矿脉 S2C
+        m.put(Envelope.ServerDataEnvelope.PayloadCase.MINERAL_PROBE_RESULT, "mineral_probe_result");
+        // plan-exploration-probe-return-v1 P1：神识感知保鲜 S2C（复用 freshness_update 链）
+        m.put(Envelope.ServerDataEnvelope.PayloadCase.FRESHNESS_UPDATE, "freshness_update");
+        // plan-exploration-probe-return-v1 P2：修炼顿悟 S2C
+        m.put(Envelope.ServerDataEnvelope.PayloadCase.INSIGHT_OFFER, "insight_offer");
         CASE_TO_TYPE = m;
     }
 
@@ -427,6 +433,12 @@ public final class ProtoServerDataBridge {
             case PERMANENT_QI_MAX_DECAY_APPLIED: return envelope.getPermanentQiMaxDecayApplied();
             // plan-combat-skill-feedback-bridges-v1 P6：人剑共生 HUD S2C
             case SWORD_BOND_HUD_STATE: return envelope.getSwordBondHudState();
+            // plan-exploration-probe-return-v1 P0：神识感知矿脉 S2C
+            case MINERAL_PROBE_RESULT: return envelope.getMineralProbeResult();
+            // plan-exploration-probe-return-v1 P1：神识感知保鲜 S2C（复用 freshness_update 链）
+            case FRESHNESS_UPDATE: return envelope.getFreshnessUpdate();
+            // plan-exploration-probe-return-v1 P2：修炼顿悟 S2C
+            case INSIGHT_OFFER: return envelope.getInsightOffer();
             default: return null;
         }
     }

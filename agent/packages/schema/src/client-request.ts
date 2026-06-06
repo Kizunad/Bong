@@ -270,6 +270,18 @@ export const MineralProbeRequestV1 = Type.Object(
 );
 export type MineralProbeRequestV1 = Static<typeof MineralProbeRequestV1>;
 
+// plan-exploration-probe-return-v1 P1 — 神识感知保鲜 C2S 触发（凝脉+）。
+// client 直接传 instance_id，消除多容器 tab 歧义（参见 ApplyPill 同约定）。
+export const FreshnessProbeRequestV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    type: Type.Literal("freshness_probe"),
+    instance_id: Type.Integer({ minimum: 0 }),
+  },
+  { additionalProperties: false },
+);
+export type FreshnessProbeRequestV1 = Static<typeof FreshnessProbeRequestV1>;
+
 export const InventoryDiscardItemRequestV1 = Type.Object(
   {
     v: Type.Literal(1),
@@ -987,6 +999,7 @@ export const ClientRequestV1 = Type.Union([
   UseLifeCoreRequestV1,
   PickupDroppedItemRequestV1,
   MineralProbeRequestV1,
+  FreshnessProbeRequestV1,
   InventoryDiscardItemRequestV1,
   DropWeaponIntentRequestV1,
   RepairWeaponIntentRequestV1,

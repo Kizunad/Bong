@@ -278,6 +278,10 @@
             {
               "const": "all_wither",
               "type": "string"
+            },
+            {
+              "const": "generic",
+              "type": "string"
             }
           ]
         },
@@ -16985,6 +16989,195 @@
         },
         "block_broken": {
           "type": "boolean"
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "type",
+        "kind"
+      ],
+      "properties": {
+        "type": {
+          "const": "mineral_probe_result",
+          "type": "string"
+        },
+        "kind": {
+          "anyOf": [
+            {
+              "const": "found",
+              "type": "string"
+            },
+            {
+              "const": "denied",
+              "type": "string"
+            }
+          ]
+        },
+        "mineral_id": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "remaining_units": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "display_name_zh": {
+          "maxLength": 64,
+          "type": "string"
+        },
+        "denial_reason": {
+          "anyOf": [
+            {
+              "const": "realm_too_low",
+              "type": "string"
+            },
+            {
+              "const": "out_of_range",
+              "type": "string"
+            },
+            {
+              "const": "not_mineral_ore",
+              "type": "string"
+            },
+            {
+              "const": "stale_ore_index",
+              "type": "string"
+            },
+            {
+              "const": "mineral_not_registered",
+              "type": "string"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "type",
+        "offer_id",
+        "trigger_id",
+        "character_id",
+        "choices"
+      ],
+      "properties": {
+        "type": {
+          "const": "insight_offer",
+          "type": "string"
+        },
+        "offer_id": {
+          "minLength": 1,
+          "maxLength": 128,
+          "type": "string"
+        },
+        "trigger_id": {
+          "minLength": 1,
+          "maxLength": 128,
+          "type": "string"
+        },
+        "character_id": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "choices": {
+          "minItems": 1,
+          "maxItems": 3,
+          "type": "array",
+          "items": {
+            "additionalProperties": false,
+            "type": "object",
+            "required": [
+              "category",
+              "effect_kind",
+              "magnitude",
+              "flavor_text"
+            ],
+            "properties": {
+              "category": {
+                "description": "A–G 七类白名单",
+                "anyOf": [
+                  {
+                    "const": "Meridian",
+                    "type": "string"
+                  },
+                  {
+                    "const": "Qi",
+                    "type": "string"
+                  },
+                  {
+                    "const": "Composure",
+                    "type": "string"
+                  },
+                  {
+                    "const": "Coloring",
+                    "type": "string"
+                  },
+                  {
+                    "const": "Breakthrough",
+                    "type": "string"
+                  },
+                  {
+                    "const": "Style",
+                    "type": "string"
+                  },
+                  {
+                    "const": "Perception",
+                    "type": "string"
+                  }
+                ]
+              },
+              "effect_kind": {
+                "minLength": 1,
+                "maxLength": 64,
+                "description": "apply_choice 支持的 InsightEffect variant 名，例如 `MeridianIntegrityBoost`",
+                "type": "string"
+              },
+              "magnitude": {
+                "type": "number"
+              },
+              "flavor_text": {
+                "maxLength": 500,
+                "type": "string"
+              },
+              "narrator_voice": {
+                "maxLength": 64,
+                "type": "string"
+              },
+              "alignment": {
+                "anyOf": [
+                  {
+                    "const": "converge",
+                    "type": "string"
+                  },
+                  {
+                    "const": "neutral",
+                    "type": "string"
+                  },
+                  {
+                    "const": "diverge",
+                    "type": "string"
+                  }
+                ]
+              },
+              "cost_kind": {
+                "minLength": 1,
+                "maxLength": 64,
+                "type": "string"
+              },
+              "cost_magnitude": {
+                "type": "number"
+              },
+              "cost_flavor": {
+                "minLength": 1,
+                "maxLength": 500,
+                "type": "string"
+              }
+            }
+          }
         }
       }
     }

@@ -1,0 +1,37 @@
+{
+  "type": "insight_offer",
+  "offer_id": "insight:12:4800",
+  "trigger_id": "insight:12:4800",
+  "character_id": "player_wanderer",
+  "choices": [
+    {
+      "category": "Meridian",
+      "effect_kind": "meridian_rate",
+      "magnitude": 0.12,
+      "flavor_text": "气机在督脉尾闾一处静静等候，轻轻一推便可贯通。",
+      "narrator_voice": "平稳",
+      "alignment": "converge"
+    },
+    {
+      "category": "Qi",
+      "effect_kind": "unfreeze_qi_max",
+      "magnitude": 0.08,
+      "flavor_text": "真元潮汐涌上，潜藏上限若隐若现。",
+      "alignment": "converge",
+      "cost_kind": "qi_current",
+      "cost_magnitude": 0.05,
+      "cost_flavor": "以少量真元换取上限的松动。"
+    },
+    {
+      "category": "Qi",
+      "effect_kind": "qi_regen_factor",
+      "magnitude": 0.15,
+      "flavor_text": "幻象如镜，镜中所映皆是道机——你看见了，就不会再忘记。",
+      "narrator_voice": "悠远",
+      "alignment": "diverge",
+      "cost_kind": "composure",
+      "cost_magnitude": 0.1,
+      "cost_flavor": "此悟需以心境微动为代价。"
+    }
+  ]
+}

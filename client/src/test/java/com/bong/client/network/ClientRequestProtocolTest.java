@@ -8,6 +8,7 @@ import org.junit.jupiter.api.Test;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 public class ClientRequestProtocolTest {
@@ -850,5 +851,82 @@ public class ClientRequestProtocolTest {
             "coffin_menu_reclaim must include version field v=1 for server decode");
         assertEquals("coffin_menu_reclaim", obj.get("type").getAsString(),
             "coffin_menu_reclaim type field must match server ClientRequestV1::CoffinMenuReclaim serde tag");
+    }
+
+    // ─── plan-exploration-probe-return-v1 P1：encodeFreshnessProbe encode ────
+
+    @Test
+    void encodesFreshnessProbe() {
+        String json = ClientRequestProtocol.encodeFreshnessProbe(4242L);
+        assertEquals(
+            "{\"type\":\"freshness_probe\",\"v\":1,\"instance_id\":4242}",
+            json,
+            "freshness_probe 应包含 type='freshness_probe' + v=1 + instance_id，实际=" + json
+        );
+    }
+
+    @Test
+    void encodesFreshnessProbeTypeField() {
+        String json = ClientRequestProtocol.encodeFreshnessProbe(1L);
+        com.google.gson.JsonObject obj = com.google.gson.JsonParser.parseString(json).getAsJsonObject();
+        assertEquals("freshness_probe", obj.get("type").getAsString(),
+            "freshness_probe type 字段必须为 'freshness_probe'（与 server ClientRequestV1::FreshnessProbe serde tag 一致），实际=" + obj.get("type"));
+    }
+
+    @Test
+    void encodesFreshnessProbeVersionField() {
+        String json = ClientRequestProtocol.encodeFreshnessProbe(1L);
+        com.google.gson.JsonObject obj = com.google.gson.JsonParser.parseString(json).getAsJsonObject();
+        assertEquals(1, obj.get("v").getAsInt(),
+            "freshness_probe 必须包含 v=1（server serde 要求），实际=" + obj.get("v"));
+    }
+
+    @Test
+    void encodesFreshnessProbeInstanceIdRoundTrip() {
+        long instanceId = 9_999_999_999L;
+        String json = ClientRequestProtocol.encodeFreshnessProbe(instanceId);
+        com.google.gson.JsonObject obj = com.google.gson.JsonParser.parseString(json).getAsJsonObject();
+        assertEquals(instanceId, obj.get("instance_id").getAsLong(),
+            "instance_id 应精确 round-trip，大值=" + instanceId + " 实际=" + obj.get("instance_id").getAsLong());
+    }
+
+    @Test
+    void encodesFreshnessProbeZeroInstanceId() {
+        String json = ClientRequestProtocol.encodeFreshnessProbe(0L);
+        com.google.gson.JsonObject obj = com.google.gson.JsonParser.parseString(json).getAsJsonObject();
+        assertEquals(0L, obj.get("instance_id").getAsLong(),
+            "instance_id=0 是合法值（server 端校验归属），客户端不拒绝，实际=" + obj.get("instance_id").getAsLong());
+    }
+
+    @Test
+    void encodesFreshnessProbeNoExtraFields() {
+        // 协议仅含 type / v / instance_id 三字段，不应有多余字段（防止 server serde 严格模式拒绝）
+        String json = ClientRequestProtocol.encodeFreshnessProbe(7L);
+        com.google.gson.JsonObject obj = com.google.gson.JsonParser.parseString(json).getAsJsonObject();
+        assertEquals(3, obj.size(),
+            "freshness_probe 应恰好含 3 个字段（type/v/instance_id），实际 size=" + obj.size() + " json=" + json);
+    }
+
+    // ─── plan-exploration-probe-return-v1 P1：freshness_probe 边界值（S3 补充）───
+
+    @Test
+    void encodesFreshnessProbeMaxLong() {
+        // Long.MAX_VALUE = 9223372036854775807（u64::MAX 近似上界，客户端透传不拒绝）
+        long maxId = Long.MAX_VALUE;
+        String json = ClientRequestProtocol.encodeFreshnessProbe(maxId);
+        com.google.gson.JsonObject obj = com.google.gson.JsonParser.parseString(json).getAsJsonObject();
+        // JSON long round-trip：Gson 读 getAsLong() 确保无精度丢失
+        assertEquals(maxId, obj.get("instance_id").getAsLong(),
+            "freshness_probe instance_id=Long.MAX_VALUE 应精确 round-trip，实际=" + obj.get("instance_id").getAsLong());
+    }
+
+    @Test
+    void encodesFreshnessProbeNegativeInstanceId_throws() {
+        // 负值 instance_id 不合法（与同文件其它 instance_id 编码器一致，抛 IllegalArgumentException）。
+        assertThrows(
+            IllegalArgumentException.class,
+            () -> ClientRequestProtocol.encodeFreshnessProbe(-1L),
+            "instance_id=-1 应抛 IllegalArgumentException（非负约束）"
+        );
     }
 }

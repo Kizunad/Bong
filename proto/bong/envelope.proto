@@ -152,6 +152,12 @@ message ServerDataEnvelope {
     PermanentQiMaxDecayApplied permanent_qi_max_decay_applied = 127;
     // ─── plan-combat-skill-feedback-bridges-v1 P6：剑道人剑共生 HUD S2C ─
     SwordBondHud sword_bond_hud_state = 128;
+    // ─── plan-exploration-probe-return-v1 P0：神识感知矿脉 S2C ────
+    MineralProbeResult mineral_probe_result = 129;
+    // ─── plan-exploration-probe-return-v1 P1：神识感知保鲜 S2C ────
+    FreshnessUpdate freshness_update = 130;
+    // ─── plan-exploration-probe-return-v1 P2：修炼顿悟 S2C ──────
+    InsightOffer insight_offer = 131;
     // 字段编号一旦分配永不复用（buf breaking 检测保证）。
   }
 }
@@ -256,6 +262,8 @@ message ClientRequestEnvelope {
     // plan-coffin-tiers-v1 P3 — 延寿棺 marker 交互 C2S。
     CoffinBreak                 coffin_break                  = 88;
     CoffinMenuReclaim           coffin_menu_reclaim           = 89;
+    // ─── plan-exploration-probe-return-v1 P1：神识感知保鲜 C2S ────
+    FreshnessProbe              freshness_probe               = 90;
   }
 }
 
@@ -2441,6 +2449,8 @@ enum EventKind {
   EVENT_KIND_HEAVENLY_FIRE     = 8;
   EVENT_KIND_PRESSURE_INVERT   = 9;
   EVENT_KIND_ALL_WITHER        = 10;
+  // plan-exploration-probe-return-v1 P1 — 通用提示（探针 Denied 等非灾事件通知）。
+  EVENT_KIND_GENERIC           = 11;
 }
 
 // 与 Rust ServerDataPayloadV1::EventAlert 精确对应。
@@ -3707,4 +3717,56 @@ message SwordBondHud {
   float  stored_qi_ratio    = 4; // 0..=1（stored_qi / cap，cap=0 时为 0）
   float  bond_strength      = 5; // 0..=1
   bool   heaven_gate_ready  = 6; // stored_qi >= stored_qi_cap() && can_store_qi()
+}
+
+// ─── plan-exploration-probe-return-v1 P0：神识感知矿脉回执 ────────
+// 与 Rust MineralProbeResultV1 精确对应。
+// kind = "found" | "denied"；found 时含 mineral_id/remaining_units/display_name_zh；
+// denied 时含 denial_reason（snake_case 5 变体）。
+message MineralProbeResult {
+  string           kind              = 1; // "found" | "denied"
+  optional string  mineral_id        = 2; // found only
+  optional uint32  remaining_units   = 3; // found only
+  optional string  display_name_zh   = 4; // found only
+  optional string  denial_reason     = 5; // denied only: realm_too_low/out_of_range/not_mineral_ore/stale_ore_index/mineral_not_registered
+}
+
+// ─── plan-exploration-probe-return-v1 P1：神识感知保鲜 C2S ────────
+// 与 Rust ClientRequestV1::FreshnessProbe 精确对应。
+// instance_id = 玩家 inventory 中物品的实例 ID（直接定位，消除容器 tab 歧义）。
+message FreshnessProbe {
+  uint64 instance_id = 1;
+}
+
+// ─── plan-exploration-probe-return-v1 P1：神识感知保鲜回执 S2C ────
+// 与 Rust FreshnessUpdateV1 精确对应（复用既有 freshness_update 类型串）。
+// item_uuid = instance_id.to_string()；freshness ∈ [0, 1]；
+// profile_name = 从 inventory 反查的 freshness.profile 字段。
+message FreshnessUpdate {
+  string item_uuid     = 1;
+  float  freshness     = 2;
+  string profile_name  = 3;
+}
+
+// ─── plan-exploration-probe-return-v1 P2：修炼顿悟 S2C ──────────
+// 与 Rust InsightOfferV1 / InsightChoiceV1 精确对应。
+// offer_id / trigger_id / character_id 唯一标识本次顿悟。
+// choices 1-3 项；每个 choice 的 effect_kind 对应 InsightEffect 变体名（snake_case）。
+message InsightChoice {
+  string           category      = 1;  // InsightCategory snake_case
+  string           effect_kind   = 2;  // InsightEffect variant snake_case
+  double           magnitude     = 3;
+  string           flavor_text   = 4;
+  optional string  narrator_voice = 5;
+  optional string  alignment     = 6;  // "converge" | "neutral" | "diverge"
+  optional string  cost_kind     = 7;
+  optional double  cost_magnitude = 8;
+  optional string  cost_flavor   = 9;
+}
+
+message InsightOffer {
+  string           offer_id     = 1;
+  string           trigger_id   = 2;
+  string           character_id = 3;
+  repeated InsightChoice choices = 4;
 }

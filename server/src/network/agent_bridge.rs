@@ -178,6 +178,11 @@ pub fn payload_type_label(payload_type: ServerDataType) -> &'static str {
         ServerDataType::PermanentQiMaxDecayApplied => "permanent_qi_max_decay_applied",
         // ─── plan-combat-skill-feedback-bridges-v1 P6 ─────────────
         ServerDataType::SwordBondHudState => "sword_bond_hud_state",
+        // ─── plan-exploration-probe-return-v1 P0 ────────────────────
+        ServerDataType::MineralProbeResult => "mineral_probe_result",
+        ServerDataType::FreshnessUpdate => "freshness_update",
+        // ─── plan-exploration-probe-return-v1 P2 ────────────────────
+        ServerDataType::InsightOffer => "insight_offer",
     }
 }
 
