@@ -143,3 +143,37 @@
 
 - 修复对象：`plan-offscreen-war-v1`（dormant 散修播种）/ `plan-npc-virtualize-v1`（dormant↔hydrate）/ `plan-npc-ai-v1`（big-brain 行为）。
 - 不与活跃 `plan-territory-v1` / `plan-tiandao-hunt-v1` 撞车（二者为新增 ZoneInfluence / TiandaoAttention 玩法系统，全 ⬜，不碰 navigator / hydrate home / ReturnHome）。
+
+## Finish Evidence
+
+### 落地清单
+
+- P0：`server/src/npc/hydrate/mod.rs` 的 `spawn_from_snapshot` 现在使用 `snapshot.position_vec()` 派生 `NpcHomeBase`，`patrol_target` 仍保留给巡逻/领地语义。
+- P1：`server/src/npc/navigator.rs` 的 `compute_path` 改为带 `reached_goal` 标记的 bounded A*，完整 A* 失败时回溯最接近目标的已展开节点作为 partial path；失败计数、退避和 `A* failed` WARN 语义保留。
+- P1：`server/src/npc/brain/mod.rs` 新增 `RETURN_HOME_MAX_TICKS`，`server/src/npc/brain/actions_life.rs` 的 `return_home_action_system` 对未抵达 home 的执行态增加超时失败兜底。
+- P2：`server/src/npc/hydrate/mod.rs`、`server/src/npc/navigator.rs`、`server/src/npc/brain/actions_life.rs` 增加回归测试，覆盖边缘 dormant hydrate、partial path 推进、ReturnHome Success/Failure/Cancelled 状态机。
+
+### 关键 commit
+
+- `2cfaeff69` · 2026-06-06 · `fix(npc): 归位寻路失败时优雅降级`。
+- `e2a3f28a1` · 2026-06-06 · `fix(npc): 使用散修落点作为归位家锚`。
+
+### 测试结果
+
+- `cd server && cargo test compute_path_returns_partial_path_toward_far_goal`：1 passed。
+- `cd server && cargo test return_home_times_out_when_home_unreachable`：1 passed。
+- `cd server && cargo test home_base_uses_scatter_position_not_zone_center`：1 passed。
+- `cd server && cargo test partial_path_advances_npc_not_freeze`：1 passed。
+- `cd server && cargo test dormant_edge_seed_returns_home_without_astar_flood`：1 passed。
+- `cd server && cargo test home_base_tracks_extreme_zone_positions_and_center_degenerate_case`：1 passed。
+- `cd server && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test`：通过；`cargo test` 结果 `7344 passed; 0 failed; 1 ignored`。
+
+### 跨仓库核验
+
+- server：命中 `NpcDormantSnapshot::position_vec`、`NpcHomeBase`、`compute_path`、`Navigator::consecutive_path_failures`、`ReturnHomeAction`、`return_home_action_system`、`RETURN_HOME_MAX_TICKS`。
+- agent：不涉及；无 IPC schema、Redis key、TypeBox schema 变更。
+- client：不涉及；无 CustomPayload、HUD、贴图、动画或 SFX 变更。
+
+### 遗留 / 后续
+
+- 无。本 plan 为 server-only 正确性修复，不新增玩法系统、不改 qi_physics、不引入跨仓库契约。
