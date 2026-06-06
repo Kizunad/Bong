@@ -1404,6 +1404,29 @@ impl From<&ServerDataPayloadV1> for Payload {
                     profile_name: u.profile_name.clone(),
                 })
             }
+            // plan-exploration-probe-return-v1 P2：修炼顿悟 S2C（只读传输）
+            ServerDataPayloadV1::InsightOffer(offer) => {
+                Payload::InsightOffer(bong::InsightOffer {
+                    offer_id: offer.offer_id.clone(),
+                    trigger_id: offer.trigger_id.clone(),
+                    character_id: offer.character_id.clone(),
+                    choices: offer
+                        .choices
+                        .iter()
+                        .map(|c| bong::InsightChoice {
+                            category: c.category.clone(),
+                            effect_kind: c.effect_kind.clone(),
+                            magnitude: c.magnitude,
+                            flavor_text: c.flavor_text.clone(),
+                            narrator_voice: c.narrator_voice.clone(),
+                            alignment: c.alignment.clone(),
+                            cost_kind: c.cost_kind.clone(),
+                            cost_magnitude: c.cost_magnitude,
+                            cost_flavor: c.cost_flavor.clone(),
+                        })
+                        .collect(),
+                })
+            }
         }
     }
 }

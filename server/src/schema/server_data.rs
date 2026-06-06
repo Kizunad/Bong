@@ -14,7 +14,7 @@ use super::combat_hud::{
 };
 use super::common::{EventKind, MAX_PAYLOAD_BYTES};
 use super::craft::{CraftOutcomeV1, CraftSessionStateV1, RecipeListV1, RecipeUnlockedV1};
-use super::cultivation::SkillMilestoneSnapshotV1;
+use super::cultivation::{InsightOfferV1, SkillMilestoneSnapshotV1};
 use super::death_cinematic::DeathCinematicS2cV1;
 use super::dugu::DuguPoisonStateV1;
 use super::forge::{
@@ -264,6 +264,8 @@ pub enum ServerDataType {
     MineralProbeResult,
     // ─── plan-exploration-probe-return-v1 P1：神识感知保鲜 S2C ──────
     FreshnessUpdate,
+    // ─── plan-exploration-probe-return-v1 P2：修炼顿悟 S2C ──────────
+    InsightOffer,
 }
 
 #[derive(Debug, Clone)]
@@ -528,6 +530,9 @@ pub enum ServerDataPayloadV1 {
     // ─── plan-exploration-probe-return-v1 P1：神识感知保鲜 S2C ──────
     /// 神识感知保鲜回执（只读传输，复用 freshness_update 类型串）。
     FreshnessUpdate(FreshnessUpdateV1),
+    // ─── plan-exploration-probe-return-v1 P2：修炼顿悟 S2C ──────────
+    /// 修炼顿悟邀约（只读传输，不涉及 qi_physics 守恒）。复用 InsightOfferV1。
+    InsightOffer(InsightOfferV1),
 }
 
 /// 神识感知矿脉回执 S2C。扁平化 `MineralProbeResult` 枚举。
@@ -1620,6 +1625,11 @@ enum ServerDataPayloadWireV1 {
         #[serde(flatten)]
         data: FreshnessUpdateV1,
     },
+    // ─── plan-exploration-probe-return-v1 P2：修炼顿悟 S2C ──────────
+    InsightOffer {
+        #[serde(flatten)]
+        data: InsightOfferV1,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -2470,6 +2480,7 @@ impl TryFrom<ServerDataPayloadWireV1> for ServerDataPayloadV1 {
                 Ok(Self::MineralProbeResult(data))
             }
             ServerDataPayloadWireV1::FreshnessUpdate { data } => Ok(Self::FreshnessUpdate(data)),
+            ServerDataPayloadWireV1::InsightOffer { data } => Ok(Self::InsightOffer(data)),
         }
     }
 }
@@ -3026,6 +3037,9 @@ impl From<&ServerDataPayloadV1> for ServerDataPayloadWireV1 {
             ServerDataPayloadV1::FreshnessUpdate(data) => {
                 Self::FreshnessUpdate { data: data.clone() }
             }
+            ServerDataPayloadV1::InsightOffer(data) => {
+                Self::InsightOffer { data: data.clone() }
+            }
         }
     }
 }
@@ -3347,6 +3361,8 @@ impl ServerDataPayloadV1 {
             // ─── plan-exploration-probe-return-v1 P0 ────────────────
             Self::MineralProbeResult(..) => ServerDataType::MineralProbeResult,
             Self::FreshnessUpdate(..) => ServerDataType::FreshnessUpdate,
+            // ─── plan-exploration-probe-return-v1 P2 ────────────────
+            Self::InsightOffer(..) => ServerDataType::InsightOffer,
         }
     }
 }

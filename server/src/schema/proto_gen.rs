@@ -6942,6 +6942,89 @@ mod tests {
         }
     }
 
+    // ─── InsightOffer roundtrip ────────────────────────────────────
+
+    #[test]
+    fn insight_offer_envelope_roundtrip() {
+        let offer = InsightOffer {
+            offer_id: "insight:42:bt:1".to_string(),
+            trigger_id: "bt:1".to_string(),
+            character_id: "offline:Azure".to_string(),
+            choices: vec![
+                InsightChoice {
+                    category: "Composure".to_string(),
+                    effect_kind: "composure_recover".to_string(),
+                    magnitude: 0.05,
+                    flavor_text: "守本心，气机稳。".to_string(),
+                    narrator_voice: None,
+                    alignment: Some("neutral".to_string()),
+                    cost_kind: Some("qi_volatility".to_string()),
+                    cost_magnitude: Some(0.015),
+                    cost_flavor: Some("灵气更活。".to_string()),
+                },
+                InsightChoice {
+                    category: "Breakthrough".to_string(),
+                    effect_kind: "next_breakthrough_bonus".to_string(),
+                    magnitude: 0.05,
+                    flavor_text: "下次冲关必有所得。".to_string(),
+                    narrator_voice: Some("heaven".to_string()),
+                    alignment: Some("converge".to_string()),
+                    cost_kind: Some("shock_sensitivity".to_string()),
+                    cost_magnitude: Some(0.02),
+                    cost_flavor: None,
+                },
+            ],
+        };
+        let envelope = ServerDataEnvelope {
+            payload: Some(server_data_envelope::Payload::InsightOffer(offer)),
+        };
+        let bytes = envelope.encode_to_vec();
+        let decoded =
+            ServerDataEnvelope::decode(bytes.as_slice()).expect("InsightOffer decode 失败");
+        match decoded.payload {
+            Some(server_data_envelope::Payload::InsightOffer(o)) => {
+                assert_eq!(o.offer_id, "insight:42:bt:1");
+                assert_eq!(o.trigger_id, "bt:1");
+                assert_eq!(o.character_id, "offline:Azure");
+                assert_eq!(o.choices.len(), 2);
+                assert_eq!(o.choices[0].category, "Composure");
+                assert_eq!(o.choices[0].effect_kind, "composure_recover");
+                assert!((o.choices[0].magnitude - 0.05).abs() < 1e-9);
+                assert_eq!(o.choices[0].flavor_text, "守本心，气机稳。");
+                assert_eq!(o.choices[0].alignment, Some("neutral".to_string()));
+                assert_eq!(o.choices[0].cost_kind, Some("qi_volatility".to_string()));
+                assert_eq!(o.choices[0].cost_magnitude, Some(0.015));
+                assert_eq!(o.choices[0].cost_flavor, Some("灵气更活。".to_string()));
+                assert_eq!(o.choices[1].category, "Breakthrough");
+                assert_eq!(o.choices[1].narrator_voice, Some("heaven".to_string()));
+                assert_eq!(o.choices[1].cost_flavor, None);
+            }
+            other => panic!("expected InsightOffer, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn insight_offer_empty_choices_roundtrip() {
+        let offer = InsightOffer {
+            offer_id: "insight:empty".to_string(),
+            trigger_id: "bt:empty".to_string(),
+            character_id: "offline:Test".to_string(),
+            choices: vec![],
+        };
+        let envelope = ServerDataEnvelope {
+            payload: Some(server_data_envelope::Payload::InsightOffer(offer)),
+        };
+        let bytes = envelope.encode_to_vec();
+        let decoded = ServerDataEnvelope::decode(bytes.as_slice())
+            .expect("empty InsightOffer decode 失败");
+        match decoded.payload {
+            Some(server_data_envelope::Payload::InsightOffer(o)) => {
+                assert_eq!(o.choices.len(), 0, "空 choices InsightOffer round-trip");
+            }
+            other => panic!("expected InsightOffer, got {other:?}"),
+        }
+    }
+
     // ─── BurstMeridianEvent roundtrip ──────────────────────────────
 
     #[test]

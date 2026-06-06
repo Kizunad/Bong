@@ -156,6 +156,8 @@ message ServerDataEnvelope {
     MineralProbeResult mineral_probe_result = 129;
     // ─── plan-exploration-probe-return-v1 P1：神识感知保鲜 S2C ────
     FreshnessUpdate freshness_update = 130;
+    // ─── plan-exploration-probe-return-v1 P2：修炼顿悟 S2C ──────
+    InsightOffer insight_offer = 131;
     // 字段编号一旦分配永不复用（buf breaking 检测保证）。
   }
 }
@@ -3744,4 +3746,27 @@ message FreshnessUpdate {
   string item_uuid     = 1;
   float  freshness     = 2;
   string profile_name  = 3;
+}
+
+// ─── plan-exploration-probe-return-v1 P2：修炼顿悟 S2C ──────────
+// 与 Rust InsightOfferV1 / InsightChoiceV1 精确对应。
+// offer_id / trigger_id / character_id 唯一标识本次顿悟。
+// choices 1-3 项；每个 choice 的 effect_kind 对应 InsightEffect 变体名（snake_case）。
+message InsightChoice {
+  string           category      = 1;  // InsightCategory snake_case
+  string           effect_kind   = 2;  // InsightEffect variant snake_case
+  double           magnitude     = 3;
+  string           flavor_text   = 4;
+  optional string  narrator_voice = 5;
+  optional string  alignment     = 6;  // "converge" | "neutral" | "diverge"
+  optional string  cost_kind     = 7;
+  optional double  cost_magnitude = 8;
+  optional string  cost_flavor   = 9;
+}
+
+message InsightOffer {
+  string           offer_id     = 1;
+  string           trigger_id   = 2;
+  string           character_id = 3;
+  repeated InsightChoice choices = 4;
 }

@@ -181,6 +181,8 @@ pub fn payload_type_label(payload_type: ServerDataType) -> &'static str {
         // ─── plan-exploration-probe-return-v1 P0 ────────────────────
         ServerDataType::MineralProbeResult => "mineral_probe_result",
         ServerDataType::FreshnessUpdate => "freshness_update",
+        // ─── plan-exploration-probe-return-v1 P2 ────────────────────
+        ServerDataType::InsightOffer => "insight_offer",
     }
 }
 
