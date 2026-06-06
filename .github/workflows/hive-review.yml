@@ -48,15 +48,17 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PR_NUMBER: ${{ github.event.issue.number || inputs.pr_number }}
-          # 端点/模型/规模/裁定阈值都可被 repo variables / secrets 覆盖。
-          # key 必须在 repo secrets 配 HIVE_API_KEY(SenseNova 端点需鉴权,无默认)。
+          # 多端点 failover:@hive 跑限时免费 GPT-5.5。这些羊毛端点死活无常(luciferai 已宕),
+          # 故配三个 base|key 端点(muyuan / chybenzun / centos),脚本 round-robin、挂一个自动切下一个。
+          # base 是公开 URL 写明文,key 走 secrets。端点死光时回退老 HIVE_BASE_URL+HIVE_API_KEY(已留兜底)。
+          HIVE_ENDPOINTS: >-
+            https://muyuan.do/v1|${{ secrets.HIVE_GPT_KEY_1 }};https://chybenzun.top/v1|${{ secrets.HIVE_GPT_KEY_2 }};https://ai.centos.hk/v1|${{ secrets.HIVE_GPT_KEY_3 }}
+          # 兜底:HIVE_ENDPOINTS 全空时才用(老 SenseNova 端点 + key)
           HIVE_BASE_URL: ${{ vars.HIVE_BASE_URL || 'https://token.sensenova.cn/v1' }}
-          # 多 key 轮询:HIVE_API_KEY + HIVE_API_KEY_2 两个独立 secret 拼成逗号串,
-          # 脚本按 round-robin 摊负载、失败自动切下一把。空 secret 会被脚本去空过滤掉。
           HIVE_API_KEYS: ${{ secrets.HIVE_API_KEY }},${{ secrets.HIVE_API_KEY_2 }}
-          # 逗号分隔,finders + 投票者在这些模型间轮转,同台裁定
-          HIVE_MODELS: ${{ vars.HIVE_MODELS || 'deepseek-v4-flash,sensenova-6.7-flash-lite' }}
-          HIVE_ARBITER_MODEL: ${{ vars.HIVE_ARBITER_MODEL || 'deepseek-v4-flash' }}
+          # finders + 投票者 + 裁决统一用免费 gpt-5.5(bench 实测:有效 2.5 / 精确率 0.83 / 仅 30k token)
+          HIVE_MODELS: ${{ vars.HIVE_MODELS || 'gpt-5.5' }}
+          HIVE_ARBITER_MODEL: ${{ vars.HIVE_ARBITER_MODEL || 'gpt-5.5' }}
           HIVE_SWARM_SIZE: ${{ vars.HIVE_SWARM_SIZE || '10' }}
           HIVE_CONCURRENCY: ${{ vars.HIVE_CONCURRENCY || '12' }}
           # 严格收敛(少而准):默认 NOT_REAL 投票者多轮裁定,接受/拒绝阈值 + 争议进下一轮 + top-N
