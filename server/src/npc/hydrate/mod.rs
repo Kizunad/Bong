@@ -455,11 +455,12 @@ fn spawn_from_snapshot(
         .as_ref()
         .map(|patrol| dvec3_from_array(patrol.current_target))
         .unwrap_or_else(|| snapshot.position_vec());
-    let home_base = home_base_for_archetype(snapshot.archetype, patrol_target);
+    let snapshot_pos = snapshot.position_vec();
+    let home_base = home_base_for_archetype(snapshot.archetype, snapshot_pos);
     let pos = hydrate_position_for(
         &schedule,
         Some(home_base),
-        snapshot.position_vec(),
+        snapshot_pos,
         current_tick,
         schedule_seed,
         pois,
@@ -685,6 +686,7 @@ mod tests {
     use valence::prelude::{DVec3, Events};
 
     use crate::cultivation::components::Realm;
+    use crate::npc::brain::return_home_action_system;
     use crate::npc::dormant::{DEHYDRATE_RADIUS_BLOCKS, HYDRATE_RADIUS_BLOCKS};
     use crate::world::zone::{Zone, DEFAULT_SPAWN_ZONE_NAME};
 
@@ -1110,6 +1112,188 @@ mod tests {
             !has_skin,
             "hydrated disciple without skin pool must NOT have NpcPlayerSkin component"
         );
+    }
+
+    #[test]
+    fn home_base_uses_scatter_position_not_zone_center() {
+        const ARRIVAL_DISTANCE: f64 = 1.8;
+
+        let mut app = App::new();
+        app.add_event::<InitiateXuhuaTribulation>();
+
+        let overworld = app.world_mut().spawn_empty().id();
+        let tsy = app.world_mut().spawn_empty().id();
+        app.insert_resource(DimensionLayers { overworld, tsy });
+        app.insert_resource(NpcVirtualizationConfig::default());
+
+        let scatter_pos = DVec3::new(-1600.0, 101.0, 3980.0);
+        let zone_center = DVec3::new(-2500.0, 128.0, 2500.0);
+        let mut snap = snapshot("edge_rogue", scatter_pos);
+        snap.patrol = Some(DormantPatrolSnapshot {
+            home_zone: DEFAULT_SPAWN_ZONE_NAME.to_string(),
+            anchor_index: 0,
+            current_target: vec3_to_array(zone_center),
+        });
+
+        let mut store = NpcDormantStore::default();
+        store.insert(snap);
+        app.insert_resource(store);
+        app.world_mut().spawn((
+            ClientMarker,
+            Position(scatter_pos + DVec3::new(1.0, 0.0, 1.0)),
+        ));
+
+        app.add_systems(Update, hydrate_dormant_near_players_system);
+        app.update();
+
+        let (position, home, patrol) = {
+            let world = app.world_mut();
+            let mut query =
+                world.query::<(&Position, &crate::npc::schedule::NpcHomeBase, &NpcPatrol)>();
+            query
+                .iter(world)
+                .next()
+                .map(|(pos, home, patrol)| (pos.get(), *home, patrol.current_target))
+                .expect("edge dormant rogue should hydrate")
+        };
+
+        assert!(
+            home.center().distance(scatter_pos) <= ARRIVAL_DISTANCE,
+            "home_base must be anchored at the NPC scatter position; home={:?}, scatter={:?}",
+            home.center(),
+            scatter_pos,
+        );
+        assert!(
+            position.distance(scatter_pos) <= ARRIVAL_DISTANCE,
+            "non-rest hydrate position should remain at scatter position; pos={position:?}, scatter={scatter_pos:?}"
+        );
+        assert!(
+            home.center().distance(zone_center) > 800.0,
+            "home_base must not keep using the far zone center; home={:?}, center={zone_center:?}",
+            home.center(),
+        );
+        assert_eq!(
+            patrol, zone_center,
+            "patrol target should remain the original zone center; this plan only decouples home"
+        );
+    }
+
+    #[test]
+    fn dormant_edge_seed_returns_home_without_astar_flood() {
+        const REST_TICKS: u32 = 20 * 120;
+
+        let mut app = App::new();
+        app.add_event::<InitiateXuhuaTribulation>();
+
+        let overworld = app.world_mut().spawn_empty().id();
+        let tsy = app.world_mut().spawn_empty().id();
+        app.insert_resource(DimensionLayers { overworld, tsy });
+        app.insert_resource(NpcVirtualizationConfig::default());
+
+        let scatter_pos = DVec3::new(-2998.0, 101.0, -2998.0);
+        let zone_center = DVec3::new(-2500.0, 128.0, -2500.0);
+        let mut snap = snapshot_in_zone("edge_return_home", scatter_pos, "zone_b");
+        snap.patrol = Some(DormantPatrolSnapshot {
+            home_zone: "zone_b".to_string(),
+            anchor_index: 0,
+            current_target: vec3_to_array(zone_center),
+        });
+
+        let mut store = NpcDormantStore::default();
+        store.insert(snap);
+        app.insert_resource(store);
+        app.world_mut().spawn((ClientMarker, Position(scatter_pos)));
+
+        app.add_systems(Update, hydrate_dormant_near_players_system);
+        app.update();
+
+        let npc = {
+            let world = app.world_mut();
+            let mut query = world.query_filtered::<Entity, With<NpcMarker>>();
+            query
+                .iter(world)
+                .next()
+                .expect("edge dormant rogue should hydrate")
+        };
+        let action = app
+            .world_mut()
+            .spawn((
+                crate::npc::brain::ReturnHomeAction,
+                big_brain::prelude::Actor(npc),
+                big_brain::prelude::ActionState::Requested,
+            ))
+            .id();
+        app.add_systems(Update, return_home_action_system);
+
+        for _ in 0..=REST_TICKS {
+            app.update();
+        }
+
+        assert_eq!(
+            app.world().get::<big_brain::prelude::ActionState>(action),
+            Some(&big_brain::prelude::ActionState::Success),
+            "edge rogue should return to its scatter home and finish rest instead of walking to zone center"
+        );
+        assert_eq!(
+            app.world()
+                .get::<crate::npc::navigator::Navigator>(npc)
+                .unwrap()
+                .consecutive_path_failures_for_test(),
+            0,
+            "edge return-home should not enter repeated A* failure backoff"
+        );
+    }
+
+    #[test]
+    fn home_base_tracks_extreme_zone_positions_and_center_degenerate_case() {
+        let center = DVec3::new(-2_500.0, 128.0, -2_500.0);
+        let positions = [
+            DVec3::new(-3_000.0, 64.0, -3_000.0),
+            DVec3::new(-2_000.0, 64.0, -3_000.0),
+            DVec3::new(-3_000.0, 64.0, -2_000.0),
+            DVec3::new(-2_000.0, 64.0, -2_000.0),
+            center,
+        ];
+
+        for (index, pos) in positions.into_iter().enumerate() {
+            let mut app = App::new();
+            app.add_event::<InitiateXuhuaTribulation>();
+
+            let overworld = app.world_mut().spawn_empty().id();
+            let tsy = app.world_mut().spawn_empty().id();
+            app.insert_resource(DimensionLayers { overworld, tsy });
+            app.insert_resource(NpcVirtualizationConfig::default());
+
+            let mut snap = snapshot_in_zone(&format!("edge_case_{index}"), pos, "zone_b");
+            snap.patrol = Some(DormantPatrolSnapshot {
+                home_zone: "zone_b".to_string(),
+                anchor_index: 0,
+                current_target: vec3_to_array(center),
+            });
+            let mut store = NpcDormantStore::default();
+            store.insert(snap);
+            app.insert_resource(store);
+            app.world_mut().spawn((ClientMarker, Position(pos)));
+
+            app.add_systems(Update, hydrate_dormant_near_players_system);
+            app.update();
+
+            let home = {
+                let world = app.world_mut();
+                let mut query =
+                    world.query_filtered::<&crate::npc::schedule::NpcHomeBase, With<NpcMarker>>();
+                *query
+                    .iter(world)
+                    .next()
+                    .expect("extreme zone dormant rogue should hydrate")
+            };
+
+            assert!(
+                home.center().distance(pos) <= 1.8,
+                "case {index}: home should track snapshot position, home={:?}, pos={pos:?}",
+                home.center(),
+            );
+        }
     }
 
     #[test]
