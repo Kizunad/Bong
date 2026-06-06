@@ -1595,7 +1595,7 @@ pub fn handle_client_request_payloads(
                 {
                     // client 直接传来 instance_id，server 只需校验该 instance_id
                     // 确实属于该玩家 inventory（任意容器均可），避免容器 tab 歧义。
-                    let belongs_to_player = inventories.get(ev.client).ok().map_or(false, |inv| {
+                    let belongs_to_player = inventories.get(ev.client).is_ok_and(|inv| {
                         inv.containers
                             .iter()
                             .flat_map(|c| c.items.iter())
@@ -10221,7 +10221,9 @@ mod npc_flawed_pill_trade_tests {
 #[cfg(test)]
 mod freshness_probe_handler_tests {
     use super::*;
-    use crate::inventory::{ContainerState, InventoryRevision, ItemInstance, ItemRarity, PlacedItemState};
+    use crate::inventory::{
+        ContainerState, InventoryRevision, ItemInstance, ItemRarity, PlacedItemState,
+    };
     use valence::prelude::{ident, App, EventReader, IntoSystemConfigs, ResMut, Update};
     use valence::testing::create_mock_client;
 
@@ -10377,9 +10379,7 @@ mod freshness_probe_handler_tests {
     fn freshness_probe_request_not_found_does_not_emit() {
         let (mut app, entity) = setup_freshness_probe_app();
         // inventory 为空，instance_id=9999 不存在
-        app.world_mut()
-            .entity_mut(entity)
-            .insert(empty_inventory());
+        app.world_mut().entity_mut(entity).insert(empty_inventory());
         app.world_mut()
             .resource_mut::<valence::prelude::Events<CustomPayloadEvent>>()
             .send(CustomPayloadEvent {
