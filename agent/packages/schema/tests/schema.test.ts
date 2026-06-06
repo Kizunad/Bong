@@ -1099,6 +1099,32 @@ describe("sample files pass schema validation", () => {
     expect(result.ok, `应拒绝缺少 offer_id，实际: ${result.errors.join("; ")}`).toBe(false);
   });
 
+  // plan-exploration-probe-return-v1 P2 — choices 边界负例（S3 补充）
+  it("insight offer: choices=[] 空数组违反 minItems=1 应拒绝", () => {
+    const bad = {
+      type: "insight_offer",
+      offer_id: "insight:1:100",
+      trigger_id: "insight:1:100",
+      character_id: "player_azure",
+      choices: [],
+    };
+    const result = validate(ServerDataInsightOfferV1, bad);
+    expect(result.ok, `choices=[] 应违反 minItems=1 被拒绝，但通过了: ${result.errors.join("; ")}`).toBe(false);
+  });
+
+  it("insight offer: choices=4 违反 maxItems=3 应拒绝（off-by-one 守卫）", () => {
+    const oneChoice = { category: "Qi", effect_kind: "qi_max", magnitude: 0.05, flavor_text: "x" };
+    const bad = {
+      type: "insight_offer",
+      offer_id: "insight:1:100",
+      trigger_id: "insight:1:100",
+      character_id: "player_azure",
+      choices: [oneChoice, oneChoice, oneChoice, oneChoice], // 4 个，超出 maxItems=3
+    };
+    const result = validate(ServerDataInsightOfferV1, bad);
+    expect(result.ok, `choices=4 应违反 maxItems=3 被拒绝，但通过了: ${result.errors.join("; ")}`).toBe(false);
+  });
+
   it("accepts heart demon pregen request and offer draft", () => {
     const request = {
       trigger_id: "heart_demon:1:1000",
