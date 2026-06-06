@@ -1,8 +1,8 @@
 name: Hive-Think Review
 
-# 按需触发:在 PR 上评论 @hive(或 @hive-think)才跑。
+# 按需触发:在 PR 上评论 `/review hive` 才跑。
 # "hive-think" 不是单模型,而是 N× gpt-5.5 并行 debate(发现 → 对峙 → 总裁决)。
-# 走免费 GPT-5.5 端点(限时羊毛),不计 token;与 @pi / @claude_workflow_review 并存互不干扰。
+# 走免费 GPT-5.5 端点(限时羊毛),不计 token;与 `/review pi` / `/review claude` 并存互不干扰。
 on:
   issue_comment:
     types: [created]
@@ -24,12 +24,13 @@ concurrency:
 
 jobs:
   review:
-    # 仅当 PR 评论里 @hive、且评论者有写权限(OWNER/MEMBER/COLLABORATOR)时运行——
-    # public 仓库下防止任意访客评论 @hive 触发跑(虽是免费 key,也避免被刷)。
+    # 仅当 PR 评论里 `/review hive`、且评论者有写权限(OWNER/MEMBER/COLLABORATOR)时运行——
+    # public 仓库下防止任意访客评论 `/review hive` 触发跑(虽是免费 key,也避免被刷)。
+    # 触发词用 `/review hive`(不是 @hive):后者会解析成 GitHub 真实用户/组织 mention。
     if: >-
       github.event_name == 'workflow_dispatch' ||
       (github.event.issue.pull_request != null &&
-       contains(github.event.comment.body, '@hive') &&
+       contains(github.event.comment.body, '/review hive') &&
        contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association))
     runs-on: ubuntu-latest
     timeout-minutes: 60
@@ -48,7 +49,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PR_NUMBER: ${{ github.event.issue.number || inputs.pr_number }}
-          # @hive 跑免费 GPT-5.5,走自家代理 proxy.kizun4.uk(模型都汇总在此,比羊毛端点稳)。
+          # hive 引擎跑免费 GPT-5.5,走自家代理 proxy.kizun4.uk(模型都汇总在此,比羊毛端点稳)。
           # HIVE_ENDPOINTS="base|key;..." 支持多端点 round-robin failover——要加备用端点(muyuan/centos 等)
           # 直接往后拼 ";https://muyuan.do/v1|<key>" 即可,脚本会挂一个自动切下一个。
           HIVE_ENDPOINTS: >-

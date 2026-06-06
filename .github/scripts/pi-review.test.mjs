@@ -1,4 +1,4 @@
-// @pi 轮控 reviewer 纯逻辑测试 —— `node --test .github/scripts/pi-review.test.mjs`
+// Pi 轮控 reviewer 纯逻辑测试 —— `node --test .github/scripts/pi-review.test.mjs`
 // 锁住决策行为:倒计时分档(语气逐级加码)、自信度聚合(收敛门控判据)、
 // findings 去重(consensus/严重度合并)、JSON/成员解析容错、补充文件路径安全过滤。
 // 这些是 B 方案"确定性外壳"的核心——任何回归(门控阈值错算、倒计时跳档、去重漏合并)都要立刻撞红。
