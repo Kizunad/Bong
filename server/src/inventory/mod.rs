@@ -48,6 +48,8 @@ pub mod ancient_relics;
 pub mod external_container;
 // plan-tsy-loot-v1 §4 — 干尸 component。
 pub mod corpse;
+// plan-food-v1 P2 — 灵食消费路径（consume_food + FoodRegen 临时修炼加速）。
+pub mod food;
 // plan-lingtian-process-v1 P1 — 在线 tick freshness cache + season/anqi multiplier.
 pub mod freshness;
 // plan-poi-novice-v1 §P1 — 新手 POI loot 表。
@@ -253,14 +255,40 @@ pub enum ItemRarity {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum ItemEffect {
-    BreakthroughBonus { magnitude: f64 },
-    QiRecovery { amount: f64 },
-    MeridianHeal { magnitude: f64, target: String },
-    ContaminationCleanse { magnitude: f64 },
-    LifespanExtension { years: u32, source: String },
-    AntiSpiritPressure { duration_ticks: u64 },
-    PoisonPill { pill_item_id: String },
-    CombatPill { pill_item_id: String },
+    BreakthroughBonus {
+        magnitude: f64,
+    },
+    QiRecovery {
+        amount: f64,
+    },
+    MeridianHeal {
+        magnitude: f64,
+        target: String,
+    },
+    ContaminationCleanse {
+        magnitude: f64,
+    },
+    LifespanExtension {
+        years: u32,
+        source: String,
+    },
+    AntiSpiritPressure {
+        duration_ticks: u64,
+    },
+    PoisonPill {
+        pill_item_id: String,
+    },
+    CombatPill {
+        pill_item_id: String,
+    },
+    /// plan-food-v1 P2 — 灵食消费：临时修炼加速。
+    ///
+    /// `bonus_factor`：加速比例（0.20 = +20% 修炼速度），挂 `CultivationAcceleration`。
+    /// `duration_ticks`：效果持续 tick 数（通常 `GAME_DAY_TICKS * 2`）。
+    FoodRegen {
+        bonus_factor: f32,
+        duration_ticks: u64,
+    },
 }
 
 #[derive(Debug, Default)]

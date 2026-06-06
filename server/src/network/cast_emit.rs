@@ -469,6 +469,16 @@ pub(crate) fn apply_item_effect(
                 "[bong][network][cast] CombatPill `{pill_item_id}` for `{username}` ({entity:?}) — handled by take_pill path"
             );
         }
+        ItemEffect::FoodRegen {
+            bonus_factor,
+            duration_ticks,
+        } => {
+            // plan-food-v1 P2: FoodRegen 在 apply_item_effect 路径无 StatusEffects 可写，
+            // 由 apply_cast_item_effect 路径通过 ApplyStatusEffectIntent 处理。此处仅 log。
+            tracing::debug!(
+                "[bong][network][cast] FoodRegen bonus={bonus_factor} duration={duration_ticks} for `{username}` ({entity:?}) — handled by cast_item_effect path"
+            );
+        }
     }
 }
 
@@ -532,6 +542,26 @@ fn apply_cast_item_effect(
         ItemEffect::CombatPill { .. } => {
             tracing::debug!(
                 "[bong][network][cast] CombatPill for `{}` ({:?}) ignored on generic cast path",
+                context.username,
+                context.entity
+            );
+        }
+        ItemEffect::FoodRegen {
+            bonus_factor,
+            duration_ticks,
+        } => {
+            // plan-food-v1 P2：灵食修炼加速。
+            // 注意：这里走 upsert（取 max）而非 push stacking；食物重复食用刷新时长/取更高档。
+            // 若后续需要 per-source stacking，改为发 FoodConsumeIntent 走独立系统。
+            effect_intents.p0().send(ApplyStatusEffectIntent {
+                target: context.entity,
+                kind: StatusEffectKind::CultivationAcceleration,
+                magnitude: *bonus_factor,
+                duration_ticks: (*duration_ticks).max(1),
+                issued_at_tick: context.issued_at_tick,
+            });
+            tracing::info!(
+                "[bong][network][cast] FoodRegen bonus_factor={bonus_factor} duration_ticks={duration_ticks} for `{}` ({:?}) → CultivationAcceleration intent",
                 context.username,
                 context.entity
             );
