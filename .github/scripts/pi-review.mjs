@@ -41,16 +41,25 @@ const ANTHROPIC_MAX_TOKENS = Math.max(1024, parseInt(process.env.PI_ANTHROPIC_MA
 const RETRIES = Math.max(1, parseInt(process.env.PI_RETRIES || "4", 10));
 const usageByModel = {};
 
-// 分层模型(全 provider 限定名):gather 廉价压缩;debate 面板混多模型(逗号分隔 + `name*count` 展开,
-// 如 cliproxy/deepseek-v4-flash*20,deepseek/deepseek-v4-pro*4);arbiter 单模型做最终综合。
-const GATHER_MODEL = process.env.PI_GATHER_MODEL || "cliproxy/deepseek-v4-flash";
-const DEBATE_MODELS = expandModelList(process.env.PI_DEBATE_MODELS || "cliproxy/deepseek-v4-flash*3");
-const ARBITER_MODEL = process.env.PI_ARBITER_MODEL || DEBATE_MODELS[0];
+// 分层角色模型(provider 限定名,env 可覆盖):动态分档按这三档角色拼面板。
+const FLASH_MODEL = process.env.PI_FLASH_MODEL || "cliproxy/deepseek-v4-flash"; // 廉价免费,主力
+const PRO_MODEL = process.env.PI_PRO_MODEL || "deepseek/deepseek-v4-pro"; // 付费深推理
+const LITE_MODEL = process.env.PI_LITE_MODEL || "cliproxy/sensenova-6.7-flash-lite"; // 免费,异源多样性
+const GATHER_MODEL = process.env.PI_GATHER_MODEL || FLASH_MODEL; // gather 永远用廉价 flash
 
-// 轮控参数
-const MAX_ROUNDS = Math.max(1, parseInt(process.env.PI_MAX_ROUNDS || "3", 10)); // debate 硬上限轮数
-// 每轮面板成员数:默认 = 展开后的 DEBATE_MODELS 长度(力大砖飞时即清单全员上场);PI_PANEL 可显式截断/扩展。
-const PANEL = process.env.PI_PANEL ? Math.max(1, parseInt(process.env.PI_PANEL, 10)) : DEBATE_MODELS.length;
+// 动态分档(autoscale 默认开):main() 取到 diff 规模后按 TIERS/pickTier 选面板配比 + 轮数 + arbiter 档。
+// 显式设 PI_DEBATE_MODELS / PI_MAX_ROUNDS / PI_PANEL / PI_ARBITER_MODEL → 钉死该维度,跳过该维 autoscale。
+const AUTOSCALE = process.env.PI_AUTOSCALE !== "0";
+const DEBATE_MODELS_PIN = process.env.PI_DEBATE_MODELS ? expandModelList(process.env.PI_DEBATE_MODELS) : null;
+const MAX_ROUNDS_PIN = process.env.PI_MAX_ROUNDS ? Math.max(1, parseInt(process.env.PI_MAX_ROUNDS, 10)) : null;
+const PANEL_PIN = process.env.PI_PANEL ? Math.max(1, parseInt(process.env.PI_PANEL, 10)) : null;
+const ARBITER_PIN = process.env.PI_ARBITER_MODEL || null;
+// 以下四项在 main() 里按档/按 pin 最终敲定(故为 let);此处给安全默认,避免 chat 默认参数取到 undefined。
+let DEBATE_MODELS = DEBATE_MODELS_PIN || expandModelList(`${FLASH_MODEL}*3`);
+let MAX_ROUNDS = MAX_ROUNDS_PIN || 2;
+let PANEL = PANEL_PIN || DEBATE_MODELS.length;
+let ARBITER_MODEL = ARBITER_PIN || PRO_MODEL;
+let TIER_LABEL = "default";
 const CONFIDENCE_TARGET = clampPct(parseFloat(process.env.PI_CONFIDENCE_TARGET || "80"), 80); // 中位数 ≥ 此值即收敛
 const CONCURRENCY = Math.max(1, parseInt(process.env.PI_CONCURRENCY || "6", 10));
 const FANOUT_ENABLED = process.env.PI_FANOUT !== "0"; // 低自信精准 fan-out 开关
@@ -253,6 +262,33 @@ export function parseModel(full) {
   const i = s.indexOf("/");
   if (i < 0) return { provider: null, id: s };
   return { provider: s.slice(0, i), id: s.slice(i + 1) };
+}
+
+// 动态分档表(均衡档):按总变更行数选档,定 flash/pro/lite 数量 + 轮数。小改省钱省时,大改力大砖飞。
+// pro>0 的档 arbiter 用付费 pro,trivial(pro=0)全程零付费。maxLines 升序、最后一档 Infinity 兜底。
+export const TIERS = [
+  { label: "trivial", maxLines: 40, flash: 4, pro: 0, lite: 2, rounds: 1 },
+  { label: "small", maxLines: 250, flash: 8, pro: 1, lite: 3, rounds: 1 },
+  { label: "medium", maxLines: 1000, flash: 14, pro: 2, lite: 5, rounds: 2 },
+  { label: "large", maxLines: Infinity, flash: 20, pro: 4, lite: 8, rounds: 2 },
+];
+
+// 选档:总变更行数定基础档;文件数 ≥ bumpFiles(改动面广)升一档,封顶最后一档。
+export function pickTier(changedLines, changedFiles, { tiers = TIERS, bumpFiles = 15 } = {}) {
+  const lines = Math.max(0, Number(changedLines) || 0);
+  let idx = tiers.findIndex((t) => lines <= t.maxLines);
+  if (idx < 0) idx = tiers.length - 1;
+  if ((Number(changedFiles) || 0) >= bumpFiles && idx < tiers.length - 1) idx += 1;
+  return tiers[idx];
+}
+
+// 把一档的 flash/pro/lite 数量按角色模型名拼成展开后的面板清单(数量为 0 的角色略过)。
+export function buildTierPanel(tier, { flashModel, proModel, liteModel }) {
+  const parts = [];
+  if (tier.flash > 0) parts.push(`${flashModel}*${tier.flash}`);
+  if (tier.pro > 0) parts.push(`${proModel}*${tier.pro}`);
+  if (tier.lite > 0) parts.push(`${liteModel}*${tier.lite}`);
+  return expandModelList(parts.join(","));
 }
 
 // ── 项目审核准则(精简版,静态 worldview slice,塞进每个成员上下文)────────────────
@@ -458,15 +494,6 @@ async function main() {
     console.error("没有可用 provider key(在 repo secrets 配 PI_CLIPROXY_KEY / PI_DEEPSEEK_KEY / PI_KIRO_KEY / PI_OLLAMA_KEY 等)");
     process.exit(1);
   }
-  // 统计面板里每个模型几票,供日志一眼看清"力大砖飞"的实际配比
-  const mix = DEBATE_MODELS.reduce((a, m) => ((a[m] = (a[m] || 0) + 1), a), {});
-  console.error(
-    `@pi 轮控 review: PR #${PR} · 面板 ${PANEL}×≤${MAX_ROUNDS}轮 · 收敛阈值中位数≥${CONFIDENCE_TARGET} · ` +
-      `fan-out ${FANOUT_ENABLED ? `≤${FANOUT_MAX}` : "关"} · gather ${GATHER_MODEL} · arbiter ${ARBITER_MODEL}\n` +
-      `  在线 provider: ${liveProviders.join(", ")}\n` +
-      `  debate 配比: ${Object.entries(mix).map(([m, n]) => `${m}×${n}`).join(", ")}`,
-  );
-
   // ── 收集 PR 上下文 ──
   let meta;
   try {
@@ -488,6 +515,28 @@ async function main() {
     diffTruncated = true;
   }
   const fileList = (meta.files || []).map((f) => `- ${f.path} (+${f.additions}/-${f.deletions})`).join("\n");
+
+  // ── 动态分档:按改动规模选面板配比 + 轮数 + arbiter 档(显式 pin 优先)──
+  const changedFiles = (meta.files || []).length;
+  const changedLines = (meta.files || []).reduce((s, f) => s + (f.additions || 0) + (f.deletions || 0), 0);
+  if (AUTOSCALE && !DEBATE_MODELS_PIN) {
+    const tier = pickTier(changedLines, changedFiles);
+    TIER_LABEL = tier.label;
+    DEBATE_MODELS = buildTierPanel(tier, { flashModel: FLASH_MODEL, proModel: PRO_MODEL, liteModel: LITE_MODEL });
+    if (!MAX_ROUNDS_PIN) MAX_ROUNDS = tier.rounds;
+    if (!ARBITER_PIN) ARBITER_MODEL = tier.pro > 0 ? PRO_MODEL : FLASH_MODEL;
+  } else {
+    TIER_LABEL = DEBATE_MODELS_PIN ? "manual-pin" : "autoscale-off";
+  }
+  if (!PANEL_PIN) PANEL = DEBATE_MODELS.length;
+
+  const mix = DEBATE_MODELS.reduce((a, m) => ((a[m] = (a[m] || 0) + 1), a), {});
+  console.error(
+    `@pi review: PR #${PR} · 档[${TIER_LABEL}] ${changedLines} 行/${changedFiles} 文件 · ` +
+      `面板 ${PANEL}×≤${MAX_ROUNDS}轮 · 收敛≥${CONFIDENCE_TARGET} · fan-out ${FANOUT_ENABLED ? `≤${FANOUT_MAX}` : "关"}\n` +
+      `  gather ${GATHER_MODEL} · arbiter ${ARBITER_MODEL} · 在线 provider: ${liveProviders.join(", ")}\n` +
+      `  debate 配比: ${Object.entries(mix).map(([m, n]) => `${m}×${n}`).join(", ")}`,
+  );
 
   // plan 探测
   const pm = `${meta.title} ${meta.headRefName}`.match(/plan-[a-z0-9-]+-v\d+/i);
@@ -657,7 +706,7 @@ ${diff}
 
   const header =
     `## 🤖 @pi Plan-Aware Review · PR #${PR}\n\n` +
-    `> 引擎:确定性轮控脚本(无界 agent 循环已退役)。面板 ${PANEL} 成员 × 最多 ${MAX_ROUNDS} 轮,自信度门控 + 低自信精准 fan-out。\n` +
+    `> 引擎:确定性轮控脚本(无界 agent 循环已退役)。**动态分档 [${TIER_LABEL}]**(${changedLines} 行/${changedFiles} 文件)→ 面板 ${PANEL} 成员 × 最多 ${MAX_ROUNDS} 轮,自信度门控 + 低自信精准 fan-out。\n` +
     `> ${statusLine}\n` +
     (plan ? `> Plan: \`${plan.name}\`${plan.path ? "" : "(未找到文件)"}\n` : "") +
     (diffTruncated ? `> ⚠️ diff 过大已截断至 ${MAX_DIFF} 字符\n` : "") +
