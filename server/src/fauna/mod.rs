@@ -4,6 +4,7 @@ pub mod components;
 pub mod drop;
 pub mod experience;
 pub mod ghost;
+pub mod ghost_narration;
 pub mod migration;
 pub mod rat_phase;
 pub mod visual;
@@ -51,6 +52,16 @@ pub fn register(app: &mut App) {
             ghost::ghost_spawn_system,
             ghost::ghost_drift_system.after(ghost::ghost_spawn_system),
             ghost::ghost_contact_system.after(ghost::ghost_drift_system),
+        ),
+    );
+    // plan-neg-domain-fauna-v1 P3：Narration hints（诡影接触 + 噬灵藓踩踏，per-session 首次提示）
+    app.init_resource::<ghost_narration::GhostNarrationSessionSeen>();
+    app.init_resource::<ghost_narration::MossNarrationSessionSeen>();
+    app.add_systems(
+        valence::prelude::Update,
+        (
+            ghost_narration::ghost_contact_narration_system.after(ghost::ghost_contact_system),
+            ghost_narration::moss_drain_narration_system,
         ),
     );
 }
