@@ -8,6 +8,7 @@ import org.junit.jupiter.api.Test;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 public class ClientRequestProtocolTest {
@@ -904,5 +905,28 @@ public class ClientRequestProtocolTest {
         com.google.gson.JsonObject obj = com.google.gson.JsonParser.parseString(json).getAsJsonObject();
         assertEquals(3, obj.size(),
             "freshness_probe 应恰好含 3 个字段（type/v/instance_id），实际 size=" + obj.size() + " json=" + json);
+    }
+
+    // ─── plan-exploration-probe-return-v1 P1：freshness_probe 边界值（S3 补充）───
+
+    @Test
+    void encodesFreshnessProbeMaxLong() {
+        // Long.MAX_VALUE = 9223372036854775807（u64::MAX 近似上界，客户端透传不拒绝）
+        long maxId = Long.MAX_VALUE;
+        String json = ClientRequestProtocol.encodeFreshnessProbe(maxId);
+        com.google.gson.JsonObject obj = com.google.gson.JsonParser.parseString(json).getAsJsonObject();
+        // JSON long round-trip：Gson 读 getAsLong() 确保无精度丢失
+        assertEquals(maxId, obj.get("instance_id").getAsLong(),
+            "freshness_probe instance_id=Long.MAX_VALUE 应精确 round-trip，实际=" + obj.get("instance_id").getAsLong());
+    }
+
+    @Test
+    void encodesFreshnessProbeNegativeInstanceId_throws() {
+        // 负值 instance_id 不合法（与同文件其它 instance_id 编码器一致，抛 IllegalArgumentException）。
+        assertThrows(
+            IllegalArgumentException.class,
+            () -> ClientRequestProtocol.encodeFreshnessProbe(-1L),
+            "instance_id=-1 应抛 IllegalArgumentException（非负约束）"
+        );
     }
 }

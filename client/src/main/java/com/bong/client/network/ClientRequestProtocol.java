@@ -609,6 +609,9 @@ public final class ClientRequestProtocol {
      * @param instanceId 被查询物品的 inventory instance_id（来自 InventoryItem.getInstanceId()）
      */
     public static String encodeFreshnessProbe(long instanceId) {
+        if (instanceId < 0) {
+            throw new IllegalArgumentException("instanceId must be >= 0, got " + instanceId);
+        }
         JsonObject obj = envelope("freshness_probe");
         obj.addProperty("instance_id", instanceId);
         return obj.toString();
