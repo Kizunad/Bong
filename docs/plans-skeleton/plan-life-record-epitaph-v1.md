@@ -33,7 +33,7 @@
 ## 接入面 Checklist
 
 - **进料**：`FinalDeathEvent { player, last_niche_pos, life_record_snapshot: LifeRecordSnapshotV1 }`（multi-life-v1 P0 产出，本 plan 依赖）+ `LifeRecord` 数据（`persistence-v1` SQLite 存储，通过 `LifeRecordSnapshotV1` 序列化）+ 玩家最后选择的「遗念」（`FinalThought { kind: LocationHint | RevengeHint | InsightHint, content: String }`，在最终死亡前 60s 内玩家可提交）
-- **出料**：`WorldEpitaphRegistry { entries: HashMap<EpitaphId, EpitaphEntry> }` Bevy Resource + `EpitaphEntry { id, player_name, final_realm, death_tick, niche_pos, record_summary: LifeRecordSummary, final_thought: FinalThought }` + 世界坐标处的 `EpitaphBlock` structure（小型 NBT，3×1×1）+ agent `world_state.epitaphs` 字段（最近 10 条摘要）
+- **出料**：`WorldEpitaphRegistry { entries: HashMap<EpitaphId, EpitaphEntry> }` Bevy Resource + `PendingFinalThoughtStore { HashMap<PlayerId, FinalThought> }` Bevy Resource（缓存 `FinalDeathEvent` 之前提交的遗念，生成碑刻时 consume）+ `EpitaphEntry { id, player_name, final_realm, death_tick, niche_pos, record_summary: LifeRecordSummary, final_thought: FinalThought }` + 世界坐标处的 `EpitaphBlock` structure（小型 NBT，3×1×1）+ agent `world_state.epitaphs` 字段（最近 10 条摘要）
 - **共享类型**：新增 `EpitaphId`（UUID 字符串）+ `LifeRecordSummary { peak_realm, total_kills, total_deaths, signature_skill_ids, final_zone }` + `FinalThought`；复用 `LifeRecordSnapshotV1`（已存在 `server/src/schema/cultivation.rs:83`）
 - **跨仓库契约**：server `bong:world_state` 新增 `epitaphs: EpitaphEntry[]`（最近 N 条）→ agent `world-model.ts` 增加 `epitaphs` 字段（era.md skill 已引用但数据未接）；client `EpitaphInspectS2c` CustomPayload（查阅请求 + 响应）+ `FinalThoughtSubmitC2s`（临终遗念提交）
 - **worldview 锚点**：§十二 一生记录 + 遗念 + 不可篡改
@@ -56,7 +56,7 @@
 
 - [ ] `server/src/cultivation/epitaph.rs`（新文件）：`EpitaphId(String)` + `LifeRecordSummary { peak_realm, total_kills, total_deaths, signature_skill_ids, final_zone: ZoneId }` + `FinalThought { kind: LocationHint | RevengeHint | InsightHint, content: String }` + `EpitaphEntry`
 - [ ] `WorldEpitaphRegistry { entries: IndexMap<EpitaphId, EpitaphEntry>, max_cap: 1000 }` Bevy Resource（超出 cap 时删除最旧的，但 SQLite 永久保留）
-- [ ] `EpitaphGenerationSystem`：监听 `FinalDeathEvent`（multi-life-v1 P0 产出）→ 从 `LifeRecord` 提取 `LifeRecordSummary` → 创建 `EpitaphEntry` → 写 `WorldEpitaphRegistry` → 持久化 SQLite `epitaphs` 表
+- [ ] `EpitaphGenerationSystem`：监听 `FinalDeathEvent`（multi-life-v1 P0 产出）→ 从 `LifeRecord` 提取 `LifeRecordSummary` → 从 `PendingFinalThoughtStore`（P1）`remove(player_id)` 取出预提交遗念（无则 `FinalThought::None`）→ 创建 `EpitaphEntry` → 写 `WorldEpitaphRegistry` → 持久化 SQLite `epitaphs` 表
 - [ ] ≥ 10 单测（LifeRecordSummary 字段提取正确 / EpitaphRegistry 写入 / SQLite round-trip / cap 1000 淘汰最旧）
 
 ---
@@ -65,8 +65,9 @@
 
 - [ ] `EpitaphBlock` NBT structure（`worldgen/structures/epitaph_stone.nbt`）：3×1×1 雕刻石 + 中心块带 `custom_data: { epitaph_id }` 的 CustomBlockEntity；视觉：石碑竖立，表面雕刻纹理（无法用原版 NBT tag 写汉字，由 client 读 epitaph_id 后查询内容渲染）
 - [ ] `EpitaphPlacementSystem`：在 `FinalDeathEvent.last_niche_pos` 附近 5 格半径内寻找有效放置地点（避免悬空 / 水中）→ 调用 `StructureStamper::stamp_at(epitaph_stone, pos)`
-- [ ] `FinalThoughtSubmitC2s` CustomPayload：玩家在"濒死倒计时"（multi-life-v1 最终死亡前 60s）内可发送遗念；server 存入 `EpitaphEntry.final_thought`；超时未提交则 `FinalThought::None`
-- [ ] ≥ 8 单测（structure 放置坐标不悬空 / FinalThought 超时 = None / 碑刻位于正确 zone）
+- [ ] `PendingFinalThoughtStore { HashMap<PlayerId, FinalThought> }` Bevy Resource：**遗念在 `FinalDeathEvent` 之前提交，此时 `EpitaphEntry` 尚未创建**，故先缓存到此 store；P0 的 `EpitaphGenerationSystem` 在收到 `FinalDeathEvent` 创建 `EpitaphEntry` 时 `remove(player_id)` 取出 pending thought 合并入碑刻，无 pending 则写 `FinalThought::None`
+- [ ] `FinalThoughtSubmitC2s` CustomPayload：玩家在"濒死倒计时"（multi-life-v1 最终死亡前 60s）内可发送遗念；server 写入 `PendingFinalThoughtStore`（**非** `EpitaphEntry`，后者尚不存在）；窗口外提交拒绝；多次提交覆盖（取最后一次）；玩家下线/死亡取消时清理 pending
+- [ ] ≥ 8 单测（structure 放置坐标不悬空 / 窗口内提交进 PendingStore / FinalDeathEvent 时 consume pending 合并入 EpitaphEntry / 无 pending → FinalThought::None / 重复提交覆盖 / 提交后下线清理 / 碑刻位于正确 zone）
 
 ---
 

@@ -29,9 +29,9 @@
 
 **qi_physics 锚点**：
 - 时代切换的灵气影响**不接受 agent 直接写全局 delta**（凭空增减全服灵气 = 守恒律红旗）。`era_decree` 的 `spirit_qi_delta` 只作 server 侧的**倾向/强度提示**，由 server 换算成守恒路径，从不直接落到 `WorldQiAccount`：
-  - **负向（天道收紧）**：走正典唯一允许的系统外流出口径——`qi_physics` 天道每时代衰减常数 `QI_TIANDAO_DECAY_PER_ERA_*`（1-3%/时代上限），不新增旁路
-  - **正向（变化时代灵气潮汐）**：**不铸新真元**——仅改环境密度读数（`qi_physics::field` 风格，不动 ledger 余额），或在账户间走守恒 `qi_physics::ledger::QiTransfer { from, to, amount, reason: EraShift }`（如世界储池账户 → zone）
-  - `QiTransferReason::EraShift` 若仅留可审计轨迹则按 audit-only 口径 emit、不调 `WorldQiAccount::transfer`；任何路径都不得改变 `SPIRIT_QI_TOTAL`
+  - **负向（天道收紧）**：复用既有的天道每时代衰减机制 `qi_physics::tiandao::era_decay_step`（常数 `QI_TIANDAO_DECAY_PER_ERA_MIN/MAX` = 1-3%/时代上限），**不新增旁路、不新建衰减函数**。该机制**不是"系统外流/凭空蒸发"**——`WorldQiBudget::apply_era_decay` 把衰减量从 `current_total` 挪进**被追踪的沉降槽 `era_decay_accum`**，恒定锚 `initial_total` 不动，不变式 `current_total + era_decay_accum == initial_total` 始终成立（即衰减的真元仍被记账，只是不再可用）。`era_decree` 的负向 `spirit_qi_delta` 只调节 `era_decay_step` 的 `era_factor`（时代进度强度），不直接扣账
+  - **正向（变化时代灵气潮汐）**：**不铸新真元**——二选一：(a) 仅改环境密度读数（`qi_physics::field` 风格，不动 ledger 余额）；(b) 在账户间走守恒 `qi_physics::ledger::QiTransfer { from, to, amount, reason: EraShift }`（如世界储池账户 → zone）。路线 (b) 需**新增 `QiTransferReason::EraShift` 变体**到 `qi_physics::ledger`（当前不存在；负向已有 `EraDecay`，正向账户间搬运语义不同，须独立变体）
+  - 守恒口径锚定 `qi_physics::ledger::assert_conservation(before, after, era_decay)`——它已接受"observed 总量减少量 == 被追踪的 `era_decay` 沉降量"为合法（衰减进 `era_decay_accum`），但拒绝无去向的 drift。本 plan 任何路径都必须能通过此断言；audit-only 的 `EraShift` 若只留轨迹则 emit event、不调 `WorldQiAccount::transfer`（后者会变动 balance）
 - 灾劫时代 danger_level_delta 不直接影响真元物理，只影响异变兽 aggression scorer weight
 
 ---
@@ -43,7 +43,7 @@
 - **共享类型**：复用 `NarrationStyle::EraDecree`（`server/src/schema/common.rs:57`）；新增 `EraType` enum（Calamity / Change / Deduction / Unknown）+ `EraModifiers { tribulation_threshold_mul, beast_density_mul, faction_loyalty_drift }`；IPC schema 新增 `EraState` 字段到 `world_state.era`
 - **跨仓库契约**：server `world_state.era { era_type, intensity }` → agent 世界状态快照（agent 当前 world-model.ts 有 `era: "演绎时代 Agent"` 字段但仅作者标注，需扩为实际时代类型枚举）；client CustomPayload `bong:era_ambiance` 含 `sky_tint_hex / fog_density_delta / ambient_sound_id`，仅发通灵+ 境界
 - **worldview 锚点**：§八 天道三手段 + §八 天道运维博弈
-- **qi_physics 锚点**：`era_decree` 的 spirit_qi_delta 仅作倾向值；负向走天道每时代衰减常数 `QI_TIANDAO_DECAY_PER_ERA_*`，正向走密度读数修正或账户间守恒 `QiTransfer{from,to,amount,reason:EraShift}`；**不接受直接写全局 delta**（守恒律，`SPIRIT_QI_TOTAL` 恒定）
+- **qi_physics 锚点**：`era_decree` 的 spirit_qi_delta 仅作倾向值；负向复用 `qi_physics::tiandao::era_decay_step`（衰减进追踪沉降槽 `era_decay_accum`，恒定锚 `initial_total = current_total + era_decay_accum` 不变，非凭空蒸发），正向走密度读数修正或账户间守恒 `QiTransfer{from,to,amount,reason:EraShift}`（新增变体）；**不接受直接写全局 delta**，全程须过 `assert_conservation`（守恒律红旗）
 
 ---
 
@@ -52,7 +52,7 @@
 | 阶段 | 状态 | 主要交付物 | 验收标准 |
 |------|------|-----------|---------|
 | **P0** | ⬜ | `WorldEraState` + `EraType` + `EraModifiers` + era_decree → WorldEraState 写入系统 | agent 发 era_decree → server WorldEraState 更新 + `EraChangedEvent` emit + ≥ 8 单测 green |
-| **P1** | ⬜ | 下游系统读取 EraModifiers：渡劫阈值 × mul / 异变兽 spawn weight × mul / 派系 AI loyalty drift | 三系统分别加 ERA 系数测试；守恒律单测（EraShift 前后 `SPIRIT_QI_TOTAL` 不变）|
+| **P1** | ⬜ | 下游系统读取 EraModifiers：渡劫阈值 × mul / 异变兽 spawn weight × mul / 派系 AI loyalty drift | 三系统分别加 ERA 系数测试；守恒律单测（EraDecay/EraShift 后 `assert_conservation` 通过，`initial_total = current_total + era_decay_accum` 恒定）|
 | **P2** | ⬜ | IPC schema `world_state.era` 字段 + agent world-model.ts 更新 + EraState sample | agent 能在 era_decree 中读回当前时代名称并用于决策 |
 | **P3** | ⬜ | Client `EraAmbiance` packet：通灵+ 收到天象微变化（sky tint / fog / ambient sound） | 3 时代 × 2 客户端（通灵/固元）：通灵端有天象，固元端无；无 UI 文字提示 |
 
@@ -62,9 +62,9 @@
 
 - [ ] `server/src/world/era.rs`：`EraType { Calamity, Change, Deduction, Unknown }` + `WorldEraState { era, onset_tick, intensity, qi_delta, danger_delta }` Bevy Resource
 - [ ] `EraModifiers { tribulation_threshold_mul: f32, beast_density_mul: f32, faction_loyalty_drift: f32 }` + `current_modifiers(era: &WorldEraState) -> EraModifiers` 函数（三个 EraType 各自一组常数，放 era_params.rs）
-- [ ] `EraDecreeSystem`：监听 `bong:agent_cmd` 队列里 `style == "era_decree"` 的 NarrationCommand，解析 `params.era_name / spirit_qi_delta / danger_level_delta` → 写 `WorldEraState`；spirit_qi_delta **仅作倾向值**，server 据此走守恒路径（负向 = 天道每时代衰减常数 / 正向 = 密度读数修正或账户间 `QiTransfer{from,to,amount,reason:EraShift}`），**不直接写全局 delta**
+- [ ] `EraDecreeSystem`：监听 `bong:agent_cmd` 队列里 `style == "era_decree"` 的 NarrationCommand，解析 `params.era_name / spirit_qi_delta / danger_level_delta` → 写 `WorldEraState`；spirit_qi_delta **仅作倾向值**，server 据此走守恒路径（负向 = 调 `era_decay_step` 的 era_factor，衰减入 `era_decay_accum` / 正向 = 密度读数修正或账户间 `QiTransfer{from,to,amount,reason:EraShift}`），**不直接写全局 delta**
 - [ ] `EraChangedEvent { old_era, new_era, onset_tick }` Bevy event，写入系统 emit
-- [ ] ≥ 8 单测（era_decree 解析 / WorldEraState 更新 / EraModifiers 三型正确 / **EraShift 前后 `SPIRIT_QI_TOTAL` 不变** + 倾向值不直接落全局 delta）
+- [ ] ≥ 8 单测（era_decree 解析 / WorldEraState 更新 / EraModifiers 三型正确 / **负向 EraDecay 前后 `assert_conservation` 通过 + `initial_total == current_total + era_decay_accum` 不变量保持** / 正向 EraShift transfer 守恒 / 倾向值不直接落全局 delta）
 
 ---
 

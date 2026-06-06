@@ -34,6 +34,7 @@
 - **qi_physics 锚点**：
   - 诡影接触扣真元：`QiTransfer { from: player, to: zone_neg, amount: ghost_siphon_pulse, reason: GhostContact }`（真元归还负灵域 zone，守恒）
   - 噬灵藓踩踏扣真元：`QiTransfer { from: player, to: zone_neg, amount: moss_drain_per_tick, reason: ShiLingXianDrain }`（同上）
+  - **`GhostContact` / `ShiLingXianDrain` 当前不在 `qi_physics::ledger::QiTransferReason` 中**——P0/P1 须先在 `qi_physics::ledger` 新增这两个变体（见 §4 数据契约），再 import；不在 fauna 模块内私造 reason
   - **不自造物理公式**：接触量 = `|zone_qi| × qi_max × GHOST_CONTACT_FACTOR`（参照 `siphon_amount` 模式）
 
 ---
@@ -52,10 +53,10 @@
 
 | 阶段 | 内容 | 状态 | 验收 |
 |------|------|------|------|
-| **P0** | 诡影：`GhostEntity` 漂移 + 接触检测 + QiTransfer；负灵域内随机生成 | ⬜ | server test：玩家进入 ghost 半径 → QiTransfer 触发；ghost 在 spirit_qi < 0 的 zone 内生成 |
-| **P1** | 噬灵藓：`ShiLingXian` 方块注册 + 踩踏持续扣真元 + 负灵域生长逻辑 | ⬜ | server test：踩噬灵藓 → FoodBonus-style Drain Component 挂载 → QiTransfer per tick；负灵域 zone 内地表方块生长 |
-| **P2** | 生态联动：诡影密度随 zone 负压强度缩放；噬灵藓蔓延速率随 spirit_qi 负值正比 | ⬜ | server test：spirit_qi = -0.2 vs -1.0 区域诡影数量差异；噬灵藓在 spirit_qi 趋近 0 时停止蔓延 |
-| **P3** | Narration hints + 视觉占位（诡影粒子扰动/噬灵藓暗紫占位材质） | ⬜ | narration：首次进入负灵域且遭遇诡影时输出提示；噬灵藓踩踏有短暂视觉反馈 |
+| **P0** | 诡影：`GhostEntity` 漂移 + 接触检测 + QiTransfer；负灵域内随机生成 | ⬜ | ≥ 10 单测：玩家进入 ghost 半径 → QiTransfer(GhostContact) 触发 + 守恒（player 减 == zone 增）/ ghost 仅在 spirit_qi < 0 zone 生成 / 接触 cooldown 1s 防叠爆 / qi_max 越大 pulse 越大 / 不发 SpawnEntity packet |
+| **P1** | 噬灵藓：`ShiLingXian` 方块注册 + 踩踏持续扣真元 + 负灵域生长逻辑 | ⬜ | ≥ 8 单测：踩噬灵藓 → Drain Component 挂载 → QiTransfer(ShiLingXianDrain) per tick + 守恒 / 离开方块移除 Component / 负灵域 zone 内地表生长 / spirit_qi ≥ 0 时枯萎 |
+| **P2** | 生态联动：诡影密度随 zone 负压强度缩放；噬灵藓蔓延速率随 spirit_qi 负值正比 | ⬜ | ≥ 6 单测：spirit_qi = -0.2 vs -1.0 区域诡影数量差异 / 诡影密度上限（每 zone ≤ 10）/ 噬灵藓在 spirit_qi 趋近 0 时停止蔓延 |
+| **P3** | Narration hints + 视觉占位（诡影粒子扰动/噬灵藓暗紫占位材质） | ⬜ | ≥ 4 单测 + narration：首次进入负灵域且遭遇诡影时输出提示（一会话不重复）/ 噬灵藓踩踏有短暂视觉反馈 |
 
 ---
 
@@ -73,7 +74,7 @@ pub struct GhostEntity {
 }
 ```
 
-**生成条件**：`ZoneRegistry` 中 `zone.spirit_qi < NEG_DOMAIN_THRESHOLD`（-0.2）时，按负压强度决定诡影密度（`|spirit_qi| × GHOST_DENSITY_FACTOR`）
+**生成条件**：负灵域定义统一采用正典口径 `zone.spirit_qi < 0`（与 `cultivation/negative_zone.rs:3` 一致，**不另立阈值**）。诡影只在负压**足够强**时才生成——`zone.spirit_qi < GHOST_SPAWN_MIN_PRESSURE`（建议 -0.2，仅作"诡影刷出强度门"，**不是负灵域边界**），按负压强度决定密度（`|spirit_qi| × GHOST_DENSITY_FACTOR`）
 
 **漂移行为**：Bevy 系统 `ghost_drift_system` 每 tick 更新位置；每 3s 重新随机方向；不穿越 zone 边界
 
@@ -129,7 +130,7 @@ PlantSpec {
 - [ ] `server/src/botany/shiling_xian.rs`：`ShiLingXianDrainTag` Component + `moss_drain_system` + `moss_spread_system`
 - [ ] `PlantRegistry` 新增 `shi_ling_xian`（P1 前置于 botany）
 - [ ] `FaunaKind::Ghost` variant（server-only；不参与 MC entity lifecycle）
-- [ ] `QiTransfer` reason variant：`GhostContact` / `ShiLingXianDrain`
+- [ ] `qi_physics::ledger::QiTransferReason` **新增**两个变体：`GhostContact` / `ShiLingXianDrain`（连同 `WorldQiAccount::transfer` 的 reason 接纳分支 + 守恒 round-trip 单测）
 - [ ] 两个 narration hint 模板（`ghost_contact_hint` / `moss_drain_hint`）
 
 ---
@@ -142,7 +143,7 @@ PlantSpec {
 | `GHOST_DENSITY_FACTOR` | 0.5 | spirit_qi=-1.0 时每 chunk 约 0.5 个诡影（低密度，随机恐惧感） |
 | `GHOST_SIPHON_RADIUS` | 2.0 | 贴脸才触发，不会远程扣 |
 | `MOSS_DRAIN_FACTOR` | 0.002 | 每 tick 扣 0.2%×qi_max；比 zone siphon 弱，属辅助惩罚 |
-| `NEG_DOMAIN_THRESHOLD` | -0.2 | 本方案阈值；实施时与 `negative_zone.rs` 实际判定核对对齐（勿假设已一致）|
+| `GHOST_SPAWN_MIN_PRESSURE` | -0.2 | **诡影刷出强度门，非负灵域边界**；负灵域边界正典口径恒为 `spirit_qi < 0`（`negative_zone.rs:3`），此值只决定诡影"负压多强才出现"，避免在微弱负压区刷诡影 |
 
 > **qi_physics 归口（docs/CLAUDE.md 孤岛红旗）**：`GHOST_CONTACT_FACTOR` / `MOSS_DRAIN_FACTOR` 属真元抽取/衰减率，实施时**必须先扩 `qi_physics::constants` 再 import**，不在 fauna 模块内硬编；本表只声明建议初值，底层公式与常数归 `qi_physics` 唯一实现。`GHOST_DENSITY_FACTOR` / `GHOST_SIPHON_RADIUS` 为生成/几何参数，不属真元物理，留本模块即可。
 

@@ -43,9 +43,9 @@
 
 | 阶段 | 内容 | 状态 | 验收 |
 |------|------|------|------|
-| **P0** | agent calamity 加负灵域豁免判定：玩家 zone spirit_qi < 0 时不触发/挂起天劫；出域后恢复 | ⬜ | agent test：mock player in neg zone → calamity skill 不发天劫事件；玩家移到正 zone → 重新评估触发条件 |
-| **P1** | Narration 正典化：天道"失去锁定" / "重新锁定"提示 + 溺水暗杀术 narration（感知对方真元骤降）| ⬜ | narration test：通灵境玩家入负灵域时天道 narration 广播"灵压庇护"类；对方 qi_current 在 1 tick 内降超过 30% 时 narration hint |
-| **P2** | telemetry + 平衡数据：逃遁使用频率 / 逃遁后境界跌落率 / 实际成功规避天劫次数 | ⬜ | telemetry 计数器累积到 plan-tribulation-balance-v1 的数据管道 |
+| **P0** | agent calamity 加负灵域豁免判定：玩家 zone spirit_qi < 0 时不触发/挂起天劫；出域后恢复 | ⬜ | ≥ 8 单测：mock player in neg zone → calamity skill 不发天劫事件 / 玩家移到正 zone → 重新评估触发 / pending 后条件变化不误触发 / 仅通灵境豁免（固元/凝脉不豁免）/ 离线重连 pending 保留 |
+| **P1** | Narration 正典化：天道"失去锁定" / "重新锁定"提示 + 溺水暗杀术 narration（感知对方真元骤降）| ⬜ | ≥ 6 单测：通灵境玩家入负灵域时广播"灵压庇护"类 narration / 出域广播"重新锁定" / 对方 qi_current 5 tick 内降超 25%×qi_max 触发溺水 hint / 境界差不足两级不触发 / 私信 A + 公开 B 气息溃散 scope 正确 |
+| **P2** | telemetry + 平衡数据：逃遁使用频率 / 逃遁后境界跌落率 / 实际成功规避天劫次数 | ⬜ | ≥ 4 单测：三类计数器累积正确 + 累积到 plan-tribulation-balance-v1 的数据管道 |
 
 ---
 
