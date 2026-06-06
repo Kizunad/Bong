@@ -8,7 +8,7 @@ use valence::prelude::*;
 
 use super::components::DandaoStyle;
 use crate::cultivation::color::{record_style_practice, PracticeLog};
-use crate::cultivation::components::ColorKind;
+use crate::cultivation::components::{ColorKind, QiColor};
 
 /// 某次丹道操作（服药/炼丹/招式）导致丹毒累积的事件通知。
 /// 丹道招式 resolver 在消耗丹药时主动 send。
@@ -25,14 +25,14 @@ pub struct PillIntakeTracked {
 /// 本系统只负责 PracticeLog side-effect。
 pub fn track_pill_intake_system(
     mut events: EventReader<PillIntakeTracked>,
-    mut players: Query<&mut PracticeLog>,
+    mut players: Query<(&mut PracticeLog, Option<&QiColor>)>,
 ) {
     for ev in events.read() {
         if ev.toxin_amount <= 0.0 {
             continue;
         }
-        if let Ok(mut log) = players.get_mut(ev.entity) {
-            record_style_practice(&mut log, ColorKind::Mellow);
+        if let Ok((mut log, qi_color)) = players.get_mut(ev.entity) {
+            record_style_practice(&mut log, ColorKind::Mellow, qi_color);
         }
     }
 }

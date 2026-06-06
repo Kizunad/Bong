@@ -33,6 +33,7 @@ pub mod character_lifecycle;
 pub mod character_select;
 pub mod color;
 pub mod color_affinity;
+pub mod color_bonus;
 pub mod components;
 pub mod composure;
 pub mod contamination;

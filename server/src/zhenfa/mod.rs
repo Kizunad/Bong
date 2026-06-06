@@ -1173,7 +1173,7 @@ fn handle_zhenfa_trigger_requests(
     mut players: Query<ZhenfaTriggerPlayer<'_>>,
     mut layers: Query<&mut ChunkLayer, With<OverworldLayer>>,
     mut targets: Query<ZhenfaDamageTarget<'_>>,
-    mut practice_logs: Query<&mut PracticeLog>,
+    mut practice_logs: Query<(&mut PracticeLog, Option<&QiColor>)>,
     mut combat_events: EventWriter<CombatEvent>,
     mut death_events: EventWriter<DeathEvent>,
     mut status_effects: EventWriter<ApplyStatusEffectIntent>,
@@ -1379,7 +1379,7 @@ fn tick_zhenfa_registry(
     mut commands: Commands,
     mut layers: Query<&mut ChunkLayer, With<OverworldLayer>>,
     mut targets: Query<ZhenfaDamageTarget<'_>>,
-    mut practice_logs: Query<&mut PracticeLog>,
+    mut practice_logs: Query<(&mut PracticeLog, Option<&QiColor>)>,
     ward_positions: Query<(Entity, &Position), Without<ZhenfaAnchor>>,
     mut events: ZhenfaTickEventWriters,
     mut zones: Option<ResMut<ZoneRegistry>>,
@@ -1980,7 +1980,7 @@ fn apply_trigger_snapshots(
     snapshots: Vec<TriggerSnapshot>,
     targets: &mut Query<ZhenfaDamageTarget<'_>>,
     layers: &mut Query<&mut ChunkLayer, With<OverworldLayer>>,
-    practice_logs: &mut Query<&mut PracticeLog>,
+    practice_logs: &mut Query<(&mut PracticeLog, Option<&QiColor>)>,
     combat_events: &mut EventWriter<CombatEvent>,
     death_events: &mut EventWriter<DeathEvent>,
     status_effects: &mut EventWriter<ApplyStatusEffectIntent>,
@@ -2162,8 +2162,8 @@ fn apply_trigger_snapshots(
             }
         }
         if hit_any {
-            if let Ok(mut practice_log) = practice_logs.get_mut(snapshot.owner) {
-                record_style_practice(&mut practice_log, ColorKind::Intricate);
+            if let Ok((mut practice_log, qi_color)) = practice_logs.get_mut(snapshot.owner) {
+                record_style_practice(&mut practice_log, ColorKind::Intricate, qi_color);
             }
         }
     }

@@ -15,6 +15,7 @@ use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
 use valence::prelude::{bevy_ecs, Component, Entity, Event, EventReader, Query, Res};
 
+use super::color_bonus::color_style_bonus;
 use super::components::{ColorKind, QiColor};
 use super::life_record::{BiographyEntry, LifeRecord};
 use super::tick::CultivationClock;
@@ -59,8 +60,14 @@ impl PracticeLog {
     }
 }
 
-pub fn record_style_practice(log: &mut PracticeLog, color: ColorKind) {
-    log.add(color, STYLE_PRACTICE_AMOUNT);
+/// 记录一次招式练习，并按玩家当前 QiColor 应用效率倍率。
+///
+/// `qi_color` 为 `None` 时（例如 NPC、无色状态初始化阶段）退化为不带加成的默认 1.0x。
+pub fn record_style_practice(log: &mut PracticeLog, color: ColorKind, qi_color: Option<&QiColor>) {
+    let bonus = qi_color
+        .map(|qc| color_style_bonus(qc, color))
+        .unwrap_or(1.0);
+    log.add(color, STYLE_PRACTICE_AMOUNT * bonus);
 }
 
 pub fn is_hunyuan(log: &PracticeLog) -> bool {
@@ -78,25 +85,38 @@ pub struct CultivationSessionPracticeEvent {
     pub elapsed_ticks: u64,
 }
 
+/// 记录一次打坐练习（按分钟计），并按玩家当前 QiColor 应用效率倍率。
+///
+/// 返回实际累积的分钟数（< 1 分钟不累积）。
+/// `qi_color` 为 `None` 时退化为 1.0x（无加成）。
 pub fn record_cultivation_session_practice(
     log: &mut PracticeLog,
     active_color: ColorKind,
     elapsed_ticks: u64,
+    qi_color: Option<&QiColor>,
 ) -> u64 {
     let minutes = elapsed_ticks / CULTIVATION_SESSION_PRACTICE_TICKS_PER_MINUTE;
     if minutes > 0 {
-        log.add(active_color, STYLE_PRACTICE_AMOUNT * minutes as f64);
+        let bonus = qi_color
+            .map(|qc| color_style_bonus(qc, active_color))
+            .unwrap_or(1.0);
+        log.add(active_color, STYLE_PRACTICE_AMOUNT * minutes as f64 * bonus);
     }
     minutes
 }
 
 pub fn record_cultivation_session_practice_events(
     mut events: EventReader<CultivationSessionPracticeEvent>,
-    mut logs: Query<&mut PracticeLog>,
+    mut logs: Query<(&mut PracticeLog, Option<&QiColor>)>,
 ) {
     for event in events.read() {
-        if let Ok(mut log) = logs.get_mut(event.entity) {
-            record_cultivation_session_practice(&mut log, event.active_color, event.elapsed_ticks);
+        if let Ok((mut log, qi_color)) = logs.get_mut(event.entity) {
+            record_cultivation_session_practice(
+                &mut log,
+                event.active_color,
+                event.elapsed_ticks,
+                qi_color,
+            );
         }
     }
 }
@@ -264,15 +284,19 @@ mod tests {
     #[test]
     fn cultivation_session_practice_records_one_unit_per_minute() {
         let mut log = PracticeLog::default();
+        // None qi_color → 1.0x bonus（无加成基准）
         let minutes = record_cultivation_session_practice(
             &mut log,
             ColorKind::Heavy,
             CULTIVATION_SESSION_PRACTICE_TICKS_PER_MINUTE * 60,
+            None,
         );
-        assert_eq!(minutes, 60);
+        assert_eq!(minutes, 60, "期望 60 分钟，实际 {minutes}");
         assert_eq!(
             log.weights.get(&ColorKind::Heavy).copied(),
-            Some(STYLE_PRACTICE_AMOUNT * 60.0)
+            Some(STYLE_PRACTICE_AMOUNT * 60.0),
+            "期望 60 × STYLE_PRACTICE_AMOUNT（无加成），实际 {:?}",
+            log.weights.get(&ColorKind::Heavy)
         );
     }
 
@@ -283,9 +307,61 @@ mod tests {
             &mut log,
             ColorKind::Heavy,
             CULTIVATION_SESSION_PRACTICE_TICKS_PER_MINUTE - 1,
+            None,
         );
-        assert_eq!(minutes, 0);
-        assert!(log.weights.is_empty());
+        assert_eq!(minutes, 0, "期望 0 分钟（不足 1 分钟），实际 {minutes}");
+        assert!(log.weights.is_empty(), "不足 1 分钟不应写入任何权重");
+    }
+
+    #[test]
+    fn cultivation_session_practice_applies_main_color_bonus() {
+        let mut log = PracticeLog::default();
+        let qi_color = QiColor {
+            main: ColorKind::Heavy,
+            secondary: None,
+            is_chaotic: false,
+            is_hunyuan: false,
+            permanent_lock_mask: Default::default(),
+        };
+        // 主色匹配 Heavy → 0.9x 倍率
+        let minutes = record_cultivation_session_practice(
+            &mut log,
+            ColorKind::Heavy,
+            CULTIVATION_SESSION_PRACTICE_TICKS_PER_MINUTE * 10,
+            Some(&qi_color),
+        );
+        assert_eq!(minutes, 10, "期望 10 分钟，实际 {minutes}");
+        let expected = STYLE_PRACTICE_AMOUNT * 10.0 * 0.9;
+        let actual = log.weights.get(&ColorKind::Heavy).copied().unwrap_or(0.0);
+        assert!(
+            (actual - expected).abs() < 1e-9,
+            "主色匹配打坐 10 分钟期望权重 {expected:.4}（×0.9），实际 {actual:.4}"
+        );
+    }
+
+    #[test]
+    fn cultivation_session_practice_applies_chaotic_penalty() {
+        let mut log = PracticeLog::default();
+        let qi_color = QiColor {
+            main: ColorKind::Heavy,
+            secondary: None,
+            is_chaotic: true,
+            is_hunyuan: false,
+            permanent_lock_mask: Default::default(),
+        };
+        // 杂色 → 1.1x 倍率（惩罚）
+        record_cultivation_session_practice(
+            &mut log,
+            ColorKind::Heavy,
+            CULTIVATION_SESSION_PRACTICE_TICKS_PER_MINUTE * 5,
+            Some(&qi_color),
+        );
+        let expected = STYLE_PRACTICE_AMOUNT * 5.0 * 1.1;
+        let actual = log.weights.get(&ColorKind::Heavy).copied().unwrap_or(0.0);
+        assert!(
+            (actual - expected).abs() < 1e-9,
+            "杂色打坐 5 分钟期望权重 {expected:.4}（×1.1），实际 {actual:.4}"
+        );
     }
 
     #[test]
@@ -308,12 +384,34 @@ mod tests {
     }
 
     #[test]
-    fn style_practice_uses_unified_amount() {
+    fn style_practice_uses_unified_amount_without_qi_color() {
         let mut log = PracticeLog::default();
-        record_style_practice(&mut log, ColorKind::Heavy);
+        // None qi_color → 1.0x 基准，等于 STYLE_PRACTICE_AMOUNT
+        record_style_practice(&mut log, ColorKind::Heavy, None);
         assert_eq!(
             log.weights.get(&ColorKind::Heavy).copied(),
-            Some(STYLE_PRACTICE_AMOUNT)
+            Some(STYLE_PRACTICE_AMOUNT),
+            "期望 STYLE_PRACTICE_AMOUNT（无加成），实际 {:?}",
+            log.weights.get(&ColorKind::Heavy)
+        );
+    }
+
+    #[test]
+    fn style_practice_applies_main_color_bonus() {
+        let mut log = PracticeLog::default();
+        let qi_color = QiColor {
+            main: ColorKind::Heavy,
+            secondary: None,
+            is_chaotic: false,
+            is_hunyuan: false,
+            permanent_lock_mask: Default::default(),
+        };
+        record_style_practice(&mut log, ColorKind::Heavy, Some(&qi_color));
+        let expected = STYLE_PRACTICE_AMOUNT * 0.9;
+        let actual = log.weights.get(&ColorKind::Heavy).copied().unwrap_or(0.0);
+        assert!(
+            (actual - expected).abs() < 1e-9,
+            "主色匹配 record_style_practice 期望权重 {expected:.4}（×0.9），实际 {actual:.4}"
         );
     }
 

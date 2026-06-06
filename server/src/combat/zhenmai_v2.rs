@@ -15,7 +15,7 @@ use crate::combat::status::has_active_status;
 use crate::combat::{CombatClock, CombatSystemSet};
 use crate::cultivation::color::{record_style_practice, PracticeLog};
 use crate::cultivation::components::{
-    ColorKind, Contamination, Cultivation, MeridianId, MeridianSystem, Realm,
+    ColorKind, Contamination, Cultivation, MeridianId, MeridianSystem, QiColor, Realm,
 };
 use crate::cultivation::meridian::severed::{
     check_meridian_dependencies, enforce_severed_state, MeridianSeveredEvent,
@@ -1219,8 +1219,10 @@ fn parse_meridian_id(value: &Value) -> Option<MeridianId> {
 }
 
 fn record_practice(world: &mut bevy_ecs::world::World, caster: Entity, skill: ZhenmaiSkillId) {
+    // 先 clone QiColor（放弃只读引用），再取 PracticeLog 可变引用，避免 borrow 冲突
+    let qi_color = world.get::<QiColor>(caster).cloned();
     if let Some(mut practice_log) = world.get_mut::<PracticeLog>(caster) {
-        record_style_practice(&mut practice_log, ColorKind::Violent);
+        record_style_practice(&mut practice_log, ColorKind::Violent, qi_color.as_ref());
     }
     world.send_event(SkillXpGain {
         char_entity: caster,

@@ -157,7 +157,7 @@ pub fn track_woliu_proficiency_from_casts(
             continue;
         };
         if let Some(mut practice_log) = practice_log {
-            record_style_practice(&mut practice_log, ColorKind::Intricate);
+            record_style_practice(&mut practice_log, ColorKind::Intricate, qi_color);
         }
         if transition.mastered_now {
             if let Some(mut life_record) = life_record {
@@ -358,9 +358,16 @@ mod tests {
             "实战释放已学涡流招式后应增长 proficiency"
         );
         let practice = app.world().get::<PracticeLog>(entity).unwrap();
-        assert_eq!(
-            practice.weights.get(&ColorKind::Intricate).copied(),
-            Some(1.0)
+        // plan-color-v1 P0：QiColor.main = Intricate → 主色匹配 → 0.9x 加成，
+        // 因此 practice.weights[Intricate] = STYLE_PRACTICE_AMOUNT * 0.9 = 0.9
+        let actual = practice
+            .weights
+            .get(&ColorKind::Intricate)
+            .copied()
+            .unwrap_or(0.0);
+        assert!(
+            (actual - 0.9_f64).abs() < 1e-9,
+            "QiColor 主色 Intricate 匹配时 practice 权重应为 0.9（×0.9 加成），实际 {actual}"
         );
     }
 

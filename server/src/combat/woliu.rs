@@ -12,7 +12,9 @@ use crate::combat::projectile::QiProjectile;
 use crate::combat::status::{has_active_status, remove_status_effect, upsert_status_effect};
 use crate::combat::{CombatClock, CombatSystemSet};
 use crate::cultivation::color::{record_style_practice, PracticeLog};
-use crate::cultivation::components::{ColorKind, Cultivation, MeridianId, MeridianSystem, Realm};
+use crate::cultivation::components::{
+    ColorKind, Cultivation, MeridianId, MeridianSystem, QiColor, Realm,
+};
 use crate::cultivation::life_record::{BiographyEntry, LifeRecord};
 use crate::cultivation::skill_registry::{CastRejectReason, CastResult, SkillRegistry};
 use crate::qi_physics::{
@@ -474,7 +476,7 @@ pub fn vortex_intercept_tick(
         EventWriter<QiTransfer>,
     )>,
     mut life_records: Query<&mut LifeRecord>,
-    mut practice_logs: Query<&mut PracticeLog>,
+    mut practice_logs: Query<(&mut PracticeLog, Option<&QiColor>)>,
 ) {
     if fields.is_empty() {
         return;
@@ -906,9 +908,12 @@ fn record_projectile_drain(
     });
 }
 
-fn record_vortex_practice(practice_logs: &mut Query<&mut PracticeLog>, caster: Entity) {
-    if let Ok(mut practice_log) = practice_logs.get_mut(caster) {
-        record_style_practice(&mut practice_log, ColorKind::Intricate);
+fn record_vortex_practice(
+    practice_logs: &mut Query<(&mut PracticeLog, Option<&QiColor>)>,
+    caster: Entity,
+) {
+    if let Ok((mut practice_log, qi_color)) = practice_logs.get_mut(caster) {
+        record_style_practice(&mut practice_log, ColorKind::Intricate, qi_color);
     }
 }
 
