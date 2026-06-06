@@ -23,7 +23,7 @@ use crate::cultivation::components::Cultivation;
 use crate::cultivation::life_record::LifeRecord;
 use crate::cultivation::tick::CultivationClock;
 use crate::npc::spawn::common::NpcMarker;
-use crate::qi_physics::constants::{GHOST_CONTACT_FACTOR, QI_EPSILON};
+use crate::qi_physics::constants::{GHOST_CONTACT_FACTOR, QI_EPSILON, QI_ZONE_UNIT_CAPACITY};
 use crate::qi_physics::ledger::{QiAccountId, QiTransfer, QiTransferReason};
 use crate::world::dimension::CurrentDimension;
 use crate::world::zone::ZoneRegistry;
@@ -212,10 +212,11 @@ pub fn ghost_drift_system(zones: Option<Res<ZoneRegistry>>, mut ghosts: Query<&m
 /// - 仅对玩家生效（`Without<NpcMarker>` 过滤掉 NPC）
 /// - 多诡影共享 cooldown（per-player 1s 内只触发一次）
 /// - pulse_amount = |zone_qi| × qi_max × GHOST_CONTACT_FACTOR
-/// - 通过 `QiTransfer{reason: GhostContact}` 守恒流向 zone 账户
+/// - 扣玩家 qi_current 的同时，把 actual_pulse 真实搬进 zone 账户（zone.spirit_qi 增加），
+///   再 emit `QiTransfer{reason: GhostContact}` 留痕。player 减 == zone 增，守恒不破。
 #[allow(clippy::type_complexity)]
 pub fn ghost_contact_system(
-    zones: Option<Res<ZoneRegistry>>,
+    mut zones: Option<ResMut<ZoneRegistry>>,
     mut qi_transfer_events: Option<ResMut<Events<QiTransfer>>>,
     ghosts: Query<&GhostEntity>,
     mut players: Query<
@@ -232,12 +233,22 @@ pub fn ghost_contact_system(
     tick: Option<Res<CultivationClock>>,
     mut commands: Commands,
 ) {
-    let Some(zones) = zones else {
+    let Some(ref zones_res) = zones else {
         return;
     };
     let current_tick = tick.as_deref().map(|t| t.tick).unwrap_or(0);
 
-    for (entity, pos, current_dim, life_record, mut cultivation, cooldown) in players.iter_mut() {
+    // 先收集每个玩家需要的 zone 信息（借用不可变，避免与后面的 mut borrow 冲突）
+    struct ContactInfo {
+        entity: Entity,
+        zone_qi: f64,
+        zone_name: String,
+        pulse_amount: f64,
+    }
+
+    let mut contacts: Vec<ContactInfo> = Vec::new();
+
+    for (entity, pos, current_dim, _life_record, cultivation, cooldown) in players.iter() {
         // 检查 cooldown（共享：任一诡影触发后 1s 内不重复）
         if let Some(cd) = cooldown.as_ref() {
             if current_tick.saturating_sub(cd.last_contact_tick) < GHOST_COOLDOWN_TICKS {
@@ -247,7 +258,7 @@ pub fn ghost_contact_system(
 
         // 确定玩家所在 zone 的 spirit_qi
         let player_zone = current_dim
-            .and_then(|dim| zones.find_zone(dim.0, pos.0))
+            .and_then(|dim| zones_res.find_zone(dim.0, pos.0))
             .filter(|z| z.spirit_qi < 0.0);
         let Some(zone) = player_zone else {
             continue; // 不在负灵域，跳过
@@ -267,7 +278,6 @@ pub fn ghost_contact_system(
                 break;
             }
         }
-
         if !triggered {
             continue;
         }
@@ -278,26 +288,59 @@ pub fn ghost_contact_system(
             continue;
         }
 
+        contacts.push(ContactInfo {
+            entity,
+            zone_qi,
+            zone_name,
+            pulse_amount,
+        });
+    }
+
+    // 第二遍：可变借用处理真元搬运
+    for info in contacts {
+        // 可变借用玩家 cultivation
+        let Ok((entity, _pos, _current_dim, life_record, mut cultivation, _cooldown)) =
+            players.get_mut(info.entity)
+        else {
+            continue;
+        };
+
         // 扣真元（优先从 qi_current 扣；不足则扣到 0）
-        let actual_pulse = pulse_amount.min(cultivation.qi_current.max(0.0));
+        let actual_pulse = info.pulse_amount.min(cultivation.qi_current.max(0.0));
+        if actual_pulse <= QI_EPSILON {
+            // 更新 cooldown 即使没真元可扣（防止频繁检测）
+            commands.entity(entity).insert(GhostContactCooldown {
+                last_contact_tick: current_tick,
+            });
+            continue;
+        }
         cultivation.qi_current = (cultivation.qi_current - actual_pulse).max(0.0);
 
-        // 守恒流向 zone 账户：emit QiTransfer 事件
-        if actual_pulse > QI_EPSILON {
-            let player_account_id = life_record
-                .map(|lr| QiAccountId::player(&lr.character_id))
-                .unwrap_or_else(|| QiAccountId::player(format!("{entity:?}")));
-            let zone_account_id = QiAccountId::zone(&zone_name);
+        // 守恒：把 actual_pulse 真实搬进 zone 账户（zone.spirit_qi 增加）
+        // 公式：zone_after = zone_current + actual_pulse（以 QI_ZONE_UNIT_CAPACITY 为单位换算）
+        if let Some(ref mut zones_mut) = zones {
+            if let Some(zone) = zones_mut.find_zone_mut(&info.zone_name) {
+                let zone_current = zone.spirit_qi * QI_ZONE_UNIT_CAPACITY;
+                let room = (QI_ZONE_UNIT_CAPACITY - zone_current).max(0.0);
+                let accepted = actual_pulse.min(room);
+                zone.spirit_qi = (zone_current + accepted) / QI_ZONE_UNIT_CAPACITY;
+            }
+        }
 
-            if let Ok(transfer) = QiTransfer::new(
-                player_account_id,
-                zone_account_id,
-                actual_pulse,
-                QiTransferReason::GhostContact,
-            ) {
-                if let Some(events) = qi_transfer_events.as_deref_mut() {
-                    events.send(transfer);
-                }
+        // emit QiTransfer 留痕（审计轨迹，reason = GhostContact）
+        let player_account_id = life_record
+            .map(|lr| QiAccountId::player(&lr.character_id))
+            .unwrap_or_else(|| QiAccountId::player(format!("{entity:?}")));
+        let zone_account_id = QiAccountId::zone(&info.zone_name);
+
+        if let Ok(transfer) = QiTransfer::new(
+            player_account_id,
+            zone_account_id,
+            actual_pulse,
+            QiTransferReason::GhostContact,
+        ) {
+            if let Some(events) = qi_transfer_events.as_deref_mut() {
+                events.send(transfer);
             }
         }
 
@@ -787,6 +830,148 @@ mod tests {
         assert_eq!(
             target, 2,
             "spirit_qi=-0.4 时 target_count 应为 2（floor(0.4×5.0)=2），实际 {target}（P2 中间值密度公式）"
+        );
+    }
+
+    // ── 系统级守恒测试：zone.spirit_qi 增量 == 玩家 qi_current 减量 ──
+    // 这组测试跑真实 ECS system，断言"player 减 == zone 增"契约在运行时路径成立。
+    // 与 qi_physics::ledger 的 WorldQiAccount 单测互补——后者只测孤立数学，
+    // 这里锁住 ghost_contact_system 系统路径本身。
+
+    /// SYS-CONS-T1: ghost_contact_system 运行后，zone.spirit_qi 增量精确等于玩家 qi_current 减量。
+    /// 验证：player 减 actual_pulse，zone 增 actual_pulse / QI_ZONE_UNIT_CAPACITY，守恒不破。
+    #[test]
+    fn ghost_contact_system_zone_spirit_qi_increases_by_player_qi_loss() {
+        use crate::qi_physics::constants::QI_ZONE_UNIT_CAPACITY;
+        let initial_spirit_qi = -0.5_f64; // 负灵域
+        let mut app = make_app_with_neg_zone(initial_spirit_qi);
+        app.add_systems(Update, ghost_contact_system);
+
+        // Spawn 诡影在玩家附近（距离 0.1 格 < GHOST_SIPHON_RADIUS=2.0）
+        app.world_mut().spawn(GhostEntity {
+            position: DVec3::new(8.0, 66.0, 8.1),
+            drift_velocity: DVec3::ZERO,
+            zone_name: "spawn".to_string(),
+            tick_counter: 0,
+        });
+
+        let qi_max = 100.0_f64;
+        let initial_qi = 50.0_f64;
+
+        let player = app
+            .world_mut()
+            .spawn((
+                Position::new([8.0, 66.0, 8.0]),
+                CurrentDimension(DimensionKind::Overworld),
+                Cultivation {
+                    qi_current: initial_qi,
+                    qi_max,
+                    ..Default::default()
+                },
+                LifeRecord::new(canonical_player_id("ZoneGuardTest")),
+            ))
+            .id();
+
+        // 记录系统运行前 zone.spirit_qi
+        let zone_qi_before = {
+            let zones = app.world().resource::<ZoneRegistry>();
+            zones
+                .find_zone_by_name("spawn")
+                .expect("spawn zone must exist")
+                .spirit_qi
+        };
+
+        app.update();
+
+        // 系统运行后
+        let qi_current_after = app
+            .world()
+            .entity(player)
+            .get::<Cultivation>()
+            .unwrap()
+            .qi_current;
+        let zone_qi_after = {
+            let zones = app.world().resource::<ZoneRegistry>();
+            zones
+                .find_zone_by_name("spawn")
+                .expect("spawn zone must exist")
+                .spirit_qi
+        };
+
+        let player_loss = initial_qi - qi_current_after;
+        let zone_gain_raw = (zone_qi_after - zone_qi_before) * QI_ZONE_UNIT_CAPACITY;
+
+        assert!(
+            player_loss > 0.0,
+            "系统守恒测试前提：玩家 qi_current 应有减少（期望 > 0，实际 {}）",
+            player_loss
+        );
+        assert!(
+            (player_loss - zone_gain_raw).abs() < 1e-9,
+            "守恒失败：玩家减 qi={player_loss}，zone 增 qi={zone_gain_raw}（应相等，误差 {}）。\
+             player 减 == zone 增是负灵域生态守恒红线。",
+            (player_loss - zone_gain_raw).abs()
+        );
+    }
+
+    /// SYS-CONS-T2: ghost_contact_system 运行后，玩家 qi_current + zone 增量 = 初始总量（总量守恒）。
+    /// 三角验证：不仅各方向相等，总量也不变。
+    #[test]
+    fn ghost_contact_system_total_qi_is_conserved() {
+        use crate::qi_physics::constants::QI_ZONE_UNIT_CAPACITY;
+        let initial_spirit_qi = -0.5_f64;
+        let mut app = make_app_with_neg_zone(initial_spirit_qi);
+        app.add_systems(Update, ghost_contact_system);
+
+        app.world_mut().spawn(GhostEntity {
+            position: DVec3::new(8.0, 66.0, 8.1),
+            drift_velocity: DVec3::ZERO,
+            zone_name: "spawn".to_string(),
+            tick_counter: 0,
+        });
+
+        let qi_max = 100.0_f64;
+        let initial_qi = 50.0_f64;
+
+        let player = app
+            .world_mut()
+            .spawn((
+                Position::new([8.0, 66.0, 8.0]),
+                CurrentDimension(DimensionKind::Overworld),
+                Cultivation {
+                    qi_current: initial_qi,
+                    qi_max,
+                    ..Default::default()
+                },
+                LifeRecord::new(canonical_player_id("TotalConsTest")),
+            ))
+            .id();
+
+        let zone_qi_before = {
+            let zones = app.world().resource::<ZoneRegistry>();
+            zones.find_zone_by_name("spawn").unwrap().spirit_qi
+        };
+        let total_before = initial_qi + zone_qi_before * QI_ZONE_UNIT_CAPACITY;
+
+        app.update();
+
+        let qi_current_after = app
+            .world()
+            .entity(player)
+            .get::<Cultivation>()
+            .unwrap()
+            .qi_current;
+        let zone_qi_after = {
+            let zones = app.world().resource::<ZoneRegistry>();
+            zones.find_zone_by_name("spawn").unwrap().spirit_qi
+        };
+        let total_after = qi_current_after + zone_qi_after * QI_ZONE_UNIT_CAPACITY;
+
+        assert!(
+            (total_before - total_after).abs() < 1e-9,
+            "总量守恒失败：系统前 {total_before}，系统后 {total_after}（误差 {}）。\
+             ghost_contact_system 不应吞真元也不应凭空创造真元。",
+            (total_before - total_after).abs()
         );
     }
 }

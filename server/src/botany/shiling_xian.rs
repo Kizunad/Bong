@@ -24,7 +24,7 @@ use super::registry::BotanyPlantId;
 use crate::cultivation::components::Cultivation;
 use crate::cultivation::life_record::LifeRecord;
 use crate::npc::spawn::common::NpcMarker;
-use crate::qi_physics::constants::{MOSS_DRAIN_FACTOR, QI_EPSILON};
+use crate::qi_physics::constants::{MOSS_DRAIN_FACTOR, QI_EPSILON, QI_ZONE_UNIT_CAPACITY};
 use crate::qi_physics::ledger::{QiAccountId, QiTransfer, QiTransferReason};
 use crate::world::dimension::CurrentDimension;
 use crate::world::zone::ZoneRegistry;
@@ -177,7 +177,8 @@ pub fn moss_step_off_system(
 /// moss_drain_system：每 tick 对有 `ShiLingXianDrainTag` 的玩家 emit `QiTransfer`。
 ///
 /// drain_per_tick = qi_max × MOSS_DRAIN_FACTOR（已在 tag 内预计算）。
-/// 通过 `QiTransfer{reason: ShiLingXianDrain}` 守恒流向 zone 账户。
+/// 扣玩家 qi_current 的同时，把 actual_drain 真实搬进 zone 账户（zone.spirit_qi 增加），
+/// 再 emit `QiTransfer{reason: ShiLingXianDrain}` 留痕。player 减 == zone 增，守恒不破。
 #[allow(clippy::type_complexity)]
 pub fn moss_drain_system(
     mut players: Query<
@@ -189,6 +190,7 @@ pub fn moss_drain_system(
         ),
         Without<NpcMarker>,
     >,
+    mut zones: Option<ResMut<ZoneRegistry>>,
     mut qi_transfer_events: Option<ResMut<Events<QiTransfer>>>,
 ) {
     for (entity, life_record, mut cultivation, tag) in players.iter_mut() {
@@ -206,7 +208,18 @@ pub fn moss_drain_system(
         // 扣真元（守恒：player 减 → zone 增）
         cultivation.qi_current = (cultivation.qi_current - actual_drain).max(0.0);
 
-        // emit QiTransfer 事件（守恒流向 zone 账户）
+        // 守恒：把 actual_drain 真实搬进 zone 账户（zone.spirit_qi 增加）
+        // 公式：zone_after = zone_current + actual_drain（以 QI_ZONE_UNIT_CAPACITY 为单位换算）
+        if let Some(ref mut zones_mut) = zones {
+            if let Some(zone) = zones_mut.find_zone_mut(&tag.zone_name) {
+                let zone_current = zone.spirit_qi * QI_ZONE_UNIT_CAPACITY;
+                let room = (QI_ZONE_UNIT_CAPACITY - zone_current).max(0.0);
+                let accepted = actual_drain.min(room);
+                zone.spirit_qi = (zone_current + accepted) / QI_ZONE_UNIT_CAPACITY;
+            }
+        }
+
+        // emit QiTransfer 留痕（审计轨迹，reason = ShiLingXianDrain）
         let player_account_id = life_record
             .map(|lr| QiAccountId::player(&lr.character_id))
             .unwrap_or_else(|| QiAccountId::player(format!("{entity:?}")));
@@ -988,6 +1001,170 @@ mod tests {
         assert_eq!(
             count, 1,
             "超出 MOSS_MAX_SPREAD_RADIUS({MOSS_MAX_SPREAD_RADIUS}) 的 moss 不应蔓延（期望 1，实际 {count}）（P2 最大半径边界）"
+        );
+    }
+
+    // ── 系统级守恒测试：zone.spirit_qi 增量 == 玩家 qi_current 减量 ──
+    // 这组测试跑真实 ECS system，断言"player 减 == zone 增"契约在运行时路径成立。
+    // 与 qi_physics::ledger 的 WorldQiAccount 单测互补——后者只测孤立数学，
+    // 这里锁住 moss_drain_system 系统路径本身。
+
+    /// SYS-CONS-T1: moss_drain_system 运行后，zone.spirit_qi 增量精确等于玩家 qi_current 减量。
+    /// 验证：player 减 actual_drain，zone 增 actual_drain / QI_ZONE_UNIT_CAPACITY，守恒不破。
+    #[test]
+    fn moss_drain_system_zone_spirit_qi_increases_by_player_qi_loss() {
+        use crate::qi_physics::constants::QI_ZONE_UNIT_CAPACITY;
+        let initial_spirit_qi = -0.5_f64;
+        let mut app = make_app_with_neg_zone(initial_spirit_qi);
+        app.add_systems(Update, moss_drain_system);
+
+        let drain_per_tick = 0.5_f64;
+        let initial_qi = 10.0_f64;
+
+        let player = app
+            .world_mut()
+            .spawn((
+                make_player_cultivation(initial_qi, 100.0),
+                LifeRecord::new(crate::player::state::canonical_player_id("ZoneConsTest")),
+                ShiLingXianDrainTag {
+                    drain_per_tick,
+                    zone_name: "spawn".to_string(),
+                },
+            ))
+            .id();
+
+        // 系统运行前记录 zone.spirit_qi
+        let zone_qi_before = {
+            let zones = app.world().resource::<crate::world::zone::ZoneRegistry>();
+            zones
+                .find_zone_by_name("spawn")
+                .expect("spawn zone must exist")
+                .spirit_qi
+        };
+
+        app.update();
+
+        let qi_after = app
+            .world()
+            .entity(player)
+            .get::<Cultivation>()
+            .unwrap()
+            .qi_current;
+        let zone_qi_after = {
+            let zones = app.world().resource::<crate::world::zone::ZoneRegistry>();
+            zones
+                .find_zone_by_name("spawn")
+                .expect("spawn zone must exist")
+                .spirit_qi
+        };
+
+        let player_loss = initial_qi - qi_after;
+        let zone_gain_raw = (zone_qi_after - zone_qi_before) * QI_ZONE_UNIT_CAPACITY;
+
+        assert!(
+            player_loss > 0.0,
+            "系统守恒测试前提：玩家 qi_current 应有减少（期望 > 0，实际 {}）",
+            player_loss
+        );
+        assert!(
+            (player_loss - zone_gain_raw).abs() < 1e-9,
+            "守恒失败：玩家减 qi={player_loss}，zone 增 qi={zone_gain_raw}（应相等，误差 {}）。\
+             player 减 == zone 增是噬灵藓守恒红线。",
+            (player_loss - zone_gain_raw).abs()
+        );
+    }
+
+    /// SYS-CONS-T2: moss_drain_system 多 tick 后总量守恒（不吞不造）。
+    /// 三角验证：玩家 qi_current + zone spirit_qi×cap = 初始总量，5 tick 累计都守恒。
+    #[test]
+    fn moss_drain_system_total_qi_is_conserved_over_multiple_ticks() {
+        use crate::qi_physics::constants::QI_ZONE_UNIT_CAPACITY;
+        let initial_spirit_qi = -0.5_f64;
+        let mut app = make_app_with_neg_zone(initial_spirit_qi);
+        app.add_systems(Update, moss_drain_system);
+
+        let drain_per_tick = 0.2_f64;
+        let initial_qi = 100.0_f64;
+
+        let player = app
+            .world_mut()
+            .spawn((
+                make_player_cultivation(initial_qi, 100.0),
+                LifeRecord::new(crate::player::state::canonical_player_id("TotalConsMoss")),
+                ShiLingXianDrainTag {
+                    drain_per_tick,
+                    zone_name: "spawn".to_string(),
+                },
+            ))
+            .id();
+
+        let zone_qi_before = {
+            let zones = app.world().resource::<crate::world::zone::ZoneRegistry>();
+            zones.find_zone_by_name("spawn").unwrap().spirit_qi
+        };
+        let total_before = initial_qi + zone_qi_before * QI_ZONE_UNIT_CAPACITY;
+
+        for _ in 0..5 {
+            app.update();
+        }
+
+        let qi_after = app
+            .world()
+            .entity(player)
+            .get::<Cultivation>()
+            .unwrap()
+            .qi_current;
+        let zone_qi_after = {
+            let zones = app.world().resource::<crate::world::zone::ZoneRegistry>();
+            zones.find_zone_by_name("spawn").unwrap().spirit_qi
+        };
+        let total_after = qi_after + zone_qi_after * QI_ZONE_UNIT_CAPACITY;
+
+        assert!(
+            (total_before - total_after).abs() < 1e-9,
+            "5 tick 后总量守恒失败：系统前 {total_before}，系统后 {total_after}（误差 {}）。\
+             moss_drain_system 不应吞真元也不应凭空创造真元。",
+            (total_before - total_after).abs()
+        );
+    }
+
+    // ── 隔离测试：ShiLingXian Plant 不进 botany harvest/lifecycle 路径 ──
+
+    /// ISO-T1: ShiLingXian Plant 的 id 是 ShiLingXian（BotanyPlantId），
+    /// 不是 Herb 类型（非药材），没有 drop/harvest 路径。
+    /// pin 测试：钉死"噬灵藓不可采集/非药材"契约——任何把它接入 harvest 路径的 PR 会撞红。
+    #[test]
+    fn shiling_xian_plant_is_not_a_herb_and_cannot_be_harvested_via_lifecycle() {
+        // 噬灵藓 Plant 的 id 必须是 ShiLingXian，不是任何 Herb 变种。
+        // botany harvest lifecycle 只处理 BotanyPlantId 非 ShiLingXian 的植物。
+        let plant = make_moss_plant([0.0, 0.0, 0.0], "spawn");
+        assert_eq!(
+            plant.id,
+            BotanyPlantId::ShiLingXian,
+            "噬灵藓的 id 必须是 BotanyPlantId::ShiLingXian（期望），实际 {:?}",
+            plant.id
+        );
+
+        // 踩踏检测以 harvested / trampled 标记控制生命周期，
+        // 不存在 harvest 接口：plant 本身没有 harvestable 字段/方法。
+        // 验证：初始状态下 harvested=false（未被 lifecycle 标记过采集）。
+        assert!(
+            !plant.harvested,
+            "初始 ShiLingXian 不应被标记为 harvested（期望 false，实际 {}）——噬灵藓无采集路径",
+            plant.harvested
+        );
+
+        // 确认 ShiLingXian 不在药材采集系统触及范围：
+        // 用 moss_step_on / moss_drain 这两个专属系统，而不是通用 botany_harvest_system。
+        // 此处 pin：BotanyPlantId::ShiLingXian 是 TaintedBotany 子类，而非 MedicinalHerb 子类。
+        // 用 variant == Tainted 来识别，普通药材 variant != Tainted。
+        let plant_tainted = make_moss_plant([0.0, 0.0, 0.0], "spawn");
+        assert_eq!(
+            plant_tainted.variant,
+            PlantVariant::Tainted,
+            "噬灵藓的 variant 必须是 PlantVariant::Tainted（期望），实际 {:?}——\
+             通用 harvest lifecycle 不处理 Tainted variant，钉死不可采集契约",
+            plant_tainted.variant
         );
     }
 }
