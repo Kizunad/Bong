@@ -3414,6 +3414,7 @@ mod tests {
         app.add_event::<CancelExtractRequestEvent>();
         app.add_event::<QiColorInspectRequest>();
         app.add_event::<MineralProbeIntent>();
+        app.add_event::<FreshnessProbeIntent>();
         app.add_event::<SkillXpGain>();
         app.add_event::<SkillScrollUsed>();
         app.add_event::<InventoryDurabilityChangedEvent>();
@@ -10212,6 +10213,268 @@ mod npc_flawed_pill_trade_tests {
         assert!(
             npc_trade_catalog_entry(NpcArchetype::Rogue, "xi_sui_ye_flawed").is_none(),
             "洗髓液以上 NPC 不售卖"
+        );
+    }
+}
+
+// ─── plan-exploration-probe-return-v1 P1 — FreshnessProbe handler 测试 ───
+#[cfg(test)]
+mod freshness_probe_handler_tests {
+    use super::*;
+    use crate::inventory::{ContainerState, InventoryRevision, ItemInstance, ItemRarity, PlacedItemState};
+    use valence::prelude::{ident, App, EventReader, IntoSystemConfigs, ResMut, Update};
+    use valence::testing::create_mock_client;
+
+    #[derive(Default)]
+    struct CapturedFreshnessProbes(Vec<FreshnessProbeIntent>);
+    impl valence::prelude::Resource for CapturedFreshnessProbes {}
+
+    fn capture_freshness_probes(
+        mut events: EventReader<FreshnessProbeIntent>,
+        mut captured: ResMut<CapturedFreshnessProbes>,
+    ) {
+        captured.0.extend(events.read().cloned());
+    }
+
+    fn empty_inventory() -> PlayerInventory {
+        PlayerInventory {
+            revision: InventoryRevision(0),
+            containers: vec![ContainerState {
+                id: "main_pack".into(),
+                name: "main_pack".into(),
+                rows: 5,
+                cols: 7,
+                items: Vec::new(),
+            }],
+            equipped: Default::default(),
+            hotbar: Default::default(),
+            bone_coins: 0,
+            max_weight: 50.0,
+        }
+    }
+
+    fn inventory_with_item(item: ItemInstance) -> PlayerInventory {
+        PlayerInventory {
+            revision: InventoryRevision(0),
+            containers: vec![ContainerState {
+                id: "main_pack".into(),
+                name: "main_pack".into(),
+                rows: 5,
+                cols: 7,
+                items: vec![PlacedItemState {
+                    row: 0,
+                    col: 0,
+                    instance: item,
+                }],
+            }],
+            equipped: Default::default(),
+            hotbar: Default::default(),
+            bone_coins: 0,
+            max_weight: 50.0,
+        }
+    }
+
+    /// helper：为 FreshnessProbe 测试注册最小 app。
+    /// 镜像 mineral_probe_request_emits_probe_intent 的 app 构造模式。
+    fn setup_freshness_probe_app() -> (App, valence::prelude::Entity) {
+        let mut app = App::new();
+        app.insert_resource(CapturedFreshnessProbes::default());
+        app.insert_resource(CombatClock { tick: 42 });
+        app.insert_resource(GameplayActionQueue::default());
+        app.insert_resource(AlchemyMockState::default());
+        app.insert_resource(DroppedLootRegistry::default());
+        app.insert_resource(ItemRegistry::default());
+        app.insert_resource(RecipeRegistry::default());
+        app.add_event::<CustomPayloadEvent>();
+        app.add_event::<BreakthroughRequest>();
+        app.add_event::<ForgeRequest>();
+        app.add_event::<InsightChosen>();
+        app.add_event::<DefenseIntent>();
+        app.add_event::<ApplyStatusEffectIntent>();
+        app.add_event::<PlaceFurnaceRequest>();
+        app.add_event::<crate::alchemy::LearnRecipeFragmentIntent>();
+        app.add_event::<StartTillRequest>();
+        app.add_event::<StartRenewRequest>();
+        app.add_event::<StartPlantingRequest>();
+        app.add_event::<StartHarvestRequest>();
+        app.add_event::<StartReplenishRequest>();
+        app.add_event::<StartDrainQiRequest>();
+        app.add_event::<StartExtractRequestEvent>();
+        app.add_event::<CancelExtractRequestEvent>();
+        app.add_event::<MineralProbeIntent>();
+        app.add_event::<FreshnessProbeIntent>();
+        app.add_event::<SkillXpGain>();
+        app.add_event::<SkillScrollUsed>();
+        app.add_systems(
+            Update,
+            (handle_client_request_payloads, capture_freshness_probes).chain(),
+        );
+        let (client_bundle, _helper) = create_mock_client("Azure");
+        let entity = app.world_mut().spawn(client_bundle).id();
+        (app, entity)
+    }
+
+    /// FreshnessProbe 请求：inventory 中存在 instance_id → emit FreshnessProbeIntent 正确字段。
+    #[test]
+    fn freshness_probe_request_emits_probe_intent() {
+        let (mut app, entity) = setup_freshness_probe_app();
+        let item = ItemInstance {
+            instance_id: 7777,
+            template_id: "xi_zhi_herb".to_string(),
+            display_name: "细枝草".to_string(),
+            grid_w: 1,
+            grid_h: 1,
+            weight: 0.1,
+            rarity: ItemRarity::Common,
+            description: String::new(),
+            stack_count: 1,
+            spirit_quality: 0.8,
+            durability: 1.0,
+            freshness: None,
+            mineral_id: None,
+            charges: None,
+            forge_quality: None,
+            forge_color: None,
+            forge_side_effects: Vec::new(),
+            forge_achieved_tier: None,
+            alchemy: None,
+            lingering_owner_qi: None,
+        };
+        app.world_mut()
+            .entity_mut(entity)
+            .insert(inventory_with_item(item));
+        app.world_mut()
+            .resource_mut::<valence::prelude::Events<CustomPayloadEvent>>()
+            .send(CustomPayloadEvent {
+                client: entity,
+                channel: ident!("bong:client_request").into(),
+                data: br#"{"type":"freshness_probe","v":1,"instance_id":7777}"#
+                    .to_vec()
+                    .into_boxed_slice(),
+            });
+        app.update();
+
+        let captured = app.world().resource::<CapturedFreshnessProbes>();
+        assert_eq!(
+            captured.0.len(),
+            1,
+            "应 emit 1 个 FreshnessProbeIntent，实际 {}",
+            captured.0.len()
+        );
+        assert_eq!(captured.0[0].player, entity, "player entity 应匹配");
+        assert_eq!(
+            captured.0[0].instance_id, 7777,
+            "instance_id 应 round-trip 为 7777"
+        );
+        assert_eq!(
+            captured.0[0].issued_at_tick, 42,
+            "issued_at_tick 应等于 CombatClock.tick=42"
+        );
+    }
+
+    /// FreshnessProbe 请求：instance_id 不在 inventory → 不 emit，不 panic。
+    #[test]
+    fn freshness_probe_request_not_found_does_not_emit() {
+        let (mut app, entity) = setup_freshness_probe_app();
+        // inventory 为空，instance_id=9999 不存在
+        app.world_mut()
+            .entity_mut(entity)
+            .insert(empty_inventory());
+        app.world_mut()
+            .resource_mut::<valence::prelude::Events<CustomPayloadEvent>>()
+            .send(CustomPayloadEvent {
+                client: entity,
+                channel: ident!("bong:client_request").into(),
+                data: br#"{"type":"freshness_probe","v":1,"instance_id":9999}"#
+                    .to_vec()
+                    .into_boxed_slice(),
+            });
+        app.update();
+
+        let captured = app.world().resource::<CapturedFreshnessProbes>();
+        assert!(
+            captured.0.is_empty(),
+            "instance_id 不存在时不应 emit FreshnessProbeIntent"
+        );
+    }
+
+    /// FreshnessProbe 请求：instance_id 在非首容器中也能找到并 emit（多容器覆盖）。
+    #[test]
+    fn freshness_probe_request_finds_item_in_secondary_container() {
+        let (mut app, entity) = setup_freshness_probe_app();
+        // 构造含两个容器的 inventory，物品在第二个容器
+        let item = ItemInstance {
+            instance_id: 1234,
+            template_id: "xi_zhi_herb".to_string(),
+            display_name: "细枝草".to_string(),
+            grid_w: 1,
+            grid_h: 1,
+            weight: 0.1,
+            rarity: ItemRarity::Common,
+            description: String::new(),
+            stack_count: 1,
+            spirit_quality: 1.0,
+            durability: 1.0,
+            freshness: None,
+            mineral_id: None,
+            charges: None,
+            forge_quality: None,
+            forge_color: None,
+            forge_side_effects: Vec::new(),
+            forge_achieved_tier: None,
+            alchemy: None,
+            lingering_owner_qi: None,
+        };
+        let inv = PlayerInventory {
+            revision: InventoryRevision(0),
+            containers: vec![
+                // 第一容器（空）
+                ContainerState {
+                    id: "main_pack".into(),
+                    name: "main_pack".into(),
+                    rows: 5,
+                    cols: 7,
+                    items: Vec::new(),
+                },
+                // 第二容器持有目标物品
+                ContainerState {
+                    id: "side_pack".into(),
+                    name: "side_pack".into(),
+                    rows: 3,
+                    cols: 4,
+                    items: vec![PlacedItemState {
+                        row: 1,
+                        col: 2,
+                        instance: item,
+                    }],
+                },
+            ],
+            equipped: Default::default(),
+            hotbar: Default::default(),
+            bone_coins: 0,
+            max_weight: 50.0,
+        };
+        app.world_mut().entity_mut(entity).insert(inv);
+        app.world_mut()
+            .resource_mut::<valence::prelude::Events<CustomPayloadEvent>>()
+            .send(CustomPayloadEvent {
+                client: entity,
+                channel: ident!("bong:client_request").into(),
+                data: br#"{"type":"freshness_probe","v":1,"instance_id":1234}"#
+                    .to_vec()
+                    .into_boxed_slice(),
+            });
+        app.update();
+
+        let captured = app.world().resource::<CapturedFreshnessProbes>();
+        assert_eq!(
+            captured.0.len(),
+            1,
+            "第二容器中的物品也应能 emit FreshnessProbeIntent"
+        );
+        assert_eq!(
+            captured.0[0].instance_id, 1234,
+            "instance_id 应匹配第二容器物品"
         );
     }
 }
