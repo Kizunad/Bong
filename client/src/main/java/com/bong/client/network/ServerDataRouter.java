@@ -253,6 +253,8 @@ public final class ServerDataRouter {
             new com.bong.client.combat.handler.SwordBondHudStateHandler());
         // plan-exploration-probe-return-v1 P0：神识感知矿脉回执（actionbar overlay + SFX）
         handlers.put("mineral_probe_result", new MineralProbeResultHandler());
+        // plan-exploration-probe-return-v1 P2：修炼顿悟邀约（InsightOfferStore → InsightOfferScreen）
+        handlers.put("insight_offer", new InsightOfferHandler());
         return new ServerDataRouter(handlers);
     }
 

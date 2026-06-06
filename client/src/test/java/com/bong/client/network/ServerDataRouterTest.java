@@ -168,7 +168,9 @@ public class ServerDataRouterTest {
             // plan-combat-skill-feedback-bridges-v1 P6 — 人剑共生 HUD S2C
             "sword_bond_hud_state",
             // plan-exploration-probe-return-v1 P0 — 神识感知矿脉回执 S2C
-            "mineral_probe_result"
+            "mineral_probe_result",
+            // plan-exploration-probe-return-v1 P2 — 修炼顿悟邀约 S2C
+            "insight_offer"
         ), router.registeredTypes());
     }
 
