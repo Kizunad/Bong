@@ -4,6 +4,7 @@ import org.junit.jupiter.api.Test;
 
 import java.util.List;
 import java.util.Map;
+import java.util.regex.Pattern;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -15,6 +16,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * (No real MC client needed -- pure data → layout description.)
  */
 public class NpcScreenDescribeTest {
+    private static final Pattern SECT_WORDS = Pattern.compile(".*(魔修|正道|宗门|掌门|真传弟子|内门|外门).*", Pattern.DOTALL);
 
     // ── helpers ─────────────────────────────────────────────────────────────
 
@@ -105,7 +107,7 @@ public class NpcScreenDescribeTest {
     void dialogueArchetypeLabelMapping() {
         assertEquals("散修", NpcDialogueScreen.archetypeLabel("rogue"));
         assertEquals("凡人", NpcDialogueScreen.archetypeLabel("commoner"));
-        assertEquals("宗门弟子", NpcDialogueScreen.archetypeLabel("disciple"));
+        assertEquals("残宗余孽", NpcDialogueScreen.archetypeLabel("disciple"));
         assertEquals("异兽", NpcDialogueScreen.archetypeLabel("beast"));
         assertEquals("游尸", NpcDialogueScreen.archetypeLabel("zombie"));
         assertEquals("遗迹守卫", NpcDialogueScreen.archetypeLabel("guardian_relic"));
@@ -187,26 +189,51 @@ public class NpcScreenDescribeTest {
     }
 
     @Test
-    void inspectFactionPresent() {
+    void inspectShowsAttitudeInsteadOfFactionWhenFactionFieldsArePresent() {
         NpcInspectScreen.RenderContent content = NpcInspectScreen.describe(friendly(), NpcInspectScreen.REALM_RANK_FULL);
-        assertTrue(content.lines().stream().anyMatch(l -> l.contains("faction:") && l.contains("中立盟") && l.contains("客卿")),
-            "faction + rank should be displayed");
+
+        assertTrue(content.lines().stream().anyMatch(l -> l.equals("attitude: 亲善")),
+            "inspect should show attitude from reputation_to_player instead of faction fields");
+        assertFalse(content.lines().stream().anyMatch(l -> l.startsWith("faction:")),
+            "inspect should not render faction lines after NPC faction anonymity reframe");
+        assertInspectHasNoSectWords(content);
     }
 
     @Test
-    void inspectNoFaction() {
+    void inspectNoFactionStillShowsNeutralAttitude() {
         NpcInspectScreen.RenderContent content = NpcInspectScreen.describe(noEquipNoTech(), NpcInspectScreen.REALM_RANK_FULL);
-        assertTrue(content.lines().stream().anyMatch(l -> l.equals("faction: 无")),
-            "NPC without faction should show '无'");
+
+        assertTrue(content.lines().stream().anyMatch(l -> l.equals("attitude: 中立")),
+            "NPC without faction should still show neutral attitude");
+        assertFalse(content.lines().stream().anyMatch(l -> l.startsWith("faction:")),
+            "inspect should not show fallback faction lines after anonymity reframe");
     }
 
     @Test
     void inspectAttitudeLabels() {
-        assertEquals("友善", NpcInspectScreen.attitudeLabel(60));
-        assertEquals("敌意", NpcInspectScreen.attitudeLabel(-40));
-        assertEquals("中立", NpcInspectScreen.attitudeLabel(10));
+        assertEquals("亲善", NpcInspectScreen.attitudeLabel(34));
+        assertEquals("亲善", NpcInspectScreen.attitudeLabel(100));
+        assertEquals("敌意", NpcInspectScreen.attitudeLabel(-34));
+        assertEquals("敌意", NpcInspectScreen.attitudeLabel(-100));
+        assertEquals("中立", NpcInspectScreen.attitudeLabel(-33));
+        assertEquals("中立", NpcInspectScreen.attitudeLabel(33));
         assertEquals("中立", NpcInspectScreen.attitudeLabel(0));
-        assertEquals("中立", NpcInspectScreen.attitudeLabel(50));
+    }
+
+    @Test
+    void npcIdentitySurfacesDoNotContainSectWords() {
+        NpcMetadata metadata = new NpcMetadata(
+            4, "disciple", "凝脉", "魔修派", "掌门", 40,
+            "残宗余孽·凝脉", "正值壮年", "道友，可有灵草出让？", null,
+            1.0, 0.5,
+            Map.of(), List.of(), List.of()
+        );
+
+        NpcDialogueScreen.RenderContent dialogue = NpcDialogueScreen.describe(metadata);
+        NpcInspectScreen.RenderContent inspect = NpcInspectScreen.describe(metadata, NpcInspectScreen.REALM_RANK_FULL);
+
+        assertNoSectWords(String.join("\n", dialogue.lines()), "dialogue");
+        assertInspectHasNoSectWords(inspect);
     }
 
     @Test
@@ -400,5 +427,14 @@ public class NpcScreenDescribeTest {
         assertEquals("腿甲", NpcInspectScreen.slotLabel("legs"));
         assertEquals("靴子", NpcInspectScreen.slotLabel("feet"));
         assertEquals("unknown_slot", NpcInspectScreen.slotLabel("unknown_slot"));
+    }
+
+    private static void assertInspectHasNoSectWords(NpcInspectScreen.RenderContent content) {
+        assertNoSectWords(String.join("\n", content.lines()), "inspect");
+    }
+
+    private static void assertNoSectWords(String actual, String surface) {
+        assertFalse(SECT_WORDS.matcher(actual).matches(),
+            "期望 NPC " + surface + " 不含具名宗门字样（reframe b），实际: " + actual);
     }
 }

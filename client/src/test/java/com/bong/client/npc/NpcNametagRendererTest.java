@@ -37,4 +37,23 @@ public class NpcNametagRendererTest {
         assertTrue(NpcNametagRenderer.labelForDistance(metadata, 19.0, "Awaken").startsWith("⚠ "));
         assertEquals("[散修·凝脉]", NpcNametagRenderer.labelForDistance(metadata, 19.0, "Induce"));
     }
+
+    @Test
+    void discipleDistanceIconUsesRuinedRemnantGlyph() {
+        NpcMetadata metadata = new NpcMetadata(
+            43,
+            "disciple",
+            "凝脉",
+            null,
+            null,
+            0,
+            "残宗余孽·凝脉",
+            "正值壮年",
+            "道友，可有灵草出让？",
+            null
+        );
+
+        assertEquals("[残宗余孽·凝脉]", NpcNametagRenderer.labelForDistance(metadata, 19.0, "凝脉"));
+        assertEquals("余", NpcNametagRenderer.labelForDistance(metadata, 25.0, "凝脉"));
+    }
 }

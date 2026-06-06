@@ -111,8 +111,8 @@ public class NpcLodWorldRendererTest {
             "期望 rogue→散");
         assertEquals("凡", NpcLodWorldRenderer.lodLabelFor("commoner"),
             "期望 commoner→凡");
-        assertEquals("宗", NpcLodWorldRenderer.lodLabelFor("disciple"),
-            "期望 disciple→宗");
+        assertEquals("余", NpcLodWorldRenderer.lodLabelFor("disciple"),
+            "期望 disciple→余");
         assertEquals("兽", NpcLodWorldRenderer.lodLabelFor("beast"),
             "期望 beast→兽");
         assertEquals("守", NpcLodWorldRenderer.lodLabelFor("guardian_relic"),

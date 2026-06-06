@@ -195,7 +195,7 @@ public final class NpcDialogueScreen extends BaseOwoScreen<FlowLayout> {
         return switch (archetype == null ? "" : archetype) {
             case "rogue" -> "散修";
             case "commoner" -> "凡人";
-            case "disciple" -> "宗门弟子";
+            case "disciple" -> "残宗余孽";
             case "beast" -> "异兽";
             case "zombie" -> "游尸";
             case "guardian_relic" -> "遗迹守卫";
