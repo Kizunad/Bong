@@ -12,7 +12,7 @@ name: Pi Plan-Aware Review
 #   低自信 fan-out:仍不达标且有弱项 → 每个弱维派一个专项成员并行深挖
 #   第二步 arbiter:综合去重后的 findings 产出中文 review 并发评论
 # 多 provider 力大砖飞:模型名 `provider/id` 路由到各自端点/key/API 格式(OpenAI + Anthropic),
-#   一次 review 同时混免费队(cliproxy flash/lite)+ 付费 pro(deepseek)。
+#   全走自家代理 proxy.kizun4.uk(免费):flash=deepseek-v4-flash、lite=sensenova-lite、pro=gpt-5.5。
 #   某 provider 宕机/无 key → 自动跳过(graceful degrade),不阻断全局。
 # 端点/模型/key/轮控参数全 env 可覆盖(repo variables / secrets)。
 on:
@@ -44,7 +44,7 @@ jobs:
        contains(github.event.comment.body, '@pi') &&
        contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association))
     runs-on: ubuntu-latest
-    # 动态分档:小改 6 成员/1 轮/零付费,大改力大砖飞 32 成员/2 轮,跨 cliproxy(免费)+ deepseek(pro)两端点并发。每次调用 ≤PI_CALL_TIMEOUT_MS、
+    # 动态分档:小改 6 成员/1 轮,大改力大砖飞 32 成员/2 轮,全走自家代理 proxy.kizun4.uk(免费)。每次调用 ≤PI_CALL_TIMEOUT_MS、
     # 轮数硬上限,所以仍有界;45min 是大面板的逃生阀(实测一次约 7-15min)。
     timeout-minutes: 45
 
@@ -61,19 +61,19 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PR_NUMBER: ${{ github.event.issue.number || inputs.pr_number }}
-          # 多 provider key:模型名 `provider/id` 路由到各自端点。免费队(cliproxy)+ 付费 pro(deepseek)。
-          # ollama/minimax 已撤(免费额度太少);kiro/anyrouter 的免费 claude 端点当前已宕(530/无效令牌)。
-          # 这几个 provider 的 registry 仍在脚本里——救活/加额度后把模型加回 PI_DEBATE_MODELS 即可,不动代码。
+          # 全走自家代理 proxy.kizun4.uk(脚本 cliproxy provider,key=server_agent via PI_CLIPROXY_KEY)。
+          # 模型都汇总在此(deepseek-v4-flash + sensenova-lite + gpt-5.x),全免费、用量在代理侧统一统计。
+          # proxy 上没有 deepseek-v4-pro,故 pro 档改用最强的 gpt-5.5(bench 实测比 deepseek-pro 还强)。
+          # 其它 provider(deepseek/ollama/kiro/gemini…)registry 仍在脚本里,要用再配对应 PI_*_KEY 即可。
           PI_CLIPROXY_KEY: ${{ secrets.PI_CLIPROXY_KEY }}
-          PI_DEEPSEEK_KEY: ${{ secrets.PI_DEEPSEEK_KEY }}
           # 动态分档:按 diff 规模自动选面板配比 + 轮数(脚本 TIERS,均衡档):
-          #   trivial ≤40 行 = flash4+lite2 / 1 轮 / 无 pro(零成本)
+          #   trivial ≤40 行 = flash4+lite2 / 1 轮 / 无 pro
           #   small   ≤250    = flash8+pro1+lite3 / 1 轮
           #   medium  ≤1000   = flash14+pro2+lite5 / 2 轮
           #   large   >1000   = flash20+pro4+lite8 / 2 轮(力大砖飞);文件≥15 升一档
-          # 这里只配【角色模型】(分档按角色拼面板);arbiter 在有 pro 的档用 pro、trivial 用免费 flash。
+          # 三档角色模型全在 proxy.kizun4.uk 上;arbiter 在有 pro 的档用 gpt-5.5、trivial 用免费 flash。
           PI_FLASH_MODEL: ${{ vars.PI_FLASH_MODEL || 'cliproxy/deepseek-v4-flash' }}
-          PI_PRO_MODEL: ${{ vars.PI_PRO_MODEL || 'deepseek/deepseek-v4-pro' }}
+          PI_PRO_MODEL: ${{ vars.PI_PRO_MODEL || 'cliproxy/gpt-5.5' }}
           PI_LITE_MODEL: ${{ vars.PI_LITE_MODEL || 'cliproxy/sensenova-6.7-flash-lite' }}
           PI_GATHER_MODEL: ${{ vars.PI_GATHER_MODEL || 'cliproxy/deepseek-v4-flash' }}
           # 要钉死面板/轮数(关掉 autoscale 那一维)就设 vars.PI_DEBATE_MODELS / PI_MAX_ROUNDS / PI_ARBITER_MODEL;
