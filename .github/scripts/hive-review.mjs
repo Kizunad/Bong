@@ -14,19 +14,30 @@
 import { execSync } from "node:child_process";
 import { readFileSync, writeFileSync, existsSync } from "node:fs";
 
-const BASE_URL = (process.env.HIVE_BASE_URL || "https://token.sensenova.cn/v1").replace(/\/+$/, "");
-// 多 key 轮询:HIVE_API_KEYS(逗号分隔)优先,否则收集 HIVE_API_KEY / HIVE_API_KEY_2/3...
-// 去重 + 去空,每次请求 round-robin 摊负载,重试时自动切下一把(跳过被限流/失效的 key)。
-const KEYS = [
-  ...(process.env.HIVE_API_KEYS || "").split(","),
-  process.env.HIVE_API_KEY,
-  process.env.HIVE_API_KEY_2,
-  process.env.HIVE_API_KEY_3,
-]
-  .map((s) => (s || "").trim())
-  .filter(Boolean)
-  .filter((k, i, a) => a.indexOf(k) === i);
-let keyCursor = 0;
+// 多端点 failover(限时羊毛端点死活无常,挂一个自动切下一个 = base + key 一起切):
+// HIVE_ENDPOINTS = "base|key;base|key;..."(分号分隔条目,每条 base 与 key 用 | 分隔)。
+// 不设时回退老的单 HIVE_BASE_URL × 多 HIVE_API_KEY(_2/_3 / HIVE_API_KEYS 逗号)轮询,向后兼容。
+const ENDPOINTS = (() => {
+  const multi = (process.env.HIVE_ENDPOINTS || "")
+    .split(";")
+    .map((s) => s.trim())
+    .filter(Boolean)
+    .map((pair) => {
+      const i = pair.indexOf("|");
+      return { base: (i < 0 ? pair : pair.slice(0, i)).trim().replace(/\/+$/, ""), key: (i < 0 ? "" : pair.slice(i + 1)).trim() };
+    })
+    .filter((e) => e.base && e.key)
+    .filter((e, i, a) => a.findIndex((x) => x.base === e.base && x.key === e.key) === i);
+  if (multi.length) return multi;
+  const base = (process.env.HIVE_BASE_URL || "https://token.sensenova.cn/v1").replace(/\/+$/, "");
+  const keys = [...(process.env.HIVE_API_KEYS || "").split(","), process.env.HIVE_API_KEY, process.env.HIVE_API_KEY_2, process.env.HIVE_API_KEY_3]
+    .map((s) => (s || "").trim())
+    .filter(Boolean)
+    .filter((k, i, a) => a.indexOf(k) === i);
+  return keys.map((key) => ({ base, key }));
+})();
+let epCursor = 0;
+const epHost = (b) => { try { return new URL(b).host; } catch { return b; } };
 // 累计 token 消耗(按模型),从每次响应的 usage 字段取
 const usageByModel = {};
 // 多模型混合 hive:成员在这几个模型间轮转,同台 debate(HIVE_MODEL 单数仍兼容)。
@@ -51,13 +62,13 @@ if (!PR) {
   console.error("PR_NUMBER 未设置");
   process.exit(1);
 }
-if (KEYS.length === 0) {
-  console.error("没有可用 key(在 repo secrets 添加 HIVE_API_KEY,多 key 再加 HIVE_API_KEY_2 或用 HIVE_API_KEYS 逗号分隔)");
+if (ENDPOINTS.length === 0) {
+  console.error("没有可用端点(配 HIVE_ENDPOINTS='base|key;...',或老式 HIVE_BASE_URL + HIVE_API_KEY)");
   process.exit(1);
 }
 console.error(
   `hive-think: PR #${PR} · ${SWARM} finders / ${VOTERS} voters×≤${MAX_VOTE_ROUNDS}轮 · ` +
-    `接受≥${ACCEPT_RATIO}/拒绝≤${REJECT_RATIO} · top${TOP_N} · 模型 [${MODELS.join(", ")}] · 裁决 ${ARBITER_MODEL} · ${KEYS.length} key`,
+    `接受≥${ACCEPT_RATIO}/拒绝≤${REJECT_RATIO} · top${TOP_N} · 模型 [${MODELS.join(", ")}] · 裁决 ${ARBITER_MODEL} · ${ENDPOINTS.length} 端点 [${ENDPOINTS.map((e) => epHost(e.base)).join(", ")}]`,
 );
 
 // ── 项目准则(精简版,塞进每个成员的上下文,让它知道该查什么)──────────────
@@ -125,17 +136,17 @@ async function mapLimit(items, limit, fn) {
   return out;
 }
 
-// 单次 chat,带超时 + 429/网络错误重试退避;每次尝试 round-robin 换一把 key(失败自动切下一把)
-async function chat(content, { label = "", model = MODELS[0], retries = Math.max(4, KEYS.length * 2) } = {}) {
+// 单次 chat,带超时 + 429/网络错误重试退避;每次尝试 round-robin 换一个端点(base+key 一起切,失败自动 failover)
+async function chat(content, { label = "", model = MODELS[0], retries = Math.max(4, ENDPOINTS.length * 2) } = {}) {
   for (let attempt = 1; attempt <= retries; attempt++) {
-    const key = KEYS[keyCursor++ % KEYS.length];
+    const ep = ENDPOINTS[epCursor++ % ENDPOINTS.length];
     const ctrl = new AbortController();
     const timer = setTimeout(() => ctrl.abort(), 300_000);
     try {
-      const res = await fetch(`${BASE_URL}/chat/completions`, {
+      const res = await fetch(`${ep.base}/chat/completions`, {
         method: "POST",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${key}` },
-        body: JSON.stringify({ model, messages: [{ role: "user", content }] }),
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${ep.key}` },
+        body: JSON.stringify({ model, messages: [{ role: "user", content }], stream: false }),
         signal: ctrl.signal,
       });
       clearTimeout(timer);
@@ -157,8 +168,8 @@ async function chat(content, { label = "", model = MODELS[0], retries = Math.max
       return text;
     } catch (e) {
       clearTimeout(timer);
-      // key 只露尾 4 位,不泄全量
-      console.error(`[${label}] 第 ${attempt}/${retries} 次失败(key …${key.slice(-4)}): ${e.message}`);
+      // 只露端点 host + key 尾 4 位,不泄全量
+      console.error(`[${label}] 第 ${attempt}/${retries} 次失败(${epHost(ep.base)} …${ep.key.slice(-4)}): ${e.message}`);
       if (attempt === retries) return null;
       await sleep(2500 * attempt);
     }

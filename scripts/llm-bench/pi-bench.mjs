@@ -28,6 +28,7 @@ const PROVIDERS = {
   ollama: { baseUrl: process.env.PI_OLLAMA_BASE_URL || "https://ollama.com/v1", key: process.env.PI_OLLAMA_KEY },
   aliyun: { baseUrl: process.env.PI_ALIYUN_BASE_URL || "https://ws-h0zvje40wib8deor.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1", key: process.env.PI_ALIYUN_KEY },
   gemini: { baseUrl: process.env.PI_GEMINI_BASE_URL || "https://ai.hybgzs.com/v1", key: process.env.PI_GEMINI_KEY },
+  muyuan: { baseUrl: process.env.PI_MUYUAN_BASE_URL || "https://muyuan.do/v1", key: process.env.PI_MUYUAN_KEY }, // newapi 代理:gpt-5.x 全家
 };
 
 // ── 候选 + jury(env 逗号分隔覆盖)─────────────────────────────────────────────
@@ -40,6 +41,8 @@ const CANDIDATES = (process.env.BENCH_MODELS ||
     "aliyun/qwen3.7-max",
     "aliyun/qwen3.7-plus",
     "gemini/gemini-3.5-flash",
+    "muyuan/gpt-5.5",
+    "muyuan/gpt-5.4-mini",
   ].join(",")
 )
   .split(",").map((s) => s.trim()).filter(Boolean);
