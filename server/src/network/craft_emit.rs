@@ -300,6 +300,7 @@ pub fn apply_craft_intents(
                 &mut allocator,
                 &template,
                 count,
+                0,
             ) {
                 tracing::warn!("[bong][craft] cancel refund failed for {template} x{count}: {err}");
             }
@@ -367,6 +368,7 @@ pub fn tick_craft_sessions(
                 &mut allocator,
                 &template,
                 count,
+                clock.tick,
             ) {
                 Ok(_) => {
                     let next_completed = session.completed_count.saturating_add(1);
@@ -401,6 +403,7 @@ pub fn tick_craft_sessions(
                             &mut allocator,
                             &refund_template,
                             refund_count,
+                            0,
                         ) {
                             Ok(_) => {
                                 material_returned += refund_count;

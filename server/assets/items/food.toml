@@ -32,7 +32,7 @@ grid_h = 1
 base_weight = 0.15
 rarity = "common"
 spirit_quality_initial = 0.35
-shelflife_profile = "food_spoil_mundane_meat_v1"
+shelflife_profile = "food_spoil_mundane_dry_v1"
 shelflife_track = "spoil"
 description = "荒地麦草磨粉压成的干饼，无灵气可言。久置发霉，路人口粮，修士不屑。"
 

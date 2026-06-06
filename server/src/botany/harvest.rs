@@ -179,10 +179,18 @@ pub fn complete_harvest_for_player(
             allocator,
             kind.item_id,
             1,
+            now_tick,
             |instance| apply_harvest_modifiers_to_item(instance, variant, herbalism_quality_bonus),
         )?
     } else {
-        add_item_to_player_inventory(&mut inventory, item_registry, allocator, kind.item_id, 1)?
+        add_item_to_player_inventory(
+            &mut inventory,
+            item_registry,
+            allocator,
+            kind.item_id,
+            1,
+            now_tick,
+        )?
     };
 
     if let Some(required_tool) = required_tool_for(session.target_plant, kind_registry) {

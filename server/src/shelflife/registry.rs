@@ -123,6 +123,17 @@ pub fn build_default_registry() -> DecayProfileRegistry {
         })
         .expect("built-in food_spoil_ling_guo profile should validate");
 
+    // plan-food-v1 MAJOR3: 干饼 Spoil（30 游戏日；陈饼是晒干品，远比生肉耐储）
+    registry
+        .insert(DecayProfile::Spoil {
+            id: DecayProfileId::new("food_spoil_mundane_dry_v1"),
+            formula: DecayFormula::Linear {
+                decay_per_tick: 1.0 / (GAME_DAY_TICKS as f32 * 30.0),
+            },
+            spoil_threshold: 0.01,
+        })
+        .expect("built-in food_spoil_mundane_dry profile should validate");
+
     // plan-shelflife-v1 M6: 陈酒 Age PeakAndFall → 过峰迁 Spoil（chen_cu_v1）
     // chen_cu_v1 作为 Spoil profile 先注册，chen_jiu_v1 引用它
     registry
@@ -347,13 +358,14 @@ mod tests {
             "fauna_bone_feng_he_gu_v1",
             "chen_cu_v1",
             "chen_jiu_v1",
-            // plan-food-v1 P0 — 食物 Spoil profiles
+            // plan-food-v1 P0/MAJOR3 — 食物 Spoil profiles
             "food_spoil_mundane_meat_v1",
             "food_spoil_ling_guo_v1",
+            "food_spoil_mundane_dry_v1",
         ] {
             assert!(r.contains(&DecayProfileId::new(id)), "missing {id}");
         }
-        assert_eq!(r.len(), 22, "expected 22 profiles: 20 existing + 2 food spoil profiles (food_spoil_mundane_meat_v1, food_spoil_ling_guo_v1)");
+        assert_eq!(r.len(), 23, "expected 23 profiles: 20 existing + 3 food spoil profiles (food_spoil_mundane_meat_v1, food_spoil_ling_guo_v1, food_spoil_mundane_dry_v1)");
     }
 
     #[test]

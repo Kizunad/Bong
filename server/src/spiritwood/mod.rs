@@ -600,14 +600,13 @@ fn grant_ling_mu_gun_to_inventory(
     Ok(instance_id)
 }
 
-#[cfg_attr(not(test), allow(dead_code))]
 pub fn ling_xia_container_behavior(
     item: &ItemInstance,
 ) -> Option<crate::shelflife::ContainerFreshnessBehavior> {
     (item.template_id == "ling_xia").then_some(crate::shelflife::ContainerFreshnessBehavior::Freeze)
 }
 
-#[cfg_attr(not(test), allow(dead_code))]
+#[allow(dead_code)]
 pub fn durability_tick_allowed_in_ling_xia(container: Option<&ItemInstance>) -> bool {
     container.is_none_or(|item| item.template_id != "ling_xia")
 }
@@ -616,7 +615,6 @@ pub fn durability_tick_allowed_in_ling_xia(container: Option<&ItemInstance>) -> 
 ///
 /// 冰窖仅对 Spoil track 生效（rate ×0.3），非 Spoil item 在此容器退 Normal。
 /// 使用 `ContainerFreshnessBehavior::SpoilOnly { rate: 0.3 }`。
-#[cfg_attr(not(test), allow(dead_code))]
 pub fn ice_cellar_container_behavior(
     item: &ItemInstance,
 ) -> Option<crate::shelflife::ContainerFreshnessBehavior> {
@@ -625,8 +623,7 @@ pub fn ice_cellar_container_behavior(
 }
 
 /// plan-food-v1 P3 — 组合容器行为查询：优先 ling_xia（Freeze），次查 ice_cellar（SpoilOnly 0.3），
-/// 否则返回 Normal。调用方（如 inventory_snapshot_emit）用此函数消除逐一 if-else。
-#[cfg_attr(not(test), allow(dead_code))]
+/// 否则返回 Normal。调用方（如 sweep、inventory_snapshot_emit）用此函数消除逐一 if-else。
 pub fn item_freshness_behavior(
     container_item: Option<&ItemInstance>,
 ) -> crate::shelflife::ContainerFreshnessBehavior {

@@ -138,6 +138,80 @@ pub fn apply_variant_switch_with_season(
     false
 }
 
+/// plan-food-v1 MAJOR1 — 与 `apply_variant_switch_with_season` 相同，
+/// 但额外接受 `ContainerFreshnessBehavior`。
+///
+/// 若当前 item 所在容器包含 ice_cellar（SpoilOnly { rate: 0.3 }），
+/// 则在 zone_multiplier 基础上再乘 `container_storage_multiplier`，
+/// 使腐败速率差异 ≥70% 的容器效果在 sweep 中真实生效。
+#[allow(clippy::too_many_arguments)]
+pub fn apply_variant_switch_with_season_and_container(
+    item: &mut ItemInstance,
+    profile_registry: &DecayProfileRegistry,
+    item_registry: &ItemRegistry,
+    now_tick: u64,
+    zone_multiplier: f32,
+    season: Season,
+    entropy_seed: u64,
+    container_behavior: &super::types::ContainerFreshnessBehavior,
+) -> bool {
+    let Some(freshness) = &item.freshness else {
+        return false;
+    };
+
+    let Some(profile) = profile_registry.get(&freshness.profile) else {
+        return false;
+    };
+
+    // 组合容器行为乘子与 zone_multiplier。
+    let container_mul = super::container::container_storage_multiplier(container_behavior, profile);
+    let effective_multiplier = (zone_multiplier * container_mul).max(0.0);
+
+    let state = compute_track_state_with_season(
+        freshness,
+        profile,
+        now_tick,
+        effective_multiplier,
+        season,
+        entropy_seed,
+    );
+
+    match state {
+        TrackState::Dead => {
+            if let Some(dead_id) = dead_variant_mapping(freshness.profile.as_str()) {
+                if switch_template(item, dead_id, item_registry) {
+                    return true;
+                }
+            }
+        }
+        TrackState::AgePostPeakSpoiled => {
+            if let Some(spoil_id) = age_spoil_variant_mapping(freshness.profile.as_str()) {
+                let current_qi = compute_current_qi_with_season(
+                    freshness,
+                    profile,
+                    now_tick,
+                    effective_multiplier,
+                    season,
+                    entropy_seed,
+                );
+                if migrate_age_to_spoil(
+                    item,
+                    profile,
+                    spoil_id,
+                    item_registry,
+                    now_tick,
+                    current_qi,
+                ) {
+                    return true;
+                }
+            }
+        }
+        _ => {}
+    }
+
+    false
+}
+
 /// Decay track `Dead` → dead 变体 template_id 映射。
 fn dead_variant_mapping(profile_id: &str) -> Option<&'static str> {
     match profile_id {

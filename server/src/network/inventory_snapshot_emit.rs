@@ -334,6 +334,8 @@ fn woliu_scroll_skill_id(template_id: &str) -> Option<&'static str> {
 ///
 /// **None 早返**：freshness 字段缺失 / profile 未在 registry / item.freshness 为 None
 /// 时静默返，不修改 view（防止误覆盖）。
+// plan-shelflife-v1 M3a — 快照路径的衍生数据填充；
+// 目前仅在测试中使用，生产 build_inventory_snapshot 路径尚未接入。
 #[allow(dead_code)]
 pub(crate) fn enrich_with_derived_freshness(
     view: &mut InventoryItemViewV1,

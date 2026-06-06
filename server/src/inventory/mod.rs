@@ -1073,6 +1073,7 @@ pub fn add_item_to_player_inventory(
     allocator: &mut InventoryInstanceIdAllocator,
     template_id: &str,
     stack_count: u32,
+    current_tick: u64,
 ) -> Result<InventoryGrantReceipt, String> {
     add_item_to_player_inventory_inner(
         inventory,
@@ -1082,6 +1083,7 @@ pub fn add_item_to_player_inventory(
         stack_count,
         true,
         None,
+        current_tick,
     )
 }
 
@@ -1091,6 +1093,7 @@ pub fn add_customized_item_to_player_inventory(
     allocator: &mut InventoryInstanceIdAllocator,
     template_id: &str,
     stack_count: u32,
+    current_tick: u64,
     customize_instance: impl Fn(&mut ItemInstance),
 ) -> Result<InventoryGrantReceipt, String> {
     add_item_to_player_inventory_inner(
@@ -1101,6 +1104,7 @@ pub fn add_customized_item_to_player_inventory(
         stack_count,
         true,
         Some(&customize_instance),
+        current_tick,
     )
 }
 
@@ -1111,6 +1115,7 @@ pub fn add_item_to_player_inventory_with_alchemy(
     template_id: &str,
     stack_count: u32,
     alchemy: Option<AlchemyItemData>,
+    current_tick: u64,
 ) -> Result<InventoryGrantReceipt, String> {
     add_item_to_player_inventory_inner(
         inventory,
@@ -1122,9 +1127,11 @@ pub fn add_item_to_player_inventory_with_alchemy(
         Some(&|instance| {
             instance.alchemy = alchemy.clone();
         }),
+        current_tick,
     )
 }
 
+#[allow(clippy::too_many_arguments)]
 fn add_item_to_player_inventory_inner(
     inventory: &mut PlayerInventory,
     registry: &ItemRegistry,
@@ -1133,6 +1140,7 @@ fn add_item_to_player_inventory_inner(
     stack_count: u32,
     merge_existing_stacks: bool,
     customize_instance: Option<&dyn Fn(&mut ItemInstance)>,
+    current_tick: u64,
 ) -> Result<InventoryGrantReceipt, String> {
     if stack_count == 0 {
         return Err("add_item_to_player_inventory requires stack_count >= 1".to_string());
@@ -1158,7 +1166,7 @@ fn add_item_to_player_inventory_inner(
         .ok_or_else(|| "player inventory has no containers".to_string())?;
 
     let max_stack_count = template.max_stack_count.max(1);
-    let mut merge_probe = runtime_instance_from_template(template, 0, 1);
+    let mut merge_probe = runtime_instance_from_template(template, 0, 1, current_tick);
     if let Some(customize_instance) = customize_instance {
         customize_instance(&mut merge_probe);
     }
@@ -1186,7 +1194,8 @@ fn add_item_to_player_inventory_inner(
         let Some((row, col)) = find_free_slot(&staged, template.grid_w, template.grid_h) else {
             return Err(format!("inventory full: {template_id}"));
         };
-        let mut staged_instance = runtime_instance_from_template(template, 0, new_stack_count);
+        let mut staged_instance =
+            runtime_instance_from_template(template, 0, new_stack_count, current_tick);
         if let Some(customize_instance) = customize_instance {
             customize_instance(&mut staged_instance);
         }
@@ -1232,7 +1241,8 @@ fn add_item_to_player_inventory_inner(
         new_stacks.into_iter().zip(new_instance_ids.into_iter())
     {
         created_instance_ids.push(instance_id);
-        let mut instance = runtime_instance_from_template(template, instance_id, new_stack_count);
+        let mut instance =
+            runtime_instance_from_template(template, instance_id, new_stack_count, current_tick);
         if let Some(customize_instance) = customize_instance {
             customize_instance(&mut instance);
         }
@@ -1290,12 +1300,14 @@ fn runtime_instance_from_template(
     template: &ItemTemplate,
     instance_id: u64,
     stack_count: u32,
+    current_tick: u64,
 ) -> ItemInstance {
-    // plan-food-v1 P1：当 template 声明了 shelflife_profile + track 时，
-    // 自动在 tick=0 挂 Freshness（initial_qi 取 spirit_quality_initial 折算为 f32）。
+    // plan-food-v1 P1/MAJOR2：当 template 声明了 shelflife_profile + track 时，
+    // 自动挂 Freshness；created_at_tick 取 current_tick，避免服务器运行一段时间后
+    // 发出的食物 elapsed=T 立刻被当已陈化（raw_dt=now_tick-0 >> 实际存放时间）。
     let freshness = match (&template.shelflife_profile, &template.shelflife_track) {
         (Some(profile_id), Some(track)) => Some(crate::shelflife::Freshness {
-            created_at_tick: 0,
+            created_at_tick: current_tick,
             initial_qi: template.spirit_quality_initial as f32,
             track: *track,
             profile: crate::shelflife::DecayProfileId::new(profile_id),
@@ -5551,7 +5563,7 @@ cols = 4
         let mut inventory = empty_inventory(3, 3);
         let mut allocator = InventoryInstanceIdAllocator::new(1);
 
-        add_item_to_player_inventory(&mut inventory, &registry, &mut allocator, "wide", 1)
+        add_item_to_player_inventory(&mut inventory, &registry, &mut allocator, "wide", 1, 0)
             .expect("first wide item should fit at top-left");
 
         let main_pack = &inventory.containers[0];
@@ -5575,7 +5587,7 @@ cols = 4
         let mut allocator = InventoryInstanceIdAllocator::new(1);
 
         for _ in 0..5 {
-            add_item_to_player_inventory(&mut inventory, &registry, &mut allocator, "one", 1)
+            add_item_to_player_inventory(&mut inventory, &registry, &mut allocator, "one", 1, 0)
                 .expect("first five one-cell items should fit");
         }
 
@@ -5583,7 +5595,7 @@ cols = 4
         assert_eq!(find_free_slot(main_pack, 1, 1), Some((1, 2)));
         assert_eq!(find_free_slot(main_pack, 2, 2), None);
 
-        add_item_to_player_inventory(&mut inventory, &registry, &mut allocator, "one", 1)
+        add_item_to_player_inventory(&mut inventory, &registry, &mut allocator, "one", 1, 0)
             .expect("last one-cell slot should fit");
         assert_eq!(find_free_slot(&inventory.containers[0], 1, 1), None);
     }
@@ -5603,6 +5615,7 @@ cols = 4
             &mut allocator,
             "ci_she_hao",
             2,
+            0,
         )
         .expect("runtime inventory grant should succeed for canonical herb");
 
@@ -5641,7 +5654,7 @@ cols = 4
         let mut allocator = InventoryInstanceIdAllocator::new(1);
 
         let receipt =
-            add_item_to_player_inventory(&mut inventory, &registry, &mut allocator, "stone", 4)
+            add_item_to_player_inventory(&mut inventory, &registry, &mut allocator, "stone", 4, 0)
                 .expect("four non-stack one-cell items should exactly fill a 2x2 pack");
 
         assert_eq!(receipt.stack_count, 4);
@@ -5655,7 +5668,7 @@ cols = 4
         assert_container_has_no_overlaps(main_pack);
 
         let error =
-            add_item_to_player_inventory(&mut inventory, &registry, &mut allocator, "stone", 1)
+            add_item_to_player_inventory(&mut inventory, &registry, &mut allocator, "stone", 1, 0)
                 .expect_err("full pack should reject another non-stack item");
         assert!(error.contains("inventory full: stone"));
     }
@@ -5672,8 +5685,15 @@ cols = 4
         let mut inventory = empty_inventory(2, 2);
         let mut allocator = InventoryInstanceIdAllocator::new(10);
 
-        add_item_to_player_inventory(&mut inventory, &registry, &mut allocator, "ci_she_hao", 10)
-            .expect("initial herb stack should fit");
+        add_item_to_player_inventory(
+            &mut inventory,
+            &registry,
+            &mut allocator,
+            "ci_she_hao",
+            10,
+            0,
+        )
+        .expect("initial herb stack should fit");
         let first_instance_id = inventory.containers[0].items[0].instance.instance_id;
 
         let receipt = add_item_to_player_inventory(
@@ -5682,6 +5702,7 @@ cols = 4
             &mut allocator,
             "ci_she_hao",
             5,
+            0,
         )
         .expect("second herb grant should merge into existing stack");
 
@@ -5711,6 +5732,7 @@ cols = 4
                 &mut allocator,
                 "ci_she_hao",
                 1,
+                0,
             )
             .expect("batch herb harvest grant should merge into existing stack");
             if receipt.merged_instance_ids.is_empty() {
@@ -5741,14 +5763,22 @@ cols = 4
         let mut inventory = empty_inventory(2, 2);
         let mut allocator = InventoryInstanceIdAllocator::new(20);
 
-        add_item_to_player_inventory(&mut inventory, &registry, &mut allocator, "ci_she_hao", 63)
-            .expect("initial herb stack should fit");
+        add_item_to_player_inventory(
+            &mut inventory,
+            &registry,
+            &mut allocator,
+            "ci_she_hao",
+            63,
+            0,
+        )
+        .expect("initial herb stack should fit");
         let receipt = add_item_to_player_inventory(
             &mut inventory,
             &registry,
             &mut allocator,
             "ci_she_hao",
             3,
+            0,
         )
         .expect("overflow should create a second stack");
 
@@ -5779,8 +5809,15 @@ cols = 4
         let mut inventory = empty_inventory(2, 2);
         let mut allocator = InventoryInstanceIdAllocator::new(40);
 
-        add_item_to_player_inventory(&mut inventory, &registry, &mut allocator, "ci_she_hao", 1)
-            .expect("initial herb stack should fit");
+        add_item_to_player_inventory(
+            &mut inventory,
+            &registry,
+            &mut allocator,
+            "ci_she_hao",
+            1,
+            0,
+        )
+        .expect("initial herb stack should fit");
 
         assert!(
             find_mergeable_stack(&mut inventory.containers[0], "ci_she_hao", 1).is_none(),
@@ -5812,6 +5849,7 @@ cols = 4
             &mut allocator,
             "ci_she_hao",
             1,
+            0,
             |instance| {
                 instance.display_name = format!("雷 · {}", instance.display_name);
                 instance.spirit_quality = (instance.spirit_quality + 0.1).clamp(0.0, 1.0);
@@ -5824,6 +5862,7 @@ cols = 4
             &mut allocator,
             "ci_she_hao",
             1,
+            0,
         )
         .expect("default herb should fit beside customized stack");
 
@@ -9228,7 +9267,7 @@ cols = 4
             ),
             (
                 "food.mundane.chen_bing",
-                "food_spoil_mundane_meat_v1",
+                "food_spoil_mundane_dry_v1",
                 crate::shelflife::DecayTrack::Spoil,
             ),
             (
@@ -9296,7 +9335,10 @@ cols = 4
             shelflife_track: Some(DecayTrack::Age),
         };
 
-        let instance = runtime_instance_from_template(&tpl, 1, 1);
+        // plan-food-v1 MAJOR2: current_tick 传入 runtime_instance_from_template，
+        // created_at_tick 应等于传入的 current_tick（不再硬编码 0）。
+        let spawn_tick = 12345_u64;
+        let instance = runtime_instance_from_template(&tpl, 1, 1, spawn_tick);
         let freshness = instance.freshness.as_ref().expect(
             "chen_jiu item should have Freshness attached by runtime_instance_from_template \
                      because template declares shelflife_profile=chen_jiu_v1",
@@ -9312,8 +9354,9 @@ cols = 4
             "freshness.profile must be chen_jiu_v1 as declared in food.toml"
         );
         assert_eq!(
-            freshness.created_at_tick, 0,
-            "freshness.created_at_tick=0 (spawned at server start tick=0)"
+            freshness.created_at_tick, spawn_tick,
+            "freshness.created_at_tick must equal current_tick passed to runtime_instance_from_template; \
+             hardcoding 0 causes elapsed=now-0 to pre-age items spawned mid-session"
         );
         assert!(
             (freshness.initial_qi - 0.80_f32).abs() < 1e-4,
@@ -9359,7 +9402,7 @@ cols = 4
             shelflife_track: None,
         };
 
-        let instance = runtime_instance_from_template(&tpl, 1, 1);
+        let instance = runtime_instance_from_template(&tpl, 1, 1, 0);
         assert!(
             instance.freshness.is_none(),
             "item without shelflife_profile should have freshness=None — \
@@ -9378,7 +9421,7 @@ cols = 4
             .get("food.spirit_wine.chen_jiu")
             .expect("food.spirit_wine.chen_jiu must be loadable from food.toml");
 
-        let instance = runtime_instance_from_template(tpl, 99, 1);
+        let instance = runtime_instance_from_template(tpl, 99, 1, 0);
         let freshness = instance.freshness.as_ref().expect(
             "food.spirit_wine.chen_jiu should have freshness auto-attached because \
              food.toml declares shelflife_profile=chen_jiu_v1",
@@ -9400,7 +9443,7 @@ cols = 4
             .get("food.spirit_fruit.ling_guo")
             .expect("food.spirit_fruit.ling_guo must exist");
 
-        let instance = runtime_instance_from_template(tpl, 1, 1);
+        let instance = runtime_instance_from_template(tpl, 1, 1, 0);
         let freshness = instance.freshness.as_ref().expect(
             "ling_guo should have freshness because food.toml declares shelflife_profile=food_spoil_ling_guo_v1"
         );

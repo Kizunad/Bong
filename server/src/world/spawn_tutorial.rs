@@ -441,6 +441,7 @@ pub fn grant_coffin_reward_once(
         allocator,
         SPIRIT_NICHE_STONE_TEMPLATE_ID,
         1,
+        0,
     ) {
         Ok(receipt) => {
             state.opened_coffin_pos = Some(coffin_pos);

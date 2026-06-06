@@ -1242,6 +1242,7 @@ pub fn handle_client_request_payloads(
                     instance_allocator,
                     template_id,
                     1,
+                    0,
                 ) {
                     send_npc_interaction_feedback(
                         ev.client,
@@ -8436,6 +8437,7 @@ fn grant_alchemy_outcome_item(
         template_id,
         1,
         alchemy,
+        0,
     ) {
         send_alchemy_error(client, player_id, format!("炼丹产物入袋失败：{error}"));
         return false;

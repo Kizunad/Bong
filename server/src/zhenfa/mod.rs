@@ -1816,6 +1816,7 @@ fn handle_zhenfa_disarm_requests(
                             allocator,
                             ZHENFA_PEARL_ITEM_ID,
                             1,
+                            0,
                         ) {
                             tracing::warn!(
                                 "[bong][zhenfa] disarm succeeded but pearl grant failed: {error}"

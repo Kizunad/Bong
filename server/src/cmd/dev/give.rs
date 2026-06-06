@@ -60,7 +60,8 @@ pub fn handle_give(
             client.send_chat_message("[dev] give rejected: count must be >= 1");
             continue;
         }
-        match add_item_to_player_inventory(&mut inventory, &registry, &mut allocator, id, *count) {
+        match add_item_to_player_inventory(&mut inventory, &registry, &mut allocator, id, *count, 0)
+        {
             Ok(receipt) => {
                 client.send_chat_message(format!(
                     "[dev] gave {} x{} revision={}",

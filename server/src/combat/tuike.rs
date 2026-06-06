@@ -339,6 +339,7 @@ pub fn forge_false_skin(
         &mut staged_allocator,
         recipe.kind.output_item_id(),
         1,
+        0,
     )
     .map_err(|_| FalseSkinForgeError::InventoryFull)?;
 
