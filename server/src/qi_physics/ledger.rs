@@ -165,6 +165,17 @@ pub enum QiTransferReason {
     /// 从附近修士真元库抽取 +50%。吸来的真元守恒转入 zone 账户（坍缩渊），
     /// **不得凭空消失**。amount = 玩家实际被吸走量（经光环计算，已扣除 50% 加成）。
     BossDrain,
+    /// plan-neg-domain-fauna-v1 P0 — 诡影接触扣真元。
+    ///
+    /// worldview §七:751「负灵域」：诡影是负灵域的环境生态，接触时真元从玩家守恒
+    /// 流入所在 zone 账户。pulse_amount = |zone_qi| × qi_max × GHOST_CONTACT_FACTOR。
+    /// 仅对玩家生效（NPC 不进负灵域）；多诡影共享 1s cooldown 防叠爆。
+    GhostContact,
+    /// plan-neg-domain-fauna-v1 P1 — 噬灵藓踩踏持续扣真元。
+    ///
+    /// 噬灵藓是负灵域 tainted 地块危害，踩踏后每 tick 持续从玩家真元守恒
+    /// 流入所在 zone 账户。drain_per_tick = qi_max × MOSS_DRAIN_FACTOR。
+    ShiLingXianDrain,
 }
 
 #[derive(Debug, Clone, Event, PartialEq)]
@@ -802,6 +813,117 @@ mod tests {
             field(&fields, "total_observed"),
             "100",
             "空账本下 total_observed 仍来自 player/zone 快照，起服后应 ≈ DEFAULT_SPIRIT_QI_TOTAL"
+        );
+    }
+
+    // ── plan-neg-domain-fauna-v1 P0-prereq：GhostContact / ShiLingXianDrain 守恒 round-trip ──
+
+    #[test]
+    fn ghost_contact_transfer_player_minus_equals_zone_plus() {
+        // 诡影接触守恒：玩家账户减 X，zone 账户增 X，总量不变。
+        // 这是 QiTransferReason::GhostContact 的最核心契约——不允许真元凭空消失。
+        let player = QiAccountId::player("cultivator_a");
+        let zone = QiAccountId::zone("neg_field");
+        let mut account = WorldQiAccount::default();
+        account.set_balance(player.clone(), 50.0).unwrap();
+        account.set_balance(zone.clone(), 5.0).unwrap();
+
+        let pulse_amount = 2.5_f64; // |zone_qi| × qi_max × GHOST_CONTACT_FACTOR
+        account
+            .transfer(
+                QiTransfer::new(
+                    player.clone(),
+                    zone.clone(),
+                    pulse_amount,
+                    QiTransferReason::GhostContact,
+                )
+                .unwrap(),
+            )
+            .unwrap();
+
+        assert!(
+            (account.balance(&player) - 47.5).abs() < QI_EPSILON,
+            "诡影接触后玩家账户应从 50.0 降至 47.5（减 2.5），实际 {}",
+            account.balance(&player)
+        );
+        assert!(
+            (account.balance(&zone) - 7.5).abs() < QI_EPSILON,
+            "诡影接触后 zone 账户应从 5.0 升至 7.5（增 2.5），实际 {}",
+            account.balance(&zone)
+        );
+        assert!(
+            (account.total() - 55.0).abs() < QI_EPSILON,
+            "GhostContact transfer 后总量应守恒为 55.0，实际 {}",
+            account.total()
+        );
+        // audit trail 必须记录
+        let transfers = account.transfers();
+        assert_eq!(
+            transfers.len(),
+            1,
+            "GhostContact transfer 应有 1 条 audit trail，实际 {}",
+            transfers.len()
+        );
+        assert!(
+            matches!(transfers[0].reason, QiTransferReason::GhostContact),
+            "audit trail reason 应为 GhostContact，实际 {:?}",
+            transfers[0].reason
+        );
+    }
+
+    #[test]
+    fn shiling_xian_drain_transfer_player_minus_equals_zone_plus() {
+        // 噬灵藓守恒：玩家账户减 X，zone 账户增 X，总量不变。
+        // QiTransferReason::ShiLingXianDrain 是每 tick 持续抽取，多次 transfer 累积守恒。
+        let player = QiAccountId::player("cultivator_b");
+        let zone = QiAccountId::zone("tainted_marsh");
+        let mut account = WorldQiAccount::default();
+        account.set_balance(player.clone(), 100.0).unwrap();
+        account.set_balance(zone.clone(), 0.0).unwrap();
+
+        let drain_per_tick = 0.2_f64; // qi_max × MOSS_DRAIN_FACTOR（qi_max=100, factor=0.002）
+        for _ in 0..5 {
+            account
+                .transfer(
+                    QiTransfer::new(
+                        player.clone(),
+                        zone.clone(),
+                        drain_per_tick,
+                        QiTransferReason::ShiLingXianDrain,
+                    )
+                    .unwrap(),
+                )
+                .unwrap();
+        }
+
+        let expected_player = 100.0 - 5.0 * drain_per_tick;
+        let expected_zone = 5.0 * drain_per_tick;
+        assert!(
+            (account.balance(&player) - expected_player).abs() < QI_EPSILON,
+            "5 tick 后玩家账户应为 {expected_player}，实际 {}",
+            account.balance(&player)
+        );
+        assert!(
+            (account.balance(&zone) - expected_zone).abs() < QI_EPSILON,
+            "5 tick 后 zone 账户应为 {expected_zone}，实际 {}",
+            account.balance(&zone)
+        );
+        assert!(
+            (account.total() - 100.0).abs() < QI_EPSILON,
+            "ShiLingXianDrain 多 tick 后总量应守恒为 100.0，实际 {}",
+            account.total()
+        );
+        // 每 tick 都应有 audit trail
+        let drain_records: Vec<_> = account
+            .transfers()
+            .iter()
+            .filter(|t| matches!(t.reason, QiTransferReason::ShiLingXianDrain))
+            .collect();
+        assert_eq!(
+            drain_records.len(),
+            5,
+            "5 tick ShiLingXianDrain 应有 5 条 audit trail，实际 {}",
+            drain_records.len()
         );
     }
 

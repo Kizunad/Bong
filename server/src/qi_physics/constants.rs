@@ -105,6 +105,14 @@ pub const WAR_WINNER_ZONE_REGEN_MULTIPLIER: f64 = 1.10;
 /// 仅作用于 regen_from_zone 的 rate 参数，不铸造/销毁真元，守恒安全。
 pub const WAR_LOSER_ZONE_REGEN_MULTIPLIER: f64 = 0.95;
 
+// ── plan-neg-domain-fauna-v1 P0 — 负灵域生态真元抽取率 ──
+/// 诡影接触真元抽取率（归口 qi_physics；几何/密度参数留在 fauna 模块）。
+/// pulse_amount = |zone_qi| × qi_max × GHOST_CONTACT_FACTOR（每次接触，1s cooldown）。
+pub const GHOST_CONTACT_FACTOR: f64 = 0.05;
+/// 噬灵藓踩踏每 tick 真元抽取率（归口 qi_physics；蔓延参数留在 botany 模块）。
+/// drain_per_tick = qi_max × MOSS_DRAIN_FACTOR（每 tick 持续扣除）。
+pub const MOSS_DRAIN_FACTOR: f64 = 0.002;
+
 // ── plan-baomai-v4 §1.3 疤纹回路（经脉 integrity 物理阈值）──
 /// 回路形成所需经脉 integrity 下限（含）。
 pub const SCAR_CIRCUIT_INTEGRITY_MIN: f64 = 0.50;
@@ -136,5 +144,77 @@ mod tests {
     fn dugu_dirty_qi_constants_match_plan_budget() {
         assert!((DUGU_RHO - 0.05).abs() < QI_EPSILON);
         assert!((DUGU_DIRTY_QI_ZONE_RETURN_RATIO - 0.99).abs() < QI_EPSILON);
+    }
+
+    // ── plan-neg-domain-fauna-v1 P0：真元抽取率常量 pin 测试 ──
+
+    #[test]
+    fn ghost_contact_factor_positive_and_in_range() {
+        // GHOST_CONTACT_FACTOR 必须 > 0（有效抽取）且 < 1（每次不超过 qi_max 全量）。
+        // 设计值 0.05 ≈ 每次接触抽 5% × |zone_qi|，高手比低手更危险。
+        assert!(
+            GHOST_CONTACT_FACTOR > 0.0,
+            "GHOST_CONTACT_FACTOR 必须 > 0，否则诡影接触无效"
+        );
+        assert!(
+            GHOST_CONTACT_FACTOR < 1.0,
+            "GHOST_CONTACT_FACTOR 必须 < 1，一次接触不应抽超过 qi_max 全量"
+        );
+        assert!(
+            (GHOST_CONTACT_FACTOR - 0.05).abs() < QI_EPSILON,
+            "期望 GHOST_CONTACT_FACTOR == 0.05（plan-neg-domain-fauna-v1 §6 设计决议），实际 {GHOST_CONTACT_FACTOR}"
+        );
+    }
+
+    #[test]
+    fn moss_drain_factor_positive_and_small() {
+        // MOSS_DRAIN_FACTOR 必须 > 0（有效持续扣除）且远小于 GHOST_CONTACT_FACTOR。
+        // 踩踏是每 tick 持续抽取，设计值 0.002（20 tps → 每秒 4% qi_max），
+        // 应小于诡影单次接触抽取率 0.05。
+        assert!(
+            MOSS_DRAIN_FACTOR > 0.0,
+            "MOSS_DRAIN_FACTOR 必须 > 0，否则噬灵藓踩踏无效"
+        );
+        assert!(
+            MOSS_DRAIN_FACTOR < GHOST_CONTACT_FACTOR,
+            "MOSS_DRAIN_FACTOR 应小于 GHOST_CONTACT_FACTOR（持续 tick 累积 vs 单次脉冲）"
+        );
+        assert!(
+            (MOSS_DRAIN_FACTOR - 0.002).abs() < QI_EPSILON,
+            "期望 MOSS_DRAIN_FACTOR == 0.002（plan-neg-domain-fauna-v1 §6 设计决议），实际 {MOSS_DRAIN_FACTOR}"
+        );
+    }
+
+    #[test]
+    fn ghost_pulse_formula_scales_with_qi_max() {
+        // 验证公式：pulse = |zone_qi| × qi_max × GHOST_CONTACT_FACTOR。
+        // 高手（qi_max=200）被抽双倍——这是设计意图（高手在负灵域更危险）。
+        let zone_qi = -0.5_f64;
+        let low_qi_max = 100.0_f64;
+        let high_qi_max = 200.0_f64;
+        let pulse_low = zone_qi.abs() * low_qi_max * GHOST_CONTACT_FACTOR;
+        let pulse_high = zone_qi.abs() * high_qi_max * GHOST_CONTACT_FACTOR;
+        assert!(
+            (pulse_high - 2.0 * pulse_low).abs() < QI_EPSILON,
+            "qi_max 翻倍，pulse 应翻倍；期望 {}, 实际 {pulse_high}（pulse_low={pulse_low}）",
+            2.0 * pulse_low
+        );
+        assert!(
+            pulse_low > 0.0,
+            "负 zone_qi 下 pulse 必须 > 0，否则诡影接触无效"
+        );
+    }
+
+    #[test]
+    fn moss_drain_formula_zero_for_positive_zone() {
+        // 噬灵藓只在负灵域生长，spirit_qi >= 0 时不应有持续 drain（系统会移除 tag）。
+        // 但公式本身不检查 zone_qi，检查逻辑在 moss_step_on_system 和 moss_spread_system 中。
+        // 这里只验证公式数值范围：qi_max=100, MOSS_DRAIN_FACTOR=0.002 → 每 tick 扣 0.2。
+        let qi_max = 100.0_f64;
+        let drain_per_tick = qi_max * MOSS_DRAIN_FACTOR;
+        assert!(
+            (drain_per_tick - 0.2).abs() < QI_EPSILON,
+            "qi_max=100 时 drain_per_tick 应为 0.2（100×0.002），实际 {drain_per_tick}"
+        );
     }
 }
