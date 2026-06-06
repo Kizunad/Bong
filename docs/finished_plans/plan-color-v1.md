@@ -27,7 +27,7 @@
 |------|------|------|------|
 | **P0** | 色-派对应加速规则（`color_style_bonus`）+ 接入 cultivation session 与 combat XP 累积 | ✅ 2026-06-07 | 单测：main 匹配 → 1.1x（事半功倍）；secondary → 1.05x；unmatched → 1.0x；chaotic → 0.9x（惩罚）；hunyuan → 0.8x（-20%，worldview §六.2:644） |
 | **P1** | 杂色惩罚实装：`is_chaotic=true` 时关闭各流派专项效果 | ✅ 2026-06-07 | 单测：杂色玩家 combat bonus 归零；各流派 module guard 测试 |
-| **P2** | 混元色特效：`is_hunyuan=true` 时解锁全 10 色顿悟选项 + 通用 -5% 成本（0.95x） | ✅ 2026-06-07 | 单测：混元色 insight 池覆盖所有 ColorKind |
+| **P2** | 混元色特效：`is_hunyuan=true` 时解锁全 10 色顿悟选项 + 修炼总效率 **-20%（0.8x）**（worldview §六.2:644） | ✅ 2026-06-07 | 单测：混元色 insight 池覆盖所有 ColorKind；色加速 0.8x |
 | **P3** | 色调里程碑 narration（首次主色涌现 / 色调转换 / 杂色堕落 / 混元觉醒） | ✅ 2026-06-07 | 单测：4 个里程碑各触发一条 narration，scope=player |
 | **P4** | 神视观察机制：高境施展神识可远程感知他人真元色调（aura 视觉 deferred） | ✅ 2026-06-07 | 单测：通灵+（Spirit=32/Void=128）可感知范围内目标的 QiColor；范围外返回 None |
 | **P5** | 饱和测试（色演化稳定性 + 死亡清零 + PracticeLog 跨 session 衰减） | ✅ 2026-06-07 | 20+ 单测全绿 |
@@ -58,7 +58,7 @@ pub fn color_style_bonus(qi_color: &QiColor, active_color: ColorKind) -> f64 {
 |---|---|---|
 | `cultivation::color::record_style_practice` | 乘 `color_style_bonus` | 战斗动作练习时按色匹配调整权重 |
 | `cultivation::color::record_cultivation_session_practice` | 同上 | 打坐练习也按色调整 |
-| `combat::anqi_v2.rs` line ≈463（已有 TODO 注释） | 读取 bonus 作为距离衰减修正 | 凝实色 + 暗器距离衰减 -5%（worldview §六.2 正典化） |
+| `qi_physics::env::MediumKind::loss_bonus_per_block` | 凝实色暗器距离衰减减免（Solid = -0.004/block）经 `qi_distance_atten`、`AnqiStyleAttack::medium()` 喂入 | **正典传输层路径**（非 color_style_bonus、非战斗乘子，worldview §五正典化）；实施中曾误加 flat×1.05 payload 乘子已删除 |
 
 ---
 
@@ -66,7 +66,7 @@ pub fn color_style_bonus(qi_color: &QiColor, active_color: ColorKind) -> f64 {
 
 当 `QiColor.is_chaotic = true`：
 - 各流派 combat module 在应用专项 bonus 前 guard：`if qi_color.is_chaotic { return; }`
-- `cultivation_session`：`record_cultivation_session_practice` 积累权重 ×1.1（效率降低）
+- `cultivation_session`：`record_cultivation_session_practice` 杂色积累权重 ×0.9（专精失效，积累-10%）
 - 范围：anqi_v2 / woliu_v2 / dugu_v2 / zhenmai_v2 / tuike / zhenfa / sword_path 各流派专项函数
 
 **关键约束**：杂色不影响基础真元消耗，只让专项加成失效。worldview 定义为「所有专精效果失效，只剩基础真元属性」，不是扣分。
@@ -78,7 +78,7 @@ pub fn color_style_bonus(qi_color: &QiColor, active_color: ColorKind) -> f64 {
 当 `QiColor.is_hunyuan = true`：
 
 1. `cultivation::color_affinity::select_aligned_tradeoffs` 中：当前已处理 `is_hunyuan` → `hunyuan_tradeoffs()`，**只需核验是否覆盖全 10 色 InsightChoice**（现有函数可能是占位）
-2. 通用效率系数 0.95（-5% practice 成本）对所有色/流派生效，作为"博而不精"的平衡补偿
+2. 混元修炼总效率 0.8（**-20%**，worldview §六.2:644 正典）——`color_style_bonus` 返回 0.8，博而不精的代价；main 匹配 1.1 > 混元 0.8 保证专精仍最优
 3. 混元色 **不可被 `permanent_lock_mask`** 锁定（不允许任何色永久污染，worldview §六.2 混元色为第十一种特殊形态）
 
 ---
