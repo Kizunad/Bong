@@ -20,8 +20,9 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
  * server 侧 {@code MineralProbeDenialReason::NotMineralOre} 已兜底非矿块，client 不预判矿种。
  * <p>
  * 决议依据：§8.1 #2「矿脉 = use-on-block mixin，镜像 MixinClientPlayerInteractionManagerAlchemy 的
- * interactBlock 钩子，右键矿块且手持空手或神识焦点物时触发」。
- * 此处简化为：主手右键任意方块均发探针（由 server 拒绝非矿块），与 client 不预判矿种的原则一致。
+ * interactBlock 钩子，空手右键方���时触发」。
+ * 当��触发条件：主手空���右键任意方块，server 侧 {@code MineralProbeDenialReason::NotMineralOre} 兜底非矿块。
+ * 注意：神识焦点物（item path）尚未实装，���手触发为有意的合理简��，非 bug。
  * <p>
  * 实现镜像 {@link MixinClientPlayerInteractionManagerAlchemy} 的 {@code interactBlock} 钩子签名，
  * 但本 mixin **不取消**交互（不调用 {@code cir.setReturnValue}），允许原生 MC 交互继续进行。

@@ -249,6 +249,8 @@ export const ServerDataType = Type.Union([
   Type.Literal("knockback_sync"),
   Type.Literal("coffin_state"),
   Type.Literal("insight_offer"),
+  // plan-exploration-probe-return-v1 P0 — 神识感知矿脉回执（补���：原始 union 遗漏此字面量）
+  Type.Literal("mineral_probe_result"),
 ]);
 export type ServerDataType = Static<typeof ServerDataType>;
 
