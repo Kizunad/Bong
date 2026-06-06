@@ -1242,6 +1242,7 @@ pub fn handle_client_request_payloads(
                     instance_allocator,
                     template_id,
                     1,
+                    combat_clock.tick,
                 ) {
                     send_npc_interaction_feedback(
                         ev.client,
@@ -3100,6 +3101,8 @@ mod tests {
                     technique_scroll_spec: None,
                     recipe_fragment_spec: None,
                     container_spec: None,
+                    shelflife_profile: None,
+                    shelflife_track: None,
                 },
             ),
             (
@@ -3127,6 +3130,8 @@ mod tests {
                     technique_scroll_spec: None,
                     recipe_fragment_spec: None,
                     container_spec: None,
+                    shelflife_profile: None,
+                    shelflife_track: None,
                 },
             ),
         ]))
@@ -4312,6 +4317,8 @@ mod tests {
                 technique_scroll_spec: None,
                 recipe_fragment_spec: None,
                 container_spec: None,
+                shelflife_profile: None,
+                shelflife_track: None,
             },
         )])));
         let mut karma = KarmaWeightStore::default();
@@ -4408,6 +4415,8 @@ mod tests {
                 technique_scroll_spec: None,
                 recipe_fragment_spec: None,
                 container_spec: None,
+                shelflife_profile: None,
+                shelflife_track: None,
             },
         )])));
 
@@ -8428,6 +8437,7 @@ fn grant_alchemy_outcome_item(
         template_id,
         1,
         alchemy,
+        tick,
     ) {
         send_alchemy_error(client, player_id, format!("炼丹产物入袋失败：{error}"));
         return false;
@@ -8744,6 +8754,23 @@ fn handle_alchemy_take_pill(
         _ => None,
     };
 
+    // plan-food-v1 P2：灵食必须走 quick slot（cast_emit 路径），禁止走 take_pill 路径。
+    // 在此处前置拒绝，避免 consume_item_instance_once 扣掉物品后 FoodRegen 分支 noop。
+    if matches!(effect, ItemEffect::FoodRegen { .. }) {
+        tracing::debug!(
+            "[bong][network][alchemy] take_pill entity={entity:?} `{pill_item_id}` rejected: food must be consumed via quick slot"
+        );
+        resync_snapshot(
+            entity,
+            &inventory,
+            clients,
+            player_states,
+            cultivations,
+            "take_pill_food_rejected",
+        );
+        return;
+    }
+
     let consume_result = consume_item_instance_once(&mut inventory, consumed_item.instance_id);
     if let Err(error) = consume_result {
         tracing::warn!(
@@ -8895,6 +8922,12 @@ fn handle_alchemy_take_pill(
                 contamination,
                 pill_item_id,
                 entity,
+            );
+        }
+        ItemEffect::FoodRegen { .. } => {
+            // plan-food-v1 P2：灵食不走 take_pill 路径（食物通过 cast_emit 快捷槽消费）。
+            tracing::debug!(
+                "[bong][network][alchemy] take_pill entity={entity:?} `{pill_item_id}` FoodRegen on pill path — noop (food must be consumed via quick slot)"
             );
         }
     }

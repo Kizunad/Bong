@@ -230,6 +230,8 @@ mod tests {
             }),
             recipe_fragment_spec: None,
             container_spec: None,
+            shelflife_profile: None,
+            shelflife_track: None,
         }
     }
 

@@ -441,6 +441,7 @@ pub fn grant_coffin_reward_once(
         allocator,
         SPIRIT_NICHE_STONE_TEMPLATE_ID,
         1,
+        0,
     ) {
         Ok(receipt) => {
             state.opened_coffin_pos = Some(coffin_pos);
@@ -917,6 +918,8 @@ mod tests {
                 technique_scroll_spec: None,
                 recipe_fragment_spec: None,
                 container_spec: None,
+                shelflife_profile: None,
+                shelflife_track: None,
             },
         );
         ItemRegistry::from_map(templates)

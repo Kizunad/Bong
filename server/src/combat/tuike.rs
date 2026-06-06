@@ -339,6 +339,7 @@ pub fn forge_false_skin(
         &mut staged_allocator,
         recipe.kind.output_item_id(),
         1,
+        0,
     )
     .map_err(|_| FalseSkinForgeError::InventoryFull)?;
 
@@ -622,6 +623,8 @@ mod tests {
             technique_scroll_spec: None,
             recipe_fragment_spec: None,
             container_spec: None,
+            shelflife_profile: None,
+            shelflife_track: None,
         }
     }
 

@@ -1816,6 +1816,7 @@ fn handle_zhenfa_disarm_requests(
                             allocator,
                             ZHENFA_PEARL_ITEM_ID,
                             1,
+                            req.requested_at_tick,
                         ) {
                             tracing::warn!(
                                 "[bong][zhenfa] disarm succeeded but pearl grant failed: {error}"
@@ -2937,6 +2938,8 @@ mod tests {
             technique_scroll_spec: None,
             recipe_fragment_spec: None,
             container_spec: None,
+            shelflife_profile: None,
+            shelflife_track: None,
         };
         ItemRegistry::from_map(HashMap::from([(
             ZHENFA_PEARL_ITEM_ID.to_string(),

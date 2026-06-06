@@ -508,6 +508,7 @@ fn handle_coffin_place_requests(
                 &mut allocator,
                 grade.item_id(),
                 1,
+                0,
             ) {
                 tracing::warn!(
                     "[bong][coffin] failed to refund rejected coffin placement for `{}`: {error}",
@@ -1019,8 +1020,14 @@ fn grant_reclaim_drops_to_inventory(
     let mut granted_any = false;
     let mut failed_count = 0u32;
     for (template_id, count) in drops {
-        match add_item_to_player_inventory(inventory, item_registry, allocator, template_id, *count)
-        {
+        match add_item_to_player_inventory(
+            inventory,
+            item_registry,
+            allocator,
+            template_id,
+            *count,
+            0,
+        ) {
             Ok(_) => granted_any = true,
             Err(error) => {
                 tracing::warn!(
@@ -1782,6 +1789,8 @@ mod tests {
                     technique_scroll_spec: None,
                     recipe_fragment_spec: None,
                     container_spec: None,
+                    shelflife_profile: None,
+                    shelflife_track: None,
                 },
             );
         }
@@ -2167,6 +2176,7 @@ mod tests {
             &mut allocator,
             "ling_mu_ban",
             64,
+            0,
         )
         .expect("should fit into empty slot");
 
@@ -2298,6 +2308,7 @@ mod tests {
             &mut allocator,
             "ling_mu_ban",
             64,
+            0,
         )
         .expect("should fill the single slot");
         app.world_mut().entity_mut(client_entity).insert(full_inv);

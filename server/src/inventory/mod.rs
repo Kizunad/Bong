@@ -48,6 +48,8 @@ pub mod ancient_relics;
 pub mod external_container;
 // plan-tsy-loot-v1 §4 — 干尸 component。
 pub mod corpse;
+// plan-food-v1 P2 — 灵食消费路径（consume_food + FoodRegen 临时修炼加速）。
+pub mod food;
 // plan-lingtian-process-v1 P1 — 在线 tick freshness cache + season/anqi multiplier.
 pub mod freshness;
 // plan-poi-novice-v1 §P1 — 新手 POI loot 表。
@@ -149,6 +151,13 @@ pub struct ItemTemplate {
     pub recipe_fragment_spec: Option<RecipeFragmentSpec>,
     /// plan-backpack-equip-v1 P0 — 可装备容器规格；category=Container 时必填。
     pub container_spec: Option<ContainerSpec>,
+    /// plan-food-v1 P1 — 默认 shelflife profile ID；Some(id) 时 `runtime_instance_from_template`
+    /// 在 tick=0 自动挂 `Freshness`，无需消费侧手动初始化。
+    /// 食物类物品（category=Food）在 food.toml 内填此字段。
+    pub shelflife_profile: Option<String>,
+    /// plan-food-v1 P1 — shelflife 初始路径（`DecayTrack`）；配合 `shelflife_profile` 使用。
+    /// None = 无 shelflife（shelflife_profile 也为 None 时）。
+    pub shelflife_track: Option<crate::shelflife::DecayTrack>,
 }
 
 /// plan-backpack-equip-v1 P0 — 可装备容器（背包/囊/挎包）的模板级静态规格。
@@ -228,6 +237,8 @@ pub enum ItemCategory {
     /// plan-backpack-equip-v1 P0 — 可装备容器（背包/囊/挎包），携带 ContainerSpec。
     #[allow(dead_code)]
     Container,
+    /// plan-food-v1 P0 — 灵食（熟肉 / 陈饼 / 灵果 / 陈酒 / 陈醋等），消费时触发 FoodRegen。
+    Food,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -244,14 +255,40 @@ pub enum ItemRarity {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum ItemEffect {
-    BreakthroughBonus { magnitude: f64 },
-    QiRecovery { amount: f64 },
-    MeridianHeal { magnitude: f64, target: String },
-    ContaminationCleanse { magnitude: f64 },
-    LifespanExtension { years: u32, source: String },
-    AntiSpiritPressure { duration_ticks: u64 },
-    PoisonPill { pill_item_id: String },
-    CombatPill { pill_item_id: String },
+    BreakthroughBonus {
+        magnitude: f64,
+    },
+    QiRecovery {
+        amount: f64,
+    },
+    MeridianHeal {
+        magnitude: f64,
+        target: String,
+    },
+    ContaminationCleanse {
+        magnitude: f64,
+    },
+    LifespanExtension {
+        years: u32,
+        source: String,
+    },
+    AntiSpiritPressure {
+        duration_ticks: u64,
+    },
+    PoisonPill {
+        pill_item_id: String,
+    },
+    CombatPill {
+        pill_item_id: String,
+    },
+    /// plan-food-v1 P2 — 灵食消费：临时修炼加速。
+    ///
+    /// `bonus_factor`：加速比例（0.20 = +20% 修炼速度），挂 `CultivationAcceleration`。
+    /// `duration_ticks`：效果持续 tick 数（通常 `GAME_DAY_TICKS * 2`）。
+    FoodRegen {
+        bonus_factor: f32,
+        duration_ticks: u64,
+    },
 }
 
 #[derive(Debug, Default)]
@@ -1036,6 +1073,7 @@ pub fn add_item_to_player_inventory(
     allocator: &mut InventoryInstanceIdAllocator,
     template_id: &str,
     stack_count: u32,
+    current_tick: u64,
 ) -> Result<InventoryGrantReceipt, String> {
     add_item_to_player_inventory_inner(
         inventory,
@@ -1045,6 +1083,7 @@ pub fn add_item_to_player_inventory(
         stack_count,
         true,
         None,
+        current_tick,
     )
 }
 
@@ -1054,6 +1093,7 @@ pub fn add_customized_item_to_player_inventory(
     allocator: &mut InventoryInstanceIdAllocator,
     template_id: &str,
     stack_count: u32,
+    current_tick: u64,
     customize_instance: impl Fn(&mut ItemInstance),
 ) -> Result<InventoryGrantReceipt, String> {
     add_item_to_player_inventory_inner(
@@ -1064,6 +1104,7 @@ pub fn add_customized_item_to_player_inventory(
         stack_count,
         true,
         Some(&customize_instance),
+        current_tick,
     )
 }
 
@@ -1074,6 +1115,7 @@ pub fn add_item_to_player_inventory_with_alchemy(
     template_id: &str,
     stack_count: u32,
     alchemy: Option<AlchemyItemData>,
+    current_tick: u64,
 ) -> Result<InventoryGrantReceipt, String> {
     add_item_to_player_inventory_inner(
         inventory,
@@ -1085,9 +1127,11 @@ pub fn add_item_to_player_inventory_with_alchemy(
         Some(&|instance| {
             instance.alchemy = alchemy.clone();
         }),
+        current_tick,
     )
 }
 
+#[allow(clippy::too_many_arguments)]
 fn add_item_to_player_inventory_inner(
     inventory: &mut PlayerInventory,
     registry: &ItemRegistry,
@@ -1096,6 +1140,7 @@ fn add_item_to_player_inventory_inner(
     stack_count: u32,
     merge_existing_stacks: bool,
     customize_instance: Option<&dyn Fn(&mut ItemInstance)>,
+    current_tick: u64,
 ) -> Result<InventoryGrantReceipt, String> {
     if stack_count == 0 {
         return Err("add_item_to_player_inventory requires stack_count >= 1".to_string());
@@ -1121,7 +1166,7 @@ fn add_item_to_player_inventory_inner(
         .ok_or_else(|| "player inventory has no containers".to_string())?;
 
     let max_stack_count = template.max_stack_count.max(1);
-    let mut merge_probe = runtime_instance_from_template(template, 0, 1);
+    let mut merge_probe = runtime_instance_from_template(template, 0, 1, current_tick);
     if let Some(customize_instance) = customize_instance {
         customize_instance(&mut merge_probe);
     }
@@ -1149,7 +1194,8 @@ fn add_item_to_player_inventory_inner(
         let Some((row, col)) = find_free_slot(&staged, template.grid_w, template.grid_h) else {
             return Err(format!("inventory full: {template_id}"));
         };
-        let mut staged_instance = runtime_instance_from_template(template, 0, new_stack_count);
+        let mut staged_instance =
+            runtime_instance_from_template(template, 0, new_stack_count, current_tick);
         if let Some(customize_instance) = customize_instance {
             customize_instance(&mut staged_instance);
         }
@@ -1195,7 +1241,8 @@ fn add_item_to_player_inventory_inner(
         new_stacks.into_iter().zip(new_instance_ids.into_iter())
     {
         created_instance_ids.push(instance_id);
-        let mut instance = runtime_instance_from_template(template, instance_id, new_stack_count);
+        let mut instance =
+            runtime_instance_from_template(template, instance_id, new_stack_count, current_tick);
         if let Some(customize_instance) = customize_instance {
             customize_instance(&mut instance);
         }
@@ -1253,7 +1300,23 @@ fn runtime_instance_from_template(
     template: &ItemTemplate,
     instance_id: u64,
     stack_count: u32,
+    current_tick: u64,
 ) -> ItemInstance {
+    // plan-food-v1 P1/MAJOR2：当 template 声明了 shelflife_profile + track 时，
+    // 自动挂 Freshness；created_at_tick 取 current_tick，避免服务器运行一段时间后
+    // 发出的食物 elapsed=T 立刻被当已陈化（raw_dt=now_tick-0 >> 实际存放时间）。
+    let freshness = match (&template.shelflife_profile, &template.shelflife_track) {
+        (Some(profile_id), Some(track)) => Some(crate::shelflife::Freshness {
+            created_at_tick: current_tick,
+            initial_qi: template.spirit_quality_initial as f32,
+            track: *track,
+            profile: crate::shelflife::DecayProfileId::new(profile_id),
+            frozen_accumulated: 0,
+            frozen_since_tick: None,
+        }),
+        _ => None,
+    };
+
     ItemInstance {
         instance_id,
         template_id: template.id.clone(),
@@ -1266,7 +1329,7 @@ fn runtime_instance_from_template(
         stack_count,
         spirit_quality: template.spirit_quality_initial,
         durability: 1.0,
-        freshness: None,
+        freshness,
         mineral_id: None,
         charges: None,
         forge_quality: None,
@@ -1376,6 +1439,14 @@ struct ItemTemplateToml {
     /// plan-backpack-equip-v1 P0：category == "Container" 时必填，否则须缺省。
     #[serde(default)]
     container: Option<ContainerSpecToml>,
+    /// plan-food-v1 P1：食物类物品的默认 shelflife profile ID。
+    /// Some(id) → 物品生成时自动挂 `Freshness`；None → 无 shelflife。
+    #[serde(default)]
+    shelflife_profile: Option<String>,
+    /// plan-food-v1 P1：shelflife 路径 — "decay" / "spoil" / "age"；缺省 "spoil"。
+    /// 仅当 shelflife_profile 非 None 时有效。
+    #[serde(default)]
+    shelflife_track: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1507,7 +1578,7 @@ fn default_max_stack_count_for_category(category: ItemCategory) -> u32 {
     match category {
         ItemCategory::Herb => 64,
         ItemCategory::BoneCoin => u32::MAX,
-        ItemCategory::Pill | ItemCategory::Misc => 16,
+        ItemCategory::Pill | ItemCategory::Misc | ItemCategory::Food => 16,
         ItemCategory::Armor
         | ItemCategory::Weapon
         | ItemCategory::Tool
@@ -1525,6 +1596,9 @@ struct ItemEffectToml {
     kind: String,
     magnitude: f64,
     target: Option<String>,
+    /// plan-food-v1 P2 — food_regen 专用：效果持续 tick 数（其他 effect 忽略）。
+    #[serde(default)]
+    duration_ticks: Option<u64>,
 }
 
 impl ItemTemplateToml {
@@ -1647,6 +1721,34 @@ impl ItemTemplateToml {
             (_, None) => None,
         };
 
+        // plan-food-v1 P1：解析 shelflife_track 字符串 → DecayTrack。
+        // CodeRabbit fix：shelflife_track 只写而 shelflife_profile=None 时报错，
+        // 防止半配置静默绕过 freshness gate。
+        if self.shelflife_profile.is_none() && self.shelflife_track.is_some() {
+            return Err(format!(
+                "{} item `{id}` has shelflife_track set but missing shelflife_profile; both must be specified together",
+                source_path.display()
+            ));
+        }
+        let shelflife_track = match self.shelflife_profile.as_deref() {
+            Some(_) => {
+                // shelflife_profile 存在时必须有合法 track（默认 spoil）。
+                let raw_track = self.shelflife_track.as_deref().unwrap_or("spoil");
+                match raw_track.trim().to_lowercase().as_str() {
+                    "decay" => Some(crate::shelflife::DecayTrack::Decay),
+                    "spoil" => Some(crate::shelflife::DecayTrack::Spoil),
+                    "age" => Some(crate::shelflife::DecayTrack::Age),
+                    other => {
+                        return Err(format!(
+                            "{} item `{id}` has invalid shelflife_track `{other}`; expected decay/spoil/age",
+                            source_path.display()
+                        ));
+                    }
+                }
+            }
+            None => None,
+        };
+
         Ok(ItemTemplate {
             id,
             display_name,
@@ -1668,6 +1770,8 @@ impl ItemTemplateToml {
             technique_scroll_spec,
             recipe_fragment_spec,
             container_spec,
+            shelflife_profile: self.shelflife_profile,
+            shelflife_track,
         })
     }
 }
@@ -1850,6 +1954,8 @@ fn parse_item_category(
         "scroll" => Ok(ItemCategory::Scroll),
         "misc" => Ok(ItemCategory::Misc),
         "container" => Ok(ItemCategory::Container),
+        // plan-food-v1 P0 — 灵食分类
+        "food" => Ok(ItemCategory::Food),
         other => Err(format!(
             "{} item `{item_id}` has unknown category `{other}`",
             source_path.display()
@@ -1940,6 +2046,25 @@ fn parse_item_effect(
                 ));
             }
             Ok(ItemEffect::CombatPill { pill_item_id })
+        }
+        "food_regen" => {
+            // plan-food-v1 P2 — bonus_factor 来自 magnitude，duration_ticks 来自专属字段。
+            let duration_ticks = effect.duration_ticks.ok_or_else(|| {
+                format!(
+                    "{} item `{item_id}` effect `food_regen` missing required field `duration_ticks`",
+                    source_path.display()
+                )
+            })?;
+            if duration_ticks == 0 {
+                return Err(format!(
+                    "{} item `{item_id}` effect `food_regen` has invalid duration_ticks 0; expected >= 1",
+                    source_path.display()
+                ));
+            }
+            Ok(ItemEffect::FoodRegen {
+                bonus_factor: effect.magnitude as f32,
+                duration_ticks,
+            })
         }
         other => Err(format!(
             "{} item `{item_id}` has unsupported effect kind `{other}`",
@@ -4295,6 +4420,8 @@ mod tests {
                     technique_scroll_spec: None,
                     recipe_fragment_spec: None,
                     container_spec: None,
+                    shelflife_profile: None,
+                    shelflife_track: None,
                 },
             );
         }
@@ -4329,6 +4456,8 @@ mod tests {
             technique_scroll_spec: None,
             recipe_fragment_spec: None,
             container_spec: None,
+            shelflife_profile: None,
+            shelflife_track: None,
         }
     }
 
@@ -4348,6 +4477,7 @@ mod tests {
                 kind: "poison_pill".to_string(),
                 magnitude: 0.0,
                 target: Some("poison_pill_qing_lin_man_tuo".to_string()),
+                duration_ticks: None,
             },
             Path::new("<inline-items.toml>"),
             "poison_pill_qing_lin_man_tuo",
@@ -4370,6 +4500,7 @@ mod tests {
                     kind: "poison_pill".to_string(),
                     magnitude: 0.0,
                     target,
+                    duration_ticks: None,
                 },
                 Path::new("<inline-items.toml>"),
                 "poison_pill_missing_target",
@@ -4390,6 +4521,7 @@ mod tests {
                 kind: "poison_pill".to_string(),
                 magnitude: 0.0,
                 target: Some("poison_pill_typo".to_string()),
+                duration_ticks: None,
             },
             Path::new("<inline-items.toml>"),
             "poison_pill_unknown_target",
@@ -4652,6 +4784,149 @@ mod tests {
                 .max_stack_count,
             1
         );
+    }
+
+    // ── plan-food-v1 P2 BLOCKER 1：food.toml FoodRegen effect 解析测试 ──
+
+    /// BLOCKER 1 端到端：food.toml → ItemRegistry → ling_guo.effect = FoodRegen{0.20, 48000}
+    #[test]
+    fn food_toml_ling_guo_has_food_regen_effect() {
+        let registry =
+            load_item_registry().expect("item registry should load from assets/items/*.toml");
+        let ling_guo = registry
+            .get("food.spirit_fruit.ling_guo")
+            .expect("food.toml ling_guo must be registered");
+        match &ling_guo.effect {
+            Some(ItemEffect::FoodRegen {
+                bonus_factor,
+                duration_ticks,
+            }) => {
+                assert!(
+                    (bonus_factor - 0.20).abs() < 1e-4,
+                    "ling_guo bonus_factor 应=0.20（+20% 修炼速度），实际 {bonus_factor}"
+                );
+                assert_eq!(
+                    *duration_ticks, 48_000u64,
+                    "ling_guo duration_ticks 应=48000（2 GAME_DAY），实际 {duration_ticks}"
+                );
+            }
+            other => panic!("ling_guo.effect 应为 FoodRegen{{0.20, 48000}}，实际 {other:?}"),
+        }
+    }
+
+    /// BLOCKER 1 端到端：food.toml → chen_jiu.effect = FoodRegen{0.15, 36000}
+    #[test]
+    fn food_toml_chen_jiu_has_food_regen_effect() {
+        let registry =
+            load_item_registry().expect("item registry should load from assets/items/*.toml");
+        let chen_jiu = registry
+            .get("food.spirit_wine.chen_jiu")
+            .expect("food.toml chen_jiu must be registered");
+        match &chen_jiu.effect {
+            Some(ItemEffect::FoodRegen {
+                bonus_factor,
+                duration_ticks,
+            }) => {
+                assert!(
+                    (bonus_factor - 0.15).abs() < 1e-4,
+                    "chen_jiu bonus_factor 应=0.15（+15% 修炼速度），实际 {bonus_factor}"
+                );
+                assert_eq!(
+                    *duration_ticks, 36_000u64,
+                    "chen_jiu duration_ticks 应=36000（1.5 GAME_DAY），实际 {duration_ticks}"
+                );
+            }
+            other => panic!("chen_jiu.effect 应为 FoodRegen{{0.15, 36000}}，实际 {other:?}"),
+        }
+    }
+
+    /// 凡俗食物（cooked_meat / chen_bing）不挂修炼加速 effect
+    #[test]
+    fn food_toml_mundane_foods_have_no_cultivation_effect() {
+        let registry =
+            load_item_registry().expect("item registry should load from assets/items/*.toml");
+        for mundane in ["food.mundane.cooked_meat", "food.mundane.chen_bing"] {
+            let item = registry
+                .get(mundane)
+                .unwrap_or_else(|| panic!("food.toml {mundane} must be registered"));
+            assert!(
+                item.effect.is_none(),
+                "凡俗食物 `{mundane}` 不应有修炼加速 effect，实际 {:?}",
+                item.effect
+            );
+        }
+    }
+
+    /// food_regen 解析：duration_ticks 缺失时应报错
+    #[test]
+    fn parse_item_effect_food_regen_missing_duration_ticks_returns_error() {
+        let err = parse_item_effect(
+            ItemEffectToml {
+                kind: "food_regen".to_string(),
+                magnitude: 0.20,
+                target: None,
+                duration_ticks: None,
+            },
+            std::path::Path::new("<test>"),
+            "test_food_item",
+        )
+        .expect_err("food_regen 缺失 duration_ticks 应返回 Err");
+        assert!(
+            err.contains("duration_ticks"),
+            "错误信息应包含 'duration_ticks'，实际: {err}"
+        );
+    }
+
+    /// food_regen 解析：duration_ticks = 0 时应报错
+    #[test]
+    fn parse_item_effect_food_regen_zero_duration_ticks_returns_error() {
+        let err = parse_item_effect(
+            ItemEffectToml {
+                kind: "food_regen".to_string(),
+                magnitude: 0.20,
+                target: None,
+                duration_ticks: Some(0),
+            },
+            std::path::Path::new("<test>"),
+            "test_food_item",
+        )
+        .expect_err("food_regen duration_ticks=0 应返回 Err");
+        assert!(
+            err.contains("duration_ticks"),
+            "错误信息应包含 'duration_ticks'，实际: {err}"
+        );
+    }
+
+    /// food_regen 解析：合法参数应成功 → FoodRegen{bonus_factor: 0.20, duration_ticks: 48000}
+    #[test]
+    fn parse_item_effect_food_regen_valid_returns_food_regen() {
+        let effect = parse_item_effect(
+            ItemEffectToml {
+                kind: "food_regen".to_string(),
+                magnitude: 0.20,
+                target: None,
+                duration_ticks: Some(48_000),
+            },
+            std::path::Path::new("<test>"),
+            "test_ling_guo",
+        )
+        .expect("合法 food_regen 参数应成功解析");
+        match effect {
+            ItemEffect::FoodRegen {
+                bonus_factor,
+                duration_ticks,
+            } => {
+                assert!(
+                    (bonus_factor - 0.20).abs() < 1e-4,
+                    "bonus_factor 应=0.20，实际 {bonus_factor}"
+                );
+                assert_eq!(
+                    duration_ticks, 48_000,
+                    "duration_ticks 应=48000，实际 {duration_ticks}"
+                );
+            }
+            other => panic!("期望 FoodRegen，实际 {other:?}"),
+        }
     }
 
     // ── plan-cultivation-pacing-v1 P2.2：次品修炼丹药模板加载测试 ──
@@ -5138,6 +5413,8 @@ cols = 4
                 technique_scroll_spec: None,
                 recipe_fragment_spec: None,
                 container_spec: None,
+                shelflife_profile: None,
+                shelflife_track: None,
             },
         );
         let registry = ItemRegistry { templates };
@@ -5202,6 +5479,8 @@ cols = 4
                 technique_scroll_spec: None,
                 recipe_fragment_spec: None,
                 container_spec: None,
+                shelflife_profile: None,
+                shelflife_track: None,
             },
         );
         let registry = ItemRegistry { templates };
@@ -5292,7 +5571,7 @@ cols = 4
         let mut inventory = empty_inventory(3, 3);
         let mut allocator = InventoryInstanceIdAllocator::new(1);
 
-        add_item_to_player_inventory(&mut inventory, &registry, &mut allocator, "wide", 1)
+        add_item_to_player_inventory(&mut inventory, &registry, &mut allocator, "wide", 1, 0)
             .expect("first wide item should fit at top-left");
 
         let main_pack = &inventory.containers[0];
@@ -5316,7 +5595,7 @@ cols = 4
         let mut allocator = InventoryInstanceIdAllocator::new(1);
 
         for _ in 0..5 {
-            add_item_to_player_inventory(&mut inventory, &registry, &mut allocator, "one", 1)
+            add_item_to_player_inventory(&mut inventory, &registry, &mut allocator, "one", 1, 0)
                 .expect("first five one-cell items should fit");
         }
 
@@ -5324,7 +5603,7 @@ cols = 4
         assert_eq!(find_free_slot(main_pack, 1, 1), Some((1, 2)));
         assert_eq!(find_free_slot(main_pack, 2, 2), None);
 
-        add_item_to_player_inventory(&mut inventory, &registry, &mut allocator, "one", 1)
+        add_item_to_player_inventory(&mut inventory, &registry, &mut allocator, "one", 1, 0)
             .expect("last one-cell slot should fit");
         assert_eq!(find_free_slot(&inventory.containers[0], 1, 1), None);
     }
@@ -5344,6 +5623,7 @@ cols = 4
             &mut allocator,
             "ci_she_hao",
             2,
+            0,
         )
         .expect("runtime inventory grant should succeed for canonical herb");
 
@@ -5382,7 +5662,7 @@ cols = 4
         let mut allocator = InventoryInstanceIdAllocator::new(1);
 
         let receipt =
-            add_item_to_player_inventory(&mut inventory, &registry, &mut allocator, "stone", 4)
+            add_item_to_player_inventory(&mut inventory, &registry, &mut allocator, "stone", 4, 0)
                 .expect("four non-stack one-cell items should exactly fill a 2x2 pack");
 
         assert_eq!(receipt.stack_count, 4);
@@ -5396,7 +5676,7 @@ cols = 4
         assert_container_has_no_overlaps(main_pack);
 
         let error =
-            add_item_to_player_inventory(&mut inventory, &registry, &mut allocator, "stone", 1)
+            add_item_to_player_inventory(&mut inventory, &registry, &mut allocator, "stone", 1, 0)
                 .expect_err("full pack should reject another non-stack item");
         assert!(error.contains("inventory full: stone"));
     }
@@ -5413,8 +5693,15 @@ cols = 4
         let mut inventory = empty_inventory(2, 2);
         let mut allocator = InventoryInstanceIdAllocator::new(10);
 
-        add_item_to_player_inventory(&mut inventory, &registry, &mut allocator, "ci_she_hao", 10)
-            .expect("initial herb stack should fit");
+        add_item_to_player_inventory(
+            &mut inventory,
+            &registry,
+            &mut allocator,
+            "ci_she_hao",
+            10,
+            0,
+        )
+        .expect("initial herb stack should fit");
         let first_instance_id = inventory.containers[0].items[0].instance.instance_id;
 
         let receipt = add_item_to_player_inventory(
@@ -5423,6 +5710,7 @@ cols = 4
             &mut allocator,
             "ci_she_hao",
             5,
+            0,
         )
         .expect("second herb grant should merge into existing stack");
 
@@ -5452,6 +5740,7 @@ cols = 4
                 &mut allocator,
                 "ci_she_hao",
                 1,
+                0,
             )
             .expect("batch herb harvest grant should merge into existing stack");
             if receipt.merged_instance_ids.is_empty() {
@@ -5482,14 +5771,22 @@ cols = 4
         let mut inventory = empty_inventory(2, 2);
         let mut allocator = InventoryInstanceIdAllocator::new(20);
 
-        add_item_to_player_inventory(&mut inventory, &registry, &mut allocator, "ci_she_hao", 63)
-            .expect("initial herb stack should fit");
+        add_item_to_player_inventory(
+            &mut inventory,
+            &registry,
+            &mut allocator,
+            "ci_she_hao",
+            63,
+            0,
+        )
+        .expect("initial herb stack should fit");
         let receipt = add_item_to_player_inventory(
             &mut inventory,
             &registry,
             &mut allocator,
             "ci_she_hao",
             3,
+            0,
         )
         .expect("overflow should create a second stack");
 
@@ -5520,8 +5817,15 @@ cols = 4
         let mut inventory = empty_inventory(2, 2);
         let mut allocator = InventoryInstanceIdAllocator::new(40);
 
-        add_item_to_player_inventory(&mut inventory, &registry, &mut allocator, "ci_she_hao", 1)
-            .expect("initial herb stack should fit");
+        add_item_to_player_inventory(
+            &mut inventory,
+            &registry,
+            &mut allocator,
+            "ci_she_hao",
+            1,
+            0,
+        )
+        .expect("initial herb stack should fit");
 
         assert!(
             find_mergeable_stack(&mut inventory.containers[0], "ci_she_hao", 1).is_none(),
@@ -5553,6 +5857,7 @@ cols = 4
             &mut allocator,
             "ci_she_hao",
             1,
+            0,
             |instance| {
                 instance.display_name = format!("雷 · {}", instance.display_name);
                 instance.spirit_quality = (instance.spirit_quality + 0.1).clamp(0.0, 1.0);
@@ -5565,6 +5870,7 @@ cols = 4
             &mut allocator,
             "ci_she_hao",
             1,
+            0,
         )
         .expect("default herb should fit beside customized stack");
 
@@ -6926,6 +7232,8 @@ cols = 4
                 technique_scroll_spec: None,
                 recipe_fragment_spec: None,
                 container_spec: None,
+                shelflife_profile: None,
+                shelflife_track: None,
             },
         );
         let mut inv = make_test_inventory_with_one_item();
@@ -6998,6 +7306,8 @@ cols = 4
                 technique_scroll_spec: None,
                 recipe_fragment_spec: None,
                 container_spec: None,
+                shelflife_profile: None,
+                shelflife_track: None,
             },
         );
         let mut inv = make_test_inventory_with_one_item();
@@ -7305,6 +7615,8 @@ cols = 4
                 equip_slot: equip_slot.to_string(),
                 durability_cost_per_op: 0.0,
             }),
+            shelflife_profile: None,
+            shelflife_track: None,
         }
     }
 
@@ -7992,6 +8304,8 @@ cols = 4
                 equip_slot: EQUIP_SLOT_WAIST_POUCH.to_string(),
                 durability_cost_per_op: 0.008,
             }),
+            shelflife_profile: None,
+            shelflife_track: None,
         };
         let registry =
             ItemRegistry::from_map(HashMap::from([("worn_grass_pouch".to_string(), template)]));
@@ -8408,6 +8722,8 @@ cols = 4
             technique_scroll_spec: None,
             recipe_fragment_spec: None,
             container_spec: None,
+            shelflife_profile: None,
+            shelflife_track: None,
         }
     }
 
@@ -8433,6 +8749,8 @@ cols = 4
             technique_scroll_spec: None,
             recipe_fragment_spec: None,
             container_spec: None,
+            shelflife_profile: None,
+            shelflife_track: None,
         }
     }
 
@@ -8804,6 +9122,528 @@ cols = 4
         assert!(
             def.is_some(),
             "sword.cleave should be a registered technique definition"
+        );
+    }
+
+    // ── plan-food-v1 P0 — 食物物品模板加载测试 ──
+
+    #[test]
+    fn food_item_templates_load_from_assets() {
+        let registry =
+            load_item_registry().expect("item registry should load from assets/items/*.toml");
+
+        // happy path: 五个食物 ID 均可查到
+        for id in [
+            "food.mundane.cooked_meat",
+            "food.mundane.chen_bing",
+            "food.spirit_fruit.ling_guo",
+            "food.spirit_wine.chen_jiu",
+            "food.spirit_wine.chen_cu",
+        ] {
+            assert!(
+                registry.get(id).is_some(),
+                "food item `{id}` should load from food.toml — 确认 TOML 已添加并 category=food"
+            );
+        }
+    }
+
+    #[test]
+    fn food_item_templates_have_food_category() {
+        let registry =
+            load_item_registry().expect("item registry should load from assets/items/*.toml");
+
+        for id in [
+            "food.mundane.cooked_meat",
+            "food.mundane.chen_bing",
+            "food.spirit_fruit.ling_guo",
+            "food.spirit_wine.chen_jiu",
+            "food.spirit_wine.chen_cu",
+        ] {
+            let tpl = registry
+                .get(id)
+                .unwrap_or_else(|| panic!("{id} must be in registry"));
+            assert_eq!(
+                tpl.category,
+                ItemCategory::Food,
+                "item `{id}` should have category=Food because plan-food-v1 P0 requires food category; \
+                 check parse_item_category food arm and TOML category field"
+            );
+        }
+    }
+
+    #[test]
+    fn food_item_default_stack_count_is_16() {
+        // ItemCategory::Food stacks up to 16, same as Pill/Misc
+        let registry =
+            load_item_registry().expect("item registry should load from assets/items/*.toml");
+
+        let cooked_meat = registry
+            .get("food.mundane.cooked_meat")
+            .expect("food.mundane.cooked_meat must exist");
+        assert_eq!(
+            cooked_meat.max_stack_count, 16,
+            "food items default to stack 16 because ItemCategory::Food is in same arm as Pill/Misc"
+        );
+
+        let ling_guo = registry
+            .get("food.spirit_fruit.ling_guo")
+            .expect("food.spirit_fruit.ling_guo must exist");
+        assert_eq!(
+            ling_guo.max_stack_count, 16,
+            "ling_guo stack should be 16 because Food category has same default as Misc"
+        );
+    }
+
+    #[test]
+    fn food_item_spirit_quality_initial_is_in_range() {
+        let registry =
+            load_item_registry().expect("item registry should load from assets/items/*.toml");
+
+        let cases: &[(&str, f64, f64)] = &[
+            ("food.mundane.cooked_meat", 0.30, 0.50),
+            ("food.mundane.chen_bing", 0.25, 0.50),
+            ("food.spirit_fruit.ling_guo", 0.60, 0.80),
+            ("food.spirit_wine.chen_jiu", 0.70, 0.90),
+            ("food.spirit_wine.chen_cu", 0.55, 0.75),
+        ];
+        for (id, lo, hi) in cases {
+            let tpl = registry
+                .get(id)
+                .unwrap_or_else(|| panic!("{id} must exist"));
+            assert!(
+                tpl.spirit_quality_initial >= *lo && tpl.spirit_quality_initial <= *hi,
+                "item `{id}` spirit_quality_initial {} out of expected range [{lo},{hi}] — \
+                 check food.toml values",
+                tpl.spirit_quality_initial
+            );
+        }
+    }
+
+    #[test]
+    fn parse_item_category_food_arm_roundtrip() {
+        // Verify parse_item_category correctly routes "food" string
+        use std::path::PathBuf;
+        let path = PathBuf::from("test_path.toml");
+        let result = parse_item_category("food", &path, "test_id");
+        assert!(
+            matches!(result, Ok(ItemCategory::Food)),
+            "parse_item_category(\"food\") should return Ok(ItemCategory::Food), got {result:?}"
+        );
+    }
+
+    #[test]
+    fn parse_item_category_food_arm_case_insensitive() {
+        use std::path::PathBuf;
+        let path = PathBuf::from("test_path.toml");
+        assert!(matches!(
+            parse_item_category("Food", &path, "x"),
+            Ok(ItemCategory::Food)
+        ));
+        assert!(matches!(
+            parse_item_category("FOOD", &path, "x"),
+            Ok(ItemCategory::Food)
+        ));
+        assert!(matches!(
+            parse_item_category("  food  ", &path, "x"),
+            Ok(ItemCategory::Food)
+        ));
+    }
+
+    #[test]
+    fn parse_item_category_unknown_still_errors() {
+        use std::path::PathBuf;
+        let path = PathBuf::from("test.toml");
+        assert!(
+            parse_item_category("totally_unknown_category", &path, "id").is_err(),
+            "unknown category should still return Err — food arm must not swallow others"
+        );
+    }
+
+    // ── plan-food-v1 P1 — 食物物品 shelflife_profile 初始化测试 ──
+
+    #[test]
+    fn food_item_templates_have_shelflife_profile_set() {
+        // plan-food-v1 P1：food.toml 中每个食物 item 应声明 shelflife_profile + shelflife_track
+        let registry =
+            load_item_registry().expect("item registry should load from assets/items/*.toml");
+
+        let cases: &[(&str, &str, crate::shelflife::DecayTrack)] = &[
+            (
+                "food.mundane.cooked_meat",
+                "food_spoil_mundane_meat_v1",
+                crate::shelflife::DecayTrack::Spoil,
+            ),
+            (
+                "food.mundane.chen_bing",
+                "food_spoil_mundane_dry_v1",
+                crate::shelflife::DecayTrack::Spoil,
+            ),
+            (
+                "food.spirit_fruit.ling_guo",
+                "food_spoil_ling_guo_v1",
+                crate::shelflife::DecayTrack::Spoil,
+            ),
+            (
+                "food.spirit_wine.chen_jiu",
+                "chen_jiu_v1",
+                crate::shelflife::DecayTrack::Age,
+            ),
+            (
+                "food.spirit_wine.chen_cu",
+                "chen_cu_v1",
+                crate::shelflife::DecayTrack::Spoil,
+            ),
+        ];
+        for (id, expected_profile, expected_track) in cases {
+            let tpl = registry
+                .get(id)
+                .unwrap_or_else(|| panic!("{id} must be in registry — check food.toml"));
+            assert_eq!(
+                tpl.shelflife_profile.as_deref(),
+                Some(*expected_profile),
+                "item `{id}` should have shelflife_profile=`{expected_profile}` \
+                 because plan-food-v1 P1 requires food items to declare their decay profile in food.toml"
+            );
+            assert_eq!(
+                tpl.shelflife_track,
+                Some(*expected_track),
+                "item `{id}` should have shelflife_track={expected_track:?} \
+                 because plan-food-v1 P1 assigns decay track in food.toml"
+            );
+        }
+    }
+
+    #[test]
+    fn runtime_instance_from_template_attaches_freshness_for_food_with_shelflife_profile() {
+        use crate::shelflife::{DecayProfileId, DecayTrack};
+        // plan-food-v1 P1：runtime_instance_from_template が shelflife_profile を持つ
+        // テンプレートで Freshness を自動挂する。
+        let tpl = ItemTemplate {
+            id: "food.spirit_wine.chen_jiu".to_string(),
+            display_name: "陈酒".to_string(),
+            category: ItemCategory::Food,
+            max_stack_count: 16,
+            grid_w: 1,
+            grid_h: 1,
+            base_weight: 0.5,
+            rarity: ItemRarity::Uncommon,
+            spirit_quality_initial: 0.80,
+            description: "test".to_string(),
+            effect: None,
+            cast_duration_ms: DEFAULT_CAST_DURATION_MS,
+            cooldown_ms: DEFAULT_COOLDOWN_MS,
+            weapon_spec: None,
+            forge_station_spec: None,
+            blueprint_scroll_spec: None,
+            inscription_scroll_spec: None,
+            technique_scroll_spec: None,
+            recipe_fragment_spec: None,
+            container_spec: None,
+            shelflife_profile: Some("chen_jiu_v1".to_string()),
+            shelflife_track: Some(DecayTrack::Age),
+        };
+
+        // plan-food-v1 MAJOR2: current_tick 传入 runtime_instance_from_template，
+        // created_at_tick 应等于传入的 current_tick（不再硬编码 0）。
+        let spawn_tick = 12345_u64;
+        let instance = runtime_instance_from_template(&tpl, 1, 1, spawn_tick);
+        let freshness = instance.freshness.as_ref().expect(
+            "chen_jiu item should have Freshness attached by runtime_instance_from_template \
+                     because template declares shelflife_profile=chen_jiu_v1",
+        );
+        assert_eq!(
+            freshness.track,
+            DecayTrack::Age,
+            "freshness.track should be Age for chen_jiu (plan-food-v1 P1 Age track)"
+        );
+        assert_eq!(
+            freshness.profile,
+            DecayProfileId::new("chen_jiu_v1"),
+            "freshness.profile must be chen_jiu_v1 as declared in food.toml"
+        );
+        assert_eq!(
+            freshness.created_at_tick, spawn_tick,
+            "freshness.created_at_tick must equal current_tick passed to runtime_instance_from_template; \
+             hardcoding 0 causes elapsed=now-0 to pre-age items spawned mid-session"
+        );
+        assert!(
+            (freshness.initial_qi - 0.80_f32).abs() < 1e-4,
+            "freshness.initial_qi should equal spirit_quality_initial=0.80 cast to f32; \
+             got {}",
+            freshness.initial_qi
+        );
+        assert_eq!(
+            freshness.frozen_accumulated, 0,
+            "new item frozen_accumulated=0"
+        );
+        assert!(
+            freshness.frozen_since_tick.is_none(),
+            "new item frozen_since_tick=None"
+        );
+    }
+
+    #[test]
+    fn runtime_instance_from_template_no_freshness_when_no_shelflife_profile() {
+        // Non-food items (or food without shelflife_profile) should have freshness=None
+        let tpl = ItemTemplate {
+            id: "misc_thing".to_string(),
+            display_name: "misc".to_string(),
+            category: ItemCategory::Misc,
+            max_stack_count: 1,
+            grid_w: 1,
+            grid_h: 1,
+            base_weight: 0.1,
+            rarity: ItemRarity::Common,
+            spirit_quality_initial: 1.0,
+            description: "no shelflife".to_string(),
+            effect: None,
+            cast_duration_ms: DEFAULT_CAST_DURATION_MS,
+            cooldown_ms: DEFAULT_COOLDOWN_MS,
+            weapon_spec: None,
+            forge_station_spec: None,
+            blueprint_scroll_spec: None,
+            inscription_scroll_spec: None,
+            technique_scroll_spec: None,
+            recipe_fragment_spec: None,
+            container_spec: None,
+            shelflife_profile: None,
+            shelflife_track: None,
+        };
+
+        let instance = runtime_instance_from_template(&tpl, 1, 1, 0);
+        assert!(
+            instance.freshness.is_none(),
+            "item without shelflife_profile should have freshness=None — \
+             only items with shelflife_profile in food.toml get auto-freshness"
+        );
+    }
+
+    #[test]
+    fn chen_jiu_item_from_registry_has_age_freshness_on_spawn() {
+        // End-to-end: load food.toml item, instantiate, verify freshness is Age track.
+        use crate::shelflife::DecayTrack;
+        let registry =
+            load_item_registry().expect("item registry should load from assets/items/*.toml");
+
+        let tpl = registry
+            .get("food.spirit_wine.chen_jiu")
+            .expect("food.spirit_wine.chen_jiu must be loadable from food.toml");
+
+        let instance = runtime_instance_from_template(tpl, 99, 1, 0);
+        let freshness = instance.freshness.as_ref().expect(
+            "food.spirit_wine.chen_jiu should have freshness auto-attached because \
+             food.toml declares shelflife_profile=chen_jiu_v1",
+        );
+        assert_eq!(
+            freshness.track,
+            DecayTrack::Age,
+            "chen_jiu template spawns with Age track because chen_jiu_v1 is an Age profile"
+        );
+    }
+
+    #[test]
+    fn ling_guo_item_from_registry_has_spoil_freshness_on_spawn() {
+        use crate::shelflife::DecayTrack;
+        let registry =
+            load_item_registry().expect("item registry should load from assets/items/*.toml");
+
+        let tpl = registry
+            .get("food.spirit_fruit.ling_guo")
+            .expect("food.spirit_fruit.ling_guo must exist");
+
+        let instance = runtime_instance_from_template(tpl, 1, 1, 0);
+        let freshness = instance.freshness.as_ref().expect(
+            "ling_guo should have freshness because food.toml declares shelflife_profile=food_spoil_ling_guo_v1"
+        );
+        assert_eq!(
+            freshness.track,
+            DecayTrack::Spoil,
+            "ling_guo spawns with Spoil track — it decays in 2 game days"
+        );
+    }
+
+    #[test]
+    fn shelflife_track_parse_invalid_rejects_with_error() {
+        // plan-food-v1 P1：无效的 shelflife_track 字符串应在 TOML 解析时报错。
+        use std::path::PathBuf;
+        let path = PathBuf::from("test_path.toml");
+
+        let raw = ItemTemplateToml {
+            id: "test_item".to_string(),
+            name: "Test".to_string(),
+            category: "food".to_string(),
+            grid_w: 1,
+            grid_h: 1,
+            base_weight: 0.1,
+            rarity: "common".to_string(),
+            spirit_quality_initial: 0.5,
+            description: "test".to_string(),
+            max_stack_count: None,
+            effect: None,
+            cast_duration_ms: None,
+            cooldown_ms: None,
+            weapon: None,
+            forge_station: None,
+            blueprint_scroll: None,
+            inscription_scroll: None,
+            technique_scroll: None,
+            recipe_fragment: None,
+            container: None,
+            shelflife_profile: Some("some_profile".to_string()),
+            shelflife_track: Some("INVALID_TRACK".to_string()),
+        };
+
+        let result = raw.try_into_item_template(&path);
+        assert!(
+            result.is_err(),
+            "ItemTemplateToml with invalid shelflife_track should fail try_into_item_template"
+        );
+        let err = result.unwrap_err();
+        assert!(
+            err.contains("shelflife_track"),
+            "error message should mention shelflife_track; got: {err}"
+        );
+    }
+
+    #[test]
+    fn shelflife_track_defaults_to_spoil_when_not_specified() {
+        // shelflife_profile は Some だが shelflife_track を省略 → デフォルト spoil。
+        use crate::shelflife::DecayTrack;
+        use std::path::PathBuf;
+        let path = PathBuf::from("test_path.toml");
+
+        let raw = ItemTemplateToml {
+            id: "test_item".to_string(),
+            name: "Test".to_string(),
+            category: "food".to_string(),
+            grid_w: 1,
+            grid_h: 1,
+            base_weight: 0.1,
+            rarity: "common".to_string(),
+            spirit_quality_initial: 0.5,
+            description: "test".to_string(),
+            max_stack_count: None,
+            effect: None,
+            cast_duration_ms: None,
+            cooldown_ms: None,
+            weapon: None,
+            forge_station: None,
+            blueprint_scroll: None,
+            inscription_scroll: None,
+            technique_scroll: None,
+            recipe_fragment: None,
+            container: None,
+            shelflife_profile: Some("some_profile".to_string()),
+            shelflife_track: None, // should default to "spoil"
+        };
+
+        let tpl = raw
+            .try_into_item_template(&path)
+            .expect("valid TOML should parse OK");
+        assert_eq!(
+            tpl.shelflife_track,
+            Some(DecayTrack::Spoil),
+            "when shelflife_track is omitted but shelflife_profile is present, \
+             shelflife_track defaults to Spoil"
+        );
+    }
+
+    // ── plan-food-v1 P1 (CodeRabbit 补测) — shelflife 半配置报错 ──
+
+    /// 负向：shelflife_track=Some 但 shelflife_profile=None → try_into_item_template 必须报错，
+    /// 且错误信息含 "shelflife_track"（防止半配置静默绕过 freshness gate）。
+    #[test]
+    fn shelflife_track_without_profile_is_rejected() {
+        use std::path::PathBuf;
+        let path = PathBuf::from("test_path.toml");
+
+        let raw = ItemTemplateToml {
+            id: "bad_food_half_config".to_string(),
+            name: "半配置食物".to_string(),
+            category: "food".to_string(),
+            grid_w: 1,
+            grid_h: 1,
+            base_weight: 0.1,
+            rarity: "common".to_string(),
+            spirit_quality_initial: 1.0,
+            description: "shelflife_track 有值但 profile 为 None".to_string(),
+            max_stack_count: None,
+            effect: None,
+            cast_duration_ms: None,
+            cooldown_ms: None,
+            weapon: None,
+            forge_station: None,
+            blueprint_scroll: None,
+            inscription_scroll: None,
+            technique_scroll: None,
+            recipe_fragment: None,
+            container: None,
+            shelflife_profile: None,                    // ← 故意缺失
+            shelflife_track: Some("spoil".to_string()), // ← 有值但 profile 为 None → 报错
+        };
+
+        let result = raw.try_into_item_template(&path);
+        assert!(
+            result.is_err(),
+            "shelflife_track 有值但 shelflife_profile=None 时 try_into_item_template 必须返回 Err，\
+             否则 freshness gate 会被静默绕过"
+        );
+        let err = result.unwrap_err();
+        assert!(
+            err.contains("shelflife_track"),
+            "错误信息应提到 shelflife_track 字段，方便定位半配置问题；实际错误：{err}"
+        );
+        assert!(
+            err.contains("shelflife_profile"),
+            "错误信息应同时提到 shelflife_profile 字段，方便定位半配置问题；实际错误：{err}"
+        );
+    }
+
+    /// 正向对照：shelflife_profile=Some + shelflife_track=Some("spoil") → 正常解析，
+    /// track=Spoil，不报错。
+    #[test]
+    fn shelflife_track_and_profile_both_some_is_accepted() {
+        use crate::shelflife::DecayTrack;
+        use std::path::PathBuf;
+        let path = PathBuf::from("test_path.toml");
+
+        let raw = ItemTemplateToml {
+            id: "good_food_full_config".to_string(),
+            name: "完整配置食物".to_string(),
+            category: "food".to_string(),
+            grid_w: 1,
+            grid_h: 1,
+            base_weight: 0.1,
+            rarity: "common".to_string(),
+            spirit_quality_initial: 1.0,
+            description: "shelflife_track + profile 均有值".to_string(),
+            max_stack_count: None,
+            effect: None,
+            cast_duration_ms: None,
+            cooldown_ms: None,
+            weapon: None,
+            forge_station: None,
+            blueprint_scroll: None,
+            inscription_scroll: None,
+            technique_scroll: None,
+            recipe_fragment: None,
+            container: None,
+            shelflife_profile: Some("my_spoil_profile_v1".to_string()), // ← 正确配对
+            shelflife_track: Some("spoil".to_string()),
+        };
+
+        let tpl = raw
+            .try_into_item_template(&path)
+            .expect("shelflife_profile + shelflife_track 均 Some 时应正常解析");
+        assert_eq!(
+            tpl.shelflife_profile.as_deref(),
+            Some("my_spoil_profile_v1"),
+            "shelflife_profile 应原样保留在解析结果中"
+        );
+        assert_eq!(
+            tpl.shelflife_track,
+            Some(DecayTrack::Spoil),
+            "shelflife_track='spoil' 应解析为 DecayTrack::Spoil"
         );
     }
 }

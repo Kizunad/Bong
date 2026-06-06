@@ -3,18 +3,26 @@
 //! plan §6.1 第 7 条 access-time：每 200 tick（与 worldstate publish 同节拍），
 //! 全局扫描所有 PlayerInventory，对 track_state 边界跨越的 item 做 ID 变体切换。
 //!
+//! plan-food-v1 MAJOR1 — sweep 接入 ContainerFreshnessBehavior：
+//! 若容器内存在 ice_cellar（food.container.ice_cellar），则对 Spoil track 物品
+//! 应用 SpoilOnly { rate: 0.3 } 乘子，使冰窖 spoil 速率差异 ≥70% 真实生效。
+//!
 //! 本系统仅在 sweep 时修改 item — 不对 snapshot emit / probe / consume 读路径产生副作用。
 
 use valence::prelude::{Position, Query, Res, ResMut, Update};
 
 use crate::inventory::{bump_revision, ItemRegistry, PlayerInventory};
+use crate::spiritwood::item_freshness_behavior;
 use crate::world::dimension::{CurrentDimension, DimensionKind};
 use crate::world::season::query_season;
 use crate::world::zone::ZoneRegistry;
 
 use super::compute::zone_multiplier_lookup;
 use super::registry::DecayProfileRegistry;
-use super::variant::apply_variant_switch_with_season;
+use super::types::ContainerFreshnessBehavior;
+use super::variant::{
+    apply_variant_switch_with_season, apply_variant_switch_with_season_and_container,
+};
 
 /// plan §6.1 第 7 条：每 200 tick sweep 所有玩家 inventory，
 /// 对 `TrackState::Dead` / `AgePostPeakSpoiled` 的 item 执行变体切换。
@@ -37,9 +45,24 @@ pub fn sweep_shelflife_variants(
         let season = query_season("", tick_counter.0).season;
 
         for container in &mut inventory.containers {
+            // plan-food-v1 MAJOR1: 扫描容器内是否存在行为修改器物品（ice_cellar / ling_xia）。
+            // 找到第一个非 Normal behavior 的容器物品，用其行为修改本容器内所有 item 的腐败速率。
+            let container_behavior: ContainerFreshnessBehavior = container
+                .items
+                .iter()
+                .find_map(|placed| {
+                    let b = item_freshness_behavior(Some(&placed.instance));
+                    if matches!(b, ContainerFreshnessBehavior::Normal) {
+                        None
+                    } else {
+                        Some(b)
+                    }
+                })
+                .unwrap_or(ContainerFreshnessBehavior::Normal);
+
             for placed in &mut container.items {
                 let entropy_seed = placed.instance.instance_id;
-                if apply_variant_switch_with_season(
+                if apply_variant_switch_with_season_and_container(
                     &mut placed.instance,
                     &profile_registry,
                     &item_registry,
@@ -47,6 +70,7 @@ pub fn sweep_shelflife_variants(
                     zone_multiplier,
                     season,
                     entropy_seed,
+                    &container_behavior,
                 ) {
                     any_switched = true;
                 }

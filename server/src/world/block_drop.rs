@@ -183,6 +183,7 @@ pub fn apply_block_drops(
             &mut allocator,
             entry.template_id,
             count,
+            now_tick,
         ) {
             Ok(receipt) => {
                 tracing::debug!(

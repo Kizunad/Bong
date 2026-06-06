@@ -137,6 +137,7 @@ pub fn handle_danxin_identify_intents(
             RECIPE_HINT_TEMPLATE_ID,
             1,
             Some(AlchemyItemData::RecipeHint { hint: hint.clone() }),
+            0,
         );
 
         if accuracy >= 0.80 {
