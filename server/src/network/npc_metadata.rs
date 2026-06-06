@@ -354,7 +354,7 @@ pub fn archetype_label(archetype: NpcArchetype) -> &'static str {
         NpcArchetype::Commoner => "凡人",
         NpcArchetype::Rogue => "散修",
         NpcArchetype::Beast => "妖兽",
-        NpcArchetype::Disciple => "宗门弟子",
+        NpcArchetype::Disciple => "残宗余孽",
         NpcArchetype::GuardianRelic => "遗种守卫",
         NpcArchetype::Daoxiang => "道伥",
         NpcArchetype::Zhinian => "执念",
@@ -519,7 +519,7 @@ mod tests {
         assert!(json.contains(r#""entity_id":42"#));
         assert!(json.contains(r#""archetype":"disciple""#));
         assert!(json.contains(r#""realm":"凝脉""#));
-        assert!(json.contains(r#""display_name":"宗门弟子·凝脉""#));
+        assert!(json.contains(r#""display_name":"残宗余孽·凝脉""#));
         assert!(json.contains(r#""greeting_text":"道友，可有灵草出让？""#));
         assert!(json.contains(r#""reputation_to_player":50"#));
         assert!(json.contains(r#""qi_hint":"你看不清此人深浅""#));
@@ -577,7 +577,7 @@ mod tests {
                     "expected faction_rank None because NPC payload must not expose faction_id={faction_id:?} rank={rank:?}"
                 );
                 assert_eq!(
-                    payload.display_name, "宗门弟子·凝脉",
+                    payload.display_name, "残宗余孽·凝脉",
                     "期望 NPC payload 不暴露具名派系（reframe b 对齐），实际 display_name={} faction_id={faction_id:?} rank={rank:?}",
                     payload.display_name
                 );
@@ -586,7 +586,7 @@ mod tests {
                 let dialogue_name =
                     display_name(NpcArchetype::Disciple, Realm::Condense, Some(&membership));
                 assert_eq!(
-                    dialogue_name, "宗门弟子·凝脉",
+                    dialogue_name, "残宗余孽·凝脉",
                     "期望 NPC 互动文本 display_name 共用匿名身份，实际 display_name={dialogue_name} faction_id={faction_id:?} rank={rank:?}"
                 );
                 assert_no_faction_words(&dialogue_name, "dialogue display_name");
@@ -673,6 +673,17 @@ mod tests {
         assert_eq!(realm_label(Realm::Solidify), "固元");
         assert_eq!(realm_label(Realm::Spirit), "通灵");
         assert_eq!(realm_label(Realm::Void), "化虚");
+    }
+
+    #[test]
+    fn disciple_archetype_label_is_ruined_sect_remnant() {
+        let label = archetype_label(NpcArchetype::Disciple);
+
+        assert_eq!(label, "残宗余孽");
+        assert!(
+            !label.contains("宗门") && !label.contains("弟子"),
+            "期望 Disciple 展示身份不再使用当世宗门层级字样，实际 label={label}"
+        );
     }
 
     #[test]
