@@ -101,6 +101,28 @@ pub fn build_default_registry() -> DecayProfileRegistry {
             .expect("built-in fauna bone profile should validate");
     }
 
+    // plan-food-v1 P0: 普通熟肉 Spoil（3 游戏日腐败）
+    registry
+        .insert(DecayProfile::Spoil {
+            id: DecayProfileId::new("food_spoil_mundane_meat_v1"),
+            formula: DecayFormula::Linear {
+                decay_per_tick: 1.0 / (GAME_DAY_TICKS as f32 * 3.0),
+            },
+            spoil_threshold: 0.01,
+        })
+        .expect("built-in food_spoil_mundane_meat profile should validate");
+
+    // plan-food-v1 P0: 灵果 Spoil（2 游戏日腐败，食物中腐败最快）
+    registry
+        .insert(DecayProfile::Spoil {
+            id: DecayProfileId::new("food_spoil_ling_guo_v1"),
+            formula: DecayFormula::Linear {
+                decay_per_tick: 1.0 / (GAME_DAY_TICKS as f32 * 2.0),
+            },
+            spoil_threshold: 0.01,
+        })
+        .expect("built-in food_spoil_ling_guo profile should validate");
+
     // plan-shelflife-v1 M6: 陈酒 Age PeakAndFall → 过峰迁 Spoil（chen_cu_v1）
     // chen_cu_v1 作为 Spoil profile 先注册，chen_jiu_v1 引用它
     registry
@@ -325,10 +347,13 @@ mod tests {
             "fauna_bone_feng_he_gu_v1",
             "chen_cu_v1",
             "chen_jiu_v1",
+            // plan-food-v1 P0 — 食物 Spoil profiles
+            "food_spoil_mundane_meat_v1",
+            "food_spoil_ling_guo_v1",
         ] {
             assert!(r.contains(&DecayProfileId::new(id)), "missing {id}");
         }
-        assert_eq!(r.len(), 20);
+        assert_eq!(r.len(), 22, "expected 22 profiles: 20 existing + 2 food spoil profiles (food_spoil_mundane_meat_v1, food_spoil_ling_guo_v1)");
     }
 
     #[test]
@@ -379,5 +404,242 @@ mod tests {
                 ..
             } if *half_life_ticks == TICKS_PER_REAL_DAY
         ));
+    }
+
+    // ── plan-food-v1 P0 — 食物 Spoil profile 测试 ──
+
+    #[test]
+    fn food_spoil_mundane_meat_profile_is_spoil_track() {
+        let r = build_default_registry();
+        let profile = r
+            .get(&DecayProfileId::new("food_spoil_mundane_meat_v1"))
+            .expect("food_spoil_mundane_meat_v1 should be in build_default_registry — check shelflife/registry.rs food-v1 P0 block");
+        assert!(
+            matches!(profile, DecayProfile::Spoil { .. }),
+            "food_spoil_mundane_meat_v1 should be DecayProfile::Spoil track because mundane meat spoils"
+        );
+        assert_eq!(
+            profile.track(),
+            super::super::types::DecayTrack::Spoil,
+            "track() should return Spoil for food_spoil_mundane_meat_v1"
+        );
+    }
+
+    #[test]
+    fn food_spoil_mundane_meat_profile_spoil_threshold_near_zero() {
+        let r = build_default_registry();
+        let profile = r
+            .get(&DecayProfileId::new("food_spoil_mundane_meat_v1"))
+            .expect("food_spoil_mundane_meat_v1 must be registered");
+        let DecayProfile::Spoil {
+            spoil_threshold,
+            formula: DecayFormula::Linear { decay_per_tick },
+            ..
+        } = profile
+        else {
+            panic!("expected Spoil+Linear profile for mundane meat");
+        };
+        assert!(
+            (*spoil_threshold - 0.01).abs() < 1e-6,
+            "mundane meat spoil_threshold should be 0.01, got {spoil_threshold}"
+        );
+        // 3 game days to full decay: decay_per_tick = 1.0 / (GAME_DAY_TICKS * 3)
+        let expected = 1.0 / (GAME_DAY_TICKS as f32 * 3.0);
+        assert!(
+            (*decay_per_tick - expected).abs() < 1e-12,
+            "mundane meat decay_per_tick should be {expected} (1 / 3 game days), got {decay_per_tick}"
+        );
+    }
+
+    #[test]
+    fn food_spoil_mundane_meat_spoils_after_three_game_days() {
+        use super::super::consume::{spoil_check, SpoilCheckOutcome};
+        use super::super::types::{DecayFormula, DecayProfile, DecayProfileId, Freshness};
+        let profile = DecayProfile::Spoil {
+            id: DecayProfileId::new("food_spoil_mundane_meat_v1"),
+            formula: DecayFormula::Linear {
+                decay_per_tick: 1.0 / (GAME_DAY_TICKS as f32 * 3.0),
+            },
+            spoil_threshold: 0.01,
+        };
+        let freshness = Freshness::new(0, 1.0, &profile);
+
+        // At tick 0 (just created): Safe — qi == 1.0 >= 0.01
+        assert!(
+            matches!(
+                spoil_check(&freshness, &profile, 0, 1.0),
+                SpoilCheckOutcome::Safe { .. }
+            ),
+            "at tick 0 mundane meat should be Safe because qi=1.0 >> spoil_threshold=0.01"
+        );
+
+        // At exactly 3 game days: qi ≈ 0.0 → should be CriticalBlock (< 0.1 * 0.01)
+        let after_three_days = GAME_DAY_TICKS * 3;
+        let outcome = spoil_check(&freshness, &profile, after_three_days, 1.0);
+        assert!(
+            matches!(outcome, SpoilCheckOutcome::CriticalBlock { .. }),
+            "at 3 game days mundane meat should be CriticalBlock because qi depleted; got {outcome:?}"
+        );
+    }
+
+    #[test]
+    fn food_spoil_ling_guo_profile_is_spoil_track_with_two_game_day_formula() {
+        let r = build_default_registry();
+        let profile = r
+            .get(&DecayProfileId::new("food_spoil_ling_guo_v1"))
+            .expect("food_spoil_ling_guo_v1 should be in build_default_registry — check shelflife/registry.rs food-v1 P0 block");
+        let DecayProfile::Spoil {
+            spoil_threshold,
+            formula: DecayFormula::Linear { decay_per_tick },
+            ..
+        } = profile
+        else {
+            panic!("expected Spoil+Linear for ling_guo profile, got {profile:?}");
+        };
+        assert!(
+            (*spoil_threshold - 0.01).abs() < 1e-6,
+            "ling_guo spoil_threshold should be 0.01, got {spoil_threshold}"
+        );
+        // 2 game days to full decay: decay_per_tick = 1.0 / (GAME_DAY_TICKS * 2)
+        let expected = 1.0 / (GAME_DAY_TICKS as f32 * 2.0);
+        assert!(
+            (*decay_per_tick - expected).abs() < 1e-12,
+            "ling_guo decay_per_tick should be {expected} (1 / 2 game days), got {decay_per_tick}"
+        );
+    }
+
+    #[test]
+    fn ling_guo_decays_faster_than_mundane_meat() {
+        // ling_guo 2 game days < mundane_meat 3 game days
+        let r = build_default_registry();
+        let ling_guo = r
+            .get(&DecayProfileId::new("food_spoil_ling_guo_v1"))
+            .unwrap();
+        let meat = r
+            .get(&DecayProfileId::new("food_spoil_mundane_meat_v1"))
+            .unwrap();
+        let (
+            DecayProfile::Spoil {
+                formula:
+                    DecayFormula::Linear {
+                        decay_per_tick: ling_guo_rate,
+                    },
+                ..
+            },
+            DecayProfile::Spoil {
+                formula:
+                    DecayFormula::Linear {
+                        decay_per_tick: meat_rate,
+                    },
+                ..
+            },
+        ) = (ling_guo, meat)
+        else {
+            panic!("both profiles must be Spoil+Linear");
+        };
+        assert!(
+            ling_guo_rate > meat_rate,
+            "ling_guo ({ling_guo_rate}) should decay faster than mundane_meat ({meat_rate}) \
+             because fruit is more perishable (2 game days vs 3)"
+        );
+    }
+
+    #[test]
+    fn food_spoil_profiles_validate_ok() {
+        // All food profiles must pass validate()
+        for (id, profile) in [
+            (
+                "food_spoil_mundane_meat_v1",
+                DecayProfile::Spoil {
+                    id: DecayProfileId::new("food_spoil_mundane_meat_v1"),
+                    formula: DecayFormula::Linear {
+                        decay_per_tick: 1.0 / (GAME_DAY_TICKS as f32 * 3.0),
+                    },
+                    spoil_threshold: 0.01,
+                },
+            ),
+            (
+                "food_spoil_ling_guo_v1",
+                DecayProfile::Spoil {
+                    id: DecayProfileId::new("food_spoil_ling_guo_v1"),
+                    formula: DecayFormula::Linear {
+                        decay_per_tick: 1.0 / (GAME_DAY_TICKS as f32 * 2.0),
+                    },
+                    spoil_threshold: 0.01,
+                },
+            ),
+        ] {
+            profile.validate().unwrap_or_else(|e| {
+                panic!("{id} profile failed validate(): {e}");
+            });
+        }
+    }
+
+    #[test]
+    fn food_spoil_check_safe_at_creation() {
+        use super::super::consume::{spoil_check, SpoilCheckOutcome};
+        use super::super::types::{DecayFormula, DecayProfile, DecayProfileId, Freshness};
+        let profile = DecayProfile::Spoil {
+            id: DecayProfileId::new("food_spoil_ling_guo_v1"),
+            formula: DecayFormula::Linear {
+                decay_per_tick: 1.0 / (GAME_DAY_TICKS as f32 * 2.0),
+            },
+            spoil_threshold: 0.01,
+        };
+        let freshness = Freshness::new(0, 1.0, &profile);
+        match spoil_check(&freshness, &profile, 0, 1.0) {
+            SpoilCheckOutcome::Safe { current_qi } => {
+                assert!(
+                    (current_qi - 1.0).abs() < 1e-4,
+                    "ling_guo at tick 0 should have current_qi≈1.0, got {current_qi}"
+                );
+            }
+            other => panic!("expected Safe at tick 0, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn food_spoil_check_warn_approaching_spoil() {
+        use super::super::consume::{spoil_check, SpoilCheckOutcome};
+        use super::super::types::{DecayFormula, DecayProfile, DecayProfileId, Freshness};
+        // decay_per_tick=1.0: depletes 1 qi per tick from initial=100.
+        // spoil_threshold=10.0 → Warn when 1.0 <= current < 10.0.
+        // At tick 95: current = 100 - 1*95 = 5.0 → Warn (1.0 <= 5.0 < 10.0).
+        let profile = DecayProfile::Spoil {
+            id: DecayProfileId::new("food_spoil_ling_guo_v1"),
+            formula: DecayFormula::Linear {
+                decay_per_tick: 1.0,
+            },
+            spoil_threshold: 10.0,
+        };
+        let freshness = Freshness::new(0, 100.0, &profile);
+
+        let outcome = spoil_check(&freshness, &profile, 95, 1.0);
+        assert!(
+            matches!(outcome, SpoilCheckOutcome::Warn { .. }),
+            "at tick 95 current=5.0 should be Warn because 0.1*threshold(=1.0) <= 5.0 < threshold(=10.0); got {outcome:?}"
+        );
+    }
+
+    #[test]
+    fn food_spoil_check_critical_block_fully_spoiled() {
+        use super::super::consume::{spoil_check, SpoilCheckOutcome};
+        use super::super::types::{DecayFormula, DecayProfile, DecayProfileId, Freshness};
+        // decay_per_tick=1.0, initial=100, spoil_threshold=10.0.
+        // At tick 100: current = 100 - 1*100 = 0 < 0.1*10.0=1.0 → CriticalBlock.
+        let profile = DecayProfile::Spoil {
+            id: DecayProfileId::new("food_spoil_mundane_meat_v1"),
+            formula: DecayFormula::Linear {
+                decay_per_tick: 1.0,
+            },
+            spoil_threshold: 10.0,
+        };
+        let freshness = Freshness::new(0, 100.0, &profile);
+
+        let outcome = spoil_check(&freshness, &profile, 100, 1.0);
+        assert!(
+            matches!(outcome, SpoilCheckOutcome::CriticalBlock { .. }),
+            "at tick 100 current=0 should be CriticalBlock because 0 < 0.1*threshold(=1.0); got {outcome:?}"
+        );
     }
 }

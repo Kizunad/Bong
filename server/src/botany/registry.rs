@@ -141,6 +141,8 @@ pub const MING_GU_GU: &str = "ming_gu_gu";
 pub const BEI_WEN_ZHI: &str = "bei_wen_zhi";
 pub const LING_JING_XU: &str = "ling_jing_xu";
 pub const MAO_XIN_WEI: &str = "mao_xin_wei";
+// plan-food-v1 P0 — 灵果（Mountain/Plains 稀有档食物植物）
+pub const LING_GUO: &str = "food.spirit_fruit.ling_guo";
 
 const HAZARD_NONE: &[HarvestHazard] = &[];
 const ENV_FU_YUAN_JUE: &[EnvLock] = &[EnvLock::NegPressure { min: 0.3 }];
@@ -303,6 +305,9 @@ const ENV_MAO_XIN_WEI: &[EnvLock] = &[EnvLock::AdjacentDecoration {
     radius: 2,
 }];
 
+// plan-food-v1 P0 — 灵果：山地/平原稀有档，无特殊 env 约束，无采集危害。
+const ENV_LING_GUO: &[EnvLock] = &[];
+
 pub const KAI_MAI_CAO_ALIAS: &str = "kai_mai_cao";
 pub const XUE_CAO_ALIAS: &str = "xue_cao";
 pub const BAI_CAO_ALIAS: &str = "bai_cao";
@@ -349,6 +354,8 @@ pub enum BotanyPlantId {
     BeiWenZhi,
     LingJingXu,
     MaoXinWei,
+    /// plan-food-v1 P0 — 灵果：Mountain/Plains 稀有档食物植物，item_id = food.spirit_fruit.ling_guo。
+    LingGuo,
 }
 
 impl BotanyPlantId {
@@ -394,6 +401,7 @@ impl BotanyPlantId {
             Self::BeiWenZhi => BEI_WEN_ZHI,
             Self::LingJingXu => LING_JING_XU,
             Self::MaoXinWei => MAO_XIN_WEI,
+            Self::LingGuo => LING_GUO,
         }
     }
 
@@ -439,6 +447,7 @@ impl BotanyPlantId {
             BEI_WEN_ZHI => Some(Self::BeiWenZhi),
             LING_JING_XU => Some(Self::LingJingXu),
             MAO_XIN_WEI => Some(Self::MaoXinWei),
+            LING_GUO => Some(Self::LingGuo),
             _ => None,
         }
     }
@@ -1246,6 +1255,25 @@ impl Default for BotanyKindRegistry {
                     icon_prompt: "warm yellow thatch-heart vetch, hermitage remnant herb icon",
                 },
             ),
+            // plan-food-v1 P0 — 灵果：Mountain/Plains 稀有档食物植物，density_factor=0.5
+            botany_v2_kind_with_density(
+                BotanyPlantId::LingGuo,
+                LING_GUO,
+                0.003,
+                8_000,
+                0.5,
+                &[BotanyZoneTag::Mountain, BotanyZoneTag::Plains],
+                BotanyV2Spec {
+                    survival_mode: SurvivalMode::QiAbsorb,
+                    env_locks: ENV_LING_GUO,
+                    harvest_hazards: HAZARD_NONE,
+                    base_mesh_ref: "sweet_berry_bush",
+                    tint_rgb: 0xA0E060,
+                    tint_rgb_secondary: None,
+                    model_overlay: ModelOverlay::None,
+                    icon_prompt: "round luminous spirit fruit on mountain shrub, rare food item icon, jade-green glow",
+                },
+            ),
         ];
 
         Self {
@@ -1499,14 +1527,18 @@ mod tests {
     #[test]
     fn default_registry_contains_23_v1_and_17_v2_canonical_kinds() {
         // plan-botany-v1 22 种 + plan-cultivation-pacing-v1 P1.8 spirit_grass 1 种 +
-        // plan-botany-v2 绝地草木拾遗 17 种 = 40。
+        // plan-botany-v2 绝地草木拾遗 17 种 + plan-food-v1 P0 ling_guo 1 种 = 41。
         let registry = BotanyKindRegistry::default();
         let count = registry.iter().count();
         assert_eq!(
-            count, 40,
-            "BotanyKindRegistry should register exactly 40 canonical kinds (23 v1 + 17 v2), got {count}"
+            count, 41,
+            "BotanyKindRegistry should register exactly 41 canonical kinds (23 v1 + 17 v2 + 1 food), got {count}"
         );
-        assert_eq!(registry.iter().filter(|kind| kind.is_v2()).count(), 17);
+        assert_eq!(
+            registry.iter().filter(|kind| kind.is_v2()).count(),
+            18,
+            "18 v2 kinds expected (17 botany-v2 + 1 food ling_guo)"
+        );
     }
 
     // ===== plan-cultivation-pacing-v1 P1.8 灵草刷新配置验收测试 =====
@@ -1745,6 +1777,117 @@ mod tests {
             "CiSheHao ({}) should be denser than NingMaiCao ({})",
             ci.density_factor,
             ning.density_factor
+        );
+    }
+
+    // ── plan-food-v1 P0 — 灵果植物注册测试 ──
+
+    #[test]
+    fn ling_guo_plant_id_in_registry() {
+        let reg = BotanyKindRegistry::default();
+        let kind = reg.get(BotanyPlantId::LingGuo);
+        assert!(
+            kind.is_some(),
+            "BotanyPlantId::LingGuo should be in BotanyKindRegistry::default — \
+             check registry.rs LingGuo entry in default() array"
+        );
+    }
+
+    #[test]
+    fn ling_guo_item_id_points_to_food_spirit_fruit() {
+        let reg = BotanyKindRegistry::default();
+        let kind = reg
+            .get(BotanyPlantId::LingGuo)
+            .expect("LingGuo must be registered");
+        assert_eq!(
+            kind.item_id, "food.spirit_fruit.ling_guo",
+            "LingGuo item_id should be food.spirit_fruit.ling_guo — \
+             matching the food.toml item template ID"
+        );
+    }
+
+    #[test]
+    fn ling_guo_as_str_matches_item_id_constant() {
+        assert_eq!(
+            BotanyPlantId::LingGuo.as_str(),
+            LING_GUO,
+            "BotanyPlantId::LingGuo.as_str() should equal LING_GUO constant"
+        );
+        assert_eq!(
+            LING_GUO, "food.spirit_fruit.ling_guo",
+            "LING_GUO constant should be food.spirit_fruit.ling_guo"
+        );
+    }
+
+    #[test]
+    fn ling_guo_from_canonical_roundtrip() {
+        let id = BotanyPlantId::from_canonical(LING_GUO);
+        assert_eq!(
+            id,
+            Some(BotanyPlantId::LingGuo),
+            "from_canonical(LING_GUO) should return Some(LingGuo) for roundtrip"
+        );
+    }
+
+    #[test]
+    fn ling_guo_zone_tags_include_mountain_and_plains() {
+        let reg = BotanyKindRegistry::default();
+        let kind = reg
+            .get(BotanyPlantId::LingGuo)
+            .expect("LingGuo must be registered");
+        assert!(
+            kind.zone_tags
+                .contains(&crate::world::zone::BotanyZoneTag::Mountain),
+            "LingGuo should include Mountain zone_tag as a mountain-dwelling spirit fruit"
+        );
+        assert!(
+            kind.zone_tags
+                .contains(&crate::world::zone::BotanyZoneTag::Plains),
+            "LingGuo should include Plains zone_tag for broader spawn coverage"
+        );
+    }
+
+    #[test]
+    fn ling_guo_density_factor_is_rare() {
+        // density_factor ≈ 0.5 — rare relative to spirit_grass (20.0)
+        let reg = BotanyKindRegistry::default();
+        let kind = reg
+            .get(BotanyPlantId::LingGuo)
+            .expect("LingGuo must be registered");
+        assert!(
+            kind.density_factor <= 1.0,
+            "LingGuo density_factor {} should be ≤ 1.0 (rare plant), \
+             much less than spirit_grass 20.0",
+            kind.density_factor
+        );
+        assert!(
+            kind.density_factor > 0.0,
+            "LingGuo density_factor must be > 0 to actually spawn"
+        );
+    }
+
+    #[test]
+    fn ling_guo_spawn_mode_is_zone_refresh() {
+        let reg = BotanyKindRegistry::default();
+        let kind = reg
+            .get(BotanyPlantId::LingGuo)
+            .expect("LingGuo must be registered");
+        assert_eq!(
+            kind.spawn_mode,
+            BotanySpawnMode::ZoneRefresh,
+            "LingGuo should use ZoneRefresh spawn_mode per plan-food-v1 design decision"
+        );
+    }
+
+    #[test]
+    fn ling_guo_v2_spec_is_some() {
+        let reg = BotanyKindRegistry::default();
+        let kind = reg
+            .get(BotanyPlantId::LingGuo)
+            .expect("LingGuo must be registered");
+        assert!(
+            kind.v2.is_some(),
+            "LingGuo should have BotanyV2Spec because all new plants added after plan-botany-v2 must use v2"
         );
     }
 }

@@ -228,6 +228,8 @@ pub enum ItemCategory {
     /// plan-backpack-equip-v1 P0 — 可装备容器（背包/囊/挎包），携带 ContainerSpec。
     #[allow(dead_code)]
     Container,
+    /// plan-food-v1 P0 — 灵食（熟肉 / 陈饼 / 灵果 / 陈酒 / 陈醋等），消费时触发 FoodRegen。
+    Food,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -1507,7 +1509,7 @@ fn default_max_stack_count_for_category(category: ItemCategory) -> u32 {
     match category {
         ItemCategory::Herb => 64,
         ItemCategory::BoneCoin => u32::MAX,
-        ItemCategory::Pill | ItemCategory::Misc => 16,
+        ItemCategory::Pill | ItemCategory::Misc | ItemCategory::Food => 16,
         ItemCategory::Armor
         | ItemCategory::Weapon
         | ItemCategory::Tool
@@ -1850,6 +1852,8 @@ fn parse_item_category(
         "scroll" => Ok(ItemCategory::Scroll),
         "misc" => Ok(ItemCategory::Misc),
         "container" => Ok(ItemCategory::Container),
+        // plan-food-v1 P0 — 灵食分类
+        "food" => Ok(ItemCategory::Food),
         other => Err(format!(
             "{} item `{item_id}` has unknown category `{other}`",
             source_path.display()
@@ -8804,6 +8808,140 @@ cols = 4
         assert!(
             def.is_some(),
             "sword.cleave should be a registered technique definition"
+        );
+    }
+
+    // ── plan-food-v1 P0 — 食物物品模板加载测试 ──
+
+    #[test]
+    fn food_item_templates_load_from_assets() {
+        let registry =
+            load_item_registry().expect("item registry should load from assets/items/*.toml");
+
+        // happy path: 五个食物 ID 均可查到
+        for id in [
+            "food.mundane.cooked_meat",
+            "food.mundane.chen_bing",
+            "food.spirit_fruit.ling_guo",
+            "food.spirit_wine.chen_jiu",
+            "food.spirit_wine.chen_cu",
+        ] {
+            assert!(
+                registry.get(id).is_some(),
+                "food item `{id}` should load from food.toml — 确认 TOML 已添加并 category=food"
+            );
+        }
+    }
+
+    #[test]
+    fn food_item_templates_have_food_category() {
+        let registry =
+            load_item_registry().expect("item registry should load from assets/items/*.toml");
+
+        for id in [
+            "food.mundane.cooked_meat",
+            "food.mundane.chen_bing",
+            "food.spirit_fruit.ling_guo",
+            "food.spirit_wine.chen_jiu",
+            "food.spirit_wine.chen_cu",
+        ] {
+            let tpl = registry
+                .get(id)
+                .unwrap_or_else(|| panic!("{id} must be in registry"));
+            assert_eq!(
+                tpl.category,
+                ItemCategory::Food,
+                "item `{id}` should have category=Food because plan-food-v1 P0 requires food category; \
+                 check parse_item_category food arm and TOML category field"
+            );
+        }
+    }
+
+    #[test]
+    fn food_item_default_stack_count_is_16() {
+        // ItemCategory::Food stacks up to 16, same as Pill/Misc
+        let registry =
+            load_item_registry().expect("item registry should load from assets/items/*.toml");
+
+        let cooked_meat = registry
+            .get("food.mundane.cooked_meat")
+            .expect("food.mundane.cooked_meat must exist");
+        assert_eq!(
+            cooked_meat.max_stack_count, 16,
+            "food items default to stack 16 because ItemCategory::Food is in same arm as Pill/Misc"
+        );
+
+        let ling_guo = registry
+            .get("food.spirit_fruit.ling_guo")
+            .expect("food.spirit_fruit.ling_guo must exist");
+        assert_eq!(
+            ling_guo.max_stack_count, 16,
+            "ling_guo stack should be 16 because Food category has same default as Misc"
+        );
+    }
+
+    #[test]
+    fn food_item_spirit_quality_initial_is_in_range() {
+        let registry =
+            load_item_registry().expect("item registry should load from assets/items/*.toml");
+
+        let cases: &[(&str, f64, f64)] = &[
+            ("food.mundane.cooked_meat", 0.30, 0.50),
+            ("food.mundane.chen_bing", 0.25, 0.50),
+            ("food.spirit_fruit.ling_guo", 0.60, 0.80),
+            ("food.spirit_wine.chen_jiu", 0.70, 0.90),
+            ("food.spirit_wine.chen_cu", 0.55, 0.75),
+        ];
+        for (id, lo, hi) in cases {
+            let tpl = registry
+                .get(id)
+                .unwrap_or_else(|| panic!("{id} must exist"));
+            assert!(
+                tpl.spirit_quality_initial >= *lo && tpl.spirit_quality_initial <= *hi,
+                "item `{id}` spirit_quality_initial {} out of expected range [{lo},{hi}] — \
+                 check food.toml values",
+                tpl.spirit_quality_initial
+            );
+        }
+    }
+
+    #[test]
+    fn parse_item_category_food_arm_roundtrip() {
+        // Verify parse_item_category correctly routes "food" string
+        use std::path::PathBuf;
+        let path = PathBuf::from("test_path.toml");
+        let result = parse_item_category("food", &path, "test_id");
+        assert!(
+            matches!(result, Ok(ItemCategory::Food)),
+            "parse_item_category(\"food\") should return Ok(ItemCategory::Food), got {result:?}"
+        );
+    }
+
+    #[test]
+    fn parse_item_category_food_arm_case_insensitive() {
+        use std::path::PathBuf;
+        let path = PathBuf::from("test_path.toml");
+        assert!(matches!(
+            parse_item_category("Food", &path, "x"),
+            Ok(ItemCategory::Food)
+        ));
+        assert!(matches!(
+            parse_item_category("FOOD", &path, "x"),
+            Ok(ItemCategory::Food)
+        ));
+        assert!(matches!(
+            parse_item_category("  food  ", &path, "x"),
+            Ok(ItemCategory::Food)
+        ));
+    }
+
+    #[test]
+    fn parse_item_category_unknown_still_errors() {
+        use std::path::PathBuf;
+        let path = PathBuf::from("test.toml");
+        assert!(
+            parse_item_category("totally_unknown_category", &path, "id").is_err(),
+            "unknown category should still return Err — food arm must not swallow others"
         );
     }
 }

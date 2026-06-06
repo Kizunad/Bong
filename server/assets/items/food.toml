@@ -1,0 +1,59 @@
+# plan-food-v1 P0 — 灵食物品模板注册
+# 五个 item ID：mundane 普通食物 2 种 + spirit_fruit 1 种 + spirit_wine 2 种
+# category=misc（ItemCategory 无 Food 变体，由 parse_item_category 的 food 分支路由）
+# spirit_quality_initial：普通食物 0.40-0.60，灵果 0.70，陈酒 0.80，陈醋 0.65
+
+[[item]]
+id = "food.mundane.cooked_meat"
+name = "熟肉"
+category = "food"
+grid_w = 1
+grid_h = 1
+base_weight = 0.25
+rarity = "common"
+spirit_quality_initial = 0.40
+description = "粗劣灵兽肉块，炙烤至熟。腥气犹存，饥时聊以果腹；过期则腐，食之有险。"
+
+[[item]]
+id = "food.mundane.chen_bing"
+name = "陈饼"
+category = "food"
+grid_w = 1
+grid_h = 1
+base_weight = 0.15
+rarity = "common"
+spirit_quality_initial = 0.35
+description = "荒地麦草磨粉压成的干饼，无灵气可言。久置发霉，路人口粮，修士不屑。"
+
+[[item]]
+id = "food.spirit_fruit.ling_guo"
+name = "灵果"
+category = "food"
+grid_w = 1
+grid_h = 1
+base_weight = 0.12
+rarity = "uncommon"
+spirit_quality_initial = 0.70
+description = "山间孤生的圆润灵果，表皮隐隐流光。食之可微暖经脉、小助修炼，过峰腐烂极速。"
+
+[[item]]
+id = "food.spirit_wine.chen_jiu"
+name = "陈酒"
+category = "food"
+grid_w = 1
+grid_h = 1
+base_weight = 0.50
+rarity = "uncommon"
+spirit_quality_initial = 0.80
+description = "以灵草浸泡数月酿成的淡金色醴酒。陈化至峰，酒气凝灵；过峰则变陈醋，药力殆尽。"
+
+[[item]]
+id = "food.spirit_wine.chen_cu"
+name = "陈醋"
+category = "food"
+grid_w = 1
+grid_h = 1
+base_weight = 0.50
+rarity = "common"
+spirit_quality_initial = 0.65
+description = "陈酒过峰后自然转化的昏黄醋液，灵气大半散逸。酸涩微苦，偶有人用作调料。"
