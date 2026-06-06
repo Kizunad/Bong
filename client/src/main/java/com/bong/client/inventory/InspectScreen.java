@@ -1751,6 +1751,13 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
                 var pos = grid.screenToGrid(mouseX, mouseY);
                 if (pos != null) {
                     InventoryItem item = grid.itemAt(pos.row(), pos.col());
+                    // plan-exploration-probe-return-v1 P1 — Shift+右键槽位触发神识感知保鲜。
+                    if (item != null && hasShiftDown()) {
+                        int flatSlot = pos.row() * grid.cols() + pos.col();
+                        com.bong.client.network.ClientRequestSender.sendFreshnessProbe(flatSlot);
+                        itemInspectLongPress.cancel();
+                        return true;
+                    }
                     if (item != null && openPillContextMenu(item, (int) mouseX, (int) mouseY)) {
                         itemInspectLongPress.cancel();
                         return true;

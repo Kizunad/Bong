@@ -26,6 +26,7 @@ use super::lingtian::LingtianSessionDataV1;
 use super::movement::MovementStateV1;
 use super::narration::Narration;
 use super::poison_trait::{PoisonDoseEventV1, PoisonOverdoseEventV1, PoisonTraitStateV1};
+use super::processing::FreshnessUpdateV1;
 use super::realm_vision::{RealmVisionParamsV1, SpiritualSenseTargetsV1};
 use super::skill::{
     SkillCapChangedPayloadV1, SkillEntrySnapshotV1, SkillIdV1, SkillLvUpPayloadV1,
@@ -261,6 +262,8 @@ pub enum ServerDataType {
     SwordBondHudState,
     // ─── plan-exploration-probe-return-v1 P0：神识感知矿脉 S2C ───────
     MineralProbeResult,
+    // ─── plan-exploration-probe-return-v1 P1：神识感知保鲜 S2C ──────
+    FreshnessUpdate,
 }
 
 #[derive(Debug, Clone)]
@@ -522,6 +525,9 @@ pub enum ServerDataPayloadV1 {
     // ─── plan-exploration-probe-return-v1 P0：神识感知矿脉 S2C ──────
     /// 神识感知矿脉回执（只读传输，不涉及 qi_physics 守恒）。
     MineralProbeResult(MineralProbeResultV1),
+    // ─── plan-exploration-probe-return-v1 P1：神识感知保鲜 S2C ──────
+    /// 神识感知保鲜回执（只读传输，复用 freshness_update 类型串）。
+    FreshnessUpdate(FreshnessUpdateV1),
 }
 
 /// 神识感知矿脉回执 S2C。扁平化 `MineralProbeResult` 枚举。
@@ -1609,6 +1615,11 @@ enum ServerDataPayloadWireV1 {
         #[serde(flatten)]
         data: MineralProbeResultV1,
     },
+    // ─── plan-exploration-probe-return-v1 P1：神识感知保鲜 S2C ──────
+    FreshnessUpdate {
+        #[serde(flatten)]
+        data: FreshnessUpdateV1,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -2458,6 +2469,7 @@ impl TryFrom<ServerDataPayloadWireV1> for ServerDataPayloadV1 {
             ServerDataPayloadWireV1::MineralProbeResult { data } => {
                 Ok(Self::MineralProbeResult(data))
             }
+            ServerDataPayloadWireV1::FreshnessUpdate { data } => Ok(Self::FreshnessUpdate(data)),
         }
     }
 }
@@ -3011,6 +3023,9 @@ impl From<&ServerDataPayloadV1> for ServerDataPayloadWireV1 {
             ServerDataPayloadV1::MineralProbeResult(data) => {
                 Self::MineralProbeResult { data: data.clone() }
             }
+            ServerDataPayloadV1::FreshnessUpdate(data) => {
+                Self::FreshnessUpdate { data: data.clone() }
+            }
         }
     }
 }
@@ -3331,6 +3346,7 @@ impl ServerDataPayloadV1 {
             Self::SwordBondHudState(..) => ServerDataType::SwordBondHudState,
             // ─── plan-exploration-probe-return-v1 P0 ────────────────
             Self::MineralProbeResult(..) => ServerDataType::MineralProbeResult,
+            Self::FreshnessUpdate(..) => ServerDataType::FreshnessUpdate,
         }
     }
 }

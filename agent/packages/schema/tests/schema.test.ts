@@ -1300,6 +1300,25 @@ describe("sample files pass schema validation", () => {
     expect(result.ok, result.errors.join("; ")).toBe(true);
   });
 
+  // plan-exploration-probe-return-v1 P1 — 神识感知保鲜 C2S schema pin
+  it("client-request.freshness-probe.sample.json 正样本通过", () => {
+    const data = loadSample("client-request.freshness-probe.sample.json");
+    const result = validate(ClientRequestV1, data);
+    expect(result.ok, result.errors.join("; ")).toBe(true);
+  });
+
+  it("FreshnessProbeRequestV1 负样本：slot 缺失应拒绝", () => {
+    const bad = { type: "freshness_probe", v: 1 };
+    const result = validate(ClientRequestV1, bad);
+    expect(result.ok).toBe(false);
+  });
+
+  it("FreshnessProbeRequestV1 负样本：slot=-1 应拒绝", () => {
+    const bad = { type: "freshness_probe", v: 1, slot: -1 };
+    const result = validate(ClientRequestV1, bad);
+    expect(result.ok).toBe(false);
+  });
+
   it("client-request.movement-action.sample.json", () => {
     const data = loadSample("client-request.movement-action.sample.json");
     const result = validate(ClientRequestV1, data);

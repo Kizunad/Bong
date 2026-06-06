@@ -603,6 +603,17 @@ public final class ClientRequestProtocol {
         return obj.toString();
     }
 
+    /**
+     * plan-exploration-probe-return-v1 P1 — 神识感知保鲜 C2S 请求。
+     *
+     * @param slot 背包容器内的扁平槽位序号（row * cols + col）
+     */
+    public static String encodeFreshnessProbe(int slot) {
+        JsonObject obj = envelope("freshness_probe");
+        obj.addProperty("slot", slot);
+        return obj.toString();
+    }
+
     public static String encodeInventoryDiscardItem(long instanceId, InvLocation from) {
         JsonObject obj = envelope("inventory_discard_item");
         obj.addProperty("instance_id", instanceId);

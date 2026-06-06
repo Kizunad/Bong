@@ -328,6 +328,14 @@ pub enum ClientRequestV1 {
         y: i32,
         z: i32,
     },
+    /// plan-exploration-probe-return-v1 P1 — 凝脉+ 检视背包槽位物品，
+    /// server 用 `slot` 在玩家 inventory 查找 instance_id 并 emit `FreshnessProbeIntent`。
+    FreshnessProbe {
+        v: u8,
+        /// 背包容器内的线性槽位编号（0-indexed，按 row-major 顺序，单背包内扁平化）。
+        /// server 侧按 slot 在 PlayerInventory.containers[0].items 中找对应 instance_id。
+        slot: u8,
+    },
     ApplyPill {
         v: u8,
         instance_id: u64,

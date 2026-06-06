@@ -1161,6 +1161,30 @@
       "required": [
         "v",
         "type",
+        "slot"
+      ],
+      "properties": {
+        "v": {
+          "const": 1,
+          "type": "number"
+        },
+        "type": {
+          "const": "freshness_probe",
+          "type": "string"
+        },
+        "slot": {
+          "minimum": 0,
+          "maximum": 255,
+          "type": "integer"
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "v",
+        "type",
         "instance_id",
         "from"
       ],

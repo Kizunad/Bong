@@ -34,6 +34,7 @@ pub mod extract_emit;
 pub mod false_skin_state_emit;
 pub mod forge_bridge;
 pub mod forge_snapshot_emit;
+pub mod freshness_probe_emit;
 pub mod full_power_emit;
 pub mod gameplay_vfx;
 pub mod identity_panel_emit;
@@ -512,6 +513,8 @@ pub fn register(app: &mut App) {
     );
     // plan-exploration-probe-return-v1 P0：神识感知矿脉 S2C 回执。
     app.add_systems(Update, mineral_probe_emit::emit_mineral_probe_results);
+    // plan-exploration-probe-return-v1 P1：神识感知保鲜 S2C 回执。
+    app.add_systems(Update, freshness_probe_emit::emit_freshness_probe_results);
     app.add_systems(Update, tuike_event_bridge::publish_tuike_v2_skill_events);
     // plan-combat-skill-feedback-bridges-v1 P6：蜕壳灰烬入包 + VFX + Redis（FalseSkinDecayedToAshEvent）
     app.add_systems(Update, tuike_ash_emit::publish_tuike_ash_events);

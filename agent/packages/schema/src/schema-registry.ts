@@ -73,6 +73,7 @@ import {
   ForgeBlueprintTurnPageRequestV1,
   ForgeLearnBlueprintRequestV1,
   ForgeStationPlaceRequestV1,
+  FreshnessProbeRequestV1,
   InsightDecisionRequestV1,
   MineralProbeRequestV1,
   NpcDialogueChoiceRequestV1,
@@ -608,6 +609,7 @@ export const SCHEMA_REGISTRY = {
   clientRequestForgeFalseSkinV1: ForgeFalseSkinRequestV1,
   clientRequestUseLifeCoreV1: UseLifeCoreRequestV1,
   clientRequestMineralProbeV1: MineralProbeRequestV1,
+  clientRequestFreshnessProbeV1: FreshnessProbeRequestV1,
   clientRequestBotanyHarvestV1: BotanyHarvestRequestV1,
   clientRequestCombatReincarnateV1: CombatReincarnateRequestV1,
   clientRequestCombatTerminateV1: CombatTerminateRequestV1,
@@ -1061,6 +1063,8 @@ export const GENERATED_SCHEMA_FILES = {
   "client-request-use-life-core-v1.json":
     SCHEMA_REGISTRY.clientRequestUseLifeCoreV1,
   "client-request-mineral-probe-v1.json": SCHEMA_REGISTRY.clientRequestMineralProbeV1,
+  "client-request-freshness-probe-v1.json":
+    SCHEMA_REGISTRY.clientRequestFreshnessProbeV1,
   "client-request-botany-harvest-v1.json":
     SCHEMA_REGISTRY.clientRequestBotanyHarvestV1,
   "client-request-combat-reincarnate-v1.json":

@@ -96,6 +96,7 @@ use crate::network::audio_event_emit::{AudioRecipient, PlaySoundRecipeRequest};
 use crate::network::cast_emit::{
     apply_item_effect, current_unix_millis, push_cast_sync, CAST_INTERRUPT_COOLDOWN_TICKS,
 };
+use crate::shelflife::probe::FreshnessProbeIntent;
 // dropped_loot_sync is emitted by dropped_loot_sync_emit.
 use crate::identity::PlayerIdentities;
 use crate::network::inventory_snapshot_emit::send_inventory_snapshot_to_client;
@@ -299,6 +300,7 @@ pub struct SkillScrollRequestParams<'w, 's> {
     pub technique_scroll_read_tx: Option<ResMut<'w, Events<TechniqueScrollReadEvent>>>,
     pub technique_learned_tx: Option<ResMut<'w, Events<TechniqueLearnedEvent>>>,
     pub mineral_probe_tx: Option<ResMut<'w, Events<MineralProbeIntent>>>,
+    pub freshness_probe_tx: Option<ResMut<'w, Events<FreshnessProbeIntent>>>,
     pub skill_sets: Query<'w, 's, &'static mut SkillSet>,
     pub known_techniques: Query<'w, 's, &'static mut KnownTechniques>,
     pub learned_blueprints: Query<'w, 's, &'static mut LearnedBlueprints>,
@@ -469,6 +471,7 @@ pub fn handle_client_request_payloads(
             | ClientRequestV1::RepairWeaponIntent { v, .. }
             | ClientRequestV1::PickupDroppedItem { v, .. }
             | ClientRequestV1::MineralProbe { v, .. }
+            | ClientRequestV1::FreshnessProbe { v, .. }
             | ClientRequestV1::ApplyPill { v, .. }
             | ClientRequestV1::SelfAntidote { v, .. }
             | ClientRequestV1::DuoSheRequest { v, .. }
@@ -1584,6 +1587,46 @@ pub fn handle_client_request_payloads(
                         dimension,
                         position,
                     });
+                }
+            }
+            ClientRequestV1::FreshnessProbe { slot, .. } => {
+                if let Some(freshness_probe_tx) =
+                    skill_scroll_params.freshness_probe_tx.as_deref_mut()
+                {
+                    // 从玩家 inventory 第一个 container 中按扁平槽位编号查找 instance_id。
+                    // slot 由 client 传来，代表 containers[0] 内 row-major 下标。
+                    let maybe_instance_id = inventories.get(ev.client).ok().and_then(|inv| {
+                        let container = inv.containers.first()?;
+                        let cols = container.cols as u16;
+                        container
+                            .items
+                            .iter()
+                            .find(|p| {
+                                let flat = p.row as u16 * cols + p.col as u16;
+                                flat == slot as u16
+                            })
+                            .map(|p| p.instance.instance_id)
+                    });
+
+                    match maybe_instance_id {
+                        Some(instance_id) => {
+                            tracing::info!(
+                                "[bong][network] client_request freshness_probe entity={:?} slot={slot} instance_id={instance_id}",
+                                ev.client
+                            );
+                            freshness_probe_tx.send(FreshnessProbeIntent {
+                                player: ev.client,
+                                instance_id,
+                                issued_at_tick: combat_clock.tick,
+                            });
+                        }
+                        None => {
+                            tracing::warn!(
+                                "[bong][network] client_request freshness_probe rejected: entity={:?} slot={slot} not found in inventory",
+                                ev.client
+                            );
+                        }
+                    }
                 }
             }
             ClientRequestV1::ApplyPill {

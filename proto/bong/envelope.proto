@@ -154,6 +154,8 @@ message ServerDataEnvelope {
     SwordBondHud sword_bond_hud_state = 128;
     // ─── plan-exploration-probe-return-v1 P0：神识感知矿脉 S2C ────
     MineralProbeResult mineral_probe_result = 129;
+    // ─── plan-exploration-probe-return-v1 P1：神识感知保鲜 S2C ────
+    FreshnessUpdate freshness_update = 130;
     // 字段编号一旦分配永不复用（buf breaking 检测保证）。
   }
 }
@@ -258,6 +260,8 @@ message ClientRequestEnvelope {
     // plan-coffin-tiers-v1 P3 — 延寿棺 marker 交互 C2S。
     CoffinBreak                 coffin_break                  = 88;
     CoffinMenuReclaim           coffin_menu_reclaim           = 89;
+    // ─── plan-exploration-probe-return-v1 P1：神识感知保鲜 C2S ────
+    FreshnessProbe              freshness_probe               = 90;
   }
 }
 
@@ -2443,6 +2447,8 @@ enum EventKind {
   EVENT_KIND_HEAVENLY_FIRE     = 8;
   EVENT_KIND_PRESSURE_INVERT   = 9;
   EVENT_KIND_ALL_WITHER        = 10;
+  // plan-exploration-probe-return-v1 P1 — 通用提示（探针 Denied 等非灾事件通知）。
+  EVENT_KIND_GENERIC           = 11;
 }
 
 // 与 Rust ServerDataPayloadV1::EventAlert 精确对应。
@@ -3721,4 +3727,21 @@ message MineralProbeResult {
   optional uint32  remaining_units   = 3; // found only
   optional string  display_name_zh   = 4; // found only
   optional string  denial_reason     = 5; // denied only: realm_too_low/out_of_range/not_mineral_ore/stale_ore_index/mineral_not_registered
+}
+
+// ─── plan-exploration-probe-return-v1 P1：神识感知保鲜 C2S ────────
+// 与 Rust ClientRequestV1::FreshnessProbe 精确对应。
+// slot = 玩家背包第一容器内 row-major 扁平槽位编号（0-indexed）。
+message FreshnessProbe {
+  uint32 slot = 1;
+}
+
+// ─── plan-exploration-probe-return-v1 P1：神识感知保鲜回执 S2C ────
+// 与 Rust FreshnessUpdateV1 精确对应（复用既有 freshness_update 类型串）。
+// item_uuid = instance_id.to_string()；freshness ∈ [0, 1]；
+// profile_name = 从 inventory 反查的 freshness.profile 字段。
+message FreshnessUpdate {
+  string item_uuid     = 1;
+  float  freshness     = 2;
+  string profile_name  = 3;
 }

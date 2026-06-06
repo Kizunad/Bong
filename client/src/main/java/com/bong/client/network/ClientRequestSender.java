@@ -128,6 +128,15 @@ public final class ClientRequestSender {
         dispatch(ClientRequestProtocol.encodeMineralProbe(x, y, z));
     }
 
+    /**
+     * plan-exploration-probe-return-v1 P1 — 神识感知保鲜 C2S 请求。
+     *
+     * @param slot 背包容器内的扁平槽位序号（row * cols + col）
+     */
+    public static void sendFreshnessProbe(int slot) {
+        dispatch(ClientRequestProtocol.encodeFreshnessProbe(slot));
+    }
+
     public static void sendInventoryDiscardItem(long instanceId, ClientRequestProtocol.InvLocation from) {
         dispatch(ClientRequestProtocol.encodeInventoryDiscardItem(instanceId, from));
     }

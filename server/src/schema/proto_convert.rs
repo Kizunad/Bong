@@ -80,6 +80,8 @@ fn event_kind_to_proto(e: &super::common::EventKind) -> i32 {
         EventKind::HeavenlyFire => bong::EventKind::HeavenlyFire as i32,
         EventKind::PressureInvert => bong::EventKind::PressureInvert as i32,
         EventKind::AllWither => bong::EventKind::AllWither as i32,
+        // plan-exploration-probe-return-v1 P1 — 通用提示。
+        EventKind::Generic => bong::EventKind::Generic as i32,
     }
 }
 
@@ -1392,6 +1394,14 @@ impl From<&ServerDataPayloadV1> for Payload {
                     remaining_units: m.remaining_units,
                     display_name_zh: m.display_name_zh.clone(),
                     denial_reason: m.denial_reason.clone(),
+                })
+            }
+            // plan-exploration-probe-return-v1 P1：神识感知保鲜 S2C（只读传输，复用 freshness_update 类型串）
+            ServerDataPayloadV1::FreshnessUpdate(u) => {
+                Payload::FreshnessUpdate(bong::FreshnessUpdate {
+                    item_uuid: u.item_uuid.clone(),
+                    freshness: u.freshness,
+                    profile_name: u.profile_name.clone(),
                 })
             }
         }
@@ -3462,6 +3472,10 @@ impl From<&super::client_request::ClientRequestV1> for bong::client_request_enve
                     y: *y,
                     z: *z,
                 })
+            }
+            // ─── plan-exploration-probe-return-v1 P1：神识感知保鲜 C2S ────────
+            ClientRequestV1::FreshnessProbe { slot, .. } => {
+                Payload::FreshnessProbe(bong::FreshnessProbe { slot: *slot as u32 })
             }
             // ─── 丹药 C2S ────────────────────────────────────────
             ClientRequestV1::ApplyPill {
