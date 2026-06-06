@@ -7015,8 +7015,8 @@ mod tests {
             payload: Some(server_data_envelope::Payload::InsightOffer(offer)),
         };
         let bytes = envelope.encode_to_vec();
-        let decoded = ServerDataEnvelope::decode(bytes.as_slice())
-            .expect("empty InsightOffer decode 失败");
+        let decoded =
+            ServerDataEnvelope::decode(bytes.as_slice()).expect("empty InsightOffer decode 失败");
         match decoded.payload {
             Some(server_data_envelope::Payload::InsightOffer(o)) => {
                 assert_eq!(o.choices.len(), 0, "空 choices InsightOffer round-trip");

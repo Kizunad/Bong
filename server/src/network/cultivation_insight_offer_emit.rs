@@ -1,8 +1,8 @@
 //! 修炼顿悟 S2C 回执发送系统
 //!
 //! 消费 `InsightOffer` 事件（两路 producer：`insight_flow.rs:212` fallback
-//! + `network/mod.rs:2263` agent-fed，共用同一事件队列），将顿悟邀约
-//! 序列化为 `ServerDataPayloadV1::InsightOffer` 并仅发给触发者。
+//! 与 `network/mod.rs:2263` agent-fed，共用同一事件队列），将顿悟邀约序列化为
+//! `ServerDataPayloadV1::InsightOffer` 并仅发给触发者。
 //!
 //! 模板：`tribulation_heart_demon_offer_emit.rs`（已验证范本）。
 
@@ -107,16 +107,12 @@ fn insight_effect_kind_str(effect: &InsightEffect) -> &'static str {
         InsightEffect::UnfreezeQiMax { .. } => "unfreeze_qi_max",
         InsightEffect::ComposureRecover { .. } => "composure_recover",
         InsightEffect::ComposureShockDiscount { .. } => "composure_shock_discount",
-        InsightEffect::ComposureImmuneDuringBreakthrough => {
-            "composure_immune_during_breakthrough"
-        }
+        InsightEffect::ComposureImmuneDuringBreakthrough => "composure_immune_during_breakthrough",
         InsightEffect::ColorCapAdd { .. } => "color_cap_add",
         InsightEffect::ChaoticTolerance { .. } => "chaotic_tolerance",
         InsightEffect::HunyuanThreshold { .. } => "hunyuan_threshold",
         InsightEffect::NextBreakthroughBonus { .. } => "next_breakthrough_bonus",
-        InsightEffect::BreakthroughEventConditionDrop { .. } => {
-            "breakthrough_event_condition_drop"
-        }
+        InsightEffect::BreakthroughEventConditionDrop { .. } => "breakthrough_event_condition_drop",
         InsightEffect::TribulationPredictionWindow => "tribulation_prediction_window",
         InsightEffect::DualForgeDiscount { .. } => "dual_forge_discount",
         InsightEffect::ColorMaterialAffinity { .. } => "color_material_affinity",
@@ -421,22 +417,45 @@ mod tests {
     #[test]
     fn effect_kind_str_all_variants_non_empty() {
         let effects = vec![
-            InsightEffect::MeridianRate { id: MeridianId::Lung, mul: 1.0 },
-            InsightEffect::MeridianForgeDiscount { id: MeridianId::Lung, discount: 0.1 },
-            InsightEffect::MeridianOverloadTolerance { id: MeridianId::Lung, add: 0.01 },
+            InsightEffect::MeridianRate {
+                id: MeridianId::Lung,
+                mul: 1.0,
+            },
+            InsightEffect::MeridianForgeDiscount {
+                id: MeridianId::Lung,
+                discount: 0.1,
+            },
+            InsightEffect::MeridianOverloadTolerance {
+                id: MeridianId::Lung,
+                add: 0.01,
+            },
             InsightEffect::QiRegenFactor { mul: 1.1 },
-            InsightEffect::PurgeEfficiency { color: ColorKind::Sharp, mul: 1.1 },
+            InsightEffect::PurgeEfficiency {
+                color: ColorKind::Sharp,
+                mul: 1.1,
+            },
             InsightEffect::UnfreezeQiMax { mul: 0.9 },
             InsightEffect::ComposureRecover { mul: 1.05 },
-            InsightEffect::ComposureShockDiscount { event: "tribulation".to_string(), mul: 0.9 },
+            InsightEffect::ComposureShockDiscount {
+                event: "tribulation".to_string(),
+                mul: 0.9,
+            },
             InsightEffect::ComposureImmuneDuringBreakthrough,
-            InsightEffect::ColorCapAdd { color: ColorKind::Sharp, add: 0.05 },
+            InsightEffect::ColorCapAdd {
+                color: ColorKind::Sharp,
+                add: 0.05,
+            },
             InsightEffect::ChaoticTolerance { add: 0.03 },
             InsightEffect::HunyuanThreshold { mul: 0.95 },
             InsightEffect::NextBreakthroughBonus { add: 0.05 },
-            InsightEffect::BreakthroughEventConditionDrop { realm: Realm::Induce },
+            InsightEffect::BreakthroughEventConditionDrop {
+                realm: Realm::Induce,
+            },
             InsightEffect::TribulationPredictionWindow,
-            InsightEffect::DualForgeDiscount { id: MeridianId::Lung, mul: 0.9 },
+            InsightEffect::DualForgeDiscount {
+                id: MeridianId::Lung,
+                mul: 0.9,
+            },
             InsightEffect::ColorMaterialAffinity {
                 color: ColorKind::Sharp,
                 material: "jade".to_string(),
@@ -447,8 +466,12 @@ mod tests {
             InsightEffect::VortexBackfireResist { mul: 0.9 },
             InsightEffect::VortexDeltaBonus { add: 0.05 },
             InsightEffect::VortexFlowSpeed { mul: 1.1 },
-            InsightEffect::UnlockPractice { name: "wind_step".to_string() },
-            InsightEffect::UnlockPerception { kind: "mineral_sense".to_string() },
+            InsightEffect::UnlockPractice {
+                name: "wind_step".to_string(),
+            },
+            InsightEffect::UnlockPerception {
+                kind: "mineral_sense".to_string(),
+            },
             InsightEffect::LifespanExtensionEnlightenment,
         ];
         for effect in &effects {

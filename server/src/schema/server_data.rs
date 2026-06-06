@@ -3037,9 +3037,7 @@ impl From<&ServerDataPayloadV1> for ServerDataPayloadWireV1 {
             ServerDataPayloadV1::FreshnessUpdate(data) => {
                 Self::FreshnessUpdate { data: data.clone() }
             }
-            ServerDataPayloadV1::InsightOffer(data) => {
-                Self::InsightOffer { data: data.clone() }
-            }
+            ServerDataPayloadV1::InsightOffer(data) => Self::InsightOffer { data: data.clone() },
         }
     }
 }
