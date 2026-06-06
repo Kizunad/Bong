@@ -52,6 +52,8 @@ fn test_template(template_id: &str, spirit_quality_initial: f64) -> ItemTemplate
         technique_scroll_spec: None,
         recipe_fragment_spec: None,
         container_spec: None,
+        shelflife_profile: None,
+        shelflife_track: None,
     }
 }
 

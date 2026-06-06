@@ -153,9 +153,11 @@ fn dead_variant_mapping(profile_id: &str) -> Option<&'static str> {
 }
 
 /// Age → Spoil 迁移 → item ID 映射（仅对有文化语义的物品）。
+///
+/// plan-food-v1 P1：chen_jiu_v1 映射到 `food.spirit_wine.chen_cu`（food.toml 注册的完整 template ID）。
 fn age_spoil_variant_mapping(profile_id: &str) -> Option<&'static str> {
     match profile_id {
-        "chen_jiu_v1" => Some("chen_cu"),
+        "chen_jiu_v1" => Some("food.spirit_wine.chen_cu"),
         _ => None,
     }
 }
@@ -259,6 +261,8 @@ mod tests {
             technique_scroll_spec: None,
             recipe_fragment_spec: None,
             container_spec: None,
+            shelflife_profile: None,
+            shelflife_track: None,
         }
     }
 
@@ -295,21 +299,24 @@ mod tests {
                 technique_scroll_spec: None,
                 recipe_fragment_spec: None,
                 container_spec: None,
+                shelflife_profile: None,
+                shelflife_track: None,
             },
         );
+        // plan-food-v1 P1：food.spirit_wine.chen_cu 是 age_spoil_variant_mapping 的目标 ID。
         map.insert(
-            "chen_cu".to_string(),
+            "food.spirit_wine.chen_cu".to_string(),
             crate::inventory::ItemTemplate {
-                id: "chen_cu".to_string(),
+                id: "food.spirit_wine.chen_cu".to_string(),
                 display_name: "陈醋".to_string(),
-                category: ItemCategory::Misc,
-                max_stack_count: 1,
+                category: ItemCategory::Food,
+                max_stack_count: 16,
                 grid_w: 1,
                 grid_h: 1,
                 base_weight: 0.5,
                 rarity: ItemRarity::Common,
-                spirit_quality_initial: 0.0,
-                description: String::from("vinegar"),
+                spirit_quality_initial: 0.65,
+                description: String::from("vinegar after aging"),
                 effect: None,
                 cast_duration_ms: 1500,
                 cooldown_ms: 1500,
@@ -320,6 +327,8 @@ mod tests {
                 technique_scroll_spec: None,
                 recipe_fragment_spec: None,
                 container_spec: None,
+                shelflife_profile: Some("chen_cu_v1".to_string()),
+                shelflife_track: Some(crate::shelflife::DecayTrack::Spoil),
             },
         );
         ItemRegistry::from_map(map)
@@ -515,19 +524,45 @@ mod tests {
         };
 
         let now = 5000;
-        assert!(apply_variant_switch(
-            &mut item, &profile_r, &item_r, now, 1.0
-        ));
-        assert_eq!(item.template_id, "chen_cu");
-        assert_eq!(item.display_name, "陈醋");
+        assert!(
+            apply_variant_switch(&mut item, &profile_r, &item_r, now, 1.0),
+            "chen_jiu past post_peak_spoil_threshold should trigger variant switch to food.spirit_wine.chen_cu"
+        );
+        // plan-food-v1 P1：item ID 切换到完整 food namespace 的 chen_cu template。
+        assert_eq!(
+            item.template_id, "food.spirit_wine.chen_cu",
+            "template_id should switch to food.spirit_wine.chen_cu (not legacy 'chen_cu') \
+             because age_spoil_variant_mapping maps chen_jiu_v1 → food.spirit_wine.chen_cu"
+        );
+        assert_eq!(
+            item.display_name, "陈醋",
+            "display_name should reflect the food.spirit_wine.chen_cu template display_name"
+        );
 
         // Freshness should be reset to Spoil track with chen_cu_v1 profile
         let f = item.freshness.as_ref().unwrap();
-        assert_eq!(f.track, DecayTrack::Spoil);
-        assert_eq!(f.profile.as_str(), "chen_cu_v1");
-        assert_eq!(f.created_at_tick, now); // reset
-        assert_eq!(f.frozen_accumulated, 0);
-        assert!(f.frozen_since_tick.is_none());
+        assert_eq!(
+            f.track,
+            DecayTrack::Spoil,
+            "after Age→Spoil migration, track should become Spoil"
+        );
+        assert_eq!(
+            f.profile.as_str(),
+            "chen_cu_v1",
+            "post-migration profile should be chen_cu_v1 (from Age profile's post_peak_spoil_profile)"
+        );
+        assert_eq!(
+            f.created_at_tick, now,
+            "created_at_tick reset to migration tick"
+        ); // reset
+        assert_eq!(
+            f.frozen_accumulated, 0,
+            "frozen_accumulated reset to 0 after migration"
+        );
+        assert!(
+            f.frozen_since_tick.is_none(),
+            "frozen_since_tick cleared after migration"
+        );
     }
 
     #[test]
@@ -573,5 +608,257 @@ mod tests {
         ));
         assert_eq!(item.template_id, "rotten_bone_coin");
         assert_eq!(item.display_name, "腐骨币");
+    }
+
+    // ── plan-food-v1 P1 — 陈酒陈化路径完整链路测试 ──
+
+    fn make_chen_jiu_item(initial_qi: f32, created_at: u64) -> ItemInstance {
+        ItemInstance {
+            instance_id: 42,
+            template_id: "food.spirit_wine.chen_jiu".to_string(),
+            display_name: "陈酒".to_string(),
+            grid_w: 1,
+            grid_h: 1,
+            weight: 0.5,
+            rarity: ItemRarity::Uncommon,
+            description: String::new(),
+            stack_count: 1,
+            spirit_quality: 0.0,
+            durability: 1.0,
+            freshness: Some(Freshness {
+                created_at_tick: created_at,
+                initial_qi,
+                track: DecayTrack::Age,
+                profile: DecayProfileId::new("chen_jiu_v1"),
+                frozen_accumulated: 0,
+                frozen_since_tick: None,
+            }),
+            mineral_id: None,
+            charges: None,
+            forge_quality: None,
+            forge_color: None,
+            forge_side_effects: Vec::new(),
+            forge_achieved_tier: None,
+            alchemy: None,
+            lingering_owner_qi: None,
+        }
+    }
+
+    /// P1 happy path: 陈酒在峰值窗口内，age_peak_check 返回 Peaking，apply_variant_switch 不切换。
+    #[test]
+    fn chen_jiu_in_peak_window_no_switch() {
+        use super::super::consume::{age_peak_check, AgePeakCheck};
+        let profile_r = make_profile_registry();
+        let item_r = make_item_registry();
+
+        // chen_jiu_v1: peak_at_ticks=1000, peak_window_ratio=0.1
+        // 窗口 = [1000*(1-0.1), 1000*(1+0.1)] = [900, 1100]
+        // initial_qi=100, peak_bonus=0.5 → Peaking 时 current_qi ≈ 150
+        let mut item = make_chen_jiu_item(100.0, 0);
+        let profile = profile_r
+            .get(&DecayProfileId::new("chen_jiu_v1"))
+            .expect("chen_jiu_v1 must be in test registry");
+
+        // 在峰值中心 tick=1000 处检查 age_peak_check
+        let freshness = item.freshness.as_ref().unwrap();
+        let peak_result = age_peak_check(freshness, profile, 1000, 1.0);
+        assert!(
+            matches!(peak_result, AgePeakCheck::Peaking { bonus_strength } if (bonus_strength - 0.5).abs() < 1e-3),
+            "chen_jiu at tick=1000 (peak center) should return Peaking with bonus_strength=0.5; \
+             got {peak_result:?}"
+        );
+
+        // apply_variant_switch 在峰值窗口内不切换 item ID。
+        let switched = apply_variant_switch(&mut item, &profile_r, &item_r, 1000, 1.0);
+        assert!(
+            !switched,
+            "chen_jiu in peak window should NOT trigger variant switch; it's still aging well"
+        );
+        assert_eq!(
+            item.template_id, "food.spirit_wine.chen_jiu",
+            "template_id must remain food.spirit_wine.chen_jiu during peak window"
+        );
+    }
+
+    /// P1: 峰值窗口前沿（tick=900），也算 Peaking。
+    #[test]
+    fn chen_jiu_at_peak_window_start_is_peaking() {
+        use super::super::consume::{age_peak_check, AgePeakCheck};
+        let profile_r = make_profile_registry();
+
+        let item = make_chen_jiu_item(100.0, 0);
+        let profile = profile_r.get(&DecayProfileId::new("chen_jiu_v1")).unwrap();
+        let freshness = item.freshness.as_ref().unwrap();
+
+        // 窗口下沿 tick=900（包含端点）
+        let result_at_900 = age_peak_check(freshness, profile, 900, 1.0);
+        assert!(
+            matches!(result_at_900, AgePeakCheck::Peaking { .. }),
+            "at peak window lower boundary (tick=900) should be Peaking; got {result_at_900:?}"
+        );
+    }
+
+    /// P1: 在峰值窗口前（tick=500），age_peak_check 返回 NotPeaking。
+    #[test]
+    fn chen_jiu_before_peak_window_not_peaking() {
+        use super::super::consume::{age_peak_check, AgePeakCheck};
+        let profile_r = make_profile_registry();
+
+        let item = make_chen_jiu_item(100.0, 0);
+        let profile = profile_r.get(&DecayProfileId::new("chen_jiu_v1")).unwrap();
+        let freshness = item.freshness.as_ref().unwrap();
+
+        // 峰值窗口下沿 900 之前
+        let result = age_peak_check(freshness, profile, 500, 1.0);
+        assert_eq!(
+            result,
+            AgePeakCheck::NotPeaking,
+            "at tick=500 (before peak window [900,1100]) should be NotPeaking; got {result:?}"
+        );
+    }
+
+    /// P1: 过峰后（tick=5000），apply_variant_switch 触发 item ID 切换为 food.spirit_wine.chen_cu。
+    #[test]
+    fn chen_jiu_past_post_peak_threshold_switches_to_food_spirit_wine_chen_cu() {
+        let profile_r = make_profile_registry();
+        let item_r = make_item_registry();
+
+        // chen_jiu_v1: peak=1000, post_peak_half=1000, post_peak_spoil_threshold=30
+        // initial_qi=100, peak_bonus=0.5 → peak_value=150
+        // post_peak 衰减：at tick 5000 → 150 * 0.5^((5000-1000)/1000) = 150 * 0.0625 = 9.375 < 30
+        let mut item = make_chen_jiu_item(100.0, 0);
+
+        let switched = apply_variant_switch(&mut item, &profile_r, &item_r, 5000, 1.0);
+        assert!(
+            switched,
+            "chen_jiu at tick=5000 (current_qi≈9.4 < post_peak_spoil_threshold=30) \
+             should trigger Age→Spoil migration; no switch indicates bug in variant mapping"
+        );
+        assert_eq!(
+            item.template_id, "food.spirit_wine.chen_cu",
+            "after Age→Spoil migration, template_id MUST be food.spirit_wine.chen_cu \
+             (plan-food-v1 P1 fix: age_spoil_variant_mapping maps chen_jiu_v1 → food.spirit_wine.chen_cu)"
+        );
+        assert_eq!(
+            item.display_name, "陈醋",
+            "display_name after migration should match food.spirit_wine.chen_cu template"
+        );
+        let f = item
+            .freshness
+            .as_ref()
+            .expect("freshness must survive migration");
+        assert_eq!(
+            f.track,
+            DecayTrack::Spoil,
+            "after Age→Spoil migration, track must be Spoil because chen_jiu passed post_peak_spoil_threshold"
+        );
+        assert_eq!(
+            f.profile.as_str(),
+            "chen_cu_v1",
+            "freshness profile after migration must be chen_cu_v1 (post_peak_spoil_profile field)"
+        );
+        assert_eq!(
+            f.created_at_tick, 5000,
+            "created_at_tick reset to migration tick=5000 for new Spoil countdown"
+        );
+    }
+
+    /// P1 边界: post_peak_spoil_threshold 恰好满足时（current == threshold）不切换（严格 <）。
+    #[test]
+    fn chen_jiu_exactly_at_post_peak_threshold_does_not_switch() {
+        let profile_r = make_profile_registry();
+        let item_r = make_item_registry();
+
+        // 需要找到 current == 30 的时间点。
+        // peak_at=1000, post_peak_half=1000, peak_bonus=0.5, initial=100 → peak_value=150
+        // current(t) = 150 * 0.5^((t-1000)/1000) = 30 → 0.5^x = 0.2 → x = log2(5) ≈ 2.322
+        // t = 1000 + 2322 = 3322
+        // 用 t=3320 先确认 current > threshold（不切换），t=3400 确认 < threshold（切换）。
+        let mut item_near = make_chen_jiu_item(100.0, 0);
+
+        // 3320 ticks: 0.5^(2320/1000) ≈ 0.5^2.32 ≈ 0.201 → 150 * 0.201 ≈ 30.2 > 30 → 不切换
+        let switched_near = apply_variant_switch(&mut item_near, &profile_r, &item_r, 3320, 1.0);
+        assert!(
+            !switched_near,
+            "at tick=3320 current≈30.2 which is > post_peak_spoil_threshold=30 — should NOT switch yet"
+        );
+    }
+
+    /// P1 边界：apply_variant_switch 对非 Age track item（pure Spoil）不触发陈化切换。
+    #[test]
+    fn spoil_track_food_does_not_trigger_age_spoil_switch() {
+        let profile_r = make_profile_registry();
+        let item_r = make_item_registry();
+
+        // 使用 Spoil profile（chen_cu_v1）的物品，不应触发 age_spoil_variant_mapping。
+        let mut item = ItemInstance {
+            instance_id: 99,
+            template_id: "food.spirit_wine.chen_cu".to_string(),
+            display_name: "陈醋".to_string(),
+            grid_w: 1,
+            grid_h: 1,
+            weight: 0.5,
+            rarity: ItemRarity::Common,
+            description: String::new(),
+            stack_count: 1,
+            spirit_quality: 0.0,
+            durability: 1.0,
+            freshness: Some(Freshness {
+                created_at_tick: 0,
+                initial_qi: 100.0,
+                track: DecayTrack::Spoil,
+                profile: DecayProfileId::new("chen_cu_v1"),
+                frozen_accumulated: 0,
+                frozen_since_tick: None,
+            }),
+            mineral_id: None,
+            charges: None,
+            forge_quality: None,
+            forge_color: None,
+            forge_side_effects: Vec::new(),
+            forge_achieved_tier: None,
+            alchemy: None,
+            lingering_owner_qi: None,
+        };
+
+        // 在 Spoil Spoiled 状态（远过 spoil_threshold=10）：不切 item ID（plan §9.4 Spoil Spoiled 不走 ID 变体）。
+        let switched = apply_variant_switch(&mut item, &profile_r, &item_r, 10_000_000, 1.0);
+        assert!(
+            !switched,
+            "Spoil-track food item should NOT trigger age_spoil_variant_mapping — \
+             only Age→Spoil migration path cuts item ID"
+        );
+        assert_eq!(
+            item.template_id, "food.spirit_wine.chen_cu",
+            "template_id must remain food.spirit_wine.chen_cu for Spoil-track items"
+        );
+    }
+
+    /// P1: apply_variant_switch_with_season 路径也正确切换 chen_jiu → food.spirit_wine.chen_cu。
+    #[test]
+    fn chen_jiu_with_season_path_also_switches_to_correct_id() {
+        use crate::world::season::Season;
+        let profile_r = make_profile_registry();
+        let item_r = make_item_registry();
+
+        let mut item = make_chen_jiu_item(100.0, 0);
+        // tick=5000: summer（不影响 Age track，只影响 Decay/Spoil 的季节系数）
+        let switched = apply_variant_switch_with_season(
+            &mut item,
+            &profile_r,
+            &item_r,
+            5000,
+            1.0,
+            Season::Summer,
+            42,
+        );
+        assert!(
+            switched,
+            "apply_variant_switch_with_season: chen_jiu at tick=5000 should switch"
+        );
+        assert_eq!(
+            item.template_id, "food.spirit_wine.chen_cu",
+            "apply_variant_switch_with_season must also use food.spirit_wine.chen_cu not legacy 'chen_cu'"
+        );
     }
 }

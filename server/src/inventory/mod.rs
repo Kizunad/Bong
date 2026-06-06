@@ -149,6 +149,13 @@ pub struct ItemTemplate {
     pub recipe_fragment_spec: Option<RecipeFragmentSpec>,
     /// plan-backpack-equip-v1 P0 — 可装备容器规格；category=Container 时必填。
     pub container_spec: Option<ContainerSpec>,
+    /// plan-food-v1 P1 — 默认 shelflife profile ID；Some(id) 时 `runtime_instance_from_template`
+    /// 在 tick=0 自动挂 `Freshness`，无需消费侧手动初始化。
+    /// 食物类物品（category=Food）在 food.toml 内填此字段。
+    pub shelflife_profile: Option<String>,
+    /// plan-food-v1 P1 — shelflife 初始路径（`DecayTrack`）；配合 `shelflife_profile` 使用。
+    /// None = 无 shelflife（shelflife_profile 也为 None 时）。
+    pub shelflife_track: Option<crate::shelflife::DecayTrack>,
 }
 
 /// plan-backpack-equip-v1 P0 — 可装备容器（背包/囊/挎包）的模板级静态规格。
@@ -1256,6 +1263,20 @@ fn runtime_instance_from_template(
     instance_id: u64,
     stack_count: u32,
 ) -> ItemInstance {
+    // plan-food-v1 P1：当 template 声明了 shelflife_profile + track 时，
+    // 自动在 tick=0 挂 Freshness（initial_qi 取 spirit_quality_initial 折算为 f32）。
+    let freshness = match (&template.shelflife_profile, &template.shelflife_track) {
+        (Some(profile_id), Some(track)) => Some(crate::shelflife::Freshness {
+            created_at_tick: 0,
+            initial_qi: template.spirit_quality_initial as f32,
+            track: *track,
+            profile: crate::shelflife::DecayProfileId::new(profile_id),
+            frozen_accumulated: 0,
+            frozen_since_tick: None,
+        }),
+        _ => None,
+    };
+
     ItemInstance {
         instance_id,
         template_id: template.id.clone(),
@@ -1268,7 +1289,7 @@ fn runtime_instance_from_template(
         stack_count,
         spirit_quality: template.spirit_quality_initial,
         durability: 1.0,
-        freshness: None,
+        freshness,
         mineral_id: None,
         charges: None,
         forge_quality: None,
@@ -1378,6 +1399,14 @@ struct ItemTemplateToml {
     /// plan-backpack-equip-v1 P0：category == "Container" 时必填，否则须缺省。
     #[serde(default)]
     container: Option<ContainerSpecToml>,
+    /// plan-food-v1 P1：食物类物品的默认 shelflife profile ID。
+    /// Some(id) → 物品生成时自动挂 `Freshness`；None → 无 shelflife。
+    #[serde(default)]
+    shelflife_profile: Option<String>,
+    /// plan-food-v1 P1：shelflife 路径 — "decay" / "spoil" / "age"；缺省 "spoil"。
+    /// 仅当 shelflife_profile 非 None 时有效。
+    #[serde(default)]
+    shelflife_track: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1649,6 +1678,26 @@ impl ItemTemplateToml {
             (_, None) => None,
         };
 
+        // plan-food-v1 P1：解析 shelflife_track 字符串 → DecayTrack。
+        let shelflife_track = match self.shelflife_profile.as_deref() {
+            Some(_) => {
+                // shelflife_profile 存在时必须有合法 track（默认 spoil）。
+                let raw_track = self.shelflife_track.as_deref().unwrap_or("spoil");
+                match raw_track.trim().to_lowercase().as_str() {
+                    "decay" => Some(crate::shelflife::DecayTrack::Decay),
+                    "spoil" => Some(crate::shelflife::DecayTrack::Spoil),
+                    "age" => Some(crate::shelflife::DecayTrack::Age),
+                    other => {
+                        return Err(format!(
+                            "{} item `{id}` has invalid shelflife_track `{other}`; expected decay/spoil/age",
+                            source_path.display()
+                        ));
+                    }
+                }
+            }
+            None => None,
+        };
+
         Ok(ItemTemplate {
             id,
             display_name,
@@ -1670,6 +1719,8 @@ impl ItemTemplateToml {
             technique_scroll_spec,
             recipe_fragment_spec,
             container_spec,
+            shelflife_profile: self.shelflife_profile,
+            shelflife_track,
         })
     }
 }
@@ -4299,6 +4350,8 @@ mod tests {
                     technique_scroll_spec: None,
                     recipe_fragment_spec: None,
                     container_spec: None,
+                    shelflife_profile: None,
+                    shelflife_track: None,
                 },
             );
         }
@@ -4333,6 +4386,8 @@ mod tests {
             technique_scroll_spec: None,
             recipe_fragment_spec: None,
             container_spec: None,
+            shelflife_profile: None,
+            shelflife_track: None,
         }
     }
 
@@ -5142,6 +5197,8 @@ cols = 4
                 technique_scroll_spec: None,
                 recipe_fragment_spec: None,
                 container_spec: None,
+                shelflife_profile: None,
+                shelflife_track: None,
             },
         );
         let registry = ItemRegistry { templates };
@@ -5206,6 +5263,8 @@ cols = 4
                 technique_scroll_spec: None,
                 recipe_fragment_spec: None,
                 container_spec: None,
+                shelflife_profile: None,
+                shelflife_track: None,
             },
         );
         let registry = ItemRegistry { templates };
@@ -6930,6 +6989,8 @@ cols = 4
                 technique_scroll_spec: None,
                 recipe_fragment_spec: None,
                 container_spec: None,
+                shelflife_profile: None,
+                shelflife_track: None,
             },
         );
         let mut inv = make_test_inventory_with_one_item();
@@ -7002,6 +7063,8 @@ cols = 4
                 technique_scroll_spec: None,
                 recipe_fragment_spec: None,
                 container_spec: None,
+                shelflife_profile: None,
+                shelflife_track: None,
             },
         );
         let mut inv = make_test_inventory_with_one_item();
@@ -7309,6 +7372,8 @@ cols = 4
                 equip_slot: equip_slot.to_string(),
                 durability_cost_per_op: 0.0,
             }),
+            shelflife_profile: None,
+            shelflife_track: None,
         }
     }
 
@@ -7996,6 +8061,8 @@ cols = 4
                 equip_slot: EQUIP_SLOT_WAIST_POUCH.to_string(),
                 durability_cost_per_op: 0.008,
             }),
+            shelflife_profile: None,
+            shelflife_track: None,
         };
         let registry =
             ItemRegistry::from_map(HashMap::from([("worn_grass_pouch".to_string(), template)]));
@@ -8412,6 +8479,8 @@ cols = 4
             technique_scroll_spec: None,
             recipe_fragment_spec: None,
             container_spec: None,
+            shelflife_profile: None,
+            shelflife_track: None,
         }
     }
 
@@ -8437,6 +8506,8 @@ cols = 4
             technique_scroll_spec: None,
             recipe_fragment_spec: None,
             container_spec: None,
+            shelflife_profile: None,
+            shelflife_track: None,
         }
     }
 
@@ -8942,6 +9013,291 @@ cols = 4
         assert!(
             parse_item_category("totally_unknown_category", &path, "id").is_err(),
             "unknown category should still return Err — food arm must not swallow others"
+        );
+    }
+
+    // ── plan-food-v1 P1 — 食物物品 shelflife_profile 初始化测试 ──
+
+    #[test]
+    fn food_item_templates_have_shelflife_profile_set() {
+        // plan-food-v1 P1：food.toml 中每个食物 item 应声明 shelflife_profile + shelflife_track
+        let registry =
+            load_item_registry().expect("item registry should load from assets/items/*.toml");
+
+        let cases: &[(&str, &str, crate::shelflife::DecayTrack)] = &[
+            (
+                "food.mundane.cooked_meat",
+                "food_spoil_mundane_meat_v1",
+                crate::shelflife::DecayTrack::Spoil,
+            ),
+            (
+                "food.mundane.chen_bing",
+                "food_spoil_mundane_meat_v1",
+                crate::shelflife::DecayTrack::Spoil,
+            ),
+            (
+                "food.spirit_fruit.ling_guo",
+                "food_spoil_ling_guo_v1",
+                crate::shelflife::DecayTrack::Spoil,
+            ),
+            (
+                "food.spirit_wine.chen_jiu",
+                "chen_jiu_v1",
+                crate::shelflife::DecayTrack::Age,
+            ),
+            (
+                "food.spirit_wine.chen_cu",
+                "chen_cu_v1",
+                crate::shelflife::DecayTrack::Spoil,
+            ),
+        ];
+        for (id, expected_profile, expected_track) in cases {
+            let tpl = registry
+                .get(id)
+                .unwrap_or_else(|| panic!("{id} must be in registry — check food.toml"));
+            assert_eq!(
+                tpl.shelflife_profile.as_deref(),
+                Some(*expected_profile),
+                "item `{id}` should have shelflife_profile=`{expected_profile}` \
+                 because plan-food-v1 P1 requires food items to declare their decay profile in food.toml"
+            );
+            assert_eq!(
+                tpl.shelflife_track,
+                Some(*expected_track),
+                "item `{id}` should have shelflife_track={expected_track:?} \
+                 because plan-food-v1 P1 assigns decay track in food.toml"
+            );
+        }
+    }
+
+    #[test]
+    fn runtime_instance_from_template_attaches_freshness_for_food_with_shelflife_profile() {
+        use crate::shelflife::{DecayProfileId, DecayTrack};
+        // plan-food-v1 P1：runtime_instance_from_template が shelflife_profile を持つ
+        // テンプレートで Freshness を自動挂する。
+        let tpl = ItemTemplate {
+            id: "food.spirit_wine.chen_jiu".to_string(),
+            display_name: "陈酒".to_string(),
+            category: ItemCategory::Food,
+            max_stack_count: 16,
+            grid_w: 1,
+            grid_h: 1,
+            base_weight: 0.5,
+            rarity: ItemRarity::Uncommon,
+            spirit_quality_initial: 0.80,
+            description: "test".to_string(),
+            effect: None,
+            cast_duration_ms: DEFAULT_CAST_DURATION_MS,
+            cooldown_ms: DEFAULT_COOLDOWN_MS,
+            weapon_spec: None,
+            forge_station_spec: None,
+            blueprint_scroll_spec: None,
+            inscription_scroll_spec: None,
+            technique_scroll_spec: None,
+            recipe_fragment_spec: None,
+            container_spec: None,
+            shelflife_profile: Some("chen_jiu_v1".to_string()),
+            shelflife_track: Some(DecayTrack::Age),
+        };
+
+        let instance = runtime_instance_from_template(&tpl, 1, 1);
+        let freshness = instance.freshness.as_ref().expect(
+            "chen_jiu item should have Freshness attached by runtime_instance_from_template \
+                     because template declares shelflife_profile=chen_jiu_v1",
+        );
+        assert_eq!(
+            freshness.track,
+            DecayTrack::Age,
+            "freshness.track should be Age for chen_jiu (plan-food-v1 P1 Age track)"
+        );
+        assert_eq!(
+            freshness.profile,
+            DecayProfileId::new("chen_jiu_v1"),
+            "freshness.profile must be chen_jiu_v1 as declared in food.toml"
+        );
+        assert_eq!(
+            freshness.created_at_tick, 0,
+            "freshness.created_at_tick=0 (spawned at server start tick=0)"
+        );
+        assert!(
+            (freshness.initial_qi - 0.80_f32).abs() < 1e-4,
+            "freshness.initial_qi should equal spirit_quality_initial=0.80 cast to f32; \
+             got {}",
+            freshness.initial_qi
+        );
+        assert_eq!(
+            freshness.frozen_accumulated, 0,
+            "new item frozen_accumulated=0"
+        );
+        assert!(
+            freshness.frozen_since_tick.is_none(),
+            "new item frozen_since_tick=None"
+        );
+    }
+
+    #[test]
+    fn runtime_instance_from_template_no_freshness_when_no_shelflife_profile() {
+        // Non-food items (or food without shelflife_profile) should have freshness=None
+        let tpl = ItemTemplate {
+            id: "misc_thing".to_string(),
+            display_name: "misc".to_string(),
+            category: ItemCategory::Misc,
+            max_stack_count: 1,
+            grid_w: 1,
+            grid_h: 1,
+            base_weight: 0.1,
+            rarity: ItemRarity::Common,
+            spirit_quality_initial: 1.0,
+            description: "no shelflife".to_string(),
+            effect: None,
+            cast_duration_ms: DEFAULT_CAST_DURATION_MS,
+            cooldown_ms: DEFAULT_COOLDOWN_MS,
+            weapon_spec: None,
+            forge_station_spec: None,
+            blueprint_scroll_spec: None,
+            inscription_scroll_spec: None,
+            technique_scroll_spec: None,
+            recipe_fragment_spec: None,
+            container_spec: None,
+            shelflife_profile: None,
+            shelflife_track: None,
+        };
+
+        let instance = runtime_instance_from_template(&tpl, 1, 1);
+        assert!(
+            instance.freshness.is_none(),
+            "item without shelflife_profile should have freshness=None — \
+             only items with shelflife_profile in food.toml get auto-freshness"
+        );
+    }
+
+    #[test]
+    fn chen_jiu_item_from_registry_has_age_freshness_on_spawn() {
+        // End-to-end: load food.toml item, instantiate, verify freshness is Age track.
+        use crate::shelflife::DecayTrack;
+        let registry =
+            load_item_registry().expect("item registry should load from assets/items/*.toml");
+
+        let tpl = registry
+            .get("food.spirit_wine.chen_jiu")
+            .expect("food.spirit_wine.chen_jiu must be loadable from food.toml");
+
+        let instance = runtime_instance_from_template(tpl, 99, 1);
+        let freshness = instance.freshness.as_ref().expect(
+            "food.spirit_wine.chen_jiu should have freshness auto-attached because \
+             food.toml declares shelflife_profile=chen_jiu_v1",
+        );
+        assert_eq!(
+            freshness.track,
+            DecayTrack::Age,
+            "chen_jiu template spawns with Age track because chen_jiu_v1 is an Age profile"
+        );
+    }
+
+    #[test]
+    fn ling_guo_item_from_registry_has_spoil_freshness_on_spawn() {
+        use crate::shelflife::DecayTrack;
+        let registry =
+            load_item_registry().expect("item registry should load from assets/items/*.toml");
+
+        let tpl = registry
+            .get("food.spirit_fruit.ling_guo")
+            .expect("food.spirit_fruit.ling_guo must exist");
+
+        let instance = runtime_instance_from_template(tpl, 1, 1);
+        let freshness = instance.freshness.as_ref().expect(
+            "ling_guo should have freshness because food.toml declares shelflife_profile=food_spoil_ling_guo_v1"
+        );
+        assert_eq!(
+            freshness.track,
+            DecayTrack::Spoil,
+            "ling_guo spawns with Spoil track — it decays in 2 game days"
+        );
+    }
+
+    #[test]
+    fn shelflife_track_parse_invalid_rejects_with_error() {
+        // plan-food-v1 P1：无效的 shelflife_track 字符串应在 TOML 解析时报错。
+        use std::path::PathBuf;
+        let path = PathBuf::from("test_path.toml");
+
+        let raw = ItemTemplateToml {
+            id: "test_item".to_string(),
+            name: "Test".to_string(),
+            category: "food".to_string(),
+            grid_w: 1,
+            grid_h: 1,
+            base_weight: 0.1,
+            rarity: "common".to_string(),
+            spirit_quality_initial: 0.5,
+            description: "test".to_string(),
+            max_stack_count: None,
+            effect: None,
+            cast_duration_ms: None,
+            cooldown_ms: None,
+            weapon: None,
+            forge_station: None,
+            blueprint_scroll: None,
+            inscription_scroll: None,
+            technique_scroll: None,
+            recipe_fragment: None,
+            container: None,
+            shelflife_profile: Some("some_profile".to_string()),
+            shelflife_track: Some("INVALID_TRACK".to_string()),
+        };
+
+        let result = raw.try_into_item_template(&path);
+        assert!(
+            result.is_err(),
+            "ItemTemplateToml with invalid shelflife_track should fail try_into_item_template"
+        );
+        let err = result.unwrap_err();
+        assert!(
+            err.contains("shelflife_track"),
+            "error message should mention shelflife_track; got: {err}"
+        );
+    }
+
+    #[test]
+    fn shelflife_track_defaults_to_spoil_when_not_specified() {
+        // shelflife_profile は Some だが shelflife_track を省略 → デフォルト spoil。
+        use crate::shelflife::DecayTrack;
+        use std::path::PathBuf;
+        let path = PathBuf::from("test_path.toml");
+
+        let raw = ItemTemplateToml {
+            id: "test_item".to_string(),
+            name: "Test".to_string(),
+            category: "food".to_string(),
+            grid_w: 1,
+            grid_h: 1,
+            base_weight: 0.1,
+            rarity: "common".to_string(),
+            spirit_quality_initial: 0.5,
+            description: "test".to_string(),
+            max_stack_count: None,
+            effect: None,
+            cast_duration_ms: None,
+            cooldown_ms: None,
+            weapon: None,
+            forge_station: None,
+            blueprint_scroll: None,
+            inscription_scroll: None,
+            technique_scroll: None,
+            recipe_fragment: None,
+            container: None,
+            shelflife_profile: Some("some_profile".to_string()),
+            shelflife_track: None, // should default to "spoil"
+        };
+
+        let tpl = raw
+            .try_into_item_template(&path)
+            .expect("valid TOML should parse OK");
+        assert_eq!(
+            tpl.shelflife_track,
+            Some(DecayTrack::Spoil),
+            "when shelflife_track is omitted but shelflife_profile is present, \
+             shelflife_track defaults to Spoil"
         );
     }
 }

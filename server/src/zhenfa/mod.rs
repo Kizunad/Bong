@@ -2937,6 +2937,8 @@ mod tests {
             technique_scroll_spec: None,
             recipe_fragment_spec: None,
             container_spec: None,
+            shelflife_profile: None,
+            shelflife_track: None,
         };
         ItemRegistry::from_map(HashMap::from([(
             ZHENFA_PEARL_ITEM_ID.to_string(),

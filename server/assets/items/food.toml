@@ -1,7 +1,14 @@
-# plan-food-v1 P0 — 灵食物品模板注册
+# plan-food-v1 P0/P1 — 灵食物品模板注册
 # 五个 item ID：mundane 普通食物 2 种 + spirit_fruit 1 种 + spirit_wine 2 种
-# category=misc（ItemCategory 无 Food 变体，由 parse_item_category 的 food 分支路由）
-# spirit_quality_initial：普通食物 0.40-0.60，灵果 0.70，陈酒 0.80，陈醋 0.65
+# category=food（由 parse_item_category 的 food 分支路由 → ItemCategory::Food）
+# spirit_quality_initial：普通食物 0.35-0.40，灵果 0.70，陈酒 0.80，陈醋 0.65
+#
+# plan-food-v1 P1：shelflife_profile / shelflife_track 字段
+# 物品创建时（runtime_instance_from_template）自动挂 Freshness，无需消费侧手动初始化。
+# - food.mundane.* 用 Spoil track（会腐）
+# - food.spirit_fruit.ling_guo 用 Spoil track（快腐，2 游戏日）
+# - food.spirit_wine.chen_jiu 用 Age track（陈化 → 过峰迁 food.spirit_wine.chen_cu）
+# - food.spirit_wine.chen_cu 用 Spoil track（chen_jiu 过峰后的降级形态，缓慢 Spoil）
 
 [[item]]
 id = "food.mundane.cooked_meat"
@@ -12,6 +19,8 @@ grid_h = 1
 base_weight = 0.25
 rarity = "common"
 spirit_quality_initial = 0.40
+shelflife_profile = "food_spoil_mundane_meat_v1"
+shelflife_track = "spoil"
 description = "粗劣灵兽肉块，炙烤至熟。腥气犹存，饥时聊以果腹；过期则腐，食之有险。"
 
 [[item]]
@@ -23,6 +32,8 @@ grid_h = 1
 base_weight = 0.15
 rarity = "common"
 spirit_quality_initial = 0.35
+shelflife_profile = "food_spoil_mundane_meat_v1"
+shelflife_track = "spoil"
 description = "荒地麦草磨粉压成的干饼，无灵气可言。久置发霉，路人口粮，修士不屑。"
 
 [[item]]
@@ -34,6 +45,8 @@ grid_h = 1
 base_weight = 0.12
 rarity = "uncommon"
 spirit_quality_initial = 0.70
+shelflife_profile = "food_spoil_ling_guo_v1"
+shelflife_track = "spoil"
 description = "山间孤生的圆润灵果，表皮隐隐流光。食之可微暖经脉、小助修炼，过峰腐烂极速。"
 
 [[item]]
@@ -45,6 +58,8 @@ grid_h = 1
 base_weight = 0.50
 rarity = "uncommon"
 spirit_quality_initial = 0.80
+shelflife_profile = "chen_jiu_v1"
+shelflife_track = "age"
 description = "以灵草浸泡数月酿成的淡金色醴酒。陈化至峰，酒气凝灵；过峰则变陈醋，药力殆尽。"
 
 [[item]]
@@ -56,4 +71,6 @@ grid_h = 1
 base_weight = 0.50
 rarity = "common"
 spirit_quality_initial = 0.65
+shelflife_profile = "chen_cu_v1"
+shelflife_track = "spoil"
 description = "陈酒过峰后自然转化的昏黄醋液，灵气大半散逸。酸涩微苦，偶有人用作调料。"
