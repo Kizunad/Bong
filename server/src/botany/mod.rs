@@ -16,6 +16,7 @@ pub mod integration;
 pub mod lifecycle;
 pub mod plant_kind;
 pub mod registry;
+pub mod shiling_xian;
 pub mod skill_hook;
 
 #[allow(unused_imports)]
@@ -100,6 +101,16 @@ pub fn register(app: &mut App) {
             emit_botany_ecology_snapshot,
         )
             .chain(),
+    );
+    // plan-neg-domain-fauna-v1 P1：噬灵藓系统（单独注册，避免超过 Bevy 元组系统上限）
+    app.add_systems(
+        Update,
+        (
+            shiling_xian::moss_spread_system,
+            shiling_xian::moss_step_on_system.after(shiling_xian::moss_spread_system),
+            shiling_xian::moss_step_off_system.after(shiling_xian::moss_step_on_system),
+            shiling_xian::moss_drain_system.after(shiling_xian::moss_step_off_system),
+        ),
     );
 }
 

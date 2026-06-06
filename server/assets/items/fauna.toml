@@ -464,3 +464,16 @@ base_weight = 0.3
 rarity = "legendary"
 spirit_quality_initial = 1.0
 description = "邃渊柱核心的眼状凝晶，窥视深渊者亦被深渊窥视。极品丹药/法宝材料。"
+
+# plan-neg-domain-fauna-v1 P1 — 噬灵藓：负灵域 tainted 地块危害，不可采集/合成。
+# item_id 仅供 BotanyKindRegistry 注册基础设施校验通过；无 drop、无 harvest、无合成路径。
+[[item]]
+id = "shi_ling_xian"
+name = "噬灵藓"
+category = "misc"
+grid_w = 1
+grid_h = 1
+base_weight = 0.0
+rarity = "common"
+spirit_quality_initial = 0.0
+description = "负灵域地面蔓生的黑色苔藓，每踏一步都在吸食踩踏者的真元。不可采集，不可入药。"
