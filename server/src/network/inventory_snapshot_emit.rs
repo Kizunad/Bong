@@ -1389,4 +1389,114 @@ mod tests {
         assert!((derived.current_qi - expected).abs() < 1e-3);
         assert_eq!(derived.track_state, crate::shelflife::TrackState::PastPeak);
     }
+
+    /// plan-food-v1 P3 — 冰窖 SpoilOnly behavior 的 enrich 集成测试。
+    ///
+    /// Spoil profile half_life=1000, 5000 ticks 后：
+    ///   Normal:  current = 100 × 0.5^5 = 3.125 → Spoiled
+    ///   SpoilOnly { 0.3 }: effective_dt = 0.3×5000 = 1500 → current = 100 × 0.5^1.5 ≈ 35.36 → Declining
+    #[test]
+    fn enrich_with_ice_cellar_spoil_only_slows_decay() {
+        let p = crate::shelflife::DecayProfile::Spoil {
+            id: crate::shelflife::DecayProfileId::new("food_spoil_test"),
+            formula: crate::shelflife::DecayFormula::Exponential {
+                half_life_ticks: 1000,
+            },
+            spoil_threshold: 10.0,
+        };
+        let mut registry = crate::shelflife::DecayProfileRegistry::new();
+        registry.insert(p.clone()).unwrap();
+
+        let item_normal = make_test_item_with_freshness(1, &p, 100.0, 0);
+        let item_cold = make_test_item_with_freshness(2, &p, 100.0, 0);
+        let mut view_normal = item_view_from_instance(&item_normal);
+        let mut view_cold = item_view_from_instance(&item_cold);
+
+        enrich_with_derived_freshness(
+            &mut view_normal,
+            &registry,
+            5000,
+            &crate::shelflife::ContainerFreshnessBehavior::Normal,
+        );
+        enrich_with_derived_freshness(
+            &mut view_cold,
+            &registry,
+            5000,
+            &crate::shelflife::ContainerFreshnessBehavior::SpoilOnly { rate: 0.3 },
+        );
+
+        let normal_derived = view_normal
+            .freshness_current
+            .expect("normal should have derived");
+        let cold_derived = view_cold
+            .freshness_current
+            .expect("cold should have derived");
+
+        // Normal @ 5000 ticks: current = 100 × 0.5^5 = 3.125 < spoil_threshold=10 → Spoiled
+        assert_eq!(
+            normal_derived.track_state,
+            crate::shelflife::TrackState::Spoiled,
+            "Normal 容器 5000 ticks 后应 Spoiled（current≈3.125 < threshold=10），实际 {:?}",
+            normal_derived.track_state
+        );
+
+        // SpoilOnly { 0.3 } @ 5000: effective_dt = 1500 → current ≈ 35.36 > threshold=10 → not Spoiled
+        assert_ne!(
+            cold_derived.track_state,
+            crate::shelflife::TrackState::Spoiled,
+            "冰窖 (SpoilOnly 0.3) 5000 ticks 后 current≈35.36 > threshold=10，不应 Spoiled，\
+             实际 {:?} (current={:.3})",
+            cold_derived.track_state,
+            cold_derived.current_qi,
+        );
+
+        // 冷藏 current 应显著高于 Normal current
+        assert!(
+            cold_derived.current_qi > normal_derived.current_qi * 5.0,
+            "冰窖 current ({:.3}) 应超过 Normal ({:.3}) 的 5 倍 (rate=0.3 使 effective_dt 缩短 70%)",
+            cold_derived.current_qi,
+            normal_derived.current_qi,
+        );
+    }
+
+    /// plan-food-v1 P3 — SpoilOnly 对非 Spoil track（Decay）退 Normal，无冷藏效果。
+    #[test]
+    fn enrich_ice_cellar_does_not_slow_decay_track() {
+        let p = crate::shelflife::DecayProfile::Decay {
+            id: crate::shelflife::DecayProfileId::new("decay_item_test"),
+            formula: crate::shelflife::DecayFormula::Exponential {
+                half_life_ticks: 1000,
+            },
+            floor_qi: 0.0,
+        };
+        let mut registry = crate::shelflife::DecayProfileRegistry::new();
+        registry.insert(p.clone()).unwrap();
+
+        let item_normal = make_test_item_with_freshness(1, &p, 100.0, 0);
+        let item_cold = make_test_item_with_freshness(2, &p, 100.0, 0);
+        let mut view_normal = item_view_from_instance(&item_normal);
+        let mut view_cold = item_view_from_instance(&item_cold);
+
+        enrich_with_derived_freshness(
+            &mut view_normal,
+            &registry,
+            1000,
+            &crate::shelflife::ContainerFreshnessBehavior::Normal,
+        );
+        enrich_with_derived_freshness(
+            &mut view_cold,
+            &registry,
+            1000,
+            &crate::shelflife::ContainerFreshnessBehavior::SpoilOnly { rate: 0.3 },
+        );
+
+        let normal_qi = view_normal.freshness_current.expect("derived").current_qi;
+        let cold_qi = view_cold.freshness_current.expect("derived").current_qi;
+
+        // Decay track + SpoilOnly → multiplier = 1.0（退 Normal），两者结果相同
+        assert!(
+            (normal_qi - cold_qi).abs() < 0.1,
+            "SpoilOnly 对 Decay track 应退 Normal，normal={normal_qi:.3} vs cold={cold_qi:.3}"
+        );
+    }
 }

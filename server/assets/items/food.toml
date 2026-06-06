@@ -74,3 +74,17 @@ spirit_quality_initial = 0.65
 shelflife_profile = "chen_cu_v1"
 shelflife_track = "spoil"
 description = "陈酒过峰后自然转化的昏黄醋液，灵气大半散逸。酸涩微苦，偶有人用作调料。"
+
+# plan-food-v1 P3 — 冰窖容器
+# 置于背包 / 外部容器内，与同 grid 内食物共存时触发 SpoilOnly { rate: 0.3 }。
+# 调用方（spiritwood::ice_cellar_container_behavior）通过 template_id 识别。
+[[item]]
+id = "food.container.ice_cellar"
+name = "寒冰窖格"
+category = "misc"
+grid_w = 2
+grid_h = 2
+base_weight = 3.0
+rarity = "uncommon"
+spirit_quality_initial = 0.0
+description = "以玄冰石凿成的小型冷储格。置于容器槽中可使同层食物腐败速率降至 30%，但对非食腐物品无效。"
