@@ -1584,6 +1584,9 @@ struct ItemEffectToml {
     kind: String,
     magnitude: f64,
     target: Option<String>,
+    /// plan-food-v1 P2 — food_regen 专用：效果持续 tick 数（其他 effect 忽略）。
+    #[serde(default)]
+    duration_ticks: Option<u64>,
 }
 
 impl ItemTemplateToml {
@@ -2023,6 +2026,25 @@ fn parse_item_effect(
                 ));
             }
             Ok(ItemEffect::CombatPill { pill_item_id })
+        }
+        "food_regen" => {
+            // plan-food-v1 P2 — bonus_factor 来自 magnitude，duration_ticks 来自专属字段。
+            let duration_ticks = effect.duration_ticks.ok_or_else(|| {
+                format!(
+                    "{} item `{item_id}` effect `food_regen` missing required field `duration_ticks`",
+                    source_path.display()
+                )
+            })?;
+            if duration_ticks == 0 {
+                return Err(format!(
+                    "{} item `{item_id}` effect `food_regen` has invalid duration_ticks 0; expected >= 1",
+                    source_path.display()
+                ));
+            }
+            Ok(ItemEffect::FoodRegen {
+                bonus_factor: effect.magnitude as f32,
+                duration_ticks,
+            })
         }
         other => Err(format!(
             "{} item `{item_id}` has unsupported effect kind `{other}`",
@@ -4435,6 +4457,7 @@ mod tests {
                 kind: "poison_pill".to_string(),
                 magnitude: 0.0,
                 target: Some("poison_pill_qing_lin_man_tuo".to_string()),
+                duration_ticks: None,
             },
             Path::new("<inline-items.toml>"),
             "poison_pill_qing_lin_man_tuo",
@@ -4457,6 +4480,7 @@ mod tests {
                     kind: "poison_pill".to_string(),
                     magnitude: 0.0,
                     target,
+                    duration_ticks: None,
                 },
                 Path::new("<inline-items.toml>"),
                 "poison_pill_missing_target",
@@ -4477,6 +4501,7 @@ mod tests {
                 kind: "poison_pill".to_string(),
                 magnitude: 0.0,
                 target: Some("poison_pill_typo".to_string()),
+                duration_ticks: None,
             },
             Path::new("<inline-items.toml>"),
             "poison_pill_unknown_target",
@@ -4739,6 +4764,149 @@ mod tests {
                 .max_stack_count,
             1
         );
+    }
+
+    // ── plan-food-v1 P2 BLOCKER 1：food.toml FoodRegen effect 解析测试 ──
+
+    /// BLOCKER 1 端到端：food.toml → ItemRegistry → ling_guo.effect = FoodRegen{0.20, 48000}
+    #[test]
+    fn food_toml_ling_guo_has_food_regen_effect() {
+        let registry =
+            load_item_registry().expect("item registry should load from assets/items/*.toml");
+        let ling_guo = registry
+            .get("food.spirit_fruit.ling_guo")
+            .expect("food.toml ling_guo must be registered");
+        match &ling_guo.effect {
+            Some(ItemEffect::FoodRegen {
+                bonus_factor,
+                duration_ticks,
+            }) => {
+                assert!(
+                    (bonus_factor - 0.20).abs() < 1e-4,
+                    "ling_guo bonus_factor 应=0.20（+20% 修炼速度），实际 {bonus_factor}"
+                );
+                assert_eq!(
+                    *duration_ticks, 48_000u64,
+                    "ling_guo duration_ticks 应=48000（2 GAME_DAY），实际 {duration_ticks}"
+                );
+            }
+            other => panic!("ling_guo.effect 应为 FoodRegen{{0.20, 48000}}，实际 {other:?}"),
+        }
+    }
+
+    /// BLOCKER 1 端到端：food.toml → chen_jiu.effect = FoodRegen{0.15, 36000}
+    #[test]
+    fn food_toml_chen_jiu_has_food_regen_effect() {
+        let registry =
+            load_item_registry().expect("item registry should load from assets/items/*.toml");
+        let chen_jiu = registry
+            .get("food.spirit_wine.chen_jiu")
+            .expect("food.toml chen_jiu must be registered");
+        match &chen_jiu.effect {
+            Some(ItemEffect::FoodRegen {
+                bonus_factor,
+                duration_ticks,
+            }) => {
+                assert!(
+                    (bonus_factor - 0.15).abs() < 1e-4,
+                    "chen_jiu bonus_factor 应=0.15（+15% 修炼速度），实际 {bonus_factor}"
+                );
+                assert_eq!(
+                    *duration_ticks, 36_000u64,
+                    "chen_jiu duration_ticks 应=36000（1.5 GAME_DAY），实际 {duration_ticks}"
+                );
+            }
+            other => panic!("chen_jiu.effect 应为 FoodRegen{{0.15, 36000}}，实际 {other:?}"),
+        }
+    }
+
+    /// 凡俗食物（cooked_meat / chen_bing）不挂修炼加速 effect
+    #[test]
+    fn food_toml_mundane_foods_have_no_cultivation_effect() {
+        let registry =
+            load_item_registry().expect("item registry should load from assets/items/*.toml");
+        for mundane in ["food.mundane.cooked_meat", "food.mundane.chen_bing"] {
+            let item = registry
+                .get(mundane)
+                .unwrap_or_else(|| panic!("food.toml {mundane} must be registered"));
+            assert!(
+                item.effect.is_none(),
+                "凡俗食物 `{mundane}` 不应有修炼加速 effect，实际 {:?}",
+                item.effect
+            );
+        }
+    }
+
+    /// food_regen 解析：duration_ticks 缺失时应报错
+    #[test]
+    fn parse_item_effect_food_regen_missing_duration_ticks_returns_error() {
+        let err = parse_item_effect(
+            ItemEffectToml {
+                kind: "food_regen".to_string(),
+                magnitude: 0.20,
+                target: None,
+                duration_ticks: None,
+            },
+            std::path::Path::new("<test>"),
+            "test_food_item",
+        )
+        .expect_err("food_regen 缺失 duration_ticks 应返回 Err");
+        assert!(
+            err.contains("duration_ticks"),
+            "错误信息应包含 'duration_ticks'，实际: {err}"
+        );
+    }
+
+    /// food_regen 解析：duration_ticks = 0 时应报错
+    #[test]
+    fn parse_item_effect_food_regen_zero_duration_ticks_returns_error() {
+        let err = parse_item_effect(
+            ItemEffectToml {
+                kind: "food_regen".to_string(),
+                magnitude: 0.20,
+                target: None,
+                duration_ticks: Some(0),
+            },
+            std::path::Path::new("<test>"),
+            "test_food_item",
+        )
+        .expect_err("food_regen duration_ticks=0 应返回 Err");
+        assert!(
+            err.contains("duration_ticks"),
+            "错误信息应包含 'duration_ticks'，实际: {err}"
+        );
+    }
+
+    /// food_regen 解析：合法参数应成功 → FoodRegen{bonus_factor: 0.20, duration_ticks: 48000}
+    #[test]
+    fn parse_item_effect_food_regen_valid_returns_food_regen() {
+        let effect = parse_item_effect(
+            ItemEffectToml {
+                kind: "food_regen".to_string(),
+                magnitude: 0.20,
+                target: None,
+                duration_ticks: Some(48_000),
+            },
+            std::path::Path::new("<test>"),
+            "test_ling_guo",
+        )
+        .expect("合法 food_regen 参数应成功解析");
+        match effect {
+            ItemEffect::FoodRegen {
+                bonus_factor,
+                duration_ticks,
+            } => {
+                assert!(
+                    (bonus_factor - 0.20).abs() < 1e-4,
+                    "bonus_factor 应=0.20，实际 {bonus_factor}"
+                );
+                assert_eq!(
+                    duration_ticks, 48_000,
+                    "duration_ticks 应=48000，实际 {duration_ticks}"
+                );
+            }
+            other => panic!("期望 FoodRegen，实际 {other:?}"),
+        }
     }
 
     // ── plan-cultivation-pacing-v1 P2.2：次品修炼丹药模板加载测试 ──

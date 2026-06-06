@@ -29,6 +29,7 @@ use crate::cultivation::components::{
 };
 use crate::cultivation::lifespan::LifespanExtensionIntent;
 use crate::cultivation::poison_trait::{ConsumePoisonPillIntent, PoisonPillKind};
+use crate::inventory::food::{consume_food, ConsumeFoodResult};
 use crate::inventory::{ItemEffect, ItemRegistry, PlayerInventory};
 use crate::network::agent_bridge::{
     payload_type_label, serialize_server_data_payload, SERVER_DATA_CHANNEL,
@@ -41,6 +42,7 @@ use crate::network::{log_payload_build_error, send_server_data_payload};
 use crate::player::state::PlayerState;
 use crate::schema::combat_hud::{CastOutcomeV1, CastPhaseV1, CastSyncV1};
 use crate::schema::server_data::{ServerDataPayloadV1, ServerDataV1};
+use crate::shelflife::DecayProfileRegistry;
 
 /// Cooldown 默认值（plan §4.4）。中断后短冷却 0.5s（10 tick）；
 /// 完成后冷却来自 ItemTemplate.cooldown_ms（折算到 Casting.complete_cooldown_ticks）。
@@ -75,12 +77,19 @@ struct CastItemEffectContext<'a> {
     issued_at_tick: u64,
     username: &'a str,
     entity: Entity,
+    /// plan-food-v1 P2 — 消费 FoodRegen 时从 ItemInstance 克隆的 freshness（已 clone，无借用冲突）。
+    /// `None` = 无 freshness（非食物或尚未挂 freshness）。
+    item_freshness: Option<crate::shelflife::Freshness>,
+    /// plan-food-v1 P2 — DecayProfileRegistry 引用，用于 freshness 门控。
+    decay_profiles: Option<&'a crate::shelflife::DecayProfileRegistry>,
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn tick_casts_or_interrupt(
     clock: Res<CombatClock>,
     mut commands: Commands,
     item_registry: Res<ItemRegistry>,
+    decay_profiles: Option<Res<DecayProfileRegistry>>,
     mut audio_events: AudioEmitWriter,
     mut yidao_complete_events: EventWriter<YidaoCastCompleteEvent>,
     mut effect_intents: ParamSet<(
@@ -221,12 +230,19 @@ pub fn tick_casts_or_interrupt(
             }
             // 1) 消耗：物品快捷槽找到绑定 instance_id，stack -= 1；技能栏只进入冷却。
             let mut effect_to_apply: Option<ItemEffect> = None;
+            // plan-food-v1 P2：在 consume_one_stack 借走 inventory 之前，先 clone freshness
+            // （clone 避免生命周期冲突）。
+            let mut cast_item_freshness: Option<crate::shelflife::Freshness> = None;
             if casting.source == CastSource::QuickSlot {
                 if let Some(id) = casting.bound_instance_id {
                     if let Some(template_id) = lookup_template_id(&inventory, id) {
                         if let Some(template) = item_registry.get(&template_id) {
                             effect_to_apply = template.effect.clone();
                         }
+                    }
+                    // 克隆 freshness（在 consume_one_stack 可变借用前做）
+                    if let Some(inst) = clone_item_at_for_freshness(&inventory, id) {
+                        cast_item_freshness = inst;
                     }
                 }
             }
@@ -252,6 +268,8 @@ pub fn tick_casts_or_interrupt(
                         issued_at_tick: clock.tick,
                         username: &username.0,
                         entity,
+                        item_freshness: cast_item_freshness,
+                        decay_profiles: decay_profiles.as_deref(),
                     },
                 );
             }
@@ -550,21 +568,98 @@ fn apply_cast_item_effect(
             bonus_factor,
             duration_ticks,
         } => {
-            // plan-food-v1 P2：灵食修炼加速。
-            // 注意：这里走 upsert（取 max）而非 push stacking；食物重复食用刷新时长/取更高档。
-            // 若后续需要 per-source stacking，改为发 FoodConsumeIntent 走独立系统。
-            effect_intents.p0().send(ApplyStatusEffectIntent {
-                target: context.entity,
-                kind: StatusEffectKind::CultivationAcceleration,
-                magnitude: *bonus_factor,
-                duration_ticks: (*duration_ticks).max(1),
-                issued_at_tick: context.issued_at_tick,
+            // plan-food-v1 P2：灵食修炼加速 + freshness 门控。
+            // 1) 用 consume_food 纯函数判定 freshness 状态。
+            // 2) CriticalBlock → 拒绝消费，不写 status effect。
+            // 3) SpoiledWarn → 降效消费（按折算 magnitude）。
+            // 4) FoodApplied / Noop → 正常写入 CultivationAcceleration。
+            let freshness_pair = context.item_freshness.as_ref().and_then(|f| {
+                context
+                    .decay_profiles
+                    .and_then(|reg| reg.get(&f.profile))
+                    .map(|profile| (f, profile))
             });
-            tracing::info!(
-                "[bong][network][cast] FoodRegen bonus_factor={bonus_factor} duration_ticks={duration_ticks} for `{}` ({:?}) → CultivationAcceleration intent",
-                context.username,
-                context.entity
+            let food_result = consume_food(
+                freshness_pair,
+                *bonus_factor,
+                *duration_ticks,
+                context.issued_at_tick,
+                1.0, // storage_multiplier：无容器上下文，传 1.0（冰窖走 P3 容器层）
             );
+            match &food_result {
+                ConsumeFoodResult::CriticalBlock {
+                    current_qi,
+                    spoil_threshold,
+                } => {
+                    tracing::warn!(
+                        "[bong][network][cast] FoodRegen CriticalBlock: current_qi={current_qi:.3} < 0.1×spoil_threshold={spoil_threshold:.3} for `{}` ({:?}) — 拒绝消费，不写 CultivationAcceleration",
+                        context.username,
+                        context.entity
+                    );
+                    // 注意：BLOCKER 2 要求此处不写 status effect。物品已在 consume_one_stack 扣除；
+                    // 若需"腐败食物退回"逻辑，留 P3 TODO。
+                }
+                ConsumeFoodResult::SpoiledWarn {
+                    reduced_bonus_factor,
+                    duration_ticks: eff_duration,
+                    current_qi,
+                    spoil_threshold,
+                } => {
+                    if *reduced_bonus_factor > 0.0 {
+                        effect_intents.p0().send(ApplyStatusEffectIntent {
+                            target: context.entity,
+                            kind: StatusEffectKind::CultivationAcceleration,
+                            magnitude: *reduced_bonus_factor,
+                            duration_ticks: (*eff_duration).max(1),
+                            issued_at_tick: context.issued_at_tick,
+                        });
+                        tracing::warn!(
+                            "[bong][network][cast] FoodRegen SpoiledWarn: current_qi={current_qi:.3} spoil_threshold={spoil_threshold:.3} → reduced bonus={reduced_bonus_factor:.3} for `{}` ({:?})",
+                            context.username,
+                            context.entity
+                        );
+                    } else {
+                        tracing::warn!(
+                            "[bong][network][cast] FoodRegen SpoiledWarn reduced_bonus=0 for `{}` ({:?}) — 跳过写入",
+                            context.username,
+                            context.entity
+                        );
+                    }
+                }
+                ConsumeFoodResult::FoodApplied {
+                    bonus_factor: eff_bonus,
+                    duration_ticks: eff_duration,
+                    is_peak,
+                } => {
+                    effect_intents.p0().send(ApplyStatusEffectIntent {
+                        target: context.entity,
+                        kind: StatusEffectKind::CultivationAcceleration,
+                        magnitude: *eff_bonus,
+                        duration_ticks: (*eff_duration).max(1),
+                        issued_at_tick: context.issued_at_tick,
+                    });
+                    tracing::info!(
+                        "[bong][network][cast] FoodRegen FoodApplied: bonus={eff_bonus:.3} duration={eff_duration} is_peak={is_peak} for `{}` ({:?}) → CultivationAcceleration intent",
+                        context.username,
+                        context.entity
+                    );
+                }
+                ConsumeFoodResult::Noop => {
+                    // 无 freshness / profile 不匹配 — 退化为直接应用原始 bonus（兼容旧物品）
+                    effect_intents.p0().send(ApplyStatusEffectIntent {
+                        target: context.entity,
+                        kind: StatusEffectKind::CultivationAcceleration,
+                        magnitude: *bonus_factor,
+                        duration_ticks: (*duration_ticks).max(1),
+                        issued_at_tick: context.issued_at_tick,
+                    });
+                    tracing::info!(
+                        "[bong][network][cast] FoodRegen Noop (no freshness) bonus={bonus_factor} duration={duration_ticks} for `{}` ({:?}) → CultivationAcceleration intent",
+                        context.username,
+                        context.entity
+                    );
+                }
+            }
         }
         _ => apply_item_effect(
             effect,
@@ -575,6 +670,29 @@ fn apply_cast_item_effect(
             context.entity,
         ),
     }
+}
+
+/// plan-food-v1 P2 — 从 inventory 克隆指定 item 的 freshness（仅 clone，不 borrow 可变）。
+/// 用于在 consume_one_stack 可变借用前先取到 freshness，避免借用冲突。
+fn clone_item_at_for_freshness(
+    inventory: &PlayerInventory,
+    instance_id: u64,
+) -> Option<Option<crate::shelflife::Freshness>> {
+    for c in &inventory.containers {
+        if let Some(p) = c
+            .items
+            .iter()
+            .find(|p| p.instance.instance_id == instance_id)
+        {
+            return Some(p.instance.freshness.clone());
+        }
+    }
+    for item in inventory.hotbar.iter().flatten() {
+        if item.instance_id == instance_id {
+            return Some(item.freshness.clone());
+        }
+    }
+    None
 }
 
 /// 在 inventory 内找 instance_id 并 stack-=1；归零则移除。返回是否成功扣到。
@@ -807,6 +925,8 @@ mod tests {
                     issued_at_tick: 42,
                     username: "Azure",
                     entity: Entity::PLACEHOLDER,
+                    item_freshness: None,
+                    decay_profiles: None,
                 },
             );
         }
@@ -853,6 +973,8 @@ mod tests {
                     issued_at_tick: 7,
                     username: "Azure",
                     entity: Entity::PLACEHOLDER,
+                    item_freshness: None,
+                    decay_profiles: None,
                 },
             );
             apply_cast_item_effect(
@@ -867,6 +989,8 @@ mod tests {
                     issued_at_tick: 9,
                     username: "Azure",
                     entity: Entity::PLACEHOLDER,
+                    item_freshness: None,
+                    decay_profiles: None,
                 },
             );
         }
@@ -931,6 +1055,313 @@ mod tests {
         assert_eq!(inv.hotbar[3].as_ref().unwrap().stack_count, 1);
         assert!(consume_one_stack(&mut inv, 7));
         assert!(inv.hotbar[3].is_none());
+    }
+
+    // ── plan-food-v1 P2 BLOCKER 2：FoodRegen freshness 门控端到端测试 ──
+
+    /// 辅助：构造带 FoodRegen effect 的 ApplyStatusEffectIntent 触发函数，
+    /// 允许注入 freshness 和 decay profile registry。
+    fn build_app_for_food_regen_test(
+        freshness: Option<crate::shelflife::Freshness>,
+        registry: Option<crate::shelflife::DecayProfileRegistry>,
+        bonus_factor: f32,
+        duration_ticks: u64,
+    ) -> App {
+        let mut app = App::new();
+        app.add_event::<ApplyStatusEffectIntent>();
+        app.add_event::<LifespanExtensionIntent>();
+        app.add_event::<ConsumePoisonPillIntent>();
+        if let Some(r) = registry {
+            app.insert_resource(r);
+        }
+
+        let freshness_clone = freshness.clone();
+        app.add_systems(
+            Update,
+            move |mut effect_intents: ParamSet<(
+                EventWriter<ApplyStatusEffectIntent>,
+                EventWriter<LifespanExtensionIntent>,
+                EventWriter<ConsumePoisonPillIntent>,
+            )>,
+                  reg: Option<Res<crate::shelflife::DecayProfileRegistry>>| {
+                apply_cast_item_effect(
+                    &ItemEffect::FoodRegen {
+                        bonus_factor,
+                        duration_ticks,
+                    },
+                    CastItemEffectTargets {
+                        cultivation: None,
+                        meridians: None,
+                        contamination: None,
+                    },
+                    &mut effect_intents,
+                    CastItemEffectContext {
+                        issued_at_tick: 1000,
+                        username: "TestUser",
+                        entity: Entity::PLACEHOLDER,
+                        item_freshness: freshness_clone.clone(),
+                        decay_profiles: reg.as_deref(),
+                    },
+                );
+            },
+        );
+        app
+    }
+
+    /// BLOCKER 2 端到端：新鲜灵果（freshness 状态 Fresh）→ FoodRegen 发全额 bonus CultivationAcceleration intent
+    #[test]
+    fn food_regen_fresh_ling_guo_emits_full_bonus_intent() {
+        use crate::inventory::freshness::GAME_DAY_TICKS;
+        use crate::shelflife::types::{DecayFormula, DecayProfile, DecayProfileId, Freshness};
+
+        let profile = DecayProfile::Spoil {
+            id: DecayProfileId::new("food_spoil_ling_guo_v1"),
+            formula: DecayFormula::Linear {
+                decay_per_tick: 1.0 / (GAME_DAY_TICKS as f32 * 2.0),
+            },
+            spoil_threshold: 0.01,
+        };
+        let mut registry = crate::shelflife::DecayProfileRegistry::new();
+        registry.insert(profile.clone()).unwrap();
+
+        let freshness = Freshness::new(0, 1.0, &profile); // created at tick 0, full qi
+                                                          // issued_at_tick=1000 → 已经过 1000 ticks，但 ling_guo 2 GAME_DAY = 48000 ticks，
+                                                          // current_qi = 1.0 - 1000/(48000) ≈ 0.979 >> threshold 0.01 → FoodApplied
+
+        let mut app = build_app_for_food_regen_test(Some(freshness), Some(registry), 0.20, 48_000);
+        app.update();
+
+        let intents: Vec<_> = app
+            .world_mut()
+            .resource_mut::<Events<ApplyStatusEffectIntent>>()
+            .drain()
+            .collect();
+        assert_eq!(
+            intents.len(),
+            1,
+            "新鲜灵果应发出 1 条 CultivationAcceleration intent，实际 {}",
+            intents.len()
+        );
+        let intent = &intents[0];
+        assert_eq!(
+            intent.kind,
+            StatusEffectKind::CultivationAcceleration,
+            "intent.kind 应为 CultivationAcceleration"
+        );
+        assert!(
+            (intent.magnitude - 0.20).abs() < 1e-3,
+            "新鲜灵果 magnitude 应=0.20（全额），实际 {}",
+            intent.magnitude
+        );
+        assert_eq!(
+            intent.duration_ticks, 48_000,
+            "duration_ticks 应=48000，实际 {}",
+            intent.duration_ticks
+        );
+    }
+
+    /// BLOCKER 2 端到端：腐败到 CriticalBlock 的食物 → 不发 ApplyStatusEffectIntent
+    #[test]
+    fn food_regen_critical_block_emits_no_intent() {
+        use crate::inventory::freshness::GAME_DAY_TICKS;
+        use crate::shelflife::types::{DecayFormula, DecayProfile, DecayProfileId, Freshness};
+
+        // spoil_threshold = 0.5，Linear decay_per_tick = 0.5/1
+        // issued_at_tick = 1000 → 如果 created_at = 0 → current = 1.0 - 1.0*1000 < 0 → CriticalBlock
+        // 但 Linear 会 clamp，我们用 threshold=0.5，decay_per_tick=1.0（每 tick 衰减 1），
+        // current = 1.0 - 1000*1.0 ≈ 0（极低） < 0.1×0.5 → CriticalBlock
+        let profile = DecayProfile::Spoil {
+            id: DecayProfileId::new("test_fast_spoil"),
+            formula: DecayFormula::Linear {
+                decay_per_tick: 1.0 / (GAME_DAY_TICKS as f32 * 0.1),
+            },
+            spoil_threshold: 0.5,
+        };
+        let mut registry = crate::shelflife::DecayProfileRegistry::new();
+        registry.insert(profile.clone()).unwrap();
+
+        // issued_at_tick = 1000，created_at = 0 → 已经过 1000 ticks
+        // ling_guo_fast: 0.1 GAME_DAY = 2400 ticks → linear threshold 在 ~2400 ticks 内到达 spoil
+        // 1000 ticks 时 current = 1 - 1000/2400 ≈ 0.583 > threshold 0.5 → 不是 block
+        // 改用大的 now_tick：用 freshness created_at=0 但构造时把 issued_at_tick 设成超大值
+        // 更简单：用 Spoil Linear decay，让 (tick - created_at) >> half_life
+        let fast_profile = DecayProfile::Spoil {
+            id: DecayProfileId::new("food_regen_crit_test"),
+            formula: DecayFormula::Linear {
+                decay_per_tick: 1.0 / (100.0_f32), // 每 100 tick 耗尽 initial_qi
+            },
+            spoil_threshold: 0.5,
+        };
+        let mut registry2 = crate::shelflife::DecayProfileRegistry::new();
+        registry2.insert(fast_profile.clone()).unwrap();
+
+        // issued_at_tick = 1000 (in the test app)
+        // created_at = 0, decay_per_tick = 1/100 → at tick 1000: current = 1 - (1000/100) = -9 → clamped 0
+        // 0 < 0.1 × 0.5 = 0.05 → CriticalBlock
+        let freshness = Freshness::new(0, 1.0, &fast_profile);
+
+        let mut app = build_app_for_food_regen_test(Some(freshness), Some(registry2), 0.20, 48_000);
+        app.update();
+
+        let intents: Vec<_> = app
+            .world_mut()
+            .resource_mut::<Events<ApplyStatusEffectIntent>>()
+            .drain()
+            .collect();
+        assert_eq!(
+            intents.len(),
+            0,
+            "CriticalBlock 应不发出任何 CultivationAcceleration intent，实际发出 {} 条",
+            intents.len()
+        );
+    }
+
+    /// BLOCKER 2 端到端：SpoiledWarn 状态食物 → 发出 reduced_bonus intent
+    #[test]
+    fn food_regen_spoiled_warn_emits_reduced_bonus_intent() {
+        use crate::shelflife::types::{DecayFormula, DecayProfile, DecayProfileId, Freshness};
+
+        // spoil_threshold=0.5，Linear decay：每 tick 衰减 1/12000（半衰=12000 ticks = 0.5 GAME_DAY）
+        // issued_at_tick=1000, created_at=0
+        // tick=1000 → current = 1 - 1000/12000 ≈ 0.917 → Safe（不 warn）
+        // 用更快衰减：decay_per_tick = 1/3（每 3 tick 耗完），issued_at_tick=1000
+        // current = 1 - 1000/3 ≈ -332 → CriticalBlock（太快）
+        // 精心设计：spoil_threshold=0.5, decay_per_tick = 0.75/12000
+        // at tick=1000: current = 1.0 - (1000/12000)*0.75 = 1.0 - 0.0625 = 0.9375 → Safe
+        // 但我需要 Warn 区间：0.1×spoil_threshold <= current < spoil_threshold = 0.05 ~ 0.5
+        // 设 spoil_threshold=0.5, decay so that current ≈ 0.25 at tick=1000
+        // 0.25 = 1.0 - decay_per_tick × 1000 → decay_per_tick = 0.00075
+        // 0.05 < 0.25 < 0.5 → SpoiledWarn ✓
+        let warn_profile = DecayProfile::Spoil {
+            id: DecayProfileId::new("food_regen_warn_test"),
+            formula: DecayFormula::Linear {
+                decay_per_tick: 0.00075,
+            },
+            spoil_threshold: 0.5,
+        };
+        let mut registry = crate::shelflife::DecayProfileRegistry::new();
+        registry.insert(warn_profile.clone()).unwrap();
+
+        let freshness = Freshness::new(0, 1.0, &warn_profile);
+
+        let mut app = build_app_for_food_regen_test(Some(freshness), Some(registry), 0.20, 48_000);
+        app.update();
+
+        let intents: Vec<_> = app
+            .world_mut()
+            .resource_mut::<Events<ApplyStatusEffectIntent>>()
+            .drain()
+            .collect();
+        assert_eq!(
+            intents.len(),
+            1,
+            "SpoiledWarn 应发出 1 条 intent（降效），实际 {} 条",
+            intents.len()
+        );
+        let intent = &intents[0];
+        assert_eq!(intent.kind, StatusEffectKind::CultivationAcceleration);
+        assert!(
+            intent.magnitude < 0.20,
+            "SpoiledWarn intent.magnitude 应 < 0.20（降效），实际 {}",
+            intent.magnitude
+        );
+        assert!(
+            intent.magnitude > 0.0,
+            "SpoiledWarn intent.magnitude 应 > 0.0（未全腐），实际 {}",
+            intent.magnitude
+        );
+    }
+
+    /// BLOCKER 2 端到端：无 freshness（Noop）→ 退化为原始 bonus intent（兼容旧物品）
+    #[test]
+    fn food_regen_no_freshness_noop_emits_original_bonus_intent() {
+        let mut app = build_app_for_food_regen_test(None, None, 0.20, 48_000);
+        app.update();
+
+        let intents: Vec<_> = app
+            .world_mut()
+            .resource_mut::<Events<ApplyStatusEffectIntent>>()
+            .drain()
+            .collect();
+        assert_eq!(
+            intents.len(),
+            1,
+            "Noop（无 freshness）应退化为发出 1 条原始 bonus intent，实际 {} 条",
+            intents.len()
+        );
+        let intent = &intents[0];
+        assert!(
+            (intent.magnitude - 0.20).abs() < 1e-4,
+            "Noop 路径 magnitude 应=0.20（原始值），实际 {}",
+            intent.magnitude
+        );
+    }
+
+    /// BLOCKER 1+2 全链路：food.toml 加载 → ling_guo effect → freshness gating → status 挂载
+    #[test]
+    fn food_regen_end_to_end_from_food_toml_ling_guo_fresh_to_intent() {
+        use crate::inventory::freshness::GAME_DAY_TICKS;
+        use crate::shelflife::types::{DecayFormula, DecayProfile, DecayProfileId, Freshness};
+
+        // 1) 从 food.toml 加载 ling_guo 的 FoodRegen effect
+        let registry = crate::inventory::load_item_registry()
+            .expect("item registry 应从 assets/items/*.toml 加载成功");
+        let ling_guo = registry
+            .get("food.spirit_fruit.ling_guo")
+            .expect("food.spirit_fruit.ling_guo 必须在 registry 中");
+        let (bonus_factor, duration_ticks) = match &ling_guo.effect {
+            Some(ItemEffect::FoodRegen {
+                bonus_factor,
+                duration_ticks,
+            }) => (*bonus_factor, *duration_ticks),
+            other => panic!("ling_guo.effect 应为 FoodRegen，实际 {other:?}"),
+        };
+
+        // 2) 构造 freshness（新鲜：created_at=0，issued_at=100，远未过 spoil）
+        let spoil_profile = DecayProfile::Spoil {
+            id: DecayProfileId::new("food_spoil_ling_guo_v1"),
+            formula: DecayFormula::Linear {
+                decay_per_tick: 1.0 / (GAME_DAY_TICKS as f32 * 2.0),
+            },
+            spoil_threshold: 0.01,
+        };
+        let mut decay_reg = crate::shelflife::DecayProfileRegistry::new();
+        decay_reg.insert(spoil_profile.clone()).unwrap();
+
+        let freshness = Freshness::new(0, 1.0, &spoil_profile);
+
+        // 3) 触发 apply_cast_item_effect + freshness 门控 → 检查 intent
+        let mut app = build_app_for_food_regen_test(
+            Some(freshness),
+            Some(decay_reg),
+            bonus_factor,
+            duration_ticks,
+        );
+        app.update();
+
+        let intents: Vec<_> = app
+            .world_mut()
+            .resource_mut::<Events<ApplyStatusEffectIntent>>()
+            .drain()
+            .collect();
+        assert_eq!(
+            intents.len(),
+            1,
+            "全链路：新鲜 ling_guo 应发出 1 条 CultivationAcceleration intent，实际 {} 条",
+            intents.len()
+        );
+        let intent = &intents[0];
+        assert_eq!(intent.kind, StatusEffectKind::CultivationAcceleration);
+        assert!(
+            (intent.magnitude - 0.20).abs() < 1e-3,
+            "全链路：magnitude 应=0.20（food.toml 配置的 bonus_factor），实际 {}",
+            intent.magnitude
+        );
+        assert_eq!(
+            intent.duration_ticks, 48_000,
+            "全链路：duration_ticks 应=48000（food.toml 配置的 2 GAME_DAY），实际 {}",
+            intent.duration_ticks
+        );
     }
 
     #[test]
