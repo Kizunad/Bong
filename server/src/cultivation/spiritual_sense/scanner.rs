@@ -10,6 +10,11 @@ pub enum SpiritualSenseTargetKind {
     Crisis,
     SpiritEye,
     NicheIntrusionTrace,
+    /// plan-fauna-mimic-spider-v1 P2：伪装蛛 — 只有神识足够的观察者才能看穿。
+    ///
+    /// 识破条件：observer realm >= Condense（凝脉期，realm_rank ≥ 2）。
+    /// 低于此境界的观察者感知结果被过滤掉，蛛在神识雷达上不可见。
+    DisguisedSpider,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -121,6 +126,15 @@ fn target_to_entry(observer_realm: Realm, target: &SpiritualSenseTarget) -> Opti
                 return None;
             }
         }
+        // plan-fauna-mimic-spider-v1 P2：Condense（凝脉期）及以上境界才能识破伪装蛛。
+        // realm_rank: Awaken=0, Induce=1, Condense=2, Solidify=3, Spirit=4, Void=5
+        SpiritualSenseTargetKind::DisguisedSpider => {
+            if realm_rank(observer_realm) >= 2 {
+                SenseKindV1::DisguisedSpider
+            } else {
+                return None;
+            }
+        }
     };
     Some(SenseEntryV1 {
         kind,
@@ -131,7 +145,7 @@ fn target_to_entry(observer_realm: Realm, target: &SpiritualSenseTarget) -> Opti
     })
 }
 
-fn distance(a: [f64; 3], b: [f64; 3]) -> f64 {
+pub fn distance(a: [f64; 3], b: [f64; 3]) -> f64 {
     let dx = a[0] - b[0];
     let dy = a[1] - b[1];
     let dz = a[2] - b[2];
@@ -356,5 +370,96 @@ mod tests {
             };
             serde_json::to_string(&entry).expect("sense entry variant should serialize");
         }
+    }
+
+    // ── P2 DisguisedSpider 测试 ─────────────────────────────────────────────
+
+    #[test]
+    fn disguised_spider_visible_to_condense_and_above() {
+        // DisguisedSpider 只有 Condense 及以上境界（realm_rank ≥ 2）可见
+        let targets = vec![SpiritualSenseTarget {
+            position: [30.0, 64.0, 0.0],
+            kind: SpiritualSenseTargetKind::DisguisedSpider,
+            intensity: 0.7,
+            stealth: None,
+        }];
+
+        // Awaken / Induce 看不见（rank 0/1 < 2）
+        assert!(
+            scan_targets_inner_ring([0.0, 64.0, 0.0], Realm::Awaken, &targets).is_empty(),
+            "Awaken 境界不应识破伪装蛛"
+        );
+        assert!(
+            scan_targets_inner_ring([0.0, 64.0, 0.0], Realm::Induce, &targets).is_empty(),
+            "Induce 境界不应识破伪装蛛"
+        );
+
+        // Condense 及以上可见
+        let condense_entries = scan_targets_inner_ring([0.0, 64.0, 0.0], Realm::Condense, &targets);
+        assert_eq!(
+            condense_entries.len(),
+            1,
+            "Condense 境界应识破伪装蛛（实际 {}）",
+            condense_entries.len()
+        );
+        assert_eq!(
+            condense_entries[0].kind,
+            SenseKindV1::DisguisedSpider,
+            "识破后 sense kind 应为 DisguisedSpider"
+        );
+
+        let solidify_entries = scan_targets_inner_ring([0.0, 64.0, 0.0], Realm::Solidify, &targets);
+        assert_eq!(solidify_entries.len(), 1, "Solidify 境界应识破伪装蛛");
+
+        let spirit_entries = scan_targets_inner_ring([0.0, 64.0, 0.0], Realm::Spirit, &targets);
+        assert_eq!(spirit_entries.len(), 1, "Spirit 境界应识破伪装蛛");
+    }
+
+    #[test]
+    fn disguised_spider_sense_kind_serializes_correctly() {
+        // SenseKindV1::DisguisedSpider 序列化 wire name
+        let entry = SenseEntryV1 {
+            kind: SenseKindV1::DisguisedSpider,
+            x: 10.0,
+            y: 64.0,
+            z: 5.0,
+            intensity: 0.7,
+        };
+        let json = serde_json::to_string(&entry).expect("DisguisedSpider must serialize");
+        assert!(
+            json.contains("\"DisguisedSpider\""),
+            "DisguisedSpider wire name 必须为 DisguisedSpider（PascalCase），实际 {json}"
+        );
+
+        // 往返
+        let decoded: SenseEntryV1 = serde_json::from_str(&json).expect("must deserialize");
+        assert_eq!(decoded.kind, SenseKindV1::DisguisedSpider);
+        assert_eq!(decoded.intensity, 0.7_f64);
+    }
+
+    #[test]
+    fn disguised_spider_out_of_realm_scan_radius_not_visible() {
+        // Condense 扫描半径 200，目标距离 300 > 200，不可见
+        let targets = vec![SpiritualSenseTarget {
+            position: [300.0, 64.0, 0.0],
+            kind: SpiritualSenseTargetKind::DisguisedSpider,
+            intensity: 0.7,
+            stealth: None,
+        }];
+        let entries = scan_targets_inner_ring([0.0, 64.0, 0.0], Realm::Condense, &targets);
+        assert!(
+            entries.is_empty(),
+            "超出扫描半径的 DisguisedSpider 不应出现在神识结果中"
+        );
+    }
+
+    #[test]
+    fn distance_fn_is_correct() {
+        // 验证 pub distance 函数正确性（3D 勾股）
+        let result = distance([0.0, 0.0, 0.0], [3.0, 4.0, 0.0]);
+        assert!(
+            (result - 5.0).abs() < 1e-9,
+            "distance([0,0,0], [3,4,0]) 应为 5.0，实际 {result}"
+        );
     }
 }

@@ -1,6 +1,7 @@
 package com.bong.client;
 
 import com.bong.client.animation.ClientAnimationBridge;
+import com.bong.client.spider.SpiderDisguiseHandler;
 import com.bong.client.audio.SoundRecipePlayer;
 import com.bong.client.dandao.MutationPayloadHandler;
 import com.bong.client.dandao.MutationVisualState;
@@ -92,6 +93,9 @@ public class BongNetworkHandler {
         registerResonanceLockEndChannel();
         // plan-combat-skill-feedback-bridges-v1 P3 — 我流虚蚀视觉同步
         registerVoidErosionVisualChannel();
+        // plan-fauna-mimic-spider-v1 P2 — 拟态蛛伪装渲染 CustomPayload
+        registerSpiderDisguiseEnterChannel();
+        registerSpiderAmbushTriggerChannel();
         // 旧 server 推过的 realm_collapse evac HUD 是 static volatile 字段倒计时，
         // 不会在断线 / 切服 / 重连时自清。Disconnect 时强制清掉，避免上一 server
         // 的 "域崩撤离 48s" 倒计时跨 session 续命。
@@ -113,6 +117,8 @@ public class BongNetworkHandler {
                 com.bong.client.combat.baomai.v4.ResonanceLockHudStateStore.clear();
                 // plan-combat-skill-feedback-bridges-v1 P3 — 断线时清理虚蚀视觉状态
                 com.bong.client.visual.VoidErosionVisualStore.reset();
+                // plan-fauna-mimic-spider-v1 P2 — 断线时清理伪装蛛列表
+                SpiderDisguiseHandler.clearOnDisconnect();
             })
         );
         ClientPlayConnectionEvents.JOIN.register(
@@ -522,6 +528,60 @@ public class BongNetworkHandler {
                 }
             });
         });
+    }
+
+    // ── plan-fauna-mimic-spider-v1 P2 — spider disguise CustomPayload channels ─────────
+
+    /**
+     * 注册 {@code bong:spider_disguise_enter} channel。
+     * payload JSON → {@link SpiderDisguiseHandler#handleEnter} → 全量替换 disguised entity id 集合。
+     *
+     * <p>服务端每 40 tick 全量 broadcast；client 用 full-replace 策略（clear + addAll）确保状态同步。
+     */
+    private static void registerSpiderDisguiseEnterChannel() {
+        ClientPlayNetworking.registerGlobalReceiver(
+            new Identifier(SpiderDisguiseHandler.CHANNEL_NAMESPACE, SpiderDisguiseHandler.CHANNEL_PATH_ENTER),
+            (client, handler, buf, responseSender) -> {
+                int readableBytes = buf.readableBytes();
+                byte[] bytes = new byte[readableBytes];
+                buf.readBytes(bytes);
+                String jsonPayload = ServerDataEnvelope.decodeUtf8(bytes);
+                markConnectionPayload();
+                client.execute(() -> {
+                    boolean handled = SpiderDisguiseHandler.handleEnter(jsonPayload, readableBytes);
+                    if (handled) {
+                        BongClient.LOGGER.debug("Processed bong:spider_disguise_enter ({} bytes)", readableBytes);
+                    } else {
+                        BongClient.LOGGER.warn("Ignoring bong:spider_disguise_enter payload (parse failed)");
+                    }
+                });
+            }
+        );
+    }
+
+    /**
+     * 注册 {@code bong:spider_ambush_trigger} channel。
+     * payload JSON → {@link SpiderDisguiseHandler#handleAmbush} → 从 disguised 集合移除暴起的蛛。
+     */
+    private static void registerSpiderAmbushTriggerChannel() {
+        ClientPlayNetworking.registerGlobalReceiver(
+            new Identifier(SpiderDisguiseHandler.CHANNEL_NAMESPACE, SpiderDisguiseHandler.CHANNEL_PATH_AMBUSH),
+            (client, handler, buf, responseSender) -> {
+                int readableBytes = buf.readableBytes();
+                byte[] bytes = new byte[readableBytes];
+                buf.readBytes(bytes);
+                String jsonPayload = ServerDataEnvelope.decodeUtf8(bytes);
+                markConnectionPayload();
+                client.execute(() -> {
+                    boolean handled = SpiderDisguiseHandler.handleAmbush(jsonPayload, readableBytes);
+                    if (handled) {
+                        BongClient.LOGGER.debug("Processed bong:spider_ambush_trigger ({} bytes)", readableBytes);
+                    } else {
+                        BongClient.LOGGER.warn("Ignoring bong:spider_ambush_trigger payload (parse failed)");
+                    }
+                });
+            }
+        );
     }
 
     private static void markConnectionPayload() {

@@ -34,6 +34,10 @@ pub enum SenseKindV1 {
     ZhenfaWardAlert,
     SpiritEye,
     NicheIntrusionTrace,
+    /// plan-fauna-mimic-spider-v1 P2：神识识破伪装蛛。
+    /// Client 端渲染为橙色 #FF8040 轮廓，intensity 70%。
+    /// 仅 Condense 及以上境界可见。
+    DisguisedSpider,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
