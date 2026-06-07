@@ -1,0 +1,127 @@
+name: Review
+
+# 按需触发:在 PR 上评论 `/review` 才跑(合并旧 `/review pi` + `/review hive` 为单一入口)。
+#
+# 引擎:确定性轮控脚本 .github/scripts/review.mjs(自包含,只用 Node 内置模块 + gh/codex/claude CLI)。
+# hybrid——外层是脚本写死的离散轮控(对峙 + 怀疑审判 + token 统计,天生有界),内层每个节点是
+# 带 read/grep 工具、能翻真实代码的 coding-agent 会话(恢复 agent 自主性,少幻觉)。
+#
+# 模型路由(claude=小模型 swarm,GPT=裁判):
+#   - finder / voter swarm → `claude -p` 跑 proxy 上的廉价小模型(deepseek-v4-flash + sensenova-lite)。
+#   - arbiter 总裁决       → `codex exec` 固定跑 GPT(gpt-5.5),只一个、要最强推理。
+#   两个 harness 都经自家代理 proxy.kizun4.uk:claude 走 /v1/messages(anthropic 格式),codex 走 /v1(responses)。
+#   鉴权同一把 key(secrets.PI_CLIPROXY_KEY):claude→ANTHROPIC_AUTH_TOKEN,codex→OPENAI_API_KEY。
+#
+# 流程:gather(压 brief)→ debate 轮控(claude finder 并行 + 自信度门控 + 低自信 fan-out)
+#   → 去重 → 怀疑投票审判(claude,默认 NOT_REAL,接受/拒绝/争议分流)→ arbiter(codex gpt-5.5)→ 发评论。
+# 端点/模型/轮控参数全 env 可覆盖(repo variables / secrets)。
+on:
+  issue_comment:
+    types: [created]
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: 要审核的 PR 号
+        required: true
+
+permissions:
+  contents: read # 只读 token:reviewer 天然无法 merge / push
+  pull-requests: write
+  issues: write
+
+concurrency:
+  # group 只按 PR(不含 comment.id)+ 不取消进行中:同一 PR 的多次 /review 串行排队,
+  # 避免重复触发并发跑多套 swarm/codex 烧额度、发重复评论。
+  group: review-${{ github.event.issue.number || inputs.pr_number || github.run_id }}
+  cancel-in-progress: false
+
+jobs:
+  review:
+    # 仅当 PR 评论以 `/review` 开头、且评论者有写权限(OWNER/MEMBER/COLLABORATOR)时运行——
+    # 用 startsWith(不是 contains):`/review`、`/review pi`(旧词平滑落到这里)都触发,
+    # 但正文中间提到 /review 的普通讨论不误触发。public 仓库下防止访客评论触发烧 key;
+    # bot 评论(github-actions[bot])的 author_association 不在白名单,天然不自触发(本脚本评论不以 /review 开头)。
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.issue.pull_request != null &&
+       startsWith(github.event.comment.body, '/review') &&
+       contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association))
+    runs-on: ubuntu-latest
+    # agent 会话(多轮 + 工具)远慢于单轮 HTTP;动态分档 + 并发上限 + 单次硬超时仍保证有界,
+    # 60min 是大面板的逃生阀。
+    timeout-minutes: 60
+
+    steps:
+      # issue_comment 触发的 workflow 只认 main 上的定义,先签出 main 拿到最新 review.mjs。
+      # fetch-depth: 0 让后面 gh pr checkout 能切到 PR head。
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false # 不把 GITHUB_TOKEN 写进 .git/config;后续 gh 操作用 step 级 GH_TOKEN
+
+      # 把脚本拷出来,再把 working tree 切到 PR head——这样 review.mjs 是 main 最新版,
+      # 而 agent(codex/claude)用 Read/Grep 读到的是 PR 的真实代码(不是 main 版)。
+      - name: 暂存脚本 + 切到 PR head(给 agent 读真实代码)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          mkdir -p /tmp/rev
+          cp .github/scripts/review.mjs /tmp/rev/review.mjs
+          gh pr checkout "${{ github.event.issue.number || inputs.pr_number }}"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+
+      - name: 安装 codex + claude CLI
+        run: |
+          npm install -g @openai/codex@0.137.0 @anthropic-ai/claude-code@2.1.168
+          codex --version
+          claude --version
+
+      # 纯净 codex 配置:指向 proxy 跑 gpt-5.5,**不带任何命令型 MCP / skills**(否则进程不回收顶 CPU)。
+      # CODEX_HOME 用 ~/.codex(绝不能放 /tmp:codex 拒在临时目录建 helper binary)。
+      # auth:proxy 的 OpenAI 端点用 PI_CLIPROXY_KEY 作 OPENAI_API_KEY(与 anthropic 端点同一把 key)。
+      - name: 配置 codex(纯净,指向 proxy)
+        env:
+          PI_CLIPROXY_KEY: ${{ secrets.PI_CLIPROXY_KEY }}
+          REVIEW_PROXY_BASE: ${{ vars.REVIEW_PROXY_BASE || 'https://proxy.kizun4.uk' }}
+        run: |
+          mkdir -p ~/.codex
+          BASE="${REVIEW_PROXY_BASE%/}/v1" # 与 claude 共用同一 proxy(REVIEW_PROXY_BASE),补 /v1 是 codex responses 端点
+          cat > ~/.codex/config.toml <<EOF
+          model_provider = "custom"
+          model = "gpt-5.5"
+          model_reasoning_effort = "high"
+          disable_response_storage = true
+
+          [model_providers.custom]
+          name = "custom"
+          wire_api = "responses"
+          requires_openai_auth = true
+          base_url = "${BASE}"
+          EOF
+          printf '{"OPENAI_API_KEY":"%s"}' "$PI_CLIPROXY_KEY" > ~/.codex/auth.json
+          chmod 600 ~/.codex/auth.json
+
+      - name: 统一 Review (claude swarm 对峙审判 + codex gpt-5.5 裁决)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.issue.number || inputs.pr_number }}
+          # 一把 key 两用:claude→ANTHROPIC_AUTH_TOKEN,codex→OPENAI_API_KEY(脚本内注入)。
+          REVIEW_PROXY_KEY: ${{ secrets.PI_CLIPROXY_KEY }}
+          REVIEW_PROXY_BASE: ${{ vars.REVIEW_PROXY_BASE || 'https://proxy.kizun4.uk' }}
+          # 角色模型(全在 proxy 上;finder/voter=claude 小模型,arbiter=codex GPT):
+          REVIEW_FLASH_MODEL: ${{ vars.REVIEW_FLASH_MODEL || 'deepseek-v4-flash' }}
+          REVIEW_LITE_MODEL: ${{ vars.REVIEW_LITE_MODEL || 'sensenova-6.7-flash-lite' }}
+          REVIEW_GATHER_MODEL: ${{ vars.REVIEW_GATHER_MODEL || 'deepseek-v4-flash' }}
+          REVIEW_ARBITER_MODEL: ${{ vars.REVIEW_ARBITER_MODEL || 'gpt-5.5' }}
+          # 轮控/投票/并发(env 可覆盖;agent 进程重,并发默认收紧):
+          REVIEW_CONFIDENCE_TARGET: ${{ vars.REVIEW_CONFIDENCE_TARGET || '80' }}
+          REVIEW_CONCURRENCY: ${{ vars.REVIEW_CONCURRENCY || '4' }}
+          REVIEW_VOTERS: ${{ vars.REVIEW_VOTERS || '5' }}
+          REVIEW_VOTE_ROUNDS: ${{ vars.REVIEW_VOTE_ROUNDS || '2' }}
+          REVIEW_CALL_TIMEOUT_MS: ${{ vars.REVIEW_CALL_TIMEOUT_MS || '300000' }}
+          REVIEW_ARBITER_TIMEOUT_MS: ${{ vars.REVIEW_ARBITER_TIMEOUT_MS || '480000' }}
+          # CODEX_HOME 不显式设:review.mjs 默认取 process.env.HOME/.codex(=上一步写的 ~/.codex),runner 上即 /home/runner/.codex
+        run: node /tmp/rev/review.mjs

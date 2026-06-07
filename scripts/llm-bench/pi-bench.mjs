@@ -5,7 +5,7 @@
 // 逐条判定是否「有效错误」(默认怀疑,多数 REAL 才算数);再算每个模型平均找到几条有效错误
 // (同模型多实例取平均)+ 精确率 + 独有贡献。产出自包含 HTML 可视化(内联 SVG,无外部依赖)。
 //
-// 自包含:Node 内置 fetch + gh,只从 pi-review.mjs 复用纯 extractJSON。全 OpenAI 兼容端点。
+// 自包含:Node 内置 fetch + gh,只从 review.mjs 复用纯 extractJSON。全 OpenAI 兼容端点。
 // key/模型/PR/实例数全 env 可覆盖,key 绝不写进文件(运行时 env 注入)。
 //
 // 用法:
@@ -17,7 +17,7 @@ import { execSync } from "node:child_process";
 import { writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
-import { extractJSON } from "../../.github/scripts/pi-review.mjs";
+import { extractJSON } from "../../.github/scripts/review.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 
