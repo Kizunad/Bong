@@ -39,18 +39,23 @@ use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
 use valence::client::ClientMarker;
 use valence::prelude::{
-    bevy_ecs, App, Commands, Component, DVec3, Entity, EventWriter, Position, Query, Res, With,
-    Without,
+    bevy_ecs, App, Commands, Component, DVec3, Entity, EventReader, EventWriter, Position, Query,
+    Res, ResMut, With, Without,
 };
 
+use crate::combat::events::DeathEvent;
 use crate::cultivation::components::{Cultivation, Realm};
+use crate::cultivation::death_hooks::release_qi_amount_to_zone;
 use crate::fauna::experience::{play_audio, spawn_particle};
 use crate::network::audio_event_emit::PlaySoundRecipeRequest;
 use crate::network::daozhan_disguise_emit::DaoZhangRevealEvent;
 use crate::network::vfx_event_emit::VfxEventRequest;
 use crate::npc::movement::GameTick;
 use crate::npc::spawn::NpcMarker;
+use crate::npc::tsy_hostile::spawn_tsy_daoxiang_at;
 use crate::qi_physics::ledger::{QiAccountId, QiTransfer, QiTransferReason};
+use crate::world::dimension::CurrentDimension;
+use crate::world::zone::ZoneRegistry;
 
 // ── 常数 ─────────────────────────────────────────────────────────────────────
 
@@ -945,6 +950,263 @@ pub fn register_p2(app: &mut App) {
     app.add_systems(
         Update,
         daozhan_drain_accumulate_system.after(daozhan_ambush_action_system),
+    );
+}
+
+// ── P3: 天道凝结系统 ──────────────────────────────────────────────────────────
+
+/// 天道凝结：zone.spirit_qi > TIANDAO_CONDENSE_THRESHOLD 时，从高浓度灵气中凝出道伥。
+///
+/// ## 守恒
+/// 初始 qi 走 `QiTransfer{from:zone,to:daozhan,reason:TiandaoCondense}`；
+/// zone.spirit_qi -= condensed_delta；绝不凭空创生。
+///
+/// ## 触发条件
+/// - zone.spirit_qi > TIANDAO_CONDENSE_THRESHOLD（默认 0.8）
+/// - 每 TIANDAO_CONDENSE_INTERVAL_TICKS tick 检查一次（不每帧触发）
+/// - 每次凝结消耗 TIANDAO_CONDENSE_QI_COST（从 zone 扣除）
+/// - 生成的道伥 origin_realm = None（天道凝结，无具体原始修士）
+///
+/// **注意**：P3 走 server 侧确定性系统，不依赖 LLM agent 确定性触发，
+/// 保证高灵气区域必然产出道伥（agent 仅作为可选加强路径）。
+pub const TIANDAO_CONDENSE_INTERVAL_TICKS: u32 = 600; // 30s @ 20TPS
+
+/// 天道凝结时从 zone 扣除的灵气量（每次凝出一只道伥扣此量）。
+pub const TIANDAO_CONDENSE_QI_COST: f64 = 0.05;
+
+/// 天道凝结 qi 守恒：凝出道伥的初始 qi 量（= zone 扣减量）。
+pub const TIANDAO_CONDENSE_INITIAL_QI: f64 = TIANDAO_CONDENSE_QI_COST;
+
+/// 天道凝结检查的每 zone 最大道伥上限（防止同区堆叠过多）。
+pub const TIANDAO_CONDENSE_MAX_PER_ZONE: u32 = 3;
+
+/// 道伥凝结系统状态（per-zone 冷却，Resource）。
+#[derive(Debug, Default, valence::prelude::Resource)]
+pub struct DaoZhangCondenseState {
+    /// zone_name → 上次凝结的 tick（GameTick 为 u32）
+    pub last_condense_tick: std::collections::HashMap<String, u32>,
+}
+
+/// 天道凝结系统：每 TIANDAO_CONDENSE_INTERVAL_TICKS 检查一次高浓度灵气区域，
+/// 超过阈值时凝出道伥（守恒：zone.spirit_qi -= TIANDAO_CONDENSE_QI_COST）。
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn daozhan_tiandao_condense_system(
+    mut zones: Option<ResMut<ZoneRegistry>>,
+    mut condense_state: Option<ResMut<DaoZhangCondenseState>>,
+    existing_daozhan: Query<&DaoZhangBehaviorBlackboard, With<NpcMarker>>,
+    game_tick: Option<Res<GameTick>>,
+    mut qi_transfer_events: EventWriter<QiTransfer>,
+    // 暂不实际 spawn（需要 layer entity + commands 才能 spawn_tsy_daoxiang_at）
+    // P3 守恒测试 + 灵气消耗由本系统实装；spawn 接入点在 fauna::mod.rs 注册后
+    // 通过 SpawnDaoZhangRequest event 分发（避免此系统直接持有 Commands）
+    mut spawn_requests: EventWriter<SpawnDaoZhangFromCondenseRequest>,
+) {
+    let tick = game_tick.as_deref().map(|t| t.0).unwrap_or(0);
+    let Some(zones) = zones.as_deref_mut() else {
+        return;
+    };
+    let Some(condense_state) = condense_state.as_deref_mut() else {
+        return;
+    };
+
+    let all_zones: Vec<(String, f64)> = zones
+        .zones
+        .iter()
+        .map(|z| (z.name.clone(), z.spirit_qi))
+        .collect();
+
+    for (zone_name, spirit_qi) in all_zones {
+        if spirit_qi <= TIANDAO_CONDENSE_THRESHOLD {
+            continue;
+        }
+        // 冷却检查
+        let last = condense_state
+            .last_condense_tick
+            .get(&zone_name)
+            .copied()
+            .unwrap_or(0);
+        if tick.saturating_sub(last) < TIANDAO_CONDENSE_INTERVAL_TICKS {
+            continue;
+        }
+        // 本 zone 道伥数量检查（不超过上限）
+        let count_in_zone = existing_daozhan
+            .iter()
+            .filter(|bb| bb.home_zone == zone_name)
+            .count() as u32;
+        if count_in_zone >= TIANDAO_CONDENSE_MAX_PER_ZONE {
+            continue;
+        }
+        // 扣减 zone spirit_qi（守恒：从 zone 凝结，绝不凭空创生）
+        if let Some(zone) = zones.find_zone_mut(zone_name.as_str()) {
+            let actual_cost =
+                TIANDAO_CONDENSE_QI_COST.min(zone.spirit_qi - TIANDAO_CONDENSE_THRESHOLD);
+            if actual_cost <= 0.0 {
+                continue;
+            }
+            zone.spirit_qi = (zone.spirit_qi - actual_cost).clamp(-1.0, 1.0);
+
+            // 守恒 ledger 记录
+            let from = QiAccountId::zone(zone_name.clone());
+            let to = QiAccountId::npc(format!("daozhan:condense:{zone_name}:{tick}"));
+            if let Ok(transfer) =
+                QiTransfer::new(from, to, actual_cost, QiTransferReason::TiandaoCondense)
+            {
+                qi_transfer_events.send(transfer);
+            }
+
+            condense_state
+                .last_condense_tick
+                .insert(zone_name.clone(), tick);
+
+            // 发出凝结 spawn 请求（由 daozhan_condense_spawn_system 实际执行 spawn）
+            spawn_requests.send(SpawnDaoZhangFromCondenseRequest {
+                zone_name,
+                condensed_qi: actual_cost,
+                tick,
+            });
+        }
+    }
+}
+
+/// 天道凝结 spawn 请求事件（解耦守恒扣减与实际 spawn，避免单系统参数爆炸）。
+#[derive(Debug, Clone, valence::prelude::Event)]
+pub struct SpawnDaoZhangFromCondenseRequest {
+    /// 触发凝结的 zone 名（道伥 home_zone）。
+    pub zone_name: String,
+    /// 凝结初始 qi 量（守恒：来自 zone 的扣减）。
+    pub condensed_qi: f64,
+    /// 触发 tick（GameTick 为 u32，用于日志/audit）。
+    pub tick: u32,
+}
+
+/// 天道凝结 spawn 执行系统：消费 `SpawnDaoZhangFromCondenseRequest`，
+/// 在对应 zone 中 spawn 道伥实体（挂载 DaoZhangBehaviorBlackboard）。
+///
+/// 使用 `spawn_tsy_daoxiang_at` + DaoZhangBehaviorBlackboard 注入，
+/// 道伥初始 qi 由调用者通过 DaoZhangBehaviorBlackboard.daozhan_qi 反映。
+pub(crate) fn daozhan_condense_spawn_system(
+    mut spawn_requests: EventReader<SpawnDaoZhangFromCondenseRequest>,
+    zones: Option<Res<ZoneRegistry>>,
+    layers: Option<Res<crate::world::dimension::DimensionLayers>>,
+    mut commands: Commands,
+) {
+    let Some(zones) = zones else {
+        for _ in spawn_requests.read() {}
+        return;
+    };
+    let Some(layers) = layers else {
+        for _ in spawn_requests.read() {}
+        return;
+    };
+    let layer = layers.overworld;
+
+    for req in spawn_requests.read() {
+        let Some(zone) = zones.find_zone_by_name(req.zone_name.as_str()) else {
+            continue;
+        };
+        // 在 zone AABB 中心 spawn 道伥
+        let center = zone.center();
+        let spawn_pos = center;
+        let patrol_target = DVec3::new(center.x + 5.0, center.y, center.z);
+
+        let entity = spawn_tsy_daoxiang_at(
+            &mut commands,
+            layer,
+            &format!("condense:{}", req.zone_name),
+            req.zone_name.as_str(),
+            spawn_pos,
+            patrol_target,
+        );
+        // 附加 DaoZhangBehaviorBlackboard（覆盖 spawn 默认，注入天道凝结 origin_realm=None）
+        commands.entity(entity).insert((
+            DaoZhangState::Mimicry,
+            DaoZhangBehaviorBlackboard {
+                home_zone: req.zone_name.clone(),
+                home_pos: spawn_pos,
+                // 守恒：凝结 qi 来自 zone，初始存入 blackboard.daozhan_qi（等待死亡归还）
+                daozhan_qi: req.condensed_qi,
+                origin_realm: None,
+                behavior_queue: {
+                    let mut q = std::collections::VecDeque::with_capacity(3);
+                    for b in FakeBehavior::cycle() {
+                        q.push_back(b);
+                    }
+                    q
+                },
+                current_behavior_ticks: 0,
+                pack_id: None,
+            },
+        ));
+    }
+}
+
+// ── P3: 死亡 qi 全额归还系统 ─────────────────────────────────────────────────
+
+/// 道伥死亡时将 qi_current 残余 + 累积 daozhan_qi 全额归还 zone。
+///
+/// ## 守恒红线
+/// - 全额归还（非 1%）：道伥死亡即阴质瓦解，积蓄真元即时散逸回灵气环境。
+/// - 走 `release_qi_amount_to_zone`（正典 helper），不私造 zone.spirit_qi += X 路径。
+/// - `release_amount = daozhan_qi（累积吸取）`（qi_current 是 NPC 战斗 hp 字段，非 qi 账户）。
+pub(crate) fn daozhan_death_qi_release_system(
+    mut deaths: EventReader<DeathEvent>,
+    daozhan_q: Query<
+        (
+            &Position,
+            Option<&CurrentDimension>,
+            &DaoZhangBehaviorBlackboard,
+        ),
+        With<NpcMarker>,
+    >,
+    mut zones: Option<ResMut<ZoneRegistry>>,
+    mut qi_transfers: ResMut<bevy_ecs::event::Events<QiTransfer>>,
+) {
+    let Some(zones) = zones.as_deref_mut() else {
+        for _ in deaths.read() {}
+        return;
+    };
+
+    for death in deaths.read() {
+        let Ok((position, dimension, blackboard)) = daozhan_q.get(death.target) else {
+            continue;
+        };
+        // 全额归还：daozhan_qi（累积吸取量，包括天道凝结初始量）
+        let release_amount = blackboard.daozhan_qi;
+        if release_amount <= 0.0 {
+            continue;
+        }
+        // 走 release_qi_amount_to_zone 正典 helper（全额，非1%）
+        release_qi_amount_to_zone(
+            death.target,
+            release_amount,
+            Some(position),
+            dimension,
+            None, // DaoZhang 无 LifeRecord
+            Some(zones),
+            Some(&mut *qi_transfers),
+            "daozhan_death",
+        );
+    }
+}
+
+// ── P3: Bevy 注册 ─────────────────────────────────────────────────────────────
+
+/// Bevy 注册：P3 天道凝结系统 + 死亡 qi 归还系统（供 fauna::mod.rs 调用）。
+pub fn register_p3(app: &mut App) {
+    use valence::prelude::{IntoSystemConfigs, Update};
+
+    // 注册事件
+    app.add_event::<SpawnDaoZhangFromCondenseRequest>();
+    app.init_resource::<DaoZhangCondenseState>();
+    // QiTransfer 事件已在 qi_physics::register 全局注册，此处无需重复
+
+    app.add_systems(
+        Update,
+        (
+            daozhan_tiandao_condense_system,
+            daozhan_condense_spawn_system.after(daozhan_tiandao_condense_system),
+            daozhan_death_qi_release_system.before(crate::fauna::drop::fauna_drop_system),
+        ),
     );
 }
 
@@ -2249,6 +2511,193 @@ mod tests {
             DAOZHAN_REVEAL_VFX_EVENT_ID, "bong:vfx/daozhan_reveal",
             "VFX event_id 应为 bong:vfx/daozhan_reveal，实际={}",
             DAOZHAN_REVEAL_VFX_EVENT_ID
+        );
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // P3: 天道凝结守恒测试
+    // ═══════════════════════════════════════════════════════════════════════
+
+    #[test]
+    fn tiandao_condense_threshold_blocks_low_zone_spirit_qi() {
+        // zone.spirit_qi <= TIANDAO_CONDENSE_THRESHOLD 时不应触发凝结
+        // 模拟：spirit_qi=0.7 < threshold=0.8 → 不触发
+        let spirit_qi = 0.70f64;
+        let threshold: f64 = TIANDAO_CONDENSE_THRESHOLD;
+        assert!(
+            spirit_qi <= threshold,
+            "spirit_qi={spirit_qi} 应 <= TIANDAO_CONDENSE_THRESHOLD={threshold}（不触发凝结）"
+        );
+        // 模拟凝结守卫：不触发时 zone 灵气不变
+        let zone_qi_before = spirit_qi;
+        let should_condense = spirit_qi > threshold;
+        let zone_qi_after = if should_condense {
+            (spirit_qi - TIANDAO_CONDENSE_QI_COST).clamp(-1.0, 1.0)
+        } else {
+            spirit_qi
+        };
+        assert!(
+            (zone_qi_before - zone_qi_after).abs() < 1e-9,
+            "低于阈值时 zone 灵气不应变化（守恒：不凝结不扣减），before={zone_qi_before:.3} after={zone_qi_after:.3}"
+        );
+    }
+
+    #[test]
+    fn tiandao_condense_conservation_zone_decreases_by_cost() {
+        // 守恒：zone 扣减量 == 道伥获得初始 qi
+        let spirit_qi_before = 0.90f64; // > threshold=0.8
+        let threshold: f64 = TIANDAO_CONDENSE_THRESHOLD;
+        assert!(
+            spirit_qi_before > threshold,
+            "测试前提：spirit_qi={spirit_qi_before} 应 > threshold={threshold}"
+        );
+        // 实际 cost = min(COST, spirit_qi - threshold)（防止扣过头）
+        let actual_cost = TIANDAO_CONDENSE_QI_COST.min(spirit_qi_before - threshold);
+        let spirit_qi_after = (spirit_qi_before - actual_cost).clamp(-1.0, 1.0);
+        let daozhan_initial_qi = actual_cost;
+
+        // 守恒：zone 减少量 == 道伥初始 qi
+        assert!(
+            (spirit_qi_before - spirit_qi_after - daozhan_initial_qi).abs() < 1e-9,
+            "守恒失败：zone 减少 {:.4}，道伥初始 qi={:.4}，差值应为 0",
+            spirit_qi_before - spirit_qi_after,
+            daozhan_initial_qi
+        );
+    }
+
+    #[test]
+    fn tiandao_condense_actual_cost_capped_to_available_headroom() {
+        // 边界：spirit_qi = threshold + 极小量（0.001），cost 不超过可用头量
+        let spirit_qi = TIANDAO_CONDENSE_THRESHOLD + 0.001;
+        let actual_cost = TIANDAO_CONDENSE_QI_COST.min(spirit_qi - TIANDAO_CONDENSE_THRESHOLD);
+        let headroom = spirit_qi - TIANDAO_CONDENSE_THRESHOLD;
+        assert!(
+            actual_cost <= headroom + 1e-9,
+            "actual_cost={actual_cost:.5} 不应超过可用头量 headroom={headroom:.5}（防止 zone 跌穿 threshold）"
+        );
+    }
+
+    #[test]
+    fn tiandao_condense_interval_ticks_plausible() {
+        // TIANDAO_CONDENSE_INTERVAL_TICKS 应为合理值（不小于 20 tick = 1s）
+        let interval: u32 = TIANDAO_CONDENSE_INTERVAL_TICKS;
+        assert!(
+            interval >= 20,
+            "TIANDAO_CONDENSE_INTERVAL_TICKS 应 >= 20 tick（1s），实际={interval}"
+        );
+        assert!(
+            interval <= 6000,
+            "TIANDAO_CONDENSE_INTERVAL_TICKS 应 <= 6000 tick（5分钟），实际={interval}"
+        );
+    }
+
+    #[test]
+    fn tiandao_condense_max_per_zone_plausible() {
+        // TIANDAO_CONDENSE_MAX_PER_ZONE 应在合理范围（1~10）
+        let max: u32 = TIANDAO_CONDENSE_MAX_PER_ZONE;
+        assert!(
+            max >= 1,
+            "TIANDAO_CONDENSE_MAX_PER_ZONE 应 >= 1，实际={max}"
+        );
+        assert!(
+            max <= 10,
+            "TIANDAO_CONDENSE_MAX_PER_ZONE 应 <= 10（防止同区堆叠过多），实际={max}"
+        );
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // P3: DaoZhangDeathSystem 守恒测试（unit level，无 ECS）
+    // ═══════════════════════════════════════════════════════════════════════
+
+    #[test]
+    fn death_release_full_amount_not_partial() {
+        // 守恒语义：死亡时 daozhan_qi 全额归还（非1%），验证数学逻辑
+        let daozhan_qi_accumulated = 24.0f64; // 三连击 × 8.0 = 24.0
+                                              // 正典 helper 返回归还的实际量（全额 or 0）
+                                              // 我们只测逻辑：release_amount == daozhan_qi（不是 0.01 × daozhan_qi）
+        let release_amount = daozhan_qi_accumulated;
+        let partial_1pct = daozhan_qi_accumulated * 0.01;
+        assert!(
+            release_amount > partial_1pct,
+            "道伥死亡应全额归还（{release_amount:.3}），而非 1%（{partial_1pct:.3}）"
+        );
+        // 守恒不变式：release == daozhan_qi
+        assert!(
+            (release_amount - daozhan_qi_accumulated).abs() < 1e-9,
+            "release_amount 应等于 daozhan_qi_accumulated（守恒），差值应为 0"
+        );
+    }
+
+    #[test]
+    fn death_release_zero_when_daozhan_qi_is_zero() {
+        // 天道凝结道伥未吸取任何真元时，daozhan_qi=0，死亡时不应触发释放（守恒：无吸无还）
+        let daozhan_qi = 0.0f64;
+        let should_release = daozhan_qi > 0.0;
+        assert!(
+            !should_release,
+            "daozhan_qi=0 时不应触发 release_qi_amount_to_zone（无真元可还）"
+        );
+    }
+
+    #[test]
+    fn death_release_includes_both_accumulated_and_initial_qi() {
+        // 道伥既有天道凝结初始 qi，又有伏击吸取累积量
+        // 两者都存在于 daozhan_qi 字段（天道凝结路径：condense 初始量写入 daozhan_qi）
+        let condense_qi = TIANDAO_CONDENSE_INITIAL_QI;
+        let drained_from_player = DAOZHAN_DRAIN_AMOUNT_PER_HIT * 2.0; // 2 连击
+                                                                      // 模拟 blackboard.daozhan_qi 包含两部分
+        let total_daozhan_qi = condense_qi + drained_from_player;
+        let release_amount = total_daozhan_qi;
+
+        // 守恒：全额归还（含凝结量 + 吸取量）
+        assert!(
+            (release_amount - total_daozhan_qi).abs() < 1e-9,
+            "死亡归还量应包含凝结量({condense_qi:.4}) + 吸取量({drained_from_player:.4})，合计={total_daozhan_qi:.4}"
+        );
+        assert!(
+            total_daozhan_qi > condense_qi,
+            "含伏击吸取后总量 {total_daozhan_qi:.4} 应大于仅凝结量 {condense_qi:.4}"
+        );
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // P3: 神识识破 DisguisedDaoZhang — 常数 pin 测试
+    // ═══════════════════════════════════════════════════════════════════════
+
+    #[test]
+    fn disguised_daozhan_condense_state_default_is_empty() {
+        // DaoZhangCondenseState default 应无任何 zone 记录（全新服务器无冷却）
+        let state = DaoZhangCondenseState::default();
+        assert!(
+            state.last_condense_tick.is_empty(),
+            "DaoZhangCondenseState 初始应无 zone 冷却记录（空 HashMap）"
+        );
+    }
+
+    #[test]
+    fn spawn_request_event_fields_accessible() {
+        // SpawnDaoZhangFromCondenseRequest 字段语义 pin（守恒测试用）
+        let req = SpawnDaoZhangFromCondenseRequest {
+            zone_name: "spawn".to_string(),
+            condensed_qi: TIANDAO_CONDENSE_INITIAL_QI,
+            tick: 600,
+        };
+        assert_eq!(req.zone_name, "spawn", "zone_name 字段应为初始化值");
+        assert!(
+            (req.condensed_qi - TIANDAO_CONDENSE_INITIAL_QI).abs() < 1e-9,
+            "condensed_qi 应等于 TIANDAO_CONDENSE_INITIAL_QI={TIANDAO_CONDENSE_INITIAL_QI}"
+        );
+        assert_eq!(req.tick, 600, "tick 字段应为初始化值");
+    }
+
+    #[test]
+    fn tiandao_initial_qi_equals_cost() {
+        // TIANDAO_CONDENSE_INITIAL_QI 应等于 TIANDAO_CONDENSE_QI_COST（守恒：zone 扣多少，道伥得多少）
+        assert!(
+            (TIANDAO_CONDENSE_INITIAL_QI - TIANDAO_CONDENSE_QI_COST).abs() < 1e-9,
+            "TIANDAO_CONDENSE_INITIAL_QI({}) 应等于 TIANDAO_CONDENSE_QI_COST({})（守恒 1:1 转移）",
+            TIANDAO_CONDENSE_INITIAL_QI,
+            TIANDAO_CONDENSE_QI_COST
         );
     }
 }

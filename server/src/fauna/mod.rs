@@ -81,4 +81,6 @@ pub fn register(app: &mut App) {
     daozhan::register_p1(app);
     // plan-daozhan-v1 P2：Ambush big-brain Scorer/Action 注册（背对/低真元触发 + QiTransfer 守恒）
     daozhan::register_p2(app);
+    // plan-daozhan-v1 P3：天道凝结 + 死亡 qi 全额归还（神识识破在 spiritual_sense/push.rs 接入）
+    daozhan::register_p3(app);
 }
