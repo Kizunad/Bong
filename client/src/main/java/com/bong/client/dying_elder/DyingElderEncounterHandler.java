@@ -59,6 +59,10 @@ public final class DyingElderEncounterHandler {
             double betrayProbability = root.has("betray_probability")
                 ? root.get("betray_probability").getAsDouble()
                 : 0.0;
+            // M2 修复：从 payload 读取真实 qi_fraction（server 用实际 qi_current/qi_max_cache 计算）
+            float qiFraction = root.has("qi_fraction")
+                ? root.get("qi_fraction").getAsFloat()
+                : 0.0f;
             long serverTick = root.has("server_tick")
                 ? root.get("server_tick").getAsLong()
                 : 0L;
@@ -66,6 +70,9 @@ public final class DyingElderEncounterHandler {
             boolean isDeath = "betrayal".equals(eventKind)
                 || "dead_natural".equals(eventKind)
                 || "dead_player_kill".equals(eventKind);
+
+            // M2 修复：每次收到 payload 都更新 qi_fraction（生产路径接通）
+            DyingElderEncounterStore.setQiFraction(qiFraction);
 
             if ("appeared".equals(eventKind)) {
                 DyingElderEncounterStore.activate(zoneName, elderEntityIdx, serverTick);

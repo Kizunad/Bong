@@ -3,11 +3,22 @@ package com.bong.client.dying_elder;
 import com.bong.client.hud.DyingElderHudPlanner;
 import com.bong.client.hud.HudRenderCommand;
 import com.bong.client.hud.HudRenderLayer;
+import com.bong.client.inventory.model.InventoryItem;
+import com.bong.client.inventory.model.InventoryModel;
+import com.bong.client.inventory.state.InventoryStateStore;
+import com.bong.client.network.ClientRequestProtocol;
+import com.bong.client.network.ClientRequestSender;
 import com.bong.client.visual.realm_vision.SenseKind;
+import com.google.gson.JsonObject;
+import com.google.gson.JsonParser;
+import net.minecraft.util.Identifier;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
+import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -29,6 +40,12 @@ public class DyingElderEncounterTest {
     @BeforeEach
     void reset() {
         DyingElderEncounterStore.resetForTest();
+        ClientRequestSender.resetBackendForTests();
+    }
+
+    @AfterEach
+    void afterEach() {
+        ClientRequestSender.resetBackendForTests();
     }
 
     // ──────────────────────────────────────────────────────────────────────────
@@ -991,6 +1008,366 @@ public class DyingElderEncounterTest {
             SenseKind.SPIRIT_EYE,
             SenseKind.fromWire("SpiritEye"),
             "expected SenseKind.fromWire('SpiritEye') == SPIRIT_EYE because server sends 'SpiritEye' kind string"
+        );
+    }
+
+    // ──────────────────────────────────────────────────────────────────────────
+    // B2 fix: ClientRequestProtocol.encodeGiveDanToElder payload 结构 pin
+    // ──────────────────────────────────────────────────────────────────────────
+
+    @Test
+    void encodeGiveDanToElderTypePin() {
+        String json = ClientRequestProtocol.encodeGiveDanToElder(99L, 42);
+        JsonObject obj = JsonParser.parseString(json).getAsJsonObject();
+
+        assertEquals(
+            "give_dan_to_elder",
+            obj.get("type").getAsString(),
+            "expected type=give_dan_to_elder to match Rust ClientRequestV1::GiveDanToElder serde tag, actual: "
+                + obj.get("type")
+        );
+    }
+
+    @Test
+    void encodeGiveDanToElderVersionPin() {
+        String json = ClientRequestProtocol.encodeGiveDanToElder(99L, 42);
+        JsonObject obj = JsonParser.parseString(json).getAsJsonObject();
+
+        assertEquals(
+            1,
+            obj.get("v").getAsInt(),
+            "expected v=1 in give_dan_to_elder payload because protocol VERSION=1, actual: " + obj.get("v")
+        );
+    }
+
+    @Test
+    void encodeGiveDanToElderPillInstanceId() {
+        String json = ClientRequestProtocol.encodeGiveDanToElder(1234567890L, 7);
+        JsonObject obj = JsonParser.parseString(json).getAsJsonObject();
+
+        assertEquals(
+            1234567890L,
+            obj.get("pill_instance_id").getAsLong(),
+            "expected pill_instance_id=1234567890 in give_dan_to_elder payload to match server GiveDanToElder.pill_instance_id (u64), actual: "
+                + obj.get("pill_instance_id")
+        );
+    }
+
+    @Test
+    void encodeGiveDanToElderElderEntityId() {
+        String json = ClientRequestProtocol.encodeGiveDanToElder(5L, 777);
+        JsonObject obj = JsonParser.parseString(json).getAsJsonObject();
+
+        assertEquals(
+            777,
+            obj.get("elder_entity_id").getAsInt(),
+            "expected elder_entity_id=777 in give_dan_to_elder payload to match server GiveDanToElder.elder_entity_id (i32), actual: "
+                + obj.get("elder_entity_id")
+        );
+    }
+
+    @Test
+    void encodeGiveDanToElderZeroPillInstanceId() {
+        // 边界：instance_id=0（服务端会拒绝，但 client 端必须能编码）
+        String json = ClientRequestProtocol.encodeGiveDanToElder(0L, 1);
+        JsonObject obj = JsonParser.parseString(json).getAsJsonObject();
+
+        assertEquals(
+            0L,
+            obj.get("pill_instance_id").getAsLong(),
+            "expected pill_instance_id=0 to be serialized correctly (server will reject, client must encode faithfully)"
+        );
+    }
+
+    // ──────────────────────────────────────────────────────────────────────────
+    // B2 fix: DyingElderInteractionKeybindings — 背包搜索逻辑
+    // ──────────────────────────────────────────────────────────────────────────
+
+    @Test
+    void findHuiYuanPillInGridItems() {
+        // 背包格子中有回元丹
+        InventoryItem pill = InventoryItem.simple("hui_yuan_pill", "回元丹");
+        InventoryModel model = InventoryModel.builder()
+            .gridItem(pill, InventoryModel.PRIMARY_CONTAINER_ID, 0, 0)
+            .build();
+        InventoryStateStore.replace(model);
+
+        long found = DyingElderInteractionKeybindings.findHuiYuanPillInstanceId();
+        assertEquals(
+            pill.instanceId(),
+            found,
+            "expected findHuiYuanPillInstanceId() to return pill's instanceId when hui_yuan_pill is in grid, actual: " + found
+        );
+    }
+
+    @Test
+    void findHuiYuanPillInHotbar() {
+        // 回元丹在 hotbar slot 2
+        InventoryItem pill = InventoryItem.simple("hui_yuan_pill", "回元丹");
+        InventoryModel model = InventoryModel.builder()
+            .hotbar(2, pill)
+            .build();
+        InventoryStateStore.replace(model);
+
+        long found = DyingElderInteractionKeybindings.findHuiYuanPillInstanceId();
+        assertEquals(
+            pill.instanceId(),
+            found,
+            "expected findHuiYuanPillInstanceId() to return pill's instanceId when hui_yuan_pill is in hotbar slot 2, actual: " + found
+        );
+    }
+
+    @Test
+    void findHuiYuanPillReturnsNegativeOneWhenNotFound() {
+        // 背包中只有其他物品
+        InventoryItem other = InventoryItem.simple("common_herb", "普通草药");
+        InventoryModel model = InventoryModel.builder()
+            .gridItem(other, InventoryModel.PRIMARY_CONTAINER_ID, 0, 0)
+            .build();
+        InventoryStateStore.replace(model);
+
+        long found = DyingElderInteractionKeybindings.findHuiYuanPillInstanceId();
+        assertEquals(
+            -1L,
+            found,
+            "expected findHuiYuanPillInstanceId() to return -1 when no hui_yuan_pill in inventory, actual: " + found
+        );
+    }
+
+    @Test
+    void findHuiYuanPillReturnsNegativeOneOnEmptyInventory() {
+        InventoryStateStore.replace(InventoryModel.empty());
+
+        long found = DyingElderInteractionKeybindings.findHuiYuanPillInstanceId();
+        assertEquals(
+            -1L,
+            found,
+            "expected findHuiYuanPillInstanceId() to return -1 on empty inventory, actual: " + found
+        );
+    }
+
+    // ──────────────────────────────────────────────────────────────────────────
+    // B2 fix: DyingElderInteractionKeybindings.handleGiveDan — 发送路径
+    // ──────────────────────────────────────────────────────────────────────────
+
+    @Test
+    void handleGiveDanSendsCorrectPayload() {
+        // 准备：activate encounter + 背包有回元丹
+        DyingElderEncounterStore.activate("坍缩渊", 42, 1000L);
+
+        InventoryItem pill = InventoryItem.simple("hui_yuan_pill", "回元丹");
+        InventoryModel model = InventoryModel.builder()
+            .gridItem(pill, InventoryModel.PRIMARY_CONTAINER_ID, 0, 0)
+            .build();
+        InventoryStateStore.replace(model);
+
+        // 注入 mock backend 捕获发送的 JSON
+        AtomicReference<String> capturedJson = new AtomicReference<>();
+        ClientRequestSender.setBackendForTests((channel, payload) -> {
+            capturedJson.set(new String(payload, java.nio.charset.StandardCharsets.UTF_8));
+        });
+
+        DyingElderInteractionKeybindings.handleGiveDan();
+
+        assertNotNull(
+            capturedJson.get(),
+            "expected ClientRequestSender to dispatch a give_dan_to_elder payload when handleGiveDan() is called with active encounter and pill in inventory, actual: null (nothing was sent)"
+        );
+
+        JsonObject sent = JsonParser.parseString(capturedJson.get()).getAsJsonObject();
+        assertEquals(
+            "give_dan_to_elder",
+            sent.get("type").getAsString(),
+            "expected sent payload type=give_dan_to_elder, actual: " + sent.get("type")
+        );
+        assertEquals(
+            pill.instanceId(),
+            sent.get("pill_instance_id").getAsLong(),
+            "expected sent payload pill_instance_id to match the pill in inventory, actual: " + sent.get("pill_instance_id")
+        );
+        assertEquals(
+            42,
+            sent.get("elder_entity_id").getAsInt(),
+            "expected sent payload elder_entity_id=42 from DyingElderEncounterStore.getElderEntityIdx(), actual: "
+                + sent.get("elder_entity_id")
+        );
+    }
+
+    @Test
+    void handleGiveDanDoesNotSendWhenNoPillInInventory() {
+        DyingElderEncounterStore.activate("坍缩渊", 42, 1000L);
+        InventoryStateStore.replace(InventoryModel.empty());
+
+        AtomicReference<String> capturedJson = new AtomicReference<>();
+        ClientRequestSender.setBackendForTests((channel, payload) -> {
+            capturedJson.set(new String(payload, java.nio.charset.StandardCharsets.UTF_8));
+        });
+
+        DyingElderInteractionKeybindings.handleGiveDan();
+
+        assertNull(
+            capturedJson.get(),
+            "expected no C2S payload when inventory has no hui_yuan_pill because server would reject anyway "
+                + "(client prevents useless packet), actual: " + capturedJson.get()
+        );
+    }
+
+    @Test
+    void handleGiveDanDoesNotSendWhenElderEntityIdxZero() {
+        // elderEntityIdx=0 means elder not yet synced
+        DyingElderEncounterStore.activate("坍缩渊", 0, 1000L);
+
+        InventoryItem pill = InventoryItem.simple("hui_yuan_pill", "回元丹");
+        InventoryModel model = InventoryModel.builder()
+            .gridItem(pill, InventoryModel.PRIMARY_CONTAINER_ID, 0, 0)
+            .build();
+        InventoryStateStore.replace(model);
+
+        AtomicReference<String> capturedJson = new AtomicReference<>();
+        ClientRequestSender.setBackendForTests((channel, payload) -> {
+            capturedJson.set(new String(payload, java.nio.charset.StandardCharsets.UTF_8));
+        });
+
+        DyingElderInteractionKeybindings.handleGiveDan();
+
+        assertNull(
+            capturedJson.get(),
+            "expected no C2S payload when elderEntityIdx=0 because elder entity ID has not been synced from server, actual: "
+                + capturedJson.get()
+        );
+    }
+
+    @Test
+    void handleGiveDanDoesNotSendWhenEncounterNotActive() {
+        // Store is reset to inactive in @BeforeEach
+        InventoryItem pill = InventoryItem.simple("hui_yuan_pill", "回元丹");
+        InventoryModel model = InventoryModel.builder()
+            .gridItem(pill, InventoryModel.PRIMARY_CONTAINER_ID, 0, 0)
+            .build();
+        InventoryStateStore.replace(model);
+
+        AtomicReference<String> capturedJson = new AtomicReference<>();
+        ClientRequestSender.setBackendForTests((channel, payload) -> {
+            capturedJson.set(new String(payload, java.nio.charset.StandardCharsets.UTF_8));
+        });
+
+        // Simulate tick with encounter not active — onEndClientTick drains keys and returns early.
+        // handleGiveDan itself also checks elderEntityIdx (defaults to 0), so no send.
+        DyingElderInteractionKeybindings.handleGiveDan();
+
+        assertNull(
+            capturedJson.get(),
+            "expected no C2S payload when encounter is not active (elderEntityIdx=0 on fresh store), actual: "
+                + capturedJson.get()
+        );
+    }
+
+    // ──────────────────────────────────────────────────────────────────────────
+    // B2 fix: SenseKind.DYING_ELDER_QI 存在（M1 fix 扩展）
+    // ──────────────────────────────────────────────────────────────────────────
+
+    @Test
+    void senseKindDyingElderQiVariantExists() {
+        // plan-dying-elder-v1 P3 M1 fix: DyingElderQi enum variant 必须存在
+        SenseKind kind = SenseKind.DYING_ELDER_QI;
+        assertNotNull(
+            kind,
+            "expected SenseKind.DYING_ELDER_QI to exist because server push.rs emits DyingElderQi "
+                + "sense entries for the dying elder, actual: null"
+        );
+    }
+
+    @Test
+    void senseKindDyingElderQiFromWire() {
+        SenseKind kind = SenseKind.fromWire("DyingElderQi");
+        assertEquals(
+            SenseKind.DYING_ELDER_QI,
+            kind,
+            "expected SenseKind.fromWire('DyingElderQi') == DYING_ELDER_QI because server sends 'DyingElderQi' wire string, actual: " + kind
+        );
+    }
+
+    // ──────────────────────────────────────────────────────────────────────────
+    // B2 fix: DyingElderInteractionKeybindings 已在 BongClient 中注册
+    // ──────────────────────────────────────────────────────────────────────────
+
+    @Test
+    void bongClientRegistersDyingElderInteractionKeybindings() throws Exception {
+        java.nio.file.Path testClasses = java.nio.file.Path.of("").toAbsolutePath().normalize();
+        java.nio.file.Path clientRoot;
+        if (java.nio.file.Files.isDirectory(testClasses.resolve("src"))) {
+            clientRoot = testClasses;
+        } else if (java.nio.file.Files.isDirectory(testClasses.resolve("client").resolve("src"))) {
+            clientRoot = testClasses.resolve("client");
+        } else {
+            clientRoot = testClasses;
+        }
+        java.nio.file.Path bongClientSrc = clientRoot.resolve(
+            "src/main/java/com/bong/client/BongClient.java"
+        );
+        assertTrue(
+            java.nio.file.Files.exists(bongClientSrc),
+            "BongClient.java must exist at " + bongClientSrc.toAbsolutePath()
+        );
+        String src = java.nio.file.Files.readString(bongClientSrc);
+        assertTrue(
+            src.contains("DyingElderInteractionKeybindings.register()"),
+            "expected BongClient to call DyingElderInteractionKeybindings.register() because "
+                + "without this call the G/H/J keybindings are never registered and players cannot give dan (B2 fix), "
+                + "actual: call not found in source"
+        );
+    }
+
+    // ──────────────────────────────────────────────────────────────────────────
+    // B2 fix: handler qi_fraction M2 — 生产调用路径 pin
+    // ──────────────────────────────────────────────────────────────────────────
+
+    @Test
+    void handlerAppearedSetsQiFraction() {
+        // M2: appeared payload 中的 qi_fraction 必须写入 Store
+        String payload = "{\"zone_name\":\"坍缩渊\",\"elder_entity_idx\":3,\"event_kind\":\"appeared\","
+            + "\"betray_probability\":0.45,\"qi_fraction\":0.88,\"dan_count\":0,\"offered_skill_id\":\"s\",\"server_tick\":500}";
+
+        DyingElderEncounterHandler.handle(payload);
+
+        assertEquals(
+            0.88f,
+            DyingElderEncounterStore.getQiFraction(),
+            1e-4f,
+            "expected getQiFraction()=0.88 after handler processes appeared payload with qi_fraction=0.88 (M2 fix), actual: "
+                + DyingElderEncounterStore.getQiFraction()
+        );
+    }
+
+    @Test
+    void handlerDanReceivedUpdatesQiFraction() {
+        // M2: dan_received payload 中的 qi_fraction 也必须写入 Store
+        DyingElderEncounterHandler.handle("{\"zone_name\":\"z\",\"elder_entity_idx\":1,\"event_kind\":\"appeared\","
+            + "\"betray_probability\":0.3,\"qi_fraction\":1.0,\"dan_count\":0,\"offered_skill_id\":\"s\",\"server_tick\":1}");
+        DyingElderEncounterHandler.handle("{\"zone_name\":\"z\",\"elder_entity_idx\":1,\"event_kind\":\"dan_received\","
+            + "\"betray_probability\":0.35,\"qi_fraction\":0.55,\"dan_count\":1,\"offered_skill_id\":\"s\",\"server_tick\":200}");
+
+        assertEquals(
+            0.55f,
+            DyingElderEncounterStore.getQiFraction(),
+            1e-4f,
+            "expected getQiFraction()=0.55 after handler processes dan_received payload with qi_fraction=0.55 (M2 fix), actual: "
+                + DyingElderEncounterStore.getQiFraction()
+        );
+    }
+
+    @Test
+    void handlerMissingQiFractionDefaultsToZero() {
+        // 兼容旧 payload（无 qi_fraction 字段）
+        String payload = "{\"event_kind\":\"appeared\"}";
+        DyingElderEncounterHandler.handle(payload);
+
+        assertEquals(
+            0.0f,
+            DyingElderEncounterStore.getQiFraction(),
+            1e-5f,
+            "expected getQiFraction()=0.0 when qi_fraction is absent from payload (default=0), actual: "
+                + DyingElderEncounterStore.getQiFraction()
         );
     }
 }

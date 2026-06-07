@@ -529,6 +529,25 @@ public final class ClientRequestProtocol {
         return obj.toString();
     }
 
+    // ─── plan-dying-elder-v1 P3：给丹/拒绝/拖延 C2S ─────────────────────────
+
+    /**
+     * plan-dying-elder-v1 P3 — 向垂死大能交付回元丹。
+     *
+     * <p>对应 Rust {@code ClientRequestV1::GiveDanToElder}。
+     * 守恒约束：server 校验玩家背包确实有此 pill_instance_id，
+     * 消耗后 qi_gain 走 QiTransfer{TradeDan} 转入大能，不旁路 ledger。
+     *
+     * @param pillInstanceId 玩家背包中回元丹的 inventory instance_id
+     * @param elderEntityId  垂死大能的 MC protocol entity_id（i32）
+     */
+    public static String encodeGiveDanToElder(long pillInstanceId, int elderEntityId) {
+        JsonObject obj = envelope("give_dan_to_elder");
+        obj.addProperty("pill_instance_id", pillInstanceId);
+        obj.addProperty("elder_entity_id", elderEntityId);
+        return obj.toString();
+    }
+
     // ─── Inventory move intent (client → server) ────────────────────────────
 
     /** 库存位置三态联合，匹配 server schema InventoryLocationV1。 */

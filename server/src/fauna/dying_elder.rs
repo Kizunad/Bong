@@ -1160,6 +1160,8 @@ pub(crate) fn dying_elder_p3_emit_appear_event_system(
     let Some(redis) = redis else { return };
 
     for req in spawn_requests.read() {
+        // qi_fraction = 1.0：大能刚出现时真元满值（DYING_ELDER_INITIAL_QI / DYING_ELDER_INITIAL_QI）
+        let qi_fraction = 1.0_f32;
         let event = ElderEncounterEventV1 {
             zone_name: req.zone_name.clone(),
             elder_entity_idx: 0, // spawn 阶段尚无 entity id（P1 系统创建 entity）；0 为占位
@@ -1167,6 +1169,7 @@ pub(crate) fn dying_elder_p3_emit_appear_event_system(
             betray_probability: req.blackboard.betray_probability,
             dan_count: 0,
             offered_skill_id: req.blackboard.offered_skill_id.to_string(),
+            qi_fraction,
             server_tick: tick,
         };
         let _ = redis
@@ -1226,6 +1229,7 @@ pub(crate) fn dying_elder_p3_emit_death_event_system(
             betray_probability: 0.0,
             dan_count: 0,
             offered_skill_id: String::new(),
+            qi_fraction: 0.0, // 死亡时真元耗尽
             server_tick: tick,
         };
         let _ = redis
@@ -1273,6 +1277,12 @@ pub(crate) fn dying_elder_p3_emit_dan_received_event_system(
             DyingElderState::Plea => continue, // 给丹系统拒绝了此 intent
         };
 
+        // qi_fraction：大能当前真元比例（M2 修复：用真实 qi_current / qi_max_cache）
+        let qi_fraction = if bb.qi_max_cache > 0.0 {
+            (bb.qi_current / bb.qi_max_cache).clamp(0.0, 1.0) as f32
+        } else {
+            0.0
+        };
         let event = ElderEncounterEventV1 {
             zone_name: bb.home_zone.clone(),
             elder_entity_idx: entity.index(),
@@ -1280,6 +1290,7 @@ pub(crate) fn dying_elder_p3_emit_dan_received_event_system(
             betray_probability: 0.0,
             dan_count,
             offered_skill_id: bb.offered_skill_id.to_string(),
+            qi_fraction,
             server_tick: tick,
         };
         let _ = redis
@@ -2361,7 +2372,7 @@ mod tests {
         let bb = DyingElderBlackboard::new("tsy_deep", DVec3::ZERO, 1234, 0);
         let betray_prob = bb.betray_probability;
 
-        // 模拟构建 appeared 事件
+        // 模拟构建 appeared 事件（qi_fraction=1.0：刚出现时真元满值）
         let event = ElderEncounterEventV1 {
             zone_name: bb.home_zone.clone(),
             elder_entity_idx: 0,
@@ -2369,6 +2380,7 @@ mod tests {
             betray_probability: betray_prob,
             dan_count: 0,
             offered_skill_id: bb.offered_skill_id.to_string(),
+            qi_fraction: 1.0,
             server_tick: 0,
         };
 
@@ -2409,6 +2421,7 @@ mod tests {
                 betray_probability: 0.5,
                 dan_count: 0,
                 offered_skill_id: "woliu.heart".to_string(),
+                qi_fraction: 0.7,
                 server_tick: 100,
             };
             let json = serde_json::to_string(&event).unwrap_or_else(|e| {

@@ -433,6 +433,19 @@ public final class ClientRequestSender {
         dispatch(ClientRequestProtocol.encodeTechniqueScrollUse(instanceId));
     }
 
+    // ─── plan-dying-elder-v1 P3：垂死大能交互 C2S ────────────────────────────
+
+    /**
+     * plan-dying-elder-v1 P3 — 向垂死大能交付回元丹。
+     * 守恒：server 校验背包持有 pill_instance_id，qi_gain 走 QiTransfer{TradeDan}，不旁路 ledger。
+     *
+     * @param pillInstanceId 玩家背包中回元丹的 inventory instance_id
+     * @param elderEntityId  垂死大能的 MC protocol entity_id（i32）
+     */
+    public static void sendGiveDanToElder(long pillInstanceId, int elderEntityId) {
+        dispatch(ClientRequestProtocol.encodeGiveDanToElder(pillInstanceId, elderEntityId));
+    }
+
     // ─── 灵田 (plan-lingtian-v1 §1.2-§1.7) ──────────────────────────────────
 
     public static void sendLingtianStartTill(int x, int y, int z, long hoeInstanceId, String mode) {

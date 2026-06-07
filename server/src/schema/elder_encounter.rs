@@ -28,7 +28,7 @@ pub enum ElderEncounterEventKindV1 {
     DeadPlayerKill,
 }
 
-/// 垂死大能遭遇事件 payload（server → agent，`bong:elder_encounter`）。
+/// 垂死大能遭遇事件 payload（server → agent + client，`bong:elder_encounter`）。
 ///
 /// ## 字段说明
 /// - `zone_name`：大能所在 TSY zone 名称（agent 用于 zone-scoped narration）
@@ -39,6 +39,8 @@ pub enum ElderEncounterEventKindV1 {
 ///   - agent narration 中 `appeared` 事件使用此值描述危险程度
 /// - `dan_count`：累计收到丹数量（`dan_received` 事件时递增；其他事件填 0）
 /// - `offered_skill_id`：承诺传授的功法 ID（地阶，四门之一；`appeared` 时填，其他可填空）
+/// - `qi_fraction`：大能当前真元比例（qi_current / qi_max_cache，0.0-1.0）；
+///   client HUD 真元进度条从此字段渲染；死亡事件填 0.0
 /// - `server_tick`：server 游戏 tick（用于 agent 时序审计）
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -58,6 +60,12 @@ pub struct ElderEncounterEventV1 {
     pub dan_count: u32,
     /// 承诺传授的功法 ID（地阶；`appeared` 时填实际值，其他可填空字符串）。
     pub offered_skill_id: String,
+    /// 大能当前真元比例（qi_current / qi_max_cache，[0.0, 1.0]）。
+    ///
+    /// - `appeared` / `dan_received` 时填实际值（大能真元恢复进度）
+    /// - 死亡类事件（betrayal / dead_natural / dead_player_kill）填 0.0
+    /// - client HUD 进度条从此字段渲染（B1 修复：实际真元而非硬编码 0.8）
+    pub qi_fraction: f32,
     /// Server 游戏 tick（时序审计用）。
     pub server_tick: u64,
 }
@@ -128,7 +136,7 @@ mod elder_encounter_schema_tests {
 
     #[test]
     fn event_v1_appeared_serde_roundtrip() {
-        // 期望：appeared 事件（含 betray_probability）完整往返
+        // 期望：appeared 事件（含 betray_probability + qi_fraction）完整往返
         let ev = ElderEncounterEventV1 {
             zone_name: "tsy_deep".to_string(),
             elder_entity_idx: 42,
@@ -136,6 +144,7 @@ mod elder_encounter_schema_tests {
             betray_probability: 0.65,
             dan_count: 0,
             offered_skill_id: "woliu.heart".to_string(),
+            qi_fraction: 0.9,
             server_tick: 720_000,
         };
         let json = serde_json::to_string(&ev).expect("serialize");
@@ -148,7 +157,7 @@ mod elder_encounter_schema_tests {
 
     #[test]
     fn event_v1_dan_received_serde_roundtrip() {
-        // 期望：dan_received 事件（dan_count=3）往返
+        // 期望：dan_received 事件（dan_count=3）往返（qi_fraction 反映恢复进度）
         let ev = ElderEncounterEventV1 {
             zone_name: "tsy_shallow".to_string(),
             elder_entity_idx: 99,
@@ -156,6 +165,7 @@ mod elder_encounter_schema_tests {
             betray_probability: 0.0,
             dan_count: 3,
             offered_skill_id: "anqi.echo_fractal".to_string(),
+            qi_fraction: 0.6,
             server_tick: 1000,
         };
         let json = serde_json::to_string(&ev).expect("serialize");
@@ -165,7 +175,7 @@ mod elder_encounter_schema_tests {
 
     #[test]
     fn event_v1_betrayal_serde_roundtrip() {
-        // 期望：betrayal 事件往返（betray_probability=0.0，offered_skill_id 可为空）
+        // 期望：betrayal 事件往返（betray_probability=0.0，offered_skill_id 可为空，qi_fraction=0.0）
         let ev = ElderEncounterEventV1 {
             zone_name: "tsy_deep".to_string(),
             elder_entity_idx: 7,
@@ -173,6 +183,7 @@ mod elder_encounter_schema_tests {
             betray_probability: 0.0,
             dan_count: 5,
             offered_skill_id: String::new(),
+            qi_fraction: 0.0,
             server_tick: 999_999,
         };
         let json = serde_json::to_string(&ev).expect("serialize");
@@ -182,7 +193,7 @@ mod elder_encounter_schema_tests {
 
     #[test]
     fn event_v1_dead_natural_serde_roundtrip() {
-        // 期望：dead_natural 事件往返
+        // 期望：dead_natural 事件往返（qi_fraction=0.0 死亡后真元耗尽）
         let ev = ElderEncounterEventV1 {
             zone_name: "tsy_abyss".to_string(),
             elder_entity_idx: 11,
@@ -190,6 +201,7 @@ mod elder_encounter_schema_tests {
             betray_probability: 0.0,
             dan_count: 0,
             offered_skill_id: String::new(),
+            qi_fraction: 0.0,
             server_tick: 500,
         };
         let json = serde_json::to_string(&ev).expect("serialize");
@@ -199,7 +211,7 @@ mod elder_encounter_schema_tests {
 
     #[test]
     fn event_v1_dead_player_kill_serde_roundtrip() {
-        // 期望：dead_player_kill 事件往返
+        // 期望：dead_player_kill 事件往返（qi_fraction=0.0 被击杀后无真元）
         let ev = ElderEncounterEventV1 {
             zone_name: "tsy_deep".to_string(),
             elder_entity_idx: 3,
@@ -207,6 +219,7 @@ mod elder_encounter_schema_tests {
             betray_probability: 0.0,
             dan_count: 2,
             offered_skill_id: String::new(),
+            qi_fraction: 0.0,
             server_tick: 1234,
         };
         let json = serde_json::to_string(&ev).expect("serialize");
@@ -245,6 +258,7 @@ mod elder_encounter_schema_tests {
                 betray_probability: prob,
                 dan_count: 0,
                 offered_skill_id: "woliu.heart".to_string(),
+                qi_fraction: 0.8,
                 server_tick: 0,
             };
             let json = serde_json::to_string(&ev).expect("serialize");
@@ -267,6 +281,7 @@ mod elder_encounter_schema_tests {
             betray_probability: 0.5,
             dan_count: 0,
             offered_skill_id: "woliu.turbulence_burst".to_string(),
+            qi_fraction: 1.0,
             server_tick: 0,
         };
         let json = serde_json::to_string(&ev).expect("serialize");

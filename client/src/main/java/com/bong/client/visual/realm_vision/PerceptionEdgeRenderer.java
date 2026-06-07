@@ -41,6 +41,8 @@ public final class PerceptionEdgeRenderer {
             case DISGUISED_SPIDER -> 0xFF8040;
             // plan-daozhan-v1 P3：伪装道伥红色轮廓 #C04040，Spirit+ 可见
             case DISGUISED_DAOZHAN -> 0xC04040;
+            // plan-dying-elder-v1 P3：垂死大能真元流失青蓝色轮廓 #40C0E0，凝脉+ 可见
+            case DYING_ELDER_QI -> 0x40C0E0;
         };
         int alpha = (int) Math.round(80.0 + Math.max(0.0, Math.min(1.0, intensity)) * 175.0);
         return (alpha << 24) | base;

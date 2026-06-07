@@ -175,8 +175,9 @@ pub fn push_spiritual_sense_targets(
             .collect()
     };
 
-    // plan-dying-elder-v1 P3：收集 Plea/Recovering 态垂死大能 → DyingElderQi target
-    // intensity 0.8（化虚大能真元流失，波动剧烈，比道伥/蛛更易被神识察觉）
+    // plan-dying-elder-v1 P3/M2：收集 Plea/Recovering 态垂死大能 → DyingElderQi target
+    // intensity 使用真实 qi_current / qi_max_cache（M2 修复：非硬编码 0.8）
+    // 真元越少，感知强度越弱（濒死大能快力竭时波动减小，越难被神识察觉）
     let dying_elder_targets: Vec<SpiritualSenseTarget> = {
         let elder_q = player_sets.p4();
         elder_q
@@ -187,12 +188,20 @@ pub fn push_spiritual_sense_targets(
                     DyingElderState::Plea | DyingElderState::Recovering { .. }
                 )
             })
-            .map(|(pos, _, _, _)| SpiritualSenseTarget {
-                position: position_to_array(pos),
-                kind: SpiritualSenseTargetKind::DyingElderQi,
-                // intensity 0.8：化虚大能真元流失波动，神识感知明显（"气息有异"）
-                intensity: 0.8,
-                stealth: None,
+            .map(|(pos, bb, _, _)| {
+                // M2 修复：intensity = qi_current / qi_max_cache，clamp [0.1, 0.9]
+                // 最小 0.1 保证即使真元极低仍可被神识感知（不完全消失）；最大 0.9 避免超亮
+                let intensity = if bb.qi_max_cache > 0.0 {
+                    (bb.qi_current / bb.qi_max_cache).clamp(0.1, 0.9)
+                } else {
+                    0.5
+                };
+                SpiritualSenseTarget {
+                    position: position_to_array(pos),
+                    kind: SpiritualSenseTargetKind::DyingElderQi,
+                    intensity,
+                    stealth: None,
+                }
             })
             .collect()
     };
