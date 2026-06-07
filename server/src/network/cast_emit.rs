@@ -548,6 +548,17 @@ pub(crate) fn apply_item_effect(
                 "[bong][network][cast] FoodRegen bonus={bonus_factor} duration={duration_ticks} for `{username}` ({entity:?}) — handled by cast_item_effect path"
             );
         }
+        ItemEffect::BeastCoreAbsorption {
+            breakthrough_magnitude,
+            hallucination_duration_ticks,
+        } => {
+            // plan-fauna-stitched-beast-v1 P3: 兽核吸收在 take_pill 路径处理（emit S2C + narration）。
+            // apply_item_effect 路径仅 log，不重复处理。
+            tracing::info!(
+                "[bong][network][cast] BeastCoreAbsorption magnitude={breakthrough_magnitude} hallucination={hallucination_duration_ticks}t \
+                 for `{username}` ({entity:?}) — handled by take_pill path"
+            );
+        }
     }
 }
 

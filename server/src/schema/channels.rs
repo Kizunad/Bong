@@ -227,6 +227,11 @@ pub const CH_MERIDIAN_SEVERED: &str = "bong:meridian_severed";
 /// 对齐 agent `CHANNELS.VOID_EROSION_EVENT`（channels.ts P3 新增）。
 pub const CH_VOID_EROSION_EVENT: &str = "bong:void_erosion_event";
 
+// 异变缝合兽（plan-fauna-stitched-beast-v1 P3）—— server → client 兽核吸收幻觉 payload。
+/// S2C `bong:core_absorption_hallucination`：client 收到后触发感知幻觉 HUD（视野偏移/绿边像差/bar偏移）。
+/// payload JSON: `{"duration_ticks": u32}`，client 端 200tick 后推送取消（duration_ticks=0）。
+pub const CH_CORE_ABSORPTION_HALLUCINATION: &str = "bong:core_absorption_hallucination";
+
 // 爆脉 v4（plan-combat-skill-feedback-bridges-v1 P1）—— baomai_v4 反馈整桥。
 /// 疤纹回路形成事件，对齐 agent `CHANNELS.BAOMAI_V4_SCAR_CIRCUIT_FORMED`。
 pub const CH_BAOMAI_V4_SCAR_CIRCUIT_FORMED: &str = "bong:baomai_v4/scar_circuit_formed";

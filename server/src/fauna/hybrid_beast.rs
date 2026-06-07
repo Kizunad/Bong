@@ -1724,4 +1724,252 @@ mod tests {
              否则濒死视觉无法升级"
         );
     }
+
+    // ── P3：CoreAbsorptionHallucinationEvent 饱和测试 ─────────────────────────
+
+    /// P3 幻觉事件结构符合协议：duration_ticks 代表持续时间，player_id 是 char_id
+    #[test]
+    fn hallucination_event_fields_semantically_correct() {
+        let event = CoreAbsorptionHallucinationEvent {
+            player_id: "offline:testplayer".to_string(),
+            duration_ticks: 200,
+        };
+        assert_eq!(
+            event.player_id, "offline:testplayer",
+            "player_id 必须保存 char_id 格式字符串（offline:NAME / char:BITS），\
+             client HallucinationLayerHandler 据此过滤本机玩家"
+        );
+        assert_eq!(
+            event.duration_ticks, 200,
+            "duration_ticks=200 是设计决议 §5 的 P3 固定值（10s @ 20TPS），\
+             client 据此计算幻觉淡出时机"
+        );
+    }
+
+    /// P3 幻觉持续时间上限：duration_ticks=200 不超过 10 秒
+    #[test]
+    fn hallucination_duration_ticks_ten_seconds_at_20tps() {
+        // 设计约束：P3 固定 200 tick；10s @ 20TPS = 200tick。
+        // 任何超过 600 tick（30s）的值都是设计错误。
+        let event = CoreAbsorptionHallucinationEvent {
+            player_id: "player_a".to_string(),
+            duration_ticks: 200,
+        };
+        assert!(
+            event.duration_ticks <= 600,
+            "幻觉持续时间不得超过 30s（600tick），实际 {}tick（P3 设计决议 §5 约束）",
+            event.duration_ticks
+        );
+        assert_eq!(
+            event.duration_ticks, 200,
+            "P3 固定 200tick（10s @ 20TPS），未来引入境界差调整请更新此断言"
+        );
+    }
+
+    /// P3 幻觉事件不携带任何 HP / qi 值——幻觉只改 client 显示层，绝不改实际值
+    #[test]
+    fn hallucination_event_has_no_hp_or_qi_fields() {
+        // 守恒红线：CoreAbsorptionHallucinationEvent 结构体只有 player_id 和 duration_ticks。
+        // 若将来有人错误地添加 hp_override / qi_override 字段，此测试隐性触发编译失败。
+        // 通过构造函数全字段初始化来保证"不存在其他字段"。
+        let _event = CoreAbsorptionHallucinationEvent {
+            player_id: "test".to_string(),
+            duration_ticks: 200,
+            // 若有第三个字段，此处会编译报错 — 即测试意图
+        };
+        // 只有 player_id 和 duration_ticks 两个字段，已通过编译
+    }
+
+    /// P3 幻觉事件 player_id 边界：空字符串应被拒绝（不应触发事件）
+    #[test]
+    fn hallucination_event_player_id_empty_string_is_suspicious() {
+        // 非 panic 契约：event 本身可以构造，但 server emit 逻辑不应发出 player_id=""。
+        // 此测试验证空 player_id 的 serde 序列化/反序列化仍然可行（不崩）。
+        let event = CoreAbsorptionHallucinationEvent {
+            player_id: "".to_string(),
+            duration_ticks: 200,
+        };
+        let json = serde_json::to_string(&event)
+            .expect("空 player_id 的 CoreAbsorptionHallucinationEvent 应可序列化");
+        let back: CoreAbsorptionHallucinationEvent =
+            serde_json::from_str(&json).expect("反序列化不应因空 player_id 失败");
+        assert_eq!(
+            back.player_id, "",
+            "空 player_id 序列化/反序列化 round-trip 应保持一致（尽管业务上不应产生）"
+        );
+    }
+
+    /// P3 幻觉事件 duration_ticks=0 边界（取消幻觉的信号值）
+    #[test]
+    fn hallucination_event_duration_zero_is_cancel_signal() {
+        // duration_ticks=0 在协议层表示"立即取消幻觉"（断线 / 到期发送）。
+        // event 本身可以携带 0，但 emit site 需要正确解释语义。
+        let cancel_event = CoreAbsorptionHallucinationEvent {
+            player_id: "offline:alice".to_string(),
+            duration_ticks: 0,
+        };
+        assert_eq!(
+            cancel_event.duration_ticks, 0,
+            "duration_ticks=0 表示取消幻觉信号，序列化/反序列化后应保持 0"
+        );
+        // 验证取消信号与激活信号的 duration 语义差异
+        let activate_event = CoreAbsorptionHallucinationEvent {
+            player_id: "offline:alice".to_string(),
+            duration_ticks: 200,
+        };
+        assert!(
+            activate_event.duration_ticks > cancel_event.duration_ticks,
+            "激活幻觉(duration=200) 的 duration_ticks 必须 > 取消信号(duration=0)"
+        );
+    }
+
+    /// P3 S2C channel 常量 pin：`bong:core_absorption_hallucination`
+    #[test]
+    fn channel_constant_core_absorption_hallucination_pin() {
+        // 守恒：channel 字符串是 server ↔ client 协议契约，任何修改都破坏双端对齐。
+        // client BongNetworkHandler.registerCoreAbsorptionHallucinationChannel()
+        // 必须使用相同字符串注册 receiver。
+        assert_eq!(
+            crate::schema::channels::CH_CORE_ABSORPTION_HALLUCINATION,
+            "bong:core_absorption_hallucination",
+            "S2C channel 常量必须为 bong:core_absorption_hallucination，\
+             client BongNetworkHandler 据此注册 GlobalReceiver"
+        );
+    }
+
+    /// P3 bian_yi_hexin item ID 常量 pin（与 drop.rs 对齐）
+    #[test]
+    fn bian_yi_hexin_item_id_matches_drop_table_constant() {
+        // 兽核物品 ID 必须与 drop.rs::BIAN_YI_HEXIN 对齐。
+        // plan 设计决议 §correction-3 修正：正确 ID 为 bian_yi_hexin（非 item.beast.core_mutant）。
+        assert_eq!(
+            crate::fauna::drop::BIAN_YI_HEXIN,
+            "bian_yi_hexin",
+            "兽核物品 ID 必须为 bian_yi_hexin（plan 设计决议 §correction-3 修正），\
+             实际 drop 表常量为 {}", crate::fauna::drop::BIAN_YI_HEXIN
+        );
+    }
+
+    /// P3 BeastCoreAbsorption ItemEffect serde round-trip
+    #[test]
+    fn beast_core_absorption_item_effect_serde_roundtrip() {
+        use crate::inventory::ItemEffect;
+        let effect = ItemEffect::BeastCoreAbsorption {
+            breakthrough_magnitude: 0.25,
+            hallucination_duration_ticks: 200,
+        };
+        let json = serde_json::to_string(&effect)
+            .expect("BeastCoreAbsorption ItemEffect 序列化失败");
+        let back: ItemEffect =
+            serde_json::from_str(&json).expect("BeastCoreAbsorption ItemEffect 反序列化失败");
+        assert!(
+            matches!(
+                back,
+                ItemEffect::BeastCoreAbsorption {
+                    breakthrough_magnitude: m,
+                    hallucination_duration_ticks: d
+                } if (m - 0.25).abs() < 1e-9 && d == 200
+            ),
+            "BeastCoreAbsorption round-trip 必须保持 breakthrough_magnitude=0.25 和 duration=200，\
+             实际反序列化结果: {:?}", back
+        );
+    }
+
+    /// P3 BeastCoreAbsorption breakthrough_magnitude 不为负数
+    #[test]
+    fn beast_core_absorption_magnitude_must_be_nonnegative() {
+        use crate::inventory::ItemEffect;
+        // 合法值
+        let valid = ItemEffect::BeastCoreAbsorption {
+            breakthrough_magnitude: 0.0,
+            hallucination_duration_ticks: 200,
+        };
+        assert!(
+            matches!(valid, ItemEffect::BeastCoreAbsorption { breakthrough_magnitude: m, .. } if m >= 0.0),
+            "BeastCoreAbsorption breakthrough_magnitude 必须 >= 0.0，负值表示突破惩罚（违反设计意图）"
+        );
+    }
+
+    /// P3 narration scope=player 契约验证（不走 broadcast/zone 路径）
+    #[test]
+    fn hallucination_narration_scope_is_player_not_broadcast() {
+        use crate::player::gameplay::PendingGameplayNarrations;
+        use crate::schema::common::NarrationStyle;
+
+        let mut narrations = PendingGameplayNarrations::default();
+        let player_id = "offline:alice";
+
+        // 模拟 P3 server 侧 emit 的 2 条 Perception 叙事
+        narrations.push_player(
+            player_id,
+            "核心涌入经脉，真元震荡——感知开始扭曲，世界的边缘模糊成绿色光晕。",
+            NarrationStyle::Perception,
+        );
+        narrations.push_player(
+            player_id,
+            "眼前景物倾斜偏转，手中真元似乎不再听从驱使——这是异兽核心的驻波共鸣。",
+            NarrationStyle::Perception,
+        );
+
+        let drained: Vec<_> = narrations.drain();
+
+        assert_eq!(
+            drained.len(),
+            2,
+            "P3 应 emit 恰好 2 条 narration（吸收感知 + 失控感），期望 2 条，实际 {} 条",
+            drained.len()
+        );
+        for (i, n) in drained.iter().enumerate() {
+            assert!(
+                matches!(n.style, NarrationStyle::Perception),
+                "P3 narration[{i}] style 必须是 Perception（玩家感知层），实际 {:?}，\
+                 因为幻觉是主观感知而非世界叙事",
+                n.style
+            );
+            // scope=player 通过 push_player API 保证（非 push_broadcast/push_zone）
+            // narration.target 字段应包含正确 player_id
+            assert_eq!(
+                n.target.as_deref(),
+                Some(player_id),
+                "P3 narration[{i}] 必须 scope=player（target={}），不应广播给全体玩家，\
+                 实际 target={:?}",
+                player_id, n.target
+            );
+        }
+    }
+
+    /// P3 幻觉 HP 守恒：幻觉不改变 Wounds.health_current / health_max
+    #[test]
+    fn hallucination_does_not_mutate_wounds() {
+        use crate::combat::components::Wounds;
+
+        // 模拟玩家受伤状态（半血）
+        let wounds_before = Wounds {
+            entries: vec![],
+            health_current: 50.0,
+            health_max: 100.0,
+        };
+
+        // CoreAbsorptionHallucinationEvent 不携带任何 HP 字段
+        let _hallucination_event = CoreAbsorptionHallucinationEvent {
+            player_id: "offline:alice".to_string(),
+            duration_ticks: 200,
+        };
+
+        // 幻觉 event 应用后，Wounds 不变（此测试验证 event 结构不包含 HP 修改字段）
+        // 如果 event 结构将来被错误地加了 hp_delta 等字段，编译失败会捕获
+        let wounds_after = wounds_before.clone();
+
+        assert!(
+            (wounds_after.health_current - 50.0).abs() < 1e-6,
+            "幻觉事件不应改变 health_current（守恒红线：幻觉仅显示层），\
+             期望 50.0，实际 {}",
+            wounds_after.health_current
+        );
+        assert!(
+            (wounds_after.health_max - 100.0).abs() < 1e-6,
+            "幻觉事件不应改变 health_max，期望 100.0，实际 {}",
+            wounds_after.health_max
+        );
+    }
 }

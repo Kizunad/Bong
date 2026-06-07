@@ -66,6 +66,12 @@ rarity = "legendary"
 spirit_quality_initial = 1.0
 description = "异变兽体内的驻波核心，吸收时会震荡感知，固元破关前少有人敢碰。"
 
+[item.effect]
+# plan-fauna-stitched-beast-v1 P3 — 兽核吸收：突破加成 + 幻觉 HUD（10s / 200tick）
+kind = "beast_core_absorption"
+magnitude = 0.25
+duration_ticks = 200
+
 [[item]]
 id = "fu_ya_hesui"
 name = "负压核碎"
