@@ -638,7 +638,7 @@ pub(crate) fn daozhan_ambush_scorer_system(
 /// 判断玩家是否背对道伥（偏转角 > DAOZHAN_BACK_ANGLE_DEG = 150°）。
 ///
 /// 复用 tsy_hostile.rs `player_back_faces_npc` 同等逻辑；P2 以此函数为 source of truth，
-/// 测试直接测本函数（契约：dot(facing, to_npc_norm) < cos(150°/2)=cos(75°) ≈ -0.2588）。
+/// 测试直接测本函数（契约：dot(facing, to_npc_norm) < cos(150°) ≈ -0.866）。
 fn player_back_faces_npc_p2(
     player_pos: DVec3,
     look: Option<&valence::entity::Look>,
