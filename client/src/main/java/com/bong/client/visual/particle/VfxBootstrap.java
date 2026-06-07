@@ -106,6 +106,8 @@ public final class VfxBootstrap {
         registry.register(PseudoVeinVisualPlayer.AFTERMATH,      pseudoVein);
         registry.register(FaunaBoneShatterPlayer.EVENT_ID,       new FaunaBoneShatterPlayer());
         registry.register(SpiderShimmerPlayer.EVENT_ID,          new SpiderShimmerPlayer());
+        // plan-fauna-mimic-spider-v1 P1 — 拟态蛛暴起径向粒子 burst
+        registry.register(SpiderAmbushVfxPlayer.EVENT_ID,        new SpiderAmbushVfxPlayer());
         registry.register(TuikeFalseSkinParticlePlayer.DON_DUST,
             new TuikeFalseSkinParticlePlayer(TuikeFalseSkinParticlePlayer.DON_DUST));
         registry.register(TuikeFalseSkinParticlePlayer.SHED_BURST,

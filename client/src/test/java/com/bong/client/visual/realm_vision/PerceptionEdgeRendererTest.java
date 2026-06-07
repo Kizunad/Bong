@@ -52,4 +52,42 @@ class PerceptionEdgeRendererTest {
         ));
         assertEquals(0, out.size());
     }
+
+    // plan-fauna-mimic-spider-v1 P2
+    @Test
+    void disguisedSpiderWireKindMapsToOrangeMarker() {
+        assertEquals(
+            SenseKind.DISGUISED_SPIDER,
+            SenseKind.fromWire("DisguisedSpider"),
+            "wire name DisguisedSpider 应映射到 DISGUISED_SPIDER"
+        );
+        int color = PerceptionEdgeRenderer.colorFor(SenseKind.DISGUISED_SPIDER, 1.0);
+        assertEquals(
+            0xFF8040,
+            color & 0x00FFFFFF,
+            "DISGUISED_SPIDER 颜色应为橙色 #FF8040（plan §P2 规格）"
+        );
+    }
+
+    @Test
+    void disguisedSpiderColorIntensityScales() {
+        int lowAlpha  = PerceptionEdgeRenderer.colorFor(SenseKind.DISGUISED_SPIDER, 0.0) >>> 24;
+        int highAlpha = PerceptionEdgeRenderer.colorFor(SenseKind.DISGUISED_SPIDER, 1.0) >>> 24;
+        assertTrue(
+            highAlpha > lowAlpha,
+            "DISGUISED_SPIDER alpha 应随 intensity 增大（低 " + lowAlpha + " < 高 " + highAlpha + "）"
+        );
+    }
+
+    @Test
+    void all_sense_kinds_have_color_entry() {
+        // 每个 SenseKind 都必须有颜色映射，添加新 variant 时此测试撞红提示补颜色
+        for (SenseKind kind : SenseKind.values()) {
+            int color = PerceptionEdgeRenderer.colorFor(kind, 0.5);
+            assertTrue(
+                (color & 0x00FFFFFF) != 0,
+                "SenseKind." + kind + " 颜色不应为纯黑（可能 switch 缺少该 case）"
+            );
+        }
+    }
 }

@@ -105,6 +105,13 @@ pub const WAR_WINNER_ZONE_REGEN_MULTIPLIER: f64 = 1.10;
 /// 仅作用于 regen_from_zone 的 rate 参数，不铸造/销毁真元，守恒安全。
 pub const WAR_LOSER_ZONE_REGEN_MULTIPLIER: f64 = 0.95;
 
+// ── plan-fauna-mimic-spider-v1 P0 — 拟态灰烬蛛 Disguised 期真元吸收率 ──
+/// 拟态灰烬蛛 Disguised 期每 tick 真元吸收速率系数（归口 qi_physics；几何 / 感知参数留在 fauna 模块）。
+/// regen_from_zone 的 rate 参数：gain = zone_qi × rate × integrity × QI_CULTIVATION_REGEN_RATE。
+/// rate=0.001 × 0.003 = 0.000003 / tick；正常修炼速率的 1/1000，符合伏击型妖兽极低吸收定位
+/// （plan P0 §line76 明文要求：0.001 = 正常速率 / 100）。
+pub const SPIDER_DISGUISE_REGEN_RATE: f64 = 0.001;
+
 // ── plan-neg-domain-fauna-v1 P0 — 负灵域生态真元抽取率 ──
 /// 诡影接触真元抽取率（归口 qi_physics；几何/密度参数留在 fauna 模块）。
 /// pulse_amount = |zone_qi| × qi_max × GHOST_CONTACT_FACTOR（每次接触，1s cooldown）。
@@ -130,6 +137,26 @@ pub const RESONANCE_RETREAT_INTEGRITY_PENALTY: f64 = 0.08;
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ── plan-fauna-mimic-spider-v1 P0：SPIDER_DISGUISE_REGEN_RATE pin 测试 ──
+
+    #[test]
+    fn spider_disguise_regen_rate_is_one_thousandth() {
+        // plan P0 §line76 明文要求 0.001（正常速率/100）。
+        // 1000× 偏差会导致蛛秒速吸干 zone，严重破坏 qi 守恒预算。
+        assert!(
+            (SPIDER_DISGUISE_REGEN_RATE - 0.001).abs() < QI_EPSILON,
+            "SPIDER_DISGUISE_REGEN_RATE 必须为 0.001（plan P0 设计决议），实际 {SPIDER_DISGUISE_REGEN_RATE}"
+        );
+        // 必须远低于玩家修炼速率（QI_CULTIVATION_REGEN_RATE=0.003 × rate=1.0 base）
+        // 蛛 rate=0.001 意味着每 tick gain ≈ 0.001 × 0.003 × zone_qi
+        // 若 rate 意外等于 1.0，gain 会是设计值的 1000 倍
+        let implied_gain_fraction = SPIDER_DISGUISE_REGEN_RATE / QI_CULTIVATION_REGEN_RATE;
+        assert!(
+            implied_gain_fraction < 1.0,
+            "蛛 rate 不应超过基础修炼速率（rate/regen = {implied_gain_fraction:.4}，应 < 1.0）"
+        );
+    }
 
     #[test]
     fn vortex_stir_ratios_close_conservation_budget() {

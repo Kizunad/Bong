@@ -9,7 +9,9 @@ public enum SenseKind {
     ZHENFA_ARRAY,
     ZHENFA_WARD_ALERT,
     SPIRIT_EYE,
-    NICHE_INTRUSION_TRACE;
+    NICHE_INTRUSION_TRACE,
+    /** plan-fauna-mimic-spider-v1 P2：神识识破伪装蛛，橙色 #FF8040 轮廓，Condense+ 可见。 */
+    DISGUISED_SPIDER;
 
     public static SenseKind fromWire(String wireName) {
         if (wireName == null) {
@@ -24,6 +26,8 @@ public enum SenseKind {
             case "ZhenfaWardAlert" -> ZHENFA_WARD_ALERT;
             case "SpiritEye" -> SPIRIT_EYE;
             case "NicheIntrusionTrace" -> NICHE_INTRUSION_TRACE;
+            // plan-fauna-mimic-spider-v1 P2
+            case "DisguisedSpider" -> DISGUISED_SPIDER;
             default -> LIVING_QI;
         };
     }

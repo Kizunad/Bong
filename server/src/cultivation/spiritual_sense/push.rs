@@ -10,10 +10,12 @@ use crate::cultivation::dugu::{DuguObfuscationDisrupted, DuguPractice};
 use crate::cultivation::life_record::LifeRecord;
 use crate::cultivation::realm_taint::{RealmTaintState, RealmTaintedKind};
 use crate::cultivation::tick::CultivationClock;
+use crate::fauna::mimic_spider::SpiderDisguiseState;
 use crate::network::agent_bridge::{
     payload_type_label, serialize_server_data_payload, SERVER_DATA_CHANNEL,
 };
 use crate::network::{log_payload_build_error, send_server_data_payload};
+use crate::npc::spawn::NpcMarker;
 use crate::schema::realm_vision::{SenseEntryV1, SpiritualSenseTargetsV1};
 use crate::schema::server_data::{ServerDataPayloadV1, ServerDataV1};
 use crate::world::dimension::{CurrentDimension, DimensionKind};
@@ -68,9 +70,17 @@ type SpiritualSenseObserverItem<'a> = (
     &'a LifeRecord,
 );
 type SpiritualSenseObserverFilter = With<Client>;
+type SpiritualSenseNpcSpiderReadItem<'a> = (
+    &'a Position,
+    &'a SpiderDisguiseState,
+    Option<&'a CurrentDimension>,
+);
+type SpiritualSenseNpcSpiderReadFilter = With<NpcMarker>;
+
 type SpiritualSenseQueryParams<'w, 's> = (
     Query<'w, 's, SpiritualSensePlayerReadItem<'w>, SpiritualSensePlayerReadFilter>,
     Query<'w, 's, SpiritualSenseObserverItem<'w>, SpiritualSenseObserverFilter>,
+    Query<'w, 's, SpiritualSenseNpcSpiderReadItem<'w>, SpiritualSenseNpcSpiderReadFilter>,
 );
 
 pub fn send_spiritual_sense_targets(client: &mut Client, targets: SpiritualSenseTargetsV1) {
@@ -110,6 +120,23 @@ pub fn push_spiritual_sense_targets(
     mut player_sets: ParamSet<SpiritualSenseQueryParams<'_, '_>>,
 ) {
     let now_tick = clock.tick;
+
+    // Collect NPC spider targets (Disguised 蛛 → DisguisedSpider target kind)
+    let spider_targets: Vec<SpiritualSenseTarget> = {
+        let spiders = player_sets.p2();
+        spiders
+            .iter()
+            .filter(|(_, disguise_state, _)| **disguise_state == SpiderDisguiseState::Disguised)
+            .map(|(pos, _, _)| SpiritualSenseTarget {
+                position: position_to_array(pos),
+                kind: SpiritualSenseTargetKind::DisguisedSpider,
+                // Disguised 蛛 intensity 恒定 0.7（不随距离衰减，保持神秘感）
+                intensity: 0.7,
+                stealth: None, // DisguisedSpider 走专属分支，stealth 字段不参与 obfuscate_sense_kind
+            })
+            .collect()
+    };
+
     let snapshots: Vec<PlayerSenseSnapshot> = {
         let players = player_sets.p0();
         players
@@ -132,7 +159,7 @@ pub fn push_spiritual_sense_targets(
             )
             .collect()
     };
-    if snapshots.is_empty() {
+    if snapshots.is_empty() && spider_targets.is_empty() {
         return;
     }
 
@@ -168,6 +195,13 @@ pub fn push_spiritual_sense_targets(
                 observer_pos,
                 &snapshots,
             ));
+            // plan-fauna-mimic-spider-v1 P2：追加 Disguised 蛛目标
+            targets.extend(
+                spider_targets
+                    .iter()
+                    .filter(|t| super::scanner::distance(observer_pos, t.position) <= radius)
+                    .cloned(),
+            );
             let entries = scan_targets_inner_ring(observer_pos, cultivation.realm, &targets);
             state.inner_entries.insert(entity, entries);
             state.last_inner_scan_tick.insert(entity, now_tick);

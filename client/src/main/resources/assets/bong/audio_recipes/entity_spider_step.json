@@ -1,0 +1,15 @@
+{
+  "id": "entity_spider_step",
+  "layers": [
+    {
+      "sound": "minecraft:entity.spider.step",
+      "volume": 0.6,
+      "pitch": 1.8,
+      "delay_ticks": 0
+    }
+  ],
+  "priority": 20,
+  "attenuation": "world",
+  "category": "HOSTILE",
+  "bus": "SFX"
+}

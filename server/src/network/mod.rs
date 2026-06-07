@@ -64,6 +64,8 @@ pub mod skill_snapshot_emit;
 pub mod skillbar_config_emit;
 #[cfg(test)]
 mod skillbar_config_emit_test;
+// plan-fauna-mimic-spider-v1 P2 — 拟态蛛伪装状态 S2C CustomPayload
+pub mod spider_disguise_emit;
 pub mod spirit_treasure_emit;
 pub mod status_snapshot_emit;
 pub mod sword_bond_state_emit;
@@ -908,6 +910,9 @@ pub fn register(app: &mut App) {
     app.add_event::<WarPhaseChanged>();
     // plan-offscreen-war-v1 P9：战事结算 resource（ZoneSpiritBonus 倍率表）。
     app.init_resource::<ZoneSpiritBonusStore>();
+
+    // plan-fauna-mimic-spider-v1 P2 — 拟态蛛伪装渲染 S2C payloads
+    spider_disguise_emit::register(app);
 
     app.init_resource::<cultivation_detail_emit::CultivationDetailEmitState>();
     app.init_resource::<client_request_handler::AlchemyMockState>();
