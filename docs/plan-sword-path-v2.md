@@ -71,9 +71,15 @@
 | P0 | 残卷解锁（scroll_sword_path → technique_scroll_spec 5 招）+ 残卷读取 system | ✅ 2026-05-17 |
 | P1 | ECS 接线——绑定触发 + 注入 + 碎裂 + 招式 cast + 经脉拦截 | ✅ 2026-05-17 |
 | P2 | 化虚·一剑开天门 runtime + 天道盲区 tick/过滤 + agent 屏蔽 | ✅ 2026-05-17 |
-| P3 | 黑武士 BOSS AI（big-brain 3 阶段 + spawn + 掉落 runtime）| ⬜ |
-| P4 | VFX 资产全包（贴图 + audio_recipe + 动画 + VfxPlayer）+ 视听联调 | ⬜ |
+| P3 | 黑武士 BOSS AI（big-brain 3 阶段 + spawn + 掉落 runtime）| ✅ 2026-06-07 |
+| P4 | VFX 资产全包（贴图 + audio_recipe + 动画 + VfxPlayer）+ 视听联调 | ⏳ |
 | P5 | v1 遗留测试补全 + e2e 集成测试 + InspectScreen 扩展 | ⬜ |
+
+> **实施进度（2026-06-07，单 plan 多 PR 序列化 §10.3）**：
+> - **PR-A（本次）= P3 server BOSS AI + P4 数据资产首批**。已落地：`server/src/npc/heiwushi.rs`（HeiwushiState/Phase/Cooldowns 成长型 + 5 Scorer + 6 Action + spawn + register，20 单测）、`fauna/drop.rs` HEIWUSHI_DROPS + 参数化覆盖、`combat::resolve` 近战端到端回归；client 侧 5 条 heiwushi audio_recipe + idle/walk/skill1-3/death geckolib 动画 + SwordPathVfxPlayer 注册（资产测试绿）。**关键修复**：近战斩击原 `qi_invest=35` 经 source=Melee 非 prepaid 白名单被 resolver qi 闸门丢弃（零伤害）→ 改 `qi_invest=0` 走物理命中路径，phase 伤害经 `derived_attrs.attack_power` 注入（已加 resolver 回归锁）。
+> - **P4 余下 defer 到 PR-B（视听联调，§10.1 三轮 PROMISE）**：① server 端 emit `bong:heiwushi_*` VFX 事件 + audio_recipe 触发（当前资产已注册但 server 未 emit，未真正联动）；② 缺失粒子贴图 `dark_barrage_bolt`/`dark_transform`/`dark_vortex_ring`/`sword_resonance_ring`（需 `/gen-image`）；③ 近战 melee 动画 + 玩家侧剑道动画（sword_manifest_cast 等）；④ 余下 VfxPlayer 类 + 余下剑道招式 audio_recipe；⑤ 暗黑旋涡「朝心吸入」手感（当前 knockback infra 仅 push，退化为 Slowed）。
+> - **P5 未启动**：v1 遗留单测补全（bond/techniques/tiandao_blind）、e2e 集成、InspectScreen 灵剑信息扩展、SwordBondHudStateStore + SwordBondStateV1 schema。
+> - **首杀 `broken_sword_soul` 掉落（§P3.5）defer**：需 PlayerState 首杀追踪，归 PR-B/后续。
 
 ---
 
