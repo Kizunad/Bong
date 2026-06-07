@@ -56,6 +56,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          persist-credentials: false # 不把 GITHUB_TOKEN 写进 .git/config;后续 gh 操作用 step 级 GH_TOKEN
 
       # 把脚本拷出来,再把 working tree 切到 PR head——这样 review.mjs 是 main 最新版,
       # 而 agent(codex/claude)用 Read/Grep 读到的是 PR 的真实代码(不是 main 版)。
@@ -83,9 +84,11 @@ jobs:
       - name: 配置 codex(纯净,指向 proxy)
         env:
           PI_CLIPROXY_KEY: ${{ secrets.PI_CLIPROXY_KEY }}
+          REVIEW_PROXY_BASE: ${{ vars.REVIEW_PROXY_BASE || 'https://proxy.kizun4.uk' }}
         run: |
           mkdir -p ~/.codex
-          cat > ~/.codex/config.toml <<'EOF'
+          BASE="${REVIEW_PROXY_BASE%/}/v1" # 与 claude 共用同一 proxy(REVIEW_PROXY_BASE),补 /v1 是 codex responses 端点
+          cat > ~/.codex/config.toml <<EOF
           model_provider = "custom"
           model = "gpt-5.5"
           model_reasoning_effort = "high"
@@ -95,7 +98,7 @@ jobs:
           name = "custom"
           wire_api = "responses"
           requires_openai_auth = true
-          base_url = "https://proxy.kizun4.uk/v1"
+          base_url = "${BASE}"
           EOF
           printf '{"OPENAI_API_KEY":"%s"}' "$PI_CLIPROXY_KEY" > ~/.codex/auth.json
           chmod 600 ~/.codex/auth.json

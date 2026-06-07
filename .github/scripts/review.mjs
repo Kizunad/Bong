@@ -21,7 +21,7 @@
 //   extractJSON / normalizeConfidence / tallyDecision …)导出供 review.test.mjs 用 `node --test` 锁行为。
 
 import { execSync, spawn } from "node:child_process";
-import { readFileSync, writeFileSync, existsSync, mkdtempSync, rmSync } from "node:fs";
+import { readFileSync, writeFileSync, existsSync, statSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -83,7 +83,8 @@ const ARBITER_RETRIES = Math.max(RETRIES, parseInt(process.env.REVIEW_ARBITER_RE
 const MAX_FILES = Math.max(0, parseInt(process.env.REVIEW_MAX_FILES || "6", 10));
 const FILE_BYTES = Math.max(1000, parseInt(process.env.REVIEW_FILE_BYTES || "8000", 10));
 const MAX_DIFF = parseInt(process.env.REVIEW_MAX_DIFF || "200000", 10);
-const DRY_RUN = !!process.env.REVIEW_DRY_RUN;
+// 显式解析:只有 1/true/yes 才算开,避免 REVIEW_DRY_RUN="0"/"false" 被 !! 误判为真。
+const DRY_RUN = /^(1|true|yes)$/i.test(String(process.env.REVIEW_DRY_RUN || "").trim());
 
 const PR = process.env.PR_NUMBER;
 
@@ -567,8 +568,15 @@ function fetchFiles(paths, already) {
   for (const p of paths) {
     if (picked.length >= MAX_FILES) break;
     if (already.has(p) || !isSafeRepoPath(p) || !existsSync(p)) continue;
-    already.add(p);
-    let body = readFileSync(p, "utf8");
+    let body;
+    try {
+      if (!statSync(p).isFile()) continue; // 跳过目录等非常规文件:readFileSync(dir,"utf8") 会抛 EISDIR 拖垮整次 review
+      body = readFileSync(p, "utf8");
+    } catch (e) {
+      console.error(`  跳过无法读取的补充文件 ${p}: ${e.message}`);
+      continue;
+    }
+    already.add(p); // 仅对真正读到的文件标记,避免坏路径占名额
     const truncated = body.length > FILE_BYTES;
     if (truncated) body = body.slice(0, FILE_BYTES);
     picked.push(`### ${p}${truncated ? `(前 ${FILE_BYTES} 字符)` : ""}\n\`\`\`\n${body}\n\`\`\``);
@@ -592,14 +600,14 @@ const gatherPrompt = (prContext) =>
   `facts only;plan 从 PR 标题/分支名识别 plan-<name>-vN,识别不到 plan_checklist 给空数组。`;
 
 const debatePrompt = (brief, extraContext, countdown, priorUncertain) =>
-  `你是 Bong 项目 PR 审核的一员(深度推理,独立判断,带 Read/Grep 工具)。\n${GUIDELINES}\n\n` +
+  `你是 Bong 项目 PR 审核的一员(深度推理,独立判断)。\n${GUIDELINES}\n\n` +
   `## 已整理的审核 brief\n${brief}\n` +
   (priorUncertain.length
     ? `\n## 上一轮面板标记的弱项(请优先攻克)\n${priorUncertain.map((u) => `- ${u.dimension}: ${u.reason || ""} ${u.need ? `(需:${u.need})` : ""}`).join("\n")}\n`
     : "") +
   `${extraContext}\n\n` +
   `${countdown.text}\n\n` +
-  `基于以上材料 + 你打开真实文件的核对,逐项审核本 PR:\n` +
+  `基于以上材料逐项审核本 PR:\n` +
   `a) plan 该阶段交付物是否逐项落地(对照 plan_checklist 标 ✅/❌/⚠️)\n` +
   `b) plan 列出但 PR 缺失的模块/函数/测试/schema\n` +
   `c) 正确性:逻辑、边界 off-by-one、并发、错误分支、IPC schema 对齐\n` +
@@ -618,10 +626,10 @@ const debatePrompt = (brief, extraContext, countdown, priorUncertain) =>
   `}`;
 
 const fanoutPrompt = (brief, extraContext, dim) =>
-  `你是 Bong PR 审核的【${dim.dimension}】专项核查员(带 Read/Grep 工具)。前几轮对该维度把握不足,现在只盯这一维度深挖到底。\n` +
+  `你是 Bong PR 审核的【${dim.dimension}】专项核查员。前几轮对该维度把握不足,现在只盯这一维度深挖到底。\n` +
   `${GUIDELINES}\n\n## 审核 brief\n${brief}\n${extraContext}\n\n` +
   `## 待澄清\n${dim.reason || ""}${dim.need ? `(还需:${dim.need})` : ""}\n\n` +
-  `打开真实文件核对,只就【${dim.dimension}】给结论:有问题逐条带 file:line + 证据;确认无问题就明说"该维度核查通过"。\n` +
+  `只就【${dim.dimension}】给结论:有问题逐条带 file:line + 证据;确认无问题就明说"该维度核查通过"。\n` +
   `只输出纯 JSON:\n` +
   `{"dimension":"${dim.dimension}","confidence":0-100,"verdict":"问题|通过|仍不确定",` +
   `"findings":[{"severity":"blocker|major|minor","file":"路径","line":"行号","title":"...","evidence":"...","why":"..."}]}`;
@@ -629,8 +637,8 @@ const fanoutPrompt = (brief, extraContext, dim) =>
 const votePrompt = (prContext, activeFindings, askMissed) => {
   const view = activeFindings.map(({ id, severity, file, line, title, why }) => ({ id, severity, file, line, title, why }));
   return (
-    `你是 Bong PR 审核的**怀疑型投票者**(带 Read/Grep 工具)。\n${GUIDELINES}\n\n${prContext}\n\n` +
-    `逐条裁断下面的 findings(带 id)。**默认判 NOT_REAL**——只有当你打开真实文件、明确确认全部四点:\n` +
+    `你是 Bong PR 审核的**怀疑型投票者**。\n${GUIDELINES}\n\n${prContext}\n\n` +
+    `逐条裁断下面的 findings(带 id)。**默认判 NOT_REAL**——只有当你能明确确认全部四点:\n` +
     `① 问题真实存在 ② 该代码路径可达 ③ 周围代码确实没有处理 ④ 行号对得上,才投 REAL。\n` +
     `证据不足、无法定位、推测性、风格洁癖、"可能/也许/建议"一律 NOT_REAL。宁可漏过,也不要放过假阳性。\n\n` +
     `findings:\n${JSON.stringify(view, null, 2)}\n\n` +
@@ -860,8 +868,11 @@ ${diff}
       if (askMissed) {
         for (const m of r?.missed || []) {
           if (m && (m.title || m.file)) {
+            // 与已有 findings / 已补漏 同坐标(file|line|title 归一)的不再新增,否则同问题拆成多条独立票仓。
+            const mkey = `${String(m.file || "").trim()}|${String(m.line ?? "").trim()}|${String(m.title || "").trim().toLowerCase().replace(/\s+/g, " ")}`;
+            if (deduped.some((f) => f.key === mkey) || missedPool.some((f) => f.key === mkey)) continue;
             const id = deduped.length + missedPool.length + 1;
-            const f = { ...m, id, by: "补漏", consensus: 1, severity: String(m.severity || "minor").toLowerCase() };
+            const f = { ...m, key: mkey, id, by: "补漏", consensus: 1, severity: String(m.severity || "minor").toLowerCase() };
             missedPool.push(f);
             tally[id] = { real: 0, not: 0 };
             active.push(id);
