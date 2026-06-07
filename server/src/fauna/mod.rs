@@ -1,6 +1,8 @@
 pub mod bone_coin;
 pub mod butcher;
 pub mod components;
+// plan-daozhan-v1 P0 — 道伥核心数据结构与 spawn 触发逻辑
+pub mod daozhan;
 pub mod drop;
 pub mod experience;
 pub mod ghost;
@@ -75,4 +77,10 @@ pub fn register(app: &mut App) {
     );
     // plan-fauna-mimic-spider-v1 P0：拟态灰烬蛛状态机 + Disguised qi 吸收 + 死亡归还
     mimic_spider::register(app);
+    // plan-daozhan-v1 P1：Mimicry big-brain Scorer/Action 注册
+    daozhan::register_p1(app);
+    // plan-daozhan-v1 P2：Ambush big-brain Scorer/Action 注册（背对/低真元触发 + QiTransfer 守恒）
+    daozhan::register_p2(app);
+    // plan-daozhan-v1 P3：天道凝结 + 死亡 qi 全额归还（神识识破在 spiritual_sense/push.rs 接入）
+    daozhan::register_p3(app);
 }

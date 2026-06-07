@@ -175,6 +175,18 @@ pub enum QiTransferReason {
     ///   - 逸散 20%：emit QiTransfer(from=npc:<hybrid_id>, to=zone:<zone_name>, reason=ReleaseToZone)
     ///   - **sum(beast_qi) == hybrid_qi + released_to_zone**，无凭空消失
     FusionMerge,
+    /// plan-daozhan-v1 P0 — 道伥伏击时从玩家 qi_current 吸取真元，守恒转入道伥储量。
+    ///
+    /// 守恒约束：player.qi_current -= amount；daozhan.daozhan_qi += amount；
+    /// QiTransfer(from=player:<id>, to=npc:daozhan:<id>, reason=DaoZhangDrain)。
+    /// 凝结/坍缩渊死亡 spawn 的道伥初始 qi 走死亡转移，不走此路径。
+    DaoZhangDrain,
+    /// plan-daozhan-v1 P0 — 天道凝结道伥时从高浓度 zone.spirit_qi 凝出初始真元。
+    ///
+    /// 守恒约束：zone.spirit_qi -= delta；daozhan.qi_init = condensed_amount；
+    /// QiTransfer(from=zone:<name>, to=npc:daozhan:<id>, reason=TiandaoCondense)。
+    /// 绝不凭空创生：zone 必须先减，道伥才获得真元。
+    TiandaoCondense,
 }
 
 #[derive(Debug, Clone, Event, PartialEq)]

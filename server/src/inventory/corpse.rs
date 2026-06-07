@@ -9,6 +9,8 @@
 use serde::{Deserialize, Serialize};
 use valence::prelude::{bevy_ecs, Component};
 
+use crate::cultivation::components::Realm;
+
 /// 干尸实体的 marker component。
 ///
 /// `drops` 是死亡点散落的 instance_id 列表（既包括 entry_carry 50% 也包括 tsy_acquired
@@ -26,6 +28,12 @@ pub struct CorpseEmbalmed {
     pub drops: Vec<u64>,
     /// 是否已被 P2 lifecycle 激活成道伥。MVP 默认 false。
     pub activated_to_daoxiang: bool,
+    /// plan-daozhan-v1 P0 — 死者境界（来自死亡时刻的 Cultivation.realm）。
+    ///
+    /// 用于道伥 spawn 概率门控（化虚 80% / 通灵 50% / 固元 20%）及 loot 分档。
+    /// 历史干尸（升级前创建）无此字段时反序列化为 None，视为低境处理（spawn 概率 0%）。
+    #[serde(default)]
+    pub origin_realm: Option<Realm>,
 }
 
 #[cfg(test)]
@@ -40,12 +48,17 @@ mod tests {
             death_cause: "tsy_drain".into(),
             drops: vec![10, 11, 12],
             activated_to_daoxiang: false,
+            origin_realm: None,
         };
         assert_eq!(corpse.family_id, "tsy_lingxu_01");
         assert_eq!(corpse.died_at_tick, 1234);
         assert_eq!(corpse.death_cause, "tsy_drain");
         assert_eq!(corpse.drops, vec![10, 11, 12]);
         assert!(!corpse.activated_to_daoxiang);
+        assert!(
+            corpse.origin_realm.is_none(),
+            "默认 origin_realm 应为 None（向后兼容）"
+        );
     }
 
     #[test]
@@ -56,9 +69,39 @@ mod tests {
             death_cause: "attack_intent:offline:Bob".into(),
             drops: vec![1, 2, 3, 4, 5],
             activated_to_daoxiang: true,
+            origin_realm: Some(Realm::Void),
         };
         let json = serde_json::to_string(&corpse).expect("serialize");
         let back: CorpseEmbalmed = serde_json::from_str(&json).expect("deserialize");
         assert_eq!(corpse, back);
+    }
+
+    #[test]
+    fn corpse_embalmed_serde_backward_compat_no_origin_realm() {
+        // 历史 JSON（无 origin_realm 字段）应能反序列化，origin_realm 默认 None
+        let legacy_json = r#"{"family_id":"tsy_old","died_at_tick":100,"death_cause":"tsy_drain","drops":[],"activated_to_daoxiang":false}"#;
+        let corpse: CorpseEmbalmed = serde_json::from_str(legacy_json)
+            .expect("历史 JSON 应能反序列化（origin_realm 有 #[serde(default)]）");
+        assert!(
+            corpse.origin_realm.is_none(),
+            "旧版 JSON 无 origin_realm 字段，应反序列化为 None"
+        );
+    }
+
+    #[test]
+    fn corpse_embalmed_void_realm() {
+        let corpse = CorpseEmbalmed {
+            family_id: "tsy_qingyun_01".into(),
+            died_at_tick: 5000,
+            death_cause: "tsy_collapsed".into(),
+            drops: vec![],
+            activated_to_daoxiang: false,
+            origin_realm: Some(Realm::Void),
+        };
+        assert_eq!(
+            corpse.origin_realm,
+            Some(Realm::Void),
+            "化虚境界干尸应记录 Realm::Void"
+        );
     }
 }

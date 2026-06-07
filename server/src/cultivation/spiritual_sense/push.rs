@@ -10,6 +10,7 @@ use crate::cultivation::dugu::{DuguObfuscationDisrupted, DuguPractice};
 use crate::cultivation::life_record::LifeRecord;
 use crate::cultivation::realm_taint::{RealmTaintState, RealmTaintedKind};
 use crate::cultivation::tick::CultivationClock;
+use crate::fauna::daozhan::DaoZhangState;
 use crate::fauna::mimic_spider::SpiderDisguiseState;
 use crate::network::agent_bridge::{
     payload_type_label, serialize_server_data_payload, SERVER_DATA_CHANNEL,
@@ -77,10 +78,19 @@ type SpiritualSenseNpcSpiderReadItem<'a> = (
 );
 type SpiritualSenseNpcSpiderReadFilter = With<NpcMarker>;
 
+// plan-daozhan-v1 P3：Mimicry 态道伥 → DisguisedDaoZhang target
+type SpiritualSenseNpcDaoZhangReadItem<'a> = (
+    &'a Position,
+    &'a DaoZhangState,
+    Option<&'a CurrentDimension>,
+);
+type SpiritualSenseNpcDaoZhangReadFilter = With<NpcMarker>;
+
 type SpiritualSenseQueryParams<'w, 's> = (
     Query<'w, 's, SpiritualSensePlayerReadItem<'w>, SpiritualSensePlayerReadFilter>,
     Query<'w, 's, SpiritualSenseObserverItem<'w>, SpiritualSenseObserverFilter>,
     Query<'w, 's, SpiritualSenseNpcSpiderReadItem<'w>, SpiritualSenseNpcSpiderReadFilter>,
+    Query<'w, 's, SpiritualSenseNpcDaoZhangReadItem<'w>, SpiritualSenseNpcDaoZhangReadFilter>,
 );
 
 pub fn send_spiritual_sense_targets(client: &mut Client, targets: SpiritualSenseTargetsV1) {
@@ -137,6 +147,23 @@ pub fn push_spiritual_sense_targets(
             .collect()
     };
 
+    // plan-daozhan-v1 P3：收集 Mimicry 态道伥 → DisguisedDaoZhang target
+    // intensity 0.6（略低于伪装蛛，道伥本就是"更难察觉的人形"，固元以上神识感知到微弱残念波动）
+    let daozhan_targets: Vec<SpiritualSenseTarget> = {
+        let daozhan_q = player_sets.p3();
+        daozhan_q
+            .iter()
+            .filter(|(_, state, _)| **state == DaoZhangState::Mimicry)
+            .map(|(pos, _, _)| SpiritualSenseTarget {
+                position: position_to_array(pos),
+                kind: SpiritualSenseTargetKind::DisguisedDaoZhang,
+                // intensity 0.6：道伥伪装精妙，神识感知比蛛更弱（Mimicry 态残念渗出微量）
+                intensity: 0.6,
+                stealth: None,
+            })
+            .collect()
+    };
+
     let snapshots: Vec<PlayerSenseSnapshot> = {
         let players = player_sets.p0();
         players
@@ -159,7 +186,7 @@ pub fn push_spiritual_sense_targets(
             )
             .collect()
     };
-    if snapshots.is_empty() && spider_targets.is_empty() {
+    if snapshots.is_empty() && spider_targets.is_empty() && daozhan_targets.is_empty() {
         return;
     }
 
@@ -198,6 +225,13 @@ pub fn push_spiritual_sense_targets(
             // plan-fauna-mimic-spider-v1 P2：追加 Disguised 蛛目标
             targets.extend(
                 spider_targets
+                    .iter()
+                    .filter(|t| super::scanner::distance(observer_pos, t.position) <= radius)
+                    .cloned(),
+            );
+            // plan-daozhan-v1 P3：追加 Mimicry 态道伥目标（DisguisedDaoZhang）
+            targets.extend(
+                daozhan_targets
                     .iter()
                     .filter(|t| super::scanner::distance(observer_pos, t.position) <= radius)
                     .cloned(),

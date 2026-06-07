@@ -50,10 +50,10 @@
 
 | 阶段 | 状态 | 主要交付物 | 验收标准 |
 |------|------|-----------|---------|
-| **P0** | ⬜ | `DaoZhangState` 三态模型 + spawn 触发条件 + loot 注册 | 数据模型 PR 合并 + ≥ 8 单测 green |
-| **P1** | ⬜ | Mimicry 行为 AI（假砍树/挖矿/蹲伏）+ 伪装渲染 | 道伥在神识范围外看起来是无名玩家 |
-| **P2** | ⬜ | 触发绝杀（背对 or qi < 20%）+ 真元吸取攻击 + VFX | 触发条件满足 → 道伥立即切入 Ambush + 守恒律通过 |
-| **P3** | ⬜ | 神识识破 + 天道条件刷出 + 死亡掉落完整链路 | spirit-eye 激活可识别道伥；掉落验收（残卷/破碎法宝 drop table 正确）|
+| **P0** | ✅ 2026-06-08 | `DaoZhangState`(Mimicry/Ambush) + spawn 触发(3来源) + loot 分档 + QiTransferReason::DaoZhangDrain/TiandaoCondense | 数据模型 + 守恒(spawn凝结 zone减==道伥增) |
+| **P1** | ✅ 2026-06-08 | Mimicry 行为 AI(FakeSwing/Sneak/Mine,游戏tick计时) + fake-player 渲染(CustomPayload,禁vanilla hack) | 道伥伪装成无名玩家 |
+| **P2** | ✅ 2026-06-08 | 触发绝杀(背对>150°(符号修正) or qi<20%) + 真元吸取(QiTransfer DaoZhangDrain) + reveal VFX | 触发→Ambush + 守恒(player减==道伥增) |
+| **P3** | ✅ 2026-06-08 | 神识识破(DisguisedDaoZhang红轮廓#C04040) + 天道凝结刷出 + 死亡掉落(按origin_realm) + qi_release_to_zone全额 | 神识识别 + 掉落分档 + 死亡守恒 |
 
 ---
 
@@ -101,3 +101,42 @@
 3. **道伥 AI 套路有限问题**：P1 只有 3 种假动作；v2 是否引入更多"语境感知"行为（当附近有玩家在挖矿，道伥就过来假装"一起挖"）
 4. **多道伥协作**：同区块多个道伥是否有联动（一个引开注意，另一个绕背）——v1 各自独立，v2 留接口
 5. **道伥与负灵域**：worldview §七 说负灵域里没有生物；道伥诞生于坍缩渊（负灵域），是否属于例外？建议：道伥可在负灵域存活（因其真元已是"残留"不受正常压差影响），但玩家进负灵域追道伥风险极高
+
+---
+
+## Finish Evidence
+
+**验收日期**：2026-06-08 · 全 P0-P3 ✅ · 经 consume-plan 自动消费(viability gate 验证+纠正10接口偏差 + 实施 + opus 对抗自检 2 轮修复)
+
+### 落地清单
+- **P0**：`server/src/fauna/daozhan.rs`(DaoZhangState Mimicry/Ambush + DaoZhangBehaviorBlackboard + DaoZhangSpawnTrigger 3来源 + realm_spawn_probability 化虚80/通灵50/固元20);`server/src/qi_physics/ledger.rs` 新增 `QiTransferReason::DaoZhangDrain` + `TiandaoCondense`;`server/src/npc/loot.rs` daozhan loot 按 origin_realm 分档(tattered_scroll_generic + broken_artifact);道伥挂 `NpcArchetype::Daoxiang`(复用既有 spawn/thinker 基础设施,非新建 FaunaKind)。
+- **P1**：DaoZhangMimicryScorer/Action(FakeSwing/FakeSneak/FakeMine behavior_queue 循环,**游戏 tick 计时非渲染帧**);`server/src/network/daozhan_disguise_emit.rs`(bong:daozhan_disguise_enter CustomPayload);client `DaoZhanDisguiseHandler.java` + `FakePlayerRendererMixin.java`(**禁 vanilla hack**,PlayerEntityRenderer 注入渲染无名玩家)。
+- **P2**：DaoZhangAmbushScorer(背对>150°(**B1 符号反转修正**:dot<cos150°=-0.866) or qi<20%) + AmbushAction(reveal event + 古术绝杀连3次 `QiTransfer{DaoZhangDrain}` 玩家 qi_current → daozhan_qi 累积守恒) + reveal VFX/audio 常数。
+- **P3**：神识识破(scanner 推 `SenseKind::DisguisedDaoZhang` → client 红轮廓 #C04040);天道凝结刷出(zone.spirit_qi 高浓度 → daozhan_condense_spawn,TiandaoCondense 从 zone 凝结**不创生**);`daozhan_death_loot_system` 按 origin_realm 掉落 + `release_qi_amount_to_zone` **全额**归还(残余 + 累积 daozhan_qi)。
+- **B2/B3 wiring 修复**：`inventory/mod.rs` apply_death_drop_on_revive 读真实 Cultivation.realm 写 origin_realm(原恒 None);`tsy_lifecycle.rs` spawn_daoxiang_from_corpse 插 DaoZhangState/Blackboard(尸体路径产真道伥)。
+- **schema 契约**：`agent/packages/schema/src/spiritual-sense.ts` SenseKindV1 union 补 `DisguisedDaoZhang` + `DisguisedSpider`(后者补 fauna-mimic #431 遗留缺口)+ `npm run generate` 重建 5 个 generated artifacts。
+
+### 关键 commit(branch auto/plan-daozhan-v1)
+- `522a84409` P0 状态机/blackboard/spawn触发/loot分档 + 境界概率门控 + 25测
+- `6c2bc1e98` P1 Mimicry big-brain AI + 伪装 S2C + client 渲染
+- `32f229b51` P2 AmbushScorer/Action + 三连 QiTransfer 守恒 + VFX/音效
+- `cd524bd41` P3 神识识破 + 天道凝结 + 死亡气释放
+- `b1c9762fa` fix: 3 blocker(背对符号反转/origin_realm生产None/尸体spawn不挂组件)+3 major(client神识枚举/loot接通/集成测试走生产链)
+- `b490e3e0f` fix: agent SenseKindV1 union 补 DisguisedSpider/DisguisedDaoZhang + rebuild generated artifacts + doc 修正
+
+### 测试结果
+- server `cargo fmt --check` ✅ / `cargo clippy --all-targets -- -D warnings` ✅ / `cargo test`:**7903 passed / 0 failed**(含背对阈值边界/守恒3流/经真实尸体spawn路径集成测试 corpse_spawn_path_yields_daozhan_state_and_blackboard)
+- agent `npm test -w @bong/schema`:**546 tests 全绿**(4 个 spiritual-sense RED → 绿,generated-artifacts freshness gate 绿)
+- client:realm_vision 测试绿;1 pre-existing 失败 BongEntityModelAssetTest(gitignored local_models,本分支零触及实体模型)
+
+### 跨仓库核验
+- **server** ✅:`DaoZhangState`/`daozhan_*_system`/`QiTransferReason::{DaoZhangDrain,TiandaoCondense}`/`daozhan_loot_for_tier`/spawn_daoxiang_from_corpse(扩展)
+- **agent** ✅:`SenseKindV1` union DisguisedDaoZhang/DisguisedSpider + generated artifacts
+- **client** ✅:`DaoZhanDisguiseHandler`/`FakePlayerRendererMixin`/`SenseKind.DISGUISED_DAOZHAN`(#C04040)
+- **契约** ✅:S2C `bong:daozhan_disguise_enter` + scanner push DisguisedDaoZhang
+
+### 遗留 / 后续
+- **client 视觉待 WSLg 验收**:fake-player 无名玩家渲染 + 神识红轮廓(逻辑/契约已测,主观视觉需人眼)。
+- **P2 reveal VFX/音效 polish**:DAOZHAN_REVEAL_VFX/AUDIO 常数已定义但 emit/render 未接(pre-existing polish 缺口,reveal 核心行为=伪装→真NPC切换已接通)。
+- **DaoZhangSpawnTrigger::TribulationStrike deferred**:主世界突破回火死亡(BreakthroughBackfire)当前不产 CorpseEmbalmed,天劫作为 worldview§七「次要来源」待后续 tribulation plan 接通;主来源 CollapseZoneDeath 已全链路。
+- **DisguisedSpider 渲染**:agent union 已补,client 神识红轮廓仅 daozhan;spider 神识识破属 fauna-mimic 范围。

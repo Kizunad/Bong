@@ -39,6 +39,8 @@ public final class PerceptionEdgeRenderer {
             case NICHE_INTRUSION_TRACE -> 0x4B4654;
             // plan-fauna-mimic-spider-v1 P2：伪装蛛橙色轮廓 #FF8040，intensity 约 70%
             case DISGUISED_SPIDER -> 0xFF8040;
+            // plan-daozhan-v1 P3：伪装道伥红色轮廓 #C04040，Spirit+ 可见
+            case DISGUISED_DAOZHAN -> 0xC04040;
         };
         int alpha = (int) Math.round(80.0 + Math.max(0.0, Math.min(1.0, intensity)) * 175.0);
         return (alpha << 24) | base;

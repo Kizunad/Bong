@@ -38,6 +38,7 @@ use valence::prelude::{
 };
 
 use crate::combat::CombatClock;
+use crate::fauna::daozhan::{daozhan_spawn_roll, DaoZhangBehaviorBlackboard, DaoZhangState};
 use crate::inventory::ancient_relics::AncientRelicSource;
 use crate::inventory::corpse::CorpseEmbalmed;
 use crate::inventory::tsy_loot_spawn::source_class_from_family_id;
@@ -607,33 +608,48 @@ pub fn tsy_collapse_completed_cleanup(
                 continue;
             }
             // 加速激活：与自然激活同样 spawn，但立刻进 Roll 决定喷不喷。
+            // plan-daozhan-v1 P0 — 先做境界概率门控，再做喷出 Roll。
+            // 无境界信息的历史干尸不生成道伥（概率 0%），直接跳过 spawn 流程。
+            let should_attempt_spawn = if let Some(realm) = corpse.origin_realm {
+                let seed = corpse
+                    .died_at_tick
+                    .wrapping_mul(0x6C62_272E_07BB_0142)
+                    .wrapping_add(rng_seed);
+                let (hit, next) = daozhan_spawn_roll(realm, seed);
+                rng_seed = next;
+                hit
+            } else {
+                false
+            };
             if let Some(layer) = layer_entity {
-                let spawn_pos = pos.0;
-                let new_entity = spawn_daoxiang_from_corpse(
-                    &mut commands,
-                    layer,
-                    &zones,
-                    corpse,
-                    spawn_pos,
-                    clock.tick,
-                );
-                let (decision, next_seed) = collapse_roll(rng_seed);
-                rng_seed = next_seed;
-                if decision {
-                    let offset_pos = ejection_target(main_world_anchor.pos, rng_seed);
-                    rng_seed = rng_seed.wrapping_mul(0x9E37_79B9).wrapping_add(1);
-                    dim_transfer.send(DimensionTransferRequest {
-                        entity: new_entity,
-                        target: main_world_anchor.dimension,
-                        target_pos: offset_pos,
-                    });
-                } else {
-                    commands
-                        .entity(new_entity)
-                        .insert(valence::prelude::Despawned);
+                if should_attempt_spawn {
+                    let spawn_pos = pos.0;
+                    let new_entity = spawn_daoxiang_from_corpse(
+                        &mut commands,
+                        layer,
+                        &zones,
+                        corpse,
+                        spawn_pos,
+                        clock.tick,
+                    );
+                    let (decision, next_seed) = collapse_roll(rng_seed);
+                    rng_seed = next_seed;
+                    if decision {
+                        let offset_pos = ejection_target(main_world_anchor.pos, rng_seed);
+                        rng_seed = rng_seed.wrapping_mul(0x9E37_79B9).wrapping_add(1);
+                        dim_transfer.send(DimensionTransferRequest {
+                            entity: new_entity,
+                            target: main_world_anchor.dimension,
+                            target_pos: offset_pos,
+                        });
+                    } else {
+                        commands
+                            .entity(new_entity)
+                            .insert(valence::prelude::Despawned);
+                    }
                 }
             }
-            // 干尸本体一律消失（已被激活）
+            // 干尸本体一律消失（已被激活或已检查概率）
             commands
                 .entity(corpse_entity)
                 .insert(valence::prelude::Despawned);
@@ -710,6 +726,24 @@ pub fn tsy_corpse_to_daoxiang_tick(
         if elapsed < DAOXIANG_NATURAL_TICKS {
             continue;
         }
+        // plan-daozhan-v1 P0 — 境界概率门控：化虚 80% / 通灵 50% / 固元 20% / 其他 0%。
+        // 无境界信息（历史干尸）视为低境，spawn 概率 0%（不生成道伥）。
+        let realm = match corpse.origin_realm {
+            Some(r) => r,
+            None => {
+                commands.entity(entity).insert(valence::prelude::Despawned);
+                continue;
+            }
+        };
+        // 以 entity index + died_at_tick 派生确定性种子，避免引入外部 rng 依赖
+        let seed = (entity.index() as u64)
+            .wrapping_mul(0x9E37_79B9_7F4A_7C15)
+            .wrapping_add(corpse.died_at_tick);
+        let (should_spawn, _) = daozhan_spawn_roll(realm, seed);
+        if !should_spawn {
+            commands.entity(entity).insert(valence::prelude::Despawned);
+            continue;
+        }
         spawn_daoxiang_from_corpse(&mut commands, layers.tsy, &zones, corpse, pos.0, clock.tick);
         commands.entity(entity).insert(valence::prelude::Despawned);
     }
@@ -778,13 +812,20 @@ pub fn spawn_daoxiang_from_corpse(
         MovementController::new(),
         loadout.movement_capabilities,
         MovementCooldowns::default(),
-        NpcPatrol::new(home_zone, pos),
+        NpcPatrol::new(home_zone.clone(), pos),
         crate::npc::brain::WanderState::default(),
         daoxiang_lifecycle_thinker(),
         TsyHostileMarker {
             family_id: corpse.family_id.clone(),
         },
     ));
+    // plan-daozhan-v1 B3 fix：尸体路径产出的道伥必须挂 DaoZhangState + DaoZhangBehaviorBlackboard，
+    // 让 P2/P3 两态机（Mimicry↔Ambush）和 qi 守恒系统正确识别为"真道伥"。
+    // origin_realm 来自 CorpseEmbalmed（已由 B2 修复，携带真实境界）。
+    let daozhan_bb = DaoZhangBehaviorBlackboard::new(home_zone.as_str(), pos, corpse.origin_realm);
+    commands
+        .entity(entity)
+        .insert((DaoZhangState::Mimicry, daozhan_bb));
     commands
         .entity(entity)
         .insert(npc_runtime_bundle(entity, NpcArchetype::Daoxiang));

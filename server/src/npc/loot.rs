@@ -10,6 +10,7 @@
 use serde::{Deserialize, Serialize};
 use valence::prelude::{bevy_ecs, Component};
 
+use crate::fauna::daozhan::DaoZhangLootTier;
 use crate::npc::lifecycle::NpcArchetype;
 
 // plan-npc-ai-v1 scaffolding: this module is referenced by design documents
@@ -169,9 +170,46 @@ pub fn roll_loot(table: &NpcLootTable, seed: u64) -> Vec<RolledLoot> {
     out
 }
 
+/// plan-daozhan-v1 P0 — 道伥 loot 按 origin_realm 分档。
+///
+/// 使用 [`DaoZhangLootTier`] 区分三档：
+/// - `High`（化虚/通灵）：高档残卷 + 破碎法宝（低概率）。
+/// - `Mid`（固元）：中档残卷。
+/// - `Base`（天道凝结/低境）：通用残卷（最基础）。
+///
+/// 条目复用已有模板 ID（`tattered_scroll_generic` / `broken_artifact`），
+/// 按境界调整掉率权重。
+pub fn daozhan_loot_for_tier(tier: DaoZhangLootTier) -> Vec<NpcLootEntry> {
+    match tier {
+        DaoZhangLootTier::High => vec![
+            // 高档残卷（高境遗骸携带高阶功法残片）
+            NpcLootEntry::new("tattered_scroll_generic", 0.05),
+            // 破碎法宝（化虚/通灵修士遗存）
+            NpcLootEntry::new("broken_artifact", 0.12),
+            NpcLootEntry::new("broken_artifact_scroll", 0.06),
+            // 骨币
+            NpcLootEntry::new("item.bone_coin", 0.5).with_stack(2, 10),
+        ],
+        DaoZhangLootTier::Mid => vec![
+            // 中档残卷
+            NpcLootEntry::new("tattered_scroll_generic", 0.025),
+            // 骨币
+            NpcLootEntry::new("item.bone_coin", 0.4).with_stack(1, 6),
+        ],
+        DaoZhangLootTier::Base => vec![
+            // 基础残卷（天道凝结道伥或低境遗骸）
+            NpcLootEntry::new("tattered_scroll_generic", 0.008),
+            // 骨币
+            NpcLootEntry::new("item.bone_coin", 0.3).with_stack(1, 4),
+        ],
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::cultivation::components::Realm;
+    use crate::fauna::daozhan::{daozhan_loot_tier, DaoZhangLootTier};
 
     // --- NpcLootEntry ---
 
@@ -394,5 +432,108 @@ mod tests {
             (rate - 0.6).abs() < 0.15,
             "骨币命中率偏离过大：实际 {rate:.3}"
         );
+    }
+
+    // ── plan-daozhan-v1 P0 — daozhan_loot_for_tier 饱和测试 ─────────────────
+
+    #[test]
+    fn daozhan_loot_high_tier_has_broken_artifact() {
+        let entries = daozhan_loot_for_tier(DaoZhangLootTier::High);
+        assert!(
+            entries.iter().any(|e| e.template_id == "broken_artifact"),
+            "High 档道伥应掉 broken_artifact（化虚/通灵遗存）"
+        );
+        assert!(
+            entries
+                .iter()
+                .any(|e| e.template_id == "broken_artifact_scroll"),
+            "High 档道伥应掉 broken_artifact_scroll"
+        );
+    }
+
+    #[test]
+    fn daozhan_loot_all_tiers_have_tattered_scroll() {
+        for tier in [
+            DaoZhangLootTier::High,
+            DaoZhangLootTier::Mid,
+            DaoZhangLootTier::Base,
+        ] {
+            let entries = daozhan_loot_for_tier(tier);
+            assert!(
+                entries
+                    .iter()
+                    .any(|e| e.template_id == "tattered_scroll_generic"),
+                "{tier:?} 档道伥应含 tattered_scroll_generic"
+            );
+        }
+    }
+
+    #[test]
+    fn daozhan_loot_all_tiers_nonempty() {
+        for tier in [
+            DaoZhangLootTier::High,
+            DaoZhangLootTier::Mid,
+            DaoZhangLootTier::Base,
+        ] {
+            let entries = daozhan_loot_for_tier(tier);
+            assert!(!entries.is_empty(), "{tier:?} 档道伥 loot 不应为空");
+        }
+    }
+
+    #[test]
+    fn daozhan_loot_high_has_higher_scroll_chance_than_base() {
+        let high = daozhan_loot_for_tier(DaoZhangLootTier::High);
+        let base = daozhan_loot_for_tier(DaoZhangLootTier::Base);
+        let high_chance = high
+            .iter()
+            .find(|e| e.template_id == "tattered_scroll_generic")
+            .map(|e| e.chance)
+            .unwrap_or(0.0);
+        let base_chance = base
+            .iter()
+            .find(|e| e.template_id == "tattered_scroll_generic")
+            .map(|e| e.chance)
+            .unwrap_or(0.0);
+        assert!(
+            high_chance > base_chance,
+            "High 档残卷掉率 {high_chance} 应高于 Base 档 {base_chance}"
+        );
+    }
+
+    #[test]
+    fn daozhan_loot_tier_by_realm_integration() {
+        // 整合 daozhan::daozhan_loot_tier + loot::daozhan_loot_for_tier
+        let void_entries = daozhan_loot_for_tier(daozhan_loot_tier(Some(Realm::Void)));
+        assert!(
+            void_entries
+                .iter()
+                .any(|e| e.template_id == "broken_artifact"),
+            "化虚境界道伥应掉 broken_artifact（由 daozhan_loot_tier -> High 路由）"
+        );
+        let awaken_entries = daozhan_loot_for_tier(daozhan_loot_tier(Some(Realm::Awaken)));
+        assert!(
+            !awaken_entries
+                .iter()
+                .any(|e| e.template_id == "broken_artifact"),
+            "醒灵境界道伥 Base 档不应掉 broken_artifact"
+        );
+    }
+
+    #[test]
+    fn daozhan_loot_all_chances_in_unit_range() {
+        for tier in [
+            DaoZhangLootTier::High,
+            DaoZhangLootTier::Mid,
+            DaoZhangLootTier::Base,
+        ] {
+            for e in daozhan_loot_for_tier(tier) {
+                assert!(
+                    (0.0..=1.0).contains(&e.chance),
+                    "{tier:?} 档 {} chance={} 超出 [0,1]",
+                    e.template_id,
+                    e.chance
+                );
+            }
+        }
     }
 }

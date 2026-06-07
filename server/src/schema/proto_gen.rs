@@ -7788,6 +7788,8 @@ mod tests {
         assert_eq!(SenseKind::NicheIntrusionTrace as i32, 9);
         // plan-fauna-mimic-spider-v1 P2
         assert_eq!(SenseKind::DisguisedSpider as i32, 10);
+        // plan-daozhan-v1 P3
+        assert_eq!(SenseKind::DisguisedDaoZhang as i32, 11);
     }
 
     // ─── SenseKind all variants roundtrip ──────────────────────────
@@ -7806,6 +7808,8 @@ mod tests {
             SenseKind::NicheIntrusionTrace,
             // plan-fauna-mimic-spider-v1 P2
             SenseKind::DisguisedSpider,
+            // plan-daozhan-v1 P3
+            SenseKind::DisguisedDaoZhang,
         ];
         for kind in kinds {
             let targets = SpiritualSenseTargets {

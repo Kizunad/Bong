@@ -2384,6 +2384,8 @@ enum SenseKind {
   SENSE_KIND_NICHE_INTRUSION_TRACE = 9;
   // plan-fauna-mimic-spider-v1 P2：神识识破伪装蛛，Condense+ 可见
   SENSE_KIND_DISGUISED_SPIDER      = 10;
+  // plan-daozhan-v1 P3：神识识破 Mimicry 态道伥，Solidify+ 可见
+  SENSE_KIND_DISGUISED_DAO_ZHANG   = 11;
 }
 
 message SenseEntry {

@@ -11,7 +11,9 @@ public enum SenseKind {
     SPIRIT_EYE,
     NICHE_INTRUSION_TRACE,
     /** plan-fauna-mimic-spider-v1 P2：神识识破伪装蛛，橙色 #FF8040 轮廓，Condense+ 可见。 */
-    DISGUISED_SPIDER;
+    DISGUISED_SPIDER,
+    /** plan-daozhan-v1 P3：神识识破伪装道伥，红色 #C04040 轮廓，Solidify(固元)+ 可见。 */
+    DISGUISED_DAOZHAN;
 
     public static SenseKind fromWire(String wireName) {
         if (wireName == null) {
@@ -28,6 +30,8 @@ public enum SenseKind {
             case "NicheIntrusionTrace" -> NICHE_INTRUSION_TRACE;
             // plan-fauna-mimic-spider-v1 P2
             case "DisguisedSpider" -> DISGUISED_SPIDER;
+            // plan-daozhan-v1 P3
+            case "DisguisedDaoZhang" -> DISGUISED_DAOZHAN;
             default -> LIVING_QI;
         };
     }

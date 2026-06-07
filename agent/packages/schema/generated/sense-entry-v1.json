@@ -46,6 +46,14 @@
         {
           "const": "NicheIntrusionTrace",
           "type": "string"
+        },
+        {
+          "const": "DisguisedSpider",
+          "type": "string"
+        },
+        {
+          "const": "DisguisedDaoZhang",
+          "type": "string"
         }
       ]
     },

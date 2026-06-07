@@ -2584,6 +2584,8 @@ fn sense_kind_to_proto(k: &super::realm_vision::SenseKindV1) -> i32 {
         SenseKindV1::NicheIntrusionTrace => bong::SenseKind::NicheIntrusionTrace as i32,
         // plan-fauna-mimic-spider-v1 P2
         SenseKindV1::DisguisedSpider => bong::SenseKind::DisguisedSpider as i32,
+        // plan-daozhan-v1 P3
+        SenseKindV1::DisguisedDaoZhang => bong::SenseKind::DisguisedDaoZhang as i32,
     }
 }
 

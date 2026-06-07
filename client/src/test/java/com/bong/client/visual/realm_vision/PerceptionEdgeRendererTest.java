@@ -90,4 +90,44 @@ class PerceptionEdgeRendererTest {
             );
         }
     }
+
+    // plan-daozhan-v1 P3 M1 fix：DISGUISED_DAOZHAN wire 映射 + 颜色规格
+    @Test
+    void disguisedDaoZhanWireKindMapsToRedMarker() {
+        assertEquals(
+            SenseKind.DISGUISED_DAOZHAN,
+            SenseKind.fromWire("DisguisedDaoZhang"),
+            "wire name DisguisedDaoZhang 应映射到 DISGUISED_DAOZHAN（plan §P3 规格）"
+        );
+        int color = PerceptionEdgeRenderer.colorFor(SenseKind.DISGUISED_DAOZHAN, 1.0);
+        assertEquals(
+            0xC04040,
+            color & 0x00FFFFFF,
+            "DISGUISED_DAOZHAN 颜色应为红色 #C04040（plan §P3 神识识破道伥规格）"
+        );
+    }
+
+    @Test
+    void disguisedDaoZhanColorIntensityScales() {
+        int lowAlpha  = PerceptionEdgeRenderer.colorFor(SenseKind.DISGUISED_DAOZHAN, 0.0) >>> 24;
+        int highAlpha = PerceptionEdgeRenderer.colorFor(SenseKind.DISGUISED_DAOZHAN, 1.0) >>> 24;
+        assertTrue(
+            highAlpha > lowAlpha,
+            "DISGUISED_DAOZHAN alpha 应随 intensity 增大（低 " + lowAlpha + " < 高 " + highAlpha + "）"
+        );
+    }
+
+    @Test
+    void unknownWireNameFallsBackToLivingQi() {
+        assertEquals(
+            SenseKind.LIVING_QI,
+            SenseKind.fromWire("UnknownKind"),
+            "未知 wire name 应 fallback 到 LIVING_QI"
+        );
+        assertEquals(
+            SenseKind.LIVING_QI,
+            SenseKind.fromWire(null),
+            "null wire name 应 fallback 到 LIVING_QI"
+        );
+    }
 }

@@ -1211,10 +1211,27 @@ fn visual_kind_for_tsy_archetype(archetype: NpcArchetype) -> FaunaVisualKind {
 }
 
 fn daoxiang_thinker() -> ThinkerBuilder {
+    // plan-daozhan-v1 P2：优先级顺序（FirstToScore，列越靠前优先级越高）：
+    //   AgeingScorer(retire=1.0)
+    //   > DaoZhangAmbushScorer(暴起=1.0，背对/低真元触发)
+    //   > DaoxiangInstinctScorer(本能=1.0，冷却到期时触发)
+    //   > DaoZhangMimicryScorer(伪装游荡=0.7)
+    //   > NpcTechniqueScorer > MeleeRangeScorer > ChaseTargetScorer > WanderScorer
+    //
+    // Ambush 在 Instinct 之前：道伥暴起优先于普通近战本能（暴起自带 QiTransfer 守恒，不走普通攻击）。
+    // Mimicry(0.7) 低于 Ambush(1.0)/Instinct(1.0) 保证攻击可抢占伪装游荡；高于 Wander(0.08)。
     Thinker::build()
         .picker(FirstToScore { threshold: 0.05 })
         .when(AgeingScorer, RetireAction)
+        .when(
+            crate::fauna::daozhan::DaoZhangAmbushScorer,
+            crate::fauna::daozhan::DaoZhangAmbushAction,
+        )
         .when(DaoxiangInstinctScorer, DaoxiangInstinctAction)
+        .when(
+            crate::fauna::daozhan::DaoZhangMimicryScorer,
+            crate::fauna::daozhan::DaoZhangMimicryAction,
+        )
         .when(NpcTechniqueScorer, NpcTechniqueAction)
         .when(MeleeRangeScorer, MeleeAttackAction)
         .when(ChaseTargetScorer, ChaseAction)

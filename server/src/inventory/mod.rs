@@ -2815,6 +2815,7 @@ pub fn apply_death_drop_on_revive(
     anchors: Query<&DeathDropAnchor>,
     dimensions: Query<&CurrentDimension>,
     presences: Query<&crate::world::tsy::TsyPresence>,
+    cultivations: Query<&crate::cultivation::components::Cultivation>,
     mut dropped_registry: bevy_ecs::system::ResMut<DroppedLootRegistry>,
     mut dropped_events: bevy_ecs::event::EventWriter<DroppedItemEvent>,
 ) {
@@ -2874,6 +2875,9 @@ pub fn apply_death_drop_on_revive(
             // §4.3：干尸实体落 corpse_pos。MVP 仅 Position + CorpseEmbalmed component；
             // visual marker mob 由后续 P3 plan-tsy-polish 接 Valence entity sync。
             let drop_ids: Vec<u64> = combined.iter().map(|r| r.instance.instance_id).collect();
+            // plan-daozhan-v1 B2 fix：从死亡玩家的 Cultivation 读取真实境界，
+            // 让 CorpseEmbalmed.origin_realm 携带真境界触发道伥 spawn 概率门控。
+            let origin_realm = cultivations.get(ev.entity).ok().map(|c| c.realm);
             commands.spawn((
                 Position(tsy_outcome.corpse_pos),
                 corpse::CorpseEmbalmed {
@@ -2882,6 +2886,7 @@ pub fn apply_death_drop_on_revive(
                     death_cause: "tsy_death".to_string(),
                     drops: drop_ids,
                     activated_to_daoxiang: false,
+                    origin_realm,
                 },
             ));
 

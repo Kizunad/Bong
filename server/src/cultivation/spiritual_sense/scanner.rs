@@ -15,6 +15,11 @@ pub enum SpiritualSenseTargetKind {
     /// 识破条件：observer realm >= Condense（凝脉期，realm_rank ≥ 2）。
     /// 低于此境界的观察者感知结果被过滤掉，蛛在神识雷达上不可见。
     DisguisedSpider,
+    /// plan-daozhan-v1 P3：Mimicry 态道伥 — 伪装为"无名玩家"，神识较难识破。
+    ///
+    /// 识破条件：observer realm >= Solidify（固元期，realm_rank ≥ 3）。
+    /// 道伥伪装比蛛更接近真实玩家，需更高境界才能识破。
+    DisguisedDaoZhang,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -131,6 +136,15 @@ fn target_to_entry(observer_realm: Realm, target: &SpiritualSenseTarget) -> Opti
         SpiritualSenseTargetKind::DisguisedSpider => {
             if realm_rank(observer_realm) >= 2 {
                 SenseKindV1::DisguisedSpider
+            } else {
+                return None;
+            }
+        }
+        // plan-daozhan-v1 P3：Solidify（固元期）及以上境界才能识破 Mimicry 态道伥。
+        // 道伥伪装更接近真实玩家，需 realm_rank ≥ 3（Solidify）才能看穿。
+        SpiritualSenseTargetKind::DisguisedDaoZhang => {
+            if realm_rank(observer_realm) >= 3 {
+                SenseKindV1::DisguisedDaoZhang
             } else {
                 return None;
             }
@@ -460,6 +474,155 @@ mod tests {
         assert!(
             (result - 5.0).abs() < 1e-9,
             "distance([0,0,0], [3,4,0]) 应为 5.0，实际 {result}"
+        );
+    }
+
+    // ── P3 DisguisedDaoZhang 测试 ───────────────────────────────────────────
+
+    #[test]
+    fn disguised_daozhan_requires_solidify_realm_or_above() {
+        // DisguisedDaoZhang 只有 Solidify（固元期）及以上（realm_rank ≥ 3）可见
+        let targets = vec![SpiritualSenseTarget {
+            position: [30.0, 64.0, 0.0],
+            kind: SpiritualSenseTargetKind::DisguisedDaoZhang,
+            intensity: 0.6,
+            stealth: None,
+        }];
+
+        // Awaken / Induce / Condense 看不见（rank 0/1/2 < 3）
+        assert!(
+            scan_targets_inner_ring([0.0, 64.0, 0.0], Realm::Awaken, &targets).is_empty(),
+            "Awaken 境界不应识破 Mimicry 态道伥（rank=0 < 3）"
+        );
+        assert!(
+            scan_targets_inner_ring([0.0, 64.0, 0.0], Realm::Induce, &targets).is_empty(),
+            "Induce 境界不应识破 Mimicry 态道伥（rank=1 < 3）"
+        );
+        assert!(
+            scan_targets_inner_ring([0.0, 64.0, 0.0], Realm::Condense, &targets).is_empty(),
+            "Condense 境界不应识破 Mimicry 态道伥（rank=2 < 3，比伪装蛛更难识破）"
+        );
+
+        // Solidify 及以上可见（rank ≥ 3）
+        let solidify_entries = scan_targets_inner_ring([0.0, 64.0, 0.0], Realm::Solidify, &targets);
+        assert_eq!(
+            solidify_entries.len(),
+            1,
+            "Solidify 境界（固元）应识破 Mimicry 态道伥（实际 {}）",
+            solidify_entries.len()
+        );
+        assert_eq!(
+            solidify_entries[0].kind,
+            SenseKindV1::DisguisedDaoZhang,
+            "识破后 sense kind 应为 DisguisedDaoZhang"
+        );
+
+        let spirit_entries = scan_targets_inner_ring([0.0, 64.0, 0.0], Realm::Spirit, &targets);
+        assert_eq!(spirit_entries.len(), 1, "Spirit 境界应识破 Mimicry 态道伥");
+
+        let void_entries = scan_targets_inner_ring([0.0, 64.0, 0.0], Realm::Void, &targets);
+        assert_eq!(void_entries.len(), 1, "Void 境界应识破 Mimicry 态道伥");
+    }
+
+    #[test]
+    fn disguised_daozhan_harder_than_spider_to_detect() {
+        // 道伥识破要求 Solidify（rank≥3），蛛识破只需 Condense（rank≥2）
+        // Condense 境界能看到蛛，但看不到道伥
+        let spider_target = SpiritualSenseTarget {
+            position: [30.0, 64.0, 0.0],
+            kind: SpiritualSenseTargetKind::DisguisedSpider,
+            intensity: 0.7,
+            stealth: None,
+        };
+        let daozhan_target = SpiritualSenseTarget {
+            position: [30.0, 64.0, 5.0],
+            kind: SpiritualSenseTargetKind::DisguisedDaoZhang,
+            intensity: 0.6,
+            stealth: None,
+        };
+        let targets = vec![spider_target, daozhan_target];
+
+        // Condense：看到蛛（rank=2），但看不到道伥（需 rank≥3）
+        let condense_entries = scan_targets_inner_ring([0.0, 64.0, 0.0], Realm::Condense, &targets);
+        assert_eq!(
+            condense_entries.len(),
+            1,
+            "Condense 境界应只看到蛛（1个），看不到道伥（需更高境界），实际={}",
+            condense_entries.len()
+        );
+        assert_eq!(
+            condense_entries[0].kind,
+            SenseKindV1::DisguisedSpider,
+            "Condense 境界看到的应是 DisguisedSpider，而非道伥"
+        );
+
+        // Solidify：两者都看到（rank=3）
+        let solidify_entries = scan_targets_inner_ring([0.0, 64.0, 0.0], Realm::Solidify, &targets);
+        assert_eq!(
+            solidify_entries.len(),
+            2,
+            "Solidify 境界应同时看到蛛和道伥（共2个），实际={}",
+            solidify_entries.len()
+        );
+    }
+
+    #[test]
+    fn disguised_daozhan_sense_kind_serializes_correctly() {
+        // SenseKindV1::DisguisedDaoZhang 序列化 wire name（PascalCase）
+        let entry = SenseEntryV1 {
+            kind: SenseKindV1::DisguisedDaoZhang,
+            x: 10.0,
+            y: 64.0,
+            z: 5.0,
+            intensity: 0.6,
+        };
+        let json = serde_json::to_string(&entry).expect("DisguisedDaoZhang must serialize");
+        assert!(
+            json.contains("\"DisguisedDaoZhang\""),
+            "DisguisedDaoZhang wire name 必须为 DisguisedDaoZhang（PascalCase），实际 {json}"
+        );
+
+        // 往返
+        let decoded: SenseEntryV1 = serde_json::from_str(&json).expect("must deserialize");
+        assert_eq!(decoded.kind, SenseKindV1::DisguisedDaoZhang);
+        assert!(
+            (decoded.intensity - 0.6).abs() < 1e-9,
+            "intensity 往返应保持 0.6，实际={}",
+            decoded.intensity
+        );
+    }
+
+    #[test]
+    fn disguised_daozhan_out_of_range_not_visible() {
+        // Solidify 扫描半径 500，目标在 600 > 500，不可见
+        let targets = vec![SpiritualSenseTarget {
+            position: [600.0, 64.0, 0.0],
+            kind: SpiritualSenseTargetKind::DisguisedDaoZhang,
+            intensity: 0.6,
+            stealth: None,
+        }];
+        let entries = scan_targets_inner_ring([0.0, 64.0, 0.0], Realm::Solidify, &targets);
+        assert!(
+            entries.is_empty(),
+            "超出扫描半径（600 > 500）的道伥不应出现在神识结果中"
+        );
+    }
+
+    #[test]
+    fn disguised_daozhan_intensity_within_range() {
+        // intensity 应在 [0, 1] 范围内（保证 clamp 后不越界）
+        let targets = vec![SpiritualSenseTarget {
+            position: [30.0, 64.0, 0.0],
+            kind: SpiritualSenseTargetKind::DisguisedDaoZhang,
+            intensity: 0.6,
+            stealth: None,
+        }];
+        let entries = scan_targets_inner_ring([0.0, 64.0, 0.0], Realm::Solidify, &targets);
+        assert_eq!(entries.len(), 1, "应有 1 条道伥感知记录");
+        let intensity = entries[0].intensity;
+        assert!(
+            (0.0..=1.0).contains(&intensity),
+            "道伥感知 intensity={intensity:.3} 应在 [0, 1] 范围内"
         );
     }
 }

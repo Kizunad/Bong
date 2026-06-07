@@ -38,6 +38,10 @@ pub enum SenseKindV1 {
     /// Client 端渲染为橙色 #FF8040 轮廓，intensity 70%。
     /// 仅 Condense 及以上境界可见。
     DisguisedSpider,
+    /// plan-daozhan-v1 P3：神识识破 Mimicry 态道伥。
+    /// Client 端渲染为红色 #C04040 轮廓，透明度 60%。
+    /// 仅 Solidify（固元）及以上境界可见（比伪装蛛更难识破，因道伥伪装更接近真实玩家）。
+    DisguisedDaoZhang,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
