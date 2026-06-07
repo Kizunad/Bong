@@ -79,6 +79,12 @@ export const NarrationKind = Type.Union([
   Type.Literal("political_jianghu"),
   /** plan-offscreen-war-v1 P9：战事结算匿名叙事（reframe b，无具名宗门）。 */
   Type.Literal("war_outcome"),
+  // plan-dying-elder-v1 P3：垂死大能遭遇叙事种类
+  Type.Literal("dying_elder_appeared"),
+  Type.Literal("dying_elder_dan_received"),
+  Type.Literal("dying_elder_betrayal"),
+  Type.Literal("dying_elder_dead_natural"),
+  Type.Literal("dying_elder_dead_player_kill"),
 ]);
 export type NarrationKind = Static<typeof NarrationKind>;
 

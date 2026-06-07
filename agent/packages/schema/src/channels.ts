@@ -345,6 +345,10 @@ export const CHANNELS = {
   /** Server → Agent: 过载涟漪事件（baomai_v3 overload ripple，agent narration） */
   BAOMAI_V3_OVERLOAD_RIPPLE: "bong:baomai_v3/overload_ripple",
 
+  // ─── 垂死大能遭遇（plan-dying-elder-v1 P3） ─────────────────────────────────
+  /** Server → Agent: 垂死大能遭遇事件（appeared / dan_received / betrayal / dead_*，agent narration） */
+  ELDER_ENCOUNTER: "bong:elder_encounter",
+
   // ─── 我流虚蚀（plan-combat-skill-feedback-bridges-v1 P3） ────────────────────
   /** Server → Agent: 虚蚀阶段推进事件（我流虚蚀整链激活，agent narration） */
   VOID_EROSION_EVENT: "bong:void_erosion_event",
@@ -457,6 +461,8 @@ export const REDIS_V1_CHANNELS = [
   CHANNELS.CRAFT_OUTCOME,
   CHANNELS.CRAFT_RECIPE_UNLOCKED,
   CHANNELS.MUTATION_EVENT,
+  // plan-dying-elder-v1 P3 — 垂死大能遭遇叙事通道
+  CHANNELS.ELDER_ENCOUNTER,
   // plan-combat-skill-feedback-bridges-v1 P3 — 我流虚蚀阶段推进叙事通道
   CHANNELS.VOID_EROSION_EVENT,
   // plan-combat-skill-feedback-bridges-v1 P6 — 蜕壳灰烬入包叙事通道
