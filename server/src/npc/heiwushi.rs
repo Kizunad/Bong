@@ -873,6 +873,335 @@ mod tests {
         assert_eq!(status_events[0].kind, StatusEffectKind::Slowed);
     }
 
+    // ── 饱和测试：P3 阶段边界、幂等、scorer gating ────────────────────────
+
+    #[test]
+    fn phase_sync_boundary_exact_sixty_percent_stays_phase1() {
+        // HP/max == 0.60 (ratio == 0.60, NOT < 0.60) → 期望停在 Phase1
+        // 边界下一个 tick (1259.9) 才应进入 Phase2
+        let mut state = HeiwushiState::default();
+        state.sync_phase_from_health(1260.0, HEIWUSHI_HEALTH_MAX); // 1260/2100 = 0.600…
+        assert_eq!(
+            state.phase,
+            HeiwushiPhase::Phase1,
+            "HP==60% (ratio==0.60) 不满足 ratio<0.60，期望 Phase1，实际 {:?}",
+            state.phase
+        );
+
+        let mut state2 = HeiwushiState::default();
+        state2.sync_phase_from_health(1259.9, HEIWUSHI_HEALTH_MAX); // 1259.9/2100 ≈ 0.5999 < 0.60
+        assert_eq!(
+            state2.phase,
+            HeiwushiPhase::Phase2,
+            "HP<60% (ratio<0.60) 期望进入 Phase2，实际 {:?}",
+            state2.phase
+        );
+    }
+
+    #[test]
+    fn phase_sync_boundary_exact_twenty_five_percent_stays_phase2() {
+        // HP/max == 0.25 (ratio == 0.25, NOT < 0.25) → 期望停在 Phase2
+        // 边界下一个 tick (524.9) 才应触发 Phase3 transform
+        let mut state = HeiwushiState::default();
+        // 先推入 Phase2
+        state.sync_phase_from_health(1000.0, HEIWUSHI_HEALTH_MAX);
+        assert_eq!(state.phase, HeiwushiPhase::Phase2, "前置：应已进入 Phase2");
+        state.sync_phase_from_health(525.0, HEIWUSHI_HEALTH_MAX); // 525/2100 = 0.25
+        assert_eq!(
+            state.phase,
+            HeiwushiPhase::Phase2,
+            "HP==25% (ratio==0.25) 不满足 ratio<0.25，期望留在 Phase2，实际 {:?}",
+            state.phase
+        );
+
+        let mut state2 = HeiwushiState::default();
+        state2.sync_phase_from_health(1000.0, HEIWUSHI_HEALTH_MAX); // Phase2
+        state2.sync_phase_from_health(524.9, HEIWUSHI_HEALTH_MAX); // 524.9/2100 ≈ 0.2499 < 0.25
+        assert_eq!(
+            state2.phase,
+            HeiwushiPhase::Phase3,
+            "HP<25% (ratio<0.25) 期望触发 Phase3 transform，实际 {:?}",
+            state2.phase
+        );
+        // Phase3 transform 副作用也应落地
+        assert_eq!(
+            state2.base_attack,
+            HEIWUSHI_BASE_ATTACK * 2.0,
+            "Phase3 transform: base_attack 期望 {}，实际 {}",
+            HEIWUSHI_BASE_ATTACK * 2.0,
+            state2.base_attack
+        );
+    }
+
+    #[test]
+    fn apply_phase3_transform_is_idempotent() {
+        // apply_phase3_transform 调用两次 → base_attack 只翻一次（*2，不是*4）
+        // 守卫：self.phase == Phase3 时提前 return
+        let mut state = HeiwushiState::default();
+        state.apply_phase3_transform();
+        let attack_after_first = state.base_attack;
+        let defense_after_first = state.defense;
+        let speed_after_first = state.move_speed;
+
+        state.apply_phase3_transform(); // 第二次调用：guard 应拦截
+        assert_eq!(
+            state.base_attack, attack_after_first,
+            "第二次 apply_phase3_transform 不应再翻倍 base_attack：期望 {}，实际 {}",
+            attack_after_first, state.base_attack
+        );
+        assert_eq!(
+            state.base_attack,
+            HEIWUSHI_BASE_ATTACK * 2.0,
+            "Phase3 base_attack 应为原始值*2：期望 {}，实际 {}",
+            HEIWUSHI_BASE_ATTACK * 2.0,
+            state.base_attack
+        );
+        assert_eq!(
+            state.defense, defense_after_first,
+            "第二次调用不应再减半 defense：期望 {}，实际 {}",
+            defense_after_first, state.defense
+        );
+        assert_eq!(
+            state.defense,
+            HEIWUSHI_DEFENSE * 0.5,
+            "Phase3 defense 应为原始值*0.5：期望 {}，实际 {}",
+            HEIWUSHI_DEFENSE * 0.5,
+            state.defense
+        );
+        assert_eq!(
+            state.move_speed, speed_after_first,
+            "第二次调用不应改变 move_speed：期望 {}，实际 {}",
+            speed_after_first, state.move_speed
+        );
+    }
+
+    #[test]
+    fn phase_damage_multiplier_all_three_variants() {
+        // 每个 Phase variant 的 damage multiplier 直接断言，防止 transposition/off-by-one
+        // Phase1 是 Default，直接用 default()；Phase2/Phase3 用 struct update 语法避免 clippy::field_reassign_with_default
+        let phase1 = HeiwushiState::default();
+        assert_eq!(
+            phase1.phase_damage_multiplier(),
+            1.0_f32,
+            "Phase1 damage multiplier 期望 1.0，实际 {}",
+            phase1.phase_damage_multiplier()
+        );
+
+        let phase2 = HeiwushiState {
+            phase: HeiwushiPhase::Phase2,
+            ..Default::default()
+        };
+        assert_eq!(
+            phase2.phase_damage_multiplier(),
+            1.3_f32,
+            "Phase2 damage multiplier 期望 1.3，实际 {}",
+            phase2.phase_damage_multiplier()
+        );
+
+        let phase3 = HeiwushiState {
+            phase: HeiwushiPhase::Phase3,
+            ..Default::default()
+        };
+        assert_eq!(
+            phase3.phase_damage_multiplier(),
+            2.0_f32,
+            "Phase3 damage multiplier 期望 2.0，实际 {}",
+            phase3.phase_damage_multiplier()
+        );
+    }
+
+    #[test]
+    fn scorers_return_zero_when_cooldown_active() {
+        // 三个 skill scorer 在 CD > 0 时必须返回 0.0（CD gate）
+        let mut app = App::new();
+        app.add_systems(
+            Update,
+            (
+                heiwushi_melee_scorer_system,
+                heiwushi_barrage_scorer_system,
+                heiwushi_vortex_scorer_system,
+            ),
+        );
+        // Phase2，距离满足所有 scorer 的 range 条件，但 CD 均 > 0
+        let boss = spawn_boss(app.world_mut(), HEIWUSHI_HEALTH_MAX, 2.5);
+        {
+            let mut state = app.world_mut().get_mut::<HeiwushiState>(boss).unwrap();
+            state.phase = HeiwushiPhase::Phase2;
+            state.skill_cooldowns.melee_slash = 10;
+            state.skill_cooldowns.dark_barrage = 10;
+            state.skill_cooldowns.dark_vortex = 10;
+        }
+        let melee = app
+            .world_mut()
+            .spawn((Actor(boss), Score::default(), HeiwushiMeleeScorer))
+            .id();
+        let barrage = app
+            .world_mut()
+            .spawn((Actor(boss), Score::default(), HeiwushiBarrageScorer))
+            .id();
+        let vortex = app
+            .world_mut()
+            .spawn((Actor(boss), Score::default(), HeiwushiVortexScorer))
+            .id();
+
+        // 距离 2.5 不在 barrage 4-8 范围内，但我们要确认 CD gate 优先
+        // 再改距离为 5.0（barrage 范围内），验证 barrage CD gate
+        app.world_mut()
+            .get_mut::<NpcBlackboard>(boss)
+            .unwrap()
+            .player_distance = 5.0;
+
+        app.update();
+        assert_eq!(
+            app.world().get::<Score>(melee).unwrap().get(),
+            0.0,
+            "melee_slash CD>0 时 scorer 期望 0.0，实际 {}",
+            app.world().get::<Score>(melee).unwrap().get()
+        );
+        assert_eq!(
+            app.world().get::<Score>(barrage).unwrap().get(),
+            0.0,
+            "dark_barrage CD>0 时 scorer 期望 0.0，实际 {}",
+            app.world().get::<Score>(barrage).unwrap().get()
+        );
+        assert_eq!(
+            app.world().get::<Score>(vortex).unwrap().get(),
+            0.0,
+            "dark_vortex CD>0 时 scorer 期望 0.0，实际 {}",
+            app.world().get::<Score>(vortex).unwrap().get()
+        );
+    }
+
+    #[test]
+    fn transform_scorer_returns_zero_when_already_phase3() {
+        // HeiwushiTransformScorer 在 phase==Phase3 时必须返回 0.0（one-time guard）
+        let mut app = App::new();
+        app.add_systems(Update, heiwushi_transform_scorer_system);
+        // HP < 25%，phase 已经是 Phase3
+        let boss = spawn_boss(app.world_mut(), 400.0, 3.0);
+        app.world_mut()
+            .get_mut::<HeiwushiState>(boss)
+            .unwrap()
+            .phase = HeiwushiPhase::Phase3;
+        let transform_scorer = app
+            .world_mut()
+            .spawn((Actor(boss), Score::default(), HeiwushiTransformScorer))
+            .id();
+
+        app.update();
+        assert_eq!(
+            app.world().get::<Score>(transform_scorer).unwrap().get(),
+            0.0,
+            "phase==Phase3 时 TransformScorer 期望 0.0（已变身，不应再触发），实际 {}",
+            app.world().get::<Score>(transform_scorer).unwrap().get()
+        );
+    }
+
+    #[test]
+    fn barrage_scorer_excluded_in_phase3() {
+        // HeiwushiBarrageScorer 在 Phase3 时必须返回 0.0（phase gate: Phase1|Phase2 only）
+        let mut app = App::new();
+        app.add_systems(Update, heiwushi_barrage_scorer_system);
+        // 距离 5.0 在 barrage 范围 4-8 内，CD = 0，但 phase = Phase3
+        let boss = spawn_boss(app.world_mut(), HEIWUSHI_HEALTH_MAX, 5.0);
+        app.world_mut()
+            .get_mut::<HeiwushiState>(boss)
+            .unwrap()
+            .phase = HeiwushiPhase::Phase3;
+        let barrage = app
+            .world_mut()
+            .spawn((Actor(boss), Score::default(), HeiwushiBarrageScorer))
+            .id();
+
+        app.update();
+        assert_eq!(
+            app.world().get::<Score>(barrage).unwrap().get(),
+            0.0,
+            "Phase3 时 BarrageScorer 期望 0.0（Phase3 不可用 barrage），实际 {}",
+            app.world().get::<Score>(barrage).unwrap().get()
+        );
+    }
+
+    #[test]
+    fn vortex_scorer_active_in_phase3() {
+        // HeiwushiVortexScorer 在 Phase3 也应激活（phase gate: Phase2|Phase3）
+        let mut app = App::new();
+        app.add_systems(Update, heiwushi_vortex_scorer_system);
+        // 距离 4.0 <= VORTEX_RANGE=6, CD=0, phase=Phase3
+        let boss = spawn_boss(app.world_mut(), HEIWUSHI_HEALTH_MAX, 4.0);
+        app.world_mut()
+            .get_mut::<HeiwushiState>(boss)
+            .unwrap()
+            .phase = HeiwushiPhase::Phase3;
+        let vortex = app
+            .world_mut()
+            .spawn((Actor(boss), Score::default(), HeiwushiVortexScorer))
+            .id();
+
+        app.update();
+        assert_eq!(
+            app.world().get::<Score>(vortex).unwrap().get(),
+            0.8,
+            "Phase3 + in_range + CD=0 时 VortexScorer 期望 0.8，实际 {}",
+            app.world().get::<Score>(vortex).unwrap().get()
+        );
+    }
+
+    #[test]
+    fn effective_cd_floor_is_stable_after_floor_cycle() {
+        // floor 生效后（factor 触达 CD_FLOOR_RATIO=0.40），后续 cycle 值不再下降（稳定）
+        // melee base=40: floor = round(40*0.40)=16; 第一个 floor cycle 是 cycle=6（0.85^6≈0.377<0.40）
+        // barrage base=60: floor = round(60*0.40)=24
+        // vortex base=80: floor = round(80*0.40)=32
+        // cycle=5 对 melee：factor = 0.85^5 ≈ 0.4437 > 0.40 → 仍在衰减，值 = round(40*0.4437)=18 (>16)
+        let cd = HeiwushiCooldowns::default();
+
+        // melee (base=40): cycle 5 应高于 floor（衰减未结束）
+        let cycle5_melee = cd.effective_cd(40, 5);
+        let cycle6_melee = cd.effective_cd(40, 6);
+        let cycle7_melee = cd.effective_cd(40, 7);
+        let cycle100_melee = cd.effective_cd(40, 100);
+        assert!(
+            cycle5_melee > cycle6_melee,
+            "melee cycle 5 (值={}) 应高于 cycle 6 (值={})，floor 在 cycle 6 生效",
+            cycle5_melee,
+            cycle6_melee
+        );
+        assert_eq!(
+            cycle6_melee, 16,
+            "melee cycle 6 应首次到达 floor=16（round(40*0.40)=16），实际 {}",
+            cycle6_melee
+        );
+        assert_eq!(
+            cycle7_melee, cycle6_melee,
+            "melee floor 稳定：cycle 7 (值={}) 应等于 cycle 6 (值={})，floor 不再下降",
+            cycle7_melee, cycle6_melee
+        );
+        assert_eq!(
+            cycle100_melee, 16,
+            "melee 极大 cycle 数 (100) 应稳定在 floor=16，实际 {}",
+            cycle100_melee
+        );
+
+        // barrage (base=60): floor = round(60*0.40) = 24
+        let barrage_floor = cd.effective_cd(60, 100);
+        assert_eq!(
+            barrage_floor, 24,
+            "barrage floor 期望 24（round(60*0.40)=24），实际 {}",
+            barrage_floor
+        );
+
+        // vortex (base=80): floor = round(80*0.40) = 32
+        let vortex_floor = cd.effective_cd(80, 100);
+        assert_eq!(
+            vortex_floor, 32,
+            "vortex floor 期望 32（round(80*0.40)=32），实际 {}",
+            vortex_floor
+        );
+    }
+
+    // ── (已有测试保持不变) ─────────────────────────────────────────────────
+
     #[test]
     fn spawn_helper_uses_marker_kind_and_fauna_drop_tag() {
         let mut app = App::new();
