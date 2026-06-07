@@ -6,13 +6,14 @@ import org.junit.jupiter.api.Test;
 import static org.junit.jupiter.api.Assertions.*;
 
 /**
- * plan-fauna-stitched-beast-v1 P3 — 幻觉层 Store / Handler / Overlay 饱和单测。
+ * plan-fauna-stitched-beast-v1 P3 — 幻觉层 Store / Handler / Overlay / TickController 饱和单测。
  *
  * <p>覆盖范围：
  * <ul>
  *   <li>{@link HallucinationLayerStore}：activate / cancel / fade-in / fade-out / decrementTick / bar offsets / clearOnDisconnect</li>
  *   <li>{@link HallucinationLayerHandler}：happy path / cancel=true / duration=0 / invalid JSON</li>
  *   <li>{@link HallucinationHudOverlay}：applyFadeAlpha / getYawOffset / getHpBarDisplayOffset / getQiBarDisplayOffset</li>
+ *   <li>{@link HallucinationTickController}：tick-based 倒计时 / bar 重随机 / 音效 pitch 公式 / 200tick=10s 约束</li>
  *   <li>Channel 常量 pin：namespace=bong, path=core_absorption_hallucination</li>
  *   <li>守恒红线：bar 偏移不超 ±20%，fade 不超 [0,1]</li>
  * </ul>
@@ -24,7 +25,7 @@ public class HallucinationLayerOverlayTest {
     @BeforeEach
     void resetAll() {
         HallucinationLayerStore.resetForTest();
-        HallucinationHudOverlay.resetBarReshuffleForTest();
+        HallucinationTickController.resetForTest();
     }
 
     // ──────────────────────────────────────────────────────────────────────────
@@ -702,6 +703,212 @@ public class HallucinationLayerOverlayTest {
             1e-5f,
             "expected fadeProgress=0 after re-activate because the effect always fades in from zero, actual: "
                 + HallucinationLayerStore.getFadeProgress()
+        );
+    }
+
+    // ──────────────────────────────────────────────────────────────────────────
+    // HallucinationTickController — tick-based 倒计时核心锁
+    // ──────────────────────────────────────────────────────────────────────────
+
+    @Test
+    void tickControllerDecrementsDrivenByGameTick() {
+        // 关键锁：验证 onEndClientTick 每次调用将 remainingTicks 减 1（tick-based，与帧率无关）
+        HallucinationLayerStore.activate(200);
+
+        HallucinationTickController.onEndClientTick(null);
+
+        assertEquals(
+            199,
+            HallucinationLayerStore.getRemainingTicks(),
+            "expected remainingTicks=199 after one onEndClientTick because tick controller drives decrementTick at 20Hz game rate, actual: "
+                + HallucinationLayerStore.getRemainingTicks()
+        );
+    }
+
+    @Test
+    void tickControllerDuration200TicksEquates10GameTicks() {
+        // 关键性能锁：200 游戏 tick 后幻觉应耗尽倒计时（即 10s @ 20TPS）
+        // render() 不再减少 tick，所以 200 次 onEndClientTick 才会耗尽
+        HallucinationLayerStore.activate(200);
+
+        for (int i = 0; i < 200; i++) {
+            HallucinationTickController.onEndClientTick(null);
+        }
+
+        assertEquals(
+            0,
+            HallucinationLayerStore.getRemainingTicks(),
+            "expected remainingTicks=0 after 200 onEndClientTick calls because 200 game ticks = 10s @ 20TPS, actual: "
+                + HallucinationLayerStore.getRemainingTicks()
+        );
+        // Active 应进入 fade-out（remainingTicks=0 时 active 逻辑参见 tickFade）
+        // 但 isActive() 仍可能为 true（等 fadeProgress→0 才清），这是设计意图
+    }
+
+    @Test
+    void tickControllerFadeInProgressesOverTicks() {
+        // fade-in 应在游戏 tick 内推进，10 tick 后应达到 1.0（或接近 1.0）
+        HallucinationLayerStore.activate(200);
+        float before = HallucinationLayerStore.getFadeProgress(); // 0.0
+
+        // 运行 10 tick
+        for (int i = 0; i < 10; i++) {
+            HallucinationTickController.onEndClientTick(null);
+        }
+
+        float after = HallucinationLayerStore.getFadeProgress();
+        assertTrue(
+            after > before,
+            "expected fadeProgress > 0 after 10 game ticks because tick controller drives fade-in via tickFade, actual before="
+                + before + " after=" + after
+        );
+        assertEquals(
+            1.0f,
+            after,
+            1e-4f,
+            "expected fadeProgress=1.0 after 10 game ticks because FADE_IN_STEP_PER_TICK=0.1 × 10 ticks = 1.0, actual: " + after
+        );
+    }
+
+    @Test
+    void tickControllerBarReshuffleAtTenTickInterval() {
+        // bar 偏移重随机应每 10 game tick 触发一次（非每帧）
+        HallucinationLayerStore.activate(200);
+        HallucinationLayerStore.updateBarOffsets(0.0f, 0.0f);
+
+        // 9 tick：不触发重随机（从 resetForTest 后 barReshuffleTick=0 开始）
+        for (int i = 0; i < 9; i++) {
+            HallucinationTickController.onEndClientTick(null);
+        }
+        assertEquals(
+            9,
+            HallucinationTickController.getBarReshuffleTickForTest(),
+            "expected barReshuffleTick=9 after 9 ticks because reshuffle happens every 10 ticks, actual: "
+                + HallucinationTickController.getBarReshuffleTickForTest()
+        );
+
+        // 第 10 tick：触发重随机，计数归 0
+        HallucinationTickController.onEndClientTick(null);
+        assertEquals(
+            0,
+            HallucinationTickController.getBarReshuffleTickForTest(),
+            "expected barReshuffleTick=0 after 10th tick because reshuffle resets the counter, actual: "
+                + HallucinationTickController.getBarReshuffleTickForTest()
+        );
+    }
+
+    @Test
+    void tickControllerSoundRetriggerFiresImmediatelyOnActivation() {
+        // 激活前 soundRetriggerTick=INTERVAL（由 resetForTest 设置），激活后首 tick 立即触发
+        // （不调用 MinecraftClient，仅验证 soundRetriggerTick 被重置）
+        HallucinationLayerStore.activate(200);
+
+        // soundRetriggerTick 初始为 INTERVAL（触发阈值），onEndClientTick 应在首 tick 触发音效尝试
+        // 由于 MinecraftClient 为 null，sound 播放被 skip；计数归 0
+        HallucinationTickController.onEndClientTick(null); // MinecraftClient=null 安全调用
+
+        assertEquals(
+            0,
+            HallucinationTickController.getSoundRetriggerTickForTest(),
+            "expected soundRetriggerTick=0 after first tick of active hallucination because sound retrigger fires and resets counter, actual: "
+                + HallucinationTickController.getSoundRetriggerTickForTest()
+        );
+    }
+
+    @Test
+    void tickControllerSoundPitchProgressFormula() {
+        // 验证 pitch 插值公式：start=0.5, end=1.2, at 50% progress = 0.85
+        float pitchStart = HallucinationTickController.SOUND_PITCH_START;
+        float pitchEnd = HallucinationTickController.SOUND_PITCH_END;
+        float pitchAt50Pct = pitchStart + (pitchEnd - pitchStart) * 0.5f;
+
+        assertEquals(
+            0.85f,
+            pitchAt50Pct,
+            1e-4f,
+            "expected pitch at 50% progress = 0.85 because formula is 0.5 + (1.2-0.5)*0.5 = 0.85, actual: " + pitchAt50Pct
+        );
+    }
+
+    @Test
+    void tickControllerSoundPitchStartEndPinned() {
+        assertEquals(
+            0.5f,
+            HallucinationTickController.SOUND_PITCH_START,
+            1e-5f,
+            "expected SOUND_PITCH_START=0.5 because plan P3 specifies pitch 0.5→1.2 ambient.cave sound, actual: "
+                + HallucinationTickController.SOUND_PITCH_START
+        );
+        assertEquals(
+            1.2f,
+            HallucinationTickController.SOUND_PITCH_END,
+            1e-5f,
+            "expected SOUND_PITCH_END=1.2 because plan P3 specifies pitch 0.5→1.2 ambient.cave sound, actual: "
+                + HallucinationTickController.SOUND_PITCH_END
+        );
+    }
+
+    @Test
+    void tickControllerSoundVolumePinned() {
+        assertEquals(
+            0.4f,
+            HallucinationTickController.SOUND_VOLUME,
+            1e-5f,
+            "expected SOUND_VOLUME=0.4 because plan P3 specifies volume 0.4 for ambient.cave, actual: "
+                + HallucinationTickController.SOUND_VOLUME
+        );
+    }
+
+    @Test
+    void tickControllerNotRunWhenStoreInactive() {
+        // 未激活时 barReshuffleTick 应被归 0，不累积
+        // (active=false after resetForTest)
+        for (int i = 0; i < 15; i++) {
+            HallucinationTickController.onEndClientTick(null);
+        }
+        assertEquals(
+            0,
+            HallucinationTickController.getBarReshuffleTickForTest(),
+            "expected barReshuffleTick=0 when hallucination is inactive because bar reshuffle only counts during active state, actual: "
+                + HallucinationTickController.getBarReshuffleTickForTest()
+        );
+    }
+
+    // ──────────────────────────────────────────────────────────────────────────
+    // 新常量 pin：tick-based fade / sin phase 步长
+    // ──────────────────────────────────────────────────────────────────────────
+
+    @Test
+    void fadeInStepPerTickIsOneTenth() {
+        assertEquals(
+            0.1f,
+            HallucinationHudOverlay.FADE_IN_STEP_PER_TICK,
+            1e-5f,
+            "expected FADE_IN_STEP_PER_TICK=0.1 because 10 ticks × 0.1 = 1.0 (full fade-in in 10 ticks), actual: "
+                + HallucinationHudOverlay.FADE_IN_STEP_PER_TICK
+        );
+    }
+
+    @Test
+    void fadeOutStepPerTickIsOneOverTwenty() {
+        assertEquals(
+            0.05f,
+            HallucinationHudOverlay.FADE_OUT_STEP_PER_TICK,
+            1e-5f,
+            "expected FADE_OUT_STEP_PER_TICK=0.05 because 20 ticks × 0.05 = 1.0 (full fade-out in 20 ticks), actual: "
+                + HallucinationHudOverlay.FADE_OUT_STEP_PER_TICK
+        );
+    }
+
+    @Test
+    void sinPhaseIncrementPerTickPeriodIs40Ticks() {
+        // period = 2π / INCREMENT; should equal 40 ticks
+        double period = 2 * Math.PI / HallucinationHudOverlay.SIN_PHASE_INCREMENT_PER_TICK;
+        assertEquals(
+            40.0,
+            period,
+            0.01,
+            "expected sin wave period=40 ticks because design spec says period ~40 tick, actual: " + period
         );
     }
 }

@@ -675,7 +675,7 @@ pub fn compute_rage_absorption_rate(hp_pct: f32) -> f64 {
 /// 3. hp_pct = wounds.health_current / wounds.health_max
 /// 4. rage_absorption_rate = BASE × (1 + RAGE_MULT × (1 - hp_pct))
 /// 5. 调用 `regen_from_zone(zone.spirit_qi, rate, integrity=1.0, qi_room)`
-/// 6. zone.spirit_qi -= drain / QI_ZONE_UNIT_CAPACITY（zone 灵气减少）
+/// 6. zone.spirit_qi -= drain（zone 灵气减少；drain 已是 zone 单位，由 regen_from_zone 内部除以 QI_ZONE_UNIT_CAPACITY 给出）
 /// 7. emit QiTransfer(zone → npc_hybrid, amount=gain, reason=CultivationRegen)
 /// 8. HP<50% 时 emit VFX（bong:vfx/hybrid_rage，BongLineParticle count=8 #FF4010）
 /// 9. HP<25% 时升级 VFX（count=16 #FF0000）

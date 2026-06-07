@@ -1,11 +1,6 @@
 package com.bong.client.fauna;
 
-import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.gui.DrawContext;
-import net.minecraft.client.sound.SoundManager;
-import net.minecraft.sound.SoundEvent;
-import net.minecraft.sound.SoundEvents;
-import net.minecraft.util.math.random.Random;
 
 /**
  * plan-fauna-stitched-beast-v1 P3 — 兽核吸收幻觉 HUD overlay。
@@ -15,9 +10,14 @@ import net.minecraft.util.math.random.Random;
  *   <li><b>绿色边缘像差</b>：四边缘 fillGradient（颜色 #80F040，半透明），随 fade 曲线渐变</li>
  *   <li><b>HP / qi bar 显示偏移</b>：±20% 随机偏移，每 10 tick 重随机，<strong>绝不改实际值</strong></li>
  *   <li><b>视野旋转</b>：sin wave ±3° yaw 偏移（period 约 40 tick）——视觉观感需用户 WSLg 手测验收</li>
- *   <li><b>音效</b>：ambient.cave.cave1（通过 MC SoundManager）pitch 0.5→1.2 渐变</li>
+ *   <li><b>音效</b>：ambient.cave（vanilla）pitch 0.5→1.2 渐变，由 {@link HallucinationTickController} 每 tick 触发</li>
  *   <li><b>Fade</b>：进入 10 tick（0→1），退出 20 tick（1→0）</li>
  * </ul>
+ *
+ * <p><b>Tick 架构（M2 blocker fix）</b>：本类 {@link #render} 仅<em>读取</em> {@link HallucinationLayerStore}
+ * 状态做渲染，不修改任何计数器。所有递减/进度更新（{@code decrementTick} / {@code tickFade} /
+ * bar 偏移重随机 / 音效）均由 {@link HallucinationTickController}（挂在
+ * {@code ClientTickEvents.END_CLIENT_TICK}，20Hz）驱动，确保 200 tick = 10s 与 server 对齐、帧率无关。
  *
  * <p><b>守恒红线</b>：所有 bar 偏移仅用于 HUD 渲染时的 <em>显示值</em>，
  * 不经过任何写回玩家 HP / qi 的路径。实际 HUD 数值来源不变。
@@ -42,20 +42,32 @@ public final class HallucinationHudOverlay {
     static final int TRANSPARENT = 0x00000000;
 
     // ──────────────────────────────────────────────────────────────────────────
-    // Fade 曲线参数
+    // Fade 曲线参数（tick-based，供 HallucinationTickController 使用）
     // ──────────────────────────────────────────────────────────────────────────
 
     /**
-     * fade-in 每帧增量（10 tick 完成 = 约 0.5s @ 60fps 渲染）。
-     * 1.0 / (10 * 3) = 0.0333：10 tick × 约 3 帧/tick ≈ 30 帧。
+     * fade-in 每 tick 增量（10 tick 完成，1.0 / 10 = 0.1）。
+     * 由 {@link HallucinationTickController} 每游戏 tick 调用，与帧率无关。
      */
-    static final float FADE_IN_STEP = 1.0f / 30.0f;
+    static final float FADE_IN_STEP_PER_TICK = 1.0f / 10.0f;
 
     /**
-     * fade-out 每帧减量（20 tick 完成 = 约 1s @ 60fps 渲染）。
-     * 1.0 / (20 * 3) = 0.0167：20 tick × 约 3 帧/tick ≈ 60 帧。
+     * fade-out 每 tick 减量（20 tick 完成，1.0 / 20 = 0.05）。
+     * 由 {@link HallucinationTickController} 每游戏 tick 调用，与帧率无关。
      */
-    static final float FADE_OUT_STEP = 1.0f / 60.0f;
+    static final float FADE_OUT_STEP_PER_TICK = 1.0f / 20.0f;
+
+    /**
+     * @deprecated 仅供旧测试引用。请使用 {@link #FADE_IN_STEP_PER_TICK}。
+     */
+    @Deprecated
+    static final float FADE_IN_STEP = FADE_IN_STEP_PER_TICK;
+
+    /**
+     * @deprecated 仅供旧测试引用。请使用 {@link #FADE_OUT_STEP_PER_TICK}。
+     */
+    @Deprecated
+    static final float FADE_OUT_STEP = FADE_OUT_STEP_PER_TICK;
 
     // ──────────────────────────────────────────────────────────────────────────
     // 视野旋转参数
@@ -68,10 +80,17 @@ public final class HallucinationHudOverlay {
     static final float MAX_YAW_DEGREES = 3.0f;
 
     /**
-     * Sin wave 每帧相位增量（period 约 40 tick × 3帧/tick = 120 帧）。
-     * phase_increment = 2π / 120 ≈ 0.05236 rad/frame。
+     * Sin wave 每 tick 相位增量（period = 40 tick）。
+     * phase_increment = 2π / 40 ≈ 0.15708 rad/tick。
+     * 由 {@link HallucinationTickController} 每游戏 tick 调用，与帧率无关。
      */
-    static final float SIN_PHASE_INCREMENT = (float) (2 * Math.PI / 120.0);
+    static final float SIN_PHASE_INCREMENT_PER_TICK = (float) (2 * Math.PI / 40.0);
+
+    /**
+     * @deprecated 仅供旧测试引用。请使用 {@link #SIN_PHASE_INCREMENT_PER_TICK}。
+     */
+    @Deprecated
+    static final float SIN_PHASE_INCREMENT = SIN_PHASE_INCREMENT_PER_TICK;
 
     // ──────────────────────────────────────────────────────────────────────────
     // Bar 偏移参数
@@ -93,16 +112,6 @@ public final class HallucinationHudOverlay {
     /** 边缘像差条宽（像素），绿色 fillGradient 的渐变宽度。 */
     static final int EDGE_ABERRATION_WIDTH = 32;
 
-    // ──────────────────────────────────────────────────────────────────────────
-    // 内部状态（仅供 Overlay 跨帧使用）
-    // ──────────────────────────────────────────────────────────────────────────
-
-    /** 上次 bar 偏移重随机的 tick 计数（基于系统帧计数近似）。 */
-    private static int barReshuffle = 0;
-
-    /** 简易随机（bar 偏移用）。 */
-    private static final Random RAND = Random.create();
-
     private HallucinationHudOverlay() {}
 
     // ──────────────────────────────────────────────────────────────────────────
@@ -112,11 +121,13 @@ public final class HallucinationHudOverlay {
     /**
      * 每帧渲染调用（由 BongHud 在 visibility == FULL 分支内调用）。
      *
+     * <p><b>重要</b>：本方法只<em>读取</em> {@link HallucinationLayerStore} 状态，不递减任何计数器。
+     * 所有 tick-based 状态更新（decrementTick / tickFade / bar 偏移 / 音效）均由
+     * {@link HallucinationTickController} 在 {@code ClientTickEvents.END_CLIENT_TICK} 中处理。
+     *
      * <p>渲染步骤：
      * <ol>
-     *   <li>更新 Store fade 进度（tickFade）</li>
-     *   <li>递减 remainingTicks</li>
-     *   <li>每 BAR_OFFSET_RESHUFFLE_INTERVAL_TICKS 帧重随机 bar 偏移</li>
+     *   <li>读取当前 fadeProgress（由 HallucinationTickController 每 tick 更新）</li>
      *   <li>绿色边缘像差 fillGradient（按 fadeProgress 调整 alpha）</li>
      *   <li>（视野旋转由调用方通过 getYawOffset() 应用，此处不直接写相机）</li>
      * </ol>
@@ -124,19 +135,6 @@ public final class HallucinationHudOverlay {
      * @param context DrawContext（Fabric 1.20.1）
      */
     public static void render(DrawContext context) {
-        // M2 修复：每帧递减 remainingTicks，使幻觉在 durationTicks 后自然过期
-        HallucinationLayerStore.decrementTick();
-        HallucinationLayerStore.tickFade(SIN_PHASE_INCREMENT, FADE_IN_STEP, FADE_OUT_STEP);
-
-        // bar 偏移重随机（每 BAR_OFFSET_RESHUFFLE_INTERVAL_TICKS 帧）
-        barReshuffle++;
-        if (barReshuffle >= BAR_OFFSET_RESHUFFLE_INTERVAL_TICKS) {
-            barReshuffle = 0;
-            float hpOffset = (RAND.nextFloat() * 2 * MAX_BAR_OFFSET) - MAX_BAR_OFFSET;
-            float qiOffset = (RAND.nextFloat() * 2 * MAX_BAR_OFFSET) - MAX_BAR_OFFSET;
-            HallucinationLayerStore.updateBarOffsets(hpOffset, qiOffset);
-        }
-
         float fade = HallucinationLayerStore.getFadeProgress();
         if (fade <= 0.0f) {
             return; // 完全不可见，跳过渲染
@@ -255,12 +253,5 @@ public final class HallucinationHudOverlay {
         context.fillGradient(screenWidth - w, 0, screenWidth, screenHeight, TRANSPARENT, color);
     }
 
-    // ──────────────────────────────────────────────────────────────────────────
-    // 仅供测试
-    // ──────────────────────────────────────────────────────────────────────────
-
-    /** 仅供测试：重置内部 barReshuffle 计数。 */
-    static void resetBarReshuffleForTest() {
-        barReshuffle = 0;
-    }
 }
+

@@ -122,6 +122,7 @@ public class BongClient implements ClientModInitializer {
         BotanyHudBootstrap.register();
         WhaleRenderBootstrap.register();
         FaunaRenderBootstrap.register();
+        com.bong.client.fauna.HallucinationTickController.bootstrap();
         BongEntityRenderBootstrap.register();
         BaolongwangRenderBootstrap.register();
         WhaleDebugCommand.register();
