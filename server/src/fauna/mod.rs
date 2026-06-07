@@ -79,4 +79,6 @@ pub fn register(app: &mut App) {
     mimic_spider::register(app);
     // plan-daozhan-v1 P1：Mimicry big-brain Scorer/Action 注册
     daozhan::register_p1(app);
+    // plan-daozhan-v1 P2：Ambush big-brain Scorer/Action 注册（背对/低真元触发 + QiTransfer 守恒）
+    daozhan::register_p2(app);
 }

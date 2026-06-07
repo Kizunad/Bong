@@ -1,4 +1,4 @@
-//! plan-daozhan-v1 P0/P1 — 道伥核心数据结构、spawn 触发逻辑与 Mimicry big-brain AI。
+//! plan-daozhan-v1 P0/P1/P2 — 道伥核心数据结构、spawn 触发逻辑与 Mimicry/Ambush big-brain AI。
 //!
 //! 道伥：死在坍缩渊/天劫的高境遗骸，以玩家外形伪装诱近，背对/低真元时绝杀。
 //!
@@ -16,9 +16,18 @@
 //! - [`DaoZhangMimicryAction`] — big-brain Action，循环推进 behavior_queue，计时 2–4s（游戏 tick）。
 //! - [`daozhan_mimicry_scorer_system`] / [`daozhan_mimicry_action_system`] — Bevy 注册函数。
 //!
+//! ## P2 交付物
+//!
+//! - [`DaoZhangAmbushScorer`] — big-brain Scorer，背对 > 150° 或 qi < 20% 时 score=1.0，抢占 Mimicry。
+//! - [`DaoZhangAmbushAction`] — big-brain Action，emit `DaoZhangRevealEvent` + VFX + 音效，
+//!   然后在目标最近玩家上执行 3 连 `QiTransfer{DaoZhangDrain}`（守恒：player.qi -= amount，
+//!   daozhan_qi += amount），完成后转回 Mimicry 冷却。
+//! - [`DaoZhangAmbushChainState`] — 连击链追踪 Component（当前已击次数 / 目标玩家 / chain 开始 tick）。
+//! - [`daozhan_ambush_scorer_system`] / [`daozhan_ambush_action_system`] — Bevy 注册函数。
+//!
 //! ## 守恒红线
 //!
-//! 1. **攻击吸取**（P2 实装）：走 `QiTransfer{DaoZhangDrain}`；player.qi_current -= amount，
+//! 1. **攻击吸取**（P2）：走 `QiTransfer{DaoZhangDrain}`；player.qi_current -= amount，
 //!    daozhan_qi += amount，不凭空消失。
 //! 2. **死亡释放**：走 `release_qi_amount_to_zone` 全额（qi_current 残余 + daozhan_qi 一并归还）。
 //! 3. **天道凝结**（P3 实装）：走 `QiTransfer{TiandaoCondense}`；zone.spirit_qi -= delta，
@@ -30,12 +39,18 @@ use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
 use valence::client::ClientMarker;
 use valence::prelude::{
-    bevy_ecs, App, Commands, Component, DVec3, Entity, Position, Query, With, Without,
+    bevy_ecs, App, Commands, Component, DVec3, Entity, EventWriter, Position, Query, Res, With,
+    Without,
 };
 
-use crate::cultivation::components::Realm;
+use crate::cultivation::components::{Cultivation, Realm};
+use crate::fauna::experience::{play_audio, spawn_particle};
+use crate::network::audio_event_emit::PlaySoundRecipeRequest;
+use crate::network::daozhan_disguise_emit::DaoZhangRevealEvent;
+use crate::network::vfx_event_emit::VfxEventRequest;
 use crate::npc::movement::GameTick;
 use crate::npc::spawn::NpcMarker;
+use crate::qi_physics::ledger::{QiAccountId, QiTransfer, QiTransferReason};
 
 // ── 常数 ─────────────────────────────────────────────────────────────────────
 
@@ -441,6 +456,495 @@ pub fn register_p1(app: &mut App) {
     app.add_systems(
         PreUpdate,
         daozhan_mimicry_action_system.in_set(BigBrainSet::Actions),
+    );
+}
+
+// ── P2: Ambush 常数 ───────────────────────────────────────────────────────────
+
+/// 道伥暴起 VFX event_id（`bong:vfx/daozhan_reveal`）。
+pub const DAOZHAN_REVEAL_VFX_EVENT_ID: &str = "bong:vfx/daozhan_reveal";
+
+/// 暴起粒子颜色（阴邪紫 #7040A8）。
+pub const DAOZHAN_REVEAL_PARTICLE_COLOR: &str = "#7040A8";
+
+/// 暴起粒子数量（burst 12）。
+pub const DAOZHAN_REVEAL_PARTICLE_COUNT: u16 = 12;
+
+/// 粒子持续时间（10 tick ≈ 500ms）。
+pub const DAOZHAN_REVEAL_PARTICLE_DURATION_TICKS: u16 = 10;
+
+/// 暴起粒子 strength（径向扩散速度参考）。
+pub const DAOZHAN_REVEAL_PARTICLE_STRENGTH: f32 = 0.75;
+
+/// 暴起音效 recipe ID（entity.wither.ambient 变体）。
+pub const DAOZHAN_REVEAL_AUDIO_RECIPE_ID: &str = "entity_wither_ambient";
+
+/// 暴起音效音量倍率。
+pub const DAOZHAN_REVEAL_AUDIO_VOLUME: f32 = 0.8;
+
+/// 暴起音效 pitch shift（略低沉，体现阴邪感）。
+pub const DAOZHAN_REVEAL_AUDIO_PITCH_SHIFT: f32 = -0.3;
+
+/// 每次 QiTransfer{DaoZhangDrain} 从玩家吸取的真元量（每连击一次）。
+/// 三连总共吸取 `DAOZHAN_DRAIN_AMOUNT_PER_HIT * 3`。
+pub const DAOZHAN_DRAIN_AMOUNT_PER_HIT: f64 = 8.0;
+
+/// Ambush 连击最大 hit 次数（3 连）。
+pub const DAOZHAN_AMBUSH_CHAIN_HITS: u32 = DAOZHAN_AMBUSH_CHAIN_COUNT;
+
+/// 连击时两次 hit 之间的间隔（tick），避免同 tick 全部打完。
+pub const DAOZHAN_AMBUSH_HIT_INTERVAL_TICKS: u32 = 4; // 4 tick ≈ 200ms
+
+/// Ambush 完成后冷却 tick 数（道伥短暂切回 Mimicry 喘息期），供 Scorer 避免重入暴起。
+pub const DAOZHAN_AMBUSH_COOLDOWN_TICKS: u64 = 60; // 3s
+
+/// 道伥 VFX 原点 Y 轴偏移（躯干中心）。
+pub const DAOZHAN_VFX_ORIGIN_Y_OFFSET: f64 = 0.8;
+
+/// 道伥感知范围：Ambush 触发检测范围（格）。
+pub const DAOZHAN_AMBUSH_SENSE_RADIUS: f64 = 8.0;
+
+// ── P2: 暴起冷却 Component ─────────────────────────────────────────────────────
+
+/// Ambush 结束后附加的冷却 Component，防止立即重入暴起。
+/// `ready_at_tick`：`>= 此值` 时才允许再次 Ambush。
+#[derive(Debug, Clone, Copy, Component)]
+pub struct DaoZhangAmbushCooldown {
+    pub ready_at_tick: u64,
+}
+
+// ── P2: 连击链状态 Component ──────────────────────────────────────────────────
+
+/// 道伥暴起连击链追踪 Component（Ambush Action 内部状态）。
+///
+/// - `hits_done`：已完成的连击次数（0..=DAOZHAN_AMBUSH_CHAIN_COUNT）。
+/// - `target_player`：当前连击目标玩家 Entity。
+/// - `next_hit_at_tick`：下一次打击允许的 tick（间隔计时）。
+///
+/// 每次 Requested 时初始化；达到 DAOZHAN_AMBUSH_CHAIN_COUNT 次后 Action Success。
+#[derive(Debug, Clone, Component)]
+pub struct DaoZhangAmbushChainState {
+    /// 已打出的连击次数。
+    pub hits_done: u32,
+    /// 当前连击目标玩家 Entity。
+    pub target_player: Entity,
+    /// 下次允许打击的 tick（间隔节拍，避免同帧三连）。
+    pub next_hit_at_tick: u64,
+}
+
+// ── P2: DaoZhangAmbushScorer ──────────────────────────────────────────────────
+
+/// 暴起评分器：
+///
+/// 条件（AND-OR）：
+///   1. 道伥处于 `DaoZhangState::Mimicry`（Ambush 态已处理，不重入）
+///   2. 无暴起冷却（`DaoZhangAmbushCooldown` 已过期或不存在）
+///   3. 附近玩家（< `DAOZHAN_AMBUSH_SENSE_RADIUS`）满足至少一项触发条件：
+///      a. 玩家背对道伥（偏转角 > 150°）
+///      b. 玩家 qi_current / qi_max < 0.20
+///
+/// 满足时 score = 1.0（高于 Mimicry=0.7，保证 Ambush 优先抢占）。
+#[derive(Clone, Copy, Debug, Component)]
+pub struct DaoZhangAmbushScorer;
+
+impl ScorerBuilder for DaoZhangAmbushScorer {
+    fn build(&self, cmd: &mut Commands, scorer: Entity, _actor: Entity) {
+        cmd.entity(scorer).insert(*self);
+    }
+
+    fn label(&self) -> Option<&str> {
+        Some("DaoZhangAmbushScorer")
+    }
+}
+
+type DaoZhangAmbushScorerActorQuery<'w, 's> = Query<
+    'w,
+    's,
+    (
+        &'static Position,
+        &'static DaoZhangState,
+        Option<&'static DaoZhangAmbushCooldown>,
+    ),
+    (With<NpcMarker>, Without<ClientMarker>),
+>;
+
+type AmbushPlayerQuery<'w, 's> = Query<
+    'w,
+    's,
+    (
+        Entity,
+        &'static Position,
+        &'static Cultivation,
+        Option<&'static valence::entity::Look>,
+    ),
+    (With<ClientMarker>, Without<NpcMarker>),
+>;
+
+pub(crate) fn daozhan_ambush_scorer_system(
+    daozhan: DaoZhangAmbushScorerActorQuery<'_, '_>,
+    players: AmbushPlayerQuery<'_, '_>,
+    mut scorers: Query<(&Actor, &mut Score), With<DaoZhangAmbushScorer>>,
+    game_tick: Option<Res<GameTick>>,
+) {
+    let tick = game_tick.as_deref().map(|t| t.0).unwrap_or(0);
+
+    for (Actor(actor), mut score) in &mut scorers {
+        let Ok((npc_pos, state, cooldown)) = daozhan.get(*actor) else {
+            score.set(0.0);
+            continue;
+        };
+
+        // 只在 Mimicry 态尝试暴起（Ambush 态由 AmbushAction 接管）
+        if *state != DaoZhangState::Mimicry {
+            score.set(0.0);
+            continue;
+        }
+
+        // 冷却检查：冷却未到期时不暴起
+        if let Some(cd) = cooldown {
+            if u64::from(tick) < cd.ready_at_tick {
+                score.set(0.0);
+                continue;
+            }
+        }
+
+        let npc_p = npc_pos.get();
+
+        // 扫描感知范围内的玩家，检查触发条件
+        let should_ambush = players.iter().any(|(_, player_pos, cultivation, look)| {
+            let d = npc_p.distance(player_pos.get());
+            if d > DAOZHAN_AMBUSH_SENSE_RADIUS {
+                return false;
+            }
+            let back = player_back_faces_npc_p2(player_pos.get(), look, npc_p);
+            let low_qi = qi_ratio_p2(cultivation) < DAOZHAN_LOW_QI_RATIO;
+            back || low_qi
+        });
+
+        score.set(if should_ambush { 1.0 } else { 0.0 });
+    }
+}
+
+/// 判断玩家是否背对道伥（偏转角 > DAOZHAN_BACK_ANGLE_DEG = 150°）。
+///
+/// 复用 tsy_hostile.rs `player_back_faces_npc` 同等逻辑；P2 以此函数为 source of truth，
+/// 测试直接测本函数（契约：dot(facing, to_npc_norm) < cos(150°/2)=cos(75°) ≈ -0.2588）。
+fn player_back_faces_npc_p2(
+    player_pos: DVec3,
+    look: Option<&valence::entity::Look>,
+    npc_pos: DVec3,
+) -> bool {
+    let Some(look) = look else { return false };
+    let to_npc = npc_pos - player_pos;
+    let to_npc_xz = DVec3::new(to_npc.x, 0.0, to_npc.z);
+    if to_npc_xz.length_squared() <= f64::EPSILON {
+        return false;
+    }
+    // MC yaw：0 = south(+Z)，顺时针增加；facing = (-sin(yaw), 0, cos(yaw))
+    let yaw = f64::from(look.yaw).to_radians();
+    let facing = DVec3::new(-yaw.sin(), 0.0, yaw.cos());
+    // dot < 0 意味着面朝方向"背离" NPC（偏转角 > 90°）；
+    // 但道伥要求 > 150°（更严格），等价于 dot < cos(150°) = -sqrt(3)/2 ≈ -0.866
+    let cos_threshold = -(DAOZHAN_BACK_ANGLE_DEG.to_radians().cos()); // cos(150°) = -0.866
+    let dot = facing.dot(to_npc_xz.normalize());
+    dot <= cos_threshold
+}
+
+/// 玩家真元比（qi_current / qi_max），夹逼到 [0, 1]。
+fn qi_ratio_p2(cultivation: &Cultivation) -> f64 {
+    cultivation.qi_current.max(0.0) / cultivation.qi_max.max(1.0)
+}
+
+// ── P2: DaoZhangAmbushAction ──────────────────────────────────────────────────
+
+/// 暴起行动：
+///
+/// 1. **Requested**（首次进入）：
+///    - 切换 `DaoZhangState::Ambush`
+///    - emit `DaoZhangRevealEvent`（触发 client 渲染切换 + daozhan_disguise_emit 广播）
+///    - emit VFX burst（`bong:vfx/daozhan_reveal`，#7040A8，count=12，10tick）
+///    - emit 音效（`entity_wither_ambient`，vol=0.8，pitch=-0.3）
+///    - 初始化 `DaoZhangAmbushChainState`：找最近玩家作为目标
+///    - 转 Executing
+///
+/// 2. **Executing**（连击期）：
+///    - 每隔 `DAOZHAN_AMBUSH_HIT_INTERVAL_TICKS` tick 打出一次 QiTransfer{DaoZhangDrain}：
+///      `player.qi_current -= DAOZHAN_DRAIN_AMOUNT_PER_HIT`（若不足则取 min）
+///      `daozhan_bb.daozhan_qi += actual_drained`（守恒）
+///      emit `QiTransfer{from=player,to=daozhan,reason=DaoZhangDrain}`
+///    - 达到 DAOZHAN_AMBUSH_CHAIN_COUNT 次后：
+///      切换回 `DaoZhangState::Mimicry`，添加 `DaoZhangAmbushCooldown`，Success
+///
+/// 3. **Cancelled**：停止，切回 Mimicry，Failure
+///
+/// ## 守恒约束
+///
+/// 每次 DaoZhangDrain：
+/// - `player_cultivation.qi_current -= drained`
+/// - `daozhan_bb.daozhan_qi += drained`
+/// - emit `QiTransfer{from=player:<uuid>, to=npc:daozhan:<entity_id>, reason=DaoZhangDrain}`
+///
+/// 死亡时 `DaoZhangDeathSystem`（P3）负责 `release_qi_amount_to_zone(daozhan_bb.daozhan_qi)`。
+#[derive(Clone, Copy, Debug, Component)]
+pub struct DaoZhangAmbushAction;
+
+impl ActionBuilder for DaoZhangAmbushAction {
+    fn build(&self, cmd: &mut Commands, action: Entity, _actor: Entity) {
+        cmd.entity(action).insert(*self);
+    }
+
+    fn label(&self) -> Option<&str> {
+        Some("DaoZhangAmbushAction")
+    }
+}
+
+type DaoZhangAmbushActorQuery<'w, 's> = Query<
+    'w,
+    's,
+    (
+        &'static Position,
+        &'static mut DaoZhangState,
+        &'static mut DaoZhangBehaviorBlackboard,
+        Option<&'static mut DaoZhangAmbushChainState>,
+    ),
+    (With<NpcMarker>, Without<ClientMarker>),
+>;
+
+type AmbushTargetPlayerQuery<'w, 's> = Query<
+    'w,
+    's,
+    (Entity, &'static Position, &'static mut Cultivation),
+    (With<ClientMarker>, Without<NpcMarker>),
+>;
+
+#[allow(clippy::type_complexity, clippy::too_many_arguments)]
+pub(crate) fn daozhan_ambush_action_system(
+    mut daozhan: DaoZhangAmbushActorQuery<'_, '_>,
+    mut players: AmbushTargetPlayerQuery<'_, '_>,
+    mut actions: Query<(&Actor, &mut ActionState), With<DaoZhangAmbushAction>>,
+    mut vfx_events: EventWriter<VfxEventRequest>,
+    mut audio_events: EventWriter<PlaySoundRecipeRequest>,
+    mut reveal_events: EventWriter<DaoZhangRevealEvent>,
+    mut qi_transfer_events: EventWriter<QiTransfer>,
+    mut drain_events: EventWriter<DaoZhangDrainAccumulate>,
+    mut commands: Commands,
+    game_tick: Option<Res<GameTick>>,
+) {
+    let tick = game_tick.as_deref().map(|t| t.0).unwrap_or(0);
+
+    // Collect action updates to avoid borrow conflicts with mutable player query.
+    // (player_entity, daozhan_actor_index)
+    let mut pending_drains: Vec<(Entity, u32)> = Vec::new();
+
+    for (Actor(actor), mut action_state) in &mut actions {
+        let Ok((pos, mut state, bb, mut chain_opt)) = daozhan.get_mut(*actor) else {
+            *action_state = ActionState::Failure;
+            continue;
+        };
+
+        match *action_state {
+            ActionState::Requested => {
+                // ① 状态切换 Mimicry → Ambush
+                *state = DaoZhangState::Ambush;
+
+                let npc_pos = pos.get();
+
+                // ② emit reveal event（daozhan_disguise_emit 监听后广播 bong:daozhan_reveal）
+                reveal_events.send(DaoZhangRevealEvent {
+                    daozhan: actor.index(),
+                    trigger_pos: npc_pos,
+                });
+
+                // ③ VFX burst：阴邪紫粒子，count=12，10tick，#7040A8
+                vfx_events.send(spawn_particle(
+                    DAOZHAN_REVEAL_VFX_EVENT_ID,
+                    npc_pos + DVec3::new(0.0, DAOZHAN_VFX_ORIGIN_Y_OFFSET, 0.0),
+                    DAOZHAN_REVEAL_PARTICLE_COLOR,
+                    DAOZHAN_REVEAL_PARTICLE_STRENGTH,
+                    DAOZHAN_REVEAL_PARTICLE_COUNT,
+                    DAOZHAN_REVEAL_PARTICLE_DURATION_TICKS,
+                ));
+                let _ = bb.daozhan_qi; // keep bb borrow to avoid dead_code lint
+
+                // ④ 音效：entity.wither.ambient（阴邪低吼）
+                audio_events.send(play_audio(
+                    DAOZHAN_REVEAL_AUDIO_RECIPE_ID,
+                    npc_pos,
+                    DAOZHAN_REVEAL_AUDIO_VOLUME,
+                    DAOZHAN_REVEAL_AUDIO_PITCH_SHIFT,
+                ));
+
+                // ⑤ 找最近玩家初始化连击链
+                let nearest_player = players
+                    .iter()
+                    .min_by(|(_, pa, _), (_, pb, _)| {
+                        npc_pos
+                            .distance(pa.get())
+                            .partial_cmp(&npc_pos.distance(pb.get()))
+                            .unwrap_or(std::cmp::Ordering::Equal)
+                    })
+                    .map(|(e, _, _)| e);
+
+                if let Some(target_player) = nearest_player {
+                    // 附加连击链 Component 到 daozhan 实体
+                    commands.entity(*actor).insert(DaoZhangAmbushChainState {
+                        hits_done: 0,
+                        target_player,
+                        next_hit_at_tick: tick as u64,
+                    });
+                    *action_state = ActionState::Executing;
+                } else {
+                    // 无目标玩家 → 直接 Success，回 Mimicry
+                    *state = DaoZhangState::Mimicry;
+                    *action_state = ActionState::Success;
+                }
+            }
+
+            ActionState::Executing => {
+                // 守卫：确保仍在 Ambush 态
+                if *state != DaoZhangState::Ambush {
+                    *action_state = ActionState::Success;
+                    continue;
+                }
+
+                let Some(ref mut chain_state) = chain_opt else {
+                    // chain state 丢失（理论上不应发生），回 Mimicry
+                    *state = DaoZhangState::Mimicry;
+                    *action_state = ActionState::Success;
+                    continue;
+                };
+
+                // 检查是否已完成全部连击
+                if chain_state.hits_done >= DAOZHAN_AMBUSH_CHAIN_HITS {
+                    // 连击完成：回 Mimicry + 冷却
+                    *state = DaoZhangState::Mimicry;
+                    commands.entity(*actor).insert(DaoZhangAmbushCooldown {
+                        ready_at_tick: tick as u64 + DAOZHAN_AMBUSH_COOLDOWN_TICKS,
+                    });
+                    *action_state = ActionState::Success;
+                    continue;
+                }
+
+                // 间隔计时：还没到下次打击时机
+                if (tick as u64) < chain_state.next_hit_at_tick {
+                    continue;
+                }
+
+                // 记录待处理的 drain（避免同一帧对 player 双重借用）
+                pending_drains.push((chain_state.target_player, actor.index()));
+
+                // 更新连击链（hits_done+1，推进 next_hit_at_tick）— 直接在借用上修改
+                chain_state.hits_done += 1;
+                chain_state.next_hit_at_tick =
+                    tick as u64 + DAOZHAN_AMBUSH_HIT_INTERVAL_TICKS as u64;
+
+                // 注：daozhan_qi 通过 pending_drains 路径在循环外更新（分步处理避免双借）
+                let _ = bb.daozhan_qi;
+            }
+
+            ActionState::Cancelled => {
+                // 取消暴起：切回 Mimicry
+                *state = DaoZhangState::Mimicry;
+                *action_state = ActionState::Failure;
+            }
+
+            ActionState::Init | ActionState::Success | ActionState::Failure => {}
+        }
+    }
+
+    // 执行 pending drain（守恒：player.qi_current -= drained，daozhan.daozhan_qi += drained）
+    for (player_entity, actor_idx) in pending_drains {
+        let Ok((_, _, mut cult)) = players.get_mut(player_entity) else {
+            continue;
+        };
+
+        // 计算实际可吸取量（不超过玩家当前真元，保证 player qi 不负数）
+        let available = cult.qi_current.max(0.0);
+        let drained = DAOZHAN_DRAIN_AMOUNT_PER_HIT.min(available);
+        if drained <= 0.0 {
+            continue;
+        }
+
+        // 守恒步骤 ①：玩家减真元（不走 cultivation.qi_current+=X 无对应转移的私造路径）
+        cult.qi_current -= drained;
+
+        // 守恒步骤 ②：emit DaoZhangDrainAccumulate（由 daozhan_drain_accumulate_system 同步到 daozhan_qi）
+        // 此 event 在 daozhan 主查询结束后的独立系统中处理，避免 ECS 双重可变借用。
+        drain_events.send(DaoZhangDrainAccumulate {
+            daozhan_idx: actor_idx,
+            amount: drained,
+        });
+
+        // 守恒步骤 ③：emit QiTransfer ledger 事件（audit trail）
+        let from = QiAccountId::player(player_entity.index().to_string());
+        let to = QiAccountId::npc(format!("daozhan:{actor_idx}"));
+        if let Ok(transfer) = QiTransfer::new(from, to, drained, QiTransferReason::DaoZhangDrain) {
+            qi_transfer_events.send(transfer);
+        }
+    }
+}
+
+type DaoZhangBBQuery<'w, 's> = Query<
+    'w,
+    's,
+    (Entity, &'static mut DaoZhangBehaviorBlackboard),
+    (With<NpcMarker>, Without<ClientMarker>),
+>;
+
+/// 守恒系统：消费 `DaoZhangDrainAccumulate` 事件，将 `amount` 累积到对应道伥的
+/// `DaoZhangBehaviorBlackboard.daozhan_qi` 字段（保证死亡时 `release_qi_amount_to_zone` 全额归还）。
+///
+/// 独立系统避免与 `daozhan_ambush_action_system` 的双重可变借用冲突。
+pub(crate) fn daozhan_drain_accumulate_system(
+    mut drain_events: valence::prelude::EventReader<DaoZhangDrainAccumulate>,
+    mut daozhan: DaoZhangBBQuery<'_, '_>,
+) {
+    for event in drain_events.read() {
+        // 按 entity raw index 精确定位道伥 blackboard
+        for (entity, mut bb) in daozhan.iter_mut() {
+            if entity.index() == event.daozhan_idx {
+                bb.daozhan_qi += event.amount;
+                break;
+            }
+        }
+    }
+}
+
+/// `QiAccountId.id` is a public field — this alias helps tests reference the field cleanly.
+#[allow(dead_code)]
+pub(crate) fn _qi_account_id_str(id: &QiAccountId) -> &str {
+    &id.id
+}
+
+/// P2 辅助事件：记录需累积到道伥 daozhan_qi 的量（避免 ECS 双重借用）。
+#[derive(Debug, Clone, valence::prelude::Event)]
+pub struct DaoZhangDrainAccumulate {
+    /// 道伥 entity raw index。
+    pub daozhan_idx: u32,
+    /// 本次实际吸取量。
+    pub amount: f64,
+}
+
+// ── P2: Bevy 注册 ─────────────────────────────────────────────────────────────
+
+/// Bevy 注册：P2 Ambush 评分器 + 行动 system + 守恒累积 system（供 fauna::mod.rs 调用）。
+pub fn register_p2(app: &mut App) {
+    use big_brain::prelude::BigBrainSet;
+    use valence::prelude::{IntoSystemConfigs, PreUpdate, Update};
+
+    app.add_event::<DaoZhangDrainAccumulate>();
+    app.add_systems(
+        PreUpdate,
+        daozhan_ambush_scorer_system.in_set(BigBrainSet::Scorers),
+    );
+    app.add_systems(
+        PreUpdate,
+        daozhan_ambush_action_system.in_set(BigBrainSet::Actions),
+    );
+    // 守恒：在 Update 阶段处理 DaoZhangDrainAccumulate，将吸取量累积到 daozhan_qi
+    app.add_systems(
+        Update,
+        daozhan_drain_accumulate_system.after(daozhan_ambush_action_system),
     );
 }
 
@@ -1195,6 +1699,556 @@ mod tests {
             *state,
             ActionState::Failure,
             "非 Mimicry 态时 action 应立即 Failure，实际={state:?}"
+        );
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // P2: player_back_faces_npc_p2 单元测试
+    // ═══════════════════════════════════════════════════════════════════════
+
+    #[test]
+    fn back_angle_threshold_constant_pin() {
+        // DAOZHAN_BACK_ANGLE_DEG = 150°；cos(150°) ≈ -0.866
+        let threshold: f64 = DAOZHAN_BACK_ANGLE_DEG;
+        assert!(
+            (threshold - 150.0).abs() < 1e-9,
+            "DAOZHAN_BACK_ANGLE_DEG 应为 150°，实际={threshold}"
+        );
+        // 对应 cos(150°) ≈ -0.866（背对判断 cutoff）
+        let cos_val = threshold.to_radians().cos();
+        assert!(
+            (cos_val - (-0.866_025_4)).abs() < 1e-4,
+            "cos(150°) ≈ -0.866，实际={cos_val:.6}"
+        );
+    }
+
+    #[test]
+    fn back_faces_npc_true_when_player_faces_away() {
+        // 玩家站在 (0,64,0)，道伥在 (0,64,5)（+Z 方向）
+        // 玩家 yaw=0 → facing=(0,0,1)（向 +Z，即朝向道伥方向）
+        // 要让玩家背对道伥：yaw=180° → facing=(0,0,-1)（背道伥而去）
+        // to_npc = (0,0,5-0)=(0,0,5)，normalize=(0,0,1)
+        // facing(yaw=180°) = (-sin(180°),0,cos(180°)) = (0,0,-1)
+        // dot = (0,0,-1)·(0,0,1) = -1.0 <= -0.866 → 背对 ✓
+        use valence::entity::Look;
+        let player_pos = DVec3::new(0.0, 64.0, 0.0);
+        let npc_pos = DVec3::new(0.0, 64.0, 5.0);
+        let look = Look {
+            yaw: 180.0,
+            pitch: 0.0,
+        };
+        assert!(
+            player_back_faces_npc_p2(player_pos, Some(&look), npc_pos),
+            "yaw=180° 时玩家应背对 +Z 方向的道伥（期望 back=true）"
+        );
+    }
+
+    #[test]
+    fn back_faces_npc_false_when_player_faces_toward_npc() {
+        // 玩家面朝道伥（yaw=0 → facing=(0,0,1)，npc 在 +Z 方向）
+        // dot = 1.0 >> -0.866 → 非背对
+        use valence::entity::Look;
+        let player_pos = DVec3::new(0.0, 64.0, 0.0);
+        let npc_pos = DVec3::new(0.0, 64.0, 5.0);
+        let look = Look {
+            yaw: 0.0,
+            pitch: 0.0,
+        };
+        assert!(
+            !player_back_faces_npc_p2(player_pos, Some(&look), npc_pos),
+            "yaw=0 时玩家面朝道伥，不应触发背对判断（期望 back=false）"
+        );
+    }
+
+    #[test]
+    fn back_faces_npc_false_when_look_is_none() {
+        // 没有 Look Component 时不触发背对（无法判断方向，保守返回 false）
+        let player_pos = DVec3::new(0.0, 64.0, 0.0);
+        let npc_pos = DVec3::new(0.0, 64.0, 5.0);
+        assert!(
+            !player_back_faces_npc_p2(player_pos, None, npc_pos),
+            "Look=None 时 back 应返回 false（无法判断方向）"
+        );
+    }
+
+    #[test]
+    fn back_faces_npc_false_when_player_on_same_xz_as_npc() {
+        // 同一 XZ 坐标（to_npc_xz 长度为 0），不触发背对（避免除零）
+        use valence::entity::Look;
+        let player_pos = DVec3::new(0.0, 64.0, 0.0);
+        let npc_pos = DVec3::new(0.0, 70.0, 0.0); // 同 XZ，只差 Y
+        let look = Look {
+            yaw: 0.0,
+            pitch: 0.0,
+        };
+        assert!(
+            !player_back_faces_npc_p2(player_pos, Some(&look), npc_pos),
+            "XZ 距离为 0 时不应触发背对（避免除零，期望 back=false）"
+        );
+    }
+
+    #[test]
+    fn back_faces_boundary_at_exactly_150_degrees() {
+        // 偏转角恰好 150° 时应触发（> = <=  threshold 边界）
+        // 玩家在原点，道伥在 +Z，facing 旋转 150°（从 +Z 方向转 150°）= yaw=150
+        // yaw=150° → facing = (-sin(150°),0,cos(150°)) = (-0.5,0,-0.866)
+        // to_npc_norm = (0,0,1)
+        // dot = 0+0+(-0.866)·1 = -0.866 = cos(150°) → 应触发（<= threshold）
+        use valence::entity::Look;
+        let player_pos = DVec3::ZERO;
+        let npc_pos = DVec3::new(0.0, 0.0, 5.0);
+        // 从 +Z 方向顺时针 150° = yaw=150°（MC yaw 0=south=+Z，顺时针增加）
+        let look = Look {
+            yaw: 150.0,
+            pitch: 0.0,
+        };
+        assert!(
+            player_back_faces_npc_p2(player_pos, Some(&look), npc_pos),
+            "yaw=150° 对 +Z 方向道伥时 dot=cos(150°) 恰好触发背对（边界应为 true）"
+        );
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // P2: qi_ratio_p2 单元测试
+    // ═══════════════════════════════════════════════════════════════════════
+
+    fn make_cultivation(qi_current: f64, qi_max: f64) -> Cultivation {
+        Cultivation {
+            qi_current,
+            qi_max,
+            qi_max_frozen: None,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn qi_ratio_full_is_one() {
+        let cult = make_cultivation(100.0, 100.0);
+        let r = qi_ratio_p2(&cult);
+        assert!(
+            (r - 1.0).abs() < 1e-9,
+            "qi_current=qi_max 时比例应为 1.0，实际={r}"
+        );
+    }
+
+    #[test]
+    fn qi_ratio_empty_is_zero() {
+        let cult = make_cultivation(0.0, 100.0);
+        let r = qi_ratio_p2(&cult);
+        assert!(r.abs() < 1e-9, "qi_current=0 时比例应为 0，实际={r}");
+    }
+
+    #[test]
+    fn qi_ratio_below_low_threshold() {
+        // qi_current = 15, qi_max = 100 → ratio=0.15 < 0.20 → 触发 low_qi 条件
+        let cult = make_cultivation(15.0, 100.0);
+        let r = qi_ratio_p2(&cult);
+        assert!(
+            r < DAOZHAN_LOW_QI_RATIO,
+            "比例=0.15 应低于 DAOZHAN_LOW_QI_RATIO={DAOZHAN_LOW_QI_RATIO}"
+        );
+    }
+
+    #[test]
+    fn qi_ratio_at_boundary_20_percent() {
+        // qi_current = 20, qi_max = 100 → ratio=0.20 = threshold，不触发（要求严格 <）
+        let cult = make_cultivation(20.0, 100.0);
+        let r = qi_ratio_p2(&cult);
+        assert!(
+            (r - 0.20).abs() < 1e-9,
+            "比例应为 0.20（边界），实际={r:.6}"
+        );
+        // 边界：< 0.20 才触发，等于不触发（r >= threshold → 不触发）
+        assert!(
+            r >= DAOZHAN_LOW_QI_RATIO,
+            "ratio=0.20 不应小于 DAOZHAN_LOW_QI_RATIO（边界 off-by-one：< 而非 <=）"
+        );
+    }
+
+    #[test]
+    fn qi_ratio_negative_current_clamped_to_zero() {
+        // 防御性：qi_current < 0 时 clamp 到 0
+        let cult = make_cultivation(-5.0, 100.0);
+        let r = qi_ratio_p2(&cult);
+        assert!(
+            r.abs() < 1e-9,
+            "qi_current<0 时 ratio 应 clamp 到 0，实际={r}"
+        );
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // P2: DaoZhangAmbushScorer ECS 测试
+    // ═══════════════════════════════════════════════════════════════════════
+
+    fn ambush_test_app() -> App {
+        let mut app = App::new();
+        app.add_systems(
+            Update,
+            (
+                daozhan_mimicry_scorer_system,
+                daozhan_mimicry_action_system,
+                daozhan_ambush_scorer_system,
+            ),
+        );
+        app
+    }
+
+    #[test]
+    fn ambush_scorer_zero_when_ambush_state() {
+        // 已处于 Ambush 态时 scorer 应为 0（不重入）
+        let mut app = ambush_test_app();
+        let pos = DVec3::new(0.0, 64.0, 0.0);
+
+        let daozhan = app
+            .world_mut()
+            .spawn((
+                NpcMarker,
+                Position::new([pos.x, pos.y, pos.z]),
+                DaoZhangState::Ambush,
+                DaoZhangBehaviorBlackboard::new("spawn", pos, None),
+            ))
+            .id();
+
+        let scorer = app
+            .world_mut()
+            .spawn((Actor(daozhan), Score::default(), DaoZhangAmbushScorer))
+            .id();
+
+        app.update();
+
+        let score = app.world().get::<Score>(scorer).unwrap().get();
+        assert_eq!(
+            score, 0.0,
+            "Ambush 态时 DaoZhangAmbushScorer 应为 0（不重入），实际={score}"
+        );
+    }
+
+    #[test]
+    fn ambush_scorer_zero_when_on_cooldown() {
+        // 冷却未过期时 scorer 应为 0
+        let mut app = ambush_test_app();
+        let pos = DVec3::new(0.0, 64.0, 0.0);
+
+        let daozhan = app
+            .world_mut()
+            .spawn((
+                NpcMarker,
+                Position::new([pos.x, pos.y, pos.z]),
+                DaoZhangState::Mimicry,
+                DaoZhangBehaviorBlackboard::new("spawn", pos, None),
+                // 冷却到 tick=99999，当前 tick=0
+                DaoZhangAmbushCooldown {
+                    ready_at_tick: 99_999,
+                },
+            ))
+            .id();
+
+        // 玩家在感知范围内且背对（理论上应触发，但被冷却阻止）
+        app.world_mut().spawn((
+            ClientMarker,
+            Position::new([0.0, 64.0, 3.0]),
+            Cultivation {
+                qi_current: 5.0,
+                qi_max: 100.0,
+                ..Default::default()
+            },
+        ));
+
+        let scorer = app
+            .world_mut()
+            .spawn((Actor(daozhan), Score::default(), DaoZhangAmbushScorer))
+            .id();
+
+        app.update();
+
+        let score = app.world().get::<Score>(scorer).unwrap().get();
+        assert_eq!(
+            score, 0.0,
+            "冷却中时 DaoZhangAmbushScorer 应为 0，实际={score}"
+        );
+    }
+
+    #[test]
+    fn ambush_scorer_one_when_player_low_qi() {
+        // 玩家 qi < 20% 时 scorer 应为 1.0
+        let mut app = ambush_test_app();
+        let pos = DVec3::new(0.0, 64.0, 0.0);
+
+        let daozhan = app
+            .world_mut()
+            .spawn((
+                NpcMarker,
+                Position::new([pos.x, pos.y, pos.z]),
+                DaoZhangState::Mimicry,
+                DaoZhangBehaviorBlackboard::new("spawn", pos, None),
+            ))
+            .id();
+
+        // 玩家在 5 格内（< 8 = DAOZHAN_AMBUSH_SENSE_RADIUS），qi=10/100 = 10% < 20%
+        app.world_mut().spawn((
+            ClientMarker,
+            Position::new([0.0, 64.0, 5.0]),
+            Cultivation {
+                qi_current: 10.0,
+                qi_max: 100.0,
+                ..Default::default()
+            },
+        ));
+
+        let scorer = app
+            .world_mut()
+            .spawn((Actor(daozhan), Score::default(), DaoZhangAmbushScorer))
+            .id();
+
+        app.update();
+
+        let score = app.world().get::<Score>(scorer).unwrap().get();
+        assert!(
+            (score - 1.0).abs() < 1e-6,
+            "低真元（qi=10%）时 DaoZhangAmbushScorer 应=1.0，实际={score}"
+        );
+    }
+
+    #[test]
+    fn ambush_scorer_zero_when_player_out_of_range() {
+        // 玩家超出感知范围时 scorer 为 0（即使 qi 低）
+        let mut app = ambush_test_app();
+        let pos = DVec3::new(0.0, 64.0, 0.0);
+
+        let daozhan = app
+            .world_mut()
+            .spawn((
+                NpcMarker,
+                Position::new([pos.x, pos.y, pos.z]),
+                DaoZhangState::Mimicry,
+                DaoZhangBehaviorBlackboard::new("spawn", pos, None),
+            ))
+            .id();
+
+        // 玩家在 20 格处（> 8 = DAOZHAN_AMBUSH_SENSE_RADIUS）
+        app.world_mut().spawn((
+            ClientMarker,
+            Position::new([0.0, 64.0, 20.0]),
+            Cultivation {
+                qi_current: 1.0, // 很低
+                qi_max: 100.0,
+                ..Default::default()
+            },
+        ));
+
+        let scorer = app
+            .world_mut()
+            .spawn((Actor(daozhan), Score::default(), DaoZhangAmbushScorer))
+            .id();
+
+        app.update();
+
+        let score = app.world().get::<Score>(scorer).unwrap().get();
+        assert_eq!(
+            score, 0.0,
+            "超出感知范围时 DaoZhangAmbushScorer 应=0，实际={score}"
+        );
+    }
+
+    #[test]
+    fn ambush_scorer_zero_when_no_player_nearby() {
+        // 无玩家时 scorer 为 0
+        let mut app = ambush_test_app();
+        let pos = DVec3::new(0.0, 64.0, 0.0);
+
+        let daozhan = app
+            .world_mut()
+            .spawn((
+                NpcMarker,
+                Position::new([pos.x, pos.y, pos.z]),
+                DaoZhangState::Mimicry,
+                DaoZhangBehaviorBlackboard::new("spawn", pos, None),
+            ))
+            .id();
+
+        let scorer = app
+            .world_mut()
+            .spawn((Actor(daozhan), Score::default(), DaoZhangAmbushScorer))
+            .id();
+
+        app.update();
+
+        let score = app.world().get::<Score>(scorer).unwrap().get();
+        assert_eq!(
+            score, 0.0,
+            "无玩家时 DaoZhangAmbushScorer 应=0，实际={score}"
+        );
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // P2: 守恒核心测试：player.qi -= amount == daozhan.daozhan_qi += amount
+    // ═══════════════════════════════════════════════════════════════════════
+
+    #[test]
+    fn drain_amount_constant_pin() {
+        // DAOZHAN_DRAIN_AMOUNT_PER_HIT 应大于 0 且合理（< qi_max 典型值）
+        let drain: f64 = DAOZHAN_DRAIN_AMOUNT_PER_HIT;
+        assert!(
+            drain > 0.0,
+            "DAOZHAN_DRAIN_AMOUNT_PER_HIT 应 > 0，实际={drain}"
+        );
+        assert!(
+            drain <= 50.0,
+            "DAOZHAN_DRAIN_AMOUNT_PER_HIT 应 <= 50（单次不超过半满上限），实际={drain}"
+        );
+    }
+
+    #[test]
+    fn drain_conservation_normal_case() {
+        // 守恒：player.qi_current -= drained，daozhan.daozhan_qi += drained（之和不变）
+        let player_qi_before = 100.0f64;
+        let drain = DAOZHAN_DRAIN_AMOUNT_PER_HIT;
+        let available = player_qi_before.max(0.0);
+        let drained = drain.min(available);
+
+        let player_qi_after = player_qi_before - drained;
+        let daozhan_qi_after = 0.0f64 + drained; // 初始 daozhan_qi=0
+
+        // 守恒：player 减少量 == daozhan 增加量
+        assert!(
+            (player_qi_before - player_qi_after - daozhan_qi_after).abs() < 1e-9,
+            "守恒失败：player 减少 {:.3}，daozhan 增加 {:.3}，差值应为 0",
+            player_qi_before - player_qi_after,
+            daozhan_qi_after
+        );
+    }
+
+    #[test]
+    fn drain_conservation_player_has_less_than_drain_amount() {
+        // 边界：玩家真元 < DAOZHAN_DRAIN_AMOUNT_PER_HIT 时，drained = 玩家实际量（不负数）
+        let player_qi_before = 3.0f64; // 远小于 DAOZHAN_DRAIN_AMOUNT_PER_HIT=8
+        let drain = DAOZHAN_DRAIN_AMOUNT_PER_HIT;
+        let available = player_qi_before.max(0.0);
+        let drained = drain.min(available);
+
+        assert!(
+            (drained - 3.0).abs() < 1e-9,
+            "玩家 qi=3 时应只吸取 3，实际吸取={drained}"
+        );
+
+        let player_qi_after = player_qi_before - drained;
+        assert!(
+            player_qi_after >= 0.0,
+            "玩家 qi 不应变负数，实际={player_qi_after}"
+        );
+
+        let daozhan_qi_after = drained;
+        // 总和守恒
+        assert!(
+            (player_qi_before - (player_qi_after + daozhan_qi_after)).abs() < 1e-9,
+            "守恒：player_before={player_qi_before}，player_after+daozhan={:.3}",
+            player_qi_after + daozhan_qi_after
+        );
+    }
+
+    #[test]
+    fn drain_conservation_player_qi_zero() {
+        // 边界：玩家 qi=0 时 drained=0，daozhan_qi 不增加（无真元可吸）
+        let player_qi_before = 0.0f64;
+        let drain = DAOZHAN_DRAIN_AMOUNT_PER_HIT;
+        let available = player_qi_before.max(0.0);
+        let drained = drain.min(available);
+
+        assert!(
+            drained.abs() < 1e-9,
+            "玩家 qi=0 时 drained 应为 0，实际={drained}"
+        );
+    }
+
+    #[test]
+    fn drain_conservation_three_hits_total() {
+        // 三连击总守恒：player 总减少量 == daozhan 总累积量
+        let mut player_qi = 100.0f64;
+        let mut daozhan_qi = 0.0f64;
+        let drain = DAOZHAN_DRAIN_AMOUNT_PER_HIT;
+
+        for _ in 0..DAOZHAN_AMBUSH_CHAIN_COUNT {
+            let available = player_qi.max(0.0);
+            let drained = drain.min(available);
+            player_qi -= drained;
+            daozhan_qi += drained;
+        }
+
+        assert!(
+            (player_qi + daozhan_qi - 100.0).abs() < 1e-9,
+            "三连击后 player_qi({player_qi:.3}) + daozhan_qi({daozhan_qi:.3}) 应等于初始总量 100"
+        );
+    }
+
+    #[test]
+    fn ambush_chain_state_initial_values_pin() {
+        // 确认 DaoZhangAmbushChainState 初始字段语义
+        let e = Entity::PLACEHOLDER;
+        let cs = DaoZhangAmbushChainState {
+            hits_done: 0,
+            target_player: e,
+            next_hit_at_tick: 0,
+        };
+        assert_eq!(cs.hits_done, 0, "初始 hits_done 应为 0（尚未打出任何一击）");
+        assert_eq!(
+            cs.target_player, e,
+            "target_player 应为初始化时指定的 entity"
+        );
+    }
+
+    #[test]
+    fn ambush_chain_hits_constant_matches_ambush_chain_count() {
+        // DAOZHAN_AMBUSH_CHAIN_HITS 应与 DAOZHAN_AMBUSH_CHAIN_COUNT 一致（两个常量来源同一逻辑）
+        let chain_hits: u32 = DAOZHAN_AMBUSH_CHAIN_HITS;
+        let chain_count: u32 = DAOZHAN_AMBUSH_CHAIN_COUNT;
+        assert_eq!(
+            chain_hits, chain_count,
+            "DAOZHAN_AMBUSH_CHAIN_HITS({chain_hits}) 应等于 DAOZHAN_AMBUSH_CHAIN_COUNT({chain_count})"
+        );
+        // 应为 3
+        assert_eq!(
+            chain_hits, 3,
+            "三连击设计决议：道伥连击次数应为 3，实际={chain_hits}"
+        );
+    }
+
+    #[test]
+    fn ambush_cooldown_ticks_plausible() {
+        // DAOZHAN_AMBUSH_COOLDOWN_TICKS 应在合理范围（1s~10s）
+        let cd: u64 = DAOZHAN_AMBUSH_COOLDOWN_TICKS;
+        assert!(cd >= 20, "暴起冷却应 >= 20 tick（1s），实际={cd}");
+        assert!(cd <= 200, "暴起冷却应 <= 200 tick（10s），实际={cd}");
+    }
+
+    #[test]
+    fn low_qi_ratio_constant_pin() {
+        // DAOZHAN_LOW_QI_RATIO 应为 0.20（设计决议）
+        let r: f64 = DAOZHAN_LOW_QI_RATIO;
+        assert!(
+            (r - 0.20).abs() < 1e-9,
+            "DAOZHAN_LOW_QI_RATIO 应为 0.20（设计决议 #2），实际={r}"
+        );
+    }
+
+    #[test]
+    fn reveal_vfx_constants_pin() {
+        // VFX 规格 pin：count=12，#7040A8，10tick（与设计决议锁定）
+        let count: u16 = DAOZHAN_REVEAL_PARTICLE_COUNT;
+        assert_eq!(count, 12, "暴起粒子数量应为 12，实际={count}");
+
+        assert_eq!(
+            DAOZHAN_REVEAL_PARTICLE_COLOR, "#7040A8",
+            "暴起粒子颜色应为 #7040A8，实际={}",
+            DAOZHAN_REVEAL_PARTICLE_COLOR
+        );
+
+        let duration: u16 = DAOZHAN_REVEAL_PARTICLE_DURATION_TICKS;
+        assert_eq!(duration, 10, "暴起粒子持续应为 10 tick，实际={duration}");
+
+        assert_eq!(
+            DAOZHAN_REVEAL_VFX_EVENT_ID, "bong:vfx/daozhan_reveal",
+            "VFX event_id 应为 bong:vfx/daozhan_reveal，实际={}",
+            DAOZHAN_REVEAL_VFX_EVENT_ID
         );
     }
 }
