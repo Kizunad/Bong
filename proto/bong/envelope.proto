@@ -2386,6 +2386,9 @@ enum SenseKind {
   SENSE_KIND_DISGUISED_SPIDER      = 10;
   // plan-daozhan-v1 P3：神识识破 Mimicry 态道伥，Solidify+ 可见
   SENSE_KIND_DISGUISED_DAO_ZHANG   = 11;
+  // plan-dying-elder-v1 P3：感知垂死大能残余真元波动，Solidify+ 可见
+  // intensity 映射大能剩余真元比（0.0 = 濒死 / 1.0 = 余力尚足）
+  SENSE_KIND_DYING_ELDER_QI        = 12;
 }
 
 message SenseEntry {

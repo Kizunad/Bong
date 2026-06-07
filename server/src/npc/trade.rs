@@ -602,13 +602,15 @@ pub fn assign_npc_trade_inventory(
         NpcArchetype::Rogue => (1, 3),
         NpcArchetype::Disciple => (2, 4),
         // 非交易 archetype
+        // plan-dying-elder-v1：垂死大能走专属 GiveDan 交互（P1），不走通用 trade
         NpcArchetype::GuardianRelic
         | NpcArchetype::Daoxiang
         | NpcArchetype::Zhinian
         | NpcArchetype::Beast
         | NpcArchetype::SkullFiend
         | NpcArchetype::Fuya
-        | NpcArchetype::Zombie => {
+        | NpcArchetype::Zombie
+        | NpcArchetype::DyingElder => {
             return NpcTradeInventory { offers: Vec::new() };
         }
     };

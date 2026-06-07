@@ -158,6 +158,12 @@ pub const CH_TUIKE_FALSE_SKIN_STATE: &str = "bong:tuike/false_skin_state";
 pub const CH_TUIKE_V2_SKILL_EVENT: &str = "bong:tuike_v2/skill_event";
 /// plan-combat-skill-feedback-bridges-v1 P6 — 蜕壳灰烬入包事件（server → agent）。
 pub const CH_TUIKE_ASH_DECAY: &str = "bong:tuike_v2/ash_decay";
+
+// 垂死大能遭遇（plan-dying-elder-v1 §P0）—— server → agent 叙事频道。
+// payload JSON：`ElderEncounterEventV1`（zone_name / elder_entity_idx / event_kind / betray_probability）。
+// event_kind: "appeared" | "dan_received" | "betrayal" | "dead_natural" | "dead_player_kill"。
+// agent 订阅后 LLM 生成 zone perception / death broadcast 两类 narration（各 2 条文案）。
+pub const CH_ELDER_ENCOUNTER: &str = "bong:elder_encounter";
 pub const CH_YIDAO_EVENT: &str = "bong:yidao/event";
 
 // 伪灵脉（plan-terrain-pseudo-vein-v1 §6.1）
@@ -414,5 +420,7 @@ mod tests {
             CH_BAOMAI_V3_OVERLOAD_RIPPLE,
             "bong:baomai_v3/overload_ripple"
         );
+        // plan-dying-elder-v1 P0 — 垂死大能遭遇 server → agent 叙事频道
+        assert_eq!(CH_ELDER_ENCOUNTER, "bong:elder_encounter");
     }
 }

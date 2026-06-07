@@ -594,6 +594,11 @@ fn spawn_from_snapshot(
                 )
             })
             .unwrap_or_else(|| spawn_zombie_npc_at(commands, layer, home_zone, pos, patrol_target)),
+        // plan-dying-elder-v1：垂死大能由 DyingElderSpawnSystem（P1）管理，
+        // hydrate 路径退化为 zombie 占位（P1 完整实装前不会有 DyingElder snapshot）。
+        NpcArchetype::DyingElder => {
+            spawn_zombie_npc_at(commands, layer, home_zone, pos, patrol_target)
+        }
     };
 
     let mut entity_commands = commands.entity(entity);

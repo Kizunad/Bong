@@ -42,6 +42,11 @@ pub enum SenseKindV1 {
     /// Client 端渲染为红色 #C04040 轮廓，透明度 60%。
     /// 仅 Solidify（固元）及以上境界可见（比伪装蛛更难识破，因道伥伪装更接近真实玩家）。
     DisguisedDaoZhang,
+    /// plan-dying-elder-v1 P3：垂死大能残余真元波动。
+    /// Client 端渲染为暗金 #C0A020 轮廓，透明度 70%，intensity 映射剩余真元比。
+    /// SpiritEye 激活时 HUD 显示 betray_probability%；未激活时显示"气息有异"模糊提示。
+    /// 仅 Solidify（固元）及以上境界可见。
+    DyingElderQi,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

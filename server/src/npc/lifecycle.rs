@@ -103,6 +103,8 @@ pub enum NpcArchetype {
     Fuya,
     /// plan-skull-fiend-v1 §P0 — 骨煞（头骨畸变体，直线冲撞猎物）。
     SkullFiend,
+    /// plan-dying-elder-v1 P0 — 垂死大能（困于坍缩渊濒死化虚修士，欺骗性遭遇，可能翻脸夺舍）。
+    DyingElder,
 }
 
 /// plan-npc-overhaul-v1 §P1.1 — 三桶预算系统，按 NPC 类型族群分组限额。
@@ -137,7 +139,7 @@ impl NpcBudgetBucket {
 impl NpcArchetype {
     /// 所有变体，用于遍历和 exhaustiveness 测试。
     #[allow(dead_code)]
-    pub const ALL: [NpcArchetype; 10] = [
+    pub const ALL: [NpcArchetype; 11] = [
         NpcArchetype::Zombie,
         NpcArchetype::Commoner,
         NpcArchetype::Rogue,
@@ -148,6 +150,7 @@ impl NpcArchetype {
         NpcArchetype::Zhinian,
         NpcArchetype::Fuya,
         NpcArchetype::SkullFiend,
+        NpcArchetype::DyingElder,
     ];
 
     pub const fn as_str(self) -> &'static str {
@@ -162,6 +165,7 @@ impl NpcArchetype {
             Self::Zhinian => "zhinian",
             Self::Fuya => "fuya",
             Self::SkullFiend => "skull_fiend",
+            Self::DyingElder => "dying_elder",
         }
     }
 
@@ -184,6 +188,7 @@ impl NpcArchetype {
             "zhinian" => Self::Zhinian,
             "fuya" => Self::Fuya,
             "skull_fiend" => Self::SkullFiend,
+            "dying_elder" => Self::DyingElder,
             _ => return None,
         })
     }
@@ -198,7 +203,7 @@ impl NpcArchetype {
             | Self::Daoxiang
             | Self::Zhinian => NpcBudgetBucket::Humanoid,
             Self::Beast | Self::Fuya => NpcBudgetBucket::Beast,
-            Self::GuardianRelic | Self::SkullFiend => NpcBudgetBucket::Special,
+            Self::GuardianRelic | Self::SkullFiend | Self::DyingElder => NpcBudgetBucket::Special,
         }
     }
 
@@ -215,11 +220,16 @@ impl NpcArchetype {
             Self::Zhinian => 180_000.0,
             Self::Fuya => 240_000.0,
             Self::SkullFiend => 260_000.0,
+            // 垂死大能由 DyingElderDrainSystem 驱动自然消亡（真元耗尽），不走年龄 aging
+            Self::DyingElder => 1_000_000.0,
         }
     }
 
     pub const fn uses_lifespan_aging(self) -> bool {
-        !matches!(self, Self::Zombie | Self::GuardianRelic | Self::Daoxiang)
+        !matches!(
+            self,
+            Self::Zombie | Self::GuardianRelic | Self::Daoxiang | Self::DyingElder
+        )
     }
 }
 
@@ -1333,8 +1343,8 @@ mod tests {
         // Verify count matches known variant count.
         assert_eq!(
             NpcArchetype::ALL.len(),
-            10,
-            "NpcArchetype::ALL should contain exactly 10 variants (update if enum grows)"
+            11,
+            "NpcArchetype::ALL should contain exactly 11 variants (update if enum grows)"
         );
     }
 

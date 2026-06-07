@@ -3,7 +3,9 @@ pub mod butcher;
 pub mod components;
 // plan-daozhan-v1 P0 — 道伥核心数据结构与 spawn 触发逻辑
 pub mod daozhan;
+// plan-dying-elder-v1 P0 — 垂死大能核心数据结构与 spawn 触发逻辑
 pub mod drop;
+pub mod dying_elder;
 pub mod experience;
 pub mod ghost;
 pub mod ghost_narration;
@@ -83,4 +85,6 @@ pub fn register(app: &mut App) {
     daozhan::register_p2(app);
     // plan-daozhan-v1 P3：天道凝结 + 死亡 qi 全额归还（神识识破在 spiritual_sense/push.rs 接入）
     daozhan::register_p3(app);
+    // plan-dying-elder-v1 P0：垂死大能 spawn timer + spawn 系统
+    dying_elder::register_p0(app);
 }

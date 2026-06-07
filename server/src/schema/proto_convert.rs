@@ -2586,6 +2586,8 @@ fn sense_kind_to_proto(k: &super::realm_vision::SenseKindV1) -> i32 {
         SenseKindV1::DisguisedSpider => bong::SenseKind::DisguisedSpider as i32,
         // plan-daozhan-v1 P3
         SenseKindV1::DisguisedDaoZhang => bong::SenseKind::DisguisedDaoZhang as i32,
+        // plan-dying-elder-v1 P3
+        SenseKindV1::DyingElderQi => bong::SenseKind::DyingElderQi as i32,
     }
 }
 

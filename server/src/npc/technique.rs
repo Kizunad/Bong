@@ -183,11 +183,13 @@ pub fn assign_npc_techniques(
 
     let (count_min, count_max, prof_min, prof_max) = match archetype {
         // Commoner / Beast / SkullFiend / Fuya / Zombie → 无功法
+        // plan-dying-elder-v1：垂死大能技法由 P1 inject（含 offered_skill_id），此处占位无功法
         NpcArchetype::Commoner
         | NpcArchetype::Beast
         | NpcArchetype::SkullFiend
         | NpcArchetype::Fuya
-        | NpcArchetype::Zombie => {
+        | NpcArchetype::Zombie
+        | NpcArchetype::DyingElder => {
             return KnownTechniques {
                 entries: Vec::new(),
             };
