@@ -1,0 +1,12 @@
+{
+  "id": "heiwushi_transform",
+  "layers": [
+    { "sound": "minecraft:entity.warden.emerge", "volume": 1.0, "pitch": 1.2, "delay_ticks": 0 },
+    { "sound": "minecraft:entity.wither.spawn", "volume": 0.6, "pitch": 1.5, "delay_ticks": 5 },
+    { "sound": "minecraft:entity.lightning_bolt.impact", "volume": 0.4, "pitch": 0.8, "delay_ticks": 8 }
+  ],
+  "priority": 85,
+  "attenuation": "world_3d",
+  "category": "HOSTILE",
+  "bus": "COMBAT"
+}

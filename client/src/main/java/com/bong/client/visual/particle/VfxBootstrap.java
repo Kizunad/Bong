@@ -22,6 +22,10 @@ public final class VfxBootstrap {
             new SwordBasicsVfxPlayer(SwordBasicsVfxPlayer.Kind.PARRY));
         registry.register(SwordBasicsVfxPlayer.INFUSE_GLOW,
             new SwordBasicsVfxPlayer(SwordBasicsVfxPlayer.Kind.INFUSE));
+        SwordPathVfxPlayer swordPath = new SwordPathVfxPlayer();
+        for (net.minecraft.util.Identifier eventId : SwordPathVfxPlayer.EVENT_IDS) {
+            registry.register(eventId, swordPath);
+        }
         registry.register(BreakthroughPillarPlayer.EVENT_ID,     new BreakthroughPillarPlayer());
         registry.register(EnlightenmentAuraPlayer.EVENT_ID,      new EnlightenmentAuraPlayer());
         registry.register(TribulationLightningPlayer.EVENT_ID,   new TribulationLightningPlayer());

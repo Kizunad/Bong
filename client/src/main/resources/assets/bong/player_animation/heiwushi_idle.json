@@ -1,0 +1,33 @@
+{
+  "version": 3,
+  "author": "Bong",
+  "name": "heiwushi_idle",
+  "description": "黑武士待机：上身轻微摇晃，持剑手微抬。",
+  "emote": {
+    "beginTick": 0,
+    "endTick": 80,
+    "stopTick": 82,
+    "isLoop": true,
+    "returnTick": 0,
+    "nsfw": false,
+    "degrees": false,
+    "moves": [
+      { "tick": 0, "easing": "INOUTSINE", "body": { "y": 0.0 } },
+      { "tick": 0, "easing": "INOUTSINE", "head": { "pitch": 0.0 } },
+      { "tick": 0, "easing": "INOUTSINE", "torso": { "yaw": 0.0 } },
+      { "tick": 0, "easing": "INOUTSINE", "rightArm": { "pitch": -0.15 } },
+      { "tick": 0, "easing": "INOUTSINE", "leftArm": { "pitch": 0.0 } },
+      { "tick": 20, "easing": "INOUTSINE", "head": { "pitch": 0.03 } },
+      { "tick": 20, "easing": "INOUTSINE", "torso": { "yaw": 0.05 } },
+      { "tick": 40, "easing": "INOUTSINE", "head": { "pitch": 0.0 } },
+      { "tick": 40, "easing": "INOUTSINE", "torso": { "yaw": 0.0 } },
+      { "tick": 60, "easing": "INOUTSINE", "head": { "pitch": -0.03 } },
+      { "tick": 60, "easing": "INOUTSINE", "torso": { "yaw": -0.05 } },
+      { "tick": 80, "easing": "INOUTSINE", "body": { "y": 0.0 } },
+      { "tick": 80, "easing": "INOUTSINE", "head": { "pitch": 0.0 } },
+      { "tick": 80, "easing": "INOUTSINE", "torso": { "yaw": 0.0 } },
+      { "tick": 80, "easing": "INOUTSINE", "rightArm": { "pitch": -0.15 } },
+      { "tick": 80, "easing": "INOUTSINE", "leftArm": { "pitch": 0.0 } }
+    ]
+  }
+}

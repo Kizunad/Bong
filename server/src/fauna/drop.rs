@@ -200,10 +200,10 @@ const LIVING_PILLAR_DROPS: [DropEntry; 3] = [
 ];
 
 const HEIWUSHI_DROPS: [DropEntry; 4] = [
-    DropEntry::guaranteed("star_iron", QuantityRange::between(1, 2)),
-    DropEntry::guaranteed("sword_embryo_shard", QuantityRange::between(1, 2)),
+    DropEntry::guaranteed("star_iron", QuantityRange::fixed(2)),
+    DropEntry::guaranteed("sword_embryo_shard", QuantityRange::fixed(2)),
     DropEntry::rare("ancient_sword_embryo", QuantityRange::fixed(1), 0.30),
-    DropEntry::rare("scroll_sword_path", QuantityRange::fixed(1), 0.10),
+    DropEntry::rare("scroll_sword_manifest", QuantityRange::fixed(1), 0.10),
 ];
 
 const POISON_DRAGON_DROPS: [DropEntry; 4] = [

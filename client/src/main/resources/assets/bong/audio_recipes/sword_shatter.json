@@ -1,0 +1,12 @@
+{
+  "id": "sword_shatter",
+  "layers": [
+    { "sound": "minecraft:item.shield.break", "volume": 0.8, "pitch": 0.75, "delay_ticks": 0 },
+    { "sound": "minecraft:block.glass.break", "volume": 0.55, "pitch": 0.6, "delay_ticks": 2 },
+    { "sound": "minecraft:entity.player.hurt", "volume": 0.45, "pitch": 0.8, "delay_ticks": 5 }
+  ],
+  "priority": 70,
+  "attenuation": "world_3d",
+  "category": "PLAYERS",
+  "bus": "COMBAT"
+}

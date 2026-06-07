@@ -7,8 +7,7 @@ use valence::prelude::{
     With,
 };
 
-use crate::fauna::visual::HEIWUSHI_ENTITY_KIND;
-use crate::npc::spawn::spawn_zombie_npc_at;
+use crate::npc::heiwushi::spawn_heiwushi_at;
 use crate::world::dimension::{DimensionKind, OverworldLayer};
 use crate::world::zone::{ZoneRegistry, DEFAULT_SPAWN_ZONE_NAME};
 
@@ -58,10 +57,7 @@ fn handle_summon_heiwushi(
             .map(|z| z.name.clone())
             .unwrap_or_else(|| DEFAULT_SPAWN_ZONE_NAME.to_string());
 
-        let entity = spawn_zombie_npc_at(&mut commands, layer, &zone_name, spawn_pos, spawn_pos);
-
-        // Override entity kind to Heiwushi model
-        commands.entity(entity).insert(HEIWUSHI_ENTITY_KIND);
+        spawn_heiwushi_at(&mut commands, layer, &zone_name, spawn_pos, spawn_pos);
 
         client.send_chat_message(format!(
             "§6[黑武士] §f已召唤 ({:.0}, {:.0}, {:.0})",
@@ -74,6 +70,7 @@ fn handle_summon_heiwushi(
 mod tests {
     use super::*;
     use crate::cmd::dev::test_support::{run_update, spawn_test_client};
+    use crate::fauna::visual::HEIWUSHI_ENTITY_KIND;
     use crate::npc::spawn::NpcMarker;
     use valence::prelude::{EntityKind, Events};
 

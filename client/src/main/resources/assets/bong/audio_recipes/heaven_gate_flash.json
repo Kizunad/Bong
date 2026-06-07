@@ -1,0 +1,10 @@
+{
+  "id": "heaven_gate_flash",
+  "layers": [
+    { "sound": "minecraft:entity.lightning_bolt.thunder", "volume": 0.65, "pitch": 1.8, "delay_ticks": 0 }
+  ],
+  "priority": 80,
+  "attenuation": "world_3d",
+  "category": "PLAYERS",
+  "bus": "COMBAT"
+}

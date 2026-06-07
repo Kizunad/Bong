@@ -1,0 +1,10 @@
+{
+  "id": "heaven_gate_charge_1s",
+  "layers": [
+    { "sound": "minecraft:block.beacon.ambient", "volume": 0.45, "pitch": 1.0, "delay_ticks": 0 }
+  ],
+  "priority": 66,
+  "attenuation": "world_3d",
+  "category": "PLAYERS",
+  "bus": "COMBAT"
+}

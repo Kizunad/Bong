@@ -1,0 +1,10 @@
+{
+  "id": "sword_manifest_strike",
+  "layers": [
+    { "sound": "minecraft:entity.player.attack.strong", "volume": 0.6, "pitch": 1.25, "delay_ticks": 0 }
+  ],
+  "priority": 55,
+  "attenuation": "world_3d",
+  "category": "PLAYERS",
+  "bus": "COMBAT"
+}

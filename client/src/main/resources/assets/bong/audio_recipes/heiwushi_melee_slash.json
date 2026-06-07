@@ -1,0 +1,11 @@
+{
+  "id": "heiwushi_melee_slash",
+  "layers": [
+    { "sound": "minecraft:entity.player.attack.sweep", "volume": 0.9, "pitch": 0.8, "delay_ticks": 3 },
+    { "sound": "minecraft:entity.iron_golem.attack", "volume": 0.5, "pitch": 1.2, "delay_ticks": 4 }
+  ],
+  "priority": 75,
+  "attenuation": "world_3d",
+  "category": "HOSTILE",
+  "bus": "COMBAT"
+}
