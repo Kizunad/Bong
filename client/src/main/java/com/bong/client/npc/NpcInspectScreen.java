@@ -101,14 +101,6 @@ public final class NpcInspectScreen extends BaseOwoScreen<FlowLayout> {
         leftCol.gap(2);
         leftCol.child(NpcDialogueScreen.coloredLabel("基础信息", COLOR_SECTION_TITLE));
         leftCol.child(infoLine("寿元: " + metadata.ageBand()));
-        if (metadata.factionName() != null) {
-            String factionText = metadata.factionRank() != null
-                ? metadata.factionName() + " / " + metadata.factionRank()
-                : metadata.factionName();
-            leftCol.child(infoLine("派系: " + factionText));
-        } else {
-            leftCol.child(infoLine("派系: 无"));
-        }
         leftCol.child(attitudeLine(metadata.reputationToPlayer()));
         if (metadata.qiHint() != null) {
             leftCol.child(coloredLine("气息: " + metadata.qiHint(), COLOR_QI_HINT));
@@ -179,12 +171,6 @@ public final class NpcInspectScreen extends BaseOwoScreen<FlowLayout> {
         lines.add("header: " + metadata.displayName() + " · "
             + NpcDialogueScreen.archetypeLabel(metadata.archetype()) + " · " + metadata.realm());
         lines.add("age: " + metadata.ageBand());
-        if (metadata.factionName() != null) {
-            lines.add("faction: " + metadata.factionName()
-                + (metadata.factionRank() != null ? " / " + metadata.factionRank() : ""));
-        } else {
-            lines.add("faction: 无");
-        }
         lines.add("attitude: " + attitudeLabel(metadata.reputationToPlayer()));
         if (metadata.qiHint() != null) {
             lines.add("qi_hint: " + metadata.qiHint());
@@ -244,15 +230,15 @@ public final class NpcInspectScreen extends BaseOwoScreen<FlowLayout> {
 
     private static LabelComponent attitudeLine(int reputation) {
         String label = attitudeLabel(reputation);
-        int color = reputation > 50 ? COLOR_FRIENDLY : reputation < -30 ? COLOR_HOSTILE : COLOR_NEUTRAL;
+        int color = reputation > 33 ? COLOR_FRIENDLY : reputation < -33 ? COLOR_HOSTILE : COLOR_NEUTRAL;
         return coloredLine("态度: " + label, color);
     }
 
     static String attitudeLabel(int reputation) {
-        if (reputation > 50) {
-            return "友善";
+        if (reputation > 33) {
+            return "亲善";
         }
-        if (reputation < -30) {
+        if (reputation < -33) {
             return "敌意";
         }
         return "中立";

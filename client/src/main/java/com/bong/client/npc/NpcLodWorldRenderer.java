@@ -76,7 +76,7 @@ public final class NpcLodWorldRenderer {
             case "zombie" -> "尸";
             case "rogue" -> "散";
             case "commoner" -> "凡";
-            case "disciple" -> "宗";
+            case "disciple" -> "余";
             case "beast" -> "兽";
             case "guardian_relic" -> "守";
             case "daoxiang" -> "伥";

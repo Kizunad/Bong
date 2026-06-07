@@ -75,7 +75,7 @@ pub(crate) fn relic_guard_thinker() -> ThinkerBuilder {
 // Spawn
 // ---------------------------------------------------------------------------
 
-/// Spawn a Disciple (宗门弟子) NPC. 基于 Rogue 外观 + 挂 FactionMembership。
+/// Spawn a Disciple（残宗余孽）NPC. 基于 Rogue 外观 + 挂 FactionMembership。
 /// `faction_id` 决定所属派系（Attack / Defend / Neutral）。`master_id` 可选
 /// 挂师承；缺省表示无师父。
 #[allow(clippy::too_many_arguments)]

@@ -45,6 +45,24 @@ public class NpcMetadataHandlerTest {
     }
 
     @Test
+    void storesAnonymousDisciplePayloadFromServerContract() {
+        String payload = """
+            {"type":"npc_metadata","v":1,"entity_id":43,"archetype":"disciple","realm":"凝脉",\
+            "reputation_to_player":80,"display_name":"残宗余孽·凝脉",\
+            "age_band":"正值壮年","greeting_text":"道友，可有灵草出让？"}
+            """.trim();
+
+        assertTrue(NpcMetadataHandler.handle(payload, payload.getBytes(StandardCharsets.UTF_8).length));
+
+        NpcMetadata metadata = NpcMetadataStore.get(43);
+        assertNotNull(metadata, "metadata should be stored for anonymous disciple payload");
+        assertEquals("disciple", metadata.archetype());
+        assertEquals("残宗余孽·凝脉", metadata.displayName());
+        assertEquals(null, metadata.factionName(), "server anonymity contract should omit faction_name");
+        assertEquals(null, metadata.factionRank(), "server anonymity contract should omit faction_rank");
+    }
+
+    @Test
     void rejectsOversizeNpcMetadataPayload() {
         String payload = "{\"type\":\"npc_metadata\",\"v\":1,\"entity_id\":42}";
 
