@@ -126,7 +126,8 @@ public enum HudLayoutPreset {
             case LINGTIAN_OVERLAY -> Widget.LINGTIAN;
             case PROCESSING_HUD, SEARCH_PROGRESS, TSY_EXTRACT, REALM_COLLAPSE, GATHERING -> Widget.PROCESSING;
             case MERIDIAN_OPEN -> Widget.MERIDIAN;
-            case VISUAL, SPIRITUAL_SENSE, DAMAGE_FLOATER, FLIGHT_HUD, CONNECTION_STATUS -> Widget.CRITICAL;
+            case VISUAL, SPIRITUAL_SENSE, DAMAGE_FLOATER, FLIGHT_HUD, CONNECTION_STATUS,
+                HALLUCINATION -> Widget.CRITICAL;
             case YIDAO -> Widget.CRITICAL;
         };
     }

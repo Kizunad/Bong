@@ -241,6 +241,11 @@ pub struct AlchemyRequestParams<'w, 's> {
     pub redis: Option<Res<'w, RedisBridgeResource>>,
     pub zones: Option<Res<'w, ZoneRegistry>>,
     pub vfx_events: Option<ResMut<'w, Events<VfxEventRequest>>>,
+    /// plan-fauna-stitched-beast-v1 P3：兽核吸收幻觉事件 (M1 修复：接通 narration/hallucination)
+    pub hallucination_events:
+        Option<ResMut<'w, Events<crate::fauna::hybrid_beast::CoreAbsorptionHallucinationEvent>>>,
+    /// plan-fauna-stitched-beast-v1 P3：叙事容器（M1 修复：兽核吸收后推 player narration）
+    pub pending_narrations: Option<ResMut<'w, crate::player::gameplay::PendingGameplayNarrations>>,
 }
 
 #[derive(SystemParam)]
@@ -754,6 +759,9 @@ pub fn handle_client_request_payloads(
                     &mut dispatch.lifespan_extension_tx,
                     alchemy_params.vfx_events.as_deref_mut(),
                     &mut npc_engagement_params.audio_events,
+                    // plan-fauna-stitched-beast-v1 P3 M1 修复：接通幻觉事件和叙事容器
+                    alchemy_params.hallucination_events.as_deref_mut(),
+                    alchemy_params.pending_narrations.as_deref_mut(),
                 );
             }
             ClientRequestV1::AlchemyFurnacePlace {
@@ -1639,6 +1647,9 @@ pub fn handle_client_request_payloads(
                     &mut dispatch.lifespan_extension_tx,
                     alchemy_params.vfx_events.as_deref_mut(),
                     &mut npc_engagement_params.audio_events,
+                    // plan-fauna-stitched-beast-v1 P3 M1 修复：接通幻觉事件和叙事容器
+                    alchemy_params.hallucination_events.as_deref_mut(),
+                    alchemy_params.pending_narrations.as_deref_mut(),
                 );
             }
             ClientRequestV1::SelfAntidote { instance_id, .. } => {
@@ -7811,6 +7822,10 @@ fn handle_apply_pill(
     lifespan_extension_tx: &mut Option<ResMut<Events<LifespanExtensionIntent>>>,
     vfx_events: Option<&mut Events<VfxEventRequest>>,
     audio_events: &mut Option<ResMut<Events<PlaySoundRecipeRequest>>>,
+    hallucination_events: Option<
+        &mut Events<crate::fauna::hybrid_beast::CoreAbsorptionHallucinationEvent>,
+    >,
+    narrations: Option<&mut crate::player::gameplay::PendingGameplayNarrations>,
 ) {
     let template_id = inventories
         .get(entity)
@@ -7839,6 +7854,9 @@ fn handle_apply_pill(
         lifespan_extension_tx,
         vfx_events,
         audio_events,
+        // plan-fauna-stitched-beast-v1 P3 M1 修复：透传幻觉事件和叙事容器
+        hallucination_events,
+        narrations,
     );
 }
 
@@ -8674,6 +8692,10 @@ fn handle_alchemy_take_pill(
     lifespan_extension_tx: &mut Option<ResMut<Events<LifespanExtensionIntent>>>,
     vfx_events: Option<&mut Events<VfxEventRequest>>,
     audio_events: &mut Option<ResMut<Events<PlaySoundRecipeRequest>>>,
+    hallucination_events: Option<
+        &mut Events<crate::fauna::hybrid_beast::CoreAbsorptionHallucinationEvent>,
+    >,
+    narrations: Option<&mut crate::player::gameplay::PendingGameplayNarrations>,
 ) {
     let Some(template) = combat_params.item_registry.get(pill_item_id).cloned() else {
         tracing::warn!(
@@ -8963,6 +8985,87 @@ fn handle_alchemy_take_pill(
             tracing::debug!(
                 "[bong][network][alchemy] take_pill entity={entity:?} `{pill_item_id}` FoodRegen on pill path — noop (food must be consumed via quick slot)"
             );
+        }
+        // plan-fauna-stitched-beast-v1 P3 — 异变兽核吸收：突破加成 + 幻觉 HUD。
+        //
+        // 步骤：
+        // 1. 突破加成（同 BreakthroughBonus）：emit ApplyStatusEffectIntent(BreakthroughBoost)
+        // 2. 解析玩家 char_id（Username 组件）
+        // 3. emit CoreAbsorptionHallucinationEvent（duration_ticks=固定）
+        // 4. S2C push `bong:core_absorption_hallucination` JSON payload（{duration_ticks, cancel:false}）
+        // 5. 叙事 1：Perception "核心涌入经脉，感知开始扭曲..."（scope=player）
+        // 6. 叙事 2：Perception "眼前世界开始倾斜，手中真元似乎不受控..."（scope=player）
+        //
+        // 守恒红线：幻觉仅改变 client 显示层，不改玩家实际 HP / qi_current。
+        ItemEffect::BeastCoreAbsorption {
+            breakthrough_magnitude,
+            hallucination_duration_ticks,
+        } => {
+            // 1. 突破加成（同 BreakthroughBonus 路径）
+            let scaled_magnitude =
+                breakthrough_magnitude * alchemy_multiplier * foreign_qi.effect_multiplier;
+            combat_params.buff_tx.send(ApplyStatusEffectIntent {
+                target: entity,
+                kind: StatusEffectKind::BreakthroughBoost,
+                magnitude: scaled_magnitude as f32,
+                duration_ticks: BREAKTHROUGH_BOOST_DURATION_TICKS * duration_multiplier,
+                issued_at_tick: clock.tick,
+            });
+            tracing::info!(
+                "[bong][network][alchemy] take_pill entity={entity:?} `{pill_item_id}` → BeastCoreAbsorption BreakthroughBoost +{scaled_magnitude:.3}",
+            );
+
+            // 2. 获取 player char_id（"offline:{username}"）
+            let player_char_id = clients
+                .get(entity)
+                .ok()
+                .map(|(username, _)| format!("offline:{}", username.0))
+                .unwrap_or_else(|| format!("char:{}", entity.to_bits()));
+
+            // 3. emit CoreAbsorptionHallucinationEvent（server 内部事件）
+            if let Some(hall_events) = hallucination_events {
+                hall_events.send(
+                    crate::fauna::hybrid_beast::CoreAbsorptionHallucinationEvent {
+                        player_id: player_char_id.clone(),
+                        duration_ticks: hallucination_duration_ticks,
+                    },
+                );
+            }
+
+            // 4. S2C push `bong:core_absorption_hallucination` JSON → client
+            // payload: {"duration_ticks": N, "cancel": false}
+            // duration_ticks=0 表示立即取消（断线或到期时用）；正值表示激活幻觉。
+            let s2c_payload = format!(
+                r#"{{"duration_ticks":{},"cancel":false}}"#,
+                hallucination_duration_ticks
+            );
+            let s2c_bytes = s2c_payload.as_bytes().to_vec();
+            if let Ok((_, mut client)) = clients.get_mut(entity) {
+                client.send_custom_payload(
+                    valence::prelude::ident!("bong:core_absorption_hallucination"),
+                    &s2c_bytes,
+                );
+            }
+            tracing::info!(
+                "[bong][network][alchemy] take_pill entity={entity:?} → CoreAbsorptionHallucination S2C pushed (duration_ticks={})",
+                hallucination_duration_ticks
+            );
+
+            // 5. 叙事 1：感知层第一条（真元冲击感知）
+            if let Some(narrations) = narrations {
+                use crate::schema::common::NarrationStyle;
+                narrations.push_player(
+                    &player_char_id,
+                    "核心涌入经脉，真元震荡——感知开始扭曲，世界的边缘模糊成绿色光晕。",
+                    NarrationStyle::Perception,
+                );
+                // 6. 叙事 2：感知层第二条（失控感）
+                narrations.push_player(
+                    &player_char_id,
+                    "眼前景物倾斜偏转，手中真元似乎不再听从驱使——这是异兽核心的驻波共鸣。",
+                    NarrationStyle::Perception,
+                );
+            }
         }
     }
 

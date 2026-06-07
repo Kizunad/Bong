@@ -105,6 +105,22 @@ pub const WAR_WINNER_ZONE_REGEN_MULTIPLIER: f64 = 1.10;
 /// 仅作用于 regen_from_zone 的 rate 参数，不铸造/销毁真元，守恒安全。
 pub const WAR_LOSER_ZONE_REGEN_MULTIPLIER: f64 = 0.95;
 
+// ── plan-fauna-stitched-beast-v1 P0 — 异变缝合兽灵压狂暴吸收率 ──────────────
+/// 异变缝合兽满血时每 tick 灵压吸收速率（归口 qi_physics；触发/几何参数留在 hybrid_beast.rs）。
+///
+/// 吸收速率公式：`rate = BASE × (1.0 + RAGE_MULTIPLIER × (1.0 - hp_pct))`
+///
+/// rate=0.002 × (1 + 2.0 × 1) = 0.006/tick（濒死），约 83 秒吸干 zone_qi=0.5 的区域。
+/// 设计决议 §2：给玩家约 1.5 分钟窗口，既感受压力又不秒速收场。
+pub const BASE_HYBRID_ABSORPTION_RATE: f64 = 0.002;
+
+/// 异变缝合兽灵压狂暴倍率（f32，与 HybridBeastRageState.hp_pct 同类型）。
+///
+/// HP=0 时 rate = BASE × (1 + RAGE_MULTIPLIER × 1) = BASE × 3.0。
+/// HP=1 时 rate = BASE（无加成）。
+/// 设计决议 §2：取 2.0（中间值），使濒死时 zone 约 83 秒吸干；3.0 太激进，1.5 压力平淡。
+pub const RAGE_MULTIPLIER: f32 = 2.0;
+
 // ── plan-fauna-mimic-spider-v1 P0 — 拟态灰烬蛛 Disguised 期真元吸收率 ──
 /// 拟态灰烬蛛 Disguised 期每 tick 真元吸收速率系数（归口 qi_physics；几何 / 感知参数留在 fauna 模块）。
 /// regen_from_zone 的 rate 参数：gain = zone_qi × rate × integrity × QI_CULTIVATION_REGEN_RATE。

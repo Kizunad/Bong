@@ -165,6 +165,16 @@ pub enum QiTransferReason {
     /// 从附近修士真元库抽取 +50%。吸来的真元守恒转入 zone 账户（坍缩渊），
     /// **不得凭空消失**。amount = 玩家实际被吸走量（经光环计算，已扣除 50% 加成）。
     BossDrain,
+    /// plan-fauna-stitched-beast-v1 P0 — 异变缝合兽融合时 N 只野兽 qi_current 合并到 HybridBeast。
+    ///
+    /// worldview §七「几只野兽相互吞噬」正典依据：低灵气饥饿状态下，低阶野兽融合为缝合兽，
+    /// 真元加和后按 FUSION_RETAIN_RATIO 保留于 HybridBeast，余下 20% 走 ReleaseToZone 逸散。
+    ///
+    /// 守恒约束：
+    ///   - 每只组件兽：emit QiTransfer(from=npc:<beast_id>, to=npc:<hybrid_id>, reason=FusionMerge)
+    ///   - 逸散 20%：emit QiTransfer(from=npc:<hybrid_id>, to=zone:<zone_name>, reason=ReleaseToZone)
+    ///   - **sum(beast_qi) == hybrid_qi + released_to_zone**，无凭空消失
+    FusionMerge,
 }
 
 #[derive(Debug, Clone, Event, PartialEq)]

@@ -289,6 +289,17 @@ pub enum ItemEffect {
         bonus_factor: f32,
         duration_ticks: u64,
     },
+    /// plan-fauna-stitched-beast-v1 P3 — 异变兽核吸收：使用 `bian_yi_hexin` 时触发幻觉。
+    ///
+    /// 向玩家施加突破加成（同 `BreakthroughBonus`）并额外 emit `CoreAbsorptionHallucinationEvent`
+    /// 触发 client 端感知幻觉 HUD（视野偏移/绿边像差/bar ±20% 随机偏移，绝不改实际值）。
+    ///
+    /// - `breakthrough_magnitude`：突破加成幅度（同 `BreakthroughBonus.magnitude` 语义）
+    /// - `hallucination_duration_ticks`：幻觉持续 tick 数（P3 固定 200，约 10s @ 20TPS）
+    BeastCoreAbsorption {
+        breakthrough_magnitude: f64,
+        hallucination_duration_ticks: u32,
+    },
 }
 
 #[derive(Debug, Default)]
@@ -2064,6 +2075,22 @@ fn parse_item_effect(
             Ok(ItemEffect::FoodRegen {
                 bonus_factor: effect.magnitude as f32,
                 duration_ticks,
+            })
+        }
+        "beast_core_absorption" => {
+            // plan-fauna-stitched-beast-v1 P3 — 异变兽核吸收。
+            // magnitude = 突破加成幅度；duration_ticks = 幻觉持续 tick 数（默认 200）。
+            let hallucination_duration_ticks =
+                effect.duration_ticks.map(|t| t as u32).unwrap_or(200);
+            if hallucination_duration_ticks == 0 {
+                return Err(format!(
+                    "{} item `{item_id}` effect `beast_core_absorption` has invalid hallucination_duration_ticks 0; expected >= 1",
+                    source_path.display()
+                ));
+            }
+            Ok(ItemEffect::BeastCoreAbsorption {
+                breakthrough_magnitude: effect.magnitude,
+                hallucination_duration_ticks,
             })
         }
         other => Err(format!(

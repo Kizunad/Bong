@@ -175,9 +175,11 @@ public class BongHud {
 
         // plan-combat-skill-feedback-bridges-v1 P1 — 爆脉 v4 HUD overlay 接入渲染回路
         // plan-combat-skill-feedback-bridges-v1 P3 — 我流虚蚀视觉 HUD overlay（声音扭曲+阶段文字）
+        // plan-fauna-stitched-beast-v1 P3 — 兽核吸收幻觉 HUD overlay（绿边像差+bar偏移+视野旋转）
         if (visibility == ScreenHudVisibility.FULL) {
             CrackReadingOverlay.render(context, client.textRenderer, nowMillis);
             VoidErosionHudOverlay.render(context, client.textRenderer);
+            com.bong.client.fauna.HallucinationHudOverlay.render(context);
             long estimatedTick = nowMillis / 50L;
             ResonanceLockMeterHud.render(
                 context,
