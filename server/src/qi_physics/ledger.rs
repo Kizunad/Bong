@@ -187,6 +187,12 @@ pub enum QiTransferReason {
     /// QiTransfer(from=zone:<name>, to=npc:daozhan:<id>, reason=TiandaoCondense)。
     /// 绝不凭空创生：zone 必须先减，道伥才获得真元。
     TiandaoCondense,
+    /// plan-era-state-v1 P0 — 变化时代潮汐涌动（正向 qi 搬运）。
+    ///
+    /// 守恒约束：搬运必须是账户间 QiTransfer（from=zone:<src>, to=zone:<dst>），
+    /// 两端 balance 一增一减，initial_total 恒定。不凭空增减。
+    /// 负向衰减走 [`QiTransferReason::EraDecay`] + [`crate::qi_physics::tiandao::era_decay_step`]。
+    EraShift,
 }
 
 #[derive(Debug, Clone, Event, PartialEq)]
