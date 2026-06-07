@@ -6,9 +6,9 @@
 
 | 阶段 | 主题 | 状态 | 验收日期 |
 |------|------|------|---------|
-| P0 | server payload 匿名化：faction 退出玩家可见层 | ⬜ | — |
-| P1 | `Disciple` archetype 重定义为「残宗余孽」（server） | ⬜ | — |
-| P2 | client 渲染对齐 + reframe b 正则 pin + e2e | ⬜ | — |
+| P0 | server payload 匿名化：faction 退出玩家可见层 | ✅ | 2026-06-07 |
+| P1 | `Disciple` archetype 重定义为「残宗余孽」（server） | ✅ | 2026-06-07 |
+| P2 | client 渲染对齐 + reframe b 正则 pin + e2e | ✅ | 2026-06-07 |
 | ~~P3~~ | ~~EmergentGroupId live 数据通路~~ —— **已取消**：§8.1 #1 选定方案 (a) 完全匿名 | ❌ 2026-06-05 | — |
 
 > **共 3 PR**（P0 → P1 → P2）。§8 开放问题已于 2026-06-05 全部收口（见 §8.1），可提升为 active 后 `/consume-plan`。
@@ -209,4 +209,41 @@
 
 ## Finish Evidence
 
-> 迁入 `docs/finished_plans/` 前必填：落地清单（各阶段真实文件路径）/ 关键 commit（hash + 日期 + 一句话）/ 测试结果（命令 + 数量）/ 跨仓库核验（server·client·agent 命中 symbol）/ 遗留后续。
+### 落地清单
+
+- **P0 — server payload 匿名化**（`server/src/network/npc_metadata.rs`）：
+  - `build_npc_metadata()` 恒置 `faction_name = None` / `faction_rank = None`，faction 退出玩家可见 payload。
+  - `display_name()` 删除 `membership.is_some()` 具名拼接分支，统一回退 `{archetype_label}·{realm}`（如「残宗余孽·凝脉」），同步覆盖 `client_request_handler.rs` NPC 互动文本。
+  - `reputation_to_player`（-100..100）保留——worldview §十一 允许的「NPC 对我的态度」，非具名派系。
+  - `is_hostile_pair` / `are_hostile` / `FactionId` / `FactionMembership` 全保留为 server 内部 big-brain 敌我逻辑，不进 payload。
+- **P1 — `Disciple` 重定义「残宗余孽」**（`server/src/network/npc_metadata.rs` archetype_label + `server/src/npc/spawn/disciple.rs` 文档注释）：`NpcArchetype::Disciple` 展示名「宗门弟子」→「残宗余孽」（worldview.md:1462 失落宗门遗民依据）。loot/必留遗物分支叙事上仍成立，保留 item key。
+- **P2 — client 渲染对齐 + reframe b 正则 pin**（`client/src/main/java/com/bong/client/npc/`）：
+  - `NpcInspectScreen.java` `build()` + `describe()`：「派系」行 →「态度」行，按 `reputation_to_player` 分级（敌意 <-33 / 中立 / 亲善 >33）。
+  - `NpcDialogueScreen.java` / `NpcNametagRenderer.java` / `NpcLodWorldRenderer.java` disciple 展示对齐「残宗余孽」/ 单字图标。
+
+### 关键 commit
+
+- `0fe08376e` · 2026-06-06 · `fix(npc): 匿名化 NPC faction 可见 payload`（P0）。
+- `ba235d1d3` · 2026-06-06 · `fix(npc): 重定义 Disciple 展示身份为残宗余孽`（P1）。
+- `d0aa808bc` · 2026-06-06 · `fix(client): 对齐 NPC 匿名身份展示`（P2）。
+- （以上 3 commit 2026-06-07 rebase 至 origin/main 干净，hash 重写为当前值。）
+
+### 测试结果
+
+- server：`cd server && cargo test npc_metadata` → **12 passed; 0 failed**，含 reframe b pin 用例：
+  - `disciple_archetype_label_is_ruined_sect_remnant`（P1 身份名 == 残宗余孽，不含「宗门」「弟子」）
+  - `npc_metadata_hides_faction_fields_for_all_faction_rank_pairs`（P0 全 FactionRank 组合 faction 字段恒 None — 状态饱和）
+  - `npc_metadata_reputation_is_player_specific`（reputation_to_player 保留且按玩家区分）
+  - `realm_label_matches_worldview_canon`
+- client：`cd client && ./gradlew test --tests "com.bong.client.npc.*"` → **BUILD SUCCESSFUL**（`NpcMetadataHandlerTest` / `NpcNametagRendererTest` / `NpcScreenDescribeTest` / `NpcLodWorldRendererTest` 共 81 个 @Test 全绿），含 reframe b 正则不命中 pin + e2e（server `FactionMembership{Attack,Leader}` disciple → payload → client 解析断言 `factionName == null` 且 `displayName` 匹配「残宗余孽·.*」）。
+
+### 跨仓库核验
+
+- **server**：命中 `build_npc_metadata` / `display_name` / `archetype_label` / `reputation_to_player` / `NpcArchetype::Disciple` / `is_hostile_pair` / `are_hostile`（保留）。
+- **client**：命中 `NpcInspectScreen` / `NpcDialogueScreen` / `NpcNametagRenderer` / `NpcLodWorldRenderer`；CustomPayload `bong:npc_metadata` type ID 不变。
+- **agent**：**无需改**——`bong:npc_metadata` 在 agent/schema 侧无 TypeBox/sample（client 手工解析），`FactionId`/`FactionRank` 为内部三态枚举，与具名展示无关。
+
+### 遗留 / 后续
+
+- P3（`EmergentGroupId` live 数据通路）已于 2026-06-05 §8.1 #1 取消（选定方案 a 完全匿名），不在本 plan 范围。
+- 骨架 `faction-expansion-v1` / `faction-wars-v1` / `social-v2` 方向（玩家可挂靠具名散修势力）与已落地 reframe b §10.1 #6 决议直接冲突，**交人工**决定是否标记「⚠️ 待重审」或废弃——本 plan 不擅自改他人骨架（见 §关联）。
