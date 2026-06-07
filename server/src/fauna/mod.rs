@@ -6,6 +6,7 @@ pub mod experience;
 pub mod ghost;
 pub mod ghost_narration;
 pub mod migration;
+pub mod mimic_spider;
 pub mod rat_phase;
 pub mod visual;
 
@@ -64,4 +65,6 @@ pub fn register(app: &mut App) {
             ghost_narration::moss_drain_narration_system,
         ),
     );
+    // plan-fauna-mimic-spider-v1 P0：拟态灰烬蛛状态机 + Disguised qi 吸收 + 死亡归还
+    mimic_spider::register(app);
 }

@@ -105,6 +105,12 @@ pub const WAR_WINNER_ZONE_REGEN_MULTIPLIER: f64 = 1.10;
 /// 仅作用于 regen_from_zone 的 rate 参数，不铸造/销毁真元，守恒安全。
 pub const WAR_LOSER_ZONE_REGEN_MULTIPLIER: f64 = 0.95;
 
+// ── plan-fauna-mimic-spider-v1 P0 — 拟态灰烬蛛 Disguised 期真元吸收率 ──
+/// 拟态灰烬蛛 Disguised 期每 tick 真元吸收速率系数（归口 qi_physics；几何 / 感知参数留在 fauna 模块）。
+/// regen_from_zone 的 rate 参数：gain = zone_qi × rate × integrity × QI_CULTIVATION_REGEN_RATE。
+/// rate=1.0 × 0.003 = 0.003 / tick；远低于玩家修炼速率（>0.1），符合伏击型妖兽定位。
+pub const SPIDER_DISGUISE_REGEN_RATE: f64 = 1.0;
+
 // ── plan-neg-domain-fauna-v1 P0 — 负灵域生态真元抽取率 ──
 /// 诡影接触真元抽取率（归口 qi_physics；几何/密度参数留在 fauna 模块）。
 /// pulse_amount = |zone_qi| × qi_max × GHOST_CONTACT_FACTOR（每次接触，1s cooldown）。
