@@ -33,11 +33,11 @@
 //! - Integrated with big_brain's Scorer/Action model (not Pumpkin's Goal trait)
 //! - Zone bounds clamping from our zone system
 
-use std::collections::HashMap;
+use std::cmp::Reverse;
+use std::collections::{BinaryHeap, HashMap};
 use std::time::Instant;
 
 use bevy_transform::components::Transform;
-use pathfinding::prelude::astar;
 use valence::entity::{HeadYaw, Look};
 use valence::prelude::{
     bevy_ecs, App, BlockState, Chunk, ChunkLayer, ChunkPos, Component, DVec3, Entity,
@@ -235,6 +235,11 @@ impl Navigator {
         self.current_goal.is_none()
     }
 
+    #[cfg(test)]
+    pub(crate) fn consecutive_path_failures_for_test(&self) -> u32 {
+        self.consecutive_path_failures
+    }
+
     /// Override the pathfinding penalty for a given [`PathType`].
     /// Use negative values to make a type impassable.
     #[allow(dead_code)]
@@ -375,8 +380,8 @@ pub fn navigator_tick_system(
         let path_exhausted = nav.path_index >= nav.path.len() && nav.consecutive_path_failures == 0;
         let needs_repath = nav.repath_countdown == 0 || destination_moved || path_exhausted;
         if needs_repath && should_repath_in_bucket(entity, tick, nav.force_next_repath) {
-            let new_path = compute_path(current_pos, goal.destination, &nav, terrain, layer);
-            if new_path.is_empty() {
+            let computed_path = compute_path(current_pos, goal.destination, &nav, terrain, layer);
+            if !computed_path.reached_goal {
                 let dx = (current_pos.x.floor() as i32).abs_diff(goal.destination.x.floor() as i32);
                 let dz = (current_pos.z.floor() as i32).abs_diff(goal.destination.z.floor() as i32);
                 if dx > GOAL_REACH_XZ as u32 || dz > GOAL_REACH_XZ as u32 {
@@ -395,7 +400,7 @@ pub fn navigator_tick_system(
             } else {
                 nav.consecutive_path_failures = 0;
             }
-            nav.path = new_path;
+            nav.path = computed_path.waypoints;
             nav.path_index = 0;
             // Exponential backoff: 20 → 40 → 80 → 160 → 320 (cap at ~16s).
             let backoff_shift = nav.consecutive_path_failures.min(4);
@@ -494,11 +499,16 @@ pub(crate) fn should_repath_in_bucket(entity: Entity, tick: u32, force: bool) ->
 // ---------------------------------------------------------------------------
 
 /// A* node: block-level world coordinate.
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 struct PathNode {
     x: i32,
     y: i32,
     z: i32,
+}
+
+struct ComputedPath {
+    waypoints: Vec<DVec3>,
+    reached_goal: bool,
 }
 
 impl PathNode {
@@ -526,7 +536,7 @@ fn compute_path(
     nav: &Navigator,
     terrain: Option<&TerrainProvider>,
     layer: Option<&ChunkLayer>,
-) -> Vec<DVec3> {
+) -> ComputedPath {
     let start_node = PathNode {
         x: start.x.floor() as i32,
         y: start.y.floor() as i32,
@@ -549,32 +559,120 @@ fn compute_path(
     if start_node.x.abs_diff(target_node.x) <= GOAL_REACH_XZ as u32
         && start_node.z.abs_diff(target_node.z) <= GOAL_REACH_XZ as u32
     {
-        return Vec::new(); // already close enough
+        return ComputedPath {
+            waypoints: Vec::new(),
+            reached_goal: true,
+        };
     }
 
-    // A* with iteration cap.
-    let mut iters = 0usize;
+    compute_bounded_astar(start_node, target_node, nav, terrain, layer)
+}
 
-    let result = astar(
-        &start_node,
-        |node| {
-            iters += 1;
-            if iters > MAX_PATH_ITERS {
-                return Vec::new();
+fn compute_bounded_astar(
+    start_node: PathNode,
+    target_node: PathNode,
+    nav: &Navigator,
+    terrain: Option<&TerrainProvider>,
+    layer: Option<&ChunkLayer>,
+) -> ComputedPath {
+    let mut open = BinaryHeap::new();
+    let mut came_from: HashMap<PathNode, PathNode> = HashMap::new();
+    let mut costs: HashMap<PathNode, u32> = HashMap::new();
+    let mut best_node = start_node;
+    let mut best_heuristic = start_node.heuristic_xz(target_node);
+    let mut sequence = 0usize;
+
+    costs.insert(start_node, 0);
+    open.push(Reverse((best_heuristic, 0u32, sequence, start_node)));
+
+    let mut expanded = 0usize;
+    while let Some(Reverse((_score, _cost, _sequence, node))) = open.pop() {
+        expanded += 1;
+        if expanded > MAX_PATH_ITERS {
+            break;
+        }
+
+        let heuristic = node.heuristic_xz(target_node);
+        if heuristic < best_heuristic {
+            best_heuristic = heuristic;
+            best_node = node;
+        }
+        if node.x.abs_diff(target_node.x) <= GOAL_REACH_XZ as u32
+            && node.z.abs_diff(target_node.z) <= GOAL_REACH_XZ as u32
+        {
+            return ComputedPath {
+                waypoints: reconstruct_path(start_node, node, &came_from),
+                reached_goal: true,
+            };
+        }
+
+        let Some(current_cost) = costs.get(&node).copied() else {
+            continue;
+        };
+        for (next, step_cost) in block_successors(node, start_node, nav, terrain, layer) {
+            let next_cost = current_cost.saturating_add(step_cost);
+            if next_cost >= costs.get(&next).copied().unwrap_or(u32::MAX) {
+                continue;
             }
-            block_successors(*node, start_node, nav, terrain, layer)
-        },
-        |node| node.heuristic_xz(target_node),
-        // Goal reached when within GOAL_REACH_XZ blocks horizontally.
-        |node| {
-            node.x.abs_diff(target_node.x) <= GOAL_REACH_XZ as u32
-                && node.z.abs_diff(target_node.z) <= GOAL_REACH_XZ as u32
-        },
-    );
+            came_from.insert(next, node);
+            costs.insert(next, next_cost);
+            sequence = sequence.saturating_add(1);
+            let priority = next_cost.saturating_add(next.heuristic_xz(target_node));
+            open.push(Reverse((priority, next_cost, sequence, next)));
+        }
+    }
 
-    result
-        .map(|(path, _cost)| path.into_iter().skip(1).map(|n| n.to_dvec3()).collect())
-        .unwrap_or_default()
+    let mut waypoints = reconstruct_path(start_node, best_node, &came_from);
+    if waypoints.is_empty() {
+        waypoints.push(best_effort_direct_waypoint(
+            start_node,
+            target_node,
+            terrain,
+        ));
+    }
+    ComputedPath {
+        waypoints,
+        reached_goal: false,
+    }
+}
+
+fn reconstruct_path(
+    start_node: PathNode,
+    mut node: PathNode,
+    came_from: &HashMap<PathNode, PathNode>,
+) -> Vec<DVec3> {
+    if node == start_node {
+        return Vec::new();
+    }
+
+    let mut path = vec![node];
+    while let Some(previous) = came_from.get(&node).copied() {
+        node = previous;
+        if node == start_node {
+            break;
+        }
+        path.push(node);
+    }
+    path.reverse();
+    path.into_iter().map(PathNode::to_dvec3).collect()
+}
+
+fn best_effort_direct_waypoint(
+    start_node: PathNode,
+    target_node: PathNode,
+    terrain: Option<&TerrainProvider>,
+) -> DVec3 {
+    let dx = (target_node.x - start_node.x).clamp(-1, 1);
+    let dz = (target_node.z - start_node.z).clamp(-1, 1);
+    let next_x = start_node.x + dx;
+    let next_z = start_node.z + dz;
+    let next_y = resolve_surface_y(next_x, next_z, terrain) + 1;
+    PathNode {
+        x: next_x,
+        y: next_y,
+        z: next_z,
+    }
+    .to_dvec3()
 }
 
 /// Generate walkable neighbors for a block-level A* node.
@@ -1072,7 +1170,68 @@ mod tests {
         let start = DVec3::new(0.5, 67.0, 0.5);
         let end = DVec3::new(5.5, 67.0, 0.5);
         let path = compute_path(start, end, &nav, None, None);
-        assert!(!path.is_empty(), "should find path on open terrain");
+        assert!(
+            !path.waypoints.is_empty(),
+            "should find path on open terrain"
+        );
+    }
+
+    #[test]
+    fn compute_path_returns_partial_path_toward_far_goal() {
+        let nav = Navigator::new();
+        let start = DVec3::new(0.5, 67.0, 0.5);
+        let far_goal = DVec3::new(2_000.5, 67.0, 0.5);
+
+        let computed = compute_path(start, far_goal, &nav, None, None);
+
+        assert!(
+            !computed.reached_goal,
+            "far goal should exceed MAX_PATH_ITERS and use partial path"
+        );
+        assert!(
+            !computed.waypoints.is_empty(),
+            "partial path must contain at least one waypoint so NPC can advance"
+        );
+        let first_delta = computed.waypoints[0] - start;
+        let goal_delta = far_goal - start;
+        assert!(
+            first_delta.dot(goal_delta) > 0.0,
+            "first partial waypoint should point toward the far goal; first={:?}, goal={far_goal:?}",
+            computed.waypoints[0],
+        );
+    }
+
+    #[test]
+    fn partial_path_advances_npc_not_freeze() {
+        let (mut app, _) = make_navigator_app_with_ground(66);
+        let mut navigator = Navigator::new();
+        navigator.set_goal(DVec3::new(2_000.5, 67.0, 0.5), 1.0);
+        navigator.force_next_repath = true;
+        let npc = app
+            .world_mut()
+            .spawn((
+                NpcMarker,
+                Position::new([0.5, 67.0, 0.5]),
+                Transform::default(),
+                Look::default(),
+                HeadYaw::default(),
+                navigator,
+            ))
+            .id();
+
+        app.update();
+
+        let nav = app.world().get::<Navigator>(npc).unwrap();
+        let pos = app.world().get::<Position>(npc).unwrap().get();
+        assert_eq!(
+            nav.consecutive_path_failures, 1,
+            "far partial path should preserve failed-full-A* accounting"
+        );
+        assert!(
+            pos.x > 0.5,
+            "partial path should advance the NPC toward the far target instead of freezing at {:?}",
+            pos,
+        );
     }
 
     #[test]

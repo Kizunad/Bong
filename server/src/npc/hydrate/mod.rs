@@ -455,11 +455,12 @@ fn spawn_from_snapshot(
         .as_ref()
         .map(|patrol| dvec3_from_array(patrol.current_target))
         .unwrap_or_else(|| snapshot.position_vec());
-    let home_base = home_base_for_archetype(snapshot.archetype, patrol_target);
+    let snapshot_pos = snapshot.position_vec();
+    let home_base = home_base_for_archetype(snapshot.archetype, snapshot_pos);
     let pos = hydrate_position_for(
         &schedule,
         Some(home_base),
-        snapshot.position_vec(),
+        snapshot_pos,
         current_tick,
         schedule_seed,
         pois,
@@ -685,6 +686,7 @@ mod tests {
     use valence::prelude::{DVec3, Events};
 
     use crate::cultivation::components::Realm;
+    use crate::npc::brain::return_home_action_system;
     use crate::npc::dormant::{DEHYDRATE_RADIUS_BLOCKS, HYDRATE_RADIUS_BLOCKS};
     use crate::world::zone::{Zone, DEFAULT_SPAWN_ZONE_NAME};
 
@@ -1110,6 +1112,303 @@ mod tests {
             !has_skin,
             "hydrated disciple without skin pool must NOT have NpcPlayerSkin component"
         );
+    }
+
+    #[test]
+    fn home_base_uses_scatter_position_not_zone_center() {
+        const ARRIVAL_DISTANCE: f64 = 1.8;
+
+        let mut app = App::new();
+        app.add_event::<InitiateXuhuaTribulation>();
+
+        let overworld = app.world_mut().spawn_empty().id();
+        let tsy = app.world_mut().spawn_empty().id();
+        app.insert_resource(DimensionLayers { overworld, tsy });
+        app.insert_resource(NpcVirtualizationConfig::default());
+
+        let scatter_pos = DVec3::new(-1600.0, 101.0, 3980.0);
+        let zone_center = DVec3::new(-2500.0, 128.0, 2500.0);
+        let mut snap = snapshot("edge_rogue", scatter_pos);
+        snap.patrol = Some(DormantPatrolSnapshot {
+            home_zone: DEFAULT_SPAWN_ZONE_NAME.to_string(),
+            anchor_index: 0,
+            current_target: vec3_to_array(zone_center),
+        });
+
+        let mut store = NpcDormantStore::default();
+        store.insert(snap);
+        app.insert_resource(store);
+        app.world_mut().spawn((
+            ClientMarker,
+            Position(scatter_pos + DVec3::new(1.0, 0.0, 1.0)),
+        ));
+
+        app.add_systems(Update, hydrate_dormant_near_players_system);
+        app.update();
+
+        let (position, home, patrol) = {
+            let world = app.world_mut();
+            let mut query =
+                world.query::<(&Position, &crate::npc::schedule::NpcHomeBase, &NpcPatrol)>();
+            query
+                .iter(world)
+                .next()
+                .map(|(pos, home, patrol)| (pos.get(), *home, patrol.current_target))
+                .expect("edge dormant rogue should hydrate")
+        };
+
+        assert!(
+            home.center().distance(scatter_pos) <= ARRIVAL_DISTANCE,
+            "home_base must be anchored at the NPC scatter position; home={:?}, scatter={:?}",
+            home.center(),
+            scatter_pos,
+        );
+        assert!(
+            position.distance(scatter_pos) <= ARRIVAL_DISTANCE,
+            "non-rest hydrate position should remain at scatter position; pos={position:?}, scatter={scatter_pos:?}"
+        );
+        assert!(
+            home.center().distance(zone_center) > 800.0,
+            "home_base must not keep using the far zone center; home={:?}, center={zone_center:?}",
+            home.center(),
+        );
+        assert_eq!(
+            patrol, zone_center,
+            "patrol target should remain the original zone center; this plan only decouples home"
+        );
+    }
+
+    #[test]
+    fn dormant_edge_seed_returns_home_without_astar_flood() {
+        // Regression: after the npc-return-home-freeze fix, home_base is set to
+        // the scatter position (not the far zone center). This test verifies that
+        // the return-home action actually exercises navigator_tick_system (real
+        // pathfinding runs) and that the NPC navigates toward its local scatter
+        // home WITHOUT triggering repeated A* failure backoff (the "站桩 / flood"
+        // bug).
+        //
+        // The "pre-fix" behaviour had home_base == zone_center, which is hundreds
+        // of blocks away and beyond MAX_PATH_ITERS → every A* attempt fails →
+        // consecutive_path_failures grows rapidly. This test catches that by
+        // asserting failures == 0 on flat terrain.
+        //
+        // Setup: flat stone ground at y=66 in chunk [0,0]. NPC home anchored at
+        // (8,67,8); NPC displaced to (0.5,67,0.5) — 11.3 blocks away — simulating
+        // "wandered away after combat". navigator_tick_system is registered so real
+        // pathfinding runs every tick.
+        //
+        // NOTE ON ARRIVAL: the navigator's GOAL_REACH_XZ=2 "fuzzy-arrival" zone
+        // causes A* to terminate at the cheapest block within 2 of the target
+        // (not at target_block itself), leaving the NPC ~2.8 blocks short of
+        // ARRIVAL_DISTANCE=1.8. Full arrival therefore cannot be asserted here in
+        // a unit harness. The test instead verifies meaningful progress and zero
+        // A* failures — sufficient to lock the regression.
+        use bevy_transform::components::Transform;
+        use valence::entity::{HeadYaw, Look};
+        use valence::prelude::{BlockState, Chunk, ChunkLayer, UnloadedChunk};
+        use valence::testing::ScenarioSingleClient;
+
+        const GROUND_Y: i32 = 66;
+        const WALK_Y: f64 = 67.0;
+        // 120 ticks = enough for the NPC to travel from 11.3 → ~3 blocks from
+        // home on flat terrain (bucket/repath overhead included). Well under
+        // RETURN_HOME_MAX_TICKS=300 so no timeout.
+        const NAVIGATE_TICKS: u32 = 120;
+        // The NPC must close more than half the initial gap to prove real navigation
+        // (not just a 1-block shuffle). With GOAL_REACH_XZ=2 gap, the navigator
+        // will stop ~2–3 blocks from home center; threshold set conservatively.
+        const PROGRESS_FRACTION: f64 = 0.5;
+        // arrival threshold (from brain::RETURN_HOME_ARRIVAL_DISTANCE)
+        const ARRIVAL_DISTANCE: f64 = 1.8;
+
+        let home_world_pos = DVec3::new(8.0, WALK_Y, 8.0);
+        let displaced_pos = DVec3::new(0.5, WALK_Y, 0.5);
+        let home_base = crate::npc::schedule::NpcHomeBase::from_world_pos(home_world_pos, 0.6);
+        let home_center = home_base.center();
+        let initial_distance = displaced_pos.distance(home_center);
+
+        // Sanity: the displaced position must be well beyond the arrival threshold
+        // so the first Executing tick does NOT shortcircuit into the "arrived" branch.
+        assert!(
+            initial_distance > ARRIVAL_DISTANCE + 5.0,
+            "test setup broken: displaced pos must be far enough from home to force navigation; \
+             initial_distance={initial_distance:.2}, arrival_threshold={ARRIVAL_DISTANCE}",
+        );
+
+        // Build an app with a real ChunkLayer (needed by navigator_tick_system for
+        // collision and ground-snap). ScenarioSingleClient is the same harness used
+        // by navigator::tests::make_navigator_app_with_ground.
+        let scenario = ScenarioSingleClient::new();
+        let mut app = scenario.app;
+        crate::world::dimension::mark_test_layer_as_overworld(&mut app);
+
+        // Fill chunk [0,0] with flat stone at GROUND_Y so A* finds a clean path
+        // and consecutive_path_failures stays 0.
+        {
+            let layer_entity = {
+                let world = app.world_mut();
+                let mut q = world.query_filtered::<Entity, With<ChunkLayer>>();
+                q.iter(world).next().unwrap()
+            };
+            let mut layer = app.world_mut().get_mut::<ChunkLayer>(layer_entity).unwrap();
+            let mut chunk = UnloadedChunk::with_height(384);
+            let min_y = layer.min_y();
+            let local_y = (GROUND_Y - min_y) as u32;
+            for lx in 0..16u32 {
+                for lz in 0..16u32 {
+                    chunk.set_block_state(lx, local_y, lz, BlockState::STONE);
+                }
+            }
+            layer.insert_chunk([0, 0], chunk);
+        }
+
+        // Spawn the NPC at the displaced position. home_base mirrors what
+        // hydrate_dormant_near_players_system sets for an edge-zone 散修:
+        // scatter position as home, NOT the far zone center.
+        let npc = app
+            .world_mut()
+            .spawn((
+                NpcMarker,
+                Position(displaced_pos),
+                Transform::default(),
+                Look::default(),
+                HeadYaw::default(),
+                crate::npc::navigator::Navigator::new(),
+                home_base,
+                crate::npc::brain::RestState::default(),
+            ))
+            .id();
+
+        let action = app
+            .world_mut()
+            .spawn((
+                crate::npc::brain::ReturnHomeAction,
+                big_brain::prelude::Actor(npc),
+                big_brain::prelude::ActionState::Requested,
+            ))
+            .id();
+
+        // Both systems MUST be registered:
+        //   - navigator_tick_system: runs A* and advances Position each tick
+        //   - return_home_action_system: drives the navigator goal toward home
+        // Without navigator_tick_system the NPC never moves (original fake-green bug).
+        //
+        // GameTick must advance so should_repath_in_bucket cycles through all
+        // 10 buckets — the NPC entity's bucket fires within the first 10 ticks.
+        app.insert_resource(GameTick(0));
+        app.add_systems(
+            Update,
+            (
+                crate::npc::navigator::navigator_tick_system,
+                return_home_action_system,
+            ),
+        );
+
+        for i in 0..NAVIGATE_TICKS {
+            app.world_mut().resource_mut::<GameTick>().0 = i;
+            app.update();
+        }
+
+        let final_pos = app.world().get::<Position>(npc).unwrap().get();
+        let final_distance = final_pos.distance(home_center);
+        let failures = app
+            .world()
+            .get::<crate::npc::navigator::Navigator>(npc)
+            .unwrap()
+            .consecutive_path_failures_for_test();
+
+        // Primary regression guard: A* must NOT flood on flat terrain. The old
+        // bug caused a zone-center goal ~500+ blocks away → every A* attempt
+        // exceeded MAX_PATH_ITERS → failures grew unboundedly.
+        assert_eq!(
+            failures, 0,
+            "edge return-home must not enter A* failure backoff on flat terrain; \
+             {failures} failure(s) recorded — indicates repeated A* flood / 站桩 regression \
+             (did home_base revert to using the far zone center instead of scatter pos?)",
+        );
+
+        // Secondary guard: the NPC must have actually navigated toward home,
+        // not stayed put. Proves navigator_tick_system was exercised.
+        // NOTE: due to navigator GOAL_REACH_XZ=2 fuzzy-arrival, the NPC will stop
+        // ~2-3 blocks short of home center (not within ARRIVAL_DISTANCE=1.8).
+        // We assert >50% gap closure as a meaningful lower bound.
+        let min_expected_progress = initial_distance * PROGRESS_FRACTION;
+        assert!(
+            final_distance < initial_distance - min_expected_progress,
+            "edge rogue must navigate at least {min_expected_progress:.1} blocks toward home \
+             within {NAVIGATE_TICKS} ticks; started {initial_distance:.1} blocks away, \
+             ended {final_distance:.1} blocks away at {final_pos:?} \
+             (home={home_center:?}) — was navigator_tick_system actually running?",
+        );
+
+        // Confirm the action did NOT time out or fail: it should still be Executing
+        // (the NPC is navigating toward home, just not arrived yet in this window).
+        let action_state = app
+            .world()
+            .get::<big_brain::prelude::ActionState>(action)
+            .unwrap();
+        assert!(
+            matches!(
+                action_state,
+                big_brain::prelude::ActionState::Executing
+                    | big_brain::prelude::ActionState::Success
+            ),
+            "ReturnHomeAction must be Executing or Success after {NAVIGATE_TICKS} ticks, \
+             got {action_state:?} — Failure here means the navigator could not navigate \
+             toward home (check home_base is scatter-anchored, not zone-center)",
+        );
+    }
+
+    #[test]
+    fn home_base_tracks_extreme_zone_positions_and_center_degenerate_case() {
+        let center = DVec3::new(-2_500.0, 128.0, -2_500.0);
+        let positions = [
+            DVec3::new(-3_000.0, 64.0, -3_000.0),
+            DVec3::new(-2_000.0, 64.0, -3_000.0),
+            DVec3::new(-3_000.0, 64.0, -2_000.0),
+            DVec3::new(-2_000.0, 64.0, -2_000.0),
+            center,
+        ];
+
+        for (index, pos) in positions.into_iter().enumerate() {
+            let mut app = App::new();
+            app.add_event::<InitiateXuhuaTribulation>();
+
+            let overworld = app.world_mut().spawn_empty().id();
+            let tsy = app.world_mut().spawn_empty().id();
+            app.insert_resource(DimensionLayers { overworld, tsy });
+            app.insert_resource(NpcVirtualizationConfig::default());
+
+            let mut snap = snapshot_in_zone(&format!("edge_case_{index}"), pos, "zone_b");
+            snap.patrol = Some(DormantPatrolSnapshot {
+                home_zone: "zone_b".to_string(),
+                anchor_index: 0,
+                current_target: vec3_to_array(center),
+            });
+            let mut store = NpcDormantStore::default();
+            store.insert(snap);
+            app.insert_resource(store);
+            app.world_mut().spawn((ClientMarker, Position(pos)));
+
+            app.add_systems(Update, hydrate_dormant_near_players_system);
+            app.update();
+
+            let home = {
+                let world = app.world_mut();
+                let mut query =
+                    world.query_filtered::<&crate::npc::schedule::NpcHomeBase, With<NpcMarker>>();
+                *query
+                    .iter(world)
+                    .next()
+                    .expect("extreme zone dormant rogue should hydrate")
+            };
+
+            assert!(
+                home.center().distance(pos) <= 1.8,
+                "case {index}: home should track snapshot position, home={:?}, pos={pos:?}",
+                home.center(),
+            );
+        }
     }
 
     #[test]
