@@ -29,7 +29,8 @@ const MAX_DIFF = parseInt(process.env.REVIEW_MAX_DIFF || "100000", 10);
 // 想直接钉死模型 id 就设 REVIEW_OPUS_MODEL=deepseek-v4-pro 等。
 const OPUS = process.env.REVIEW_OPUS_MODEL || "opus";
 const SONNET = process.env.REVIEW_SONNET_MODEL || "sonnet";
-const FINDER_PIN = process.env.REVIEW_FINDERS ? Math.max(1, parseInt(process.env.REVIEW_FINDERS, 10)) : null;
+const _finderPin = parseInt(process.env.REVIEW_FINDERS || "", 10);
+const FINDER_PIN = Number.isFinite(_finderPin) ? Math.max(1, _finderPin) : null; // 非法/空 → null(用档位默认)
 
 // ══════════════════════════════════════════════════════════════════════════════
 //  纯逻辑(导出测试)
@@ -347,7 +348,7 @@ ${diff}
   let body;
   const header =
     `## 🔭 Review · PR #${PR}\n\n` +
-    `> 引擎:SDK agent 编排——**opus(deepseek-v4-pro) orchestrator 自主调度 sonnet(deepseek-v4-flash) finder swarm**,全走 proxy。\n` +
+    `> 引擎:SDK agent 编排——**opus orchestrator 自主调度 sonnet finder swarm**,全走 proxy(opus/sonnet 实际映射的模型见末尾 token 表)。\n` +
     `> 档 [${tier.label}](${changedLines} 行/${changedFiles} 文件)· finder 预算 ${budget} · ${swarmStat}\n` +
     (plan ? `> Plan: \`${plan.name}\`${plan.path ? "" : "(未找到文件)"}\n` : "") +
     (diffTruncated ? `> ⚠️ diff 过大已截断至 ${MAX_DIFF} 字符\n` : "") +

@@ -54,10 +54,11 @@ jobs:
       - name: 暂存脚本 + 切到 PR head(给 finder 子代理读真实代码)
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PRNUM: ${{ github.event.issue.number || inputs.pr_number }} # 经 env 中转,不把 ${{}} 直插 run 文本(防模板注入)
         run: |
           mkdir -p /tmp/rev
           cp .github/scripts/review.mjs /tmp/rev/review.mjs
-          gh pr checkout "${{ github.event.issue.number || inputs.pr_number }}" \
+          gh pr checkout "$PRNUM" \
             || echo "::warning::gh pr checkout 失败,finder 将基于 main + diff 审核"
 
       - uses: actions/setup-node@v4
