@@ -2,6 +2,7 @@ package com.bong.client.hud;
 
 import com.bong.client.combat.CombatHudState;
 import com.bong.client.combat.ArmorProfileStore;
+import com.bong.client.fauna.HallucinationHudOverlay;
 import com.bong.client.combat.store.StatusEffectStore;
 import com.bong.client.artifact.ArtifactState;
 import com.bong.client.inventory.model.EquipSlotType;
@@ -419,8 +420,15 @@ public final class MiniBodyHudPlanner {
         int staminaX = qiX + BAR_W + BAR_GAP;
         int barTop = anchorY + BAR_Y_OFFSET;
 
-        appendBar(out, qiX, barTop, hud.qiPercent(), SeasonVisuals.qiBarColor(QI_FILL_COLOR, seasonState, nowMillis), nowMillis);
-        appendBar(out, staminaX, barTop, hud.staminaPercent(), STAMINA_FILL_COLOR, nowMillis);
+        // plan-fauna-stitched-beast-v1 P3 M3 修复：幻觉激活时对 qi/stamina bar 显示值施加偏移。
+        // 守恒红线：仅改 displayRatio，绝不写回 hud.qiPercent() / hud.staminaPercent() 实际值。
+        float qiDisplayOffset = HallucinationHudOverlay.getQiBarDisplayOffset();
+        float staminaDisplayOffset = HallucinationHudOverlay.getHpBarDisplayOffset(); // stamina 借用 hp offset
+        float qiDisplayRatio = Math.max(0f, Math.min(1f, hud.qiPercent() * (1.0f + qiDisplayOffset)));
+        float staminaDisplayRatio = Math.max(0f, Math.min(1f, hud.staminaPercent() * (1.0f + staminaDisplayOffset)));
+
+        appendBar(out, qiX, barTop, qiDisplayRatio, SeasonVisuals.qiBarColor(QI_FILL_COLOR, seasonState, nowMillis), nowMillis);
+        appendBar(out, staminaX, barTop, staminaDisplayRatio, STAMINA_FILL_COLOR, nowMillis);
     }
 
     private static void appendBar(

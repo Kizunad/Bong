@@ -241,6 +241,11 @@ pub struct AlchemyRequestParams<'w, 's> {
     pub redis: Option<Res<'w, RedisBridgeResource>>,
     pub zones: Option<Res<'w, ZoneRegistry>>,
     pub vfx_events: Option<ResMut<'w, Events<VfxEventRequest>>>,
+    /// plan-fauna-stitched-beast-v1 P3：兽核吸收幻觉事件 (M1 修复：接通 narration/hallucination)
+    pub hallucination_events:
+        Option<ResMut<'w, Events<crate::fauna::hybrid_beast::CoreAbsorptionHallucinationEvent>>>,
+    /// plan-fauna-stitched-beast-v1 P3：叙事容器（M1 修复：兽核吸收后推 player narration）
+    pub pending_narrations: Option<ResMut<'w, crate::player::gameplay::PendingGameplayNarrations>>,
 }
 
 #[derive(SystemParam)]
@@ -754,11 +759,9 @@ pub fn handle_client_request_payloads(
                     &mut dispatch.lifespan_extension_tx,
                     alchemy_params.vfx_events.as_deref_mut(),
                     &mut npc_engagement_params.audio_events,
-                    // plan-fauna-stitched-beast-v1 P3: hallucination_events and narrations
-                    // not yet wired into main system params; None is safe — BeastCoreAbsorption
-                    // S2C push is handled via direct client.send_custom_payload inside.
-                    None,
-                    None,
+                    // plan-fauna-stitched-beast-v1 P3 M1 修复：接通幻觉事件和叙事容器
+                    alchemy_params.hallucination_events.as_deref_mut(),
+                    alchemy_params.pending_narrations.as_deref_mut(),
                 );
             }
             ClientRequestV1::AlchemyFurnacePlace {
@@ -1644,6 +1647,9 @@ pub fn handle_client_request_payloads(
                     &mut dispatch.lifespan_extension_tx,
                     alchemy_params.vfx_events.as_deref_mut(),
                     &mut npc_engagement_params.audio_events,
+                    // plan-fauna-stitched-beast-v1 P3 M1 修复：接通幻觉事件和叙事容器
+                    alchemy_params.hallucination_events.as_deref_mut(),
+                    alchemy_params.pending_narrations.as_deref_mut(),
                 );
             }
             ClientRequestV1::SelfAntidote { instance_id, .. } => {
@@ -7816,6 +7822,10 @@ fn handle_apply_pill(
     lifespan_extension_tx: &mut Option<ResMut<Events<LifespanExtensionIntent>>>,
     vfx_events: Option<&mut Events<VfxEventRequest>>,
     audio_events: &mut Option<ResMut<Events<PlaySoundRecipeRequest>>>,
+    hallucination_events: Option<
+        &mut Events<crate::fauna::hybrid_beast::CoreAbsorptionHallucinationEvent>,
+    >,
+    narrations: Option<&mut crate::player::gameplay::PendingGameplayNarrations>,
 ) {
     let template_id = inventories
         .get(entity)
@@ -7844,8 +7854,9 @@ fn handle_apply_pill(
         lifespan_extension_tx,
         vfx_events,
         audio_events,
-        None,
-        None,
+        // plan-fauna-stitched-beast-v1 P3 M1 修复：透传幻觉事件和叙事容器
+        hallucination_events,
+        narrations,
     );
 }
 

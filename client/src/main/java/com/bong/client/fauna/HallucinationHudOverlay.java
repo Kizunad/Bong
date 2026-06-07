@@ -124,6 +124,8 @@ public final class HallucinationHudOverlay {
      * @param context DrawContext（Fabric 1.20.1）
      */
     public static void render(DrawContext context) {
+        // M2 修复：每帧递减 remainingTicks，使幻觉在 durationTicks 后自然过期
+        HallucinationLayerStore.decrementTick();
         HallucinationLayerStore.tickFade(SIN_PHASE_INCREMENT, FADE_IN_STEP, FADE_OUT_STEP);
 
         // bar 偏移重随机（每 BAR_OFFSET_RESHUFFLE_INTERVAL_TICKS 帧）
