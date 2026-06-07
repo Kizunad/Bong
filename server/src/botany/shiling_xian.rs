@@ -22,10 +22,11 @@ use valence::prelude::{
 use super::components::Plant;
 use super::registry::BotanyPlantId;
 use crate::cultivation::components::Cultivation;
+use crate::cultivation::death_hooks::release_qi_amount_to_zone;
 use crate::cultivation::life_record::LifeRecord;
 use crate::npc::spawn::common::NpcMarker;
-use crate::qi_physics::constants::{MOSS_DRAIN_FACTOR, QI_EPSILON, QI_ZONE_UNIT_CAPACITY};
-use crate::qi_physics::ledger::{QiAccountId, QiTransfer, QiTransferReason};
+use crate::qi_physics::constants::{MOSS_DRAIN_FACTOR, QI_EPSILON};
+use crate::qi_physics::ledger::QiTransfer;
 use crate::world::dimension::CurrentDimension;
 use crate::world::zone::ZoneRegistry;
 
@@ -184,6 +185,8 @@ pub fn moss_drain_system(
     mut players: Query<
         (
             Entity,
+            &Position,
+            Option<&CurrentDimension>,
             Option<&LifeRecord>,
             &mut Cultivation,
             &ShiLingXianDrainTag,
@@ -193,9 +196,19 @@ pub fn moss_drain_system(
     mut zones: Option<ResMut<ZoneRegistry>>,
     mut qi_transfer_events: Option<ResMut<Events<QiTransfer>>>,
 ) {
-    for (entity, life_record, mut cultivation, tag) in players.iter_mut() {
+    for (entity, pos, current_dim, life_record, mut cultivation, tag) in players.iter_mut() {
         let drain = tag.drain_per_tick;
         if drain <= QI_EPSILON {
+            continue;
+        }
+
+        // 门控：只在负灵域（spirit_qi < 0）为害；zone 回正则停 drain（tag 由 step_off 清除）
+        let zone_spirit_qi = zones
+            .as_deref()
+            .and_then(|z| z.find_zone_by_name(&tag.zone_name))
+            .map(|z| z.spirit_qi)
+            .unwrap_or(0.0);
+        if zone_spirit_qi >= 0.0 {
             continue;
         }
 
@@ -208,33 +221,17 @@ pub fn moss_drain_system(
         // 扣真元（守恒：player 减 → zone 增）
         cultivation.qi_current = (cultivation.qi_current - actual_drain).max(0.0);
 
-        // 守恒：把 actual_drain 真实搬进 zone 账户（zone.spirit_qi 增加）
-        // 公式：zone_after = zone_current + actual_drain（以 QI_ZONE_UNIT_CAPACITY 为单位换算）
-        if let Some(ref mut zones_mut) = zones {
-            if let Some(zone) = zones_mut.find_zone_mut(&tag.zone_name) {
-                let zone_current = zone.spirit_qi * QI_ZONE_UNIT_CAPACITY;
-                let room = (QI_ZONE_UNIT_CAPACITY - zone_current).max(0.0);
-                let accepted = actual_drain.min(room);
-                zone.spirit_qi = (zone_current + accepted) / QI_ZONE_UNIT_CAPACITY;
-            }
-        }
-
-        // emit QiTransfer 留痕（审计轨迹，reason = ShiLingXianDrain）
-        let player_account_id = life_record
-            .map(|lr| QiAccountId::player(&lr.character_id))
-            .unwrap_or_else(|| QiAccountId::player(format!("{entity:?}")));
-        let zone_account_id = QiAccountId::zone(&tag.zone_name);
-
-        if let Ok(transfer) = QiTransfer::new(
-            player_account_id,
-            zone_account_id,
+        // 守恒：overflow-safe 路由，emit QiTransfer 留痕（溢出量进专用 overflow 账户，不销毁）
+        release_qi_amount_to_zone(
+            entity,
             actual_drain,
-            QiTransferReason::ShiLingXianDrain,
-        ) {
-            if let Some(events) = qi_transfer_events.as_deref_mut() {
-                events.send(transfer);
-            }
-        }
+            Some(pos),
+            current_dim,
+            life_record,
+            zones.as_deref_mut(),
+            qi_transfer_events.as_deref_mut(),
+            "moss_drain",
+        );
     }
 }
 
@@ -396,6 +393,7 @@ mod tests {
     use crate::botany::registry::{BotanyPlantId, PlantVariant};
     use crate::cultivation::components::Cultivation;
     use crate::player::state::canonical_player_id;
+    use crate::qi_physics::ledger::QiTransferReason;
     use crate::world::dimension::{CurrentDimension, DimensionKind};
     use valence::prelude::{App, Events, IntoSystemConfigs, Update};
 
@@ -508,6 +506,8 @@ mod tests {
         let player = app
             .world_mut()
             .spawn((
+                Position::new([8.0, 65.0, 8.0]),
+                CurrentDimension(DimensionKind::Overworld),
                 make_player_cultivation(initial_qi, 100.0),
                 LifeRecord::new(canonical_player_id("Azure")),
                 ShiLingXianDrainTag {
@@ -539,10 +539,11 @@ mod tests {
             "每 tick 应 emit 1 条 QiTransfer（期望 1，实际 {}）",
             transfers.len()
         );
+        // release_qi_amount_to_zone 统一用 ReleaseToZone reason（overflow-safe helper 硬编码）
         assert_eq!(
             transfers[0].reason,
-            QiTransferReason::ShiLingXianDrain,
-            "QiTransfer reason 应为 ShiLingXianDrain（期望），实际 {:?}",
+            QiTransferReason::ReleaseToZone,
+            "QiTransfer reason 应为 ReleaseToZone（release_qi_amount_to_zone helper 统一编码），实际 {:?}",
             transfers[0].reason
         );
         assert!(
@@ -565,6 +566,8 @@ mod tests {
         let player = app
             .world_mut()
             .spawn((
+                Position::new([8.0, 65.0, 8.0]),
+                CurrentDimension(DimensionKind::Overworld),
                 make_player_cultivation(initial_qi, 100.0),
                 LifeRecord::new(canonical_player_id("Bao")),
                 ShiLingXianDrainTag {
@@ -614,6 +617,8 @@ mod tests {
         app.add_systems(Update, moss_drain_system);
 
         app.world_mut().spawn((
+            Position::new([8.0, 65.0, 8.0]),
+            CurrentDimension(DimensionKind::Overworld),
             make_player_cultivation(0.0, 100.0),
             LifeRecord::new(canonical_player_id("Empty")),
             ShiLingXianDrainTag {
@@ -650,6 +655,8 @@ mod tests {
         let player = app
             .world_mut()
             .spawn((
+                Position::new([8.0, 65.0, 8.0]),
+                CurrentDimension(DimensionKind::Overworld),
                 make_player_cultivation(initial_qi, 100.0),
                 LifeRecord::new(canonical_player_id("Multi")),
                 ShiLingXianDrainTag {
@@ -1024,6 +1031,8 @@ mod tests {
         let player = app
             .world_mut()
             .spawn((
+                Position::new([8.0, 65.0, 8.0]),
+                CurrentDimension(DimensionKind::Overworld),
                 make_player_cultivation(initial_qi, 100.0),
                 LifeRecord::new(crate::player::state::canonical_player_id("ZoneConsTest")),
                 ShiLingXianDrainTag {
@@ -1089,6 +1098,8 @@ mod tests {
         let player = app
             .world_mut()
             .spawn((
+                Position::new([8.0, 65.0, 8.0]),
+                CurrentDimension(DimensionKind::Overworld),
                 make_player_cultivation(initial_qi, 100.0),
                 LifeRecord::new(crate::player::state::canonical_player_id("TotalConsMoss")),
                 ShiLingXianDrainTag {
@@ -1165,6 +1176,111 @@ mod tests {
             "噬灵藓的 variant 必须是 PlantVariant::Tainted（期望），实际 {:?}——\
              通用 harvest lifecycle 不处理 Tainted variant，钉死不可采集契约",
             plant_tainted.variant
+        );
+    }
+
+    /// ISO-T2: ShiLingXian 在 BotanyKindRegistry 中无 v2_spec 且 restore_ratio=0.0——钉死采集机制排除契约。
+    ///
+    /// 采集系统的"排除噬灵藓"机制：
+    /// 1. `v2 = None`：ShiLingXian 不走 v2 harvest 路径（无 harvest hazard、无 quality rolling）
+    /// 2. `restore_ratio = 0.0`：static point 采集后不恢复
+    /// 3. `spawn_mode = SpreadByCrawl`：lifecycle 系统不为其分配静态采集点
+    ///
+    /// 任何给 ShiLingXian 添加 v2 spec 或 restore_ratio > 0 的 PR 会撞红此测试。
+    #[test]
+    fn shiling_xian_harvest_complete_yields_no_drop_via_harvest_fn() {
+        use crate::botany::registry::{BotanyKindRegistry, BotanySpawnMode};
+
+        let kind_registry = BotanyKindRegistry::default();
+
+        let kind = kind_registry
+            .get(BotanyPlantId::ShiLingXian)
+            .expect("ShiLingXian 应在 BotanyKindRegistry（期望：已注册）");
+
+        // v2 = None：ShiLingXian 不走 v2 harvest 路径（钉死：噬灵藓无 v2 harvest 机制）
+        assert!(
+            kind.v2_spec().is_none(),
+            "ShiLingXian 不应有 v2 harvest spec（期望：None，实际：Some）——\
+             噬灵藓是地块危害非药材，任何给它加 v2_spec 的 PR 必须撞红此测试"
+        );
+
+        // restore_ratio = 0.0：采集后 static point 不恢复（噬灵藓无重生机制）
+        assert!(
+            kind.restore_ratio == 0.0,
+            "ShiLingXian restore_ratio 应为 0.0（期望），实际 {}——\
+             噬灵藓不走 harvest/恢复路径",
+            kind.restore_ratio
+        );
+
+        // spawn_mode = SpreadByCrawl：lifecycle 系统不为其分配静态采集点（只蔓延不重生）
+        assert!(
+            matches!(kind.spawn_mode, BotanySpawnMode::SpreadByCrawl),
+            "ShiLingXian spawn_mode 应为 SpreadByCrawl（期望），实际 {:?}——\
+             lifecycle 不分配 static 采集点给噬灵藓",
+            kind.spawn_mode
+        );
+    }
+
+    /// ZS-T1: zone 回正（spirit_qi >= 0）时 moss_drain_system 停止 drain（zone-sign 门控）。
+    ///
+    /// 设计决议："噬灵藓只在负灵域为害"——zone 回正后即使 tag 仍挂，drain 应停。
+    /// 这防止了 spirit_qi 溢出 +50 上限的可达性（zone 回正后不再向正方向泵入真元）。
+    #[test]
+    fn moss_drain_stops_when_zone_spirit_qi_turns_positive() {
+        // 第一 tick：zone 负 → drain 应发生
+        let mut app = make_app_with_neg_zone(-0.5);
+        app.add_systems(Update, moss_drain_system);
+
+        let drain_per_tick = 0.2_f64;
+        let initial_qi = 100.0_f64;
+
+        let player = app
+            .world_mut()
+            .spawn((
+                Position::new([8.0, 65.0, 8.0]),
+                CurrentDimension(DimensionKind::Overworld),
+                make_player_cultivation(initial_qi, 100.0),
+                LifeRecord::new(canonical_player_id("ZoneSign")),
+                ShiLingXianDrainTag {
+                    drain_per_tick,
+                    zone_name: "spawn".to_string(),
+                },
+            ))
+            .id();
+
+        app.update();
+
+        let qi_after_neg = app
+            .world()
+            .entity(player)
+            .get::<Cultivation>()
+            .unwrap()
+            .qi_current;
+        assert!(
+            qi_after_neg < initial_qi,
+            "负灵域 zone 中 moss drain 应扣减 qi_current（期望 < {initial_qi}，实际 {qi_after_neg}）"
+        );
+
+        // zone 回正
+        {
+            let mut zones = app
+                .world_mut()
+                .resource_mut::<crate::world::zone::ZoneRegistry>();
+            zones.find_zone_mut("spawn").unwrap().spirit_qi = 0.5;
+        }
+
+        app.update();
+
+        let qi_after_pos = app
+            .world()
+            .entity(player)
+            .get::<Cultivation>()
+            .unwrap()
+            .qi_current;
+        assert_eq!(
+            qi_after_pos, qi_after_neg,
+            "zone 回正（spirit_qi=0.5）后 moss drain 应停（期望 qi 不再减少：{qi_after_neg}，\
+             实际 {qi_after_pos}）——噬灵藓只在负灵域为害（zone-sign 门控）"
         );
     }
 }

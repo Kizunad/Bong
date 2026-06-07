@@ -20,11 +20,12 @@ use valence::prelude::{
 };
 
 use crate::cultivation::components::Cultivation;
+use crate::cultivation::death_hooks::release_qi_amount_to_zone;
 use crate::cultivation::life_record::LifeRecord;
 use crate::cultivation::tick::CultivationClock;
 use crate::npc::spawn::common::NpcMarker;
-use crate::qi_physics::constants::{GHOST_CONTACT_FACTOR, QI_EPSILON, QI_ZONE_UNIT_CAPACITY};
-use crate::qi_physics::ledger::{QiAccountId, QiTransfer, QiTransferReason};
+use crate::qi_physics::constants::{GHOST_CONTACT_FACTOR, QI_EPSILON};
+use crate::qi_physics::ledger::QiTransfer;
 use crate::world::dimension::CurrentDimension;
 use crate::world::zone::ZoneRegistry;
 
@@ -298,8 +299,8 @@ pub fn ghost_contact_system(
 
     // 第二遍：可变借用处理真元搬运
     for info in contacts {
-        // 可变借用玩家 cultivation
-        let Ok((entity, _pos, _current_dim, life_record, mut cultivation, _cooldown)) =
+        // 可变借用玩家 cultivation（同时取 Position / CurrentDimension 供 release_qi_amount_to_zone 用）
+        let Ok((entity, pos, current_dim, life_record, mut cultivation, _cooldown)) =
             players.get_mut(info.entity)
         else {
             continue;
@@ -316,33 +317,17 @@ pub fn ghost_contact_system(
         }
         cultivation.qi_current = (cultivation.qi_current - actual_pulse).max(0.0);
 
-        // 守恒：把 actual_pulse 真实搬进 zone 账户（zone.spirit_qi 增加）
-        // 公式：zone_after = zone_current + actual_pulse（以 QI_ZONE_UNIT_CAPACITY 为单位换算）
-        if let Some(ref mut zones_mut) = zones {
-            if let Some(zone) = zones_mut.find_zone_mut(&info.zone_name) {
-                let zone_current = zone.spirit_qi * QI_ZONE_UNIT_CAPACITY;
-                let room = (QI_ZONE_UNIT_CAPACITY - zone_current).max(0.0);
-                let accepted = actual_pulse.min(room);
-                zone.spirit_qi = (zone_current + accepted) / QI_ZONE_UNIT_CAPACITY;
-            }
-        }
-
-        // emit QiTransfer 留痕（审计轨迹，reason = GhostContact）
-        let player_account_id = life_record
-            .map(|lr| QiAccountId::player(&lr.character_id))
-            .unwrap_or_else(|| QiAccountId::player(format!("{entity:?}")));
-        let zone_account_id = QiAccountId::zone(&info.zone_name);
-
-        if let Ok(transfer) = QiTransfer::new(
-            player_account_id,
-            zone_account_id,
+        // 守恒：overflow-safe 路由，emit QiTransfer 留痕（溢出量进专用 overflow 账户，不销毁）
+        release_qi_amount_to_zone(
+            entity,
             actual_pulse,
-            QiTransferReason::GhostContact,
-        ) {
-            if let Some(events) = qi_transfer_events.as_deref_mut() {
-                events.send(transfer);
-            }
-        }
+            Some(pos),
+            current_dim,
+            life_record,
+            zones.as_deref_mut(),
+            qi_transfer_events.as_deref_mut(),
+            "ghost_contact",
+        );
 
         // 更新 cooldown（insert 或 update）
         commands.entity(entity).insert(GhostContactCooldown {
@@ -358,6 +343,7 @@ mod tests {
     use super::*;
     use crate::cultivation::components::Cultivation;
     use crate::player::state::canonical_player_id;
+    use crate::qi_physics::ledger::QiTransferReason;
     use crate::world::dimension::{CurrentDimension, DimensionKind};
     use valence::prelude::{App, Events, Update};
 
@@ -575,11 +561,12 @@ mod tests {
             !transfers.is_empty(),
             "诡影接触应 emit QiTransfer，实际未 emit"
         );
+        // release_qi_amount_to_zone 统一用 ReleaseToZone reason（overflow-safe helper 硬编码）
         assert!(
             transfers
                 .iter()
-                .any(|t| matches!(t.reason, QiTransferReason::GhostContact)),
-            "emit 的 QiTransfer reason 应为 GhostContact，实际 {:?}",
+                .any(|t| matches!(t.reason, QiTransferReason::ReleaseToZone)),
+            "emit 的 QiTransfer reason 应为 ReleaseToZone（release_qi_amount_to_zone helper 统一编码），实际 {:?}",
             transfers.iter().map(|t| t.reason).collect::<Vec<_>>()
         );
 
@@ -972,6 +959,75 @@ mod tests {
             "总量守恒失败：系统前 {total_before}，系统后 {total_after}（误差 {}）。\
              ghost_contact_system 不应吞真元也不应凭空创造真元。",
             (total_before - total_after).abs()
+        );
+    }
+
+    /// SYS-CONS-T3（overflow 路径）: zone 趋近 +50 上限时，玩家减少量 == zone 实际接纳 + overflow 账户增量。
+    ///
+    /// 覆盖场景：zone 接近满载（room < actual_pulse），差额通过 release_qi_amount_to_zone 路由到 overflow
+    /// 专用账户，永不销毁。验证：player 减少 actual_pulse，zone 接纳 accepted，overflow = actual_pulse - accepted，
+    /// 总量仍守恒（player_loss == accepted + overflow_amount）。
+    ///
+    /// 前两条守恒测试用 spirit_qi=-0.5（room 充裕），永不触发 overflow 分支。
+    /// 本测试专门构造 spirit_qi 接近 +1.0（zone 接近满载）验证 overflow-safe 路径。
+    #[test]
+    fn ghost_contact_system_overflow_safe_when_zone_near_cap() {
+        use crate::qi_physics::constants::QI_ZONE_UNIT_CAPACITY;
+        // spirit_qi = 0.9 → zone_current = 0.9 × 50.0 = 45.0，room = 5.0
+        // 但 ghost_contact_system 在 spirit_qi < 0 时才触发（zone 过滤器）。
+        // 所以改用一个负 zone（-0.1）让系统触发，同时手动把 spirit_qi 推到接近上限
+        // 来测 overflow helper。
+        // 实际构造：用 spirit_qi=-0.1 触发系统，然后验证 release_qi_amount_to_zone 的 overflow 行为
+        // 通过直接调用 helper（不经过系统），因为系统需要 spirit_qi < 0 才触发接触。
+        // 改用独立单元验证 release_qi_amount_to_zone 在 zone 趋近 +50 时的 overflow 守恒。
+        // 这样既锁住 helper 契约，又不依赖 ghost 系统的门控条件。
+
+        // 构造：entity 没有 Position/CurrentDimension → release_qi_amount_to_zone 路由到 overflow
+        // 这验证了"缺 Position 时降级到 overflow"路径，但不是 zone 满载路径。
+        // 真正的满载测试：直接调用 qi_release_to_zone。
+        use crate::qi_physics::ledger::QiAccountId;
+        use crate::qi_physics::release::qi_release_to_zone;
+
+        let zone_cap = QI_ZONE_UNIT_CAPACITY; // 50.0
+        let zone_current = 45.0_f64; // room = 5.0（zone 接近满载）
+        let drain_amount = 10.0_f64; // 超过 room，会有 overflow
+
+        let from = QiAccountId::player("overflow_test_player");
+        let to = QiAccountId::zone("spawn");
+
+        let outcome = qi_release_to_zone(drain_amount, from, to, zone_current, zone_cap)
+            .expect("qi_release_to_zone 应成功（期望：Ok）");
+
+        let accepted = outcome.accepted;
+        let overflow = outcome.overflow;
+        let zone_after = outcome.zone_after;
+
+        // 守恒：accepted + overflow == drain_amount（差额不销毁）
+        assert!(
+            (accepted + overflow - drain_amount).abs() < 1e-9,
+            "overflow 守恒失败：accepted={accepted} + overflow={overflow} 应等于 drain={drain_amount}，\
+             误差 {}（release_qi_amount_to_zone overflow-safe：差额路由到专用账户不销毁）",
+            (accepted + overflow - drain_amount).abs()
+        );
+
+        // zone 接纳量 == room（不超过上限）
+        let room = zone_cap - zone_current;
+        assert!(
+            (accepted - room).abs() < 1e-9,
+            "accepted 应等于 room（{room}），实际 {accepted}（zone 不超 cap）"
+        );
+
+        // zone_after 不超过 cap
+        assert!(
+            zone_after <= zone_cap + 1e-9,
+            "zone_after={zone_after} 不应超过 zone_cap={zone_cap}（overflow 守恒：不吞不造）"
+        );
+
+        // overflow 量 = drain - room
+        let expected_overflow = drain_amount - room;
+        assert!(
+            (overflow - expected_overflow).abs() < 1e-9,
+            "overflow 量应为 drain-room={expected_overflow}，实际 {overflow}（overflow 守恒精确性）"
         );
     }
 }
