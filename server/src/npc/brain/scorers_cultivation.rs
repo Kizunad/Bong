@@ -11,6 +11,7 @@ use crate::npc::lod::{lod_gated_score_by_kind, NpcLodConfig, NpcLodTick, NpcLodT
 use crate::npc::patrol::NpcPatrol;
 use crate::npc::schedule::{schedule_multiplier, NpcDailySchedule, ScheduleActivity};
 use crate::npc::spawn::NpcMarker;
+use crate::world::era::WorldEraState;
 use crate::world::zone::ZoneRegistry;
 
 use super::{
@@ -246,10 +247,16 @@ impl ScorerBuilder for TribulationReadyScorer {
 }
 
 /// Pure function: check 4 prerequisites for tribulation.
+///
+/// `tribulation_threshold_mul` — era modifier from [`WorldEraState::current_modifiers`].
+/// - `> 1.0` = 渡劫阈值提高（灾劫时代，天道施压）
+/// - `< 1.0` = 阈值降低（演绎时代，略宽）
+/// - `1.0` = 无时代修正，行为与旧版完全相同。
 pub(crate) fn tribulation_prereqs_met(
     cultivation: &Cultivation,
     meridians: &MeridianSystem,
     history: &CultivationDriveHistory,
+    tribulation_threshold_mul: f64,
 ) -> bool {
     if !matches!(cultivation.realm, Realm::Spirit) {
         return false;
@@ -257,7 +264,9 @@ pub(crate) fn tribulation_prereqs_met(
     if meridians.opened_count() < Realm::Void.required_meridians() {
         return false;
     }
-    if cultivation.qi_current < cultivation.qi_max * super::TRIBULATION_MIN_QI_RATIO {
+    // era 修正：TRIBULATION_MIN_QI_RATIO × era_modifier（不写字面值，通过常数引用）
+    let effective_ratio = super::TRIBULATION_MIN_QI_RATIO * tribulation_threshold_mul;
+    if cultivation.qi_current < cultivation.qi_max * effective_ratio {
         return false;
     }
     if history.above_threshold_ticks < TRIBULATION_READY_SUSTAIN_TICKS {
@@ -296,10 +305,16 @@ pub(crate) fn tribulation_ready_scorer_system(
     mut scorers: Query<(&Actor, &mut Score), With<TribulationReadyScorer>>,
     lod_config: Option<Res<NpcLodConfig>>,
     lod_tick: Option<Res<NpcLodTick>>,
+    world_era: Option<Res<WorldEraState>>,
 ) {
     let player_positions: Vec<DVec3> = players.iter().map(|p| p.get()).collect();
     let cfg = lod_config.as_deref().cloned().unwrap_or_default();
     let tick = lod_tick.as_deref().map(|t| t.0).unwrap_or(0);
+    // P1 era 注入：从 WorldEraState 读取渡劫阈值系数；Resource 不存在时退回基准 1.0。
+    let tribulation_threshold_mul = world_era
+        .as_deref()
+        .map(|e| e.current_modifiers().tribulation_threshold_mul)
+        .unwrap_or(1.0);
 
     for (Actor(actor), mut score) in &mut scorers {
         let value = match npcs.get(*actor) {
@@ -307,7 +322,12 @@ pub(crate) fn tribulation_ready_scorer_system(
                 match lod_gated_score_by_kind(tier, tick, &cfg, ScorerKind::Cosmetic, || {
                     if pending.is_some()
                         || in_tribulation.is_some()
-                        || !tribulation_prereqs_met(cultivation, meridians, history)
+                        || !tribulation_prereqs_met(
+                            cultivation,
+                            meridians,
+                            history,
+                            tribulation_threshold_mul,
+                        )
                     {
                         0.0
                     } else {
@@ -514,7 +534,7 @@ mod tests {
         let h = CultivationDriveHistory {
             above_threshold_ticks: TRIBULATION_READY_SUSTAIN_TICKS,
         };
-        assert!(!tribulation_prereqs_met(&c, &m, &h));
+        assert!(!tribulation_prereqs_met(&c, &m, &h, 1.0));
     }
 
     #[test]
@@ -524,7 +544,7 @@ mod tests {
         let h = CultivationDriveHistory {
             above_threshold_ticks: TRIBULATION_READY_SUSTAIN_TICKS,
         };
-        assert!(!tribulation_prereqs_met(&c, &m, &h));
+        assert!(!tribulation_prereqs_met(&c, &m, &h, 1.0));
     }
 
     #[test]
@@ -534,7 +554,7 @@ mod tests {
         let h = CultivationDriveHistory {
             above_threshold_ticks: TRIBULATION_READY_SUSTAIN_TICKS,
         };
-        assert!(!tribulation_prereqs_met(&c, &m, &h));
+        assert!(!tribulation_prereqs_met(&c, &m, &h, 1.0));
     }
 
     #[test]
@@ -544,7 +564,7 @@ mod tests {
         let h = CultivationDriveHistory {
             above_threshold_ticks: 0,
         };
-        assert!(!tribulation_prereqs_met(&c, &m, &h));
+        assert!(!tribulation_prereqs_met(&c, &m, &h, 1.0));
     }
 
     #[test]
@@ -554,7 +574,81 @@ mod tests {
         let h = CultivationDriveHistory {
             above_threshold_ticks: TRIBULATION_READY_SUSTAIN_TICKS,
         };
-        assert!(tribulation_prereqs_met(&c, &m, &h));
+        assert!(tribulation_prereqs_met(&c, &m, &h, 1.0));
+    }
+
+    // ── P1 Era 渡劫阈值注入测试 ──────────────────────────────────────────────
+
+    #[test]
+    fn tribulation_prereqs_calamity_era_higher_threshold_blocks_borderline_qi() {
+        use crate::world::era::{current_modifiers, EraType, CALAMITY_TRIBULATION_MUL};
+        // qi = 0.85 在 Unknown 时代（ratio=0.8）下通过，但灾劫时代（0.8*1.1=0.88）下应被拒绝
+        let c = spirit_cultivation_at_qi(0.85);
+        let m = all_meridians_open();
+        let h = CultivationDriveHistory {
+            above_threshold_ticks: TRIBULATION_READY_SUSTAIN_TICKS,
+        };
+        let calamity_mul = current_modifiers(EraType::Calamity).tribulation_threshold_mul;
+        assert_eq!(
+            calamity_mul, CALAMITY_TRIBULATION_MUL,
+            "灾劫时代系数应等于 CALAMITY_TRIBULATION_MUL 常数（不写字面值）"
+        );
+        assert!(
+            !tribulation_prereqs_met(&c, &m, &h, calamity_mul),
+            "灾劫时代 qi=0.85 < 0.8*1.1=0.88 应被拒绝（天道施压）"
+        );
+        // 但同一 qi 在 Unknown 时代应通过
+        assert!(
+            tribulation_prereqs_met(&c, &m, &h, 1.0),
+            "Unknown 时代 qi=0.85 >= 0.8 应通过（基准不变）"
+        );
+    }
+
+    #[test]
+    fn tribulation_prereqs_deduction_era_lower_threshold_allows_borderline_qi() {
+        use crate::world::era::{current_modifiers, EraType, DEDUCTION_TRIBULATION_MUL};
+        // qi = 0.77 在 Unknown 时代（ratio=0.8）下被拒，但演绎时代（0.8*0.95=0.76）下应通过
+        let c = spirit_cultivation_at_qi(0.77);
+        let m = all_meridians_open();
+        let h = CultivationDriveHistory {
+            above_threshold_ticks: TRIBULATION_READY_SUSTAIN_TICKS,
+        };
+        let deduction_mul = current_modifiers(EraType::Deduction).tribulation_threshold_mul;
+        assert_eq!(
+            deduction_mul, DEDUCTION_TRIBULATION_MUL,
+            "演绎时代系数应等于 DEDUCTION_TRIBULATION_MUL 常数（不写字面值）"
+        );
+        assert!(
+            tribulation_prereqs_met(&c, &m, &h, deduction_mul),
+            "演绎时代 qi=0.77 >= 0.8*0.95=0.76 应通过（天道略宽）"
+        );
+        // 同一 qi 在 Unknown 时代应被拒绝
+        assert!(
+            !tribulation_prereqs_met(&c, &m, &h, 1.0),
+            "Unknown 时代 qi=0.77 < 0.8 应被拒绝"
+        );
+    }
+
+    #[test]
+    fn tribulation_prereqs_tribulation_min_qi_ratio_constant_not_hardcoded() {
+        // 确保阈值检查通过常数 TRIBULATION_MIN_QI_RATIO，而非写死字面值
+        // 测试方式：qi = TRIBULATION_MIN_QI_RATIO * 1.05 (略高于阈值) 应通过；
+        //          qi = TRIBULATION_MIN_QI_RATIO * 0.95 (略低于阈值) 应被拒绝
+        use crate::npc::brain::TRIBULATION_MIN_QI_RATIO;
+        let above = spirit_cultivation_at_qi(TRIBULATION_MIN_QI_RATIO * 1.05);
+        let below = spirit_cultivation_at_qi(TRIBULATION_MIN_QI_RATIO * 0.95);
+        let m = all_meridians_open();
+        let h = CultivationDriveHistory {
+            above_threshold_ticks: TRIBULATION_READY_SUSTAIN_TICKS,
+        };
+        assert!(
+            tribulation_prereqs_met(&above, &m, &h, 1.0),
+            "qi 略高于 TRIBULATION_MIN_QI_RATIO 应通过（常数参照正确）"
+        );
+        assert!(
+            !tribulation_prereqs_met(&below, &m, &h, 1.0),
+            "qi 略低于 TRIBULATION_MIN_QI_RATIO 应被拒绝（常数参照正确）"
+        );
     }
 
     #[test]

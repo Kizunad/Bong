@@ -340,6 +340,66 @@ pub fn era_expiry_system(
     }
 }
 
+// ─── P1 era faction drift system ──────────────────────────────────────────────
+
+/// 变化时代 loyalty_bias 随机漂移每次施加的 tick 间隔。
+///
+/// @20TPS = 每 600 tick = 30 秒漂移一次。灾劫/演绎/Unknown 时代无漂移。
+pub const ERA_FACTION_DRIFT_INTERVAL_TICKS: u64 = 600;
+
+/// 变化时代 loyalty_bias 单次漂移的最大幅度（绝对值）。
+pub const ERA_FACTION_DRIFT_MAX_ABS: f64 = 0.1;
+
+/// 变化时代派系 loyalty_bias 漂移系统。
+///
+/// 每 [`ERA_FACTION_DRIFT_INTERVAL_TICKS`] tick 在变化时代对所有 [`FactionStore`] 派系
+/// 施加 `±random_drift`（上限 [`ERA_FACTION_DRIFT_MAX_ABS`] × faction_loyalty_drift 系数）。
+/// 演绎/灾劫/Unknown 时代无漂移（`faction_loyalty_drift == 0.0`）。
+///
+/// **警告**：本系统仅改动 loyalty_bias，不碰真元物理，无守恒约束。
+/// 派系系统本身（plan-faction-wars-v1）当前骨架未实装；本系统注入到
+/// 现有 `FactionStore` Resource（已在 npc::faction::register 插入）。
+pub fn era_faction_drift_system(
+    world_era: Option<bevy_ecs::system::Res<WorldEraState>>,
+    mut faction_store: Option<bevy_ecs::system::ResMut<crate::npc::faction::FactionStore>>,
+    clock: Option<bevy_ecs::system::Res<crate::cultivation::tick::CultivationClock>>,
+) {
+    let tick = clock.map(|c| c.tick).unwrap_or(0);
+    // 按 interval 节流
+    if tick == 0 || tick % ERA_FACTION_DRIFT_INTERVAL_TICKS != 0 {
+        return;
+    }
+
+    let loyalty_drift = world_era
+        .as_deref()
+        .map(|e| e.current_modifiers().faction_loyalty_drift)
+        .unwrap_or(0.0);
+
+    // faction_loyalty_drift == 0.0 时不施加任何漂移（灾劫/演绎/Unknown）
+    if loyalty_drift == 0.0 {
+        return;
+    }
+
+    let Some(store) = faction_store.as_deref_mut() else {
+        return;
+    };
+
+    // 轻量级伪随机：用 tick 作为 seed，每个 faction 加一个偏移量区分
+    for (i, faction) in store.factions.iter_mut().enumerate() {
+        // 伪随机 [-1, 1) 基于 tick ^ faction_index
+        let seed = tick.wrapping_add(i as u64 * 7919);
+        let rng_val = ((seed % 1000) as f64 / 1000.0) * 2.0 - 1.0; // [-1, 1)
+        let delta = rng_val * loyalty_drift * ERA_FACTION_DRIFT_MAX_ABS;
+        faction.loyalty_bias = (faction.loyalty_bias + delta).clamp(0.0, 1.0);
+        tracing::debug!(
+            "[bong][era] faction {:?} loyalty_bias drifted by {:.4} → {:.4} (Change 时代)",
+            faction.id,
+            delta,
+            faction.loyalty_bias
+        );
+    }
+}
+
 /// 注册所有 era 系统和资源到 Bevy App。
 pub fn register(app: &mut valence::prelude::App) {
     use valence::prelude::{IntoSystemConfigs, Update};
@@ -347,7 +407,15 @@ pub fn register(app: &mut valence::prelude::App) {
     app.insert_resource(WorldEraState::default());
     app.add_event::<EraDecreeIntent>();
     app.add_event::<EraChangedEvent>();
-    app.add_systems(Update, (era_decree_system, era_expiry_system).chain());
+    app.add_systems(
+        Update,
+        (
+            era_decree_system,
+            era_expiry_system,
+            era_faction_drift_system,
+        )
+            .chain(),
+    );
 
     tracing::info!("[bong][era] WorldEraState resource + era systems registered");
 }
@@ -723,5 +791,298 @@ mod tests {
             budget.current_total + budget.era_decay_accum
         );
         assert!(decay > 0.0, "灾劫衰减应 > 0；decay = {}", decay);
+    }
+
+    // ── P1 守恒律：EraDecay 多轮后 initial_total 不变，current+accum 恒等 ──────
+
+    #[test]
+    fn era_decay_step_multiple_rounds_conservation_invariant() {
+        use crate::qi_physics::ledger::WorldQiBudget;
+        use crate::qi_physics::tiandao::era_decay_step;
+
+        let initial = 1000.0_f64;
+        let mut budget = WorldQiBudget::from_total(initial);
+        // 连续 5 轮 era_decay_step（灾劫时代 era_factor=1.0）
+        for round in 0..5 {
+            let decay = era_decay_step(&mut budget, 1.0)
+                .unwrap_or_else(|_| panic!("era_decay_step 第 {round} 轮不应失败"));
+            assert!(decay >= 0.0, "era_decay 量应 >= 0，round={round}");
+        }
+        // 5 轮后守恒不变量必须成立
+        assert!(
+            (budget.initial_total - (budget.current_total + budget.era_decay_accum)).abs() < 1e-6,
+            "5 轮 era_decay 后守恒不变量失败：\
+            initial={}, current={}, accum={}, delta={}",
+            budget.initial_total,
+            budget.current_total,
+            budget.era_decay_accum,
+            budget.initial_total - (budget.current_total + budget.era_decay_accum)
+        );
+        assert_eq!(
+            budget.initial_total, initial,
+            "era_decay 不得修改 initial_total（守恒基准必须固定）"
+        );
+    }
+
+    #[test]
+    fn era_decay_step_calamity_factor_decays_faster_than_deduction() {
+        use crate::qi_physics::ledger::WorldQiBudget;
+        use crate::qi_physics::tiandao::era_decay_step;
+        use crate::world::era::{current_modifiers, EraType};
+
+        let calamity_factor = current_modifiers(EraType::Calamity).tribulation_threshold_mul;
+        let deduction_factor = current_modifiers(EraType::Deduction).tribulation_threshold_mul;
+
+        let mut budget_calamity = WorldQiBudget::from_total(1000.0);
+        let mut budget_deduction = WorldQiBudget::from_total(1000.0);
+
+        // 用时代系数作为 era_factor 驱动衰减
+        let decay_c = era_decay_step(&mut budget_calamity, calamity_factor).unwrap_or(0.0);
+        let decay_d = era_decay_step(&mut budget_deduction, deduction_factor).unwrap_or(0.0);
+
+        assert!(
+            decay_c >= decay_d,
+            "灾劫时代（factor={calamity_factor}）衰减量 {decay_c} 应 >= 演绎时代（factor={deduction_factor}）{decay_d}"
+        );
+        // 两者均满足守恒
+        for (budget, label) in [
+            (&budget_calamity, "calamity"),
+            (&budget_deduction, "deduction"),
+        ] {
+            assert!(
+                (budget.initial_total - (budget.current_total + budget.era_decay_accum)).abs()
+                    < 1e-9,
+                "{label} 时代守恒失败：initial={}, current={}, accum={}",
+                budget.initial_total,
+                budget.current_total,
+                budget.era_decay_accum
+            );
+        }
+    }
+
+    // ── P1 era faction drift 系统单测 ─────────────────────────────────────────
+
+    #[test]
+    fn era_faction_drift_change_era_applies_drift_at_interval() {
+        use crate::npc::faction::FactionStore;
+
+        let mut app = valence::prelude::App::new();
+        app.add_event::<EraDecreeIntent>();
+        app.add_event::<EraChangedEvent>();
+        app.insert_resource(WorldEraState::default());
+        app.insert_resource(FactionStore::default());
+        app.insert_resource(crate::cultivation::tick::CultivationClock::default());
+        app.add_systems(valence::prelude::Update, era_faction_drift_system);
+
+        // 进入变化时代
+        app.world_mut().send_event(EraDecreeIntent {
+            era_name: "mutation".to_string(),
+            spirit_qi_delta: 0.03,
+            danger_level_delta: 0,
+            tick: 0,
+        });
+
+        // 手动写入 Change 时代（绕过 era_decree_system 不在此 app 中）
+        {
+            let mut era = app.world_mut().resource_mut::<WorldEraState>();
+            era.apply_decree("mutation", 0.03, 0, 0);
+        }
+
+        // 在 interval tick（600）运行
+        {
+            let mut clock = app
+                .world_mut()
+                .resource_mut::<crate::cultivation::tick::CultivationClock>();
+            clock.tick = ERA_FACTION_DRIFT_INTERVAL_TICKS;
+        }
+
+        let bias_before: Vec<f64> = app
+            .world()
+            .resource::<FactionStore>()
+            .factions
+            .iter()
+            .map(|f| f.loyalty_bias)
+            .collect();
+
+        app.update();
+
+        let bias_after: Vec<f64> = app
+            .world()
+            .resource::<FactionStore>()
+            .factions
+            .iter()
+            .map(|f| f.loyalty_bias)
+            .collect();
+
+        // 变化时代下，loyalty_bias 应有所漂移（至少有一个不同于初始值）
+        assert!(
+            bias_before
+                .iter()
+                .zip(bias_after.iter())
+                .any(|(a, b)| (a - b).abs() > 1e-9),
+            "变化时代在 interval tick 应对至少一个 faction 施加 loyalty_bias 漂移；\
+            before={bias_before:?}, after={bias_after:?}"
+        );
+        // 所有 bias 值应在 [0, 1] 范围内（clamp 守护）
+        for bias in &bias_after {
+            assert!(
+                *bias >= 0.0 && *bias <= 1.0,
+                "loyalty_bias 必须在 [0, 1] 范围内（clamp 守护）；实际 = {bias}"
+            );
+        }
+    }
+
+    #[test]
+    fn era_faction_drift_unknown_era_no_drift() {
+        use crate::npc::faction::FactionStore;
+
+        let mut app = valence::prelude::App::new();
+        app.insert_resource(WorldEraState::default()); // Unknown 时代
+        app.insert_resource(FactionStore::default());
+        app.insert_resource(crate::cultivation::tick::CultivationClock {
+            tick: ERA_FACTION_DRIFT_INTERVAL_TICKS,
+        });
+        app.add_systems(valence::prelude::Update, era_faction_drift_system);
+
+        let bias_before: Vec<f64> = app
+            .world()
+            .resource::<FactionStore>()
+            .factions
+            .iter()
+            .map(|f| f.loyalty_bias)
+            .collect();
+
+        app.update();
+
+        let bias_after: Vec<f64> = app
+            .world()
+            .resource::<FactionStore>()
+            .factions
+            .iter()
+            .map(|f| f.loyalty_bias)
+            .collect();
+
+        assert_eq!(
+            bias_before, bias_after,
+            "Unknown 时代无漂移（faction_loyalty_drift=0.0），loyalty_bias 不应变化"
+        );
+    }
+
+    #[test]
+    fn era_faction_drift_calamity_era_no_drift() {
+        use crate::npc::faction::FactionStore;
+
+        let mut app = valence::prelude::App::new();
+        let mut era = WorldEraState::default();
+        era.apply_decree("calamity", 0.05, 0, 0);
+        app.insert_resource(era);
+        app.insert_resource(FactionStore::default());
+        app.insert_resource(crate::cultivation::tick::CultivationClock {
+            tick: ERA_FACTION_DRIFT_INTERVAL_TICKS,
+        });
+        app.add_systems(valence::prelude::Update, era_faction_drift_system);
+
+        let bias_before: Vec<f64> = app
+            .world()
+            .resource::<FactionStore>()
+            .factions
+            .iter()
+            .map(|f| f.loyalty_bias)
+            .collect();
+
+        app.update();
+
+        let bias_after: Vec<f64> = app
+            .world()
+            .resource::<FactionStore>()
+            .factions
+            .iter()
+            .map(|f| f.loyalty_bias)
+            .collect();
+
+        assert_eq!(
+            bias_before, bias_after,
+            "灾劫时代 faction_loyalty_drift=0.0，loyalty_bias 不应变化"
+        );
+    }
+
+    #[test]
+    fn era_faction_drift_deduction_era_no_drift() {
+        use crate::npc::faction::FactionStore;
+
+        let mut app = valence::prelude::App::new();
+        let mut era = WorldEraState::default();
+        era.apply_decree("deduction", 0.02, 0, 0);
+        app.insert_resource(era);
+        app.insert_resource(FactionStore::default());
+        app.insert_resource(crate::cultivation::tick::CultivationClock {
+            tick: ERA_FACTION_DRIFT_INTERVAL_TICKS,
+        });
+        app.add_systems(valence::prelude::Update, era_faction_drift_system);
+
+        let bias_before: Vec<f64> = app
+            .world()
+            .resource::<FactionStore>()
+            .factions
+            .iter()
+            .map(|f| f.loyalty_bias)
+            .collect();
+
+        app.update();
+
+        let bias_after: Vec<f64> = app
+            .world()
+            .resource::<FactionStore>()
+            .factions
+            .iter()
+            .map(|f| f.loyalty_bias)
+            .collect();
+
+        assert_eq!(
+            bias_before, bias_after,
+            "演绎时代 faction_loyalty_drift=0.0，loyalty_bias 不应变化"
+        );
+    }
+
+    #[test]
+    fn era_faction_drift_not_at_interval_no_drift() {
+        use crate::npc::faction::FactionStore;
+
+        let mut app = valence::prelude::App::new();
+        let mut era = WorldEraState::default();
+        era.apply_decree("mutation", 0.03, 0, 0); // Change 时代
+        app.insert_resource(era);
+        app.insert_resource(FactionStore::default());
+        // tick = 601 — 非整除点，不应漂移
+        app.insert_resource(crate::cultivation::tick::CultivationClock {
+            tick: ERA_FACTION_DRIFT_INTERVAL_TICKS + 1,
+        });
+        app.add_systems(valence::prelude::Update, era_faction_drift_system);
+
+        let bias_before: Vec<f64> = app
+            .world()
+            .resource::<FactionStore>()
+            .factions
+            .iter()
+            .map(|f| f.loyalty_bias)
+            .collect();
+
+        app.update();
+
+        let bias_after: Vec<f64> = app
+            .world()
+            .resource::<FactionStore>()
+            .factions
+            .iter()
+            .map(|f| f.loyalty_bias)
+            .collect();
+
+        assert_eq!(
+            bias_before,
+            bias_after,
+            "非整除 tick 点（{} mod {} != 0）不应漂移",
+            ERA_FACTION_DRIFT_INTERVAL_TICKS + 1,
+            ERA_FACTION_DRIFT_INTERVAL_TICKS
+        );
     }
 }
