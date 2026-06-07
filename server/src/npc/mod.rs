@@ -1,5 +1,6 @@
 pub mod brain;
 pub mod brain_rat;
+pub mod brain_spider;
 pub mod brain_whale;
 #[cfg(test)]
 mod combat_ai_integration_test;
@@ -43,6 +44,7 @@ pub mod spawn;
 #[allow(dead_code)]
 pub mod spawn_pillar;
 pub mod spawn_rat;
+pub mod spawn_spider;
 pub mod spawn_whale;
 pub mod sync;
 #[allow(dead_code)]
@@ -75,6 +77,7 @@ pub fn register(app: &mut App) {
     sync::register(app);
     brain::register(app);
     brain_rat::register(app);
+    brain_spider::register(app);
     brain_whale::register(app);
     heiwushi::register(app);
     whale_narration::register(app);
