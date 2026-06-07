@@ -3,8 +3,10 @@
 //! 两个系统各自维护 per-player per-session 首次触发门控（`Resource HashSet<Entity>`），
 //! 防止同一玩家在同一服务器会话内反复收到相同提示。
 //!
-//! - [`ghost_contact_narration_system`]：检测首次 `GhostContact` QiTransfer 事件，
+//! - [`ghost_contact_narration_system`]：检测首次诡影接触（`GhostContactCooldown` 组件被 insert/刷新），
 //!   向 `PendingGameplayNarrations::push_player` 发 `NarrationStyle::Perception` 提示。
+//!   信号来源：`ghost_contact_system` 每次接触都 insert `GhostContactCooldown`，本系统仅在
+//!   per-session 首次看到该 component 时触发——不依赖 `QiTransferReason`（helper 统一走 ReleaseToZone）。
 //! - [`moss_drain_narration_system`]：检测玩家首次踩踏噬灵藓（挂 `ShiLingXianDrainTag`），
 //!   向 `PendingGameplayNarrations::push_player` 发 `NarrationStyle::Perception` 提示。
 //!
@@ -12,13 +14,13 @@
 
 use std::collections::HashSet;
 
-use valence::prelude::{bevy_ecs, Entity, EventReader, Query, ResMut, Resource, With, Without};
+use valence::prelude::{bevy_ecs, Entity, Query, ResMut, Resource, With, Without};
 
 use crate::botany::shiling_xian::ShiLingXianDrainTag;
 use crate::cultivation::life_record::LifeRecord;
+use crate::fauna::ghost::GhostContactCooldown;
 use crate::npc::spawn::common::NpcMarker;
 use crate::player::gameplay::PendingGameplayNarrations;
-use crate::qi_physics::ledger::{QiAccountKind, QiTransfer, QiTransferReason};
 use crate::schema::common::NarrationStyle;
 
 // ── 诡影接触提示文案（2 条；Perception 风格，从内感描写出发）──
@@ -54,43 +56,27 @@ pub struct MossNarrationSessionSeen {
 
 // ── 系统 ──
 
-/// ghost_contact_narration_system：读取 `QiTransfer` 事件流，
-/// 首次（per-player per-session）检测到 `GhostContact` reason 时，
-/// 向 `PendingGameplayNarrations` push 一条 Perception 级提示。
+/// ghost_contact_narration_system：检测首次诡影接触（`GhostContactCooldown` 组件存在），
+/// 首次（per-player per-session）向 `PendingGameplayNarrations` push 一条 Perception 级提示。
+///
+/// 设计原因：`ghost_contact_system` 每次接触都 `commands.entity(entity).insert(GhostContactCooldown{..})`，
+/// 本系统直接查询有 `GhostContactCooldown` 的玩家 Entity——无需依赖 `QiTransferReason`
+///（`release_qi_amount_to_zone` helper 统一硬编码为 `ReleaseToZone`，不再 emit `GhostContact` reason）。
 ///
 /// 技术细节：
-/// - 通过 `EventReader<QiTransfer>` 消费事件，`from`（player 账户）的 `.id` 就是 character_id。
+/// - 直接查询有 `GhostContactCooldown` 的玩家 Entity（`With<GhostContactCooldown>` 过滤）。
 /// - 同一 Entity 仅触发一次（`GhostNarrationSessionSeen` 门控）。
 /// - 示例文案 2 条轮选（用 Entity bits 取模，稳定不随机）。
+/// - 不依赖 `ReleaseToZone`（death/craft/moss 共用，会误触发）。
+#[allow(clippy::type_complexity)]
 pub fn ghost_contact_narration_system(
-    mut qi_events: EventReader<QiTransfer>,
-    players: Query<(Entity, Option<&LifeRecord>), Without<NpcMarker>>,
+    players: Query<(Entity, Option<&LifeRecord>), (Without<NpcMarker>, With<GhostContactCooldown>)>,
     mut seen: ResMut<GhostNarrationSessionSeen>,
     mut narrations: Option<ResMut<PendingGameplayNarrations>>,
 ) {
     let Some(narrations) = narrations.as_deref_mut() else {
-        // 消费事件以防积压，即使无 narrations resource
-        qi_events.clear();
         return;
     };
-
-    // 读当前帧所有 GhostContact 事件，提取涉及的 player character_id
-    let ghost_contact_player_ids: Vec<String> = qi_events
-        .read()
-        .filter(|t| matches!(t.reason, QiTransferReason::GhostContact))
-        .filter_map(|t| {
-            // QiAccountId.from 是 player 侧（kind == Player），.id 就是 character_id
-            if t.from.kind == QiAccountKind::Player {
-                Some(t.from.id.clone())
-            } else {
-                None
-            }
-        })
-        .collect();
-
-    if ghost_contact_player_ids.is_empty() {
-        return;
-    }
 
     for (entity, life_record) in players.iter() {
         // 已经提示过：跳过（per-session 门控）
@@ -98,12 +84,7 @@ pub fn ghost_contact_narration_system(
             continue;
         }
 
-        // 匹配 character_id
         let char_id = life_record.map(|lr| lr.character_id.as_str()).unwrap_or("");
-        let matched = ghost_contact_player_ids.iter().any(|id| id == char_id);
-        if !matched {
-            continue;
-        }
 
         // 选一条文案（用 entity.to_bits() 取模，稳定不随机）
         let hint_idx = (entity.to_bits() as usize) % GHOST_CONTACT_HINTS.len();
@@ -151,18 +132,21 @@ pub fn moss_drain_narration_system(
 mod tests {
     use super::*;
     use crate::botany::shiling_xian::ShiLingXianDrainTag;
+    use crate::cultivation::components::Cultivation;
     use crate::cultivation::life_record::LifeRecord;
+    use crate::fauna::ghost::{GhostContactCooldown, GhostEntity, GhostZoneRegistry};
     use crate::player::gameplay::PendingGameplayNarrations;
     use crate::player::state::canonical_player_id;
-    use crate::qi_physics::ledger::{QiAccountId, QiTransfer, QiTransferReason};
+    use crate::qi_physics::ledger::QiTransfer;
     use crate::schema::common::NarrationStyle;
-    use valence::prelude::{App, Events, Update};
+    use crate::world::dimension::{CurrentDimension, DimensionKind};
+    use crate::world::zone::ZoneRegistry;
+    use valence::prelude::{App, DVec3, IntoSystemConfigs, Position, Update};
 
     // ── helpers ──
 
     fn make_app_with_ghost_narration() -> App {
         let mut app = App::new();
-        app.add_event::<QiTransfer>();
         app.insert_resource(PendingGameplayNarrations::default());
         app.init_resource::<GhostNarrationSessionSeen>();
         app.add_systems(Update, ghost_contact_narration_system);
@@ -177,30 +161,20 @@ mod tests {
         app
     }
 
-    fn emit_ghost_contact_transfer(app: &mut App, char_id: &str) {
-        let from = QiAccountId::player(char_id);
-        let to = QiAccountId::zone("neg_zone");
-        let transfer =
-            QiTransfer::new(from, to, 1.0, QiTransferReason::GhostContact).expect("valid transfer");
-        app.world_mut()
-            .resource_mut::<Events<QiTransfer>>()
-            .send(transfer);
-    }
-
-    // ── T1: 首次接触诡影 → 发 narration ──
+    // ── T1: 首次接触诡影（GhostContactCooldown 存在）→ 发 narration ──
 
     #[test]
     fn ghost_narration_sent_on_first_contact() {
         let mut app = make_app_with_ghost_narration();
         let char_id = canonical_player_id("Azure");
 
-        app.world_mut()
-            .spawn(LifeRecord::new(char_id.clone()))
-            // Without<NpcMarker> 无需额外 component
-            ;
-
-        // Emit 一条 GhostContact QiTransfer
-        emit_ghost_contact_transfer(&mut app, &char_id);
+        // 模拟 ghost_contact_system 已 insert GhostContactCooldown
+        app.world_mut().spawn((
+            LifeRecord::new(char_id.clone()),
+            GhostContactCooldown {
+                last_contact_tick: 1,
+            },
+        ));
 
         app.update();
 
@@ -211,7 +185,7 @@ mod tests {
         assert_eq!(
             narrations.len(),
             1,
-            "首次诡影接触应发 1 条 narration（期望 1，实际 {}）",
+            "首次诡影接触（GhostContactCooldown 存在）应发 1 条 narration（期望 1，实际 {}）",
             narrations.len()
         );
         assert!(
@@ -228,25 +202,35 @@ mod tests {
         );
     }
 
-    // ── T2: 第二次接触诡影 → 不重复发 narration（per-session 门控）──
+    // ── T2: 第二次接触诡影 → per-session 门控，不重复发 narration ──
 
     #[test]
     fn ghost_narration_not_sent_on_second_contact() {
         let mut app = make_app_with_ghost_narration();
         let char_id = canonical_player_id("Bao");
 
-        app.world_mut().spawn(LifeRecord::new(char_id.clone()));
+        let player = app
+            .world_mut()
+            .spawn((
+                LifeRecord::new(char_id.clone()),
+                GhostContactCooldown {
+                    last_contact_tick: 1,
+                },
+            ))
+            .id();
 
-        // 第一次接触
-        emit_ghost_contact_transfer(&mut app, &char_id);
+        // 第一次 update（触发 narration）
         app.update();
-        // 清掉第一次的 narration
         app.world_mut()
             .resource_mut::<PendingGameplayNarrations>()
             .drain();
 
-        // 第二次接触
-        emit_ghost_contact_transfer(&mut app, &char_id);
+        // 模拟第二次接触（cooldown 刷新）
+        app.world_mut()
+            .entity_mut(player)
+            .insert(GhostContactCooldown {
+                last_contact_tick: 25,
+            });
         app.update();
 
         let narrations = app
@@ -268,11 +252,18 @@ mod tests {
         let char_a = canonical_player_id("Alice");
         let char_b = canonical_player_id("Bob");
 
-        app.world_mut().spawn(LifeRecord::new(char_a.clone()));
-        app.world_mut().spawn(LifeRecord::new(char_b.clone()));
-
-        emit_ghost_contact_transfer(&mut app, &char_a);
-        emit_ghost_contact_transfer(&mut app, &char_b);
+        app.world_mut().spawn((
+            LifeRecord::new(char_a.clone()),
+            GhostContactCooldown {
+                last_contact_tick: 1,
+            },
+        ));
+        app.world_mut().spawn((
+            LifeRecord::new(char_b.clone()),
+            GhostContactCooldown {
+                last_contact_tick: 1,
+            },
+        ));
 
         app.update();
 
@@ -302,16 +293,16 @@ mod tests {
         );
     }
 
-    // ── T4: 无 QiTransfer 事件时不发 narration ──
+    // ── T4: 无 GhostContactCooldown 时不发 narration ──
 
     #[test]
-    fn ghost_narration_not_sent_without_qi_transfer_events() {
+    fn ghost_narration_not_sent_without_cooldown_component() {
         let mut app = make_app_with_ghost_narration();
 
+        // 玩家没有 GhostContactCooldown（未被诡影接触过）
         app.world_mut()
             .spawn(LifeRecord::new(canonical_player_id("Empty")));
 
-        // 不 emit 任何事件
         app.update();
 
         let narrations = app
@@ -320,7 +311,7 @@ mod tests {
             .drain();
         assert!(
             narrations.is_empty(),
-            "无 QiTransfer 事件时不应发 narration（期望空，实际 {} 条）",
+            "无 GhostContactCooldown 时不应发 narration（期望空，实际 {} 条）",
             narrations.len()
         );
     }
@@ -470,26 +461,22 @@ mod tests {
         }
     }
 
-    // ── T9: ShiLingXianDrain reason 不触发 ghost narration（reason 隔离）──
+    // ── T9: 无 GhostContactCooldown 的玩家（仅挂 ShiLingXianDrainTag）不触发 ghost narration ──
+    // 隔离：moss 踩踏不应产生 ghost narration，两个系统各司其职。
 
     #[test]
-    fn ghost_narration_not_triggered_by_shiling_xian_drain_reason() {
+    fn ghost_narration_not_triggered_by_moss_drain_tag() {
         let mut app = make_app_with_ghost_narration();
         let char_id = canonical_player_id("Silent");
 
-        app.world_mut().spawn(LifeRecord::new(char_id.clone()));
-
-        // Emit ShiLingXianDrain（不是 GhostContact）
-        let transfer = QiTransfer::new(
-            QiAccountId::player(&char_id),
-            QiAccountId::zone("neg_zone"),
-            0.5,
-            QiTransferReason::ShiLingXianDrain,
-        )
-        .expect("valid transfer");
-        app.world_mut()
-            .resource_mut::<Events<QiTransfer>>()
-            .send(transfer);
+        // 只有 ShiLingXianDrainTag，没有 GhostContactCooldown
+        app.world_mut().spawn((
+            LifeRecord::new(char_id.clone()),
+            ShiLingXianDrainTag {
+                drain_per_tick: 0.2,
+                zone_name: "neg_zone".to_string(),
+            },
+        ));
 
         app.update();
 
@@ -499,7 +486,208 @@ mod tests {
             .drain();
         assert!(
             narrations.is_empty(),
-            "ShiLingXianDrain reason 不应触发 ghost narration（reason 隔离，期望空，实际 {} 条）",
+            "仅有 ShiLingXianDrainTag 时不应触发 ghost narration（期望空，实际 {} 条）",
+            narrations.len()
+        );
+    }
+
+    // ── E2E: ghost_contact_system × ghost_contact_narration_system 端到端链路 ──
+    // 这是锁住"玩家进负灵域 → 诡影接触 → narration 触发"完整链路的集成测试。
+    // 替代旧的"手塞 GhostContact reason"假绿测试，验证真实 system 串联路径。
+
+    use crate::fauna::ghost::{ghost_contact_system, GHOST_SIPHON_RADIUS};
+
+    fn make_e2e_app(spirit_qi: f64) -> App {
+        let mut app = App::new();
+        app.add_event::<QiTransfer>();
+        let mut zones = ZoneRegistry::fallback();
+        zones.find_zone_mut("spawn").unwrap().spirit_qi = spirit_qi;
+        app.insert_resource(zones);
+        app.init_resource::<GhostZoneRegistry>();
+        app.insert_resource(PendingGameplayNarrations::default());
+        app.init_resource::<GhostNarrationSessionSeen>();
+        // ghost_contact_system 先于 narration system 运行（insert cooldown → narration 本 tick 感知）
+        app.add_systems(
+            Update,
+            (ghost_contact_system, ghost_contact_narration_system).chain(),
+        );
+        app
+    }
+
+    /// E2E-T1: 玩家在负灵域 + 诡影在接触半径内 → 首次接触触发 perception narration。
+    #[test]
+    fn e2e_ghost_contact_system_triggers_narration_on_first_contact() {
+        let mut app = make_e2e_app(-0.5);
+        let char_id = canonical_player_id("E2eAzure");
+
+        // 诡影在玩家附近（距离 < GHOST_SIPHON_RADIUS=2.0）
+        app.world_mut().spawn(GhostEntity {
+            position: DVec3::new(8.0, 66.0, 8.1),
+            drift_velocity: DVec3::ZERO,
+            zone_name: "spawn".to_string(),
+            tick_counter: 0,
+        });
+
+        app.world_mut().spawn((
+            Position::new([8.0, 66.0, 8.0]),
+            CurrentDimension(DimensionKind::Overworld),
+            Cultivation {
+                qi_current: 50.0,
+                qi_max: 100.0,
+                ..Default::default()
+            },
+            LifeRecord::new(char_id.clone()),
+        ));
+
+        app.update();
+
+        let narrations = app
+            .world_mut()
+            .resource_mut::<PendingGameplayNarrations>()
+            .drain();
+        assert_eq!(
+            narrations.len(),
+            1,
+            "E2E：玩家首次进入负灵域诡影半径应触发 1 条 perception narration（期望 1，实际 {}）",
+            narrations.len()
+        );
+        assert!(
+            matches!(narrations[0].style, NarrationStyle::Perception),
+            "E2E：narration style 应为 Perception（诡影首次接触 perception 叙事），实际 {:?}",
+            narrations[0].style
+        );
+        assert_eq!(
+            narrations[0].target.as_deref(),
+            Some(char_id.as_str()),
+            "E2E：narration target 应为 player（期望 {char_id}，实际 {:?}）",
+            narrations[0].target
+        );
+    }
+
+    /// E2E-T2: 同一玩家第二次接触（cooldown 内/已提示）→ narration 不重复触发。
+    #[test]
+    fn e2e_ghost_narration_not_repeated_on_second_contact() {
+        let mut app = make_e2e_app(-0.5);
+        let char_id = canonical_player_id("E2eBao");
+
+        app.world_mut().spawn(GhostEntity {
+            position: DVec3::new(8.0, 66.0, 8.1),
+            drift_velocity: DVec3::ZERO,
+            zone_name: "spawn".to_string(),
+            tick_counter: 0,
+        });
+
+        app.world_mut().spawn((
+            Position::new([8.0, 66.0, 8.0]),
+            CurrentDimension(DimensionKind::Overworld),
+            Cultivation {
+                qi_current: 50.0,
+                qi_max: 100.0,
+                ..Default::default()
+            },
+            LifeRecord::new(char_id.clone()),
+        ));
+
+        // 第一次 update → 触发接触 + narration
+        app.update();
+        app.world_mut()
+            .resource_mut::<PendingGameplayNarrations>()
+            .drain();
+
+        // 多次 update（cooldown 内 ghost_contact_system 不 re-trigger，但即使触发 narration 也走 seen 门控）
+        for _ in 0..5 {
+            app.update();
+        }
+
+        let narrations = app
+            .world_mut()
+            .resource_mut::<PendingGameplayNarrations>()
+            .drain();
+        assert!(
+            narrations.is_empty(),
+            "E2E：per-session 门控——同一玩家不应重复收到诡影 narration（期望空，实际 {} 条）",
+            narrations.len()
+        );
+    }
+
+    /// E2E-T3: 正灵域（spirit_qi >= 0）中不触发诡影接触，narration 不发。
+    #[test]
+    fn e2e_ghost_narration_not_triggered_in_positive_zone() {
+        let mut app = make_e2e_app(0.5); // 正灵域
+        let char_id = canonical_player_id("E2eSafe");
+
+        app.world_mut().spawn(GhostEntity {
+            position: DVec3::new(8.0, 66.0, 8.0),
+            drift_velocity: DVec3::ZERO,
+            zone_name: "spawn".to_string(),
+            tick_counter: 0,
+        });
+
+        app.world_mut().spawn((
+            Position::new([8.0, 66.0, 8.0]),
+            CurrentDimension(DimensionKind::Overworld),
+            Cultivation {
+                qi_current: 50.0,
+                qi_max: 100.0,
+                ..Default::default()
+            },
+            LifeRecord::new(char_id.clone()),
+        ));
+
+        app.update();
+
+        let narrations = app
+            .world_mut()
+            .resource_mut::<PendingGameplayNarrations>()
+            .drain();
+        assert!(
+            narrations.is_empty(),
+            "E2E：正灵域中不应触发诡影 narration（ghost_contact_system 不接触 → 无 cooldown → 无 narration，期望空，实际 {} 条）",
+            narrations.len()
+        );
+    }
+
+    /// E2E-T4: 诡影超出 siphon 半径 → 不接触 → narration 不发。
+    #[test]
+    fn e2e_ghost_narration_not_triggered_when_ghost_out_of_radius() {
+        let mut app = make_e2e_app(-0.5);
+        let char_id = canonical_player_id("E2eFar");
+
+        // 诡影在 100 格外（远超 GHOST_SIPHON_RADIUS=2.0）
+        app.world_mut().spawn(GhostEntity {
+            position: DVec3::new(108.0, 66.0, 8.0),
+            drift_velocity: DVec3::ZERO,
+            zone_name: "spawn".to_string(),
+            tick_counter: 0,
+        });
+
+        app.world_mut().spawn((
+            Position::new([8.0, 66.0, 8.0]),
+            CurrentDimension(DimensionKind::Overworld),
+            Cultivation {
+                qi_current: 50.0,
+                qi_max: 100.0,
+                ..Default::default()
+            },
+            LifeRecord::new(char_id.clone()),
+        ));
+
+        // 校验 ghost 确实超出半径（文档化测试前提）
+        let dist = (DVec3::new(108.0, 66.0, 8.0) - DVec3::new(8.0, 66.0, 8.0)).length();
+        assert!(
+            dist >= GHOST_SIPHON_RADIUS,
+            "测试前提：诡影距离 {dist} 应 >= GHOST_SIPHON_RADIUS {GHOST_SIPHON_RADIUS}"
+        );
+
+        app.update();
+
+        let narrations = app
+            .world_mut()
+            .resource_mut::<PendingGameplayNarrations>()
+            .drain();
+        assert!(
+            narrations.is_empty(),
+            "E2E：诡影超出 siphon 半径时不应触发 narration（期望空，实际 {} 条）",
             narrations.len()
         );
     }
