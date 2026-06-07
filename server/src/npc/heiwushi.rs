@@ -14,7 +14,7 @@ use valence::prelude::{
     IntoSystemConfigs, Position, PreUpdate, Query, Res, Update, With,
 };
 
-use crate::combat::components::{Lifecycle, LifecycleState, WoundKind, Wounds};
+use crate::combat::components::{DerivedAttrs, Lifecycle, LifecycleState, WoundKind, Wounds};
 use crate::combat::events::{
     ApplyStatusEffectIntent, AttackIntent, AttackReach, AttackSource, StatusEffectKind,
 };
@@ -323,6 +323,9 @@ pub fn spawn_heiwushi_at(
     let mut runtime = npc_runtime_bundle(entity, NpcArchetype::Beast);
     runtime.wounds.health_current = HEIWUSHI_HEALTH_MAX;
     runtime.wounds.health_max = HEIWUSHI_HEALTH_MAX;
+    // 黑武士近战走物理命中路径（qi_invest=0），伤害靠 DerivedAttrs.attack_power 传递；
+    // 初始值 = Phase1 base_attack（35.0），heiwushi_phase_sync_system 随相变保持同步。
+    runtime.derived_attrs.attack_power = HEIWUSHI_BASE_ATTACK;
     commands.entity(entity).insert(runtime);
     entity
 }
@@ -347,10 +350,13 @@ fn heiwushi_cooldown_tick_system(mut bosses: Query<&mut HeiwushiState, With<Heiw
 }
 
 fn heiwushi_phase_sync_system(
-    mut bosses: Query<(&Wounds, &mut HeiwushiState), With<HeiwushiMarker>>,
+    mut bosses: Query<(&Wounds, &mut HeiwushiState, &mut DerivedAttrs), With<HeiwushiMarker>>,
 ) {
-    for (wounds, mut state) in &mut bosses {
+    for (wounds, mut state, mut derived) in &mut bosses {
         state.sync_phase_from_health(wounds.health_current, wounds.health_max);
+        // 近战走物理路径（qi_invest=0），DerivedAttrs.attack_power 是伤害唯一来源；
+        // 随相变保持 = base_attack（已含 Phase3 翻倍）× phase_damage_multiplier()。
+        derived.attack_power = state.base_attack * state.phase_damage_multiplier();
     }
 }
 
@@ -501,12 +507,14 @@ fn heiwushi_melee_slash_action_system(
                     *action_state = ActionState::Failure;
                     continue;
                 };
+                // qi_invest=0 → 物理命中路径（is_physical_hit=true），绕开 qi 闸门。
+                // 相位缩放伤害已写入 DerivedAttrs.attack_power（由 heiwushi_phase_sync_system 维护）。
                 attacks.send(AttackIntent {
                     attacker: *actor,
                     target: Some(target),
                     issued_at_tick: now,
                     reach: AttackReach::new(3.0, 0.5),
-                    qi_invest: state.base_attack * state.phase_damage_multiplier(),
+                    qi_invest: 0.0,
                     wound_kind: WoundKind::Cut,
                     source: AttackSource::Melee,
                     debug_command: None,
@@ -829,6 +837,14 @@ mod tests {
         assert_eq!(events[0].attacker, boss);
         assert_eq!(events[0].issued_at_tick, 42);
         assert_eq!(events[0].source, AttackSource::Melee);
+        // qi_invest=0.0 → 物理命中路径，绕过 qi 闸门（修复 plan-sword-path-v2 P3 melee zero-damage bug）。
+        // 若此值被改回非零（如 base_attack * phase_mult），resolver 会因 qi_current=0 拒绝 intent。
+        assert_eq!(
+            events[0].qi_invest, 0.0,
+            "黑武士近战 qi_invest 必须为 0.0（物理路径），否则 resolver qi 闸门会拒绝攻击，\
+            实际 qi_invest={:.3}",
+            events[0].qi_invest
+        );
         assert_eq!(
             app.world()
                 .get::<HeiwushiState>(boss)
@@ -1197,6 +1213,170 @@ mod tests {
             vortex_floor, 32,
             "vortex floor 期望 32（round(80*0.40)=32），实际 {}",
             vortex_floor
+        );
+    }
+
+    // ── Fix 3：death / transform action system 覆盖（review 补测）────────────────────────────
+
+    #[test]
+    fn death_action_sets_lifecycle_terminated_and_stops_navigator() {
+        // heiwushi_death_action_system 副作用：
+        //   1. Lifecycle.state → LifecycleState::Terminated
+        //   2. Navigator.stop()（is_idle() = true）
+        let mut app = App::new();
+        app.add_systems(Update, heiwushi_death_action_system);
+        let boss = spawn_boss(app.world_mut(), 0.0, 3.0); // health=0 → death scorer 会打高分
+
+        // 确认初始状态
+        assert_eq!(
+            app.world().get::<Lifecycle>(boss).unwrap().state,
+            LifecycleState::Alive,
+            "前置：boss 初始应为 Alive"
+        );
+
+        // 注入 Requested action state
+        app.world_mut()
+            .spawn((Actor(boss), ActionState::Requested, HeiwushiDeathAction));
+
+        // Requested → Executing → Success 需要两次 update
+        app.update();
+        app.update();
+
+        let lifecycle_state = app.world().get::<Lifecycle>(boss).unwrap().state;
+        assert_eq!(
+            lifecycle_state,
+            LifecycleState::Terminated,
+            "heiwushi_death_action_system 执行后 Lifecycle.state 应为 Terminated，实际 {:?}",
+            lifecycle_state
+        );
+
+        let navigator_is_idle = app.world().get::<Navigator>(boss).unwrap().is_idle();
+        assert!(
+            navigator_is_idle,
+            "heiwushi_death_action_system 执行后 Navigator 应被 stop()（is_idle=true）"
+        );
+    }
+
+    #[test]
+    fn death_action_is_idempotent_on_already_terminated_boss() {
+        // 死亡 action 在 boss 已经是 Terminated 时不应 panic / 改其他状态
+        let mut app = App::new();
+        app.add_systems(Update, heiwushi_death_action_system);
+        let boss = spawn_boss(app.world_mut(), 0.0, 3.0);
+
+        // 先手动 Terminate
+        app.world_mut().get_mut::<Lifecycle>(boss).unwrap().state = LifecycleState::Terminated;
+
+        app.world_mut()
+            .spawn((Actor(boss), ActionState::Requested, HeiwushiDeathAction));
+
+        app.update();
+        app.update();
+
+        // 状态应仍是 Terminated，不应 panic 也不应回退
+        assert_eq!(
+            app.world().get::<Lifecycle>(boss).unwrap().state,
+            LifecycleState::Terminated,
+            "已 Terminated 的 boss 再次触发 death action 后状态应保持 Terminated"
+        );
+    }
+
+    #[test]
+    fn shadow_transform_action_transitions_to_phase3_once() {
+        // heiwushi_shadow_transform_action_system：
+        //   - 执行时调用 apply_phase3_transform()
+        //   - ActionState 变为 Success
+        //   - 第二次调用（幂等）不应再翻倍 base_attack
+        let mut app = App::new();
+        app.add_systems(Update, heiwushi_shadow_transform_action_system);
+
+        // Phase1/2 boss，HP 已降至 <25%
+        let boss = spawn_boss(app.world_mut(), 400.0, 3.0);
+        app.world_mut()
+            .get_mut::<HeiwushiState>(boss)
+            .unwrap()
+            .phase = HeiwushiPhase::Phase1; // 确保还没变身
+
+        let action_entity = app
+            .world_mut()
+            .spawn((
+                Actor(boss),
+                ActionState::Requested,
+                HeiwushiShadowTransformAction,
+            ))
+            .id();
+
+        // Requested → Executing → Success
+        app.update();
+        app.update();
+
+        let state = app.world().get::<HeiwushiState>(boss).unwrap();
+        assert_eq!(
+            state.phase,
+            HeiwushiPhase::Phase3,
+            "shadow_transform_action 执行后 phase 应为 Phase3，实际 {:?}",
+            state.phase
+        );
+        assert_eq!(
+            state.base_attack,
+            HEIWUSHI_BASE_ATTACK * 2.0,
+            "Phase3 base_attack 应为原始值 *2 = {}，实际 {}",
+            HEIWUSHI_BASE_ATTACK * 2.0,
+            state.base_attack
+        );
+        assert_eq!(
+            state.defense,
+            HEIWUSHI_DEFENSE * 0.5,
+            "Phase3 defense 应为原始值 *0.5 = {}，实际 {}",
+            HEIWUSHI_DEFENSE * 0.5,
+            state.defense
+        );
+
+        let action_state = app.world().get::<ActionState>(action_entity).unwrap();
+        assert_eq!(
+            *action_state,
+            ActionState::Success,
+            "ShadowTransformAction 执行后 ActionState 应为 Success，实际 {:?}",
+            action_state
+        );
+    }
+
+    #[test]
+    fn shadow_transform_action_is_one_shot_already_phase3_stays_success() {
+        // apply_phase3_transform 有幂等守卫；Phase3 boss 再次收到 Requested → 应顺利 Success
+        // 但 base_attack 不应再翻倍（守卫已 return）
+        let mut app = App::new();
+        app.add_systems(Update, heiwushi_shadow_transform_action_system);
+
+        let boss = spawn_boss(app.world_mut(), 400.0, 3.0);
+        // 先推入 Phase3
+        app.world_mut()
+            .get_mut::<HeiwushiState>(boss)
+            .unwrap()
+            .apply_phase3_transform();
+        let attack_after_first_transform =
+            app.world().get::<HeiwushiState>(boss).unwrap().base_attack;
+
+        // 再触发一次 transform action
+        app.world_mut().spawn((
+            Actor(boss),
+            ActionState::Requested,
+            HeiwushiShadowTransformAction,
+        ));
+        app.update();
+        app.update();
+
+        let state = app.world().get::<HeiwushiState>(boss).unwrap();
+        assert_eq!(
+            state.phase,
+            HeiwushiPhase::Phase3,
+            "已是 Phase3：再次 transform 后 phase 应仍为 Phase3，实际 {:?}",
+            state.phase
+        );
+        assert_eq!(
+            state.base_attack, attack_after_first_transform,
+            "已是 Phase3：base_attack 不应再翻倍，期望 {}，实际 {}",
+            attack_after_first_transform, state.base_attack
         );
     }
 
