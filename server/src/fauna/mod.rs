@@ -89,4 +89,6 @@ pub fn register(app: &mut App) {
     dying_elder::register_p0(app);
     // plan-dying-elder-v1 P1：给丹交互 + 夺舍事件 + betray 判定系统
     dying_elder::register_p1(app);
+    // plan-dying-elder-v1 P2：drain 系统（坍缩渊持续消耗）+ 死亡结算（qi release + loot）
+    dying_elder::register_p2(app);
 }

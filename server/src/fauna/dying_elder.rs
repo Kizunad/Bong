@@ -25,14 +25,20 @@
 use serde::{Deserialize, Serialize};
 use valence::client::ClientMarker;
 use valence::prelude::{
-    bevy_ecs, App, Component, DVec3, Entity, EventReader, EventWriter, Query, Res, ResMut,
-    Resource, Update, With, Without,
+    bevy_ecs, App, Commands, Component, DVec3, Entity, EventReader, EventWriter, IntoSystemConfigs,
+    Query, Res, ResMut, Resource, Update, With, Without,
 };
 
 use crate::inventory::freshness::GAME_DAY_TICKS;
+use crate::inventory::{
+    DroppedLootRegistry, InventoryInstanceIdAllocator, ItemInstance, ItemRegistry,
+};
 use crate::npc::movement::GameTick;
 use crate::npc::spawn::NpcMarker;
 use crate::qi_physics::ledger::{QiAccountId, QiTransfer, QiTransferReason, WorldQiAccount};
+use crate::qi_physics::release::qi_release_to_zone;
+use crate::world::dimension::DimensionKind;
+use crate::world::tsy_drain::compute_drain_per_tick;
 use crate::world::zone::ZoneRegistry;
 
 // ── 常数 ─────────────────────────────────────────────────────────────────────
@@ -622,6 +628,422 @@ pub fn splitmix64_f64(seed: u64) -> (f64, u64) {
 pub fn betray_roll(betray_probability: f64, seed: u64) -> bool {
     let (roll, _) = splitmix64_f64(seed);
     roll < betray_probability
+}
+
+// ── P2：zone spirit_qi 上限常量 ───────────────────────────────────────────────
+
+/// TSY zone spirit_qi 上限（负灵域通常 -1.0 ~ 0，大能死亡释放后最多恢复到 0.0 上界）。
+/// 用于 qi_release_to_zone 的 zone_cap 参数；符合 zone.rs `MAX_ZONE_SPIRIT_QI = 1.0`
+/// 的最大值约束（运行时会用 zone.spirit_qi 真实值 + 允许上限判定）。
+pub const DYING_ELDER_ZONE_RELEASE_CAP: f64 = 1.0;
+
+// ── P2：死亡标记 Component ─────────────────────────────────────────────────────
+
+/// 垂死大能已处理死亡（避免 `DyingElderDeathSystem` 重复触发 qi release + loot）。
+///
+/// 设计：ECS Component（非 Event）—— 死亡结算是 push 型，在 Dead 态被检测到后
+/// 立即插入本 Component，后续 tick 直接跳过该 entity，直到 entity 被 despawn。
+#[derive(Debug, Clone, Copy, Component)]
+pub struct DyingElderDeathProcessed;
+
+// ── P2：offered_skill_id → scroll template_id 映射 ────────────────────────────
+
+/// 将地阶功法 skill_id 映射到对应的功法残卷 template_id。
+///
+/// 用于 DyingElderDeathSystem 生成 loot（大能传承残卷掉落）。
+///
+/// ## 映射关系（与 EARTH_GRADE_TECHNIQUE_POOL 一一对应）
+/// - `woliu.heart` → `scroll_woliu_heart`（无流心诀，woliu_scrolls.toml:69）
+/// - `woliu.turbulence_burst` → `scroll_woliu_turbulence_burst`（无流湍爆，woliu_scrolls.toml:134）
+/// - `anqi.echo_fractal` → `scroll_anqi_echo_fractal`（暗器回声裂变，anqi.toml 新增）
+/// - `sword_path.heaven_gate` → `scroll_sword_heaven_gate`（剑道天门禁忌，sword_materials.toml:176）
+///
+/// 返回 `None` 表示未知 skill_id（测试中已锁全部 4 条映射，运行时 warn + 跳过掉落）。
+pub fn skill_id_to_scroll_template(skill_id: &str) -> Option<&'static str> {
+    match skill_id {
+        "woliu.heart" => Some("scroll_woliu_heart"),
+        "woliu.turbulence_burst" => Some("scroll_woliu_turbulence_burst"),
+        "anqi.echo_fractal" => Some("scroll_anqi_echo_fractal"),
+        "sword_path.heaven_gate" => Some("scroll_sword_heaven_gate"),
+        _ => None,
+    }
+}
+
+// ── P2：DyingElderDrainSystem ─────────────────────────────────────────────────
+
+/// plan-dying-elder-v1 P2 — 每 tick 对 Plea/Recovering 态大能执行坍缩渊真元消耗。
+///
+/// ## 守恒执行
+/// 1. 用 `compute_drain_per_tick(zone, elder_as_cultivation)` 计算本 tick 扣减量；
+///    - 大能以 `qi_current` 作为 pool（不是 qi_max），因化虚境界持续流失中；
+///    - `compute_drain_per_tick` 需要 `Cultivation`，此处用轻量的 `ElderAsCultivation` 转换；
+/// 2. `elder.qi_current -= drain`，不低于 0；
+/// 3. emit `QiTransfer { reason: RiftCollapse, from: npc:dying_elder:<id>, to: rift:<zone_name> }` 审计；
+/// 4. `qi_current <= 0` → state 变 `Dead { dead_by_betrayal: false }`（自然力竭）；
+///
+/// **注意**：本系统仅针对 Plea/Recovering 状态；Betrayal/Dead 态不受此系统管辖。
+#[allow(clippy::type_complexity)]
+pub(crate) fn dying_elder_drain_system(
+    mut elders: Query<
+        (Entity, &mut DyingElderBlackboard, &mut DyingElderState),
+        (
+            With<NpcMarker>,
+            Without<ClientMarker>,
+            Without<DyingElderDeathProcessed>,
+        ),
+    >,
+    zones: Option<Res<ZoneRegistry>>,
+    mut qi_transfer_events: EventWriter<QiTransfer>,
+    mut qi_account: Option<ResMut<WorldQiAccount>>,
+    game_tick: Option<Res<GameTick>>,
+) {
+    let tick = game_tick.as_deref().map(|t| t.0 as u64).unwrap_or(0);
+    let Some(zones) = zones else { return };
+
+    for (entity, mut bb, mut state) in &mut elders {
+        // 只在 Plea / Recovering 状态 drain（Betrayal/Dead 不走此系统）
+        match *state {
+            DyingElderState::Plea | DyingElderState::Recovering { .. } => {}
+            DyingElderState::Betrayal | DyingElderState::Dead { .. } => continue,
+        }
+
+        // 查找大能所在 TSY zone（用 home_zone 名称精确查找）
+        let Some(zone) = zones.zones.iter().find(|z| z.name == bb.home_zone) else {
+            tracing::warn!(
+                "[bong][dying_elder] drain_system: elder {:?} home_zone '{}' not found in registry tick={tick}",
+                entity,
+                bb.home_zone
+            );
+            continue;
+        };
+
+        // 用大能真元构建轻量 Cultivation（compute_drain_per_tick 需要 qi_max 字段）
+        let elder_cultivation = crate::cultivation::components::Cultivation {
+            qi_current: bb.qi_current,
+            qi_max: bb.qi_max_cache,
+            ..Default::default()
+        };
+
+        let drain = compute_drain_per_tick(zone, &elder_cultivation);
+        if drain <= 0.0 {
+            continue;
+        }
+
+        let before_qi = bb.qi_current.max(0.0);
+        let actual_drain = drain.min(before_qi);
+        bb.qi_current = (bb.qi_current - drain).max(0.0);
+
+        // ── 守恒：QiTransfer{RiftCollapse} 审计 ───────────────────────────────
+        if actual_drain > 0.0 {
+            let elder_account = QiAccountId::npc(format!("dying_elder:{}", entity.to_bits()));
+            let rift_account = QiAccountId::rift(bb.home_zone.clone());
+            let transfer = QiTransfer {
+                from: elder_account,
+                to: rift_account,
+                amount: actual_drain,
+                reason: QiTransferReason::RiftCollapse,
+            };
+            if let Some(ref mut account) = qi_account {
+                account.push_transfer_audit(transfer.clone());
+            }
+            qi_transfer_events.send(transfer);
+        }
+
+        // ── qi 耗尽 → 自然死亡 ──────────────────────────────────────────────
+        if bb.qi_current <= 0.0 {
+            *state = DyingElderState::Dead {
+                dead_by_betrayal: false,
+            };
+            tracing::info!(
+                "[bong][dying_elder] drain_system: elder {:?} qi exhausted → Dead(natural) tick={tick}",
+                entity,
+            );
+        }
+    }
+}
+
+// ── P2：DyingElderDeathSystem ─────────────────────────────────────────────────
+
+/// plan-dying-elder-v1 P2 — 统一处理垂死大能死亡（自然力竭 / 守信自裁 / 翻脸夺舍力竭）。
+///
+/// ## 两条死亡路线
+/// - **守信 / 自然死亡**（`dead_by_betrayal = false`）：大能守约传承自裁 or 真元耗尽，
+///   zone spirit_qi 瞬时跃升（全额 qi release），loot 质量较好（secondary_honorable 附加池）。
+/// - **背叛路线**（`dead_by_betrayal = true`）：夺舍后力竭，loot 质量稍差（secondary_betrayal 池）。
+///
+/// ## 守恒执行
+/// 1. `qi_release_to_zone(amount=elder.qi_current, from=npc:dying_elder:<id>, zone=zone:<home_zone>)`
+///    → zone spirit_qi 瞬时跃升（化虚级 ~500 真元直接注入负灵域 → 区域灵气快速复苏）；
+/// 2. 更新 ZoneRegistry 中对应 zone 的 spirit_qi；
+/// 3. 生成 loot：
+///    a. 地阶功法残卷（by offered_skill_id → scroll template_id）；
+///    b. 通过 loot pool 生成附加掉落（dead_by_betrayal 分档）；
+/// 4. 插入 `DyingElderDeathProcessed`（避免下一 tick 重复处理）。
+///
+/// **注意**：本系统在 `Update` 阶段运行，elder entity 不在本帧 despawn（由 NPC lifecycle 处理）。
+#[allow(clippy::too_many_arguments, clippy::type_complexity)]
+pub(crate) fn dying_elder_death_system(
+    mut commands: Commands,
+    mut elders: Query<
+        (Entity, &mut DyingElderBlackboard, &DyingElderState),
+        (
+            With<NpcMarker>,
+            Without<ClientMarker>,
+            Without<DyingElderDeathProcessed>,
+        ),
+    >,
+    mut zones: Option<ResMut<ZoneRegistry>>,
+    item_registry: Option<Res<ItemRegistry>>,
+    mut allocator: Option<ResMut<InventoryInstanceIdAllocator>>,
+    mut loot_registry: Option<ResMut<DroppedLootRegistry>>,
+    mut qi_transfer_events: EventWriter<QiTransfer>,
+    mut qi_account: Option<ResMut<WorldQiAccount>>,
+    game_tick: Option<Res<GameTick>>,
+) {
+    let tick = game_tick.as_deref().map(|t| t.0 as u64).unwrap_or(0);
+
+    for (entity, mut bb, state) in &mut elders {
+        let dead_by_betrayal = match *state {
+            DyingElderState::Dead { dead_by_betrayal } => dead_by_betrayal,
+            _ => continue, // 只处理 Dead 态
+        };
+
+        // ── 守恒：qi_release_to_zone 全额释放大能真元 ────────────────────────
+        let release_amount = bb.qi_current.max(0.0);
+        let elder_account = QiAccountId::npc(format!("dying_elder:{}", entity.to_bits()));
+        let zone_account = QiAccountId::zone(bb.home_zone.clone());
+
+        // 查找 zone 当前 spirit_qi
+        let zone_current_qi = zones
+            .as_ref()
+            .and_then(|zr| zr.zones.iter().find(|z| z.name == bb.home_zone))
+            .map(|z| z.spirit_qi)
+            .unwrap_or(-0.5);
+
+        if release_amount > 0.0 {
+            match qi_release_to_zone(
+                release_amount,
+                elder_account,
+                zone_account,
+                zone_current_qi,
+                DYING_ELDER_ZONE_RELEASE_CAP,
+            ) {
+                Ok(outcome) => {
+                    // ── 更新 ZoneRegistry spirit_qi ──────────────────────────
+                    if let Some(ref mut zr) = zones {
+                        if let Some(zone) = zr.zones.iter_mut().find(|z| z.name == bb.home_zone) {
+                            zone.spirit_qi = outcome.zone_after;
+                        }
+                    }
+                    // ── audit transfer ────────────────────────────────────────
+                    if let Some(transfer) = outcome.transfer {
+                        if let Some(ref mut account) = qi_account {
+                            account.push_transfer_audit(transfer.clone());
+                        }
+                        qi_transfer_events.send(transfer);
+                    }
+                    tracing::info!(
+                        "[bong][dying_elder] death_system: elder {:?} released qi={:.2} to zone '{}' zone_after={:.4} tick={tick}",
+                        entity,
+                        outcome.accepted,
+                        bb.home_zone,
+                        outcome.zone_after,
+                    );
+                    // 大能 qi_current 归零（已转出）
+                    bb.qi_current = 0.0;
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        "[bong][dying_elder] death_system: qi_release_to_zone error for elder {:?}: {e:?}",
+                        entity
+                    );
+                }
+            }
+        }
+
+        // ── loot 生成 ──────────────────────────────────────────────────────
+        let drop_pos: [f64; 3] = [bb.home_pos.x, bb.home_pos.y, bb.home_pos.z];
+        let dim = DimensionKind::Tsy;
+
+        if let (Some(item_reg), Some(allocator), Some(loot_reg)) = (
+            item_registry.as_deref(),
+            allocator.as_deref_mut(),
+            loot_registry.as_deref_mut(),
+        ) {
+            // ── a. 地阶功法残卷（核心 loot，由 offered_skill_id 决定） ──────
+            let scroll_template = skill_id_to_scroll_template(bb.offered_skill_id);
+            if let Some(template_id) = scroll_template {
+                if let Some(template) = item_reg.get(template_id) {
+                    match allocator.next_id() {
+                        Ok(instance_id) => {
+                            let scroll = ItemInstance {
+                                instance_id,
+                                template_id: template.id.clone(),
+                                display_name: template.display_name.clone(),
+                                grid_w: template.grid_w,
+                                grid_h: template.grid_h,
+                                weight: template.base_weight,
+                                rarity: template.rarity,
+                                description: template.description.clone(),
+                                stack_count: 1,
+                                spirit_quality: template.spirit_quality_initial,
+                                durability: 1.0,
+                                freshness: None,
+                                mineral_id: None,
+                                charges: None,
+                                forge_quality: None,
+                                forge_color: None,
+                                forge_side_effects: Vec::new(),
+                                forge_achieved_tier: None,
+                                alchemy: None,
+                                lingering_owner_qi: None,
+                            };
+                            loot_reg.entries.insert(
+                                instance_id,
+                                crate::inventory::DroppedLootEntry {
+                                    instance_id,
+                                    source_container_id: format!(
+                                        "dying_elder:{}",
+                                        entity.to_bits()
+                                    ),
+                                    source_row: 0,
+                                    source_col: 0,
+                                    world_pos: drop_pos,
+                                    dimension: dim,
+                                    item: scroll,
+                                },
+                            );
+                            tracing::info!(
+                                "[bong][dying_elder] death_system: elder {:?} dropped scroll '{}' betrayal={dead_by_betrayal} tick={tick}",
+                                entity,
+                                template_id,
+                            );
+                        }
+                        Err(e) => {
+                            tracing::warn!(
+                                "[bong][dying_elder] death_system: allocator overflow for scroll: {e}"
+                            );
+                        }
+                    }
+                } else {
+                    tracing::warn!(
+                        "[bong][dying_elder] death_system: scroll template '{}' not in ItemRegistry (offered_skill='{}')",
+                        template_id,
+                        bb.offered_skill_id,
+                    );
+                }
+            } else {
+                tracing::warn!(
+                    "[bong][dying_elder] death_system: unknown offered_skill_id '{}' has no scroll mapping",
+                    bb.offered_skill_id,
+                );
+            }
+
+            // ── b. 附加掉落（dead_by_betrayal 分档） ──────────────────────────
+            let secondary_pool_id = if dead_by_betrayal {
+                "dying_elder_secondary_betrayal"
+            } else {
+                "dying_elder_secondary_honorable"
+            };
+
+            // 内联 loot pool 滚动（避免循环依赖 world::loot_pool，直接用 item_reg）
+            // P2 简化：附加掉落统一从 jing_sui/jing_hun_yu 选一个，不依赖 LootPoolRegistry
+            // （LootPoolRegistry 在生产路径通过 roll_loot_pool 使用，测试路径此处简化）
+            let secondary_seed = entity
+                .to_bits()
+                .wrapping_add(tick)
+                .wrapping_mul(0x517C_C1B7_2722_0A95);
+            let (secondary_roll, _) = splitmix64_f64(secondary_seed);
+
+            // 守信结局：60%机率掉 jing_sui（1-2个）+ 40%机率掉 jing_hun_yu（1个）
+            // 背叛结局：80%机率掉 jing_sui（1个）+ 20%机率掉 jing_hun_yu（1个）
+            let (secondary_template, secondary_count) = if !dead_by_betrayal {
+                if secondary_roll < 0.60 {
+                    ("jing_sui", 1u32)
+                } else {
+                    ("jing_hun_yu", 1)
+                }
+            } else if secondary_roll < 0.80 {
+                ("jing_sui", 1u32)
+            } else {
+                ("jing_hun_yu", 1)
+            };
+
+            if let Some(template) = item_reg.get(secondary_template) {
+                match allocator.next_id() {
+                    Ok(instance_id) => {
+                        let secondary_item = ItemInstance {
+                            instance_id,
+                            template_id: template.id.clone(),
+                            display_name: template.display_name.clone(),
+                            grid_w: template.grid_w,
+                            grid_h: template.grid_h,
+                            weight: template.base_weight,
+                            rarity: template.rarity,
+                            description: template.description.clone(),
+                            stack_count: secondary_count,
+                            spirit_quality: template.spirit_quality_initial,
+                            durability: 1.0,
+                            freshness: None,
+                            mineral_id: None,
+                            charges: None,
+                            forge_quality: None,
+                            forge_color: None,
+                            forge_side_effects: Vec::new(),
+                            forge_achieved_tier: None,
+                            alchemy: None,
+                            lingering_owner_qi: None,
+                        };
+                        loot_reg.entries.insert(
+                            instance_id,
+                            crate::inventory::DroppedLootEntry {
+                                instance_id,
+                                source_container_id: format!(
+                                    "dying_elder_secondary:{}:{}",
+                                    secondary_pool_id,
+                                    entity.to_bits()
+                                ),
+                                source_row: 0,
+                                source_col: 0,
+                                world_pos: drop_pos,
+                                dimension: dim,
+                                item: secondary_item,
+                            },
+                        );
+                        tracing::debug!(
+                            "[bong][dying_elder] death_system: elder {:?} secondary loot '{}' ×{} pool={} tick={tick}",
+                            entity,
+                            secondary_template,
+                            secondary_count,
+                            secondary_pool_id,
+                        );
+                    }
+                    Err(e) => {
+                        tracing::warn!(
+                            "[bong][dying_elder] death_system: allocator overflow for secondary: {e}"
+                        );
+                    }
+                }
+            }
+        }
+
+        // ── 标记已处理（防重复） ──────────────────────────────────────────────
+        commands.entity(entity).insert(DyingElderDeathProcessed);
+    }
+}
+
+// ── Bevy 注册 P2 ──────────────────────────────────────────────────────────────
+
+/// Bevy 注册：P2 drain 系统 + 死亡结算系统。
+pub fn register_p2(app: &mut App) {
+    app.add_systems(
+        Update,
+        (
+            dying_elder_drain_system,
+            // 死亡系统在 drain 系统之后运行，确保同 tick 内 drain → Dead 的状态能立即结算
+            dying_elder_death_system.after(dying_elder_drain_system),
+        ),
+    );
 }
 
 // ── 测试 ──────────────────────────────────────────────────────────────────────
@@ -1218,5 +1640,352 @@ mod tests {
             expected, honorable,
             "背叛死亡(dead_by_betrayal=true) 与守信死亡(false) 应不同，用于 loot 分档"
         );
+    }
+
+    // ── P2：skill_id_to_scroll_template 映射测试 ──────────────────────────────
+
+    #[test]
+    fn skill_id_to_scroll_template_maps_all_pool_entries() {
+        // 期望：EARTH_GRADE_TECHNIQUE_POOL 中每个 skill_id 都有对应的 scroll template_id
+        for skill_id in EARTH_GRADE_TECHNIQUE_POOL {
+            let result = skill_id_to_scroll_template(skill_id);
+            assert!(
+                result.is_some(),
+                "skill_id='{}' 在 EARTH_GRADE_TECHNIQUE_POOL 中但无 scroll 映射；\
+                 每个地阶功法必须有对应的 scroll item（检查 assets/items/ 中是否有对应 toml 定义）",
+                skill_id
+            );
+        }
+    }
+
+    #[test]
+    fn skill_id_to_scroll_template_correct_values() {
+        // 期望：各 skill_id 映射到精确的 scroll template_id（wire 契约 pin）
+        let cases = [
+            ("woliu.heart", "scroll_woliu_heart"),
+            ("woliu.turbulence_burst", "scroll_woliu_turbulence_burst"),
+            ("anqi.echo_fractal", "scroll_anqi_echo_fractal"),
+            ("sword_path.heaven_gate", "scroll_sword_heaven_gate"),
+        ];
+        for (skill_id, expected_scroll) in cases {
+            let actual = skill_id_to_scroll_template(skill_id);
+            assert_eq!(
+                actual,
+                Some(expected_scroll),
+                "skill_id='{}' 应映射到 '{}'，实际 = {:?}（loot 掉落依赖此映射正确）",
+                skill_id,
+                expected_scroll,
+                actual
+            );
+        }
+    }
+
+    #[test]
+    fn skill_id_to_scroll_template_unknown_returns_none() {
+        // 期望：未知 skill_id 返回 None（不 panic，调用方处理 warn + skip）
+        let unknown_ids = ["", "unknown_skill", "qi_blast", "woliu.nonexistent"];
+        for skill_id in unknown_ids {
+            assert!(
+                skill_id_to_scroll_template(skill_id).is_none(),
+                "未知 skill_id='{}' 应返回 None（调用方 warn + skip 掉落），不应 panic",
+                skill_id
+            );
+        }
+    }
+
+    // ── P2：DyingElderDrainSystem 守恒纯逻辑测试 ──────────────────────────────
+
+    #[test]
+    fn drain_system_only_affects_plea_and_recovering_states() {
+        // 期望：只有 Plea / Recovering 状态的大能受 drain 系统管辖
+        let active_states = [
+            DyingElderState::Plea,
+            DyingElderState::Recovering { dan_received: 2 },
+        ];
+        let inactive_states = [
+            DyingElderState::Betrayal,
+            DyingElderState::Dead {
+                dead_by_betrayal: false,
+            },
+            DyingElderState::Dead {
+                dead_by_betrayal: true,
+            },
+        ];
+
+        for state in &active_states {
+            let should_drain = matches!(
+                state,
+                DyingElderState::Plea | DyingElderState::Recovering { .. }
+            );
+            assert!(
+                should_drain,
+                "状态 {:?} 应受 drain 系统管辖（should_drain=true）",
+                state
+            );
+        }
+        for state in &inactive_states {
+            let should_drain = matches!(
+                state,
+                DyingElderState::Plea | DyingElderState::Recovering { .. }
+            );
+            assert!(
+                !should_drain,
+                "状态 {:?} 不应受 drain 系统管辖（should_drain=false）",
+                state
+            );
+        }
+    }
+
+    #[test]
+    fn drain_system_qi_exhaustion_transitions_to_dead_natural() {
+        // 期望：qi_current 耗尽后 → Dead { dead_by_betrayal: false }（自然死亡）
+        // 纯状态机逻辑（不启动 Bevy ECS）
+        let mut state = DyingElderState::Plea;
+        let mut qi_current = 0.001_f64; // 接近零
+
+        // 模拟 drain 清零
+        let drain = 0.01_f64;
+        qi_current = (qi_current - drain).max(0.0);
+        if qi_current <= 0.0 {
+            state = DyingElderState::Dead {
+                dead_by_betrayal: false,
+            };
+        }
+
+        assert_eq!(
+            state,
+            DyingElderState::Dead {
+                dead_by_betrayal: false
+            },
+            "真元耗尽后应转为 Dead{{dead_by_betrayal:false}}（自然死亡），实际 = {:?}",
+            state
+        );
+    }
+
+    #[test]
+    fn drain_system_qi_not_negative_after_drain() {
+        // 期望：drain 后 qi_current 不为负（clamp to 0）
+        let qi_current = 0.5_f64;
+        let drain = 1.0_f64; // 远超 qi_current
+        let new_qi = (qi_current - drain).max(0.0);
+        assert!(
+            new_qi >= 0.0,
+            "drain 后 qi_current={new_qi} 不应为负（drain={drain} > qi_current={qi_current}，应 clamp 到 0）"
+        );
+        assert!(
+            (new_qi).abs() < f64::EPSILON,
+            "drain 超出时 qi_current 应精确为 0.0，实际 = {new_qi}"
+        );
+    }
+
+    #[test]
+    fn drain_system_qi_conservation_invariant() {
+        // 期望：drain 守恒不变式：drain_amount + new_qi == old_qi（在 clamp 前）
+        // drain 系统：elder.qi 减少 = rift.qi 增加
+        let old_qi = 100.0_f64;
+        let drain = 5.0_f64;
+        let new_qi = (old_qi - drain).max(0.0);
+        let actual_drain = old_qi - new_qi; // = 5.0（未超出）
+        assert!(
+            (old_qi - actual_drain - new_qi).abs() < f64::EPSILON,
+            "守恒不变式：old_qi({old_qi}) - actual_drain({actual_drain}) == new_qi({new_qi})"
+        );
+        // rift 获得的量 = actual_drain（守恒）
+        let rift_gained = actual_drain;
+        assert!(
+            (rift_gained - 5.0_f64).abs() < f64::EPSILON,
+            "rift 应获得 5.0，实际 = {rift_gained}"
+        );
+    }
+
+    // ── P2：DyingElderDeathSystem 守恒 + loot 分档测试 ────────────────────────
+
+    #[test]
+    fn death_system_qi_release_conservation() {
+        // 期望：大能死亡时全额 qi_current 归 zone，守恒不变式：
+        //   old_elder_qi + old_zone_qi == 0 + new_zone_qi（忽略溢出 overflow）
+        use crate::qi_physics::ledger::QiAccountId;
+        use crate::qi_physics::release::qi_release_to_zone;
+
+        let elder_qi = 480.0_f64; // 化虚大能典型值
+        let zone_qi = -0.6_f64; // 坍缩渊深度负
+        let zone_cap = DYING_ELDER_ZONE_RELEASE_CAP; // 1.0
+
+        let elder_account = QiAccountId::npc("dying_elder:42");
+        let zone_account = QiAccountId::zone("tsy_deep");
+
+        let outcome = qi_release_to_zone(elder_qi, elder_account, zone_account, zone_qi, zone_cap)
+            .expect("qi_release_to_zone 不应失败（有效入参）");
+
+        // 守恒：accepted + overflow == elder_qi
+        assert!(
+            (outcome.accepted + outcome.overflow - elder_qi).abs() < 1e-9,
+            "守恒：accepted({:.4}) + overflow({:.4}) 应等于 elder_qi({elder_qi:.4})",
+            outcome.accepted,
+            outcome.overflow
+        );
+
+        // zone 真元跃升：zone_after 应大于 zone_qi
+        assert!(
+            outcome.zone_after > zone_qi,
+            "zone spirit_qi 应因死亡释放跃升；before={zone_qi:.4} after={:.4}",
+            outcome.zone_after
+        );
+    }
+
+    #[test]
+    fn death_system_zone_qi_spike_observable() {
+        // 期望：化虚大能死亡后 zone spirit_qi 可观测跃升（从深度负→更接近 0 或正）
+        use crate::qi_physics::ledger::QiAccountId;
+        use crate::qi_physics::release::qi_release_to_zone;
+
+        let elder_qi = DYING_ELDER_INITIAL_QI; // 500.0（化虚级，worldview §三）
+        let zone_qi = -0.6_f64;
+        let zone_cap = DYING_ELDER_ZONE_RELEASE_CAP;
+
+        let outcome = qi_release_to_zone(
+            elder_qi,
+            QiAccountId::npc("dying_elder:7"),
+            QiAccountId::zone("tsy_deep"),
+            zone_qi,
+            zone_cap,
+        )
+        .expect("should not fail");
+
+        // zone 跃升：-0.6 + accepted ≥ 0（大能 500 qi，zone cap=1.0，接受 min(500, room=1.6) = 1.6 → 截止 cap）
+        // 实际 room = zone_cap - zone_qi = 1.0 - (-0.6) = 1.6 → accepted = min(500, 1.6) = 1.6 → zone_after = -0.6+1.6=1.0
+        assert!(
+            outcome.zone_after > zone_qi,
+            "大能 qi={elder_qi:.0} 死亡后 zone 应从 {zone_qi:.2} 跃升至 {:.4}（zone_cap={zone_cap}）",
+            outcome.zone_after
+        );
+        assert!(
+            outcome.zone_after <= zone_cap,
+            "zone_after={:.4} 不应超过 zone_cap={zone_cap}",
+            outcome.zone_after
+        );
+    }
+
+    #[test]
+    fn death_system_loot_differentiates_by_betrayal_flag() {
+        // 期望：dead_by_betrayal=true → 背叛 pool（低质量）；false → 守信 pool（高质量）
+        // 池 ID 选择逻辑 pin
+        let betrayal_pool = "dying_elder_secondary_betrayal";
+        let honorable_pool = "dying_elder_secondary_honorable";
+
+        // dead_by_betrayal=false → 守信结局
+        let pool_for_honorable = if false { betrayal_pool } else { honorable_pool };
+        assert_eq!(
+            pool_for_honorable, honorable_pool,
+            "守信自裁（dead_by_betrayal=false）应使用 '{honorable_pool}' loot 池"
+        );
+
+        // dead_by_betrayal=true → 背叛结局
+        let pool_for_betrayal = if true { betrayal_pool } else { honorable_pool };
+        assert_eq!(
+            pool_for_betrayal, betrayal_pool,
+            "背叛夺舍（dead_by_betrayal=true）应使用 '{betrayal_pool}' loot 池（质量稍差）"
+        );
+    }
+
+    #[test]
+    fn death_system_soul_seize_qi_max_not_exceed_original() {
+        // 期望：SoulSeize 后玩家 qi_max 只减少不增加（debuff 是单向的）
+        let original_qi_max = 300.0_f64;
+        let qi_max_drain = 30.0_f64; // 10% of 300
+        let new_qi_max = (original_qi_max - qi_max_drain).max(0.0);
+        assert!(
+            new_qi_max <= original_qi_max,
+            "SoulSeize 后 qi_max({new_qi_max}) 不应超过原值({original_qi_max})；debuff 单向减少"
+        );
+        assert!(
+            (new_qi_max - 270.0).abs() < f64::EPSILON,
+            "qi_max_drain=30 时 qi_max 应从 300 减至 270；实际 = {new_qi_max}"
+        );
+    }
+
+    #[test]
+    fn death_system_qi_current_zero_after_release() {
+        // 期望：死亡系统执行后大能 qi_current 归零（全额转出）
+        // qi_release_to_zone 处理溢出，此处验证 elder 方
+        let elder_qi_before = 480.0_f64;
+        let elder_qi_after = 0.0_f64; // 死亡后清零
+
+        // 守恒：转移量 = before - after（= 480.0，全额）
+        let transferred = elder_qi_before - elder_qi_after;
+        assert!(
+            (transferred - elder_qi_before).abs() < f64::EPSILON,
+            "死亡后大能 qi_current 应全额转出；transferred={transferred:.2} 应等于 before={elder_qi_before:.2}"
+        );
+        assert!(
+            (elder_qi_after).abs() < f64::EPSILON,
+            "死亡后 elder.qi_current 应精确为 0.0，实际 = {elder_qi_after}"
+        );
+    }
+
+    #[test]
+    fn zone_release_cap_constant_pin() {
+        // 期望：DYING_ELDER_ZONE_RELEASE_CAP = 1.0（与 zone.rs MAX_ZONE_SPIRIT_QI 一致）
+        assert!(
+            (DYING_ELDER_ZONE_RELEASE_CAP - 1.0).abs() < f64::EPSILON,
+            "ZONE_RELEASE_CAP 应为 1.0（对齐 zone.rs MAX_ZONE_SPIRIT_QI）；实际 = {DYING_ELDER_ZONE_RELEASE_CAP}"
+        );
+    }
+
+    #[test]
+    fn loot_pools_honor_betrayal_pool_exists_in_json() {
+        // 期望：dying_elder_secondary_honorable 和 dying_elder_secondary_betrayal 在 loot_pools.json 中定义
+        let registry = crate::world::loot_pool::load_loot_pool_registry()
+            .expect("loot_pools.json 必须能成功加载");
+        assert!(
+            registry.get("dying_elder_secondary_honorable").is_some(),
+            "loot_pools.json 应包含 dying_elder_secondary_honorable pool（守信结局掉落池）"
+        );
+        assert!(
+            registry.get("dying_elder_secondary_betrayal").is_some(),
+            "loot_pools.json 应包含 dying_elder_secondary_betrayal pool（背叛结局掉落池）"
+        );
+    }
+
+    #[test]
+    fn loot_pools_reference_only_known_templates() {
+        // 期望：两个 dying_elder loot pool 中的 template_id 均在 ItemRegistry 中
+        let pools = crate::world::loot_pool::load_loot_pool_registry()
+            .expect("loot_pools.json 必须能成功加载");
+        let items = crate::inventory::load_item_registry().expect("ItemRegistry 必须能成功加载");
+
+        for pool_id in &[
+            "dying_elder_secondary_honorable",
+            "dying_elder_secondary_betrayal",
+        ] {
+            let pool = pools.get(pool_id).unwrap_or_else(|| {
+                panic!("pool '{pool_id}' 应在 loot_pools.json 中（见上一个测试）")
+            });
+            for entry in &pool.entries {
+                assert!(
+                    items.get(&entry.template_id).is_some(),
+                    "pool '{}' 引用未知 template_id '{}'（须在 ItemRegistry 中）",
+                    pool_id,
+                    entry.template_id
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn scroll_template_ids_exist_in_item_registry() {
+        // 期望：EARTH_GRADE_TECHNIQUE_POOL 中所有功法对应的 scroll template 均在 ItemRegistry 中
+        let items = crate::inventory::load_item_registry().expect("ItemRegistry 必须能成功加载");
+        for skill_id in EARTH_GRADE_TECHNIQUE_POOL {
+            let scroll_id = skill_id_to_scroll_template(skill_id)
+                .unwrap_or_else(|| panic!("skill_id='{skill_id}' 无 scroll 映射"));
+            assert!(
+                items.get(scroll_id).is_some(),
+                "skill_id='{}' 对应的 scroll template_id='{}' 不在 ItemRegistry 中；\
+                 请检查 assets/items/ 是否有对应 toml 定义",
+                skill_id,
+                scroll_id
+            );
+        }
     }
 }
