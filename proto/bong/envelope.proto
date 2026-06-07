@@ -264,6 +264,8 @@ message ClientRequestEnvelope {
     CoffinMenuReclaim           coffin_menu_reclaim           = 89;
     // ─── plan-exploration-probe-return-v1 P1：神识感知保鲜 C2S ────
     FreshnessProbe              freshness_probe               = 90;
+    // ─── plan-dying-elder-v1 P1：垂死大能给丹 C2S ──────────────────
+    GiveDanToElderReq           give_dan_to_elder             = 91;
   }
 }
 
@@ -3743,6 +3745,15 @@ message MineralProbeResult {
 // instance_id = 玩家 inventory 中物品的实例 ID（直接定位，消除容器 tab 歧义）。
 message FreshnessProbe {
   uint64 instance_id = 1;
+}
+
+// ─── plan-dying-elder-v1 P1：玩家向垂死大能交付一颗回元丹 C2S ────
+// 与 Rust ClientRequestV1::GiveDanToElder 精确对应。
+// pill_instance_id = 玩家背包中回元丹的 inventory instance_id；
+// elder_entity_id  = 垂死大能的 MC protocol entity_id（i32）。
+message GiveDanToElderReq {
+  uint64 pill_instance_id = 1;
+  int32  elder_entity_id  = 2;
 }
 
 // ─── plan-exploration-probe-return-v1 P1：神识感知保鲜回执 S2C ────

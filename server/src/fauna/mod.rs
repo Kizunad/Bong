@@ -87,4 +87,6 @@ pub fn register(app: &mut App) {
     daozhan::register_p3(app);
     // plan-dying-elder-v1 P0：垂死大能 spawn timer + spawn 系统
     dying_elder::register_p0(app);
+    // plan-dying-elder-v1 P1：给丹交互 + 夺舍事件 + betray 判定系统
+    dying_elder::register_p1(app);
 }

@@ -3779,6 +3779,15 @@ impl From<&super::client_request::ClientRequestV1> for bong::client_request_enve
                     entity_id: *entity_id,
                 })
             }
+            // ── plan-dying-elder-v1 P1：垂死大能给丹 C2S ─────────────────────
+            ClientRequestV1::GiveDanToElder {
+                pill_instance_id,
+                elder_entity_id,
+                ..
+            } => Payload::GiveDanToElder(bong::GiveDanToElderReq {
+                pill_instance_id: *pill_instance_id,
+                elder_entity_id: *elder_entity_id,
+            }),
         }
     }
 }
