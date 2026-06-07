@@ -10099,7 +10099,7 @@ fn resync_inventory_only(
 /// plan-dying-elder-v1 P1 — 处理玩家向垂死大能交付回元丹请求。
 ///
 /// ## 处理流程
-/// 1. 校验玩家背包中 `pill_instance_id` 对应物品为 `hui_yuan_pill`；
+/// 1. 校验玩家背包中 `pill_instance_id` 对应物品为 `huiyuan_pill`（pills.toml id，无下划线）；
 /// 2. 根据 `elder_entity_id` 找到大能 ECS entity；
 /// 3. 消耗丹（inventory 真删）；
 /// 4. 读取 ItemEffect::QiRecovery { amount } 作为 qi_gain（默认 24.0）；
@@ -10108,7 +10108,7 @@ fn resync_inventory_only(
 ///
 /// ## 失败路径（静默 warn，不 crash）
 /// - pill_instance_id 不在玩家背包 → warn + reject
-/// - 物品不是 `hui_yuan_pill` → warn + reject
+/// - 物品不是 `huiyuan_pill` → warn + reject
 /// - elder_entity_id 找不到 entity → warn + reject
 /// - give_dan_to_elder_tx 缺失 → warn + reject（事件注册未完成）
 #[allow(clippy::too_many_arguments)]
@@ -10147,10 +10147,10 @@ fn handle_give_dan_to_elder(
         }
     };
 
-    // ── 校验物品是 hui_yuan_pill ──────────────────────────────────────────
-    if pill_template_id != "hui_yuan_pill" {
+    // ── 校验物品是 huiyuan_pill（pills.toml 注册 id，无下划线）───────────
+    if pill_template_id != "huiyuan_pill" {
         tracing::warn!(
-            "[bong][dying_elder] give_dan: item template_id={pill_template_id} is not hui_yuan_pill"
+            "[bong][dying_elder] give_dan: item template_id={pill_template_id} is not huiyuan_pill"
         );
         if let Ok((_u, mut client)) = clients.get_mut(player_entity) {
             client.send_chat_message("§c[垂死大能] 只接受回元丹。");
@@ -10160,7 +10160,7 @@ fn handle_give_dan_to_elder(
 
     // ── 获取丹携带的 qi_gain（从 ItemEffect::QiRecovery，默认 24.0）────────
     let qi_gain = item_registry
-        .get("hui_yuan_pill")
+        .get("huiyuan_pill")
         .and_then(|tmpl| {
             if let Some(ItemEffect::QiRecovery { amount }) = tmpl.effect {
                 Some(amount)

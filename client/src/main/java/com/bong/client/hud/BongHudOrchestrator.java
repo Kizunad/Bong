@@ -422,6 +422,8 @@ public final class BongHudOrchestrator {
         ));
         commands.addAll(ForgeProgressHudPlanner.buildCommands(screenWidth, screenHeight, nowMillis));
         commands.addAll(AlchemyProgressHudPlanner.buildCommands(screenWidth, screenHeight, nowMillis));
+        // plan-dying-elder-v1 P3: 垂死大能遭遇 HUD（遭遇激活时在屏幕底部中央显示面板）
+        commands.addAll(DyingElderHudPlanner.buildCommands(screenWidth, screenHeight));
         commands.addAll(CoffinHudPlanner.buildCommands(screenWidth, screenHeight));
         commands.addAll(LingtianOverlayHudPlanner.buildCommands(
             com.bong.client.lingtian.state.LingtianSessionStore.snapshot(),

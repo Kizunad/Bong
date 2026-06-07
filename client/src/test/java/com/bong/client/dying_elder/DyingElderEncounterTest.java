@@ -3,6 +3,7 @@ package com.bong.client.dying_elder;
 import com.bong.client.hud.DyingElderHudPlanner;
 import com.bong.client.hud.HudRenderCommand;
 import com.bong.client.hud.HudRenderLayer;
+import com.bong.client.visual.realm_vision.SenseKind;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
@@ -824,6 +825,172 @@ public class DyingElderEncounterTest {
         assertTrue(
             DyingElderEncounterStore.isActive(),
             "expected isActive()=true after re-activate following death because encounters can repeat, actual: false"
+        );
+    }
+
+    // ──────────────────────────────────────────────────────────────────────────
+    // B2 fix: BongHudOrchestrator 已集成 DyingElderHudPlanner
+    // ──────────────────────────────────────────────────────────────────────────
+
+    /**
+     * B2 fix: 验证 BongHudOrchestrator.java 源码包含 DyingElderHudPlanner.buildCommands 调用。
+     *
+     * <p>BongHudOrchestrator 是纯静态工厂，无法在测试环境中执行（依赖 Minecraft 渲染上下文）。
+     * 通过读取源码文本确认调用链存在，锁住"HUD planner 已被调用"这一契约。
+     */
+    @Test
+    void bongHudOrchestratorInvokesDyingElderHudPlanner() throws Exception {
+        // 定位 BongHudOrchestrator.java 源码（从 test class root 向上定位）
+        java.nio.file.Path testClasses = java.nio.file.Path.of("").toAbsolutePath().normalize();
+        // 解析 client module root
+        java.nio.file.Path clientRoot;
+        if (java.nio.file.Files.isDirectory(testClasses.resolve("src"))) {
+            clientRoot = testClasses;
+        } else if (java.nio.file.Files.isDirectory(testClasses.resolve("client").resolve("src"))) {
+            clientRoot = testClasses.resolve("client");
+        } else {
+            // fallback: gradle test working dir is usually module root
+            clientRoot = testClasses;
+        }
+        java.nio.file.Path orchestratorSrc = clientRoot.resolve(
+            "src/main/java/com/bong/client/hud/BongHudOrchestrator.java"
+        );
+        assertTrue(
+            java.nio.file.Files.exists(orchestratorSrc),
+            "BongHudOrchestrator.java must exist at " + orchestratorSrc.toAbsolutePath()
+                + " — cannot verify B2 fix without source file"
+        );
+        String src = java.nio.file.Files.readString(orchestratorSrc);
+        assertTrue(
+            src.contains("DyingElderHudPlanner.buildCommands"),
+            "expected BongHudOrchestrator to call DyingElderHudPlanner.buildCommands because "
+                + "without this call the dying elder HUD will never render (B2 blocker fix), actual: call not found in source"
+        );
+    }
+
+    // ──────────────────────────────────────────────────────────────────────────
+    // M1 fix: SpiritualSenseTargetsHandler 已集成 setSpiritEyeActive
+    // ──────────────────────────────────────────────────────────────────────────
+
+    /**
+     * M1 fix: 验证 SpiritualSenseTargetsHandler.java 源码包含 setSpiritEyeActive 调用。
+     *
+     * <p>SpiritualSenseTargetsHandler 依赖 Minecraft 网络上下文，无法直接在测试环境执行。
+     * 通过读取源码文本锁住"setSpiritEyeActive 已被调用"这一契约。
+     */
+    @Test
+    void spiritualSenseTargetsHandlerCallsSetSpiritEyeActive() throws Exception {
+        java.nio.file.Path testClasses = java.nio.file.Path.of("").toAbsolutePath().normalize();
+        java.nio.file.Path clientRoot;
+        if (java.nio.file.Files.isDirectory(testClasses.resolve("src"))) {
+            clientRoot = testClasses;
+        } else if (java.nio.file.Files.isDirectory(testClasses.resolve("client").resolve("src"))) {
+            clientRoot = testClasses.resolve("client");
+        } else {
+            clientRoot = testClasses;
+        }
+        java.nio.file.Path handlerSrc = clientRoot.resolve(
+            "src/main/java/com/bong/client/network/SpiritualSenseTargetsHandler.java"
+        );
+        assertTrue(
+            java.nio.file.Files.exists(handlerSrc),
+            "SpiritualSenseTargetsHandler.java must exist at " + handlerSrc.toAbsolutePath()
+        );
+        String src = java.nio.file.Files.readString(handlerSrc);
+        assertTrue(
+            src.contains("setSpiritEyeActive"),
+            "expected SpiritualSenseTargetsHandler to call DyingElderEncounterStore.setSpiritEyeActive "
+                + "because without this call the spirit eye state never updates and the dying elder HUD "
+                + "will always show '气息有异' even when SpiritEye is active (M1 fix), actual: call not found in source"
+        );
+        assertTrue(
+            src.contains("SPIRIT_EYE"),
+            "expected SpiritualSenseTargetsHandler to check for SenseKind.SPIRIT_EYE entries "
+                + "to derive spiritEyeActive state, actual: check not found in source"
+        );
+    }
+
+    // ──────────────────────────────────────────────────────────────────────────
+    // M1 fix: DyingElderEncounterStore.setSpiritEyeActive 正确更新 spiritEyeActive
+    // ──────────────────────────────────────────────────────────────────────────
+
+    @Test
+    void setSpiritEyeActiveUpdatesState() {
+        // 初始为 false
+        assertFalse(
+            DyingElderEncounterStore.isSpiritEyeActive(),
+            "expected spiritEyeActive=false initially because no perception data received yet"
+        );
+
+        // 激活
+        DyingElderEncounterStore.setSpiritEyeActive(true);
+        assertTrue(
+            DyingElderEncounterStore.isSpiritEyeActive(),
+            "expected spiritEyeActive=true after setSpiritEyeActive(true), actual: false"
+        );
+
+        // 关闭
+        DyingElderEncounterStore.setSpiritEyeActive(false);
+        assertFalse(
+            DyingElderEncounterStore.isSpiritEyeActive(),
+            "expected spiritEyeActive=false after setSpiritEyeActive(false), actual: true"
+        );
+    }
+
+    @Test
+    void spiritEyeActiveTrueShowsBetrayProbabilityInHud() {
+        // M1 fix 端到端: spiritEyeActive=true 时 HUD 显示背叛概率数字
+        DyingElderEncounterStore.activate("坍缩渊", 1, 100L);
+        DyingElderEncounterStore.setBetrayProbability(0.8);
+        DyingElderEncounterStore.setSpiritEyeActive(true);
+
+        List<HudRenderCommand> cmds = DyingElderHudPlanner.buildCommands(1024, 768);
+        boolean hasBetrayPercent = cmds.stream()
+            .filter(c -> c.kind() == HudRenderCommand.Kind.SCALED_TEXT)
+            .anyMatch(c -> c.text() != null && c.text().contains("叛") && c.text().contains("%"));
+        assertTrue(
+            hasBetrayPercent,
+            "expected betray percentage text in HUD when spiritEyeActive=true and encounter active "
+                + "because SpiritEye allows reading the elder's true betrayal probability (M1 fix), actual: not found"
+        );
+    }
+
+    @Test
+    void spiritEyeActiveFalseShowsGasHasAnomalyInHud() {
+        // M1 fix 端到端: spiritEyeActive=false 时 HUD 显示"气息有异"
+        DyingElderEncounterStore.activate("坍缩渊", 1, 100L);
+        DyingElderEncounterStore.setBetrayProbability(0.8);
+        DyingElderEncounterStore.setSpiritEyeActive(false);
+
+        List<HudRenderCommand> cmds = DyingElderHudPlanner.buildCommands(1024, 768);
+        boolean hasAnomalyText = cmds.stream()
+            .filter(c -> c.kind() == HudRenderCommand.Kind.SCALED_TEXT)
+            .anyMatch(c -> c.text() != null && c.text().contains("气息有异"));
+        assertTrue(
+            hasAnomalyText,
+            "expected '气息有异' in HUD when spiritEyeActive=false because without SpiritEye "
+                + "the player cannot read the elder's betrayal probability (M1 fix), actual: not found"
+        );
+    }
+
+    // ──────────────────────────────────────────────────────────────────────────
+    // SenseKind.SPIRIT_EYE 存在（M1 fix 依赖）
+    // ──────────────────────────────────────────────────────────────────────────
+
+    @Test
+    void senseKindSpiritEyeVariantExists() {
+        // M1 fix: SenseKind.SPIRIT_EYE enum variant 必须存在，
+        // SpiritualSenseTargetsHandler 依赖此 variant 判断 spiritEye 是否激活
+        SenseKind spiritEye = SenseKind.SPIRIT_EYE;
+        assertNotNull(
+            spiritEye,
+            "expected SenseKind.SPIRIT_EYE to exist because SpiritualSenseTargetsHandler checks this "
+                + "to derive DyingElderEncounterStore.spiritEyeActive (M1 fix)"
+        );
+        assertEquals(
+            SenseKind.SPIRIT_EYE,
+            SenseKind.fromWire("SpiritEye"),
+            "expected SenseKind.fromWire('SpiritEye') == SPIRIT_EYE because server sends 'SpiritEye' kind string"
         );
     }
 }
