@@ -61,13 +61,17 @@ jobs:
 
       # 把脚本拷出来,再把 working tree 切到 PR head——这样 review.mjs 是 main 最新版,
       # 而 agent(codex/claude)用 Read/Grep 读到的是 PR 的真实代码(不是 main 版)。
+      # checkout 失败(PR 已合并且 head 分支被删 / fork 受限)不阻断:finder/voter 默认无工具、
+      # 只基于 diff brief 出 findings,根本不读 working tree;只有裁判 codex 用工具读代码,
+      # 此时退化到读 main 版即可,review 仍能正常产出。故 `|| 警告` 降级而非 fail。
       - name: 暂存脚本 + 切到 PR head(给 agent 读真实代码)
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           mkdir -p /tmp/rev
           cp .github/scripts/review.mjs /tmp/rev/review.mjs
-          gh pr checkout "${{ github.event.issue.number || inputs.pr_number }}"
+          gh pr checkout "${{ github.event.issue.number || inputs.pr_number }}" \
+            || echo "::warning::gh pr checkout 失败(PR 可能已合并/删分支/fork 受限),agent 将基于 main + diff brief 审核"
 
       - uses: actions/setup-node@v4
         with:
