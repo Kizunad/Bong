@@ -63,10 +63,10 @@
 
 | 阶段 | 状态 | 主要交付物 | 验收标准 |
 |------|------|-----------|---------|
-| **P0** | ⬜ | 融合触发数据模型 + 融合参数决策门 | `HybridBeastFormationEvent` 数据模型 PR + ≥ 8 单测 green |
-| **P1** | ⬜ | 融合 system（野兽→HybridBeast） + qi 守恒 | 3 只野兽低灵气融合 → HybridBeast 生成，qi 守恒 |
-| **P2** | ⬜ | 灵压狂暴 system + zone 灵气吸干效果 | HP 越低吸收率越高；zone spirit_qi 正确下降 |
-| **P3** | ⬜ | 兽核幻觉 HUD + VFX + client 整合 | 吸收兽核后 client HUD 幻觉效果正确触发 |
+| **P0** | ✅ 2026-06-07 | 融合触发数据模型 + `QiTransferReason::FusionMerge` + 参数收口 | HybridBeastFormationEvent + 系统级守恒测试 |
+| **P1** | ✅ 2026-06-07 | 融合 system（野兽→HybridBeast,**不凭空造qi**:hybrid初始=sum组件兽真实qi）+ Rat 逃跑联动 | 融合前后世界总qi守恒;Rat逃跑 |
+| **P2** | ✅ 2026-06-07 | 灵压狂暴 system（zone-=drain == hybrid cultivation.qi_current+=gain 守恒）+ VFX | HP越低吸收率越高;zone减==hybrid增 |
+| **P3** | ✅ 2026-06-07 | 兽核幻觉 HUD（视野旋转/bar偏移**不改实际值**,到期fade-out）+ VFX + 死亡释放 | 吸收bian_yi_hexin→client幻觉;死亡release_qi_amount_to_zone全额 |
 
 ---
 
@@ -147,3 +147,38 @@
 4. **融合可见**：融合过程 VFX 是否向玩家可见（玩家能看到野兽融合则可以打断 → 策略；不可见则发现时已是 HybridBeast）
 5. **幻觉 HUD 强度**：10s 幻觉是否影响游戏性（玩家吸收兽核通常在安全地点 or 战斗中）？是否需要根据境界差（兽核阶级 vs 玩家境界）调整幻觉强度
 6. **负灵域触发整合**：灵压狂暴把 zone 吸成负灵域时，是否触发 plan-zone-environment-v1 ✅ 的 `EnvironmentEffect::NegativePressure` 视觉层（可见的负压环境效果）
+---
+
+## Finish Evidence
+
+**验收日期**：2026-06-07 · 全 P0-P3 ✅ · 经 consume-plan 自动消费(viability gate 验证+纠正3接口 + 实施 + opus 对抗自检 1 轮守恒修复)
+
+### 落地清单
+- **P0**：`server/src/fauna/hybrid_beast.rs`(HybridBeastFormationEvent + HybridBeastRageState);`server/src/qi_physics/ledger.rs` 新增 `QiTransferReason::FusionMerge`;`qi_physics/constants.rs` 新增 BASE_HYBRID_ABSORPTION_RATE/RAGE_MULTIPLIER。
+- **P1 融合**：`hybrid_beast_formation_system`(zone 聚合 realm_tier≤2 野兽 + 连续饥饿 tick + 低灵气 → spawn HybridBeast)。**守恒**:hybrid 初始 qi = sum(组件兽**真实** cultivation.qi_current)(野兽默认0则0,**不凭空造**),逸散走 release_qi_amount_to_zone;FusionCandidateQuery 读 &Cultivation 真实值。Rat 逃跑联动走 negative_pressure_avoidance(本 plan 实装写入)。
+- **P2 灵压狂暴**：`hybrid_beast_rage_system`(HP%→rage_absorption_rate=BASE×(1+RAGE_MULT×(1-hp_pct)))走 regen_from_zone;**守恒**:HybridRageQuery 加 &mut Cultivation,zone.spirit_qi-=drain 同时 cultivation.qi_current+=gain(镜像 cultivation/tick.rs canonical ledger 搬运)+ QiTransfer(CultivationRegen)。
+- **P3 兽核幻觉**：`CoreAbsorptionHallucinationEvent` + bian_yi_hexin 吸收接口(ItemEffect→突破+emit)+ S2C bong:core_absorption_hallucination + client `HallucinationLayer*`(视野旋转走 MixinCamera getYawOffset / HP-qi bar 偏移走 MiniBodyHudPlanner,**绝不改实际值** / render decrementTick 到期 fade-out)+ narration 2条 scope=player。**死亡释放**:HybridBeast 走 on_player_terminated → release_terminated_qi_to_zone **全额**(NPC 同路径,已核实)。
+
+### 关键 commit(branch auto/plan-fauna-stitched-beast-v1)
+- `941ca69ef` P0 基础结构 + FusionMerge + 常数 + 25测
+- `c74a010fd` P1 融合触发 + Rat 逃跑 + 36测
+- `b44f429c7` P2 灵压狂暴吸收 + 14测
+- `bc1e71ee0` P3-server 兽核吸收 + 幻觉event + S2C + narration + 11测
+- `0bcdcba35` P3-client 幻觉层 HUD + BongHud 接入 + 33测
+- `d0c0ebf08` fix: 4守恒blocker(融合不造qi/狂暴zone减==hybrid增/死亡全释放/系统级守恒测试)+4major(narration容器/幻觉到期/Camera+HUD Mixin/zone统一)
+
+### 测试结果
+- `cargo fmt --check` ✅ / `cargo clippy --all-targets -- -D warnings` ✅
+- `cargo test`:**7805 passed / 0 failed**;系统级守恒测试(fusion@0qi / fusion@nonzero / rage 区间守恒 / 死亡释放)全过
+- client:HallucinationLayerOverlayTest(707行)BUILD SUCCESSFUL;1 pre-existing 失败 BongEntityModelAssetTest(local_models/*.bbmodel gitignored,本分支零触及实体模型代码,已核实)
+
+### 跨仓库核验
+- **server** ✅:`hybrid_beast_formation_system`/`hybrid_beast_rage_system`/`QiTransferReason::FusionMerge`/`CoreAbsorptionHallucinationEvent`/release_terminated_qi_to_zone(复用)
+- **client** ✅:`HallucinationLayer{Store,Handler,Overlay}`/MixinCamera(getYawOffset)/MiniBodyHudPlanner(bar offset)
+- **schema/契约** ✅:S2C `bong:core_absorption_hallucination`(server emit↔client handler 精确匹配)
+- **agent**:无改动
+
+### 遗留 / 后续
+- **client 幻觉视觉观感待 WSLg 验收**:视野旋转±3°/绿边像差/HP-qi bar±20%偏移的实际渲染(逻辑/契约已测,主观视觉需人眼)。
+- **rat/spider 死亡 1%-release 跨 fauna tech-debt**(见 fauna-mimic-spider PR #431 记录):本 plan HybridBeast 死亡已用正典全释放;rat_phase/mimic_spider 的 1%-release 仍待统一收紧(cross-cutting follow-up)。
+- 2 minor:rage zone.max(-1.0) 允许 zone 跌负(守恒正常,与 tick.rs .max(0.0) 注释一致性);死亡释放缺 hybrid 专属端到端集成测试(生产链路已核实接通)。
