@@ -1,0 +1,11 @@
+{
+  "id": "sword_bond_form",
+  "layers": [
+    { "sound": "minecraft:block.amethyst_block.chime", "volume": 0.65, "pitch": 1.1, "delay_ticks": 0 },
+    { "sound": "minecraft:item.trident.return", "volume": 0.35, "pitch": 1.4, "delay_ticks": 4 }
+  ],
+  "priority": 60,
+  "attenuation": "world_3d",
+  "category": "PLAYERS",
+  "bus": "COMBAT"
+}

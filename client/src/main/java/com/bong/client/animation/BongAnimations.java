@@ -104,6 +104,14 @@ public final class BongAnimations {
     public static final Identifier PILL_HUI_LI = new Identifier(MOD_ID, "pill_hui_li");
     public static final Identifier PILL_HU_GU = new Identifier(MOD_ID, "pill_hu_gu");
 
+    // plan-sword-path-v2 P4：剑道 runtime 与黑武士动作补充动画。
+    public static final Identifier SWORD_MANIFEST_CAST = new Identifier(MOD_ID, "sword_manifest_cast");
+    public static final Identifier SWORD_HEAVEN_GATE_CHARGE = new Identifier(MOD_ID, "sword_heaven_gate_charge");
+    public static final Identifier SWORD_HEAVEN_GATE_RELEASE = new Identifier(MOD_ID, "sword_heaven_gate_release");
+    public static final Identifier HEIWUSHI_IDLE = new Identifier(MOD_ID, "heiwushi_idle");
+    public static final Identifier HEIWUSHI_WALK = new Identifier(MOD_ID, "heiwushi_walk");
+    public static final Identifier HEIWUSHI_DEATH = new Identifier(MOD_ID, "heiwushi_death");
+
     public static final List<Identifier> IMPLEMENTATION_V1_ANIMATIONS = List.of(
         SWORD_SWING_RIGHT,
         MEDITATE_SIT,
@@ -169,6 +177,15 @@ public final class BongAnimations {
         PILL_SUO_DI,
         PILL_HUI_LI,
         PILL_HU_GU
+    );
+
+    public static final List<Identifier> SWORD_PATH_V2_ANIMATIONS = List.of(
+        SWORD_MANIFEST_CAST,
+        SWORD_HEAVEN_GATE_CHARGE,
+        SWORD_HEAVEN_GATE_RELEASE,
+        HEIWUSHI_IDLE,
+        HEIWUSHI_WALK,
+        HEIWUSHI_DEATH
     );
 
     private BongAnimations() {

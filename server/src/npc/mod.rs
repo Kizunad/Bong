@@ -12,6 +12,7 @@ pub mod dying_master;
 pub mod equipment;
 pub mod faction;
 pub mod farming_brain;
+pub mod heiwushi;
 pub mod hunger;
 pub mod hydrate;
 #[cfg(test)]
@@ -75,6 +76,7 @@ pub fn register(app: &mut App) {
     brain::register(app);
     brain_rat::register(app);
     brain_whale::register(app);
+    heiwushi::register(app);
     whale_narration::register(app);
     dormant::register(app);
     farming_brain::register(app);

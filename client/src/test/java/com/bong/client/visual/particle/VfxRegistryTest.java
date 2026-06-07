@@ -177,6 +177,14 @@ public class VfxRegistryTest {
             "bootstrap should register sword_parry_spark");
         assertTrue(VfxRegistry.instance().contains(SwordBasicsVfxPlayer.INFUSE_GLOW),
             "bootstrap should register sword_infuse_glow");
+        for (Identifier eventId : SwordPathVfxPlayer.EVENT_IDS) {
+            Optional<VfxPlayer> player = VfxRegistry.instance().lookup(eventId);
+            assertTrue(player.isPresent(),
+                "bootstrap should register sword-path-v2 VFX event " + eventId);
+            assertTrue(player.get() instanceof SwordPathVfxPlayer,
+                "sword-path-v2 event " + eventId + " should route to SwordPathVfxPlayer; got "
+                    + player.get().getClass().getName());
+        }
         assertTrue(VfxRegistry.instance().contains(FlyingSwordDemoPlayer.EVENT_ID),
             "bootstrap should register flying_sword_demo");
         assertTrue(VfxRegistry.instance().contains(FormationCoreDemoPlayer.EVENT_ID),

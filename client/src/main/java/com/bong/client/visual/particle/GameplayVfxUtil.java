@@ -53,6 +53,9 @@ final class GameplayVfxUtil {
         int maxAge,
         float scale
     ) {
+        if (client == null || world == null || provider == null || client.particleManager == null) {
+            return;
+        }
         EnlightenmentAuraPlayer.spawnSprite(
             client,
             world,

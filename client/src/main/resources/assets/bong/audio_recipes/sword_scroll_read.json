@@ -1,0 +1,11 @@
+{
+  "id": "sword_scroll_read",
+  "layers": [
+    { "sound": "minecraft:entity.experience_orb.pickup", "volume": 0.7, "pitch": 1.2, "delay_ticks": 0 },
+    { "sound": "minecraft:block.enchantment_table.use", "volume": 0.5, "pitch": 1.0, "delay_ticks": 5 }
+  ],
+  "priority": 55,
+  "attenuation": "world_3d",
+  "category": "PLAYERS",
+  "bus": "COMBAT"
+}

@@ -200,10 +200,10 @@ const LIVING_PILLAR_DROPS: [DropEntry; 3] = [
 ];
 
 const HEIWUSHI_DROPS: [DropEntry; 4] = [
-    DropEntry::guaranteed("star_iron", QuantityRange::between(1, 2)),
-    DropEntry::guaranteed("sword_embryo_shard", QuantityRange::between(1, 2)),
+    DropEntry::guaranteed("star_iron", QuantityRange::fixed(2)),
+    DropEntry::guaranteed("sword_embryo_shard", QuantityRange::fixed(2)),
     DropEntry::rare("ancient_sword_embryo", QuantityRange::fixed(1), 0.30),
-    DropEntry::rare("scroll_sword_path", QuantityRange::fixed(1), 0.10),
+    DropEntry::rare("scroll_sword_manifest", QuantityRange::fixed(1), 0.10),
 ];
 
 const POISON_DRAGON_DROPS: [DropEntry; 4] = [
@@ -577,6 +577,7 @@ mod tests {
             BeastKind::VoidDistorted,
             BeastKind::DarkTiger,
             BeastKind::LivingPillar,
+            BeastKind::Heiwushi, // plan-sword-path-v2 P3 boss — 修复 review 发现的遗漏
             BeastKind::PoisonDragon,
             BeastKind::BoneDragon,
             BeastKind::Whale,
@@ -594,6 +595,83 @@ mod tests {
                 );
             }
         }
+    }
+
+    // ── HEIWUSHI_DROPS 饱和锁（plan-sword-path-v2 P3 review 补测）───────────────────────────
+    //
+    // 设计表：
+    //   star_iron        ×2   保底（guaranteed, fixed）
+    //   sword_embryo_shard ×2 保底（guaranteed, fixed）
+    //   ancient_sword_embryo ×1 30%（rare）
+    //   scroll_sword_manifest ×1 10%（rare）
+    //
+    // 本测试锁定以上契约；任何对 HEIWUSHI_DROPS 的修改必须同步改此测试。
+    #[test]
+    fn heiwushi_drops_match_boss_design_table() {
+        let mut star_iron_hits = 0;
+        let mut sword_shard_hits = 0;
+        let mut ancient_embryo_hits = 0;
+        let mut scroll_manifest_hits = 0;
+        const SAMPLES: u64 = 2000;
+
+        for seed in 0..SAMPLES {
+            let drops = roll_fauna_drops(FaunaTag::new(BeastKind::Heiwushi), seed.wrapping_mul(37));
+
+            // 保底项：每次都必须出现
+            let star_iron = drops
+                .iter()
+                .find(|d| d.item_id == "star_iron")
+                .expect("黑武士必须保底掉落 star_iron（guaranteed），seed={seed} 未命中");
+            assert_eq!(
+                star_iron.quantity, 2,
+                "star_iron 数量应为固定 2，seed={seed} 实际={:?}",
+                star_iron.quantity
+            );
+            star_iron_hits += 1;
+
+            let sword_shard = drops
+                .iter()
+                .find(|d| d.item_id == "sword_embryo_shard")
+                .expect("黑武士必须保底掉落 sword_embryo_shard（guaranteed），seed={seed} 未命中");
+            assert_eq!(
+                sword_shard.quantity, 2,
+                "sword_embryo_shard 数量应为固定 2，seed={seed} 实际={:?}",
+                sword_shard.quantity
+            );
+            sword_shard_hits += 1;
+
+            // 稀有项：计数
+            if drops.iter().any(|d| d.item_id == "ancient_sword_embryo") {
+                ancient_embryo_hits += 1;
+            }
+            if drops.iter().any(|d| d.item_id == "scroll_sword_manifest") {
+                scroll_manifest_hits += 1;
+            }
+        }
+
+        // 保底项：100% 命中
+        assert_eq!(
+            star_iron_hits, SAMPLES,
+            "star_iron 保底：期望 {SAMPLES} 次全中，实际 {star_iron_hits}"
+        );
+        assert_eq!(
+            sword_shard_hits, SAMPLES,
+            "sword_embryo_shard 保底：期望 {SAMPLES} 次全中，实际 {sword_shard_hits}"
+        );
+
+        // ancient_sword_embryo ~30%（容差 ±5%）
+        let ancient_rate = ancient_embryo_hits as f64 / SAMPLES as f64;
+        assert!(
+            (0.25..=0.35).contains(&ancient_rate),
+            "ancient_sword_embryo 期望概率 ~0.30 (±0.05)，实际 {ancient_rate:.3}（{ancient_embryo_hits}/{SAMPLES}）"
+        );
+
+        // scroll_sword_manifest ~10%（容差 ±4%）
+        let scroll_rate = scroll_manifest_hits as f64 / SAMPLES as f64;
+        assert!(
+            (0.06..=0.14).contains(&scroll_rate),
+            "scroll_sword_manifest 期望概率 ~0.10 (±0.04)，实际 {scroll_rate:.3}（{scroll_manifest_hits}/{SAMPLES}）"
+        );
     }
 
     #[test]

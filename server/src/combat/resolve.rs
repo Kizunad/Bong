@@ -3604,6 +3604,112 @@ mod tests {
         );
     }
 
+    // ── 回归测试：黑武士近战 qi 闸门漏洞（plan-sword-path-v2 P3 review 发现）────────────────
+    //
+    // 修复前根因：`heiwushi_melee_slash_action_system` 发 `qi_invest = base_attack * phase_mult`
+    // （Phase1 = 35.0），但 `npc_runtime_bundle` 给 boss 的 `Cultivation::default()` 只有
+    // `qi_current = 0.0`。resolver §362-377 的 qi 闸门：
+    //   `qi_invest > EPSILON && !prepaid && qi_current < qi_invest`
+    // → `35.0 > ε && Melee 不在 prepaid 白名单 && 0.0 < 35.0` → continue（intent 被丢弃）。
+    // 结果：所有 Phase 的近战斩击永远打不到人。
+    //
+    // 修复后：`qi_invest = 0.0` 触发物理路径（is_physical_hit=true），
+    // 相位缩放伤害通过 `DerivedAttrs.attack_power` 传递，闸门不触发。
+    //
+    // 本测试专门覆盖 NPC 攻击者 qi_current=0 + qi_invest=0.0 能成功落伤的完整路径，
+    // 若将 qi_invest 改回 35.0（pre-fix），断言会失败（target wounds 不变）。
+    #[test]
+    fn heiwushi_melee_physical_path_lands_with_zero_qi_attacker() {
+        let mut app = App::new();
+        app.insert_resource(CombatClock { tick: 200 });
+        app.add_event::<AttackIntent>();
+        app.add_event::<ApplyStatusEffectIntent>();
+        app.add_event::<CombatEvent>();
+        app.add_event::<DeathEvent>();
+        app.add_event::<crate::combat::weapon::WeaponBroken>();
+        app.add_event::<InventoryDurabilityChangedEvent>();
+        app.add_systems(Update, resolve_attack_intents);
+
+        // Boss attacker: qi_current=0（npc_runtime_bundle default）+ attack_power=35.0
+        // 这是修复前触发 qi 闸门的精确条件。
+        let boss = app
+            .world_mut()
+            .spawn((
+                NpcMarker,
+                Position::new([0.0, 64.0, 0.0]),
+                Cultivation {
+                    qi_current: 0.0,
+                    qi_max: 10.0,
+                    ..Cultivation::default()
+                },
+                MeridianSystem::default(),
+                Contamination::default(),
+                StatusEffects::default(),
+                Wounds::default(),
+                crate::combat::components::Stamina::default(),
+                CombatState::default(),
+                DerivedAttrs {
+                    attack_power: 35.0,
+                    ..DerivedAttrs::default()
+                },
+            ))
+            .id();
+        let canonical = canonical_npc_id(boss);
+        app.world_mut().entity_mut(boss).insert((
+            Lifecycle {
+                character_id: canonical.clone(),
+                ..Default::default()
+            },
+            LifeRecord::new(canonical),
+        ));
+
+        // Player target — 近战距离内 (1 block away)
+        let target = spawn_player(
+            &mut app,
+            "Crimson",
+            [1.0, 64.0, 0.0],
+            Wounds {
+                health_current: 100.0,
+                health_max: 100.0,
+                entries: Vec::new(),
+            },
+            crate::combat::components::Stamina::default(),
+        );
+
+        // 物理命中路径：qi_invest=0.0（修复后的黑武士近战斩击）
+        app.world_mut().send_event(AttackIntent {
+            attacker: boss,
+            target: Some(target),
+            issued_at_tick: 199,
+            reach: AttackReach::new(3.0, 0.5),
+            qi_invest: 0.0,
+            wound_kind: WoundKind::Cut,
+            source: AttackSource::Melee,
+            debug_command: None,
+        });
+        app.update();
+
+        let target_wounds = app.world().entity(target).get::<Wounds>().unwrap();
+        assert!(
+            !target_wounds.entries.is_empty(),
+            "黑武士近战（qi_invest=0, qi_current=0）必须落至少一道伤，实际伤口数={}。\
+            若此断言失败，说明 qi 闸门仍在拦截物理近战。",
+            target_wounds.entries.len()
+        );
+        assert!(
+            target_wounds.health_current < 100.0,
+            "黑武士近战必须扣血，修复前 qi_invest=35.0 被闸门拒绝导致此处不降；\
+            实际 health_current={:.2}，期望 < 100.0",
+            target_wounds.health_current
+        );
+
+        let combat_events = app.world().resource::<Events<CombatEvent>>();
+        assert!(
+            !combat_events.is_empty(),
+            "黑武士近战命中必须 emit CombatEvent（resolver 未拒绝才会到达此处）"
+        );
+    }
+
     #[test]
     fn fist_reach_misses_when_target_is_outside_physical_range() {
         let mut app = App::new();
