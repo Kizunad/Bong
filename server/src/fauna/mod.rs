@@ -17,6 +17,8 @@ pub fn register(app: &mut App) {
     // plan-fauna-stitched-beast-v1 P0：注册事件（系统在 P1/P2/P3 添加）
     app.add_event::<hybrid_beast::HybridBeastFormationEvent>();
     app.add_event::<hybrid_beast::CoreAbsorptionHallucinationEvent>();
+    // plan-fauna-stitched-beast-v1 P1：注册融合系统 + ZoneBeastHungerTracker resource
+    hybrid_beast::register_p1(app);
     app.add_event::<butcher::ButcherRequest>();
     app.add_event::<bone_coin::BoneCoinCraftRequest>();
     app.add_event::<bone_coin::BoneCoinCrafted>();
