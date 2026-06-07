@@ -164,7 +164,7 @@
 - `cd server && cargo test return_home_times_out_when_home_unreachable`：1 passed。
 - `cd server && cargo test home_base_uses_scatter_position_not_zone_center`：1 passed。
 - `cd server && cargo test partial_path_advances_npc_not_freeze`：1 passed。
-- `cd server && cargo test dormant_edge_seed_returns_home_without_astar_flood`：1 passed。
+- `cd server && cargo test dormant_edge_seed_returns_home_without_astar_flood`：1 passed。（`4856da316` review 后强化：原用例 NPC 出生即在 home、且未注册 `navigator_tick_system`，`consecutive_path_failures==0` 为假绿；现改为真实 ChunkLayer 平地 + NPC 离 home 11.3 格 + 注册 `navigator_tick_system` 跑真寻路，断言归位进度 >50% gap 且失败计数恒 0。）
 - `cd server && cargo test home_base_tracks_extreme_zone_positions_and_center_degenerate_case`：1 passed。
 - `cd server && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test`：通过；`cargo test` 结果 `7344 passed; 0 failed; 1 ignored`。
 
@@ -176,4 +176,8 @@
 
 ### 遗留 / 后续
 
-- 无。本 plan 为 server-only 正确性修复，不新增玩法系统、不改 qi_physics、不引入跨仓库契约。
+- 本 plan 为 server-only 正确性修复，不新增玩法系统、不改 qi_physics、不引入跨仓库契约。
+- **review 评估后判为 deferred（非本 plan 范围内必修）的项**：
+  - **home 锚点跨 dehydrate 漂移**（coderabbit `hydrate/mod.rs:463`）：`spawn_from_snapshot` 用 `snapshot.position` 派生 home，而脱水 `mod.rs:255` 把 live `Position` 写回该字段——散修若离 home 时脱水再水化，home 会跟到上次脱水点。对游牧型散修而言"home=上次活动落点"语义可接受，且彻底修复需新增独立持久化 `home_base` 快照字段（结构性 heavy lift，越出本 plan「修 navigator 站桩」范围）。**留作后续 plan：dormant 散修持久家锚**。
+  - **到达目标后每 bucket-tick 空转重算寻路**（pi `navigator.rs:380-410`）：`path_exhausted` 在 `reached_goal` 且 path 空时恒真。对 ReturnHome 流程已被到达即 `navigator.stop()`（清 goal）兜住不触发；仅对持有常驻 goal 且坐在目标上的巡逻态有 near-zero A* 的有界开销，非洪水。留作 navigator 后续优化。
+  - **`RestState.elapsed_ticks` 被 ReturnHome 复用为超时计时**（pi `actions_life.rs:671-685`）：`RestAction`/`ReturnHomeAction` 各自在 `Requested` 分支重置该字段，污染已被互相重置兜住，判 minor，不改。
