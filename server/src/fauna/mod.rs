@@ -77,4 +77,6 @@ pub fn register(app: &mut App) {
     );
     // plan-fauna-mimic-spider-v1 P0：拟态灰烬蛛状态机 + Disguised qi 吸收 + 死亡归还
     mimic_spider::register(app);
+    // plan-daozhan-v1 P1：Mimicry big-brain Scorer/Action 注册
+    daozhan::register_p1(app);
 }

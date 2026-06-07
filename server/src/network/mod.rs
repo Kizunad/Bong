@@ -64,6 +64,8 @@ pub mod skill_snapshot_emit;
 pub mod skillbar_config_emit;
 #[cfg(test)]
 mod skillbar_config_emit_test;
+// plan-daozhan-v1 P1 — 道伥伪装状态 S2C CustomPayload
+pub mod daozhan_disguise_emit;
 // plan-fauna-mimic-spider-v1 P2 — 拟态蛛伪装状态 S2C CustomPayload
 pub mod spider_disguise_emit;
 pub mod spirit_treasure_emit;
@@ -911,6 +913,8 @@ pub fn register(app: &mut App) {
     // plan-offscreen-war-v1 P9：战事结算 resource（ZoneSpiritBonus 倍率表）。
     app.init_resource::<ZoneSpiritBonusStore>();
 
+    // plan-daozhan-v1 P1 — 道伥伪装渲染 S2C payloads
+    daozhan_disguise_emit::register(app);
     // plan-fauna-mimic-spider-v1 P2 — 拟态蛛伪装渲染 S2C payloads
     spider_disguise_emit::register(app);
 

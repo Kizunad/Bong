@@ -1211,10 +1211,18 @@ fn visual_kind_for_tsy_archetype(archetype: NpcArchetype) -> FaunaVisualKind {
 }
 
 fn daoxiang_thinker() -> ThinkerBuilder {
+    // plan-daozhan-v1 P1：优先级顺序
+    //   AgeingScorer(retire) > DaoxiangInstinctScorer(暴起/本能) > MimicryScorer(伪装游荡)
+    //   > NpcTechniqueScorer > MeleeRangeScorer > ChaseTargetScorer > WanderScorer
+    // Mimicry(0.7) 低于 DaoxiangInstinct(1.0) 保证本能攻击优先；高于 Wander(0.08) 驱动游荡欺骗。
     Thinker::build()
         .picker(FirstToScore { threshold: 0.05 })
         .when(AgeingScorer, RetireAction)
         .when(DaoxiangInstinctScorer, DaoxiangInstinctAction)
+        .when(
+            crate::fauna::daozhan::DaoZhangMimicryScorer,
+            crate::fauna::daozhan::DaoZhangMimicryAction,
+        )
         .when(NpcTechniqueScorer, NpcTechniqueAction)
         .when(MeleeRangeScorer, MeleeAttackAction)
         .when(ChaseTargetScorer, ChaseAction)
