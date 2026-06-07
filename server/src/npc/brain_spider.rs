@@ -109,14 +109,18 @@ impl ScorerBuilder for SpiderAmbushScorer {
 type SpiderScorerActorQuery<'w, 's> = Query<
     'w,
     's,
-    (&'static Position, &'static SpiderDisguiseState),
+    (
+        &'static Position,
+        &'static SpiderDisguiseState,
+        &'static MimicSpiderBlackboard,
+    ),
     (With<NpcMarker>, Without<ClientMarker>),
 >;
 
 type PlayerCultivationQuery<'w, 's> = Query<
     'w,
     's,
-    (&'static Position, &'static Cultivation),
+    (Entity, &'static Position, &'static Cultivation),
     (With<ClientMarker>, Without<NpcMarker>),
 >;
 
@@ -126,7 +130,7 @@ pub(crate) fn spider_ambush_scorer_system(
     mut scorers: Query<(&Actor, &mut Score), With<SpiderAmbushScorer>>,
 ) {
     for (Actor(actor), mut score) in &mut scorers {
-        let Ok((spider_pos, state)) = spiders.get(*actor) else {
+        let Ok((spider_pos, state, blackboard)) = spiders.get(*actor) else {
             score.set(0.0);
             continue;
         };
@@ -137,11 +141,23 @@ pub(crate) fn spider_ambush_scorer_system(
             continue;
         }
 
-        // 扫描感知半径内的玩家
-        let detected = players.iter().any(|(player_pos, cultivation)| {
-            within_sense_radius(spider_pos.get(), player_pos.get())
-                && cultivation.qi_current > cultivation.qi_max * SPIDER_QI_SENSE_THRESHOLD
-        });
+        // P3：陷阱蛛不攻击 trap_owner（只攻击第三方玩家）
+        let trap_owner = blackboard.trapped_by;
+
+        // 扫描感知半径内的玩家（排除陷阱归属玩家）
+        let detected = players
+            .iter()
+            .filter(|(player_entity, _, _)| {
+                // 野生蛛（trap_owner=None）攻击所有玩家；
+                // 陷阱蛛（trap_owner=Some(owner)）跳过 owner，攻击其他玩家
+                trap_owner
+                    .map(|owner| *player_entity != owner)
+                    .unwrap_or(true)
+            })
+            .any(|(_, player_pos, cultivation)| {
+                within_sense_radius(spider_pos.get(), player_pos.get())
+                    && cultivation.qi_current > cultivation.qi_max * SPIDER_QI_SENSE_THRESHOLD
+            });
 
         score.set(if detected { 1.0 } else { 0.0 });
     }
@@ -238,17 +254,25 @@ pub(crate) fn spider_ambush_action_system(
 
                 let pos = position.get();
 
-                // 找最近真元超阈值玩家
+                // P3：陷阱蛛追击时排除 trap_owner
+                let trap_owner = blackboard.trapped_by;
+
+                // 找最近真元超阈值玩家（排除 trap_owner）
                 let nearest = players
                     .iter()
-                    .filter(|(_, cult)| cult.qi_current > cult.qi_max * SPIDER_QI_SENSE_THRESHOLD)
-                    .min_by(|(pa, _), (pb, _)| {
+                    .filter(|(player_entity, _, cult)| {
+                        let not_owner = trap_owner
+                            .map(|owner| *player_entity != owner)
+                            .unwrap_or(true);
+                        not_owner && cult.qi_current > cult.qi_max * SPIDER_QI_SENSE_THRESHOLD
+                    })
+                    .min_by(|(_, pa, _), (_, pb, _)| {
                         pos.distance(pa.get())
                             .partial_cmp(&pos.distance(pb.get()))
                             .unwrap_or(std::cmp::Ordering::Equal)
                     });
 
-                let Some((target_pos, _)) = nearest else {
+                let Some((_, target_pos, _)) = nearest else {
                     // 无目标 → Ambush 完成（转回 Disguised 由外部 scorer 决定）
                     navigator.stop();
                     *disguise_state = SpiderDisguiseState::Disguised;
@@ -357,7 +381,7 @@ pub(crate) fn spider_retreat_scorer_system(
         // P1 策略：Ambush 状态且附近仍有玩家时给出基线分，让外部 hp-scorer 可以在必要时覆盖
         let has_nearby_player = players
             .iter()
-            .any(|(pp, _)| within_sense_radius(spider_pos.get(), pp.get()));
+            .any(|(_, pp, _)| within_sense_radius(spider_pos.get(), pp.get()));
 
         score.set(if has_nearby_player { 0.4 } else { 0.0 });
     }
@@ -387,12 +411,12 @@ pub(crate) fn spider_retreat_action_system(
                 // 找最近玩家（作为威胁参考方向）
                 let threat_pos = players
                     .iter()
-                    .min_by(|(pa, _), (pb, _)| {
+                    .min_by(|(_, pa, _), (_, pb, _)| {
                         pos.distance(pa.get())
                             .partial_cmp(&pos.distance(pb.get()))
                             .unwrap_or(std::cmp::Ordering::Equal)
                     })
-                    .map(|(pp, _)| pp.get());
+                    .map(|(_, pp, _)| pp.get());
 
                 // 检查是否满足撤退完成条件
                 let retreat_done = threat_pos
@@ -1157,6 +1181,186 @@ mod tests {
         assert_eq!(
             target, home,
             "蛛在 home 位置时 backtrack_target 应返回 home（实际 {target:?}）"
+        );
+    }
+
+    // ── P3 陷阱归属感知测试 ──────────────────────────────────────────────────
+
+    #[test]
+    fn ambush_scorer_skips_trap_owner_player() {
+        // 陷阱蛛（trapped_by = owner）不应被 owner 触发感知——
+        // 只有第三方玩家才能触发暴起。
+        let mut app = spider_test_app();
+        let spider_pos = DVec3::new(0.0, 64.0, 0.0);
+
+        // trap_owner：部署陷阱的玩家（蛛不感知它）
+        let owner = app
+            .world_mut()
+            .spawn((
+                ClientMarker,
+                Position::new([2.0_f64, 64.0, 0.0]), // 距离 2 < SENSE_RADIUS=8
+                cultivation_with_qi(50.0, 100.0),
+            ))
+            .id();
+
+        let mut bb = make_blackboard("spawn", spider_pos);
+        bb.trapped_by = Some(owner);
+
+        let spider = app
+            .world_mut()
+            .spawn((
+                NpcMarker,
+                Position::new([spider_pos.x, spider_pos.y, spider_pos.z]),
+                SpiderDisguiseState::Disguised,
+                bb,
+            ))
+            .id();
+
+        use big_brain::prelude::Score;
+        let scorer_entity = app
+            .world_mut()
+            .spawn((Actor(spider), Score::default(), SpiderAmbushScorer))
+            .id();
+
+        app.update();
+
+        let score = app.world().get::<Score>(scorer_entity).unwrap().get();
+        assert_eq!(
+            score, 0.0,
+            "陷阱蛛不应被 trap_owner 触发感知（owner 在范围内时 score 期望 0.0，实际 {score}）"
+        );
+    }
+
+    #[test]
+    fn ambush_scorer_triggers_on_third_party_player_not_trap_owner() {
+        // 陷阱蛛（trapped_by = owner）：owner 在感知范围内不触发，但第三方玩家在范围内触发。
+        let mut app = spider_test_app();
+        let spider_pos = DVec3::new(0.0, 64.0, 0.0);
+
+        // trap_owner：范围内，不触发
+        let owner = app
+            .world_mut()
+            .spawn((
+                ClientMarker,
+                Position::new([2.0_f64, 64.0, 0.0]),
+                cultivation_with_qi(50.0, 100.0),
+            ))
+            .id();
+
+        // 第三方：也在范围内，应触发
+        app.world_mut().spawn((
+            ClientMarker,
+            Position::new([3.0_f64, 64.0, 0.0]),
+            cultivation_with_qi(50.0, 100.0),
+        ));
+
+        let mut bb = make_blackboard("spawn", spider_pos);
+        bb.trapped_by = Some(owner);
+
+        let spider = app
+            .world_mut()
+            .spawn((
+                NpcMarker,
+                Position::new([spider_pos.x, spider_pos.y, spider_pos.z]),
+                SpiderDisguiseState::Disguised,
+                bb,
+            ))
+            .id();
+
+        use big_brain::prelude::Score;
+        let scorer_entity = app
+            .world_mut()
+            .spawn((Actor(spider), Score::default(), SpiderAmbushScorer))
+            .id();
+
+        app.update();
+
+        let score = app.world().get::<Score>(scorer_entity).unwrap().get();
+        assert_eq!(
+            score, 1.0,
+            "第三方玩家在感知范围内时陷阱蛛应触发感知（期望 1.0，实际 {score}）"
+        );
+    }
+
+    #[test]
+    fn wild_spider_triggers_on_all_players() {
+        // 野生蛛（trapped_by=None）应对所有玩家触发感知（无排除逻辑）
+        let mut app = spider_test_app();
+        let spider_pos = DVec3::new(0.0, 64.0, 0.0);
+
+        // 只有一个玩家（无 trap_owner 概念）
+        app.world_mut().spawn((
+            ClientMarker,
+            Position::new([4.0_f64, 64.0, 0.0]),
+            cultivation_with_qi(50.0, 100.0),
+        ));
+
+        // 野生蛛：trapped_by=None
+        let spider = app
+            .world_mut()
+            .spawn((
+                NpcMarker,
+                Position::new([spider_pos.x, spider_pos.y, spider_pos.z]),
+                SpiderDisguiseState::Disguised,
+                make_blackboard("spawn", spider_pos), // trapped_by=None
+            ))
+            .id();
+
+        use big_brain::prelude::Score;
+        let scorer_entity = app
+            .world_mut()
+            .spawn((Actor(spider), Score::default(), SpiderAmbushScorer))
+            .id();
+
+        app.update();
+
+        let score = app.world().get::<Score>(scorer_entity).unwrap().get();
+        assert_eq!(
+            score, 1.0,
+            "野生蛛对所有玩家触发感知（期望 1.0，实际 {score}）"
+        );
+    }
+
+    #[test]
+    fn ambush_scorer_zero_when_only_owner_present_for_trap_spider() {
+        // 陷阱蛛感知范围内只有 owner，无第三方 → score=0
+        let mut app = spider_test_app();
+        let spider_pos = DVec3::new(0.0, 64.0, 0.0);
+
+        let owner = app
+            .world_mut()
+            .spawn((
+                ClientMarker,
+                Position::new([1.0_f64, 64.0, 0.0]),
+                cultivation_with_qi(200.0, 500.0), // 即使高境界也不触发
+            ))
+            .id();
+
+        let mut bb = make_blackboard("spawn", spider_pos);
+        bb.trapped_by = Some(owner);
+
+        let spider = app
+            .world_mut()
+            .spawn((
+                NpcMarker,
+                Position::new([spider_pos.x, spider_pos.y, spider_pos.z]),
+                SpiderDisguiseState::Disguised,
+                bb,
+            ))
+            .id();
+
+        use big_brain::prelude::Score;
+        let scorer_entity = app
+            .world_mut()
+            .spawn((Actor(spider), Score::default(), SpiderAmbushScorer))
+            .id();
+
+        app.update();
+
+        let score = app.world().get::<Score>(scorer_entity).unwrap().get();
+        assert_eq!(
+            score, 0.0,
+            "感知范围内只有 owner 时陷阱蛛 score 必须为 0（即使 owner 境界极高）（实际 {score}）"
         );
     }
 }

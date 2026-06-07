@@ -1,4 +1,4 @@
-//! 拟态灰烬蛛 — plan-fauna-mimic-spider-v1 P0
+//! 拟态灰烬蛛 — plan-fauna-mimic-spider-v1 P0/P3
 //!
 //! 三态状态机 Disguised / Ambush / Retreat，伏击型妖兽。
 //! P0 实装：
@@ -8,15 +8,22 @@
 //!   - Disguised 期 qi 吸收系统（走 qi_physics::regen_from_zone + QiTransfer，守恒）
 //!   - 死亡 qi 归还系统（mirror fauna/rat_phase.rs release_drained_qi_on_death_system）
 //!
-//! P1/P2/P3 在后续阶段追加。
+//! P3 实装：
+//!   - `SpiderTrapPotential` component（陷阱归属 + 放置时间戳）
+//!   - `SPIDER_TRAP_TIMEOUT_TICKS` 常数（72 游戏内天 = 72 × 24_000 tick）
+//!   - `SPIDER_CAGE_TEMPLATE_ID` 常数（item.spider_cage 模板 ID，与 fauna.toml 对齐）
+//!   - `spider_trap_timeout_system`（超时自动释放陷阱蛛 → Retreat）
+//!
+//! item.spider_cage 的配方不在本 plan 范围，由 anqi-v2 引用。
 
 use serde::{Deserialize, Serialize};
 use valence::prelude::{
     bevy_ecs, Component, DVec3, Entity, Event, EventReader, IntoSystemConfigs, Position, Query,
-    ResMut, With,
+    Res, ResMut, With,
 };
 
 use crate::combat::events::DeathEvent;
+use crate::cultivation::tick::CultivationClock;
 use crate::npc::spawn::NpcMarker;
 use crate::qi_physics::constants::SPIDER_DISGUISE_REGEN_RATE;
 use crate::qi_physics::excretion::regen_from_zone;
@@ -35,6 +42,16 @@ pub const SPIDER_SENSE_RADIUS: f64 = 8.0;
 
 /// 撤退判定半径（方块数）：退出此距离视为完成撤退。
 pub const SPIDER_RETREAT_RADIUS: f64 = 32.0;
+
+// ── P3 陷阱常数 ───────────────────────────────────────────────────────────────
+
+/// 陷阱笼物品模板 ID（与 server/assets/items/fauna.toml 中的 `id = "spider_cage"` 对齐）。
+/// anqi-v2 引用此常数注册配方，本 plan 不实装配方。
+pub const SPIDER_CAGE_TEMPLATE_ID: &str = "spider_cage";
+
+/// 陷阱超时 tick 数：72 游戏内天（72 × 24_000 tick）。
+/// 超过此时间，被捕获的蛛自动进入 Retreat 并解除 trap 归属。
+pub const SPIDER_TRAP_TIMEOUT_TICKS: u64 = 72 * 24_000;
 
 // ──────────────────────────────────────────────────────────────────────────────
 
@@ -82,6 +99,65 @@ impl MimicSpiderBlackboard {
         }
     }
 }
+
+/// P3 陷阱归属 component。
+///
+/// 当玩家以 `item.spider_cage` 对处于 `Disguised` 状态的蛛使用时，
+/// server 端添加此 component，标记陷阱归属和放置时间戳。
+///
+/// # 语义约束
+///
+/// - `trap_owner`：放置陷阱的玩家 Entity；陷阱触发时蛛不攻击此玩家。
+/// - `placed_at`：放置世界坐标（供后续 P-future 地图渲染使用）。
+/// - `placed_tick`：放置时的 `CultivationClock::tick`；超过
+///   `placed_tick + SPIDER_TRAP_TIMEOUT_TICKS` 时 `spider_trap_timeout_system` 自动释放。
+///
+/// 释放方式：从蛛身上移除此 component + 清空 `blackboard.trapped_by` + 转为 Retreat。
+#[derive(Debug, Clone, Component)]
+pub struct SpiderTrapPotential {
+    /// 部署陷阱的玩家；陷阱激活时不攻击此玩家（仅攻击第三方）。
+    pub trap_owner: Entity,
+    /// 放置坐标（语义参考，不影响 AI 决策）。
+    pub placed_at: DVec3,
+    /// 放置时的 `CultivationClock::tick`。
+    pub placed_tick: u64,
+}
+
+/// P3 陷阱超时释放系统。
+///
+/// 每 tick 扫描带有 `SpiderTrapPotential` 的蛛：
+///   - 若 `current_tick >= placed_tick + SPIDER_TRAP_TIMEOUT_TICKS`，
+///     则移除 `SpiderTrapPotential`、清空 `blackboard.trapped_by`、
+///     强制切换到 `SpiderDisguiseState::Retreat`（让 big-brain 正常接手撤退路径）。
+///
+/// # 设计说明
+/// 超时不立即 Despawn 蛛，而是进入 Retreat——符合 worldview §七"蛛自主游走，不被永久禁锢"。
+pub fn spider_trap_timeout_system(
+    mut commands: Commands,
+    clock: Option<Res<CultivationClock>>,
+    mut spiders: Query<
+        (
+            Entity,
+            &SpiderTrapPotential,
+            &mut MimicSpiderBlackboard,
+            &mut SpiderDisguiseState,
+        ),
+        With<NpcMarker>,
+    >,
+) {
+    let current_tick = clock.map(|c| c.tick).unwrap_or(0);
+
+    for (entity, trap, mut blackboard, mut state) in &mut spiders {
+        if current_tick >= trap.placed_tick + SPIDER_TRAP_TIMEOUT_TICKS {
+            // 超时：解除陷阱归属，强制进入 Retreat（自然撤退回出生地后变回 Disguised）
+            blackboard.trapped_by = None;
+            *state = SpiderDisguiseState::Retreat;
+            commands.entity(entity).remove::<SpiderTrapPotential>();
+        }
+    }
+}
+
+use valence::prelude::Commands;
 
 /// P0 Disguised 期 qi 吸收系统。
 ///
@@ -253,7 +329,7 @@ pub struct SpiderStateChangeEvent {
     pub tick: u64,
 }
 
-/// P0 事件注册入口（由 fauna::register 调用）。
+/// P0/P3 事件 + 系统注册入口（由 fauna::register 调用）。
 pub fn register(app: &mut valence::prelude::App) {
     app.add_event::<SpiderStateChangeEvent>();
     app.add_systems(
@@ -261,6 +337,7 @@ pub fn register(app: &mut valence::prelude::App) {
         (
             spider_disguised_qi_absorb_system,
             spider_release_qi_on_death_system.before(crate::fauna::drop::fauna_drop_system),
+            spider_trap_timeout_system,
         ),
     );
 }
@@ -271,6 +348,7 @@ mod tests {
     use valence::prelude::{App, DVec3, Update};
 
     use crate::combat::events::DeathEvent;
+    use crate::cultivation::tick::CultivationClock;
     use crate::npc::spawn::NpcMarker;
     use crate::world::zone::ZoneRegistry;
 
@@ -659,6 +737,323 @@ mod tests {
         assert!(
             b.trapped_by.is_none(),
             "新建 blackboard trapped_by 应为 None（野生蛛不属于任何陷阱主）"
+        );
+    }
+
+    // ── P3 SpiderTrapPotential + 超时系统测试 ────────────────────────────────
+
+    #[test]
+    fn spider_cage_template_id_pin() {
+        // wire 名稳定性：fauna.toml id = "spider_cage" 必须与常数一致
+        assert_eq!(
+            SPIDER_CAGE_TEMPLATE_ID, "spider_cage",
+            "SPIDER_CAGE_TEMPLATE_ID 应与 fauna.toml 中 item id 一致（实际 {SPIDER_CAGE_TEMPLATE_ID}）"
+        );
+    }
+
+    #[test]
+    fn spider_trap_timeout_ticks_pin() {
+        // 72 游戏内天 = 72 × 24_000 = 1_728_000 tick
+        assert_eq!(
+            SPIDER_TRAP_TIMEOUT_TICKS,
+            72 * 24_000,
+            "陷阱超时应为 72 游戏天（期望 {}，实际 {SPIDER_TRAP_TIMEOUT_TICKS}）",
+            72 * 24_000
+        );
+    }
+
+    #[test]
+    fn trap_potential_component_stores_owner_and_tick() {
+        // SpiderTrapPotential 存储正确的归属和时间戳
+        let mut app = App::new();
+        let owner = app.world_mut().spawn_empty().id();
+        let placed_pos = DVec3::new(10.0, 64.0, 20.0);
+        let placed_tick = 5000_u64;
+
+        let spider = app
+            .world_mut()
+            .spawn(SpiderTrapPotential {
+                trap_owner: owner,
+                placed_at: placed_pos,
+                placed_tick,
+            })
+            .id();
+
+        let trap = app
+            .world()
+            .get::<SpiderTrapPotential>(spider)
+            .expect("SpiderTrapPotential should be present");
+        assert_eq!(trap.trap_owner, owner, "trap_owner 应与放置者 Entity 一致");
+        assert_eq!(
+            trap.placed_tick, placed_tick,
+            "placed_tick 应与放置时刻一致"
+        );
+        assert_eq!(trap.placed_at, placed_pos, "placed_at 应与放置坐标一致");
+    }
+
+    #[test]
+    fn trap_timeout_system_releases_spider_after_timeout() {
+        // current_tick >= placed_tick + TIMEOUT → SpiderTrapPotential 被移除，状态变 Retreat
+        let mut app = App::new();
+        app.add_event::<DeathEvent>();
+        app.insert_resource(WorldQiAccount::default());
+        app.insert_resource(CultivationClock {
+            tick: SPIDER_TRAP_TIMEOUT_TICKS + 100,
+        });
+        app.add_systems(Update, spider_trap_timeout_system);
+
+        let owner = app.world_mut().spawn_empty().id();
+        let pos = DVec3::new(0.0, 64.0, 0.0);
+        let mut blackboard = make_blackboard("spawn", pos);
+        blackboard.trapped_by = Some(owner);
+
+        let spider = app
+            .world_mut()
+            .spawn((
+                NpcMarker,
+                Position::new([pos.x, pos.y, pos.z]),
+                SpiderDisguiseState::Disguised,
+                blackboard,
+                SpiderTrapPotential {
+                    trap_owner: owner,
+                    placed_at: pos,
+                    placed_tick: 0, // placed at tick 0，current = TIMEOUT+100 → 超时
+                },
+            ))
+            .id();
+
+        app.update();
+
+        // SpiderTrapPotential 应被移除
+        assert!(
+            app.world().get::<SpiderTrapPotential>(spider).is_none(),
+            "超时后 SpiderTrapPotential 应被移除（蛛已释放）"
+        );
+
+        // 状态应变 Retreat
+        let state = app
+            .world()
+            .get::<SpiderDisguiseState>(spider)
+            .expect("SpiderDisguiseState must still exist");
+        assert_eq!(
+            *state,
+            SpiderDisguiseState::Retreat,
+            "超时后蛛状态应变 Retreat（期望 Retreat，实际 {state:?}）"
+        );
+
+        // blackboard.trapped_by 应被清空
+        let bb = app
+            .world()
+            .get::<MimicSpiderBlackboard>(spider)
+            .expect("blackboard must still exist");
+        assert!(
+            bb.trapped_by.is_none(),
+            "超时后 blackboard.trapped_by 应为 None（期望 None，说明归属已解除）"
+        );
+    }
+
+    #[test]
+    fn trap_timeout_system_does_not_release_before_timeout() {
+        // current_tick < placed_tick + TIMEOUT → 不释放
+        let mut app = App::new();
+        app.add_event::<DeathEvent>();
+        app.insert_resource(WorldQiAccount::default());
+        // 设时钟为超时前一刻
+        app.insert_resource(CultivationClock {
+            tick: SPIDER_TRAP_TIMEOUT_TICKS - 1,
+        });
+        app.add_systems(Update, spider_trap_timeout_system);
+
+        let owner = app.world_mut().spawn_empty().id();
+        let pos = DVec3::new(0.0, 64.0, 0.0);
+        let mut blackboard = make_blackboard("spawn", pos);
+        blackboard.trapped_by = Some(owner);
+
+        let spider = app
+            .world_mut()
+            .spawn((
+                NpcMarker,
+                Position::new([pos.x, pos.y, pos.z]),
+                SpiderDisguiseState::Disguised,
+                blackboard,
+                SpiderTrapPotential {
+                    trap_owner: owner,
+                    placed_at: pos,
+                    placed_tick: 0, // placed_tick=0, current=TIMEOUT-1 → 未超时
+                },
+            ))
+            .id();
+
+        app.update();
+
+        // SpiderTrapPotential 应还在
+        assert!(
+            app.world().get::<SpiderTrapPotential>(spider).is_some(),
+            "未超时时 SpiderTrapPotential 不应被移除（蛛仍受控）"
+        );
+
+        // 状态应保持 Disguised
+        let state = app.world().get::<SpiderDisguiseState>(spider).unwrap();
+        assert_eq!(
+            *state,
+            SpiderDisguiseState::Disguised,
+            "未超时时蛛应保持 Disguised（实际 {state:?}）"
+        );
+    }
+
+    #[test]
+    fn trap_timeout_system_exact_boundary_releases() {
+        // current_tick == placed_tick + TIMEOUT → 恰好超时（边界 off-by-one：>=）
+        let mut app = App::new();
+        app.add_event::<DeathEvent>();
+        app.insert_resource(WorldQiAccount::default());
+        app.insert_resource(CultivationClock {
+            tick: SPIDER_TRAP_TIMEOUT_TICKS, // 恰好等于超时
+        });
+        app.add_systems(Update, spider_trap_timeout_system);
+
+        let owner = app.world_mut().spawn_empty().id();
+        let pos = DVec3::new(0.0, 64.0, 0.0);
+        let mut blackboard = make_blackboard("spawn", pos);
+        blackboard.trapped_by = Some(owner);
+
+        let spider = app
+            .world_mut()
+            .spawn((
+                NpcMarker,
+                Position::new([pos.x, pos.y, pos.z]),
+                SpiderDisguiseState::Disguised,
+                blackboard,
+                SpiderTrapPotential {
+                    trap_owner: owner,
+                    placed_at: pos,
+                    placed_tick: 0,
+                },
+            ))
+            .id();
+
+        app.update();
+
+        // 恰好等于超时边界，应释放
+        assert!(
+            app.world().get::<SpiderTrapPotential>(spider).is_none(),
+            "恰好到达超时边界时应释放（期望 SpiderTrapPotential=None，current=TIMEOUT，placed=0）"
+        );
+        let state = app.world().get::<SpiderDisguiseState>(spider).unwrap();
+        assert_eq!(
+            *state,
+            SpiderDisguiseState::Retreat,
+            "边界超时应切换到 Retreat（实际 {state:?}）"
+        );
+    }
+
+    #[test]
+    fn wild_spider_not_affected_by_trap_timeout_system() {
+        // 没有 SpiderTrapPotential 的野生蛛，timeout 系统不影响其状态
+        let mut app = App::new();
+        app.add_event::<DeathEvent>();
+        app.insert_resource(WorldQiAccount::default());
+        app.insert_resource(CultivationClock {
+            tick: SPIDER_TRAP_TIMEOUT_TICKS * 10, // 极大 tick，野生蛛不应受影响
+        });
+        app.add_systems(Update, spider_trap_timeout_system);
+
+        let pos = DVec3::new(0.0, 64.0, 0.0);
+        let spider = app
+            .world_mut()
+            .spawn((
+                NpcMarker,
+                Position::new([pos.x, pos.y, pos.z]),
+                SpiderDisguiseState::Disguised,
+                make_blackboard("spawn", pos),
+                // 无 SpiderTrapPotential
+            ))
+            .id();
+
+        app.update();
+
+        // 状态应保持 Disguised
+        let state = app.world().get::<SpiderDisguiseState>(spider).unwrap();
+        assert_eq!(
+            *state,
+            SpiderDisguiseState::Disguised,
+            "野生蛛（无 SpiderTrapPotential）不应被 timeout 系统修改（实际 {state:?}）"
+        );
+    }
+
+    #[test]
+    fn trap_potential_different_owners_are_independent() {
+        // 两只蛛各有不同 owner，超时后各自独立释放，不互相干扰
+        let mut app = App::new();
+        app.add_event::<DeathEvent>();
+        app.insert_resource(WorldQiAccount::default());
+        // 只让 spider_a 超时（placed_tick=0, timeout），spider_b 放置在未来（placed_tick=TIMEOUT+100）
+        app.insert_resource(CultivationClock {
+            tick: SPIDER_TRAP_TIMEOUT_TICKS + 50,
+        });
+        app.add_systems(Update, spider_trap_timeout_system);
+
+        let owner_a = app.world_mut().spawn_empty().id();
+        let owner_b = app.world_mut().spawn_empty().id();
+        let pos = DVec3::new(0.0, 64.0, 0.0);
+
+        let mut bb_a = make_blackboard("spawn", pos);
+        bb_a.trapped_by = Some(owner_a);
+        let spider_a = app
+            .world_mut()
+            .spawn((
+                NpcMarker,
+                Position::new([pos.x, pos.y, pos.z]),
+                SpiderDisguiseState::Disguised,
+                bb_a,
+                SpiderTrapPotential {
+                    trap_owner: owner_a,
+                    placed_at: pos,
+                    placed_tick: 0, // 超时
+                },
+            ))
+            .id();
+
+        let mut bb_b = make_blackboard("spawn", pos);
+        bb_b.trapped_by = Some(owner_b);
+        let spider_b = app
+            .world_mut()
+            .spawn((
+                NpcMarker,
+                Position::new([pos.x, pos.y, pos.z]),
+                SpiderDisguiseState::Disguised,
+                bb_b,
+                SpiderTrapPotential {
+                    trap_owner: owner_b,
+                    placed_at: pos,
+                    // 放置在 TIMEOUT + 100 tick 时，current = TIMEOUT + 50 → 未超时
+                    placed_tick: SPIDER_TRAP_TIMEOUT_TICKS + 100,
+                },
+            ))
+            .id();
+
+        app.update();
+
+        // spider_a 应超时释放
+        assert!(
+            app.world().get::<SpiderTrapPotential>(spider_a).is_none(),
+            "spider_a 应超时后释放（placed=0, current=TIMEOUT+50）"
+        );
+        assert_eq!(
+            *app.world().get::<SpiderDisguiseState>(spider_a).unwrap(),
+            SpiderDisguiseState::Retreat,
+            "spider_a 超时后应 Retreat"
+        );
+
+        // spider_b 应保持 Disguised（未超时）
+        assert!(
+            app.world().get::<SpiderTrapPotential>(spider_b).is_some(),
+            "spider_b 未超时不应释放（placed=TIMEOUT+100, current=TIMEOUT+50）"
+        );
+        assert_eq!(
+            *app.world().get::<SpiderDisguiseState>(spider_b).unwrap(),
+            SpiderDisguiseState::Disguised,
+            "spider_b 未超时应保持 Disguised"
         );
     }
 }

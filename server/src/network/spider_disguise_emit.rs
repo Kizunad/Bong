@@ -139,8 +139,10 @@ pub fn periodic_spider_disguise_sync_system(
 
 // ── 系统：蛛暴起时广播 ambush_trigger ─────────────────────────────────────────
 
-type AmbushSpiderQuery<'w, 's> = Query<'w, 's, (&'static EntityId, &'static Position), (With<NpcMarker>, Without<Client>)>;
-type AmbushClientQuery<'w, 's> = Query<'w, 's, (&'static mut Client, &'static Position), Without<NpcMarker>>;
+type AmbushSpiderQuery<'w, 's> =
+    Query<'w, 's, (&'static EntityId, &'static Position), (With<NpcMarker>, Without<Client>)>;
+type AmbushClientQuery<'w, 's> =
+    Query<'w, 's, (&'static mut Client, &'static Position), Without<NpcMarker>>;
 
 /// 监听 `SpiderAmbushTriggerEvent`，向暴起坐标周围 `SPIDER_AMBUSH_BROADCAST_RADIUS` 内玩家
 /// 广播 `bong:spider_ambush_trigger`。

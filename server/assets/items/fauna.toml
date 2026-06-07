@@ -465,6 +465,21 @@ rarity = "legendary"
 spirit_quality_initial = 1.0
 description = "邃渊柱核心的眼状凝晶，窥视深渊者亦被深渊窥视。极品丹药/法宝材料。"
 
+# plan-fauna-mimic-spider-v1 P3 — 蛛制陷阱笼：捕捉 Disguised 蛛并布置为受控陷阱。
+# 配方留空（仅定义 ItemTemplate），合成路径归 anqi-v2 实装。
+# SpiderTrapPotential component 的 trap_owner 来自使用者 Entity；陷阱蛛不攻击归属玩家。
+[[item]]
+id = "spider_cage"
+name = "蛛制陷阱笼"
+category = "misc"
+grid_w = 1
+grid_h = 1
+base_weight = 0.4
+rarity = "uncommon"
+spirit_quality_initial = 0.0
+description = "以拟态蛛骨与枯枝编制的小型陷阱笼。\n对伪装中的灰烬蛛使用可将其捕入，再对地面使用可布置为陷阱——\n蛛只攻击路过的第三者，对布置者收起爪牙。配方归属暗器流。"
+max_stack_count = 1
+
 # plan-neg-domain-fauna-v1 P1 — 噬灵藓：负灵域 tainted 地块危害，不可采集/合成。
 # item_id 仅供 BotanyKindRegistry 注册基础设施校验通过；无 drop、无 harvest、无合成路径。
 [[item]]
