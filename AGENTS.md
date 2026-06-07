@@ -176,6 +176,6 @@
 ## 14. （仅当你的流程会开 PR 时）review gate
 
 sisyphus 自动流水线以 `scripts/plan-finish.sh` 归档收尾、不开 PR；若你走的是开 PR 的变体：
-- **gate 只看 Pi agent + CodeRabbit，绝不等 Codex**。`chatgpt-codex-connector`("Codex usage limits reached") 是与本仓库无关的噪音，忽略。
-- **Pi / Claude / Hive review 不再自动跑**：需在 PR 评论 `/review pi`（结构化审核，不吃额度）/ `/review claude`（opus 多代理）/ `/review hive`（免费 GPT-5.5 群审）触发。触发词一律用 `/review <x>` 而非 `@x`——`@pi`/`@hive`/`@claude` 会 mention 到 GitHub 上的真实陌生用户。CodeRabbit 仍自动（但额度耗尽会限流失败，那是计费问题不是代码问题，可降级到 Pi-only）。
+- **gate 只看 `/review` + CodeRabbit，绝不等 Codex**。`chatgpt-codex-connector`("Codex usage limits reached") 是与本仓库无关的噪音，忽略。
+- **Review 不再自动跑，且已合并为单一 `/review`**：旧的 `/review pi` `/review hive` `/review claude` 三入口合一，在 PR 评论 `/review` 触发即可。引擎=对峙(claude finder swarm 跑 proxy 上 deepseek/sensenova 小模型) + 怀疑投票审判 + 裁决(codex 跑 gpt-5.5)，全走自家代理 proxy.kizun4.uk。触发词用 `/review` 而非 `@x`——`@pi`/`@hive`/`@claude` 会 mention 到 GitHub 上的真实陌生用户。CodeRabbit 仍自动（但额度耗尽会限流失败，那是计费问题不是代码问题）。
 - 等待用轮询节奏（~20min/回合，最多 3 回合），别 busy-poll。修完 review 意见要重新等 re-review，不自判"应该过了"。
