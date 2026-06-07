@@ -30,20 +30,21 @@ permissions:
   issues: write
 
 concurrency:
-  # 含 comment.id 且不取消进行中:避免同一 PR 上后续 bot 评论把正在跑的 review 杀掉
-  group: review-${{ github.event.issue.number || inputs.pr_number || github.run_id }}-${{ github.event.comment.id || github.run_id }}
+  # group 只按 PR(不含 comment.id)+ 不取消进行中:同一 PR 的多次 /review 串行排队,
+  # 避免重复触发并发跑多套 swarm/codex 烧额度、发重复评论。
+  group: review-${{ github.event.issue.number || inputs.pr_number || github.run_id }}
   cancel-in-progress: false
 
 jobs:
   review:
-    # 仅当 PR 评论里 `/review`、且评论者有写权限(OWNER/MEMBER/COLLABORATOR)时运行——
-    # public 仓库下防止任意访客评论触发、烧 key。`/review` 是 `/review pi|hive|claude` 的子串,
-    # 旧词也会落到这里(已合并,符合预期);bot 评论(github-actions[bot])的 author_association
-    # 不在白名单,天然不会自触发(本脚本发的评论标题不含 /review)。
+    # 仅当 PR 评论以 `/review` 开头、且评论者有写权限(OWNER/MEMBER/COLLABORATOR)时运行——
+    # 用 startsWith(不是 contains):`/review`、`/review pi`(旧词平滑落到这里)都触发,
+    # 但正文中间提到 /review 的普通讨论不误触发。public 仓库下防止访客评论触发烧 key;
+    # bot 评论(github-actions[bot])的 author_association 不在白名单,天然不自触发(本脚本评论不以 /review 开头)。
     if: >-
       github.event_name == 'workflow_dispatch' ||
       (github.event.issue.pull_request != null &&
-       contains(github.event.comment.body, '/review') &&
+       startsWith(github.event.comment.body, '/review') &&
        contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association))
     runs-on: ubuntu-latest
     # agent 会话(多轮 + 工具)远慢于单轮 HTTP;动态分档 + 并发上限 + 单次硬超时仍保证有界,
