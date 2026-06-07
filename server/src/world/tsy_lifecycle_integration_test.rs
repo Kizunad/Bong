@@ -554,6 +554,86 @@ mod tests {
         );
     }
 
+    /// M4 / B3 回归测试：经真实 spawn_daoxiang_from_corpse 路径产生的道伥必须带
+    /// DaoZhangState::Mimicry + DaoZhangBehaviorBlackboard，且 origin_realm 与 CorpseEmbalmed 一致。
+    /// 这是对 B3（尸体 spawn 不挂道伥组件）的 integration-level 锁定。
+    #[test]
+    fn corpse_spawn_path_yields_daozhan_state_and_blackboard() {
+        // 化虚境界 80% spawn 概率，用固定 seed 命中
+        // seed 派生：entity.index()=1(近似), died_at_tick=0
+        // 为保证 deterministic hit，把 DAOXIANG_NATURAL_TICKS 设为已超过的 tick
+        let mut app = make_app(DAOXIANG_NATURAL_TICKS + 1);
+        register_lingxu(&mut app);
+
+        let layers = *app.world().resource::<DimensionLayers>();
+        {
+            let mut reg = app.world_mut().resource_mut::<TsyZoneStateRegistry>();
+            reg.ensure_active(
+                "tsy_lingxu_01",
+                AncientRelicSource::DaoLord,
+                DimensionAnchor {
+                    dimension: DimensionKind::Overworld,
+                    pos: DVec3::ZERO,
+                },
+                0,
+            );
+        }
+
+        // 以确定性种子排列：对足够多的 entity / seed 组合，化虚 80% 应有命中
+        // 用 100 具干尸保证至少一具 spawn 道伥（实验概率极接近 1-0.2^100）
+        let mut corpse_entities = Vec::new();
+        for i in 0..100u32 {
+            let id = app
+                .world_mut()
+                .spawn((
+                    Position::new([50.0, 50.0, 50.0]),
+                    EntityLayerId(layers.tsy),
+                    CorpseEmbalmed {
+                        family_id: "tsy_lingxu_01".into(),
+                        died_at_tick: i as u64,
+                        death_cause: "tsy_drain".into(),
+                        drops: vec![],
+                        activated_to_daoxiang: false,
+                        // B2 fix 验证：显式传 Some(Void) 确保路径真实携带境界
+                        origin_realm: Some(crate::cultivation::components::Realm::Void),
+                    },
+                ))
+                .id();
+            corpse_entities.push(id);
+        }
+
+        app.update();
+
+        // 验证：至少一具 Daoxiang 带了 DaoZhangState 组件（B3 fix）
+        let world = app.world_mut();
+        let mut state_q = world.query::<(
+            &crate::npc::lifecycle::NpcArchetype,
+            &crate::fauna::daozhan::DaoZhangState,
+            &crate::fauna::daozhan::DaoZhangBehaviorBlackboard,
+        )>();
+        let with_state: Vec<_> = state_q
+            .iter(world)
+            .filter(|(arch, _, _)| matches!(arch, crate::npc::lifecycle::NpcArchetype::Daoxiang))
+            .collect();
+        assert!(
+            !with_state.is_empty(),
+            "经 spawn_daoxiang_from_corpse 路径产生的道伥至少要有一个带 DaoZhangState（B3 修复验证）"
+        );
+        for (_, state, bb) in &with_state {
+            assert_eq!(
+                **state,
+                crate::fauna::daozhan::DaoZhangState::Mimicry,
+                "尸体路径产出的道伥初始态应为 Mimicry（期望初始伪装，实际={state:?}）"
+            );
+            assert_eq!(
+                bb.origin_realm,
+                Some(crate::cultivation::components::Realm::Void),
+                "DaoZhangBehaviorBlackboard.origin_realm 应与 CorpseEmbalmed 一致（期望 Void，实际={:?}）",
+                bb.origin_realm
+            );
+        }
+    }
+
     #[test]
     fn corpse_below_threshold_does_not_spawn() {
         let mut app = make_app(100);

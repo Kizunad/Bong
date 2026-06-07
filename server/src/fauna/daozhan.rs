@@ -46,10 +46,15 @@ use valence::prelude::{
 use crate::combat::events::DeathEvent;
 use crate::cultivation::components::{Cultivation, Realm};
 use crate::cultivation::death_hooks::release_qi_amount_to_zone;
+use crate::fauna::drop::{build_fauna_item_instance, fauna_drop_seed, jittered_drop_pos};
 use crate::fauna::experience::{play_audio, spawn_particle};
+use crate::inventory::{
+    DroppedLootEntry, DroppedLootRegistry, InventoryInstanceIdAllocator, ItemRegistry,
+};
 use crate::network::audio_event_emit::PlaySoundRecipeRequest;
 use crate::network::daozhan_disguise_emit::DaoZhangRevealEvent;
 use crate::network::vfx_event_emit::VfxEventRequest;
+use crate::npc::loot::{daozhan_loot_for_tier, roll_loot, NpcLootTable};
 use crate::npc::movement::GameTick;
 use crate::npc::spawn::NpcMarker;
 use crate::npc::tsy_hostile::spawn_tsy_daoxiang_at;
@@ -648,9 +653,10 @@ fn player_back_faces_npc_p2(
     // MC yaw：0 = south(+Z)，顺时针增加；facing = (-sin(yaw), 0, cos(yaw))
     let yaw = f64::from(look.yaw).to_radians();
     let facing = DVec3::new(-yaw.sin(), 0.0, yaw.cos());
-    // dot < 0 意味着面朝方向"背离" NPC（偏转角 > 90°）；
-    // 但道伥要求 > 150°（更严格），等价于 dot < cos(150°) = -sqrt(3)/2 ≈ -0.866
-    let cos_threshold = -(DAOZHAN_BACK_ANGLE_DEG.to_radians().cos()); // cos(150°) = -0.866
+    // 背对判断：玩家面向与"玩家→道伥"方向的夹角 > 150°
+    // 等价于 dot(facing, to_npc_norm) < cos(150°) = -sqrt(3)/2 ≈ -0.866
+    // 注意：不取反，cos(150°) 本身就是负数。
+    let cos_threshold = DAOZHAN_BACK_ANGLE_DEG.to_radians().cos(); // ≈ -0.866
     let dot = facing.dot(to_npc_xz.normalize());
     dot <= cos_threshold
 }
@@ -1189,6 +1195,82 @@ pub(crate) fn daozhan_death_qi_release_system(
     }
 }
 
+// ── P3: 死亡掉落系统（M2 fix）─────────────────────────────────────────────────
+
+/// 道伥死亡时按 origin_realm 分档产出 loot，接通 npc::loot::daozhan_loot_for_tier。
+///
+/// 走 `crate::inventory::DroppedLootRegistry` + `InventoryInstanceIdAllocator`，
+/// 与 fauna_drop_system 相同的掉落登记路径，保证 pickup 逻辑正常识别。
+pub(crate) fn daozhan_death_loot_system(
+    mut deaths: EventReader<DeathEvent>,
+    daozhan_q: Query<
+        (
+            &Position,
+            Option<&CurrentDimension>,
+            &DaoZhangBehaviorBlackboard,
+        ),
+        With<NpcMarker>,
+    >,
+    item_registry: Option<Res<ItemRegistry>>,
+    decay_profiles: Option<Res<crate::shelflife::DecayProfileRegistry>>,
+    mut allocator: Option<ResMut<InventoryInstanceIdAllocator>>,
+    mut loot_registry: Option<ResMut<DroppedLootRegistry>>,
+) {
+    let (Some(item_registry), Some(allocator), Some(loot_registry)) = (
+        item_registry.as_deref(),
+        allocator.as_deref_mut(),
+        loot_registry.as_deref_mut(),
+    ) else {
+        return;
+    };
+    for death in deaths.read() {
+        let Ok((pos, dimension, blackboard)) = daozhan_q.get(death.target) else {
+            continue;
+        };
+        let tier = daozhan_loot_tier(blackboard.origin_realm);
+        let loot_entries = daozhan_loot_for_tier(tier);
+        if loot_entries.is_empty() {
+            continue;
+        }
+        let seed = fauna_drop_seed(death.target, death.at_tick);
+        let dim = dimension
+            .map(|d| d.0)
+            .unwrap_or(crate::world::dimension::DimensionKind::Tsy);
+        // roll_loot 已处理 chance × stack range，不重复实现 RNG
+        let table = NpcLootTable::new(crate::npc::lifecycle::NpcArchetype::Daoxiang, loot_entries);
+        let rolled = roll_loot(&table, seed);
+        for (idx, loot) in rolled.into_iter().enumerate() {
+            let Ok(item) = build_fauna_item_instance(
+                loot.template_id.as_str(),
+                loot.stack,
+                death.at_tick,
+                item_registry,
+                decay_profiles.as_deref(),
+                allocator,
+            ) else {
+                tracing::warn!(
+                    "[bong][daozhan] loot drop `{}` skipped: template missing",
+                    loot.template_id
+                );
+                continue;
+            };
+            let world_pos = jittered_drop_pos(pos.get(), seed, idx as u64);
+            loot_registry.entries.insert(
+                item.instance_id,
+                DroppedLootEntry {
+                    instance_id: item.instance_id,
+                    source_container_id: format!("daozhan_death:{:?}", blackboard.origin_realm),
+                    source_row: 0,
+                    source_col: 0,
+                    world_pos,
+                    dimension: dim,
+                    item,
+                },
+            );
+        }
+    }
+}
+
 // ── P3: Bevy 注册 ─────────────────────────────────────────────────────────────
 
 /// Bevy 注册：P3 天道凝结系统 + 死亡 qi 归还系统（供 fauna::mod.rs 调用）。
@@ -1206,6 +1288,8 @@ pub fn register_p3(app: &mut App) {
             daozhan_tiandao_condense_system,
             daozhan_condense_spawn_system.after(daozhan_tiandao_condense_system),
             daozhan_death_qi_release_system.before(crate::fauna::drop::fauna_drop_system),
+            // M2 fix：道伥死亡 loot 掉落（接通 npc::loot::daozhan_loot_for_tier）
+            daozhan_death_loot_system.after(daozhan_death_qi_release_system),
         ),
     );
 }
@@ -2067,6 +2151,60 @@ mod tests {
         assert!(
             player_back_faces_npc_p2(player_pos, Some(&look), npc_pos),
             "yaw=150° 对 +Z 方向道伥时 dot=cos(150°) 恰好触发背对（边界应为 true）"
+        );
+    }
+
+    #[test]
+    fn back_faces_npc_false_when_player_side_facing_90_degrees() {
+        // B1 回归测试：玩家 90° 侧对道伥不应触发暴起（正典：> 150° 才触发）。
+        // 玩家在原点，道伥在 +Z 方向，yaw=90°（面朝 -X，侧对道伥）。
+        // MC yaw=90° → facing = (-sin(90°),0,cos(90°)) = (-1,0,0)
+        // to_npc_norm = (0,0,1)
+        // dot = 0 — 明显 > cos(150°) ≈ -0.866 → 不触发（期望 false）
+        use valence::entity::Look;
+        let player_pos = DVec3::ZERO;
+        let npc_pos = DVec3::new(0.0, 0.0, 5.0);
+        let look = Look {
+            yaw: 90.0,
+            pitch: 0.0,
+        };
+        assert!(
+            !player_back_faces_npc_p2(player_pos, Some(&look), npc_pos),
+            "yaw=90°（侧对）时不应触发道伥暴起，偏转角仅 90° < 150°（期望 back=false）"
+        );
+    }
+
+    #[test]
+    fn back_faces_npc_false_when_player_facing_45_degrees_toward_npc() {
+        // yaw=45°（朝向介于正对与侧对之间），偏转角仅 45° < 150° → 不触发
+        use valence::entity::Look;
+        let player_pos = DVec3::ZERO;
+        let npc_pos = DVec3::new(0.0, 0.0, 5.0);
+        let look = Look {
+            yaw: 45.0,
+            pitch: 0.0,
+        };
+        assert!(
+            !player_back_faces_npc_p2(player_pos, Some(&look), npc_pos),
+            "yaw=45° 时偏转角仅 45°，远小于 150° 阈值，不应触发背对（期望 back=false）"
+        );
+    }
+
+    #[test]
+    fn back_faces_npc_true_when_player_facing_151_degrees() {
+        // 偏转角 151° > 150° 阈值 → 应触发（>150° 背对区间）
+        // 道伥在 +Z，yaw=151° → facing = (-sin(151°),0,cos(151°))
+        // dot = cos(151°) ≈ -0.875 < cos(150°) ≈ -0.866 → 触发
+        use valence::entity::Look;
+        let player_pos = DVec3::ZERO;
+        let npc_pos = DVec3::new(0.0, 0.0, 5.0);
+        let look = Look {
+            yaw: 151.0,
+            pitch: 0.0,
+        };
+        assert!(
+            player_back_faces_npc_p2(player_pos, Some(&look), npc_pos),
+            "yaw=151° 时偏转角 151° > 150° 阈值，应触发背对（期望 back=true）"
         );
     }
 

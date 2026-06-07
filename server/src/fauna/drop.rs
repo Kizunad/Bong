@@ -425,7 +425,7 @@ pub fn fauna_drop_seed(entity: Entity, tick: u64) -> u64 {
         .wrapping_add(tick.wrapping_mul(0x9E37_79B9_7F4A_7C15))
 }
 
-fn jittered_drop_pos(base: valence::prelude::DVec3, seed: u64, idx: u64) -> [f64; 3] {
+pub(crate) fn jittered_drop_pos(base: valence::prelude::DVec3, seed: u64, idx: u64) -> [f64; 3] {
     let x = splitmix64_unit(seed.wrapping_add(idx)) as f64 - 0.5;
     let z = splitmix64_unit(seed.wrapping_add(idx.rotate_left(11))) as f64 - 0.5;
     [base.x + x * 0.7, base.y, base.z + z * 0.7]
@@ -435,12 +435,12 @@ fn splitmix64_u32(seed: u64) -> u32 {
     (splitmix64(seed) >> 32) as u32
 }
 
-fn splitmix64_unit(seed: u64) -> f32 {
+pub(crate) fn splitmix64_unit(seed: u64) -> f32 {
     let bits = ((splitmix64(seed) >> 40) & 0x00FF_FFFF) as u32;
     bits as f32 / (1u32 << 24) as f32
 }
 
-fn splitmix64(seed: u64) -> u64 {
+pub(crate) fn splitmix64(seed: u64) -> u64 {
     let mut x = seed.wrapping_add(0x9E37_79B9_7F4A_7C15);
     x = (x ^ (x >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
     x = (x ^ (x >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);

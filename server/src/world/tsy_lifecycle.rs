@@ -38,7 +38,7 @@ use valence::prelude::{
 };
 
 use crate::combat::CombatClock;
-use crate::fauna::daozhan::daozhan_spawn_roll;
+use crate::fauna::daozhan::{daozhan_spawn_roll, DaoZhangBehaviorBlackboard, DaoZhangState};
 use crate::inventory::ancient_relics::AncientRelicSource;
 use crate::inventory::corpse::CorpseEmbalmed;
 use crate::inventory::tsy_loot_spawn::source_class_from_family_id;
@@ -812,13 +812,20 @@ pub fn spawn_daoxiang_from_corpse(
         MovementController::new(),
         loadout.movement_capabilities,
         MovementCooldowns::default(),
-        NpcPatrol::new(home_zone, pos),
+        NpcPatrol::new(home_zone.clone(), pos),
         crate::npc::brain::WanderState::default(),
         daoxiang_lifecycle_thinker(),
         TsyHostileMarker {
             family_id: corpse.family_id.clone(),
         },
     ));
+    // plan-daozhan-v1 B3 fix：尸体路径产出的道伥必须挂 DaoZhangState + DaoZhangBehaviorBlackboard，
+    // 让 P2/P3 两态机（Mimicry↔Ambush）和 qi 守恒系统正确识别为"真道伥"。
+    // origin_realm 来自 CorpseEmbalmed（已由 B2 修复，携带真实境界）。
+    let daozhan_bb = DaoZhangBehaviorBlackboard::new(home_zone.as_str(), pos, corpse.origin_realm);
+    commands
+        .entity(entity)
+        .insert((DaoZhangState::Mimicry, daozhan_bb));
     commands
         .entity(entity)
         .insert(npc_runtime_bundle(entity, NpcArchetype::Daoxiang));
