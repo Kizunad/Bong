@@ -8,6 +8,7 @@ use valence::prelude::{
 };
 
 use crate::npc::heiwushi::spawn_heiwushi_at;
+use crate::npc::movement::GameTick;
 use crate::world::dimension::{DimensionKind, OverworldLayer};
 use crate::world::zone::{ZoneRegistry, DEFAULT_SPAWN_ZONE_NAME};
 
@@ -37,7 +38,9 @@ fn handle_summon_heiwushi(
     mut players: Query<(&Position, Option<&EntityLayerId>, &mut Client)>,
     layers: Query<Entity, With<OverworldLayer>>,
     zones: Option<Res<ZoneRegistry>>,
+    tick: Option<Res<GameTick>>,
 ) {
+    let current_tick = tick.map(|t| u64::from(t.0)).unwrap_or(0);
     for event in events.read() {
         let Ok((position, player_layer, mut client)) = players.get_mut(event.executor) else {
             continue;
@@ -57,7 +60,14 @@ fn handle_summon_heiwushi(
             .map(|z| z.name.clone())
             .unwrap_or_else(|| DEFAULT_SPAWN_ZONE_NAME.to_string());
 
-        spawn_heiwushi_at(&mut commands, layer, &zone_name, spawn_pos, spawn_pos);
+        spawn_heiwushi_at(
+            &mut commands,
+            layer,
+            &zone_name,
+            spawn_pos,
+            spawn_pos,
+            current_tick,
+        );
 
         client.send_chat_message(format!(
             "§6[黑武士] §f已召唤 ({:.0}, {:.0}, {:.0})",

@@ -9,7 +9,9 @@ import org.junit.jupiter.api.Test;
 import java.io.IOException;
 import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
+import java.util.HashMap;
 import java.util.HashSet;
+import java.util.Map;
 import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -56,15 +58,28 @@ class SwordPathV2AnimationAssetTest {
     private static void assertLoopedAxesHaveEndTickKeys(String id, JsonObject emote) {
         int endTick = emote.get("endTick").getAsInt();
         JsonArray moves = emote.getAsJsonArray("moves");
-        Set<String> tick0Axes = axesAtTick(moves, 0);
-        Set<String> endAxes = axesAtTick(moves, endTick);
-        assertTrue(endAxes.containsAll(tick0Axes),
+        Map<String, Double> tick0 = axisValuesAtTick(moves, 0);
+        Map<String, Double> end = axisValuesAtTick(moves, endTick);
+        // Check all tick-0 axes are present at endTick (guards against single-frame decay)
+        assertTrue(end.keySet().containsAll(tick0.keySet()),
             id + " is looped, so every tick-0 axis must also be keyed at endTick to avoid single-frame decay; missing "
-                + difference(tick0Axes, endAxes));
+                + difference(tick0.keySet(), end.keySet()));
+        // Check values are identical per axis (guards against visible playback jump at loop boundary)
+        for (String axis : tick0.keySet()) {
+            assertEquals(tick0.get(axis), end.get(axis),
+                id + " loop boundary value mismatch for axis=" + axis
+                    + ": tick0=" + tick0.get(axis) + " endTick=" + end.get(axis)
+                    + " — PlayerAnimator decays looped single-keyframe axes to defaultValue, "
+                    + "so首尾值必须一致否则会出现回环跳变");
+        }
     }
 
-    private static Set<String> axesAtTick(JsonArray moves, int tick) {
-        Set<String> axes = new HashSet<>();
+    /**
+     * Returns a map from "part.axis" to the (first) numeric value at {@code tick}.
+     * Non-numeric values are skipped (e.g. string easing fields nested inside part objects).
+     */
+    private static Map<String, Double> axisValuesAtTick(JsonArray moves, int tick) {
+        Map<String, Double> out = new HashMap<>();
         for (int i = 0; i < moves.size(); i++) {
             JsonObject move = moves.get(i).getAsJsonObject();
             if (move.get("tick").getAsInt() != tick) {
@@ -76,11 +91,18 @@ class SwordPathV2AnimationAssetTest {
                 }
                 JsonObject partAxes = move.getAsJsonObject(part);
                 for (String axis : partAxes.keySet()) {
-                    axes.add(part + "." + axis);
+                    var elem = partAxes.get(axis);
+                    if (elem.isJsonPrimitive() && elem.getAsJsonPrimitive().isNumber()) {
+                        out.putIfAbsent(part + "." + axis, elem.getAsDouble());
+                    }
                 }
             }
         }
-        return axes;
+        return out;
+    }
+
+    private static Set<String> axesAtTick(JsonArray moves, int tick) {
+        return axisValuesAtTick(moves, tick).keySet();
     }
 
     private static Set<String> difference(Set<String> left, Set<String> right) {

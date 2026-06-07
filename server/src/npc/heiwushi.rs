@@ -230,6 +230,10 @@ action_builder!(HeiwushiDeathAction, "HeiwushiDeathAction");
 pub fn register(app: &mut App) {
     app.add_systems(
         PreUpdate,
+        heiwushi_cooldown_tick_system.before(BigBrainSet::Actions),
+    )
+    .add_systems(
+        PreUpdate,
         (
             heiwushi_death_scorer_system,
             heiwushi_transform_scorer_system,
@@ -253,11 +257,7 @@ pub fn register(app: &mut App) {
     )
     .add_systems(
         Update,
-        (
-            heiwushi_growth_tick_system,
-            heiwushi_cooldown_tick_system,
-            heiwushi_phase_sync_system,
-        ),
+        (heiwushi_growth_tick_system, heiwushi_phase_sync_system),
     );
 }
 
@@ -280,6 +280,7 @@ pub fn spawn_heiwushi_at(
     home_zone: &str,
     spawn_position: DVec3,
     patrol_center: DVec3,
+    current_tick: u64,
 ) -> Entity {
     let loadout = NpcCombatLoadout::fighter(NpcMeleeArchetype::Sword);
     let entity = commands
@@ -298,7 +299,10 @@ pub fn spawn_heiwushi_at(
             GlobalTransform::default(),
             NpcMarker,
             HeiwushiMarker,
-            HeiwushiState::default(),
+            HeiwushiState {
+                last_cycle_tick: current_tick,
+                ..Default::default()
+            },
             NpcBlackboard::default(),
             loadout.clone(),
             loadout.melee_archetype,
@@ -1393,6 +1397,7 @@ mod tests {
             "giant_sword_sea",
             DVec3::new(1.0, 64.0, 2.0),
             DVec3::ZERO,
+            0,
         );
         app.world_mut().flush();
 
@@ -1411,6 +1416,168 @@ mod tests {
         assert_eq!(
             app.world().get::<Wounds>(boss).unwrap().health_current,
             HEIWUSHI_HEALTH_MAX
+        );
+    }
+
+    // ── FIX 1 regression: 新生 boss 不得因服务器 uptime 白拿 growth cycle ─────
+
+    #[test]
+    fn spawn_at_tick_1000_no_free_growth_cycle_on_first_update() {
+        // 服务器已运行 1000 tick，刚 spawn 的 boss last_cycle_tick=1000；
+        // 第一次 Update 时 tick 仍为 1000（或 1001 等 <1000+600），不应触发增长。
+        let mut app = App::new();
+        app.insert_resource(GameTick(1000));
+        app.add_systems(Update, heiwushi_growth_tick_system);
+        // spawn with current tick = 1000
+        let boss = app
+            .world_mut()
+            .spawn((
+                HeiwushiMarker,
+                HeiwushiState {
+                    last_cycle_tick: 1000,
+                    ..Default::default()
+                },
+                NpcBlackboard::default(),
+                Wounds {
+                    entries: Vec::new(),
+                    health_current: HEIWUSHI_HEALTH_MAX,
+                    health_max: HEIWUSHI_HEALTH_MAX,
+                },
+                Lifecycle::default(),
+                Navigator::new(),
+                NpcPatrol::new("giant_sword_sea", DVec3::ZERO),
+                Position::new([0.0, 64.0, 0.0]),
+            ))
+            .id();
+
+        // First update at tick=1000: delta = 1000-1000 = 0 < 600, no cycle
+        app.update();
+        assert_eq!(
+            app.world().get::<HeiwushiState>(boss).unwrap().growth_cycles,
+            0,
+            "tick=1000 spawn, first update at tick=1000: growth_cycles 期望 0（不应白拿 cycle），实际 {}",
+            app.world().get::<HeiwushiState>(boss).unwrap().growth_cycles
+        );
+
+        // Advance to tick=1000+599: still below threshold
+        app.world_mut().resource_mut::<GameTick>().0 = 1599;
+        app.update();
+        assert_eq!(
+            app.world()
+                .get::<HeiwushiState>(boss)
+                .unwrap()
+                .growth_cycles,
+            0,
+            "tick=1599 (delta=599 < 600): growth_cycles 期望仍为 0，实际 {}",
+            app.world()
+                .get::<HeiwushiState>(boss)
+                .unwrap()
+                .growth_cycles
+        );
+
+        // Advance to tick=1600 = 1000+600: first legitimate cycle
+        app.world_mut().resource_mut::<GameTick>().0 = 1600;
+        app.update();
+        assert_eq!(
+            app.world()
+                .get::<HeiwushiState>(boss)
+                .unwrap()
+                .growth_cycles,
+            1,
+            "tick=1600 (delta=600 >= 600): growth_cycles 期望 1（首次合法增长），实际 {}",
+            app.world()
+                .get::<HeiwushiState>(boss)
+                .unwrap()
+                .growth_cycles
+        );
+    }
+
+    // ── FIX 2 regression: action 写入冷却当帧不得被立即扣 1 ──────────────────
+
+    #[test]
+    fn cooldown_set_by_action_not_decremented_same_frame() {
+        // 验证系统顺序契约：cooldown_tick 先跑（递减旧值），action 后写入新冷却值。
+        // 测试使用 .chain()（cooldown_tick → melee_slash_action）模拟正确的调度顺序，
+        // 确保 action 写入 effective_cd(40,1)=34 后，该值在 *当帧* 不被再次递减。
+        //
+        // 行为时序（3 次 update）：
+        //   update 1: tick_down(0→0 saturate), action Requested→Executing (不写 CD)
+        //   update 2: tick_down(0→0 saturate), action Executing→fires, 写 melee=34, →Success
+        //   update 3: tick_down(34→33), action 已 Success 不再执行, melee=33
+        let mut app = App::new();
+        app.add_event::<AttackIntent>();
+        app.insert_resource(GameTick(42));
+        // 顺序：cooldown_tick 先跑，melee_slash_action 后跑（模拟 PreUpdate 中 cooldown.before(Actions)）
+        app.add_systems(
+            Update,
+            (
+                heiwushi_cooldown_tick_system,
+                heiwushi_melee_slash_action_system,
+            )
+                .chain(),
+        );
+
+        let boss = app
+            .world_mut()
+            .spawn((
+                HeiwushiMarker,
+                HeiwushiState {
+                    growth_cycles: 1, // effective_cd(40, 1) = 34
+                    ..Default::default()
+                },
+                NpcBlackboard {
+                    nearest_player: Some(Entity::PLACEHOLDER),
+                    player_distance: 2.0,
+                    ..Default::default()
+                },
+                Wounds {
+                    entries: Vec::new(),
+                    health_current: HEIWUSHI_HEALTH_MAX,
+                    health_max: HEIWUSHI_HEALTH_MAX,
+                },
+                Lifecycle::default(),
+                Navigator::new(),
+                NpcPatrol::new("giant_sword_sea", DVec3::ZERO),
+                Position::new([0.0, 64.0, 0.0]),
+            ))
+            .id();
+
+        app.world_mut().spawn((
+            Actor(boss),
+            ActionState::Requested,
+            HeiwushiMeleeSlashAction,
+        ));
+
+        // update 1: tick_down(0→0 sat), action Requested→Executing
+        app.update();
+        // update 2: tick_down(0→0 sat), action Executing→fires, writes melee=34 → Success
+        app.update();
+
+        let cd_after_action = app
+            .world()
+            .get::<HeiwushiState>(boss)
+            .unwrap()
+            .skill_cooldowns
+            .melee_slash;
+        assert_eq!(
+            cd_after_action, 34,
+            "action 写入后 melee_slash 期望 34（effective_cd(40,1)），\
+            若为 33 说明 tick_down 在 action 之后跑了（off-by-one bug），实际 {}",
+            cd_after_action
+        );
+
+        // update 3: tick_down(34→33), action 已 Success 不再写 CD
+        app.update();
+        let cd_after_tick = app
+            .world()
+            .get::<HeiwushiState>(boss)
+            .unwrap()
+            .skill_cooldowns
+            .melee_slash;
+        assert_eq!(
+            cd_after_tick, 33,
+            "第三次 update（tick_down 后无 action）melee_slash 期望 33，实际 {}",
+            cd_after_tick
         );
     }
 }

@@ -6,6 +6,8 @@ import net.minecraft.client.particle.SpriteProvider;
 import net.minecraft.client.world.ClientWorld;
 import net.minecraft.util.Identifier;
 
+import java.util.List;
+
 public final class SwordPathVfxPlayer implements VfxPlayer {
     public static final Identifier SWORD_BOND_FORM = id("sword_bond_form");
     public static final Identifier SWORD_SHATTER = id("sword_shatter");
@@ -28,7 +30,7 @@ public final class SwordPathVfxPlayer implements VfxPlayer {
     public static final Identifier HEIWUSHI_DEATH = id("heiwushi_death");
     public static final Identifier SWORD_SCROLL_READ = id("sword_scroll_read");
 
-    public static final Identifier[] EVENT_IDS = {
+    public static final List<Identifier> EVENT_IDS = List.of(
         SWORD_BOND_FORM,
         SWORD_SHATTER,
         SWORD_CONDENSE_EDGE,
@@ -49,7 +51,7 @@ public final class SwordPathVfxPlayer implements VfxPlayer {
         HEIWUSHI_TRANSFORM,
         HEIWUSHI_DEATH,
         SWORD_SCROLL_READ
-    };
+    );
 
     private static Identifier id(String path) {
         return new Identifier("bong", path);
