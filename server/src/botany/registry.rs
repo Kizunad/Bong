@@ -143,6 +143,8 @@ pub const LING_JING_XU: &str = "ling_jing_xu";
 pub const MAO_XIN_WEI: &str = "mao_xin_wei";
 // plan-food-v1 P0 — 灵果（Mountain/Plains 稀有档食物植物）
 pub const LING_GUO: &str = "food.spirit_fruit.ling_guo";
+// plan-neg-domain-fauna-v1 P1 — 噬灵藓（负灵域 tainted 地块危害，不可采集）
+pub const SHI_LING_XIAN: &str = "shi_ling_xian";
 
 const HAZARD_NONE: &[HarvestHazard] = &[];
 const ENV_FU_YUAN_JUE: &[EnvLock] = &[EnvLock::NegPressure { min: 0.3 }];
@@ -356,6 +358,10 @@ pub enum BotanyPlantId {
     MaoXinWei,
     /// plan-food-v1 P0 — 灵果：Mountain/Plains 稀有档食物植物，item_id = food.spirit_fruit.ling_guo。
     LingGuo,
+    /// plan-neg-domain-fauna-v1 P1 — 噬灵藓：负灵域 tainted 地块危害。
+    /// 非药材：item_id = "shi_ling_xian"（无 drop/harvest/合成路径），v2 = None。
+    /// spawn_mode = SpreadByCrawl（由 moss_spread_system 驱动 noise-based 蔓延）。
+    ShiLingXian,
 }
 
 impl BotanyPlantId {
@@ -402,6 +408,7 @@ impl BotanyPlantId {
             Self::LingJingXu => LING_JING_XU,
             Self::MaoXinWei => MAO_XIN_WEI,
             Self::LingGuo => LING_GUO,
+            Self::ShiLingXian => SHI_LING_XIAN,
         }
     }
 
@@ -448,6 +455,7 @@ impl BotanyPlantId {
             LING_JING_XU => Some(Self::LingJingXu),
             MAO_XIN_WEI => Some(Self::MaoXinWei),
             LING_GUO => Some(Self::LingGuo),
+            SHI_LING_XIAN => Some(Self::ShiLingXian),
             _ => None,
         }
     }
@@ -467,6 +475,10 @@ pub enum BotanySpawnMode {
     /// plan §1.2.3 事件触发（兽死 / 残灰 / 天劫余波 / 负灵域裂缝）。
     /// 不参与 ZoneRefresh / StaticPoint spawn loop；不检查 zone 支持性与 spirit_qi 下限。
     EventTriggered,
+    /// plan-neg-domain-fauna-v1 P1 — 噬灵藓专属扩散模式。
+    /// 不走 ZoneRefresh/StaticPoint；由 `moss_spread_system` 驱动 noise-based 蔓延。
+    /// spirit_qi >= 0 时停止蔓延并启动 60s 枯萎倒计时。
+    SpreadByCrawl,
 }
 
 /// plan §7 TODO 植物变异：特殊 zone 环境下的稀有变种。
@@ -1274,6 +1286,24 @@ impl Default for BotanyKindRegistry {
                     icon_prompt: "round luminous spirit fruit on mountain shrub, rare food item icon, jade-green glow",
                 },
             ),
+            // plan-neg-domain-fauna-v1 P1 — 噬灵藓：负灵域 tainted 地块危害，非药材。
+            // zone_tags: NegativeField（spirit_qi < 0 zone 自动推入）。
+            // spawn_mode: SpreadByCrawl（moss_spread_system 驱动）。
+            // max_age_ticks: 1200（60s × 20tick，spirit_qi >= 0 时开始 60s 枯萎倒计时）。
+            // v2: None（不走 harvest/skill_hook 路径）。
+            BotanyPlantKind {
+                id: BotanyPlantId::ShiLingXian,
+                item_id: SHI_LING_XIAN,
+                zone_tags: &[BotanyZoneTag::NegativeField],
+                density_factor: 0.0,
+                growth_cost: 0.0,
+                survive_threshold: -1.0,
+                max_age_ticks: 1_200,
+                regen_ticks: 0,
+                spawn_mode: BotanySpawnMode::SpreadByCrawl,
+                restore_ratio: 0.0,
+                v2: None,
+            },
         ];
 
         Self {
@@ -1502,6 +1532,7 @@ mod tests {
             BEI_WEN_ZHI,
             LING_JING_XU,
             MAO_XIN_WEI,
+            SHI_LING_XIAN,
         ] {
             assert!(canonicalize_herb_id(id).is_ok(), "{id} should be canonical");
         }
@@ -1527,17 +1558,56 @@ mod tests {
     #[test]
     fn default_registry_contains_23_v1_and_17_v2_canonical_kinds() {
         // plan-botany-v1 22 种 + plan-cultivation-pacing-v1 P1.8 spirit_grass 1 种 +
-        // plan-botany-v2 绝地草木拾遗 17 种 + plan-food-v1 P0 ling_guo 1 种 = 41。
+        // plan-botany-v2 绝地草木拾遗 17 种 + plan-food-v1 P0 ling_guo 1 种 +
+        // plan-neg-domain-fauna-v1 P1 shi_ling_xian 1 种 = 42。
         let registry = BotanyKindRegistry::default();
         let count = registry.iter().count();
         assert_eq!(
-            count, 41,
-            "BotanyKindRegistry should register exactly 41 canonical kinds (23 v1 + 17 v2 + 1 food), got {count}"
+            count, 42,
+            "BotanyKindRegistry should register exactly 42 canonical kinds (23 v1 + 17 v2 + 1 food + 1 hazard), got {count}"
         );
         assert_eq!(
             registry.iter().filter(|kind| kind.is_v2()).count(),
             18,
-            "18 v2 kinds expected (17 botany-v2 + 1 food ling_guo)"
+            "18 v2 kinds expected (17 botany-v2 + 1 food ling_guo); shi_ling_xian is v1"
+        );
+    }
+
+    #[test]
+    fn shi_ling_xian_registered_as_spread_by_crawl_negative_field() {
+        // pin 测试：噬灵藓注册为 SpreadByCrawl + NegativeField + 非药材（v2=None）。
+        let registry = BotanyKindRegistry::default();
+        let kind = registry
+            .get(BotanyPlantId::ShiLingXian)
+            .expect("ShiLingXian 应在 BotanyKindRegistry 中注册（plan-neg-domain-fauna-v1 P1）");
+        assert_eq!(
+            kind.item_id, SHI_LING_XIAN,
+            "ShiLingXian item_id 应为 'shi_ling_xian'，实际 {}",
+            kind.item_id
+        );
+        assert_eq!(
+            kind.spawn_mode,
+            BotanySpawnMode::SpreadByCrawl,
+            "ShiLingXian spawn_mode 应为 SpreadByCrawl（噬灵藓专属蔓延模式）"
+        );
+        assert_eq!(
+            kind.zone_tags,
+            &[BotanyZoneTag::NegativeField],
+            "ShiLingXian 必须属于 NegativeField（负灵域地块危害）"
+        );
+        assert_eq!(
+            kind.max_age_ticks, 1_200,
+            "ShiLingXian max_age_ticks 应为 1200（60s × 20tick 枯萎倒计时），实际 {}",
+            kind.max_age_ticks
+        );
+        assert!(
+            !kind.is_v2(),
+            "ShiLingXian 是地块危害而非药材，v2 应为 None"
+        );
+        assert_eq!(
+            kind.restore_ratio, 0.0,
+            "ShiLingXian restore_ratio 应为 0.0（不走 harvest/恢复路径），实际 {}",
+            kind.restore_ratio
         );
     }
 

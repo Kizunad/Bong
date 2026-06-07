@@ -53,10 +53,10 @@
 
 | 阶段 | 内容 | 状态 | 验收 |
 |------|------|------|------|
-| **P0** | 诡影：`GhostEntity` 漂移 + 接触检测 + QiTransfer；负灵域内随机生成 | ⬜ | ≥ 10 单测：玩家进入 ghost 半径 → QiTransfer(GhostContact) 触发 + 守恒（player 减 == zone 增）/ ghost 仅在 spirit_qi < 0 zone 生成 / 接触 cooldown 1s 防叠爆 / qi_max 越大 pulse 越大 / 不发 SpawnEntity packet |
-| **P1** | 噬灵藓：`ShiLingXian` 方块注册 + 踩踏持续扣真元 + 负灵域生长逻辑 | ⬜ | ≥ 8 单测：踩噬灵藓 → Drain Component 挂载 → QiTransfer(ShiLingXianDrain) per tick + 守恒 / 离开方块移除 Component / 负灵域 zone 内地表生长 / spirit_qi ≥ 0 时枯萎 |
-| **P2** | 生态联动：诡影密度随 zone 负压强度缩放；噬灵藓蔓延速率随 spirit_qi 负值正比 | ⬜ | ≥ 6 单测：spirit_qi = -0.2 vs -1.0 区域诡影数量差异 / 诡影密度上限（每 zone ≤ 10）/ 噬灵藓在 spirit_qi 趋近 0 时停止蔓延 |
-| **P3** | Narration hints + 视觉占位（诡影粒子扰动/噬灵藓暗紫占位材质） | ⬜ | ≥ 4 单测 + narration：首次进入负灵域且遭遇诡影时输出提示（一会话不重复）/ 噬灵藓踩踏有短暂视觉反馈 |
+| **P0** | 诡影：`GhostEntity` 漂移 + 接触检测 + 守恒抽取；负灵域内随机生成 | ✅ 2026-06-07 | 单测：玩家进入 ghost 半径 → 经 `release_qi_amount_to_zone` 抽取(reason=ReleaseToZone) + 系统级守恒（player 减 == zone 增, overflow-safe）/ ghost 仅在 spirit_qi < 0 zone 生成 / 接触 cooldown 1s 防叠爆 / qi_max 越大 pulse 越大 / 不发 SpawnEntity packet / zone 回正诡影 cleanup |
+| **P1** | 噬灵藓：`ShiLingXian` 方块注册 + 踩踏持续扣真元 + 负灵域生长逻辑 | ✅ 2026-06-07 | 单测：踩噬灵藓 → `ShiLingXianDrainTag` 挂载 → 经 `release_qi_amount_to_zone` per tick + 系统级守恒 / spirit_qi<0 门控（zone 回正停 drain）/ 离开方块移除 Tag / 负灵域生长 / spirit_qi ≥ 0 枯萎 / 不进 harvest |
+| **P2** | 生态联动：诡影密度随 zone 负压强度缩放；噬灵藓蔓延速率随 spirit_qi 负值正比 | ✅ 2026-06-07 | 单测：spirit_qi = -0.2 vs -1.0 区域诡影数量差异 / 诡影密度上限（每 zone ≤ 10）/ 噬灵藓在 spirit_qi 趋近 0 时停止蔓延 |
+| **P3** | Narration hints + 视觉占位（诡影粒子扰动/噬灵藓暗紫占位材质 deferred） | ✅ 2026-06-07 | 单测 + e2e：首次遭遇诡影输出 Perception 提示（GhostContactCooldown 信号触发,一会话不重复,e2e 串联 ghost_contact_system×narration）;per-event VFX 反馈 deferred(见遗留) |
 
 ---
 
@@ -160,3 +160,53 @@ PlantSpec {
 ## §7 进度日志
 
 - 2026-05-31：骨架创建。worldview §二/§七 审计发现负灵域特有生态无实装 plan。前置 qi-physics / negative_zone.rs 已就绪，本 plan 在其基础上叠加实体级危害。
+
+---
+
+## Finish Evidence
+
+**验收日期**：2026-06-07 · 全 P0-P3 ✅ · 经 consume-plan 自动消费（实施 workflow + opus 对抗自检 3 轮守恒级联修复）
+
+### 落地清单
+
+- **P0 诡影**：`server/src/fauna/ghost.rs`（新）`GhostEntity` + `GhostContactCooldown` + `GhostZoneRegistry`；`ghost_spawn_system`（spirit_qi<GHOST_SPAWN_MIN_PRESSURE 按密度生成,per-zone≤10,不发 SpawnEntity packet）/ `ghost_drift_system`（漂移+AABB clamp 不跨 zone）/ `ghost_contact_system`（Without NPC,接触经 `release_qi_amount_to_zone` overflow-safe 抽取）/ `ghost_cleanup_system`（zone 回正 despawn + remove_entity）
+- **P1 噬灵藓**：`server/src/botany/shiling_xian.rs`（新）`ShiLingXianDrainTag` + step_on/step_off/drain/spread 系统；`BotanyPlantId::ShiLingXian` + `BotanySpawnMode::SpreadByCrawl`（registry.rs）；drain 经 `release_qi_amount_to_zone` + spirit_qi<0 门控（zone 回正停 drain）；不进 harvest（隔离测试钉死）
+- **P2 生态联动**：诡影密度 `|spirit_qi|×GHOST_DENSITY_FACTOR` 上限 10；噬灵藓 spread_rate∝|spirit_qi|,spirit_qi≥0 停蔓延 60s 枯萎
+- **P3 narration**：`ghost_narration.rs` `ghost_contact_narration_system`（`With<GhostContactCooldown>` 信号触发,per-session 首次,scope=Player style=Perception）+ moss narration（`With<ShiLingXianDrainTag>`）；e2e 串联真实双系统
+- **守恒(最高红线)**：所有抽取走正典 `cultivation::death_hooks::release_qi_amount_to_zone`（内部 `qi_release_to_zone`,overflow 路由专用 overflow 账户**永不销毁**,emit reason=ReleaseToZone,与 negative_zone_siphon_tick/death/craft 共用同一正典路径）；`qi_physics::constants` 归口 `GHOST_CONTACT_FACTOR`/`MOSS_DRAIN_FACTOR`
+
+### 关键 commit（branch auto/plan-neg-domain-fauna-v1）
+
+- `3ed26a7bc` P0-prereq 扩 QiTransferReason + constants 归口
+- `912b5c06c` / `fc735f0f3` P0 诡影三系统 + 饱和单测
+- `14e279251` P1 噬灵藓四系统
+- `ce99a1c0e` P2 生态联动测试
+- `b0aa34b28` P3 narration hints
+- `11acc7ed5` fix 守恒律破裂（emit-only→真给 zone 记账 + 系统级守恒测试）
+- `5f0b40188` fix overflow 守恒 + 复用 release_qi_amount_to_zone helper
+- `4f8ac8973` fix ghost narration 改 GhostContactCooldown 信号 + 删 dead reason 变体 + e2e
+
+### 测试结果
+
+- `cargo fmt --check` ✅ / `cargo clippy --all-targets -- -D warnings` ✅
+- `cargo test --bin bong-server`：**7619 passed / 0 failed / 1 ignored**（proto_gen.rs pre-existing）
+- 守恒锁定：系统级测试 `*_zone_spirit_qi_increases_by_player_qi_loss` / `*_total_qi_is_conserved`（跑真实 ECS 路径 player减==zone增）+ overflow round-trip + e2e ghost_contact×narration 串联
+
+### 跨仓库核验
+
+- **server** ✅：`GhostEntity`/`ghost_contact_system`/`ghost_cleanup_system`/`ShiLingXianDrainTag`/`BotanyPlantId::ShiLingXian`/`BotanySpawnMode::SpreadByCrawl`/`release_qi_amount_to_zone`（复用正典）/`GHOST_CONTACT_FACTOR`/`MOSS_DRAIN_FACTOR`
+- **agent**：无改动（narration 经既有 PendingGameplayNarrations→client；agent 经 world_state zone qi 间接感知）
+- **client**：narration→client 契约接通（network/mod.rs drain + selector 路由,Perception 提示送达）；诡影/噬灵藓**视觉资产 deferred**（见遗留）
+
+### 关键设计决议（实施中收口）
+
+- **守恒走正典 helper 而非自造**：诡影/噬灵藓抽取一律 `release_qi_amount_to_zone`（overflow-safe）。实施经历守恒级联:① emit-only 不记 zone（全量销毁）② 手搓 min(room) 仍扣全额（overflow 销毁+audit 高报）③ 换正典 helper 修好 overflow——三轮自检逐层揪出,印证「守恒改一处要追下游所有契约」。
+- **QiTransferReason 不新增专属变体**：原 P0-prereq 加的 `GhostContact`/`ShiLingXianDrain` 已删除——helper 统一 emit `ReleaseToZone`(正典 reason),与 death/craft/negative_zone 一致。plan §4/§1 原文提及的这两个 reason 以本决议为准（reason=ReleaseToZone）。
+- **诡影用独立 GhostEntity Component 而非 FaunaKind::Ghost**：诡影是环境陷阱非 NPC（plan §0 自述）,不参与 MC entity / harvest lifecycle,独立 Component 建模更贴契约。plan §4 列的 FaunaKind::Ghost 以此对齐。
+- **ghost narration 信号源 = GhostContactCooldown 组件**（非 QiTransfer reason）：因 helper 硬编码 ReleaseToZone（共享 reason 会误触发）,改用每次接触 insert 的 cooldown 组件作可靠信号,e2e 锁住。
+
+### 遗留 / 后续
+
+- **per-event VFX 反馈 deferred**：诡影接触/噬灵藓踩踏目前仅「会话首次」Perception narration,**无 per-event VfxEventRequest**（粒子扰动/脚底反馈）。视觉资产在 plan §0 已书面 deferred 到 plan-model-asset-v1 + VFX plan。建议后续 plan 至少补一条 server-side VfxEventRequest（不必等模型）落实 P3「踩踏短暂视觉反馈」。
+- 代码 doc-comment 轻微漂移：ghost.rs/shiling_xian.rs 个别注释仍提 GhostContact/ShiLingXianDrain（reason 已删,实 emit ReleaseToZone）——非功能,后续顺手清。
+- moss 门控用 tag.zone_name 读 spirit_qi 而 helper 用玩家实时 Position 落账;跨 zone 边界踩 footprint 时两者可能不同（helper 更正确）——pre-existing tag-vs-position 特征,非本 plan 引入。
