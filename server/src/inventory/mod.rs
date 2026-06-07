@@ -2882,6 +2882,9 @@ pub fn apply_death_drop_on_revive(
                     death_cause: "tsy_death".to_string(),
                     drops: drop_ids,
                     activated_to_daoxiang: false,
+                    // plan-daozhan-v1 P0：暂无死亡时刻 Cultivation 可读，此处 None；
+                    // P2/P3 lifecycle 重写此构造点时应从 Cultivation.realm 读取。
+                    origin_realm: None,
                 },
             ));
 

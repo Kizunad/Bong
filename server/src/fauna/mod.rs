@@ -1,6 +1,8 @@
 pub mod bone_coin;
 pub mod butcher;
 pub mod components;
+// plan-daozhan-v1 P0 — 道伥核心数据结构与 spawn 触发逻辑
+pub mod daozhan;
 pub mod drop;
 pub mod experience;
 pub mod ghost;

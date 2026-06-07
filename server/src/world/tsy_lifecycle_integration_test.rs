@@ -522,30 +522,36 @@ mod tests {
                     death_cause: "tsy_drain".into(),
                     drops: vec![10, 11],
                     activated_to_daoxiang: false,
+                    // plan-daozhan-v1 P0: 化虚境界 = 80% spawn 概率。
+                    // 测试合约：corpse 一律 despawn（不论概率门控结果）；
+                    // Daoxiang NPC 数量可为 0 或 1（概率性，不锁定）。
+                    origin_realm: Some(crate::cultivation::components::Realm::Void),
                 },
             ))
             .id();
 
         app.update();
 
-        // Corpse entity 应被 Despawned 标记
+        // Corpse entity 应被 Despawned 标记（不论 spawn 概率结果，corpse 一律清除）
         assert!(
             app.world()
                 .entity(corpse_entity)
                 .get::<valence::prelude::Despawned>()
                 .is_some(),
-            "corpse entity 应在自然激活后被 despawn"
+            "corpse entity 应在自然激活门槛后被 despawn（不论道伥 spawn 概率是否命中）"
         );
-        // 至少 spawn 1 个 Daoxiang archetype NPC
-        let mut count = 0;
+        // plan-daozhan-v1 P0: 道伥 spawn 为概率性（化虚 80%），不锁定必有 1 个。
+        // 只验证：spawn 的 Daoxiang NPC 不超过 1 个（无意外多重 spawn）。
         let world = app.world_mut();
         let mut q = world.query::<&crate::npc::lifecycle::NpcArchetype>();
-        for arch in q.iter(world) {
-            if matches!(arch, crate::npc::lifecycle::NpcArchetype::Daoxiang) {
-                count += 1;
-            }
-        }
-        assert_eq!(count, 1, "应 spawn 1 个 Daoxiang NPC");
+        let count = q
+            .iter(world)
+            .filter(|a| matches!(a, crate::npc::lifecycle::NpcArchetype::Daoxiang))
+            .count();
+        assert!(
+            count <= 1,
+            "单具干尸不应 spawn 超过 1 个 Daoxiang NPC，实际 count={count}"
+        );
     }
 
     #[test]
@@ -577,6 +583,7 @@ mod tests {
                     death_cause: "tsy_drain".into(),
                     drops: vec![10],
                     activated_to_daoxiang: false,
+                    origin_realm: None,
                 },
             ))
             .id();
@@ -629,6 +636,7 @@ mod tests {
                     death_cause: "tsy_drain".into(),
                     drops: vec![10],
                     activated_to_daoxiang: false,
+                    origin_realm: None,
                 },
             ))
             .id();
