@@ -55,5 +55,7 @@ public enum HudRenderLayer {
     /** plan-offscreen-war-v1 P9：战事双色血条 + WarPhase 文字。 */
     FACTION_WAR,
     /** plan-fauna-stitched-beast-v1 P3：兽核吸收幻觉层（绿边像差/bar偏移/视野旋转）。 */
-    HALLUCINATION
+    HALLUCINATION,
+    /** plan-dying-elder-v1 P3：垂死大能遭遇 HUD（真元进度条 + 三按钮 + 背叛概率）。 */
+    DYING_ELDER
 }
