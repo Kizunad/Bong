@@ -1,4 +1,4 @@
-//! 异变缝合兽 — plan-fauna-stitched-beast-v1 P0/P1
+//! 异变缝合兽 — plan-fauna-stitched-beast-v1 P0/P1/P2
 //!
 //! P0 实装：
 //!   - `HybridBeastFormationEvent`：融合事件（组件兽列表 + zone + 时间戳 + 合并 qi）
@@ -13,10 +13,22 @@
 //!   - `hybrid_beast_formation_system`：融合触发 + HybridBeast spawn + QiTransfer + VFX + 音效
 //!   - `apply_rat_flee_on_fusion_system`：周围 24 格 Rat 逃跑联动（negative_pressure_avoidance）
 //!
+//! P2 实装：
+//!   - `hybrid_beast_rage_system`：HP% 驱动灵压狂暴吸收（每 10 tick / 2Hz）
+//!     * rage_absorption_rate = BASE × (1 + RAGE_MULT × (1 - hp_pct))
+//!     * 调 `regen_from_zone` → QiTransfer(CultivationRegen)，zone.spirit_qi -= drain
+//!     * HP<50%：VFX bong:vfx/hybrid_rage（BongLineParticle count=8 #FF4010）
+//!     * HP<25%：VFX count=16 #FF0000
+//!     * 持续音效 block.deepslate.hit loop
+//!     * zone.spirit_qi 跌负后不主动 emit 事件，既有 negative_zone_siphon_tick 自动处理
+//!
 //! 守恒红线（P0 级别锁住契约，P1 系统保证实现）：
 //!   sum(beast_qi) == hybrid_qi + released_to_zone
 //!   hybrid_qi = sum * FUSION_RETAIN_RATIO
 //!   released_to_zone = sum * (1 - FUSION_RETAIN_RATIO)
+//!
+//! P2 守恒红线：
+//!   zone.spirit_qi 减少量 == ledger 累计 QiTransfer(CultivationRegen).amount / QI_ZONE_UNIT_CAPACITY
 //!
 //! qi_physics 速率常数归 qi_physics::constants：
 //!   BASE_HYBRID_ABSORPTION_RATE / RAGE_MULTIPLIER
@@ -31,6 +43,7 @@ use valence::prelude::{
     EventWriter, IntoSystemConfigs, Position, Query, Res, ResMut, Resource, Update, With,
 };
 
+use crate::combat::components::Wounds;
 use crate::cultivation::tick::CultivationClock;
 use crate::fauna::components::{BeastKind, FaunaTag};
 use crate::fauna::rat_phase::{PressureSensor, RatPhase, RatPhaseChangeEvent};
@@ -43,7 +56,8 @@ use crate::npc::movement::{MovementCapabilities, MovementController, MovementCoo
 use crate::npc::navigator::Navigator;
 use crate::npc::patrol::NpcPatrol;
 use crate::npc::spawn::{NpcBlackboard, NpcCombatLoadout, NpcMarker, NpcMeleeArchetype};
-use crate::qi_physics::constants::QI_EPSILON;
+use crate::qi_physics::constants::{BASE_HYBRID_ABSORPTION_RATE, QI_EPSILON, RAGE_MULTIPLIER};
+use crate::qi_physics::excretion::regen_from_zone;
 use crate::qi_physics::ledger::{QiAccountId, QiTransfer, QiTransferReason};
 use crate::schema::vfx_event::VfxEventPayloadV1;
 use crate::world::dimension::CurrentDimension;
@@ -601,6 +615,229 @@ pub fn register_p1(app: &mut App) {
             apply_rat_flee_on_fusion_system.after(hybrid_beast_formation_system),
         ),
     );
+}
+
+// ── P2：灵压狂暴吸收常数 ──────────────────────────────────────────────────────
+
+/// 狂暴系统每 N tick 运行一次（2Hz @ 20TPS = 每 10 tick）。
+/// 减少每 tick 都跑的开销，同时保持足够的灵气压力响应速度。
+pub const RAGE_TICK_INTERVAL: u64 = 10;
+
+/// HP 低于此百分比时触发 rage VFX（50% = 半血）。
+pub const RAGE_VFX_HALF_HP_THRESHOLD: f32 = 0.5;
+
+/// HP 低于此百分比时触发 "濒死" rage VFX（25%）。
+pub const RAGE_VFX_CRITICAL_HP_THRESHOLD: f32 = 0.25;
+
+/// 半血 rage VFX 粒子数量（BongLineParticle）。
+pub const RAGE_VFX_HALF_HP_COUNT: u16 = 8;
+
+/// 濒死 rage VFX 粒子数量（BongLineParticle）。
+pub const RAGE_VFX_CRITICAL_COUNT: u16 = 16;
+
+/// 半血 rage VFX 颜色（#FF4010，暗橙红，象征灵压失控初期）。
+pub const RAGE_VFX_HALF_HP_COLOR: &str = "#FF4010";
+
+/// 濒死 rage VFX 颜色（#FF0000，纯红，象征灵压濒临崩溃）。
+pub const RAGE_VFX_CRITICAL_COLOR: &str = "#FF0000";
+
+/// rage VFX 持续 tick 数（短暂一闪，不遮挡视线）。
+pub const RAGE_VFX_DURATION_TICKS: u16 = 12;
+
+/// rage 持续音效 recipe ID（block.deepslate.hit，低频嗡鸣感）。
+pub const RAGE_AUDIO_RECIPE_ID: &str = "block.deepslate.hit";
+
+/// rage 音效广播半径（方块数）。
+pub const RAGE_AUDIO_RADIUS: f64 = 32.0;
+
+// ── P2：灵压狂暴吸收速率纯函数 ───────────────────────────────────────────────
+
+/// 计算当前 HP 百分比对应的灵压狂暴吸收速率。
+///
+/// 公式：`rate = BASE_HYBRID_ABSORPTION_RATE × (1.0 + RAGE_MULTIPLIER × (1.0 - hp_pct))`
+///
+/// - `hp_pct = 1.0`（满血）：rate = BASE（无加成）
+/// - `hp_pct = 0.5`（半血）：rate = BASE × (1 + RAGE_MULT × 0.5) = BASE × 2.0
+/// - `hp_pct = 0.0`（濒死）：rate = BASE × (1 + RAGE_MULT) = BASE × 3.0
+///
+/// # 参数
+/// - `hp_pct`：HP 百分比（clamp 至 [0, 1]）
+///
+/// # 返回值
+/// 该 tick 应传入 `regen_from_zone` 的 `rate` 参数（f64）。
+pub fn compute_rage_absorption_rate(hp_pct: f32) -> f64 {
+    let hp_pct = hp_pct.clamp(0.0, 1.0) as f64;
+    BASE_HYBRID_ABSORPTION_RATE * (1.0 + RAGE_MULTIPLIER as f64 * (1.0 - hp_pct))
+}
+
+// ── P2：灵压狂暴吸收系统 ─────────────────────────────────────────────────────
+
+/// P2 HybridBeast 灵压狂暴吸收系统（每 RAGE_TICK_INTERVAL tick 运行一次）。
+///
+/// 执行逻辑：
+/// 1. 每 RAGE_TICK_INTERVAL tick 运行一次（tick % RAGE_TICK_INTERVAL == 0）
+/// 2. 查询所有带 `HybridBeastRageState` 的 `NpcMarker` entity
+/// 3. hp_pct = wounds.health_current / wounds.health_max
+/// 4. rage_absorption_rate = BASE × (1 + RAGE_MULT × (1 - hp_pct))
+/// 5. 调用 `regen_from_zone(zone.spirit_qi, rate, integrity=1.0, qi_room)`
+/// 6. zone.spirit_qi -= drain / QI_ZONE_UNIT_CAPACITY（zone 灵气减少）
+/// 7. emit QiTransfer(zone → npc_hybrid, amount=gain, reason=CultivationRegen)
+/// 8. HP<50% 时 emit VFX（bong:vfx/hybrid_rage，BongLineParticle count=8 #FF4010）
+/// 9. HP<25% 时升级 VFX（count=16 #FF0000）
+/// 10. emit 音效（block.deepslate.hit，每次吸收 tick 发一条）
+///
+/// # 守恒约束
+/// zone.spirit_qi 减少量 = drain = gain / QI_ZONE_UNIT_CAPACITY
+/// HybridBeast qi_current += gain（通过 ledger QiTransfer 记录；Cultivation 组件更新在此系统）
+/// => zone 减少量 × QI_ZONE_UNIT_CAPACITY == hybrid 增加量（无凭空损耗/生成）
+///
+/// # 设计说明
+/// zone.spirit_qi 跌负后不主动 emit ZoneEnteringNegativePressure（该 event 不存在于代码）。
+/// 依赖既有 `negative_zone_siphon_tick`（cultivation/negative_zone.rs:32）自动对区域内玩家施加 qi siphon。
+type HybridRageQuery<'w, 's> = Query<
+    'w,
+    's,
+    (
+        Entity,
+        &'static Position,
+        Option<&'static CurrentDimension>,
+        &'static Wounds,
+        &'static mut HybridBeastRageState,
+    ),
+    (With<NpcMarker>, With<FaunaTag>),
+>;
+
+pub fn hybrid_beast_rage_system(
+    clock: Option<Res<CultivationClock>>,
+    mut rage_query: HybridRageQuery<'_, '_>,
+    mut zones: Option<ResMut<ZoneRegistry>>,
+    mut qi_transfers: EventWriter<QiTransfer>,
+    mut vfx_events: EventWriter<VfxEventRequest>,
+    mut audio_events: EventWriter<PlaySoundRecipeRequest>,
+) {
+    let tick = clock.map(|c| c.tick).unwrap_or(0);
+
+    // 每 RAGE_TICK_INTERVAL tick 运行一次（2Hz @ 20TPS）
+    if tick % RAGE_TICK_INTERVAL != 0 {
+        return;
+    }
+
+    let Some(zones) = zones.as_deref_mut() else {
+        return;
+    };
+
+    for (entity, pos, dim, wounds, mut rage_state) in &mut rage_query {
+        // 只处理 HybridBeast（通过 FaunaTag 无法直接过滤，需运行时检查）
+        // 注意：query 使用 With<FaunaTag>，但所有 NpcMarker 都有此标记
+        // 精确过滤：只有带 HybridBeastRageState 的才是缝合兽（FaunaTag.beast_kind == HybridBeast 是充分条件）
+        // HybridBeastRageState 是独占 HybridBeast 的 component，有此 component == 是缝合兽
+
+        // ── Step 1：计算 HP 百分比 ───────────────────────────────────────────
+        let hp_pct = if wounds.health_max > 0.0 {
+            (wounds.health_current / wounds.health_max).clamp(0.0, 1.0)
+        } else {
+            0.0
+        };
+
+        // ── Step 2：计算吸收速率并更新 RageState ────────────────────────────
+        let rate = compute_rage_absorption_rate(hp_pct);
+        rage_state.hp_pct = hp_pct;
+        rage_state.rage_absorption_rate = rate as f32;
+
+        // ── Step 3：查找所在 zone ──────────────────────────────────────────
+        let dim_kind = dim
+            .map(|d| d.0)
+            .unwrap_or(crate::world::dimension::DimensionKind::Overworld);
+
+        let Some(zone_name) = zones.find_zone(dim_kind, pos.get()).map(|z| z.name.clone()) else {
+            continue;
+        };
+        let Some(zone) = zones.find_zone_mut(&zone_name) else {
+            continue;
+        };
+
+        // zone.spirit_qi <= 0 时不能通过正常 regen 路径吸收（regen_from_zone 内置检查）
+        // 但即使跌负仍可能有残余，regen_from_zone 会正确返回 (0,0)
+        // 所以不需要显式 skip，让函数自行处理
+
+        // ── Step 4：调用 regen_from_zone ─────────────────────────────────
+        // qi_room = 无上限（缝合兽真元池随融合而增长，不设硬上限）
+        // 使用 f64::MAX / 2.0 避免溢出
+        let qi_room = f64::MAX / 2.0;
+        let (gain, drain) = regen_from_zone(zone.spirit_qi, rate, 1.0, qi_room);
+
+        if gain <= QI_EPSILON || drain <= QI_EPSILON {
+            // zone 已空或无法吸收，跳过（不 emit QiTransfer 防止 ledger 噪音）
+            continue;
+        }
+
+        // ── Step 5：更新 zone.spirit_qi（zone 减少量 = drain）──────────────
+        zone.spirit_qi = (zone.spirit_qi - drain).max(-1.0);
+
+        // ── Step 6：emit QiTransfer（zone → hybrid, CultivationRegen）───────
+        let zone_account = QiAccountId::zone(zone_name.clone());
+        let hybrid_account = QiAccountId::npc(format!("hybrid_beast:{}", entity.index()));
+        if let Ok(transfer) = QiTransfer::new(
+            zone_account,
+            hybrid_account,
+            gain,
+            QiTransferReason::CultivationRegen,
+        ) {
+            qi_transfers.send(transfer);
+        }
+
+        // ── Step 7：VFX（HP 档位驱动）────────────────────────────────────
+        let world_pos = pos.get();
+        if hp_pct < RAGE_VFX_CRITICAL_HP_THRESHOLD {
+            // HP < 25%：濒死，count=16 #FF0000
+            vfx_events.send(VfxEventRequest::new(
+                world_pos,
+                VfxEventPayloadV1::SpawnParticle {
+                    event_id: "bong:vfx/hybrid_rage".to_string(),
+                    origin: [world_pos.x, world_pos.y, world_pos.z],
+                    direction: None,
+                    color: Some(RAGE_VFX_CRITICAL_COLOR.to_string()),
+                    strength: Some(1.0),
+                    count: Some(RAGE_VFX_CRITICAL_COUNT),
+                    duration_ticks: Some(RAGE_VFX_DURATION_TICKS),
+                },
+            ));
+        } else if hp_pct < RAGE_VFX_HALF_HP_THRESHOLD {
+            // HP < 50%：半血，count=8 #FF4010
+            vfx_events.send(VfxEventRequest::new(
+                world_pos,
+                VfxEventPayloadV1::SpawnParticle {
+                    event_id: "bong:vfx/hybrid_rage".to_string(),
+                    origin: [world_pos.x, world_pos.y, world_pos.z],
+                    direction: None,
+                    color: Some(RAGE_VFX_HALF_HP_COLOR.to_string()),
+                    strength: Some(0.7),
+                    count: Some(RAGE_VFX_HALF_HP_COUNT),
+                    duration_ticks: Some(RAGE_VFX_DURATION_TICKS),
+                },
+            ));
+        }
+        // HP >= 50%：无 rage VFX（满血无视觉反馈，符合"感受压力需要打它"的设计）
+
+        // ── Step 8：持续音效（每次吸收 tick 发一条）──────────────────────
+        audio_events.send(PlaySoundRecipeRequest {
+            recipe_id: RAGE_AUDIO_RECIPE_ID.to_string(),
+            instance_id: 0,
+            pos: Some([world_pos.x as i32, world_pos.y as i32, world_pos.z as i32]),
+            flag: None,
+            volume_mul: 0.5 + (1.0 - hp_pct) * 0.5, // 血量越低音量越大
+            pitch_shift: -0.2 + (1.0 - hp_pct) * 0.4, // 血量越低音调越低沉
+            recipient: AudioRecipient::Radius {
+                origin: world_pos,
+                radius: RAGE_AUDIO_RADIUS,
+            },
+        });
+    }
+}
+
+/// P2 注册到 App（由 fauna::register 调用）。
+pub fn register_p2(app: &mut App) {
+    app.add_systems(Update, hybrid_beast_rage_system);
 }
 
 #[cfg(test)]
@@ -1189,6 +1426,302 @@ mod tests {
             tracker.get("zone_mid_qi"),
             50,
             "zone_mid_qi 独立计数不受 zone_low_qi reset 影响，期望 50"
+        );
+    }
+
+    // ── P2：compute_rage_absorption_rate 单元测试 ────────────────────────────
+
+    #[test]
+    fn rage_rate_full_hp_equals_base() {
+        // 满血：rate = BASE × (1 + RAGE_MULT × 0) = BASE（无加成）
+        let rate = compute_rage_absorption_rate(1.0);
+        let diff = (rate - BASE_HYBRID_ABSORPTION_RATE).abs();
+        assert!(
+            diff < 1e-12,
+            "满血(hp=1.0) rage_rate 必须等于 BASE_HYBRID_ABSORPTION_RATE({BASE_HYBRID_ABSORPTION_RATE})，\
+             实际 {rate}，误差 {diff:.2e}"
+        );
+    }
+
+    #[test]
+    fn rage_rate_zero_hp_equals_base_times_one_plus_rage_mult() {
+        // 濒死：rate = BASE × (1 + RAGE_MULT × 1) = BASE × 3.0（设计决议 §2）
+        let rate = compute_rage_absorption_rate(0.0);
+        let expected = BASE_HYBRID_ABSORPTION_RATE * (1.0 + RAGE_MULTIPLIER as f64);
+        let diff = (rate - expected).abs();
+        assert!(
+            diff < 1e-12,
+            "濒死(hp=0.0) rage_rate 必须等于 BASE×(1+RAGE_MULT)={expected}，\
+             实际 {rate}，误差 {diff:.2e}"
+        );
+    }
+
+    #[test]
+    fn rage_rate_half_hp_midpoint() {
+        // 半血：rate = BASE × (1 + RAGE_MULT × 0.5) = BASE × 2.0（RAGE_MULT=2.0 时）
+        let rate = compute_rage_absorption_rate(0.5);
+        let expected = BASE_HYBRID_ABSORPTION_RATE * (1.0 + RAGE_MULTIPLIER as f64 * 0.5);
+        let diff = (rate - expected).abs();
+        assert!(
+            diff < 1e-12,
+            "半血(hp=0.5) rage_rate 必须等于 BASE×(1+RAGE_MULT×0.5)={expected}，\
+             实际 {rate}，误差 {diff:.2e}"
+        );
+    }
+
+    #[test]
+    fn rage_rate_monotonically_decreasing_with_hp() {
+        // HP 越低，吸收速率越高（单调递减关系）
+        let rates: Vec<f64> = [1.0_f32, 0.75, 0.5, 0.25, 0.0]
+            .iter()
+            .map(|&hp| compute_rage_absorption_rate(hp))
+            .collect();
+        for i in 0..rates.len() - 1 {
+            assert!(
+                rates[i] < rates[i + 1],
+                "rage_rate 应随 HP 降低而单调递增：hp={} rate={} < hp={} rate={}（期望 rate[i]<rate[i+1]）",
+                [1.0, 0.75, 0.5, 0.25, 0.0][i],
+                rates[i],
+                [1.0, 0.75, 0.5, 0.25, 0.0][i + 1],
+                rates[i + 1]
+            );
+        }
+    }
+
+    #[test]
+    fn rage_rate_clamped_for_hp_above_one() {
+        // HP > 1.0（不应发生，但防御性 clamp）：rate = BASE（等同满血）
+        let rate_normal = compute_rage_absorption_rate(1.0);
+        let rate_overheal = compute_rage_absorption_rate(1.5);
+        let diff = (rate_normal - rate_overheal).abs();
+        assert!(
+            diff < 1e-12,
+            "HP > 1.0 时 rate 应等同 HP=1.0（clamp 保护），实际 rate_overheal={rate_overheal}"
+        );
+    }
+
+    #[test]
+    fn rage_rate_clamped_for_negative_hp() {
+        // HP < 0.0（不应发生）：rate = BASE × (1 + RAGE_MULT)（等同濒死）
+        let rate_zero = compute_rage_absorption_rate(0.0);
+        let rate_negative = compute_rage_absorption_rate(-0.5);
+        let diff = (rate_zero - rate_negative).abs();
+        assert!(
+            diff < 1e-12,
+            "HP < 0.0 时 rate 应等同 HP=0.0（clamp 保护），实际 rate_negative={rate_negative}"
+        );
+    }
+
+    // ── P2：VFX 阈值常数 pin 测试 ─────────────────────────────────────────────
+
+    #[test]
+    fn rage_vfx_half_hp_threshold_pin() {
+        // plan P2 workItems 指定 HP<50% 触发 half-blood rage VFX
+        let diff = (RAGE_VFX_HALF_HP_THRESHOLD - 0.5).abs();
+        assert!(
+            diff < 1e-6_f32,
+            "RAGE_VFX_HALF_HP_THRESHOLD 必须为 0.5（plan P2 workItems 规格），实际 {RAGE_VFX_HALF_HP_THRESHOLD}"
+        );
+    }
+
+    #[test]
+    fn rage_vfx_critical_hp_threshold_pin() {
+        // plan P2 workItems 指定 HP<25% 触发 critical rage VFX（升级版）
+        let diff = (RAGE_VFX_CRITICAL_HP_THRESHOLD - 0.25).abs();
+        assert!(
+            diff < 1e-6_f32,
+            "RAGE_VFX_CRITICAL_HP_THRESHOLD 必须为 0.25（plan P2 workItems 规格），实际 {RAGE_VFX_CRITICAL_HP_THRESHOLD}"
+        );
+    }
+
+    #[test]
+    fn rage_vfx_particle_counts_pin() {
+        // plan P2 workItems：half-blood count=8，critical count=16
+        assert_eq!(
+            RAGE_VFX_HALF_HP_COUNT, 8,
+            "半血 rage VFX 粒子数量必须为 8（plan P2 workItems 规格），实际 {RAGE_VFX_HALF_HP_COUNT}"
+        );
+        assert_eq!(
+            RAGE_VFX_CRITICAL_COUNT, 16,
+            "濒死 rage VFX 粒子数量必须为 16（plan P2 workItems 规格），实际 {RAGE_VFX_CRITICAL_COUNT}"
+        );
+    }
+
+    #[test]
+    fn rage_vfx_colors_pin() {
+        // plan P2 workItems：half-blood #FF4010，critical #FF0000
+        assert_eq!(
+            RAGE_VFX_HALF_HP_COLOR, "#FF4010",
+            "半血 rage VFX 颜色必须为 #FF4010（暗橙红，plan P2 workItems 规格），实际 {RAGE_VFX_HALF_HP_COLOR}"
+        );
+        assert_eq!(
+            RAGE_VFX_CRITICAL_COLOR, "#FF0000",
+            "濒死 rage VFX 颜色必须为 #FF0000（纯红，plan P2 workItems 规格），实际 {RAGE_VFX_CRITICAL_COLOR}"
+        );
+    }
+
+    #[test]
+    fn rage_tick_interval_is_ten() {
+        // 2Hz @ 20TPS = 每 10 tick，对应 2Hz 系统频率
+        assert_eq!(
+            RAGE_TICK_INTERVAL, 10,
+            "RAGE_TICK_INTERVAL 必须为 10（2Hz @ 20TPS），实际 {RAGE_TICK_INTERVAL}"
+        );
+    }
+
+    // ── P2：系统级守恒测试（zone 变化量 == ledger 累计 QiTransfer）────────────
+
+    #[test]
+    fn rage_zone_drain_conservation_single_tick() {
+        // 守恒红线：zone.spirit_qi 减少量 = drain = gain / QI_ZONE_UNIT_CAPACITY
+        // 验证 regen_from_zone 返回的 (gain, drain) 满足守恒关系
+        use crate::qi_physics::constants::QI_ZONE_UNIT_CAPACITY;
+        use crate::qi_physics::excretion::regen_from_zone;
+
+        let zone_qi = 0.5_f64;
+        let rate = compute_rage_absorption_rate(0.5); // 半血 rate
+        let (gain, drain) = regen_from_zone(zone_qi, rate, 1.0, f64::MAX / 2.0);
+
+        // drain > 0（zone 有灵气，rate > 0，应有吸收）
+        assert!(
+            drain > 0.0,
+            "zone_qi=0.5 时 drain 应 > 0（zone 灵气充足，rage 应吸收），实际 {drain}"
+        );
+
+        // 守恒关系：gain == drain × QI_ZONE_UNIT_CAPACITY
+        let expected_gain = drain * QI_ZONE_UNIT_CAPACITY;
+        let error = (gain - expected_gain).abs();
+        assert!(
+            error < 1e-10,
+            "P2 守恒红线：gain({gain:.12}) 应等于 drain({drain:.12}) × QI_ZONE_UNIT_CAPACITY({QI_ZONE_UNIT_CAPACITY})，\
+             误差 {error:.2e}"
+        );
+    }
+
+    #[test]
+    fn rage_zone_drain_conservation_multiple_ticks() {
+        // 系统级守恒：多次 tick 累计后 zone 减少量 == ledger 累计 QiTransfer.amount / QI_ZONE_UNIT_CAPACITY
+        use crate::qi_physics::constants::QI_ZONE_UNIT_CAPACITY;
+        use crate::qi_physics::excretion::regen_from_zone;
+
+        let mut zone_qi = 0.8_f64;
+        let mut total_gain = 0.0_f64;
+        let mut total_drain = 0.0_f64;
+        let initial_zone_qi = zone_qi;
+
+        // 模拟 20 个 rage tick（对应 200 个游戏 tick = 10秒）
+        for i in 0..20 {
+            let hp_pct = (1.0 - i as f32 * 0.04).max(0.0); // HP 从 100% 线性下降到 24%
+            let rate = compute_rage_absorption_rate(hp_pct);
+            let (gain, drain) = regen_from_zone(zone_qi, rate, 1.0, f64::MAX / 2.0);
+            if drain > 0.0 {
+                zone_qi -= drain;
+                total_gain += gain;
+                total_drain += drain;
+            }
+        }
+
+        // zone 实际减少量
+        let zone_decrease = initial_zone_qi - zone_qi;
+        let error = (zone_decrease - total_drain).abs();
+        assert!(
+            error < 1e-10,
+            "多 tick 守恒：zone 减少量({zone_decrease:.12}) 应等于累计 drain({total_drain:.12})，\
+             误差 {error:.2e}"
+        );
+
+        // ledger 累计 gain 守恒：total_gain ≈ total_drain × QI_ZONE_UNIT_CAPACITY
+        let expected_total_gain = total_drain * QI_ZONE_UNIT_CAPACITY;
+        let gain_error = (total_gain - expected_total_gain).abs();
+        assert!(
+            gain_error < 1e-8, // 多次乘除有轻微精度积累，容忍稍宽
+            "多 tick ledger 守恒：total_gain({total_gain:.12}) ≈ total_drain×QI_ZONE_UNIT_CAPACITY({expected_total_gain:.12})，\
+             误差 {gain_error:.2e}"
+        );
+    }
+
+    #[test]
+    fn rage_no_absorption_when_zone_empty() {
+        // 边界：zone.spirit_qi <= 0 时 regen_from_zone 返回 (0, 0)，无真元凭空生成
+        use crate::qi_physics::excretion::regen_from_zone;
+
+        let zone_qi = 0.0_f64;
+        let rate = compute_rage_absorption_rate(0.0); // 最大 rage rate
+
+        let (gain, drain) = regen_from_zone(zone_qi, rate, 1.0, f64::MAX / 2.0);
+        assert_eq!(
+            gain, 0.0,
+            "zone_qi=0 时 gain 必须为 0（无真元可吸收，守恒红线），实际 {gain}"
+        );
+        assert_eq!(
+            drain, 0.0,
+            "zone_qi=0 时 drain 必须为 0（zone 无灵气可抽），实际 {drain}"
+        );
+    }
+
+    #[test]
+    fn rage_no_absorption_when_zone_negative() {
+        // 边界：zone.spirit_qi < 0 时 regen_from_zone 返回 (0, 0)（负灵域不被正常吸收）
+        use crate::qi_physics::excretion::regen_from_zone;
+
+        let zone_qi = -0.3_f64;
+        let rate = compute_rage_absorption_rate(0.0);
+        let (gain, drain) = regen_from_zone(zone_qi, rate, 1.0, f64::MAX / 2.0);
+        assert_eq!(
+            gain, 0.0,
+            "zone_qi=-0.3（负灵域）时 gain 必须为 0（regen_from_zone 负值检查），实际 {gain}"
+        );
+        assert_eq!(
+            drain, 0.0,
+            "zone_qi=-0.3（负灵域）时 drain 必须为 0，实际 {drain}"
+        );
+    }
+
+    #[test]
+    fn rage_rate_increases_as_zone_depletes() {
+        // 系统级：zone.spirit_qi 随 HP 下降和吸收而减少，而 rate 随 HP 下降而增加
+        // 验证：濒死缝合兽比满血缝合兽消耗 zone 更快
+        use crate::qi_physics::excretion::regen_from_zone;
+
+        let zone_qi = 0.5_f64;
+        let rate_full = compute_rage_absorption_rate(1.0); // 满血 rate
+        let rate_dying = compute_rage_absorption_rate(0.0); // 濒死 rate
+
+        let (_, drain_full) = regen_from_zone(zone_qi, rate_full, 1.0, f64::MAX / 2.0);
+        let (_, drain_dying) = regen_from_zone(zone_qi, rate_dying, 1.0, f64::MAX / 2.0);
+
+        assert!(
+            drain_dying > drain_full,
+            "濒死缝合兽（rate={rate_dying}）应比满血（rate={rate_full}）更快消耗 zone：\
+             drain_dying({drain_dying}) 应 > drain_full({drain_full})"
+        );
+    }
+
+    #[test]
+    fn rage_vfx_threshold_ordering_constraint() {
+        // 设计约束：critical_threshold < half_threshold（濒死触发更严格条件）
+        // 用变量比较避免 clippy::assertions_on_constants
+        let critical = RAGE_VFX_CRITICAL_HP_THRESHOLD;
+        let half = RAGE_VFX_HALF_HP_THRESHOLD;
+        assert!(
+            critical < half,
+            "RAGE_VFX_CRITICAL_HP_THRESHOLD({critical}) \
+             必须 < RAGE_VFX_HALF_HP_THRESHOLD({half})，\
+             否则 HP<25% 区间无法进入 critical 分支"
+        );
+    }
+
+    #[test]
+    fn rage_vfx_critical_count_greater_than_half_hp_count() {
+        // 设计约束：濒死粒子数量 > 半血（视觉升级明显）
+        // 用变量比较避免 clippy::assertions_on_constants
+        let critical_count = RAGE_VFX_CRITICAL_COUNT;
+        let half_count = RAGE_VFX_HALF_HP_COUNT;
+        assert!(
+            critical_count > half_count,
+            "RAGE_VFX_CRITICAL_COUNT({critical_count}) \
+             必须 > RAGE_VFX_HALF_HP_COUNT({half_count})，\
+             否则濒死视觉无法升级"
         );
     }
 }

@@ -19,6 +19,8 @@ pub fn register(app: &mut App) {
     app.add_event::<hybrid_beast::CoreAbsorptionHallucinationEvent>();
     // plan-fauna-stitched-beast-v1 P1：注册融合系统 + ZoneBeastHungerTracker resource
     hybrid_beast::register_p1(app);
+    // plan-fauna-stitched-beast-v1 P2：注册灵压狂暴吸收系统
+    hybrid_beast::register_p2(app);
     app.add_event::<butcher::ButcherRequest>();
     app.add_event::<bone_coin::BoneCoinCraftRequest>();
     app.add_event::<bone_coin::BoneCoinCrafted>();
