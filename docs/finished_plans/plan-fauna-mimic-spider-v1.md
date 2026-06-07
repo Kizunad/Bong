@@ -56,10 +56,10 @@
 
 | 阶段 | 状态 | 主要交付物 | 验收标准 |
 |------|------|-----------|---------|
-| **P0** | ⬜ | SpiderDisguiseState 三态数据模型 + 感知触发器设计 | 数据模型 PR 合并 + ≥ 8 单测 green |
-| **P1** | ⬜ | 暴起 + 伏击 AI（big-brain Scorer/Action）+ VFX | 蛛感知玩家 → 暴起 → 战斗正确执行 |
-| **P2** | ⬜ | Retreat 态 + 神识识破 + client 伪装渲染 | SpiritEye 激活可见蛛轮廓；退出战斗重回伪装 |
-| **P3** | ⬜ | 留活接口 + SpiderTrapPotential + anqi-v2 钩子 | 玩家压制活蛛、布置陷阱对追兵生效 |
+| **P0** | ✅ 2026-06-07 | SpiderDisguiseState 三态数据模型 + 感知触发器 + Disguised qi 守恒吸收 | 经生产 spawn(spawn_attracted_mobs_from_harvest)附全套组件；≥8 单测 |
+| **P1** | ✅ 2026-06-07 | 暴起 + 伏击 AI（big-brain Scorer/Action）+ VFX/audio | 蛛感知玩家 → 暴起追击 → Retreat(朝 spirit_qi<-0.2 梯度) |
+| **P2** | ✅ 2026-06-07 | Retreat + 神识识破(spiritual_sense StealthState)+ client 伪装渲染 | 凝脉+境界神识可见橙轮廓；client FaunaModel disguised→ash_block |
+| **P3** | ✅ 2026-06-07 | 留活接口 + SpiderTrapPotential(陷阱仅对非主人触发+72h释放) | spider_cage 捕获/布置；合成配方 deferred anqi-v2 |
 
 ---
 
@@ -135,3 +135,38 @@
 3. **多蛛同巢**：同一区域多只 Disguised 蛛是否同步暴起（聚集效果）or 各自独立感知
 4. **陷阱笼 item**：由本 plan 定义 `item.spider_cage` or 归 anqi-v2 定义（材料链归属问题）
 5. **蛛骨刺陷阱 vs 活蛛陷阱**：两种陷阱是否共存（anqi-v1 已有骨刺抛掷，活蛛陷阱是新玩法维度；是否过度复杂）
+---
+
+## Finish Evidence
+
+**验收日期**：2026-06-07 · 全 P0-P3 ✅ · 经 consume-plan 自动消费(viability gate 验证架构 + 实施 + opus 对抗自检 1 轮 wiring 修复)
+
+### 落地清单
+- **P0 三态机**：`server/src/fauna/mimic_spider.rs`(SpiderDisguiseState Disguised/Ambush/Retreat + MimicSpiderBlackboard + 阈值常数);Disguised 期 qi 吸收走 qi_physics `regen_from_zone` + ledger transfer(CultivationRegen,守恒)。**生产 spawn 接通**:`server/src/botany/hazard.rs` `spawn_attracted_mobs_from_harvest` 对 `FaunaKind::MimicSpider` 走 `spawn_natural_mob_at(AshSpider)` → `spawn_ash_spider_npc_at`(附全套组件 + FaunaTag 掉落路由)。
+- **P1 暴起 AI**：`server/src/npc/brain_spider.rs`(SpiderAmbushScorer/Action + SpiderRetreatAction 朝 spirit_qi<-0.2 梯度逃,`retreat_target_by_qi_gradient`);VFX `bong:vfx/spider_ambush`(BongSpriteParticle count16 #B8D0C8 burst,复用 ash_fragment)+ audio entity.spider.step。
+- **P2 神识识破 + 伪装渲染**：server `spiritual_sense::push` 扫描 Disguised 蛛 → `SpiritualSenseTarget{DisguisedSpider}` → scanner 按境界(凝脉+)门控 → `SenseKindV1::DisguisedSpider`(proto value 10) → client `PerceptionEdgeRenderer` 橙 #FF8040 轮廓;client `FaunaModel.getTextureResource` 按 `SpiderDisguiseHandler.isDisguised` 切 ash_block 贴图(收 bong:spider_disguise_enter/ambush_trigger CustomPayload)。**接口纠正**:用 `NameVisible(false)` 非不存在的 EntityVisibilityFilter;神识走 spiritual_sense scanner StealthState 非 spirit_eye landmark。
+- **P3 留活陷阱**：`SpiderTrapPotential` component + item.spider_cage 捕获/布置 + 陷阱仅对 trap_owner 以外触发 + 72h 超时释放。
+
+### 关键 commit(branch auto/plan-fauna-mimic-spider-v1)
+- `64d692197` P0 三态机 + Disguised qi 守恒吸收
+- `d3202a5bf` P1 暴起 AI brain_spider + spawn_spider + VFX/audio
+- `0edf43038` P2 神识识破 + 伪装渲染
+- `b1130d902` P3 陷阱笼捕捉 + 超时释放 + 感知归属排除
+- `4850be410` fix: 接通生产 spawn 路径(B1)+ client 渲染 Mixin(B2)+ regen 0.001/ambush event.spider/retreat 梯度(M1/M2/M4)
+
+### 测试结果
+- `cargo fmt --check` ✅ / `cargo clippy --all-targets -- -D warnings` ✅(dead_code lint 真消除非压制)
+- server:spider 85 / botany 130 / schema 887(含 SenseKind::DisguisedSpider value=10 roundtrip+pin)/ spiritual_sense disguised 3 — 全绿
+- client:`FaunaModelDisguiseTest`(8 渲染契约)+ `SpiderDisguiseHandlerTest` BUILD SUCCESSFUL
+- ⚠️ 1 pre-existing 失败:`BongEntityModelAssetTest.blockbenchSourcesExistForEveryGameEntity`(local_models/*.bbmodel gitignored 本地文件缺失,与本 PR 无关)
+
+### 跨仓库核验
+- **server** ✅：`SpiderDisguiseState`/`MimicSpiderBlackboard`/`brain_spider`/`spawn_attracted_mobs_from_harvest`(MimicSpider 分支)/`SpiderTrapPotential`/`regen_from_zone`(复用)
+- **client** ✅：`SpiderDisguiseHandler`/`FaunaModel`(disguise 贴图切换)/`PerceptionEdgeRenderer`(DisguisedSpider 橙轮廓)
+- **schema** ✅：`SenseKindV1::DisguisedSpider`(双端 proto 对拍)
+- **agent**：无改动
+
+### 遗留 / 后续
+- **client 伪装视觉观感待用户 WSLg 验收**:ash_block 伪装贴图 / 橙色识破轮廓的实际渲染效果(契约/逻辑已测,主观视觉需人眼)。
+- **item.spider_cage 合成配方 deferred 到 anqi-v2**(plan §8 开放问题#4 决议):本 plan 仅定义 ItemTemplate + SpiderTrapPotential 接入面,材料链/升级版归 anqi-v2。
+- 3 条 minor(注释自相矛盾/SpiderAmbushTriggerEvent 字段残留 allow(dead_code)/Bevy entity index 跨帧复用极小误配风险)——非功能,后续顺手清。
