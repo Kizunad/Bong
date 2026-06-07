@@ -15,7 +15,7 @@ use big_brain::prelude::{ActionBuilder, ActionState, Actor, BigBrainSet, Score, 
 use valence::client::ClientMarker;
 use valence::prelude::{
     bevy_ecs, App, Commands, Component, DVec3, Entity, Event, EventWriter, IntoSystemConfigs,
-    Position, PreUpdate, Query, With, Without,
+    Position, PreUpdate, Query, Res, With, Without,
 };
 
 use crate::cultivation::components::Cultivation;
@@ -28,6 +28,8 @@ use crate::network::audio_event_emit::PlaySoundRecipeRequest;
 use crate::network::vfx_event_emit::VfxEventRequest;
 use crate::npc::navigator::Navigator;
 use crate::npc::spawn::NpcMarker;
+use crate::world::dimension::CurrentDimension;
+use crate::world::zone::ZoneRegistry;
 
 // ── 暴起 VFX 常数 ─────────────────────────────────────────────────────────────
 
@@ -345,6 +347,7 @@ type SpiderRetreatActorQuery<'w, 's> = Query<
     's,
     (
         &'static Position,
+        Option<&'static CurrentDimension>,
         &'static mut SpiderDisguiseState,
         &'static MimicSpiderBlackboard,
         &'static mut Navigator,
@@ -387,13 +390,20 @@ pub(crate) fn spider_retreat_scorer_system(
     }
 }
 
+/// 撤退行动系统：蛛向负灵域方向逃离（按 zone spirit_qi 梯度寻路）。
+///
+/// plan P1 §line93："向 spirit_qi < -0.2 方向逃（按 zone spirit_qi 梯度寻路）"。
+/// 策略：从 ZoneRegistry 中找 spirit_qi 最低的 zone，取其中心作为逃跑目标。
+/// 若无低灵气区（所有 zone spirit_qi >= 0）则回退到 home_pos 方向（伏击蛛回巢）。
 pub(crate) fn spider_retreat_action_system(
     mut spiders: SpiderRetreatActorQuery<'_, '_>,
     players: PlayerCultivationQuery<'_, '_>,
     mut actions: Query<(&Actor, &mut ActionState), With<SpiderRetreatAction>>,
+    zone_registry: Option<Res<ZoneRegistry>>,
 ) {
     for (Actor(actor), mut state) in &mut actions {
-        let Ok((position, mut disguise_state, blackboard, mut navigator)) = spiders.get_mut(*actor)
+        let Ok((position, dim, mut disguise_state, blackboard, mut navigator)) =
+            spiders.get_mut(*actor)
         else {
             *state = ActionState::Failure;
             continue;
@@ -430,11 +440,15 @@ pub(crate) fn spider_retreat_action_system(
                     continue;
                 }
 
-                // 向 home_pos 方向移动（低灵气区往往在出生地附近）
-                navigator.set_goal(
-                    backtrack_target(pos, blackboard.home_pos),
-                    SPIDER_RETREAT_SPEED,
+                // plan P1 §line93：按 zone spirit_qi 梯度逃向最低灵气区（负灵域方向）
+                let retreat_target = retreat_target_by_qi_gradient(
+                    pos,
+                    blackboard,
+                    dim.map(|d| d.0)
+                        .unwrap_or(crate::world::dimension::DimensionKind::Overworld),
+                    zone_registry.as_deref(),
                 );
+                navigator.set_goal(retreat_target, SPIDER_RETREAT_SPEED);
             }
 
             ActionState::Cancelled => {
@@ -445,6 +459,50 @@ pub(crate) fn spider_retreat_action_system(
             ActionState::Init | ActionState::Success | ActionState::Failure => {}
         }
     }
+}
+
+/// 按 zone spirit_qi 梯度计算撤退目标点。
+///
+/// 策略：
+/// 1. 从 ZoneRegistry 中找同维度内 spirit_qi 最低的 zone（plan P1 §line93 要求 < -0.2）；
+/// 2. 若找到负灵域 zone，朝其中心方向迈一步（SPIDER_RETREAT_RADIUS / 4.0）；
+/// 3. 若无低灵气区（ZoneRegistry 不可用或所有 zone spirit_qi >= -0.2），
+///    回退到 home_pos 方向（伏击蛛归巢，守恒安全）。
+///
+/// `pub(crate)` 供测试模块直接调用。
+pub(crate) fn retreat_target_by_qi_gradient(
+    pos: DVec3,
+    blackboard: &MimicSpiderBlackboard,
+    dim: crate::world::dimension::DimensionKind,
+    zone_registry: Option<&ZoneRegistry>,
+) -> DVec3 {
+    const LOW_QI_THRESHOLD: f64 = -0.2;
+
+    if let Some(registry) = zone_registry {
+        // 在当前维度内找 spirit_qi 最低（最负）的 zone
+        let lowest_zone_center = registry
+            .zones
+            .iter()
+            .filter(|z| z.dimension == dim && z.spirit_qi < LOW_QI_THRESHOLD)
+            .min_by(|a, b| {
+                a.spirit_qi
+                    .partial_cmp(&b.spirit_qi)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            })
+            .map(|z| z.center());
+
+        if let Some(target) = lowest_zone_center {
+            // 朝最低灵气 zone 中心方向迈一步（分段导航）
+            let dir = (target - pos).with_y(0.0);
+            if dir.length_squared() > 1e-6 {
+                let step = dir.normalize() * (SPIDER_RETREAT_RADIUS / 4.0);
+                return pos + step;
+            }
+        }
+    }
+
+    // 回退：朝 home_pos 方向（无 ZoneRegistry 或无低灵气区时）
+    backtrack_target(pos, blackboard.home_pos)
 }
 
 /// 计算撤退目标点：朝 home_pos 方向前进一步（避免直接跳到 home_pos 跳过寻路）。
@@ -460,10 +518,9 @@ fn backtrack_target(pos: DVec3, home: DVec3) -> DVec3 {
 
 // ── ThinkerBuilder ────────────────────────────────────────────────────────────
 
-/// 拟态灰烬蛛 big-brain thinker（供 spawn_spider.rs 使用）。
+/// 拟态灰烬蛛 big-brain thinker（供 spawn_spider.rs 和 mob_spawn::spawn_natural_mob_at 使用）。
 ///
 /// 优先级：AmbushScorer(1.0) > RetreatScorer(0.4) > WanderScorer(0.08 baseline)
-#[allow(dead_code)]
 pub fn spider_thinker() -> big_brain::prelude::ThinkerBuilder {
     use crate::npc::brain::{ChaseAction, ChaseTargetScorer, MeleeAttackAction, MeleeRangeScorer};
     use big_brain::prelude::{FirstToScore, Thinker};
@@ -503,6 +560,154 @@ mod tests {
     };
     use crate::npc::navigator::Navigator;
     use crate::npc::spawn::NpcMarker;
+    use crate::world::dimension::DimensionKind;
+    use crate::world::zone::{Zone, ZoneRegistry};
+
+    // ── M4 撤退方向测试：必须朝低 spirit_qi 梯度逃，不是朝 home_pos ──────────────
+
+    fn make_zone(name: &str, center: [f64; 3], spirit_qi: f64) -> Zone {
+        let half = 64.0_f64;
+        Zone {
+            name: name.to_string(),
+            dimension: DimensionKind::Overworld,
+            bounds: (
+                valence::prelude::DVec3::new(center[0] - half, center[1] - 8.0, center[2] - half),
+                valence::prelude::DVec3::new(center[0] + half, center[1] + 16.0, center[2] + half),
+            ),
+            spirit_qi,
+            danger_level: 3,
+            active_events: vec![],
+            patrol_anchors: vec![valence::prelude::DVec3::new(
+                center[0], center[1], center[2],
+            )],
+            blocked_tiles: vec![],
+        }
+    }
+
+    fn zone_registry_with_neg_domain(neg_center: [f64; 3]) -> ZoneRegistry {
+        ZoneRegistry {
+            zones: vec![
+                make_zone("spawn", [0.0, 64.0, 0.0], 0.8),
+                make_zone("ash_dead_zone", neg_center, -0.5), // 负灵域
+            ],
+        }
+    }
+
+    /// M4 核心：有负灵域时，蛛应朝负灵域方向逃，而非朝 home_pos（旧 bug 行为）。
+    #[test]
+    fn retreat_target_flees_toward_negative_qi_zone_not_home_pos() {
+        // 蛛在 [0,64,0]，home_pos 在 [0,64,0]（同位置），负灵域在 [500,64,0]（东方）
+        let spider_pos = DVec3::new(0.0, 64.0, 0.0);
+        let home_pos = DVec3::new(0.0, 64.0, 0.0); // 与蛛位置相同
+        let neg_zone_center = [500.0_f64, 64.0, 0.0]; // 负灵域在东方
+
+        let blackboard = MimicSpiderBlackboard::new("spawn", home_pos);
+        let registry = zone_registry_with_neg_domain(neg_zone_center);
+
+        let target = retreat_target_by_qi_gradient(
+            spider_pos,
+            &blackboard,
+            DimensionKind::Overworld,
+            Some(&registry),
+        );
+
+        // 朝东（X 增大）才是正确方向
+        assert!(
+            target.x > spider_pos.x,
+            "负灵域在东方（X+500），蛛应朝 X 增大方向逃（实际 target.x={:.2}，说明未用 qi 梯度）",
+            target.x
+        );
+        // 与 home_pos 方向明显不同（home_pos 与蛛位置重合，若走旧 home_pos 路径 target 会是 home）
+        let dist_from_spider = spider_pos.distance(target);
+        assert!(
+            dist_from_spider > 1.0,
+            "撤退目标应离蛛有一步距离（期望 > 1.0，实际 {dist_from_spider:.2}）"
+        );
+    }
+
+    /// M4：无负灵域时，回退到 home_pos 方向（守恒安全回退路径）。
+    #[test]
+    fn retreat_target_falls_back_to_home_pos_when_no_neg_zone() {
+        // 所有 zone spirit_qi >= 0（无负灵域），应回退到 home_pos 方向
+        let spider_pos = DVec3::new(100.0, 64.0, 0.0);
+        let home_pos = DVec3::new(0.0, 64.0, 0.0); // 蛛在家西方 100 格
+
+        let blackboard = MimicSpiderBlackboard::new("spawn", home_pos);
+        let registry = ZoneRegistry {
+            zones: vec![
+                make_zone("spawn", [0.0, 64.0, 0.0], 0.8),
+                make_zone("good_zone", [200.0, 64.0, 0.0], 0.3),
+            ],
+        };
+
+        let target = retreat_target_by_qi_gradient(
+            spider_pos,
+            &blackboard,
+            DimensionKind::Overworld,
+            Some(&registry),
+        );
+
+        // 无负灵域时应朝 home_pos（X 减小）方向逃
+        assert!(
+            target.x < spider_pos.x,
+            "无负灵域时蛛应朝 home_pos（X=0 方向）回退（期望 target.x < {}, 实际 {:.2}）",
+            spider_pos.x,
+            target.x
+        );
+    }
+
+    /// M4：ZoneRegistry 不可用时，也能安全回退到 home_pos 方向。
+    #[test]
+    fn retreat_target_no_registry_falls_back_to_home_pos() {
+        let spider_pos = DVec3::new(50.0, 64.0, 0.0);
+        let home_pos = DVec3::new(0.0, 64.0, 0.0);
+
+        let blackboard = MimicSpiderBlackboard::new("spawn", home_pos);
+
+        let target = retreat_target_by_qi_gradient(
+            spider_pos,
+            &blackboard,
+            DimensionKind::Overworld,
+            None, // 无 ZoneRegistry
+        );
+
+        // 回退到 home_pos 方向
+        assert!(
+            target.x < spider_pos.x,
+            "无 ZoneRegistry 时应回退到 home_pos 方向（期望 target.x < {}, 实际 {:.2}）",
+            spider_pos.x,
+            target.x
+        );
+    }
+
+    /// M4：负灵域 spirit_qi 最低的那个才是逃跑目标（多负灵域时选最负的）。
+    #[test]
+    fn retreat_target_picks_most_negative_qi_zone() {
+        let spider_pos = DVec3::new(0.0, 64.0, 0.0);
+        let home_pos = DVec3::new(0.0, 64.0, 0.0);
+
+        let blackboard = MimicSpiderBlackboard::new("spawn", home_pos);
+        let registry = ZoneRegistry {
+            zones: vec![
+                make_zone("mildly_neg_north", [0.0, 64.0, -200.0], -0.25), // 北（Z-）
+                make_zone("deeply_neg_south", [0.0, 64.0, 200.0], -0.8),   // 南（Z+），更负
+            ],
+        };
+
+        let target = retreat_target_by_qi_gradient(
+            spider_pos,
+            &blackboard,
+            DimensionKind::Overworld,
+            Some(&registry),
+        );
+
+        // 应选最负的区域（南方 Z+），不是稍微负的北方（Z-）
+        assert!(
+            target.z > spider_pos.z,
+            "应逃向 spirit_qi 最低的 zone（南方 Z+200），而非稍负的北方（期望 target.z > 0, 实际 {:.2}）",
+            target.z
+        );
+    }
 
     // ── 测试工具 ────────────────────────────────────────────────────────────
 

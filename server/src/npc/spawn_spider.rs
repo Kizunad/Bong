@@ -42,8 +42,6 @@ use crate::npc::spawn::{NpcBlackboard, NpcCombatLoadout, NpcMarker, NpcMeleeArch
 /// | `NameVisible(false)` | nameplate 隐藏（伪装为灰烬方块） |
 /// | `NpcBlackboard` | 玩家感知缓存（供 big-brain 使用） |
 /// | `spider_thinker()` | P1 大脑（Ambush/Retreat/Chase/Melee） |
-// P3 mob_spawn.rs 接入时移除此 allow — 目前 NaturalMobKind::AshSpider 路径尚未接入。
-#[allow(dead_code)]
 pub fn spawn_ash_spider_npc_at(
     commands: &mut Commands,
     layer: Entity,

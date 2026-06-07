@@ -9,6 +9,7 @@ use crate::npc::spawn::spawn_beast_npc_at;
 use crate::npc::territory::Territory;
 use crate::tools::{has_required_tool, ToolKind};
 use crate::world::dimension::{DimensionKind, DimensionLayers, OverworldLayer};
+use crate::world::mob_spawn::{spawn_natural_mob_at, NaturalMobKind};
 use crate::world::zone::ZoneRegistry;
 
 pub fn hazard_hints_for_kind(
@@ -212,26 +213,38 @@ pub fn spawn_attracted_mobs_from_harvest(
         };
 
         let count = attracted_mob_count(event.min_count, event.max_count, event_seed(event));
+        let patrol_center = DVec3::new(
+            event.target_pos[0],
+            event.target_pos[1],
+            event.target_pos[2],
+        );
         for idx in 0..count {
             let spawn_pos = attracted_mob_position(event.target_pos, event_seed(event), idx);
-            let entity = spawn_beast_npc_at(
-                &mut commands,
-                layer,
-                event.zone_name.as_str(),
-                spawn_pos,
-                Territory::new(
-                    DVec3::new(
-                        event.target_pos[0],
-                        event.target_pos[1],
-                        event.target_pos[2],
-                    ),
-                    12.0,
-                ),
-                0.0,
-            );
-            commands
-                .entity(entity)
-                .insert(FaunaTag::new(beast_kind_for_botany(event.mob_kind)));
+            // 拟态灰烬蛛（FaunaKind::MimicSpider）走 spawn_natural_mob_at，
+            // 附带完整 MimicSpiderBlackboard / SpiderDisguiseState 组件。
+            // 其他 FaunaKind 回退到通用 spawn_beast_npc_at 路径。
+            if event.mob_kind == FaunaKind::MimicSpider {
+                spawn_natural_mob_at(
+                    &mut commands,
+                    layer,
+                    NaturalMobKind::AshSpider,
+                    event.zone_name.as_str(),
+                    spawn_pos,
+                    patrol_center,
+                );
+            } else {
+                let entity = spawn_beast_npc_at(
+                    &mut commands,
+                    layer,
+                    event.zone_name.as_str(),
+                    spawn_pos,
+                    Territory::new(patrol_center, 12.0),
+                    0.0,
+                );
+                commands
+                    .entity(entity)
+                    .insert(FaunaTag::new(beast_kind_for_botany(event.mob_kind)));
+            }
         }
     }
 }

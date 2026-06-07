@@ -19,7 +19,9 @@
 
 use serde::{Deserialize, Serialize};
 use valence::entity::EntityId;
-use valence::prelude::{ident, Added, Client, EventReader, Position, Query, Res, With, Without};
+use valence::prelude::{
+    ident, Added, Client, Entity, EventReader, Position, Query, Res, With, Without,
+};
 
 use crate::cultivation::tick::CultivationClock;
 use crate::fauna::mimic_spider::SpiderDisguiseState;
@@ -139,8 +141,12 @@ pub fn periodic_spider_disguise_sync_system(
 
 // ── 系统：蛛暴起时广播 ambush_trigger ─────────────────────────────────────────
 
-type AmbushSpiderQuery<'w, 's> =
-    Query<'w, 's, (&'static EntityId, &'static Position), (With<NpcMarker>, Without<Client>)>;
+type AmbushSpiderQuery<'w, 's> = Query<
+    'w,
+    's,
+    (Entity, &'static EntityId, &'static Position),
+    (With<NpcMarker>, Without<Client>),
+>;
 type AmbushClientQuery<'w, 's> =
     Query<'w, 's, (&'static mut Client, &'static Position), Without<NpcMarker>>;
 
@@ -148,6 +154,11 @@ type AmbushClientQuery<'w, 's> =
 /// 广播 `bong:spider_ambush_trigger`。
 ///
 /// Client 收到后将对应 entity 的渲染从 ash_block 切回正常蜘蛛外观。
+///
+/// # 修复 M2（plan-fauna-mimic-spider-v1）
+///
+/// 使用 `SpiderAmbushTriggerEvent.spider`（Entity raw index）直接定位暴起蛛，
+/// 而非按距离找最近蛛——多蛛近距离时原策略会广播错误 entity_id。
 pub fn on_spider_ambush_broadcast_system(
     mut ambush_events: EventReader<SpiderAmbushTriggerEvent>,
     spiders: AmbushSpiderQuery<'_, '_>,
@@ -159,18 +170,16 @@ pub fn on_spider_ambush_broadcast_system(
     }
 
     for event in &events {
-        // 找到对应 spider entity 的 entity_id
-        // SpiderAmbushTriggerEvent.spider 是 Entity::raw index，但 EntityId 是 MC 协议 id
-        // 我们需要找到与 trigger_pos 最近的 Ambush 蛛的 entity_id
-        // 策略：按 trigger_pos 距离找最近蛛（Ambush 已转换）
         let trigger_pos = event.trigger_pos;
         let trigger_pos_arr = [trigger_pos.x, trigger_pos.y, trigger_pos.z];
 
-        let Some((spider_eid, _)) = spiders.iter().min_by(|(_, pa), (_, pb)| {
-            let da = dist3(trigger_pos_arr, [pa.get().x, pa.get().y, pa.get().z]);
-            let db = dist3(trigger_pos_arr, [pb.get().x, pb.get().y, pb.get().z]);
-            da.partial_cmp(&db).unwrap_or(std::cmp::Ordering::Equal)
-        }) else {
+        // 用 event.spider（Entity raw index）直接定位暴起蛛的 MC entity_id。
+        // 多蛛近距离时按坐标找最近蛛会广播错 id——直接用携带的 Entity 才是正确目标。
+        let Some((_, spider_eid, _)) = spiders
+            .iter()
+            .find(|(entity, _, _)| entity.index() == event.spider)
+        else {
+            // 蛛可能已被 despawn（死亡），跳过
             continue;
         };
 
@@ -300,6 +309,77 @@ mod tests {
         assert!(
             (dist3([0.0, 0.0, 0.0], [3.0, 4.0, 0.0]) - 5.0).abs() < 1e-9,
             "dist3 三角函数校验失败"
+        );
+    }
+
+    // ── M2 修复验证：ambush_trigger 必须用 event.spider 定位，非距离最近 ─────────
+
+    /// 模拟两蛛紧邻情况，验证 entity_ids 匹配逻辑使用 raw index 而非坐标距离。
+    ///
+    /// 这是 on_spider_ambush_broadcast_system 内部查找逻辑的单元测试替身：
+    /// 给定两个蛛的 (entity_index, mc_entity_id, pos)，以及 event.spider 指定其中一个，
+    /// 验证找到的是 event.spider 对应的那只，而非坐标更近的那只。
+    #[test]
+    fn ambush_broadcast_uses_entity_index_not_nearest_position() {
+        // 蛛 A：entity.index()=1，MC entity_id=100，坐标 [0,64,0]（离触发点更近）
+        // 蛛 B：entity.index()=2，MC entity_id=200，坐标 [5,64,0]（离触发点更远）
+        // event.spider = 2 → 应选蛛 B（entity_id=200），不是坐标最近的蛛 A（entity_id=100）
+        let spider_entries: Vec<(u32, i32, [f64; 3])> = vec![
+            (1, 100, [0.0, 64.0, 0.0]), // A：近
+            (2, 200, [5.0, 64.0, 0.0]), // B：远
+        ];
+        let trigger_spider_index: u32 = 2; // 触发暴起的是蛛 B
+
+        // 模拟 event.spider 匹配逻辑（从 on_spider_ambush_broadcast_system 提取）
+        let found_mc_id = spider_entries
+            .iter()
+            .find(|(idx, _, _)| *idx == trigger_spider_index)
+            .map(|(_, mc_id, _)| *mc_id);
+
+        assert_eq!(
+            found_mc_id,
+            Some(200),
+            "event.spider=2 应定位到 entity_id=200（蛛 B），而非坐标更近的 entity_id=100（蛛 A），\
+             多蛛近距离时距离策略会广播错蛛"
+        );
+
+        // 反面验证：如果用距离策略，会错误地选到蛛 A
+        let trigger_pos = [2.0_f64, 64.0, 0.0];
+        let nearest_by_dist = spider_entries
+            .iter()
+            .min_by(|(_, _, pa), (_, _, pb)| {
+                let da = dist3(trigger_pos, *pa);
+                let db = dist3(trigger_pos, *pb);
+                da.partial_cmp(&db).unwrap_or(std::cmp::Ordering::Equal)
+            })
+            .map(|(_, mc_id, _)| *mc_id);
+        assert_eq!(
+            nearest_by_dist,
+            Some(100),
+            "距离策略在此场景会错误地选 entity_id=100（蛛 A），证明距离策略有 bug"
+        );
+
+        // 两者不同，说明修复是必要的
+        assert_ne!(
+            found_mc_id, nearest_by_dist,
+            "event.spider 策略与距离策略在多蛛场景应给出不同结果（若相同说明测试场景设置错误）"
+        );
+    }
+
+    /// 当 event.spider 指向已 despawn 的蛛（找不到匹配项）时，行为应是跳过（不 panic）。
+    #[test]
+    fn ambush_broadcast_skips_when_spider_entity_not_found() {
+        // 蛛 A 存在，事件指向不存在的 entity index=99
+        let spider_entries: Vec<(u32, i32)> = vec![(1, 100)];
+        let trigger_spider_index: u32 = 99; // 不存在
+
+        let found = spider_entries
+            .iter()
+            .find(|(idx, _)| *idx == trigger_spider_index);
+
+        assert!(
+            found.is_none(),
+            "已 despawn 的蛛（index=99）查找应返回 None，系统应安静跳过而非 panic"
         );
     }
 }
