@@ -91,4 +91,6 @@ pub fn register(app: &mut App) {
     dying_elder::register_p1(app);
     // plan-dying-elder-v1 P2：drain 系统（坍缩渊持续消耗）+ 死亡结算（qi release + loot）
     dying_elder::register_p2(app);
+    // plan-dying-elder-v1 P3：Redis 叙事事件（appear/death/dan_received broadcast）+ Renown 接入
+    dying_elder::register_p3(app);
 }

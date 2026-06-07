@@ -29,6 +29,7 @@ pub mod death_lifecycle;
 pub mod dugu;
 pub mod dugu_v2;
 pub mod economy;
+pub mod elder_encounter;
 pub mod forge;
 pub mod forge_bridge;
 pub mod identity;

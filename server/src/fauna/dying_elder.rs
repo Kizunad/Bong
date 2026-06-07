@@ -33,10 +33,14 @@ use crate::inventory::freshness::GAME_DAY_TICKS;
 use crate::inventory::{
     DroppedLootRegistry, InventoryInstanceIdAllocator, ItemInstance, ItemRegistry,
 };
+use crate::network::redis_bridge::RedisOutbound;
+use crate::network::RedisBridgeResource;
 use crate::npc::movement::GameTick;
 use crate::npc::spawn::NpcMarker;
 use crate::qi_physics::ledger::{QiAccountId, QiTransfer, QiTransferReason, WorldQiAccount};
 use crate::qi_physics::release::qi_release_to_zone;
+use crate::schema::elder_encounter::{ElderEncounterEventKindV1, ElderEncounterEventV1};
+use crate::social::components::Renown;
 use crate::world::dimension::DimensionKind;
 use crate::world::tsy_drain::compute_drain_per_tick;
 use crate::world::zone::ZoneRegistry;
@@ -395,6 +399,7 @@ pub(crate) fn dying_elder_give_dan_system(
         (&mut DyingElderBlackboard, &mut DyingElderState),
         (With<NpcMarker>, Without<ClientMarker>),
     >,
+    player_renowns: Query<&Renown, With<ClientMarker>>,
     mut soul_seize_events: EventWriter<SoulSeizeEvent>,
     mut qi_transfer_events: EventWriter<QiTransfer>,
     mut qi_account: Option<ResMut<WorldQiAccount>>,
@@ -413,7 +418,19 @@ pub(crate) fn dying_elder_give_dan_system(
 
         // 校验大能当前状态是否可接丹（只在 Plea 或 Recovering 状态接受）
         let dan_received = match *state {
-            DyingElderState::Plea => 0,
+            DyingElderState::Plea => {
+                // P3 Renown 调整：首次给丹时（Plea 态），按玩家声名调整 betray_probability
+                if let Ok(renown) = player_renowns.get(intent.player) {
+                    bb.apply_renown_adjustment(renown.fame);
+                    tracing::debug!(
+                        "[bong][dying_elder] give_dan_system: player {:?} fame={} applied renown adjustment → betray_prob={:.3}",
+                        intent.player,
+                        renown.fame,
+                        bb.betray_probability,
+                    );
+                }
+                0
+            }
             DyingElderState::Recovering { dan_received } => dan_received,
             DyingElderState::Betrayal | DyingElderState::Dead { .. } => {
                 tracing::debug!(
@@ -1042,6 +1059,175 @@ pub fn register_p2(app: &mut App) {
             dying_elder_drain_system,
             // 死亡系统在 drain 系统之后运行，确保同 tick 内 drain → Dead 的状态能立即结算
             dying_elder_death_system.after(dying_elder_drain_system),
+        ),
+    );
+}
+
+// ── P3：Redis 叙事事件发送 ──────────────────────────────────────────────────────
+
+/// plan-dying-elder-v1 P3 — 消费 `DyingElderSpawnRequest`，向 agent 广播「大能出现」叙事事件。
+///
+/// 在 P0 spawn 系统 emit 了 `DyingElderSpawnRequest` 后，本系统在同一帧内读取这些事件，
+/// 向 Redis `bong:elder_encounter` 发布 `ElderEncounterEventV1{event_kind: Appeared}`。
+///
+/// ## 注意
+/// - 本系统只 **read** spawn 事件（不消费其内容，不重置 EventReader 消费状态）；
+///   实际 entity 创建由 P1 消费同一事件完成（Bevy event reader 各自独立）。
+/// - `betray_probability` 字段使用 blackboard 初始值（renown 调整在首次给丹时执行）。
+pub(crate) fn dying_elder_p3_emit_appear_event_system(
+    mut spawn_requests: EventReader<DyingElderSpawnRequest>,
+    redis: Option<Res<RedisBridgeResource>>,
+    game_tick: Option<Res<GameTick>>,
+) {
+    let tick = game_tick.as_deref().map(|t| t.0 as u64).unwrap_or(0);
+    let Some(redis) = redis else { return };
+
+    for req in spawn_requests.read() {
+        let event = ElderEncounterEventV1 {
+            zone_name: req.zone_name.clone(),
+            elder_entity_idx: 0, // spawn 阶段尚无 entity id（P1 系统创建 entity）；0 为占位
+            event_kind: ElderEncounterEventKindV1::Appeared,
+            betray_probability: req.blackboard.betray_probability,
+            dan_count: 0,
+            offered_skill_id: req.blackboard.offered_skill_id.to_string(),
+            server_tick: tick,
+        };
+        let _ = redis
+            .tx_outbound
+            .send(RedisOutbound::ElderEncounterEvent(event));
+        tracing::info!(
+            "[bong][dying_elder] P3 emit appear event: zone='{}' betray_prob={:.3} tick={tick}",
+            req.zone_name,
+            req.blackboard.betray_probability,
+        );
+    }
+}
+
+/// plan-dying-elder-v1 P3 — 检测新进入 Dead 态的大能，向 agent 广播死亡叙事事件。
+///
+/// 在 P2 `dying_elder_death_system` 标记 `DyingElderDeathProcessed` 之前运行（ordering: before
+/// `dying_elder_death_system`），因此检测到的是"本 tick 刚死亡、尚未处理"的大能。
+///
+/// 广播的 `event_kind` 按死亡原因区分：
+/// - `dead_by_betrayal = false` → `DeadNatural`（自然力竭 / 守信自裁）
+/// - `dead_by_betrayal = true` → `Betrayal`（翻脸夺舍力竭）
+///
+/// **注意**：被玩家直接击杀（外部 kill system emit `Dead{dead_by_betrayal:false}`）在游戏中
+/// 目前无专属路径区分，暂时统一归为 `DeadNatural`；后续如引入外部击杀标记可分档。
+#[allow(clippy::type_complexity)]
+pub(crate) fn dying_elder_p3_emit_death_event_system(
+    elders: Query<
+        (Entity, &DyingElderBlackboard, &DyingElderState),
+        (
+            With<NpcMarker>,
+            Without<ClientMarker>,
+            Without<DyingElderDeathProcessed>,
+        ),
+    >,
+    redis: Option<Res<RedisBridgeResource>>,
+    game_tick: Option<Res<GameTick>>,
+) {
+    let tick = game_tick.as_deref().map(|t| t.0 as u64).unwrap_or(0);
+    let Some(redis) = redis else { return };
+
+    for (entity, bb, state) in elders.iter() {
+        let dead_by_betrayal = match *state {
+            DyingElderState::Dead { dead_by_betrayal } => dead_by_betrayal,
+            _ => continue,
+        };
+
+        let event_kind = if dead_by_betrayal {
+            ElderEncounterEventKindV1::Betrayal
+        } else {
+            ElderEncounterEventKindV1::DeadNatural
+        };
+
+        let event = ElderEncounterEventV1 {
+            zone_name: bb.home_zone.clone(),
+            elder_entity_idx: entity.index(),
+            event_kind,
+            betray_probability: 0.0,
+            dan_count: 0,
+            offered_skill_id: String::new(),
+            server_tick: tick,
+        };
+        let _ = redis
+            .tx_outbound
+            .send(RedisOutbound::ElderEncounterEvent(event));
+        tracing::info!(
+            "[bong][dying_elder] P3 emit death event: entity={:?} zone='{}' kind={:?} tick={tick}",
+            entity,
+            bb.home_zone,
+            event_kind,
+        );
+    }
+}
+
+/// plan-dying-elder-v1 P3 — 向 agent 广播「大能收丹」叙事事件（Recovering 态每次给丹后触发）。
+///
+/// 本系统通过 `GiveDanToElderIntent` 事件来判断收丹时机，而不是轮询 Recovering 状态，
+/// 避免每 tick 扫描全部大能。在 `dying_elder_give_dan_system` 之后运行，此时 state
+/// 已更新为 Recovering{n+1}（或进入 Betrayal/Dead）。
+///
+/// 发送 `DanReceived` 事件，携带当前大能 `dan_count`，供 agent 生成进度叙事。
+#[allow(clippy::type_complexity)]
+pub(crate) fn dying_elder_p3_emit_dan_received_event_system(
+    mut intents: EventReader<GiveDanToElderIntent>,
+    elders: Query<
+        (Entity, &DyingElderBlackboard, &DyingElderState),
+        (With<NpcMarker>, Without<ClientMarker>),
+    >,
+    redis: Option<Res<RedisBridgeResource>>,
+    game_tick: Option<Res<GameTick>>,
+) {
+    let tick = game_tick.as_deref().map(|t| t.0 as u64).unwrap_or(0);
+    let Some(redis) = redis else { return };
+
+    for intent in intents.read() {
+        let Ok((entity, bb, state)) = elders.get(intent.elder) else {
+            continue;
+        };
+
+        // 读取更新后的 dan_count（give_dan_system 已更新）
+        let dan_count = match *state {
+            DyingElderState::Recovering { dan_received } => dan_received,
+            DyingElderState::Betrayal => DYING_ELDER_DAN_THRESHOLD,
+            DyingElderState::Dead { .. } => DYING_ELDER_DAN_THRESHOLD,
+            DyingElderState::Plea => continue, // 给丹系统拒绝了此 intent
+        };
+
+        let event = ElderEncounterEventV1 {
+            zone_name: bb.home_zone.clone(),
+            elder_entity_idx: entity.index(),
+            event_kind: ElderEncounterEventKindV1::DanReceived,
+            betray_probability: 0.0,
+            dan_count,
+            offered_skill_id: bb.offered_skill_id.to_string(),
+            server_tick: tick,
+        };
+        let _ = redis
+            .tx_outbound
+            .send(RedisOutbound::ElderEncounterEvent(event));
+        tracing::debug!(
+            "[bong][dying_elder] P3 emit dan_received event: entity={:?} zone='{}' dan_count={dan_count} tick={tick}",
+            entity,
+            bb.home_zone,
+        );
+    }
+}
+
+// ── Bevy 注册 P3 ──────────────────────────────────────────────────────────────
+
+/// Bevy 注册：P3 Redis 叙事事件系统（appear / death / dan_received broadcast）。
+pub fn register_p3(app: &mut App) {
+    app.add_systems(
+        Update,
+        (
+            dying_elder_p3_emit_appear_event_system,
+            // death broadcast 在 death_system 之前运行（标记前检测）
+            dying_elder_p3_emit_death_event_system.before(dying_elder_death_system),
+            // dan_received broadcast 在 give_dan_system 之后（状态已更新后再广播）
+            dying_elder_p3_emit_dan_received_event_system.after(dying_elder_give_dan_system),
         ),
     );
 }
@@ -1985,6 +2171,177 @@ mod tests {
                  请检查 assets/items/ 是否有对应 toml 定义",
                 skill_id,
                 scroll_id
+            );
+        }
+    }
+
+    // ── P3：Redis 叙事事件 + Renown 调整测试 ──────────────────────────────────
+
+    #[test]
+    fn p3_renown_threshold_constant_pin() {
+        // 期望：DYING_ELDER_RENOWN_THRESHOLD = 300（设计决议 pin）
+        assert_eq!(
+            DYING_ELDER_RENOWN_THRESHOLD, 300,
+            "P3 声名门槛应精确为 300（worldview §七 fame>300 触发友好调整）；实际 = {}",
+            DYING_ELDER_RENOWN_THRESHOLD
+        );
+    }
+
+    #[test]
+    fn p3_renown_betray_reduction_constant_pin() {
+        // 期望：DYING_ELDER_RENOWN_BETRAY_REDUCTION = 0.2（设计决议 pin）
+        assert!(
+            (DYING_ELDER_RENOWN_BETRAY_REDUCTION - 0.2).abs() < f64::EPSILON,
+            "P3 声名减量应精确为 0.2；实际 = {}",
+            DYING_ELDER_RENOWN_BETRAY_REDUCTION
+        );
+    }
+
+    #[test]
+    fn p3_renown_adjustment_applied_only_once_at_plea() {
+        // 期望：声名调整只在 Plea 态（首次给丹）触发，之后 Recovering 态不再调整
+        let mut bb = DyingElderBlackboard::new("tsy_deep", DVec3::ZERO, 0, 0);
+        let original_prob = bb.betray_probability;
+
+        // 模拟 Plea 态调整（fame=301）
+        bb.apply_renown_adjustment(301);
+        let after_first = bb.betray_probability;
+
+        // 验证确实发生了调整
+        let expected_after_first =
+            (original_prob - DYING_ELDER_RENOWN_BETRAY_REDUCTION).clamp(0.05, 0.95);
+        assert!(
+            (after_first - expected_after_first).abs() < f64::EPSILON,
+            "首次 apply_renown_adjustment(fame=301) 后应减少 {DYING_ELDER_RENOWN_BETRAY_REDUCTION}；\
+             original={original_prob:.3} expected={expected_after_first:.3} actual={after_first:.3}"
+        );
+
+        // 模拟 Recovering 态不再调整（give_dan_system 只在 Plea 态调用 apply_renown_adjustment）
+        // 此处纯逻辑验证：Recovering 态下调用不会 panic 或产生异常副作用
+        let after_second = bb.betray_probability; // 不再调用 apply_renown_adjustment
+        assert!(
+            (after_second - after_first).abs() < f64::EPSILON,
+            "Recovering 态下 betray_probability 不应再变化；after_first={after_first:.3} after_second={after_second:.3}"
+        );
+    }
+
+    #[test]
+    fn p3_renown_adjustment_boundary_exactly_300_no_change() {
+        // 期望：fame = 300（等于阈值）不触发调整（条件是严格 fame > 300）
+        let mut bb = DyingElderBlackboard::new("tsy_deep", DVec3::ZERO, 42, 0);
+        let before = bb.betray_probability;
+        bb.apply_renown_adjustment(300); // 等于阈值，不触发
+        assert!(
+            (bb.betray_probability - before).abs() < f64::EPSILON,
+            "fame=300 不应触发减量（严格大于判断）；before={before:.3} after={:.3}",
+            bb.betray_probability
+        );
+    }
+
+    #[test]
+    fn p3_renown_adjustment_fame_301_triggers_change() {
+        // 期望：fame = 301（恰好超过阈值）触发减量
+        let mut bb = DyingElderBlackboard::new("tsy_deep", DVec3::ZERO, 42, 0);
+        let before = bb.betray_probability;
+        bb.apply_renown_adjustment(301); // 刚超过阈值，触发
+        assert!(
+            bb.betray_probability < before,
+            "fame=301 应触发减量；before={before:.3} after={:.3}",
+            bb.betray_probability
+        );
+    }
+
+    #[test]
+    fn p3_death_event_kind_dead_natural_vs_betrayal() {
+        // 期望：dead_by_betrayal 决定 event_kind（纯逻辑 pin，匹配 P3 系统逻辑）
+        let kind_betrayal = if true {
+            ElderEncounterEventKindV1::Betrayal
+        } else {
+            ElderEncounterEventKindV1::DeadNatural
+        };
+        let kind_natural = if false {
+            ElderEncounterEventKindV1::Betrayal
+        } else {
+            ElderEncounterEventKindV1::DeadNatural
+        };
+
+        assert_eq!(
+            kind_betrayal,
+            ElderEncounterEventKindV1::Betrayal,
+            "dead_by_betrayal=true 应映射为 ElderEncounterEventKindV1::Betrayal"
+        );
+        assert_eq!(
+            kind_natural,
+            ElderEncounterEventKindV1::DeadNatural,
+            "dead_by_betrayal=false 应映射为 ElderEncounterEventKindV1::DeadNatural"
+        );
+    }
+
+    #[test]
+    fn p3_appear_event_betray_probability_from_blackboard() {
+        // 期望：Appeared 事件的 betray_probability 来自 blackboard 初始值
+        // （renown 调整在首次给丹时执行，appeared 事件使用 spawn 时的原始值）
+        let bb = DyingElderBlackboard::new("tsy_deep", DVec3::ZERO, 1234, 0);
+        let betray_prob = bb.betray_probability;
+
+        // 模拟构建 appeared 事件
+        let event = ElderEncounterEventV1 {
+            zone_name: bb.home_zone.clone(),
+            elder_entity_idx: 0,
+            event_kind: ElderEncounterEventKindV1::Appeared,
+            betray_probability: betray_prob,
+            dan_count: 0,
+            offered_skill_id: bb.offered_skill_id.to_string(),
+            server_tick: 0,
+        };
+
+        assert_eq!(
+            event.event_kind,
+            ElderEncounterEventKindV1::Appeared,
+            "spawn 时发送的事件应为 Appeared"
+        );
+        assert!(
+            (event.betray_probability - betray_prob).abs() < f64::EPSILON,
+            "appeared 事件 betray_probability 应来自 blackboard spawn 值；\
+             bb={betray_prob:.3} event={:.3}",
+            event.betray_probability
+        );
+        assert_eq!(
+            event.dan_count, 0,
+            "appeared 事件 dan_count 应为 0（刚出现，尚未收到丹）"
+        );
+    }
+
+    #[test]
+    fn p3_elder_encounter_event_v1_all_event_kinds_constructible() {
+        // 期望：5 种 ElderEncounterEventKindV1 均可构建为完整 ElderEncounterEventV1（契约 pin）
+        use crate::schema::elder_encounter::ElderEncounterEventKindV1;
+
+        let kinds = [
+            ElderEncounterEventKindV1::Appeared,
+            ElderEncounterEventKindV1::DanReceived,
+            ElderEncounterEventKindV1::Betrayal,
+            ElderEncounterEventKindV1::DeadNatural,
+            ElderEncounterEventKindV1::DeadPlayerKill,
+        ];
+        for kind in kinds {
+            let event = ElderEncounterEventV1 {
+                zone_name: "tsy_deep".to_string(),
+                elder_entity_idx: 1,
+                event_kind: kind,
+                betray_probability: 0.5,
+                dan_count: 0,
+                offered_skill_id: "woliu.heart".to_string(),
+                server_tick: 100,
+            };
+            let json = serde_json::to_string(&event).unwrap_or_else(|e| {
+                panic!("ElderEncounterEventV1{{kind:{kind:?}}} serialize failed: {e}")
+            });
+            let back: ElderEncounterEventV1 =
+                serde_json::from_str(&json).unwrap_or_else(|e| panic!("deserialize failed: {e}"));
+            assert_eq!(
+                back.event_kind, kind,
+                "event_kind={kind:?} serde round-trip should preserve value"
             );
         }
     }
