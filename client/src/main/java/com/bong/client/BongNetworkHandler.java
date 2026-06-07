@@ -96,6 +96,8 @@ public class BongNetworkHandler {
         // plan-fauna-mimic-spider-v1 P2 — 拟态蛛伪装渲染 CustomPayload
         registerSpiderDisguiseEnterChannel();
         registerSpiderAmbushTriggerChannel();
+        // plan-fauna-stitched-beast-v1 P3 — 兽核吸收幻觉 HUD
+        registerCoreAbsorptionHallucinationChannel();
         // 旧 server 推过的 realm_collapse evac HUD 是 static volatile 字段倒计时，
         // 不会在断线 / 切服 / 重连时自清。Disconnect 时强制清掉，避免上一 server
         // 的 "域崩撤离 48s" 倒计时跨 session 续命。
@@ -119,6 +121,8 @@ public class BongNetworkHandler {
                 com.bong.client.visual.VoidErosionVisualStore.reset();
                 // plan-fauna-mimic-spider-v1 P2 — 断线时清理伪装蛛列表
                 SpiderDisguiseHandler.clearOnDisconnect();
+                // plan-fauna-stitched-beast-v1 P3 — 断线时清理幻觉层状态
+                com.bong.client.fauna.HallucinationLayerStore.clearOnDisconnect();
             })
         );
         ClientPlayConnectionEvents.JOIN.register(
@@ -578,6 +582,41 @@ public class BongNetworkHandler {
                         BongClient.LOGGER.debug("Processed bong:spider_ambush_trigger ({} bytes)", readableBytes);
                     } else {
                         BongClient.LOGGER.warn("Ignoring bong:spider_ambush_trigger payload (parse failed)");
+                    }
+                });
+            }
+        );
+    }
+
+    // ── plan-fauna-stitched-beast-v1 P3 — 兽核吸收幻觉 HUD channel ─────────────
+
+    /**
+     * 注册 {@code bong:core_absorption_hallucination} channel。
+     * payload JSON → {@link com.bong.client.fauna.HallucinationLayerHandler#handle} →
+     * {@link com.bong.client.fauna.HallucinationLayerStore}。
+     *
+     * <p>仅写入 <em>显示层</em> 状态，不改玩家实际 HP / qi。
+     */
+    private static void registerCoreAbsorptionHallucinationChannel() {
+        ClientPlayNetworking.registerGlobalReceiver(
+            new Identifier(
+                com.bong.client.fauna.HallucinationLayerHandler.CHANNEL_NAMESPACE,
+                com.bong.client.fauna.HallucinationLayerHandler.CHANNEL_PATH
+            ),
+            (client, handler, buf, responseSender) -> {
+                int readableBytes = buf.readableBytes();
+                byte[] bytes = new byte[readableBytes];
+                buf.readBytes(bytes);
+                String jsonPayload = ServerDataEnvelope.decodeUtf8(bytes);
+                markConnectionPayload();
+                client.execute(() -> {
+                    try {
+                        com.bong.client.fauna.HallucinationLayerHandler.handle(jsonPayload);
+                        BongClient.LOGGER.debug(
+                            "Processed bong:core_absorption_hallucination ({} bytes)", readableBytes);
+                    } catch (Exception e) {
+                        BongClient.LOGGER.error(
+                            "Failed to process bong:core_absorption_hallucination: {}", e.getMessage());
                     }
                 });
             }

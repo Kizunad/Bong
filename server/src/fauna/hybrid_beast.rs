@@ -1846,7 +1846,8 @@ mod tests {
             crate::fauna::drop::BIAN_YI_HEXIN,
             "bian_yi_hexin",
             "兽核物品 ID 必须为 bian_yi_hexin（plan 设计决议 §correction-3 修正），\
-             实际 drop 表常量为 {}", crate::fauna::drop::BIAN_YI_HEXIN
+             实际 drop 表常量为 {}",
+            crate::fauna::drop::BIAN_YI_HEXIN
         );
     }
 
@@ -1858,8 +1859,8 @@ mod tests {
             breakthrough_magnitude: 0.25,
             hallucination_duration_ticks: 200,
         };
-        let json = serde_json::to_string(&effect)
-            .expect("BeastCoreAbsorption ItemEffect 序列化失败");
+        let json =
+            serde_json::to_string(&effect).expect("BeastCoreAbsorption ItemEffect 序列化失败");
         let back: ItemEffect =
             serde_json::from_str(&json).expect("BeastCoreAbsorption ItemEffect 反序列化失败");
         assert!(
@@ -1871,7 +1872,8 @@ mod tests {
                 } if (m - 0.25).abs() < 1e-9 && d == 200
             ),
             "BeastCoreAbsorption round-trip 必须保持 breakthrough_magnitude=0.25 和 duration=200，\
-             实际反序列化结果: {:?}", back
+             实际反序列化结果: {:?}",
+            back
         );
     }
 
@@ -1933,7 +1935,8 @@ mod tests {
                 Some(player_id),
                 "P3 narration[{i}] 必须 scope=player（target={}），不应广播给全体玩家，\
                  实际 target={:?}",
-                player_id, n.target
+                player_id,
+                n.target
             );
         }
     }
