@@ -35,6 +35,7 @@ pub struct ResourcePackManifest {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ResourcePackEntry {
     pub id: String,
+    pub version: String,
     pub url: String,
     pub sha1: String,
     pub forced: bool,
@@ -76,7 +77,7 @@ pub enum ResourcePackClientStatus {
 
 #[derive(Debug, Default)]
 pub struct ResourcePackStatusStore {
-    statuses: HashMap<Entity, ResourcePackClientStatus>,
+    sessions: HashMap<Entity, ResourcePackSessionState>,
 }
 
 impl Resource for ResourcePackStatusStore {}
@@ -84,7 +85,28 @@ impl Resource for ResourcePackStatusStore {}
 impl ResourcePackStatusStore {
     #[cfg(test)]
     pub fn get(&self, client: Entity) -> Option<ResourcePackClientStatus> {
-        self.statuses.get(&client).copied()
+        self.sessions
+            .get(&client)
+            .and_then(|session| session.last_status)
+    }
+
+    fn should_prompt(&self, client: Entity, pack: &ResourcePackEntry) -> bool {
+        match self
+            .sessions
+            .get(&client)
+            .and_then(|session| session.accepted.get(pack.id.as_str()))
+        {
+            Some(accepted) => !accepted.matches(pack),
+            None => true,
+        }
+    }
+
+    fn record_prompted(&mut self, client: Entity, pack: &ResourcePackEntry) {
+        self.sessions
+            .entry(client)
+            .or_default()
+            .prompted
+            .insert(pack.id.clone(), ResourcePackVersion::from(pack));
     }
 
     fn record(
@@ -92,12 +114,69 @@ impl ResourcePackStatusStore {
         client: Entity,
         status: ResourcePackClientStatus,
     ) -> Option<ResourcePackClientStatus> {
-        self.statuses.insert(client, status)
+        let session = self.sessions.entry(client).or_default();
+        let previous = session.last_status.replace(status);
+        match status {
+            ResourcePackClientStatus::SuccessfullyLoaded => {
+                session.accepted.extend(session.prompted.drain());
+            }
+            ResourcePackClientStatus::Declined | ResourcePackClientStatus::FailedDownload => {
+                session.prompted.clear();
+            }
+            ResourcePackClientStatus::Accepted => {}
+        }
+        previous
+    }
+
+    #[cfg(test)]
+    fn record_loaded_for_pack(&mut self, client: Entity, pack: &ResourcePackEntry) {
+        self.sessions
+            .entry(client)
+            .or_default()
+            .accepted
+            .insert(pack.id.clone(), ResourcePackVersion::from(pack));
+    }
+
+    #[cfg(test)]
+    fn accepted_version(&self, client: Entity, pack_id: &str) -> Option<&str> {
+        self.sessions
+            .get(&client)
+            .and_then(|session| session.accepted.get(pack_id))
+            .map(|accepted| accepted.version.as_str())
+    }
+}
+
+#[derive(Debug, Default)]
+struct ResourcePackSessionState {
+    last_status: Option<ResourcePackClientStatus>,
+    prompted: HashMap<String, ResourcePackVersion>,
+    accepted: HashMap<String, ResourcePackVersion>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ResourcePackVersion {
+    version: String,
+    sha1: String,
+}
+
+impl ResourcePackVersion {
+    fn matches(&self, pack: &ResourcePackEntry) -> bool {
+        self.version == pack.version && self.sha1.eq_ignore_ascii_case(pack.sha1.as_str())
+    }
+}
+
+impl From<&ResourcePackEntry> for ResourcePackVersion {
+    fn from(pack: &ResourcePackEntry) -> Self {
+        Self {
+            version: pack.version.clone(),
+            sha1: pack.sha1.to_ascii_lowercase(),
+        }
     }
 }
 
 pub fn prompt_resource_pack_on_join(
     config: Res<ResourcePackConfig>,
+    mut store: ResMut<ResourcePackStatusStore>,
     mut joined_clients: Query<(Entity, &mut Client), Added<Client>>,
 ) {
     if config.packs.is_empty() {
@@ -106,15 +185,25 @@ pub fn prompt_resource_pack_on_join(
 
     for (entity, mut client) in &mut joined_clients {
         for pack in &config.packs {
+            if !store.should_prompt(entity, pack) {
+                tracing::info!(
+                    "[bong][resourcepack] client entity {entity:?} already accepted pack {} {}; skipping prompt",
+                    pack.id,
+                    pack.version,
+                );
+                continue;
+            }
             client.set_resource_pack(
                 pack.url.as_str(),
                 pack.sha1.as_str(),
                 pack.forced,
                 Some(Text::text(pack.prompt.clone())),
             );
+            store.record_prompted(entity, pack);
             tracing::info!(
-                "[bong][resourcepack] prompted client entity {entity:?} with pack {} {}",
+                "[bong][resourcepack] prompted client entity {entity:?} with pack {} {} {}",
                 pack.id,
+                pack.version,
                 pack.sha1,
             );
         }
@@ -199,6 +288,7 @@ pub fn resolve_resource_pack_config(
                 "{}-{}",
                 DEFAULT_RESOURCE_PACK_MANIFEST.name, DEFAULT_RESOURCE_PACK_MANIFEST.version
             ),
+            version: DEFAULT_RESOURCE_PACK_MANIFEST.version.to_string(),
             url: url.to_string(),
             sha1: sha1.to_ascii_lowercase(),
             forced: parse_bool_or_default(forced, false),
@@ -257,13 +347,14 @@ mod tests {
     use valence::protocol::packets::play::ResourcePackSendS2c;
     use valence::testing::{create_mock_client, MockClientHelper};
 
-    fn setup_resource_pack_app(config: ResourcePackConfig) -> (App, MockClientHelper) {
+    fn setup_resource_pack_app(config: ResourcePackConfig) -> (App, MockClientHelper, Entity) {
         let mut app = App::new();
         app.insert_resource(config);
+        app.insert_resource(ResourcePackStatusStore::default());
         app.add_systems(Update, prompt_resource_pack_on_join);
         let (bundle, helper) = create_mock_client("resourcepack-test");
-        app.world_mut().spawn(bundle);
-        (app, helper)
+        let client = app.world_mut().spawn(bundle).id();
+        (app, helper, client)
     }
 
     fn flush_packets(app: &mut App) {
@@ -306,6 +397,7 @@ mod tests {
             "default should push exactly one full pack"
         );
         assert_eq!(config.packs[0].id, "bong-full-v1");
+        assert_eq!(config.packs[0].version, "v1");
     }
 
     #[test]
@@ -362,7 +454,7 @@ mod tests {
             Some("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"),
             Some("false"),
         );
-        let (mut app, mut helper) = setup_resource_pack_app(config);
+        let (mut app, mut helper, _) = setup_resource_pack_app(config);
 
         app.update();
         flush_packets(&mut app);
@@ -380,6 +472,7 @@ mod tests {
             packs: vec![
                 ResourcePackEntry {
                     id: "first".to_string(),
+                    version: "v1".to_string(),
                     url: "https://example.invalid/first.zip".to_string(),
                     sha1: "1111111111111111111111111111111111111111".to_string(),
                     forced: false,
@@ -387,6 +480,7 @@ mod tests {
                 },
                 ResourcePackEntry {
                     id: "second".to_string(),
+                    version: "v1".to_string(),
                     url: "https://example.invalid/second.zip".to_string(),
                     sha1: "2222222222222222222222222222222222222222".to_string(),
                     forced: true,
@@ -395,7 +489,7 @@ mod tests {
             ],
             disabled_reason: None,
         };
-        let (mut app, mut helper) = setup_resource_pack_app(config);
+        let (mut app, mut helper, _) = setup_resource_pack_app(config);
 
         app.update();
         flush_packets(&mut app);
@@ -428,6 +522,114 @@ mod tests {
             status_from_valence(ResourcePackStatusC2s::SuccessfullyLoaded),
             ResourcePackClientStatus::SuccessfullyLoaded
         );
+    }
+
+    #[test]
+    fn successfully_loaded_pack_records_accepted_version() {
+        let client = Entity::from_raw(9);
+        let pack = resolve_resource_pack_config(None, None, None, None)
+            .packs
+            .pop()
+            .expect("default pack");
+        let mut store = ResourcePackStatusStore::default();
+
+        store.record_prompted(client, &pack);
+        assert_eq!(
+            store.record(client, ResourcePackClientStatus::SuccessfullyLoaded),
+            None
+        );
+
+        assert_eq!(
+            store.get(client),
+            Some(ResourcePackClientStatus::SuccessfullyLoaded)
+        );
+        assert_eq!(store.accepted_version(client, pack.id.as_str()), Some("v1"));
+        assert!(
+            !store.should_prompt(client, &pack),
+            "same accepted version should not be prompted again in the same server session"
+        );
+    }
+
+    #[test]
+    fn same_accepted_version_join_does_not_reprompt() {
+        let config = resolve_resource_pack_config(None, None, None, None);
+        let pack = config.packs[0].clone();
+        let (mut app, mut helper, client) = setup_resource_pack_app(config);
+        app.world_mut()
+            .resource_mut::<ResourcePackStatusStore>()
+            .record_loaded_for_pack(client, &pack);
+
+        app.update();
+        flush_packets(&mut app);
+
+        let prompts = collect_resource_pack_prompts(&mut helper);
+        assert!(
+            prompts.is_empty(),
+            "accepted version {} should not be re-prompted, actual prompts={prompts:?}",
+            pack.version
+        );
+    }
+
+    #[test]
+    fn upgraded_version_prompts_even_when_previous_version_was_accepted() {
+        let mut config = resolve_resource_pack_config(None, None, None, None);
+        let previous = config.packs[0].clone();
+        config.packs[0].id = "bong-full-v2".to_string();
+        config.packs[0].version = "v2".to_string();
+        config.packs[0].url = "https://example.invalid/bong-full-v2.zip".to_string();
+        config.packs[0].sha1 = "3333333333333333333333333333333333333333".to_string();
+        let upgraded = config.packs[0].clone();
+        let (mut app, mut helper, client) = setup_resource_pack_app(config);
+        app.world_mut()
+            .resource_mut::<ResourcePackStatusStore>()
+            .record_loaded_for_pack(client, &previous);
+
+        app.update();
+        flush_packets(&mut app);
+
+        let prompts = collect_resource_pack_prompts(&mut helper);
+        assert_eq!(prompts.len(), 1);
+        assert_eq!(prompts[0].0, upgraded.url);
+        assert_eq!(prompts[0].1, upgraded.sha1);
+    }
+
+    #[test]
+    fn changed_sha1_for_same_version_prompts_again() {
+        let mut config = resolve_resource_pack_config(None, None, None, None);
+        let previous = config.packs[0].clone();
+        config.packs[0].sha1 = "4444444444444444444444444444444444444444".to_string();
+        let upgraded = config.packs[0].clone();
+        let (mut app, mut helper, client) = setup_resource_pack_app(config);
+        app.world_mut()
+            .resource_mut::<ResourcePackStatusStore>()
+            .record_loaded_for_pack(client, &previous);
+
+        app.update();
+        flush_packets(&mut app);
+
+        let prompts = collect_resource_pack_prompts(&mut helper);
+        assert_eq!(prompts.len(), 1);
+        assert_eq!(prompts[0].1, upgraded.sha1);
+    }
+
+    #[test]
+    fn declined_or_failed_download_does_not_mark_version_accepted() {
+        let client = Entity::from_raw(11);
+        let pack = resolve_resource_pack_config(None, None, None, None)
+            .packs
+            .pop()
+            .expect("default pack");
+        let mut declined = ResourcePackStatusStore::default();
+        declined.record_prompted(client, &pack);
+        declined.record(client, ResourcePackClientStatus::Declined);
+        assert_eq!(declined.accepted_version(client, pack.id.as_str()), None);
+        assert!(declined.should_prompt(client, &pack));
+
+        let mut failed = ResourcePackStatusStore::default();
+        failed.record_prompted(client, &pack);
+        failed.record(client, ResourcePackClientStatus::FailedDownload);
+        assert_eq!(failed.accepted_version(client, pack.id.as_str()), None);
+        assert!(failed.should_prompt(client, &pack));
     }
 
     #[test]
