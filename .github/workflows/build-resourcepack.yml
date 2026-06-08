@@ -22,23 +22,27 @@ name: Build Resource Pack
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: resourcepack-${{ github.ref }}
   cancel-in-progress: true
 
+env:
+  BONG_RESOURCEPACK_OUT_DIR: /tmp/bong-resourcepack
+  BONG_RESOURCEPACK_VERSION: v1
+
 jobs:
   build:
+    name: Build resource pack
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    env:
-      BONG_RESOURCEPACK_OUT_DIR: /tmp/bong-resourcepack
-      BONG_RESOURCEPACK_VERSION: v1
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
       - name: Setup Python
         uses: actions/setup-python@v5
@@ -98,25 +102,43 @@ jobs:
         with:
           name: bong-resourcepack-${{ github.sha }}
           path: |
-            /tmp/bong-resourcepack/bong-full-v1.zip
-            /tmp/bong-resourcepack/bong-full-v1.zip.sha1
-            /tmp/bong-resourcepack/manifest.json
+            ${{ env.BONG_RESOURCEPACK_OUT_DIR }}/${{ format('bong-full-{0}.zip', env.BONG_RESOURCEPACK_VERSION) }}
+            ${{ env.BONG_RESOURCEPACK_OUT_DIR }}/${{ format('bong-full-{0}.zip.sha1', env.BONG_RESOURCEPACK_VERSION) }}
+            ${{ env.BONG_RESOURCEPACK_OUT_DIR }}/manifest.json
           if-no-files-found: error
 
+  publish-release:
+    name: Publish release asset
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      # Required only on main pushes to create/update the resourcepack-v1 release assets.
+      contents: write
+
+    steps:
+      - name: Download resource pack artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: bong-resourcepack-${{ github.sha }}
+          path: ${{ env.BONG_RESOURCEPACK_OUT_DIR }}
+
       - name: Publish release artifact
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         env:
+          GH_REPO: ${{ github.repository }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
           tag="resourcepack-${BONG_RESOURCEPACK_VERSION}"
+          pack_file="bong-full-${BONG_RESOURCEPACK_VERSION}.zip"
           if ! gh release view "$tag" >/dev/null 2>&1; then
             gh release create "$tag" \
               --title "Bong Resource Pack ${BONG_RESOURCEPACK_VERSION}" \
               --notes "Automated Bong full resource pack build for ${GITHUB_SHA}."
           fi
           gh release upload "$tag" \
-            "$BONG_RESOURCEPACK_OUT_DIR/bong-full-v1.zip" \
-            "$BONG_RESOURCEPACK_OUT_DIR/bong-full-v1.zip.sha1" \
+            "$BONG_RESOURCEPACK_OUT_DIR/$pack_file" \
+            "$BONG_RESOURCEPACK_OUT_DIR/$pack_file.sha1" \
             "$BONG_RESOURCEPACK_OUT_DIR/manifest.json" \
             --clobber
