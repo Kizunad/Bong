@@ -66,6 +66,8 @@ pub mod skillbar_config_emit;
 mod skillbar_config_emit_test;
 // plan-daozhan-v1 P1 — 道伥伪装状态 S2C CustomPayload
 pub mod daozhan_disguise_emit;
+// plan-era-state-v1 P3 — 时代天象 S2C CustomPayload
+pub mod era_ambiance_emit;
 // plan-fauna-mimic-spider-v1 P2 — 拟态蛛伪装状态 S2C CustomPayload
 pub mod spider_disguise_emit;
 pub mod spirit_treasure_emit;
@@ -463,6 +465,16 @@ pub fn register(app: &mut App) {
                 .after(crate::world::weather_to_environment::weather_environment_sync_system),
             zone_environment_bridge::zone_environment_broadcast_system
                 .after(zone_environment_bridge::mark_zone_environment_dirty_for_new_clients),
+        ),
+    );
+    // plan-era-state-v1 P3 — 时代天象 S2C：监听 EraChangedEvent，按 realm gate 分档发送。
+    // 排在 era 系统之后（WorldEraState + EraChangedEvent 由 world::era::register 注册）。
+    app.add_systems(
+        Update,
+        (
+            era_ambiance_emit::era_ambiance_on_era_changed_system
+                .after(crate::world::era::era_decree_system),
+            era_ambiance_emit::era_ambiance_on_join_system,
         ),
     );
     app.add_systems(

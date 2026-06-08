@@ -102,6 +102,8 @@ public class BongNetworkHandler {
         registerDaoZhanRevealChannel();
         // plan-fauna-stitched-beast-v1 P3 — 兽核吸收幻觉 HUD
         registerCoreAbsorptionHallucinationChannel();
+        // plan-era-state-v1 P3 — 时代天象 S2C CustomPayload（realm gate 由 server 执行）
+        registerEraAmbianceChannel();
         // 旧 server 推过的 realm_collapse evac HUD 是 static volatile 字段倒计时，
         // 不会在断线 / 切服 / 重连时自清。Disconnect 时强制清掉，避免上一 server
         // 的 "域崩撤离 48s" 倒计时跨 session 续命。
@@ -129,6 +131,8 @@ public class BongNetworkHandler {
                 DaoZhanDisguiseHandler.clearOnDisconnect();
                 // plan-fauna-stitched-beast-v1 P3 — 断线时清理幻觉层状态
                 com.bong.client.fauna.HallucinationLayerStore.clearOnDisconnect();
+                // plan-era-state-v1 P3 — 断线时重置时代天象状态
+                com.bong.client.era.EraAmbianceState.reset();
             })
         );
         ClientPlayConnectionEvents.JOIN.register(
@@ -890,6 +894,37 @@ public class BongNetworkHandler {
             iterator.next();
             iterator.remove();
         }
+    }
+
+    // ── plan-era-state-v1 P3 — 时代天象 S2C CustomPayload ──────────────────────
+
+    /**
+     * 注册 {@code bong:era_ambiance} channel。
+     * payload JSON → {@link com.bong.client.era.EraAmbianceHandler#handle(String)} →
+     * {@link com.bong.client.era.EraAmbianceState} 存储，渲染层按需消费。
+     * Realm gate 由 server 执行，client 收到即接受，不做二次 realm 过滤。
+     */
+    private static void registerEraAmbianceChannel() {
+        ClientPlayNetworking.registerGlobalReceiver(
+            new Identifier("bong", "era_ambiance"),
+            (client, handler, buf, responseSender) -> {
+                int readableBytes = buf.readableBytes();
+                byte[] bytes = new byte[readableBytes];
+                buf.readBytes(bytes);
+                String jsonPayload = ServerDataEnvelope.decodeUtf8(bytes);
+                markConnectionPayload();
+                client.execute(() -> {
+                    try {
+                        com.bong.client.era.EraAmbianceHandler.handle(jsonPayload);
+                        BongClient.LOGGER.debug(
+                            "Processed bong:era_ambiance payload ({} bytes)", readableBytes);
+                    } catch (Exception ex) {
+                        BongClient.LOGGER.error(
+                            "Failed to handle bong:era_ambiance payload: {}", ex.getMessage());
+                    }
+                });
+            }
+        );
     }
 
 }
