@@ -63,3 +63,43 @@ plan-mineral-v2 P5 已决策：
 - 拒绝 pack → **降级，不 kick**
 - 现有 `bong-mineral-v1.zip` sha1 已验证（`scripts/build-resourcepack.sh`）
 - **本 plan P0 以此为起点扩展**，不重做 mineral-v2 已完成部分
+
+---
+
+## Finish Evidence
+
+### 落地清单
+
+- **P0 全量资源包构建**：`scripts/build-resourcepack.sh` 将 `client/src/main/resources/assets/` 下矿物、实体模型、VFX、HUD effect、音频配方等运行时资源合并为 `bong-full-v1.zip`；`client/resourcepack/manifest.json` 固化 `version`、`sha1`、`size` 和子包 file count。
+- **P0 构建测试**：`scripts/test_build_resourcepack.py` 覆盖完整构建、空资产树、白名单过滤、缺失 assets root 错误分支。
+- **P1 server 推送**：`server/src/network/resourcepack.rs` 的 `ResourcePackConfig { packs }` 支持按序推送；`prompt_resource_pack_on_join` 在 join 后发送 Valence resource pack prompt；拒绝/下载失败只记录降级状态，不 kick。
+- **P2 CI artifact**：`.github/workflows/build-resourcepack.yml` 在 PR 构建并上传 zip/sha1/manifest artifact；main push 发布 `resourcepack-v1` GitHub Release assets；workflow 校验生成 manifest 与 `ResourcePackConfig` 默认 URL/sha1 不漂移。
+- **P3 版本管理**：`ResourcePackEntry.version` 与 `ResourcePackStatusStore` session 状态记录已成功加载的 `{version, sha1}`；同版本同 sha1 不重复推，版本或 sha1 变化会重新推送。
+
+### 关键 commit / PR
+
+- `e736d8b7f` / PR #446：实现资源包全量清单 P0。
+- `890c66c73` / PR #447：实现资源包 server join hook P1。
+- `83eacd0e4` / PR #448：实现资源包 CI artifact 与 Release 发布 P2。
+- `f145a78eb`：实现资源包版本接受记录 P3。
+
+### 测试结果
+
+- `python3 -m unittest scripts/test_build_resourcepack.py`：4 tests passed。
+- `bash -n scripts/build-resourcepack.sh`：通过。
+- `BONG_RESOURCEPACK_OUT_DIR=$(mktemp -d) BONG_RESOURCEPACK_VERSION=v1 bash scripts/build-resourcepack.sh`：生成 `bong-full-v1.zip`，sha1=`9af0504a8f09b08d308d3d9f3cb5e9853f6dc0e3`。
+- `cd server && cargo test resourcepack`：14 tests passed。
+- `cd server && cargo fmt --check`：通过。
+- `cd server && cargo clippy --all-targets -- -D warnings`：通过。
+- GitHub Actions run `27140750320`：main `Build resource pack` 与 `Publish release asset` jobs 均 success；Release `resourcepack-v1` 已包含 `bong-full-v1.zip`、`bong-full-v1.zip.sha1`、`manifest.json`。
+
+### 跨仓库核验
+
+- **server**：`ResourcePackConfig` 默认 URL 指向 `https://github.com/Kizunad/Bong/releases/download/resourcepack-v1/bong-full-v1.zip`；默认 sha1 来自 manifest 常量；`ResourcePackStatusStore` 记录 session 级 accepted version。
+- **client**：无需 Fabric client 代码接线；原版 Minecraft 客户端处理 Valence `ResourcePackSendS2c`，资源来自 `client/src/main/resources/assets/`。
+- **agent**：不涉及 agent/schema 变更。
+
+### 遗留 / 后续
+
+- 生产带宽与 CDN 迁移不在本 plan 范围；当前 v1 托管在 GitHub Release。
+- `plan-client-login-ux-v1` 可基于本 plan 的 manifest/version/sha1 结果继续做登录 UX 与缓存提示。
