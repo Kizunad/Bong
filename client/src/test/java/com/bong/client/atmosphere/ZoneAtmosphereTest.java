@@ -1,10 +1,14 @@
 package com.bong.client.atmosphere;
 
+import com.bong.client.era.EraAmbianceHandler;
+import com.bong.client.era.EraAmbiancePayload;
+import com.bong.client.era.EraAmbianceState;
 import com.bong.client.environment.EnvironmentFogCommand;
 import com.bong.client.state.SeasonState;
 import com.bong.client.state.ZoneState;
 import net.minecraft.util.math.Vec3d;
 import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 import java.util.ArrayList;
@@ -18,9 +22,15 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class ZoneAtmosphereTest {
+    @BeforeEach
+    void resetEraState() {
+        EraAmbianceState.reset();
+    }
+
     @AfterEach
     void resetRenderer() {
         ZoneAtmosphereRenderer.resetForTests();
+        EraAmbianceState.reset();
     }
 
     @Test
@@ -360,6 +370,133 @@ class ZoneAtmosphereTest {
                 .of(ZoneState.create("tsy_lingxu", "TSY", 0.4, 5, 10L), null)
                 .withTsyTier(tier),
             1L
+        );
+    }
+
+    // ── plan-era-state-v1 M2 — EraAmbianceState 接入 ZoneAtmospherePlanner ────
+
+    /**
+     * 验证 EraAmbianceState 无时代宣告时，ZoneAtmospherePlanner 输出不受影响（无 era 干扰）。
+     *
+     * <p>这是 M2 的 baseline 测试：任何新代码不能在无 era 时改变 sky_tint 或 fog_density。
+     */
+    @Test
+    void planner_without_era_returns_baseline_profile() {
+        // EraAmbianceState 已在 @BeforeEach 重置（target=null）
+        ZoneAtmosphereCommand cmd = commandFor(
+            ZoneState.create("spawn_plain", "Spawn", 0.5, 1, 1L), null
+        );
+        assertNotNull(cmd, "无 era 时 planner 仍应返回 non-null command");
+
+        ZoneAtmosphereProfile baseline = ZoneAtmosphereProfileRegistry.loadDefault().forZone("spawn_plain");
+        assertNotNull(baseline, "spawn_plain 应有 baseline profile");
+
+        // 无 era → sky_tint 和 fog_density 应等于 baseline（0 era 干扰）
+        assertEquals(
+            baseline.skyTintRgb(), cmd.skyTintRgb(),
+            "无时代宣告时 sky_tint_rgb 应等于 baseline profile 值；" +
+            "期望 #" + Integer.toHexString(baseline.skyTintRgb()) +
+            " 实际 #" + Integer.toHexString(cmd.skyTintRgb())
+        );
+        assertEquals(
+            baseline.fogDensity(), cmd.fogDensity(), 0.001,
+            "无时代宣告时 fog_density 应等于 baseline profile 值；" +
+            "期望 " + baseline.fogDensity() + " 实际 " + cmd.fogDensity()
+        );
+    }
+
+    /**
+     * 验证 EraAmbianceState 接受灾劫时代 payload 后（transition 推进到完成），
+     * ZoneAtmospherePlanner 输出的 sky_tint_rgb 向灾劫天象方向插值。
+     *
+     * <p>这是 M2 的核心测试：EraAmbianceState 接入 ZoneAtmospherePlanner 生产路径后，
+     * 收到 era_ambiance payload 时 planner 输出的 sky_tint 应发生变化。
+     * 任何回归（EraAmbianceState 未接入 planner）都会让此测试失败。
+     */
+    @Test
+    void planner_applies_calamity_era_sky_tint_after_full_transition() {
+        // 接受灾劫时代 payload
+        String calamityJson = """
+            {
+              "v": 1,
+              "era_type": "calamity",
+              "sky_tint_hex": "#4A1A1A",
+              "fog_density_delta": 0.15,
+              "ambient_sound_id": "ambient.weather.thunder",
+              "transition_ticks": 1
+            }
+            """;
+        EraAmbiancePayload payload = EraAmbianceHandler.handle(calamityJson);
+        assertNotNull(payload, "灾劫时代 payload 解析不应返回 null");
+        EraAmbianceState.accept(payload);
+
+        // 推进 tick 到 transition 完成（transitionTicks=1，tick 一次即 100% 完成）
+        EraAmbianceState.tick();
+
+        ZoneAtmosphereCommand cmd = commandFor(
+            ZoneState.create("spawn_plain", "Spawn", 0.5, 1, 1L), null
+        );
+        assertNotNull(cmd, "接受 era payload 后 planner 仍应返回 non-null command");
+
+        // sky_tint 应向 0x4A1A1A（灾劫）插值，不再等于 baseline
+        ZoneAtmosphereProfile baseline = ZoneAtmosphereProfileRegistry.loadDefault().forZone("spawn_plain");
+        assertNotNull(baseline, "spawn_plain 应有 baseline profile");
+
+        int eraSkyTint = 0x4A1A1A; // CALAMITY_SKY_TINT from server
+        // 若 EraAmbianceState 已正确接入，skyTintRgb 应向 eraSkyTint 偏移，
+        // 不再等于 baseline（除非 baseline 恰好等于 era tint，极小概率）
+        assertNotEquals(
+            baseline.skyTintRgb(), cmd.skyTintRgb(),
+            "灾劫时代 transition 完成后 sky_tint_rgb 应被 EraAmbianceState 修改，" +
+            "不再等于 baseline #" + Integer.toHexString(baseline.skyTintRgb()) +
+            "（实际 #" + Integer.toHexString(cmd.skyTintRgb()) + "）" +
+            "；若两者相等说明 EraAmbianceState 未接入 ZoneAtmospherePlanner（M2 孤岛未修）"
+        );
+
+        // 并且 fog_density 应高于 baseline（灾劫 fog_density_delta=+0.15）
+        assertTrue(
+            cmd.fogDensity() > baseline.fogDensity() - 0.001,
+            "灾劫时代 fog_density 应 >= baseline（fog_delta=+0.15）；" +
+            "baseline=" + baseline.fogDensity() + " 实际=" + cmd.fogDensity()
+        );
+    }
+
+    /**
+     * 验证死灵域（dead zone）不受时代天象叠加影响（dead zone 优先）。
+     *
+     * <p>M2 约束：死灵域强制白/灰天空，时代天象不覆盖死灵域视觉。
+     */
+    @Test
+    void planner_dead_zone_sky_not_overridden_by_era_ambiance() {
+        // 接受灾劫时代 payload（灰暗红天）
+        String calamityJson = """
+            {
+              "v": 1,
+              "era_type": "calamity",
+              "sky_tint_hex": "#4A1A1A",
+              "fog_density_delta": 0.15,
+              "ambient_sound_id": "ambient.weather.thunder",
+              "transition_ticks": 1
+            }
+            """;
+        EraAmbiancePayload payload = EraAmbianceHandler.handle(calamityJson);
+        assertNotNull(payload);
+        EraAmbianceState.accept(payload);
+        EraAmbianceState.tick();
+
+        // spirit_qi=0.0 → dead zone
+        ZoneAtmosphereCommand deadCmd = commandFor(
+            ZoneState.create("south_ash_dead_zone", "Dead", 0.0, 5, 1L), null
+        );
+        ZoneAtmosphereCommand normalCmd = commandFor(
+            ZoneState.create("spawn_plain", "Spawn", 0.5, 1, 1L), null
+        );
+
+        // dead zone 强制 DEAD_SKY_RGB=0xF0F0F0，不受时代 sky_tint 影响
+        // 若 dead zone 和 normal zone 的 sky_tint 不同，说明 dead zone 优先级正确
+        assertNotEquals(
+            deadCmd.skyTintRgb(), normalCmd.skyTintRgb(),
+            "死灵域的 sky_tint 应与普通 zone 不同（死灵域固定灰白，普通 zone 受 era 染色）"
         );
     }
 }

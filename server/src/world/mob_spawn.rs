@@ -97,14 +97,12 @@ pub fn spawn_natural_mob_at(
 /// era 时代对兽 spawn 密度的 baseline clamp。
 /// beast_density_mul > 1.0 时允许超过 1.0 的有效概率（冗余 spawn 机会），
 /// < 1.0 时有一定概率抑制 spawn。
-// NOTE: 已集成到 spawn 决策层，binary 直接用于 era_beast_spawn_gate，暂保留 allow。
-#[allow(dead_code)]
 pub const ERA_BEAST_SPAWN_DENSITY_CLAMP_MAX: f64 = 2.0;
 
 /// P1 era beast spawn 密度门控（纯函数，方便测试）。
-// NOTE: 调用侧（botany/hazard.rs spawn 调度）在 spawn 决策前调用此函数；
-//       binary 中目前未直接调用，allow 保留接口供集成测试/botany 调用。
-#[allow(dead_code)]
+///
+/// 生产调用者：[`spawn_attracted_mobs_from_harvest`]（botany/hazard.rs）在每次
+/// `BotanyAttractsMobsEvent` 触发 spawn 前调用，按 `WorldEraState.beast_density_mul` 门控。
 ///
 /// 根据 `beast_density_mul`（来自 `WorldEraState::current_modifiers().beast_density_mul`）
 /// 以及伪随机种子 `spawn_seed`（通常为 tick ^ zone_hash 等轻量信息），决定本次 spawn 是否放行。

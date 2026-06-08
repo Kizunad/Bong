@@ -43,6 +43,7 @@ import com.bong.client.ui.UiOpenScreens;
 import com.bong.client.visual.VisualEffectController;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
+import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.fabricmc.fabric.api.client.networking.v1.ClientPlayConnectionEvents;
 import net.fabricmc.fabric.api.client.networking.v1.ClientPlayNetworking;
 import net.minecraft.text.Text;
@@ -104,6 +105,11 @@ public class BongNetworkHandler {
         registerCoreAbsorptionHallucinationChannel();
         // plan-era-state-v1 P3 — 时代天象 S2C CustomPayload（realm gate 由 server 执行）
         registerEraAmbianceChannel();
+        // plan-era-state-v1 M2 — EraAmbianceState 渐变计数器每游戏 tick 推进（非渲染帧）。
+        // 必须在游戏 tick 而非渲染帧调用，保证 transitionTicks 按 @20TPS 推进。
+        ClientTickEvents.END_CLIENT_TICK.register(
+            client -> com.bong.client.era.EraAmbianceState.tick()
+        );
         // 旧 server 推过的 realm_collapse evac HUD 是 static volatile 字段倒计时，
         // 不会在断线 / 切服 / 重连时自清。Disconnect 时强制清掉，避免上一 server
         // 的 "域崩撤离 48s" 倒计时跨 session 续命。

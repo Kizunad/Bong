@@ -551,17 +551,53 @@ mod tests {
 
     // ── 新玩家连接补发（on_join）逻辑 ─────────────────────────────────────────
 
-    /// 验证 WorldEraState Unknown 时不触发新玩家补发逻辑（payload = None 路径）。
+    /// 验证 WorldEraState Unknown 时 build_payload_for_tier 对所有 realm gate 分档均不发
+    /// 实质性天象包：Full 档返回 reset（非 None），Attenuated/None 档返回 None。
+    ///
+    /// 同时覆盖 on_join_system 在 era == Unknown 时直接 return 的实际效果：
+    /// build_payload_for_tier(Unknown, Full) 返回 reset payload，
+    /// 但该路径只在 era != Unknown 时触发（on_join_system 先判断 era == Unknown → return）。
     #[test]
-    fn on_join_unknown_era_no_payload_for_spirit() {
-        // Spirit 玩家，时代 Unknown → 不发包（build_payload_for_tier 对 Full+Unknown 返回 reset，
-        // 但 on_join 在 era == Unknown 时直接跳过）
-        let era = EraType::Unknown;
-        // on_join_system 在 era == Unknown 时直接 return，验证此路径
-        assert_eq!(era, EraType::Unknown, "测试前置：era 应为 Unknown");
-        // build_payload_for_tier(Unknown, Full) 返回 reset payload，但 on_join 先判断
-        // era == Unknown 并 return，不进入 client 循环
-        // → 此测试证明函数签名正确（不需要 Bevy app）
+    fn on_join_unknown_era_no_meaningful_payload_for_any_tier() {
+        // Full 档（Spirit+）：Unknown 时返回 reset payload（sky_tint="#000000"，fog=0，无 sound）
+        let full_payload = build_payload_for_tier(EraType::Unknown, RealmGateTier::Full).expect(
+            "Unknown+Full 应返回 reset payload 而非 None（on_join_system 在 era==Unknown 时 skip）",
+        );
+        assert_eq!(
+            full_payload.sky_tint_hex, "#000000",
+            "Unknown 时代 Full 档 reset payload 的 sky_tint_hex 应为 #000000（无天象）；\
+             实际 {}",
+            full_payload.sky_tint_hex
+        );
+        assert!(
+            (full_payload.fog_density_delta - 0.0).abs() < 1e-9,
+            "Unknown 时代 Full 档 reset payload 的 fog_density_delta 应为 0.0；\
+             实际 {}",
+            full_payload.fog_density_delta
+        );
+        assert!(
+            full_payload.ambient_sound_id.is_empty(),
+            "Unknown 时代 Full 档 reset payload 的 ambient_sound_id 应为空字符串（无音效）；\
+             实际 {:?}",
+            full_payload.ambient_sound_id
+        );
+
+        // Attenuated 档（Solidify）：Unknown 时返回 None（无需发缩减包）
+        let attenuated = build_payload_for_tier(EraType::Unknown, RealmGateTier::Attenuated);
+        assert!(
+            attenuated.is_none(),
+            "Unknown 时代 Attenuated 档应返回 None（无天象，无需发任何包）；\
+             实际 {:?}",
+            attenuated
+        );
+
+        // None 档（Condense-）：始终返回 None
+        let none_tier = build_payload_for_tier(EraType::Unknown, RealmGateTier::None);
+        assert!(
+            none_tier.is_none(),
+            "Unknown 时代 None 档应返回 None（境界不足，不发包）；实际 {:?}",
+            none_tier
+        );
     }
 
     /// 验证灾劫时代 Spirit 玩家连接时会产生完整 payload（on_join 路径）。
