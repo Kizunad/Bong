@@ -194,29 +194,40 @@ EFFECTS: list[tuple[str, str, str]] = [
 ]
 
 
-def gen_one(eid: str, motif: str, force: bool) -> tuple[str, bool, str]:
-    out = OUT_DIR / f"{eid}.png"
-    if out.exists() and not force:
-        return (eid, True, "skip (exists)")
+def build_cmd(eid: str, motif: str) -> list[str]:
+    """构造 gen.py 命令（纯函数，便于测试）。"""
     prompt = f"{STYLE} — motif: {motif}"
-    cmd = [
+    return [
         sys.executable, str(GEN), prompt,
         "--name", eid, "--style", "none", "--transparent",
         "--size", "1024x1024", "--out", str(OUT_DIR), "--save-prompt",
     ]
-    proc = subprocess.run(cmd, capture_output=True, text=True)
+
+
+def gen_one(eid: str, motif: str, *, force: bool) -> tuple[str, bool, str]:
+    out = OUT_DIR / f"{eid}.png"
+    if out.exists() and not force:
+        return (eid, True, "skip (exists)")
+    try:
+        proc = subprocess.run(
+            build_cmd(eid, motif), capture_output=True, text=True, timeout=360
+        )
+    except subprocess.TimeoutExpired:
+        # gen.py 的 urllib 自带 ~300s 读超时；这层兜底防整批卡死。
+        return (eid, False, "TIMEOUT after 360s")
     ok = out.exists() and proc.returncode == 0
     tail = (proc.stderr or proc.stdout or "").strip().splitlines()
     return (eid, ok, tail[-1] if tail else ("ok" if ok else "FAILED"))
 
 
-def install() -> None:
+def install() -> tuple[int, list[str]]:
+    """缩到 256 装进 client 资产；返回 (装入数, 缺失 id 列表)。"""
     from PIL import Image
 
     ASSET_DIR.mkdir(parents=True, exist_ok=True)
     ids = {e[0] for e in EFFECTS}
     n = 0
-    missing = []
+    missing: list[str] = []
     for eid in sorted(ids):
         src = OUT_DIR / f"{eid}.png"
         if not src.exists():
@@ -227,9 +238,14 @@ def install() -> None:
         )
         im.save(ASSET_DIR / f"{eid}.png")
         n += 1
-    print(f"installed {n} icons → {ASSET_DIR.relative_to(REPO_ROOT)}")
+    try:
+        shown = ASSET_DIR.relative_to(REPO_ROOT)
+    except ValueError:
+        shown = ASSET_DIR
+    print(f"installed {n} icons → {shown}")
     if missing:
         print(f"MISSING ({len(missing)}): {', '.join(missing)}", file=sys.stderr)
+    return (n, missing)
 
 
 def main() -> None:
@@ -258,7 +274,7 @@ def main() -> None:
     print(f"生成 {len(todo)} 个图标（jobs={args.jobs}, force={args.force}）→ {OUT_DIR}")
     results: list[tuple[str, bool, str]] = []
     with ThreadPoolExecutor(max_workers=max(1, args.jobs)) as pool:
-        futs = [pool.submit(gen_one, eid, motif, args.force)
+        futs = [pool.submit(gen_one, eid, motif, force=args.force)
                 for eid, _cat, motif in todo]
         for f in futs:
             eid, ok, msg = f.result()

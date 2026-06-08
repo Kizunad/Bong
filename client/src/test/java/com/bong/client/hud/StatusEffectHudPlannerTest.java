@@ -78,6 +78,23 @@ class StatusEffectHudPlannerTest {
             "un-iconned effect must fall back to a kind-tint inner fill");
     }
 
+    @Test void nullOrEmptyIdFallsBackGracefully() {
+        // StatusEffectStore.Effect coerces a null id to "" — buildCommands must
+        // not crash and must fall back to a kind tint (never a texture draw).
+        StatusEffectStore.replace(List.of(
+            new StatusEffectStore.Effect(null, "空ID", StatusEffectStore.Kind.UNKNOWN, 1, 5_000, 0xFF808080, "", 0),
+            new StatusEffectStore.Effect("", "空串", StatusEffectStore.Kind.BUFF, 1, 5_000, 0xFF55CC66, "", 0)
+        ));
+        List<HudRenderCommand> cmds = StatusEffectHudPlanner.buildCommands(800, 600);
+
+        assertFalse(cmds.stream().anyMatch(HudRenderCommand::isTexturedRect),
+            "null/empty id must not emit a TEXTURED_RECT (no '' icon ships)");
+        long tintFills = cmds.stream().filter(c ->
+            c.isRect() && c.width() == StatusEffectHudPlanner.SLOT_SIZE - 4
+                && c.height() == StatusEffectHudPlanner.SLOT_SIZE - 4).count();
+        assertEquals(2L, tintFills, "both blank-id effects must fall back to a kind-tint inner fill");
+    }
+
     @Test void debuffRemainingBarUsesRedCountdown() {
         StatusEffectStore.replace(List.of(
             new StatusEffectStore.Effect("stamina_crash", "体力虚脱", StatusEffectStore.Kind.DEBUFF, 1, 5_000, 0xFFFF8030, "", 0)
