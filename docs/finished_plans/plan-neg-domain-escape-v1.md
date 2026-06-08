@@ -43,9 +43,9 @@
 
 | 阶段 | 内容 | 状态 | 验收 |
 |------|------|------|------|
-| **P0** | agent calamity 加负灵域豁免判定：玩家 zone spirit_qi < 0 时不触发/挂起天劫；出域后恢复 | ⬜ | ≥ 8 单测：mock player in neg zone → calamity skill 不发天劫事件 / 玩家移到正 zone → 重新评估触发 / pending 后条件变化不误触发 / 仅通灵境豁免（固元/凝脉不豁免）/ 离线重连 pending 保留 |
-| **P1** | Narration 正典化：天道"失去锁定" / "重新锁定"提示 + 溺水暗杀术 narration（感知对方真元骤降）| ⬜ | ≥ 6 单测：通灵境玩家入负灵域时广播"灵压庇护"类 narration / 出域广播"重新锁定" / 对方 qi_current 5 tick 内降超 25%×qi_max 触发溺水 hint / 境界差不足两级不触发 / 私信 A + 公开 B 气息溃散 scope 正确 |
-| **P2** | telemetry + 平衡数据：逃遁使用频率 / 逃遁后境界跌落率 / 实际成功规避天劫次数 | ⬜ | ≥ 4 单测：三类计数器累积正确 + 累积到 plan-tribulation-balance-v1 的数据管道 |
+| **P0** | agent calamity 加负灵域豁免判定：玩家 zone spirit_qi < 0 时不触发/挂起天劫；出域后恢复 | ✅ 2026-06-08 | ≥ 8 单测：mock player in neg zone → calamity skill 不发天劫事件 / 玩家移到正 zone → 重新评估触发 / pending 后条件变化不误触发 / 仅通灵境豁免（固元/凝脉不豁免）/ 离线重连 pending 保留 |
+| **P1** | Narration 正典化：天道"失去锁定" / "重新锁定"提示 + 溺水暗杀术 narration（感知对方真元骤降）| ✅ 2026-06-08 | ≥ 6 单测：通灵境玩家入负灵域时广播"灵压庇护"类 narration / 出域广播"重新锁定" / 对方 qi_current 5 tick 内降超 25%×qi_max 触发溺水 hint / 境界差不足两级不触发 / 私信 A + 公开 B 气息溃散 scope 正确 |
+| **P2** | telemetry + 平衡数据：逃遁使用频率 / 逃遁后境界跌落率 / 实际成功规避天劫次数 | ✅ 2026-06-08 | ≥ 4 单测：三类计数器累积正确 + 累积到 plan-tribulation-balance-v1 的数据管道 |
 
 ---
 
@@ -99,3 +99,37 @@
 ## §5 进度日志
 
 - 2026-05-31：骨架创建。worldview §二 战术价值审计，agent calamity 代码无负灵域豁免判定；negative_zone.rs 的物理已足够支撑溺水物理，缺的是逻辑判定和叙事正典化。
+
+## Finish Evidence
+
+### 落地清单
+
+- **P0 负灵域天劫豁免 gate**：`agent/packages/tiandao/src/neg-domain-escape.ts` 增加 `applyNegDomainTribulationGate`，`agent/packages/tiandao/src/runtime.ts` 在天道 tick 后处理 targeted `thunder_tribulation`，`agent/packages/tiandao/src/world-model.ts` 持久化 `NegDomainPendingTribulation`。
+- **P1 负灵域叙事正典化**：`agent/packages/tiandao/src/neg-domain-escape.ts` 增加负灵域失锁/重锁 narration 与 `renderNegDomainNarrations` 溺水暗杀术提示，`agent/packages/tiandao/src/runtime.ts` 将 narration 接入 tick 输出。
+- **P2 telemetry 与平衡数据管道**：`agent/packages/tiandao/src/world-model.ts` 增加 `NegDomainEscapeTelemetrySnapshot` 与逃遁 session，`agent/packages/tiandao/src/redis-ipc.ts` 扩展 Redis mirror 字段，`agent/packages/schema/src/agent-world-model.ts` 与 `agent/packages/schema/generated/agent-world-model-*.json` 同步 schema。
+- **测试与 fixture**：`agent/packages/tiandao/tests/neg-domain-escape.test.ts` 覆盖 P0/P1/P2 行为，`agent/packages/tiandao/tests/runtime.test.ts` 覆盖 runtime wiring 与 telemetrySink，`agent/packages/tiandao/tests/redis-ipc.test.ts` 覆盖 Redis mirror 兼容解析，`agent/packages/tiandao/data/tiandao-snapshot-200.json` / `tiandao-snapshot-300.json` 更新 snapshot 样本。
+
+### 关键 commit
+
+- `915c4e778a8a62d75626f211e076eb0bdf70a8f7`（2026-06-08）`feat(tiandao): P0 负灵域天劫豁免 gate`，PR #450：`https://github.com/Kizunad/Bong/pull/450`。
+- `0b429667383dd102522c04354593a721f09a1e36`（2026-06-08）`feat(tiandao): P1 负灵域溺水叙事正典化`，PR #451：`https://github.com/Kizunad/Bong/pull/451`。
+- `20b7411d2d4cec5b45ff917be727066df607af2c`（2026-06-08）`feat(tiandao): 接入负灵域逃遁 P2 telemetry`，PR #452：`https://github.com/Kizunad/Bong/pull/452`。
+
+### 测试结果
+
+- P0 PR #450：`e2e` CI 通过，`/review` 判定可合并，CodeRabbit 通过。
+- P1 PR #451：`e2e` CI 通过，`/review` 判定可合并，CodeRabbit 通过。
+- P2 PR #452：`cd agent/packages/tiandao && npm test -- --run tests/neg-domain-escape.test.ts tests/runtime.test.ts tests/redis-ipc.test.ts` 通过（3 files / 88 tests）。
+- P2 PR #452：`cd agent && npm run build` 通过；`cd agent/packages/schema && npm test` 通过（25 files / 554 tests）；`cd agent/packages/schema && npm run generate:check` 通过。
+- P2 PR #452：`cd agent/packages/tiandao && npm test` 通过（65 files / 601 tests）；`e2e` CI 通过；`/review` 判定可合并；CodeRabbit 通过。
+
+### 跨仓库核验
+
+- **agent**：`applyNegDomainTribulationGate`、`renderNegDomainNarrations`、`recordNegDomainEscapeTelemetry`、`WorldModel.getNegDomainEscapeTelemetrySnapshot`、`WORLD_MODEL_STATE_FIELDS.negDomainEscapeTelemetry` 已落地。
+- **schema**：`AgentWorldModelSnapshotV1.negDomainPendingTribulations`、`AgentWorldModelSnapshotV1.negDomainEscapeTelemetry`、`AgentWorldModelSnapshotV1.negDomainEscapeSessions` 已同步到 generated JSON schema。
+- **server/client**：本 plan 未引入 server/client 改动；负灵域抽吸物理继续复用既有 `negative_zone.rs` / `qi_physics::siphon_amount`，叙事与 telemetry 在 agent 层消费 world_state 与 WorldModel snapshot。
+
+### 遗留 / 后续
+
+- `plan-neg-domain-fauna-v1` 仍负责负灵域内诡影/噬灵藓等环境威胁密度，本 plan 不实现 fauna。
+- `plan-tribulation-balance-v1` 可消费 `negDomainEscapeTelemetry` 做后续平衡矩阵；本 plan 只提供累计计数与持久化数据管道。
