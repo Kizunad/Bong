@@ -1,7 +1,11 @@
 import { describe, expect, it } from "vitest";
 import type { Command, WorldStateV1 } from "@bong/schema";
 import { Arbiter } from "../src/arbiter.js";
-import { applyNegDomainTribulationGate, renderNegDomainNarrations } from "../src/neg-domain-escape.js";
+import {
+  applyNegDomainTribulationGate,
+  recordNegDomainEscapeTelemetry,
+  renderNegDomainNarrations,
+} from "../src/neg-domain-escape.js";
 import { WorldModel } from "../src/world-model.js";
 import { createTestWorldState } from "./support/fakes.js";
 
@@ -295,5 +299,79 @@ describe("plan-neg-domain-escape-v1 P1 — 负灵域叙事正典化", () => {
     const { previousState, state } = previousAndCurrentForDrowning({ previousQi: 90, currentQi: 60, tickDelta: 6 });
 
     expect(renderNegDomainNarrations({ previousState, state })).toEqual([]);
+  });
+});
+
+describe("plan-neg-domain-escape-v1 P2 — telemetry 与平衡数据", () => {
+  it("counts spirit-realm negative-domain escape entries once per active session", () => {
+    const previousState = stateWithPlayer({ realm: "Spirit", spiritQi: 0.2, playerZone: "safe_zone", tick: 10 });
+    const state = stateWithPlayer({ realm: "Spirit", spiritQi: -0.2, playerZone: "negative_domain", tick: 11 });
+    const worldModel = WorldModel.fromState(previousState);
+
+    recordNegDomainEscapeTelemetry({ previousState, state, worldModel });
+    recordNegDomainEscapeTelemetry({ previousState, state, worldModel });
+
+    expect(worldModel.getNegDomainEscapeTelemetrySnapshot()).toMatchObject({
+      escapeEntryCount: 1,
+      activeEscapeSessionCount: 1,
+    });
+  });
+
+  it("counts post-escape realm drops and exposes drop rate", () => {
+    const safeState = stateWithPlayer({ realm: "Spirit", spiritQi: 0.2, playerZone: "safe_zone", tick: 10 });
+    const negativeState = stateWithPlayer({ realm: "Spirit", spiritQi: -0.2, playerZone: "negative_domain", tick: 11 });
+    const droppedState = stateWithPlayer({ realm: "Solidify", spiritQi: 0.2, playerZone: "safe_zone", tick: 12 });
+    const worldModel = WorldModel.fromState(safeState);
+
+    recordNegDomainEscapeTelemetry({ previousState: safeState, state: negativeState, worldModel });
+    recordNegDomainEscapeTelemetry({ previousState: negativeState, state: droppedState, worldModel });
+
+    expect(worldModel.getNegDomainEscapeTelemetrySnapshot()).toMatchObject({
+      escapeEntryCount: 1,
+      postEscapeRealmDropCount: 1,
+      activeEscapeSessionCount: 0,
+      postEscapeRealmDropRate: 1,
+    });
+  });
+
+  it("counts first successful tribulation avoidance per pending escape", () => {
+    const state = stateWithPlayer({ realm: "Spirit", spiritQi: -0.2 });
+    const worldModel = WorldModel.fromState(state);
+
+    applyNegDomainTribulationGate({
+      commands: [targetedTribulation("player-spirit")],
+      state,
+      worldModel,
+    });
+    applyNegDomainTribulationGate({
+      commands: [targetedTribulation("player-spirit")],
+      state,
+      worldModel,
+    });
+
+    expect(worldModel.getNegDomainEscapeTelemetrySnapshot()).toMatchObject({
+      successfulTribulationAvoidanceCount: 1,
+    });
+  });
+
+  it("persists telemetry counters and active sessions through WorldModel snapshot", () => {
+    const previousState = stateWithPlayer({ realm: "Spirit", spiritQi: 0.2, playerZone: "safe_zone", tick: 10 });
+    const state = stateWithPlayer({ realm: "Spirit", spiritQi: -0.2, playerZone: "negative_domain", tick: 11 });
+    const worldModel = WorldModel.fromState(previousState);
+
+    recordNegDomainEscapeTelemetry({ previousState, state, worldModel });
+    applyNegDomainTribulationGate({
+      commands: [targetedTribulation("player-spirit")],
+      state,
+      worldModel,
+    });
+
+    const restored = WorldModel.fromJSON(worldModel.toJSON());
+
+    expect(restored.getNegDomainEscapeTelemetrySnapshot()).toMatchObject({
+      escapeEntryCount: 1,
+      successfulTribulationAvoidanceCount: 1,
+      activeEscapeSessionCount: 1,
+    });
   });
 });

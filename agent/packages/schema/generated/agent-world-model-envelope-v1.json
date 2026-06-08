@@ -44,6 +44,8 @@
         "lastDecisions",
         "playerFirstSeenTick",
         "negDomainPendingTribulations",
+        "negDomainEscapeTelemetry",
+        "negDomainEscapeSessions",
         "lastTick",
         "lastStateTs"
       ],
@@ -346,6 +348,72 @@
                 "reason": {
                   "const": "negative_domain_tribulation_exempt",
                   "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "negDomainEscapeTelemetry": {
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "escapeEntryCount",
+            "postEscapeRealmDropCount",
+            "successfulTribulationAvoidanceCount",
+            "activeEscapeSessionCount",
+            "postEscapeRealmDropRate"
+          ],
+          "properties": {
+            "escapeEntryCount": {
+              "minimum": 0,
+              "type": "integer"
+            },
+            "postEscapeRealmDropCount": {
+              "minimum": 0,
+              "type": "integer"
+            },
+            "successfulTribulationAvoidanceCount": {
+              "minimum": 0,
+              "type": "integer"
+            },
+            "activeEscapeSessionCount": {
+              "minimum": 0,
+              "type": "integer"
+            },
+            "postEscapeRealmDropRate": {
+              "minimum": 0,
+              "type": "number"
+            }
+          }
+        },
+        "negDomainEscapeSessions": {
+          "type": "object",
+          "patternProperties": {
+            "^(.*)$": {
+              "additionalProperties": false,
+              "type": "object",
+              "required": [
+                "playerUuid",
+                "playerName",
+                "zone",
+                "enteredAtTick",
+                "entryRealmRank"
+              ],
+              "properties": {
+                "playerUuid": {
+                  "type": "string"
+                },
+                "playerName": {
+                  "type": "string"
+                },
+                "zone": {
+                  "type": "string"
+                },
+                "enteredAtTick": {
+                  "type": "integer"
+                },
+                "entryRealmRank": {
+                  "type": "number"
                 }
               }
             }

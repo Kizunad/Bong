@@ -1,4 +1,5 @@
 import type { NarrationEvaluation } from "./narration-eval.js";
+import type { NegDomainEscapeTelemetrySnapshot } from "./world-model.js";
 
 export interface TickErrorBreakdown {
   timeout: number;
@@ -32,6 +33,7 @@ export interface TickMetrics {
   narrationScores?: NarrationEvaluation[];
   narrationLowScoreCount?: number;
   narrationAverageScore?: number;
+  negDomainEscape?: NegDomainEscapeTelemetrySnapshot;
 }
 
 export interface TelemetrySink {

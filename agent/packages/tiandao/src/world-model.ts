@@ -89,6 +89,8 @@ export interface WorldModelSnapshot {
   lastDecisions: Record<string, AgentDecision>;
   playerFirstSeenTick: Record<string, number>;
   negDomainPendingTribulations: Record<string, NegDomainPendingTribulation>;
+  negDomainEscapeTelemetry: NegDomainEscapeTelemetrySnapshot;
+  negDomainEscapeSessions: Record<string, NegDomainEscapeSession>;
   lastTick: number | null;
   lastStateTs: number | null;
 }
@@ -100,6 +102,22 @@ export interface NegDomainPendingTribulation {
   enteredAtTick: number;
   lastSuppressedTick: number;
   reason: "negative_domain_tribulation_exempt";
+}
+
+export interface NegDomainEscapeTelemetrySnapshot {
+  escapeEntryCount: number;
+  postEscapeRealmDropCount: number;
+  successfulTribulationAvoidanceCount: number;
+  activeEscapeSessionCount: number;
+  postEscapeRealmDropRate: number;
+}
+
+export interface NegDomainEscapeSession {
+  playerUuid: string;
+  playerName: string;
+  zone: string;
+  enteredAtTick: number;
+  entryRealmRank: number;
 }
 
 export interface ZoneStressFlag {
@@ -136,6 +154,10 @@ export class WorldModel {
   readonly lastDecisions = new Map<string, AgentDecision>();
   private readonly playerFirstSeenTick = new Map<string, number>();
   private readonly negDomainPendingTribulations = new Map<string, NegDomainPendingTribulation>();
+  private readonly negDomainEscapeSessions = new Map<string, NegDomainEscapeSession>();
+  private negDomainEscapeEntryCount = 0;
+  private negDomainPostEscapeRealmDropCount = 0;
+  private negDomainSuccessfulTribulationAvoidanceCount = 0;
   private botanyEcologyValue: BotanyEcologySnapshotV1 | null = null;
   private readonly botanyEcologySnapshots: BotanyEcologySnapshotV1[] = [];
   readonly botanyEcologyHistory = new Map<string, BotanyZoneEcologyV1[]>();
@@ -198,6 +220,8 @@ export class WorldModel {
       lastDecisions,
       playerFirstSeenTick: Object.fromEntries(this.playerFirstSeenTick.entries()),
       negDomainPendingTribulations: Object.fromEntries(this.negDomainPendingTribulations.entries()),
+      negDomainEscapeTelemetry: this.getNegDomainEscapeTelemetrySnapshot(),
+      negDomainEscapeSessions: Object.fromEntries(this.negDomainEscapeSessions.entries()),
       lastTick: this.lastTick,
       lastStateTs: this.lastStateTs,
     };
@@ -408,6 +432,56 @@ export class WorldModel {
     return pending;
   }
 
+  recordNegDomainEscapeEntry(args: {
+    playerUuid: string;
+    playerName: string;
+    zone: string;
+    tick: number;
+    entryRealmRank: number;
+  }): void {
+    if (this.negDomainEscapeSessions.has(args.playerUuid)) {
+      return;
+    }
+
+    this.negDomainEscapeEntryCount += 1;
+    this.negDomainEscapeSessions.set(args.playerUuid, {
+      playerUuid: args.playerUuid,
+      playerName: args.playerName,
+      zone: args.zone,
+      enteredAtTick: args.tick,
+      entryRealmRank: args.entryRealmRank,
+    });
+  }
+
+  recordNegDomainEscapeExit(args: { playerUuid: string; exitRealmRank: number }): void {
+    const session = this.negDomainEscapeSessions.get(args.playerUuid);
+    if (!session) {
+      return;
+    }
+
+    if (args.exitRealmRank < session.entryRealmRank) {
+      this.negDomainPostEscapeRealmDropCount += 1;
+    }
+    this.negDomainEscapeSessions.delete(args.playerUuid);
+  }
+
+  recordSuccessfulNegDomainTribulationAvoidance(): void {
+    this.negDomainSuccessfulTribulationAvoidanceCount += 1;
+  }
+
+  getNegDomainEscapeTelemetrySnapshot(): NegDomainEscapeTelemetrySnapshot {
+    return {
+      escapeEntryCount: this.negDomainEscapeEntryCount,
+      postEscapeRealmDropCount: this.negDomainPostEscapeRealmDropCount,
+      successfulTribulationAvoidanceCount: this.negDomainSuccessfulTribulationAvoidanceCount,
+      activeEscapeSessionCount: this.negDomainEscapeSessions.size,
+      postEscapeRealmDropRate:
+        this.negDomainEscapeEntryCount > 0
+          ? this.negDomainPostEscapeRealmDropCount / this.negDomainEscapeEntryCount
+          : 0,
+    };
+  }
+
   getKeyPlayers(): KeyPlayerSummary[] {
     const state = this.latestStateValue;
     if (!state || state.players.length === 0) {
@@ -558,6 +632,18 @@ export class WorldModel {
     for (const [playerId, pending] of Object.entries(pendingTribulations)) {
       this.negDomainPendingTribulations.set(playerId, pending);
     }
+
+    this.negDomainEscapeSessions.clear();
+    const escapeSessions = sanitizeNegDomainEscapeSessions(snapshot.negDomainEscapeSessions);
+    for (const [playerId, session] of Object.entries(escapeSessions)) {
+      this.negDomainEscapeSessions.set(playerId, session);
+    }
+
+    const escapeTelemetry = sanitizeNegDomainEscapeTelemetry(snapshot.negDomainEscapeTelemetry);
+    this.negDomainEscapeEntryCount = escapeTelemetry.escapeEntryCount;
+    this.negDomainPostEscapeRealmDropCount = escapeTelemetry.postEscapeRealmDropCount;
+    this.negDomainSuccessfulTribulationAvoidanceCount =
+      escapeTelemetry.successfulTribulationAvoidanceCount;
 
     const normalizedLastTick = sanitizeLastTick(snapshot.lastTick);
     const normalizedLastStateTs = sanitizeLastStateTs(snapshot.lastStateTs);
@@ -1226,12 +1312,74 @@ function sanitizeNegDomainPendingTribulations(
   return normalized;
 }
 
+function sanitizeNegDomainEscapeTelemetry(
+  telemetry: unknown,
+): Omit<NegDomainEscapeTelemetrySnapshot, "activeEscapeSessionCount" | "postEscapeRealmDropRate"> {
+  if (!isRecord(telemetry)) {
+    return {
+      escapeEntryCount: 0,
+      postEscapeRealmDropCount: 0,
+      successfulTribulationAvoidanceCount: 0,
+    };
+  }
+
+  return {
+    escapeEntryCount: sanitizeNonNegativeInteger(telemetry.escapeEntryCount),
+    postEscapeRealmDropCount: sanitizeNonNegativeInteger(telemetry.postEscapeRealmDropCount),
+    successfulTribulationAvoidanceCount: sanitizeNonNegativeInteger(
+      telemetry.successfulTribulationAvoidanceCount,
+    ),
+  };
+}
+
+function sanitizeNegDomainEscapeSessions(
+  sessions: unknown,
+): Record<string, NegDomainEscapeSession> {
+  if (!isRecord(sessions)) {
+    return {};
+  }
+
+  const normalized: Record<string, NegDomainEscapeSession> = {};
+  for (const [playerId, session] of Object.entries(sessions)) {
+    if (!isRecord(session)) {
+      continue;
+    }
+
+    const playerUuid = typeof session.playerUuid === "string" ? session.playerUuid : playerId;
+    const playerName = typeof session.playerName === "string" ? session.playerName : playerUuid;
+    const zone = typeof session.zone === "string" ? session.zone : "";
+    const enteredAtTick = sanitizeFiniteNumber(session.enteredAtTick);
+    const entryRealmRank = sanitizeFiniteNumber(session.entryRealmRank);
+    if (zone.length === 0 || enteredAtTick === null || entryRealmRank === null) {
+      continue;
+    }
+
+    normalized[playerUuid] = {
+      playerUuid,
+      playerName,
+      zone,
+      enteredAtTick,
+      entryRealmRank,
+    };
+  }
+
+  return normalized;
+}
+
 function sanitizeFiniteNumber(value: unknown): number | null {
   if (typeof value !== "number" || !Number.isFinite(value)) {
     return null;
   }
 
   return value;
+}
+
+function sanitizeNonNegativeInteger(value: unknown): number {
+  if (typeof value !== "number" || !Number.isFinite(value) || value < 0) {
+    return 0;
+  }
+
+  return Math.floor(value);
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
