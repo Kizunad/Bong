@@ -191,3 +191,44 @@ python -m pytest worldgen/tests/test_p2_dan_zong_activation.py
 ## 进度日志
 
 - 2026-06-08：根据进服 creative、固定 spawn、怪异 decorations、丹宗医苑刷新证据与 TP 命令需求创建 active draft。
+
+## Finish Evidence
+
+### 落地清单
+
+- P0/P1 生存开局与分散出生：`server/src/player/mod.rs`、`server/src/player/state.rs`、`server/src/player/spawn_selector.rs`、`server/zones.json`、`server/src/cmd/dev/spawn.rs`、`server/src/world/terrain/mod.rs`、`server/src/cultivation/character_select.rs`、`server/src/combat/lifecycle.rs`。
+- P2 decoration 清理与契约：`worldgen/scripts/terrain_gen/profiles/*.py` 高危 profile 清理，`server/src/world/terrain/blocks.rs` 补齐合法 block 映射，`worldgen/tests/test_decoration_contract.py` 钉住非方块/高危语义懒堆回归。
+- P3 丹宗真实刷新声明：`worldgen/tests/test_p2_dan_zong_activation.py` 新增 manifest 证据断言与缺 sidecar 失败断言；实际运行 `python3 -m scripts.terrain_gen` 写出 `worldgen/generated/terrain-gen/rasters/placement_manifest.json`。
+- P4 POI 验收命令：`server/src/cmd/dev/tppoi.rs`、`server/src/cmd/dev/mod.rs`、`server/src/cmd/registry_pin.rs` 新增 `/tppoi <zone> <poi>`，支持 `great_hall`、`master_sarcophagus`、`poison_spring_main`。
+
+### 关键 commits
+
+- `4cef0bf2f`（2026-06-08）`修正首玩生存开局与分散出生`。
+- `1e2b8ad2f`（2026-06-08）`清理高危装饰懒堆并钉住契约`。
+- `787c3f8fb`（2026-06-08）`补丹宗刷新证明与POI传送`。
+
+### 测试结果
+
+- `cd server && cargo fmt --check && cargo test player:: && cargo test cmd::dev::spawn && cargo test cmd::dev::tppoi && cargo test cmd::registry_pin && cargo test world::terrain::blocks`：全部通过（50 + 4 + 5 + 3 + 2 tests）。
+- `python3 -m unittest worldgen.tests.test_decoration_contract worldgen.tests.test_p2_dan_zong_activation worldgen.tests.test_layout_wiring`：通过，`113 tests OK`。
+- `cd server && cargo clippy --all-targets -- -D warnings`：通过。
+- `cd server && cargo test`：通过，`7914 passed; 0 failed; 1 ignored`。
+- `cd worldgen && python3 -m scripts.terrain_gen`：通过，生成 raster bake 与 placement sidecar。
+
+### 生成产物证据
+
+- `worldgen/generated/terrain-gen/rasters/placement_manifest.json` 实测统计：`structures=67`、`blocks=138969`。
+- manifest 明确包含 `dan_zong_great_hall.nbt`、`<stamp_radial:herb_garden_pen_*>` 和 `<block_grid:central_path_6x152>`，证明丹宗主殿、药圃、中轴大道均真实刷新。
+- 该生成目录当前被 git ignore；本 plan 提交代码/测试/生成流程和统计证据，不提交 21.9MB sidecar 产物本体。
+
+### 手动验收命令
+
+- `/tpzone dan_zong_yi_yuan`：到丹宗 zone 中心附近，预期约 `x=-1600, y=136, z=4000`。
+- `/tppoi dan_zong_yi_yuan great_hall`：到主殿验收点，测试钉住 `[-1600, 84, 4000]`。
+- `/tppoi dan_zong_yi_yuan master_sarcophagus`：到石棺验收点，layout offset `(0, -4, 8)`。
+- `/tppoi dan_zong_yi_yuan poison_spring_main`：到主毒泉验收点，测试钉住 `[-1600, 83, 4096]`。
+
+### 遗留 / 后续
+
+- `worldgen/generated/terrain-gen/rasters/placement_manifest.json` 为大体积忽略产物；若后续需要入库，应单独决策压缩 fixture 或小型 golden manifest。
+- 本 plan 未做 `runClient` 人工视觉截图；已用 manifest、layout 和 server/worldgen 自动测试覆盖可见性与命令坐标。
