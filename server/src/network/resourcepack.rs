@@ -11,13 +11,30 @@ pub const RESOURCE_PACK_SHA1_ENV: &str = "BONG_RESOURCE_PACK_SHA1";
 pub const RESOURCE_PACK_FORCED_ENV: &str = "BONG_RESOURCE_PACK_FORCED";
 
 pub const DEFAULT_RESOURCE_PACK_URL: &str =
-    "https://raw.githubusercontent.com/Kizunad/Bong/22fd031aa13f9eda2ec382f3515f4741e8d19aa3/client/resourcepack/bong-mineral-v1.zip";
-pub const DEFAULT_RESOURCE_PACK_SHA1: &str = "4b4215c149d4202942a3fb1936f54a7e817db8b4";
+    "https://github.com/Kizunad/Bong/releases/download/resourcepack-v1/bong-full-v1.zip";
+pub const DEFAULT_RESOURCE_PACK_SHA1: &str = DEFAULT_RESOURCE_PACK_MANIFEST.sha1;
 const DEFAULT_RESOURCE_PACK_PROMPT: &str =
-    "Bong 矿物贴图资源包；拒绝后仍可游玩，但矿石显示为 vanilla 贴图。";
+    "Bong 全量资源包；拒绝后仍可游玩，但模型、音效、贴图会降级为 vanilla 表现。";
+const DEFAULT_RESOURCE_PACK_MANIFEST: ResourcePackManifest = ResourcePackManifest {
+    name: "bong-full",
+    version: "v1",
+    file: "bong-full-v1.zip",
+    sha1: "9af0504a8f09b08d308d3d9f3cb5e9853f6dc0e3",
+    size: 72_218_179,
+};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ResourcePackManifest {
+    pub name: &'static str,
+    pub version: &'static str,
+    pub file: &'static str,
+    pub sha1: &'static str,
+    pub size: u64,
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ResourcePackPromptConfig {
+pub struct ResourcePackEntry {
+    pub id: String,
     pub url: String,
     pub sha1: String,
     pub forced: bool,
@@ -26,7 +43,7 @@ pub struct ResourcePackPromptConfig {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ResourcePackConfig {
-    pub prompt: Option<ResourcePackPromptConfig>,
+    pub packs: Vec<ResourcePackEntry>,
     pub disabled_reason: Option<String>,
 }
 
@@ -83,21 +100,24 @@ pub fn prompt_resource_pack_on_join(
     config: Res<ResourcePackConfig>,
     mut joined_clients: Query<(Entity, &mut Client), Added<Client>>,
 ) {
-    let Some(prompt) = &config.prompt else {
+    if config.packs.is_empty() {
         return;
-    };
+    }
 
     for (entity, mut client) in &mut joined_clients {
-        client.set_resource_pack(
-            prompt.url.as_str(),
-            prompt.sha1.as_str(),
-            prompt.forced,
-            Some(Text::text(prompt.prompt.clone())),
-        );
-        tracing::info!(
-            "[bong][resourcepack] prompted client entity {entity:?} with mineral pack {}",
-            prompt.sha1,
-        );
+        for pack in &config.packs {
+            client.set_resource_pack(
+                pack.url.as_str(),
+                pack.sha1.as_str(),
+                pack.forced,
+                Some(Text::text(pack.prompt.clone())),
+            );
+            tracing::info!(
+                "[bong][resourcepack] prompted client entity {entity:?} with pack {} {}",
+                pack.id,
+                pack.sha1,
+            );
+        }
     }
 }
 
@@ -111,30 +131,33 @@ pub fn record_resource_pack_status(
         store.record(event.client, status);
         match status {
             ResourcePackClientStatus::Accepted => tracing::info!(
-                "[bong][resourcepack] client {:?} accepted mineral pack",
-                event.client
+                "[bong][resourcepack] event={} client {:?} accepted pack",
+                resource_pack_event_name(status),
+                event.client,
             ),
             ResourcePackClientStatus::SuccessfullyLoaded => tracing::info!(
-                "[bong][resourcepack] client {:?} loaded mineral pack",
-                event.client
+                "[bong][resourcepack] event={} client {:?} loaded pack",
+                resource_pack_event_name(status),
+                event.client,
             ),
             ResourcePackClientStatus::Declined => {
                 tracing::warn!(
-                    "[bong][resourcepack] client {:?} declined mineral pack; continuing degraded",
-                    event.client
+                    "[bong][resourcepack] event={} client {:?} declined pack; continuing degraded",
+                    resource_pack_event_name(status),
+                    event.client,
                 );
                 if let Ok(mut client) = clients.get_mut(event.client) {
-                    client
-                        .send_chat_message("已降级为 vanilla 矿石贴图；矿物 tooltip 与玩法仍正常。")
+                    client.send_chat_message("已降级为 vanilla 资源表现；玩法逻辑仍正常。")
                 }
             }
             ResourcePackClientStatus::FailedDownload => {
                 tracing::warn!(
-                    "[bong][resourcepack] client {:?} failed to download mineral pack; continuing degraded",
-                    event.client
+                    "[bong][resourcepack] event={} client {:?} failed to download pack; continuing degraded",
+                    resource_pack_event_name(status),
+                    event.client,
                 );
                 if let Ok(mut client) = clients.get_mut(event.client) {
-                    client.send_chat_message("矿物资源包下载失败，已降级为 vanilla 贴图。")
+                    client.send_chat_message("资源包下载失败，已降级为 vanilla 表现。")
                 }
             }
         }
@@ -149,7 +172,7 @@ pub fn resolve_resource_pack_config(
 ) -> ResourcePackConfig {
     if !parse_bool_or_default(enabled, true) {
         return ResourcePackConfig {
-            prompt: None,
+            packs: Vec::new(),
             disabled_reason: Some(format!("{RESOURCE_PACK_ENABLED_ENV}=false")),
         };
     }
@@ -157,7 +180,7 @@ pub fn resolve_resource_pack_config(
     let url = non_empty_or_default(url, DEFAULT_RESOURCE_PACK_URL);
     if !is_http_url(url) {
         return ResourcePackConfig {
-            prompt: None,
+            packs: Vec::new(),
             disabled_reason: Some(format!("invalid {RESOURCE_PACK_URL_ENV}")),
         };
     }
@@ -165,19 +188,32 @@ pub fn resolve_resource_pack_config(
     let sha1 = non_empty_or_default(sha1, DEFAULT_RESOURCE_PACK_SHA1);
     if !is_valid_sha1_hex(sha1) {
         return ResourcePackConfig {
-            prompt: None,
+            packs: Vec::new(),
             disabled_reason: Some(format!("invalid {RESOURCE_PACK_SHA1_ENV}")),
         };
     }
 
     ResourcePackConfig {
-        prompt: Some(ResourcePackPromptConfig {
+        packs: vec![ResourcePackEntry {
+            id: format!(
+                "{}-{}",
+                DEFAULT_RESOURCE_PACK_MANIFEST.name, DEFAULT_RESOURCE_PACK_MANIFEST.version
+            ),
             url: url.to_string(),
             sha1: sha1.to_ascii_lowercase(),
             forced: parse_bool_or_default(forced, false),
             prompt: DEFAULT_RESOURCE_PACK_PROMPT.to_string(),
-        }),
+        }],
         disabled_reason: None,
+    }
+}
+
+pub fn resource_pack_event_name(status: ResourcePackClientStatus) -> &'static str {
+    match status {
+        ResourcePackClientStatus::Accepted => "resource_pack_accepted",
+        ResourcePackClientStatus::Declined => "resource_pack_declined",
+        ResourcePackClientStatus::FailedDownload => "resource_pack_failed_download",
+        ResourcePackClientStatus::SuccessfullyLoaded => "resource_pack_loaded",
     }
 }
 
@@ -216,27 +252,78 @@ fn is_valid_sha1_hex(value: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::Value;
+    use valence::prelude::{App, Update};
+    use valence::protocol::packets::play::ResourcePackSendS2c;
+    use valence::testing::{create_mock_client, MockClientHelper};
+
+    fn setup_resource_pack_app(config: ResourcePackConfig) -> (App, MockClientHelper) {
+        let mut app = App::new();
+        app.insert_resource(config);
+        app.add_systems(Update, prompt_resource_pack_on_join);
+        let (bundle, helper) = create_mock_client("resourcepack-test");
+        app.world_mut().spawn(bundle);
+        (app, helper)
+    }
+
+    fn flush_packets(app: &mut App) {
+        let world = app.world_mut();
+        let mut query = world.query::<&mut Client>();
+        for mut client in query.iter_mut(world) {
+            client
+                .flush_packets()
+                .expect("mock client packets should flush successfully");
+        }
+    }
+
+    fn collect_resource_pack_prompts(helper: &mut MockClientHelper) -> Vec<(String, String, bool)> {
+        helper
+            .collect_received()
+            .0
+            .into_iter()
+            .filter_map(|frame| {
+                let packet = frame.decode::<ResourcePackSendS2c>().ok()?;
+                Some((
+                    packet.url.to_string(),
+                    packet.hash.to_string(),
+                    packet.forced,
+                ))
+            })
+            .collect()
+    }
 
     #[test]
     fn default_config_prompts_with_committed_sha1_and_degraded_decline_policy() {
         let config = resolve_resource_pack_config(None, None, None, None);
-        let prompt = config.prompt.expect("default resource pack prompt");
+        let prompt = config.packs.first().expect("default resource pack prompt");
         assert_eq!(prompt.url, DEFAULT_RESOURCE_PACK_URL);
         assert!(!prompt.url.contains("/main/"));
         assert_eq!(prompt.sha1, DEFAULT_RESOURCE_PACK_SHA1);
         assert!(!prompt.forced, "decline should degrade instead of kicking");
+        assert_eq!(
+            config.packs.len(),
+            1,
+            "default should push exactly one full pack"
+        );
+        assert_eq!(config.packs[0].id, "bong-full-v1");
     }
 
     #[test]
-    fn committed_sha1_sidecar_matches_default_constant() {
-        let sidecar = include_str!("../../../client/resourcepack/bong-mineral-v1.zip.sha1").trim();
-        assert_eq!(sidecar, DEFAULT_RESOURCE_PACK_SHA1);
+    fn committed_manifest_matches_default_constants() {
+        let manifest: Value =
+            serde_json::from_str(include_str!("../../../client/resourcepack/manifest.json"))
+                .expect("committed manifest should parse as JSON");
+        assert_eq!(manifest["name"], DEFAULT_RESOURCE_PACK_MANIFEST.name);
+        assert_eq!(manifest["version"], DEFAULT_RESOURCE_PACK_MANIFEST.version);
+        assert_eq!(manifest["file"], DEFAULT_RESOURCE_PACK_MANIFEST.file);
+        assert_eq!(manifest["sha1"], DEFAULT_RESOURCE_PACK_MANIFEST.sha1);
+        assert_eq!(manifest["size"], DEFAULT_RESOURCE_PACK_MANIFEST.size);
     }
 
     #[test]
     fn disabled_env_suppresses_prompt() {
         let config = resolve_resource_pack_config(Some("false"), None, None, None);
-        assert!(config.prompt.is_none());
+        assert!(config.packs.is_empty());
         assert_eq!(
             config.disabled_reason.as_deref(),
             Some("BONG_RESOURCE_PACK_ENABLED=false")
@@ -246,7 +333,7 @@ mod tests {
     #[test]
     fn invalid_sha1_suppresses_prompt() {
         let config = resolve_resource_pack_config(None, None, Some("not-a-sha1"), None);
-        assert!(config.prompt.is_none());
+        assert!(config.packs.is_empty());
         assert_eq!(
             config.disabled_reason.as_deref(),
             Some("invalid BONG_RESOURCE_PACK_SHA1")
@@ -257,14 +344,70 @@ mod tests {
     fn env_can_override_url_sha1_and_forced_flag() {
         let config = resolve_resource_pack_config(
             Some("true"),
-            Some("https://example.invalid/bong-mineral-v1.zip"),
+            Some("https://example.invalid/bong-full-v1.zip"),
             Some("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"),
             Some("true"),
         );
-        let prompt = config.prompt.expect("prompt should be configured");
-        assert_eq!(prompt.url, "https://example.invalid/bong-mineral-v1.zip");
+        let prompt = config.packs.first().expect("prompt should be configured");
+        assert_eq!(prompt.url, "https://example.invalid/bong-full-v1.zip");
         assert_eq!(prompt.sha1, "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
         assert!(prompt.forced);
+    }
+
+    #[test]
+    fn join_hook_sends_resource_pack_prompt_with_url_and_sha1() {
+        let config = resolve_resource_pack_config(
+            Some("true"),
+            Some("https://example.invalid/bong-full-v1.zip"),
+            Some("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"),
+            Some("false"),
+        );
+        let (mut app, mut helper) = setup_resource_pack_app(config);
+
+        app.update();
+        flush_packets(&mut app);
+
+        let prompts = collect_resource_pack_prompts(&mut helper);
+        assert_eq!(prompts.len(), 1);
+        assert_eq!(prompts[0].0, "https://example.invalid/bong-full-v1.zip");
+        assert_eq!(prompts[0].1, "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb");
+        assert!(!prompts[0].2, "decline should not be forced by default");
+    }
+
+    #[test]
+    fn join_hook_sends_packs_in_config_order() {
+        let config = ResourcePackConfig {
+            packs: vec![
+                ResourcePackEntry {
+                    id: "first".to_string(),
+                    url: "https://example.invalid/first.zip".to_string(),
+                    sha1: "1111111111111111111111111111111111111111".to_string(),
+                    forced: false,
+                    prompt: "first".to_string(),
+                },
+                ResourcePackEntry {
+                    id: "second".to_string(),
+                    url: "https://example.invalid/second.zip".to_string(),
+                    sha1: "2222222222222222222222222222222222222222".to_string(),
+                    forced: true,
+                    prompt: "second".to_string(),
+                },
+            ],
+            disabled_reason: None,
+        };
+        let (mut app, mut helper) = setup_resource_pack_app(config);
+
+        app.update();
+        flush_packets(&mut app);
+
+        let prompts = collect_resource_pack_prompts(&mut helper);
+        assert_eq!(prompts.len(), 2);
+        assert_eq!(prompts[0].0, "https://example.invalid/first.zip");
+        assert_eq!(prompts[0].1, "1111111111111111111111111111111111111111");
+        assert!(!prompts[0].2);
+        assert_eq!(prompts[1].0, "https://example.invalid/second.zip");
+        assert_eq!(prompts[1].1, "2222222222222222222222222222222222222222");
+        assert!(prompts[1].2);
     }
 
     #[test]
@@ -296,5 +439,9 @@ mod tests {
             None
         );
         assert_eq!(store.get(client), Some(ResourcePackClientStatus::Declined));
+        assert_eq!(
+            resource_pack_event_name(ResourcePackClientStatus::Declined),
+            "resource_pack_declined"
+        );
     }
 }
