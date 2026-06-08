@@ -53,13 +53,14 @@ INCLUDE_PREFIXES=(
 
 should_include() {
   local rel="$1"
-  case "$rel" in
+  local rel_lc="${rel,,}"
+  case "$rel_lc" in
     *.png|*.json|*.ogg|*.obj|*.mtl) ;;
     *) return 1 ;;
   esac
   local prefix
   for prefix in "${INCLUDE_PREFIXES[@]}"; do
-    if [[ "$rel" == "$prefix" || "$rel" == "$prefix/"* ]]; then
+    if [[ "$rel_lc" == "$prefix" || "$rel_lc" == "$prefix/"* ]]; then
       return 0
     fi
   done
@@ -68,7 +69,12 @@ should_include() {
 
 mkdir -p "$TMP/assets"
 while IFS= read -r -d '' file; do
-  rel="${file#$ASSETS_ROOT/}"
+  if [[ "$file" == "$ASSETS_ROOT/"* ]]; then
+    prefix_len=${#ASSETS_ROOT}
+    rel="${file:prefix_len+1}"
+  else
+    rel="$file"
+  fi
   should_include "$rel" || continue
   mkdir -p "$TMP/assets/$(dirname "$rel")"
   cp "$file" "$TMP/assets/$rel"
