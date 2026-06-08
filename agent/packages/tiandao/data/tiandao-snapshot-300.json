@@ -1,0 +1,26 @@
+{
+  "currentEra": null,
+  "zoneHistory": {
+    "starter_zone": [
+      {
+        "name": "starter_zone",
+        "spirit_qi": 0.5,
+        "danger_level": 1,
+        "active_events": [],
+        "player_count": 1
+      }
+    ]
+  },
+  "lastDecisions": {
+    "mutation": {
+      "commands": [],
+      "narrations": [],
+      "reasoning": "idle"
+    }
+  },
+  "playerFirstSeenTick": {
+    "offline:test-player": 300
+  },
+  "lastTick": 300,
+  "lastStateTs": 1711333300
+}

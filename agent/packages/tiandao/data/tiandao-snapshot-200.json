@@ -1,0 +1,45 @@
+{
+  "currentEra": {
+    "name": "末法纪",
+    "sinceTick": 188,
+    "globalEffect": "灵机渐枯"
+  },
+  "zoneHistory": {
+    "starter_zone": [
+      {
+        "name": "starter_zone",
+        "spirit_qi": 0.5,
+        "danger_level": 1,
+        "active_events": [],
+        "player_count": 1
+      },
+      {
+        "name": "starter_zone",
+        "spirit_qi": 0.5,
+        "danger_level": 1,
+        "active_events": [],
+        "player_count": 1
+      }
+    ]
+  },
+  "lastDecisions": {
+    "mutation": {
+      "commands": [
+        {
+          "type": "modify_zone",
+          "target": "starter_zone",
+          "params": {
+            "spirit_qi_delta": 0.01
+          }
+        }
+      ],
+      "narrations": [],
+      "reasoning": "snapshot-cursor"
+    }
+  },
+  "playerFirstSeenTick": {
+    "offline:test-player": 188
+  },
+  "lastTick": 200,
+  "lastStateTs": 1712345690
+}
