@@ -1578,7 +1578,8 @@ fn reset_for_new_character(
     // （spawn_pos = spawn_plain，realm = Awaken，lifespan = AWAKEN cap）。这里曾硬编
     // MORTAL=80，与 attach_cultivation_to_joined_clients 路径用的 AWAKEN=120 数值漂移；
     // 现统一从 spec 读，单一数据源。
-    let new_char_spec = crate::cultivation::character_select::next_character_spec();
+    let new_char_spec =
+        crate::cultivation::character_select::next_character_spec_for_seed(&lifecycle.character_id);
     let spawn_position = new_char_spec.spawn_pos;
     let fresh_lifespan = LifespanComponent::new(new_char_spec.lifespan_cap);
 
@@ -3931,10 +3932,11 @@ mod tests {
         assert_eq!(lifespan.cap_by_realm, LifespanCapTable::AWAKEN);
         assert_eq!(lifespan.years_lived, 0.0);
         assert_eq!(player_state, &PlayerState::default());
-        assert_eq!(
-            position.get(),
-            Position::new(crate::player::spawn_position()).get()
-        );
+        let expected_spawn = crate::cultivation::character_select::next_character_spec_for_seed(
+            &lifecycle.character_id,
+        )
+        .spawn_pos;
+        assert_eq!(position.get(), Position::new(expected_spawn).get());
         assert_eq!(cultivation.realm, Realm::Awaken);
         assert_eq!(cultivation.qi_current, 0.0);
         assert_eq!(cultivation.qi_max, 10.0);
@@ -3951,7 +3953,7 @@ mod tests {
             username.0.as_str(),
         );
         assert_eq!(persisted.state, PlayerState::default());
-        assert_eq!(persisted.position, crate::player::spawn_position());
+        assert_eq!(persisted.position, expected_spawn);
         assert!(persisted.inventory.is_some());
         let persisted_lifespan = persisted.lifespan.expect("fresh lifespan should persist");
         assert_eq!(persisted_lifespan.born_at_tick, 0);

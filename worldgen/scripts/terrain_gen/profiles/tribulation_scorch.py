@@ -11,12 +11,12 @@ from .base import DecorationSpec, EcologySpec, ProfileContext, TerrainProfileGen
 
 TRIBULATION_SCORCH_DECORATIONS = (
     DecorationSpec(
-        name="glass_fulgurite",
-        kind="boulder",
-        blocks=("sand", "glass", "tinted_glass"),
+        name="short_fulgurite_shards",
+        kind="crystal",
+        blocks=("sand", "light_blue_stained_glass", "calcite"),
         size_range=(2, 5),
-        rarity=0.40,
-        notes="玻璃熔痕：雷弧熔沙形成的短管状玻璃坑，是焦土最常见视觉符号。",
+        rarity=0.30,
+        notes="短熔砂晶：只放低矮雷熔碎片，避免大块玻璃柱团。",
     ),
     DecorationSpec(
         name="charred_husk_tree",
@@ -275,9 +275,9 @@ def fill_tribulation_scorch_tile(
 
     flora_density = np.zeros_like(height)
     flora_variant = np.zeros_like(height, dtype=np.int32)
-    glass_fulgurite = (glass_noise > -0.12) & interior
-    flora_variant = np.where(glass_fulgurite, 1, flora_variant)
-    flora_density = np.where(glass_fulgurite, 0.34, flora_density)
+    short_fulgurite_shards = (glass_noise > -0.12) & interior
+    flora_variant = np.where(short_fulgurite_shards, 1, flora_variant)
+    flora_density = np.where(short_fulgurite_shards, 0.24, flora_density)
     flora_variant = np.where(charred_tree, 2, flora_variant)
     flora_density = np.where(charred_tree, 0.58, flora_density)
     flora_variant = np.where((crater_mask > 0.50) | basalt_pit, 3, flora_variant)

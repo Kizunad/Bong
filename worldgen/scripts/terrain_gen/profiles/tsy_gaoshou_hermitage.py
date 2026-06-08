@@ -25,12 +25,12 @@ from .base import (
 
 GAOSHOU_DECORATIONS = (
     DecorationSpec(
-        name="thatched_hermitage",
-        kind="boulder",
-        blocks=("hay_block", "oak_planks", "spruce_planks"),
-        size_range=(4, 7),
+        name="abandoned_farmland_patch",
+        kind="shrub",
+        blocks=("farmland", "wheat", "dead_bush"),
+        size_range=(1, 2),
         rarity=0.20,
-        notes="单栋茅屋：高手隐居所，茅草顶+木墙，门半开。",
+        notes="废弃田垄：只保留低矮作物和枯枝，茅屋改走 authored layout/NBT。",
     ),
     DecorationSpec(
         name="lone_grave_mound",
@@ -41,20 +41,20 @@ GAOSHOU_DECORATIONS = (
         notes="孤坟：墓主之坟，碑石半埋，覆苔腐草。",
     ),
     DecorationSpec(
-        name="daily_artifact_cache",
+        name="tea_herb_patch",
         kind="shrub",
-        blocks=("barrel", "iron_ingot", "glass_bottle"),
-        size_range=(1, 3),
+        blocks=("dead_bush", "fern", "moss_block"),
+        size_range=(1, 2),
         rarity=0.45,
-        notes="日常器物：木桶、铁锭、玻璃瓶散落，生活气息浓。",
+        notes="茶草残茬：日常器物不走 density flora，保留低矮自然痕迹。",
     ),
     DecorationSpec(
-        name="abandoned_weiqi_board",
+        name="bamboo_shoot_patch",
         kind="shrub",
-        blocks=("white_concrete", "black_concrete", "bamboo"),
+        blocks=("bamboo", "grass", "fern"),
         size_range=(1, 2),
         rarity=0.15,
-        notes="残棋盘：黑白对弈未终局，棋子半散。",
+        notes="竹芽斑：棋盘器物不走 density flora，只保留竹草低矮点缀。",
     ),
 )
 
@@ -166,13 +166,13 @@ def fill_tsy_gaoshou_hermitage_tile(
     flora_density = np.clip(0.20 + ruin * 0.55, 0.0, 1.0)
     flora_variant = np.zeros_like(base, dtype=np.int32)
     if depth_tier == "shallow":
-        flora_variant = np.where(core > 0.7, 1, flora_variant)  # thatched_hermitage（中心）
-        flora_variant = np.where((flora_variant == 0) & (core > 0.3), 3, flora_variant)  # daily_artifact
+        flora_variant = np.where(core > 0.7, 1, flora_variant)  # abandoned_farmland_patch
+        flora_variant = np.where((flora_variant == 0) & (core > 0.3), 3, flora_variant)  # tea_herb_patch
     elif depth_tier == "mid":
         flora_variant = np.where(core > 0.5, 2, flora_variant)  # lone_grave_mound
-        flora_variant = np.where((flora_variant == 0) & (core > 0.2), 4, flora_variant)  # weiqi
+        flora_variant = np.where((flora_variant == 0) & (core > 0.2), 4, flora_variant)  # bamboo_shoot_patch
     else:  # deep
-        flora_variant = np.where(core > 0.5, 3, flora_variant)  # daily_artifact
+        flora_variant = np.where(core > 0.5, 3, flora_variant)  # tea_herb_patch
         flora_variant = np.where((flora_variant == 0) & (core > 0.2), 2, flora_variant)  # grave
 
     buffer.layers["height"] = np.round(base, 3).ravel()

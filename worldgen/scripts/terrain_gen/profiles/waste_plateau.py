@@ -16,12 +16,12 @@ from .base import (
 
 WASTE_PLATEAU_DECORATIONS = (
     DecorationSpec(
-        name="whalefall_rib_tree",
-        kind="tree",
-        blocks=("bone_block", "quartz_block", "white_concrete"),
-        size_range=(10, 18),
+        name="bleached_bone_rubble",
+        kind="boulder",
+        blocks=("bone_block", "calcite", "gravel"),
+        size_range=(3, 6),
         rarity=0.12,
-        notes="鲸坠肋骨树：鲸类化石肋骨被腐朽之力立起，状若白树。地标级稀有。",
+        notes="白骨碎丘：鲸骨地标改走 authored fossil mask，此处只放低矮骨砾。",
     ),
     DecorationSpec(
         name="dust_thorn",
@@ -75,7 +75,7 @@ class WastePlateauGenerator(TerrainProfileGenerator):
     ecology = EcologySpec(
         decorations=WASTE_PLATEAU_DECORATIONS,
         ambient_effects=("dust_storm", "bone_creak", "heavy_silence"),
-        notes="北荒生态：极度稀疏。唯尘棘遍地，鲸坠肋骨树为罕见地标，"
+        notes="北荒生态：极度稀疏。唯尘棘遍地，鲸骨地标由 fossil mask / authored placement 表达，"
               "虚压岩围绕 neg_pressure 区域，古废片是势力曾到达的证明。",
     )
 
@@ -219,7 +219,7 @@ def fill_waste_plateau_tile(
     buffer.layers["mofa_decay"] = np.round(mofa_decay, 3).ravel()
     buffer.layers["fossil_bbox"] = fossil_bbox.ravel().astype(np.uint8)
 
-    # --- Flora: 1 whalefall_rib_tree / 2 dust_thorn / 3 null_pressure_rock /
+    # --- Flora: 1 bleached_bone_rubble / 2 dust_thorn / 3 null_pressure_rock /
     # 4 ancient_ruin_fragment ---
     flora_density = np.zeros_like(height)
     flora_variant = np.zeros_like(height, dtype=np.int32)

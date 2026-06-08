@@ -44,12 +44,32 @@ from scripts.terrain_gen.bakers.raster_export import BIOME_PALETTE
 from scripts.terrain_gen.blueprint import BlueprintZone, BoundarySpec, PoiSpec, ZoneWorldgenConfig
 from scripts.terrain_gen.fields import Bounds2D
 from scripts.terrain_gen.layouts.dan_zong_compound import DAN_ZONG_COMPOUND_LAYOUT
-from scripts.terrain_gen.layouts.runner import run_layout
+from scripts.terrain_gen.layouts.runner import export_placement_manifest, run_layout
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SERVER_DIR = REPO_ROOT / "server"
 DAN_ZONG_NBT_DIR = SERVER_DIR / "structures" / "dan_zong"
 DAN_ZONG_NBT_BASE = str(DAN_ZONG_NBT_DIR)
+
+
+def assert_dan_zong_manifest_refresh_evidence(manifest_path: Path) -> dict:
+    """Load and validate the sidecar evidence required for 丹宗真实刷新."""
+    if not manifest_path.exists():
+        raise AssertionError(f"丹宗 placement sidecar 缺失: {manifest_path}")
+
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    structures = manifest.get("structures", [])
+    total_blocks = sum(len(structure.get("blocks", [])) for structure in structures)
+    paths = {Path(structure.get("nbt_path", "")).name for structure in structures}
+
+    if len(structures) < 50:
+        raise AssertionError(f"丹宗 placement structures 过少: {len(structures)} < 50")
+    if total_blocks <= 0:
+        raise AssertionError("丹宗 placement blocks 为空，不能证明建筑刷新")
+    if "dan_zong_great_hall.nbt" not in paths:
+        raise AssertionError("丹宗 manifest 缺少 dan_zong_great_hall.nbt")
+
+    return manifest
 
 
 # ---------------------------------------------------------------------------
@@ -507,6 +527,48 @@ class PlacementResolutionTests(unittest.TestCase):
             0,
             "Total block count across all placements must be > 0",
         )
+
+    def test_exported_manifest_proves_dan_zong_refresh(self):
+        """placement_manifest.json must explicitly prove 丹宗主殿/药圃/中轴大道刷新。"""
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            manifest_path = Path(tmpdir) / "placement_manifest.json"
+            export_placement_manifest(list(self.result.paste_results), str(manifest_path))
+            manifest = assert_dan_zong_manifest_refresh_evidence(manifest_path)
+
+        structures = manifest["structures"]
+        total_blocks = sum(len(structure["blocks"]) for structure in structures)
+        paths = {Path(structure["nbt_path"]).name for structure in structures}
+        inline_paths = {structure["nbt_path"] for structure in structures}
+        all_blocks = {
+            block["block"].removeprefix("minecraft:")
+            for structure in structures
+            for block in structure["blocks"]
+        }
+
+        self.assertEqual(manifest["version"], 1)
+        self.assertGreaterEqual(len(structures), 50)
+        self.assertGreater(total_blocks, 0)
+        self.assertIn("dan_zong_great_hall.nbt", paths)
+        self.assertTrue(
+            any(path.startswith("<stamp_radial:herb_garden_pen_") for path in inline_paths),
+            "manifest must include at least one herb garden stamp_radial placement",
+        )
+        self.assertIn("<block_grid:central_path_6x152>", inline_paths)
+        self.assertTrue(
+            {"stone_bricks", "mossy_cobblestone", "farmland"}.issubset(all_blocks),
+            f"manifest lacks authored dan_zong block evidence: {all_blocks}",
+        )
+
+    def test_missing_manifest_sidecar_fails_dan_zong_refresh_evidence(self):
+        """缺 placement_manifest.json 时必须显式失败，不能当作 0 placements 假绿。"""
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            missing_path = Path(tmpdir) / "placement_manifest.json"
+            with self.assertRaisesRegex(AssertionError, "丹宗 placement sidecar 缺失"):
+                assert_dan_zong_manifest_refresh_evidence(missing_path)
 
     def test_great_hall_placement_count_is_largest(self):
         """dan_zong_great_hall.nbt must produce the most blocks (it is the main structure)."""

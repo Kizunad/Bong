@@ -2,7 +2,7 @@ use valence::command::graph::CommandGraphBuilder;
 use valence::command::handler::CommandResultEvent;
 use valence::command::{AddCommand, Command};
 use valence::message::SendMessage;
-use valence::prelude::{App, Client, EventReader, Position, Query, Update};
+use valence::prelude::{App, Client, EventReader, Position, Query, Update, Username};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SpawnCmd {
@@ -25,13 +25,19 @@ pub fn register(app: &mut App) {
 
 pub fn handle_spawn(
     mut events: EventReader<CommandResultEvent<SpawnCmd>>,
-    mut players: Query<(&mut Position, &mut Client)>,
+    mut players: Query<(&mut Position, &mut Client, Option<&Username>)>,
 ) {
     for event in events.read() {
-        let Ok((mut position, mut client)) = players.get_mut(event.executor) else {
+        let Ok((mut position, mut client, username)) = players.get_mut(event.executor) else {
             continue;
         };
-        position.set(crate::player::spawn_position());
+        let seed = username
+            .map(|username| username.0.as_str())
+            .unwrap_or("dev-spawn");
+        position.set(crate::player::spawn_position_for_seed(
+            seed,
+            crate::player::spawn_selector::SpawnPurpose::DevSpawnCommand,
+        ));
         client.send_chat_message("Teleported to spawn.");
     }
 }
@@ -68,7 +74,13 @@ mod tests {
         run_update(&mut app);
 
         let position = app.world().get::<Position>(player).unwrap();
-        assert_eq!(position.get().to_array(), crate::player::spawn_position());
+        assert_eq!(
+            position.get().to_array(),
+            crate::player::spawn_position_for_seed(
+                "Alice",
+                crate::player::spawn_selector::SpawnPurpose::DevSpawnCommand,
+            )
+        );
     }
 
     #[test]
@@ -109,11 +121,17 @@ mod tests {
 
         assert_eq!(
             app.world().get::<Position>(alice).unwrap().get().to_array(),
-            crate::player::spawn_position()
+            crate::player::spawn_position_for_seed(
+                "Alice",
+                crate::player::spawn_selector::SpawnPurpose::DevSpawnCommand,
+            )
         );
         assert_eq!(
             app.world().get::<Position>(bob).unwrap().get().to_array(),
-            crate::player::spawn_position()
+            crate::player::spawn_position_for_seed(
+                "Bob",
+                crate::player::spawn_selector::SpawnPurpose::DevSpawnCommand,
+            )
         );
     }
 }

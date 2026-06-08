@@ -24,20 +24,20 @@ from .base import (
 
 ZHANCHANG_DECORATIONS = (
     DecorationSpec(
-        name="bone_mountain",
+        name="bone_gravel_mound",
         kind="boulder",
         blocks=("bone_block", "dirt", "coarse_dirt"),
-        size_range=(5, 10),
-        rarity=0.65,
-        notes="骨堆山：层层叠叠的修士遗骨，怨念不散，密度三倍于主世界古战场。",
+        size_range=(3, 6),
+        rarity=0.35,
+        notes="骨砾丘：骨山改走 authored placement，此处只保留低矮骨砾堆。",
     ),
     DecorationSpec(
-        name="weapon_thicket",
-        kind="tree",
-        blocks=("iron_block", "copper_block", "cobwebs"),
-        size_range=(3, 6),
+        name="rusted_web_thicket",
+        kind="shrub",
+        blocks=("iron_bars", "copper_block", "cobweb"),
+        size_range=(1, 3),
         rarity=0.40,
-        notes="兵器林：插地兵器森林般林立，部分被蜘蛛网缠绕。",
+        notes="锈网灌丛：兵器林语义不走 density flora，只保留低矮铁栏和蛛网。",
     ),
     DecorationSpec(
         name="blood_ley_line",
@@ -159,7 +159,7 @@ def fill_tsy_zhanchang_tile(
 
     flora_density = np.clip(ruin * 0.65 + fracture * 0.20, 0.0, 1.0)
     flora_variant = np.zeros_like(base, dtype=np.int32)
-    flora_variant = np.where(ruin > 0.55, 1, flora_variant)  # bone_mountain
+    flora_variant = np.where(ruin > 0.55, 1, flora_variant)  # bone_gravel_mound
     flora_variant = np.where((flora_variant == 0) & (fracture > 0.4), 2, flora_variant)  # weapon_thicket
     flora_variant = np.where((flora_variant == 0) & (qi_vein > 0.5), 3, flora_variant)  # blood_ley_line
     flora_variant = np.where((flora_variant == 0) & (ruin > 0.3), 4, flora_variant)  # war_banner_remnant

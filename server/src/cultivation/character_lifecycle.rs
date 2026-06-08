@@ -416,8 +416,9 @@ mod tests {
         );
         assert_eq!(
             spec.spawn_pos,
-            crate::player::spawn_position(),
-            "新角色 spawn_pos = spawn_plain（Q-ML4）",
+            crate::cultivation::character_select::next_character_spec_for_seed("new-character")
+                .spawn_pos,
+            "新角色 spawn_pos 必须由统一 selector 生成（Q-ML4）",
         );
     }
 
