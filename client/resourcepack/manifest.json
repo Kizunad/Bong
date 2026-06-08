@@ -1,0 +1,55 @@
+{
+  "schema": 1,
+  "name": "bong-full",
+  "version": "v1",
+  "file": "bong-full-v1.zip",
+  "sha1": "9af0504a8f09b08d308d3d9f3cb5e9853f6dc0e3",
+  "size": 72218179,
+  "url_env": "BONG_RESOURCE_PACK_URL",
+  "sha1_env": "BONG_RESOURCE_PACK_SHA1",
+  "force_accept_default": false,
+  "packs": [
+    {
+      "id": "mineral",
+      "paths": [
+        "minecraft/blockstates",
+        "minecraft/models",
+        "minecraft/textures/block",
+        "minecraft/atlases",
+        "bong/blockstates",
+        "bong/textures/block"
+      ],
+      "file_count": 45
+    },
+    {
+      "id": "entity-model",
+      "paths": [
+        "bong/geo",
+        "bong/animations",
+        "bong/models",
+        "bong/textures/entity",
+        "bong/textures/item",
+        "bong/textures/armor"
+      ],
+      "file_count": 287
+    },
+    {
+      "id": "vfx",
+      "paths": [
+        "bong/particles",
+        "bong/textures/particle",
+        "bong-client/textures/hud/effects",
+        "bong-client/textures/gui/skill"
+      ],
+      "file_count": 118
+    },
+    {
+      "id": "audio",
+      "paths": [
+        "bong/atmosphere",
+        "bong/audio_recipes"
+      ],
+      "file_count": 45
+    }
+  ]
+}
