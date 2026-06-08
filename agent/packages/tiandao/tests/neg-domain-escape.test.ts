@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { Command, WorldStateV1 } from "@bong/schema";
 import { Arbiter } from "../src/arbiter.js";
-import { applyNegDomainTribulationGate } from "../src/neg-domain-escape.js";
+import { applyNegDomainTribulationGate, renderNegDomainNarrations } from "../src/neg-domain-escape.js";
 import { WorldModel } from "../src/world-model.js";
 import { createTestWorldState } from "./support/fakes.js";
 
@@ -45,6 +45,52 @@ function stateWithPlayer(args: {
     },
   ];
   return state;
+}
+
+function cultivationSnapshot(args: { realm: "Awaken" | "Induce" | "Condense" | "Solidify" | "Spirit" | "Void"; qiCurrent: number; qiMax: number }) {
+  return {
+    realm: args.realm,
+    qi_current: args.qiCurrent,
+    qi_max: args.qiMax,
+    qi_max_frozen: args.qiMax,
+    meridians_opened: 12,
+    meridians_total: 20,
+    qi_color_main: "Sharp" as const,
+    qi_color_chaotic: false,
+    qi_color_hunyuan: false,
+    composure: 0.8,
+  };
+}
+
+function previousAndCurrentForDrowning(args: {
+  previousQi: number;
+  currentQi: number;
+  victimRealm?: "Condense" | "Solidify" | "Spirit" | "Void";
+  baiterRealm?: "Awaken" | "Induce" | "Condense" | "Solidify";
+  tickDelta?: number;
+}): { previousState: WorldStateV1; state: WorldStateV1 } {
+  const previousState = stateWithPlayer({ realm: args.victimRealm ?? "Spirit", spiritQi: -0.3, tick: 100 });
+  previousState.players[0] = {
+    ...previousState.players[0],
+    uuid: "victim",
+    name: "高修乙",
+    cultivation: cultivationSnapshot({ realm: args.victimRealm ?? "Spirit", qiCurrent: args.previousQi, qiMax: 100 }),
+  };
+  previousState.players.push({
+    ...previousState.players[0],
+    uuid: "baiter",
+    name: "低修甲",
+    realm: args.baiterRealm ?? "Condense",
+    cultivation: cultivationSnapshot({ realm: args.baiterRealm ?? "Condense", qiCurrent: 20, qiMax: 30 }),
+  });
+
+  const state = stateWithPlayer({ realm: args.victimRealm ?? "Spirit", spiritQi: -0.3, tick: 100 + (args.tickDelta ?? 5) });
+  state.players = previousState.players.map((player) => ({ ...player }));
+  state.players[0] = {
+    ...state.players[0],
+    cultivation: cultivationSnapshot({ realm: args.victimRealm ?? "Spirit", qiCurrent: args.currentQi, qiMax: 100 }),
+  };
+  return { previousState, state };
 }
 
 describe("plan-neg-domain-escape-v1 P0 — 负灵域天劫豁免 gate", () => {
@@ -187,5 +233,67 @@ describe("plan-neg-domain-escape-v1 P0 — 负灵域天劫豁免 gate", () => {
 
     expect(merged.commands).toHaveLength(1);
     expect(result.commands).toHaveLength(0);
+  });
+});
+
+describe("plan-neg-domain-escape-v1 P1 — 负灵域叙事正典化", () => {
+  it("broadcasts spirit-realm lock loss when player enters negative domain", () => {
+    const previousState = stateWithPlayer({ realm: "Spirit", spiritQi: 0.2, playerZone: "safe_zone", tick: 10 });
+    const state = stateWithPlayer({ realm: "Spirit", spiritQi: -0.2, playerZone: "negative_domain", tick: 11 });
+
+    const narrations = renderNegDomainNarrations({ previousState, state });
+
+    expect(narrations).toEqual([
+      expect.objectContaining({ scope: "broadcast", target: "player-spirit", style: "system_warning" }),
+    ]);
+    expect(narrations[0]?.text).toContain("天道视线");
+  });
+
+  it("broadcasts relock when spirit-realm player leaves negative domain", () => {
+    const previousState = stateWithPlayer({ realm: "Spirit", spiritQi: -0.2, playerZone: "negative_domain", tick: 20 });
+    const state = stateWithPlayer({ realm: "Spirit", spiritQi: 0.2, playerZone: "safe_zone", tick: 21 });
+
+    const narrations = renderNegDomainNarrations({ previousState, state });
+
+    expect(narrations[0]).toEqual(
+      expect.objectContaining({ scope: "broadcast", target: "player-spirit", style: "system_warning" }),
+    );
+    expect(narrations[0]?.text).toContain("重新合拢");
+  });
+
+  it("emits private baiter hint and zone narration for large qi drop in five ticks", () => {
+    const { previousState, state } = previousAndCurrentForDrowning({ previousQi: 90, currentQi: 60 });
+
+    const narrations = renderNegDomainNarrations({ previousState, state });
+
+    expect(narrations).toEqual([
+      expect.objectContaining({ scope: "player", target: "baiter", style: "perception" }),
+      expect.objectContaining({ scope: "zone", target: "negative_domain", style: "narration" }),
+    ]);
+    expect(narrations[0]?.text).toContain("这是你的机会");
+    expect(narrations[1]?.text).toContain("不偏向强者");
+  });
+
+  it("does not emit drowning hint when realm gap is less than two", () => {
+    const { previousState, state } = previousAndCurrentForDrowning({
+      previousQi: 90,
+      currentQi: 60,
+      victimRealm: "Spirit",
+      baiterRealm: "Solidify",
+    });
+
+    expect(renderNegDomainNarrations({ previousState, state })).toEqual([]);
+  });
+
+  it("does not emit drowning hint below the 25 percent qi_max drop threshold", () => {
+    const { previousState, state } = previousAndCurrentForDrowning({ previousQi: 90, currentQi: 66 });
+
+    expect(renderNegDomainNarrations({ previousState, state })).toEqual([]);
+  });
+
+  it("does not emit drowning hint outside the five tick window", () => {
+    const { previousState, state } = previousAndCurrentForDrowning({ previousQi: 90, currentQi: 60, tickDelta: 6 });
+
+    expect(renderNegDomainNarrations({ previousState, state })).toEqual([]);
   });
 });

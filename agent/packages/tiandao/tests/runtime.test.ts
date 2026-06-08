@@ -511,6 +511,83 @@ describe("runTick", () => {
     expect(publishNarrations).not.toHaveBeenCalled();
   });
 
+  it("publishes deterministic negative-domain drowning narrations from WorldModel state", async () => {
+    const previousState = createTestWorldState();
+    previousState.tick = 200;
+    previousState.zones = [
+      { name: "negative_domain", spirit_qi: -0.3, danger_level: 4, active_events: [], player_count: 2 },
+    ];
+    previousState.players[0] = {
+      ...previousState.players[0],
+      uuid: "victim",
+      name: "高修乙",
+      realm: "Spirit",
+      zone: "negative_domain",
+      cultivation: {
+        realm: "Spirit",
+        qi_current: 90,
+        qi_max: 100,
+        qi_max_frozen: 100,
+        meridians_opened: 12,
+        meridians_total: 20,
+        qi_color_main: "Sharp",
+        qi_color_chaotic: false,
+        qi_color_hunyuan: false,
+        composure: 0.8,
+      },
+    };
+    previousState.players.push({
+      ...previousState.players[0],
+      uuid: "baiter",
+      name: "低修甲",
+      realm: "Condense",
+      cultivation: {
+        realm: "Condense",
+        qi_current: 20,
+        qi_max: 30,
+        qi_max_frozen: 30,
+        meridians_opened: 8,
+        meridians_total: 20,
+        qi_color_main: "Sharp",
+        qi_color_chaotic: false,
+        qi_color_hunyuan: false,
+        composure: 0.8,
+      },
+    });
+    const currentState = {
+      ...previousState,
+      tick: 205,
+      players: previousState.players.map((player) => ({ ...player })),
+    };
+    currentState.players[0] = {
+      ...currentState.players[0],
+      cultivation: {
+        ...currentState.players[0].cultivation!,
+        qi_current: 60,
+      },
+    };
+    const publishNarrations = vi.fn(async () => {});
+
+    await runTick(currentState, {
+      agents: [],
+      llmClient: new StructuredFakeLlmClient("{}"),
+      model: DEFAULT_MODEL,
+      worldModel: WorldModel.fromState(previousState),
+      publishCommands: vi.fn(async () => {}),
+      publishNarrations,
+      logger: { log: vi.fn(), error: vi.fn() },
+    });
+
+    expect(publishNarrations).toHaveBeenCalledWith(
+      expect.objectContaining({
+        narrations: expect.arrayContaining([
+          expect.objectContaining({ scope: "player", target: "baiter", text: expect.stringContaining("这是你的机会") }),
+          expect.objectContaining({ scope: "zone", target: "negative_domain", text: expect.stringContaining("不偏向强者") }),
+        ]),
+      }),
+    );
+  });
+
   it("injects drained chat signals to agents before ticking", async () => {
     const publishCommands = vi.fn(async () => {});
     const publishNarrations = vi.fn(async () => {});
