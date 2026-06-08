@@ -49,6 +49,9 @@ public final class VfxBootstrap {
         registry.register(JueBiTribulationPlayer.FISSURE,         jueBi);
         registry.register(JueBiTribulationPlayer.ERUPTION,        jueBi);
         registry.register(RealmCollapseBoundaryPlayer.EVENT_ID,  new RealmCollapseBoundaryPlayer());
+        TiandaoHuntVfxPlayer tiandaoHunt = new TiandaoHuntVfxPlayer();
+        registry.register(TiandaoHuntVfxPlayer.BEAST_SPAWN,       tiandaoHunt);
+        registry.register(TiandaoHuntVfxPlayer.DIRECTED_THUNDER,  tiandaoHunt);
         registry.register(FormationActivatePlayer.EVENT_ID,      new FormationActivatePlayer());
         registry.register(DeathSoulDissipatePlayer.EVENT_ID,     new DeathSoulDissipatePlayer());
         registry.register(NpcDeathSmokePlayer.EVENT_ID,          new NpcDeathSmokePlayer());

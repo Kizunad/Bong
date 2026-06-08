@@ -23,6 +23,8 @@ import com.bong.client.hud.HudRenderCommand;
 import com.bong.client.hud.HudRuntimeContext;
 import com.bong.client.hud.ScreenHudVisibility;
 import com.bong.client.inventory.component.GridSlotComponent;
+import com.bong.client.tiandao.TiandaoPresenceHudPlanner;
+import com.bong.client.tiandao.TiandaoPresenceStore;
 import com.bong.client.ui.ClientConnectionStatusStore;
 import com.bong.client.ui.ScreenTransition;
 import com.bong.client.ui.ScreenTransitionOverlay;
@@ -101,6 +103,16 @@ public class BongHud {
         if (!spiritualSenseIndicators.isEmpty()) {
             commands = new ArrayList<>(commands);
             PerceptionEdgeRenderer.append(commands, spiritualSenseIndicators);
+        }
+        List<HudRenderCommand> tiandaoCommands = TiandaoPresenceHudPlanner.buildCommands(
+            TiandaoPresenceStore.snapshot(),
+            nowMillis,
+            client.getWindow().getScaledWidth(),
+            client.getWindow().getScaledHeight()
+        );
+        if (!tiandaoCommands.isEmpty()) {
+            commands = new ArrayList<>(commands);
+            commands.addAll(tiandaoCommands);
         }
 
         if (visibility == ScreenHudVisibility.CAST_BAR_ONLY) {

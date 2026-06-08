@@ -34,6 +34,7 @@ import com.bong.client.state.SeasonStateStore;
 import com.bong.client.state.UiOpenState;
 import com.bong.client.state.VisualEffectState;
 import com.bong.client.state.ZoneState;
+import com.bong.client.tiandao.TiandaoPresencePayloadHandler;
 import com.bong.client.tsy.TsyBossHealthHandler;
 import com.bong.client.tsy.TsyBossHealthStore;
 import com.bong.client.tsy.TsyDeathVfxHandler;
@@ -86,6 +87,7 @@ public class BongNetworkHandler {
         registerVfxEventChannel();
         registerAudioPlayChannel();
         registerAudioStopChannel();
+        registerTiandaoPresenceChannel();
         registerAmbientZoneChannel();
         registerZoneEnvironmentChannel();
         registerMutationVisualChannel();
@@ -395,6 +397,26 @@ public class BongNetworkHandler {
                     return;
                 }
                 BongClient.LOGGER.info("Processed bong:audio/stop payload: {}", result.logMessage());
+            });
+        });
+    }
+
+    private static void registerTiandaoPresenceChannel() {
+        ClientPlayNetworking.registerGlobalReceiver(new Identifier("bong", "tiandao_presence"), (client, handler, buf, responseSender) -> {
+            int readableBytes = buf.readableBytes();
+            byte[] bytes = new byte[readableBytes];
+            buf.readBytes(bytes);
+
+            String jsonPayload = ServerDataEnvelope.decodeUtf8(bytes);
+            markConnectionPayload();
+            client.execute(() -> {
+                TiandaoPresencePayloadHandler.Result result =
+                    TiandaoPresencePayloadHandler.handle(jsonPayload, readableBytes);
+                if (!result.handled()) {
+                    BongClient.LOGGER.error("Failed to parse bong:tiandao_presence payload: {}", result.logMessage());
+                    return;
+                }
+                BongClient.LOGGER.info("Processed bong:tiandao_presence payload: {}", result.logMessage());
             });
         });
     }

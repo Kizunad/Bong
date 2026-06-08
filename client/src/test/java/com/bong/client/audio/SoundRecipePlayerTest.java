@@ -6,6 +6,8 @@ import com.bong.client.combat.DerivedAttrFlags;
 import com.bong.client.environment.EnvironmentAudioLoopState;
 import com.bong.client.hud.HudImmersionMode;
 import com.bong.client.network.AudioEventPayload;
+import com.bong.client.tiandao.TiandaoPresenceState;
+import com.bong.client.tiandao.TiandaoPresenceStore;
 import net.minecraft.util.Identifier;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
@@ -24,6 +26,7 @@ public class SoundRecipePlayerTest {
         CombatHudStateStore.resetForTests();
         EnvironmentAudioLoopState.clear();
         HudImmersionMode.resetForTests();
+        TiandaoPresenceStore.clear();
     }
 
     @Test
@@ -106,6 +109,49 @@ public class SoundRecipePlayerTest {
 
         assertEquals(0, player.activeLoopCountForTests());
         assertFalse(EnvironmentAudioLoopState.isActive("fauna_fuya_pressure:42"));
+    }
+
+    @Test
+    void tiandaoFlagFollowsPresenceStateInsteadOfStickyOwnedFlag() {
+        RecordingSink sink = new RecordingSink();
+        SoundRecipePlayer player = new SoundRecipePlayer(
+            sink,
+            SoundRecipePlayer::defaultFlagActiveForTests
+        );
+
+        TiandaoPresenceStore.replace(new TiandaoPresenceState(
+            true,
+            "pressure",
+            48.0,
+            "spawn",
+            0.5,
+            0x400800,
+            0.08,
+            0.35,
+            0.95,
+            200L
+        ));
+        player.play(playPayloadWithFlag(recipeWithLoop(), "tiandao:pressure"));
+        player.tick();
+        assertEquals(2, sink.played.size());
+
+        TiandaoPresenceStore.replace(TiandaoPresenceState.empty());
+        player.tick();
+
+        assertEquals(0, player.activeLoopCountForTests());
+        assertEquals(42L, sink.stoppedInstanceId);
+    }
+
+    @Test
+    void replacingSameLoopInstanceStopsPreviousSound() {
+        RecordingSink sink = new RecordingSink();
+        SoundRecipePlayer player = new SoundRecipePlayer(sink, flag -> true);
+
+        player.play(playPayloadWithFlag(recipeWithLoop(), "tiandao:pressure"));
+        player.play(playPayloadWithFlag(recipeWithLoop(), "tiandao:pressure"));
+
+        assertEquals(1, player.activeLoopCountForTests());
+        assertEquals(42L, sink.stoppedInstanceId);
     }
 
     @Test
