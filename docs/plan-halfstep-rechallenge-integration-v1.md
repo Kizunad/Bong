@@ -1,4 +1,4 @@
-# Bong · plan-halfstep-rechallenge-integration-v1 · 骨架
+# Bong · plan-halfstep-rechallenge-integration-v1 · active
 
 半步化虚**重渡机制跨层集成**——承接 `plan-halfstep-buff-v1` P3 遗留三项：① client HUD "灵机涌现" 倒计时显示；② agent 侧三条 narration 模板接入；③ dormant NPC 重渡触发 hydrate 钩子。server 端 `HalfStepRechallengeTriggerEvent` / `dispatch_rechallenge_on_quota_opened_system` 已实装（`server/src/cultivation/tribulation.rs`），本 plan 只做接收层集成。
 

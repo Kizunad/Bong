@@ -1,4 +1,4 @@
-# Bong · plan-tribulation-balance-v1 · 骨架
+# Bong · plan-tribulation-balance-v1 · active
 
 渡虚劫**系统性平衡矩阵**——承接 plan-halfstep-buff-v1 P0 遥测数据，对化虚名额公式、三波难度曲线、半步化虚 buff 强度、重渡间隔做整体校准，防止"名额长期空缺"或"名额永久饱和"导致渡虚劫系统性失效。v1 不改变渡虚劫机制本身，只调整可配置参数和监控看板。
 

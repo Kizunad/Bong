@@ -1,4 +1,4 @@
-# Bong · plan-agent-ui-data-v1 · 骨架
+# Bong · plan-agent-ui-data-v1 · active
 
 **UI-as-Data：天道驱动的动态交互面板**——天道 Agent 根据当前世界状态生成 OwoUI XML 布局，经 Redis IPC `bong:agent_ui_cmd` → Valence server 验证/门控 → `bong:agent_ui_request` CustomPayload 下发给指定玩家，Fabric 微端用 OwoUIAdapter 实时渲染动态面板；玩家的交互（按钮点击 / 关闭）经 `bong:agent_ui_response` CustomPayload 回传 server，再经 `bong:agent_ui_response` Redis channel 回传 Agent 驱动后续推演。适用场景：活坍缩渊秘境发现界面、垂死大能最后传承对话、天道"气运审判"启示面板（通灵+专属）。
 

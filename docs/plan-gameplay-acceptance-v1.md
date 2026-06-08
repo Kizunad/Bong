@@ -1,4 +1,4 @@
-# Bong · plan-gameplay-acceptance-v1 · 骨架
+# Bong · plan-gameplay-acceptance-v1 · active
 
 终极验收:6 段 E2E 脚本 + 100h 真实玩家实测。是 plan-gameplay-journey-v1 §H 的 plan 化交付。**所有前置 42 plan 完成后才能跑**——本 plan 是 Wave 5 收口的唯一 plan。
 

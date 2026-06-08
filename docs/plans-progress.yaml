@@ -1264,3 +1264,211 @@ plans:
   pr_refs: []
   blocking_on: []
   summary: 已归档为三方 journey 草案；工程红线与 100h 验收内容已并入 plan-gameplay-journey-v1，无代码 PR。
+- file: finished_plans/plan-era-state-v1.md
+  group: finished
+  title: 时代状态机
+  state: finished
+  percent: 100
+  last_updated: '2026-06-08'
+  pr_refs: []
+  blocking_on: []
+  summary: 计划已位于 finished_plans；本轮仅修正标题残留的“骨架”标识，保持归档状态。
+- file: finished_plans/plan-status-effect-icon-v1.md
+  group: combat-vfx
+  title: 状态效果 HUD 图标补全
+  state: merged
+  percent: 100
+  last_updated: '2026-06-08'
+  pr_refs:
+  - 443
+  blocking_on: []
+  summary: PR #443 已合并；StatusEffectHudPlanner 以既有 status_effect.id 映射 38 张本地图标，保留未知 id tint fallback，并补充完成证据后归档。
+- file: plan-agent-ui-data-v1.md
+  group: infrastructure
+  title: UI-as-Data 动态交互面板
+  state: active-design
+  percent: 10
+  last_updated: '2026-06-08'
+  pr_refs: []
+  blocking_on:
+  - AgentUiSession
+  - OwoUIAdapter
+  - XML sanitizer
+  summary: 已从 skeleton 升 active；需落地 agent XML 面板、server sanitize/session 状态机、client OwoUI 渲染与 response 回传链路。
+- file: plan-beast-horde-v1.md
+  group: gameplay-npc
+  title: 兽潮迁徙与负压灭杀
+  state: active-design
+  percent: 10
+  last_updated: '2026-06-08'
+  pr_refs: []
+  blocking_on:
+  - BeastHordeEvent
+  - FlowField
+  - ZoneDepletionEvent
+  summary: 已从 skeleton 升 active；P0 从触发条件、BeastHordeEvent 数据模型与 Flow Field 原型开始。
+- file: plan-client-login-ux-v1.md
+  group: infrastructure
+  title: 客户端登录与资源包 UX
+  state: active-design
+  percent: 5
+  last_updated: '2026-06-08'
+  pr_refs: []
+  blocking_on:
+  - plan-resourcepack-v1 P0/P1
+  - ResourcePackManifestPayloadV1
+  summary: 已从 skeleton 升 active；硬依赖 resourcepack manifest 与 server 推送逻辑，当前仍处设计待实现。
+- file: plan-faction-expansion-v1.md
+  group: gameplay-npc
+  title: 具名散修势力扩展
+  state: active-design
+  percent: 5
+  last_updated: '2026-06-08'
+  pr_refs: []
+  blocking_on:
+  - plan-faction-wars-v1 P2
+  - NamedFactionId
+  - FactionRelationMatrix
+  summary: 已从 skeleton 升 active；具名势力、领袖 NPC 与地盘绑定依赖派系战争生命周期落地。
+- file: plan-faction-wars-v1.md
+  group: gameplay-npc
+  title: 玩家可参与的派系战争
+  state: active-design
+  percent: 10
+  last_updated: '2026-06-08'
+  pr_refs: []
+  blocking_on:
+  - plan-npc-virtualize-v3 P1
+  - FactionWarEvent
+  - FactionWarOutcome
+  summary: 已从 skeleton 升 active；P0 需要收口 dormant 批量战斗前置、战争事件数据模型与触发阈值。
+- file: plan-halfstep-buff-calibration-v1.md
+  group: cultivation-economy
+  title: 半步化虚 buff 强度运营校准
+  state: active-design
+  percent: 5
+  last_updated: '2026-06-08'
+  pr_refs: []
+  blocking_on:
+  - 4 周运营遥测
+  - 人工数值决策
+  summary: 已从 skeleton 升 active；当前是数据观测与人工拍板型计划，未到 const 修改阶段。
+- file: plan-halfstep-rechallenge-integration-v1.md
+  group: cultivation-economy
+  title: 半步化虚重渡跨层集成
+  state: active-design
+  percent: 10
+  last_updated: '2026-06-08'
+  pr_refs: []
+  blocking_on:
+  - HALFSTEP_RECHALLENGE_TRIGGER
+  - Agent narration
+  - dormant hydrate hook
+  summary: 已从 skeleton 升 active；server 触发事件已存在，待补 client HUD、agent narration 与 dormant NPC hydrate 钩子。
+- file: plan-life-record-epitaph-v1.md
+  group: gameplay-npc
+  title: 生平碑刻与临终遗念
+  state: active-design
+  percent: 10
+  last_updated: '2026-06-08'
+  pr_refs: []
+  blocking_on:
+  - FinalDeathEvent
+  - EpitaphEntry
+  - WorldEpitaphRegistry
+  summary: 已从 skeleton 升 active；依赖 multi-life 最终死亡事件，P0 从碑刻数据模型与持久化开始。
+- file: plan-neg-domain-escape-v1.md
+  group: cultivation-economy
+  title: 负灵域逃遁战术
+  state: active-design
+  percent: 10
+  last_updated: '2026-06-08'
+  pr_refs: []
+  blocking_on:
+  - calamity neg-domain exemption
+  - pending_in_neg_domain telemetry
+  summary: 已进入 active；P0 聚焦通灵境玩家在负灵域内挂起天劫锁定，出域后重新评估。
+- file: plan-npc-virtualize-v2.md
+  group: gameplay-npc
+  title: NPC Drowsy 三态虚拟化
+  state: active-design
+  percent: 5
+  last_updated: '2026-06-08'
+  pr_refs: []
+  blocking_on:
+  - v1 实测触发条件
+  - Drowsy 数据模型
+  - qi ledger 单测
+  summary: 已从 skeleton 升 active；P0 仍是启动条件与 6 边转换矩阵决策门。
+- file: plan-npc-virtualize-v3.md
+  group: gameplay-npc
+  title: Dormant NPC 批量战斗推演
+  state: active-design
+  percent: 10
+  last_updated: '2026-06-08'
+  pr_refs: []
+  blocking_on:
+  - dormant_combat_batch_system
+  - roll_combat_death
+  - qi release conservation
+  summary: 已从 skeleton 升 active；派系战争依赖本计划的 dormant 批量死亡与守恒释放。
+- file: plan-qi-handling-attrition-v1.md
+  group: cultivation-economy
+  title: 灵气物品搬运磨损
+  state: active-design
+  percent: 10
+  last_updated: '2026-06-08'
+  pr_refs: []
+  blocking_on:
+  - AttritionTax QiTransferReason
+  - QiAttritionSystem
+  - AttritionConfig
+  summary: 已从 skeleton 升 active；所有真元磨损必须走 qi_physics ledger，P0 从守恒税与核心系统开始。
+- file: plan-resourcepack-v1.md
+  group: infrastructure
+  title: 多资源包构建与推送
+  state: active-design
+  percent: 10
+  last_updated: '2026-06-08'
+  pr_refs: []
+  blocking_on:
+  - manifest sha1/size
+  - build-resourcepack.sh
+  - ResourcePackPrompt
+  summary: 已从 skeleton 升 active；client-login-ux 硬依赖本计划 P0/P1 的 manifest 与推送契约。
+- file: plan-social-v2.md
+  group: gameplay-npc
+  title: 战争结果与信誉系统联动
+  state: active-design
+  percent: 5
+  last_updated: '2026-06-08'
+  pr_refs: []
+  blocking_on:
+  - plan-faction-expansion-v1 P2
+  - plan-faction-wars-v1 P2
+  - WarReputationRecord
+  summary: 已从 skeleton 升 active；硬依赖具名派系与战争结算产物，当前仅能推进数据契约设计。
+- file: plan-sword-path-v3.md
+  group: combat-vfx
+  title: 剑修 v3：黑武士与化虚天门剑
+  state: active-design
+  percent: 10
+  last_updated: '2026-06-08'
+  pr_refs: []
+  blocking_on:
+  - plan-sword-path-v2 P0-P2
+  - HeiwushiState
+  - heaven_gate_full
+  summary: 已从 skeleton 升 active；承接 v2 deferred，需完整 BOSS AI、剑意化形追踪实体与化虚天门剑四阶段时序。
+- file: plan-tribulation-balance-v1.md
+  group: cultivation-economy
+  title: 渡虚劫平衡矩阵
+  state: active-design
+  percent: 5
+  last_updated: '2026-06-08'
+  pr_refs: []
+  blocking_on:
+  - halfstep-buff telemetry
+  - /balance tribulation
+  - quota simulation
+  summary: 已从 skeleton 升 active；依赖半步化虚遥测数据，P0 从平衡监控看板与指标定义开始。

@@ -13,16 +13,16 @@ AI-Native Xianxia (修仙) sandbox on Minecraft. Three-layer architecture:
 <!-- BEGIN:PLANS_PROGRESS -->
 ## Plan 进度
 
-_自动生成于 2026-06-08 · 共 114 份 plan_
+_自动生成于 2026-06-08 · 共 132 份 plan_
 
 ```
-总进度  ████████████████████████████░░  92.8%
+总进度  █████████████████████████░░░░░  82.7%
 ```
 
-**分布**：`merged` 57 · `wip` 1 · `design` 7 · `skeleton` 1 · `done` 48
+**分布**：`merged` 58 · `wip` 1 · `design` 23 · `skeleton` 1 · `done` 49
 
 ### 战斗 / HUD / 视觉
-_战斗 ECS、流派、HUD、粒子、动画、Iris · 13 份 · 组均 92%_
+_战斗 ECS、流派、HUD、粒子、动画、Iris · 15 份 · 组均 87%_
 
 | 状态 | Plan | 进度 | PR | 最近更新 |
 |---|---|---|---|---|
@@ -31,6 +31,7 @@ _战斗 ECS、流派、HUD、粒子、动画、Iris · 13 份 · 组均 92%_
 | `merged` | **突破 cinematic 三栈闭环** <br/><sub>`finished_plans/plan-breakthrough-cinematic-v1.md`</sub> | `████████████` 100% | #420 | 2026-06-08 |
 | `merged` | **HUD 感知增强** <br/><sub>`finished_plans/plan-hud-immersion-v2.md`</sub> | `████████████` 100% | #203 | 2026-06-08 |
 | `merged` | **G 键统一环境交互路由** <br/><sub>`finished_plans/plan-input-binding-v1.md`</sub> | `████████████` 100% | #101 | 2026-06-08 |
+| `merged` | **状态效果 HUD 图标补全** <br/><sub>`finished_plans/plan-status-effect-icon-v1.md`</sub> | `████████████` 100% | #443 | 2026-06-08 |
 | `merged` | **流派碰撞平衡** <br/><sub>`finished_plans/plan-style-balance-v1.md`</sub> | `████████████` 100% | #204 | 2026-06-08 |
 | `merged` | **替尸蜕壳伪皮闭环** <br/><sub>`finished_plans/plan-tuike-v1.md`</sub> | `████████████` 100% | #124 | 2026-06-08 |
 | `merged` | **绝灵涡流 v1** <br/><sub>`finished_plans/plan-woliu-v1.md`</sub> | `████████████` 100% | #113 #244 | 2026-06-08 |
@@ -38,10 +39,11 @@ _战斗 ECS、流派、HUD、粒子、动画、Iris · 13 份 · 组均 92%_
 | `merged` | **截脉震爆流 P1/P2** <br/><sub>`finished_plans/plan-zhenmai-v1.md`</sub> | `████████████` 100% | #122 | 2026-06-08 |
 | `merged` | **毒蛊流：凝针与经脉永久损伤** <br/><sub>`finished_plans/plan-dugu-v1.md`</sub> | `███████████░`  95% | #126 | 2026-06-08 |
 | `merged` | **真元色向量链路接入** <br/><sub>`finished_plans/plan-style-vector-integration-v1.md`</sub> | `███████████░`  95% | #123 #425 | 2026-06-08 |
+| `design` | **剑修 v3：黑武士与化虚天门剑** <br/><sub>`plan-sword-path-v3.md`</sub> | `█░░░░░░░░░░░`  10% | — | 2026-06-08 |
 | `design` | **Iris 光影集成** <br/><sub>`plan-iris-integration-v1.md`</sub> | `█░░░░░░░░░░░`   5% | #254 | 2026-06-08 |
 
 ### 修炼 / 经济
-_六境修炼、天劫、炼丹/炼器、矿物、灵田、保质期 · 21 份 · 组均 99%_
+_六境修炼、天劫、炼丹/炼器、矿物、灵田、保质期 · 26 份 · 组均 81%_
 
 | 状态 | Plan | 进度 | PR | 最近更新 |
 |---|---|---|---|---|
@@ -66,9 +68,14 @@ _六境修炼、天劫、炼丹/炼器、矿物、灵田、保质期 · 21 份 �
 | `merged` | **世界灵气预算化虚名额** <br/><sub>`finished_plans/plan-void-quota-v1.md`</sub> | `████████████` 100% | #159 | 2026-06-08 |
 | `merged` | **灵田专项** <br/><sub>`finished_plans/plan-lingtian-v1.md`</sub> | `███████████░`  88% | #26 #127 #115 | 2026-06-08 |
 | `merged` | **灵田季节天气消费层** <br/><sub>`finished_plans/plan-lingtian-weather-v1.md`</sub> | `██████████░░`  85% | #154 | 2026-06-08 |
+| `design` | **半步化虚重渡跨层集成** <br/><sub>`plan-halfstep-rechallenge-integration-v1.md`</sub> | `█░░░░░░░░░░░`  10% | — | 2026-06-08 |
+| `design` | **负灵域逃遁战术** <br/><sub>`plan-neg-domain-escape-v1.md`</sub> | `█░░░░░░░░░░░`  10% | — | 2026-06-08 |
+| `design` | **灵气物品搬运磨损** <br/><sub>`plan-qi-handling-attrition-v1.md`</sub> | `█░░░░░░░░░░░`  10% | — | 2026-06-08 |
+| `design` | **半步化虚 buff 强度运营校准** <br/><sub>`plan-halfstep-buff-calibration-v1.md`</sub> | `█░░░░░░░░░░░`   5% | — | 2026-06-08 |
+| `design` | **渡虚劫平衡矩阵** <br/><sub>`plan-tribulation-balance-v1.md`</sub> | `█░░░░░░░░░░░`   5% | — | 2026-06-08 |
 
 ### 玩法 / NPC / 世界
-_背包、NPC AI、感知、社交、技艺、死亡周期 · 16 份 · 组均 75%_
+_背包、NPC AI、感知、社交、技艺、死亡周期 · 23 份 · 组均 55%_
 
 | 状态 | Plan | 进度 | PR | 最近更新 |
 |---|---|---|---|---|
@@ -86,11 +93,18 @@ _背包、NPC AI、感知、社交、技艺、死亡周期 · 16 份 · 组均 7
 | `wip` | **100h 玩家旅程总线** <br/><sub>`plan-gameplay-journey-v1.md`</sub> | `████████░░░░`  65% | #159 | 2026-06-08 |
 | `design` | **搜打撤风险节拍** <br/><sub>`plan-sou-da-che-v1.md`</sub> | `██░░░░░░░░░░`  15% | — | 2026-06-08 |
 | `design` | **无墙领地影响力博弈** <br/><sub>`plan-territory-v1.md`</sub> | `█░░░░░░░░░░░`  12% | — | 2026-06-08 |
+| `design` | **兽潮迁徙与负压灭杀** <br/><sub>`plan-beast-horde-v1.md`</sub> | `█░░░░░░░░░░░`  10% | — | 2026-06-08 |
 | `design` | **垂死的大能遭遇** <br/><sub>`plan-dying-elder-v1.md`</sub> | `█░░░░░░░░░░░`  10% | — | 2026-06-08 |
+| `design` | **玩家可参与的派系战争** <br/><sub>`plan-faction-wars-v1.md`</sub> | `█░░░░░░░░░░░`  10% | — | 2026-06-08 |
+| `design` | **生平碑刻与临终遗念** <br/><sub>`plan-life-record-epitaph-v1.md`</sub> | `█░░░░░░░░░░░`  10% | — | 2026-06-08 |
+| `design` | **Dormant NPC 批量战斗推演** <br/><sub>`plan-npc-virtualize-v3.md`</sub> | `█░░░░░░░░░░░`  10% | — | 2026-06-08 |
+| `design` | **具名散修势力扩展** <br/><sub>`plan-faction-expansion-v1.md`</sub> | `█░░░░░░░░░░░`   5% | — | 2026-06-08 |
 | `design` | **终极验收：6 段 E2E + 100h 实测** <br/><sub>`plan-gameplay-acceptance-v1.md`</sub> | `█░░░░░░░░░░░`   5% | — | 2026-06-08 |
+| `design` | **NPC Drowsy 三态虚拟化** <br/><sub>`plan-npc-virtualize-v2.md`</sub> | `█░░░░░░░░░░░`   5% | — | 2026-06-08 |
+| `design` | **战争结果与信誉系统联动** <br/><sub>`plan-social-v2.md`</sub> | `█░░░░░░░░░░░`   5% | — | 2026-06-08 |
 
 ### 基础设施 / 工作流
-_IPC schema、持久化、工作流、内容、音效 · 10 份 · 组均 72%_
+_IPC schema、持久化、工作流、内容、音效 · 13 份 · 组均 57%_
 
 | 状态 | Plan | 进度 | PR | 最近更新 |
 |---|---|---|---|---|
@@ -102,6 +116,9 @@ _IPC schema、持久化、工作流、内容、音效 · 10 份 · 组均 72%_
 | `merged` | **服务端 Brigadier 命令迁移** <br/><sub>`finished_plans/plan-server-cmd-system-v1.md`</sub> | `████████████` 100% | #72 #90 | 2026-06-08 |
 | `merged` | **天道叙事模板** <br/><sub>`finished_plans/plan-narrative-v1.md`</sub> | `███████████░`  90% | #89 | 2026-06-08 |
 | `design` | **天道狩猎注意力系统** <br/><sub>`plan-tiandao-hunt-v1.md`</sub> | `██░░░░░░░░░░`  15% | — | 2026-06-08 |
+| `design` | **UI-as-Data 动态交互面板** <br/><sub>`plan-agent-ui-data-v1.md`</sub> | `█░░░░░░░░░░░`  10% | — | 2026-06-08 |
+| `design` | **多资源包构建与推送** <br/><sub>`plan-resourcepack-v1.md`</sub> | `█░░░░░░░░░░░`  10% | — | 2026-06-08 |
+| `design` | **客户端登录与资源包 UX** <br/><sub>`plan-client-login-ux-v1.md`</sub> | `█░░░░░░░░░░░`   5% | — | 2026-06-08 |
 | `design` | **Tripo3D 模型资产批产** <br/><sub>`plan-model-asset-v1.md`</sub> | `█░░░░░░░░░░░`   5% | — | 2026-06-08 |
 | `skeleton` | **视频动捕到玩家动画工具链** <br/><sub>`plan-video2anim-v1.md`</sub> | `█░░░░░░░░░░░`   5% | #240 | 2026-06-08 |
 
@@ -118,10 +135,11 @@ _末法残土 terrain profile、worldgen 流水线、CI 视觉快照 · 6 份 ·
 | `merged` | **渊口荒丘地形** <br/><sub>`finished_plans/plan-terrain-rift-mouth-v1.md`</sub> | `███████████░`  95% | #119 | 2026-06-08 |
 
 ### 已完成归档
-_M0/M1 阶段产物 + 已 docs/finished_plans 的子 plan · 48 份 · 组均 100%_
+_M0/M1 阶段产物 + 已 docs/finished_plans 的子 plan · 49 份 · 组均 100%_
 
 | 状态 | Plan | 进度 | PR | 最近更新 |
 |---|---|---|---|---|
+| `done` | **时代状态机** <br/><sub>`finished_plans/plan-era-state-v1.md`</sub> | `████████████` 100% | — | 2026-06-08 |
 | `done` | **玩家全程旅途 deepseek 稿** <br/><sub>`finished_plans/plan-player-journey-deepseek.md`</sub> | `████████████` 100% | — | 2026-05-16 |
 | `done` | **100h 游玩路程 gpt 稿** <br/><sub>`finished_plans/plan-playthrough-100h-gpt-v1.md`</sub> | `████████████` 100% | — | 2026-05-16 |
 | `done` | **MVP 0.1 — Server scaffold + NPC + Fabric Client** <br/><sub>`mvp01-plan.md`</sub> | `████████████` 100% | — | 2026-03-25 |

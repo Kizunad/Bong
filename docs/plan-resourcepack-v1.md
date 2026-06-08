@@ -1,4 +1,4 @@
-# Bong · plan-resourcepack-v1 · 骨架
+# Bong · plan-resourcepack-v1 · active
 
 **资源包统一交付**——将 `plan-mineral-v2` P5 实装的单包（`bong-mineral-v1.zip`）扩展为**全量 Bong 内容统一包**（`bong-full-vN.zip`），覆盖矿物 / 实体模型 / 音效 / VFX 贴图等所有非 vanilla 资产，通过 Valence `ResourcePackPrompt` 在玩家 join 时自动推送，并建立 CI 自动构建 + sha1 校验 + 版本号管理流水线。
 

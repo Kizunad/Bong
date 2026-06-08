@@ -1,4 +1,4 @@
-# Bong · plan-era-state-v1 · 骨架
+# Bong · plan-era-state-v1 · finished
 
 **天道时代状态机**——将演绎时代 Agent 发出的 `era_decree` 持久化为服务端 `WorldEraState` Resource，并将当前时代（`Calamity / Change / Deduction`）作为系数注入渡劫难度、异变兽刷出密度、派系 AI 忠诚偏置等下游系统，同时向客户端暴露高境界玩家可感知的时代环境层（天象/音效/HUD 微提示）。
 

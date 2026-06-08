@@ -1,4 +1,4 @@
-# Bong · plan-faction-wars-v1 · 骨架
+# Bong · plan-faction-wars-v1 · active
 
 玩家可参与的**派系战争**——在 npc-virtualize-v3 dormant 批量战斗基础上，实装玩家可加入/佣兵/截胡的派系战争事件，让 worldview §十一"散修江湖派系势力消长"有玩家参与渠道。v1 以现有 `FactionId::Attack / Defend / Neutral` 为基础，扩展战争事件生命周期（宣战 → 野战 → 结算 → 余波），玩家可选择投靠、雇佣、背刺或旁观。
 

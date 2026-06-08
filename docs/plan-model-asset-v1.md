@@ -1,4 +1,4 @@
-# Bong · plan-model-asset-v1 · 骨架
+# Bong · plan-model-asset-v1 · active
 
 Tripo3D 会员 2026-05-17 到期，剩余 ~2900 网页积分 + ~250 API 积分。本 plan 在到期前批量生成项目所需的全部 3D 模型资产，建立从"AI 生成 → 减面 → 格式转换 → 游戏接入"的完整流水线，填补当前 ~200 项资产缺口中最关键的部分。
 

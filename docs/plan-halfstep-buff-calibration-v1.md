@@ -1,4 +1,4 @@
-# Bong · plan-halfstep-buff-calibration-v1 · 骨架
+# Bong · plan-halfstep-buff-calibration-v1 · active
 
 半步化虚 **buff 强度运营校准**——承接 `plan-halfstep-buff-v1` P1 首期占位值（`HALFSTEP_QI_MAX_BONUS = 0.10` / `HALFSTEP_LIFESPAN_BONUS_YEARS = 200.0`），在积累 ≥ 4 周运营数据后，依据遥测指标对 buff 常数做数据驱动的调整，保证半步化虚"有意义但不等同化虚"的 worldview 定位。
 
