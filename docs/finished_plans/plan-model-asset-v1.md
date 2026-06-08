@@ -1,4 +1,4 @@
-# Bong · plan-model-asset-v1 · active
+# Bong · plan-model-asset-v1 · ✅ archived 2026-06-09（时限过期，P-done 19 模型已落地，P0-P4 作废）
 
 Tripo3D 会员 2026-05-17 到期，剩余 ~2900 网页积分 + ~250 API 积分。本 plan 在到期前批量生成项目所需的全部 3D 模型资产，建立从"AI 生成 → 减面 → 格式转换 → 游戏接入"的完整流水线，填补当前 ~200 项资产缺口中最关键的部分。
 
@@ -489,4 +489,34 @@ local_models/tripo_generated/
 
 ## Finish Evidence
 
-（迁入 finished_plans/ 前填写）
+> **归档原因（2026-06-09）**：本 plan 是**时限驱动**的——核心前提是「Tripo3D 会员 2026-05-17 到期前用掉 ~3150 积分批量出模型」。截止日已过 3 周、积分清零，P0-P4（各依赖剩余积分）在物理上已不可执行。只有 P-done（2026-05-11 实际生成的 19 个模型 + 工具链）是真实落地交付。作为「active 待办」已死，故归档保留历史记录。**未来若续费会员需要重新批产，另立 `plan-model-asset-v2`，而非复活本 plan。**
+
+### 落地清单（P-done 真实交付）
+
+- **19 个 3D 模型**（共 ~350 积分）：`local_models/tripo_generated/`（gitignored 本地 artifact，非纳入 git）
+  - `weapon/`（4）：iron_spear / horsetail_whisk / iron_war_fan / herb_knife
+  - `alchemy/`（3）：spirit_herb / spirit_stone_cluster / pill_gourd
+  - `currency/`（2）：bone_coin_stack / bone_coin_imgref
+  - `prop/`（6）：jade_slip / ancient_stone_stele / formation_flag / talisman_paper / dead_drop_box / ancient_scroll
+  - `spirit_treasure/`（2）：silent_mirror / jade_pendant
+  - `lowpoly/`（2，外部下载 + 减面）：skull_fiend_lowpoly（192 万 → 5000 面）/ spirit_sealing_box_lowpoly（179 万 → 2.1 万面）
+- **工具链**：`scripts/tripo_batch_gen.py`（API 批量生成：ModelSpec 列表 → 并发 → 下载 GLB+预览）
+- **减面流程**：`trimesh` + `pyfqmr` inline（计划中的 `scripts/tripo_decimate.py` 未单独提交，减面逻辑直接走库调用）
+
+### 关键 commit
+
+- `37dd410d7`（2026-05-12）— chore: 收录 tripo 3D 模型批量生成脚本（工具链落地，模型本体为 gitignored 本地 artifact）
+
+### 测试结果
+
+- 无自动化测试（纯资产生成 / 工具脚本 plan，非运行时代码）。验收靠人工：19 个模型均有 preview + meta.json，减面后 GLB ≤ 500KB。
+
+### 跨仓库核验
+
+- N/A —— 本 plan 只产出**离线资产 + 生成脚本**，不接入 server/agent runtime。下游接入（Blockbench 转 BBModel/MC JSON、`ItemModelRegistry` 注册、EntityRenderer）归各自的 client plan，本 plan 不负责。
+
+### 遗留 / 后续
+
+- **P0-P4（~145 个计划模型）作废**：武器全系补档 / 丹药灵草材料 / 坍缩渊道具+怪物 / 环境建筑 / 变体高阶——全部依赖已清零的积分，不再执行。
+- 已生成的 19 个模型尚未全部接入游戏（多数停在 GLB/OBJ，未转 BBModel + 注册 CustomModelData）。接入工作归 client 侧资产 plan，非本 plan 范围。
+- `plan-resourcepack-v1` 曾把本 plan 列为 3D 物品模型输入——交叉引用已同步更新为「归档，仅 19 个 P-done 模型可用」。

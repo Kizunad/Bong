@@ -13,13 +13,13 @@ AI-Native Xianxia (修仙) sandbox on Minecraft. Three-layer architecture:
 <!-- BEGIN:PLANS_PROGRESS -->
 ## Plan 进度
 
-_自动生成于 2026-06-08 · 共 132 份 plan_
+_自动生成于 2026-06-08 · 共 131 份 plan_
 
 ```
-总进度  █████████████████████████░░░░░  82.7%
+总进度  █████████████████████████░░░░░  84.0%
 ```
 
-**分布**：`merged` 58 · `wip` 1 · `design` 23 · `skeleton` 1 · `done` 49
+**分布**：`merged` 59 · `wip` 1 · `design` 21 · `skeleton` 1 · `done` 49
 
 ### 战斗 / HUD / 视觉
 _战斗 ECS、流派、HUD、粒子、动画、Iris · 15 份 · 组均 87%_
@@ -75,7 +75,7 @@ _六境修炼、天劫、炼丹/炼器、矿物、灵田、保质期 · 26 份 �
 | `design` | **渡虚劫平衡矩阵** <br/><sub>`plan-tribulation-balance-v1.md`</sub> | `█░░░░░░░░░░░`   5% | — | 2026-06-08 |
 
 ### 玩法 / NPC / 世界
-_背包、NPC AI、感知、社交、技艺、死亡周期 · 23 份 · 组均 55%_
+_背包、NPC AI、感知、社交、技艺、死亡周期 · 22 份 · 组均 57%_
 
 | 状态 | Plan | 进度 | PR | 最近更新 |
 |---|---|---|---|---|
@@ -99,12 +99,11 @@ _背包、NPC AI、感知、社交、技艺、死亡周期 · 23 份 · 组均 5
 | `design` | **生平碑刻与临终遗念** <br/><sub>`plan-life-record-epitaph-v1.md`</sub> | `█░░░░░░░░░░░`  10% | — | 2026-06-08 |
 | `design` | **Dormant NPC 批量战斗推演** <br/><sub>`plan-npc-virtualize-v3.md`</sub> | `█░░░░░░░░░░░`  10% | — | 2026-06-08 |
 | `design` | **具名散修势力扩展** <br/><sub>`plan-faction-expansion-v1.md`</sub> | `█░░░░░░░░░░░`   5% | — | 2026-06-08 |
-| `design` | **终极验收：6 段 E2E + 100h 实测** <br/><sub>`plan-gameplay-acceptance-v1.md`</sub> | `█░░░░░░░░░░░`   5% | — | 2026-06-08 |
 | `design` | **NPC Drowsy 三态虚拟化** <br/><sub>`plan-npc-virtualize-v2.md`</sub> | `█░░░░░░░░░░░`   5% | — | 2026-06-08 |
 | `design` | **战争结果与信誉系统联动** <br/><sub>`plan-social-v2.md`</sub> | `█░░░░░░░░░░░`   5% | — | 2026-06-08 |
 
 ### 基础设施 / 工作流
-_IPC schema、持久化、工作流、内容、音效 · 13 份 · 组均 57%_
+_IPC schema、持久化、工作流、内容、音效 · 13 份 · 组均 64%_
 
 | 状态 | Plan | 进度 | PR | 最近更新 |
 |---|---|---|---|---|
@@ -112,6 +111,7 @@ _IPC schema、持久化、工作流、内容、音效 · 13 份 · 组均 57%_
 | `merged` | **植物生态快照接入天道 agent** <br/><sub>`finished_plans/plan-botany-agent-v1.md`</sub> | `████████████` 100% | #136 | 2026-06-08 |
 | `merged` | **客户端接线缺口收口** <br/><sub>`finished_plans/plan-client-wiring-gaps-v1.md`</sub> | `████████████` 100% | #236 | 2026-06-08 |
 | `merged` | **跨系统接入缺口补丁** <br/><sub>`finished_plans/plan-cross-system-patch-v1.md`</sub> | `████████████` 100% | #92 | 2026-06-08 |
+| `merged` | **Tripo3D 模型资产批产** <br/><sub>`finished_plans/plan-model-asset-v1.md`</sub> | `████████████` 100% | — | 2026-06-09 |
 | `merged` | **持久化硬化** <br/><sub>`finished_plans/plan-persistence-v1.md`</sub> | `████████████` 100% | #24 | 2026-06-08 |
 | `merged` | **服务端 Brigadier 命令迁移** <br/><sub>`finished_plans/plan-server-cmd-system-v1.md`</sub> | `████████████` 100% | #72 #90 | 2026-06-08 |
 | `merged` | **天道叙事模板** <br/><sub>`finished_plans/plan-narrative-v1.md`</sub> | `███████████░`  90% | #89 | 2026-06-08 |
@@ -119,7 +119,6 @@ _IPC schema、持久化、工作流、内容、音效 · 13 份 · 组均 57%_
 | `design` | **UI-as-Data 动态交互面板** <br/><sub>`plan-agent-ui-data-v1.md`</sub> | `█░░░░░░░░░░░`  10% | — | 2026-06-08 |
 | `design` | **多资源包构建与推送** <br/><sub>`plan-resourcepack-v1.md`</sub> | `█░░░░░░░░░░░`  10% | — | 2026-06-08 |
 | `design` | **客户端登录与资源包 UX** <br/><sub>`plan-client-login-ux-v1.md`</sub> | `█░░░░░░░░░░░`   5% | — | 2026-06-08 |
-| `design` | **Tripo3D 模型资产批产** <br/><sub>`plan-model-asset-v1.md`</sub> | `█░░░░░░░░░░░`   5% | — | 2026-06-08 |
 | `skeleton` | **视频动捕到玩家动画工具链** <br/><sub>`plan-video2anim-v1.md`</sub> | `█░░░░░░░░░░░`   5% | #240 | 2026-06-08 |
 
 ### 地形 / 世界生成
