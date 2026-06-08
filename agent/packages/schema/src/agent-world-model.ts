@@ -31,6 +31,20 @@ export const AgentWorldModelSnapshotV1 = Type.Object(
       ),
     ),
     playerFirstSeenTick: Type.Record(Type.String(), Type.Integer()),
+    negDomainPendingTribulations: Type.Record(
+      Type.String(),
+      Type.Object(
+        {
+          playerUuid: Type.String(),
+          playerName: Type.String(),
+          zone: Type.String(),
+          enteredAtTick: Type.Integer(),
+          lastSuppressedTick: Type.Integer(),
+          reason: Type.Literal("negative_domain_tribulation_exempt"),
+        },
+        { additionalProperties: false },
+      ),
+    ),
     lastTick: Type.Union([Type.Integer(), Type.Null()]),
     lastStateTs: Type.Union([Type.Integer(), Type.Null()]),
   },

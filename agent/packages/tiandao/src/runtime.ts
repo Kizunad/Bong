@@ -29,6 +29,7 @@ import {
 } from "./locust-swarm-narration.js";
 import { createClient, createMockClient, LlmBackoffError, LlmTimeoutError, type LlmClient } from "./llm.js";
 import { createMockWorldState } from "./mock-state.js";
+import { applyNegDomainTribulationGate } from "./neg-domain-escape.js";
 import {
   NARRATION_LOW_SCORE_THRESHOLD,
   evaluateNarrations,
@@ -540,6 +541,13 @@ export async function runTick(state: WorldStateV1, deps: TickDeps): Promise<Tick
     ? [...sourcedDecisions, ...producedNpcDecisions]
     : sourcedDecisions;
   const merged = new Arbiter(state).merge(decisionsForMerge);
+  const gated = applyNegDomainTribulationGate({
+    commands: merged.commands,
+    state,
+    worldModel,
+  });
+  merged.commands = gated.commands;
+  merged.narrations = [...merged.narrations, ...gated.narrations];
   const totalCommands = decisionsForMerge.reduce((sum, { decision }) => sum + decision.commands.length, 0);
   const totalNarrations = decisionsForMerge.reduce((sum, { decision }) => sum + decision.narrations.length, 0);
   const narrationScores = evaluateNarrations(merged.narrations);
@@ -1372,6 +1380,7 @@ function worldModelSnapshotToEnvelopeSnapshot(
     zoneHistory: snapshot.zoneHistory,
     lastDecisions: snapshot.lastDecisions,
     playerFirstSeenTick: snapshot.playerFirstSeenTick,
+    negDomainPendingTribulations: snapshot.negDomainPendingTribulations,
     lastTick: snapshot.lastTick,
     lastStateTs: snapshot.lastStateTs,
   };
