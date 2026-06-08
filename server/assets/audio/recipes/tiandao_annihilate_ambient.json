@@ -1,0 +1,14 @@
+{
+  "id": "tiandao_annihilate_ambient",
+  "layers": [
+    { "sound": "minecraft:entity.warden.sonic_boom", "volume": 0.20, "pitch": 0.15, "delay_ticks": 0 },
+    { "sound": "minecraft:entity.warden.heartbeat", "volume": 0.18, "pitch": 0.2, "delay_ticks": 10 },
+    { "sound": "minecraft:entity.lightning_bolt.thunder", "volume": 0.15, "pitch": 0.2, "delay_ticks": 40 },
+    { "sound": "minecraft:ambient.basalt_deltas.loop", "volume": 0.12, "pitch": 0.3, "delay_ticks": 0 }
+  ],
+  "loop": { "interval_ticks": 80, "while_flag": "tiandao:annihilate" },
+  "priority": 98,
+  "attenuation": "global_hint",
+  "category": "AMBIENT",
+  "bus": "ENVIRONMENT"
+}

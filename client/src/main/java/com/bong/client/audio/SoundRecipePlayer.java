@@ -7,6 +7,8 @@ import com.bong.client.hud.HudImmersionMode;
 import com.bong.client.lingtian.state.LingtianSessionStore;
 import com.bong.client.BongClient;
 import com.bong.client.network.AudioEventPayload;
+import com.bong.client.tiandao.TiandaoPresenceState;
+import com.bong.client.tiandao.TiandaoPresenceStore;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 
 import java.util.ArrayList;
@@ -71,12 +73,16 @@ public final class SoundRecipePlayer implements com.bong.client.network.AudioPla
         payload.recipe().loop().ifPresent(loop -> {
             String whileFlag = payload.flag().orElse(loop.whileFlag());
             payload.flag().ifPresent(EnvironmentAudioLoopState::activate);
-            loops.put(payload.instanceId(), new ActiveLoop(
+            ActiveLoop previous = loops.put(payload.instanceId(), new ActiveLoop(
                 payload,
                 tick + loop.intervalTicks(),
                 whileFlag,
                 payload.flag().orElse(null)
             ));
+            if (previous != null) {
+                previous.deactivateOwnedFlag();
+                sink.stop(payload.instanceId(), 0);
+            }
         });
         enqueue(payload);
         return true;
@@ -105,6 +111,7 @@ public final class SoundRecipePlayer implements com.bong.client.network.AudioPla
             ActiveLoop active = entry.getValue();
             if (!flagProvider.test(active.whileFlag)) {
                 active.deactivateOwnedFlag();
+                sink.stop(entry.getKey(), 0);
                 iterator.remove();
                 continue;
             }
@@ -211,6 +218,11 @@ public final class SoundRecipePlayer implements com.bong.client.network.AudioPla
     }
 
     private static boolean defaultFlagActive(String flag) {
+        if (flag != null && flag.startsWith("tiandao:")) {
+            String response = flag.substring("tiandao:".length());
+            TiandaoPresenceState state = TiandaoPresenceStore.snapshot();
+            return state.active() && state.response().equals(response);
+        }
         if (EnvironmentAudioLoopState.isActive(flag)) {
             return true;
         }
@@ -223,6 +235,10 @@ public final class SoundRecipePlayer implements com.bong.client.network.AudioPla
             }
             default -> false;
         };
+    }
+
+    static boolean defaultFlagActiveForTests(String flag) {
+        return defaultFlagActive(flag);
     }
 
     private void restoreUiOnCombatEdge(CombatHudState combat) {

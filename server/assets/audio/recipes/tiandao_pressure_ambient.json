@@ -1,0 +1,13 @@
+{
+  "id": "tiandao_pressure_ambient",
+  "layers": [
+    { "sound": "minecraft:ambient.cave", "volume": 0.10, "pitch": 0.35, "delay_ticks": 0 },
+    { "sound": "minecraft:weather.rain.above", "volume": 0.05, "pitch": 0.3, "delay_ticks": 0 },
+    { "sound": "minecraft:entity.lightning_bolt.thunder", "volume": 0.08, "pitch": 0.25, "delay_ticks": 40 }
+  ],
+  "loop": { "interval_ticks": 1800, "while_flag": "tiandao:pressure" },
+  "priority": 92,
+  "attenuation": "global_hint",
+  "category": "AMBIENT",
+  "bus": "ENVIRONMENT"
+}
