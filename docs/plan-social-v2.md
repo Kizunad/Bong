@@ -1,4 +1,4 @@
-# Bong · plan-social-v2 · 骨架
+# Bong · plan-social-v2 · active
 
 在 social-v1 的 Renown（fame / notoriety）基础上，增加**按具名势力分组的声望轨道**，并将**派系战争结果**接入信誉传播链——让战争不只是 zone 控制权的数字变化，而在 NPC 社会网络中留下"谁赢了那场仗"的口碑记录。
 

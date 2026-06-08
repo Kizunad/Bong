@@ -1,4 +1,4 @@
-# Bong · plan-qi-handling-attrition-v1 · 骨架
+# Bong · plan-qi-handling-attrition-v1 · active
 
 **灵气操作磨损**（"零拷贝生存"实装）——把 worldview §八.2「灵物操作磨损」正典化为服务端机制：任何携带 `qi_value > 0` 的物品一旦触发 inventory 操作（拿起/转移/搜刮箱子），立即损耗 1-5% 灵气纯度，超额部分以 `QiTransfer(AttritionTax)` 逸散归还 zone，同时向客户端推送 `qi_decay_flash` 粒子反馈。核心设计意图：天道对"搬运灵物者"的隐性交易税；迫使玩家做极度节制的资源规划，实现"零拷贝生存"博弈。
 

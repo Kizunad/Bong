@@ -1,4 +1,4 @@
-# Bong · plan-faction-expansion-v1 · 骨架
+# Bong · plan-faction-expansion-v1 · active
 
 将 NPC 派系从三档匿名占位（Attack / Defend / Neutral）扩展为**具名散修势力**——每个势力有名称、区域锚点（地盘）、宗门残余背景、内部等级、**领袖 NPC**，并提供 v2 后续可消费的"派系事件 API"（结盟 / 宣战 / 领袖陨落 / 势力消亡）。worldview §十一 的"散修江湖人来人往 / 势力消长"终于有具体载体。
 

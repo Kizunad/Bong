@@ -1,4 +1,4 @@
-# Bong · plan-life-record-epitaph-v1 · 骨架
+# Bong · plan-life-record-epitaph-v1 · active
 
 **一生记录·遗念碑刻**——玩家在「最终死亡」（寿元耗尽/运数到头，无法再生）后，服务端在其最后一处灵龛坐标自动 stamp 一块「遗念碑」structure（刻有生平摘要），世界上任何修士路过时均可俯身查阅，获得死者的位置遗念（「此处东 200 格有地下洞穴」）或战斗摘要，也作为 Tiandao agent 叙事素材（"此地曾有一名通灵修士陨落"）。
 

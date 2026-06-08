@@ -1,4 +1,4 @@
-# Bong · plan-sword-path-v3 · 骨架
+# Bong · plan-sword-path-v3 · active
 
 接续 sword-path-v2 明确 deferred 的三段——黑武士 BOSS AI 完整 ECS、全量 VFX/音效资产联调、剑意化形完整实体追踪、化虚天门剑四阶段时序。**plan-sword-path-v2 在本 plan 归档前不归档，继续 active。**
 

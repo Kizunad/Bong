@@ -1,4 +1,4 @@
-# Bong · plan-npc-virtualize-v3 · 骨架
+# Bong · plan-npc-virtualize-v3 · active
 
 NPC 虚拟化**派系战争批量推演**——在 v1 二态框架基础上，实装 dormant↔dormant 敌对派系 NPC 互殴的批量推演（死亡 → release 灵气 → zone 竞争），让世界线在玩家不在场时仍有真实派系势力消长。
 

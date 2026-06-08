@@ -1,6 +1,6 @@
-# Bong · plan-status-effect-icon-v1 · 骨架
+# Bong · plan-status-effect-icon-v1 · finished
 
-状态效果 HUD 图标补全。当前 `StatusEffectHudPlanner` 只画纯色色块（`rect()` 边框 + tint 填充），没有渲染任何纹理图标——plan-alchemy-combat-v1 设计时提到"图标 source_color 描边"但实施只落地了色块。本 plan 补全整条链路：server 发 icon 字段 → client 解析 → HudPlanner 渲染纹理 → gen-image 批量生成图标 PNG。
+状态效果 HUD 图标补全。原始问题是 `StatusEffectHudPlanner` 只画纯色色块（`rect()` 边框 + tint 填充），没有渲染任何纹理图标——plan-alchemy-combat-v1 设计时提到"图标 source_color 描边"但实施只落地了色块。本 plan 已在 PR #443 完成：client 直接以现有稳定 `status_effect.id` 解析本地图标，HudPlanner 渲染纹理，gen-image 批量生成 38 张状态图标 PNG。
 
 **世界观锚点**：`worldview.md` §四 战斗（状态效果是战斗/丹药/修炼三条线的 HUD 出口）
 
@@ -11,12 +11,12 @@
 ## 接入面 Checklist
 
 - **进料**：`server/src/combat/events.rs::StatusEffectKind`（35 个变体）→ `server/src/network/status_snapshot_emit.rs`（wire shape）
-- **出料**：`client/src/main/resources/assets/bong-client/textures/hud/status_effects/*.png`（图标资产）→ `StatusEffectHudPlanner`（HUD 渲染）
-- **共享类型**：复用 `HudRenderCommand::texture()`（已有，`TEXTURED_RECT` kind）；复用 `StatusEffectStore.Effect` record（加 `iconId` 字段）
+- **出料**：`client/src/main/resources/assets/bong-client/textures/hud/effects/*.png`（图标资产）→ `StatusEffectHudPlanner`（HUD 渲染）
+- **共享类型**：复用 `HudRenderCommand::texture()`（已有，`TEXTURED_RECT` kind）；复用 `StatusEffectStore.Effect` record（以既有 `id` 作为 icon key）
 - **跨仓库契约**：
-  - server：`status_snapshot_emit.rs` payload 新增 `"icon"` 字段（string，effect id）
-  - client：`StatusSnapshotHandler` 解析 `"icon"` → `StatusEffectStore.Effect` 新增 `iconId`
-  - client：`StatusEffectHudPlanner` 用 `HudRenderCommand.texture()` 渲染 `bong-client:textures/hud/status_effects/{iconId}.png`
+  - server：保持 `status_snapshot_emit.rs` 既有 wire shape，不新增 `"icon"` 字段
+  - client：`StatusSnapshotHandler` 继续解析既有 `"id"`；`StatusEffectHudPlanner` 将 `id` 规整为本地图标 key
+  - client：`StatusEffectHudPlanner` 用 `HudRenderCommand.texture()` 渲染 `bong-client:textures/hud/effects/{iconKey}.png`
 - **worldview 锚点**：§四 战斗（状态效果可视化）
 
 ---
@@ -25,11 +25,42 @@
 
 | 阶段 | 内容 | 状态 |
 |------|------|------|
-| **P0** ⬜ | wire shape 扩展 + client 解析 + HudPlanner 纹理渲染 | ⬜ |
-| **P1** ⬜ | gen-image 批量生成 35 种状态效果图标 PNG | ⬜ |
-| **P2** ⬜ | 饱和测试 + 视觉验收 | ⬜ |
+| **P0** ✅ | client 以既有 `id` 解析图标 + HudPlanner 纹理渲染 | ✅ |
+| **P1** ✅ | gen-image 批量生成 38 种状态效果图标 PNG | ✅ |
+| **P2** ✅ | 饱和测试 + 视觉验收证据 | ✅ |
+
+## 完成说明（PR #443）
+
+### 实施决议：不扩展 wire shape
+
+原设计要求 server 在 `status_snapshot` payload 中新增 `"icon"` 字段，并让 client 存储 `iconId`。实际实现选择不扩展协议：
+
+1. `status_effect.id` 已经是稳定、可复用的效果标识，足以作为本地图标 key
+2. 避免为纯客户端贴图选择引入 schema / wire shape 变更，减少跨端兼容成本
+3. 参数化 id（如 `body_part_resist:head`）由 `StatusEffectHudPlanner.iconKey()` 截取冒号前缀，复用通用图标
+4. 未知 id 保留纯色 tint fallback，不产生 missing-texture
+
+### 实际落点
+
+- HUD 渲染：`client/src/main/java/com/bong/client/hud/StatusEffectHudPlanner.java`
+- status_snapshot 解析：`client/src/main/java/com/bong/client/combat/handler/StatusSnapshotHandler.java`
+- 图标资产：`client/src/main/resources/assets/bong-client/textures/hud/effects/*.png`
+- 生成脚本：`scripts/images/gen_status_effects.py`
+- 客户端测试：`client/src/test/java/com/bong/client/hud/StatusEffectHudPlannerTest.java`
+- 脚本测试：`scripts/images/test_gen_status_effects.py`
+
+### Finish Evidence
+
+- PR：#443 `https://github.com/Kizunad/Bong/pull/443`
+- Merge commit：`1cc12aa29fac77f87d60561d751aa09df7f25647`
+- 资产数量：`client/src/main/resources/assets/bong-client/textures/hud/effects/` 下 38 张 PNG
+- Review：CodeRabbit 对修复评论已确认，`/review` 已触发；旧 CodeRabbit check 的 failure 为 rate-limit / stale 状态，PR 已合并
+- 测试：`StatusEffectHudPlannerTest` 覆盖有图标、参数化 id、未知 id fallback、null/empty fallback
+- 测试：`scripts/images/test_gen_status_effects.py` 覆盖 manifest、命令构造、skip existing、install resize/missing
 
 ---
+
+以下 P0/P1/P2 与 §8 为原始设计追溯；实际合并方案以“完成说明（PR #443）”为准，不再要求 server 增发 `"icon"` 字段或 client 新增 `iconId` 字段。
 
 ## P0：wire shape + client 渲染管线
 

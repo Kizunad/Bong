@@ -1,4 +1,4 @@
-# Bong · plan-npc-virtualize-v2 · 骨架
+# Bong · plan-npc-virtualize-v2 · active
 
 NPC 虚拟化**三态扩展**——在 v1 二态（Hydrated ↔ Dormant）基础上补 Drowsy 中间态（64-256 格 ECS entity 但仅核心 system 1Hz tick + 远视野 LOD 可见），消除玩家快速穿越边界时的 spawn/despawn 撕裂感并补足远视野 NPC 稀薄问题。
 

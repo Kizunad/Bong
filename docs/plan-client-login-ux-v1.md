@@ -1,4 +1,4 @@
-# Bong · plan-client-login-ux-v1 · 骨架
+# Bong · plan-client-login-ux-v1 · active
 
 **连接/登录体验主题化**——将玩家从"点击进入服务器"到"站在世界中"的整段体验改写为末法残土风格：自定义"灵识共鸣"连接动画、资源包下载进度 HUD 覆盖（取代原版 "Downloading resource pack..."）、版本校验 SHA1+size 客户端缓存（避免每次连接重下），以及若资源包下载失败时的末法风格提示（而非原版错误框）。
 
