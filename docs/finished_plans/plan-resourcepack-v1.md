@@ -1,4 +1,4 @@
-# Bong · plan-resourcepack-v1 · active
+# Bong · plan-resourcepack-v1 · finished
 
 **资源包统一交付**——将 `plan-mineral-v2` P5 实装的单包（`bong-mineral-v1.zip`）扩展为**全量 Bong 内容统一包**（`bong-full-vN.zip`），覆盖矿物 / 实体模型 / 音效 / VFX 贴图等所有非 vanilla 资产，通过 Valence `ResourcePackPrompt` 在玩家 join 时自动推送，并建立 CI 自动构建 + sha1 校验 + 版本号管理流水线。
 
@@ -41,10 +41,10 @@
 
 | 阶段 | 内容 | 状态 | 验收 |
 |------|------|------|------|
-| **P0** | 资产清单审计 + `manifest.json` 格式定稿 + `build-resourcepack.sh` 扩展为 merge 多子目录 | ⬜ | 单测：merge 脚本生成的 zip 包含 mineral / entity-model / vfx 贴图；sha1 与 manifest.json 一致 |
-| **P1** | server join hook 升级（单包 → 支持 `packs` 列表；降级策略：client 拒绝 → 记录日志但不 kick）| ⬜ | 集成测试：mock client join → 收到 `ResourcePackPrompt` 含正确 URL + sha1；拒绝 pack → server 记录 `resource_pack_declined` 事件但不断线 |
-| **P2** | CI 自动构建（GitHub Actions: PR merge → build zip → 上传 Release artifact → sha1 写入 `ResourcePackConfig`）| ⬜ | CI 流水线跑通；build artifact URL 可直接填入 `ResourcePackConfig.url` |
-| **P3** | 版本号管理（`manifest.json` 含 `version: "vN"` + 玩家 session 记录已接受版本；版本变更时触发重推） | ⬜ | 单测：相同版本 join 不重推；版本升级后首次 join 触发重推 |
+| **P0** | 资产清单审计 + `manifest.json` 格式定稿 + `build-resourcepack.sh` 扩展为 merge 多子目录 | ✅ | 单测：merge 脚本生成的 zip 包含 mineral / entity-model / vfx 贴图；sha1 与 manifest.json 一致 |
+| **P1** | server join hook 升级（单包 → 支持 `packs` 列表；降级策略：client 拒绝 → 记录日志但不 kick）| ✅ | 集成测试：mock client join → 收到 `ResourcePackPrompt` 含正确 URL + sha1；拒绝 pack → server 记录 `resource_pack_declined` 事件但不断线 |
+| **P2** | CI 自动构建（GitHub Actions: PR merge → build zip → 上传 Release artifact → sha1 写入 `ResourcePackConfig`）| ✅ | CI 流水线跑通；build artifact URL 可直接填入 `ResourcePackConfig.url` |
+| **P3** | 版本号管理（`manifest.json` 含 `version: "vN"` + 玩家 session 记录已接受版本；版本变更时触发重推） | ✅ | 单测：相同版本 join 不重推；版本升级后首次 join 触发重推 |
 
 ---
 

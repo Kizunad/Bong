@@ -1,7 +1,9 @@
 use std::collections::HashMap;
 
 use valence::message::SendMessage;
-use valence::prelude::{Added, Client, Entity, EventReader, Query, Res, ResMut, Resource, Text};
+use valence::prelude::{
+    Added, Client, Entity, EventReader, Query, RemovedComponents, Res, ResMut, Resource, Text,
+};
 use valence::protocol::packets::play::ResourcePackStatusC2s;
 use valence::resource_pack::ResourcePackStatusEvent;
 
@@ -107,6 +109,10 @@ impl ResourcePackStatusStore {
             .or_default()
             .prompted
             .insert(pack.id.clone(), ResourcePackVersion::from(pack));
+    }
+
+    fn remove_client(&mut self, client: Entity) -> Option<ResourcePackSessionState> {
+        self.sessions.remove(&client)
     }
 
     fn record(
@@ -250,6 +256,15 @@ pub fn record_resource_pack_status(
                 }
             }
         }
+    }
+}
+
+pub fn cleanup_disconnected_resource_pack_sessions(
+    mut store: ResMut<ResourcePackStatusStore>,
+    mut removed_clients: RemovedComponents<Client>,
+) {
+    for client in removed_clients.read() {
+        store.remove_client(client);
     }
 }
 
@@ -594,6 +609,34 @@ mod tests {
     }
 
     #[test]
+    fn same_id_different_version_prompts_again() {
+        let mut config = resolve_resource_pack_config(None, None, None, None);
+        let previous = config.packs[0].clone();
+        config.packs[0].version = "v2".to_string();
+        config.packs[0].url = "https://example.invalid/bong-full-v2.zip".to_string();
+        config.packs[0].sha1 = "5555555555555555555555555555555555555555".to_string();
+        let upgraded = config.packs[0].clone();
+        let (mut app, mut helper, client) = setup_resource_pack_app(config);
+        app.world_mut()
+            .resource_mut::<ResourcePackStatusStore>()
+            .record_loaded_for_pack(client, &previous);
+
+        app.update();
+        flush_packets(&mut app);
+
+        let prompts = collect_resource_pack_prompts(&mut helper);
+        assert_eq!(
+            prompts.len(),
+            1,
+            "same pack id should re-prompt when version changes from {} to {}",
+            previous.version,
+            upgraded.version
+        );
+        assert_eq!(prompts[0].0, upgraded.url);
+        assert_eq!(prompts[0].1, upgraded.sha1);
+    }
+
+    #[test]
     fn changed_sha1_for_same_version_prompts_again() {
         let mut config = resolve_resource_pack_config(None, None, None, None);
         let previous = config.packs[0].clone();
@@ -630,6 +673,30 @@ mod tests {
         failed.record(client, ResourcePackClientStatus::FailedDownload);
         assert_eq!(failed.accepted_version(client, pack.id.as_str()), None);
         assert!(failed.should_prompt(client, &pack));
+    }
+
+    #[test]
+    fn disconnected_client_cleans_resource_pack_session() {
+        let config = resolve_resource_pack_config(None, None, None, None);
+        let pack = config.packs[0].clone();
+        let mut app = App::new();
+        app.insert_resource(ResourcePackStatusStore::default());
+        app.add_systems(Update, cleanup_disconnected_resource_pack_sessions);
+        let (bundle, _helper) = create_mock_client("resourcepack-disconnect-test");
+        let client = app.world_mut().spawn(bundle).id();
+        app.world_mut()
+            .resource_mut::<ResourcePackStatusStore>()
+            .record_loaded_for_pack(client, &pack);
+
+        app.world_mut().despawn(client);
+        app.update();
+
+        let store = app.world().resource::<ResourcePackStatusStore>();
+        assert_eq!(
+            store.accepted_version(client, pack.id.as_str()),
+            None,
+            "resource pack session for disconnected client {client:?} should be removed"
+        );
     }
 
     #[test]

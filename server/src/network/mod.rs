@@ -492,6 +492,7 @@ pub fn register(app: &mut App) {
         (
             resourcepack::prompt_resource_pack_on_join.after(send_welcome_payload_on_join),
             resourcepack::record_resource_pack_status,
+            resourcepack::cleanup_disconnected_resource_pack_sessions,
         ),
     );
     app.add_systems(
