@@ -29,7 +29,7 @@ import {
 } from "./locust-swarm-narration.js";
 import { createClient, createMockClient, LlmBackoffError, LlmTimeoutError, type LlmClient } from "./llm.js";
 import { createMockWorldState } from "./mock-state.js";
-import { applyNegDomainTribulationGate } from "./neg-domain-escape.js";
+import { applyNegDomainTribulationGate, renderNegDomainNarrations } from "./neg-domain-escape.js";
 import {
   NARRATION_LOW_SCORE_THRESHOLD,
   evaluateNarrations,
@@ -447,6 +447,10 @@ export async function runTick(state: WorldStateV1, deps: TickDeps): Promise<Tick
     correlationId: `tiandao-tick-${state.tick}`,
   };
 
+  const negDomainNarrations = renderNegDomainNarrations({
+    previousState: worldModel?.latestState ?? null,
+    state,
+  });
   worldModel?.updateState(state);
   applyWorldModelToAgents(agents, worldModel);
   applyChatSignalsToAgents(agents, chatSignals ?? []);
@@ -546,8 +550,11 @@ export async function runTick(state: WorldStateV1, deps: TickDeps): Promise<Tick
     state,
     worldModel,
   });
+  const negDomainNarrationsToAdd = negDomainNarrations.filter(
+    (narration) => !gated.narrations.some((gatedNarration) => sameNarration(gatedNarration, narration)),
+  );
   merged.commands = gated.commands;
-  merged.narrations = [...merged.narrations, ...gated.narrations];
+  merged.narrations = [...merged.narrations, ...gated.narrations, ...negDomainNarrationsToAdd];
   const totalCommands = decisionsForMerge.reduce((sum, { decision }) => sum + decision.commands.length, 0);
   const totalNarrations = decisionsForMerge.reduce((sum, { decision }) => sum + decision.narrations.length, 0);
   const narrationScores = evaluateNarrations(merged.narrations);
@@ -883,6 +890,15 @@ function weatherNarrationText(zone: string, kind: WeatherEventUpdateV1["data"]["
 
 function isScorchWeatherZone(zone: string): boolean {
   return SCORCH_WEATHER_ZONE_IDS.has(zone);
+}
+
+function sameNarration(left: Narration, right: Narration): boolean {
+  return (
+    left.scope === right.scope &&
+    left.target === right.target &&
+    left.style === right.style &&
+    left.text === right.text
+  );
 }
 
 export async function processLocustSwarmEvents(args: {
