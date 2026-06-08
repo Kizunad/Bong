@@ -21,6 +21,7 @@
   "playerFirstSeenTick": {
     "offline:test-player": 300
   },
+  "negDomainPendingTribulations": {},
   "lastTick": 300,
   "lastStateTs": 1711333300
 }

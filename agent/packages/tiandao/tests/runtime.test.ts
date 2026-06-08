@@ -102,6 +102,7 @@ function createMirrorSnapshot(overrides: Partial<WorldModelSnapshot> = {}): Worl
     zoneHistory: {},
     lastDecisions: {},
     playerFirstSeenTick: {},
+    negDomainPendingTribulations: {},
     lastTick: null,
     lastStateTs: null,
     ...overrides,

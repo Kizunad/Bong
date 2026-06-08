@@ -43,6 +43,7 @@
         "zoneHistory",
         "lastDecisions",
         "playerFirstSeenTick",
+        "negDomainPendingTribulations",
         "lastTick",
         "lastStateTs"
       ],
@@ -309,6 +310,44 @@
           "patternProperties": {
             "^(.*)$": {
               "type": "integer"
+            }
+          }
+        },
+        "negDomainPendingTribulations": {
+          "type": "object",
+          "patternProperties": {
+            "^(.*)$": {
+              "additionalProperties": false,
+              "type": "object",
+              "required": [
+                "playerUuid",
+                "playerName",
+                "zone",
+                "enteredAtTick",
+                "lastSuppressedTick",
+                "reason"
+              ],
+              "properties": {
+                "playerUuid": {
+                  "type": "string"
+                },
+                "playerName": {
+                  "type": "string"
+                },
+                "zone": {
+                  "type": "string"
+                },
+                "enteredAtTick": {
+                  "type": "integer"
+                },
+                "lastSuppressedTick": {
+                  "type": "integer"
+                },
+                "reason": {
+                  "const": "negative_domain_tribulation_exempt",
+                  "type": "string"
+                }
+              }
             }
           }
         },

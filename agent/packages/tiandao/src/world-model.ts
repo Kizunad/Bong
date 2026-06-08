@@ -88,8 +88,18 @@ export interface WorldModelSnapshot {
   zoneHistory: Record<string, ZoneSnapshot[]>;
   lastDecisions: Record<string, AgentDecision>;
   playerFirstSeenTick: Record<string, number>;
+  negDomainPendingTribulations: Record<string, NegDomainPendingTribulation>;
   lastTick: number | null;
   lastStateTs: number | null;
+}
+
+export interface NegDomainPendingTribulation {
+  playerUuid: string;
+  playerName: string;
+  zone: string;
+  enteredAtTick: number;
+  lastSuppressedTick: number;
+  reason: "negative_domain_tribulation_exempt";
 }
 
 export interface ZoneStressFlag {
@@ -125,6 +135,7 @@ export class WorldModel {
   readonly zoneHistory = new Map<string, ZoneSnapshot[]>();
   readonly lastDecisions = new Map<string, AgentDecision>();
   private readonly playerFirstSeenTick = new Map<string, number>();
+  private readonly negDomainPendingTribulations = new Map<string, NegDomainPendingTribulation>();
   private botanyEcologyValue: BotanyEcologySnapshotV1 | null = null;
   private readonly botanyEcologySnapshots: BotanyEcologySnapshotV1[] = [];
   readonly botanyEcologyHistory = new Map<string, BotanyZoneEcologyV1[]>();
@@ -186,6 +197,7 @@ export class WorldModel {
       zoneHistory,
       lastDecisions,
       playerFirstSeenTick: Object.fromEntries(this.playerFirstSeenTick.entries()),
+      negDomainPendingTribulations: Object.fromEntries(this.negDomainPendingTribulations.entries()),
       lastTick: this.lastTick,
       lastStateTs: this.lastStateTs,
     };
@@ -359,6 +371,43 @@ export class WorldModel {
     return summarizeBalance(this.latestStateValue?.players ?? []);
   }
 
+  recordNegDomainPendingTribulation(args: {
+    playerUuid: string;
+    playerName: string;
+    zone: string;
+    tick: number;
+    reason: NegDomainPendingTribulation["reason"];
+  }): void {
+    const existing = this.negDomainPendingTribulations.get(args.playerUuid);
+    this.negDomainPendingTribulations.set(args.playerUuid, {
+      playerUuid: args.playerUuid,
+      playerName: args.playerName,
+      zone: args.zone,
+      enteredAtTick: existing?.enteredAtTick ?? args.tick,
+      lastSuppressedTick: args.tick,
+      reason: args.reason,
+    });
+  }
+
+  hasNegDomainPendingTribulation(playerUuid: string): boolean {
+    return this.negDomainPendingTribulations.has(playerUuid);
+  }
+
+  getNegDomainPendingTribulation(playerUuid: string): NegDomainPendingTribulation | null {
+    const pending = this.negDomainPendingTribulations.get(playerUuid);
+    return pending ? { ...pending } : null;
+  }
+
+  clearNegDomainPendingTribulation(playerUuid: string): void {
+    this.negDomainPendingTribulations.delete(playerUuid);
+  }
+
+  consumeNegDomainPendingTribulation(playerUuid: string): NegDomainPendingTribulation | null {
+    const pending = this.getNegDomainPendingTribulation(playerUuid);
+    this.clearNegDomainPendingTribulation(playerUuid);
+    return pending;
+  }
+
   getKeyPlayers(): KeyPlayerSummary[] {
     const state = this.latestStateValue;
     if (!state || state.players.length === 0) {
@@ -500,6 +549,14 @@ export class WorldModel {
     const playerFirstSeenTick = sanitizePlayerFirstSeenTick(snapshot.playerFirstSeenTick);
     for (const [playerId, firstSeenTick] of Object.entries(playerFirstSeenTick)) {
       this.playerFirstSeenTick.set(playerId, firstSeenTick);
+    }
+
+    this.negDomainPendingTribulations.clear();
+    const pendingTribulations = sanitizeNegDomainPendingTribulations(
+      snapshot.negDomainPendingTribulations,
+    );
+    for (const [playerId, pending] of Object.entries(pendingTribulations)) {
+      this.negDomainPendingTribulations.set(playerId, pending);
     }
 
     const normalizedLastTick = sanitizeLastTick(snapshot.lastTick);
@@ -1129,6 +1186,41 @@ function sanitizePlayerFirstSeenTick(playerFirstSeenTick: unknown): Record<strin
     if (normalizedFirstSeenTick !== null) {
       normalized[playerId] = normalizedFirstSeenTick;
     }
+  }
+
+  return normalized;
+}
+
+function sanitizeNegDomainPendingTribulations(
+  pendingTribulations: unknown,
+): Record<string, NegDomainPendingTribulation> {
+  if (!isRecord(pendingTribulations)) {
+    return {};
+  }
+
+  const normalized: Record<string, NegDomainPendingTribulation> = {};
+  for (const [playerId, pending] of Object.entries(pendingTribulations)) {
+    if (!isRecord(pending)) {
+      continue;
+    }
+
+    const playerUuid = typeof pending.playerUuid === "string" ? pending.playerUuid : playerId;
+    const playerName = typeof pending.playerName === "string" ? pending.playerName : playerUuid;
+    const zone = typeof pending.zone === "string" ? pending.zone : "";
+    const enteredAtTick = sanitizeFiniteNumber(pending.enteredAtTick);
+    const lastSuppressedTick = sanitizeFiniteNumber(pending.lastSuppressedTick);
+    if (zone.length === 0 || enteredAtTick === null || lastSuppressedTick === null) {
+      continue;
+    }
+
+    normalized[playerUuid] = {
+      playerUuid,
+      playerName,
+      zone,
+      enteredAtTick,
+      lastSuppressedTick,
+      reason: "negative_domain_tribulation_exempt",
+    };
   }
 
   return normalized;

@@ -1178,6 +1178,7 @@ describe("redis-ipc", () => {
         playerFirstSeenTick: {
           "offline:Elder": 88,
         },
+        negDomainPendingTribulations: {},
         lastTick: 123,
         lastStateTs: 1710000100,
       },
@@ -1278,6 +1279,7 @@ describe("redis-ipc", () => {
       playerFirstSeenTick: {
         "offline:test-player": 188,
       },
+      negDomainPendingTribulations: {},
       lastTick: 188,
       lastStateTs: null,
     });
