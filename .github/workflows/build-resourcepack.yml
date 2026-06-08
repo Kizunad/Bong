@@ -33,7 +33,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     env:
-      BONG_RESOURCEPACK_OUT_DIR: ${{ runner.temp }}/resourcepack
+      BONG_RESOURCEPACK_OUT_DIR: /tmp/bong-resourcepack
       BONG_RESOURCEPACK_VERSION: v1
 
     steps:
@@ -98,9 +98,9 @@ jobs:
         with:
           name: bong-resourcepack-${{ github.sha }}
           path: |
-            ${{ runner.temp }}/resourcepack/bong-full-v1.zip
-            ${{ runner.temp }}/resourcepack/bong-full-v1.zip.sha1
-            ${{ runner.temp }}/resourcepack/manifest.json
+            /tmp/bong-resourcepack/bong-full-v1.zip
+            /tmp/bong-resourcepack/bong-full-v1.zip.sha1
+            /tmp/bong-resourcepack/manifest.json
           if-no-files-found: error
 
       - name: Publish release artifact
