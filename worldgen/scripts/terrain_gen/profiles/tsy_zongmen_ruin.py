@@ -40,20 +40,20 @@ ZONGMEN_RUIN_DECORATIONS = (
         notes="阵盘残片：曾经的引气阵法核心，紫晶尚有微光。",
     ),
     DecorationSpec(
-        name="scripture_pile",
+        name="dark_loam_patch",
         kind="shrub",
         blocks=("dirt", "podzol", "soul_sand"),
         size_range=(1, 3),
         rarity=0.30,
-        notes="藏经废墟：腐朽竹简化为黑土，灵识扫过隐约见字。",
+        notes="黑腐土斑：藏经/器物语义不走 density flora，只保留土壤痕迹。",
     ),
     DecorationSpec(
-        name="sect_stele",
+        name="deepslate_rubble_marker",
         kind="boulder",
-        blocks=("deepslate_bricks", "chiseled_deepslate", "soul_lantern"),
-        size_range=(3, 5),
-        rarity=0.20,
-        notes="宗门界碑：刻有山门字样的深板岩碑，多已断裂。",
+        blocks=("deepslate_bricks", "chiseled_deepslate", "cobbled_deepslate"),
+        size_range=(2, 4),
+        rarity=0.18,
+        notes="深岩碎标：界碑叙事改走 authored placement，此处只保留碎石标记。",
     ),
 )
 

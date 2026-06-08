@@ -39,12 +39,12 @@ PSEUDO_VEIN_DECORATIONS = (
         notes="异常茂盛草：荒野中突现的花海，是伪灵脉最显眼识别。",
     ),
     DecorationSpec(
-        name="tiandao_seal_stele",
+        name="sculk_loam_patch",
         kind="boulder",
         blocks=("sculk", "sculk_vein", "soul_sand"),
         size_range=(2, 3),
         rarity=0.15,
-        notes="天道封纹石：凝脉以上可读出模糊瓮字，是此地唯一警示。",
+        notes="幽纹土斑：封印碑/文字警示改走 authored placement，此处只保留幽纹土壤。",
     ),
     DecorationSpec(
         name="false_vein_well",
