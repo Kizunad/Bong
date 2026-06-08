@@ -1,5 +1,6 @@
 package com.bong.client.atmosphere;
 
+import com.bong.client.era.EraAmbianceState;
 import com.bong.client.state.SeasonState;
 import com.bong.client.state.ZoneState;
 
@@ -60,13 +61,24 @@ public final class ZoneAtmospherePlanner {
             hardClip = hardClip || collapse.blacken() >= 1.0;
         }
 
+        // plan-era-state-v1 M2 — 时代天象叠加：EraAmbianceState 插值 sky_tint 和 fog_density_delta。
+        // 死灵域强制白/灰天空，折叠崩溃强制黑天空，均优先于时代天象。
+        // 非死灵域/非折叠时才叠加时代天象，避免颜色冲突。
+        int eraSkyTintRgb = profile.skyTintRgb();
+        double eraFogDensity = profile.fogDensity();
+        if (!deadZone && !collapse.active()) {
+            eraSkyTintRgb = EraAmbianceState.interpolateSkyTintRgb(profile.skyTintRgb());
+            double fogDelta = EraAmbianceState.interpolateFogDensityDelta();
+            eraFogDensity = Math.max(0.0, Math.min(1.0, profile.fogDensity() + fogDelta));
+        }
+
         return new ZoneAtmosphereCommand(
             profile.zoneId(),
             profile.fogColorRgb(),
-            profile.fogDensity(),
-            fogStart(profile.fogDensity(), hardClip, zoneState, safeContext.tsyTier()),
-            fogEnd(profile.fogDensity(), hardClip, zoneState, safeContext.tsyTier()),
-            profile.skyTintRgb(),
+            eraFogDensity,
+            fogStart(eraFogDensity, hardClip, zoneState, safeContext.tsyTier()),
+            fogEnd(eraFogDensity, hardClip, zoneState, safeContext.tsyTier()),
+            eraSkyTintRgb,
             profile.ambientParticles(),
             profile.entryTransitionFx(),
             profile.ambientRecipeId(),

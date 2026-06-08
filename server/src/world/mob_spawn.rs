@@ -1,4 +1,7 @@
 //! 死域自然刷怪过滤规则与生产生成调度。
+//!
+//! P1 plan-era-state-v1：[`era_beast_spawn_gate`] 根据 WorldEraState 的 `beast_density_mul`
+//! 决定本次 spawn 事件是否放行（概率门控，Calamity×1.5 / Deduction×0.8 / Unknown×1.0）。
 
 use valence::prelude::{Commands, DVec3, Entity};
 
@@ -89,6 +92,38 @@ pub fn spawn_natural_mob_at(
     }
 }
 
+// ─── P1 Era 异变兽 spawn 密度门控 ─────────────────────────────────────────────
+
+/// era 时代对兽 spawn 密度的 baseline clamp。
+/// beast_density_mul > 1.0 时允许超过 1.0 的有效概率（冗余 spawn 机会），
+/// < 1.0 时有一定概率抑制 spawn。
+pub const ERA_BEAST_SPAWN_DENSITY_CLAMP_MAX: f64 = 2.0;
+
+/// P1 era beast spawn 密度门控（纯函数，方便测试）。
+///
+/// 生产调用者：[`spawn_attracted_mobs_from_harvest`]（botany/hazard.rs）在每次
+/// `BotanyAttractsMobsEvent` 触发 spawn 前调用，按 `WorldEraState.beast_density_mul` 门控。
+///
+/// 根据 `beast_density_mul`（来自 `WorldEraState::current_modifiers().beast_density_mul`）
+/// 以及伪随机种子 `spawn_seed`（通常为 tick ^ zone_hash 等轻量信息），决定本次 spawn 是否放行。
+///
+/// 算法：
+/// - 有效概率 = clamp(beast_density_mul, 0.0, ERA_BEAST_SPAWN_DENSITY_CLAMP_MAX)
+/// - 若有效概率 >= 1.0，通过（Calamity 时代始终允许）
+/// - 若有效概率 < 1.0，以 (spawn_seed % 1000) / 1000.0 作为随机数，小于概率则允许
+///
+/// 注意：`spawn_seed` 只提供粗粒度随机性，不追求密码学强度。
+/// 调用侧应在 spawn 事件触发处（如 botany/hazard.rs 或 spawn scheduler）检查此函数。
+pub fn era_beast_spawn_gate(beast_density_mul: f64, spawn_seed: u64) -> bool {
+    let effective_prob = beast_density_mul.clamp(0.0, ERA_BEAST_SPAWN_DENSITY_CLAMP_MAX);
+    if effective_prob >= 1.0 {
+        return true;
+    }
+    // 以 spawn_seed mod 1000 / 1000.0 作为 [0, 1) 的伪随机数
+    let random_val = (spawn_seed % 1000) as f64 / 1000.0;
+    random_val < effective_prob
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -109,6 +144,75 @@ mod tests {
             patrol_anchors: Vec::new(),
             blocked_tiles: Vec::new(),
         }
+    }
+
+    // ── P1 era beast spawn gate ────────────────────────────────────────────
+
+    #[test]
+    fn era_beast_spawn_gate_calamity_always_allows() {
+        use crate::world::era::{current_modifiers, EraType, CALAMITY_BEAST_DENSITY_MUL};
+        let mul = current_modifiers(EraType::Calamity).beast_density_mul;
+        assert_eq!(
+            mul, CALAMITY_BEAST_DENSITY_MUL,
+            "灾劫时代兽密度系数应等于常数（不写字面值）"
+        );
+        // 灾劫时代 mul=1.5 >= 1.0，任何 seed 都应通过
+        assert!(era_beast_spawn_gate(mul, 0), "seed=0 灾劫时代应允许");
+        assert!(era_beast_spawn_gate(mul, 999), "seed=999 灾劫时代应允许");
+        assert!(era_beast_spawn_gate(mul, 500), "seed=500 灾劫时代应允许");
+    }
+
+    #[test]
+    fn era_beast_spawn_gate_unknown_era_always_allows() {
+        // Unknown 时代 mul=1.0 >= 1.0，始终通过
+        assert!(era_beast_spawn_gate(1.0, 0), "Unknown 时代 seed=0 应允许");
+        assert!(
+            era_beast_spawn_gate(1.0, 999),
+            "Unknown 时代 seed=999 应允许"
+        );
+    }
+
+    #[test]
+    fn era_beast_spawn_gate_deduction_era_reduces_spawn_probability() {
+        use crate::world::era::{current_modifiers, EraType, DEDUCTION_BEAST_DENSITY_MUL};
+        let mul = current_modifiers(EraType::Deduction).beast_density_mul;
+        assert_eq!(
+            mul, DEDUCTION_BEAST_DENSITY_MUL,
+            "演绎时代兽密度系数应等于常数（不写字面值）"
+        );
+        // mul=0.8，seed % 1000 / 1000.0 < 0.8 才通过
+        // seed=700: 700/1000.0 = 0.7 < 0.8 → 通过
+        assert!(
+            era_beast_spawn_gate(mul, 700),
+            "演绎时代 seed=700 (0.7 < 0.8) 应通过"
+        );
+        // seed=850: 850/1000.0 = 0.85 >= 0.8 → 拒绝
+        assert!(
+            !era_beast_spawn_gate(mul, 850),
+            "演绎时代 seed=850 (0.85 >= 0.8) 应被拒"
+        );
+    }
+
+    #[test]
+    fn era_beast_spawn_gate_zero_density_blocks_all() {
+        // mul=0.0 → 所有 seed 都被拒绝（0/1000 = 0.0 不 < 0.0）
+        for seed in [0u64, 1, 100, 499, 999] {
+            assert!(
+                !era_beast_spawn_gate(0.0, seed),
+                "mul=0.0 任何 seed={seed} 应被拒绝"
+            );
+        }
+    }
+
+    #[test]
+    fn era_beast_spawn_gate_above_1_always_allows() {
+        // mul=1.5 clamp 到不超过 ERA_BEAST_SPAWN_DENSITY_CLAMP_MAX，但仍 >= 1.0 → 始终通过
+        assert!(era_beast_spawn_gate(1.5, 0));
+        assert!(era_beast_spawn_gate(1.5, 999));
+        assert!(
+            era_beast_spawn_gate(99.0, 0),
+            "超高系数 clamp 后仍 >= 1.0，应通过"
+        );
     }
 
     #[test]

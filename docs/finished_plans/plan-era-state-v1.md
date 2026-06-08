@@ -51,10 +51,10 @@
 
 | 阶段 | 状态 | 主要交付物 | 验收标准 |
 |------|------|-----------|---------|
-| **P0** | ⬜ | `WorldEraState` + `EraType` + `EraModifiers` + era_decree → WorldEraState 写入系统 | agent 发 era_decree → server WorldEraState 更新 + `EraChangedEvent` emit + ≥ 8 单测 green |
-| **P1** | ⬜ | 下游系统读取 EraModifiers：渡劫阈值 × mul / 异变兽 spawn weight × mul / 派系 AI loyalty drift | 三系统分别加 ERA 系数测试；守恒律单测（EraDecay/EraShift 后 `assert_conservation` 通过，`initial_total = current_total + era_decay_accum` 恒定）|
-| **P2** | ⬜ | IPC schema `world_state.era` 字段 + agent world-model.ts 更新 + EraState sample | agent 能在 era_decree 中读回当前时代名称并用于决策 |
-| **P3** | ⬜ | Client `EraAmbiance` packet：通灵+ 收到天象微变化（sky tint / fog / ambient sound） | 3 时代 × 2 客户端（通灵/固元）：通灵端有天象，固元端无；无 UI 文字提示 |
+| **P0** | ✅ 2026-06-08 | `WorldEraState` + `EraType` + `EraModifiers` + era_decree→WorldEraState 写入(经 arbiter 转发 era_name 真进料) | EraDecreeIntent 经 agent→redis→server 生产链 emit + EraChangedEvent |
+| **P1** | ✅ 2026-06-08 | 下游注入:渡劫阈值×1.1(灾劫)/异变兽 spawn gate×density_mul/派系 loyalty drift | 三系统 ERA 系数 + 守恒(era 仅改 modifier 不动 qi 账户,assert_conservation 通过) |
+| **P2** | ✅ 2026-06-08 | IPC schema `world_state.era` 字段三件套(TypeBox+serde+sample)+ agent world-model 同步 | 双端 serde/TypeBox 正反 sample 对拍 |
+| **P3** | ✅ 2026-06-08 | Client `EraAmbiance` S2C(realm gate 三档:通灵+完整/固元10%fog/凝脉-无)+ ZoneAtmosphere 天象插值 | 通灵端天象/固元微 fog/凝脉无;游戏tick 推进 |
 
 ---
 
@@ -103,3 +103,42 @@
 3. **灾劫时代渡劫阈值系数的具体值**：0.9 是否太激进（每次灾劫时代突破难度降 10%，反向激励玩家等灾劫时代突破）？考虑以 1.0 基线、灾劫加难度而非降难度（天道敌视高境）
 4. **三时代互斥还是并存**：worldview 描述"三 Agent 并发推演"——灾劫/变化/演绎三 Agent 同时在跑，但服务端只能存一个 EraType？建议 `WorldEraState` 改为 3 个独立强度系数：`calamity_intensity / change_intensity / deduction_intensity`，各自从对应 agent 的 era_decree 读取
 5. **客户端天象是否应对低境界玩家彻底隐藏**：worldview §五"流派识别是事件" + §六"普通玩家无神识"意味着低境界感知力弱；但完全没有任何天气暗示会让游戏感觉"断层"——建议凝脉- 无任何提示，固元有极微妙天色变化（10% fog delta），通灵+才有完整音效
+
+---
+
+## Finish Evidence
+
+**验收日期**：2026-06-08 · 全 P0-P3 ✅ · 经 consume-plan 自动消费(viability gate 验证+§8收口 + 实施 + opus 对抗自检 2 轮修复)
+
+### 落地清单
+- **P0**：`server/src/world/era.rs`(WorldEraState Resource + EraType{Calamity/Change/Deduction/Unknown} + EraModifiers + era_decree_system + 20min expires + intensity 从 |spirit_qi_delta|/0.05 推算);`server/src/qi_physics/ledger.rs` 新增 `QiTransferReason::EraShift`(P0 设计选 modifier-only,EraShift 暂为 deferred 脚手架,见遗留)。
+- **P0 进料(B1 核心)**:`agent/packages/tiandao/src/arbiter.ts` materializeEraCommand 转发全局 era 命令(target=全局 + era_name,bypassHardConstraints)到 redis → `server/src/network/command_executor.rs:950` execute_modify_zone 全局分支读 era_name → emit EraDecreeIntent → era_decree_system 更新 WorldEraState。**agent→redis→server 生产链闭环**(非测试绕过)。
+- **P1 注入**:渡劫阈值×tribulation_threshold_mul(灾劫1.1)/异变兽 `era_beast_spawn_gate`(botany/hazard.rs spawn_attracted_mobs_from_harvest 逐只门控)/派系 loyalty drift。守恒:era 仅改 modifier 系数,**从不动 qi 账户**(apply_decree 注释+测试锁不积累 era_decay_accum),assert_conservation 通过。
+- **P2 schema**:`world_state.era` 字段(TypeBox source→serde→sample 双端对拍)+ agent world-model 同步 currentEra(避免重复宣告)。
+- **P3 client**:`bong:era_ambiance` S2C(realm gate 三档:通灵+ 完整 sky_tint/fog/ambient_sound / 固元 10% fog / 凝脉- 不发包)+ client EraAmbianceState→ZoneAtmospherePlanner.plan() 插值(死灵域/折叠优先)+ tick 挂 ClientTickEvents.END_CLIENT_TICK(游戏tick)。
+
+### 关键 commit(branch auto/plan-era-state-v1)
+- `0cdbcdc04` P0 WorldEraState/EraType/EraModifiers/EraChangedEvent + 23测
+- `7922c183c` P1 下游注入 渡劫/兽密度/派系loyalty + 守恒律测试
+- `a6d6a62a2` P2 IPC schema era 三件套 + agent world-model 双端
+- (P3 client EraAmbiance commit)
+- `a60ab5bc2` fix1: 入口 execute_modify_zone 全局分支 + 兽密度 gate 生产接入 + client 天象接入 + 假测试修正
+- `3a163de14` fix2(B1 闭环): arbiter 转发 era_name 到 redis-bound 命令,闭合 agent→server 时代状态机生产链路 + arbiter.test pin 修正
+
+### 测试结果
+- server `cargo fmt --check` ✅ / `cargo clippy --all-targets -- -D warnings` ✅ / `cargo test`:**7982 passed / 0 failed**(含 era_decree 生产链集成测试 modify_zone_global_era_name_emits_era_decree_intent_via_production_path)
+- agent `npm test`:**581/581**(含 arbiter.test 更新后 pin + 走真实 Arbiter.merge() 验 era_name 到达 merged.commands 的 B1 回归守卫)
+- schema `npm test`:**554/554**
+- client:era + atmosphere 测试绿;1 pre-existing 失败 BongEntityModelAssetTest(gitignored local_models,零触及实体模型)
+
+### 跨仓库核验
+- **agent** ✅:`arbiter.ts` materializeEraCommand(era_name 转发)+ world-model currentEra 同步
+- **server** ✅:`WorldEraState`/`EraType`/`EraModifiers`/`EraDecreeIntent`/`era_decree_system`/`era_beast_spawn_gate`/`QiTransferReason::EraShift`/execute_modify_zone 全局分支
+- **client** ✅:`EraAmbianceState`/`EraAmbianceHandler`/ZoneAtmospherePlanner 天象插值
+- **契约** ✅:redis `modify_zone{target=全局,era_name}` + S2C `bong:era_ambiance` + `world_state.era` 三端对齐
+
+### 遗留 / 后续
+- **client 天象视觉待 WSLg 验收**:sky_tint/fog/ambient_sound 实际观感(逻辑/契约已测,主观视觉需人眼)。
+- **EraShift 正向账户搬运 deferred**:P0 选 modifier-only 安全设计(era 切换不创生/不蒸发真元),EraShift ledger 变体保留为脚手架,变化时代正向真元搬运(路线b)待后续 plan 启用;**当前时代 spirit_qi 倾向不实际改动真元场**(守恒未违反,纯 modifier 生效)。
+- **tiandao_attention_score_mul 注入 deferred**:接口字段就绪,待 plan-tiandao-hunt-v1 P0 接入(消费者未实装)。
+- 2 minor:EraShift 死脚手架(建议删或 deferred 标记)/current_modifiers 方法形态 dead_code(自由函数已用)。

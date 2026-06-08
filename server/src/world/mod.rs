@@ -6,6 +6,7 @@ pub mod dimension;
 pub mod dimension_transfer;
 pub mod entity_model;
 pub mod environment;
+pub mod era;
 pub mod events;
 pub mod extract_system;
 pub mod heartbeat;
@@ -120,6 +121,7 @@ pub fn register(app: &mut App) {
     weather_physics::register(app);
     season::register(app);
     calamity::register(app);
+    era::register(app);
     pseudo_vein_runtime::register(app);
     spirit_eye::register(app);
     entity_model::register(app);

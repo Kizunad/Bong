@@ -138,6 +138,8 @@ import { validate } from "../src/validate.js";
 import { VfxEventV1 } from "../src/vfx-event.js";
 import { BreakthroughCinematicEventV1 } from "../src/breakthrough-cinematic.js";
 import {
+  EraStateV1,
+  EraTypeV1,
   WorldStateV1,
   validateWorldStateV1Contract,
 } from "../src/world-state.js";
@@ -497,6 +499,66 @@ describe("sample files pass schema validation", () => {
     const data = loadSample("world-state.sample.json");
     const result = validate(WorldStateV1, data);
     expect(result.ok, result.errors.join("; ")).toBe(true);
+  });
+
+  // ── plan-era-state-v1 P2：EraStateV1 TypeBox 正反 sample 对拍 ────────────
+
+  it("EraStateV1 — calamity sample validates", () => {
+    const samples = loadSample("era-state.sample.json") as Record<string, unknown>;
+    const result = validate(EraStateV1, samples["calamity"]);
+    expect(result.ok, `calamity sample 应通过 EraStateV1 验证；errors: ${result.errors.join("; ")}`).toBe(true);
+  });
+
+  it("EraStateV1 — change sample validates", () => {
+    const samples = loadSample("era-state.sample.json") as Record<string, unknown>;
+    const result = validate(EraStateV1, samples["change"]);
+    expect(result.ok, `change sample 应通过 EraStateV1 验证；errors: ${result.errors.join("; ")}`).toBe(true);
+  });
+
+  it("EraStateV1 — deduction sample validates", () => {
+    const samples = loadSample("era-state.sample.json") as Record<string, unknown>;
+    const result = validate(EraStateV1, samples["deduction"]);
+    expect(result.ok, `deduction sample 应通过 EraStateV1 验证；errors: ${result.errors.join("; ")}`).toBe(true);
+  });
+
+  it("EraStateV1 — null/undefined for Optional era field is valid in WorldStateV1", () => {
+    const data = loadSample("world-state.sample.json") as Record<string, unknown>;
+    const withoutEra = { ...data };
+    delete withoutEra["era"];
+    const result = validate(WorldStateV1, withoutEra);
+    expect(result.ok, `era 字段缺失时 WorldStateV1 验证应通过（Optional）；errors: ${result.errors.join("; ")}`).toBe(true);
+  });
+
+  it("EraStateV1 — rejects extra fields", () => {
+    const bad = { era_type: "calamity", intensity: 0.9, onset_tick: 1000, rogue: 99 };
+    const result = validate(EraStateV1, bad);
+    expect(result.ok, "EraStateV1 应拒绝额外字段").toBe(false);
+  });
+
+  it("EraStateV1 — rejects unknown era_type", () => {
+    const bad = { era_type: "invalid_era", intensity: 0.5, onset_tick: 100 };
+    const result = validate(EraStateV1, bad);
+    expect(result.ok, "EraStateV1 应拒绝未知 era_type").toBe(false);
+  });
+
+  it("EraTypeV1 — all 4 literal variants validate", () => {
+    for (const literal of ["calamity", "change", "deduction", "unknown"]) {
+      const result = validate(EraTypeV1, literal);
+      expect(
+        result.ok,
+        `EraTypeV1 literal "${literal}" 应通过验证；errors: ${result.errors.join("; ")}`,
+      ).toBe(true);
+    }
+  });
+
+  it("world-state.sample.json — era field validates against EraStateV1", () => {
+    const data = loadSample("world-state.sample.json") as { era?: unknown };
+    expect(data.era, "world-state.sample.json 应含 era 字段（plan-era-state-v1 P2）").toBeDefined();
+    const result = validate(EraStateV1, data.era);
+    expect(
+      result.ok,
+      `world-state.sample.json 的 era 字段应通过 EraStateV1 验证；errors: ${result.errors.join("; ")}`,
+    ).toBe(true);
   });
 
   it("rat phase event contract", () => {
