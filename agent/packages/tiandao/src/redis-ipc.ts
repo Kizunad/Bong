@@ -110,6 +110,8 @@ export const WORLD_MODEL_STATE_FIELDS = Object.freeze({
   lastDecisions: "last_decisions",
   playerFirstSeenTick: "player_first_seen_tick",
   negDomainPendingTribulations: "neg_domain_pending_tribulations",
+  negDomainEscapeTelemetry: "neg_domain_escape_telemetry",
+  negDomainEscapeSessions: "neg_domain_escape_sessions",
   lastTick: "last_tick",
   lastStateTs: "last_state_ts",
 });
@@ -936,6 +938,19 @@ function parseWorldModelStateMirror(
     logger,
     isNegDomainPendingTribulations,
   );
+  const negDomainEscapeTelemetry = parseJsonField(
+    mirror[WORLD_MODEL_STATE_FIELDS.negDomainEscapeTelemetry] ??
+      '{"escapeEntryCount":0,"postEscapeRealmDropCount":0,"successfulTribulationAvoidanceCount":0,"activeEscapeSessionCount":0,"postEscapeRealmDropRate":0}',
+    WORLD_MODEL_STATE_FIELDS.negDomainEscapeTelemetry,
+    logger,
+    isNegDomainEscapeTelemetry,
+  );
+  const negDomainEscapeSessions = parseJsonField(
+    mirror[WORLD_MODEL_STATE_FIELDS.negDomainEscapeSessions] ?? "{}",
+    WORLD_MODEL_STATE_FIELDS.negDomainEscapeSessions,
+    logger,
+    isNegDomainEscapeSessions,
+  );
   const lastTick = parseOptionalIntegerField(
     mirror[WORLD_MODEL_STATE_FIELDS.lastTick],
     WORLD_MODEL_STATE_FIELDS.lastTick,
@@ -953,6 +968,8 @@ function parseWorldModelStateMirror(
     lastDecisions === INVALID_MIRROR_FIELD ||
     playerFirstSeenTick === INVALID_MIRROR_FIELD ||
     negDomainPendingTribulations === INVALID_MIRROR_FIELD ||
+    negDomainEscapeTelemetry === INVALID_MIRROR_FIELD ||
+    negDomainEscapeSessions === INVALID_MIRROR_FIELD ||
     lastTick === INVALID_MIRROR_FIELD ||
     lastStateTs === INVALID_MIRROR_FIELD
   ) {
@@ -965,6 +982,8 @@ function parseWorldModelStateMirror(
     lastDecisions,
     playerFirstSeenTick,
     negDomainPendingTribulations,
+    negDomainEscapeTelemetry,
+    negDomainEscapeSessions,
     lastTick,
     lastStateTs,
   };
@@ -1130,6 +1149,48 @@ function isNegDomainPendingTribulations(
       pending.reason === "negative_domain_tribulation_exempt"
     );
   });
+}
+
+function isNegDomainEscapeTelemetry(
+  value: unknown,
+): value is AgentWorldModelSnapshotV1["negDomainEscapeTelemetry"] {
+  return (
+    isObjectRecord(value) &&
+    isNonNegativeFiniteNumber(value.escapeEntryCount) &&
+    Number.isInteger(value.escapeEntryCount) &&
+    isNonNegativeFiniteNumber(value.postEscapeRealmDropCount) &&
+    Number.isInteger(value.postEscapeRealmDropCount) &&
+    isNonNegativeFiniteNumber(value.successfulTribulationAvoidanceCount) &&
+    Number.isInteger(value.successfulTribulationAvoidanceCount) &&
+    isNonNegativeFiniteNumber(value.activeEscapeSessionCount) &&
+    Number.isInteger(value.activeEscapeSessionCount) &&
+    isNonNegativeFiniteNumber(value.postEscapeRealmDropRate)
+  );
+}
+
+function isNegDomainEscapeSessions(
+  value: unknown,
+): value is AgentWorldModelSnapshotV1["negDomainEscapeSessions"] {
+  if (!isObjectRecord(value)) {
+    return false;
+  }
+
+  return Object.values(value).every((session) => {
+    return (
+      isObjectRecord(session) &&
+      typeof session.playerUuid === "string" &&
+      typeof session.playerName === "string" &&
+      typeof session.zone === "string" &&
+      typeof session.enteredAtTick === "number" &&
+      Number.isInteger(session.enteredAtTick) &&
+      typeof session.entryRealmRank === "number" &&
+      Number.isFinite(session.entryRealmRank)
+    );
+  });
+}
+
+function isNonNegativeFiniteNumber(value: unknown): value is number {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0;
 }
 
 function isObjectRecord(value: unknown): value is Record<string, unknown> {

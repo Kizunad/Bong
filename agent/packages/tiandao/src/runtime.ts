@@ -29,7 +29,11 @@ import {
 } from "./locust-swarm-narration.js";
 import { createClient, createMockClient, LlmBackoffError, LlmTimeoutError, type LlmClient } from "./llm.js";
 import { createMockWorldState } from "./mock-state.js";
-import { applyNegDomainTribulationGate, renderNegDomainNarrations } from "./neg-domain-escape.js";
+import {
+  applyNegDomainTribulationGate,
+  recordNegDomainEscapeTelemetry,
+  renderNegDomainNarrations,
+} from "./neg-domain-escape.js";
 import {
   NARRATION_LOW_SCORE_THRESHOLD,
   evaluateNarrations,
@@ -451,6 +455,11 @@ export async function runTick(state: WorldStateV1, deps: TickDeps): Promise<Tick
     previousState: worldModel?.latestState ?? null,
     state,
   });
+  recordNegDomainEscapeTelemetry({
+    previousState: worldModel?.latestState ?? null,
+    state,
+    worldModel,
+  });
   worldModel?.updateState(state);
   applyWorldModelToAgents(agents, worldModel);
   applyChatSignalsToAgents(agents, chatSignals ?? []);
@@ -644,6 +653,7 @@ export async function runTick(state: WorldStateV1, deps: TickDeps): Promise<Tick
     narrationScores,
     narrationLowScoreCount,
     narrationAverageScore: summarizeNarrationAverage(narrationScores),
+    negDomainEscape: worldModel?.getNegDomainEscapeTelemetrySnapshot(),
   };
 
   if (telemetrySink) {
@@ -1397,6 +1407,8 @@ function worldModelSnapshotToEnvelopeSnapshot(
     lastDecisions: snapshot.lastDecisions,
     playerFirstSeenTick: snapshot.playerFirstSeenTick,
     negDomainPendingTribulations: snapshot.negDomainPendingTribulations,
+    negDomainEscapeTelemetry: snapshot.negDomainEscapeTelemetry,
+    negDomainEscapeSessions: snapshot.negDomainEscapeSessions,
     lastTick: snapshot.lastTick,
     lastStateTs: snapshot.lastStateTs,
   };

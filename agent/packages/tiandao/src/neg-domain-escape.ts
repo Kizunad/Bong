@@ -57,6 +57,7 @@ export function applyNegDomainTribulationGate(args: {
       continue;
     }
 
+    const alreadyPending = args.worldModel?.hasNegDomainPendingTribulation(player.uuid) ?? false;
     args.worldModel?.recordNegDomainPendingTribulation({
       playerUuid: player.uuid,
       playerName: player.name,
@@ -64,6 +65,9 @@ export function applyNegDomainTribulationGate(args: {
       tick: args.state.tick,
       reason: "negative_domain_tribulation_exempt",
     });
+    if (!alreadyPending) {
+      args.worldModel?.recordSuccessfulNegDomainTribulationAvoidance();
+    }
     narrations.push(buildLostLockNarration(player));
   }
 
@@ -112,6 +116,50 @@ export function renderNegDomainNarrations(args: {
   }
 
   return narrations;
+}
+
+export function recordNegDomainEscapeTelemetry(args: {
+  previousState: WorldStateV1 | null;
+  state: WorldStateV1;
+  worldModel?: WorldModel;
+}): void {
+  const worldModel = args.worldModel;
+  const previousState = args.previousState;
+  if (!worldModel || previousState === null) {
+    return;
+  }
+
+  const previousPlayers = new Map(previousState.players.map((player) => [player.uuid, player]));
+  for (const player of args.state.players) {
+    const previousPlayer = previousPlayers.get(player.uuid);
+    if (!previousPlayer) {
+      continue;
+    }
+
+    const currentZone = findZone(args.state, player.zone);
+    const previousZone = findZone(previousState, previousPlayer.zone);
+    const wasInNegativeDomain = previousZone ? isNegativeDomain(previousZone) : false;
+    const isInNegativeDomain = currentZone ? isNegativeDomain(currentZone) : false;
+    const currentRank = realmRank(player.realm);
+    const previousRank = realmRank(previousPlayer.realm);
+
+    if (isSpiritRealm(player) && !wasInNegativeDomain && isInNegativeDomain && currentZone && currentRank !== null) {
+      worldModel.recordNegDomainEscapeEntry({
+        playerUuid: player.uuid,
+        playerName: player.name,
+        zone: currentZone.name,
+        tick: args.state.tick,
+        entryRealmRank: currentRank,
+      });
+    }
+
+    if (wasInNegativeDomain && !isInNegativeDomain && previousRank !== null && currentRank !== null) {
+      worldModel.recordNegDomainEscapeExit({
+        playerUuid: player.uuid,
+        exitRealmRank: currentRank,
+      });
+    }
+  }
 }
 
 function getTargetedTribulationPlayer(command: Command): string | null {
