@@ -21,7 +21,6 @@ use valence::prelude::{
 const ATTENTION_MIN: f64 = 0.0;
 const ATTENTION_MAX: f64 = 100.0;
 pub const TIANDAO_HUNT_EVAL_INTERVAL_TICKS: u64 = 10 * 20;
-const TIANDAO_PRESENCE_CHANNEL: &str = "bong:tiandao_presence";
 const TIANDAO_PRESENCE_SPIRIT_REALM_MIN_RANK: u8 = 4;
 const TIANDAO_PRESSURE_EVENT_INTERVAL_TICKS: u64 = 3 * 60 * 20;
 const TIANDAO_TRIBULATION_EVENT_INTERVAL_TICKS: u64 = 5 * 60 * 20;
@@ -37,7 +36,6 @@ pub struct TiandaoAttention {
     pub peak_level: f64,
     pub last_response_tick: u64,
     pub last_emitted_response: TiandaoResponseLevel,
-    pub last_presence_tick: u64,
 }
 
 impl Default for TiandaoAttention {
@@ -50,7 +48,6 @@ impl Default for TiandaoAttention {
             peak_level: 0.0,
             last_response_tick: 0,
             last_emitted_response: TiandaoResponseLevel::None,
-            last_presence_tick: 0,
         }
     }
 }
@@ -168,7 +165,6 @@ pub fn tiandao_hunt_tick(
             eval.zone_spirit_qi,
             now_tick,
         );
-        attention.last_presence_tick = now_tick;
 
         apply_tiandao_response_chain(
             &mut attention,
@@ -594,12 +590,10 @@ fn emit_tiandao_presence_payload(
         "vignette_alpha": profile.map(|profile| profile.vignette_alpha).unwrap_or(0.0),
         "shake_intensity": profile.map(|profile| profile.shake_intensity).unwrap_or(0.0),
         "saturation": profile.map(|profile| profile.saturation).unwrap_or(1.0),
-        "audio_recipe": profile.map(|profile| profile.audio_recipe_id).unwrap_or(""),
         "tick": now_tick,
     });
     match serde_json::to_vec(&payload) {
         Ok(bytes) => {
-            let _ = TIANDAO_PRESENCE_CHANNEL;
             client.send_custom_payload(ident!("bong:tiandao_presence"), &bytes);
         }
         Err(error) => {
