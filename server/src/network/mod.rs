@@ -110,6 +110,7 @@ use big_brain::prelude::{ActionState, Actor};
 use chat_collector::{collect_player_chat, ChatCollectorRateLimit};
 use command_executor::{execute_agent_commands, CommandExecutorResource};
 use redis_bridge::{RedisInbound, RedisOutbound};
+use valence::prelude::bevy_ecs::system::SystemParam;
 use valence::prelude::{
     bevy_ecs, ident, Added, App, Changed, Client, Commands, DVec3, Entity, EntityKind, EventReader,
     EventWriter, Events, IntoSystemConfigs, Or, Position, Query, Res, ResMut, Resource, Startup,
@@ -167,6 +168,7 @@ use crate::social::components::{
     Anonymity, FactionMembership as PlayerFactionMembership, Relationships, Renown,
 };
 use crate::world::dimension::{CurrentDimension, DimensionKind};
+use crate::world::era::WorldEraState;
 use crate::world::events::{ActiveEventsResource, EVENT_REALM_COLLAPSE};
 use crate::world::season::{query_season, SeasonChangedEvent, WorldSeasonState};
 use crate::world::terrain::TerrainProviders;
@@ -969,6 +971,15 @@ fn redact_redis_url_for_log(redis_url: &str) -> String {
     }
 }
 
+/// 额外上下文 SystemParam：将超出 Bevy 16 参数上限的两个可选 Resource 捆绑为一个参数。
+///
+/// plan-era-state-v1 P2：引入 WorldEraState 后函数参数超出 16 个限制，故使用此包裹体。
+#[derive(SystemParam)]
+struct WorldStateContextParams<'w> {
+    tiandao_blind_zones: Option<Res<'w, crate::sword_path::heaven_gate::TiandaoBlindZoneRegistry>>,
+    world_era_state: Option<Res<'w, WorldEraState>>,
+}
+
 /// Periodically publish world state snapshot to Redis
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
 fn publish_world_state_to_redis(
@@ -1016,7 +1027,7 @@ fn publish_world_state_to_redis(
         (Entity, &Cultivation, &MeridianSystem, &QiColor, &LifeRecord),
         With<Client>,
     >,
-    tiandao_blind_zones: Option<Res<crate::sword_path::heaven_gate::TiandaoBlindZoneRegistry>>,
+    ctx: WorldStateContextParams<'_>,
 ) {
     timer.ticks += 1;
     if !timer
@@ -1045,7 +1056,8 @@ fn publish_world_state_to_redis(
         &cultivation_by_entity,
         dormant_store.as_deref(),
         rat_density_heatmap,
-        tiandao_blind_zones.as_deref(),
+        ctx.tiandao_blind_zones.as_deref(),
+        ctx.world_era_state.as_deref(),
     );
 
     let _ = redis.tx_outbound.send(RedisOutbound::WorldState(state));
@@ -1206,7 +1218,10 @@ fn build_world_state_snapshot(
     dormant_store: Option<&NpcDormantStore>,
     rat_density_heatmap: RatDensityHeatmapV1,
     tiandao_blind_zones: Option<&crate::sword_path::heaven_gate::TiandaoBlindZoneRegistry>,
+    world_era_state: Option<&WorldEraState>,
 ) -> WorldStateV1 {
+    use crate::schema::world_state::{EraStateV1 as IpcEraStateV1, EraTypeV1Wire};
+
     let zone_registry = effective_zone_registry(zone_registry);
     let (players, player_ids_by_entity, player_counts_by_zone) = collect_player_snapshots(
         tick,
@@ -1215,6 +1230,20 @@ fn build_world_state_snapshot(
         cultivation_by_entity,
         tiandao_blind_zones,
     );
+
+    // plan-era-state-v1 P2：从 WorldEraState Resource 填充 era 字段。
+    // Unknown 时代（或无 Resource）不填充（None → skip_serializing_if）。
+    let era = world_era_state.and_then(|era_state| {
+        if era_state.era == crate::world::era::EraType::Unknown {
+            None
+        } else {
+            Some(IpcEraStateV1 {
+                era_type: EraTypeV1Wire::from(era_state.era),
+                intensity: era_state.intensity,
+                onset_tick: era_state.onset_tick,
+            })
+        }
+    });
 
     WorldStateV1 {
         v: 1,
@@ -1235,6 +1264,7 @@ fn build_world_state_snapshot(
         recent_events: active_events
             .map(ActiveEventsResource::recent_events_snapshot)
             .unwrap_or_default(),
+        era,
     }
 }
 

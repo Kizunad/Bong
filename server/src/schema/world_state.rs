@@ -3,6 +3,7 @@ use std::collections::HashMap;
 
 use crate::fauna::rat_phase::RatDensityHeatmapV1;
 use crate::npc::faction::{FactionId, FactionRank};
+use crate::world::era::EraType;
 
 use super::common::{GameEventType, NpcStateKind, PlayerTrend};
 use super::cultivation::{CultivationSnapshotV1, LifeRecordSnapshotV1};
@@ -187,6 +188,42 @@ pub struct GameEvent {
     pub details: Option<HashMap<String, serde_json::Value>>,
 }
 
+/// plan-era-state-v1 P2：时代状态 IPC 结构体，嵌入 WorldStateV1.era（Optional）。
+///
+/// TypeBox source of truth: `EraStateV1` in `agent/packages/schema/src/world-state.ts`。
+/// era_type="unknown" 时 server 不填此字段（None → 不序列化）。
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct EraStateV1 {
+    /// 时代类型（wire 字符串：calamity / change / deduction / unknown）。
+    pub era_type: EraTypeV1Wire,
+    /// 强度 [0.0, 1.0]，由 |spirit_qi_delta| / 0.05 推算（clamp 到 1.0）。
+    pub intensity: f64,
+    /// 时代宣告时的 server tick。
+    pub onset_tick: u64,
+}
+
+/// 时代类型 wire 枚举（与 TypeBox EraTypeV1 字面量对应）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum EraTypeV1Wire {
+    Calamity,
+    Change,
+    Deduction,
+    Unknown,
+}
+
+impl From<EraType> for EraTypeV1Wire {
+    fn from(era: EraType) -> Self {
+        match era {
+            EraType::Calamity => EraTypeV1Wire::Calamity,
+            EraType::Change => EraTypeV1Wire::Change,
+            EraType::Deduction => EraTypeV1Wire::Deduction,
+            EraType::Unknown => EraTypeV1Wire::Unknown,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct WorldStateV1 {
@@ -202,6 +239,10 @@ pub struct WorldStateV1 {
     pub rat_density_heatmap: RatDensityHeatmapV1,
     pub zones: Vec<ZoneSnapshot>,
     pub recent_events: Vec<GameEvent>,
+    /// 当前天道时代状态（plan-era-state-v1 P2）。
+    /// era_type=Unknown 时不序列化（None）；非 Unknown 时填充 EraStateV1。
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub era: Option<EraStateV1>,
 }
 
 fn deserialize_v1_version<'de, D>(deserializer: D) -> Result<u8, D::Error>
@@ -271,6 +312,21 @@ mod tests {
         );
         assert_eq!(state.zones.len(), 2);
         assert_eq!(state.recent_events.len(), 2);
+        // plan-era-state-v1 P2：sample 中含 era 字段
+        let era = state
+            .era
+            .expect("world-state.sample.json 应含 era 字段（plan-era-state-v1 P2）");
+        assert_eq!(
+            era.era_type,
+            EraTypeV1Wire::Calamity,
+            "sample 中 era_type 应为 calamity"
+        );
+        assert!(
+            (era.intensity - 0.9).abs() < 1e-9,
+            "sample 中 era.intensity 应为 0.9；实际 = {}",
+            era.intensity
+        );
+        assert_eq!(era.onset_tick, 80000, "sample 中 era.onset_tick 应为 80000");
         assert_eq!(CH_WORLD_STATE, "bong:world_state");
         assert_eq!(CH_PLAYER_CHAT, "bong:player_chat");
     }
@@ -345,5 +401,179 @@ mod tests {
         let state: WorldStateV1 = serde_json::from_value(value).expect("deserialize world state");
 
         assert_eq!(state.zones[0].status, ZoneStatusV1::RaceOut);
+    }
+
+    // ── plan-era-state-v1 P2：EraStateV1 Rust serde 正反 sample 对拍 ──────────
+
+    #[test]
+    fn deserialize_era_state_calamity() {
+        let json = r#"{"era_type":"calamity","intensity":0.8,"onset_tick":500}"#;
+        let era: EraStateV1 =
+            serde_json::from_str(json).expect("EraStateV1 calamity 应正常反序列化");
+        assert_eq!(
+            era.era_type,
+            EraTypeV1Wire::Calamity,
+            "era_type 应为 Calamity"
+        );
+        assert!((era.intensity - 0.8).abs() < 1e-9, "intensity 应为 0.8");
+        assert_eq!(era.onset_tick, 500, "onset_tick 应为 500");
+    }
+
+    #[test]
+    fn deserialize_era_state_change() {
+        let json = r#"{"era_type":"change","intensity":0.5,"onset_tick":1200}"#;
+        let era: EraStateV1 = serde_json::from_str(json).expect("EraStateV1 change 应正常反序列化");
+        assert_eq!(era.era_type, EraTypeV1Wire::Change, "era_type 应为 Change");
+        assert!((era.intensity - 0.5).abs() < 1e-9, "intensity 应为 0.5");
+    }
+
+    #[test]
+    fn deserialize_era_state_deduction() {
+        let json = r#"{"era_type":"deduction","intensity":0.3,"onset_tick":2400}"#;
+        let era: EraStateV1 =
+            serde_json::from_str(json).expect("EraStateV1 deduction 应正常反序列化");
+        assert_eq!(
+            era.era_type,
+            EraTypeV1Wire::Deduction,
+            "era_type 应为 Deduction"
+        );
+    }
+
+    #[test]
+    fn deserialize_era_state_rejects_extra_field() {
+        let json = r#"{"era_type":"calamity","intensity":0.8,"onset_tick":500,"rogue":99}"#;
+        assert!(
+            serde_json::from_str::<EraStateV1>(json).is_err(),
+            "EraStateV1 应拒绝额外字段（deny_unknown_fields）"
+        );
+    }
+
+    #[test]
+    fn deserialize_era_state_rejects_unknown_era_type() {
+        let json = r#"{"era_type":"invalid_type","intensity":0.5,"onset_tick":100}"#;
+        assert!(
+            serde_json::from_str::<EraStateV1>(json).is_err(),
+            "EraStateV1 应拒绝未知 era_type 字符串"
+        );
+    }
+
+    #[test]
+    fn era_type_v1_wire_roundtrip_all_variants() {
+        for (era_type, wire_str) in [
+            (EraTypeV1Wire::Calamity, "\"calamity\""),
+            (EraTypeV1Wire::Change, "\"change\""),
+            (EraTypeV1Wire::Deduction, "\"deduction\""),
+            (EraTypeV1Wire::Unknown, "\"unknown\""),
+        ] {
+            let serialized = serde_json::to_string(&era_type)
+                .unwrap_or_else(|_| panic!("序列化 {:?} 不应失败", era_type));
+            assert_eq!(
+                serialized, wire_str,
+                "EraTypeV1Wire::{:?} wire 字符串应为 {wire_str}",
+                era_type
+            );
+            let deserialized: EraTypeV1Wire = serde_json::from_str(wire_str)
+                .unwrap_or_else(|_| panic!("反序列化 {wire_str} 不应失败"));
+            assert_eq!(
+                deserialized, era_type,
+                "反序列化 {wire_str} 应还原为 {:?}",
+                era_type
+            );
+        }
+    }
+
+    #[test]
+    fn era_type_v1_wire_from_era_type_all_variants() {
+        use crate::world::era::EraType;
+
+        assert_eq!(
+            EraTypeV1Wire::from(EraType::Calamity),
+            EraTypeV1Wire::Calamity
+        );
+        assert_eq!(EraTypeV1Wire::from(EraType::Change), EraTypeV1Wire::Change);
+        assert_eq!(
+            EraTypeV1Wire::from(EraType::Deduction),
+            EraTypeV1Wire::Deduction
+        );
+        assert_eq!(
+            EraTypeV1Wire::from(EraType::Unknown),
+            EraTypeV1Wire::Unknown
+        );
+    }
+
+    #[test]
+    fn world_state_era_field_optional_absent_is_none() {
+        // world-state.sample.json に era フィールドがない場合は None になるべき
+        // (we'll add era to the sample; this test verifies removal => None)
+        let mut value = sample_world_state_value();
+        value.as_object_mut().map(|obj| obj.remove("era"));
+        let state: WorldStateV1 =
+            serde_json::from_value(value).expect("era フィールド不在でも逆シリアル化できるべき");
+        assert!(state.era.is_none(), "era フィールド不在 → None であるべき");
+    }
+
+    #[test]
+    fn world_state_era_field_calamity_roundtrip() {
+        let mut value = sample_world_state_value();
+        value["era"] = json!({
+            "era_type": "calamity",
+            "intensity": 0.9,
+            "onset_tick": 1000
+        });
+        let state: WorldStateV1 =
+            serde_json::from_value(value).expect("WorldStateV1 含 era=calamity 应反序列化成功");
+        let era = state.era.expect("era 字段应存在");
+        assert_eq!(
+            era.era_type,
+            EraTypeV1Wire::Calamity,
+            "era_type 应为 Calamity"
+        );
+        assert!((era.intensity - 0.9).abs() < 1e-9, "intensity 应为 0.9");
+        assert_eq!(era.onset_tick, 1000);
+
+        // Roundtrip: serialize back and re-parse
+        let re_json = serde_json::to_string(&state).expect("序列化不应失败");
+        let state2: WorldStateV1 = serde_json::from_str(&re_json).expect("重新反序列化不应失败");
+        let era2 = state2.era.expect("roundtrip 后 era 应存在");
+        assert_eq!(era2.era_type, EraTypeV1Wire::Calamity);
+        assert!((era2.intensity - 0.9).abs() < 1e-9);
+        assert_eq!(era2.onset_tick, 1000);
+    }
+
+    #[test]
+    fn world_state_era_field_none_not_serialized() {
+        // era=None 时序列化产物不应有 "era" key
+        let mut value = sample_world_state_value();
+        value.as_object_mut().map(|obj| obj.remove("era"));
+        let state: WorldStateV1 = serde_json::from_value(value).expect("deserialize ok");
+        assert!(state.era.is_none());
+        let serialized = serde_json::to_string(&state).expect("serialize ok");
+        assert!(
+            !serialized.contains("\"era\""),
+            "era=None 时序列化产物不应包含 'era' key；actual: {serialized}"
+        );
+    }
+
+    #[test]
+    fn deserialize_era_state_sample_json() {
+        // 验证 era-state.sample.json 三时代正样本均能正常反序列化
+        let json = include_str!("../../../agent/packages/schema/samples/era-state.sample.json");
+        let samples: serde_json::Value =
+            serde_json::from_str(json).expect("era-state.sample.json 应为有效 JSON");
+
+        let calamity = &samples["calamity"];
+        let era: EraStateV1 = serde_json::from_value(calamity.clone())
+            .expect("era-state.sample.json calamity 应反序列化为 EraStateV1");
+        assert_eq!(era.era_type, EraTypeV1Wire::Calamity);
+
+        let change = &samples["change"];
+        let era: EraStateV1 = serde_json::from_value(change.clone())
+            .expect("era-state.sample.json change 应反序列化为 EraStateV1");
+        assert_eq!(era.era_type, EraTypeV1Wire::Change);
+
+        let deduction = &samples["deduction"];
+        let era: EraStateV1 = serde_json::from_value(deduction.clone())
+            .expect("era-state.sample.json deduction 应反序列化为 EraStateV1");
+        assert_eq!(era.era_type, EraTypeV1Wire::Deduction);
     }
 }

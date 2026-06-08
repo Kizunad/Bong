@@ -188,5 +188,10 @@
       "player": "offline:NewPlayer1",
       "zone": "starter_valley"
     }
-  ]
+  ],
+  "era": {
+    "era_type": "calamity",
+    "intensity": 0.9,
+    "onset_tick": 80000
+  }
 }

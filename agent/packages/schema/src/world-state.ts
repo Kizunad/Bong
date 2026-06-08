@@ -196,6 +196,31 @@ export const RatDensityHeatmapV1 = Type.Object(
 );
 export type RatDensityHeatmapV1 = Static<typeof RatDensityHeatmapV1>;
 
+// ─── 时代状态 ──────────────────────────────────────────
+// plan-era-state-v1 P2：WorldStateV1 era 字段（agent 端 source of truth）。
+// 注意：此字段由 server 从 WorldEraState Bevy Resource 填充；
+// agent world-model.ts 在 updateState() 中同步更新 currentEraValue。
+
+export const EraTypeV1 = Type.Union([
+  Type.Literal("calamity"),
+  Type.Literal("change"),
+  Type.Literal("deduction"),
+  Type.Literal("unknown"),
+]);
+export type EraTypeV1 = Static<typeof EraTypeV1>;
+
+export const EraStateV1 = Type.Object(
+  {
+    era_type: EraTypeV1,
+    /// 强度 [0.0, 1.0]，由 |spirit_qi_delta| / 0.05 推算（clamp 到 1.0）。
+    intensity: Type.Number({ minimum: 0, maximum: 1 }),
+    /// 时代宣告时的 server tick。
+    onset_tick: Type.Integer({ minimum: 0 }),
+  },
+  { additionalProperties: false },
+);
+export type EraStateV1 = Static<typeof EraStateV1>;
+
 // ─── 顶层消息 ──────────────────────────────────────────
 
 export const WorldStateV1 = Type.Object(
@@ -210,6 +235,9 @@ export const WorldStateV1 = Type.Object(
     rat_density_heatmap: RatDensityHeatmapV1,
     zones: Type.Array(ZoneSnapshot),
     recent_events: Type.Array(GameEvent),
+    /// 当前天道时代状态（plan-era-state-v1 P2）。
+    /// 由 server WorldEraState Resource 填充；era_type="unknown" 时 server 不填此字段（Optional）。
+    era: Type.Optional(EraStateV1),
   },
   { additionalProperties: false },
 );

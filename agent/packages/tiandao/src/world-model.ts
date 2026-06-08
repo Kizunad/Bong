@@ -200,6 +200,25 @@ export class WorldModel {
     this.lastStateTsValue = clonedState.ts;
     this.newPlayersThisTick = new Set<string>();
 
+    // plan-era-state-v1 P2：从 WorldStateV1.era 同步时代状态到 currentEraValue。
+    // agent era.md skill 可在决策前通过 worldModel.currentEra 获取当前时代，避免重复宣告。
+    if (clonedState.era) {
+      const eraTypeToName: Record<string, string> = {
+        calamity: "calamity",
+        change: "mutation",
+        deduction: "deduction",
+        unknown: "unknown",
+      };
+      const eraName = eraTypeToName[clonedState.era.era_type] ?? clonedState.era.era_type;
+      this.currentEraValue = {
+        name: eraName,
+        sinceTick: clonedState.era.onset_tick,
+        globalEffect: `era_type:${clonedState.era.era_type}|intensity:${clonedState.era.intensity.toFixed(2)}`,
+      };
+    }
+    // 注意：era=undefined 时不清除 currentEraValue（保留 agent 自己记录的时代状态，
+    // 避免 server 未回填 era 字段时丢失 agent 内部推演结果）。
+
     for (const zone of clonedState.zones) {
       const history = this.zoneHistory.get(zone.name) ?? [];
       history.push(cloneZoneSnapshot(zone));
@@ -832,6 +851,8 @@ function cloneWorldState(state: WorldStateV1): WorldStateV1 {
       zone: event.zone,
       details: event.details ? { ...event.details } : undefined,
     })),
+    // plan-era-state-v1 P2: 携带时代状态字段
+    era: state.era ? { ...state.era } : undefined,
   };
 }
 
