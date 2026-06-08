@@ -13,13 +13,13 @@ AI-Native Xianxia (修仙) sandbox on Minecraft. Three-layer architecture:
 <!-- BEGIN:PLANS_PROGRESS -->
 ## Plan 进度
 
-_自动生成于 2026-06-08 · 共 113 份 plan_
+_自动生成于 2026-06-08 · 共 114 份 plan_
 
 ```
-总进度  ████████████████████████████░░  93.5%
+总进度  ████████████████████████████░░  92.8%
 ```
 
-**分布**：`merged` 57 · `wip` 1 · `design` 4 · `skeleton` 3 · `done` 48
+**分布**：`merged` 57 · `wip` 1 · `design` 7 · `skeleton` 1 · `done` 48
 
 ### 战斗 / HUD / 视觉
 _战斗 ECS、流派、HUD、粒子、动画、Iris · 13 份 · 组均 92%_
@@ -68,7 +68,7 @@ _六境修炼、天劫、炼丹/炼器、矿物、灵田、保质期 · 21 份 �
 | `merged` | **灵田季节天气消费层** <br/><sub>`finished_plans/plan-lingtian-weather-v1.md`</sub> | `██████████░░`  85% | #154 | 2026-06-08 |
 
 ### 玩法 / NPC / 世界
-_背包、NPC AI、感知、社交、技艺、死亡周期 · 14 份 · 组均 85%_
+_背包、NPC AI、感知、社交、技艺、死亡周期 · 16 份 · 组均 75%_
 
 | 状态 | Plan | 进度 | PR | 最近更新 |
 |---|---|---|---|---|
@@ -86,9 +86,11 @@ _背包、NPC AI、感知、社交、技艺、死亡周期 · 14 份 · 组均 8
 | `wip` | **100h 玩家旅程总线** <br/><sub>`plan-gameplay-journey-v1.md`</sub> | `████████░░░░`  65% | #159 | 2026-06-08 |
 | `design` | **搜打撤风险节拍** <br/><sub>`plan-sou-da-che-v1.md`</sub> | `██░░░░░░░░░░`  15% | — | 2026-06-08 |
 | `design` | **无墙领地影响力博弈** <br/><sub>`plan-territory-v1.md`</sub> | `█░░░░░░░░░░░`  12% | — | 2026-06-08 |
+| `design` | **垂死的大能遭遇** <br/><sub>`plan-dying-elder-v1.md`</sub> | `█░░░░░░░░░░░`  10% | — | 2026-06-08 |
+| `design` | **终极验收：6 段 E2E + 100h 实测** <br/><sub>`plan-gameplay-acceptance-v1.md`</sub> | `█░░░░░░░░░░░`   5% | — | 2026-06-08 |
 
 ### 基础设施 / 工作流
-_IPC schema、持久化、工作流、内容、音效 · 9 份 · 组均 79%_
+_IPC schema、持久化、工作流、内容、音效 · 10 份 · 组均 72%_
 
 | 状态 | Plan | 进度 | PR | 最近更新 |
 |---|---|---|---|---|
@@ -100,6 +102,7 @@ _IPC schema、持久化、工作流、内容、音效 · 9 份 · 组均 79%_
 | `merged` | **服务端 Brigadier 命令迁移** <br/><sub>`finished_plans/plan-server-cmd-system-v1.md`</sub> | `████████████` 100% | #72 #90 | 2026-06-08 |
 | `merged` | **天道叙事模板** <br/><sub>`finished_plans/plan-narrative-v1.md`</sub> | `███████████░`  90% | #89 | 2026-06-08 |
 | `design` | **天道狩猎注意力系统** <br/><sub>`plan-tiandao-hunt-v1.md`</sub> | `██░░░░░░░░░░`  15% | — | 2026-06-08 |
+| `design` | **Tripo3D 模型资产批产** <br/><sub>`plan-model-asset-v1.md`</sub> | `█░░░░░░░░░░░`   5% | — | 2026-06-08 |
 | `skeleton` | **视频动捕到玩家动画工具链** <br/><sub>`plan-video2anim-v1.md`</sub> | `█░░░░░░░░░░░`   5% | #240 | 2026-06-08 |
 
 ### 地形 / 世界生成
@@ -113,14 +116,6 @@ _末法残土 terrain profile、worldgen 流水线、CI 视觉快照 · 6 份 ·
 | `merged` | **烬焰焦土 profile 与渡劫遗痕** <br/><sub>`finished_plans/plan-terrain-tribulation-scorch-v1.md`</sub> | `████████████` 100% | #207 | 2026-06-08 |
 | `merged` | **伪灵脉绿洲地形与生命周期** <br/><sub>`finished_plans/plan-terrain-pseudo-vein-v1.md`</sub> | `███████████░`  95% | #107 | 2026-06-08 |
 | `merged` | **渊口荒丘地形** <br/><sub>`finished_plans/plan-terrain-rift-mouth-v1.md`</sub> | `███████████░`  95% | #119 | 2026-06-08 |
-
-### 骨架 plan
-_玩家旅程 / 经济 / 化虚等待开工骨架 · 2 份 · 组均 5%_
-
-| 状态 | Plan | 进度 | PR | 最近更新 |
-|---|---|---|---|---|
-| `skeleton` | **终极验收：6 段 E2E + 100h 实测** <br/><sub>`plan-gameplay-acceptance-v1.md`</sub> | `█░░░░░░░░░░░`   5% | — | — |
-| `skeleton` | **Tripo3D 模型资产批产** <br/><sub>`plan-model-asset-v1.md`</sub> | `█░░░░░░░░░░░`   5% | — | 2026-05-16 |
 
 ### 已完成归档
 _M0/M1 阶段产物 + 已 docs/finished_plans 的子 plan · 48 份 · 组均 100%_

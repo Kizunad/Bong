@@ -523,6 +523,18 @@ plans:
   - 148
   blocking_on: []
   summary: per-life 运数、强制重开、道统遗物分散与 lives/index.astro 历代生平页都已实现。
+- file: plan-dying-elder-v1.md
+  group: gameplay-npc
+  title: 垂死的大能遭遇
+  state: active-design
+  percent: 10
+  last_updated: '2026-06-08'
+  pr_refs: []
+  blocking_on:
+  - DyingElderState
+  - SoulSeize ledger 守恒实现
+  - elder_encounter client/agent 接线
+  summary: 已从 skeleton 升 active 并收口 P0 决策门；当前为设计态，需实现四态遭遇、夺舍守恒、client UI 与 agent 叙事。
 - file: plan-sou-da-che-v1.md
   group: gameplay-npc
   title: 搜打撤风险节拍
@@ -714,24 +726,25 @@ plans:
   blocking_on: []
   summary: TerrainProvider layer 查询、layer_names、LayerSchema、39 条 fixture、dump_layer_registry.py 与 fixture test 已落地。
 - file: plan-gameplay-acceptance-v1.md
-  group: skeleton
+  group: gameplay-npc
   title: 终极验收：6 段 E2E + 100h 实测
-  state: skeleton
+  state: active-design
   percent: 5
-  last_updated: ''
+  last_updated: '2026-06-08'
   pr_refs: []
   blocking_on:
   - 所有前置 42 plan
-  summary: 骨架；Wave 5 收口唯一 plan，所有前置 plan 完成后才能跑。
+  summary: 已升 active 但仍是 Wave 5 收口验收；所有前置 plan 完成前不适合 consume。
 - file: plan-model-asset-v1.md
-  group: skeleton
+  group: infrastructure
   title: Tripo3D 模型资产批产
-  state: skeleton
+  state: active-design
   percent: 5
-  last_updated: '2026-05-16'
+  last_updated: '2026-06-08'
   pr_refs: []
-  blocking_on: []
-  summary: 骨架；2026-05-17 Tripo3D 到期前批产约 150 个模型，现记录 19 个已生成资产、API 批量脚本与本地减面流程。
+  blocking_on:
+  - 资产预算/外部生成策略重新确认
+  summary: 已升 active 但旧 Tripo3D 到期前提过期；消费前需改成现有资产整理与后续生成接入计划。
 - file: mvp01-plan.md
   group: finished
   title: MVP 0.1 — Server scaffold + NPC + Fabric Client
