@@ -18,6 +18,7 @@ use crate::cultivation::lifespan::{
 };
 use crate::inventory::PlayerInventory;
 use crate::persistence::{DEFAULT_DATABASE_PATH, SQLITE_BUSY_TIMEOUT_MS};
+use crate::player::spawn_selector::SpawnPurpose;
 use crate::schema::cultivation::realm_to_string;
 use crate::schema::server_data::{ServerDataPayloadV1, ServerDataV1};
 use crate::schema::social::PlayerSocialSnapshotV1;
@@ -418,7 +419,10 @@ pub fn load_player_slices(
             );
             return LoadedPlayerSlices {
                 state,
-                position: crate::player::spawn_position(),
+                position: crate::player::spawn_position_for_seed(
+                    username,
+                    SpawnPurpose::InitialLogin,
+                ),
                 last_dimension: DimensionKind::default(),
                 inventory: None,
                 lifespan: None,
@@ -433,14 +437,20 @@ pub fn load_player_slices(
 
     let (position, last_dimension) = match load_player_slow_from_sqlite(&connection, username) {
         Ok(Some((pos, dim))) => sanitize_loaded_position(username, pos, dim),
-        Ok(None) => (crate::player::spawn_position(), DimensionKind::default()),
+        Ok(None) => (
+            crate::player::spawn_position_for_seed(username, SpawnPurpose::InitialLogin),
+            DimensionKind::default(),
+        ),
         Err(error) => {
             tracing::warn!(
                 "[bong][player] failed to load persisted position/dimension for `{}` from sqlite {}: {error}; using spawn defaults",
                 username,
                 persistence.db_path().display()
             );
-            (crate::player::spawn_position(), DimensionKind::default())
+            (
+                crate::player::spawn_position_for_seed(username, SpawnPurpose::InitialLogin),
+                DimensionKind::default(),
+            )
         }
     };
     let inventory = match load_player_inventory_from_sqlite(&connection, username) {
@@ -548,7 +558,7 @@ pub fn save_player_state(
         persistence,
         username,
         state,
-        crate::player::spawn_position(),
+        crate::player::spawn_position_for_seed(username, SpawnPurpose::InitialLogin),
         DimensionKind::default(),
         None,
         None,
@@ -1070,7 +1080,10 @@ fn sanitize_loaded_position(
         "[bong][player] persisted position for `{username}` is outside safe login bounds \
          ({x:.2}, {y:.2}, {z:.2}, {last_dimension:?}); using spawn defaults"
     );
-    (crate::player::spawn_position(), DimensionKind::default())
+    (
+        crate::player::spawn_position_for_seed(username, SpawnPurpose::InitialLogin),
+        DimensionKind::default(),
+    )
 }
 
 fn load_player_inventory_from_sqlite(
@@ -1480,7 +1493,7 @@ fn persist_player_core_slice_in_sqlite(
             connection,
             username,
             state,
-            crate::player::spawn_position(),
+            crate::player::spawn_position_for_seed(username, SpawnPurpose::InitialLogin),
             DimensionKind::default(),
             None,
             None,
@@ -1904,7 +1917,8 @@ fn insert_default_player_slice_rows(
     last_updated_wall: i64,
     prefs_json: &str,
 ) -> rusqlite::Result<()> {
-    let [pos_x, pos_y, pos_z] = crate::player::spawn_position();
+    let [pos_x, pos_y, pos_z] =
+        crate::player::spawn_position_for_seed(username, SpawnPurpose::InitialLogin);
     let skill_set_json = serialize_skill_set_json(&SkillSet::default())
         .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?;
     let known_techniques_json = serialize_known_techniques_json(&KnownTechniques::default())
@@ -2019,7 +2033,7 @@ fn migrate_legacy_player_json_to_sqlite(
         connection,
         username,
         &state,
-        crate::player::spawn_position(),
+        crate::player::spawn_position_for_seed(username, SpawnPurpose::InitialLogin),
         DimensionKind::default(),
         None,
         None,
@@ -2288,7 +2302,8 @@ mod player_state_tests {
             serde_json::from_str(&prefs_json).expect("prefs_json should decode");
         let current_char_uuid =
             Uuid::parse_str(&current_char_id).expect("current_char_id should be a UUID");
-        let [spawn_x, spawn_y, spawn_z] = crate::player::spawn_position();
+        let [spawn_x, spawn_y, spawn_z] =
+            crate::player::spawn_position_for_seed("Azure", SpawnPurpose::InitialLogin);
 
         assert_eq!(save_path, persistence.db_path().to_path_buf());
         assert_eq!(reloaded, persisted.normalized());
@@ -2320,7 +2335,10 @@ mod player_state_tests {
 
         let loaded = load_player_slices(&persistence, "Azure");
 
-        assert_eq!(loaded.position, crate::player::spawn_position());
+        assert_eq!(
+            loaded.position,
+            crate::player::spawn_position_for_seed("Azure", SpawnPurpose::InitialLogin)
+        );
         assert_eq!(loaded.last_dimension, DimensionKind::default());
 
         let _ = fs::remove_dir_all(&data_dir);
@@ -2341,7 +2359,10 @@ mod player_state_tests {
 
         let loaded = load_player_slices(&persistence, "Azure");
 
-        assert_eq!(loaded.position, crate::player::spawn_position());
+        assert_eq!(
+            loaded.position,
+            crate::player::spawn_position_for_seed("Azure", SpawnPurpose::InitialLogin)
+        );
         assert_eq!(loaded.last_dimension, DimensionKind::default());
 
         let _ = fs::remove_dir_all(&data_dir);

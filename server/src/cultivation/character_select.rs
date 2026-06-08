@@ -36,8 +36,15 @@ pub struct NewCharacterSpec {
 /// 此函数是 reset_for_new_character / character_lifecycle 路径的唯一参数源。
 /// 调用方不应再硬编码 `Realm::Awaken` / `LifespanCapTable::AWAKEN` / `3` 等数值。
 pub fn next_character_spec() -> NewCharacterSpec {
+    next_character_spec_for_seed("new-character")
+}
+
+pub fn next_character_spec_for_seed(seed: &str) -> NewCharacterSpec {
     NewCharacterSpec {
-        spawn_pos: crate::player::spawn_position(),
+        spawn_pos: crate::player::spawn_position_for_seed(
+            seed,
+            crate::player::spawn_selector::SpawnPurpose::NewLifeBirth,
+        ),
         realm: Realm::Awaken,
         initial_fortune: INITIAL_FORTUNE_PER_LIFE,
         lifespan_cap: LifespanCapTable::AWAKEN,
@@ -73,14 +80,25 @@ mod tests {
     }
 
     #[test]
-    fn spec_spawn_pos_matches_player_spawn_plain() {
+    fn spec_spawn_pos_is_stable_for_same_life_seed() {
         // Q-ML4：第二世新角色 spawn 位置 = spawn_plain（与新玩家相同）
         // spawn_plain 由 plan-spawn-tutorial-v1 实装为 crate::player::spawn_position()
-        assert_eq!(
-            next_character_spec().spawn_pos,
+        let first = next_character_spec_for_seed("offline:Azure:char-2").spawn_pos;
+        let second = next_character_spec_for_seed("offline:Azure:char-2").spawn_pos;
+        assert_eq!(first, second, "同一 life seed 的新角色出生点必须稳定");
+        assert_ne!(
+            first,
             crate::player::spawn_position(),
-            "新角色 spawn_pos 必须直接引用 player::spawn_position()，否则两条路径数值漂移",
+            "新角色出生不应退回紧急固定点，除非 spawn registry 缺失"
         );
+    }
+
+    #[test]
+    fn spec_spawn_pos_resamples_for_different_life_seed() {
+        let first = next_character_spec_for_seed("offline:Azure:char-2").spawn_pos;
+        let second = next_character_spec_for_seed("offline:Azure:char-3").spawn_pos;
+
+        assert_ne!(first, second, "不同 life seed 应重新采样出生点");
     }
 
     #[test]
