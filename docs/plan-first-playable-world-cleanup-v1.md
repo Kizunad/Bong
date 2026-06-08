@@ -2,6 +2,16 @@
 
 > 状态：active draft / 待消费。目标是在不扩写新大系统的前提下，把“玩家进服第一分钟”从调试沙盒纠偏为可玩的生存开局，并清理 worldgen 中由 AI 惰性堆叠产生的怪异装饰，同时给 `dan_zong_yi_yuan` 建筑刷新提供硬证据和可 TP 验收命令。
 
+## Worldview Anchors
+
+- `worldview.md §一 L13-L22`：本 plan 继承“末法残土 / 灵气不会凭空产生 / 区域会被吸干”的基调；`GameMode` 默认从 Creative 改 Survival 只是调试闸门纠偏，不改变灵气守恒或修炼资源来源。
+- `worldview.md §三 L61-L81`：首次可玩体验仍从六境界的醒灵开局出发，不新增境界、不改突破条件、不使用练气/筑基/金丹等旧称。
+- `worldview.md §四 L213-L313`：生存开局必须让体表伤害、经脉损伤、真元消耗等战斗模型可触达；Creative 免伤只能作为显式 dev 模式。
+- `worldview.md §七 L725-L750`：随机出生只在 spawn / 初醒区域内做安全分散，不把玩家直接送到异变兽、负灵域或中高阶威胁中心。
+- `worldview.md §九 L836-L858`：本 plan 不改骨币经济，只确保 Survival 开局后掉落、采集、交易前置循环能被触发。
+- `worldview.md §十 L862-L872`：decor 清理和丹宗刷新不得新增凭空资源；`placement_manifest` 只证明遗址/结构可见，不额外注入灵气或物资。
+- 边界声明：`/tpzone` / `/tppoi` 是 dev/test 验收工具，不是正典传送能力；`dan_zong_yi_yuan` 沿用既有 zone id，不新增 canon zone 名称。
+
 ## 问题声明
 
 - [ ] **默认 creative 导致无玩法**：新玩家进服默认 `GameMode::Creative`，战斗受伤、NPC 追踪、掉落等核心链路只对 `Survival` 生效，导致“进游戏无玩法”。
@@ -36,14 +46,14 @@
 
 ## 阶段总览
 
-| 阶段 | 主题 | 完成标准 |
-|---|---|---|
-| P0 | 生存开局闸门 | 新玩家默认 `Survival`，核心玩法链路不再被 creative 短路。 |
-| P1 | 出生分布选择器 | 首次登录/新生命按 seed 分散在安全 spawn zone，已存档玩家不漂移。 |
-| P2 | decorations 清理与契约 | 高危语义懒堆禁用/迁移，未映射方块和不合法 kind 测试失败。 |
-| P3 | 丹宗医苑真实刷新声明 | `placement_manifest.json` 被生成、服务端加载 `N > 0 placements`，主殿 chunk 可见。 |
-| P4 | TP/POI 测试命令 | `/tpzone dan_zong_yi_yuan` 和新增 POI TP 命令可稳定到达验收点。 |
-| P5 | 端到端冒烟 | `runClient` 进服为 Survival、出生分散、世界无高危怪堆、丹宗可 TP 可见。 |
+| 阶段 | 主题 | Status | Validated At | 完成标准 |
+|---|---|---|---|---|
+| P0 | 生存开局闸门 | Draft | TBD | 新玩家默认 `Survival`，核心玩法链路不再被 creative 短路。 |
+| P1 | 出生分布选择器 | Draft | TBD | 首次登录/新生命按 seed 分散在安全 spawn zone，已存档玩家不漂移。 |
+| P2 | decorations 清理与契约 | Draft | TBD | 高危语义懒堆禁用/迁移，未映射方块和不合法 kind 测试失败。 |
+| P3 | 丹宗医苑真实刷新声明 | Draft | TBD | `placement_manifest.json` 被生成、服务端加载 `N > 0 placements`，主殿 chunk 可见。 |
+| P4 | TP/POI 测试命令 | Draft | TBD | `/tpzone dan_zong_yi_yuan` 和新增 POI TP 命令可稳定到达验收点。 |
+| P5 | 端到端冒烟 | Draft | TBD | `runClient` 进服为 Survival、出生分散、世界无高危怪堆、丹宗可 TP 可见。 |
 
 ## P0 — 生存开局闸门
 
@@ -170,13 +180,13 @@ python -m pytest worldgen/tests/test_p2_dan_zong_activation.py
 - [ ] **Survival 默认对旧调试流程影响**：现有预览/开发流程若依赖 creative，需通过 `/gm c` 或 env config 显式进入，而不是保留正式默认 creative。
 - [ ] **decor 清理可能改变地形视觉密度**：禁用高危条目后要抽样确认 profile 不变空；必要时用低矮自然物替换，而非全删。
 
-## Finish Evidence（待填）
+## Evidence Tracking（归档前暂存）
 
-- [ ] 关键 commit：待填。
-- [ ] 测试命令与结果：待填。
-- [ ] 生成产物证据：`placement_manifest.json` 统计、服务端 placement 加载日志、chunk dump 样例。
-- [ ] 手动验收：`/tpzone dan_zong_yi_yuan` 与 `/tppoi ...` 截图/坐标记录。
-- [ ] 遗留后续：若有无法在本 plan 完成的装饰迁移或丹宗视觉打磨，必须列明且不得影响 P0-P5 验收。
+- [ ] 关键 commit 暂存：消费 plan 时逐阶段补入，归档前再迁移为正式完成证据。
+- [ ] 测试命令与结果暂存：记录 P0-P5 每阶段实际命令、输出摘要和失败修复。
+- [ ] 生成产物证据暂存：`placement_manifest.json` 统计、服务端 placement 加载日志、chunk dump 样例。
+- [ ] 手动验收暂存：`/tpzone dan_zong_yi_yuan` 与 `/tppoi ...` 截图/坐标记录。
+- [ ] 遗留后续暂存：若有无法在本 plan 完成的装饰迁移或丹宗视觉打磨，必须列明且不得影响 P0-P5 验收。
 
 ## 进度日志
 
