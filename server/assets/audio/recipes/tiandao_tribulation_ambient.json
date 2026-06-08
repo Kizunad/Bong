@@ -1,0 +1,14 @@
+{
+  "id": "tiandao_tribulation_ambient",
+  "layers": [
+    { "sound": "minecraft:ambient.cave", "volume": 0.15, "pitch": 0.3, "delay_ticks": 0 },
+    { "sound": "minecraft:entity.warden.heartbeat", "volume": 0.12, "pitch": 0.25, "delay_ticks": 20 },
+    { "sound": "minecraft:weather.rain.above", "volume": 0.10, "pitch": 0.25, "delay_ticks": 0 },
+    { "sound": "minecraft:entity.warden.sonic_boom", "volume": 0.08, "pitch": 0.2, "delay_ticks": 60 }
+  ],
+  "loop": { "interval_ticks": 600, "while_flag": "tiandao:tribulation" },
+  "priority": 95,
+  "attenuation": "global_hint",
+  "category": "AMBIENT",
+  "bus": "ENVIRONMENT"
+}
