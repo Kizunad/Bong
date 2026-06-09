@@ -2638,7 +2638,7 @@ fn deterministic_seeded_roll(instance_id: u64, salt: u64) -> f64 {
     x ^= x >> 27;
     x = x.wrapping_mul(0x94D0_49BB_1331_11EB);
     x ^= x >> 31;
-    (x as f64) / (u64::MAX as f64)
+    (x as f64) / ((u64::MAX as f64) + 1.0)
 }
 
 fn in_horizontal_radius(position: valence::math::DVec3, center: [i32; 3], radius: u8) -> bool {
@@ -4605,6 +4605,9 @@ mod tests {
     fn deceive_heaven_requires_solidify_or_higher() {
         let mut app = app_with_zhenfa();
         let owner = spawn_player(&mut app, "Alice", [0.0, 64.0, 0.0]);
+        app.world_mut()
+            .entity_mut(owner)
+            .insert(deceive_heaven_material_inventory());
         app.world_mut().send_event(ZhenfaPlaceRequest {
             player: owner,
             pos: [0, 64, 0],

@@ -36,6 +36,7 @@ export const ZhenfaV2EventV1 = Type.Object(
     density_multiplier: Type.Optional(Type.Number({ minimum: 0 })),
     tiandao_gaze_weight: Type.Optional(Type.Number({ minimum: 0 })),
     reveal_chance_per_tick: Type.Optional(Type.Number({ minimum: 0, maximum: 1 })),
+    reveal_chance_lifetime: Type.Optional(Type.Number({ minimum: 0, maximum: 1 })),
     reveal_threshold: Type.Optional(Type.Number({ minimum: 0 })),
     self_weight_multiplier: Type.Optional(Type.Number({ minimum: 0 })),
     target_weight_multiplier: Type.Optional(Type.Number({ minimum: 0 })),

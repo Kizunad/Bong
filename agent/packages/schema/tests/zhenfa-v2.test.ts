@@ -119,7 +119,7 @@ describe("zhenfa-v2 schema", () => {
         y: 64,
         z: -9,
         tick: 160,
-        reveal_chance_per_tick: 0.002,
+        reveal_chance_lifetime: 0.10,
         self_weight_multiplier: 0.5,
         target_weight_multiplier: 1.5,
       }).ok,
@@ -137,6 +137,21 @@ describe("zhenfa-v2 schema", () => {
         z: -9,
         tick: 180,
         reveal_threshold: 50,
+      }).ok,
+    ).toBe(true);
+
+    expect(
+      validateZhenfaV2EventV1Contract({
+        v: 1,
+        event: "deceive_heaven_exposed",
+        array_id: 10,
+        kind: "deceive_heaven",
+        owner: "offline:Azure",
+        x: 12,
+        y: 64,
+        z: -9,
+        tick: 180,
+        reveal_chance_per_tick: 0.002,
       }).ok,
     ).toBe(true);
   });

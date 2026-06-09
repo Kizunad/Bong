@@ -55,7 +55,7 @@ pub fn publish_zhenfa_v2_events(
             event.pos,
             event.placed_at_tick,
         );
-        payload.reveal_chance_per_tick = Some(event.reveal_chance);
+        payload.reveal_chance_lifetime = Some(event.reveal_chance);
         payload.self_weight_multiplier = Some(event.self_weight_multiplier);
         payload.target_weight_multiplier = Some(event.target_weight_multiplier);
         send_zhenfa_v2_event(&redis, payload);
@@ -69,7 +69,7 @@ pub fn publish_zhenfa_v2_events(
             event.pos,
             event.exposed_at_tick,
         );
-        payload.reveal_chance_per_tick = Some(event.reveal_chance);
+        payload.reveal_chance_lifetime = Some(event.reveal_chance);
         payload.self_weight_multiplier = Some(event.self_weight_multiplier);
         payload.target_weight_multiplier = Some(event.target_weight_multiplier);
         send_zhenfa_v2_event(&redis, payload);

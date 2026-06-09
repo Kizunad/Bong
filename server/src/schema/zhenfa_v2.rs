@@ -44,6 +44,8 @@ pub struct ZhenfaV2EventV1 {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reveal_chance_per_tick: Option<f64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reveal_chance_lifetime: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reveal_threshold: Option<f64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub self_weight_multiplier: Option<f64>,
@@ -77,6 +79,7 @@ impl ZhenfaV2EventV1 {
             density_multiplier: None,
             tiandao_gaze_weight: None,
             reveal_chance_per_tick: None,
+            reveal_chance_lifetime: None,
             reveal_threshold: None,
             self_weight_multiplier: None,
             target_weight_multiplier: None,
@@ -99,12 +102,12 @@ mod tests {
             20,
         );
         event.event = ZhenfaV2EventKind::DeceiveHeavenExposed;
-        event.reveal_chance_per_tick = Some(0.002);
+        event.reveal_chance_lifetime = Some(0.10);
 
         let json = serde_json::to_value(&event).unwrap();
         assert_eq!(json["event"], "deceive_heaven_exposed");
         assert_eq!(json["kind"], "deceive_heaven");
-        assert_eq!(json["reveal_chance_per_tick"], 0.002);
+        assert_eq!(json["reveal_chance_lifetime"], 0.10);
         assert!(json.get("breaker").is_none());
         assert!(json.get("zone").is_none());
 

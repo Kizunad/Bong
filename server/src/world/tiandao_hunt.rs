@@ -1949,6 +1949,64 @@ mod tests {
     }
 
     #[test]
+    fn production_zhenfa_exposure_feeds_tiandao_hunt_penalty_once() {
+        let (mut app, player) = tiandao_zhenfa_production_app();
+        app.world_mut().resource_mut::<CultivationClock>().tick = 200;
+        app.world_mut().resource_mut::<CombatClock>().tick = 200;
+        for index in 0..5 {
+            app.world_mut()
+                .entity_mut(player)
+                .insert(deceive_heaven_test_inventory());
+            app.world_mut()
+                .get_mut::<Cultivation>(player)
+                .unwrap()
+                .qi_current = 100.0;
+            app.world_mut().send_event(ZhenfaPlaceRequest {
+                player,
+                pos: [600 + index, 64, 0],
+                kind: ZhenfaKind::DeceiveHeaven,
+                carrier: ZhenfaCarrierKind::BeastCoreInlaid,
+                qi_invest_ratio: 0.10,
+                trigger: None,
+                item_instance_id: None,
+                target_face: None,
+                requested_at_tick: 200,
+            });
+            app.update();
+        }
+
+        app.world_mut()
+            .get_mut::<TiandaoAttention>(player)
+            .unwrap()
+            .level = 21.0;
+        app.world_mut().resource_mut::<CultivationClock>().tick = 20_461;
+        app.world_mut().resource_mut::<CombatClock>().tick = 20_461;
+        app.update();
+
+        let first = app.world().get::<TiandaoAttention>(player).unwrap().clone();
+        assert_close(
+            first.level,
+            21.0 + first.accumulation_rate - decay_rate(TiandaoResponseLevel::Watch, 0.0)
+                + DECEIVE_HEAVEN_REVEAL_PENALTY,
+        );
+        assert_eq!(first.response, TiandaoResponseLevel::Pressure);
+        assert_eq!(first.last_eval_tick, 20_461);
+
+        app.world_mut().resource_mut::<CultivationClock>().tick = 20_661;
+        app.world_mut().resource_mut::<CombatClock>().tick = 20_661;
+        app.update();
+
+        let second = app.world().get::<TiandaoAttention>(player).unwrap();
+        assert_close(
+            second.level,
+            first.level + second.accumulation_rate
+                - decay_rate(TiandaoResponseLevel::Pressure, 0.0)
+                    * DECEIVE_HEAVEN_DECOY_DECAY_MULTIPLIER,
+        );
+        assert_eq!(second.last_eval_tick, 20_661);
+    }
+
+    #[test]
     fn tiandao_hunt_tick_applies_deceive_heaven_exposed_penalty_once() {
         let (mut app, player) = tiandao_runtime_app();
         app.world_mut()

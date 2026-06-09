@@ -56,7 +56,7 @@ describe("ZhenfaV2NarrationRuntime", () => {
         y: 64,
         z: -2,
         tick: 200,
-        reveal_chance_per_tick: 0.002,
+        reveal_chance_lifetime: 0.10,
       }),
     );
 
