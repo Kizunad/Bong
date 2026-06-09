@@ -739,6 +739,9 @@ pub fn deceive_heaven_decoy_outcome(
     decoy: DeceiveHeavenDecoyInput,
     eval_tick: u64,
 ) -> DeceiveHeavenOutcome {
+    if decoy.exposed {
+        return DeceiveHeavenOutcome::Revealed;
+    }
     if !decoy.distance_blocks.is_finite()
         || decoy.distance_blocks < DECEIVE_HEAVEN_DECOY_MIN_DISTANCE_BLOCKS
     {
@@ -746,9 +749,6 @@ pub fn deceive_heaven_decoy_outcome(
     }
     if eval_tick.saturating_sub(decoy.placed_tick) >= DECEIVE_HEAVEN_DECOY_DURATION_TICKS {
         return DeceiveHeavenOutcome::Expired;
-    }
-    if decoy.exposed {
-        return DeceiveHeavenOutcome::Revealed;
     }
     DeceiveHeavenOutcome::Diverted
 }
@@ -1734,6 +1734,7 @@ mod tests {
             deceive_heaven_decoy_outcome(
                 DeceiveHeavenDecoyInput {
                     exposed: true,
+                    distance_blocks: 499.99,
                     ..active
                 },
                 200
@@ -1744,6 +1745,24 @@ mod tests {
             deceive_heaven_decoy_outcome(active, 100 + DECEIVE_HEAVEN_DECOY_DURATION_TICKS),
             DeceiveHeavenOutcome::Expired
         );
+    }
+
+    #[test]
+    fn deceive_heaven_exposure_penalty_wins_over_distance_boundary() {
+        let outcome = countermeasure_outcome(
+            TiandaoCountermeasureInput {
+                deceive_heaven_decoy: Some(DeceiveHeavenDecoyInput {
+                    placed_tick: 100,
+                    distance_blocks: 1.0,
+                    exposed: true,
+                }),
+            },
+            200,
+        );
+
+        assert_eq!(outcome.deceive_heaven, DeceiveHeavenOutcome::Revealed);
+        assert_eq!(outcome.decay_multiplier, 1.0);
+        assert_close(outcome.attention_penalty, DECEIVE_HEAVEN_REVEAL_PENALTY);
     }
 
     #[test]
