@@ -479,7 +479,11 @@ mod tests {
         send_stop_break(&mut app, player, BlockPos::new(1, 64, 1));
         app.update();
 
-        assert_eq!(inventory_template_count(&app, player, "obsidian_shard"), 0);
+        let actual = inventory_template_count(&app, player, "obsidian_shard");
+        assert_eq!(
+            actual, 0,
+            "expected 0 obsidian_shard because no pickaxe is equipped, actual {actual}"
+        );
     }
 
     #[test]
@@ -492,7 +496,11 @@ mod tests {
         send_stop_break(&mut app, player, BlockPos::new(1, 64, 1));
         app.update();
 
-        assert_eq!(inventory_template_count(&app, player, "obsidian_shard"), 1);
+        let actual = inventory_template_count(&app, player, "obsidian_shard");
+        assert_eq!(
+            actual, 1,
+            "expected 1 obsidian_shard because an iron pickaxe is equipped, actual {actual}"
+        );
     }
 
     fn block_drop_app(block: BlockState, inventory: PlayerInventory) -> (App, Entity, Entity) {
@@ -534,6 +542,7 @@ mod tests {
 
     fn item_registry_for_block_drops() -> ItemRegistry {
         ItemRegistry::from_map(HashMap::from([
+            item_template("crude_wood"),
             item_template("earth_crumb"),
             item_template("obsidian_shard"),
         ]))
