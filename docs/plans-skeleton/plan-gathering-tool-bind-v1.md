@@ -17,7 +17,7 @@
 
 - **进料**:
   - shelflife:`shelflife/registry.rs:208-216` `fresh_herb_v1` profile **已存在**,herb_bundle 只差模板字段挂载
-  - 配方:`workbench_recipes.rs:386`(`workbench.process.herb_bundle`,time=10)与 `:1812`(同 id,time=200)**重复注册**——🚩调查红旗 R1,任何动 herb_bundle 前必须先去重(需确认 `CraftRegistry::register()` 重复 id 行为:panic 还是后者覆盖)
+  - 配方:`workbench_recipes.rs:386`(`workbench.process.herb_bundle`,time=10)与 `:1812`(同 id,time=200)双处定义——🚩调查红旗 R1。`CraftRegistry::register()` 对重复 id 返回 Err(不 panic 不覆盖,Pi review 2026-06-10 核实),即 :1812 注册静默失败、生效的是 :386;问题本质是**配方 time 与设计/测试预期不一致**,任何动 herb_bundle 前先删掉失效的一处并收口预期值
   - 工具:`tools/kinds.rs:7,19,44` `ToolKind::CaoLian` 已注册(战斗兜底 1.10x),forge/workbench 双路可造
   - required_tool 机制:`botany/registry.rs:238-241` `HarvestHazard::WoundOnBareHand { wound, required_tool }`(5 株已用:DunQiJia×2/GuaDao×2/BingJiaShouTao×1)+ `botany/harvest.rs:533-544` `required_tool_for()`(耐久消耗+受伤判定)
 - **出料**:草药捆进保鲜循环(批量存放减损耗);草镰成为割手草本的安全采集工具(徒手采=Laceration 受伤,持镰=免伤+耐久消耗)
@@ -47,6 +47,6 @@
 ## §8 开放问题(P0 决策门前需收口)
 
 1. **herb_bundle 配方真实意图**:time=10(:386)还是 time=200(:1812)?去重保留哪侧(建议 10s——捆扎是轻加工)
-2. **bundle 保鲜倍率**:直接挂 fresh_herb_v1 还是派生 `bundled_herb_v1`(衰减减半,体现"批量存放减损耗"的设计语义)——倾向后者,但新 profile 数值归 shelflife 侧定
+2. **bundle 保鲜倍率**:直接挂 fresh_herb_v1 还是派生 `bundled_herb_v1`(衰减减半,体现"批量存放减损耗"的设计语义)——倾向后者;plan-shelflife-v1 已归档无主,新 profile 数值**本 plan 内自决**(registry.rs 加一条 profile 常量,沿用 fresh_herb_v1 结构减半)
 3. **草镰速度/品质加成**:本 plan 不做;若将来做,需 GatheringToolKind 加 Sickle 变体并与 bao_chu 重新平衡(登记待办)
 4. **目标植物名单**:候选丛生草本的最终 1-2 株(实施前 grep v2 spec 现状定名单)
