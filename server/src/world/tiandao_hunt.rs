@@ -1,21 +1,25 @@
+use crate::combat::components::{CombatState, Lifecycle};
 use crate::cultivation::components::{Cultivation, Realm};
-use crate::cultivation::tick::CultivationClock;
+use crate::cultivation::tick::{CultivationClock, CultivationSessionPracticeAccumulator};
 use crate::network::audio_event_emit::{AudioRecipient, PlaySoundRecipeRequest};
 use crate::network::vfx_event_emit::VfxEventRequest;
 use crate::player::state::canonical_player_id;
 use crate::schema::agent_command::Command;
 use crate::schema::common::CommandType;
 use crate::schema::vfx_event::VfxEventPayloadV1;
+use crate::social::{position_is_within_own_active_spirit_niche, SpiritNicheRegistry};
 use crate::world::calamity::{EVENT_BEAST_TIDE, EVENT_REALM_COLLAPSE, EVENT_THUNDER_TRIBULATION};
 use crate::world::dimension::{CurrentDimension, DimensionKind};
 use crate::world::events::ActiveEventsResource;
 use crate::world::season::{Season, WorldSeasonState};
 use crate::world::zone::ZoneRegistry;
+use crate::zhenfa::{DeceiveHeavenEvent, DeceiveHeavenExposedEvent, ZhenfaSystemSet};
 use serde_json::json;
 use std::collections::HashMap;
 use valence::prelude::{
-    bevy_ecs, ident, App, Client, Commands, Component, DVec3, Entity, Events, Position, Query, Res,
-    ResMut, Update, Username, With, Without,
+    bevy_ecs, bevy_ecs::system::SystemParam, ident, App, Client, Commands, Component, DVec3,
+    Entity, Events, IntoSystemConfigs, Local, Position, Query, Res, ResMut, Resource, Update,
+    Username, With, Without,
 };
 
 const ATTENTION_MIN: f64 = 0.0;
@@ -26,6 +30,11 @@ const TIANDAO_PRESSURE_EVENT_INTERVAL_TICKS: u64 = 3 * 60 * 20;
 const TIANDAO_TRIBULATION_EVENT_INTERVAL_TICKS: u64 = 5 * 60 * 20;
 const TIANDAO_ANNIHILATE_EVENT_INTERVAL_TICKS: u64 = 2 * 60 * 20;
 const TIANDAO_AUDIO_INSTANCE_BASE: u64 = 710_000;
+pub const DECEIVE_HEAVEN_DECOY_MIN_DISTANCE_BLOCKS: f64 = 500.0;
+pub const DECEIVE_HEAVEN_DECOY_DURATION_TICKS: u64 = 30 * 60 * 20;
+pub const DECEIVE_HEAVEN_DECOY_DECAY_MULTIPLIER: f64 = 4.0;
+pub const DECEIVE_HEAVEN_REVEAL_PENALTY: f64 = 20.0;
+const TIANDAO_MOVING_DISTANCE_EPSILON_BLOCKS: f64 = 0.1;
 
 #[derive(Debug, Clone, Component, PartialEq)]
 pub struct TiandaoAttention {
@@ -63,14 +72,10 @@ pub enum TiandaoResponseLevel {
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum TiandaoActivity {
-    #[cfg(test)]
     Meditating,
-    #[cfg(test)]
     Combat,
-    #[cfg(test)]
     Moving,
     Standing,
-    #[cfg(test)]
     InNiche,
 }
 
@@ -85,16 +90,99 @@ type TiandaoPlayerQuery<'w, 's> = Query<
         &'static Username,
         &'static mut Client,
         Option<&'static CurrentDimension>,
+        Option<&'static CombatState>,
+        Option<&'static Lifecycle>,
         &'static mut TiandaoAttention,
     ),
     With<Client>,
 >;
+
+#[derive(SystemParam)]
+pub struct TiandaoHuntResources<'w, 's> {
+    clock: Option<Res<'w, CultivationClock>>,
+    practice_accumulator: Option<Res<'w, CultivationSessionPracticeAccumulator>>,
+    spirit_niches: Option<Res<'w, SpiritNicheRegistry>>,
+    activity: ResMut<'w, TiandaoActivityRuntimeState>,
+    deceive_heaven: DeceiveHeavenRuntimeParams<'w, 's>,
+    zones: Option<ResMut<'w, ZoneRegistry>>,
+    season: Option<Res<'w, WorldSeasonState>>,
+    active_events: Option<ResMut<'w, ActiveEventsResource>>,
+    vfx_events: Option<ResMut<'w, Events<VfxEventRequest>>>,
+    audio_events: Option<ResMut<'w, Events<PlaySoundRecipeRequest>>>,
+}
+
+#[derive(SystemParam)]
+pub struct DeceiveHeavenRuntimeParams<'w, 's> {
+    state: ResMut<'w, DeceiveHeavenRuntimeState>,
+    deceive_events: Option<Res<'w, Events<DeceiveHeavenEvent>>>,
+    deceive_exposed_events: Option<Res<'w, Events<DeceiveHeavenExposedEvent>>>,
+    deceive_event_reader: Local<'s, bevy_ecs::event::ManualEventReader<DeceiveHeavenEvent>>,
+    deceive_exposed_event_reader:
+        Local<'s, bevy_ecs::event::ManualEventReader<DeceiveHeavenExposedEvent>>,
+}
 
 struct TiandaoResponseSinks<'a> {
     zones: Option<&'a mut ZoneRegistry>,
     active_events: Option<&'a mut ActiveEventsResource>,
     vfx_events: Option<&'a mut Events<VfxEventRequest>>,
     audio_events: Option<&'a mut Events<PlaySoundRecipeRequest>>,
+}
+
+#[derive(Debug, Clone, Default, Resource)]
+pub struct TiandaoActivityRuntimeState {
+    last_eval_position_by_entity: HashMap<Entity, DVec3>,
+}
+
+impl TiandaoActivityRuntimeState {
+    fn activity_for_eval(&mut self, input: TiandaoActivityRuntimeInput<'_>) -> TiandaoActivity {
+        let moved_since_last_eval = self
+            .last_eval_position_by_entity
+            .insert(input.entity, input.position)
+            .is_some_and(|previous| {
+                (input.position - previous).length() > TIANDAO_MOVING_DISTANCE_EPSILON_BLOCKS
+            });
+
+        if input
+            .combat
+            .and_then(|combat| combat.in_combat_until_tick)
+            .is_some_and(|until_tick| until_tick > input.now_tick)
+        {
+            return TiandaoActivity::Combat;
+        }
+
+        if let (Some(lifecycle), Some(spirit_niches)) = (input.lifecycle, input.spirit_niches) {
+            if position_is_within_own_active_spirit_niche(
+                lifecycle.character_id.as_str(),
+                input.position,
+                spirit_niches,
+            ) {
+                return TiandaoActivity::InNiche;
+            }
+        }
+
+        if input.practice_accumulator.is_some_and(|accumulator| {
+            accumulator.is_recently_practicing(input.entity, input.now_tick)
+        }) {
+            return TiandaoActivity::Meditating;
+        }
+
+        if moved_since_last_eval {
+            TiandaoActivity::Moving
+        } else {
+            TiandaoActivity::Standing
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+struct TiandaoActivityRuntimeInput<'a> {
+    entity: Entity,
+    position: DVec3,
+    combat: Option<&'a CombatState>,
+    lifecycle: Option<&'a Lifecycle>,
+    practice_accumulator: Option<&'a CultivationSessionPracticeAccumulator>,
+    spirit_niches: Option<&'a SpiritNicheRegistry>,
+    now_tick: u64,
 }
 
 impl Default for TiandaoActivity {
@@ -111,8 +199,248 @@ pub struct TiandaoAttentionInput {
     pub season: Season,
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct TiandaoCountermeasureInput {
+    pub deceive_heaven_decoy: Option<DeceiveHeavenDecoyInput>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct DeceiveHeavenDecoyInput {
+    pub placed_tick: u64,
+    pub distance_blocks: f64,
+    pub exposed: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DeceiveHeavenOutcome {
+    None,
+    TooClose,
+    Expired,
+    Diverted,
+    Revealed,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct TiandaoCountermeasureOutcome {
+    pub deceive_heaven: DeceiveHeavenOutcome,
+    pub decay_multiplier: f64,
+    pub attention_penalty: f64,
+}
+
+impl Default for TiandaoCountermeasureOutcome {
+    fn default() -> Self {
+        Self {
+            deceive_heaven: DeceiveHeavenOutcome::None,
+            decay_multiplier: 1.0,
+            attention_penalty: 0.0,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Default, Resource)]
+pub struct DeceiveHeavenRuntimeState {
+    deployments: HashMap<u64, DeceiveHeavenRuntimeDeployment>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+struct DeceiveHeavenRuntimeDeployment {
+    owner_player_id: String,
+    pos: [i32; 3],
+    placed_at_tick: u64,
+    exposed_at_tick: Option<u64>,
+    exposure_penalty_pending: bool,
+}
+
+impl DeceiveHeavenRuntimeState {
+    fn record_events(
+        &mut self,
+        deceive_events: Option<&Events<DeceiveHeavenEvent>>,
+        deceive_exposed_events: Option<&Events<DeceiveHeavenExposedEvent>>,
+        deceive_event_reader: &mut bevy_ecs::event::ManualEventReader<DeceiveHeavenEvent>,
+        deceive_exposed_event_reader: &mut bevy_ecs::event::ManualEventReader<
+            DeceiveHeavenExposedEvent,
+        >,
+    ) {
+        if let Some(events) = deceive_events {
+            for event in deceive_event_reader.read(events) {
+                self.record_deployment(event);
+            }
+        }
+        if let Some(events) = deceive_exposed_events {
+            for event in deceive_exposed_event_reader.read(events) {
+                self.record_exposure(event);
+            }
+        }
+    }
+
+    fn record_deployment(&mut self, event: &DeceiveHeavenEvent) {
+        self.deployments.insert(
+            event.array_id,
+            DeceiveHeavenRuntimeDeployment {
+                owner_player_id: event.owner_player_id.clone(),
+                pos: event.pos,
+                placed_at_tick: event.placed_at_tick,
+                exposed_at_tick: None,
+                exposure_penalty_pending: false,
+            },
+        );
+    }
+
+    fn record_exposure(&mut self, event: &DeceiveHeavenExposedEvent) {
+        self.deployments
+            .entry(event.array_id)
+            .and_modify(|deployment| {
+                deployment.exposed_at_tick = Some(event.exposed_at_tick);
+                deployment.exposure_penalty_pending = true;
+            })
+            .or_insert_with(|| DeceiveHeavenRuntimeDeployment {
+                owner_player_id: event.owner_player_id.clone(),
+                pos: event.pos,
+                placed_at_tick: event.exposed_at_tick,
+                exposed_at_tick: Some(event.exposed_at_tick),
+                exposure_penalty_pending: true,
+            });
+    }
+
+    fn prune_expired(&mut self, now_tick: u64) {
+        self.deployments.retain(|_, deployment| {
+            now_tick.saturating_sub(deployment.placed_at_tick) < DECEIVE_HEAVEN_DECOY_DURATION_TICKS
+        });
+    }
+
+    fn countermeasure_input(
+        &self,
+        owner_player_id: &str,
+        player_pos: DVec3,
+        now_tick: u64,
+    ) -> TiandaoCountermeasureInput {
+        let mut exposed_candidate = None;
+        let mut diverted_candidate = None;
+        let mut inactive_candidate = None;
+
+        for deployment in self.deployments.values() {
+            if deployment.owner_player_id != owner_player_id {
+                continue;
+            }
+
+            let decoy = deployment.decoy_input(player_pos);
+            match deceive_heaven_decoy_outcome(decoy, now_tick) {
+                DeceiveHeavenOutcome::Revealed if deployment.exposure_penalty_pending => {
+                    exposed_candidate = Some(decoy);
+                    break;
+                }
+                DeceiveHeavenOutcome::Diverted if diverted_candidate.is_none() => {
+                    diverted_candidate = Some(decoy);
+                }
+                DeceiveHeavenOutcome::TooClose | DeceiveHeavenOutcome::Expired
+                    if inactive_candidate.is_none() =>
+                {
+                    inactive_candidate = Some(decoy);
+                }
+                DeceiveHeavenOutcome::None
+                | DeceiveHeavenOutcome::TooClose
+                | DeceiveHeavenOutcome::Expired
+                | DeceiveHeavenOutcome::Diverted
+                | DeceiveHeavenOutcome::Revealed => {}
+            }
+        }
+
+        if let Some(decoy) = exposed_candidate {
+            return TiandaoCountermeasureInput {
+                deceive_heaven_decoy: Some(decoy),
+            };
+        }
+
+        TiandaoCountermeasureInput {
+            deceive_heaven_decoy: diverted_candidate.or(inactive_candidate),
+        }
+    }
+
+    fn mark_countermeasure_applied(
+        &mut self,
+        owner_player_id: &str,
+        player_pos: DVec3,
+        now_tick: u64,
+        outcome: TiandaoCountermeasureOutcome,
+    ) {
+        if outcome.deceive_heaven != DeceiveHeavenOutcome::Revealed {
+            return;
+        }
+
+        let applied_array_id = self.deployments.iter().find_map(|(array_id, deployment)| {
+            if deployment.owner_player_id != owner_player_id || !deployment.exposure_penalty_pending
+            {
+                return None;
+            }
+
+            if deceive_heaven_decoy_outcome(deployment.decoy_input(player_pos), now_tick)
+                == DeceiveHeavenOutcome::Revealed
+            {
+                Some(*array_id)
+            } else {
+                None
+            }
+        });
+
+        if let Some(array_id) = applied_array_id {
+            self.deployments.remove(&array_id);
+        }
+    }
+}
+
+impl DeceiveHeavenRuntimeDeployment {
+    fn decoy_input(&self, player_pos: DVec3) -> DeceiveHeavenDecoyInput {
+        DeceiveHeavenDecoyInput {
+            placed_tick: self.placed_at_tick,
+            distance_blocks: distance_to_array(player_pos, self.pos),
+            exposed: self.exposure_penalty_pending,
+        }
+    }
+}
+
+impl DeceiveHeavenRuntimeParams<'_, '_> {
+    fn sync_events(&mut self, now_tick: u64) {
+        self.state.record_events(
+            self.deceive_events.as_deref(),
+            self.deceive_exposed_events.as_deref(),
+            &mut self.deceive_event_reader,
+            &mut self.deceive_exposed_event_reader,
+        );
+        self.state.prune_expired(now_tick);
+    }
+
+    fn countermeasure_input(
+        &self,
+        owner_player_id: &str,
+        player_pos: DVec3,
+        now_tick: u64,
+    ) -> TiandaoCountermeasureInput {
+        self.state
+            .countermeasure_input(owner_player_id, player_pos, now_tick)
+    }
+
+    fn mark_countermeasure_applied(
+        &mut self,
+        owner_player_id: &str,
+        player_pos: DVec3,
+        now_tick: u64,
+        outcome: TiandaoCountermeasureOutcome,
+    ) {
+        self.state
+            .mark_countermeasure_applied(owner_player_id, player_pos, now_tick, outcome);
+    }
+}
+
 pub fn register(app: &mut App) {
-    app.add_systems(Update, (attach_tiandao_attention, tiandao_hunt_tick));
+    app.init_resource::<DeceiveHeavenRuntimeState>();
+    app.init_resource::<TiandaoActivityRuntimeState>();
+    app.add_systems(
+        Update,
+        (
+            attach_tiandao_attention,
+            tiandao_hunt_tick.after(ZhenfaSystemSet::Runtime),
+        ),
+    );
 }
 
 pub fn attach_tiandao_attention(
@@ -125,37 +453,72 @@ pub fn attach_tiandao_attention(
 }
 
 pub fn tiandao_hunt_tick(
-    clock: Option<Res<CultivationClock>>,
-    mut zones: Option<ResMut<ZoneRegistry>>,
-    season: Option<Res<WorldSeasonState>>,
-    mut active_events: Option<ResMut<ActiveEventsResource>>,
-    mut vfx_events: Option<ResMut<Events<VfxEventRequest>>>,
-    mut audio_events: Option<ResMut<Events<PlaySoundRecipeRequest>>>,
+    mut resources: TiandaoHuntResources<'_, '_>,
     mut players: TiandaoPlayerQuery<'_, '_>,
 ) {
-    let Some(clock) = clock else {
+    let Some(clock) = resources.clock.as_deref() else {
         return;
     };
     let now_tick = clock.tick;
-    let season = season
+    resources.deceive_heaven.sync_events(now_tick);
+    let season = resources
+        .season
         .as_deref()
         .map(|state| state.current.season)
         .unwrap_or_default();
-    for (player_entity, cultivation, position, username, mut client, dimension, mut attention) in
-        players.iter_mut()
+    for (
+        player_entity,
+        cultivation,
+        position,
+        username,
+        mut client,
+        dimension,
+        combat,
+        lifecycle,
+        mut attention,
+    ) in players.iter_mut()
     {
+        if !should_evaluate_attention(now_tick, attention.last_eval_tick) {
+            continue;
+        }
+        let activity = resources
+            .activity
+            .activity_for_eval(TiandaoActivityRuntimeInput {
+                entity: player_entity,
+                position: position.0,
+                combat,
+                lifecycle,
+                practice_accumulator: resources.practice_accumulator.as_deref(),
+                spirit_niches: resources.spirit_niches.as_deref(),
+                now_tick,
+            });
+        let owner_player_id = canonical_player_id(username.0.as_str());
+        let countermeasures =
+            resources
+                .deceive_heaven
+                .countermeasure_input(&owner_player_id, position.0, now_tick);
         let eval = apply_attention_eval(
             cultivation,
             position,
-            dimension,
             &mut attention,
-            zones.as_deref(),
-            season,
-            now_tick,
+            TiandaoEvalContext {
+                dimension,
+                zones: resources.zones.as_deref(),
+                season,
+                activity,
+                countermeasures,
+                now_tick,
+            },
         );
         let Some(eval) = eval else {
             continue;
         };
+        resources.deceive_heaven.mark_countermeasure_applied(
+            &owner_player_id,
+            position.0,
+            now_tick,
+            eval.countermeasure,
+        );
 
         emit_tiandao_presence_payload(
             &mut client,
@@ -172,10 +535,10 @@ pub fn tiandao_hunt_tick(
             player_entity,
             username.0.as_str(),
             TiandaoResponseSinks {
-                zones: zones.as_deref_mut(),
-                active_events: active_events.as_deref_mut(),
-                vfx_events: vfx_events.as_deref_mut(),
-                audio_events: audio_events.as_deref_mut(),
+                zones: resources.zones.as_deref_mut(),
+                active_events: resources.active_events.as_deref_mut(),
+                vfx_events: resources.vfx_events.as_deref_mut(),
+                audio_events: resources.audio_events.as_deref_mut(),
             },
             now_tick,
         );
@@ -185,16 +548,15 @@ pub fn tiandao_hunt_tick(
 pub fn apply_attention_eval(
     cultivation: &Cultivation,
     position: &Position,
-    dimension: Option<&CurrentDimension>,
     attention: &mut TiandaoAttention,
-    zones: Option<&ZoneRegistry>,
-    season: Season,
-    now_tick: u64,
+    context: TiandaoEvalContext<'_>,
 ) -> Option<TiandaoEvalSnapshot> {
-    let dimension = dimension
+    let dimension = context
+        .dimension
         .map(|dim| dim.0)
         .unwrap_or(DimensionKind::Overworld);
-    let zone = zones
+    let zone = context
+        .zones
         .and_then(|registry| registry.find_zone(dimension, position.0))
         .map(|zone| (zone.name.clone(), zone.spirit_qi));
     let zone_spirit_qi = zone
@@ -204,21 +566,37 @@ pub fn apply_attention_eval(
     let input = TiandaoAttentionInput {
         realm: cultivation.realm,
         zone_spirit_qi,
-        activity: TiandaoActivity::Standing,
-        season,
+        activity: context.activity,
+        season: context.season,
     };
-    if should_evaluate_attention(now_tick, attention.last_eval_tick) {
-        advance_attention(attention, input, now_tick);
+    if should_evaluate_attention(context.now_tick, attention.last_eval_tick) {
+        let countermeasure = advance_attention_with_countermeasures(
+            attention,
+            input,
+            context.countermeasures,
+            context.now_tick,
+        );
         Some(TiandaoEvalSnapshot {
             position: position.0,
             zone_name: zone.map(|(name, _)| name),
             zone_spirit_qi,
             response: attention.response,
             level: attention.level,
+            countermeasure,
         })
     } else {
         None
     }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct TiandaoEvalContext<'a> {
+    pub dimension: Option<&'a CurrentDimension>,
+    pub zones: Option<&'a ZoneRegistry>,
+    pub season: Season,
+    pub activity: TiandaoActivity,
+    pub countermeasures: TiandaoCountermeasureInput,
+    pub now_tick: u64,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -228,6 +606,7 @@ pub struct TiandaoEvalSnapshot {
     pub zone_spirit_qi: f64,
     pub response: TiandaoResponseLevel,
     pub level: f64,
+    pub countermeasure: TiandaoCountermeasureOutcome,
 }
 
 pub fn should_evaluate_attention(now_tick: u64, last_eval_tick: u64) -> bool {
@@ -235,22 +614,39 @@ pub fn should_evaluate_attention(now_tick: u64, last_eval_tick: u64) -> bool {
         && now_tick.saturating_sub(last_eval_tick) >= TIANDAO_HUNT_EVAL_INTERVAL_TICKS
 }
 
+#[cfg(test)]
 pub fn advance_attention(
     attention: &mut TiandaoAttention,
     input: TiandaoAttentionInput,
     eval_tick: u64,
 ) {
+    advance_attention_with_countermeasures(
+        attention,
+        input,
+        TiandaoCountermeasureInput::default(),
+        eval_tick,
+    );
+}
+
+pub fn advance_attention_with_countermeasures(
+    attention: &mut TiandaoAttention,
+    input: TiandaoAttentionInput,
+    countermeasures: TiandaoCountermeasureInput,
+    eval_tick: u64,
+) -> TiandaoCountermeasureOutcome {
     let previous_response = attention.response;
     let accumulation_rate = accumulation_rate(input);
-    let decay = decay_rate(previous_response, input.zone_spirit_qi);
-    let next_level =
-        (attention.level + accumulation_rate - decay).clamp(ATTENTION_MIN, ATTENTION_MAX);
+    let outcome = countermeasure_outcome(countermeasures, eval_tick);
+    let decay = decay_rate(previous_response, input.zone_spirit_qi) * outcome.decay_multiplier;
+    let next_level = (attention.level + accumulation_rate - decay + outcome.attention_penalty)
+        .clamp(ATTENTION_MIN, ATTENTION_MAX);
 
     attention.level = next_level;
     attention.accumulation_rate = accumulation_rate;
     attention.peak_level = attention.peak_level.max(next_level);
     attention.response = response_for_level(previous_response, next_level);
     attention.last_eval_tick = eval_tick;
+    outcome
 }
 
 pub fn accumulation_rate(input: TiandaoAttentionInput) -> f64 {
@@ -284,14 +680,10 @@ pub fn zone_qi_factor(spirit_qi: f64) -> f64 {
 
 pub const fn activity_factor(activity: TiandaoActivity) -> f64 {
     match activity {
-        #[cfg(test)]
         TiandaoActivity::Meditating => 1.5,
-        #[cfg(test)]
         TiandaoActivity::Combat => 1.2,
-        #[cfg(test)]
         TiandaoActivity::Moving => 0.8,
         TiandaoActivity::Standing => 1.0,
-        #[cfg(test)]
         TiandaoActivity::InNiche => 0.5,
     }
 }
@@ -313,6 +705,61 @@ pub fn decay_rate(response: TiandaoResponseLevel, zone_spirit_qi: f64) -> f64 {
         TiandaoResponseLevel::Annihilate => 0.0,
     };
     base * zone_decay_multiplier(zone_spirit_qi)
+}
+
+pub fn countermeasure_outcome(
+    input: TiandaoCountermeasureInput,
+    eval_tick: u64,
+) -> TiandaoCountermeasureOutcome {
+    let Some(decoy) = input.deceive_heaven_decoy else {
+        return TiandaoCountermeasureOutcome::default();
+    };
+    let deceive_heaven = deceive_heaven_decoy_outcome(decoy, eval_tick);
+    match deceive_heaven {
+        DeceiveHeavenOutcome::Diverted => TiandaoCountermeasureOutcome {
+            deceive_heaven,
+            decay_multiplier: DECEIVE_HEAVEN_DECOY_DECAY_MULTIPLIER,
+            attention_penalty: 0.0,
+        },
+        DeceiveHeavenOutcome::Revealed => TiandaoCountermeasureOutcome {
+            deceive_heaven,
+            decay_multiplier: 1.0,
+            attention_penalty: DECEIVE_HEAVEN_REVEAL_PENALTY,
+        },
+        DeceiveHeavenOutcome::None
+        | DeceiveHeavenOutcome::TooClose
+        | DeceiveHeavenOutcome::Expired => TiandaoCountermeasureOutcome {
+            deceive_heaven,
+            ..TiandaoCountermeasureOutcome::default()
+        },
+    }
+}
+
+pub fn deceive_heaven_decoy_outcome(
+    decoy: DeceiveHeavenDecoyInput,
+    eval_tick: u64,
+) -> DeceiveHeavenOutcome {
+    if decoy.exposed {
+        return DeceiveHeavenOutcome::Revealed;
+    }
+    if !decoy.distance_blocks.is_finite()
+        || decoy.distance_blocks < DECEIVE_HEAVEN_DECOY_MIN_DISTANCE_BLOCKS
+    {
+        return DeceiveHeavenOutcome::TooClose;
+    }
+    if eval_tick.saturating_sub(decoy.placed_tick) >= DECEIVE_HEAVEN_DECOY_DURATION_TICKS {
+        return DeceiveHeavenOutcome::Expired;
+    }
+    DeceiveHeavenOutcome::Diverted
+}
+
+fn distance_to_array(player_pos: DVec3, array_pos: [i32; 3]) -> f64 {
+    let array_center = DVec3::new(
+        f64::from(array_pos[0]) + 0.5,
+        f64::from(array_pos[1]),
+        f64::from(array_pos[2]) + 0.5,
+    );
+    (player_pos - array_center).length()
 }
 
 pub fn zone_decay_multiplier(spirit_qi: f64) -> f64 {
@@ -638,10 +1085,27 @@ impl TiandaoResponseLevel {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cultivation::components::{Cultivation, Realm};
+    use crate::combat::components::Wounds;
+    use crate::combat::events::{ApplyStatusEffectIntent, CombatEvent, DeathEvent};
+    use crate::combat::CombatClock;
+    use crate::cultivation::color::PracticeLog;
+    use crate::cultivation::components::{
+        Contamination, Cultivation, MeridianSystem, QiColor, Realm,
+    };
+    use crate::cultivation::negative_zone::siphon_amount;
+    use crate::cultivation::tribulation::JueBiTriggerEvent;
+    use crate::inventory::{
+        ContainerState, InventoryRevision, ItemInstance, ItemRarity, PlayerInventory,
+        EQUIP_SLOT_MAIN_HAND, MAIN_PACK_CONTAINER_ID,
+    };
+    use crate::player::gameplay::PendingGameplayNarrations;
+    use crate::social::components::SpiritNiche;
     use crate::world::dimension::{CurrentDimension, DimensionKind};
     use crate::world::season::Season;
-    use valence::prelude::DVec3;
+    use crate::world::zone::Zone;
+    use crate::zhenfa::{ZhenfaCarrierKind, ZhenfaKind, ZhenfaPlaceRequest, ZhenfaRegistry};
+    use valence::prelude::{ChunkLayer, DVec3, UnloadedChunk};
+    use valence::testing::{create_mock_client, ScenarioSingleClient};
 
     fn assert_close(actual: f64, expected: f64) {
         assert!(
@@ -659,6 +1123,333 @@ mod tests {
         }
     }
 
+    fn sync_deceive_heaven_runtime(
+        state: &mut DeceiveHeavenRuntimeState,
+        deploy_event: Option<DeceiveHeavenEvent>,
+        exposed_event: Option<DeceiveHeavenExposedEvent>,
+    ) {
+        let mut deploy_events = Events::default();
+        let mut exposed_events = Events::default();
+        let mut deploy_reader = bevy_ecs::event::ManualEventReader::default();
+        let mut exposed_reader = bevy_ecs::event::ManualEventReader::default();
+
+        if let Some(event) = deploy_event {
+            deploy_events.send(event);
+        }
+        if let Some(event) = exposed_event {
+            exposed_events.send(event);
+        }
+
+        state.record_events(
+            Some(&deploy_events),
+            Some(&exposed_events),
+            &mut deploy_reader,
+            &mut exposed_reader,
+        );
+    }
+
+    fn deceive_heaven_deploy_event(
+        array_id: u64,
+        owner_player_id: &str,
+        pos: [i32; 3],
+        placed_at_tick: u64,
+    ) -> DeceiveHeavenEvent {
+        DeceiveHeavenEvent {
+            owner: Entity::from_raw(1),
+            owner_player_id: owner_player_id.to_string(),
+            array_id,
+            pos,
+            self_weight_multiplier: 0.5,
+            target_weight_multiplier: 1.5,
+            reveal_chance: 0.10,
+            placed_at_tick,
+        }
+    }
+
+    fn deceive_heaven_exposed_event(
+        array_id: u64,
+        owner_player_id: &str,
+        pos: [i32; 3],
+        exposed_at_tick: u64,
+    ) -> DeceiveHeavenExposedEvent {
+        DeceiveHeavenExposedEvent {
+            owner: Entity::from_raw(1),
+            owner_player_id: owner_player_id.to_string(),
+            array_id,
+            pos,
+            self_weight_multiplier: 0.5,
+            target_weight_multiplier: 1.5,
+            reveal_chance: 0.10,
+            exposed_at_tick,
+        }
+    }
+
+    fn negative_zone_escape_qi_cost_per_eval_for_tests(zone_spirit_qi: f64, qi_max: f64) -> f64 {
+        siphon_amount(zone_spirit_qi, qi_max) * TIANDAO_HUNT_EVAL_INTERVAL_TICKS as f64
+    }
+
+    fn tiandao_runtime_app() -> (App, Entity) {
+        let mut app = App::new();
+        app.add_event::<DeceiveHeavenEvent>();
+        app.add_event::<DeceiveHeavenExposedEvent>();
+        app.insert_resource(CultivationClock { tick: 0 });
+        app.init_resource::<DeceiveHeavenRuntimeState>();
+        app.init_resource::<TiandaoActivityRuntimeState>();
+        app.add_systems(Update, tiandao_hunt_tick);
+
+        let (mut bundle, _helper) = create_mock_client("Alice");
+        bundle.player.position = Position::new([0.0, 64.0, 0.0]);
+        let player = app
+            .world_mut()
+            .spawn((
+                bundle,
+                Cultivation {
+                    realm: Realm::Awaken,
+                    qi_current: 100.0,
+                    qi_max: 100.0,
+                    ..Cultivation::default()
+                },
+                TiandaoAttention {
+                    level: 20.0,
+                    response: TiandaoResponseLevel::Watch,
+                    ..TiandaoAttention::default()
+                },
+            ))
+            .id();
+        (app, player)
+    }
+
+    fn tiandao_zhenfa_production_app() -> (App, Entity) {
+        let scenario = ScenarioSingleClient::new();
+        let mut app = scenario.app;
+        crate::world::dimension::mark_test_layer_as_overworld(&mut app);
+        app.world_mut()
+            .get_mut::<ChunkLayer>(scenario.layer)
+            .expect("test layer should carry ChunkLayer")
+            .insert_chunk([37, 0], UnloadedChunk::new());
+        app.insert_resource(CultivationClock { tick: 0 });
+        app.insert_resource(CombatClock::default());
+        app.insert_resource(PendingGameplayNarrations::default());
+        app.add_event::<JueBiTriggerEvent>();
+        app.add_event::<CombatEvent>();
+        app.add_event::<DeathEvent>();
+        app.add_event::<ApplyStatusEffectIntent>();
+        crate::zhenfa::register(&mut app);
+        super::register(&mut app);
+
+        let (mut bundle, _helper) = create_mock_client("Alice");
+        bundle.player.position = Position::new([0.0, 64.0, 0.0]);
+        let player = app
+            .world_mut()
+            .spawn((
+                bundle,
+                Cultivation {
+                    realm: Realm::Solidify,
+                    qi_current: 100.0,
+                    qi_max: 100.0,
+                    ..Cultivation::default()
+                },
+                QiColor::default(),
+                PracticeLog::default(),
+                Wounds::default(),
+                Contamination::default(),
+                MeridianSystem::default(),
+                TiandaoAttention {
+                    level: 20.0,
+                    response: TiandaoResponseLevel::Watch,
+                    ..TiandaoAttention::default()
+                },
+                deceive_heaven_test_inventory(),
+            ))
+            .id();
+        (app, player)
+    }
+
+    fn deceive_heaven_test_inventory() -> PlayerInventory {
+        const ZHENFA_FLAG_ITEM_ID_FOR_TEST: &str = "array_flag";
+        let mut inventory = PlayerInventory {
+            revision: InventoryRevision(0),
+            containers: vec![ContainerState {
+                id: MAIN_PACK_CONTAINER_ID.to_string(),
+                name: "main".to_string(),
+                rows: 4,
+                cols: 6,
+                items: Vec::new(),
+            }],
+            equipped: HashMap::new(),
+            hotbar: Default::default(),
+            bone_coins: 10,
+            max_weight: 45.0,
+        };
+        inventory.equipped.insert(
+            EQUIP_SLOT_MAIN_HAND.to_string(),
+            test_item(9200, ZHENFA_FLAG_ITEM_ID_FOR_TEST, 1),
+        );
+        inventory.containers[0]
+            .items
+            .push(crate::inventory::PlacedItemState {
+                row: 0,
+                col: 0,
+                instance: test_item(9201, "ling_mu_ban", 2),
+            });
+        inventory.containers[0]
+            .items
+            .push(crate::inventory::PlacedItemState {
+                row: 0,
+                col: 1,
+                instance: test_item(9202, "yi_shou_gu", 4),
+            });
+        inventory
+    }
+
+    fn capture_production_deceive_heaven_exposure(
+        app: &mut App,
+        player: Entity,
+    ) -> DeceiveHeavenExposedEvent {
+        const MAX_EXPOSURE_CANDIDATES: i32 = 200;
+
+        let mut requested_at_tick = 200;
+        for offset in 0..MAX_EXPOSURE_CANDIDATES {
+            let pos = [600 + offset, 64, 0];
+            app.world_mut().resource_mut::<CultivationClock>().tick = requested_at_tick;
+            app.world_mut().resource_mut::<CombatClock>().tick = requested_at_tick;
+            app.world_mut()
+                .entity_mut(player)
+                .insert(deceive_heaven_test_inventory());
+            app.world_mut()
+                .get_mut::<Cultivation>(player)
+                .unwrap()
+                .qi_current = 100.0;
+            app.world_mut().send_event(ZhenfaPlaceRequest {
+                player,
+                pos,
+                kind: ZhenfaKind::DeceiveHeaven,
+                carrier: ZhenfaCarrierKind::BeastCoreInlaid,
+                qi_invest_ratio: 0.10,
+                trigger: None,
+                item_instance_id: None,
+                target_face: None,
+                requested_at_tick,
+            });
+            app.update();
+
+            let instance = app
+                .world()
+                .resource::<ZhenfaRegistry>()
+                .find_at(pos)
+                .expect("production placement should create a deceive heaven instance")
+                .clone();
+            let probe_tick = instance.expires_at_tick.saturating_sub(1);
+            {
+                let mut attention = app.world_mut().get_mut::<TiandaoAttention>(player).unwrap();
+                attention.level = 21.0;
+                attention.response = TiandaoResponseLevel::Watch;
+                attention.last_eval_tick = instance.placed_at_tick;
+            }
+            app.world_mut().resource_mut::<CultivationClock>().tick = probe_tick;
+            app.world_mut().resource_mut::<CombatClock>().tick = probe_tick;
+            app.update();
+
+            let exposed = app
+                .world()
+                .resource::<Events<DeceiveHeavenExposedEvent>>()
+                .iter_current_update_events()
+                .find(|event| event.array_id == instance.id)
+                .cloned();
+            if let Some(event) = exposed {
+                assert_eq!(event.owner_player_id, "offline:Alice");
+                assert_eq!(event.pos, pos);
+                assert_eq!(event.exposed_at_tick, probe_tick);
+                return event;
+            }
+
+            requested_at_tick = instance.expires_at_tick.saturating_add(1);
+        }
+
+        panic!("production zhenfa path did not emit a deceive heaven exposure event");
+    }
+
+    fn test_item(instance_id: u64, template_id: &str, stack_count: u32) -> ItemInstance {
+        ItemInstance {
+            instance_id,
+            template_id: template_id.to_string(),
+            display_name: template_id.to_string(),
+            grid_w: 1,
+            grid_h: 1,
+            weight: 0.1,
+            rarity: ItemRarity::Common,
+            description: template_id.to_string(),
+            stack_count,
+            spirit_quality: 1.0,
+            durability: 1.0,
+            freshness: None,
+            mineral_id: None,
+            charges: None,
+            forge_quality: None,
+            forge_color: None,
+            forge_side_effects: Vec::new(),
+            forge_achieved_tier: None,
+            alchemy: None,
+            lingering_owner_qi: None,
+        }
+    }
+
+    fn single_zone_registry(name: &str, spirit_qi: f64) -> ZoneRegistry {
+        ZoneRegistry {
+            zones: vec![Zone {
+                name: name.to_string(),
+                dimension: DimensionKind::Overworld,
+                bounds: (DVec3::new(-16.0, 0.0, -16.0), DVec3::new(16.0, 128.0, 16.0)),
+                spirit_qi,
+                danger_level: 0,
+                active_events: Vec::new(),
+                patrol_anchors: Vec::new(),
+                blocked_tiles: Vec::new(),
+            }],
+        }
+    }
+
+    fn evaluate_deceive_runtime(
+        state: &mut DeceiveHeavenRuntimeState,
+        player_pos: DVec3,
+        now_tick: u64,
+        start_level: f64,
+    ) -> (TiandaoEvalSnapshot, TiandaoAttention) {
+        let cultivation = Cultivation {
+            realm: Realm::Awaken,
+            ..Cultivation::default()
+        };
+        let position = Position(player_pos);
+        let mut attention = TiandaoAttention {
+            level: start_level,
+            response: TiandaoResponseLevel::Watch,
+            ..TiandaoAttention::default()
+        };
+        let countermeasures = state.countermeasure_input("offline:Alice", position.0, now_tick);
+        let snapshot = apply_attention_eval(
+            &cultivation,
+            &position,
+            &mut attention,
+            TiandaoEvalContext {
+                dimension: None,
+                zones: None,
+                season: Season::Summer,
+                activity: TiandaoActivity::Standing,
+                countermeasures,
+                now_tick,
+            },
+        )
+        .expect("ten-second tiandao_hunt eval should run");
+        state.mark_countermeasure_applied(
+            "offline:Alice",
+            position.0,
+            now_tick,
+            snapshot.countermeasure,
+        );
+
+        (snapshot, attention)
+    }
+
     #[test]
     fn realm_base_rates_match_plan_scale() {
         assert_eq!(realm_base_rate(Realm::Awaken), 0.0);
@@ -667,6 +1458,91 @@ mod tests {
         assert_eq!(realm_base_rate(Realm::Solidify), 0.05);
         assert_eq!(realm_base_rate(Realm::Spirit), 0.15);
         assert_eq!(realm_base_rate(Realm::Void), 0.40);
+    }
+
+    #[test]
+    fn runtime_activity_tracks_movement_since_last_eval() {
+        let entity = Entity::from_raw(7);
+        let mut state = TiandaoActivityRuntimeState::default();
+
+        let first = state.activity_for_eval(TiandaoActivityRuntimeInput {
+            entity,
+            position: DVec3::new(0.0, 64.0, 0.0),
+            combat: None,
+            lifecycle: None,
+            practice_accumulator: None,
+            spirit_niches: None,
+            now_tick: 200,
+        });
+        let second = state.activity_for_eval(TiandaoActivityRuntimeInput {
+            entity,
+            position: DVec3::new(1.0, 64.0, 0.0),
+            combat: None,
+            lifecycle: None,
+            practice_accumulator: None,
+            spirit_niches: None,
+            now_tick: 400,
+        });
+
+        assert_eq!(first, TiandaoActivity::Standing);
+        assert_eq!(second, TiandaoActivity::Moving);
+    }
+
+    #[test]
+    fn runtime_activity_uses_combat_before_meditation_or_movement() {
+        let entity = Entity::from_raw(8);
+        let mut state = TiandaoActivityRuntimeState::default();
+        let mut practice = CultivationSessionPracticeAccumulator::default();
+        practice.note_practice_tick_for_tests(entity, 198);
+        let combat = CombatState {
+            in_combat_until_tick: Some(300),
+            ..CombatState::default()
+        };
+
+        let activity = state.activity_for_eval(TiandaoActivityRuntimeInput {
+            entity,
+            position: DVec3::new(4.0, 64.0, 0.0),
+            combat: Some(&combat),
+            lifecycle: None,
+            practice_accumulator: Some(&practice),
+            spirit_niches: None,
+            now_tick: 200,
+        });
+
+        assert_eq!(activity, TiandaoActivity::Combat);
+    }
+
+    #[test]
+    fn runtime_activity_uses_own_active_niche_before_meditation() {
+        let entity = Entity::from_raw(9);
+        let mut state = TiandaoActivityRuntimeState::default();
+        let mut practice = CultivationSessionPracticeAccumulator::default();
+        practice.note_practice_tick_for_tests(entity, 198);
+        let lifecycle = Lifecycle {
+            character_id: "offline:Alice".to_string(),
+            ..Lifecycle::default()
+        };
+        let mut spirit_niches = SpiritNicheRegistry::default();
+        spirit_niches.upsert(SpiritNiche {
+            owner: "offline:Alice".to_string(),
+            pos: [10, 64, 10],
+            placed_at_tick: 1,
+            revealed: false,
+            revealed_by: None,
+            guardians: Vec::new(),
+        });
+
+        let activity = state.activity_for_eval(TiandaoActivityRuntimeInput {
+            entity,
+            position: DVec3::new(10.5, 64.5, 10.5),
+            combat: None,
+            lifecycle: Some(&lifecycle),
+            practice_accumulator: Some(&practice),
+            spirit_niches: Some(&spirit_niches),
+            now_tick: 200,
+        });
+
+        assert_eq!(activity, TiandaoActivity::InNiche);
     }
 
     #[test]
@@ -828,6 +1704,510 @@ mod tests {
     }
 
     #[test]
+    fn deceive_heaven_decoy_diverts_attention_when_far_active_and_not_revealed() {
+        let start_level = 20.0;
+        let mut attention = TiandaoAttention {
+            level: start_level,
+            response: TiandaoResponseLevel::Watch,
+            ..TiandaoAttention::default()
+        };
+        let outcome = advance_attention_with_countermeasures(
+            &mut attention,
+            TiandaoAttentionInput {
+                realm: Realm::Awaken,
+                zone_spirit_qi: 0.6,
+                activity: TiandaoActivity::Standing,
+                season: Season::Summer,
+            },
+            TiandaoCountermeasureInput {
+                deceive_heaven_decoy: Some(DeceiveHeavenDecoyInput {
+                    placed_tick: 200,
+                    distance_blocks: DECEIVE_HEAVEN_DECOY_MIN_DISTANCE_BLOCKS,
+                    exposed: false,
+                }),
+            },
+            400,
+        );
+
+        assert_eq!(outcome.deceive_heaven, DeceiveHeavenOutcome::Diverted);
+        assert_close(
+            outcome.decay_multiplier,
+            DECEIVE_HEAVEN_DECOY_DECAY_MULTIPLIER,
+        );
+        assert_close(
+            attention.level,
+            start_level - 0.05 * DECEIVE_HEAVEN_DECOY_DECAY_MULTIPLIER,
+        );
+        assert_eq!(attention.response, TiandaoResponseLevel::Watch);
+    }
+
+    #[test]
+    fn deceive_heaven_decoy_revealed_adds_twenty_attention_without_decay_bonus() {
+        let start_level = 21.0;
+        let mut attention = TiandaoAttention {
+            level: start_level,
+            response: TiandaoResponseLevel::Watch,
+            ..TiandaoAttention::default()
+        };
+        let outcome = advance_attention_with_countermeasures(
+            &mut attention,
+            TiandaoAttentionInput {
+                realm: Realm::Awaken,
+                zone_spirit_qi: 0.6,
+                activity: TiandaoActivity::Standing,
+                season: Season::Summer,
+            },
+            TiandaoCountermeasureInput {
+                deceive_heaven_decoy: Some(DeceiveHeavenDecoyInput {
+                    placed_tick: 0,
+                    distance_blocks: 800.0,
+                    exposed: true,
+                }),
+            },
+            400,
+        );
+
+        assert_eq!(outcome.deceive_heaven, DeceiveHeavenOutcome::Revealed);
+        assert_close(outcome.attention_penalty, DECEIVE_HEAVEN_REVEAL_PENALTY);
+        assert_close(
+            attention.level,
+            start_level - 0.05 + DECEIVE_HEAVEN_REVEAL_PENALTY,
+        );
+        assert_eq!(attention.response, TiandaoResponseLevel::Pressure);
+    }
+
+    #[test]
+    fn deceive_heaven_decoy_has_distance_reveal_and_expiry_boundaries() {
+        let active = DeceiveHeavenDecoyInput {
+            placed_tick: 100,
+            distance_blocks: 500.0,
+            exposed: false,
+        };
+        assert_eq!(
+            deceive_heaven_decoy_outcome(active, 100 + DECEIVE_HEAVEN_DECOY_DURATION_TICKS - 1),
+            DeceiveHeavenOutcome::Diverted
+        );
+        assert_eq!(
+            deceive_heaven_decoy_outcome(
+                DeceiveHeavenDecoyInput {
+                    distance_blocks: 499.99,
+                    ..active
+                },
+                200
+            ),
+            DeceiveHeavenOutcome::TooClose
+        );
+        assert_eq!(
+            deceive_heaven_decoy_outcome(
+                DeceiveHeavenDecoyInput {
+                    exposed: true,
+                    distance_blocks: 499.99,
+                    ..active
+                },
+                200
+            ),
+            DeceiveHeavenOutcome::Revealed
+        );
+        assert_eq!(
+            deceive_heaven_decoy_outcome(active, 100 + DECEIVE_HEAVEN_DECOY_DURATION_TICKS),
+            DeceiveHeavenOutcome::Expired
+        );
+    }
+
+    #[test]
+    fn deceive_heaven_exposure_penalty_wins_over_distance_boundary() {
+        let outcome = countermeasure_outcome(
+            TiandaoCountermeasureInput {
+                deceive_heaven_decoy: Some(DeceiveHeavenDecoyInput {
+                    placed_tick: 100,
+                    distance_blocks: 1.0,
+                    exposed: true,
+                }),
+            },
+            200,
+        );
+
+        assert_eq!(outcome.deceive_heaven, DeceiveHeavenOutcome::Revealed);
+        assert_eq!(outcome.decay_multiplier, 1.0);
+        assert_close(outcome.attention_penalty, DECEIVE_HEAVEN_REVEAL_PENALTY);
+    }
+
+    #[test]
+    fn deceive_heaven_deploy_event_enters_tiandao_hunt_runtime_and_decays_x4() {
+        let mut state = DeceiveHeavenRuntimeState::default();
+        sync_deceive_heaven_runtime(
+            &mut state,
+            Some(deceive_heaven_deploy_event(
+                7,
+                "offline:Alice",
+                [600, 64, 0],
+                100,
+            )),
+            None,
+        );
+
+        let (snapshot, attention) =
+            evaluate_deceive_runtime(&mut state, DVec3::new(0.0, 64.0, 0.0), 300, 20.0);
+
+        assert_eq!(
+            snapshot.countermeasure.deceive_heaven,
+            DeceiveHeavenOutcome::Diverted
+        );
+        assert_close(
+            snapshot.countermeasure.decay_multiplier,
+            DECEIVE_HEAVEN_DECOY_DECAY_MULTIPLIER,
+        );
+        assert_close(
+            attention.level,
+            20.0 - decay_rate(TiandaoResponseLevel::Watch, 0.0)
+                * DECEIVE_HEAVEN_DECOY_DECAY_MULTIPLIER,
+        );
+    }
+
+    #[test]
+    fn deceive_heaven_runtime_rejects_too_close_and_expired_deployments() {
+        let mut too_close_state = DeceiveHeavenRuntimeState::default();
+        sync_deceive_heaven_runtime(
+            &mut too_close_state,
+            Some(deceive_heaven_deploy_event(
+                8,
+                "offline:Alice",
+                [499, 64, 0],
+                100,
+            )),
+            None,
+        );
+
+        let (too_close, too_close_attention) =
+            evaluate_deceive_runtime(&mut too_close_state, DVec3::new(0.0, 64.0, 0.0), 300, 20.0);
+
+        assert_eq!(
+            too_close.countermeasure.deceive_heaven,
+            DeceiveHeavenOutcome::TooClose
+        );
+        assert_close(
+            too_close_attention.level,
+            20.0 - decay_rate(TiandaoResponseLevel::Watch, 0.0),
+        );
+
+        let mut expired_state = DeceiveHeavenRuntimeState::default();
+        sync_deceive_heaven_runtime(
+            &mut expired_state,
+            Some(deceive_heaven_deploy_event(
+                9,
+                "offline:Alice",
+                [600, 64, 0],
+                100,
+            )),
+            None,
+        );
+
+        let (expired, expired_attention) = evaluate_deceive_runtime(
+            &mut expired_state,
+            DVec3::new(0.0, 64.0, 0.0),
+            100 + DECEIVE_HEAVEN_DECOY_DURATION_TICKS,
+            20.0,
+        );
+
+        assert_eq!(
+            expired.countermeasure.deceive_heaven,
+            DeceiveHeavenOutcome::Expired
+        );
+        assert_close(
+            expired_attention.level,
+            20.0 - decay_rate(TiandaoResponseLevel::Watch, 0.0),
+        );
+    }
+
+    #[test]
+    fn deceive_heaven_exposed_event_adds_tiandao_hunt_attention_penalty() {
+        let mut state = DeceiveHeavenRuntimeState::default();
+        sync_deceive_heaven_runtime(
+            &mut state,
+            Some(deceive_heaven_deploy_event(
+                10,
+                "offline:Alice",
+                [600, 64, 0],
+                100,
+            )),
+            None,
+        );
+        sync_deceive_heaven_runtime(
+            &mut state,
+            None,
+            Some(deceive_heaven_exposed_event(
+                10,
+                "offline:Alice",
+                [600, 64, 0],
+                250,
+            )),
+        );
+
+        let (snapshot, attention) =
+            evaluate_deceive_runtime(&mut state, DVec3::new(0.0, 64.0, 0.0), 300, 21.0);
+
+        assert_eq!(
+            snapshot.countermeasure.deceive_heaven,
+            DeceiveHeavenOutcome::Revealed
+        );
+        assert_close(
+            snapshot.countermeasure.attention_penalty,
+            DECEIVE_HEAVEN_REVEAL_PENALTY,
+        );
+        assert_close(
+            attention.level,
+            21.0 - decay_rate(TiandaoResponseLevel::Watch, 0.0) + DECEIVE_HEAVEN_REVEAL_PENALTY,
+        );
+        assert_eq!(attention.response, TiandaoResponseLevel::Pressure);
+    }
+
+    #[test]
+    fn tiandao_hunt_tick_consumes_deceive_heaven_deploy_event_and_decays_x4() {
+        let (mut app, player) = tiandao_runtime_app();
+        app.world_mut().send_event(deceive_heaven_deploy_event(
+            11,
+            "offline:Alice",
+            [600, 64, 0],
+            200,
+        ));
+        app.world_mut().resource_mut::<CultivationClock>().tick = 200;
+
+        app.update();
+
+        let attention = app.world().get::<TiandaoAttention>(player).unwrap();
+        assert_close(
+            attention.level,
+            20.0 - decay_rate(TiandaoResponseLevel::Watch, 0.0)
+                * DECEIVE_HEAVEN_DECOY_DECAY_MULTIPLIER,
+        );
+        assert_eq!(attention.last_eval_tick, 200);
+    }
+
+    #[test]
+    fn production_zhenfa_deceive_heaven_place_feeds_tiandao_hunt_same_update() {
+        let (mut app, player) = tiandao_zhenfa_production_app();
+        app.world_mut().send_event(ZhenfaPlaceRequest {
+            player,
+            pos: [600, 64, 0],
+            kind: ZhenfaKind::DeceiveHeaven,
+            carrier: ZhenfaCarrierKind::BeastCoreInlaid,
+            qi_invest_ratio: 0.80,
+            trigger: None,
+            item_instance_id: None,
+            target_face: None,
+            requested_at_tick: 200,
+        });
+        app.world_mut().resource_mut::<CultivationClock>().tick = 200;
+
+        app.update();
+
+        let attention = app.world().get::<TiandaoAttention>(player).unwrap();
+        assert_close(
+            attention.level,
+            20.0 + accumulation_rate(TiandaoAttentionInput {
+                realm: Realm::Solidify,
+                zone_spirit_qi: 0.0,
+                activity: TiandaoActivity::Standing,
+                season: Season::default(),
+            }) - decay_rate(TiandaoResponseLevel::Watch, 0.0)
+                * DECEIVE_HEAVEN_DECOY_DECAY_MULTIPLIER,
+        );
+        assert_eq!(attention.last_eval_tick, 200);
+    }
+
+    #[test]
+    fn production_zhenfa_exposure_feeds_tiandao_hunt_penalty_once() {
+        let (mut app, player) = tiandao_zhenfa_production_app();
+        let exposed = capture_production_deceive_heaven_exposure(&mut app, player);
+
+        let first = app.world().get::<TiandaoAttention>(player).unwrap().clone();
+        assert_eq!(first.last_eval_tick, exposed.exposed_at_tick);
+        assert_close(
+            first.level,
+            21.0 + first.accumulation_rate - decay_rate(TiandaoResponseLevel::Watch, 0.0)
+                + DECEIVE_HEAVEN_REVEAL_PENALTY,
+        );
+        assert_eq!(first.response, TiandaoResponseLevel::Pressure);
+
+        let next_eval_tick = first
+            .last_eval_tick
+            .saturating_add(TIANDAO_HUNT_EVAL_INTERVAL_TICKS);
+        app.world_mut().resource_mut::<CultivationClock>().tick = next_eval_tick;
+        app.world_mut().resource_mut::<CombatClock>().tick = next_eval_tick;
+        app.update();
+
+        let second = app.world().get::<TiandaoAttention>(player).unwrap();
+        assert_close(
+            second.level,
+            first.level + second.accumulation_rate
+                - decay_rate(TiandaoResponseLevel::Pressure, 0.0),
+        );
+        assert_eq!(second.last_eval_tick, next_eval_tick);
+    }
+
+    #[test]
+    fn tiandao_hunt_tick_applies_deceive_heaven_exposed_penalty_once() {
+        let (mut app, player) = tiandao_runtime_app();
+        app.world_mut()
+            .get_mut::<TiandaoAttention>(player)
+            .unwrap()
+            .level = 21.0;
+        app.world_mut().send_event(deceive_heaven_deploy_event(
+            12,
+            "offline:Alice",
+            [600, 64, 0],
+            200,
+        ));
+        app.world_mut().send_event(deceive_heaven_exposed_event(
+            12,
+            "offline:Alice",
+            [600, 64, 0],
+            200,
+        ));
+        app.world_mut().resource_mut::<CultivationClock>().tick = 200;
+
+        app.update();
+
+        let first = app.world().get::<TiandaoAttention>(player).unwrap().clone();
+        assert_close(
+            first.level,
+            21.0 - decay_rate(TiandaoResponseLevel::Watch, 0.0) + DECEIVE_HEAVEN_REVEAL_PENALTY,
+        );
+        assert_eq!(first.response, TiandaoResponseLevel::Pressure);
+
+        app.world_mut().resource_mut::<CultivationClock>().tick = 400;
+        app.update();
+
+        let second = app.world().get::<TiandaoAttention>(player).unwrap();
+        assert_close(
+            second.level,
+            first.level - decay_rate(TiandaoResponseLevel::Pressure, 0.0),
+        );
+        assert_eq!(second.last_eval_tick, 400);
+    }
+
+    #[test]
+    fn negative_zone_escape_applies_decay_x5_and_reports_existing_siphon_cost() {
+        let mut attention = TiandaoAttention {
+            level: 50.0,
+            response: TiandaoResponseLevel::Pressure,
+            ..TiandaoAttention::default()
+        };
+        advance_attention(
+            &mut attention,
+            TiandaoAttentionInput {
+                realm: Realm::Awaken,
+                zone_spirit_qi: -0.5,
+                activity: TiandaoActivity::Standing,
+                season: Season::Summer,
+            },
+            200,
+        );
+        assert_close(attention.level, 50.0 - 0.03 * 5.0);
+        assert_close(
+            negative_zone_escape_qi_cost_per_eval_for_tests(-0.5, 1000.0),
+            siphon_amount(-0.5, 1000.0) * TIANDAO_HUNT_EVAL_INTERVAL_TICKS as f64,
+        );
+        assert!(
+            negative_zone_escape_qi_cost_per_eval_for_tests(-0.5, 1000.0)
+                > negative_zone_escape_qi_cost_per_eval_for_tests(-0.5, 100.0),
+            "负灵域反制代价必须随 qi_max 放大，让高境承担更高真元消耗"
+        );
+    }
+
+    #[test]
+    fn tiandao_hunt_tick_uses_negative_zone_registry_after_ten_second_interval() {
+        let (mut app, player) = tiandao_runtime_app();
+        app.insert_resource(single_zone_registry("test_negative_field", -0.3));
+
+        app.world_mut().resource_mut::<CultivationClock>().tick = 199;
+        app.update();
+        let before = app.world().get::<TiandaoAttention>(player).unwrap();
+        assert_eq!(before.last_eval_tick, 0);
+        assert_close(before.level, 20.0);
+
+        app.world_mut().resource_mut::<CultivationClock>().tick = 200;
+        app.update();
+
+        let after = app.world().get::<TiandaoAttention>(player).unwrap();
+        assert_eq!(after.last_eval_tick, 200);
+        assert_close(
+            after.level,
+            20.0 - decay_rate(TiandaoResponseLevel::Watch, -0.3),
+        );
+    }
+
+    #[test]
+    fn nomadic_meditation_cycle_does_not_enter_pressure() {
+        let mut attention = TiandaoAttention {
+            level: 30.0,
+            response: TiandaoResponseLevel::Watch,
+            peak_level: 30.0,
+            ..TiandaoAttention::default()
+        };
+        let mut eval_index = 1;
+        for _cycle in 0..4 {
+            for _ in 0..60 {
+                advance_attention(
+                    &mut attention,
+                    TiandaoAttentionInput {
+                        activity: TiandaoActivity::Meditating,
+                        ..input(Realm::Solidify)
+                    },
+                    eval_index * TIANDAO_HUNT_EVAL_INTERVAL_TICKS,
+                );
+                eval_index += 1;
+            }
+            for _ in 0..30 {
+                advance_attention(
+                    &mut attention,
+                    TiandaoAttentionInput {
+                        activity: TiandaoActivity::Moving,
+                        ..input(Realm::Solidify)
+                    },
+                    eval_index * TIANDAO_HUNT_EVAL_INTERVAL_TICKS,
+                );
+                eval_index += 1;
+            }
+        }
+
+        assert!(
+            attention.level < 40.0,
+            "固元 4 轮游牧打坐/转移应停在 Pressure 阈值下，actual={}",
+            attention.level
+        );
+        assert_eq!(attention.response, TiandaoResponseLevel::Watch);
+    }
+
+    #[test]
+    fn realm_regression_recomputes_accumulation_rate_from_new_realm() {
+        let (mut app, player) = tiandao_runtime_app();
+        app.insert_resource(single_zone_registry("test_plain_field", 0.6));
+        app.world_mut()
+            .get_mut::<TiandaoAttention>(player)
+            .unwrap()
+            .level = 0.0;
+        app.world_mut()
+            .get_mut::<Cultivation>(player)
+            .unwrap()
+            .realm = Realm::Spirit;
+
+        app.world_mut().resource_mut::<CultivationClock>().tick = 200;
+        app.update();
+        let first = app.world().get::<TiandaoAttention>(player).unwrap();
+        assert_close(first.accumulation_rate, 0.15);
+
+        app.world_mut()
+            .get_mut::<Cultivation>(player)
+            .unwrap()
+            .realm = Realm::Solidify;
+        app.world_mut().resource_mut::<CultivationClock>().tick = 400;
+        app.update();
+        let second = app.world().get::<TiandaoAttention>(player).unwrap();
+        assert_close(second.accumulation_rate, 0.05);
+    }
+
+    #[test]
     fn void_high_qi_meditation_reaches_watch_in_plan_timeframe() {
         let mut attention = TiandaoAttention::default();
         let input = TiandaoAttentionInput {
@@ -857,11 +2237,15 @@ mod tests {
         apply_attention_eval(
             &cultivation,
             &position,
-            Some(&dimension),
             &mut attention,
-            Some(&zones),
-            Season::Summer,
-            199,
+            TiandaoEvalContext {
+                dimension: Some(&dimension),
+                zones: Some(&zones),
+                season: Season::Summer,
+                activity: TiandaoActivity::Standing,
+                countermeasures: TiandaoCountermeasureInput::default(),
+                now_tick: 199,
+            },
         );
         assert_eq!(attention.last_eval_tick, 0);
         assert_eq!(attention.level, 0.0);
@@ -869,11 +2253,15 @@ mod tests {
         apply_attention_eval(
             &cultivation,
             &position,
-            Some(&dimension),
             &mut attention,
-            Some(&zones),
-            Season::Summer,
-            200,
+            TiandaoEvalContext {
+                dimension: Some(&dimension),
+                zones: Some(&zones),
+                season: Season::Summer,
+                activity: TiandaoActivity::Standing,
+                countermeasures: TiandaoCountermeasureInput::default(),
+                now_tick: 200,
+            },
         );
         assert_eq!(attention.last_eval_tick, 200);
         assert!(attention.level > 0.0);
@@ -967,6 +2355,7 @@ mod tests {
             zone_spirit_qi: 0.6,
             response: TiandaoResponseLevel::Watch,
             level: 20.0,
+            countermeasure: TiandaoCountermeasureOutcome::default(),
         };
         let profile = tiandao_response_profile(TiandaoResponseLevel::Watch).unwrap();
 
