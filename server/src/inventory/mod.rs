@@ -8448,14 +8448,29 @@ cols = 4
         }
     }
 
-    // ItemCategory::Container serde pin
+    // ItemCategory serde pins
 
     #[test]
-    fn item_category_block_serde_roundtrip() {
-        let cat = ItemCategory::Block;
-        let json = serde_json::to_string(&cat).expect("serialize Block category");
-        let back: ItemCategory = serde_json::from_str(&json).expect("deserialize Block category");
-        assert_eq!(back, cat);
+    fn item_category_block_serde_pin() {
+        let serialized =
+            serde_json::to_string(&ItemCategory::Block).expect("serialize Block category");
+        assert_eq!(
+            serialized, "\"Block\"",
+            "expected ItemCategory::Block to serialize as the explicit protocol literal"
+        );
+
+        let deserialized: ItemCategory =
+            serde_json::from_str("\"Block\"").expect("deserialize Block category literal");
+        assert_eq!(deserialized, ItemCategory::Block);
+    }
+
+    #[test]
+    fn item_category_invalid_variant_is_rejected() {
+        let result = serde_json::from_str::<ItemCategory>("\"InvalidVariant\"");
+        assert!(
+            result.is_err(),
+            "expected invalid ItemCategory protocol literal to be rejected, got {result:?}"
+        );
     }
 
     #[test]
