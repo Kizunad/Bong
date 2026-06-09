@@ -147,6 +147,7 @@ use crate::social::events::{
     SpiritNicheCoordinateRevealRequest, SpiritNichePlaceRequest, SpiritNicheRevealSource,
     TradeOfferRequest, TradeOfferResponseEvent,
 };
+use crate::world::block_place::BlockPlaceRequest;
 use crate::world::dimension::{CurrentDimension, DimensionKind};
 use crate::world::events::EVENT_REALM_COLLAPSE;
 use crate::world::extract_system::{
@@ -283,6 +284,7 @@ pub struct ClientRequestDispatchParams<'w> {
     pub sparring_invite_response_tx: Option<ResMut<'w, Events<SparringInviteResponseEvent>>>,
     pub trade_offer_request_tx: Option<ResMut<'w, Events<TradeOfferRequest>>>,
     pub trade_offer_response_tx: Option<ResMut<'w, Events<TradeOfferResponseEvent>>>,
+    pub block_place_tx: Option<ResMut<'w, Events<BlockPlaceRequest>>>,
     pub zhenfa_place_tx: Option<ResMut<'w, Events<ZhenfaPlaceRequest>>>,
     pub zhenfa_trigger_tx: Option<ResMut<'w, Events<ZhenfaTriggerRequest>>>,
     pub zhenfa_disarm_tx: Option<ResMut<'w, Events<ZhenfaDisarmRequest>>>,
@@ -833,9 +835,23 @@ pub fn handle_client_request_payloads(
                 ..
             } => {
                 tracing::info!(
-                    "[bong][network][block] accepted block_place schema entity={:?} pos=[{x},{y},{z}] instance={item_instance_id} target_face={target_face:?}; runtime consumer lands in P3",
+                    "[bong][network][block] dispatch block_place entity={:?} pos=[{x},{y},{z}] instance={item_instance_id} target_face={target_face:?}",
                     ev.client
                 );
+                let Some(block_place_tx) = dispatch.block_place_tx.as_deref_mut() else {
+                    tracing::warn!(
+                        "[bong][network] dropped block_place because BlockPlaceRequest event resource is missing"
+                    );
+                    continue;
+                };
+                block_place_tx.send(BlockPlaceRequest {
+                    client: ev.client,
+                    x,
+                    y,
+                    z,
+                    item_instance_id,
+                    target_face,
+                });
             }
             ClientRequestV1::CoffinEnter { x, y, z, .. } => {
                 tracing::info!(
@@ -2921,6 +2937,7 @@ mod tests {
         ItemCategory, ItemEffect, ItemInstance, ItemRarity, ItemTemplate, PlacedItemState,
     };
     use crate::skill::components::SkillSet;
+    use crate::zhenfa::trap_content::TrapTargetFace;
     use valence::prelude::{
         ident, App, DVec3, EventReader, IntoSystemConfigs, Position, ResMut, Update,
     };
@@ -3446,6 +3463,7 @@ mod tests {
         app.add_event::<FreshnessProbeIntent>();
         app.add_event::<SkillXpGain>();
         app.add_event::<SkillScrollUsed>();
+        app.add_event::<BlockPlaceRequest>();
         app.add_event::<InventoryDurabilityChangedEvent>();
         app.add_event::<crate::alchemy::AlchemyOutcomeEvent>();
         app.add_event::<crate::combat::events::CombatEvent>();
@@ -3545,6 +3563,41 @@ mod tests {
                 .any(|message| message.contains("[修炼] 已收到经脉目标：督脉。")),
             "expected generic meridian target chat echo because request is not limited to Chong, actual messages={messages:?}"
         );
+    }
+
+    #[test]
+    fn block_place_payload_dispatches_runtime_request_event() {
+        let mut app = App::new();
+        register_request_app(&mut app);
+
+        let (client_bundle, _helper) = create_mock_client("Azure");
+        let entity = app.world_mut().spawn(client_bundle).id();
+        app.world_mut()
+            .resource_mut::<valence::prelude::Events<CustomPayloadEvent>>()
+            .send(CustomPayloadEvent {
+                client: entity,
+                channel: ident!("bong:client_request").into(),
+                data: br#"{"type":"block_place","v":1,"x":8,"y":64,"z":8,"item_instance_id":4242,"target_face":"north"}"#
+                    .to_vec()
+                    .into_boxed_slice(),
+            });
+
+        app.update();
+
+        let events = app
+            .world()
+            .resource::<valence::prelude::Events<BlockPlaceRequest>>();
+        let requests = events.iter_current_update_events().collect::<Vec<_>>();
+        assert_eq!(
+            requests.len(),
+            1,
+            "expected exactly one BlockPlaceRequest from one valid block_place payload"
+        );
+        let request = requests[0];
+        assert_eq!(request.client, entity);
+        assert_eq!((request.x, request.y, request.z), (8, 64, 8));
+        assert_eq!(request.item_instance_id, 4242);
+        assert_eq!(request.target_face, TrapTargetFace::North);
     }
 
     fn assert_movement_action_yaw_forwarded(yaw_degrees: f32) {
