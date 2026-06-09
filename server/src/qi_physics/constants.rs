@@ -62,6 +62,10 @@ pub const DEFAULT_SPIRIT_QI_TOTAL: f64 = 100.0;
 pub const QI_TIANDAO_DECAY_PER_ERA_MIN: f64 = 0.01;
 /// worldview §十：天道时代衰减上限。
 pub const QI_TIANDAO_DECAY_PER_ERA_MAX: f64 = 0.03;
+/// plan-tiandao-hunt-v1 P4：Watch 级定向抽离 zone qi 速率（点 / 分钟）。
+pub const QI_TIANDAO_WATCH_ZONE_DRAIN_PER_MINUTE: f64 = 0.01;
+/// plan-tiandao-hunt-v1 P4：Pressure/Tribulation 下移动逃离的注意力衰减倍率。
+pub const QI_TIANDAO_MOVING_ESCAPE_DECAY_MULTIPLIER: f64 = 10.0;
 /// worldview §十一：灵物密度阈值。
 pub const QI_DENSITY_GAZE_THRESHOLD: f64 = 0.85;
 /// worldview §九/§十一：区域饥饿阈值。

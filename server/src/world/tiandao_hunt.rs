@@ -5,6 +5,12 @@ use crate::network::audio_event_emit::{AudioRecipient, PlaySoundRecipeRequest};
 use crate::network::vfx_event_emit::VfxEventRequest;
 use crate::network::{redis_bridge::RedisOutbound, RedisBridgeResource};
 use crate::player::state::canonical_player_id;
+use crate::qi_physics::{
+    constants::{
+        QI_TIANDAO_MOVING_ESCAPE_DECAY_MULTIPLIER, QI_TIANDAO_WATCH_ZONE_DRAIN_PER_MINUTE,
+    },
+    QiAccountId, QiTransfer, QiTransferReason, WorldQiAccount,
+};
 use crate::schema::agent_command::Command;
 use crate::schema::common::CommandType;
 use crate::schema::cultivation::realm_to_string;
@@ -117,6 +123,7 @@ pub struct TiandaoHuntResources<'w, 's> {
     vfx_events: Option<ResMut<'w, Events<VfxEventRequest>>>,
     audio_events: Option<ResMut<'w, Events<PlaySoundRecipeRequest>>>,
     redis: Option<Res<'w, RedisBridgeResource>>,
+    qi_ledger: Option<ResMut<'w, WorldQiAccount>>,
 }
 
 #[derive(SystemParam)]
@@ -135,6 +142,7 @@ struct TiandaoResponseSinks<'a> {
     vfx_events: Option<&'a mut Events<VfxEventRequest>>,
     audio_events: Option<&'a mut Events<PlaySoundRecipeRequest>>,
     redis: Option<&'a RedisBridgeResource>,
+    qi_ledger: Option<&'a mut WorldQiAccount>,
 }
 
 #[derive(Debug, Clone, Default, Resource)]
@@ -573,6 +581,7 @@ pub fn tiandao_hunt_tick(
                 vfx_events: resources.vfx_events.as_deref_mut(),
                 audio_events: resources.audio_events.as_deref_mut(),
                 redis: resources.redis.as_deref(),
+                qi_ledger: resources.qi_ledger.as_deref_mut(),
             },
             now_tick,
         );
@@ -675,7 +684,8 @@ pub fn advance_attention_with_countermeasures(
     let previous_response = attention.response;
     let accumulation_rate = accumulation_rate(input);
     let outcome = countermeasure_outcome(countermeasures, eval_tick);
-    let decay = decay_rate(previous_response, input.zone_spirit_qi) * outcome.decay_multiplier;
+    let decay = attention_decay_for_eval(previous_response, input, accumulation_rate)
+        * outcome.decay_multiplier;
     let next_level = (attention.level + accumulation_rate - decay + outcome.attention_penalty)
         .clamp(ATTENTION_MIN, ATTENTION_MAX);
 
@@ -743,6 +753,28 @@ pub fn decay_rate(response: TiandaoResponseLevel, zone_spirit_qi: f64) -> f64 {
         TiandaoResponseLevel::Annihilate => 0.0,
     };
     base * zone_decay_multiplier(zone_spirit_qi)
+}
+
+fn attention_decay_for_eval(
+    response: TiandaoResponseLevel,
+    input: TiandaoAttentionInput,
+    accumulation_rate: f64,
+) -> f64 {
+    if response == TiandaoResponseLevel::None
+        && accumulation_rate > 0.0
+        && input.activity != TiandaoActivity::Moving
+    {
+        0.0
+    } else if input.activity == TiandaoActivity::Moving
+        && matches!(
+            response,
+            TiandaoResponseLevel::Pressure | TiandaoResponseLevel::Tribulation
+        )
+    {
+        decay_rate(response, input.zone_spirit_qi) * QI_TIANDAO_MOVING_ESCAPE_DECAY_MULTIPLIER
+    } else {
+        decay_rate(response, input.zone_spirit_qi)
+    }
 }
 
 pub fn countermeasure_outcome(
@@ -904,6 +936,15 @@ fn apply_tiandao_response_chain(
             .send(RedisOutbound::TiandaoHuntNarrationRequest(request));
     }
 
+    if eval.response == TiandaoResponseLevel::Watch {
+        if let (Some(zone_name), Some(zones), Some(qi_ledger)) =
+            (eval.zone_name.as_deref(), sinks.zones, sinks.qi_ledger)
+        {
+            apply_watch_zone_qi_drain(zone_name, profile.interval_ticks, zones, qi_ledger);
+        }
+        return;
+    }
+
     let Some(event_name) = profile.event_name else {
         return;
     };
@@ -922,6 +963,38 @@ fn apply_tiandao_response_chain(
         eval.response,
     );
     active_events.enqueue_from_spawn_command_with_karma(&command, Some(zones), None, None);
+}
+
+fn apply_watch_zone_qi_drain(
+    zone_name: &str,
+    interval_ticks: u64,
+    zones: &mut ZoneRegistry,
+    qi_ledger: &mut WorldQiAccount,
+) -> Option<QiTransfer> {
+    let minutes = interval_ticks as f64 / 20.0 / 60.0;
+    let requested = QI_TIANDAO_WATCH_ZONE_DRAIN_PER_MINUTE * minutes;
+    if requested <= 0.0 {
+        return None;
+    }
+    let zone = zones.find_zone_mut(zone_name)?;
+    let amount = zone.spirit_qi.max(0.0).min(requested);
+    if amount <= 0.0 {
+        return None;
+    }
+    let transfer = QiTransfer::new(
+        QiAccountId::zone(zone_name),
+        QiAccountId::tiandao(),
+        amount,
+        QiTransferReason::TiandaoWatchDrain,
+    )
+    .ok()?;
+    let source_balance = qi_ledger.balance(&transfer.from);
+    qi_ledger
+        .set_balance(transfer.from.clone(), source_balance + amount)
+        .ok()?;
+    qi_ledger.transfer(transfer.clone()).ok()?;
+    zone.spirit_qi = (zone.spirit_qi - amount).max(0.0);
+    Some(transfer)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -1598,6 +1671,72 @@ mod tests {
             vfx_events: None,
             audio_events: None,
             redis: Some(redis),
+            qi_ledger: None,
+        }
+    }
+
+    fn advance_for_minutes(
+        attention: &mut TiandaoAttention,
+        input: TiandaoAttentionInput,
+        minutes: u64,
+        eval_index: &mut u64,
+    ) {
+        for _ in 0..(minutes * 60 * 20 / TIANDAO_HUNT_EVAL_INTERVAL_TICKS) {
+            *eval_index += 1;
+            advance_attention(
+                attention,
+                input,
+                *eval_index * TIANDAO_HUNT_EVAL_INTERVAL_TICKS,
+            );
+        }
+    }
+
+    fn emit_response_chain_for_test(
+        attention: &mut TiandaoAttention,
+        response: TiandaoResponseLevel,
+        level: f64,
+        now_tick: u64,
+    ) -> (
+        ActiveEventsResource,
+        ZoneRegistry,
+        Events<VfxEventRequest>,
+        Events<PlaySoundRecipeRequest>,
+        crossbeam_channel::Receiver<RedisOutbound>,
+    ) {
+        let (redis, rx) = narration_test_bridge();
+        let mut active_events = ActiveEventsResource::default();
+        let mut zones = single_zone_registry("spawn", 0.6);
+        let mut vfx_events = Events::<VfxEventRequest>::default();
+        let mut audio_events = Events::<PlaySoundRecipeRequest>::default();
+
+        apply_tiandao_response_chain(
+            attention,
+            narration_test_snapshot(response, level),
+            Entity::from_raw(42),
+            "Alice",
+            TiandaoResponseSinks {
+                zones: Some(&mut zones),
+                active_events: Some(&mut active_events),
+                vfx_events: Some(&mut vfx_events),
+                audio_events: Some(&mut audio_events),
+                redis: Some(&redis),
+                qi_ledger: None,
+            },
+            now_tick,
+        );
+
+        (active_events, zones, vfx_events, audio_events, rx)
+    }
+
+    fn qi_snapshot(zone_qi: f64, ledger: &WorldQiAccount) -> crate::qi_physics::WorldQiSnapshot {
+        crate::qi_physics::WorldQiSnapshot {
+            player_qi: 0.0,
+            zone_qi,
+            container_qi: 0.0,
+            ledger_qi: ledger.total(),
+            era_decay_accum: 0.0,
+            budget_initial_total: crate::qi_physics::constants::DEFAULT_SPIRIT_QI_TOTAL,
+            budget_current_total: crate::qi_physics::constants::DEFAULT_SPIRIT_QI_TOTAL,
         }
     }
 
@@ -1703,8 +1842,18 @@ mod tests {
                 level: 10.0,
                 ..TiandaoAttention::default()
             };
-            advance_attention(&mut attention, input(realm), 200);
-            assert!(attention.level < 10.0);
+            let mut eval_index = 0;
+            advance_for_minutes(
+                &mut attention,
+                TiandaoAttentionInput {
+                    zone_spirit_qi: 0.9,
+                    activity: TiandaoActivity::Meditating,
+                    ..input(realm)
+                },
+                24 * 60,
+                &mut eval_index,
+            );
+            assert_eq!(attention.level, 0.0);
             assert_eq!(attention.accumulation_rate, 0.0);
             assert_eq!(attention.response, TiandaoResponseLevel::None);
         }
@@ -1852,6 +2001,151 @@ mod tests {
         assert_eq!(zone_decay_multiplier(0.01), 1.0);
         assert_close(decay_rate(TiandaoResponseLevel::Watch, 0.0), 0.15);
         assert_close(decay_rate(TiandaoResponseLevel::Watch, -0.1), 0.25);
+    }
+
+    #[test]
+    fn none_stage_allows_attention_to_build_before_watch() {
+        let input = TiandaoAttentionInput {
+            realm: Realm::Condense,
+            zone_spirit_qi: 0.9,
+            activity: TiandaoActivity::Meditating,
+            season: Season::Summer,
+        };
+        let mut attention = TiandaoAttention::default();
+        advance_attention(&mut attention, input, 200);
+
+        assert!(
+            attention.level > 0.0,
+            "凝脉以上在高灵气打坐时必须能从 None 建立注意力，否则 P4 曲线永远到不了 Watch"
+        );
+        assert_eq!(
+            attention_decay_for_eval(TiandaoResponseLevel::None, input, accumulation_rate(input)),
+            0.0
+        );
+    }
+
+    #[test]
+    fn condense_high_qi_meditation_reaches_watch_then_moving_escapes_to_none() {
+        let mut attention = TiandaoAttention::default();
+        let mut eval_index = 0;
+        let high_qi_meditation = TiandaoAttentionInput {
+            realm: Realm::Condense,
+            zone_spirit_qi: 0.9,
+            activity: TiandaoActivity::Meditating,
+            season: Season::Summer,
+        };
+        advance_for_minutes(&mut attention, high_qi_meditation, 250, &mut eval_index);
+        assert_eq!(attention.response, TiandaoResponseLevel::Watch);
+        assert!(
+            attention.level >= 10.0 && attention.level < 15.0,
+            "凝脉高灵气打坐应只擦到 Watch 边缘并受滞后保护，actual={}",
+            attention.level
+        );
+
+        advance_for_minutes(
+            &mut attention,
+            TiandaoAttentionInput {
+                activity: TiandaoActivity::Moving,
+                ..high_qi_meditation
+            },
+            30,
+            &mut eval_index,
+        );
+        assert_eq!(attention.response, TiandaoResponseLevel::None);
+        assert!(
+            attention.level < 10.0,
+            "凝脉 Watch 边缘跑路 30 分钟应脱离天道注视，actual={}",
+            attention.level
+        );
+    }
+
+    #[test]
+    fn solidify_attention_reaches_watch_pressure_then_moving_downgrades() {
+        let mut attention = TiandaoAttention::default();
+        let mut eval_index = 0;
+        let standing = input(Realm::Solidify);
+        advance_for_minutes(&mut attention, standing, 50, &mut eval_index);
+        assert_eq!(attention.response, TiandaoResponseLevel::Watch);
+        assert!(
+            attention.level >= 15.0 && attention.level < 40.0,
+            "固元 50 分钟应进入 Watch 但未到 Pressure，actual={}",
+            attention.level
+        );
+
+        let high_qi_meditation = TiandaoAttentionInput {
+            realm: Realm::Solidify,
+            zone_spirit_qi: 0.9,
+            activity: TiandaoActivity::Meditating,
+            season: Season::Summer,
+        };
+        advance_for_minutes(&mut attention, high_qi_meditation, 70, &mut eval_index);
+        assert_eq!(attention.response, TiandaoResponseLevel::Pressure);
+
+        let before_move = attention.level;
+        advance_for_minutes(
+            &mut attention,
+            TiandaoAttentionInput {
+                activity: TiandaoActivity::Moving,
+                ..standing
+            },
+            15,
+            &mut eval_index,
+        );
+        assert!(
+            attention.level < before_move,
+            "固元移动应降低 Pressure 注意力，before={before_move} after={}",
+            attention.level
+        );
+        assert!(
+            matches!(
+                attention.response,
+                TiandaoResponseLevel::Pressure | TiandaoResponseLevel::Watch
+            ),
+            "固元移动后只能保持 Pressure 或降回 Watch，actual={:?}",
+            attention.response
+        );
+    }
+
+    #[test]
+    fn spirit_attention_reaches_watch_pressure_tribulation_in_order() {
+        let mut attention = TiandaoAttention::default();
+        let mut eval_index = 0;
+        let standing = input(Realm::Spirit);
+
+        advance_for_minutes(&mut attention, standing, 17, &mut eval_index);
+        assert_eq!(attention.response, TiandaoResponseLevel::Watch);
+
+        advance_for_minutes(&mut attention, standing, 73, &mut eval_index);
+        assert_eq!(attention.response, TiandaoResponseLevel::Pressure);
+
+        advance_for_minutes(&mut attention, standing, 30, &mut eval_index);
+        assert_eq!(attention.response, TiandaoResponseLevel::Tribulation);
+        assert!(
+            attention.peak_level >= 70.0,
+            "通灵曲线必须按 Watch→Pressure→Tribulation 升级，peak={}",
+            attention.peak_level
+        );
+    }
+
+    #[test]
+    fn void_attention_reaches_watch_tribulation_annihilate_in_order() {
+        let mut attention = TiandaoAttention::default();
+        let mut eval_index = 0;
+        let standing = input(Realm::Void);
+
+        advance_for_minutes(&mut attention, standing, 7, &mut eval_index);
+        assert_eq!(attention.response, TiandaoResponseLevel::Watch);
+
+        advance_for_minutes(&mut attention, standing, 31, &mut eval_index);
+        assert_eq!(attention.response, TiandaoResponseLevel::Tribulation);
+
+        advance_for_minutes(&mut attention, standing, 12, &mut eval_index);
+        assert_eq!(attention.response, TiandaoResponseLevel::Annihilate);
+        assert_eq!(
+            decay_rate(TiandaoResponseLevel::Annihilate, standing.zone_spirit_qi),
+            0.0,
+            "Annihilate 级注意力不自然衰减"
+        );
     }
 
     #[test]
@@ -2450,6 +2744,34 @@ mod tests {
     }
 
     #[test]
+    fn response_profiles_pin_plan_intervals() {
+        assert_eq!(
+            tiandao_response_profile(TiandaoResponseLevel::Watch)
+                .unwrap()
+                .interval_ticks,
+            5 * 60 * 20
+        );
+        assert_eq!(
+            tiandao_response_profile(TiandaoResponseLevel::Pressure)
+                .unwrap()
+                .interval_ticks,
+            TIANDAO_PRESSURE_EVENT_INTERVAL_TICKS
+        );
+        assert_eq!(
+            tiandao_response_profile(TiandaoResponseLevel::Tribulation)
+                .unwrap()
+                .interval_ticks,
+            TIANDAO_TRIBULATION_EVENT_INTERVAL_TICKS
+        );
+        assert_eq!(
+            tiandao_response_profile(TiandaoResponseLevel::Annihilate)
+                .unwrap()
+                .interval_ticks,
+            TIANDAO_ANNIHILATE_EVENT_INTERVAL_TICKS
+        );
+    }
+
+    #[test]
     fn realm_rank_gates_presence_payload_to_spirit_and_above() {
         assert_eq!(realm_rank(Realm::Awaken), 0);
         assert_eq!(realm_rank(Realm::Induce), 1);
@@ -2499,6 +2821,202 @@ mod tests {
     }
 
     #[test]
+    fn pressure_response_enqueues_beast_tide_and_emits_multimodal_feedback() {
+        let mut attention = TiandaoAttention::default();
+        let (active_events, _zones, vfx_events, audio_events, rx) =
+            emit_response_chain_for_test(&mut attention, TiandaoResponseLevel::Pressure, 45.0, 200);
+
+        assert!(active_events.contains("spawn", EVENT_BEAST_TIDE));
+        assert_eq!(
+            active_events.count_by_zone_and_event("spawn", EVENT_BEAST_TIDE),
+            1,
+            "Pressure 响应必须只入队一次定向兽潮"
+        );
+        assert_eq!(vfx_events.iter_current_update_events().count(), 1);
+        assert_eq!(audio_events.iter_current_update_events().count(), 1);
+        let narration = expect_tiandao_narration_request(&rx);
+        assert_eq!(
+            narration.response_level,
+            TiandaoHuntResponseLevelV1::Pressure
+        );
+    }
+
+    #[test]
+    fn watch_response_drains_zone_qi_through_conserving_ledger_transfer() {
+        let mut zones = single_zone_registry("spawn", 0.6);
+        let mut ledger = WorldQiAccount::default();
+        let before = qi_snapshot(0.6, &ledger);
+
+        let transfer = apply_watch_zone_qi_drain(
+            "spawn",
+            tiandao_response_profile(TiandaoResponseLevel::Watch)
+                .unwrap()
+                .interval_ticks,
+            &mut zones,
+            &mut ledger,
+        )
+        .expect("Watch 级必须发出守恒 QiTransfer");
+
+        assert_eq!(transfer.from, QiAccountId::zone("spawn"));
+        assert_eq!(transfer.to, QiAccountId::tiandao());
+        assert_eq!(transfer.reason, QiTransferReason::TiandaoWatchDrain);
+        assert_close(transfer.amount, 0.05);
+        assert_close(zones.find_zone_by_name("spawn").unwrap().spirit_qi, 0.55);
+        assert_close(ledger.balance(&QiAccountId::zone("spawn")), 0.0);
+        assert_close(ledger.balance(&QiAccountId::tiandao()), 0.05);
+        crate::qi_physics::assert_conservation(
+            &before,
+            &qi_snapshot(zones.find_zone_by_name("spawn").unwrap().spirit_qi, &ledger),
+            0.0,
+        )
+        .expect("Watch 级 zone qi 微调必须在 zone_qi + ledger_qi 口径守恒");
+    }
+
+    #[test]
+    fn watch_zone_qi_drain_is_noop_when_zone_is_missing() {
+        let mut zones = single_zone_registry("spawn", 0.6);
+        let mut ledger = WorldQiAccount::default();
+
+        let transfer = apply_watch_zone_qi_drain(
+            "missing",
+            tiandao_response_profile(TiandaoResponseLevel::Watch)
+                .unwrap()
+                .interval_ticks,
+            &mut zones,
+            &mut ledger,
+        );
+
+        assert!(
+            transfer.is_none(),
+            "未知 zone 不应生成 Watch 级 QiTransfer，got={transfer:?}"
+        );
+        assert_close(zones.find_zone_by_name("spawn").unwrap().spirit_qi, 0.6);
+        assert_close(ledger.total(), 0.0);
+    }
+
+    #[test]
+    fn watch_zone_qi_drain_is_noop_when_zone_qi_is_empty_or_negative() {
+        for zone_qi in [0.0, -0.1] {
+            let mut zones = single_zone_registry("spawn", zone_qi);
+            let mut ledger = WorldQiAccount::default();
+
+            let transfer = apply_watch_zone_qi_drain(
+                "spawn",
+                tiandao_response_profile(TiandaoResponseLevel::Watch)
+                    .unwrap()
+                    .interval_ticks,
+                &mut zones,
+                &mut ledger,
+            );
+
+            assert!(
+                transfer.is_none(),
+                "zone_qi={zone_qi} 时 Watch 级不应从空/负真元区抽取，got={transfer:?}"
+            );
+            assert_close(zones.find_zone_by_name("spawn").unwrap().spirit_qi, zone_qi);
+            assert_close(ledger.total(), 0.0);
+        }
+    }
+
+    #[test]
+    fn watch_zone_qi_drain_partial_transfer_preserves_conservation() {
+        let mut zones = single_zone_registry("spawn", 0.02);
+        let mut ledger = WorldQiAccount::default();
+        let before = qi_snapshot(0.02, &ledger);
+
+        let transfer = apply_watch_zone_qi_drain(
+            "spawn",
+            tiandao_response_profile(TiandaoResponseLevel::Watch)
+                .unwrap()
+                .interval_ticks,
+            &mut zones,
+            &mut ledger,
+        )
+        .expect("低于单次抽取量但大于 0 的 zone qi 必须被部分转移");
+
+        assert_close(transfer.amount, 0.02);
+        assert_close(zones.find_zone_by_name("spawn").unwrap().spirit_qi, 0.0);
+        assert_close(ledger.balance(&QiAccountId::tiandao()), 0.02);
+        crate::qi_physics::assert_conservation(
+            &before,
+            &qi_snapshot(zones.find_zone_by_name("spawn").unwrap().spirit_qi, &ledger),
+            0.0,
+        )
+        .expect("Watch 级部分抽取必须保持 zone_qi + ledger_qi 守恒");
+    }
+
+    #[test]
+    fn watch_zone_qi_drain_zero_interval_is_noop() {
+        let mut zones = single_zone_registry("spawn", 0.6);
+        let mut ledger = WorldQiAccount::default();
+
+        let transfer = apply_watch_zone_qi_drain("spawn", 0, &mut zones, &mut ledger);
+
+        assert!(
+            transfer.is_none(),
+            "interval_ticks=0 时 Watch 级不应生成 QiTransfer，got={transfer:?}"
+        );
+        assert_close(zones.find_zone_by_name("spawn").unwrap().spirit_qi, 0.6);
+        assert_close(ledger.total(), 0.0);
+    }
+
+    #[test]
+    fn tribulation_response_enqueues_thunder_with_targeted_feedback() {
+        let mut attention = TiandaoAttention::default();
+        let (active_events, _zones, vfx_events, audio_events, rx) = emit_response_chain_for_test(
+            &mut attention,
+            TiandaoResponseLevel::Tribulation,
+            75.0,
+            200,
+        );
+
+        assert!(active_events.contains("spawn", EVENT_THUNDER_TRIBULATION));
+        assert_eq!(
+            active_events.thunder_target_for_zone("spawn").as_deref(),
+            Some("offline:Alice"),
+            "Tribulation 雷劫必须带 target_player，避免退化成普通区域天灾"
+        );
+        assert_eq!(vfx_events.iter_current_update_events().count(), 1);
+        assert_eq!(audio_events.iter_current_update_events().count(), 1);
+        let narration = expect_tiandao_narration_request(&rx);
+        assert_eq!(
+            narration.response_level,
+            TiandaoHuntResponseLevelV1::Tribulation
+        );
+    }
+
+    #[test]
+    fn annihilate_response_enqueues_realm_collapse_and_keeps_attention_sticky() {
+        let mut attention = TiandaoAttention {
+            level: 95.0,
+            response: TiandaoResponseLevel::Annihilate,
+            ..TiandaoAttention::default()
+        };
+        let (active_events, _zones, vfx_events, audio_events, rx) = emit_response_chain_for_test(
+            &mut attention,
+            TiandaoResponseLevel::Annihilate,
+            95.0,
+            200,
+        );
+
+        assert!(active_events.contains("spawn", EVENT_REALM_COLLAPSE));
+        assert_eq!(vfx_events.iter_current_update_events().count(), 1);
+        assert_eq!(audio_events.iter_current_update_events().count(), 1);
+        let narration = expect_tiandao_narration_request(&rx);
+        assert_eq!(
+            narration.response_level,
+            TiandaoHuntResponseLevelV1::Annihilate
+        );
+
+        advance_attention(&mut attention, input(Realm::Void), 400);
+        assert_eq!(
+            attention.response,
+            TiandaoResponseLevel::Annihilate,
+            "Annihilate 级不会靠自然衰减解除，必须死亡或负灵域反制"
+        );
+    }
+
+    #[test]
     fn watch_profile_has_audio_but_no_particle_event() {
         let eval = TiandaoEvalSnapshot {
             position: DVec3::new(1.2, 64.0, -3.4),
@@ -2541,6 +3059,7 @@ mod tests {
                 vfx_events: None,
                 audio_events: None,
                 redis: Some(&redis),
+                qi_ledger: None,
             },
             200,
         );

@@ -12,6 +12,7 @@ use crate::npc::schedule::{
     schedule_multiplier, scheduled_wander_score, NpcDailySchedule, NpcHomeBase, ScheduleActivity,
 };
 use crate::npc::spawn::NpcMarker;
+use crate::world::tiandao_hunt::{TiandaoAttention, TiandaoResponseLevel};
 
 use super::WANDER_BASELINE_SCORE;
 
@@ -306,15 +307,37 @@ pub(crate) fn fear_cultivator_score(distance: f32, realm: Realm) -> f32 {
     realm_fear_weight(realm) * fear_distance_falloff(distance, FEAR_CULTIVATOR_RANGE)
 }
 
+fn tiandao_watch_fear_bonus(attention: Option<&TiandaoAttention>) -> f32 {
+    match attention.map(|attention| attention.response) {
+        Some(TiandaoResponseLevel::Watch) => 0.2,
+        Some(TiandaoResponseLevel::Pressure) => 0.5,
+        Some(TiandaoResponseLevel::Tribulation | TiandaoResponseLevel::Annihilate) => 1.0,
+        _ => 0.0,
+    }
+}
+
+fn tiandao_watch_fear_bonus_for_distance(
+    attention: Option<&TiandaoAttention>,
+    distance: f32,
+) -> f32 {
+    if fear_distance_falloff(distance, FEAR_CULTIVATOR_RANGE) <= 0.0 {
+        0.0
+    } else {
+        tiandao_watch_fear_bonus(attention)
+    }
+}
+
 pub(crate) fn fear_cultivator_scorer_system(
     npcs: Query<&NpcBlackboard, With<NpcMarker>>,
-    players: Query<&Cultivation, With<ClientMarker>>,
+    players: Query<(&Cultivation, Option<&TiandaoAttention>), With<ClientMarker>>,
     mut scorers: Query<(&Actor, &mut Score), With<FearCultivatorScorer>>,
 ) {
     for (Actor(actor), mut score) in &mut scorers {
         let value = match npcs.get(*actor) {
             Ok(bb) => match bb.nearest_player.and_then(|e| players.get(e).ok()) {
-                Some(cult) => fear_cultivator_score(bb.player_distance, cult.realm),
+                Some((cult, attention)) => (fear_cultivator_score(bb.player_distance, cult.realm)
+                    + tiandao_watch_fear_bonus_for_distance(attention, bb.player_distance))
+                .clamp(0.0, 1.0),
                 None => 0.0,
             },
             Err(_) => 0.0,
@@ -458,5 +481,114 @@ mod tests {
             score > 0.4,
             "solidify-realm player at 10 blocks should score above 0.4, got {score}"
         );
+    }
+
+    #[test]
+    fn fear_cultivator_scorer_adds_watch_bonus_from_tiandao_attention() {
+        let score =
+            run_fear_cultivator_score(Realm::Solidify, Some(TiandaoResponseLevel::Watch), 10.0);
+        let baseline = fear_cultivator_score(10.0, Realm::Solidify);
+        assert!(
+            score > baseline,
+            "Watch 级天道注视必须提升 NPC flee/fear scorer，baseline={baseline} score={score}"
+        );
+        assert!((score - (baseline + 0.2)).abs() < 1e-5);
+    }
+
+    #[test]
+    fn fear_cultivator_scorer_maps_all_tiandao_response_bonuses() {
+        let cases = [
+            (None, 0.0_f32),
+            (Some(TiandaoResponseLevel::None), 0.0),
+            (Some(TiandaoResponseLevel::Watch), 0.2),
+            (Some(TiandaoResponseLevel::Pressure), 0.5),
+            (Some(TiandaoResponseLevel::Tribulation), 1.0),
+            (Some(TiandaoResponseLevel::Annihilate), 1.0),
+        ];
+
+        for (response, expected_bonus) in cases {
+            let score = run_fear_cultivator_score(Realm::Solidify, response, 10.0);
+            let baseline = fear_cultivator_score(10.0, Realm::Solidify);
+            let expected = (baseline + expected_bonus).clamp(0.0, 1.0);
+            assert!(
+                (score - expected).abs() < 1e-5,
+                "response={response:?} 必须映射到预期天道恐惧加成，expected={expected} got={score}"
+            );
+        }
+    }
+
+    #[test]
+    fn fear_cultivator_scorer_does_not_add_tiandao_bonus_outside_fear_range() {
+        for response in [
+            TiandaoResponseLevel::Watch,
+            TiandaoResponseLevel::Pressure,
+            TiandaoResponseLevel::Tribulation,
+            TiandaoResponseLevel::Annihilate,
+        ] {
+            for distance in [FEAR_CULTIVATOR_RANGE, FEAR_CULTIVATOR_RANGE + 1.0] {
+                let score = run_fear_cultivator_score(Realm::Solidify, Some(response), distance);
+                assert!(
+                    score.abs() < 1e-5,
+                    "distance={distance} response={response:?} 已在恐惧范围外，不应残留天道 bonus，got={score}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn fear_cultivator_scorer_clamps_tiandao_bonus_to_one() {
+        let score =
+            run_fear_cultivator_score(Realm::Void, Some(TiandaoResponseLevel::Tribulation), 0.0);
+        assert_eq!(score, 1.0);
+    }
+
+    fn run_fear_cultivator_score(
+        realm: Realm,
+        response: Option<TiandaoResponseLevel>,
+        player_distance: f32,
+    ) -> f32 {
+        let mut app = App::new();
+        app.add_systems(
+            PreUpdate,
+            fear_cultivator_scorer_system.in_set(BigBrainSet::Scorers),
+        );
+
+        let mut player_entity = app.world_mut().spawn((
+            ClientMarker,
+            Position::new([0.0, 66.0, 0.0]),
+            Cultivation {
+                realm,
+                ..Cultivation::default()
+            },
+        ));
+        if let Some(response) = response {
+            player_entity.insert(TiandaoAttention {
+                response,
+                ..TiandaoAttention::default()
+            });
+        }
+        let player = player_entity.id();
+
+        let npc = app
+            .world_mut()
+            .spawn((
+                NpcMarker,
+                NpcBlackboard {
+                    nearest_player: Some(player),
+                    player_distance,
+                    target_position: Some(DVec3::new(0.0, 66.0, 0.0)),
+                    ..Default::default()
+                },
+            ))
+            .id();
+
+        let scorer = app
+            .world_mut()
+            .spawn((Actor(npc), Score::default(), FearCultivatorScorer))
+            .id();
+
+        app.update();
+
+        app.world().get::<Score>(scorer).unwrap().get()
     }
 }
