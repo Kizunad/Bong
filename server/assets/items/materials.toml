@@ -74,7 +74,7 @@ effect = { kind = "lifespan_extension", magnitude = 25, target = "collapse_core"
 [[item]]
 id = "earth_crumb"
 name = "土屑"
-category = "misc"
+category = "block"
 grid_w = 1
 grid_h = 1
 base_weight = 0.2
@@ -85,7 +85,7 @@ description = "被末法风吹干的土屑，捏碎后只剩粗涩尘味。"
 [[item]]
 id = "hardened_soil"
 name = "硬化土"
-category = "misc"
+category = "block"
 grid_w = 1
 grid_h = 1
 base_weight = 0.3
@@ -96,7 +96,7 @@ description = "雨少年荒后结成的硬土，可垫炉脚，也可堵破墙�
 [[item]]
 id = "barren_sand"
 name = "荒沙"
-category = "misc"
+category = "block"
 grid_w = 1
 grid_h = 1
 base_weight = 0.2
@@ -107,7 +107,7 @@ description = "不养草木的干沙，混着细碎骨灰，握久了磨掌。"
 [[item]]
 id = "weathered_stone"
 name = "风化碎石"
-category = "misc"
+category = "block"
 grid_w = 1
 grid_h = 1
 base_weight = 0.35
@@ -118,7 +118,7 @@ description = "旧路边剥落的碎石，灵气早散，只剩可用的硬度�
 [[item]]
 id = "raw_clay_lump"
 name = "陶土块"
-category = "misc"
+category = "block"
 grid_w = 1
 grid_h = 1
 base_weight = 0.4
@@ -129,7 +129,7 @@ description = "未入窑的湿冷泥块，能糊缝，也能捏成粗坯。"
 [[item]]
 id = "obsidian_shard"
 name = "黑曜碎片"
-category = "misc"
+category = "block"
 grid_w = 1
 grid_h = 1
 base_weight = 0.45

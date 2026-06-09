@@ -234,6 +234,7 @@ pub enum ItemCategory {
     Tool,
     Scroll,
     Misc,
+    Block,
     /// plan-backpack-equip-v1 P0 — 可装备容器（背包/囊/挎包），携带 ContainerSpec。
     #[allow(dead_code)]
     Container,
@@ -1587,7 +1588,7 @@ pub fn parse_container_spec(
 
 fn default_max_stack_count_for_category(category: ItemCategory) -> u32 {
     match category {
-        ItemCategory::Herb => 64,
+        ItemCategory::Herb | ItemCategory::Block => 64,
         ItemCategory::BoneCoin => u32::MAX,
         ItemCategory::Pill | ItemCategory::Misc | ItemCategory::Food => 16,
         ItemCategory::Armor
@@ -1964,6 +1965,7 @@ fn parse_item_category(
         "tool" => Ok(ItemCategory::Tool),
         "scroll" => Ok(ItemCategory::Scroll),
         "misc" => Ok(ItemCategory::Misc),
+        "block" => Ok(ItemCategory::Block),
         "container" => Ok(ItemCategory::Container),
         // plan-food-v1 P0 — 灵食分类
         "food" => Ok(ItemCategory::Food),
@@ -4426,6 +4428,15 @@ fn required_non_empty_option(
 mod tests {
     use super::*;
 
+    const BLOCK_ITEM_TEMPLATE_IDS: [&str; 6] = [
+        "earth_crumb",
+        "hardened_soil",
+        "barren_sand",
+        "weathered_stone",
+        "raw_clay_lump",
+        "obsidian_shard",
+    ];
+
     fn test_registry_from_strs(entries: &[(&str, &str)]) -> Result<ItemRegistry, String> {
         let mut templates = HashMap::new();
         for (template_id, display_name) in entries {
@@ -5143,6 +5154,46 @@ max_stack_count = 0
     }
 
     #[test]
+    fn parse_item_category_accepts_block_alias() {
+        for raw in ["block", "Block", " block "] {
+            let category =
+                parse_item_category(raw, Path::new("<inline-items.toml>"), "earth_crumb")
+                    .expect("block category alias should parse");
+
+            assert_eq!(category, ItemCategory::Block);
+        }
+    }
+
+    #[test]
+    fn block_category_default_stack_count_is_64() {
+        assert_eq!(
+            default_max_stack_count_for_category(ItemCategory::Block),
+            64
+        );
+    }
+
+    #[test]
+    fn block_material_templates_load_with_block_category_and_default_stack() {
+        let registry =
+            load_item_registry().expect("item registry should load from assets/items/*.toml");
+
+        for template_id in BLOCK_ITEM_TEMPLATE_IDS {
+            let template = registry
+                .get(template_id)
+                .unwrap_or_else(|| panic!("block item `{template_id}` should load"));
+            assert_eq!(
+                template.category,
+                ItemCategory::Block,
+                "block item `{template_id}` must use ItemCategory::Block"
+            );
+            assert_eq!(
+                template.max_stack_count, 64,
+                "block item `{template_id}` should inherit Block default stack count"
+            );
+        }
+    }
+
+    #[test]
     fn parse_forge_station_spec_accepts_valid_tier() {
         let spec = parse_forge_station_spec(
             ForgeStationSpecToml { tier: 4 },
@@ -5754,6 +5805,82 @@ cols = 4
     }
 
     #[test]
+    fn runtime_grant_merges_same_block_template_stack() {
+        let registry = registry_from_templates(vec![test_template(
+            "earth_crumb",
+            ItemCategory::Block,
+            1,
+            1,
+            64,
+        )]);
+        let mut inventory = empty_inventory(2, 2);
+        let mut allocator = InventoryInstanceIdAllocator::new(100);
+
+        add_item_to_player_inventory(
+            &mut inventory,
+            &registry,
+            &mut allocator,
+            "earth_crumb",
+            10,
+            0,
+        )
+        .expect("initial block stack should fit");
+        let first_instance_id = inventory.containers[0].items[0].instance.instance_id;
+
+        let receipt = add_item_to_player_inventory(
+            &mut inventory,
+            &registry,
+            &mut allocator,
+            "earth_crumb",
+            5,
+            0,
+        )
+        .expect("same block template should merge into existing stack");
+
+        assert_eq!(receipt.instance_id, 0);
+        assert!(receipt.created_instance_ids.is_empty());
+        assert_eq!(receipt.merged_instance_ids, vec![first_instance_id]);
+        assert_eq!(inventory.containers[0].items.len(), 1);
+        assert_eq!(inventory.containers[0].items[0].instance.stack_count, 15);
+    }
+
+    #[test]
+    fn runtime_grant_keeps_different_block_templates_in_separate_stacks() {
+        let registry = registry_from_templates(vec![
+            test_template("earth_crumb", ItemCategory::Block, 1, 1, 64),
+            test_template("barren_sand", ItemCategory::Block, 1, 1, 64),
+        ]);
+        let mut inventory = empty_inventory(2, 2);
+        let mut allocator = InventoryInstanceIdAllocator::new(110);
+
+        add_item_to_player_inventory(
+            &mut inventory,
+            &registry,
+            &mut allocator,
+            "earth_crumb",
+            1,
+            0,
+        )
+        .expect("earth_crumb block stack should fit");
+        add_item_to_player_inventory(
+            &mut inventory,
+            &registry,
+            &mut allocator,
+            "barren_sand",
+            1,
+            0,
+        )
+        .expect("barren_sand block stack should fit");
+
+        let main_pack = &inventory.containers[0];
+        assert_eq!(main_pack.items.len(), 2);
+        assert_eq!(main_pack.items[0].instance.template_id, "earth_crumb");
+        assert_eq!(main_pack.items[0].instance.stack_count, 1);
+        assert_eq!(main_pack.items[1].instance.template_id, "barren_sand");
+        assert_eq!(main_pack.items[1].instance.stack_count, 1);
+    }
+
+    #[test]
     fn runtime_grant_repeated_herb_harvests_merge_into_one_stack() {
         let registry = registry_from_templates(vec![test_template(
             "ci_she_hao",
@@ -6249,6 +6376,37 @@ cols = 4
                 .map(|item| item.template_id.as_str()),
             Some("dun_qi_jia")
         );
+    }
+
+    #[test]
+    fn apply_move_rejects_block_to_main_hand() {
+        use crate::schema::inventory::{EquipSlotV1, InventoryLocationV1};
+
+        let registry = load_item_registry().expect("item registry should load");
+        let mut inv = make_test_inventory_with_one_item();
+        inv.containers[0].items[0].instance.template_id = "earth_crumb".to_string();
+        inv.containers[0].items[0].instance.display_name = "土屑".to_string();
+
+        let error = apply_inventory_move(
+            &mut inv,
+            &registry,
+            42,
+            &InventoryLocationV1::Container {
+                container_id: "main_pack".to_string(),
+                row: 0,
+                col: 0,
+            },
+            &InventoryLocationV1::Equip {
+                slot: EquipSlotV1::MainHand,
+            },
+        )
+        .expect_err("block items must not equip to main_hand");
+
+        assert!(
+            error.contains("expected weapon, tool, or hoe"),
+            "expected main_hand category rejection, got: {error}"
+        );
+        assert!(!inv.equipped.contains_key(EQUIP_SLOT_MAIN_HAND));
     }
 
     #[test]
@@ -8291,6 +8449,14 @@ cols = 4
     }
 
     // ItemCategory::Container serde pin
+
+    #[test]
+    fn item_category_block_serde_roundtrip() {
+        let cat = ItemCategory::Block;
+        let json = serde_json::to_string(&cat).expect("serialize Block category");
+        let back: ItemCategory = serde_json::from_str(&json).expect("deserialize Block category");
+        assert_eq!(back, cat);
+    }
 
     #[test]
     fn item_category_container_serde_roundtrip() {
