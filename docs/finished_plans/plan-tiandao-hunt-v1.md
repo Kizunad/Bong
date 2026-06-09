@@ -6,11 +6,11 @@
 
 | 阶段 | 内容 | 状态 |
 |------|------|------|
-| P0 | TiandaoAttention 注意力系统（per-player 累积/衰减/阈值） | ⬜ |
-| P1 | 四级天道响应链（微调→施压→天劫→灭绝）+ 各级视听内联 | ⬜ |
-| P2 | 反制玩法（欺天阵/游牧打坐/负灵域躲避/低境伪装） | ⬜ |
-| P3 | 天道叙事接入（agent 对高注意力玩家产出个性化 narration） | ⬜ |
-| P4 | 饱和测试（境界缩放 + 注意力衰减 + 反制有效性 + 守恒） | ⬜ |
+| P0 | TiandaoAttention 注意力系统（per-player 累积/衰减/阈值） | ✅ 2026-06-09 |
+| P1 | 四级天道响应链（微调→施压→天劫→灭绝）+ 各级视听内联 | ✅ 2026-06-09 |
+| P2 | 反制玩法（欺天阵/游牧打坐/负灵域躲避/低境伪装） | ✅ 2026-06-09 |
+| P3 | 天道叙事接入（agent 对高注意力玩家产出个性化 narration） | ✅ 2026-06-09 |
+| P4 | 饱和测试（境界缩放 + 注意力衰减 + 反制有效性 + 守恒） | ✅ 2026-06-09 |
 
 ---
 
@@ -462,7 +462,7 @@ Annihilate:
 ### 落地清单
 
 - P0 注意力底座：`server/src/world/tiandao_hunt.rs` 新增 `TiandaoAttention`、`TiandaoResponseLevel`、`tiandao_hunt_tick()`、累积/衰减/阈值滞后纯函数，并在 `server/src/world/mod.rs` 注册。
-- P1 四级响应与视听反馈：`server/src/world/tiandao_hunt.rs` 接入 Watch / Pressure / Tribulation / Annihilate 响应链；`client/src/main/java/com/bong/client/tiandao/` 接入 presence HUD；`client/src/main/resources/assets/bong/audio/recipes/tiandao_*_ambient.json` 增加四级环境音；`client/src/main/java/com/bong/client/visual/particle/TiandaoHuntVfxPlayer.java` 接入 VFX。
+- P1 四级响应与视听反馈：`server/src/world/tiandao_hunt.rs` 接入 Watch / Pressure / Tribulation / Annihilate 响应链；`client/src/main/java/com/bong/client/tiandao/` 接入 presence HUD；`server/assets/audio/recipes/tiandao_*_ambient.json` 增加四级环境音；`client/src/main/java/com/bong/client/visual/particle/TiandaoHuntVfxPlayer.java` 接入 VFX。
 - P2 反制玩法：`server/src/zhenfa/mod.rs` 与 `server/src/world/tiandao_hunt.rs` 接入欺天阵、游牧打坐、负灵域躲避、降境后速率重算；`agent/packages/schema/src/zhenfa-v2.ts` 与 `server/src/schema/zhenfa_v2.rs` 对齐欺天阵事件契约。
 - P3 天道叙事接入：`agent/packages/schema/src/tiandao-hunt-narration.ts`、`server/src/schema/tiandao_hunt_narration.rs`、`server/src/network/redis_bridge.rs`、`agent/packages/tiandao/src/tiandao-hunt-narration-runtime.ts`、`agent/packages/tiandao/src/skills/tiandao-hunt-narration.md` 接入专属 narration 请求与 agent runtime。
 - P4 饱和测试与守恒补强：`server/src/world/tiandao_hunt.rs` 补齐注意力曲线、响应链、反制与 Watch zone qi drain 守恒测试；`server/src/npc/brain/scorers_survival.rs` 复用 `FearCultivatorScorer` 表达 NPC 对高注意力玩家的逃离倾向；`server/src/qi_physics/constants.rs` 与 `server/src/qi_physics/ledger.rs` 承载天道 Watch drain 常量和 `QiTransferReason::TiandaoWatchDrain`。
