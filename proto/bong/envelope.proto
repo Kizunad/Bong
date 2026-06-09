@@ -264,6 +264,8 @@ message ClientRequestEnvelope {
     CoffinMenuReclaim           coffin_menu_reclaim           = 89;
     // ─── plan-exploration-probe-return-v1 P1：神识感知保鲜 C2S ────
     FreshnessProbe              freshness_probe               = 90;
+    // plan-block-lifecycle-v1 P2 — Bong 自有背包方块放置 C2S。
+    BlockPlace                  block_place                   = 91;
   }
 }
 
@@ -3409,6 +3411,15 @@ message CoffinPlace {
   int32  y                = 2;
   int32  z                = 3;
   uint64 item_instance_id = 4;
+}
+
+// 与 Rust ClientRequestV1::BlockPlace 精确对应。
+message BlockPlace {
+  int32          x                = 1;
+  int32          y                = 2;
+  int32          z                = 3;
+  uint64         item_instance_id = 4;
+  TrapTargetFace target_face      = 5;
 }
 
 // 与 Rust ClientRequestV1::CoffinEnter 精确对应。

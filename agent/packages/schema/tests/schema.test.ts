@@ -1528,6 +1528,7 @@ describe("sample files pass schema validation", () => {
     "client-request.forge-inscription-submit.sample.json",
     "client-request.forge-consecration-inject.sample.json",
     "client-request.forge-station-place.sample.json",
+    "client-request.block-place.sample.json",
   ]) {
     it(sample, () => {
       const data = loadSample(sample);
@@ -1890,6 +1891,17 @@ describe("negative sample files fail schema validation", () => {
     const result = validate(ClientRequestV1, data);
     expect(result.ok).toBe(false);
   });
+
+  for (const sample of [
+    "client-request.block-place.invalid-extra-field.sample.json",
+    "client-request.block-place.invalid-target-face.sample.json",
+  ]) {
+    it(sample, () => {
+      const data = loadSample(sample);
+      const result = validate(ClientRequestV1, data);
+      expect(result.ok).toBe(false);
+    });
+  }
 
   it("client-request.trade-offer-response.invalid-null-instance.sample.json", () => {
     const data = loadSample("client-request.trade-offer-response.invalid-null-instance.sample.json");

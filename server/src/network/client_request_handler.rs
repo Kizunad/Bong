@@ -449,6 +449,7 @@ pub fn handle_client_request_payloads(
             | ClientRequestV1::AlchemyFurnacePlace { v, .. }
             | ClientRequestV1::CoffinOpen { v, .. }
             | ClientRequestV1::CoffinPlace { v, .. }
+            | ClientRequestV1::BlockPlace { v, .. }
             | ClientRequestV1::CoffinEnter { v, .. }
             | ClientRequestV1::CoffinLeave { v }
             | ClientRequestV1::CoffinBreak { v, .. }
@@ -822,6 +823,19 @@ pub fn handle_client_request_payloads(
                     item_instance_id,
                     tick: combat_clock.tick,
                 });
+            }
+            ClientRequestV1::BlockPlace {
+                x,
+                y,
+                z,
+                item_instance_id,
+                target_face,
+                ..
+            } => {
+                tracing::info!(
+                    "[bong][network][block] accepted block_place schema entity={:?} pos=[{x},{y},{z}] instance={item_instance_id} target_face={target_face:?}; runtime consumer lands in P3",
+                    ev.client
+                );
             }
             ClientRequestV1::CoffinEnter { x, y, z, .. } => {
                 tracing::info!(

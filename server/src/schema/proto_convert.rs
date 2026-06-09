@@ -3278,6 +3278,20 @@ impl From<&super::client_request::ClientRequestV1> for bong::client_request_enve
                 z: *z,
                 item_instance_id: *item_instance_id,
             }),
+            ClientRequestV1::BlockPlace {
+                x,
+                y,
+                z,
+                item_instance_id,
+                target_face,
+                ..
+            } => Payload::BlockPlace(bong::BlockPlace {
+                x: *x,
+                y: *y,
+                z: *z,
+                item_instance_id: *item_instance_id,
+                target_face: trap_target_face_to_proto(target_face),
+            }),
             ClientRequestV1::CoffinEnter { x, y, z, .. } => {
                 Payload::CoffinEnter(bong::CoffinEnter {
                     x: *x,
@@ -4128,6 +4142,18 @@ mod tests {
             trigger: None,
             item_instance_id: Some(999),
             target_face: Some(crate::zhenfa::trap_content::TrapTargetFace::Top),
+        });
+    }
+
+    #[test]
+    fn c2s_block_place_roundtrip() {
+        c2s_encode_decode_roundtrip(super::super::client_request::ClientRequestV1::BlockPlace {
+            v: 1,
+            x: 8,
+            y: 64,
+            z: -8,
+            item_instance_id: 4242,
+            target_face: crate::zhenfa::trap_content::TrapTargetFace::North,
         });
     }
 

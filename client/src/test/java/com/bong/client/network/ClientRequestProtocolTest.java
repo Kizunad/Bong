@@ -289,6 +289,36 @@ public class ClientRequestProtocolTest {
     }
 
     @Test
+    void encodesBlockPlace() {
+        String json = ClientRequestProtocol.encodeBlockPlace(
+            new BlockPos(8, 64, 8),
+            4242L,
+            ClientRequestProtocol.ZhenfaTargetFace.NORTH
+        );
+        assertEquals(
+            "{\"type\":\"block_place\",\"v\":1,\"x\":8,\"y\":64,\"z\":8,\"item_instance_id\":4242,\"target_face\":\"north\"}",
+            json
+        );
+    }
+
+    @Test
+    void encodeBlockPlaceRejectsInvalidArguments() {
+        BlockPos pos = new BlockPos(8, 64, 8);
+        assertThrows(
+            IllegalArgumentException.class,
+            () -> ClientRequestProtocol.encodeBlockPlace(null, 4242L, ClientRequestProtocol.ZhenfaTargetFace.NORTH)
+        );
+        assertThrows(
+            IllegalArgumentException.class,
+            () -> ClientRequestProtocol.encodeBlockPlace(pos, -1L, ClientRequestProtocol.ZhenfaTargetFace.NORTH)
+        );
+        assertThrows(
+            IllegalArgumentException.class,
+            () -> ClientRequestProtocol.encodeBlockPlace(pos, 4242L, null)
+        );
+    }
+
+    @Test
     void encodesSpiritNichePlace() {
         String json = ClientRequestProtocol.encodeSpiritNichePlace(11, 64, 10, 4242L);
         assertEquals(

@@ -979,6 +979,20 @@ export const ForgeStationPlaceRequestV1 = Type.Object(
 );
 export type ForgeStationPlaceRequestV1 = Static<typeof ForgeStationPlaceRequestV1>;
 
+export const BlockPlaceRequestV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    type: Type.Literal("block_place"),
+    x: Type.Integer(),
+    y: Type.Integer(),
+    z: Type.Integer(),
+    item_instance_id: Type.Integer({ minimum: 0, maximum: JS_SAFE_INTEGER_MAX }),
+    target_face: ZhenfaTargetFaceV1,
+  },
+  { additionalProperties: false },
+);
+export type BlockPlaceRequestV1 = Static<typeof BlockPlaceRequestV1>;
+
 export const ClientRequestV1 = Type.Union([
   SetMeridianTargetRequestV1,
   BreakthroughRequestV1,
@@ -1056,5 +1070,6 @@ export const ClientRequestV1 = Type.Union([
   ForgeBlueprintTurnPageRequestV1,
   ForgeLearnBlueprintRequestV1,
   ForgeStationPlaceRequestV1,
+  BlockPlaceRequestV1,
 ]);
 export type ClientRequestV1 = Static<typeof ClientRequestV1>;

@@ -652,6 +652,25 @@ public final class ClientRequestProtocol {
         return obj.toString();
     }
 
+    public static String encodeBlockPlace(BlockPos pos, long itemInstanceId, ZhenfaTargetFace targetFace) {
+        if (pos == null) {
+            throw new IllegalArgumentException("pos must not be null");
+        }
+        if (itemInstanceId < 0) {
+            throw new IllegalArgumentException("itemInstanceId must be >= 0, got " + itemInstanceId);
+        }
+        if (targetFace == null) {
+            throw new IllegalArgumentException("targetFace must not be null");
+        }
+        JsonObject obj = envelope("block_place");
+        obj.addProperty("x", pos.getX());
+        obj.addProperty("y", pos.getY());
+        obj.addProperty("z", pos.getZ());
+        obj.addProperty("item_instance_id", itemInstanceId);
+        obj.addProperty("target_face", targetFace.wireName());
+        return obj.toString();
+    }
+
     public static String encodeSpiritNichePlace(int x, int y, int z, long itemInstanceId) {
         JsonObject obj = envelope("spirit_niche_place");
         obj.addProperty("x", x);

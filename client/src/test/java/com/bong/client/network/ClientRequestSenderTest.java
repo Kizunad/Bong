@@ -228,6 +228,22 @@ public class ClientRequestSenderTest {
     }
 
     @Test
+    void sendBlockPlaceUsesCorrectChannelAndJson() {
+        install();
+        ClientRequestSender.sendBlockPlace(
+            new net.minecraft.util.math.BlockPos(8, 64, 8),
+            4242L,
+            ClientRequestProtocol.ZhenfaTargetFace.NORTH
+        );
+        assertEquals(1, sent.size());
+        assertEquals(new Identifier("bong", "client_request"), sent.get(0).channel());
+        assertEquals(
+            "{\"type\":\"block_place\",\"v\":1,\"x\":8,\"y\":64,\"z\":8,\"item_instance_id\":4242,\"target_face\":\"north\"}",
+            sent.get(0).body()
+        );
+    }
+
+    @Test
     void sendSpiritNichePlaceUsesCorrectChannelAndJson() {
         install();
         ClientRequestSender.sendSpiritNichePlace(11, 64, 10, 4242L);
