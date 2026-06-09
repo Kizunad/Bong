@@ -545,7 +545,7 @@ plans:
   summary: 原版方块破坏获取→入 Bong 自有背包→放置全流程迁移到自有系统。博弈流程设计 + 实地核查 50 条承重声明 + pre-P0 收口（§11.1/§11.2）三步完成，走下层 1-9 SkillBar Kind.ITEM 选中态、不消费 InteractBlockEvent、凡俗方块裸 set_block。零代码，待 P0 实施（扩 block_drop + ItemCategory::Block + BlockPlace payload + place_block_for_kind + FP 切手）。
 - file: plan-consumable-effects-v1.md
   group: gameplay-npc
-  title: 手搓消耗品空壳消杀（11 个补使用闭环）
+  title: 手搓消耗品空壳消杀（11 个产出物补齐使用闭环）
   state: active-design
   percent: 5
   last_updated: '2026-06-10'

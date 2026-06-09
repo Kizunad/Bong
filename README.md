@@ -99,7 +99,7 @@ _背包、NPC AI、感知、社交、技艺、死亡周期 · 24 份 · 组均 5
 | `design` | **生平碑刻与临终遗念** <br/><sub>`plan-life-record-epitaph-v1.md`</sub> | `█░░░░░░░░░░░`  10% | — | 2026-06-08 |
 | `design` | **Dormant NPC 批量战斗推演** <br/><sub>`plan-npc-virtualize-v3.md`</sub> | `█░░░░░░░░░░░`  10% | — | 2026-06-08 |
 | `design` | **方块生命周期（破坏获取→入背包→放置）** <br/><sub>`plan-block-lifecycle-v1.md`</sub> | `█░░░░░░░░░░░`   5% | — | 2026-06-09 |
-| `design` | **手搓消耗品空壳消杀（11 个补使用闭环）** <br/><sub>`plan-consumable-effects-v1.md`</sub> | `█░░░░░░░░░░░`   5% | — | 2026-06-10 |
+| `design` | **手搓消耗品空壳消杀（11 个产出物补齐使用闭环）** <br/><sub>`plan-consumable-effects-v1.md`</sub> | `█░░░░░░░░░░░`   5% | — | 2026-06-10 |
 | `design` | **具名散修势力扩展** <br/><sub>`plan-faction-expansion-v1.md`</sub> | `█░░░░░░░░░░░`   5% | — | 2026-06-08 |
 | `design` | **NPC Drowsy 三态虚拟化** <br/><sub>`plan-npc-virtualize-v2.md`</sub> | `█░░░░░░░░░░░`   5% | — | 2026-06-08 |
 | `design` | **战争结果与信誉系统联动** <br/><sub>`plan-social-v2.md`</sub> | `█░░░░░░░░░░░`   5% | — | 2026-06-08 |

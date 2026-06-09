@@ -46,7 +46,7 @@
 
 ---
 
-## P0 — 实地调查收口 + 决策门 ⬜
+## P0 — 实地调查收口 + 决策门 ✅ 2026-06-10
 
 **交付物**：一张逐物品映射表（11 行），每行锁定四档之一，附 file:line 依据。**由 field-investigation workflow 产出后填入此处。**
 
@@ -96,10 +96,10 @@
 ## P2 — 新 variant 批 ⬜
 
 **交付物**（仅当 P0 判定②档非空时）：
-- `server/src/inventory/mod.rs:257`：新增 `ItemEffect` 变体（如解蛊/安神/引气对应语义；疗伤类若选通用方案则加 `WoundHeal { grades/magnitude, target? }`）
-- `parse_item_effect`（`mod.rs:~1996`）：新增 `"key" =>` 臂；若字段超出 `ItemEffectToml` 形状（`mod.rs:1606`）则扩 struct
+- `server/src/inventory/mod.rs:257`：新增 `ItemEffect` 变体——`ComposureRestore { magnitude }`（安神）+ `WoundHeal { magnitude, target: Option<String> }`（疗伤，#8/#9/#10 共用）
+- `parse_item_effect`（`mod.rs:1992`）：新增 `"composure_restore" =>` / `"wound_heal" =>` 臂；若字段超出 `ItemEffectToml` 形状（`mod.rs:1606`）则扩 struct
 - 施效路径（`cast_emit.rs` apply_item_effect）：新增 variant 的 apply 分支，真实改 player 状态（参照现有 `MeridianHeal`/`ContaminationCleanse` 分支）；**疗伤类直接调既有 `apply_wound_heal`（pill.rs:406），不重写治疗逻辑**
-- **疗伤绑定二选一（P0 拍板）**：(a) 复用 `CombatPill` —— 给 `bandage`/splints 设 `combat_pill` effect + 在 `CombatPillKind`(`alchemy/pill.rs`) 加变体 + `client_request_handler.rs:9174` dispatch 加臂；(b) 新增 `WoundHeal` variant 直连 `apply_wound_heal`。复用现有机制优先
+- **疗伤绑定（P0 已裁定 → 方案 b）**：新增 `WoundHeal` variant 直连 `apply_wound_heal`。方案 (a) 复用 `CombatPill` **已否决**——`CombatPill` 在 QuickSlot cast 路径是 no-op（`cast_emit.rs:622` "ignored on generic cast path"），仅 `AlchemyTakePill→handle_alchemy_take_pill` 的 `CombatPillKind` dispatch（`client_request_handler.rs:9174`）活，而绷带/夹板走的正是 cast 路径，故不可复用。需把 `Wounds` 透传进 `CastItemEffectTargets`（`cast_emit.rs:70` 加 `wounds: Option<&mut Wounds>` + 调用点 `:312`）
 - 饱和测试：parser 正反 sample 对拍 + apply 分支状态变化断言（伤情 severity 下降/愈合移除/回血）+ effect=None 仍提前 return 的回归
 
 ---
