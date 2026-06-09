@@ -2050,7 +2050,7 @@ mod tests {
         };
         let mut eval_index = 1;
         for _cycle in 0..4 {
-            for _ in 0..15 {
+            for _ in 0..60 {
                 advance_attention(
                     &mut attention,
                     TiandaoAttentionInput {
@@ -2061,7 +2061,7 @@ mod tests {
                 );
                 eval_index += 1;
             }
-            for _ in 0..15 {
+            for _ in 0..30 {
                 advance_attention(
                     &mut attention,
                     TiandaoAttentionInput {
