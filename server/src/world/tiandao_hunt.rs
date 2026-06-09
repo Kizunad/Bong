@@ -5,7 +5,12 @@ use crate::network::audio_event_emit::{AudioRecipient, PlaySoundRecipeRequest};
 use crate::network::vfx_event_emit::VfxEventRequest;
 use crate::network::{redis_bridge::RedisOutbound, RedisBridgeResource};
 use crate::player::state::canonical_player_id;
-use crate::qi_physics::{QiAccountId, QiTransfer, QiTransferReason, WorldQiAccount};
+use crate::qi_physics::{
+    constants::{
+        QI_TIANDAO_MOVING_ESCAPE_DECAY_MULTIPLIER, QI_TIANDAO_WATCH_ZONE_DRAIN_PER_MINUTE,
+    },
+    QiAccountId, QiTransfer, QiTransferReason, WorldQiAccount,
+};
 use crate::schema::agent_command::Command;
 use crate::schema::common::CommandType;
 use crate::schema::cultivation::realm_to_string;
@@ -36,12 +41,10 @@ const TIANDAO_PRESSURE_EVENT_INTERVAL_TICKS: u64 = 3 * 60 * 20;
 const TIANDAO_TRIBULATION_EVENT_INTERVAL_TICKS: u64 = 5 * 60 * 20;
 const TIANDAO_ANNIHILATE_EVENT_INTERVAL_TICKS: u64 = 2 * 60 * 20;
 const TIANDAO_AUDIO_INSTANCE_BASE: u64 = 710_000;
-const TIANDAO_WATCH_ZONE_QI_DRAIN_PER_MINUTE: f64 = 0.01;
 pub const DECEIVE_HEAVEN_DECOY_MIN_DISTANCE_BLOCKS: f64 = 500.0;
 pub const DECEIVE_HEAVEN_DECOY_DURATION_TICKS: u64 = 30 * 60 * 20;
 pub const DECEIVE_HEAVEN_DECOY_DECAY_MULTIPLIER: f64 = 4.0;
 pub const DECEIVE_HEAVEN_REVEAL_PENALTY: f64 = 20.0;
-const TIANDAO_MOVING_ESCAPE_DECAY_MULTIPLIER: f64 = 10.0;
 const TIANDAO_MOVING_DISTANCE_EPSILON_BLOCKS: f64 = 0.1;
 
 #[derive(Debug, Clone, Component, PartialEq)]
@@ -768,7 +771,7 @@ fn attention_decay_for_eval(
             TiandaoResponseLevel::Pressure | TiandaoResponseLevel::Tribulation
         )
     {
-        decay_rate(response, input.zone_spirit_qi) * TIANDAO_MOVING_ESCAPE_DECAY_MULTIPLIER
+        decay_rate(response, input.zone_spirit_qi) * QI_TIANDAO_MOVING_ESCAPE_DECAY_MULTIPLIER
     } else {
         decay_rate(response, input.zone_spirit_qi)
     }
@@ -969,7 +972,7 @@ fn apply_watch_zone_qi_drain(
     qi_ledger: &mut WorldQiAccount,
 ) -> Option<QiTransfer> {
     let minutes = interval_ticks as f64 / 20.0 / 60.0;
-    let requested = TIANDAO_WATCH_ZONE_QI_DRAIN_PER_MINUTE * minutes;
+    let requested = QI_TIANDAO_WATCH_ZONE_DRAIN_PER_MINUTE * minutes;
     if requested <= 0.0 {
         return None;
     }
@@ -1732,8 +1735,8 @@ mod tests {
             container_qi: 0.0,
             ledger_qi: ledger.total(),
             era_decay_accum: 0.0,
-            budget_initial_total: 100.0,
-            budget_current_total: 100.0,
+            budget_initial_total: crate::qi_physics::constants::DEFAULT_SPIRIT_QI_TOTAL,
+            budget_current_total: crate::qi_physics::constants::DEFAULT_SPIRIT_QI_TOTAL,
         }
     }
 
@@ -2867,6 +2870,94 @@ mod tests {
             0.0,
         )
         .expect("Watch 级 zone qi 微调必须在 zone_qi + ledger_qi 口径守恒");
+    }
+
+    #[test]
+    fn watch_zone_qi_drain_is_noop_when_zone_is_missing() {
+        let mut zones = single_zone_registry("spawn", 0.6);
+        let mut ledger = WorldQiAccount::default();
+
+        let transfer = apply_watch_zone_qi_drain(
+            "missing",
+            tiandao_response_profile(TiandaoResponseLevel::Watch)
+                .unwrap()
+                .interval_ticks,
+            &mut zones,
+            &mut ledger,
+        );
+
+        assert!(
+            transfer.is_none(),
+            "未知 zone 不应生成 Watch 级 QiTransfer，got={transfer:?}"
+        );
+        assert_close(zones.find_zone_by_name("spawn").unwrap().spirit_qi, 0.6);
+        assert_close(ledger.total(), 0.0);
+    }
+
+    #[test]
+    fn watch_zone_qi_drain_is_noop_when_zone_qi_is_empty_or_negative() {
+        for zone_qi in [0.0, -0.1] {
+            let mut zones = single_zone_registry("spawn", zone_qi);
+            let mut ledger = WorldQiAccount::default();
+
+            let transfer = apply_watch_zone_qi_drain(
+                "spawn",
+                tiandao_response_profile(TiandaoResponseLevel::Watch)
+                    .unwrap()
+                    .interval_ticks,
+                &mut zones,
+                &mut ledger,
+            );
+
+            assert!(
+                transfer.is_none(),
+                "zone_qi={zone_qi} 时 Watch 级不应从空/负真元区抽取，got={transfer:?}"
+            );
+            assert_close(zones.find_zone_by_name("spawn").unwrap().spirit_qi, zone_qi);
+            assert_close(ledger.total(), 0.0);
+        }
+    }
+
+    #[test]
+    fn watch_zone_qi_drain_partial_transfer_preserves_conservation() {
+        let mut zones = single_zone_registry("spawn", 0.02);
+        let mut ledger = WorldQiAccount::default();
+        let before = qi_snapshot(0.02, &ledger);
+
+        let transfer = apply_watch_zone_qi_drain(
+            "spawn",
+            tiandao_response_profile(TiandaoResponseLevel::Watch)
+                .unwrap()
+                .interval_ticks,
+            &mut zones,
+            &mut ledger,
+        )
+        .expect("低于单次抽取量但大于 0 的 zone qi 必须被部分转移");
+
+        assert_close(transfer.amount, 0.02);
+        assert_close(zones.find_zone_by_name("spawn").unwrap().spirit_qi, 0.0);
+        assert_close(ledger.balance(&QiAccountId::tiandao()), 0.02);
+        crate::qi_physics::assert_conservation(
+            &before,
+            &qi_snapshot(zones.find_zone_by_name("spawn").unwrap().spirit_qi, &ledger),
+            0.0,
+        )
+        .expect("Watch 级部分抽取必须保持 zone_qi + ledger_qi 守恒");
+    }
+
+    #[test]
+    fn watch_zone_qi_drain_zero_interval_is_noop() {
+        let mut zones = single_zone_registry("spawn", 0.6);
+        let mut ledger = WorldQiAccount::default();
+
+        let transfer = apply_watch_zone_qi_drain("spawn", 0, &mut zones, &mut ledger);
+
+        assert!(
+            transfer.is_none(),
+            "interval_ticks=0 时 Watch 级不应生成 QiTransfer，got={transfer:?}"
+        );
+        assert_close(zones.find_zone_by_name("spawn").unwrap().spirit_qi, 0.6);
+        assert_close(ledger.total(), 0.0);
     }
 
     #[test]
