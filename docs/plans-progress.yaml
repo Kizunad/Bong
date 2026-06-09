@@ -534,6 +534,15 @@ plans:
   - SoulSeize ledger 守恒实现
   - elder_encounter client/agent 接线
   summary: 已从 skeleton 升 active 并收口 P0 决策门；当前为设计态，需实现四态遭遇、夺舍守恒、client UI 与 agent 叙事。
+- file: plan-block-lifecycle-v1.md
+  group: gameplay-npc
+  title: 方块生命周期（破坏获取→入背包→放置）
+  state: active-design
+  percent: 5
+  last_updated: '2026-06-09'
+  pr_refs: []
+  blocking_on: []
+  summary: 原版方块破坏获取→入 Bong 自有背包→放置全流程迁移到自有系统。博弈流程设计 + 实地核查 50 条承重声明 + pre-P0 收口（§11.1/§11.2）三步完成，走下层 1-9 SkillBar Kind.ITEM 选中态、不消费 InteractBlockEvent、凡俗方块裸 set_block。零代码，待 P0 实施（扩 block_drop + ItemCategory::Block + BlockPlace payload + place_block_for_kind + FP 切手）。
 - file: plan-sou-da-che-v1.md
   group: gameplay-npc
   title: 搜打撤风险节拍

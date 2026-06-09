@@ -13,13 +13,13 @@ AI-Native Xianxia (修仙) sandbox on Minecraft. Three-layer architecture:
 <!-- BEGIN:PLANS_PROGRESS -->
 ## Plan 进度
 
-_自动生成于 2026-06-08 · 共 131 份 plan_
+_自动生成于 2026-06-08 · 共 132 份 plan_
 
 ```
-总进度  █████████████████████████░░░░░  84.0%
+总进度  █████████████████████████░░░░░  83.4%
 ```
 
-**分布**：`merged` 59 · `wip` 1 · `design` 21 · `skeleton` 1 · `done` 49
+**分布**：`merged` 59 · `wip` 1 · `design` 22 · `skeleton` 1 · `done` 49
 
 ### 战斗 / HUD / 视觉
 _战斗 ECS、流派、HUD、粒子、动画、Iris · 15 份 · 组均 87%_
@@ -75,7 +75,7 @@ _六境修炼、天劫、炼丹/炼器、矿物、灵田、保质期 · 26 份 �
 | `design` | **渡虚劫平衡矩阵** <br/><sub>`plan-tribulation-balance-v1.md`</sub> | `█░░░░░░░░░░░`   5% | — | 2026-06-08 |
 
 ### 玩法 / NPC / 世界
-_背包、NPC AI、感知、社交、技艺、死亡周期 · 22 份 · 组均 57%_
+_背包、NPC AI、感知、社交、技艺、死亡周期 · 23 份 · 组均 55%_
 
 | 状态 | Plan | 进度 | PR | 最近更新 |
 |---|---|---|---|---|
@@ -98,6 +98,7 @@ _背包、NPC AI、感知、社交、技艺、死亡周期 · 22 份 · 组均 5
 | `design` | **玩家可参与的派系战争** <br/><sub>`plan-faction-wars-v1.md`</sub> | `█░░░░░░░░░░░`  10% | — | 2026-06-08 |
 | `design` | **生平碑刻与临终遗念** <br/><sub>`plan-life-record-epitaph-v1.md`</sub> | `█░░░░░░░░░░░`  10% | — | 2026-06-08 |
 | `design` | **Dormant NPC 批量战斗推演** <br/><sub>`plan-npc-virtualize-v3.md`</sub> | `█░░░░░░░░░░░`  10% | — | 2026-06-08 |
+| `design` | **方块生命周期（破坏获取→入背包→放置）** <br/><sub>`plan-block-lifecycle-v1.md`</sub> | `█░░░░░░░░░░░`   5% | — | 2026-06-09 |
 | `design` | **具名散修势力扩展** <br/><sub>`plan-faction-expansion-v1.md`</sub> | `█░░░░░░░░░░░`   5% | — | 2026-06-08 |
 | `design` | **NPC Drowsy 三态虚拟化** <br/><sub>`plan-npc-virtualize-v2.md`</sub> | `█░░░░░░░░░░░`   5% | — | 2026-06-08 |
 | `design` | **战争结果与信誉系统联动** <br/><sub>`plan-social-v2.md`</sub> | `█░░░░░░░░░░░`   5% | — | 2026-06-08 |
