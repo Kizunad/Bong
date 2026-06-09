@@ -187,6 +187,12 @@ pub enum QiTransferReason {
     /// QiTransfer(from=zone:<name>, to=npc:daozhan:<id>, reason=TiandaoCondense)。
     /// 绝不凭空创生：zone 必须先减，道伥才获得真元。
     TiandaoCondense,
+    /// plan-tiandao-hunt-v1 P4 — Watch 级天道微调区域灵气。
+    ///
+    /// 守恒约束：zone.spirit_qi -= delta；对应 delta 先镜像到 zone ledger 源账户，
+    /// 再通过 QiTransfer(from=zone:<name>, to=tiandao:tiandao, reason=TiandaoWatchDrain)
+    /// 转入天道账户。summarize_world_qi 口径下 zone_qi 降低、ledger_qi 增加，总量不变。
+    TiandaoWatchDrain,
     /// plan-era-state-v1 P0 — 变化时代潮汐涌动（正向 qi 搬运）。
     ///
     /// 守恒约束：搬运必须是账户间 QiTransfer（from=zone:<src>, to=zone:<dst>），
