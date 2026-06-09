@@ -17,3 +17,17 @@
 - **`plan-container-filter-and-completion-v1` 12 容器验收表加"落地阶段"列**：标每个容器在哪 plan 哪阶段落地（如 `herb_pouch`→A-P5+B-P3，`trade_crate`→C），降实施混淆。
 - **Plan A 与 Plan D §8 交叉引用**：两者皆无依赖根 plan，A 嵌套深度=1 与 D 方块表示策略（vanilla 占位 vs bong_blocks）将来可能联动（bong_blocks 容器方块被放入套包时），各加一条交叉引用。
 - **A-P5 / B-P3 改同一 TOML 协调**：两阶段都改 `workbench_materials.toml` 同 5 个随身子包条目，依赖图（B 依赖 A）已保证顺序，实施时注意相邻段 merge conflict。
+
+## plan-shield-block-v1（PR #470，Pi review 2026-06-10 的 3 条措辞修正，升 active 前改）
+
+- **GUARD_RAISE / PARRY_BLOCK 不是零调用死代码**：GUARD_RAISE 被爆脉 FullPowerCharge 消费（`vfx_animation_trigger.rs:361`），PARRY_BLOCK 被 DefenseIntent 动画系统消费（`vfx_animation_trigger.rs:94-102`）。盾牌接线是**新增消费方且须兼容现有触发**，不是"随意覆盖"——plan 内三处"零调用死代码"措辞全改。
+- **熟练度孤岛归类修正**：`ProficiencySource::BackfireSurvived` 是活跃变体（`technique_proficiency.rs:52`，0.015 系数），不是 dead_code；真正的第三处孤岛是 `ProficiencyScalars` struct（`technique_proficiency.rs:97-104`）。
+- **路径修正**：`armor.rs:61-67` → `combat/armor.rs:60-67`。
+
+## plan-economy-zombie-cleanup-v1（PR #472，Pi review 2026-06-10 的 5 条勘误，升 active 前改）
+
+- **蜕壳入口定位修正**："硬编码只认 tuike_*" 的定位从 `npc/npc_skill.rs` 改为 `combat/tuike.rs:22-23`（或泛指蜕壳流模块）。
+- **rat_bait 删除理由修正**：删去"鼠群系统在(spawn_tutorial.rs)"的说法，改为"仅有配方定义无消费端接入"。
+- **3 处路径勘误**：`forge/station.rs`、`alchemy/furnace.rs`、client icon 路径按实际修正。
+- **配方定位改注释锚点**：`workbench_recipes.rs:1183/:1295` 行号易漂移，改为 `// #87 伪装包裹` / `// #94 伪装网` 注释锚点。
+- **P0 交付物细化到函数名**：如 `fn filter_tuike_skin_items` 级别。
