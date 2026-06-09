@@ -43,7 +43,6 @@ import com.mojang.blaze3d.systems.RenderSystem;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.gui.DrawContext;
 import net.minecraft.client.gui.screen.Screen;
-import net.minecraft.entity.player.PlayerEntity;
 import net.minecraft.util.Identifier;
 import net.minecraft.util.Util;
 import org.lwjgl.glfw.GLFW;
@@ -289,17 +288,12 @@ public class BongHud {
     }
 
     private static CombatHudSnapshot captureCombatSnapshot(MinecraftClient client) {
-        int selectedSlot = -1;
-        PlayerEntity player = client.player;
-        if (player != null) {
-            selectedSlot = player.getInventory().selectedSlot;
-        }
         return CombatHudSnapshot.create(
             CombatHudStateStore.snapshot(),
             PhysicalBodyStore.snapshot(),
             QuickUseSlotStore.snapshot(),
             SkillBarStore.snapshot(),
-            selectedSlot,
+            SkillBarStore.selectedSlot(),
             CastStateStore.snapshot(),
             UnifiedEventStore.stream(),
             SpellVolumeStore.snapshot(),

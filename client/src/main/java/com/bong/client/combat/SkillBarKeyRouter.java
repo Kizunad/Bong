@@ -7,7 +7,16 @@ import net.minecraft.util.hit.EntityHitResult;
 
 /** Pure routing logic for 1-9 hotbar key presses; the mixin delegates here. */
 public final class SkillBarKeyRouter {
-    public enum RouteResult { NOOP, PASS_THROUGH, CAST_SENT, CONTAINER_SWITCH_SENT, COOLDOWN_BLOCKED, SAME_CAST_IGNORED }
+    public enum RouteResult {
+        NOOP,
+        PASS_THROUGH,
+        ITEM_SELECTED,
+        ITEM_DESELECTED,
+        CAST_SENT,
+        CONTAINER_SWITCH_SENT,
+        COOLDOWN_BLOCKED,
+        SAME_CAST_IGNORED
+    }
 
     private SkillBarKeyRouter() {
     }
@@ -15,6 +24,8 @@ public final class SkillBarKeyRouter {
     public static boolean shouldCancelHotbarKey(int slot) {
         RouteResult result = route(slot, System.currentTimeMillis(), SkillBarKeyRouter::sendCastWithCrosshairTarget);
         return result == RouteResult.CAST_SENT
+            || result == RouteResult.ITEM_SELECTED
+            || result == RouteResult.ITEM_DESELECTED
             || result == RouteResult.COOLDOWN_BLOCKED
             || result == RouteResult.SAME_CAST_IGNORED;
     }
@@ -29,7 +40,14 @@ public final class SkillBarKeyRouter {
         SkillBarConfig config = SkillBarStore.snapshot();
         SkillBarEntry entry = config.slot(slot);
         if (entry == null) return RouteResult.PASS_THROUGH;
-        if (entry.kind() == SkillBarEntry.Kind.ITEM) return RouteResult.PASS_THROUGH;
+        if (entry.kind() == SkillBarEntry.Kind.ITEM) {
+            if (SkillBarStore.selectedSlot() == slot) {
+                SkillBarStore.clearSelectedSlot();
+                return RouteResult.ITEM_DESELECTED;
+            }
+            SkillBarStore.setSelectedSlot(slot);
+            return RouteResult.ITEM_SELECTED;
+        }
         if (config.isOnCooldown(slot, nowMs)) return RouteResult.COOLDOWN_BLOCKED;
 
         CastState current = CastStateStore.snapshot();
@@ -37,6 +55,7 @@ public final class SkillBarKeyRouter {
             if (current.slot() == slot) return RouteResult.SAME_CAST_IGNORED;
             CastStateStore.interrupt(CastOutcome.USER_CANCEL, nowMs);
         }
+        SkillBarStore.clearSelectedSlot();
         CastStateStore.beginSkillBarCast(slot, entry.castDurationMs(), nowMs);
         castSender.accept(slot);
         return RouteResult.CAST_SENT;
