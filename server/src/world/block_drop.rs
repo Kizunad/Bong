@@ -13,6 +13,12 @@
 //!   - STONE / COBBLESTONE / ANDESITE / DIORITE / GRANITE → stone_chunk ×1
 //!   - IRON_ORE / DEEPSLATE_IRON_ORE → iron_ore ×1
 //!   - GRASS_BLOCK → grass_fiber ×1
+//!   - DIRT → earth_crumb ×1
+//!   - COARSE_DIRT → hardened_soil ×1
+//!   - SAND → barren_sand ×1
+//!   - GRAVEL → weathered_stone ×1
+//!   - CLAY → raw_clay_lump ×1
+//!   - OBSIDIAN → obsidian_shard ×1（需 Pickaxe）
 
 use crate::gathering::tools::{equipped_gathering_tool, GatheringToolKind};
 use valence::prelude::{
@@ -473,6 +479,37 @@ mod tests {
     }
 
     #[test]
+    fn survival_stop_breaking_sand_grants_one_barren_sand() {
+        let (mut app, player, _) = block_drop_app(BlockState::SAND, empty_inventory());
+
+        send_stop_break(&mut app, player, BlockPos::new(1, 64, 1));
+        app.update();
+
+        let actual = inventory_template_count(&app, player, "barren_sand");
+        assert_eq!(
+            actual, 1,
+            "expected 1 barren_sand because survival Stop break should grant the mapped P0 soft block drop, actual {actual}"
+        );
+    }
+
+    #[test]
+    fn creative_breaking_sand_grants_no_barren_sand() {
+        let (mut app, player, _) = block_drop_app(BlockState::SAND, empty_inventory());
+        app.world_mut()
+            .entity_mut(player)
+            .insert(GameMode::Creative);
+
+        send_stop_break(&mut app, player, BlockPos::new(1, 64, 1));
+        app.update();
+
+        let actual = inventory_template_count(&app, player, "barren_sand");
+        assert_eq!(
+            actual, 0,
+            "expected 0 barren_sand because block drops only run for Survival Stop events, actual {actual}"
+        );
+    }
+
+    #[test]
     fn survival_stop_breaking_obsidian_without_pickaxe_grants_nothing() {
         let (mut app, player, _) = block_drop_app(BlockState::OBSIDIAN, empty_inventory());
 
@@ -543,6 +580,7 @@ mod tests {
     fn item_registry_for_block_drops() -> ItemRegistry {
         ItemRegistry::from_map(HashMap::from([
             item_template("crude_wood"),
+            item_template("barren_sand"),
             item_template("earth_crumb"),
             item_template("obsidian_shard"),
         ]))
