@@ -156,6 +156,35 @@ public final class QuickBarHudPlanner {
             appendBorder(out, HudRenderLayer.QUICK_BAR, x, y, SLOT_SIZE, SLOT_SIZE, borderColor);
 
             SkillBarEntry skillEntry = skills.slot(i);
+            if (skillEntry != null && skillEntry.kind() == SkillBarEntry.Kind.ITEM) {
+                out.add(HudRenderCommand.rect(
+                    HudRenderLayer.QUICK_BAR,
+                    x + 1, y + 1,
+                    SLOT_SIZE - 2, SLOT_SIZE - 2,
+                    SLOT_BOUND_FILL_COLOR
+                ));
+                int iconSize = SLOT_SIZE - 2 * ICON_INSET;
+                if (skillEntry.iconTexture() == null || skillEntry.iconTexture().isBlank()) {
+                    out.add(HudRenderCommand.itemTexture(
+                        HudRenderLayer.QUICK_BAR, skillEntry.id(), x + ICON_INSET, y + ICON_INSET, iconSize
+                    ));
+                } else {
+                    out.add(HudRenderCommand.texture(
+                        HudRenderLayer.QUICK_BAR,
+                        skillEntry.iconTexture(),
+                        x + ICON_INSET,
+                        y + ICON_INSET,
+                        iconSize,
+                        iconSize,
+                        0xFFFFFFFF
+                    ));
+                }
+                if (skills.isOnCooldown(i, nowMillis)) {
+                    out.add(HudRenderCommand.rect(HudRenderLayer.QUICK_BAR, x + 1, y + 1, SLOT_SIZE - 2, SLOT_SIZE - 2, COOLDOWN_OVERLAY_COLOR));
+                }
+                continue;
+            }
+
             if (skillEntry != null && skillEntry.kind() == SkillBarEntry.Kind.SKILL) {
                 out.add(HudRenderCommand.rect(
                     HudRenderLayer.QUICK_BAR,

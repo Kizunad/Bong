@@ -2,13 +2,26 @@ package com.bong.client.mixin;
 
 import com.bong.client.alchemy.AlchemyFurnaceInteractionRules;
 import com.bong.client.alchemy.state.AlchemyFurnaceStore;
+import com.bong.client.combat.SkillBarEntry;
+import com.bong.client.combat.SkillBarStore;
+import com.bong.client.inventory.model.InventoryItem;
+import com.bong.client.inventory.model.InventoryModel;
 import net.minecraft.util.math.BlockPos;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class MixinClientPlayerInteractionManagerAlchemyTest {
+
+    @AfterEach
+    void tearDown() {
+        SkillBarStore.resetForTests();
+    }
 
     @Test
     void onlyKnownFurnacePositionOpensAlchemyUi() {
@@ -20,5 +33,39 @@ class MixinClientPlayerInteractionManagerAlchemyTest {
         assertTrue(AlchemyFurnaceInteractionRules.shouldOpenAlchemyFurnace(known, snapshot));
         assertFalse(AlchemyFurnaceInteractionRules.shouldOpenAlchemyFurnace(new BlockPos(-12, 64, 39), snapshot));
         assertFalse(AlchemyFurnaceInteractionRules.shouldOpenAlchemyFurnace(known, AlchemyFurnaceStore.Snapshot.empty()));
+    }
+
+    @Test
+    void selectedBlockItemPrefersMatchingSelectedHotbarInstance() {
+        InventoryItem selected = InventoryItem.createFull(
+            42L, "earth_crumb", "土块", 1, 1, 0.2, "common", "", 1, 1.0, 1.0
+        );
+        InventoryItem fallback = InventoryItem.createFull(
+            43L, "earth_crumb", "土块", 1, 1, 0.2, "common", "", 1, 1.0, 1.0
+        );
+        InventoryModel inventory = InventoryModel.builder()
+            .hotbar(0, fallback)
+            .hotbar(2, selected)
+            .build();
+
+        SkillBarStore.updateSlot(2, SkillBarEntry.item("earth_crumb", "土块", 0, 0, ""));
+
+        assertSame(selected, MixinClientPlayerInteractionManagerAlchemy.bong$selectedBlockItem(2, inventory));
+        assertEquals(42L, MixinClientPlayerInteractionManagerAlchemy.bong$selectedBlockItem(2, inventory).instanceId());
+    }
+
+    @Test
+    void selectedBlockItemRejectsUnknownOrMissingInstances() {
+        InventoryModel inventory = InventoryModel.builder()
+            .gridItem(InventoryItem.createFull(
+                0L, "earth_crumb", "土块", 1, 1, 0.2, "common", "", 1, 1.0, 1.0
+            ), 0, 0)
+            .build();
+
+        SkillBarStore.updateSlot(0, SkillBarEntry.item("earth_crumb", "土块", 0, 0, ""));
+        assertNull(MixinClientPlayerInteractionManagerAlchemy.bong$selectedBlockItem(0, inventory));
+
+        SkillBarStore.updateSlot(0, SkillBarEntry.item("unknown_block", "未知", 0, 0, ""));
+        assertNull(MixinClientPlayerInteractionManagerAlchemy.bong$selectedBlockItem(0, inventory));
     }
 }

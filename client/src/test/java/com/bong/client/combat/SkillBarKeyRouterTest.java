@@ -8,6 +8,7 @@ import java.util.ArrayList;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class SkillBarKeyRouterTest {
     private final List<Integer> sent = new ArrayList<>();
@@ -27,18 +28,29 @@ class SkillBarKeyRouterTest {
     }
 
     @Test
-    void emptyAndItemSlotsPassThroughNativeHotbar() {
+    void emptySlotPassesThroughNativeHotbar() {
         assertEquals(SkillBarKeyRouter.RouteResult.PASS_THROUGH,
             SkillBarKeyRouter.route(0, 1000L, sent::add));
-        SkillBarStore.updateSlot(1, SkillBarEntry.item("tea", "茶", 0, 0, ""));
-        assertEquals(SkillBarKeyRouter.RouteResult.PASS_THROUGH,
-            SkillBarKeyRouter.route(1, 1000L, sent::add));
         assertEquals(List.of(), sent);
     }
 
     @Test
-    void skillSlotSendsCastAndPredictsSkillSource() {
+    void itemSlotCancelsNativeHotbarAndTogglesSelectedSlot() {
+        SkillBarStore.updateSlot(1, SkillBarEntry.item("tea", "茶", 0, 0, ""));
+
+        assertEquals(SkillBarKeyRouter.RouteResult.ITEM_SELECTED,
+            SkillBarKeyRouter.route(1, 1000L, sent::add));
+        assertEquals(1, SkillBarStore.selectedSlot());
+        assertTrue(SkillBarKeyRouter.shouldCancelHotbarKey(1));
+        assertEquals(SkillBarStore.NO_SELECTED_SLOT, SkillBarStore.selectedSlot());
+        assertEquals(List.of(), sent);
+    }
+
+    @Test
+    void skillSlotSendsCastPredictsSkillSourceAndClearsSelectedItem() {
         SkillBarStore.updateSlot(0, SkillBarEntry.skill("burst_meridian.beng_quan", "崩拳", 400, 3000, ""));
+        SkillBarStore.updateSlot(1, SkillBarEntry.item("earth_crumb", "土块", 0, 0, ""));
+        SkillBarStore.setSelectedSlot(1);
 
         assertEquals(SkillBarKeyRouter.RouteResult.CAST_SENT,
             SkillBarKeyRouter.route(0, 1000L, sent::add));
@@ -46,6 +58,7 @@ class SkillBarKeyRouterTest {
         assertEquals(List.of(0), sent);
         assertEquals(CastState.Source.SKILL_BAR, CastStateStore.snapshot().source());
         assertEquals(0, CastStateStore.snapshot().slot());
+        assertEquals(SkillBarStore.NO_SELECTED_SLOT, SkillBarStore.selectedSlot());
     }
 
     @Test

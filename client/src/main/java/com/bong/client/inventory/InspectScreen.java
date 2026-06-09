@@ -5,6 +5,7 @@ import com.bong.client.combat.QuickSlotEntry;
 import com.bong.client.combat.QuickUseSlotStore;
 import com.bong.client.combat.SkillBarEntry;
 import com.bong.client.combat.SkillBarStore;
+import com.bong.client.block.BlockVanillaIconMap;
 import com.bong.client.combat.inspect.StatusPanelExtension;
 import com.bong.client.craft.CraftScreen;
 import com.bong.client.combat.store.AscensionQuotaStore;
@@ -164,10 +165,13 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
     record WeaponMenuAction(String label, WeaponActionKind kind) {}
     enum WeaponActionKind { REPAIR, DROP }
     record WeaponContextMenuState(InventoryItem item, EquipSlotType slotType, int x, int y, List<WeaponMenuAction> actions) {}
+    record SkillBarMenuAction(String label, int slot) {}
+    record SkillBarContextMenuState(InventoryItem item, int x, int y, List<SkillBarMenuAction> actions) {}
 
     private PillContextMenuState pillContextMenu;
     private PendingMeridianUse pendingMeridianUse;
     private WeaponContextMenuState weaponContextMenu;
+    private SkillBarContextMenuState skillBarContextMenu;
 
     private static final int PILL_MENU_WIDTH = 112;
     private static final int PILL_MENU_ROW_HEIGHT = 16;
@@ -177,7 +181,6 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
     private static final int PILL_MENU_TEXT = 0xFFE8E8E8;
     private static final int PILL_MENU_HOVER = 0xFF2A2A2A;
     private static final int PILL_TARGET_HINT = 0xFFFFD060;
-
     public InspectScreen(InventoryModel model) {
         super(TITLE);
         this.model = model == null ? InventoryModel.empty() : model;
@@ -794,10 +797,20 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
         var config = SkillBarStore.snapshot();
         for (int i = 0; i < HOTBAR_SLOTS; i++) {
             SkillBarEntry entry = config.slot(i);
-            if (entry == null || entry.kind() != SkillBarEntry.Kind.SKILL) {
+            if (entry == null) {
                 if (hotbarSlots[i] != null) {
                     if (hotbarItems[i] != null) hotbarSlots[i].setItem(hotbarItems[i], true);
                     else hotbarSlots[i].clearItem();
+                }
+                continue;
+            }
+            if (entry.kind() == SkillBarEntry.Kind.ITEM) {
+                InventoryItem matched = findItemInModel(entry.id());
+                if (hotbarSlots[i] != null) {
+                    hotbarSlots[i].setItem(
+                        matched == null ? InventoryItem.simple(entry.id(), entry.displayName()) : matched,
+                        true
+                    );
                 }
                 continue;
             }
@@ -1729,6 +1742,17 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
                 return true;
             }
 
+            if (skillBarContextMenu != null) {
+                int actionIdx = skillBarMenuActionIndexAt(mouseX, mouseY);
+                if (actionIdx >= 0) {
+                    triggerSkillBarMenuAction(skillBarContextMenu.actions().get(actionIdx).slot());
+                } else {
+                    skillBarContextMenu = null;
+                }
+                itemInspectLongPress.cancel();
+                return true;
+            }
+
             if (weaponContextMenu != null) {
                 int actionIdx = weaponMenuActionIndexAt(mouseX, mouseY);
                 if (actionIdx >= 0) {
@@ -1783,12 +1807,21 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
                         itemInspectLongPress.cancel();
                         return true;
                     }
+                    if (item != null && openSkillBarContextMenu(item, (int) mouseX, (int) mouseY)) {
+                        itemInspectLongPress.cancel();
+                        return true;
+                    }
                 }
             }
 
             int hIdx = hotbarSlotAtScreen(mouseX, mouseY);
             if (hIdx >= 0 && hotbarItems[hIdx] != null
                     && openPillContextMenu(hotbarItems[hIdx], (int) mouseX, (int) mouseY)) {
+                itemInspectLongPress.cancel();
+                return true;
+            }
+            if (hIdx >= 0 && hotbarItems[hIdx] != null
+                    && openSkillBarContextMenu(hotbarItems[hIdx], (int) mouseX, (int) mouseY)) {
                 itemInspectLongPress.cancel();
                 return true;
             }
@@ -2286,6 +2319,7 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
         }
         pillContextMenu = new PillContextMenuState(item, x, y, List.copyOf(actions));
         pendingMeridianUse = null;
+        skillBarContextMenu = null;
         return true;
     }
 
@@ -2396,6 +2430,55 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
 
     static boolean isSpiritNicheStone(InventoryItem item) {
         return item != null && "spirit_niche_stone".equals(item.itemId());
+    }
+
+    static boolean isBlockQuickBarBindable(InventoryItem item) {
+        return item != null && !item.isEmpty() && BlockVanillaIconMap.isKnownBlockItem(item.itemId());
+    }
+
+    boolean openSkillBarContextMenu(InventoryItem item, int x, int y) {
+        if (!isBlockQuickBarBindable(item)) {
+            skillBarContextMenu = null;
+            return false;
+        }
+        List<SkillBarMenuAction> actions = new ArrayList<>();
+        for (int i = 0; i < HOTBAR_SLOTS; i++) {
+            actions.add(new SkillBarMenuAction("绑定到 " + (i + 1), i));
+        }
+        skillBarContextMenu = new SkillBarContextMenuState(item, x, y, List.copyOf(actions));
+        pillContextMenu = null;
+        pendingMeridianUse = null;
+        return true;
+    }
+
+    boolean hasOpenSkillBarContextMenu() {
+        return skillBarContextMenu != null;
+    }
+
+    void triggerSkillBarMenuAction(int slot) {
+        if (skillBarContextMenu == null) return;
+        InventoryItem item = skillBarContextMenu.item();
+        skillBarContextMenu = null;
+        bindBlockItemToSkillBar(slot, item);
+    }
+
+    boolean bindBlockItemToSkillBar(int slot, InventoryItem item) {
+        if (slot < 0 || slot >= HOTBAR_SLOTS || !isBlockQuickBarBindable(item)) {
+            return false;
+        }
+        String iconTexture = ItemIconRegistry.itemTexturePath(item.itemId());
+        com.bong.client.network.ClientRequestSender.sendSkillBarBindItem(slot, item.itemId());
+        SkillBarStore.updateSlot(slot, SkillBarEntry.item(
+            item.itemId(),
+            item.displayName(),
+            0,
+            0,
+            iconTexture
+        ));
+        if (hotbarSlots[slot] != null) {
+            hotbarSlots[slot].setItem(item, true);
+        }
+        return true;
     }
 
     private static BlockPos targetPlacementPos() {
@@ -2934,6 +3017,7 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
         updateTooltipFromHover(mouseX, mouseY);
         drawPillMenuOverlay(context, mouseX, mouseY);
         drawWeaponMenuOverlay(context, mouseX, mouseY);
+        drawSkillBarMenuOverlay(context, mouseX, mouseY);
         drawPendingMeridianPrompt(context);
 
         // Body inspect tooltip — drawn here to escape owo-lib component clipping
@@ -3035,6 +3119,10 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
         return weaponContextMenu == null ? 0 : PILL_MENU_PADDING * 2 + weaponContextMenu.actions().size() * PILL_MENU_ROW_HEIGHT;
     }
 
+    private int skillBarMenuHeight() {
+        return skillBarContextMenu == null ? 0 : PILL_MENU_PADDING * 2 + skillBarContextMenu.actions().size() * PILL_MENU_ROW_HEIGHT;
+    }
+
     private int weaponMenuActionIndexAt(double mouseX, double mouseY) {
         if (weaponContextMenu == null) return -1;
         int left = weaponContextMenu.x();
@@ -3045,6 +3133,18 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
         }
         int row = ((int) mouseY - top - PILL_MENU_PADDING) / PILL_MENU_ROW_HEIGHT;
         return row >= 0 && row < weaponContextMenu.actions().size() ? row : -1;
+    }
+
+    private int skillBarMenuActionIndexAt(double mouseX, double mouseY) {
+        if (skillBarContextMenu == null) return -1;
+        int left = skillBarContextMenu.x();
+        int top = skillBarContextMenu.y();
+        int height = skillBarMenuHeight();
+        if (mouseX < left || mouseX >= left + PILL_MENU_WIDTH || mouseY < top || mouseY >= top + height) {
+            return -1;
+        }
+        int row = ((int) mouseY - top - PILL_MENU_PADDING) / PILL_MENU_ROW_HEIGHT;
+        return row >= 0 && row < skillBarContextMenu.actions().size() ? row : -1;
     }
 
     private void drawPillMenuOverlay(DrawContext context, int mouseX, int mouseY) {
@@ -3101,6 +3201,37 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
             context.drawTextWithShadow(
                 textRenderer,
                 Text.literal(weaponContextMenu.actions().get(i).label()),
+                left + 6,
+                rowTop + 4,
+                PILL_MENU_TEXT
+            );
+        }
+        matrices.pop();
+    }
+
+    private void drawSkillBarMenuOverlay(DrawContext context, int mouseX, int mouseY) {
+        if (skillBarContextMenu == null) return;
+        int left = skillBarContextMenu.x();
+        int top = skillBarContextMenu.y();
+        int height = skillBarMenuHeight();
+        var matrices = context.getMatrices();
+        matrices.push();
+        matrices.translate(0, 0, 450);
+        context.fill(left, top, left + PILL_MENU_WIDTH, top + height, PILL_MENU_BG);
+        context.fill(left, top, left + PILL_MENU_WIDTH, top + 1, PILL_MENU_BORDER);
+        context.fill(left, top + height - 1, left + PILL_MENU_WIDTH, top + height, PILL_MENU_BORDER);
+        context.fill(left, top, left + 1, top + height, PILL_MENU_BORDER);
+        context.fill(left + PILL_MENU_WIDTH - 1, top, left + PILL_MENU_WIDTH, top + height, PILL_MENU_BORDER);
+        int hovered = skillBarMenuActionIndexAt(mouseX, mouseY);
+        var textRenderer = MinecraftClient.getInstance().textRenderer;
+        for (int i = 0; i < skillBarContextMenu.actions().size(); i++) {
+            int rowTop = top + PILL_MENU_PADDING + i * PILL_MENU_ROW_HEIGHT;
+            if (i == hovered) {
+                context.fill(left + 1, rowTop, left + PILL_MENU_WIDTH - 1, rowTop + PILL_MENU_ROW_HEIGHT, PILL_MENU_HOVER);
+            }
+            context.drawTextWithShadow(
+                textRenderer,
+                Text.literal(skillBarContextMenu.actions().get(i).label()),
                 left + 6,
                 rowTop + 4,
                 PILL_MENU_TEXT
@@ -3176,6 +3307,7 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
             )
         );
         pillContextMenu = null;
+        skillBarContextMenu = null;
         pendingMeridianUse = null;
         return true;
     }

@@ -1,6 +1,9 @@
 package com.bong.client.mixin;
 
+import com.bong.client.block.BlockVanillaIconMap;
 import com.bong.client.combat.EquippedWeapon;
+import com.bong.client.combat.SkillBarEntry;
+import com.bong.client.combat.SkillBarStore;
 import com.bong.client.combat.WeaponEquippedStore;
 import com.bong.client.inventory.model.EquipSlotType;
 import com.bong.client.inventory.model.InventoryItem;
@@ -69,7 +72,12 @@ public abstract class MixinHeldItemRenderer {
             if (fake != null) this.offHand = fake;
         }
 
-        // plan-lingtian-v1 §1.2.1 — 无 Bong 武器 + 主手装备槽是 Bong 锄头时，合成 fake
+        if (bongMain == null && this.mainHand.isEmpty()) {
+            ItemStack fake = bong$selectedBlockStack().orElse(null);
+            if (fake != null) this.mainHand = fake;
+        }
+
+        // plan-lingtian-v1 §1.2.1 — 无 Bong 武器/方块 + 主手装备槽是 Bong 锄头时，合成 fake
         // vanilla HOE stack 让 HeldItemRenderer 画原生锄头 FP（三档材质区分铁/灵铁/玄铁）。
         if (bongMain == null && this.mainHand.isEmpty()) {
             InventoryItem main = InventoryStateStore.snapshot().equipped().get(EquipSlotType.MAIN_HAND);
@@ -78,5 +86,15 @@ public abstract class MixinHeldItemRenderer {
                 if (fake != null) this.mainHand = fake;
             }
         }
+    }
+
+    private static java.util.Optional<ItemStack> bong$selectedBlockStack() {
+        MinecraftClient client = MinecraftClient.getInstance();
+        if (client == null || client.player == null) return java.util.Optional.empty();
+
+        int selectedSlot = SkillBarStore.selectedSlot();
+        SkillBarEntry entry = SkillBarStore.snapshot().slot(selectedSlot);
+        if (entry == null || entry.kind() != SkillBarEntry.Kind.ITEM) return java.util.Optional.empty();
+        return BlockVanillaIconMap.createStackFor(entry.id());
     }
 }

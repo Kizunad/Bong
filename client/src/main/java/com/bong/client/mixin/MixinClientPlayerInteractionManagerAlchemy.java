@@ -4,7 +4,11 @@ import com.bong.client.alchemy.AlchemyFurnaceItems;
 import com.bong.client.alchemy.AlchemyFurnaceInteractionRules;
 import com.bong.client.alchemy.AlchemyScreenBootstrap;
 import com.bong.client.alchemy.state.AlchemyFurnaceStore;
+import com.bong.client.block.BlockVanillaIconMap;
 import com.bong.client.coffin.CoffinEnterIntentHandler;
+import com.bong.client.combat.SkillBarConfig;
+import com.bong.client.combat.SkillBarEntry;
+import com.bong.client.combat.SkillBarStore;
 import com.bong.client.combat.screen.ZhenfaLayoutScreen;
 import com.bong.client.entity.BongEntityModelKind;
 import com.bong.client.entity.BongModeledEntity;
@@ -116,6 +120,15 @@ public abstract class MixinClientPlayerInteractionManagerAlchemy {
             return;
         }
 
+        InventoryItem selectedBlock = bong$selectedBlockItem(SkillBarStore.selectedSlot(), InventoryStateStore.snapshot());
+        if (selectedBlock != null && selectedBlock.instanceId() > 0) {
+            BlockPos placePos = hit.getBlockPos().offset(hit.getSide());
+            ClientRequestSender.sendBlockPlace(placePos, selectedBlock.instanceId(), bong$zhenfaFace(hit.getSide()));
+            player.swingHand(Hand.MAIN_HAND);
+            cir.setReturnValue(ActionResult.SUCCESS);
+            return;
+        }
+
         // plan-coffin-tiers-v1 P3 — CHEST→coffin_enter 旧路径已退役。
         // P2 起延寿棺改为 marker 实体（坐标 AIR，无 CHEST 方块），进棺统一由
         // CoffinEnterIntentHandler 触发（右键/G → CoffinMenuScreen → [入眠]）。
@@ -133,6 +146,35 @@ public abstract class MixinClientPlayerInteractionManagerAlchemy {
             return false;
         }
         return Math.abs(pos.getX()) <= 8 && pos.getY() >= 60 && pos.getY() <= 90 && Math.abs(pos.getZ()) <= 8;
+    }
+
+    static InventoryItem bong$selectedBlockItem(int selectedSlot, com.bong.client.inventory.model.InventoryModel inventory) {
+        if (selectedSlot < 0 || selectedSlot >= SkillBarConfig.SLOT_COUNT || inventory == null) return null;
+
+        SkillBarEntry entry = SkillBarStore.snapshot().slot(selectedSlot);
+        if (entry == null || entry.kind() != SkillBarEntry.Kind.ITEM) return null;
+        if (!BlockVanillaIconMap.isKnownBlockItem(entry.id())) return null;
+
+        InventoryItem hotbarItem = selectedSlot < inventory.hotbar().size()
+            ? inventory.hotbar().get(selectedSlot)
+            : null;
+        if (bong$matchesInstance(hotbarItem, entry.id())) return hotbarItem;
+
+        for (InventoryItem item : inventory.hotbar()) {
+            if (bong$matchesInstance(item, entry.id())) return item;
+        }
+        for (var gridEntry : inventory.gridItems()) {
+            InventoryItem item = gridEntry.item();
+            if (bong$matchesInstance(item, entry.id())) return item;
+        }
+        return null;
+    }
+
+    private static boolean bong$matchesInstance(InventoryItem item, String templateId) {
+        return item != null
+            && !item.isEmpty()
+            && item.instanceId() > 0
+            && templateId.equals(item.itemId());
     }
 
     private static ClientRequestProtocol.ZhenfaKind bong$zhenfaKindForItem(InventoryItem item) {
