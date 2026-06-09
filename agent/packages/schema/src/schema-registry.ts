@@ -202,6 +202,10 @@ import {
   TribulationPhaseV1,
 } from "./tribulation.js";
 import {
+  TiandaoHuntNarrationRequestV1,
+  TiandaoHuntResponseLevelV1,
+} from "./tiandao-hunt-narration.js";
+import {
   BarrierGeometryV1,
   VoidActionBroadcastV1,
   VoidActionCooldownV1,
@@ -494,6 +498,8 @@ export const SCHEMA_REGISTRY = {
   calamityKindV1: CalamityKindV1,
   calamityIntentV1: CalamityIntentV1,
   narrationV1: NarrationV1,
+  tiandaoHuntResponseLevelV1: TiandaoHuntResponseLevelV1,
+  tiandaoHuntNarrationRequestV1: TiandaoHuntNarrationRequestV1,
   zonePressureLevelV1: ZonePressureLevelV1,
   zonePressureCrossedV1: ZonePressureCrossedV1,
   ratPhaseV1: RatPhaseV1,
@@ -919,6 +925,10 @@ export const GENERATED_SCHEMA_FILES = {
   "calamity-kind-v1.json": SCHEMA_REGISTRY.calamityKindV1,
   "calamity-intent-v1.json": SCHEMA_REGISTRY.calamityIntentV1,
   "narration-v1.json": SCHEMA_REGISTRY.narrationV1,
+  "tiandao-hunt-response-level-v1.json":
+    SCHEMA_REGISTRY.tiandaoHuntResponseLevelV1,
+  "tiandao-hunt-narration-request-v1.json":
+    SCHEMA_REGISTRY.tiandaoHuntNarrationRequestV1,
   "zone-pressure-level-v1.json": SCHEMA_REGISTRY.zonePressureLevelV1,
   "zone-pressure-crossed-v1.json": SCHEMA_REGISTRY.zonePressureCrossedV1,
   "rat-phase-v1.json": SCHEMA_REGISTRY.ratPhaseV1,

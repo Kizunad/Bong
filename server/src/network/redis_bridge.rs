@@ -45,9 +45,10 @@ use crate::schema::channels::{
     CH_SOCIAL_EXPOSURE, CH_SOCIAL_FEUD, CH_SOCIAL_NICHE_INTRUSION, CH_SOCIAL_PACT,
     CH_SOCIAL_RENOWN_DELTA, CH_SPIRIT_EYE_DISCOVERED, CH_SPIRIT_EYE_MIGRATE,
     CH_SPIRIT_EYE_USED_FOR_BREAKTHROUGH, CH_SPIRIT_TREASURE_DIALOGUE,
-    CH_SPIRIT_TREASURE_DIALOGUE_REQUEST, CH_STYLE_BALANCE_TELEMETRY, CH_TRIBULATION,
-    CH_TRIBULATION_COLLAPSE, CH_TRIBULATION_LOCK, CH_TRIBULATION_OMEN, CH_TRIBULATION_SETTLE,
-    CH_TRIBULATION_WAVE, CH_TSY_EVENT, CH_TUIKE_ASH_DECAY, CH_TUIKE_SHED, CH_TUIKE_V2_SKILL_EVENT,
+    CH_SPIRIT_TREASURE_DIALOGUE_REQUEST, CH_STYLE_BALANCE_TELEMETRY,
+    CH_TIANDAO_HUNT_NARRATION_REQUEST, CH_TRIBULATION, CH_TRIBULATION_COLLAPSE,
+    CH_TRIBULATION_LOCK, CH_TRIBULATION_OMEN, CH_TRIBULATION_SETTLE, CH_TRIBULATION_WAVE,
+    CH_TSY_EVENT, CH_TUIKE_ASH_DECAY, CH_TUIKE_SHED, CH_TUIKE_V2_SKILL_EVENT,
     CH_VOID_ACTION_BARRIER, CH_VOID_ACTION_EXPLODE_ZONE, CH_VOID_ACTION_LEGACY_ASSIGN,
     CH_VOID_ACTION_SUPPRESS_TSY, CH_VOID_EROSION_EVENT, CH_WANTED_PLAYER, CH_WEATHER_EVENT_UPDATE,
     CH_WOLIU_BACKFIRE, CH_WOLIU_PROJECTILE_DRAINED, CH_WOLIU_V2_BACKFIRE, CH_WOLIU_V2_CAST,
@@ -102,6 +103,7 @@ use crate::schema::spirit_eye::{
 };
 use crate::schema::spirit_treasure::{SpiritTreasureDialogueRequestV1, SpiritTreasureDialogueV1};
 use crate::schema::style_balance::StyleBalanceTelemetryEventV1;
+use crate::schema::tiandao_hunt_narration::TiandaoHuntNarrationRequestV1;
 use crate::schema::tribulation::{TribulationEventV1, TribulationKindV1, TribulationPhaseV1};
 use crate::schema::tsy::{TsyEnterEventV1, TsyExitEventV1};
 use crate::schema::tsy_hostile::{TsyNpcSpawnedV1, TsySentinelPhaseChangedV1};
@@ -170,6 +172,7 @@ pub enum RedisOutbound {
     AlchemyInsight(AlchemyInsightV1),
     CultivationDeath(CultivationDeathV1),
     InsightRequest(InsightRequestV1),
+    TiandaoHuntNarrationRequest(TiandaoHuntNarrationRequestV1),
     HeartDemonRequest(HeartDemonPregenRequestV1),
     SpiritTreasureDialogueRequest(SpiritTreasureDialogueRequestV1),
     DeathInsight(DeathInsightRequestV1),
@@ -783,6 +786,17 @@ fn prepare_outbound_command(message: RedisOutbound) -> Result<RedisIoCommand, Va
             })?;
             Ok(RedisIoCommand::Publish {
                 channel: CH_INSIGHT_REQUEST,
+                payload,
+            })
+        }
+        RedisOutbound::TiandaoHuntNarrationRequest(evt) => {
+            let payload = serde_json::to_string(&evt).map_err(|error| {
+                ValidationError::new(format!(
+                    "failed to serialize TiandaoHuntNarrationRequestV1: {error}"
+                ))
+            })?;
+            Ok(RedisIoCommand::Publish {
+                channel: CH_TIANDAO_HUNT_NARRATION_REQUEST,
                 payload,
             })
         }
@@ -3233,6 +3247,35 @@ mod redis_bridge_tests {
                 let v: Value = serde_json::from_str(&payload).unwrap();
                 assert_eq!(v["trigger_id"], "heart_demon:1:1000");
                 assert_eq!(v["recent_biography"][0], "t240:reach:Spirit");
+            }
+            other => panic!("expected publish, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn publishes_tiandao_hunt_narration_request_on_dedicated_channel() {
+        let command = prepare_outbound_command(RedisOutbound::TiandaoHuntNarrationRequest(
+            TiandaoHuntNarrationRequestV1 {
+                v: 1,
+                character_id: "offline:Alice".into(),
+                realm: "Spirit".into(),
+                attention_level: 72.5,
+                response_level:
+                    crate::schema::tiandao_hunt_narration::TiandaoHuntResponseLevelV1::Tribulation,
+                zone: "血谷".into(),
+                recent_actions: vec!["activity:meditating".into()],
+                narration_count: 2,
+            },
+        ))
+        .expect("tiandao hunt narration request should serialize");
+
+        match command {
+            RedisIoCommand::Publish { channel, payload } => {
+                assert_eq!(channel, CH_TIANDAO_HUNT_NARRATION_REQUEST);
+                let v: Value = serde_json::from_str(&payload).unwrap();
+                assert_eq!(v["character_id"], "offline:Alice");
+                assert_eq!(v["response_level"], "tribulation");
+                assert_eq!(v["narration_count"], 2);
             }
             other => panic!("expected publish, got {other:?}"),
         }

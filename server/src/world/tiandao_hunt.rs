@@ -3,9 +3,14 @@ use crate::cultivation::components::{Cultivation, Realm};
 use crate::cultivation::tick::{CultivationClock, CultivationSessionPracticeAccumulator};
 use crate::network::audio_event_emit::{AudioRecipient, PlaySoundRecipeRequest};
 use crate::network::vfx_event_emit::VfxEventRequest;
+use crate::network::{redis_bridge::RedisOutbound, RedisBridgeResource};
 use crate::player::state::canonical_player_id;
 use crate::schema::agent_command::Command;
 use crate::schema::common::CommandType;
+use crate::schema::cultivation::realm_to_string;
+use crate::schema::tiandao_hunt_narration::{
+    TiandaoHuntNarrationRequestV1, TiandaoHuntResponseLevelV1,
+};
 use crate::schema::vfx_event::VfxEventPayloadV1;
 use crate::social::{position_is_within_own_active_spirit_niche, SpiritNicheRegistry};
 use crate::world::calamity::{EVENT_BEAST_TIDE, EVENT_REALM_COLLAPSE, EVENT_THUNDER_TRIBULATION};
@@ -45,6 +50,7 @@ pub struct TiandaoAttention {
     pub peak_level: f64,
     pub last_response_tick: u64,
     pub last_emitted_response: TiandaoResponseLevel,
+    pub narration_count: u32,
 }
 
 impl Default for TiandaoAttention {
@@ -57,6 +63,7 @@ impl Default for TiandaoAttention {
             peak_level: 0.0,
             last_response_tick: 0,
             last_emitted_response: TiandaoResponseLevel::None,
+            narration_count: 0,
         }
     }
 }
@@ -109,6 +116,7 @@ pub struct TiandaoHuntResources<'w, 's> {
     active_events: Option<ResMut<'w, ActiveEventsResource>>,
     vfx_events: Option<ResMut<'w, Events<VfxEventRequest>>>,
     audio_events: Option<ResMut<'w, Events<PlaySoundRecipeRequest>>>,
+    redis: Option<Res<'w, RedisBridgeResource>>,
 }
 
 #[derive(SystemParam)]
@@ -126,6 +134,7 @@ struct TiandaoResponseSinks<'a> {
     active_events: Option<&'a mut ActiveEventsResource>,
     vfx_events: Option<&'a mut Events<VfxEventRequest>>,
     audio_events: Option<&'a mut Events<PlaySoundRecipeRequest>>,
+    redis: Option<&'a RedisBridgeResource>,
 }
 
 #[derive(Debug, Clone, Default, Resource)]
@@ -191,6 +200,18 @@ impl Default for TiandaoActivity {
     }
 }
 
+impl TiandaoActivity {
+    pub const fn as_wire(self) -> &'static str {
+        match self {
+            Self::Meditating => "meditating",
+            Self::Combat => "combat",
+            Self::Moving => "moving",
+            Self::Standing => "standing",
+            Self::InNiche => "in_niche",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct TiandaoAttentionInput {
     pub realm: Realm,
@@ -218,6 +239,18 @@ pub enum DeceiveHeavenOutcome {
     Expired,
     Diverted,
     Revealed,
+}
+
+impl DeceiveHeavenOutcome {
+    pub const fn as_wire(self) -> &'static str {
+        match self {
+            Self::None => "none",
+            Self::TooClose => "too_close",
+            Self::Expired => "expired",
+            Self::Diverted => "diverted",
+            Self::Revealed => "revealed",
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -539,6 +572,7 @@ pub fn tiandao_hunt_tick(
                 active_events: resources.active_events.as_deref_mut(),
                 vfx_events: resources.vfx_events.as_deref_mut(),
                 audio_events: resources.audio_events.as_deref_mut(),
+                redis: resources.redis.as_deref(),
             },
             now_tick,
         );
@@ -580,6 +614,8 @@ pub fn apply_attention_eval(
             position: position.0,
             zone_name: zone.map(|(name, _)| name),
             zone_spirit_qi,
+            realm: cultivation.realm,
+            activity: context.activity,
             response: attention.response,
             level: attention.level,
             countermeasure,
@@ -604,6 +640,8 @@ pub struct TiandaoEvalSnapshot {
     pub position: DVec3,
     pub zone_name: Option<String>,
     pub zone_spirit_qi: f64,
+    pub realm: Realm,
+    pub activity: TiandaoActivity,
     pub response: TiandaoResponseLevel,
     pub level: f64,
     pub countermeasure: TiandaoCountermeasureOutcome,
@@ -836,6 +874,13 @@ fn apply_tiandao_response_chain(
     {
         return;
     }
+    let narration_count = if attention.last_emitted_response == eval.response {
+        attention.narration_count = attention.narration_count.saturating_add(1);
+        attention.narration_count
+    } else {
+        attention.narration_count = 0;
+        0
+    };
     attention.last_response_tick = now_tick;
     attention.last_emitted_response = eval.response;
 
@@ -846,6 +891,14 @@ fn apply_tiandao_response_chain(
         (sinks.vfx_events, tiandao_vfx_request(&eval, profile))
     {
         vfx_events.send(request);
+    }
+    if let (Some(redis), Some(request)) = (
+        sinks.redis,
+        tiandao_narration_request(&eval, username, narration_count),
+    ) {
+        let _ = redis
+            .tx_outbound
+            .send(RedisOutbound::TiandaoHuntNarrationRequest(request));
     }
 
     let Some(event_name) = profile.event_name else {
@@ -1015,6 +1068,37 @@ fn tiandao_spawn_event_command(
     }
 }
 
+fn tiandao_narration_request(
+    eval: &TiandaoEvalSnapshot,
+    username: &str,
+    narration_count: u32,
+) -> Option<TiandaoHuntNarrationRequestV1> {
+    let response_level = TiandaoHuntResponseLevelV1::try_from(eval.response).ok()?;
+    Some(TiandaoHuntNarrationRequestV1::new(
+        canonical_player_id(username),
+        realm_to_string(eval.realm),
+        eval.level,
+        response_level,
+        eval.zone_name.as_deref().unwrap_or("unknown"),
+        tiandao_recent_actions(eval),
+        narration_count,
+    ))
+}
+
+fn tiandao_recent_actions(eval: &TiandaoEvalSnapshot) -> Vec<String> {
+    let mut actions = vec![
+        format!("activity:{}", eval.activity.as_wire()),
+        format!("zone_qi:{:.3}", eval.zone_spirit_qi),
+    ];
+    if eval.countermeasure.deceive_heaven != DeceiveHeavenOutcome::None {
+        actions.push(format!(
+            "countermeasure:deceive_heaven_{}",
+            eval.countermeasure.deceive_heaven.as_wire()
+        ));
+    }
+    actions
+}
+
 fn emit_tiandao_presence_payload(
     client: &mut Client,
     realm: Realm,
@@ -1078,6 +1162,20 @@ impl TiandaoResponseLevel {
             Self::Pressure => 2,
             Self::Tribulation => 3,
             Self::Annihilate => 4,
+        }
+    }
+}
+
+impl TryFrom<TiandaoResponseLevel> for TiandaoHuntResponseLevelV1 {
+    type Error = ();
+
+    fn try_from(value: TiandaoResponseLevel) -> Result<Self, Self::Error> {
+        match value {
+            TiandaoResponseLevel::None => Err(()),
+            TiandaoResponseLevel::Watch => Ok(Self::Watch),
+            TiandaoResponseLevel::Pressure => Ok(Self::Pressure),
+            TiandaoResponseLevel::Tribulation => Ok(Self::Tribulation),
+            TiandaoResponseLevel::Annihilate => Ok(Self::Annihilate),
         }
     }
 }
@@ -1448,6 +1546,56 @@ mod tests {
         );
 
         (snapshot, attention)
+    }
+
+    fn narration_test_snapshot(response: TiandaoResponseLevel, level: f64) -> TiandaoEvalSnapshot {
+        TiandaoEvalSnapshot {
+            position: DVec3::new(1.2, 64.0, -3.4),
+            zone_name: Some("spawn".to_string()),
+            zone_spirit_qi: 0.6,
+            realm: Realm::Spirit,
+            activity: TiandaoActivity::Meditating,
+            response,
+            level,
+            countermeasure: TiandaoCountermeasureOutcome::default(),
+        }
+    }
+
+    fn narration_test_bridge() -> (
+        RedisBridgeResource,
+        crossbeam_channel::Receiver<RedisOutbound>,
+    ) {
+        let (tx_outbound, rx_outbound) = crossbeam_channel::unbounded();
+        let (_tx_inbound, rx_inbound) = crossbeam_channel::unbounded();
+        (
+            RedisBridgeResource {
+                tx_outbound,
+                rx_inbound,
+            },
+            rx_outbound,
+        )
+    }
+
+    fn expect_tiandao_narration_request(
+        rx: &crossbeam_channel::Receiver<RedisOutbound>,
+    ) -> TiandaoHuntNarrationRequestV1 {
+        match rx
+            .try_recv()
+            .expect("expected one tiandao narration outbound")
+        {
+            RedisOutbound::TiandaoHuntNarrationRequest(payload) => payload,
+            other => panic!("expected TiandaoHuntNarrationRequest, got {other:?}"),
+        }
+    }
+
+    fn narration_test_sinks(redis: &RedisBridgeResource) -> TiandaoResponseSinks<'_> {
+        TiandaoResponseSinks {
+            zones: None,
+            active_events: None,
+            vfx_events: None,
+            audio_events: None,
+            redis: Some(redis),
+        }
     }
 
     #[test]
@@ -2353,6 +2501,8 @@ mod tests {
             position: DVec3::new(1.2, 64.0, -3.4),
             zone_name: Some("spawn".to_string()),
             zone_spirit_qi: 0.6,
+            realm: Realm::Spirit,
+            activity: TiandaoActivity::Standing,
             response: TiandaoResponseLevel::Watch,
             level: 20.0,
             countermeasure: TiandaoCountermeasureOutcome::default(),
@@ -2370,5 +2520,128 @@ mod tests {
             tiandao_vfx_request(&eval, profile).is_none(),
             "Watch 级按 plan 只给 HUD/音效氛围，不产生可见粒子"
         );
+    }
+
+    #[test]
+    fn watch_response_publishes_narration_request_before_event_name_gate() {
+        let (redis, rx) = narration_test_bridge();
+        let mut attention = TiandaoAttention::default();
+
+        apply_tiandao_response_chain(
+            &mut attention,
+            narration_test_snapshot(TiandaoResponseLevel::Watch, 20.0),
+            Entity::from_raw(42),
+            "Alice",
+            TiandaoResponseSinks {
+                zones: None,
+                active_events: None,
+                vfx_events: None,
+                audio_events: None,
+                redis: Some(&redis),
+            },
+            200,
+        );
+
+        let payload = expect_tiandao_narration_request(&rx);
+        assert_eq!(payload.character_id, "offline:Alice");
+        assert_eq!(payload.realm, "Spirit");
+        assert_eq!(payload.attention_level, 20.0);
+        assert_eq!(payload.response_level, TiandaoHuntResponseLevelV1::Watch);
+        assert_eq!(payload.zone, "spawn");
+        assert_eq!(payload.narration_count, 0);
+        assert!(
+            payload
+                .recent_actions
+                .iter()
+                .any(|entry| entry == "activity:meditating"),
+            "recent_actions must carry the activity context used by the agent prompt"
+        );
+    }
+
+    #[test]
+    fn narration_request_respects_interval_and_increments_same_response_count() {
+        let (redis, rx) = narration_test_bridge();
+        let mut attention = TiandaoAttention::default();
+
+        apply_tiandao_response_chain(
+            &mut attention,
+            narration_test_snapshot(TiandaoResponseLevel::Watch, 20.0),
+            Entity::from_raw(42),
+            "Alice",
+            narration_test_sinks(&redis),
+            200,
+        );
+        assert_eq!(expect_tiandao_narration_request(&rx).narration_count, 0);
+
+        apply_tiandao_response_chain(
+            &mut attention,
+            narration_test_snapshot(TiandaoResponseLevel::Watch, 21.0),
+            Entity::from_raw(42),
+            "Alice",
+            narration_test_sinks(&redis),
+            200 + tiandao_response_profile(TiandaoResponseLevel::Watch)
+                .unwrap()
+                .interval_ticks
+                - 1,
+        );
+        assert!(
+            rx.try_recv().is_err(),
+            "same response inside interval must not publish duplicate narration"
+        );
+
+        apply_tiandao_response_chain(
+            &mut attention,
+            narration_test_snapshot(TiandaoResponseLevel::Watch, 22.0),
+            Entity::from_raw(42),
+            "Alice",
+            narration_test_sinks(&redis),
+            200 + tiandao_response_profile(TiandaoResponseLevel::Watch)
+                .unwrap()
+                .interval_ticks,
+        );
+        assert_eq!(expect_tiandao_narration_request(&rx).narration_count, 1);
+    }
+
+    #[test]
+    fn narration_count_resets_when_response_level_upgrades() {
+        let (redis, rx) = narration_test_bridge();
+        let mut attention = TiandaoAttention::default();
+
+        apply_tiandao_response_chain(
+            &mut attention,
+            narration_test_snapshot(TiandaoResponseLevel::Watch, 20.0),
+            Entity::from_raw(42),
+            "Alice",
+            narration_test_sinks(&redis),
+            200,
+        );
+        let _ = expect_tiandao_narration_request(&rx);
+
+        apply_tiandao_response_chain(
+            &mut attention,
+            narration_test_snapshot(TiandaoResponseLevel::Watch, 22.0),
+            Entity::from_raw(42),
+            "Alice",
+            narration_test_sinks(&redis),
+            200 + tiandao_response_profile(TiandaoResponseLevel::Watch)
+                .unwrap()
+                .interval_ticks,
+        );
+        assert_eq!(expect_tiandao_narration_request(&rx).narration_count, 1);
+
+        apply_tiandao_response_chain(
+            &mut attention,
+            narration_test_snapshot(TiandaoResponseLevel::Pressure, 41.0),
+            Entity::from_raw(42),
+            "Alice",
+            narration_test_sinks(&redis),
+            200 + tiandao_response_profile(TiandaoResponseLevel::Watch)
+                .unwrap()
+                .interval_ticks
+                + 1,
+        );
+        let payload = expect_tiandao_narration_request(&rx);
+        assert_eq!(payload.response_level, TiandaoHuntResponseLevelV1::Pressure);
+        assert_eq!(payload.narration_count, 0);
     }
 }

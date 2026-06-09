@@ -15,6 +15,7 @@ import { ScatteredCultivatorNarrationRuntime } from "./scattered-cultivator-narr
 import { SkillLvUpNarrationRuntime } from "./skill-lv-up-runtime.js";
 import { SpiritTreasureDialogueRuntime } from "./spirit-treasure-dialogue-runtime.js";
 import { TribulationNarrationRuntime } from "./tribulation-runtime.js";
+import { TiandaoHuntNarrationRuntime } from "./tiandao-hunt-narration-runtime.js";
 import { TuikeNarrationRuntime } from "./tuike-narration.js";
 import { TuikeAshDecayNarrationRuntime } from "./tuike_ash_runtime.js";
 import { TuikeV2NarrationRuntime } from "./tuike_v2_runtime.js";
@@ -254,8 +255,12 @@ async function startAuxiliaryRuntimes(config: RuntimeConfig): Promise<RuntimeCle
   const politicalCleanup = await startPoliticalRuntime({
     ...runtimeOpts,
   });
+  const tiandaoHuntCleanup = await startTiandaoHuntNarrationRuntime({
+    ...runtimeOpts,
+  });
 
   return [
+    tiandaoHuntCleanup,
     politicalCleanup,
     spiritTreasureCleanup,
     heartDemonCleanup,
@@ -287,6 +292,51 @@ async function startAuxiliaryRuntimes(config: RuntimeConfig): Promise<RuntimeCle
     deathInsightCleanup,
     insightCleanup,
   ];
+}
+
+async function startTiandaoHuntNarrationRuntime(opts: {
+  redisUrl: string;
+  baseUrl?: string;
+  apiKey?: string;
+  model: string;
+}): Promise<() => Promise<void>> {
+  const IORedisCtor = ((Redis as unknown as { default?: unknown }).default ??
+    Redis) as new (url: string) => unknown;
+  const sub = new IORedisCtor(opts.redisUrl) as ConstructorParameters<
+    typeof TiandaoHuntNarrationRuntime
+  >[0]["sub"];
+  const pub = new IORedisCtor(opts.redisUrl) as ConstructorParameters<
+    typeof TiandaoHuntNarrationRuntime
+  >[0]["pub"];
+
+  const llm: LlmClient = opts.baseUrl && opts.apiKey
+    ? createLlmClient({
+        baseURL: opts.baseUrl,
+        apiKey: opts.apiKey,
+        model: opts.model,
+      })
+    : createMockClient();
+
+  const runtime = new TiandaoHuntNarrationRuntime({
+    llm,
+    model: opts.model,
+    sub,
+    pub,
+  });
+  runtime
+    .connect()
+    .then(() => console.log("[tiandao] tiandao hunt narration runtime online"))
+    .catch((error) =>
+      console.warn("[tiandao] tiandao hunt narration runtime failed to start:", error),
+    );
+  return async () => {
+    const timeout = new Promise<void>((resolve) => setTimeout(resolve, 500));
+    try {
+      await Promise.race([runtime.disconnect(), timeout]);
+    } catch (error) {
+      console.warn("[tiandao] tiandao hunt narration runtime disconnect error:", error);
+    }
+  };
 }
 
 async function startBreakthroughCinematicRuntime(opts: {

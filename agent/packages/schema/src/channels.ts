@@ -15,6 +15,9 @@ export const CHANNELS = {
   /** Agent → Server: 叙事文本，转发给客户端 (Pub/Sub) */
   AGENT_NARRATE: "bong:agent_narrate",
 
+  /** Server → Agent: 天道狩猎专属叙事请求（plan-tiandao-hunt-v1 P3） */
+  TIANDAO_HUNT_NARRATION_REQUEST: "bong:tiandao_hunt_narration_request",
+
   /** Agent → Server: WorldModel 快照权威上报（Task 5）(Pub/Sub) */
   AGENT_WORLD_MODEL: "bong:agent_world_model",
 
@@ -367,6 +370,7 @@ export const REDIS_V1_CHANNELS = [
   CHANNELS.PLAYER_CHAT,
   CHANNELS.AGENT_COMMAND,
   CHANNELS.AGENT_NARRATE,
+  CHANNELS.TIANDAO_HUNT_NARRATION_REQUEST,
   CHANNELS.AGENT_WORLD_MODEL,
   CHANNELS.CALAMITY_INTENT,
   CHANNELS.SEASON_CHANGED,
