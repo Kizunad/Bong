@@ -1,8 +1,8 @@
-# plan-economy-zombie-cleanup-v1 — 经济/流派类僵尸物品消杀(骨架)
+# plan-economy-zombie-cleanup-v1 — 经济/流派/材料/工具类僵尸物品消杀(骨架)
 
-> 一句话:处理僵尸物品审计「经济/站台/流派系统缺失(10)」类——2 个蜕壳流伪装道具接通、2 个换代放置 kit 清理、6 个无系统经济物品删除。
+> 一句话:僵尸物品审计的集中删除/接通 plan——2 个蜕壳流伪装道具接通、2 个换代放置 kit 清理、6 个无系统经济物品删除、9 个材料断链/工具类删除(2026-06-10 扩入)。
 >
-> 来源:僵尸物品审计;用户拍板 2026-06-10:「#1/#3 立一个,#2 就算了删除吧」。
+> 来源:僵尸物品审计;用户拍板 2026-06-10:「#1/#3 立一个,#2 就算了删除吧」+「工具 4 直接删除,该做适配的适配」(适配 2 件见 [[plan-gathering-tool-bind-v1]])。
 
 **依赖**:无(纯接通/清理,不依赖其他 plan;kit 处理与 plan-block-lifecycle-v1 已落地的放置链路只读对接)。
 
@@ -11,6 +11,7 @@
 | P0 | 蜕壳流伪装道具接通(disguise_wrap / camouflage_net) | ⬜ |
 | P1 | 放置 kit 换代清理(forge_station_kit / furnace_kit_fantie) | ⬜ |
 | P2 | 6 个经济物品删除(bone_coin_blank 等) | ⬜ |
+| P3 | 9 个材料断链/工具类删除(2026-06-10 扩入,调查 workflow 裁决) | ⬜ |
 
 ---
 
@@ -63,6 +64,34 @@
 - 现存量处理:玩家背包/箱内已有实例的迁移策略(直接消失 vs 折 bone_coin 返还),pre-P0 收口拍板(见 §8 #3)
 - 测试:registry 加载无死 ID;loot/NPC stock/配方全仓 grep 0 引用;启动 smoke 不崩
 
+## P3 — 9 个材料断链/工具类删除(2026-06-10 扩入)
+
+来源:材料断链调查 workflow(opus 抽查 5/5 证据属实)。裁决原则同 P2:需整套新系统支撑才能活的删;差临门一脚的适配(herb_bundle/cao_lian 两件)移 [[plan-gathering-tool-bind-v1]]。
+
+**材料断链 5(+1 连带)**:
+
+| id | 名称 | 删除理由 | 落点 |
+|----|------|---------|------|
+| `powder_zhu_sha` | 朱砂粉 | 炼丹直接吃原矿 NBT(`material=zhu_sha_aux, mineral_id=zhu_sha`),粉中间体被设计放弃,符箓无 plan | 模板 workbench_materials.toml:142-150 + 配方 #29 |
+| `iron_sword_blank` | 铁剑胚 | 所有 forge blueprint 一步直用 fan_tie,接通需重做 multi-step tempering 整套 | 模板 :677-685 + 配方 #53;blueprint 不受影响 |
+| `stone_spearhead` | 石矛头 | 无矛 WeaponKind/模板/蓝图(NPC 的矛是硬编码 zhinian_spear),接通=新武器类型 | 模板 :616-624 + 配方 #56 |
+| `sling_stone` | 弹弓石 | 弹弓退化为近战刺击(player_attack.rs:117/125)无弹药消耗;weapon-v1 正典明确不做 ranged | 模板 :644-652 + 配方 #58 |
+| `sling_weapon` | 弹弓(连带) | sling_stone 删+ranged 不立项后,这把近战兜底"弓"无独立价值 | 模板 :627-641 + 配方 #57 |
+
+**工具 4(用户指示直接删)**:
+
+| id | 名称 | 落点 |
+|----|------|------|
+| `stone_hoe` | 石锄 | 模板 :340-348 + 配方 #3(L124-131);无 ToolKind/GatheringToolSpec 接线零 runtime |
+| `mortar_stone` | 研钵 | 模板 :351-359 + 配方 #7(L162-171) |
+| `heat_gloves` | 隔热手套 | 模板 :362-370 + 配方 #10(L192-201,随行删 scroll_workbench_heat_gloves unlock)。⚠️**严防误删 `bing_jia_shou_tao`(冰甲手套)**——后者是 xue_po_lian 的 required_tool(botany/registry.rs:240),两者是不同 item |
+| `trade_scale` | 交易秤 | 模板 :771 + 配方 #9(L182-191)。**修 P2 红旗:原 P2 列了 trade_scale_stand 却漏 trade_scale 本体**——stand 配方(#85,L1161-1171)消耗 trade_scale,四处必须同 PR 原子删:scale 模板/配方#9/stand 模板/stand 配方#85 |
+
+- client icon 一并删:`textures/gui/items/{stone_hoe,mortar_stone,heat_gloves,trade_scale,trade_scale_stand,powder_zhu_sha,iron_sword_blank,stone_spearhead,sling_stone,sling_weapon}.png`(存在的删,build 产物随 gradle 重建不手删)
+- 影响面已核验:ToolKind 枚举/GATHERING_TOOL_SPECS/loot/NPC/agent/client Java 均零引用,删除不产生测试红灯
+- 存量迁移:这批仅 dev `/give` 可得,无 gameplay 来源,风险极低——item-load 路径加"未知 template_id 静默丢弃 + warn 日志"兜底(若尚无),不做主动迁移脚本
+- 测试:同 P2(registry 加载/全仓 grep 0 引用/smoke);兜底丢弃路径专属用例(未知 id 不 panic + 日志断言)
+
 ---
 
 ## §8 开放问题(P0 决策门前需收口)
@@ -71,3 +100,4 @@
 2. **P1 删 ID vs 改产物**:倾向改产物,需先核 `fan_iron_anvil`/`furnace_fantie` 是否已有自己的配方(有则旧配方直接删,无则改产物)
 3. **存量实例迁移**:删除的 6 个 id 在已存档玩家库存中的处理(建议:加载时折算 bone_coin 返还,按 base_weight 估价;或直接清除+narration 一句)
 4. **camouflage_net 的 grid 2×2**:若走 A 路线,遮蔽网放置形态是否依赖 plan-workbench-place-runtime-v1(是则 P0 拆出该效果延后)
+5. **P3 存量兜底现状**:item-load 对未知 template_id 的行为(panic? 跳过?)实施前 grep 确认,无兜底则 P3 先补
