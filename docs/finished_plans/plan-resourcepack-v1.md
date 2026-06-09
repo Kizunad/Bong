@@ -4,7 +4,7 @@
 
 **来源**：`plan-mineral-v2.md` P5 §6 "待立 `plan-resourcepack-v1`（P5 Valence `ResourcePackPrompt` 接入）"；早期架构备忘（`docs/scribble.md`）"热更新微端 + 资源包版本校验"
 
-**交叉引用**：`plan-mineral-v2.md` ✅（已有 `bong-mineral-v1.zip` 基础 + `scripts/build-resourcepack.sh` 雏形 + `ResourcePackConfig` Resource）· `plan-entity-model-v1.md` ✅（BBModel / GeckoLib 模型资产，输入本 pack）· `plan-vfx-v1.md` ✅（VFX 粒子贴图资产）· `plan-audio-v1.md` ✅（audio_recipe 引用的 sound 文件）· `plan-audio-world-v1.md` ✅（世界音效文件）· `plan-model-asset-v1.md` ⬜ skeleton（Tripo3D 生成的 3D 物品模型）
+**交叉引用**：`plan-mineral-v2.md` ✅（已有 `bong-mineral-v1.zip` 基础 + `scripts/build-resourcepack.sh` 雏形 + `ResourcePackConfig` Resource）· `plan-entity-model-v1.md` ✅（BBModel / GeckoLib 模型资产，输入本 pack）· `plan-vfx-v1.md` ✅（VFX 粒子贴图资产）· `plan-audio-v1.md` ✅（audio_recipe 引用的 sound 文件）· `plan-audio-world-v1.md` ✅（世界音效文件）· `plan-model-asset-v1.md` ✅ archived（2026-06-09 归档；仅 P-done 19 个 Tripo3D 模型可用，P0-P4 因会员到期作废）
 
 **worldview 锚点**：无直接世界观锚（纯基础设施 plan）；服务世界观所有视听内容的交付质量——资源包不下发 → 玩家看不到自定义粒子/模型 → 所有 VFX/NPC 皮肤计划的视听规格失效。
 

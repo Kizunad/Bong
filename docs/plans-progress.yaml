@@ -510,9 +510,8 @@ plans:
   pr_refs:
   - 159
   blocking_on:
-  - plan-gameplay-acceptance-v1
   - scripts/e2e/p0-p5
-  summary: 下游能力已有 spawn_plain、BreakthroughRequest、MiniBodyHudPlanner、VoidAction 等代码证据；仍缺完整 100h 主线 E2E。
+  summary: 下游能力已有 spawn_plain、BreakthroughRequest、MiniBodyHudPlanner、VoidAction 等代码证据；仍缺完整 100h 主线 E2E（验收规格内联在 §H，原 plan-gameplay-acceptance-v1 已于 2026-06-09 移除）。
 - file: finished_plans/plan-multi-life-v1.md
   group: gameplay-npc
   title: 多世人生与历代生平
@@ -725,26 +724,15 @@ plans:
   - 167
   blocking_on: []
   summary: TerrainProvider layer 查询、layer_names、LayerSchema、39 条 fixture、dump_layer_registry.py 与 fixture test 已落地。
-- file: plan-gameplay-acceptance-v1.md
-  group: gameplay-npc
-  title: 终极验收：6 段 E2E + 100h 实测
-  state: active-design
-  percent: 5
-  last_updated: '2026-06-08'
-  pr_refs: []
-  blocking_on:
-  - 所有前置 42 plan
-  summary: 已升 active 但仍是 Wave 5 收口验收；所有前置 plan 完成前不适合 consume。
-- file: plan-model-asset-v1.md
+- file: finished_plans/plan-model-asset-v1.md
   group: infrastructure
   title: Tripo3D 模型资产批产
-  state: active-design
-  percent: 5
-  last_updated: '2026-06-08'
+  state: merged
+  percent: 100
+  last_updated: '2026-06-09'
   pr_refs: []
-  blocking_on:
-  - 资产预算/外部生成策略重新确认
-  summary: 已升 active 但旧 Tripo3D 到期前提过期；消费前需改成现有资产整理与后续生成接入计划。
+  blocking_on: []
+  summary: 时限驱动 plan，会员 2026-05-17 到期、积分清零。P-done 19 个模型 + tripo_batch_gen.py 工具链已落地；P0-P4 不可执行已作废。2026-06-09 归档 finished_plans。
 - file: mvp01-plan.md
   group: finished
   title: MVP 0.1 — Server scaffold + NPC + Fabric Client
