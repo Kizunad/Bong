@@ -55,11 +55,23 @@
 
 ## P4 — client 双击开浮动可拖拽子背包面板 + 双向 drag ⬜
 
-- 新建 `SubContainerPanel`（照 `LootContainerPanel.java` POJO：`build()` 返回 FlowLayout，暴露 `lootGrid()`/`containerId()`；照 `SkillConfigFloatingWindow.java:65` 的 `positionAt`/`dragBy` 实现 header 拖拽移动 + `clamp` 边界约束）。
-- `InspectScreen.java` 的 `mountLootPanelIfActive` 同级加双击检测分支（双击背包格里的 Container 物品 → `sendPackContainerOpen` → mount `SubContainerPanel`）。
-- `DragState.java` 的 `SourceKind` 加 `SUB_CONTAINER`；`attemptDrop` 多目标加子容器面板格命中；drag 路由复用 `sendInventoryMove` / 新 `sendPackContainerMove`。
+> **⚠️ 先例核实（2026-06-10，实地 grep）——「可拖拽浮窗」是半成品，不可照抄**：
+> `SkillConfigFloatingWindow` 的 `dragBy()`（:71）是**死代码**——`WindowHandle` 接口只暴露 `component()`/`positionAt()`（`SkillConfigPanelManager.java:33`），不暴露 `dragBy`；header 只挂了 X 关闭 mouseDown（:107），无拖拽 handler；全仓 `dragBy` **零调用者**；整个 `combat/inspect/` 包**无 `mouseDragged`**。窗口被 `open(technique, 190, 18, ...)` 钉死在固定锚点（`TechniquesTabPanel.java:79`），还嵌在 techniques 标签内容里（非顶层 overlay）。**结论：浮窗能 positionAt 定位显示，但「拖拽移动」从未接线、玩家从未真正拖动过。** `LootContainerPanel` 是内嵌面板（item 在它和主网格间拖拽走 `InspectScreen` 的 item drag loop），但**面板本体不可移动**。
+> **故 P4 = 从零搭建可拖拽浮窗能力 + 验证 z 序，不是 copy。** 用户明确点名这两点（见下硬验收）。
+
+- 新建 `SubContainerPanel`（结构照 `LootContainerPanel.java` POJO：`build()` 返回 FlowLayout，暴露 `lootGrid()`/`containerId()`）。
+- **窗口拖拽接线（本 plan 新建，非复用）**：
+  - header 加 `mouseDown` 捕获拖拽起点（记 grabOffset），`mouseUp` 结束——`SkillConfigFloatingWindow` 缺这步。
+  - `InspectScreen.java` 的 `mouseDragged`（item drag loop 已存在于 inventory/InspectScreen，但**不路由窗口拖拽**）加分支：活动子面板 header 命中 → `subPanel.dragBy(dx, dy)` + `clamp` 屏内。`mouseClicked`/`mouseReleased` 同步加窗口拖拽起止。
+  - 可把 `SkillConfigFloatingWindow` 的死 `dragBy` 一并接活（顺手修 techniques 配置窗拖不动的老 bug），但不阻塞本 plan。
+- **z 序：面板必须渲染在主容器之上（硬要求）**：主网格多格物品在 `InspectScreen.drawMultiCellItems()` 走 z=100/200 特殊 pass，子面板 + 其内物品必须画在 **z > 200** 或挂为**最后添加的顶层 overlay**（不嵌在 backpack 标签内容里，否则被主网格盖住 / 被 tab 切换推出屏外）。mount 点选在 root 层级而非 tab content 层级。
+- 双击检测：`InspectScreen.java` 的 `mountLootPanelIfActive`（:3232）同级加双击背包格里 Container 物品 → `sendPackContainerOpen` → mount `SubContainerPanel`。
+- `DragState.java` 的 `SourceKind` 加 `SUB_CONTAINER`；`attemptDrop` 多目标加子容器面板格命中；item drag 路由复用 `sendInventoryMove` / 新 `sendPackContainerMove`。
 - **视听**（面板开关是玩家可感知）：开面板 SFX = `block.barrel.open` pitch 1.2 vol 0.6；关 = `block.barrel.close` pitch 1.0；面板 fade-in 6 tick（owo-lib alpha 0→1）。无粒子（纯 UI）。
-- 测试（client）：双击 Container 物品 mount 面板；面板 header 拖拽移动 + clamp 屏内；子容器格↔主背包双向 drag 发对应 C2S；关闭 unmount。
+- **硬验收（用户点名，撞红即不收）**：
+  1. **显示在主容器之上**：双击后面板**可见地**浮在主背包网格上方，不被网格/多格物品 pass 盖住、不被 tab 切换推出屏外。e2e 截图/render 验证 z 序。
+  2. **拖拽真实可用**：抓 header 拖动，面板**实际跟随鼠标移动**并 `clamp` 在屏内；松手停在新位置；拖动期间 item 不误拾。（对照死掉的 `SkillConfigFloatingWindow`，本条专测 dragBy 真被调用 + 位置真变化。）
+  3. 子容器格 ↔ 主背包双向 item drag 发对应 C2S；关闭 unmount，位置重开复位/记忆。
 
 ## P5 — 升级 5 随身子包 TOML + 端到端验收 ⬜
 
@@ -74,6 +86,7 @@
 | 2 | 套包内物品对负重的影响：只算本体 vs 本体+内容物？ | **本体+内容物全计入** `calculate_current_weight`，防「装袋减重」exploit。**用户已确认全计入。** |
 | 3 | 子容器持久化时机？ | 内嵌 `ItemInstance` 随玩家存档落盘；关闭面板 / move 时 revision bump 触发写回。需测 `persistence/mod.rs` 落盘路径含嵌套。 |
 | 4 | 5 随身子包各自 grid（rows×cols）？ | pouch/sack 中（3×3~3×4）、vial 小（1×2~2×2）、crate 大（4×4）。具体见 [[plan-container-filter-and-completion-v1]] 容量表。 |
+| 5 | **浮窗拖拽 + z 序基建从零建**（先例 `dragBy` 死代码，见 P4 ⚠️）：子面板挂在 root 层还是 tab content 层？ | **挂 root 顶层 overlay**（最后添加，z>主网格 200 pass），否则被主网格盖住或被 tab 切换推出屏。**建议升 active 时把这个「浮窗显示在主容器之上 + 能拖动」最小验证提为 P0 spike，早于 server plumbing**——UI 可行性（owo-lib 能否做主网格之上的可拖拽 overlay）是全 plan 最大未知，万一做不出整个双击开浮窗 UX 要趁早重想。**这是用户点名的最高风险点，不许假设照抄可行**。 |
 
 > §8 收口后追加 `## §8.1 决议（pre-P0，YYYY-MM-DD）`，每条带 file:line + plan 章节双锚点（依据 docs/CLAUDE.md §5.1）。
 
