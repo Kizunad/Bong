@@ -70,4 +70,4 @@
 1. **P0 路线 A vs B**:蜕壳入口改过滤(A,玩法增量)还是配方改产物(B,纯收缩)?A 需确认蜕壳系统状态机能否表达"物品气息掩盖"与"驻地遮蔽"两种新效果
 2. **P1 删 ID vs 改产物**:倾向改产物,需先核 `fan_iron_anvil`/`furnace_fantie` 是否已有自己的配方(有则旧配方直接删,无则改产物)
 3. **存量实例迁移**:删除的 6 个 id 在已存档玩家库存中的处理(建议:加载时折算 bone_coin 返还,按 base_weight 估价;或直接清除+narration 一句)
-4. **camouflage_net 的 grid 2×2**:若走 A 路线,遮蔽网放置形态是否依赖 plan-block-placement-base(是则 P0 拆出该效果延后)
+4. **camouflage_net 的 grid 2×2**:若走 A 路线,遮蔽网放置形态是否依赖 plan-workbench-place-runtime-v1(是则 P0 拆出该效果延后)

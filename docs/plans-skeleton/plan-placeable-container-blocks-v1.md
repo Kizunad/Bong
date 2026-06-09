@@ -1,10 +1,10 @@
 # plan-placeable-container-blocks-v1 — 可放置世界容器方块（货箱 / 草药筐 / 死信箱）+ bbmodel
 
 > **来源**：手搓 104 产出物僵尸审计「容器全死（12）」一类里适合作世界方块的 3 个。
-> **依赖**：[[plan-block-placement-base-v1]]（放置/破坏/交互底盘）+ [[plan-nested-pack-base-v1]]（容器打开协议 + ContainerState）。**两个都 merge 后才开本 plan。**
+> **依赖**：[[plan-workbench-place-runtime-v1]]（放置/破坏/交互底盘）+ [[plan-nested-pack-base-v1]]（容器打开协议 + ContainerState）。**两个都 merge 后才开本 plan。**
 > **状态**：骨架（草案）。bbmodel 由本仓维护者按延寿棺同款流程（分部件 gen 脚本 → 逐件预览 → 拼接，3 轮 + PROMISE）设计，在 P2 产出。
 
-把适合作世界方块的容器（`trade_crate` 货箱 / `herb_crate` 草药筐放置版 / `dead_drop_box` 死信箱）实装为可右键放置、破坏、打开搜索的世界方块，配 bbmodel 资产。放置走 [[plan-block-placement-base-v1]] 的 `PlaceableBlockKind` 底盘，打开后的容器内容操作复用套包/外部容器机制。
+把适合作世界方块的容器（`trade_crate` 货箱 / `herb_crate` 草药筐放置版 / `dead_drop_box` 死信箱）实装为可右键放置、破坏、打开搜索的世界方块，配 bbmodel 资产。放置走 [[plan-workbench-place-runtime-v1]] 的 `PlaceableBlockKind` 底盘，打开后的容器内容操作复用套包/外部容器机制。
 
 ## 阶段总览
 
@@ -16,7 +16,7 @@
 
 ## 接入面（防孤岛）
 
-- **进料**：[[plan-block-placement-base-v1]] 的 `PlaceableBlockKind` 放置底盘 + `WorkbenchPlace` 同款协议；[[plan-nested-pack-base-v1]] 的容器打开协议；`external_container.rs` 的 `ExternalContainer`（:23）+ `ExternalContainerKind`（:17）+ `pack_loot_into_grid`；`SupplyCoffinInteractIntentHandler.java`（OpenContainer intent 模板）；`CraftCategory::Container` 配方（`workbench_recipes.rs`）；coffin bbmodel 先例（`scripts/models/gen_*_coffin.py` + `render_bbmodel.py`）。
+- **进料**：[[plan-workbench-place-runtime-v1]] 的 `PlaceableBlockKind` 放置底盘 + `WorkbenchPlace` 同款协议；[[plan-nested-pack-base-v1]] 的容器打开协议；`external_container.rs` 的 `ExternalContainer`（:23）+ `ExternalContainerKind`（:17）+ `pack_loot_into_grid`；`SupplyCoffinInteractIntentHandler.java`（OpenContainer intent 模板）；`CraftCategory::Container` 配方（`workbench_recipes.rs`）；coffin bbmodel 先例（`scripts/models/gen_*_coffin.py` + `render_bbmodel.py`）。
 - **出料**：`trade_crate`/`herb_crate`(放置版)/`dead_drop_box` 放下 → 世界 entity 带 `ExternalContainer`；右键搜索打开 → `LootContainer` S2C；内容操作复用 [[plan-nested-pack-base-v1]] / 外部容器 move。
 - **共享类型 / event**：`ExternalContainerKind`（`external_container.rs:17`）加 `StorageCrate` / `DeadDrop` 变体；**复用 `ExternalContainer` / `LootContainerOpenV1`，不另造世界容器**；bbmodel 走现有资源包管线（[[plan-resourcepack-v1]]）。
 - **跨仓库契约**：server `StorageCrate`/`DeadDrop` `ExternalContainerKind`；client 新建 IntentHandler（照 `SupplyCoffinInteractIntentHandler`）+ `DefaultInteractionHandlers.java:15` 注册 + bbmodel 渲染；**agent 无关**。
@@ -27,7 +27,7 @@
 
 - `external_container.rs:17` `ExternalContainerKind` 加 `StorageCrate` / `DeadDrop`。
 - `trade_crate`（`workbench_materials.toml:281`）/`herb_crate`(:292，放置版)/`dead_drop_box`(:237) 加 placeable 标记 + 关联 `PlaceableBlockKind::Container`。
-- 放置走 [[plan-block-placement-base-v1]] 的 `handle_*_place` 底盘 → `commands.spawn` 带 `ExternalContainer { kind, container: ContainerState }` 的世界 entity（grid 用各容器 TOML 尺寸）；破坏 → 内容物掉落 + despawn。
+- 放置走 [[plan-workbench-place-runtime-v1]] 的 `handle_*_place` 底盘 → `commands.spawn` 带 `ExternalContainer { kind, container: ContainerState }` 的世界 entity（grid 用各容器 TOML 尺寸）；破坏 → 内容物掉落 + despawn。
 - 测试：放置 spawn 带正确 kind/grid 的 ExternalContainer；破坏掉落内容物 + 容器本身；空容器与满容器破坏行为。
 
 ## P1 — 打开搜索链路 + IntentHandler ⬜
@@ -51,14 +51,14 @@
 
 | # | 问题 | 推荐默认 |
 |---|------|------|
-| 1 | 死信箱首发完整形态（放置+阵法防砸+bbmodel）vs 先随身版？ | **placeable 完整形态**（依赖 [[plan-block-placement-base-v1]] 就绪后）——worldview §九:850 原意就是世界放置的死信投递点。 |
+| 1 | 死信箱首发完整形态（放置+阵法防砸+bbmodel）vs 先随身版？ | **placeable 完整形态**（依赖 [[plan-workbench-place-runtime-v1]] 就绪后）——worldview §九:850 原意就是世界放置的死信投递点。 |
 | 2 | `herb_crate` 双形态：随身版（plan-A P5 已做）+ 放置版（本 plan）都要吗？ | 待用户定位。推荐**小筐随身 + 大仓放置**两形态共存，或仅保留随身版（本 plan 去掉 herb_crate）。 |
-| 3 | bbmodel block state：vanilla chest 占位 vs `bong_blocks` 自定义方块？ | 跟随 [[plan-block-placement-base-v1]] §8 #1 的决议（先 vanilla 占位，bbmodel 换皮）。 |
+| 3 | bbmodel block state：vanilla chest 占位 vs `bong_blocks` 自定义方块？ | 跟随 [[plan-workbench-place-runtime-v1]] §8 #1 的决议（先 vanilla 占位，bbmodel 换皮）。 |
 | 4 | 货箱/死信箱是否可被其他玩家/NPC 打开（共享/异步投递）？ | 死信箱设计意图是匿名异步投递；MVP 先做自己可开，跨主体投递登记 follow-up。 |
 
 ## §10 实施工作流
 
-升 active 时按 docs/CLAUDE.md §6：P0 server 放置 / P1 client 交互 / P2 bbmodel+阵法+e2e，约 3 PR。**P2 含 bbmodel 视觉资产 → 强制走 §10.1 三轮自我打磨 + 终轮 commit `<PROMISE>` 担保块**（拼写 PROMISE）。依赖 [[plan-block-placement-base-v1]] + [[plan-nested-pack-base-v1]] 均 merge 后开。
+升 active 时按 docs/CLAUDE.md §6：P0 server 放置 / P1 client 交互 / P2 bbmodel+阵法+e2e，约 3 PR。**P2 含 bbmodel 视觉资产 → 强制走 §10.1 三轮自我打磨 + 终轮 commit `<PROMISE>` 担保块**（拼写 PROMISE）。依赖 [[plan-workbench-place-runtime-v1]] + [[plan-nested-pack-base-v1]] 均 merge 后开。
 
 ## Finish Evidence
 
