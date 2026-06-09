@@ -255,6 +255,10 @@ mod tests {
         assert_eq!(CH_PLAYER_CHAT, "bong:player_chat");
         assert_eq!(CH_AGENT_COMMAND, "bong:agent_command");
         assert_eq!(CH_AGENT_NARRATE, "bong:agent_narrate");
+        assert_eq!(
+            CH_TIANDAO_HUNT_NARRATION_REQUEST,
+            "bong:tiandao_hunt_narration_request"
+        );
         assert_eq!(CH_AGENT_WORLD_MODEL, "bong:agent_world_model");
         assert_eq!(CH_CALAMITY_INTENT, "bong:calamity_intent");
         assert_eq!(CH_SEASON_CHANGED, "bong:season_changed");

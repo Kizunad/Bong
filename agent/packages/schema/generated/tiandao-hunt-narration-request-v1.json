@@ -93,7 +93,7 @@
     },
     "narration_count": {
       "minimum": 0,
-      "maximum": 65535,
+      "maximum": 4294967295,
       "type": "integer"
     }
   }

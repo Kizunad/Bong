@@ -84,6 +84,30 @@ mod tests {
     }
 
     #[test]
+    fn response_level_variants_serialize_to_lowercase_wire_values() {
+        assert_eq!(
+            serde_json::to_value(TiandaoHuntResponseLevelV1::Watch)
+                .expect("watch response level should serialize"),
+            json!("watch")
+        );
+        assert_eq!(
+            serde_json::to_value(TiandaoHuntResponseLevelV1::Pressure)
+                .expect("pressure response level should serialize"),
+            json!("pressure")
+        );
+        assert_eq!(
+            serde_json::to_value(TiandaoHuntResponseLevelV1::Tribulation)
+                .expect("tribulation response level should serialize"),
+            json!("tribulation")
+        );
+        assert_eq!(
+            serde_json::to_value(TiandaoHuntResponseLevelV1::Annihilate)
+                .expect("annihilate response level should serialize"),
+            json!("annihilate")
+        );
+    }
+
+    #[test]
     fn rejects_unknown_response_level() {
         let error = serde_json::from_value::<TiandaoHuntNarrationRequestV1>(json!({
             "v": 1,

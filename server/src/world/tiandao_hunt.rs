@@ -865,6 +865,9 @@ fn apply_tiandao_response_chain(
     now_tick: u64,
 ) {
     let Some(profile) = tiandao_response_profile(eval.response) else {
+        attention.last_response_tick = 0;
+        attention.last_emitted_response = TiandaoResponseLevel::None;
+        attention.narration_count = 0;
         return;
     };
 
@@ -2643,5 +2646,60 @@ mod tests {
         let payload = expect_tiandao_narration_request(&rx);
         assert_eq!(payload.response_level, TiandaoHuntResponseLevelV1::Pressure);
         assert_eq!(payload.narration_count, 0);
+    }
+
+    #[test]
+    fn narration_count_resets_after_response_drops_to_none() {
+        let (redis, rx) = narration_test_bridge();
+        let mut attention = TiandaoAttention::default();
+        let interval = tiandao_response_profile(TiandaoResponseLevel::Watch)
+            .unwrap()
+            .interval_ticks;
+
+        apply_tiandao_response_chain(
+            &mut attention,
+            narration_test_snapshot(TiandaoResponseLevel::Watch, 20.0),
+            Entity::from_raw(42),
+            "Alice",
+            narration_test_sinks(&redis),
+            200,
+        );
+        assert_eq!(expect_tiandao_narration_request(&rx).narration_count, 0);
+
+        apply_tiandao_response_chain(
+            &mut attention,
+            narration_test_snapshot(TiandaoResponseLevel::Watch, 22.0),
+            Entity::from_raw(42),
+            "Alice",
+            narration_test_sinks(&redis),
+            200 + interval,
+        );
+        assert_eq!(expect_tiandao_narration_request(&rx).narration_count, 1);
+
+        apply_tiandao_response_chain(
+            &mut attention,
+            narration_test_snapshot(TiandaoResponseLevel::None, 8.0),
+            Entity::from_raw(42),
+            "Alice",
+            narration_test_sinks(&redis),
+            200 + interval + 1,
+        );
+        assert_eq!(attention.last_emitted_response, TiandaoResponseLevel::None);
+        assert_eq!(attention.last_response_tick, 0);
+        assert_eq!(attention.narration_count, 0);
+        assert!(
+            rx.try_recv().is_err(),
+            "None response must not publish narration while resetting response state"
+        );
+
+        apply_tiandao_response_chain(
+            &mut attention,
+            narration_test_snapshot(TiandaoResponseLevel::Watch, 19.0),
+            Entity::from_raw(42),
+            "Alice",
+            narration_test_sinks(&redis),
+            200 + interval + 2,
+        );
+        assert_eq!(expect_tiandao_narration_request(&rx).narration_count, 0);
     }
 }

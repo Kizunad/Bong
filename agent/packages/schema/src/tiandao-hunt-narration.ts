@@ -29,7 +29,7 @@ export const TiandaoHuntNarrationRequestV1 = Type.Object(
       minItems: 0,
       maxItems: 8,
     }),
-    narration_count: Type.Integer({ minimum: 0, maximum: 65535 }),
+    narration_count: Type.Integer({ minimum: 0, maximum: 4294967295 }),
   },
   { additionalProperties: false },
 );
