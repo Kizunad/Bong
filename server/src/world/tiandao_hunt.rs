@@ -1,4 +1,5 @@
 use crate::cultivation::components::{Cultivation, Realm};
+use crate::cultivation::negative_zone::siphon_amount;
 use crate::cultivation::tick::CultivationClock;
 use crate::network::audio_event_emit::{AudioRecipient, PlaySoundRecipeRequest};
 use crate::network::vfx_event_emit::VfxEventRequest;
@@ -26,6 +27,11 @@ const TIANDAO_PRESSURE_EVENT_INTERVAL_TICKS: u64 = 3 * 60 * 20;
 const TIANDAO_TRIBULATION_EVENT_INTERVAL_TICKS: u64 = 5 * 60 * 20;
 const TIANDAO_ANNIHILATE_EVENT_INTERVAL_TICKS: u64 = 2 * 60 * 20;
 const TIANDAO_AUDIO_INSTANCE_BASE: u64 = 710_000;
+pub const DECEIVE_HEAVEN_DECOY_MIN_DISTANCE_BLOCKS: f64 = 500.0;
+pub const DECEIVE_HEAVEN_DECOY_DURATION_TICKS: u64 = 30 * 60 * 20;
+pub const DECEIVE_HEAVEN_DECOY_DECAY_MULTIPLIER: f64 = 4.0;
+pub const DECEIVE_HEAVEN_REVEAL_CHANCE: f64 = 0.10;
+pub const DECEIVE_HEAVEN_REVEAL_PENALTY: f64 = 20.0;
 
 #[derive(Debug, Clone, Component, PartialEq)]
 pub struct TiandaoAttention {
@@ -62,15 +68,12 @@ pub enum TiandaoResponseLevel {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
+#[allow(dead_code)]
 pub enum TiandaoActivity {
-    #[cfg(test)]
     Meditating,
-    #[cfg(test)]
     Combat,
-    #[cfg(test)]
     Moving,
     Standing,
-    #[cfg(test)]
     InNiche,
 }
 
@@ -109,6 +112,45 @@ pub struct TiandaoAttentionInput {
     pub zone_spirit_qi: f64,
     pub activity: TiandaoActivity,
     pub season: Season,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct TiandaoCountermeasureInput {
+    pub deceive_heaven_decoy: Option<DeceiveHeavenDecoyInput>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct DeceiveHeavenDecoyInput {
+    pub placed_tick: u64,
+    pub distance_blocks: f64,
+    /// Deterministic roll supplied by runtime/tests. `0.0 <= roll < 0.10` means exposed.
+    pub reveal_roll: Option<f64>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DeceiveHeavenOutcome {
+    None,
+    TooClose,
+    Expired,
+    Diverted,
+    Revealed,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct TiandaoCountermeasureOutcome {
+    pub deceive_heaven: DeceiveHeavenOutcome,
+    pub decay_multiplier: f64,
+    pub attention_penalty: f64,
+}
+
+impl Default for TiandaoCountermeasureOutcome {
+    fn default() -> Self {
+        Self {
+            deceive_heaven: DeceiveHeavenOutcome::None,
+            decay_multiplier: 1.0,
+            attention_penalty: 0.0,
+        }
+    }
 }
 
 pub fn register(app: &mut App) {
@@ -240,17 +282,33 @@ pub fn advance_attention(
     input: TiandaoAttentionInput,
     eval_tick: u64,
 ) {
+    advance_attention_with_countermeasures(
+        attention,
+        input,
+        TiandaoCountermeasureInput::default(),
+        eval_tick,
+    );
+}
+
+pub fn advance_attention_with_countermeasures(
+    attention: &mut TiandaoAttention,
+    input: TiandaoAttentionInput,
+    countermeasures: TiandaoCountermeasureInput,
+    eval_tick: u64,
+) -> TiandaoCountermeasureOutcome {
     let previous_response = attention.response;
     let accumulation_rate = accumulation_rate(input);
-    let decay = decay_rate(previous_response, input.zone_spirit_qi);
-    let next_level =
-        (attention.level + accumulation_rate - decay).clamp(ATTENTION_MIN, ATTENTION_MAX);
+    let outcome = countermeasure_outcome(countermeasures, eval_tick);
+    let decay = decay_rate(previous_response, input.zone_spirit_qi) * outcome.decay_multiplier;
+    let next_level = (attention.level + accumulation_rate - decay + outcome.attention_penalty)
+        .clamp(ATTENTION_MIN, ATTENTION_MAX);
 
     attention.level = next_level;
     attention.accumulation_rate = accumulation_rate;
     attention.peak_level = attention.peak_level.max(next_level);
     attention.response = response_for_level(previous_response, next_level);
     attention.last_eval_tick = eval_tick;
+    outcome
 }
 
 pub fn accumulation_rate(input: TiandaoAttentionInput) -> f64 {
@@ -284,14 +342,10 @@ pub fn zone_qi_factor(spirit_qi: f64) -> f64 {
 
 pub const fn activity_factor(activity: TiandaoActivity) -> f64 {
     match activity {
-        #[cfg(test)]
         TiandaoActivity::Meditating => 1.5,
-        #[cfg(test)]
         TiandaoActivity::Combat => 1.2,
-        #[cfg(test)]
         TiandaoActivity::Moving => 0.8,
         TiandaoActivity::Standing => 1.0,
-        #[cfg(test)]
         TiandaoActivity::InNiche => 0.5,
     }
 }
@@ -313,6 +367,60 @@ pub fn decay_rate(response: TiandaoResponseLevel, zone_spirit_qi: f64) -> f64 {
         TiandaoResponseLevel::Annihilate => 0.0,
     };
     base * zone_decay_multiplier(zone_spirit_qi)
+}
+
+pub fn countermeasure_outcome(
+    input: TiandaoCountermeasureInput,
+    eval_tick: u64,
+) -> TiandaoCountermeasureOutcome {
+    let Some(decoy) = input.deceive_heaven_decoy else {
+        return TiandaoCountermeasureOutcome::default();
+    };
+    let deceive_heaven = deceive_heaven_decoy_outcome(decoy, eval_tick);
+    match deceive_heaven {
+        DeceiveHeavenOutcome::Diverted => TiandaoCountermeasureOutcome {
+            deceive_heaven,
+            decay_multiplier: DECEIVE_HEAVEN_DECOY_DECAY_MULTIPLIER,
+            attention_penalty: 0.0,
+        },
+        DeceiveHeavenOutcome::Revealed => TiandaoCountermeasureOutcome {
+            deceive_heaven,
+            decay_multiplier: 1.0,
+            attention_penalty: DECEIVE_HEAVEN_REVEAL_PENALTY,
+        },
+        DeceiveHeavenOutcome::None
+        | DeceiveHeavenOutcome::TooClose
+        | DeceiveHeavenOutcome::Expired => TiandaoCountermeasureOutcome {
+            deceive_heaven,
+            ..TiandaoCountermeasureOutcome::default()
+        },
+    }
+}
+
+pub fn deceive_heaven_decoy_outcome(
+    decoy: DeceiveHeavenDecoyInput,
+    eval_tick: u64,
+) -> DeceiveHeavenOutcome {
+    if !decoy.distance_blocks.is_finite()
+        || decoy.distance_blocks < DECEIVE_HEAVEN_DECOY_MIN_DISTANCE_BLOCKS
+    {
+        return DeceiveHeavenOutcome::TooClose;
+    }
+    if eval_tick.saturating_sub(decoy.placed_tick) >= DECEIVE_HEAVEN_DECOY_DURATION_TICKS {
+        return DeceiveHeavenOutcome::Expired;
+    }
+    if decoy
+        .reveal_roll
+        .is_some_and(|roll| roll.is_finite() && (0.0..DECEIVE_HEAVEN_REVEAL_CHANCE).contains(&roll))
+    {
+        return DeceiveHeavenOutcome::Revealed;
+    }
+    DeceiveHeavenOutcome::Diverted
+}
+
+#[allow(dead_code)]
+pub fn negative_zone_escape_qi_cost_per_eval(zone_spirit_qi: f64, qi_max: f64) -> f64 {
+    siphon_amount(zone_spirit_qi, qi_max) * TIANDAO_HUNT_EVAL_INTERVAL_TICKS as f64
 }
 
 pub fn zone_decay_multiplier(spirit_qi: f64) -> f64 {
@@ -825,6 +933,201 @@ mod tests {
         assert_eq!(zone_decay_multiplier(0.01), 1.0);
         assert_close(decay_rate(TiandaoResponseLevel::Watch, 0.0), 0.15);
         assert_close(decay_rate(TiandaoResponseLevel::Watch, -0.1), 0.25);
+    }
+
+    #[test]
+    fn deceive_heaven_decoy_diverts_attention_when_far_active_and_not_revealed() {
+        let start_level = 20.0;
+        let mut attention = TiandaoAttention {
+            level: start_level,
+            response: TiandaoResponseLevel::Watch,
+            ..TiandaoAttention::default()
+        };
+        let outcome = advance_attention_with_countermeasures(
+            &mut attention,
+            TiandaoAttentionInput {
+                realm: Realm::Awaken,
+                zone_spirit_qi: 0.6,
+                activity: TiandaoActivity::Standing,
+                season: Season::Summer,
+            },
+            TiandaoCountermeasureInput {
+                deceive_heaven_decoy: Some(DeceiveHeavenDecoyInput {
+                    placed_tick: 200,
+                    distance_blocks: DECEIVE_HEAVEN_DECOY_MIN_DISTANCE_BLOCKS,
+                    reveal_roll: Some(DECEIVE_HEAVEN_REVEAL_CHANCE),
+                }),
+            },
+            400,
+        );
+
+        assert_eq!(outcome.deceive_heaven, DeceiveHeavenOutcome::Diverted);
+        assert_close(
+            outcome.decay_multiplier,
+            DECEIVE_HEAVEN_DECOY_DECAY_MULTIPLIER,
+        );
+        assert_close(
+            attention.level,
+            start_level - 0.05 * DECEIVE_HEAVEN_DECOY_DECAY_MULTIPLIER,
+        );
+        assert_eq!(attention.response, TiandaoResponseLevel::Watch);
+    }
+
+    #[test]
+    fn deceive_heaven_decoy_revealed_adds_twenty_attention_without_decay_bonus() {
+        let start_level = 21.0;
+        let mut attention = TiandaoAttention {
+            level: start_level,
+            response: TiandaoResponseLevel::Watch,
+            ..TiandaoAttention::default()
+        };
+        let outcome = advance_attention_with_countermeasures(
+            &mut attention,
+            TiandaoAttentionInput {
+                realm: Realm::Awaken,
+                zone_spirit_qi: 0.6,
+                activity: TiandaoActivity::Standing,
+                season: Season::Summer,
+            },
+            TiandaoCountermeasureInput {
+                deceive_heaven_decoy: Some(DeceiveHeavenDecoyInput {
+                    placed_tick: 0,
+                    distance_blocks: 800.0,
+                    reveal_roll: Some(DECEIVE_HEAVEN_REVEAL_CHANCE - f64::EPSILON),
+                }),
+            },
+            400,
+        );
+
+        assert_eq!(outcome.deceive_heaven, DeceiveHeavenOutcome::Revealed);
+        assert_close(outcome.attention_penalty, DECEIVE_HEAVEN_REVEAL_PENALTY);
+        assert_close(
+            attention.level,
+            start_level - 0.05 + DECEIVE_HEAVEN_REVEAL_PENALTY,
+        );
+        assert_eq!(attention.response, TiandaoResponseLevel::Pressure);
+    }
+
+    #[test]
+    fn deceive_heaven_decoy_has_distance_reveal_and_expiry_boundaries() {
+        let active = DeceiveHeavenDecoyInput {
+            placed_tick: 100,
+            distance_blocks: 500.0,
+            reveal_roll: Some(0.10),
+        };
+        assert_eq!(
+            deceive_heaven_decoy_outcome(active, 100 + DECEIVE_HEAVEN_DECOY_DURATION_TICKS - 1),
+            DeceiveHeavenOutcome::Diverted
+        );
+        assert_eq!(
+            deceive_heaven_decoy_outcome(
+                DeceiveHeavenDecoyInput {
+                    distance_blocks: 499.99,
+                    ..active
+                },
+                200
+            ),
+            DeceiveHeavenOutcome::TooClose
+        );
+        assert_eq!(
+            deceive_heaven_decoy_outcome(
+                DeceiveHeavenDecoyInput {
+                    reveal_roll: Some(DECEIVE_HEAVEN_REVEAL_CHANCE - f64::EPSILON),
+                    ..active
+                },
+                200
+            ),
+            DeceiveHeavenOutcome::Revealed
+        );
+        assert_eq!(
+            deceive_heaven_decoy_outcome(active, 100 + DECEIVE_HEAVEN_DECOY_DURATION_TICKS),
+            DeceiveHeavenOutcome::Expired
+        );
+    }
+
+    #[test]
+    fn negative_zone_escape_applies_decay_x5_and_reports_existing_siphon_cost() {
+        let mut attention = TiandaoAttention {
+            level: 50.0,
+            response: TiandaoResponseLevel::Pressure,
+            ..TiandaoAttention::default()
+        };
+        advance_attention(
+            &mut attention,
+            TiandaoAttentionInput {
+                realm: Realm::Awaken,
+                zone_spirit_qi: -0.5,
+                activity: TiandaoActivity::Standing,
+                season: Season::Summer,
+            },
+            200,
+        );
+        assert_close(attention.level, 50.0 - 0.03 * 5.0);
+        assert_close(
+            negative_zone_escape_qi_cost_per_eval(-0.5, 1000.0),
+            siphon_amount(-0.5, 1000.0) * TIANDAO_HUNT_EVAL_INTERVAL_TICKS as f64,
+        );
+        assert!(
+            negative_zone_escape_qi_cost_per_eval(-0.5, 1000.0)
+                > negative_zone_escape_qi_cost_per_eval(-0.5, 100.0),
+            "负灵域反制代价必须随 qi_max 放大，让高境承担更高真元消耗"
+        );
+    }
+
+    #[test]
+    fn nomadic_meditation_cycle_does_not_enter_pressure() {
+        let mut attention = TiandaoAttention {
+            level: 30.0,
+            response: TiandaoResponseLevel::Watch,
+            peak_level: 30.0,
+            ..TiandaoAttention::default()
+        };
+        for tick in 1..=60 {
+            advance_attention(
+                &mut attention,
+                TiandaoAttentionInput {
+                    activity: TiandaoActivity::Meditating,
+                    ..input(Realm::Solidify)
+                },
+                tick * TIANDAO_HUNT_EVAL_INTERVAL_TICKS,
+            );
+        }
+        for tick in 61..=90 {
+            advance_attention(
+                &mut attention,
+                TiandaoAttentionInput {
+                    activity: TiandaoActivity::Moving,
+                    ..input(Realm::Solidify)
+                },
+                tick * TIANDAO_HUNT_EVAL_INTERVAL_TICKS,
+            );
+        }
+
+        assert!(
+            attention.level < 40.0,
+            "固元 10 分钟打坐 + 5 分钟跑路应停在 Pressure 阈值下，actual={}",
+            attention.level
+        );
+        assert_eq!(attention.response, TiandaoResponseLevel::Watch);
+    }
+
+    #[test]
+    fn realm_regression_recomputes_accumulation_rate_from_new_realm() {
+        let spirit = accumulation_rate(TiandaoAttentionInput {
+            realm: Realm::Spirit,
+            zone_spirit_qi: 0.6,
+            activity: TiandaoActivity::Standing,
+            season: Season::Summer,
+        });
+        let solidify = accumulation_rate(TiandaoAttentionInput {
+            realm: Realm::Solidify,
+            zone_spirit_qi: 0.6,
+            activity: TiandaoActivity::Standing,
+            season: Season::Summer,
+        });
+
+        assert_close(spirit, 0.15);
+        assert_close(solidify, 0.05);
     }
 
     #[test]
