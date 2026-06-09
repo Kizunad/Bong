@@ -1103,7 +1103,7 @@ mod tests {
     use crate::world::dimension::{CurrentDimension, DimensionKind};
     use crate::world::season::Season;
     use crate::world::zone::Zone;
-    use crate::zhenfa::{ZhenfaCarrierKind, ZhenfaKind, ZhenfaPlaceRequest};
+    use crate::zhenfa::{ZhenfaCarrierKind, ZhenfaKind, ZhenfaPlaceRequest, ZhenfaRegistry};
     use valence::prelude::{ChunkLayer, DVec3, UnloadedChunk};
     use valence::testing::{create_mock_client, ScenarioSingleClient};
 
@@ -1300,6 +1300,73 @@ mod tests {
                 instance: test_item(9202, "yi_shou_gu", 4),
             });
         inventory
+    }
+
+    fn capture_production_deceive_heaven_exposure(
+        app: &mut App,
+        player: Entity,
+    ) -> DeceiveHeavenExposedEvent {
+        const MAX_EXPOSURE_CANDIDATES: i32 = 200;
+
+        let mut requested_at_tick = 200;
+        for offset in 0..MAX_EXPOSURE_CANDIDATES {
+            let pos = [600 + offset, 64, 0];
+            app.world_mut().resource_mut::<CultivationClock>().tick = requested_at_tick;
+            app.world_mut().resource_mut::<CombatClock>().tick = requested_at_tick;
+            app.world_mut()
+                .entity_mut(player)
+                .insert(deceive_heaven_test_inventory());
+            app.world_mut()
+                .get_mut::<Cultivation>(player)
+                .unwrap()
+                .qi_current = 100.0;
+            app.world_mut().send_event(ZhenfaPlaceRequest {
+                player,
+                pos,
+                kind: ZhenfaKind::DeceiveHeaven,
+                carrier: ZhenfaCarrierKind::BeastCoreInlaid,
+                qi_invest_ratio: 0.10,
+                trigger: None,
+                item_instance_id: None,
+                target_face: None,
+                requested_at_tick,
+            });
+            app.update();
+
+            let instance = app
+                .world()
+                .resource::<ZhenfaRegistry>()
+                .find_at(pos)
+                .expect("production placement should create a deceive heaven instance")
+                .clone();
+            let probe_tick = instance.expires_at_tick.saturating_sub(1);
+            {
+                let mut attention = app.world_mut().get_mut::<TiandaoAttention>(player).unwrap();
+                attention.level = 21.0;
+                attention.response = TiandaoResponseLevel::Watch;
+                attention.last_eval_tick = instance.placed_at_tick;
+            }
+            app.world_mut().resource_mut::<CultivationClock>().tick = probe_tick;
+            app.world_mut().resource_mut::<CombatClock>().tick = probe_tick;
+            app.update();
+
+            let exposed = app
+                .world()
+                .resource::<Events<DeceiveHeavenExposedEvent>>()
+                .iter_current_update_events()
+                .find(|event| event.array_id == instance.id)
+                .cloned();
+            if let Some(event) = exposed {
+                assert_eq!(event.owner_player_id, "offline:Alice");
+                assert_eq!(event.pos, pos);
+                assert_eq!(event.exposed_at_tick, probe_tick);
+                return event;
+            }
+
+            requested_at_tick = instance.expires_at_tick.saturating_add(1);
+        }
+
+        panic!("production zhenfa path did not emit a deceive heaven exposure event");
     }
 
     fn test_item(instance_id: u64, template_id: &str, stack_count: u32) -> ItemInstance {
@@ -1951,59 +2018,31 @@ mod tests {
     #[test]
     fn production_zhenfa_exposure_feeds_tiandao_hunt_penalty_once() {
         let (mut app, player) = tiandao_zhenfa_production_app();
-        app.world_mut().resource_mut::<CultivationClock>().tick = 200;
-        app.world_mut().resource_mut::<CombatClock>().tick = 200;
-        for index in 0..5 {
-            app.world_mut()
-                .entity_mut(player)
-                .insert(deceive_heaven_test_inventory());
-            app.world_mut()
-                .get_mut::<Cultivation>(player)
-                .unwrap()
-                .qi_current = 100.0;
-            app.world_mut().send_event(ZhenfaPlaceRequest {
-                player,
-                pos: [600 + index, 64, 0],
-                kind: ZhenfaKind::DeceiveHeaven,
-                carrier: ZhenfaCarrierKind::BeastCoreInlaid,
-                qi_invest_ratio: 0.10,
-                trigger: None,
-                item_instance_id: None,
-                target_face: None,
-                requested_at_tick: 200,
-            });
-            app.update();
-        }
-
-        app.world_mut()
-            .get_mut::<TiandaoAttention>(player)
-            .unwrap()
-            .level = 21.0;
-        app.world_mut().resource_mut::<CultivationClock>().tick = 20_461;
-        app.world_mut().resource_mut::<CombatClock>().tick = 20_461;
-        app.update();
+        let exposed = capture_production_deceive_heaven_exposure(&mut app, player);
 
         let first = app.world().get::<TiandaoAttention>(player).unwrap().clone();
+        assert_eq!(first.last_eval_tick, exposed.exposed_at_tick);
         assert_close(
             first.level,
             21.0 + first.accumulation_rate - decay_rate(TiandaoResponseLevel::Watch, 0.0)
                 + DECEIVE_HEAVEN_REVEAL_PENALTY,
         );
         assert_eq!(first.response, TiandaoResponseLevel::Pressure);
-        assert_eq!(first.last_eval_tick, 20_461);
 
-        app.world_mut().resource_mut::<CultivationClock>().tick = 20_661;
-        app.world_mut().resource_mut::<CombatClock>().tick = 20_661;
+        let next_eval_tick = first
+            .last_eval_tick
+            .saturating_add(TIANDAO_HUNT_EVAL_INTERVAL_TICKS);
+        app.world_mut().resource_mut::<CultivationClock>().tick = next_eval_tick;
+        app.world_mut().resource_mut::<CombatClock>().tick = next_eval_tick;
         app.update();
 
         let second = app.world().get::<TiandaoAttention>(player).unwrap();
         assert_close(
             second.level,
             first.level + second.accumulation_rate
-                - decay_rate(TiandaoResponseLevel::Pressure, 0.0)
-                    * DECEIVE_HEAVEN_DECOY_DECAY_MULTIPLIER,
+                - decay_rate(TiandaoResponseLevel::Pressure, 0.0),
         );
-        assert_eq!(second.last_eval_tick, 20_661);
+        assert_eq!(second.last_eval_tick, next_eval_tick);
     }
 
     #[test]

@@ -42,8 +42,6 @@ pub struct ZhenfaV2EventV1 {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tiandao_gaze_weight: Option<f64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub reveal_chance_per_tick: Option<f64>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reveal_chance_lifetime: Option<f64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reveal_threshold: Option<f64>,
@@ -78,7 +76,6 @@ impl ZhenfaV2EventV1 {
             radius: None,
             density_multiplier: None,
             tiandao_gaze_weight: None,
-            reveal_chance_per_tick: None,
             reveal_chance_lifetime: None,
             reveal_threshold: None,
             self_weight_multiplier: None,

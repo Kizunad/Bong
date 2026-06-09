@@ -107,11 +107,6 @@
       "minimum": 0,
       "type": "number"
     },
-    "reveal_chance_per_tick": {
-      "minimum": 0,
-      "maximum": 1,
-      "type": "number"
-    },
     "reveal_chance_lifetime": {
       "minimum": 0,
       "maximum": 1,
