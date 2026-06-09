@@ -51,6 +51,7 @@ import {
   BreakthroughRequestV1,
   AbortTribulationRequestV1,
   CancelExtractRequestV1,
+  BlockPlaceRequestV1,
   CoffinOpenRequestV1,
   CoffinEnterRequestV1,
   CoffinLeaveRequestV1,
@@ -909,6 +910,7 @@ export const SCHEMA_REGISTRY = {
   clientRequestForgeBlueprintTurnPageV1: ForgeBlueprintTurnPageRequestV1,
   clientRequestForgeLearnBlueprintV1: ForgeLearnBlueprintRequestV1,
   clientRequestForgeStationPlaceV1: ForgeStationPlaceRequestV1,
+  clientRequestBlockPlaceV1: BlockPlaceRequestV1,
   // ─── 身份与信誉（plan-identity-v1 §7） ──────────
   revealedTagKindV1: RevealedTagKindV1,
   reactionTierV1: ReactionTierV1,
@@ -1418,6 +1420,7 @@ export const GENERATED_SCHEMA_FILES = {
   "client-request-forge-blueprint-turn-page-v1.json": SCHEMA_REGISTRY.clientRequestForgeBlueprintTurnPageV1,
   "client-request-forge-learn-blueprint-v1.json": SCHEMA_REGISTRY.clientRequestForgeLearnBlueprintV1,
   "client-request-forge-station-place-v1.json": SCHEMA_REGISTRY.clientRequestForgeStationPlaceV1,
+  "client-request-block-place-v1.json": SCHEMA_REGISTRY.clientRequestBlockPlaceV1,
   // plan-identity-v1 §7
   "wanted-player-event-v1.json": SCHEMA_REGISTRY.wantedPlayerEventV1,
   "identity-panel-state-v1.json": SCHEMA_REGISTRY.identityPanelStateV1,

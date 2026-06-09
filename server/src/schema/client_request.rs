@@ -148,6 +148,15 @@ pub enum ClientRequestV1 {
         z: i32,
         item_instance_id: u64,
     },
+    /// plan-block-lifecycle-v1 P2 — 玩家从 Bong 背包选中方块物品后请求放置。
+    BlockPlace {
+        v: u8,
+        x: i32,
+        y: i32,
+        z: i32,
+        item_instance_id: u64,
+        target_face: TrapTargetFace,
+    },
     /// plan-coffin-v1 — 右键凡物棺材任一半，进入卧棺状态。
     CoffinEnter {
         v: u8,
@@ -1673,6 +1682,50 @@ mod tests {
             }
             other => panic!("expected NpcTradeRequest, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn block_place_roundtrip() {
+        let json = r#"{"type":"block_place","v":1,"x":8,"y":64,"z":8,"item_instance_id":4242,"target_face":"north"}"#;
+        let req: ClientRequestV1 = serde_json::from_str(json)
+            .unwrap_or_else(|error| panic!("block_place should parse: {error}"));
+        match req {
+            ClientRequestV1::BlockPlace {
+                v,
+                x,
+                y,
+                z,
+                item_instance_id,
+                target_face,
+            } => {
+                assert_eq!(v, 1);
+                assert_eq!((x, y, z), (8, 64, 8));
+                assert_eq!(item_instance_id, 4242);
+                assert_eq!(target_face, TrapTargetFace::North);
+            }
+            other => panic!("expected BlockPlace, got {other:?}"),
+        }
+
+        let encoded = serde_json::to_string(&req).expect("block_place serializes");
+        let encoded_value: serde_json::Value =
+            serde_json::from_str(&encoded).expect("encoded block_place JSON is valid");
+        let expected_value: serde_json::Value =
+            serde_json::from_str(json).expect("expected block_place JSON is valid");
+        assert_eq!(
+            encoded_value, expected_value,
+            "block_place must preserve wire fields across serde roundtrip"
+        );
+    }
+
+    #[test]
+    fn block_place_rejects_unknown_fields() {
+        let json = r#"{"type":"block_place","v":1,"x":8,"y":64,"z":8,"item_instance_id":4242,"target_face":"north","extra":true}"#;
+        let error = serde_json::from_str::<ClientRequestV1>(json)
+            .expect_err("block_place must reject unknown fields");
+        assert!(
+            error.to_string().contains("unknown field"),
+            "expected unknown-field error for block_place, got {error}"
+        );
     }
 
     #[test]
