@@ -6,11 +6,11 @@
 
 | 阶段 | 内容 | 状态 |
 |------|------|------|
-| P0 | TiandaoAttention 注意力系统（per-player 累积/衰减/阈值） | ⬜ |
-| P1 | 四级天道响应链（微调→施压→天劫→灭绝）+ 各级视听内联 | ⬜ |
-| P2 | 反制玩法（欺天阵/游牧打坐/负灵域躲避/低境伪装） | ⬜ |
-| P3 | 天道叙事接入（agent 对高注意力玩家产出个性化 narration） | ⬜ |
-| P4 | 饱和测试（境界缩放 + 注意力衰减 + 反制有效性 + 守恒） | ⬜ |
+| P0 | TiandaoAttention 注意力系统（per-player 累积/衰减/阈值） | ✅ 2026-06-09 |
+| P1 | 四级天道响应链（微调→施压→天劫→灭绝）+ 各级视听内联 | ✅ 2026-06-09 |
+| P2 | 反制玩法（欺天阵/游牧打坐/负灵域躲避/低境伪装） | ✅ 2026-06-09 |
+| P3 | 天道叙事接入（agent 对高注意力玩家产出个性化 narration） | ✅ 2026-06-09 |
+| P4 | 饱和测试（境界缩放 + 注意力衰减 + 反制有效性 + 守恒） | ✅ 2026-06-09 |
 
 ---
 
@@ -456,3 +456,40 @@ Annihilate:
 14. **Watch 级 zone qi 变化**走 `QiTransfer`——灵气归还世界不消失
 15. **Tribulation 级刷怪**走 NpcRegistry 预算——不超额
 16. **Annihilate 域崩**走现有 RealmCollapse qi 再分配——全服 QI 守恒
+
+## Finish Evidence
+
+### 落地清单
+
+- P0 注意力底座：`server/src/world/tiandao_hunt.rs` 新增 `TiandaoAttention`、`TiandaoResponseLevel`、`tiandao_hunt_tick()`、累积/衰减/阈值滞后纯函数，并在 `server/src/world/mod.rs` 注册。
+- P1 四级响应与视听反馈：`server/src/world/tiandao_hunt.rs` 接入 Watch / Pressure / Tribulation / Annihilate 响应链；`client/src/main/java/com/bong/client/tiandao/` 接入 presence HUD；`server/assets/audio/recipes/tiandao_*_ambient.json` 增加四级环境音；`client/src/main/java/com/bong/client/visual/particle/TiandaoHuntVfxPlayer.java` 接入 VFX。
+- P2 反制玩法：`server/src/zhenfa/mod.rs` 与 `server/src/world/tiandao_hunt.rs` 接入欺天阵、游牧打坐、负灵域躲避、降境后速率重算；`agent/packages/schema/src/zhenfa-v2.ts` 与 `server/src/schema/zhenfa_v2.rs` 对齐欺天阵事件契约。
+- P3 天道叙事接入：`agent/packages/schema/src/tiandao-hunt-narration.ts`、`server/src/schema/tiandao_hunt_narration.rs`、`server/src/network/redis_bridge.rs`、`agent/packages/tiandao/src/tiandao-hunt-narration-runtime.ts`、`agent/packages/tiandao/src/skills/tiandao-hunt-narration.md` 接入专属 narration 请求与 agent runtime。
+- P4 饱和测试与守恒补强：`server/src/world/tiandao_hunt.rs` 补齐注意力曲线、响应链、反制与 Watch zone qi drain 守恒测试；`server/src/npc/brain/scorers_survival.rs` 复用 `FearCultivatorScorer` 表达 NPC 对高注意力玩家的逃离倾向；`server/src/qi_physics/constants.rs` 与 `server/src/qi_physics/ledger.rs` 承载天道 Watch drain 常量和 `QiTransferReason::TiandaoWatchDrain`。
+
+### 关键 commit
+
+- `1c08db23f`（2026-06-09）`feat(tiandao): 实装天道注意力 P0 底座 (#455)`
+- `8db44de12`（2026-06-09）`plan-tiandao-hunt-v1 P1：四级天道响应链与视听反馈 (#456)`
+- `0d45615b7`（2026-06-09）`plan-tiandao-hunt-v1: P2 反制玩法 (#458)`
+- `02cbbabca`（2026-06-09）`plan-tiandao-hunt-v1: P3 天道叙事接入 (#460)`
+- `7bfcfced7`（2026-06-09）`plan-tiandao-hunt-v1: P4 饱和测试 (#461)`
+
+### 测试结果
+
+- P0：`cd server && cargo test tiandao_hunt -- --nocapture` → 12 passed；`cd server && cargo fmt --check && cargo clippy --all-targets -- -D warnings` → passed；`cd server && cargo test` → 8014 passed, 1 ignored。
+- P1：`cd server && cargo fmt --check`；`cd server && cargo clippy --all-targets -- -D warnings`；`cd server && cargo test tiandao_hunt -- --nocapture`；`cd server && cargo test audio:: -- --nocapture`；`cd server && cargo test` → 8019 passed, 1 ignored。
+- P2：`cd server && cargo fmt --check`；`cd server && cargo test deceive_heaven -- --nocapture` → 17 passed；`cd server && cargo test tiandao_hunt -- --nocapture` → 33 passed；`cd server && cargo clippy --all-targets -- -D warnings`；`cd server && cargo test` 在 sandbox 内为 8039 passed / 2 failed / 1 ignored，失败限定为 `skin::mineskin` wiremock 本机端口权限，非本 PR 路径。
+- P3：`cd server && cargo fmt --check`；`cd server && cargo test tiandao_hunt -- --nocapture`；`cd server && cargo test redis_bridge_tests::publishes_tiandao_hunt_narration_request_on_dedicated_channel -- --nocapture`；`cd agent && npm run generate -w @bong/schema`；`cd agent && npm run generate:check -w @bong/schema`；`cd agent && npm run build -w @bong/schema`；`cd agent && npm test -w @bong/schema -- tiandao-hunt-narration`；`cd agent && npm test -w @bong/tiandao -- tiandao-hunt-narration-runtime`；`cd agent && npm run build -w @bong/tiandao`。
+- P4：`cd server && cargo fmt --check`；`cd server && cargo test tiandao_hunt -- --nocapture` → 52 passed；`cd server && cargo test fear_cultivator_scorer -- --nocapture` → 2 passed；`cd server && cargo clippy --all-targets -- -D warnings`；`cd server && cargo test` → 8061 passed, 0 failed, 1 ignored；`git diff --check`。
+- P4 review fix：`cargo fmt --check`；`cargo clippy --all-targets -- -D warnings`；`cargo test fear_cultivator_scorer -- --nocapture`；`cargo test watch_zone_qi_drain -- --nocapture`；`cargo test` → 8068 passed, 0 failed, 1 ignored；`git diff --check`；GitHub E2E run `27200223953` → success。
+
+### 跨仓库核验
+
+- server：`TiandaoAttention`、`TiandaoResponseLevel`、`tiandao_hunt_tick()`、`apply_watch_zone_qi_drain()`、`QiTransferReason::TiandaoWatchDrain`、`CH_TIANDAO_HUNT_NARRATION_REQUEST`、`TiandaoHuntNarrationRequestV1` 均已落地。
+- client：`TiandaoPresenceHudPlanner`、`TiandaoPresencePayloadHandler`、`TiandaoPresenceState`、`TiandaoHuntVfxPlayer`、`tiandao_watch_ambient.json` / `tiandao_pressure_ambient.json` / `tiandao_tribulation_ambient.json` / `tiandao_annihilate_ambient.json` 已落地。
+- agent/schema：`TIANDAO_HUNT_NARRATION_REQUEST`、`TiandaoHuntNarrationRequestV1Schema`、`TiandaoHuntResponseLevelV1Schema`、`TiandaoHuntNarrationRuntime`、`skills/tiandao-hunt-narration.md` 已落地。
+
+### 遗留 / 后续
+
+- 本 plan 已完成 P0-P4 的可合并范围；后续若要扩展天道狩猎，可单独立 plan 处理更多客户端美术资产打磨、更多事件概率曲线或跨服长期 telemetry。
