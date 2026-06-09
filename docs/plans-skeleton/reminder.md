@@ -17,7 +17,7 @@
 - **`plan-container-filter-and-completion-v1` 12 容器验收表加"落地阶段"列**：标每个容器在哪 plan 哪阶段落地（如 `herb_pouch`→A-P5+B-P3，`trade_crate`→C），降实施混淆。
 - **Plan A 与 Plan D §8 交叉引用**：两者皆无依赖根 plan，A 嵌套深度=1 与 D 方块表示策略（vanilla 占位 vs bong_blocks）将来可能联动（bong_blocks 容器方块被放入套包时），各加一条交叉引用。（注：原 Plan D `plan-block-placement-base-v1` 已于 2026-06-10 废弃并入 `plan-workbench-place-runtime-v1`，交叉引用以新名为准。）
 
-## 放置类 17 消杀 plan 族（2026-06-10 调查 workflow 产出，立骨架时已知待办）
+## 放置类 17 消杀 plan 族（2026-06-10，调查 workflow 产出，立骨架时已知待办）
 
 - **plan-block-lifecycle-v1 文档漂移回写**：P0(2ad2076a0)/P1(c1461f7bd)/P2(39d722956)/P3(b8bb67787)已 commit 但 plan 阶段总览全标 ⬜，P4 在 worktree 分支——该 plan 归属其 orchestrator，待其收尾时回写 ✅，新 plan 族不代改。
 - **双死字段顺带激活**：`healing_rate_multiplier`（components.rs:291，SpleenKidney 写入无读取）归 plan-furniture-buff-v1 P2 激活；`qi_regen_multiplier`（HeartLung 写入，qi_regen tick 不读 DerivedAttrs）暂无归属——若 furniture P3 蒲团走 QiRegenBoost 路径则顺带接，否则单列待办。

@@ -4,7 +4,7 @@
 >
 > 来源:放置类 17 调查 workflow(opus 抽查 7/7 属实);用户拍板:陷阱需具备对应功能。
 
-**依赖**:[[plan-zhenfa-content-v2]] P0(共用 ZhenfaPlace 放置路径 + ZhenfaKind 扩枚举先例)。
+**依赖**:[[plan-zhenfa-content-v2]] P0——**排期依赖**(zhenfa-content-v2 先扩 ZhenfaKind 枚举建立先例+ID 裁决),非基础设施依赖:ZhenfaPlace 协议本就存在(client_request.rs:257),不必等其全部阶段落地。
 
 | 阶段 | 主题 | 状态 |
 |------|------|------|
