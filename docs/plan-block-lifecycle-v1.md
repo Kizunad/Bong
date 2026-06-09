@@ -19,7 +19,7 @@
 **世界观锚点**：无直接修仙正典锚点，本 plan 定位为**纯沙盒环境交互基建**（仿 plan-custom-block-v1 的定位）。方块物品命名走正典字符串（残灰土 / 碎石 / 粗木之类，而非裸 `dirt`/`cobblestone`），materials.toml 全部物品命名惯例不允许裸 vanilla id 漂移——命名拍板见 §11 开放问题。放置打开后的多人 griefing 治理（出生点/灵龛/阵眼区堆方块封门）是已知缺口，最小 spawn-zone 保护 + reach 校验范围待定，见 §11。
 
 **交叉引用**：
-- `docs/finished_plans/plan-custom-block-v1.md` —— bong_blocks.json 单一事实源 + codegen + `place_bong_block` + client `ln.java` 注册范式（**本 plan 凡俗方块一律绕开 `place_bong_block` 走裸 `ChunkLayer::set_block`**，仅未来 bong 陷阱方块走 custom-block 路线）
+- `docs/finished_plans/plan-custom-block-v1.md` —— bong_blocks.json 单一事实源 + codegen + `place_bong_block` + client `BongBlocks.java` 注册范式（**本 plan 凡俗方块一律绕开 `place_bong_block` 走裸 `ChunkLayer::set_block`**，仅未来 bong 陷阱方块走 custom-block 路线）
 - `docs/finished_plans/plan-inventory-v1.md` / `plan-inventory-v2.md` —— Bong 自有背包（CustomPayload，非 vanilla inventory）+ ItemInstance/ItemTemplate/ItemCategory + 满包静默丢 UX 开放问题
 - `docs/finished_plans/plan-hotbar-modify-v1.md` / `plan-hotbar-modify-v2.md` —— SkillBar 1-9 战斗栏 + SkillBarKeyRouter + Kind.ITEM 空枝（本 plan 在此承载方块选中态）
 - `docs/finished_plans/plan-item-visual-v1.md` —— `/gen-image item` 批量出 PNG icon 落 `textures/gui/items/{id}.png` 约定路径，server 零参与图标
@@ -52,7 +52,7 @@
 
 **交付物**：
 1. `block_drop_for`(`block_drop.rs:38`) 加 match arm：`BlockState::DIRT`/`COARSE_DIRT`/`SAND`/`GRAVEL` 等当前落 `_ => None` 的软方块 → `Some(BlockDropEntry{ template_id: <正典 id>, min_count: 1, max_count: 1, required_tool: None })`（手破即掉）。**COBBLESTONE/STONE 系不动**（已掉 stone_chunk）。
-2. `BlockDropEntry`(`block_drop.rs:31`) 加字段 `required_tool: Option<GatheringToolKind>`（手破方块=None；若给某软方块设工具门控则 `Some(...)`）。
+2. `BlockDropEntry`(`block_drop.rs:32`) 加字段 `required_tool: Option<GatheringToolKind>`（手破方块=None；若给某软方块设工具门控则 `Some(...)`）。
 3. `apply_block_drops`(`block_drop.rs:104`) 命中 entry 后、`roll_count` 前插工具门控：复用 `equipped_gathering_tool`(`gathering/tools.rs:222`，只查 equipped 主手/双手、破损不算、不回退 hotbar；比 mineral `pickaxe_tier` 通用)，不满足 `required_tool` 则 skip 掉落但方块照样被 `apply_default_block_break` 抹 AIR（与 vanilla「工具决定掉不掉、不决定破不破」一致）。**单 `get_mut` 同时读工具 + 写掉落**（避免 Bevy 同组件 `&`+`&mut` 双 Query panic）。
 4. **drop count 锁 1:1 防 dupe**（硬约束）：可放置方块的 `min_count=max_count=1`，**不可照 `crude_wood` 抄 1-2 区间**，否则「破坏掉 1-2 个 + 放置只消耗 1」形成净增殖刷物。
 5. 退让顺序保持：`MineralOreIndex.lookup → spirit niche → spiritwood` 三道 skip 在前，新方块判定插在其后、`block_drop_for` 命中之后（`block_drop.rs:134` 范式）。
@@ -113,7 +113,7 @@
    - 落块：调 `place_block_for_kind(template_id, target_face)`【**嫁接 registry 案的单一分叉函数，但弃整套 registry/Spec/behavior enum**】——内部判定：①凡俗方块 → `(template_id, target_face) → vanilla BlockState`（`block_item_to_state`，与 `block_drop_for` 互逆）→ 裸 `ChunkLayer::set_block`（**不经 `place_bong_block`**，否则 `is_bong_block` 拒绝 vanilla state 返 `Err(NonBongBlock)`，`bong_blocks.rs:25` 实测 + `place_rejects_vanilla_block` pin 佐证）；②未来 bong 陷阱方块 → `place_bong_block`。这是唯一对外扩展挂点，未来接入只加一条映射。
    - 扣减：`consume_item_instance_once`(`mod.rs:2725`) 扣 1（归零删 PlacedItemState）+ `send_inventory_snapshot_to_client`。
    - layer：用 `dimension_layers.entity_for(dimension)`（`block_drop.rs:152` 范式）而非 zhenfa 的 `With<OverworldLayer>`，否则 tsy 维度放置静默失败。
-4. **S2C 零工作量**：`ChunkLayer::set_block` 让 valence 帧末自动给所有 viewer 广播 `BlockUpdateS2c`/`ChunkDeltaUpdateS2c`（loaded chunk 标 changed section）。vanilla 方块 client 天然认识，无需 `ln.java` 注册。
+4. **S2C 零工作量**：`ChunkLayer::set_block` 让 valence 帧末自动给所有 viewer 广播 `BlockUpdateS2c`/`ChunkDeltaUpdateS2c`（loaded chunk 标 changed section）。vanilla 方块 client 天然认识，无需 `BongBlocks.java` 注册。
 5. `block_item_to_state` 签名预留 target_face 入参：`(template_id, target_face) → BlockState`（**函数而非静态查表**），P0 只做单一 template→单一 state 的凡俗方块，但签名留 target_face 给未来带 property 方块（原木 axis、陷阱 armed/facing）。
 
 **测试声明**：`world::block_place::*`：① 放置成功（方块写入 + inventory 扣 1 + revision bump + snapshot 发出）② 持有校验失败（instance 不存在 / 非 Block category）拒绝 ③ canPlace 拒绝（目标格非 AIR 不可替换 / 放进玩家碰撞箱 / Y 越界 / chunk 未加载）④ **分叉 pin**：vanilla 方块走 `set_block` 成功、（mock）bong 方块走 `place_bong_block` 路径 ⑤ 多人/跨维度 layer 选对。`cargo test world::block_place`.
@@ -147,7 +147,7 @@
 **交付物**：
 1. **e2e 用例**：client 1-9 选中方块槽 → 右键方块 → 发 `block_place` CustomPayload → server canPlace 校验 + `set_block` + 扣 inventory → S2C 方块出现 + inventory snapshot 反映 → client 渲染方块 + 背包减 1，全链路一条 e2e。**破坏闭环**：破坏 DIRT → 入背包 → 放回去 → 再破坏，验证 1:1 守恒（防 dupe 端到端兜底）。
 2. **icon 资产**：`textures/gui/items/{block}.png` 全量出图（`/gen-image item`），程序化扫透明度防假透明（memory gen-image 透明随机失败）。
-3. **扩展点文档化**：`place_block_for_kind` 单一分叉函数的未来 bong 陷阱方块接法——①`bong_blocks.json` 追加方块（boolean prop 顺序严格 `"true","false"` 对齐 MC BooleanProperty，否则 raw state 错位）→ cargo build codegen `BlockState::BONG_*`（ID 从 24141 接续）+ client gradlew build generateln（fail-fast 对齐 raw ID）；②`block_item_to_state` 加一条映射返 bong BlockState → 走 `place_bong_block` 分支；③「被踩触发」行为自建（zhenfa proximity 范式 `handle_zhenfa_trigger_requests`，**真实位置 `server/src/zhenfa/mod.rs:1169`**——非 client_request_handler.rs，无引擎级 on-step hook）+ per-block 状态存 server-side registry resource（valence 无 block-entity NBT，等 plan-persistence-v1）。**本 plan 仅留挂点不实装陷阱行为**。
+3. **扩展点文档化**：`place_block_for_kind` 单一分叉函数的未来 bong 陷阱方块接法——①`bong_blocks.json` 追加方块（boolean prop 顺序严格 `"true","false"` 对齐 MC BooleanProperty，否则 raw state 错位）→ cargo build codegen `BlockState::BONG_*`（ID 从 24141 接续）+ client `gradlew build` 的 `generateBongBlockIds` 任务（`client/build.gradle:114`，fail-fast 对齐 raw ID）；②`block_item_to_state` 加一条映射返 bong BlockState → 走 `place_bong_block` 分支；③「被踩触发」行为自建（zhenfa proximity 范式 `handle_zhenfa_trigger_requests`，**真实位置 `server/src/zhenfa/mod.rs:1169`**——非 client_request_handler.rs，无引擎级 on-step hook）+ per-block 状态存 server-side registry resource（valence 无 block-entity NBT，等 plan-persistence-v1）。**本 plan 仅留挂点不实装陷阱行为**。
 4. `scripts/smoke-test.sh` 通过。
 
 **抓手 grep**：e2e 测试文件名 / `place_block_for_kind`（扩展点注释）。
@@ -250,6 +250,8 @@
 
 防撞已核：6 个 id 均不与 materials.toml 现有 28 条重名；`stone_chunk`(碎石,COBBLESTONE) 已存在故 GRAVEL 用 `weathered_stone` 区分。SNOW/DEEPSLATE/灵晶 等留后续扩展,不进 P0。最终集 P0 实施可微调,但 id/name 风格锁定如上。
 
+> **v1 范围不对称（已知,有意）**：`stone_chunk`(COBBLESTONE/STONE 掉落)**可获取但 v1 不可放置**——本 plan 只把上表软方块纳入可放置集合,不把现有 `stone_chunk` 反向做成 placeable(避免动其现有掉落经济 + 控 P0 范围)。玩家能采到 stone_chunk 却放不回石头,是有意的 MVP 边界,非遗漏;后续可补 stone_chunk→COBBLESTONE 的 `block_item_to_state` 映射开放放置。
+
 **落点**：`server/assets/items/materials.toml`（6 条新 `[[item]]`）/ `block_drop.rs:block_drop_for`（6 条 match arm）→ plan §P0 交付物 1 + §P1 交付物 2。
 
 ---
@@ -275,3 +277,4 @@
 - `2026-06-09` 用户拍板 3 条决议（→ §11.1）：① 持握态 + 选中入口走**下层 1-9 SkillBar**（复用 `Kind.ITEM` 空枝 + 补 `selectedSlot` 指针 + `sendSkillBarBindItem` 接 UI，不新建 store、不放宽 MainHand 校验、不新增 `Kind.BLOCK`）；② 方块物品走**正典中文名**（残灰土/碎石/粗石）。落点已核实存在（`SkillBarEntry.Kind.ITEM:7` / `SkillBarKeyRouter.java:32` PASS_THROUGH 空枝 / `sendSkillBarBindItem:286` 零 UI 调用 / `SkillBarConfig` 无 selectedIndex）。剩 selectedSlot 存哪、取消语义、UI 触发点、具体方块正典名 → §10.0 Explore 收口。
 - `2026-06-09` 实地核查（sonnet workflow，4 路逐条翻代码核 50 条承重声明：34 ✅证实 / 8 ⚠️行号漂移 / 5 ❌错 / 0 查无）。**修正 5 处真错**：① W1 `should_apply_default_break` 误写 `should_drop` 且漏 Creative+Start 抹块臂（§P0 测试④）；② W2 `zhenfa_place_tx` 字段声明 :286、`.send()` dispatch 实际 :1316（§0/§P3）；③ W3 `handle_zhenfa_place_requests` 在 `zhenfa/mod.rs:893` 非 client_request_handler.rs（§P3）；④ W4 `handle_zhenfa_trigger_requests` 同在 `zhenfa/mod.rs:1169`（§P5）；⑤ W5 `encodeForgeStationPlace` 真实 :645 非 :1199、envelope 多 `station_tier` 字段（§P2）。另纠命名惯例错：仓库用英文 snake_case（`spirit_grass`）非拼音，软方块 id 另起防撞 `stone_chunk`（§11.1#7）。S6 澄清 `equipped()` 是 client 缓存非直连 server。8 处行号漂移已批量修锚点。**核查后地基判定:可信,改完 pre-P0 ready（仅剩 §10.0 细节落点）**。
 - `2026-06-09` §10.0 细节落点收口（3 Explore agent 实地翻代码 → §11.2）：① selectedSlot 存 `SkillBarStore` 静态 volatile 字段 + 4 条生命周期（SKILL cast 清/切槽覆盖/toggle 取消/放完 HUD 降级）+ 纯 client 态 server 不感知；② select-block UI = 扩 `InspectScreen.availablePillMenuActions:2256` 给 Block 物品加"绑到槽 N"右键项 → `sendSkillBarBindItem`,HUD `QuickBarHudPlanner:159` 补 ITEM icon 分支；③ 初始方块命名集 6 条（`earth_crumb`土屑/`hardened_soil`硬化土/`barren_sand`荒沙/`weathered_stone`风化碎石/`raw_clay_lump`陶土块 + `obsidian_shard`黑曜碎片工具示范）,揪出 worldview §二 正典「残灰方块」是环境层、与凡俗材料方块区分。**pre-P0 决策门通过,升 active。**
+- `2026-06-09` PR #459 升 active,Pi agent `/review` ✅ 建议合并(90%+ 引用准确)。修 Pi 提的:① `ln.java` 幽灵引用 → 真实 `BongBlocks.java`(行 22/116)+ `generateln` → 真实 gradle 任务 `generateBongBlockIds`(`client/build.gradle:114`,行 150);② `BlockDropEntry` 行号 :31→:32;③ 补 §11.2 C「stone_chunk 可获取但 v1 不可放置」的有意不对称说明。Pi 误报的 `BongHud:280`(实测 :280 确是 selectedSlot)未动。
