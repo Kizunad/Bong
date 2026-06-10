@@ -229,6 +229,13 @@ class InventoryEquipRulesTest {
             InventoryEquipRules.canPlaceIntoHotbar(item(7002L, "bone_shield", 1, 2)),
             "期望 canPlaceIntoHotbar(bone_shield) = false，实际返回 true"
         );
+        // 隔离断言：用 1×1 盾使 isSingleCell 短路失效，唯一拦截点落在 !isShield。
+        // 否则现实盾恒 1×2，isSingleCell 先短路为 false，删掉 !isShield 子句也不会撞红。
+        assertFalse(
+            InventoryEquipRules.canPlaceIntoHotbar(item(7003L, "wooden_shield", 1, 1)),
+            "期望 canPlaceIntoHotbar(1×1 wooden_shield) = false：isSingleCell 为 true 时唯一拦截必须是 !isShield；" +
+            "若此断言变绿说明 canPlaceIntoHotbar 丢了 !isShield 子句"
+        );
     }
 
     private static EnumMap<EquipSlotType, InventoryItem> equipped() {
