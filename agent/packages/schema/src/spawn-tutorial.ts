@@ -39,7 +39,7 @@ export const CoffinOpenedV1 = Type.Object(
     type: Type.Literal("coffin_opened"),
     player_id: Type.String({ minLength: 1, maxLength: 128 }),
     coffin_pos: BlockPosV1,
-    granted_item_id: Type.Literal("spirit_niche_stone"),
+    granted_item_id: Type.Literal("niche_base"),
     tick: tickField,
   },
   { additionalProperties: false },

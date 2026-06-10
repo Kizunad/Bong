@@ -316,20 +316,20 @@ public class InspectScreenApplyPillTest {
     }
 
     @Test
-    void spiritNicheStoneMenuIncludesPlaceAction() {
+    void spiritNicheBaseMenuIncludesPlaceAction() {
         install();
         InspectScreen screen = new InspectScreen(InventoryModel.empty());
         InventoryItem item = InventoryItem.createFull(
             3001L,
-            "spirit_niche_stone",
-            "龛石",
-            1,
-            1,
-            0.4,
+            "niche_base",
+            "灵龛基座",
+            2,
+            2,
+            6.0,
             "rare",
-            "可埋作私有灵龛的冷石。",
+            "龛石灵铁木台组合的永久复活点基座。",
             1,
-            0.2,
+            0.5,
             1.0
         );
 
@@ -340,11 +340,37 @@ public class InspectScreenApplyPillTest {
     }
 
     @Test
-    void dispatchPlaceSpiritNicheSendsStonePlacement() {
+    void dispatchPlaceSpiritNicheSendsBasePlacement() {
         install();
         InspectScreen screen = new InspectScreen(InventoryModel.empty());
         InventoryItem item = InventoryItem.createFull(
             3002L,
+            "niche_base",
+            "灵龛基座",
+            2,
+            2,
+            6.0,
+            "rare",
+            "龛石灵铁木台组合的永久复活点基座。",
+            1,
+            0.5,
+            1.0
+        );
+
+        assertTrue(screen.dispatchPlaceSpiritNicheAt(item, 11, 64, 10));
+        assertEquals(1, sent.size());
+        assertEquals(
+            "{\"type\":\"spirit_niche_place\",\"v\":1,\"x\":11,\"y\":64,\"z\":10,\"item_instance_id\":3002}",
+            sent.get(0).body()
+        );
+    }
+
+    @Test
+    void dispatchPlaceSpiritNicheRejectsOldStoneMaterial() {
+        install();
+        InspectScreen screen = new InspectScreen(InventoryModel.empty());
+        InventoryItem item = InventoryItem.createFull(
+            3003L,
             "spirit_niche_stone",
             "龛石",
             1,
@@ -357,11 +383,34 @@ public class InspectScreenApplyPillTest {
             1.0
         );
 
-        assertTrue(screen.dispatchPlaceSpiritNicheAt(item, 11, 64, 10));
-        assertEquals(1, sent.size());
-        assertEquals(
-            "{\"type\":\"spirit_niche_place\",\"v\":1,\"x\":11,\"y\":64,\"z\":10,\"item_instance_id\":3002}",
-            sent.get(0).body()
+        assertFalse(screen.dispatchPlaceSpiritNicheAt(item, 11, 64, 10));
+        assertTrue(sent.isEmpty());
+    }
+
+    @Test
+    void dispatchPlaceSpiritNicheRejectsNullItem() {
+        install();
+        InspectScreen screen = new InspectScreen(InventoryModel.empty());
+
+        assertFalse(screen.dispatchPlaceSpiritNicheAt(null, 11, 64, 10));
+        assertTrue(sent.isEmpty());
+    }
+
+    @Test
+    void dispatchPlaceSpiritNicheRejectsMockItemWithZeroInstanceId() {
+        install();
+        InspectScreen screen = new InspectScreen(InventoryModel.empty());
+        InventoryItem item = InventoryItem.create(
+            "niche_base",
+            "灵龛基座",
+            2,
+            2,
+            6.0,
+            "rare",
+            "龛石灵铁木台组合的永久复活点基座。"
         );
+
+        assertFalse(screen.dispatchPlaceSpiritNicheAt(item, 11, 64, 10));
+        assertTrue(sent.isEmpty());
     }
 }

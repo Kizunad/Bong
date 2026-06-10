@@ -4,10 +4,8 @@ import com.bong.client.alchemy.AlchemyFurnaceItems;
 import com.bong.client.alchemy.AlchemyFurnaceInteractionRules;
 import com.bong.client.alchemy.AlchemyScreenBootstrap;
 import com.bong.client.alchemy.state.AlchemyFurnaceStore;
-import com.bong.client.block.BlockVanillaIconMap;
+import com.bong.client.block.BlockPlaceIntentResolver;
 import com.bong.client.coffin.CoffinEnterIntentHandler;
-import com.bong.client.combat.SkillBarConfig;
-import com.bong.client.combat.SkillBarEntry;
 import com.bong.client.combat.SkillBarStore;
 import com.bong.client.combat.screen.ZhenfaLayoutScreen;
 import com.bong.client.entity.BongEntityModelKind;
@@ -28,7 +26,6 @@ import net.minecraft.util.ActionResult;
 import net.minecraft.util.Hand;
 import net.minecraft.util.hit.BlockHitResult;
 import net.minecraft.util.math.BlockPos;
-import net.minecraft.util.math.Direction;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
@@ -96,7 +93,7 @@ public abstract class MixinClientPlayerInteractionManagerAlchemy {
                 hit.getBlockPos(),
                 zhenfaTrapKind,
                 mainHand.instanceId(),
-                bong$zhenfaFace(hit.getSide())
+                BlockPlaceIntentResolver.zhenfaFace(hit.getSide())
             ));
             cir.setReturnValue(ActionResult.SUCCESS);
             return;
@@ -120,7 +117,7 @@ public abstract class MixinClientPlayerInteractionManagerAlchemy {
             return;
         }
 
-        BongBlockPlaceIntent blockPlace = bong$selectedBlockPlaceIntent(
+        BlockPlaceIntentResolver.Intent blockPlace = BlockPlaceIntentResolver.selectedBlockPlaceIntent(
             SkillBarStore.selectedSlot(),
             InventoryStateStore.snapshot(),
             hit.getBlockPos(),
@@ -152,58 +149,6 @@ public abstract class MixinClientPlayerInteractionManagerAlchemy {
         return Math.abs(pos.getX()) <= 8 && pos.getY() >= 60 && pos.getY() <= 90 && Math.abs(pos.getZ()) <= 8;
     }
 
-    static InventoryItem bong$selectedBlockItem(int selectedSlot, com.bong.client.inventory.model.InventoryModel inventory) {
-        if (selectedSlot < 0 || selectedSlot >= SkillBarConfig.SLOT_COUNT || inventory == null) return null;
-
-        SkillBarEntry entry = SkillBarStore.snapshot().slot(selectedSlot);
-        if (entry == null || entry.kind() != SkillBarEntry.Kind.ITEM) return null;
-        if (!BlockVanillaIconMap.isKnownBlockItem(entry.id())) return null;
-
-        InventoryItem hotbarItem = selectedSlot < inventory.hotbar().size()
-            ? inventory.hotbar().get(selectedSlot)
-            : null;
-        if (bong$matchesInstance(hotbarItem, entry.id())) return hotbarItem;
-
-        for (InventoryItem item : inventory.hotbar()) {
-            if (bong$matchesInstance(item, entry.id())) return item;
-        }
-        for (var gridEntry : inventory.gridItems()) {
-            InventoryItem item = gridEntry.item();
-            if (bong$matchesInstance(item, entry.id())) return item;
-        }
-        return null;
-    }
-
-    static BongBlockPlaceIntent bong$selectedBlockPlaceIntent(
-        int selectedSlot,
-        com.bong.client.inventory.model.InventoryModel inventory,
-        BlockPos targetPos,
-        Direction targetFace
-    ) {
-        if (targetPos == null || targetFace == null) return null;
-        InventoryItem selectedBlock = bong$selectedBlockItem(selectedSlot, inventory);
-        if (selectedBlock == null || selectedBlock.instanceId() <= 0) return null;
-        return new BongBlockPlaceIntent(
-            targetPos.offset(targetFace),
-            selectedBlock.instanceId(),
-            bong$zhenfaFace(targetFace)
-        );
-    }
-
-    record BongBlockPlaceIntent(
-        BlockPos placePos,
-        long instanceId,
-        ClientRequestProtocol.ZhenfaTargetFace face
-    ) {
-    }
-
-    private static boolean bong$matchesInstance(InventoryItem item, String templateId) {
-        return item != null
-            && !item.isEmpty()
-            && item.instanceId() > 0
-            && templateId.equals(item.itemId());
-    }
-
     private static ClientRequestProtocol.ZhenfaKind bong$zhenfaKindForItem(InventoryItem item) {
         if (item == null) return null;
         return switch (item.itemId()) {
@@ -211,17 +156,6 @@ public abstract class MixinClientPlayerInteractionManagerAlchemy {
             case BLAST_TRAP_ITEM_ID -> ClientRequestProtocol.ZhenfaKind.BLAST_TRAP;
             case SLOW_TRAP_ITEM_ID -> ClientRequestProtocol.ZhenfaKind.SLOW_TRAP;
             default -> null;
-        };
-    }
-
-    private static ClientRequestProtocol.ZhenfaTargetFace bong$zhenfaFace(Direction direction) {
-        return switch (direction) {
-            case UP -> ClientRequestProtocol.ZhenfaTargetFace.TOP;
-            case DOWN -> ClientRequestProtocol.ZhenfaTargetFace.BOTTOM;
-            case NORTH -> ClientRequestProtocol.ZhenfaTargetFace.NORTH;
-            case SOUTH -> ClientRequestProtocol.ZhenfaTargetFace.SOUTH;
-            case EAST -> ClientRequestProtocol.ZhenfaTargetFace.EAST;
-            case WEST -> ClientRequestProtocol.ZhenfaTargetFace.WEST;
         };
     }
 }

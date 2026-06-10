@@ -187,7 +187,7 @@ def spawn_tutorial_pois_for_zone(zone: BlueprintZone) -> tuple[PoiSpec, ...]:
             kind="spawn_tutorial_coffin",
             name="半埋石棺",
             pos_xyz=(float(center_x), 69.0, float(center_z)),
-            tags=("spawn_tutorial", "coffin", "loot:spirit_niche_stone"),
+            tags=("spawn_tutorial", "coffin", "loot:niche_base"),
             qi_affinity=0.05,
         ),
         PoiSpec(

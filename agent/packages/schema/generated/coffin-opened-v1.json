@@ -41,7 +41,7 @@
       "maxItems": 3
     },
     "granted_item_id": {
-      "const": "spirit_niche_stone",
+      "const": "niche_base",
       "type": "string"
     },
     "tick": {

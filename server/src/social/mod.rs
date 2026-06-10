@@ -77,7 +77,7 @@ const SPARRING_MAX_TICKS: u64 = 5 * 60 * 20;
 const SPARRING_HUMILITY_TICKS: u64 = 5 * 60 * 20;
 const TRADE_OFFER_TIMEOUT_TICKS: u64 = 10 * 20;
 const TRADE_OFFER_TIMEOUT_MS: u64 = 10_000;
-const SPIRIT_NICHE_ITEM_TEMPLATE_ID: &str = "spirit_niche_stone";
+const SPIRIT_NICHE_ITEM_TEMPLATE_ID: &str = "niche_base";
 const SPIRIT_NICHE_RADIUS: f64 = 5.0;
 const SPIRIT_NICHE_NEGATIVE_QI_DAMAGE_RATIO: f64 = 0.1;
 const NAMELESS_LABEL: &str = "无名修士";
@@ -1536,7 +1536,7 @@ fn handle_spirit_niche_place_requests(
         };
         if instance.template_id != SPIRIT_NICHE_ITEM_TEMPLATE_ID {
             tracing::warn!(
-                "[bong][social] spirit niche place rejected for `{}`: item `{}` is not a niche stone",
+                "[bong][social] spirit niche place rejected for `{}`: item `{}` is not a niche base",
                 lifecycle.character_id,
                 instance.template_id
             );
@@ -1641,7 +1641,7 @@ fn handle_spirit_niche_place_requests(
                 &inventory,
                 player_state,
                 cultivation,
-                "spirit_niche_stone_consumed",
+                "niche_base_consumed",
             );
         }
     }
@@ -2916,11 +2916,11 @@ mod tests {
     use valence::protocol::packets::play::CustomPayloadS2c;
     use valence::testing::{create_mock_client, MockClientHelper};
 
-    fn spirit_niche_test_item(instance_id: u64) -> ItemInstance {
+    fn item_instance(instance_id: u64, template_id: &str, display_name: &str) -> ItemInstance {
         ItemInstance {
             instance_id,
-            template_id: SPIRIT_NICHE_ITEM_TEMPLATE_ID.to_string(),
-            display_name: "龛石".to_string(),
+            template_id: template_id.to_string(),
+            display_name: display_name.to_string(),
             grid_w: 1,
             grid_h: 1,
             weight: 0.4,
@@ -2939,6 +2939,18 @@ mod tests {
             alchemy: None,
             lingering_owner_qi: None,
         }
+    }
+
+    fn spirit_niche_test_item(instance_id: u64) -> ItemInstance {
+        item_instance(instance_id, SPIRIT_NICHE_ITEM_TEMPLATE_ID, "灵龛基座")
+    }
+
+    fn spirit_niche_stone_test_item(instance_id: u64) -> ItemInstance {
+        item_instance(instance_id, "spirit_niche_stone", "龛石")
+    }
+
+    fn wood_plank_test_item(instance_id: u64) -> ItemInstance {
+        item_instance(instance_id, "wood_plank", "木板")
     }
 
     fn trade_test_item(instance_id: u64, name: &str) -> ItemInstance {
@@ -4282,7 +4294,7 @@ mod tests {
     }
 
     #[test]
-    fn spirit_niche_place_consumes_stone_sets_anchor_and_persists() {
+    fn spirit_niche_place_consumes_base_sets_anchor_and_persists() {
         let (persistence, data_dir) = social_persistence("spirit-niche-place");
         let mut app = App::new();
         app.insert_resource(persistence.clone());
@@ -4344,6 +4356,136 @@ mod tests {
         }
 
         let _ = std::fs::remove_dir_all(data_dir);
+    }
+
+    #[test]
+    fn niche_base_template_id_is_recipe_output() {
+        let mut registry = crate::craft::CraftRegistry::new();
+        crate::craft::register_workbench_recipes(&mut registry)
+            .expect("workbench recipes should register");
+        let recipe = registry
+            .get(&crate::craft::RecipeId::new("workbench.shelter.niche_base"))
+            .expect("niche base recipe should exist");
+
+        assert_eq!(
+            recipe.output.0, SPIRIT_NICHE_ITEM_TEMPLATE_ID,
+            "spirit niche placement must accept the workbench recipe output"
+        );
+    }
+
+    #[test]
+    fn spirit_niche_place_rejects_old_stone_material() {
+        let mut app = App::new();
+        app.insert_resource(SpiritNicheRegistry::default());
+        app.add_event::<SpiritNichePlaceRequest>();
+        app.add_systems(Update, handle_spirit_niche_place_requests);
+
+        let (mut client_bundle, _helper) = create_mock_client("Azure");
+        client_bundle.player.position = Position::new([10.0, 64.0, 10.0]);
+        let entity = app.world_mut().spawn(client_bundle).id();
+        app.world_mut().entity_mut(entity).insert((
+            Lifecycle {
+                character_id: "char:azure".to_string(),
+                ..Default::default()
+            },
+            inventory_with_item(spirit_niche_stone_test_item(4242)),
+        ));
+        app.world_mut().send_event(SpiritNichePlaceRequest {
+            player: entity,
+            pos: [11, 64, 10],
+            item_instance_id: Some(4242),
+            tick: 77,
+        });
+
+        app.update();
+
+        assert!(app.world().get::<SpiritNiche>(entity).is_none());
+        let lifecycle = app.world().get::<Lifecycle>(entity).unwrap();
+        assert_eq!(lifecycle.spawn_anchor, None);
+        let inventory = app.world().get::<PlayerInventory>(entity).unwrap();
+        assert!(
+            inventory_item_by_instance(inventory, 4242).is_some(),
+            "old spirit_niche_stone is crafting material only and must not be consumed"
+        );
+    }
+
+    #[test]
+    fn spirit_niche_place_rejects_missing_or_wrong_item_without_consuming() {
+        let mut app = App::new();
+        app.insert_resource(SpiritNicheRegistry::default());
+        app.add_event::<SpiritNichePlaceRequest>();
+        app.add_systems(Update, handle_spirit_niche_place_requests);
+
+        let (mut client_bundle, _helper) = create_mock_client("Azure");
+        client_bundle.player.position = Position::new([10.0, 64.0, 10.0]);
+        let entity = app.world_mut().spawn(client_bundle).id();
+        app.world_mut().entity_mut(entity).insert((
+            Lifecycle {
+                character_id: "char:azure".to_string(),
+                ..Default::default()
+            },
+            inventory_with_item(wood_plank_test_item(4242)),
+        ));
+
+        app.world_mut().send_event(SpiritNichePlaceRequest {
+            player: entity,
+            pos: [11, 64, 10],
+            item_instance_id: None,
+            tick: 77,
+        });
+        app.world_mut().send_event(SpiritNichePlaceRequest {
+            player: entity,
+            pos: [11, 64, 10],
+            item_instance_id: Some(4242),
+            tick: 78,
+        });
+
+        app.update();
+
+        assert!(app.world().get::<SpiritNiche>(entity).is_none());
+        let lifecycle = app.world().get::<Lifecycle>(entity).unwrap();
+        assert_eq!(lifecycle.spawn_anchor, None);
+        let inventory = app.world().get::<PlayerInventory>(entity).unwrap();
+        assert!(
+            inventory_item_by_instance(inventory, 4242).is_some(),
+            "wrong template must not be consumed"
+        );
+    }
+
+    #[test]
+    fn spirit_niche_place_rejects_remote_target_without_consuming() {
+        let mut app = App::new();
+        app.insert_resource(SpiritNicheRegistry::default());
+        app.add_event::<SpiritNichePlaceRequest>();
+        app.add_systems(Update, handle_spirit_niche_place_requests);
+
+        let (mut client_bundle, _helper) = create_mock_client("Azure");
+        client_bundle.player.position = Position::new([10.0, 64.0, 10.0]);
+        let entity = app.world_mut().spawn(client_bundle).id();
+        app.world_mut().entity_mut(entity).insert((
+            Lifecycle {
+                character_id: "char:azure".to_string(),
+                ..Default::default()
+            },
+            inventory_with_item(spirit_niche_test_item(4242)),
+        ));
+        app.world_mut().send_event(SpiritNichePlaceRequest {
+            player: entity,
+            pos: [128, 64, 128],
+            item_instance_id: Some(4242),
+            tick: 77,
+        });
+
+        app.update();
+
+        assert!(app.world().get::<SpiritNiche>(entity).is_none());
+        let lifecycle = app.world().get::<Lifecycle>(entity).unwrap();
+        assert_eq!(lifecycle.spawn_anchor, None);
+        let inventory = app.world().get::<PlayerInventory>(entity).unwrap();
+        assert!(
+            inventory_item_by_instance(inventory, 4242).is_some(),
+            "remote target rejection must happen before item consumption"
+        );
     }
 
     #[test]
