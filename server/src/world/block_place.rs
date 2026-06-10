@@ -1,16 +1,18 @@
 use std::fmt;
 
 use valence::prelude::{
-    bevy_ecs, App, BlockPos, BlockState, ChunkLayer, Client, Entity, Event, EventReader,
+    bevy_ecs, App, BlockPos, BlockState, ChunkLayer, Client, Commands, Entity, Event, EventReader,
     IntoSystemConfigs, Position, Query, Res, Update, Username,
 };
 
+use crate::craft::handle_workbench_place;
 use crate::cultivation::components::Cultivation;
 use crate::inventory::{
     consume_item_instance_once, inventory_item_by_instance_borrow, ItemCategory, ItemRegistry,
     PlayerInventory,
 };
 use crate::network::inventory_snapshot_emit::send_inventory_snapshot_to_client;
+use crate::player::gameplay::GameplayTick;
 use crate::player::state::PlayerState;
 use crate::world::bong_blocks::{is_bong_block, place_bong_block};
 use crate::world::dimension::{CurrentDimension, DimensionKind, DimensionLayers};
@@ -30,8 +32,22 @@ pub struct BlockPlaceRequest {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PlaceableBlockKind {
+    Workbench,
+    StorageCrate { is_herb: bool },
+    DeadDrop,
+}
+
+impl PlaceableBlockKind {
+    fn is_runtime_supported(self) -> bool {
+        matches!(self, Self::Workbench)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BlockPlaceRejectReason {
     UnknownBlockItem,
+    UnsupportedPlaceableKind(PlaceableBlockKind),
     ChunkNotLoaded,
     YOutOfBounds,
     TargetNotReplaceable(BlockState),
@@ -43,6 +59,9 @@ impl fmt::Display for BlockPlaceRejectReason {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::UnknownBlockItem => write!(f, "unknown block item"),
+            Self::UnsupportedPlaceableKind(kind) => {
+                write!(f, "unsupported placeable block kind {kind:?}")
+            }
             Self::ChunkNotLoaded => write!(f, "target chunk is not loaded"),
             Self::YOutOfBounds => write!(f, "target y is outside layer bounds"),
             Self::TargetNotReplaceable(state) => {
@@ -62,9 +81,12 @@ pub fn register(app: &mut App) {
     );
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn handle_block_place_requests(
+    mut commands: Commands,
     mut requests: EventReader<BlockPlaceRequest>,
     item_registry: Res<ItemRegistry>,
+    gameplay_tick: Option<Res<GameplayTick>>,
     dimension_layers: Option<Res<DimensionLayers>>,
     mut layers: Query<&mut ChunkLayer>,
     mut inventories: Query<&mut PlayerInventory>,
@@ -84,11 +106,12 @@ pub fn handle_block_place_requests(
             .map(|component| component.0)
             .unwrap_or(DimensionKind::Overworld);
 
-        let Some(template_id) =
-            block_template_id_for_request(&inventories, &item_registry, req.client, *req)
+        let Some(target) =
+            block_place_target_for_request(&inventories, &item_registry, req.client, *req)
         else {
             continue;
         };
+        let template_id = target.template_id().to_string();
 
         let Some(dimension_layers) = dimension_layers.as_deref() else {
             tracing::warn!(
@@ -107,14 +130,21 @@ pub fn handle_block_place_requests(
             continue;
         };
 
-        let Some(block_state) = block_item_to_state(&template_id, req.target_face) else {
-            tracing::warn!(
-                "[bong][block_place] rejected: item `{}` has no placeable state",
-                template_id
-            );
-            continue;
+        let collision_state = match &target {
+            BlockPlaceTarget::Vanilla { state, .. } => *state,
+            BlockPlaceTarget::Placeable { kind, .. } => {
+                if !kind.is_runtime_supported() {
+                    tracing::warn!(
+                        "[bong][block_place] rejected: item `{}` placeable kind {:?} is declared but not implemented",
+                        template_id,
+                        kind
+                    );
+                    continue;
+                }
+                BlockState::DIRT
+            }
         };
-        if let Err(reason) = can_place_block(&layer, pos, block_state, player_position.get()) {
+        if let Err(reason) = can_place_block(&layer, pos, collision_state, player_position.get()) {
             tracing::warn!(
                 "[bong][block_place] rejected: player={:?} pos={:?} item=`{}` reason={reason}",
                 req.client,
@@ -139,7 +169,24 @@ pub fn handle_block_place_requests(
             continue;
         }
 
-        match place_block_for_kind(&mut layer, pos, &template_id, req.target_face) {
+        let placement = match target {
+            BlockPlaceTarget::Vanilla { template_id, .. } => {
+                place_block_for_kind(&mut layer, pos, &template_id, req.target_face)
+                    .map(|state| format!("state={state:?}"))
+            }
+            BlockPlaceTarget::Placeable {
+                template_id: _,
+                kind,
+            } => {
+                let now = gameplay_tick
+                    .as_ref()
+                    .map(|tick| tick.current_tick())
+                    .unwrap_or(0);
+                place_placeable(kind, &mut commands, layer_entity, pos, req.client, now)
+                    .map(|entity| format!("entity={entity:?} kind={kind:?}"))
+            }
+        };
+        match placement {
             Ok(placed) => {
                 if let Ok((username, mut client, player_state, cultivation)) =
                     clients.get_mut(req.client)
@@ -163,15 +210,15 @@ pub fn handle_block_place_requests(
                     );
                 }
                 tracing::info!(
-                    "[bong][block_place] ok: player={:?} pos={:?} item=`{}` state={placed:?}",
+                    "[bong][block_place] ok: player={:?} pos={:?} item=`{}` {placed}",
                     req.client,
                     pos,
-                    template_id
+                    template_id,
                 );
             }
             Err(reason) => {
                 tracing::error!(
-                    "[bong][block_place] placed item was consumed but block write failed: player={:?} pos={:?} item=`{}` reason={reason}",
+                    "[bong][block_place] placed item was consumed but placement failed: player={:?} pos={:?} item=`{}` reason={reason}",
                     req.client,
                     pos,
                     template_id
@@ -181,12 +228,32 @@ pub fn handle_block_place_requests(
     }
 }
 
-fn block_template_id_for_request(
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum BlockPlaceTarget {
+    Vanilla {
+        template_id: String,
+        state: BlockState,
+    },
+    Placeable {
+        template_id: String,
+        kind: PlaceableBlockKind,
+    },
+}
+
+impl BlockPlaceTarget {
+    fn template_id(&self) -> &str {
+        match self {
+            Self::Vanilla { template_id, .. } | Self::Placeable { template_id, .. } => template_id,
+        }
+    }
+}
+
+fn block_place_target_for_request(
     inventories: &Query<&mut PlayerInventory>,
     item_registry: &ItemRegistry,
     client: Entity,
     req: BlockPlaceRequest,
-) -> Option<String> {
+) -> Option<BlockPlaceTarget> {
     let Ok(inventory) = inventories.get(client) else {
         tracing::warn!(
             "[bong][block_place] rejected: player {:?} has no PlayerInventory",
@@ -217,15 +284,82 @@ fn block_template_id_for_request(
         );
         return None;
     }
-    if block_item_to_state(&item.template_id, req.target_face).is_none() {
+    if let Some(placeable) = template.placeable.as_deref() {
+        let Some(kind) = placeable_kind_from_str(placeable) else {
+            tracing::warn!(
+                "[bong][block_place] rejected: block item `{}` has unknown placeable kind `{}`",
+                item.template_id,
+                placeable
+            );
+            return None;
+        };
+        return Some(BlockPlaceTarget::Placeable {
+            template_id: item.template_id.clone(),
+            kind,
+        });
+    }
+    let Some(state) = block_item_to_state(&item.template_id, req.target_face) else {
         tracing::warn!(
             "[bong][block_place] rejected: block item `{}` is not placeable in v1",
             item.template_id
         );
         return None;
-    }
+    };
 
-    Some(item.template_id.clone())
+    Some(BlockPlaceTarget::Vanilla {
+        template_id: item.template_id.clone(),
+        state,
+    })
+}
+
+pub fn placeable_kind_from_str(raw: &str) -> Option<PlaceableBlockKind> {
+    match raw.trim().to_ascii_lowercase().as_str() {
+        "workbench" => Some(PlaceableBlockKind::Workbench),
+        "storage_crate" => Some(PlaceableBlockKind::StorageCrate { is_herb: false }),
+        "herb_crate" | "storage_crate_herb" => {
+            Some(PlaceableBlockKind::StorageCrate { is_herb: true })
+        }
+        "dead_drop" => Some(PlaceableBlockKind::DeadDrop),
+        _ => None,
+    }
+}
+
+pub fn place_placeable(
+    kind: PlaceableBlockKind,
+    commands: &mut Commands,
+    layer: Entity,
+    pos: BlockPos,
+    placed_by: Entity,
+    placed_at_tick: u64,
+) -> Result<Entity, BlockPlaceRejectReason> {
+    match kind {
+        PlaceableBlockKind::Workbench => Ok(handle_workbench_place(
+            commands,
+            layer,
+            placed_by,
+            pos,
+            placed_at_tick,
+        )),
+        PlaceableBlockKind::StorageCrate { .. } | PlaceableBlockKind::DeadDrop => {
+            Err(BlockPlaceRejectReason::UnsupportedPlaceableKind(kind))
+        }
+    }
+}
+
+pub fn break_placeable(
+    kind: PlaceableBlockKind,
+    commands: &mut Commands,
+    entity: Entity,
+) -> Result<(), BlockPlaceRejectReason> {
+    match kind {
+        PlaceableBlockKind::Workbench => {
+            commands.entity(entity).despawn();
+            Ok(())
+        }
+        PlaceableBlockKind::StorageCrate { .. } | PlaceableBlockKind::DeadDrop => {
+            Err(BlockPlaceRejectReason::UnsupportedPlaceableKind(kind))
+        }
+    }
 }
 
 /// 当前 v1 只把背包方块物品映射回 vanilla BlockState。
@@ -327,12 +461,15 @@ mod tests {
     use super::*;
     use std::collections::HashMap;
 
+    use crate::craft::workbench::workbench_block_pos;
+    use crate::craft::{WorkbenchBlock, WORKBENCH_ITEM_TEMPLATE};
     use crate::inventory::{
         ContainerState, InventoryInstanceIdAllocator, InventoryRevision, ItemInstance, ItemRarity,
         ItemTemplate, PlacedItemState,
     };
     use crate::network::agent_bridge::SERVER_DATA_CHANNEL;
     use crate::schema::server_data::{ServerDataPayloadV1, ServerDataV1};
+    use crate::world::entity_model::{BongVisualEntity, BongVisualKind};
     use valence::prelude::{
         ident, App, BiomeRegistry, DiggingEvent, DiggingState, DimensionTypeRegistry, GameMode,
         IntoSystemConfigs, Server, UnloadedChunk, Update, VisibleChunkLayer,
@@ -369,6 +506,40 @@ mod tests {
                 "expected `{template_id}` to stay non-placeable in v1"
             );
         }
+    }
+
+    #[test]
+    fn block_item_to_state_keeps_workbench_out_of_vanilla_mapping() {
+        assert_eq!(
+            block_item_to_state(WORKBENCH_ITEM_TEMPLATE, TrapTargetFace::Top),
+            None,
+            "workbench_item must route through PlaceableBlockKind, not vanilla BlockState mapping"
+        );
+    }
+
+    #[test]
+    fn placeable_kind_from_str_pins_declared_variants() {
+        assert_eq!(
+            placeable_kind_from_str("workbench"),
+            Some(PlaceableBlockKind::Workbench)
+        );
+        assert_eq!(
+            placeable_kind_from_str("storage_crate"),
+            Some(PlaceableBlockKind::StorageCrate { is_herb: false })
+        );
+        assert_eq!(
+            placeable_kind_from_str("herb_crate"),
+            Some(PlaceableBlockKind::StorageCrate { is_herb: true })
+        );
+        assert_eq!(
+            placeable_kind_from_str("dead_drop"),
+            Some(PlaceableBlockKind::DeadDrop)
+        );
+        assert_eq!(
+            placeable_kind_from_str("nonsense"),
+            None,
+            "unknown placeable values must reject without falling into vanilla placement"
+        );
     }
 
     #[test]
@@ -556,6 +727,62 @@ mod tests {
         assert!(
             has_inventory_snapshot_payload(&mut helper),
             "successful placement should push a corrective inventory snapshot"
+        );
+    }
+
+    #[test]
+    fn handler_places_workbench_entity_consumes_inventory_and_sends_snapshot() {
+        let (mut app, client, layer_entity, mut helper) = block_place_app(
+            inventory_with_item(item_instance(9201, WORKBENCH_ITEM_TEMPLATE, 1)),
+            DimensionKind::Overworld,
+        );
+        app.insert_resource(ItemRegistry::from_map(HashMap::from([
+            item_template_with_placeable(
+                WORKBENCH_ITEM_TEMPLATE,
+                ItemCategory::Block,
+                Some("workbench"),
+            ),
+        ])));
+
+        app.world_mut().send_event(BlockPlaceRequest {
+            client,
+            x: 1,
+            y: 64,
+            z: 1,
+            item_instance_id: 9201,
+            target_face: TrapTargetFace::Top,
+        });
+        app.update();
+        flush_all_client_packets(&mut app);
+
+        assert_eq!(
+            block_state_at(&app, layer_entity, BlockPos::new(1, 64, 1)),
+            Some(BlockState::AIR),
+            "workbench placement is pure entity-backed and must not write a vanilla block"
+        );
+
+        let mut query = app
+            .world_mut()
+            .query::<(&WorkbenchBlock, &BongVisualEntity, &Position)>();
+        let workbenches = query.iter(app.world()).collect::<Vec<_>>();
+        assert_eq!(
+            workbenches.len(),
+            1,
+            "placing one workbench_item should spawn exactly one WorkbenchBlock entity"
+        );
+        let (workbench, visual, position) = workbenches[0];
+        assert_eq!(workbench.placed_by, client);
+        assert_eq!(workbench.placed_at_tick, 0);
+        assert_eq!(visual.kind, BongVisualKind::Workbench);
+        assert_eq!(workbench_block_pos(position), [1, 64, 1]);
+        assert_eq!(
+            inventory_template_count(&app, client, WORKBENCH_ITEM_TEMPLATE),
+            0,
+            "successful workbench placement should consume the held workbench item"
+        );
+        assert!(
+            has_inventory_snapshot_payload(&mut helper),
+            "successful workbench placement should push a corrective inventory snapshot"
         );
     }
 
@@ -837,12 +1064,21 @@ mod tests {
     }
 
     fn item_template(template_id: &str, category: ItemCategory) -> (String, ItemTemplate) {
+        item_template_with_placeable(template_id, category, None)
+    }
+
+    fn item_template_with_placeable(
+        template_id: &str,
+        category: ItemCategory,
+        placeable: Option<&str>,
+    ) -> (String, ItemTemplate) {
         (
             template_id.to_string(),
             ItemTemplate {
                 id: template_id.to_string(),
                 display_name: template_id.to_string(),
                 category,
+                placeable: placeable.map(str::to_string),
                 max_stack_count: 16,
                 grid_w: 1,
                 grid_h: 1,

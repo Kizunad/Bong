@@ -12,6 +12,7 @@
 //!              紧随 STONE_CASKET=159 连号（与客户端 BongEntityModelKind 同一注册循环）。
 //! `164`:       Baolongwang BOSS（见 `fauna::visual::BAOLONGWANG_ENTITY_KIND`），
 //!              客户端独立 bootstrap 在四档之后注册，故取最高号 164。
+//! `165`:       Workbench。
 
 use std::collections::{HashMap, HashSet};
 
@@ -59,6 +60,7 @@ pub const COFFIN_MUNDANE_ENTITY_KIND: EntityKind = EntityKind::new(160);
 pub const COFFIN_JADE_ENTITY_KIND: EntityKind = EntityKind::new(161);
 pub const COFFIN_STONE_ENTITY_KIND: EntityKind = EntityKind::new(162);
 pub const COFFIN_BRONZE_ENTITY_KIND: EntityKind = EntityKind::new(163);
+pub const WORKBENCH_ENTITY_KIND: EntityKind = EntityKind::new(165);
 
 const BONG_VISUAL_STATE_INDEX: u8 = 8;
 const TRACKED_DATA_TYPE_INTEGER: u8 = 1;
@@ -90,6 +92,7 @@ pub enum BongVisualKind {
     CoffinJade,
     CoffinStone,
     CoffinBronze,
+    Workbench,
 }
 
 impl BongVisualKind {
@@ -113,6 +116,7 @@ impl BongVisualKind {
             Self::CoffinJade => COFFIN_JADE_ENTITY_KIND,
             Self::CoffinStone => COFFIN_STONE_ENTITY_KIND,
             Self::CoffinBronze => COFFIN_BRONZE_ENTITY_KIND,
+            Self::Workbench => WORKBENCH_ENTITY_KIND,
         }
     }
 }
@@ -624,6 +628,7 @@ mod tests {
             COFFIN_JADE_ENTITY_KIND,
             COFFIN_STONE_ENTITY_KIND,
             COFFIN_BRONZE_ENTITY_KIND,
+            WORKBENCH_ENTITY_KIND,
         ]
         .map(|kind| kind.get());
 
@@ -631,10 +636,19 @@ mod tests {
             ids,
             [
                 146, 147, 148, 149, 150, 151, 152, 153, 154, 155, 156, 157, 158, 159, 160, 161,
-                162, 163
+                162, 163, 165
             ],
             "entity raw_id contract drifted: client BongEntityModelKind must stay 1:1; \
-             延寿棺四档连号 160-163（Baolongwang BOSS 在四档之后注册取 164）"
+             延寿棺四档连号 160-163，Baolongwang=164，Workbench=165"
+        );
+    }
+
+    #[test]
+    fn workbench_visual_kind_maps_to_raw_id_165() {
+        assert_eq!(
+            BongVisualKind::Workbench.entity_kind(),
+            WORKBENCH_ENTITY_KIND,
+            "Workbench visual entity must keep raw_id 165 for client renderer parity"
         );
     }
 
