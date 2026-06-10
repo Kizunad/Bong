@@ -11256,4 +11256,104 @@ mod freshness_probe_handler_tests {
             lowered.0.len()
         );
     }
+
+    /// plan-shield-block-v1 P1 CR#4 — 同 tick 内同时发送 raise + lower 两个 payload，
+    /// 断言两个 intent 在同一 update() 内均被 dispatch（区别于 raise_then_lower 使用两次 update）。
+    #[test]
+    fn raise_and_lower_same_tick_dispatches_both_intents() {
+        let (mut app, entity) = setup_shield_e2e_app();
+
+        // 在同一 update 前发送 raise + lower 两个 CustomPayloadEvent
+        let mut events = app
+            .world_mut()
+            .resource_mut::<valence::prelude::Events<CustomPayloadEvent>>();
+        events.send(CustomPayloadEvent {
+            client: entity,
+            channel: ident!("bong:client_request").into(),
+            data: br#"{"type":"raise_shield","v":1}"#.to_vec().into_boxed_slice(),
+        });
+        events.send(CustomPayloadEvent {
+            client: entity,
+            channel: ident!("bong:client_request").into(),
+            data: br#"{"type":"lower_shield","v":1}"#.to_vec().into_boxed_slice(),
+        });
+
+        // 单次 update —— 两个 payload 在同一 tick 内被 handle_client_request_payloads 处理
+        app.update();
+
+        let raised = app.world().resource::<CapturedRaiseShieldIntents>();
+        let lowered = app.world().resource::<CapturedLowerShieldIntents>();
+        assert_eq!(
+            raised.0.len(),
+            1,
+            "同 tick raise+lower：应有 1 个 RaiseShieldIntent，实际 {}; \
+             期望 handle_client_request_payloads 在单次 update 内 dispatch raise+lower 两个 intent",
+            raised.0.len()
+        );
+        assert_eq!(
+            lowered.0.len(),
+            1,
+            "同 tick raise+lower：应有 1 个 LowerShieldIntent，实际 {}; \
+             期望 handle_client_request_payloads 在单次 update 内 dispatch raise+lower 两个 intent",
+            lowered.0.len()
+        );
+        assert_eq!(
+            raised.0[0].player, entity,
+            "RaiseShieldIntent.player 应等于发送 payload 的 client entity，同 tick 场景"
+        );
+        assert_eq!(
+            lowered.0[0].player, entity,
+            "LowerShieldIntent.player 应等于发送 payload 的 client entity，同 tick 场景"
+        );
+    }
+
+    /// plan-shield-block-v1 P1 CR#4 — 协议错误分支：v!=1 的 raise_shield payload 被版本校验拒绝，不 dispatch intent。
+    #[test]
+    fn raise_shield_bad_version_is_not_dispatched() {
+        let (mut app, entity) = setup_shield_e2e_app();
+
+        app.world_mut()
+            .resource_mut::<valence::prelude::Events<CustomPayloadEvent>>()
+            .send(CustomPayloadEvent {
+                client: entity,
+                channel: ident!("bong:client_request").into(),
+                // v:2 应被 SUPPORTED_VERSION 校验拒绝（warn + continue，不 dispatch）
+                data: br#"{"type":"raise_shield","v":2}"#.to_vec().into_boxed_slice(),
+            });
+        app.update();
+
+        let captured = app.world().resource::<CapturedRaiseShieldIntents>();
+        assert_eq!(
+            captured.0.len(),
+            0,
+            "raise_shield with v:2 must not dispatch RaiseShieldIntent \
+             because SUPPORTED_VERSION check rejects unsupported protocol versions; \
+             actual intent count={}",
+            captured.0.len()
+        );
+    }
+
+    /// plan-shield-block-v1 P1 CR#4 — 协议错误分支：malformed JSON 不 dispatch 任何 intent。
+    #[test]
+    fn raise_shield_malformed_json_is_not_dispatched() {
+        let (mut app, entity) = setup_shield_e2e_app();
+
+        app.world_mut()
+            .resource_mut::<valence::prelude::Events<CustomPayloadEvent>>()
+            .send(CustomPayloadEvent {
+                client: entity,
+                channel: ident!("bong:client_request").into(),
+                data: br#"not valid json"#.to_vec().into_boxed_slice(),
+            });
+        app.update();
+
+        let captured = app.world().resource::<CapturedRaiseShieldIntents>();
+        assert_eq!(
+            captured.0.len(),
+            0,
+            "malformed JSON payload must not dispatch any RaiseShieldIntent; \
+             actual intent count={}",
+            captured.0.len()
+        );
+    }
 }

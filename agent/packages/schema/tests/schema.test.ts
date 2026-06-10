@@ -1575,8 +1575,31 @@ describe("sample files pass schema validation", () => {
     ).toBe(false);
   });
 
+  // plan-shield-block-v1 P1 — CR#1/CR#2：shield 负向样例 sample pin（双端对拍）
+  for (const sample of [
+    "client-request.raise-shield.invalid-missing-v.sample.json",
+    "client-request.raise-shield.invalid-missing-type.sample.json",
+    "client-request.raise-shield.invalid-type-value.sample.json",
+    "client-request.raise-shield.invalid-v-nonone.sample.json",
+    "client-request.lower-shield.invalid-missing-v.sample.json",
+    "client-request.lower-shield.invalid-missing-type.sample.json",
+    "client-request.lower-shield.invalid-type-value.sample.json",
+    "client-request.lower-shield.invalid-v-nonone.sample.json",
+  ]) {
+    it(`${sample} 负样本应被 ClientRequestV1 拒绝`, () => {
+      const bad = loadSample(sample);
+      const result = validate(ClientRequestV1, bad);
+      expect(
+        result.ok,
+        `${sample} must be rejected by ClientRequestV1 — shield requests require exact type literal and v:1, errors: ${result.errors.join("; ")}`,
+      ).toBe(false);
+    });
+  }
+
   it("RaiseShieldRequestV1 负样本：缺少 v 字段应拒绝", () => {
-    const bad = { type: "raise_shield" };
+    const bad = loadSample(
+      "client-request.raise-shield.invalid-missing-v.sample.json",
+    );
     const result = validate(ClientRequestV1, bad);
     expect(result.ok, "raise_shield without v field must be rejected").toBe(
       false,
@@ -1584,11 +1607,57 @@ describe("sample files pass schema validation", () => {
   });
 
   it("LowerShieldRequestV1 负样本：缺少 v 字段应拒绝", () => {
-    const bad = { type: "lower_shield" };
+    const bad = loadSample(
+      "client-request.lower-shield.invalid-missing-v.sample.json",
+    );
     const result = validate(ClientRequestV1, bad);
     expect(result.ok, "lower_shield without v field must be rejected").toBe(
       false,
     );
+  });
+
+  it("RaiseShieldRequestV1 负样本：v:2 字面量应拒绝 (Type.Literal(1))", () => {
+    const bad = loadSample(
+      "client-request.raise-shield.invalid-v-nonone.sample.json",
+    );
+    const result = validate(ClientRequestV1, bad);
+    expect(
+      result.ok,
+      "raise_shield with v:2 must be rejected because v is Type.Literal(1)",
+    ).toBe(false);
+  });
+
+  it("LowerShieldRequestV1 负样本：v:2 字面量应拒绝 (Type.Literal(1))", () => {
+    const bad = loadSample(
+      "client-request.lower-shield.invalid-v-nonone.sample.json",
+    );
+    const result = validate(ClientRequestV1, bad);
+    expect(
+      result.ok,
+      "lower_shield with v:2 must be rejected because v is Type.Literal(1)",
+    ).toBe(false);
+  });
+
+  it("RaiseShieldRequestV1 负样本：type 字面量错误 (invalid_action) 应拒绝", () => {
+    const bad = loadSample(
+      "client-request.raise-shield.invalid-type-value.sample.json",
+    );
+    const result = validate(ClientRequestV1, bad);
+    expect(
+      result.ok,
+      "type:'invalid_action' must be rejected because it does not match any ClientRequestV1 union member",
+    ).toBe(false);
+  });
+
+  it("LowerShieldRequestV1 负样本：type 字面量错误 (invalid_action) 应拒绝", () => {
+    const bad = loadSample(
+      "client-request.lower-shield.invalid-type-value.sample.json",
+    );
+    const result = validate(ClientRequestV1, bad);
+    expect(
+      result.ok,
+      "type:'invalid_action' must be rejected because it does not match any ClientRequestV1 union member",
+    ).toBe(false);
   });
 
   it("client-request.use-quick-slot.sample.json", () => {
