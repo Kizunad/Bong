@@ -158,8 +158,16 @@ message ServerDataEnvelope {
     FreshnessUpdate freshness_update = 130;
     // ─── plan-exploration-probe-return-v1 P2：修炼顿悟 S2C ──────
     InsightOffer insight_offer = 131;
+    WorkbenchOpen workbench_open = 132;
     // 字段编号一旦分配永不复用（buf breaking 检测保证）。
   }
+}
+
+message WorkbenchOpen {
+  uint64 entity_id = 1;
+  sint32 x = 2;
+  sint32 y = 3;
+  sint32 z = 4;
 }
 
 // ─── C2S 信封（Client → Server） ────────────────────────────────

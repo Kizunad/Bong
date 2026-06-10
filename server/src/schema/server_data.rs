@@ -241,6 +241,7 @@ pub enum ServerDataType {
     CraftSessionState,
     CraftOutcome,
     RecipeUnlocked,
+    WorkbenchOpen,
     CombatEventFloater,
     KnockbackSync,
     TechniqueProficiencyUpdate,
@@ -497,6 +498,10 @@ pub enum ServerDataPayloadV1 {
     CraftOutcome(CraftOutcomeV1),
     /// 三渠道解锁广播（残卷 / 师承 / 顿悟），客户端弹解锁通知。
     RecipeUnlocked(RecipeUnlockedV1),
+    WorkbenchOpen {
+        entity_id: u64,
+        position: [i32; 3],
+    },
     CombatEventFloater(CombatEventFloaterV1),
     KnockbackSync(KnockbackSyncV1),
     TechniqueProficiencyUpdate(TechniqueProficiencyUpdateV1),
@@ -1555,6 +1560,10 @@ enum ServerDataPayloadWireV1 {
         #[serde(flatten)]
         event: RecipeUnlockedV1,
     },
+    WorkbenchOpen {
+        entity_id: u64,
+        position: [i32; 3],
+    },
     CombatEvent {
         events: Vec<CombatEventFloaterEntryV1>,
     },
@@ -2444,6 +2453,13 @@ impl TryFrom<ServerDataPayloadWireV1> for ServerDataPayloadV1 {
             }
             ServerDataPayloadWireV1::CraftOutcome { outcome } => Ok(Self::CraftOutcome(outcome)),
             ServerDataPayloadWireV1::RecipeUnlocked { event } => Ok(Self::RecipeUnlocked(event)),
+            ServerDataPayloadWireV1::WorkbenchOpen {
+                entity_id,
+                position,
+            } => Ok(Self::WorkbenchOpen {
+                entity_id,
+                position,
+            }),
             ServerDataPayloadWireV1::CombatEvent { events } => {
                 Ok(Self::CombatEventFloater(CombatEventFloaterV1 { events }))
             }
@@ -2989,6 +3005,13 @@ impl From<&ServerDataPayloadV1> for ServerDataPayloadWireV1 {
             ServerDataPayloadV1::RecipeUnlocked(event) => Self::RecipeUnlocked {
                 event: event.clone(),
             },
+            ServerDataPayloadV1::WorkbenchOpen {
+                entity_id,
+                position,
+            } => Self::WorkbenchOpen {
+                entity_id: *entity_id,
+                position: *position,
+            },
             ServerDataPayloadV1::CombatEventFloater(floater) => Self::CombatEvent {
                 events: floater.events.clone(),
             },
@@ -3340,6 +3363,7 @@ impl ServerDataPayloadV1 {
             Self::CraftSessionState(..) => ServerDataType::CraftSessionState,
             Self::CraftOutcome(..) => ServerDataType::CraftOutcome,
             Self::RecipeUnlocked(..) => ServerDataType::RecipeUnlocked,
+            Self::WorkbenchOpen { .. } => ServerDataType::WorkbenchOpen,
             Self::CombatEventFloater(..) => ServerDataType::CombatEventFloater,
             Self::KnockbackSync(..) => ServerDataType::KnockbackSync,
             Self::TechniqueProficiencyUpdate(..) => ServerDataType::TechniqueProficiencyUpdate,
@@ -3820,6 +3844,10 @@ mod tests {
                 unlocked_at_tick: 8000,
                 ts: 1234567,
             }),
+            ServerDataPayloadV1::WorkbenchOpen {
+                entity_id: 42,
+                position: [1, 64, -2],
+            },
             ServerDataPayloadV1::CombatEventFloater(CombatEventFloaterV1 {
                 events: vec![CombatEventFloaterEntryV1 {
                     kind: "hit".to_string(),

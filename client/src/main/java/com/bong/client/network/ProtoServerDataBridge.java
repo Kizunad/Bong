@@ -172,6 +172,7 @@ public final class ProtoServerDataBridge {
         m.put(Envelope.ServerDataEnvelope.PayloadCase.FRESHNESS_UPDATE, "freshness_update");
         // plan-exploration-probe-return-v1 P2：修炼顿悟 S2C
         m.put(Envelope.ServerDataEnvelope.PayloadCase.INSIGHT_OFFER, "insight_offer");
+        m.put(Envelope.ServerDataEnvelope.PayloadCase.WORKBENCH_OPEN, "workbench_open");
         CASE_TO_TYPE = m;
     }
 
@@ -439,6 +440,7 @@ public final class ProtoServerDataBridge {
             case FRESHNESS_UPDATE: return envelope.getFreshnessUpdate();
             // plan-exploration-probe-return-v1 P2：修炼顿悟 S2C
             case INSIGHT_OFFER: return envelope.getInsightOffer();
+            case WORKBENCH_OPEN: return envelope.getWorkbenchOpen();
             default: return null;
         }
     }

@@ -1425,6 +1425,15 @@ impl From<&ServerDataPayloadV1> for Payload {
                     })
                     .collect(),
             }),
+            ServerDataPayloadV1::WorkbenchOpen {
+                entity_id,
+                position,
+            } => Payload::WorkbenchOpen(bong::WorkbenchOpen {
+                entity_id: *entity_id,
+                x: position[0],
+                y: position[1],
+                z: position[2],
+            }),
         }
     }
 }
@@ -4066,6 +4075,30 @@ mod tests {
                 cost_flavor: None,
             }],
         }));
+    }
+
+    #[test]
+    fn s2c_workbench_open_proto_roundtrip() {
+        use bong::server_data_envelope::Payload;
+        use prost::Message;
+        let payload = ServerDataPayloadV1::WorkbenchOpen {
+            entity_id: 42,
+            position: [1, 64, -2],
+        };
+        let proto = server_data_to_proto_payload(&payload);
+        let envelope = bong::ServerDataEnvelope {
+            payload: Some(proto),
+        };
+        let bytes = envelope.encode_to_vec();
+        let decoded =
+            bong::ServerDataEnvelope::decode(bytes.as_slice()).expect("WorkbenchOpen proto decode");
+        match decoded.payload {
+            Some(Payload::WorkbenchOpen(open)) => {
+                assert_eq!(open.entity_id, 42);
+                assert_eq!([open.x, open.y, open.z], [1, 64, -2]);
+            }
+            other => panic!("expected WorkbenchOpen payload, got {other:?}"),
+        }
     }
 
     #[test]
