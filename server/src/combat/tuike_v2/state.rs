@@ -11,8 +11,6 @@ pub const FALSE_SKIN_HEAVY_ITEM_ID: &str = "tuike_false_skin_heavy";
 pub const FALSE_SKIN_ANCIENT_ITEM_ID: &str = "tuike_false_skin_ancient";
 pub const FALSE_SKIN_ANCIENT_RELIC_SHARD_ITEM_ID: &str = "ancient_false_skin_shard";
 pub const FALSE_SKIN_ASH_ITEM_ID: &str = "tuike_false_skin_ash";
-pub const DISGUISE_WRAP_ITEM_ID: &str = "disguise_wrap";
-pub const CAMOUFLAGE_NET_ITEM_ID: &str = "camouflage_net";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -114,8 +112,8 @@ pub fn false_skin_tier_for_item(template_id: &str) -> Option<FalseSkinTier> {
     match template_id {
         FALSE_SKIN_FAN_ITEM_ID
         | crate::combat::tuike::SPIDER_SILK_FALSE_SKIN_ITEM_ID
-        | DISGUISE_WRAP_ITEM_ID
-        | CAMOUFLAGE_NET_ITEM_ID => Some(FalseSkinTier::Fan),
+        | crate::combat::tuike::DISGUISE_WRAP_ITEM_ID
+        | crate::combat::tuike::CAMOUFLAGE_NET_ITEM_ID => Some(FalseSkinTier::Fan),
         FALSE_SKIN_LIGHT_ITEM_ID => Some(FalseSkinTier::Light),
         FALSE_SKIN_MID_ITEM_ID | crate::combat::tuike::ROTTEN_WOOD_ARMOR_ITEM_ID => {
             Some(FalseSkinTier::Mid)
@@ -263,7 +261,10 @@ mod tests {
 
     #[test]
     fn false_skin_tier_for_item_maps_low_cost_disguise_items_to_fan() {
-        for template_id in [DISGUISE_WRAP_ITEM_ID, CAMOUFLAGE_NET_ITEM_ID] {
+        for template_id in [
+            crate::combat::tuike::DISGUISE_WRAP_ITEM_ID,
+            crate::combat::tuike::CAMOUFLAGE_NET_ITEM_ID,
+        ] {
             assert_eq!(
                 false_skin_tier_for_item(template_id),
                 Some(FalseSkinTier::Fan),
