@@ -119,6 +119,7 @@ use crate::npc::interaction_memory::{
 };
 use crate::npc::lifecycle::NpcArchetype;
 use crate::npc::spawn::NpcMarker;
+use crate::npc::trade::NpcPlayerReputation;
 use crate::player::gameplay::{GameplayAction, GameplayActionQueue, GatherAction};
 use crate::player::state::{
     canonical_player_id, update_player_ui_prefs, PlayerState, PlayerStatePersistence,
@@ -336,6 +337,9 @@ type NpcEngagementItem = (
     Option<&'static FactionMembership>,
     Option<&'static Cultivation>,
     Option<&'static Lifecycle>,
+    // plan-territory-v1 P1: per-NPC per-player 信誉度（霸主驻守加成写入此组件，
+    // 这里读取后叠加到 faction baseline，让 dominance rep 真正影响交易价格）。
+    Option<&'static NpcPlayerReputation>,
 );
 
 #[derive(SystemParam)]
@@ -1247,8 +1251,27 @@ pub fn handle_client_request_payloads(
                     continue;
                 }
                 // P3: 将旧 i32 信誉转为 0.0-1.0 范围用于新定价系统。
-                let rep_f32 =
+                // plan-territory-v1 P1: 叠加 NpcPlayerReputation（霸主驻守 rep 加成写入此组件）。
+                // 叠加策略：先取 FactionMembership baseline (i32 → [0,1])，
+                // 再加 NpcPlayerReputation 的偏移量（默认 0.5 对应"中立=0 偏移"），
+                // 即 delta = npc_rep_score - 0.5，faction_baseline + delta，再 clamp。
+                let faction_rep_f32 =
                     ((target.reputation_to_player as f32 + 100.0) / 200.0).clamp(0.0, 1.0);
+                let npc_rep_delta = target
+                    .npc_player_rep
+                    .as_ref()
+                    .map(|rep| {
+                        let player_id = clients
+                            .get(ev.client)
+                            .map(|(username, _)| canonical_player_id(username.0.as_str()))
+                            .unwrap_or_default();
+                        // NpcPlayerReputation.get() 默认 0.5（中立），
+                        // 霸主驻守后逼近 0.7+（High tier）。
+                        // delta = score - 0.5（正 = 比中立好，负 = 比中立差）。
+                        rep.get(player_id.as_str()) - 0.5
+                    })
+                    .unwrap_or(0.0);
+                let rep_f32 = (faction_rep_f32 + npc_rep_delta).clamp(0.0, 1.0);
                 let rep_tier = crate::npc::trade::RepTier::from_score(rep_f32);
                 let eligibility = crate::npc::trade::check_trade_eligibility(rep_tier);
                 let price = match eligibility {
@@ -7031,6 +7054,9 @@ struct NpcEngagementTarget {
     display_name: String,
     greeting_text: String,
     position: DVec3,
+    /// plan-territory-v1 P1: per-NPC per-player 信誉组件（Optional clone）。
+    /// trade handler 读取时传入 player 的 canonical_player_id 叠加到 rep_f32。
+    npc_player_rep: Option<NpcPlayerReputation>,
 }
 
 impl NpcEngagementTarget {
@@ -7056,7 +7082,7 @@ fn resolve_npc_engagement_target(
         return None;
     }
     let player_position = npc_params.positions.get(player).ok()?.get();
-    let (npc_position, archetype, membership, cultivation, lifecycle) =
+    let (npc_position, archetype, membership, cultivation, lifecycle, npc_player_rep) =
         npc_params.npcs.get(npc).ok()?;
     if lifecycle.is_some_and(|lifecycle| lifecycle.state == LifecycleState::Terminated) {
         return None;
@@ -7078,6 +7104,8 @@ fn resolve_npc_engagement_target(
         display_name: npc_display_name(*archetype, realm, membership),
         greeting_text: greeting_text_for_archetype(*archetype).to_string(),
         position: npc_position,
+        // plan-territory-v1 P1: clone 可选信誉组件，trade handler 中叠加霸主 rep 加成。
+        npc_player_rep: npc_player_rep.cloned(),
     })
 }
 
