@@ -10083,6 +10083,18 @@ cols = 4
             "期望 wooden_shield 装入 off_hand 成功（plan-shield-block-v1 P0 消灭孤岛根因），\
              实际得到错误：{result:?}"
         );
+        // MINOR #3 — 锁住「槽位真被盾占用」：断言 equipped 里 OFF_HAND 槽存在且 template_id 正确。
+        assert_eq!(
+            inv.equipped
+                .get(EQUIP_SLOT_OFF_HAND)
+                .map(|item| item.template_id.as_str()),
+            Some("wooden_shield"),
+            "期望 OFF_HAND 槽被 wooden_shield 占用（plan-shield-block-v1 P0 post-state 断言），\
+             实际 equipped[off_hand] = {:?}",
+            inv.equipped
+                .get(EQUIP_SLOT_OFF_HAND)
+                .map(|i| &i.template_id)
+        );
     }
 
     /// two_hand 槽占用时拒绝装 off_hand 盾（边界）。
