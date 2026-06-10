@@ -216,6 +216,21 @@ class InventoryEquipRulesTest {
         );
     }
 
+    // plan-shield-block-v1 P0 MAJOR #1 — 盾不能进 hotbar（canPlaceIntoHotbar 回归）。
+    /** wooden_shield / bone_shield 不能放入 hotbar（isShield 排除）。 */
+    @Test
+    void shieldCannotPlaceIntoHotbar() {
+        assertFalse(
+            InventoryEquipRules.canPlaceIntoHotbar(item(7001L, "wooden_shield", 1, 2)),
+            "期望 canPlaceIntoHotbar(wooden_shield) = false（plan-shield-block-v1 P0 MAJOR #1 修复）" +
+            "，实际返回 true——canPlaceIntoHotbar 未排除 isShield"
+        );
+        assertFalse(
+            InventoryEquipRules.canPlaceIntoHotbar(item(7002L, "bone_shield", 1, 2)),
+            "期望 canPlaceIntoHotbar(bone_shield) = false，实际返回 true"
+        );
+    }
+
     private static EnumMap<EquipSlotType, InventoryItem> equipped() {
         return new EnumMap<>(EquipSlotType.class);
     }

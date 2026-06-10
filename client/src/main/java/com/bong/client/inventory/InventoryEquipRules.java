@@ -124,7 +124,8 @@ final class InventoryEquipRules {
     }
 
     static boolean canPlaceIntoHotbar(InventoryItem item) {
-        return isSingleCell(item) && !isWeapon(item) && !isTool(item) && !isTreasure(item) && !isArmor(item);
+        // plan-shield-block-v1 P0 MAJOR #1 — 盾牌同样不能进 hotbar，必须留在 off_hand 槽。
+        return isSingleCell(item) && !isWeapon(item) && !isTool(item) && !isTreasure(item) && !isArmor(item) && !isShield(item);
     }
 
     static boolean canPlaceIntoQuickUse(InventoryItem item) {
