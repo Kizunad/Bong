@@ -272,6 +272,13 @@ pub enum ItemEffect {
     ContaminationCleanse {
         magnitude: f64,
     },
+    ComposureRestore {
+        magnitude: f64,
+    },
+    WoundHeal {
+        magnitude: f64,
+        target: Option<String>,
+    },
     LifespanExtension {
         years: u32,
         source: String,
@@ -2030,6 +2037,13 @@ fn parse_item_effect(
         "contamination_cleanse" => Ok(ItemEffect::ContaminationCleanse {
             magnitude: effect.magnitude,
         }),
+        "composure_restore" => Ok(ItemEffect::ComposureRestore {
+            magnitude: effect.magnitude,
+        }),
+        "wound_heal" => Ok(ItemEffect::WoundHeal {
+            magnitude: effect.magnitude,
+            target: parse_wound_heal_effect_target(effect.target, source_path, item_id)?,
+        }),
         "lifespan_extension" => {
             let source = effect
                 .target
@@ -2107,6 +2121,42 @@ fn parse_item_effect(
             source_path.display()
         )),
     }
+}
+
+fn parse_wound_heal_effect_target(
+    target: Option<String>,
+    source_path: &Path,
+    item_id: &str,
+) -> Result<Option<String>, String> {
+    let Some(raw) = target else {
+        return Ok(None);
+    };
+    let parts: Vec<String> = raw
+        .split('/')
+        .map(|part| part.trim().to_ascii_lowercase())
+        .collect();
+    if parts.iter().any(String::is_empty) {
+        return Err(format!(
+            "{} item `{item_id}` effect `wound_heal` has empty target segment; omit target for all wounds or use body parts separated by `/`",
+            source_path.display()
+        ));
+    }
+    for part in &parts {
+        if !is_wound_heal_body_part(part) {
+            return Err(format!(
+                "{} item `{item_id}` effect `wound_heal` has unknown target `{part}`; expected one of head/chest/back/abdomen/arm_l/arm_r/leg_l/leg_r",
+                source_path.display()
+            ));
+        }
+    }
+    Ok(Some(parts.join("/")))
+}
+
+fn is_wound_heal_body_part(part: &str) -> bool {
+    matches!(
+        part,
+        "head" | "chest" | "back" | "abdomen" | "arm_l" | "arm_r" | "leg_l" | "leg_r"
+    )
 }
 
 #[derive(Debug, Deserialize)]
@@ -4603,6 +4653,108 @@ mod tests {
         );
     }
 
+    #[test]
+    fn parse_item_effect_accepts_wound_heal_missing_target_as_all_wounds() {
+        let effect = parse_item_effect(
+            ItemEffectToml {
+                kind: "wound_heal".to_string(),
+                magnitude: 1.0,
+                target: None,
+                duration_ticks: None,
+            },
+            Path::new("<inline-items.toml>"),
+            "bandage",
+        )
+        .expect("wound_heal without target should parse as all wounds");
+
+        assert_eq!(
+            effect,
+            ItemEffect::WoundHeal {
+                magnitude: 1.0,
+                target: None
+            }
+        );
+    }
+
+    #[test]
+    fn parse_item_effect_rejects_wound_heal_blank_target() {
+        let error = parse_item_effect(
+            ItemEffectToml {
+                kind: "wound_heal".to_string(),
+                magnitude: 1.0,
+                target: Some("   ".to_string()),
+                duration_ticks: None,
+            },
+            Path::new("<inline-items.toml>"),
+            "blank_bandage",
+        )
+        .expect_err("blank wound_heal target should be rejected instead of healing all wounds");
+
+        assert!(
+            error.contains("empty target segment"),
+            "expected empty wound_heal target validation error, got {error}"
+        );
+    }
+
+    #[test]
+    fn parse_item_effect_rejects_wound_heal_unknown_target() {
+        let error = parse_item_effect(
+            ItemEffectToml {
+                kind: "wound_heal".to_string(),
+                magnitude: 1.0,
+                target: Some("arm_l/tail".to_string()),
+                duration_ticks: None,
+            },
+            Path::new("<inline-items.toml>"),
+            "tail_splint",
+        )
+        .expect_err("unknown wound_heal body part should be rejected");
+
+        assert!(
+            error.contains("unknown target `tail`"),
+            "expected unknown wound_heal target validation error, got {error}"
+        );
+    }
+
+    #[test]
+    fn item_effect_new_consumable_variants_serde_roundtrip() {
+        for original in [
+            ItemEffect::ComposureRestore { magnitude: 0.35 },
+            ItemEffect::WoundHeal {
+                magnitude: 1.0,
+                target: None,
+            },
+            ItemEffect::WoundHeal {
+                magnitude: 2.0,
+                target: Some("arm_l/arm_r".to_string()),
+            },
+        ] {
+            let json = serde_json::to_string(&original).expect("new item effect should serialize");
+            let parsed: ItemEffect =
+                serde_json::from_str(&json).expect("new item effect should deserialize");
+            assert_eq!(
+                parsed, original,
+                "expected serde roundtrip to preserve new consumable effect, json={json}"
+            );
+        }
+    }
+
+    #[test]
+    fn item_effect_new_consumable_variants_reject_invalid_json_shape() {
+        for json in [
+            r#"{"ComposureRestore":{"amount":0.35}}"#,
+            r#"{"WoundHeal":{"magnitude":1.0,"target":5}}"#,
+            r#"{"WoundHeal":{"target":"arm_l"}}"#,
+        ] {
+            let error = serde_json::from_str::<ItemEffect>(json)
+                .expect_err("invalid new item effect JSON should fail");
+            assert!(
+                !error.to_string().is_empty(),
+                "expected serde error for invalid new item effect JSON, json={json}"
+            );
+        }
+    }
+
     fn empty_inventory(rows: u8, cols: u8) -> PlayerInventory {
         PlayerInventory {
             revision: InventoryRevision(0),
@@ -4717,6 +4869,79 @@ mod tests {
         assert!(matches!(
             registry.get("huiyuan_pill").and_then(|item| item.effect.as_ref()),
             Some(ItemEffect::QiRecovery { amount }) if (*amount - 60.0).abs() < f64::EPSILON
+        ));
+        assert!(matches!(
+            registry
+                .get("huiyuan_decoction")
+                .and_then(|item| item.effect.as_ref()),
+            Some(ItemEffect::QiRecovery { amount }) if (*amount - 40.0).abs() < f64::EPSILON
+        ));
+        assert!(matches!(
+            registry
+                .get("meridian_salve")
+                .and_then(|item| item.effect.as_ref()),
+            Some(ItemEffect::MeridianHeal { magnitude, target })
+                if (*magnitude - 0.2).abs() < f64::EPSILON && target == "any_meridian"
+        ));
+        assert!(matches!(
+            registry
+                .get("meridian_rubbing")
+                .and_then(|item| item.effect.as_ref()),
+            Some(ItemEffect::MeridianHeal { magnitude, target })
+                if (*magnitude - 0.15).abs() < f64::EPSILON && target == "any_meridian"
+        ));
+        assert!(matches!(
+            registry
+                .get("qingzhuo_powder")
+                .and_then(|item| item.effect.as_ref()),
+            Some(ItemEffect::ContaminationCleanse { magnitude })
+                if (*magnitude - 0.4).abs() < f64::EPSILON
+        ));
+        assert!(matches!(
+            registry
+                .get("anti_gu_powder")
+                .and_then(|item| item.effect.as_ref()),
+            Some(ItemEffect::ContaminationCleanse { magnitude })
+                if (*magnitude - 0.4).abs() < f64::EPSILON
+        ));
+        assert!(matches!(
+            registry
+                .get("qi_guide_talisman")
+                .and_then(|item| item.effect.as_ref()),
+            Some(ItemEffect::FoodRegen {
+                bonus_factor,
+                duration_ticks,
+            }) if (*bonus_factor - 0.30).abs() < f32::EPSILON && *duration_ticks == 36_000
+        ));
+        assert!(matches!(
+            registry
+                .get("calming_tea")
+                .and_then(|item| item.effect.as_ref()),
+            Some(ItemEffect::ComposureRestore { magnitude })
+                if (*magnitude - 0.35).abs() < f64::EPSILON
+        ));
+        assert!(matches!(
+            registry.get("bandage").and_then(|item| item.effect.as_ref()),
+            Some(ItemEffect::WoundHeal { magnitude, target })
+                if (*magnitude - 1.0).abs() < f64::EPSILON && target.is_none()
+        ));
+        assert!(matches!(
+            registry
+                .get("arm_splint")
+                .and_then(|item| item.effect.as_ref()),
+            Some(ItemEffect::WoundHeal {
+                magnitude,
+                target: Some(target),
+            }) if (*magnitude - 2.0).abs() < f64::EPSILON && target == "arm_l/arm_r"
+        ));
+        assert!(matches!(
+            registry
+                .get("leg_splint")
+                .and_then(|item| item.effect.as_ref()),
+            Some(ItemEffect::WoundHeal {
+                magnitude,
+                target: Some(target),
+            }) if (*magnitude - 2.0).abs() < f64::EPSILON && target == "leg_l/leg_r"
         ));
         assert!(matches!(
             registry.get("life_core").and_then(|item| item.effect.as_ref()),

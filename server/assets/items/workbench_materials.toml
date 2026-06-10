@@ -383,6 +383,7 @@ base_weight = 0.3
 rarity = "common"
 spirit_quality_initial = 0.0
 description = "木板布条绑的夹板，固定臂骨折。"
+effect = { kind = "wound_heal", magnitude = 2.0, target = "arm_l/arm_r" }
 
 [[item]]
 id = "leg_splint"
@@ -394,6 +395,7 @@ base_weight = 0.5
 rarity = "common"
 spirit_quality_initial = 0.0
 description = "加长木板夹板，固定腿骨折。"
+effect = { kind = "wound_heal", magnitude = 2.0, target = "leg_l/leg_r" }
 
 [[item]]
 id = "bandage"
@@ -405,6 +407,7 @@ base_weight = 0.1
 rarity = "common"
 spirit_quality_initial = 0.0
 description = "粗布撕成条裹伤口，压迫止血。"
+effect = { kind = "wound_heal", magnitude = 1.0 }
 
 [[item]]
 id = "meridian_salve"
@@ -416,6 +419,7 @@ base_weight = 0.1
 rarity = "uncommon"
 spirit_quality_initial = 0.6
 description = "养经苔熬油制膏，外敷修复微裂经脉。"
+effect = { kind = "meridian_heal", magnitude = 0.2, target = "any_meridian" }
 
 [[item]]
 id = "anti_gu_powder"
@@ -427,6 +431,7 @@ base_weight = 0.1
 rarity = "uncommon"
 spirit_quality_initial = 0.7
 description = "解蛊蕊雄黄研末，紧急解毒蛊。"
+effect = { kind = "contamination_cleanse", magnitude = 0.4 }
 
 [[item]]
 id = "qingzhuo_powder"
@@ -438,6 +443,7 @@ base_weight = 0.1
 rarity = "uncommon"
 spirit_quality_initial = 0.6
 description = "清浊草丹砂研末，克染色浊乱。"
+effect = { kind = "contamination_cleanse", magnitude = 0.4 }
 
 [[item]]
 id = "calming_tea"
@@ -449,6 +455,7 @@ base_weight = 0.2
 rarity = "common"
 spirit_quality_initial = 0.4
 description = "安神果煮水，镇心安神。"
+effect = { kind = "composure_restore", magnitude = 0.35 }
 
 [[item]]
 id = "meditation_mat"
@@ -471,6 +478,7 @@ base_weight = 0.05
 rarity = "uncommon"
 spirit_quality_initial = 0.13
 description = "丹砂画引灵符，修炼时增强灵气感应。"
+effect = { kind = "food_regen", magnitude = 0.30, duration_ticks = 36000 }
 
 [[item]]
 id = "meridian_rubbing"
@@ -482,6 +490,7 @@ base_weight = 0.05
 rarity = "uncommon"
 spirit_quality_initial = 0.4
 description = "灵草汁拓印的经脉走向参考图。"
+effect = { kind = "meridian_heal", magnitude = 0.15, target = "any_meridian" }
 
 [[item]]
 id = "ningmai_prep_kit"
@@ -504,6 +513,7 @@ base_weight = 0.3
 rarity = "uncommon"
 spirit_quality_initial = 0.5
 description = "回元芷简易煎法制剂，非炼丹产物。"
+effect = { kind = "qi_recovery", magnitude = 40.0 }
 
 [[item]]
 id = "rat_bait"
