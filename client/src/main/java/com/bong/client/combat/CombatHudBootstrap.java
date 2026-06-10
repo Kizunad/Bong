@@ -23,6 +23,8 @@ public final class CombatHudBootstrap {
         CombatKeybindings.setJiemaiHandler(CombatHudBootstrap::onJiemaiPressed);
         CombatKeybindings.setSpellVolumeHoldHandler(CombatHudBootstrap::onSpellVolumeHold);
         CombatKeybindings.setEventStreamToggleHandler(CombatHudBootstrap::onEventStreamToggle);
+        // plan-shield-block-v1 P1 — 举盾键盘备用路径（默认 UNKNOWN，主路径为右键 MixinMouse）。
+        CombatKeybindings.setShieldHoldHandler(CombatHudBootstrap::onShieldHold);
 
         ClientPlayConnectionEvents.DISCONNECT.register((handler, client) -> client.execute(CombatHudBootstrap::resetOnDisconnect));
         BongClient.LOGGER.info("Combat HUD bootstrap ready.");
@@ -65,6 +67,15 @@ public final class CombatHudBootstrap {
     private static void onEventStreamToggle() {
         boolean visible = HudConfig.toggleEventStreamVisible();
         BongClient.LOGGER.info("Combat event stream HUD {}", visible ? "shown" : "hidden");
+    }
+
+    // plan-shield-block-v1 P1 — 键盘备用举盾路径（默认 UNKNOWN，实际触发在 MixinMouse 右键路径）。
+    private static void onShieldHold(boolean pressed) {
+        if (pressed) {
+            com.bong.client.network.ClientRequestSender.sendRaiseShield();
+        } else {
+            com.bong.client.network.ClientRequestSender.sendLowerShield();
+        }
     }
 
     static void resetOnDisconnect() {

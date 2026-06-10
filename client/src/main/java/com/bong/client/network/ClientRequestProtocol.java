@@ -1252,6 +1252,26 @@ public final class ClientRequestProtocol {
         return obj.toString();
     }
 
+    // ─── plan-shield-block-v1 P1：盾牌格挡 C2S ───────────────────────
+
+    /**
+     * plan-shield-block-v1 P1 — 玩家 off_hand 持盾，右键按下边沿或举盾键按下边沿发送。
+     *
+     * <p>对应 server {@code ClientRequestV1::RaiseShield}。</p>
+     */
+    public static String encodeRaiseShield() {
+        return envelope("raise_shield").toString();
+    }
+
+    /**
+     * plan-shield-block-v1 P1 — 玩家 off_hand 持盾，右键松开边沿或举盾键松开边沿发送。
+     *
+     * <p>对应 server {@code ClientRequestV1::LowerShield}。</p>
+     */
+    public static String encodeLowerShield() {
+        return envelope("lower_shield").toString();
+    }
+
     // ─── plan-supply-coffin-loot-ui P1：外部容器 C2S ──────────────────
 
     public static String encodeExternalContainerMove(

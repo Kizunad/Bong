@@ -33,6 +33,8 @@ const ANIM_FIST_PUNCH_RIGHT: &str = "bong:fist_punch_right";
 const ANIM_PALM_STRIKE: &str = "bong:palm_strike";
 const ANIM_PARRY_BLOCK: &str = "bong:parry_block";
 const ANIM_GUARD_RAISE: &str = "bong:guard_raise";
+/// plan-shield-block-v1 P1 — 持续举盾动画（isLoop:true）。与 guard_raise (FullPowerCharge) 无关。
+pub const ANIM_SHIELD_RAISE: &str = "bong:shield_raise";
 const ANIM_HURT_STAGGER: &str = "bong:hurt_stagger";
 const ANIM_BREAKTHROUGH_YINQI: &str = "bong:breakthrough_yinqi";
 const ANIM_BREAKTHROUGH_NINGMAI: &str = "bong:breakthrough_ningmai";
@@ -642,6 +644,42 @@ fn emit_play_for_entity(
             fade_in_ticks,
         },
     ));
+}
+
+/// plan-shield-block-v1 P1 — 向 entity 发送 `bong:shield_raise` 持续举盾动画。
+/// 由 `combat::shield_block::raise_shield_handler` 调用；isLoop:true，优先级 = 战斗层中段。
+pub fn emit_shield_raise_for_entity(
+    entity: valence::prelude::Entity,
+    players: &Query<(&valence::prelude::Position, &valence::prelude::UniqueId)>,
+    vfx_events: &mut EventWriter<VfxEventRequest>,
+) {
+    let Ok((position, unique_id)) = players.get(entity) else {
+        return;
+    };
+    let origin = position.get();
+    vfx_events.send(VfxEventRequest::new(
+        origin,
+        VfxEventPayloadV1::PlayAnim {
+            target_player: unique_id.0.to_string(),
+            anim_id: ANIM_SHIELD_RAISE.to_string(),
+            priority: COMBAT_PRIORITY,
+            fade_in_ticks: Some(2),
+        },
+    ));
+}
+
+/// plan-shield-block-v1 P1 — 向 entity 发送 `bong:shield_raise` 停止信号，结束循环举盾动画。
+/// 由 `combat::shield_block::lower_shield_handler` 和 `cleanup_shield_on_death` 调用。
+/// entity 若没有 Position/UniqueId 则静默 skip（断线后实体可能已移除 Client component）。
+pub fn emit_shield_stop_for_entity(
+    entity: valence::prelude::Entity,
+    players: &Query<(&valence::prelude::Position, &valence::prelude::UniqueId)>,
+    vfx_events: &mut EventWriter<VfxEventRequest>,
+) {
+    let Ok((position, unique_id)) = players.get(entity) else {
+        return;
+    };
+    emit_stop_for_entity(position, unique_id, ANIM_SHIELD_RAISE, 3, vfx_events);
 }
 
 #[cfg(test)]
@@ -1316,5 +1354,143 @@ mod tests {
             }
             other => panic!("expected SpawnParticle, got {other:?}"),
         }
+    }
+
+    // ─── plan-shield-block-v1 P1 CR#5：emit_shield_raise_for_entity / emit_shield_stop_for_entity ───
+
+    /// Wrapper systems so we can use add_systems(Update, ...) instead of run_system_once,
+    /// which is the pattern already established in this test module.
+    fn shield_raise_system_for(
+        entity: valence::prelude::Entity,
+    ) -> impl Fn(Query<'_, '_, (&Position, &UniqueId)>, EventWriter<'_, VfxEventRequest>) {
+        move |players, mut vfx_events| {
+            emit_shield_raise_for_entity(entity, &players, &mut vfx_events);
+        }
+    }
+
+    fn shield_stop_system_for(
+        entity: valence::prelude::Entity,
+    ) -> impl Fn(Query<'_, '_, (&Position, &UniqueId)>, EventWriter<'_, VfxEventRequest>) {
+        move |players, mut vfx_events| {
+            emit_shield_stop_for_entity(entity, &players, &mut vfx_events);
+        }
+    }
+
+    fn setup_shield_vfx_app_for(
+        entity_fn: impl FnOnce(&mut App) -> valence::prelude::Entity,
+    ) -> (App, valence::prelude::Entity) {
+        let mut app = App::new();
+        app.add_event::<VfxEventRequest>();
+        let entity = entity_fn(&mut app);
+        (app, entity)
+    }
+
+    /// CR#5 — 有效实体（携带 Position + UniqueId）触发 emit_shield_raise_for_entity：
+    /// 断言发出 PlayAnim，anim_id == ANIM_SHIELD_RAISE，priority == COMBAT_PRIORITY，fade_in_ticks == Some(2)。
+    #[test]
+    fn emit_shield_raise_for_valid_entity_sends_play_anim_with_combat_priority() {
+        let (mut app, entity) = setup_shield_vfx_app_for(|app| {
+            spawn_skinned_npc_target(app, "shield:alice", [0.0, 64.0, 0.0])
+        });
+        app.add_systems(Update, shield_raise_system_for(entity));
+        app.update();
+
+        let emitted = drain_vfx(&mut app);
+        assert_eq!(
+            emitted.len(),
+            1,
+            "emit_shield_raise_for_entity must emit exactly 1 VfxEventRequest for valid entity; actual={}",
+            emitted.len()
+        );
+        match &emitted[0].payload {
+            VfxEventPayloadV1::PlayAnim {
+                anim_id,
+                priority,
+                fade_in_ticks,
+                ..
+            } => {
+                assert_eq!(
+                    anim_id, ANIM_SHIELD_RAISE,
+                    "emit_shield_raise_for_entity must use ANIM_SHIELD_RAISE='{ANIM_SHIELD_RAISE}'; actual='{anim_id}'"
+                );
+                assert_eq!(
+                    *priority, COMBAT_PRIORITY,
+                    "emit_shield_raise_for_entity priority must equal COMBAT_PRIORITY={COMBAT_PRIORITY}; actual={priority}"
+                );
+                assert_eq!(
+                    *fade_in_ticks,
+                    Some(2),
+                    "emit_shield_raise_for_entity fade_in_ticks must be Some(2); actual={fade_in_ticks:?}"
+                );
+            }
+            other => panic!("expected PlayAnim from emit_shield_raise_for_entity, got {other:?}"),
+        }
+    }
+
+    /// CR#5 — emit_shield_raise_for_entity 无效实体（缺 Position/UniqueId 组件）→ 静默 skip，不 panic，不 emit。
+    #[test]
+    fn emit_shield_raise_for_missing_entity_silently_skips() {
+        let (mut app, missing_entity) = setup_shield_vfx_app_for(|app| {
+            // spawn_empty：无 Position / UniqueId，模拟断线后实体已移除 Client component
+            app.world_mut().spawn_empty().id()
+        });
+        app.add_systems(Update, shield_raise_system_for(missing_entity));
+        // 不应 panic；entity 缺组件时 `let Ok(...) = players.get(entity)` 走 return 分支
+        app.update();
+
+        let emitted = drain_vfx(&mut app);
+        assert!(
+            emitted.is_empty(),
+            "emit_shield_raise_for_entity must silently skip when entity lacks Position/UniqueId; actual emitted={}",
+            emitted.len()
+        );
+    }
+
+    /// CR#5 — 有效实体触发 emit_shield_stop_for_entity：
+    /// 断言发出 StopAnim，anim_id == ANIM_SHIELD_RAISE，fade_out_ticks == Some(3)。
+    #[test]
+    fn emit_shield_stop_for_valid_entity_sends_stop_anim() {
+        let (mut app, entity) = setup_shield_vfx_app_for(|app| {
+            spawn_skinned_npc_target(app, "shield:bob", [1.0, 64.0, 0.0])
+        });
+        app.add_systems(Update, shield_stop_system_for(entity));
+        app.update();
+
+        let emitted = drain_vfx(&mut app);
+        assert_eq!(
+            emitted.len(),
+            1,
+            "emit_shield_stop_for_entity must emit exactly 1 VfxEventRequest for valid entity; actual={}",
+            emitted.len()
+        );
+        // fade_out=3 は emit_stop_for_entity 内の固定値
+        assert_stop_anim(&emitted[0], ANIM_SHIELD_RAISE, 3);
+    }
+
+    /// CR#5 — emit_shield_stop_for_entity 无效实体（缺 Position/UniqueId 组件）→ 静默 skip，不 panic，不 emit。
+    #[test]
+    fn emit_shield_stop_for_missing_entity_silently_skips() {
+        let (mut app, missing_entity) =
+            setup_shield_vfx_app_for(|app| app.world_mut().spawn_empty().id());
+        app.add_systems(Update, shield_stop_system_for(missing_entity));
+        app.update();
+
+        let emitted = drain_vfx(&mut app);
+        assert!(
+            emitted.is_empty(),
+            "emit_shield_stop_for_entity must silently skip when entity lacks Position/UniqueId; actual emitted={}",
+            emitted.len()
+        );
+    }
+
+    /// CR#5 — emit_shield_raise_for_entity anim_id 与 ANIM_SHIELD_RAISE 常量一致（不是 guard_raise 等旧常量）。
+    #[test]
+    fn emit_shield_raise_anim_id_is_distinct_from_guard_raise() {
+        // 确认 ANIM_SHIELD_RAISE != ANIM_GUARD_RAISE，两者语义不同
+        assert_ne!(
+            ANIM_SHIELD_RAISE, ANIM_GUARD_RAISE,
+            "ANIM_SHIELD_RAISE and ANIM_GUARD_RAISE must be different animation ids; \
+             shield_raise is a persistent looping block anim, guard_raise is FullPowerCharge"
+        );
     }
 }

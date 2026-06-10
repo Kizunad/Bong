@@ -604,6 +604,16 @@ pub enum ClientRequestV1 {
     CraftCancel {
         v: u8,
     },
+    /// plan-shield-block-v1 P1 — 按下右键边沿（off_hand 持盾），开始持续举盾状态。
+    /// server 校验 off_hand 实装盾后插入 ShieldBlocking 持续状态。
+    RaiseShield {
+        v: u8,
+    },
+    /// plan-shield-block-v1 P1 — 松开右键边沿（off_hand 持盾），结束持续举盾状态。
+    /// server 移除 ShieldBlocking 状态与 ShieldBlock component。
+    LowerShield {
+        v: u8,
+    },
 }
 
 fn default_craft_quantity() -> u32 {
@@ -2360,5 +2370,193 @@ mod tests {
             }
             other => panic!("expected ExternalContainerMove, got {other:?}"),
         }
+    }
+
+    // ─── plan-shield-block-v1 P1 CR#1：负向样例双端 serde 对拍（include_str! pin）───
+
+    /// CR#1 — 正向样例 include_str! pin：确认 samples/ 里的 JSON 文件内容与 Rust serde 可双端对拍。
+    #[test]
+    fn raise_shield_positive_sample_deserializes() {
+        let json = include_str!(
+            "../../../agent/packages/schema/samples/client-request.raise-shield.sample.json"
+        );
+        let req: ClientRequestV1 = serde_json::from_str(json)
+            .unwrap_or_else(|e| panic!("positive raise-shield sample should deserialize: {e}"));
+        assert!(
+            matches!(req, ClientRequestV1::RaiseShield { v: 1 }),
+            "positive sample must deserialize to RaiseShield{{v:1}}, got {req:?}"
+        );
+    }
+
+    #[test]
+    fn lower_shield_positive_sample_deserializes() {
+        let json = include_str!(
+            "../../../agent/packages/schema/samples/client-request.lower-shield.sample.json"
+        );
+        let req: ClientRequestV1 = serde_json::from_str(json)
+            .unwrap_or_else(|e| panic!("positive lower-shield sample should deserialize: {e}"));
+        assert!(
+            matches!(req, ClientRequestV1::LowerShield { v: 1 }),
+            "positive sample must deserialize to LowerShield{{v:1}}, got {req:?}"
+        );
+    }
+
+    /// CR#1 — 负向样例 include_str! pin：缺 v 字段被 serde 拒绝。
+    #[test]
+    fn raise_shield_invalid_missing_v_sample_is_rejected() {
+        let json = include_str!(
+            "../../../agent/packages/schema/samples/client-request.raise-shield.invalid-missing-v.sample.json"
+        );
+        assert!(
+            serde_json::from_str::<ClientRequestV1>(json).is_err(),
+            "raise-shield invalid-missing-v sample must be rejected by serde; \
+             missing v field cannot satisfy ClientRequestV1::RaiseShield{{v:u8}}"
+        );
+    }
+
+    #[test]
+    fn lower_shield_invalid_missing_v_sample_is_rejected() {
+        let json = include_str!(
+            "../../../agent/packages/schema/samples/client-request.lower-shield.invalid-missing-v.sample.json"
+        );
+        assert!(
+            serde_json::from_str::<ClientRequestV1>(json).is_err(),
+            "lower-shield invalid-missing-v sample must be rejected by serde"
+        );
+    }
+
+    /// CR#1 — 负向样例 include_str! pin：额外字段被 deny_unknown_fields 拒绝。
+    #[test]
+    fn raise_shield_invalid_extra_field_sample_is_rejected() {
+        let json = include_str!(
+            "../../../agent/packages/schema/samples/client-request.raise-shield.invalid-extra-field.sample.json"
+        );
+        assert!(
+            serde_json::from_str::<ClientRequestV1>(json).is_err(),
+            "raise-shield invalid-extra-field sample must be rejected (deny_unknown_fields)"
+        );
+    }
+
+    #[test]
+    fn lower_shield_invalid_extra_field_sample_is_rejected() {
+        let json = include_str!(
+            "../../../agent/packages/schema/samples/client-request.lower-shield.invalid-extra-field.sample.json"
+        );
+        assert!(
+            serde_json::from_str::<ClientRequestV1>(json).is_err(),
+            "lower-shield invalid-extra-field sample must be rejected (deny_unknown_fields)"
+        );
+    }
+
+    // ─── plan-shield-block-v1 P1 CR#7：RaiseShield / LowerShield serde pin tests ───
+
+    /// CR#7 — RaiseShield happy-path round-trip：{"type":"raise_shield","v":1} 反序列化为 RaiseShield{v:1}。
+    #[test]
+    fn raise_shield_roundtrip() {
+        let json = r#"{"type":"raise_shield","v":1}"#;
+        let req: ClientRequestV1 = serde_json::from_str(json)
+            .unwrap_or_else(|e| panic!("raise_shield should deserialize: {e}"));
+        assert!(
+            matches!(req, ClientRequestV1::RaiseShield { v: 1 }),
+            "expected RaiseShield{{v:1}}, got {req:?}"
+        );
+        // round-trip：serialize 回去应与原 wire JSON 一致
+        let encoded = serde_json::to_string(&req).expect("RaiseShield serializes");
+        let encoded_val: serde_json::Value = serde_json::from_str(&encoded).unwrap();
+        let expected_val: serde_json::Value = serde_json::from_str(json).unwrap();
+        assert_eq!(
+            encoded_val, expected_val,
+            "RaiseShield round-trip must preserve wire structure; expected={expected_val} actual={encoded_val}"
+        );
+    }
+
+    /// CR#7 — LowerShield happy-path round-trip：{"type":"lower_shield","v":1} 反序列化为 LowerShield{v:1}。
+    #[test]
+    fn lower_shield_roundtrip() {
+        let json = r#"{"type":"lower_shield","v":1}"#;
+        let req: ClientRequestV1 = serde_json::from_str(json)
+            .unwrap_or_else(|e| panic!("lower_shield should deserialize: {e}"));
+        assert!(
+            matches!(req, ClientRequestV1::LowerShield { v: 1 }),
+            "expected LowerShield{{v:1}}, got {req:?}"
+        );
+        let encoded = serde_json::to_string(&req).expect("LowerShield serializes");
+        let encoded_val: serde_json::Value = serde_json::from_str(&encoded).unwrap();
+        let expected_val: serde_json::Value = serde_json::from_str(json).unwrap();
+        assert_eq!(
+            encoded_val, expected_val,
+            "LowerShield round-trip must preserve wire structure; expected={expected_val} actual={encoded_val}"
+        );
+    }
+
+    /// CR#7 — RaiseShield 缺失 v 字段应反序列化失败。
+    #[test]
+    fn raise_shield_rejects_missing_v() {
+        let json = r#"{"type":"raise_shield"}"#;
+        let result: Result<ClientRequestV1, _> = serde_json::from_str(json);
+        assert!(
+            result.is_err(),
+            "raise_shield without v field should fail deserialization; \
+             v is required by serde for enum variant discrimination"
+        );
+    }
+
+    /// CR#7 — LowerShield 缺失 v 字段应反序列化失败。
+    #[test]
+    fn lower_shield_rejects_missing_v() {
+        let json = r#"{"type":"lower_shield"}"#;
+        let result: Result<ClientRequestV1, _> = serde_json::from_str(json);
+        assert!(
+            result.is_err(),
+            "lower_shield without v field should fail deserialization"
+        );
+    }
+
+    /// CR#7 — RaiseShield 额外字段被拒绝（deny_unknown_fields）。
+    #[test]
+    fn raise_shield_rejects_extra_fields() {
+        let json = r#"{"type":"raise_shield","v":1,"extra":true}"#;
+        let result: Result<ClientRequestV1, _> = serde_json::from_str(json);
+        assert!(
+            result.is_err(),
+            "raise_shield with extra field should fail deserialization (deny_unknown_fields); \
+             got Ok variant instead"
+        );
+    }
+
+    /// CR#7 — LowerShield 额外字段被拒绝（deny_unknown_fields）。
+    #[test]
+    fn lower_shield_rejects_extra_fields() {
+        let json = r#"{"type":"lower_shield","v":1,"extra":true}"#;
+        let result: Result<ClientRequestV1, _> = serde_json::from_str(json);
+        assert!(
+            result.is_err(),
+            "lower_shield with extra field should fail deserialization (deny_unknown_fields)"
+        );
+    }
+
+    /// CR#7 — 边界：raise_shield 与 lower_shield 是独立变体，互不混用。
+    #[test]
+    fn raise_shield_and_lower_shield_are_distinct_variants() {
+        let raise: ClientRequestV1 =
+            serde_json::from_str(r#"{"type":"raise_shield","v":1}"#).unwrap();
+        let lower: ClientRequestV1 =
+            serde_json::from_str(r#"{"type":"lower_shield","v":1}"#).unwrap();
+        assert!(
+            matches!(raise, ClientRequestV1::RaiseShield { .. }),
+            "raise_shield must deserialize to RaiseShield variant, got {raise:?}"
+        );
+        assert!(
+            matches!(lower, ClientRequestV1::LowerShield { .. }),
+            "lower_shield must deserialize to LowerShield variant, got {lower:?}"
+        );
+        // They must serialize back to different JSON
+        let raise_json = serde_json::to_string(&raise).unwrap();
+        let lower_json = serde_json::to_string(&lower).unwrap();
+        assert_ne!(
+            raise_json, lower_json,
+            "RaiseShield and LowerShield must produce different wire JSON; \
+             raise={raise_json} lower={lower_json}"
+        );
     }
 }

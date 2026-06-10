@@ -115,6 +115,10 @@ pub enum StatusEffectKind {
     SwordParrying,
     /// plan-sword-basics-v1：被剑格反震后的短暂硬直。
     Staggered,
+    /// plan-shield-block-v1 P1：玩家手持盾牌按住右键的持续举盾状态。
+    /// `magnitude` 存储 block_ratio 占位（P2 减伤用）。
+    /// 与 SwordParrying 不同——盾是「持续」模型而非「窗口」模型，独立变体不复用。
+    ShieldBlocking,
     /// plan-niche-defense-v1 P1：高级灵龛阵法陷阱制造的短时迷乱。
     Disoriented,
     /// plan-alchemy-combat-v1 P0：战场丹药即时伤口恢复的 HUD 标记。

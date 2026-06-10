@@ -99,6 +99,7 @@ use crate::network::cast_emit::{
 };
 use crate::shelflife::probe::FreshnessProbeIntent;
 // dropped_loot_sync is emitted by dropped_loot_sync_emit.
+use crate::combat::shield_block::{LowerShieldIntent, RaiseShieldIntent};
 use crate::identity::PlayerIdentities;
 use crate::network::inventory_snapshot_emit::send_inventory_snapshot_to_client;
 use crate::network::npc_metadata::{
@@ -305,6 +306,9 @@ pub struct ClientRequestDispatchParams<'w> {
         Option<ResMut<'w, crate::inventory::external_container::ExternalContainerRegistry>>,
     pub supply_coffin_open_tx:
         Option<ResMut<'w, Events<crate::supply_coffin::interact::SupplyCoffinOpenRequest>>>,
+    // ─── plan-shield-block-v1 P1：持续举盾 intent ─────────────────────────
+    pub raise_shield_tx: EventWriter<'w, RaiseShieldIntent>,
+    pub lower_shield_tx: EventWriter<'w, LowerShieldIntent>,
 }
 // NOTE: plan-qi-handling-attrition-v1 P0/P1 磨损写权限已合并入 AlchemyRequestParams.zones
 // (ResMut) 和 AlchemyRequestParams.attrition_qi_transfers，避免与 AlchemyRequestParams.zones
@@ -530,7 +534,9 @@ pub fn handle_client_request_payloads(
             | ClientRequestV1::CraftCancel { v }
             | ClientRequestV1::SupplyCoffinOpen { v, .. }
             | ClientRequestV1::ExternalContainerMove { v, .. }
-            | ClientRequestV1::ExternalContainerClose { v, .. } => *v,
+            | ClientRequestV1::ExternalContainerClose { v, .. }
+            | ClientRequestV1::RaiseShield { v }
+            | ClientRequestV1::LowerShield { v } => *v,
         };
         if v != SUPPORTED_VERSION {
             tracing::warn!(
@@ -2288,6 +2294,19 @@ pub fn handle_client_request_payloads(
                     craft_cancel_tx.send(crate::craft::CraftCancelIntent { caster: ev.client });
                 }
             }
+            // ─── plan-shield-block-v1 P1：盾牌举盾 intent ─────────────────────
+            ClientRequestV1::RaiseShield { .. } => {
+                tracing::debug!("[bong][shield] RaiseShield received entity={:?}", ev.client);
+                dispatch
+                    .raise_shield_tx
+                    .send(RaiseShieldIntent { player: ev.client });
+            }
+            ClientRequestV1::LowerShield { .. } => {
+                tracing::debug!("[bong][shield] LowerShield received entity={:?}", ev.client);
+                dispatch
+                    .lower_shield_tx
+                    .send(LowerShieldIntent { player: ev.client });
+            }
         }
     }
 }
@@ -3537,6 +3556,9 @@ mod tests {
         app.add_event::<crate::combat::zhenmai_v2::BackfireAmplificationActiveEvent>();
         app.add_event::<crate::cultivation::meridian::severed::MeridianSeveredEvent>();
         app.add_event::<crate::cultivation::overload::MeridianOverloadEvent>();
+        // plan-shield-block-v1 P1 — 举盾 intent events（ClientRequestDispatchParams 需要）。
+        app.add_event::<crate::combat::shield_block::RaiseShieldIntent>();
+        app.add_event::<crate::combat::shield_block::LowerShieldIntent>();
         app.add_systems(
             Update,
             (
@@ -4256,6 +4278,9 @@ mod tests {
         app.add_event::<MineralProbeIntent>();
         app.add_event::<SkillXpGain>();
         app.add_event::<SkillScrollUsed>();
+        // plan-shield-block-v1 P1 — 举盾 intent events（ClientRequestDispatchParams 需要）。
+        app.add_event::<crate::combat::shield_block::RaiseShieldIntent>();
+        app.add_event::<crate::combat::shield_block::LowerShieldIntent>();
         app.add_systems(
             Update,
             (
@@ -4684,6 +4709,9 @@ mod tests {
         app.add_event::<MineralProbeIntent>();
         app.add_event::<SkillXpGain>();
         app.add_event::<SkillScrollUsed>();
+        // plan-shield-block-v1 P1 — 举盾 intent events（ClientRequestDispatchParams 需要）。
+        app.add_event::<crate::combat::shield_block::RaiseShieldIntent>();
+        app.add_event::<crate::combat::shield_block::LowerShieldIntent>();
         app.add_systems(
             Update,
             (handle_client_request_payloads, capture_mineral_probes).chain(),
@@ -4747,6 +4775,9 @@ mod tests {
         app.add_event::<MineralProbeIntent>();
         app.add_event::<SkillXpGain>();
         app.add_event::<SkillScrollUsed>();
+        // plan-shield-block-v1 P1 — 举盾 intent events（ClientRequestDispatchParams 需要）。
+        app.add_event::<crate::combat::shield_block::RaiseShieldIntent>();
+        app.add_event::<crate::combat::shield_block::LowerShieldIntent>();
         app.add_systems(
             Update,
             (handle_client_request_payloads, capture_spirit_niche_places).chain(),
@@ -4973,6 +5004,9 @@ mod tests {
         app.add_event::<MineralProbeIntent>();
         app.add_event::<SkillXpGain>();
         app.add_event::<SkillScrollUsed>();
+        // plan-shield-block-v1 P1 — 举盾 intent events（ClientRequestDispatchParams 需要）。
+        app.add_event::<crate::combat::shield_block::RaiseShieldIntent>();
+        app.add_event::<crate::combat::shield_block::LowerShieldIntent>();
         app.add_systems(
             Update,
             (
@@ -5050,6 +5084,9 @@ mod tests {
         app.add_event::<MineralProbeIntent>();
         app.add_event::<SkillXpGain>();
         app.add_event::<SkillScrollUsed>();
+        // plan-shield-block-v1 P1 — 举盾 intent events（ClientRequestDispatchParams 需要）。
+        app.add_event::<crate::combat::shield_block::RaiseShieldIntent>();
+        app.add_event::<crate::combat::shield_block::LowerShieldIntent>();
         app.add_systems(
             Update,
             (handle_client_request_payloads, capture_mineral_probes).chain(),
@@ -5105,6 +5142,9 @@ mod tests {
         app.add_event::<MineralProbeIntent>();
         app.add_event::<SkillXpGain>();
         app.add_event::<SkillScrollUsed>();
+        // plan-shield-block-v1 P1 — 举盾 intent events（ClientRequestDispatchParams 需要）。
+        app.add_event::<crate::combat::shield_block::RaiseShieldIntent>();
+        app.add_event::<crate::combat::shield_block::LowerShieldIntent>();
         app.add_systems(
             Update,
             (handle_client_request_payloads, capture_mineral_probes).chain(),
@@ -5225,6 +5265,9 @@ mod tests {
         app.add_event::<MineralProbeIntent>();
         app.add_event::<SkillXpGain>();
         app.add_event::<SkillScrollUsed>();
+        // plan-shield-block-v1 P1 — 举盾 intent events（ClientRequestDispatchParams 需要）。
+        app.add_event::<crate::combat::shield_block::RaiseShieldIntent>();
+        app.add_event::<crate::combat::shield_block::LowerShieldIntent>();
         app.add_systems(Update, handle_client_request_payloads);
 
         let (client_bundle, _helper) = create_mock_client("Azure");
@@ -5308,6 +5351,9 @@ mod tests {
         app.add_event::<MineralProbeIntent>();
         app.add_event::<SkillXpGain>();
         app.add_event::<SkillScrollUsed>();
+        // plan-shield-block-v1 P1 — 举盾 intent events（ClientRequestDispatchParams 需要）。
+        app.add_event::<crate::combat::shield_block::RaiseShieldIntent>();
+        app.add_event::<crate::combat::shield_block::LowerShieldIntent>();
         app.add_systems(Update, handle_client_request_payloads);
 
         let (client_bundle, mut helper) = create_mock_client("Azure");
@@ -5393,6 +5439,9 @@ mod tests {
         app.add_event::<MineralProbeIntent>();
         app.add_event::<SkillXpGain>();
         app.add_event::<SkillScrollUsed>();
+        // plan-shield-block-v1 P1 — 举盾 intent events（ClientRequestDispatchParams 需要）。
+        app.add_event::<crate::combat::shield_block::RaiseShieldIntent>();
+        app.add_event::<crate::combat::shield_block::LowerShieldIntent>();
         app.add_event::<InscriptionScrollSubmit>();
         app.add_systems(Update, handle_client_request_payloads);
 
@@ -5456,6 +5505,9 @@ mod tests {
         app.add_event::<MineralProbeIntent>();
         app.add_event::<SkillXpGain>();
         app.add_event::<SkillScrollUsed>();
+        // plan-shield-block-v1 P1 — 举盾 intent events（ClientRequestDispatchParams 需要）。
+        app.add_event::<crate::combat::shield_block::RaiseShieldIntent>();
+        app.add_event::<crate::combat::shield_block::LowerShieldIntent>();
         app.add_event::<InscriptionScrollSubmit>();
         app.add_systems(
             Update,
@@ -5524,6 +5576,9 @@ mod tests {
         app.add_event::<MineralProbeIntent>();
         app.add_event::<SkillXpGain>();
         app.add_event::<SkillScrollUsed>();
+        // plan-shield-block-v1 P1 — 举盾 intent events（ClientRequestDispatchParams 需要）。
+        app.add_event::<crate::combat::shield_block::RaiseShieldIntent>();
+        app.add_event::<crate::combat::shield_block::LowerShieldIntent>();
         app.add_event::<InscriptionScrollSubmit>();
         app.add_systems(
             Update,
@@ -5590,6 +5645,9 @@ mod tests {
         app.add_event::<MineralProbeIntent>();
         app.add_event::<SkillXpGain>();
         app.add_event::<SkillScrollUsed>();
+        // plan-shield-block-v1 P1 — 举盾 intent events（ClientRequestDispatchParams 需要）。
+        app.add_event::<crate::combat::shield_block::RaiseShieldIntent>();
+        app.add_event::<crate::combat::shield_block::LowerShieldIntent>();
         app.add_event::<TemperingHit>();
         app.add_systems(
             Update,
@@ -5647,6 +5705,9 @@ mod tests {
         app.add_event::<MineralProbeIntent>();
         app.add_event::<SkillXpGain>();
         app.add_event::<SkillScrollUsed>();
+        // plan-shield-block-v1 P1 — 举盾 intent events（ClientRequestDispatchParams 需要）。
+        app.add_event::<crate::combat::shield_block::RaiseShieldIntent>();
+        app.add_event::<crate::combat::shield_block::LowerShieldIntent>();
         app.add_event::<TemperingHit>();
         app.add_systems(
             Update,
@@ -5700,6 +5761,9 @@ mod tests {
         app.add_event::<MineralProbeIntent>();
         app.add_event::<SkillXpGain>();
         app.add_event::<SkillScrollUsed>();
+        // plan-shield-block-v1 P1 — 举盾 intent events（ClientRequestDispatchParams 需要）。
+        app.add_event::<crate::combat::shield_block::RaiseShieldIntent>();
+        app.add_event::<crate::combat::shield_block::LowerShieldIntent>();
         app.add_event::<ConsecrationInject>();
         app.add_systems(
             Update,
@@ -5757,6 +5821,9 @@ mod tests {
         app.add_event::<MineralProbeIntent>();
         app.add_event::<SkillXpGain>();
         app.add_event::<SkillScrollUsed>();
+        // plan-shield-block-v1 P1 — 举盾 intent events（ClientRequestDispatchParams 需要）。
+        app.add_event::<crate::combat::shield_block::RaiseShieldIntent>();
+        app.add_event::<crate::combat::shield_block::LowerShieldIntent>();
         app.add_event::<ConsecrationInject>();
         app.add_systems(
             Update,
@@ -5810,6 +5877,9 @@ mod tests {
         app.add_event::<MineralProbeIntent>();
         app.add_event::<SkillXpGain>();
         app.add_event::<SkillScrollUsed>();
+        // plan-shield-block-v1 P1 — 举盾 intent events（ClientRequestDispatchParams 需要）。
+        app.add_event::<crate::combat::shield_block::RaiseShieldIntent>();
+        app.add_event::<crate::combat::shield_block::LowerShieldIntent>();
         app.add_event::<StepAdvance>();
         app.add_systems(
             Update,
@@ -5867,6 +5937,9 @@ mod tests {
         app.add_event::<MineralProbeIntent>();
         app.add_event::<SkillXpGain>();
         app.add_event::<SkillScrollUsed>();
+        // plan-shield-block-v1 P1 — 举盾 intent events（ClientRequestDispatchParams 需要）。
+        app.add_event::<crate::combat::shield_block::RaiseShieldIntent>();
+        app.add_event::<crate::combat::shield_block::LowerShieldIntent>();
         app.add_event::<TemperingHit>();
         app.add_event::<ConsecrationInject>();
         app.add_event::<StepAdvance>();
@@ -10733,6 +10806,9 @@ mod freshness_probe_handler_tests {
         app.add_event::<FreshnessProbeIntent>();
         app.add_event::<SkillXpGain>();
         app.add_event::<SkillScrollUsed>();
+        // plan-shield-block-v1 P1 — 举盾 intent events（ClientRequestDispatchParams 需要）。
+        app.add_event::<crate::combat::shield_block::RaiseShieldIntent>();
+        app.add_event::<crate::combat::shield_block::LowerShieldIntent>();
         app.add_systems(
             Update,
             (handle_client_request_payloads, capture_freshness_probes).chain(),
@@ -11009,6 +11085,275 @@ mod freshness_probe_handler_tests {
         assert_eq!(
             captured.0[0].instance_id, 6666,
             "instance_id 应匹配 equipped 物品"
+        );
+    }
+
+    // ── plan-shield-block-v1 P1 e2e — 举盾 / 放盾全链路 ─────────────────────
+    // 验证：JSON payload {"type":"raise_shield","v":1} → handle_client_request_payloads
+    // 解析 → 投递 RaiseShieldIntent（client entity 匹配）；
+    // 以及 lower_shield payload → LowerShieldIntent 投递。
+    // 这是「客户端发 CustomPayload → server dispatch intent」的完整链路断言。
+
+    #[derive(Default)]
+    struct CapturedRaiseShieldIntents(Vec<crate::combat::shield_block::RaiseShieldIntent>);
+    impl valence::prelude::Resource for CapturedRaiseShieldIntents {}
+
+    #[derive(Default)]
+    struct CapturedLowerShieldIntents(Vec<crate::combat::shield_block::LowerShieldIntent>);
+    impl valence::prelude::Resource for CapturedLowerShieldIntents {}
+
+    fn capture_raise_shield_intents(
+        mut events: EventReader<crate::combat::shield_block::RaiseShieldIntent>,
+        mut captured: ResMut<CapturedRaiseShieldIntents>,
+    ) {
+        captured.0.extend(events.read().cloned());
+    }
+
+    fn capture_lower_shield_intents(
+        mut events: EventReader<crate::combat::shield_block::LowerShieldIntent>,
+        mut captured: ResMut<CapturedLowerShieldIntents>,
+    ) {
+        captured.0.extend(events.read().cloned());
+    }
+
+    fn setup_shield_e2e_app() -> (App, valence::prelude::Entity) {
+        let mut app = App::new();
+        app.insert_resource(CapturedRaiseShieldIntents::default());
+        app.insert_resource(CapturedLowerShieldIntents::default());
+        app.insert_resource(CombatClock::default());
+        app.insert_resource(GameplayActionQueue::default());
+        app.insert_resource(AlchemyMockState::default());
+        app.insert_resource(DroppedLootRegistry::default());
+        app.insert_resource(ItemRegistry::default());
+        app.insert_resource(RecipeRegistry::default());
+        app.add_event::<CustomPayloadEvent>();
+        app.add_event::<BreakthroughRequest>();
+        app.add_event::<ForgeRequest>();
+        app.add_event::<InsightChosen>();
+        app.add_event::<DefenseIntent>();
+        app.add_event::<ApplyStatusEffectIntent>();
+        app.add_event::<PlaceFurnaceRequest>();
+        app.add_event::<crate::alchemy::LearnRecipeFragmentIntent>();
+        app.add_event::<StartTillRequest>();
+        app.add_event::<StartRenewRequest>();
+        app.add_event::<StartPlantingRequest>();
+        app.add_event::<StartHarvestRequest>();
+        app.add_event::<StartReplenishRequest>();
+        app.add_event::<StartDrainQiRequest>();
+        app.add_event::<StartExtractRequestEvent>();
+        app.add_event::<CancelExtractRequestEvent>();
+        app.add_event::<MineralProbeIntent>();
+        app.add_event::<FreshnessProbeIntent>();
+        app.add_event::<SkillXpGain>();
+        app.add_event::<SkillScrollUsed>();
+        app.add_event::<crate::combat::shield_block::RaiseShieldIntent>();
+        app.add_event::<crate::combat::shield_block::LowerShieldIntent>();
+        app.add_systems(
+            Update,
+            (
+                handle_client_request_payloads,
+                capture_raise_shield_intents,
+                capture_lower_shield_intents,
+            )
+                .chain(),
+        );
+        let (client_bundle, _helper) = create_mock_client("Shield");
+        let entity = app.world_mut().spawn(client_bundle).id();
+        (app, entity)
+    }
+
+    /// e2e：JSON {"type":"raise_shield","v":1} payload → RaiseShieldIntent(player=entity) 投递。
+    /// 验证 client_request_handler 正确解析 raise_shield 并路由到 intent event。
+    #[test]
+    fn raise_shield_payload_dispatches_raise_shield_intent() {
+        let (mut app, entity) = setup_shield_e2e_app();
+        app.world_mut()
+            .resource_mut::<valence::prelude::Events<CustomPayloadEvent>>()
+            .send(CustomPayloadEvent {
+                client: entity,
+                channel: ident!("bong:client_request").into(),
+                data: br#"{"type":"raise_shield","v":1}"#.to_vec().into_boxed_slice(),
+            });
+        app.update();
+
+        let captured = app.world().resource::<CapturedRaiseShieldIntents>();
+        assert_eq!(
+            captured.0.len(),
+            1,
+            "raise_shield payload 应 dispatch 恰好 1 个 RaiseShieldIntent，实际 {}",
+            captured.0.len()
+        );
+        assert_eq!(
+            captured.0[0].player, entity,
+            "RaiseShieldIntent.player 应等于发送 payload 的 client entity"
+        );
+    }
+
+    /// e2e：JSON {"type":"lower_shield","v":1} payload → LowerShieldIntent(player=entity) 投递。
+    /// 验证松开右键边沿的 lower_shield 路由正确。
+    #[test]
+    fn lower_shield_payload_dispatches_lower_shield_intent() {
+        let (mut app, entity) = setup_shield_e2e_app();
+        app.world_mut()
+            .resource_mut::<valence::prelude::Events<CustomPayloadEvent>>()
+            .send(CustomPayloadEvent {
+                client: entity,
+                channel: ident!("bong:client_request").into(),
+                data: br#"{"type":"lower_shield","v":1}"#.to_vec().into_boxed_slice(),
+            });
+        app.update();
+
+        let captured = app.world().resource::<CapturedLowerShieldIntents>();
+        assert_eq!(
+            captured.0.len(),
+            1,
+            "lower_shield payload 应 dispatch 恰好 1 个 LowerShieldIntent，实际 {}",
+            captured.0.len()
+        );
+        assert_eq!(
+            captured.0[0].player, entity,
+            "LowerShieldIntent.player 应等于发送 payload 的 client entity"
+        );
+    }
+
+    /// e2e：raise 后接 lower → 两个 intent 均投递，顺序正确。
+    #[test]
+    fn raise_then_lower_shield_payload_dispatches_both_intents_in_order() {
+        let (mut app, entity) = setup_shield_e2e_app();
+
+        // Raise
+        app.world_mut()
+            .resource_mut::<valence::prelude::Events<CustomPayloadEvent>>()
+            .send(CustomPayloadEvent {
+                client: entity,
+                channel: ident!("bong:client_request").into(),
+                data: br#"{"type":"raise_shield","v":1}"#.to_vec().into_boxed_slice(),
+            });
+        app.update();
+
+        // Lower
+        app.world_mut()
+            .resource_mut::<valence::prelude::Events<CustomPayloadEvent>>()
+            .send(CustomPayloadEvent {
+                client: entity,
+                channel: ident!("bong:client_request").into(),
+                data: br#"{"type":"lower_shield","v":1}"#.to_vec().into_boxed_slice(),
+            });
+        app.update();
+
+        let raised = app.world().resource::<CapturedRaiseShieldIntents>();
+        let lowered = app.world().resource::<CapturedLowerShieldIntents>();
+        assert_eq!(
+            raised.0.len(),
+            1,
+            "raise 后应有 1 个 RaiseShieldIntent，实际 {}",
+            raised.0.len()
+        );
+        assert_eq!(
+            lowered.0.len(),
+            1,
+            "lower 后应有 1 个 LowerShieldIntent，实际 {}",
+            lowered.0.len()
+        );
+    }
+
+    /// plan-shield-block-v1 P1 CR#4 — 同 tick 内同时发送 raise + lower 两个 payload，
+    /// 断言两个 intent 在同一 update() 内均被 dispatch（区别于 raise_then_lower 使用两次 update）。
+    #[test]
+    fn raise_and_lower_same_tick_dispatches_both_intents() {
+        let (mut app, entity) = setup_shield_e2e_app();
+
+        // 在同一 update 前发送 raise + lower 两个 CustomPayloadEvent
+        let mut events = app
+            .world_mut()
+            .resource_mut::<valence::prelude::Events<CustomPayloadEvent>>();
+        events.send(CustomPayloadEvent {
+            client: entity,
+            channel: ident!("bong:client_request").into(),
+            data: br#"{"type":"raise_shield","v":1}"#.to_vec().into_boxed_slice(),
+        });
+        events.send(CustomPayloadEvent {
+            client: entity,
+            channel: ident!("bong:client_request").into(),
+            data: br#"{"type":"lower_shield","v":1}"#.to_vec().into_boxed_slice(),
+        });
+
+        // 单次 update —— 两个 payload 在同一 tick 内被 handle_client_request_payloads 处理
+        app.update();
+
+        let raised = app.world().resource::<CapturedRaiseShieldIntents>();
+        let lowered = app.world().resource::<CapturedLowerShieldIntents>();
+        assert_eq!(
+            raised.0.len(),
+            1,
+            "同 tick raise+lower：应有 1 个 RaiseShieldIntent，实际 {}; \
+             期望 handle_client_request_payloads 在单次 update 内 dispatch raise+lower 两个 intent",
+            raised.0.len()
+        );
+        assert_eq!(
+            lowered.0.len(),
+            1,
+            "同 tick raise+lower：应有 1 个 LowerShieldIntent，实际 {}; \
+             期望 handle_client_request_payloads 在单次 update 内 dispatch raise+lower 两个 intent",
+            lowered.0.len()
+        );
+        assert_eq!(
+            raised.0[0].player, entity,
+            "RaiseShieldIntent.player 应等于发送 payload 的 client entity，同 tick 场景"
+        );
+        assert_eq!(
+            lowered.0[0].player, entity,
+            "LowerShieldIntent.player 应等于发送 payload 的 client entity，同 tick 场景"
+        );
+    }
+
+    /// plan-shield-block-v1 P1 CR#4 — 协议错误分支：v!=1 的 raise_shield payload 被版本校验拒绝，不 dispatch intent。
+    #[test]
+    fn raise_shield_bad_version_is_not_dispatched() {
+        let (mut app, entity) = setup_shield_e2e_app();
+
+        app.world_mut()
+            .resource_mut::<valence::prelude::Events<CustomPayloadEvent>>()
+            .send(CustomPayloadEvent {
+                client: entity,
+                channel: ident!("bong:client_request").into(),
+                // v:2 应被 SUPPORTED_VERSION 校验拒绝（warn + continue，不 dispatch）
+                data: br#"{"type":"raise_shield","v":2}"#.to_vec().into_boxed_slice(),
+            });
+        app.update();
+
+        let captured = app.world().resource::<CapturedRaiseShieldIntents>();
+        assert_eq!(
+            captured.0.len(),
+            0,
+            "raise_shield with v:2 must not dispatch RaiseShieldIntent \
+             because SUPPORTED_VERSION check rejects unsupported protocol versions; \
+             actual intent count={}",
+            captured.0.len()
+        );
+    }
+
+    /// plan-shield-block-v1 P1 CR#4 — 协议错误分支：malformed JSON 不 dispatch 任何 intent。
+    #[test]
+    fn raise_shield_malformed_json_is_not_dispatched() {
+        let (mut app, entity) = setup_shield_e2e_app();
+
+        app.world_mut()
+            .resource_mut::<valence::prelude::Events<CustomPayloadEvent>>()
+            .send(CustomPayloadEvent {
+                client: entity,
+                channel: ident!("bong:client_request").into(),
+                data: br#"not valid json"#.to_vec().into_boxed_slice(),
+            });
+        app.update();
+
+        let captured = app.world().resource::<CapturedRaiseShieldIntents>();
+        assert_eq!(
+            captured.0.len(),
+            0,
+            "malformed JSON payload must not dispatch any RaiseShieldIntent; \
+             actual intent count={}",
+            captured.0.len()
         );
     }
 }

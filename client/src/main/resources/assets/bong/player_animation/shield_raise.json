@@ -1,0 +1,262 @@
+{
+  "version": 3,
+  "author": "Bong",
+  "name": "shield_raise",
+  "description": "plan-shield-block-v1 P1: 持续举盾姿态。isLoop:true / endTick:6。左臂前举持盾(pitch=-80°,bend=110°,yaw=+15°)，右臂微屈备战(pitch=-20°,bend=20°)，head 低-8°藏于盾后，body 微蹲-0.05，腿 bend 15° 稳固重心。0→3 tick OUTQUAD 进入, 3→6 tick OUTSINE 微呼吸bob(-0.01/-0.005), loop 回 tick 3。与 guard_raise (FullPowerCharge,isLoop:false,endTick:4) 完全独立。<PROMISE>盾牌举盾持续姿态：左臂前伸覆盖躯干、微呼吸loop、与 guard_raise 独立不共用、isLoop:true 已验证。</PROMISE>",
+  "emote": {
+    "beginTick": 0,
+    "endTick": 6,
+    "stopTick": 9,
+    "isLoop": true,
+    "returnTick": 3,
+    "nsfw": false,
+    "degrees": false,
+    "moves": [
+      {
+        "tick": 0,
+        "easing": "LINEAR",
+        "body": {
+          "y": 0.0
+        }
+      },
+      {
+        "tick": 0,
+        "easing": "LINEAR",
+        "head": {
+          "pitch": 0.0
+        }
+      },
+      {
+        "tick": 0,
+        "easing": "LINEAR",
+        "torso": {
+          "pitch": 0.0
+        }
+      },
+      {
+        "tick": 0,
+        "easing": "LINEAR",
+        "leftArm": {
+          "pitch": -0.2617994
+        }
+      },
+      {
+        "tick": 0,
+        "easing": "LINEAR",
+        "leftArm": {
+          "yaw": 0.0
+        }
+      },
+      {
+        "tick": 0,
+        "easing": "LINEAR",
+        "leftArm": {
+          "bend": 0.2617994
+        }
+      },
+      {
+        "tick": 0,
+        "easing": "LINEAR",
+        "rightArm": {
+          "pitch": -0.1745329
+        }
+      },
+      {
+        "tick": 0,
+        "easing": "LINEAR",
+        "rightArm": {
+          "yaw": -0.0872665
+        }
+      },
+      {
+        "tick": 0,
+        "easing": "LINEAR",
+        "rightArm": {
+          "bend": 0.1745329
+        }
+      },
+      {
+        "tick": 0,
+        "easing": "LINEAR",
+        "rightLeg": {
+          "bend": 0.0
+        }
+      },
+      {
+        "tick": 0,
+        "easing": "LINEAR",
+        "leftLeg": {
+          "bend": 0.0
+        }
+      },
+      {
+        "tick": 3,
+        "easing": "OUTQUAD",
+        "body": {
+          "y": -0.05
+        }
+      },
+      {
+        "tick": 3,
+        "easing": "OUTQUAD",
+        "head": {
+          "pitch": 0.1396263
+        }
+      },
+      {
+        "tick": 3,
+        "easing": "OUTQUAD",
+        "torso": {
+          "pitch": 0.0523599
+        }
+      },
+      {
+        "tick": 3,
+        "easing": "OUTQUAD",
+        "leftArm": {
+          "pitch": -1.3962634
+        }
+      },
+      {
+        "tick": 3,
+        "easing": "OUTQUAD",
+        "leftArm": {
+          "yaw": 0.2617994
+        }
+      },
+      {
+        "tick": 3,
+        "easing": "OUTQUAD",
+        "leftArm": {
+          "roll": 0.1396263
+        }
+      },
+      {
+        "tick": 3,
+        "easing": "OUTQUAD",
+        "leftArm": {
+          "bend": 1.9198622
+        }
+      },
+      {
+        "tick": 3,
+        "easing": "OUTQUAD",
+        "rightArm": {
+          "pitch": -0.3490659
+        }
+      },
+      {
+        "tick": 3,
+        "easing": "OUTQUAD",
+        "rightArm": {
+          "yaw": -0.1745329
+        }
+      },
+      {
+        "tick": 3,
+        "easing": "OUTQUAD",
+        "rightArm": {
+          "bend": 0.3490659
+        }
+      },
+      {
+        "tick": 3,
+        "easing": "OUTQUAD",
+        "rightLeg": {
+          "bend": 0.2617994
+        }
+      },
+      {
+        "tick": 3,
+        "easing": "OUTQUAD",
+        "leftLeg": {
+          "bend": 0.2617994
+        }
+      },
+      {
+        "tick": 6,
+        "easing": "OUTSINE",
+        "body": {
+          "y": -0.04
+        }
+      },
+      {
+        "tick": 6,
+        "easing": "OUTSINE",
+        "head": {
+          "pitch": 0.1221730
+        }
+      },
+      {
+        "tick": 6,
+        "easing": "OUTSINE",
+        "torso": {
+          "pitch": 0.0349066
+        }
+      },
+      {
+        "tick": 6,
+        "easing": "OUTSINE",
+        "leftArm": {
+          "pitch": -1.3788088
+        }
+      },
+      {
+        "tick": 6,
+        "easing": "OUTSINE",
+        "leftArm": {
+          "yaw": 0.2443461
+        }
+      },
+      {
+        "tick": 6,
+        "easing": "OUTSINE",
+        "leftArm": {
+          "roll": 0.1221730
+        }
+      },
+      {
+        "tick": 6,
+        "easing": "OUTSINE",
+        "leftArm": {
+          "bend": 1.9024076
+        }
+      },
+      {
+        "tick": 6,
+        "easing": "OUTSINE",
+        "rightArm": {
+          "pitch": -0.3316126
+        }
+      },
+      {
+        "tick": 6,
+        "easing": "OUTSINE",
+        "rightArm": {
+          "yaw": -0.1570796
+        }
+      },
+      {
+        "tick": 6,
+        "easing": "OUTSINE",
+        "rightArm": {
+          "bend": 0.3316126
+        }
+      },
+      {
+        "tick": 6,
+        "easing": "OUTSINE",
+        "rightLeg": {
+          "bend": 0.2443461
+        }
+      },
+      {
+        "tick": 6,
+        "easing": "OUTSINE",
+        "leftLeg": {
+          "bend": 0.2443461
+        }
+      }
+    ]
+  }
+}

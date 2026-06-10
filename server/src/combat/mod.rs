@@ -25,6 +25,7 @@ pub mod rat_bite;
 pub mod raycast;
 pub mod realm_gap;
 pub mod resolve;
+pub mod shield_block;
 pub mod status;
 pub mod style_telemetry;
 pub mod sword_basics;
@@ -394,5 +395,30 @@ pub fn register(app: &mut App) {
         style_telemetry::track_style_tendency
             .in_set(CombatSystemSet::Emit)
             .after(style_telemetry::collect_hunyuan_pvp_telemetry),
+    );
+
+    // plan-shield-block-v1 P1 — 盾牌格挡持续状态系统
+    app.add_event::<shield_block::RaiseShieldIntent>();
+    app.add_event::<shield_block::LowerShieldIntent>();
+    app.add_systems(
+        Update,
+        (
+            shield_block::raise_shield_handler.in_set(CombatSystemSet::Intent),
+            shield_block::lower_shield_handler
+                .in_set(CombatSystemSet::Intent)
+                .after(shield_block::raise_shield_handler),
+        ),
+    );
+    app.add_systems(
+        Update,
+        shield_block::cleanup_shield_on_death
+            .in_set(CombatSystemSet::Resolve)
+            .after(lifecycle::death_arbiter_tick),
+    );
+    app.add_systems(
+        Update,
+        shield_block::cleanup_shield_on_disconnect
+            .in_set(CombatSystemSet::Intent)
+            .before(crate::player::despawn_disconnected_clients),
     );
 }

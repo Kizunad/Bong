@@ -10,7 +10,8 @@ import java.util.Map;
 import java.util.Set;
 import java.util.function.Predicate;
 
-final class InventoryEquipRules {
+// plan-shield-block-v1 P1 — 改为 public 以允许 MixinMouse 调用 isShieldPublic（同包内也可直接用 isShield）。
+public final class InventoryEquipRules {
     private enum WeaponKind {
         SWORD,
         SABER,
@@ -155,6 +156,11 @@ final class InventoryEquipRules {
     // plan-shield-block-v1 P0 — 盾牌判断，供 OFF_HAND 路由使用。
     static boolean isShield(InventoryItem item) {
         return item != null && isShield(item.itemId());
+    }
+
+    // plan-shield-block-v1 P1 — public 版本，供 MixinMouse 右键仲裁层跨包访问。
+    public static boolean isShieldPublic(InventoryItem item) {
+        return isShield(item);
     }
 
     private static boolean isSingleCell(InventoryItem item) {

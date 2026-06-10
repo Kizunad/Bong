@@ -508,6 +508,18 @@ public final class ClientRequestSender {
         dispatch(ClientRequestProtocol.encodeExternalContainerClose(sessionId));
     }
 
+    // ─── plan-shield-block-v1 P1：盾牌举盾 / 放盾 C2S ──────────────────────
+
+    /** plan-shield-block-v1 P1 — 通知 server 玩家举盾（对应 ClientRequestV1::RaiseShield）。 */
+    public static void sendRaiseShield() {
+        dispatch(ClientRequestProtocol.encodeRaiseShield());
+    }
+
+    /** plan-shield-block-v1 P1 — 通知 server 玩家放盾（对应 ClientRequestV1::LowerShield）。 */
+    public static void sendLowerShield() {
+        dispatch(ClientRequestProtocol.encodeLowerShield());
+    }
+
     private static void dispatch(String json) {
         backend.send(CHANNEL, json.getBytes(StandardCharsets.UTF_8));
     }
