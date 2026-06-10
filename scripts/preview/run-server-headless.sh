@@ -44,6 +44,10 @@ fi
 # 否则 skin::pool::maintain_skin_pool 会因缺 key 直接 panic（对齐 e2e-redis.sh:892）。
 export BONG_SKIP_SKIN_PREFETCH="${BONG_SKIP_SKIN_PREFETCH:-1}"
 
+# headless preview client 无法点击 server resource pack 提示。保持普通 server 默认推
+# 资源包，仅 preview wrapper 默认跳过；显式设 BONG_RESOURCE_PACK_ENABLED=true 可覆盖。
+export BONG_RESOURCE_PACK_ENABLED="${BONG_RESOURCE_PACK_ENABLED:-false}"
+
 echo "[run-server-headless] 启动 server (cwd=$PWD profile=${PROFILE:-debug})..."
 # nohup + setsid 防 CI 上父进程退出后子进程被收割
 # stdout/stderr 都重定向到 LOG_FILE 方便失败时回看
