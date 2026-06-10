@@ -3765,6 +3765,13 @@ fn validate_move_semantics(
                 item.template_id
             ))
         }
+        // plan-shield-block-v1 P0 — 盾牌（Shield 类）同样不能进 hotbar，必须留在 off_hand 槽。
+        InventoryLocationV1::Hotbar { .. } if matches!(template.category, ItemCategory::Shield) => {
+            Err(format!(
+                "shield `{}` cannot move to hotbar; shield must stay in equipped slots",
+                item.template_id
+            ))
+        }
         InventoryLocationV1::Hotbar { .. }
             if matches!(template.category, ItemCategory::Treasure) =>
         {
@@ -6677,6 +6684,42 @@ cols = 4
         .expect_err("armor should be rejected from hotbar");
 
         assert!(error.contains("armor `armor_bone_boots` cannot move to hotbar"));
+    }
+
+    // plan-shield-block-v1 P0 MAJOR #1 — 盾不能进 hotbar（Shield category 守卫回归）。
+    #[test]
+    fn apply_move_rejects_shield_to_hotbar() {
+        use crate::schema::inventory::InventoryLocationV1;
+
+        let registry = load_item_registry().expect("item registry should load");
+        let mut inv = make_test_inventory_with_one_item();
+        inv.containers[0].items[0].instance.template_id = "wooden_shield".to_string();
+        inv.containers[0].items[0].instance.display_name = "木盾".to_string();
+        inv.containers[0].items[0].instance.grid_h = 2;
+
+        let error = apply_inventory_move(
+            &mut inv,
+            &registry,
+            42,
+            &InventoryLocationV1::Container {
+                container_id: "main_pack".to_string(),
+                row: 0,
+                col: 0,
+            },
+            &InventoryLocationV1::Hotbar { index: 0 },
+        )
+        .expect_err("shield should be rejected from hotbar");
+
+        assert!(
+            error.contains("shield `wooden_shield` cannot move to hotbar"),
+            "期望错误消息含 'shield `wooden_shield` cannot move to hotbar'，\
+             实际消息：{error}"
+        );
+        assert!(
+            error.contains("shield must stay in equipped slots"),
+            "期望错误消息含 'shield must stay in equipped slots'，\
+             实际消息：{error}"
+        );
     }
 
     #[test]
