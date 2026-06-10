@@ -15,11 +15,13 @@ class BlockVanillaIconMapTest {
         assertEquals("minecraft:gravel", BlockVanillaIconMap.vanillaItemIdForTests("weathered_stone"));
         assertEquals("minecraft:clay", BlockVanillaIconMap.vanillaItemIdForTests("raw_clay_lump"));
         assertEquals("minecraft:obsidian", BlockVanillaIconMap.vanillaItemIdForTests("obsidian_shard"));
+        assertEquals("minecraft:crafting_table", BlockVanillaIconMap.vanillaItemIdForTests("workbench_item"));
     }
 
     @Test
     void recognizesKnownBlocksAndReturnsEmptyForUnknown() {
         assertTrue(BlockVanillaIconMap.isKnownBlockItem("earth_crumb"));
+        assertTrue(BlockVanillaIconMap.isKnownBlockItem("workbench_item"));
         assertFalse(BlockVanillaIconMap.isKnownBlockItem("missing_block"));
         assertTrue(BlockVanillaIconMap.createStackFor("missing_block").isEmpty());
     }
