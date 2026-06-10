@@ -8,10 +8,10 @@
 
 | 阶段 | 主题 | 状态 |
 |------|------|------|
-| P0 | 蜕壳流伪装道具接通（disguise_wrap / camouflage_net） | ⬜ |
-| P1 | 放置 kit 换代清理（forge_station_kit / furnace_kit_fantie） | ⬜ |
-| P2 | 6 个经济物品删除（bone_coin_blank 等） | ⬜ |
-| P3 | 9 个材料断链 / 工具类删除（2026-06-10 扩入，调查 workflow 裁决） | ⬜ |
+| P0 | 蜕壳流伪装道具接通（disguise_wrap / camouflage_net） | ✅ 2026-06-11 |
+| P1 | 放置 kit 换代清理（forge_station_kit / furnace_kit_fantie） | ✅ 2026-06-11 |
+| P2 | 6 个经济物品删除（bone_coin_blank 等） | ✅ 2026-06-11 |
+| P3 | 9 个材料断链 / 工具类删除（2026-06-10 扩入，调查 workflow 裁决） | ✅ 2026-06-11 |
 
 全部开放问题已在 §8.1 收口（见文末）。**实施时以 §8.1 决议为准**，§8 原表保留以备追溯。
 
@@ -278,3 +278,51 @@ P0 **不新增**视听资产——完全复用 tuike_v2 既有蜕壳视听：
 ---
 
 （本 plan scope = 4 PR，consume-plan 按 P0→P1→P2→P3 拆 PR；P2/P3 均涉及删除与全仓 grep 守门，建议最后串行，避免与 P0/P1 接通 / 改产物冲突。）
+
+## Finish Evidence
+
+### 落地清单
+
+- **P0：蜕壳流伪装道具接通**：
+  - `server/src/combat/tuike_v2/state.rs` 将 `disguise_wrap` / `camouflage_net` 映射到 `FalseSkinTier::Fan`。
+  - `server/src/combat/tuike.rs` 将两件低成本伪装道具映射到 `FalseSkinKind::SpiderSilk`，打通装备守卫与 realm gate。
+  - `server/src/inventory/mod.rs` 增加伪皮装备守卫回归，锁定醒灵拒绝、引气接受的 v1 门槛。
+- **P1：放置 kit 换代清理**：
+  - `server/src/craft/workbench_recipes.rs` 将 #99/#100 产物改为 `furnace_fantie` / `fan_iron_anvil`。
+  - `server/assets/items/workbench_materials.toml` 删除 `furnace_kit_fantie` / `forge_station_kit` 模板。
+  - `client/src/main/resources/assets/bong-client/textures/gui/items/` 删除旧代 kit 图标，并补齐 `fan_iron_anvil.png`。
+- **P2：6 个经济僵尸物品删除**：
+  - `server/assets/items/workbench_materials.toml` 删除 `bone_coin_blank`、`trade_scale_stand`、`price_tag`、`trade_puppet_frame`、`waymark_stone`、`rat_bait` 模板。
+  - `server/src/craft/workbench_recipes.rs` 删除对应配方并保留 P2/P3 阶段隔离测试。
+  - `server/src/network/inventory_snapshot_emit.rs` 增加删除模板旧实例快照不 panic 且原样保留的回归。
+- **P3：材料断链 / 工具类僵尸物品删除**：
+  - `server/assets/items/workbench_materials.toml` 删除 `powder_zhu_sha`、`iron_sword_blank`、`stone_spearhead`、`sling_stone`、`sling_weapon`、`stone_hoe`、`mortar_stone`、`heat_gloves`、`trade_scale`、`trade_scale_stand` 模板。
+  - `server/src/craft/workbench_recipes.rs` 删除对应配方与 `scroll_workbench_heat_gloves` unlock，并用守门测试确认 `bing_jia_shou_tao` 未被误删。
+  - `scripts/images/batch_items.py` 与 `client/src/main/resources/assets/bong-client/textures/gui/items/` 同步删除这批僵尸物品的生成 prompt / PNG 图标。
+
+### 关键 commit / PR
+
+- `78bccaa0368def5ca24f209a2533e791b9271a08`（2026-06-11）— `plan-economy-zombie-cleanup-v1 P0：接通伪装道具蜕壳入口`，PR #484。
+- `fcd883efc3ea4b3598afc1ca5fe95160f3f2a8ad`（2026-06-11）— `清理放置组件旧代物品`，PR #485。
+- `a3a36b3672a07cd94b9618dba28938be5fbf055c`（2026-06-11）— `清理经济僵尸物品`，PR #488。
+- `a4d4c0f509d98d870799815269b7831947ea8ed3`（2026-06-11）— `清理材料工具僵尸物品`，PR #489。
+
+### 测试结果
+
+- PR #484：GitHub `e2e` 通过；`/review` 通过，无阻塞问题。
+- PR #485：GitHub `Build resource pack` 与 `e2e` 通过。
+- PR #488：GitHub `Build resource pack` 与 `e2e` 通过；`/review` rerun 后通过。
+- PR #489：本地通过 `python3 -m py_compile scripts/images/batch_items.py`、`cargo fmt --check`、`cargo clippy -j 2 --all-targets -- -D warnings`、定向 `cargo test` 与全量 `BONG_SKIP_SKIN_PREFETCH=1 CARGO_BUILD_JOBS=2 nice -n 10 ionice -c3 cargo test -j 2`（8210 passed, 0 failed, 1 ignored）；GitHub `Build resource pack`、`CodeRabbit` 与 `e2e` 通过；`/review` 通过，无阻塞问题。
+
+### 跨仓库核验
+
+- **server**：`false_skin_tier_for_item`、`false_skin_kind_for_item`、`material_tool_zombie_templates_and_recipes_are_removed`、`inventory_snapshot_preserves_deleted_template_instances` 均可 grep 命中。
+- **client**：旧代 kit、P2/P3 删除 ID 的 PNG 图标已删除；`fan_iron_anvil.png` 已存在；`disguise_wrap.png` / `camouflage_net.png` 保留。
+- **agent/schema**：本 plan 删除 / 接通 ID 在 agent schema 与 WorldModel 中无新增契约；无需 schema 变更。
+- **scripts**：`scripts/images/batch_items.py` 已删除 P3 僵尸物品 prompt，`py_compile` 通过。
+
+### 遗留 / 后续
+
+- 本 plan 范围内无阻塞遗留。
+- `herb_bundle` / `cao_lian` 的临门适配不在本 plan 范围，后续由 `plan-gathering-tool-bind-v1` 承接。
+- `camouflage_net` 驻地遮蔽不是本 plan v1 目标；若需要放置形态与驻地遮蔽效果，另立放置/遮蔽玩法 plan。
