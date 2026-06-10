@@ -491,11 +491,6 @@ pub fn territory_tick(
 
     // 对本 tick 有变动的 zone 重算 dominance，并 emit DominanceChangedEvent
     for zone_name in &dirty_zones {
-        // 灵气耗尽边沿检测（独立于 dominance 切换）
-        let zone_spirit_qi = zone_registry
-            .find_zone_by_name(zone_name)
-            .map(|z| z.spirit_qi)
-            .unwrap_or(0.0);
         {
             // 用 players 中任意玩家作为 realm_band 取 token（实际取 top player）
             let entry = influence_map.zones.entry(zone_name.clone()).or_default();
@@ -556,16 +551,6 @@ pub fn territory_tick(
 
             entry.dominant = new_dominant;
         }
-
-        // 灵气耗尽边沿检测（独立，用 ZoneQiWatermark）
-        // 注意：ZoneQiWatermark 在 territory_narration_system 里维护，
-        // 这里直接检测 zone spirit_qi 是否跌至 0 且 dominant.is_some()
-        // 简化：读当前 spirit_qi，对比上一 tick（用 ZoneInfluenceEntry 里不存储）
-        // 采用独立 Resource：直接通过 influence_map 检测，跳过若无法读取 watermark
-        // 实际由 territory_narration.rs detect_qi_depleted_edge 辅助
-        // 这里读取 ZoneQiWatermark 需要额外参数，改在单独 pass 里做
-        // → 把 QiDepleted 检测放到 territory_qi_depleted_system（下方）
-        let _ = zone_spirit_qi; // suppress unused (qi depletion detection is in territory_qi_depleted_system)
     }
 }
 
@@ -756,7 +741,11 @@ pub fn territory_qi_depleted_system(
 
     for zone in &zone_registry.zones {
         let current_qi = zone.spirit_qi;
-        let last_qi = watermark.last_qi.get(&zone.name).copied().unwrap_or(1.0); // 初次默认正值
+        let last_qi = watermark
+            .last_qi
+            .get(&zone.name)
+            .copied()
+            .unwrap_or(current_qi);
 
         let has_dominant = influence_map
             .zones
@@ -1750,6 +1739,94 @@ mod territory_tests {
             .resource_mut::<bevy_ecs::event::Events<InfluenceChangedEvent>>()
             .drain()
             .collect()
+    }
+
+    fn drain_dominance_events(app: &mut App) -> Vec<DominanceChangedEvent> {
+        app.world_mut()
+            .resource_mut::<bevy_ecs::event::Events<DominanceChangedEvent>>()
+            .drain()
+            .collect()
+    }
+
+    fn make_qi_depleted_app(initial_qi: f64) -> App {
+        use crate::world::territory_narration::ZoneQiWatermark;
+        use crate::world::zone::Zone;
+        use valence::prelude::DVec3;
+
+        let mut app = App::new();
+        app.add_event::<DominanceChangedEvent>();
+        app.init_resource::<ZoneInfluenceMap>();
+        app.init_resource::<ZoneQiWatermark>();
+        app.insert_resource(CultivationClock { tick: 42 });
+        app.insert_resource(ZoneRegistry {
+            zones: vec![Zone {
+                name: "dead_zone".to_string(),
+                dimension: DimensionKind::Overworld,
+                bounds: (DVec3::new(0.0, 60.0, 0.0), DVec3::new(64.0, 80.0, 64.0)),
+                spirit_qi: initial_qi,
+                danger_level: 0,
+                active_events: vec![],
+                patrol_anchors: vec![],
+                blocked_tiles: vec![],
+            }],
+        });
+        app.add_systems(Update, territory_qi_depleted_system);
+
+        {
+            let mut map = app.world_mut().resource_mut::<ZoneInfluenceMap>();
+            map.zones.insert(
+                "dead_zone".to_string(),
+                ZoneInfluenceEntry {
+                    dominant: Some(ZoneDominance {
+                        char_id: "hero".to_string(),
+                        influence: 60.0,
+                        established_tick: 1,
+                        public_known: true,
+                        realm_band: Some(RealmBand::Mid),
+                    }),
+                    ..Default::default()
+                },
+            );
+        }
+
+        app
+    }
+
+    #[test]
+    fn qi_depleted_system_does_not_emit_for_initial_dead_zone() {
+        let mut app = make_qi_depleted_app(0.0);
+
+        app.update();
+
+        assert!(
+            drain_dominance_events(&mut app).is_empty(),
+            "初始已为废地的 zone 不应在服务启动首 tick 误触发 QiDepleted"
+        );
+    }
+
+    #[test]
+    fn qi_depleted_system_emits_when_qi_crosses_to_zero_after_watermark() {
+        let mut app = make_qi_depleted_app(0.5);
+
+        app.update();
+        assert!(
+            drain_dominance_events(&mut app).is_empty(),
+            "首次建立正水位 watermark 不应触发 QiDepleted"
+        );
+
+        {
+            let mut zones = app.world_mut().resource_mut::<ZoneRegistry>();
+            zones.zones[0].spirit_qi = 0.0;
+        }
+        app.world_mut().resource_mut::<CultivationClock>().tick = 43;
+        app.update();
+
+        let events = drain_dominance_events(&mut app);
+        assert_eq!(events.len(), 1, "正水位跌至 0 应触发 1 条 QiDepleted");
+        assert_eq!(events[0].zone_name, "dead_zone");
+        assert_eq!(events[0].kind, DominanceEventKind::QiDepleted);
+        assert_eq!(events[0].realm_band, RealmBand::Mid);
+        assert_eq!(events[0].observed_at_tick, 43);
     }
 
     // ── P2 Case 1: zone内PvP击杀 killer +5.0, victim 归零 ────────────────────
