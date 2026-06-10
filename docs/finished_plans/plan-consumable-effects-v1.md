@@ -126,11 +126,12 @@
 
 - **落地清单**：
   - P1：`server/assets/items/workbench_materials.toml` 为 `huiyuan_decoction`、`meridian_salve`、`meridian_rubbing`、`qingzhuo_powder`、`anti_gu_powder`、`qi_guide_talisman` 补齐 `effect`；`server/src/inventory/mod.rs` 增加 10 个 item effect pin 断言。
-  - P2：`server/src/inventory/mod.rs` 新增 `ComposureRestore` / `WoundHeal` parser；`server/src/network/cast_emit.rs` 新增心境恢复、疗伤施效和 QuickSlot 端到端测试；`server/src/network/client_request_handler.rs` 保持丹药路径对 QuickSlot-only effect 的显式 no-op。
-  - P3：`server/assets/alchemy/recipes/ningmai_san_v1.json` 新增 `ningmai_prep_kit` → `ningmai_powder` 复炼配方；`server/src/alchemy/recipe.rs` pin 默认 registry 加载。
+  - P2：`server/src/inventory/mod.rs` 新增 `ComposureRestore` / `WoundHeal` parser 与目标校验；`server/src/network/cast_emit.rs` 新增心境恢复、疗伤施效和 QuickSlot 端到端测试；`server/src/network/client_request_handler.rs` 对 QuickSlot-only effect 做 pill 路径前置拒绝，避免误消费。
+  - P3：`server/assets/alchemy/recipes/ningmai_san_v1.json` 新增 `ningmai_prep_kit` → `ningmai_powder` 复炼配方；`server/src/alchemy/recipe.rs` pin 默认 registry 加载与 outcomes/fallback 关键字段。
   - P4：`server/src/network/cast_emit.rs` 覆盖 `UseQuickSlot` → consume → `qi_recovery` / `composure_restore` / `wound_heal` 代表性 e2e。
 - **关键 commit**：
   - `93b2dbc82` · 2026-06-10 · `实现手搓消耗品使用闭环`
+  - `deb7c10dd` · 2026-06-10 · `修复消耗品 review 问题`
 - **测试结果**：
   - `cd server && cargo fmt --check`：通过。
   - `cd server && cargo test loads_item_registry_from_assets`：通过。
@@ -138,9 +139,13 @@
   - `cd server && cargo test composure_restore_clamps_to_full_composure`：通过。
   - `cd server && cargo test wound_heal_targets_all_wounds_when_target_missing`：通过。
   - `cd server && cargo test wound_heal_slash_target_filters_body_part_group`：通过。
+  - `cd server && cargo test parse_item_effect_accepts_wound_heal_missing_target_as_all_wounds`：通过。
+  - `cd server && cargo test parse_item_effect_rejects_wound_heal_blank_target`：通过。
+  - `cd server && cargo test parse_item_effect_rejects_wound_heal_unknown_target`：通过。
+  - `cd server && cargo test item_effect_new_consumable_variants`：2 passed。
   - `cd server && cargo test tick_casts_consumable`：3 passed。
   - `cd server && cargo clippy --all-targets -- -D warnings`：通过。
-  - `cd server && cargo test`：8161 passed；0 failed；1 ignored。
+  - `cd server && cargo test`：8167 passed；0 failed；1 ignored。
 - **跨仓库核验**：
   - server：命中并落地 `ItemEffect`、`parse_item_effect`、`apply_item_effect`、`CastItemEffectTargets`、`apply_wound_heal`、`RecipeRegistry` 默认加载。
   - client：本 plan 未改 client；入口复用既有 QuickSlot C2S cast 流程。
