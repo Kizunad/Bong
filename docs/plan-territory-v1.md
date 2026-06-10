@@ -8,13 +8,15 @@
 |------|------|------|
 | P0 | ZoneInfluence 区域影响力系统（按累计停留/修炼/战斗自动计算） | ✅ 2026-06-11 |
 | P1 | 驻守收益与代价（灵气优先权 + 天道注意力加速 + NPC 态度） | ✅ 2026-06-11 |
-| P2 | 领地争夺机制（侵入/驱逐/灵脉占据的博弈规则） | ⬜ |
+| P2 | 领地争夺机制（侵入/驱逐/灵脉占据的博弈规则） | ✅ 2026-06-11 |
 | P3 | 领地信息暴露（narration 广播 + NPC 传话 + 环境痕迹） | ⬜ |
 | P4 | 饱和测试 | ⬜ |
 
 > **P0 落地（2026-06-11）**：`server/src/world/territory.rs` 新建——`ZoneInfluenceMap` Resource（按 zone.name+char_id 键控，跨 session 稳定；Zone 非 entity 故不用 Component）+ `territory_tick`（挂 `world::register` Update，60s 节流，停留/修炼/战斗三源累积，权重：境界×(rank+1) / TiandaoAttention 驻守加速 / Renown 三档 / **§十 灵气零和**：spirit_qi≤0 废地累积归零 + 离场衰减） + `ZoneDominance` 霸主判定写回 + `InfluenceChangedEvent` + persistence **v28** SQLite round-trip。**遗留**：`InfluenceSources.combat_wins/player_kills/gather_count` 事件级胜负累积（需 DeathEvent 归属判定）在 **P1**；`InfluenceChangedEvent` consumer（NPC 反应=P1 / narration=P3）。cargo fmt+clippy(-D warnings)+test **8132 passed**（territory 专项 28：三源累积/权重/废地/衰减/dominance 三态+A→B转换/平局/event/持久化round-trip + 节流 bug 修复）。
 
 > **P1 落地（2026-06-11）**：`server/src/world/territory_perks.rs` 新建——`recompute_territory_perks`（每 tick 从 `ZoneInfluenceMap.dominant` 重建 perk store，鲁棒不漏事件）+ `apply_dominance_reputation`。三效果**真消费 ZoneDominance**：①**灵气优先权** `DOMINANCE_REGEN_MULTIPLIER=1.20`（克隆 war 先例，守恒安全——只改 rate，drain=gain/CAP 不变，霸主吸快=把地吃干更快，§十 灵气零和内生代价）②**天道注意力加速** `DOMINANCE_ATTENTION_MULT=1.5`（is_dominant→attention 累积快 50%→更快 Watch/Pressure→天道清算更狠 + FearCultivatorScorer 自动联动 NPC 恐惧，"出头椽子先烂"）③**NPC 态度** `apply_dominance_reputation` 写 `NpcPlayerReputation` 并**接进生产 trade 判定**（霸主主场 NPC 信誉↑→交易折扣/稀有品解禁）。**遗留 P1.5**：NPC 主动投靠/跟随 Action（深改 brain）+ `compute_threat_assessments` 按 char_id 对霸主威胁偏置（触碰核心威胁评估）+ `InfluenceChangedEvent`→narration（P3）。cargo fmt+clippy(-D warnings)+test **8225 passed**（territory_perks 专项 16+ 含守恒/三效果/无霸主不触发/qi tick 集成 + NPC rep→trade 集成）。
+
+> **P2 落地（2026-06-11）**：`territory_pvp_influence_system`（territory.rs，挂 combat schedule `.after(death_arbiter_tick)`）真 `EventReader<DeathEvent>` → **zone 内 PvP 击杀** → 击杀者 influence **+5.0**(clamp≤100) / 被杀者**归零** + 主动 `recompute_dominance`(避免 60s 换主延迟) + emit `InfluenceChangedEvent(Combat)`。严格归属：环境死亡/NPC杀玩家/victim非玩家/自杀/zone外 全 `continue` 不调（8 守卫）。差距<10→共治由 P0 `recompute_dominance`(LEAD=10) 自动 emerge，P2 不重造。**遗留 P2.5**：「击败不杀」(对方逃跑 +2.0/-5.0)——near_death stabilize 无事件无归属(三重不可靠)，前置需 `Lifecycle.last_pvp_attacker` + `NearDeathSurvivedEvent`，P2 不留半实现。**P3**：侵入 NPC 眼线通报 narration。cargo fmt+clippy(-D warnings)+test **8286 passed**（P2 专项 13：zone内击杀+5/归零/环境死亡不调/NPC杀不调/zone外不调/自杀不调/击杀致霸主易主/归零失霸主/clamp/InfluenceChangedEvent emit）。
 
 ---
 

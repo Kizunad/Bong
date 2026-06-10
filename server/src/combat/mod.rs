@@ -397,6 +397,15 @@ pub fn register(app: &mut App) {
             .after(style_telemetry::collect_hunyuan_pvp_telemetry),
     );
 
+    // plan-territory-v1 P2 — PvP 击杀 → 影响力争夺
+    // EventReader<DeathEvent> after death_arbiter_tick（保证 DeathEvent 已 emit）。
+    app.add_systems(
+        Update,
+        crate::world::territory::territory_pvp_influence_system
+            .in_set(CombatSystemSet::Emit)
+            .after(lifecycle::death_arbiter_tick),
+    );
+
     // plan-shield-block-v1 P1 — 盾牌格挡持续状态系统
     app.add_event::<shield_block::RaiseShieldIntent>();
     app.add_event::<shield_block::LowerShieldIntent>();

@@ -17,11 +17,12 @@
 use std::collections::HashMap;
 
 use valence::prelude::{
-    bevy_ecs, App, Client, Entity, Event, EventWriter, Position, Query, Res, ResMut, Resource,
-    Update, Username, With,
+    bevy_ecs, App, Client, Entity, Event, EventReader, EventWriter, Position, Query, Res, ResMut,
+    Resource, Update, Username, With,
 };
 
 use crate::combat::components::CombatState;
+use crate::combat::events::DeathEvent;
 use crate::cultivation::components::Cultivation;
 use crate::cultivation::tick::{CultivationClock, CultivationSessionPracticeAccumulator};
 use crate::player::state::canonical_player_id;
@@ -64,6 +65,9 @@ pub const DOMINANCE_LEAD: f64 = 10.0;
 
 /// 现任霸主 influence 低于此值则失去地位（可调）。
 pub const DOMINANCE_DROP: f64 = 20.0;
+
+/// plan-territory-v1 P2 — PvP 击杀后胜者获得的影响力增量（可调）。
+pub const KILL_INFLUENCE_GAIN: f64 = 5.0;
 
 /// TiandaoAttention.level 最大值（与 tiandao_hunt.rs ATTENTION_MAX 一致）。
 const ATTENTION_MAX: f64 = 100.0;
@@ -283,6 +287,18 @@ pub fn recompute_dominance(entry: &ZoneInfluenceEntry, now: u64) -> Option<ZoneD
 
 // ─── 查询类型别名 ──────────────────────────────────────────────────────────────
 
+/// P2 PvP system 查 victim/killer 位置+dimension+用户名。
+type PvpParticipantQuery<'w, 's> = Query<
+    'w,
+    's,
+    (
+        &'static Position,
+        Option<&'static CurrentDimension>,
+        Option<&'static Username>,
+    ),
+    With<Client>,
+>;
+
 type TerritoryPlayerQuery<'w, 's> = Query<
     'w,
     's,
@@ -488,6 +504,114 @@ pub fn compute_decay(current_value: f64, absence_ticks: u64) -> f64 {
     };
     let decay = DECAY_PER_EVAL * decay_mult;
     (current_value - decay).max(0.0)
+}
+
+/// plan-territory-v1 P2 — PvP 击杀 → 影响力争夺。
+///
+/// 真 EventReader<DeathEvent>，真 mutate ZoneInfluenceMap。
+///
+/// 触发条件：
+/// - `death.attacker_player_id.is_some()`（攻击者是玩家）
+/// - victim(`death.target`)有 `Username`（victim 也是玩家，纯 PvP 双向校验）
+/// - victim 在某 zone 内（zone 外击杀不调 influence）
+///
+/// 效果：
+/// - 击杀者 influence +KILL_INFLUENCE_GAIN(5.0)，clamp ≤ INFLUENCE_MAX
+/// - 被杀者 influence 归零（= 0.0，彻底失去此地话语权）
+/// - 写完后主动调 recompute_dominance（即时生效，不等 territory_tick 60s 批次）
+/// - 各 emit 一次 InfluenceChangedEvent{source: Combat}
+///
+/// 注意：击败不杀（+2.0/-5.0）DEFER P2.5（需 Lifecycle.last_pvp_attacker +
+/// NearDeathSurvivedEvent 前置），P2 不实现此路径。
+pub fn territory_pvp_influence_system(
+    mut deaths: EventReader<DeathEvent>,
+    players: PvpParticipantQuery<'_, '_>,
+    zones: Option<Res<ZoneRegistry>>,
+    clock: Option<Res<CultivationClock>>,
+    mut influence_map: ResMut<ZoneInfluenceMap>,
+    mut ev_writer: EventWriter<InfluenceChangedEvent>,
+) {
+    let Some(zone_registry) = zones else {
+        return;
+    };
+    let now_tick = clock.as_ref().map(|c| c.tick).unwrap_or(0);
+
+    for death in deaths.read() {
+        // PvP 条件 1：攻击者必须有 player_id（即攻击者是玩家）
+        let Some(killer_player_id) = death.attacker_player_id.as_ref() else {
+            continue;
+        };
+        // PvP 条件 2：攻击者 entity 存在
+        let Some(killer_entity) = death.attacker else {
+            continue;
+        };
+
+        // PvP 条件 3：victim 必须有 Username（victim 也是玩家，纯 PvP 双向校验）
+        let Ok((victim_pos, victim_dim, Some(victim_username))) = players.get(death.target) else {
+            continue;
+        };
+
+        // zone 定位：用 victim 位置（被击杀地点代表话语权易手的地方）
+        let dim = victim_dim.map(|d| d.0).unwrap_or(DimensionKind::Overworld);
+        let Some(zone) = zone_registry.find_zone(dim, victim_pos.0) else {
+            // zone 外击杀不调 influence
+            continue;
+        };
+        let zone_name = zone.name.clone();
+
+        let victim_player_id = canonical_player_id(victim_username.0.as_str());
+
+        // 自杀防护（killer 和 victim 是同一玩家 id）
+        if killer_player_id == &victim_player_id {
+            continue;
+        }
+
+        // ── 击杀者 +KILL_INFLUENCE_GAIN ──────────────────────────────────────
+        {
+            let entry = influence_map.zones.entry(zone_name.clone()).or_default();
+            let killer_inf = entry.players.entry(killer_player_id.clone()).or_default();
+            let old_val = killer_inf.value;
+            killer_inf.value = (killer_inf.value + KILL_INFLUENCE_GAIN).clamp(0.0, INFLUENCE_MAX);
+            killer_inf.last_activity_tick = now_tick;
+            killer_inf.source_breakdown.player_kills += 1;
+            let actual_delta = killer_inf.value - old_val;
+            let new_total = killer_inf.value;
+            ev_writer.send(InfluenceChangedEvent {
+                player_entity: killer_entity,
+                player_id: killer_player_id.clone(),
+                zone_name: zone_name.clone(),
+                delta: actual_delta,
+                new_total,
+                source: InfluenceSource::Combat,
+            });
+        }
+
+        // ── 被杀者 influence 归零 ─────────────────────────────────────────────
+        {
+            let entry = influence_map.zones.entry(zone_name.clone()).or_default();
+            let victim_inf = entry.players.entry(victim_player_id.clone()).or_default();
+            let old_val = victim_inf.value;
+            victim_inf.value = 0.0;
+            victim_inf.last_activity_tick = now_tick;
+            let actual_delta = victim_inf.value - old_val; // 负数或 0
+            let new_total = victim_inf.value;
+            ev_writer.send(InfluenceChangedEvent {
+                player_entity: death.target,
+                player_id: victim_player_id.clone(),
+                zone_name: zone_name.clone(),
+                delta: actual_delta,
+                new_total,
+                source: InfluenceSource::Combat,
+            });
+        }
+
+        // ── 主动重算霸主（不等 territory_tick 60s 批次，即时体验）────────────
+        {
+            let entry = influence_map.zones.entry(zone_name.clone()).or_default();
+            let new_dominant = recompute_dominance(entry, now_tick);
+            entry.dominant = new_dominant;
+        }
+    }
 }
 
 /// 注册 territory 系统和资源到 Bevy App。
@@ -1368,5 +1492,840 @@ mod territory_tests {
             influence_after_first, influence_after_second
         );
         let _ = player;
+    }
+
+    // ── P2 PvP 影响力系统集成测试 ─────────────────────────────────────────────
+    //
+    // 用真实 Bevy App + add_systems(territory_pvp_influence_system) + 手动 send
+    // DeathEvent + app.update() 断言 ZoneInfluenceMap 的副作用（非纯函数测试）。
+
+    /// 辅助：构造 P2 测试用 App（注册必要资源 + 系统）。
+    fn make_pvp_app() -> App {
+        use crate::cultivation::tick::CultivationClock;
+        use crate::world::zone::{Zone, ZoneRegistry};
+        use valence::prelude::DVec3;
+
+        let mut app = App::new();
+        app.add_event::<DeathEvent>();
+        app.add_event::<InfluenceChangedEvent>();
+        app.init_resource::<ZoneInfluenceMap>();
+
+        let zone = Zone {
+            name: "pvp_zone".to_string(),
+            dimension: crate::world::dimension::DimensionKind::Overworld,
+            bounds: (DVec3::new(-64.0, 60.0, -64.0), DVec3::new(64.0, 80.0, 64.0)),
+            spirit_qi: 1.0,
+            danger_level: 1,
+            active_events: vec![],
+            patrol_anchors: vec![],
+            blocked_tiles: vec![],
+        };
+        app.insert_resource(ZoneRegistry { zones: vec![zone] });
+        app.insert_resource(CultivationClock { tick: 100 });
+        app.add_systems(valence::prelude::Update, territory_pvp_influence_system);
+        app
+    }
+
+    /// 辅助：读 ZoneInfluenceMap 中某 zone 某玩家的 influence 值（若不存在返回 None）。
+    fn read_influence(app: &App, zone: &str, player_id: &str) -> Option<f64> {
+        app.world()
+            .resource::<ZoneInfluenceMap>()
+            .zones
+            .get(zone)
+            .and_then(|e| e.players.get(player_id))
+            .map(|p| p.value)
+    }
+
+    /// 辅助：读 ZoneInfluenceMap 中某 zone 某玩家的 last_activity_tick。
+    fn read_last_tick(app: &App, zone: &str, player_id: &str) -> Option<u64> {
+        app.world()
+            .resource::<ZoneInfluenceMap>()
+            .zones
+            .get(zone)
+            .and_then(|e| e.players.get(player_id))
+            .map(|p| p.last_activity_tick)
+    }
+
+    /// 辅助：读 ZoneInfluenceMap 中某 zone 某玩家的 player_kills 计数。
+    fn read_player_kills(app: &App, zone: &str, player_id: &str) -> u32 {
+        app.world()
+            .resource::<ZoneInfluenceMap>()
+            .zones
+            .get(zone)
+            .and_then(|e| e.players.get(player_id))
+            .map(|p| p.source_breakdown.player_kills)
+            .unwrap_or(0)
+    }
+
+    /// 辅助：drain InfluenceChangedEvent。
+    fn drain_influence_events(app: &mut App) -> Vec<InfluenceChangedEvent> {
+        app.world_mut()
+            .resource_mut::<bevy_ecs::event::Events<InfluenceChangedEvent>>()
+            .drain()
+            .collect()
+    }
+
+    // ── P2 Case 1: zone内PvP击杀 killer +5.0, victim 归零 ────────────────────
+
+    #[test]
+    fn pvp_kill_in_zone_killer_gains_5_victim_zeroed() {
+        use valence::testing::create_mock_client;
+
+        let mut app = make_pvp_app();
+
+        let (mut killer_bundle, _) = create_mock_client("Killer");
+        killer_bundle.player.position = valence::prelude::Position::new([0.0, 66.0, 0.0]);
+        let killer_entity = app.world_mut().spawn(killer_bundle).id();
+
+        let (mut victim_bundle, _) = create_mock_client("Victim");
+        victim_bundle.player.position = valence::prelude::Position::new([5.0, 66.0, 5.0]);
+        let victim_entity = app.world_mut().spawn(victim_bundle).id();
+
+        let killer_id = canonical_player_id("Killer");
+        let victim_id = canonical_player_id("Victim");
+
+        app.world_mut()
+            .resource_mut::<bevy_ecs::event::Events<DeathEvent>>()
+            .send(DeathEvent {
+                target: victim_entity,
+                cause: "pvp".to_string(),
+                attacker: Some(killer_entity),
+                attacker_player_id: Some(killer_id.clone()),
+                at_tick: 100,
+            });
+
+        app.update();
+
+        let killer_val = read_influence(&app, "pvp_zone", &killer_id);
+        let victim_val = read_influence(&app, "pvp_zone", &victim_id);
+
+        assert!(
+            killer_val.is_some(),
+            "击杀者 influence 应写入 pvp_zone，期望 +{KILL_INFLUENCE_GAIN}"
+        );
+        assert!(
+            (killer_val.unwrap() - KILL_INFLUENCE_GAIN).abs() < 1e-9,
+            "击杀者 influence 期望 +{KILL_INFLUENCE_GAIN}，实际={:?}",
+            killer_val
+        );
+        assert!(
+            victim_val.is_some(),
+            "被杀者 influence 应写入 pvp_zone，期望归零"
+        );
+        assert!(
+            victim_val.unwrap().abs() < 1e-9,
+            "被杀者 influence 期望归零(0.0)，实际={:?}",
+            victim_val
+        );
+
+        // last_activity_tick 更新为 clock.tick=100
+        let killer_tick = read_last_tick(&app, "pvp_zone", &killer_id);
+        assert_eq!(
+            killer_tick,
+            Some(100),
+            "击杀者 last_activity_tick 期望=100，实际={:?}",
+            killer_tick
+        );
+        let victim_tick = read_last_tick(&app, "pvp_zone", &victim_id);
+        assert_eq!(
+            victim_tick,
+            Some(100),
+            "被杀者 last_activity_tick 期望=100，实际={:?}",
+            victim_tick
+        );
+    }
+
+    // ── P2 Case 2: victim 非0初值击杀后归零 ───────────────────────────────────
+
+    #[test]
+    fn pvp_kill_zeroes_nonzero_victim_influence() {
+        use valence::testing::create_mock_client;
+
+        let mut app = make_pvp_app();
+
+        let (mut killer_bundle, _) = create_mock_client("Killer2");
+        killer_bundle.player.position = valence::prelude::Position::new([0.0, 66.0, 0.0]);
+        let killer_entity = app.world_mut().spawn(killer_bundle).id();
+
+        let (mut victim_bundle, _) = create_mock_client("Victim2");
+        victim_bundle.player.position = valence::prelude::Position::new([3.0, 66.0, 3.0]);
+        let victim_entity = app.world_mut().spawn(victim_bundle).id();
+
+        let killer_id = canonical_player_id("Killer2");
+        let victim_id = canonical_player_id("Victim2");
+
+        // 预置 victim influence = 30.0
+        {
+            let mut map = app.world_mut().resource_mut::<ZoneInfluenceMap>();
+            let entry = map.zones.entry("pvp_zone".to_string()).or_default();
+            entry.players.insert(
+                victim_id.clone(),
+                PlayerInfluence {
+                    value: 30.0,
+                    last_activity_tick: 10,
+                    ..Default::default()
+                },
+            );
+        }
+
+        app.world_mut()
+            .resource_mut::<bevy_ecs::event::Events<DeathEvent>>()
+            .send(DeathEvent {
+                target: victim_entity,
+                cause: "pvp".to_string(),
+                attacker: Some(killer_entity),
+                attacker_player_id: Some(killer_id.clone()),
+                at_tick: 100,
+            });
+
+        app.update();
+
+        let victim_val = read_influence(&app, "pvp_zone", &victim_id);
+        assert!(
+            victim_val.is_some_and(|v| v.abs() < 1e-9),
+            "victim 初始 30.0，击杀后应归零(0.0)，实际={:?}",
+            victim_val
+        );
+
+        let killer_val = read_influence(&app, "pvp_zone", &killer_id);
+        assert!(
+            killer_val.is_some_and(|v| (v - KILL_INFLUENCE_GAIN).abs() < 1e-9),
+            "killer 初始为0，击杀后 influence 期望={KILL_INFLUENCE_GAIN}，实际={:?}",
+            killer_val
+        );
+        let _ = (killer_entity, victim_entity);
+    }
+
+    // ── P2 Case 3: killer 初值+击杀后精确+5.0 ────────────────────────────────
+
+    #[test]
+    fn pvp_kill_adds_exact_5_to_killer() {
+        use valence::testing::create_mock_client;
+
+        let mut app = make_pvp_app();
+
+        let (mut killer_bundle, _) = create_mock_client("Killer3");
+        killer_bundle.player.position = valence::prelude::Position::new([0.0, 66.0, 0.0]);
+        let killer_entity = app.world_mut().spawn(killer_bundle).id();
+
+        let (mut victim_bundle, _) = create_mock_client("Victim3");
+        victim_bundle.player.position = valence::prelude::Position::new([2.0, 66.0, 2.0]);
+        let victim_entity = app.world_mut().spawn(victim_bundle).id();
+
+        let killer_id = canonical_player_id("Killer3");
+        let victim_id = canonical_player_id("Victim3");
+
+        // 预置 killer influence = 20.0
+        {
+            let mut map = app.world_mut().resource_mut::<ZoneInfluenceMap>();
+            let entry = map.zones.entry("pvp_zone".to_string()).or_default();
+            entry.players.insert(
+                killer_id.clone(),
+                PlayerInfluence {
+                    value: 20.0,
+                    ..Default::default()
+                },
+            );
+        }
+
+        app.world_mut()
+            .resource_mut::<bevy_ecs::event::Events<DeathEvent>>()
+            .send(DeathEvent {
+                target: victim_entity,
+                cause: "pvp".to_string(),
+                attacker: Some(killer_entity),
+                attacker_player_id: Some(killer_id.clone()),
+                at_tick: 100,
+            });
+
+        app.update();
+
+        let killer_val = read_influence(&app, "pvp_zone", &killer_id);
+        assert!(
+            killer_val.is_some_and(|v| (v - 25.0).abs() < 1e-9),
+            "killer 初始20.0，击杀后 influence 期望=25.0(+5)，实际={:?}",
+            killer_val
+        );
+        let _ = (victim_id, killer_entity, victim_entity);
+    }
+
+    // ── P2 Case 4: zone外击杀不调 influence ──────────────────────────────────
+
+    #[test]
+    fn pvp_kill_outside_zone_no_influence_change() {
+        use valence::testing::create_mock_client;
+
+        let mut app = make_pvp_app();
+
+        // 位置在 zone 外（pvp_zone bounds: [-64,60,-64] to [64,80,64]）
+        let (mut killer_bundle, _) = create_mock_client("KillerOut");
+        killer_bundle.player.position = valence::prelude::Position::new([200.0, 66.0, 200.0]); // 在 zone 外
+        let killer_entity = app.world_mut().spawn(killer_bundle).id();
+
+        let (mut victim_bundle, _) = create_mock_client("VictimOut");
+        victim_bundle.player.position = valence::prelude::Position::new([200.0, 66.0, 200.0]); // 也在 zone 外
+        let victim_entity = app.world_mut().spawn(victim_bundle).id();
+
+        let killer_id = canonical_player_id("KillerOut");
+        let victim_id = canonical_player_id("VictimOut");
+
+        app.world_mut()
+            .resource_mut::<bevy_ecs::event::Events<DeathEvent>>()
+            .send(DeathEvent {
+                target: victim_entity,
+                cause: "pvp".to_string(),
+                attacker: Some(killer_entity),
+                attacker_player_id: Some(killer_id.clone()),
+                at_tick: 100,
+            });
+
+        app.update();
+
+        let map = app.world().resource::<ZoneInfluenceMap>();
+        assert!(
+            !map.zones
+                .get("pvp_zone")
+                .is_some_and(|e| e.players.contains_key(&killer_id)),
+            "zone 外击杀，killer influence 不应写入 pvp_zone"
+        );
+        assert!(
+            !map.zones
+                .get("pvp_zone")
+                .is_some_and(|e| e.players.contains_key(&victim_id)),
+            "zone 外击杀，victim influence 不应写入 pvp_zone"
+        );
+        let _ = (killer_entity, victim_entity);
+    }
+
+    // ── P2 Case 5: 环境死亡（attacker=None, attacker_player_id=None）不调 ──────
+
+    #[test]
+    fn environmental_death_no_influence_change() {
+        use valence::testing::create_mock_client;
+
+        let mut app = make_pvp_app();
+
+        let (mut victim_bundle, _) = create_mock_client("VictimEnv");
+        victim_bundle.player.position = valence::prelude::Position::new([0.0, 66.0, 0.0]);
+        let victim_entity = app.world_mut().spawn(victim_bundle).id();
+
+        let victim_id = canonical_player_id("VictimEnv");
+
+        app.world_mut()
+            .resource_mut::<bevy_ecs::event::Events<DeathEvent>>()
+            .send(DeathEvent {
+                target: victim_entity,
+                cause: "bleed_out".to_string(),
+                attacker: None,
+                attacker_player_id: None,
+                at_tick: 100,
+            });
+
+        app.update();
+
+        let val = read_influence(&app, "pvp_zone", &victim_id);
+        assert!(val.is_none(), "环境死亡不应写入 influence，实际={:?}", val);
+        let _ = victim_entity;
+    }
+
+    // ── P2 Case 6: NPC杀玩家（attacker_player_id=None）不调 ──────────────────
+
+    #[test]
+    fn npc_kills_player_no_influence_change() {
+        use valence::testing::create_mock_client;
+
+        let mut app = make_pvp_app();
+
+        // NPC entity（无 Client 组件，但有 position）
+        let npc_entity = app.world_mut().spawn_empty().id();
+
+        let (mut victim_bundle, _) = create_mock_client("VictimNPC");
+        victim_bundle.player.position = valence::prelude::Position::new([0.0, 66.0, 0.0]);
+        let victim_entity = app.world_mut().spawn(victim_bundle).id();
+
+        let victim_id = canonical_player_id("VictimNPC");
+
+        app.world_mut()
+            .resource_mut::<bevy_ecs::event::Events<DeathEvent>>()
+            .send(DeathEvent {
+                target: victim_entity,
+                cause: "npc_bite".to_string(),
+                attacker: Some(npc_entity),
+                attacker_player_id: None, // NPC 无 player_id
+                at_tick: 100,
+            });
+
+        app.update();
+
+        let val = read_influence(&app, "pvp_zone", &victim_id);
+        assert!(
+            val.is_none(),
+            "NPC杀玩家（attacker_player_id=None）不应写入 influence，实际={:?}",
+            val
+        );
+        let _ = (npc_entity, victim_entity);
+    }
+
+    // ── P2 Case 7: victim 是 NPC（无 Username）不调 ───────────────────────────
+
+    #[test]
+    fn player_kills_npc_no_influence_change() {
+        use valence::testing::create_mock_client;
+
+        let mut app = make_pvp_app();
+
+        let (mut killer_bundle, _) = create_mock_client("KillerP");
+        killer_bundle.player.position = valence::prelude::Position::new([0.0, 66.0, 0.0]);
+        let killer_entity = app.world_mut().spawn(killer_bundle).id();
+        let killer_id = canonical_player_id("KillerP");
+
+        // NPC victim: 在 zone 内但无 Username
+        let npc_victim = app
+            .world_mut()
+            .spawn(valence::prelude::Position::new([1.0, 66.0, 1.0]))
+            .id();
+
+        app.world_mut()
+            .resource_mut::<bevy_ecs::event::Events<DeathEvent>>()
+            .send(DeathEvent {
+                target: npc_victim,
+                cause: "kill".to_string(),
+                attacker: Some(killer_entity),
+                attacker_player_id: Some(killer_id.clone()),
+                at_tick: 100,
+            });
+
+        app.update();
+
+        let val = read_influence(&app, "pvp_zone", &killer_id);
+        assert!(
+            val.is_none(),
+            "victim 是 NPC（无 Username），不应写入 killer influence，实际={:?}",
+            val
+        );
+        let _ = (killer_entity, npc_victim);
+    }
+
+    // ── P2 Case 8: influence clamp 上限 ──────────────────────────────────────
+
+    #[test]
+    fn pvp_kill_influence_clamps_at_max() {
+        use valence::testing::create_mock_client;
+
+        let mut app = make_pvp_app();
+
+        let (mut killer_bundle, _) = create_mock_client("KillerMax");
+        killer_bundle.player.position = valence::prelude::Position::new([0.0, 66.0, 0.0]);
+        let killer_entity = app.world_mut().spawn(killer_bundle).id();
+
+        let (mut victim_bundle, _) = create_mock_client("VictimMax");
+        victim_bundle.player.position = valence::prelude::Position::new([2.0, 66.0, 2.0]);
+        let victim_entity = app.world_mut().spawn(victim_bundle).id();
+
+        let killer_id = canonical_player_id("KillerMax");
+        let victim_id = canonical_player_id("VictimMax");
+
+        // 预置 killer influence = 98（+5 后理论值=103，应 clamp 到 100）
+        {
+            let mut map = app.world_mut().resource_mut::<ZoneInfluenceMap>();
+            let entry = map.zones.entry("pvp_zone".to_string()).or_default();
+            entry.players.insert(
+                killer_id.clone(),
+                PlayerInfluence {
+                    value: 98.0,
+                    ..Default::default()
+                },
+            );
+        }
+
+        app.world_mut()
+            .resource_mut::<bevy_ecs::event::Events<DeathEvent>>()
+            .send(DeathEvent {
+                target: victim_entity,
+                cause: "pvp".to_string(),
+                attacker: Some(killer_entity),
+                attacker_player_id: Some(killer_id.clone()),
+                at_tick: 100,
+            });
+
+        app.update();
+
+        let killer_val = read_influence(&app, "pvp_zone", &killer_id);
+        assert!(
+            killer_val.is_some_and(|v| (v - INFLUENCE_MAX).abs() < 1e-9),
+            "killer 初始 98 +5 应 clamp 到 INFLUENCE_MAX({INFLUENCE_MAX})，实际={:?}",
+            killer_val
+        );
+        let _ = (victim_id, killer_entity, victim_entity);
+    }
+
+    // ── P2 Case 9: 击杀致霸主易主 ────────────────────────────────────────────
+
+    #[test]
+    fn pvp_kill_triggers_dominance_switch() {
+        use valence::testing::create_mock_client;
+
+        let mut app = make_pvp_app();
+
+        let (mut killer_bundle, _) = create_mock_client("NewDom");
+        killer_bundle.player.position = valence::prelude::Position::new([0.0, 66.0, 0.0]);
+        let killer_entity = app.world_mut().spawn(killer_bundle).id();
+
+        let (mut victim_bundle, _) = create_mock_client("OldDom");
+        victim_bundle.player.position = valence::prelude::Position::new([5.0, 66.0, 5.0]);
+        let victim_entity = app.world_mut().spawn(victim_bundle).id();
+
+        let killer_id = canonical_player_id("NewDom");
+        let victim_id = canonical_player_id("OldDom");
+
+        // 预置：OldDom 是霸主（influence=50），NewDom influence=40（领先不够）
+        {
+            let mut map = app.world_mut().resource_mut::<ZoneInfluenceMap>();
+            let entry = map.zones.entry("pvp_zone".to_string()).or_default();
+            entry.players.insert(
+                victim_id.clone(),
+                PlayerInfluence {
+                    value: 50.0,
+                    ..Default::default()
+                },
+            );
+            entry.players.insert(
+                killer_id.clone(),
+                PlayerInfluence {
+                    value: 40.0,
+                    ..Default::default()
+                },
+            );
+            entry.dominant = Some(ZoneDominance {
+                char_id: victim_id.clone(),
+                influence: 50.0,
+                established_tick: 0,
+                public_known: false,
+            });
+        }
+
+        // killer 击杀 victim → victim 归零，killer +5 → 45；
+        // recompute_dominance: victim=0(< THRESHOLD), killer=45(≥ THRESHOLD=30)，
+        // victim 现任跌破 DOMINANCE_DROP(20) → 允许换主，killer=45 > second=0 → 领先≥LEAD → 换主
+        app.world_mut()
+            .resource_mut::<bevy_ecs::event::Events<DeathEvent>>()
+            .send(DeathEvent {
+                target: victim_entity,
+                cause: "pvp".to_string(),
+                attacker: Some(killer_entity),
+                attacker_player_id: Some(killer_id.clone()),
+                at_tick: 100,
+            });
+
+        app.update();
+
+        let dom = app
+            .world()
+            .resource::<ZoneInfluenceMap>()
+            .zones
+            .get("pvp_zone")
+            .and_then(|e| e.dominant.as_ref())
+            .cloned();
+
+        assert!(
+            dom.is_some(),
+            "击杀后应有新霸主（NewDom +5=45 > OldDom 归零=0）"
+        );
+        assert_eq!(
+            dom.as_ref().unwrap().char_id,
+            killer_id,
+            "新霸主应为击杀者 NewDom（influence=45），实际={:?}",
+            dom.as_ref().map(|d| &d.char_id)
+        );
+        let _ = (killer_entity, victim_entity);
+    }
+
+    // ── P2 Case 10: victim归零后失霸主 ───────────────────────────────────────
+
+    #[test]
+    fn pvp_kill_dominant_victim_loses_dominance_when_no_challenger() {
+        use valence::testing::create_mock_client;
+
+        let mut app = make_pvp_app();
+
+        let (mut killer_bundle, _) = create_mock_client("WeakKiller");
+        killer_bundle.player.position = valence::prelude::Position::new([0.0, 66.0, 0.0]);
+        let killer_entity = app.world_mut().spawn(killer_bundle).id();
+
+        let (mut victim_bundle, _) = create_mock_client("StrongVictim");
+        victim_bundle.player.position = valence::prelude::Position::new([5.0, 66.0, 5.0]);
+        let victim_entity = app.world_mut().spawn(victim_bundle).id();
+
+        let killer_id = canonical_player_id("WeakKiller");
+        let victim_id = canonical_player_id("StrongVictim");
+
+        // victim 是霸主 influence=40，killer influence=0（击杀后 killer=5，victim=0）
+        // recompute: killer=5 < THRESHOLD(30) → 无霸主
+        {
+            let mut map = app.world_mut().resource_mut::<ZoneInfluenceMap>();
+            let entry = map.zones.entry("pvp_zone".to_string()).or_default();
+            entry.players.insert(
+                victim_id.clone(),
+                PlayerInfluence {
+                    value: 40.0,
+                    ..Default::default()
+                },
+            );
+            entry.dominant = Some(ZoneDominance {
+                char_id: victim_id.clone(),
+                influence: 40.0,
+                established_tick: 0,
+                public_known: false,
+            });
+        }
+
+        app.world_mut()
+            .resource_mut::<bevy_ecs::event::Events<DeathEvent>>()
+            .send(DeathEvent {
+                target: victim_entity,
+                cause: "pvp".to_string(),
+                attacker: Some(killer_entity),
+                attacker_player_id: Some(killer_id.clone()),
+                at_tick: 100,
+            });
+
+        app.update();
+
+        let dom = app
+            .world()
+            .resource::<ZoneInfluenceMap>()
+            .zones
+            .get("pvp_zone")
+            .and_then(|e| e.dominant.as_ref())
+            .cloned();
+
+        assert!(
+            dom.is_none(),
+            "victim 归零失去地位，killer 影响力(5) < DOMINANCE_THRESHOLD(30)，应无霸主；实际={:?}",
+            dom.as_ref().map(|d| &d.char_id)
+        );
+        let _ = (killer_entity, victim_entity);
+    }
+
+    // ── P2 Case 11: emit InfluenceChangedEvent(killer + victim各一条) ─────────
+
+    #[test]
+    fn pvp_kill_emits_influence_changed_events() {
+        use valence::testing::create_mock_client;
+
+        let mut app = make_pvp_app();
+
+        let (mut killer_bundle, _) = create_mock_client("KillerEv");
+        killer_bundle.player.position = valence::prelude::Position::new([0.0, 66.0, 0.0]);
+        let killer_entity = app.world_mut().spawn(killer_bundle).id();
+
+        let (mut victim_bundle, _) = create_mock_client("VictimEv");
+        victim_bundle.player.position = valence::prelude::Position::new([2.0, 66.0, 2.0]);
+        let victim_entity = app.world_mut().spawn(victim_bundle).id();
+
+        let killer_id = canonical_player_id("KillerEv");
+        let victim_id = canonical_player_id("VictimEv");
+
+        app.world_mut()
+            .resource_mut::<bevy_ecs::event::Events<DeathEvent>>()
+            .send(DeathEvent {
+                target: victim_entity,
+                cause: "pvp".to_string(),
+                attacker: Some(killer_entity),
+                attacker_player_id: Some(killer_id.clone()),
+                at_tick: 100,
+            });
+
+        app.update();
+
+        let events = drain_influence_events(&mut app);
+
+        let killer_ev = events
+            .iter()
+            .find(|e| e.player_id == killer_id && e.zone_name == "pvp_zone");
+        let victim_ev = events
+            .iter()
+            .find(|e| e.player_id == victim_id && e.zone_name == "pvp_zone");
+
+        assert!(
+            killer_ev.is_some(),
+            "击杀者应 emit InfluenceChangedEvent，实际 events={:?}",
+            events.iter().map(|e| &e.player_id).collect::<Vec<_>>()
+        );
+        let ke = killer_ev.unwrap();
+        assert_eq!(
+            ke.source,
+            InfluenceSource::Combat,
+            "击杀事件 source 应为 Combat，实际={:?}",
+            ke.source
+        );
+        assert!(
+            (ke.delta - KILL_INFLUENCE_GAIN).abs() < 1e-9,
+            "killer delta 期望={KILL_INFLUENCE_GAIN}，实际={}",
+            ke.delta
+        );
+        assert!(
+            (ke.new_total - KILL_INFLUENCE_GAIN).abs() < 1e-9,
+            "killer new_total 期望={KILL_INFLUENCE_GAIN}，实际={}",
+            ke.new_total
+        );
+
+        assert!(victim_ev.is_some(), "被杀者应 emit InfluenceChangedEvent");
+        let ve = victim_ev.unwrap();
+        assert_eq!(
+            ve.source,
+            InfluenceSource::Combat,
+            "被杀者事件 source 应为 Combat，实际={:?}",
+            ve.source
+        );
+        assert!(
+            ve.delta <= 0.0,
+            "victim delta 应 <= 0（归零），实际={}",
+            ve.delta
+        );
+        assert!(
+            ve.new_total.abs() < 1e-9,
+            "victim new_total 应为 0.0，实际={}",
+            ve.new_total
+        );
+        let _ = (killer_entity, victim_entity);
+    }
+
+    // ── P2 Case 12: player_kills 计数 +1 ────────────────────────────────────
+
+    #[test]
+    fn pvp_kill_increments_player_kills_counter() {
+        use valence::testing::create_mock_client;
+
+        let mut app = make_pvp_app();
+
+        let (mut killer_bundle, _) = create_mock_client("KillerKC");
+        killer_bundle.player.position = valence::prelude::Position::new([0.0, 66.0, 0.0]);
+        let killer_entity = app.world_mut().spawn(killer_bundle).id();
+
+        let (mut victim_bundle, _) = create_mock_client("VictimKC");
+        victim_bundle.player.position = valence::prelude::Position::new([2.0, 66.0, 2.0]);
+        let victim_entity = app.world_mut().spawn(victim_bundle).id();
+
+        let killer_id = canonical_player_id("KillerKC");
+
+        app.world_mut()
+            .resource_mut::<bevy_ecs::event::Events<DeathEvent>>()
+            .send(DeathEvent {
+                target: victim_entity,
+                cause: "pvp".to_string(),
+                attacker: Some(killer_entity),
+                attacker_player_id: Some(killer_id.clone()),
+                at_tick: 100,
+            });
+
+        app.update();
+
+        let kills = read_player_kills(&app, "pvp_zone", &killer_id);
+        assert_eq!(
+            kills, 1,
+            "首次 PvP 击杀后 player_kills 应为 1，实际={}",
+            kills
+        );
+        let _ = (killer_entity, victim_entity);
+    }
+
+    // ── P2 Case 13: 差距<10共治（P0 emerge）——两人击杀后差 <10 → 无霸主 ─────
+
+    #[test]
+    fn pvp_kill_close_influence_no_dominance() {
+        use valence::testing::create_mock_client;
+
+        let mut app = make_pvp_app();
+
+        // 两玩家初始各 40，A 杀 B → A=45，B=0。A 领先 45，满足霸主；
+        // 换另一场景：A=35，B=40 → A 杀 B → A=40，B=0。A=40 vs next=0 → 领先≥LEAD → 有霸主。
+        // 测试「差距<10无霸主」需要：两玩家击杀后 value 差<10。
+        // 构造：A=35，C=32（都在 zone 内），A 杀一个无 Username 的 NPC（无效），然后验。
+        // 更直接：不走击杀，直接手写 influence，验 recompute_dominance emerge 结果。
+        // 但该测试应测 P2 调用后整体 emerge，不重测 recompute 内部。
+        //
+        // 场景：A 初始 38，B 初始 35，A 杀 C（C=0初始）→ A=43，B 仍 35；差=8 < LEAD(10) → 无霸主。
+        // 但需要 B 也在同 zone 中（B entity 不发 DeathEvent）。
+
+        let (mut a_bundle, _) = create_mock_client("PlayerA");
+        a_bundle.player.position = valence::prelude::Position::new([0.0, 66.0, 0.0]);
+        let a_entity = app.world_mut().spawn(a_bundle).id();
+
+        let (mut b_bundle, _) = create_mock_client("PlayerB");
+        b_bundle.player.position = valence::prelude::Position::new([1.0, 66.0, 1.0]);
+        let _b_entity = app.world_mut().spawn(b_bundle).id();
+
+        let (mut c_bundle, _) = create_mock_client("PlayerC");
+        c_bundle.player.position = valence::prelude::Position::new([2.0, 66.0, 2.0]);
+        let c_entity = app.world_mut().spawn(c_bundle).id();
+
+        let a_id = canonical_player_id("PlayerA");
+        let b_id = canonical_player_id("PlayerB");
+        let c_id = canonical_player_id("PlayerC");
+
+        // 预置 A=38，B=35，C=0
+        {
+            let mut map = app.world_mut().resource_mut::<ZoneInfluenceMap>();
+            let entry = map.zones.entry("pvp_zone".to_string()).or_default();
+            entry.players.insert(
+                a_id.clone(),
+                PlayerInfluence {
+                    value: 38.0,
+                    ..Default::default()
+                },
+            );
+            entry.players.insert(
+                b_id.clone(),
+                PlayerInfluence {
+                    value: 35.0,
+                    ..Default::default()
+                },
+            );
+        }
+
+        // A 击杀 C → A=43，C=0；A 与 B 差=43-35=8 < LEAD(10) → 无霸主
+        app.world_mut()
+            .resource_mut::<bevy_ecs::event::Events<DeathEvent>>()
+            .send(DeathEvent {
+                target: c_entity,
+                cause: "pvp".to_string(),
+                attacker: Some(a_entity),
+                attacker_player_id: Some(a_id.clone()),
+                at_tick: 100,
+            });
+
+        app.update();
+
+        let a_val = read_influence(&app, "pvp_zone", &a_id);
+        let b_val = read_influence(&app, "pvp_zone", &b_id);
+
+        assert!(
+            a_val.is_some_and(|v| (v - 43.0).abs() < 1e-9),
+            "A 初始38+5应=43，实际={:?}",
+            a_val
+        );
+        assert!(
+            b_val.is_some_and(|v| (v - 35.0).abs() < 1e-9),
+            "B 不参与本次击杀应维持35，实际={:?}",
+            b_val
+        );
+
+        let dom = app
+            .world()
+            .resource::<ZoneInfluenceMap>()
+            .zones
+            .get("pvp_zone")
+            .and_then(|e| e.dominant.as_ref())
+            .cloned();
+
+        // A=43，B=35，差=8 < DOMINANCE_LEAD(10) → 无霸主（平局共治 emerge）
+        assert!(
+            dom.is_none(),
+            "A(43) vs B(35) 差={}<DOMINANCE_LEAD({DOMINANCE_LEAD})，应无霸主（共治）；实际={:?}",
+            43.0_f64 - 35.0,
+            dom.as_ref().map(|d| &d.char_id)
+        );
+        let _ = (a_entity, _b_entity, c_entity, c_id);
     }
 }
