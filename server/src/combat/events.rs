@@ -111,7 +111,7 @@ pub enum StatusEffectKind {
     AlchemyBuff(String),
     /// plan-zhenmai-v1 §3.1.C：截脉震爆触发后的半息僵直。
     ParryRecovery,
-    /// plan-sword-basics-v1：基础剑式”格”的短时剑身格挡窗口。
+    /// plan-sword-basics-v1：基础剑式“格”的短时剑身格挡窗口。
     SwordParrying,
     /// plan-sword-basics-v1：被剑格反震后的短暂硬直。
     Staggered,
