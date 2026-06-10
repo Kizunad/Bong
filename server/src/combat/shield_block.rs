@@ -314,8 +314,9 @@ pub fn cleanup_shield_on_death(
 /// 2. 施加短暂 `ParryRecovery`（复用破势硬直，防立即再举盾）。
 /// 3. 发送 S2C StopAnim（通知 client 复位举盾姿态）。
 ///
-/// 此系统运行在 `stamina_tick` 之后（确保 state 已更新为 Exhausted），
-/// 在 `raise_shield_handler` 之前（Exhausted 下 raise 直接被体力系统拒绝，实测冗余但保险）。
+/// 此系统注册在 Physics set 内 `stamina_tick` 之后（确保 state 已更新为 Exhausted）。
+/// set 链为 Intent→Physics（`.chain()`），故本系统实际运行在 Intent set 的
+/// `raise_shield_handler` *之后*；但顺序无关安全——Exhausted 下 raise 本就被体力系统拒绝。
 pub fn force_lower_shield_on_stamina_exhausted(
     mut commands: Commands,
     clock: Res<CombatClock>,

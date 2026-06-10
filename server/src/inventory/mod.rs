@@ -168,14 +168,16 @@ pub struct ItemTemplate {
 /// 凡人级物理盾，不触真元（qi_physics），与 ArmorProfile 独立。
 /// - `block_ratio`：正面命中时削减伤害的比例（0.0..=0.7；worldview §五 凡人盾上限 0.7）。
 /// - `durability_max`：盾的最大耐久点数（P3 按点数扣减）。
-/// - `stamina_drain_per_s`：持续举盾每秒消耗体力。
+/// - `stamina_drain_per_s`：持续举盾每秒消耗体力。**P2 仅 validate/存储，运行时由常量
+///   `SHIELD_DRAIN_PER_SEC = 3.0` 覆盖（两盾当前同值）；P4 将经 `shield_block_profile`
+///   按熟练度接入此 per-shield 字段。配置非 3.0 的值在 P2 过验但暂不生效，勿误判为已接线。
 #[derive(Debug, Clone, PartialEq)]
 pub struct ShieldSpec {
     /// 正面命中削减比例（0.0..=0.7）。
     pub block_ratio: f64,
     /// 最大耐久点数（P3 用）。
     pub durability_max: f64,
-    /// 每秒体力 drain（P2 固定 3.0，P4 按熟练度调整）。
+    /// 每秒体力 drain（P2 validate/存储但运行时不消费——drain 用常量 SHIELD_DRAIN_PER_SEC=3.0；P4 接入按熟练度调整）。
     pub stamina_drain_per_s: f32,
 }
 
