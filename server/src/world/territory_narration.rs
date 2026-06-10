@@ -34,6 +34,7 @@ use crate::schema::territory_narration::{
 };
 use crate::world::territory::ZoneInfluenceMap;
 use crate::world::territory_rumor::RealmBand;
+use crate::world::zone::ZoneRegistry;
 
 // ─── 常量 ─────────────────────────────────────────────────────────────────────
 
@@ -126,19 +127,15 @@ pub fn territory_narration_system(
     mut ev_reader: EventReader<DominanceChangedEvent>,
     mut narrations: Option<ResMut<PendingGameplayNarrations>>,
     redis: Option<Res<RedisBridgeResource>>,
-    influence_map: Option<Res<ZoneInfluenceMap>>,
+    zones: Option<Res<ZoneRegistry>>,
 ) {
     for ev in ev_reader.read() {
         // 获取当前 spirit_qi（用于 Redis payload）
-        let spirit_qi = influence_map
+        let spirit_qi = zones
             .as_deref()
-            .and_then(|m| {
-                // 从 zone_registry 取不到，从 influence_map 找不到 qi，用默认值
-                // 实际 qi 在 ZoneRegistry，这里传 0.0 作合理默认
-                let _ = m.zones.get(&ev.zone_name);
-                None::<f64>
-            })
-            .unwrap_or(0.5);
+            .and_then(|registry| registry.find_zone_by_name(&ev.zone_name))
+            .map(|zone| zone.spirit_qi)
+            .unwrap_or(0.0);
 
         // ── (a) push_zone 兜底（不依赖 agent）──────────────────────────────
         let template_text = narration_template(&ev.zone_name, ev.kind, ev.realm_band);
@@ -446,8 +443,10 @@ mod narration_tests {
         use crate::network::redis_bridge::RedisOutbound;
         use crate::network::RedisBridgeResource;
         use crate::schema::territory_narration::TerritoryEventKindV1;
+        use crate::world::dimension::DimensionKind;
+        use crate::world::zone::{Zone, ZoneRegistry};
         use crossbeam_channel::unbounded;
-        use valence::prelude::{App, Update};
+        use valence::prelude::{App, DVec3, Update};
 
         let (tx, rx) = unbounded::<RedisOutbound>();
         let (_, rx_inbound) = unbounded::<crate::network::redis_bridge::RedisInbound>();
@@ -459,6 +458,18 @@ mod narration_tests {
         app.insert_resource(RedisBridgeResource {
             tx_outbound: tx,
             rx_inbound,
+        });
+        app.insert_resource(ZoneRegistry {
+            zones: vec![Zone {
+                name: "qingyun_peaks".to_string(),
+                dimension: DimensionKind::Overworld,
+                bounds: (DVec3::new(0.0, 60.0, 0.0), DVec3::new(200.0, 80.0, 200.0)),
+                spirit_qi: 0.73,
+                danger_level: 0,
+                active_events: vec![],
+                patrol_anchors: vec![DVec3::new(100.0, 66.0, 100.0)],
+                blocked_tiles: vec![],
+            }],
         });
         app.add_systems(Update, territory_narration_system);
 
@@ -487,6 +498,55 @@ mod narration_tests {
                 );
                 assert_eq!(req.realm_band, "mid", "realm_band 应为 mid");
                 assert_eq!(req.v, 1, "v 字段应为 1");
+                assert!(
+                    (req.spirit_qi - 0.73).abs() < f64::EPSILON,
+                    "Redis payload spirit_qi 应来自 ZoneRegistry 当前值，实际={}",
+                    req.spirit_qi
+                );
+            }
+            other => panic!("期望 TerritoryDominanceNarration，实际={other:?}"),
+        }
+    }
+
+    #[test]
+    fn narration_redis_path_defaults_spirit_qi_to_zero_when_zone_missing() {
+        use crate::network::redis_bridge::RedisOutbound;
+        use crate::network::RedisBridgeResource;
+        use crossbeam_channel::unbounded;
+        use valence::prelude::{App, Update};
+
+        let (tx, rx) = unbounded::<RedisOutbound>();
+        let (_, rx_inbound) = unbounded::<crate::network::redis_bridge::RedisInbound>();
+
+        let mut app = App::new();
+        app.add_event::<DominanceChangedEvent>();
+        app.init_resource::<ZoneInfluenceMap>();
+        app.insert_resource(RedisBridgeResource {
+            tx_outbound: tx,
+            rx_inbound,
+        });
+        app.add_systems(Update, territory_narration_system);
+
+        app.world_mut()
+            .resource_mut::<valence::prelude::bevy_ecs::event::Events<DominanceChangedEvent>>()
+            .send(DominanceChangedEvent {
+                zone_name: "missing_zone".to_string(),
+                kind: DominanceEventKind::QiDepleted,
+                realm_band: RealmBand::Low,
+                observed_at_tick: 6000,
+            });
+
+        app.update();
+
+        let received = rx
+            .try_recv()
+            .expect("tx_outbound 应收到缺失 zone 的 TerritoryDominanceNarration");
+        match received {
+            RedisOutbound::TerritoryDominanceNarration(req) => {
+                assert_eq!(
+                    req.spirit_qi, 0.0,
+                    "缺失 ZoneRegistry/zone 时应使用 0.0 默认值而非旧的 0.5"
+                );
             }
             other => panic!("期望 TerritoryDominanceNarration，实际={other:?}"),
         }

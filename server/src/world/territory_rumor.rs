@@ -16,8 +16,8 @@
 //! - 环境痕迹 client 视觉（GroundDecal/Sprite）DEFER 到独立 client 资产 PR。
 
 use valence::prelude::{
-    bevy_ecs, App, Component, Entity, EventReader, Position, Query, Res, ResMut, Resource, Update,
-    With,
+    bevy_ecs, App, Commands, Component, Entity, EventReader, IntoSystemConfigs, Position, Query,
+    Res, ResMut, Resource, Update, With, Without,
 };
 
 use crate::cultivation::components::Realm;
@@ -247,6 +247,22 @@ type SpreadSystemNpcQuery<'w, 's> = Query<
     With<NpcPatrol>,
 >;
 
+type MissingRumorMemoryNpcQuery<'w, 's> =
+    Query<'w, 's, Entity, (With<NpcPatrol>, Without<NpcRumorMemory>)>;
+
+/// 为生产 NPC spawn / hydrate 路径补齐 rumor memory。
+///
+/// 传话系统的主体是任何带 NpcPatrol 的 NPC；生产 spawn 点分散在多个模块，
+/// 用统一 ECS 补齐系统避免遗漏某个 archetype 导致 spread query 静默为空。
+pub fn ensure_npc_rumor_memory_system(
+    mut commands: Commands,
+    npc_query: MissingRumorMemoryNpcQuery<'_, '_>,
+) {
+    for entity in npc_query.iter() {
+        commands.entity(entity).insert(NpcRumorMemory::default());
+    }
+}
+
 /// 到期 rumor 写入 home_zone 匹配（及相邻 zone）的 NPC NpcRumorMemory。
 ///
 /// - 节流：每 RUMOR_SPREAD_EVAL_TICKS 执行一次（~30s）。
@@ -317,7 +333,14 @@ pub fn register(app: &mut App) {
     app.init_resource::<PendingZoneRumors>();
     app.init_resource::<RumorSpreadThrottle>();
     app.add_systems(Update, territory_rumor_enqueue_system);
-    app.add_systems(Update, territory_rumor_spread_system);
+    app.add_systems(
+        Update,
+        (
+            ensure_npc_rumor_memory_system,
+            territory_rumor_spread_system,
+        )
+            .chain(),
+    );
 }
 
 // ─── 单测 ─────────────────────────────────────────────────────────────────────
@@ -554,8 +577,53 @@ mod rumor_tests {
         }
 
         app.add_systems(Update, territory_rumor_enqueue_system);
-        app.add_systems(Update, territory_rumor_spread_system);
+        app.add_systems(
+            Update,
+            (
+                ensure_npc_rumor_memory_system,
+                territory_rumor_spread_system,
+            )
+                .chain(),
+        );
         app
+    }
+
+    #[test]
+    fn ensure_npc_rumor_memory_attaches_to_patrol_npc_without_spawn_site_wiring() {
+        use crate::npc::patrol::NpcPatrol;
+        use crate::npc::spawn::NpcMarker;
+        use valence::testing::create_mock_client;
+
+        let mut app = App::new();
+        app.add_systems(Update, ensure_npc_rumor_memory_system);
+
+        let (client_bundle, _) = create_mock_client("npc_without_memory");
+        let npc_entity = app
+            .world_mut()
+            .spawn((
+                client_bundle,
+                NpcPatrol::new("spawn", DVec3::new(14.0, 66.0, 14.0)),
+                NpcMarker,
+            ))
+            .id();
+
+        assert!(
+            app.world()
+                .entity(npc_entity)
+                .get::<NpcRumorMemory>()
+                .is_none(),
+            "测试前提：生产 spawn 只挂 NpcPatrol 时不应已有 NpcRumorMemory"
+        );
+
+        app.update();
+
+        assert!(
+            app.world()
+                .entity(npc_entity)
+                .get::<NpcRumorMemory>()
+                .is_some(),
+            "带 NpcPatrol 的 NPC 必须自动获得 NpcRumorMemory，避免 rumor spread query 静默为空"
+        );
     }
 
     #[test]
@@ -637,7 +705,14 @@ mod rumor_tests {
         };
         app.insert_resource(ZoneRegistry { zones: vec![zone] });
         app.insert_resource(CultivationClock { tick: now });
-        app.add_systems(Update, territory_rumor_spread_system);
+        app.add_systems(
+            Update,
+            (
+                ensure_npc_rumor_memory_system,
+                territory_rumor_spread_system,
+            )
+                .chain(),
+        );
 
         // 预置一条已到期的 rumor
         {
@@ -650,7 +725,7 @@ mod rumor_tests {
             });
         }
 
-        // spawn NPC with NpcPatrol + NpcRumorMemory + Position
+        // spawn NPC with NpcPatrol + Position；NpcRumorMemory 由生产补齐 system 自动挂载。
         use crate::npc::patrol::NpcPatrol;
         use crate::npc::spawn::NpcMarker;
         use valence::prelude::Position;
@@ -661,7 +736,6 @@ mod rumor_tests {
             .spawn((
                 client_bundle,
                 NpcPatrol::new(zone_name, DVec3::new(50.0, 66.0, 50.0)),
-                NpcRumorMemory::default(),
                 NpcMarker,
             ))
             .id();
