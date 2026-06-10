@@ -228,6 +228,14 @@ fn block_template_id_for_request(
     Some(item.template_id.clone())
 }
 
+/// 当前 v1 只把背包方块物品映射回 vanilla BlockState。
+///
+/// 未来 Bong/custom 方块接入只扩这一条分叉：
+/// 1. 在 `bong_blocks.json` 追加方块定义，保持 boolean property 顺序与 MC raw state 对齐。
+/// 2. 跑 client `generateBongBlockIds` / server codegen，让 raw id 在双端 registry 中一致。
+/// 3. 在 `block_item_to_state` 增加 template_id + target_face -> Bong BlockState 映射。
+/// 4. 若 `is_bong_block(state)` 命中，`write_block_state` 会走 `place_bong_block`；否则仍走 vanilla `set_block`。
+/// 5. 踩踏/触发行为不放在本函数，后续按 zhenfa proximity system 自建 server-side registry。
 pub fn place_block_for_kind(
     layer: &mut ChunkLayer,
     pos: BlockPos,
@@ -320,12 +328,14 @@ mod tests {
     use std::collections::HashMap;
 
     use crate::inventory::{
-        ContainerState, InventoryRevision, ItemInstance, ItemRarity, ItemTemplate, PlacedItemState,
+        ContainerState, InventoryInstanceIdAllocator, InventoryRevision, ItemInstance, ItemRarity,
+        ItemTemplate, PlacedItemState,
     };
     use crate::network::agent_bridge::SERVER_DATA_CHANNEL;
     use crate::schema::server_data::{ServerDataPayloadV1, ServerDataV1};
     use valence::prelude::{
-        ident, App, BiomeRegistry, DimensionTypeRegistry, Server, UnloadedChunk, Update,
+        ident, App, BiomeRegistry, DiggingEvent, DiggingState, DimensionTypeRegistry, GameMode,
+        IntoSystemConfigs, Server, UnloadedChunk, Update, VisibleChunkLayer,
     };
     use valence::protocol::packets::play::CustomPayloadS2c;
     use valence::testing::{create_mock_client, MockClientHelper, ScenarioSingleClient};
@@ -661,6 +671,74 @@ mod tests {
         );
     }
 
+    #[test]
+    fn p5_break_place_break_dirt_preserves_one_to_one_inventory() {
+        let (mut app, client, layer_entity, _helper) =
+            block_place_app(empty_inventory(), DimensionKind::Overworld);
+        app.insert_resource(InventoryInstanceIdAllocator::new(9104));
+        app.world_mut()
+            .entity_mut(client)
+            .insert((GameMode::Survival, VisibleChunkLayer(layer_entity)));
+        app.add_event::<DiggingEvent>();
+        app.add_systems(
+            Update,
+            (
+                crate::world::block_drop::apply_block_drops
+                    .before(crate::world::block_break::apply_default_block_break),
+                crate::world::block_break::apply_default_block_break,
+            ),
+        );
+
+        let pos = BlockPos::new(1, 64, 1);
+        app.world_mut()
+            .get_mut::<ChunkLayer>(layer_entity)
+            .expect("test layer should carry ChunkLayer")
+            .set_block(pos, BlockState::DIRT);
+
+        send_stop_break(&mut app, client, pos);
+        app.update();
+        assert_eq!(
+            inventory_template_count(&app, client, "earth_crumb"),
+            1,
+            "first DIRT break should grant exactly one earth_crumb"
+        );
+        assert_eq!(
+            block_state_at(&app, layer_entity, pos),
+            Some(BlockState::AIR)
+        );
+
+        app.world_mut().send_event(BlockPlaceRequest {
+            client,
+            x: pos.x,
+            y: pos.y,
+            z: pos.z,
+            item_instance_id: 9104,
+            target_face: TrapTargetFace::Top,
+        });
+        app.update();
+        assert_eq!(
+            inventory_template_count(&app, client, "earth_crumb"),
+            0,
+            "placing the block back must consume the only earth_crumb"
+        );
+        assert_eq!(
+            block_state_at(&app, layer_entity, pos),
+            Some(BlockState::DIRT)
+        );
+
+        send_stop_break(&mut app, client, pos);
+        app.update();
+        assert_eq!(
+            inventory_template_count(&app, client, "earth_crumb"),
+            1,
+            "second DIRT break should grant one item, not duplicate the placed item"
+        );
+        assert_eq!(
+            block_state_at(&app, layer_entity, pos),
+            Some(BlockState::AIR)
+        );
+    }
+
     fn block_place_app(
         inventory: PlayerInventory,
         dimension: DimensionKind,
@@ -704,6 +782,21 @@ mod tests {
             .expect("test layer should carry ChunkLayer")
             .insert_chunk([0, 0], UnloadedChunk::new());
         (app, scenario.layer)
+    }
+
+    fn send_stop_break(app: &mut App, client: Entity, pos: BlockPos) {
+        app.world_mut().send_event(DiggingEvent {
+            client,
+            position: pos,
+            direction: valence::protocol::Direction::Up,
+            state: DiggingState::Stop,
+        });
+    }
+
+    fn block_state_at(app: &App, layer_entity: Entity, pos: BlockPos) -> Option<BlockState> {
+        app.world()
+            .get::<ChunkLayer>(layer_entity)
+            .and_then(|layer| layer.block(pos).map(|block| block.state))
     }
 
     fn new_test_chunk_layer(app: &App) -> ChunkLayer {
@@ -786,6 +879,23 @@ mod tests {
                     col: 0,
                     instance: item,
                 }],
+            }],
+            equipped: HashMap::new(),
+            hotbar: Default::default(),
+            bone_coins: 0,
+            max_weight: 99.0,
+        }
+    }
+
+    fn empty_inventory() -> PlayerInventory {
+        PlayerInventory {
+            revision: InventoryRevision(0),
+            containers: vec![ContainerState {
+                id: crate::inventory::MAIN_PACK_CONTAINER_ID.to_string(),
+                name: "主背包".to_string(),
+                rows: 2,
+                cols: 9,
+                items: Vec::new(),
             }],
             equipped: HashMap::new(),
             hotbar: Default::default(),

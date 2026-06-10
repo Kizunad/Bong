@@ -120,10 +120,14 @@ public abstract class MixinClientPlayerInteractionManagerAlchemy {
             return;
         }
 
-        InventoryItem selectedBlock = bong$selectedBlockItem(SkillBarStore.selectedSlot(), InventoryStateStore.snapshot());
-        if (selectedBlock != null && selectedBlock.instanceId() > 0) {
-            BlockPos placePos = hit.getBlockPos().offset(hit.getSide());
-            ClientRequestSender.sendBlockPlace(placePos, selectedBlock.instanceId(), bong$zhenfaFace(hit.getSide()));
+        BongBlockPlaceIntent blockPlace = bong$selectedBlockPlaceIntent(
+            SkillBarStore.selectedSlot(),
+            InventoryStateStore.snapshot(),
+            hit.getBlockPos(),
+            hit.getSide()
+        );
+        if (blockPlace != null) {
+            ClientRequestSender.sendBlockPlace(blockPlace.placePos(), blockPlace.instanceId(), blockPlace.face());
             player.swingHand(Hand.MAIN_HAND);
             cir.setReturnValue(ActionResult.SUCCESS);
             return;
@@ -168,6 +172,29 @@ public abstract class MixinClientPlayerInteractionManagerAlchemy {
             if (bong$matchesInstance(item, entry.id())) return item;
         }
         return null;
+    }
+
+    static BongBlockPlaceIntent bong$selectedBlockPlaceIntent(
+        int selectedSlot,
+        com.bong.client.inventory.model.InventoryModel inventory,
+        BlockPos targetPos,
+        Direction targetFace
+    ) {
+        if (targetPos == null || targetFace == null) return null;
+        InventoryItem selectedBlock = bong$selectedBlockItem(selectedSlot, inventory);
+        if (selectedBlock == null || selectedBlock.instanceId() <= 0) return null;
+        return new BongBlockPlaceIntent(
+            targetPos.offset(targetFace),
+            selectedBlock.instanceId(),
+            bong$zhenfaFace(targetFace)
+        );
+    }
+
+    record BongBlockPlaceIntent(
+        BlockPos placePos,
+        long instanceId,
+        ClientRequestProtocol.ZhenfaTargetFace face
+    ) {
     }
 
     private static boolean bong$matchesInstance(InventoryItem item, String templateId) {
