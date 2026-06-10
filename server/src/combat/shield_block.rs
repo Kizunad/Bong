@@ -186,28 +186,46 @@ pub fn lower_shield_handler(
 /// plan-shield-block-v1 P1 — 玩家死亡时强制清理 ShieldBlocking 状态，防残留。
 /// 仍需发 StopAnim：玩家死亡后仍保持连接（死亡画面），视觉需要复位；
 /// 若 entity 无 Position/UniqueId 则 emit_shield_stop_for_entity 会静默 skip，不 panic。
+///
+/// # 判据说明
+/// StopAnim 的 emit 判据使用 `ShieldBlock` component 是否在场，**而非**
+/// `has_active_status(ShieldBlocking)`。原因：此系统注册在
+/// `death_arbiter_tick` 之后运行，而 `death_arbiter_tick` 内的 `enter_near_death`
+/// 会无条件 `status_effects.active.clear()`，先于本系统清掉 ShieldBlocking status。
+/// 若依赖 `has_active_status` 判断，死亡时举盾的 StopAnim 永远不会发出（生产孤岛）。
+/// `ShieldBlock` component 是盾牌模块专属的持续标记，`enter_near_death` 不会触碰它，
+/// 因此它在本系统运行时仍准确反映"玩家死前是否在举盾"。
 pub fn cleanup_shield_on_death(
     mut death_events: EventReader<DeathEvent>,
     mut commands: Commands,
-    mut status_q: Query<&mut StatusEffects>,
+    mut status_q: Query<(&mut StatusEffects, Option<&ShieldBlock>)>,
     mut vfx_events: EventWriter<VfxEventRequest>,
     players_q: Query<(&Position, &UniqueId)>,
 ) {
     for ev in death_events.read() {
         let entity = ev.target;
-        if let Ok(mut status_effects) = status_q.get_mut(entity) {
+        // 以 ShieldBlock component 是否在场作为「死前举盾」的可靠真相源（见上注释）。
+        let was_blocking = if let Ok((_, shield_block)) = status_q.get(entity) {
+            shield_block.is_some()
+        } else {
+            false
+        };
+        // Defensive：若 ShieldBlocking status 仍在（如非 NearDeath 路径）也一并清理。
+        if let Ok((mut status_effects, _)) = status_q.get_mut(entity) {
             if has_active_status(&status_effects, StatusEffectKind::ShieldBlocking) {
                 remove_status_effect(&mut status_effects, StatusEffectKind::ShieldBlocking);
-                // 死亡时复位循环举盾动画，玩家死后仍连接需视觉复位
-                crate::network::vfx_animation_trigger::emit_shield_stop_for_entity(
-                    entity,
-                    &players_q,
-                    &mut vfx_events,
-                );
-                tracing::debug!(
-                    "[bong][shield] cleanup_on_death: removed ShieldBlocking for {entity:?}"
-                );
             }
+        }
+        if was_blocking {
+            // 死亡时复位循环举盾动画，玩家死后仍连接需视觉复位
+            crate::network::vfx_animation_trigger::emit_shield_stop_for_entity(
+                entity,
+                &players_q,
+                &mut vfx_events,
+            );
+            tracing::debug!(
+                "[bong][shield] cleanup_on_death: removed ShieldBlocking for {entity:?}"
+            );
         }
         if let Some(mut entity_commands) = commands.get_entity(entity) {
             entity_commands.remove::<ShieldBlock>();
@@ -218,7 +236,7 @@ pub fn cleanup_shield_on_death(
 /// plan-shield-block-v1 P1 — 断线时强制清理盾牌格挡状态。
 /// 由 `despawn_disconnected_clients` 之前的 system 调用。
 /// 使用 RemovedComponents<valence::prelude::Client> 探测断线实体。
-/// 注：断线时客户端已不在连接中，StopAnim 无接收者，故不 emit（避免无谓的 unicast 发送）。
+/// 注：断线时实体即将 despawn、渲染模型随之移除，无需单独发 StopAnim（模型消失动画也随之消失）。
 pub fn cleanup_shield_on_disconnect(
     mut commands: Commands,
     mut disconnected_clients: valence::prelude::RemovedComponents<valence::prelude::Client>,
@@ -243,13 +261,19 @@ pub fn cleanup_shield_on_disconnect(
 mod tests {
     use super::*;
     use crate::combat::components::StatusEffects;
+    use crate::combat::components::{CombatState, Lifecycle, Stamina, Wounds};
+    use crate::combat::events::DeathInsightRequested;
     use crate::combat::events::StatusEffectKind;
+    use crate::combat::lifecycle::death_arbiter_tick;
     use crate::combat::status::has_active_status;
+    use crate::cultivation::death_hooks::{CultivationDeathTrigger, PlayerTerminated};
+    use crate::cultivation::life_record::LifeRecord;
     use crate::inventory::{ItemInstance, PlayerInventory, EQUIP_SLOT_OFF_HAND};
     use crate::network::vfx_event_emit::VfxEventRequest;
+    use crate::persistence::{bootstrap_sqlite, PersistenceSettings};
     use crate::schema::vfx_event::VfxEventPayloadV1;
     use uuid::Uuid;
-    use valence::prelude::{App, DVec3, Events, Update};
+    use valence::prelude::{App, DVec3, Events, IntoSystemConfigs, Update};
 
     fn make_app() -> App {
         let mut app = App::new();
@@ -562,9 +586,12 @@ mod tests {
     // plan-shield-block-v1 P1 — 验证 cleanup_shield_on_disconnect 的逻辑等价语义：
     // 玩家断线后 ShieldBlocking 状态 + ShieldBlock component 被强制移除，防止残留。
     //
-    // 注：cleanup_shield_on_disconnect 使用 RemovedComponents<valence::prelude::Client>，
-    // 需要真实 valence 服务器上下文才能触发（Client 非 unit-constructible）。
-    // 此测试验证同等清理语义通过 lower_shield_handler 路径，并断言：
+    // ⚠️ 局限性说明：
+    // cleanup_shield_on_disconnect 使用 RemovedComponents<valence::prelude::Client> 探测断线，
+    // 而 valence Client 不可在测试中构造（非 unit-constructible），故真实断线的运行时行为
+    // **未被本测试锁定**。此处仅通过 lower_shield_handler 路径验证语义等价的状态移除。
+    // 真断线运行时行为未被锁定（Client 不可单测构造），此处仅验语义等价的状态移除。
+    // 以下断言：
     //   - 系统注册已在 combat/mod.rs:418 中声明（编译守护）
     //   - cleanup_shield_on_disconnect 函数签名接受 RemovedComponents<Client>（编译守护）
     //   - 清理后状态完全干净（语义等价断言）
@@ -857,5 +884,145 @@ mod tests {
             "cleanup_shield_on_death must NOT emit StopAnim when player was not blocking; \
              emitted events: {emitted:?}"
         );
+    }
+
+    // ── e2e 生产序：death_arbiter_tick 先清 status → cleanup_shield_on_death 仍发 StopAnim ──
+    //
+    // 这是锁定「生产执行序」的真 e2e 测试。
+    // 背景：mod.rs 注册 cleanup_shield_on_death .after(death_arbiter_tick)。
+    // death_arbiter_tick 内的 enter_near_death 会无条件 status_effects.active.clear()，
+    // 在 cleanup_shield_on_death 运行前已清空 ShieldBlocking status。
+    // 若 cleanup_shield_on_death 以 has_active_status(ShieldBlocking) 判 emit，
+    // 生产环境下 StopAnim 永远不发出（isLoop:true 的 bong:shield_raise 在死亡后永久卡住）。
+    //
+    // 此测试在同一 App 内同时注册两个系统（保持 after 顺序），用带完整组件的真实 DeathEvent
+    // 触发完整死亡链路，断言「death_arbiter 先清 status 后 cleanup_shield 仍发 StopAnim」。
+    // 破坏修法（改回 has_active_status 判断）必须让此测试撞红。
+    #[test]
+    fn e2e_cleanup_on_death_emits_stop_anim_after_death_arbiter_clears_status() {
+        use std::time::{SystemTime, UNIX_EPOCH};
+
+        // -- 构造 PersistenceSettings（death_arbiter_tick 需要此 Res）--
+        let unique_suffix = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock after unix epoch")
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "bong-shield-death-e2e-{}-{unique_suffix}",
+            std::process::id()
+        ));
+        let db_path = root.join("data").join("bong.db");
+        std::fs::create_dir_all(db_path.parent().unwrap())
+            .expect("temp dir creation should succeed");
+        bootstrap_sqlite(&db_path, "shield-death-e2e").expect("sqlite bootstrap should succeed");
+        let persistence =
+            PersistenceSettings::with_paths(&db_path, root.join("deceased"), "shield-death-e2e");
+
+        // -- App 构建：注册 death_arbiter_tick + cleanup_shield_on_death（保持 after 顺序）--
+        let mut app = App::new();
+        app.insert_resource(persistence);
+        app.insert_resource(crate::combat::CombatClock { tick: 1 });
+        // death_arbiter_tick 需要的事件
+        app.add_event::<DeathEvent>();
+        app.add_event::<CultivationDeathTrigger>();
+        app.add_event::<DeathInsightRequested>();
+        app.add_event::<PlayerTerminated>();
+        app.add_event::<VfxEventRequest>();
+        // shield handler 需要的事件
+        app.add_event::<RaiseShieldIntent>();
+        app.add_event::<LowerShieldIntent>();
+        // 按 mod.rs 注册顺序：cleanup_shield_on_death after death_arbiter_tick
+        app.add_systems(
+            Update,
+            (
+                death_arbiter_tick,
+                cleanup_shield_on_death.after(death_arbiter_tick),
+            ),
+        );
+
+        // -- spawn 带完整组件的玩家实体（Lifecycle + StatusEffects 含 ShieldBlocking + ShieldBlock）--
+        let uid = UniqueId(Uuid::new_v5(
+            &Uuid::NAMESPACE_OID,
+            b"shield_death_e2e_player",
+        ));
+        let entity = app
+            .world_mut()
+            .spawn((
+                Wounds {
+                    health_current: 0.0,
+                    health_max: 30.0,
+                    entries: Vec::new(),
+                },
+                Stamina::default(),
+                CombatState::default(),
+                LifeRecord::default(),
+                Lifecycle {
+                    fortune_remaining: 1,
+                    ..Default::default()
+                },
+                // ShieldBlocking status — death_arbiter 会在 cleanup_shield_on_death 前清掉它
+                StatusEffects {
+                    active: vec![crate::combat::components::ActiveStatusEffect {
+                        kind: StatusEffectKind::ShieldBlocking,
+                        magnitude: 0.5,
+                        remaining_ticks: SHIELD_BLOCKING_DURATION_TICKS,
+                        source_pill: None,
+                    }],
+                },
+                // ShieldBlock component — enter_near_death 不会碰它，是可靠真相源
+                ShieldBlock {
+                    template_id: "wooden_shield".to_string(),
+                },
+                Position::new(DVec3::new(8.0, 64.0, 8.0)),
+                uid,
+            ))
+            .id();
+
+        // -- 发送真实 DeathEvent，触发完整死亡链路 --
+        app.world_mut()
+            .resource_mut::<Events<DeathEvent>>()
+            .send(DeathEvent {
+                target: entity,
+                cause: "e2e_test_death_while_blocking".to_string(),
+                attacker: None,
+                attacker_player_id: None,
+                at_tick: 1,
+            });
+
+        // 排空 Raise 前的 VfxEvents（此处无，但保持干净）
+        let _ = drain_vfx(&mut app);
+
+        app.update();
+
+        // -- 关键断言：death_arbiter 先清 ShieldBlocking status，但 StopAnim 仍必须发出 --
+        let status_after = app.world().entity(entity).get::<StatusEffects>();
+        if let Some(status) = status_after {
+            assert!(
+                !has_active_status(status, StatusEffectKind::ShieldBlocking),
+                "death_arbiter_tick must have cleared ShieldBlocking status via enter_near_death.active.clear()"
+            );
+        }
+        // ShieldBlock component 也必须被 cleanup_shield_on_death 移除
+        assert!(
+            app.world().entity(entity).get::<ShieldBlock>().is_none(),
+            "ShieldBlock component must be removed by cleanup_shield_on_death after death"
+        );
+        // 核心断言：即使 death_arbiter 先清了 status，StopAnim 仍必须发出
+        let emitted = drain_vfx(&mut app);
+        let stop = find_stop_anim(
+            &emitted,
+            crate::network::vfx_animation_trigger::ANIM_SHIELD_RAISE,
+        );
+        assert!(
+            stop.is_some(),
+            "cleanup_shield_on_death MUST emit StopAnim{{anim_id==\"bong:shield_raise\"}} even after \
+             death_arbiter_tick clears ShieldBlocking via enter_near_death.active.clear(). \
+             If this fails, the emit gate has regressed to has_active_status() which is always false \
+             at this point in the execution order — the isLoop:true shield_raise animation would be \
+             permanently stuck on connected-but-dead players. \
+             emitted events: {emitted:?}"
+        );
+
+        let _ = std::fs::remove_dir_all(root);
     }
 }
