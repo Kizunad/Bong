@@ -667,6 +667,64 @@ mod tests {
     }
 
     #[test]
+    fn inventory_snapshot_preserves_p2_deleted_template_instances() {
+        let deleted_ids = [
+            "bone_coin_blank",
+            "waymark_stone",
+            "price_tag",
+            "trade_puppet_frame",
+            "rat_bait",
+        ];
+        let mut inventory = make_inventory(33, false);
+        for container in &mut inventory.containers {
+            container.items.clear();
+        }
+        for (offset, deleted_id) in deleted_ids.iter().enumerate() {
+            inventory.containers[0].items.push(PlacedItemState {
+                row: offset as u8,
+                col: 0,
+                instance: make_item(
+                    9000 + offset as u64,
+                    deleted_id,
+                    &format!("{deleted_id} legacy instance"),
+                    0.1,
+                    1,
+                ),
+            });
+        }
+
+        let snapshot = build_inventory_snapshot(
+            &inventory,
+            &PlayerState {
+                karma: 0.0,
+                inventory_score: 0.0,
+            },
+            &Cultivation {
+                realm: crate::cultivation::components::Realm::Awaken,
+                qi_current: 1.0,
+                qi_max: 10.0,
+                ..Cultivation::default()
+            },
+        );
+
+        let snapshot_ids: Vec<&str> = snapshot
+            .placed_items
+            .iter()
+            .map(|placed| placed.item.item_id.as_str())
+            .collect();
+        assert_eq!(
+            snapshot_ids, deleted_ids,
+            "deleted template instances must remain serializable because ItemInstance carries display data"
+        );
+        for (placed, deleted_id) in snapshot.placed_items.iter().zip(deleted_ids) {
+            assert_eq!(
+                placed.item.display_name,
+                format!("{deleted_id} legacy instance")
+            );
+        }
+    }
+
+    #[test]
     fn join_emits_single_inventory_snapshot_without_cross_client_broadcast() {
         let mut app = setup_app();
 

@@ -110,8 +110,6 @@ ITEMS = [
      "a pre-packaged alchemy ingredient kit, small cloth bundle with multiple tied compartments containing powders and dried herbs, solid black background"),
     ("huiyuan_decoction", "回元芷煎汤",
      "a ceramic bowl of herbal decoction, dark brown medicinal liquid with steam rising, solid black background"),
-    ("rat_bait", "鼠群诱饵",
-     "a rat bait bundle, salt crystals wrapped in coarse cloth forming a small lure pouch, solid black background"),
     ("spirit_stone_rack", "灵石架",
      "a small wooden rack with iron pegs for hanging spirit stones, simple dark wood frame, solid black background"),
 
@@ -154,22 +152,14 @@ ITEMS = [
      "a simple wooden club, dark grey-brown spirit-wood staff carved to a blunt weapon, solid black background"),
 
     # ── 经济 ──
-    ("bone_coin_blank", "骨币胚",
-     "a blank bone coin, flat circular bone disc with array-paper face but no spiritual charge, pale ivory, solid black background"),
     ("trade_scale", "交易秤",
      "a simple balance scale, iron beam with two wooden pans hung by cord, for weighing bone coins and herbs, solid black background"),
-    ("waymark_stone", "标记石",
-     "a waymark stone, dark grey stone with cinnabar-drawn directional symbol on one face, solid black background"),
     ("disguise_wrap", "伪装包裹",
      "a disguise wrapping, grey-green ash-moss wrapped cloth bundle designed to mask spiritual aura, solid black background"),
     ("trade_scale_stand", "交易秤台",
      "a trade scale mounted on a wooden stand, iron balance on a dark wood frame, market stall equipment, solid black background"),
-    ("trade_puppet_frame", "交易傀儡骨架",
-     "a humanoid puppet skeleton frame, assembled from beast bones with spider-silk joints and iron hinges, eerie figure, solid black background"),
     ("niche_repair_kit", "灵龛修补料",
      "a spirit-niche repair kit, a pouch of crushed stone mixed with spirit-iron filings, dark granular material, solid black background"),
-    ("price_tag", "标价签",
-     "a small price tag, coarse cloth strip with cinnabar-written numerals, tied with thin cord, solid white background"),
 
     # ── 住所 ──
     ("torch_item", "火把",
