@@ -165,6 +165,10 @@ public final class ClientRequestSender {
         dispatch(ClientRequestProtocol.encodeSpiritNichePlace(x, y, z, itemInstanceId));
     }
 
+    public static void sendSpiritNicheRepair(int x, int y, int z, long itemInstanceId) {
+        dispatch(ClientRequestProtocol.encodeSpiritNicheRepair(x, y, z, itemInstanceId));
+    }
+
     public static void sendSpiritNicheGaze(int x, int y, int z) {
         dispatch(ClientRequestProtocol.encodeSpiritNicheGaze(x, y, z));
     }

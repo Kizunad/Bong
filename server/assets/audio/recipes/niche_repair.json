@@ -1,0 +1,21 @@
+{
+  "id": "niche_repair",
+  "layers": [
+    {
+      "sound": "minecraft:block.grindstone.use",
+      "volume": 0.34,
+      "pitch": 0.82,
+      "delay_ticks": 0
+    },
+    {
+      "sound": "minecraft:block.respawn_anchor.charge",
+      "volume": 0.24,
+      "pitch": 1.18,
+      "delay_ticks": 4
+    }
+  ],
+  "priority": 74,
+  "attenuation": "AREA",
+  "category": "BLOCKS",
+  "bus": "ENVIRONMENT"
+}

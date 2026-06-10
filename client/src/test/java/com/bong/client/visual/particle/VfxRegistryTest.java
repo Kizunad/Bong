@@ -345,6 +345,8 @@ public class VfxRegistryTest {
             "bootstrap should register zhenfa_deplete");
         assertTrue(VfxRegistry.instance().contains(SocialLinkVfxPlayer.NICHE_ESTABLISH),
             "bootstrap should register social_niche_establish");
+        assertTrue(VfxRegistry.instance().contains(NicheRepairParticlePlayer.EVENT_ID),
+            "bootstrap should register social_niche_repair");
         assertTrue(VfxRegistry.instance().contains(SocialLinkVfxPlayer.PACT_LINK),
             "bootstrap should register social_pact_link");
         assertTrue(VfxRegistry.instance().contains(SocialLinkVfxPlayer.FEUD_MARK),

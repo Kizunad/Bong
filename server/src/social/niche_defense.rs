@@ -1,5 +1,8 @@
 use serde::{Deserialize, Serialize};
-use valence::prelude::{App, Entity, EventReader, EventWriter, IntoSystemConfigs, Query, Update};
+use valence::prelude::{
+    bevy_ecs, bevy_ecs::system::SystemParam, App, Commands, Entity, EventReader, EventWriter,
+    IntoSystemConfigs, Query, Res, ResMut, Update,
+};
 
 use super::components::{
     GuardianKind, HouseGuardian, IntrusionRecord, SpiritNiche, Tick, ZhenfaTrapTier,
@@ -8,11 +11,13 @@ use super::events::{
     NicheGuardianBroken, NicheGuardianFatigue, NicheIntrusionAttempt, NicheIntrusionEvent,
     SpiritNicheActivateGuardianRequest,
 };
-use crate::combat::components::TICKS_PER_SECOND;
+use super::{persist_social_spirit_niche, SpiritNicheRegistry};
+use crate::combat::components::{Lifecycle, TICKS_PER_SECOND};
 use crate::cultivation::realm_taint::{ApplyRealmTaint, RealmTaintedKind};
 use crate::inventory::{
     attach_lingering_owner_qi_by_instance, consume_item_instance_once, PlayerInventory,
 };
+use crate::persistence::PersistenceSettings;
 
 pub const NICHE_INTRUSION_TAINT_DELTA: f32 = 0.20;
 pub const LINGERING_OWNER_QI_TICKS: u64 = 8 * 60 * 60 * TICKS_PER_SECOND;
@@ -38,6 +43,22 @@ pub struct IntrusionDefenseOutcome {
     pub guardian_fatigues: Vec<(GuardianKind, u8)>,
     pub guardian_breaks: Vec<GuardianKind>,
     pub taint_delta: f32,
+}
+
+#[derive(SystemParam)]
+struct NicheIntrusionState<'w, 's> {
+    niches: Query<'w, 's, &'static mut SpiritNiche>,
+    lifecycles: Query<'w, 's, (Entity, &'static mut Lifecycle)>,
+    inventories: Query<'w, 's, &'static mut PlayerInventory>,
+    registry: ResMut<'w, SpiritNicheRegistry>,
+}
+
+#[derive(SystemParam)]
+struct NicheIntrusionWriters<'w> {
+    intrusions: EventWriter<'w, NicheIntrusionEvent>,
+    fatigues: EventWriter<'w, NicheGuardianFatigue>,
+    broken: EventWriter<'w, NicheGuardianBroken>,
+    taints: EventWriter<'w, ApplyRealmTaint>,
 }
 
 pub fn register(app: &mut App) {
@@ -236,16 +257,15 @@ fn handle_spirit_niche_activate_guardian_requests(
 }
 
 fn handle_niche_intrusion_attempts(
+    mut commands: Commands,
+    persistence: Option<Res<PersistenceSettings>>,
     mut attempts: EventReader<NicheIntrusionAttempt>,
-    mut niches: Query<&mut SpiritNiche>,
-    mut inventories: Query<&mut PlayerInventory>,
-    mut intrusions: EventWriter<NicheIntrusionEvent>,
-    mut fatigues: EventWriter<NicheGuardianFatigue>,
-    mut broken: EventWriter<NicheGuardianBroken>,
-    mut taints: EventWriter<ApplyRealmTaint>,
+    mut state: NicheIntrusionState,
+    mut writers: NicheIntrusionWriters,
 ) {
     for attempt in attempts.read() {
-        let Some(mut niche) = niches
+        let Some(mut niche) = state
+            .niches
             .iter_mut()
             .find(|niche| niche.owner == attempt.niche_owner && niche.pos == attempt.niche_pos)
         else {
@@ -263,7 +283,7 @@ fn handle_niche_intrusion_attempts(
             continue;
         };
         for (guardian_kind, charges_remaining) in &outcome.guardian_fatigues {
-            fatigues.send(NicheGuardianFatigue {
+            writers.fatigues.send(NicheGuardianFatigue {
                 niche_owner: outcome.record.owner.clone(),
                 guardian_kind: *guardian_kind,
                 charges_remaining: *charges_remaining,
@@ -271,7 +291,7 @@ fn handle_niche_intrusion_attempts(
             });
         }
         for guardian_kind in &outcome.guardian_breaks {
-            broken.send(NicheGuardianBroken {
+            writers.broken.send(NicheGuardianBroken {
                 niche_owner: outcome.record.owner.clone(),
                 guardian_kind: *guardian_kind,
                 intruder: attempt.intruder,
@@ -280,7 +300,29 @@ fn handle_niche_intrusion_attempts(
             });
         }
         if !outcome.record.items_taken.is_empty() {
-            if let Ok(mut inventory) = inventories.get_mut(attempt.intruder) {
+            niche.is_damaged = true;
+            let damaged_niche = niche.clone();
+            state.registry.upsert(damaged_niche.clone());
+            if let Some(persistence) = persistence.as_deref() {
+                if let Err(error) = persist_social_spirit_niche(persistence, &damaged_niche) {
+                    tracing::warn!(
+                        "[bong][social][niche-defense] failed to persist damaged spirit niche for `{}`: {error}",
+                        outcome.record.owner
+                    );
+                }
+            }
+            let mut owner_entity = None;
+            for (entity, mut lifecycle) in &mut state.lifecycles {
+                if lifecycle.character_id == outcome.record.owner {
+                    lifecycle.spawn_anchor_damaged = true;
+                    owner_entity = Some(entity);
+                    break;
+                }
+            }
+            if let Some(owner_entity) = owner_entity {
+                commands.entity(owner_entity).insert(damaged_niche.clone());
+            }
+            if let Ok(mut inventory) = state.inventories.get_mut(attempt.intruder) {
                 let expire_at = attempt.tick.saturating_add(LINGERING_OWNER_QI_TICKS);
                 for instance_id in &outcome.record.items_taken {
                     attach_lingering_owner_qi_by_instance(
@@ -293,14 +335,14 @@ fn handle_niche_intrusion_attempts(
             }
         }
         if outcome.taint_delta > 0.0 {
-            taints.send(ApplyRealmTaint {
+            writers.taints.send(ApplyRealmTaint {
                 target: attempt.intruder,
                 kind: RealmTaintedKind::NicheIntrusion,
                 delta: outcome.taint_delta,
                 tick: attempt.tick,
             });
         }
-        intrusions.send(NicheIntrusionEvent {
+        writers.intrusions.send(NicheIntrusionEvent {
             niche_owner: outcome.record.owner,
             intruder: attempt.intruder,
             intruder_char_id: attempt.intruder_char_id.clone(),
@@ -506,6 +548,7 @@ mod tests {
             placed_at_tick: 1,
             revealed: false,
             revealed_by: None,
+            is_damaged: false,
             guardians: Vec::new(),
         }
     }
@@ -710,6 +753,74 @@ mod tests {
         assert_eq!(outcome.guardian_fatigues, vec![(GuardianKind::Puppet, 4)]);
         assert_eq!(outcome.taint_delta, NICHE_INTRUSION_TAINT_DELTA);
         assert_eq!(niche.guardians[0].charges_remaining, 4);
+    }
+
+    #[test]
+    fn intrusion_with_taken_items_marks_niche_damaged_across_sources() {
+        let mut app = App::new();
+        let mut registry = SpiritNicheRegistry::default();
+        registry.upsert(niche());
+        app.insert_resource(registry);
+        app.add_event::<NicheIntrusionAttempt>();
+        app.add_event::<NicheIntrusionEvent>();
+        app.add_event::<NicheGuardianFatigue>();
+        app.add_event::<NicheGuardianBroken>();
+        app.add_event::<ApplyRealmTaint>();
+        app.add_systems(Update, handle_niche_intrusion_attempts);
+
+        let owner = app
+            .world_mut()
+            .spawn((
+                crate::combat::components::Lifecycle {
+                    character_id: "char:owner".to_string(),
+                    spawn_anchor: Some([10.5, 65.0, 10.5]),
+                    ..Default::default()
+                },
+                niche(),
+            ))
+            .id();
+        let intruder = app
+            .world_mut()
+            .spawn(inventory_with(vec![item("stolen_relic", 42, 1)]))
+            .id();
+
+        app.world_mut().send_event(NicheIntrusionAttempt {
+            niche_owner: "char:owner".to_string(),
+            niche_pos: [10, 64, 10],
+            intruder,
+            intruder_char_id: "char:intruder".to_string(),
+            items_taken: vec![42],
+            intruder_qi_fraction: 0.8,
+            intruder_back_turned: false,
+            tick: 11,
+        });
+
+        app.update();
+
+        assert!(
+            app.world().get::<SpiritNiche>(owner).unwrap().is_damaged,
+            "SpiritNiche component should be damaged after successful looting"
+        );
+        assert!(
+            app.world()
+                .get::<crate::combat::components::Lifecycle>(owner)
+                .unwrap()
+                .spawn_anchor_damaged,
+            "Lifecycle revive marker should mirror damaged spirit niche"
+        );
+        assert!(
+            app.world()
+                .resource::<SpiritNicheRegistry>()
+                .niches
+                .get("char:owner")
+                .unwrap()
+                .is_damaged,
+            "registry should mirror damaged spirit niche component"
+        );
+        let mut intrusions = app
+            .world_mut()
+            .resource_mut::<valence::prelude::Events<NicheIntrusionEvent>>();
+        assert_eq!(intrusions.drain().count(), 1);
     }
 
     #[test]

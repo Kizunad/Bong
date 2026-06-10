@@ -6566,6 +6566,15 @@ mod tests {
                 "SpiritNichePlace",
             ),
             (
+                client_request_envelope::Payload::SpiritNicheRepair(SpiritNicheRepair {
+                    x: 0,
+                    y: 0,
+                    z: 0,
+                    item_instance_id: 0,
+                }),
+                "SpiritNicheRepair",
+            ),
+            (
                 client_request_envelope::Payload::SpiritNicheGaze(SpiritNicheGaze {
                     x: 0,
                     y: 0,

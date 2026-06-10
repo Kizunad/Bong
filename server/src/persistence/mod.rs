@@ -37,7 +37,7 @@ pub mod identity;
 pub const DEFAULT_DATABASE_PATH: &str = "data/bong.db";
 pub const SQLITE_BUSY_TIMEOUT_MS: u64 = 15_000;
 const DEFAULT_DECEASED_PUBLIC_DIR: &str = "../library-web/public/deceased";
-const CURRENT_USER_VERSION: i32 = 27;
+const CURRENT_USER_VERSION: i32 = 28;
 const AGENT_WORLD_MODEL_ROW_ID: i64 = 1;
 const ASCENSION_QUOTA_ROW_ID: i64 = 1;
 const TRIBULATION_KIND_DU_XU: &str = "du_xu";
@@ -1336,6 +1336,7 @@ fn apply_migrations(connection: &mut Connection) -> rusqlite::Result<()> {
                 placed_at_tick INTEGER NOT NULL CHECK (placed_at_tick >= 0),
                 revealed INTEGER NOT NULL CHECK (revealed IN (0, 1)),
                 revealed_by TEXT,
+                is_damaged INTEGER NOT NULL DEFAULT 0 CHECK (is_damaged IN (0, 1)),
                 defense_mode TEXT,
                 guardians_json TEXT NOT NULL DEFAULT '[]',
                 schema_version INTEGER NOT NULL CHECK (schema_version >= 1),
@@ -1713,6 +1714,24 @@ fn apply_migrations(connection: &mut Connection) -> rusqlite::Result<()> {
             )?;
         }
         transaction.execute_batch("PRAGMA user_version = 27;")?;
+        transaction.commit()?;
+    }
+
+    let current_version: i32 =
+        connection.query_row("PRAGMA user_version;", [], |row| row.get(0))?;
+    if current_version < 28 {
+        // plan-niche-craft-fix-v1 P1：灵龛本体增加单一受损态。
+        let transaction = connection.transaction()?;
+        let columns = table_columns(&transaction, "social_spirit_niches")?;
+        if !columns.is_empty() && !columns.iter().any(|col| col == "is_damaged") {
+            transaction.execute_batch(
+                "
+                ALTER TABLE social_spirit_niches
+                ADD COLUMN is_damaged INTEGER NOT NULL DEFAULT 0 CHECK (is_damaged IN (0, 1));
+                ",
+            )?;
+        }
+        transaction.execute_batch("PRAGMA user_version = 28;")?;
         transaction.commit()?;
     }
 
@@ -9054,6 +9073,7 @@ mod persistence_tests {
             last_death_tick: Some(77),
             last_revive_tick: Some(55),
             spawn_anchor: None,
+            spawn_anchor_damaged: false,
             near_death_deadline_tick: None,
             awaiting_decision: None,
             revival_decision_deadline_tick: None,
@@ -9154,6 +9174,7 @@ mod persistence_tests {
             last_death_tick: Some(77),
             last_revive_tick: Some(55),
             spawn_anchor: None,
+            spawn_anchor_damaged: false,
             near_death_deadline_tick: None,
             awaiting_decision: None,
             revival_decision_deadline_tick: None,
@@ -9290,6 +9311,7 @@ mod persistence_tests {
             last_death_tick: Some(77),
             last_revive_tick: Some(55),
             spawn_anchor: None,
+            spawn_anchor_damaged: false,
             near_death_deadline_tick: None,
             awaiting_decision: None,
             revival_decision_deadline_tick: None,
@@ -9371,6 +9393,7 @@ mod persistence_tests {
             last_death_tick: Some(77),
             last_revive_tick: Some(55),
             spawn_anchor: None,
+            spawn_anchor_damaged: false,
             near_death_deadline_tick: None,
             awaiting_decision: None,
             revival_decision_deadline_tick: None,
@@ -9400,6 +9423,7 @@ mod persistence_tests {
             last_death_tick: Some(99),
             last_revive_tick: Some(55),
             spawn_anchor: None,
+            spawn_anchor_damaged: false,
             near_death_deadline_tick: None,
             awaiting_decision: None,
             revival_decision_deadline_tick: None,
@@ -9479,6 +9503,7 @@ mod persistence_tests {
                 last_death_tick: Some(died_at_tick as u64),
                 last_revive_tick: None,
                 spawn_anchor: None,
+                spawn_anchor_damaged: false,
                 near_death_deadline_tick: None,
                 awaiting_decision: None,
                 revival_decision_deadline_tick: None,
@@ -9545,6 +9570,7 @@ mod persistence_tests {
                 last_death_tick: Some(tick),
                 last_revive_tick: None,
                 spawn_anchor: None,
+                spawn_anchor_damaged: false,
                 near_death_deadline_tick: None,
                 awaiting_decision: None,
                 revival_decision_deadline_tick: None,
@@ -9649,6 +9675,7 @@ mod persistence_tests {
                 last_death_tick: Some(55),
                 last_revive_tick: Some(66),
                 spawn_anchor: None,
+                spawn_anchor_damaged: false,
                 near_death_deadline_tick: None,
                 awaiting_decision: None,
                 revival_decision_deadline_tick: None,
@@ -9872,6 +9899,7 @@ mod persistence_tests {
                         last_death_tick: Some(tick),
                         last_revive_tick: Some(tick.saturating_sub(1)),
                         spawn_anchor: None,
+                        spawn_anchor_damaged: false,
                         near_death_deadline_tick: Some(tick + 30),
                         awaiting_decision: None,
                         revival_decision_deadline_tick: None,
@@ -9970,6 +9998,7 @@ mod persistence_tests {
                         last_death_tick: Some(tick),
                         last_revive_tick: None,
                         spawn_anchor: None,
+                        spawn_anchor_damaged: false,
                         near_death_deadline_tick: None,
                         awaiting_decision: None,
                         revival_decision_deadline_tick: None,
@@ -10146,6 +10175,7 @@ mod persistence_tests {
                         last_death_tick: Some(tick),
                         last_revive_tick: Some(tick.saturating_sub(1)),
                         spawn_anchor: None,
+                        spawn_anchor_damaged: false,
                         near_death_deadline_tick: Some(tick + 30),
                         awaiting_decision: None,
                         revival_decision_deadline_tick: None,
@@ -10310,6 +10340,7 @@ mod persistence_tests {
                         last_death_tick: Some(tick),
                         last_revive_tick: Some(tick.saturating_sub(1)),
                         spawn_anchor: None,
+                        spawn_anchor_damaged: false,
                         near_death_deadline_tick: Some(tick + 30),
                         awaiting_decision: None,
                         revival_decision_deadline_tick: None,
@@ -10501,6 +10532,7 @@ mod persistence_tests {
                         last_death_tick: Some(tick),
                         last_revive_tick: Some(tick.saturating_sub(1)),
                         spawn_anchor: None,
+                        spawn_anchor_damaged: false,
                         near_death_deadline_tick: Some(tick + 30),
                         awaiting_decision: None,
                         revival_decision_deadline_tick: None,
@@ -10745,6 +10777,7 @@ mod persistence_tests {
                             last_death_tick: Some(tick),
                             last_revive_tick: Some(tick.saturating_sub(1)),
                             spawn_anchor: None,
+                            spawn_anchor_damaged: false,
                             near_death_deadline_tick: Some(tick + 30),
                             awaiting_decision: None,
                             revival_decision_deadline_tick: None,
@@ -12205,5 +12238,68 @@ mod persistence_tests {
             version2, CURRENT_USER_VERSION,
             "user_version after v27 migration on fresh db should be CURRENT_USER_VERSION"
         );
+    }
+
+    #[test]
+    fn v28_migration_adds_spirit_niche_damage_flag_with_default_false() {
+        let db_path = database_path("v28-spirit-niche-damage-flag");
+        fs::create_dir_all(db_path.parent().expect("db path should have parent"))
+            .expect("temp db parent should be created");
+        let mut connection = Connection::open(&db_path).expect("db should open");
+
+        connection
+            .execute_batch(
+                "
+                CREATE TABLE social_spirit_niches (
+                    owner TEXT PRIMARY KEY,
+                    pos_x INTEGER NOT NULL,
+                    pos_y INTEGER NOT NULL,
+                    pos_z INTEGER NOT NULL,
+                    placed_at_tick INTEGER NOT NULL CHECK (placed_at_tick >= 0),
+                    revealed INTEGER NOT NULL CHECK (revealed IN (0, 1)),
+                    revealed_by TEXT,
+                    defense_mode TEXT,
+                    guardians_json TEXT NOT NULL DEFAULT '[]',
+                    schema_version INTEGER NOT NULL CHECK (schema_version >= 1),
+                    last_updated_wall INTEGER NOT NULL CHECK (last_updated_wall >= 0)
+                );
+                INSERT INTO social_spirit_niches (
+                    owner, pos_x, pos_y, pos_z, placed_at_tick, revealed, revealed_by,
+                    guardians_json, schema_version, last_updated_wall
+                ) VALUES ('char:owner', 10, 64, 10, 1, 0, NULL, '[]', 1, 0);
+                PRAGMA user_version = 27;
+                ",
+            )
+            .expect("legacy v27 social_spirit_niches fixture should create");
+
+        apply_migrations(&mut connection).expect("v28 migration should succeed");
+
+        let mut statement = connection
+            .prepare("PRAGMA table_info(social_spirit_niches)")
+            .expect("social_spirit_niches table_info should prepare");
+        let columns = statement
+            .query_map([], |row| row.get::<_, String>(1))
+            .expect("social_spirit_niches table_info should query")
+            .collect::<Result<Vec<_>, _>>()
+            .expect("social_spirit_niches columns should collect");
+        assert!(
+            columns.iter().any(|col| col == "is_damaged"),
+            "social_spirit_niches should have is_damaged after v28 migration; columns: {columns:?}"
+        );
+        let is_damaged: i64 = connection
+            .query_row(
+                "SELECT is_damaged FROM social_spirit_niches WHERE owner = 'char:owner'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("legacy row should keep default is_damaged");
+        assert_eq!(
+            is_damaged, 0,
+            "legacy spirit niche row should default to undamaged after v28 migration"
+        );
+        let user_version: i32 = connection
+            .query_row("PRAGMA user_version;", [], |row| row.get(0))
+            .expect("user_version should be readable");
+        assert_eq!(user_version, CURRENT_USER_VERSION);
     }
 }

@@ -680,6 +680,15 @@ public final class ClientRequestProtocol {
         return obj.toString();
     }
 
+    public static String encodeSpiritNicheRepair(int x, int y, int z, long itemInstanceId) {
+        JsonObject obj = envelope("spirit_niche_repair");
+        obj.addProperty("x", x);
+        obj.addProperty("y", y);
+        obj.addProperty("z", z);
+        obj.addProperty("item_instance_id", itemInstanceId);
+        return obj.toString();
+    }
+
     public static String encodeSpiritNicheGaze(int x, int y, int z) {
         JsonObject obj = envelope("spirit_niche_gaze");
         obj.addProperty("x", x);

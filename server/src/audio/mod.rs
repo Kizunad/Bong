@@ -176,14 +176,19 @@ mod tests {
             SoundRecipeRegistry::load_default().expect("default audio recipes should load");
         assert_eq!(
             registry.len(),
-            217,
+            218,
             "audio registry should exclude removed slide and double-jump movement recipes \
              plus include 7 supply_coffin recipes (break + open common/rare/precious + emerge) \
              plus 1 ambient_dan_zong recipe \
              plus 1 ambient_wangyintai recipe \
              plus 1 offscreen_relic_reveal recipe (plan-offscreen-war-v1 P3) \
              plus 1 coffin_reclaim recipe (plan-coffin-tiers-v1 P2 对峙修复) \
+             plus 1 niche_repair recipe (plan-niche-craft-fix-v1 P1) \
              plus 4 tiandao hunt ambient recipes"
+        );
+        assert!(
+            registry.get("niche_repair").is_some(),
+            "plan-niche-craft-fix-v1 P1 灵龛修补音效 recipe 必须加载"
         );
         assert!(
             registry.get("tiandao_watch_ambient").is_some(),

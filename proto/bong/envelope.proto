@@ -266,6 +266,8 @@ message ClientRequestEnvelope {
     FreshnessProbe              freshness_probe               = 90;
     // plan-block-lifecycle-v1 P2 — Bong 自有背包方块放置 C2S。
     BlockPlace                  block_place                   = 91;
+    // plan-niche-craft-fix-v1 P1 — 灵龛修补 C2S。
+    SpiritNicheRepair           spirit_niche_repair           = 92;
   }
 }
 
@@ -2055,6 +2057,14 @@ message TradeOffer {
 
 // 与 Rust ClientRequestV1::SpiritNichePlace 精确对应。
 message SpiritNichePlace {
+  int32  x                = 1;
+  int32  y                = 2;
+  int32  z                = 3;
+  uint64 item_instance_id = 4;
+}
+
+// 与 Rust ClientRequestV1::SpiritNicheRepair 精确对应。
+message SpiritNicheRepair {
   int32  x                = 1;
   int32  y                = 2;
   int32  z                = 3;

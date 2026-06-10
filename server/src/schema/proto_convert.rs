@@ -3328,6 +3328,18 @@ impl From<&super::client_request::ClientRequestV1> for bong::client_request_enve
                 z: *z,
                 item_instance_id: *item_instance_id,
             }),
+            ClientRequestV1::SpiritNicheRepair {
+                x,
+                y,
+                z,
+                item_instance_id,
+                ..
+            } => Payload::SpiritNicheRepair(bong::SpiritNicheRepair {
+                x: *x,
+                y: *y,
+                z: *z,
+                item_instance_id: *item_instance_id,
+            }),
             ClientRequestV1::SpiritNicheGaze { x, y, z, .. } => {
                 Payload::SpiritNicheGaze(bong::SpiritNicheGaze {
                     x: *x,

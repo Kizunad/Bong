@@ -617,6 +617,19 @@ export const SpiritNichePlaceRequestV1 = Type.Object(
 );
 export type SpiritNichePlaceRequestV1 = Static<typeof SpiritNichePlaceRequestV1>;
 
+export const SpiritNicheRepairRequestV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    type: Type.Literal("spirit_niche_repair"),
+    x: Type.Integer(),
+    y: Type.Integer(),
+    z: Type.Integer(),
+    item_instance_id: Type.Integer({ minimum: 0, maximum: JS_SAFE_INTEGER_MAX }),
+  },
+  { additionalProperties: false },
+);
+export type SpiritNicheRepairRequestV1 = Static<typeof SpiritNicheRepairRequestV1>;
+
 export const SpiritNicheGazeRequestV1 = Type.Object(
   {
     v: Type.Literal(1),
@@ -1041,6 +1054,7 @@ export const ClientRequestV1 = Type.Union([
   CoffinEnterRequestV1,
   CoffinLeaveRequestV1,
   SpiritNichePlaceRequestV1,
+  SpiritNicheRepairRequestV1,
   SpiritNicheGazeRequestV1,
   SpiritNicheMarkCoordinateRequestV1,
   SpiritNicheActivateGuardianRequestV1,

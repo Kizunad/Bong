@@ -93,6 +93,7 @@ import {
   TradeOfferRequestV1,
   TradeOfferResponseRequestV1,
   SelfAntidoteRequestV1,
+  SpiritNicheRepairRequestV1,
   UseQuickSlotRequestV1,
   UseLifeCoreRequestV1,
   ZhenfaDisarmRequestV1,
@@ -630,6 +631,7 @@ export const SCHEMA_REGISTRY = {
   clientRequestCoffinPlaceV1: CoffinPlaceRequestV1,
   clientRequestCoffinEnterV1: CoffinEnterRequestV1,
   clientRequestCoffinLeaveV1: CoffinLeaveRequestV1,
+  clientRequestSpiritNicheRepairV1: SpiritNicheRepairRequestV1,
   clientRequestSparringInviteResponseV1: SparringInviteResponseRequestV1,
   clientRequestTradeOfferV1: TradeOfferRequestV1,
   clientRequestTradeOfferResponseV1: TradeOfferResponseRequestV1,
@@ -1099,6 +1101,8 @@ export const GENERATED_SCHEMA_FILES = {
   "client-request-coffin-place-v1.json": SCHEMA_REGISTRY.clientRequestCoffinPlaceV1,
   "client-request-coffin-enter-v1.json": SCHEMA_REGISTRY.clientRequestCoffinEnterV1,
   "client-request-coffin-leave-v1.json": SCHEMA_REGISTRY.clientRequestCoffinLeaveV1,
+  "client-request-spirit-niche-repair-v1.json":
+    SCHEMA_REGISTRY.clientRequestSpiritNicheRepairV1,
   "client-request-trade-offer-v1.json": SCHEMA_REGISTRY.clientRequestTradeOfferV1,
   "client-request-trade-offer-response-v1.json":
     SCHEMA_REGISTRY.clientRequestTradeOfferResponseV1,

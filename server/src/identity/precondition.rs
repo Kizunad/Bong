@@ -70,6 +70,7 @@ mod tests {
             placed_at_tick: 1,
             revealed,
             revealed_by: None,
+            is_damaged: false,
             guardians: Vec::new(),
         });
     }

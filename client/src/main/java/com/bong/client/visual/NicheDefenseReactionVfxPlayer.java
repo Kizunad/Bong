@@ -2,6 +2,7 @@ package com.bong.client.visual;
 
 import java.util.List;
 
+@Deprecated(forRemoval = true)
 public final class NicheDefenseReactionVfxPlayer {
     private NicheDefenseReactionVfxPlayer() {
     }
