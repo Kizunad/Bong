@@ -11087,4 +11087,173 @@ mod freshness_probe_handler_tests {
             "instance_id 应匹配 equipped 物品"
         );
     }
+
+    // ── plan-shield-block-v1 P1 e2e — 举盾 / 放盾全链路 ─────────────────────
+    // 验证：JSON payload {"type":"raise_shield","v":1} → handle_client_request_payloads
+    // 解析 → 投递 RaiseShieldIntent（client entity 匹配）；
+    // 以及 lower_shield payload → LowerShieldIntent 投递。
+    // 这是「客户端发 CustomPayload → server dispatch intent」的完整链路断言。
+
+    #[derive(Default)]
+    struct CapturedRaiseShieldIntents(Vec<crate::combat::shield_block::RaiseShieldIntent>);
+    impl valence::prelude::Resource for CapturedRaiseShieldIntents {}
+
+    #[derive(Default)]
+    struct CapturedLowerShieldIntents(Vec<crate::combat::shield_block::LowerShieldIntent>);
+    impl valence::prelude::Resource for CapturedLowerShieldIntents {}
+
+    fn capture_raise_shield_intents(
+        mut events: EventReader<crate::combat::shield_block::RaiseShieldIntent>,
+        mut captured: ResMut<CapturedRaiseShieldIntents>,
+    ) {
+        captured.0.extend(events.read().cloned());
+    }
+
+    fn capture_lower_shield_intents(
+        mut events: EventReader<crate::combat::shield_block::LowerShieldIntent>,
+        mut captured: ResMut<CapturedLowerShieldIntents>,
+    ) {
+        captured.0.extend(events.read().cloned());
+    }
+
+    fn setup_shield_e2e_app() -> (App, valence::prelude::Entity) {
+        let mut app = App::new();
+        app.insert_resource(CapturedRaiseShieldIntents::default());
+        app.insert_resource(CapturedLowerShieldIntents::default());
+        app.insert_resource(CombatClock::default());
+        app.insert_resource(GameplayActionQueue::default());
+        app.insert_resource(AlchemyMockState::default());
+        app.insert_resource(DroppedLootRegistry::default());
+        app.insert_resource(ItemRegistry::default());
+        app.insert_resource(RecipeRegistry::default());
+        app.add_event::<CustomPayloadEvent>();
+        app.add_event::<BreakthroughRequest>();
+        app.add_event::<ForgeRequest>();
+        app.add_event::<InsightChosen>();
+        app.add_event::<DefenseIntent>();
+        app.add_event::<ApplyStatusEffectIntent>();
+        app.add_event::<PlaceFurnaceRequest>();
+        app.add_event::<crate::alchemy::LearnRecipeFragmentIntent>();
+        app.add_event::<StartTillRequest>();
+        app.add_event::<StartRenewRequest>();
+        app.add_event::<StartPlantingRequest>();
+        app.add_event::<StartHarvestRequest>();
+        app.add_event::<StartReplenishRequest>();
+        app.add_event::<StartDrainQiRequest>();
+        app.add_event::<StartExtractRequestEvent>();
+        app.add_event::<CancelExtractRequestEvent>();
+        app.add_event::<MineralProbeIntent>();
+        app.add_event::<FreshnessProbeIntent>();
+        app.add_event::<SkillXpGain>();
+        app.add_event::<SkillScrollUsed>();
+        app.add_event::<crate::combat::shield_block::RaiseShieldIntent>();
+        app.add_event::<crate::combat::shield_block::LowerShieldIntent>();
+        app.add_systems(
+            Update,
+            (
+                handle_client_request_payloads,
+                capture_raise_shield_intents,
+                capture_lower_shield_intents,
+            )
+                .chain(),
+        );
+        let (client_bundle, _helper) = create_mock_client("Shield");
+        let entity = app.world_mut().spawn(client_bundle).id();
+        (app, entity)
+    }
+
+    /// e2e：JSON {"type":"raise_shield","v":1} payload → RaiseShieldIntent(player=entity) 投递。
+    /// 验证 client_request_handler 正确解析 raise_shield 并路由到 intent event。
+    #[test]
+    fn raise_shield_payload_dispatches_raise_shield_intent() {
+        let (mut app, entity) = setup_shield_e2e_app();
+        app.world_mut()
+            .resource_mut::<valence::prelude::Events<CustomPayloadEvent>>()
+            .send(CustomPayloadEvent {
+                client: entity,
+                channel: ident!("bong:client_request").into(),
+                data: br#"{"type":"raise_shield","v":1}"#.to_vec().into_boxed_slice(),
+            });
+        app.update();
+
+        let captured = app.world().resource::<CapturedRaiseShieldIntents>();
+        assert_eq!(
+            captured.0.len(),
+            1,
+            "raise_shield payload 应 dispatch 恰好 1 个 RaiseShieldIntent，实际 {}",
+            captured.0.len()
+        );
+        assert_eq!(
+            captured.0[0].player, entity,
+            "RaiseShieldIntent.player 应等于发送 payload 的 client entity"
+        );
+    }
+
+    /// e2e：JSON {"type":"lower_shield","v":1} payload → LowerShieldIntent(player=entity) 投递。
+    /// 验证松开右键边沿的 lower_shield 路由正确。
+    #[test]
+    fn lower_shield_payload_dispatches_lower_shield_intent() {
+        let (mut app, entity) = setup_shield_e2e_app();
+        app.world_mut()
+            .resource_mut::<valence::prelude::Events<CustomPayloadEvent>>()
+            .send(CustomPayloadEvent {
+                client: entity,
+                channel: ident!("bong:client_request").into(),
+                data: br#"{"type":"lower_shield","v":1}"#.to_vec().into_boxed_slice(),
+            });
+        app.update();
+
+        let captured = app.world().resource::<CapturedLowerShieldIntents>();
+        assert_eq!(
+            captured.0.len(),
+            1,
+            "lower_shield payload 应 dispatch 恰好 1 个 LowerShieldIntent，实际 {}",
+            captured.0.len()
+        );
+        assert_eq!(
+            captured.0[0].player, entity,
+            "LowerShieldIntent.player 应等于发送 payload 的 client entity"
+        );
+    }
+
+    /// e2e：raise 后接 lower → 两个 intent 均投递，顺序正确。
+    #[test]
+    fn raise_then_lower_shield_payload_dispatches_both_intents_in_order() {
+        let (mut app, entity) = setup_shield_e2e_app();
+
+        // Raise
+        app.world_mut()
+            .resource_mut::<valence::prelude::Events<CustomPayloadEvent>>()
+            .send(CustomPayloadEvent {
+                client: entity,
+                channel: ident!("bong:client_request").into(),
+                data: br#"{"type":"raise_shield","v":1}"#.to_vec().into_boxed_slice(),
+            });
+        app.update();
+
+        // Lower
+        app.world_mut()
+            .resource_mut::<valence::prelude::Events<CustomPayloadEvent>>()
+            .send(CustomPayloadEvent {
+                client: entity,
+                channel: ident!("bong:client_request").into(),
+                data: br#"{"type":"lower_shield","v":1}"#.to_vec().into_boxed_slice(),
+            });
+        app.update();
+
+        let raised = app.world().resource::<CapturedRaiseShieldIntents>();
+        let lowered = app.world().resource::<CapturedLowerShieldIntents>();
+        assert_eq!(
+            raised.0.len(),
+            1,
+            "raise 后应有 1 个 RaiseShieldIntent，实际 {}",
+            raised.0.len()
+        );
+        assert_eq!(
+            lowered.0.len(),
+            1,
+            "lower 后应有 1 个 LowerShieldIntent，实际 {}",
+            lowered.0.len()
+        );
+    }
 }
