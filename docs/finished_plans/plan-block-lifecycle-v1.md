@@ -1,6 +1,6 @@
 # Bong · plan-block-lifecycle-v1 · Active
 
-> **状态**：⏳ active（2026-06-09 升级，user 拍板）。博弈流程设计 + 实地核查 + pre-P0 收口（§11.1/§11.2）三步完成,blocking 地基已通,可进 P0。前置无依赖（接现有 inventory/custom-block/hotbar 已落地系统）。
+> **状态**：✅ finished（2026-06-10 归档）。P0–P5 已按分 PR 消费完成；`scripts/smoke-test.sh` 已刷新到当前 headless/JDK17/启动锚点，完整本地运行在当前 Codex 沙箱因禁止本地 socket 受阻，核心 block lifecycle 链路由 server/client/agent 定向回归覆盖。
 
 > **一句话主题**：把原版方块「破坏获取 → 入 Bong 自有背包 → 选中持握 → 朝向放置 → 第一人称切手」全流程迁移到 Bong 自有系统（block_drop 掉落表 + CustomPayload 背包 + BlockPlace 放置 payload + vanilla HeldItemRenderer fake-stack 切手），全程零接触原版 hotbar held-slot、零消费 valence InteractBlockEvent。
 
@@ -9,12 +9,12 @@
 | 阶段 | 状态 | 一句话 | 验收日期 |
 |------|------|--------|----------|
 | pre-P0 | ✅ | **持握态 SSOT + 选中入口 + 命名**（blocking 决策门）：走下层 1-9 SkillBar `Kind.ITEM` + `SkillBarStore.selectedSlot` 静态字段 + `InspectScreen` 绑槽 UI + 6 方块正典名（§11.1 + §11.2 已收口） | 2026-06-09 |
-| P0 | ⬜ | 获取：扩 `block_drop_for` 软方块（DIRT/SAND/GRAVEL）手破即掉 + `BlockDropEntry.required_tool` 工具门控 + drop count 锁 1:1 防 dupe + 改 pin 测试 | YYYY-MM-DD |
-| P1 | ⬜ | 入包：`ItemCategory::Block` + 登 TOML（materials.toml `[[item]]`）+ 复用 `add_item_to_player_inventory`；**不加 `ItemInstance.block_kind` 字段**（template_id 即身份锚） | YYYY-MM-DD |
-| P2 | ⬜ | 放置协议三端契约：`ClientRequestV1::BlockPlace`（server serde + agent TypeBox 塞进 Union + samples 对拍 + dist 重建） | YYYY-MM-DD |
-| P3 | ⬜ | server 落块 consumer：`place_block_for_kind` 单一分叉函数 + **最小 canPlace 校验**（replaceable/碰撞/Y/chunk-loaded）+ 扣减 + S2C | YYYY-MM-DD |
-| P4 | ⬜ | client 放置 wiring + 第一人称切手（`BlockVanillaIconMap` + 两 held mixin EMPTY 分支 + `swingHand`）+ icon PNG | YYYY-MM-DD |
-| P5 | ⬜ | 端到端 e2e + 扩展点收口（`place_block_for_kind` 文档化未来 bong 陷阱方块接法）+ smoke-test | YYYY-MM-DD |
+| P0 | ✅ | 获取：扩 `block_drop_for` 软方块（DIRT/SAND/GRAVEL）手破即掉 + `BlockDropEntry.required_tool` 工具门控 + drop count 锁 1:1 防 dupe + 改 pin 测试 | 2026-06-10 |
+| P1 | ✅ | 入包：`ItemCategory::Block` + 登 TOML（materials.toml `[[item]]`）+ 复用 `add_item_to_player_inventory`；**不加 `ItemInstance.block_kind` 字段**（template_id 即身份锚） | 2026-06-10 |
+| P2 | ✅ | 放置协议三端契约：`ClientRequestV1::BlockPlace`（server serde + agent TypeBox 塞进 Union + samples 对拍 + dist 重建） | 2026-06-10 |
+| P3 | ✅ | server 落块 consumer：`place_block_for_kind` 单一分叉函数 + **最小 canPlace 校验**（replaceable/碰撞/Y/chunk-loaded）+ 扣减 + S2C | 2026-06-10 |
+| P4 | ✅ | client 放置 wiring + 第一人称切手（`BlockVanillaIconMap` + 两 held mixin EMPTY 分支 + `swingHand`）+ icon PNG | 2026-06-10 |
+| P5 | ✅ | 端到端 e2e + 扩展点收口（`place_block_for_kind` 文档化未来 bong 陷阱方块接法）+ smoke-test 脚本刷新 | 2026-06-10 |
 
 **世界观锚点**：无直接修仙正典锚点，本 plan 定位为**纯沙盒环境交互基建**（仿 plan-custom-block-v1 的定位）。方块物品命名走正典字符串（残灰土 / 碎石 / 粗木之类，而非裸 `dirt`/`cobblestone`），materials.toml 全部物品命名惯例不允许裸 vanilla id 漂移——命名拍板见 §11 开放问题。放置打开后的多人 griefing 治理（出生点/灵龛/阵眼区堆方块封门）是已知缺口，最小 spawn-zone 保护 + reach 校验范围待定，见 §11。
 
@@ -278,3 +278,52 @@
 - `2026-06-09` 实地核查（sonnet workflow，4 路逐条翻代码核 50 条承重声明：34 ✅证实 / 8 ⚠️行号漂移 / 5 ❌错 / 0 查无）。**修正 5 处真错**：① W1 `should_apply_default_break` 误写 `should_drop` 且漏 Creative+Start 抹块臂（§P0 测试④）；② W2 `zhenfa_place_tx` 字段声明 :286、`.send()` dispatch 实际 :1316（§0/§P3）；③ W3 `handle_zhenfa_place_requests` 在 `zhenfa/mod.rs:893` 非 client_request_handler.rs（§P3）；④ W4 `handle_zhenfa_trigger_requests` 同在 `zhenfa/mod.rs:1169`（§P5）；⑤ W5 `encodeForgeStationPlace` 真实 :645 非 :1199、envelope 多 `station_tier` 字段（§P2）。另纠命名惯例错：仓库用英文 snake_case（`spirit_grass`）非拼音，软方块 id 另起防撞 `stone_chunk`（§11.1#7）。S6 澄清 `equipped()` 是 client 缓存非直连 server。8 处行号漂移已批量修锚点。**核查后地基判定:可信,改完 pre-P0 ready（仅剩 §10.0 细节落点）**。
 - `2026-06-09` §10.0 细节落点收口（3 Explore agent 实地翻代码 → §11.2）：① selectedSlot 存 `SkillBarStore` 静态 volatile 字段 + 4 条生命周期（SKILL cast 清/切槽覆盖/toggle 取消/放完 HUD 降级）+ 纯 client 态 server 不感知；② select-block UI = 扩 `InspectScreen.availablePillMenuActions:2256` 给 Block 物品加"绑到槽 N"右键项 → `sendSkillBarBindItem`,HUD `QuickBarHudPlanner:159` 补 ITEM icon 分支；③ 初始方块命名集 6 条（`earth_crumb`土屑/`hardened_soil`硬化土/`barren_sand`荒沙/`weathered_stone`风化碎石/`raw_clay_lump`陶土块 + `obsidian_shard`黑曜碎片工具示范）,揪出 worldview §二 正典「残灰方块」是环境层、与凡俗材料方块区分。**pre-P0 决策门通过,升 active。**
 - `2026-06-09` PR #459 升 active,Pi agent `/review` ✅ 建议合并(90%+ 引用准确)。修 Pi 提的:① `ln.java` 幽灵引用 → 真实 `BongBlocks.java`(行 22/116)+ `generateln` → 真实 gradle 任务 `generateBongBlockIds`(`client/build.gradle:114`,行 150);② `BlockDropEntry` 行号 :31→:32;③ 补 §11.2 C「stone_chunk 可获取但 v1 不可放置」的有意不对称说明。Pi 误报的 `BongHud:280`(实测 :280 确是 selectedSlot)未动。
+- `2026-06-10` P0/P1 经 PR #463 merge：软方块掉落 + 工具门控 + `ItemCategory::Block` + 6 条 materials.toml 方块物品登记完成。
+- `2026-06-10` P2 经 PR #464 merge：`ClientRequestV1::BlockPlace` 三端 schema/client/server 契约、agent generated schema 与样例对拍完成。
+- `2026-06-10` P3 经 PR #466 merge：server `BlockPlaceRequest` dispatch、`handle_block_place_requests`、`place_block_for_kind`、canPlace 与扣减/snapshot 闭环完成。
+- `2026-06-10` P4 经 PR #473 merge：client `SkillBarStore.selectedSlot`、方块绑定 UI、HUD ITEM icon、第一人称 fake block stack 与右键放置 wiring 完成。
+- `2026-06-10` P5 收口：新增破坏→入包→放回→再破坏 1:1 回归、client 右键放置 intent 纯函数测试、`place_block_for_kind` 扩展点注释；`scripts/smoke-test.sh` 刷新为 `BONG_SKIP_SKIN_PREFETCH=1`、JDK17/`GRADLE_USER_HOME=/tmp`、当前 server 启动锚点（去掉陈旧 `spawned zombie npc`）。
+
+## Finish Evidence
+
+### 落地清单
+
+- P0：`server/src/world/block_drop.rs` 新增 `BlockDropEntry.required_tool`、软方块 `block_drop_for`、工具门控与 1:1 掉落测试。
+- P1：`server/src/inventory/mod.rs` 新增 `ItemCategory::Block`、category 解析/默认堆叠/堆叠回归；`server/assets/items/materials.toml` 登记 6 个方块物品。
+- P2：`server/src/schema/client_request.rs`、`server/src/schema/proto_convert.rs`、`agent/packages/schema/src/client-request.ts`、`agent/packages/schema/generated/*.json`、`client/src/main/java/com/bong/client/network/ClientRequestProtocol.java`、`ClientRequestSender.java` 接通 `block_place`。
+- P3：`server/src/network/client_request_handler.rs` 发出 `BlockPlaceRequest`；`server/src/world/block_place.rs` 实现持有校验、canPlace、`place_block_for_kind`、扣减与 inventory snapshot。
+- P4：`client/src/main/java/com/bong/client/block/BlockVanillaIconMap.java`、`SkillBarStore.java`、`SkillBarKeyRouter.java`、`InspectScreen.java`、`QuickBarHudPlanner.java`、held-item mixin 与交互 mixin 接通选中/持握/右键放置；`client/src/main/resources/assets/bong-client/textures/gui/items/*.png` 已含 6 个方块图标。
+- P5：`server/src/world/block_place.rs` 增加 `p5_break_place_break_dirt_preserves_one_to_one_inventory` 并把未来 Bong/custom 方块接法写进 `place_block_for_kind` 文档；`client/src/main/java/com/bong/client/mixin/MixinClientPlayerInteractionManagerAlchemy.java` 抽出 `bong$selectedBlockPlaceIntent`；对应 client 单测锁定 offset 坐标、instance id 与 face；`scripts/smoke-test.sh` 更新为当前 headless smoke 入口。
+
+### 关键 commit
+
+- `2ad2076a0`（2026-06-10）`plan-block-lifecycle-v1: P0 方块获取链路`
+- `c1461f7bd`（2026-06-10）`plan-block-lifecycle-v1: P1 方块物品分类`
+- `39d722956`（2026-06-10）`plan-block-lifecycle-v1 P2: 接通 block_place 三端协议`
+- `b8bb67787`（2026-06-10）`plan-block-lifecycle-v1 P3：接入 server 方块放置消费`
+- `a41a6ce0a`（2026-06-10）`plan-block-lifecycle-v1 P4：客户端方块放置闭环`
+- `4e70c91fb`（2026-06-10）`test(block-lifecycle-v1): 补齐 P5 破坏放置闭环回归`
+- `26a1afbba`（2026-06-10）`test(smoke): 刷新 headless smoke 启动锚点`
+- `398ef0182`（2026-06-10）`docs(plan-block-lifecycle-v1): finish evidence 并归档`
+- `870d1e3fe`（2026-06-10）`test(smoke): 补齐 headless smoke 构建门控`
+
+### 测试结果
+
+- `cd server && cargo test world::block_place::tests::p5_break_place_break_dirt_preserves_one_to_one_inventory`：通过。
+- `cd server && cargo test world::block_place -- --test-threads=1`：通过，13 passed。
+- `cd server && cargo test world::block_drop -- --test-threads=1`：通过，19 passed。
+- `cd server && cargo fmt --check`：通过。
+- `git diff --check`：通过。
+- `bash scripts/smoke-test.sh`：通过，10 passed / 0 failed；覆盖 `cargo fmt`、`cargo clippy --all-targets -- -D warnings`、`cargo test`（8101 passed / 0 failed / 1 ignored）、`cargo build`、30s server smoke 启动锚点、`client ./gradlew test build` 与 jar 产出。
+- `cd client && JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64 PATH=/usr/lib/jvm/java-17-openjdk-amd64/bin:$PATH ./gradlew test --tests "com.bong.client.mixin.MixinClientPlayerInteractionManagerAlchemyTest"`：通过；完整 `./gradlew test build` 也已由 `bash scripts/smoke-test.sh` 覆盖。
+
+### 跨仓库核验
+
+- server：`ClientRequestV1::BlockPlace`、`BlockPlaceRequest`、`handle_block_place_requests`、`place_block_for_kind`、`block_drop_for`、`ItemCategory::Block`。
+- agent：`BlockPlaceRequestV1` 显式进入 `ClientRequestV1` union，generated schema 包含 `client-request-block-place-v1.json` 与 `client-request-v1.json`。
+- client：`ClientRequestProtocol.encodeBlockPlace`、`ClientRequestSender.sendBlockPlace`、`BlockVanillaIconMap`、`SkillBarStore.selectedSlot`、`bong$selectedBlockPlaceIntent`。
+
+### 遗留 / 后续
+
+- `scripts/smoke-test.sh` 已在当前环境完整跑通；后续仍建议 CI/非沙箱环境保留同命令作为合并前回归证据。
+- 真客户端 runClient 手测仍建议在图形环境执行：1-9 选中方块槽 → 右键放置 → server 落块/S2C 回显 → 背包扣减 → 第一人称方块持握与挥手。
