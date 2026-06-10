@@ -11000,6 +11000,7 @@ cols = 4
         let path = PathBuf::from("test_shield.toml");
         let raw = ItemTemplateToml {
             id: "bad_shield_no_spec".to_string(),
+            placeable: None,
             name: "无规格盾".to_string(),
             category: "shield".to_string(),
             grid_w: 1,
@@ -11042,6 +11043,7 @@ cols = 4
         let path = PathBuf::from("test_sword_with_shield_spec.toml");
         let raw = ItemTemplateToml {
             id: "bad_sword_with_shield_spec".to_string(),
+            placeable: None,
             name: "剑+盾规格冲突".to_string(),
             category: "weapon".to_string(),
             grid_w: 1,

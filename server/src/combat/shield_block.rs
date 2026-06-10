@@ -1745,6 +1745,7 @@ mod tests {
             "bone_shield".to_string(),
             ItemTemplate {
                 id: "bone_shield".to_string(),
+                placeable: None,
                 display_name: "骨盾".to_string(),
                 category: ItemCategory::Shield,
                 max_stack_count: 1,
