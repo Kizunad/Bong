@@ -144,8 +144,8 @@ use crate::skill::config::{
 use crate::skill::events::{SkillScrollUsed, SkillXpGain, XpGainSource};
 use crate::social::events::{
     SparringInviteResponseEvent, SparringInviteResponseKind, SpiritNicheActivateGuardianRequest,
-    SpiritNicheCoordinateRevealRequest, SpiritNichePlaceRequest, SpiritNicheRevealSource,
-    TradeOfferRequest, TradeOfferResponseEvent,
+    SpiritNicheCoordinateRevealRequest, SpiritNichePlaceRequest, SpiritNicheRepairRequest,
+    SpiritNicheRevealSource, TradeOfferRequest, TradeOfferResponseEvent,
 };
 use crate::world::block_place::BlockPlaceRequest;
 use crate::world::dimension::{CurrentDimension, DimensionKind};
@@ -271,6 +271,7 @@ pub struct ClientRequestDispatchParams<'w> {
     pub consecration_inject_tx: Option<ResMut<'w, Events<ConsecrationInject>>>,
     pub step_advance_tx: Option<ResMut<'w, Events<StepAdvance>>>,
     pub spirit_niche_place_tx: Option<ResMut<'w, Events<SpiritNichePlaceRequest>>>,
+    pub spirit_niche_repair_tx: Option<ResMut<'w, Events<SpiritNicheRepairRequest>>>,
     pub spirit_niche_coordinate_reveal_tx:
         Option<ResMut<'w, Events<SpiritNicheCoordinateRevealRequest>>>,
     pub spirit_niche_activate_guardian_tx:
@@ -457,6 +458,7 @@ pub fn handle_client_request_payloads(
             | ClientRequestV1::CoffinBreak { v, .. }
             | ClientRequestV1::CoffinMenuReclaim { v, .. }
             | ClientRequestV1::SpiritNichePlace { v, .. }
+            | ClientRequestV1::SpiritNicheRepair { v, .. }
             | ClientRequestV1::SpiritNicheGaze { v, .. }
             | ClientRequestV1::SpiritNicheMarkCoordinate { v, .. }
             | ClientRequestV1::SpiritNicheActivateGuardian { v, .. }
@@ -934,6 +936,31 @@ pub fn handle_client_request_payloads(
                     continue;
                 };
                 spirit_niche_place_tx.send(SpiritNichePlaceRequest {
+                    player: ev.client,
+                    pos: [x, y, z],
+                    item_instance_id: Some(item_instance_id),
+                    tick: combat_clock.tick,
+                });
+            }
+            ClientRequestV1::SpiritNicheRepair {
+                x,
+                y,
+                z,
+                item_instance_id,
+                ..
+            } => {
+                tracing::info!(
+                    "[bong][network][social] spirit_niche_repair entity={:?} pos=[{x},{y},{z}] instance={item_instance_id}",
+                    ev.client
+                );
+                let Some(spirit_niche_repair_tx) = dispatch.spirit_niche_repair_tx.as_deref_mut()
+                else {
+                    tracing::warn!(
+                        "[bong][network] dropped spirit_niche_repair because SpiritNicheRepairRequest event resource is missing"
+                    );
+                    continue;
+                };
+                spirit_niche_repair_tx.send(SpiritNicheRepairRequest {
                     player: ev.client,
                     pos: [x, y, z],
                     item_instance_id: Some(item_instance_id),
@@ -2975,6 +3002,11 @@ mod tests {
     impl valence::prelude::Resource for CapturedSpiritNichePlaces {}
 
     #[derive(Default)]
+    struct CapturedSpiritNicheRepairs(Vec<SpiritNicheRepairRequest>);
+
+    impl valence::prelude::Resource for CapturedSpiritNicheRepairs {}
+
+    #[derive(Default)]
     struct CapturedSpiritNicheCoordinateReveals(Vec<SpiritNicheCoordinateRevealRequest>);
 
     impl valence::prelude::Resource for CapturedSpiritNicheCoordinateReveals {}
@@ -3057,6 +3089,13 @@ mod tests {
     fn capture_spirit_niche_places(
         mut events: EventReader<SpiritNichePlaceRequest>,
         mut captured: ResMut<CapturedSpiritNichePlaces>,
+    ) {
+        captured.0.extend(events.read().cloned());
+    }
+
+    fn capture_spirit_niche_repairs(
+        mut events: EventReader<SpiritNicheRepairRequest>,
+        mut captured: ResMut<CapturedSpiritNicheRepairs>,
     ) {
         captured.0.extend(events.read().cloned());
     }
@@ -3446,6 +3485,7 @@ mod tests {
         app.add_event::<PlaceFurnaceRequest>();
         app.add_event::<crate::alchemy::LearnRecipeFragmentIntent>();
         app.add_event::<SpiritNichePlaceRequest>();
+        app.add_event::<SpiritNicheRepairRequest>();
         app.add_event::<SpiritNicheCoordinateRevealRequest>();
         app.add_event::<CoffinOpenRequest>();
         app.add_event::<crate::coffin::CoffinBreakRequest>();
@@ -4710,6 +4750,39 @@ mod tests {
         assert_eq!(captured.0[0].pos, [11, 64, 10]);
         assert_eq!(captured.0[0].item_instance_id, Some(4242));
         assert_eq!(captured.0[0].tick, 88);
+    }
+
+    #[test]
+    fn spirit_niche_repair_request_emits_repair_intent() {
+        let mut app = App::new();
+        app.insert_resource(CapturedSpiritNicheRepairs::default());
+        register_request_app(&mut app);
+        app.insert_resource(CombatClock { tick: 90 });
+        app.add_systems(
+            Update,
+            capture_spirit_niche_repairs.after(handle_client_request_payloads),
+        );
+
+        let (client_bundle, _helper) = create_mock_client("Azure");
+        let entity = app.world_mut().spawn(client_bundle).id();
+        app.world_mut()
+            .resource_mut::<valence::prelude::Events<CustomPayloadEvent>>()
+            .send(CustomPayloadEvent {
+                client: entity,
+                channel: ident!("bong:client_request").into(),
+                data: br#"{"type":"spirit_niche_repair","v":1,"x":11,"y":64,"z":10,"item_instance_id":4242}"#
+                    .to_vec()
+                    .into_boxed_slice(),
+            });
+
+        app.update();
+
+        let captured = app.world().resource::<CapturedSpiritNicheRepairs>();
+        assert_eq!(captured.0.len(), 1);
+        assert_eq!(captured.0[0].player, entity);
+        assert_eq!(captured.0[0].pos, [11, 64, 10]);
+        assert_eq!(captured.0[0].item_instance_id, Some(4242));
+        assert_eq!(captured.0[0].tick, 90);
     }
 
     #[test]

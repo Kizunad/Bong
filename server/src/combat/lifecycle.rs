@@ -1290,7 +1290,8 @@ fn revive_lifecycle(
     ) {
         staged_lifecycle.fortune_remaining = staged_lifecycle.fortune_remaining.saturating_sub(1);
     }
-    staged_lifecycle.revive(now_tick);
+    let weakened_multiplier = damaged_spawn_anchor_weakened_multiplier(lifecycle);
+    staged_lifecycle.revive_with_weakened_multiplier(now_tick, weakened_multiplier);
 
     let mut staged_cultivation = cultivation.as_ref().map(|value| (**value).clone());
     let mut staged_meridians = meridians.as_ref().map(|value| (**value).clone());
@@ -1341,7 +1342,7 @@ fn revive_lifecycle(
     }
 
     lifecycle.fortune_remaining = staged_lifecycle.fortune_remaining;
-    lifecycle.revive(now_tick);
+    lifecycle.revive_with_weakened_multiplier(now_tick, weakened_multiplier);
     if let (Some(mut cultivation), Some(staged_cultivation)) = (cultivation, staged_cultivation) {
         *cultivation = staged_cultivation;
     }
@@ -1380,6 +1381,14 @@ fn revive_lifecycle(
 
     revived.send(PlayerRevived { entity });
     true
+}
+
+fn damaged_spawn_anchor_weakened_multiplier(lifecycle: &Lifecycle) -> u64 {
+    if lifecycle.spawn_anchor.is_some() && lifecycle.spawn_anchor_damaged {
+        2
+    } else {
+        1
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1926,7 +1935,7 @@ mod tests {
     use crate::combat::anticheat::AntiCheatCounter;
     use crate::combat::components::{
         ActiveStatusEffect, BodyPart, DefenseWindow, StatusEffects, Wound, WoundKind,
-        IN_COMBAT_WINDOW_TICKS,
+        IN_COMBAT_WINDOW_TICKS, REVIVE_WEAKENED_TICKS,
     };
     use crate::combat::events::{
         ApplyStatusEffectIntent, DefenseIntent, RevivalActionIntent, RevivalActionKind,
@@ -4306,6 +4315,73 @@ mod tests {
         assert_eq!(
             without_shrine_pos,
             Position::new(crate::player::spawn_position()).get()
+        );
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn damaged_spawn_anchor_doubles_revive_weakened_duration() {
+        let mut app = App::new();
+        let (settings, root) = persistence_settings("revive-damaged-spawn-anchor");
+        app.insert_resource(settings);
+        app.insert_resource(CombatClock { tick: 42 });
+        app.add_event::<RevivalActionIntent>();
+        app.add_event::<PlayerRevived>();
+        app.add_event::<PlayerTerminated>();
+        app.add_event::<AscensionQuotaOpened>();
+        app.add_event::<VfxEventRequest>();
+        app.add_systems(Update, handle_revival_action_intents);
+
+        let damaged = app
+            .world_mut()
+            .spawn((
+                Position::new([99.0, 64.0, 99.0]),
+                Lifecycle {
+                    state: LifecycleState::AwaitingRevival,
+                    awaiting_decision: Some(RevivalDecision::Fortune { chance: 1.0 }),
+                    spawn_anchor: Some([11.0, 65.0, 10.0]),
+                    spawn_anchor_damaged: true,
+                    fortune_remaining: 1,
+                    ..Default::default()
+                },
+            ))
+            .id();
+        let intact = app
+            .world_mut()
+            .spawn((
+                Position::new([99.0, 64.0, 99.0]),
+                Lifecycle {
+                    state: LifecycleState::AwaitingRevival,
+                    awaiting_decision: Some(RevivalDecision::Fortune { chance: 1.0 }),
+                    spawn_anchor: Some([12.0, 65.0, 10.0]),
+                    spawn_anchor_damaged: false,
+                    fortune_remaining: 1,
+                    ..Default::default()
+                },
+            ))
+            .id();
+
+        for entity in [damaged, intact] {
+            app.world_mut().send_event(RevivalActionIntent {
+                entity,
+                action: RevivalActionKind::Reincarnate,
+                issued_at_tick: 42,
+            });
+        }
+        app.update();
+
+        let damaged_lifecycle = app.world().entity(damaged).get::<Lifecycle>().unwrap();
+        let intact_lifecycle = app.world().entity(intact).get::<Lifecycle>().unwrap();
+        assert_eq!(
+            damaged_lifecycle.weakened_until_tick.unwrap() - 42,
+            REVIVE_WEAKENED_TICKS * 2,
+            "damaged spirit niche spawn anchor should double revive weakened duration"
+        );
+        assert_eq!(
+            intact_lifecycle.weakened_until_tick.unwrap() - 42,
+            REVIVE_WEAKENED_TICKS,
+            "intact spirit niche spawn anchor should keep baseline revive weakened duration"
         );
 
         let _ = fs::remove_dir_all(root);

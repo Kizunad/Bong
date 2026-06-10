@@ -131,6 +131,14 @@ pub struct SpiritNichePlaceRequest {
     pub tick: u64,
 }
 
+#[derive(Debug, Clone, Event, Serialize, Deserialize)]
+pub struct SpiritNicheRepairRequest {
+    pub player: Entity,
+    pub pos: [i32; 3],
+    pub item_instance_id: Option<u64>,
+    pub tick: u64,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SpiritNicheRevealSource {

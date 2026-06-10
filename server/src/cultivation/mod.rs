@@ -1350,6 +1350,7 @@ mod tests {
                     last_death_tick: None,
                     last_revive_tick: None,
                     spawn_anchor: None,
+                    spawn_anchor_damaged: false,
                     near_death_deadline_tick: None,
                     awaiting_decision: None,
                     revival_decision_deadline_tick: None,
