@@ -5,6 +5,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 PASS=0
 FAIL=0
+export BONG_SKIP_SKIN_PREFETCH="${BONG_SKIP_SKIN_PREFETCH:-1}"
 
 pass() { echo "  ✓ $1"; ((PASS+=1)); }
 fail() { echo "  ✗ $1"; ((FAIL+=1)); }
@@ -21,15 +22,20 @@ if cargo test 2>&1 | tee /tmp/bong-test.log | tail -5; then pass "cargo test"; e
 echo ""
 echo "=== [3/4] Server smoke run (15s) ==="
 timeout 15s cargo run 2>&1 | tee /tmp/bong-smoke.log || true
-grep -q "tokio runtime started" /tmp/bong-smoke.log && pass "bridge startup" || fail "bridge startup"
-grep -q "creating overworld" /tmp/bong-smoke.log && pass "world creation" || fail "world creation"
-grep -q "registering player" /tmp/bong-smoke.log && pass "player system" || fail "player system"
-grep -q "spawned zombie npc" /tmp/bong-smoke.log && pass "npc spawn" || fail "npc spawn"
+grep -q "\[bong\]\[bridge\] tokio runtime started" /tmp/bong-smoke.log && pass "bridge startup" || fail "bridge startup"
+grep -q "\[bong\]\[world\] creating overworld test area" /tmp/bong-smoke.log && pass "world creation" || fail "world creation"
+grep -q "\[bong\]\[player\] registering player init/cleanup systems" /tmp/bong-smoke.log && pass "player system" || fail "player system"
+grep -q "\[bong\]\[redis\] connecting to" /tmp/bong-smoke.log && pass "redis bridge startup" || fail "redis bridge startup"
 
 echo ""
 echo "=== [4/4] Fabric client build ==="
 if [ -f "$ROOT/client/gradlew" ]; then
     cd "$ROOT/client"
+    if [ -d "/usr/lib/jvm/java-17-openjdk-amd64" ]; then
+        export JAVA_HOME="/usr/lib/jvm/java-17-openjdk-amd64"
+        export PATH="$JAVA_HOME/bin:$PATH"
+    fi
+    export GRADLE_USER_HOME="${GRADLE_USER_HOME:-/tmp/bong-gradle}"
     if ./gradlew test build 2>&1 | tail -10; then
         pass "gradlew test build"
         JAR=$(find build/libs -name "*.jar" -not -name "*-sources*" 2>/dev/null | head -1)
