@@ -494,6 +494,10 @@ public final class ClientRequestSender {
         dispatch(ClientRequestProtocol.encodeSupplyCoffinOpen(entityId));
     }
 
+    public static void sendWorkbenchOpen(int entityId) {
+        dispatch(ClientRequestProtocol.encodeWorkbenchOpen(entityId));
+    }
+
     // ─── plan-supply-coffin-loot-ui P1：外部容器 C2S ──────────────
 
     public static void sendExternalContainerMove(

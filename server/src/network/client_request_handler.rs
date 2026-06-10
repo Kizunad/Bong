@@ -307,6 +307,7 @@ pub struct ClientRequestDispatchParams<'w> {
         Option<ResMut<'w, crate::inventory::external_container::ExternalContainerRegistry>>,
     pub supply_coffin_open_tx:
         Option<ResMut<'w, Events<crate::supply_coffin::interact::SupplyCoffinOpenRequest>>>,
+    pub workbench_open_tx: Option<ResMut<'w, Events<crate::craft::WorkbenchOpenRequest>>>,
     // ─── plan-shield-block-v1 P1：持续举盾 intent ─────────────────────────
     pub raise_shield_tx: EventWriter<'w, RaiseShieldIntent>,
     pub lower_shield_tx: EventWriter<'w, LowerShieldIntent>,
@@ -537,6 +538,7 @@ pub fn handle_client_request_payloads(
             | ClientRequestV1::CraftStart { v, .. }
             | ClientRequestV1::CraftCancel { v }
             | ClientRequestV1::SupplyCoffinOpen { v, .. }
+            | ClientRequestV1::WorkbenchOpen { v, .. }
             | ClientRequestV1::ExternalContainerMove { v, .. }
             | ClientRequestV1::ExternalContainerClose { v, .. }
             | ClientRequestV1::RaiseShield { v }
@@ -2050,6 +2052,38 @@ pub fn handle_client_request_payloads(
                     );
                 }
             }
+            // ── 制作台 entity-based open（plan-workbench-place-runtime-v1 P2）──
+            ClientRequestV1::WorkbenchOpen { entity_id, .. } => {
+                tracing::info!(
+                    "[bong][network] client_request workbench_open entity={:?} target_id={entity_id}",
+                    ev.client
+                );
+                let Some(entity_manager) = combat_params.entity_manager.as_deref() else {
+                    tracing::warn!(
+                        "[bong][network] dropped workbench_open because EntityManager resource is missing"
+                    );
+                    continue;
+                };
+                let Some(workbench) = entity_manager.get_by_id(entity_id) else {
+                    tracing::debug!(
+                        "[bong][network] workbench_open rejected: no entity for protocol id {entity_id}"
+                    );
+                    if let Ok((_username, mut client)) = clients.get_mut(ev.client) {
+                        client.send_chat_message("§c[制作台] 目标不存在。");
+                    }
+                    continue;
+                };
+                if let Some(workbench_open_tx) = dispatch.workbench_open_tx.as_deref_mut() {
+                    workbench_open_tx.send(crate::craft::WorkbenchOpenRequest {
+                        client: ev.client,
+                        workbench,
+                    });
+                } else {
+                    tracing::warn!(
+                        "[bong][network] dropped workbench_open because WorkbenchOpenRequest event resource is missing"
+                    );
+                }
+            }
             // ── 外部容器 move / close ─────────────
             ClientRequestV1::ExternalContainerMove {
                 session_id,
@@ -3556,6 +3590,7 @@ mod tests {
         app.add_event::<CoffinOpenRequest>();
         app.add_event::<crate::coffin::CoffinBreakRequest>();
         app.add_event::<crate::coffin::CoffinMenuReclaimRequest>();
+        app.add_event::<crate::craft::WorkbenchOpenRequest>();
         app.add_event::<StartTillRequest>();
         app.add_event::<StartRenewRequest>();
         app.add_event::<StartPlantingRequest>();
@@ -3707,6 +3742,35 @@ mod tests {
         assert_eq!((request.x, request.y, request.z), (8, 64, 8));
         assert_eq!(request.item_instance_id, 4242);
         assert_eq!(request.target_face, TrapTargetFace::North);
+    }
+
+    #[test]
+    fn workbench_open_payload_requires_entity_manager_before_dispatch() {
+        let mut app = App::new();
+        register_request_app(&mut app);
+
+        let (client_bundle, _helper) = create_mock_client("Azure");
+        let client = app.world_mut().spawn(client_bundle).id();
+        app.world_mut()
+            .resource_mut::<valence::prelude::Events<CustomPayloadEvent>>()
+            .send(CustomPayloadEvent {
+                client,
+                channel: ident!("bong:client_request").into(),
+                data: br#"{"type":"workbench_open","v":1,"entity_id":42}"#
+                    .to_vec()
+                    .into_boxed_slice(),
+            });
+
+        app.update();
+
+        let events = app
+            .world()
+            .resource::<valence::prelude::Events<crate::craft::WorkbenchOpenRequest>>();
+        assert_eq!(
+            events.iter_current_update_events().count(),
+            0,
+            "workbench_open must not fabricate an ECS entity when EntityManager is unavailable"
+        );
     }
 
     fn assert_movement_action_yaw_forwarded(yaw_degrees: f32) {

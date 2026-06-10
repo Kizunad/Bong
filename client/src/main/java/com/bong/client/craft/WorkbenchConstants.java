@@ -3,23 +3,24 @@ package com.bong.client.craft;
 /**
  * plan-workbench-recipes-v1 P3.3 -- 制作台音效/VFX 规格常量。
  *
- * <p>定义 7 个 SFX 音效 ID 和 3 组 VFX 参数，供后续 audio/particle 系统接入使用。
- * 当前为纯常量定义（stub），实际播放由 SoundRecipePlayer / VfxPlayer 消费。</p>
+ * <p>放置/拆除/打开三项为 audio_recipe id，由 plan-workbench-place-runtime-v1 P2 接线。
+ * 制作过程 4 个 SFX 与 3 组 VFX 仍归 plan-workbench-recipes-v1 消费。</p>
  */
 public final class WorkbenchConstants {
     private WorkbenchConstants() {}
 
-    // ========== SFX 音效 ID 常量 (7 个) ==========
+    // ========== SFX 常量 ==========
 
     /** 放置制作台：木块重落 + 铁钉微响。pitch 0.9-1.1, volume 0.8。 */
-    public static final String SFX_PLACE = "bong:block.workbench.place";
+    public static final String SFX_PLACE = "workbench_place";
 
     /** 拆除制作台：木板裂响。pitch 0.8-1.0, volume 0.7。 */
-    public static final String SFX_BREAK = "bong:block.workbench.break";
+    public static final String SFX_BREAK = "workbench_break";
 
     /** 打开制作台：木盖推开声。pitch 1.0-1.2, volume 0.5。 */
-    public static final String SFX_OPEN = "bong:block.workbench.open";
+    public static final String SFX_OPEN = "workbench_open";
 
+    // 以下 4 条为制作 session 视听，非本 plan 范围。
     /** 开始制作：工具碰撞声。pitch 0.9-1.1, volume 0.6。 */
     public static final String SFX_CRAFT_START = "bong:craft.workbench.start";
 
@@ -32,7 +33,7 @@ public final class WorkbenchConstants {
     /** 制作失败：沉闷断裂声。pitch 0.7, volume 0.5。 */
     public static final String SFX_CRAFT_FAIL = "bong:craft.workbench.fail";
 
-    // ========== VFX 视觉效果规格常量 (3 组) ==========
+    // ========== VFX 视觉效果规格常量 (3 组，制作 session 视听，非本 plan 范围) ==========
 
     // --- 制作进行中 VFX ---
     /** 粒子颜色：丹砂红 #8B3A3A。 */

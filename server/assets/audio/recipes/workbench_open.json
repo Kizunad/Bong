@@ -1,0 +1,15 @@
+{
+  "id": "workbench_open",
+  "layers": [
+    {
+      "sound": "minecraft:block.barrel.open",
+      "volume": 0.5,
+      "pitch": 1.1,
+      "delay_ticks": 0
+    }
+  ],
+  "priority": 50,
+  "attenuation": "world_3d",
+  "category": "BLOCKS",
+  "bus": "ENVIRONMENT"
+}

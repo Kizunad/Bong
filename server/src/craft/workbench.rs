@@ -11,7 +11,7 @@
 
 use valence::prelude::{
     bevy_ecs, App, BlockPos, Client, Commands, Component, DVec3, DiggingEvent, Entity, Event,
-    EventReader, GameMode, Position, Query, Res, ResMut, Update, Username, With,
+    EventReader, Events, GameMode, Position, Query, Res, ResMut, Update, Username, With,
 };
 
 use crate::cultivation::components::Cultivation;
@@ -20,6 +20,7 @@ use crate::inventory::{
     InventoryInstanceIdAllocator, ItemRegistry, PlayerInventory, TemplateDroppedLootRequest,
 };
 use crate::network::agent_bridge::{payload_type_label, serialize_server_data_payload};
+use crate::network::audio_event_emit::{AudioRecipient, PlaySoundRecipeRequest, AUDIO_AREA_RADIUS};
 use crate::network::inventory_snapshot_emit::send_inventory_snapshot_to_client;
 use crate::network::{log_payload_build_error, send_server_data_payload};
 use crate::player::gameplay::GameplayTick;
@@ -59,6 +60,9 @@ pub const WORKBENCH_INTERACT_RANGE: f64 = 3.0;
 
 /// 制作台物品 template_id。
 pub const WORKBENCH_ITEM_TEMPLATE: &str = "workbench_item";
+pub const WORKBENCH_PLACE_AUDIO_RECIPE_ID: &str = "workbench_place";
+pub const WORKBENCH_BREAK_AUDIO_RECIPE_ID: &str = "workbench_break";
+pub const WORKBENCH_OPEN_AUDIO_RECIPE_ID: &str = "workbench_open";
 
 #[derive(Debug, Clone, Copy, Event)]
 pub struct WorkbenchOpenRequest {
@@ -113,6 +117,7 @@ pub fn handle_workbench_interact(
     mut clients: Query<&mut Client>,
     players: Query<&Position, With<Client>>,
     workbenches: Query<(&Position, &WorkbenchBlock)>,
+    mut audio_events: Option<ResMut<Events<PlaySoundRecipeRequest>>>,
 ) {
     for request in requests.read() {
         let Ok(player_pos) = players.get(request.client) else {
@@ -146,6 +151,11 @@ pub fn handle_workbench_interact(
             }
         };
         send_server_data_payload(&mut client, bytes.as_slice());
+        send_workbench_audio(
+            audio_events.as_deref_mut(),
+            WORKBENCH_OPEN_AUDIO_RECIPE_ID,
+            block_pos,
+        );
     }
 }
 
@@ -171,6 +181,7 @@ pub fn handle_workbench_break(
         With<Client>,
     >,
     workbenches: Query<(Entity, &Position, &WorkbenchBlock)>,
+    mut audio_events: Option<ResMut<Events<PlaySoundRecipeRequest>>>,
 ) {
     for event in digs.read() {
         let Ok((
@@ -189,7 +200,7 @@ pub fn handle_workbench_break(
         if !should_apply_default_break(event.state, *game_mode) {
             continue;
         }
-        let Some((workbench_entity, _, _workbench)) =
+        let Some((workbench_entity, workbench_position, _workbench)) =
             workbenches.iter().find(|(_, position, _)| {
                 workbench_block_pos(position)
                     == [event.position.x, event.position.y, event.position.z]
@@ -267,8 +278,45 @@ pub fn handle_workbench_break(
             workbench_entity,
         ) {
             tracing::error!("[bong][workbench] failed to break placeable workbench: {error}");
+        } else {
+            send_workbench_audio(
+                audio_events.as_deref_mut(),
+                WORKBENCH_BREAK_AUDIO_RECIPE_ID,
+                workbench_block_pos(workbench_position),
+            );
         }
     }
+}
+
+pub fn send_workbench_audio(
+    audio_events: Option<&mut Events<PlaySoundRecipeRequest>>,
+    recipe_id: &str,
+    block_pos: [i32; 3],
+) {
+    let Some(audio_events) = audio_events else {
+        return;
+    };
+    let origin = workbench_audio_origin(block_pos);
+    audio_events.send(PlaySoundRecipeRequest {
+        recipe_id: recipe_id.to_string(),
+        instance_id: 0,
+        pos: Some(block_pos),
+        flag: None,
+        volume_mul: 1.0,
+        pitch_shift: 0.0,
+        recipient: AudioRecipient::Radius {
+            origin,
+            radius: AUDIO_AREA_RADIUS,
+        },
+    });
+}
+
+pub fn workbench_audio_origin(block_pos: [i32; 3]) -> DVec3 {
+    DVec3::new(
+        f64::from(block_pos[0]) + 0.5,
+        f64::from(block_pos[1]) + 0.5,
+        f64::from(block_pos[2]) + 0.5,
+    )
 }
 
 pub fn workbench_block_pos(position: &Position) -> [i32; 3] {

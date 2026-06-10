@@ -2,15 +2,16 @@ use std::fmt;
 
 use valence::prelude::{
     bevy_ecs, App, BlockPos, BlockState, ChunkLayer, Client, Commands, Entity, Event, EventReader,
-    IntoSystemConfigs, Position, Query, Res, Update, Username,
+    Events, IntoSystemConfigs, Position, Query, Res, ResMut, Update, Username,
 };
 
-use crate::craft::handle_workbench_place;
+use crate::craft::{handle_workbench_place, send_workbench_audio, WORKBENCH_PLACE_AUDIO_RECIPE_ID};
 use crate::cultivation::components::Cultivation;
 use crate::inventory::{
     consume_item_instance_once, inventory_item_by_instance_borrow, ItemCategory, ItemRegistry,
     PlayerInventory,
 };
+use crate::network::audio_event_emit::PlaySoundRecipeRequest;
 use crate::network::inventory_snapshot_emit::send_inventory_snapshot_to_client;
 use crate::player::gameplay::GameplayTick;
 use crate::player::state::PlayerState;
@@ -92,6 +93,7 @@ pub fn handle_block_place_requests(
     mut inventories: Query<&mut PlayerInventory>,
     player_positions: Query<(&Position, Option<&CurrentDimension>)>,
     mut clients: Query<(&Username, &mut Client, &PlayerState, Option<&Cultivation>)>,
+    mut audio_events: Option<ResMut<Events<PlaySoundRecipeRequest>>>,
 ) {
     for req in requests.read() {
         let pos = BlockPos::new(req.x, req.y, req.z);
@@ -182,8 +184,16 @@ pub fn handle_block_place_requests(
                     .as_ref()
                     .map(|tick| tick.current_tick())
                     .unwrap_or(0);
-                place_placeable(kind, &mut commands, layer_entity, pos, req.client, now)
-                    .map(|entity| format!("entity={entity:?} kind={kind:?}"))
+                let placed =
+                    place_placeable(kind, &mut commands, layer_entity, pos, req.client, now);
+                if placed.is_ok() && kind == PlaceableBlockKind::Workbench {
+                    send_workbench_audio(
+                        audio_events.as_deref_mut(),
+                        WORKBENCH_PLACE_AUDIO_RECIPE_ID,
+                        [pos.x, pos.y, pos.z],
+                    );
+                }
+                placed.map(|entity| format!("entity={entity:?} kind={kind:?}"))
             }
         };
         match placement {
