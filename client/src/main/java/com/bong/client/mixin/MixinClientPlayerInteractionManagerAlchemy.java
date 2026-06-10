@@ -7,6 +7,7 @@ import com.bong.client.alchemy.state.AlchemyFurnaceStore;
 import com.bong.client.block.BlockPlaceIntentResolver;
 import com.bong.client.coffin.CoffinEnterIntentHandler;
 import com.bong.client.combat.SkillBarStore;
+import com.bong.client.craft.WorkbenchPlaceDust;
 import com.bong.client.combat.screen.ZhenfaLayoutScreen;
 import com.bong.client.entity.BongEntityModelKind;
 import com.bong.client.entity.BongModeledEntity;
@@ -35,6 +36,7 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 @Mixin(ClientPlayerInteractionManager.class)
 public abstract class MixinClientPlayerInteractionManagerAlchemy {
     private static final String MUNDANE_COFFIN_ITEM_ID = "mundane_coffin";
+    private static final String WORKBENCH_ITEM_ID = "workbench_item";
     private static final String WARNING_TRAP_ITEM_ID = "warning_trap";
     private static final String BLAST_TRAP_ITEM_ID = "blast_trap";
     private static final String SLOW_TRAP_ITEM_ID = "slow_trap";
@@ -117,6 +119,10 @@ public abstract class MixinClientPlayerInteractionManagerAlchemy {
             return;
         }
 
+        InventoryItem selectedBlockItem = BlockPlaceIntentResolver.selectedBlockItem(
+            SkillBarStore.selectedSlot(),
+            InventoryStateStore.snapshot()
+        );
         BlockPlaceIntentResolver.Intent blockPlace = BlockPlaceIntentResolver.selectedBlockPlaceIntent(
             SkillBarStore.selectedSlot(),
             InventoryStateStore.snapshot(),
@@ -125,6 +131,9 @@ public abstract class MixinClientPlayerInteractionManagerAlchemy {
         );
         if (blockPlace != null) {
             ClientRequestSender.sendBlockPlace(blockPlace.placePos(), blockPlace.instanceId(), blockPlace.face());
+            if (selectedBlockItem != null && WORKBENCH_ITEM_ID.equals(selectedBlockItem.itemId())) {
+                WorkbenchPlaceDust.spawn(client, blockPlace.placePos());
+            }
             player.swingHand(Hand.MAIN_HAND);
             cir.setReturnValue(ActionResult.SUCCESS);
             return;

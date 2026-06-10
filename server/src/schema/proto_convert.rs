@@ -3812,6 +3812,11 @@ impl From<&super::client_request::ClientRequestV1> for bong::client_request_enve
                     entity_id: *entity_id,
                 })
             }
+            ClientRequestV1::WorkbenchOpen { entity_id, .. } => {
+                Payload::WorkbenchOpen(bong::WorkbenchOpenReq {
+                    entity_id: *entity_id,
+                })
+            }
             // plan-shield-block-v1 P1 — 持续举盾 / 放盾 C2S
             ClientRequestV1::RaiseShield { .. } => Payload::RaiseShield(bong::RaiseShield {}),
             ClientRequestV1::LowerShield { .. } => Payload::LowerShield(bong::LowerShield {}),
@@ -4433,6 +4438,41 @@ mod tests {
                 entity_id: i32::MAX,
             },
         );
+    }
+
+    #[test]
+    fn c2s_workbench_open_roundtrip() {
+        c2s_encode_decode_roundtrip(
+            super::super::client_request::ClientRequestV1::WorkbenchOpen {
+                v: 1,
+                entity_id: 42,
+            },
+        );
+    }
+
+    #[test]
+    fn c2s_workbench_open_proto_roundtrip_asserts_variant_and_entity_id() {
+        use prost::Message;
+        let req = super::super::client_request::ClientRequestV1::WorkbenchOpen {
+            v: 1,
+            entity_id: 165,
+        };
+        let proto_payload = bong::client_request_envelope::Payload::from(&req);
+        let envelope = bong::ClientRequestEnvelope {
+            payload: Some(proto_payload),
+        };
+        let bytes = envelope.encode_to_vec();
+        let decoded = bong::ClientRequestEnvelope::decode(bytes.as_slice())
+            .expect("C2S WorkbenchOpen proto decode should succeed");
+        match decoded.payload {
+            Some(bong::client_request_envelope::Payload::WorkbenchOpen(open)) => {
+                assert_eq!(
+                    open.entity_id, 165,
+                    "WorkbenchOpen.entity_id should survive proto roundtrip"
+                );
+            }
+            other => panic!("expected WorkbenchOpen payload, got {other:?}"),
+        }
     }
 
     // ─── plan-coffin-tiers-v1 P3：延寿棺 C2S proto roundtrip ────────────────

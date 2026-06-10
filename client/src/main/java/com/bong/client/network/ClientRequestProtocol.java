@@ -1252,6 +1252,15 @@ public final class ClientRequestProtocol {
         return obj.toString();
     }
 
+    // ─── plan-workbench-place-runtime-v1 P2：workbench open (entity-based) ──
+
+    /** 玩家右键制作台实体，发送 entity_id 让 server 校验距离并打开制作 UI。 */
+    public static String encodeWorkbenchOpen(int entityId) {
+        JsonObject obj = envelope("workbench_open");
+        obj.addProperty("entity_id", entityId);
+        return obj.toString();
+    }
+
     // ─── plan-shield-block-v1 P1：盾牌格挡 C2S ───────────────────────
 
     /**

@@ -17,20 +17,20 @@ class WorkbenchConstantsTest {
 
     @Test
     void sfxPlaceId() {
-        assertEquals("bong:block.workbench.place", WorkbenchConstants.SFX_PLACE,
-            "放置制作台音效 ID 应为 bong:block.workbench.place");
+        assertEquals("workbench_place", WorkbenchConstants.SFX_PLACE,
+            "放置制作台应使用 audio_recipe id workbench_place");
     }
 
     @Test
     void sfxBreakId() {
-        assertEquals("bong:block.workbench.break", WorkbenchConstants.SFX_BREAK,
-            "拆除制作台音效 ID 应为 bong:block.workbench.break");
+        assertEquals("workbench_break", WorkbenchConstants.SFX_BREAK,
+            "拆除制作台应使用 audio_recipe id workbench_break");
     }
 
     @Test
     void sfxOpenId() {
-        assertEquals("bong:block.workbench.open", WorkbenchConstants.SFX_OPEN,
-            "打开制作台音效 ID 应为 bong:block.workbench.open");
+        assertEquals("workbench_open", WorkbenchConstants.SFX_OPEN,
+            "打开制作台应使用 audio_recipe id workbench_open");
     }
 
     @Test
@@ -128,11 +128,23 @@ class WorkbenchConstantsTest {
     // ---- SFX ID 格式验证 ----
 
     @Test
-    void allSfxIdsFollowBongNamespaceConvention() {
+    void runtimeSfxIdsAreAudioRecipeBasenames() {
         String[] ids = {
             WorkbenchConstants.SFX_PLACE,
             WorkbenchConstants.SFX_BREAK,
             WorkbenchConstants.SFX_OPEN,
+        };
+        for (String id : ids) {
+            assertTrue(id.startsWith("workbench_"),
+                "Runtime SFX ID \"" + id + "\" 应为 workbench_* audio recipe basename");
+            assertTrue(!id.contains(":"),
+                "Runtime SFX ID \"" + id + "\" 不应带 namespace，server audio recipe 以 basename 查找");
+        }
+    }
+
+    @Test
+    void craftSessionSfxIdsKeepBongNamespaceConvention() {
+        String[] ids = {
             WorkbenchConstants.SFX_CRAFT_START,
             WorkbenchConstants.SFX_CRAFT_TICK,
             WorkbenchConstants.SFX_CRAFT_DONE,

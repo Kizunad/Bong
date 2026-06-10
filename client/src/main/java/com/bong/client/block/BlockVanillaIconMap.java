@@ -25,7 +25,8 @@ public final class BlockVanillaIconMap {
         "barren_sand", new Entry("minecraft:sand", () -> Items.SAND),
         "weathered_stone", new Entry("minecraft:gravel", () -> Items.GRAVEL),
         "raw_clay_lump", new Entry("minecraft:clay", () -> Items.CLAY),
-        "obsidian_shard", new Entry("minecraft:obsidian", () -> Items.OBSIDIAN)
+        "obsidian_shard", new Entry("minecraft:obsidian", () -> Items.OBSIDIAN),
+        "workbench_item", new Entry("minecraft:crafting_table", () -> Items.CRAFTING_TABLE)
     );
     private static final ConcurrentHashMap<String, ItemStack> STACK_CACHE = new ConcurrentHashMap<>();
 

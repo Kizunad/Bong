@@ -234,6 +234,19 @@ public enum BongEntityModelKind {
         10,
         0.22f,
         "intact"
+    ),
+    // plan-workbench-place-runtime-v1 P2 — 制作台 marker。Baolongwang 独立注册占 164，
+    // 本 kind 通过 BongEntityRenderBootstrap.registerDeferred() 在其后注册，固定 raw_id=165。
+    WORKBENCH(
+        "workbench",
+        "Workbench.bbmodel",
+        165,
+        1.0f,
+        0.9f,
+        64,
+        10,
+        0.25f,
+        "intact"
     );
 
     private static final String MOD_ID = "bong";

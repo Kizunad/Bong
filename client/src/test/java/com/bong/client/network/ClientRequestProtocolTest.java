@@ -826,6 +826,28 @@ public class ClientRequestProtocolTest {
         );
     }
 
+    // ─── plan-workbench-place-runtime-v1 P2：workbench_open ──────────
+
+    @Test
+    void encodesWorkbenchOpen() {
+        String json = ClientRequestProtocol.encodeWorkbenchOpen(42);
+        assertEquals(
+            "{\"type\":\"workbench_open\",\"v\":1,\"entity_id\":42}",
+            json,
+            "workbench_open should encode type + v + entity_id"
+        );
+    }
+
+    @Test
+    void encodesWorkbenchOpenWithZeroId() {
+        String json = ClientRequestProtocol.encodeWorkbenchOpen(0);
+        assertEquals(
+            "{\"type\":\"workbench_open\",\"v\":1,\"entity_id\":0}",
+            json,
+            "entity_id 0 is a valid MC protocol entity id"
+        );
+    }
+
     // ─── plan-coffin-tiers-v1 P3：C2S coffin_break / coffin_menu_reclaim ────
 
     @Test

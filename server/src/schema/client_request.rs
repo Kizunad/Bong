@@ -471,6 +471,13 @@ pub enum ClientRequestV1 {
         v: u8,
         entity_id: i32,
     },
+    // ─── plan-workbench-place-runtime-v1 P2：entity-based workbench open ────
+    /// 玩家右键制作台 Marker entity 后发送此请求。server 解析 MC protocol
+    /// entity_id → ECS Entity，再交给 `WorkbenchOpenRequest` 做距离校验与开屏。
+    WorkbenchOpen {
+        v: u8,
+        entity_id: i32,
+    },
     // ─── plan-supply-coffin-loot-ui P1：外部容器 C2S ────────────────
     ExternalContainerMove {
         v: u8,
@@ -2080,6 +2087,37 @@ mod tests {
             }
             other => panic!("expected SupplyCoffinOpen, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn workbench_open_roundtrip() {
+        let json = r#"{"type":"workbench_open","v":1,"entity_id":42}"#;
+        let req: ClientRequestV1 = serde_json::from_str(json).unwrap();
+        match req {
+            ClientRequestV1::WorkbenchOpen { v, entity_id } => {
+                assert_eq!(v, 1, "version should be 1");
+                assert_eq!(entity_id, 42, "entity_id should be 42");
+            }
+            other => panic!("expected WorkbenchOpen, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn workbench_open_rejects_missing_entity_id() {
+        let json = r#"{"type":"workbench_open","v":1}"#;
+        assert!(
+            serde_json::from_str::<ClientRequestV1>(json).is_err(),
+            "missing entity_id should fail"
+        );
+    }
+
+    #[test]
+    fn workbench_open_rejects_extra_fields() {
+        let json = r#"{"type":"workbench_open","v":1,"entity_id":42,"extra":true}"#;
+        assert!(
+            serde_json::from_str::<ClientRequestV1>(json).is_err(),
+            "extra field should fail due to deny_unknown_fields"
+        );
     }
 
     #[test]

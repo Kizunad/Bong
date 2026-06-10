@@ -493,4 +493,16 @@ public class ClientRequestSenderTest {
             sent.get(0).body()
         );
     }
+
+    @Test
+    void sendWorkbenchOpenUsesCorrectChannelAndJson() {
+        install();
+        ClientRequestSender.sendWorkbenchOpen(42);
+        assertEquals(1, sent.size());
+        assertEquals(new Identifier("bong", "client_request"), sent.get(0).channel());
+        assertEquals(
+            "{\"type\":\"workbench_open\",\"v\":1,\"entity_id\":42}",
+            sent.get(0).body()
+        );
+    }
 }
