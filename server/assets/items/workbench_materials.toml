@@ -139,17 +139,6 @@ spirit_quality_initial = 0.0
 description = "丹砂碾制的细粉，画符染色调和用。"
 
 [[item]]
-id = "powder_zhu_sha"
-name = "朱砂粉"
-category = "misc"
-grid_w = 1
-grid_h = 1
-base_weight = 0.1
-rarity = "uncommon"
-spirit_quality_initial = 0.13
-description = "朱砂碾磨的赤粉，高阶丹药引料。"
-
-[[item]]
 id = "herb_bundle"
 name = "灵草束"
 category = "herb"
@@ -335,39 +324,6 @@ base_weight = 1.8
 rarity = "common"
 spirit_quality_initial = 0.0
 description = "碎石夹木柄，伐木入门。"
-
-[[item]]
-id = "stone_hoe"
-name = "石锄"
-category = "tool"
-grid_w = 1
-grid_h = 2
-base_weight = 1.5
-rarity = "common"
-spirit_quality_initial = 0.0
-description = "碎石绑木柄，翻土入门。"
-
-[[item]]
-id = "mortar_stone"
-name = "研钵"
-category = "tool"
-grid_w = 1
-grid_h = 1
-base_weight = 2.0
-rarity = "common"
-spirit_quality_initial = 0.0
-description = "石块凿成的药臼，碾草磨粉。"
-
-[[item]]
-id = "heat_gloves"
-name = "绝热手套"
-category = "tool"
-grid_w = 1
-grid_h = 1
-base_weight = 0.3
-rarity = "uncommon"
-spirit_quality_initial = 0.3
-description = "蛛丝内衬的厚手套，采焦脉藤不灼伤。"
 
 # ═══════════════════════════════════════════════════════════════════════════
 # 急救与修炼 (13)
@@ -612,45 +568,6 @@ description = "粗布编灵草的遮蔽网，藏人藏物。"
 # ═══════════════════════════════════════════════════════════════════════════
 
 [[item]]
-id = "stone_spearhead"
-name = "石矛头"
-category = "misc"
-grid_w = 1
-grid_h = 1
-base_weight = 0.5
-rarity = "common"
-spirit_quality_initial = 0.0
-description = "碎石磨尖的矛头，绑木棍成矛。"
-
-[[item]]
-id = "sling_weapon"
-name = "弹弓"
-category = "weapon"
-grid_w = 1
-grid_h = 1
-base_weight = 0.3
-rarity = "common"
-spirit_quality_initial = 0.0
-description = "兽皮兜木叉弹弓，甩石打鼠。"
-
-[item.weapon]
-kind = "bow"
-base_attack = 2.0
-quality_tier = 0
-durability_max = 40.0
-
-[[item]]
-id = "sling_stone"
-name = "飞石"
-category = "misc"
-grid_w = 1
-grid_h = 1
-base_weight = 0.3
-rarity = "common"
-spirit_quality_initial = 0.0
-description = "磨圆的弹弓石，打不远但打得准。"
-
-[[item]]
 id = "wooden_shield"
 name = "木盾"
 # plan-shield-block-v1 P0 — 由 armor 改为 shield，消灭「装不上 off_hand」僵尸根因。
@@ -675,17 +592,6 @@ base_weight = 2.5
 rarity = "common"
 spirit_quality_initial = 0.0
 description = "兽骨编绳的圆盾，轻但脆。"
-
-[[item]]
-id = "iron_sword_blank"
-name = "凡铁剑胎"
-category = "misc"
-grid_w = 1
-grid_h = 2
-base_weight = 2.5
-rarity = "common"
-spirit_quality_initial = 0.0
-description = "凡铁粗锻的剑形坯料，送锻造台精锻。"
 
 [[item]]
 id = "iron_dagger"
@@ -760,17 +666,6 @@ durability_max = 60.0
 # ═══════════════════════════════════════════════════════════════════════════
 
 [[item]]
-id = "trade_scale"
-name = "交易秤"
-category = "tool"
-grid_w = 1
-grid_h = 1
-base_weight = 0.8
-rarity = "common"
-spirit_quality_initial = 0.0
-description = "铁杆木盘的简易秤，称骨币灵草。"
-
-[[item]]
 id = "disguise_wrap"
 name = "伪装包裹"
 category = "misc"
@@ -780,17 +675,6 @@ base_weight = 0.2
 rarity = "common"
 spirit_quality_initial = 0.0
 description = "灰烬苔裹布的包装，掩盖灵物气息。"
-
-[[item]]
-id = "trade_scale_stand"
-name = "交易秤台"
-category = "tool"
-grid_w = 1
-grid_h = 1
-base_weight = 1.5
-rarity = "common"
-spirit_quality_initial = 0.0
-description = "秤固定在木架上，摊位交易免手持。"
 
 [[item]]
 id = "niche_repair_kit"
