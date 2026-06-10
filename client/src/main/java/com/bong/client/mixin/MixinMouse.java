@@ -54,12 +54,20 @@ public class MixinMouse {
         // ── plan-shield-block-v1 P1 §8.1 #5 — 右键举盾仲裁 ──────────────────
         // 规则（优先级从高到低）：
         //   1. 已有 UI 屏幕打开 → 不拦截，让 vanilla 处理（UI 关闭事件等）
+        //      兜底：若此时仍持举盾(bong$shieldRightHeld==true)，强制发 LowerShield
+        //      防止「持举时打开背包再松键」导致服务端永远卡在 ShieldBlocking。
         //   2. off_hand 有盾牌 → PRESS 举盾 + cancel；RELEASE 放盾 + cancel
         //   3. 否则 → pass through（vanilla 右键使用/放置）
         // 注意：consumable 判断不在客户端做，让 server 的 ItemCategory 负责防止双重消费。
         if (button == GLFW.GLFW_MOUSE_BUTTON_RIGHT) {
             if (action == GLFW.GLFW_PRESS || action == GLFW.GLFW_RELEASE) {
                 MinecraftClient client = MinecraftClient.getInstance();
+                // UI 打开时强制兜底放盾：持举中打开背包再松键，RELEASE 会落入此分支；
+                // 强制发 LowerShield + 重置 flag，防止服务端格挡状态永远残留。
+                if (client != null && client.currentScreen != null && bong$shieldRightHeld) {
+                    bong$shieldRightHeld = false;
+                    ClientRequestSender.sendLowerShield();
+                }
                 // 若有 UI screen 打开则不拦截
                 if (client != null && client.currentScreen == null) {
                     InventoryModel invSnapshot = InventoryStateStore.snapshot();
@@ -84,7 +92,7 @@ public class MixinMouse {
                 }
             }
         }
-        // ── 左键举盾仲裁结束 ────────────────────────────────────────────────────
+        // ── 右键举盾仲裁结束 ────────────────────────────────────────────────────
 
         if (button != GLFW.GLFW_MOUSE_BUTTON_LEFT) {
             return;
