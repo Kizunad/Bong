@@ -491,6 +491,7 @@ mod tests {
             recipe_fragment_spec: None,
             container_spec: None,
             shelflife_profile: None,
+            shield_spec: None,
             shelflife_track: None,
         }
     }

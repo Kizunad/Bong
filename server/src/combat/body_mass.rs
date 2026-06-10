@@ -111,7 +111,10 @@ impl Stance {
             StaminaState::Exhausted => Self::Exhausted,
             StaminaState::Sprinting => Self::Sprinting,
             StaminaState::Walking | StaminaState::Jogging => Self::Moving,
-            StaminaState::Idle | StaminaState::Combat => Self::Standing,
+            // plan-shield-block-v1 P2 — 举盾视为站立（未冲刺/行进）
+            StaminaState::Idle | StaminaState::Combat | StaminaState::ShieldBlocking => {
+                Self::Standing
+            }
         }
     }
 }

@@ -8,20 +8,20 @@
 //! - `cleanup_shield_on_disconnect`：断线时强制清理（`.before(despawn_disconnected_clients)` 约束保证顺序）。
 //!
 //! # 接入注意
-//! - StatusEffectKind::ShieldBlocking 的 `magnitude` 存储 block_ratio 占位（P2 写入真实值）。
+//! - StatusEffectKind::ShieldBlocking 的 `magnitude` 存储真实 block_ratio（P2 从 ShieldSpec 读取）。
 //! - 动画触发（`bong:shield_raise`）通过 `vfx_animation_trigger::emit_shield_raise_for_entity`。
-//! - P2 会在此模块追加 `shield_fov_check` 和 stamina drain 分支，不新增文件。
+//! - P2 追加 `shield_fov_check`（正面 FOV 判定）和 `stamina_drain_shield_blocking_tick`（体力 drain）。
 
 use valence::prelude::{
     bevy_ecs, Commands, Component, Entity, Event, EventReader, EventWriter, Position, Query, Res,
     UniqueId,
 };
 
-use crate::combat::components::{ActiveStatusEffect, StatusEffects};
-use crate::combat::events::{DeathEvent, StatusEffectKind};
+use crate::combat::components::{ActiveStatusEffect, Stamina, StaminaState, StatusEffects};
+use crate::combat::events::{ApplyStatusEffectIntent, DeathEvent, StatusEffectKind};
 use crate::combat::status::{has_active_status, remove_status_effect, upsert_status_effect};
 use crate::combat::CombatClock;
-use crate::inventory::{PlayerInventory, EQUIP_SLOT_OFF_HAND};
+use crate::inventory::{ItemRegistry, PlayerInventory, EQUIP_SLOT_OFF_HAND};
 use crate::network::vfx_event_emit::VfxEventRequest;
 
 /// plan-shield-block-v1 P1 — 玩家正在举盾的持续标记 component。
@@ -50,8 +50,13 @@ pub struct LowerShieldIntent {
 /// 超大 duration 让 status_effect_tick 不会在持举期间超时移除。
 pub const SHIELD_BLOCKING_DURATION_TICKS: u64 = u64::MAX / 2;
 
-/// plan-shield-block-v1 P1 — block_ratio 占位：P1 暂存 0.5（P2 从 ShieldSpec 读取真实值）。
-const SHIELD_BLOCKING_MAGNITUDE_P1_PLACEHOLDER: f32 = 0.5;
+/// plan-shield-block-v1 P2 — 正面 FOV 阈值常数（±120° 弧度，cos(-120°/2) = -0.5）。
+/// 与境界无关，凡人盾无修士 FOV 加成。
+pub const SHIELD_FOV_DOT: f64 = -0.5;
+
+/// plan-shield-block-v1 P2 — 体力归零强制放盾时施加的破势硬直 ticks（约 1s = 20 ticks）。
+/// 语义复用 ParryRecovery 破势硬直，防止玩家立刻再次举盾。
+pub const SHIELD_EXHAUSTED_PARRY_RECOVERY_TICKS: u64 = 20;
 
 /// 检查 off_hand 槽物品是否是已知盾牌模板。
 /// 与 client InventoryEquipRules.SHIELD_TEMPLATE_IDS 保持同步。
@@ -59,15 +64,50 @@ pub fn is_shield_template_id(template_id: &str) -> bool {
     matches!(template_id, "wooden_shield" | "bone_shield")
 }
 
+/// plan-shield-block-v1 P2 — 盾牌正面 FOV 判定。
+/// 检查攻击者是否在防御者正面 ±120° 范围内。
+/// - dot ≥ -0.5 表示命中（在正面弧度内），返回 true。
+/// - dot < -0.5 表示背面，返回 false（盾无效）。
+/// - 绝不调用 `jiemai_fov_check`（其阈值随境界变化，盾不应有境界加成）。
+/// - 无 Look 时（NPC 等无头部组件情况）保守返回 true（正面方向不确定，视为可挡）。
+pub fn shield_fov_check(
+    attacker_pos: valence::prelude::DVec3,
+    defender_pos: valence::prelude::DVec3,
+    defender_look: Option<&valence::entity::Look>,
+) -> bool {
+    let Some(look) = defender_look else {
+        return true;
+    };
+    let to_attacker = valence::prelude::DVec3::new(
+        attacker_pos.x - defender_pos.x,
+        0.0,
+        attacker_pos.z - defender_pos.z,
+    );
+    let len_sq = to_attacker.length_squared();
+    if len_sq <= f64::EPSILON {
+        return true;
+    }
+    let yaw = f64::from(look.yaw).to_radians();
+    let facing = valence::prelude::DVec3::new(-yaw.sin(), 0.0, yaw.cos());
+    facing.dot(to_attacker / len_sq.sqrt()) >= SHIELD_FOV_DOT
+}
+
 /// 处理 RaiseShieldIntent：校验 off_hand 盾 → 插入 ShieldBlock component + ShieldBlocking status。
+/// P2：magnitude 从 ShieldSpec.block_ratio 读取；同时将 StaminaState 切换到 ShieldBlocking。
+#[allow(clippy::too_many_arguments)]
 pub fn raise_shield_handler(
     mut intents: EventReader<RaiseShieldIntent>,
     mut commands: Commands,
     clock: Res<CombatClock>,
     mut vfx_events: EventWriter<VfxEventRequest>,
-    mut status_q: Query<(&mut StatusEffects, Option<&ShieldBlock>)>,
+    mut status_q: Query<(
+        &mut StatusEffects,
+        Option<&ShieldBlock>,
+        Option<&mut Stamina>,
+    )>,
     inventory_q: Query<&PlayerInventory>,
     players_q: Query<(&Position, &UniqueId)>,
+    item_registry: Option<Res<ItemRegistry>>,
 ) {
     for intent in intents.read() {
         let entity = intent.player;
@@ -98,10 +138,30 @@ pub fn raise_shield_handler(
             }
         };
 
+        // P2 — 从 ShieldSpec 读取 block_ratio；如无 ItemRegistry（单测环境）fallback 到 0.5。
+        let block_ratio = item_registry
+            .as_deref()
+            .and_then(|reg| reg.get(&template_id))
+            .and_then(|tpl| tpl.shield_spec.as_ref())
+            .map(|spec| spec.block_ratio as f32)
+            .unwrap_or(0.5);
+
         // 2. 校验并操作 StatusEffects + component
-        let Ok((mut status_effects, existing_shield_block)) = status_q.get_mut(entity) else {
+        let Ok((mut status_effects, existing_shield_block, stamina)) = status_q.get_mut(entity)
+        else {
             continue;
         };
+
+        // 拒绝：Exhausted 状态下不允许举盾（体力不足）
+        if stamina
+            .as_ref()
+            .is_some_and(|s| s.state == StaminaState::Exhausted)
+        {
+            tracing::debug!(
+                "[bong][shield] RaiseShield entity={entity:?}: stamina exhausted, ignoring"
+            );
+            continue;
+        }
 
         // 幂等：已在举盾状态则刷新持续时间即可（不叠加）
         if existing_shield_block.is_some()
@@ -114,7 +174,7 @@ pub fn raise_shield_handler(
                 &mut status_effects,
                 ActiveStatusEffect {
                     kind: StatusEffectKind::ShieldBlocking,
-                    magnitude: SHIELD_BLOCKING_MAGNITUDE_P1_PLACEHOLDER,
+                    magnitude: block_ratio,
                     remaining_ticks: SHIELD_BLOCKING_DURATION_TICKS,
                     source_pill: None,
                 },
@@ -127,11 +187,17 @@ pub fn raise_shield_handler(
             &mut status_effects,
             ActiveStatusEffect {
                 kind: StatusEffectKind::ShieldBlocking,
-                magnitude: SHIELD_BLOCKING_MAGNITUDE_P1_PLACEHOLDER,
+                magnitude: block_ratio,
                 remaining_ticks: SHIELD_BLOCKING_DURATION_TICKS,
                 source_pill: None,
             },
         );
+        // P2 — 切换体力状态到 ShieldBlocking（触发 stamina_tick 的持续 drain）
+        if let Some(mut s) = stamina {
+            if !matches!(s.state, StaminaState::Exhausted) {
+                s.state = StaminaState::ShieldBlocking;
+            }
+        }
         // 插入 ShieldBlock component
         if let Some(mut entity_commands) = commands.get_entity(entity) {
             entity_commands.insert(ShieldBlock {
@@ -140,7 +206,7 @@ pub fn raise_shield_handler(
         }
 
         tracing::debug!(
-            "[bong][shield] RaiseShield entity={entity:?}: shield raised (template={template_id}) tick={}",
+            "[bong][shield] RaiseShield entity={entity:?}: shield raised (template={template_id}, block_ratio={block_ratio:.2}) tick={}",
             clock.tick
         );
 
@@ -154,18 +220,25 @@ pub fn raise_shield_handler(
 }
 
 /// 处理 LowerShieldIntent：移除 ShieldBlocking 状态 + ShieldBlock component + 停止举盾动画。
+/// P2：同时将 StaminaState 从 ShieldBlocking 恢复到 Idle（或 Combat）。
 pub fn lower_shield_handler(
     mut intents: EventReader<LowerShieldIntent>,
     mut commands: Commands,
     clock: Res<CombatClock>,
-    mut status_q: Query<&mut StatusEffects>,
+    mut status_q: Query<(&mut StatusEffects, Option<&mut Stamina>)>,
     mut vfx_events: EventWriter<VfxEventRequest>,
     players_q: Query<(&Position, &UniqueId)>,
 ) {
     for intent in intents.read() {
         let entity = intent.player;
-        if let Ok(mut status_effects) = status_q.get_mut(entity) {
+        if let Ok((mut status_effects, stamina)) = status_q.get_mut(entity) {
             remove_status_effect(&mut status_effects, StatusEffectKind::ShieldBlocking);
+            // P2 — 恢复体力状态（ShieldBlocking → Idle；若已 Exhausted 则保留）
+            if let Some(mut s) = stamina {
+                if s.state == StaminaState::ShieldBlocking {
+                    s.state = StaminaState::Idle;
+                }
+            }
         }
         if let Some(mut entity_commands) = commands.get_entity(entity) {
             entity_commands.remove::<ShieldBlock>();
@@ -230,6 +303,58 @@ pub fn cleanup_shield_on_death(
         if let Some(mut entity_commands) = commands.get_entity(entity) {
             entity_commands.remove::<ShieldBlock>();
         }
+    }
+}
+
+/// plan-shield-block-v1 P2 — 体力归零时强制放盾。
+///
+/// 检测所有同时拥有 `ShieldBlock` component 且 `Stamina.state == Exhausted` 的实体，
+/// 执行强制放盾流程：
+/// 1. 移除 `ShieldBlocking` status + `ShieldBlock` component（与 lower_shield_handler 语义等价）。
+/// 2. 施加短暂 `ParryRecovery`（复用破势硬直，防立即再举盾）。
+/// 3. 发送 S2C StopAnim（通知 client 复位举盾姿态）。
+///
+/// 此系统运行在 `stamina_tick` 之后（确保 state 已更新为 Exhausted），
+/// 在 `raise_shield_handler` 之前（Exhausted 下 raise 直接被体力系统拒绝，实测冗余但保险）。
+pub fn force_lower_shield_on_stamina_exhausted(
+    mut commands: Commands,
+    clock: Res<CombatClock>,
+    mut shield_q: Query<
+        (Entity, &Stamina, &mut StatusEffects),
+        valence::prelude::With<ShieldBlock>,
+    >,
+    mut status_effect_intents: EventWriter<ApplyStatusEffectIntent>,
+    mut vfx_events: EventWriter<VfxEventRequest>,
+    players_q: Query<(&Position, &UniqueId)>,
+) {
+    for (entity, stamina, mut status_effects) in &mut shield_q {
+        if stamina.state != StaminaState::Exhausted {
+            continue;
+        }
+        // 1. 移除 ShieldBlocking status
+        remove_status_effect(&mut status_effects, StatusEffectKind::ShieldBlocking);
+        // 2. 移除 ShieldBlock component
+        if let Some(mut entity_commands) = commands.get_entity(entity) {
+            entity_commands.remove::<ShieldBlock>();
+        }
+        // 3. 施加 ParryRecovery 破势硬直（防立即再举盾）
+        status_effect_intents.send(ApplyStatusEffectIntent {
+            target: entity,
+            kind: StatusEffectKind::ParryRecovery,
+            magnitude: 1.0,
+            duration_ticks: SHIELD_EXHAUSTED_PARRY_RECOVERY_TICKS,
+            issued_at_tick: clock.tick,
+        });
+        // 4. 发 S2C StopAnim（通知 client 收举盾姿态）
+        crate::network::vfx_animation_trigger::emit_shield_stop_for_entity(
+            entity,
+            &players_q,
+            &mut vfx_events,
+        );
+        tracing::debug!(
+            "[bong][shield] force_lower_shield entity={entity:?}: stamina exhausted → shield lowered tick={}",
+            clock.tick
+        );
     }
 }
 
@@ -1090,6 +1215,435 @@ mod tests {
             app.world().entity(entity).get::<ShieldBlock>().is_none(),
             "同 tick raise+lower 净结果必须无 ShieldBlock component（松键应彻底清理）。\
              actual: component still present"
+        );
+    }
+
+    // ══════════════════════════════════════════════════════════════════════════
+    // plan-shield-block-v1 P2 — FOV 判定 / StaminaState / force-lower 饱和化测试
+    // ══════════════════════════════════════════════════════════════════════════
+
+    // ── shield_fov_check happy path：正面（dot ≥ -0.5）──────────────────────
+    #[test]
+    fn shield_fov_check_front_face_returns_true() {
+        use valence::entity::Look;
+        // 防御者在 (0,0,0) 朝 +Z（yaw=0），攻击者在 (0,0,1)——正面
+        let defender_pos = DVec3::ZERO;
+        let attacker_pos = DVec3::new(0.0, 0.0, 2.0);
+        let look = Look {
+            yaw: 0.0,
+            pitch: 0.0,
+        };
+        assert!(
+            shield_fov_check(attacker_pos, defender_pos, Some(&look)),
+            "攻击者在防御者正前方时 shield_fov_check 应返回 true（dot=1.0 ≥ SHIELD_FOV_DOT=-0.5）"
+        );
+    }
+
+    // ── shield_fov_check 背面（dot < -0.5）──────────────────────────────────
+    #[test]
+    fn shield_fov_check_back_face_returns_false() {
+        use valence::entity::Look;
+        // 防御者在 (0,0,0) 朝 +Z（yaw=0），攻击者在 (0,0,-2)——背后 dot=-1.0
+        let defender_pos = DVec3::ZERO;
+        let attacker_pos = DVec3::new(0.0, 0.0, -2.0);
+        let look = Look {
+            yaw: 0.0,
+            pitch: 0.0,
+        };
+        assert!(
+            !shield_fov_check(attacker_pos, defender_pos, Some(&look)),
+            "攻击者在防御者正后方时 shield_fov_check 应返回 false（dot=-1.0 < SHIELD_FOV_DOT=-0.5）；\
+             背面命中不应被盾拦截"
+        );
+    }
+
+    // ── shield_fov_check 边界 dot=-0.5 恰好通过 ─────────────────────────────
+    #[test]
+    fn shield_fov_check_boundary_dot_minus_half_passes() {
+        use valence::entity::Look;
+        // dot = cos(120°) = -0.5 的方向：攻击者在 120° 侧翼
+        // 防御者朝 +Z（yaw=0），facing=(0,0,1)
+        // 攻击者方向：(-sin(120°), 0, cos(120°)) = (-√3/2, 0, -0.5)，normalize 后 dot with (0,0,1) = -0.5
+        let angle: f64 = 120.0_f64.to_radians();
+        let attacker_dir = DVec3::new(-angle.sin(), 0.0, angle.cos());
+        let attacker_pos = attacker_dir * 2.0; // 距离 2
+        let defender_pos = DVec3::ZERO;
+        let look = Look {
+            yaw: 0.0,
+            pitch: 0.0,
+        };
+        let result = shield_fov_check(attacker_pos, defender_pos, Some(&look));
+        assert!(
+            result,
+            "dot=-0.5 恰好等于 SHIELD_FOV_DOT 阈值，应 >= 比较为 true（>=, not >）；\
+             shield_fov_check 应返回 true，实际返回 false"
+        );
+    }
+
+    // ── shield_fov_check 边界 dot 稍小于 -0.5 被拒 ──────────────────────────
+    #[test]
+    fn shield_fov_check_boundary_just_past_threshold_fails() {
+        use valence::entity::Look;
+        // 攻击者方向：120° + 小偏差 → dot 略小于 -0.5
+        let angle: f64 = 121.0_f64.to_radians(); // 1° 超出
+        let attacker_dir = DVec3::new(-angle.sin(), 0.0, angle.cos());
+        let attacker_pos = attacker_dir * 2.0;
+        let defender_pos = DVec3::ZERO;
+        let look = Look {
+            yaw: 0.0,
+            pitch: 0.0,
+        };
+        assert!(
+            !shield_fov_check(attacker_pos, defender_pos, Some(&look)),
+            "dot < -0.5 时 shield_fov_check 应返回 false（超出 ±120° 格挡弧）"
+        );
+    }
+
+    // ── shield_fov_check no-Look 保守返回 true ───────────────────────────────
+    #[test]
+    fn shield_fov_check_no_look_returns_true_conservatively() {
+        // 无 Look component（如 NPC）时保守视为正面可挡
+        let result = shield_fov_check(DVec3::new(1.0, 0.0, 0.0), DVec3::ZERO, None);
+        assert!(
+            result,
+            "无 Look 组件时 shield_fov_check 应保守返回 true（正面方向不确定）"
+        );
+    }
+
+    // ── shield_fov_check 零距离保守返回 true ────────────────────────────────
+    #[test]
+    fn shield_fov_check_zero_distance_returns_true_conservatively() {
+        use valence::entity::Look;
+        // 攻击者与防御者同位置（零向量无法 normalize）
+        let look = Look {
+            yaw: 0.0,
+            pitch: 0.0,
+        };
+        let result = shield_fov_check(DVec3::ZERO, DVec3::ZERO, Some(&look));
+        assert!(
+            result,
+            "攻击者与防御者同位置（零距离）时 shield_fov_check 应保守返回 true，不除以零"
+        );
+    }
+
+    // ── StaminaState::ShieldBlocking 在 stamina_tick 中独立 drain ────────────
+    // 通过直接调用 stamina_tick 系统验证 ShieldBlocking 状态的 drain 速率正确。
+    #[test]
+    fn stamina_tick_shield_blocking_drains_at_correct_rate() {
+        use crate::combat::components::{Stamina, StaminaState};
+        use crate::combat::lifecycle::{stamina_tick, SHIELD_DRAIN_PER_SEC};
+
+        let mut app = App::new();
+        app.insert_resource(crate::combat::CombatClock { tick: 0 });
+        app.add_systems(Update, stamina_tick);
+
+        let entity = app
+            .world_mut()
+            .spawn(Stamina {
+                current: 100.0,
+                max: 100.0,
+                recover_per_sec: 5.0,
+                state: StaminaState::ShieldBlocking,
+                last_drain_tick: None,
+            })
+            .id();
+
+        app.update();
+
+        let stamina = app.world().entity(entity).get::<Stamina>().unwrap();
+        // stamina_tick 每 STAMINA_TICK_INTERVAL_TICKS=4 ticks 更新一次（dt = 4/20 = 0.2s）
+        // drain = SHIELD_DRAIN_PER_SEC * dt = 3.0 * 0.2 = 0.6
+        use crate::combat::components::{STAMINA_TICK_INTERVAL_TICKS, TICKS_PER_SECOND};
+        let dt = STAMINA_TICK_INTERVAL_TICKS as f32 / TICKS_PER_SECOND as f32;
+        let expected_drain = SHIELD_DRAIN_PER_SEC * dt;
+        let expected_current = 100.0 - expected_drain;
+        assert!(
+            (stamina.current - expected_current).abs() < 0.01,
+            "ShieldBlocking stamina drain 应为 {expected_drain:.4}（drain_rate={SHIELD_DRAIN_PER_SEC} * dt={dt:.3}），\
+             期望 current≈{expected_current:.4}，实际 {:.4}",
+            stamina.current
+        );
+        assert_eq!(
+            stamina.state,
+            StaminaState::ShieldBlocking,
+            "ShieldBlocking 状态在体力未耗尽时应保持不变"
+        );
+    }
+
+    // ── 体力归零时 stamina_tick 将状态切换到 Exhausted ──────────────────────
+    #[test]
+    fn stamina_tick_shield_blocking_transitions_to_exhausted_when_depleted() {
+        use crate::combat::components::{Stamina, StaminaState};
+        use crate::combat::lifecycle::stamina_tick;
+
+        let mut app = App::new();
+        app.insert_resource(crate::combat::CombatClock { tick: 0 });
+        app.add_systems(Update, stamina_tick);
+
+        // 极低体力确保一 tick 内必耗尽
+        let entity = app
+            .world_mut()
+            .spawn(Stamina {
+                current: 0.01,
+                max: 100.0,
+                recover_per_sec: 0.0,
+                state: StaminaState::ShieldBlocking,
+                last_drain_tick: None,
+            })
+            .id();
+
+        app.update();
+
+        let stamina = app.world().entity(entity).get::<Stamina>().unwrap();
+        assert_eq!(
+            stamina.state,
+            StaminaState::Exhausted,
+            "ShieldBlocking 体力耗尽时 stamina_tick 应将状态切为 Exhausted，\
+             actual: {:?}",
+            stamina.state
+        );
+    }
+
+    // ── 持续举盾可支撑时间与 max_stamina 成正比 ─────────────────────────────
+    #[test]
+    fn shield_blocking_hold_duration_proportional_to_max_stamina() {
+        use crate::combat::components::TICKS_PER_SECOND;
+        use crate::combat::lifecycle::SHIELD_DRAIN_PER_SEC;
+        // hold_seconds = max_stamina / drain_per_sec（与 STAMINA_TICK_INTERVAL_TICKS 无关）
+        let max_stamina = 60.0_f32;
+        let hold_seconds = max_stamina / SHIELD_DRAIN_PER_SEC;
+        let expected_ticks = (hold_seconds * TICKS_PER_SECOND as f32) as u64;
+        // 60 / 3.0 = 20s = 400 game-ticks（@ 20 tps）
+        assert_eq!(
+            expected_ticks, 400,
+            "max_stamina=60 / SHIELD_DRAIN_PER_SEC=3.0 应支撑 400 game-ticks（20s @ 20tps）；\
+             SHIELD_DRAIN_PER_SEC 或 TICKS_PER_SECOND 改动会破坏此断言；\
+             实际计算 {expected_ticks}"
+        );
+    }
+
+    // ── raise_shield 拒绝 Exhausted 状态下举盾 ──────────────────────────────
+    #[test]
+    fn raise_shield_rejected_when_stamina_exhausted() {
+        use crate::combat::components::{Stamina, StaminaState};
+
+        let mut app = make_app();
+        let entity = app
+            .world_mut()
+            .spawn((
+                StatusEffects::default(),
+                make_inventory_with_off_hand("wooden_shield"),
+                Stamina {
+                    current: 0.0,
+                    max: 100.0,
+                    recover_per_sec: 5.0,
+                    state: StaminaState::Exhausted,
+                    last_drain_tick: None,
+                },
+            ))
+            .id();
+
+        app.world_mut()
+            .resource_mut::<Events<RaiseShieldIntent>>()
+            .send(RaiseShieldIntent { player: entity });
+        app.update();
+
+        let status = app.world().entity(entity).get::<StatusEffects>().unwrap();
+        assert!(
+            !has_active_status(status, StatusEffectKind::ShieldBlocking),
+            "Exhausted 状态下 raise_shield 应被拒绝，ShieldBlocking 不应被插入；\
+             actual status.active: {:?}",
+            status.active
+        );
+    }
+
+    // ── raise_shield 切换 StaminaState 到 ShieldBlocking ────────────────────
+    #[test]
+    fn raise_shield_transitions_stamina_state_to_shield_blocking() {
+        use crate::combat::components::{Stamina, StaminaState};
+
+        let mut app = make_app();
+        let entity = app
+            .world_mut()
+            .spawn((
+                StatusEffects::default(),
+                make_inventory_with_off_hand("wooden_shield"),
+                Stamina {
+                    current: 100.0,
+                    max: 100.0,
+                    recover_per_sec: 5.0,
+                    state: StaminaState::Idle,
+                    last_drain_tick: None,
+                },
+            ))
+            .id();
+
+        app.world_mut()
+            .resource_mut::<Events<RaiseShieldIntent>>()
+            .send(RaiseShieldIntent { player: entity });
+        app.update();
+
+        let stamina = app.world().entity(entity).get::<Stamina>().unwrap();
+        assert_eq!(
+            stamina.state,
+            StaminaState::ShieldBlocking,
+            "举盾后 StaminaState 应切换到 ShieldBlocking（触发 drain），\
+             actual: {:?}",
+            stamina.state
+        );
+    }
+
+    // ── lower_shield 恢复 StaminaState 到 Idle ──────────────────────────────
+    #[test]
+    fn lower_shield_restores_stamina_state_to_idle() {
+        use crate::combat::components::{Stamina, StaminaState};
+
+        let mut app = make_app();
+        let entity = app
+            .world_mut()
+            .spawn((
+                StatusEffects::default(),
+                make_inventory_with_off_hand("wooden_shield"),
+                Stamina {
+                    current: 100.0,
+                    max: 100.0,
+                    recover_per_sec: 5.0,
+                    state: StaminaState::ShieldBlocking,
+                    last_drain_tick: None,
+                },
+            ))
+            .id();
+
+        // 直接 lower（不需要先 raise 在这里）
+        app.world_mut()
+            .resource_mut::<Events<LowerShieldIntent>>()
+            .send(LowerShieldIntent { player: entity });
+        app.update();
+
+        let stamina = app.world().entity(entity).get::<Stamina>().unwrap();
+        assert_eq!(
+            stamina.state,
+            StaminaState::Idle,
+            "放盾后 StaminaState 应从 ShieldBlocking 恢复到 Idle，\
+             actual: {:?}",
+            stamina.state
+        );
+    }
+
+    // ── lower_shield 不强制覆盖 Exhausted 状态 ──────────────────────────────
+    #[test]
+    fn lower_shield_preserves_exhausted_state() {
+        use crate::combat::components::{Stamina, StaminaState};
+
+        let mut app = make_app();
+        let entity = app
+            .world_mut()
+            .spawn((
+                StatusEffects::default(),
+                make_inventory_with_off_hand("wooden_shield"),
+                Stamina {
+                    current: 0.0,
+                    max: 100.0,
+                    recover_per_sec: 5.0,
+                    state: StaminaState::Exhausted,
+                    last_drain_tick: None,
+                },
+            ))
+            .id();
+
+        app.world_mut()
+            .resource_mut::<Events<LowerShieldIntent>>()
+            .send(LowerShieldIntent { player: entity });
+        app.update();
+
+        let stamina = app.world().entity(entity).get::<Stamina>().unwrap();
+        assert_eq!(
+            stamina.state,
+            StaminaState::Exhausted,
+            "lower_shield 不应将 Exhausted 状态强制改为 Idle（体力仍为 0）；\
+             actual: {:?}",
+            stamina.state
+        );
+    }
+
+    // ── force_lower 系统编译注册断言（签名守护）────────────────────────────
+    // 验证 force_lower_shield_on_stamina_exhausted 函数可作为 Bevy 系统注册（类型守护）。
+    #[test]
+    fn force_lower_shield_on_stamina_exhausted_compiles_as_system() {
+        use crate::combat::events::ApplyStatusEffectIntent;
+        let mut app = App::new();
+        app.add_event::<VfxEventRequest>();
+        app.add_event::<ApplyStatusEffectIntent>();
+        app.insert_resource(crate::combat::CombatClock::default());
+        app.add_systems(Update, force_lower_shield_on_stamina_exhausted);
+        let _ = app; // 只需构建不 panic
+    }
+
+    // ── SHIELD_DRAIN_PER_SEC 常量值锁定 ─────────────────────────────────────
+    #[test]
+    fn shield_drain_per_sec_constant_is_3_0() {
+        use crate::combat::lifecycle::SHIELD_DRAIN_PER_SEC;
+        assert!(
+            (SHIELD_DRAIN_PER_SEC - 3.0).abs() < f32::EPSILON,
+            "SHIELD_DRAIN_PER_SEC 应为 3.0（plan-shield-block-v1 P2 spec），\
+             实际值 {SHIELD_DRAIN_PER_SEC}（改动此值必须同步更新 plan spec）"
+        );
+    }
+
+    // ── SHIELD_FOV_DOT 常量值锁定 ────────────────────────────────────────────
+    #[test]
+    fn shield_fov_dot_constant_is_minus_half() {
+        assert!(
+            (SHIELD_FOV_DOT - (-0.5)).abs() < f64::EPSILON,
+            "SHIELD_FOV_DOT 应为 -0.5（对应 ±120° 格挡弧，凡人盾无境界加成），\
+             实际值 {SHIELD_FOV_DOT}"
+        );
+    }
+
+    // ── CombatDefenseKindV1::ShieldBlock serde roundtrip ────────────────────
+    // 锁住 schema 序列化契约：ShieldBlock → "shield_block" (snake_case)。
+    #[test]
+    fn combat_defense_kind_shield_block_serde_roundtrip() {
+        use crate::schema::combat_event::CombatDefenseKindV1;
+        let variant = CombatDefenseKindV1::ShieldBlock;
+        let json =
+            serde_json::to_string(&variant).expect("CombatDefenseKindV1::ShieldBlock 应可序列化");
+        assert_eq!(
+            json, "\"shield_block\"",
+            "CombatDefenseKindV1::ShieldBlock 应序列化为 \"shield_block\"（snake_case），\
+             实际 {json}"
+        );
+        let back: CombatDefenseKindV1 =
+            serde_json::from_str(&json).expect("\"shield_block\" 应可反序列化为 ShieldBlock");
+        assert_eq!(
+            back,
+            CombatDefenseKindV1::ShieldBlock,
+            "\"shield_block\" 反序列化应还原为 ShieldBlock 变体，实际 {back:?}"
+        );
+    }
+
+    // ── map_defense_kind 全变体覆盖（编译 + 语义）──────────────────────────
+    // 锁住 combat_bridge.rs map_defense_kind 映射的三个变体全部正确。
+    #[test]
+    fn map_defense_kind_all_variants_map_correctly() {
+        use crate::combat::events::DefenseKind;
+        use crate::network::combat_bridge::map_defense_kind_pub;
+        use crate::schema::combat_event::CombatDefenseKindV1;
+
+        assert_eq!(
+            map_defense_kind_pub(DefenseKind::JieMai),
+            CombatDefenseKindV1::JieMai,
+            "JieMai 应映射到 CombatDefenseKindV1::JieMai"
+        );
+        assert_eq!(
+            map_defense_kind_pub(DefenseKind::SwordParry),
+            CombatDefenseKindV1::SwordParry,
+            "SwordParry 应映射到 CombatDefenseKindV1::SwordParry"
+        );
+        assert_eq!(
+            map_defense_kind_pub(DefenseKind::ShieldBlock),
+            CombatDefenseKindV1::ShieldBlock,
+            "ShieldBlock 应映射到 CombatDefenseKindV1::ShieldBlock"
         );
     }
 }

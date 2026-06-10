@@ -152,6 +152,9 @@ pub struct ItemTemplate {
     pub recipe_fragment_spec: Option<RecipeFragmentSpec>,
     /// plan-backpack-equip-v1 P0 — 可装备容器规格；category=Container 时必填。
     pub container_spec: Option<ContainerSpec>,
+    /// plan-shield-block-v1 P2 — 盾牌物理防御规格；category=Shield 时必填。
+    /// 不继承 ArmorProfile（其 validate 硬拒非四体护甲槽）。
+    pub shield_spec: Option<ShieldSpec>,
     /// plan-food-v1 P1 — 默认 shelflife profile ID；Some(id) 时 `runtime_instance_from_template`
     /// 在 tick=0 自动挂 `Freshness`，无需消费侧手动初始化。
     /// 食物类物品（category=Food）在 food.toml 内填此字段。
@@ -159,6 +162,50 @@ pub struct ItemTemplate {
     /// plan-food-v1 P1 — shelflife 初始路径（`DecayTrack`）；配合 `shelflife_profile` 使用。
     /// None = 无 shelflife（shelflife_profile 也为 None 时）。
     pub shelflife_track: Option<crate::shelflife::DecayTrack>,
+}
+
+/// plan-shield-block-v1 P2 — 盾牌物理防御模板级别静态规格（不随 instance 变动）。
+/// 凡人级物理盾，不触真元（qi_physics），与 ArmorProfile 独立。
+/// - `block_ratio`：正面命中时削减伤害的比例（0.0..=0.7；worldview §五 凡人盾上限 0.7）。
+/// - `durability_max`：盾的最大耐久点数（P3 按点数扣减）。
+/// - `stamina_drain_per_s`：持续举盾每秒消耗体力。
+#[derive(Debug, Clone, PartialEq)]
+pub struct ShieldSpec {
+    /// 正面命中削减比例（0.0..=0.7）。
+    pub block_ratio: f64,
+    /// 最大耐久点数（P3 用）。
+    pub durability_max: f64,
+    /// 每秒体力 drain（P2 固定 3.0，P4 按熟练度调整）。
+    pub stamina_drain_per_s: f32,
+}
+
+impl ShieldSpec {
+    /// 校验 ShieldSpec 字段合法性：
+    /// - block_ratio 须在 (0, 0.7] 区间（worldview §五 凡人盾上限 0.7，不能为 0）。
+    /// - durability_max 须 > 0。
+    /// - stamina_drain_per_s 须 > 0 且有限。
+    pub fn validate(&self, item_id: &str) -> Result<(), String> {
+        if !self.block_ratio.is_finite() || self.block_ratio <= 0.0 || self.block_ratio > 0.7 {
+            return Err(format!(
+                "item `{item_id}` shield_spec.block_ratio {} must be in (0, 0.7] \
+                 (worldview §五: 凡人盾不得压过修士防御)",
+                self.block_ratio
+            ));
+        }
+        if !self.durability_max.is_finite() || self.durability_max <= 0.0 {
+            return Err(format!(
+                "item `{item_id}` shield_spec.durability_max {} must be > 0",
+                self.durability_max
+            ));
+        }
+        if !self.stamina_drain_per_s.is_finite() || self.stamina_drain_per_s <= 0.0 {
+            return Err(format!(
+                "item `{item_id}` shield_spec.stamina_drain_per_s {} must be > 0 and finite",
+                self.stamina_drain_per_s
+            ));
+        }
+        Ok(())
+    }
 }
 
 /// plan-backpack-equip-v1 P0 — 可装备容器（背包/囊/挎包）的模板级静态规格。
@@ -1464,6 +1511,9 @@ struct ItemTemplateToml {
     /// plan-backpack-equip-v1 P0：category == "Container" 时必填，否则须缺省。
     #[serde(default)]
     container: Option<ContainerSpecToml>,
+    /// plan-shield-block-v1 P2：category == "Shield" 时必填，否则须缺省。
+    #[serde(default)]
+    shield_spec: Option<ShieldSpecToml>,
     /// plan-food-v1 P1：食物类物品的默认 shelflife profile ID。
     /// Some(id) → 物品生成时自动挂 `Freshness`；None → 无 shelflife。
     #[serde(default)]
@@ -1533,6 +1583,15 @@ pub struct ContainerSpecToml {
     durability_cost_per_op: f64,
 }
 
+/// plan-shield-block-v1 P2 — TOML 层的盾牌规格块（对应 `[item.shield_spec]`）。
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ShieldSpecToml {
+    block_ratio: f64,
+    durability_max: f64,
+    stamina_drain_per_s: f32,
+}
+
 fn default_qi_cost_mul() -> f32 {
     1.0
 }
@@ -1597,6 +1656,22 @@ pub fn parse_container_spec(
         equip_slot: raw.equip_slot,
         durability_cost_per_op: raw.durability_cost_per_op,
     })
+}
+
+/// plan-shield-block-v1 P2 — 解析 TOML 盾牌规格块为 `ShieldSpec`。
+pub fn parse_shield_spec(
+    raw: ShieldSpecToml,
+    source_path: &Path,
+    item_id: &str,
+) -> Result<ShieldSpec, String> {
+    let spec = ShieldSpec {
+        block_ratio: raw.block_ratio,
+        durability_max: raw.durability_max,
+        stamina_drain_per_s: raw.stamina_drain_per_s,
+    };
+    spec.validate(item_id)
+        .map_err(|e| format!("{} {}", source_path.display(), e))?;
+    Ok(spec)
 }
 
 fn default_max_stack_count_for_category(category: ItemCategory) -> u32 {
@@ -1761,6 +1836,26 @@ impl ItemTemplateToml {
             (_, None) => None,
         };
 
+        // plan-shield-block-v1 P2：shield_spec 块与 category=Shield 必须一致。
+        let shield_spec = match (&category, self.shield_spec) {
+            (ItemCategory::Shield, Some(raw)) => {
+                Some(parse_shield_spec(raw, source_path, id.as_str())?)
+            }
+            (ItemCategory::Shield, None) => {
+                return Err(format!(
+                    "{} item `{id}` has category=Shield but missing [item.shield_spec] block",
+                    source_path.display()
+                ));
+            }
+            (_, Some(_)) => {
+                return Err(format!(
+                    "{} item `{id}` has [item.shield_spec] block but category != Shield",
+                    source_path.display()
+                ));
+            }
+            (_, None) => None,
+        };
+
         // plan-food-v1 P1：解析 shelflife_track 字符串 → DecayTrack。
         // CodeRabbit fix：shelflife_track 只写而 shelflife_profile=None 时报错，
         // 防止半配置静默绕过 freshness gate。
@@ -1811,6 +1906,7 @@ impl ItemTemplateToml {
             technique_scroll_spec,
             recipe_fragment_spec,
             container_spec,
+            shield_spec,
             shelflife_profile: self.shelflife_profile,
             shelflife_track,
         })
@@ -4596,6 +4692,8 @@ mod tests {
                     technique_scroll_spec: None,
                     recipe_fragment_spec: None,
                     container_spec: None,
+                    shield_spec: None,
+
                     shelflife_profile: None,
                     shelflife_track: None,
                 },
@@ -4633,6 +4731,8 @@ mod tests {
             technique_scroll_spec: None,
             recipe_fragment_spec: None,
             container_spec: None,
+            shield_spec: None,
+
             shelflife_profile: None,
             shelflife_track: None,
         }
@@ -5807,6 +5907,8 @@ cols = 4
                 technique_scroll_spec: None,
                 recipe_fragment_spec: None,
                 container_spec: None,
+                shield_spec: None,
+
                 shelflife_profile: None,
                 shelflife_track: None,
             },
@@ -5874,6 +5976,8 @@ cols = 4
                 technique_scroll_spec: None,
                 recipe_fragment_spec: None,
                 container_spec: None,
+                shield_spec: None,
+
                 shelflife_profile: None,
                 shelflife_track: None,
             },
@@ -7807,6 +7911,8 @@ cols = 4
                 technique_scroll_spec: None,
                 recipe_fragment_spec: None,
                 container_spec: None,
+                shield_spec: None,
+
                 shelflife_profile: None,
                 shelflife_track: None,
             },
@@ -7882,6 +7988,8 @@ cols = 4
                 technique_scroll_spec: None,
                 recipe_fragment_spec: None,
                 container_spec: None,
+                shield_spec: None,
+
                 shelflife_profile: None,
                 shelflife_track: None,
             },
@@ -8192,6 +8300,8 @@ cols = 4
                 equip_slot: equip_slot.to_string(),
                 durability_cost_per_op: 0.0,
             }),
+            shield_spec: None,
+
             shelflife_profile: None,
             shelflife_track: None,
         }
@@ -8905,6 +9015,8 @@ cols = 4
                 equip_slot: EQUIP_SLOT_WAIST_POUCH.to_string(),
                 durability_cost_per_op: 0.008,
             }),
+            shield_spec: None,
+
             shelflife_profile: None,
             shelflife_track: None,
         };
@@ -9324,6 +9436,8 @@ cols = 4
             technique_scroll_spec: None,
             recipe_fragment_spec: None,
             container_spec: None,
+            shield_spec: None,
+
             shelflife_profile: None,
             shelflife_track: None,
         }
@@ -9352,6 +9466,8 @@ cols = 4
             technique_scroll_spec: None,
             recipe_fragment_spec: None,
             container_spec: None,
+            shield_spec: None,
+
             shelflife_profile: None,
             shelflife_track: None,
         }
@@ -10007,6 +10123,7 @@ cols = 4
             technique_scroll_spec: None,
             recipe_fragment_spec: None,
             container_spec: None,
+            shield_spec: None,
             shelflife_profile: Some("chen_jiu_v1".to_string()),
             shelflife_track: Some(DecayTrack::Age),
         };
@@ -10075,6 +10192,8 @@ cols = 4
             technique_scroll_spec: None,
             recipe_fragment_spec: None,
             container_spec: None,
+            shield_spec: None,
+
             shelflife_profile: None,
             shelflife_track: None,
         };
@@ -10159,6 +10278,7 @@ cols = 4
             technique_scroll: None,
             recipe_fragment: None,
             container: None,
+            shield_spec: None,
             shelflife_profile: Some("some_profile".to_string()),
             shelflife_track: Some("INVALID_TRACK".to_string()),
         };
@@ -10205,6 +10325,7 @@ cols = 4
             recipe_fragment: None,
             container: None,
             shelflife_profile: Some("some_profile".to_string()),
+            shield_spec: None,
             shelflife_track: None, // should default to "spoil"
         };
 
@@ -10250,6 +10371,7 @@ cols = 4
             technique_scroll: None,
             recipe_fragment: None,
             container: None,
+            shield_spec: None,
             shelflife_profile: None,                    // ← 故意缺失
             shelflife_track: Some("spoil".to_string()), // ← 有值但 profile 为 None → 报错
         };
@@ -10301,6 +10423,7 @@ cols = 4
             technique_scroll: None,
             recipe_fragment: None,
             container: None,
+            shield_spec: None,
             shelflife_profile: Some("my_spoil_profile_v1".to_string()), // ← 正确配对
             shelflife_track: Some("spoil".to_string()),
         };
@@ -10584,5 +10707,297 @@ cols = 4
              因为盾走 EquipSlotV1::OffHand 3799 arm 不走此函数，\
              实际得到 {slot:?}"
         );
+    }
+
+    // ── plan-shield-block-v1 P2 — ShieldSpec 饱和化测试 ──────────────────────
+
+    /// ShieldSpec.validate() happy path：wooden_shield 规格通过验证。
+    #[test]
+    fn shield_spec_validate_happy_path_wooden_shield() {
+        let spec = ShieldSpec {
+            block_ratio: 0.5,
+            durability_max: 40.0,
+            stamina_drain_per_s: 3.0,
+        };
+        assert!(
+            spec.validate("wooden_shield").is_ok(),
+            "wooden_shield 规格（0.5/40/3.0）应通过 validate()；\
+             实际 Err: {:?}",
+            spec.validate("wooden_shield")
+        );
+    }
+
+    /// ShieldSpec.validate() happy path：bone_shield 规格通过验证。
+    #[test]
+    fn shield_spec_validate_happy_path_bone_shield() {
+        let spec = ShieldSpec {
+            block_ratio: 0.65,
+            durability_max: 80.0,
+            stamina_drain_per_s: 3.0,
+        };
+        assert!(
+            spec.validate("bone_shield").is_ok(),
+            "bone_shield 规格（0.65/80/3.0）应通过 validate()；\
+             实际 Err: {:?}",
+            spec.validate("bone_shield")
+        );
+    }
+
+    /// block_ratio = 0.7（上限）仍通过验证（边界：上界包含）。
+    #[test]
+    fn shield_spec_validate_block_ratio_max_boundary_passes() {
+        let spec = ShieldSpec {
+            block_ratio: 0.7,
+            durability_max: 40.0,
+            stamina_drain_per_s: 3.0,
+        };
+        assert!(
+            spec.validate("test_shield").is_ok(),
+            "block_ratio=0.7（worldview §五 凡人盾上限）应通过 validate()（>= 包含边界），\
+             实际 Err: {:?}",
+            spec.validate("test_shield")
+        );
+    }
+
+    /// block_ratio > 0.7 被拒绝（超出凡人盾上限）。
+    #[test]
+    fn shield_spec_validate_block_ratio_above_max_rejected() {
+        let spec = ShieldSpec {
+            block_ratio: 0.71,
+            durability_max: 40.0,
+            stamina_drain_per_s: 3.0,
+        };
+        let err = spec
+            .validate("cheat_shield")
+            .expect_err("block_ratio=0.71 超出凡人盾 0.7 上限，应被拒绝");
+        assert!(
+            err.contains("block_ratio"),
+            "错误消息应含 'block_ratio'，实际：{err}"
+        );
+    }
+
+    /// block_ratio = 0.0 被拒绝（无效：不可为零）。
+    #[test]
+    fn shield_spec_validate_block_ratio_zero_rejected() {
+        let spec = ShieldSpec {
+            block_ratio: 0.0,
+            durability_max: 40.0,
+            stamina_drain_per_s: 3.0,
+        };
+        assert!(
+            spec.validate("zero_shield").is_err(),
+            "block_ratio=0.0 应被拒绝（无效：不能为 0）"
+        );
+    }
+
+    /// block_ratio 负值被拒绝。
+    #[test]
+    fn shield_spec_validate_block_ratio_negative_rejected() {
+        let spec = ShieldSpec {
+            block_ratio: -0.1,
+            durability_max: 40.0,
+            stamina_drain_per_s: 3.0,
+        };
+        assert!(
+            spec.validate("neg_shield").is_err(),
+            "block_ratio 负值应被拒绝"
+        );
+    }
+
+    /// block_ratio = NaN 被拒绝。
+    #[test]
+    fn shield_spec_validate_block_ratio_nan_rejected() {
+        let spec = ShieldSpec {
+            block_ratio: f64::NAN,
+            durability_max: 40.0,
+            stamina_drain_per_s: 3.0,
+        };
+        assert!(
+            spec.validate("nan_shield").is_err(),
+            "block_ratio=NaN 应被拒绝（is_finite 检查）"
+        );
+    }
+
+    /// durability_max = 0.0 被拒绝。
+    #[test]
+    fn shield_spec_validate_durability_zero_rejected() {
+        let spec = ShieldSpec {
+            block_ratio: 0.5,
+            durability_max: 0.0,
+            stamina_drain_per_s: 3.0,
+        };
+        let err = spec
+            .validate("zero_dur_shield")
+            .expect_err("durability_max=0 应被拒绝");
+        assert!(
+            err.contains("durability_max"),
+            "错误消息应含 'durability_max'，实际：{err}"
+        );
+    }
+
+    /// stamina_drain_per_s = 0.0 被拒绝。
+    #[test]
+    fn shield_spec_validate_stamina_drain_zero_rejected() {
+        let spec = ShieldSpec {
+            block_ratio: 0.5,
+            durability_max: 40.0,
+            stamina_drain_per_s: 0.0,
+        };
+        let err = spec
+            .validate("zero_drain_shield")
+            .expect_err("stamina_drain_per_s=0 应被拒绝");
+        assert!(
+            err.contains("stamina_drain_per_s"),
+            "错误消息应含 'stamina_drain_per_s'，实际：{err}"
+        );
+    }
+
+    /// 从 TOML 加载的 wooden_shield 含正确 ShieldSpec（block_ratio=0.5, durability=40, drain=3.0）。
+    #[test]
+    fn wooden_shield_loads_correct_shield_spec_from_toml() {
+        let registry = load_item_registry().expect("item registry 应从 assets/items/*.toml 加载");
+        let tpl = registry
+            .get("wooden_shield")
+            .expect("wooden_shield 应存在于 registry");
+        let spec = tpl
+            .shield_spec
+            .as_ref()
+            .expect("wooden_shield 应有 shield_spec（P2 TOML 块必须存在）");
+        assert!(
+            (spec.block_ratio - 0.5).abs() < 1e-9,
+            "wooden_shield.block_ratio 应为 0.5，实际 {}",
+            spec.block_ratio
+        );
+        assert!(
+            (spec.durability_max - 40.0).abs() < 1e-9,
+            "wooden_shield.durability_max 应为 40.0，实际 {}",
+            spec.durability_max
+        );
+        assert!(
+            (spec.stamina_drain_per_s - 3.0).abs() < 1e-4,
+            "wooden_shield.stamina_drain_per_s 应为 3.0，实际 {}",
+            spec.stamina_drain_per_s
+        );
+    }
+
+    /// 从 TOML 加载的 bone_shield 含正确 ShieldSpec（block_ratio=0.65, durability=80, drain=3.0）。
+    #[test]
+    fn bone_shield_loads_correct_shield_spec_from_toml() {
+        let registry = load_item_registry().expect("item registry 应从 assets/items/*.toml 加载");
+        let tpl = registry
+            .get("bone_shield")
+            .expect("bone_shield 应存在于 registry");
+        let spec = tpl
+            .shield_spec
+            .as_ref()
+            .expect("bone_shield 应有 shield_spec（P2 TOML 块必须存在）");
+        assert!(
+            (spec.block_ratio - 0.65).abs() < 1e-9,
+            "bone_shield.block_ratio 应为 0.65，实际 {}",
+            spec.block_ratio
+        );
+        assert!(
+            (spec.durability_max - 80.0).abs() < 1e-9,
+            "bone_shield.durability_max 应为 80.0，实际 {}",
+            spec.durability_max
+        );
+        assert!(
+            (spec.stamina_drain_per_s - 3.0).abs() < 1e-4,
+            "bone_shield.stamina_drain_per_s 应为 3.0，实际 {}",
+            spec.stamina_drain_per_s
+        );
+    }
+
+    /// 非盾物品（如 iron_sword）的 shield_spec 为 None。
+    #[test]
+    fn non_shield_item_has_no_shield_spec() {
+        let registry = load_item_registry().expect("item registry 应加载");
+        let tpl = registry
+            .get("iron_sword")
+            .expect("iron_sword 应存在于 registry");
+        assert!(
+            tpl.shield_spec.is_none(),
+            "iron_sword 不是盾，shield_spec 应为 None，实际有值"
+        );
+    }
+
+    /// category=Shield 但缺 shield_spec 块 → try_into_item_template 报错。
+    #[test]
+    fn shield_category_without_shield_spec_block_is_rejected() {
+        use std::path::PathBuf;
+        let path = PathBuf::from("test_shield.toml");
+        let raw = ItemTemplateToml {
+            id: "bad_shield_no_spec".to_string(),
+            name: "无规格盾".to_string(),
+            category: "shield".to_string(),
+            grid_w: 1,
+            grid_h: 2,
+            base_weight: 2.0,
+            rarity: "common".to_string(),
+            spirit_quality_initial: 0.0,
+            description: "category=shield but missing shield_spec".to_string(),
+            max_stack_count: None,
+            effect: None,
+            cast_duration_ms: None,
+            cooldown_ms: None,
+            weapon: None,
+            forge_station: None,
+            blueprint_scroll: None,
+            inscription_scroll: None,
+            technique_scroll: None,
+            recipe_fragment: None,
+            container: None,
+            shield_spec: None, // ← 故意缺失
+            shelflife_profile: None,
+            shelflife_track: None,
+        };
+        let result = raw.try_into_item_template(&path);
+        assert!(
+            result.is_err(),
+            "category=shield 但缺 shield_spec 块时应报错，防止孤岛装备"
+        );
+        let err = result.unwrap_err();
+        assert!(
+            err.contains("shield_spec") || err.contains("Shield"),
+            "错误消息应提到 shield_spec 缺失，实际：{err}"
+        );
+    }
+
+    /// 非盾 category 带 shield_spec 块 → try_into_item_template 报错。
+    #[test]
+    fn non_shield_category_with_shield_spec_block_is_rejected() {
+        use std::path::PathBuf;
+        let path = PathBuf::from("test_sword_with_shield_spec.toml");
+        let raw = ItemTemplateToml {
+            id: "bad_sword_with_shield_spec".to_string(),
+            name: "剑+盾规格冲突".to_string(),
+            category: "weapon".to_string(),
+            grid_w: 1,
+            grid_h: 2,
+            base_weight: 1.0,
+            rarity: "common".to_string(),
+            spirit_quality_initial: 0.0,
+            description: "weapon category with shield_spec should fail".to_string(),
+            max_stack_count: None,
+            effect: None,
+            cast_duration_ms: None,
+            cooldown_ms: None,
+            weapon: None,
+            forge_station: None,
+            blueprint_scroll: None,
+            inscription_scroll: None,
+            technique_scroll: None,
+            recipe_fragment: None,
+            container: None,
+            shield_spec: Some(ShieldSpecToml {
+                block_ratio: 0.5,
+                durability_max: 40.0,
+                stamina_drain_per_s: 3.0,
+            }),
+            shelflife_profile: None,
+            shelflife_track: None,
+        };
+        let result = raw.try_into_item_template(&path);
+        assert!(result.is_err(), "非盾 category 带 shield_spec 块时应报错");
     }
 }

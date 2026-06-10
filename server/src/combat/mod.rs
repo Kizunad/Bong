@@ -430,4 +430,11 @@ pub fn register(app: &mut App) {
             .in_set(CombatSystemSet::Intent)
             .before(crate::player::despawn_disconnected_clients),
     );
+    // plan-shield-block-v1 P2 — 体力归零强制放盾（在 stamina_tick 之后运行）
+    app.add_systems(
+        Update,
+        shield_block::force_lower_shield_on_stamina_exhausted
+            .in_set(CombatSystemSet::Intent)
+            .after(lifecycle::stamina_tick),
+    );
 }

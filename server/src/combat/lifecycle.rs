@@ -75,6 +75,9 @@ use super::events::{
 const COMBAT_DRAIN_PER_SEC: f32 = 5.0;
 const JOG_DRAIN_PER_SEC: f32 = 2.0;
 const SPRINT_DRAIN_PER_SEC: f32 = 10.0;
+/// plan-shield-block-v1 P2 — 举盾持续每秒体力消耗（量级：COMBAT=5.0，JOG=2.0，盾=3.0）。
+/// 不触 qi_physics ledger（体力非真元）。P4 按熟练度 1→2 不在本阶段。
+pub const SHIELD_DRAIN_PER_SEC: f32 = 3.0;
 const EXHAUSTED_RECOVER_RATIO: f32 = 0.5;
 const EXHAUSTED_EXIT_FRACTION: f32 = 0.3;
 const DEATH_INSIGHT_RECENT_BIO_N: usize = 16;
@@ -148,7 +151,11 @@ pub fn sync_combat_state_from_events(
 
         if let Ok((mut state, mut stamina)) = actors.get_mut(event.target) {
             state.refresh_combat_window(event.resolved_at_tick);
-            if stamina.state != StaminaState::Exhausted {
+            // 举盾态与精疲状态不被战斗事件覆盖（让 stamina_tick 维护其 drain/drain-零 逻辑）。
+            if !matches!(
+                stamina.state,
+                StaminaState::Exhausted | StaminaState::ShieldBlocking
+            ) {
                 stamina.state = StaminaState::Combat;
             }
         }
@@ -220,6 +227,9 @@ pub fn stamina_tick(clock: Res<CombatClock>, mut stamina_q: Query<&mut Stamina>)
             StaminaState::Sprinting => -SPRINT_DRAIN_PER_SEC,
             StaminaState::Combat => -COMBAT_DRAIN_PER_SEC,
             StaminaState::Exhausted => stamina.recover_per_sec * EXHAUSTED_RECOVER_RATIO,
+            // plan-shield-block-v1 P2 — 举盾持续 drain。
+            // 体力归零时由 `force_lower_shield_on_stamina_exhausted` 负责强制放盾 + 施加 ParryRecovery。
+            StaminaState::ShieldBlocking => -SHIELD_DRAIN_PER_SEC,
         };
 
         stamina.current = (stamina.current + delta_per_sec * dt).clamp(0.0, stamina.max);
@@ -227,7 +237,7 @@ pub fn stamina_tick(clock: Res<CombatClock>, mut stamina_q: Query<&mut Stamina>)
         if stamina.current <= 0.0
             && matches!(
                 stamina.state,
-                StaminaState::Sprinting | StaminaState::Combat
+                StaminaState::Sprinting | StaminaState::Combat | StaminaState::ShieldBlocking
             )
         {
             stamina.state = StaminaState::Exhausted;

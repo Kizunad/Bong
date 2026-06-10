@@ -89,6 +89,9 @@ pub enum StaminaState {
     Sprinting,
     Combat,
     Exhausted,
+    /// plan-shield-block-v1 P2 — 玩家举盾（ShieldBlocking 状态激活）时的持续体力消耗态。
+    /// drain = SHIELD_DRAIN_PER_SEC (3.0/s)，不触 qi_physics（体力非真元）。
+    ShieldBlocking,
 }
 
 #[derive(Debug, Clone, Component, Serialize, Deserialize)]

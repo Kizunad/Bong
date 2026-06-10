@@ -337,6 +337,7 @@ mod tests {
             recipe_fragment_spec: None,
             container_spec: None,
             shelflife_profile: None,
+            shield_spec: None,
             shelflife_track: None,
         }
     }
@@ -376,6 +377,7 @@ mod tests {
                 recipe_fragment_spec: None,
                 container_spec: None,
                 shelflife_profile: None,
+                shield_spec: None,
                 shelflife_track: None,
             },
         );
@@ -404,6 +406,7 @@ mod tests {
                 technique_scroll_spec: None,
                 recipe_fragment_spec: None,
                 container_spec: None,
+                shield_spec: None,
                 shelflife_profile: Some("chen_cu_v1".to_string()),
                 shelflife_track: Some(crate::shelflife::DecayTrack::Spoil),
             },

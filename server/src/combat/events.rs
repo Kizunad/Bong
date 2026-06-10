@@ -75,6 +75,8 @@ pub struct DefenseIntent {
 pub enum DefenseKind {
     JieMai,
     SwordParry,
+    /// plan-shield-block-v1 P2 — 盾牌正面格挡成功（不含反伤）。
+    ShieldBlock,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

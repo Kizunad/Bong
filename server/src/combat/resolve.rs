@@ -15,6 +15,7 @@ use crate::combat::jiemai::{
 use crate::combat::knockback::{
     compute_combat_knockback, CombatKnockbackInput, KnockbackEvent, DEFAULT_CHAIN_DEPTH,
 };
+use crate::combat::shield_block::shield_fov_check;
 use crate::combat::status::{body_part_damage_multiplier, has_active_status};
 use crate::combat::sword_basics;
 use crate::combat::tuike::{tuike_filter_contam, FalseSkin, ShedEvent};
@@ -168,6 +169,8 @@ pub struct CombatResolveEventWriters<'w> {
     knockback_events: Option<ResMut<'w, Events<KnockbackEvent>>>,
     death_events: EventWriter<'w, DeathEvent>,
     durability_changed_tx: EventWriter<'w, InventoryDurabilityChangedEvent>,
+    /// plan-shield-block-v1 P2 — 盾牌格挡成功触发 PARRY_BLOCK 动画（via emit_defense_animation_triggers）。
+    defense_intent_tx: Option<ResMut<'w, Events<DefenseIntent>>>,
 }
 
 pub fn apply_defense_intents(
@@ -804,6 +807,11 @@ pub fn resolve_attack_intents(
         let mut sword_parry_block_ratio = None;
         let mut sword_parry_contam_reduced = None;
         let mut sword_parry_reflected_damage = None;
+        // plan-shield-block-v1 P2 — 盾牌格挡结果（无反伤）
+        let mut shield_block_success = false;
+        let mut shield_block_ratio: Option<f32> = None;
+        let mut shield_block_contam_reduced: Option<f64> = None;
+        let mut shield_blocked_damage: Option<f32> = None;
         let mut false_skin = false_skin;
         let mut defender_attrs = defender_attrs;
 
@@ -945,6 +953,43 @@ pub fn resolve_attack_intents(
                     sword_basics::record_sword_parry_success(world, defender);
                 },
             );
+        }
+
+        // plan-shield-block-v1 P2 — 盾牌格挡减伤分支（独立于 SwordParrying，无反伤）。
+        // 正面 FOV 判定：须先过 shield_fov_check，背面不减伤。
+        if let Some(raw_ratio) =
+            active_status_magnitude(defender_status_effects, StatusEffectKind::ShieldBlocking)
+        {
+            let ratio = raw_ratio.clamp(0.0, 0.95);
+            // 正面 FOV 判定（±120°，dot ≥ -0.5）
+            let fov_ok = shield_fov_check(
+                attacker_position,
+                target_position,
+                positions
+                    .get(target_entity)
+                    .ok()
+                    .and_then(|(_pos, look)| look),
+            );
+            if fov_ok && ratio > 0.0 {
+                let before_severity = wound.severity;
+                let before_contam = emitted_contam_delta;
+                wound.severity *= 1.0 - ratio;
+                wound.bleeding_per_sec *= 1.0 - ratio;
+                emitted_contam_delta *= f64::from(1.0 - ratio);
+                let blocked = (before_severity - wound.severity).max(0.0);
+                shield_block_success = true;
+                shield_block_ratio = Some(ratio);
+                shield_block_contam_reduced = Some((before_contam - emitted_contam_delta).max(0.0));
+                // P3 将消费 shield_blocked_damage 扣耐久；P2 只计算，不扣耐久。
+                shield_blocked_damage = Some(blocked);
+                // 格挡成功：emit DefenseIntent 触发 PARRY_BLOCK 动画（兼容现有路径，不覆盖）。
+                if let Some(defense_tx) = event_writers.defense_intent_tx.as_deref_mut() {
+                    defense_tx.send(DefenseIntent {
+                        defender: target_entity,
+                        issued_at_tick: clock.tick,
+                    });
+                }
+            }
         }
 
         // plan-armor-v1 §4.1：护甲减免在截脉判定之后应用。
@@ -1182,7 +1227,7 @@ pub fn resolve_attack_intents(
         let qi_damage = if is_physical_hit { 0.0 } else { wound_severity };
         let physical_damage = if is_physical_hit { wound_severity } else { 0.0 };
         let description = format!(
-            "{} {} -> {} hit {:?} with {:?} for {:.1} qi / {:.1} physical damage (hit_qi {:.1}, jiemai={} sword_parry={} eff={:.2}) at {:.2} reach decay",
+            "{} {} -> {} hit {:?} with {:?} for {:.1} qi / {:.1} physical damage (hit_qi {:.1}, jiemai={} sword_parry={} shield_block={} eff={:.2}) at {:.2} reach decay",
             action_label,
             attacker_id,
             target_id,
@@ -1193,8 +1238,10 @@ pub fn resolve_attack_intents(
             hit_qi,
             jiemai_success,
             sword_parry_success,
+            shield_block_success,
             jiemai_effectiveness_value
                 .or(sword_parry_block_ratio)
+                .or(shield_block_ratio)
                 .unwrap_or(0.0),
             decay
         );
@@ -1213,12 +1260,20 @@ pub fn resolve_attack_intents(
             description,
             defense_kind: if sword_parry_success {
                 Some(DefenseKind::SwordParry)
+            } else if shield_block_success {
+                Some(DefenseKind::ShieldBlock)
             } else {
                 jiemai_success.then_some(DefenseKind::JieMai)
             },
-            defense_effectiveness: jiemai_effectiveness_value.or(sword_parry_block_ratio),
-            defense_contam_reduced: jiemai_contam_reduced.or(sword_parry_contam_reduced),
-            defense_wound_severity: jiemai_wound_severity.or(sword_parry_reflected_damage),
+            defense_effectiveness: jiemai_effectiveness_value
+                .or(sword_parry_block_ratio)
+                .or(shield_block_ratio),
+            defense_contam_reduced: jiemai_contam_reduced
+                .or(sword_parry_contam_reduced)
+                .or(shield_block_contam_reduced),
+            defense_wound_severity: jiemai_wound_severity
+                .or(sword_parry_reflected_damage)
+                .or(shield_blocked_damage),
         });
         if let Some(events) = event_writers.vfx_events.as_deref_mut() {
             let hit_origin = target_position + DVec3::new(0.0, 1.0, 0.0);
@@ -1251,7 +1306,7 @@ pub fn resolve_attack_intents(
                     12,
                 ),
             );
-            if jiemai_success || sword_parry_success {
+            if jiemai_success || sword_parry_success || shield_block_success {
                 gameplay_vfx::send_spawn(
                     events,
                     gameplay_vfx::spawn_request(
@@ -1260,11 +1315,14 @@ pub fn resolve_attack_intents(
                         Some([-hit_dir[0], -hit_dir[1], -hit_dir[2]]),
                         if sword_parry_success {
                             "#FFD080"
+                        } else if shield_block_success {
+                            "#A0C8FF"
                         } else {
                             "#4488FF"
                         },
                         jiemai_effectiveness_value
                             .or(sword_parry_block_ratio)
+                            .or(shield_block_ratio)
                             .unwrap_or(0.6)
                             .clamp(0.3, 1.0),
                         8,
@@ -1744,6 +1802,7 @@ mod tests {
                     recipe_fragment_spec: None,
                     container_spec: None,
                     shelflife_profile: None,
+                    shield_spec: None,
                     shelflife_track: None,
                 },
             ),
@@ -1778,6 +1837,7 @@ mod tests {
                     recipe_fragment_spec: None,
                     container_spec: None,
                     shelflife_profile: None,
+                    shield_spec: None,
                     shelflife_track: None,
                 },
             ),
@@ -1812,6 +1872,7 @@ mod tests {
                     recipe_fragment_spec: None,
                     container_spec: None,
                     shelflife_profile: None,
+                    shield_spec: None,
                     shelflife_track: None,
                 },
             ),

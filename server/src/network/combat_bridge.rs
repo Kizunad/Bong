@@ -299,7 +299,15 @@ fn map_defense_kind(kind: crate::combat::events::DefenseKind) -> CombatDefenseKi
     match kind {
         crate::combat::events::DefenseKind::JieMai => CombatDefenseKindV1::JieMai,
         crate::combat::events::DefenseKind::SwordParry => CombatDefenseKindV1::SwordParry,
+        // plan-shield-block-v1 P2 — 盾牌格挡成功穿透 IPC 层
+        crate::combat::events::DefenseKind::ShieldBlock => CombatDefenseKindV1::ShieldBlock,
     }
+}
+
+/// plan-shield-block-v1 P2 — 仅测试可见的 map_defense_kind 包装，用于跨模块单测覆盖全变体。
+#[cfg(test)]
+pub fn map_defense_kind_pub(kind: crate::combat::events::DefenseKind) -> CombatDefenseKindV1 {
+    map_defense_kind(kind)
 }
 
 #[cfg(test)]
