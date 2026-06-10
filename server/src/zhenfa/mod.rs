@@ -3215,6 +3215,7 @@ mod tests {
             id: ZHENFA_PEARL_ITEM_ID.to_string(),
             display_name: "散逸真元珠".to_string(),
             category: ItemCategory::Misc,
+            placeable: None,
             max_stack_count: 1,
             grid_w: 1,
             grid_h: 1,

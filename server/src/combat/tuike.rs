@@ -662,6 +662,7 @@ mod tests {
             id: id.to_string(),
             display_name: id.to_string(),
             category: ItemCategory::Misc,
+            placeable: None,
             max_stack_count: 16,
             grid_w,
             grid_h,

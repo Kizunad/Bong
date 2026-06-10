@@ -466,6 +466,7 @@ mod tests {
             id: id.into(),
             display_name: id.into(),
             category: ItemCategory::Weapon,
+            placeable: None,
             max_stack_count: 1,
             grid_w: 1,
             grid_h: 2,

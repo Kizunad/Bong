@@ -411,7 +411,8 @@ durability_cost_per_op = 0.005
 [[item]]
 id = "workbench_item"
 name = "制作台"
-category = "misc"
+category = "block"
+placeable = "workbench"
 grid_w = 2
 grid_h = 2
 base_weight = 6.0

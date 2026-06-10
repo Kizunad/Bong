@@ -35,6 +35,7 @@ fn test_template(template_id: &str, spirit_quality_initial: f64) -> ItemTemplate
         id: template_id.to_string(),
         display_name: format!("display:{template_id}"),
         category: ItemCategory::Misc,
+        placeable: None,
         max_stack_count: 64,
         grid_w: 1,
         grid_h: 1,

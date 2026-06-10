@@ -2136,6 +2136,7 @@ mod tests {
             id: id.to_string(),
             display_name: id.to_string(),
             category: ItemCategory::Misc,
+            placeable: None,
             max_stack_count: 1,
             grid_w: 1,
             grid_h: 1,

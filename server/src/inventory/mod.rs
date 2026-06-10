@@ -129,6 +129,7 @@ pub struct ItemTemplate {
     pub id: String,
     pub display_name: String,
     pub category: ItemCategory,
+    pub placeable: Option<String>,
     pub max_stack_count: u32,
     pub grid_w: u8,
     pub grid_h: u8,
@@ -1429,6 +1430,8 @@ struct ItemTemplateToml {
     id: String,
     name: String,
     category: String,
+    #[serde(default)]
+    placeable: Option<String>,
     grid_w: u8,
     grid_h: u8,
     base_weight: f64,
@@ -1661,6 +1664,19 @@ impl ItemTemplateToml {
         }
 
         let category = parse_item_category(self.category.as_str(), source_path, id.as_str())?;
+        let placeable = self
+            .placeable
+            .map(|raw| {
+                required_non_empty(raw, source_path, &format!("item `{id}` placeable"))
+                    .map(|value| value.trim().to_ascii_lowercase())
+            })
+            .transpose()?;
+        if placeable.is_some() && category != ItemCategory::Block {
+            return Err(format!(
+                "{} item `{id}` has placeable marker but category != Block",
+                source_path.display()
+            ));
+        }
         let rarity = parse_item_rarity(self.rarity.as_str(), source_path, id.as_str())?;
         let max_stack_count = self
             .max_stack_count
@@ -1777,6 +1793,7 @@ impl ItemTemplateToml {
             id,
             display_name,
             category,
+            placeable,
             max_stack_count,
             grid_w: self.grid_w,
             grid_h: self.grid_h,
@@ -3457,6 +3474,45 @@ pub fn dropped_loot_snapshot(registry: &DroppedLootRegistry) -> Vec<DroppedLootE
     drops
 }
 
+pub struct TemplateDroppedLootRequest<'a> {
+    pub template_id: &'a str,
+    pub stack_count: u32,
+    pub world_pos: [f64; 3],
+    pub dimension: DimensionKind,
+    pub current_tick: u64,
+}
+
+pub fn spawn_template_dropped_loot(
+    registry: &mut DroppedLootRegistry,
+    item_registry: &ItemRegistry,
+    allocator: &mut InventoryInstanceIdAllocator,
+    request: TemplateDroppedLootRequest<'_>,
+) -> Result<DroppedLootEntry, String> {
+    if request.stack_count == 0 {
+        return Err("spawn_template_dropped_loot requires stack_count >= 1".to_string());
+    }
+    let template = item_registry
+        .get(request.template_id)
+        .ok_or_else(|| format!("unknown item template id `{}`", request.template_id))?;
+    let instance_id = allocator.next_id()?;
+    let dropped = DroppedLootEntry {
+        instance_id,
+        source_container_id: "placeable_break".to_string(),
+        source_row: 0,
+        source_col: 0,
+        world_pos: request.world_pos,
+        dimension: request.dimension,
+        item: runtime_instance_from_template(
+            template,
+            instance_id,
+            request.stack_count,
+            request.current_tick,
+        ),
+    };
+    registry.entries.insert(instance_id, dropped.clone());
+    Ok(dropped)
+}
+
 pub fn pickup_dropped_loot_instance(
     inventory: &mut PlayerInventory,
     registry: &mut DroppedLootRegistry,
@@ -4522,6 +4578,7 @@ mod tests {
                     id: (*template_id).to_string(),
                     display_name: (*display_name).to_string(),
                     category: ItemCategory::Misc,
+                    placeable: None,
                     max_stack_count: 1,
                     grid_w: 1,
                     grid_h: 1,
@@ -4558,6 +4615,7 @@ mod tests {
             id: template_id.to_string(),
             display_name: template_id.to_string(),
             category,
+            placeable: None,
             max_stack_count,
             grid_w,
             grid_h,
@@ -4960,6 +5018,7 @@ mod tests {
             registry.get("spirit_treasure_jizhaojing"),
             Some(ItemTemplate {
                 category: ItemCategory::Treasure,
+                placeable: None,
                 rarity: ItemRarity::Ancient,
                 max_stack_count: 1,
                 ..
@@ -5730,6 +5789,7 @@ cols = 4
                 id: "wide_talisman".to_string(),
                 display_name: "阔符".to_string(),
                 category: ItemCategory::Misc,
+                placeable: None,
                 max_stack_count: 1,
                 grid_w: 2,
                 grid_h: 2,
@@ -5796,6 +5856,7 @@ cols = 4
                 id: "wide_talisman".to_string(),
                 display_name: "阔符".to_string(),
                 category: ItemCategory::Misc,
+                placeable: None,
                 max_stack_count: 1,
                 grid_w: 2,
                 grid_h: 2,
@@ -7722,6 +7783,7 @@ cols = 4
                 id: "iron_sword".to_string(),
                 display_name: "铁剑".to_string(),
                 category: ItemCategory::Weapon,
+                placeable: None,
                 max_stack_count: 1,
                 grid_w: 1,
                 grid_h: 2,
@@ -7796,6 +7858,7 @@ cols = 4
                 id: "iron_sword".to_string(),
                 display_name: "铁剑".to_string(),
                 category: ItemCategory::Weapon,
+                placeable: None,
                 max_stack_count: 1,
                 grid_w: 1,
                 grid_h: 2,
@@ -8105,6 +8168,7 @@ cols = 4
             id: id.to_string(),
             display_name: id.to_string(),
             category: ItemCategory::Container,
+            placeable: None,
             max_stack_count: 1,
             grid_w: 2,
             grid_h: 3,
@@ -8817,6 +8881,7 @@ cols = 4
             id: "worn_grass_pouch".to_string(),
             display_name: "草编囊（磨损）".to_string(),
             category: ItemCategory::Container,
+            placeable: None,
             max_stack_count: 1,
             grid_w: 1,
             grid_h: 2,
@@ -9235,6 +9300,7 @@ cols = 4
             id: id.to_string(),
             display_name: id.to_string(),
             category: ItemCategory::Weapon,
+            placeable: None,
             max_stack_count: 1,
             grid_w: 1,
             grid_h: 2,
@@ -9268,6 +9334,7 @@ cols = 4
             id: id.to_string(),
             display_name: id.to_string(),
             category: ItemCategory::Misc,
+            placeable: None,
             max_stack_count: 64,
             grid_w: 1,
             grid_h: 1,
@@ -9922,6 +9989,7 @@ cols = 4
             id: "food.spirit_wine.chen_jiu".to_string(),
             display_name: "陈酒".to_string(),
             category: ItemCategory::Food,
+            placeable: None,
             max_stack_count: 16,
             grid_w: 1,
             grid_h: 1,
@@ -9989,6 +10057,7 @@ cols = 4
             id: "misc_thing".to_string(),
             display_name: "misc".to_string(),
             category: ItemCategory::Misc,
+            placeable: None,
             max_stack_count: 1,
             grid_w: 1,
             grid_h: 1,
@@ -10072,6 +10141,7 @@ cols = 4
             id: "test_item".to_string(),
             name: "Test".to_string(),
             category: "food".to_string(),
+            placeable: None,
             grid_w: 1,
             grid_h: 1,
             base_weight: 0.1,
@@ -10116,6 +10186,7 @@ cols = 4
             id: "test_item".to_string(),
             name: "Test".to_string(),
             category: "food".to_string(),
+            placeable: None,
             grid_w: 1,
             grid_h: 1,
             base_weight: 0.1,
@@ -10161,6 +10232,7 @@ cols = 4
             id: "bad_food_half_config".to_string(),
             name: "半配置食物".to_string(),
             category: "food".to_string(),
+            placeable: None,
             grid_w: 1,
             grid_h: 1,
             base_weight: 0.1,
@@ -10211,6 +10283,7 @@ cols = 4
             id: "good_food_full_config".to_string(),
             name: "完整配置食物".to_string(),
             category: "food".to_string(),
+            placeable: None,
             grid_w: 1,
             grid_h: 1,
             base_weight: 0.1,
