@@ -486,8 +486,7 @@ plans:
   state: merged
   percent: 100
   last_updated: '2026-06-08'
-  pr_refs:
-  - 483
+  pr_refs: []
   blocking_on: []
   summary: spawn_tutorial state machine、coffin_open、spirit_niche_stone、dynamic rat swarm、world structure、schema event 与 agent
     narration 存在。
@@ -550,7 +549,8 @@ plans:
   state: merged
   percent: 100
   last_updated: '2026-06-10'
-  pr_refs: []
+  pr_refs:
+  - 483
   blocking_on: []
   summary: 11 个手搓消耗品已补齐使用闭环：6 个直接映射 ItemEffect，新增 ComposureRestore/WoundHeal，绷带/夹板复用 apply_wound_heal，凝脉散预制包接炼丹配方，并覆盖 QuickSlot consume→施效端到端测试。
 - file: plan-sou-da-che-v1.md

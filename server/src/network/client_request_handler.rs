@@ -9111,7 +9111,7 @@ fn handle_alchemy_take_pill(
             clients,
             player_states,
             cultivations,
-            "take_pill_quickslot_effect_rejected",
+            "take_pill_food_rejected",
         );
         return;
     }
