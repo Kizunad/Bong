@@ -785,7 +785,6 @@ pub fn register(app: &mut App) {
     crate::world::territory_narration::register(app);
     crate::world::territory_rumor::register(app);
     app.add_systems(Update, territory_qi_depleted_system);
-    app.add_systems(Update, territory_pvp_influence_system);
 }
 
 // ─── 单测 ─────────────────────────────────────────────────────────────────────
