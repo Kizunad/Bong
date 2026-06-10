@@ -4,17 +4,17 @@
 
 > **来源**：2026-06-10 手搓产出物使用流程审计（104 个 → 41✅/2⚠️/61💀），本 plan 处理其中"💊 消耗品空壳"一类。
 
-> **状态**：Active —— P0 实地调查 + 决策表已收口（field-investigation `wvlyzs44i` + 路径裁定实测），P1-P4 待 `/consume-plan` 实施。
+> **状态**：Finished —— P0-P4 已完成并通过 server 测试矩阵，归档至 `docs/finished_plans/`。
 
 ## 阶段总览
 
 | 阶段 | 内容 | 状态 |
 |------|------|------|
 | P0 | 实地调查收口 + 决策门：逐个锁定 canonical 意图 → effect 映射表（直接映射/新 variant/重分类/转后续 plan 四档） | ✅ 2026-06-10 |
-| P1 | 直接映射批：能镜像现有 `ItemEffect` variant 的，补 `[item.effect]` + pin 测试 | ⬜ |
-| P2 | 新 variant 批：现有 enum 无对应语义的，加 `ItemEffect` 变体 + parser key + apply 路径 + 饱和测试 | ⬜ |
-| P3 | 重分类批：本就不是"嗑"的物品（炼丹输入 / 知识物），接到正确系统而非 effect | ⬜ |
-| P4 | e2e + 收尾：UseQuickSlot→consume→施效 端到端；明确分流到其他 plan 的遗留 | ⬜ |
+| P1 | 直接映射批：能镜像现有 `ItemEffect` variant 的，补 `[item.effect]` + pin 测试 | ✅ 2026-06-10 |
+| P2 | 新 variant 批：现有 enum 无对应语义的，加 `ItemEffect` 变体 + parser key + apply 路径 + 饱和测试 | ✅ 2026-06-10 |
+| P3 | 重分类批：本就不是"嗑"的物品（炼丹输入 / 知识物），接到正确系统而非 effect | ✅ 2026-06-10 |
+| P4 | e2e + 收尾：UseQuickSlot→consume→施效 端到端；明确分流到其他 plan 的遗留 | ✅ 2026-06-10 |
 
 **待处理 11 个**（均定义于 `server/assets/items/workbench_materials.toml`，产出配方在 `server/src/craft/workbench_recipes.rs`）：
 `bandage` `arm_splint` `leg_splint` `huiyuan_decoction` `calming_tea` `meridian_salve` `ningmai_prep_kit` `meridian_rubbing` `qi_guide_talisman` `anti_gu_powder` `qingzhuo_powder`
@@ -84,7 +84,7 @@
 
 ---
 
-## P1 — 直接映射批（补 `[item.effect]`）⬜
+## P1 — 直接映射批（补 `[item.effect]`）✅ 2026-06-10
 
 **交付物**：
 - `server/assets/items/workbench_materials.toml`：P0 表中①档物品各加一行 `effect = { kind = "...", ... }`（+ 必要的 `cast_duration_ms`/`cooldown_ms`）
@@ -93,7 +93,7 @@
 
 ---
 
-## P2 — 新 variant 批 ⬜
+## P2 — 新 variant 批 ✅ 2026-06-10
 
 **交付物**（仅当 P0 判定②档非空时）：
 - `server/src/inventory/mod.rs:257`：新增 `ItemEffect` 变体——`ComposureRestore { magnitude }`（安神）+ `WoundHeal { magnitude, target: Option<String> }`（疗伤，#8/#9/#10 共用）
@@ -104,7 +104,7 @@
 
 ---
 
-## P3 — 重分类批 ⬜
+## P3 — 重分类批 ✅ 2026-06-10
 
 **交付物**（仅当 P0 判定③档非空时）：
 - `ningmai_prep_kit`（若判定为炼丹输入）：在对应 alchemy recipe JSON（`server/assets/alchemy/recipes/`）加它为 stage 输入，或在 dandao 加工链接入；补"被消耗"测试
@@ -113,7 +113,7 @@
 
 ---
 
-## P4 — e2e + 收尾 ⬜
+## P4 — e2e + 收尾 ✅ 2026-06-10
 
 **交付物**：
 - e2e：对至少 3 个代表性物品（①/②各取样）走 client `UseQuickSlot` → server consume → effect applied → 可观察状态变化（qi/经脉/污染）的端到端用例
@@ -124,10 +124,26 @@
 
 ## Finish Evidence
 
-> 迁入 `finished_plans/` 前必填。
-
-- **落地清单**：（每阶段对应真实文件路径）
-- **关键 commit**：（hash + 日期 + 一句话）
-- **测试结果**：（命令 + 数量）
-- **跨仓库核验**：server / agent / client 命中的 symbol
-- **遗留 / 后续**：转入其他 plan 的 ④档物品 + 依赖机制
+- **落地清单**：
+  - P1：`server/assets/items/workbench_materials.toml` 为 `huiyuan_decoction`、`meridian_salve`、`meridian_rubbing`、`qingzhuo_powder`、`anti_gu_powder`、`qi_guide_talisman` 补齐 `effect`；`server/src/inventory/mod.rs` 增加 10 个 item effect pin 断言。
+  - P2：`server/src/inventory/mod.rs` 新增 `ComposureRestore` / `WoundHeal` parser；`server/src/network/cast_emit.rs` 新增心境恢复、疗伤施效和 QuickSlot 端到端测试；`server/src/network/client_request_handler.rs` 保持丹药路径对 QuickSlot-only effect 的显式 no-op。
+  - P3：`server/assets/alchemy/recipes/ningmai_san_v1.json` 新增 `ningmai_prep_kit` → `ningmai_powder` 复炼配方；`server/src/alchemy/recipe.rs` pin 默认 registry 加载。
+  - P4：`server/src/network/cast_emit.rs` 覆盖 `UseQuickSlot` → consume → `qi_recovery` / `composure_restore` / `wound_heal` 代表性 e2e。
+- **关键 commit**：
+  - `93b2dbc82` · 2026-06-10 · `实现手搓消耗品使用闭环`
+- **测试结果**：
+  - `cd server && cargo fmt --check`：通过。
+  - `cd server && cargo test loads_item_registry_from_assets`：通过。
+  - `cd server && cargo test load_registry_from_default_dir`：通过。
+  - `cd server && cargo test composure_restore_clamps_to_full_composure`：通过。
+  - `cd server && cargo test wound_heal_targets_all_wounds_when_target_missing`：通过。
+  - `cd server && cargo test wound_heal_slash_target_filters_body_part_group`：通过。
+  - `cd server && cargo test tick_casts_consumable`：3 passed。
+  - `cd server && cargo clippy --all-targets -- -D warnings`：通过。
+  - `cd server && cargo test`：8161 passed；0 failed；1 ignored。
+- **跨仓库核验**：
+  - server：命中并落地 `ItemEffect`、`parse_item_effect`、`apply_item_effect`、`CastItemEffectTargets`、`apply_wound_heal`、`RecipeRegistry` 默认加载。
+  - client：本 plan 未改 client；入口复用既有 QuickSlot C2S cast 流程。
+  - agent：本 plan 未改 agent/schema。
+- **遗留 / 后续**：
+  - P0 四档裁定中无 ④档物品；夹板的 `splinted` 持续旗标仍依赖后续伤情扩展 plan，本 plan 仅按既有 `apply_wound_heal` 做 severity 降级/愈合。
