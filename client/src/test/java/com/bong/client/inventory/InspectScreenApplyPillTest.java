@@ -323,13 +323,13 @@ public class InspectScreenApplyPillTest {
             3001L,
             "niche_base",
             "灵龛基座",
-            1,
-            1,
-            0.4,
+            2,
+            2,
+            6.0,
             "rare",
             "龛石灵铁木台组合的永久复活点基座。",
             1,
-            0.2,
+            0.5,
             1.0
         );
 
@@ -347,13 +347,13 @@ public class InspectScreenApplyPillTest {
             3002L,
             "niche_base",
             "灵龛基座",
-            1,
-            1,
-            0.4,
+            2,
+            2,
+            6.0,
             "rare",
             "龛石灵铁木台组合的永久复活点基座。",
             1,
-            0.2,
+            0.5,
             1.0
         );
 
@@ -381,6 +381,33 @@ public class InspectScreenApplyPillTest {
             1,
             0.2,
             1.0
+        );
+
+        assertFalse(screen.dispatchPlaceSpiritNicheAt(item, 11, 64, 10));
+        assertTrue(sent.isEmpty());
+    }
+
+    @Test
+    void dispatchPlaceSpiritNicheRejectsNullItem() {
+        install();
+        InspectScreen screen = new InspectScreen(InventoryModel.empty());
+
+        assertFalse(screen.dispatchPlaceSpiritNicheAt(null, 11, 64, 10));
+        assertTrue(sent.isEmpty());
+    }
+
+    @Test
+    void dispatchPlaceSpiritNicheRejectsMockItemWithZeroInstanceId() {
+        install();
+        InspectScreen screen = new InspectScreen(InventoryModel.empty());
+        InventoryItem item = InventoryItem.create(
+            "niche_base",
+            "灵龛基座",
+            2,
+            2,
+            6.0,
+            "rare",
+            "龛石灵铁木台组合的永久复活点基座。"
         );
 
         assertFalse(screen.dispatchPlaceSpiritNicheAt(item, 11, 64, 10));
