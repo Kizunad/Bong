@@ -59,7 +59,7 @@ fn mentor(npc: &str) -> Vec<UnlockSource> {
 }
 
 /// 注册全部制作台配方 + 制作台自身手搓配方。
-/// plan-coffin-tiers-v1 P4 加入 3 档延寿棺后共 103 workbench + 1 self = 104 条。
+/// plan-coffin-tiers-v1 P4 加入 3 档延寿棺、P2 经济僵尸清理后共 98 workbench/coffin + 1 self = 99 条。
 pub fn register_workbench_recipes(registry: &mut CraftRegistry) -> Result<(), RegistryError> {
     register_workbench_self_recipe(registry)?;
     register_survival_tools(registry)?; // #1-12
@@ -949,17 +949,6 @@ fn register_cultivation_support(registry: &mut CraftRegistry) -> Result<(), Regi
             CraftCategory::Misc,
             vec![],
         ),
-        // #72 鼠群诱饵
-        (
-            "workbench.cultivation.rat_bait",
-            "鼠群诱饵",
-            vec![("salt_crystal", 2), ("rough_cloth", 1)],
-            0.0,
-            20,
-            ("rat_bait", 1),
-            CraftCategory::Misc,
-            vec![],
-        ),
         // #73 灵石架
         (
             "workbench.cultivation.spirit_rack",
@@ -1136,17 +1125,6 @@ fn register_array_basics(registry: &mut CraftRegistry) -> Result<(), RegistryErr
 /// 八、经济与交易 #83-90
 fn register_economy(registry: &mut CraftRegistry) -> Result<(), RegistryError> {
     let recipes: Vec<CategorizedRow> = vec![
-        // #83 骨币胚
-        (
-            "workbench.economy.coin_blank",
-            "骨币胚",
-            vec![("shu_gu", 1), ("zhenfa_blank_array", 1)],
-            0.0,
-            30,
-            ("bone_coin_blank", 3),
-            CraftCategory::Misc,
-            vec![],
-        ),
         // #84 骨币匣 (Container)
         (
             "workbench.economy.coin_box",
@@ -1169,17 +1147,6 @@ fn register_economy(registry: &mut CraftRegistry) -> Result<(), RegistryError> {
             CraftCategory::Tool,
             vec![],
         ),
-        // #86 标记石
-        (
-            "workbench.economy.waymark",
-            "标记石",
-            vec![("stone_chunk", 1), ("powder_dan_sha", 1)],
-            0.0,
-            10,
-            ("waymark_stone", 4),
-            CraftCategory::Misc,
-            vec![],
-        ),
         // #87 伪装包裹 (TuikeSkin)
         (
             "workbench.economy.disguise_wrap",
@@ -1190,35 +1157,6 @@ fn register_economy(registry: &mut CraftRegistry) -> Result<(), RegistryError> {
             ("disguise_wrap", 2),
             CraftCategory::TuikeSkin,
             vec![],
-        ),
-        // #88 标价签
-        (
-            "workbench.economy.price_tag",
-            "标价签",
-            vec![("rough_cloth", 1), ("powder_dan_sha", 1)],
-            0.0,
-            10,
-            ("price_tag", 5),
-            CraftCategory::Misc,
-            vec![],
-        ),
-        // #89 交易傀儡骨架 (📜👤)
-        (
-            "workbench.economy.puppet_frame",
-            "交易傀儡骨架",
-            vec![("shu_gu", 8), ("spider_silk_cord", 3), ("iron_ingot", 2)],
-            4.0,
-            150,
-            ("trade_puppet_frame", 1),
-            CraftCategory::Misc,
-            vec![
-                UnlockSource::Scroll {
-                    item_template: "scroll_workbench_puppet_frame".into(),
-                },
-                UnlockSource::Mentor {
-                    npc_archetype: "trader_npc".into(),
-                },
-            ],
         ),
         // #90 灵龛修补料 (📜)
         (
@@ -1512,11 +1450,11 @@ mod tests {
     fn register_workbench_recipes_succeeds() {
         let mut registry = CraftRegistry::new();
         register_workbench_recipes(&mut registry).unwrap();
-        // 103 workbench recipes (100 + 3 coffin tiers P4) + 1 workbench self recipe = 104
+        // 98 workbench/coffin recipes (95 workbench.* + 3 coffin tiers P4) + 1 workbench self recipe = 99
         assert_eq!(
             registry.len(),
-            104,
-            "expected 104 recipes (103 workbench + 1 self craft), got {}",
+            99,
+            "expected 99 recipes (98 workbench/coffin + 1 self craft), got {}",
             registry.len()
         );
     }
@@ -1623,8 +1561,8 @@ mod tests {
             }
         }
         assert_eq!(
-            workbench_count, 100,
-            "must have exactly 100 workbench.* recipes"
+            workbench_count, 95,
+            "must have exactly 95 workbench.* recipes"
         );
     }
 
@@ -1722,6 +1660,96 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn economy_zombie_templates_and_recipes_are_removed() {
+        let mut registry = CraftRegistry::new();
+        register_workbench_recipes(&mut registry).unwrap();
+        let item_registry = crate::inventory::load_item_registry().expect("item registry loads");
+        let removed_ids = [
+            "bone_coin_blank",
+            "waymark_stone",
+            "price_tag",
+            "trade_puppet_frame",
+            "rat_bait",
+        ];
+        let removed_recipe_ids = [
+            "workbench.economy.coin_blank",
+            "workbench.economy.waymark",
+            "workbench.economy.price_tag",
+            "workbench.economy.puppet_frame",
+            "workbench.cultivation.rat_bait",
+        ];
+
+        for removed_id in removed_ids {
+            assert!(
+                item_registry.get(removed_id).is_none(),
+                "P2 zombie template `{removed_id}` must be absent from ItemRegistry"
+            );
+        }
+
+        for recipe_id in removed_recipe_ids {
+            assert!(
+                registry.get(&RecipeId::new(recipe_id)).is_none(),
+                "P2 zombie recipe `{recipe_id}` must be absent from CraftRegistry"
+            );
+        }
+
+        for recipe in registry.iter() {
+            let (output_id, _) = &recipe.output;
+            assert!(
+                !removed_ids.contains(&output_id.as_str()),
+                "recipe `{}` must not output removed economy item `{output_id}`",
+                recipe.id
+            );
+            for (material_id, _) in &recipe.materials {
+                assert!(
+                    !removed_ids.contains(&material_id.as_str()),
+                    "recipe `{}` must not consume removed economy item `{material_id}`",
+                    recipe.id
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn trade_scale_chain_is_deferred_to_p3_intact() {
+        let mut registry = CraftRegistry::new();
+        register_workbench_recipes(&mut registry).unwrap();
+        let item_registry = crate::inventory::load_item_registry().expect("item registry loads");
+
+        assert!(
+            item_registry.get("trade_scale").is_some(),
+            "P2 must keep trade_scale template for P3 atomic deletion with stand"
+        );
+        assert!(
+            item_registry.get("trade_scale_stand").is_some(),
+            "P2 must keep trade_scale_stand template until trade_scale is removed in P3"
+        );
+
+        let trade_scale_recipe = registry
+            .get(&RecipeId::new("workbench.tool.trade_scale"))
+            .expect("trade_scale recipe must remain until P3");
+        assert_eq!(
+            trade_scale_recipe.output,
+            ("trade_scale".into(), 1),
+            "P2 must not orphan the trade_scale recipe"
+        );
+
+        let trade_scale_stand_recipe = registry
+            .get(&RecipeId::new("workbench.economy.trade_scale_stand"))
+            .expect("trade_scale_stand recipe must remain until P3");
+        assert_eq!(
+            trade_scale_stand_recipe.materials,
+            vec![("trade_scale".into(), 1), ("wood_plank".into(), 2)],
+            "trade_scale_stand must still consume trade_scale until both are deleted in P3"
+        );
+        assert_eq!(
+            trade_scale_stand_recipe.output,
+            ("trade_scale_stand".into(), 1),
+            "P2 must not delete trade_scale_stand separately from trade_scale"
+        );
     }
 
     #[test]
@@ -1883,8 +1911,8 @@ mod tests {
             }
         }
         assert_eq!(
-            workbench_count, 103,
-            "expected exactly 103 workbench recipes (100 original + 3 coffin tiers P4)"
+            workbench_count, 98,
+            "expected exactly 98 workbench/coffin recipes (95 workbench.* + 3 coffin tiers P4)"
         );
     }
 
@@ -2027,10 +2055,11 @@ mod tests {
                 );
             }
         }
-        // plan-coffin-tiers-v1 P4: +3 coffin 配方（jade qi=2 / stone qi=4 / bronze qi=6）
+        // plan-coffin-tiers-v1 P4: +3 coffin 配方（jade qi=2 / stone qi=4 / bronze qi=6）；
+        // plan-economy-zombie-cleanup-v1 P2 删除 trade_puppet_frame 后 -1 条正 qi 配方。
         assert_eq!(
-            qi_recipe_count, 21,
-            "expected exactly 21 recipes with qi_cost > 0 (18 original + 3 coffin tiers P4)"
+            qi_recipe_count, 20,
+            "expected exactly 20 recipes with qi_cost > 0 (17 current + 3 coffin tiers P4)"
         );
     }
 }

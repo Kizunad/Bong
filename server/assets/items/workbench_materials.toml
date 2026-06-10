@@ -516,17 +516,6 @@ description = "回元芷简易煎法制剂，非炼丹产物。"
 effect = { kind = "qi_recovery", magnitude = 40.0 }
 
 [[item]]
-id = "rat_bait"
-name = "鼠群诱饵"
-category = "misc"
-grid_w = 1
-grid_h = 1
-base_weight = 0.2
-rarity = "common"
-spirit_quality_initial = 0.1
-description = "盐蓬晶裹粗布的诱鼠包。"
-
-[[item]]
 id = "spirit_stone_rack"
 name = "灵石架"
 category = "misc"
@@ -767,19 +756,8 @@ quality_tier = 0
 durability_max = 60.0
 
 # ═══════════════════════════════════════════════════════════════════════════
-# 经济 (8)
+# 经济 (4)
 # ═══════════════════════════════════════════════════════════════════════════
-
-[[item]]
-id = "bone_coin_blank"
-name = "骨币胚"
-category = "misc"
-grid_w = 1
-grid_h = 1
-base_weight = 0.1
-rarity = "common"
-spirit_quality_initial = 0.0
-description = "兽骨切片阵纸贴面的空白骨币，灌真元才有价。"
 
 [[item]]
 id = "trade_scale"
@@ -791,17 +769,6 @@ base_weight = 0.8
 rarity = "common"
 spirit_quality_initial = 0.0
 description = "铁杆木盘的简易秤，称骨币灵草。"
-
-[[item]]
-id = "waymark_stone"
-name = "标记石"
-category = "misc"
-grid_w = 1
-grid_h = 1
-base_weight = 0.4
-rarity = "common"
-spirit_quality_initial = 0.0
-description = "丹砂画记号的石头，标路不迷。"
 
 [[item]]
 id = "disguise_wrap"
@@ -826,17 +793,6 @@ spirit_quality_initial = 0.0
 description = "秤固定在木架上，摊位交易免手持。"
 
 [[item]]
-id = "trade_puppet_frame"
-name = "交易傀儡骨架"
-category = "misc"
-grid_w = 2
-grid_h = 2
-base_weight = 5.0
-rarity = "rare"
-spirit_quality_initial = 0.3
-description = "兽骨蛛丝铁关节的人形骨架，注灵后可充当游商。"
-
-[[item]]
 id = "niche_repair_kit"
 name = "灵龛修补料"
 category = "misc"
@@ -846,17 +802,6 @@ base_weight = 1.5
 rarity = "uncommon"
 spirit_quality_initial = 0.3
 description = "碎石灵铁混合料，修补损坏灵龛。"
-
-[[item]]
-id = "price_tag"
-name = "标价签"
-category = "misc"
-grid_w = 1
-grid_h = 1
-base_weight = 0.01
-rarity = "common"
-spirit_quality_initial = 0.0
-description = "丹砂写价的粗布签，贴在交易品上。"
 
 # ═══════════════════════════════════════════════════════════════════════════
 # 住所 (7)
