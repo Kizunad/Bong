@@ -6750,6 +6750,42 @@ cols = 4
         assert!(error.contains("only dagger/fist are allowed"));
     }
 
+    // plan-shield-block-v1 P0 MAJOR #2 — off_hand 路径 a：无 weapon_spec 的非武器物品（armor）
+    // 装 off_hand 被拒，错误消息含 "expected dagger/fist weapon or treasure"。
+    #[test]
+    fn apply_move_rejects_non_weapon_armor_to_off_hand() {
+        use crate::schema::inventory::{EquipSlotV1, InventoryLocationV1};
+
+        let registry = load_item_registry().expect("item registry should load");
+        let mut inv = make_test_inventory_with_one_item();
+        // armor_bone_boots：ItemCategory::Armor，无 weapon_spec → 走路径 a 被 ok_or_else 拒
+        inv.containers[0].items[0].instance.template_id = "armor_bone_boots".to_string();
+        inv.containers[0].items[0].instance.display_name = "骨甲靴".to_string();
+        inv.containers[0].items[0].instance.grid_w = 1;
+        inv.containers[0].items[0].instance.grid_h = 1;
+
+        let error = apply_inventory_move(
+            &mut inv,
+            &registry,
+            42,
+            &InventoryLocationV1::Container {
+                container_id: "main_pack".to_string(),
+                row: 0,
+                col: 0,
+            },
+            &InventoryLocationV1::Equip {
+                slot: EquipSlotV1::OffHand,
+            },
+        )
+        .expect_err("armor should be rejected from off_hand (path a: no weapon_spec)");
+
+        assert!(
+            error.contains("expected dagger/fist weapon or treasure"),
+            "期望错误消息含 'expected dagger/fist weapon or treasure'（off_hand 路径 a，\
+             无 weapon_spec 非武器物品），实际消息：{error}"
+        );
+    }
+
     #[test]
     fn apply_move_rejects_two_hand_when_main_hand_occupied() {
         use crate::schema::inventory::{EquipSlotV1, InventoryLocationV1};
