@@ -8,8 +8,8 @@
 
 | 阶段 | 主题 | 状态 | 验收日期 |
 |------|------|------|----------|
-| P0 | `niche_base` 接通放置（ID 断链收口） | ⬜ | |
-| P1 | SpiritNiche 损伤/修补生命周期 + `niche_repair_kit` use 闭环 + 视听断链收口 | ⬜ | |
+| P0 | `niche_base` 接通放置（ID 断链收口） | ✅ | 2026-06-10 |
+| P1 | SpiritNiche 损伤/修补生命周期 + `niche_repair_kit` use 闭环 + 视听断链收口 | ✅ | 2026-06-10 |
 
 ---
 
@@ -241,3 +241,46 @@ Agent(subagent_type:"claude", model:"opus", prompt:"<本 PR 范围 + §10.3 测�
 ### §10.5 单次 consume-plan 全自动到 merge
 
 用户提交 `/consume-plan plan-niche-craft-fix-v1` 后即可下班，醒来看 plan 是否在 `docs/finished_plans/`。
+
+## Finish Evidence
+
+### 落地清单
+
+- **P0：`niche_base` 放置闭环**：
+  - `server/src/social/mod.rs` 将 `SPIRIT_NICHE_ITEM_TEMPLATE_ID` 收口为 `niche_base`，放置成功写入 `Lifecycle.spawn_anchor`、`SpiritNicheRegistry` 与持久化。
+  - `server/src/world/spawn_tutorial.rs` 将新手起始灵龛 grant 改为可直接放置的 `niche_base`。
+  - `server/src/social/mod.rs` 增加 `niche_base_template_id_is_recipe_output` 等断链回归，锁住配方产物与 handler 可接受 ID 一致。
+- **P1：损伤/修补生命周期**：
+  - `server/src/social/components.rs` 为 `SpiritNiche` 增加 `is_damaged`；`server/src/persistence/mod.rs` 增加 `social_spirit_niches.is_damaged` 迁移、读写与回归。
+  - `server/src/social/niche_defense.rs` 在成功抄家后就地置损伤，并同步 component / registry / persistence / `Lifecycle.spawn_anchor_damaged`。
+  - `server/src/combat/components.rs` 与 `server/src/combat/lifecycle.rs` 接入受损灵龛复活虚弱时长翻倍，测试断言使用 `REVIVE_WEAKENED_TICKS * 2`。
+  - `server/src/social/events.rs`、`server/src/network/client_request_handler.rs`、`server/src/schema/client_request.rs`、`proto/bong/envelope.proto` 接通 `SpiritNicheRepair` C2S 请求与事件。
+  - `server/src/social/mod.rs` 增加 `handle_spirit_niche_repair_requests`，校验 `niche_repair_kit`、自有受损灵龛、距离与实例 ID，成功后消耗修补料、清除损伤并发出 VFX/SFX/narration。
+  - `server/assets/audio/recipes/niche_repair.json` 与 `server/src/network/gameplay_vfx.rs` 增加修补音效和 `bong:social_niche_repair` 粒子事件。
+- **P1：client / schema 接线**：
+  - `client/src/main/java/com/bong/client/inventory/InspectScreen.java` 增加 `niche_repair_kit` 右键菜单与 `ClientRequestSender.sendSpiritNicheRepair`。
+  - `client/src/main/java/com/bong/client/network/ClientRequestProtocol.java`、`ClientRequestSender.java` 增加 `spirit_niche_repair` 编码/发送。
+  - `client/src/main/java/com/bong/client/visual/particle/NicheRepairParticlePlayer.java` 与 `VfxBootstrap.java` 注册修补粒子。
+  - `client/src/main/java/com/bong/client/social/NicheIntrusionAlertHandler.java` 将守家破损/损耗本地程序化音频播放接到真实 callsite，并将旧 `NicheDefenseReactionVfxPlayer` 标记弃用。
+  - `agent/packages/schema/src/client-request.ts`、`schema-registry.ts`、`generated/client-request-spirit-niche-repair-v1.json` 与 sample 文件补齐 `SpiritNicheRepairRequestV1`。
+
+### 关键 commit / PR
+
+- `d5142417981beab1aee5e387ba779edab466922e`（2026-06-10）— `plan-niche-craft-fix-v1 P0: 接通 niche_base 灵龛放置`，PR #478。
+- `2c75e7e208bd0ccaaf02343c2c6018c67ca23e18`（2026-06-10）— `plan-niche-craft-fix-v1 P1: 灵龛损伤修补闭环`，PR #480。
+
+### 测试结果
+
+- PR #478：GitHub `e2e` 通过（E2E Redis Smoke，job `80491916091`）；GitHub `snapshot` 通过（Worldgen Preview Snapshot，job `80491916185`）。CodeRabbit 为额度失败，非代码 blocker。
+- PR #480：本地通过 `cd agent/packages/schema && npm test`（595 passed）、`cd agent && npm run build -w @bong/schema`、`cd server && cargo fmt && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test`（8126 passed, 0 failed, 1 ignored）、`JAVA_HOME=$HOME/.sdkman/candidates/java/17.0.18-amzn cd client && ./gradlew test build`。GitHub `e2e` 通过（E2E Redis Smoke，job `80519271178`）。CodeRabbit 为额度失败，非代码 blocker。
+
+### 跨仓库核验
+
+- **server**：`SPIRIT_NICHE_ITEM_TEMPLATE_ID = "niche_base"`、`SpiritNiche.is_damaged`、`Lifecycle.spawn_anchor_damaged`、`handle_spirit_niche_repair_requests`、`SOCIAL_NICHE_REPAIR`、`niche_repair` audio recipe 均可 grep 命中。
+- **client**：`ClientRequestProtocol.encodeSpiritNicheRepair`、`ClientRequestSender.sendSpiritNicheRepair`、`InspectScreen.isSpiritNicheRepairKit`、`NicheRepairParticlePlayer.EVENT_ID`、`NicheIntrusionAlertHandler` 本地守家音频播放均可 grep 命中。
+- **agent/schema**：`SpiritNicheRepairRequestV1`、`clientRequestSpiritNicheRepairV1`、`client-request.spirit-niche-repair.sample.json` 与 generated schema 均可 grep 命中。
+- **proto**：`ClientRequestEnvelope.Payload.spirit_niche_repair = 92` 与 `message SpiritNicheRepair` 已落地。
+
+### 遗留 / 后续
+
+- 无本 plan 范围内遗留阻塞；后续若要让已揭露/已拆除灵龛也可被修补，需要另立玩法 plan 明确语义。
