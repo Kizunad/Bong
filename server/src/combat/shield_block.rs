@@ -385,7 +385,7 @@ pub fn cleanup_shield_on_disconnect(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::combat::components::StatusEffects;
+    use crate::combat::components::{ActiveStatusEffect, StatusEffects};
     use crate::combat::components::{CombatState, Lifecycle, Stamina, Wounds};
     use crate::combat::events::DeathInsightRequested;
     use crate::combat::events::StatusEffectKind;
@@ -1577,6 +1577,239 @@ mod tests {
         app.insert_resource(crate::combat::CombatClock::default());
         app.add_systems(Update, force_lower_shield_on_stamina_exhausted);
         let _ = app; // 只需构建不 panic
+    }
+
+    // ── force_lower 真行为：Exhausted+ShieldBlock → 强制放盾，发 ParryRecovery intent ──
+    // plan-shield-block-v1 P2 §Issue4：锁住完整的强制放盾副作用链路。
+    #[test]
+    fn force_lower_removes_shield_and_emits_parry_recovery_when_exhausted() {
+        use crate::combat::components::{Stamina, StaminaState};
+        use crate::combat::events::ApplyStatusEffectIntent;
+
+        let mut app = App::new();
+        app.add_event::<VfxEventRequest>();
+        app.add_event::<ApplyStatusEffectIntent>();
+        app.insert_resource(crate::combat::CombatClock { tick: 5 });
+        app.add_systems(Update, force_lower_shield_on_stamina_exhausted);
+
+        let entity = app
+            .world_mut()
+            .spawn((
+                StatusEffects {
+                    active: vec![ActiveStatusEffect {
+                        kind: StatusEffectKind::ShieldBlocking,
+                        magnitude: 0.5,
+                        remaining_ticks: SHIELD_BLOCKING_DURATION_TICKS,
+                        source_pill: None,
+                    }],
+                },
+                ShieldBlock {
+                    template_id: "wooden_shield".to_string(),
+                },
+                Stamina {
+                    current: 0.0,
+                    max: 100.0,
+                    recover_per_sec: 5.0,
+                    state: StaminaState::Exhausted,
+                    last_drain_tick: None,
+                },
+            ))
+            .id();
+
+        app.update();
+
+        // 1. ShieldBlocking status が移除
+        let status = app.world().entity(entity).get::<StatusEffects>().unwrap();
+        assert!(
+            !has_active_status(status, StatusEffectKind::ShieldBlocking),
+            "force_lower: Exhausted 体力归零时 ShieldBlocking status 应被移除，\
+             避免格挡残留；actual: {:?}",
+            status.active
+        );
+        // 2. ShieldBlock component が移除
+        assert!(
+            app.world().entity(entity).get::<ShieldBlock>().is_none(),
+            "force_lower: Exhausted 时 ShieldBlock component 应被移除"
+        );
+        // 3. ApplyStatusEffectIntent(ParryRecovery) 发送
+        let intents: Vec<ApplyStatusEffectIntent> = app
+            .world()
+            .resource::<Events<ApplyStatusEffectIntent>>()
+            .iter_current_update_events()
+            .cloned()
+            .collect();
+        let parry_recovery = intents
+            .iter()
+            .find(|i| i.kind == StatusEffectKind::ParryRecovery && i.target == entity);
+        assert!(
+            parry_recovery.is_some(),
+            "force_lower: 应发送 ApplyStatusEffectIntent(ParryRecovery)（破势硬直防立即再举盾）；\
+             actual intents: {intents:?}"
+        );
+        let pr = parry_recovery.unwrap();
+        assert_eq!(
+            pr.magnitude, 1.0,
+            "force_lower: ParryRecovery magnitude 应为 1.0，实际 {}",
+            pr.magnitude
+        );
+        assert_eq!(
+            pr.duration_ticks, SHIELD_EXHAUSTED_PARRY_RECOVERY_TICKS,
+            "force_lower: ParryRecovery duration_ticks 应为 SHIELD_EXHAUSTED_PARRY_RECOVERY_TICKS={} \
+             （约 1s=20ticks），实际 {}",
+            SHIELD_EXHAUSTED_PARRY_RECOVERY_TICKS,
+            pr.duration_ticks
+        );
+        // 4. StopAnim 应发出（通知 client 收举盾姿态）——无 Position/UniqueId 时静默 skip，不 panic
+        // 无需断言 VfxEventRequest 存在（无 Position/UniqueId 时 emit_shield_stop_for_entity 静默）
+    }
+
+    // ── force_lower 负分支：非 Exhausted 不强制放盾 ─────────────────────────
+    #[test]
+    fn force_lower_does_not_lower_when_stamina_not_exhausted() {
+        use crate::combat::components::{Stamina, StaminaState};
+        use crate::combat::events::ApplyStatusEffectIntent;
+
+        let mut app = App::new();
+        app.add_event::<VfxEventRequest>();
+        app.add_event::<ApplyStatusEffectIntent>();
+        app.insert_resource(crate::combat::CombatClock { tick: 5 });
+        app.add_systems(Update, force_lower_shield_on_stamina_exhausted);
+
+        let entity = app
+            .world_mut()
+            .spawn((
+                StatusEffects {
+                    active: vec![ActiveStatusEffect {
+                        kind: StatusEffectKind::ShieldBlocking,
+                        magnitude: 0.5,
+                        remaining_ticks: SHIELD_BLOCKING_DURATION_TICKS,
+                        source_pill: None,
+                    }],
+                },
+                ShieldBlock {
+                    template_id: "wooden_shield".to_string(),
+                },
+                Stamina {
+                    current: 50.0, // 非 Exhausted
+                    max: 100.0,
+                    recover_per_sec: 5.0,
+                    state: StaminaState::ShieldBlocking,
+                    last_drain_tick: None,
+                },
+            ))
+            .id();
+
+        app.update();
+
+        // 体力不为 Exhausted，不应强制放盾
+        let status = app.world().entity(entity).get::<StatusEffects>().unwrap();
+        assert!(
+            has_active_status(status, StatusEffectKind::ShieldBlocking),
+            "force_lower 负分支：非 Exhausted 状态不应移除 ShieldBlocking；\
+             actual: {:?}",
+            status.active
+        );
+        assert!(
+            app.world().entity(entity).get::<ShieldBlock>().is_some(),
+            "force_lower 负分支：非 Exhausted 状态不应移除 ShieldBlock component"
+        );
+        let intents: Vec<ApplyStatusEffectIntent> = app
+            .world()
+            .resource::<Events<ApplyStatusEffectIntent>>()
+            .iter_current_update_events()
+            .cloned()
+            .collect();
+        let parry = intents
+            .iter()
+            .any(|i| i.kind == StatusEffectKind::ParryRecovery && i.target == entity);
+        assert!(
+            !parry,
+            "force_lower 负分支：非 Exhausted 时不应发 ParryRecovery；\
+             actual intents: {intents:?}"
+        );
+    }
+
+    // ── raise_shield 读真实 ShieldSpec.block_ratio（ItemRegistry 测试）────────
+    // 补充 ItemRegistry（含 bone_shield shield_spec.block_ratio=0.65）的 raise 测试，
+    // 断言 ShieldBlocking magnitude == 0.65（非 fallback 0.5）。
+    #[test]
+    fn raise_shield_reads_block_ratio_from_item_registry() {
+        use crate::combat::components::{Stamina, StaminaState};
+        use crate::inventory::{ItemCategory, ItemRarity, ItemRegistry, ItemTemplate, ShieldSpec};
+
+        let mut app = make_app(); // 使用已注册 raise_shield_handler 的 make_app
+
+        // 构建含 bone_shield 的 ItemRegistry
+        let registry = ItemRegistry::from_map(std::collections::HashMap::from([(
+            "bone_shield".to_string(),
+            ItemTemplate {
+                id: "bone_shield".to_string(),
+                display_name: "骨盾".to_string(),
+                category: ItemCategory::Shield,
+                max_stack_count: 1,
+                grid_w: 1,
+                grid_h: 2,
+                base_weight: 2.5,
+                rarity: ItemRarity::Common,
+                spirit_quality_initial: 1.0,
+                description: String::new(),
+                effect: None,
+                cast_duration_ms: 0,
+                cooldown_ms: 0,
+                weapon_spec: None,
+                forge_station_spec: None,
+                blueprint_scroll_spec: None,
+                inscription_scroll_spec: None,
+                technique_scroll_spec: None,
+                recipe_fragment_spec: None,
+                container_spec: None,
+                shield_spec: Some(ShieldSpec {
+                    block_ratio: 0.65,
+                    durability_max: 150.0,
+                    stamina_drain_per_s: 3.0,
+                }),
+                shelflife_profile: None,
+                shelflife_track: None,
+            },
+        )]));
+        app.insert_resource(registry);
+
+        let entity = app
+            .world_mut()
+            .spawn((
+                StatusEffects::default(),
+                make_inventory_with_off_hand("bone_shield"),
+                Stamina {
+                    current: 100.0,
+                    max: 100.0,
+                    recover_per_sec: 5.0,
+                    state: StaminaState::Idle,
+                    last_drain_tick: None,
+                },
+            ))
+            .id();
+
+        app.world_mut()
+            .resource_mut::<Events<RaiseShieldIntent>>()
+            .send(RaiseShieldIntent { player: entity });
+        app.update();
+
+        let status = app.world().entity(entity).get::<StatusEffects>().unwrap();
+        let shield_effect = status
+            .active
+            .iter()
+            .find(|e| e.kind == StatusEffectKind::ShieldBlocking);
+        assert!(
+            shield_effect.is_some(),
+            "ItemRegistry 存在时 raise_shield 应插入 ShieldBlocking status"
+        );
+        let magnitude = shield_effect.unwrap().magnitude;
+        assert!(
+            (magnitude - 0.65_f32).abs() < 0.001,
+            "raise_shield 应从 ItemRegistry(bone_shield.shield_spec.block_ratio=0.65) \
+             读取 block_ratio，ShieldBlocking magnitude 应为 0.65（非 fallback 0.5）；\
+             实际 magnitude={magnitude}"
+        );
     }
 
     // ── SHIELD_DRAIN_PER_SEC 常量值锁定 ─────────────────────────────────────

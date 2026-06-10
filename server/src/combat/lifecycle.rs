@@ -4396,4 +4396,74 @@ mod tests {
 
         let _ = fs::remove_dir_all(root);
     }
+
+    // ── plan-shield-block-v1 P2 §Issue5.2 — sync_combat_state ShieldBlocking 保留 ──
+    // 被命中时若受击方处于 ShieldBlocking 状态，sync_combat_state_from_events 不应将其
+    // stamina.state 翻成 Combat（应保留 ShieldBlocking，由 stamina_tick 维护 drain 逻辑）。
+    #[test]
+    fn sync_combat_state_preserves_shield_blocking_state_on_target() {
+        let mut app = App::new();
+        app.add_event::<CombatEvent>();
+        app.add_systems(Update, sync_combat_state_from_events);
+
+        let attacker = app
+            .world_mut()
+            .spawn((
+                Wounds::default(),
+                Stamina {
+                    current: 100.0,
+                    max: 100.0,
+                    recover_per_sec: 5.0,
+                    state: StaminaState::Combat,
+                    last_drain_tick: None,
+                },
+                CombatState::default(),
+                Lifecycle::default(),
+            ))
+            .id();
+        let target = app
+            .world_mut()
+            .spawn((
+                Wounds::default(),
+                Stamina {
+                    current: 60.0,
+                    max: 100.0,
+                    recover_per_sec: 5.0,
+                    state: StaminaState::ShieldBlocking,
+                    last_drain_tick: None,
+                },
+                CombatState::default(),
+                Lifecycle::default(),
+            ))
+            .id();
+
+        app.world_mut().send_event(CombatEvent {
+            attacker,
+            target,
+            resolved_at_tick: 100,
+            body_part: BodyPart::Chest,
+            wound_kind: WoundKind::Blunt,
+            source: crate::combat::events::AttackSource::Melee,
+            debug_command: false,
+            physical_damage: 0.5,
+            damage: 0.0,
+            contam_delta: 0.0,
+            description: "test_hit".to_string(),
+            defense_kind: Some(crate::combat::events::DefenseKind::ShieldBlock),
+            defense_effectiveness: Some(0.6),
+            defense_contam_reduced: None,
+            defense_wound_severity: None,
+        });
+        app.update();
+
+        let target_stamina = app.world().entity(target).get::<Stamina>().unwrap();
+        assert_eq!(
+            target_stamina.state,
+            StaminaState::ShieldBlocking,
+            "sync_combat_state_from_events 被命中时不应将 ShieldBlocking 状态覆写为 Combat；\
+             举盾状态由 stamina_tick 维护（drain/exhausted 逻辑）；\
+             actual: {:?}",
+            target_stamina.state
+        );
+    }
 }

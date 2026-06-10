@@ -193,6 +193,13 @@ pub fn apply_defense_intents(
         }) {
             continue;
         }
+        // plan-shield-block-v1 P2 — 盾格挡 emit 的 DefenseIntent 仅用于动画触发，
+        // 不应开截脉 incoming_window 也不应施加 per-block ParryRecovery。
+        // 盾格挡语义：凡人盾，无境界加成，不耦合 jiemai/zhenmai。
+        if status_effects.is_some_and(|se| has_active_status(se, StatusEffectKind::ShieldBlocking))
+        {
+            continue;
+        }
         if zhenmai_v2::parry_qi_cost_for_realm(cultivation.realm).is_none() {
             continue;
         }
@@ -6835,6 +6842,342 @@ mod tests {
         assert_eq!(
             intent_count, 0,
             "VoidCoreActive defender should not emit ApplyStatusEffectIntent (e.g. ParryRecovery), got {intent_count}"
+        );
+    }
+
+    // ══════════════════════════════════════════════════════════════════════════
+    // plan-shield-block-v1 P2 — resolve_attack_intents 减伤分支集成测试
+    // ══════════════════════════════════════════════════════════════════════════
+
+    fn make_shield_block_app() -> App {
+        let mut app = App::new();
+        app.insert_resource(CombatClock { tick: 5000 });
+        app.add_event::<AttackIntent>();
+        app.add_event::<ApplyStatusEffectIntent>();
+        app.add_event::<CombatEvent>();
+        app.add_event::<DeathEvent>();
+        app.add_event::<crate::combat::weapon::WeaponBroken>();
+        app.add_event::<InventoryDurabilityChangedEvent>();
+        app.add_systems(Update, resolve_attack_intents);
+        app
+    }
+
+    // ── happy path：正面命中 + ShieldBlocking → wound.severity / bleeding / contam 按比例削减 ──
+    #[test]
+    fn shield_block_front_face_reduces_severity_bleeding_and_contam() {
+        let mut app = make_shield_block_app();
+        // 攻击者在 [0,64,0]，防御者在 [1,64,0] 朝 +Z（yaw=0）
+        // 防御者朝 -X(facing=-sin(0)=0, cos(0)=1 → facing=(0,0,1))
+        // to_attacker = 0-1=-1 in X → dot 需计算
+        // 为简化：defender 在 z=1，attacker 在 z=3 → to_attacker=(0,0,2) → dot with (0,0,1)=1.0 > -0.5 → 正面
+        let attacker = spawn_player(
+            &mut app,
+            "ShieldAtk",
+            [0.0, 64.0, 3.0],
+            Wounds::default(),
+            Stamina::default(),
+        );
+        let defender = spawn_player(
+            &mut app,
+            "ShieldDef",
+            [0.0, 64.0, 1.0],
+            Wounds::default(),
+            Stamina::default(),
+        );
+        // defender 朝 +Z（yaw=0），attacker 在 z=3（防御者前方）→ dot=1.0 > -0.5 → 正面
+        app.world_mut().entity_mut(defender).insert((
+            StatusEffects {
+                active: vec![ActiveStatusEffect {
+                    kind: StatusEffectKind::ShieldBlocking,
+                    magnitude: 0.6, // 60% 减伤
+                    remaining_ticks: crate::combat::shield_block::SHIELD_BLOCKING_DURATION_TICKS,
+                    source_pill: None,
+                }],
+            },
+            crate::combat::shield_block::ShieldBlock {
+                template_id: "bone_shield".to_string(),
+            },
+            Look {
+                yaw: 0.0,
+                pitch: 0.0,
+            }, // 朝 +Z
+        ));
+
+        app.world_mut().send_event(AttackIntent {
+            attacker,
+            target: Some(defender),
+            issued_at_tick: 4999,
+            reach: FIST_REACH,
+            qi_invest: 0.0,
+            wound_kind: WoundKind::Blunt,
+            source: AttackSource::Melee,
+            debug_command: None,
+        });
+        app.update();
+
+        // 1. CombatEvent 发出 defense_kind = ShieldBlock
+        let events: Vec<_> = app
+            .world()
+            .resource::<Events<CombatEvent>>()
+            .iter_current_update_events()
+            .collect();
+        assert_eq!(events.len(), 1, "应有且仅有一个 CombatEvent");
+        assert_eq!(
+            events[0].defense_kind,
+            Some(DefenseKind::ShieldBlock),
+            "正面命中 ShieldBlocking 应发出 defense_kind=ShieldBlock；actual: {:?}",
+            events[0].defense_kind
+        );
+        // 2. defense_effectiveness == block_ratio (0.6)
+        assert!(
+            events[0]
+                .defense_effectiveness
+                .is_some_and(|e| (e - 0.6).abs() < 0.01),
+            "defense_effectiveness 应等于 block_ratio=0.6，actual: {:?}",
+            events[0].defense_effectiveness
+        );
+        // 3. wound 减伤确认（physical_damage 应小于无盾时的 1.0 unarmed）
+        let phys_dmg = events[0].physical_damage;
+        assert!(
+            phys_dmg < 0.5,
+            "60% 盾格挡后 physical_damage 应小于 0.5（减伤比例正确），actual={phys_dmg}"
+        );
+        // 4. 攻击者无 reflected_damage（盾格挡无反伤，对比 SwordParry 有 0.15 反伤）
+        let attacker_wounds = app.world().entity(attacker).get::<Wounds>().unwrap();
+        assert!(
+            attacker_wounds.entries.is_empty(),
+            "盾格挡后攻击者不应有 reflected_damage（无反伤语义），\
+             actual entries: {:?}",
+            attacker_wounds.entries
+        );
+    }
+
+    // ── 边界 dot==-0.5（恰好 120° 边界） → 命中减伤 ──────────────────────────
+    // 使攻击者方向 dot 精确等于 -0.5，不靠近似几何，直接在 FOV 判定上测 >= 语义。
+    #[test]
+    fn shield_fov_check_exact_boundary_dot_minus_half_triggers_block() {
+        // 直接测 shield_fov_check 函数，dot 精确等于 -0.5（见 P5 §1 要求）
+        use valence::entity::Look;
+        // 防御者朝 +Z（yaw=0），facing=(0,0,1)
+        // 攻击者方向 = cos(120°)=-0.5, sin(120°)=√3/2
+        // to_attacker normalized = (-sin120°, 0, cos120°) = (-√3/2, 0, -0.5)
+        // dot with (0,0,1) = -0.5 → 恰好等于 SHIELD_FOV_DOT
+        let cos120 = 120.0_f64.to_radians().cos(); // = -0.5
+        let sin120 = 120.0_f64.to_radians().sin(); // = √3/2
+                                                   // 构造攻击者在方向 (-sin120, 0, cos120) 距离 2
+        let attacker_pos = valence::prelude::DVec3::new(-sin120 * 2.0, 0.0, cos120 * 2.0);
+        let defender_pos = valence::prelude::DVec3::ZERO;
+        let look = Look {
+            yaw: 0.0,
+            pitch: 0.0,
+        };
+
+        let result =
+            crate::combat::shield_block::shield_fov_check(attacker_pos, defender_pos, Some(&look));
+        // 验证 dot = facing · to_att_norm = (0,0,1) · (-sin120, 0, cos120) = cos120 = -0.5
+        assert!(
+            result,
+            "dot=-0.5 精确等于 SHIELD_FOV_DOT(-0.5)，>= 比较应通过（命中可挡）；\
+             若改为 > 则此测试撞红（>=  vs > boundary pin）"
+        );
+    }
+
+    // ── 背面命中（dot < -0.5）→ 盾格挡无效 ─────────────────────────────────
+    #[test]
+    fn shield_block_back_face_no_reduction() {
+        let mut app = make_shield_block_app();
+        // 防御者在 [0,64,0] 朝 +Z（yaw=0），攻击者在 [0,64,-2]（背后 dot=-1.0 < -0.5）
+        let attacker = spawn_player(
+            &mut app,
+            "BackAtk",
+            [0.0, 64.0, -2.0],
+            Wounds::default(),
+            Stamina::default(),
+        );
+        let defender = spawn_player(
+            &mut app,
+            "BackDef",
+            [0.0, 64.0, 0.0],
+            Wounds::default(),
+            Stamina::default(),
+        );
+        app.world_mut().entity_mut(defender).insert((
+            StatusEffects {
+                active: vec![ActiveStatusEffect {
+                    kind: StatusEffectKind::ShieldBlocking,
+                    magnitude: 0.6,
+                    remaining_ticks: crate::combat::shield_block::SHIELD_BLOCKING_DURATION_TICKS,
+                    source_pill: None,
+                }],
+            },
+            crate::combat::shield_block::ShieldBlock {
+                template_id: "bone_shield".to_string(),
+            },
+            Look {
+                yaw: 0.0,
+                pitch: 0.0,
+            }, // 朝 +Z，攻击者在 -Z（背后）
+        ));
+
+        app.world_mut().send_event(AttackIntent {
+            attacker,
+            target: Some(defender),
+            issued_at_tick: 4999,
+            reach: FIST_REACH,
+            qi_invest: 0.0,
+            wound_kind: WoundKind::Blunt,
+            source: AttackSource::Melee,
+            debug_command: None,
+        });
+        app.update();
+
+        // 背面命中：defense_kind != ShieldBlock（盾不生效）
+        let events: Vec<_> = app
+            .world()
+            .resource::<Events<CombatEvent>>()
+            .iter_current_update_events()
+            .collect();
+        assert_eq!(events.len(), 1);
+        assert_ne!(
+            events[0].defense_kind,
+            Some(DefenseKind::ShieldBlock),
+            "背面命中（dot=-1.0 < -0.5）盾格挡不应生效，defense_kind 不应为 ShieldBlock；\
+             actual: {:?}",
+            events[0].defense_kind
+        );
+        // 背面命中不减伤：物理伤害不被削减
+        assert!(
+            events[0].physical_damage >= 0.9,
+            "背面命中不减伤，physical_damage 应接近无盾时的基础值（约 1.0 unarmed）；\
+             actual: {}",
+            events[0].physical_damage
+        );
+    }
+
+    // ── 无反伤专属断言：盾格挡后攻击者无 reflected_damage ───────────────────
+    // 对比 SwordParry（有 0.15 反伤），盾格挡应无反伤。
+    #[test]
+    fn shield_block_has_no_reflected_damage_unlike_sword_parry() {
+        let mut app = make_shield_block_app();
+        let attacker = spawn_player(
+            &mut app,
+            "NoReflectAtk",
+            [0.0, 64.0, 3.0],
+            Wounds::default(),
+            Stamina::default(),
+        );
+        let defender = spawn_player(
+            &mut app,
+            "NoReflectDef",
+            [0.0, 64.0, 1.0],
+            Wounds::default(),
+            Stamina::default(),
+        );
+        app.world_mut().entity_mut(defender).insert((
+            StatusEffects {
+                active: vec![ActiveStatusEffect {
+                    kind: StatusEffectKind::ShieldBlocking,
+                    magnitude: 0.5,
+                    remaining_ticks: crate::combat::shield_block::SHIELD_BLOCKING_DURATION_TICKS,
+                    source_pill: None,
+                }],
+            },
+            crate::combat::shield_block::ShieldBlock {
+                template_id: "bone_shield".to_string(),
+            },
+            Look {
+                yaw: 0.0,
+                pitch: 0.0,
+            },
+        ));
+
+        app.world_mut().send_event(AttackIntent {
+            attacker,
+            target: Some(defender),
+            issued_at_tick: 4999,
+            reach: FIST_REACH,
+            qi_invest: 0.0,
+            wound_kind: WoundKind::Blunt,
+            source: AttackSource::Melee,
+            debug_command: None,
+        });
+        app.update();
+
+        let attacker_wounds = app.world().entity(attacker).get::<Wounds>().unwrap();
+        assert!(
+            attacker_wounds.entries.is_empty(),
+            "盾格挡不应产生 reflected_damage（无反伤），\
+             对比 SwordParry 有 0.15*blocked 反伤。\
+             actual attacker wound entries: {:?}",
+            attacker_wounds.entries
+        );
+    }
+
+    // ── apply_defense_intents with ShieldBlocking → 无 jiemai 窗口，无 per-block ParryRecovery ──
+    // plan-shield-block-v1 P2 Issue3 验证：盾格挡 emit 的 DefenseIntent 不应开 jiemai 窗口，
+    // 也不应施加 per-block ParryRecovery（只有真截脉才有）。
+    #[test]
+    fn apply_defense_intent_shield_blocking_no_jiemai_window_no_parry_recovery() {
+        let mut app = App::new();
+        app.add_event::<DefenseIntent>();
+        app.add_event::<ApplyStatusEffectIntent>();
+        app.add_systems(
+            Update,
+            (
+                apply_defense_intents,
+                crate::combat::status::status_effect_apply_tick.after(apply_defense_intents),
+            ),
+        );
+
+        let defender = app
+            .world_mut()
+            .spawn((
+                CombatState::default(),
+                Cultivation {
+                    realm: Realm::Condense, // 修士境界（parry_qi_cost_for_realm 返回 Some）
+                    qi_current: 12.0,
+                    qi_max: 20.0,
+                    ..Cultivation::default()
+                },
+                StatusEffects {
+                    active: vec![ActiveStatusEffect {
+                        kind: StatusEffectKind::ShieldBlocking,
+                        magnitude: 0.6,
+                        remaining_ticks:
+                            crate::combat::shield_block::SHIELD_BLOCKING_DURATION_TICKS,
+                        source_pill: None,
+                    }],
+                },
+            ))
+            .id();
+
+        app.world_mut().send_event(DefenseIntent {
+            defender,
+            issued_at_tick: 10,
+        });
+        app.update();
+
+        // 断言1：盾格挡时不开 jiemai incoming_window
+        let state = app.world().entity(defender).get::<CombatState>().unwrap();
+        assert!(
+            state.incoming_window.is_none(),
+            "盾格挡下 apply_defense_intents 不应开 jiemai incoming_window（盾不耦合截脉）；\
+             actual incoming_window: {:?}",
+            state.incoming_window
+        );
+        // 断言2：不发 per-block ParryRecovery intent
+        let intents: Vec<_> = app
+            .world()
+            .resource::<Events<ApplyStatusEffectIntent>>()
+            .iter_current_update_events()
+            .collect();
+        let has_parry_recovery = intents
+            .iter()
+            .any(|i| i.kind == StatusEffectKind::ParryRecovery && i.target == defender);
+        assert!(
+            !has_parry_recovery,
+            "盾格挡下 apply_defense_intents 不应施加 per-block ParryRecovery（锁 0.5s）；\
+             actual intents: {intents:?}"
         );
     }
 }
