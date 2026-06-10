@@ -24,6 +24,7 @@ pub mod spawn_tutorial;
 pub mod spirit_eye;
 pub mod terrain;
 pub mod territory;
+pub mod territory_perks;
 pub mod tiandao_hunt;
 pub mod tsy;
 pub mod tsy_container;
@@ -128,6 +129,7 @@ pub fn register(app: &mut App) {
     era::register(app);
     tiandao_hunt::register(app);
     territory::register(app);
+    territory_perks::register(app);
     pseudo_vein_runtime::register(app);
     spirit_eye::register(app);
     entity_model::register(app);

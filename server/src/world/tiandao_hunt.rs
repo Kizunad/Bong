@@ -23,6 +23,7 @@ use crate::world::calamity::{EVENT_BEAST_TIDE, EVENT_REALM_COLLAPSE, EVENT_THUND
 use crate::world::dimension::{CurrentDimension, DimensionKind};
 use crate::world::events::ActiveEventsResource;
 use crate::world::season::{Season, WorldSeasonState};
+use crate::world::territory::ZoneInfluenceMap;
 use crate::world::zone::ZoneRegistry;
 use crate::zhenfa::{DeceiveHeavenEvent, DeceiveHeavenExposedEvent, ZhenfaSystemSet};
 use serde_json::json;
@@ -124,6 +125,9 @@ pub struct TiandaoHuntResources<'w, 's> {
     audio_events: Option<ResMut<'w, Events<PlaySoundRecipeRequest>>>,
     redis: Option<Res<'w, RedisBridgeResource>>,
     qi_ledger: Option<ResMut<'w, WorldQiAccount>>,
+    /// plan-territory-v1 P1：用于查询玩家是否为当前 zone 霸主，注入 is_dominant。
+    /// Option<Res> 防资源缺失 panic（克隆 war_bonus 写法）。
+    influence_map: Option<Res<'w, ZoneInfluenceMap>>,
 }
 
 #[derive(SystemParam)]
@@ -226,6 +230,10 @@ pub struct TiandaoAttentionInput {
     pub zone_spirit_qi: f64,
     pub activity: TiandaoActivity,
     pub season: Season,
+    /// 玩家是否为其当前所在 zone 的霸主（ZoneDominance.char_id 匹配）。
+    /// plan-territory-v1 P1：霸主 attention 累积速率 × `DOMINANCE_ATTENTION_MULT = 1.5`。
+    /// 默认 false（非霸主 / zone 无霸主 / ZoneInfluenceMap 未就绪时）。
+    pub is_dominant: bool,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
@@ -538,6 +546,32 @@ pub fn tiandao_hunt_tick(
             resources
                 .deceive_heaven
                 .countermeasure_input(&owner_player_id, position.0, now_tick);
+
+        // plan-territory-v1 P1：查 ZoneInfluenceMap 判断是否为区域霸主。
+        // 需要先通过 zones 得到 zone_name，再查 influence_map.dominant.char_id。
+        // dimension 借用：若缺 CurrentDimension 组件，按 Overworld 处理（与 tick.rs 一致）。
+        let is_dominant = {
+            let dim = dimension
+                .map(|d| d.0)
+                .unwrap_or(crate::world::dimension::DimensionKind::Overworld);
+            let zone_name = resources
+                .zones
+                .as_deref()
+                .and_then(|reg| reg.find_zone(dim, position.0))
+                .map(|z| z.name.clone());
+            zone_name
+                .as_deref()
+                .and_then(|zn| {
+                    resources
+                        .influence_map
+                        .as_deref()
+                        .and_then(|m| m.zones.get(zn))
+                        .and_then(|entry| entry.dominant.as_ref())
+                        .map(|dom| dom.char_id == owner_player_id)
+                })
+                .unwrap_or(false)
+        };
+
         let eval = apply_attention_eval(
             cultivation,
             position,
@@ -549,6 +583,7 @@ pub fn tiandao_hunt_tick(
                 activity,
                 countermeasures,
                 now_tick,
+                is_dominant,
             },
         );
         let Some(eval) = eval else {
@@ -611,6 +646,7 @@ pub fn apply_attention_eval(
         zone_spirit_qi,
         activity: context.activity,
         season: context.season,
+        is_dominant: context.is_dominant,
     };
     if should_evaluate_attention(context.now_tick, attention.last_eval_tick) {
         let countermeasure = advance_attention_with_countermeasures(
@@ -642,6 +678,10 @@ pub struct TiandaoEvalContext<'a> {
     pub activity: TiandaoActivity,
     pub countermeasures: TiandaoCountermeasureInput,
     pub now_tick: u64,
+    /// plan-territory-v1 P1：玩家是否为当前 zone 霸主。
+    /// `tiandao_hunt_tick` 内查 `ZoneInfluenceMap.dominant.char_id` 注入；
+    /// 旧调用点（测试 / 其他 caller）不设此字段时默认 false。
+    pub is_dominant: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -682,7 +722,8 @@ pub fn advance_attention_with_countermeasures(
     eval_tick: u64,
 ) -> TiandaoCountermeasureOutcome {
     let previous_response = attention.response;
-    let accumulation_rate = accumulation_rate(input);
+    // plan-territory-v1 P1：霸主使用含 is_dominant 加速的速率；非霸主路径与原 accumulation_rate 完全一致。
+    let accumulation_rate = accumulation_rate_with_dominance(input);
     let outcome = countermeasure_outcome(countermeasures, eval_tick);
     let decay = attention_decay_for_eval(previous_response, input, accumulation_rate)
         * outcome.decay_multiplier;
@@ -697,11 +738,26 @@ pub fn advance_attention_with_countermeasures(
     outcome
 }
 
+/// 基础天道注意力累积速率（不含霸主加速，向后兼容已有测试）。
 pub fn accumulation_rate(input: TiandaoAttentionInput) -> f64 {
     realm_base_rate(input.realm)
         * zone_qi_factor(input.zone_spirit_qi)
         * activity_factor(input.activity)
         * season_factor(input.season)
+}
+
+/// 含霸主加速的天道注意力累积速率（plan-territory-v1 P1）。
+///
+/// 若 `input.is_dominant = true`，在基础速率上乘以
+/// `territory_perks::DOMINANCE_ATTENTION_MULT = 1.5`（出头椽子先烂）。
+/// 非霸主路径与 `accumulation_rate` 完全一致（向后兼容）。
+pub fn accumulation_rate_with_dominance(input: TiandaoAttentionInput) -> f64 {
+    let base = accumulation_rate(input);
+    if input.is_dominant {
+        base * crate::world::territory_perks::DOMINANCE_ATTENTION_MULT
+    } else {
+        base
+    }
 }
 
 pub const fn realm_base_rate(realm: Realm) -> f64 {
@@ -1294,6 +1350,7 @@ mod tests {
             zone_spirit_qi: 0.6,
             activity: TiandaoActivity::Standing,
             season: Season::Summer,
+            is_dominant: false,
         }
     }
 
@@ -1611,6 +1668,7 @@ mod tests {
                 activity: TiandaoActivity::Standing,
                 countermeasures,
                 now_tick,
+                is_dominant: false,
             },
         )
         .expect("ten-second tiandao_hunt eval should run");
@@ -1966,6 +2024,7 @@ mod tests {
                 zone_spirit_qi: 1.0,
                 activity: TiandaoActivity::Meditating,
                 season: Season::SummerToWinter,
+                is_dominant: false,
             },
             u64::MAX,
         );
@@ -1989,6 +2048,7 @@ mod tests {
                 zone_spirit_qi: -0.5,
                 activity: TiandaoActivity::Standing,
                 season: Season::Summer,
+                is_dominant: false,
             },
             200,
         );
@@ -2011,6 +2071,7 @@ mod tests {
             zone_spirit_qi: 0.9,
             activity: TiandaoActivity::Meditating,
             season: Season::Summer,
+            is_dominant: false,
         };
         let mut attention = TiandaoAttention::default();
         advance_attention(&mut attention, input, 200);
@@ -2034,6 +2095,7 @@ mod tests {
             zone_spirit_qi: 0.9,
             activity: TiandaoActivity::Meditating,
             season: Season::Summer,
+            is_dominant: false,
         };
         advance_for_minutes(&mut attention, high_qi_meditation, 250, &mut eval_index);
         assert_eq!(attention.response, TiandaoResponseLevel::Watch);
@@ -2078,6 +2140,7 @@ mod tests {
             zone_spirit_qi: 0.9,
             activity: TiandaoActivity::Meditating,
             season: Season::Summer,
+            is_dominant: false,
         };
         advance_for_minutes(&mut attention, high_qi_meditation, 70, &mut eval_index);
         assert_eq!(attention.response, TiandaoResponseLevel::Pressure);
@@ -2164,6 +2227,7 @@ mod tests {
                 zone_spirit_qi: 0.6,
                 activity: TiandaoActivity::Standing,
                 season: Season::Summer,
+                is_dominant: false,
             },
             TiandaoCountermeasureInput {
                 deceive_heaven_decoy: Some(DeceiveHeavenDecoyInput {
@@ -2202,6 +2266,7 @@ mod tests {
                 zone_spirit_qi: 0.6,
                 activity: TiandaoActivity::Standing,
                 season: Season::Summer,
+                is_dominant: false,
             },
             TiandaoCountermeasureInput {
                 deceive_heaven_decoy: Some(DeceiveHeavenDecoyInput {
@@ -2455,6 +2520,7 @@ mod tests {
                 zone_spirit_qi: 0.0,
                 activity: TiandaoActivity::Standing,
                 season: Season::default(),
+                is_dominant: false,
             }) - decay_rate(TiandaoResponseLevel::Watch, 0.0)
                 * DECEIVE_HEAVEN_DECOY_DECAY_MULTIPLIER,
         );
@@ -2546,6 +2612,7 @@ mod tests {
                 zone_spirit_qi: -0.5,
                 activity: TiandaoActivity::Standing,
                 season: Season::Summer,
+                is_dominant: false,
             },
             200,
         );
@@ -2661,6 +2728,7 @@ mod tests {
             zone_spirit_qi: 0.9,
             activity: TiandaoActivity::Meditating,
             season: Season::Summer,
+            is_dominant: false,
         };
         for _ in 0..28 {
             advance_attention(&mut attention, input, 200);
@@ -2691,6 +2759,7 @@ mod tests {
                 activity: TiandaoActivity::Standing,
                 countermeasures: TiandaoCountermeasureInput::default(),
                 now_tick: 199,
+                is_dominant: false,
             },
         );
         assert_eq!(attention.last_eval_tick, 0);
@@ -2707,6 +2776,7 @@ mod tests {
                 activity: TiandaoActivity::Standing,
                 countermeasures: TiandaoCountermeasureInput::default(),
                 now_tick: 200,
+                is_dominant: false,
             },
         );
         assert_eq!(attention.last_eval_tick, 200);
