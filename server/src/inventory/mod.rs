@@ -9291,6 +9291,70 @@ cols = 4
     }
 
     #[test]
+    fn validate_move_semantics_accepts_low_cost_disguise_items_to_false_skin_slot() {
+        use crate::combat::tuike::{CAMOUFLAGE_NET_ITEM_ID, DISGUISE_WRAP_ITEM_ID};
+        use crate::schema::inventory::{EquipSlotV1, InventoryLocationV1};
+
+        let registry = ItemRegistry::from_map(HashMap::from([
+            (
+                DISGUISE_WRAP_ITEM_ID.to_string(),
+                make_misc_template(DISGUISE_WRAP_ITEM_ID),
+            ),
+            (
+                CAMOUFLAGE_NET_ITEM_ID.to_string(),
+                make_misc_template(CAMOUFLAGE_NET_ITEM_ID),
+            ),
+        ]));
+        let inventory = make_empty_inventory();
+        let from = InventoryLocationV1::Container {
+            container_id: MAIN_PACK_CONTAINER_ID.to_string(),
+            row: 0,
+            col: 0,
+        };
+        let to = InventoryLocationV1::Equip {
+            slot: EquipSlotV1::FalseSkin,
+        };
+
+        for (instance_id, template_id) in
+            [(10, DISGUISE_WRAP_ITEM_ID), (11, CAMOUFLAGE_NET_ITEM_ID)]
+        {
+            let item = make_test_item_instance(instance_id, template_id);
+            assert!(
+                validate_move_semantics(&registry, &inventory, &item, &from, &to).is_ok(),
+                "{template_id} should pass the false_skin equip slot guard"
+            );
+        }
+    }
+
+    #[test]
+    fn validate_move_semantics_still_rejects_non_false_skin_item_to_false_skin_slot() {
+        use crate::schema::inventory::{EquipSlotV1, InventoryLocationV1};
+
+        let registry = ItemRegistry::from_map(HashMap::from([(
+            "rough_cloth".to_string(),
+            make_misc_template("rough_cloth"),
+        )]));
+        let inventory = make_empty_inventory();
+        let item = make_test_item_instance(12, "rough_cloth");
+        let from = InventoryLocationV1::Container {
+            container_id: MAIN_PACK_CONTAINER_ID.to_string(),
+            row: 0,
+            col: 0,
+        };
+        let to = InventoryLocationV1::Equip {
+            slot: EquipSlotV1::FalseSkin,
+        };
+
+        let error = validate_move_semantics(&registry, &inventory, &item, &from, &to)
+            .expect_err("non false-skin item should be rejected by false_skin slot guard");
+
+        assert!(
+            error.contains("expected tuike false skin"),
+            "expected false_skin slot error, got: {error}"
+        );
+    }
+
+    #[test]
     fn equip_slot_key_extra_hand_0_returns_correct_string() {
         use crate::schema::inventory::EquipSlotV1;
         assert_eq!(

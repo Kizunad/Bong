@@ -21,6 +21,8 @@ pub const SPIDER_SILK_MATERIAL_ID: &str = "ash_spider_silk";
 pub const ROTTEN_WOOD_MATERIAL_ID: &str = "tuike_rotten_wood";
 pub const SPIDER_SILK_FALSE_SKIN_ITEM_ID: &str = "tuike_false_skin_silk";
 pub const ROTTEN_WOOD_ARMOR_ITEM_ID: &str = "tuike_rotten_wood_armor";
+pub const DISGUISE_WRAP_ITEM_ID: &str = "disguise_wrap";
+pub const CAMOUFLAGE_NET_ITEM_ID: &str = "camouflage_net";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -113,7 +115,9 @@ impl From<FalseSkinKindV1> for FalseSkinKind {
 
 pub fn false_skin_kind_for_item(template_id: &str) -> Option<FalseSkinKind> {
     match template_id {
-        SPIDER_SILK_FALSE_SKIN_ITEM_ID => Some(FalseSkinKind::SpiderSilk),
+        SPIDER_SILK_FALSE_SKIN_ITEM_ID | DISGUISE_WRAP_ITEM_ID | CAMOUFLAGE_NET_ITEM_ID => {
+            Some(FalseSkinKind::SpiderSilk)
+        }
         ROTTEN_WOOD_ARMOR_ITEM_ID => Some(FalseSkinKind::RottenWoodArmor),
         _ => None,
     }
@@ -549,6 +553,58 @@ mod tests {
 
     fn skin(kind: FalseSkinKind) -> FalseSkin {
         FalseSkin::fresh(7, kind, 11)
+    }
+
+    #[test]
+    fn false_skin_kind_for_item_accepts_low_cost_disguise_items_as_spider_silk() {
+        for template_id in [DISGUISE_WRAP_ITEM_ID, CAMOUFLAGE_NET_ITEM_ID] {
+            assert_eq!(
+                false_skin_kind_for_item(template_id),
+                Some(FalseSkinKind::SpiderSilk),
+                "{template_id} should pass the v1 false_skin equipment gate"
+            );
+        }
+    }
+
+    #[test]
+    fn false_skin_kind_for_item_preserves_existing_and_unknown_mappings() {
+        let cases = [
+            (
+                SPIDER_SILK_FALSE_SKIN_ITEM_ID,
+                Some(FalseSkinKind::SpiderSilk),
+            ),
+            (
+                ROTTEN_WOOD_ARMOR_ITEM_ID,
+                Some(FalseSkinKind::RottenWoodArmor),
+            ),
+            ("bone_coin", None),
+        ];
+
+        for (template_id, expected) in cases {
+            assert_eq!(
+                false_skin_kind_for_item(template_id),
+                expected,
+                "{template_id} v1 false skin mapping regressed"
+            );
+        }
+    }
+
+    #[test]
+    fn low_cost_disguise_items_keep_v1_spider_silk_realm_gate() {
+        for template_id in [DISGUISE_WRAP_ITEM_ID, CAMOUFLAGE_NET_ITEM_ID] {
+            let kind = false_skin_kind_for_item(template_id)
+                .expect("low cost disguise item should resolve to a v1 false skin kind");
+
+            assert_eq!(kind, FalseSkinKind::SpiderSilk);
+            assert!(
+                !can_equip_false_skin(Realm::Awaken, kind),
+                "{template_id} should still be rejected at Awaken by the v1 SpiderSilk gate"
+            );
+            assert!(
+                can_equip_false_skin(Realm::Induce, kind),
+                "{template_id} should be accepted at Induce by the v1 SpiderSilk gate"
+            );
+        }
     }
 
     #[test]
