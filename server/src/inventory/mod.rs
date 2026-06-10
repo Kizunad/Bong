@@ -10852,6 +10852,76 @@ cols = 4
         );
     }
 
+    // plan-shield-block-v1 P2 §Issue5.3 — durability_max NaN/inf 独立用例
+    /// durability_max = NaN 被拒绝（is_finite 检查）。
+    #[test]
+    fn shield_spec_validate_durability_max_nan_rejected() {
+        let spec = ShieldSpec {
+            block_ratio: 0.5,
+            durability_max: f64::NAN,
+            stamina_drain_per_s: 3.0,
+        };
+        let err = spec
+            .validate("nan_dur_shield")
+            .expect_err("durability_max=NaN 应被拒绝（is_finite 检查）");
+        assert!(
+            err.contains("durability_max"),
+            "错误消息应含 'durability_max'，实际：{err}"
+        );
+    }
+
+    /// durability_max = +Inf 被拒绝（is_finite 检查）。
+    #[test]
+    fn shield_spec_validate_durability_max_inf_rejected() {
+        let spec = ShieldSpec {
+            block_ratio: 0.5,
+            durability_max: f64::INFINITY,
+            stamina_drain_per_s: 3.0,
+        };
+        let err = spec
+            .validate("inf_dur_shield")
+            .expect_err("durability_max=+Inf 应被拒绝（is_finite 检查）");
+        assert!(
+            err.contains("durability_max"),
+            "错误消息应含 'durability_max'，实际：{err}"
+        );
+    }
+
+    // plan-shield-block-v1 P2 §Issue5.3 — stamina_drain_per_s NaN/inf 独立用例
+    /// stamina_drain_per_s = NaN 被拒绝（is_finite 检查）。
+    #[test]
+    fn shield_spec_validate_stamina_drain_nan_rejected() {
+        let spec = ShieldSpec {
+            block_ratio: 0.5,
+            durability_max: 40.0,
+            stamina_drain_per_s: f32::NAN,
+        };
+        let err = spec
+            .validate("nan_drain_shield")
+            .expect_err("stamina_drain_per_s=NaN 应被拒绝（is_finite 检查）");
+        assert!(
+            err.contains("stamina_drain_per_s"),
+            "错误消息应含 'stamina_drain_per_s'，实际：{err}"
+        );
+    }
+
+    /// stamina_drain_per_s = +Inf 被拒绝（is_finite 检查）。
+    #[test]
+    fn shield_spec_validate_stamina_drain_inf_rejected() {
+        let spec = ShieldSpec {
+            block_ratio: 0.5,
+            durability_max: 40.0,
+            stamina_drain_per_s: f32::INFINITY,
+        };
+        let err = spec
+            .validate("inf_drain_shield")
+            .expect_err("stamina_drain_per_s=+Inf 应被拒绝（is_finite 检查）");
+        assert!(
+            err.contains("stamina_drain_per_s"),
+            "错误消息应含 'stamina_drain_per_s'，实际：{err}"
+        );
+    }
+
     /// 从 TOML 加载的 wooden_shield 含正确 ShieldSpec（block_ratio=0.5, durability=40, drain=3.0）。
     #[test]
     fn wooden_shield_loads_correct_shield_spec_from_toml() {
