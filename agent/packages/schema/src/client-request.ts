@@ -1006,6 +1006,27 @@ export const BlockPlaceRequestV1 = Type.Object(
 );
 export type BlockPlaceRequestV1 = Static<typeof BlockPlaceRequestV1>;
 
+// plan-shield-block-v1 P1 — 盾牌举盾 / 放盾请求。
+// 对应 Rust ClientRequestV1::RaiseShield / LowerShield。
+// 玩家 off_hand 持盾时按住右键边沿发送 RaiseShield；松开右键边沿发送 LowerShield。
+export const RaiseShieldRequestV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    type: Type.Literal("raise_shield"),
+  },
+  { additionalProperties: false },
+);
+export type RaiseShieldRequestV1 = Static<typeof RaiseShieldRequestV1>;
+
+export const LowerShieldRequestV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    type: Type.Literal("lower_shield"),
+  },
+  { additionalProperties: false },
+);
+export type LowerShieldRequestV1 = Static<typeof LowerShieldRequestV1>;
+
 export const ClientRequestV1 = Type.Union([
   SetMeridianTargetRequestV1,
   BreakthroughRequestV1,
@@ -1085,5 +1106,7 @@ export const ClientRequestV1 = Type.Union([
   ForgeLearnBlueprintRequestV1,
   ForgeStationPlaceRequestV1,
   BlockPlaceRequestV1,
+  RaiseShieldRequestV1,
+  LowerShieldRequestV1,
 ]);
 export type ClientRequestV1 = Static<typeof ClientRequestV1>;

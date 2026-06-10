@@ -456,6 +456,31 @@ mod tests {
         app.add_event::<StartHarvestRequest>();
         app.add_event::<StartReplenishRequest>();
         app.add_event::<StartDrainQiRequest>();
+        app.add_event::<crate::combat::events::AttackIntent>();
+        app.add_event::<crate::world::extract_system::StartExtractRequest>();
+        app.add_event::<crate::world::extract_system::CancelExtractRequest>();
+        app.add_event::<crate::network::vfx_event_emit::VfxEventRequest>();
+        app.add_event::<crate::network::audio_event_emit::PlaySoundRecipeRequest>();
+        app.add_event::<crate::network::qi_color_observed_emit::QiColorInspectRequest>();
+        app.add_event::<crate::mineral::events::MineralProbeIntent>();
+        app.add_event::<crate::shelflife::probe::FreshnessProbeIntent>();
+        app.add_event::<crate::skill::events::SkillXpGain>();
+        app.add_event::<crate::skill::events::SkillScrollUsed>();
+        app.add_event::<crate::world::block_place::BlockPlaceRequest>();
+        app.add_event::<InventoryDurabilityChangedEvent>();
+        app.add_event::<crate::alchemy::AlchemyOutcomeEvent>();
+        app.add_event::<crate::combat::events::CombatEvent>();
+        app.add_event::<crate::combat::events::DeathEvent>();
+        app.add_event::<crate::combat::zhenmai_v2::LocalNeutralizeEvent>();
+        app.add_event::<crate::combat::zhenmai_v2::MultiPointBackfireEvent>();
+        app.add_event::<crate::combat::zhenmai_v2::MeridianHardenEvent>();
+        app.add_event::<crate::combat::zhenmai_v2::MeridianSeveredVoluntaryEvent>();
+        app.add_event::<crate::combat::zhenmai_v2::BackfireAmplificationActiveEvent>();
+        app.add_event::<crate::cultivation::meridian::severed::MeridianSeveredEvent>();
+        app.add_event::<crate::cultivation::overload::MeridianOverloadEvent>();
+        // plan-shield-block-v1 P1 — 举盾 intent events（ClientRequestDispatchParams 需要）。
+        app.add_event::<crate::combat::shield_block::RaiseShieldIntent>();
+        app.add_event::<crate::combat::shield_block::LowerShieldIntent>();
 
         // Run request handler, then broadcast dropped_loot_sync if the registry changed.
         app.add_systems(

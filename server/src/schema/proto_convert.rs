@@ -3803,6 +3803,9 @@ impl From<&super::client_request::ClientRequestV1> for bong::client_request_enve
                     entity_id: *entity_id,
                 })
             }
+            // plan-shield-block-v1 P1 — 持续举盾 / 放盾 C2S
+            ClientRequestV1::RaiseShield { .. } => Payload::RaiseShield(bong::RaiseShield {}),
+            ClientRequestV1::LowerShield { .. } => Payload::LowerShield(bong::LowerShield {}),
         }
     }
 }

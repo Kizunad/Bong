@@ -604,6 +604,16 @@ pub enum ClientRequestV1 {
     CraftCancel {
         v: u8,
     },
+    /// plan-shield-block-v1 P1 — 按下右键边沿（off_hand 持盾），开始持续举盾状态。
+    /// server 校验 off_hand 实装盾后插入 ShieldBlocking 持续状态。
+    RaiseShield {
+        v: u8,
+    },
+    /// plan-shield-block-v1 P1 — 松开右键边沿（off_hand 持盾），结束持续举盾状态。
+    /// server 移除 ShieldBlocking 状态与 ShieldBlock component。
+    LowerShield {
+        v: u8,
+    },
 }
 
 fn default_craft_quantity() -> u32 {

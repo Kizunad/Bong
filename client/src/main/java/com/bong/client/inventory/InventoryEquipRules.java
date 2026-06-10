@@ -157,6 +157,11 @@ final class InventoryEquipRules {
         return item != null && isShield(item.itemId());
     }
 
+    // plan-shield-block-v1 P1 — public 版本，供 MixinMouse 右键仲裁层跨包访问。
+    public static boolean isShieldPublic(InventoryItem item) {
+        return isShield(item);
+    }
+
     private static boolean isSingleCell(InventoryItem item) {
         return item != null && item.gridWidth() == 1 && item.gridHeight() == 1;
     }

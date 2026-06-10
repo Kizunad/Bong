@@ -33,6 +33,8 @@ const ANIM_FIST_PUNCH_RIGHT: &str = "bong:fist_punch_right";
 const ANIM_PALM_STRIKE: &str = "bong:palm_strike";
 const ANIM_PARRY_BLOCK: &str = "bong:parry_block";
 const ANIM_GUARD_RAISE: &str = "bong:guard_raise";
+/// plan-shield-block-v1 P1 — 持续举盾动画（isLoop:true）。与 guard_raise (FullPowerCharge) 无关。
+pub const ANIM_SHIELD_RAISE: &str = "bong:shield_raise";
 const ANIM_HURT_STAGGER: &str = "bong:hurt_stagger";
 const ANIM_BREAKTHROUGH_YINQI: &str = "bong:breakthrough_yinqi";
 const ANIM_BREAKTHROUGH_NINGMAI: &str = "bong:breakthrough_ningmai";
@@ -640,6 +642,28 @@ fn emit_play_for_entity(
             anim_id: anim_id.to_string(),
             priority,
             fade_in_ticks,
+        },
+    ));
+}
+
+/// plan-shield-block-v1 P1 — 向 entity 发送 `bong:shield_raise` 持续举盾动画。
+/// 由 `combat::shield_block::raise_shield_handler` 调用；isLoop:true，优先级 = 战斗层中段。
+pub fn emit_shield_raise_for_entity(
+    entity: valence::prelude::Entity,
+    players: &Query<(&valence::prelude::Position, &valence::prelude::UniqueId)>,
+    vfx_events: &mut EventWriter<VfxEventRequest>,
+) {
+    let Ok((position, unique_id)) = players.get(entity) else {
+        return;
+    };
+    let origin = position.get();
+    vfx_events.send(VfxEventRequest::new(
+        origin,
+        VfxEventPayloadV1::PlayAnim {
+            target_player: unique_id.0.to_string(),
+            anim_id: ANIM_SHIELD_RAISE.to_string(),
+            priority: 1000, // COMBAT_PRIORITY
+            fade_in_ticks: Some(2),
         },
     ));
 }

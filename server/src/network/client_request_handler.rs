@@ -99,6 +99,7 @@ use crate::network::cast_emit::{
 };
 use crate::shelflife::probe::FreshnessProbeIntent;
 // dropped_loot_sync is emitted by dropped_loot_sync_emit.
+use crate::combat::shield_block::{LowerShieldIntent, RaiseShieldIntent};
 use crate::identity::PlayerIdentities;
 use crate::network::inventory_snapshot_emit::send_inventory_snapshot_to_client;
 use crate::network::npc_metadata::{
@@ -305,6 +306,9 @@ pub struct ClientRequestDispatchParams<'w> {
         Option<ResMut<'w, crate::inventory::external_container::ExternalContainerRegistry>>,
     pub supply_coffin_open_tx:
         Option<ResMut<'w, Events<crate::supply_coffin::interact::SupplyCoffinOpenRequest>>>,
+    // ─── plan-shield-block-v1 P1：持续举盾 intent ─────────────────────────
+    pub raise_shield_tx: EventWriter<'w, RaiseShieldIntent>,
+    pub lower_shield_tx: EventWriter<'w, LowerShieldIntent>,
 }
 // NOTE: plan-qi-handling-attrition-v1 P0/P1 磨损写权限已合并入 AlchemyRequestParams.zones
 // (ResMut) 和 AlchemyRequestParams.attrition_qi_transfers，避免与 AlchemyRequestParams.zones
@@ -530,7 +534,9 @@ pub fn handle_client_request_payloads(
             | ClientRequestV1::CraftCancel { v }
             | ClientRequestV1::SupplyCoffinOpen { v, .. }
             | ClientRequestV1::ExternalContainerMove { v, .. }
-            | ClientRequestV1::ExternalContainerClose { v, .. } => *v,
+            | ClientRequestV1::ExternalContainerClose { v, .. }
+            | ClientRequestV1::RaiseShield { v }
+            | ClientRequestV1::LowerShield { v } => *v,
         };
         if v != SUPPORTED_VERSION {
             tracing::warn!(
@@ -2288,6 +2294,19 @@ pub fn handle_client_request_payloads(
                     craft_cancel_tx.send(crate::craft::CraftCancelIntent { caster: ev.client });
                 }
             }
+            // ─── plan-shield-block-v1 P1：盾牌举盾 intent ─────────────────────
+            ClientRequestV1::RaiseShield { .. } => {
+                tracing::debug!("[bong][shield] RaiseShield received entity={:?}", ev.client);
+                dispatch
+                    .raise_shield_tx
+                    .send(RaiseShieldIntent { player: ev.client });
+            }
+            ClientRequestV1::LowerShield { .. } => {
+                tracing::debug!("[bong][shield] LowerShield received entity={:?}", ev.client);
+                dispatch
+                    .lower_shield_tx
+                    .send(LowerShieldIntent { player: ev.client });
+            }
         }
     }
 }
@@ -3537,6 +3556,9 @@ mod tests {
         app.add_event::<crate::combat::zhenmai_v2::BackfireAmplificationActiveEvent>();
         app.add_event::<crate::cultivation::meridian::severed::MeridianSeveredEvent>();
         app.add_event::<crate::cultivation::overload::MeridianOverloadEvent>();
+        // plan-shield-block-v1 P1 — 举盾 intent events（ClientRequestDispatchParams 需要）。
+        app.add_event::<crate::combat::shield_block::RaiseShieldIntent>();
+        app.add_event::<crate::combat::shield_block::LowerShieldIntent>();
         app.add_systems(
             Update,
             (
@@ -4256,6 +4278,9 @@ mod tests {
         app.add_event::<MineralProbeIntent>();
         app.add_event::<SkillXpGain>();
         app.add_event::<SkillScrollUsed>();
+        // plan-shield-block-v1 P1 — 举盾 intent events（ClientRequestDispatchParams 需要）。
+        app.add_event::<crate::combat::shield_block::RaiseShieldIntent>();
+        app.add_event::<crate::combat::shield_block::LowerShieldIntent>();
         app.add_systems(
             Update,
             (
@@ -4684,6 +4709,9 @@ mod tests {
         app.add_event::<MineralProbeIntent>();
         app.add_event::<SkillXpGain>();
         app.add_event::<SkillScrollUsed>();
+        // plan-shield-block-v1 P1 — 举盾 intent events（ClientRequestDispatchParams 需要）。
+        app.add_event::<crate::combat::shield_block::RaiseShieldIntent>();
+        app.add_event::<crate::combat::shield_block::LowerShieldIntent>();
         app.add_systems(
             Update,
             (handle_client_request_payloads, capture_mineral_probes).chain(),
@@ -4747,6 +4775,9 @@ mod tests {
         app.add_event::<MineralProbeIntent>();
         app.add_event::<SkillXpGain>();
         app.add_event::<SkillScrollUsed>();
+        // plan-shield-block-v1 P1 — 举盾 intent events（ClientRequestDispatchParams 需要）。
+        app.add_event::<crate::combat::shield_block::RaiseShieldIntent>();
+        app.add_event::<crate::combat::shield_block::LowerShieldIntent>();
         app.add_systems(
             Update,
             (handle_client_request_payloads, capture_spirit_niche_places).chain(),
@@ -4973,6 +5004,9 @@ mod tests {
         app.add_event::<MineralProbeIntent>();
         app.add_event::<SkillXpGain>();
         app.add_event::<SkillScrollUsed>();
+        // plan-shield-block-v1 P1 — 举盾 intent events（ClientRequestDispatchParams 需要）。
+        app.add_event::<crate::combat::shield_block::RaiseShieldIntent>();
+        app.add_event::<crate::combat::shield_block::LowerShieldIntent>();
         app.add_systems(
             Update,
             (
@@ -5050,6 +5084,9 @@ mod tests {
         app.add_event::<MineralProbeIntent>();
         app.add_event::<SkillXpGain>();
         app.add_event::<SkillScrollUsed>();
+        // plan-shield-block-v1 P1 — 举盾 intent events（ClientRequestDispatchParams 需要）。
+        app.add_event::<crate::combat::shield_block::RaiseShieldIntent>();
+        app.add_event::<crate::combat::shield_block::LowerShieldIntent>();
         app.add_systems(
             Update,
             (handle_client_request_payloads, capture_mineral_probes).chain(),
@@ -5105,6 +5142,9 @@ mod tests {
         app.add_event::<MineralProbeIntent>();
         app.add_event::<SkillXpGain>();
         app.add_event::<SkillScrollUsed>();
+        // plan-shield-block-v1 P1 — 举盾 intent events（ClientRequestDispatchParams 需要）。
+        app.add_event::<crate::combat::shield_block::RaiseShieldIntent>();
+        app.add_event::<crate::combat::shield_block::LowerShieldIntent>();
         app.add_systems(
             Update,
             (handle_client_request_payloads, capture_mineral_probes).chain(),
@@ -5225,6 +5265,9 @@ mod tests {
         app.add_event::<MineralProbeIntent>();
         app.add_event::<SkillXpGain>();
         app.add_event::<SkillScrollUsed>();
+        // plan-shield-block-v1 P1 — 举盾 intent events（ClientRequestDispatchParams 需要）。
+        app.add_event::<crate::combat::shield_block::RaiseShieldIntent>();
+        app.add_event::<crate::combat::shield_block::LowerShieldIntent>();
         app.add_systems(Update, handle_client_request_payloads);
 
         let (client_bundle, _helper) = create_mock_client("Azure");
@@ -5308,6 +5351,9 @@ mod tests {
         app.add_event::<MineralProbeIntent>();
         app.add_event::<SkillXpGain>();
         app.add_event::<SkillScrollUsed>();
+        // plan-shield-block-v1 P1 — 举盾 intent events（ClientRequestDispatchParams 需要）。
+        app.add_event::<crate::combat::shield_block::RaiseShieldIntent>();
+        app.add_event::<crate::combat::shield_block::LowerShieldIntent>();
         app.add_systems(Update, handle_client_request_payloads);
 
         let (client_bundle, mut helper) = create_mock_client("Azure");
@@ -5393,6 +5439,9 @@ mod tests {
         app.add_event::<MineralProbeIntent>();
         app.add_event::<SkillXpGain>();
         app.add_event::<SkillScrollUsed>();
+        // plan-shield-block-v1 P1 — 举盾 intent events（ClientRequestDispatchParams 需要）。
+        app.add_event::<crate::combat::shield_block::RaiseShieldIntent>();
+        app.add_event::<crate::combat::shield_block::LowerShieldIntent>();
         app.add_event::<InscriptionScrollSubmit>();
         app.add_systems(Update, handle_client_request_payloads);
 
@@ -5456,6 +5505,9 @@ mod tests {
         app.add_event::<MineralProbeIntent>();
         app.add_event::<SkillXpGain>();
         app.add_event::<SkillScrollUsed>();
+        // plan-shield-block-v1 P1 — 举盾 intent events（ClientRequestDispatchParams 需要）。
+        app.add_event::<crate::combat::shield_block::RaiseShieldIntent>();
+        app.add_event::<crate::combat::shield_block::LowerShieldIntent>();
         app.add_event::<InscriptionScrollSubmit>();
         app.add_systems(
             Update,
@@ -5524,6 +5576,9 @@ mod tests {
         app.add_event::<MineralProbeIntent>();
         app.add_event::<SkillXpGain>();
         app.add_event::<SkillScrollUsed>();
+        // plan-shield-block-v1 P1 — 举盾 intent events（ClientRequestDispatchParams 需要）。
+        app.add_event::<crate::combat::shield_block::RaiseShieldIntent>();
+        app.add_event::<crate::combat::shield_block::LowerShieldIntent>();
         app.add_event::<InscriptionScrollSubmit>();
         app.add_systems(
             Update,
@@ -5590,6 +5645,9 @@ mod tests {
         app.add_event::<MineralProbeIntent>();
         app.add_event::<SkillXpGain>();
         app.add_event::<SkillScrollUsed>();
+        // plan-shield-block-v1 P1 — 举盾 intent events（ClientRequestDispatchParams 需要）。
+        app.add_event::<crate::combat::shield_block::RaiseShieldIntent>();
+        app.add_event::<crate::combat::shield_block::LowerShieldIntent>();
         app.add_event::<TemperingHit>();
         app.add_systems(
             Update,
@@ -5647,6 +5705,9 @@ mod tests {
         app.add_event::<MineralProbeIntent>();
         app.add_event::<SkillXpGain>();
         app.add_event::<SkillScrollUsed>();
+        // plan-shield-block-v1 P1 — 举盾 intent events（ClientRequestDispatchParams 需要）。
+        app.add_event::<crate::combat::shield_block::RaiseShieldIntent>();
+        app.add_event::<crate::combat::shield_block::LowerShieldIntent>();
         app.add_event::<TemperingHit>();
         app.add_systems(
             Update,
@@ -5700,6 +5761,9 @@ mod tests {
         app.add_event::<MineralProbeIntent>();
         app.add_event::<SkillXpGain>();
         app.add_event::<SkillScrollUsed>();
+        // plan-shield-block-v1 P1 — 举盾 intent events（ClientRequestDispatchParams 需要）。
+        app.add_event::<crate::combat::shield_block::RaiseShieldIntent>();
+        app.add_event::<crate::combat::shield_block::LowerShieldIntent>();
         app.add_event::<ConsecrationInject>();
         app.add_systems(
             Update,
@@ -5757,6 +5821,9 @@ mod tests {
         app.add_event::<MineralProbeIntent>();
         app.add_event::<SkillXpGain>();
         app.add_event::<SkillScrollUsed>();
+        // plan-shield-block-v1 P1 — 举盾 intent events（ClientRequestDispatchParams 需要）。
+        app.add_event::<crate::combat::shield_block::RaiseShieldIntent>();
+        app.add_event::<crate::combat::shield_block::LowerShieldIntent>();
         app.add_event::<ConsecrationInject>();
         app.add_systems(
             Update,
@@ -5810,6 +5877,9 @@ mod tests {
         app.add_event::<MineralProbeIntent>();
         app.add_event::<SkillXpGain>();
         app.add_event::<SkillScrollUsed>();
+        // plan-shield-block-v1 P1 — 举盾 intent events（ClientRequestDispatchParams 需要）。
+        app.add_event::<crate::combat::shield_block::RaiseShieldIntent>();
+        app.add_event::<crate::combat::shield_block::LowerShieldIntent>();
         app.add_event::<StepAdvance>();
         app.add_systems(
             Update,
@@ -5867,6 +5937,9 @@ mod tests {
         app.add_event::<MineralProbeIntent>();
         app.add_event::<SkillXpGain>();
         app.add_event::<SkillScrollUsed>();
+        // plan-shield-block-v1 P1 — 举盾 intent events（ClientRequestDispatchParams 需要）。
+        app.add_event::<crate::combat::shield_block::RaiseShieldIntent>();
+        app.add_event::<crate::combat::shield_block::LowerShieldIntent>();
         app.add_event::<TemperingHit>();
         app.add_event::<ConsecrationInject>();
         app.add_event::<StepAdvance>();
@@ -10733,6 +10806,9 @@ mod freshness_probe_handler_tests {
         app.add_event::<FreshnessProbeIntent>();
         app.add_event::<SkillXpGain>();
         app.add_event::<SkillScrollUsed>();
+        // plan-shield-block-v1 P1 — 举盾 intent events（ClientRequestDispatchParams 需要）。
+        app.add_event::<crate::combat::shield_block::RaiseShieldIntent>();
+        app.add_event::<crate::combat::shield_block::LowerShieldIntent>();
         app.add_systems(
             Update,
             (handle_client_request_payloads, capture_freshness_probes).chain(),
