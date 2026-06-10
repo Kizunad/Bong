@@ -6,15 +6,15 @@
 >
 > **依赖**：[[plan-block-lifecycle-v1]] P4（client 放置 wiring：`sendBlockPlace` + SkillBar `selectedSlot` + 两 held mixin）合入 main —— **仅 P2 client 放置入口依赖；server P0/P1 不依赖**（见 §8.1 #4）。
 >
-> **状态**：骨架（草案）。实地锚点已核实（research 2026-06-10 + 二次 grep 复证）；§8 开放问题已凭证据全部定案，仅 #1 entity 表示与同族 plan 同步收口列待 §8.1。
+> **状态**：✅ 已完成并归档（2026-06-11）。P0/P1 由 PR #493 合入，P2 由 PR #494 合入；§8 开放问题按实现决议收口。
 
 ## 阶段总览
 
 | 阶段 | 主题 | 状态 | 验收日期 |
 |------|------|------|----------|
-| P0 | `craft/workbench.rs` 三 stub 实装（place→spawn entity / interact→emit WorkbenchOpen / break→返还）+ `workbench_item` 接入放置管线 | ⬜ | |
-| P1 | `PlaceableBlockKind` 抽象（带交互世界实体的通用派发底盘）+ 通用 break 回收 | ⬜ | |
-| P2 | client 交互闭环（WorkbenchInteractIntentHandler）+ Workbench bbmodel 接入 + 视听（改写 `WorkbenchConstants.java` 三 SFX 常量值 → vanilla ID） | ⬜ | |
+| P0 | `craft/workbench.rs` 三 stub 实装（place→spawn entity / interact→emit WorkbenchOpen / break→返还）+ `workbench_item` 接入放置管线 | ✅ | 2026-06-11 |
+| P1 | `PlaceableBlockKind` 抽象（带交互世界实体的通用派发底盘）+ 通用 break 回收 | ✅ | 2026-06-11 |
+| P2 | client 交互闭环（WorkbenchInteractIntentHandler）+ Workbench bbmodel 接入 + 视听（改写 `WorkbenchConstants.java` 三 SFX 常量值 → vanilla ID） | ✅ | 2026-06-11 |
 
 ---
 
@@ -33,7 +33,7 @@
 
 ---
 
-## §P0 — workbench.rs 三 stub 实装 + workbench_item 接入放置管线 ⬜
+## §P0 — workbench.rs 三 stub 实装 + workbench_item 接入放置管线 ✅
 
 > **红旗根因**（reminder.md:22 + research）：`craft/workbench.rs:58-61` 三个 system 至今只是注释（"将在 PR-3 实装"，PR-3 已 merge 仍未补），是**所有容器类放置阻塞的根因**。`craft/session.rs:293` 的 `recipe.station.is_some() && !deps.has_nearby_workbench` 校验已实装但**恒假拒绝所有工作台配方**——因为 `WorkbenchBlock` entity 从未被 `commands.spawn`（全仓 grep `commands.spawn`+`WorkbenchBlock` 零命中）。
 
@@ -75,7 +75,7 @@
 
 ---
 
-## §P1 — PlaceableBlockKind 抽象 ⬜
+## §P1 — PlaceableBlockKind 抽象 ✅
 
 > **下游契约**：[[plan-placeable-container-blocks-v1]] §0 已声明依赖本 P1 的 `PlaceableBlockKind` enum 含 `StorageCrate` / `DeadDrop` 变体 + 通用 `handle_*_place` / `handle_*_break` 派发（其骨架明确"升 active 判断门：workbench-place-runtime P1 已合入"）。本 P1 必须产出该 enum + 派发底盘，命名与下游一致。
 
@@ -108,7 +108,7 @@
 
 ---
 
-## §P2 — client 交互闭环 + Workbench bbmodel 接入 + 视听 ⬜
+## §P2 — client 交互闭环 + Workbench bbmodel 接入 + 视听 ✅
 
 > **视觉资产 → 强制走 docs/CLAUDE.md §6.1 三轮自我打磨 + 终轮 commit `<PROMISE>` 担保块。**
 > **依赖 [[plan-block-lifecycle-v1]] P4** 仅限"client 放置入口"（SkillBar `selectedSlot` 选中 `workbench_item` + `sendBlockPlace` 发 BlockPlace）——若 P4 未合，P2 的 client 放置走不通，但**交互（右键打开）/ 渲染 / 视听三块不依赖 P4，可先行**（见 §8.1 #4）。
@@ -223,4 +223,38 @@ P2 含 Workbench bbmodel 渲染接入 → **强制走 §6.1 三轮自我打磨**
 
 ## Finish Evidence
 
-（迁入 `docs/finished_plans/` 前必填：落地清单 / 关键 commit hash+日期 / 测试结果命令+数量 / 跨仓库核验 server·client·agent 命中 symbol / 遗留依赖其他 plan 的待办）
+### 落地清单
+
+- **P0**：`server/src/craft/workbench.rs` 实装 `handle_workbench_place` / `handle_workbench_interact` / `handle_workbench_break`，`server/src/schema/server_data.rs` 接入 `WorkbenchOpen`，`server/src/world/entity_model.rs` 固定 `WORKBENCH_ENTITY_KIND=165` 与 `BongVisualKind::Workbench`，`server/assets/items/core.toml` 将 `workbench_item` 接入 block/placeable 路由。
+- **P1**：`server/src/world/block_place.rs` 落地 `PlaceableBlockKind` / `placeable_kind_from_str` / `place_placeable` / `break_placeable`，`server/src/inventory/mod.rs` 支持 `ItemTemplate.placeable`，工作台放置绕过 vanilla `block_item_to_state` gate 并走通用派发底盘。
+- **P2**：`client/src/main/java/com/bong/client/craft/WorkbenchInteractIntentHandler.java`、`ClientRequestSender.sendWorkbenchOpen`、`WorkbenchRenderer`、`BongEntityModelKind.WORKBENCH`、`WorkbenchPlaceDust`、`workbench.geo.json` / `workbench.animation.json` / `workbench_intact.png` 完成交互、渲染与放置粒子；`server/assets/audio/recipes/workbench_{place,break,open}.json` 与 `WorkbenchConstants` 三个 recipe id 接通放置/破坏/打开音效。
+- **资源包**：`server/src/network/resourcepack.rs` 与 `client/resourcepack/manifest.json` 已同步最新资源包 sha/size/file_count，CI 的 resourcepack 产物校验通过。
+
+### 关键 commit
+
+- `20c7054cf` · 2026-06-11 · `feat(workbench-place-runtime-v1): P0/P1 制作台放置底盘 (#493)`
+- `f7abe6213` · 2026-06-11 · `feat(workbench-place-runtime-v1): 完成制作台客户端交互与资源 (#494)`
+
+### 测试结果
+
+- `cd server && BONG_SKIP_SKIN_PREFETCH=1 CARGO_BUILD_JOBS=2 nice -n 10 ionice -c3 cargo fmt --check`
+- `cd server && BONG_SKIP_SKIN_PREFETCH=1 CARGO_BUILD_JOBS=2 nice -n 10 ionice -c3 cargo test -j 2 workbench`
+- `cd server && BONG_SKIP_SKIN_PREFETCH=1 CARGO_BUILD_JOBS=2 nice -n 10 ionice -c3 cargo test -j 2 proto_convert`
+- `cd server && BONG_SKIP_SKIN_PREFETCH=1 CARGO_BUILD_JOBS=2 nice -n 10 ionice -c3 cargo test -j 2 audio`
+- `cd server && BONG_SKIP_SKIN_PREFETCH=1 CARGO_BUILD_JOBS=2 nice -n 10 ionice -c3 cargo test -j 2 client_request_handler`
+- `cd client && JAVA_HOME=$HOME/.sdkman/candidates/java/17.0.18-amzn nice -n 10 ionice -c3 ./gradlew test --max-workers=2`
+- `cd client && JAVA_HOME=$HOME/.sdkman/candidates/java/17.0.18-amzn nice -n 10 ionice -c3 ./gradlew build --max-workers=2`
+- `python3 -m unittest scripts/test_build_resourcepack.py`
+- CI：PR #494 `Build resource pack` 通过；PR #494 `E2E Redis Smoke / e2e` 通过（schema、agent、server release build、server cargo test、Task 13 smoke/e2e 全部成功）。
+
+### 跨仓库核验
+
+- **server**：`WorkbenchOpenRequest`、`ClientRequestV1::WorkbenchOpen`、`ServerDataPayloadV1::WorkbenchOpen`、`PlaceableBlockKind::Workbench`、`WORKBENCH_ENTITY_KIND`、`WORKBENCH_PLACE_AUDIO_RECIPE_ID` / `WORKBENCH_BREAK_AUDIO_RECIPE_ID` / `WORKBENCH_OPEN_AUDIO_RECIPE_ID` 均已命中。
+- **client**：`WorkbenchInteractIntentHandler`、`ClientRequestProtocol.encodeWorkbenchOpen`、`ClientRequestSender.sendWorkbenchOpen`、`BongEntityModelKind.WORKBENCH`、`BongEntityRenderBootstrap`、`WorkbenchRenderer`、`WorkbenchPlaceDust`、`WorkbenchConstants.SFX_PLACE = "workbench_place"` 均已命中。
+- **proto/schema**：`proto/bong/envelope.proto` 包含 S2C `WorkbenchOpen` 与 C2S `WorkbenchOpenReq`，`server/src/schema/proto_convert.rs` 覆盖 C2S/S2C roundtrip。
+- **agent**：不参与；本 plan 无 Redis key、无 IPC narration、无天道侧 schema 改动。
+
+### 遗留 / 后续
+
+- `StorageCrate` / `DeadDrop` 的实际放置与破坏逻辑留给 `plan-placeable-container-blocks-v1`，本 plan 已提供 `PlaceableBlockKind` 接口与工作台分支。
+- 4 条 craft session SFX 与 3 组制作 session VFX 仍归 `plan-workbench-recipes-v1` / 后续制作反馈 plan，不在本 plan 范围内改动。
