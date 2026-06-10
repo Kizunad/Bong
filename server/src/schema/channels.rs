@@ -245,6 +245,12 @@ pub const CH_BAOMAI_V4_RESONANCE_LOCK: &str = "bong:baomai_v4/resonance_lock";
 /// 共振锁定结束事件，对齐 agent `CHANNELS.BAOMAI_V4_RESONANCE_LOCK_END`。
 pub const CH_BAOMAI_V4_RESONANCE_LOCK_END: &str = "bong:baomai_v4/resonance_lock_end";
 
+// 领地信息暴露（plan-territory-v1 P3）—— server → agent 领地叙事请求频道。
+/// 领地霸主变动叙事请求（新确立 / 被驱逐 / 灵气耗尽）。
+/// 对齐 agent `CHANNELS.TERRITORY_NARRATION_REQUEST`。
+/// 注意：P3 agent 侧暂无订阅 runtime；push_zone 兜底保证不依赖 agent 即 in-game 可见。
+pub const CH_TERRITORY_NARRATION_REQUEST: &str = "bong:territory_narration_request";
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -418,6 +424,11 @@ mod tests {
         assert_eq!(
             CH_BAOMAI_V3_OVERLOAD_RIPPLE,
             "bong:baomai_v3/overload_ripple"
+        );
+        // plan-territory-v1 P3 — 领地叙事请求频道
+        assert_eq!(
+            CH_TERRITORY_NARRATION_REQUEST,
+            "bong:territory_narration_request"
         );
     }
 }

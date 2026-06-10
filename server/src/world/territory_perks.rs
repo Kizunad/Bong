@@ -204,6 +204,7 @@ mod tests {
             influence,
             established_tick: 1000,
             public_known: false,
+            realm_band: None,
         });
         let mut map = ZoneInfluenceMap::default();
         map.zones.insert(zone_name.to_string(), entry);

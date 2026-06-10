@@ -280,6 +280,45 @@ impl ZoneRegistry {
         self.zones.iter_mut().find(|zone| zone.name == name)
     }
 
+    /// plan-territory-v1 P3 — 判断两个 zone 是否相邻。
+    ///
+    /// 将两个 zone 的 AABB 各在 XZ 平面扩展 `margin` 格后检查 XZ 投影重叠。
+    /// Y 轴不参与（地面游戏，高度不影响相邻语义）。
+    ///
+    /// `margin` 建议取 100～200 格，过大会导致跨整图误传。
+    /// 两个 zone 名相同视为相同 zone，返回 false（无意义的「自相邻」）。
+    pub fn zones_are_adjacent(&self, name_a: &str, name_b: &str, margin: f64) -> bool {
+        if name_a == name_b {
+            return false;
+        }
+        let Some(a) = self.find_zone_by_name(name_a) else {
+            return false;
+        };
+        let Some(b) = self.find_zone_by_name(name_b) else {
+            return false;
+        };
+        let (a_min, a_max) = a.bounds;
+        let (b_min, b_max) = b.bounds;
+        // XZ 平面扩展 margin 后 overlap 检测
+        let ax_min = a_min.x - margin;
+        let ax_max = a_max.x + margin;
+        let az_min = a_min.z - margin;
+        let az_max = a_max.z + margin;
+        let overlap_x = ax_min <= b_max.x && ax_max >= b_min.x;
+        let overlap_z = az_min <= b_max.z && az_max >= b_min.z;
+        overlap_x && overlap_z
+    }
+
+    /// plan-territory-v1 P3 — 返回与 `name` zone 相邻的所有 zone 名称列表。
+    #[allow(dead_code)]
+    pub fn adjacent_zone_names(&self, name: &str, margin: f64) -> Vec<String> {
+        self.zones
+            .iter()
+            .filter(|z| z.name != name && self.zones_are_adjacent(name, &z.name, margin))
+            .map(|z| z.name.clone())
+            .collect()
+    }
+
     /// plan-tsy-zone-v1 §-1 隐形前置 — 运行时动态 add 一个 zone（如 `/tsy_spawn`
     /// 调试命令追加 TSY subzone）。同名 zone 已存在则拒绝（idempotent guard）。
     /// 不做 AABB 相交校验：调用方负责保证语义正确（同 family 三层共享 XZ 是合法例外）。
@@ -1347,6 +1386,112 @@ mod zone_tests {
         assert!(registry
             .find_zone_by_name("tsy_lingxu_01_shallow")
             .is_some());
+    }
+
+    // ----- plan-territory-v1 P3 — zones_are_adjacent util tests -----
+
+    fn make_zone_at(name: &str, x_min: f64, z_min: f64, x_max: f64, z_max: f64) -> super::Zone {
+        super::Zone {
+            name: name.to_string(),
+            dimension: crate::world::dimension::DimensionKind::Overworld,
+            bounds: (
+                DVec3::new(x_min, 60.0, z_min),
+                DVec3::new(x_max, 80.0, z_max),
+            ),
+            spirit_qi: 0.5,
+            danger_level: 0,
+            active_events: Vec::new(),
+            patrol_anchors: Vec::new(),
+            blocked_tiles: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn zones_are_adjacent_touching_within_margin() {
+        // zone A: x=[0,100], zone B: x=[200,300], margin=150 → gap=100 < margin → 相邻
+        let registry = ZoneRegistry {
+            zones: vec![
+                make_zone_at("zone_a", 0.0, 0.0, 100.0, 100.0),
+                make_zone_at("zone_b", 200.0, 0.0, 300.0, 100.0),
+            ],
+        };
+        assert!(
+            registry.zones_are_adjacent("zone_a", "zone_b", 150.0),
+            "gap=100 < margin=150 应相邻"
+        );
+    }
+
+    #[test]
+    fn zones_are_adjacent_far_apart_not_adjacent() {
+        // zone A: x=[0,100], zone B: x=[400,500], margin=100 → gap=300 > margin → 不相邻
+        let registry = ZoneRegistry {
+            zones: vec![
+                make_zone_at("zone_a", 0.0, 0.0, 100.0, 100.0),
+                make_zone_at("zone_c", 400.0, 0.0, 500.0, 100.0),
+            ],
+        };
+        assert!(
+            !registry.zones_are_adjacent("zone_a", "zone_c", 100.0),
+            "gap=300 > margin=100 不应相邻"
+        );
+    }
+
+    #[test]
+    fn zones_are_adjacent_overlapping() {
+        // 两个 zone AABB 直接重叠 → 相邻
+        let registry = ZoneRegistry {
+            zones: vec![
+                make_zone_at("zone_a", 0.0, 0.0, 200.0, 200.0),
+                make_zone_at("zone_b", 100.0, 0.0, 300.0, 200.0),
+            ],
+        };
+        assert!(
+            registry.zones_are_adjacent("zone_a", "zone_b", 0.0),
+            "AABB 重叠（margin=0）应相邻"
+        );
+    }
+
+    #[test]
+    fn zones_are_adjacent_same_name_returns_false() {
+        let registry = ZoneRegistry {
+            zones: vec![make_zone_at("spawn", 0.0, 0.0, 100.0, 100.0)],
+        };
+        assert!(
+            !registry.zones_are_adjacent("spawn", "spawn", 999.0),
+            "相同 zone 名称不应视为相邻（自相邻无意义）"
+        );
+    }
+
+    #[test]
+    fn zones_are_adjacent_missing_zone_returns_false() {
+        let registry = ZoneRegistry {
+            zones: vec![make_zone_at("zone_a", 0.0, 0.0, 100.0, 100.0)],
+        };
+        assert!(
+            !registry.zones_are_adjacent("zone_a", "nonexistent", 9999.0),
+            "找不到 zone 应返回 false"
+        );
+    }
+
+    #[test]
+    fn adjacent_zone_names_returns_neighbors() {
+        // A 与 B 相邻（gap=50 < margin=100），A 与 C 不相邻（gap=500 > margin=100）
+        let registry = ZoneRegistry {
+            zones: vec![
+                make_zone_at("zone_a", 0.0, 0.0, 100.0, 100.0),
+                make_zone_at("zone_b", 150.0, 0.0, 250.0, 100.0), // gap=50
+                make_zone_at("zone_c", 700.0, 0.0, 800.0, 100.0), // gap=600
+            ],
+        };
+        let neighbors = registry.adjacent_zone_names("zone_a", 100.0);
+        assert!(
+            neighbors.contains(&"zone_b".to_string()),
+            "zone_b 应在 zone_a 的相邻列表中"
+        );
+        assert!(
+            !neighbors.contains(&"zone_c".to_string()),
+            "zone_c 不应在 zone_a 的相邻列表中"
+        );
     }
 
     #[test]

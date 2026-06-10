@@ -46,9 +46,9 @@ use crate::schema::channels::{
     CH_SOCIAL_RENOWN_DELTA, CH_SPIRIT_EYE_DISCOVERED, CH_SPIRIT_EYE_MIGRATE,
     CH_SPIRIT_EYE_USED_FOR_BREAKTHROUGH, CH_SPIRIT_TREASURE_DIALOGUE,
     CH_SPIRIT_TREASURE_DIALOGUE_REQUEST, CH_STYLE_BALANCE_TELEMETRY,
-    CH_TIANDAO_HUNT_NARRATION_REQUEST, CH_TRIBULATION, CH_TRIBULATION_COLLAPSE,
-    CH_TRIBULATION_LOCK, CH_TRIBULATION_OMEN, CH_TRIBULATION_SETTLE, CH_TRIBULATION_WAVE,
-    CH_TSY_EVENT, CH_TUIKE_ASH_DECAY, CH_TUIKE_SHED, CH_TUIKE_V2_SKILL_EVENT,
+    CH_TERRITORY_NARRATION_REQUEST, CH_TIANDAO_HUNT_NARRATION_REQUEST, CH_TRIBULATION,
+    CH_TRIBULATION_COLLAPSE, CH_TRIBULATION_LOCK, CH_TRIBULATION_OMEN, CH_TRIBULATION_SETTLE,
+    CH_TRIBULATION_WAVE, CH_TSY_EVENT, CH_TUIKE_ASH_DECAY, CH_TUIKE_SHED, CH_TUIKE_V2_SKILL_EVENT,
     CH_VOID_ACTION_BARRIER, CH_VOID_ACTION_EXPLODE_ZONE, CH_VOID_ACTION_LEGACY_ASSIGN,
     CH_VOID_ACTION_SUPPRESS_TSY, CH_VOID_EROSION_EVENT, CH_WANTED_PLAYER, CH_WEATHER_EVENT_UPDATE,
     CH_WOLIU_BACKFIRE, CH_WOLIU_PROJECTILE_DRAINED, CH_WOLIU_V2_BACKFIRE, CH_WOLIU_V2_CAST,
@@ -103,6 +103,7 @@ use crate::schema::spirit_eye::{
 };
 use crate::schema::spirit_treasure::{SpiritTreasureDialogueRequestV1, SpiritTreasureDialogueV1};
 use crate::schema::style_balance::StyleBalanceTelemetryEventV1;
+use crate::schema::territory_narration::TerritoryDominanceNarrationRequestV1;
 use crate::schema::tiandao_hunt_narration::TiandaoHuntNarrationRequestV1;
 use crate::schema::tribulation::{TribulationEventV1, TribulationKindV1, TribulationPhaseV1};
 use crate::schema::tsy::{TsyEnterEventV1, TsyExitEventV1};
@@ -280,6 +281,9 @@ pub enum RedisOutbound {
     BaomaiV4ResonanceLockEnd(BaomaiV4ResonanceLockEndV1),
     /// plan-combat-skill-feedback-bridges-v1 P3 — 虚蚀阶段推进叙事事件（bong:void_erosion_event）。
     VoidErosionEvent(VoidErosionEventV1),
+    /// plan-territory-v1 P3 — 领地霸主变动叙事请求（bong:territory_narration_request）。
+    /// 三时刻：新霸主确立 / 霸主被驱逐 / 区域灵气耗尽。匿名（境界段，非 char_id）。
+    TerritoryDominanceNarration(TerritoryDominanceNarrationRequestV1),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -1573,6 +1577,18 @@ fn prepare_outbound_command(message: RedisOutbound) -> Result<RedisIoCommand, Va
             })?;
             Ok(RedisIoCommand::Publish {
                 channel: CH_VOID_EROSION_EVENT,
+                payload,
+            })
+        }
+        // plan-territory-v1 P3 — 领地霸主变动叙事请求（照搬 ZonePressureCrossed arm）
+        RedisOutbound::TerritoryDominanceNarration(req) => {
+            let payload = serde_json::to_string(&req).map_err(|error| {
+                ValidationError::new(format!(
+                    "failed to serialize TerritoryDominanceNarrationRequestV1: {error}"
+                ))
+            })?;
+            Ok(RedisIoCommand::Publish {
+                channel: CH_TERRITORY_NARRATION_REQUEST,
                 payload,
             })
         }

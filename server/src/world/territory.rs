@@ -28,6 +28,8 @@ use crate::cultivation::tick::{CultivationClock, CultivationSessionPracticeAccum
 use crate::player::state::canonical_player_id;
 use crate::social::components::Renown;
 use crate::world::dimension::{CurrentDimension, DimensionKind};
+use crate::world::territory_narration::{DominanceChangedEvent, DominanceEventKind};
+use crate::world::territory_rumor::RealmBand;
 use crate::world::tiandao_hunt::{realm_rank, TiandaoAttention};
 use crate::world::zone::ZoneRegistry;
 
@@ -113,6 +115,9 @@ pub struct ZoneDominance {
     pub established_tick: u64,
     /// 是否已向其他玩家公开。public_known 传播延迟属 P3。P0 初始为 false。
     pub public_known: bool,
+    /// plan-territory-v1 P3 — 匿名境界段（Low/Mid/High）。
+    /// 确立时从霸主 Cultivation.realm 映射，None 表示尚未记录（P0 存量）。
+    pub realm_band: Option<RealmBand>,
 }
 
 /// 按玩家累计影响力来源细项。
@@ -216,7 +221,14 @@ pub fn compute_influence_delta(
 /// - 候选中取 influence 最高；领先第二名 ≥ DOMINANCE_LEAD(10.0) 才确认。
 /// - 现任霸主 influence < DOMINANCE_DROP(20.0) → 失去地位。
 /// - 平局（差 < LEAD）→ 维持现任 / 无霸主（不切换，防抖动）。
-pub fn recompute_dominance(entry: &ZoneInfluenceEntry, now: u64) -> Option<ZoneDominance> {
+///
+/// `new_top_realm_band` — 新霸主候选的境界段（P3），在新确立时写入 ZoneDominance.realm_band。
+/// 若为 None，则新霸主 realm_band 也为 None（P0 存量兼容）。
+pub fn recompute_dominance(
+    entry: &ZoneInfluenceEntry,
+    now: u64,
+    new_top_realm_band: Option<RealmBand>,
+) -> Option<ZoneDominance> {
     // 找候选（influence ≥ 门槛）
     let mut candidates: Vec<(&str, f64)> = entry
         .players
@@ -247,6 +259,7 @@ pub fn recompute_dominance(entry: &ZoneInfluenceEntry, now: u64) -> Option<ZoneD
                 influence: top_val,
                 established_tick: current.established_tick,
                 public_known: current.public_known,
+                realm_band: current.realm_band,
             });
         }
         // 现任霸主被另一人超越
@@ -266,6 +279,7 @@ pub fn recompute_dominance(entry: &ZoneInfluenceEntry, now: u64) -> Option<ZoneD
                     influence: current_val,
                     established_tick: current.established_tick,
                     public_known: current.public_known,
+                    realm_band: current.realm_band,
                 });
             }
         }
@@ -278,6 +292,7 @@ pub fn recompute_dominance(entry: &ZoneInfluenceEntry, now: u64) -> Option<ZoneD
             influence: top_val,
             established_tick: now,
             public_known: false,
+            realm_band: new_top_realm_band,
         })
     } else {
         // 平局 → 无明确霸主
@@ -327,6 +342,7 @@ pub fn territory_tick(
     practice_accumulator: Option<Res<CultivationSessionPracticeAccumulator>>,
     mut influence_map: ResMut<ZoneInfluenceMap>,
     mut ev_writer: EventWriter<InfluenceChangedEvent>,
+    mut dominance_ev_writer: EventWriter<DominanceChangedEvent>,
     players: TerritoryPlayerQuery<'_, '_>,
 ) {
     let Some(clock) = clock else {
@@ -473,11 +489,68 @@ pub fn territory_tick(
         }
     }
 
-    // 对本 tick 有变动的 zone 重算 dominance
-    for zone_name in dirty_zones {
-        let entry = influence_map.zones.entry(zone_name.clone()).or_default();
-        let new_dominant = recompute_dominance(entry, now_tick);
-        entry.dominant = new_dominant;
+    // 对本 tick 有变动的 zone 重算 dominance，并 emit DominanceChangedEvent
+    for zone_name in &dirty_zones {
+        {
+            // 用 players 中任意玩家作为 realm_band 取 token（实际取 top player）
+            let entry = influence_map.zones.entry(zone_name.clone()).or_default();
+
+            // 找候选中 influence 最高的 player id，查其境界段
+            let top_id = entry
+                .players
+                .iter()
+                .max_by(|a, b| {
+                    a.1.value
+                        .partial_cmp(&b.1.value)
+                        .unwrap_or(std::cmp::Ordering::Equal)
+                })
+                .map(|(id, _)| id.clone());
+
+            let new_realm_band = top_id.as_deref().and_then(|tid| {
+                players
+                    .iter()
+                    .find_map(|(_, cultivation, _, username, ..)| {
+                        let pid = canonical_player_id(username.0.as_str());
+                        if pid == tid {
+                            Some(RealmBand::from_realm(cultivation.realm))
+                        } else {
+                            None
+                        }
+                    })
+            });
+
+            let old_dominant = entry.dominant.clone();
+            let new_dominant = recompute_dominance(entry, now_tick, new_realm_band);
+
+            // emit DominanceChangedEvent
+            let realm_band = new_realm_band
+                .or_else(|| old_dominant.as_ref().and_then(|d| d.realm_band))
+                .unwrap_or(RealmBand::Low);
+
+            match (&old_dominant, &new_dominant) {
+                (None, Some(nd)) | (Some(_), Some(nd))
+                    if old_dominant.as_ref().map(|d| &d.char_id) != Some(&nd.char_id) =>
+                {
+                    dominance_ev_writer.send(DominanceChangedEvent {
+                        zone_name: zone_name.clone(),
+                        kind: DominanceEventKind::Established,
+                        realm_band: nd.realm_band.unwrap_or(realm_band),
+                        observed_at_tick: now_tick,
+                    });
+                }
+                (Some(_), None) => {
+                    dominance_ev_writer.send(DominanceChangedEvent {
+                        zone_name: zone_name.clone(),
+                        kind: DominanceEventKind::Ousted,
+                        realm_band,
+                        observed_at_tick: now_tick,
+                    });
+                }
+                _ => {}
+            }
+
+            entry.dominant = new_dominant;
+        }
     }
 }
 
@@ -530,6 +603,7 @@ pub fn territory_pvp_influence_system(
     clock: Option<Res<CultivationClock>>,
     mut influence_map: ResMut<ZoneInfluenceMap>,
     mut ev_writer: EventWriter<InfluenceChangedEvent>,
+    mut dominance_ev_writer: EventWriter<DominanceChangedEvent>,
 ) {
     let Some(zone_registry) = zones else {
         return;
@@ -608,9 +682,97 @@ pub fn territory_pvp_influence_system(
         // ── 主动重算霸主（不等 territory_tick 60s 批次，即时体验）────────────
         {
             let entry = influence_map.zones.entry(zone_name.clone()).or_default();
-            let new_dominant = recompute_dominance(entry, now_tick);
+            let old_dominant = entry.dominant.clone();
+            // pvp 场景下 realm_band 从 killer 取（杀者夺主）
+            // PvpParticipantQuery 无 Cultivation，realm_band 暂为 None
+            let new_dominant = recompute_dominance(entry, now_tick, None);
+
+            // emit DominanceChangedEvent
+            let realm_band = old_dominant
+                .as_ref()
+                .and_then(|d| d.realm_band)
+                .unwrap_or(RealmBand::Low);
+            match (&old_dominant, &new_dominant) {
+                (None, Some(nd)) | (Some(_), Some(nd))
+                    if old_dominant.as_ref().map(|d| &d.char_id) != Some(&nd.char_id) =>
+                {
+                    dominance_ev_writer.send(DominanceChangedEvent {
+                        zone_name: zone_name.clone(),
+                        kind: DominanceEventKind::Established,
+                        realm_band: nd.realm_band.unwrap_or(realm_band),
+                        observed_at_tick: now_tick,
+                    });
+                }
+                (Some(_), None) => {
+                    dominance_ev_writer.send(DominanceChangedEvent {
+                        zone_name: zone_name.clone(),
+                        kind: DominanceEventKind::Ousted,
+                        realm_band,
+                        observed_at_tick: now_tick,
+                    });
+                }
+                _ => {}
+            }
+
             entry.dominant = new_dominant;
         }
+    }
+}
+
+/// plan-territory-v1 P3 — 灵气耗尽边沿检测系统。
+///
+/// 独立于 dominance 切换。每次 eval 读 ZoneRegistry spirit_qi 与上一 tick 水位比较，
+/// 若从 >0 跌至 ≤0 且该 zone 有霸主 → emit DominanceChangedEvent(QiDepleted)。
+/// 使用 ZoneQiWatermark 缓存上一 tick 值，避免每 tick 重复 emit。
+pub fn territory_qi_depleted_system(
+    clock: Option<Res<CultivationClock>>,
+    zones: Option<Res<ZoneRegistry>>,
+    influence_map: Res<ZoneInfluenceMap>,
+    mut watermark: ResMut<crate::world::territory_narration::ZoneQiWatermark>,
+    mut dominance_ev_writer: EventWriter<DominanceChangedEvent>,
+) {
+    let Some(clock) = clock else {
+        return;
+    };
+    let Some(zone_registry) = zones else {
+        return;
+    };
+    let now_tick = clock.tick;
+
+    for zone in &zone_registry.zones {
+        let current_qi = zone.spirit_qi;
+        let last_qi = watermark
+            .last_qi
+            .get(&zone.name)
+            .copied()
+            .unwrap_or(current_qi);
+
+        let has_dominant = influence_map
+            .zones
+            .get(&zone.name)
+            .and_then(|e| e.dominant.as_ref())
+            .is_some();
+
+        if crate::world::territory_narration::detect_qi_depleted_edge(last_qi, current_qi)
+            && has_dominant
+        {
+            let realm_band = influence_map
+                .zones
+                .get(&zone.name)
+                .and_then(|e| e.dominant.as_ref())
+                .and_then(|d| d.realm_band)
+                .unwrap_or(RealmBand::Low);
+
+            dominance_ev_writer.send(DominanceChangedEvent {
+                zone_name: zone.name.clone(),
+                kind: DominanceEventKind::QiDepleted,
+                realm_band,
+                observed_at_tick: now_tick,
+            });
+        }
+
+        // 更新水位
+        watermark.last_qi.insert(zone.name.clone(), current_qi);
     }
 }
 
@@ -619,6 +781,10 @@ pub fn register(app: &mut App) {
     app.init_resource::<ZoneInfluenceMap>();
     app.add_event::<InfluenceChangedEvent>();
     app.add_systems(Update, territory_tick);
+    // plan-territory-v1 P3 — 接入 narration + rumor + public_known 系统
+    crate::world::territory_narration::register(app);
+    crate::world::territory_rumor::register(app);
+    app.add_systems(Update, territory_qi_depleted_system);
 }
 
 // ─── 单测 ─────────────────────────────────────────────────────────────────────
@@ -834,7 +1000,7 @@ mod territory_tests {
                 ..Default::default()
             },
         );
-        let dom = recompute_dominance(&entry, 1000);
+        let dom = recompute_dominance(&entry, 1000, None);
         assert!(dom.is_some(), "应有霸主");
         let dom = dom.unwrap();
         assert_eq!(dom.char_id, "p2", "p2(45)应成为霸主");
@@ -863,14 +1029,14 @@ mod territory_tests {
                 ..Default::default()
             },
         );
-        let dom = recompute_dominance(&entry, 100);
+        let dom = recompute_dominance(&entry, 100, None);
         assert!(dom.is_none(), "两人并列应无霸主（防抖）");
     }
 
     #[test]
     fn dominance_empty_zone_none() {
         let entry = ZoneInfluenceEntry::default();
-        let dom = recompute_dominance(&entry, 0);
+        let dom = recompute_dominance(&entry, 0, None);
         assert!(dom.is_none(), "空 zone 应无霸主");
     }
 
@@ -902,9 +1068,10 @@ mod territory_tests {
             influence: 35.0,
             established_tick: 0,
             public_known: true,
+            realm_band: None,
         });
 
-        let dom = recompute_dominance(&entry, 2000);
+        let dom = recompute_dominance(&entry, 2000, None);
         assert!(dom.is_some(), "应有新霸主");
         let dom = dom.unwrap();
         assert_eq!(
@@ -951,9 +1118,10 @@ mod territory_tests {
             influence: 40.0,
             established_tick: 500,
             public_known: true,
+            realm_band: None,
         });
 
-        let dom = recompute_dominance(&entry, 3000);
+        let dom = recompute_dominance(&entry, 3000, None);
         assert!(dom.is_some(), "应维持有霸主");
         let dom = dom.unwrap();
         assert_eq!(
@@ -980,6 +1148,7 @@ mod territory_tests {
             influence: 35.0,
             established_tick: 0,
             public_known: false,
+            realm_band: None,
         };
         entry.dominant = Some(current);
         // 当前记录 incumbent 跌到 15（< DROP），且无候选超过 THRESHOLD
@@ -991,7 +1160,7 @@ mod territory_tests {
             },
         );
 
-        let dom = recompute_dominance(&entry, 500);
+        let dom = recompute_dominance(&entry, 500, None);
         assert!(
             dom.is_none(),
             "现任霸主 influence(15) < DOMINANCE_DROP({DOMINANCE_DROP}) 且无够格挑战者应失去地位"
@@ -1033,7 +1202,7 @@ mod territory_tests {
                 ..Default::default()
             },
         );
-        entry.dominant = recompute_dominance(&entry, 999);
+        entry.dominant = recompute_dominance(&entry, 999, None);
         let dom = entry.dominant.as_ref().expect("应有霸主");
         assert_eq!(dom.char_id, "hero", "霸主应为 hero");
         assert_close(dom.influence, 50.0, "霸主 influence 应为 50");
@@ -1058,6 +1227,7 @@ mod territory_tests {
 
         let mut app = App::new();
         app.add_event::<InfluenceChangedEvent>();
+        app.add_event::<DominanceChangedEvent>();
         app.init_resource::<ZoneInfluenceMap>();
 
         // 构造一个包含 spawn zone 的 ZoneRegistry
@@ -1167,6 +1337,7 @@ mod territory_tests {
 
         let mut app = App::new();
         app.add_event::<InfluenceChangedEvent>();
+        app.add_event::<DominanceChangedEvent>();
         app.init_resource::<ZoneInfluenceMap>();
 
         let zone = Zone {
@@ -1244,6 +1415,7 @@ mod territory_tests {
 
         let mut app = App::new();
         app.add_event::<InfluenceChangedEvent>();
+        app.add_event::<DominanceChangedEvent>();
         app.init_resource::<ZoneInfluenceMap>();
 
         let eval_tick = TERRITORY_EVAL_INTERVAL_TICKS;
@@ -1317,6 +1489,7 @@ mod territory_tests {
 
         let mut app = App::new();
         app.add_event::<InfluenceChangedEvent>();
+        app.add_event::<DominanceChangedEvent>();
         app.init_resource::<ZoneInfluenceMap>();
 
         let zone = Zone {
@@ -1421,6 +1594,7 @@ mod territory_tests {
 
         let mut app = App::new();
         app.add_event::<InfluenceChangedEvent>();
+        app.add_event::<DominanceChangedEvent>();
         app.init_resource::<ZoneInfluenceMap>();
 
         let zone = Zone {
@@ -1508,6 +1682,7 @@ mod territory_tests {
         let mut app = App::new();
         app.add_event::<DeathEvent>();
         app.add_event::<InfluenceChangedEvent>();
+        app.add_event::<DominanceChangedEvent>();
         app.init_resource::<ZoneInfluenceMap>();
 
         let zone = Zone {
@@ -1563,6 +1738,94 @@ mod territory_tests {
             .resource_mut::<bevy_ecs::event::Events<InfluenceChangedEvent>>()
             .drain()
             .collect()
+    }
+
+    fn drain_dominance_events(app: &mut App) -> Vec<DominanceChangedEvent> {
+        app.world_mut()
+            .resource_mut::<bevy_ecs::event::Events<DominanceChangedEvent>>()
+            .drain()
+            .collect()
+    }
+
+    fn make_qi_depleted_app(initial_qi: f64) -> App {
+        use crate::world::territory_narration::ZoneQiWatermark;
+        use crate::world::zone::Zone;
+        use valence::prelude::DVec3;
+
+        let mut app = App::new();
+        app.add_event::<DominanceChangedEvent>();
+        app.init_resource::<ZoneInfluenceMap>();
+        app.init_resource::<ZoneQiWatermark>();
+        app.insert_resource(CultivationClock { tick: 42 });
+        app.insert_resource(ZoneRegistry {
+            zones: vec![Zone {
+                name: "dead_zone".to_string(),
+                dimension: DimensionKind::Overworld,
+                bounds: (DVec3::new(0.0, 60.0, 0.0), DVec3::new(64.0, 80.0, 64.0)),
+                spirit_qi: initial_qi,
+                danger_level: 0,
+                active_events: vec![],
+                patrol_anchors: vec![],
+                blocked_tiles: vec![],
+            }],
+        });
+        app.add_systems(Update, territory_qi_depleted_system);
+
+        {
+            let mut map = app.world_mut().resource_mut::<ZoneInfluenceMap>();
+            map.zones.insert(
+                "dead_zone".to_string(),
+                ZoneInfluenceEntry {
+                    dominant: Some(ZoneDominance {
+                        char_id: "hero".to_string(),
+                        influence: 60.0,
+                        established_tick: 1,
+                        public_known: true,
+                        realm_band: Some(RealmBand::Mid),
+                    }),
+                    ..Default::default()
+                },
+            );
+        }
+
+        app
+    }
+
+    #[test]
+    fn qi_depleted_system_does_not_emit_for_initial_dead_zone() {
+        let mut app = make_qi_depleted_app(0.0);
+
+        app.update();
+
+        assert!(
+            drain_dominance_events(&mut app).is_empty(),
+            "初始已为废地的 zone 不应在服务启动首 tick 误触发 QiDepleted"
+        );
+    }
+
+    #[test]
+    fn qi_depleted_system_emits_when_qi_crosses_to_zero_after_watermark() {
+        let mut app = make_qi_depleted_app(0.5);
+
+        app.update();
+        assert!(
+            drain_dominance_events(&mut app).is_empty(),
+            "首次建立正水位 watermark 不应触发 QiDepleted"
+        );
+
+        {
+            let mut zones = app.world_mut().resource_mut::<ZoneRegistry>();
+            zones.zones[0].spirit_qi = 0.0;
+        }
+        app.world_mut().resource_mut::<CultivationClock>().tick = 43;
+        app.update();
+
+        let events = drain_dominance_events(&mut app);
+        assert_eq!(events.len(), 1, "正水位跌至 0 应触发 1 条 QiDepleted");
+        assert_eq!(events[0].zone_name, "dead_zone");
+        assert_eq!(events[0].kind, DominanceEventKind::QiDepleted);
+        assert_eq!(events[0].realm_band, RealmBand::Mid);
+        assert_eq!(events[0].observed_at_tick, 43);
     }
 
     // ── P2 Case 1: zone内PvP击杀 killer +5.0, victim 归零 ────────────────────
@@ -2001,6 +2264,7 @@ mod territory_tests {
                 influence: 50.0,
                 established_tick: 0,
                 public_known: false,
+                realm_band: None,
             });
         }
 
@@ -2076,6 +2340,7 @@ mod territory_tests {
                 influence: 40.0,
                 established_tick: 0,
                 public_known: false,
+                realm_band: None,
             });
         }
 

@@ -2999,6 +2999,7 @@ fn hydrate_zone_influence(
                 influence: record.value,
                 established_tick: record.established_tick,
                 public_known: record.public_known,
+                realm_band: None, // persistence 存量无境界段，P3 新增字段
             });
         }
     }
@@ -12632,6 +12633,7 @@ mod persistence_tests {
             influence: 45.5,
             established_tick: 8000,
             public_known: true,
+            realm_band: None,
         });
         influence_map.zones.insert("spawn".to_string(), spawn_entry);
 
@@ -12757,6 +12759,7 @@ mod persistence_tests {
             influence: 60.0,
             established_tick: 5000,
             public_known: false,
+            realm_band: None,
         });
         map.zones.insert("throne_hall".to_string(), entry);
 
