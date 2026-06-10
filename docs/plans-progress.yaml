@@ -543,15 +543,15 @@ plans:
   pr_refs: []
   blocking_on: []
   summary: 原版方块破坏获取→入 Bong 自有背包→放置全流程迁移到自有系统。博弈流程设计 + 实地核查 50 条承重声明 + pre-P0 收口（§11.1/§11.2）三步完成，走下层 1-9 SkillBar Kind.ITEM 选中态、不消费 InteractBlockEvent、凡俗方块裸 set_block。零代码，待 P0 实施（扩 block_drop + ItemCategory::Block + BlockPlace payload + place_block_for_kind + FP 切手）。
-- file: plan-consumable-effects-v1.md
+- file: finished_plans/plan-consumable-effects-v1.md
   group: gameplay-npc
   title: 手搓消耗品空壳消杀（11 个产出物补齐使用闭环）
-  state: active-design
-  percent: 5
+  state: merged
+  percent: 100
   last_updated: '2026-06-10'
   pr_refs: []
   blocking_on: []
-  summary: 手搓产出物审计（104→41✅/2⚠️/61💀）中"消耗品空壳"一类——11 个有模板有配方但缺 [item.effect]、使用只扣库存不施效的僵尸物品。11 agent 实地调查 + 施效路径裁定收口：QuickSlot cast 经 apply_cast_item_effect→_=>apply_item_effect，QiRecovery/MeridianHeal/ContaminationCleanse/FoodRegen 真施效；CombatPill 在 cast 路径 no-op，疗伤仅 take_pill 路径活。决策表 6 direct_map（补 toml）+ 4 new_variant（共 WoundHeal+ComposureRestore 两变体，绷带/夹板复用既有 apply_wound_heal，需把 Wounds 透传进 CastItemEffectTargets）+ 1 reclassify（凝脉散预制包→新建 alchemy 配方）。零代码，待 P1-P4 实施。
+  summary: 11 个手搓消耗品已补齐使用闭环：6 个直接映射 ItemEffect，新增 ComposureRestore/WoundHeal，绷带/夹板复用 apply_wound_heal，凝脉散预制包接炼丹配方，并覆盖 QuickSlot consume→施效端到端测试。
 - file: plan-sou-da-che-v1.md
   group: gameplay-npc
   title: 搜打撤风险节拍
