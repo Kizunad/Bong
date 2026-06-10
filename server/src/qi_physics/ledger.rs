@@ -199,6 +199,32 @@ pub enum QiTransferReason {
     /// 两端 balance 一增一减，initial_total 恒定。不凭空增减。
     /// 负向衰减走 [`QiTransferReason::EraDecay`] + [`crate::qi_physics::tiandao::era_decay_step`]。
     EraShift,
+    /// plan-qi-handling-attrition-v1 P0 — 搬运灵物天道税（worldview §八.2）。
+    ///
+    /// inventory 操作对 spirit_quality>0 物品施加磨损，逸散量守恒归还玩家所在 zone。
+    /// 守恒约束：item.spirit_quality 减少量(绝对) == zone 接收量，不凭空消失。
+    /// op_kind 区分操作类型（拾起/移动/搜刮/炼器/炼丹），供审计轨迹按类型区分。
+    AttritionTax {
+        op_kind: AttritionOpKind,
+    },
+}
+
+/// plan-qi-handling-attrition-v1 P0 — 搬运磨损操作类型，对应不同基础磨损率。
+///
+/// 定义在 ledger.rs 内（与 `QiTransferReason` 同级），避免 attrition.rs ↔ ledger.rs 循环依赖。
+/// attrition.rs 反向 use 此 enum。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum AttritionOpKind {
+    /// 从地面拾起物品（base rate × 1.0 = 0.03）
+    Pickup,
+    /// 背包内槽位移动（base rate × 0.667 ≈ 0.02）
+    SlotMove,
+    /// TSY 容器搜刮入包（base rate × 1.667 ≈ 0.05）
+    ContainerSearch,
+    /// 炼器炉加料（base rate × 1.333 ≈ 0.04）
+    ForgeLoad,
+    /// 炼丹炉加料（base rate × 1.333 ≈ 0.04）
+    AlchemyLoad,
 }
 
 #[derive(Debug, Clone, Event, PartialEq)]
@@ -891,5 +917,73 @@ mod tests {
             bone_coins: 0,
             max_weight: 45.0,
         }
+    }
+
+    // ── plan-qi-handling-attrition-v1 P0 — AttritionTax 变体 pin 测试 ───────
+
+    #[test]
+    fn attrition_tax_variant_neq_half_step_buff() {
+        // AttritionTax 与 HalfStepBuff 是独立变体，语义不同（税 vs 容量扩张）
+        let attrition = QiTransferReason::AttritionTax {
+            op_kind: AttritionOpKind::Pickup,
+        };
+        let halfstep = QiTransferReason::HalfStepBuff;
+        assert_ne!(
+            attrition, halfstep,
+            "AttritionTax 与 HalfStepBuff 应为不同变体"
+        );
+    }
+
+    #[test]
+    fn attrition_tax_variant_neq_release_to_zone() {
+        // AttritionTax 与 ReleaseToZone 是独立变体，审计轨迹不应混淆
+        let attrition = QiTransferReason::AttritionTax {
+            op_kind: AttritionOpKind::Pickup,
+        };
+        let release = QiTransferReason::ReleaseToZone;
+        assert_ne!(
+            attrition, release,
+            "AttritionTax 与 ReleaseToZone 应为不同变体，否则审计轨迹混淆"
+        );
+    }
+
+    #[test]
+    fn attrition_tax_op_kind_all_five_distinct() {
+        // 5 个 AttritionOpKind 变体应各自独立，pin 其相等性
+        use AttritionOpKind::*;
+        let variants = [Pickup, SlotMove, ContainerSearch, ForgeLoad, AlchemyLoad];
+        for i in 0..variants.len() {
+            for j in 0..variants.len() {
+                if i == j {
+                    assert_eq!(variants[i], variants[j], "同一变体应相等");
+                } else {
+                    assert_ne!(
+                        variants[i], variants[j],
+                        "{:?} 与 {:?} 应为不同变体",
+                        variants[i], variants[j]
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn attrition_tax_is_not_audit_only_in_transfer() {
+        // AttritionTax 不是 audit-only，应可以走 emit QiTransfer::new（不被拒绝）
+        let from = QiAccountId::container("item:123");
+        let to = QiAccountId::zone("spawn");
+        let result = QiTransfer::new(
+            from,
+            to,
+            3.0,
+            QiTransferReason::AttritionTax {
+                op_kind: AttritionOpKind::Pickup,
+            },
+        );
+        assert!(
+            result.is_ok(),
+            "AttritionTax QiTransfer::new 不应失败，实际 {:?}",
+            result.err()
+        );
     }
 }

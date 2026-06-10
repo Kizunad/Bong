@@ -5,6 +5,7 @@
 
 #![allow(unused_imports)]
 
+pub mod attrition;
 pub mod channeling;
 pub mod collision;
 pub mod constants;
@@ -24,6 +25,10 @@ pub mod wear;
 
 use valence::prelude::App;
 
+pub use attrition::{
+    apply_attrition, env_multiplier, is_attrition_exempt, release_attrition_to_zone,
+    AttritionConfig,
+};
 pub use channeling::{qi_channeling, qi_channeling_transfer, ChannelDirection, ChannelingOutcome};
 pub use collision::{
     flow_modifier, qi_collision, qi_negative_field_drain_ratio,
@@ -52,8 +57,9 @@ pub use knockback::{
 };
 pub use ledger::{
     assert_conservation, build_qi_ledger_hash_fields, snapshot_for_ipc, summarize_world_qi,
-    QiAccountId, QiAccountKind, QiPhysicsIpcSnapshot, QiTransfer, QiTransferReason, WorldQiAccount,
-    WorldQiBudget, WorldQiSnapshot, QI_LEDGER_ACCOUNT_FIELD_PREFIX,
+    AttritionOpKind, QiAccountId, QiAccountKind, QiPhysicsIpcSnapshot, QiTransfer,
+    QiTransferReason, WorldQiAccount, WorldQiBudget, WorldQiSnapshot,
+    QI_LEDGER_ACCOUNT_FIELD_PREFIX,
 };
 pub use projectile::{
     armor_penetrate, cone_dispersion, high_density_inject, ArmorPenetrationOutcome,

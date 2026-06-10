@@ -146,6 +146,21 @@ pub const SCAR_CIRCUIT_INTEGRITY_MIN: f64 = 0.50;
 /// 回路形成所需经脉 integrity 上限（含）——超过此值回路断开。
 pub const SCAR_CIRCUIT_INTEGRITY_MAX: f64 = 0.85;
 
+// ── plan-qi-handling-attrition-v1 P0/P1 — 搬运灵物天道税（worldview §八.2）──
+/// 磨损基础税率（§8 校准项；1–5% 区间中位）。effective_rate = BASE × rate_factor × env_mult。
+pub const QI_ATTRITION_BASE_RATE: f64 = 0.03;
+/// abs_qi = spirit_quality × stack_count < 0.5 时跳过磨损（避免频繁小额转账）。
+pub const QI_ATTRITION_MIN_QI: f64 = 0.5;
+/// 死域（spirit_qi < DEAD_ZONE_QI_THRESHOLD）内磨损环境倍率。
+/// **专属常数**，禁止复用 QI_SHELFLIFE_DEAD_ZONE_MULTIPLIER（两者语义独立）。
+pub const QI_ATTRITION_DEAD_ZONE_MULTIPLIER: f64 = 3.0;
+/// 坍缩渊（is_tsy）内磨损环境倍率。
+pub const QI_ATTRITION_TSY_MULTIPLIER: f64 = 3.0;
+/// 馈赠区（spirit_qi >= 阈值）内磨损环境倍率（< 1，表示减轻磨损）。
+pub const QI_ATTRITION_SPIRIT_SOURCE_MULTIPLIER: f64 = 0.8;
+/// 馈赠区判定阈值：zone.spirit_qi >= 0.7（与 npc/trade.rs:152 对齐）。
+pub const QI_ATTRITION_SPIRIT_SOURCE_THRESHOLD: f64 = 0.7;
+
 // ── plan-baomai-v4 §1.3 互噬（真元排斥/经脉损伤物理）──
 /// 共振锁定期间 ρ 覆写值（排斥系数降为零）。
 pub const RESONANCE_LOCK_RHO_OVERRIDE: f64 = 0.0;
