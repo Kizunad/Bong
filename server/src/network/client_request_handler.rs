@@ -9094,11 +9094,16 @@ fn handle_alchemy_take_pill(
         _ => None,
     };
 
-    // plan-food-v1 P2：灵食必须走 quick slot（cast_emit 路径），禁止走 take_pill 路径。
-    // 在此处前置拒绝，避免 consume_item_instance_once 扣掉物品后 FoodRegen 分支 noop。
-    if matches!(effect, ItemEffect::FoodRegen { .. }) {
+    // plan-food-v1 P2 / plan-consumable-effects-v1：这些效果必须走 quick slot（cast_emit 路径）。
+    // 在此处前置拒绝，避免 consume_item_instance_once 扣掉物品后 noop。
+    if matches!(
+        effect,
+        ItemEffect::FoodRegen { .. }
+            | ItemEffect::ComposureRestore { .. }
+            | ItemEffect::WoundHeal { .. }
+    ) {
         tracing::debug!(
-            "[bong][network][alchemy] take_pill entity={entity:?} `{pill_item_id}` rejected: food must be consumed via quick slot"
+            "[bong][network][alchemy] take_pill entity={entity:?} `{pill_item_id}` rejected: effect must be consumed via quick slot"
         );
         resync_snapshot(
             entity,
@@ -9106,7 +9111,7 @@ fn handle_alchemy_take_pill(
             clients,
             player_states,
             cultivations,
-            "take_pill_food_rejected",
+            "take_pill_quickslot_effect_rejected",
         );
         return;
     }
@@ -9265,15 +9270,11 @@ fn handle_alchemy_take_pill(
                 entity,
             );
         }
-        ItemEffect::ComposureRestore { .. } | ItemEffect::WoundHeal { .. } => {
+        ItemEffect::ComposureRestore { .. }
+        | ItemEffect::WoundHeal { .. }
+        | ItemEffect::FoodRegen { .. } => {
             tracing::debug!(
-                "[bong][network][alchemy] take_pill entity={entity:?} `{pill_item_id}` generic cast effect on pill path — noop (consume via quick slot)"
-            );
-        }
-        ItemEffect::FoodRegen { .. } => {
-            // plan-food-v1 P2：灵食不走 take_pill 路径（食物通过 cast_emit 快捷槽消费）。
-            tracing::debug!(
-                "[bong][network][alchemy] take_pill entity={entity:?} `{pill_item_id}` FoodRegen on pill path — noop (food must be consumed via quick slot)"
+                "[bong][network][alchemy] take_pill entity={entity:?} `{pill_item_id}` quick-slot-only effect reached pill dispatch after prevalidation"
             );
         }
         // plan-fauna-stitched-beast-v1 P3 — 异变兽核吸收：突破加成 + 幻觉 HUD。

@@ -89,7 +89,7 @@ _背包、NPC AI、感知、社交、技艺、死亡周期 · 24 份 · 组均 5
 | `merged` | **灵龛守家与龛侵追凶闭环** <br/><sub>`finished_plans/plan-niche-defense-v1.md`</sub> | `████████████` 100% | #130 | 2026-06-08 |
 | `merged` | **视觉与神识感知系统** <br/><sub>`finished_plans/plan-perception-v1.1.md`</sub> | `████████████` 100% | #85 | 2026-06-08 |
 | `merged` | **新手 POI 动态选址** <br/><sub>`finished_plans/plan-poi-novice-v1.md`</sub> | `████████████` 100% | #109 | 2026-06-08 |
-| `merged` | **出生沉默引导** <br/><sub>`finished_plans/plan-spawn-tutorial-v1.md`</sub> | `████████████` 100% | — | 2026-06-08 |
+| `merged` | **出生沉默引导** <br/><sub>`finished_plans/plan-spawn-tutorial-v1.md`</sub> | `████████████` 100% | #483 | 2026-06-08 |
 | `merged` | **坍缩渊撤离压迫感** <br/><sub>`finished_plans/plan-tsy-raceout-v1.md`</sub> | `████████████` 100% | #151 | 2026-06-08 |
 | `wip` | **100h 玩家旅程总线** <br/><sub>`plan-gameplay-journey-v1.md`</sub> | `████████░░░░`  65% | #159 | 2026-06-08 |
 | `design` | **搜打撤风险节拍** <br/><sub>`plan-sou-da-che-v1.md`</sub> | `██░░░░░░░░░░`  15% | — | 2026-06-08 |

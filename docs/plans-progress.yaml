@@ -486,7 +486,8 @@ plans:
   state: merged
   percent: 100
   last_updated: '2026-06-08'
-  pr_refs: []
+  pr_refs:
+  - 483
   blocking_on: []
   summary: spawn_tutorial state machine、coffin_open、spirit_niche_stone、dynamic rat swarm、world structure、schema event 与 agent
     narration 存在。

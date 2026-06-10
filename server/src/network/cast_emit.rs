@@ -776,11 +776,17 @@ fn apply_wound_heal_targets(wounds: &mut Wounds, target: Option<&str>, grades: u
     let Some(target) = target.map(str::trim).filter(|target| !target.is_empty()) else {
         return apply_wound_heal(wounds, None, grades);
     };
-    target
-        .split('/')
-        .filter_map(parse_wound_heal_body_part)
-        .map(|part| apply_wound_heal(wounds, Some(part), grades))
-        .sum()
+    let mut remaining_grades = grades;
+    let mut changed_total = 0usize;
+    for part in target.split('/').filter_map(parse_wound_heal_body_part) {
+        if remaining_grades == 0 {
+            break;
+        }
+        let changed = apply_wound_heal(wounds, Some(part), remaining_grades);
+        changed_total += changed;
+        remaining_grades = remaining_grades.saturating_sub(changed as u8);
+    }
+    changed_total
 }
 
 fn parse_wound_heal_body_part(raw: &str) -> Option<BodyPart> {
@@ -1182,7 +1188,11 @@ mod tests {
             Entity::PLACEHOLDER,
         );
 
-        assert_eq!(cultivation.composure, 1.0);
+        assert_eq!(
+            cultivation.composure, 1.0,
+            "expected composure to clamp to 1.0 because restored by ComposureRestore magnitude 0.35, actual {}",
+            cultivation.composure
+        );
     }
 
     #[test]
@@ -1218,9 +1228,23 @@ mod tests {
             Entity::PLACEHOLDER,
         );
 
-        assert_eq!(wounds.entries.len(), 1);
-        assert_eq!(wounds.entries[0].location, BodyPart::LegR);
-        assert!((wounds.entries[0].severity - 0.50).abs() < f32::EPSILON);
+        assert_eq!(
+            wounds.entries.len(),
+            1,
+            "expected one wound to remain because all-target WoundHeal removes only the light cut, actual {}",
+            wounds.entries.len()
+        );
+        assert_eq!(
+            wounds.entries[0].location,
+            BodyPart::LegR,
+            "expected remaining wound to be LegR because ArmL cut was healed below removal threshold, actual {:?}",
+            wounds.entries[0].location
+        );
+        assert!(
+            (wounds.entries[0].severity - 0.50).abs() < f32::EPSILON,
+            "expected LegR severity 0.50 because WoundHeal magnitude 1 applies one grade, actual {}",
+            wounds.entries[0].severity
+        );
     }
 
     #[test]
@@ -1256,9 +1280,78 @@ mod tests {
             Entity::PLACEHOLDER,
         );
 
-        assert_eq!(wounds.entries.len(), 1);
-        assert_eq!(wounds.entries[0].location, BodyPart::LegL);
-        assert!((wounds.entries[0].severity - 0.70).abs() < f32::EPSILON);
+        assert_eq!(
+            wounds.entries.len(),
+            1,
+            "expected one wound to remain because arm target group should not heal leg wounds, actual {}",
+            wounds.entries.len()
+        );
+        assert_eq!(
+            wounds.entries[0].location,
+            BodyPart::LegL,
+            "expected remaining wound to be LegL because target was arm_l/arm_r, actual {:?}",
+            wounds.entries[0].location
+        );
+        assert!(
+            (wounds.entries[0].severity - 0.70).abs() < f32::EPSILON,
+            "expected LegL severity unchanged at 0.70 because target was arm_l/arm_r, actual {}",
+            wounds.entries[0].severity
+        );
+    }
+
+    #[test]
+    fn wound_heal_slash_target_shares_grade_budget_across_group() {
+        let mut wounds = Wounds::default();
+        wounds.entries.push(Wound {
+            location: BodyPart::ArmL,
+            kind: WoundKind::Blunt,
+            severity: 0.75,
+            bleeding_per_sec: 1.0,
+            created_at_tick: 0,
+            inflicted_by: None,
+        });
+        wounds.entries.push(Wound {
+            location: BodyPart::ArmR,
+            kind: WoundKind::Blunt,
+            severity: 0.75,
+            bleeding_per_sec: 1.0,
+            created_at_tick: 0,
+            inflicted_by: None,
+        });
+
+        apply_item_effect(
+            &ItemEffect::WoundHeal {
+                magnitude: 2.0,
+                target: Some("arm_l/arm_r".to_string()),
+            },
+            None,
+            None,
+            None,
+            Some(&mut wounds),
+            "Azure",
+            Entity::PLACEHOLDER,
+        );
+
+        let arm_l = wounds
+            .entries
+            .iter()
+            .find(|wound| wound.location == BodyPart::ArmL)
+            .expect("ArmL wound should remain after shared-budget heal");
+        let arm_r = wounds
+            .entries
+            .iter()
+            .find(|wound| wound.location == BodyPart::ArmR)
+            .expect("ArmR wound should remain after shared-budget heal");
+        assert!(
+            (arm_l.severity - 0.25).abs() < f32::EPSILON,
+            "expected ArmL severity 0.25 because it consumes the initial two-grade budget, actual {}",
+            arm_l.severity
+        );
+        assert!(
+            (arm_r.severity - 0.50).abs() < f32::EPSILON,
+            "expected ArmR severity 0.50 because remaining shared budget is one grade, actual {}",
+            arm_r.severity
+        );
     }
 
     #[test]
@@ -1275,13 +1368,21 @@ mod tests {
 
         app.update();
 
-        assert_eq!(hotbar_stack_count(&mut app, player), 1);
+        let stack_count = hotbar_stack_count(&mut app, player);
+        assert_eq!(
+            stack_count, 1,
+            "expected hotbar stack count 1 because QuickSlot consumable should consume one item, actual {stack_count}"
+        );
         let cultivation = app
             .world_mut()
             .entity(player)
             .get::<Cultivation>()
             .expect("Cultivation should remain attached");
-        assert_eq!(cultivation.qi_current, 50.0);
+        assert_eq!(
+            cultivation.qi_current, 50.0,
+            "expected qi_current 50.0 because QiRecovery amount 40 applies after consuming one item, actual {}",
+            cultivation.qi_current
+        );
     }
 
     #[test]
@@ -1297,13 +1398,21 @@ mod tests {
 
         app.update();
 
-        assert_eq!(hotbar_stack_count(&mut app, player), 1);
+        let stack_count = hotbar_stack_count(&mut app, player);
+        assert_eq!(
+            stack_count, 1,
+            "expected hotbar stack count 1 because QuickSlot consumable should consume one item, actual {stack_count}"
+        );
         let cultivation = app
             .world_mut()
             .entity(player)
             .get::<Cultivation>()
             .expect("Cultivation should remain attached");
-        assert!((cultivation.composure - 0.75).abs() < f64::EPSILON);
+        assert!(
+            (cultivation.composure - 0.75).abs() < f64::EPSILON,
+            "expected composure 0.75 because ComposureRestore magnitude 0.35 applies to 0.40, actual {}",
+            cultivation.composure
+        );
     }
 
     #[test]
@@ -1340,15 +1449,33 @@ mod tests {
 
         app.update();
 
-        assert_eq!(hotbar_stack_count(&mut app, player), 1);
+        let stack_count = hotbar_stack_count(&mut app, player);
+        assert_eq!(
+            stack_count, 1,
+            "expected hotbar stack count 1 because QuickSlot consumable should consume one item, actual {stack_count}"
+        );
         let wounds = app
             .world_mut()
             .entity(player)
             .get::<Wounds>()
             .expect("Wounds should remain attached");
-        assert_eq!(wounds.entries.len(), 1);
-        assert_eq!(wounds.entries[0].location, BodyPart::ArmL);
-        assert!((wounds.entries[0].severity - 0.40).abs() < f32::EPSILON);
+        assert_eq!(
+            wounds.entries.len(),
+            1,
+            "expected one wound to remain because leg_splint only heals leg_l/leg_r, actual {}",
+            wounds.entries.len()
+        );
+        assert_eq!(
+            wounds.entries[0].location,
+            BodyPart::ArmL,
+            "expected ArmL wound to remain because leg_splint targets only legs, actual {:?}",
+            wounds.entries[0].location
+        );
+        assert!(
+            (wounds.entries[0].severity - 0.40).abs() < f32::EPSILON,
+            "expected ArmL severity unchanged at 0.40 because leg_splint targets only legs, actual {}",
+            wounds.entries[0].severity
+        );
     }
 
     #[test]

@@ -2042,7 +2042,7 @@ fn parse_item_effect(
         }),
         "wound_heal" => Ok(ItemEffect::WoundHeal {
             magnitude: effect.magnitude,
-            target: effect.target.filter(|target| !target.trim().is_empty()),
+            target: parse_wound_heal_effect_target(effect.target, source_path, item_id)?,
         }),
         "lifespan_extension" => {
             let source = effect
@@ -2121,6 +2121,42 @@ fn parse_item_effect(
             source_path.display()
         )),
     }
+}
+
+fn parse_wound_heal_effect_target(
+    target: Option<String>,
+    source_path: &Path,
+    item_id: &str,
+) -> Result<Option<String>, String> {
+    let Some(raw) = target else {
+        return Ok(None);
+    };
+    let parts: Vec<String> = raw
+        .split('/')
+        .map(|part| part.trim().to_ascii_lowercase())
+        .collect();
+    if parts.iter().any(String::is_empty) {
+        return Err(format!(
+            "{} item `{item_id}` effect `wound_heal` has empty target segment; omit target for all wounds or use body parts separated by `/`",
+            source_path.display()
+        ));
+    }
+    for part in &parts {
+        if !is_wound_heal_body_part(part) {
+            return Err(format!(
+                "{} item `{item_id}` effect `wound_heal` has unknown target `{part}`; expected one of head/chest/back/abdomen/arm_l/arm_r/leg_l/leg_r",
+                source_path.display()
+            ));
+        }
+    }
+    Ok(Some(parts.join("/")))
+}
+
+fn is_wound_heal_body_part(part: &str) -> bool {
+    matches!(
+        part,
+        "head" | "chest" | "back" | "abdomen" | "arm_l" | "arm_r" | "leg_l" | "leg_r"
+    )
 }
 
 #[derive(Debug, Deserialize)]
@@ -4615,6 +4651,108 @@ mod tests {
             error.contains("unknown poison pill target `poison_pill_typo`"),
             "expected poison pill target validation error, got {error}"
         );
+    }
+
+    #[test]
+    fn parse_item_effect_accepts_wound_heal_missing_target_as_all_wounds() {
+        let effect = parse_item_effect(
+            ItemEffectToml {
+                kind: "wound_heal".to_string(),
+                magnitude: 1.0,
+                target: None,
+                duration_ticks: None,
+            },
+            Path::new("<inline-items.toml>"),
+            "bandage",
+        )
+        .expect("wound_heal without target should parse as all wounds");
+
+        assert_eq!(
+            effect,
+            ItemEffect::WoundHeal {
+                magnitude: 1.0,
+                target: None
+            }
+        );
+    }
+
+    #[test]
+    fn parse_item_effect_rejects_wound_heal_blank_target() {
+        let error = parse_item_effect(
+            ItemEffectToml {
+                kind: "wound_heal".to_string(),
+                magnitude: 1.0,
+                target: Some("   ".to_string()),
+                duration_ticks: None,
+            },
+            Path::new("<inline-items.toml>"),
+            "blank_bandage",
+        )
+        .expect_err("blank wound_heal target should be rejected instead of healing all wounds");
+
+        assert!(
+            error.contains("empty target segment"),
+            "expected empty wound_heal target validation error, got {error}"
+        );
+    }
+
+    #[test]
+    fn parse_item_effect_rejects_wound_heal_unknown_target() {
+        let error = parse_item_effect(
+            ItemEffectToml {
+                kind: "wound_heal".to_string(),
+                magnitude: 1.0,
+                target: Some("arm_l/tail".to_string()),
+                duration_ticks: None,
+            },
+            Path::new("<inline-items.toml>"),
+            "tail_splint",
+        )
+        .expect_err("unknown wound_heal body part should be rejected");
+
+        assert!(
+            error.contains("unknown target `tail`"),
+            "expected unknown wound_heal target validation error, got {error}"
+        );
+    }
+
+    #[test]
+    fn item_effect_new_consumable_variants_serde_roundtrip() {
+        for original in [
+            ItemEffect::ComposureRestore { magnitude: 0.35 },
+            ItemEffect::WoundHeal {
+                magnitude: 1.0,
+                target: None,
+            },
+            ItemEffect::WoundHeal {
+                magnitude: 2.0,
+                target: Some("arm_l/arm_r".to_string()),
+            },
+        ] {
+            let json = serde_json::to_string(&original).expect("new item effect should serialize");
+            let parsed: ItemEffect =
+                serde_json::from_str(&json).expect("new item effect should deserialize");
+            assert_eq!(
+                parsed, original,
+                "expected serde roundtrip to preserve new consumable effect, json={json}"
+            );
+        }
+    }
+
+    #[test]
+    fn item_effect_new_consumable_variants_reject_invalid_json_shape() {
+        for json in [
+            r#"{"ComposureRestore":{"amount":0.35}}"#,
+            r#"{"WoundHeal":{"magnitude":1.0,"target":5}}"#,
+            r#"{"WoundHeal":{"target":"arm_l"}}"#,
+        ] {
+            let error = serde_json::from_str::<ItemEffect>(json)
+                .expect_err("invalid new item effect JSON should fail");
+            assert!(
+                !error.to_string().is_empty(),
+                "expected serde error for invalid new item effect JSON, json={json}"
+            );
+        }
     }
 
     fn empty_inventory(rows: u8, cols: u8) -> PlayerInventory {
