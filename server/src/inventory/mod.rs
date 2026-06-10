@@ -10195,18 +10195,19 @@ cols = 4
         );
     }
 
-    /// equip_slot_for_item_id("iron_chestplate") 返回 armor slot 不变（路由回归）。
+    /// equip_slot_for_item_id("armor_iron_chestplate") 正向返回 Some(Chest)（路由回归正向断言）。
     #[test]
     fn equip_slot_for_item_id_armor_still_routes_correctly() {
         use crate::armor::mundane::equip_slot_for_item_id;
         use crate::schema::inventory::EquipSlotV1;
         let slot = equip_slot_for_item_id("armor_iron_chestplate");
-        // iron_chestplate → Chest（mundane armor 仍走 parse_mundane_armor_item_id，Shield 未改此函数）
-        // 即使没有 iron_chestplate，只要不 panic 且不返回 OffHand 即满足回归条件。
-        assert!(
-            !matches!(slot, Some(EquipSlotV1::OffHand)),
-            "期望 equip_slot_for_item_id 不把 armor 类物品路由到 OffHand，\
-             plan-shield-block-v1 P0 不改此函数，实际得到 {slot:?}"
+        // MINOR #4 — MundaneArmorSlot::Chestplate → EquipSlotV1::Chest；
+        // 正向断言锁住「iron chestplate 确实路由到 Chest 槽」，防 Shield 分支意外影响 Armor routing。
+        assert_eq!(
+            slot,
+            Some(EquipSlotV1::Chest),
+            "期望 equip_slot_for_item_id(\"armor_iron_chestplate\") == Some(Chest)，\
+             plan-shield-block-v1 P0 不改此函数；实际得到 {slot:?}"
         );
     }
 
