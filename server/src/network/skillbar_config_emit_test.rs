@@ -37,6 +37,7 @@ fn template(id: &str, display_name: &str) -> ItemTemplate {
         id: id.to_string(),
         display_name: display_name.to_string(),
         category: ItemCategory::Pill,
+        placeable: None,
         max_stack_count: 1,
         grid_w: 1,
         grid_h: 1,

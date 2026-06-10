@@ -210,6 +210,7 @@ mod tests {
             id: id.to_string(),
             display_name: "涡流残卷".to_string(),
             category: ItemCategory::Scroll,
+            placeable: None,
             max_stack_count: 1,
             grid_w: 1,
             grid_h: 2,
