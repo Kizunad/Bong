@@ -5,7 +5,7 @@
 //! - `raise_shield_handler` / `lower_shield_handler`：消费 server 端 RaiseShield/LowerShield
 //!   事件（由 client_request_handler 投递），校验 off_hand 实装盾后操作 StatusEffects。
 //! - `cleanup_shield_on_death`：死亡时强制清理防残留（接 DeathEvent）。
-//! - `cleanup_shield_on_disconnect`：断线时强制清理（在 despawn_disconnected_clients 前运行）。
+//! - `cleanup_shield_on_disconnect`：断线时强制清理（`.before(despawn_disconnected_clients)` 约束保证顺序）。
 //!
 //! # 接入注意
 //! - StatusEffectKind::ShieldBlocking 的 `magnitude` 存储 block_ratio 占位（P2 写入真实值）。
@@ -234,7 +234,7 @@ pub fn cleanup_shield_on_death(
 }
 
 /// plan-shield-block-v1 P1 — 断线时强制清理盾牌格挡状态。
-/// 由 `despawn_disconnected_clients` 之前的 system 调用。
+/// 在 `despawn_disconnected_clients` 之前运行（见 combat/mod.rs 的 `.before()` 约束）。
 /// 使用 RemovedComponents<valence::prelude::Client> 探测断线实体。
 /// 注：断线时实体即将 despawn、渲染模型随之移除，无需单独发 StopAnim（模型消失动画也随之消失）。
 pub fn cleanup_shield_on_disconnect(
@@ -1024,5 +1024,72 @@ mod tests {
         );
 
         let _ = std::fs::remove_dir_all(root);
+    }
+
+    // ── 同帧 raise+lower 净结果放盾（顺序约束测试）────────────────────────────
+    //
+    // plan-shield-block-v1 P1 §must-fix: 同 tick RaiseShieldIntent + LowerShieldIntent
+    // 并发送达时，lower_shield_handler 必须在 raise_shield_handler 之后执行（.after 约束）。
+    // 净结果：玩家松键 → 放盾（无 ShieldBlocking status，无 ShieldBlock component）。
+    //
+    // 安全方向：松键即放盾，不留残留 ShieldBlocking（P2 减伤路径的 exploit 根源被消除）。
+    //
+    // 约束失效时的语义：若 lower 先 raise 后，最终 ShieldBlocking 被留存（残留 exploit）。
+    // 本测试锁定「净放盾」语义，并间接锁定 .after 顺序约束。
+    #[test]
+    fn same_tick_raise_then_lower_net_result_is_shield_down() {
+        // 独立 App，显式注册带 .after 约束的系统（镜像 combat/mod.rs 真实注册）
+        let mut app = App::new();
+        app.add_event::<RaiseShieldIntent>();
+        app.add_event::<LowerShieldIntent>();
+        app.add_event::<DeathEvent>();
+        app.add_event::<VfxEventRequest>();
+        app.insert_resource(crate::combat::CombatClock::default());
+        // 关键：lower_shield_handler .after(raise_shield_handler)，镜像 mod.rs 约束
+        app.add_systems(
+            Update,
+            (
+                raise_shield_handler,
+                lower_shield_handler.after(raise_shield_handler),
+            ),
+        );
+
+        let entity = app
+            .world_mut()
+            .spawn((
+                StatusEffects::default(),
+                make_inventory_with_off_hand("wooden_shield"),
+            ))
+            .id();
+
+        // 同 tick 内同时投递 Raise + Lower（模拟同帧 dispatch）
+        {
+            let world = app.world_mut();
+            world
+                .resource_mut::<Events<RaiseShieldIntent>>()
+                .send(RaiseShieldIntent { player: entity });
+            world
+                .resource_mut::<Events<LowerShieldIntent>>()
+                .send(LowerShieldIntent { player: entity });
+        }
+
+        // 单次 update = 同 tick 执行顺序：raise_shield_handler 先，lower_shield_handler 后
+        app.update();
+
+        // 净结果断言：放盾（松键优先，安全方向）
+        let status = app.world().entity(entity).get::<StatusEffects>().unwrap();
+        assert!(
+            !has_active_status(status, StatusEffectKind::ShieldBlocking),
+            "同 tick raise+lower 净结果必须是放盾（无 ShieldBlocking status）。\
+             若 lower 先 raise 后执行，ShieldBlocking 会被残留——松键后免费减伤 exploit。\
+             .after(raise_shield_handler) 约束保证 raise→lower 顺序，净结果应为放盾。\
+             actual status.active: {:?}",
+            status.active
+        );
+        assert!(
+            app.world().entity(entity).get::<ShieldBlock>().is_none(),
+            "同 tick raise+lower 净结果必须无 ShieldBlock component（松键应彻底清理）。\
+             actual: component still present"
+        );
     }
 }

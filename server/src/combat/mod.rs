@@ -404,7 +404,9 @@ pub fn register(app: &mut App) {
         Update,
         (
             shield_block::raise_shield_handler.in_set(CombatSystemSet::Intent),
-            shield_block::lower_shield_handler.in_set(CombatSystemSet::Intent),
+            shield_block::lower_shield_handler
+                .in_set(CombatSystemSet::Intent)
+                .after(shield_block::raise_shield_handler),
         ),
     );
     app.add_systems(
@@ -415,6 +417,8 @@ pub fn register(app: &mut App) {
     );
     app.add_systems(
         Update,
-        shield_block::cleanup_shield_on_disconnect.in_set(CombatSystemSet::Intent),
+        shield_block::cleanup_shield_on_disconnect
+            .in_set(CombatSystemSet::Intent)
+            .before(crate::player::despawn_disconnected_clients),
     );
 }
