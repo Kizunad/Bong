@@ -302,7 +302,10 @@
 - `39d722956`（2026-06-10）`plan-block-lifecycle-v1 P2: 接通 block_place 三端协议`
 - `b8bb67787`（2026-06-10）`plan-block-lifecycle-v1 P3：接入 server 方块放置消费`
 - `a41a6ce0a`（2026-06-10）`plan-block-lifecycle-v1 P4：客户端方块放置闭环`
-- P5 本 PR：补齐 P5 破坏放置闭环回归、client 右键放置 intent 回归、smoke 脚本刷新与 finish evidence 归档。
+- `4e70c91fb`（2026-06-10）`test(block-lifecycle-v1): 补齐 P5 破坏放置闭环回归`
+- `26a1afbba`（2026-06-10）`test(smoke): 刷新 headless smoke 启动锚点`
+- `398ef0182`（2026-06-10）`docs(plan-block-lifecycle-v1): finish evidence 并归档`
+- `870d1e3fe`（2026-06-10）`test(smoke): 补齐 headless smoke 构建门控`
 
 ### 测试结果
 
@@ -311,8 +314,8 @@
 - `cd server && cargo test world::block_drop -- --test-threads=1`：通过，19 passed。
 - `cd server && cargo fmt --check`：通过。
 - `git diff --check`：通过。
-- `bash scripts/smoke-test.sh`：脚本已启动并通过 `cargo fmt`/`cargo clippy`；沙箱内失败点是本地 socket 权限而非 block lifecycle 逻辑：`wiremock` MineSkin 单测无法 bind 端口、Gradle daemon 无法开本地 socket，server smoke 首次运行也因依赖编译超过 15s 未到启动锚点。提权完整运行被当前审批策略拒绝，需 CI/非沙箱环境复跑。
-- `cd client && JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64 PATH=/usr/lib/jvm/java-17-openjdk-amd64/bin:$PATH ./gradlew test --tests "com.bong.client.mixin.MixinClientPlayerInteractionManagerAlchemyTest"`：子代理验证通过；主流程用 `/tmp` Gradle cache 避免下载后仍被沙箱禁止 Gradle daemon 本地 socket，提权运行被审批策略拒绝。
+- `bash scripts/smoke-test.sh`：通过，10 passed / 0 failed；覆盖 `cargo fmt`、`cargo clippy --all-targets -- -D warnings`、`cargo test`（8101 passed / 0 failed / 1 ignored）、`cargo build`、30s server smoke 启动锚点、`client ./gradlew test build` 与 jar 产出。
+- `cd client && JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64 PATH=/usr/lib/jvm/java-17-openjdk-amd64/bin:$PATH ./gradlew test --tests "com.bong.client.mixin.MixinClientPlayerInteractionManagerAlchemyTest"`：通过；完整 `./gradlew test build` 也已由 `bash scripts/smoke-test.sh` 覆盖。
 
 ### 跨仓库核验
 
@@ -322,5 +325,5 @@
 
 ### 遗留 / 后续
 
-- `scripts/smoke-test.sh` 已修正陈旧启动锚点和 Java/headless 环境，但完整运行依赖本地 socket（wiremock、server、Gradle daemon）。当前 Codex 沙箱禁止该能力；非沙箱/CI 必须复跑该脚本确认全仓 smoke。
+- `scripts/smoke-test.sh` 已在当前环境完整跑通；后续仍建议 CI/非沙箱环境保留同命令作为合并前回归证据。
 - 真客户端 runClient 手测仍建议在图形环境执行：1-9 选中方块槽 → 右键放置 → server 落块/S2C 回显 → 背包扣减 → 第一人称方块持握与挥手。
