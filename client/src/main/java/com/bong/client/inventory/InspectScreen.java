@@ -2302,7 +2302,7 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
         if (forgeStationTier(item) > 0) {
             actions.add(new PillMenuAction("放置炼器砧", ActionKind.PLACE_FORGE_STATION));
         }
-        if (isSpiritNicheStone(item)) {
+        if (isSpiritNicheBase(item)) {
             actions.add(new PillMenuAction("放置灵龛", ActionKind.PLACE_SPIRIT_NICHE));
         }
         if (item.isTechniqueScroll() && isKnownTechniqueScroll(item) && !isKnownTechnique(item)) {
@@ -2374,7 +2374,7 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
     }
 
     boolean dispatchPlaceSpiritNicheAt(InventoryItem item, int x, int y, int z) {
-        if (item == null || item.instanceId() == 0L || !isSpiritNicheStone(item)) {
+        if (item == null || item.instanceId() == 0L || !isSpiritNicheBase(item)) {
             return false;
         }
         com.bong.client.BongClient.LOGGER.info(
@@ -2428,8 +2428,8 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
         };
     }
 
-    static boolean isSpiritNicheStone(InventoryItem item) {
-        return item != null && "spirit_niche_stone".equals(item.itemId());
+    static boolean isSpiritNicheBase(InventoryItem item) {
+        return item != null && "niche_base".equals(item.itemId());
     }
 
     static boolean isBlockQuickBarBindable(InventoryItem item) {

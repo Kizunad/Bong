@@ -37,7 +37,7 @@ describe("spawn tutorial schema", () => {
         type: "coffin_opened",
         player_id: "offline:Azure",
         coffin_pos: [0, 69, 0],
-        granted_item_id: "spirit_niche_stone",
+        granted_item_id: "niche_base",
         tick: 91,
       }).ok,
     ).toBe(true);

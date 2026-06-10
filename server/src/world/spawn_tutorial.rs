@@ -2,7 +2,7 @@
 //!
 //! v1 keeps the tutorial silent: no quest UI, no explicit progress packet. The
 //! server only records player-driven hooks, grants the coffin spirit niche
-//! stone once per player, and spawns tutorial rats that drain qi through the
+//! base once per player, and spawns tutorial rats that drain qi through the
 //! shared RatBiteEvent path.
 
 use std::collections::BTreeSet;
@@ -40,7 +40,7 @@ use crate::world::tsy_container::{ContainerKind, LootContainer};
 use crate::world::zone::TsyDepth;
 use crate::world::zone::DEFAULT_SPAWN_ZONE_NAME;
 
-pub const SPIRIT_NICHE_STONE_TEMPLATE_ID: &str = "spirit_niche_stone";
+pub const SPIRIT_NICHE_BASE_TEMPLATE_ID: &str = "niche_base";
 pub const TUTORIAL_KAIMAI_LOOT_POOL_ID: &str = "tutorial_kaimai_chest";
 pub const COFFIN_OPEN_INTERACT_RADIUS: f64 = 6.0;
 pub const TUTORIAL_LINGQUAN_REACH_RADIUS: f64 = 8.0;
@@ -439,7 +439,7 @@ pub fn grant_coffin_reward_once(
         inventory,
         registry,
         allocator,
-        SPIRIT_NICHE_STONE_TEMPLATE_ID,
+        SPIRIT_NICHE_BASE_TEMPLATE_ID,
         1,
         0,
     ) {
@@ -893,21 +893,21 @@ mod tests {
     };
     use std::collections::HashMap;
 
-    fn registry_with_spirit_niche_stone() -> ItemRegistry {
+    fn registry_with_spirit_niche_base() -> ItemRegistry {
         let mut templates = HashMap::new();
         templates.insert(
-            SPIRIT_NICHE_STONE_TEMPLATE_ID.to_string(),
+            SPIRIT_NICHE_BASE_TEMPLATE_ID.to_string(),
             ItemTemplate {
-                id: SPIRIT_NICHE_STONE_TEMPLATE_ID.to_string(),
-                display_name: "龛石".to_string(),
-                category: ItemCategory::Treasure,
+                id: SPIRIT_NICHE_BASE_TEMPLATE_ID.to_string(),
+                display_name: "灵龛基座".to_string(),
+                category: ItemCategory::Misc,
                 max_stack_count: 1,
-                grid_w: 1,
-                grid_h: 1,
-                base_weight: 0.4,
+                grid_w: 2,
+                grid_h: 2,
+                base_weight: 6.0,
                 rarity: ItemRarity::Rare,
-                spirit_quality_initial: 0.2,
-                description: "test".to_string(),
+                spirit_quality_initial: 0.5,
+                description: "龛石灵铁木台组合的永久复活点基座。".to_string(),
                 effect: None,
                 cast_duration_ms: 1500,
                 cooldown_ms: 1500,
@@ -943,8 +943,8 @@ mod tests {
     }
 
     #[test]
-    fn coffin_open_grants_spirit_niche_once_per_player_state() {
-        let registry = registry_with_spirit_niche_stone();
+    fn coffin_open_grants_spirit_niche_base_once_per_player_state() {
+        let registry = registry_with_spirit_niche_base();
         let mut allocator = InventoryInstanceIdAllocator::new(100);
         let mut state = TutorialState::new(0);
         let mut inventory = empty_inventory();
@@ -961,6 +961,10 @@ mod tests {
             CoffinGrantOutcome::Granted { instance_id: 100 }
         ));
         assert_eq!(inventory.containers[0].items.len(), 1);
+        assert_eq!(
+            inventory.containers[0].items[0].instance.template_id, SPIRIT_NICHE_BASE_TEMPLATE_ID,
+            "coffin reward must be the placeable niche base, not the old material"
+        );
         assert!(state.has(TutorialHook::CoffinOpened));
 
         let second = grant_coffin_reward_once(

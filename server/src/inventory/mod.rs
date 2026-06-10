@@ -5306,8 +5306,8 @@ max_stack_count = 0
             );
         }
         assert!(
-            !all_template_ids.contains(&"spirit_niche_stone"),
-            "spirit_niche_stone must be granted by spawn coffin, not default loadout"
+            !all_template_ids.contains(&"niche_base"),
+            "niche_base must be granted by spawn coffin, not default loadout"
         );
     }
 
