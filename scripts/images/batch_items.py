@@ -40,8 +40,6 @@ ITEMS = [
      "a piece of ritual array paper, pale yellow-white cloth soaked in cinnabar oil, faint red-orange stain pattern, solid black background"),
     ("powder_dan_sha", "丹砂粉",
      "a small mound of cinnabar powder, deep red-orange fine powder on a cloth wrap, solid black background"),
-    ("powder_zhu_sha", "朱砂粉",
-     "a small mound of vermilion powder, bright crimson-red fine powder with faint spiritual shimmer, solid black background"),
     ("herb_bundle", "灵草束",
      "a bundle of spirit herbs tied with cord, mixed green and grey-green dried leaves and stems, faint glow at the binding, solid black background"),
 
@@ -78,13 +76,6 @@ ITEMS = [
      "a crude stone pickaxe, sharp grey stone head bound to a wooden handle with cord, primitive tool, solid black background"),
     ("stone_axe", "石斧",
      "a crude stone axe, wedge-shaped grey stone clamped onto a wooden handle, primitive tool, solid black background"),
-    ("stone_hoe", "石锄",
-     "a crude stone hoe, flat grey stone bound to a wooden handle, farming tool, solid black background"),
-    ("mortar_stone", "研钵",
-     "a stone mortar and pestle, grey carved stone bowl with a grinding stone inside, herb residue stains, solid black background"),
-    ("heat_gloves", "绝热手套",
-     "a pair of heat-resistant gloves, thick dark leather with spider-silk inner lining visible at the cuff, faint blue shimmer, solid black background"),
-
     # ── 急救与修炼 ──
     ("arm_splint", "夹板·臂",
      "an arm splint made of two thin wood boards bound with cloth strips, medical supply, solid black background"),
@@ -130,18 +121,10 @@ ITEMS = [
      "a camouflage net, woven coarse cloth threaded with dried spirit-grass, grey-green mottled pattern, solid black background"),
 
     # ── 基础武器 ──
-    ("stone_spearhead", "石矛头",
-     "a sharpened stone spearhead, grey flint knapped to a point, solid black background"),
-    ("sling_weapon", "弹弓",
-     "a crude slingshot, Y-shaped wooden fork with leather pouch and cord, solid black background"),
-    ("sling_stone", "飞石",
-     "several smooth round sling stones, grey polished river pebbles, solid black background"),
     ("wooden_shield", "木盾",
      "a crude wooden shield, dark wood planks nailed together with iron reinforcement, solid black background"),
     ("bone_shield", "骨盾",
      "a round shield made of woven beast bones tied with rope, pale ivory bone pieces, solid black background"),
-    ("iron_sword_blank", "凡铁剑胎",
-     "an unfinished iron sword blank, rough dark grey iron blade shape not yet sharpened, no handle wrap, solid black background"),
     ("iron_dagger", "凡铁匕首",
      "a simple iron dagger, short dark grey blade with plain wooden handle, utilitarian design, solid black background"),
     ("stone_knife", "石刃",
@@ -152,12 +135,8 @@ ITEMS = [
      "a simple wooden club, dark grey-brown spirit-wood staff carved to a blunt weapon, solid black background"),
 
     # ── 经济 ──
-    ("trade_scale", "交易秤",
-     "a simple balance scale, iron beam with two wooden pans hung by cord, for weighing bone coins and herbs, solid black background"),
     ("disguise_wrap", "伪装包裹",
      "a disguise wrapping, grey-green ash-moss wrapped cloth bundle designed to mask spiritual aura, solid black background"),
-    ("trade_scale_stand", "交易秤台",
-     "a trade scale mounted on a wooden stand, iron balance on a dark wood frame, market stall equipment, solid black background"),
     ("niche_repair_kit", "灵龛修补料",
      "a spirit-niche repair kit, a pouch of crushed stone mixed with spirit-iron filings, dark granular material, solid black background"),
 

@@ -667,22 +667,33 @@ mod tests {
     }
 
     #[test]
-    fn inventory_snapshot_preserves_p2_deleted_template_instances() {
+    fn inventory_snapshot_preserves_deleted_template_instances() {
         let deleted_ids = [
             "bone_coin_blank",
             "waymark_stone",
             "price_tag",
             "trade_puppet_frame",
             "rat_bait",
+            "powder_zhu_sha",
+            "iron_sword_blank",
+            "stone_spearhead",
+            "sling_stone",
+            "sling_weapon",
+            "stone_hoe",
+            "mortar_stone",
+            "heat_gloves",
+            "trade_scale",
+            "trade_scale_stand",
         ];
         let mut inventory = make_inventory(33, false);
         for container in &mut inventory.containers {
             container.items.clear();
         }
+        let main_cols = inventory.containers[0].cols as usize;
         for (offset, deleted_id) in deleted_ids.iter().enumerate() {
             inventory.containers[0].items.push(PlacedItemState {
-                row: offset as u8,
-                col: 0,
+                row: (offset / main_cols) as u8,
+                col: (offset % main_cols) as u8,
                 instance: make_item(
                     9000 + offset as u64,
                     deleted_id,
