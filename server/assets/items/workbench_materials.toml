@@ -571,7 +571,7 @@ description = "粗布编灵草的遮蔽网，藏人藏物。"
 id = "wooden_shield"
 name = "木盾"
 # plan-shield-block-v1 P0 — 由 armor 改为 shield，消灭「装不上 off_hand」僵尸根因。
-# shield_spec（block_ratio/durability_max 等）待 P3 补全。
+# plan-shield-block-v1 P2 — 补全 shield_spec 真实值（block_ratio=0.5/durability_max=40/drain=3.0）。
 category = "shield"
 grid_w = 1
 grid_h = 2
@@ -580,11 +580,16 @@ rarity = "common"
 spirit_quality_initial = 0.0
 description = "木板钉铁的粗盾，挡一两下。"
 
+[item.shield_spec]
+block_ratio = 0.5
+durability_max = 40.0
+stamina_drain_per_s = 3.0
+
 [[item]]
 id = "bone_shield"
 name = "骨盾"
 # plan-shield-block-v1 P0 — 由 armor 改为 shield，消灭「装不上 off_hand」僵尸根因。
-# shield_spec（block_ratio/durability_max 等）待 P3 补全。
+# plan-shield-block-v1 P2 — 补全 shield_spec 真实值（block_ratio=0.65/durability_max=80/drain=3.0）。
 category = "shield"
 grid_w = 1
 grid_h = 2
@@ -592,6 +597,11 @@ base_weight = 2.5
 rarity = "common"
 spirit_quality_initial = 0.0
 description = "兽骨编绳的圆盾，轻但脆。"
+
+[item.shield_spec]
+block_ratio = 0.65
+durability_max = 80.0
+stamina_drain_per_s = 3.0
 
 [[item]]
 id = "iron_dagger"

@@ -149,6 +149,10 @@
         {
           "const": "sword_parry",
           "type": "string"
+        },
+        {
+          "const": "shield_block",
+          "type": "string"
         }
       ]
     },

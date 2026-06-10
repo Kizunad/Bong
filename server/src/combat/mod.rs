@@ -430,4 +430,13 @@ pub fn register(app: &mut App) {
             .in_set(CombatSystemSet::Intent)
             .before(crate::player::despawn_disconnected_clients),
     );
+    // plan-shield-block-v1 P2 — 体力归零强制放盾（在 Physics set 内 stamina_tick 之后运行）。
+    // 注：stamina_tick ∈ Physics，force_lower 也注册到 Physics set 并 .after(stamina_tick)，
+    // 避免跨 set 约束（Intent→Physics chain 已确保 set 间全序，跨 set .after 会产生环）。
+    app.add_systems(
+        Update,
+        shield_block::force_lower_shield_on_stamina_exhausted
+            .in_set(CombatSystemSet::Physics)
+            .after(lifecycle::stamina_tick),
+    );
 }

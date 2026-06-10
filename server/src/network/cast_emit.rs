@@ -968,6 +968,7 @@ mod tests {
             recipe_fragment_spec: None,
             container_spec: None,
             shelflife_profile: None,
+            shield_spec: None,
             shelflife_track: None,
         }
     }
@@ -2013,6 +2014,7 @@ mod tests {
             technique_scroll_spec: None,
             recipe_fragment_spec: None,
             container_spec: None,
+            shield_spec: None,
             shelflife_profile: Some("crit_block_test_profile".to_string()),
             shelflife_track: Some(DecayTrack::Spoil),
         };

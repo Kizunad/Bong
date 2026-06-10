@@ -1,0 +1,8 @@
+{
+  "v": 1,
+  "kind": "combat_event",
+  "tick": 91200,
+  "target_id": "offline:Defender",
+  "attacker_id": "offline:Attacker",
+  "defense_kind": "unknown_parry"
+}

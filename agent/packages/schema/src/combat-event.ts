@@ -11,6 +11,8 @@ export type CombatRealtimeKindV1 = Static<typeof CombatRealtimeKindV1>;
 export const CombatDefenseKindV1 = Type.Union([
   Type.Literal("jie_mai"),
   Type.Literal("sword_parry"),
+  // plan-shield-block-v1 P2 — 凡人盾格挡（无境界加成，无截脉窗口）
+  Type.Literal("shield_block"),
 ]);
 export type CombatDefenseKindV1 = Static<typeof CombatDefenseKindV1>;
 
