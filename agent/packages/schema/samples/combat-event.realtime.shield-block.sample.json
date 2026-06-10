@@ -1,0 +1,16 @@
+{
+  "v": 1,
+  "kind": "combat_event",
+  "tick": 91200,
+  "target_id": "offline:Defender",
+  "attacker_id": "offline:Attacker",
+  "body_part": "chest",
+  "wound_kind": "cut",
+  "damage": 6,
+  "physical_damage": 6,
+  "contam_delta": 1,
+  "description": "shield_block melee offline:Attacker -> offline:Defender hit Chest with Cut for 6.0 damage (shield_block=true ratio=0.65)",
+  "defense_kind": "shield_block",
+  "defense_effectiveness": 0.65,
+  "defense_contam_reduced": 1.5
+}

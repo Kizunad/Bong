@@ -11,7 +11,7 @@ import { AntiCheatReportV1 } from "../src/anticheat.js";
 import { AudioEventV1 } from "../src/audio-event.js";
 import { ChatMessageV1 } from "../src/chat-message.js";
 import { validateQiInjectionEventV1Contract } from "../src/combat-carrier.js";
-import { CombatRealtimeEventV1, CombatSummaryV1 } from "../src/combat-event.js";
+import { CombatDefenseKindV1, CombatRealtimeEventV1, CombatSummaryV1 } from "../src/combat-event.js";
 import { DeathInsightRequestV1 } from "../src/death-insight.js";
 import {
   HeartDemonOfferDraftV1,
@@ -1759,6 +1759,45 @@ describe("sample files pass schema validation", () => {
     const data = loadSample("combat-event.summary.sample.json");
     const result = validate(CombatSummaryV1, data);
     expect(result.ok, result.errors.join("; ")).toBe(true);
+  });
+
+  // plan-shield-block-v1 P2 — CombatDefenseKindV1 schema pin tests
+  it("CombatDefenseKindV1 accepts jie_mai", () => {
+    const result = validate(CombatDefenseKindV1, "jie_mai");
+    expect(result.ok, result.errors.join("; ")).toBe(true);
+  });
+  it("CombatDefenseKindV1 accepts sword_parry", () => {
+    const result = validate(CombatDefenseKindV1, "sword_parry");
+    expect(result.ok, result.errors.join("; ")).toBe(true);
+  });
+  it("CombatDefenseKindV1 accepts shield_block", () => {
+    const result = validate(CombatDefenseKindV1, "shield_block");
+    expect(
+      result.ok,
+      `shield_block must be a valid CombatDefenseKindV1 variant (plan-shield-block-v1 P2 IPC contract): ${result.errors.join("; ")}`,
+    ).toBe(true);
+  });
+  it("CombatDefenseKindV1 rejects unknown_parry", () => {
+    const result = validate(CombatDefenseKindV1, "unknown_parry");
+    expect(result.ok).toBe(false);
+  });
+  it("combat-event.realtime.shield-block.sample.json positive", () => {
+    const data = loadSample("combat-event.realtime.shield-block.sample.json");
+    const result = validate(CombatRealtimeEventV1, data);
+    expect(
+      result.ok,
+      `shield_block combat event sample must validate against CombatRealtimeEventV1: ${result.errors.join("; ")}`,
+    ).toBe(true);
+  });
+  it("combat-event.realtime.shield-block.invalid-defense-kind.sample.json rejects invalid defense kind", () => {
+    const data = loadSample(
+      "combat-event.realtime.shield-block.invalid-defense-kind.sample.json",
+    );
+    const result = validate(CombatRealtimeEventV1, data);
+    expect(
+      result.ok,
+      "unknown_parry must be rejected as defense_kind",
+    ).toBe(false);
   });
 
   it("anticheat-report.sample.json", () => {
