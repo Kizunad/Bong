@@ -272,6 +272,13 @@ pub enum ItemEffect {
     ContaminationCleanse {
         magnitude: f64,
     },
+    ComposureRestore {
+        magnitude: f64,
+    },
+    WoundHeal {
+        magnitude: f64,
+        target: Option<String>,
+    },
     LifespanExtension {
         years: u32,
         source: String,
@@ -2029,6 +2036,13 @@ fn parse_item_effect(
         }
         "contamination_cleanse" => Ok(ItemEffect::ContaminationCleanse {
             magnitude: effect.magnitude,
+        }),
+        "composure_restore" => Ok(ItemEffect::ComposureRestore {
+            magnitude: effect.magnitude,
+        }),
+        "wound_heal" => Ok(ItemEffect::WoundHeal {
+            magnitude: effect.magnitude,
+            target: effect.target.filter(|target| !target.trim().is_empty()),
         }),
         "lifespan_extension" => {
             let source = effect
@@ -4717,6 +4731,79 @@ mod tests {
         assert!(matches!(
             registry.get("huiyuan_pill").and_then(|item| item.effect.as_ref()),
             Some(ItemEffect::QiRecovery { amount }) if (*amount - 60.0).abs() < f64::EPSILON
+        ));
+        assert!(matches!(
+            registry
+                .get("huiyuan_decoction")
+                .and_then(|item| item.effect.as_ref()),
+            Some(ItemEffect::QiRecovery { amount }) if (*amount - 40.0).abs() < f64::EPSILON
+        ));
+        assert!(matches!(
+            registry
+                .get("meridian_salve")
+                .and_then(|item| item.effect.as_ref()),
+            Some(ItemEffect::MeridianHeal { magnitude, target })
+                if (*magnitude - 0.2).abs() < f64::EPSILON && target == "any_meridian"
+        ));
+        assert!(matches!(
+            registry
+                .get("meridian_rubbing")
+                .and_then(|item| item.effect.as_ref()),
+            Some(ItemEffect::MeridianHeal { magnitude, target })
+                if (*magnitude - 0.15).abs() < f64::EPSILON && target == "any_meridian"
+        ));
+        assert!(matches!(
+            registry
+                .get("qingzhuo_powder")
+                .and_then(|item| item.effect.as_ref()),
+            Some(ItemEffect::ContaminationCleanse { magnitude })
+                if (*magnitude - 0.4).abs() < f64::EPSILON
+        ));
+        assert!(matches!(
+            registry
+                .get("anti_gu_powder")
+                .and_then(|item| item.effect.as_ref()),
+            Some(ItemEffect::ContaminationCleanse { magnitude })
+                if (*magnitude - 0.4).abs() < f64::EPSILON
+        ));
+        assert!(matches!(
+            registry
+                .get("qi_guide_talisman")
+                .and_then(|item| item.effect.as_ref()),
+            Some(ItemEffect::FoodRegen {
+                bonus_factor,
+                duration_ticks,
+            }) if (*bonus_factor - 0.30).abs() < f32::EPSILON && *duration_ticks == 36_000
+        ));
+        assert!(matches!(
+            registry
+                .get("calming_tea")
+                .and_then(|item| item.effect.as_ref()),
+            Some(ItemEffect::ComposureRestore { magnitude })
+                if (*magnitude - 0.35).abs() < f64::EPSILON
+        ));
+        assert!(matches!(
+            registry.get("bandage").and_then(|item| item.effect.as_ref()),
+            Some(ItemEffect::WoundHeal { magnitude, target })
+                if (*magnitude - 1.0).abs() < f64::EPSILON && target.is_none()
+        ));
+        assert!(matches!(
+            registry
+                .get("arm_splint")
+                .and_then(|item| item.effect.as_ref()),
+            Some(ItemEffect::WoundHeal {
+                magnitude,
+                target: Some(target),
+            }) if (*magnitude - 2.0).abs() < f64::EPSILON && target == "arm_l/arm_r"
+        ));
+        assert!(matches!(
+            registry
+                .get("leg_splint")
+                .and_then(|item| item.effect.as_ref()),
+            Some(ItemEffect::WoundHeal {
+                magnitude,
+                target: Some(target),
+            }) if (*magnitude - 2.0).abs() < f64::EPSILON && target == "leg_l/leg_r"
         ));
         assert!(matches!(
             registry.get("life_core").and_then(|item| item.effect.as_ref()),

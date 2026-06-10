@@ -9260,8 +9260,14 @@ fn handle_alchemy_take_pill(
                 None,
                 meridians,
                 contamination,
+                None,
                 pill_item_id,
                 entity,
+            );
+        }
+        ItemEffect::ComposureRestore { .. } | ItemEffect::WoundHeal { .. } => {
+            tracing::debug!(
+                "[bong][network][alchemy] take_pill entity={entity:?} `{pill_item_id}` generic cast effect on pill path — noop (consume via quick slot)"
             );
         }
         ItemEffect::FoodRegen { .. } => {

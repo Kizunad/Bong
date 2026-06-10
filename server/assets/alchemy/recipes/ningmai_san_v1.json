@@ -1,0 +1,66 @@
+{
+  "id": "ningmai_san_v1",
+  "name": "凝脉散·预制包复炼",
+  "furnace_tier_min": 1,
+  "stages": [
+    {
+      "at_tick": 0,
+      "required": [
+        {
+          "material": "ningmai_prep_kit",
+          "count": 1
+        }
+      ],
+      "window": 0
+    }
+  ],
+  "fire_profile": {
+    "target_temp": 0.38,
+    "target_duration_ticks": 90,
+    "qi_cost": 8.0,
+    "tolerance": {
+      "temp_band": 0.12,
+      "duration_band": 20
+    }
+  },
+  "outcomes": {
+    "perfect": {
+      "pill": "ningmai_powder",
+      "quality": 1.0,
+      "toxin_amount": 0.12,
+      "toxin_color": "Gentle",
+      "qi_gain": 0.0
+    },
+    "good": {
+      "pill": "ningmai_powder",
+      "quality": 0.72,
+      "toxin_amount": 0.18,
+      "toxin_color": "Gentle",
+      "qi_gain": 0.0
+    },
+    "flawed": {
+      "pill": "ningmai_powder",
+      "quality": 0.42,
+      "toxin_amount": 0.30,
+      "toxin_color": "Turbid",
+      "qi_gain": 0.0
+    },
+    "waste": null,
+    "explode": {
+      "damage": 6.0,
+      "meridian_crack": 0.03
+    }
+  },
+  "flawed_fallback": {
+    "pill": "ningmai_powder",
+    "quality_scale": 0.5,
+    "toxin_scale": 1.5,
+    "side_effect_pool": [
+      {
+        "tag": "minor_qi_regen_boost",
+        "duration_s": 20,
+        "weight": 1
+      }
+    ]
+  }
+}

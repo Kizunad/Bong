@@ -523,6 +523,22 @@ mod tests {
         assert!(registry.get("hui_yuan_pill_v0").is_some());
         assert!(registry.get("du_ming_san_v0").is_some());
         assert!(registry.get("anti_spirit_pressure_pill_v1").is_some());
+        let ningmai = registry
+            .get("ningmai_san_v1")
+            .expect("ningmai_prep_kit should refine into ningmai_powder");
+        assert_eq!(ningmai.furnace_tier_min, 1);
+        assert_eq!(
+            ningmai.stage0_ingredients().get("ningmai_prep_kit"),
+            Some(&1)
+        );
+        assert_eq!(
+            ningmai
+                .outcomes
+                .perfect
+                .as_ref()
+                .map(|outcome| outcome.pill.as_str()),
+            Some("ningmai_powder")
+        );
         for pill_id in crate::alchemy::pill::COMBAT_PILL_IDS {
             let recipe_id = format!("{pill_id}_v1");
             let recipe = registry

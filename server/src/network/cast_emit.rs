@@ -18,8 +18,9 @@ use valence::prelude::{
     Client, Commands, Entity, EventWriter, Mut, ParamSet, Position, Query, Res, Username,
 };
 
+use crate::alchemy::pill::apply_wound_heal;
 use crate::combat::components::{
-    CastSource, Casting, QuickSlotBindings, SkillBarBindings, StatusEffects, Wounds,
+    BodyPart, CastSource, Casting, QuickSlotBindings, SkillBarBindings, StatusEffects, Wounds,
 };
 use crate::combat::events::{ApplyStatusEffectIntent, StatusEffectKind};
 use crate::combat::yidao::YidaoCastCompleteEvent;
@@ -55,7 +56,7 @@ type CastTickQueryItem<'a> = (
     &'a mut Client,
     &'a Username,
     &'a Casting,
-    &'a Wounds,
+    &'a mut Wounds,
     &'a Position,
     &'a mut PlayerInventory,
     &'a PlayerState,
@@ -71,6 +72,7 @@ struct CastItemEffectTargets<'a> {
     cultivation: Option<&'a mut Cultivation>,
     meridians: Option<Mut<'a, MeridianSystem>>,
     contamination: Option<Mut<'a, Contamination>>,
+    wounds: Option<&'a mut Wounds>,
 }
 
 struct CastItemEffectContext<'a> {
@@ -105,7 +107,7 @@ pub fn tick_casts_or_interrupt(
         mut client,
         username,
         casting,
-        wounds,
+        mut wounds,
         position,
         mut inventory,
         player_state,
@@ -313,6 +315,7 @@ pub fn tick_casts_or_interrupt(
                         cultivation: cultivation.as_deref_mut(),
                         meridians,
                         contamination,
+                        wounds: Some(&mut *wounds),
                     },
                     &mut effect_intents,
                     CastItemEffectContext {
@@ -438,6 +441,7 @@ pub(crate) fn apply_item_effect(
     cultivation: Option<&mut Cultivation>,
     meridians: Option<valence::prelude::Mut<MeridianSystem>>,
     contamination: Option<valence::prelude::Mut<Contamination>>,
+    wounds: Option<&mut Wounds>,
     username: &str,
     entity: Entity,
 ) {
@@ -510,6 +514,34 @@ pub(crate) fn apply_item_effect(
             let recovered = recover_current_qi(cultivation, *amount);
             tracing::info!(
                 "[bong][network][cast] QiRecovery amount={amount} for `{username}` ({entity:?}) — recovered {recovered:.1}, qi_max stays {qi_max_before:.1}"
+            );
+        }
+        ItemEffect::ComposureRestore { magnitude } => {
+            let Some(cultivation) = cultivation else {
+                tracing::debug!(
+                    "[bong][network][cast] ComposureRestore noop: entity {entity:?} `{username}` has no Cultivation"
+                );
+                return;
+            };
+            let before = cultivation.composure;
+            cultivation.composure = (cultivation.composure + magnitude).clamp(0.0, 1.0);
+            tracing::info!(
+                "[bong][network][cast] ComposureRestore magnitude={magnitude} for `{username}` ({entity:?}) — {before:.3} → {:.3}",
+                cultivation.composure
+            );
+        }
+        ItemEffect::WoundHeal { magnitude, target } => {
+            let Some(wounds) = wounds else {
+                tracing::debug!(
+                    "[bong][network][cast] WoundHeal noop: entity {entity:?} `{username}` has no Wounds"
+                );
+                return;
+            };
+            let grades = wound_heal_grades(*magnitude);
+            let changed = apply_wound_heal_targets(wounds, target.as_deref(), grades);
+            tracing::info!(
+                "[bong][network][cast] WoundHeal magnitude={magnitude} target={:?} grades={grades} for `{username}` ({entity:?}) — {changed} wound(s) changed",
+                target
             );
         }
         ItemEffect::BreakthroughBonus { magnitude } => {
@@ -729,9 +761,39 @@ fn apply_cast_item_effect(
             targets.cultivation,
             targets.meridians,
             targets.contamination,
+            targets.wounds,
             context.username,
             context.entity,
         ),
+    }
+}
+
+fn wound_heal_grades(magnitude: f64) -> u8 {
+    magnitude.round().clamp(0.0, f64::from(u8::MAX)) as u8
+}
+
+fn apply_wound_heal_targets(wounds: &mut Wounds, target: Option<&str>, grades: u8) -> usize {
+    let Some(target) = target.map(str::trim).filter(|target| !target.is_empty()) else {
+        return apply_wound_heal(wounds, None, grades);
+    };
+    target
+        .split('/')
+        .filter_map(parse_wound_heal_body_part)
+        .map(|part| apply_wound_heal(wounds, Some(part), grades))
+        .sum()
+}
+
+fn parse_wound_heal_body_part(raw: &str) -> Option<BodyPart> {
+    match raw.trim().to_ascii_lowercase().as_str() {
+        "head" => Some(BodyPart::Head),
+        "chest" => Some(BodyPart::Chest),
+        "back" => Some(BodyPart::Back),
+        "abdomen" => Some(BodyPart::Abdomen),
+        "arm_l" => Some(BodyPart::ArmL),
+        "arm_r" => Some(BodyPart::ArmR),
+        "leg_l" => Some(BodyPart::LegL),
+        "leg_r" => Some(BodyPart::LegR),
+        _ => None,
     }
 }
 
@@ -824,9 +886,10 @@ pub fn current_unix_millis() -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::combat::components::{Wound, WoundKind};
     use crate::inventory::{
-        ContainerState, InventoryRevision, ItemInstance, ItemRarity, PlacedItemState,
-        MAIN_PACK_CONTAINER_ID,
+        ContainerState, InventoryRevision, ItemCategory, ItemInstance, ItemRarity, ItemRegistry,
+        ItemTemplate, PlacedItemState, MAIN_PACK_CONTAINER_ID,
     };
     use crate::network::audio_event_emit::{AudioRecipient, PlaySoundRecipeRequest};
     use std::collections::HashMap;
@@ -873,6 +936,142 @@ mod tests {
             bone_coins: 0,
             max_weight: 50.0,
         }
+    }
+
+    fn make_effect_template(template_id: &str, effect: ItemEffect) -> ItemTemplate {
+        ItemTemplate {
+            id: template_id.to_string(),
+            display_name: template_id.to_string(),
+            category: ItemCategory::Misc,
+            max_stack_count: 16,
+            grid_w: 1,
+            grid_h: 1,
+            base_weight: 0.1,
+            rarity: ItemRarity::Common,
+            spirit_quality_initial: 0.0,
+            description: String::new(),
+            effect: Some(effect),
+            cast_duration_ms: 1000,
+            cooldown_ms: 500,
+            weapon_spec: None,
+            forge_station_spec: None,
+            blueprint_scroll_spec: None,
+            inscription_scroll_spec: None,
+            technique_scroll_spec: None,
+            recipe_fragment_spec: None,
+            container_spec: None,
+            shelflife_profile: None,
+            shelflife_track: None,
+        }
+    }
+
+    fn make_hotbar_item(template_id: &str, instance_id: u64, stack_count: u32) -> ItemInstance {
+        ItemInstance {
+            instance_id,
+            template_id: template_id.to_string(),
+            display_name: template_id.to_string(),
+            grid_w: 1,
+            grid_h: 1,
+            weight: 0.1,
+            rarity: ItemRarity::Common,
+            description: String::new(),
+            stack_count,
+            spirit_quality: 0.0,
+            durability: 1.0,
+            freshness: None,
+            mineral_id: None,
+            charges: None,
+            forge_quality: None,
+            forge_color: None,
+            forge_side_effects: Vec::new(),
+            forge_achieved_tier: None,
+            alchemy: None,
+            lingering_owner_qi: None,
+        }
+    }
+
+    fn setup_quickslot_effect_app(template_id: &str, effect: ItemEffect) -> (App, Entity) {
+        use crate::combat::CombatClock;
+        use crate::player::state::PlayerState;
+        use valence::prelude::DVec3;
+        use valence::testing::create_mock_client;
+
+        const INSTANCE_ID: u64 = 4242;
+        const QUICK_SLOT: u8 = 0;
+
+        let mut templates = HashMap::new();
+        templates.insert(
+            template_id.to_string(),
+            make_effect_template(template_id, effect),
+        );
+
+        let mut inventory = PlayerInventory {
+            revision: InventoryRevision(1),
+            containers: vec![ContainerState {
+                id: MAIN_PACK_CONTAINER_ID.to_string(),
+                name: "主背包".to_string(),
+                rows: 5,
+                cols: 7,
+                items: Vec::new(),
+            }],
+            equipped: HashMap::new(),
+            hotbar: Default::default(),
+            bone_coins: 0,
+            max_weight: 50.0,
+        };
+        inventory.hotbar[QUICK_SLOT as usize] = Some(make_hotbar_item(template_id, INSTANCE_ID, 2));
+
+        let mut quick_slot_bindings = QuickSlotBindings::default();
+        quick_slot_bindings.slots[QUICK_SLOT as usize] = Some(INSTANCE_ID);
+        let casting = Casting {
+            source: CastSource::QuickSlot,
+            slot: QUICK_SLOT,
+            started_at_tick: 0,
+            duration_ticks: 1,
+            started_at_ms: 0,
+            duration_ms: 50,
+            bound_instance_id: Some(INSTANCE_ID),
+            start_position: DVec3::new(0.0, 64.0, 0.0),
+            complete_cooldown_ticks: 20,
+            skill_id: None,
+            skill_config: None,
+        };
+
+        let mut app = App::new();
+        app.insert_resource(CombatClock { tick: 10 });
+        app.insert_resource(ItemRegistry::from_map(templates));
+        app.add_event::<crate::network::audio_event_emit::PlaySoundRecipeRequest>();
+        app.add_event::<crate::combat::yidao::YidaoCastCompleteEvent>();
+        app.add_event::<ApplyStatusEffectIntent>();
+        app.add_event::<crate::cultivation::lifespan::LifespanExtensionIntent>();
+        app.add_event::<crate::cultivation::poison_trait::ConsumePoisonPillIntent>();
+        app.add_systems(Update, tick_casts_or_interrupt);
+
+        let (client_bundle, _helper) = create_mock_client("TestPlayer");
+        let player = app
+            .world_mut()
+            .spawn(client_bundle)
+            .insert((
+                Position::new([0.0, 64.0, 0.0]),
+                casting,
+                Wounds::default(),
+                inventory,
+                PlayerState::default(),
+                quick_slot_bindings,
+                SkillBarBindings::default(),
+            ))
+            .id();
+
+        (app, player)
+    }
+
+    fn hotbar_stack_count(app: &mut App, player: Entity) -> u32 {
+        app.world_mut()
+            .entity(player)
+            .get::<PlayerInventory>()
+            .and_then(|inventory| inventory.hotbar[0].as_ref())
+            .map(|item| item.stack_count)
+            .unwrap_or(0)
     }
 
     #[test]
@@ -956,6 +1155,7 @@ mod tests {
             Some(&mut cultivation),
             None,
             None,
+            None,
             "Azure",
             Entity::PLACEHOLDER,
         );
@@ -963,6 +1163,192 @@ mod tests {
         assert_eq!(cultivation.qi_current, 190.0);
         assert_eq!(cultivation.qi_max, 210.0);
         assert_eq!(cultivation.qi_max_frozen, Some(20.0));
+    }
+
+    #[test]
+    fn composure_restore_clamps_to_full_composure() {
+        let mut cultivation = Cultivation {
+            composure: 0.80,
+            ..Default::default()
+        };
+
+        apply_item_effect(
+            &ItemEffect::ComposureRestore { magnitude: 0.35 },
+            Some(&mut cultivation),
+            None,
+            None,
+            None,
+            "Azure",
+            Entity::PLACEHOLDER,
+        );
+
+        assert_eq!(cultivation.composure, 1.0);
+    }
+
+    #[test]
+    fn wound_heal_targets_all_wounds_when_target_missing() {
+        let mut wounds = Wounds::default();
+        wounds.entries.push(Wound {
+            location: BodyPart::ArmL,
+            kind: WoundKind::Cut,
+            severity: 0.20,
+            bleeding_per_sec: 1.0,
+            created_at_tick: 0,
+            inflicted_by: None,
+        });
+        wounds.entries.push(Wound {
+            location: BodyPart::LegR,
+            kind: WoundKind::Blunt,
+            severity: 0.75,
+            bleeding_per_sec: 1.0,
+            created_at_tick: 0,
+            inflicted_by: None,
+        });
+
+        apply_item_effect(
+            &ItemEffect::WoundHeal {
+                magnitude: 1.0,
+                target: None,
+            },
+            None,
+            None,
+            None,
+            Some(&mut wounds),
+            "Azure",
+            Entity::PLACEHOLDER,
+        );
+
+        assert_eq!(wounds.entries.len(), 1);
+        assert_eq!(wounds.entries[0].location, BodyPart::LegR);
+        assert!((wounds.entries[0].severity - 0.50).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn wound_heal_slash_target_filters_body_part_group() {
+        let mut wounds = Wounds::default();
+        wounds.entries.push(Wound {
+            location: BodyPart::ArmL,
+            kind: WoundKind::Blunt,
+            severity: 0.40,
+            bleeding_per_sec: 1.0,
+            created_at_tick: 0,
+            inflicted_by: None,
+        });
+        wounds.entries.push(Wound {
+            location: BodyPart::LegL,
+            kind: WoundKind::Blunt,
+            severity: 0.70,
+            bleeding_per_sec: 1.0,
+            created_at_tick: 0,
+            inflicted_by: None,
+        });
+
+        apply_item_effect(
+            &ItemEffect::WoundHeal {
+                magnitude: 2.0,
+                target: Some("arm_l/arm_r".to_string()),
+            },
+            None,
+            None,
+            None,
+            Some(&mut wounds),
+            "Azure",
+            Entity::PLACEHOLDER,
+        );
+
+        assert_eq!(wounds.entries.len(), 1);
+        assert_eq!(wounds.entries[0].location, BodyPart::LegL);
+        assert!((wounds.entries[0].severity - 0.70).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn tick_casts_consumable_qi_recovery_consumes_and_applies() {
+        let (mut app, player) = setup_quickslot_effect_app(
+            "huiyuan_decoction_test",
+            ItemEffect::QiRecovery { amount: 40.0 },
+        );
+        app.world_mut().entity_mut(player).insert(Cultivation {
+            qi_current: 10.0,
+            qi_max: 100.0,
+            ..Default::default()
+        });
+
+        app.update();
+
+        assert_eq!(hotbar_stack_count(&mut app, player), 1);
+        let cultivation = app
+            .world_mut()
+            .entity(player)
+            .get::<Cultivation>()
+            .expect("Cultivation should remain attached");
+        assert_eq!(cultivation.qi_current, 50.0);
+    }
+
+    #[test]
+    fn tick_casts_consumable_composure_restore_consumes_and_applies() {
+        let (mut app, player) = setup_quickslot_effect_app(
+            "calming_tea_test",
+            ItemEffect::ComposureRestore { magnitude: 0.35 },
+        );
+        app.world_mut().entity_mut(player).insert(Cultivation {
+            composure: 0.40,
+            ..Default::default()
+        });
+
+        app.update();
+
+        assert_eq!(hotbar_stack_count(&mut app, player), 1);
+        let cultivation = app
+            .world_mut()
+            .entity(player)
+            .get::<Cultivation>()
+            .expect("Cultivation should remain attached");
+        assert!((cultivation.composure - 0.75).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn tick_casts_consumable_wound_heal_consumes_and_applies() {
+        let (mut app, player) = setup_quickslot_effect_app(
+            "leg_splint_test",
+            ItemEffect::WoundHeal {
+                magnitude: 2.0,
+                target: Some("leg_l/leg_r".to_string()),
+            },
+        );
+        {
+            let mut entity = app.world_mut().entity_mut(player);
+            let mut wounds = entity
+                .get_mut::<Wounds>()
+                .expect("Wounds should be present on player");
+            wounds.entries.push(Wound {
+                location: BodyPart::LegL,
+                kind: WoundKind::Blunt,
+                severity: 0.40,
+                bleeding_per_sec: 1.0,
+                created_at_tick: 0,
+                inflicted_by: None,
+            });
+            wounds.entries.push(Wound {
+                location: BodyPart::ArmL,
+                kind: WoundKind::Blunt,
+                severity: 0.40,
+                bleeding_per_sec: 1.0,
+                created_at_tick: 0,
+                inflicted_by: None,
+            });
+        }
+
+        app.update();
+
+        assert_eq!(hotbar_stack_count(&mut app, player), 1);
+        let wounds = app
+            .world_mut()
+            .entity(player)
+            .get::<Wounds>()
+            .expect("Wounds should remain attached");
+        assert_eq!(wounds.entries.len(), 1);
+        assert_eq!(wounds.entries[0].location, BodyPart::ArmL);
+        assert!((wounds.entries[0].severity - 0.40).abs() < f32::EPSILON);
     }
 
     #[test]
@@ -982,6 +1368,7 @@ mod tests {
                     cultivation: None,
                     meridians: None,
                     contamination: None,
+                    wounds: None,
                 },
                 &mut effect_intents,
                 CastItemEffectContext {
@@ -1030,6 +1417,7 @@ mod tests {
                     cultivation: None,
                     meridians: None,
                     contamination: None,
+                    wounds: None,
                 },
                 &mut effect_intents,
                 CastItemEffectContext {
@@ -1046,6 +1434,7 @@ mod tests {
                     cultivation: None,
                     meridians: None,
                     contamination: None,
+                    wounds: None,
                 },
                 &mut effect_intents,
                 CastItemEffectContext {
@@ -1156,6 +1545,7 @@ mod tests {
                         cultivation: None,
                         meridians: None,
                         contamination: None,
+                        wounds: None,
                     },
                     &mut effect_intents,
                     CastItemEffectContext {
