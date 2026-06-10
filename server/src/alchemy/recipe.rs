@@ -523,6 +523,45 @@ mod tests {
         assert!(registry.get("hui_yuan_pill_v0").is_some());
         assert!(registry.get("du_ming_san_v0").is_some());
         assert!(registry.get("anti_spirit_pressure_pill_v1").is_some());
+        let ningmai = registry
+            .get("ningmai_san_v1")
+            .expect("ningmai_prep_kit should refine into ningmai_powder");
+        assert_eq!(ningmai.furnace_tier_min, 1);
+        assert_eq!(
+            ningmai.stage0_ingredients().get("ningmai_prep_kit"),
+            Some(&1)
+        );
+        assert_eq!(
+            ningmai
+                .outcomes
+                .perfect
+                .as_ref()
+                .map(|outcome| outcome.pill.as_str()),
+            Some("ningmai_powder")
+        );
+        let good = ningmai.outcomes.good.as_ref().expect("good outcome");
+        assert_eq!(good.pill, "ningmai_powder");
+        assert_eq!(good.quality, 0.72);
+        assert_eq!(good.toxin_amount, 0.18);
+        assert_eq!(good.toxin_color, ColorKind::Gentle);
+        let flawed = ningmai.outcomes.flawed.as_ref().expect("flawed outcome");
+        assert_eq!(flawed.pill, "ningmai_powder");
+        assert_eq!(flawed.quality, 0.42);
+        assert_eq!(flawed.toxin_amount, 0.30);
+        assert_eq!(flawed.toxin_color, ColorKind::Turbid);
+        assert!(ningmai.outcomes.waste.is_none());
+        let explode = ningmai.outcomes.explode.as_ref().expect("explode outcome");
+        assert_eq!(explode.damage, 6.0);
+        assert_eq!(explode.meridian_crack, 0.03);
+        let fallback = ningmai
+            .flawed_fallback
+            .as_ref()
+            .expect("flawed fallback should exist");
+        assert_eq!(fallback.pill, "ningmai_powder");
+        assert_eq!(fallback.quality_scale, 0.5);
+        assert_eq!(fallback.toxin_scale, 1.5);
+        assert_eq!(fallback.side_effect_pool.len(), 1);
+        assert_eq!(fallback.side_effect_pool[0].tag, "minor_qi_regen_boost");
         for pill_id in crate::alchemy::pill::COMBAT_PILL_IDS {
             let recipe_id = format!("{pill_id}_v1");
             let recipe = registry

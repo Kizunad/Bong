@@ -178,6 +178,8 @@ public final class VfxBootstrap {
             new ZhenfaActionVfxPlayer(ZhenfaActionVfxPlayer.Kind.DEPLETE));
         registry.register(SocialLinkVfxPlayer.NICHE_ESTABLISH,
             new SocialLinkVfxPlayer(SocialLinkVfxPlayer.Kind.NICHE_ESTABLISH));
+        registry.register(NicheRepairParticlePlayer.EVENT_ID,
+            new NicheRepairParticlePlayer());
         registry.register(SocialLinkVfxPlayer.PACT_LINK,
             new SocialLinkVfxPlayer(SocialLinkVfxPlayer.Kind.PACT_LINK));
         registry.register(SocialLinkVfxPlayer.FEUD_MARK,

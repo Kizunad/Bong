@@ -16,10 +16,10 @@ AI-Native Xianxia (修仙) sandbox on Minecraft. Three-layer architecture:
 _自动生成于 2026-06-08 · 共 133 份 plan_
 
 ```
-总进度  █████████████████████████░░░░░  82.8%
+总进度  █████████████████████████░░░░░  83.5%
 ```
 
-**分布**：`merged` 59 · `wip` 1 · `design` 23 · `skeleton` 1 · `done` 49
+**分布**：`merged` 60 · `wip` 1 · `design` 22 · `skeleton` 1 · `done` 49
 
 ### 战斗 / HUD / 视觉
 _战斗 ECS、流派、HUD、粒子、动画、Iris · 15 份 · 组均 87%_
@@ -75,10 +75,11 @@ _六境修炼、天劫、炼丹/炼器、矿物、灵田、保质期 · 26 份 �
 | `design` | **渡虚劫平衡矩阵** <br/><sub>`plan-tribulation-balance-v1.md`</sub> | `█░░░░░░░░░░░`   5% | — | 2026-06-08 |
 
 ### 玩法 / NPC / 世界
-_背包、NPC AI、感知、社交、技艺、死亡周期 · 24 份 · 组均 53%_
+_背包、NPC AI、感知、社交、技艺、死亡周期 · 24 份 · 组均 57%_
 
 | 状态 | Plan | 进度 | PR | 最近更新 |
 |---|---|---|---|---|
+| `merged` | **手搓消耗品空壳消杀（11 个产出物补齐使用闭环）** <br/><sub>`finished_plans/plan-consumable-effects-v1.md`</sub> | `████████████` 100% | #483 | 2026-06-10 |
 | `merged` | **Inventory v1** <br/><sub>`finished_plans/plan-inventory-v1.md`</sub> | `████████████` 100% | #27 | 2026-06-08 |
 | `merged` | **背包 v2 堆叠与批量入包** <br/><sub>`finished_plans/plan-inventory-v2.md`</sub> | `████████████` 100% | #115 | 2026-06-08 |
 | `merged` | **已亡七宗宗门志入库** <br/><sub>`finished_plans/plan-library-jiuzong-history-v1.md`</sub> | `████████████` 100% | #114 | 2026-06-08 |
@@ -99,7 +100,6 @@ _背包、NPC AI、感知、社交、技艺、死亡周期 · 24 份 · 组均 5
 | `design` | **生平碑刻与临终遗念** <br/><sub>`plan-life-record-epitaph-v1.md`</sub> | `█░░░░░░░░░░░`  10% | — | 2026-06-08 |
 | `design` | **Dormant NPC 批量战斗推演** <br/><sub>`plan-npc-virtualize-v3.md`</sub> | `█░░░░░░░░░░░`  10% | — | 2026-06-08 |
 | `design` | **方块生命周期（破坏获取→入背包→放置）** <br/><sub>`plan-block-lifecycle-v1.md`</sub> | `█░░░░░░░░░░░`   5% | — | 2026-06-09 |
-| `design` | **手搓消耗品空壳消杀（11 个产出物补齐使用闭环）** <br/><sub>`plan-consumable-effects-v1.md`</sub> | `█░░░░░░░░░░░`   5% | — | 2026-06-10 |
 | `design` | **具名散修势力扩展** <br/><sub>`plan-faction-expansion-v1.md`</sub> | `█░░░░░░░░░░░`   5% | — | 2026-06-08 |
 | `design` | **NPC Drowsy 三态虚拟化** <br/><sub>`plan-npc-virtualize-v2.md`</sub> | `█░░░░░░░░░░░`   5% | — | 2026-06-08 |
 | `design` | **战争结果与信誉系统联动** <br/><sub>`plan-social-v2.md`</sub> | `█░░░░░░░░░░░`   5% | — | 2026-06-08 |

@@ -256,6 +256,18 @@ public class ClientRequestSenderTest {
     }
 
     @Test
+    void sendSpiritNicheRepairUsesCorrectChannelAndJson() {
+        install();
+        ClientRequestSender.sendSpiritNicheRepair(11, 64, 10, 4242L);
+        assertEquals(1, sent.size());
+        assertEquals(new Identifier("bong", "client_request"), sent.get(0).channel());
+        assertEquals(
+            "{\"type\":\"spirit_niche_repair\",\"v\":1,\"x\":11,\"y\":64,\"z\":10,\"item_instance_id\":4242}",
+            sent.get(0).body()
+        );
+    }
+
+    @Test
     void sendCoffinOpenUsesCorrectChannelAndJson() {
         install();
         ClientRequestSender.sendCoffinOpen(new BlockPos(0, 69, 0));

@@ -74,6 +74,7 @@ class SpawnTutorialProfileTest(unittest.TestCase):
         self.assertIn("tutorial_chest", kinds)
         self.assertIn("tutorial_rogue_anchor", kinds)
         self.assertIn("tutorial_rat_path", kinds)
+        self.assertIn("loot:niche_base", kinds["spawn_tutorial_coffin"].tags)
         lingquans = [
             poi
             for poi in spawn_tutorial_pois_for_zone(self.build_zone())

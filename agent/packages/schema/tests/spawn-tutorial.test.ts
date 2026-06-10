@@ -37,10 +37,23 @@ describe("spawn tutorial schema", () => {
         type: "coffin_opened",
         player_id: "offline:Azure",
         coffin_pos: [0, 69, 0],
-        granted_item_id: "spirit_niche_stone",
+        granted_item_id: "niche_base",
         tick: 91,
       }).ok,
     ).toBe(true);
+  });
+
+  it("rejects deprecated coffin-opened granted item id", () => {
+    expect(
+      validateCoffinOpenedV1Contract({
+        v: 1,
+        type: "coffin_opened",
+        player_id: "offline:Azure",
+        coffin_pos: [0, 69, 0],
+        granted_item_id: "spirit_niche_stone",
+        tick: 91,
+      }).ok,
+    ).toBe(false);
   });
 
   it.each(["craft_hint_shown", "first_alchemy_hint", "first_forge_hint"] as const)(

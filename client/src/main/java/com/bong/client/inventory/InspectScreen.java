@@ -159,7 +159,7 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
     private final LabelComponent[] filterLabels = new LabelComponent[4];
 
     record PillMenuAction(String label, ActionKind kind) {}
-    enum ActionKind { SELF_USE, MERIDIAN_TARGET, PLACE_FORGE_STATION, PLACE_SPIRIT_NICHE, TECHNIQUE_SCROLL_USE }
+    enum ActionKind { SELF_USE, MERIDIAN_TARGET, PLACE_FORGE_STATION, PLACE_SPIRIT_NICHE, REPAIR_SPIRIT_NICHE, TECHNIQUE_SCROLL_USE }
     record PillContextMenuState(InventoryItem item, int x, int y, List<PillMenuAction> actions) {}
     record PendingMeridianUse(InventoryItem item) {}
     record WeaponMenuAction(String label, WeaponActionKind kind) {}
@@ -2302,8 +2302,11 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
         if (forgeStationTier(item) > 0) {
             actions.add(new PillMenuAction("放置炼器砧", ActionKind.PLACE_FORGE_STATION));
         }
-        if (isSpiritNicheStone(item)) {
+        if (isSpiritNicheBase(item)) {
             actions.add(new PillMenuAction("放置灵龛", ActionKind.PLACE_SPIRIT_NICHE));
+        }
+        if (isSpiritNicheRepairKit(item)) {
+            actions.add(new PillMenuAction("修补灵龛", ActionKind.REPAIR_SPIRIT_NICHE));
         }
         if (item.isTechniqueScroll() && isKnownTechniqueScroll(item) && !isKnownTechnique(item)) {
             actions.add(new PillMenuAction("研读功法", ActionKind.TECHNIQUE_SCROLL_USE));
@@ -2361,6 +2364,10 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
                 pendingMeridianUse = null;
                 dispatchPlaceSpiritNiche(item);
             }
+            case REPAIR_SPIRIT_NICHE -> {
+                pendingMeridianUse = null;
+                dispatchRepairSpiritNiche(item);
+            }
             case TECHNIQUE_SCROLL_USE -> {
                 pendingMeridianUse = null;
                 dispatchTechniqueScrollUse(item);
@@ -2374,13 +2381,34 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
     }
 
     boolean dispatchPlaceSpiritNicheAt(InventoryItem item, int x, int y, int z) {
-        if (item == null || item.instanceId() == 0L || !isSpiritNicheStone(item)) {
+        if (item == null || item.instanceId() == 0L || !isSpiritNicheBase(item)) {
             return false;
         }
         com.bong.client.BongClient.LOGGER.info(
             "[bong][inspect] dispatchPlaceSpiritNiche instance={} item={} pos=[{},{},{}]",
             item.instanceId(), item.itemId(), x, y, z);
         com.bong.client.network.ClientRequestSender.sendSpiritNichePlace(
+            x,
+            y,
+            z,
+            item.instanceId()
+        );
+        return true;
+    }
+
+    boolean dispatchRepairSpiritNiche(InventoryItem item) {
+        BlockPos pos = targetPlacementPos();
+        return dispatchRepairSpiritNicheAt(item, pos.getX(), pos.getY(), pos.getZ());
+    }
+
+    boolean dispatchRepairSpiritNicheAt(InventoryItem item, int x, int y, int z) {
+        if (item == null || item.instanceId() == 0L || !isSpiritNicheRepairKit(item)) {
+            return false;
+        }
+        com.bong.client.BongClient.LOGGER.info(
+            "[bong][inspect] dispatchRepairSpiritNiche instance={} item={} pos=[{},{},{}]",
+            item.instanceId(), item.itemId(), x, y, z);
+        com.bong.client.network.ClientRequestSender.sendSpiritNicheRepair(
             x,
             y,
             z,
@@ -2428,8 +2456,12 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
         };
     }
 
-    static boolean isSpiritNicheStone(InventoryItem item) {
-        return item != null && "spirit_niche_stone".equals(item.itemId());
+    static boolean isSpiritNicheBase(InventoryItem item) {
+        return item != null && "niche_base".equals(item.itemId());
+    }
+
+    static boolean isSpiritNicheRepairKit(InventoryItem item) {
+        return item != null && "niche_repair_kit".equals(item.itemId());
     }
 
     static boolean isBlockQuickBarBindable(InventoryItem item) {

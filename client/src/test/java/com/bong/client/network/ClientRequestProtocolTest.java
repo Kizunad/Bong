@@ -328,6 +328,15 @@ public class ClientRequestProtocolTest {
     }
 
     @Test
+    void encodesSpiritNicheRepair() {
+        String json = ClientRequestProtocol.encodeSpiritNicheRepair(11, 64, 10, 4242L);
+        assertEquals(
+            "{\"type\":\"spirit_niche_repair\",\"v\":1,\"x\":11,\"y\":64,\"z\":10,\"item_instance_id\":4242}",
+            json
+        );
+    }
+
+    @Test
     void encodesCoffinOpen() {
         String json = ClientRequestProtocol.encodeCoffinOpen(new BlockPos(0, 69, 0));
         assertEquals("{\"type\":\"coffin_open\",\"v\":1,\"x\":0,\"y\":69,\"z\":0}", json);

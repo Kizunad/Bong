@@ -187,11 +187,9 @@ ITEMS = [
     ("niche_base", "灵龛基座",
      "a spirit-niche pedestal base, dark stone platform with spirit-iron inlays and wood frame, faint spiritual glow at the seams, solid black background"),
 
-    # ── 炼丹/炼器预备 ──
-    ("furnace_kit_fantie", "凡铁炉组件",
-     "a disassembled iron furnace kit, dark iron plates and stone bricks bundled together, forge components, solid black background"),
-    ("forge_station_kit", "锻造台组件",
-     "a disassembled forge station kit, dark iron anvil piece with spirit-wood frame parts and stone blocks, bundled, solid black background"),
+    # ── 炼器可放置物 ──
+    ("fan_iron_anvil", "凡铁砧台",
+     "a tier-one forge station, dark iron anvil mounted on a spirit-wood frame with rough stone base, usable crafting station, solid black background"),
 
     # ── 矿石 ──
     ("fan_tie", "凡铁矿",

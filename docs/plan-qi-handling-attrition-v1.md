@@ -48,10 +48,13 @@
 
 | 阶段 | 状态 | 主要交付物 | 验收标准 |
 |------|------|-----------|---------|
-| **P0** | ⬜ | `AttritionTax` QiTransferReason + `AttritionConfig` 常数 + `QiAttritionSystem` server 逻辑 | 拿起 1 个 qi_value=100 灵石 → qi_value=97 + zone +3 + 守恒律单测全绿 |
-| **P1** | ⬜ | 多 op_kind 磨损分档（拾起/移动/搜刮/炼器/炼丹）+ 环境倍率（死域×3/坍缩渊×3/馈赠区×0.8）+ `AttritionExemptTag` | 各 op_kind 磨损率单测 + 环境倍率边界 |
+| **P0** | ✅ 2026-06-10 | `AttritionTax` QiTransferReason + `AttritionConfig` 常数 + `QiAttritionSystem` server 逻辑 | 拿起 1 个 qi_value=100 灵石 → qi_value=97 + zone +3 + 守恒律单测全绿 |
+| **P1** | ✅ 2026-06-10 | 多 op_kind 磨损分档（拾起/移动/搜刮/炼器/炼丹）+ 环境倍率（死域×3/坍缩渊×3/馈赠区×0.8）+ `AttritionExemptTag` | 各 op_kind 磨损率单测 + 环境倍率边界 |
 | **P2** | ⬜ | Client VFX：`bong:vfx/qi_attrition` 粒子闪光 + 物品 qi_value HUD 实时更新 | 客户端拿起高灵气物品 → 物品栏显示 qi_value 下降 + 粒子闪烁 |
 | **P3** | ⬜ | 边界情况：`qi_value < 0.5` 跳过磨损 + 封灵容器豁免 + 死坍缩渊（已 dead）无灵气可逸散的处理 | 边界单测 + 封灵容器豁免单测 |
+
+> **P0/P1 落地（2026-06-10）**：`server/src/qi_physics/attrition.rs` 新建（`AttritionConfig` + `AttritionOpKind` + `apply_attrition` + `release_attrition_to_zone` 守恒归还 `zone.spirit_qi`）；`ledger.rs` 加 `QiTransferReason::AttritionTax{op_kind}` 变体；`constants.rs` 配置（BASE_RATE=0.03 等）。**4/5 op_kind 已接生产**：Pickup / SlotMove / ContainerSearch / AlchemyLoad。**遗留**：`ForgeLoad`（炼器）变体+rate 已定义并 pin 测试，但 forge session 生产接线 deferred follow-up。cargo fmt + clippy(-D warnings) + test **8130 passed**（attrition 专项 25，含守恒律+overflow守恒+各 op_kind率+环境倍率边界+<0.5 skip+exempt）。
+
 
 ---
 

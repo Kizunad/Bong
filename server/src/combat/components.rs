@@ -200,6 +200,8 @@ pub struct Lifecycle {
     #[serde(default)]
     pub spawn_anchor: Option<[f64; 3]>,
     #[serde(default)]
+    pub spawn_anchor_damaged: bool,
+    #[serde(default)]
     pub near_death_deadline_tick: Option<u64>,
     #[serde(default)]
     pub awaiting_decision: Option<RevivalDecision>,
@@ -218,6 +220,7 @@ impl Default for Lifecycle {
             last_death_tick: None,
             last_revive_tick: None,
             spawn_anchor: None,
+            spawn_anchor_damaged: false,
             near_death_deadline_tick: None,
             awaiting_decision: None,
             revival_decision_deadline_tick: None,
@@ -240,11 +243,17 @@ impl Lifecycle {
     }
 
     pub fn revive(&mut self, now_tick: u64) {
+        self.revive_with_weakened_multiplier(now_tick, 1);
+    }
+
+    pub fn revive_with_weakened_multiplier(&mut self, now_tick: u64, weakened_multiplier: u64) {
         self.last_revive_tick = Some(now_tick);
         self.near_death_deadline_tick = None;
         self.awaiting_decision = None;
         self.revival_decision_deadline_tick = None;
-        self.weakened_until_tick = Some(now_tick.saturating_add(REVIVE_WEAKENED_TICKS));
+        self.weakened_until_tick = Some(
+            now_tick.saturating_add(REVIVE_WEAKENED_TICKS.saturating_mul(weakened_multiplier)),
+        );
         self.state = LifecycleState::Alive;
     }
 

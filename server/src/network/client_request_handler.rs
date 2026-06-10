@@ -67,9 +67,10 @@ use crate::forge::station::PlaceForgeStationRequest;
 use crate::inventory::{
     add_item_to_player_inventory, add_item_to_player_inventory_with_alchemy, apply_inventory_move,
     apply_item_spiritual_wear, consume_item_instance_once, discard_inventory_item_to_dropped_loot,
-    fully_repair_weapon_instance, inventory_item_by_instance_borrow, pickup_dropped_loot_instance,
-    DroppedLootRegistry, InventoryDurabilityChangedEvent, InventoryInstanceIdAllocator,
-    InventoryMoveOutcome, ItemInstance, ItemTemplate, PlayerInventory,
+    fully_repair_weapon_instance, inventory_item_by_instance_borrow,
+    inventory_item_by_instance_mut, pickup_dropped_loot_instance, DroppedLootRegistry,
+    InventoryDurabilityChangedEvent, InventoryInstanceIdAllocator, InventoryMoveOutcome,
+    ItemInstance, ItemTemplate, PlayerInventory,
 };
 use crate::inventory::{
     AlchemyItemData, ItemEffect, ItemRegistry,
@@ -122,7 +123,9 @@ use crate::player::gameplay::{GameplayAction, GameplayActionQueue, GatherAction}
 use crate::player::state::{
     canonical_player_id, update_player_ui_prefs, PlayerState, PlayerStatePersistence,
 };
+use crate::qi_physics::attrition::{apply_attrition, is_attrition_exempt};
 use crate::qi_physics::constants::QI_TARGETED_ITEM_WEAR_WEIGHT_THRESHOLD;
+use crate::qi_physics::ledger::AttritionOpKind;
 use crate::qi_physics::qi_targeted_item_wear_fraction;
 use crate::qi_physics::AnqiContainerKind;
 use crate::schema::alchemy::{AlchemyInterventionResultV1, AlchemySessionStartV1};
@@ -144,8 +147,8 @@ use crate::skill::config::{
 use crate::skill::events::{SkillScrollUsed, SkillXpGain, XpGainSource};
 use crate::social::events::{
     SparringInviteResponseEvent, SparringInviteResponseKind, SpiritNicheActivateGuardianRequest,
-    SpiritNicheCoordinateRevealRequest, SpiritNichePlaceRequest, SpiritNicheRevealSource,
-    TradeOfferRequest, TradeOfferResponseEvent,
+    SpiritNicheCoordinateRevealRequest, SpiritNichePlaceRequest, SpiritNicheRepairRequest,
+    SpiritNicheRevealSource, TradeOfferRequest, TradeOfferResponseEvent,
 };
 use crate::world::block_place::BlockPlaceRequest;
 use crate::world::dimension::{CurrentDimension, DimensionKind};
@@ -240,8 +243,11 @@ pub struct AlchemyRequestParams<'w, 's> {
     pub item_registry: Res<'w, ItemRegistry>,
     pub instance_allocator: Option<ResMut<'w, InventoryInstanceIdAllocator>>,
     pub redis: Option<Res<'w, RedisBridgeResource>>,
-    pub zones: Option<Res<'w, ZoneRegistry>>,
+    /// plan-qi-handling-attrition-v1 P0/P1：升级为 ResMut，兼顾 alchemy read-only 和磨损写权限。
+    pub zones: Option<ResMut<'w, ZoneRegistry>>,
     pub vfx_events: Option<ResMut<'w, Events<VfxEventRequest>>>,
+    /// plan-qi-handling-attrition-v1 P0/P1：AttritionTax 审计转账事件队列。
+    pub attrition_qi_transfers: Option<ResMut<'w, Events<crate::qi_physics::ledger::QiTransfer>>>,
     /// plan-fauna-stitched-beast-v1 P3：兽核吸收幻觉事件 (M1 修复：接通 narration/hallucination)
     pub hallucination_events:
         Option<ResMut<'w, Events<crate::fauna::hybrid_beast::CoreAbsorptionHallucinationEvent>>>,
@@ -271,6 +277,7 @@ pub struct ClientRequestDispatchParams<'w> {
     pub consecration_inject_tx: Option<ResMut<'w, Events<ConsecrationInject>>>,
     pub step_advance_tx: Option<ResMut<'w, Events<StepAdvance>>>,
     pub spirit_niche_place_tx: Option<ResMut<'w, Events<SpiritNichePlaceRequest>>>,
+    pub spirit_niche_repair_tx: Option<ResMut<'w, Events<SpiritNicheRepairRequest>>>,
     pub spirit_niche_coordinate_reveal_tx:
         Option<ResMut<'w, Events<SpiritNicheCoordinateRevealRequest>>>,
     pub spirit_niche_activate_guardian_tx:
@@ -299,6 +306,9 @@ pub struct ClientRequestDispatchParams<'w> {
     pub supply_coffin_open_tx:
         Option<ResMut<'w, Events<crate::supply_coffin::interact::SupplyCoffinOpenRequest>>>,
 }
+// NOTE: plan-qi-handling-attrition-v1 P0/P1 磨损写权限已合并入 AlchemyRequestParams.zones
+// (ResMut) 和 AlchemyRequestParams.attrition_qi_transfers，避免与 AlchemyRequestParams.zones
+// (Res) 产生 Bevy B0002 Res/ResMut 冲突。
 
 #[derive(SystemParam)]
 pub struct SkillScrollRequestParams<'w, 's> {
@@ -457,6 +467,7 @@ pub fn handle_client_request_payloads(
             | ClientRequestV1::CoffinBreak { v, .. }
             | ClientRequestV1::CoffinMenuReclaim { v, .. }
             | ClientRequestV1::SpiritNichePlace { v, .. }
+            | ClientRequestV1::SpiritNicheRepair { v, .. }
             | ClientRequestV1::SpiritNicheGaze { v, .. }
             | ClientRequestV1::SpiritNicheMarkCoordinate { v, .. }
             | ClientRequestV1::SpiritNicheActivateGuardian { v, .. }
@@ -934,6 +945,31 @@ pub fn handle_client_request_payloads(
                     continue;
                 };
                 spirit_niche_place_tx.send(SpiritNichePlaceRequest {
+                    player: ev.client,
+                    pos: [x, y, z],
+                    item_instance_id: Some(item_instance_id),
+                    tick: combat_clock.tick,
+                });
+            }
+            ClientRequestV1::SpiritNicheRepair {
+                x,
+                y,
+                z,
+                item_instance_id,
+                ..
+            } => {
+                tracing::info!(
+                    "[bong][network][social] spirit_niche_repair entity={:?} pos=[{x},{y},{z}] instance={item_instance_id}",
+                    ev.client
+                );
+                let Some(spirit_niche_repair_tx) = dispatch.spirit_niche_repair_tx.as_deref_mut()
+                else {
+                    tracing::warn!(
+                        "[bong][network] dropped spirit_niche_repair because SpiritNicheRepairRequest event resource is missing"
+                    );
+                    continue;
+                };
+                spirit_niche_repair_tx.send(SpiritNicheRepairRequest {
                     player: ev.client,
                     pos: [x, y, z],
                     item_instance_id: Some(item_instance_id),
@@ -1440,6 +1476,8 @@ pub fn handle_client_request_payloads(
                     &mut inventories,
                     &player_states,
                     &skill_scroll_params.cultivations,
+                    alchemy_params.zones.as_deref_mut(),
+                    alchemy_params.attrition_qi_transfers.as_deref_mut(),
                 );
             }
             ClientRequestV1::AlchemyTakeBack {
@@ -1482,6 +1520,10 @@ pub fn handle_client_request_payloads(
                     &skill_scroll_params.cultivations,
                     karma_weights.as_deref(),
                     durability_changed_tx.as_deref_mut(),
+                    &skill_scroll_params.positions,
+                    &skill_scroll_params.dimensions,
+                    alchemy_params.zones.as_deref_mut(),
+                    alchemy_params.attrition_qi_transfers.as_deref_mut(),
                 );
             }
             ClientRequestV1::EquipFalseSkin {
@@ -1519,6 +1561,10 @@ pub fn handle_client_request_payloads(
                     &skill_scroll_params.cultivations,
                     karma_weights.as_deref(),
                     durability_changed_tx.as_deref_mut(),
+                    &skill_scroll_params.positions,
+                    &skill_scroll_params.dimensions,
+                    alchemy_params.zones.as_deref_mut(),
+                    alchemy_params.attrition_qi_transfers.as_deref_mut(),
                 );
             }
             ClientRequestV1::ForgeFalseSkin { kind, .. } => {
@@ -1591,6 +1637,9 @@ pub fn handle_client_request_payloads(
                     &player_states,
                     &skill_scroll_params.cultivations,
                     &dropped_loot_params.positions,
+                    &skill_scroll_params.dimensions,
+                    alchemy_params.zones.as_deref_mut(),
+                    alchemy_params.attrition_qi_transfers.as_deref_mut(),
                 );
             }
             ClientRequestV1::MineralProbe { x, y, z, .. } => {
@@ -2975,6 +3024,11 @@ mod tests {
     impl valence::prelude::Resource for CapturedSpiritNichePlaces {}
 
     #[derive(Default)]
+    struct CapturedSpiritNicheRepairs(Vec<SpiritNicheRepairRequest>);
+
+    impl valence::prelude::Resource for CapturedSpiritNicheRepairs {}
+
+    #[derive(Default)]
     struct CapturedSpiritNicheCoordinateReveals(Vec<SpiritNicheCoordinateRevealRequest>);
 
     impl valence::prelude::Resource for CapturedSpiritNicheCoordinateReveals {}
@@ -3057,6 +3111,13 @@ mod tests {
     fn capture_spirit_niche_places(
         mut events: EventReader<SpiritNichePlaceRequest>,
         mut captured: ResMut<CapturedSpiritNichePlaces>,
+    ) {
+        captured.0.extend(events.read().cloned());
+    }
+
+    fn capture_spirit_niche_repairs(
+        mut events: EventReader<SpiritNicheRepairRequest>,
+        mut captured: ResMut<CapturedSpiritNicheRepairs>,
     ) {
         captured.0.extend(events.read().cloned());
     }
@@ -3446,6 +3507,7 @@ mod tests {
         app.add_event::<PlaceFurnaceRequest>();
         app.add_event::<crate::alchemy::LearnRecipeFragmentIntent>();
         app.add_event::<SpiritNichePlaceRequest>();
+        app.add_event::<SpiritNicheRepairRequest>();
         app.add_event::<SpiritNicheCoordinateRevealRequest>();
         app.add_event::<CoffinOpenRequest>();
         app.add_event::<crate::coffin::CoffinBreakRequest>();
@@ -4710,6 +4772,39 @@ mod tests {
         assert_eq!(captured.0[0].pos, [11, 64, 10]);
         assert_eq!(captured.0[0].item_instance_id, Some(4242));
         assert_eq!(captured.0[0].tick, 88);
+    }
+
+    #[test]
+    fn spirit_niche_repair_request_emits_repair_intent() {
+        let mut app = App::new();
+        app.insert_resource(CapturedSpiritNicheRepairs::default());
+        register_request_app(&mut app);
+        app.insert_resource(CombatClock { tick: 90 });
+        app.add_systems(
+            Update,
+            capture_spirit_niche_repairs.after(handle_client_request_payloads),
+        );
+
+        let (client_bundle, _helper) = create_mock_client("Azure");
+        let entity = app.world_mut().spawn(client_bundle).id();
+        app.world_mut()
+            .resource_mut::<valence::prelude::Events<CustomPayloadEvent>>()
+            .send(CustomPayloadEvent {
+                client: entity,
+                channel: ident!("bong:client_request").into(),
+                data: br#"{"type":"spirit_niche_repair","v":1,"x":11,"y":64,"z":10,"item_instance_id":4242}"#
+                    .to_vec()
+                    .into_boxed_slice(),
+            });
+
+        app.update();
+
+        let captured = app.world().resource::<CapturedSpiritNicheRepairs>();
+        assert_eq!(captured.0.len(), 1);
+        assert_eq!(captured.0[0].player, entity);
+        assert_eq!(captured.0[0].pos, [11, 64, 10]);
+        assert_eq!(captured.0[0].item_instance_id, Some(4242));
+        assert_eq!(captured.0[0].tick, 90);
     }
 
     #[test]
@@ -7423,6 +7518,10 @@ fn handle_inventory_move(
     cultivations: &Query<&Cultivation>,
     karma_weights: Option<&KarmaWeightStore>,
     durability_changed_tx: Option<&mut Events<InventoryDurabilityChangedEvent>>,
+    positions: &Query<&valence::prelude::Position>,
+    dimensions: &Query<&CurrentDimension>,
+    zones: Option<&mut ZoneRegistry>,
+    qi_transfers: Option<&mut Events<crate::qi_physics::ledger::QiTransfer>>,
 ) {
     let item_before_move = inventories
         .get(entity)
@@ -7486,6 +7585,38 @@ fn handle_inventory_move(
             let revision = wear_update
                 .map(|update| update.revision)
                 .unwrap_or(revision);
+
+            // plan-qi-handling-attrition-v1 P1: SlotMove 磨损，逸散守恒归还 zone
+            if let Some(zones) = zones {
+                let dim = dimensions
+                    .get(entity)
+                    .map(|d| d.0)
+                    .unwrap_or(DimensionKind::Overworld);
+                let player_pos_arr = client_position(positions, entity);
+                let pos = valence::prelude::DVec3::new(
+                    player_pos_arr[0],
+                    player_pos_arr[1],
+                    player_pos_arr[2],
+                );
+                let zone_name = zones.find_zone(dim, pos).map(|z| z.name.clone());
+                if let Some(zone_name) = zone_name {
+                    if let Some(zone) = zones.find_zone_mut(&zone_name) {
+                        if let Some(item) =
+                            inventory_item_by_instance_mut(&mut inventory, instance_id)
+                        {
+                            if !is_attrition_exempt(item) {
+                                apply_attrition(
+                                    item,
+                                    AttritionOpKind::SlotMove,
+                                    Some(zone),
+                                    qi_transfers,
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+
             tracing::info!(
                 "[bong][network][inventory] moved instance={instance_id} {from:?} -> {to:?} revision={}",
                 revision.0
@@ -7769,6 +7900,9 @@ fn handle_pickup_dropped_item(
     player_states: &Query<&PlayerState>,
     cultivations: &Query<&Cultivation>,
     positions: &Query<&valence::prelude::Position>,
+    dimensions: &Query<&CurrentDimension>,
+    zones: Option<&mut ZoneRegistry>,
+    qi_transfers: Option<&mut Events<crate::qi_physics::ledger::QiTransfer>>,
 ) {
     let player_pos = client_position(positions, entity);
     let mut inventory = match inventories.get_mut(entity) {
@@ -7792,6 +7926,35 @@ fn handle_pickup_dropped_item(
                 "[bong][network][inventory] picked up dropped instance={instance_id} revision={}",
                 revision.0
             );
+
+            // plan-qi-handling-attrition-v1 P0: Pickup 磨损，逸散守恒归还 zone
+            if let Some(zones) = zones {
+                let dim = dimensions
+                    .get(entity)
+                    .map(|d| d.0)
+                    .unwrap_or(DimensionKind::Overworld);
+                let pos = valence::prelude::DVec3::new(player_pos[0], player_pos[1], player_pos[2]);
+                // find_zone 借不可变引用获取 zone_name，再 find_zone_mut 借可变引用
+                let zone_name = zones.find_zone(dim, pos).map(|z| z.name.clone());
+                if let Some(zone_name) = zone_name {
+                    if let Some(zone) = zones.find_zone_mut(&zone_name) {
+                        // 在 inventory 里按 instance_id 找到拾起的 item 并应用磨损
+                        if let Some(item) =
+                            inventory_item_by_instance_mut(&mut inventory, instance_id)
+                        {
+                            if !is_attrition_exempt(item) {
+                                apply_attrition(
+                                    item,
+                                    AttritionOpKind::Pickup,
+                                    Some(zone),
+                                    qi_transfers,
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+
             resync_snapshot(
                 entity,
                 &inventory,
@@ -8235,6 +8398,8 @@ fn handle_alchemy_feed_slot(
     inventories: &mut Query<&mut PlayerInventory>,
     player_states: &Query<&PlayerState>,
     cultivations: &Query<&Cultivation>,
+    mut zones: Option<&mut ZoneRegistry>,
+    mut qi_transfers: Option<&mut Events<crate::qi_physics::ledger::QiTransfer>>,
 ) {
     let Ok((username, mut client)) = clients.get_mut(entity) else {
         return;
@@ -8290,6 +8455,58 @@ fn handle_alchemy_feed_slot(
             send_alchemy_error(&mut client, &player_id, format!("投料失败：{error}"));
             return;
         }
+
+        // plan-qi-handling-attrition-v1 P1：AlchemyLoad 磨损。
+        // 在 consume 前对投料 item 施加磨损（item 还在 inventory，可找到并改 spirit_quality）。
+        // zone 用炼炉位置（与 MIN_ZONE_QI_TO_ALCHEMY 检查一致）。
+        {
+            let zone_name = zones.as_deref().and_then(|z| {
+                z.find_zone(
+                    DimensionKind::Overworld,
+                    valence::prelude::DVec3::new(
+                        furnace_pos.0 as f64,
+                        furnace_pos.1 as f64,
+                        furnace_pos.2 as f64,
+                    ),
+                )
+                .or_else(|| z.find_zone_by_name(DEFAULT_SPAWN_ZONE_NAME))
+                .map(|z| z.name.clone())
+            });
+
+            // 收集待磨损的 instance_id（template 匹配的前 count 个）
+            let mut to_attrit: Vec<u64> = Vec::new();
+            for container in &inventory.containers {
+                for placed in &container.items {
+                    if placed.instance.template_id == material && to_attrit.len() < count as usize {
+                        to_attrit.push(placed.instance.instance_id);
+                    }
+                }
+                if to_attrit.len() >= count as usize {
+                    break;
+                }
+            }
+
+            for instance_id in to_attrit {
+                if let Some(item) = inventory_item_by_instance_mut(&mut inventory, instance_id) {
+                    if is_attrition_exempt(item) {
+                        continue;
+                    }
+                    if let (Some(zone_name), Some(ref mut zones)) =
+                        (zone_name.clone(), zones.as_deref_mut())
+                    {
+                        if let Some(zone) = zones.find_zone_mut(&zone_name) {
+                            apply_attrition(
+                                item,
+                                AttritionOpKind::AlchemyLoad,
+                                Some(zone),
+                                qi_transfers.as_deref_mut(),
+                            );
+                        }
+                    }
+                }
+            }
+        }
+
         for _ in 0..count {
             let consumed = consume_one_by_template(&mut inventory, material.as_str());
             debug_assert!(
@@ -8877,11 +9094,16 @@ fn handle_alchemy_take_pill(
         _ => None,
     };
 
-    // plan-food-v1 P2：灵食必须走 quick slot（cast_emit 路径），禁止走 take_pill 路径。
-    // 在此处前置拒绝，避免 consume_item_instance_once 扣掉物品后 FoodRegen 分支 noop。
-    if matches!(effect, ItemEffect::FoodRegen { .. }) {
+    // plan-food-v1 P2 / plan-consumable-effects-v1：这些效果必须走 quick slot（cast_emit 路径）。
+    // 在此处前置拒绝，避免 consume_item_instance_once 扣掉物品后 noop。
+    if matches!(
+        effect,
+        ItemEffect::FoodRegen { .. }
+            | ItemEffect::ComposureRestore { .. }
+            | ItemEffect::WoundHeal { .. }
+    ) {
         tracing::debug!(
-            "[bong][network][alchemy] take_pill entity={entity:?} `{pill_item_id}` rejected: food must be consumed via quick slot"
+            "[bong][network][alchemy] take_pill entity={entity:?} `{pill_item_id}` rejected: effect must be consumed via quick slot"
         );
         resync_snapshot(
             entity,
@@ -9043,14 +9265,16 @@ fn handle_alchemy_take_pill(
                 None,
                 meridians,
                 contamination,
+                None,
                 pill_item_id,
                 entity,
             );
         }
-        ItemEffect::FoodRegen { .. } => {
-            // plan-food-v1 P2：灵食不走 take_pill 路径（食物通过 cast_emit 快捷槽消费）。
+        ItemEffect::ComposureRestore { .. }
+        | ItemEffect::WoundHeal { .. }
+        | ItemEffect::FoodRegen { .. } => {
             tracing::debug!(
-                "[bong][network][alchemy] take_pill entity={entity:?} `{pill_item_id}` FoodRegen on pill path — noop (food must be consumed via quick slot)"
+                "[bong][network][alchemy] take_pill entity={entity:?} `{pill_item_id}` quick-slot-only effect reached pill dispatch after prevalidation"
             );
         }
         // plan-fauna-stitched-beast-v1 P3 — 异变兽核吸收：突破加成 + 幻觉 HUD。
