@@ -153,12 +153,14 @@ pub fn raise_shield_handler(
     }
 }
 
-/// 处理 LowerShieldIntent：移除 ShieldBlocking 状态 + ShieldBlock component。
+/// 处理 LowerShieldIntent：移除 ShieldBlocking 状态 + ShieldBlock component + 停止举盾动画。
 pub fn lower_shield_handler(
     mut intents: EventReader<LowerShieldIntent>,
     mut commands: Commands,
     clock: Res<CombatClock>,
     mut status_q: Query<&mut StatusEffects>,
+    mut vfx_events: EventWriter<VfxEventRequest>,
+    players_q: Query<(&Position, &UniqueId)>,
 ) {
     for intent in intents.read() {
         let entity = intent.player;
@@ -168,6 +170,12 @@ pub fn lower_shield_handler(
         if let Some(mut entity_commands) = commands.get_entity(entity) {
             entity_commands.remove::<ShieldBlock>();
         }
+        // 停止 isLoop:true 的举盾循环动画，否则客户端手臂永远卡在举盾姿势
+        crate::network::vfx_animation_trigger::emit_shield_stop_for_entity(
+            entity,
+            &players_q,
+            &mut vfx_events,
+        );
         tracing::debug!(
             "[bong][shield] LowerShield entity={entity:?}: shield lowered tick={}",
             clock.tick
@@ -176,16 +184,26 @@ pub fn lower_shield_handler(
 }
 
 /// plan-shield-block-v1 P1 — 玩家死亡时强制清理 ShieldBlocking 状态，防残留。
+/// 仍需发 StopAnim：玩家死亡后仍保持连接（死亡画面），视觉需要复位；
+/// 若 entity 无 Position/UniqueId 则 emit_shield_stop_for_entity 会静默 skip，不 panic。
 pub fn cleanup_shield_on_death(
     mut death_events: EventReader<DeathEvent>,
     mut commands: Commands,
     mut status_q: Query<&mut StatusEffects>,
+    mut vfx_events: EventWriter<VfxEventRequest>,
+    players_q: Query<(&Position, &UniqueId)>,
 ) {
     for ev in death_events.read() {
         let entity = ev.target;
         if let Ok(mut status_effects) = status_q.get_mut(entity) {
             if has_active_status(&status_effects, StatusEffectKind::ShieldBlocking) {
                 remove_status_effect(&mut status_effects, StatusEffectKind::ShieldBlocking);
+                // 死亡时复位循环举盾动画，玩家死后仍连接需视觉复位
+                crate::network::vfx_animation_trigger::emit_shield_stop_for_entity(
+                    entity,
+                    &players_q,
+                    &mut vfx_events,
+                );
                 tracing::debug!(
                     "[bong][shield] cleanup_on_death: removed ShieldBlocking for {entity:?}"
                 );
@@ -200,6 +218,7 @@ pub fn cleanup_shield_on_death(
 /// plan-shield-block-v1 P1 — 断线时强制清理盾牌格挡状态。
 /// 由 `despawn_disconnected_clients` 之前的 system 调用。
 /// 使用 RemovedComponents<valence::prelude::Client> 探测断线实体。
+/// 注：断线时客户端已不在连接中，StopAnim 无接收者，故不 emit（避免无谓的 unicast 发送）。
 pub fn cleanup_shield_on_disconnect(
     mut commands: Commands,
     mut disconnected_clients: valence::prelude::RemovedComponents<valence::prelude::Client>,
@@ -227,7 +246,10 @@ mod tests {
     use crate::combat::events::StatusEffectKind;
     use crate::combat::status::has_active_status;
     use crate::inventory::{ItemInstance, PlayerInventory, EQUIP_SLOT_OFF_HAND};
-    use valence::prelude::{App, Events, Update};
+    use crate::network::vfx_event_emit::VfxEventRequest;
+    use crate::schema::vfx_event::VfxEventPayloadV1;
+    use uuid::Uuid;
+    use valence::prelude::{App, DVec3, Events, Update};
 
     fn make_app() -> App {
         let mut app = App::new();
@@ -666,6 +688,174 @@ mod tests {
         assert!(
             content.contains("<PROMISE>"),
             "shield_raise.json must contain a <PROMISE> block as required by §10.1 3-round polish rule"
+        );
+    }
+
+    // ── 辅助：带 Position + UniqueId 的完整实体（动画 emit 需要这两个 component）───
+    fn spawn_entity_with_pos_uid(app: &mut App, name: &str) -> Entity {
+        let uid = UniqueId(Uuid::new_v5(&Uuid::NAMESPACE_OID, name.as_bytes()));
+        app.world_mut()
+            .spawn((
+                StatusEffects::default(),
+                make_inventory_with_off_hand("wooden_shield"),
+                Position::new(DVec3::new(0.0, 64.0, 0.0)),
+                uid,
+            ))
+            .id()
+    }
+
+    fn drain_vfx(app: &mut App) -> Vec<VfxEventRequest> {
+        app.world_mut()
+            .resource_mut::<Events<VfxEventRequest>>()
+            .drain()
+            .collect()
+    }
+
+    fn find_play_anim<'a>(
+        reqs: &'a [VfxEventRequest],
+        anim_id: &str,
+    ) -> Option<&'a VfxEventRequest> {
+        reqs.iter().find(|r| {
+            matches!(&r.payload, VfxEventPayloadV1::PlayAnim { anim_id: id, .. } if id == anim_id)
+        })
+    }
+
+    fn find_stop_anim<'a>(
+        reqs: &'a [VfxEventRequest],
+        anim_id: &str,
+    ) -> Option<&'a VfxEventRequest> {
+        reqs.iter().find(|r| {
+            matches!(&r.payload, VfxEventPayloadV1::StopAnim { anim_id: id, .. } if id == anim_id)
+        })
+    }
+
+    // ── #2: raise_shield_handler 发 PlayAnim{bong:shield_raise} ────────────────
+    // 验证完整实体（带 Position+UniqueId）触发 RaiseShield 后 VfxEventRequest 队列含
+    // PlayAnim{anim_id=="bong:shield_raise"}。锁住动画 emit 分支——之前此分支零覆盖。
+    #[test]
+    fn raise_shield_emits_play_anim_when_entity_has_position_and_unique_id() {
+        let mut app = make_app();
+        let entity = spawn_entity_with_pos_uid(&mut app, "alice_raise");
+
+        app.world_mut()
+            .resource_mut::<Events<RaiseShieldIntent>>()
+            .send(RaiseShieldIntent { player: entity });
+        app.update();
+
+        let emitted = drain_vfx(&mut app);
+        let play = find_play_anim(
+            &emitted,
+            crate::network::vfx_animation_trigger::ANIM_SHIELD_RAISE,
+        );
+        assert!(
+            play.is_some(),
+            "raise_shield_handler must emit PlayAnim{{anim_id==\"bong:shield_raise\"}} \
+             when entity has Position+UniqueId — emit branch was previously unreachable in tests; \
+             emitted events: {emitted:?}"
+        );
+    }
+
+    // ── #1: lower_shield_handler 发 StopAnim{bong:shield_raise} ───────────────
+    // 验证 LowerShield 后 VfxEventRequest 队列含 StopAnim{anim_id=="bong:shield_raise"}，
+    // 锁住「松开右键→停循环动画」闭环。
+    #[test]
+    fn lower_shield_emits_stop_anim_when_entity_has_position_and_unique_id() {
+        let mut app = make_app();
+        let entity = spawn_entity_with_pos_uid(&mut app, "alice_lower");
+
+        // 先举盾（产生 PlayAnim），再排空，专注验证 LowerShield 的 StopAnim
+        app.world_mut()
+            .resource_mut::<Events<RaiseShieldIntent>>()
+            .send(RaiseShieldIntent { player: entity });
+        app.update();
+        let _ = drain_vfx(&mut app); // discard raise events
+
+        // 放盾
+        app.world_mut()
+            .resource_mut::<Events<LowerShieldIntent>>()
+            .send(LowerShieldIntent { player: entity });
+        app.update();
+
+        let emitted = drain_vfx(&mut app);
+        let stop = find_stop_anim(
+            &emitted,
+            crate::network::vfx_animation_trigger::ANIM_SHIELD_RAISE,
+        );
+        assert!(
+            stop.is_some(),
+            "lower_shield_handler must emit StopAnim{{anim_id==\"bong:shield_raise\"}} \
+             after LowerShieldIntent — isLoop:true animation must be explicitly stopped; \
+             emitted events: {emitted:?}"
+        );
+    }
+
+    // ── #1: cleanup_shield_on_death 发 StopAnim{bong:shield_raise} ────────────
+    // 死亡时举盾态的循环动画必须被停止（死亡后仍连接，视觉需复位）。
+    #[test]
+    fn cleanup_on_death_emits_stop_anim_when_blocking() {
+        let mut app = make_app();
+        let entity = spawn_entity_with_pos_uid(&mut app, "alice_death");
+
+        // 举盾
+        app.world_mut()
+            .resource_mut::<Events<RaiseShieldIntent>>()
+            .send(RaiseShieldIntent { player: entity });
+        app.update();
+        let _ = drain_vfx(&mut app); // discard raise events
+
+        // 触发死亡
+        app.world_mut()
+            .resource_mut::<Events<DeathEvent>>()
+            .send(DeathEvent {
+                target: entity,
+                cause: "test_death_anim".to_string(),
+                attacker: None,
+                attacker_player_id: None,
+                at_tick: 0,
+            });
+        app.update();
+
+        let emitted = drain_vfx(&mut app);
+        let stop = find_stop_anim(
+            &emitted,
+            crate::network::vfx_animation_trigger::ANIM_SHIELD_RAISE,
+        );
+        assert!(
+            stop.is_some(),
+            "cleanup_shield_on_death must emit StopAnim{{anim_id==\"bong:shield_raise\"}} \
+             when player dies while blocking — isLoop:true needs explicit stop even on death; \
+             emitted events: {emitted:?}"
+        );
+    }
+
+    // ── #1: cleanup_shield_on_death 无举盾时不发 StopAnim ────────────────────
+    // 死亡时没有 ShieldBlocking 状态，不应 emit StopAnim（无举盾无需停动画）。
+    #[test]
+    fn cleanup_on_death_no_stop_anim_when_not_blocking() {
+        let mut app = make_app();
+        let entity = spawn_entity_with_pos_uid(&mut app, "alice_death_no_block");
+
+        // 直接死亡，未举盾
+        app.world_mut()
+            .resource_mut::<Events<DeathEvent>>()
+            .send(DeathEvent {
+                target: entity,
+                cause: "test_death_no_block".to_string(),
+                attacker: None,
+                attacker_player_id: None,
+                at_tick: 0,
+            });
+        app.update();
+
+        let emitted = drain_vfx(&mut app);
+        let stop = find_stop_anim(
+            &emitted,
+            crate::network::vfx_animation_trigger::ANIM_SHIELD_RAISE,
+        );
+        assert!(
+            stop.is_none(),
+            "cleanup_shield_on_death must NOT emit StopAnim when player was not blocking; \
+             emitted events: {emitted:?}"
         );
     }
 }

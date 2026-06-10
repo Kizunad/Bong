@@ -668,6 +668,20 @@ pub fn emit_shield_raise_for_entity(
     ));
 }
 
+/// plan-shield-block-v1 P1 — 向 entity 发送 `bong:shield_raise` 停止信号，结束循环举盾动画。
+/// 由 `combat::shield_block::lower_shield_handler` 和 `cleanup_shield_on_death` 调用。
+/// entity 若没有 Position/UniqueId 则静默 skip（断线后实体可能已移除 Client component）。
+pub fn emit_shield_stop_for_entity(
+    entity: valence::prelude::Entity,
+    players: &Query<(&valence::prelude::Position, &valence::prelude::UniqueId)>,
+    vfx_events: &mut EventWriter<VfxEventRequest>,
+) {
+    let Ok((position, unique_id)) = players.get(entity) else {
+        return;
+    };
+    emit_stop_for_entity(position, unique_id, ANIM_SHIELD_RAISE, 3, vfx_events);
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
