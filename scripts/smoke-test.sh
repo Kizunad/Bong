@@ -20,8 +20,9 @@ echo "=== [2/4] Rust tests ==="
 if cargo test 2>&1 | tee /tmp/bong-test.log | tail -5; then pass "cargo test"; else fail "cargo test"; fi
 
 echo ""
-echo "=== [3/4] Server smoke run (15s) ==="
-timeout 15s cargo run 2>&1 | tee /tmp/bong-smoke.log || true
+echo "=== [3/4] Server smoke run (30s) ==="
+if cargo build 2>/dev/null; then pass "cargo build"; else fail "cargo build"; fi
+timeout 30s cargo run 2>&1 | tee /tmp/bong-smoke.log || true
 grep -q "\[bong\]\[bridge\] tokio runtime started" /tmp/bong-smoke.log && pass "bridge startup" || fail "bridge startup"
 grep -q "\[bong\]\[world\] creating overworld test area" /tmp/bong-smoke.log && pass "world creation" || fail "world creation"
 grep -q "\[bong\]\[player\] registering player init/cleanup systems" /tmp/bong-smoke.log && pass "player system" || fail "player system"
