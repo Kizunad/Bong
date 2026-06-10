@@ -938,29 +938,3 @@ base_weight = 6.0
 rarity = "rare"
 spirit_quality_initial = 0.5
 description = "龛石灵铁木台组合的永久复活点基座。"
-
-# ═══════════════════════════════════════════════════════════════════════════
-# 炼丹 / 炼器预备 (2)
-# ═══════════════════════════════════════════════════════════════════════════
-
-[[item]]
-id = "furnace_kit_fantie"
-name = "凡铁炉组件"
-category = "misc"
-grid_w = 2
-grid_h = 2
-base_weight = 8.0
-rarity = "common"
-spirit_quality_initial = 0.0
-description = "凡铁拼焊石块砌底的炉胎。放置后消耗此 item 并 spawn furnace ECS entity。"
-
-[[item]]
-id = "forge_station_kit"
-name = "锻造台组件"
-category = "misc"
-grid_w = 2
-grid_h = 2
-base_weight = 10.0
-rarity = "common"
-spirit_quality_initial = 0.0
-description = "凡铁砧灵木架石块基的锻造台料包。"

@@ -23,7 +23,7 @@ grid_w = 2
 grid_h = 2
 base_weight = 8.0
 rarity = "common"
-spirit_quality_initial = 0.6
+spirit_quality_initial = 0.57
 description = "最入门的炼丹炉。摆稳了就能起炉，坏了再打一座就是。"
 
 [[item]]
