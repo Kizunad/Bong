@@ -240,6 +240,9 @@ pub enum ItemCategory {
     Container,
     /// plan-food-v1 P0 — 灵食（熟肉 / 陈饼 / 灵果 / 陈酒 / 陈醋等），消费时触发 FoodRegen。
     Food,
+    /// plan-shield-block-v1 P0 — 凡人级物理防御盾牌（wooden_shield / bone_shield），装备于 off_hand 槽。
+    /// 全程不涉真元（纯体力消耗），与 ItemCategory::Armor 语义不同（ArmorProfile 硬拒非四槽）。
+    Shield,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -1598,7 +1601,9 @@ fn default_max_stack_count_for_category(category: ItemCategory) -> u32 {
         | ItemCategory::RecipeFragment
         | ItemCategory::RecipeHint
         | ItemCategory::Scroll
-        | ItemCategory::Container => 1,
+        | ItemCategory::Container
+        // plan-shield-block-v1 P0 — 盾牌不可叠加，与武器/防具同为 1。
+        | ItemCategory::Shield => 1,
     }
 }
 
@@ -1969,6 +1974,8 @@ fn parse_item_category(
         "container" => Ok(ItemCategory::Container),
         // plan-food-v1 P0 — 灵食分类
         "food" => Ok(ItemCategory::Food),
+        // plan-shield-block-v1 P0 — 凡人级物理防御盾牌
+        "shield" => Ok(ItemCategory::Shield),
         other => Err(format!(
             "{} item `{item_id}` has unknown category `{other}`",
             source_path.display()
@@ -3758,6 +3765,13 @@ fn validate_move_semantics(
                 item.template_id
             ))
         }
+        // plan-shield-block-v1 P0 — 盾牌（Shield 类）同样不能进 hotbar，必须留在 off_hand 槽。
+        InventoryLocationV1::Hotbar { .. } if matches!(template.category, ItemCategory::Shield) => {
+            Err(format!(
+                "shield `{}` cannot move to hotbar; shield must stay in equipped slots",
+                item.template_id
+            ))
+        }
         InventoryLocationV1::Hotbar { .. }
             if matches!(template.category, ItemCategory::Treasure) =>
         {
@@ -3801,6 +3815,18 @@ fn validate_move_semantics(
                     if inventory.equipped.contains_key(EQUIP_SLOT_TWO_HAND) && !from_two_hand {
                         return Err(
                             "cannot equip off_hand while two_hand slot is occupied".to_string()
+                        );
+                    }
+                    return Ok(());
+                }
+
+                // plan-shield-block-v1 P0 — 盾牌（Shield 类）可装入 off_hand；
+                // 同样受 two_hand 占用约束，但不需要 weapon_spec（盾无 weapon_spec）。
+                if matches!(template.category, ItemCategory::Shield) {
+                    if inventory.equipped.contains_key(EQUIP_SLOT_TWO_HAND) && !from_two_hand {
+                        return Err(
+                            "cannot equip off_hand shield while two_hand slot is occupied"
+                                .to_string(),
                         );
                     }
                     return Ok(());
@@ -6660,6 +6686,42 @@ cols = 4
         assert!(error.contains("armor `armor_bone_boots` cannot move to hotbar"));
     }
 
+    // plan-shield-block-v1 P0 MAJOR #1 — 盾不能进 hotbar（Shield category 守卫回归）。
+    #[test]
+    fn apply_move_rejects_shield_to_hotbar() {
+        use crate::schema::inventory::InventoryLocationV1;
+
+        let registry = load_item_registry().expect("item registry should load");
+        let mut inv = make_test_inventory_with_one_item();
+        inv.containers[0].items[0].instance.template_id = "wooden_shield".to_string();
+        inv.containers[0].items[0].instance.display_name = "木盾".to_string();
+        inv.containers[0].items[0].instance.grid_h = 2;
+
+        let error = apply_inventory_move(
+            &mut inv,
+            &registry,
+            42,
+            &InventoryLocationV1::Container {
+                container_id: "main_pack".to_string(),
+                row: 0,
+                col: 0,
+            },
+            &InventoryLocationV1::Hotbar { index: 0 },
+        )
+        .expect_err("shield should be rejected from hotbar");
+
+        assert!(
+            error.contains("shield `wooden_shield` cannot move to hotbar"),
+            "期望错误消息含 'shield `wooden_shield` cannot move to hotbar'，\
+             实际消息：{error}"
+        );
+        assert!(
+            error.contains("shield must stay in equipped slots"),
+            "期望错误消息含 'shield must stay in equipped slots'，\
+             实际消息：{error}"
+        );
+    }
+
     #[test]
     fn apply_move_rejects_non_dagger_off_hand_weapon() {
         use crate::schema::inventory::{EquipSlotV1, InventoryLocationV1};
@@ -6686,6 +6748,42 @@ cols = 4
         .expect_err("sword should be rejected from off_hand");
 
         assert!(error.contains("only dagger/fist are allowed"));
+    }
+
+    // plan-shield-block-v1 P0 MAJOR #2 — off_hand 路径 a：无 weapon_spec 的非武器物品（armor）
+    // 装 off_hand 被拒，错误消息含 "expected dagger/fist weapon or treasure"。
+    #[test]
+    fn apply_move_rejects_non_weapon_armor_to_off_hand() {
+        use crate::schema::inventory::{EquipSlotV1, InventoryLocationV1};
+
+        let registry = load_item_registry().expect("item registry should load");
+        let mut inv = make_test_inventory_with_one_item();
+        // armor_bone_boots：ItemCategory::Armor，无 weapon_spec → 走路径 a 被 ok_or_else 拒
+        inv.containers[0].items[0].instance.template_id = "armor_bone_boots".to_string();
+        inv.containers[0].items[0].instance.display_name = "骨甲靴".to_string();
+        inv.containers[0].items[0].instance.grid_w = 1;
+        inv.containers[0].items[0].instance.grid_h = 1;
+
+        let error = apply_inventory_move(
+            &mut inv,
+            &registry,
+            42,
+            &InventoryLocationV1::Container {
+                container_id: "main_pack".to_string(),
+                row: 0,
+                col: 0,
+            },
+            &InventoryLocationV1::Equip {
+                slot: EquipSlotV1::OffHand,
+            },
+        )
+        .expect_err("armor should be rejected from off_hand (path a: no weapon_spec)");
+
+        assert!(
+            error.contains("expected dagger/fist weapon or treasure"),
+            "期望错误消息含 'expected dagger/fist weapon or treasure'（off_hand 路径 a，\
+             无 weapon_spec 非武器物品），实际消息：{error}"
+        );
     }
 
     #[test]
@@ -9857,6 +9955,272 @@ cols = 4
             tpl.shelflife_track,
             Some(DecayTrack::Spoil),
             "shelflife_track='spoil' 应解析为 DecayTrack::Spoil"
+        );
+    }
+
+    // ── plan-shield-block-v1 P0 — ItemCategory::Shield 饱和化测试 ──────────────
+
+    /// Shield 变体 serde 正反对拍（happy path）：序列化后再反序列化须还原原值。
+    #[test]
+    fn item_category_shield_serde_roundtrip() {
+        let cat = ItemCategory::Shield;
+        let json = serde_json::to_string(&cat).expect(
+            "期望 Shield 变体可序列化为 JSON，\
+             实际 serde_json::to_string 失败",
+        );
+        let parsed: ItemCategory = serde_json::from_str(&json).expect(
+            "期望 JSON 字符串可反序列化回 ItemCategory::Shield，\
+             实际 serde_json::from_str 失败",
+        );
+        assert_eq!(
+            parsed,
+            ItemCategory::Shield,
+            "期望 serde roundtrip 结果为 Shield，\
+             实际得到 {parsed:?}"
+        );
+    }
+
+    /// parse_item_category("shield") 应返回 ItemCategory::Shield。
+    #[test]
+    fn parse_item_category_shield_happy() {
+        use std::path::PathBuf;
+        let path = PathBuf::from("test.toml");
+        let result = parse_item_category("shield", &path, "wooden_shield");
+        assert!(
+            matches!(result, Ok(ItemCategory::Shield)),
+            "期望 parse_item_category(\"shield\") = Ok(Shield)，因为 plan-shield-block-v1 P0 加了 shield 分支，\
+             实际得到 {result:?}"
+        );
+    }
+
+    /// parse_item_category("Shield")（首字母大写）因 to_ascii_lowercase 后应也命中 shield 分支。
+    #[test]
+    fn parse_item_category_shield_case_insensitive() {
+        use std::path::PathBuf;
+        let path = PathBuf::from("test.toml");
+        let result = parse_item_category("Shield", &path, "wooden_shield");
+        assert!(
+            matches!(result, Ok(ItemCategory::Shield)),
+            "期望 parse_item_category(\"Shield\") 因 trim+to_ascii_lowercase 后命中 shield 分支，\
+             实际得到 {result:?}"
+        );
+    }
+
+    /// parse_item_category("") 应返回 Err（未知 category 分支）。
+    #[test]
+    fn parse_item_category_empty_string_errors() {
+        use std::path::PathBuf;
+        let path = PathBuf::from("test.toml");
+        let result = parse_item_category("", &path, "x");
+        assert!(
+            result.is_err(),
+            "期望 parse_item_category(\"\") 返回 Err（空字符串不是合法 category），\
+             实际得到 {result:?}"
+        );
+    }
+
+    /// ItemCategory::Shield 的 max_stack_count 应为 1（与武器/防具同级，不可叠加）。
+    #[test]
+    fn shield_category_default_stack_count_is_one() {
+        assert_eq!(
+            default_max_stack_count_for_category(ItemCategory::Shield),
+            1,
+            "期望 Shield max_stack_count = 1，因为盾牌与武器/防具同级不可叠加，\
+             实际得到 {}",
+            default_max_stack_count_for_category(ItemCategory::Shield)
+        );
+    }
+
+    /// workbench_materials.toml 中 wooden_shield / bone_shield 应以 ItemCategory::Shield 加载。
+    #[test]
+    fn shield_templates_load_with_shield_category() {
+        let registry =
+            load_item_registry().expect("item registry should load from assets/items/*.toml");
+
+        for id in ["wooden_shield", "bone_shield"] {
+            let tpl = registry.get(id).unwrap_or_else(|| {
+                panic!(
+                    "期望 item `{id}` 在 registry 中存在，\
+                     实际未找到——检查 workbench_materials.toml 是否包含该 id"
+                )
+            });
+            assert_eq!(
+                tpl.category,
+                ItemCategory::Shield,
+                "期望 item `{id}` category = Shield（plan-shield-block-v1 P0 改 category），\
+                 实际得到 {:?}",
+                tpl.category
+            );
+        }
+    }
+
+    /// 盾牌装入 off_hand 应成功（happy path）。
+    #[test]
+    fn apply_move_shield_to_off_hand_succeeds() {
+        use crate::schema::inventory::{EquipSlotV1, InventoryLocationV1};
+
+        let registry = load_item_registry().expect("item registry should load");
+        let mut inv = make_test_inventory_with_one_item();
+        inv.containers[0].items[0].instance.template_id = "wooden_shield".to_string();
+        inv.containers[0].items[0].instance.display_name = "木盾".to_string();
+        inv.containers[0].items[0].instance.grid_h = 2;
+
+        let result = apply_inventory_move(
+            &mut inv,
+            &registry,
+            42,
+            &InventoryLocationV1::Container {
+                container_id: "main_pack".to_string(),
+                row: 0,
+                col: 0,
+            },
+            &InventoryLocationV1::Equip {
+                slot: EquipSlotV1::OffHand,
+            },
+        );
+        assert!(
+            result.is_ok(),
+            "期望 wooden_shield 装入 off_hand 成功（plan-shield-block-v1 P0 消灭孤岛根因），\
+             实际得到错误：{result:?}"
+        );
+        // MINOR #3 — 锁住「槽位真被盾占用」：断言 equipped 里 OFF_HAND 槽存在且 template_id 正确。
+        assert_eq!(
+            inv.equipped
+                .get(EQUIP_SLOT_OFF_HAND)
+                .map(|item| item.template_id.as_str()),
+            Some("wooden_shield"),
+            "期望 OFF_HAND 槽被 wooden_shield 占用（plan-shield-block-v1 P0 post-state 断言），\
+             实际 equipped[off_hand] = {:?}",
+            inv.equipped
+                .get(EQUIP_SLOT_OFF_HAND)
+                .map(|i| &i.template_id)
+        );
+    }
+
+    /// two_hand 槽占用时拒绝装 off_hand 盾（边界）。
+    #[test]
+    fn apply_move_shield_to_off_hand_rejected_when_two_hand_occupied() {
+        use crate::schema::inventory::{EquipSlotV1, InventoryLocationV1};
+
+        let registry = load_item_registry().expect("item registry should load");
+        let mut inv = make_test_inventory_with_one_item();
+        inv.containers[0].items[0].instance.template_id = "wooden_shield".to_string();
+        inv.containers[0].items[0].instance.display_name = "木盾".to_string();
+        inv.containers[0].items[0].instance.grid_h = 2;
+        inv.equipped.insert(
+            EQUIP_SLOT_TWO_HAND.to_string(),
+            ItemInstance {
+                instance_id: 99,
+                template_id: "wooden_staff".to_string(),
+                display_name: "木杖".to_string(),
+                grid_w: 1,
+                grid_h: 3,
+                weight: 2.0,
+                rarity: ItemRarity::Common,
+                description: String::new(),
+                stack_count: 1,
+                spirit_quality: 1.0,
+                durability: 1.0,
+                freshness: None,
+                mineral_id: None,
+                charges: None,
+                forge_quality: None,
+                forge_color: None,
+                forge_side_effects: Vec::new(),
+                forge_achieved_tier: None,
+                alchemy: None,
+                lingering_owner_qi: None,
+            },
+        );
+
+        let error = apply_inventory_move(
+            &mut inv,
+            &registry,
+            42,
+            &InventoryLocationV1::Container {
+                container_id: "main_pack".to_string(),
+                row: 0,
+                col: 0,
+            },
+            &InventoryLocationV1::Equip {
+                slot: EquipSlotV1::OffHand,
+            },
+        )
+        .expect_err(
+            "期望 two_hand 占用时装盾到 off_hand 被拒绝，\
+             实际返回 Ok——校验逻辑漏掉了 two_hand 占用检查",
+        );
+
+        assert!(
+            error.contains("two_hand slot is occupied"),
+            "期望错误消息含 'two_hand slot is occupied'，\
+             实际消息：{error}"
+        );
+    }
+
+    /// 非盾非 treasure 非 dagger 物品装 off_hand 仍按原逻辑拒绝（回归保护）。
+    #[test]
+    fn apply_move_non_shield_non_treasure_non_dagger_off_hand_still_rejected() {
+        use crate::schema::inventory::{EquipSlotV1, InventoryLocationV1};
+
+        let registry = load_item_registry().expect("item registry should load");
+        let mut inv = make_test_inventory_with_one_item();
+        // iron_sword：Weapon 但非 Dagger/Fist，应被拒
+        inv.containers[0].items[0].instance.template_id = "iron_sword".to_string();
+        inv.containers[0].items[0].instance.display_name = "凡铁剑".to_string();
+        inv.containers[0].items[0].instance.grid_h = 2;
+
+        let error = apply_inventory_move(
+            &mut inv,
+            &registry,
+            42,
+            &InventoryLocationV1::Container {
+                container_id: "main_pack".to_string(),
+                row: 0,
+                col: 0,
+            },
+            &InventoryLocationV1::Equip {
+                slot: EquipSlotV1::OffHand,
+            },
+        )
+        .expect_err(
+            "期望 iron_sword 装 off_hand 被拒绝（非盾非 treasure 非 dagger），\
+             实际返回 Ok——Shield 分支意外放行了其他类别",
+        );
+
+        assert!(
+            error.contains("only dagger/fist are allowed"),
+            "期望错误消息含 'only dagger/fist are allowed'，\
+             实际消息：{error}"
+        );
+    }
+
+    /// equip_slot_for_item_id("armor_iron_chestplate") 正向返回 Some(Chest)（路由回归正向断言）。
+    #[test]
+    fn equip_slot_for_item_id_armor_still_routes_correctly() {
+        use crate::armor::mundane::equip_slot_for_item_id;
+        use crate::schema::inventory::EquipSlotV1;
+        let slot = equip_slot_for_item_id("armor_iron_chestplate");
+        // MINOR #4 — MundaneArmorSlot::Chestplate → EquipSlotV1::Chest；
+        // 正向断言锁住「iron chestplate 确实路由到 Chest 槽」，防 Shield 分支意外影响 Armor routing。
+        assert_eq!(
+            slot,
+            Some(EquipSlotV1::Chest),
+            "期望 equip_slot_for_item_id(\"armor_iron_chestplate\") == Some(Chest)，\
+             plan-shield-block-v1 P0 不改此函数；实际得到 {slot:?}"
+        );
+    }
+
+    /// equip_slot_for_item_id("wooden_shield") 仍返回 None（盾不经此函数）。
+    #[test]
+    fn equip_slot_for_item_id_wooden_shield_returns_none() {
+        use crate::armor::mundane::equip_slot_for_item_id;
+        let slot = equip_slot_for_item_id("wooden_shield");
+        assert!(
+            slot.is_none(),
+            "期望 equip_slot_for_item_id(\"wooden_shield\") = None，\
+             因为盾走 EquipSlotV1::OffHand 3799 arm 不走此函数，\
+             实际得到 {slot:?}"
         );
     }
 }

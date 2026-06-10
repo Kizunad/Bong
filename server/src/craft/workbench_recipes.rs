@@ -784,9 +784,9 @@ fn register_weapon_components(registry: &mut CraftRegistry) -> Result<(), Regist
             CraftCategory::Misc,
             vec![],
         ),
-        // #59 木盾 (ArmorCraft)
+        // #59 木盾 (ArmorCraft) — plan-shield-block-v1 P0: recipe id 由 weapon.* 归位到 shield.*
         (
-            "workbench.weapon.wooden_shield",
+            "workbench.shield.wooden_shield",
             "木盾",
             vec![("wood_plank", 4), ("iron_ingot", 1)],
             0.0,
@@ -795,9 +795,9 @@ fn register_weapon_components(registry: &mut CraftRegistry) -> Result<(), Regist
             CraftCategory::ArmorCraft,
             vec![],
         ),
-        // #60 骨盾 (ArmorCraft)
+        // #60 骨盾 (ArmorCraft) — plan-shield-block-v1 P0: recipe id 由 weapon.* 归位到 shield.*
         (
-            "workbench.weapon.bone_shield",
+            "workbench.shield.bone_shield",
             "骨盾",
             vec![("shu_gu", 6), ("grass_rope", 2)],
             0.0,
