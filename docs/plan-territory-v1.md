@@ -6,11 +6,13 @@
 
 | 阶段 | 内容 | 状态 |
 |------|------|------|
-| P0 | ZoneInfluence 区域影响力系统（按累计停留/修炼/战斗自动计算） | ⬜ |
+| P0 | ZoneInfluence 区域影响力系统（按累计停留/修炼/战斗自动计算） | ✅ 2026-06-11 |
 | P1 | 驻守收益与代价（灵气优先权 + 天道注意力加速 + NPC 态度） | ⬜ |
 | P2 | 领地争夺机制（侵入/驱逐/灵脉占据的博弈规则） | ⬜ |
 | P3 | 领地信息暴露（narration 广播 + NPC 传话 + 环境痕迹） | ⬜ |
 | P4 | 饱和测试 | ⬜ |
+
+> **P0 落地（2026-06-11）**：`server/src/world/territory.rs` 新建——`ZoneInfluenceMap` Resource（按 zone.name+char_id 键控，跨 session 稳定；Zone 非 entity 故不用 Component）+ `territory_tick`（挂 `world::register` Update，60s 节流，停留/修炼/战斗三源累积，权重：境界×(rank+1) / TiandaoAttention 驻守加速 / Renown 三档 / **§十 灵气零和**：spirit_qi≤0 废地累积归零 + 离场衰减） + `ZoneDominance` 霸主判定写回 + `InfluenceChangedEvent` + persistence **v28** SQLite round-trip。**遗留**：`InfluenceSources.combat_wins/player_kills/gather_count` 事件级胜负累积（需 DeathEvent 归属判定）在 **P1**；`InfluenceChangedEvent` consumer（NPC 反应=P1 / narration=P3）。cargo fmt+clippy(-D warnings)+test **8132 passed**（territory 专项 28：三源累积/权重/废地/衰减/dominance 三态+A→B转换/平局/event/持久化round-trip + 节流 bug 修复）。
 
 ---
 

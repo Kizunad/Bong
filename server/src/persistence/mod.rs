@@ -37,7 +37,7 @@ pub mod identity;
 pub const DEFAULT_DATABASE_PATH: &str = "data/bong.db";
 pub const SQLITE_BUSY_TIMEOUT_MS: u64 = 15_000;
 const DEFAULT_DECEASED_PUBLIC_DIR: &str = "../library-web/public/deceased";
-const CURRENT_USER_VERSION: i32 = 28;
+const CURRENT_USER_VERSION: i32 = 29;
 const AGENT_WORLD_MODEL_ROW_ID: i64 = 1;
 const ASCENSION_QUOTA_ROW_ID: i64 = 1;
 const TRIBULATION_KIND_DU_XU: &str = "du_xu";
@@ -119,6 +119,14 @@ struct ZoneRuntimeSnapshotState {
 }
 
 impl Resource for ZoneRuntimeSnapshotState {}
+
+/// plan-territory-v1 P0：zone_influence snapshot 的节流状态。
+#[derive(Debug, Default)]
+struct ZoneInfluenceSnapshotState {
+    last_snapshot_wall: i64,
+}
+
+impl Resource for ZoneInfluenceSnapshotState {}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, SystemSet)]
 pub(crate) struct PersistenceBootstrapSet;
@@ -423,6 +431,27 @@ pub struct ZoneRuntimeRecord {
     pub danger_level: u8,
 }
 
+/// plan-territory-v1 P0：区域影响力持久化记录（zone_influence 表一行）。
+#[cfg_attr(not(test), allow(dead_code))]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ZoneInfluenceRecord {
+    pub zone_id: String,
+    pub char_id: String,
+    pub value: f64,
+    pub meditation_ticks: u64,
+    pub combat_wins: u32,
+    pub player_kills: u32,
+    pub gather_count: u32,
+    pub continuous_sessions: u32,
+    pub last_activity_tick: u64,
+    /// dominant=true 表示该 char_id 是此 zone 的当前霸主。
+    pub dominant: bool,
+    pub established_tick: u64,
+    pub public_known: bool,
+    pub schema_version: i32,
+    pub last_updated_wall: i64,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ZoneOverlayRecord {
     pub zone_id: String,
@@ -570,6 +599,7 @@ pub fn register(app: &mut App) {
         .init_resource::<DormantRelicSweepState>()
         .init_resource::<DailyBackupState>()
         .init_resource::<ZoneRuntimeSnapshotState>()
+        .init_resource::<ZoneInfluenceSnapshotState>()
         .add_systems(
             Startup,
             bootstrap_persistence_system.in_set(PersistenceBootstrapSet),
@@ -583,6 +613,7 @@ pub fn register(app: &mut App) {
                 sweep_dormant_relic_retention_system,
                 daily_midnight_backup_system,
                 persist_zone_runtime_system,
+                persist_zone_influence_system,
             ),
         );
 }
@@ -592,6 +623,7 @@ fn bootstrap_persistence_system(
     mut daily_backup_state: valence::prelude::ResMut<DailyBackupState>,
     mut zones: Option<ResMut<crate::world::zone::ZoneRegistry>>,
     mut void_action_cooldowns: Option<ResMut<VoidActionCooldowns>>,
+    mut zone_influence_map: Option<ResMut<crate::world::territory::ZoneInfluenceMap>>,
 ) {
     let wall_clock = current_unix_seconds();
     daily_backup_state.last_backup_day = Some(utc_day_from_unix_seconds(wall_clock));
@@ -661,6 +693,20 @@ fn bootstrap_persistence_system(
             );
         }
     }
+
+    // plan-territory-v1 P0：hydrate 区域影响力（照 zones_runtime hydrate 模式）
+    if let Some(influence_map) = zone_influence_map.as_deref_mut() {
+        match hydrate_zone_influence(&settings, influence_map) {
+            Ok(count) if count > 0 => tracing::info!(
+                "[bong][persistence] hydrated {count} zone-influence record(s) from sqlite"
+            ),
+            Ok(_) => {}
+            Err(error) => tracing::warn!(
+                "[bong][persistence] failed to hydrate zone influence from sqlite at {}: {error}",
+                settings.db_path().display()
+            ),
+        }
+    }
 }
 
 fn daily_midnight_backup_system(
@@ -715,6 +761,35 @@ fn persist_zone_runtime_system(
         }
         Err(error) => tracing::warn!(
             "[bong][persistence] failed to persist zone runtime snapshot at {}: {error}",
+            settings.db_path().display()
+        ),
+    }
+}
+
+/// plan-territory-v1 P0：zone_influence 快照 system（节流 ZONE_RUNTIME_SNAPSHOT_INTERVAL_SECS）。
+fn persist_zone_influence_system(
+    settings: Res<PersistenceSettings>,
+    mut snapshot_state: ResMut<ZoneInfluenceSnapshotState>,
+    influence_map: Option<Res<crate::world::territory::ZoneInfluenceMap>>,
+) {
+    let Some(influence_map) = influence_map else {
+        return;
+    };
+
+    let wall_clock = current_unix_seconds();
+    if snapshot_state.last_snapshot_wall > 0
+        && wall_clock.saturating_sub(snapshot_state.last_snapshot_wall)
+            < ZONE_RUNTIME_SNAPSHOT_INTERVAL_SECS
+    {
+        return;
+    }
+
+    match persist_zone_influence_snapshot(&settings, &influence_map) {
+        Ok(_) => {
+            snapshot_state.last_snapshot_wall = wall_clock;
+        }
+        Err(error) => tracing::warn!(
+            "[bong][persistence] failed to persist zone influence snapshot at {}: {error}",
             settings.db_path().display()
         ),
     }
@@ -1735,6 +1810,39 @@ fn apply_migrations(connection: &mut Connection) -> rusqlite::Result<()> {
         transaction.commit()?;
     }
 
+    let current_version: i32 =
+        connection.query_row("PRAGMA user_version;", [], |row| row.get(0))?;
+    if current_version < 29 {
+        // plan-territory-v1 P0：区域影响力持久化表（zone_influence）。
+        // key=(zone_id, char_id)；dominant=1 标记当前霸主行。
+        let transaction = connection.transaction()?;
+        transaction.execute_batch(
+            "
+            CREATE TABLE IF NOT EXISTS zone_influence (
+                zone_id               TEXT    NOT NULL,
+                char_id               TEXT    NOT NULL,
+                value                 REAL    NOT NULL DEFAULT 0.0,
+                meditation_ticks      INTEGER NOT NULL DEFAULT 0,
+                combat_wins           INTEGER NOT NULL DEFAULT 0,
+                player_kills          INTEGER NOT NULL DEFAULT 0,
+                gather_count          INTEGER NOT NULL DEFAULT 0,
+                continuous_sessions   INTEGER NOT NULL DEFAULT 0,
+                last_activity_tick    INTEGER NOT NULL DEFAULT 0,
+                dominant              INTEGER NOT NULL DEFAULT 0,
+                established_tick      INTEGER NOT NULL DEFAULT 0,
+                public_known          INTEGER NOT NULL DEFAULT 0,
+                schema_version        INTEGER NOT NULL DEFAULT 1,
+                last_updated_wall     INTEGER NOT NULL DEFAULT 0,
+                PRIMARY KEY (zone_id, char_id)
+            );
+            CREATE INDEX IF NOT EXISTS idx_zone_influence_zone_id
+            ON zone_influence (zone_id);
+            ",
+        )?;
+        transaction.execute_batch("PRAGMA user_version = 29;")?;
+        transaction.commit()?;
+    }
+
     let final_version: i32 = connection.query_row("PRAGMA user_version;", [], |row| row.get(0))?;
     if final_version != CURRENT_USER_VERSION {
         return Err(rusqlite::Error::ToSqlConversionFailure(Box::new(
@@ -2718,6 +2826,183 @@ fn hydrate_zone_overlays(
         .apply_overlay_records(&overlay_rows)
         .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
     Ok(())
+}
+
+/// plan-territory-v1 P0：持久化 ZoneInfluenceMap 快照到 SQLite。
+/// 照 `persist_zone_runtime_snapshot` 范本。
+#[cfg_attr(not(test), allow(dead_code))]
+pub fn persist_zone_influence_snapshot(
+    settings: &PersistenceSettings,
+    influence_map: &crate::world::territory::ZoneInfluenceMap,
+) -> io::Result<()> {
+    let wall_clock = current_unix_seconds();
+    let mut connection = open_persistence_connection(settings)?;
+    let transaction = connection.transaction().map_err(io::Error::other)?;
+    for (zone_id, entry) in &influence_map.zones {
+        for (char_id, player_inf) in &entry.players {
+            let is_dominant = entry
+                .dominant
+                .as_ref()
+                .is_some_and(|d| d.char_id == *char_id);
+            let (established_tick, public_known) = if let Some(dom) = &entry.dominant {
+                if dom.char_id == *char_id {
+                    (dom.established_tick, dom.public_known)
+                } else {
+                    (0u64, false)
+                }
+            } else {
+                (0u64, false)
+            };
+            upsert_zone_influence(
+                &transaction,
+                &ZoneInfluenceRecord {
+                    zone_id: zone_id.clone(),
+                    char_id: char_id.clone(),
+                    value: player_inf.value,
+                    meditation_ticks: player_inf.source_breakdown.meditation_ticks,
+                    combat_wins: player_inf.source_breakdown.combat_wins,
+                    player_kills: player_inf.source_breakdown.player_kills,
+                    gather_count: player_inf.source_breakdown.gather_count,
+                    continuous_sessions: player_inf.source_breakdown.continuous_sessions,
+                    last_activity_tick: player_inf.last_activity_tick,
+                    dominant: is_dominant,
+                    established_tick,
+                    public_known,
+                    schema_version: CURRENT_SCHEMA_VERSION,
+                    last_updated_wall: wall_clock,
+                },
+            )?;
+        }
+    }
+    transaction.commit().map_err(io::Error::other)
+}
+
+/// plan-territory-v1 P0：从 SQLite 读取所有 zone_influence 记录。
+#[cfg_attr(not(test), allow(dead_code))]
+pub fn load_zone_influence_snapshot(
+    settings: &PersistenceSettings,
+) -> io::Result<Vec<ZoneInfluenceRecord>> {
+    let connection = open_persistence_connection(settings)?;
+    load_zone_influence_snapshot_from_connection(&connection)
+}
+
+/// plan-territory-v1 P0：从已有 Connection 读取 zone_influence 记录。
+#[cfg_attr(not(test), allow(dead_code))]
+pub fn load_zone_influence_snapshot_from_connection(
+    connection: &Connection,
+) -> io::Result<Vec<ZoneInfluenceRecord>> {
+    let mut statement = connection
+        .prepare(
+            "
+            SELECT zone_id, char_id, value,
+                   meditation_ticks, combat_wins, player_kills,
+                   gather_count, continuous_sessions, last_activity_tick,
+                   dominant, established_tick, public_known,
+                   schema_version, last_updated_wall
+            FROM zone_influence
+            ORDER BY zone_id ASC, char_id ASC
+            ",
+        )
+        .map_err(io::Error::other)?;
+    let rows = statement
+        .query_map([], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, f64>(2)?,
+                row.get::<_, i64>(3)?,
+                row.get::<_, i64>(4)?,
+                row.get::<_, i64>(5)?,
+                row.get::<_, i64>(6)?,
+                row.get::<_, i64>(7)?,
+                row.get::<_, i64>(8)?,
+                row.get::<_, i64>(9)?,
+                row.get::<_, i64>(10)?,
+                row.get::<_, i64>(11)?,
+                row.get::<_, i64>(12)?,
+                row.get::<_, i64>(13)?,
+            ))
+        })
+        .map_err(io::Error::other)?;
+
+    let mut records = Vec::new();
+    for row in rows {
+        let (
+            zone_id,
+            char_id,
+            value,
+            meditation_ticks,
+            combat_wins,
+            player_kills,
+            gather_count,
+            continuous_sessions,
+            last_activity_tick,
+            dominant,
+            established_tick,
+            public_known,
+            schema_version,
+            last_updated_wall,
+        ) = row.map_err(io::Error::other)?;
+        records.push(ZoneInfluenceRecord {
+            zone_id,
+            char_id,
+            value,
+            meditation_ticks: u64::try_from(meditation_ticks.max(0)).unwrap_or(u64::MAX),
+            combat_wins: sql_to_u32(combat_wins)?,
+            player_kills: sql_to_u32(player_kills)?,
+            gather_count: sql_to_u32(gather_count)?,
+            continuous_sessions: sql_to_u32(continuous_sessions)?,
+            last_activity_tick: u64::try_from(last_activity_tick.max(0)).unwrap_or(u64::MAX),
+            dominant: dominant != 0,
+            established_tick: u64::try_from(established_tick.max(0)).unwrap_or(u64::MAX),
+            public_known: public_known != 0,
+            schema_version: i32::try_from(schema_version).unwrap_or(CURRENT_SCHEMA_VERSION),
+            last_updated_wall,
+        });
+    }
+    Ok(records)
+}
+
+/// plan-territory-v1 P0：从 SQLite 记录 hydrate 到 ZoneInfluenceMap Resource。
+/// 返回 hydrate 成功的记录数。
+#[cfg_attr(not(test), allow(dead_code))]
+fn hydrate_zone_influence(
+    settings: &PersistenceSettings,
+    influence_map: &mut crate::world::territory::ZoneInfluenceMap,
+) -> io::Result<usize> {
+    use crate::world::territory::{InfluenceSources, PlayerInfluence, ZoneDominance};
+    let records = load_zone_influence_snapshot(settings)?;
+    let count = records.len();
+    for record in records {
+        let entry = influence_map
+            .zones
+            .entry(record.zone_id.clone())
+            .or_default();
+        entry.players.insert(
+            record.char_id.clone(),
+            PlayerInfluence {
+                value: record.value,
+                last_activity_tick: record.last_activity_tick,
+                source_breakdown: InfluenceSources {
+                    meditation_ticks: record.meditation_ticks,
+                    combat_wins: record.combat_wins,
+                    player_kills: record.player_kills,
+                    gather_count: record.gather_count,
+                    continuous_sessions: record.continuous_sessions,
+                },
+            },
+        );
+        // 恢复霸主状态（dominant=true 的那行）
+        if record.dominant {
+            entry.dominant = Some(ZoneDominance {
+                char_id: record.char_id.clone(),
+                influence: record.value,
+                established_tick: record.established_tick,
+                public_known: record.public_known,
+            });
+        }
+    }
+    Ok(count)
 }
 
 fn normalize_zone_overlay_payload(
@@ -4358,6 +4643,66 @@ fn upsert_zone_runtime(
                 i64::from(record.danger_level),
                 CURRENT_SCHEMA_VERSION,
                 wall_clock,
+            ],
+        )
+        .map_err(io::Error::other)?;
+    Ok(())
+}
+
+/// plan-territory-v1 P0：upsert zone_influence 行（照 upsert_zone_runtime 范本）。
+#[cfg_attr(not(test), allow(dead_code))]
+fn upsert_zone_influence(
+    transaction: &rusqlite::Transaction<'_>,
+    record: &ZoneInfluenceRecord,
+) -> io::Result<()> {
+    transaction
+        .execute(
+            "
+            INSERT INTO zone_influence (
+                zone_id,
+                char_id,
+                value,
+                meditation_ticks,
+                combat_wins,
+                player_kills,
+                gather_count,
+                continuous_sessions,
+                last_activity_tick,
+                dominant,
+                established_tick,
+                public_known,
+                schema_version,
+                last_updated_wall
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)
+            ON CONFLICT(zone_id, char_id) DO UPDATE SET
+                value                = excluded.value,
+                meditation_ticks     = excluded.meditation_ticks,
+                combat_wins          = excluded.combat_wins,
+                player_kills         = excluded.player_kills,
+                gather_count         = excluded.gather_count,
+                continuous_sessions  = excluded.continuous_sessions,
+                last_activity_tick   = excluded.last_activity_tick,
+                dominant             = excluded.dominant,
+                established_tick     = excluded.established_tick,
+                public_known         = excluded.public_known,
+                schema_version       = excluded.schema_version,
+                last_updated_wall    = excluded.last_updated_wall
+            ",
+            params![
+                record.zone_id,
+                record.char_id,
+                record.value,
+                i64::try_from(record.meditation_ticks).unwrap_or(i64::MAX),
+                i64::from(record.combat_wins),
+                i64::from(record.player_kills),
+                i64::from(record.gather_count),
+                i64::from(record.continuous_sessions),
+                i64::try_from(record.last_activity_tick).unwrap_or(i64::MAX),
+                i64::from(record.dominant),
+                i64::try_from(record.established_tick).unwrap_or(i64::MAX),
+                i64::from(record.public_known),
+                record.schema_version,
+                record.last_updated_wall,
             ],
         )
         .map_err(io::Error::other)?;
@@ -12240,6 +12585,208 @@ mod persistence_tests {
         );
     }
 
+    // ── plan-territory-v1 P0：zone_influence 持久化 round-trip ───────────────
+
+    #[test]
+    fn zone_influence_persistence_round_trip() {
+        use crate::world::territory::{
+            InfluenceSources, PlayerInfluence, ZoneDominance, ZoneInfluenceEntry, ZoneInfluenceMap,
+        };
+
+        let (settings, root) = persistence_settings("zone-influence-roundtrip");
+        bootstrap_sqlite(settings.db_path(), settings.server_run_id())
+            .expect("bootstrap should succeed");
+
+        // 构造 ZoneInfluenceMap：2 个 zone，其中 spawn 有霸主
+        let mut influence_map = ZoneInfluenceMap::default();
+
+        // zone 1: "spawn" — 有两个玩家，p1 是霸主
+        let mut spawn_entry = ZoneInfluenceEntry::default();
+        spawn_entry.players.insert(
+            "offline:HeroA".to_string(),
+            PlayerInfluence {
+                value: 45.5,
+                last_activity_tick: 12000,
+                source_breakdown: InfluenceSources {
+                    meditation_ticks: 200,
+                    combat_wins: 5,
+                    player_kills: 1,
+                    gather_count: 10,
+                    continuous_sessions: 3,
+                },
+            },
+        );
+        spawn_entry.players.insert(
+            "offline:RivalB".to_string(),
+            PlayerInfluence {
+                value: 30.0,
+                last_activity_tick: 11000,
+                source_breakdown: InfluenceSources {
+                    meditation_ticks: 100,
+                    ..Default::default()
+                },
+            },
+        );
+        spawn_entry.dominant = Some(ZoneDominance {
+            char_id: "offline:HeroA".to_string(),
+            influence: 45.5,
+            established_tick: 8000,
+            public_known: true,
+        });
+        influence_map.zones.insert("spawn".to_string(), spawn_entry);
+
+        // zone 2: "wilderness" — 单玩家无霸主
+        let mut wild_entry = ZoneInfluenceEntry::default();
+        wild_entry.players.insert(
+            "offline:Wanderer".to_string(),
+            PlayerInfluence {
+                value: 5.0,
+                last_activity_tick: 500,
+                source_breakdown: Default::default(),
+            },
+        );
+        influence_map
+            .zones
+            .insert("wilderness".to_string(), wild_entry);
+
+        // 持久化
+        persist_zone_influence_snapshot(&settings, &influence_map)
+            .expect("zone influence snapshot should persist");
+
+        // 读回
+        let records =
+            load_zone_influence_snapshot(&settings).expect("zone influence snapshot should load");
+        assert_eq!(
+            records.len(),
+            3,
+            "应有 3 条记录（spawn×2 + wilderness×1），实际 {}",
+            records.len()
+        );
+
+        // 找霸主行
+        let hero_record = records
+            .iter()
+            .find(|r| r.zone_id == "spawn" && r.char_id == "offline:HeroA")
+            .expect("应有 HeroA 记录");
+        assert!(
+            (hero_record.value - 45.5).abs() < 1e-9,
+            "value 应为 45.5，实际 {}",
+            hero_record.value
+        );
+        assert_eq!(
+            hero_record.meditation_ticks, 200,
+            "meditation_ticks 应为 200"
+        );
+        assert_eq!(hero_record.combat_wins, 5, "combat_wins 应为 5");
+        assert_eq!(hero_record.player_kills, 1, "player_kills 应为 1");
+        assert_eq!(hero_record.gather_count, 10, "gather_count 应为 10");
+        assert_eq!(
+            hero_record.continuous_sessions, 3,
+            "continuous_sessions 应为 3"
+        );
+        assert_eq!(
+            hero_record.last_activity_tick, 12000,
+            "last_activity_tick 应为 12000"
+        );
+        assert!(hero_record.dominant, "HeroA 应标记为 dominant=true");
+        assert_eq!(
+            hero_record.established_tick, 8000,
+            "established_tick 应为 8000"
+        );
+        assert!(hero_record.public_known, "HeroA public_known 应为 true");
+
+        // 非霸主行
+        let rival_record = records
+            .iter()
+            .find(|r| r.zone_id == "spawn" && r.char_id == "offline:RivalB")
+            .expect("应有 RivalB 记录");
+        assert!(!rival_record.dominant, "RivalB 不应是霸主");
+
+        // 空表分支：wilderness 无霸主
+        let wanderer_record = records
+            .iter()
+            .find(|r| r.zone_id == "wilderness" && r.char_id == "offline:Wanderer")
+            .expect("应有 Wanderer 记录");
+        assert!(!wanderer_record.dominant, "Wanderer 不是霸主");
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn zone_influence_load_empty_returns_empty_vec() {
+        let (settings, root) = persistence_settings("zone-influence-empty");
+        bootstrap_sqlite(settings.db_path(), settings.server_run_id())
+            .expect("bootstrap should succeed");
+
+        let records = load_zone_influence_snapshot(&settings).expect("空表 load 应返回空 Vec");
+        assert!(
+            records.is_empty(),
+            "空表 load 应返回 [], 实际 {:?}",
+            records
+        );
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn zone_influence_hydrate_restores_dominant() {
+        use crate::world::territory::{
+            InfluenceSources, PlayerInfluence, ZoneDominance, ZoneInfluenceEntry, ZoneInfluenceMap,
+        };
+
+        let (settings, root) = persistence_settings("zone-influence-hydrate");
+        bootstrap_sqlite(settings.db_path(), settings.server_run_id())
+            .expect("bootstrap should succeed");
+
+        // 持久化一个有霸主的 zone
+        let mut map = ZoneInfluenceMap::default();
+        let mut entry = ZoneInfluenceEntry::default();
+        entry.players.insert(
+            "offline:King".to_string(),
+            PlayerInfluence {
+                value: 60.0,
+                last_activity_tick: 9999,
+                source_breakdown: InfluenceSources {
+                    meditation_ticks: 500,
+                    ..Default::default()
+                },
+            },
+        );
+        entry.dominant = Some(ZoneDominance {
+            char_id: "offline:King".to_string(),
+            influence: 60.0,
+            established_tick: 5000,
+            public_known: false,
+        });
+        map.zones.insert("throne_hall".to_string(), entry);
+
+        persist_zone_influence_snapshot(&settings, &map)
+            .expect("zone influence snapshot should persist");
+
+        // hydrate 到新的 map
+        let mut restored = ZoneInfluenceMap::default();
+        let count = hydrate_zone_influence(&settings, &mut restored).expect("hydrate 应成功");
+        assert_eq!(count, 1, "应 hydrate 1 条记录");
+
+        let zone_entry = restored
+            .zones
+            .get("throne_hall")
+            .expect("throne_hall 应存在");
+        let king = zone_entry.players.get("offline:King").expect("King 应存在");
+        assert!(
+            (king.value - 60.0).abs() < 1e-9,
+            "value 应为 60.0，实际 {}",
+            king.value
+        );
+        assert_eq!(king.last_activity_tick, 9999);
+
+        let dom = zone_entry.dominant.as_ref().expect("应有霸主");
+        assert_eq!(dom.char_id, "offline:King", "霸主应为 King");
+        assert_eq!(dom.established_tick, 5000);
+        assert!(!dom.public_known, "public_known 应为 false");
+
+        let _ = fs::remove_dir_all(root);
+    }
     #[test]
     fn v28_migration_adds_spirit_niche_damage_flag_with_default_false() {
         let db_path = database_path("v28-spirit-niche-damage-flag");

@@ -23,6 +23,7 @@ pub mod season;
 pub mod spawn_tutorial;
 pub mod spirit_eye;
 pub mod terrain;
+pub mod territory;
 pub mod tiandao_hunt;
 pub mod tsy;
 pub mod tsy_container;
@@ -126,6 +127,7 @@ pub fn register(app: &mut App) {
     calamity::register(app);
     era::register(app);
     tiandao_hunt::register(app);
+    territory::register(app);
     pseudo_vein_runtime::register(app);
     spirit_eye::register(app);
     entity_model::register(app);
