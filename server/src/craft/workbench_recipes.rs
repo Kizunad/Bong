@@ -1393,7 +1393,7 @@ fn register_alchemy_forge_prep(registry: &mut CraftRegistry) -> Result<(), Regis
                 ("stone_chunk", 4),
             ],
             120,
-            "furnace_kit_fantie",
+            "furnace_fantie",
         ),
         // #100 锻造台组件
         (
@@ -1401,7 +1401,7 @@ fn register_alchemy_forge_prep(registry: &mut CraftRegistry) -> Result<(), Regis
             "锻造台组件",
             vec![("iron_ingot", 4), ("spirit_wood", 2), ("stone_chunk", 6)],
             100,
-            "forge_station_kit",
+            "fan_iron_anvil",
         ),
     ];
 
@@ -1626,6 +1626,102 @@ mod tests {
             workbench_count, 100,
             "must have exactly 100 workbench.* recipes"
         );
+    }
+
+    #[test]
+    fn alchemy_forge_prep_recipes_output_placeable_items_with_same_materials() {
+        let mut registry = CraftRegistry::new();
+        register_workbench_recipes(&mut registry).unwrap();
+        let item_registry = crate::inventory::load_item_registry().expect("item registry loads");
+
+        let furnace_recipe = registry
+            .get(&RecipeId::new("workbench.prep.furnace_kit"))
+            .expect("furnace prep recipe must exist");
+        assert_eq!(
+            furnace_recipe.materials,
+            vec![
+                ("iron_ingot".into(), 6),
+                ("spirit_charcoal".into(), 2),
+                ("stone_chunk".into(), 4),
+            ],
+            "furnace prep materials must stay unchanged while replacing the dead kit output"
+        );
+        assert_eq!(
+            furnace_recipe.output,
+            ("furnace_fantie".into(), 1),
+            "furnace prep must output the item accepted by furnace placement"
+        );
+        assert_eq!(
+            crate::alchemy::furnace::furnace_tier_from_item_id(&furnace_recipe.output.0),
+            Some(1),
+            "furnace prep output must map to tier-1 furnace placement"
+        );
+
+        let forge_recipe = registry
+            .get(&RecipeId::new("workbench.prep.forge_station"))
+            .expect("forge station prep recipe must exist");
+        assert_eq!(
+            forge_recipe.materials,
+            vec![
+                ("iron_ingot".into(), 4),
+                ("spirit_wood".into(), 2),
+                ("stone_chunk".into(), 6),
+            ],
+            "forge prep materials must stay unchanged while replacing the dead kit output"
+        );
+        assert_eq!(
+            forge_recipe.output,
+            ("fan_iron_anvil".into(), 1),
+            "forge prep must output the item carrying forge_station_spec"
+        );
+        let forge_station_tier = item_registry
+            .get(&forge_recipe.output.0)
+            .and_then(|template| template.forge_station_spec.as_ref())
+            .map(|spec| spec.tier);
+        assert_eq!(
+            forge_station_tier,
+            Some(1),
+            "forge prep output must be a tier-1 forge station item"
+        );
+    }
+
+    #[test]
+    fn old_alchemy_forge_kit_templates_are_removed_from_registry_and_recipes() {
+        let mut registry = CraftRegistry::new();
+        register_workbench_recipes(&mut registry).unwrap();
+        let item_registry = crate::inventory::load_item_registry().expect("item registry loads");
+        let removed_ids = ["furnace_kit_fantie", "forge_station_kit"];
+
+        for removed_id in removed_ids {
+            assert!(
+                item_registry.get(removed_id).is_none(),
+                "old kit template `{removed_id}` must be absent from ItemRegistry"
+            );
+        }
+        assert!(
+            item_registry.get("furnace_fantie").is_some(),
+            "replacement furnace item must remain registered"
+        );
+        assert!(
+            item_registry.get("fan_iron_anvil").is_some(),
+            "replacement forge station item must remain registered"
+        );
+
+        for recipe in registry.iter() {
+            let (output_id, _) = &recipe.output;
+            assert!(
+                !removed_ids.contains(&output_id.as_str()),
+                "recipe `{}` must not output removed kit `{output_id}`",
+                recipe.id
+            );
+            for (material_id, _) in &recipe.materials {
+                assert!(
+                    !removed_ids.contains(&material_id.as_str()),
+                    "recipe `{}` must not consume removed kit `{material_id}`",
+                    recipe.id
+                );
+            }
+        }
     }
 
     #[test]
