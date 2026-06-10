@@ -2,6 +2,7 @@ package com.bong.client.mixin;
 
 import com.bong.client.alchemy.AlchemyFurnaceInteractionRules;
 import com.bong.client.alchemy.state.AlchemyFurnaceStore;
+import com.bong.client.block.BlockPlaceIntentResolver;
 import com.bong.client.combat.SkillBarEntry;
 import com.bong.client.combat.SkillBarStore;
 import com.bong.client.inventory.model.InventoryItem;
@@ -53,8 +54,8 @@ class MixinClientPlayerInteractionManagerAlchemyTest {
 
         SkillBarStore.updateSlot(2, SkillBarEntry.item("earth_crumb", "土块", 0, 0, ""));
 
-        assertSame(selected, MixinClientPlayerInteractionManagerAlchemy.bong$selectedBlockItem(2, inventory));
-        assertEquals(42L, MixinClientPlayerInteractionManagerAlchemy.bong$selectedBlockItem(2, inventory).instanceId());
+        assertSame(selected, BlockPlaceIntentResolver.selectedBlockItem(2, inventory));
+        assertEquals(42L, BlockPlaceIntentResolver.selectedBlockItem(2, inventory).instanceId());
     }
 
     @Test
@@ -66,10 +67,10 @@ class MixinClientPlayerInteractionManagerAlchemyTest {
             .build();
 
         SkillBarStore.updateSlot(0, SkillBarEntry.item("earth_crumb", "土块", 0, 0, ""));
-        assertNull(MixinClientPlayerInteractionManagerAlchemy.bong$selectedBlockItem(0, inventory));
+        assertNull(BlockPlaceIntentResolver.selectedBlockItem(0, inventory));
 
         SkillBarStore.updateSlot(0, SkillBarEntry.item("unknown_block", "未知", 0, 0, ""));
-        assertNull(MixinClientPlayerInteractionManagerAlchemy.bong$selectedBlockItem(0, inventory));
+        assertNull(BlockPlaceIntentResolver.selectedBlockItem(0, inventory));
     }
 
     @Test
@@ -88,8 +89,8 @@ class MixinClientPlayerInteractionManagerAlchemyTest {
 
         SkillBarStore.updateSlot(3, SkillBarEntry.item("earth_crumb", "土块", 0, 0, ""));
 
-        MixinClientPlayerInteractionManagerAlchemy.BongBlockPlaceIntent intent =
-            MixinClientPlayerInteractionManagerAlchemy.bong$selectedBlockPlaceIntent(
+        BlockPlaceIntentResolver.Intent intent =
+            BlockPlaceIntentResolver.selectedBlockPlaceIntent(
                 3, inventory, hitPos, Direction.EAST
             );
 
@@ -114,12 +115,12 @@ class MixinClientPlayerInteractionManagerAlchemyTest {
         BlockPos hitPos = new BlockPos(10, 64, -3);
 
         SkillBarStore.updateSlot(0, SkillBarEntry.item("earth_crumb", "土块", 0, 0, ""));
-        assertNull(MixinClientPlayerInteractionManagerAlchemy.bong$selectedBlockPlaceIntent(
+        assertNull(BlockPlaceIntentResolver.selectedBlockPlaceIntent(
             0, missingInstanceInventory, hitPos, Direction.UP
         ));
 
         SkillBarStore.updateSlot(0, SkillBarEntry.item("unknown_block", "未知", 0, 0, ""));
-        assertNull(MixinClientPlayerInteractionManagerAlchemy.bong$selectedBlockPlaceIntent(
+        assertNull(BlockPlaceIntentResolver.selectedBlockPlaceIntent(
             0, unknownInventory, hitPos, Direction.UP
         ));
     }
