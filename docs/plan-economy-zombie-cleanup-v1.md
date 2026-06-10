@@ -2,7 +2,7 @@
 
 > 一句话：处理僵尸物品审计集中删除 / 接通类——2 个蜕壳流伪装道具**接通**（disguise_wrap / camouflage_net 挂上 `FalseSkinTier`，走 tuike_v2 真实使用闭环）、2 个换代放置 kit **清理**（forge_station_kit / furnace_kit_fantie 配方产物改指新代 ID）、6 个无系统经济物品**删除**（bone_coin_blank 等，TOML+配方+icon+全仓引用清零）、9 个材料断链 / 工具类**删除**（2026-06-10 扩入）。
 >
-> 来源：僵尸物品审计；用户拍板 2026-06-10「#1/#3 立一个，#2 就算了删除吧」+「工具 4 直接删除，该做适配的适配」（适配 2 件见 [[plan-gathering-tool-bind-v1]]）。本骨架已据 reminder.md「plan-economy-zombie-cleanup-v1（PR #472，Pi review 2026-06-10 的 5 条勘误）」逐条修订（蜕壳入口定位、rat_bait 删除理由、3 处路径勘误、配方注释锚点、P0 函数名级交付物），并合入 PR #475 材料断链 / 工具类裁决。
+> 来源：僵尸物品审计；用户拍板 2026-06-10「#1/#3 立一个，#2 就算了删除吧」+「工具 4 直接删除，该做适配的适配」（适配 2 件见 [[plan-gathering-tool-bind-v1]]）。本 plan 已据 reminder.md「plan-economy-zombie-cleanup-v1（PR #472，Pi review 2026-06-10 的 5 条勘误）」逐条修订（蜕壳入口定位、rat_bait 删除理由、3 处路径勘误、配方注释锚点、P0 函数名级交付物），并合入 PR #475 材料断链 / 工具类裁决。
 
 **依赖**：无（纯接通/清理，不依赖其他 plan）。P1 kit 清理与 `plan-block-lifecycle-v1` 已落地的放置链路（`alchemy/furnace.rs::furnace_tier_from_item_id`、`forge/station.rs::handle_place_station_request`）**只读对接、不改其逻辑**——本 plan 只改配方产物指向已被放置链路认可的 ID。
 
@@ -260,11 +260,11 @@ P0 **不新增**视听资产——完全复用 tuike_v2 既有蜕壳视听：
 ### #4 trade_scale 连带处置
 
 **决议**：
-1. **保留 `trade_scale`**（`workbench_materials.toml:771`，配方 `"workbench.tool.trade_scale"` `workbench_recipes.rs:184`），不在本 plan 删除范围。
-2. 理由：用户删除清单（2026-06-10 拍板 6 项）未点名 `trade_scale`；它有独立合成配方，删 #85 后仅失去唯一下游用途，成为"孤立工具"而非"僵尸物品"（仍可合成、有 icon、玩家可见）。
-3. 边界：P2 不删 `trade_scale.png`；plan 内备注其孤立状态，留待将来交易系统立项复用；§P2 测试加 `trade_scale` 存在性回归防误删。
+1. **P2 不删，P3 删除**：`trade_scale`（`workbench_materials.toml:771`，配方 `"workbench.tool.trade_scale"`）原本未在 6 个经济删除清单内；PR #475 已按用户「工具 4 直接删除」把它纳入 P3 工具类删除。
+2. 理由：`trade_scale_stand` 配方 #85 消耗 `trade_scale`。若 P2 删 stand 而保留 scale，会留下「交易秤本体可合成但唯一用途已删」的新僵尸；因此 P3 必须把 `trade_scale` 模板 / 配方 #9 与 `trade_scale_stand` 模板 / 配方 #85 同 PR 原子删。
+3. 边界：P2 commit 阶段保留 `trade_scale`，避免 P2 范围漂移；P3 commit 阶段删除 `trade_scale.png`，并用测试断言 stand/scale 双清零。
 
-**落点**：`server/assets/items/workbench_materials.toml:771`（保留）/ plan §P2 交付物 5 + 测试。
+**落点**：`server/assets/items/workbench_materials.toml:771`（P3 删除）/ `server/src/craft/workbench_recipes.rs` `// #9` + `// #85`（P3 同 PR 删除）/ plan §P2 交付物 5 + §P3。
 
 ### #5 camouflage_net 驻地遮蔽
 
@@ -277,4 +277,4 @@ P0 **不新增**视听资产——完全复用 tuike_v2 既有蜕壳视听：
 
 ---
 
-（本 plan scope = 3 PR < 4，按 docs/CLAUDE.md §六不强制 §10 实施工作流；consume-plan 走通用流程即可。三 PR 建议序列：PR-1 P0 接通 → PR-2 P1 kit 改产物 → PR-3 P2 删除，互不依赖可并行，但 P2 删除涉及全仓 grep 守门建议最后做以免与 P0/P1 改动冲突。）
+（本 plan scope = 4 PR，consume-plan 按 P0→P1→P2→P3 拆 PR；P2/P3 均涉及删除与全仓 grep 守门，建议最后串行，避免与 P0/P1 接通 / 改产物冲突。）
