@@ -91,24 +91,30 @@ def build_simple_bed() -> list[Cube]:
 
 def part_meditation_mat_base() -> list[Cube]:
     return [
-        cube("mat", "reed", "mat_mid_x", (2.0, 0.0, 5.2), (14.0, 1.0, 10.8)),
-        cube("mat", "reed", "mat_mid_z", (5.2, 0.0, 2.0), (10.8, 1.0, 14.0)),
-        cube("mat", "reed", "mat_diag_ne", (3.4, 0.0, 3.4), (6.2, 1.0, 6.2)),
-        cube("mat", "reed", "mat_diag_nw", (9.8, 0.0, 3.4), (12.6, 1.0, 6.2)),
-        cube("mat", "reed", "mat_diag_se", (3.4, 0.0, 9.8), (6.2, 1.0, 12.6)),
-        cube("mat", "reed", "mat_diag_sw", (9.8, 0.0, 9.8), (12.6, 1.0, 12.6)),
+        cube("mat", "reed", "mat_core", (4.0, 0.0, 4.0), (12.0, 0.85, 12.0)),
+        cube("mat", "reed", "mat_north", (5.4, 0.0, 2.4), (10.6, 0.85, 4.0)),
+        cube("mat", "reed", "mat_south", (5.4, 0.0, 12.0), (10.6, 0.85, 13.6)),
+        cube("mat", "reed", "mat_west", (2.4, 0.0, 5.4), (4.0, 0.85, 10.6)),
+        cube("mat", "reed", "mat_east", (12.0, 0.0, 5.4), (13.6, 0.85, 10.6)),
+        cube("mat", "reed", "mat_corner_nw", (3.4, 0.0, 3.4), (5.4, 0.85, 5.4)),
+        cube("mat", "reed", "mat_corner_ne", (10.6, 0.0, 3.4), (12.6, 0.85, 5.4)),
+        cube("mat", "reed", "mat_corner_sw", (3.4, 0.0, 10.6), (5.4, 0.85, 12.6)),
+        cube("mat", "reed", "mat_corner_se", (10.6, 0.0, 10.6), (12.6, 0.85, 12.6)),
     ]
 
 
 def part_meditation_mat_cushion() -> list[Cube]:
     return [
-        cube("cushion", "cloth", "cushion_mid_x", (3.2, 1.0, 5.8), (12.8, 2.2, 10.2)),
-        cube("cushion", "cloth", "cushion_mid_z", (5.8, 1.0, 3.2), (10.2, 2.2, 12.8)),
-        cube("cushion", "binding", "front_binding", (4.6, 2.2, 4.8), (11.4, 2.45, 5.25)),
-        cube("cushion", "binding", "back_binding", (4.6, 2.2, 10.75), (11.4, 2.45, 11.2)),
-        cube("cushion", "binding", "left_binding", (4.8, 2.2, 4.6), (5.25, 2.45, 11.4)),
-        cube("cushion", "binding", "right_binding", (10.75, 2.2, 4.6), (11.2, 2.45, 11.4)),
-        cube("cushion", "patch", "center_patch", (6.5, 2.45, 6.5), (9.5, 2.65, 9.5)),
+        cube("cushion", "cloth", "cushion_core", (5.0, 0.85, 5.0), (11.0, 2.15, 11.0)),
+        cube("cushion", "cloth", "cushion_north", (6.0, 0.85, 3.9), (10.0, 2.15, 5.0)),
+        cube("cushion", "cloth", "cushion_south", (6.0, 0.85, 11.0), (10.0, 2.15, 12.1)),
+        cube("cushion", "cloth", "cushion_west", (3.9, 0.85, 6.0), (5.0, 2.15, 10.0)),
+        cube("cushion", "cloth", "cushion_east", (11.0, 0.85, 6.0), (12.1, 2.15, 10.0)),
+        cube("cushion", "binding", "front_binding", (5.4, 2.15, 4.7), (10.6, 2.42, 5.1)),
+        cube("cushion", "binding", "back_binding", (5.4, 2.15, 10.9), (10.6, 2.42, 11.3)),
+        cube("cushion", "binding", "left_binding", (4.7, 2.15, 5.4), (5.1, 2.42, 10.6)),
+        cube("cushion", "binding", "right_binding", (10.9, 2.15, 5.4), (11.3, 2.42, 10.6)),
+        cube("cushion", "patch", "center_patch", (6.6, 2.42, 6.6), (9.4, 2.62, 9.4)),
     ]
 
 
