@@ -10,6 +10,7 @@ use valence::message::SendMessage;
 use valence::prelude::{App, Client, EventReader, Position, Query, Res, Update};
 
 use crate::cultivation::components::{Cultivation, Realm};
+use crate::world::dimension::DimensionKind;
 use crate::world::risk_heatmap::{risk_score, RiskHeatmap};
 use crate::world::zone::ZoneRegistry;
 
@@ -66,11 +67,10 @@ pub fn handle_riskmap(
         };
 
         let player_pos = pos.0;
-        // 查找玩家当前所在 zone（使用 Overworld 维度，与 zone.rs find_zone 行为一致）
+        // 使用 ZoneRegistry::find_zone(Overworld, pos) 取最小 AABB zone，
+        // 与 update_risk_heatmap 系统的归属逻辑完全一致。
         let zone_name = zones
-            .zones
-            .iter()
-            .find(|z| z.contains(player_pos))
+            .find_zone(DimensionKind::Overworld, player_pos)
             .map(|z| z.name.as_str())
             .unwrap_or("<unknown>");
 

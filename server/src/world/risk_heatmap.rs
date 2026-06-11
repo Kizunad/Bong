@@ -7,7 +7,7 @@
 //!   以 `Zone::contains` 分配至 zone，按 `realm_tier` 加权。
 //! - **NPC 活跃度轴**：ECS Query `NpcArchetype + Position + NpcMarker`，
 //!   散修/守墓人/骨煞按权重累计。
-//! - **玩家密度轴**：ECS Query `Position + ClientMarker`，可见低境玩家数量。
+//! - **玩家密度轴**：ECS Query `Position + Cultivation + ClientMarker`，境界 < 通灵（ordinal < 4）的低境玩家数量。通灵/化虚不计入（自保能力强）。
 //!
 //! **境界相关**：`risk_score` 纯函数接受 `player_realm` 参数，通灵在馈赠区 -20（食物链顶），
 //! 引气同位置 +30（底端），使用 `realm_ordinal` 差值修正。
@@ -28,6 +28,7 @@ use crate::fauna::components::FaunaTag;
 use crate::npc::combat_power::realm_ordinal;
 use crate::npc::lifecycle::NpcArchetype;
 use crate::npc::spawn::common::NpcMarker;
+use crate::world::dimension::DimensionKind;
 use crate::world::zone::ZoneRegistry;
 
 // ─── 常量 ─────────────────────────────────────────────────────────────────────
@@ -79,6 +80,10 @@ pub const PLAYER_SCORE_PER_PLAYER: f32 = 4.0;
 
 /// 玩家密度轴：该轴上限贡献。
 pub const PLAYER_SCORE_CAP: f32 = 15.0;
+
+/// 玩家密度轴：只统计境界 ordinal < 此值的玩家（通灵=4、化虚=5 不计入，食物链顶端自保能力强）。
+/// 阈值取 `realm_ordinal(Realm::Spirit)` = 4，即「低于通灵」为低境。
+pub const PLAYER_LOW_REALM_ORDINAL_THRESHOLD: u8 = 4; // Spirit ordinal
 
 /// 境界修正：通灵（Spirit，ordinal=4）在中险区 -20（食物链顶）。
 pub const REALM_SPIRIT_MID_BONUS: i32 = -20;
@@ -248,50 +253,47 @@ pub fn update_risk_heatmap(
     let mut npc_score: HashMap<String, f32> = HashMap::new();
     let mut player_score: HashMap<String, f32> = HashMap::new();
 
-    // 野兽密度轴
+    // 野兽密度轴：使用 ZoneRegistry::find_zone(Overworld, pos) 取最小 AABB zone，
+    // 保证嵌套 zone（内层小 zone 嵌在外层大 zone 内）时归属到内层，与全仓 find_zone 语义一致。
+    // 当前所有野兽 / NPC 均生活在 Overworld；若未来支持 TSY 维度，需扩展 CurrentDimension 查询。
     for (pos, fauna_tag) in &fauna_query {
         let p: DVec3 = pos.0;
-        for zone in &zones.zones {
-            if zone.contains(p) {
-                let tier_weight =
-                    (fauna_tag.beast_kind.realm_tier() as f32 + 1.0) * FAUNA_SCORE_PER_TIER;
-                let entry = fauna_score.entry(zone.name.clone()).or_insert(0.0);
-                *entry = (*entry + tier_weight).min(FAUNA_SCORE_CAP);
-                break; // 只归属最小 zone（zone.rs find_zone 语义）
-            }
+        if let Some(zone) = zones.find_zone(DimensionKind::Overworld, p) {
+            let tier_weight =
+                (fauna_tag.beast_kind.realm_tier() as f32 + 1.0) * FAUNA_SCORE_PER_TIER;
+            let entry = fauna_score.entry(zone.name.clone()).or_insert(0.0);
+            *entry = (*entry + tier_weight).min(FAUNA_SCORE_CAP);
         }
     }
 
-    // NPC 活跃度轴
+    // NPC 活跃度轴：同上，使用 find_zone(Overworld, pos) 取最小 AABB zone。
     for (pos, archetype) in &npc_query {
         let p: DVec3 = pos.0;
-        for zone in &zones.zones {
-            if zone.contains(p) {
-                let score = if is_high_danger_npc(*archetype) {
-                    NPC_SCORE_HIGH_DANGER
-                } else if is_humanoid_npc(*archetype) {
-                    NPC_SCORE_HUMANOID
-                } else {
-                    0.0
-                };
-                if score > 0.0 {
-                    let entry = npc_score.entry(zone.name.clone()).or_insert(0.0);
-                    *entry = (*entry + score).min(NPC_SCORE_CAP);
-                }
-                break;
+        let score = if is_high_danger_npc(*archetype) {
+            NPC_SCORE_HIGH_DANGER
+        } else if is_humanoid_npc(*archetype) {
+            NPC_SCORE_HUMANOID
+        } else {
+            0.0
+        };
+        if score > 0.0 {
+            if let Some(zone) = zones.find_zone(DimensionKind::Overworld, p) {
+                let entry = npc_score.entry(zone.name.clone()).or_insert(0.0);
+                *entry = (*entry + score).min(NPC_SCORE_CAP);
             }
         }
     }
 
-    // 玩家密度轴（所有在线玩家）
-    for (pos, _cultivation) in &player_query {
+    // 玩家密度轴：只计低境（< 通灵，ordinal < PLAYER_LOW_REALM_ORDINAL_THRESHOLD）玩家。
+    // 通灵/化虚已是食物链顶端，自保能力强，对区域危险指数贡献忽略。
+    for (pos, cultivation) in &player_query {
+        if realm_ordinal(cultivation.realm) >= PLAYER_LOW_REALM_ORDINAL_THRESHOLD {
+            continue; // 通灵及以上，跳过
+        }
         let p: DVec3 = pos.0;
-        for zone in &zones.zones {
-            if zone.contains(p) {
-                let entry = player_score.entry(zone.name.clone()).or_insert(0.0);
-                *entry = (*entry + PLAYER_SCORE_PER_PLAYER).min(PLAYER_SCORE_CAP);
-                break;
-            }
+        if let Some(zone) = zones.find_zone(DimensionKind::Overworld, p) {
+            let entry = player_score.entry(zone.name.clone()).or_insert(0.0);
+            *entry = (*entry + PLAYER_SCORE_PER_PLAYER).min(PLAYER_SCORE_CAP);
         }
     }
 
