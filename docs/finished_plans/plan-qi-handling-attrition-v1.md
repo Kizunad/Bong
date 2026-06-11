@@ -95,7 +95,7 @@
 - [x] 死坍缩渊（zone 已塌缩）内的操作：禁止进死坍缩渊操作物品（tsy-raceout-v1 应已强制撤离，此处加断言 + warn log）
 - [x] ≥ 8 单测（0.5 阈值边界 / 死域 zone 归还守恒 / 死坍缩渊 guard）
 
-> **P3 落地（2026-06-11）**：`server/src/qi_physics/attrition.rs` 新增 `AttritionApplyOutcome` / `AttritionSkipReason` / `apply_attrition_checked`，把 `qi_value < QI_ATTRITION_MIN_QI` 显式归类为 `BelowMinimumQi`，并让 `qi_value == QI_ATTRITION_MIN_QI` 正常结算磨损；`dead_tsy_family_id` 读取 `TsyZoneStateRegistry` 中 `TsyLifecycle::Dead`，死坍缩渊操作返回 `DeadTsy` 并 warn，不扣物品真元，避免无接收方时吞真元；`server/src/inventory/mod.rs` 给 `ContainerSpec` 增加 `attrition_exempt`，`client_request_handler.rs` / `tsy_container_search.rs` 在 SlotMove / Pickup / ContainerSearch / AlchemyLoad 接入容器级豁免与 checked 磨损。验证：`cargo fmt --check`、`cargo clippy --all-targets -j 2 -- -D warnings`、`cargo test -q -j 2` 通过。
+> **P3 落地（2026-06-11）**：`server/src/qi_physics/attrition.rs` 新增 `AttritionApplyOutcome` / `AttritionSkipReason` / `apply_attrition_checked`，把 `qi_value < QI_ATTRITION_MIN_QI` 显式归类为 `BelowMinimumQi`，并让 `qi_value == QI_ATTRITION_MIN_QI` 正常结算磨损；`dead_tsy_family_id` 读取 `TsyZoneStateRegistry` 中 `TsyLifecycle::Dead`，死坍缩渊操作返回 `DeadTsy` 并 warn，不扣物品真元，避免无接收方时吞真元；缺少 zone 上下文时返回 `MissingZone`，不扣 item、不发 transfer；`server/src/inventory/mod.rs` 给 `ContainerSpec` 增加 `attrition_exempt`，`client_request_handler.rs` / `tsy_container_search.rs` 在 SlotMove / Pickup / ContainerSearch / AlchemyLoad 接入容器级豁免与 checked 磨损。验证：`cargo fmt --check`、`cargo clippy --all-targets -j 2 -- -D warnings`、`cargo test -q -j 2` 通过。
 
 ---
 
@@ -113,18 +113,19 @@
 
 - **P0/P1 server 核心**：`server/src/qi_physics/attrition.rs`、`server/src/qi_physics/ledger.rs`、`server/src/qi_physics/constants.rs` 落地 `AttritionOpKind`、`AttritionConfig`、`QiTransferReason::AttritionTax`、环境倍率、`release_attrition_to_zone` 守恒归还；`server/src/network/client_request_handler.rs`、`server/src/world/tsy_container_search.rs` 接入 Pickup / SlotMove / ContainerSearch / AlchemyLoad。
 - **P2 client 反馈**：`server/src/network/qi_attrition_emit.rs` 定向发射 `bong:vfx/qi_attrition`；`client/src/main/java/com/bong/client/network/QiAttritionPayload.java`、`client/src/main/java/com/bong/client/visual/particle/QiAttritionVfxPlayer.java` 解析并播放暗金粒子；物品栏 qi_value 继续走 `InventorySync` 实时刷新。
-- **P3 边界豁免**：`server/src/qi_physics/attrition.rs` 落地 `AttritionApplyOutcome`、`AttritionSkipReason`、`apply_attrition_checked`、`dead_tsy_family_id`；`server/src/inventory/mod.rs` 落地 `ContainerSpec.attrition_exempt` 与 `inventory_instance_container_attrition_exempt`；生产接线覆盖 SlotMove / Pickup / ContainerSearch / AlchemyLoad。
+- **P3 边界豁免**：`server/src/qi_physics/attrition.rs` 落地 `AttritionApplyOutcome`、`AttritionSkipReason::{BelowMinimumQi, DeadTsy, MissingZone}`、`apply_attrition_checked`、`dead_tsy_family_id`；`server/src/inventory/mod.rs` 落地 `ContainerSpec.attrition_exempt` 与 `inventory_instance_container_attrition_exempt`；生产接线覆盖 SlotMove / Pickup / ContainerSearch / AlchemyLoad。
 
 ### 关键 commit
 
 - `a29bf371f`（2026-06-10）：P0/P1 真元搬运磨损，含守恒归还 zone、op_kind 分档和环境倍率。
 - `c9dcea5cc` / `42eba7bda` / `a87fc20a0` / `1e6982dfb`（2026-06-11）：P2 客户端粒子反馈、搜刮与炼丹投料磨损反馈补齐。
-- `a3bed2dfb`（2026-06-11）：P3 阈值边界、封灵容器显式豁免、死坍缩渊 guard 与饱和单测。
+- `a3bed2dfb` / `18cd57e20` / `97c378d95`（2026-06-11）：P3 阈值边界、封灵容器显式豁免、死坍缩渊 guard、缺 zone 守恒 skip 与饱和单测。
 
 ### 测试结果
 
 - `cd server && cargo fmt --check`：通过。
 - `cd server && BONG_SKIP_SKIN_PREFETCH=1 CARGO_BUILD_JOBS=2 nice -n 10 ionice -c3 cargo clippy --all-targets -j 2 -- -D warnings`：通过。
+- `cd server && BONG_SKIP_SKIN_PREFETCH=1 CARGO_BUILD_JOBS=2 nice -n 10 ionice -c3 cargo test -q -j 2 attrition`：通过，`47 passed; 0 failed`。
 - `cd server && BONG_SKIP_SKIN_PREFETCH=1 CARGO_BUILD_JOBS=2 nice -n 10 ionice -c3 cargo test -q -j 2`：通过，`8531 passed; 0 failed; 1 ignored`。
 - `cd client && ./gradlew test --max-workers=2`：P2 阶段通过，覆盖 VFX packet 与粒子参数。
 
