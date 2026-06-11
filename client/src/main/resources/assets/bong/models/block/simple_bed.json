@@ -5,7 +5,7 @@
   },
   "elements": [
     {
-      "name": "bed_leg",
+      "name": "bed_leg_head_left",
       "from": [
         1.0,
         0.0,
@@ -38,7 +38,7 @@
       }
     },
     {
-      "name": "bed_leg",
+      "name": "bed_leg_head_right",
       "from": [
         1.0,
         0.0,
@@ -71,7 +71,7 @@
       }
     },
     {
-      "name": "bed_leg",
+      "name": "bed_leg_foot_left",
       "from": [
         13.0,
         0.0,
@@ -104,7 +104,7 @@
       }
     },
     {
-      "name": "bed_leg",
+      "name": "bed_leg_foot_right",
       "from": [
         13.0,
         0.0,

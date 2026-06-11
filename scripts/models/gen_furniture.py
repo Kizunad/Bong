@@ -28,6 +28,7 @@ BLOCK_MODEL_DIR = (
 )
 
 TEXTURE_RES = 64
+UUID_NAMESPACE = uuid.UUID("4f0d85f8-1874-4e29-9d75-7e44f4b4f001")
 
 
 @dataclass(frozen=True)
@@ -59,11 +60,23 @@ def cube(
     return Cube(bone, material, name, origin, target)
 
 
+def stable_uuid(*parts: str) -> str:
+    return str(uuid.uuid5(UUID_NAMESPACE, ":".join(parts)))
+
+
 def part_simple_bed_base() -> list[Cube]:
     cubes: list[Cube] = []
-    for x_origin, x_target in ((1.0, 3.0), (13.0, 15.0)):
-        for z_origin, z_target in ((2.0, 4.0), (12.0, 14.0)):
-            cubes.append(cube("base", "wood", "bed_leg", (x_origin, 0.0, z_origin), (x_target, 2.2, z_target)))
+    for x_label, x_origin, x_target in (("head", 1.0, 3.0), ("foot", 13.0, 15.0)):
+        for z_label, z_origin, z_target in (("left", 2.0, 4.0), ("right", 12.0, 14.0)):
+            cubes.append(
+                cube(
+                    "base",
+                    "wood",
+                    f"bed_leg_{x_label}_{z_label}",
+                    (x_origin, 0.0, z_origin),
+                    (x_target, 2.2, z_target),
+                )
+            )
     cubes.extend(
         [
             cube("base", "wood", "side_rail_left", (1.0, 2.0, 2.0), (15.0, 3.1, 3.2)),
@@ -337,7 +350,7 @@ def build_bbmodel(spec: FurnitureSpec) -> dict[str, object]:
     bone_children: dict[str, list[str]] = {bone: [] for bone in spec.bones}
 
     for cube_spec in cubes:
-        element_uuid = str(uuid.uuid4())
+        element_uuid = stable_uuid(spec.item_id, "cube", cube_spec.name)
         elements.append(
             {
                 "name": cube_spec.name,
@@ -363,7 +376,7 @@ def build_bbmodel(spec: FurnitureSpec) -> dict[str, object]:
             "name": bone,
             "origin": [0.0, 0.0, 0.0],
             "color": index,
-            "uuid": str(uuid.uuid4()),
+            "uuid": stable_uuid(spec.item_id, "bone", bone),
             "export": True,
             "mirror_uv": False,
             "isOpen": True,
@@ -399,7 +412,7 @@ def build_bbmodel(spec: FurnitureSpec) -> dict[str, object]:
                 "visible": True,
                 "mode": "bitmap",
                 "saved": False,
-                "uuid": str(uuid.uuid4()),
+                "uuid": stable_uuid(spec.item_id, "texture"),
                 "source": png_data_url(texture),
             }
         ],
@@ -536,10 +549,49 @@ def write_spec(spec: FurnitureSpec) -> None:
     print(f"  preview    : {preview_path.relative_to(REPO)}")
 
 
+def verify_spec(spec: FurnitureSpec) -> None:
+    cubes = spec.build()
+    if len(cubes) < 4:
+        raise ValueError(f"{spec.item_id} cube 数过少，不能退回占位方块")
+    seen_names: set[str] = set()
+    for cube_spec in cubes:
+        if cube_spec.name in seen_names:
+            raise ValueError(f"{spec.item_id} cube 名重复：{cube_spec.name}")
+        seen_names.add(cube_spec.name)
+        if cube_spec.bone not in spec.bones:
+            raise ValueError(f"{spec.item_id} cube {cube_spec.name} 使用未知 bone={cube_spec.bone}")
+        if cube_spec.material not in spec.materials:
+            raise ValueError(f"{spec.item_id} cube {cube_spec.name} 使用未知 material={cube_spec.material}")
+        for axis_name, origin_value, target_value in zip(
+            ("x", "y", "z"),
+            cube_spec.origin,
+            cube_spec.target,
+        ):
+            if not (0.0 <= origin_value < target_value <= 16.0):
+                raise ValueError(
+                    f"{spec.item_id} cube {cube_spec.name} {axis_name} 坐标越界或退化："
+                    f"{origin_value}..{target_value}"
+                )
+    unused_bones = set(spec.bones) - {cube_spec.bone for cube_spec in cubes}
+    if unused_bones:
+        raise ValueError(f"{spec.item_id} 存在未使用 bone：{sorted(unused_bones)}")
+
+
+def verify_all_specs() -> None:
+    for spec in SPECS:
+        verify_spec(spec)
+        print(f"{spec.item_id}: verify ok ({len(spec.build())} cubes)")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--only", choices=[spec.item_id for spec in SPECS], help="只生成一个家具")
+    parser.add_argument("--verify", action="store_true", help="只校验规格，不写文件")
     args = parser.parse_args()
+
+    if args.verify:
+        verify_all_specs()
+        return
 
     for spec in SPECS:
         if args.only and spec.item_id != args.only:
