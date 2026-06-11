@@ -19,14 +19,18 @@ public final class BlockVanillaIconMap {
     private record Entry(String vanillaItemId, Supplier<Item> itemSupplier) {
     }
 
-    private static final Map<String, Entry> HOST_ITEMS = Map.of(
-        "earth_crumb", new Entry("minecraft:dirt", () -> Items.DIRT),
-        "hardened_soil", new Entry("minecraft:coarse_dirt", () -> Items.COARSE_DIRT),
-        "barren_sand", new Entry("minecraft:sand", () -> Items.SAND),
-        "weathered_stone", new Entry("minecraft:gravel", () -> Items.GRAVEL),
-        "raw_clay_lump", new Entry("minecraft:clay", () -> Items.CLAY),
-        "obsidian_shard", new Entry("minecraft:obsidian", () -> Items.OBSIDIAN),
-        "workbench_item", new Entry("minecraft:crafting_table", () -> Items.CRAFTING_TABLE)
+    private static final Map<String, Entry> HOST_ITEMS = Map.ofEntries(
+        Map.entry("earth_crumb", new Entry("minecraft:dirt", () -> Items.DIRT)),
+        Map.entry("hardened_soil", new Entry("minecraft:coarse_dirt", () -> Items.COARSE_DIRT)),
+        Map.entry("barren_sand", new Entry("minecraft:sand", () -> Items.SAND)),
+        Map.entry("weathered_stone", new Entry("minecraft:gravel", () -> Items.GRAVEL)),
+        Map.entry("raw_clay_lump", new Entry("minecraft:clay", () -> Items.CLAY)),
+        Map.entry("obsidian_shard", new Entry("minecraft:obsidian", () -> Items.OBSIDIAN)),
+        Map.entry("workbench_item", new Entry("minecraft:crafting_table", () -> Items.CRAFTING_TABLE)),
+        Map.entry("torch_item", new Entry("minecraft:torch", () -> Items.TORCH)),
+        Map.entry("lantern_item", new Entry("minecraft:lantern", () -> Items.LANTERN)),
+        Map.entry("door_bolt", new Entry("minecraft:iron_door", () -> Items.IRON_DOOR)),
+        Map.entry("window_grate", new Entry("minecraft:iron_bars", () -> Items.IRON_BARS))
     );
     private static final ConcurrentHashMap<String, ItemStack> STACK_CACHE = new ConcurrentHashMap<>();
 
