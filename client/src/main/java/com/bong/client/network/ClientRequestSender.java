@@ -225,6 +225,14 @@ public final class ClientRequestSender {
         dispatch(ClientRequestProtocol.encodeZhenfaDisarm(pos, mode));
     }
 
+    public static void sendQiScatterBeadUse(long itemInstanceId) {
+        dispatch(ClientRequestProtocol.encodeQiScatterBeadUse(itemInstanceId));
+    }
+
+    public static void sendQiScatterBeadUse(long itemInstanceId, BlockPos buryPos) {
+        dispatch(ClientRequestProtocol.encodeQiScatterBeadUse(itemInstanceId, buryPos));
+    }
+
     public static void sendSparringInviteResponse(String inviteId, boolean accepted, boolean timedOut) {
         dispatch(ClientRequestProtocol.encodeSparringInviteResponse(inviteId, accepted, timedOut));
     }

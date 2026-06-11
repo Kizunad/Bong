@@ -352,6 +352,9 @@ public class VfxRegistryTest {
         assertTrue(VfxRegistry.instance().lookup(LingjuActivatePlayer.EVENT_ID).orElseThrow()
                 instanceof LingjuActivatePlayer,
             "bootstrap should register lingju_activate to LingjuActivatePlayer");
+        assertTrue(VfxRegistry.instance().lookup(ScatterBurstPlayer.EVENT_ID).orElseThrow()
+                instanceof ScatterBurstPlayer,
+            "bootstrap should register scatter_burst to ScatterBurstPlayer");
         assertTrue(VfxRegistry.instance().contains(SocialLinkVfxPlayer.NICHE_ESTABLISH),
             "bootstrap should register social_niche_establish");
         assertTrue(VfxRegistry.instance().contains(NicheRepairParticlePlayer.EVENT_ID),

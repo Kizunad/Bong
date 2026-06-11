@@ -277,6 +277,8 @@ message ClientRequestEnvelope {
     FreshnessProbe              freshness_probe               = 90;
     // ─── plan-dying-elder-v1 P1：垂死大能给丹 C2S ──────────────────
     GiveDanToElderReq           give_dan_to_elder             = 96;
+    // plan-zhenfa-content-v2 P2 — 主动使用散灵珠 C2S。
+    QiScatterBeadUse            qi_scatter_bead_use           = 97;
     // plan-block-lifecycle-v1 P2 — Bong 自有背包方块放置 C2S。
     BlockPlace                  block_place                   = 91;
     // plan-niche-craft-fix-v1 P1 — 灵龛修补 C2S。
@@ -3557,6 +3559,14 @@ message ZhenfaDisarm {
   int32                y    = 2;
   int32                z    = 3;
   ZhenfaDisarmMode mode = 4;
+}
+
+// 与 Rust ClientRequestV1::QiScatterBeadUse 精确对应。
+message QiScatterBeadUse {
+  uint64 item_instance_id = 1;
+  optional int32 x = 2;
+  optional int32 y = 3;
+  optional int32 z = 4;
 }
 
 // 与 Rust ClientRequestV1::LearnSkillScroll 精确对应。

@@ -360,8 +360,10 @@ public class ClientRequestSenderTest {
         );
         ClientRequestSender.sendZhenfaTrigger(null);
         ClientRequestSender.sendZhenfaDisarm(pos, ClientRequestProtocol.ZhenfaDisarmMode.FORCE_BREAK);
+        ClientRequestSender.sendQiScatterBeadUse(7001L);
+        ClientRequestSender.sendQiScatterBeadUse(7002L, pos);
 
-        assertEquals(4, sent.size());
+        assertEquals(6, sent.size());
         assertEquals(new Identifier("bong", "client_request"), sent.get(0).channel());
         assertEquals(
             "{\"type\":\"zhenfa_place\",\"v\":1,\"x\":11,\"y\":64,\"z\":-3,\"kind\":\"trap\",\"carrier\":\"night_withered_vine\",\"qi_invest_ratio\":0.3,\"trigger\":\"proximity\"}",
@@ -375,6 +377,14 @@ public class ClientRequestSenderTest {
         assertEquals(
             "{\"type\":\"zhenfa_disarm\",\"v\":1,\"x\":11,\"y\":64,\"z\":-3,\"mode\":\"force_break\"}",
             sent.get(3).body()
+        );
+        assertEquals(
+            "{\"type\":\"qi_scatter_bead_use\",\"v\":1,\"item_instance_id\":7001}",
+            sent.get(4).body()
+        );
+        assertEquals(
+            "{\"type\":\"qi_scatter_bead_use\",\"v\":1,\"item_instance_id\":7002,\"x\":11,\"y\":64,\"z\":-3}",
+            sent.get(5).body()
         );
     }
 
