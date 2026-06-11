@@ -415,6 +415,19 @@ public class ClientRequestProtocolTest {
             "{\"type\":\"zhenfa_disarm\",\"v\":1,\"x\":11,\"y\":64,\"z\":-3,\"mode\":\"force_break\"}",
             ClientRequestProtocol.encodeZhenfaDisarm(pos, ClientRequestProtocol.ZhenfaDisarmMode.FORCE_BREAK)
         );
+        assertEquals(
+            "{\"type\":\"qi_scatter_bead_use\",\"v\":1,\"item_instance_id\":7001}",
+            ClientRequestProtocol.encodeQiScatterBeadUse(7001L)
+        );
+        assertEquals(
+            "{\"type\":\"qi_scatter_bead_use\",\"v\":1,\"item_instance_id\":7002,\"x\":11,\"y\":64,\"z\":-3}",
+            ClientRequestProtocol.encodeQiScatterBeadUse(7002L, pos)
+        );
+        assertThrows(
+            IllegalArgumentException.class,
+            () -> ClientRequestProtocol.encodeQiScatterBeadUse(-1L),
+            "qi_scatter_bead_use 不能编码负 instance id"
+        );
     }
 
     @Test

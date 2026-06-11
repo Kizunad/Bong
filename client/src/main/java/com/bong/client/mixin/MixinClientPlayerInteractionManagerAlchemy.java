@@ -41,6 +41,7 @@ public abstract class MixinClientPlayerInteractionManagerAlchemy {
     private static final String BLAST_TRAP_ITEM_ID = "blast_trap";
     private static final String SLOW_TRAP_ITEM_ID = "slow_trap";
     private static final String GATHER_ARRAY_BASE_ITEM_ID = "gather_array_base";
+    private static final String QI_SCATTER_BEAD_ITEM_ID = "qi_scatter_bead";
 
     @Inject(method = "attackEntity", at = @At("TAIL"))
     @SuppressWarnings({"unused", "PMD.UnusedPrivateMethod"})
@@ -90,6 +91,21 @@ public abstract class MixinClientPlayerInteractionManagerAlchemy {
         }
 
         InventoryItem mainHand = InventoryStateStore.snapshot().equipped().get(EquipSlotType.MAIN_HAND);
+        Long scatterBeadInstanceId = bong$qiScatterBeadUseInstanceId(mainHand);
+        if (scatterBeadInstanceId != null) {
+            if (player.isSneaking()) {
+                ClientRequestSender.sendQiScatterBeadUse(
+                    scatterBeadInstanceId,
+                    hit.getBlockPos().offset(hit.getSide())
+                );
+            } else {
+                ClientRequestSender.sendQiScatterBeadUse(scatterBeadInstanceId);
+            }
+            player.swingHand(Hand.MAIN_HAND);
+            cir.setReturnValue(ActionResult.SUCCESS);
+            return;
+        }
+
         ClientRequestProtocol.ZhenfaKind zhenfaTrapKind = bong$zhenfaKindForItem(mainHand);
         if (zhenfaTrapKind != null && mainHand.instanceId() > 0) {
             client.setScreen(new ZhenfaLayoutScreen(
@@ -168,5 +184,12 @@ public abstract class MixinClientPlayerInteractionManagerAlchemy {
             case GATHER_ARRAY_BASE_ITEM_ID -> ClientRequestProtocol.ZhenfaKind.LINGJU;
             default -> null;
         };
+    }
+
+    static Long bong$qiScatterBeadUseInstanceId(InventoryItem item) {
+        if (item == null || !QI_SCATTER_BEAD_ITEM_ID.equals(item.itemId()) || item.instanceId() <= 0) {
+            return null;
+        }
+        return item.instanceId();
     }
 }

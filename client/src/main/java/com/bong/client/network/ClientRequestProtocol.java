@@ -826,6 +826,24 @@ public final class ClientRequestProtocol {
         return obj.toString();
     }
 
+    public static String encodeQiScatterBeadUse(long itemInstanceId) {
+        return encodeQiScatterBeadUse(itemInstanceId, null);
+    }
+
+    public static String encodeQiScatterBeadUse(long itemInstanceId, BlockPos buryPos) {
+        if (itemInstanceId < 0) {
+            throw new IllegalArgumentException("itemInstanceId must be >= 0, got " + itemInstanceId);
+        }
+        JsonObject obj = envelope("qi_scatter_bead_use");
+        obj.addProperty("item_instance_id", itemInstanceId);
+        if (buryPos != null) {
+            obj.addProperty("x", buryPos.getX());
+            obj.addProperty("y", buryPos.getY());
+            obj.addProperty("z", buryPos.getZ());
+        }
+        return obj.toString();
+    }
+
     public static String encodeSparringInviteResponse(String inviteId, boolean accepted, boolean timedOut) {
         if (inviteId == null || inviteId.isBlank()) {
             throw new IllegalArgumentException("inviteId must not be blank");

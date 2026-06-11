@@ -28,10 +28,10 @@ use crate::lingtian::{LingtianPlot, PLOT_QI_CAP_MAX, QI_LINGJU_ARRAY_CAP_BONUS};
 use crate::network::{gameplay_vfx, vfx_event_emit::VfxEventRequest};
 use crate::player::gameplay::PendingGameplayNarrations;
 use crate::player::state::canonical_player_id;
-use crate::qi_physics::constants::QI_ZONE_UNIT_CAPACITY;
+use crate::qi_physics::constants::{QI_EPSILON, QI_SCATTER_BEAD_CAPACITY, QI_ZONE_UNIT_CAPACITY};
 use crate::qi_physics::{
-    qi_release_to_zone, CarrierGrade, MediumKind, QiAccountId, QiTransfer, QiTransferReason,
-    StyleAttack, StyleDefense,
+    qi_excretion, qi_release_to_zone, CarrierGrade, ContainerKind, EnvField, MediumKind,
+    QiAccountId, QiTransfer, QiTransferReason, StyleAttack, StyleDefense, WorldQiAccount,
 };
 use crate::schema::common::NarrationStyle;
 use crate::schema::realm_vision::{SenseEntryV1, SenseKindV1, SpiritualSenseTargetsV1};
@@ -54,6 +54,9 @@ const ZHENFA_PEARL_ITEM_ID: &str = "scattered_qi_pearl";
 const CHAIN_DELAY_TICKS: u64 = 6;
 const WARD_ALERT_THROTTLE_TICKS: u64 = 60 * TICKS_PER_SECOND;
 const DISARM_RANGE: f64 = 4.5;
+const QI_SCATTER_BEAD_ITEM_ID: &str = "qi_scatter_bead";
+const SCATTER_DISTURBANCE_EVENT: &str = "scatter_disturbance";
+const SCATTER_DISTURBANCE_DURATION_TICKS: u64 = 30 * TICKS_PER_SECOND;
 pub const DECEIVE_HEAVEN_DURATION_TICKS: u64 = 30 * 60 * TICKS_PER_SECOND;
 pub const DECEIVE_HEAVEN_REVEAL_CHANCE: f64 = 0.10;
 const DECEIVE_HEAVEN_SPIRITWOOD_ITEM_ID: &str = "ling_mu_ban";
@@ -139,6 +142,83 @@ pub struct ZhenfaDisarmRequest {
     pub pos: [i32; 3],
     pub mode: ZhenfaDisarmMode,
     pub requested_at_tick: u64,
+}
+
+#[derive(Debug, Clone, Event)]
+pub struct ScatterBeadUseRequest {
+    pub player: Entity,
+    pub item_instance_id: u64,
+    pub bury_pos: Option<[i32; 3]>,
+    pub requested_at_tick: u64,
+}
+
+#[derive(Debug, Clone, Event)]
+pub struct ScatterBeadTriggerRequest {
+    pub player: Entity,
+    pub bead_id: u64,
+    pub requested_at_tick: u64,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+struct ScatterBeadBurial {
+    id: u64,
+    owner: Entity,
+    owner_player_id: String,
+    pos: [i32; 3],
+    remaining_qi: f64,
+    last_tick: u64,
+}
+
+#[derive(Debug, Default, Resource)]
+struct ScatterBeadBurials {
+    next_id: u64,
+    beads: HashMap<u64, ScatterBeadBurial>,
+}
+
+impl ScatterBeadBurials {
+    fn insert(
+        &mut self,
+        owner: Entity,
+        owner_player_id: impl Into<String>,
+        pos: [i32; 3],
+        remaining_qi: f64,
+        placed_at_tick: u64,
+    ) -> u64 {
+        self.next_id = self.next_id.saturating_add(1).max(1);
+        let id = self.next_id;
+        self.beads.insert(
+            id,
+            ScatterBeadBurial {
+                id,
+                owner,
+                owner_player_id: owner_player_id.into(),
+                pos,
+                remaining_qi: remaining_qi.clamp(0.0, QI_SCATTER_BEAD_CAPACITY),
+                last_tick: placed_at_tick,
+            },
+        );
+        id
+    }
+
+    fn trigger_buried(
+        &mut self,
+        id: u64,
+        requester: Entity,
+        triggered_at_tick: u64,
+    ) -> Option<ScatterBeadBurial> {
+        let bead = self.beads.get(&id)?;
+        if bead.owner != requester {
+            return None;
+        }
+        let mut bead = self.beads.remove(&id)?;
+        bead.last_tick = triggered_at_tick;
+        Some(bead)
+    }
+}
+
+#[derive(Debug, Default, Resource)]
+struct ScatterDisturbanceZones {
+    expires_at: HashMap<String, u64>,
 }
 
 #[derive(Debug, Clone, Event)]
@@ -434,9 +514,14 @@ pub enum ZhenfaSpecialistLevel {
 pub fn register(app: &mut App) {
     tracing::info!("[bong][zhenfa] registering zhenfa systems");
     app.insert_resource(ZhenfaRegistry::default());
+    app.init_resource::<WorldQiAccount>();
+    app.insert_resource(ScatterBeadBurials::default());
+    app.insert_resource(ScatterDisturbanceZones::default());
     app.add_event::<ZhenfaPlaceRequest>();
     app.add_event::<ZhenfaTriggerRequest>();
     app.add_event::<ZhenfaDisarmRequest>();
+    app.add_event::<ScatterBeadUseRequest>();
+    app.add_event::<ScatterBeadTriggerRequest>();
     app.add_event::<ZhenfaSensePulse>();
     app.add_event::<WardArrayDeployEvent>();
     app.add_event::<LingArrayDeployEvent>();
@@ -450,8 +535,12 @@ pub fn register(app: &mut App) {
         Update,
         (
             handle_zhenfa_place_requests,
+            handle_scatter_bead_use,
+            handle_scatter_bead_trigger_requests,
             handle_zhenfa_trigger_requests,
             handle_zhenfa_disarm_requests,
+            tick_scatter_bead_excretion,
+            tick_scatter_disturbance_zones,
             tick_zhenfa_registry,
             emit_zhenfa_sense_pulses,
         )
@@ -1615,6 +1704,473 @@ fn zone_name_at_pos(zones: Option<&ZoneRegistry>, pos: [i32; 3]) -> String {
         .unwrap_or_else(|| DEFAULT_SPAWN_ZONE_NAME.to_string())
 }
 
+fn zone_name_for_block(zones: &ZoneRegistry, pos: [i32; 3]) -> Option<String> {
+    zones
+        .find_zone(DimensionKind::Overworld, gameplay_vfx::block_center(pos))
+        .map(|zone| zone.name.clone())
+}
+
+fn player_block_pos(position: DVec3) -> [i32; 3] {
+    [
+        position.x.floor() as i32,
+        position.y.floor() as i32,
+        position.z.floor() as i32,
+    ]
+}
+
+fn mark_scatter_disturbance(
+    zones: &mut ZoneRegistry,
+    disturbances: &mut ScatterDisturbanceZones,
+    zone_name: &str,
+    now: u64,
+) {
+    if let Some(zone) = zones.find_zone_mut(zone_name) {
+        if !zone
+            .active_events
+            .iter()
+            .any(|event| event == SCATTER_DISTURBANCE_EVENT)
+        {
+            zone.active_events
+                .push(SCATTER_DISTURBANCE_EVENT.to_string());
+        }
+        disturbances.expires_at.insert(
+            zone_name.to_string(),
+            now.saturating_add(SCATTER_DISTURBANCE_DURATION_TICKS),
+        );
+    }
+}
+
+fn tick_scatter_disturbance_zones(
+    clock: Res<CombatClock>,
+    mut zones: Option<ResMut<ZoneRegistry>>,
+    mut disturbances: ResMut<ScatterDisturbanceZones>,
+) {
+    let Some(zones) = zones.as_deref_mut() else {
+        return;
+    };
+    let now = clock.tick;
+    let expired = disturbances
+        .expires_at
+        .iter()
+        .filter_map(|(zone_name, expires_at)| (*expires_at <= now).then_some(zone_name.clone()))
+        .collect::<Vec<_>>();
+    for zone_name in expired {
+        disturbances.expires_at.remove(zone_name.as_str());
+        if let Some(zone) = zones.find_zone_mut(zone_name.as_str()) {
+            zone.active_events
+                .retain(|event| event != SCATTER_DISTURBANCE_EVENT);
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+struct ScatterReleaseOutcome {
+    zone_name: String,
+    accepted: f64,
+    overflow: f64,
+    transfer: Option<QiTransfer>,
+}
+
+#[allow(clippy::too_many_arguments)]
+fn release_scatter_qi_to_zone(
+    zones: &mut ZoneRegistry,
+    ledger: &mut WorldQiAccount,
+    mut qi_transfers: Option<&mut Events<QiTransfer>>,
+    source: QiAccountId,
+    source_balance_before: f64,
+    pos: [i32; 3],
+    amount: f64,
+    overflow_key: &str,
+) -> Option<ScatterReleaseOutcome> {
+    if amount <= QI_EPSILON {
+        return None;
+    }
+    let zone_name = zone_name_for_block(zones, pos)?;
+    let zone = zones.find_zone_mut(zone_name.as_str())?;
+    let to = QiAccountId::zone(zone.name.clone());
+    let zone_current = zone.spirit_qi.max(0.0) * QI_ZONE_UNIT_CAPACITY;
+    let outcome = match qi_release_to_zone(
+        amount,
+        source.clone(),
+        to,
+        zone_current,
+        QI_ZONE_UNIT_CAPACITY,
+    ) {
+        Ok(outcome) => outcome,
+        Err(error) => {
+            tracing::warn!(
+                ?error,
+                "[bong][zhenfa] scatter bead release rejected at pos={pos:?}"
+            );
+            return None;
+        }
+    };
+
+    if let Err(error) = ledger.set_balance(source.clone(), source_balance_before) {
+        tracing::warn!(
+            ?error,
+            "[bong][zhenfa] scatter bead ledger source init failed at pos={pos:?}"
+        );
+        return None;
+    }
+
+    zone.spirit_qi = (outcome.zone_after / QI_ZONE_UNIT_CAPACITY).clamp(-1.0, 1.0);
+    let mut applied_transfer = None;
+    if let Some(transfer) = outcome.transfer.clone() {
+        if let Err(error) = ledger.transfer(transfer.clone()) {
+            tracing::warn!(
+                ?error,
+                "[bong][zhenfa] scatter bead ledger transfer failed at pos={pos:?}"
+            );
+            return None;
+        }
+        if let Some(events) = &mut qi_transfers {
+            events.send(transfer.clone());
+        }
+        applied_transfer = Some(transfer);
+    }
+    if outcome.overflow > QI_EPSILON {
+        let overflow = QiTransfer::new(
+            source,
+            QiAccountId::overflow(format!("qi_scatter_overflow:{overflow_key}")),
+            outcome.overflow,
+            QiTransferReason::ReleaseToZone,
+        )
+        .ok()?;
+        if let Err(error) = ledger.transfer(overflow.clone()) {
+            tracing::warn!(
+                ?error,
+                "[bong][zhenfa] scatter bead overflow ledger transfer failed at pos={pos:?}"
+            );
+            return None;
+        }
+        if let Some(events) = &mut qi_transfers {
+            events.send(overflow);
+        }
+    }
+
+    Some(ScatterReleaseOutcome {
+        zone_name,
+        accepted: outcome.accepted,
+        overflow: outcome.overflow,
+        transfer: applied_transfer,
+    })
+}
+
+#[allow(clippy::too_many_arguments)]
+fn handle_scatter_bead_use(
+    mut requests: EventReader<ScatterBeadUseRequest>,
+    mut players: Query<ScatterBeadUsePlayer<'_>>,
+    mut zones: Option<ResMut<ZoneRegistry>>,
+    mut ledger: ResMut<WorldQiAccount>,
+    mut qi_transfers: Option<ResMut<Events<QiTransfer>>>,
+    mut pending_narrations: Option<ResMut<PendingGameplayNarrations>>,
+    mut vfx_events: Option<ResMut<Events<VfxEventRequest>>>,
+    mut burials: ResMut<ScatterBeadBurials>,
+    mut disturbances: ResMut<ScatterDisturbanceZones>,
+) {
+    for req in requests.read() {
+        let Ok((username, position, mut inventory)) = players.get_mut(req.player) else {
+            tracing::warn!(
+                "[bong][zhenfa] scatter bead rejected: player {:?} missing bundle",
+                req.player
+            );
+            continue;
+        };
+        let Some(inventory_ref) = inventory.as_deref() else {
+            tracing::warn!(
+                "[bong][zhenfa] scatter bead rejected: player {:?} has no inventory",
+                req.player
+            );
+            continue;
+        };
+        let Some(item) = inventory_item_by_instance_borrow(inventory_ref, req.item_instance_id)
+        else {
+            tracing::warn!(
+                "[bong][zhenfa] scatter bead rejected: missing item instance {}",
+                req.item_instance_id
+            );
+            continue;
+        };
+        if item.template_id != QI_SCATTER_BEAD_ITEM_ID {
+            tracing::warn!(
+                "[bong][zhenfa] scatter bead rejected: item {} is not {}",
+                item.template_id,
+                QI_SCATTER_BEAD_ITEM_ID
+            );
+            continue;
+        }
+        let pos = req
+            .bury_pos
+            .unwrap_or_else(|| player_block_pos(position.get()));
+        let Some(zones_ref) = zones.as_deref_mut() else {
+            tracing::warn!(
+                "[bong][zhenfa] scatter bead rejected: ZoneRegistry missing player={:?}",
+                req.player
+            );
+            continue;
+        };
+        if zone_name_for_block(zones_ref, pos).is_none() {
+            tracing::warn!("[bong][zhenfa] scatter bead rejected: no zone for pos={pos:?}");
+            continue;
+        }
+        if let Err(error) = inventory
+            .as_deref_mut()
+            .ok_or_else(|| "inventory missing".to_string())
+            .and_then(|inventory| consume_item_instance_once(inventory, req.item_instance_id))
+        {
+            tracing::warn!(
+                "[bong][zhenfa] scatter bead rejected: consume failed instance={} error={error}",
+                req.item_instance_id
+            );
+            continue;
+        }
+        let owner_player_id = canonical_player_id(username.0.as_str());
+        if req.bury_pos.is_some() {
+            let bead_id = burials.insert(
+                req.player,
+                owner_player_id.clone(),
+                pos,
+                QI_SCATTER_BEAD_CAPACITY,
+                req.requested_at_tick,
+            );
+            let source =
+                QiAccountId::container(format!("qi_scatter_buried:{owner_player_id}:{bead_id}"));
+            if let Err(error) = ledger.set_balance(source, QI_SCATTER_BEAD_CAPACITY) {
+                burials.beads.remove(&bead_id);
+                tracing::warn!(
+                    ?error,
+                    "[bong][zhenfa] scatter bead burial source init failed instance={} pos={pos:?}",
+                    req.item_instance_id
+                );
+                continue;
+            }
+            tracing::info!(
+                "[bong][zhenfa] scatter bead buried player={:?} instance={} bead_id={} pos={pos:?}",
+                req.player,
+                req.item_instance_id,
+                bead_id
+            );
+            continue;
+        }
+        let source = QiAccountId::container(format!(
+            "qi_scatter:{owner_player_id}:{}",
+            req.item_instance_id
+        ));
+        let Some(outcome) = release_scatter_qi_to_zone(
+            zones_ref,
+            &mut ledger,
+            qi_transfers.as_deref_mut(),
+            source,
+            QI_SCATTER_BEAD_CAPACITY,
+            pos,
+            QI_SCATTER_BEAD_CAPACITY,
+            &format!("{owner_player_id}:{}", req.item_instance_id),
+        ) else {
+            tracing::warn!(
+                "[bong][zhenfa] scatter bead consumed but release failed instance={} pos={pos:?}",
+                req.item_instance_id
+            );
+            continue;
+        };
+        mark_scatter_disturbance(
+            zones_ref,
+            &mut disturbances,
+            outcome.zone_name.as_str(),
+            req.requested_at_tick,
+        );
+        emit_scatter_bead_feedback(
+            pos,
+            outcome.zone_name.as_str(),
+            pending_narrations.as_deref_mut(),
+            vfx_events.as_deref_mut(),
+        );
+        tracing::info!(
+            "[bong][zhenfa] scatter bead used player={:?} instance={} accepted={:.3} overflow={:.3}",
+            req.player,
+            req.item_instance_id,
+            outcome.accepted,
+            outcome.overflow
+        );
+    }
+}
+
+fn handle_scatter_bead_trigger_requests(
+    mut requests: EventReader<ScatterBeadTriggerRequest>,
+    mut scatter: ScatterBeadRuntime,
+) {
+    for req in requests.read() {
+        let Some(bead) =
+            scatter
+                .burials
+                .trigger_buried(req.bead_id, req.player, req.requested_at_tick)
+        else {
+            tracing::warn!(
+                "[bong][zhenfa] buried scatter bead trigger rejected: player {:?} is not owner of bead {}",
+                req.player,
+                req.bead_id
+            );
+            continue;
+        };
+        let Some(zones_ref) = scatter.zones.as_deref_mut() else {
+            scatter.burials.beads.insert(req.bead_id, bead);
+            tracing::warn!(
+                "[bong][zhenfa] buried scatter bead trigger rejected: ZoneRegistry missing bead={}",
+                req.bead_id
+            );
+            continue;
+        };
+        let source = QiAccountId::container(format!(
+            "qi_scatter_buried:{}:{}",
+            bead.owner_player_id, bead.id
+        ));
+        let Some(outcome) = release_scatter_qi_to_zone(
+            zones_ref,
+            &mut scatter.ledger,
+            scatter.qi_transfers.as_deref_mut(),
+            source,
+            bead.remaining_qi,
+            bead.pos,
+            bead.remaining_qi,
+            &format!("buried:{}:{}", bead.owner_player_id, bead.id),
+        ) else {
+            scatter.burials.beads.insert(req.bead_id, bead);
+            tracing::warn!(
+                "[bong][zhenfa] buried scatter bead trigger release failed bead={}",
+                req.bead_id
+            );
+            continue;
+        };
+        mark_scatter_disturbance(
+            zones_ref,
+            &mut scatter.disturbances,
+            outcome.zone_name.as_str(),
+            req.requested_at_tick,
+        );
+        emit_scatter_bead_feedback(
+            bead.pos,
+            outcome.zone_name.as_str(),
+            scatter.pending_narrations.as_deref_mut(),
+            scatter.vfx_events.as_deref_mut(),
+        );
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn tick_scatter_bead_excretion(
+    clock: Res<CombatClock>,
+    mut burials: ResMut<ScatterBeadBurials>,
+    mut zones: Option<ResMut<ZoneRegistry>>,
+    mut ledger: ResMut<WorldQiAccount>,
+    mut qi_transfers: Option<ResMut<Events<QiTransfer>>>,
+    mut disturbances: ResMut<ScatterDisturbanceZones>,
+) {
+    let Some(zones_ref) = zones.as_deref_mut() else {
+        return;
+    };
+    let now = clock.tick;
+    let ids = burials.beads.keys().copied().collect::<Vec<_>>();
+    let mut depleted = Vec::new();
+
+    for id in ids {
+        let Some(bead) = burials.beads.get_mut(&id) else {
+            continue;
+        };
+        if bead.remaining_qi <= QI_EPSILON {
+            depleted.push(id);
+            continue;
+        }
+        let elapsed_ticks = now.saturating_sub(bead.last_tick);
+        if elapsed_ticks == 0 {
+            continue;
+        }
+
+        let Some(zone_name) = zone_name_for_block(zones_ref, bead.pos) else {
+            continue;
+        };
+        let Some(zone_qi) = zones_ref
+            .find_zone_mut(zone_name.as_str())
+            .map(|zone| zone.spirit_qi)
+        else {
+            continue;
+        };
+        let elapsed_secs = elapsed_ticks as f64 / TICKS_PER_SECOND as f64;
+        let remaining_after = qi_excretion(
+            bead.remaining_qi,
+            ContainerKind::EmbeddedTrap,
+            elapsed_secs,
+            EnvField::new(zone_qi),
+        );
+        let leaked = (bead.remaining_qi - remaining_after).max(0.0);
+        bead.last_tick = now;
+
+        if leaked <= QI_EPSILON {
+            bead.remaining_qi = remaining_after;
+            continue;
+        }
+
+        let source = QiAccountId::container(format!(
+            "qi_scatter_buried:{}:{}",
+            bead.owner_player_id, bead.id
+        ));
+        let Some(outcome) = release_scatter_qi_to_zone(
+            zones_ref,
+            &mut ledger,
+            qi_transfers.as_deref_mut(),
+            source,
+            bead.remaining_qi,
+            bead.pos,
+            leaked,
+            &format!("buried:{}:{}", bead.owner_player_id, bead.id),
+        ) else {
+            continue;
+        };
+        bead.remaining_qi = remaining_after;
+        mark_scatter_disturbance(
+            zones_ref,
+            &mut disturbances,
+            outcome.zone_name.as_str(),
+            now,
+        );
+        if bead.remaining_qi <= QI_EPSILON {
+            depleted.push(id);
+        }
+    }
+
+    for id in depleted {
+        burials.beads.remove(&id);
+    }
+}
+
+fn emit_scatter_bead_feedback(
+    pos: [i32; 3],
+    zone_name: &str,
+    pending_narrations: Option<&mut PendingGameplayNarrations>,
+    vfx_events: Option<&mut Events<VfxEventRequest>>,
+) {
+    if let Some(pending_narrations) = pending_narrations {
+        pending_narrations.push_zone(
+            zone_name,
+            "珠子应声碎裂,一缕灰白真元散入空气,周遭气息变得浑浊难辨。",
+            NarrationStyle::Perception,
+        );
+        pending_narrations.push_zone(
+            zone_name,
+            "你能感觉到这片地界的气机被搅了一下,像一碗清水里落了灰。",
+            NarrationStyle::Perception,
+        );
+    }
+    emit_zhenfa_vfx(
+        vfx_events,
+        gameplay_vfx::SCATTER_BURST,
+        pos,
+        "#E8F0EE",
+        0.75,
+        14,
+        16,
+    );
+}
+
 type ZhenfaDamageTarget<'a> = (
     Entity,
     &'a Position,
@@ -1654,6 +2210,19 @@ type ZhenfaDisarmPlayer<'a> = (
     Option<&'a InsightModifiers>,
     Option<&'a mut PlayerInventory>,
 );
+
+type ScatterBeadUsePlayer<'a> = (&'a Username, &'a Position, Option<&'a mut PlayerInventory>);
+
+#[derive(SystemParam)]
+struct ScatterBeadRuntime<'w> {
+    zones: Option<ResMut<'w, ZoneRegistry>>,
+    ledger: ResMut<'w, WorldQiAccount>,
+    qi_transfers: Option<ResMut<'w, Events<QiTransfer>>>,
+    burials: ResMut<'w, ScatterBeadBurials>,
+    disturbances: ResMut<'w, ScatterDisturbanceZones>,
+    pending_narrations: Option<ResMut<'w, PendingGameplayNarrations>>,
+    vfx_events: Option<ResMut<'w, Events<VfxEventRequest>>>,
+}
 
 #[derive(SystemParam)]
 struct ZhenfaTickEventWriters<'w> {
@@ -3150,9 +3719,14 @@ mod tests {
     fn install_zhenfa_test_systems(app: &mut App) {
         app.insert_resource(CombatClock::default());
         app.insert_resource(PendingGameplayNarrations::default());
+        app.insert_resource(WorldQiAccount::default());
+        app.insert_resource(ScatterBeadBurials::default());
+        app.insert_resource(ScatterDisturbanceZones::default());
         app.add_event::<ZhenfaPlaceRequest>();
         app.add_event::<ZhenfaTriggerRequest>();
         app.add_event::<ZhenfaDisarmRequest>();
+        app.add_event::<ScatterBeadUseRequest>();
+        app.add_event::<ScatterBeadTriggerRequest>();
         app.add_event::<ZhenfaSensePulse>();
         app.add_event::<WardArrayDeployEvent>();
         app.add_event::<LingArrayDeployEvent>();
@@ -3171,8 +3745,12 @@ mod tests {
             Update,
             (
                 handle_zhenfa_place_requests,
+                handle_scatter_bead_use,
+                handle_scatter_bead_trigger_requests,
                 handle_zhenfa_trigger_requests,
                 handle_zhenfa_disarm_requests,
+                tick_scatter_bead_excretion,
+                tick_scatter_disturbance_zones,
                 tick_zhenfa_registry,
             )
                 .chain(),
@@ -3180,6 +3758,15 @@ mod tests {
     }
 
     fn spawn_player(app: &mut App, name: &str, pos: [f64; 3]) -> Entity {
+        spawn_player_with_inventory(app, name, pos, zhenfa_flag_inventory())
+    }
+
+    fn spawn_player_with_inventory(
+        app: &mut App,
+        name: &str,
+        pos: [f64; 3],
+        inventory: PlayerInventory,
+    ) -> Entity {
         app.world_mut()
             .spawn((
                 Username(name.to_string()),
@@ -3195,7 +3782,7 @@ mod tests {
                 Wounds::default(),
                 Contamination::default(),
                 MeridianSystem::default(),
-                zhenfa_flag_inventory(),
+                inventory,
             ))
             .id()
     }
@@ -3490,6 +4077,344 @@ mod tests {
     }
 
     #[test]
+    fn scatter_bead_active_use_consumes_item_and_applies_ledger_transfer() {
+        let mut app = app_with_loaded_zhenfa();
+        let mut zones = ZoneRegistry::fallback();
+        zones.zones[0].spirit_qi = 0.2;
+        app.insert_resource(zones);
+        app.add_event::<VfxEventRequest>();
+        let owner = spawn_player_with_inventory(
+            &mut app,
+            "Alice",
+            [0.5, 64.0, 0.5],
+            scatter_bead_inventory(7001),
+        );
+
+        app.world_mut().send_event(ScatterBeadUseRequest {
+            player: owner,
+            item_instance_id: 7001,
+            bury_pos: None,
+            requested_at_tick: 1,
+        });
+        app.update();
+
+        let inventory = app
+            .world()
+            .get::<PlayerInventory>(owner)
+            .expect("player inventory should exist");
+        assert!(
+            inventory_item_by_instance_borrow(inventory, 7001).is_none(),
+            "主动使用散灵珠必须消费对应 inventory instance"
+        );
+
+        let zone = app
+            .world()
+            .resource::<ZoneRegistry>()
+            .find_zone_by_name(DEFAULT_SPAWN_ZONE_NAME)
+            .expect("spawn zone should exist");
+        assert!(
+            (zone.spirit_qi - (0.2 + QI_SCATTER_BEAD_CAPACITY / QI_ZONE_UNIT_CAPACITY)).abs()
+                < 1e-9,
+            "zone 浓度增量必须等于散灵珠实际注入量 / QI_ZONE_UNIT_CAPACITY"
+        );
+        assert!(zone
+            .active_events
+            .iter()
+            .any(|event| event == SCATTER_DISTURBANCE_EVENT));
+
+        let source = QiAccountId::container("qi_scatter:offline:Alice:7001");
+        let zone_account = QiAccountId::zone(DEFAULT_SPAWN_ZONE_NAME);
+        let ledger = app.world().resource::<WorldQiAccount>();
+        assert!(
+            ledger.balance(&source) <= QI_EPSILON,
+            "散灵珠 source account 应在主动使用后归零"
+        );
+        assert!(
+            (ledger.balance(&zone_account) - QI_SCATTER_BEAD_CAPACITY).abs() < 1e-9,
+            "WorldQiAccount zone balance 必须真实接收散灵珠真元，不能只 emit event"
+        );
+        assert!(ledger.transfers().iter().any(|transfer| {
+            transfer.from == source
+                && transfer.to == zone_account
+                && (transfer.amount - QI_SCATTER_BEAD_CAPACITY).abs() < 1e-9
+                && transfer.reason == QiTransferReason::ReleaseToZone
+        }));
+
+        let vfx_events = app.world().resource::<Events<VfxEventRequest>>();
+        assert!(vfx_events
+            .iter_current_update_events()
+            .any(|event| matches!(
+                &event.payload,
+                crate::schema::vfx_event::VfxEventPayloadV1::SpawnParticle { event_id, .. }
+                    if event_id == gameplay_vfx::SCATTER_BURST
+            )));
+        let narrations = app
+            .world_mut()
+            .resource_mut::<PendingGameplayNarrations>()
+            .drain();
+        assert_eq!(narrations.len(), 2, "主动破裂应入队两条感知旁白");
+        assert!(narrations.iter().all(|narration| matches!(
+            narration.scope,
+            crate::schema::common::NarrationScope::Zone
+        )));
+    }
+
+    #[test]
+    fn scatter_bead_full_zone_routes_overflow_without_changing_zone() {
+        let mut app = app_with_loaded_zhenfa();
+        let mut zones = ZoneRegistry::fallback();
+        zones.zones[0].spirit_qi = 1.0;
+        app.insert_resource(zones);
+        let owner = spawn_player_with_inventory(
+            &mut app,
+            "Alice",
+            [0.5, 64.0, 0.5],
+            scatter_bead_inventory(7002),
+        );
+
+        app.world_mut().send_event(ScatterBeadUseRequest {
+            player: owner,
+            item_instance_id: 7002,
+            bury_pos: None,
+            requested_at_tick: 1,
+        });
+        app.update();
+
+        let zone = app
+            .world()
+            .resource::<ZoneRegistry>()
+            .find_zone_by_name(DEFAULT_SPAWN_ZONE_NAME)
+            .expect("spawn zone should exist");
+        assert_eq!(zone.spirit_qi, 1.0, "满 cap zone 不应继续升高");
+
+        let ledger = app.world().resource::<WorldQiAccount>();
+        let overflow_total: f64 = ledger
+            .transfers()
+            .iter()
+            .filter(|transfer| transfer.to.kind == crate::qi_physics::QiAccountKind::Overflow)
+            .map(|transfer| transfer.amount)
+            .sum();
+        assert!(
+            (overflow_total - QI_SCATTER_BEAD_CAPACITY).abs() < 1e-9,
+            "zone 已满时散灵珠真元必须进入 overflow account，不能凭空消失"
+        );
+    }
+
+    #[test]
+    fn scatter_bead_repeated_instance_is_rejected_after_first_consume() {
+        let mut app = app_with_loaded_zhenfa();
+        app.insert_resource(ZoneRegistry::fallback());
+        let owner = spawn_player_with_inventory(
+            &mut app,
+            "Alice",
+            [0.5, 64.0, 0.5],
+            scatter_bead_inventory(7003),
+        );
+
+        for tick in [1, 2] {
+            app.world_mut().send_event(ScatterBeadUseRequest {
+                player: owner,
+                item_instance_id: 7003,
+                bury_pos: None,
+                requested_at_tick: tick,
+            });
+            app.world_mut().resource_mut::<CombatClock>().tick = tick;
+            app.update();
+        }
+
+        let ledger = app.world().resource::<WorldQiAccount>();
+        assert_eq!(
+            ledger.transfers().len(),
+            1,
+            "第二次使用同一已消耗散灵珠 instance 必须被拒绝，不能重复转账"
+        );
+    }
+
+    #[test]
+    fn scatter_disturbance_tag_expires() {
+        let mut app = app_with_loaded_zhenfa();
+        app.insert_resource(ZoneRegistry::fallback());
+        let owner = spawn_player_with_inventory(
+            &mut app,
+            "Alice",
+            [0.5, 64.0, 0.5],
+            scatter_bead_inventory(7004),
+        );
+
+        app.world_mut().send_event(ScatterBeadUseRequest {
+            player: owner,
+            item_instance_id: 7004,
+            bury_pos: None,
+            requested_at_tick: 1,
+        });
+        app.update();
+        assert!(app
+            .world()
+            .resource::<ZoneRegistry>()
+            .find_zone_by_name(DEFAULT_SPAWN_ZONE_NAME)
+            .expect("spawn zone should exist")
+            .active_events
+            .iter()
+            .any(|event| event == SCATTER_DISTURBANCE_EVENT));
+
+        app.world_mut().resource_mut::<CombatClock>().tick = 1 + SCATTER_DISTURBANCE_DURATION_TICKS;
+        app.update();
+        assert!(!app
+            .world()
+            .resource::<ZoneRegistry>()
+            .find_zone_by_name(DEFAULT_SPAWN_ZONE_NAME)
+            .expect("spawn zone should exist")
+            .active_events
+            .iter()
+            .any(|event| event == SCATTER_DISTURBANCE_EVENT));
+    }
+
+    #[test]
+    fn buried_scatter_bead_excretes_conservatively_and_elapsed_zero_is_stable() {
+        let mut app = app_with_loaded_zhenfa();
+        let mut zones = ZoneRegistry::fallback();
+        zones.zones[0].spirit_qi = 0.0;
+        app.insert_resource(zones);
+        let owner = spawn_player_with_inventory(
+            &mut app,
+            "Alice",
+            [0.5, 64.0, 0.5],
+            scatter_bead_inventory(7005),
+        );
+
+        app.world_mut().send_event(ScatterBeadUseRequest {
+            player: owner,
+            item_instance_id: 7005,
+            bury_pos: Some([0, 64, 0]),
+            requested_at_tick: 0,
+        });
+
+        app.update();
+        let bead_id = 1;
+        assert_eq!(
+            app.world()
+                .resource::<ScatterBeadBurials>()
+                .beads
+                .get(&bead_id)
+                .expect("buried bead should still exist")
+                .remaining_qi,
+            QI_SCATTER_BEAD_CAPACITY,
+            "elapsed=0 时预埋散灵珠 remaining 不应变化"
+        );
+
+        app.world_mut().resource_mut::<CombatClock>().tick = 60 * TICKS_PER_SECOND;
+        app.update();
+
+        let remaining = app
+            .world()
+            .resource::<ScatterBeadBurials>()
+            .beads
+            .get(&bead_id)
+            .expect("60 秒后不应立即归零")
+            .remaining_qi;
+        assert!(
+            remaining < QI_SCATTER_BEAD_CAPACITY && remaining > 0.0,
+            "预埋散灵珠应随 EmbeddedTrap 逸散曲线单调递减"
+        );
+        let source = QiAccountId::container(format!("qi_scatter_buried:offline:Alice:{bead_id}"));
+        let zone_account = QiAccountId::zone(DEFAULT_SPAWN_ZONE_NAME);
+        let ledger = app.world().resource::<WorldQiAccount>();
+        assert!(
+            (ledger.balance(&source) - remaining).abs() < 1e-9,
+            "buried source account balance 必须等于剩余真元"
+        );
+        assert!(
+            (remaining + ledger.balance(&zone_account) - QI_SCATTER_BEAD_CAPACITY).abs() < 1e-9,
+            "bead_remaining + 已注入 zone 必须闭合为 QI_SCATTER_BEAD_CAPACITY"
+        );
+    }
+
+    #[test]
+    fn buried_scatter_bead_owner_trigger_releases_remaining_qi() {
+        let mut app = app_with_loaded_zhenfa();
+        let mut zones = ZoneRegistry::fallback();
+        zones.zones[0].spirit_qi = 0.0;
+        app.insert_resource(zones);
+        app.add_event::<VfxEventRequest>();
+        let owner = spawn_player_with_inventory(
+            &mut app,
+            "Alice",
+            [0.5, 64.0, 0.5],
+            scatter_bead_inventory(7006),
+        );
+        let intruder = spawn_player(&mut app, "Bob", [0.5, 64.0, 0.5]);
+
+        app.world_mut().send_event(ScatterBeadUseRequest {
+            player: owner,
+            item_instance_id: 7006,
+            bury_pos: Some([0, 64, 0]),
+            requested_at_tick: 0,
+        });
+        app.update();
+        let bead_id = 1;
+
+        app.world_mut().send_event(ScatterBeadTriggerRequest {
+            player: intruder,
+            bead_id,
+            requested_at_tick: 1,
+        });
+        app.update();
+        assert!(
+            app.world()
+                .resource::<ScatterBeadBurials>()
+                .beads
+                .contains_key(&bead_id),
+            "非 owner 触发预埋散灵珠必须被拒绝并保留埋设记录"
+        );
+
+        app.world_mut().send_event(ScatterBeadTriggerRequest {
+            player: owner,
+            bead_id,
+            requested_at_tick: 2,
+        });
+        app.update();
+        assert!(
+            !app.world()
+                .resource::<ScatterBeadBurials>()
+                .beads
+                .contains_key(&bead_id),
+            "owner 触发后预埋散灵珠必须移除"
+        );
+        let zone_account = QiAccountId::zone(DEFAULT_SPAWN_ZONE_NAME);
+        let ledger = app.world().resource::<WorldQiAccount>();
+        assert!(
+            (ledger.balance(&zone_account) - QI_SCATTER_BEAD_CAPACITY).abs() < 1e-9,
+            "owner 触发预埋散灵珠应将剩余真元守恒释放到 zone"
+        );
+    }
+
+    #[test]
+    fn buried_scatter_bead_trigger_requires_owner() {
+        let mut burials = ScatterBeadBurials::default();
+        let mut app = app_with_zhenfa();
+        let owner = app.world_mut().spawn_empty().id();
+        let intruder = app.world_mut().spawn_empty().id();
+        let bead_id = burials.insert(
+            owner,
+            "offline:Alice",
+            [0, 64, 0],
+            QI_SCATTER_BEAD_CAPACITY,
+            0,
+        );
+
+        assert!(
+            burials.trigger_buried(bead_id, intruder, 1).is_none(),
+            "非 owner 触发预埋散灵珠必须被拒绝"
+        );
+        assert!(burials.beads.contains_key(&bead_id));
+        assert!(
+            burials.trigger_buried(bead_id, owner, 2).is_some(),
+            "owner 可以触发自己的预埋散灵珠"
+        );
+        assert!(!burials.beads.contains_key(&bead_id));
+    }
+
+    #[test]
     fn clear_lingju_effect_ignores_removed_or_unknown_instance() {
         let mut app = app_with_zhenfa();
         spawn_plot(&mut app, [0, 64, 0], PLOT_QI_CAP_BASE);
@@ -3639,6 +4564,10 @@ mod tests {
         item
     }
 
+    fn scatter_bead_item(instance_id: u64) -> ItemInstance {
+        trap_item(instance_id, QI_SCATTER_BEAD_ITEM_ID, "散灵珠")
+    }
+
     fn released_zhenfa_qi_total(transfers: &Events<QiTransfer>) -> f64 {
         transfers
             .iter_current_update_events()
@@ -3693,6 +4622,10 @@ mod tests {
             .equipped
             .insert(EQUIP_SLOT_MAIN_HAND.to_string(), item);
         inventory
+    }
+
+    fn scatter_bead_inventory(instance_id: u64) -> PlayerInventory {
+        ordinary_trap_inventory(scatter_bead_item(instance_id))
     }
 
     fn pearl_registry() -> ItemRegistry {

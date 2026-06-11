@@ -292,6 +292,17 @@ pub enum ClientRequestV1 {
         z: i32,
         mode: ZhenfaDisarmMode,
     },
+    /// plan-zhenfa-content-v2 P2 — 主动使用散灵珠，服务端消费 inventory instance 并守恒注入所在 zone。
+    QiScatterBeadUse {
+        v: u8,
+        item_instance_id: u64,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        x: Option<i32>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        y: Option<i32>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        z: Option<i32>,
+    },
     LearnSkillScroll {
         v: u8,
         instance_id: u64,
@@ -1851,6 +1862,53 @@ mod tests {
             }
             other => panic!("expected ZhenfaDisarm, got {other:?}"),
         }
+
+        let scatter = r#"{"type":"qi_scatter_bead_use","v":1,"item_instance_id":7001}"#;
+        let req: ClientRequestV1 = serde_json::from_str(scatter).unwrap();
+        match req {
+            ClientRequestV1::QiScatterBeadUse {
+                v,
+                item_instance_id,
+                x,
+                y,
+                z,
+            } => {
+                assert_eq!(v, 1);
+                assert_eq!(item_instance_id, 7001);
+                assert_eq!((x, y, z), (None, None, None));
+            }
+            other => panic!("expected QiScatterBeadUse, got {other:?}"),
+        }
+
+        let scatter_bury =
+            r#"{"type":"qi_scatter_bead_use","v":1,"item_instance_id":7002,"x":1,"y":64,"z":-2}"#;
+        let req: ClientRequestV1 = serde_json::from_str(scatter_bury).unwrap();
+        match req {
+            ClientRequestV1::QiScatterBeadUse {
+                v,
+                item_instance_id,
+                x,
+                y,
+                z,
+            } => {
+                assert_eq!(v, 1);
+                assert_eq!(item_instance_id, 7002);
+                assert_eq!((x, y, z), (Some(1), Some(64), Some(-2)));
+            }
+            other => panic!("expected buried QiScatterBeadUse, got {other:?}"),
+        }
+
+        let unknown =
+            r#"{"type":"qi_scatter_bead_use","v":1,"item_instance_id":7001,"extra":true}"#;
+        assert!(
+            serde_json::from_str::<ClientRequestV1>(unknown).is_err(),
+            "qi_scatter_bead_use must reject unknown fields"
+        );
+        let negative = r#"{"type":"qi_scatter_bead_use","v":1,"item_instance_id":-1}"#;
+        assert!(
+            serde_json::from_str::<ClientRequestV1>(negative).is_err(),
+            "qi_scatter_bead_use item_instance_id is u64 and must reject negative JSON"
+        );
     }
 
     #[test]

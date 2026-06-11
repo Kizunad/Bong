@@ -3474,6 +3474,18 @@ impl From<&super::client_request::ClientRequestV1> for bong::client_request_enve
                     mode: zhenfa_disarm_mode_to_proto(mode),
                 })
             }
+            ClientRequestV1::QiScatterBeadUse {
+                item_instance_id,
+                x,
+                y,
+                z,
+                ..
+            } => Payload::QiScatterBeadUse(bong::QiScatterBeadUse {
+                item_instance_id: *item_instance_id,
+                x: *x,
+                y: *y,
+                z: *z,
+            }),
             // ─── 学习 / 功法 C2S ──────────────────────────────────
             ClientRequestV1::LearnSkillScroll { instance_id, .. } => {
                 Payload::LearnSkillScroll(bong::LearnSkillScroll {

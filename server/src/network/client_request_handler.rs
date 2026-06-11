@@ -171,7 +171,9 @@ use crate::world::tsy_container_search::{
 };
 use crate::world::tsy_lifecycle::TsyZoneStateRegistry;
 use crate::world::zone::{ZoneRegistry, DEFAULT_SPAWN_ZONE_NAME};
-use crate::zhenfa::{ZhenfaDisarmRequest, ZhenfaPlaceRequest, ZhenfaTriggerRequest};
+use crate::zhenfa::{
+    ScatterBeadUseRequest, ZhenfaDisarmRequest, ZhenfaPlaceRequest, ZhenfaTriggerRequest,
+};
 
 /// per-client alchemy mock 状态，让 client→server 操作（翻页/学方）有可观察的回响。
 /// 真实数据流（ECS 接入后）会替换掉本 resource。
@@ -306,6 +308,7 @@ pub struct ClientRequestDispatchParams<'w> {
     pub zhenfa_place_tx: Option<ResMut<'w, Events<ZhenfaPlaceRequest>>>,
     pub zhenfa_trigger_tx: Option<ResMut<'w, Events<ZhenfaTriggerRequest>>>,
     pub zhenfa_disarm_tx: Option<ResMut<'w, Events<ZhenfaDisarmRequest>>>,
+    pub qi_scatter_bead_use_tx: Option<ResMut<'w, Events<ScatterBeadUseRequest>>>,
     pub charge_carrier_tx: Option<ResMut<'w, Events<ChargeCarrierIntent>>>,
     pub throw_carrier_tx: Option<ResMut<'w, Events<ThrowCarrierIntent>>>,
     // ─── plan-craft-v1 P2：通用手搓 intent ──────────────────
@@ -501,6 +504,7 @@ pub fn handle_client_request_payloads(
             | ClientRequestV1::ZhenfaPlace { v, .. }
             | ClientRequestV1::ZhenfaTrigger { v, .. }
             | ClientRequestV1::ZhenfaDisarm { v, .. }
+            | ClientRequestV1::QiScatterBeadUse { v, .. }
             | ClientRequestV1::LearnSkillScroll { v, .. }
             | ClientRequestV1::TechniqueScrollUse { v, .. }
             | ClientRequestV1::InventoryMoveIntent { v, .. }
@@ -1459,6 +1463,36 @@ pub fn handle_client_request_payloads(
                     player: ev.client,
                     pos: [x, y, z],
                     mode,
+                    requested_at_tick: combat_clock.tick,
+                });
+            }
+            ClientRequestV1::QiScatterBeadUse {
+                item_instance_id,
+                x,
+                y,
+                z,
+                ..
+            } => {
+                let Some(use_tx) = dispatch.qi_scatter_bead_use_tx.as_deref_mut() else {
+                    tracing::warn!(
+                        "[bong][network] dropped qi_scatter_bead_use because ScatterBeadUseRequest event resource is missing"
+                    );
+                    continue;
+                };
+                let bury_pos = match (x, y, z) {
+                    (Some(x), Some(y), Some(z)) => Some([x, y, z]),
+                    (None, None, None) => None,
+                    _ => {
+                        tracing::warn!(
+                            "[bong][network] dropped malformed qi_scatter_bead_use: x/y/z must be all present or all absent"
+                        );
+                        continue;
+                    }
+                };
+                use_tx.send(ScatterBeadUseRequest {
+                    player: ev.client,
+                    item_instance_id,
+                    bury_pos,
                     requested_at_tick: combat_clock.tick,
                 });
             }
@@ -3650,6 +3684,10 @@ mod tests {
         app.add_event::<SkillXpGain>();
         app.add_event::<SkillScrollUsed>();
         app.add_event::<BlockPlaceRequest>();
+        app.add_event::<ZhenfaPlaceRequest>();
+        app.add_event::<ZhenfaTriggerRequest>();
+        app.add_event::<ZhenfaDisarmRequest>();
+        app.add_event::<ScatterBeadUseRequest>();
         app.add_event::<InventoryDurabilityChangedEvent>();
         app.add_event::<crate::alchemy::AlchemyOutcomeEvent>();
         app.add_event::<crate::combat::events::CombatEvent>();
@@ -3752,6 +3790,79 @@ mod tests {
                 .any(|message| message.contains("[修炼] 已收到经脉目标：督脉。")),
             "expected generic meridian target chat echo because request is not limited to Chong, actual messages={messages:?}"
         );
+    }
+
+    #[test]
+    fn qi_scatter_bead_use_dispatches_zhenfa_event() {
+        let mut app = App::new();
+        register_request_app(&mut app);
+        app.world_mut().resource_mut::<CombatClock>().tick = 33;
+
+        let (client_bundle, _helper) = create_mock_client("Azure");
+        let entity = app.world_mut().spawn(client_bundle).id();
+        app.world_mut()
+            .resource_mut::<valence::prelude::Events<CustomPayloadEvent>>()
+            .send(CustomPayloadEvent {
+                client: entity,
+                channel: ident!("bong:client_request").into(),
+                data: serde_json::to_vec(&ClientRequestV1::QiScatterBeadUse {
+                    v: 1,
+                    item_instance_id: 7001,
+                    x: None,
+                    y: None,
+                    z: None,
+                })
+                .expect("qi scatter bead request should serialize")
+                .into_boxed_slice(),
+            });
+
+        app.update();
+
+        let mut events = app
+            .world()
+            .resource::<Events<ScatterBeadUseRequest>>()
+            .iter_current_update_events();
+        let event = events
+            .next()
+            .expect("qi_scatter_bead_use must dispatch ScatterBeadUseRequest");
+        assert_eq!(event.player, entity);
+        assert_eq!(event.item_instance_id, 7001);
+        assert_eq!(event.bury_pos, None);
+        assert_eq!(event.requested_at_tick, 33);
+        assert!(
+            events.next().is_none(),
+            "qi_scatter_bead_use should emit exactly one request event"
+        );
+    }
+
+    #[test]
+    fn qi_scatter_bead_use_with_coords_dispatches_burial_pos() {
+        let mut app = App::new();
+        register_request_app(&mut app);
+
+        let (client_bundle, _helper) = create_mock_client("Azure");
+        let entity = app.world_mut().spawn(client_bundle).id();
+        app.world_mut()
+            .resource_mut::<valence::prelude::Events<CustomPayloadEvent>>()
+            .send(CustomPayloadEvent {
+                client: entity,
+                channel: ident!("bong:client_request").into(),
+                data: br#"{"type":"qi_scatter_bead_use","v":1,"item_instance_id":7002,"x":1,"y":64,"z":-2}"#
+                    .to_vec()
+                    .into_boxed_slice(),
+            });
+
+        app.update();
+
+        let event = app
+            .world()
+            .resource::<Events<ScatterBeadUseRequest>>()
+            .iter_current_update_events()
+            .next()
+            .expect("qi_scatter_bead_use with coords must dispatch burial request");
+        assert_eq!(event.player, entity);
+        assert_eq!(event.item_instance_id, 7002);
+        assert_eq!(event.bury_pos, Some([1, 64, -2]));
     }
 
     #[test]
