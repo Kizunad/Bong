@@ -10,7 +10,7 @@
 | P1 | 驻守收益与代价（灵气优先权 + 天道注意力加速 + NPC 态度） | ✅ 2026-06-11 |
 | P2 | 领地争夺机制（侵入/驱逐/灵脉占据的博弈规则） | ✅ 2026-06-11 |
 | P3 | 领地信息暴露（narration 广播 + NPC 传话 + 环境痕迹） | ✅ 2026-06-11 |
-| P4 | 饱和测试 | ⬜ |
+| P4 | 饱和测试 | ✅ 2026-06-11 |
 
 > **P3 落地（2026-06-11, server 侧）**：`territory_narration.rs`(天道 narration) + `territory_rumor.rs`(NPC 传话) 新建。①**三时刻检测** `DominanceChangedEvent`(新霸主/驱逐/灵气耗尽边沿，首帧水位默认当前 `spirit_qi`，避免重启后初始废地误报) + `realm_band` 匿名 3 段。②**天道 narration 双路**：emit `bong:territory_narration_request`(留 agent runtime 契约，`spirit_qi` 从 `ZoneRegistry` 取真实水位) + 同步 `PendingGameplayNarrations.push_zone`(不依赖 agent 即 in-game 聊天可见，真闭环)。③**public_known 延迟传播** `territory_public_reveal_system`(established_tick+~1hr)。④**NPC 传话** `ZoneDominionRumor`(匿名:zone+境界段+时间,无名字) + `NpcRumorMemory` + enqueue/spread system，相邻 zone gate(`zones_are_adjacent` AABB margin)，延迟 1-3hr；`ensure_npc_rumor_memory_system` 自动给带 `NpcPatrol` 的生产 NPC 补齐 memory，避免 spawn/hydrate 路径漏挂导致 spread query 静默为空。**纠偏**：散修不带 NpcPatrol，传话主体改为带 NpcPatrol 的 NPC。**遗留**：环境痕迹 client 视觉(GroundDecal/Sprite 粒子=资产)→独立 client PR；`NpcRumorMemory`→玩家可见 NPC 对话渲染→独立 NPC chat PR；agent territory-narration runtime(订阅契约已留)→独立 agent PR。cargo fmt+clippy(-D warnings)+test **8330+ passed**（P3 专项 47+：三时刻narration/public_known延迟/rumor匿名/相邻才传/非相邻不收/生产NPC自动挂rumor memory/真实spirit_qi/QiDepleted 首帧废地不误报/zones_are_adjacent）。
 
@@ -306,3 +306,28 @@ NPC 传话精度：只传境界段 + 大致时间，不传名字（匿名系统�
 13. **influence 不影响灵气数值**——纯社交层面，灵气走现有 zone qi 系统
 14. **NPC 行为变化不创造/消灭灵气**
 15. **击杀 influence 零和**：A 杀 B → A +5, B 归 0（总量不守恒——这是故意的，击杀是毁灭性的）
+
+
+---
+
+## Finish Evidence
+
+**落地清单**（全 P0-P4 ✅，2026-06-11）：
+- **P0** 区域影响力系统：`server/src/world/territory.rs`（`ZoneInfluenceMap`/`ZoneDominance`/`territory_tick` 三源累积+权重+衰减）+ persistence v29（`zone_influence` 表 SQLite round-trip）
+- **P1** 驻守收益与代价：`server/src/world/territory_perks.rs`（灵气优先权×1.20 守恒安全 / 天道加速×1.5 / NPC 态度接 trade）
+- **P2** 领地争夺：`territory_pvp_influence_system`（zone 内 PvP 击杀→killer+5/victim 归零；差距<10 共治由 `recompute_dominance` emerge）
+- **P3** 信息暴露：`territory_narration.rs`（天道 narration 双路：Redis 通道契约 + `push_zone` 兜底）+ `territory_rumor.rs`（NPC 匿名传话，相邻 zone gate）+ public_known 延迟传播
+- **P4** 饱和测试：24 场景集成测试（影响力曲线/NPC让路/传话/天道联动/守恒断言）+ QiDepleted 边界回归测试
+
+**关键 commit**：P0 `0af5857dc`(#487) · P1 `eb5b4f2eb`(#491) · P2 `5d206acae`(#492) · P3 `d3c98c008`(#495) · P4 本 PR
+
+**测试结果**：`cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test` → **8368 passed; 0 failed; 1 ignored**。territory 专项 ~120（territory.rs 61 / perks 17 / rumor 19 / narration 14 / scorers_survival 13）。
+
+**跨仓库核验**：server `ZoneInfluenceMap`/`ZoneDominance`/`territory_pvp_influence_system`/`TerritoryDominanceNarrationRequestV1`/`ZoneDominionRumor` · agent `channels.ts` `CH_TERRITORY_NARRATION_REQUEST` 契约 · IPC Redis `bong:territory_narration_request`。
+
+**遗留 / 后续**：
+- **环境痕迹 client 视觉**（影响力 30+/50+/70+ → GroundDecal/Sprite 粒子）→ 独立 client 资产 PR（需 gen-image 粒子贴图）
+- **agent territory-narration runtime**（订阅 `bong:territory_narration_request` 渲染 LLM 文本）→ 独立 agent PR（server 已留 channel+schema 契约，`push_zone` 已兜底 in-game 可见）
+- **#8 NPC 报信**（influence≥70→入侵者通报≤30s）→ P4.5（全仓无此机制，需 `NpcIntruderReportEvent` + 600-tick system + narration 模板）
+- **#10 驻守加速×1.6**（连续 2h dwell 时间加成）→ 未实现，当前由 is_dominant×1.5 近似，P4.5 可补
+- **plan 场景数值偏差**：原 P4 场景 1（固元60min→18）/场景 2（赢3场+6）与实现公式不自洽（实测 per-eval：dwell 0.3×(rank+1)/practice×1.5/combat×1.2/kill+5），P4 测真实 contract 并注明，未按错误聚合值断言

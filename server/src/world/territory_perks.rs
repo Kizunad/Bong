@@ -757,4 +757,78 @@ mod tests {
             "无霸主 zone 查询应返回 1.0",
         );
     }
+
+    // ── plan-territory-v1 P4 场景 11: 领地+天道双压共存断言 ──────────────────────
+    // 霸主同时得到 regen×1.20 和 attention×1.5，两效果共存不可分（worldview §八 "出头椽子先烂"）。
+    // 扩展 dominance_perk_and_cost_are_inseparable 加精确倍率边界断言。
+
+    #[test]
+    fn scenario_11_territory_tiandao_dual_pressure_precise_multipliers() {
+        use crate::cultivation::components::Realm;
+        use crate::world::season::Season;
+        use crate::world::tiandao_hunt::{
+            accumulation_rate_with_dominance, TiandaoActivity, TiandaoAttentionInput,
+        };
+
+        // --- 霸主 regen 倍率精确断言 ---
+        let mut regen_store = ZoneDominanceRegenStore::default();
+        regen_store
+            .multipliers
+            .insert("dual_zone".to_string(), DOMINANCE_REGEN_MULTIPLIER);
+        let regen_mult = regen_store.multiplier_for("dual_zone");
+        assert_close(
+            regen_mult,
+            DOMINANCE_REGEN_MULTIPLIER,
+            "期望霸主 regen 倍率=DOMINANCE_REGEN_MULTIPLIER(1.20)，\
+             若撞红说明 DOMINANCE_REGEN_MULTIPLIER 常量被改",
+        );
+        assert!(
+            regen_mult > 1.0,
+            "期望霸主 regen 倍率 > 1.0（有实质加成），实际={}",
+            regen_mult
+        );
+
+        // --- 霸主 attention 速率精确倍率断言 ---
+        let base_input = TiandaoAttentionInput {
+            realm: Realm::Condense,
+            zone_spirit_qi: 0.7,
+            activity: TiandaoActivity::Standing,
+            season: Season::default(),
+            is_dominant: false,
+        };
+        let dom_input = TiandaoAttentionInput {
+            is_dominant: true,
+            ..base_input
+        };
+
+        let rate_base = accumulation_rate_with_dominance(base_input);
+        let rate_dom = accumulation_rate_with_dominance(dom_input);
+
+        assert_close(
+            rate_dom,
+            rate_base * DOMINANCE_ATTENTION_MULT,
+            "期望霸主 attention 速率=非霸主×DOMINANCE_ATTENTION_MULT(1.5)，\
+             若撞红说明 accumulation_rate_with_dominance 乘子逻辑改变",
+        );
+
+        // --- 双效果共存约束 ---
+        assert!(
+            regen_mult > 1.0 && rate_dom > rate_base,
+            "期望霸主同时得到 regen 优先({regen_mult:.2}×) 和 attention 加速({rate_dom:.6} vs {rate_base:.6})，\
+             两效果必须共存不可分（场景11 双压验证）"
+        );
+
+        // --- 非霸主无额外倍率 ---
+        let store_nondom = ZoneDominanceRegenStore::default();
+        assert_close(
+            store_nondom.multiplier_for("dual_zone"),
+            1.0,
+            "期望非霸主 zone regen 倍率=1.0（无加成），实际非 1.0 说明 store 有污染",
+        );
+        assert_close(
+            rate_base,
+            rate_dom / DOMINANCE_ATTENTION_MULT,
+            "期望非霸主 attention 速率=霸主速率/DOMINANCE_ATTENTION_MULT，实现对称验证",
+        );
+    }
 }
