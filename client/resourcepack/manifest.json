@@ -3,8 +3,8 @@
   "name": "bong-full",
   "version": "v1",
   "file": "bong-full-v1.zip",
-  "sha1": "7eaa22c753c8bbeb93e36838ff18eae973c731d4",
-  "size": 72238086,
+  "sha1": "07a7fb70d19e837677697ec27caae709f9656169",
+  "size": 72238471,
   "url_env": "BONG_RESOURCE_PACK_URL",
   "sha1_env": "BONG_RESOURCE_PACK_SHA1",
   "force_accept_default": false,
@@ -49,7 +49,7 @@
         "bong/atmosphere",
         "bong/audio_recipes"
       ],
-      "file_count": 48
+      "file_count": 49
     }
   ]
 }
