@@ -11,6 +11,7 @@ pub enum ContainerKind {
     SealedInBone,
     LooseInPill,
     WieldedInWeapon,
+    EmbeddedTrap,
     AmbientField,
     TurbulentField,
     SealedAncientRelic,
@@ -22,6 +23,7 @@ impl ContainerKind {
             Self::SealedAncientRelic => 0.02,
             Self::SealedInBone => 0.12,
             Self::WieldedInWeapon => 0.35,
+            Self::EmbeddedTrap => 0.45,
             Self::LooseInPill => 0.55,
             Self::AmbientField => 1.0,
             Self::TurbulentField => 1.0,
@@ -225,11 +227,24 @@ mod tests {
     use super::*;
 
     #[test]
-    fn ancient_relic_leaks_less_than_bone() {
-        assert!(
-            ContainerKind::SealedAncientRelic.seal_multiplier()
-                < ContainerKind::SealedInBone.seal_multiplier()
-        );
+    fn seal_multipliers_pin_all_container_kinds() {
+        let cases = [
+            (ContainerKind::SealedAncientRelic, 0.02),
+            (ContainerKind::SealedInBone, 0.12),
+            (ContainerKind::WieldedInWeapon, 0.35),
+            (ContainerKind::EmbeddedTrap, 0.45),
+            (ContainerKind::LooseInPill, 0.55),
+            (ContainerKind::AmbientField, 1.0),
+            (ContainerKind::TurbulentField, 1.0),
+        ];
+
+        for (kind, expected) in cases {
+            assert_eq!(
+                kind.seal_multiplier(),
+                expected,
+                "{kind:?} multiplier drifted"
+            );
+        }
     }
 
     #[test]
@@ -237,6 +252,7 @@ mod tests {
         assert!(ContainerKind::AmbientField.allows_reverse_pressure());
         assert!(ContainerKind::TurbulentField.allows_reverse_pressure());
         assert!(!ContainerKind::SealedInBone.allows_reverse_pressure());
+        assert!(!ContainerKind::EmbeddedTrap.allows_reverse_pressure());
     }
 
     #[test]
