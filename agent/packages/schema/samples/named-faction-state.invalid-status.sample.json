@@ -1,0 +1,15 @@
+{
+  "v": 1,
+  "kind": "named_faction_state",
+  "named_factions": [
+    {
+      "id": "qingyun_hunters",
+      "display_name": "青云猎盟",
+      "zone_anchor": "qingyun_peaks",
+      "current_npc_count": 0,
+      "status": "alive"
+    }
+  ],
+  "relation_matrix": [],
+  "at_tick": 1
+}

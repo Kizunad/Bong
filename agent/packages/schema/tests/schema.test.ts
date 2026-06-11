@@ -66,6 +66,9 @@ import {
   validateFactionStateV1Contract,
   validateFactionWarEventV1Contract,
   validateNpcDeathV1Contract,
+  validateNamedFactionStateV1Contract,
+  NamedFactionStateV1,
+  FactionStatusV1,
 } from "../src/npc.js";
 import {
   PseudoVeinDissipateEventV1,
@@ -3068,5 +3071,62 @@ describe("MutationEventV1 schema pin tests (plan-dandao-runtime-wiring-v1 P2)", 
   it("CHANNELS.MUTATION_EVENT equals bong:mutation_event", () => {
     // 对齐 server CH_MUTATION_EVENT = "bong:mutation_event"
     expect(CHANNELS.MUTATION_EVENT).toBe("bong:mutation_event");
+  });
+
+  // ── plan-faction-expansion-v1 P0：具名势力 schema 双端 ────────────────────────
+
+  it("CHANNELS.NAMED_FACTION_STATE 防撞（≠ bong:faction_state）", () => {
+    // 双端 pin：CH_NAMED_FACTION_STATE 必须是 "bong:named_faction_state"（非 "bong:faction_state"）。
+    expect(CHANNELS.NAMED_FACTION_STATE).toBe("bong:named_faction_state");
+    expect(CHANNELS.NAMED_FACTION_STATE).not.toBe(CHANNELS.FACTION_STATE);
+    expect(REDIS_V1_CHANNELS).toContain(CHANNELS.NAMED_FACTION_STATE);
+  });
+
+  it("named-faction-state.sample.json passes NamedFactionStateV1 contract（正 sample）", () => {
+    // 正 sample：3 势力，北荒 headless，关系矩阵 hostile=true。
+    const data = loadSample("named-faction-state.sample.json");
+    expectContractAccepts("NamedFactionStateV1 正样本", validateNamedFactionStateV1Contract, data);
+  });
+
+  it("named-faction-state.invalid-status.sample.json is rejected（反 sample：非法 status）", () => {
+    // 反 sample：status="alive" 不属于 active/headless/decayed，必须被拒。
+    const data = loadSample("named-faction-state.invalid-status.sample.json");
+    expectContractRejects("NamedFactionStateV1 非法 status", validateNamedFactionStateV1Contract, data);
+  });
+
+  it("named-faction-state.invalid-missing-field.sample.json is rejected（反 sample：缺 at_tick）", () => {
+    // 反 sample：缺必填 at_tick 字段，必须被拒（additionalProperties:false，无 default）。
+    const data = loadSample("named-faction-state.invalid-missing-field.sample.json");
+    expectContractRejects("NamedFactionStateV1 缺 at_tick", validateNamedFactionStateV1Contract, data);
+  });
+
+  it("FactionStatusV1 三变体各自被接受（active/headless/decayed）", () => {
+    // FactionStatusV1 union 三变体专属正向 pin——每个 wire string 都必须被接受。
+    for (const status of ["active", "headless", "decayed"] as const) {
+      const result = validateNamedFactionStateV1Contract({
+        v: 1,
+        kind: "named_faction_state",
+        named_factions: [{
+          id: "qingyun_hunters",
+          display_name: "青云猎盟",
+          zone_anchor: "qingyun_peaks",
+          current_npc_count: 0,
+          status,
+        }],
+        relation_matrix: [],
+        at_tick: 1,
+      });
+      expect(
+        result.ok,
+        `FactionStatusV1 variant "${status}" must be accepted; errors: ${result.errors.join("; ")}`
+      ).toBe(true);
+    }
+  });
+
+  it("NamedFactionStateV1 is exported from index", () => {
+    // 锁住 index 导出——下游 import { NamedFactionStateV1 } from "@bong/schema" 必须可用。
+    expect(SchemaPackage.NamedFactionStateV1).toBe(NamedFactionStateV1);
+    expect(SchemaPackage.FactionStatusV1).toBe(FactionStatusV1);
+    expect(typeof SchemaPackage.validateNamedFactionStateV1Contract).toBe("function");
   });
 });

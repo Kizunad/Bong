@@ -59,7 +59,9 @@
 
 | 阶段 | 状态 | 主要交付物 | 验收标准 |
 |------|------|-----------|---------|
-| **P0** | ⬜ | `NamedFactionId` 注册表 + 数据模型 + migration | `NamedFactionId` PR 合并 + 现有 FactionId 代码无 breakage + schema 双端校验 |
+| **P0** | ✅ 2026-06-11 | `NamedFactionId` 注册表 + 数据模型 + migration | `NamedFactionId` PR 合并 + 现有 FactionId 代码无 breakage + schema 双端校验 |
+> **P0 落地（2026-06-11）**：`server/src/npc/faction.rs` 追加 `NamedFactionId`（青云猎盟/沧渊商会/北荒漂流者）+ `NamedFaction`/`FactionStatus`(Active/Headless/Decayed)/`NamedFactionRegistry`（`register()` 启动真注册 3 条，北荒初始 Headless）+ `FactionStore::faction_id_for_war`（兼容层真接现有 `is_hostile_pair`，war 逻辑零改）。schema：**避命名撞车**——已有 `FactionStateV1`/`bong:faction_state`（emergent group census 在用），故新增 `NamedFactionStateV1` + `bong:named_faction_state`（TypeBox+Rust serde+3 sample 双端）。migration **v30**：现有 `FactionMembership` Attack→qingyun/Defend→cangyuan/Neutral→north_waste 按 zone_anchor 真迁移。**lore 正典核验**：青云猎盟（docs/library 宗门残息）/ 北荒漂流者 Headless（北荒坍缩渊记"入者十归者不过百"强支撑）；**沧渊商会正典无直接记载 → 代码注释如实标注 plan 设定/推演自血谷矿脉经济，非硬编乱猜**。leader 具名正典无确指，P0 不设 leader 字段（P2 领袖 spawn 再填）。**遗留**：下游 social-v2(`WarReputationRecord`)/faction-wars(`FactionWarEvent`) 消费 `NamedFactionId`（契约已留）；P1（`FactionRelationMatrix` + dormant 权重接入）+ P2（领袖/census）待续。cargo fmt+clippy(-D warnings)+test **8536 passed** + agent schema 双端（3 sample 正反对拍）。
+
 | **P1** | ⬜ | `FactionRelationMatrix` + dormant 权重接入 | 三势力在 npc-virtualize-v3 批量战斗中按关系矩阵出现正确敌对对 |
 | **P2** | ⬜ | 领袖 NPC spawn + `FactionZoneClaim` 地盘绑定 + 领袖行为树 | 领袖 spawn 于正确 zone；FactionZoneClaim 与 FactionStore 一致；领袖 big-brain scorer 在地盘内激活 |
 | **P3** | ⬜ | 玩家挂靠具名势力 + NPC 信誉分组 + 领袖陨落/势力消亡 + agent 叙事 | 挂靠后 zone NPC 信誉正确分组；领袖死亡 → Headless + agent narration；NPC 清零 → 消亡 narration |
