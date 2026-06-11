@@ -62,10 +62,10 @@
 
 | 阶段 | 状态 | 主要交付物 | 验收标准 |
 |------|------|-----------|---------|
-| **P0** | ⬜ | `DyingElderState` 四态模型 + spawn 条件 + 基础 Plea 对话 | 数据模型 PR 合并 + ≥ 8 单测 green |
-| **P1** | ⬜ | 给丹交互 + 真元回升 + Betrayal 翻脸 AI | 给丹后 qi_current 回升；`betray_probability` 触发翻脸正确 |
-| **P2** | ⬜ | 夺舍攻击（qi_max 容量伤 + 当前真元转移）+ 大能自毙（qi 耗尽）+ 死亡 loot | 两种结局（夺舍/自毙）守恒律均通过；掉落地阶功法 |
-| **P3** | ⬜ | client 交互 UI + agent 叙事 + SpiritEye 观测 + Renown 影响 | 完整 e2e：遭遇 → 对话 → 选择路径 → 结局 → agent 叙述 |
+| **P0** | ✅ 2026-06-11 | `DyingElderState` 四态模型 + spawn 条件 + 基础 Plea 对话 | 数据模型 PR 合并 + ≥ 8 单测 green |
+| **P1** | ✅ 2026-06-11 | 给丹交互 + 真元回升 + Betrayal 翻脸 AI | 给丹后 qi_current 回升；`betray_probability` 触发翻脸正确 |
+| **P2** | ✅ 2026-06-11 | 夺舍攻击（qi_max 容量伤 + 当前真元转移）+ 大能自毙（qi 耗尽）+ 死亡 loot | 两种结局（夺舍/自毙）守恒律均通过；掉落地阶功法 |
+| **P3** | ✅ 2026-06-11 | client 交互 UI + agent 叙事 + SpiritEye 观测 + Renown 影响 | 完整 e2e：遭遇 → 对话 → 选择路径 → 结局 → agent 叙述 |
 
 ---
 
@@ -122,3 +122,22 @@
 
 - **2026-06-08**：从 `docs/plans-skeleton/` 升 active 前核验：同名 `docs/plan-dying-elder-v1.md` 与 `docs/finished_plans/plan-dying-elder-v1.md` 均不存在；前置 `npc-ai / cultivation / qi-physics / death-lifecycle / skill / social / spirit-treasure` 已可作为实现接入面。
 - 本次定稿重点：收口 `SoulSeize` 守恒语义、spawn 范围、loot 差异与 trap v1 边界。后续 consume-plan 不得把 `qi_max` 降容写成真元销毁，也不得新造绕过 `qi_physics::ledger` 的常数/衰减公式。
+
+
+---
+
+## Finish Evidence
+
+**落地清单**（全 P0-P3 ✅，2026-06-11；完整实现于 PR #437，rebase 最新 main + 修 4 阻断 bug 后合入）：
+- **P0** 数据模型 + spawn：`server/src/fauna/dying_elder.rs`（`DyingElderState` 四态 + `DyingElderBlackboard` + spawn system，含 `EntityKind`/`EntityLayerId`/`Transform` 客户端可见组件 + `betray_probability`）
+- **P1** 给丹 + 回真元 + 翻脸：`GiveDanToElder` C2S（item `huiyuan_pill` + `qi_from_item` 守恒回真元）+ Betrayal big-brain Action + `SoulSeizeEvent`
+- **P2** 夺舍 + 自毙 + loot：`DyingElderDrainSystem`（负灵域 qi drain → 自毙）+ `DyingElderDeathSystem`（两结局守恒律 + 地阶功法掉落）；夺舍 `qi_max` 容量伤 + 真元转移经 ledger
+- **P3** client UI + agent 叙事：`server/src/network/elder_encounter_emit.rs`（`DyingElderAppearedEvent` 传真 entity index）+ `schema/elder_encounter.rs`（含 `qi_fraction`）+ Redis `bong:elder_encounter` · agent `ElderEncounterNarrationRuntime` · client `DyingElderHUD` + `DyingElderEncounterStore` + SpiritEye/Renown 接入
+
+**关键 commit**：`97a5f53d4`（#437，完整 P0-P3 + 4 阻断 bug 修复：item id/elderEntityIdx/spawn可见组件/schema qi_fraction）
+
+**测试结果**：server `cargo fmt+clippy(-D warnings)+test` **8497 passed** · agent `npm test` **636 passed**（schema 对拍含 elder-encounter）· client `gradle compileJava/compileTestJava` **BUILD SUCCESSFUL**
+
+**跨仓库核验**：server `DyingElderState`/`SoulSeizeEvent`/`DyingElderAppearedEvent`/`elder_encounter` · agent `ElderEncounterNarrationRuntime` + `elder-encounter.ts`(qi_fraction) · client `DyingElderHUD`/`DyingElderEncounterStore` · IPC Redis `bong:elder_encounter`
+
+**遗留 / 后续**：`DeadPlayerKill` 死代码清理（Pi review 非阻塞 follow-up）。
