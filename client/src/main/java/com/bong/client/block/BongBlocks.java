@@ -24,6 +24,10 @@ public final class BongBlocks {
     public static final Identifier ZHENFA_NODE_ID = id("zhenfa_node");
     public static final Identifier ZHENFA_LINE_ID = id("zhenfa_line");
     public static final Identifier ZHENFA_EYE_ID = id("zhenfa_eye");
+    public static final Identifier SIMPLE_BED_ID = id("simple_bed");
+    public static final Identifier MEDITATION_MAT_ID = id("meditation_mat");
+    public static final Identifier MOISTURE_BASE_ID = id("moisture_base");
+    public static final Identifier SPIRIT_STONE_RACK_ID = id("spirit_stone_rack");
     public static final BooleanProperty CHARGED = BooleanProperty.of("charged");
 
     public static final Block ZHENFA_NODE = new Block(settings(3));
@@ -35,6 +39,10 @@ public final class BongBlocks {
             .breakInstantly()
             .nonOpaque()
     );
+    public static final Block SIMPLE_BED = new Block(settings(0));
+    public static final Block MEDITATION_MAT = new Block(settings(0));
+    public static final Block MOISTURE_BASE = new Block(settings(0));
+    public static final Block SPIRIT_STONE_RACK = new Block(settings(2));
 
     private static boolean registered;
 
@@ -48,32 +56,61 @@ public final class BongBlocks {
         registerBlock(ZHENFA_NODE_ID, ZHENFA_NODE);
         registerBlock(ZHENFA_LINE_ID, ZHENFA_LINE);
         registerBlock(ZHENFA_EYE_ID, ZHENFA_EYE);
+        registerBlock(SIMPLE_BED_ID, SIMPLE_BED);
+        registerBlock(MEDITATION_MAT_ID, MEDITATION_MAT);
+        registerBlock(MOISTURE_BASE_ID, MOISTURE_BASE);
+        registerBlock(SPIRIT_STONE_RACK_ID, SPIRIT_STONE_RACK);
         registered = true;
         verifyRawIds();
 
-        LOGGER.info("Registered Bong custom blocks: {}, {}, {}", ZHENFA_NODE_ID, ZHENFA_LINE_ID, ZHENFA_EYE_ID);
+        LOGGER.info(
+            "Registered Bong custom blocks: {}, {}, {}, {}, {}, {}, {}",
+            ZHENFA_NODE_ID,
+            ZHENFA_LINE_ID,
+            ZHENFA_EYE_ID,
+            SIMPLE_BED_ID,
+            MEDITATION_MAT_ID,
+            MOISTURE_BASE_ID,
+            SPIRIT_STONE_RACK_ID
+        );
     }
 
     public static List<Identifier> orderedIdsForTests() {
-        return List.of(ZHENFA_NODE_ID, ZHENFA_LINE_ID, ZHENFA_EYE_ID);
+        return List.of(
+            ZHENFA_NODE_ID,
+            ZHENFA_LINE_ID,
+            ZHENFA_EYE_ID,
+            SIMPLE_BED_ID,
+            MEDITATION_MAT_ID,
+            MOISTURE_BASE_ID,
+            SPIRIT_STONE_RACK_ID
+        );
     }
 
     public static Map<String, Integer> expectedBlockRawIdsForTests() {
         return Map.of(
             "zhenfa_node", BongBlockIds.ZHENFA_NODE_BLOCK_ID,
             "zhenfa_line", BongBlockIds.ZHENFA_LINE_BLOCK_ID,
-            "zhenfa_eye", BongBlockIds.ZHENFA_EYE_BLOCK_ID
+            "zhenfa_eye", BongBlockIds.ZHENFA_EYE_BLOCK_ID,
+            "simple_bed", BongBlockIds.SIMPLE_BED_BLOCK_ID,
+            "meditation_mat", BongBlockIds.MEDITATION_MAT_BLOCK_ID,
+            "moisture_base", BongBlockIds.MOISTURE_BASE_BLOCK_ID,
+            "spirit_stone_rack", BongBlockIds.SPIRIT_STONE_RACK_BLOCK_ID
         );
     }
 
     public static Map<String, Integer> expectedStateRawIdsForTests() {
-        return Map.of(
-            "zhenfa_node", BongBlockIds.ZHENFA_NODE_STATE_ID,
-            "zhenfa_line_axis_x", BongBlockIds.ZHENFA_LINE_STATE_ID,
-            "zhenfa_line_axis_y", BongBlockIds.ZHENFA_LINE_STATE_ID + 1,
-            "zhenfa_line_axis_z", BongBlockIds.ZHENFA_LINE_STATE_ID + 2,
-            "zhenfa_eye_charged_true", BongBlockIds.ZHENFA_EYE_STATE_ID,
-            "zhenfa_eye_charged_false", BongBlockIds.ZHENFA_EYE_STATE_ID + 1
+        return Map.ofEntries(
+            Map.entry("zhenfa_node", BongBlockIds.ZHENFA_NODE_STATE_ID),
+            Map.entry("zhenfa_line_axis_x", BongBlockIds.ZHENFA_LINE_STATE_ID),
+            Map.entry("zhenfa_line_axis_y", BongBlockIds.ZHENFA_LINE_STATE_ID + 1),
+            Map.entry("zhenfa_line_axis_z", BongBlockIds.ZHENFA_LINE_STATE_ID + 2),
+            Map.entry("zhenfa_eye_charged_true", BongBlockIds.ZHENFA_EYE_STATE_ID),
+            Map.entry("zhenfa_eye_charged_false", BongBlockIds.ZHENFA_EYE_STATE_ID + 1),
+            Map.entry("simple_bed", BongBlockIds.SIMPLE_BED_STATE_ID),
+            Map.entry("meditation_mat", BongBlockIds.MEDITATION_MAT_STATE_ID),
+            Map.entry("moisture_base", BongBlockIds.MOISTURE_BASE_STATE_ID),
+            Map.entry("spirit_stone_rack", BongBlockIds.SPIRIT_STONE_RACK_STATE_ID)
         );
     }
 
@@ -97,6 +134,10 @@ public final class BongBlocks {
         verifyBlockRawId("zhenfa_node", ZHENFA_NODE, BongBlockIds.ZHENFA_NODE_BLOCK_ID);
         verifyBlockRawId("zhenfa_line", ZHENFA_LINE, BongBlockIds.ZHENFA_LINE_BLOCK_ID);
         verifyBlockRawId("zhenfa_eye", ZHENFA_EYE, BongBlockIds.ZHENFA_EYE_BLOCK_ID);
+        verifyBlockRawId("simple_bed", SIMPLE_BED, BongBlockIds.SIMPLE_BED_BLOCK_ID);
+        verifyBlockRawId("meditation_mat", MEDITATION_MAT, BongBlockIds.MEDITATION_MAT_BLOCK_ID);
+        verifyBlockRawId("moisture_base", MOISTURE_BASE, BongBlockIds.MOISTURE_BASE_BLOCK_ID);
+        verifyBlockRawId("spirit_stone_rack", SPIRIT_STONE_RACK, BongBlockIds.SPIRIT_STONE_RACK_BLOCK_ID);
 
         verifyStateRawId("zhenfa_node", ZHENFA_NODE.getDefaultState(), BongBlockIds.ZHENFA_NODE_STATE_ID);
         verifyStateRawId(
@@ -123,6 +164,18 @@ public final class BongBlocks {
             "zhenfa_eye charged=false",
             ZHENFA_EYE.getDefaultState().with(CHARGED, false),
             BongBlockIds.ZHENFA_EYE_STATE_ID + 1
+        );
+        verifyStateRawId("simple_bed", SIMPLE_BED.getDefaultState(), BongBlockIds.SIMPLE_BED_STATE_ID);
+        verifyStateRawId(
+            "meditation_mat",
+            MEDITATION_MAT.getDefaultState(),
+            BongBlockIds.MEDITATION_MAT_STATE_ID
+        );
+        verifyStateRawId("moisture_base", MOISTURE_BASE.getDefaultState(), BongBlockIds.MOISTURE_BASE_STATE_ID);
+        verifyStateRawId(
+            "spirit_stone_rack",
+            SPIRIT_STONE_RACK.getDefaultState(),
+            BongBlockIds.SPIRIT_STONE_RACK_STATE_ID
         );
     }
 

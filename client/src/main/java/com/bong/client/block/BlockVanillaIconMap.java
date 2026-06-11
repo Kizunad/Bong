@@ -30,7 +30,11 @@ public final class BlockVanillaIconMap {
         Map.entry("torch_item", new Entry("minecraft:torch", () -> Items.TORCH)),
         Map.entry("lantern_item", new Entry("minecraft:lantern", () -> Items.LANTERN)),
         Map.entry("door_bolt", new Entry("minecraft:iron_door", () -> Items.IRON_DOOR)),
-        Map.entry("window_grate", new Entry("minecraft:iron_bars", () -> Items.IRON_BARS))
+        Map.entry("window_grate", new Entry("minecraft:iron_bars", () -> Items.IRON_BARS)),
+        Map.entry("simple_bed", new Entry("minecraft:brown_bed", () -> Items.BROWN_BED)),
+        Map.entry("meditation_mat", new Entry("minecraft:brown_carpet", () -> Items.BROWN_CARPET)),
+        Map.entry("moisture_base", new Entry("minecraft:stone_slab", () -> Items.STONE_SLAB)),
+        Map.entry("spirit_stone_rack", new Entry("minecraft:chiseled_stone_bricks", () -> Items.CHISELED_STONE_BRICKS))
     );
     private static final ConcurrentHashMap<String, ItemStack> STACK_CACHE = new ConcurrentHashMap<>();
 
