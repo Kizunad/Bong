@@ -51,6 +51,62 @@
         "collision_shapes": []
       },
       "item_id": null
+    },
+    {
+      "name": "simple_bed",
+      "namespace": "bong",
+      "translation_key": "block.bong.simple_bed",
+      "properties": [],
+      "default_state": {
+        "luminance": 0,
+        "opaque": false,
+        "replaceable": false,
+        "blocks_motion": true,
+        "collision_shapes": []
+      },
+      "item_id": null
+    },
+    {
+      "name": "meditation_mat",
+      "namespace": "bong",
+      "translation_key": "block.bong.meditation_mat",
+      "properties": [],
+      "default_state": {
+        "luminance": 0,
+        "opaque": false,
+        "replaceable": false,
+        "blocks_motion": false,
+        "collision_shapes": []
+      },
+      "item_id": null
+    },
+    {
+      "name": "moisture_base",
+      "namespace": "bong",
+      "translation_key": "block.bong.moisture_base",
+      "properties": [],
+      "default_state": {
+        "luminance": 0,
+        "opaque": false,
+        "replaceable": false,
+        "blocks_motion": true,
+        "collision_shapes": []
+      },
+      "item_id": null
+    },
+    {
+      "name": "spirit_stone_rack",
+      "namespace": "bong",
+      "translation_key": "block.bong.spirit_stone_rack",
+      "properties": [],
+      "default_state": {
+        "luminance": 2,
+        "opaque": false,
+        "replaceable": false,
+        "blocks_motion": true,
+        "collision_shapes": []
+      },
+      "item_id": null
     }
   ]
 }

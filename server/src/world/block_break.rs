@@ -18,8 +18,10 @@
 
 use valence::prelude::{
     App, BlockState, ChunkLayer, Client, DiggingEvent, DiggingState, EventReader, GameMode, Query,
-    Update, VisibleChunkLayer, With,
+    ResMut, Update, VisibleChunkLayer, With,
 };
+
+use crate::world::furniture::FurnitureRegistry;
 
 /// 决策"这次 dig 是否要把方块抹成 AIR"。纯函数，与 ECS 解耦，便于 saturate 测试。
 pub fn should_apply_default_break(state: DiggingState, mode: GameMode) -> bool {
@@ -33,6 +35,7 @@ pub fn apply_default_block_break(
     mut digs: EventReader<DiggingEvent>,
     players: Query<(&GameMode, &VisibleChunkLayer), With<Client>>,
     mut layers: Query<&mut ChunkLayer>,
+    mut furniture_registry: Option<ResMut<FurnitureRegistry>>,
 ) {
     for event in digs.read() {
         let Ok((game_mode, visible_layer)) = players.get(event.client) else {
@@ -45,6 +48,9 @@ pub fn apply_default_block_break(
             continue;
         };
         layer.set_block(event.position, BlockState::AIR);
+        if let Some(registry) = furniture_registry.as_deref_mut() {
+            registry.remove([event.position.x, event.position.y, event.position.z]);
+        }
     }
 }
 
@@ -55,6 +61,9 @@ pub fn register(app: &mut App) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::world::furniture::FurnitureKind;
+    use valence::prelude::{BlockPos, UnloadedChunk};
+    use valence::testing::ScenarioSingleClient;
 
     /// 8 种 (state, mode) 组合中只有两条要应用：Creative+Start、Survival+Stop。
     /// 其余六条（含 Survival 中途 Start/Abort、Adventure/Spectator 全部）都跳过。
@@ -123,5 +132,53 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn default_break_removes_furniture_registry_entry() {
+        let scenario = ScenarioSingleClient::new();
+        let mut app = scenario.app;
+        crate::world::dimension::mark_test_layer_as_overworld(&mut app);
+        app.add_event::<DiggingEvent>();
+        app.add_systems(Update, apply_default_block_break);
+        app.insert_resource(FurnitureRegistry::default());
+        app.world_mut()
+            .entity_mut(scenario.client)
+            .insert(GameMode::Survival);
+        app.world_mut()
+            .get_mut::<ChunkLayer>(scenario.layer)
+            .expect("test layer should carry ChunkLayer")
+            .insert_chunk([0, 0], UnloadedChunk::new());
+        app.world_mut()
+            .get_mut::<ChunkLayer>(scenario.layer)
+            .expect("test layer should carry ChunkLayer")
+            .set_block(BlockPos::new(1, 64, 1), BlockState::BONG_SIMPLE_BED);
+        app.world_mut()
+            .resource_mut::<FurnitureRegistry>()
+            .register([1, 64, 1], FurnitureKind::SimpleBed);
+
+        app.world_mut().send_event(DiggingEvent {
+            client: scenario.client,
+            position: BlockPos::new(1, 64, 1),
+            direction: valence::protocol::Direction::Up,
+            state: DiggingState::Stop,
+        });
+        app.update();
+
+        assert_eq!(
+            app.world()
+                .resource::<FurnitureRegistry>()
+                .kind_at([1, 64, 1]),
+            None,
+            "breaking a placed furniture block should remove its registry coordinate"
+        );
+        assert_eq!(
+            app.world()
+                .get::<ChunkLayer>(scenario.layer)
+                .and_then(|layer| layer
+                    .block(BlockPos::new(1, 64, 1))
+                    .map(|block| block.state)),
+            Some(BlockState::AIR)
+        );
     }
 }

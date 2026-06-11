@@ -20,11 +20,15 @@ public class BongBlocksTest {
     void idsAreGeneratedFromBongBlockManifest() throws IOException {
         String manifest = Files.readString(REPO_ROOT.resolve("bong_blocks.json"), StandardCharsets.UTF_8);
 
-        assertTrue(manifest.contains("\"name\": \"zhenfa_node\""));
-        assertTrue(manifest.contains("\"name\": \"zhenfa_line\""));
-        assertTrue(manifest.contains("\"name\": \"zhenfa_eye\""));
-        assertTrue(manifest.contains("\"name\": \"axis\""));
-        assertTrue(manifest.contains("\"name\": \"charged\""));
+        assertManifestContainsName(manifest, "zhenfa_node");
+        assertManifestContainsName(manifest, "zhenfa_line");
+        assertManifestContainsName(manifest, "zhenfa_eye");
+        assertManifestContainsName(manifest, "simple_bed");
+        assertManifestContainsName(manifest, "meditation_mat");
+        assertManifestContainsName(manifest, "moisture_base");
+        assertManifestContainsName(manifest, "spirit_stone_rack");
+        assertManifestContainsName(manifest, "axis");
+        assertManifestContainsName(manifest, "charged");
 
         // These values intentionally pin protocol IDs; failures mean manifest order or base IDs changed.
         assertEquals(1003, BongBlockIds.BONG_BLOCK_ID_START);
@@ -32,17 +36,37 @@ public class BongBlocksTest {
         assertEquals(1003, BongBlockIds.ZHENFA_NODE_BLOCK_ID);
         assertEquals(1004, BongBlockIds.ZHENFA_LINE_BLOCK_ID);
         assertEquals(1005, BongBlockIds.ZHENFA_EYE_BLOCK_ID);
+        assertEquals(1006, BongBlockIds.SIMPLE_BED_BLOCK_ID);
+        assertEquals(1007, BongBlockIds.MEDITATION_MAT_BLOCK_ID);
+        assertEquals(1008, BongBlockIds.MOISTURE_BASE_BLOCK_ID);
+        assertEquals(1009, BongBlockIds.SPIRIT_STONE_RACK_BLOCK_ID);
         assertEquals(24135, BongBlockIds.ZHENFA_NODE_STATE_ID);
         assertEquals(24136, BongBlockIds.ZHENFA_LINE_STATE_ID);
         assertEquals(24139, BongBlockIds.ZHENFA_EYE_STATE_ID);
+        assertEquals(24141, BongBlockIds.SIMPLE_BED_STATE_ID);
+        assertEquals(24142, BongBlockIds.MEDITATION_MAT_STATE_ID);
+        assertEquals(24143, BongBlockIds.MOISTURE_BASE_STATE_ID);
+        assertEquals(24144, BongBlockIds.SPIRIT_STONE_RACK_STATE_ID);
         assertEquals(1, BongBlockIds.ZHENFA_NODE_STATE_COUNT);
         assertEquals(3, BongBlockIds.ZHENFA_LINE_STATE_COUNT);
         assertEquals(2, BongBlockIds.ZHENFA_EYE_STATE_COUNT);
+        assertEquals(1, BongBlockIds.SIMPLE_BED_STATE_COUNT);
+        assertEquals(1, BongBlockIds.MEDITATION_MAT_STATE_COUNT);
+        assertEquals(1, BongBlockIds.MOISTURE_BASE_STATE_COUNT);
+        assertEquals(1, BongBlockIds.SPIRIT_STONE_RACK_STATE_COUNT);
     }
 
     @Test
     void blockAssetsExistForAllManifestEntries() {
-        for (String id : List.of("zhenfa_node", "zhenfa_line", "zhenfa_eye")) {
+        for (String id : List.of(
+            "zhenfa_node",
+            "zhenfa_line",
+            "zhenfa_eye",
+            "simple_bed",
+            "meditation_mat",
+            "moisture_base",
+            "spirit_stone_rack"
+        )) {
             assertTrue(
                 Files.exists(RESOURCES.resolve(Path.of("assets", "bong", "blockstates", id + ".json"))),
                 "Missing blockstate asset for " + id
@@ -68,5 +92,12 @@ public class BongBlocksTest {
             return nestedClient;
         }
         throw new IllegalStateException("Cannot locate client module root from " + cwd);
+    }
+
+    private static void assertManifestContainsName(String manifest, String name) {
+        assertTrue(
+            manifest.contains("\"name\": \"" + name + "\""),
+            "expected manifest to contain \"" + name + "\" because Bong block IDs are generated from explicit manifest names, actual manifest: " + manifest
+        );
     }
 }

@@ -20,6 +20,13 @@ class BlockVanillaIconMapTest {
         assertEquals("minecraft:lantern", BlockVanillaIconMap.vanillaItemIdForTests("lantern_item"));
         assertEquals("minecraft:iron_door", BlockVanillaIconMap.vanillaItemIdForTests("door_bolt"));
         assertEquals("minecraft:iron_bars", BlockVanillaIconMap.vanillaItemIdForTests("window_grate"));
+        assertEquals("minecraft:brown_bed", BlockVanillaIconMap.vanillaItemIdForTests("simple_bed"));
+        assertEquals("minecraft:brown_carpet", BlockVanillaIconMap.vanillaItemIdForTests("meditation_mat"));
+        assertEquals("minecraft:stone_slab", BlockVanillaIconMap.vanillaItemIdForTests("moisture_base"));
+        assertEquals(
+            "minecraft:chiseled_stone_bricks",
+            BlockVanillaIconMap.vanillaItemIdForTests("spirit_stone_rack")
+        );
     }
 
     @Test
@@ -28,6 +35,10 @@ class BlockVanillaIconMapTest {
         assertTrue(BlockVanillaIconMap.isKnownBlockItem("workbench_item"));
         assertTrue(BlockVanillaIconMap.isKnownBlockItem("torch_item"));
         assertTrue(BlockVanillaIconMap.isKnownBlockItem("window_grate"));
+        assertTrue(BlockVanillaIconMap.isKnownBlockItem("simple_bed"));
+        assertTrue(BlockVanillaIconMap.isKnownBlockItem("meditation_mat"));
+        assertTrue(BlockVanillaIconMap.isKnownBlockItem("moisture_base"));
+        assertTrue(BlockVanillaIconMap.isKnownBlockItem("spirit_stone_rack"));
         assertFalse(BlockVanillaIconMap.isKnownBlockItem("missing_block"));
         assertTrue(BlockVanillaIconMap.createStackFor("missing_block").isEmpty());
     }
