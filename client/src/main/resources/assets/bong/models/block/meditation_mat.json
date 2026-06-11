@@ -1,6 +1,635 @@
 {
-  "parent": "minecraft:block/cube_all",
   "textures": {
+    "particle": "bong:block/meditation_mat",
     "all": "bong:block/meditation_mat"
-  }
+  },
+  "elements": [
+    {
+      "name": "mat_core",
+      "from": [
+        4.0,
+        0.0,
+        4.0
+      ],
+      "to": [
+        12.0,
+        0.85,
+        12.0
+      ],
+      "faces": {
+        "north": {
+          "texture": "#all"
+        },
+        "south": {
+          "texture": "#all"
+        },
+        "east": {
+          "texture": "#all"
+        },
+        "west": {
+          "texture": "#all"
+        },
+        "up": {
+          "texture": "#all"
+        },
+        "down": {
+          "texture": "#all"
+        }
+      }
+    },
+    {
+      "name": "mat_north",
+      "from": [
+        5.4,
+        0.0,
+        2.4
+      ],
+      "to": [
+        10.6,
+        0.85,
+        4.0
+      ],
+      "faces": {
+        "north": {
+          "texture": "#all"
+        },
+        "south": {
+          "texture": "#all"
+        },
+        "east": {
+          "texture": "#all"
+        },
+        "west": {
+          "texture": "#all"
+        },
+        "up": {
+          "texture": "#all"
+        },
+        "down": {
+          "texture": "#all"
+        }
+      }
+    },
+    {
+      "name": "mat_south",
+      "from": [
+        5.4,
+        0.0,
+        12.0
+      ],
+      "to": [
+        10.6,
+        0.85,
+        13.6
+      ],
+      "faces": {
+        "north": {
+          "texture": "#all"
+        },
+        "south": {
+          "texture": "#all"
+        },
+        "east": {
+          "texture": "#all"
+        },
+        "west": {
+          "texture": "#all"
+        },
+        "up": {
+          "texture": "#all"
+        },
+        "down": {
+          "texture": "#all"
+        }
+      }
+    },
+    {
+      "name": "mat_west",
+      "from": [
+        2.4,
+        0.0,
+        5.4
+      ],
+      "to": [
+        4.0,
+        0.85,
+        10.6
+      ],
+      "faces": {
+        "north": {
+          "texture": "#all"
+        },
+        "south": {
+          "texture": "#all"
+        },
+        "east": {
+          "texture": "#all"
+        },
+        "west": {
+          "texture": "#all"
+        },
+        "up": {
+          "texture": "#all"
+        },
+        "down": {
+          "texture": "#all"
+        }
+      }
+    },
+    {
+      "name": "mat_east",
+      "from": [
+        12.0,
+        0.0,
+        5.4
+      ],
+      "to": [
+        13.6,
+        0.85,
+        10.6
+      ],
+      "faces": {
+        "north": {
+          "texture": "#all"
+        },
+        "south": {
+          "texture": "#all"
+        },
+        "east": {
+          "texture": "#all"
+        },
+        "west": {
+          "texture": "#all"
+        },
+        "up": {
+          "texture": "#all"
+        },
+        "down": {
+          "texture": "#all"
+        }
+      }
+    },
+    {
+      "name": "mat_corner_nw",
+      "from": [
+        3.4,
+        0.0,
+        3.4
+      ],
+      "to": [
+        5.4,
+        0.85,
+        5.4
+      ],
+      "faces": {
+        "north": {
+          "texture": "#all"
+        },
+        "south": {
+          "texture": "#all"
+        },
+        "east": {
+          "texture": "#all"
+        },
+        "west": {
+          "texture": "#all"
+        },
+        "up": {
+          "texture": "#all"
+        },
+        "down": {
+          "texture": "#all"
+        }
+      }
+    },
+    {
+      "name": "mat_corner_ne",
+      "from": [
+        10.6,
+        0.0,
+        3.4
+      ],
+      "to": [
+        12.6,
+        0.85,
+        5.4
+      ],
+      "faces": {
+        "north": {
+          "texture": "#all"
+        },
+        "south": {
+          "texture": "#all"
+        },
+        "east": {
+          "texture": "#all"
+        },
+        "west": {
+          "texture": "#all"
+        },
+        "up": {
+          "texture": "#all"
+        },
+        "down": {
+          "texture": "#all"
+        }
+      }
+    },
+    {
+      "name": "mat_corner_sw",
+      "from": [
+        3.4,
+        0.0,
+        10.6
+      ],
+      "to": [
+        5.4,
+        0.85,
+        12.6
+      ],
+      "faces": {
+        "north": {
+          "texture": "#all"
+        },
+        "south": {
+          "texture": "#all"
+        },
+        "east": {
+          "texture": "#all"
+        },
+        "west": {
+          "texture": "#all"
+        },
+        "up": {
+          "texture": "#all"
+        },
+        "down": {
+          "texture": "#all"
+        }
+      }
+    },
+    {
+      "name": "mat_corner_se",
+      "from": [
+        10.6,
+        0.0,
+        10.6
+      ],
+      "to": [
+        12.6,
+        0.85,
+        12.6
+      ],
+      "faces": {
+        "north": {
+          "texture": "#all"
+        },
+        "south": {
+          "texture": "#all"
+        },
+        "east": {
+          "texture": "#all"
+        },
+        "west": {
+          "texture": "#all"
+        },
+        "up": {
+          "texture": "#all"
+        },
+        "down": {
+          "texture": "#all"
+        }
+      }
+    },
+    {
+      "name": "cushion_core",
+      "from": [
+        5.0,
+        0.85,
+        5.0
+      ],
+      "to": [
+        11.0,
+        2.15,
+        11.0
+      ],
+      "faces": {
+        "north": {
+          "texture": "#all"
+        },
+        "south": {
+          "texture": "#all"
+        },
+        "east": {
+          "texture": "#all"
+        },
+        "west": {
+          "texture": "#all"
+        },
+        "up": {
+          "texture": "#all"
+        },
+        "down": {
+          "texture": "#all"
+        }
+      }
+    },
+    {
+      "name": "cushion_north",
+      "from": [
+        6.0,
+        0.85,
+        3.9
+      ],
+      "to": [
+        10.0,
+        2.15,
+        5.0
+      ],
+      "faces": {
+        "north": {
+          "texture": "#all"
+        },
+        "south": {
+          "texture": "#all"
+        },
+        "east": {
+          "texture": "#all"
+        },
+        "west": {
+          "texture": "#all"
+        },
+        "up": {
+          "texture": "#all"
+        },
+        "down": {
+          "texture": "#all"
+        }
+      }
+    },
+    {
+      "name": "cushion_south",
+      "from": [
+        6.0,
+        0.85,
+        11.0
+      ],
+      "to": [
+        10.0,
+        2.15,
+        12.1
+      ],
+      "faces": {
+        "north": {
+          "texture": "#all"
+        },
+        "south": {
+          "texture": "#all"
+        },
+        "east": {
+          "texture": "#all"
+        },
+        "west": {
+          "texture": "#all"
+        },
+        "up": {
+          "texture": "#all"
+        },
+        "down": {
+          "texture": "#all"
+        }
+      }
+    },
+    {
+      "name": "cushion_west",
+      "from": [
+        3.9,
+        0.85,
+        6.0
+      ],
+      "to": [
+        5.0,
+        2.15,
+        10.0
+      ],
+      "faces": {
+        "north": {
+          "texture": "#all"
+        },
+        "south": {
+          "texture": "#all"
+        },
+        "east": {
+          "texture": "#all"
+        },
+        "west": {
+          "texture": "#all"
+        },
+        "up": {
+          "texture": "#all"
+        },
+        "down": {
+          "texture": "#all"
+        }
+      }
+    },
+    {
+      "name": "cushion_east",
+      "from": [
+        11.0,
+        0.85,
+        6.0
+      ],
+      "to": [
+        12.1,
+        2.15,
+        10.0
+      ],
+      "faces": {
+        "north": {
+          "texture": "#all"
+        },
+        "south": {
+          "texture": "#all"
+        },
+        "east": {
+          "texture": "#all"
+        },
+        "west": {
+          "texture": "#all"
+        },
+        "up": {
+          "texture": "#all"
+        },
+        "down": {
+          "texture": "#all"
+        }
+      }
+    },
+    {
+      "name": "front_binding",
+      "from": [
+        5.4,
+        2.15,
+        4.7
+      ],
+      "to": [
+        10.6,
+        2.42,
+        5.1
+      ],
+      "faces": {
+        "north": {
+          "texture": "#all"
+        },
+        "south": {
+          "texture": "#all"
+        },
+        "east": {
+          "texture": "#all"
+        },
+        "west": {
+          "texture": "#all"
+        },
+        "up": {
+          "texture": "#all"
+        },
+        "down": {
+          "texture": "#all"
+        }
+      }
+    },
+    {
+      "name": "back_binding",
+      "from": [
+        5.4,
+        2.15,
+        10.9
+      ],
+      "to": [
+        10.6,
+        2.42,
+        11.3
+      ],
+      "faces": {
+        "north": {
+          "texture": "#all"
+        },
+        "south": {
+          "texture": "#all"
+        },
+        "east": {
+          "texture": "#all"
+        },
+        "west": {
+          "texture": "#all"
+        },
+        "up": {
+          "texture": "#all"
+        },
+        "down": {
+          "texture": "#all"
+        }
+      }
+    },
+    {
+      "name": "left_binding",
+      "from": [
+        4.7,
+        2.15,
+        5.4
+      ],
+      "to": [
+        5.1,
+        2.42,
+        10.6
+      ],
+      "faces": {
+        "north": {
+          "texture": "#all"
+        },
+        "south": {
+          "texture": "#all"
+        },
+        "east": {
+          "texture": "#all"
+        },
+        "west": {
+          "texture": "#all"
+        },
+        "up": {
+          "texture": "#all"
+        },
+        "down": {
+          "texture": "#all"
+        }
+      }
+    },
+    {
+      "name": "right_binding",
+      "from": [
+        10.9,
+        2.15,
+        5.4
+      ],
+      "to": [
+        11.3,
+        2.42,
+        10.6
+      ],
+      "faces": {
+        "north": {
+          "texture": "#all"
+        },
+        "south": {
+          "texture": "#all"
+        },
+        "east": {
+          "texture": "#all"
+        },
+        "west": {
+          "texture": "#all"
+        },
+        "up": {
+          "texture": "#all"
+        },
+        "down": {
+          "texture": "#all"
+        }
+      }
+    },
+    {
+      "name": "center_patch",
+      "from": [
+        6.6,
+        2.42,
+        6.6
+      ],
+      "to": [
+        9.4,
+        2.62,
+        9.4
+      ],
+      "faces": {
+        "north": {
+          "texture": "#all"
+        },
+        "south": {
+          "texture": "#all"
+        },
+        "east": {
+          "texture": "#all"
+        },
+        "west": {
+          "texture": "#all"
+        },
+        "up": {
+          "texture": "#all"
+        },
+        "down": {
+          "texture": "#all"
+        }
+      }
+    }
+  ]
 }

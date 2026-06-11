@@ -480,7 +480,7 @@ grid_h = 1
 base_weight = 1.0
 rarity = "common"
 spirit_quality_initial = 0.0
-description = "木架铁钉挂灵石，减接触磨损。"
+description = "粗木架嵌着几只空石槽，暂只作摆设；灵石存放另候后续。"
 
 # ═══════════════════════════════════════════════════════════════════════════
 # 阵法与防御 (7)
@@ -743,7 +743,7 @@ grid_h = 1
 base_weight = 3.0
 rarity = "common"
 spirit_quality_initial = 0.0
-description = "石块灰烬苔铺的地基，架上不潮。"
+description = "石块与灰烬苔铺成的垫基，先垫平潮地；保鲜另候容器落地。"
 
 [[item]]
 id = "simple_bed"
