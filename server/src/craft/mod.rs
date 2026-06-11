@@ -452,6 +452,7 @@ pub fn register_zhenfa_v2_recipes(registry: &mut CraftRegistry) -> Result<(), Re
         (
             "zhenfa.array.lingju",
             CraftCategory::ZhenfaTrap,
+            // deprecated：plan-zhenfa-content-v2 P0 裁决 Lingju 凡阶来源统一为 workbench 的 gather_array_base。
             "聚灵阵预埋件",
             vec![
                 ("ancient_soil_shard".to_string(), 9),

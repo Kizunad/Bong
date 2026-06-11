@@ -969,7 +969,7 @@ fn register_array_basics(registry: &mut CraftRegistry) -> Result<(), RegistryErr
                 },
             ],
         ),
-        // #80 散真元珠 (ZhenfaTrap, 📜)
+        // #80 散真元珠 (ZhenfaTrap, 📜)：主动投掷/埋设散逸道具；破阵被动掉落物是 scattered_qi_pearl。
         (
             "workbench.array.scatter_bead",
             "散真元珠",
@@ -980,7 +980,7 @@ fn register_array_basics(registry: &mut CraftRegistry) -> Result<(), RegistryErr
             CraftCategory::ZhenfaTrap,
             scroll("scroll_workbench_scatter_bead"),
         ),
-        // #81 聚灵阵基座 (ZhenfaTrap, 📜👤)
+        // #81 聚灵阵基座 (ZhenfaTrap, 📜👤)：Lingju 凡阶唯一来源；旧 zhenfa_array_lingju 为 deprecated 旧配方。
         (
             "workbench.array.gather_base",
             "聚灵阵基座",

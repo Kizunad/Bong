@@ -46,7 +46,9 @@ pub mod trap_content;
 
 const TICKS_PER_SECOND: u64 = 20;
 const MIN_QI_INVEST_RATIO: f64 = 0.05;
+// 旧阵旗道具：用于已实装拆阵/布阵检测；凡阶组网阵改走 array_flag_basic/array_eye_basic（P3）。
 const ZHENFA_FLAG_ITEM_ID: &str = "array_flag";
+// 破阵被动掉落物；主动投掷/埋设散逸道具是 qi_scatter_bead（plan-zhenfa-content-v2 P2）。
 const ZHENFA_PEARL_ITEM_ID: &str = "scattered_qi_pearl";
 const CHAIN_DELAY_TICKS: u64 = 6;
 const WARD_ALERT_THROTTLE_TICKS: u64 = 60 * TICKS_PER_SECOND;
