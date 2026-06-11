@@ -126,7 +126,7 @@
 - `cd server && cargo fmt --check`：通过。
 - `cd server && BONG_SKIP_SKIN_PREFETCH=1 CARGO_BUILD_JOBS=2 nice -n 10 ionice -c3 cargo clippy --all-targets -j 2 -- -D warnings`：通过。
 - `cd server && BONG_SKIP_SKIN_PREFETCH=1 CARGO_BUILD_JOBS=2 nice -n 10 ionice -c3 cargo test -q -j 2 attrition`：通过，`47 passed; 0 failed`。
-- `cd server && BONG_SKIP_SKIN_PREFETCH=1 CARGO_BUILD_JOBS=2 nice -n 10 ionice -c3 cargo test -q -j 2`：通过，`8531 passed; 0 failed; 1 ignored`。
+- `cd server && BONG_SKIP_SKIN_PREFETCH=1 CARGO_BUILD_JOBS=2 nice -n 10 ionice -c3 cargo test -q -j 2`：通过，`8532 passed; 0 failed; 1 ignored`。
 - `cd client && ./gradlew test --max-workers=2`：P2 阶段通过，覆盖 VFX packet 与粒子参数。
 
 ### 跨仓库核验
