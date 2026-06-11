@@ -9,8 +9,8 @@ use super::botany::BotanyPlantV2RenderProfileV1;
 use super::combat_carrier::CarrierStateV1;
 use super::combat_hud::{
     CastSyncV1, CombatHudStateV1, DefenseWindowV1, DerivedAttrsSyncV1, EventStreamPushV1,
-    QuickSlotConfigV1, ShieldBrokenV1, SkillBarConfigV1, TechniquesSnapshotV1, TreasureEquippedV1,
-    UnlocksSyncV1, WeaponBrokenV1, WeaponEquippedV1, WoundsSnapshotV1,
+    QuickSlotConfigV1, ShieldBlockHitV1, ShieldBrokenV1, SkillBarConfigV1, TechniquesSnapshotV1,
+    TreasureEquippedV1, UnlocksSyncV1, WeaponBrokenV1, WeaponEquippedV1, WoundsSnapshotV1,
 };
 use super::common::{EventKind, MAX_PAYLOAD_BYTES};
 use super::craft::{CraftOutcomeV1, CraftSessionStateV1, RecipeListV1, RecipeUnlockedV1};
@@ -177,6 +177,8 @@ pub enum ServerDataType {
     WeaponEquipped,
     WeaponBroken,
     ShieldBroken,
+    /// plan-shield-block-v1 P4: 盾格挡命中通知，携带 template_id 触发材质差异化视听。
+    ShieldBlockHit,
     TreasureEquipped,
     VortexState,
     DuguPoisonState,
@@ -414,6 +416,8 @@ pub enum ServerDataPayloadV1 {
     WeaponBroken(WeaponBrokenV1),
     /// plan-shield-block-v1 P3: 盾牌耐久归零销毁通知。
     ShieldBroken(ShieldBrokenV1),
+    /// plan-shield-block-v1 P4: 盾格挡命中通知，携带 template_id 触发材质差异化粒子+音效。
+    ShieldBlockHit(ShieldBlockHitV1),
     TreasureEquipped(TreasureEquippedV1),
     VortexState(VortexFieldStateV1),
     DuguPoisonState(DuguPoisonStateV1),
@@ -1266,6 +1270,10 @@ enum ServerDataPayloadWireV1 {
     ShieldBroken {
         #[serde(flatten)]
         shield_broken: ShieldBrokenV1,
+    },
+    ShieldBlockHit {
+        #[serde(flatten)]
+        shield_block_hit: ShieldBlockHitV1,
     },
     TreasureEquipped {
         #[serde(flatten)]
@@ -2204,6 +2212,9 @@ impl TryFrom<ServerDataPayloadWireV1> for ServerDataPayloadV1 {
             ServerDataPayloadWireV1::ShieldBroken { shield_broken } => {
                 Ok(Self::ShieldBroken(shield_broken))
             }
+            ServerDataPayloadWireV1::ShieldBlockHit { shield_block_hit } => {
+                Ok(Self::ShieldBlockHit(shield_block_hit))
+            }
             ServerDataPayloadWireV1::TreasureEquipped { treasure_equipped } => {
                 Ok(Self::TreasureEquipped(treasure_equipped))
             }
@@ -2772,6 +2783,9 @@ impl From<&ServerDataPayloadV1> for ServerDataPayloadWireV1 {
             ServerDataPayloadV1::ShieldBroken(b) => Self::ShieldBroken {
                 shield_broken: b.clone(),
             },
+            ServerDataPayloadV1::ShieldBlockHit(h) => Self::ShieldBlockHit {
+                shield_block_hit: h.clone(),
+            },
             ServerDataPayloadV1::TreasureEquipped(t) => Self::TreasureEquipped {
                 treasure_equipped: t.clone(),
             },
@@ -3313,6 +3327,7 @@ impl ServerDataPayloadV1 {
             Self::WeaponEquipped(..) => ServerDataType::WeaponEquipped,
             Self::WeaponBroken(..) => ServerDataType::WeaponBroken,
             Self::ShieldBroken(..) => ServerDataType::ShieldBroken,
+            Self::ShieldBlockHit(..) => ServerDataType::ShieldBlockHit,
             Self::TreasureEquipped(..) => ServerDataType::TreasureEquipped,
             Self::VortexState(..) => ServerDataType::VortexState,
             Self::DuguPoisonState(..) => ServerDataType::DuguPoisonState,

@@ -4490,6 +4490,39 @@ mod tests {
         );
     }
 
+    // ─── ShieldBlockHit ──────────────────────────────────────────
+
+    #[test]
+    fn shield_block_hit_roundtrip_wooden() {
+        let msg = ShieldBlockHit {
+            template_id: "wooden_shield".to_string(),
+        };
+        let bytes = msg.encode_to_vec();
+        let decoded = ShieldBlockHit::decode(bytes.as_slice()).expect("ShieldBlockHit decode 失败");
+        assert_eq!(
+            decoded.template_id, "wooden_shield",
+            "ShieldBlockHit proto roundtrip must preserve template_id (wooden_shield); \
+             期望 wooden_shield 因为木盾场景；实际 {:?}",
+            decoded.template_id
+        );
+    }
+
+    #[test]
+    fn shield_block_hit_roundtrip_bone() {
+        let msg = ShieldBlockHit {
+            template_id: "bone_shield".to_string(),
+        };
+        let bytes = msg.encode_to_vec();
+        let decoded =
+            ShieldBlockHit::decode(bytes.as_slice()).expect("ShieldBlockHit bone decode 失败");
+        assert_eq!(
+            decoded.template_id, "bone_shield",
+            "ShieldBlockHit proto roundtrip must preserve template_id (bone_shield); \
+             期望 bone_shield 因为骨盾场景；实际 {:?}",
+            decoded.template_id
+        );
+    }
+
     // ─── TreasureEquipped ───────────────────────────────────────
 
     #[test]
@@ -5449,6 +5482,12 @@ mod tests {
                     template_id: "wooden_shield".to_string(),
                 }),
                 "ShieldBroken",
+            ),
+            (
+                server_data_envelope::Payload::ShieldBlockHit(ShieldBlockHit {
+                    template_id: "wooden_shield".to_string(),
+                }),
+                "ShieldBlockHit",
             ),
             (
                 server_data_envelope::Payload::TreasureEquipped(TreasureEquipped {

@@ -102,6 +102,8 @@ import {
   ServerDataInsightOfferV1,
   ShieldBrokenV1,
   ServerDataShieldBrokenV1,
+  ShieldBlockHitV1,
+  ServerDataShieldBlockHitV1,
 } from "../src/server-data.js";
 import {
   TsyNpcSpawnedV1,
@@ -1418,6 +1420,77 @@ describe("sample files pass schema validation", () => {
       const data = { v: 1, type: "shield_broken", instance_id: 88, template_id: "wooden_shield" };
       const result = validate(ServerDataV1, data);
       expect(result.ok, `ServerDataV1 应通过 shield_broken，错误: ${result.errors.join("; ")}`).toBe(true);
+    });
+  });
+
+  // plan-shield-block-v1 P4 — ShieldBlockHitV1 pin tests
+  describe("ShieldBlockHitV1 wire contract", () => {
+    it("正样本: server-data.shield-block-hit.sample.json passes ServerDataV1", () => {
+      const data = loadSample("server-data.shield-block-hit.sample.json");
+      const result = validate(ServerDataV1, data);
+      expect(result.ok, `应接受 shield_block_hit 正样本，错误: ${result.errors.join("; ")}`).toBe(true);
+    });
+
+    it("正样本: server-data.shield-block-hit.bone.sample.json passes ServerDataV1", () => {
+      const data = loadSample("server-data.shield-block-hit.bone.sample.json");
+      const result = validate(ServerDataV1, data);
+      expect(result.ok, `应接受 shield_block_hit 骨盾正样本，错误: ${result.errors.join("; ")}`).toBe(true);
+    });
+
+    it("正样本: shield_block_hit 内层 ShieldBlockHitV1 单独通过（wooden_shield）", () => {
+      const payload = { template_id: "wooden_shield" };
+      const result = validate(ShieldBlockHitV1, payload);
+      expect(result.ok, `ShieldBlockHitV1 应接受 wooden_shield，错误: ${result.errors.join("; ")}`).toBe(true);
+    });
+
+    it("正样本: shield_block_hit 内层 ShieldBlockHitV1 单独通过（bone_shield）", () => {
+      const payload = { template_id: "bone_shield" };
+      const result = validate(ShieldBlockHitV1, payload);
+      expect(result.ok, `ShieldBlockHitV1 应接受 bone_shield，错误: ${result.errors.join("; ")}`).toBe(true);
+    });
+
+    it("正样本: ServerDataShieldBlockHitV1 完整 envelope 通过", () => {
+      const data = { v: 1, type: "shield_block_hit", template_id: "wooden_shield" };
+      const result = validate(ServerDataShieldBlockHitV1, data);
+      expect(result.ok, `ServerDataShieldBlockHitV1 应接受完整 envelope，错误: ${result.errors.join("; ")}`).toBe(true);
+    });
+
+    it("反样本: 缺少 template_id 被拒", () => {
+      const data = { v: 1, type: "shield_block_hit" };
+      const result = validate(ServerDataShieldBlockHitV1, data);
+      expect(result.ok, "缺少 template_id 应被 ServerDataShieldBlockHitV1 拒绝").toBe(false);
+    });
+
+    it("反样本: 多余字段被 additionalProperties:false 拒绝", () => {
+      const data = { v: 1, type: "shield_block_hit", template_id: "wooden_shield", instance_id: 1 };
+      const result = validate(ServerDataShieldBlockHitV1, data);
+      expect(result.ok, "多余字段 instance_id 应被 additionalProperties:false 拒绝（ShieldBlockHit 无 instance_id）").toBe(false);
+    });
+
+    it("反样本: type 字段为 shield_broken 时 ServerDataShieldBlockHitV1 拒绝", () => {
+      const data = { v: 1, type: "shield_broken", instance_id: 1, template_id: "wooden_shield" };
+      const result = validate(ServerDataShieldBlockHitV1, data);
+      expect(result.ok, "type=shield_broken 应被 ServerDataShieldBlockHitV1 拒绝（应为 shield_block_hit）").toBe(false);
+    });
+
+    it("反样本: template_id 为空字符串被拒", () => {
+      const payload = { template_id: "" };
+      const result = validate(ShieldBlockHitV1, payload);
+      expect(result.ok, "空 template_id 应被 ShieldBlockHitV1 拒绝（minLength: 1）").toBe(false);
+    });
+
+    it("正样本: shield_block_hit 被 ServerDataV1 union 正确辨识", () => {
+      const data = { v: 1, type: "shield_block_hit", template_id: "wooden_shield" };
+      const result = validate(ServerDataV1, data);
+      expect(result.ok, `ServerDataV1 应通过 shield_block_hit，错误: ${result.errors.join("; ")}`).toBe(true);
+    });
+
+    it("反样本: shield_block_hit 不含 instance_id 的 shield_broken 被 union 拒绝", () => {
+      // shield_block_hit 和 shield_broken 字段集不同（shield_block_hit 无 instance_id）
+      // 确认 ServerDataV1 union 在 type 不匹配时能正确拒绝
+      const data = { v: 1, type: "shield_block_hit", template_id: "wooden_shield", instance_id: 99 };
+      const result = validate(ServerDataShieldBlockHitV1, data);
+      expect(result.ok, "带 instance_id 的 shield_block_hit 应被 ServerDataShieldBlockHitV1 拒绝（无此字段）").toBe(false);
     });
   });
 

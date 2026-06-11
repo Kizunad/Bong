@@ -1255,6 +1255,27 @@ export const ServerDataShieldBrokenV1 = Type.Object(
 );
 export type ServerDataShieldBrokenV1 = Static<typeof ServerDataShieldBrokenV1>;
 
+// plan-shield-block-v1 P4: 盾格挡命中通知（携带 template_id 触发材质差异化视听）。
+export const ShieldBlockHitV1 = Type.Object(
+  {
+    template_id: Type.String({ minLength: 1, maxLength: 128 }),
+  },
+  { additionalProperties: false },
+);
+export type ShieldBlockHitV1 = Static<typeof ShieldBlockHitV1>;
+
+export const ServerDataShieldBlockHitV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    type: Type.Literal("shield_block_hit"),
+    ...ShieldBlockHitV1.properties,
+  },
+  { additionalProperties: false },
+);
+export type ServerDataShieldBlockHitV1 = Static<
+  typeof ServerDataShieldBlockHitV1
+>;
+
 export const ServerDataTreasureEquippedV1 = Type.Object(
   {
     v: Type.Literal(1),
@@ -1732,6 +1753,7 @@ export const ServerDataV1 = Type.Union([
   ServerDataWeaponEquippedV1,
   ServerDataWeaponBrokenV1,
   ServerDataShieldBrokenV1,
+  ServerDataShieldBlockHitV1,
   ServerDataTreasureEquippedV1,
   ServerDataRiftPortalStateV1,
   ServerDataRiftPortalRemovedV1,

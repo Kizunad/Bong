@@ -820,6 +820,11 @@ impl From<&ServerDataPayloadV1> for Payload {
                 instance_id: s.instance_id,
                 template_id: s.template_id.clone(),
             }),
+            ServerDataPayloadV1::ShieldBlockHit(h) => {
+                Payload::ShieldBlockHit(bong::ShieldBlockHit {
+                    template_id: h.template_id.clone(),
+                })
+            }
             ServerDataPayloadV1::TreasureEquipped(t) => {
                 Payload::TreasureEquipped(treasure_equipped_to_proto(t))
             }

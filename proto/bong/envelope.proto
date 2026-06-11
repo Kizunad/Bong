@@ -160,6 +160,8 @@ message ServerDataEnvelope {
     // ─── plan-exploration-probe-return-v1 P2：修炼顿悟 S2C ──────
     InsightOffer insight_offer = 131;
     WorkbenchOpen workbench_open = 132;
+    // plan-shield-block-v1 P4: 盾格挡命中通知（携带 template_id 触发材质差异化视听）。
+    ShieldBlockHit shield_block_hit = 134;
     // 字段编号一旦分配永不复用（buf breaking 检测保证）。
   }
 }
@@ -1582,6 +1584,12 @@ message WeaponBroken {
 message ShieldBroken {
   uint64 instance_id = 1;
   string template_id = 2;
+}
+
+// 与 Rust ShieldBlockHitV1 精确对应。（plan-shield-block-v1 P4）
+// 格挡命中通知；client 通过 template_id 触发材质差异化粒子+音效。
+message ShieldBlockHit {
+  string template_id = 1;
 }
 
 // 与 Rust TreasureViewV1 精确对应。
