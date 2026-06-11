@@ -57,6 +57,7 @@ message ServerDataEnvelope {
     EventStreamPush         event_stream_push         = 40;
     WeaponEquipped          weapon_equipped           = 41;
     WeaponBroken            weapon_broken             = 42;
+    ShieldBroken            shield_broken             = 133;
     TreasureEquipped        treasure_equipped         = 43;
     VortexFieldState        vortex_state              = 44;
     DuguPoisonState         dugu_poison_state         = 45;
@@ -1570,6 +1571,13 @@ message WeaponEquipped {
 
 // 与 Rust WeaponBrokenV1 精确对应。
 message WeaponBroken {
+  uint64 instance_id = 1;
+  string template_id = 2;
+}
+
+// 与 Rust ShieldBrokenV1 精确对应。（plan-shield-block-v1 P3）
+// client 通过 template_id 映射材质："wooden_shield"→木 / "bone_shield"→骨。
+message ShieldBroken {
   uint64 instance_id = 1;
   string template_id = 2;
 }

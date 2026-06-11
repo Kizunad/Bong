@@ -163,6 +163,10 @@
     {
       "type": "single",
       "resource": "bong:particle/hu_gu_stripe"
+    },
+    {
+      "type": "single",
+      "resource": "bong:particle/wood_debris"
     }
   ]
 }

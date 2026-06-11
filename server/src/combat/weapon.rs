@@ -190,6 +190,15 @@ pub struct WeaponBroken {
     pub template_id: String,
 }
 
+/// plan-shield-block-v1 P3: 盾牌耐久归零事件。ItemInstance 已从 inventory 移除（盾销毁）。
+/// 镜像 WeaponBroken 结构，独立 struct 不复用。
+#[derive(Debug, Clone, Event)]
+pub struct ShieldBroken {
+    pub entity: Entity,
+    pub instance_id: u64,
+    pub template_id: String,
+}
+
 /// plan-weapon-v1 §2.3: 装备武器意图。
 ///
 /// 当前架构走 `sync_weapon_component_from_equipped`:直接从 `PlayerInventory.equipped`

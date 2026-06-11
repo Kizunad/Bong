@@ -14622,6 +14622,35 @@
       "required": [
         "v",
         "type",
+        "instance_id",
+        "template_id"
+      ],
+      "properties": {
+        "v": {
+          "const": 1,
+          "type": "number"
+        },
+        "type": {
+          "const": "shield_broken",
+          "type": "string"
+        },
+        "instance_id": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "template_id": {
+          "minLength": 1,
+          "maxLength": 128,
+          "type": "string"
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "v",
+        "type",
         "slot"
       ],
       "properties": {

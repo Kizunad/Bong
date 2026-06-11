@@ -4446,6 +4446,50 @@ mod tests {
         assert_eq!(decoded.template_id, "bone_dagger");
     }
 
+    // ─── ShieldBroken ────────────────────────────────────────────
+
+    #[test]
+    fn shield_broken_roundtrip_wooden() {
+        let msg = ShieldBroken {
+            instance_id: 42,
+            template_id: "wooden_shield".to_string(),
+        };
+        let bytes = msg.encode_to_vec();
+        let decoded = ShieldBroken::decode(bytes.as_slice()).expect("ShieldBroken decode 失败");
+        assert_eq!(
+            decoded.instance_id, 42,
+            "ShieldBroken proto roundtrip must preserve instance_id; \
+             期望 42 因为 wooden_shield 场景；实际 {}",
+            decoded.instance_id
+        );
+        assert_eq!(
+            decoded.template_id, "wooden_shield",
+            "ShieldBroken proto roundtrip must preserve template_id (wooden_shield); \
+             实际 {:?}",
+            decoded.template_id
+        );
+    }
+
+    #[test]
+    fn shield_broken_roundtrip_bone() {
+        let msg = ShieldBroken {
+            instance_id: 99,
+            template_id: "bone_shield".to_string(),
+        };
+        let bytes = msg.encode_to_vec();
+        let decoded = ShieldBroken::decode(bytes.as_slice()).expect("ShieldBroken decode 失败");
+        assert_eq!(
+            decoded.instance_id, 99,
+            "ShieldBroken proto roundtrip must preserve instance_id (bone_shield); 实际 {}",
+            decoded.instance_id
+        );
+        assert_eq!(
+            decoded.template_id, "bone_shield",
+            "ShieldBroken proto roundtrip must preserve template_id (bone_shield); 实际 {:?}",
+            decoded.template_id
+        );
+    }
+
     // ─── TreasureEquipped ───────────────────────────────────────
 
     #[test]
@@ -5398,6 +5442,13 @@ mod tests {
                     template_id: "t".to_string(),
                 }),
                 "WeaponBroken",
+            ),
+            (
+                server_data_envelope::Payload::ShieldBroken(ShieldBroken {
+                    instance_id: 2,
+                    template_id: "wooden_shield".to_string(),
+                }),
+                "ShieldBroken",
             ),
             (
                 server_data_envelope::Payload::TreasureEquipped(TreasureEquipped {

@@ -169,6 +169,16 @@ enum VisualEffectProfile {
         160,
         null
     ),
+    // plan-shield-block-v1 §P3 — 破盾闪烁（暗红偏蓝，区分武器破损的纯红）
+    SHIELD_BREAK_FLASH(
+        VisualEffectState.EffectType.SHIELD_BREAK_FLASH,
+        0xC04040,
+        1.0,
+        260L,
+        120L,
+        150,
+        null
+    ),
     ARMOR_EQUIP_FLASH(
         VisualEffectState.EffectType.ARMOR_EQUIP_FLASH,
         0xFFFFFF,
@@ -256,6 +266,7 @@ enum VisualEffectProfile {
             case PRESSURE_JITTER -> PRESSURE_JITTER;
             case HIT_PUSHBACK -> HIT_PUSHBACK;
             case WEAPON_BREAK_FLASH -> WEAPON_BREAK_FLASH;
+            case SHIELD_BREAK_FLASH -> SHIELD_BREAK_FLASH;
             case ARMOR_EQUIP_FLASH -> ARMOR_EQUIP_FLASH;
             case ARMOR_LOW_DURABILITY_FLASH -> ARMOR_LOW_DURABILITY_FLASH;
             case ARMOR_BREAK_FLASH -> ARMOR_BREAK_FLASH;

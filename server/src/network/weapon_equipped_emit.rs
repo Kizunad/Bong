@@ -1,25 +1,27 @@
 //! plan-weapon-v1 §8：装备槽变更 / 武器损坏推送。
 //!
 //! v1.1 channel 契约：物理 CustomPayload channel 固定为 `bong:server_data`，
-//! 再由 JSON `type=weapon_equipped|weapon_broken` 分发；不注册独立
+//! 再由 JSON `type=weapon_equipped|weapon_broken|shield_broken` 分发；不注册独立
 //! `bong:combat/weapon_*` channel。
 //!
-//! 两条管线：
+//! 管线：
 //! 1. [`emit_weapon_equipped_payloads`]：对 `Changed<PlayerInventory>` 的玩家推送
 //!    `main_hand / off_hand / two_hand` 三槽 snapshot。这样即使 v1 的 runtime
 //!    `Weapon` component 只保留一个当前战斗武器，HUD 仍能拿到三槽装备态。
 //! 2. [`emit_weapon_broken_payloads`]：消费 [`WeaponBroken`] 事件推送
 //!    `WeaponBrokenV1 { instance_id, template_id }`。
+//! 3. [`emit_shield_broken_payloads`]：消费 [`ShieldBroken`] 事件推送
+//!    `ShieldBrokenV1 { instance_id, template_id }`。（plan-shield-block-v1 P3）
 
 use valence::prelude::{Changed, Client, Entity, EventReader, Query, Res, With};
 
-use crate::combat::weapon::{WeaponBroken, WeaponKind};
+use crate::combat::weapon::{ShieldBroken, WeaponBroken, WeaponKind};
 use crate::inventory::{ItemRegistry, PlayerInventory};
 use crate::network::agent_bridge::{
     payload_type_label, serialize_server_data_payload, SERVER_DATA_CHANNEL,
 };
 use crate::network::{log_payload_build_error, send_server_data_payload};
-use crate::schema::combat_hud::{WeaponBrokenV1, WeaponEquippedV1, WeaponViewV1};
+use crate::schema::combat_hud::{ShieldBrokenV1, WeaponBrokenV1, WeaponEquippedV1, WeaponViewV1};
 use crate::schema::server_data::{ServerDataPayloadV1, ServerDataV1};
 
 type WeaponSlotUpdate = (String, Option<WeaponViewV1>);
@@ -44,6 +46,24 @@ fn item_to_view(
         durability_current: (item.durability as f32) * spec.durability_max,
         durability_max: spec.durability_max,
         quality_tier: spec.quality_tier,
+    }
+}
+
+/// plan-shield-block-v1 P3：将盾牌 ItemInstance + ShieldSpec 构造 WeaponViewV1（weapon_kind="shield"）。
+///
+/// 盾牌没有 WeaponSpec，但客户端 WeaponEquippedHandler 通过 template_id 末尾 `_shield`
+/// 识别并路由到 EquippedShieldStore.equip()。weapon_kind="shield" 作为辅助标记字段。
+fn shield_item_to_view(
+    item: &crate::inventory::ItemInstance,
+    spec: &crate::inventory::ShieldSpec,
+) -> WeaponViewV1 {
+    WeaponViewV1 {
+        instance_id: item.instance_id,
+        template_id: item.template_id.clone(),
+        weapon_kind: "shield".to_string(),
+        durability_current: (item.durability as f32) * spec.durability_max as f32,
+        durability_max: spec.durability_max as f32,
+        quality_tier: 0, // 盾牌暂无品质等级，统一填 0
     }
 }
 
@@ -120,10 +140,18 @@ pub fn emit_weapon_equipped_payloads(
             .into_iter()
             .map(|(slot, key)| {
                 let view = inventory.equipped.get(key).and_then(|item| {
-                    registry
-                        .get(&item.template_id)
-                        .and_then(|tpl| tpl.weapon_spec.as_ref())
-                        .map(|spec| item_to_view(item, spec))
+                    let tpl = registry.get(&item.template_id)?;
+                    if let Some(weapon_spec) = tpl.weapon_spec.as_ref() {
+                        // 普通武器路径
+                        Some(item_to_view(item, weapon_spec))
+                    } else {
+                        // plan-shield-block-v1 P3：盾牌以 weapon_kind="shield" 下发
+                        // 客户端 WeaponEquippedHandler 检查 template_id._shield 后缀
+                        // 并路由到 EquippedShieldStore.equip()，不写 WeaponEquippedStore
+                        tpl.shield_spec
+                            .as_ref()
+                            .map(|shield_spec| shield_item_to_view(item, shield_spec))
+                    }
                 });
                 (slot_wire_name(slot).to_string(), view)
             })
@@ -154,6 +182,40 @@ pub fn emit_weapon_broken_payloads(
     }
 }
 
+fn send_shield_broken(client: &mut Client, instance_id: u64, template_id: &str) {
+    let payload = ServerDataV1::new(ServerDataPayloadV1::ShieldBroken(ShieldBrokenV1 {
+        instance_id,
+        template_id: template_id.to_string(),
+    }));
+    let type_label = payload_type_label(payload.payload_type());
+    let bytes = match serialize_server_data_payload(&payload) {
+        Ok(bytes) => bytes,
+        Err(err) => {
+            log_payload_build_error(type_label, &err);
+            return;
+        }
+    };
+    send_server_data_payload(client, bytes.as_slice());
+    tracing::info!(
+        "[bong][network] sent {} {} payload instance={instance_id} template={template_id}",
+        SERVER_DATA_CHANNEL,
+        type_label
+    );
+}
+
+/// plan-shield-block-v1 P3：消费 [`ShieldBroken`] 事件并推送到对应玩家 client。
+pub fn emit_shield_broken_payloads(
+    mut events: EventReader<ShieldBroken>,
+    mut clients: Query<&mut Client, With<Client>>,
+) {
+    let broken: Vec<ShieldBroken> = events.read().cloned().collect();
+    for ev in broken {
+        if let Ok(mut client) = clients.get_mut(ev.entity) {
+            send_shield_broken(&mut client, ev.instance_id, &ev.template_id);
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -165,7 +227,7 @@ mod tests {
     use crate::combat::weapon::EquipSlot;
     use crate::inventory::{
         ContainerState, InventoryRevision, ItemCategory, ItemInstance, ItemRarity, ItemTemplate,
-        WeaponSpec,
+        ShieldSpec, WeaponSpec,
     };
 
     fn weapon_template() -> ItemTemplate {
@@ -347,6 +409,89 @@ mod tests {
         );
     }
 
+    // ── plan-shield-block-v1 P3: shield_broken 推送测试 ──────────────────────
+
+    #[test]
+    fn shield_broken_uses_server_data_channel_and_type() {
+        let mut app = App::new();
+        app.add_event::<ShieldBroken>();
+        app.add_systems(Update, emit_shield_broken_payloads);
+
+        let (client_bundle, mut helper) = create_mock_client("Azure");
+        let entity = app.world_mut().spawn(client_bundle).id();
+        app.world_mut()
+            .resource_mut::<Events<ShieldBroken>>()
+            .send(ShieldBroken {
+                entity,
+                instance_id: 55,
+                template_id: "wooden_shield".to_string(),
+            });
+
+        app.update();
+        flush_client_packets(&mut app);
+
+        let frames = collect_server_data_frames(&mut helper);
+        let (channel, payload) = frames
+            .iter()
+            .find(|(_, payload)| {
+                payload.get("type").and_then(|v| v.as_str()) == Some("shield_broken")
+            })
+            .expect(
+                "shield_broken payload must be sent — emit_shield_broken_payloads must push \
+                 ShieldBrokenV1 to client; check ShieldBroken event was registered and consumed",
+            );
+        assert_eq!(
+            channel, SERVER_DATA_CHANNEL,
+            "shield_broken payload must use bong:server_data channel; 实际 {channel:?}"
+        );
+        assert_eq!(
+            payload.get("instance_id").and_then(|v| v.as_u64()),
+            Some(55),
+            "shield_broken payload must include instance_id=55; payload: {payload:?}"
+        );
+        assert_eq!(
+            payload.get("template_id").and_then(|v| v.as_str()),
+            Some("wooden_shield"),
+            "shield_broken payload must include template_id=wooden_shield; payload: {payload:?}"
+        );
+    }
+
+    #[test]
+    fn shield_broken_bone_template_round_trips_correctly() {
+        let mut app = App::new();
+        app.add_event::<ShieldBroken>();
+        app.add_systems(Update, emit_shield_broken_payloads);
+
+        let (client_bundle, mut helper) = create_mock_client("Bone");
+        let entity = app.world_mut().spawn(client_bundle).id();
+        app.world_mut()
+            .resource_mut::<Events<ShieldBroken>>()
+            .send(ShieldBroken {
+                entity,
+                instance_id: 88,
+                template_id: "bone_shield".to_string(),
+            });
+
+        app.update();
+        flush_client_packets(&mut app);
+
+        let frames = collect_server_data_frames(&mut helper);
+        let (_, payload) = frames
+            .iter()
+            .find(|(_, p)| p.get("type").and_then(|v| v.as_str()) == Some("shield_broken"))
+            .expect("shield_broken payload must be sent for bone_shield");
+        assert_eq!(
+            payload.get("template_id").and_then(|v| v.as_str()),
+            Some("bone_shield"),
+            "template_id must be 'bone_shield' — client maps template to texture; payload: {payload:?}"
+        );
+        assert_eq!(
+            payload.get("instance_id").and_then(|v| v.as_u64()),
+            Some(88),
+            "instance_id must match sent value (88); payload: {payload:?}"
+        );
+    }
+
     #[test]
     fn weapon_equipped_payload_label_matches_wire_type() {
         let weapon = WeaponViewV1 {
@@ -372,5 +517,183 @@ mod tests {
         assert_eq!(slot_wire_name(EquipSlot::MainHand), "main_hand");
         assert_eq!(slot_wire_name(EquipSlot::OffHand), "off_hand");
         assert_eq!(slot_wire_name(EquipSlot::TwoHand), "two_hand");
+    }
+
+    // ── plan-shield-block-v1 P3：盾牌装备推送路径 ────────────────────────────
+
+    fn shield_template(id: &str) -> ItemTemplate {
+        ItemTemplate {
+            id: id.to_string(),
+            display_name: "木盾".to_string(),
+            category: ItemCategory::Shield,
+            placeable: None,
+            max_stack_count: 1,
+            grid_w: 1,
+            grid_h: 2,
+            base_weight: 3.0,
+            rarity: ItemRarity::Common,
+            spirit_quality_initial: 0.0,
+            description: String::new(),
+            effect: None,
+            cast_duration_ms: 0,
+            cooldown_ms: 0,
+            weapon_spec: None, // 盾无 weapon_spec
+            forge_station_spec: None,
+            blueprint_scroll_spec: None,
+            inscription_scroll_spec: None,
+            technique_scroll_spec: None,
+            recipe_fragment_spec: None,
+            container_spec: None,
+            shelflife_profile: None,
+            shield_spec: Some(ShieldSpec {
+                block_ratio: 0.5,
+                durability_max: 40.0,
+                stamina_drain_per_s: 3.0,
+            }),
+            shelflife_track: None,
+        }
+    }
+
+    fn shield_instance(instance_id: u64, template_id: &str, durability: f64) -> ItemInstance {
+        ItemInstance {
+            instance_id,
+            template_id: template_id.to_string(),
+            display_name: template_id.to_string(),
+            grid_w: 1,
+            grid_h: 2,
+            weight: 3.0,
+            rarity: ItemRarity::Common,
+            description: String::new(),
+            stack_count: 1,
+            spirit_quality: 0.0,
+            durability,
+            freshness: None,
+            mineral_id: None,
+            charges: None,
+            forge_quality: None,
+            forge_color: None,
+            forge_side_effects: Vec::new(),
+            forge_achieved_tier: None,
+            alchemy: None,
+            lingering_owner_qi: None,
+        }
+    }
+
+    /// 盾牌装备到 off_hand 后应发出 weapon_equipped payload，weapon 非 null，
+    /// weapon_kind="shield"。这条测试守护"EquippedShieldStore 能被填充的根路径"：
+    /// 客户端 WeaponEquippedHandler 收到非 null weapon 且 template_id._shield → equip()。
+    #[test]
+    fn shield_equipped_offhand_sends_non_null_weapon_view_with_kind_shield() {
+        let mut app = App::new();
+        app.insert_resource(ItemRegistry::from_map(HashMap::from([(
+            "wooden_shield".to_string(),
+            shield_template("wooden_shield"),
+        )])));
+        app.add_systems(Update, emit_weapon_equipped_payloads);
+
+        let (client_bundle, mut helper) = create_mock_client("ShieldPlayer");
+        let mut inventory = empty_inventory();
+        inventory.equipped.insert(
+            "off_hand".to_string(),
+            shield_instance(10, "wooden_shield", 1.0),
+        );
+        app.world_mut().spawn((client_bundle, inventory));
+
+        app.update();
+        flush_client_packets(&mut app);
+
+        let frames = collect_server_data_frames(&mut helper);
+
+        // 找 off_hand slot 的 weapon_equipped
+        let (channel, payload) = frames
+            .iter()
+            .find(|(_, p)| {
+                p.get("type").and_then(|v| v.as_str()) == Some("weapon_equipped")
+                    && p.get("slot").and_then(|v| v.as_str()) == Some("off_hand")
+                    && p.get("weapon").map(|w| !w.is_null()).unwrap_or(false)
+            })
+            .expect(
+                "off_hand 盾牌应发 weapon_equipped payload 且 weapon 非 null；\
+                 检查 emit_weapon_equipped_payloads 是否接入 shield_spec 分支",
+            );
+        assert_eq!(
+            channel, SERVER_DATA_CHANNEL,
+            "盾牌 weapon_equipped 应走 bong:server_data channel"
+        );
+        let weapon = payload.get("weapon").unwrap();
+        assert_eq!(
+            weapon.get("weapon_kind").and_then(|v| v.as_str()),
+            Some("shield"),
+            "盾牌 weapon_equipped.weapon.weapon_kind 必须为 'shield'，\
+             客户端靠此（与 template_id._shield）路由到 EquippedShieldStore；\
+             实际: {:?}",
+            weapon.get("weapon_kind")
+        );
+        assert_eq!(
+            weapon.get("template_id").and_then(|v| v.as_str()),
+            Some("wooden_shield"),
+            "template_id 应为 wooden_shield"
+        );
+        assert_eq!(
+            weapon.get("instance_id").and_then(|v| v.as_u64()),
+            Some(10),
+            "instance_id 应为 10"
+        );
+        // 耐久 = durability_ratio * durability_max = 1.0 * 40.0 = 40.0
+        let dur_current = weapon
+            .get("durability_current")
+            .and_then(|v| v.as_f64())
+            .unwrap_or(0.0);
+        assert!(
+            (dur_current - 40.0).abs() < 0.01,
+            "durability_current 应为 40.0（满耐久），实际: {dur_current}"
+        );
+        assert_eq!(
+            weapon.get("durability_max").and_then(|v| v.as_f64()),
+            Some(40.0),
+            "durability_max 应为 40.0"
+        );
+    }
+
+    /// 盾牌卸下后 off_hand 应发 weapon_equipped 且 weapon=null（清空信号）。
+    #[test]
+    fn shield_unequipped_offhand_sends_null_weapon_view() {
+        let mut app = App::new();
+        app.insert_resource(ItemRegistry::from_map(HashMap::from([(
+            "wooden_shield".to_string(),
+            shield_template("wooden_shield"),
+        )])));
+        app.add_systems(Update, emit_weapon_equipped_payloads);
+
+        let (client_bundle, mut helper) = create_mock_client("ShieldUnequipPlayer");
+        // 不装备任何物品 → off_hand 为空
+        let inventory = empty_inventory();
+        app.world_mut().spawn((client_bundle, inventory));
+
+        app.update();
+        flush_client_packets(&mut app);
+
+        let frames = collect_server_data_frames(&mut helper);
+        // off_hand 空 → weapon_equipped with weapon absent/null
+        let off_hand_payloads: Vec<_> = frames
+            .iter()
+            .filter(|(_, p)| {
+                p.get("type").and_then(|v| v.as_str()) == Some("weapon_equipped")
+                    && p.get("slot").and_then(|v| v.as_str()) == Some("off_hand")
+            })
+            .collect();
+        assert!(
+            !off_hand_payloads.is_empty(),
+            "off_hand 应有 weapon_equipped 推送"
+        );
+        let (_, off_hand_payload) = off_hand_payloads[0];
+        let weapon_field = off_hand_payload.get("weapon");
+        // weapon 字段要么不存在（skip_serializing_if），要么为 null
+        let is_absent_or_null = weapon_field.map(|v| v.is_null()).unwrap_or(true);
+        assert!(
+            is_absent_or_null,
+            "空 off_hand 应推 weapon=null/absent（清空信号）；实际: {:?}",
+            weapon_field
+        );
     }
 }
