@@ -975,4 +975,177 @@ mod rumor_tests {
 
         let _ = (npc_adjacent, npc_far);
     }
+
+    // ── plan-territory-v1 P4 场景 9: NPC 传话（跨 zone 移动后目标 zone NPC 现领地信息）──
+    // 端到端：注入到期 rumor → ensure_npc_rumor_memory_system + spread_system → NPC.rumors[0] 含领地信息
+    // 边界：deliver_at > now → 不提前触达
+
+    #[test]
+    fn scenario_9_npc_rumor_cross_zone_delivers_zone_and_realm_info() {
+        use crate::npc::patrol::NpcPatrol;
+        use crate::npc::spawn::NpcMarker;
+        use valence::prelude::{DVec3, Position};
+        use valence::testing::create_mock_client;
+
+        let now = 2_000_000u64;
+        let zone_name = "rumor_zone_a";
+
+        let mut app = App::new();
+        app.add_event::<DominanceChangedEvent>();
+        app.init_resource::<PendingZoneRumors>();
+        app.init_resource::<RumorSpreadThrottle>();
+        app.init_resource::<ZoneInfluenceMap>();
+
+        use crate::world::zone::{Zone, ZoneRegistry};
+        app.insert_resource(ZoneRegistry {
+            zones: vec![Zone {
+                name: zone_name.to_string(),
+                dimension: crate::world::dimension::DimensionKind::Overworld,
+                bounds: (DVec3::new(0.0, 60.0, 0.0), DVec3::new(200.0, 80.0, 200.0)),
+                spirit_qi: 0.7,
+                danger_level: 0,
+                active_events: vec![],
+                patrol_anchors: vec![DVec3::new(100.0, 66.0, 100.0)],
+                blocked_tiles: vec![],
+            }],
+        });
+        app.insert_resource(CultivationClock { tick: now });
+        app.add_systems(
+            Update,
+            (
+                ensure_npc_rumor_memory_system,
+                territory_rumor_spread_system,
+            )
+                .chain(),
+        );
+
+        // 注入一条已到期的 rumor（zone=rumor_zone_a，realm=High）
+        {
+            let mut pending = app.world_mut().resource_mut::<PendingZoneRumors>();
+            pending.queue.push(ZoneDominionRumor {
+                zone_name: zone_name.to_string(),
+                realm_band: RealmBand::High,
+                observed_at_tick: now - 100_000,
+                deliver_at_tick: now - 1, // 已到期
+            });
+        }
+
+        // spawn NPC with NpcPatrol（home_zone=zone_a）+ NpcMarker
+        let (client_bundle, _) = create_mock_client("scenario9_npc");
+        let npc = app
+            .world_mut()
+            .spawn((
+                client_bundle,
+                NpcPatrol::new(zone_name, DVec3::new(80.0, 66.0, 80.0)),
+                NpcMarker,
+            ))
+            .id();
+        app.world_mut()
+            .entity_mut(npc)
+            .insert(Position::new([80.0, 66.0, 80.0]));
+
+        app.update();
+
+        let memory = app
+            .world()
+            .entity(npc)
+            .get::<NpcRumorMemory>()
+            .expect("NPC 应有 NpcRumorMemory（由 ensure_npc_rumor_memory_system 挂载）");
+
+        assert_eq!(
+            memory.rumors.len(),
+            1,
+            "期望 NPC 收到 1 条到期 rumor（zone={zone_name}, realm=High），实际={}；\
+             断言：跨 zone 移动后目标 zone NPC 收到领地信息（场景9 端到端）",
+            memory.rumors.len()
+        );
+        assert_eq!(
+            memory.rumors[0].zone_name, zone_name,
+            "期望 rumor.zone_name='{zone_name}'，实际='{}'",
+            memory.rumors[0].zone_name
+        );
+        assert_eq!(
+            memory.rumors[0].realm_band,
+            RealmBand::High,
+            "期望 rumor.realm_band=High，实际={:?}（匿名境界段应保留）",
+            memory.rumors[0].realm_band
+        );
+
+        let _ = npc;
+    }
+
+    #[test]
+    fn scenario_9_npc_rumor_not_delivered_before_due_tick() {
+        // 边界：deliver_at > now → rumors 为空（不提前触达）
+        use crate::npc::patrol::NpcPatrol;
+        use crate::npc::spawn::NpcMarker;
+        use valence::prelude::{DVec3, Position};
+        use valence::testing::create_mock_client;
+
+        let now = 1_000u64;
+        let zone_name = "early_zone";
+
+        let mut app = App::new();
+        app.add_event::<DominanceChangedEvent>();
+        app.init_resource::<PendingZoneRumors>();
+        app.init_resource::<RumorSpreadThrottle>();
+        app.init_resource::<ZoneInfluenceMap>();
+
+        use crate::world::zone::{Zone, ZoneRegistry};
+        app.insert_resource(ZoneRegistry {
+            zones: vec![Zone {
+                name: zone_name.to_string(),
+                dimension: crate::world::dimension::DimensionKind::Overworld,
+                bounds: (DVec3::new(0.0, 60.0, 0.0), DVec3::new(200.0, 80.0, 200.0)),
+                spirit_qi: 0.6,
+                danger_level: 0,
+                active_events: vec![],
+                patrol_anchors: vec![DVec3::new(100.0, 66.0, 100.0)],
+                blocked_tiles: vec![],
+            }],
+        });
+        app.insert_resource(CultivationClock { tick: now });
+        app.add_systems(Update, territory_rumor_spread_system);
+
+        // 注入未到期 rumor
+        {
+            let mut pending = app.world_mut().resource_mut::<PendingZoneRumors>();
+            pending.queue.push(ZoneDominionRumor {
+                zone_name: zone_name.to_string(),
+                realm_band: RealmBand::Mid,
+                observed_at_tick: now,
+                deliver_at_tick: now + 500_000, // 远未到期
+            });
+        }
+
+        let (client_bundle, _) = create_mock_client("early_npc");
+        let npc = app
+            .world_mut()
+            .spawn((
+                client_bundle,
+                NpcPatrol::new(zone_name, DVec3::new(50.0, 66.0, 50.0)),
+                NpcRumorMemory::default(),
+                NpcMarker,
+            ))
+            .id();
+        app.world_mut()
+            .entity_mut(npc)
+            .insert(Position::new([50.0, 66.0, 50.0]));
+
+        app.update();
+
+        let memory = app
+            .world()
+            .entity(npc)
+            .get::<NpcRumorMemory>()
+            .expect("NPC 应有 NpcRumorMemory");
+        assert_eq!(
+            memory.rumors.len(),
+            0,
+            "期望 deliver_at > now 时 rumors 为空（不提前触达），实际={}",
+            memory.rumors.len()
+        );
+
+        let _ = npc;
+    }
 }

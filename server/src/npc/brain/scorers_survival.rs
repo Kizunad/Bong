@@ -542,6 +542,62 @@ mod tests {
         assert_eq!(score, 1.0);
     }
 
+    // ── plan-territory-v1 P4 场景 7: NPC 让路（霸主高境+Watch → flee score）────────
+    // 霸主=高境(Solidify/Void)玩家带 TiandaoAttention{response:Watch}
+    // → NPC 100格内 fear score > 阈值 + ≥FEAR_CULTIVATOR_RANGE→0 边界 + Watch>无Watch对比
+
+    #[test]
+    fn scenario_7_dominant_player_with_watch_scores_fear_above_threshold() {
+        // Solidify+Watch，NPC 距离 10 → Score 应高于无Watch的 baseline
+        let score_with_watch =
+            run_fear_cultivator_score(Realm::Solidify, Some(TiandaoResponseLevel::Watch), 10.0);
+        let score_without_watch = run_fear_cultivator_score(Realm::Solidify, None, 10.0);
+
+        assert!(
+            score_with_watch > 0.4,
+            "期望霸主(Solidify)+Watch 时 NPC 10格内 fear score > 0.4（flee 触发阈值），\
+             实际={}（若撞红说明 fear_cultivator_score 或 Watch bonus 不足）",
+            score_with_watch
+        );
+        assert!(
+            score_with_watch > score_without_watch,
+            "期望 Solidify+Watch({score_with_watch}) > 无Watch({score_without_watch})，\
+             天道 Watch 必须提升 NPC flee/fear score"
+        );
+        let expected_bonus = score_without_watch + 0.2;
+        assert!(
+            (score_with_watch - expected_bonus.min(1.0)).abs() < 1e-5,
+            "期望 Watch bonus=+0.2，score_with_watch={score_with_watch}, expected≈{expected_bonus:.5}"
+        );
+    }
+
+    #[test]
+    fn scenario_7_fear_score_zero_at_and_beyond_fear_range() {
+        // 距离 ≥ FEAR_CULTIVATOR_RANGE(50) → Score=0（含 Watch 也归零，距离门控）
+        for distance in [FEAR_CULTIVATOR_RANGE, FEAR_CULTIVATOR_RANGE + 1.0] {
+            let score = run_fear_cultivator_score(
+                Realm::Solidify,
+                Some(TiandaoResponseLevel::Watch),
+                distance,
+            );
+            assert!(
+                score.abs() < 1e-5,
+                "期望距离={distance}（≥FEAR_CULTIVATOR_RANGE(50)）时 score=0 即使有 Watch，\
+                 实际={score}（NPC 超过恐惧范围不应躲避）"
+            );
+        }
+    }
+
+    #[test]
+    fn scenario_7_void_realm_scores_highest_fear() {
+        // Void(最高境界)在近距离 fear score 应=1.0（最大恐惧）
+        let score = run_fear_cultivator_score(Realm::Void, Some(TiandaoResponseLevel::Watch), 1.0);
+        assert_eq!(
+            score, 1.0,
+            "期望化虚(Void)+Watch+近距离(1格) fear score=1.0(clamp 上限)，实际={score}"
+        );
+    }
+
     fn run_fear_cultivator_score(
         realm: Realm,
         response: Option<TiandaoResponseLevel>,

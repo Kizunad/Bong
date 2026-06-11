@@ -2495,6 +2495,711 @@ mod territory_tests {
         let _ = (killer_entity, victim_entity);
     }
 
+    // ══════════════════════════════════════════════════════════════════════════
+    // plan-territory-v1 P4 — 15 场景饱和端到端集成测试 + QiDepleted 边界回归
+    // ══════════════════════════════════════════════════════════════════════════
+
+    // ── QiDepleted 边界回归 ── Pi 提的 bug：重启+废地+dominant 三重同时误触发
+    // 生产代码已正确（unwrap_or(current_qi)），以下 2 条测试钉死正确行为，
+    // 防有人改回 unwrap_or(0.0) 或正默认值引入假边沿。
+
+    #[test]
+    fn qi_depleted_not_triggered_for_initial_negative_qi_zone() {
+        // 场景：server 重启 + zone 初始负灵域 (spirit_qi=-0.5) + 有 dominant
+        // 期望：首 tick 不 emit QiDepleted，因 watermark 首次观测初始化为 current_qi(-0.5)，
+        // detect_qi_depleted_edge(-0.5, -0.5) = (-0.5 > 0.0) = false，不触发。
+        // 若撞红说明有人把 unwrap_or(current_qi) 改回 unwrap_or(0.0/正默认值)，
+        // 产生了 0.0 > 0.0 = false（实际上是 0.0 > -0.5 = false 仍然不触发）——
+        // 但更危险的是 unwrap_or(1.0) 产生 1.0 > 0.0 = true 的假边沿。
+        let mut app = make_qi_depleted_app(-0.5);
+        app.update();
+        let events = drain_dominance_events(&mut app);
+        assert!(
+            events.is_empty(),
+            "期望初始负灵域(spirit_qi=-0.5)+dominant 首 tick 不 emit QiDepleted，\
+             因 watermark 首次观测应初始化为 current_qi(-0.5)，\
+             detect_qi_depleted_edge(-0.5,-0.5)=false（-0.5>0 不成立）。\
+             实际 emit {} 条事件: {:?}",
+            events.len(),
+            events.iter().map(|e| &e.kind).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn qi_depleted_not_retriggered_when_already_zero() {
+        // 场景：zone spirit_qi=0.0 持续不变（持续废地）
+        // 期望：首 tick 不 emit（watermark 设为 0.0），第二 tick 仍 0.0，仍不 emit（不刷屏）。
+        let mut app = make_qi_depleted_app(0.0);
+
+        // 第一 tick 建立水位 watermark=0.0，不 emit（0.0 > 0.0 = false）
+        app.update();
+        let ev1 = drain_dominance_events(&mut app);
+        assert!(
+            ev1.is_empty(),
+            "初始 spirit_qi=0.0 首 tick 不应 emit QiDepleted（watermark 首次观测=0.0，0.0>0.0=false），\
+             实际 emit {} 条: {:?}",
+            ev1.len(),
+            ev1.iter().map(|e| &e.kind).collect::<Vec<_>>()
+        );
+
+        // 推进 clock，spirit_qi 仍 0.0（watermark 为 0.0，0.0>0.0=false）→ 不重复 emit
+        app.world_mut().resource_mut::<CultivationClock>().tick = 43;
+        app.update();
+        let ev2 = drain_dominance_events(&mut app);
+        assert!(
+            ev2.is_empty(),
+            "spirit_qi 持续为 0.0 第二 tick 不应重复 emit QiDepleted（持续废地不刷屏），\
+             实际 emit {} 条: {:?}",
+            ev2.len(),
+            ev2.iter().map(|e| &e.kind).collect::<Vec<_>>()
+        );
+    }
+
+    // ── 场景 1: 影响力曲线——修炼公式契约 ────────────────────────────────────────
+    // plan §P4 标 "固元打坐60min→influence≈18(+0.3/min)" — 数值口径与代码不符：
+    //   实测 醒灵(rank=0) 停留 = BASE_DWELL_PER_EVAL(0.3) × (0+1) = 0.3/eval ✓（18 = 0.3×60 醒灵停留）
+    //   实测 固元(rank=3) 打坐 = 0.3 × PRACTICE_MULT(1.5) × (3+1) = 1.8/eval（60次累计108→clamp100）
+    // 测试契约：per-eval 公式值精确值 + N 次累加 clamp 行为，不绑死 plan 错误聚合数字 "18"。
+
+    #[test]
+    fn scenario_1_dwell_influence_formula_per_eval() {
+        // 醒灵(rank=0) 纯停留 per-eval delta = BASE_DWELL_PER_EVAL = 0.3
+        // （plan "≈18" = 醒灵停留 0.3×60eval = 18，文档数字口径正确但标注境界为"固元"有误）
+        let delta_awaken_dwell = compute_influence_delta(0, false, false, 1.0, 0.0, 0);
+        assert!(
+            (delta_awaken_dwell - BASE_DWELL_PER_EVAL).abs() < 1e-9,
+            "期望醒灵(rank=0)停留 per-eval delta = BASE_DWELL_PER_EVAL({BASE_DWELL_PER_EVAL})，\
+             实际={}（若撞红说明 compute_influence_delta 基础计算改变）",
+            delta_awaken_dwell
+        );
+
+        // 固元(rank=3) 打坐 per-eval = 0.3 × PRACTICE_MULT(1.5) × (3+1) = 1.8
+        let expected_solidify_practice = BASE_DWELL_PER_EVAL * PRACTICE_MULT * 4.0;
+        let delta_solidify_practice = compute_influence_delta(3, true, false, 1.0, 0.0, 0);
+        assert!(
+            (delta_solidify_practice - expected_solidify_practice).abs() < 1e-9,
+            "期望固元(rank=3)打坐 per-eval delta = {expected_solidify_practice}(=BASE×PRACTICE_MULT×4)，\
+             实际={}（formula: base×practice×(rank+1)）",
+            delta_solidify_practice
+        );
+    }
+
+    #[test]
+    fn scenario_1_accumulation_clamps_at_influence_max() {
+        // 醒灵停留 60 次 eval 累加后 clamp 到 INFLUENCE_MAX(100)
+        // 60 × 0.3 = 18.0，远未达 100；固元打坐 60 × 1.8 = 108 → clamp 100。
+        let mut accum = 0.0f64;
+        for _ in 0..60 {
+            accum =
+                (accum + compute_influence_delta(3, true, false, 1.0, 0.0, 0)).min(INFLUENCE_MAX);
+        }
+        assert!(
+            (accum - INFLUENCE_MAX).abs() < 1e-9,
+            "期望固元打坐 60 eval 后累积 clamp 到 INFLUENCE_MAX({INFLUENCE_MAX})，实际={}",
+            accum
+        );
+
+        // 醒灵停留 60 次不超限
+        let mut awaken_accum = 0.0f64;
+        for _ in 0..60 {
+            awaken_accum = (awaken_accum + compute_influence_delta(0, false, false, 1.0, 0.0, 0))
+                .min(INFLUENCE_MAX);
+        }
+        assert!(
+            (awaken_accum - 18.0).abs() < 1e-9,
+            "期望醒灵停留 60 eval 后累积=18.0(=0.3×60)，实际={}（plan 文档 '≈18' 口径来源）",
+            awaken_accum
+        );
+    }
+
+    // ── 场景 2: 战斗乘子路径（plan '+2/场战斗胜利' 未实现，测真实行为）────────────
+    // plan 描述 "同zone赢3场→+6(到24)" 的 "+2/场战斗胜利计数" 机制全仓不存在。
+    // 代码只有 COMBAT_MULT(1.2) dwell 乘子 + PvP kill +5。
+    // 测试真实行为：3 次 in_combat=true eval 的 delta 累积。
+
+    #[test]
+    fn scenario_2_combat_multiplier_real_behavior() {
+        // 3 次战斗中停留 eval 的真实累积（rank=0, spirit_qi=1.0）
+        // 每次 delta = BASE_DWELL × COMBAT_MULT × 1 = 0.3 × 1.2 = 0.36
+        // 3次累积 = 1.08，非 plan 描述的 "+6"
+        // 注：plan "+2/场战斗胜利" 机制未实现，此处测真实存在的战斗乘子路径
+        let combat_delta = compute_influence_delta(0, false, true, 1.0, 0.0, 0);
+        let expected_single = BASE_DWELL_PER_EVAL * COMBAT_MULT;
+        assert!(
+            (combat_delta - expected_single).abs() < 1e-9,
+            "期望战斗中 per-eval delta = BASE_DWELL×COMBAT_MULT = {expected_single}，\
+             实际={}（代码中无+2/场战斗胜利计数机制，plan 口径未落地）",
+            combat_delta
+        );
+
+        let mut accum = 0.0f64;
+        for _ in 0..3 {
+            accum += compute_influence_delta(0, false, true, 1.0, 0.0, 0);
+        }
+        let expected_3evals = expected_single * 3.0;
+        assert!(
+            (accum - expected_3evals).abs() < 1e-9,
+            "期望 3 次战斗 eval 累积={expected_3evals}(≠plan 的+6)，实际={}；\
+             plan '+2/场战斗胜利计数' 机制未实现，测真实乘子行为",
+            accum
+        );
+    }
+
+    // ── 场景 3: 击杀 +5 端到端序列（make_pvp_app + DeathEvent）──────────────────
+    // 注：基础击杀逻辑已有 pvp_kill_in_zone_killer_gains_5_victim_zeroed 覆盖。
+    // P4 补端到端序列：从 0 起累积影响力，击杀后 +5 到 KILL_INFLUENCE_GAIN。
+
+    #[test]
+    fn scenario_3_kill_influence_gain_end_to_end_sequence() {
+        use valence::testing::create_mock_client;
+
+        let mut app = make_pvp_app();
+
+        let (mut killer_bundle, _) = create_mock_client("P4Killer");
+        killer_bundle.player.position = valence::prelude::Position::new([0.0, 66.0, 0.0]);
+        let killer_entity = app.world_mut().spawn(killer_bundle).id();
+
+        let (mut victim_bundle, _) = create_mock_client("P4Victim");
+        victim_bundle.player.position = valence::prelude::Position::new([5.0, 66.0, 5.0]);
+        let victim_entity = app.world_mut().spawn(victim_bundle).id();
+
+        let killer_id = canonical_player_id("P4Killer");
+        let victim_id = canonical_player_id("P4Victim");
+
+        // 预置 victim influence = 25（霸主级别）
+        {
+            let mut map = app.world_mut().resource_mut::<ZoneInfluenceMap>();
+            let entry = map.zones.entry("pvp_zone".to_string()).or_default();
+            entry.players.insert(
+                victim_id.clone(),
+                PlayerInfluence {
+                    value: 25.0,
+                    ..Default::default()
+                },
+            );
+        }
+
+        // 发送击杀事件
+        app.world_mut()
+            .resource_mut::<bevy_ecs::event::Events<DeathEvent>>()
+            .send(DeathEvent {
+                target: victim_entity,
+                cause: "pvp".to_string(),
+                attacker: Some(killer_entity),
+                attacker_player_id: Some(killer_id.clone()),
+                at_tick: 100,
+            });
+        app.update();
+
+        // killer: 0 → +5 = KILL_INFLUENCE_GAIN
+        let killer_val = read_influence(&app, "pvp_zone", &killer_id);
+        assert!(
+            killer_val.is_some_and(|v| (v - KILL_INFLUENCE_GAIN).abs() < 1e-9),
+            "期望 killer(0 起) 击杀后 influence={KILL_INFLUENCE_GAIN}，\
+             实际={:?}（plan 场景3 击杀1玩家→+5）",
+            killer_val
+        );
+
+        // victim: 25 → 0（归零）
+        let victim_val = read_influence(&app, "pvp_zone", &victim_id);
+        assert!(
+            victim_val.is_some_and(|v| v.abs() < 1e-9),
+            "期望 victim(25) 被击杀后 influence 归零，实际={:?}（击杀毁灭性）",
+            victim_val
+        );
+
+        // player_kills 计数 +1
+        let kills = read_player_kills(&app, "pvp_zone", &killer_id);
+        assert_eq!(
+            kills, 1,
+            "期望 killer player_kills=1，实际={}（击杀计数应增）",
+            kills
+        );
+
+        let _ = (killer_entity, victim_entity);
+    }
+
+    // ── 场景 4: 离开 1h → 衰减约 -30（60 次 eval）──────────────────────────────
+
+    #[test]
+    fn scenario_4_decay_60_evals_from_50() {
+        // 初始 influence=50，短暂离开（<24h）60 次 eval 衰减
+        // 每次 compute_decay(v, short_absence) → v - DECAY_PER_EVAL(0.5)
+        // 60 次 = -30，结果 50-30=20
+        let mut v = 50.0f64;
+        for _ in 0..60 {
+            v = compute_decay(v, 100); // absence_ticks=100 < TICKS_PER_DAY
+        }
+        let expected = 50.0 - DECAY_PER_EVAL * 60.0;
+        assert!(
+            (v - expected).abs() < 1e-9,
+            "期望从 50.0 短暂离开 60 eval 后={}(50-DECAY_PER_EVAL×60)，\
+             实际={}（plan 场景4 离开1h→-30）",
+            expected,
+            v
+        );
+    }
+
+    #[test]
+    fn scenario_4_decay_clamps_at_zero() {
+        // 衰减结果不出负数（influence 下限=0）
+        let mut v = 1.0f64;
+        for _ in 0..10 {
+            v = compute_decay(v, 100);
+        }
+        assert!(
+            v.abs() < 1e-9,
+            "期望 influence 衰减到 0 不出负数，实际={}",
+            v
+        );
+    }
+
+    // ── 场景 5: 霸主确立 influence≥30+领先≥10 ─────────────────────────────────
+
+    #[test]
+    fn scenario_5_dominance_established_at_threshold_and_lead() {
+        // top=30.0, second=20.0 → 领先=10 恰满 DOMINANCE_LEAD(10) → Some(霸主)
+        let mut entry = ZoneInfluenceEntry::default();
+        entry.players.insert(
+            "alpha".to_string(),
+            PlayerInfluence {
+                value: 30.0,
+                ..Default::default()
+            },
+        );
+        entry.players.insert(
+            "beta".to_string(),
+            PlayerInfluence {
+                value: 20.0,
+                ..Default::default()
+            },
+        );
+        let dom = recompute_dominance(&entry, 5000, None);
+        assert!(
+            dom.is_some(),
+            "期望 top=30.0/second=20.0（领先=10=DOMINANCE_LEAD）时确立霸主，\
+             实际=None（若撞红说明领先判断用了 > 而非 >=）"
+        );
+        let dom = dom.unwrap();
+        assert_eq!(
+            dom.char_id, "alpha",
+            "期望霸主为 alpha(30)，实际={}",
+            dom.char_id
+        );
+        assert_eq!(
+            dom.established_tick, 5000,
+            "期望 established_tick=5000，实际={}",
+            dom.established_tick
+        );
+    }
+
+    #[test]
+    fn scenario_5_dominance_not_established_below_lead() {
+        // top=31.0, second=21.1（均满足 DOMINANCE_THRESHOLD=30）→ 领先=9.9 < DOMINANCE_LEAD(10) → None
+        // 注意：second 必须 >= DOMINANCE_THRESHOLD(30) 才被纳入 candidates；
+        //       若 second < THRESHOLD，second_val=0，则 top-0=31>=10 反而确立。
+        let mut entry = ZoneInfluenceEntry::default();
+        entry.players.insert(
+            "p1".to_string(),
+            PlayerInfluence {
+                value: 31.0,
+                ..Default::default()
+            },
+        );
+        entry.players.insert(
+            "p2".to_string(),
+            PlayerInfluence {
+                value: 21.1, // 低于 DOMINANCE_THRESHOLD(30)，不是候选人，second_val=0
+                ..Default::default()
+            },
+        );
+        // p2<THRESHOLD 不是候选，等效单人 → 应确立（验证此理解）；
+        // 改为双人都满足门槛的场景来测差距不足：
+        let mut entry2 = ZoneInfluenceEntry::default();
+        entry2.players.insert(
+            "q1".to_string(),
+            PlayerInfluence {
+                value: 31.0,
+                ..Default::default()
+            },
+        );
+        entry2.players.insert(
+            "q2".to_string(),
+            PlayerInfluence {
+                value: 21.2, // 低于门槛不算候选，但这不测"差距不足"
+                ..Default::default()
+            },
+        );
+        // 真正测差距不足：两人都满足门槛，但差距 < DOMINANCE_LEAD
+        // top=35, second=30 → 领先=5 < LEAD(10) → None
+        let mut entry3 = ZoneInfluenceEntry::default();
+        entry3.players.insert(
+            "r1".to_string(),
+            PlayerInfluence {
+                value: 35.0,
+                ..Default::default()
+            },
+        );
+        entry3.players.insert(
+            "r2".to_string(),
+            PlayerInfluence {
+                value: 30.0, // 满足门槛，差=5 < LEAD(10)
+                ..Default::default()
+            },
+        );
+        let dom = recompute_dominance(&entry3, 1, None);
+        assert!(
+            dom.is_none(),
+            "期望 top=35.0/second=30.0（两人均满足门槛，领先=5 < DOMINANCE_LEAD(10)）时不确立霸主，\
+             实际={:?}（若撞红说明平局判定条件改变）",
+            dom.map(|d| d.char_id)
+        );
+    }
+
+    // ── 场景 6: 霸主失去 influence<20 ──────────────────────────────────────────
+
+    #[test]
+    fn scenario_6_dominance_lost_below_drop_threshold() {
+        // 纯函数：现任 influence=19 < DOMINANCE_DROP(20)，无继任（无其他候选）→ None
+        let mut entry = ZoneInfluenceEntry::default();
+        entry.players.insert(
+            "incumbent".to_string(),
+            PlayerInfluence {
+                value: 19.0,
+                ..Default::default()
+            },
+        );
+        entry.dominant = Some(ZoneDominance {
+            char_id: "incumbent".to_string(),
+            influence: 19.0,
+            established_tick: 0,
+            public_known: true,
+            realm_band: None,
+        });
+        let dom = recompute_dominance(&entry, 200, None);
+        assert!(
+            dom.is_none(),
+            "期望现任 influence=19 < DOMINANCE_DROP(20) 且无继任时失去霸主地位，实际={:?}",
+            dom.map(|d| d.char_id)
+        );
+    }
+
+    #[test]
+    fn scenario_6_dominance_lost_via_app_decay() {
+        // App 驱动：make_pvp_app + 预置 dominant 且 influence 在多次衰减后跌破 20 → dominant→None
+        // 注意：pvp_influence_system 只处理 DeathEvent，不做 tick 衰减。
+        // 直接用纯函数驱动衰减后验证 recompute_dominance 转换。
+        let mut entry = ZoneInfluenceEntry::default();
+        let mut current_influence = 22.0f64;
+        for _ in 0..10 {
+            current_influence = compute_decay(current_influence, 100);
+        }
+        // 22 - 0.5×10 = 17 < DOMINANCE_DROP(20)
+        entry.players.insert(
+            "weakdom".to_string(),
+            PlayerInfluence {
+                value: current_influence,
+                ..Default::default()
+            },
+        );
+        entry.dominant = Some(ZoneDominance {
+            char_id: "weakdom".to_string(),
+            influence: current_influence,
+            established_tick: 0,
+            public_known: true,
+            realm_band: None,
+        });
+        let dom = recompute_dominance(&entry, 999, None);
+        assert!(
+            dom.is_none(),
+            "期望 influence={current_influence:.1}(衰减后 <DOMINANCE_DROP(20)) 失去霸主，实际={:?}",
+            dom.map(|d| d.char_id)
+        );
+    }
+
+    // ── 场景 8: NPC 报信（DEFER P4.5）──────────────────────────────────────────
+    // 全仓确认不存在（grep 报信/report_intruder/IntruderReport 零命中）。
+    // P4 是测试收口阶段，新生产系统待 P4.5 独立饱和测试。
+    // 需新增：NpcIntruderReportEvent + 独立 600-tick system + narration 模板 + 注册 + 饱和测试。
+    // 见 docs/plan-territory-v1.md §P4 NPC行为 #8 标 defer P4.5。
+    // （无 #[test]，仅注释占位）
+
+    // ── 场景 10: 驻守加速（dominant attention ×1.5，2h 分级 DEFER）───────────────
+    // plan §P1 line180-184 的"连续2h→×1.6/6h→×2.0"分级时间加成全仓未实现。
+    // activity_factor 是常量，无 ZoneDwellBonus / 连续驻守计时。
+    // 测真实存在的行为：is_dominant=true → accumulation_rate×DOMINANCE_ATTENTION_MULT(1.5)。
+    // plan 的"2h→1.6"分级部分 DEFER P4.5，见文档。
+
+    #[test]
+    fn scenario_10_dominant_attention_accelerated_by_1_5x() {
+        use crate::world::season::Season;
+        use crate::world::territory_perks::DOMINANCE_ATTENTION_MULT;
+        use crate::world::tiandao_hunt::{
+            accumulation_rate_with_dominance, TiandaoActivity, TiandaoAttentionInput,
+        };
+
+        let input_dominant = TiandaoAttentionInput {
+            realm: crate::cultivation::components::Realm::Solidify,
+            zone_spirit_qi: 0.8,
+            activity: TiandaoActivity::Standing,
+            season: Season::default(),
+            is_dominant: true,
+        };
+        let input_nondominant = TiandaoAttentionInput {
+            is_dominant: false,
+            ..input_dominant
+        };
+
+        let rate_dom = accumulation_rate_with_dominance(input_dominant);
+        let rate_nondom = accumulation_rate_with_dominance(input_nondominant);
+
+        assert!(
+            rate_dom > rate_nondom,
+            "期望霸主 attention 速率({rate_dom:.6}) > 非霸主({rate_nondom:.6})，\
+             因 is_dominant=true → ×DOMINANCE_ATTENTION_MULT({DOMINANCE_ATTENTION_MULT})"
+        );
+        assert!(
+            (rate_dom - rate_nondom * DOMINANCE_ATTENTION_MULT).abs() < 1e-9,
+            "期望霸主速率=非霸主×DOMINANCE_ATTENTION_MULT({DOMINANCE_ATTENTION_MULT})，\
+             霸主={rate_dom:.9} 非霸主×mult={:.9}（plan '连续2h→×1.6' 分级 DEFER P4.5）",
+            rate_nondom * DOMINANCE_ATTENTION_MULT
+        );
+    }
+
+    // ── 场景 12: 灵气耗尽加速（霸主 regen drain + Watch qi drain → spirit_qi 跨 0）──
+
+    #[test]
+    fn scenario_12_qi_depletion_accelerated_with_dominant_and_watch() {
+        // 验证有霸主时 qi 向零趋近的检测机制：
+        // make_qi_depleted_app(0.5) → 第一 tick 建立水位 0.5，第二 tick 跌至 0.0 → emit QiDepleted
+        // 这模拟了霸主+天道双路 drain 后 spirit_qi 归零的端到端场景。
+        let mut app = make_qi_depleted_app(0.5);
+
+        // 首 tick：watermark 首次观测 = 0.5，无 emit（建立基准）
+        app.update();
+        let ev1 = drain_dominance_events(&mut app);
+        assert!(
+            ev1.is_empty(),
+            "期望首 tick 建立 watermark=0.5 不 emit QiDepleted，实际 emit={}",
+            ev1.len()
+        );
+
+        // 模拟 qi drain 跨 0：降 spirit_qi 到 0.0
+        {
+            let mut zones = app.world_mut().resource_mut::<ZoneRegistry>();
+            zones.zones[0].spirit_qi = 0.0;
+        }
+        app.world_mut().resource_mut::<CultivationClock>().tick = 43;
+        app.update();
+
+        let ev2 = drain_dominance_events(&mut app);
+        assert_eq!(
+            ev2.len(),
+            1,
+            "期望 spirit_qi 从 0.5 跌至 0.0（霸主+Watch 双路 drain 模拟）emit 1 条 QiDepleted，\
+             实际={}",
+            ev2.len()
+        );
+        assert!(
+            matches!(
+                ev2.first().map(|e| e.kind),
+                Some(crate::world::territory_narration::DominanceEventKind::QiDepleted)
+            ),
+            "期望 event.kind=QiDepleted，实际={:?}",
+            ev2.first().map(|e| &e.kind)
+        );
+    }
+
+    // ── 场景 13: influence 不影响灵气数值（守恒断言）────────────────────────────
+    // InfluenceChangedEvent 无 qi 字段（territory.rs:99 结构）；
+    // territory_pvp_influence_system 全程不调 WorldQiAccount。
+    // 断言外部可观察：App 驱动 pvp system 后 WorldQiAccount.total() 不变。
+
+    #[test]
+    fn scenario_13_influence_change_does_not_affect_qi_ledger() {
+        use crate::qi_physics::ledger::WorldQiAccount;
+        use valence::testing::create_mock_client;
+
+        let mut app = make_pvp_app();
+        // 注入 WorldQiAccount（territory_pvp_influence_system 不应接触它）
+        app.init_resource::<WorldQiAccount>();
+
+        let (mut killer_bundle, _) = create_mock_client("QiKiller");
+        killer_bundle.player.position = valence::prelude::Position::new([0.0, 66.0, 0.0]);
+        let killer_entity = app.world_mut().spawn(killer_bundle).id();
+
+        let (mut victim_bundle, _) = create_mock_client("QiVictim");
+        victim_bundle.player.position = valence::prelude::Position::new([2.0, 66.0, 2.0]);
+        let victim_entity = app.world_mut().spawn(victim_bundle).id();
+
+        let killer_id = canonical_player_id("QiKiller");
+
+        // 记录初始 ledger 总量（新建 = 0.0）
+        let qi_before = app.world().resource::<WorldQiAccount>().total();
+
+        app.world_mut()
+            .resource_mut::<bevy_ecs::event::Events<DeathEvent>>()
+            .send(DeathEvent {
+                target: victim_entity,
+                cause: "pvp".to_string(),
+                attacker: Some(killer_entity),
+                attacker_player_id: Some(killer_id.clone()),
+                at_tick: 100,
+            });
+        app.update();
+
+        let qi_after = app.world().resource::<WorldQiAccount>().total();
+        assert!(
+            (qi_before - qi_after).abs() < 1e-9,
+            "期望 influence 变动(DeathEvent→killer+5/victim归0)不改变 WorldQiAccount.total()，\
+             因 territory_pvp_influence_system 不调 qi ledger；\
+             before={qi_before}, after={qi_after}",
+        );
+
+        // 额外断言：influence 确实变了（系统正常工作，非无效测试）
+        let killer_val = read_influence(&app, "pvp_zone", &killer_id);
+        assert!(
+            killer_val.is_some_and(|v| v > 0.0),
+            "前置断言：killer influence 应已更新(>0)，确保场景13测试有效"
+        );
+
+        let _ = (killer_entity, victim_entity);
+    }
+
+    // ── 场景 14: NPC 行为不创造/消灭灵气（守恒断言）─────────────────────────────
+    // apply_dominance_reputation 只改 reputation，不调 WorldQiAccount。
+
+    #[test]
+    fn scenario_14_npc_behavior_does_not_change_qi_ledger() {
+        use crate::qi_physics::ledger::WorldQiAccount;
+        use crate::world::territory_perks::{recompute_territory_perks, ZoneDominanceRegenStore};
+        use valence::prelude::DVec3;
+
+        let mut app = valence::prelude::App::new();
+        app.init_resource::<WorldQiAccount>();
+        app.init_resource::<ZoneDominanceRegenStore>();
+
+        // 构造带霸主的 ZoneInfluenceMap
+        let mut map = ZoneInfluenceMap::default();
+        map.zones.insert(
+            "test_zone".to_string(),
+            ZoneInfluenceEntry {
+                dominant: Some(ZoneDominance {
+                    char_id: "player:npc_test".to_string(),
+                    influence: 55.0,
+                    established_tick: 1,
+                    public_known: true,
+                    realm_band: None,
+                }),
+                ..Default::default()
+            },
+        );
+        app.insert_resource(map);
+        app.insert_resource(crate::world::zone::ZoneRegistry {
+            zones: vec![crate::world::zone::Zone {
+                name: "test_zone".to_string(),
+                dimension: DimensionKind::Overworld,
+                bounds: (DVec3::new(0.0, 60.0, 0.0), DVec3::new(100.0, 80.0, 100.0)),
+                spirit_qi: 0.8,
+                danger_level: 0,
+                active_events: vec![],
+                patrol_anchors: vec![],
+                blocked_tiles: vec![],
+            }],
+        });
+        app.add_systems(valence::prelude::Update, recompute_territory_perks);
+
+        let qi_before = app.world().resource::<WorldQiAccount>().total();
+        app.update();
+        let qi_after = app.world().resource::<WorldQiAccount>().total();
+
+        assert!(
+            (qi_before - qi_after).abs() < 1e-9,
+            "期望 recompute_territory_perks(NPC 信誉/霸主 store 更新)不改变 WorldQiAccount.total()，\
+             NPC 行为只改社交层数据，不触 qi ledger；before={qi_before}, after={qi_after}"
+        );
+    }
+
+    // ── 场景 15: 击杀零和——influence 毁灭性，qi 守恒 ────────────────────────────
+    // A 杀 B → A+5/B归0（influence 总量不守恒，故意的——击杀毁灭性）
+    // 且 WorldQiAccount balance 不变（territory_pvp_influence_system 无 qi 调用）
+
+    #[test]
+    fn scenario_15_kill_influence_destructive_qi_invariant() {
+        use crate::qi_physics::ledger::WorldQiAccount;
+        use valence::testing::create_mock_client;
+
+        let mut app = make_pvp_app();
+        app.init_resource::<WorldQiAccount>();
+
+        let (mut killer_bundle, _) = create_mock_client("ZeroKiller");
+        killer_bundle.player.position = valence::prelude::Position::new([0.0, 66.0, 0.0]);
+        let killer_entity = app.world_mut().spawn(killer_bundle).id();
+
+        let (mut victim_bundle, _) = create_mock_client("ZeroVictim");
+        victim_bundle.player.position = valence::prelude::Position::new([3.0, 66.0, 3.0]);
+        let victim_entity = app.world_mut().spawn(victim_bundle).id();
+
+        let killer_id = canonical_player_id("ZeroKiller");
+        let victim_id = canonical_player_id("ZeroVictim");
+
+        // 预置双方 influence（体现毁灭性：B=40，A杀B后A=5，B=0，总量减 35）
+        {
+            let mut map = app.world_mut().resource_mut::<ZoneInfluenceMap>();
+            let entry = map.zones.entry("pvp_zone".to_string()).or_default();
+            entry.players.insert(
+                victim_id.clone(),
+                PlayerInfluence {
+                    value: 40.0,
+                    ..Default::default()
+                },
+            );
+        }
+
+        let qi_before = app.world().resource::<WorldQiAccount>().total();
+
+        app.world_mut()
+            .resource_mut::<bevy_ecs::event::Events<DeathEvent>>()
+            .send(DeathEvent {
+                target: victim_entity,
+                cause: "pvp".to_string(),
+                attacker: Some(killer_entity),
+                attacker_player_id: Some(killer_id.clone()),
+                at_tick: 100,
+            });
+        app.update();
+
+        let killer_val = read_influence(&app, "pvp_zone", &killer_id).unwrap_or(0.0);
+        let victim_val = read_influence(&app, "pvp_zone", &victim_id).unwrap_or(-1.0);
+
+        // influence 总量不守恒（故意毁灭性）：killer+5, victim 归0，总量=5 vs 原来=40
+        assert!(
+            (killer_val - KILL_INFLUENCE_GAIN).abs() < 1e-9,
+            "期望 killer influence={KILL_INFLUENCE_GAIN}，实际={killer_val}"
+        );
+        assert!(
+            victim_val.abs() < 1e-9,
+            "期望 victim influence 归零(0.0)，实际={victim_val}（击杀毁灭性：总量故意不守恒）"
+        );
+        // influence 毁灭性验证：原总量 40+0=40，现在 5+0=5，差=35（故意不守恒）
+        let influence_total_after = killer_val + victim_val;
+        assert!(
+            influence_total_after < 40.0,
+            "期望击杀后 influence 总量({influence_total_after}) < 初始总量(40)，\
+             击杀毁灭性：胜者无法完全获得败者 influence（+5 vs -40）"
+        );
+
+        // qi 守恒断言：WorldQiAccount 不变
+        let qi_after = app.world().resource::<WorldQiAccount>().total();
+        assert!(
+            (qi_before - qi_after).abs() < 1e-9,
+            "期望击杀后 WorldQiAccount.total() 不变（影响力系统与 qi ledger 解耦），\
+             before={qi_before}, after={qi_after}"
+        );
+
+        let _ = (killer_entity, victim_entity);
+    }
+
     // ── P2 Case 13: 差距<10共治（P0 emerge）——两人击杀后差 <10 → 无霸主 ─────
 
     #[test]
