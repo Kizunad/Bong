@@ -705,10 +705,147 @@ impl NamedFactionRegistry {
     }
 }
 
+// ── plan-faction-expansion-v1 P1：三值关系枚举 + 关系矩阵 Resource ───────────────
+
+/// plan-faction-expansion-v1 P1：具名势力间关系的三值枚举。
+///
+/// - `Hostile`：两势力互为敌对，NPC 相遇会触发 DuelTarget 并进行战斗。
+/// - `Neutral`：两势力互不干涉，不主动开战；NPC 相遇默认无 DuelTarget。
+/// - `Pact`：两势力盟约，NPC 绝不互打（scorer 施加 -0.3 反偏置）。
+///
+/// serde 序列化为 snake_case，便于 Redis 快照/schema 层互通。
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FactionRelation {
+    Hostile,
+    Neutral,
+    Pact,
+}
+
+impl FactionRelation {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Hostile => "hostile",
+            Self::Neutral => "neutral",
+            Self::Pact => "pact",
+        }
+    }
+
+    pub fn from_str_name(value: &str) -> Option<Self> {
+        match value {
+            "hostile" => Some(Self::Hostile),
+            "neutral" => Some(Self::Neutral),
+            "pact" => Some(Self::Pact),
+            _ => None,
+        }
+    }
+}
+
+/// plan-faction-expansion-v1 P1：具名势力关系矩阵 Bevy Resource。
+///
+/// 以 `(NamedFactionId, NamedFactionId)` 有序对（key 规范化：小者在前）存储关系；
+/// `are_hostile` 对称处理——`(a,b)` 与 `(b,a)` 查同一条记录。
+///
+/// v1 初值（startup_default）：
+/// - (QingyunHunters, CangyuanMerchants)  = Neutral
+/// - (QingyunHunters, NorthWasteDrifters) = Hostile
+/// - (CangyuanMerchants, NorthWasteDrifters) = Neutral
+///
+/// 未注册对组默认 Neutral（不敌对），防止遗漏配置触发意外战斗。
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, Resource)]
+pub struct FactionRelationMatrix {
+    /// 规范化 key（variant ordinal 小者先）→ 关系三值。
+    relations: HashMap<(NamedFactionId, NamedFactionId), FactionRelation>,
+}
+
+/// 规范化一对 NamedFactionId key，小 ordinal 先，保证 (a,b)==(b,a) 查同一条。
+fn canonical_pair(a: NamedFactionId, b: NamedFactionId) -> (NamedFactionId, NamedFactionId) {
+    // NamedFactionId::all() 顺序：QingyunHunters < CangyuanMerchants < NorthWasteDrifters。
+    // 用 all().iter().position() 算序列号作为比较键，保证稳定。
+    let ord = |id: NamedFactionId| {
+        NamedFactionId::all()
+            .iter()
+            .position(|x| *x == id)
+            .unwrap_or(usize::MAX)
+    };
+    if ord(a) <= ord(b) {
+        (a, b)
+    } else {
+        (b, a)
+    }
+}
+
+impl FactionRelationMatrix {
+    /// v1 启动初值：三对关系（设计收口）。
+    pub fn startup_default() -> Self {
+        let mut relations = HashMap::new();
+        // (QingyunHunters, CangyuanMerchants) = Neutral — 猎盟与商会各守一方，互不开战。
+        relations.insert(
+            canonical_pair(
+                NamedFactionId::QingyunHunters,
+                NamedFactionId::CangyuanMerchants,
+            ),
+            FactionRelation::Neutral,
+        );
+        // (QingyunHunters, NorthWasteDrifters) = Hostile — 猎盟排斥闯入北荒的游荡者。
+        relations.insert(
+            canonical_pair(
+                NamedFactionId::QingyunHunters,
+                NamedFactionId::NorthWasteDrifters,
+            ),
+            FactionRelation::Hostile,
+        );
+        // (CangyuanMerchants, NorthWasteDrifters) = Neutral — 商会有时雇佣漂流者，暂中立。
+        relations.insert(
+            canonical_pair(
+                NamedFactionId::CangyuanMerchants,
+                NamedFactionId::NorthWasteDrifters,
+            ),
+            FactionRelation::Neutral,
+        );
+        Self { relations }
+    }
+
+    /// 查询两具名势力的关系。对称：`(a,b)` 与 `(b,a)` 返回相同结果。
+    /// 未注册对组返回 `Neutral`（保守默认，防止意外战斗）。
+    pub fn get(&self, a: NamedFactionId, b: NamedFactionId) -> FactionRelation {
+        let key = canonical_pair(a, b);
+        self.relations
+            .get(&key)
+            .copied()
+            .unwrap_or(FactionRelation::Neutral)
+    }
+
+    /// 两具名势力是否互为敌对（`FactionRelation::Hostile`）。对称。
+    pub fn are_hostile(&self, a: NamedFactionId, b: NamedFactionId) -> bool {
+        self.get(a, b) == FactionRelation::Hostile
+    }
+
+    /// 设置两势力关系（测试/运行时动态调整用）。对称写入规范化 key。
+    pub fn set(&mut self, a: NamedFactionId, b: NamedFactionId, relation: FactionRelation) {
+        let key = canonical_pair(a, b);
+        self.relations.insert(key, relation);
+    }
+}
+
+/// plan-faction-expansion-v1 P1：NPC 具名势力归属 Component。
+///
+/// 挂在 hydrated NPC entity 上，表明该 NPC 隶属某具名势力。
+/// `assign_hostile_encounters` 优先用此 component + `FactionRelationMatrix` 判断敌对，
+/// fallback 到旧 `FactionMembership.faction_id` + `FactionStore::is_hostile_pair`。
+///
+/// P1 只添加 component 定义；NPC spawn 时由具体 archetype plugin 按 zone_anchor 附加。
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, Component)]
+pub struct NamedFactionMembership {
+    pub faction_id: NamedFactionId,
+}
+
 pub fn register(app: &mut App) {
     app.insert_resource(FactionStore::default())
         // plan-faction-expansion-v1 P0：具名势力注册表，启动即 3 条可查（防孤岛 #1）。
         .insert_resource(NamedFactionRegistry::startup_default())
+        // plan-faction-expansion-v1 P1：三势力关系矩阵，startup_default 写入三对关系。
+        .insert_resource(FactionRelationMatrix::startup_default())
         .add_event::<FactionEventNotice>();
     app.add_systems(Update, assign_hostile_encounters)
         .add_systems(
@@ -824,14 +961,24 @@ type EncounterNpcQueryItem<'a> = (
     Entity,
     &'a Position,
     Option<&'a FactionMembership>,
+    Option<&'a NamedFactionMembership>,
     Option<&'a DuelTarget>,
 );
 
 const HOSTILE_ENCOUNTER_RADIUS: f64 = 16.0;
 
+/// plan-faction-expansion-v1 P1：Hostile 关系偏置（big-brain 0-1 范围内叠加）。
+/// 当两 NPC 都携带 NamedFactionMembership 且关系为 Hostile，score += NAMED_HOSTILE_BIAS。
+pub const NAMED_HOSTILE_BIAS: f32 = 0.20;
+
+/// plan-faction-expansion-v1 P1：Pact 关系反偏置（big-brain 0-1 范围内叠加，值为负）。
+/// 当两 NPC 都携带 NamedFactionMembership 且关系为 Pact，score += NAMED_PACT_BIAS（约 -0.30）。
+pub const NAMED_PACT_BIAS: f32 = -0.30;
+
 #[allow(clippy::type_complexity)]
 fn assign_hostile_encounters(
     faction_store: Res<FactionStore>,
+    relation_matrix: Option<Res<FactionRelationMatrix>>,
     npc_positions: Query<EncounterNpcQueryItem<'_>, With<NpcMarker>>,
     spatial_index: Option<Res<NpcSpatialIndex>>,
     mut perf_probe: Option<ResMut<NpcPerfProbe>>,
@@ -841,63 +988,109 @@ fn assign_hostile_encounters(
     let started_at = Instant::now();
     let npcs = npc_positions
         .iter()
-        .map(|(entity, position, membership, duel_target)| {
-            (
-                entity,
-                position.get(),
-                membership.map(|membership| membership.faction_id),
-                duel_target.map(|target| target.0),
-            )
-        })
+        .map(
+            |(entity, position, membership, named_membership, duel_target)| {
+                (
+                    entity,
+                    position.get(),
+                    membership.map(|membership| membership.faction_id),
+                    named_membership.map(|m| m.faction_id),
+                    duel_target.map(|target| target.0),
+                )
+            },
+        )
         .collect::<Vec<_>>();
     let by_entity = npcs
         .iter()
-        .map(|(entity, position, faction_id, duel_target)| {
-            (*entity, (*position, *faction_id, *duel_target))
-        })
+        .map(
+            |(entity, position, faction_id, named_faction_id, duel_target)| {
+                (
+                    *entity,
+                    (*position, *faction_id, *named_faction_id, *duel_target),
+                )
+            },
+        )
         .collect::<HashMap<_, _>>();
     let spatial_index = spatial_index.as_deref();
+    let relation_matrix = relation_matrix.as_deref();
 
-    for (entity, position, faction_id, duel_target) in &npcs {
-        let Some(faction_id) = faction_id else {
+    for (entity, position, faction_id, named_faction_id, duel_target) in &npcs {
+        // NPC 必须有某种派系身份（旧 FactionId 或新 NamedFactionId）才参与敌对判定。
+        if faction_id.is_none() && named_faction_id.is_none() {
             if duel_target.is_some() {
                 commands.entity(*entity).remove::<DuelTarget>();
             }
             continue;
-        };
+        }
 
         let mut nearest_hostile: Option<(Entity, f64)> = None;
-        let mut consider = |other_entity: Entity, other_position: DVec3, other_faction_id| {
-            let Some(other_faction_id) = other_faction_id else {
-                return;
-            };
-            if other_entity == *entity
-                || !faction_store.is_hostile_pair(*faction_id, other_faction_id)
-            {
-                return;
-            }
+        let mut consider =
+            |other_entity: Entity,
+             other_position: DVec3,
+             other_faction_id: Option<FactionId>,
+             other_named_faction_id: Option<NamedFactionId>| {
+                if other_entity == *entity {
+                    return;
+                }
 
-            let distance_sq = planar_distance_sq(*position, other_position);
-            if distance_sq > HOSTILE_ENCOUNTER_RADIUS * HOSTILE_ENCOUNTER_RADIUS {
-                return;
-            }
-            if nearest_hostile
-                .as_ref()
-                .is_none_or(|(_, best_sq)| distance_sq < *best_sq)
-            {
-                nearest_hostile = Some((other_entity, distance_sq));
-            }
-        };
+                // plan-faction-expansion-v1 P1 反孤岛硬要求：
+                // 双方都携带 NamedFactionMembership → 优先走 FactionRelationMatrix::are_hostile。
+                // 否则 fallback 到旧 FactionStore::is_hostile_pair（Attack↔Defend 二元硬编码）。
+                let is_hostile = match (*named_faction_id, other_named_faction_id) {
+                    (Some(self_nf), Some(other_nf)) => {
+                        // 双方都有具名势力身份：走关系矩阵判断。
+                        relation_matrix
+                            .map(|m| m.are_hostile(self_nf, other_nf))
+                            .unwrap_or(false)
+                    }
+                    _ => {
+                        // 任一方无具名势力身份：fallback 旧二元模型。
+                        let Some(self_fid) = faction_id else { return };
+                        let Some(other_fid) = other_faction_id else {
+                            return;
+                        };
+                        faction_store.is_hostile_pair(*self_fid, other_fid)
+                    }
+                };
+
+                if !is_hostile {
+                    return;
+                }
+
+                let distance_sq = planar_distance_sq(*position, other_position);
+                if distance_sq > HOSTILE_ENCOUNTER_RADIUS * HOSTILE_ENCOUNTER_RADIUS {
+                    return;
+                }
+                if nearest_hostile
+                    .as_ref()
+                    .is_none_or(|(_, best_sq)| distance_sq < *best_sq)
+                {
+                    nearest_hostile = Some((other_entity, distance_sq));
+                }
+            };
 
         if let Some(index) = spatial_index {
             for other_entity in index.neighbors_within(*position, HOSTILE_ENCOUNTER_RADIUS) {
-                if let Some((other_position, other_faction_id, _)) = by_entity.get(&other_entity) {
-                    consider(other_entity, *other_position, *other_faction_id);
+                if let Some((other_position, other_faction_id, other_named_faction_id, _)) =
+                    by_entity.get(&other_entity)
+                {
+                    consider(
+                        other_entity,
+                        *other_position,
+                        *other_faction_id,
+                        *other_named_faction_id,
+                    );
                 }
             }
         } else {
-            for (other_entity, other_position, other_faction_id, _) in &npcs {
-                consider(*other_entity, *other_position, *other_faction_id);
+            for (other_entity, other_position, other_faction_id, other_named_faction_id, _) in &npcs
+            {
+                consider(
+                    *other_entity,
+                    *other_position,
+                    *other_faction_id,
+                    *other_named_faction_id,
+                );
             }
         }
 
@@ -1717,6 +1910,389 @@ mod tests {
         assert!(
             store.is_hostile_pair(attack2, defend2),
             "faction_id_for_war(Cangyuan, North) 也必须打通到 is_hostile_pair"
+        );
+    }
+
+    // ── plan-faction-expansion-v1 P1：FactionRelationMatrix 饱和测试 ───────────────
+
+    #[test]
+    fn relation_matrix_startup_default_three_pairs_correct() {
+        // v1 初值三对关系：(Qingyun,Cangyuan)=Neutral / (Qingyun,North)=Hostile /
+        // (Cangyuan,North)=Neutral。正典依据见 FactionRelationMatrix::startup_default。
+        let matrix = FactionRelationMatrix::startup_default();
+        assert_eq!(
+            matrix.get(NamedFactionId::QingyunHunters, NamedFactionId::CangyuanMerchants),
+            FactionRelation::Neutral,
+            "v1 初值：(QingyunHunters, CangyuanMerchants) 必须 = Neutral；猎盟与商会各守一方互不开战"
+        );
+        assert_eq!(
+            matrix.get(
+                NamedFactionId::QingyunHunters,
+                NamedFactionId::NorthWasteDrifters
+            ),
+            FactionRelation::Hostile,
+            "v1 初值：(QingyunHunters, NorthWasteDrifters) 必须 = Hostile；猎盟排斥闯入的游荡者"
+        );
+        assert_eq!(
+            matrix.get(
+                NamedFactionId::CangyuanMerchants,
+                NamedFactionId::NorthWasteDrifters
+            ),
+            FactionRelation::Neutral,
+            "v1 初值：(CangyuanMerchants, NorthWasteDrifters) 必须 = Neutral；商会有时雇佣漂流者"
+        );
+    }
+
+    #[test]
+    fn relation_matrix_are_hostile_symmetric() {
+        // are_hostile 对称性：(a,b) 与 (b,a) 返回相同结果。
+        let matrix = FactionRelationMatrix::startup_default();
+        let a = NamedFactionId::QingyunHunters;
+        let b = NamedFactionId::NorthWasteDrifters;
+        assert_eq!(
+            matrix.are_hostile(a, b),
+            matrix.are_hostile(b, a),
+            "are_hostile 必须对称：(Qingyun, North) 与 (North, Qingyun) 应相等，不区分参数顺序"
+        );
+        // 中立对组同样对称。
+        let c = NamedFactionId::CangyuanMerchants;
+        assert_eq!(
+            matrix.are_hostile(a, c),
+            matrix.are_hostile(c, a),
+            "are_hostile 对称性：(Qingyun, Cangyuan) 与 (Cangyuan, Qingyun) 应相等"
+        );
+    }
+
+    #[test]
+    fn relation_matrix_unregistered_pair_defaults_neutral() {
+        // 未注册对组默认 Neutral（不敌对，防止遗漏配置引发意外战斗）。
+        // 构造一个空矩阵，任意对组都应返回 Neutral。
+        let matrix = FactionRelationMatrix {
+            relations: HashMap::new(),
+        };
+        assert_eq!(
+            matrix.get(
+                NamedFactionId::QingyunHunters,
+                NamedFactionId::CangyuanMerchants
+            ),
+            FactionRelation::Neutral,
+            "未注册对组必须默认 Neutral，防止遗漏配置触发意外战斗"
+        );
+        assert!(
+            !matrix.are_hostile(
+                NamedFactionId::QingyunHunters,
+                NamedFactionId::NorthWasteDrifters
+            ),
+            "未注册对组 are_hostile 必须返回 false（默认 Neutral，边界防御）"
+        );
+    }
+
+    #[test]
+    fn relation_matrix_set_updates_relation() {
+        // set() 动态更新关系（运行时/测试用）。
+        let mut matrix = FactionRelationMatrix::startup_default();
+        // 初始 Neutral，改为 Pact。
+        matrix.set(
+            NamedFactionId::QingyunHunters,
+            NamedFactionId::CangyuanMerchants,
+            FactionRelation::Pact,
+        );
+        assert_eq!(
+            matrix.get(
+                NamedFactionId::QingyunHunters,
+                NamedFactionId::CangyuanMerchants
+            ),
+            FactionRelation::Pact,
+            "set() 后关系应变为 Pact，初始 Neutral 被覆盖"
+        );
+        // 对称性不变。
+        assert_eq!(
+            matrix.get(
+                NamedFactionId::CangyuanMerchants,
+                NamedFactionId::QingyunHunters
+            ),
+            FactionRelation::Pact,
+            "set() 写入规范化 key 后 (b,a) 方向也应反映更新（对称写入）"
+        );
+    }
+
+    #[test]
+    fn faction_relation_all_variants_serde_roundtrip() {
+        // 每个 FactionRelation 变体 serde 往返 + as_str/from_str_name 对拍。
+        for (relation, wire) in [
+            (FactionRelation::Hostile, "hostile"),
+            (FactionRelation::Neutral, "neutral"),
+            (FactionRelation::Pact, "pact"),
+        ] {
+            assert_eq!(
+                relation.as_str(),
+                wire,
+                "FactionRelation::{relation:?}.as_str() 必须=「{wire}」"
+            );
+            assert_eq!(
+                FactionRelation::from_str_name(wire),
+                Some(relation),
+                "FactionRelation::from_str_name({wire:?}) 必须=Some({relation:?})"
+            );
+            let value = serde_json::to_value(relation).expect("FactionRelation should serialize");
+            assert_eq!(
+                value,
+                json!(wire),
+                "FactionRelation::{relation:?} 序列化应为 {wire:?}，实际 {value}"
+            );
+            let back: FactionRelation =
+                serde_json::from_value(value).expect("FactionRelation should deserialize");
+            assert_eq!(
+                back, relation,
+                "FactionRelation serde roundtrip 应还原 {relation:?}，实际 {back:?}"
+            );
+        }
+        assert_eq!(
+            FactionRelation::from_str_name("unknown"),
+            None,
+            "非法 relation 字符串必须返回 None"
+        );
+    }
+
+    #[test]
+    fn relation_matrix_inserted_at_app_boot() {
+        // register() 后 FactionRelationMatrix 必须存在于 World 且三对初值正确（防孤岛）。
+        let mut app = App::new();
+        register(&mut app);
+        let matrix = app
+            .world()
+            .get_resource::<FactionRelationMatrix>()
+            .expect("FactionRelationMatrix 必须在 register() 后存在于 World（防孤岛）");
+        assert!(
+            matrix.are_hostile(
+                NamedFactionId::QingyunHunters,
+                NamedFactionId::NorthWasteDrifters
+            ),
+            "App boot 后矩阵的 (Qingyun, North) 必须 = Hostile"
+        );
+        assert!(
+            !matrix.are_hostile(
+                NamedFactionId::QingyunHunters,
+                NamedFactionId::CangyuanMerchants
+            ),
+            "App boot 后矩阵的 (Qingyun, Cangyuan) 必须 = Neutral（不敌对）"
+        );
+    }
+
+    #[test]
+    fn assign_hostile_encounters_named_faction_hostile_pair_triggers_duel() {
+        // 反孤岛硬要求：两 NPC 都携带 NamedFactionMembership，关系 Hostile ⇒ assign_hostile_encounters
+        // 用 FactionRelationMatrix 判断 ⇒ 写入 DuelTarget（非孤岛：真实 combat 路径消费）。
+        let mut app = App::new();
+        app.insert_resource(FactionStore::default());
+        app.insert_resource(FactionRelationMatrix::startup_default());
+        app.add_systems(Update, assign_hostile_encounters);
+
+        // Qingyun vs NorthWaste = Hostile in startup_default。
+        let qingyun = app
+            .world_mut()
+            .spawn((
+                NpcMarker,
+                Position::new([0.0, 64.0, 0.0]),
+                NamedFactionMembership {
+                    faction_id: NamedFactionId::QingyunHunters,
+                },
+            ))
+            .id();
+        let north = app
+            .world_mut()
+            .spawn((
+                NpcMarker,
+                Position::new([4.0, 64.0, 0.0]),
+                NamedFactionMembership {
+                    faction_id: NamedFactionId::NorthWasteDrifters,
+                },
+            ))
+            .id();
+        app.update();
+
+        assert_eq!(
+            app.world().get::<DuelTarget>(qingyun).map(|t| t.0),
+            Some(north),
+            "QingyunHunters NPC 必须把 NorthWasteDrifters NPC 设为 DuelTarget（关系 Hostile，反孤岛硬验证）"
+        );
+        assert_eq!(
+            app.world().get::<DuelTarget>(north).map(|t| t.0),
+            Some(qingyun),
+            "NorthWasteDrifters NPC 必须把 QingyunHunters NPC 设为 DuelTarget（关系 Hostile，反孤岛硬验证）"
+        );
+    }
+
+    #[test]
+    fn assign_hostile_encounters_named_faction_neutral_pair_no_duel() {
+        // Neutral 关系不触发 DuelTarget：(Qingyun, Cangyuan) = Neutral ⇒ 不成对。
+        let mut app = App::new();
+        app.insert_resource(FactionStore::default());
+        app.insert_resource(FactionRelationMatrix::startup_default());
+        app.add_systems(Update, assign_hostile_encounters);
+
+        let qingyun = app
+            .world_mut()
+            .spawn((
+                NpcMarker,
+                Position::new([0.0, 64.0, 0.0]),
+                NamedFactionMembership {
+                    faction_id: NamedFactionId::QingyunHunters,
+                },
+            ))
+            .id();
+        let cangyuan = app
+            .world_mut()
+            .spawn((
+                NpcMarker,
+                Position::new([4.0, 64.0, 0.0]),
+                NamedFactionMembership {
+                    faction_id: NamedFactionId::CangyuanMerchants,
+                },
+            ))
+            .id();
+        app.update();
+
+        assert!(
+            app.world().get::<DuelTarget>(qingyun).is_none(),
+            "Neutral 关系的 QingyunHunters NPC 不应有 DuelTarget（不主动与 CangyuanMerchants 开战）"
+        );
+        assert!(
+            app.world().get::<DuelTarget>(cangyuan).is_none(),
+            "Neutral 关系的 CangyuanMerchants NPC 不应有 DuelTarget"
+        );
+    }
+
+    #[test]
+    fn assign_hostile_encounters_headless_faction_still_uses_matrix() {
+        // Headless 势力（NorthWasteDrifters）仍按关系矩阵参战：与 QingyunHunters = Hostile。
+        // 即便 FactionStatus::Headless 也不影响 NamedFactionMembership 的判定路径。
+        let mut app = App::new();
+        app.insert_resource(FactionStore::default());
+        app.insert_resource(FactionRelationMatrix::startup_default());
+        app.add_systems(Update, assign_hostile_encounters);
+
+        let north = app
+            .world_mut()
+            .spawn((
+                NpcMarker,
+                Position::new([0.0, 64.0, 0.0]),
+                NamedFactionMembership {
+                    faction_id: NamedFactionId::NorthWasteDrifters,
+                },
+            ))
+            .id();
+        let qingyun = app
+            .world_mut()
+            .spawn((
+                NpcMarker,
+                Position::new([5.0, 64.0, 0.0]),
+                NamedFactionMembership {
+                    faction_id: NamedFactionId::QingyunHunters,
+                },
+            ))
+            .id();
+        app.update();
+
+        assert_eq!(
+            app.world().get::<DuelTarget>(north).map(|t| t.0),
+            Some(qingyun),
+            "Headless 势力 NorthWasteDrifters 仍按关系矩阵参战（与 QingyunHunters = Hostile）；\
+             FactionStatus::Headless 不影响敌对判定路径"
+        );
+    }
+
+    #[test]
+    fn assign_hostile_encounters_pact_relation_no_duel() {
+        // Pact 关系：动态改关系矩阵为 Pact，两 NPC 不应生成 DuelTarget。
+        let mut app = App::new();
+        app.insert_resource(FactionStore::default());
+        let mut matrix = FactionRelationMatrix::startup_default();
+        // 改 (Qingyun, North) → Pact
+        matrix.set(
+            NamedFactionId::QingyunHunters,
+            NamedFactionId::NorthWasteDrifters,
+            FactionRelation::Pact,
+        );
+        app.insert_resource(matrix);
+        app.add_systems(Update, assign_hostile_encounters);
+
+        let qingyun = app
+            .world_mut()
+            .spawn((
+                NpcMarker,
+                Position::new([0.0, 64.0, 0.0]),
+                NamedFactionMembership {
+                    faction_id: NamedFactionId::QingyunHunters,
+                },
+            ))
+            .id();
+        let north = app
+            .world_mut()
+            .spawn((
+                NpcMarker,
+                Position::new([4.0, 64.0, 0.0]),
+                NamedFactionMembership {
+                    faction_id: NamedFactionId::NorthWasteDrifters,
+                },
+            ))
+            .id();
+        app.update();
+
+        assert!(
+            app.world().get::<DuelTarget>(qingyun).is_none(),
+            "Pact 关系下 QingyunHunters NPC 不应有 DuelTarget（盟友不互打）"
+        );
+        assert!(
+            app.world().get::<DuelTarget>(north).is_none(),
+            "Pact 关系下 NorthWasteDrifters NPC 不应有 DuelTarget"
+        );
+    }
+
+    #[test]
+    fn assign_hostile_encounters_fallback_to_faction_id_when_no_named_membership() {
+        // fallback 路径验证：无 NamedFactionMembership 时仍走旧 is_hostile_pair（非孤岛）。
+        // Attack↔Defend = Hostile，不依赖 FactionRelationMatrix。
+        let mut app = App::new();
+        app.insert_resource(FactionStore::default());
+        // 故意不插入 FactionRelationMatrix，确认 fallback 路径不依赖它。
+        app.add_systems(Update, assign_hostile_encounters);
+
+        let attack = app
+            .world_mut()
+            .spawn((
+                NpcMarker,
+                Position::new([0.0, 64.0, 0.0]),
+                FactionMembership {
+                    faction_id: FactionId::Attack,
+                    rank: FactionRank::Disciple,
+                    reputation: Reputation::default(),
+                    lineage: None,
+                    mission_queue: MissionQueue::default(),
+                },
+            ))
+            .id();
+        let defend = app
+            .world_mut()
+            .spawn((
+                NpcMarker,
+                Position::new([4.0, 64.0, 0.0]),
+                FactionMembership {
+                    faction_id: FactionId::Defend,
+                    rank: FactionRank::Disciple,
+                    reputation: Reputation::default(),
+                    lineage: None,
+                    mission_queue: MissionQueue::default(),
+                },
+            ))
+            .id();
+        app.update();
+
+        assert_eq!(
+            app.world().get::<DuelTarget>(attack).map(|t| t.0),
+            Some(defend),
+            "旧 FactionId::Attack NPC 应在 fallback 路径（无 NamedFactionMembership）把 \
+             Defend NPC 设为 DuelTarget（is_hostile_pair 仍生效）"
         );
     }
 }
