@@ -54,8 +54,10 @@ pub const COMMAND_TREE_PATHS: &[&str] = &[
     // plan-coffin-tiers-v1 P4：延寿棺档级直写 dev 命令
     "coffin grade <grade:string>",
     // plan-offscreen-war-v1 P6：/faction 玩家参与涌现冲突
+    // plan-faction-expansion-v1 P1：/faction list 显示三势力关系矩阵
     "faction intercept",
     "faction join <group:integer>",
+    "faction list",
     "faction mercenary <group:integer>",
     "give <id:string>",
     "give <id:string> <count:integer>",

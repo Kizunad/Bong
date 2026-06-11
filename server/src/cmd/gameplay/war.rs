@@ -1,6 +1,8 @@
 //! plan-offscreen-war-v1 P6：`/faction join|mercenary|intercept` — 真玩家在线参与
 //! 涌现区域冲突的 brigadier 入口。
 //!
+//! plan-faction-expansion-v1 P1 扩展：`/faction list` — 显示三势力关系矩阵到聊天栏。
+//!
 //! **路径 A**（brigadier）：Client 按当前坐标查 zone → 组装 `WarParticipateIntent` → 发
 //! 到 `handle_war_participate_intent` system 统一处理。与路径 B（headless FactionEvent
 //! 注入）汇聚同一 intent 队列，行为完全一致。
@@ -15,7 +17,9 @@ use valence::prelude::{
     App, Client, EventReader, EventWriter, Position, Query, Res, Update, Username, With,
 };
 
-use crate::npc::faction::EmergentGroupId;
+use crate::npc::faction::{
+    EmergentGroupId, FactionRelationMatrix, NamedFactionId, NamedFactionRegistry,
+};
 use crate::npc::movement::GameTick;
 use crate::npc::war::{WarParticipateIntent, WarRole};
 use crate::player::state::canonical_player_id;
@@ -27,14 +31,21 @@ use crate::world::zone::ZoneRegistry;
 /// - `/faction join <group>`     → Enlist（投靠某匿名群体）
 /// - `/faction mercenary <group>` → Mercenary（临时佣兵）
 /// - `/faction intercept`         → Intercept（截胡，双方都打）
+/// - `/faction list`              → 显示三势力关系矩阵（plan-faction-expansion-v1 P1）
 ///
 /// Spectate 为默认态，无需命令；Settling/Aftermath 阶段 server 侧在
 /// `handle_war_participate_intent` 中拒绝并打 debug log。
 #[derive(Debug, Clone, PartialEq)]
 pub enum FactionCmd {
-    Join { group: u32 },
-    Mercenary { group: u32 },
+    Join {
+        group: u32,
+    },
+    Mercenary {
+        group: u32,
+    },
     Intercept,
+    /// plan-faction-expansion-v1 P1：显示三势力关系矩阵到聊天栏。
+    List,
 }
 
 impl Command for FactionCmd {
@@ -63,12 +74,20 @@ impl Command for FactionCmd {
             .at(faction)
             .literal("intercept")
             .with_executable(|_| FactionCmd::Intercept);
+
+        // plan-faction-expansion-v1 P1。
+        graph
+            .at(faction)
+            .literal("list")
+            .with_executable(|_| FactionCmd::List);
     }
 }
 
 pub fn register(app: &mut App) {
     app.add_command::<FactionCmd>()
-        .add_systems(Update, handle_faction_war_cmd);
+        .add_systems(Update, handle_faction_war_cmd)
+        // plan-faction-expansion-v1 P1：/faction list handler。
+        .add_systems(Update, handle_faction_list_cmd);
 }
 
 /// brigadier handler：按当前坐标查 zone，组装并发送 `WarParticipateIntent`。
@@ -105,6 +124,12 @@ pub fn handle_faction_war_cmd(
 
         let player_id = canonical_player_id(username.0.as_str());
 
+        // plan-faction-expansion-v1 P1：/faction list 由 handle_faction_list_cmd 处理，
+        // 不发 WarParticipateIntent，这里 skip。
+        if event.result == FactionCmd::List {
+            continue;
+        }
+
         let (role, allied_group) = match &event.result {
             FactionCmd::Join { group } => (
                 WarRole::Enlist,
@@ -115,6 +140,8 @@ pub fn handle_faction_war_cmd(
                 Some(EmergentGroupId(u16::try_from(*group).unwrap_or(u16::MAX))),
             ),
             FactionCmd::Intercept => (WarRole::Intercept, None),
+            // List is handled above with `continue`; this arm is unreachable but satisfies exhaustiveness.
+            FactionCmd::List => continue,
         };
 
         intents.send(WarParticipateIntent {
@@ -128,6 +155,67 @@ pub fn handle_faction_war_cmd(
         // 向玩家回一条提示（具体结果由 telemetry 反映；intent 可能在下一帧被拒绝）
         if let Ok(mut client) = client_q.get_mut(event.executor) {
             client.send_chat_message("[faction] 参与意图已发送，等待处理……");
+        }
+    }
+}
+
+/// plan-faction-expansion-v1 P1：`/faction list` brigadier handler。
+///
+/// 读 `NamedFactionRegistry` + `FactionRelationMatrix`，格式化输出三势力名称 +
+/// 当前关系矩阵到聊天栏。输出格式（中文，对齐正典势力名称）：
+/// ```
+/// [势力] 三势力关系矩阵：
+///   青云猎盟 ↔ 沧渊商会: 中立
+///   青云猎盟 ↔ 北荒漂流者: 敌对
+///   沧渊商会 ↔ 北荒漂流者: 中立
+/// ```
+pub fn handle_faction_list_cmd(
+    mut events: EventReader<CommandResultEvent<FactionCmd>>,
+    registry: Option<Res<NamedFactionRegistry>>,
+    relation_matrix: Option<Res<FactionRelationMatrix>>,
+    mut client_q: Query<&mut Client>,
+) {
+    for event in events.read() {
+        if event.result != FactionCmd::List {
+            continue;
+        }
+        let Ok(mut client) = client_q.get_mut(event.executor) else {
+            continue;
+        };
+
+        let Some(registry) = registry.as_deref() else {
+            client.send_chat_message("[势力] 注册表尚未初始化。");
+            continue;
+        };
+        let Some(matrix) = relation_matrix.as_deref() else {
+            client.send_chat_message("[势力] 关系矩阵尚未初始化。");
+            continue;
+        };
+
+        client.send_chat_message("[势力] 三势力关系矩阵：");
+
+        // 三对关系（按 NamedFactionId::all() 顺序遍历所有唯一对）。
+        let all = NamedFactionId::all();
+        for i in 0..all.len() {
+            for j in (i + 1)..all.len() {
+                let a = all[i];
+                let b = all[j];
+                let a_name = registry
+                    .get(a)
+                    .map(|f| f.display_name.as_str())
+                    .unwrap_or(a.display_name());
+                let b_name = registry
+                    .get(b)
+                    .map(|f| f.display_name.as_str())
+                    .unwrap_or(b.display_name());
+                let relation = matrix.get(a, b);
+                let relation_str = match relation {
+                    crate::npc::faction::FactionRelation::Hostile => "敌对",
+                    crate::npc::faction::FactionRelation::Neutral => "中立",
+                    crate::npc::faction::FactionRelation::Pact => "盟约",
+                };
+                client.send_chat_message(format!("  {a_name} ↔ {b_name}: {relation_str}"));
+            }
         }
     }
 }
