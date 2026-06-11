@@ -249,10 +249,23 @@ mod tests {
 
     #[test]
     fn ambient_field_allows_reverse_pressure() {
-        assert!(ContainerKind::AmbientField.allows_reverse_pressure());
-        assert!(ContainerKind::TurbulentField.allows_reverse_pressure());
-        assert!(!ContainerKind::SealedInBone.allows_reverse_pressure());
-        assert!(!ContainerKind::EmbeddedTrap.allows_reverse_pressure());
+        let cases = [
+            (ContainerKind::SealedAncientRelic, false),
+            (ContainerKind::SealedInBone, false),
+            (ContainerKind::WieldedInWeapon, false),
+            (ContainerKind::EmbeddedTrap, false),
+            (ContainerKind::LooseInPill, false),
+            (ContainerKind::AmbientField, true),
+            (ContainerKind::TurbulentField, true),
+        ];
+
+        for (kind, expected) in cases {
+            assert_eq!(
+                kind.allows_reverse_pressure(),
+                expected,
+                "{kind:?} reverse pressure policy drifted"
+            );
+        }
     }
 
     #[test]

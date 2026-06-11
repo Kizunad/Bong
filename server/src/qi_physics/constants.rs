@@ -214,16 +214,21 @@ mod tests {
 
     #[test]
     fn zhenfa_content_v2_qi_constants_match_plan_budget() {
-        let bead_capacity_times_ten = QI_SCATTER_BEAD_CAPACITY * 10.0;
-        assert!(
-            (bead_capacity_times_ten - 30.0).abs() < QI_EPSILON,
-            "QI_SCATTER_BEAD_CAPACITY 应固定为 plan-zhenfa-content-v2 P0 的 3.0，实际 {QI_SCATTER_BEAD_CAPACITY}"
-        );
-        let network_bonus_as_f64 = f64::from(QI_NETWORK_ARRAY_LINGJU_CAP_BONUS);
-        assert!(
-            (network_bonus_as_f64 - 0.5).abs() < QI_EPSILON,
-            "QI_NETWORK_ARRAY_LINGJU_CAP_BONUS 应固定为 0.5，实际 {QI_NETWORK_ARRAY_LINGJU_CAP_BONUS}"
-        );
+        let cases = [
+            (QI_SCATTER_BEAD_CAPACITY, 3.0, "QI_SCATTER_BEAD_CAPACITY"),
+            (
+                f64::from(QI_NETWORK_ARRAY_LINGJU_CAP_BONUS),
+                0.5,
+                "QI_NETWORK_ARRAY_LINGJU_CAP_BONUS",
+            ),
+        ];
+
+        for (actual, expected, name) in cases {
+            assert!(
+                (actual - expected).abs() < QI_EPSILON,
+                "{name} 应固定为 plan-zhenfa-content-v2 P0 的 {expected}，实际 {actual}"
+            );
+        }
     }
 
     // ── plan-neg-domain-fauna-v1 P0：真元抽取率常量 pin 测试 ──
