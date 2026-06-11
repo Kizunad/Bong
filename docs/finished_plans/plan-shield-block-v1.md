@@ -8,11 +8,11 @@
 
 | 阶段 | 主题 | 状态 | 验收 |
 |------|------|------|------|
-| P0 | 装备打通（消灭孤岛根因） | ⬜ | YYYY-MM-DD |
-| P1 | 持续状态协议 + 右键输入层 | ⬜ | YYYY-MM-DD |
-| P2 | 减伤 + 体力 drain + 正面判定 | ⬜ | YYYY-MM-DD |
-| P3 | 耐久 + 破盾 | ⬜ | YYYY-MM-DD |
-| P4 | skill exp + 视听四件套差异化 | ⬜ | YYYY-MM-DD |
+| P0 | 装备打通（消灭孤岛根因） | ✅ | 2026-06-11 |
+| P1 | 持续状态协议 + 右键输入层 | ✅ | 2026-06-11 |
+| P2 | 减伤 + 体力 drain + 正面判定 | ✅ | 2026-06-11 |
+| P3 | 耐久 + 破盾 | ✅ | 2026-06-11 |
+| P4 | skill exp + 视听四件套差异化 | ✅ | 2026-06-11 |
 
 ---
 
@@ -273,3 +273,45 @@ subagent 只负责实施 + 提 PR，不等 review；等待逻辑归主线。
 
 ### §10.6 单次 consume-plan 全自动到 merge
 用户提交 `/consume-plan shield-block-v1` 后即可下班，醒来看本 plan 是否在 `docs/finished_plans/`。全部 P ✅ + Finish Evidence 写完后由 consume-plan 在 PR 末尾 commit 内 `git mv` 归档。
+
+---
+
+## Finish Evidence
+
+> 验收：2026-06-11｜scope = 5 PR（P0 #479 / P1 #486 / P2 #497 / P3 #500 / P4 #503）｜三态：全 P ✅
+
+### 落地清单
+
+- **P0 装备打通**：`server/src/inventory/mod.rs`（`ItemCategory::Shield` 变体 + `parse_item_category` "shield" 分支 + `EquipSlotV1::OffHand` 校验 arm 加 Shield 放行）｜`server/assets/items/workbench_materials.toml`（wooden/bone_shield category=shield + shield_spec）｜`server/src/craft/workbench_recipes.rs`（recipe id `workbench.shield.*` 归位）｜`client/.../inventory/InventoryEquipRules.java`（`isShield` off_hand 放行）
+- **P1 持续状态 + 右键输入**：`server/src/schema/client_request.rs`（`ClientRequestV1::RaiseShield`/`LowerShield`）｜`server/src/combat/shield_block.rs`（持续状态机 + RaiseShield/LowerShield 消费 + 死亡/断线强制清理）｜`server/src/network/vfx_animation_trigger.rs`（`ANIM_SHIELD_RAISE = "bong:shield_raise"` 新常数，不动 guard_raise.json）｜`client/.../mixin/MixinMouse.java`（右键仲裁）｜`CombatKeybindings.java`（举盾键边沿检测）｜`BongAnimations.SHIELD_RAISE`｜`client/.../resources/assets/bong/player_animation/shield_raise.json`（isLoop:true，3 轮打磨）
+- **P2 减伤 + drain + FOV**：`server/src/combat/resolve.rs`（`ShieldBlocking` 减伤分支，独立无反伤）｜`server/src/combat/shield_block.rs::shield_fov_check`（固定 `SHIELD_FOV_DOT=-0.5`，不调 jiemai_fov_check）｜`server/src/combat/components.rs`（`StaminaState::ShieldBlocking`）+ `combat/lifecycle.rs`（`SHIELD_DRAIN_PER_SEC=3.0` + stamina_tick 穷尽 match 分支 + 体力归零强制放盾 + ParryRecovery）｜`DefenseKind::ShieldBlock` → `CombatDefenseKindV1::ShieldBlock` → map_defense_kind 穷尽 arm
+- **P3 耐久 + 破盾**：`server/src/combat/shield_block.rs::ShieldSpec`（block_ratio/durability_max/stamina_drain，validate）｜`set_item_instance_durability` 扣耐久检测归零｜`server/src/combat/weapon.rs::ShieldBroken { entity, instance_id, template_id }`（不复用 WeaponBroken）｜combat_bridge 序列化｜`client/.../network/ShieldBrokenHandler.java`（toast「盾已碎裂」）｜`client/.../hud` `EquippedShieldStore`（独立 store，不污染 WeaponEquippedStore）｜破盾粒子 `ShieldWoodShatterPlayer`/`FaunaBoneShatterPlayer` + `shield_break.json`（3 轮打磨）
+- **P4 skill exp + 命中视听差异化 + 闭合契约**：`server/src/combat/shield_block.rs`（`record_shield_block_success`:144 在 resolve commands.add 闭包真接线 / `shield_block_profile`:101 内联缩放 / `declare_meridian_dependencies`:156 空依赖）｜`server/src/combat/weapon.rs::ShieldBlockHit`:206 event｜`server/src/network/weapon_equipped_emit.rs::emit_shield_block_hit_payloads`:243（消费 emit `ServerDataPayloadV1::ShieldBlockHit` 走 bong:server_data）｜`agent/packages/schema/src/server-data.ts::ShieldBlockHitV1`:1259 + schema-registry｜`client/.../network/ShieldBlockHitHandler.java`（木/骨四件套差异化）+ `ServerDataRouter` "shield_block_hit" 路由 + `CombatJuiceEvent.Kind.SHIELD_BLOCK` + `shield_block.json`/`shield_block_bone.json` audio_recipe｜narration（resolve.rs:1152 / combat/mod.rs:442）
+
+### 关键 commit
+
+- `7e3ac3f97` 2026-06-11 — P0 #479 盾牌装备打通（消灭「合成出来装不上」僵尸根因）
+- `a586ff972` 2026-06-11 — P1 #486 盾牌持续格挡状态 + 右键输入 + 举盾动画
+- `b569b2671` 2026-06-11 — P2 #497 减伤 + 体力 drain + 正面 FOV 判定
+- `4f14657de` 2026-06-11 — P3 #500 耐久扣减 + 破盾事件 + 序列化链 + client 视听
+- `ec1e713bf` 2026-06-11 — P4 #503 server 技能熟练度真接线 + profile + meridian + narration
+- `e0319ed25` 2026-06-11 — P4 #503 接通格挡命中事件推送（闭合 client 空等的 shield_block_hit 孤岛）
+- `ba93a7780` 2026-06-11 — P4 #503 schema shield_block_hit 服务端数据契约
+- `ef9389a5c` 2026-06-11 — P4 #503 同步盾格挡音效包 resourcepack hash
+
+### 测试结果
+
+- server：`cargo fmt --check` clean / `cargo clippy --all-targets -- -D warnings` clean / `cargo test` → **8568 passed, 0 failed, 1 ignored**（`combat::shield_block` 78 测）
+- client：`./gradlew test --rerun-tasks` → **2535 tests, 0 failures, 0 errors, 0 skipped**（ShieldBlockHitHandlerTest 25 / ShieldBlockJuiceTest 12 / ShieldBlockAudioRecipeAssetTest 17 / VfxRegistryTest 7）
+- schema：`npm test` → **641 passed (26 files)**（ShieldBlockHitV1 正反 sample + registry pin）
+
+### 跨仓库核验
+
+- **server**：`ItemCategory::Shield`、`StatusEffectKind::ShieldBlocking`、`StaminaState::ShieldBlocking`、`DefenseKind::ShieldBlock`、`combat::shield_block::{record_shield_block_success, shield_block_profile, shield_fov_check, declare_meridian_dependencies, ShieldSpec}`、`weapon::{ShieldBroken, ShieldBlockHit}`、`ClientRequestV1::{RaiseShield, LowerShield}`、`network::emit_shield_block_hit_payloads`、`ANIM_SHIELD_RAISE`
+- **agent/schema**：`ShieldBlockHitV1` / `ServerDataShieldBlockHitV1`（server-data.ts + schema-registry.ts，正反 sample）；天道 agent 不参与运行时（纯战斗机制，无 Redis key / 无天道介入面）
+- **client**：`ShieldBlockHitHandler`、`ShieldBrokenHandler`、`EquippedShieldStore`、`ServerDataRouter` "shield_block_hit" 路由、`CombatJuiceEvent.Kind.SHIELD_BLOCK`、`BongAnimations.SHIELD_RAISE`、`InventoryEquipRules.isShield`、`MixinMouse` 右键仲裁、audio_recipes `shield_block.json`/`shield_block_bone.json`、player_animation `shield_raise.json`
+
+### 遗留 / 后续
+
+- **§7 套包 4-plan 族**（active）：盾占 `off_hand` 校验与套包 loadout 共用 `inventory/mod.rs` OffHand arm；先 merge 者定基线，后实施者 **rebase**，不各改一套 OffHand 逻辑。
+- **§7 plan-consumable-effects-v1**（active）：右键路由仲裁器已由本 plan P1 在 MixinMouse 一处落地；consumable-effects 后续 rebase 接入同一仲裁器（main_hand=consumable → 归使用透传，off_hand=shield → 举盾 cancel），不各写一套。
