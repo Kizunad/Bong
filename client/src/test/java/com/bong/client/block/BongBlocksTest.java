@@ -20,15 +20,15 @@ public class BongBlocksTest {
     void idsAreGeneratedFromBongBlockManifest() throws IOException {
         String manifest = Files.readString(REPO_ROOT.resolve("bong_blocks.json"), StandardCharsets.UTF_8);
 
-        assertTrue(manifest.contains("\"name\": \"zhenfa_node\""));
-        assertTrue(manifest.contains("\"name\": \"zhenfa_line\""));
-        assertTrue(manifest.contains("\"name\": \"zhenfa_eye\""));
-        assertTrue(manifest.contains("\"name\": \"simple_bed\""));
-        assertTrue(manifest.contains("\"name\": \"meditation_mat\""));
-        assertTrue(manifest.contains("\"name\": \"moisture_base\""));
-        assertTrue(manifest.contains("\"name\": \"spirit_stone_rack\""));
-        assertTrue(manifest.contains("\"name\": \"axis\""));
-        assertTrue(manifest.contains("\"name\": \"charged\""));
+        assertManifestContainsName(manifest, "zhenfa_node");
+        assertManifestContainsName(manifest, "zhenfa_line");
+        assertManifestContainsName(manifest, "zhenfa_eye");
+        assertManifestContainsName(manifest, "simple_bed");
+        assertManifestContainsName(manifest, "meditation_mat");
+        assertManifestContainsName(manifest, "moisture_base");
+        assertManifestContainsName(manifest, "spirit_stone_rack");
+        assertManifestContainsName(manifest, "axis");
+        assertManifestContainsName(manifest, "charged");
 
         // These values intentionally pin protocol IDs; failures mean manifest order or base IDs changed.
         assertEquals(1003, BongBlockIds.BONG_BLOCK_ID_START);
@@ -92,5 +92,12 @@ public class BongBlocksTest {
             return nestedClient;
         }
         throw new IllegalStateException("Cannot locate client module root from " + cwd);
+    }
+
+    private static void assertManifestContainsName(String manifest, String name) {
+        assertTrue(
+            manifest.contains("\"name\": \"" + name + "\""),
+            "expected manifest to contain \"" + name + "\" because Bong block IDs are generated from explicit manifest names, actual manifest: " + manifest
+        );
     }
 }

@@ -83,22 +83,25 @@ mod tests {
 
     #[test]
     fn bong_blocks_extend_vanilla_registry() {
-        assert_eq!(BlockState::max_raw(), 24144);
-        assert_eq!(BlockState::from_raw(24135), Some(BlockState::BONG_ZHENFA_NODE));
-        assert_eq!(BlockState::from_raw(24141), Some(BlockState::BONG_SIMPLE_BED));
+        let actual_max_raw = BlockState::max_raw();
         assert_eq!(
-            BlockState::from_raw(24142),
-            Some(BlockState::BONG_MEDITATION_MAT)
+            actual_max_raw, 24144,
+            "expected max raw ID 24144 because the four furniture states extend the Bong registry after zhenfa_eye, actual {actual_max_raw}"
         );
-        assert_eq!(
-            BlockState::from_raw(24143),
-            Some(BlockState::BONG_MOISTURE_BASE)
-        );
-        assert_eq!(
-            BlockState::from_raw(24144),
-            Some(BlockState::BONG_SPIRIT_STONE_RACK)
-        );
-        assert_eq!(BlockState::from_raw(24145), None);
+        for (raw_id, expected) in [
+            (24135, Some(BlockState::BONG_ZHENFA_NODE)),
+            (24141, Some(BlockState::BONG_SIMPLE_BED)),
+            (24142, Some(BlockState::BONG_MEDITATION_MAT)),
+            (24143, Some(BlockState::BONG_MOISTURE_BASE)),
+            (24144, Some(BlockState::BONG_SPIRIT_STONE_RACK)),
+            (24145, None),
+        ] {
+            let actual = BlockState::from_raw(raw_id);
+            assert_eq!(
+                actual, expected,
+                "expected raw ID {raw_id} to map to {expected:?} because Bong furniture state IDs must stay pinned, actual {actual:?}"
+            );
+        }
         assert_eq!(BlockState::BONG_ZHENFA_NODE.to_kind(), BlockKind::BongZhenfaNode);
         assert_eq!(BlockKind::from_str("bong_zhenfa_node"), Some(BlockKind::BongZhenfaNode));
         assert_eq!(BlockKind::BongZhenfaNode.translation_key(), "block.bong.zhenfa_node");
@@ -121,21 +124,86 @@ mod tests {
             24140
         );
 
-        assert_eq!(BlockState::BONG_SIMPLE_BED.to_kind(), BlockKind::BongSimpleBed);
-        assert_eq!(
-            BlockKind::from_str("bong_meditation_mat"),
-            Some(BlockKind::BongMeditationMat)
-        );
-        assert_eq!(
-            BlockKind::BongMoistureBase.translation_key(),
-            "block.bong.moisture_base"
-        );
-        assert_eq!(BlockState::BONG_SIMPLE_BED.to_raw(), 24141);
-        assert_eq!(BlockState::BONG_MEDITATION_MAT.to_raw(), 24142);
-        assert_eq!(BlockState::BONG_MOISTURE_BASE.to_raw(), 24143);
-        assert_eq!(BlockState::BONG_SPIRIT_STONE_RACK.to_raw(), 24144);
-        assert!(BlockState::BONG_SIMPLE_BED.blocks_motion());
-        assert!(!BlockState::BONG_MEDITATION_MAT.blocks_motion());
-        assert_eq!(BlockState::BONG_SPIRIT_STONE_RACK.luminance(), 2);
+        for (state, kind, raw_name, translation_key, raw_id, blocks_motion, luminance) in [
+            (
+                BlockState::BONG_SIMPLE_BED,
+                BlockKind::BongSimpleBed,
+                "bong_simple_bed",
+                "block.bong.simple_bed",
+                24141,
+                true,
+                0,
+            ),
+            (
+                BlockState::BONG_MEDITATION_MAT,
+                BlockKind::BongMeditationMat,
+                "bong_meditation_mat",
+                "block.bong.meditation_mat",
+                24142,
+                false,
+                0,
+            ),
+            (
+                BlockState::BONG_MOISTURE_BASE,
+                BlockKind::BongMoistureBase,
+                "bong_moisture_base",
+                "block.bong.moisture_base",
+                24143,
+                true,
+                0,
+            ),
+            (
+                BlockState::BONG_SPIRIT_STONE_RACK,
+                BlockKind::BongSpiritStoneRack,
+                "bong_spirit_stone_rack",
+                "block.bong.spirit_stone_rack",
+                24144,
+                true,
+                2,
+            ),
+        ] {
+            assert_eq!(
+                state.to_kind(),
+                kind,
+                "expected {state:?} to convert to {kind:?} because each furniture state must retain its generated BlockKind, actual {:?}",
+                state.to_kind()
+            );
+            assert_eq!(
+                BlockKind::from_str(raw_name),
+                Some(kind),
+                "expected raw kind name `{raw_name}` to parse as {kind:?} because client/server resource IDs depend on stable names, actual {:?}",
+                BlockKind::from_str(raw_name)
+            );
+            assert_eq!(
+                BlockKind::from_str(&format!("{raw_name}_wrong")),
+                None,
+                "expected malformed furniture kind `{raw_name}_wrong` to be rejected because unknown generated names must not alias valid blocks, actual {:?}",
+                BlockKind::from_str(&format!("{raw_name}_wrong"))
+            );
+            assert_eq!(
+                kind.translation_key(),
+                translation_key,
+                "expected {kind:?} translation key {translation_key} because generated language keys must match the manifest, actual {}",
+                kind.translation_key()
+            );
+            assert_eq!(
+                state.to_raw(),
+                raw_id,
+                "expected {state:?} raw ID {raw_id} because furniture state ordering is protocol-pinned, actual {}",
+                state.to_raw()
+            );
+            assert_eq!(
+                state.blocks_motion(),
+                blocks_motion,
+                "expected {state:?} blocks_motion={blocks_motion} because furniture collision semantics are generated from bong_blocks.json, actual {}",
+                state.blocks_motion()
+            );
+            assert_eq!(
+                state.luminance(),
+                luminance,
+                "expected {state:?} luminance {luminance} because furniture light behavior is manifest-pinned, actual {}",
+                state.luminance()
+            );
+        }
     }
 }
