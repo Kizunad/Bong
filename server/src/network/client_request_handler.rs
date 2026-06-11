@@ -106,7 +106,9 @@ use crate::network::npc_metadata::{
     display_name as npc_display_name, greeting_text_for_archetype,
     reputation_to_player_score_for_client,
 };
-use crate::network::qi_attrition_emit::AttritionAppliedEvent;
+use crate::network::qi_attrition_emit::{
+    emit_attrition_applied_if_lost, item_abs_qi_for_attrition, AttritionAppliedEvent,
+};
 use crate::network::qi_color_observed_emit::QiColorInspectRequest;
 use crate::network::send_server_data_payload;
 use crate::network::skill_config_emit::send_skill_config_snapshot_to_client;
@@ -127,7 +129,7 @@ use crate::player::state::{
     canonical_player_id, update_player_ui_prefs, PlayerState, PlayerStatePersistence,
 };
 use crate::qi_physics::attrition::{apply_attrition, is_attrition_exempt};
-use crate::qi_physics::constants::{QI_EPSILON, QI_TARGETED_ITEM_WEAR_WEIGHT_THRESHOLD};
+use crate::qi_physics::constants::QI_TARGETED_ITEM_WEAR_WEIGHT_THRESHOLD;
 use crate::qi_physics::ledger::AttritionOpKind;
 use crate::qi_physics::qi_targeted_item_wear_fraction;
 use crate::qi_physics::AnqiContainerKind;
@@ -8014,31 +8016,6 @@ fn client_position(positions: &Query<&valence::prelude::Position>, entity: Entit
             [v.x, v.y, v.z]
         })
         .unwrap_or([0.0, 64.0, 0.0])
-}
-
-fn item_abs_qi_for_attrition(item: &ItemInstance) -> f64 {
-    item.spirit_quality * item.stack_count.max(1) as f64
-}
-
-fn emit_attrition_applied_if_lost(
-    events: Option<&mut Events<AttritionAppliedEvent>>,
-    operator: Entity,
-    item: &ItemInstance,
-    before_abs_qi: f64,
-    world_pos: [f64; 3],
-) {
-    let amount_lost = before_abs_qi - item_abs_qi_for_attrition(item);
-    if amount_lost <= QI_EPSILON || !amount_lost.is_finite() {
-        return;
-    }
-    if let Some(events) = events {
-        events.send(AttritionAppliedEvent {
-            operator,
-            item_entity_id: item.instance_id,
-            amount_lost,
-            world_pos,
-        });
-    }
 }
 
 #[allow(clippy::too_many_arguments)]

@@ -38,6 +38,9 @@ use crate::inventory::{
     ItemRegistry, PlacedItemState, PlayerInventory, MAIN_PACK_CONTAINER_ID,
 };
 use crate::network::audio_event_emit::{AudioRecipient, PlaySoundRecipeRequest};
+use crate::network::qi_attrition_emit::{
+    emit_attrition_applied_if_lost, item_abs_qi_for_attrition, AttritionAppliedEvent,
+};
 use crate::network::vfx_event_emit::VfxEventRequest;
 use crate::player::state::canonical_player_id;
 use crate::qi_physics::attrition::{apply_attrition, is_attrition_exempt};
@@ -239,11 +242,13 @@ pub fn apply_search_attrition(
     mut inventories: Query<(&mut PlayerInventory, &Position)>,
     mut zones: Option<ResMut<ZoneRegistry>>,
     mut qi_transfers: Option<ResMut<Events<QiTransfer>>>,
+    mut attrition_events: Option<ResMut<Events<AttritionAppliedEvent>>>,
 ) {
     for ev in completed.read() {
         let Ok((mut inv, pos)) = inventories.get_mut(ev.player) else {
             continue;
         };
+        let world_pos = [pos.0.x, pos.0.y, pos.0.z];
 
         let zone_name = zones.as_deref().and_then(|z| {
             z.find_zone(DimensionKind::Overworld, pos.0)
@@ -257,6 +262,7 @@ pub fn apply_search_attrition(
                 if is_attrition_exempt(item) {
                     continue;
                 }
+                let before_abs_qi = item_abs_qi_for_attrition(item);
                 // 获取 zone mut 并应用磨损
                 if let (Some(zone_name), Some(ref mut zones)) =
                     (zone_name.clone(), zones.as_deref_mut())
@@ -273,6 +279,16 @@ pub fn apply_search_attrition(
                     // 无 zone 上下文时仍应用磨损（zone=None 不归还，用于 offline test）
                     apply_attrition(item, AttritionOpKind::ContainerSearch, None, None);
                 }
+                emit_attrition_applied_if_lost(
+                    match &mut attrition_events {
+                        Some(events) => Some(&mut **events),
+                        None => None,
+                    },
+                    ev.player,
+                    item,
+                    before_abs_qi,
+                    world_pos,
+                );
             }
         }
     }
@@ -739,6 +755,7 @@ mod tests {
     use super::*;
     use crate::combat::components::{Wound, WoundKind};
     use crate::inventory::ContainerState;
+    use valence::prelude::{App, Update};
 
     fn make_inv() -> PlayerInventory {
         PlayerInventory {
@@ -779,6 +796,19 @@ mod tests {
             forge_achieved_tier: None,
             alchemy: None,
             lingering_owner_qi: None,
+        }
+    }
+
+    fn spirit_item(
+        template: &str,
+        instance_id: u64,
+        spirit_quality: f64,
+        stack_count: u32,
+    ) -> ItemInstance {
+        ItemInstance {
+            spirit_quality,
+            stack_count,
+            ..key_item(template, instance_id)
         }
     }
 
@@ -856,6 +886,51 @@ mod tests {
         // 不应 panic，仅警告
         place_item_in_main_pack(&mut inv, key_item("x", 1));
         assert!(inv.containers.is_empty());
+    }
+
+    #[test]
+    fn apply_search_attrition_emits_qi_attrition_vfx_event() {
+        let mut app = App::new();
+        app.add_event::<SearchCompleted>();
+        app.add_event::<AttritionAppliedEvent>();
+        app.add_systems(Update, apply_search_attrition);
+
+        let mut inv = make_inv();
+        let item = spirit_item("tsy_spirit_relic", 9001, 1.0, 10);
+        inv.containers[0].items.push(PlacedItemState {
+            row: 0,
+            col: 0,
+            instance: item.clone(),
+        });
+        let player = app
+            .world_mut()
+            .spawn((inv, Position::new([12.0, 70.0, -4.0])))
+            .id();
+
+        app.world_mut().send_event(SearchCompleted {
+            player,
+            container: Entity::from_raw(77),
+            family_id: "test_stash".to_string(),
+            loot: vec![item],
+        });
+        app.update();
+
+        let events = app.world().resource::<Events<AttritionAppliedEvent>>();
+        let mut reader = events.get_reader();
+        let emitted: Vec<_> = reader.read(events).cloned().collect();
+        assert_eq!(
+            emitted.len(),
+            1,
+            "ContainerSearch 磨损应发出 1 条定向 VFX event"
+        );
+        assert_eq!(emitted[0].operator, player);
+        assert_eq!(emitted[0].item_entity_id, 9001);
+        assert!(
+            (emitted[0].amount_lost - 0.5001).abs() < 1e-6,
+            "ContainerSearch rate≈5.001%，stack=10 时损耗应约 0.5001，实际 {}",
+            emitted[0].amount_lost
+        );
+        assert_eq!(emitted[0].world_pos, [12.0, 70.0, -4.0]);
     }
 
     // ——— plan-onboarding-loop-v1 P0: SurfaceStashPlayerLimit 测试 ———

@@ -4,8 +4,9 @@
 //! 不复用 `bong:vfx_event` 的半径广播通道，避免旁观者收到 UI/粒子噪声。
 
 use serde::{Deserialize, Serialize};
-use valence::prelude::{bevy_ecs, ident, Client, Entity, Event, EventReader, Query, With};
+use valence::prelude::{bevy_ecs, ident, Client, Entity, Event, EventReader, Events, Query, With};
 
+use crate::inventory::ItemInstance;
 use crate::qi_physics::constants::QI_EPSILON;
 
 pub const QI_ATTRITION_CHANNEL: &str = "bong:vfx/qi_attrition";
@@ -57,6 +58,31 @@ pub fn build_qi_attrition_payload_bytes(
         world_pos,
     })
     .map_err(|_| QiAttritionPayloadError::SerializeFailed)
+}
+
+pub fn item_abs_qi_for_attrition(item: &ItemInstance) -> f64 {
+    item.spirit_quality * item.stack_count.max(1) as f64
+}
+
+pub fn emit_attrition_applied_if_lost(
+    events: Option<&mut Events<AttritionAppliedEvent>>,
+    operator: Entity,
+    item: &ItemInstance,
+    before_abs_qi: f64,
+    world_pos: [f64; 3],
+) {
+    let amount_lost = before_abs_qi - item_abs_qi_for_attrition(item);
+    if amount_lost <= QI_EPSILON || !amount_lost.is_finite() {
+        return;
+    }
+    if let Some(events) = events {
+        events.send(AttritionAppliedEvent {
+            operator,
+            item_entity_id: item.instance_id,
+            amount_lost,
+            world_pos,
+        });
+    }
 }
 
 pub fn emit_qi_attrition_payloads(
