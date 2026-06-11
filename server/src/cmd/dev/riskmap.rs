@@ -28,6 +28,26 @@ impl Command for RiskmapCmd {
     }
 }
 
+/// 将 zone 名、四轴分量、RiskScore、境界格式化为 `/riskmap` 输出行。
+///
+/// 格式示例：
+/// `[dev] riskmap zone=spawn qi=15.0 fauna=10.0 npc=8.0 player=4.0 RiskScore=37 realm=Spirit`
+///
+/// 抽为纯函数供单元测试断言可观察契约。
+pub fn format_riskmap_line(
+    zone_name: &str,
+    axes: crate::world::risk_heatmap::RiskAxes,
+    score: crate::world::risk_heatmap::RiskScore,
+    realm: crate::cultivation::components::Realm,
+) -> String {
+    format!(
+        "[dev] riskmap zone={zone_name} \
+         qi={:.1} fauna={:.1} npc={:.1} player={:.1} \
+         RiskScore={} realm={realm:?}",
+        axes.qi, axes.fauna, axes.npc, axes.player, score.0
+    )
+}
+
 pub fn register(app: &mut App) {
     app.add_command::<RiskmapCmd>()
         .add_systems(Update, handle_riskmap);
@@ -78,23 +98,19 @@ pub fn handle_riskmap(
         let player_realm = cultivation.map(|c| c.realm).unwrap_or(Realm::Condense);
         let score = risk_score(axes, player_realm);
 
-        client.send_chat_message(format!(
-            "[dev] riskmap zone={zone_name} \
-             qi={:.1} fauna={:.1} npc={:.1} player={:.1} \
-             RiskScore={} realm={player_realm:?}",
-            axes.qi, axes.fauna, axes.npc, axes.player, score.0
-        ));
+        client.send_chat_message(format_riskmap_line(zone_name, axes, score, player_realm));
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cmd::dev::test_support::{run_update, spawn_test_client};
     use crate::cultivation::components::{Cultivation, Realm};
-    use crate::world::risk_heatmap::{RiskAxes, RiskHeatmap};
+    use crate::world::risk_heatmap::{RiskAxes, RiskHeatmap, RiskScore};
     use crate::world::zone::ZoneRegistry;
-    use valence::prelude::Events;
+    use valence::prelude::{App, Events, Position, Update};
+    use valence::protocol::packets::play::GameMessageS2c;
+    use valence::testing::create_mock_client;
 
     fn setup_app() -> App {
         let mut app = App::new();
@@ -103,7 +119,7 @@ mod tests {
         app
     }
 
-    fn send(app: &mut App, player: valence::prelude::Entity) {
+    fn send_cmd(app: &mut App, player: valence::prelude::Entity) {
         app.world_mut()
             .resource_mut::<Events<CommandResultEvent<RiskmapCmd>>>()
             .send(CommandResultEvent {
@@ -113,18 +129,183 @@ mod tests {
             });
     }
 
+    /// 创建测试客户端并保留 helper（用于捕获发出的数据包）。
+    fn spawn_client_with_helper(
+        app: &mut App,
+        username: &str,
+        position: [f64; 3],
+    ) -> (valence::prelude::Entity, valence::testing::MockClientHelper) {
+        let (mut bundle, helper) = create_mock_client(username);
+        bundle.player.position = Position::new(position);
+        let entity = app.world_mut().spawn(bundle).id();
+        (entity, helper)
+    }
+
+    /// 刷新所有客户端的 ECS 发包缓冲，使数据包进入 MockClientHelper 可读取队列。
+    fn flush_packets(app: &mut App) {
+        let world = app.world_mut();
+        let mut query = world.query::<&mut valence::client::Client>();
+        for mut client in query.iter_mut(world) {
+            client
+                .flush_packets()
+                .expect("mock client flush should succeed");
+        }
+    }
+
+    /// 从 helper 收集所有已发给客户端的 GameMessage 文本。
+    fn collect_messages(helper: &mut valence::testing::MockClientHelper) -> Vec<String> {
+        helper
+            .collect_received()
+            .0
+            .into_iter()
+            .filter_map(|frame| {
+                frame
+                    .decode::<GameMessageS2c>()
+                    .ok()
+                    .map(|pkt| pkt.chat.to_legacy_lossy())
+            })
+            .collect()
+    }
+
+    // ── format_riskmap_line 纯函数契约测试 ────────────────────────────────────
+
     #[test]
-    fn riskmap_missing_heatmap_resource_sends_error_message() {
-        let mut app = setup_app();
-        // 无 RiskHeatmap resource
-        let player = spawn_test_client(&mut app, "Tester", [8.0, 66.0, 8.0]);
-        send(&mut app, player);
-        // 不 panic，正常退出即为通过
-        run_update(&mut app);
+    fn format_riskmap_line_contains_zone_name() {
+        let axes = RiskAxes {
+            qi: 15.0,
+            fauna: 10.0,
+            npc: 8.0,
+            player: 4.0,
+        };
+        let score = RiskScore(37);
+        let line = format_riskmap_line("qingyun_peaks", axes, score, Realm::Spirit);
+        assert!(
+            line.contains("zone=qingyun_peaks"),
+            "输出行必须含 zone 名称，实际=`{line}`"
+        );
     }
 
     #[test]
-    fn riskmap_with_resources_outputs_score_for_known_zone() {
+    fn format_riskmap_line_contains_all_four_axes() {
+        let axes = RiskAxes {
+            qi: 15.0,
+            fauna: 10.0,
+            npc: 8.0,
+            player: 4.0,
+        };
+        let score = RiskScore(37);
+        let line = format_riskmap_line("spawn", axes, score, Realm::Condense);
+        assert!(
+            line.contains("qi=15.0"),
+            "输出行必须含 qi 分量，实际=`{line}`"
+        );
+        assert!(
+            line.contains("fauna=10.0"),
+            "输出行必须含 fauna 分量，实际=`{line}`"
+        );
+        assert!(
+            line.contains("npc=8.0"),
+            "输出行必须含 npc 分量，实际=`{line}`"
+        );
+        assert!(
+            line.contains("player=4.0"),
+            "输出行必须含 player 分量，实际=`{line}`"
+        );
+    }
+
+    #[test]
+    fn format_riskmap_line_contains_risk_score() {
+        let axes = RiskAxes {
+            qi: 15.0,
+            fauna: 10.0,
+            npc: 8.0,
+            player: 4.0,
+        };
+        let score = RiskScore(37);
+        let line = format_riskmap_line("spawn", axes, score, Realm::Condense);
+        assert!(
+            line.contains("RiskScore=37"),
+            "输出行必须含 RiskScore 值，实际=`{line}`"
+        );
+    }
+
+    #[test]
+    fn format_riskmap_line_contains_realm() {
+        let axes = RiskAxes::default();
+        let score = RiskScore(0);
+        let spirit_line = format_riskmap_line("spawn", axes, score, Realm::Spirit);
+        let induce_line = format_riskmap_line("spawn", axes, score, Realm::Induce);
+        assert!(
+            spirit_line.contains("realm=Spirit"),
+            "通灵输出行必须含 realm=Spirit，实际=`{spirit_line}`"
+        );
+        assert!(
+            induce_line.contains("realm=Induce"),
+            "引气输出行必须含 realm=Induce，实际=`{induce_line}`"
+        );
+    }
+
+    #[test]
+    fn format_riskmap_line_unknown_zone() {
+        // <unknown> zone 时格式应正确，不含 zone= 的真实名称
+        let line = format_riskmap_line(
+            "<unknown>",
+            RiskAxes::default(),
+            RiskScore(0),
+            Realm::Condense,
+        );
+        assert!(
+            line.contains("zone=<unknown>"),
+            "未知 zone 输出行必须含 zone=<unknown>，实际=`{line}`"
+        );
+    }
+
+    // ── handler ECS 测试：错误路径断言可观察消息 ──────────────────────────────
+
+    #[test]
+    fn riskmap_missing_heatmap_resource_sends_error_message() {
+        // 错误路径①：RiskHeatmap resource 缺失 → 客户端收到错误文本
+        let mut app = setup_app();
+        // 无 RiskHeatmap、无 ZoneRegistry
+        let (player, mut helper) = spawn_client_with_helper(&mut app, "Tester", [8.0, 66.0, 8.0]);
+        send_cmd(&mut app, player);
+        app.update();
+        flush_packets(&mut app);
+
+        let messages = collect_messages(&mut helper);
+        assert!(
+            messages
+                .iter()
+                .any(|m| m.contains("RiskHeatmap resource not initialized")),
+            "RiskHeatmap 缺失时客户端应收到错误消息，实际消息列表={messages:?}"
+        );
+    }
+
+    #[test]
+    fn riskmap_missing_zone_registry_sends_error_message() {
+        // 错误路径②（CodeRabbit Major）：ZoneRegistry resource 缺失 → 客户端收到错误文本
+        let mut app = setup_app();
+        // 有 RiskHeatmap，但无 ZoneRegistry
+        app.insert_resource(RiskHeatmap::default());
+        let (player, mut helper) = spawn_client_with_helper(&mut app, "Tester2", [8.0, 66.0, 8.0]);
+        send_cmd(&mut app, player);
+        app.update();
+        flush_packets(&mut app);
+
+        let messages = collect_messages(&mut helper);
+        assert!(
+            messages
+                .iter()
+                .any(|m| m.contains("ZoneRegistry resource not initialized")),
+            "ZoneRegistry 缺失时客户端应收到错误消息，实际消息列表={messages:?}"
+        );
+    }
+
+    // ── handler ECS 测试：正常路径断言可观察消息内容 ─────────────────────────
+
+    #[test]
+    fn riskmap_normal_output_contains_zone_axes_score_realm() {
+        // 正常路径：验证客户端实际收到含 zone 名/四轴/RiskScore/realm 的消息
         let mut app = setup_app();
         app.insert_resource(ZoneRegistry::fallback());
 
@@ -138,55 +319,109 @@ mod tests {
         heatmap.by_zone.insert("spawn".to_string(), axes);
         app.insert_resource(heatmap);
 
-        // 在 spawn zone 内部（fallback spawn zone bounds: [-128, 64, -128] to [128, 80, 128]）
-        let player = spawn_test_client(&mut app, "Bob", [8.0, 66.0, 8.0]);
-        send(&mut app, player);
-        run_update(&mut app);
-        // 命令正常执行，无 panic = 通过
+        // fallback spawn zone: [-128, 64, -128] to [128, 80, 128]
+        let (player, mut helper) = spawn_client_with_helper(&mut app, "Bob", [8.0, 66.0, 8.0]);
+        send_cmd(&mut app, player);
+        app.update();
+        flush_packets(&mut app);
+
+        let messages = collect_messages(&mut helper);
+        let msg = messages
+            .iter()
+            .find(|m| m.contains("riskmap"))
+            .cloned()
+            .unwrap_or_else(|| panic!("期望找到含 riskmap 的消息，实际消息列表={messages:?}"));
+
+        assert!(
+            msg.contains("zone=spawn"),
+            "消息应含 zone=spawn，实际=`{msg}`"
+        );
+        assert!(msg.contains("qi=15.0"), "消息应含 qi=15.0，实际=`{msg}`");
+        assert!(
+            msg.contains("fauna=10.0"),
+            "消息应含 fauna=10.0，实际=`{msg}`"
+        );
+        assert!(msg.contains("npc=8.0"), "消息应含 npc=8.0，实际=`{msg}`");
+        assert!(
+            msg.contains("player=4.0"),
+            "消息应含 player=4.0，实际=`{msg}`"
+        );
+        assert!(
+            msg.contains("RiskScore="),
+            "消息应含 RiskScore=，实际=`{msg}`"
+        );
+        assert!(
+            msg.contains("realm=Condense"),
+            "无 Cultivation 时 realm 应为 Condense，实际=`{msg}`"
+        );
     }
 
     #[test]
     fn riskmap_outputs_correct_realm_in_message() {
+        // 有 Cultivation(Spirit) 时，消息 realm 字段应为 Spirit
         let mut app = setup_app();
         app.insert_resource(ZoneRegistry::fallback());
 
         let mut heatmap = RiskHeatmap::default();
-        let axes = RiskAxes::default();
-        heatmap.by_zone.insert("spawn".to_string(), axes);
+        heatmap
+            .by_zone
+            .insert("spawn".to_string(), RiskAxes::default());
         app.insert_resource(heatmap);
 
-        let player = spawn_test_client(&mut app, "CultivatorA", [8.0, 66.0, 8.0]);
-
-        // 给玩家加 Cultivation component（Spirit 境界）
-        let cultivation = Cultivation {
+        let (player, mut helper) =
+            spawn_client_with_helper(&mut app, "CultivatorA", [8.0, 66.0, 8.0]);
+        app.world_mut().entity_mut(player).insert(Cultivation {
             realm: Realm::Spirit,
             ..Default::default()
-        };
-        app.world_mut().entity_mut(player).insert(cultivation);
+        });
+        send_cmd(&mut app, player);
+        app.update();
+        flush_packets(&mut app);
 
-        send(&mut app, player);
-        run_update(&mut app);
-        // 正常完成即通过（无 Cultivation 时 fallback Condense；有 Cultivation 时读真实 realm）
+        let messages = collect_messages(&mut helper);
+        let msg = messages
+            .iter()
+            .find(|m| m.contains("riskmap"))
+            .cloned()
+            .unwrap_or_else(|| panic!("期望收到 riskmap 消息，实际={messages:?}"));
+
+        assert!(
+            msg.contains("realm=Spirit"),
+            "Spirit 境界玩家的消息应含 realm=Spirit，实际=`{msg}`"
+        );
     }
 
     #[test]
     fn riskmap_unknown_zone_reports_unknown_without_panic() {
+        // 空 registry，玩家不在任何 zone → 消息含 zone=<unknown>
         let mut app = setup_app();
-        // 空 registry，没有任何 zone（不走 fallback 构造）
         let registry = ZoneRegistry { zones: vec![] };
         app.insert_resource(registry);
         app.insert_resource(RiskHeatmap::default());
 
-        // 玩家在任何位置都不在任何 zone 里
-        let player = spawn_test_client(&mut app, "Wanderer", [9999.0, 0.0, 9999.0]);
-        send(&mut app, player);
-        run_update(&mut app);
-        // 报 <unknown> zone，不 panic = 通过
+        let (player, mut helper) =
+            spawn_client_with_helper(&mut app, "Wanderer", [9999.0, 0.0, 9999.0]);
+        send_cmd(&mut app, player);
+        app.update();
+        flush_packets(&mut app);
+
+        let messages = collect_messages(&mut helper);
+        let msg = messages
+            .iter()
+            .find(|m| m.contains("riskmap"))
+            .cloned()
+            .unwrap_or_else(|| panic!("期望收到 riskmap 消息，实际={messages:?}"));
+
+        assert!(
+            msg.contains("zone=<unknown>"),
+            "无 zone 时消息应含 zone=<unknown>，实际=`{msg}`"
+        );
     }
 
     #[test]
     fn riskmap_score_zero_for_empty_axes() {
         // 验证 risk_score 对全零轴返回 0（契约级）
+        use crate::world::risk_heatmap::risk_score;
         let axes = RiskAxes::default();
         let score = risk_score(axes, Realm::Condense);
         assert_eq!(score.0, 0, "全零轴凝脉应得 0 分，实际={}", score.0);
