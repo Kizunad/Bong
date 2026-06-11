@@ -23,7 +23,7 @@ use crate::combat::sword_basics;
 use crate::combat::tuike::{tuike_filter_contam, FalseSkin, ShedEvent};
 use crate::combat::tuike_v2::physics::naked_defense_damage_multiplier;
 use crate::combat::tuike_v2::StackedFalseSkins;
-use crate::combat::weapon::{ShieldBroken, Weapon, WeaponBroken};
+use crate::combat::weapon::{ShieldBlockHit, ShieldBroken, Weapon, WeaponBroken};
 use crate::combat::zhenmai_v2::{
     self, BackfireAmplification, MeridianHardenActive, MultiPointActive,
 };
@@ -247,11 +247,12 @@ pub fn resolve_attack_intents(
     mut event_writers: CombatResolveEventWriters,
     // plan-weapon-v1 §6：武器加成 + 耐久扣减
     // plan-shield-block-v1 P3：shield_broken 事件写出 + ItemRegistry（读 ShieldSpec）
-    // plan-shield-block-v1 P4：defender KnownTechniques（shield_block_profile 缩放）
+    // plan-shield-block-v1 P4：defender KnownTechniques（shield_block_profile 缩放）+ shield_block_hit emit
     weapon_break: (
         Query<&mut Weapon>,
         EventWriter<WeaponBroken>,
         EventWriter<ShieldBroken>,
+        EventWriter<ShieldBlockHit>,
         Commands,
         Query<&mut PlayerInventory>,
         Query<&QiColor>,
@@ -266,6 +267,7 @@ pub fn resolve_attack_intents(
         mut weapons,
         mut weapon_broken_events,
         mut shield_broken_events,
+        mut shield_block_hit_events,
         mut commands,
         mut inventories,
         qi_colors,
@@ -1028,6 +1030,8 @@ pub fn resolve_attack_intents(
 
                 // plan-shield-block-v1 P4 — 近破盾 narration 文本（在 get_mut 块内计算，在块外 emit）。
                 let mut near_break_narration_text: Option<String> = None;
+                // plan-shield-block-v1 P4 — shield_block_hit template_id（在 get_mut 块内捕获，在块外 emit）。
+                let mut shield_block_hit_template_id: Option<String> = None;
 
                 // plan-shield-block-v1 P3 — 盾牌耐久扣减。
                 // 语义：durability_max = 次满伤格挡。每次满伤格挡扣 1 单位（ratio 减 1/durability_max）。
@@ -1045,6 +1049,8 @@ pub fn resolve_attack_intents(
                     if let Some(item) = inventory.equipped.get(EQUIP_SLOT_OFF_HAND) {
                         let instance_id = item.instance_id;
                         let template_id_snap = item.template_id.clone();
+                        // plan-shield-block-v1 P4：记录盾 template_id 供格挡命中通知。
+                        shield_block_hit_template_id = Some(template_id_snap.clone());
                         let cur_ratio = item.durability;
                         let durability_max = item_registry
                             .as_deref()
@@ -1158,6 +1164,16 @@ pub fn resolve_attack_intents(
                             narrations.push_player(&target_id, text, NarrationStyle::Perception);
                         }
                     }
+                }
+
+                // plan-shield-block-v1 P4 — 格挡命中 → emit ShieldBlockHit（携带 template_id）。
+                // shield_block_hit_template_id 在 inventories.get_mut 块内捕获（避免重借），
+                // 在该块外 emit。client ShieldBlockHitHandler 按 template_id 触发材质差异化粒子+音效。
+                if let Some(ref tmpl) = shield_block_hit_template_id {
+                    shield_block_hit_events.send(ShieldBlockHit {
+                        entity: target_entity,
+                        template_id: tmpl.clone(),
+                    });
                 }
             }
         }
@@ -2060,6 +2076,7 @@ mod tests {
         app.add_event::<SkillXpGain>();
         app.add_event::<crate::combat::weapon::WeaponBroken>();
         app.add_event::<crate::combat::weapon::ShieldBroken>();
+        app.add_event::<crate::combat::weapon::ShieldBlockHit>();
         app.add_event::<InventoryDurabilityChangedEvent>();
 
         app.insert_resource(crate::inventory::ItemRegistry::default());
@@ -2185,6 +2202,7 @@ mod tests {
         app.add_event::<SkillXpGain>();
         app.add_event::<crate::combat::weapon::WeaponBroken>();
         app.add_event::<crate::combat::weapon::ShieldBroken>();
+        app.add_event::<crate::combat::weapon::ShieldBlockHit>();
         app.add_event::<InventoryDurabilityChangedEvent>();
         app.add_event::<PlaySoundRecipeRequest>();
 
@@ -2344,6 +2362,7 @@ mod tests {
         app.add_event::<VfxEventRequest>();
         app.add_event::<crate::combat::weapon::WeaponBroken>();
         app.add_event::<crate::combat::weapon::ShieldBroken>();
+        app.add_event::<crate::combat::weapon::ShieldBlockHit>();
         app.add_event::<InventoryDurabilityChangedEvent>();
         app.add_systems(Update, resolve_attack_intents);
 
@@ -2409,6 +2428,7 @@ mod tests {
         app.add_event::<DeathEvent>();
         app.add_event::<crate::combat::weapon::WeaponBroken>();
         app.add_event::<crate::combat::weapon::ShieldBroken>();
+        app.add_event::<crate::combat::weapon::ShieldBlockHit>();
         app.add_event::<InventoryDurabilityChangedEvent>();
         app.add_systems(Update, resolve_attack_intents);
 
@@ -2470,6 +2490,7 @@ mod tests {
         app.add_event::<DeathEvent>();
         app.add_event::<crate::combat::weapon::WeaponBroken>();
         app.add_event::<crate::combat::weapon::ShieldBroken>();
+        app.add_event::<crate::combat::weapon::ShieldBlockHit>();
         app.add_event::<InventoryDurabilityChangedEvent>();
         app.add_systems(Update, resolve_attack_intents);
 
@@ -2590,6 +2611,7 @@ mod tests {
         app.add_event::<DeathEvent>();
         app.add_event::<crate::combat::weapon::WeaponBroken>();
         app.add_event::<crate::combat::weapon::ShieldBroken>();
+        app.add_event::<crate::combat::weapon::ShieldBlockHit>();
         app.add_event::<InventoryDurabilityChangedEvent>();
         app.add_systems(Update, resolve_attack_intents);
 
@@ -2790,6 +2812,7 @@ mod tests {
         app.add_event::<DeathEvent>();
         app.add_event::<crate::combat::weapon::WeaponBroken>();
         app.add_event::<crate::combat::weapon::ShieldBroken>();
+        app.add_event::<crate::combat::weapon::ShieldBlockHit>();
         app.add_event::<InventoryDurabilityChangedEvent>();
         app.add_systems(Update, resolve_attack_intents);
 
@@ -2880,6 +2903,7 @@ mod tests {
         app.add_event::<DeathEvent>();
         app.add_event::<crate::combat::weapon::WeaponBroken>();
         app.add_event::<crate::combat::weapon::ShieldBroken>();
+        app.add_event::<crate::combat::weapon::ShieldBlockHit>();
         app.add_event::<InventoryDurabilityChangedEvent>();
         app.add_systems(Update, resolve_attack_intents);
 
@@ -2971,6 +2995,7 @@ mod tests {
         app.add_event::<DeathEvent>();
         app.add_event::<crate::combat::weapon::WeaponBroken>();
         app.add_event::<crate::combat::weapon::ShieldBroken>();
+        app.add_event::<crate::combat::weapon::ShieldBlockHit>();
         app.add_event::<InventoryDurabilityChangedEvent>();
         app.add_systems(
             Update,
@@ -3045,6 +3070,7 @@ mod tests {
         app.add_event::<DeathEvent>();
         app.add_event::<crate::combat::weapon::WeaponBroken>();
         app.add_event::<crate::combat::weapon::ShieldBroken>();
+        app.add_event::<crate::combat::weapon::ShieldBlockHit>();
         app.add_event::<InventoryDurabilityChangedEvent>();
         app.add_systems(
             Update,
@@ -3179,6 +3205,7 @@ mod tests {
         app.add_event::<SkillXpGain>();
         app.add_event::<crate::combat::weapon::WeaponBroken>();
         app.add_event::<crate::combat::weapon::ShieldBroken>();
+        app.add_event::<crate::combat::weapon::ShieldBlockHit>();
         app.add_event::<InventoryDurabilityChangedEvent>();
         app.add_systems(Update, resolve_attack_intents);
 
@@ -3273,6 +3300,7 @@ mod tests {
         app.add_event::<SkillXpGain>();
         app.add_event::<crate::combat::weapon::WeaponBroken>();
         app.add_event::<crate::combat::weapon::ShieldBroken>();
+        app.add_event::<crate::combat::weapon::ShieldBlockHit>();
         app.add_event::<InventoryDurabilityChangedEvent>();
         app.add_systems(Update, resolve_attack_intents);
 
@@ -3360,6 +3388,7 @@ mod tests {
             app.add_event::<DeathEvent>();
             app.add_event::<crate::combat::weapon::WeaponBroken>();
             app.add_event::<crate::combat::weapon::ShieldBroken>();
+            app.add_event::<crate::combat::weapon::ShieldBlockHit>();
             app.add_event::<InventoryDurabilityChangedEvent>();
             app.add_systems(Update, resolve_attack_intents);
 
@@ -3431,6 +3460,7 @@ mod tests {
         app.add_event::<SkillXpGain>();
         app.add_event::<crate::combat::weapon::WeaponBroken>();
         app.add_event::<crate::combat::weapon::ShieldBroken>();
+        app.add_event::<crate::combat::weapon::ShieldBlockHit>();
         app.add_event::<InventoryDurabilityChangedEvent>();
         app.add_systems(Update, resolve_attack_intents);
 
@@ -3528,6 +3558,7 @@ mod tests {
         app.add_event::<DeathEvent>();
         app.add_event::<crate::combat::weapon::WeaponBroken>();
         app.add_event::<crate::combat::weapon::ShieldBroken>();
+        app.add_event::<crate::combat::weapon::ShieldBlockHit>();
         app.add_event::<InventoryDurabilityChangedEvent>();
         app.add_systems(Update, resolve_attack_intents);
 
@@ -3594,6 +3625,7 @@ mod tests {
         app.add_event::<SkillXpGain>();
         app.add_event::<crate::combat::weapon::WeaponBroken>();
         app.add_event::<crate::combat::weapon::ShieldBroken>();
+        app.add_event::<crate::combat::weapon::ShieldBlockHit>();
         app.add_event::<InventoryDurabilityChangedEvent>();
         app.add_systems(Update, resolve_attack_intents);
 
@@ -3651,6 +3683,7 @@ mod tests {
         );
         app.add_event::<crate::combat::weapon::WeaponBroken>();
         app.add_event::<crate::combat::weapon::ShieldBroken>();
+        app.add_event::<crate::combat::weapon::ShieldBlockHit>();
         app.add_event::<InventoryDurabilityChangedEvent>();
         app.add_systems(Update, resolve_attack_intents);
 
@@ -3725,6 +3758,7 @@ mod tests {
         app.add_event::<DeathEvent>();
         app.add_event::<crate::combat::weapon::WeaponBroken>();
         app.add_event::<crate::combat::weapon::ShieldBroken>();
+        app.add_event::<crate::combat::weapon::ShieldBlockHit>();
         app.add_event::<InventoryDurabilityChangedEvent>();
         app.add_systems(Update, resolve_attack_intents);
 
@@ -3789,6 +3823,7 @@ mod tests {
         app.add_event::<DeathEvent>();
         app.add_event::<crate::combat::weapon::WeaponBroken>();
         app.add_event::<crate::combat::weapon::ShieldBroken>();
+        app.add_event::<crate::combat::weapon::ShieldBlockHit>();
         app.add_event::<InventoryDurabilityChangedEvent>();
         app.add_systems(Update, resolve_attack_intents);
 
@@ -3881,6 +3916,7 @@ mod tests {
         app.add_event::<DeathEvent>();
         app.add_event::<crate::combat::weapon::WeaponBroken>();
         app.add_event::<crate::combat::weapon::ShieldBroken>();
+        app.add_event::<crate::combat::weapon::ShieldBlockHit>();
         app.add_event::<InventoryDurabilityChangedEvent>();
         app.add_systems(Update, resolve_attack_intents);
 
@@ -3974,6 +4010,7 @@ mod tests {
         app.add_event::<DeathEvent>();
         app.add_event::<crate::combat::weapon::WeaponBroken>();
         app.add_event::<crate::combat::weapon::ShieldBroken>();
+        app.add_event::<crate::combat::weapon::ShieldBlockHit>();
         app.add_event::<InventoryDurabilityChangedEvent>();
         app.add_systems(Update, resolve_attack_intents);
 
@@ -4025,6 +4062,7 @@ mod tests {
         app.add_event::<DeathEvent>();
         app.add_event::<crate::combat::weapon::WeaponBroken>();
         app.add_event::<crate::combat::weapon::ShieldBroken>();
+        app.add_event::<crate::combat::weapon::ShieldBlockHit>();
         app.add_event::<InventoryDurabilityChangedEvent>();
         app.add_systems(Update, resolve_attack_intents);
 
@@ -4090,6 +4128,7 @@ mod tests {
         app.add_event::<DeathEvent>();
         app.add_event::<crate::combat::weapon::WeaponBroken>();
         app.add_event::<crate::combat::weapon::ShieldBroken>();
+        app.add_event::<crate::combat::weapon::ShieldBlockHit>();
         app.add_event::<InventoryDurabilityChangedEvent>();
         app.add_systems(Update, resolve_attack_intents);
 
@@ -4156,6 +4195,7 @@ mod tests {
         app.add_event::<DeathEvent>();
         app.add_event::<crate::combat::weapon::WeaponBroken>();
         app.add_event::<crate::combat::weapon::ShieldBroken>();
+        app.add_event::<crate::combat::weapon::ShieldBlockHit>();
         app.add_event::<InventoryDurabilityChangedEvent>();
         app.add_systems(Update, resolve_attack_intents);
 
@@ -4218,6 +4258,7 @@ mod tests {
         app.add_event::<DeathEvent>();
         app.add_event::<crate::combat::weapon::WeaponBroken>();
         app.add_event::<crate::combat::weapon::ShieldBroken>();
+        app.add_event::<crate::combat::weapon::ShieldBlockHit>();
         app.add_event::<InventoryDurabilityChangedEvent>();
         app.add_systems(Update, resolve_attack_intents);
 
@@ -4282,6 +4323,7 @@ mod tests {
         app.add_event::<DeathEvent>();
         app.add_event::<crate::combat::weapon::WeaponBroken>();
         app.add_event::<crate::combat::weapon::ShieldBroken>();
+        app.add_event::<crate::combat::weapon::ShieldBlockHit>();
         app.add_event::<InventoryDurabilityChangedEvent>();
         app.add_systems(Update, resolve_attack_intents);
 
@@ -4338,6 +4380,7 @@ mod tests {
         app.add_event::<DeathEvent>();
         app.add_event::<crate::combat::weapon::WeaponBroken>();
         app.add_event::<crate::combat::weapon::ShieldBroken>();
+        app.add_event::<crate::combat::weapon::ShieldBlockHit>();
         app.add_event::<InventoryDurabilityChangedEvent>();
         app.add_systems(Update, resolve_attack_intents);
 
@@ -4405,6 +4448,7 @@ mod tests {
         app.add_event::<DeathEvent>();
         app.add_event::<crate::combat::weapon::WeaponBroken>();
         app.add_event::<crate::combat::weapon::ShieldBroken>();
+        app.add_event::<crate::combat::weapon::ShieldBlockHit>();
         app.add_event::<InventoryDurabilityChangedEvent>();
         app.add_systems(Update, resolve_attack_intents);
 
@@ -4499,6 +4543,7 @@ mod tests {
         app.add_event::<DeathEvent>();
         app.add_event::<crate::combat::weapon::WeaponBroken>();
         app.add_event::<crate::combat::weapon::ShieldBroken>();
+        app.add_event::<crate::combat::weapon::ShieldBlockHit>();
         app.add_event::<InventoryDurabilityChangedEvent>();
         app.add_systems(Update, resolve_attack_intents);
 
@@ -4613,6 +4658,7 @@ mod tests {
         app.add_event::<DeathEvent>();
         app.add_event::<crate::combat::weapon::WeaponBroken>();
         app.add_event::<crate::combat::weapon::ShieldBroken>();
+        app.add_event::<crate::combat::weapon::ShieldBlockHit>();
         app.add_event::<InventoryDurabilityChangedEvent>();
         app.add_systems(Update, resolve_attack_intents);
 
@@ -4693,6 +4739,7 @@ mod tests {
         app.add_event::<DeathEvent>();
         app.add_event::<crate::combat::weapon::WeaponBroken>();
         app.add_event::<crate::combat::weapon::ShieldBroken>();
+        app.add_event::<crate::combat::weapon::ShieldBlockHit>();
         app.add_event::<InventoryDurabilityChangedEvent>();
         app.add_systems(Update, resolve_attack_intents);
 
@@ -4767,6 +4814,7 @@ mod tests {
         app.add_event::<DeathEvent>();
         app.add_event::<crate::combat::weapon::WeaponBroken>();
         app.add_event::<crate::combat::weapon::ShieldBroken>();
+        app.add_event::<crate::combat::weapon::ShieldBlockHit>();
         app.add_event::<InventoryDurabilityChangedEvent>();
         app.add_systems(Update, resolve_attack_intents);
 
@@ -4948,6 +4996,7 @@ mod tests {
         app.add_event::<DeathEvent>();
         app.add_event::<crate::combat::weapon::WeaponBroken>();
         app.add_event::<crate::combat::weapon::ShieldBroken>();
+        app.add_event::<crate::combat::weapon::ShieldBlockHit>();
         app.add_event::<InventoryDurabilityChangedEvent>();
         app.add_systems(
             Update,
@@ -5007,6 +5056,7 @@ mod tests {
         app.add_event::<DeathEvent>();
         app.add_event::<WeaponBroken>();
         app.add_event::<ShieldBroken>();
+        app.add_event::<ShieldBlockHit>();
         app.add_event::<InventoryDurabilityChangedEvent>();
         app.add_systems(
             Update,
@@ -5110,6 +5160,7 @@ mod tests {
         app.add_event::<DeathEvent>();
         app.add_event::<WeaponBroken>();
         app.add_event::<ShieldBroken>();
+        app.add_event::<ShieldBlockHit>();
         app.add_event::<InventoryDurabilityChangedEvent>();
         app.add_systems(
             Update,
@@ -5216,6 +5267,7 @@ mod tests {
         app.add_event::<DeathEvent>();
         app.add_event::<WeaponBroken>();
         app.add_event::<ShieldBroken>();
+        app.add_event::<ShieldBlockHit>();
         app.add_event::<InventoryDurabilityChangedEvent>();
         app.add_systems(Update, resolve_attack_intents);
 
@@ -5296,6 +5348,7 @@ mod tests {
         app.add_event::<DeathEvent>();
         app.add_event::<WeaponBroken>();
         app.add_event::<ShieldBroken>();
+        app.add_event::<ShieldBlockHit>();
         app.add_event::<InventoryDurabilityChangedEvent>();
         app.add_systems(
             Update,
@@ -5399,6 +5452,7 @@ mod tests {
         app.add_event::<DeathEvent>();
         app.add_event::<WeaponBroken>();
         app.add_event::<ShieldBroken>();
+        app.add_event::<ShieldBlockHit>();
         app.add_event::<InventoryDurabilityChangedEvent>();
         app.add_systems(
             Update,
@@ -5545,6 +5599,7 @@ mod tests {
         app.add_event::<DeathEvent>();
         app.add_event::<WeaponBroken>();
         app.add_event::<ShieldBroken>();
+        app.add_event::<ShieldBlockHit>();
         app.add_event::<InventoryDurabilityChangedEvent>();
         app.add_systems(
             Update,
@@ -5686,6 +5741,7 @@ mod tests {
             app.add_event::<DeathEvent>();
             app.add_event::<WeaponBroken>();
             app.add_event::<ShieldBroken>();
+            app.add_event::<ShieldBlockHit>();
             app.add_event::<InventoryDurabilityChangedEvent>();
             app.add_systems(
                 Update,
@@ -5843,6 +5899,7 @@ mod tests {
         app.add_event::<DeathEvent>();
         app.add_event::<WeaponBroken>();
         app.add_event::<ShieldBroken>();
+        app.add_event::<ShieldBlockHit>();
         app.add_event::<InventoryDurabilityChangedEvent>();
         app.add_systems(
             Update,
@@ -5971,6 +6028,7 @@ mod tests {
         app.add_event::<DeathEvent>();
         app.add_event::<WeaponBroken>();
         app.add_event::<ShieldBroken>();
+        app.add_event::<ShieldBlockHit>();
         app.add_event::<InventoryDurabilityChangedEvent>();
         app.add_systems(
             Update,
@@ -6106,6 +6164,7 @@ mod tests {
         app.add_event::<DeathEvent>();
         app.add_event::<WeaponBroken>();
         app.add_event::<ShieldBroken>();
+        app.add_event::<ShieldBlockHit>();
         app.add_event::<InventoryDurabilityChangedEvent>();
         app.add_systems(
             Update,
@@ -6260,6 +6319,7 @@ mod tests {
         app.add_event::<DeathEvent>();
         app.add_event::<crate::combat::weapon::WeaponBroken>();
         app.add_event::<crate::combat::weapon::ShieldBroken>();
+        app.add_event::<crate::combat::weapon::ShieldBlockHit>();
         app.add_event::<InventoryDurabilityChangedEvent>();
         app.add_systems(Update, resolve_attack_intents);
 
@@ -6362,6 +6422,7 @@ mod tests {
         app.add_event::<DeathEvent>();
         app.add_event::<crate::combat::weapon::WeaponBroken>();
         app.add_event::<crate::combat::weapon::ShieldBroken>();
+        app.add_event::<crate::combat::weapon::ShieldBlockHit>();
         app.add_event::<InventoryDurabilityChangedEvent>();
         app.add_systems(Update, resolve_attack_intents);
 
@@ -6451,6 +6512,7 @@ mod tests {
         app.add_event::<DeathEvent>();
         app.add_event::<WeaponBroken>();
         app.add_event::<ShieldBroken>();
+        app.add_event::<ShieldBlockHit>();
         app.add_event::<InventoryDurabilityChangedEvent>();
         app.add_systems(Update, resolve_attack_intents);
 
@@ -6547,6 +6609,7 @@ mod tests {
         app.add_event::<DeathEvent>();
         app.add_event::<WeaponBroken>();
         app.add_event::<ShieldBroken>();
+        app.add_event::<ShieldBlockHit>();
         app.add_event::<InventoryDurabilityChangedEvent>();
         app.add_systems(Update, resolve_attack_intents);
 
@@ -6645,6 +6708,7 @@ mod tests {
         app.add_event::<DeathEvent>();
         app.add_event::<crate::combat::weapon::WeaponBroken>();
         app.add_event::<crate::combat::weapon::ShieldBroken>();
+        app.add_event::<crate::combat::weapon::ShieldBlockHit>();
         app.add_event::<InventoryDurabilityChangedEvent>();
         app.add_systems(Update, resolve_attack_intents);
 
@@ -6706,6 +6770,7 @@ mod tests {
         app.add_event::<DeathEvent>();
         app.add_event::<crate::combat::weapon::WeaponBroken>();
         app.add_event::<crate::combat::weapon::ShieldBroken>();
+        app.add_event::<crate::combat::weapon::ShieldBlockHit>();
         app.add_event::<InventoryDurabilityChangedEvent>();
         app.add_systems(Update, resolve_attack_intents);
 
@@ -6773,6 +6838,7 @@ mod tests {
         app.add_event::<DeathEvent>();
         app.add_event::<crate::combat::weapon::WeaponBroken>();
         app.add_event::<crate::combat::weapon::ShieldBroken>();
+        app.add_event::<crate::combat::weapon::ShieldBlockHit>();
         app.add_event::<InventoryDurabilityChangedEvent>();
         app.add_systems(Update, resolve_attack_intents);
 
@@ -6890,6 +6956,7 @@ mod tests {
         app.add_event::<DeathEvent>();
         app.add_event::<crate::combat::weapon::WeaponBroken>();
         app.add_event::<crate::combat::weapon::ShieldBroken>();
+        app.add_event::<crate::combat::weapon::ShieldBlockHit>();
         app.add_event::<InventoryDurabilityChangedEvent>();
         app.add_systems(Update, resolve_attack_intents);
 
@@ -6955,6 +7022,7 @@ mod tests {
         app.add_event::<DeathEvent>();
         app.add_event::<crate::combat::weapon::WeaponBroken>();
         app.add_event::<crate::combat::weapon::ShieldBroken>();
+        app.add_event::<crate::combat::weapon::ShieldBlockHit>();
         app.add_event::<InventoryDurabilityChangedEvent>();
         app.add_systems(Update, resolve_attack_intents);
 
@@ -7073,6 +7141,7 @@ mod tests {
         app.add_event::<DeathEvent>();
         app.add_event::<crate::combat::weapon::WeaponBroken>();
         app.add_event::<crate::combat::weapon::ShieldBroken>();
+        app.add_event::<crate::combat::weapon::ShieldBlockHit>();
         app.add_event::<InventoryDurabilityChangedEvent>();
         app.add_systems(Update, resolve_attack_intents);
         app
@@ -7521,6 +7590,7 @@ mod tests {
         app.add_event::<DeathEvent>();
         app.add_event::<crate::combat::weapon::WeaponBroken>();
         app.add_event::<crate::combat::weapon::ShieldBroken>();
+        app.add_event::<crate::combat::weapon::ShieldBlockHit>();
         app.add_event::<InventoryDurabilityChangedEvent>();
         app.add_systems(Update, resolve_attack_intents);
         app

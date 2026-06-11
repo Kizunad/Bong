@@ -45,10 +45,13 @@ pub fn emit_combat_event_to_client(
 }
 
 fn wire_kind(ev: &CombatEvent) -> String {
-    if ev.defense_kind == Some(DefenseKind::JieMai) {
-        return "block".to_string();
+    match ev.defense_kind {
+        Some(DefenseKind::JieMai) => "block".to_string(),
+        // plan-shield-block-v1 P4：盾格挡命中独立 juice kind，
+        // client CombatEventHandler case "shield_block" → SHIELD_BLOCK juice。
+        Some(DefenseKind::ShieldBlock) => "shield_block".to_string(),
+        _ => "hit".to_string(),
     }
-    "hit".to_string()
 }
 
 fn format_amount(amount: f32) -> String {
@@ -117,7 +120,38 @@ mod tests {
     #[test]
     fn wire_kind_block_for_jiemai() {
         let ev = make_event(Some(DefenseKind::JieMai));
-        assert_eq!(wire_kind(&ev), "block");
+        assert_eq!(
+            wire_kind(&ev),
+            "block",
+            "JieMai defense must produce kind='block'; 期望 block 因为截脉格挡；实际 {:?}",
+            wire_kind(&ev)
+        );
+    }
+
+    #[test]
+    fn wire_kind_shield_block_for_shield_block() {
+        // plan-shield-block-v1 P4：盾格挡命中 → kind="shield_block"
+        // client CombatEventHandler case "shield_block" → SHIELD_BLOCK juice（独立于 JieMai block）
+        let ev = make_event(Some(DefenseKind::ShieldBlock));
+        assert_eq!(
+            wire_kind(&ev),
+            "shield_block",
+            "ShieldBlock defense must produce kind='shield_block'; \
+             期望 shield_block 因为 client CombatEventHandler 按此键路由 SHIELD_BLOCK juice；\
+             实际 {:?}",
+            wire_kind(&ev)
+        );
+    }
+
+    #[test]
+    fn wire_kind_hit_for_no_defense() {
+        let ev = make_event(None);
+        assert_eq!(
+            wire_kind(&ev),
+            "hit",
+            "No defense must produce kind='hit'; 实际 {:?}",
+            wire_kind(&ev)
+        );
     }
 
     #[test]

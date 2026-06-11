@@ -857,6 +857,12 @@ pub fn register(app: &mut App) {
     );
     // plan-shield-block-v1 P3：盾牌破损推送（独立 add_systems 避免 Bevy 20元素 tuple 上限）。
     app.add_systems(Update, weapon_equipped_emit::emit_shield_broken_payloads);
+    // plan-shield-block-v1 P4：盾格挡命中推送（材质差异化粒子+音效）。
+    app.add_systems(
+        Update,
+        weapon_equipped_emit::emit_shield_block_hit_payloads
+            .after(crate::combat::resolve::resolve_attack_intents),
+    );
     app.add_systems(Update, status_snapshot_emit::emit_status_snapshot_payloads);
     app.add_systems(
         Update,
@@ -962,6 +968,7 @@ pub fn register(app: &mut App) {
     app.add_event::<vfx_event_emit::VanillaVfxParticleRequest>();
     app.add_event::<crate::combat::weapon::WeaponBroken>();
     app.add_event::<crate::combat::weapon::ShieldBroken>();
+    app.add_event::<crate::combat::weapon::ShieldBlockHit>();
 }
 
 fn redis_url_from_env() -> String {
@@ -5428,6 +5435,7 @@ mod tests {
             app.add_event::<DeathEvent>();
             app.add_event::<crate::combat::weapon::WeaponBroken>();
             app.add_event::<crate::combat::weapon::ShieldBroken>();
+            app.add_event::<crate::combat::weapon::ShieldBlockHit>();
             app.add_event::<crate::inventory::InventoryDurabilityChangedEvent>();
             app.add_systems(
                 Update,

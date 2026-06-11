@@ -15,13 +15,15 @@
 
 use valence::prelude::{Changed, Client, Entity, EventReader, Query, Res, With};
 
-use crate::combat::weapon::{ShieldBroken, WeaponBroken, WeaponKind};
+use crate::combat::weapon::{ShieldBlockHit, ShieldBroken, WeaponBroken, WeaponKind};
 use crate::inventory::{ItemRegistry, PlayerInventory};
 use crate::network::agent_bridge::{
     payload_type_label, serialize_server_data_payload, SERVER_DATA_CHANNEL,
 };
 use crate::network::{log_payload_build_error, send_server_data_payload};
-use crate::schema::combat_hud::{ShieldBrokenV1, WeaponBrokenV1, WeaponEquippedV1, WeaponViewV1};
+use crate::schema::combat_hud::{
+    ShieldBlockHitV1, ShieldBrokenV1, WeaponBrokenV1, WeaponEquippedV1, WeaponViewV1,
+};
 use crate::schema::server_data::{ServerDataPayloadV1, ServerDataV1};
 
 type WeaponSlotUpdate = (String, Option<WeaponViewV1>);
@@ -212,6 +214,40 @@ pub fn emit_shield_broken_payloads(
     for ev in broken {
         if let Ok(mut client) = clients.get_mut(ev.entity) {
             send_shield_broken(&mut client, ev.instance_id, &ev.template_id);
+        }
+    }
+}
+
+fn send_shield_block_hit(client: &mut Client, template_id: &str) {
+    let payload = ServerDataV1::new(ServerDataPayloadV1::ShieldBlockHit(ShieldBlockHitV1 {
+        template_id: template_id.to_string(),
+    }));
+    let type_label = payload_type_label(payload.payload_type());
+    let bytes = match serialize_server_data_payload(&payload) {
+        Ok(bytes) => bytes,
+        Err(err) => {
+            log_payload_build_error(type_label, &err);
+            return;
+        }
+    };
+    send_server_data_payload(client, bytes.as_slice());
+    tracing::debug!(
+        "[bong][network] sent {} {} payload template={template_id}",
+        SERVER_DATA_CHANNEL,
+        type_label
+    );
+}
+
+/// plan-shield-block-v1 P4：消费 [`ShieldBlockHit`] 事件并推送到对应玩家 client。
+/// client ShieldBlockHitHandler 按 template_id 触发材质差异化粒子+音效。
+pub fn emit_shield_block_hit_payloads(
+    mut events: EventReader<ShieldBlockHit>,
+    mut clients: Query<&mut Client, With<Client>>,
+) {
+    let hits: Vec<ShieldBlockHit> = events.read().cloned().collect();
+    for ev in hits {
+        if let Ok(mut client) = clients.get_mut(ev.entity) {
+            send_shield_block_hit(&mut client, &ev.template_id);
         }
     }
 }
@@ -489,6 +525,79 @@ mod tests {
             payload.get("instance_id").and_then(|v| v.as_u64()),
             Some(88),
             "instance_id must match sent value (88); payload: {payload:?}"
+        );
+    }
+
+    // ── plan-shield-block-v1 P4: shield_block_hit 推送测试 ─────────────────────
+
+    #[test]
+    fn shield_block_hit_wooden_uses_server_data_channel_and_type() {
+        let mut app = App::new();
+        app.add_event::<ShieldBlockHit>();
+        app.add_systems(Update, emit_shield_block_hit_payloads);
+
+        let (client_bundle, mut helper) = create_mock_client("PlayerA");
+        let entity = app.world_mut().spawn(client_bundle).id();
+        app.world_mut()
+            .resource_mut::<Events<ShieldBlockHit>>()
+            .send(ShieldBlockHit {
+                entity,
+                template_id: "wooden_shield".to_string(),
+            });
+
+        app.update();
+        flush_client_packets(&mut app);
+
+        let frames = collect_server_data_frames(&mut helper);
+        let (channel, payload) = frames
+            .iter()
+            .find(|(_, p)| p.get("type").and_then(|v| v.as_str()) == Some("shield_block_hit"))
+            .expect(
+                "shield_block_hit payload must be sent — emit_shield_block_hit_payloads must push \
+                 ShieldBlockHitV1 to client; 检查 ShieldBlockHit 事件已注册并被消费",
+            );
+        assert_eq!(
+            channel, SERVER_DATA_CHANNEL,
+            "shield_block_hit payload must use bong:server_data channel; 实际 {channel:?}"
+        );
+        assert_eq!(
+            payload.get("template_id").and_then(|v| v.as_str()),
+            Some("wooden_shield"),
+            "shield_block_hit payload must include template_id=wooden_shield; payload: {payload:?}"
+        );
+        assert!(
+            payload.get("instance_id").is_none(),
+            "shield_block_hit payload must NOT include instance_id (格挡命中无需 instance); payload: {payload:?}"
+        );
+    }
+
+    #[test]
+    fn shield_block_hit_bone_template_round_trips_correctly() {
+        let mut app = App::new();
+        app.add_event::<ShieldBlockHit>();
+        app.add_systems(Update, emit_shield_block_hit_payloads);
+
+        let (client_bundle, mut helper) = create_mock_client("PlayerB");
+        let entity = app.world_mut().spawn(client_bundle).id();
+        app.world_mut()
+            .resource_mut::<Events<ShieldBlockHit>>()
+            .send(ShieldBlockHit {
+                entity,
+                template_id: "bone_shield".to_string(),
+            });
+
+        app.update();
+        flush_client_packets(&mut app);
+
+        let frames = collect_server_data_frames(&mut helper);
+        let (_, payload) = frames
+            .iter()
+            .find(|(_, p)| p.get("type").and_then(|v| v.as_str()) == Some("shield_block_hit"))
+            .expect("shield_block_hit payload must be sent for bone_shield");
+        assert_eq!(
+            payload.get("template_id").and_then(|v| v.as_str()),
+            Some("bone_shield"),
+            "template_id must be 'bone_shield' — client maps to bone 粒子+音效; payload: {payload:?}"
         );
     }
 

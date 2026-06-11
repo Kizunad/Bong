@@ -199,6 +199,15 @@ pub struct ShieldBroken {
     pub template_id: String,
 }
 
+/// plan-shield-block-v1 P4: 盾格挡命中事件。每次格挡成功时 server emit，
+/// 携带盾 template_id 供 client 触发材质差异化粒子+音效。
+/// 镜像 ShieldBroken，独立 struct。
+#[derive(Debug, Clone, Event)]
+pub struct ShieldBlockHit {
+    pub entity: Entity,
+    pub template_id: String,
+}
+
 /// plan-weapon-v1 §2.3: 装备武器意图。
 ///
 /// 当前架构走 `sync_weapon_component_from_equipped`:直接从 `PlayerInventory.equipped`
