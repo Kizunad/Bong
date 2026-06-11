@@ -10,6 +10,7 @@ pub mod environment;
 pub mod era;
 pub mod events;
 pub mod extract_system;
+pub mod furniture;
 pub mod heartbeat;
 pub mod karma;
 pub mod loot_pool;
@@ -135,6 +136,7 @@ pub fn register(app: &mut App) {
     pseudo_vein_runtime::register(app);
     spirit_eye::register(app);
     entity_model::register(app);
+    app.init_resource::<furniture::FurnitureRegistry>();
     app.insert_resource(karma::KarmaWeightStore::default());
     app.insert_resource(karma::QiDensityHeatmap::default());
     events::register(app);

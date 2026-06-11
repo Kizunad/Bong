@@ -4764,7 +4764,7 @@ fn required_non_empty_option(
 mod tests {
     use super::*;
 
-    const BLOCK_ITEM_TEMPLATE_IDS: [&str; 10] = [
+    const BLOCK_ITEM_TEMPLATE_IDS: [&str; 14] = [
         "earth_crumb",
         "hardened_soil",
         "barren_sand",
@@ -4775,6 +4775,10 @@ mod tests {
         "lantern_item",
         "door_bolt",
         "window_grate",
+        "simple_bed",
+        "meditation_mat",
+        "moisture_base",
+        "spirit_stone_rack",
     ];
 
     fn test_registry_from_strs(entries: &[(&str, &str)]) -> Result<ItemRegistry, String> {
@@ -5724,6 +5728,10 @@ max_stack_count = 0
             ("lantern_item", 1, 1, 0.6),
             ("door_bolt", 1, 1, 1.5),
             ("window_grate", 1, 1, 2.0),
+            ("simple_bed", 2, 2, 4.0),
+            ("meditation_mat", 2, 2, 1.5),
+            ("moisture_base", 2, 1, 3.0),
+            ("spirit_stone_rack", 1, 1, 1.0),
         ];
 
         for (template_id, grid_w, grid_h, base_weight) in cases {

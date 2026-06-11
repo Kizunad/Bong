@@ -416,7 +416,7 @@ effect = { kind = "composure_restore", magnitude = 0.35 }
 [[item]]
 id = "meditation_mat"
 name = "蒲团"
-category = "misc"
+category = "block"
 grid_w = 2
 grid_h = 2
 base_weight = 1.5
@@ -474,7 +474,7 @@ effect = { kind = "qi_recovery", magnitude = 40.0 }
 [[item]]
 id = "spirit_stone_rack"
 name = "灵石架"
-category = "misc"
+category = "block"
 grid_w = 1
 grid_h = 1
 base_weight = 1.0
@@ -737,7 +737,7 @@ description = "铁杆木板的门闩，堵门挡贼。"
 [[item]]
 id = "moisture_base"
 name = "防潮地基"
-category = "misc"
+category = "block"
 grid_w = 2
 grid_h = 1
 base_weight = 3.0
@@ -748,7 +748,7 @@ description = "石块灰烬苔铺的地基，架上不潮。"
 [[item]]
 id = "simple_bed"
 name = "简易床铺"
-category = "misc"
+category = "block"
 grid_w = 2
 grid_h = 2
 base_weight = 4.0

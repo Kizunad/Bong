@@ -17,6 +17,7 @@ use crate::player::gameplay::GameplayTick;
 use crate::player::state::PlayerState;
 use crate::world::bong_blocks::{is_bong_block, place_bong_block};
 use crate::world::dimension::{CurrentDimension, DimensionKind, DimensionLayers};
+use crate::world::furniture::{furniture_kind_for_template_id, FurnitureRegistry};
 use crate::zhenfa::trap_content::TrapTargetFace;
 
 const PLAYER_HALF_WIDTH: f64 = 0.3;
@@ -94,6 +95,7 @@ pub fn handle_block_place_requests(
     player_positions: Query<(&Position, Option<&CurrentDimension>)>,
     mut clients: Query<(&Username, &mut Client, &PlayerState, Option<&Cultivation>)>,
     mut audio_events: Option<ResMut<Events<PlaySoundRecipeRequest>>>,
+    mut furniture_registry: Option<ResMut<FurnitureRegistry>>,
 ) {
     for req in requests.read() {
         let pos = BlockPos::new(req.x, req.y, req.z);
@@ -198,6 +200,16 @@ pub fn handle_block_place_requests(
         };
         match placement {
             Ok(placed) => {
+                if let Some(kind) = furniture_kind_for_template_id(&template_id) {
+                    if let Some(registry) = furniture_registry.as_deref_mut() {
+                        registry.register([pos.x, pos.y, pos.z], kind);
+                    } else {
+                        tracing::warn!(
+                            "[bong][block_place] placed furniture `{}` but FurnitureRegistry is missing",
+                            template_id
+                        );
+                    }
+                }
                 if let Ok((username, mut client, player_state, cultivation)) =
                     clients.get_mut(req.client)
                 {
@@ -404,6 +416,10 @@ pub fn block_item_to_state(template_id: &str, _target_face: TrapTargetFace) -> O
         "lantern_item" => Some(BlockState::LANTERN),
         "door_bolt" => Some(BlockState::IRON_DOOR),
         "window_grate" => Some(BlockState::IRON_BARS),
+        "simple_bed" => Some(BlockState::BONG_SIMPLE_BED),
+        "meditation_mat" => Some(BlockState::BONG_MEDITATION_MAT),
+        "moisture_base" => Some(BlockState::BONG_MOISTURE_BASE),
+        "spirit_stone_rack" => Some(BlockState::BONG_SPIRIT_STONE_RACK),
         _ => None,
     }
 }
@@ -484,6 +500,7 @@ mod tests {
     use crate::network::agent_bridge::SERVER_DATA_CHANNEL;
     use crate::schema::server_data::{ServerDataPayloadV1, ServerDataV1};
     use crate::world::entity_model::{BongVisualEntity, BongVisualKind};
+    use crate::world::furniture::FurnitureKind;
     use valence::prelude::{
         ident, App, BiomeRegistry, DiggingEvent, DiggingState, DimensionTypeRegistry, GameMode,
         IntoSystemConfigs, Server, UnloadedChunk, Update, VisibleChunkLayer,
@@ -504,6 +521,10 @@ mod tests {
             ("lantern_item", BlockState::LANTERN),
             ("door_bolt", BlockState::IRON_DOOR),
             ("window_grate", BlockState::IRON_BARS),
+            ("simple_bed", BlockState::BONG_SIMPLE_BED),
+            ("meditation_mat", BlockState::BONG_MEDITATION_MAT),
+            ("moisture_base", BlockState::BONG_MOISTURE_BASE),
+            ("spirit_stone_rack", BlockState::BONG_SPIRIT_STONE_RACK),
         ];
 
         for (template_id, expected) in cases {
@@ -699,6 +720,51 @@ mod tests {
         assert_eq!(
             layer.block(pos).map(|block| block.state),
             Some(BlockState::BONG_ZHENFA_NODE)
+        );
+    }
+
+    #[test]
+    fn handler_places_furniture_block_and_registers_position() {
+        let (mut app, client, layer_entity, mut helper) = block_place_app(
+            inventory_with_item(item_instance(9301, "simple_bed", 1)),
+            DimensionKind::Overworld,
+        );
+        app.insert_resource(ItemRegistry::from_map(HashMap::from([item_template(
+            "simple_bed",
+            ItemCategory::Block,
+        )])));
+
+        app.world_mut().send_event(BlockPlaceRequest {
+            client,
+            x: 1,
+            y: 64,
+            z: 1,
+            item_instance_id: 9301,
+            target_face: TrapTargetFace::Top,
+        });
+        app.update();
+        flush_all_client_packets(&mut app);
+
+        assert_eq!(
+            block_state_at(&app, layer_entity, BlockPos::new(1, 64, 1)),
+            Some(BlockState::BONG_SIMPLE_BED),
+            "simple_bed should place as a Bong custom block"
+        );
+        assert_eq!(
+            app.world()
+                .resource::<FurnitureRegistry>()
+                .kind_at([1, 64, 1]),
+            Some(FurnitureKind::SimpleBed),
+            "successful furniture placement should register its coordinate"
+        );
+        assert_eq!(
+            inventory_template_count(&app, client, "simple_bed"),
+            0,
+            "successful furniture placement should consume the held item"
+        );
+        assert!(
+            has_inventory_snapshot_payload(&mut helper),
+            "successful furniture placement should push a corrective inventory snapshot"
         );
     }
 
@@ -999,6 +1065,7 @@ mod tests {
             overworld: scenario.layer,
             tsy: scenario.layer,
         });
+        app.insert_resource(FurnitureRegistry::default());
         app.add_event::<BlockPlaceRequest>();
         app.add_systems(Update, handle_block_place_requests);
 
