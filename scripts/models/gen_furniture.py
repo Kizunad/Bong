@@ -13,9 +13,9 @@ import io
 import json
 import math
 import uuid
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable
 
 import numpy as np
 from PIL import Image, ImageDraw
@@ -533,6 +533,7 @@ def render_preview(spec: FurnitureSpec, out_path: Path) -> None:
 
 
 def write_spec(spec: FurnitureSpec) -> None:
+    verify_spec(spec)
     LOCAL_MODELS.mkdir(parents=True, exist_ok=True)
     PREVIEW_DIR.mkdir(parents=True, exist_ok=True)
     BLOCK_MODEL_DIR.mkdir(parents=True, exist_ok=True)
@@ -566,6 +567,7 @@ def verify_spec(spec: FurnitureSpec) -> None:
             ("x", "y", "z"),
             cube_spec.origin,
             cube_spec.target,
+            strict=True,
         ):
             if not (0.0 <= origin_value < target_value <= 16.0):
                 raise ValueError(

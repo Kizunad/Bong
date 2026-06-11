@@ -91,14 +91,17 @@ public class BongBlocksTest {
                 RESOURCES.resolve(Path.of("assets", "bong", "models", "block", id + ".json")),
                 StandardCharsets.UTF_8
             )).getAsJsonObject();
+            int elementCount = model.has("elements") ? model.getAsJsonArray("elements").size() : 0;
+            String parent = model.has("parent") ? model.get("parent").getAsString() : "missing";
 
             assertTrue(
-                model.has("elements") && model.getAsJsonArray("elements").size() >= 4,
-                id + " should use explicit block geometry because P4 replaces cube_all placeholder models"
+                elementCount >= 4,
+                id + " expected at least 4 elements because P4 replaces cube_all placeholder models, actual "
+                    + elementCount
             );
             assertTrue(
-                !model.has("parent") || !"minecraft:block/cube_all".equals(model.get("parent").getAsString()),
-                id + " should not fall back to cube_all after furniture bbmodel pass"
+                !"minecraft:block/cube_all".equals(parent),
+                id + " expected not to fall back to cube_all after furniture bbmodel pass, parent was " + parent
             );
         }
     }
