@@ -22,6 +22,7 @@ pub const LINGTIAN_REPLENISH: &str = "bong:lingtian_replenish";
 pub const ZHENFA_TRAP: &str = "bong:zhenfa_trap";
 pub const ZHENFA_WARD: &str = "bong:zhenfa_ward";
 pub const ZHENFA_DEPLETE: &str = "bong:zhenfa_deplete";
+pub const LINGJU_ACTIVATE: &str = "bong:lingju_activate";
 pub const SOCIAL_NICHE_ESTABLISH: &str = "bong:social_niche_establish";
 pub const SOCIAL_NICHE_REPAIR: &str = "bong:social_niche_repair";
 pub const SOCIAL_PACT_LINK: &str = "bong:social_pact_link";
