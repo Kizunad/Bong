@@ -22,11 +22,13 @@
 //! 4. **夺舍**（P1）：player qi_current → elder `QiTransfer{SoulSeize}`；
 //!    qi_max 永久 debuff 是容量变化，**不** 重复计入 transfer。
 
+use bevy_transform::components::{GlobalTransform, Transform};
 use serde::{Deserialize, Serialize};
 use valence::client::ClientMarker;
+use valence::entity::marker::MarkerEntityBundle;
 use valence::prelude::{
-    bevy_ecs, App, Commands, Component, DVec3, Entity, EventReader, EventWriter, IntoSystemConfigs,
-    Position, Query, Res, ResMut, Resource, Update, With, Without,
+    bevy_ecs, App, Commands, Component, DVec3, Entity, EntityKind, EntityLayerId, EventReader,
+    EventWriter, IntoSystemConfigs, Position, Query, Res, ResMut, Resource, Update, With, Without,
 };
 
 use crate::cultivation::components::Cultivation;
@@ -43,7 +45,7 @@ use crate::qi_physics::ledger::{QiAccountId, QiTransfer, QiTransferReason, World
 use crate::qi_physics::release::qi_release_to_zone;
 use crate::schema::elder_encounter::{ElderEncounterEventKindV1, ElderEncounterEventV1};
 use crate::social::components::Renown;
-use crate::world::dimension::DimensionKind;
+use crate::world::dimension::{DimensionKind, DimensionLayers};
 use crate::world::tsy_drain::compute_drain_per_tick;
 use crate::world::zone::ZoneRegistry;
 
@@ -320,6 +322,25 @@ pub struct DyingElderSpawnRequest {
     pub tick: u64,
 }
 
+// ── 大能已出现事件 ─────────────────────────────────────────────────────────────
+
+/// plan-dying-elder-v1 Bug2 修复 — 大能 entity 真正创建后 emit 的事件。
+///
+/// `DyingElderSpawnRequest` 在 P0 emit，但 entity 由 P1 的 `dying_elder_apply_spawn_system`
+/// 创建；二者之间 entity id 未知。本事件在 entity 创建后立即 emit，携带真实 entity idx，
+/// 供 P3 appear event 系统和 S2C appear 系统填充正确的 `elder_entity_idx`。
+#[derive(Debug, Clone, valence::prelude::Event)]
+pub struct DyingElderAppearedEvent {
+    /// 真实 elder ECS entity（`entity.index()` 即 `elder_entity_idx` wire 字段）。
+    pub elder: Entity,
+    /// TSY zone 名称（来自 spawn request）。
+    pub zone_name: String,
+    /// 初始化好的 Blackboard（含 betray_probability / offered_skill_id）。
+    pub blackboard: DyingElderBlackboard,
+    /// spawn 触发 tick。
+    pub tick: u64,
+}
+
 // ── Bevy 注册 ──────────────────────────────────────────────────────────────────
 
 /// Bevy 注册：P0 spawn timer resource + spawn 系统。
@@ -336,21 +357,31 @@ pub fn register_p0(app: &mut App) {
 /// P0 spawn 系统只负责 gate 判断 + emit `DyingElderSpawnRequest`；
 /// 本系统（独立 Bevy event reader）在同一帧内消费该事件，真正将大能 entity 插入 ECS World。
 ///
-/// ## 创建的组件 bundle
+/// ## 创建的组件 bundle（Bug3 修复：补齐 Valence 客户端可见所需组件）
+/// - [`MarkerEntityBundle`]：`EntityKind::VILLAGER` + `EntityLayerId(tsy)` + `Position`
+///   → Valence 凭此向客户端发送 entity 数据包（`EntityKind` 是客户端渲染必要条件）
+/// - [`Transform`] + [`GlobalTransform`]：Bevy 变换组件（NPC 系统依赖）
 /// - [`DyingElderState::Plea`]：初始乞求态
 /// - [`DyingElderBlackboard`]：从 spawn request 内联 blackboard（含 betray_probability / offered_skill_id）
 /// - [`NpcMarker`]：标记为 NPC entity（全服系统依赖此 marker 定向查询）
-/// - [`Position`]：spawn 坐标（zone.center()）
 /// - [`NpcArchetype::DyingElder`]（通过 `npc_runtime_bundle` 包含）
 /// - [`Cultivation`]：化虚境界初始真元（qi_current = qi_max = DYING_ELDER_INITIAL_QI）
 ///
-/// ## Bevy event reader 独立性
-/// P3 的 `dying_elder_p3_emit_appear_event_system` 也读取同一事件，但各自用独立的 EventReader，
-/// 互不干扰（Bevy EventReader 各自维护独立 read cursor）。
+/// ## Bug2 修复：emit DyingElderAppearedEvent 携带真实 entity idx
+/// entity 创建后立即 emit `DyingElderAppearedEvent`，供 P3 appear event 系统和 S2C appear
+/// 系统填充正确的 `elder_entity_idx`（替代原来的 0 占位）。
 pub(crate) fn dying_elder_apply_spawn_system(
     mut commands: Commands,
     mut spawn_requests: EventReader<DyingElderSpawnRequest>,
+    dimension_layers: Option<Res<DimensionLayers>>,
+    mut appeared_events: EventWriter<DyingElderAppearedEvent>,
+    game_tick: Option<Res<GameTick>>,
 ) {
+    let tick = game_tick.as_deref().map(|t| t.0 as u64).unwrap_or(0);
+    // Bug3：TSY layer entity 用于 EntityLayerId（让 Valence 向客户端广播大能实体）
+    // 大能固定 spawn 在 TSY zone（gate 已确保），使用 dimension_layers.tsy
+    let tsy_layer = dimension_layers.as_deref().map(|dl| dl.tsy);
+
     for req in spawn_requests.read() {
         let bb = req.blackboard.clone();
         let pos = req.spawn_pos;
@@ -361,16 +392,37 @@ pub(crate) fn dying_elder_apply_spawn_system(
         cultivation.qi_current = DYING_ELDER_INITIAL_QI;
         cultivation.qi_max = DYING_ELDER_INITIAL_QI;
 
-        // ── spawn 并插入 NpcMarker + NpcArchetype bundle
-        let entity = commands
-            .spawn((
-                NpcMarker,
-                Position::new([pos.x, pos.y, pos.z]),
-                DyingElderState::Plea,
-                bb,
-                NpcArchetype::DyingElder,
-            ))
-            .id();
+        // ── Bug3 修复：MarkerEntityBundle 提供 EntityKind + EntityLayerId，让 Valence 向客户端发包
+        // EntityKind::VILLAGER 在 MC 1.20.1 是 120，用于标识大能外观（P4 可换自定义 skin）
+        let entity = if let Some(layer) = tsy_layer {
+            commands
+                .spawn((
+                    MarkerEntityBundle {
+                        kind: EntityKind::VILLAGER,
+                        layer: EntityLayerId(layer),
+                        position: Position::new([pos.x, pos.y, pos.z]),
+                        ..Default::default()
+                    },
+                    Transform::from_xyz(pos.x as f32, pos.y as f32, pos.z as f32),
+                    GlobalTransform::default(),
+                    NpcMarker,
+                    DyingElderState::Plea,
+                    bb.clone(),
+                    NpcArchetype::DyingElder,
+                ))
+                .id()
+        } else {
+            // DimensionLayers 未注册（测试环境）：退化路径，无 MarkerEntityBundle
+            commands
+                .spawn((
+                    NpcMarker,
+                    Position::new([pos.x, pos.y, pos.z]),
+                    DyingElderState::Plea,
+                    bb.clone(),
+                    NpcArchetype::DyingElder,
+                ))
+                .id()
+        };
 
         // ── 覆盖 npc_runtime_bundle 中的 Cultivation（化虚级 qi）
         let mut runtime = npc_runtime_bundle(entity, NpcArchetype::DyingElder);
@@ -378,12 +430,22 @@ pub(crate) fn dying_elder_apply_spawn_system(
         commands.entity(entity).insert(runtime);
 
         tracing::info!(
-            "[bong][dying_elder] apply_spawn: created entity {:?} at {:?} zone='{}' betray_prob={:.3}",
+            "[bong][dying_elder] apply_spawn: created entity {:?} (idx={}) at {:?} zone='{}' betray_prob={:.3} layer={:?}",
             entity,
+            entity.index(),
             pos,
             req.zone_name,
             req.blackboard.betray_probability,
+            tsy_layer,
         );
+
+        // ── Bug2 修复：emit DyingElderAppearedEvent 携带真实 entity idx ──────
+        appeared_events.send(DyingElderAppearedEvent {
+            elder: entity,
+            zone_name: req.zone_name.clone(),
+            blackboard: req.blackboard.clone(),
+            tick,
+        });
     }
 }
 
@@ -684,6 +746,8 @@ pub fn register_p1(app: &mut App) {
     app.add_event::<GiveDanToElderIntent>();
     app.add_event::<SoulSeizeEvent>();
     app.add_event::<QiTransfer>();
+    // Bug2 修复：注册 DyingElderAppearedEvent（entity 创建后 emit，携带真实 entity idx）
+    app.add_event::<DyingElderAppearedEvent>();
     // spawn apply：消费 P0 emit 的 DyingElderSpawnRequest，真正创建大能 entity。
     // 在 give_dan_system 之前注册（ordering 保证：同帧内先 spawn 再允许交互，但遭遇流程不依赖同帧）
     app.add_systems(Update, dying_elder_apply_spawn_system);
@@ -1142,43 +1206,41 @@ pub fn register_p2(app: &mut App) {
 
 // ── P3：Redis 叙事事件发送 ──────────────────────────────────────────────────────
 
-/// plan-dying-elder-v1 P3 — 消费 `DyingElderSpawnRequest`，向 agent 广播「大能出现」叙事事件。
+/// plan-dying-elder-v1 P3 Bug2 修复 — 消费 `DyingElderAppearedEvent`，向 agent 广播「大能出现」叙事事件。
 ///
-/// 在 P0 spawn 系统 emit 了 `DyingElderSpawnRequest` 后，本系统在同一帧内读取这些事件，
-/// 向 Redis `bong:elder_encounter` 发布 `ElderEncounterEventV1{event_kind: Appeared}`。
+/// 改为监听 `DyingElderAppearedEvent`（由 `dying_elder_apply_spawn_system` 在 entity 创建后 emit），
+/// 而不是原来的 `DyingElderSpawnRequest`，从而获得真实 `elder_entity_idx`（非 0 占位）。
 ///
-/// ## 注意
-/// - 本系统只 **read** spawn 事件（不消费其内容，不重置 EventReader 消费状态）；
-///   实际 entity 创建由 P1 消费同一事件完成（Bevy event reader 各自独立）。
-/// - `betray_probability` 字段使用 blackboard 初始值（renown 调整在首次给丹时执行）。
+/// `betray_probability` 字段使用 blackboard 初始值（renown 调整在首次给丹时执行）。
 pub(crate) fn dying_elder_p3_emit_appear_event_system(
-    mut spawn_requests: EventReader<DyingElderSpawnRequest>,
+    mut appeared_events: EventReader<DyingElderAppearedEvent>,
     redis: Option<Res<RedisBridgeResource>>,
-    game_tick: Option<Res<GameTick>>,
 ) {
-    let tick = game_tick.as_deref().map(|t| t.0 as u64).unwrap_or(0);
     let Some(redis) = redis else { return };
 
-    for req in spawn_requests.read() {
+    for ev in appeared_events.read() {
         // qi_fraction = 1.0：大能刚出现时真元满值（DYING_ELDER_INITIAL_QI / DYING_ELDER_INITIAL_QI）
         let qi_fraction = 1.0_f32;
         let event = ElderEncounterEventV1 {
-            zone_name: req.zone_name.clone(),
-            elder_entity_idx: 0, // spawn 阶段尚无 entity id（P1 系统创建 entity）；0 为占位
+            zone_name: ev.zone_name.clone(),
+            elder_entity_idx: ev.elder.index(), // Bug2 修复：真实 entity idx
             event_kind: ElderEncounterEventKindV1::Appeared,
-            betray_probability: req.blackboard.betray_probability,
+            betray_probability: ev.blackboard.betray_probability,
             dan_count: 0,
-            offered_skill_id: req.blackboard.offered_skill_id.to_string(),
+            offered_skill_id: ev.blackboard.offered_skill_id.to_string(),
             qi_fraction,
-            server_tick: tick,
+            server_tick: ev.tick,
         };
         let _ = redis
             .tx_outbound
             .send(RedisOutbound::ElderEncounterEvent(event));
         tracing::info!(
-            "[bong][dying_elder] P3 emit appear event: zone='{}' betray_prob={:.3} tick={tick}",
-            req.zone_name,
-            req.blackboard.betray_probability,
+            "[bong][dying_elder] P3 emit appear event: entity={:?} (idx={}) zone='{}' betray_prob={:.3} tick={}",
+            ev.elder,
+            ev.elder.index(),
+            ev.zone_name,
+            ev.blackboard.betray_probability,
+            ev.tick,
         );
     }
 }
@@ -2445,8 +2507,9 @@ mod tests {
     fn apply_spawn_system_creates_entity_with_full_bundle_from_spawn_request() {
         use valence::prelude::App;
         let mut app = App::new();
-        // 注册事件 + 系统
+        // 注册事件 + 系统（Bug2 修复：需同时注册 DyingElderAppearedEvent）
         app.add_event::<DyingElderSpawnRequest>();
+        app.add_event::<DyingElderAppearedEvent>();
         app.add_systems(valence::prelude::Update, dying_elder_apply_spawn_system);
 
         // 发送 spawn request
@@ -2502,6 +2565,7 @@ mod tests {
         use valence::prelude::App;
         let mut app = App::new();
         app.add_event::<DyingElderSpawnRequest>();
+        app.add_event::<DyingElderAppearedEvent>(); // Bug2 修复：需同时注册
         app.add_systems(valence::prelude::Update, dying_elder_apply_spawn_system);
 
         // 发送 2 个 request（模拟两帧各一次 spawn，实际生产中 spawn_system 的 global cap 防止这种情况）

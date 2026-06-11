@@ -34,8 +34,8 @@ use valence::prelude::{
 };
 
 use crate::fauna::dying_elder::{
-    dying_elder_death_system, dying_elder_give_dan_system, DyingElderBlackboard,
-    DyingElderDeathProcessed, DyingElderSpawnRequest, DyingElderState, GiveDanToElderIntent,
+    dying_elder_death_system, dying_elder_give_dan_system, DyingElderAppearedEvent,
+    DyingElderBlackboard, DyingElderDeathProcessed, DyingElderState, GiveDanToElderIntent,
     DYING_ELDER_DAN_THRESHOLD,
 };
 use crate::npc::movement::GameTick;
@@ -110,39 +110,40 @@ type DyingElderQuery<'w, 's> = Query<
 
 // ── S2C appeared 系统 ─────────────────────────────────────────────────────────
 
-/// plan-dying-elder-v1 B1 — 大能出现时向同 zone 玩家推送 `bong:elder_encounter` appeared 事件。
+/// plan-dying-elder-v1 B1 Bug2 修复 — 大能出现时向同 zone 玩家推送 `bong:elder_encounter` appeared 事件。
 ///
-/// 监听 `DyingElderSpawnRequest`，在 P0 spawn 同帧推送 appeared S2C。
+/// 改为监听 `DyingElderAppearedEvent`（由 `dying_elder_apply_spawn_system` 在 entity 创建后 emit），
+/// 使 `elder_entity_idx` 填入真实 entity index（而非原来的 0 占位）。
 /// qi_fraction = 1.0（spawn 时真元满值）。
 #[allow(clippy::type_complexity)]
 pub(crate) fn elder_encounter_s2c_appear_system(
-    mut spawn_requests: EventReader<DyingElderSpawnRequest>,
+    mut appeared_events: EventReader<DyingElderAppearedEvent>,
     mut players: PlayerQuery<'_, '_>,
     zones: Option<Res<ZoneRegistry>>,
-    game_tick: Option<Res<GameTick>>,
 ) {
     let Some(zones) = zones else { return };
-    let tick = game_tick.as_deref().map(|t| t.0 as u64).unwrap_or(0);
 
-    for req in spawn_requests.read() {
+    for ev in appeared_events.read() {
         let event = ElderEncounterEventV1 {
-            zone_name: req.zone_name.clone(),
-            elder_entity_idx: 0,
+            zone_name: ev.zone_name.clone(),
+            elder_entity_idx: ev.elder.index(), // Bug2 修复：真实 entity idx
             event_kind: ElderEncounterEventKindV1::Appeared,
-            betray_probability: req.blackboard.betray_probability,
+            betray_probability: ev.blackboard.betray_probability,
             dan_count: 0,
-            offered_skill_id: req.blackboard.offered_skill_id.to_string(),
+            offered_skill_id: ev.blackboard.offered_skill_id.to_string(),
             qi_fraction: 1.0_f32,
-            server_tick: tick,
+            server_tick: ev.tick,
         };
         let Some(bytes) = to_json_bytes(&event) else {
             continue;
         };
-        send_to_players_in_zone(&mut players, &req.zone_name, &zones, &bytes);
+        send_to_players_in_zone(&mut players, &ev.zone_name, &zones, &bytes);
         tracing::info!(
-            "[bong][elder_encounter_emit] S2C appeared → zone='{}' betray_prob={:.3} tick={tick}",
-            req.zone_name,
-            req.blackboard.betray_probability,
+            "[bong][elder_encounter_emit] S2C appeared → entity_idx={} zone='{}' betray_prob={:.3} tick={}",
+            ev.elder.index(),
+            ev.zone_name,
+            ev.blackboard.betray_probability,
+            ev.tick,
         );
     }
 }

@@ -33,8 +33,8 @@ public final class DyingElderInteractionKeybindings {
     private static final String KEY_REFUSE    = "key.bong-client.dying_elder_refuse";
     private static final String KEY_DELAY     = "key.bong-client.dying_elder_delay";
 
-    /** 回元丹的 item template id（与 server ItemTemplateId::HuiYuanPill 对齐）。 */
-    static final String HUI_YUAN_PILL_ITEM_ID = "hui_yuan_pill";
+    /** 回元丹的 item template id（与 server handle_give_dan_to_elder 校验的 "huiyuan_pill" 对齐）。 */
+    static final String HUI_YUAN_PILL_ITEM_ID = "huiyuan_pill";
 
     private static KeyBinding giveDanKey;
     private static KeyBinding refuseKey;

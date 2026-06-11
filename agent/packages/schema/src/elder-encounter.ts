@@ -59,6 +59,13 @@ export const ElderEncounterEventV1 = Type.Object(
      * 承诺传授的功法 ID（地阶；`appeared` 时填实际值，其他可填空字符串）。
      */
     offered_skill_id: Type.String(),
+    /**
+     * 大能当前真元比例（qi_current / qi_max_cache，[0.0, 1.0]）。
+     * - `appeared` / `dan_received` 时填实际值（大能真元恢复进度）
+     * - 死亡类事件（betrayal / dead_natural / dead_player_kill）填 0.0
+     * - server `ElderEncounterEventV1.qi_fraction: f32` 对齐
+     */
+    qi_fraction: Type.Number({ minimum: 0, maximum: 1 }),
     /** Server 游戏 tick（时序审计用）。 */
     server_tick: Type.Integer({ minimum: 0 }),
   },

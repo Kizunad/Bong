@@ -68,6 +68,8 @@ function makePayload(eventKind: EventKind, overrides: Record<string, unknown> = 
     betray_probability: eventKind === "appeared" ? 0.65 : 0.0,
     dan_count: eventKind === "dan_received" ? 3 : 0,
     offered_skill_id: eventKind === "appeared" ? "woliu.heart" : "",
+    // Bug4 修复：schema 新增 qi_fraction 字段（server 必发，additionalProperties:false 要求）
+    qi_fraction: ["betrayal", "dead_natural", "dead_player_kill"].includes(eventKind) ? 0.0 : 1.0,
     server_tick: 720000,
     ...overrides,
   });
@@ -274,6 +276,7 @@ describe("renderAppearedNarration", () => {
       betray_probability: 0.65,
       dan_count: 0,
       offered_skill_id: "woliu.heart",
+      qi_fraction: 1.0,
       server_tick: 1000,
     });
     expect(result.scope).toBe("zone");
@@ -291,6 +294,7 @@ describe("renderAppearedNarration", () => {
       betray_probability: 0.9,
       dan_count: 0,
       offered_skill_id: "woliu.turbulence_burst",
+      qi_fraction: 1.0,
       server_tick: 0,
     });
     expect(result.text, "高危险度应包含'险机'暗示").toContain("险机");
@@ -304,6 +308,7 @@ describe("renderAppearedNarration", () => {
       betray_probability: 0.35,
       dan_count: 0,
       offered_skill_id: "anqi.echo_fractal",
+      qi_fraction: 1.0,
       server_tick: 0,
     });
     expect(result.text, "低危险度不应包含'险机'").not.toContain("险机");
@@ -319,6 +324,7 @@ describe("renderDanReceivedNarration", () => {
       betray_probability: 0.0,
       dan_count: 4,
       offered_skill_id: "sword_path.heaven_gate",
+      qi_fraction: 0.7,
       server_tick: 500,
     });
     expect(result.scope).toBe("zone");
@@ -337,6 +343,7 @@ describe("renderDeathBroadcast", () => {
         betray_probability: 0.0,
         dan_count: 5,
         offered_skill_id: "",
+        qi_fraction: 0.0,
         server_tick: 999,
       },
       "betrayal",
@@ -355,6 +362,7 @@ describe("renderDeathBroadcast", () => {
         betray_probability: 0.0,
         dan_count: 0,
         offered_skill_id: "",
+        qi_fraction: 0.0,
         server_tick: 100,
       },
       "dead_natural",
@@ -372,6 +380,7 @@ describe("renderDeathBroadcast", () => {
         betray_probability: 0.0,
         dan_count: 0,
         offered_skill_id: "",
+        qi_fraction: 0.0,
         server_tick: 200,
       },
       "dead_player_kill",
@@ -390,6 +399,7 @@ describe("renderDeathBroadcast", () => {
         betray_probability: 0.0,
         dan_count: 0,
         offered_skill_id: "",
+        qi_fraction: 0.0,
         server_tick: 0,
       },
       "dead_natural",

@@ -1086,7 +1086,7 @@ public class DyingElderEncounterTest {
     @Test
     void findHuiYuanPillInGridItems() {
         // 背包格子中有回元丹
-        InventoryItem pill = InventoryItem.simple("hui_yuan_pill", "回元丹");
+        InventoryItem pill = InventoryItem.simple("huiyuan_pill", "回元丹");
         InventoryModel model = InventoryModel.builder()
             .gridItem(pill, InventoryModel.PRIMARY_CONTAINER_ID, 0, 0)
             .build();
@@ -1103,7 +1103,7 @@ public class DyingElderEncounterTest {
     @Test
     void findHuiYuanPillInHotbar() {
         // 回元丹在 hotbar slot 2
-        InventoryItem pill = InventoryItem.simple("hui_yuan_pill", "回元丹");
+        InventoryItem pill = InventoryItem.simple("huiyuan_pill", "回元丹");
         InventoryModel model = InventoryModel.builder()
             .hotbar(2, pill)
             .build();
@@ -1155,7 +1155,7 @@ public class DyingElderEncounterTest {
         // 准备：activate encounter + 背包有回元丹
         DyingElderEncounterStore.activate("坍缩渊", 42, 1000L);
 
-        InventoryItem pill = InventoryItem.simple("hui_yuan_pill", "回元丹");
+        InventoryItem pill = InventoryItem.simple("huiyuan_pill", "回元丹");
         InventoryModel model = InventoryModel.builder()
             .gridItem(pill, InventoryModel.PRIMARY_CONTAINER_ID, 0, 0)
             .build();
@@ -1217,7 +1217,7 @@ public class DyingElderEncounterTest {
         // elderEntityIdx=0 means elder not yet synced
         DyingElderEncounterStore.activate("坍缩渊", 0, 1000L);
 
-        InventoryItem pill = InventoryItem.simple("hui_yuan_pill", "回元丹");
+        InventoryItem pill = InventoryItem.simple("huiyuan_pill", "回元丹");
         InventoryModel model = InventoryModel.builder()
             .gridItem(pill, InventoryModel.PRIMARY_CONTAINER_ID, 0, 0)
             .build();
@@ -1240,7 +1240,7 @@ public class DyingElderEncounterTest {
     @Test
     void handleGiveDanDoesNotSendWhenEncounterNotActive() {
         // Store is reset to inactive in @BeforeEach
-        InventoryItem pill = InventoryItem.simple("hui_yuan_pill", "回元丹");
+        InventoryItem pill = InventoryItem.simple("huiyuan_pill", "回元丹");
         InventoryModel model = InventoryModel.builder()
             .gridItem(pill, InventoryModel.PRIMARY_CONTAINER_ID, 0, 0)
             .build();
