@@ -131,6 +131,18 @@ pub fn status_effect_tick(clock: Res<CombatClock>, mut statuses: Query<&mut Stat
 const BODY_REFINING_DEFENSE_MULTIPLIER: f32 = 1.0 / 1.3;
 const DEFAULT_STAMINA_MAX_FOR_STATUS: f32 = 100.0;
 const DEFAULT_STAMINA_RECOVER_FOR_STATUS: f32 = 5.0;
+const MAX_HEALTH_REGEN_BOOST_MULTIPLIER: f32 = 5.0;
+
+pub fn health_regen_boost_multiplier(status_effects: &StatusEffects) -> f32 {
+    status_effects
+        .active
+        .iter()
+        .filter(|effect| {
+            effect.kind == StatusEffectKind::HealthRegenBoost && effect.remaining_ticks > 0
+        })
+        .fold(1.0, |acc, effect| acc * (1.0 + effect.magnitude.max(0.0)))
+        .clamp(1.0, MAX_HEALTH_REGEN_BOOST_MULTIPLIER)
+}
 
 pub fn attribute_aggregate_tick(
     mut q: Query<(
@@ -732,6 +744,108 @@ mod tests {
         clear_breakthrough_boost(&mut status_effects);
         assert_eq!(status_effects.active.len(), 1);
         assert_eq!(status_effects.active[0].kind, StatusEffectKind::Bleeding);
+    }
+
+    #[test]
+    fn health_regen_boost_multiplier_defaults_to_one_without_active_buff() {
+        let status_effects = StatusEffects {
+            active: vec![
+                crate::combat::components::ActiveStatusEffect {
+                    kind: StatusEffectKind::HealthRegenBoost,
+                    magnitude: 3.0,
+                    remaining_ticks: 0,
+                    source_pill: None,
+                },
+                crate::combat::components::ActiveStatusEffect {
+                    kind: StatusEffectKind::StaminaRecovBoost,
+                    magnitude: 2.0,
+                    remaining_ticks: 20,
+                    source_pill: None,
+                },
+            ],
+        };
+
+        assert_eq!(health_regen_boost_multiplier(&status_effects), 1.0);
+    }
+
+    #[test]
+    fn health_regen_boost_multiplier_stacks_positive_magnitude_and_ignores_negative() {
+        let status_effects = StatusEffects {
+            active: vec![
+                crate::combat::components::ActiveStatusEffect {
+                    kind: StatusEffectKind::HealthRegenBoost,
+                    magnitude: 0.5,
+                    remaining_ticks: 20,
+                    source_pill: None,
+                },
+                crate::combat::components::ActiveStatusEffect {
+                    kind: StatusEffectKind::HealthRegenBoost,
+                    magnitude: 1.0,
+                    remaining_ticks: 20,
+                    source_pill: None,
+                },
+                crate::combat::components::ActiveStatusEffect {
+                    kind: StatusEffectKind::HealthRegenBoost,
+                    magnitude: -0.75,
+                    remaining_ticks: 20,
+                    source_pill: None,
+                },
+            ],
+        };
+
+        assert!((health_regen_boost_multiplier(&status_effects) - 3.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn health_regen_boost_multiplier_caps_runaway_stack() {
+        let status_effects = StatusEffects {
+            active: vec![
+                crate::combat::components::ActiveStatusEffect {
+                    kind: StatusEffectKind::HealthRegenBoost,
+                    magnitude: 9.0,
+                    remaining_ticks: 20,
+                    source_pill: None,
+                },
+                crate::combat::components::ActiveStatusEffect {
+                    kind: StatusEffectKind::HealthRegenBoost,
+                    magnitude: 9.0,
+                    remaining_ticks: 20,
+                    source_pill: None,
+                },
+            ],
+        };
+
+        assert_eq!(
+            health_regen_boost_multiplier(&status_effects),
+            MAX_HEALTH_REGEN_BOOST_MULTIPLIER
+        );
+    }
+
+    #[test]
+    fn health_regen_boost_multiplier_returns_to_one_after_expiry() {
+        let mut app = App::new();
+        app.insert_resource(CombatClock {
+            tick: STATUS_EFFECT_TICK_INTERVAL_TICKS,
+        });
+        app.add_systems(Update, status_effect_tick);
+
+        let entity = app
+            .world_mut()
+            .spawn(StatusEffects {
+                active: vec![crate::combat::components::ActiveStatusEffect {
+                    kind: StatusEffectKind::HealthRegenBoost,
+                    magnitude: 0.5,
+                    remaining_ticks: STATUS_EFFECT_TICK_INTERVAL_TICKS,
+                    source_pill: None,
+                }],
+            })
+            .id();
+
+        app.update();
+
+        let status_effects = app.world().entity(entity).get::<StatusEffects>().unwrap();
+        assert!(status_effects.active.is_empty());
+        assert_eq!(health_regen_boost_multiplier(status_effects), 1.0);
     }
 
     #[test]

@@ -65,6 +65,7 @@ fn status_effect_id(kind: &StatusEffectKind) -> String {
         StatusEffectKind::BodyPartWeaken(part) => {
             format!("body_part_weaken:{}", body_part_wire(*part))
         }
+        StatusEffectKind::HealthRegenBoost => "health_regen_boost".to_string(),
         StatusEffectKind::MirrorConcealment => "mirror_concealment".to_string(),
         StatusEffectKind::MirrorExposed => "mirror_exposed".to_string(),
         StatusEffectKind::SpiritTreasurePerception => "spirit_treasure_perception".to_string(),
@@ -100,6 +101,7 @@ fn status_effect_name(kind: &StatusEffectKind) -> String {
         StatusEffectKind::BodyPartWeaken(part) => format!("{}脆弱", body_part_name(*part)),
         StatusEffectKind::SpeedBoost => "疾行".to_string(),
         StatusEffectKind::StaminaRecovBoost => "回力".to_string(),
+        StatusEffectKind::HealthRegenBoost => "养伤".to_string(),
         StatusEffectKind::StaminaCrash => "体力虚脱".to_string(),
         StatusEffectKind::QiDrainForStamina => "真元换体".to_string(),
         StatusEffectKind::LegStrain => "腿部应力伤".to_string(),
@@ -134,6 +136,7 @@ fn status_effect_category(kind: &StatusEffectKind) -> &'static str {
         | StatusEffectKind::BodyPartResist(_)
         | StatusEffectKind::SpeedBoost
         | StatusEffectKind::StaminaRecovBoost
+        | StatusEffectKind::HealthRegenBoost
         | StatusEffectKind::MirrorConcealment
         | StatusEffectKind::SwordParrying
         | StatusEffectKind::ShieldBlocking
@@ -165,6 +168,7 @@ fn status_effect_source_label(kind: &StatusEffectKind) -> &'static str {
         StatusEffectKind::MirrorConcealment
         | StatusEffectKind::MirrorExposed
         | StatusEffectKind::SpiritTreasurePerception => "灵宝",
+        StatusEffectKind::HealthRegenBoost => "养伤设施",
         // plan-cultivation-pacing-v1 P2.3：修炼类 buff/debuff 来源标注"修炼丹药"。
         StatusEffectKind::CultivationAcceleration
         | StatusEffectKind::ExtraordinaryMeridianAcceleration
@@ -189,6 +193,7 @@ fn status_effect_dispel(kind: &StatusEffectKind) -> i32 {
         StatusEffectKind::QiCapPermMinus => 5,
         StatusEffectKind::Stunned | StatusEffectKind::StaminaCrash => 3,
         StatusEffectKind::BodyPartWeaken(_) | StatusEffectKind::QiDrainForStamina => 2,
+        StatusEffectKind::HealthRegenBoost => 1,
         _ => 1,
     }
 }
@@ -312,6 +317,18 @@ mod tests {
             status_effect_source_label(&StatusEffectKind::ExtraordinaryMeridianAcceleration),
             "修炼丹药"
         );
+    }
+
+    #[test]
+    fn health_regen_boost_wire_shape_is_furniture_buff() {
+        let kind = StatusEffectKind::HealthRegenBoost;
+
+        assert_eq!(status_effect_id(&kind), "health_regen_boost");
+        assert_eq!(status_effect_name(&kind), "养伤");
+        assert_eq!(status_effect_category(&kind), "buff");
+        assert_eq!(status_effect_source_label(&kind), "养伤设施");
+        assert_eq!(status_effect_color(&kind), 0xFF55CC66_u32 as i32);
+        assert_eq!(status_effect_dispel(&kind), 1);
     }
 
     #[test]

@@ -133,6 +133,8 @@ pub enum StatusEffectKind {
     SpeedBoost,
     /// plan-alchemy-combat-v1 P0：体力恢复加速或体力上限爆发窗口。
     StaminaRecovBoost,
+    /// plan-furniture-buff-v1 P2：养伤恢复加速，magnitude N → HP 回复 ×(1+N)。
+    HealthRegenBoost,
     /// plan-alchemy-combat-v1 P0：药效结束后的体力虚脱。
     StaminaCrash,
     /// plan-alchemy-combat-v1 P0：用真元持续换取体力恢复。
@@ -289,6 +291,26 @@ mod tests {
         assert!(
             !emitted,
             "expected false because Events<DeathEvent> resource is not registered"
+        );
+    }
+
+    #[test]
+    fn health_regen_boost_status_effect_kind_round_trips_via_serde() {
+        let json = serde_json::to_string(&StatusEffectKind::HealthRegenBoost)
+            .expect("HealthRegenBoost should serialize");
+        assert_eq!(json, "\"HealthRegenBoost\"");
+
+        let decoded: StatusEffectKind =
+            serde_json::from_str(&json).expect("HealthRegenBoost should deserialize");
+        assert_eq!(decoded, StatusEffectKind::HealthRegenBoost);
+    }
+
+    #[test]
+    fn health_regen_boost_rejects_wire_id_as_serde_variant() {
+        let decoded = serde_json::from_str::<StatusEffectKind>("\"health_regen_boost\"");
+        assert!(
+            decoded.is_err(),
+            "serde variant 应保持 Rust enum 名，HUD wire id 由 status_snapshot_emit 显式映射"
         );
     }
 }

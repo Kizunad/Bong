@@ -7,6 +7,7 @@ use valence::prelude::{
 
 use crate::alchemy::LearnedRecipes;
 use crate::combat::anticheat::AntiCheatCounter;
+use crate::combat::status::health_regen_boost_multiplier;
 use crate::combat::CombatClock;
 use crate::cultivation::components::{Contamination, Cultivation, MeridianSystem, Realm};
 use crate::cultivation::death_hooks::{
@@ -64,8 +65,8 @@ use super::components::{
     CombatState, DerivedAttrs, Lifecycle, LifecycleState, QuickSlotBindings, RevivalDecision,
     ShieldDrainOverride, SkillBarBindings, Stamina, StaminaState, StatusEffects, UnlockedStyles,
     Wounds, ATTACK_STAMINA_COST, BLEED_TICK_INTERVAL_TICKS, COMBAT_STATE_TICK_INTERVAL_TICKS,
-    NEAR_DEATH_HEALTH_FRACTION, REVIVAL_CONFIRM_WINDOW_TICKS, REVIVE_HEALTH_FRACTION,
-    STAMINA_TICK_INTERVAL_TICKS, TICKS_PER_SECOND,
+    HEALTH_REGEN_TICK_INTERVAL_TICKS, NEAR_DEATH_HEALTH_FRACTION, REVIVAL_CONFIRM_WINDOW_TICKS,
+    REVIVE_HEALTH_FRACTION, STAMINA_TICK_INTERVAL_TICKS, TICKS_PER_SECOND,
 };
 use super::events::{
     CombatEvent, DeathCinematicPublished, DeathEvent, DeathInsightRequested, RevivalActionIntent,
@@ -81,6 +82,7 @@ pub const SHIELD_DRAIN_PER_SEC: f32 = 3.0;
 const EXHAUSTED_RECOVER_RATIO: f32 = 0.5;
 const EXHAUSTED_EXIT_FRACTION: f32 = 0.3;
 const DEATH_INSIGHT_RECENT_BIO_N: usize = 16;
+pub const BASE_HEALTH_REGEN_PER_SEC: f32 = 0.5;
 
 type NearDeathQueryItem<'a> = (
     Entity,
@@ -88,6 +90,13 @@ type NearDeathQueryItem<'a> = (
     Option<&'a mut Wounds>,
     Option<&'a mut Stamina>,
     Option<&'a mut CombatState>,
+);
+
+type HealthRegenQueryItem<'a> = (
+    &'a mut Wounds,
+    Option<&'a Lifecycle>,
+    Option<&'a DerivedAttrs>,
+    Option<&'a StatusEffects>,
 );
 
 type DeathArbiterQueryItem<'a> = (
@@ -209,6 +218,58 @@ pub fn wound_bleed_tick(
             });
         }
     }
+}
+
+pub fn health_regen_tick(clock: Res<CombatClock>, mut wounded: Query<HealthRegenQueryItem<'_>>) {
+    if !clock.tick.is_multiple_of(HEALTH_REGEN_TICK_INTERVAL_TICKS) {
+        return;
+    }
+
+    let dt = HEALTH_REGEN_TICK_INTERVAL_TICKS as f32 / TICKS_PER_SECOND as f32;
+    for (mut wounds, lifecycle, derived_attrs, status_effects) in &mut wounded {
+        if !can_health_regen(lifecycle, &wounds) {
+            continue;
+        }
+
+        let derived_multiplier = derived_attrs
+            .map(|attrs| attrs.healing_rate_multiplier.max(0.0) as f32)
+            .unwrap_or(1.0);
+        let status_multiplier = status_effects
+            .map(health_regen_boost_multiplier)
+            .unwrap_or(1.0);
+        let regen = BASE_HEALTH_REGEN_PER_SEC * derived_multiplier * status_multiplier * dt;
+        if regen <= f32::EPSILON {
+            continue;
+        }
+
+        wounds.health_current = (wounds.health_current + regen).clamp(0.0, wounds.health_max);
+    }
+}
+
+fn can_health_regen(lifecycle: Option<&Lifecycle>, wounds: &Wounds) -> bool {
+    if wounds.health_max <= 0.0
+        || wounds.health_current <= 0.0
+        || wounds.health_current >= wounds.health_max
+        || has_active_bleeding(wounds)
+    {
+        return false;
+    }
+
+    !lifecycle.is_some_and(|lifecycle| {
+        matches!(
+            lifecycle.state,
+            LifecycleState::NearDeath
+                | LifecycleState::AwaitingRevival
+                | LifecycleState::Terminated
+        )
+    })
+}
+
+fn has_active_bleeding(wounds: &Wounds) -> bool {
+    wounds
+        .entries
+        .iter()
+        .any(|entry| entry.bleeding_per_sec > 0.0)
 }
 
 pub fn stamina_tick(
@@ -2214,6 +2275,245 @@ mod tests {
             wounds.health_current, after_survival,
             "switching to Creative must stop residual wound bleed damage"
         );
+    }
+
+    #[test]
+    fn health_regen_tick_recovers_base_rate() {
+        let mut app = App::new();
+        app.insert_resource(CombatClock {
+            tick: HEALTH_REGEN_TICK_INTERVAL_TICKS,
+        });
+        app.add_systems(Update, health_regen_tick);
+
+        let entity = spawn_actor(
+            &mut app,
+            Wounds {
+                health_current: 10.0,
+                health_max: 30.0,
+                entries: Vec::new(),
+            },
+            Stamina::default(),
+            Lifecycle::default(),
+        );
+
+        app.update();
+
+        let wounds = app.world().entity(entity).get::<Wounds>().unwrap();
+        assert!((wounds.health_current - 10.5).abs() < 1e-6);
+    }
+
+    #[test]
+    fn health_regen_tick_clamps_at_health_max() {
+        let mut app = App::new();
+        app.insert_resource(CombatClock {
+            tick: HEALTH_REGEN_TICK_INTERVAL_TICKS,
+        });
+        app.add_systems(Update, health_regen_tick);
+
+        let entity = spawn_actor(
+            &mut app,
+            Wounds {
+                health_current: 29.8,
+                health_max: 30.0,
+                entries: Vec::new(),
+            },
+            Stamina::default(),
+            Lifecycle::default(),
+        );
+
+        app.update();
+
+        let wounds = app.world().entity(entity).get::<Wounds>().unwrap();
+        assert_eq!(wounds.health_current, 30.0);
+    }
+
+    #[test]
+    fn health_regen_tick_skips_zero_full_and_active_bleeding() {
+        let mut app = App::new();
+        app.insert_resource(CombatClock {
+            tick: HEALTH_REGEN_TICK_INTERVAL_TICKS,
+        });
+        app.add_systems(Update, health_regen_tick);
+
+        let zero_health = spawn_actor(
+            &mut app,
+            Wounds {
+                health_current: 0.0,
+                health_max: 30.0,
+                entries: Vec::new(),
+            },
+            Stamina::default(),
+            Lifecycle::default(),
+        );
+        let full_health = spawn_actor(
+            &mut app,
+            Wounds {
+                health_current: 30.0,
+                health_max: 30.0,
+                entries: Vec::new(),
+            },
+            Stamina::default(),
+            Lifecycle::default(),
+        );
+        let bleeding = spawn_actor(
+            &mut app,
+            Wounds {
+                health_current: 12.0,
+                health_max: 30.0,
+                entries: vec![Wound {
+                    location: BodyPart::Chest,
+                    kind: WoundKind::Cut,
+                    severity: 0.3,
+                    bleeding_per_sec: 0.1,
+                    created_at_tick: 0,
+                    inflicted_by: None,
+                }],
+            },
+            Stamina::default(),
+            Lifecycle::default(),
+        );
+
+        app.update();
+
+        assert_eq!(
+            app.world()
+                .entity(zero_health)
+                .get::<Wounds>()
+                .unwrap()
+                .health_current,
+            0.0
+        );
+        assert_eq!(
+            app.world()
+                .entity(full_health)
+                .get::<Wounds>()
+                .unwrap()
+                .health_current,
+            30.0
+        );
+        assert_eq!(
+            app.world()
+                .entity(bleeding)
+                .get::<Wounds>()
+                .unwrap()
+                .health_current,
+            12.0
+        );
+    }
+
+    #[test]
+    fn health_regen_tick_skips_pending_revival_lifecycles() {
+        let mut app = App::new();
+        app.insert_resource(CombatClock {
+            tick: HEALTH_REGEN_TICK_INTERVAL_TICKS,
+        });
+        app.add_systems(Update, health_regen_tick);
+
+        let near_death = spawn_actor(
+            &mut app,
+            Wounds {
+                health_current: 1.0,
+                health_max: 30.0,
+                entries: Vec::new(),
+            },
+            Stamina::default(),
+            Lifecycle {
+                state: LifecycleState::NearDeath,
+                ..Lifecycle::default()
+            },
+        );
+        let awaiting_revival = spawn_actor(
+            &mut app,
+            Wounds {
+                health_current: 1.0,
+                health_max: 30.0,
+                entries: Vec::new(),
+            },
+            Stamina::default(),
+            Lifecycle {
+                state: LifecycleState::AwaitingRevival,
+                ..Lifecycle::default()
+            },
+        );
+        let terminated = spawn_actor(
+            &mut app,
+            Wounds {
+                health_current: 1.0,
+                health_max: 30.0,
+                entries: Vec::new(),
+            },
+            Stamina::default(),
+            Lifecycle {
+                state: LifecycleState::Terminated,
+                ..Lifecycle::default()
+            },
+        );
+
+        app.update();
+
+        assert_eq!(
+            app.world()
+                .entity(near_death)
+                .get::<Wounds>()
+                .unwrap()
+                .health_current,
+            1.0
+        );
+        assert_eq!(
+            app.world()
+                .entity(awaiting_revival)
+                .get::<Wounds>()
+                .unwrap()
+                .health_current,
+            1.0
+        );
+        assert_eq!(
+            app.world()
+                .entity(terminated)
+                .get::<Wounds>()
+                .unwrap()
+                .health_current,
+            1.0
+        );
+    }
+
+    #[test]
+    fn health_regen_tick_multiplies_derived_attrs_and_status_boost() {
+        let mut app = App::new();
+        app.insert_resource(CombatClock {
+            tick: HEALTH_REGEN_TICK_INTERVAL_TICKS,
+        });
+        app.add_systems(Update, health_regen_tick);
+
+        let entity = spawn_actor(
+            &mut app,
+            Wounds {
+                health_current: 10.0,
+                health_max: 30.0,
+                entries: Vec::new(),
+            },
+            Stamina::default(),
+            Lifecycle::default(),
+        );
+        app.world_mut().entity_mut(entity).insert((
+            DerivedAttrs {
+                healing_rate_multiplier: 1.5,
+                ..DerivedAttrs::default()
+            },
+            StatusEffects {
+                active: vec![ActiveStatusEffect {
+                    kind: StatusEffectKind::HealthRegenBoost,
+                    magnitude: 0.5,
+                    remaining_ticks: 100,
+                    source_pill: None,
+                }],
+            },
+        ));
+
+        app.update();
+
+        let wounds = app.world().entity(entity).get::<Wounds>().unwrap();
+        assert!((wounds.health_current - 11.125).abs() < 1e-6);
     }
 
     #[test]
