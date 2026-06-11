@@ -10,11 +10,11 @@
 
 | 阶段 | 主题 | 状态 |
 |------|------|------|
-| P0 | 纯方块 4 个落地（category 改写 + vanilla state 映射 + client icon） | ⬜ |
-| P1 | FurnitureRegistry + 家具方块放置（bong_blocks 扩） | ⬜ |
-| P2 | 血量自然恢复 tick（从零建）+ `HealthRegenBoost` 变体 | ⬜ |
-| P3 | 床/蒲团 aura buff + 限制 + 视听 | ⬜ |
-| P4 | 防潮架接保鲜 / 灵石架降级装饰 / 收尾验收 | ⬜ |
+| P0 | 纯方块 4 个落地（category 改写 + vanilla state 映射 + client icon） | ✅ 2026-06-11 |
+| P1 | FurnitureRegistry + 家具方块放置（bong_blocks 扩） | ✅ 2026-06-11 |
+| P2 | 血量自然恢复 tick（从零建）+ `HealthRegenBoost` 变体 | ✅ 2026-06-11 |
+| P3 | 床/蒲团 aura buff + 限制 + 视听 | ✅ 2026-06-12 |
+| P4 | 防潮架接保鲜 / 灵石架降级装饰 / 收尾验收 | ✅ 2026-06-12 |
 
 ---
 
@@ -49,7 +49,7 @@
 
 ---
 
-## P0 — 纯方块 4 个落地 ⬜
+## P0 — 纯方块 4 个落地 ✅ 2026-06-11
 
 **目标**：`torch_item`/`lantern_item`/`door_bolt`/`window_grate` 从"category=misc 被放置闸拒"变成可右键放置的实体方块。
 
@@ -68,7 +68,7 @@
 - **测试**（client）：`BlockVanillaIconMap` 4 条新 host item `createStackFor` 非空 + `isKnownBlockItem` true（参 `ClientRequestSenderTest.java:231` 既有 sendBlockPlace 测试）
 - **视听**：复用 vanilla 方块放置（torch/lantern 自带原版光照与放置音），P0 无需新增 VFX/SFX——纯 vanilla state 占位，玩家可感知行为完全由原版方块承载。
 
-## P1 — FurnitureRegistry + 家具方块放置 ⬜
+## P1 — FurnitureRegistry + 家具方块放置 ✅ 2026-06-11
 
 **目标**：`simple_bed`/`meditation_mat`/`moisture_base`/`spirit_stone_rack` 放置为带坐标登记的家具方块，供 P3/P4 的 aura/保鲜扫描查询。
 
@@ -95,7 +95,7 @@
   - 客户端（按 README 第 2/5 步）：`server/crates/valence_generated_bong` `cargo test` 验 `BlockState::BONG_*` 常量；`client` `BongBlocksTest` 验 4 方块注册 + `BongBlockIds` raw-id 与 server 对齐（防 raw ID mismatch）
 - **视听**：放置走 P3 各家具 bbmodel/vanilla 占位 + vanilla 放置音（bbmodel 资产产出见 §8.1 #2 与 §10——P1 先用 bong_blocks 默认渲染，bbmodel 留 P4 收尾或 follow-up）。
 
-## P2 — 血量自然恢复 tick（从零）+ HealthRegenBoost ⬜
+## P2 — 血量自然恢复 tick（从零）+ HealthRegenBoost ✅ 2026-06-11
 
 **目标**：从零建血量自然恢复系统（现仅有流血减血、无回血），并新增 `HealthRegenBoost` 状态变体供 P3 床 aura 施加。
 
@@ -123,7 +123,7 @@
   - 状态转换：buff 施加→生效→过期回基准（`duration_ticks` 耗尽后 multiplier 回 1.0）
 - **视听**：纯 server 逻辑（恢复 buff 的玩家感知视听在 P3 床 aura 上 buff 瞬间触发，见 P3）。
 
-## P3 — 床/蒲团 aura buff + 限制 + 视听 ⬜
+## P3 — 床/蒲团 aura buff + 限制 + 视听 ✅ 2026-06-12
 
 **目标**：床/蒲团放置后在小范围内给静止玩家恢复加速 buff，带用户硬要求的 4 条限制，配上 buff 瞬间的视听反馈。
 
@@ -155,7 +155,7 @@
   - 蒲团 `CultivationAcceleration` 经 `cultivation_acceleration_multiplier`（`tick.rs:181`）正确叠乘
   - vfx：上 buff 时 emit 对应 `VfxEventRequest`（event_id 断言 `bong:furniture_bed_rest` / `bong:furniture_meditation`）
 
-## P4 — 防潮架接保鲜 / 灵石架降级装饰 / 收尾验收 ⬜
+## P4 — 防潮架接保鲜 / 灵石架降级装饰 / 收尾验收 ✅ 2026-06-12
 
 **目标**：灵石架降级为纯装饰（系统未实装）；端到端验收 + bbmodel 收尾。**防潮架接 shelflife 降级为 follow-up**——依赖 `plan-placeable-container-blocks-v1`（世界放置容器 entity）未落地，本 plan 不做悬空接线（见下文 + reminder.md）。
 
@@ -278,4 +278,44 @@ PR-5 的 4 家具 bbmodel 属视觉资产，**强制走 docs/CLAUDE.md §10.1 �
 
 ## Finish Evidence
 
-（迁入前必填）
+### 落地清单
+
+| 阶段 | 落地模块 / 文件 |
+|---|---|
+| P0 | `server/assets/items/workbench_materials.toml` 将 `torch_item` / `lantern_item` / `door_bolt` / `window_grate` 改为可放置 block；`server/src/world/block_place.rs` 增加 4 条 vanilla 映射；`client/src/main/java/com/bong/client/block/BlockVanillaIconMap.java` 扩 host item；`client/src/test/java/com/bong/client/block/BlockVanillaIconMapTest.java` 与 `server/src/inventory/mod.rs` 锁住客户端图标和库存模板回归。 |
+| P1 | `server/src/world/furniture.rs` 新增 `FurnitureRegistry` / `FurnitureKind` / 范围查询 / 重建映射；`server/src/world/block_place.rs` 放置成功后登记家具，`server/src/world/block_break.rs` 破坏时移除登记；`client/src/main/java/com/bong/client/block/BongBlocks.java`、`client/src/main/resources/assets/bong/blockstates/*.json`、`client/src/main/resources/assets/bong/models/block/*.json`、`client/src/main/resources/assets/bong/textures/block/*.png` 完成 4 家具方块客户端注册与占位资源。 |
+| P2 | `server/src/combat/lifecycle.rs` 新增 `health_regen_tick` 并显式处理满血、死亡态、流血压制、乘区和 clamp；`server/src/combat/events.rs` / `server/src/combat/status.rs` 新增并消费 `HealthRegenBoost`；`server/src/combat/components.rs` 激活 `DerivedAttrs.healing_rate_multiplier`；`server/src/network/status_snapshot_emit.rs` 补 HUD/status wire 显示。 |
+| P3 | `server/src/world/furniture.rs` 新增床/蒲团 aura tick、Chebyshev 2 格范围、静止限制、同效不叠、续期不重放反馈；`server/src/audio/mod.rs` 与 `client/src/main/resources/assets/audio/recipes/furniture_aura_hint.json` 接入提示音；`client/src/main/java/com/bong/client/visual/particle/BedRestAuraPlayer.java`、`MeditationAuraPlayer.java`、`FurnitureAuraParticleSpec.java` 与 `VfxBootstrap.java` 接入两套可区分 VFX。 |
+| P4 | `server/assets/items/workbench_materials.toml` 明确 `spirit_stone_rack` 纯装饰、`moisture_base` 仅作后续保鲜接线锚点；`scripts/models/gen_furniture.py` 单源生成 4 家具 `.bbmodel` / block model JSON / preview；`scripts/models/test_gen_furniture.py` 覆盖生成器 happy、边界、错误和 CLI 分支；`local_models/*.bbmodel`、`client/src/main/resources/assets/bong/models/block/*.json`、`scripts/models/*furniture*|*preview*.png` 提交三轮视觉产物；`client/resourcepack/manifest.json` 与 `server/src/network/resourcepack.rs` 同步默认资源包哈希。 |
+
+### 关键 commit / PR
+
+| 阶段 | PR | merge commit | 结果 |
+|---|---|---|---|
+| P0 | `#505` | `0aa8f07289361449a531a59ecd4a83aefbd8a599` | `plan-furniture-buff-v1 P0: 纯方块落地`，4 个纯方块进入放置链。 |
+| P1 | `#506` | `3eaecaa60233e1ff448dbe9b169970ae37f2f7f0` | `plan-furniture-buff-v1 P1: FurnitureRegistry + 家具方块放置`，4 家具方块完成 server/client 注册与 registry 生命周期。 |
+| P2 | `#507` | `e52a430cec2532077370eeba08aa126cf7d21045` | `plan-furniture-buff-v1 P2: 血量恢复体系`，自然回血与 `HealthRegenBoost` wire/HUD 显示落地。 |
+| P3 | `#510` | `ca866b1709160c11739eb041a0f978efe6a51fc6` | `plan-furniture-buff-v1 P3: 家具 aura buff 与视听反馈`，床/蒲团 buff 限制与 VFX/SFX/narration 落地。 |
+| P4 | `#511` | `1981ad829f9fa3095c80dac79537bf8a727fb8e8` | `plan-furniture-buff-v1 P4: 家具 bbmodel 收尾与降级验收`，4 家具模型三轮打磨、生成器测试与 e2e 收口。 |
+
+### 测试结果
+
+- P0：`cargo fmt --check`、`cargo test block_item_to_state -j 2`、`cargo test block_material_templates_load_with_block_category_and_default_stack -j 2`、`cargo test shelter_block_templates_keep_inventory_footprint_and_weight -j 2`、`cargo clippy --all-targets -j 2 -- -D warnings`、`cargo test -j 2`（8579 passed, 1 ignored）、`./gradlew test --tests com.bong.client.block.BlockVanillaIconMapTest --max-workers=2`、`./gradlew test build --max-workers=2`。
+- P1：`cargo fmt --check`、`cargo clippy --all-targets -j 2 -- -D warnings`、`cargo test world::furniture -j 2`、完整矩阵 `cargo test -j 2`、`server/crates/valence_generated_bong cargo test -j 2`、`./gradlew generateBongBlockIds test --tests com.bong.client.block.BongBlocksTest --tests com.bong.client.block.BlockVanillaIconMapTest --max-workers=2`、`./gradlew test build --max-workers=2`。
+- P2：`cargo fmt --check`、`cargo test combat::events -j 2`、`cargo test combat::status -j 2`、`cargo test combat::lifecycle -j 2`、`cargo test network::status_snapshot_emit -j 2`、`cargo clippy --all-targets -j 2 -- -D warnings`、`cargo test -j 2`（8613 passed, 1 ignored）。
+- P3：`cargo fmt --check`、`cargo clippy --all-targets -- -D warnings`、`cargo test -j 2`（8634 passed, 1 ignored）、`cargo test world::furniture -j 2`（13 passed）、`cargo test audio::tests::loads_default_audio_recipes -j 2`（1 passed）、`./gradlew --max-workers=2 test --tests com.bong.client.visual.particle.VfxRegistryTest`、`./gradlew --max-workers=2 test build`。
+- P4：`python3 scripts/models/gen_furniture.py --verify`、`python3 -m unittest scripts/models/test_gen_furniture.py`、`git diff --check origin/main...HEAD`、`cargo fmt --check`、`cargo test world::block_place::tests::handler_places_furniture_block_and_registers_position -j 2`、`cargo test world::block_break::tests::default_break_removes_furniture_registry_entry -j 2`、`cargo test world::furniture -j 2`、`cargo clippy --all-targets -- -D warnings`、`cargo test -j 2`（8666 passed, 1 ignored）、`./gradlew --max-workers=2 test --tests com.bong.client.block.BongBlocksTest`、`./gradlew --max-workers=2 test build`、`bash scripts/smoke-test-e2e.sh`（8 passed, 0 failed）。
+- CI gate：`#505`、`#506`、`#507`、`#510`、`#511` 的 `e2e` 均为 success；`#506`、`#511` 的 `Build resource pack` 为 success。`#511` 最终 `/review` 给出 LGTM，CodeRabbit 红灯为额度 / Docstring Coverage warning，不构成内容 blocker。
+
+### 跨仓库核验
+
+- server：`BlockPlaceRequest` → `block_item_to_state` → `write_block_state` → `FurnitureRegistry` 登记；`block_break` 破坏移除；`health_regen_tick` 读取 `HealthRegenBoost` 与 `DerivedAttrs.healing_rate_multiplier`；`status_snapshot_emit` 显示 `health_regen_boost`；P4 未新增任何 qi 流，蒲团仍复用守恒安全的 `CultivationAcceleration`。
+- client：`BlockVanillaIconMap` 打通 8 个放置物品；`BongBlocks` / `BongBlockIds` / blockstates / models / textures 对齐 4 家具方块；`BedRestAuraPlayer` 与 `MeditationAuraPlayer` 经 `VfxRegistry` 注册，测试覆盖 VFX 差异化；P4 block model 均为 explicit `elements`，不再回退 `minecraft:block/cube_all`。
+- agent：本 plan 不接入天道 agent；无 schema / Redis / agent IPC 变更。
+- assets/scripts：`scripts/models/gen_furniture.py` 为 4 家具模型单源生成器，`scripts/models/test_gen_furniture.py` 锁住生成器验证、写入和 CLI 分支；`local_models/*.bbmodel` 为 Blockbench 源产物，`scripts/models/*preview*.png` / `render_*.png` 为三轮视觉验收产物。
+
+### 遗留 / 后续
+
+- `moisture_base` 保鲜行为仍依赖 `plan-placeable-container-blocks-v1` 的世界放置容器 entity；本 plan 只保留家具方块与 `FurnitureRegistry` 锚点，不做悬空 shelflife 接线。
+- `spirit_stone_rack` 仍为纯装饰；灵石存储 / 磨损 / 陈列收益等待后续灵石系统 plan。
+- `practice_session_tick` 与 `DerivedAttrs.qi_regen_multiplier` 未在本 plan 接活，避免引入未走 `qi_physics::ledger` 的真元守恒风险。
