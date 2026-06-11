@@ -1,5 +1,7 @@
 package com.bong.client.network;
 
+import com.bong.client.combat.EquippedShield;
+import com.bong.client.combat.EquippedShieldStore;
 import com.bong.client.combat.EquippedWeapon;
 import com.bong.client.combat.WeaponEquippedStore;
 import com.google.gson.JsonElement;
@@ -20,6 +22,10 @@ public final class WeaponEquippedHandler implements ServerDataHandler {
         JsonElement weaponElem = payload.get("weapon");
         if (weaponElem == null || weaponElem.isJsonNull() || !weaponElem.isJsonObject()) {
             WeaponEquippedStore.putOrClear(slot, null);
+            // plan-shield-block-v1 §P3：卸下时同步清空盾槽（若 off_hand 卸下则盾也消）
+            if ("off_hand".equals(slot)) {
+                EquippedShieldStore.clear();
+            }
             return ServerDataDispatch.handled(envelope.type(), "Cleared slot " + slot);
         }
 
@@ -30,6 +36,21 @@ public final class WeaponEquippedHandler implements ServerDataHandler {
         float durCurrent = w.get("durability_current").getAsFloat();
         float durMax = w.get("durability_max").getAsFloat();
         int qualityTier = w.get("quality_tier").getAsInt();
+
+        // plan-shield-block-v1 §P3：off_hand 装备盾牌模板时同步写入 EquippedShieldStore
+        if ("off_hand".equals(slot) && isShieldTemplate(templateId)) {
+            EquippedShieldStore.equip(new EquippedShield(instanceId, templateId, durCurrent, durMax));
+            // 盾牌不写入 WeaponEquippedStore（盾非武器），但仍返回 handled
+            return ServerDataDispatch.handled(
+                envelope.type(),
+                "Equipped shield " + templateId + " to off_hand (dur=" + durCurrent + "/" + durMax + ")"
+            );
+        }
+
+        // 非盾牌：清空盾槽（off_hand 改装其他武器时清除盾）
+        if ("off_hand".equals(slot)) {
+            EquippedShieldStore.clear();
+        }
 
         WeaponEquippedStore.putOrClear(slot, new EquippedWeapon(
             slot, instanceId, templateId, weaponKind,
@@ -47,5 +68,13 @@ public final class WeaponEquippedHandler implements ServerDataHandler {
         JsonElement e = obj.get(field);
         if (e == null || !e.isJsonPrimitive()) return fallback;
         return e.getAsString();
+    }
+
+    /**
+     * plan-shield-block-v1 §P3：template_id→材质映射。
+     * 盾牌 template 以 "_shield" 结尾，不新增 material 字段，客户端自行判定。
+     */
+    static boolean isShieldTemplate(String templateId) {
+        return templateId != null && templateId.endsWith("_shield");
     }
 }

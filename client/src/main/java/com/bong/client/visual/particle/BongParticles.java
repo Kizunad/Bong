@@ -49,6 +49,8 @@ public final class BongParticles {
     public static final DefaultParticleType SUO_DI_ARC           = FabricParticleTypes.simple();
     public static final DefaultParticleType HUI_LI_BREATH        = FabricParticleTypes.simple();
     public static final DefaultParticleType HU_GU_STRIPE         = FabricParticleTypes.simple();
+    // plan-shield-block-v1 §P3 — 木盾破碎碎屑粒子贴图
+    public static final DefaultParticleType WOOD_DEBRIS           = FabricParticleTypes.simple();
 
     // SpriteProvider 缓存，由 Factory 注册回调注入，VfxPlayer 通过它取 sprite。
     public static volatile SpriteProvider swordQiTrailSprites;
@@ -75,6 +77,8 @@ public final class BongParticles {
     public static volatile SpriteProvider suoDiArcSprites;
     public static volatile SpriteProvider huiLiBreathSprites;
     public static volatile SpriteProvider huGuStripeSprites;
+    // plan-shield-block-v1 §P3 — 木盾破碎碎屑贴图 sprite provider
+    public static volatile SpriteProvider woodDebrisSprites;
 
     private BongParticles() {
     }
@@ -105,6 +109,8 @@ public final class BongParticles {
         reg("suo_di_arc",           SUO_DI_ARC);
         reg("hui_li_breath",        HUI_LI_BREATH);
         reg("hu_gu_stripe",         HU_GU_STRIPE);
+        // plan-shield-block-v1 §P3
+        reg("wood_debris",          WOOD_DEBRIS);
     }
 
     /** Client 侧：注册 Factory，抓住 SpriteProvider 引用。 */
@@ -134,6 +140,8 @@ public final class BongParticles {
         pfr.register(SUO_DI_ARC,           provider -> { suoDiArcSprites          = provider; return lineFactory(provider); });
         pfr.register(HUI_LI_BREATH,        provider -> { huiLiBreathSprites       = provider; return spriteFactory(provider); });
         pfr.register(HU_GU_STRIPE,         provider -> { huGuStripeSprites        = provider; return ribbonFactory(provider); });
+        // plan-shield-block-v1 §P3 — 木盾破碎碎屑（sprite billboard）
+        pfr.register(WOOD_DEBRIS,           provider -> { woodDebrisSprites         = provider; return spriteFactory(provider); });
     }
 
     private static void reg(String id, DefaultParticleType type) {

@@ -1,5 +1,7 @@
 package com.bong.client.hud;
 
+import com.bong.client.combat.EquippedShield;
+import com.bong.client.combat.EquippedShieldStore;
 import com.bong.client.combat.EquippedWeapon;
 import com.bong.client.combat.EquippedTreasure;
 import com.bong.client.combat.TreasureEquippedStore;
@@ -58,10 +60,17 @@ public final class WeaponHotbarHudPlanner {
             int x = hotbarLeftX + hotbarWidth + SLOT_GAP_TO_HOTBAR;
             drawWeaponSlot(out, x, upperY, totalHeight, offHand);
         } else {
-            EquippedTreasure offHandTreasure = TreasureEquippedStore.get("off_hand");
-            if (offHandTreasure != null) {
+            // plan-shield-block-v1 §P3：盾牌 off_hand 槽优先于宝器槽（盾牌不是武器，独立 store）
+            EquippedShield offHandShield = EquippedShieldStore.snapshot();
+            if (offHandShield != null) {
                 int x = hotbarLeftX + hotbarWidth + SLOT_GAP_TO_HOTBAR;
-                drawTreasureSlot(out, x, upperY, totalHeight, offHandTreasure);
+                drawShieldSlot(out, x, upperY, totalHeight, offHandShield);
+            } else {
+                EquippedTreasure offHandTreasure = TreasureEquippedStore.get("off_hand");
+                if (offHandTreasure != null) {
+                    int x = hotbarLeftX + hotbarWidth + SLOT_GAP_TO_HOTBAR;
+                    drawTreasureSlot(out, x, upperY, totalHeight, offHandTreasure);
+                }
             }
         }
         // two_hand 暂合并到 main_hand 渲染槽,语义待后续(plan §2.2 two_hand 占 main+off)
@@ -92,6 +101,37 @@ public final class WeaponHotbarHudPlanner {
         int durTrackW = SLOT_W - 4;
         int durFilledW = Math.round(w.durabilityRatio() * durTrackW);
         int durColor = durabilityColor(w.durabilityRatio());
+        out.add(HudRenderCommand.rect(
+            HudRenderLayer.QUICK_BAR, x + 2, durY, durTrackW, DURABILITY_H, DURABILITY_BG_COLOR
+        ));
+        if (durFilledW > 0) {
+            out.add(HudRenderCommand.rect(
+                HudRenderLayer.QUICK_BAR, x + 2, durY, durFilledW, DURABILITY_H, durColor
+            ));
+        }
+    }
+
+    /**
+     * plan-shield-block-v1 §P3：渲染 off_hand 盾牌槽（耐久条 + 盾字标识）。
+     * 耐久条逻辑与武器槽一致；外框采用蓝色区分（盾非武器）。
+     */
+    private static void drawShieldSlot(
+        List<HudRenderCommand> out, int x, int y, int totalH, EquippedShield shield
+    ) {
+        final int SHIELD_BORDER_COLOR = 0xFF4080C0; // 蓝：盾牌专属边框
+        out.add(HudRenderCommand.rect(HudRenderLayer.QUICK_BAR, x, y, SLOT_W, totalH, BG_COLOR));
+        appendBorder(out, x, y, SLOT_W, totalH, SHIELD_BORDER_COLOR);
+
+        out.add(HudRenderCommand.text(
+            HudRenderLayer.QUICK_BAR, "盾",
+            x + SLOT_W / 2 - 3, y + totalH / 2 - 4,
+            GLYPH_COLOR
+        ));
+
+        int durY = y + totalH - DURABILITY_H - 2;
+        int durTrackW = SLOT_W - 4;
+        int durFilledW = Math.round(shield.durabilityRatio() * durTrackW);
+        int durColor = durabilityColor(shield.durabilityRatio());
         out.add(HudRenderCommand.rect(
             HudRenderLayer.QUICK_BAR, x + 2, durY, durTrackW, DURABILITY_H, DURABILITY_BG_COLOR
         ));

@@ -360,6 +360,22 @@ public class VfxRegistryTest {
                 "bootstrap should register alchemy combat pill VFX " + eventId);
         }
         assertNotNull(VfxRegistry.instance().lookup(SwordQiSlashPlayer.EVENT_ID).orElse(null));
+
+        // plan-shield-block-v1 §P3 — 破盾粒子
+        assertTrue(VfxRegistry.instance().contains(ShieldWoodShatterPlayer.EVENT_ID),
+            "bootstrap should register shield_break_wood VFX (木盾碎屑迸射)");
+        assertTrue(
+            VfxRegistry.instance().lookup(ShieldWoodShatterPlayer.EVENT_ID).get()
+                instanceof ShieldWoodShatterPlayer,
+            "shield_break_wood should route to ShieldWoodShatterPlayer"
+        );
+        assertTrue(VfxRegistry.instance().contains(new Identifier("bong", "shield_break_bone")),
+            "bootstrap should register shield_break_bone VFX (骨盾碎裂，复用 FaunaBoneShatterPlayer)");
+        assertTrue(
+            VfxRegistry.instance().lookup(new Identifier("bong", "shield_break_bone")).get()
+                instanceof FaunaBoneShatterPlayer,
+            "shield_break_bone should route to FaunaBoneShatterPlayer"
+        );
     }
 
     private static void assertTiandaoHuntRoute(Identifier eventId) {

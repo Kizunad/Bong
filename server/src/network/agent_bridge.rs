@@ -96,6 +96,7 @@ pub fn payload_type_label(payload_type: ServerDataType) -> &'static str {
         ServerDataType::EventStreamPush => "event_stream_push",
         ServerDataType::WeaponEquipped => "weapon_equipped",
         ServerDataType::WeaponBroken => "weapon_broken",
+        ServerDataType::ShieldBroken => "shield_broken",
         ServerDataType::TreasureEquipped => "treasure_equipped",
         ServerDataType::VortexState => "vortex_state",
         ServerDataType::DuguPoisonState => "dugu_poison_state",

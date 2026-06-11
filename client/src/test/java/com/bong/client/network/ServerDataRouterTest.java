@@ -8,7 +8,9 @@ import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 public class ServerDataRouterTest {
@@ -76,6 +78,8 @@ public class ServerDataRouterTest {
             "weapon_equipped",
             "weapon_broken",
             "treasure_equipped",
+            // plan-shield-block-v1 §P3 破盾事件。
+            "shield_broken",
             // plan-woliu-v1 §A.1 涡流 HUD 状态推送。
             "vortex_state",
             // plan-dugu-v1 P0/P1 — 毒蛊受毒状态 HUD 推送。
@@ -277,6 +281,79 @@ public class ServerDataRouterTest {
         assertTrue(result.isHandled());
         assertFalse(result.isNoOp());
         assertEquals("burst_meridian_event", result.envelope().type());
+    }
+
+    // ---- plan-shield-block-v1 §P3 e2e: shield_broken 端到端路由验证 ------
+
+    /**
+     * e2e：server 推送 shield_broken payload → client router 路由 → 收到 toast「盾已碎裂」+
+     * SHIELD_BREAK_FLASH VisualEffect。
+     * 验证的是完整链路：ServerDataRouter.createDefault() → ShieldBrokenHandler → dispatch。
+     */
+    @Test
+    void e2e_shieldBroken_woodenShield_routesToHandlerWithToastAndFlash() {
+        com.bong.client.combat.EquippedShieldStore.resetForTests();
+        String json = "{\"v\":1,\"type\":\"shield_broken\",\"instance_id\":77,\"template_id\":\"wooden_shield\"}";
+        ServerDataRouter.RouteResult result = ServerDataRouter.createDefault()
+            .route(json, json.getBytes(StandardCharsets.UTF_8).length);
+
+        assertFalse(result.isParseError(),
+            "shield_broken payload 不应解析失败");
+        assertTrue(result.isHandled(),
+            "shield_broken 应被路由并标记为 handled（找到注册的 ShieldBrokenHandler）");
+        assertFalse(result.isNoOp(),
+            "shield_broken 不应变成 noOp（noOp 意味着没有注册 handler）");
+        assertEquals("shield_broken", result.envelope().type());
+
+        // toast 文案验证：「盾已碎裂」
+        assertTrue(result.dispatch().alertToast().isPresent(),
+            "e2e：shield_broken dispatch 应包含 alertToast");
+        assertEquals("盾已碎裂", result.dispatch().alertToast().orElseThrow().text(),
+            "e2e toast 文案应为「盾已碎裂」");
+
+        // VisualEffect SHIELD_BREAK_FLASH
+        assertTrue(result.dispatch().visualEffectState().isPresent(),
+            "e2e：shield_broken dispatch 应包含 visualEffectState");
+        assertSame(
+            com.bong.client.state.VisualEffectState.EffectType.SHIELD_BREAK_FLASH,
+            result.dispatch().visualEffectState().orElseThrow().effectType(),
+            "e2e：visualEffect 类型应为 SHIELD_BREAK_FLASH，"
+                + "实际: " + result.dispatch().visualEffectState().orElseThrow().effectType()
+        );
+    }
+
+    @Test
+    void e2e_shieldBroken_boneShield_routesToHandlerWithToast() {
+        com.bong.client.combat.EquippedShieldStore.resetForTests();
+        String json = "{\"v\":1,\"type\":\"shield_broken\",\"instance_id\":88,\"template_id\":\"bone_shield\"}";
+        ServerDataRouter.RouteResult result = ServerDataRouter.createDefault()
+            .route(json, json.getBytes(StandardCharsets.UTF_8).length);
+
+        assertFalse(result.isParseError());
+        assertTrue(result.isHandled());
+        assertEquals("盾已碎裂", result.dispatch().alertToast().orElseThrow().text(),
+            "骨盾破碎 e2e toast 应为「盾已碎裂」");
+    }
+
+    /**
+     * e2e：连续格挡至破盾 payload → EquippedShieldStore 清空（off_hand 盾槽消失）。
+     */
+    @Test
+    void e2e_shieldBroken_clearsOffHandShieldStore() {
+        long instanceId = 55L;
+        com.bong.client.combat.EquippedShieldStore.equip(
+            new com.bong.client.combat.EquippedShield(instanceId, "wooden_shield", 0f, 100f)
+        );
+        // precondition: 盾槽有盾
+        assertNotNull(com.bong.client.combat.EquippedShieldStore.snapshot(),
+            "e2e 前置：盾槽应有盾");
+
+        String json = "{\"v\":1,\"type\":\"shield_broken\",\"instance_id\":" + instanceId
+            + ",\"template_id\":\"wooden_shield\"}";
+        ServerDataRouter.createDefault().route(json, json.getBytes(StandardCharsets.UTF_8).length);
+
+        assertNull(com.bong.client.combat.EquippedShieldStore.snapshot(),
+            "e2e：破盾后 off_hand 盾槽应清空");
     }
 
     @Test

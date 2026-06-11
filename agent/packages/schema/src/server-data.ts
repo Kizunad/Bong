@@ -200,6 +200,7 @@ export const ServerDataType = Type.Union([
   Type.Literal("skill_config_snapshot"),
   Type.Literal("weapon_equipped"),
   Type.Literal("weapon_broken"),
+  Type.Literal("shield_broken"),
   Type.Literal("treasure_equipped"),
   Type.Literal("dugu_poison_state"),
   Type.Literal("poison_dose_event"),
@@ -1194,6 +1195,15 @@ export const WeaponBrokenV1 = Type.Object(
 );
 export type WeaponBrokenV1 = Static<typeof WeaponBrokenV1>;
 
+export const ShieldBrokenV1 = Type.Object(
+  {
+    instance_id: Type.Integer({ minimum: 0 }),
+    template_id: Type.String({ minLength: 1, maxLength: 128 }),
+  },
+  { additionalProperties: false },
+);
+export type ShieldBrokenV1 = Static<typeof ShieldBrokenV1>;
+
 export const TreasureViewV1 = Type.Object(
   {
     instance_id: Type.Integer({ minimum: 0 }),
@@ -1234,6 +1244,16 @@ export const ServerDataWeaponBrokenV1 = Type.Object(
   { additionalProperties: false },
 );
 export type ServerDataWeaponBrokenV1 = Static<typeof ServerDataWeaponBrokenV1>;
+
+export const ServerDataShieldBrokenV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    type: Type.Literal("shield_broken"),
+    ...ShieldBrokenV1.properties,
+  },
+  { additionalProperties: false },
+);
+export type ServerDataShieldBrokenV1 = Static<typeof ServerDataShieldBrokenV1>;
 
 export const ServerDataTreasureEquippedV1 = Type.Object(
   {
@@ -1711,6 +1731,7 @@ export const ServerDataV1 = Type.Union([
   ServerDataCoffinStateV1,
   ServerDataWeaponEquippedV1,
   ServerDataWeaponBrokenV1,
+  ServerDataShieldBrokenV1,
   ServerDataTreasureEquippedV1,
   ServerDataRiftPortalStateV1,
   ServerDataRiftPortalRemovedV1,

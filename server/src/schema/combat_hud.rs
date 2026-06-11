@@ -270,6 +270,16 @@ pub struct WeaponBrokenV1 {
     pub template_id: String,
 }
 
+/// 盾牌损坏通知（plan-shield-block-v1 P3）。盾耐久归零时 server 销毁 ItemInstance，
+/// client 通过 template_id 映射贴图（"wooden_shield"→木 / "bone_shield"→骨）。
+/// 镜像 WeaponBrokenV1，独立 struct 不复用。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ShieldBrokenV1 {
+    pub instance_id: u64,
+    pub template_id: String,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct TreasureViewV1 {
@@ -350,6 +360,62 @@ mod tests {
         let json = serde_json::to_string(&original).expect("serialize");
         let parsed: WeaponBrokenV1 = serde_json::from_str(&json).expect("deserialize");
         assert_eq!(parsed, original);
+    }
+
+    // ── plan-shield-block-v1 P3: ShieldBrokenV1 serde roundtrip ──────────────
+
+    #[test]
+    fn shield_broken_roundtrip_wooden() {
+        let original = ShieldBrokenV1 {
+            instance_id: 42,
+            template_id: "wooden_shield".to_string(),
+        };
+        let json = serde_json::to_string(&original).expect("serialize ShieldBrokenV1");
+        let parsed: ShieldBrokenV1 =
+            serde_json::from_str(&json).expect("deserialize ShieldBrokenV1");
+        assert_eq!(
+            parsed, original,
+            "ShieldBrokenV1 roundtrip must preserve all fields (wooden_shield)"
+        );
+    }
+
+    #[test]
+    fn shield_broken_roundtrip_bone() {
+        let original = ShieldBrokenV1 {
+            instance_id: 99,
+            template_id: "bone_shield".to_string(),
+        };
+        let json = serde_json::to_string(&original).expect("serialize ShieldBrokenV1 bone");
+        let parsed: ShieldBrokenV1 =
+            serde_json::from_str(&json).expect("deserialize ShieldBrokenV1 bone");
+        assert_eq!(
+            parsed, original,
+            "ShieldBrokenV1 roundtrip must preserve all fields (bone_shield)"
+        );
+    }
+
+    #[test]
+    fn shield_broken_denies_unknown_fields() {
+        let json = r#"{"instance_id":1,"template_id":"wooden_shield","extra":"bad"}"#;
+        let result = serde_json::from_str::<ShieldBrokenV1>(json);
+        assert!(
+            result.is_err(),
+            "ShieldBrokenV1 must deny unknown fields (serde deny_unknown_fields); \
+             expected Err but got Ok — extra field 'extra' was silently accepted"
+        );
+    }
+
+    #[test]
+    fn shield_broken_wire_fields_match_weapon_broken_contract() {
+        // Pin wire shape: {instance_id: integer, template_id: string} — matches TypeBox contract
+        let json = r#"{"instance_id":7,"template_id":"bone_shield"}"#;
+        let parsed: ShieldBrokenV1 =
+            serde_json::from_str(json).expect("ShieldBrokenV1 must parse standard wire shape");
+        assert_eq!(parsed.instance_id, 7, "instance_id field must be u64");
+        assert_eq!(
+            parsed.template_id, "bone_shield",
+            "template_id field must be String"
+        );
     }
 
     #[test]

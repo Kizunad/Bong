@@ -85,6 +85,7 @@ public final class ServerDataRouter {
         FullPowerStateHandler fullPowerStateHandler = new FullPowerStateHandler();
         WeaponEquippedHandler weaponEquippedHandler = new WeaponEquippedHandler();
         WeaponBrokenHandler weaponBrokenHandler = new WeaponBrokenHandler();
+        ShieldBrokenHandler shieldBrokenHandler = new ShieldBrokenHandler();
         TreasureEquippedHandler treasureEquippedHandler = new TreasureEquippedHandler();
         RealmVisionParamsHandler realmVisionParamsHandler = new RealmVisionParamsHandler();
         SpiritualSenseTargetsHandler spiritualSenseTargetsHandler = new SpiritualSenseTargetsHandler();
@@ -164,6 +165,8 @@ public final class ServerDataRouter {
         handlers.put("full_power_exhausted_state", fullPowerStateHandler);
         handlers.put("weapon_equipped", weaponEquippedHandler);
         handlers.put("weapon_broken", weaponBrokenHandler);
+        // plan-shield-block-v1 §P3 — 破盾事件
+        handlers.put("shield_broken", shieldBrokenHandler);
         handlers.put("treasure_equipped", treasureEquippedHandler);
         handlers.put("realm_vision_params", realmVisionParamsHandler);
         handlers.put("spiritual_sense_targets", spiritualSenseTargetsHandler);

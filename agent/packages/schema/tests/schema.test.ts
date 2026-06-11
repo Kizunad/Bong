@@ -96,7 +96,13 @@ import {
 import { ZongCoreActivationV1 } from "../src/zong-formation.js";
 import { RealmVisionParamsV1 } from "../src/realm-vision.js";
 import { ClientRequestV1 } from "../src/client-request.js";
-import { ServerDataV1, ServerDataMineralProbeResultV1, ServerDataInsightOfferV1 } from "../src/server-data.js";
+import {
+  ServerDataV1,
+  ServerDataMineralProbeResultV1,
+  ServerDataInsightOfferV1,
+  ShieldBrokenV1,
+  ServerDataShieldBrokenV1,
+} from "../src/server-data.js";
 import {
   TsyNpcSpawnedV1,
   TsySentinelPhaseChangedV1,
@@ -1344,6 +1350,75 @@ describe("sample files pass schema validation", () => {
     const data = loadSample("server-data.weapon-broken.sample.json");
     const result = validate(ServerDataV1, data);
     expect(result.ok, result.errors.join("; ")).toBe(true);
+  });
+
+  // plan-shield-block-v1 P3 — ShieldBrokenV1 pin tests
+  describe("ShieldBrokenV1 wire contract", () => {
+    it("正样本: server-data.shield-broken.sample.json passes ServerDataV1", () => {
+      const data = loadSample("server-data.shield-broken.sample.json");
+      const result = validate(ServerDataV1, data);
+      expect(result.ok, `应接受 shield_broken 正样本，错误: ${result.errors.join("; ")}`).toBe(true);
+    });
+
+    it("正样本: shield_broken 内层 ShieldBrokenV1 单独通过", () => {
+      const payload = { instance_id: 88, template_id: "wooden_shield" };
+      const result = validate(ShieldBrokenV1, payload);
+      expect(result.ok, `ShieldBrokenV1 应接受合法 payload，错误: ${result.errors.join("; ")}`).toBe(true);
+    });
+
+    it("正样本: bone_shield template_id 通过", () => {
+      const payload = { instance_id: 1, template_id: "bone_shield" };
+      const result = validate(ShieldBrokenV1, payload);
+      expect(result.ok, `bone_shield 应通过 ShieldBrokenV1，错误: ${result.errors.join("; ")}`).toBe(true);
+    });
+
+    it("正样本: ServerDataShieldBrokenV1 完整 envelope 通过", () => {
+      const data = { v: 1, type: "shield_broken", instance_id: 42, template_id: "wooden_shield" };
+      const result = validate(ServerDataShieldBrokenV1, data);
+      expect(result.ok, `ServerDataShieldBrokenV1 应接受完整 envelope，错误: ${result.errors.join("; ")}`).toBe(true);
+    });
+
+    it("反样本: 缺少 instance_id 被拒", () => {
+      const data = { v: 1, type: "shield_broken", template_id: "wooden_shield" };
+      const result = validate(ServerDataShieldBrokenV1, data);
+      expect(result.ok, "缺少 instance_id 应被 ServerDataShieldBrokenV1 拒绝").toBe(false);
+    });
+
+    it("反样本: 缺少 template_id 被拒", () => {
+      const data = { v: 1, type: "shield_broken", instance_id: 1 };
+      const result = validate(ServerDataShieldBrokenV1, data);
+      expect(result.ok, "缺少 template_id 应被 ServerDataShieldBrokenV1 拒绝").toBe(false);
+    });
+
+    it("反样本: 多余字段被 additionalProperties:false 拒绝", () => {
+      const data = { v: 1, type: "shield_broken", instance_id: 1, template_id: "wooden_shield", material: "wood" };
+      const result = validate(ServerDataShieldBrokenV1, data);
+      expect(result.ok, "多余字段 material 应被 additionalProperties:false 拒绝").toBe(false);
+    });
+
+    it("反样本: type 字段为 weapon_broken 时 ServerDataShieldBrokenV1 拒绝", () => {
+      const data = { v: 1, type: "weapon_broken", instance_id: 1, template_id: "bone_dagger" };
+      const result = validate(ServerDataShieldBrokenV1, data);
+      expect(result.ok, "type=weapon_broken 应被 ServerDataShieldBrokenV1 拒绝（应为 shield_broken）").toBe(false);
+    });
+
+    it("反样本: instance_id 为负数被拒", () => {
+      const payload = { instance_id: -1, template_id: "wooden_shield" };
+      const result = validate(ShieldBrokenV1, payload);
+      expect(result.ok, "负数 instance_id 应被 ShieldBrokenV1 拒绝").toBe(false);
+    });
+
+    it("反样本: template_id 为空字符串被拒", () => {
+      const payload = { instance_id: 1, template_id: "" };
+      const result = validate(ShieldBrokenV1, payload);
+      expect(result.ok, "空 template_id 应被 ShieldBrokenV1 拒绝（minLength: 1）").toBe(false);
+    });
+
+    it("正样本: shield_broken 被 ServerDataV1 union 正确辨识（不误判为 weapon_broken）", () => {
+      const data = { v: 1, type: "shield_broken", instance_id: 88, template_id: "wooden_shield" };
+      const result = validate(ServerDataV1, data);
+      expect(result.ok, `ServerDataV1 应通过 shield_broken，错误: ${result.errors.join("; ")}`).toBe(true);
+    });
   });
 
   it("server-data.treasure-equipped.sample.json", () => {
