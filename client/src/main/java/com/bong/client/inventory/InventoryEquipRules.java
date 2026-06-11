@@ -129,8 +129,10 @@ public final class InventoryEquipRules {
         return isSingleCell(item) && !isWeapon(item) && !isTool(item) && !isTreasure(item) && !isArmor(item) && !isShield(item);
     }
 
+    // plan-shield-block-v1 §P4 — 盾不能放入 QuickUse 槽（与 canPlaceIntoHotbar 排盾对齐）。
+    // QuickUse 是 F 键快速使用槽，盾必须通过 off_hand 装备路径，不应能拖入此槽。
     static boolean canPlaceIntoQuickUse(InventoryItem item) {
-        return isSingleCell(item);
+        return isSingleCell(item) && !isShield(item);
     }
 
     static boolean isHoe(InventoryItem item) {

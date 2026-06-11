@@ -78,8 +78,9 @@ public class ServerDataRouterTest {
             "weapon_equipped",
             "weapon_broken",
             "treasure_equipped",
-            // plan-shield-block-v1 §P3 破盾事件。
+            // plan-shield-block-v1 §P3 破盾事件 / §P4 格挡命中事件。
             "shield_broken",
+            "shield_block_hit",
             // plan-woliu-v1 §A.1 涡流 HUD 状态推送。
             "vortex_state",
             // plan-dugu-v1 P0/P1 — 毒蛊受毒状态 HUD 推送。

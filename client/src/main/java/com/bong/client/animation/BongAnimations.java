@@ -72,6 +72,14 @@ public final class BongAnimations {
     public static final Identifier REBIRTH_WAKE = new Identifier(MOD_ID, "rebirth_wake");
     public static final Identifier BOW_SALUTE = new Identifier(MOD_ID, "bow_salute");
 
+    // plan-shield-block-v1 §P4 — 动画优先级文档常量（priority 由 server vfx_animation_trigger.rs 写入 payload）。
+    // BongAnimationPlayer 按 AnimationStack priority 决定覆盖关系：高值盖低值。
+    // PARRY_BLOCK 战斗层 1000 < HURT_STAGGER 受击层 2000 → 受击硬直时 HURT_STAGGER 覆盖 PARRY_BLOCK。
+    /** 战斗动画优先级（COMBAT_PRIORITY，含 PARRY_BLOCK）——server 常量 {@code COMBAT_PRIORITY=1000}。 */
+    public static final int PRIORITY_COMBAT = 1000;
+    /** 受击动画优先级（HIT_RECOIL_PRIORITY，含 HURT_STAGGER）——server 常量 {@code HIT_RECOIL_PRIORITY=2000}。 */
+    public static final int PRIORITY_HIT_RECOIL = 2000;
+
     // plan-player-animation-implementation-v1：NPC / 产出交互 / 流派 stance / 状态步态
     public static final Identifier NPC_PATROL_WALK = new Identifier(MOD_ID, "npc_patrol_walk");
     public static final Identifier NPC_CHOP_TREE = new Identifier(MOD_ID, "npc_chop_tree");

@@ -1,0 +1,21 @@
+{
+  "id": "shield_block_bone",
+  "layers": [
+    {
+      "sound": "minecraft:item.shield.block",
+      "volume": 0.8,
+      "pitch": 1.3,
+      "delay_ticks": 0
+    },
+    {
+      "sound": "minecraft:entity.skeleton.hurt",
+      "volume": 0.3,
+      "pitch": 1.0,
+      "delay_ticks": 1
+    }
+  ],
+  "priority": 68,
+  "attenuation": "world_3d",
+  "category": "PLAYERS",
+  "bus": "COMBAT"
+}

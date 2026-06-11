@@ -164,6 +164,9 @@ public final class CombatEventHandler implements ServerDataHandler {
             case "qi_collision", "qi_collision_event" -> CombatJuiceEvent.Kind.QI_COLLISION;
             case "full_power_release", "full_charge", "charge_release", "release" -> CombatJuiceEvent.Kind.FULL_CHARGE;
             case "overload", "overload_tear", "meridian_overload" -> CombatJuiceEvent.Kind.OVERLOAD;
+            // plan-shield-block-v1 §P4 — "shield_block" wire 走 SHIELD_BLOCK，不复用 PARRY（其音效硬编码剑击声）。
+            // "block" 仍路由 PARRY（JieMai 截脉格挡，兼容现有路径）。
+            case "shield_block" -> CombatJuiceEvent.Kind.SHIELD_BLOCK;
             case "parry", "block" -> CombatJuiceEvent.Kind.PARRY;
             case "perfect_parry" -> CombatJuiceEvent.Kind.PERFECT_PARRY;
             case "dodge" -> CombatJuiceEvent.Kind.DODGE;

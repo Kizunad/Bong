@@ -86,6 +86,7 @@ public final class ServerDataRouter {
         WeaponEquippedHandler weaponEquippedHandler = new WeaponEquippedHandler();
         WeaponBrokenHandler weaponBrokenHandler = new WeaponBrokenHandler();
         ShieldBrokenHandler shieldBrokenHandler = new ShieldBrokenHandler();
+        ShieldBlockHitHandler shieldBlockHitHandler = new ShieldBlockHitHandler();
         TreasureEquippedHandler treasureEquippedHandler = new TreasureEquippedHandler();
         RealmVisionParamsHandler realmVisionParamsHandler = new RealmVisionParamsHandler();
         SpiritualSenseTargetsHandler spiritualSenseTargetsHandler = new SpiritualSenseTargetsHandler();
@@ -167,6 +168,8 @@ public final class ServerDataRouter {
         handlers.put("weapon_broken", weaponBrokenHandler);
         // plan-shield-block-v1 §P3 — 破盾事件
         handlers.put("shield_broken", shieldBrokenHandler);
+        // plan-shield-block-v1 §P4 — 格挡命中事件（视听四件套差异化，按 template_id 路由木/骨）
+        handlers.put("shield_block_hit", shieldBlockHitHandler);
         handlers.put("treasure_equipped", treasureEquippedHandler);
         handlers.put("realm_vision_params", realmVisionParamsHandler);
         handlers.put("spiritual_sense_targets", spiritualSenseTargetsHandler);

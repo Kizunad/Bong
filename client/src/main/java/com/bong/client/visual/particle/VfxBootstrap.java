@@ -191,11 +191,22 @@ public final class VfxBootstrap {
         for (net.minecraft.util.Identifier eventId : AlchemyCombatPillVfxPlayer.EVENT_IDS) {
             registry.register(eventId, combatPills);
         }
-        // plan-shield-block-v1 §P3 — 破盾粒子
+        // plan-shield-block-v1 §P3 — 破盾粒子（破碎，count 7，duration 10t）
         registry.register(ShieldWoodShatterPlayer.EVENT_ID, new ShieldWoodShatterPlayer());
         // 骨盾破碎复用 FaunaBoneShatterPlayer（颜色 #E8DCC8 骨白，count/duration 从 payload 读）
         registry.register(
             new net.minecraft.util.Identifier("bong", "shield_break_bone"),
+            new FaunaBoneShatterPlayer()
+        );
+        // plan-shield-block-v1 §P4 — 格挡命中迸溅粒子（区别于 P3 破碎，count 6，duration 8t，更轻量）
+        // 木盾命中：ShieldWoodShatterPlayer 复用，payload count=6 duration=8t 覆盖 P3 默认值。
+        registry.register(
+            new net.minecraft.util.Identifier("bong", "shield_block_wood"),
+            new ShieldWoodShatterPlayer()
+        );
+        // 骨盾命中：FaunaBoneShatterPlayer 复用（骨白 #E8DCC8，count/duration 从 payload 读）。
+        registry.register(
+            new net.minecraft.util.Identifier("bong", "shield_block_bone"),
             new FaunaBoneShatterPlayer()
         );
     }

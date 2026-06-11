@@ -1,0 +1,15 @@
+{
+  "id": "shield_block",
+  "layers": [
+    {
+      "sound": "minecraft:item.shield.block",
+      "volume": 0.9,
+      "pitch": 0.9,
+      "delay_ticks": 0
+    }
+  ],
+  "priority": 68,
+  "attenuation": "world_3d",
+  "category": "PLAYERS",
+  "bus": "COMBAT"
+}
