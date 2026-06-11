@@ -17261,6 +17261,75 @@
           }
         }
       }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "v",
+        "type",
+        "request_id",
+        "target_player",
+        "xml",
+        "timeout_ticks"
+      ],
+      "properties": {
+        "v": {
+          "const": 1,
+          "type": "number"
+        },
+        "type": {
+          "const": "agent_ui_request",
+          "type": "string"
+        },
+        "request_id": {
+          "minLength": 1,
+          "maxLength": 128,
+          "type": "string"
+        },
+        "target_player": {
+          "minLength": 1,
+          "maxLength": 128,
+          "type": "string"
+        },
+        "xml": {
+          "maxLength": 8192,
+          "type": "string"
+        },
+        "timeout_ticks": {
+          "minimum": 20,
+          "maximum": 2400,
+          "type": "integer"
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "v",
+        "type",
+        "request_id"
+      ],
+      "properties": {
+        "v": {
+          "const": 1,
+          "type": "number"
+        },
+        "type": {
+          "const": "agent_ui_close",
+          "type": "string"
+        },
+        "request_id": {
+          "minLength": 1,
+          "maxLength": 128,
+          "type": "string"
+        },
+        "reason": {
+          "maxLength": 64,
+          "type": "string"
+        }
+      }
     }
   ]
 }

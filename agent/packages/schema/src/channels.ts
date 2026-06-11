@@ -359,6 +359,13 @@ export const CHANNELS = {
   /** Server → Agent: 过载涟漪事件（baomai_v3 overload ripple，agent narration） */
   BAOMAI_V3_OVERLOAD_RIPPLE: "bong:baomai_v3/overload_ripple",
 
+  // ─── 天道 UI-as-Data（plan-agent-ui-data-v1 P0） ─────────────────────────────
+  /** Agent → Server: 天道 UI 面板指令（含 realm_gate / allowed_button_ids，Pub/Sub） */
+  AGENT_UI_CMD: "bong:agent_ui_cmd",
+
+  /** Server → Agent: 天道 UI 面板响应（button_click / dismissed / timeout / replaced / error / parse_error，Pub/Sub） */
+  AGENT_UI_RESPONSE: "bong:agent_ui_response",
+
   // ─── 垂死大能遭遇（plan-dying-elder-v1 P3） ─────────────────────────────────
   /** Server → Agent: 垂死大能遭遇事件（appeared / dan_received / betrayal / dead_*，agent narration） */
   ELDER_ENCOUNTER: "bong:elder_encounter",
@@ -501,6 +508,9 @@ export const REDIS_V1_CHANNELS = [
   CHANNELS.TERRITORY_NARRATION_REQUEST,
   // plan-faction-expansion-v1 P0 — 具名势力注册表快照通道
   CHANNELS.NAMED_FACTION_STATE,
+  // plan-agent-ui-data-v1 P0 — 天道 UI 面板 IPC 通道
+  CHANNELS.AGENT_UI_CMD,
+  CHANNELS.AGENT_UI_RESPONSE,
 ] as const;
 
 export type ChannelName = (typeof CHANNELS)[keyof typeof CHANNELS];

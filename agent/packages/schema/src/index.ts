@@ -64,6 +64,9 @@ export * from "./zhenmai-v2.js";
 export * from "./zhenfa-v2.js";
 export * from "./zong-formation.js";
 
+// plan-agent-ui-data-v1 P0 — 天道 UI-as-Data schema
+export * from "./payloads/agent-ui.js";
+
 // Validation & registry
 export * from "./schema-registry.js";
 export * from "./validate.js";

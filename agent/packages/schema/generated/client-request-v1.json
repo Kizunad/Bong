@@ -3539,6 +3539,68 @@
           "type": "string"
         }
       }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "v",
+        "type",
+        "request_id",
+        "action",
+        "params"
+      ],
+      "properties": {
+        "v": {
+          "const": 1,
+          "type": "number"
+        },
+        "type": {
+          "const": "agent_ui_response",
+          "type": "string"
+        },
+        "request_id": {
+          "minLength": 1,
+          "maxLength": 128,
+          "type": "string"
+        },
+        "action": {
+          "anyOf": [
+            {
+              "const": "button_click",
+              "type": "string"
+            },
+            {
+              "const": "dismissed",
+              "type": "string"
+            },
+            {
+              "const": "timeout",
+              "type": "string"
+            },
+            {
+              "const": "replaced",
+              "type": "string"
+            },
+            {
+              "const": "error",
+              "type": "string"
+            },
+            {
+              "const": "parse_error",
+              "type": "string"
+            }
+          ]
+        },
+        "params": {
+          "type": "object",
+          "patternProperties": {
+            "^(.*)$": {
+              "type": "string"
+            }
+          }
+        }
+      }
     }
   ]
 }

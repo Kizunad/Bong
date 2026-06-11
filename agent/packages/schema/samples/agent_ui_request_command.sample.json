@@ -1,0 +1,8 @@
+{
+  "request_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+  "target_player": "b2c3d4e5-f6a7-8901-bcde-f01234567891",
+  "xml": "<flow-layout direction=\"vertical\" gap=\"4\"><label style=\"color:#C8A060\">活坍缩渊</label><button id=\"enter_realm\">踏入探寻</button><button id=\"dismiss\">离开</button></flow-layout>",
+  "timeout_ticks": 600,
+  "realm_gate": 3,
+  "allowed_button_ids": ["enter_realm", "observe_only", "dismiss"]
+}
