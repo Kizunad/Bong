@@ -704,7 +704,7 @@ description = "碎石灵铁混合料，修补损坏灵龛。"
 [[item]]
 id = "torch_item"
 name = "火把"
-category = "misc"
+category = "block"
 grid_w = 1
 grid_h = 1
 base_weight = 0.2
@@ -715,7 +715,7 @@ description = "木柄缠油炭的火把，照明一时辰。"
 [[item]]
 id = "lantern_item"
 name = "灯笼"
-category = "misc"
+category = "block"
 grid_w = 1
 grid_h = 1
 base_weight = 0.6
@@ -726,7 +726,7 @@ description = "铁框灵晶芯的长明灯，灵气耗尽才灭。"
 [[item]]
 id = "door_bolt"
 name = "门闩"
-category = "misc"
+category = "block"
 grid_w = 1
 grid_h = 1
 base_weight = 1.5
@@ -759,7 +759,7 @@ description = "木板干草粗布叠的床，总比地上强。"
 [[item]]
 id = "window_grate"
 name = "窗栅"
-category = "misc"
+category = "block"
 grid_w = 1
 grid_h = 1
 base_weight = 2.0

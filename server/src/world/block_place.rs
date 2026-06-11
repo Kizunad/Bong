@@ -400,6 +400,10 @@ pub fn block_item_to_state(template_id: &str, _target_face: TrapTargetFace) -> O
         "weathered_stone" => Some(BlockState::GRAVEL),
         "raw_clay_lump" => Some(BlockState::CLAY),
         "obsidian_shard" => Some(BlockState::OBSIDIAN),
+        "torch_item" => Some(BlockState::TORCH),
+        "lantern_item" => Some(BlockState::LANTERN),
+        "door_bolt" => Some(BlockState::IRON_DOOR),
+        "window_grate" => Some(BlockState::IRON_BARS),
         _ => None,
     }
 }
@@ -496,6 +500,10 @@ mod tests {
             ("weathered_stone", BlockState::GRAVEL),
             ("raw_clay_lump", BlockState::CLAY),
             ("obsidian_shard", BlockState::OBSIDIAN),
+            ("torch_item", BlockState::TORCH),
+            ("lantern_item", BlockState::LANTERN),
+            ("door_bolt", BlockState::IRON_DOOR),
+            ("window_grate", BlockState::IRON_BARS),
         ];
 
         for (template_id, expected) in cases {

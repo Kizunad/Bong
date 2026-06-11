@@ -4764,13 +4764,17 @@ fn required_non_empty_option(
 mod tests {
     use super::*;
 
-    const BLOCK_ITEM_TEMPLATE_IDS: [&str; 6] = [
+    const BLOCK_ITEM_TEMPLATE_IDS: [&str; 10] = [
         "earth_crumb",
         "hardened_soil",
         "barren_sand",
         "weathered_stone",
         "raw_clay_lump",
         "obsidian_shard",
+        "torch_item",
+        "lantern_item",
+        "door_bolt",
+        "window_grate",
     ];
 
     fn test_registry_from_strs(entries: &[(&str, &str)]) -> Result<ItemRegistry, String> {
@@ -5707,6 +5711,34 @@ max_stack_count = 0
             assert_eq!(
                 template.max_stack_count, 64,
                 "block item `{template_id}` should inherit Block default stack count"
+            );
+        }
+    }
+
+    #[test]
+    fn shelter_block_templates_keep_inventory_footprint_and_weight() {
+        let registry =
+            load_item_registry().expect("item registry should load from assets/items/*.toml");
+        let cases = [
+            ("torch_item", 1, 1, 0.2),
+            ("lantern_item", 1, 1, 0.6),
+            ("door_bolt", 1, 1, 1.5),
+            ("window_grate", 1, 1, 2.0),
+        ];
+
+        for (template_id, grid_w, grid_h, base_weight) in cases {
+            let template = registry
+                .get(template_id)
+                .unwrap_or_else(|| panic!("shelter block item `{template_id}` should load"));
+            assert_eq!(
+                (template.grid_w, template.grid_h),
+                (grid_w, grid_h),
+                "shelter block item `{template_id}` must keep its inventory footprint"
+            );
+            assert!(
+                (template.base_weight - base_weight).abs() < f64::EPSILON,
+                "shelter block item `{template_id}` must keep base_weight {base_weight}, got {}",
+                template.base_weight
             );
         }
     }
