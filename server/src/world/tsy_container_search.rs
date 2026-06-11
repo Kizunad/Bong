@@ -43,7 +43,7 @@ use crate::network::qi_attrition_emit::{
 };
 use crate::network::vfx_event_emit::VfxEventRequest;
 use crate::player::state::canonical_player_id;
-use crate::qi_physics::attrition::{apply_attrition, apply_attrition_checked, is_attrition_exempt};
+use crate::qi_physics::attrition::{apply_attrition_checked, is_attrition_exempt};
 use crate::qi_physics::ledger::{AttritionOpKind, QiTransfer};
 use crate::schema::vfx_event::VfxEventPayloadV1;
 use crate::world::dimension::DimensionKind;
@@ -279,8 +279,13 @@ pub fn apply_search_attrition(
                         );
                     }
                 } else {
-                    // 无 zone 上下文时仍应用磨损（zone=None 不归还，用于 offline test）
-                    apply_attrition(item, AttritionOpKind::ContainerSearch, None, None);
+                    let _ = apply_attrition_checked(
+                        item,
+                        AttritionOpKind::ContainerSearch,
+                        None,
+                        None,
+                        None,
+                    );
                 }
                 emit_attrition_applied_if_lost(
                     match &mut attrition_events {
@@ -895,7 +900,11 @@ mod tests {
     fn apply_search_attrition_emits_qi_attrition_vfx_event() {
         let mut app = App::new();
         app.add_event::<SearchCompleted>();
+        app.add_event::<QiTransfer>();
         app.add_event::<AttritionAppliedEvent>();
+        let mut zones = ZoneRegistry::fallback();
+        zones.zones[0].spirit_qi = 0.5;
+        app.insert_resource(zones);
         app.add_systems(Update, apply_search_attrition);
 
         let mut inv = make_inv();

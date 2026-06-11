@@ -132,6 +132,7 @@ pub enum AttritionSkipReason {
     BelowMinimumQi,
     Exempt,
     DeadTsy,
+    MissingZone,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -229,9 +230,10 @@ pub fn release_attrition_to_zone(
 /// - `abs_qi < QI_ATTRITION_MIN_QI`（小额跳过）
 /// - item 带遗留 `attrition_exempt:` 标记（物品级豁免）
 /// - 调用方已判定封灵容器 `ContainerSpec.attrition_exempt`（容器级豁免）
+/// - 缺少 zone 上下文（避免扣 item 后无接收方导致吞真元）
 ///
 /// # zone 为 None 时
-/// 无 zone 上下文（如内部测试）时不做归还，直接 return（守恒靠 tests 对拍）。
+/// 无 zone 上下文时直接跳过并 warn，不扣 item、不发 transfer。
 /// 生产路径保证调用方传入非 None。
 pub fn apply_attrition(
     item: &mut ItemInstance,
@@ -263,9 +265,16 @@ pub fn apply_attrition_checked(
         return AttritionApplyOutcome::Skipped(AttritionSkipReason::BelowMinimumQi);
     }
 
-    if let Some((zone_name, family_id)) = zone.as_deref().and_then(|zone| {
-        dead_tsy_family_id(zone, tsy_lifecycle).map(|family_id| (zone.name.clone(), family_id))
-    }) {
+    let Some(zone) = zone else {
+        tracing::warn!(
+            "[bong][attrition] skipped attrition without zone context op_kind={op_kind:?} item={}",
+            item.instance_id
+        );
+        return AttritionApplyOutcome::Skipped(AttritionSkipReason::MissingZone);
+    };
+
+    if let Some(family_id) = dead_tsy_family_id(zone, tsy_lifecycle) {
+        let zone_name = zone.name.clone();
         tracing::warn!(
             "[bong][attrition] blocked attrition in dead tsy family={family_id} zone={zone_name} op_kind={op_kind:?} item={}",
             item.instance_id
@@ -273,7 +282,7 @@ pub fn apply_attrition_checked(
         return AttritionApplyOutcome::Skipped(AttritionSkipReason::DeadTsy);
     }
 
-    let env_mult = zone.as_deref().map(env_multiplier).unwrap_or(1.0);
+    let env_mult = env_multiplier(zone);
     let rate = QI_ATTRITION_BASE_RATE * op_kind.rate_factor() * env_mult;
     let attrition_abs = abs_qi * rate;
 
@@ -282,10 +291,8 @@ pub fn apply_attrition_checked(
     item.spirit_quality = new_quality;
 
     // 守恒归还 zone
-    if let Some(zone) = zone {
-        let from_id = QiAccountId::container(format!("item:{}", item.instance_id));
-        release_attrition_to_zone(zone, attrition_abs, from_id, op_kind, qi_transfers);
-    }
+    let from_id = QiAccountId::container(format!("item:{}", item.instance_id));
+    release_attrition_to_zone(zone, attrition_abs, from_id, op_kind, qi_transfers);
 
     AttritionApplyOutcome::Applied
 }
@@ -815,6 +822,43 @@ mod tests {
         assert!(
             transfers.is_empty(),
             "DeadTsy guard 命中时不应 emit QiTransfer，实际 {} 条",
+            transfers.len()
+        );
+    }
+
+    #[test]
+    fn p3_missing_zone_skips_without_transfer_or_mutation() {
+        let mut item = make_item(35, 1.0, 100);
+        let item_before = item.spirit_quality;
+
+        let mut app = App::new();
+        app.add_event::<QiTransfer>();
+        let outcome = {
+            let mut events_res = app.world_mut().resource_mut::<Events<QiTransfer>>();
+            apply_attrition_checked(
+                &mut item,
+                AttritionOpKind::ContainerSearch,
+                None,
+                Some(&mut events_res),
+                None,
+            )
+        };
+
+        assert_eq!(
+            outcome,
+            AttritionApplyOutcome::Skipped(AttritionSkipReason::MissingZone),
+            "缺少 zone 上下文时必须跳过磨损，避免扣 item 后无接收方吞真元"
+        );
+        assert!(
+            (item.spirit_quality - item_before).abs() < QI_EPSILON,
+            "MissingZone 跳过时 item 不应变动"
+        );
+        let events_res = app.world().resource::<Events<QiTransfer>>();
+        let mut reader = events_res.get_reader();
+        let transfers: Vec<_> = reader.read(events_res).collect();
+        assert!(
+            transfers.is_empty(),
+            "MissingZone 跳过时不应 emit QiTransfer，实际 {} 条",
             transfers.len()
         );
     }
