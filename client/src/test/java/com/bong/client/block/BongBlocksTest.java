@@ -1,5 +1,7 @@
 package com.bong.client.block;
 
+import com.google.gson.JsonObject;
+import com.google.gson.JsonParser;
 import org.junit.jupiter.api.Test;
 
 import java.io.IOException;
@@ -78,6 +80,25 @@ public class BongBlocksTest {
             assertTrue(
                 Files.exists(RESOURCES.resolve(Path.of("assets", "bong", "textures", "block", id + ".png"))),
                 "Missing block texture for " + id
+            );
+        }
+    }
+
+    @Test
+    void furnitureBlockModelsUseExplicitGeometry() throws IOException {
+        for (String id : List.of("simple_bed", "meditation_mat", "moisture_base", "spirit_stone_rack")) {
+            JsonObject model = JsonParser.parseString(Files.readString(
+                RESOURCES.resolve(Path.of("assets", "bong", "models", "block", id + ".json")),
+                StandardCharsets.UTF_8
+            )).getAsJsonObject();
+
+            assertTrue(
+                model.has("elements") && model.getAsJsonArray("elements").size() >= 4,
+                id + " should use explicit block geometry because P4 replaces cube_all placeholder models"
+            );
+            assertTrue(
+                !model.has("parent") || !"minecraft:block/cube_all".equals(model.get("parent").getAsString()),
+                id + " should not fall back to cube_all after furniture bbmodel pass"
             );
         }
     }

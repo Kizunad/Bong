@@ -136,49 +136,64 @@ mod tests {
 
     #[test]
     fn default_break_removes_furniture_registry_entry() {
-        let scenario = ScenarioSingleClient::new();
-        let mut app = scenario.app;
-        crate::world::dimension::mark_test_layer_as_overworld(&mut app);
-        app.add_event::<DiggingEvent>();
-        app.add_systems(Update, apply_default_block_break);
-        app.insert_resource(FurnitureRegistry::default());
-        app.world_mut()
-            .entity_mut(scenario.client)
-            .insert(GameMode::Survival);
-        app.world_mut()
-            .get_mut::<ChunkLayer>(scenario.layer)
-            .expect("test layer should carry ChunkLayer")
-            .insert_chunk([0, 0], UnloadedChunk::new());
-        app.world_mut()
-            .get_mut::<ChunkLayer>(scenario.layer)
-            .expect("test layer should carry ChunkLayer")
-            .set_block(BlockPos::new(1, 64, 1), BlockState::BONG_SIMPLE_BED);
-        app.world_mut()
-            .resource_mut::<FurnitureRegistry>()
-            .register([1, 64, 1], FurnitureKind::SimpleBed);
+        let cases = [
+            (BlockState::BONG_SIMPLE_BED, FurnitureKind::SimpleBed),
+            (
+                BlockState::BONG_MEDITATION_MAT,
+                FurnitureKind::MeditationMat,
+            ),
+            (BlockState::BONG_MOISTURE_BASE, FurnitureKind::MoistureBase),
+            (
+                BlockState::BONG_SPIRIT_STONE_RACK,
+                FurnitureKind::SpiritStoneRack,
+            ),
+        ];
 
-        app.world_mut().send_event(DiggingEvent {
-            client: scenario.client,
-            position: BlockPos::new(1, 64, 1),
-            direction: valence::protocol::Direction::Up,
-            state: DiggingState::Stop,
-        });
-        app.update();
+        for (index, (block_state, furniture_kind)) in cases.into_iter().enumerate() {
+            let scenario = ScenarioSingleClient::new();
+            let mut app = scenario.app;
+            crate::world::dimension::mark_test_layer_as_overworld(&mut app);
+            app.add_event::<DiggingEvent>();
+            app.add_systems(Update, apply_default_block_break);
+            app.insert_resource(FurnitureRegistry::default());
+            app.world_mut()
+                .entity_mut(scenario.client)
+                .insert(GameMode::Survival);
+            app.world_mut()
+                .get_mut::<ChunkLayer>(scenario.layer)
+                .expect("test layer should carry ChunkLayer")
+                .insert_chunk([0, 0], UnloadedChunk::new());
+            let pos = BlockPos::new(1 + index as i32, 64, 1);
+            app.world_mut()
+                .get_mut::<ChunkLayer>(scenario.layer)
+                .expect("test layer should carry ChunkLayer")
+                .set_block(pos, block_state);
+            app.world_mut()
+                .resource_mut::<FurnitureRegistry>()
+                .register([pos.x, pos.y, pos.z], furniture_kind);
 
-        assert_eq!(
-            app.world()
-                .resource::<FurnitureRegistry>()
-                .kind_at([1, 64, 1]),
-            None,
-            "breaking a placed furniture block should remove its registry coordinate"
-        );
-        assert_eq!(
-            app.world()
-                .get::<ChunkLayer>(scenario.layer)
-                .and_then(|layer| layer
-                    .block(BlockPos::new(1, 64, 1))
-                    .map(|block| block.state)),
-            Some(BlockState::AIR)
-        );
+            app.world_mut().send_event(DiggingEvent {
+                client: scenario.client,
+                position: pos,
+                direction: valence::protocol::Direction::Up,
+                state: DiggingState::Stop,
+            });
+            app.update();
+
+            assert_eq!(
+                app.world()
+                    .resource::<FurnitureRegistry>()
+                    .kind_at([pos.x, pos.y, pos.z]),
+                None,
+                "breaking {furniture_kind:?} should remove its registry coordinate"
+            );
+            assert_eq!(
+                app.world()
+                    .get::<ChunkLayer>(scenario.layer)
+                    .and_then(|layer| layer.block(pos).map(|block| block.state)),
+                Some(BlockState::AIR),
+                "breaking {furniture_kind:?} should clear the placed Bong block"
+            );
+        }
     }
 }

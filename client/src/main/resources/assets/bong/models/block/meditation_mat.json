@@ -1,6 +1,437 @@
 {
-  "parent": "minecraft:block/cube_all",
   "textures": {
+    "particle": "bong:block/meditation_mat",
     "all": "bong:block/meditation_mat"
-  }
+  },
+  "elements": [
+    {
+      "name": "mat_mid_x",
+      "from": [
+        2.0,
+        0.0,
+        5.2
+      ],
+      "to": [
+        14.0,
+        1.0,
+        10.8
+      ],
+      "faces": {
+        "north": {
+          "texture": "#all"
+        },
+        "south": {
+          "texture": "#all"
+        },
+        "east": {
+          "texture": "#all"
+        },
+        "west": {
+          "texture": "#all"
+        },
+        "up": {
+          "texture": "#all"
+        },
+        "down": {
+          "texture": "#all"
+        }
+      }
+    },
+    {
+      "name": "mat_mid_z",
+      "from": [
+        5.2,
+        0.0,
+        2.0
+      ],
+      "to": [
+        10.8,
+        1.0,
+        14.0
+      ],
+      "faces": {
+        "north": {
+          "texture": "#all"
+        },
+        "south": {
+          "texture": "#all"
+        },
+        "east": {
+          "texture": "#all"
+        },
+        "west": {
+          "texture": "#all"
+        },
+        "up": {
+          "texture": "#all"
+        },
+        "down": {
+          "texture": "#all"
+        }
+      }
+    },
+    {
+      "name": "mat_diag_ne",
+      "from": [
+        3.4,
+        0.0,
+        3.4
+      ],
+      "to": [
+        6.2,
+        1.0,
+        6.2
+      ],
+      "faces": {
+        "north": {
+          "texture": "#all"
+        },
+        "south": {
+          "texture": "#all"
+        },
+        "east": {
+          "texture": "#all"
+        },
+        "west": {
+          "texture": "#all"
+        },
+        "up": {
+          "texture": "#all"
+        },
+        "down": {
+          "texture": "#all"
+        }
+      }
+    },
+    {
+      "name": "mat_diag_nw",
+      "from": [
+        9.8,
+        0.0,
+        3.4
+      ],
+      "to": [
+        12.6,
+        1.0,
+        6.2
+      ],
+      "faces": {
+        "north": {
+          "texture": "#all"
+        },
+        "south": {
+          "texture": "#all"
+        },
+        "east": {
+          "texture": "#all"
+        },
+        "west": {
+          "texture": "#all"
+        },
+        "up": {
+          "texture": "#all"
+        },
+        "down": {
+          "texture": "#all"
+        }
+      }
+    },
+    {
+      "name": "mat_diag_se",
+      "from": [
+        3.4,
+        0.0,
+        9.8
+      ],
+      "to": [
+        6.2,
+        1.0,
+        12.6
+      ],
+      "faces": {
+        "north": {
+          "texture": "#all"
+        },
+        "south": {
+          "texture": "#all"
+        },
+        "east": {
+          "texture": "#all"
+        },
+        "west": {
+          "texture": "#all"
+        },
+        "up": {
+          "texture": "#all"
+        },
+        "down": {
+          "texture": "#all"
+        }
+      }
+    },
+    {
+      "name": "mat_diag_sw",
+      "from": [
+        9.8,
+        0.0,
+        9.8
+      ],
+      "to": [
+        12.6,
+        1.0,
+        12.6
+      ],
+      "faces": {
+        "north": {
+          "texture": "#all"
+        },
+        "south": {
+          "texture": "#all"
+        },
+        "east": {
+          "texture": "#all"
+        },
+        "west": {
+          "texture": "#all"
+        },
+        "up": {
+          "texture": "#all"
+        },
+        "down": {
+          "texture": "#all"
+        }
+      }
+    },
+    {
+      "name": "cushion_mid_x",
+      "from": [
+        3.2,
+        1.0,
+        5.8
+      ],
+      "to": [
+        12.8,
+        2.2,
+        10.2
+      ],
+      "faces": {
+        "north": {
+          "texture": "#all"
+        },
+        "south": {
+          "texture": "#all"
+        },
+        "east": {
+          "texture": "#all"
+        },
+        "west": {
+          "texture": "#all"
+        },
+        "up": {
+          "texture": "#all"
+        },
+        "down": {
+          "texture": "#all"
+        }
+      }
+    },
+    {
+      "name": "cushion_mid_z",
+      "from": [
+        5.8,
+        1.0,
+        3.2
+      ],
+      "to": [
+        10.2,
+        2.2,
+        12.8
+      ],
+      "faces": {
+        "north": {
+          "texture": "#all"
+        },
+        "south": {
+          "texture": "#all"
+        },
+        "east": {
+          "texture": "#all"
+        },
+        "west": {
+          "texture": "#all"
+        },
+        "up": {
+          "texture": "#all"
+        },
+        "down": {
+          "texture": "#all"
+        }
+      }
+    },
+    {
+      "name": "front_binding",
+      "from": [
+        4.6,
+        2.2,
+        4.8
+      ],
+      "to": [
+        11.4,
+        2.45,
+        5.25
+      ],
+      "faces": {
+        "north": {
+          "texture": "#all"
+        },
+        "south": {
+          "texture": "#all"
+        },
+        "east": {
+          "texture": "#all"
+        },
+        "west": {
+          "texture": "#all"
+        },
+        "up": {
+          "texture": "#all"
+        },
+        "down": {
+          "texture": "#all"
+        }
+      }
+    },
+    {
+      "name": "back_binding",
+      "from": [
+        4.6,
+        2.2,
+        10.75
+      ],
+      "to": [
+        11.4,
+        2.45,
+        11.2
+      ],
+      "faces": {
+        "north": {
+          "texture": "#all"
+        },
+        "south": {
+          "texture": "#all"
+        },
+        "east": {
+          "texture": "#all"
+        },
+        "west": {
+          "texture": "#all"
+        },
+        "up": {
+          "texture": "#all"
+        },
+        "down": {
+          "texture": "#all"
+        }
+      }
+    },
+    {
+      "name": "left_binding",
+      "from": [
+        4.8,
+        2.2,
+        4.6
+      ],
+      "to": [
+        5.25,
+        2.45,
+        11.4
+      ],
+      "faces": {
+        "north": {
+          "texture": "#all"
+        },
+        "south": {
+          "texture": "#all"
+        },
+        "east": {
+          "texture": "#all"
+        },
+        "west": {
+          "texture": "#all"
+        },
+        "up": {
+          "texture": "#all"
+        },
+        "down": {
+          "texture": "#all"
+        }
+      }
+    },
+    {
+      "name": "right_binding",
+      "from": [
+        10.75,
+        2.2,
+        4.6
+      ],
+      "to": [
+        11.2,
+        2.45,
+        11.4
+      ],
+      "faces": {
+        "north": {
+          "texture": "#all"
+        },
+        "south": {
+          "texture": "#all"
+        },
+        "east": {
+          "texture": "#all"
+        },
+        "west": {
+          "texture": "#all"
+        },
+        "up": {
+          "texture": "#all"
+        },
+        "down": {
+          "texture": "#all"
+        }
+      }
+    },
+    {
+      "name": "center_patch",
+      "from": [
+        6.5,
+        2.45,
+        6.5
+      ],
+      "to": [
+        9.5,
+        2.65,
+        9.5
+      ],
+      "faces": {
+        "north": {
+          "texture": "#all"
+        },
+        "south": {
+          "texture": "#all"
+        },
+        "east": {
+          "texture": "#all"
+        },
+        "west": {
+          "texture": "#all"
+        },
+        "up": {
+          "texture": "#all"
+        },
+        "down": {
+          "texture": "#all"
+        }
+      }
+    }
+  ]
 }

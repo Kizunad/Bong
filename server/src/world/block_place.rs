@@ -725,47 +725,73 @@ mod tests {
 
     #[test]
     fn handler_places_furniture_block_and_registers_position() {
-        let (mut app, client, layer_entity, mut helper) = block_place_app(
-            inventory_with_item(item_instance(9301, "simple_bed", 1)),
-            DimensionKind::Overworld,
-        );
-        app.insert_resource(ItemRegistry::from_map(HashMap::from([item_template(
-            "simple_bed",
-            ItemCategory::Block,
-        )])));
+        let cases = [
+            (
+                "simple_bed",
+                BlockState::BONG_SIMPLE_BED,
+                FurnitureKind::SimpleBed,
+            ),
+            (
+                "meditation_mat",
+                BlockState::BONG_MEDITATION_MAT,
+                FurnitureKind::MeditationMat,
+            ),
+            (
+                "moisture_base",
+                BlockState::BONG_MOISTURE_BASE,
+                FurnitureKind::MoistureBase,
+            ),
+            (
+                "spirit_stone_rack",
+                BlockState::BONG_SPIRIT_STONE_RACK,
+                FurnitureKind::SpiritStoneRack,
+            ),
+        ];
 
-        app.world_mut().send_event(BlockPlaceRequest {
-            client,
-            x: 1,
-            y: 64,
-            z: 1,
-            item_instance_id: 9301,
-            target_face: TrapTargetFace::Top,
-        });
-        app.update();
-        flush_all_client_packets(&mut app);
+        for (index, (template_id, expected_state, expected_kind)) in cases.into_iter().enumerate() {
+            let item_instance_id = 9301 + index as u64;
+            let (mut app, client, layer_entity, mut helper) = block_place_app(
+                inventory_with_item(item_instance(item_instance_id, template_id, 1)),
+                DimensionKind::Overworld,
+            );
+            app.insert_resource(ItemRegistry::from_map(HashMap::from([item_template(
+                template_id,
+                ItemCategory::Block,
+            )])));
 
-        assert_eq!(
-            block_state_at(&app, layer_entity, BlockPos::new(1, 64, 1)),
-            Some(BlockState::BONG_SIMPLE_BED),
-            "simple_bed should place as a Bong custom block"
-        );
-        assert_eq!(
-            app.world()
-                .resource::<FurnitureRegistry>()
-                .kind_at([1, 64, 1]),
-            Some(FurnitureKind::SimpleBed),
-            "successful furniture placement should register its coordinate"
-        );
-        assert_eq!(
-            inventory_template_count(&app, client, "simple_bed"),
-            0,
-            "successful furniture placement should consume the held item"
-        );
-        assert!(
-            has_inventory_snapshot_payload(&mut helper),
-            "successful furniture placement should push a corrective inventory snapshot"
-        );
+            app.world_mut().send_event(BlockPlaceRequest {
+                client,
+                x: 1,
+                y: 64,
+                z: 1,
+                item_instance_id,
+                target_face: TrapTargetFace::Top,
+            });
+            app.update();
+            flush_all_client_packets(&mut app);
+
+            assert_eq!(
+                block_state_at(&app, layer_entity, BlockPos::new(1, 64, 1)),
+                Some(expected_state),
+                "{template_id} should place as its Bong custom block"
+            );
+            assert_eq!(
+                app.world()
+                    .resource::<FurnitureRegistry>()
+                    .kind_at([1, 64, 1]),
+                Some(expected_kind),
+                "successful {template_id} placement should register its furniture coordinate"
+            );
+            assert_eq!(
+                inventory_template_count(&app, client, template_id),
+                0,
+                "successful {template_id} placement should consume the held item"
+            );
+            assert!(
+                has_inventory_snapshot_payload(&mut helper),
+                "successful {template_id} placement should push a corrective inventory snapshot"
+            );
+        }
     }
 
     #[test]
