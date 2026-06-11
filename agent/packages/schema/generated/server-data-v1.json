@@ -151,6 +151,26 @@
                   {
                     "const": "war_outcome",
                     "type": "string"
+                  },
+                  {
+                    "const": "dying_elder_appeared",
+                    "type": "string"
+                  },
+                  {
+                    "const": "dying_elder_dan_received",
+                    "type": "string"
+                  },
+                  {
+                    "const": "dying_elder_betrayal",
+                    "type": "string"
+                  },
+                  {
+                    "const": "dying_elder_dead_natural",
+                    "type": "string"
+                  },
+                  {
+                    "const": "dying_elder_dead_player_kill",
+                    "type": "string"
                   }
                 ]
               }

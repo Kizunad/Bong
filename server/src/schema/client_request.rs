@@ -611,6 +611,20 @@ pub enum ClientRequestV1 {
     CraftCancel {
         v: u8,
     },
+    /// plan-dying-elder-v1 P1 — 玩家向垂死大能交付一颗回元丹。
+    ///
+    /// ## 守恒约束
+    /// - 玩家背包须持有 `hui_yuan_pill` 一颗（server 以 `instance_id` 校验）；
+    /// - 消耗后，丹携带的 qi_gain 值走 `QiTransfer{TradeDan}` 转入大能；
+    /// - `elder_entity_id` 为 MC protocol entity_id（由 `EntityManager::get_by_id` 解析）；
+    /// - 大能须处于 `DyingElderState::Plea` 或 `DyingElderState::Recovering{..}` 状态。
+    GiveDanToElder {
+        v: u8,
+        /// 玩家背包中回元丹的 inventory instance_id。
+        pill_instance_id: u64,
+        /// 垂死大能的 MC protocol entity_id（i32）。
+        elder_entity_id: i32,
+    },
     /// plan-shield-block-v1 P1 — 按下右键边沿（off_hand 持盾），开始持续举盾状态。
     /// server 校验 off_hand 实装盾后插入 ShieldBlocking 持续状态。
     RaiseShield {
@@ -2380,6 +2394,91 @@ mod tests {
                 }
             }
             other => panic!("expected ExternalContainerMove, got {other:?}"),
+        }
+    }
+
+    // ── plan-dying-elder-v1 P1：GiveDanToElder C2S schema tests ─────────────
+
+    #[test]
+    fn give_dan_to_elder_roundtrip() {
+        // 期望：GiveDanToElder 序列化/反序列化往返，字段完全保留
+        let json =
+            r#"{"type":"give_dan_to_elder","v":1,"pill_instance_id":4242,"elder_entity_id":99}"#;
+        let req: ClientRequestV1 = serde_json::from_str(json)
+            .unwrap_or_else(|e| panic!("give_dan_to_elder should deserialize: {e}"));
+        match req {
+            ClientRequestV1::GiveDanToElder {
+                v,
+                pill_instance_id,
+                elder_entity_id,
+            } => {
+                assert_eq!(v, 1, "version byte should be 1");
+                assert_eq!(pill_instance_id, 4242, "pill_instance_id should be 4242");
+                assert_eq!(elder_entity_id, 99, "elder_entity_id should be 99");
+            }
+            other => panic!("expected GiveDanToElder, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn give_dan_to_elder_rejects_missing_pill_instance_id() {
+        // 期望：缺少 pill_instance_id 应反序列化失败
+        let json = r#"{"type":"give_dan_to_elder","v":1,"elder_entity_id":99}"#;
+        let result: Result<ClientRequestV1, _> = serde_json::from_str(json);
+        assert!(
+            result.is_err(),
+            "GiveDanToElder 缺少 pill_instance_id 应拒绝反序列化，\
+             但实际成功：{result:?}"
+        );
+    }
+
+    #[test]
+    fn give_dan_to_elder_rejects_missing_elder_entity_id() {
+        // 期望：缺少 elder_entity_id 应反序列化失败
+        let json = r#"{"type":"give_dan_to_elder","v":1,"pill_instance_id":1001}"#;
+        let result: Result<ClientRequestV1, _> = serde_json::from_str(json);
+        assert!(
+            result.is_err(),
+            "GiveDanToElder 缺少 elder_entity_id 应拒绝反序列化，\
+             但实际成功：{result:?}"
+        );
+    }
+
+    #[test]
+    fn give_dan_to_elder_accepts_negative_elder_entity_id() {
+        // 期望：elder_entity_id 为 i32，可以是负值（MC protocol entity_id 可负）
+        let json =
+            r#"{"type":"give_dan_to_elder","v":1,"pill_instance_id":1,"elder_entity_id":-1}"#;
+        let req: ClientRequestV1 =
+            serde_json::from_str(json).unwrap_or_else(|e| panic!("负 elder_entity_id 应合法：{e}"));
+        assert!(
+            matches!(
+                req,
+                ClientRequestV1::GiveDanToElder {
+                    elder_entity_id: -1,
+                    ..
+                }
+            ),
+            "elder_entity_id=-1 应被接受（MC protocol i32 范围），实际：{req:?}"
+        );
+    }
+
+    #[test]
+    fn give_dan_to_elder_max_pill_instance_id() {
+        // 期望：pill_instance_id = u64::MAX 是合法边界值
+        let max_id = u64::MAX;
+        let json = format!(
+            r#"{{"type":"give_dan_to_elder","v":1,"pill_instance_id":{max_id},"elder_entity_id":1}}"#
+        );
+        let req: ClientRequestV1 = serde_json::from_str(&json)
+            .unwrap_or_else(|e| panic!("pill_instance_id=u64::MAX 应合法：{e}"));
+        match req {
+            ClientRequestV1::GiveDanToElder {
+                pill_instance_id, ..
+            } => {
+                assert_eq!(pill_instance_id, max_id, "u64::MAX 应原样往返");
+            }
+            other => panic!("expected GiveDanToElder, got {other:?}"),
         }
     }
 

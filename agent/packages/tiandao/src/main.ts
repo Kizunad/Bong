@@ -11,6 +11,7 @@ import { OffscreenWarNarrationRuntime } from "./offscreen-war-narration.js";
 import { WarOutcomeNarrationRuntime } from "./war-outcome-narration.js";
 import { PoliticalNarrationRuntime } from "./political-narration.js";
 import { PoisonTraitNarrationRuntime } from "./poison-trait-runtime.js";
+import { ElderEncounterNarrationRuntime } from "./elder-encounter-narration.js";
 import { ScatteredCultivatorNarrationRuntime } from "./scattered-cultivator-narration.js";
 import { SkillLvUpNarrationRuntime } from "./skill-lv-up-runtime.js";
 import { SpiritTreasureDialogueRuntime } from "./spirit-treasure-dialogue-runtime.js";
@@ -229,6 +230,10 @@ async function startAuxiliaryRuntimes(config: RuntimeConfig): Promise<RuntimeCle
   const poisonTraitCleanup = await startPoisonTraitRuntime({
     redisUrl: config.redisUrl,
   });
+  // plan-dying-elder-v1 P3: 垂死大能遭遇叙事 runtime（订阅 bong:elder_encounter）。
+  const elderEncounterCleanup = await startElderEncounterRuntime({
+    redisUrl: config.redisUrl,
+  });
   const scatteredCultivatorCleanup = await startScatteredCultivatorRuntime({
     redisUrl: config.redisUrl,
   });
@@ -280,6 +285,7 @@ async function startAuxiliaryRuntimes(config: RuntimeConfig): Promise<RuntimeCle
     duguV2Cleanup,
     duguCleanup,
     poisonTraitCleanup,
+    elderEncounterCleanup,
     scatteredCultivatorCleanup,
     offscreenWarCleanup,
     warOutcomeCleanup,
@@ -753,6 +759,36 @@ async function startZhenfaV2Runtime(opts: {
       await Promise.race([runtime.disconnect(), timeout]);
     } catch (error) {
       console.warn("[tiandao] zhenfa v2 runtime disconnect error:", error);
+    }
+  };
+}
+
+// plan-dying-elder-v1 P3
+async function startElderEncounterRuntime(opts: {
+  redisUrl: string;
+}): Promise<() => Promise<void>> {
+  const IORedisCtor = ((Redis as unknown as { default?: unknown }).default ??
+    Redis) as new (url: string) => unknown;
+  const sub = new IORedisCtor(opts.redisUrl) as ConstructorParameters<
+    typeof ElderEncounterNarrationRuntime
+  >[0]["sub"];
+  const pub = new IORedisCtor(opts.redisUrl) as ConstructorParameters<
+    typeof ElderEncounterNarrationRuntime
+  >[0]["pub"];
+
+  const runtime = new ElderEncounterNarrationRuntime({ sub, pub });
+  runtime
+    .connect()
+    .then(() => console.log("[tiandao] elder encounter narration runtime online"))
+    .catch((error) =>
+      console.warn("[tiandao] elder encounter runtime failed to start:", error),
+    );
+  return async () => {
+    const timeout = new Promise<void>((resolve) => setTimeout(resolve, 500));
+    try {
+      await Promise.race([runtime.disconnect(), timeout]);
+    } catch (error) {
+      console.warn("[tiandao] elder encounter runtime disconnect error:", error);
     }
   };
 }

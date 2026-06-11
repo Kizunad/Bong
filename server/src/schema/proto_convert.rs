@@ -2599,6 +2599,8 @@ fn sense_kind_to_proto(k: &super::realm_vision::SenseKindV1) -> i32 {
         SenseKindV1::DisguisedSpider => bong::SenseKind::DisguisedSpider as i32,
         // plan-daozhan-v1 P3
         SenseKindV1::DisguisedDaoZhang => bong::SenseKind::DisguisedDaoZhang as i32,
+        // plan-dying-elder-v1 P3
+        SenseKindV1::DyingElderQi => bong::SenseKind::DyingElderQi as i32,
     }
 }
 
@@ -3816,6 +3818,15 @@ impl From<&super::client_request::ClientRequestV1> for bong::client_request_enve
                     entity_id: *entity_id,
                 })
             }
+            // ── plan-dying-elder-v1 P1：垂死大能给丹 C2S ─────────────────────
+            ClientRequestV1::GiveDanToElder {
+                pill_instance_id,
+                elder_entity_id,
+                ..
+            } => Payload::GiveDanToElder(bong::GiveDanToElderReq {
+                pill_instance_id: *pill_instance_id,
+                elder_entity_id: *elder_entity_id,
+            }),
             ClientRequestV1::WorkbenchOpen { entity_id, .. } => {
                 Payload::WorkbenchOpen(bong::WorkbenchOpenReq {
                     entity_id: *entity_id,

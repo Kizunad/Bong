@@ -20,6 +20,13 @@ pub enum SpiritualSenseTargetKind {
     /// 识破条件：observer realm >= Solidify（固元期，realm_rank ≥ 3）。
     /// 道伥伪装比蛛更接近真实玩家，需更高境界才能识破。
     DisguisedDaoZhang,
+    /// plan-dying-elder-v1 P3：垂死大能 Plea 态真元 — 神识感知大能的残余真元波动。
+    ///
+    /// 感知条件：observer realm >= Solidify（固元期，realm_rank ≥ 3）。
+    /// SpiritEye 激活时：显示具体 betray_probability%（明确数值）。
+    /// SpiritEye 未激活时：仅显示"气息有异"（模糊提示，不暴露概率）。
+    /// intensity 映射为大能剩余真元比例（0.0 = 濒死 / 1.0 = 尚有余力）。
+    DyingElderQi,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -145,6 +152,15 @@ fn target_to_entry(observer_realm: Realm, target: &SpiritualSenseTarget) -> Opti
         SpiritualSenseTargetKind::DisguisedDaoZhang => {
             if realm_rank(observer_realm) >= 3 {
                 SenseKindV1::DisguisedDaoZhang
+            } else {
+                return None;
+            }
+        }
+        // plan-dying-elder-v1 P3：Solidify（固元期）及以上境界感知垂死大能真元波动。
+        // intensity 映射大能剩余真元比（0.0 = 濒死 / 1.0 = 余力尚足）。
+        SpiritualSenseTargetKind::DyingElderQi => {
+            if realm_rank(observer_realm) >= 3 {
+                SenseKindV1::DyingElderQi
             } else {
                 return None;
             }

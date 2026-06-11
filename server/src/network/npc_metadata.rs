@@ -360,6 +360,8 @@ pub fn archetype_label(archetype: NpcArchetype) -> &'static str {
         NpcArchetype::Zhinian => "执念",
         NpcArchetype::Fuya => "负压畸体",
         NpcArchetype::SkullFiend => "骨煞",
+        // plan-dying-elder-v1：垂死大能显示"老修士"（伪装化虚修士身份）
+        NpcArchetype::DyingElder => "老修士",
     }
 }
 
@@ -439,6 +441,8 @@ pub fn greeting_text_for_archetype(archetype: NpcArchetype) -> &'static str {
         | NpcArchetype::Zhinian
         | NpcArchetype::Fuya
         | NpcArchetype::SkullFiend => "此人气息浑浊，答非所问。",
+        // plan-dying-elder-v1：垂死大能发出求助，inspect 显示乞求之语
+        NpcArchetype::DyingElder => "老者气息奄奄，却有真元波动残留……",
         NpcArchetype::Zombie => "游尸没有回应。",
     }
 }

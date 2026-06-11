@@ -108,6 +108,8 @@ public class BongNetworkHandler {
         registerDaoZhanRevealChannel();
         // plan-fauna-stitched-beast-v1 P3 — 兽核吸收幻觉 HUD
         registerCoreAbsorptionHallucinationChannel();
+        // plan-dying-elder-v1 P3 — 垂死大能遭遇 HUD
+        registerElderEncounterChannel();
         // plan-era-state-v1 P3 — 时代天象 S2C CustomPayload（realm gate 由 server 执行）
         registerEraAmbianceChannel();
         // plan-era-state-v1 M2 — EraAmbianceState 渐变计数器每游戏 tick 推进（非渲染帧）。
@@ -142,6 +144,8 @@ public class BongNetworkHandler {
                 DaoZhanDisguiseHandler.clearOnDisconnect();
                 // plan-fauna-stitched-beast-v1 P3 — 断线时清理幻觉层状态
                 com.bong.client.fauna.HallucinationLayerStore.clearOnDisconnect();
+                // plan-dying-elder-v1 P3 — 断线时清理垂死大能遭遇状态
+                com.bong.client.dying_elder.DyingElderEncounterStore.clearOnDisconnect();
                 // plan-era-state-v1 P3 — 断线时重置时代天象状态
                 com.bong.client.era.EraAmbianceState.reset();
             })
@@ -744,6 +748,41 @@ public class BongNetworkHandler {
                     } catch (Exception e) {
                         BongClient.LOGGER.error(
                             "Failed to process bong:core_absorption_hallucination: {}", e.getMessage());
+                    }
+                });
+            }
+        );
+    }
+
+    // ── plan-dying-elder-v1 P3 — 垂死大能遭遇 HUD channel ──────────────────────
+
+    /**
+     * 注册 {@code bong:elder_encounter} channel。
+     * payload JSON → {@link com.bong.client.dying_elder.DyingElderEncounterHandler#handle} →
+     * {@link com.bong.client.dying_elder.DyingElderEncounterStore}。
+     *
+     * <p>仅写入 <em>显示层</em> 状态，不改玩家实际 HP / qi 或任何 gameplay 数值。
+     */
+    private static void registerElderEncounterChannel() {
+        ClientPlayNetworking.registerGlobalReceiver(
+            new Identifier(
+                com.bong.client.dying_elder.DyingElderEncounterHandler.CHANNEL_NAMESPACE,
+                com.bong.client.dying_elder.DyingElderEncounterHandler.CHANNEL_PATH
+            ),
+            (client, handler, buf, responseSender) -> {
+                int readableBytes = buf.readableBytes();
+                byte[] bytes = new byte[readableBytes];
+                buf.readBytes(bytes);
+                String jsonPayload = ServerDataEnvelope.decodeUtf8(bytes);
+                markConnectionPayload();
+                client.execute(() -> {
+                    boolean handled = com.bong.client.dying_elder.DyingElderEncounterHandler.handle(jsonPayload);
+                    if (handled) {
+                        BongClient.LOGGER.debug(
+                            "Processed bong:elder_encounter ({} bytes)", readableBytes);
+                    } else {
+                        BongClient.LOGGER.warn(
+                            "Ignoring bong:elder_encounter payload (parse failed)");
                     }
                 });
             }

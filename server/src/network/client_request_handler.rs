@@ -312,6 +312,9 @@ pub struct ClientRequestDispatchParams<'w> {
         Option<ResMut<'w, crate::inventory::external_container::ExternalContainerRegistry>>,
     pub supply_coffin_open_tx:
         Option<ResMut<'w, Events<crate::supply_coffin::interact::SupplyCoffinOpenRequest>>>,
+    // ─── plan-dying-elder-v1 P1：垂死大能给丹 C2S ──────────────────
+    pub give_dan_to_elder_tx:
+        Option<ResMut<'w, Events<crate::fauna::dying_elder::GiveDanToElderIntent>>>,
     pub workbench_open_tx: Option<ResMut<'w, Events<crate::craft::WorkbenchOpenRequest>>>,
     // ─── plan-shield-block-v1 P1：持续举盾 intent ─────────────────────────
     pub raise_shield_tx: EventWriter<'w, RaiseShieldIntent>,
@@ -546,6 +549,7 @@ pub fn handle_client_request_payloads(
             | ClientRequestV1::WorkbenchOpen { v, .. }
             | ClientRequestV1::ExternalContainerMove { v, .. }
             | ClientRequestV1::ExternalContainerClose { v, .. }
+            | ClientRequestV1::GiveDanToElder { v, .. }
             | ClientRequestV1::RaiseShield { v }
             | ClientRequestV1::LowerShield { v } => *v,
         };
@@ -2359,6 +2363,27 @@ pub fn handle_client_request_payloads(
                 if let Some(craft_cancel_tx) = dispatch.craft_cancel_tx.as_deref_mut() {
                     craft_cancel_tx.send(crate::craft::CraftCancelIntent { caster: ev.client });
                 }
+            }
+            // ── 垂死大能给丹（plan-dying-elder-v1 P1）─────────────────────────
+            ClientRequestV1::GiveDanToElder {
+                pill_instance_id,
+                elder_entity_id,
+                ..
+            } => {
+                tracing::info!(
+                    "[bong][network][dying_elder] give_dan entity={:?} pill_instance_id={pill_instance_id} elder_entity_id={elder_entity_id}",
+                    ev.client,
+                );
+                handle_give_dan_to_elder(
+                    ev.client,
+                    pill_instance_id,
+                    elder_entity_id,
+                    &mut inventories,
+                    &combat_params.item_registry,
+                    combat_params.entity_manager.as_deref(),
+                    &mut clients,
+                    dispatch.give_dan_to_elder_tx.as_deref_mut(),
+                );
             }
             // ─── plan-shield-block-v1 P1：盾牌举盾 intent ─────────────────────
             ClientRequestV1::RaiseShield { .. } => {
@@ -10611,6 +10636,130 @@ fn resync_inventory_only(
         player_state,
         cultivation,
         "external_container_resync",
+    );
+}
+
+/// plan-dying-elder-v1 P1 — 处理玩家向垂死大能交付回元丹请求。
+///
+/// ## 处理流程
+/// 1. 校验玩家背包中 `pill_instance_id` 对应物品为 `huiyuan_pill`（pills.toml id，无下划线）；
+/// 2. 根据 `elder_entity_id` 找到大能 ECS entity；
+/// 3. 消耗丹（inventory 真删）；
+/// 4. 读取 ItemEffect::QiRecovery { amount } 作为 qi_gain（默认 24.0）；
+/// 5. emit `GiveDanToElderIntent` 供 `dying_elder_give_dan_system` 在下一 tick 处理
+///    真元转移（解耦网络层与守恒系统）；
+///
+/// ## 失败路径（静默 warn，不 crash）
+/// - pill_instance_id 不在玩家背包 → warn + reject
+/// - 物品不是 `huiyuan_pill` → warn + reject
+/// - elder_entity_id 找不到 entity → warn + reject
+/// - give_dan_to_elder_tx 缺失 → warn + reject（事件注册未完成）
+#[allow(clippy::too_many_arguments)]
+fn handle_give_dan_to_elder(
+    player_entity: Entity,
+    pill_instance_id: u64,
+    elder_entity_id: i32,
+    inventories: &mut Query<&mut PlayerInventory>,
+    item_registry: &ItemRegistry,
+    entity_manager: Option<&valence::prelude::EntityManager>,
+    clients: &mut Query<(&Username, &mut Client)>,
+    give_dan_tx: Option<&mut Events<crate::fauna::dying_elder::GiveDanToElderIntent>>,
+) {
+    use crate::fauna::dying_elder::GiveDanToElderIntent;
+    use crate::inventory::ItemEffect;
+
+    // ── 校验玩家背包中是否有该 pill instance ──────────────────────────────
+    let pill_template_id = {
+        let Ok(inventory) = inventories.get(player_entity) else {
+            tracing::warn!(
+                "[bong][dying_elder] give_dan: player entity {player_entity:?} has no PlayerInventory"
+            );
+            return;
+        };
+        match crate::inventory::inventory_item_by_instance_borrow(inventory, pill_instance_id) {
+            Some(item) => item.template_id.clone(),
+            None => {
+                tracing::warn!(
+                    "[bong][dying_elder] give_dan: pill_instance_id={pill_instance_id} not in player inventory"
+                );
+                if let Ok((_u, mut client)) = clients.get_mut(player_entity) {
+                    client.send_chat_message("§c[垂死大能] 背包中未找到该回元丹。");
+                }
+                return;
+            }
+        }
+    };
+
+    // ── 校验物品是 huiyuan_pill（pills.toml 注册 id，无下划线）───────────
+    if pill_template_id != "huiyuan_pill" {
+        tracing::warn!(
+            "[bong][dying_elder] give_dan: item template_id={pill_template_id} is not huiyuan_pill"
+        );
+        if let Ok((_u, mut client)) = clients.get_mut(player_entity) {
+            client.send_chat_message("§c[垂死大能] 只接受回元丹。");
+        }
+        return;
+    }
+
+    // ── 获取丹携带的 qi_gain（从 ItemEffect::QiRecovery，默认 24.0）────────
+    let qi_gain = item_registry
+        .get("huiyuan_pill")
+        .and_then(|tmpl| {
+            if let Some(ItemEffect::QiRecovery { amount }) = tmpl.effect {
+                Some(amount)
+            } else {
+                None
+            }
+        })
+        .unwrap_or(24.0); // fallback to canonical value
+
+    // ── 解析大能 entity ────────────────────────────────────────────────────
+    let Some(entity_manager) = entity_manager else {
+        tracing::warn!("[bong][dying_elder] give_dan: EntityManager resource missing");
+        return;
+    };
+    let Some(elder_entity) = entity_manager.get_by_id(elder_entity_id) else {
+        tracing::warn!(
+            "[bong][dying_elder] give_dan: no entity for elder_entity_id={elder_entity_id}"
+        );
+        if let Ok((_u, mut client)) = clients.get_mut(player_entity) {
+            client.send_chat_message("§c[垂死大能] 找不到目标大能。");
+        }
+        return;
+    };
+
+    // ── 消耗丹（inventory 真删）───────────────────────────────────────────
+    {
+        let Ok(mut inventory) = inventories.get_mut(player_entity) else {
+            return;
+        };
+        match crate::inventory::consume_item_instance_once(&mut inventory, pill_instance_id) {
+            Ok(_) => {}
+            Err(e) => {
+                tracing::warn!(
+                    "[bong][dying_elder] give_dan: consume_item_instance_once failed: {e}"
+                );
+                return;
+            }
+        }
+    }
+
+    // ── emit GiveDanToElderIntent 供 dying_elder_give_dan_system 处理 ────────
+    let Some(tx) = give_dan_tx else {
+        tracing::warn!(
+            "[bong][dying_elder] give_dan: GiveDanToElderIntent event resource missing, dropping intent"
+        );
+        return;
+    };
+    tx.send(GiveDanToElderIntent {
+        player: player_entity,
+        elder: elder_entity,
+        pill_instance_id,
+        qi_gain,
+    });
+
+    tracing::info!(
+        "[bong][dying_elder] give_dan: player {player_entity:?} → elder {elder_entity:?} qi_gain={qi_gain} pill={pill_instance_id}"
     );
 }
 

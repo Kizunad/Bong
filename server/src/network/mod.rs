@@ -67,6 +67,8 @@ pub mod skillbar_config_emit;
 mod skillbar_config_emit_test;
 // plan-daozhan-v1 P1 — 道伥伪装状态 S2C CustomPayload
 pub mod daozhan_disguise_emit;
+// plan-dying-elder-v1 B1 — 垂死大能遭遇 S2C CustomPayload（HUD 驱动）
+pub mod elder_encounter_emit;
 // plan-era-state-v1 P3 — 时代天象 S2C CustomPayload
 pub mod era_ambiance_emit;
 // plan-fauna-mimic-spider-v1 P2 — 拟态蛛伪装状态 S2C CustomPayload
@@ -938,6 +940,8 @@ pub fn register(app: &mut App) {
 
     // plan-daozhan-v1 P1 — 道伥伪装渲染 S2C payloads
     daozhan_disguise_emit::register(app);
+    // plan-dying-elder-v1 B1 — 垂死大能遭遇 HUD S2C payloads
+    elder_encounter_emit::register(app);
     // plan-fauna-mimic-spider-v1 P2 — 拟态蛛伪装渲染 S2C payloads
     spider_disguise_emit::register(app);
 

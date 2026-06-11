@@ -119,7 +119,9 @@ public enum HudLayoutPreset {
             case QUICK_BAR, CAST_BAR, SPELL_VOLUME, CARRIER, JIEMAI_RING, VORTEX_CHARGE, VORTEX_COOLDOWN,
                 VORTEX_BACKFIRE, VORTEX_TURBULENCE, DUGU_TAINT_WARNING, DUGU_TAINT_INDICATOR,
                 DUGU_REVEAL_RISK, DUGU_SELF_CURE_PROGRESS, DUGU_SHROUD, DUGU_QI_DECAY, POISON_TRAIT, COFFIN,
-                DANDAO_MUTATION, SWORD_BOND -> Widget.BARS;
+                DANDAO_MUTATION, SWORD_BOND,
+                // plan-dying-elder-v1 P3：大能遭遇交互面板跟随 BARS 组
+                DYING_ELDER -> Widget.BARS;
             case TARGET_INFO -> Widget.TARGET;
             case EVENT_STREAM, TOAST -> Widget.EVENT_STREAM;
             case BOTANY -> Widget.BOTANY;

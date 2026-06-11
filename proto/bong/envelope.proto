@@ -273,6 +273,8 @@ message ClientRequestEnvelope {
     CoffinMenuReclaim           coffin_menu_reclaim           = 89;
     // ─── plan-exploration-probe-return-v1 P1：神识感知保鲜 C2S ────
     FreshnessProbe              freshness_probe               = 90;
+    // ─── plan-dying-elder-v1 P1：垂死大能给丹 C2S ──────────────────
+    GiveDanToElderReq           give_dan_to_elder             = 96;
     // plan-block-lifecycle-v1 P2 — Bong 自有背包方块放置 C2S。
     BlockPlace                  block_place                   = 91;
     // plan-niche-craft-fix-v1 P1 — 灵龛修补 C2S。
@@ -2419,6 +2421,9 @@ enum SenseKind {
   SENSE_KIND_DISGUISED_SPIDER      = 10;
   // plan-daozhan-v1 P3：神识识破 Mimicry 态道伥，Solidify+ 可见
   SENSE_KIND_DISGUISED_DAO_ZHANG   = 11;
+  // plan-dying-elder-v1 P3：感知垂死大能残余真元波动，Solidify+ 可见
+  // intensity 映射大能剩余真元比（0.0 = 濒死 / 1.0 = 余力尚足）
+  SENSE_KIND_DYING_ELDER_QI        = 12;
 }
 
 message SenseEntry {
@@ -3787,6 +3792,15 @@ message MineralProbeResult {
 // instance_id = 玩家 inventory 中物品的实例 ID（直接定位，消除容器 tab 歧义）。
 message FreshnessProbe {
   uint64 instance_id = 1;
+}
+
+// ─── plan-dying-elder-v1 P1：玩家向垂死大能交付一颗回元丹 C2S ────
+// 与 Rust ClientRequestV1::GiveDanToElder 精确对应。
+// pill_instance_id = 玩家背包中回元丹的 inventory instance_id；
+// elder_entity_id  = 垂死大能的 MC protocol entity_id（i32）。
+message GiveDanToElderReq {
+  uint64 pill_instance_id = 1;
+  int32  elder_entity_id  = 2;
 }
 
 // ─── plan-exploration-probe-return-v1 P1：神识感知保鲜回执 S2C ────

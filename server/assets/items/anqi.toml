@@ -169,6 +169,20 @@ description = "隐蔽小袋，可收纳四支暗器载体，磨损税高于箭�
 max_stack_count = 1
 
 [[item]]
+id = "scroll_anqi_echo_fractal"
+name = "暗器残卷·回声裂变"
+category = "scroll"
+grid_w = 1
+grid_h = 2
+base_weight = 0.05
+rarity = "epic"
+spirit_quality_initial = 0.7
+description = "地阶残卷，载有以声成形、碎而复聚的回声裂变法门。每发分裂后数枚暗器齐袭，末法时代失传已久。"
+max_stack_count = 1
+[item.technique_scroll]
+skill_id = "anqi.echo_fractal"
+
+[[item]]
 id = "anqi_container_fenglinghe"
 name = "封灵匣"
 category = "misc"

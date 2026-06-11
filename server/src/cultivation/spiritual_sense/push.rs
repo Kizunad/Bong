@@ -11,6 +11,7 @@ use crate::cultivation::life_record::LifeRecord;
 use crate::cultivation::realm_taint::{RealmTaintState, RealmTaintedKind};
 use crate::cultivation::tick::CultivationClock;
 use crate::fauna::daozhan::DaoZhangState;
+use crate::fauna::dying_elder::{DyingElderBlackboard, DyingElderState};
 use crate::fauna::mimic_spider::SpiderDisguiseState;
 use crate::network::agent_bridge::{
     payload_type_label, serialize_server_data_payload, SERVER_DATA_CHANNEL,
@@ -86,11 +87,21 @@ type SpiritualSenseNpcDaoZhangReadItem<'a> = (
 );
 type SpiritualSenseNpcDaoZhangReadFilter = With<NpcMarker>;
 
+// plan-dying-elder-v1 P3：垂死大能真元流失 → DyingElderQi target
+type SpiritualSenseNpcDyingElderReadItem<'a> = (
+    &'a Position,
+    &'a DyingElderBlackboard,
+    &'a DyingElderState,
+    Option<&'a CurrentDimension>,
+);
+type SpiritualSenseNpcDyingElderReadFilter = With<NpcMarker>;
+
 type SpiritualSenseQueryParams<'w, 's> = (
     Query<'w, 's, SpiritualSensePlayerReadItem<'w>, SpiritualSensePlayerReadFilter>,
     Query<'w, 's, SpiritualSenseObserverItem<'w>, SpiritualSenseObserverFilter>,
     Query<'w, 's, SpiritualSenseNpcSpiderReadItem<'w>, SpiritualSenseNpcSpiderReadFilter>,
     Query<'w, 's, SpiritualSenseNpcDaoZhangReadItem<'w>, SpiritualSenseNpcDaoZhangReadFilter>,
+    Query<'w, 's, SpiritualSenseNpcDyingElderReadItem<'w>, SpiritualSenseNpcDyingElderReadFilter>,
 );
 
 pub fn send_spiritual_sense_targets(client: &mut Client, targets: SpiritualSenseTargetsV1) {
@@ -164,6 +175,37 @@ pub fn push_spiritual_sense_targets(
             .collect()
     };
 
+    // plan-dying-elder-v1 P3/M2：收集 Plea/Recovering 态垂死大能 → DyingElderQi target
+    // intensity 使用真实 qi_current / qi_max_cache（M2 修复：非硬编码 0.8）
+    // 真元越少，感知强度越弱（濒死大能快力竭时波动减小，越难被神识察觉）
+    let dying_elder_targets: Vec<SpiritualSenseTarget> = {
+        let elder_q = player_sets.p4();
+        elder_q
+            .iter()
+            .filter(|(_, _, state, _)| {
+                matches!(
+                    **state,
+                    DyingElderState::Plea | DyingElderState::Recovering { .. }
+                )
+            })
+            .map(|(pos, bb, _, _)| {
+                // M2 修复：intensity = qi_current / qi_max_cache，clamp [0.1, 0.9]
+                // 最小 0.1 保证即使真元极低仍可被神识感知（不完全消失）；最大 0.9 避免超亮
+                let intensity = if bb.qi_max_cache > 0.0 {
+                    (bb.qi_current / bb.qi_max_cache).clamp(0.1, 0.9)
+                } else {
+                    0.5
+                };
+                SpiritualSenseTarget {
+                    position: position_to_array(pos),
+                    kind: SpiritualSenseTargetKind::DyingElderQi,
+                    intensity,
+                    stealth: None,
+                }
+            })
+            .collect()
+    };
+
     let snapshots: Vec<PlayerSenseSnapshot> = {
         let players = player_sets.p0();
         players
@@ -186,7 +228,11 @@ pub fn push_spiritual_sense_targets(
             )
             .collect()
     };
-    if snapshots.is_empty() && spider_targets.is_empty() && daozhan_targets.is_empty() {
+    if snapshots.is_empty()
+        && spider_targets.is_empty()
+        && daozhan_targets.is_empty()
+        && dying_elder_targets.is_empty()
+    {
         return;
     }
 
@@ -232,6 +278,13 @@ pub fn push_spiritual_sense_targets(
             // plan-daozhan-v1 P3：追加 Mimicry 态道伥目标（DisguisedDaoZhang）
             targets.extend(
                 daozhan_targets
+                    .iter()
+                    .filter(|t| super::scanner::distance(observer_pos, t.position) <= radius)
+                    .cloned(),
+            );
+            // plan-dying-elder-v1 P3：追加 Plea/Recovering 态垂死大能目标（DyingElderQi）
+            targets.extend(
+                dying_elder_targets
                     .iter()
                     .filter(|t| super::scanner::distance(observer_pos, t.position) <= radius)
                     .cloned(),

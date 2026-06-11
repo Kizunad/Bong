@@ -544,6 +544,38 @@
                     ]
                 }
             ]
+        },
+        "dying_elder_secondary_honorable": {
+            "_doc": "plan-dying-elder-v1 P2 — 守信自裁结局附加掉落（稀有材料，dead_by_betrayal=false 时叠加）。",
+            "rolls": [1, 2],
+            "entries": [
+                {
+                    "template_id": "jing_sui",
+                    "weight": 60,
+                    "count": [1, 2]
+                },
+                {
+                    "template_id": "jing_hun_yu",
+                    "weight": 40,
+                    "count": [1, 1]
+                }
+            ]
+        },
+        "dying_elder_secondary_betrayal": {
+            "_doc": "plan-dying-elder-v1 P2 — 翻脸背叛结局附加掉落（质量稍差，dead_by_betrayal=true 时使用）。",
+            "rolls": [1, 1],
+            "entries": [
+                {
+                    "template_id": "jing_sui",
+                    "weight": 80,
+                    "count": [1, 1]
+                },
+                {
+                    "template_id": "jing_hun_yu",
+                    "weight": 20,
+                    "count": [1, 1]
+                }
+            ]
         }
     }
 }

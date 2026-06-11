@@ -222,6 +222,8 @@ pub fn bubble_text_by_archetype(
             NpcArchetype::Zhinian => "...这是...",
             NpcArchetype::Fuya => "气息陷下去了。",
             NpcArchetype::SkullFiend => "骨声贴地。",
+            // plan-dying-elder-v1：垂死大能向玩家乞求，显示求助气泡
+            NpcArchetype::DyingElder => "还请施主……留步……",
             NpcArchetype::Beast => "它警惕地盯着你。",
             NpcArchetype::Zombie => "...",
         },

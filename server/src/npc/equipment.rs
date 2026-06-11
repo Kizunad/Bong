@@ -295,7 +295,9 @@ pub fn assign_npc_equipment(
         NpcArchetype::Beast
         | NpcArchetype::Fuya
         | NpcArchetype::SkullFiend
-        | NpcArchetype::Zombie => NpcEquipment::default(),
+        | NpcArchetype::Zombie
+        // plan-dying-elder-v1：垂死大能无装备（修士本体，无武器 / 甲）
+        | NpcArchetype::DyingElder => NpcEquipment::default(),
     }
 }
 

@@ -37,6 +37,7 @@ import com.bong.client.inventory.LootContainerScreenBootstrap;
 import com.bong.client.cultivation.voidaction.VoidActionScreenBootstrap;
 import com.bong.client.craft.CraftScreenBootstrap;
 import com.bong.client.lingtian.LingtianActionScreenBootstrap;
+import com.bong.client.dying_elder.DyingElderInteractionKeybindings;
 import com.bong.client.movement.MovementKeybindings;
 import com.bong.client.npc.NpcLodWorldRenderer;
 import com.bong.client.npc.NpcNametagRenderer;
@@ -84,6 +85,7 @@ public class BongClient implements ClientModInitializer {
         NpcInteractionLogControls.register();
         HudImmersionControls.register();
         MovementKeybindings.register();
+        DyingElderInteractionKeybindings.register();
         DefaultInteractionHandlers.registerDefaults();
         CultivationScreenBootstrap.register();
         InspectScreenBootstrap.register();

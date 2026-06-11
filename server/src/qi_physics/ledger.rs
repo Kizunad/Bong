@@ -187,6 +187,23 @@ pub enum QiTransferReason {
     /// QiTransfer(from=zone:<name>, to=npc:daozhan:<id>, reason=TiandaoCondense)。
     /// 绝不凭空创生：zone 必须先减，道伥才获得真元。
     TiandaoCondense,
+    /// plan-dying-elder-v1 P0 — 玩家向垂死大能交付回元丹，丹携带的 qi 转入大能 qi_current。
+    ///
+    /// 守恒约束：丹从玩家背包消耗（inventory 真删）；丹携带的 qi_gain 值走本 reason 转入大能；
+    /// QiTransfer(from=item:hui_yuan_pill:<instance_id>, to=npc:dying_elder:<id>, reason=TradeDan)。
+    /// 丹的 qi 来自炼丹时 zone 灵气凝结（已在 alchemy plan 记账），此处只搬运成品 qi，不凭空创生。
+    TradeDan,
+    /// plan-dying-elder-v1 P0 — 垂死大能翻脸夺舍时，从玩家 qi_current 吸取真元转入大能。
+    ///
+    /// 守恒约束：
+    ///   - `player.qi_current` 清零（实际转移量 = 玩家当前 qi_current）走本 reason；
+    ///   - `player.qi_max -= soul_seize_drain`（永久容量 debuff，**不是** qi 搬运——守恒只作用于
+    ///     qi_current 转移；qi_max 减少是单独的容量变化，不重复计入 QiTransfer）；
+    ///   - QiTransfer(from=player:<uuid>, to=npc:dying_elder:<id>, reason=SoulSeize)；
+    ///   - 凭空吸取红线：玩家 qi 减少量必须等于大能 qi 增加量，qi_max debuff 不影响此不变式。
+    ///
+    /// worldview 正典依据（§七「无人可信，算计至上」）：夺舍是末法最惨结局，永久烙印强化危机感。
+    SoulSeize,
     /// plan-tiandao-hunt-v1 P4 — Watch 级天道微调区域灵气。
     ///
     /// 守恒约束：zone.spirit_qi -= delta；对应 delta 先镜像到 zone ledger 源账户，

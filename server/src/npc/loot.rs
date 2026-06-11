@@ -120,6 +120,9 @@ pub fn default_loot_for_archetype(archetype: NpcArchetype) -> NpcLootTable {
             NpcLootEntry::new("broken_artifact", 0.05),
             NpcLootEntry::new("broken_artifact_scroll", 0.02),
         ],
+        // plan-dying-elder-v1：垂死大能死亡 loot 由 DyingElderDeathSystem（P2）专门处理
+        // （地阶功法残卷 + 破碎法宝，按 dead_by_betrayal 分档），此处返回空表占位。
+        NpcArchetype::DyingElder => vec![],
     };
     NpcLootTable::new(archetype, entries)
 }

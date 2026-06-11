@@ -7850,6 +7850,8 @@ mod tests {
         assert_eq!(SenseKind::DisguisedSpider as i32, 10);
         // plan-daozhan-v1 P3
         assert_eq!(SenseKind::DisguisedDaoZhang as i32, 11);
+        // plan-dying-elder-v1 P3
+        assert_eq!(SenseKind::DyingElderQi as i32, 12);
     }
 
     // ─── SenseKind all variants roundtrip ──────────────────────────
@@ -7870,6 +7872,8 @@ mod tests {
             SenseKind::DisguisedSpider,
             // plan-daozhan-v1 P3
             SenseKind::DisguisedDaoZhang,
+            // plan-dying-elder-v1 P3
+            SenseKind::DyingElderQi,
         ];
         for kind in kinds {
             let targets = SpiritualSenseTargets {
