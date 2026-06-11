@@ -14,6 +14,7 @@ pub mod rat;
 pub mod realm;
 pub mod reset;
 pub mod revive;
+pub mod riskmap;
 pub mod season;
 pub mod shader_push;
 pub mod shrine;
@@ -67,6 +68,7 @@ pub fn register(app: &mut App) {
     npc_scenario::register(app);
     preview_tp::register(app);
     rat::register(app);
+    riskmap::register(app);
     whale::register(app);
     zone_qi::register(app);
     shader_push::register(app);
