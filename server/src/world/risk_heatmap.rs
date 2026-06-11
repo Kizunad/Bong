@@ -65,7 +65,7 @@ pub const FAUNA_SCORE_PER_TIER: f32 = 5.0;
 /// 野兽密度轴：每个 zone 野兽分的上限贡献。
 pub const FAUNA_SCORE_CAP: f32 = 30.0;
 
-/// NPC 活跃度轴：高危 NPC（GuardianRelic / SkullFiend）每只得分。
+/// NPC 活跃度轴：高危 NPC（GuardianRelic / SkullFiend / DyingElder / Fuya）每只得分。
 pub const NPC_SCORE_HIGH_DANGER: f32 = 8.0;
 
 /// NPC 活跃度轴：散修类 NPC（Rogue / Commoner / Disciple）每只得分。
@@ -186,11 +186,17 @@ pub fn qi_axis_score(spirit_qi: f64) -> f32 {
     }
 }
 
-/// NPC 是否为高危类型（GuardianRelic / SkullFiend / DyingElder）。
+/// NPC 是否为高危类型（GuardianRelic / SkullFiend / DyingElder / Fuya）。
+///
+/// Fuya（负压畸变体）是带耗真元光环的环境威胁（worldview §七 / plan-tsy-hostile-v1 §1），
+/// 其存在对区域构成持续压力，应计入高危 NPC 轴。
 pub fn is_high_danger_npc(archetype: NpcArchetype) -> bool {
     matches!(
         archetype,
-        NpcArchetype::GuardianRelic | NpcArchetype::SkullFiend | NpcArchetype::DyingElder
+        NpcArchetype::GuardianRelic
+            | NpcArchetype::SkullFiend
+            | NpcArchetype::DyingElder
+            | NpcArchetype::Fuya
     )
 }
 
@@ -547,11 +553,33 @@ mod tests {
 
     #[test]
     fn npc_archetype_high_danger_classification() {
-        assert!(is_high_danger_npc(NpcArchetype::GuardianRelic));
-        assert!(is_high_danger_npc(NpcArchetype::SkullFiend));
-        assert!(is_high_danger_npc(NpcArchetype::DyingElder));
-        assert!(!is_high_danger_npc(NpcArchetype::Rogue));
-        assert!(!is_high_danger_npc(NpcArchetype::Zombie));
+        // 高危 NPC：GuardianRelic / SkullFiend / DyingElder / Fuya（负压畸变体，worldview §七）
+        assert!(
+            is_high_danger_npc(NpcArchetype::GuardianRelic),
+            "GuardianRelic 应为高危"
+        );
+        assert!(
+            is_high_danger_npc(NpcArchetype::SkullFiend),
+            "SkullFiend 应为高危"
+        );
+        assert!(
+            is_high_danger_npc(NpcArchetype::DyingElder),
+            "DyingElder 应为高危"
+        );
+        assert!(
+            is_high_danger_npc(NpcArchetype::Fuya),
+            "Fuya（负压畸变体）应为高危 — 带耗真元光环的环境威胁"
+        );
+        // 非高危：普通散修类
+        assert!(!is_high_danger_npc(NpcArchetype::Rogue), "Rogue 不应为高危");
+        assert!(
+            !is_high_danger_npc(NpcArchetype::Zombie),
+            "Zombie 不应为高危"
+        );
+        assert!(
+            !is_high_danger_npc(NpcArchetype::Commoner),
+            "Commoner 不应为高危"
+        );
     }
 
     #[test]
