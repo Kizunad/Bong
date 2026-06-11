@@ -258,7 +258,9 @@ fn can_health_regen(lifecycle: Option<&Lifecycle>, wounds: &Wounds) -> bool {
     !lifecycle.is_some_and(|lifecycle| {
         matches!(
             lifecycle.state,
-            LifecycleState::NearDeath | LifecycleState::Terminated
+            LifecycleState::NearDeath
+                | LifecycleState::AwaitingRevival
+                | LifecycleState::Terminated
         )
     })
 }
@@ -2400,7 +2402,7 @@ mod tests {
     }
 
     #[test]
-    fn health_regen_tick_skips_near_death_and_terminated_lifecycle() {
+    fn health_regen_tick_skips_pending_revival_lifecycles() {
         let mut app = App::new();
         app.insert_resource(CombatClock {
             tick: HEALTH_REGEN_TICK_INTERVAL_TICKS,
@@ -2417,6 +2419,19 @@ mod tests {
             Stamina::default(),
             Lifecycle {
                 state: LifecycleState::NearDeath,
+                ..Lifecycle::default()
+            },
+        );
+        let awaiting_revival = spawn_actor(
+            &mut app,
+            Wounds {
+                health_current: 1.0,
+                health_max: 30.0,
+                entries: Vec::new(),
+            },
+            Stamina::default(),
+            Lifecycle {
+                state: LifecycleState::AwaitingRevival,
                 ..Lifecycle::default()
             },
         );
@@ -2439,6 +2454,14 @@ mod tests {
         assert_eq!(
             app.world()
                 .entity(near_death)
+                .get::<Wounds>()
+                .unwrap()
+                .health_current,
+            1.0
+        );
+        assert_eq!(
+            app.world()
+                .entity(awaiting_revival)
                 .get::<Wounds>()
                 .unwrap()
                 .health_current,
