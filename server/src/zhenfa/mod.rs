@@ -3,9 +3,9 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use serde::{Deserialize, Serialize};
 use valence::prelude::{
     bevy_ecs, bevy_ecs::system::SystemParam, App, BlockPos, BlockState, ChunkLayer, Client,
-    Commands, Component, Entity, Event, EventReader, EventWriter, Events, IntoSystemConfigs,
-    Position, PropName, PropValue, Query, Res, ResMut, Resource, SystemSet, Update, Username, With,
-    Without,
+    Commands, Component, DVec3, Entity, Event, EventReader, EventWriter, Events, IntoSystemConfigs,
+    Mut, Position, PropName, PropValue, Query, Res, ResMut, Resource, SystemSet, Update, Username,
+    With, Without,
 };
 
 use crate::combat::components::{BodyPart, Lifecycle, LifecycleState, Wound, WoundKind, Wounds};
@@ -24,6 +24,7 @@ use crate::inventory::{
     add_item_to_player_inventory, consume_item_instance_once, inventory_item_by_instance_borrow,
     InventoryInstanceIdAllocator, ItemRegistry, PlayerInventory,
 };
+use crate::lingtian::{LingtianPlot, PLOT_QI_CAP_MAX, QI_LINGJU_ARRAY_CAP_BONUS};
 use crate::network::{gameplay_vfx, vfx_event_emit::VfxEventRequest};
 use crate::player::gameplay::PendingGameplayNarrations;
 use crate::player::state::canonical_player_id;
@@ -39,7 +40,7 @@ use crate::social::components::{Relationships, Renown};
 use crate::world::{
     bong_blocks::{place_bong_block, remove_bong_block},
     dimension::{DimensionKind, OverworldLayer},
-    zone::ZoneRegistry,
+    zone::{ZoneRegistry, DEFAULT_SPAWN_ZONE_NAME},
 };
 
 pub mod trap_content;
@@ -413,6 +414,8 @@ pub struct ZhenfaRegistry {
     ward_inside: HashSet<(u64, Entity)>,
     slow_charges_remaining: HashMap<u64, u8>,
     slow_inside: HashSet<(u64, Entity)>,
+    lingju_plot_coverers: HashMap<BlockPos, HashSet<u64>>,
+    lingju_plot_base_caps: HashMap<BlockPos, f32>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -659,6 +662,79 @@ impl ZhenfaRegistry {
             });
         }
     }
+}
+
+fn apply_lingju_effect(
+    instance: &ZhenfaInstance,
+    registry: &mut ZhenfaRegistry,
+    plot_env_writer: &mut Query<&mut LingtianPlot>,
+) {
+    for mut plot in plot_env_writer.iter_mut() {
+        if !lingju_covers_plot(instance, plot.pos) {
+            continue;
+        }
+        let coverers = registry.lingju_plot_coverers.entry(plot.pos).or_default();
+        let was_covered = !coverers.is_empty();
+        coverers.insert(instance.id);
+        if was_covered {
+            continue;
+        }
+        registry
+            .lingju_plot_base_caps
+            .entry(plot.pos)
+            .or_insert(plot.plot_qi_cap);
+        plot.plot_qi_cap = (plot.plot_qi_cap + QI_LINGJU_ARRAY_CAP_BONUS).min(PLOT_QI_CAP_MAX);
+    }
+}
+
+fn clear_lingju_effect(
+    instance: &ZhenfaInstance,
+    registry: &mut ZhenfaRegistry,
+    plot_env_writer: &mut Query<&mut LingtianPlot>,
+) {
+    clear_lingju_effect_for_plots(instance, registry, plot_env_writer.iter_mut());
+}
+
+fn clear_lingju_effect_for_plots<'a>(
+    instance: &ZhenfaInstance,
+    registry: &mut ZhenfaRegistry,
+    plots: impl Iterator<Item = Mut<'a, LingtianPlot>>,
+) {
+    let mut uncovered = Vec::new();
+    for (pos, coverers) in &mut registry.lingju_plot_coverers {
+        coverers.remove(&instance.id);
+        if coverers.is_empty() {
+            uncovered.push(*pos);
+        }
+    }
+
+    let mut restored_caps = Vec::new();
+    for pos in uncovered {
+        registry.lingju_plot_coverers.remove(&pos);
+        let Some(base_cap) = registry.lingju_plot_base_caps.remove(&pos) else {
+            continue;
+        };
+        restored_caps.push((pos, base_cap));
+    }
+
+    for mut plot in plots {
+        if let Some((_, base_cap)) = restored_caps.iter().find(|(pos, _)| *pos == plot.pos) {
+            plot.plot_qi_cap = *base_cap;
+            plot.plot_qi = plot.plot_qi.min(plot.plot_qi_cap);
+        }
+    }
+}
+
+fn lingju_covers_plot(instance: &ZhenfaInstance, pos: BlockPos) -> bool {
+    in_horizontal_radius(
+        DVec3::new(
+            f64::from(pos.x) + 0.5,
+            f64::from(pos.y),
+            f64::from(pos.z) + 0.5,
+        ),
+        instance.pos,
+        instance.effect_radius,
+    )
 }
 
 pub fn carrier_spec(carrier: ZhenfaCarrierKind) -> CarrierSpec {
@@ -1035,6 +1111,8 @@ fn handle_zhenfa_place_requests(
     mut ling_events: EventWriter<LingArrayDeployEvent>,
     mut deceive_events: EventWriter<DeceiveHeavenEvent>,
     mut illusion_events: EventWriter<IllusionArrayDeployEvent>,
+    mut pending_narrations: Option<ResMut<PendingGameplayNarrations>>,
+    mut vfx_events: Option<ResMut<Events<VfxEventRequest>>>,
 ) {
     for req in requests.read() {
         if registry.find_at(req.pos).is_some() {
@@ -1157,10 +1235,15 @@ fn handle_zhenfa_place_requests(
                 profile.min_invest_ratio,
                 profile.cap_invest_ratio,
             );
+            let effect_radius = if req.kind == ZhenfaKind::Lingju {
+                profile.radius
+            } else {
+                trap_effect_radius(invest_ratio)
+            };
             (
                 invest_ratio,
                 cultivation.qi_max.max(1.0) * invest_ratio,
-                trap_effect_radius(invest_ratio),
+                effect_radius,
             )
         };
         if cultivation.qi_current + f64::EPSILON < qi_cost {
@@ -1292,7 +1375,7 @@ fn handle_zhenfa_place_requests(
                 emit_deploy_event(
                     req.kind,
                     req.player,
-                    owner_player_id,
+                    owner_player_id.clone(),
                     id,
                     req.pos,
                     &profile,
@@ -1301,6 +1384,13 @@ fn handle_zhenfa_place_requests(
                     &mut ling_events,
                     &mut deceive_events,
                     &mut illusion_events,
+                );
+                emit_lingju_activate_feedback(
+                    req.kind,
+                    req.pos,
+                    zones.as_deref(),
+                    pending_narrations.as_deref_mut(),
+                    vfx_events.as_deref_mut(),
                 );
                 tracing::info!(
                     "[bong][zhenfa] placed {:?} id={} owner={:?} pos={:?} ratio={:.3}",
@@ -1477,6 +1567,54 @@ fn emit_deploy_event(
     }
 }
 
+fn emit_lingju_activate_feedback(
+    kind: ZhenfaKind,
+    pos: [i32; 3],
+    zones: Option<&ZoneRegistry>,
+    pending_narrations: Option<&mut PendingGameplayNarrations>,
+    vfx_events: Option<&mut Events<VfxEventRequest>>,
+) {
+    if kind != ZhenfaKind::Lingju {
+        return;
+    }
+    let zone_name = zone_name_at_pos(zones, pos);
+    if let Some(pending_narrations) = pending_narrations {
+        pending_narrations.push_zone(
+            zone_name.as_str(),
+            "此地灵气似有汇聚之势，呼吸间多了几分清润。",
+            NarrationStyle::Perception,
+        );
+        pending_narrations.push_zone(
+            zone_name.as_str(),
+            "脚下方块隐隐泛起微光——聚灵阵已成。",
+            NarrationStyle::Perception,
+        );
+        pending_narrations.push_zone(
+            zone_name.as_str(),
+            "又一个把家当往一处堆的。天道的眼睛，最爱这种亮堂的地方。",
+            NarrationStyle::Narration,
+        );
+    }
+    emit_zhenfa_vfx(
+        vfx_events,
+        gameplay_vfx::LINGJU_ACTIVATE,
+        pos,
+        "#7FD8A8",
+        0.65,
+        8,
+        20,
+    );
+}
+
+fn zone_name_at_pos(zones: Option<&ZoneRegistry>, pos: [i32; 3]) -> String {
+    zones
+        .and_then(|zones| {
+            zones.find_zone(DimensionKind::Overworld, gameplay_vfx::block_center(pos))
+        })
+        .map(|zone| zone.name.clone())
+        .unwrap_or_else(|| DEFAULT_SPAWN_ZONE_NAME.to_string())
+}
+
 type ZhenfaDamageTarget<'a> = (
     Entity,
     &'a Position,
@@ -1535,6 +1673,7 @@ fn tick_zhenfa_registry(
     mut registry: ResMut<ZhenfaRegistry>,
     mut commands: Commands,
     mut layers: Query<&mut ChunkLayer, With<OverworldLayer>>,
+    mut plots: Query<&mut LingtianPlot>,
     mut targets: Query<ZhenfaDamageTarget<'_>>,
     mut practice_logs: Query<(&mut PracticeLog, Option<&QiColor>)>,
     ward_positions: Query<(Entity, &Position), Without<ZhenfaAnchor>>,
@@ -1549,6 +1688,9 @@ fn tick_zhenfa_registry(
         tracing::debug!("[bong][zhenfa] expired {} array eye(s)", expired.len());
     }
     for instance in &expired {
+        if instance.kind == ZhenfaKind::Lingju {
+            clear_lingju_effect(instance, &mut registry, &mut plots);
+        }
         if should_release_sealed_qi_to_zone(instance.kind) {
             release_zhenfa_qi_to_zone(zones.as_deref_mut(), &mut events.qi_transfers, instance);
         }
@@ -1579,6 +1721,7 @@ fn tick_zhenfa_registry(
     let mut slow_triggers = Vec::new();
     let mut ward_alerts = Vec::new();
     let mut deceived_exposed = Vec::new();
+    let mut lingju_instances = Vec::new();
     let mut current_ward_inside = HashSet::new();
     let mut current_slow_inside = HashSet::new();
     for instance in registry
@@ -1710,7 +1853,9 @@ fn tick_zhenfa_registry(
                     &mut events.status_effects,
                 );
             }
-            ZhenfaKind::Lingju => {}
+            ZhenfaKind::Lingju => {
+                lingju_instances.push(instance.clone());
+            }
             ZhenfaKind::DeceiveHeaven => {
                 if deceive_heaven_detected(instance, now) {
                     deceived_exposed.push((
@@ -1723,6 +1868,9 @@ fn tick_zhenfa_registry(
             }
             ZhenfaKind::Illusion => {}
         }
+    }
+    for instance in &lingju_instances {
+        apply_lingju_effect(instance, &mut registry, &mut plots);
     }
     registry
         .ward_inside
@@ -1899,6 +2047,7 @@ fn handle_zhenfa_disarm_requests(
     mut commands: Commands,
     mut players: Query<ZhenfaDisarmPlayer<'_>>,
     mut layers: Query<&mut ChunkLayer, With<OverworldLayer>>,
+    mut plots: Query<&mut LingtianPlot>,
     item_registry: Option<Res<ItemRegistry>>,
     mut allocator: Option<ResMut<InventoryInstanceIdAllocator>>,
     mut breakthrough_events: EventWriter<ArrayBreakthroughEvent>,
@@ -1932,6 +2081,9 @@ fn handle_zhenfa_disarm_requests(
         let Some(instance) = registry.remove(instance_id) else {
             continue;
         };
+        if instance.kind == ZhenfaKind::Lingju {
+            clear_lingju_effect(&instance, &mut registry, &mut plots);
+        }
         remove_zhenfa_anchor_block(&mut layers, instance.pos);
         commands.entity(instance.anchor_entity).despawn();
         breakthrough_events.send(ArrayBreakthroughEvent {
@@ -2939,6 +3091,7 @@ mod tests {
         inventory_item_by_instance_borrow, ContainerState, InventoryRevision, ItemCategory,
         ItemInstance, ItemRarity, ItemTemplate, PlayerInventory, EQUIP_SLOT_MAIN_HAND,
     };
+    use crate::lingtian::PLOT_QI_CAP_BASE;
     use valence::prelude::{App, ChunkLayer, DVec3, Entity, Events, UnloadedChunk};
     use valence::testing::ScenarioSingleClient;
 
@@ -3045,6 +3198,336 @@ mod tests {
                 zhenfa_flag_inventory(),
             ))
             .id()
+    }
+
+    fn spawn_plot(app: &mut App, pos: [i32; 3], cap: f32) -> Entity {
+        let mut plot = LingtianPlot::new(block_pos_from_array(pos), None);
+        plot.plot_qi_cap = cap;
+        app.world_mut().spawn(plot).id()
+    }
+
+    fn plot_cap(app: &mut App, pos: [i32; 3]) -> f32 {
+        app.world_mut()
+            .query::<&LingtianPlot>()
+            .iter(app.world())
+            .find(|plot| plot.pos == block_pos_from_array(pos))
+            .map(|plot| plot.plot_qi_cap)
+            .expect("test plot should exist")
+    }
+
+    fn send_lingju_place(app: &mut App, player: Entity, pos: [i32; 3], tick: u64) {
+        app.world_mut().send_event(ZhenfaPlaceRequest {
+            player,
+            pos,
+            kind: ZhenfaKind::Lingju,
+            carrier: ZhenfaCarrierKind::BeastCoreInlaid,
+            qi_invest_ratio: 0.30,
+            trigger: None,
+            item_instance_id: None,
+            target_face: None,
+            requested_at_tick: tick,
+        });
+    }
+
+    #[test]
+    fn lingju_tick_applies_cap_bonus_inside_radius_only() {
+        let mut app = app_with_loaded_zhenfa();
+        let owner = spawn_player(&mut app, "Alice", [0.5, 64.0, 0.5]);
+        spawn_plot(&mut app, [20, 64, 0], PLOT_QI_CAP_BASE);
+        spawn_plot(&mut app, [21, 64, 0], PLOT_QI_CAP_BASE);
+
+        send_lingju_place(&mut app, owner, [0, 64, 0], 1);
+        app.update();
+        let instance = app
+            .world()
+            .resource::<ZhenfaRegistry>()
+            .find_at([0, 64, 0])
+            .expect("Lingju 应成功放置");
+        assert_eq!(
+            instance.effect_radius, 20,
+            "Lingju 必须使用 profile radius，不能沿用旧 trap_effect_radius 的 0-2 格半径"
+        );
+
+        app.world_mut().resource_mut::<CombatClock>().tick = 2;
+        app.update();
+
+        assert!(
+            (plot_cap(&mut app, [20, 64, 0]) - (PLOT_QI_CAP_BASE + QI_LINGJU_ARRAY_CAP_BONUS))
+                .abs()
+                < 1e-6,
+            "恰好在 Lingju 半径边缘的 plot 应获得 +QI_LINGJU_ARRAY_CAP_BONUS cap"
+        );
+        assert!(
+            (plot_cap(&mut app, [21, 64, 0]) - PLOT_QI_CAP_BASE).abs() < 1e-6,
+            "半径外 1 格 plot 不应被 Lingju 影响"
+        );
+    }
+
+    #[test]
+    fn lingju_cap_bonus_is_clamped_to_plot_qi_cap_max() {
+        let mut app = app_with_loaded_zhenfa();
+        let owner = spawn_player(&mut app, "Alice", [0.5, 64.0, 0.5]);
+        let near_max_cap = PLOT_QI_CAP_MAX - (QI_LINGJU_ARRAY_CAP_BONUS * 0.5);
+        spawn_plot(&mut app, [0, 64, 0], near_max_cap);
+
+        send_lingju_place(&mut app, owner, [0, 64, 0], 1);
+        app.update();
+        app.world_mut().resource_mut::<CombatClock>().tick = 2;
+        app.update();
+
+        let actual = plot_cap(&mut app, [0, 64, 0]);
+        assert!(
+            (actual - PLOT_QI_CAP_MAX).abs() < 1e-6,
+            "expected cap={} because Lingju bonus must clamp at PLOT_QI_CAP_MAX; actual={}",
+            PLOT_QI_CAP_MAX,
+            actual
+        );
+    }
+
+    #[test]
+    fn lingju_decay_clears_cap_bonus_and_emits_decay_event() {
+        let mut app = app_with_loaded_zhenfa();
+        let owner = spawn_player(&mut app, "Alice", [0.5, 64.0, 0.5]);
+        spawn_plot(&mut app, [0, 64, 0], PLOT_QI_CAP_BASE);
+
+        send_lingju_place(&mut app, owner, [0, 64, 0], 1);
+        app.update();
+        app.world_mut().resource_mut::<CombatClock>().tick = 2;
+        app.update();
+        assert!((plot_cap(&mut app, [0, 64, 0]) - 2.0).abs() < 1e-6);
+
+        let expires_at_tick = app
+            .world()
+            .resource::<ZhenfaRegistry>()
+            .find_at([0, 64, 0])
+            .expect("Lingju 应仍在 registry 中")
+            .expires_at_tick;
+        app.world_mut().resource_mut::<CombatClock>().tick = expires_at_tick;
+        app.update();
+
+        assert!(
+            (plot_cap(&mut app, [0, 64, 0]) - PLOT_QI_CAP_BASE).abs() < 1e-6,
+            "Lingju decay 后 plot cap 必须恢复原值"
+        );
+        assert!(app
+            .world()
+            .resource::<Events<ArrayDecayEvent>>()
+            .iter_current_update_events()
+            .any(|event| event.kind == ZhenfaKind::Lingju));
+    }
+
+    #[test]
+    fn lingju_force_break_clears_cap_bonus() {
+        let mut app = app_with_loaded_zhenfa();
+        let owner = spawn_player(&mut app, "Alice", [0.5, 64.0, 0.5]);
+        spawn_plot(&mut app, [0, 64, 0], PLOT_QI_CAP_BASE);
+
+        send_lingju_place(&mut app, owner, [0, 64, 0], 1);
+        app.update();
+        app.world_mut().resource_mut::<CombatClock>().tick = 2;
+        app.update();
+        assert!(
+            (plot_cap(&mut app, [0, 64, 0]) - (PLOT_QI_CAP_BASE + QI_LINGJU_ARRAY_CAP_BONUS)).abs()
+                < 1e-6
+        );
+
+        app.world_mut().send_event(ZhenfaDisarmRequest {
+            player: owner,
+            pos: [0, 64, 0],
+            mode: ZhenfaDisarmMode::ForceBreak,
+            requested_at_tick: 3,
+        });
+        app.update();
+
+        assert!(
+            (plot_cap(&mut app, [0, 64, 0]) - PLOT_QI_CAP_BASE).abs() < 1e-6,
+            "Lingju force break 后 plot cap 必须恢复原值"
+        );
+    }
+
+    #[test]
+    fn overlapping_lingju_arrays_use_boolean_or_not_stacking() {
+        let (mut app, layer_entity) = app_with_zhenfa_layer();
+        app.world_mut()
+            .get_mut::<ChunkLayer>(layer_entity)
+            .expect("test layer should carry ChunkLayer")
+            .insert_chunk([1, 0], UnloadedChunk::new());
+        let owner = spawn_player(&mut app, "Alice", [0.5, 64.0, 0.5]);
+        spawn_plot(&mut app, [10, 64, 0], PLOT_QI_CAP_BASE);
+
+        send_lingju_place(&mut app, owner, [0, 64, 0], 1);
+        app.update();
+        send_lingju_place(&mut app, owner, [20, 64, 0], 2);
+        app.update();
+        app.world_mut().resource_mut::<CombatClock>().tick = 3;
+        app.update();
+
+        let boosted = PLOT_QI_CAP_BASE + QI_LINGJU_ARRAY_CAP_BONUS;
+        assert!(
+            (plot_cap(&mut app, [10, 64, 0]) - boosted).abs() < 1e-6,
+            "双 Lingju 覆盖同一 plot 只能取 OR/max，不能叠加到 +2.0"
+        );
+
+        app.world_mut().send_event(ZhenfaDisarmRequest {
+            player: owner,
+            pos: [0, 64, 0],
+            mode: ZhenfaDisarmMode::ForceBreak,
+            requested_at_tick: 4,
+        });
+        app.update();
+        assert!(
+            (plot_cap(&mut app, [10, 64, 0]) - boosted).abs() < 1e-6,
+            "拆掉一个 Lingju 后，仍被另一个覆盖的 plot 应保持 boosted"
+        );
+
+        app.world_mut()
+            .entity_mut(owner)
+            .insert(Position::new([20.5, 64.0, 0.5]));
+        app.world_mut().send_event(ZhenfaDisarmRequest {
+            player: owner,
+            pos: [20, 64, 0],
+            mode: ZhenfaDisarmMode::ForceBreak,
+            requested_at_tick: 5,
+        });
+        app.update();
+        assert!(
+            (plot_cap(&mut app, [10, 64, 0]) - PLOT_QI_CAP_BASE).abs() < 1e-6,
+            "最后一个 Lingju 清除后 plot cap 才恢复基线"
+        );
+    }
+
+    #[test]
+    fn lingju_deploy_event_feedback_vfx_and_narration_are_emitted() {
+        let mut app = app_with_loaded_zhenfa();
+        app.insert_resource(ZoneRegistry::fallback());
+        app.add_event::<VfxEventRequest>();
+        let owner = spawn_player(&mut app, "Alice", [0.5, 64.0, 0.5]);
+
+        send_lingju_place(&mut app, owner, [0, 64, 0], 1);
+        app.update();
+
+        let ling_events = app.world().resource::<Events<LingArrayDeployEvent>>();
+        let deploy = ling_events
+            .iter_current_update_events()
+            .find(|event| event.owner == owner)
+            .expect("Lingju 放置应继续发 LingArrayDeployEvent");
+        assert!(
+            deploy.tiandao_gaze_weight > 0.0,
+            "LingArrayDeployEvent.tiandao_gaze_weight 必须为正，给天道 gaze 审计消费"
+        );
+
+        let vfx_events = app.world().resource::<Events<VfxEventRequest>>();
+        assert!(vfx_events
+            .iter_current_update_events()
+            .any(|event| matches!(
+                &event.payload,
+                crate::schema::vfx_event::VfxEventPayloadV1::SpawnParticle { event_id, .. }
+                    if event_id == gameplay_vfx::LINGJU_ACTIVATE
+            )));
+
+        let narrations = app
+            .world_mut()
+            .resource_mut::<PendingGameplayNarrations>()
+            .drain();
+        assert_eq!(
+            narrations.len(),
+            3,
+            "Lingju 激活应入队两条感知 + 一条天道叙事"
+        );
+        assert!(narrations.iter().all(|narration| matches!(
+            narration.scope,
+            crate::schema::common::NarrationScope::Zone
+        )));
+        assert!(narrations
+            .iter()
+            .any(|narration| narration.style == NarrationStyle::Narration));
+    }
+
+    #[test]
+    fn non_lingju_place_does_not_emit_lingju_feedback() {
+        let mut app = app_with_loaded_zhenfa();
+        app.insert_resource(ZoneRegistry::fallback());
+        app.add_event::<VfxEventRequest>();
+        let owner = spawn_player(&mut app, "Alice", [0.5, 64.0, 0.5]);
+
+        app.world_mut().send_event(ZhenfaPlaceRequest {
+            player: owner,
+            pos: [0, 64, 0],
+            kind: ZhenfaKind::Ward,
+            carrier: ZhenfaCarrierKind::LingqiBlock,
+            qi_invest_ratio: 0.20,
+            trigger: None,
+            item_instance_id: None,
+            target_face: None,
+            requested_at_tick: 1,
+        });
+        app.update();
+
+        assert!(
+            app.world()
+                .resource::<ZhenfaRegistry>()
+                .find_at([0, 64, 0])
+                .is_some(),
+            "expected Ward place to succeed because this test must exercise a real non-Lingju place path"
+        );
+        assert!(
+            app.world()
+                .resource::<Events<VfxEventRequest>>()
+                .iter_current_update_events()
+                .next()
+                .is_none(),
+            "expected no VfxEventRequest because non-Lingju place must not run Lingju feedback"
+        );
+        let narrations = app
+            .world_mut()
+            .resource_mut::<PendingGameplayNarrations>()
+            .drain();
+        assert!(
+            narrations.is_empty(),
+            "expected no PendingGameplayNarrations because non-Lingju place must not run Lingju feedback; actual={:?}",
+            narrations
+        );
+    }
+
+    #[test]
+    fn clear_lingju_effect_ignores_removed_or_unknown_instance() {
+        let mut app = app_with_zhenfa();
+        spawn_plot(&mut app, [0, 64, 0], PLOT_QI_CAP_BASE);
+        let owner = app.world_mut().spawn_empty().id();
+        let anchor_entity = app.world_mut().spawn_empty().id();
+        let instance = ZhenfaInstance {
+            id: 404,
+            kind: ZhenfaKind::Lingju,
+            owner,
+            owner_player_id: "offline:Alice".to_string(),
+            pos: [0, 64, 0],
+            carrier: ZhenfaCarrierKind::BeastCoreInlaid,
+            qi_invest_ratio: 0.30,
+            qi_invest_amount: 30.0,
+            realm_at_cast: Realm::Induce,
+            mastery_at_cast: 0.0,
+            effect_radius: 20,
+            ward_radius: 20,
+            placed_at_tick: 1,
+            expires_at_tick: 100,
+            triggered_at: None,
+            trigger: None,
+            color_main: ColorKind::Intricate,
+            color_secondary: None,
+            anchor_entity,
+        };
+
+        app.world_mut()
+            .resource_scope(|world, mut registry: Mut<ZhenfaRegistry>| {
+                let mut plots = world.query::<&mut LingtianPlot>();
+                clear_lingju_effect_for_plots(&instance, &mut registry, plots.iter_mut(world));
+            });
+        app.update();
+
+        assert!(
+            (plot_cap(&mut app, [0, 64, 0]) - PLOT_QI_CAP_BASE).abs() < 1e-6,
+            "未知/已移除 Lingju 清理不应 panic，也不应改动未覆盖 plot"
+        );
     }
 
     #[test]

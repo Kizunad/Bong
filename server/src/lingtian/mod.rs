@@ -42,7 +42,7 @@ pub use contamination::{apply_dye_contamination_on_replenish, dye_contamination_
 #[allow(unused_imports)]
 pub use environment::{
     apply_xizhuan_qi_cap_jitter, apply_xizhuan_supply_jitter, compute_plot_qi_cap,
-    compute_zone_flow_multiplier, PlotBiome, PlotEnvironment,
+    compute_zone_flow_multiplier, PlotBiome, PlotEnvironment, QI_LINGJU_ARRAY_CAP_BONUS,
 };
 #[allow(unused_imports)]
 pub use pressure::{

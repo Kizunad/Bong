@@ -20,6 +20,8 @@ use super::plot::{PLOT_QI_CAP_BASE, PLOT_QI_CAP_MAX};
 use super::weather::WeatherEvent;
 use crate::world::season::Season;
 
+pub const QI_LINGJU_ARRAY_CAP_BONUS: f32 = 1.0;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PlotBiome {
@@ -98,7 +100,7 @@ fn scan_water_near(layer: &ChunkLayer, center: BlockPos, radius: i32) -> bool {
 /// 公式：base 1.0
 ///   + (water_adjacent ? 0.3 : 0)
 ///   + (wetland ? 0.5 : 0)
-///   + (zhenfa_jvling ? 1.0 : 0)
+///   + (zhenfa_jvling ? QI_LINGJU_ARRAY_CAP_BONUS : 0)
 ///   + season modifier（夏 -0.2 / 冬 +0.2 / 汐转 0 基线）
 ///   + active_weather modifier（雷暴 -0.2 / 灵雾 +0.2 / 其他 0）
 ///
@@ -115,7 +117,7 @@ pub fn compute_plot_qi_cap(env: &PlotEnvironment) -> f32 {
         cap += 0.5;
     }
     if env.zhenfa_jvling {
-        cap += 1.0;
+        cap += QI_LINGJU_ARRAY_CAP_BONUS;
     }
     cap += env.season.plot_qi_cap_modifier();
     if let Some(weather) = env.active_weather {
