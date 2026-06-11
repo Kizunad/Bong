@@ -62,8 +62,8 @@ use crate::world::zone::ZoneRegistry;
 
 use super::components::{
     CombatState, DerivedAttrs, Lifecycle, LifecycleState, QuickSlotBindings, RevivalDecision,
-    SkillBarBindings, Stamina, StaminaState, StatusEffects, UnlockedStyles, Wounds,
-    ATTACK_STAMINA_COST, BLEED_TICK_INTERVAL_TICKS, COMBAT_STATE_TICK_INTERVAL_TICKS,
+    ShieldDrainOverride, SkillBarBindings, Stamina, StaminaState, StatusEffects, UnlockedStyles,
+    Wounds, ATTACK_STAMINA_COST, BLEED_TICK_INTERVAL_TICKS, COMBAT_STATE_TICK_INTERVAL_TICKS,
     NEAR_DEATH_HEALTH_FRACTION, REVIVAL_CONFIRM_WINDOW_TICKS, REVIVE_HEALTH_FRACTION,
     STAMINA_TICK_INTERVAL_TICKS, TICKS_PER_SECOND,
 };
@@ -211,13 +211,16 @@ pub fn wound_bleed_tick(
     }
 }
 
-pub fn stamina_tick(clock: Res<CombatClock>, mut stamina_q: Query<&mut Stamina>) {
+pub fn stamina_tick(
+    clock: Res<CombatClock>,
+    mut stamina_q: Query<(&mut Stamina, Option<&ShieldDrainOverride>)>,
+) {
     if !clock.tick.is_multiple_of(STAMINA_TICK_INTERVAL_TICKS) {
         return;
     }
 
     let dt = STAMINA_TICK_INTERVAL_TICKS as f32 / TICKS_PER_SECOND as f32;
-    for mut stamina in &mut stamina_q {
+    for (mut stamina, shield_drain_override) in &mut stamina_q {
         stamina.max = stamina.max.max(1.0);
         stamina.recover_per_sec = stamina.recover_per_sec.max(0.0);
 
@@ -227,9 +230,16 @@ pub fn stamina_tick(clock: Res<CombatClock>, mut stamina_q: Query<&mut Stamina>)
             StaminaState::Sprinting => -SPRINT_DRAIN_PER_SEC,
             StaminaState::Combat => -COMBAT_DRAIN_PER_SEC,
             StaminaState::Exhausted => stamina.recover_per_sec * EXHAUSTED_RECOVER_RATIO,
-            // plan-shield-block-v1 P2 — 举盾持续 drain。
+            // plan-shield-block-v1 P2/P4 — 举盾持续 drain。
+            // P4: ShieldDrainOverride component 携带 shield_block_profile 按熟练度缩放的 drain_per_s
+            //   （2.0..3.0），覆写常量 SHIELD_DRAIN_PER_SEC（P2 fallback）。
             // 体力归零时由 `force_lower_shield_on_stamina_exhausted` 负责强制放盾 + 施加 ParryRecovery。
-            StaminaState::ShieldBlocking => -SHIELD_DRAIN_PER_SEC,
+            StaminaState::ShieldBlocking => {
+                let drain = shield_drain_override
+                    .map(|o| o.drain_per_s)
+                    .unwrap_or(SHIELD_DRAIN_PER_SEC);
+                -drain
+            }
         };
 
         stamina.current = (stamina.current + delta_per_sec * dt).clamp(0.0, stamina.max);

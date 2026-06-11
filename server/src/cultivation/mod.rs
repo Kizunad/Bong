@@ -208,6 +208,8 @@ pub fn register(app: &mut App) {
     crate::combat::dugu_v2::declare_meridian_dependencies(&mut skill_meridian_dependencies);
     crate::combat::tuike_v2::declare_meridian_dependencies(&mut skill_meridian_dependencies);
     crate::combat::sword_basics::declare_meridian_dependencies(&mut skill_meridian_dependencies);
+    // plan-shield-block-v1 P4：盾牌格挡不依赖任何经脉（凡人物理防御）。
+    crate::combat::shield_block::declare_meridian_dependencies(&mut skill_meridian_dependencies);
     crate::sword_path::skill_register::declare_meridian_dependencies(
         &mut skill_meridian_dependencies,
     );

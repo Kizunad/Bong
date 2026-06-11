@@ -75,6 +75,13 @@ public final class CombatJuiceSystem {
                 freezes.addAll(HitStopController.request(event.attackerUuid(), event.targetUuid(), parryProfile, nowMs));
                 shake = CameraShakeController.trigger(parryProfile, event.directionX(), event.directionZ(), nowMs);
             }
+            // plan-shield-block-v1 §P4 — 盾格挡命中：轻 hit-stop + 无屏幕闪烁，区别于 PARRY 剑击体感。
+            case SHIELD_BLOCK -> {
+                CombatJuiceProfile shieldProfile = CombatJuiceProfile.select(event.school(), CombatJuiceTier.LIGHT);
+                effectiveProfile = shieldProfile;
+                freezes.addAll(HitStopController.request(event.attackerUuid(), event.targetUuid(), shieldProfile, nowMs));
+                shake = CameraShakeController.trigger(shieldProfile, event.directionX(), event.directionZ(), nowMs);
+            }
             case DODGE -> lastGhost = ParryDodgeJuicePlanner.dodge(event.targetUuid(), profile.qiColorArgb(), nowMs);
             case KILL -> {
                 CombatJuiceProfile killProfile = CombatJuiceProfile.select(event.school(), CombatJuiceTier.CRITICAL);

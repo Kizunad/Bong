@@ -439,4 +439,12 @@ pub fn register(app: &mut App) {
             .in_set(CombatSystemSet::Physics)
             .after(lifecycle::stamina_tick),
     );
+    // plan-shield-block-v1 P4 — 体力低预警 narration（每 80 ticks 一次，防刷屏）。
+    // 注册在 Physics set 内 stamina_tick 之后，确保 stamina.current 已更新。
+    app.add_systems(
+        Update,
+        shield_block::shield_low_stamina_narration_tick
+            .in_set(CombatSystemSet::Physics)
+            .after(lifecycle::stamina_tick),
+    );
 }

@@ -14671,6 +14671,30 @@
       "required": [
         "v",
         "type",
+        "template_id"
+      ],
+      "properties": {
+        "v": {
+          "const": 1,
+          "type": "number"
+        },
+        "type": {
+          "const": "shield_block_hit",
+          "type": "string"
+        },
+        "template_id": {
+          "minLength": 1,
+          "maxLength": 128,
+          "type": "string"
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "v",
+        "type",
         "slot"
       ],
       "properties": {

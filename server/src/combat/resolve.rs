@@ -15,13 +15,15 @@ use crate::combat::jiemai::{
 use crate::combat::knockback::{
     compute_combat_knockback, CombatKnockbackInput, KnockbackEvent, DEFAULT_CHAIN_DEPTH,
 };
-use crate::combat::shield_block::shield_fov_check;
+use crate::combat::shield_block::{
+    self as shield_block_mod, shield_fov_check, SHIELD_NEAR_BREAK_DURABILITY_THRESHOLD,
+};
 use crate::combat::status::{body_part_damage_multiplier, has_active_status};
 use crate::combat::sword_basics;
 use crate::combat::tuike::{tuike_filter_contam, FalseSkin, ShedEvent};
 use crate::combat::tuike_v2::physics::naked_defense_damage_multiplier;
 use crate::combat::tuike_v2::StackedFalseSkins;
-use crate::combat::weapon::{ShieldBroken, Weapon, WeaponBroken};
+use crate::combat::weapon::{ShieldBlockHit, ShieldBroken, Weapon, WeaponBroken};
 use crate::combat::zhenmai_v2::{
     self, BackfireAmplification, MeridianHardenActive, MultiPointActive,
 };
@@ -65,7 +67,7 @@ use crate::qi_physics::constants::{
 };
 use crate::qi_physics::{flow_modifier, QiAccountId, QiTransfer};
 use crate::schema::anticheat::ViolationKindV1;
-use crate::schema::common::GameEventType;
+use crate::schema::common::{GameEventType, NarrationStyle};
 use crate::schema::inventory::{EquipSlotV1, InventoryLocationV1};
 use crate::schema::world_state::GameEvent;
 use crate::skill::components::SkillId;
@@ -171,6 +173,8 @@ pub struct CombatResolveEventWriters<'w> {
     durability_changed_tx: EventWriter<'w, InventoryDurabilityChangedEvent>,
     /// plan-shield-block-v1 P2 — 盾牌格挡成功触发 PARRY_BLOCK 动画（via emit_defense_animation_triggers）。
     defense_intent_tx: Option<ResMut<'w, Events<DefenseIntent>>>,
+    /// plan-shield-block-v1 P4 — player-scope narration（格挡成功 / 近破盾）。
+    narrations: Option<ResMut<'w, crate::player::gameplay::PendingGameplayNarrations>>,
 }
 
 pub fn apply_defense_intents(
@@ -243,10 +247,12 @@ pub fn resolve_attack_intents(
     mut event_writers: CombatResolveEventWriters,
     // plan-weapon-v1 §6：武器加成 + 耐久扣减
     // plan-shield-block-v1 P3：shield_broken 事件写出 + ItemRegistry（读 ShieldSpec）
+    // plan-shield-block-v1 P4：defender KnownTechniques（shield_block_profile 缩放）+ shield_block_hit emit
     weapon_break: (
         Query<&mut Weapon>,
         EventWriter<WeaponBroken>,
         EventWriter<ShieldBroken>,
+        EventWriter<ShieldBlockHit>,
         Commands,
         Query<&mut PlayerInventory>,
         Query<&QiColor>,
@@ -254,12 +260,14 @@ pub fn resolve_attack_intents(
         Option<ResMut<Events<SkillXpGain>>>,
         Option<ResMut<Events<ShedEvent>>>,
         Option<Res<ItemRegistry>>,
+        Query<Option<&KnownTechniques>>,
     ),
 ) {
     let (
         mut weapons,
         mut weapon_broken_events,
         mut shield_broken_events,
+        mut shield_block_hit_events,
         mut commands,
         mut inventories,
         qi_colors,
@@ -267,6 +275,7 @@ pub fn resolve_attack_intents(
         mut skill_xp_events,
         mut shed_events,
         item_registry,
+        defender_known_q,
     ) = weapon_break;
 
     for intent in intents.read() {
@@ -967,12 +976,37 @@ pub fn resolve_attack_intents(
             );
         }
 
-        // plan-shield-block-v1 P2 — 盾牌格挡减伤分支（独立于 SwordParrying，无反伤）。
+        // plan-shield-block-v1 P2 / P4 — 盾牌格挡减伤分支（独立于 SwordParrying，无反伤）。
+        // P4: block_ratio 经 shield_block_profile(proficiency) 缩放（替代 P2 固定 spec.block_ratio）。
         // 正面 FOV 判定：须先过 shield_fov_check，背面不减伤。
-        if let Some(raw_ratio) =
+        if let Some(_raw_ratio) =
             active_status_magnitude(defender_status_effects, StatusEffectKind::ShieldBlocking)
         {
-            let ratio = raw_ratio.clamp(0.0, 0.95);
+            // plan-shield-block-v1 P4 — 读取 defender 的 shield_block proficiency 并应用 profile。
+            // shield_block_profile 根据 template_id 给出各盾的上下限（木盾 0.5→0.6，骨盾 0.65→0.72）。
+            let (shield_template_id, shield_proficiency) = inventories
+                .get(target_entity)
+                .ok()
+                .and_then(|inv| inv.equipped.get(EQUIP_SLOT_OFF_HAND).cloned())
+                .map(|item| {
+                    let proficiency = defender_known_q
+                        .get(target_entity)
+                        .ok()
+                        .flatten()
+                        .and_then(|known| {
+                            known
+                                .entries
+                                .iter()
+                                .find(|e| e.id == shield_block_mod::SHIELD_BLOCK_TECHNIQUE_ID)
+                                .map(|e| e.proficiency)
+                        })
+                        .unwrap_or(0.0);
+                    (item.template_id, proficiency)
+                })
+                .unwrap_or_else(|| ("wooden_shield".to_string(), 0.0));
+            let profile =
+                shield_block_mod::shield_block_profile(&shield_template_id, shield_proficiency);
+            let ratio = profile.block_ratio.clamp(0.0, 0.95);
             // 正面 FOV 判定（±120°，dot ≥ -0.5）
             let fov_ok = shield_fov_check(
                 attacker_position,
@@ -994,6 +1028,11 @@ pub fn resolve_attack_intents(
                 shield_block_contam_reduced = Some((before_contam - emitted_contam_delta).max(0.0));
                 shield_blocked_damage = Some(blocked);
 
+                // plan-shield-block-v1 P4 — 近破盾 narration 文本（在 get_mut 块内计算，在块外 emit）。
+                let mut near_break_narration_text: Option<String> = None;
+                // plan-shield-block-v1 P4 — shield_block_hit template_id（在 get_mut 块内捕获，在块外 emit）。
+                let mut shield_block_hit_template_id: Option<String> = None;
+
                 // plan-shield-block-v1 P3 — 盾牌耐久扣减。
                 // 语义：durability_max = 次满伤格挡。每次满伤格挡扣 1 单位（ratio 减 1/durability_max）。
                 // 盾的 ItemInstance.durability 以 0..1 ratio 存储，与 set_item_instance_durability 契约一致。
@@ -1010,6 +1049,8 @@ pub fn resolve_attack_intents(
                     if let Some(item) = inventory.equipped.get(EQUIP_SLOT_OFF_HAND) {
                         let instance_id = item.instance_id;
                         let template_id_snap = item.template_id.clone();
+                        // plan-shield-block-v1 P4：记录盾 template_id 供格挡命中通知。
+                        shield_block_hit_template_id = Some(template_id_snap.clone());
                         let cur_ratio = item.durability;
                         let durability_max = item_registry
                             .as_deref()
@@ -1052,8 +1093,21 @@ pub fn resolve_attack_intents(
                                             shield_broken_events.send(ShieldBroken {
                                                 entity: target_entity,
                                                 instance_id,
-                                                template_id: template_id_snap,
+                                                template_id: template_id_snap.clone(),
                                             });
+                                        }
+                                        // plan-shield-block-v1 P4 — 近破盾 narration 文本。
+                                        // next_ratio > 0: 盾未销毁但已低于预警阈值。
+                                        if next_ratio > 0.0
+                                            && next_ratio < SHIELD_NEAR_BREAK_DURABILITY_THRESHOLD
+                                            && near_break_narration_text.is_none()
+                                        {
+                                            near_break_narration_text =
+                                                Some(if template_id_snap == "bone_shield" {
+                                                    "骨盾发出一声脆响，裂纹爬上盾沿。".to_string()
+                                                } else {
+                                                    "盾面传来裂木之声，这盾快撑不住了。".to_string()
+                                                });
                                         }
                                     }
                                     Err(error) => {
@@ -1074,6 +1128,51 @@ pub fn resolve_attack_intents(
                     defense_tx.send(DefenseIntent {
                         defender: target_entity,
                         issued_at_tick: clock.tick,
+                    });
+                }
+
+                // plan-shield-block-v1 P4 — 格挡成功 → 熟练度增益（接线点）。
+                // 严格镜像 resolve.rs:963-965 SwordParry 的 commands.add 接线写法。
+                let defender_for_proficiency = target_entity;
+                commands.add(
+                    move |world: &mut valence::prelude::bevy_ecs::world::World| {
+                        shield_block_mod::record_shield_block_success(
+                            world,
+                            defender_for_proficiency,
+                        );
+                    },
+                );
+
+                // plan-shield-block-v1 P4 — 格挡成功 narration（scope=Player, style=Perception）。
+                if let Some(narrations) = event_writers.narrations.as_deref_mut() {
+                    // target_id 是 canonical_player_id（NPC 无 Username 时返回 offline: 前缀）
+                    if !target_id.starts_with("offline:") && !target_id.starts_with("npc:") {
+                        narrations.push_player(
+                            &target_id,
+                            "盾面一震，那一下被卸开了大半。",
+                            NarrationStyle::Perception,
+                        );
+                    }
+                }
+
+                // plan-shield-block-v1 P4 — 近破盾 narration（耐久低于阈值时）。
+                // near_break_narration_text 在 inventories.get_mut 块内计算（避免重借），
+                // 在该块外 emit（narrations 在事件写出参数中）。
+                if let Some(text) = near_break_narration_text.as_deref() {
+                    if !target_id.starts_with("offline:") && !target_id.starts_with("npc:") {
+                        if let Some(narrations) = event_writers.narrations.as_deref_mut() {
+                            narrations.push_player(&target_id, text, NarrationStyle::Perception);
+                        }
+                    }
+                }
+
+                // plan-shield-block-v1 P4 — 格挡命中 → emit ShieldBlockHit（携带 template_id）。
+                // shield_block_hit_template_id 在 inventories.get_mut 块内捕获（避免重借），
+                // 在该块外 emit。client ShieldBlockHitHandler 按 template_id 触发材质差异化粒子+音效。
+                if let Some(ref tmpl) = shield_block_hit_template_id {
+                    shield_block_hit_events.send(ShieldBlockHit {
+                        entity: target_entity,
+                        template_id: tmpl.clone(),
                     });
                 }
             }
@@ -1977,6 +2076,7 @@ mod tests {
         app.add_event::<SkillXpGain>();
         app.add_event::<crate::combat::weapon::WeaponBroken>();
         app.add_event::<crate::combat::weapon::ShieldBroken>();
+        app.add_event::<crate::combat::weapon::ShieldBlockHit>();
         app.add_event::<InventoryDurabilityChangedEvent>();
 
         app.insert_resource(crate::inventory::ItemRegistry::default());
@@ -2102,6 +2202,7 @@ mod tests {
         app.add_event::<SkillXpGain>();
         app.add_event::<crate::combat::weapon::WeaponBroken>();
         app.add_event::<crate::combat::weapon::ShieldBroken>();
+        app.add_event::<crate::combat::weapon::ShieldBlockHit>();
         app.add_event::<InventoryDurabilityChangedEvent>();
         app.add_event::<PlaySoundRecipeRequest>();
 
@@ -2261,6 +2362,7 @@ mod tests {
         app.add_event::<VfxEventRequest>();
         app.add_event::<crate::combat::weapon::WeaponBroken>();
         app.add_event::<crate::combat::weapon::ShieldBroken>();
+        app.add_event::<crate::combat::weapon::ShieldBlockHit>();
         app.add_event::<InventoryDurabilityChangedEvent>();
         app.add_systems(Update, resolve_attack_intents);
 
@@ -2326,6 +2428,7 @@ mod tests {
         app.add_event::<DeathEvent>();
         app.add_event::<crate::combat::weapon::WeaponBroken>();
         app.add_event::<crate::combat::weapon::ShieldBroken>();
+        app.add_event::<crate::combat::weapon::ShieldBlockHit>();
         app.add_event::<InventoryDurabilityChangedEvent>();
         app.add_systems(Update, resolve_attack_intents);
 
@@ -2387,6 +2490,7 @@ mod tests {
         app.add_event::<DeathEvent>();
         app.add_event::<crate::combat::weapon::WeaponBroken>();
         app.add_event::<crate::combat::weapon::ShieldBroken>();
+        app.add_event::<crate::combat::weapon::ShieldBlockHit>();
         app.add_event::<InventoryDurabilityChangedEvent>();
         app.add_systems(Update, resolve_attack_intents);
 
@@ -2507,6 +2611,7 @@ mod tests {
         app.add_event::<DeathEvent>();
         app.add_event::<crate::combat::weapon::WeaponBroken>();
         app.add_event::<crate::combat::weapon::ShieldBroken>();
+        app.add_event::<crate::combat::weapon::ShieldBlockHit>();
         app.add_event::<InventoryDurabilityChangedEvent>();
         app.add_systems(Update, resolve_attack_intents);
 
@@ -2707,6 +2812,7 @@ mod tests {
         app.add_event::<DeathEvent>();
         app.add_event::<crate::combat::weapon::WeaponBroken>();
         app.add_event::<crate::combat::weapon::ShieldBroken>();
+        app.add_event::<crate::combat::weapon::ShieldBlockHit>();
         app.add_event::<InventoryDurabilityChangedEvent>();
         app.add_systems(Update, resolve_attack_intents);
 
@@ -2797,6 +2903,7 @@ mod tests {
         app.add_event::<DeathEvent>();
         app.add_event::<crate::combat::weapon::WeaponBroken>();
         app.add_event::<crate::combat::weapon::ShieldBroken>();
+        app.add_event::<crate::combat::weapon::ShieldBlockHit>();
         app.add_event::<InventoryDurabilityChangedEvent>();
         app.add_systems(Update, resolve_attack_intents);
 
@@ -2888,6 +2995,7 @@ mod tests {
         app.add_event::<DeathEvent>();
         app.add_event::<crate::combat::weapon::WeaponBroken>();
         app.add_event::<crate::combat::weapon::ShieldBroken>();
+        app.add_event::<crate::combat::weapon::ShieldBlockHit>();
         app.add_event::<InventoryDurabilityChangedEvent>();
         app.add_systems(
             Update,
@@ -2962,6 +3070,7 @@ mod tests {
         app.add_event::<DeathEvent>();
         app.add_event::<crate::combat::weapon::WeaponBroken>();
         app.add_event::<crate::combat::weapon::ShieldBroken>();
+        app.add_event::<crate::combat::weapon::ShieldBlockHit>();
         app.add_event::<InventoryDurabilityChangedEvent>();
         app.add_systems(
             Update,
@@ -3096,6 +3205,7 @@ mod tests {
         app.add_event::<SkillXpGain>();
         app.add_event::<crate::combat::weapon::WeaponBroken>();
         app.add_event::<crate::combat::weapon::ShieldBroken>();
+        app.add_event::<crate::combat::weapon::ShieldBlockHit>();
         app.add_event::<InventoryDurabilityChangedEvent>();
         app.add_systems(Update, resolve_attack_intents);
 
@@ -3190,6 +3300,7 @@ mod tests {
         app.add_event::<SkillXpGain>();
         app.add_event::<crate::combat::weapon::WeaponBroken>();
         app.add_event::<crate::combat::weapon::ShieldBroken>();
+        app.add_event::<crate::combat::weapon::ShieldBlockHit>();
         app.add_event::<InventoryDurabilityChangedEvent>();
         app.add_systems(Update, resolve_attack_intents);
 
@@ -3277,6 +3388,7 @@ mod tests {
             app.add_event::<DeathEvent>();
             app.add_event::<crate::combat::weapon::WeaponBroken>();
             app.add_event::<crate::combat::weapon::ShieldBroken>();
+            app.add_event::<crate::combat::weapon::ShieldBlockHit>();
             app.add_event::<InventoryDurabilityChangedEvent>();
             app.add_systems(Update, resolve_attack_intents);
 
@@ -3348,6 +3460,7 @@ mod tests {
         app.add_event::<SkillXpGain>();
         app.add_event::<crate::combat::weapon::WeaponBroken>();
         app.add_event::<crate::combat::weapon::ShieldBroken>();
+        app.add_event::<crate::combat::weapon::ShieldBlockHit>();
         app.add_event::<InventoryDurabilityChangedEvent>();
         app.add_systems(Update, resolve_attack_intents);
 
@@ -3445,6 +3558,7 @@ mod tests {
         app.add_event::<DeathEvent>();
         app.add_event::<crate::combat::weapon::WeaponBroken>();
         app.add_event::<crate::combat::weapon::ShieldBroken>();
+        app.add_event::<crate::combat::weapon::ShieldBlockHit>();
         app.add_event::<InventoryDurabilityChangedEvent>();
         app.add_systems(Update, resolve_attack_intents);
 
@@ -3511,6 +3625,7 @@ mod tests {
         app.add_event::<SkillXpGain>();
         app.add_event::<crate::combat::weapon::WeaponBroken>();
         app.add_event::<crate::combat::weapon::ShieldBroken>();
+        app.add_event::<crate::combat::weapon::ShieldBlockHit>();
         app.add_event::<InventoryDurabilityChangedEvent>();
         app.add_systems(Update, resolve_attack_intents);
 
@@ -3568,6 +3683,7 @@ mod tests {
         );
         app.add_event::<crate::combat::weapon::WeaponBroken>();
         app.add_event::<crate::combat::weapon::ShieldBroken>();
+        app.add_event::<crate::combat::weapon::ShieldBlockHit>();
         app.add_event::<InventoryDurabilityChangedEvent>();
         app.add_systems(Update, resolve_attack_intents);
 
@@ -3642,6 +3758,7 @@ mod tests {
         app.add_event::<DeathEvent>();
         app.add_event::<crate::combat::weapon::WeaponBroken>();
         app.add_event::<crate::combat::weapon::ShieldBroken>();
+        app.add_event::<crate::combat::weapon::ShieldBlockHit>();
         app.add_event::<InventoryDurabilityChangedEvent>();
         app.add_systems(Update, resolve_attack_intents);
 
@@ -3706,6 +3823,7 @@ mod tests {
         app.add_event::<DeathEvent>();
         app.add_event::<crate::combat::weapon::WeaponBroken>();
         app.add_event::<crate::combat::weapon::ShieldBroken>();
+        app.add_event::<crate::combat::weapon::ShieldBlockHit>();
         app.add_event::<InventoryDurabilityChangedEvent>();
         app.add_systems(Update, resolve_attack_intents);
 
@@ -3798,6 +3916,7 @@ mod tests {
         app.add_event::<DeathEvent>();
         app.add_event::<crate::combat::weapon::WeaponBroken>();
         app.add_event::<crate::combat::weapon::ShieldBroken>();
+        app.add_event::<crate::combat::weapon::ShieldBlockHit>();
         app.add_event::<InventoryDurabilityChangedEvent>();
         app.add_systems(Update, resolve_attack_intents);
 
@@ -3891,6 +4010,7 @@ mod tests {
         app.add_event::<DeathEvent>();
         app.add_event::<crate::combat::weapon::WeaponBroken>();
         app.add_event::<crate::combat::weapon::ShieldBroken>();
+        app.add_event::<crate::combat::weapon::ShieldBlockHit>();
         app.add_event::<InventoryDurabilityChangedEvent>();
         app.add_systems(Update, resolve_attack_intents);
 
@@ -3942,6 +4062,7 @@ mod tests {
         app.add_event::<DeathEvent>();
         app.add_event::<crate::combat::weapon::WeaponBroken>();
         app.add_event::<crate::combat::weapon::ShieldBroken>();
+        app.add_event::<crate::combat::weapon::ShieldBlockHit>();
         app.add_event::<InventoryDurabilityChangedEvent>();
         app.add_systems(Update, resolve_attack_intents);
 
@@ -4007,6 +4128,7 @@ mod tests {
         app.add_event::<DeathEvent>();
         app.add_event::<crate::combat::weapon::WeaponBroken>();
         app.add_event::<crate::combat::weapon::ShieldBroken>();
+        app.add_event::<crate::combat::weapon::ShieldBlockHit>();
         app.add_event::<InventoryDurabilityChangedEvent>();
         app.add_systems(Update, resolve_attack_intents);
 
@@ -4073,6 +4195,7 @@ mod tests {
         app.add_event::<DeathEvent>();
         app.add_event::<crate::combat::weapon::WeaponBroken>();
         app.add_event::<crate::combat::weapon::ShieldBroken>();
+        app.add_event::<crate::combat::weapon::ShieldBlockHit>();
         app.add_event::<InventoryDurabilityChangedEvent>();
         app.add_systems(Update, resolve_attack_intents);
 
@@ -4135,6 +4258,7 @@ mod tests {
         app.add_event::<DeathEvent>();
         app.add_event::<crate::combat::weapon::WeaponBroken>();
         app.add_event::<crate::combat::weapon::ShieldBroken>();
+        app.add_event::<crate::combat::weapon::ShieldBlockHit>();
         app.add_event::<InventoryDurabilityChangedEvent>();
         app.add_systems(Update, resolve_attack_intents);
 
@@ -4199,6 +4323,7 @@ mod tests {
         app.add_event::<DeathEvent>();
         app.add_event::<crate::combat::weapon::WeaponBroken>();
         app.add_event::<crate::combat::weapon::ShieldBroken>();
+        app.add_event::<crate::combat::weapon::ShieldBlockHit>();
         app.add_event::<InventoryDurabilityChangedEvent>();
         app.add_systems(Update, resolve_attack_intents);
 
@@ -4255,6 +4380,7 @@ mod tests {
         app.add_event::<DeathEvent>();
         app.add_event::<crate::combat::weapon::WeaponBroken>();
         app.add_event::<crate::combat::weapon::ShieldBroken>();
+        app.add_event::<crate::combat::weapon::ShieldBlockHit>();
         app.add_event::<InventoryDurabilityChangedEvent>();
         app.add_systems(Update, resolve_attack_intents);
 
@@ -4322,6 +4448,7 @@ mod tests {
         app.add_event::<DeathEvent>();
         app.add_event::<crate::combat::weapon::WeaponBroken>();
         app.add_event::<crate::combat::weapon::ShieldBroken>();
+        app.add_event::<crate::combat::weapon::ShieldBlockHit>();
         app.add_event::<InventoryDurabilityChangedEvent>();
         app.add_systems(Update, resolve_attack_intents);
 
@@ -4416,6 +4543,7 @@ mod tests {
         app.add_event::<DeathEvent>();
         app.add_event::<crate::combat::weapon::WeaponBroken>();
         app.add_event::<crate::combat::weapon::ShieldBroken>();
+        app.add_event::<crate::combat::weapon::ShieldBlockHit>();
         app.add_event::<InventoryDurabilityChangedEvent>();
         app.add_systems(Update, resolve_attack_intents);
 
@@ -4530,6 +4658,7 @@ mod tests {
         app.add_event::<DeathEvent>();
         app.add_event::<crate::combat::weapon::WeaponBroken>();
         app.add_event::<crate::combat::weapon::ShieldBroken>();
+        app.add_event::<crate::combat::weapon::ShieldBlockHit>();
         app.add_event::<InventoryDurabilityChangedEvent>();
         app.add_systems(Update, resolve_attack_intents);
 
@@ -4610,6 +4739,7 @@ mod tests {
         app.add_event::<DeathEvent>();
         app.add_event::<crate::combat::weapon::WeaponBroken>();
         app.add_event::<crate::combat::weapon::ShieldBroken>();
+        app.add_event::<crate::combat::weapon::ShieldBlockHit>();
         app.add_event::<InventoryDurabilityChangedEvent>();
         app.add_systems(Update, resolve_attack_intents);
 
@@ -4684,6 +4814,7 @@ mod tests {
         app.add_event::<DeathEvent>();
         app.add_event::<crate::combat::weapon::WeaponBroken>();
         app.add_event::<crate::combat::weapon::ShieldBroken>();
+        app.add_event::<crate::combat::weapon::ShieldBlockHit>();
         app.add_event::<InventoryDurabilityChangedEvent>();
         app.add_systems(Update, resolve_attack_intents);
 
@@ -4865,6 +4996,7 @@ mod tests {
         app.add_event::<DeathEvent>();
         app.add_event::<crate::combat::weapon::WeaponBroken>();
         app.add_event::<crate::combat::weapon::ShieldBroken>();
+        app.add_event::<crate::combat::weapon::ShieldBlockHit>();
         app.add_event::<InventoryDurabilityChangedEvent>();
         app.add_systems(
             Update,
@@ -4924,6 +5056,7 @@ mod tests {
         app.add_event::<DeathEvent>();
         app.add_event::<WeaponBroken>();
         app.add_event::<ShieldBroken>();
+        app.add_event::<ShieldBlockHit>();
         app.add_event::<InventoryDurabilityChangedEvent>();
         app.add_systems(
             Update,
@@ -5027,6 +5160,7 @@ mod tests {
         app.add_event::<DeathEvent>();
         app.add_event::<WeaponBroken>();
         app.add_event::<ShieldBroken>();
+        app.add_event::<ShieldBlockHit>();
         app.add_event::<InventoryDurabilityChangedEvent>();
         app.add_systems(
             Update,
@@ -5133,6 +5267,7 @@ mod tests {
         app.add_event::<DeathEvent>();
         app.add_event::<WeaponBroken>();
         app.add_event::<ShieldBroken>();
+        app.add_event::<ShieldBlockHit>();
         app.add_event::<InventoryDurabilityChangedEvent>();
         app.add_systems(Update, resolve_attack_intents);
 
@@ -5213,6 +5348,7 @@ mod tests {
         app.add_event::<DeathEvent>();
         app.add_event::<WeaponBroken>();
         app.add_event::<ShieldBroken>();
+        app.add_event::<ShieldBlockHit>();
         app.add_event::<InventoryDurabilityChangedEvent>();
         app.add_systems(
             Update,
@@ -5316,6 +5452,7 @@ mod tests {
         app.add_event::<DeathEvent>();
         app.add_event::<WeaponBroken>();
         app.add_event::<ShieldBroken>();
+        app.add_event::<ShieldBlockHit>();
         app.add_event::<InventoryDurabilityChangedEvent>();
         app.add_systems(
             Update,
@@ -5462,6 +5599,7 @@ mod tests {
         app.add_event::<DeathEvent>();
         app.add_event::<WeaponBroken>();
         app.add_event::<ShieldBroken>();
+        app.add_event::<ShieldBlockHit>();
         app.add_event::<InventoryDurabilityChangedEvent>();
         app.add_systems(
             Update,
@@ -5603,6 +5741,7 @@ mod tests {
             app.add_event::<DeathEvent>();
             app.add_event::<WeaponBroken>();
             app.add_event::<ShieldBroken>();
+            app.add_event::<ShieldBlockHit>();
             app.add_event::<InventoryDurabilityChangedEvent>();
             app.add_systems(
                 Update,
@@ -5760,6 +5899,7 @@ mod tests {
         app.add_event::<DeathEvent>();
         app.add_event::<WeaponBroken>();
         app.add_event::<ShieldBroken>();
+        app.add_event::<ShieldBlockHit>();
         app.add_event::<InventoryDurabilityChangedEvent>();
         app.add_systems(
             Update,
@@ -5888,6 +6028,7 @@ mod tests {
         app.add_event::<DeathEvent>();
         app.add_event::<WeaponBroken>();
         app.add_event::<ShieldBroken>();
+        app.add_event::<ShieldBlockHit>();
         app.add_event::<InventoryDurabilityChangedEvent>();
         app.add_systems(
             Update,
@@ -6023,6 +6164,7 @@ mod tests {
         app.add_event::<DeathEvent>();
         app.add_event::<WeaponBroken>();
         app.add_event::<ShieldBroken>();
+        app.add_event::<ShieldBlockHit>();
         app.add_event::<InventoryDurabilityChangedEvent>();
         app.add_systems(
             Update,
@@ -6177,6 +6319,7 @@ mod tests {
         app.add_event::<DeathEvent>();
         app.add_event::<crate::combat::weapon::WeaponBroken>();
         app.add_event::<crate::combat::weapon::ShieldBroken>();
+        app.add_event::<crate::combat::weapon::ShieldBlockHit>();
         app.add_event::<InventoryDurabilityChangedEvent>();
         app.add_systems(Update, resolve_attack_intents);
 
@@ -6279,6 +6422,7 @@ mod tests {
         app.add_event::<DeathEvent>();
         app.add_event::<crate::combat::weapon::WeaponBroken>();
         app.add_event::<crate::combat::weapon::ShieldBroken>();
+        app.add_event::<crate::combat::weapon::ShieldBlockHit>();
         app.add_event::<InventoryDurabilityChangedEvent>();
         app.add_systems(Update, resolve_attack_intents);
 
@@ -6368,6 +6512,7 @@ mod tests {
         app.add_event::<DeathEvent>();
         app.add_event::<WeaponBroken>();
         app.add_event::<ShieldBroken>();
+        app.add_event::<ShieldBlockHit>();
         app.add_event::<InventoryDurabilityChangedEvent>();
         app.add_systems(Update, resolve_attack_intents);
 
@@ -6464,6 +6609,7 @@ mod tests {
         app.add_event::<DeathEvent>();
         app.add_event::<WeaponBroken>();
         app.add_event::<ShieldBroken>();
+        app.add_event::<ShieldBlockHit>();
         app.add_event::<InventoryDurabilityChangedEvent>();
         app.add_systems(Update, resolve_attack_intents);
 
@@ -6562,6 +6708,7 @@ mod tests {
         app.add_event::<DeathEvent>();
         app.add_event::<crate::combat::weapon::WeaponBroken>();
         app.add_event::<crate::combat::weapon::ShieldBroken>();
+        app.add_event::<crate::combat::weapon::ShieldBlockHit>();
         app.add_event::<InventoryDurabilityChangedEvent>();
         app.add_systems(Update, resolve_attack_intents);
 
@@ -6623,6 +6770,7 @@ mod tests {
         app.add_event::<DeathEvent>();
         app.add_event::<crate::combat::weapon::WeaponBroken>();
         app.add_event::<crate::combat::weapon::ShieldBroken>();
+        app.add_event::<crate::combat::weapon::ShieldBlockHit>();
         app.add_event::<InventoryDurabilityChangedEvent>();
         app.add_systems(Update, resolve_attack_intents);
 
@@ -6690,6 +6838,7 @@ mod tests {
         app.add_event::<DeathEvent>();
         app.add_event::<crate::combat::weapon::WeaponBroken>();
         app.add_event::<crate::combat::weapon::ShieldBroken>();
+        app.add_event::<crate::combat::weapon::ShieldBlockHit>();
         app.add_event::<InventoryDurabilityChangedEvent>();
         app.add_systems(Update, resolve_attack_intents);
 
@@ -6807,6 +6956,7 @@ mod tests {
         app.add_event::<DeathEvent>();
         app.add_event::<crate::combat::weapon::WeaponBroken>();
         app.add_event::<crate::combat::weapon::ShieldBroken>();
+        app.add_event::<crate::combat::weapon::ShieldBlockHit>();
         app.add_event::<InventoryDurabilityChangedEvent>();
         app.add_systems(Update, resolve_attack_intents);
 
@@ -6872,6 +7022,7 @@ mod tests {
         app.add_event::<DeathEvent>();
         app.add_event::<crate::combat::weapon::WeaponBroken>();
         app.add_event::<crate::combat::weapon::ShieldBroken>();
+        app.add_event::<crate::combat::weapon::ShieldBlockHit>();
         app.add_event::<InventoryDurabilityChangedEvent>();
         app.add_systems(Update, resolve_attack_intents);
 
@@ -6990,6 +7141,7 @@ mod tests {
         app.add_event::<DeathEvent>();
         app.add_event::<crate::combat::weapon::WeaponBroken>();
         app.add_event::<crate::combat::weapon::ShieldBroken>();
+        app.add_event::<crate::combat::weapon::ShieldBlockHit>();
         app.add_event::<InventoryDurabilityChangedEvent>();
         app.add_systems(Update, resolve_attack_intents);
         app
@@ -7018,11 +7170,14 @@ mod tests {
             Stamina::default(),
         );
         // defender 朝 +Z（yaw=0），attacker 在 z=3（防御者前方）→ dot=1.0 > -0.5 → 正面
+        // plan-shield-block-v1 P4: block_ratio 来自 shield_block_profile("bone_shield", proficiency)
+        // 骨盾 proficiency=0.0 → block_ratio=0.65（P4 spec）。
+        // off_hand 中的骨盾提供 template_id 用于 profile 查找；KnownTechniques 中 proficiency=0.0。
         app.world_mut().entity_mut(defender).insert((
             StatusEffects {
                 active: vec![ActiveStatusEffect {
                     kind: StatusEffectKind::ShieldBlocking,
-                    magnitude: 0.6, // 60% 减伤
+                    magnitude: 0.65, // P4 snapshot：magnitude 用于记录当前格挡态，block_ratio 通过 profile 计算
                     remaining_ticks: crate::combat::shield_block::SHIELD_BLOCKING_DURATION_TICKS,
                     source_pill: None,
                 }],
@@ -7034,6 +7189,39 @@ mod tests {
                 yaw: 0.0,
                 pitch: 0.0,
             }, // 朝 +Z
+            // P4: off_hand 骨盾供 profile 查找（template_id → block_ratio=0.65）
+            PlayerInventory {
+                revision: InventoryRevision(1),
+                containers: vec![],
+                equipped: std::collections::HashMap::from([(
+                    EQUIP_SLOT_OFF_HAND.to_string(),
+                    ItemInstance {
+                        instance_id: 91,
+                        template_id: "bone_shield".to_string(),
+                        display_name: "骨盾".to_string(),
+                        grid_w: 1,
+                        grid_h: 2,
+                        weight: 2.5,
+                        rarity: ItemRarity::Common,
+                        description: String::new(),
+                        stack_count: 1,
+                        spirit_quality: 0.0,
+                        durability: 1.0,
+                        freshness: None,
+                        mineral_id: None,
+                        charges: None,
+                        forge_quality: None,
+                        forge_color: None,
+                        forge_side_effects: Vec::new(),
+                        forge_achieved_tier: None,
+                        alchemy: None,
+                        lingering_owner_qi: None,
+                    },
+                )]),
+                hotbar: Default::default(),
+                bone_coins: 0,
+                max_weight: 100.0,
+            },
         ));
 
         app.world_mut().send_event(AttackIntent {
@@ -7061,19 +7249,21 @@ mod tests {
             "正面命中 ShieldBlocking 应发出 defense_kind=ShieldBlock；actual: {:?}",
             events[0].defense_kind
         );
-        // 2. defense_effectiveness == block_ratio (0.6)
+        // 2. defense_effectiveness == block_ratio（plan-shield-block-v1 P4）
+        // bone_shield proficiency=0.0 → shield_block_profile("bone_shield", 0.0).block_ratio = 0.65
         assert!(
             events[0]
                 .defense_effectiveness
-                .is_some_and(|e| (e - 0.6).abs() < 0.01),
-            "defense_effectiveness 应等于 block_ratio=0.6，actual: {:?}",
+                .is_some_and(|e| (e - 0.65).abs() < 0.01),
+            "defense_effectiveness 应等于 bone_shield 基础 block_ratio=0.65（P4 profile，proficiency=0.0），\
+             actual: {:?}",
             events[0].defense_effectiveness
         );
         // 3. wound 减伤确认（physical_damage 应小于无盾时的 1.0 unarmed）
         let phys_dmg = events[0].physical_damage;
         assert!(
             phys_dmg < 0.5,
-            "60% 盾格挡后 physical_damage 应小于 0.5（减伤比例正确），actual={phys_dmg}"
+            "65% 盾格挡后 physical_damage 应小于 0.5（减伤比例正确），actual={phys_dmg}"
         );
         // 4. 攻击者无 reflected_damage（盾格挡无反伤，对比 SwordParry 有 0.15 反伤）
         let attacker_wounds = app.world().entity(attacker).get::<Wounds>().unwrap();
@@ -7400,6 +7590,7 @@ mod tests {
         app.add_event::<DeathEvent>();
         app.add_event::<crate::combat::weapon::WeaponBroken>();
         app.add_event::<crate::combat::weapon::ShieldBroken>();
+        app.add_event::<crate::combat::weapon::ShieldBlockHit>();
         app.add_event::<InventoryDurabilityChangedEvent>();
         app.add_systems(Update, resolve_attack_intents);
         app

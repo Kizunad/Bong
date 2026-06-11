@@ -376,6 +376,23 @@ public class VfxRegistryTest {
                 instanceof FaunaBoneShatterPlayer,
             "shield_break_bone should route to FaunaBoneShatterPlayer"
         );
+        // plan-shield-block-v1 §P4 — 格挡命中迸溅粒子（区别于 P3 破碎，count 6，duration 8t）
+        assertTrue(VfxRegistry.instance().contains(new Identifier("bong", "shield_block_wood")),
+            "bootstrap should register shield_block_wood VFX (木盾格挡命中迸溅，plan-shield-block-v1 §P4；"
+                + "区别于 P3 shield_break_wood 破碎，count/duration 更轻量)");
+        assertTrue(
+            VfxRegistry.instance().lookup(new Identifier("bong", "shield_block_wood")).get()
+                instanceof ShieldWoodShatterPlayer,
+            "shield_block_wood should route to ShieldWoodShatterPlayer"
+        );
+        assertTrue(VfxRegistry.instance().contains(new Identifier("bong", "shield_block_bone")),
+            "bootstrap should register shield_block_bone VFX (骨盾格挡命中迸溅，plan-shield-block-v1 §P4；"
+                + "区别于 P3 shield_break_bone 破碎)");
+        assertTrue(
+            VfxRegistry.instance().lookup(new Identifier("bong", "shield_block_bone")).get()
+                instanceof FaunaBoneShatterPlayer,
+            "shield_block_bone should route to FaunaBoneShatterPlayer"
+        );
     }
 
     private static void assertTiandaoHuntRoute(Identifier eventId) {

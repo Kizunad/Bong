@@ -311,6 +311,7 @@ import {
   ServerDataCoffinStateV1,
   ServerDataWeaponBrokenV1,
   ServerDataShieldBrokenV1,
+  ServerDataShieldBlockHitV1,
   ServerDataWeaponEquippedV1,
   ServerDataForgeStationV1,
   ServerDataForgeSessionV1,
@@ -339,6 +340,7 @@ import {
   TreasureViewV1,
   WeaponBrokenV1,
   ShieldBrokenV1,
+  ShieldBlockHitV1,
   WeaponEquippedV1,
   WeaponViewV1,
   // plan-exploration-probe-return-v1 P0
@@ -685,11 +687,13 @@ export const SCHEMA_REGISTRY = {
   weaponEquippedV1: WeaponEquippedV1,
   weaponBrokenV1: WeaponBrokenV1,
   shieldBrokenV1: ShieldBrokenV1,
+  shieldBlockHitV1: ShieldBlockHitV1,
   treasureViewV1: TreasureViewV1,
   treasureEquippedV1: TreasureEquippedV1,
   serverDataWeaponEquippedV1: ServerDataWeaponEquippedV1,
   serverDataWeaponBrokenV1: ServerDataWeaponBrokenV1,
   serverDataShieldBrokenV1: ServerDataShieldBrokenV1,
+  serverDataShieldBlockHitV1: ServerDataShieldBlockHitV1,
   serverDataTreasureEquippedV1: ServerDataTreasureEquippedV1,
   vortexFieldStateV1: VortexFieldStateV1,
   vortexBackfireEventV1: VortexBackfireEventV1,
@@ -1192,6 +1196,8 @@ export const GENERATED_SCHEMA_FILES = {
     SCHEMA_REGISTRY.serverDataWeaponBrokenV1,
   "server-data-shield-broken-v1.json":
     SCHEMA_REGISTRY.serverDataShieldBrokenV1,
+  "server-data-shield-block-hit-v1.json":
+    SCHEMA_REGISTRY.serverDataShieldBlockHitV1,
   "server-data-treasure-equipped-v1.json":
     SCHEMA_REGISTRY.serverDataTreasureEquippedV1,
   "dugu-poison-state-v1.json": SCHEMA_REGISTRY.duguPoisonStateV1,

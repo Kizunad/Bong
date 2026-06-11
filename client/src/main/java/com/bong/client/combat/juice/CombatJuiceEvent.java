@@ -53,6 +53,8 @@ public record CombatJuiceEvent(
         OVERLOAD,
         PARRY,
         PERFECT_PARRY,
+        // plan-shield-block-v1 §P4 — 盾格挡命中，不复用 PARRY（其音效硬编码剑击声）。
+        SHIELD_BLOCK,
         DODGE,
         WOUND,
         KILL

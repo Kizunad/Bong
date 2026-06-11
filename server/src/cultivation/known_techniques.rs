@@ -36,12 +36,13 @@ impl KnownTechniques {
     }
 }
 
-const TECHNIQUE_IDS: [&str; 47] = [
+const TECHNIQUE_IDS: [&str; 48] = [
     "sword.cleave",
     "sword.thrust",
     "sword.parry",
     "sword.infuse",
     "movement.dash",
+    "shield_block",
     "burst_meridian.beng_quan",
     "burst_meridian.tie_shan_kao",
     "burst_meridian.xue_beng_bu",
@@ -129,7 +130,7 @@ const WOLIU_V3_REQUIRED_MERIDIANS: [TechniqueRequiredMeridian; 2] = [
     },
 ];
 
-pub const TECHNIQUE_DEFINITIONS: [TechniqueDefinition; 47] = [
+pub const TECHNIQUE_DEFINITIONS: [TechniqueDefinition; 48] = [
     TechniqueDefinition {
         id: "sword.cleave",
         display_name: "劈",
@@ -204,6 +205,22 @@ pub const TECHNIQUE_DEFINITIONS: [TechniqueDefinition; 47] = [
         range: 2.8,
         icon_texture: "bong:textures/gui/skill/movement_dash.png",
         category: SkillCategory::Attack,
+    },
+    // plan-shield-block-v1 P4 — 盾牌格挡熟练度，无经脉前置，持盾即可习得。
+    TechniqueDefinition {
+        id: "shield_block",
+        display_name: "盾挡",
+        grade: "common",
+        description: "以盾承受敌方攻击。熟练后格挡比例上升、体力消耗下降。",
+        required_realm: "Awaken",
+        required_meridians: &[],
+        qi_cost: 0.0,
+        stamina_cost: 0.0, // 耗体力由 ShieldDrainOverride / stamina_tick 管理，非 cast 消耗
+        cast_ticks: 0,
+        cooldown_ticks: 0,
+        range: 0.0,
+        icon_texture: "bong:textures/gui/skill/shield_block.png",
+        category: SkillCategory::Defense,
     },
     TechniqueDefinition {
         id: "burst_meridian.beng_quan",
@@ -1046,8 +1063,9 @@ mod tests {
 
     #[test]
     fn dev_default_has_all_47() {
+        // plan-shield-block-v1 P4: shield_block 加入后总数升至 48
         let dev = KnownTechniques::dev_default();
-        assert_eq!(dev.entries.len(), 47);
+        assert_eq!(dev.entries.len(), 48);
         assert!(dev
             .entries
             .iter()
