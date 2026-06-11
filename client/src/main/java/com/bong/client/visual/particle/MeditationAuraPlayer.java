@@ -11,26 +11,27 @@ public final class MeditationAuraPlayer implements VfxPlayer {
     private static final int FALLBACK_RGB = 0xBFD8C8;
     private static final int DEFAULT_COUNT = 8;
     private static final int DEFAULT_MAX_AGE = 16;
+    private static final double DEFAULT_STRENGTH = 0.75;
+    private static final float MIN_ALPHA = 0.4f;
+    private static final float MAX_ALPHA = 0.85f;
+    private static final int MIN_COUNT = 1;
+    private static final int MAX_COUNT = 24;
+    private static final int MIN_MAX_AGE = 1;
+    private static final int MAX_MAX_AGE = 48;
 
     @Override
     public void play(MinecraftClient client, VfxEventPayload.SpawnParticle payload) {
-        ClientWorld world = client.world;
+        ClientWorld world = GameplayVfxUtil.world(client);
         if (world == null) return;
 
         double ox = payload.origin()[0];
         double oy = payload.origin()[1];
         double oz = payload.origin()[2];
-        int rgb = payload.colorRgb().orElse(FALLBACK_RGB);
-        float r = ((rgb >> 16) & 0xFF) / 255f;
-        float g = ((rgb >> 8) & 0xFF) / 255f;
-        float b = (rgb & 0xFF) / 255f;
-        float alpha = (float) Math.max(0.4, Math.min(0.85, payload.strength().orElse(0.75)));
-        int count = clamp(payload.count().orElse(DEFAULT_COUNT), 1, 24);
-        int maxAge = clamp(payload.durationTicks().orElse(DEFAULT_MAX_AGE), 1, 48);
+        FurnitureAuraParticleSpec spec = resolveSpec(payload);
         double phase = world.random.nextDouble() * Math.PI * 2.0;
 
-        for (int i = 0; i < count; i++) {
-            double angle = phase + (Math.PI * 2.0 * i / count);
+        for (int i = 0; i < spec.count(); i++) {
+            double angle = phase + (Math.PI * 2.0 * i / spec.count());
             double radius = 0.45 + world.random.nextDouble() * 0.18;
             double x = ox + Math.cos(angle) * radius;
             double y = oy + 0.25 + world.random.nextDouble() * 0.55;
@@ -39,11 +40,25 @@ public final class MeditationAuraPlayer implements VfxPlayer {
             double vy = 0.008 + world.random.nextDouble() * 0.012;
             double vz = Math.cos(angle) * 0.012;
             EnlightenmentAuraPlayer.spawnSprite(client, world, BongParticles.enlightenmentDustSprites,
-                x, y, z, vx, vy, vz, r, g, b, alpha, maxAge, 0.065f);
+                x, y, z, vx, vy, vz, spec.red(), spec.green(), spec.blue(), spec.alpha(),
+                spec.maxAge(), 0.065f);
         }
     }
 
-    private static int clamp(int value, int min, int max) {
-        return Math.max(min, Math.min(max, value));
+    static FurnitureAuraParticleSpec resolveSpec(VfxEventPayload.SpawnParticle payload) {
+        float[] rgb = GameplayVfxUtil.rgb(payload, FALLBACK_RGB);
+        float alpha = (float) GameplayVfxUtil.clamp(
+            payload.strength().orElse(DEFAULT_STRENGTH),
+            MIN_ALPHA,
+            MAX_ALPHA
+        );
+        return new FurnitureAuraParticleSpec(
+            rgb[0],
+            rgb[1],
+            rgb[2],
+            alpha,
+            GameplayVfxUtil.clamp(payload.count().orElse(DEFAULT_COUNT), MIN_COUNT, MAX_COUNT),
+            GameplayVfxUtil.clamp(payload.durationTicks().orElse(DEFAULT_MAX_AGE), MIN_MAX_AGE, MAX_MAX_AGE)
+        );
     }
 }

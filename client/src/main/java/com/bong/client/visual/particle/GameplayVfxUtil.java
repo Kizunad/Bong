@@ -145,4 +145,8 @@ final class GameplayVfxUtil {
     static int clamp(int value, int lo, int hi) {
         return Math.max(lo, Math.min(hi, value));
     }
+
+    static double clamp(double value, double lo, double hi) {
+        return Math.max(lo, Math.min(hi, value));
+    }
 }
