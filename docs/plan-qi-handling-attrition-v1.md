@@ -50,7 +50,7 @@
 |------|------|-----------|---------|
 | **P0** | ✅ 2026-06-10 | `AttritionTax` QiTransferReason + `AttritionConfig` 常数 + `QiAttritionSystem` server 逻辑 | 拿起 1 个 qi_value=100 灵石 → qi_value=97 + zone +3 + 守恒律单测全绿 |
 | **P1** | ✅ 2026-06-10 | 多 op_kind 磨损分档（拾起/移动/搜刮/炼器/炼丹）+ 环境倍率（死域×3/坍缩渊×3/馈赠区×0.8）+ `AttritionExemptTag` | 各 op_kind 磨损率单测 + 环境倍率边界 |
-| **P2** | ⬜ | Client VFX：`bong:vfx/qi_attrition` 粒子闪光 + 物品 qi_value HUD 实时更新 | 客户端拿起高灵气物品 → 物品栏显示 qi_value 下降 + 粒子闪烁 |
+| **P2** | ✅ 2026-06-11 | Client VFX：`bong:vfx/qi_attrition` 粒子闪光 + 物品 qi_value HUD 实时更新 | 客户端拿起高灵气物品 → 物品栏显示 qi_value 下降 + 粒子闪烁 |
 | **P3** | ⬜ | 边界情况：`qi_value < 0.5` 跳过磨损 + 封灵容器豁免 + 死坍缩渊（已 dead）无灵气可逸散的处理 | 边界单测 + 封灵容器豁免单测 |
 
 > **P0/P1 落地（2026-06-10）**：`server/src/qi_physics/attrition.rs` 新建（`AttritionConfig` + `AttritionOpKind` + `apply_attrition` + `release_attrition_to_zone` 守恒归还 `zone.spirit_qi`）；`ledger.rs` 加 `QiTransferReason::AttritionTax{op_kind}` 变体；`constants.rs` 配置（BASE_RATE=0.03 等）。**4/5 op_kind 已接生产**：Pickup / SlotMove / ContainerSearch / AlchemyLoad。**遗留**：`ForgeLoad`（炼器）变体+rate 已定义并 pin 测试，但 forge session 生产接线 deferred follow-up。cargo fmt + clippy(-D warnings) + test **8130 passed**（attrition 专项 25，含守恒律+overflow守恒+各 op_kind率+环境倍率边界+<0.5 skip+exempt）。
@@ -79,10 +79,12 @@
 
 ## P2 — 客户端 VFX 反馈
 
-- [ ] `bong:vfx/qi_attrition` CustomPayload：`{ item_entity_id, amount_lost, world_pos }` → 由 `AttritionAppliedEvent` 触发，server 向操作者客户端发送
-- [ ] client `QiAttritionVfxPlayer`：收包后在 world_pos 处 spawn 3-5 个 `BongSpriteParticle`，颜色 `#D4A820`（暗金色），lifetime 8 tick，向上飘散 0.5m；无文字数字（避免"你损失了 3 灵气"的游戏化感觉，用隐式粒子暗示）
-- [ ] 物品栏 qi_value 标签实时响应 `ItemQiValue` 更新（不需要新 CustomPayload，走 `InventorySync` 已有通道）
-- [ ] ≥ 6 单测（VFX packet 格式 / 粒子参数范围 / 不发给非操作者客户端）
+- [x] `bong:vfx/qi_attrition` CustomPayload：`{ item_entity_id, amount_lost, world_pos }` → 由 `AttritionAppliedEvent` 触发，server 向操作者客户端发送
+- [x] client `QiAttritionVfxPlayer`：收包后在 world_pos 处 spawn 3-5 个 `BongSpriteParticle`，颜色 `#D4A820`（暗金色），lifetime 8 tick，向上飘散 0.5m；无文字数字（避免"你损失了 3 灵气"的游戏化感觉，用隐式粒子暗示）
+- [x] 物品栏 qi_value 标签实时响应 `ItemQiValue` 更新（不需要新 CustomPayload，走 `InventorySync` 已有通道）
+- [x] ≥ 6 单测（VFX packet 格式 / 粒子参数范围 / 不发给非操作者客户端）
+
+> **P2 落地（2026-06-11）**：`server/src/network/qi_attrition_emit.rs` 新增定向 S2C 发射器与 `AttritionAppliedEvent`；`client/src/main/java/com/bong/client/network/QiAttritionPayload.java` 解析并校验包版本/大小/坐标；`client/src/main/java/com/bong/client/visual/particle/QiAttritionVfxPlayer.java` 播放暗金色 3-5 粒子、8 tick、0.5m 上飘；`ItemTooltipPanel` 继续消费 `InventorySync` 快照并实时响应 `spiritQuality` 变化。验证：`cargo fmt --check`、`cargo clippy --all-targets -j 2 -- -D warnings`、`cargo test -j 2`、`./gradlew test --max-workers=2` 通过。
 
 ---
 

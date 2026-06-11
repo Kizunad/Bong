@@ -30,6 +30,48 @@ class ItemTooltipPanelTest {
     }
 
     @Test
+    void spiritQualityLabelRespondsToUpdatedSnapshotItem() {
+        InventoryItem before = InventoryItem.createFull(
+            7L,
+            "ling_stone",
+            "碎灵石",
+            1,
+            1,
+            0.2,
+            "common",
+            "",
+            1,
+            0.97,
+            1.0
+        );
+        InventoryItem after = InventoryItem.createFull(
+            7L,
+            "ling_stone",
+            "碎灵石",
+            1,
+            1,
+            0.2,
+            "common",
+            "",
+            1,
+            0.68,
+            1.0
+        );
+
+        assertEquals("灵质 97%", ItemTooltipPanel.spiritQualityLabel(before));
+        assertEquals("灵质 68%", ItemTooltipPanel.spiritQualityLabel(after));
+        int widthBefore = ItemTooltipPanel.qualityBarFillWidth(196, before.spiritQuality());
+        int widthAfter = ItemTooltipPanel.qualityBarFillWidth(196, after.spiritQuality());
+        assertTrue(
+            widthAfter < widthBefore,
+            () -> "expected fillWidth(after) < fillWidth(before) because spiritQuality dropped, actual after="
+                + widthAfter
+                + " before="
+                + widthBefore
+        );
+    }
+
+    @Test
     void qualityBarColorMovesFromGreyThroughGreenToGold() {
         assertEquals(0x888888, ItemTooltipPanel.qualityBarColor(0.0));
         assertEquals(0x22CC22, ItemTooltipPanel.qualityBarColor(0.5));

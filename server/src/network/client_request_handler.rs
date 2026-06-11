@@ -106,6 +106,9 @@ use crate::network::npc_metadata::{
     display_name as npc_display_name, greeting_text_for_archetype,
     reputation_to_player_score_for_client,
 };
+use crate::network::qi_attrition_emit::{
+    emit_attrition_applied_if_lost, item_abs_qi_for_attrition, AttritionAppliedEvent,
+};
 use crate::network::qi_color_observed_emit::QiColorInspectRequest;
 use crate::network::send_server_data_payload;
 use crate::network::skill_config_emit::send_skill_config_snapshot_to_client;
@@ -250,6 +253,8 @@ pub struct AlchemyRequestParams<'w, 's> {
     pub vfx_events: Option<ResMut<'w, Events<VfxEventRequest>>>,
     /// plan-qi-handling-attrition-v1 P0/P1：AttritionTax 审计转账事件队列。
     pub attrition_qi_transfers: Option<ResMut<'w, Events<crate::qi_physics::ledger::QiTransfer>>>,
+    /// plan-qi-handling-attrition-v1 P2：定向客户端粒子反馈事件队列。
+    pub attrition_applied_events: Option<ResMut<'w, Events<AttritionAppliedEvent>>>,
     /// plan-fauna-stitched-beast-v1 P3：兽核吸收幻觉事件 (M1 修复：接通 narration/hallucination)
     pub hallucination_events:
         Option<ResMut<'w, Events<crate::fauna::hybrid_beast::CoreAbsorptionHallucinationEvent>>>,
@@ -1509,6 +1514,7 @@ pub fn handle_client_request_payloads(
                     &skill_scroll_params.cultivations,
                     alchemy_params.zones.as_deref_mut(),
                     alchemy_params.attrition_qi_transfers.as_deref_mut(),
+                    alchemy_params.attrition_applied_events.as_deref_mut(),
                 );
             }
             ClientRequestV1::AlchemyTakeBack {
@@ -1555,6 +1561,7 @@ pub fn handle_client_request_payloads(
                     &skill_scroll_params.dimensions,
                     alchemy_params.zones.as_deref_mut(),
                     alchemy_params.attrition_qi_transfers.as_deref_mut(),
+                    alchemy_params.attrition_applied_events.as_deref_mut(),
                 );
             }
             ClientRequestV1::EquipFalseSkin {
@@ -1596,6 +1603,7 @@ pub fn handle_client_request_payloads(
                     &skill_scroll_params.dimensions,
                     alchemy_params.zones.as_deref_mut(),
                     alchemy_params.attrition_qi_transfers.as_deref_mut(),
+                    alchemy_params.attrition_applied_events.as_deref_mut(),
                 );
             }
             ClientRequestV1::ForgeFalseSkin { kind, .. } => {
@@ -1671,6 +1679,7 @@ pub fn handle_client_request_payloads(
                     &skill_scroll_params.dimensions,
                     alchemy_params.zones.as_deref_mut(),
                     alchemy_params.attrition_qi_transfers.as_deref_mut(),
+                    alchemy_params.attrition_applied_events.as_deref_mut(),
                 );
             }
             ClientRequestV1::MineralProbe { x, y, z, .. } => {
@@ -7695,6 +7704,7 @@ fn handle_inventory_move(
     dimensions: &Query<&CurrentDimension>,
     zones: Option<&mut ZoneRegistry>,
     qi_transfers: Option<&mut Events<crate::qi_physics::ledger::QiTransfer>>,
+    attrition_events: Option<&mut Events<AttritionAppliedEvent>>,
 ) {
     let item_before_move = inventories
         .get(entity)
@@ -7766,6 +7776,7 @@ fn handle_inventory_move(
                     .map(|d| d.0)
                     .unwrap_or(DimensionKind::Overworld);
                 let player_pos_arr = client_position(positions, entity);
+                let world_pos = player_pos_arr;
                 let pos = valence::prelude::DVec3::new(
                     player_pos_arr[0],
                     player_pos_arr[1],
@@ -7778,11 +7789,19 @@ fn handle_inventory_move(
                             inventory_item_by_instance_mut(&mut inventory, instance_id)
                         {
                             if !is_attrition_exempt(item) {
+                                let before_abs_qi = item_abs_qi_for_attrition(item);
                                 apply_attrition(
                                     item,
                                     AttritionOpKind::SlotMove,
                                     Some(zone),
                                     qi_transfers,
+                                );
+                                emit_attrition_applied_if_lost(
+                                    attrition_events,
+                                    entity,
+                                    item,
+                                    before_abs_qi,
+                                    world_pos,
                                 );
                             }
                         }
@@ -8076,6 +8095,7 @@ fn handle_pickup_dropped_item(
     dimensions: &Query<&CurrentDimension>,
     zones: Option<&mut ZoneRegistry>,
     qi_transfers: Option<&mut Events<crate::qi_physics::ledger::QiTransfer>>,
+    attrition_events: Option<&mut Events<AttritionAppliedEvent>>,
 ) {
     let player_pos = client_position(positions, entity);
     let mut inventory = match inventories.get_mut(entity) {
@@ -8116,11 +8136,19 @@ fn handle_pickup_dropped_item(
                             inventory_item_by_instance_mut(&mut inventory, instance_id)
                         {
                             if !is_attrition_exempt(item) {
+                                let before_abs_qi = item_abs_qi_for_attrition(item);
                                 apply_attrition(
                                     item,
                                     AttritionOpKind::Pickup,
                                     Some(zone),
                                     qi_transfers,
+                                );
+                                emit_attrition_applied_if_lost(
+                                    attrition_events,
+                                    entity,
+                                    item,
+                                    before_abs_qi,
+                                    player_pos,
                                 );
                             }
                         }
@@ -8573,6 +8601,7 @@ fn handle_alchemy_feed_slot(
     cultivations: &Query<&Cultivation>,
     mut zones: Option<&mut ZoneRegistry>,
     mut qi_transfers: Option<&mut Events<crate::qi_physics::ledger::QiTransfer>>,
+    mut attrition_events: Option<&mut Events<AttritionAppliedEvent>>,
 ) {
     let Ok((username, mut client)) = clients.get_mut(entity) else {
         return;
@@ -8633,6 +8662,8 @@ fn handle_alchemy_feed_slot(
         // 在 consume 前对投料 item 施加磨损（item 还在 inventory，可找到并改 spirit_quality）。
         // zone 用炼炉位置（与 MIN_ZONE_QI_TO_ALCHEMY 检查一致）。
         {
+            let vfx_pos = alchemy_furnace_origin(furnace_pos);
+            let world_pos = [vfx_pos.x, vfx_pos.y, vfx_pos.z];
             let zone_name = zones.as_deref().and_then(|z| {
                 z.find_zone(
                     DimensionKind::Overworld,
@@ -8646,18 +8677,8 @@ fn handle_alchemy_feed_slot(
                 .map(|z| z.name.clone())
             });
 
-            // 收集待磨损的 instance_id（template 匹配的前 count 个）
-            let mut to_attrit: Vec<u64> = Vec::new();
-            for container in &inventory.containers {
-                for placed in &container.items {
-                    if placed.instance.template_id == material && to_attrit.len() < count as usize {
-                        to_attrit.push(placed.instance.instance_id);
-                    }
-                }
-                if to_attrit.len() >= count as usize {
-                    break;
-                }
-            }
+            let to_attrit =
+                select_template_instances_for_consumption(&inventory, material.as_str(), count);
 
             for instance_id in to_attrit {
                 if let Some(item) = inventory_item_by_instance_mut(&mut inventory, instance_id) {
@@ -8668,11 +8689,25 @@ fn handle_alchemy_feed_slot(
                         (zone_name.clone(), zones.as_deref_mut())
                     {
                         if let Some(zone) = zones.find_zone_mut(&zone_name) {
+                            let before_abs_qi = item_abs_qi_for_attrition(item);
                             apply_attrition(
                                 item,
                                 AttritionOpKind::AlchemyLoad,
                                 Some(zone),
-                                qi_transfers.as_deref_mut(),
+                                match &mut qi_transfers {
+                                    Some(events) => Some(&mut **events),
+                                    None => None,
+                                },
+                            );
+                            emit_attrition_applied_if_lost(
+                                match &mut attrition_events {
+                                    Some(events) => Some(&mut **events),
+                                    None => None,
+                                },
+                                entity,
+                                item,
+                                before_abs_qi,
+                                world_pos,
                             );
                         }
                     }
@@ -9842,6 +9877,50 @@ fn consume_one_by_template(inventory: &mut PlayerInventory, template_id: &str) -
     false
 }
 
+fn select_template_instances_for_consumption(
+    inventory: &PlayerInventory,
+    template_id: &str,
+    required: u32,
+) -> Vec<u64> {
+    let mut remaining = required;
+    let mut instance_ids = Vec::new();
+    if remaining == 0 {
+        return instance_ids;
+    }
+
+    for item in inventory.hotbar.iter().flatten() {
+        if item.template_id == template_id && item.stack_count > 0 {
+            instance_ids.push(item.instance_id);
+            remaining = remaining.saturating_sub(item.stack_count);
+            if remaining == 0 {
+                return instance_ids;
+            }
+        }
+    }
+    for container in &inventory.containers {
+        for placed in &container.items {
+            let item = &placed.instance;
+            if item.template_id == template_id && item.stack_count > 0 {
+                instance_ids.push(item.instance_id);
+                remaining = remaining.saturating_sub(item.stack_count);
+                if remaining == 0 {
+                    return instance_ids;
+                }
+            }
+        }
+    }
+    for item in inventory.equipped.values() {
+        if item.template_id == template_id && item.stack_count > 0 {
+            instance_ids.push(item.instance_id);
+            remaining = remaining.saturating_sub(item.stack_count);
+            if remaining == 0 {
+                return instance_ids;
+            }
+        }
+    }
+    instance_ids
+}
+
 fn inventory_has_template_count(
     inventory: &PlayerInventory,
     template_id: &str,
@@ -10611,6 +10690,49 @@ mod take_pill_tests {
             });
         assert!(consume_one_by_template(&mut inv, "guyuan_pill"));
         assert_eq!(inv.containers[0].items[0].instance.stack_count, 1);
+    }
+
+    #[test]
+    fn alchemy_attrition_selection_matches_consume_order() {
+        let mut inv = fresh_inventory();
+        inv.hotbar[0] = Some(make_pill(11, "guyuan_pill", 1));
+        inv.containers[0]
+            .items
+            .push(crate::inventory::PlacedItemState {
+                row: 0,
+                col: 0,
+                instance: make_pill(22, "guyuan_pill", 1),
+            });
+
+        assert_eq!(
+            select_template_instances_for_consumption(&inv, "guyuan_pill", 1),
+            vec![11],
+            "投料磨损应命中 hotbar 中即将被 consume_one_by_template 消耗的实例"
+        );
+        assert!(consume_one_by_template(&mut inv, "guyuan_pill"));
+        assert!(inv.hotbar[0].is_none());
+        assert_eq!(inv.containers[0].items[0].instance.instance_id, 22);
+    }
+
+    #[test]
+    fn alchemy_attrition_selection_spans_consumed_stacks_once_per_instance() {
+        let mut inv = fresh_inventory();
+        inv.hotbar[0] = Some(make_pill(11, "guyuan_pill", 2));
+        inv.containers[0]
+            .items
+            .push(crate::inventory::PlacedItemState {
+                row: 0,
+                col: 0,
+                instance: make_pill(22, "guyuan_pill", 3),
+            });
+        inv.equipped
+            .insert("treasure_belt_0".into(), make_pill(33, "guyuan_pill", 1));
+
+        assert_eq!(
+            select_template_instances_for_consumption(&inv, "guyuan_pill", 5),
+            vec![11, 22],
+            "投料磨损应按 hotbar → containers → equipped 覆盖将被消耗的实例"
+        );
     }
 
     #[test]
