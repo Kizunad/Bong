@@ -8677,18 +8677,8 @@ fn handle_alchemy_feed_slot(
                 .map(|z| z.name.clone())
             });
 
-            // 收集待磨损的 instance_id（template 匹配的前 count 个）
-            let mut to_attrit: Vec<u64> = Vec::new();
-            for container in &inventory.containers {
-                for placed in &container.items {
-                    if placed.instance.template_id == material && to_attrit.len() < count as usize {
-                        to_attrit.push(placed.instance.instance_id);
-                    }
-                }
-                if to_attrit.len() >= count as usize {
-                    break;
-                }
-            }
+            let to_attrit =
+                select_template_instances_for_consumption(&inventory, material.as_str(), count);
 
             for instance_id in to_attrit {
                 if let Some(item) = inventory_item_by_instance_mut(&mut inventory, instance_id) {
@@ -9887,6 +9877,50 @@ fn consume_one_by_template(inventory: &mut PlayerInventory, template_id: &str) -
     false
 }
 
+fn select_template_instances_for_consumption(
+    inventory: &PlayerInventory,
+    template_id: &str,
+    required: u32,
+) -> Vec<u64> {
+    let mut remaining = required;
+    let mut instance_ids = Vec::new();
+    if remaining == 0 {
+        return instance_ids;
+    }
+
+    for item in inventory.hotbar.iter().flatten() {
+        if item.template_id == template_id && item.stack_count > 0 {
+            instance_ids.push(item.instance_id);
+            remaining = remaining.saturating_sub(item.stack_count);
+            if remaining == 0 {
+                return instance_ids;
+            }
+        }
+    }
+    for container in &inventory.containers {
+        for placed in &container.items {
+            let item = &placed.instance;
+            if item.template_id == template_id && item.stack_count > 0 {
+                instance_ids.push(item.instance_id);
+                remaining = remaining.saturating_sub(item.stack_count);
+                if remaining == 0 {
+                    return instance_ids;
+                }
+            }
+        }
+    }
+    for item in inventory.equipped.values() {
+        if item.template_id == template_id && item.stack_count > 0 {
+            instance_ids.push(item.instance_id);
+            remaining = remaining.saturating_sub(item.stack_count);
+            if remaining == 0 {
+                return instance_ids;
+            }
+        }
+    }
+    instance_ids
+}
+
 fn inventory_has_template_count(
     inventory: &PlayerInventory,
     template_id: &str,
@@ -10656,6 +10690,49 @@ mod take_pill_tests {
             });
         assert!(consume_one_by_template(&mut inv, "guyuan_pill"));
         assert_eq!(inv.containers[0].items[0].instance.stack_count, 1);
+    }
+
+    #[test]
+    fn alchemy_attrition_selection_matches_consume_order() {
+        let mut inv = fresh_inventory();
+        inv.hotbar[0] = Some(make_pill(11, "guyuan_pill", 1));
+        inv.containers[0]
+            .items
+            .push(crate::inventory::PlacedItemState {
+                row: 0,
+                col: 0,
+                instance: make_pill(22, "guyuan_pill", 1),
+            });
+
+        assert_eq!(
+            select_template_instances_for_consumption(&inv, "guyuan_pill", 1),
+            vec![11],
+            "投料磨损应命中 hotbar 中即将被 consume_one_by_template 消耗的实例"
+        );
+        assert!(consume_one_by_template(&mut inv, "guyuan_pill"));
+        assert!(inv.hotbar[0].is_none());
+        assert_eq!(inv.containers[0].items[0].instance.instance_id, 22);
+    }
+
+    #[test]
+    fn alchemy_attrition_selection_spans_consumed_stacks_once_per_instance() {
+        let mut inv = fresh_inventory();
+        inv.hotbar[0] = Some(make_pill(11, "guyuan_pill", 2));
+        inv.containers[0]
+            .items
+            .push(crate::inventory::PlacedItemState {
+                row: 0,
+                col: 0,
+                instance: make_pill(22, "guyuan_pill", 3),
+            });
+        inv.equipped
+            .insert("treasure_belt_0".into(), make_pill(33, "guyuan_pill", 1));
+
+        assert_eq!(
+            select_template_instances_for_consumption(&inv, "guyuan_pill", 5),
+            vec![11, 22],
+            "投料磨损应按 hotbar → containers → equipped 覆盖将被消耗的实例"
+        );
     }
 
     #[test]

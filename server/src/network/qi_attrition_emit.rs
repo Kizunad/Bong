@@ -4,7 +4,7 @@
 //! 不复用 `bong:vfx_event` 的半径广播通道，避免旁观者收到 UI/粒子噪声。
 
 use serde::{Deserialize, Serialize};
-use valence::prelude::{bevy_ecs, ident, Client, Entity, Event, EventReader, Events, Query, With};
+use valence::prelude::{bevy_ecs, Client, Entity, Event, EventReader, Events, Ident, Query, With};
 
 use crate::inventory::ItemInstance;
 use crate::qi_physics::constants::QI_EPSILON;
@@ -113,8 +113,9 @@ pub fn emit_qi_attrition_payloads(
             );
             continue;
         };
-        let _ = QI_ATTRITION_CHANNEL;
-        client.send_custom_payload(ident!("bong:vfx/qi_attrition"), &bytes);
+        let channel =
+            Ident::new(QI_ATTRITION_CHANNEL).expect("QI_ATTRITION_CHANNEL must be a valid ident");
+        client.send_custom_payload(channel.as_str_ident(), &bytes);
     }
 }
 
@@ -185,6 +186,20 @@ mod tests {
         assert_eq!(
             build_qi_attrition_payload_bytes(42, 0.0, [0.0, 64.0, 0.0]),
             Err(QiAttritionPayloadError::NonPositiveAmount)
+        );
+        assert_eq!(
+            build_qi_attrition_payload_bytes(42, QI_EPSILON, [0.0, 64.0, 0.0]),
+            Err(QiAttritionPayloadError::NonPositiveAmount),
+            "amount_lost exactly at QI_EPSILON must be rejected"
+        );
+    }
+
+    #[test]
+    fn payload_builder_accepts_amount_above_epsilon() {
+        assert!(
+            build_qi_attrition_payload_bytes(42, QI_EPSILON + f64::EPSILON, [0.0, 64.0, 0.0],)
+                .is_ok(),
+            "amount_lost above QI_EPSILON must serialize"
         );
     }
 

@@ -25,6 +25,20 @@ class QiAttritionVfxPlayerTest {
     }
 
     @Test
+    void plansExactlyMinParticlesAtBoundary() {
+        QiAttritionPayload payload = new QiAttritionPayload(0L, 1.0, new double[] {0.0, 64.0, 0.0});
+
+        assertEquals(QiAttritionVfxPlayer.MIN_PARTICLES, QiAttritionVfxPlayer.plan(payload).size());
+    }
+
+    @Test
+    void plansExactlyMaxParticlesAtBoundary() {
+        QiAttritionPayload payload = new QiAttritionPayload(2L, 1.0, new double[] {0.0, 64.0, 0.0});
+
+        assertEquals(QiAttritionVfxPlayer.MAX_PARTICLES, QiAttritionVfxPlayer.plan(payload).size());
+    }
+
+    @Test
     void planStaysNearWorldPosition() {
         QiAttritionPayload payload = new QiAttritionPayload(7L, 1.0, new double[] {12.0, 70.0, -4.0});
         List<QiAttritionVfxPlayer.ParticleSpec> specs = QiAttritionVfxPlayer.plan(payload);

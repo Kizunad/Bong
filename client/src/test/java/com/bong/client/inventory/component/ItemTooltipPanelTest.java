@@ -60,9 +60,14 @@ class ItemTooltipPanelTest {
 
         assertEquals("灵质 97%", ItemTooltipPanel.spiritQualityLabel(before));
         assertEquals("灵质 68%", ItemTooltipPanel.spiritQualityLabel(after));
+        int widthBefore = ItemTooltipPanel.qualityBarFillWidth(196, before.spiritQuality());
+        int widthAfter = ItemTooltipPanel.qualityBarFillWidth(196, after.spiritQuality());
         assertTrue(
-            ItemTooltipPanel.qualityBarFillWidth(196, after.spiritQuality())
-                < ItemTooltipPanel.qualityBarFillWidth(196, before.spiritQuality())
+            widthAfter < widthBefore,
+            () -> "expected fillWidth(after) < fillWidth(before) because spiritQuality dropped, actual after="
+                + widthAfter
+                + " before="
+                + widthBefore
         );
     }
 
