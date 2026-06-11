@@ -51,7 +51,7 @@
 
 | 阶段 | 内容 | 状态 |
 |----|------|----|
-| P0 | 风险梯度地图：按灵气浓度/野兽密度/NPC 活跃度/玩家密度 四轴标注风险 | ⬜ |
+| P0 | 风险梯度地图：按灵气浓度/野兽密度/NPC 活跃度/玩家密度 四轴标注风险 | ✅ 2026-06-12 |
 | P1 | 环境风险信号：植被/音效/粒子/天气 四通道传递风险信息 | ⬜ |
 | P2 | 撤退决策辅助：五维决策信号 + 关键撤退窗口提示 | ⬜ |
 | P3 | Run 间节奏：回家整理循环 + 世界状态变化感知 + 下一次目标选择 | ⬜ |
@@ -60,7 +60,9 @@
 
 ---
 
-## P0 — 风险梯度地图 ⬜
+## P0 — 风险梯度地图 ✅ 2026-06-12
+
+> **P0 落地（2026-06-12）**：新建 `server/src/world/risk_heatmap.rs`——`RiskAxes`/`RiskScore`/`RiskHeatmap`(Bevy Resource)，`risk_score` 纯函数四轴加权 + 境界修正(通灵馈赠区 -20 / 引气 +30，走 `realm_ordinal`)，`update_risk_heatmap` system 读**真实**数据源(`ZoneRegistry.spirit_qi` / `FaunaTag` / `NpcArchetype` / `ClientMarker`+`Cultivation`)，zone 归属复用 canonical `ZoneRegistry::find_zone`(最小 AABB)。新建 `server/src/cmd/dev/riskmap.rs`——`/riskmap` GM 命令输出当前 zone 四轴+RiskScore(P0 可观察出口)，注册进 `cmd/dev/mod.rs` + `registry_pin.rs`。28 测试(含 4 条 ECS 端到端集成：fauna/npc 计入、低境玩家过滤、嵌套 zone 最小归属、zone 外不计)。cargo fmt+clippy(-D warnings)+test 全绿。**说明**：RiskHeatmap 按 plan 设计 server 内部用、不暴露客户端；其下游消费者(驱动 NPC 行为 / 野兽 spawn 偏置 / agent narration)属 **P1+ 后续阶段**，P0 仅建热图计算 + `/riskmap` 可观察出口。**已知次要遗留**：中险区境界修正目前靠 qi 轴浮点分值判定(脆弱但当前正确)、热图节流首 ~100 tick 为空(冷启动近似)——留待后续优化。
 
 ### 交付物
 
