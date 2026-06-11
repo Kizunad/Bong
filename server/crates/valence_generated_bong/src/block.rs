@@ -83,9 +83,22 @@ mod tests {
 
     #[test]
     fn bong_blocks_extend_vanilla_registry() {
-        assert_eq!(BlockState::max_raw(), 24140);
+        assert_eq!(BlockState::max_raw(), 24144);
         assert_eq!(BlockState::from_raw(24135), Some(BlockState::BONG_ZHENFA_NODE));
-        assert_eq!(BlockState::from_raw(24141), None);
+        assert_eq!(BlockState::from_raw(24141), Some(BlockState::BONG_SIMPLE_BED));
+        assert_eq!(
+            BlockState::from_raw(24142),
+            Some(BlockState::BONG_MEDITATION_MAT)
+        );
+        assert_eq!(
+            BlockState::from_raw(24143),
+            Some(BlockState::BONG_MOISTURE_BASE)
+        );
+        assert_eq!(
+            BlockState::from_raw(24144),
+            Some(BlockState::BONG_SPIRIT_STONE_RACK)
+        );
+        assert_eq!(BlockState::from_raw(24145), None);
         assert_eq!(BlockState::BONG_ZHENFA_NODE.to_kind(), BlockKind::BongZhenfaNode);
         assert_eq!(BlockKind::from_str("bong_zhenfa_node"), Some(BlockKind::BongZhenfaNode));
         assert_eq!(BlockKind::BongZhenfaNode.translation_key(), "block.bong.zhenfa_node");
@@ -107,5 +120,22 @@ mod tests {
                 .to_raw(),
             24140
         );
+
+        assert_eq!(BlockState::BONG_SIMPLE_BED.to_kind(), BlockKind::BongSimpleBed);
+        assert_eq!(
+            BlockKind::from_str("bong_meditation_mat"),
+            Some(BlockKind::BongMeditationMat)
+        );
+        assert_eq!(
+            BlockKind::BongMoistureBase.translation_key(),
+            "block.bong.moisture_base"
+        );
+        assert_eq!(BlockState::BONG_SIMPLE_BED.to_raw(), 24141);
+        assert_eq!(BlockState::BONG_MEDITATION_MAT.to_raw(), 24142);
+        assert_eq!(BlockState::BONG_MOISTURE_BASE.to_raw(), 24143);
+        assert_eq!(BlockState::BONG_SPIRIT_STONE_RACK.to_raw(), 24144);
+        assert!(BlockState::BONG_SIMPLE_BED.blocks_motion());
+        assert!(!BlockState::BONG_MEDITATION_MAT.blocks_motion());
+        assert_eq!(BlockState::BONG_SPIRIT_STONE_RACK.luminance(), 2);
     }
 }
