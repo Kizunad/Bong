@@ -178,6 +178,8 @@ public final class VfxBootstrap {
             new ZhenfaActionVfxPlayer(ZhenfaActionVfxPlayer.Kind.WARD));
         registry.register(ZhenfaActionVfxPlayer.DEPLETE,
             new ZhenfaActionVfxPlayer(ZhenfaActionVfxPlayer.Kind.DEPLETE));
+        registry.register(LingjuActivatePlayer.EVENT_ID,
+            new LingjuActivatePlayer());
         registry.register(SocialLinkVfxPlayer.NICHE_ESTABLISH,
             new SocialLinkVfxPlayer(SocialLinkVfxPlayer.Kind.NICHE_ESTABLISH));
         registry.register(NicheRepairParticlePlayer.EVENT_ID,

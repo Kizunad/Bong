@@ -349,6 +349,9 @@ public class VfxRegistryTest {
             "bootstrap should register zhenfa_ward");
         assertTrue(VfxRegistry.instance().contains(ZhenfaActionVfxPlayer.DEPLETE),
             "bootstrap should register zhenfa_deplete");
+        assertTrue(VfxRegistry.instance().lookup(LingjuActivatePlayer.EVENT_ID).orElseThrow()
+                instanceof LingjuActivatePlayer,
+            "bootstrap should register lingju_activate to LingjuActivatePlayer");
         assertTrue(VfxRegistry.instance().contains(SocialLinkVfxPlayer.NICHE_ESTABLISH),
             "bootstrap should register social_niche_establish");
         assertTrue(VfxRegistry.instance().contains(NicheRepairParticlePlayer.EVENT_ID),

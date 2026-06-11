@@ -40,6 +40,7 @@ public abstract class MixinClientPlayerInteractionManagerAlchemy {
     private static final String WARNING_TRAP_ITEM_ID = "warning_trap";
     private static final String BLAST_TRAP_ITEM_ID = "blast_trap";
     private static final String SLOW_TRAP_ITEM_ID = "slow_trap";
+    private static final String GATHER_ARRAY_BASE_ITEM_ID = "gather_array_base";
 
     @Inject(method = "attackEntity", at = @At("TAIL"))
     @SuppressWarnings({"unused", "PMD.UnusedPrivateMethod"})
@@ -158,12 +159,13 @@ public abstract class MixinClientPlayerInteractionManagerAlchemy {
         return Math.abs(pos.getX()) <= 8 && pos.getY() >= 60 && pos.getY() <= 90 && Math.abs(pos.getZ()) <= 8;
     }
 
-    private static ClientRequestProtocol.ZhenfaKind bong$zhenfaKindForItem(InventoryItem item) {
+    static ClientRequestProtocol.ZhenfaKind bong$zhenfaKindForItem(InventoryItem item) {
         if (item == null) return null;
         return switch (item.itemId()) {
             case WARNING_TRAP_ITEM_ID -> ClientRequestProtocol.ZhenfaKind.WARNING_TRAP;
             case BLAST_TRAP_ITEM_ID -> ClientRequestProtocol.ZhenfaKind.BLAST_TRAP;
             case SLOW_TRAP_ITEM_ID -> ClientRequestProtocol.ZhenfaKind.SLOW_TRAP;
+            case GATHER_ARRAY_BASE_ITEM_ID -> ClientRequestProtocol.ZhenfaKind.LINGJU;
             default -> null;
         };
     }
