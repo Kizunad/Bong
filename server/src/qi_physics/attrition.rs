@@ -227,7 +227,8 @@ pub fn release_attrition_to_zone(
 /// # 跳过条件
 /// - `item.spirit_quality <= 0`（凡俗物品）
 /// - `abs_qi < QI_ATTRITION_MIN_QI`（小额跳过）
-/// - item 带 `attrition_exempt` 字段（P1 豁免）
+/// - item 带遗留 `attrition_exempt:` 标记（物品级豁免）
+/// - 调用方已判定封灵容器 `ContainerSpec.attrition_exempt`（容器级豁免）
 ///
 /// # zone 为 None 时
 /// 无 zone 上下文（如内部测试）时不做归还，直接 return（守恒靠 tests 对拍）。
@@ -289,10 +290,11 @@ pub fn apply_attrition_checked(
     AttritionApplyOutcome::Applied
 }
 
-/// P1 豁免检查 helper：若 item 携带豁免标记则返回 true，调用方应跳过 apply_attrition。
+/// 物品级豁免检查 helper：若 item 携带遗留豁免标记则返回 true。
 ///
-/// 当前实现：template_id 以 `"attrition_exempt:"` 前缀为豁免标记（临时约定，
-/// P2 正式字段 `ItemInstance.attrition_exempt: bool` 落地后替换此 check）。
+/// P3 的封灵容器豁免不绑在被操作 item 上，而由调用方通过
+/// `ContainerSpec.attrition_exempt` / `inventory_instance_container_attrition_exempt`
+/// 判定后跳过 `apply_attrition_checked`。
 pub fn is_attrition_exempt(item: &ItemInstance) -> bool {
     item.template_id.starts_with("attrition_exempt:")
 }
