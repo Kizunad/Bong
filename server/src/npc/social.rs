@@ -20,7 +20,10 @@ use crate::combat::events::DeathEvent;
 use crate::economy::{estimate_item_price_with_index, neutral_price_index, EconomyPriceIndex};
 use crate::inventory::{ItemInstance, ItemRarity};
 use crate::npc::brain::canonical_npc_id;
-use crate::npc::faction::FactionMembership;
+use crate::npc::faction::{
+    FactionMembership, FactionRelation, FactionRelationMatrix, NamedFactionMembership,
+    NAMED_HOSTILE_BIAS, NAMED_PACT_BIAS,
+};
 use crate::npc::lod::{lod_gated_score, NpcLodConfig, NpcLodTick, NpcLodTier};
 use crate::npc::navigator::Navigator;
 use crate::npc::perf::NpcPerfProbe;
@@ -225,17 +228,46 @@ fn has_same_faction_peer(
     })
 }
 
+/// plan-faction-expansion-v1 P1：FactionDuelScorer 加权关系偏置。
+///
+/// 基础逻辑不变（有 DuelTarget → 1.0，无 → 0.0）。新增：
+/// - 双方都携带 `NamedFactionMembership` + `FactionRelationMatrix` 存在时：
+///   - `Hostile` → score + `NAMED_HOSTILE_BIAS`（+0.2），鼓励积极追击敌对势力。
+///   - `Pact` → score + `NAMED_PACT_BIAS`（−0.3），Pact 对组即便有 DuelTarget
+///     也大幅压分（外部强制标为 DuelTarget 时罕见，但 Pact 必须反映在分值上）。
+/// - `Neutral` 或无具名身份：无偏置，保持原始 0.0/1.0。
 fn faction_duel_scorer_system(
-    duelists: Query<Option<&DuelTarget>, With<NpcMarker>>,
+    duelists: Query<(Option<&DuelTarget>, Option<&NamedFactionMembership>), With<NpcMarker>>,
+    relation_matrix: Option<Res<FactionRelationMatrix>>,
     mut scorers: Query<(&Actor, &mut Score), With<FactionDuelScorer>>,
 ) {
     for (Actor(actor), mut score) in &mut scorers {
-        let value = duelists
-            .get(*actor)
-            .ok()
-            .flatten()
-            .map(|_| 1.0)
-            .unwrap_or(0.0);
+        let Ok((duel_target, self_named)) = duelists.get(*actor) else {
+            score.set(0.0);
+            continue;
+        };
+        let Some(duel_target) = duel_target else {
+            score.set(0.0);
+            continue;
+        };
+
+        // 基础分：有 DuelTarget → 1.0。
+        let mut value = 1.0f32;
+
+        // plan-faction-expansion-v1 P1：具名势力偏置。
+        if let (Some(self_nf), Some(matrix)) = (self_named, relation_matrix.as_deref()) {
+            // 查目标的 NamedFactionMembership。
+            if let Ok((_, Some(target_nf))) = duelists.get(duel_target.0) {
+                let relation = matrix.get(self_nf.faction_id, target_nf.faction_id);
+                let bias = match relation {
+                    FactionRelation::Hostile => NAMED_HOSTILE_BIAS,
+                    FactionRelation::Pact => NAMED_PACT_BIAS,
+                    FactionRelation::Neutral => 0.0,
+                };
+                value = (value + bias).clamp(0.0, 1.0);
+            }
+        }
+
         score.set(value);
     }
 }
@@ -752,6 +784,147 @@ mod tests {
             .id();
         app.update();
         assert_eq!(app.world().get::<Score>(scorer).unwrap().get(), 0.0);
+    }
+
+    // --- FactionDuelScorer P1 关系偏置 ---
+
+    #[test]
+    fn faction_duel_scorer_hostile_named_relation_adds_bias() {
+        // plan-faction-expansion-v1 P1：Hostile 关系下 score = 1.0 + NAMED_HOSTILE_BIAS (0.2) = 1.2 → clamp → 1.0。
+        // 验证 Hostile 关系偏置（+0.2）确实被叠加（即便 clamp 到 1.0，也确认无异常）。
+        use crate::npc::faction::{FactionRelationMatrix, NamedFactionId, NamedFactionMembership};
+        let mut app = App::new();
+        app.insert_resource(FactionRelationMatrix::startup_default());
+        app.add_systems(PreUpdate, faction_duel_scorer_system);
+
+        // target entity（北荒漂流者）
+        let target = app
+            .world_mut()
+            .spawn((
+                NpcMarker,
+                NamedFactionMembership {
+                    faction_id: NamedFactionId::NorthWasteDrifters,
+                },
+            ))
+            .id();
+        // self entity（青云猎盟，Hostile 关系）
+        let npc = app
+            .world_mut()
+            .spawn((
+                NpcMarker,
+                DuelTarget(target),
+                NamedFactionMembership {
+                    faction_id: NamedFactionId::QingyunHunters,
+                },
+            ))
+            .id();
+        let scorer = app
+            .world_mut()
+            .spawn((Actor(npc), Score::default(), FactionDuelScorer))
+            .id();
+        app.update();
+
+        let got = app.world().get::<Score>(scorer).unwrap().get();
+        // (1.0 + 0.2).clamp(0.0, 1.0) = 1.0
+        assert_eq!(
+            got, 1.0,
+            "Hostile 关系下 score=(1.0+NAMED_HOSTILE_BIAS).clamp(0,1)=1.0；\
+             Hostile 偏置不应使 score 超出 1.0 上限，got {got}"
+        );
+    }
+
+    #[test]
+    fn faction_duel_scorer_pact_named_relation_reduces_score() {
+        // plan-faction-expansion-v1 P1：Pact 关系下 score = 1.0 + NAMED_PACT_BIAS (-0.3) = 0.7。
+        // 确保 Pact 盟友的 FactionDuelScorer 分值低于 1.0（有 DuelTarget 但不想主动打）。
+        use crate::npc::faction::{
+            FactionRelation, FactionRelationMatrix, NamedFactionId, NamedFactionMembership,
+        };
+        let mut app = App::new();
+        let mut matrix = FactionRelationMatrix::startup_default();
+        // 改 (Qingyun, Cangyuan) → Pact 用于测试（默认 Neutral，无法测 Pact 偏置）。
+        matrix.set(
+            NamedFactionId::QingyunHunters,
+            NamedFactionId::CangyuanMerchants,
+            FactionRelation::Pact,
+        );
+        app.insert_resource(matrix);
+        app.add_systems(PreUpdate, faction_duel_scorer_system);
+
+        let target = app
+            .world_mut()
+            .spawn((
+                NpcMarker,
+                NamedFactionMembership {
+                    faction_id: NamedFactionId::CangyuanMerchants,
+                },
+            ))
+            .id();
+        let npc = app
+            .world_mut()
+            .spawn((
+                NpcMarker,
+                DuelTarget(target),
+                NamedFactionMembership {
+                    faction_id: NamedFactionId::QingyunHunters,
+                },
+            ))
+            .id();
+        let scorer = app
+            .world_mut()
+            .spawn((Actor(npc), Score::default(), FactionDuelScorer))
+            .id();
+        app.update();
+
+        let got = app.world().get::<Score>(scorer).unwrap().get();
+        // (1.0 + -0.3).clamp(0.0, 1.0) = 0.7
+        let expected = (1.0f32 + NAMED_PACT_BIAS).clamp(0.0, 1.0);
+        assert!(
+            (got - expected).abs() < 1e-5,
+            "Pact 关系下 score 应 = 1.0 + NAMED_PACT_BIAS({NAMED_PACT_BIAS}) = {expected}，\
+             表示盟友即便有 DuelTarget 也不主动攻击（分值压低）；got {got}"
+        );
+    }
+
+    #[test]
+    fn faction_duel_scorer_neutral_named_relation_no_bias() {
+        // Neutral 关系：无偏置，有 DuelTarget → score 仍为 1.0（外部原因被标为 DuelTarget）。
+        use crate::npc::faction::{FactionRelationMatrix, NamedFactionId, NamedFactionMembership};
+        let mut app = App::new();
+        app.insert_resource(FactionRelationMatrix::startup_default());
+        app.add_systems(PreUpdate, faction_duel_scorer_system);
+
+        // (Qingyun, Cangyuan) = Neutral in startup_default
+        let target = app
+            .world_mut()
+            .spawn((
+                NpcMarker,
+                NamedFactionMembership {
+                    faction_id: NamedFactionId::CangyuanMerchants,
+                },
+            ))
+            .id();
+        let npc = app
+            .world_mut()
+            .spawn((
+                NpcMarker,
+                DuelTarget(target),
+                NamedFactionMembership {
+                    faction_id: NamedFactionId::QingyunHunters,
+                },
+            ))
+            .id();
+        let scorer = app
+            .world_mut()
+            .spawn((Actor(npc), Score::default(), FactionDuelScorer))
+            .id();
+        app.update();
+
+        let got = app.world().get::<Score>(scorer).unwrap().get();
+        assert_eq!(
+            got, 1.0,
+            "Neutral 关系无偏置：有 DuelTarget 时 score 仍为 1.0（无加减），got {got}"
+        );
     }
 
     // --- SocializeAction ---
