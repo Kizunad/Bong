@@ -33,6 +33,8 @@ public final class BongAnimations {
     public static final Identifier PALM_THRUST = new Identifier(MOD_ID, "palm_thrust");
     public static final Identifier PALM_STRIKE = new Identifier(MOD_ID, "palm_strike");
     public static final Identifier GUARD_RAISE = new Identifier(MOD_ID, "guard_raise");
+    // plan-shield-block-v1 P1 — 持续举盾动画（isLoop:true），与 GUARD_RAISE (FullPowerCharge) 独立。
+    public static final Identifier SHIELD_RAISE = new Identifier(MOD_ID, "shield_raise");
     public static final Identifier PARRY_BLOCK = new Identifier(MOD_ID, "parry_block");
     public static final Identifier DODGE_BACK = new Identifier(MOD_ID, "dodge_back");
     public static final Identifier DODGE_ROLL = new Identifier(MOD_ID, "dodge_roll");

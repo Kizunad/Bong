@@ -176,13 +176,36 @@ mod tests {
             SoundRecipeRegistry::load_default().expect("default audio recipes should load");
         assert_eq!(
             registry.len(),
-            213,
+            221,
             "audio registry should exclude removed slide and double-jump movement recipes \
              plus include 7 supply_coffin recipes (break + open common/rare/precious + emerge) \
              plus 1 ambient_dan_zong recipe \
              plus 1 ambient_wangyintai recipe \
              plus 1 offscreen_relic_reveal recipe (plan-offscreen-war-v1 P3) \
-             plus 1 coffin_reclaim recipe (plan-coffin-tiers-v1 P2 对峙修复)"
+             plus 1 coffin_reclaim recipe (plan-coffin-tiers-v1 P2 对峙修复) \
+             plus 1 niche_repair recipe (plan-niche-craft-fix-v1 P1) \
+             plus 4 tiandao hunt ambient recipes \
+             plus 3 workbench runtime recipes (place/break/open)"
+        );
+        assert!(
+            registry.get("niche_repair").is_some(),
+            "plan-niche-craft-fix-v1 P1 灵龛修补音效 recipe 必须加载"
+        );
+        assert!(
+            registry.get("tiandao_watch_ambient").is_some(),
+            "plan-tiandao-hunt-v1 P1 Watch 环境音 recipe 必须加载"
+        );
+        assert!(
+            registry.get("tiandao_pressure_ambient").is_some(),
+            "plan-tiandao-hunt-v1 P1 Pressure 环境音 recipe 必须加载"
+        );
+        assert!(
+            registry.get("tiandao_tribulation_ambient").is_some(),
+            "plan-tiandao-hunt-v1 P1 Tribulation 环境音 recipe 必须加载"
+        );
+        assert!(
+            registry.get("tiandao_annihilate_ambient").is_some(),
+            "plan-tiandao-hunt-v1 P1 Annihilate 环境音 recipe 必须加载"
         );
         assert!(
             registry.get("offscreen_relic_reveal").is_some(),
@@ -195,6 +218,18 @@ mod tests {
         assert!(
             registry.get("coffin_reclaim").is_some(),
             "plan-coffin-tiers-v1 P2 对峙修复：reclaim 专属音效 recipe 必须加载"
+        );
+        assert!(
+            registry.get("workbench_place").is_some(),
+            "plan-workbench-place-runtime-v1 P2：制作台放置音效 recipe 必须加载"
+        );
+        assert!(
+            registry.get("workbench_break").is_some(),
+            "plan-workbench-place-runtime-v1 P2：制作台拆除音效 recipe 必须加载"
+        );
+        assert!(
+            registry.get("workbench_open").is_some(),
+            "plan-workbench-place-runtime-v1 P2：制作台打开音效 recipe 必须加载"
         );
         // plan-supply-coffin-v1 P2.2 audio
         assert!(registry.get("supply_coffin_break_common").is_some());

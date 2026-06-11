@@ -1,0 +1,12 @@
+{
+  "id": "tiandao_watch_ambient",
+  "layers": [
+    { "sound": "minecraft:ambient.cave", "volume": 0.06, "pitch": 0.4, "delay_ticks": 0 },
+    { "sound": "minecraft:entity.warden.heartbeat", "volume": 0.04, "pitch": 0.3, "delay_ticks": 80 }
+  ],
+  "loop": { "interval_ticks": 1600, "while_flag": "tiandao:watch" },
+  "priority": 90,
+  "attenuation": "global_hint",
+  "category": "AMBIENT",
+  "bus": "ENVIRONMENT"
+}

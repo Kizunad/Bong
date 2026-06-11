@@ -34,6 +34,7 @@ import com.bong.client.state.SeasonStateStore;
 import com.bong.client.state.UiOpenState;
 import com.bong.client.state.VisualEffectState;
 import com.bong.client.state.ZoneState;
+import com.bong.client.tiandao.TiandaoPresencePayloadHandler;
 import com.bong.client.tsy.TsyBossHealthHandler;
 import com.bong.client.tsy.TsyBossHealthStore;
 import com.bong.client.tsy.TsyDeathVfxHandler;
@@ -43,6 +44,7 @@ import com.bong.client.ui.UiOpenScreens;
 import com.bong.client.visual.VisualEffectController;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
+import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.fabricmc.fabric.api.client.networking.v1.ClientPlayConnectionEvents;
 import net.fabricmc.fabric.api.client.networking.v1.ClientPlayNetworking;
 import net.minecraft.text.Text;
@@ -85,6 +87,7 @@ public class BongNetworkHandler {
         registerVfxEventChannel();
         registerAudioPlayChannel();
         registerAudioStopChannel();
+        registerTiandaoPresenceChannel();
         registerAmbientZoneChannel();
         registerZoneEnvironmentChannel();
         registerMutationVisualChannel();
@@ -104,6 +107,13 @@ public class BongNetworkHandler {
         registerCoreAbsorptionHallucinationChannel();
         // plan-dying-elder-v1 P3 — 垂死大能遭遇 HUD
         registerElderEncounterChannel();
+        // plan-era-state-v1 P3 — 时代天象 S2C CustomPayload（realm gate 由 server 执行）
+        registerEraAmbianceChannel();
+        // plan-era-state-v1 M2 — EraAmbianceState 渐变计数器每游戏 tick 推进（非渲染帧）。
+        // 必须在游戏 tick 而非渲染帧调用，保证 transitionTicks 按 @20TPS 推进。
+        ClientTickEvents.END_CLIENT_TICK.register(
+            client -> com.bong.client.era.EraAmbianceState.tick()
+        );
         // 旧 server 推过的 realm_collapse evac HUD 是 static volatile 字段倒计时，
         // 不会在断线 / 切服 / 重连时自清。Disconnect 时强制清掉，避免上一 server
         // 的 "域崩撤离 48s" 倒计时跨 session 续命。
@@ -133,6 +143,8 @@ public class BongNetworkHandler {
                 com.bong.client.fauna.HallucinationLayerStore.clearOnDisconnect();
                 // plan-dying-elder-v1 P3 — 断线时清理垂死大能遭遇状态
                 com.bong.client.dying_elder.DyingElderEncounterStore.clearOnDisconnect();
+                // plan-era-state-v1 P3 — 断线时重置时代天象状态
+                com.bong.client.era.EraAmbianceState.reset();
             })
         );
         ClientPlayConnectionEvents.JOIN.register(
@@ -389,6 +401,26 @@ public class BongNetworkHandler {
                     return;
                 }
                 BongClient.LOGGER.info("Processed bong:audio/stop payload: {}", result.logMessage());
+            });
+        });
+    }
+
+    private static void registerTiandaoPresenceChannel() {
+        ClientPlayNetworking.registerGlobalReceiver(new Identifier("bong", "tiandao_presence"), (client, handler, buf, responseSender) -> {
+            int readableBytes = buf.readableBytes();
+            byte[] bytes = new byte[readableBytes];
+            buf.readBytes(bytes);
+
+            String jsonPayload = ServerDataEnvelope.decodeUtf8(bytes);
+            markConnectionPayload();
+            client.execute(() -> {
+                TiandaoPresencePayloadHandler.Result result =
+                    TiandaoPresencePayloadHandler.handle(jsonPayload, readableBytes);
+                if (!result.handled()) {
+                    BongClient.LOGGER.error("Failed to parse bong:tiandao_presence payload: {}", result.logMessage());
+                    return;
+                }
+                BongClient.LOGGER.info("Processed bong:tiandao_presence payload: {}", result.logMessage());
             });
         });
     }
@@ -929,6 +961,37 @@ public class BongNetworkHandler {
             iterator.next();
             iterator.remove();
         }
+    }
+
+    // ── plan-era-state-v1 P3 — 时代天象 S2C CustomPayload ──────────────────────
+
+    /**
+     * 注册 {@code bong:era_ambiance} channel。
+     * payload JSON → {@link com.bong.client.era.EraAmbianceHandler#handle(String)} →
+     * {@link com.bong.client.era.EraAmbianceState} 存储，渲染层按需消费。
+     * Realm gate 由 server 执行，client 收到即接受，不做二次 realm 过滤。
+     */
+    private static void registerEraAmbianceChannel() {
+        ClientPlayNetworking.registerGlobalReceiver(
+            new Identifier("bong", "era_ambiance"),
+            (client, handler, buf, responseSender) -> {
+                int readableBytes = buf.readableBytes();
+                byte[] bytes = new byte[readableBytes];
+                buf.readBytes(bytes);
+                String jsonPayload = ServerDataEnvelope.decodeUtf8(bytes);
+                markConnectionPayload();
+                client.execute(() -> {
+                    try {
+                        com.bong.client.era.EraAmbianceHandler.handle(jsonPayload);
+                        BongClient.LOGGER.debug(
+                            "Processed bong:era_ambiance payload ({} bytes)", readableBytes);
+                    } catch (Exception ex) {
+                        BongClient.LOGGER.error(
+                            "Failed to handle bong:era_ambiance payload: {}", ex.getMessage());
+                    }
+                });
+            }
+        );
     }
 
 }

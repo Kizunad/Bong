@@ -59,7 +59,7 @@ fn mentor(npc: &str) -> Vec<UnlockSource> {
 }
 
 /// 注册全部制作台配方 + 制作台自身手搓配方。
-/// plan-coffin-tiers-v1 P4 加入 3 档延寿棺后共 103 workbench + 1 self = 104 条。
+/// plan-coffin-tiers-v1 P4 加入 3 档延寿棺、P2 经济僵尸清理后共 98 workbench/coffin + 1 self = 99 条。
 pub fn register_workbench_recipes(registry: &mut CraftRegistry) -> Result<(), RegistryError> {
     register_workbench_self_recipe(registry)?;
     register_survival_tools(registry)?; // #1-12
@@ -119,16 +119,6 @@ fn register_survival_tools(registry: &mut CraftRegistry) -> Result<(), RegistryE
             ("stone_axe", 1),
             vec![],
         ),
-        // #3 石锄
-        (
-            "workbench.tool.stone_hoe",
-            "石锄",
-            vec![("stone_chunk", 1), ("wood_handle", 1)],
-            0.0,
-            20,
-            ("stone_hoe", 1),
-            vec![],
-        ),
         // #4 铁镐
         (
             "workbench.tool.pickaxe_iron",
@@ -159,16 +149,6 @@ fn register_survival_tools(registry: &mut CraftRegistry) -> Result<(), RegistryE
             ("hoe_iron", 1),
             vec![],
         ),
-        // #7 研钵
-        (
-            "workbench.tool.mortar",
-            "研钵",
-            vec![("stone_chunk", 4)],
-            0.0,
-            40,
-            ("mortar_stone", 1),
-            vec![],
-        ),
         // #8 草镰
         (
             "workbench.tool.sickle",
@@ -178,26 +158,6 @@ fn register_survival_tools(registry: &mut CraftRegistry) -> Result<(), RegistryE
             40,
             ("cao_lian", 1),
             vec![],
-        ),
-        // #9 交易秤
-        (
-            "workbench.tool.trade_scale",
-            "交易秤",
-            vec![("iron_ingot", 2), ("wood_plank", 1)],
-            0.0,
-            45,
-            ("trade_scale", 1),
-            vec![],
-        ),
-        // #10 绝热手套
-        (
-            "workbench.tool.heat_gloves",
-            "绝热手套",
-            vec![("ash_spider_silk", 3), ("tanned_hide", 2)],
-            0.0,
-            60,
-            ("heat_gloves", 1),
-            scroll("scroll_workbench_heat_gloves"),
         ),
         // #11 冰甲手套
         (
@@ -399,16 +359,6 @@ fn register_processing(registry: &mut CraftRegistry) -> Result<(), RegistryError
             0.0,
             15,
             ("powder_dan_sha", 3),
-            vec![],
-        ),
-        // #29 朱砂粉
-        (
-            "workbench.process.zhu_sha_powder",
-            "朱砂粉",
-            vec![("zhu_sha", 1)],
-            0.0,
-            25,
-            ("powder_zhu_sha", 2),
             vec![],
         ),
         // #30 铁针
@@ -718,17 +668,6 @@ fn register_basic_armor(registry: &mut CraftRegistry) -> Result<(), RegistryErro
 /// 五、基础武器组件 #53-62
 fn register_weapon_components(registry: &mut CraftRegistry) -> Result<(), RegistryError> {
     let recipes: Vec<CategorizedRow> = vec![
-        // #53 凡铁剑胎
-        (
-            "workbench.weapon.iron_sword_blank",
-            "凡铁剑胎",
-            vec![("iron_ingot", 3)],
-            0.0,
-            65,
-            ("iron_sword_blank", 1),
-            CraftCategory::Misc,
-            vec![],
-        ),
         // #54 粗骨刺 (AnqiCarrier)
         (
             "workbench.weapon.bone_spike_crude",
@@ -751,42 +690,9 @@ fn register_weapon_components(registry: &mut CraftRegistry) -> Result<(), Regist
             CraftCategory::Misc,
             vec![],
         ),
-        // #56 石矛头
+        // #59 木盾 (ArmorCraft) — plan-shield-block-v1 P0: recipe id 由 weapon.* 归位到 shield.*
         (
-            "workbench.weapon.stone_spearhead",
-            "石矛头",
-            vec![("stone_chunk", 2)],
-            0.0,
-            30,
-            ("stone_spearhead", 1),
-            CraftCategory::Misc,
-            vec![],
-        ),
-        // #57 弹弓
-        (
-            "workbench.weapon.sling",
-            "弹弓",
-            vec![("wood_handle", 1), ("tanned_hide", 1), ("grass_rope", 1)],
-            0.0,
-            35,
-            ("sling_weapon", 1),
-            CraftCategory::Misc,
-            vec![],
-        ),
-        // #58 飞石
-        (
-            "workbench.weapon.sling_stone",
-            "飞石",
-            vec![("stone_chunk", 3)],
-            0.0,
-            10,
-            ("sling_stone", 5),
-            CraftCategory::Misc,
-            vec![],
-        ),
-        // #59 木盾 (ArmorCraft)
-        (
-            "workbench.weapon.wooden_shield",
+            "workbench.shield.wooden_shield",
             "木盾",
             vec![("wood_plank", 4), ("iron_ingot", 1)],
             0.0,
@@ -795,9 +701,9 @@ fn register_weapon_components(registry: &mut CraftRegistry) -> Result<(), Regist
             CraftCategory::ArmorCraft,
             vec![],
         ),
-        // #60 骨盾 (ArmorCraft)
+        // #60 骨盾 (ArmorCraft) — plan-shield-block-v1 P0: recipe id 由 weapon.* 归位到 shield.*
         (
-            "workbench.weapon.bone_shield",
+            "workbench.shield.bone_shield",
             "骨盾",
             vec![("shu_gu", 6), ("grass_rope", 2)],
             0.0,
@@ -946,17 +852,6 @@ fn register_cultivation_support(registry: &mut CraftRegistry) -> Result<(), Regi
             0.0,
             30,
             ("calming_tea", 1),
-            CraftCategory::Misc,
-            vec![],
-        ),
-        // #72 鼠群诱饵
-        (
-            "workbench.cultivation.rat_bait",
-            "鼠群诱饵",
-            vec![("salt_crystal", 2), ("rough_cloth", 1)],
-            0.0,
-            20,
-            ("rat_bait", 1),
             CraftCategory::Misc,
             vec![],
         ),
@@ -1136,17 +1031,6 @@ fn register_array_basics(registry: &mut CraftRegistry) -> Result<(), RegistryErr
 /// 八、经济与交易 #83-90
 fn register_economy(registry: &mut CraftRegistry) -> Result<(), RegistryError> {
     let recipes: Vec<CategorizedRow> = vec![
-        // #83 骨币胚
-        (
-            "workbench.economy.coin_blank",
-            "骨币胚",
-            vec![("shu_gu", 1), ("zhenfa_blank_array", 1)],
-            0.0,
-            30,
-            ("bone_coin_blank", 3),
-            CraftCategory::Misc,
-            vec![],
-        ),
         // #84 骨币匣 (Container)
         (
             "workbench.economy.coin_box",
@@ -1156,28 +1040,6 @@ fn register_economy(registry: &mut CraftRegistry) -> Result<(), RegistryError> {
             55,
             ("coin_box", 1),
             CraftCategory::Container,
-            vec![],
-        ),
-        // #85 交易秤台 (Tool)
-        (
-            "workbench.economy.trade_scale_stand",
-            "交易秤台",
-            vec![("trade_scale", 1), ("wood_plank", 2)],
-            0.0,
-            40,
-            ("trade_scale_stand", 1),
-            CraftCategory::Tool,
-            vec![],
-        ),
-        // #86 标记石
-        (
-            "workbench.economy.waymark",
-            "标记石",
-            vec![("stone_chunk", 1), ("powder_dan_sha", 1)],
-            0.0,
-            10,
-            ("waymark_stone", 4),
-            CraftCategory::Misc,
             vec![],
         ),
         // #87 伪装包裹 (TuikeSkin)
@@ -1190,35 +1052,6 @@ fn register_economy(registry: &mut CraftRegistry) -> Result<(), RegistryError> {
             ("disguise_wrap", 2),
             CraftCategory::TuikeSkin,
             vec![],
-        ),
-        // #88 标价签
-        (
-            "workbench.economy.price_tag",
-            "标价签",
-            vec![("rough_cloth", 1), ("powder_dan_sha", 1)],
-            0.0,
-            10,
-            ("price_tag", 5),
-            CraftCategory::Misc,
-            vec![],
-        ),
-        // #89 交易傀儡骨架 (📜👤)
-        (
-            "workbench.economy.puppet_frame",
-            "交易傀儡骨架",
-            vec![("shu_gu", 8), ("spider_silk_cord", 3), ("iron_ingot", 2)],
-            4.0,
-            150,
-            ("trade_puppet_frame", 1),
-            CraftCategory::Misc,
-            vec![
-                UnlockSource::Scroll {
-                    item_template: "scroll_workbench_puppet_frame".into(),
-                },
-                UnlockSource::Mentor {
-                    npc_archetype: "trader_npc".into(),
-                },
-            ],
         ),
         // #90 灵龛修补料 (📜)
         (
@@ -1393,7 +1226,7 @@ fn register_alchemy_forge_prep(registry: &mut CraftRegistry) -> Result<(), Regis
                 ("stone_chunk", 4),
             ],
             120,
-            "furnace_kit_fantie",
+            "furnace_fantie",
         ),
         // #100 锻造台组件
         (
@@ -1401,7 +1234,7 @@ fn register_alchemy_forge_prep(registry: &mut CraftRegistry) -> Result<(), Regis
             "锻造台组件",
             vec![("iron_ingot", 4), ("spirit_wood", 2), ("stone_chunk", 6)],
             100,
-            "forge_station_kit",
+            "fan_iron_anvil",
         ),
     ];
 
@@ -1512,11 +1345,11 @@ mod tests {
     fn register_workbench_recipes_succeeds() {
         let mut registry = CraftRegistry::new();
         register_workbench_recipes(&mut registry).unwrap();
-        // 103 workbench recipes (100 + 3 coffin tiers P4) + 1 workbench self recipe = 104
+        // 88 workbench/coffin recipes (85 workbench.* + 3 coffin tiers P4) + 1 workbench self recipe = 89
         assert_eq!(
             registry.len(),
-            104,
-            "expected 104 recipes (103 workbench + 1 self craft), got {}",
+            89,
+            "expected 89 recipes (88 workbench/coffin + 1 self craft), got {}",
             registry.len()
         );
     }
@@ -1623,9 +1456,237 @@ mod tests {
             }
         }
         assert_eq!(
-            workbench_count, 100,
-            "must have exactly 100 workbench.* recipes"
+            workbench_count, 85,
+            "must have exactly 85 workbench.* recipes"
         );
+    }
+
+    #[test]
+    fn alchemy_forge_prep_recipes_output_placeable_items_with_same_materials() {
+        let mut registry = CraftRegistry::new();
+        register_workbench_recipes(&mut registry).unwrap();
+        let item_registry = crate::inventory::load_item_registry().expect("item registry loads");
+
+        let furnace_recipe = registry
+            .get(&RecipeId::new("workbench.prep.furnace_kit"))
+            .expect("furnace prep recipe must exist");
+        assert_eq!(
+            furnace_recipe.materials,
+            vec![
+                ("iron_ingot".into(), 6),
+                ("spirit_charcoal".into(), 2),
+                ("stone_chunk".into(), 4),
+            ],
+            "furnace prep materials must stay unchanged while replacing the dead kit output"
+        );
+        assert_eq!(
+            furnace_recipe.output,
+            ("furnace_fantie".into(), 1),
+            "furnace prep must output the item accepted by furnace placement"
+        );
+        assert_eq!(
+            crate::alchemy::furnace::furnace_tier_from_item_id(&furnace_recipe.output.0),
+            Some(1),
+            "furnace prep output must map to tier-1 furnace placement"
+        );
+
+        let forge_recipe = registry
+            .get(&RecipeId::new("workbench.prep.forge_station"))
+            .expect("forge station prep recipe must exist");
+        assert_eq!(
+            forge_recipe.materials,
+            vec![
+                ("iron_ingot".into(), 4),
+                ("spirit_wood".into(), 2),
+                ("stone_chunk".into(), 6),
+            ],
+            "forge prep materials must stay unchanged while replacing the dead kit output"
+        );
+        assert_eq!(
+            forge_recipe.output,
+            ("fan_iron_anvil".into(), 1),
+            "forge prep must output the item carrying forge_station_spec"
+        );
+        let forge_station_tier = item_registry
+            .get(&forge_recipe.output.0)
+            .and_then(|template| template.forge_station_spec.as_ref())
+            .map(|spec| spec.tier);
+        assert_eq!(
+            forge_station_tier,
+            Some(1),
+            "forge prep output must be a tier-1 forge station item"
+        );
+    }
+
+    #[test]
+    fn old_alchemy_forge_kit_templates_are_removed_from_registry_and_recipes() {
+        let mut registry = CraftRegistry::new();
+        register_workbench_recipes(&mut registry).unwrap();
+        let item_registry = crate::inventory::load_item_registry().expect("item registry loads");
+        let removed_ids = ["furnace_kit_fantie", "forge_station_kit"];
+
+        for removed_id in removed_ids {
+            assert!(
+                item_registry.get(removed_id).is_none(),
+                "old kit template `{removed_id}` must be absent from ItemRegistry"
+            );
+        }
+        assert!(
+            item_registry.get("furnace_fantie").is_some(),
+            "replacement furnace item must remain registered"
+        );
+        assert!(
+            item_registry.get("fan_iron_anvil").is_some(),
+            "replacement forge station item must remain registered"
+        );
+
+        for recipe in registry.iter() {
+            let (output_id, _) = &recipe.output;
+            assert!(
+                !removed_ids.contains(&output_id.as_str()),
+                "recipe `{}` must not output removed kit `{output_id}`",
+                recipe.id
+            );
+            for (material_id, _) in &recipe.materials {
+                assert!(
+                    !removed_ids.contains(&material_id.as_str()),
+                    "recipe `{}` must not consume removed kit `{material_id}`",
+                    recipe.id
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn economy_zombie_templates_and_recipes_are_removed() {
+        let mut registry = CraftRegistry::new();
+        register_workbench_recipes(&mut registry).unwrap();
+        let item_registry = crate::inventory::load_item_registry().expect("item registry loads");
+        let removed_ids = [
+            "bone_coin_blank",
+            "waymark_stone",
+            "price_tag",
+            "trade_puppet_frame",
+            "rat_bait",
+        ];
+        let removed_recipe_ids = [
+            "workbench.economy.coin_blank",
+            "workbench.economy.waymark",
+            "workbench.economy.price_tag",
+            "workbench.economy.puppet_frame",
+            "workbench.cultivation.rat_bait",
+        ];
+
+        for removed_id in removed_ids {
+            assert!(
+                item_registry.get(removed_id).is_none(),
+                "P2 zombie template `{removed_id}` must be absent from ItemRegistry"
+            );
+        }
+
+        for recipe_id in removed_recipe_ids {
+            assert!(
+                registry.get(&RecipeId::new(recipe_id)).is_none(),
+                "P2 zombie recipe `{recipe_id}` must be absent from CraftRegistry"
+            );
+        }
+
+        for recipe in registry.iter() {
+            let (output_id, _) = &recipe.output;
+            assert!(
+                !removed_ids.contains(&output_id.as_str()),
+                "recipe `{}` must not output removed economy item `{output_id}`",
+                recipe.id
+            );
+            for (material_id, _) in &recipe.materials {
+                assert!(
+                    !removed_ids.contains(&material_id.as_str()),
+                    "recipe `{}` must not consume removed economy item `{material_id}`",
+                    recipe.id
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn material_tool_zombie_templates_and_recipes_are_removed() {
+        let mut registry = CraftRegistry::new();
+        register_workbench_recipes(&mut registry).unwrap();
+        let item_registry = crate::inventory::load_item_registry().expect("item registry loads");
+        let removed_ids = [
+            "powder_zhu_sha",
+            "iron_sword_blank",
+            "stone_spearhead",
+            "sling_stone",
+            "sling_weapon",
+            "stone_hoe",
+            "mortar_stone",
+            "heat_gloves",
+            "trade_scale",
+            "trade_scale_stand",
+        ];
+        let removed_recipe_ids = [
+            "workbench.process.zhu_sha_powder",
+            "workbench.weapon.iron_sword_blank",
+            "workbench.weapon.stone_spearhead",
+            "workbench.weapon.sling_stone",
+            "workbench.weapon.sling",
+            "workbench.tool.stone_hoe",
+            "workbench.tool.mortar",
+            "workbench.tool.heat_gloves",
+            "workbench.tool.trade_scale",
+            "workbench.economy.trade_scale_stand",
+        ];
+
+        assert!(
+            item_registry.get("bing_jia_shou_tao").is_some(),
+            "bing_jia_shou_tao must stay registered; it is not the removed heat_gloves item"
+        );
+        assert!(
+            registry
+                .get(&RecipeId::new("workbench.tool.ice_gauntlet"))
+                .is_some(),
+            "bing_jia_shou_tao recipe must stay registered while heat_gloves is removed"
+        );
+
+        for removed_id in removed_ids {
+            assert!(
+                item_registry.get(removed_id).is_none(),
+                "P3 zombie template `{removed_id}` must be absent from ItemRegistry"
+            );
+        }
+
+        for recipe_id in removed_recipe_ids {
+            assert!(
+                registry.get(&RecipeId::new(recipe_id)).is_none(),
+                "P3 zombie recipe `{recipe_id}` must be absent from CraftRegistry"
+            );
+        }
+
+        for recipe in registry.iter() {
+            let (output_id, _) = &recipe.output;
+            assert!(
+                !removed_ids.contains(&output_id.as_str()),
+                "recipe `{}` must not output removed P3 item `{output_id}`",
+                recipe.id
+            );
+            for (material_id, _) in &recipe.materials {
+                assert!(
+                    !removed_ids.contains(&material_id.as_str()),
+                    "recipe `{}` must not consume removed P3 item `{material_id}`",
+                    recipe.id
+                );
+            }
+            assert!(
+                !recipe.unlock_sources.iter().any(|unlock| matches!(
+                    unlock,
+                    UnlockSource::Scroll { item_template }
+                        if item_template == "scroll_workbench_heat_gloves"
+                )),
+                "recipe `{}` must not retain removed heat_gloves unlock scroll",
+                recipe.id
+            );
+        }
     }
 
     #[test]
@@ -1703,7 +1764,7 @@ mod tests {
     }
 
     #[test]
-    fn all_103_workbench_recipes_individual_pin() {
+    fn all_88_workbench_and_coffin_recipes_individual_pin() {
         let mut registry = CraftRegistry::new();
         register_workbench_recipes(&mut registry).unwrap();
         let item_registry = crate::inventory::load_item_registry().expect("item registry loads");
@@ -1787,8 +1848,8 @@ mod tests {
             }
         }
         assert_eq!(
-            workbench_count, 103,
-            "expected exactly 103 workbench recipes (100 original + 3 coffin tiers P4)"
+            workbench_count, 88,
+            "expected exactly 88 workbench/coffin recipes (85 workbench.* + 3 coffin tiers P4)"
         );
     }
 
@@ -1931,10 +1992,11 @@ mod tests {
                 );
             }
         }
-        // plan-coffin-tiers-v1 P4: +3 coffin 配方（jade qi=2 / stone qi=4 / bronze qi=6）
+        // plan-coffin-tiers-v1 P4: +3 coffin 配方（jade qi=2 / stone qi=4 / bronze qi=6）；
+        // plan-economy-zombie-cleanup-v1 P2 删除 trade_puppet_frame 后 -1 条正 qi 配方。
         assert_eq!(
-            qi_recipe_count, 21,
-            "expected exactly 21 recipes with qi_cost > 0 (18 original + 3 coffin tiers P4)"
+            qi_recipe_count, 20,
+            "expected exactly 20 recipes with qi_cost > 0 (17 current + 3 coffin tiers P4)"
         );
     }
 }

@@ -1,0 +1,100 @@
+{
+  "additionalProperties": false,
+  "type": "object",
+  "required": [
+    "v",
+    "character_id",
+    "realm",
+    "attention_level",
+    "response_level",
+    "zone",
+    "recent_actions",
+    "narration_count"
+  ],
+  "properties": {
+    "v": {
+      "const": 1,
+      "type": "number"
+    },
+    "character_id": {
+      "minLength": 1,
+      "maxLength": 128,
+      "type": "string"
+    },
+    "realm": {
+      "description": "6 境界：醒灵/引气/凝脉/固元/通灵/化虚",
+      "anyOf": [
+        {
+          "const": "Awaken",
+          "type": "string"
+        },
+        {
+          "const": "Induce",
+          "type": "string"
+        },
+        {
+          "const": "Condense",
+          "type": "string"
+        },
+        {
+          "const": "Solidify",
+          "type": "string"
+        },
+        {
+          "const": "Spirit",
+          "type": "string"
+        },
+        {
+          "const": "Void",
+          "type": "string"
+        }
+      ]
+    },
+    "attention_level": {
+      "minimum": 0,
+      "maximum": 100,
+      "type": "number"
+    },
+    "response_level": {
+      "description": "天道狩猎叙事响应档；none 不触发叙事请求",
+      "anyOf": [
+        {
+          "const": "watch",
+          "type": "string"
+        },
+        {
+          "const": "pressure",
+          "type": "string"
+        },
+        {
+          "const": "tribulation",
+          "type": "string"
+        },
+        {
+          "const": "annihilate",
+          "type": "string"
+        }
+      ]
+    },
+    "zone": {
+      "minLength": 1,
+      "maxLength": 128,
+      "type": "string"
+    },
+    "recent_actions": {
+      "minItems": 0,
+      "maxItems": 8,
+      "type": "array",
+      "items": {
+        "minLength": 1,
+        "maxLength": 128,
+        "type": "string"
+      }
+    },
+    "narration_count": {
+      "minimum": 0,
+      "maximum": 4294967295,
+      "type": "integer"
+    }
+  }
+}

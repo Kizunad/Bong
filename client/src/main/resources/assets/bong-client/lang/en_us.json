@@ -19,5 +19,6 @@
   "key.bong-client.movement_dash": "Dash",
   "key.bong-client.botany_auto_harvest": "Botany Auto Harvest",
   "key.bong-client.tsy_extract": "Start TSY Extract",
-  "key.bong-client.tsy_extract_cancel": "Cancel TSY Extract"
+  "key.bong-client.tsy_extract_cancel": "Cancel TSY Extract",
+  "key.bong-client.shield_hold": "Hold Shield"
 }

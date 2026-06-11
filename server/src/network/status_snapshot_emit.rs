@@ -92,6 +92,7 @@ fn status_effect_name(kind: &StatusEffectKind) -> String {
         StatusEffectKind::AlchemyBuff(tag) => format!("丹药副效：{tag}"),
         StatusEffectKind::ParryRecovery => "截脉收势".to_string(),
         StatusEffectKind::SwordParrying => "剑格架势".to_string(),
+        StatusEffectKind::ShieldBlocking => "盾牌格挡".to_string(),
         StatusEffectKind::Staggered => "反震硬直".to_string(),
         StatusEffectKind::Disoriented => "迷乱".to_string(),
         StatusEffectKind::WoundHeal => "伤口回稳".to_string(),
@@ -135,6 +136,7 @@ fn status_effect_category(kind: &StatusEffectKind) -> &'static str {
         | StatusEffectKind::StaminaRecovBoost
         | StatusEffectKind::MirrorConcealment
         | StatusEffectKind::SwordParrying
+        | StatusEffectKind::ShieldBlocking
         | StatusEffectKind::SpiritTreasurePerception
         | StatusEffectKind::CultivationAcceleration
         | StatusEffectKind::ExtraordinaryMeridianAcceleration => "buff",

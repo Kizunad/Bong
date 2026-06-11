@@ -1,0 +1,144 @@
+name: Build Resource Pack
+
+"on":
+  push:
+    branches:
+      - main
+    paths:
+      - "client/src/main/resources/assets/**"
+      - "client/resourcepack/manifest.json"
+      - "server/src/network/resourcepack.rs"
+      - "scripts/build-resourcepack.sh"
+      - "scripts/test_build_resourcepack.py"
+      - ".github/workflows/build-resourcepack.yml"
+  pull_request:
+    paths:
+      - "client/src/main/resources/assets/**"
+      - "client/resourcepack/manifest.json"
+      - "server/src/network/resourcepack.rs"
+      - "scripts/build-resourcepack.sh"
+      - "scripts/test_build_resourcepack.py"
+      - ".github/workflows/build-resourcepack.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: resourcepack-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  BONG_RESOURCEPACK_OUT_DIR: /tmp/bong-resourcepack
+  BONG_RESOURCEPACK_VERSION: v1
+
+jobs:
+  build:
+    name: Build resource pack
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install zip tooling
+        run: sudo apt-get update && sudo apt-get install -y zip
+
+      - name: Unit test resource pack builder
+        run: python3 -m unittest scripts/test_build_resourcepack.py
+
+      - name: Build resource pack
+        run: bash scripts/build-resourcepack.sh
+
+      - name: Verify manifest and server defaults
+        run: |
+          python3 - <<'PY'
+          from __future__ import annotations
+
+          import hashlib
+          import json
+          import os
+          import re
+          from pathlib import Path
+
+          out_dir = Path(os.environ["BONG_RESOURCEPACK_OUT_DIR"])
+          manifest_path = out_dir / "manifest.json"
+          manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+          pack_path = out_dir / manifest["file"]
+          sha1_path = out_dir / f"{manifest['file']}.sha1"
+          server_source = Path("server/src/network/resourcepack.rs").read_text(encoding="utf-8")
+
+          actual_sha1 = hashlib.sha1(pack_path.read_bytes(), usedforsecurity=False).hexdigest()
+          expected_sha1 = sha1_path.read_text(encoding="utf-8").strip()
+          if manifest["sha1"] != actual_sha1 or expected_sha1 != actual_sha1:
+              raise SystemExit(f"sha1 mismatch: manifest={manifest['sha1']} sidecar={expected_sha1} actual={actual_sha1}")
+
+          if manifest["size"] != pack_path.stat().st_size:
+              raise SystemExit(f"size mismatch: manifest={manifest['size']} actual={pack_path.stat().st_size}")
+
+          required_literals = [manifest["version"], manifest["file"], manifest["sha1"]]
+          missing = [value for value in required_literals if value not in server_source]
+          if missing:
+              raise SystemExit(f"server ResourcePackConfig defaults are stale: missing {missing}")
+
+          release_url = f"https://github.com/{os.environ['GITHUB_REPOSITORY']}/releases/download/resourcepack-{manifest['version']}/{manifest['file']}"
+          if release_url not in server_source:
+              raise SystemExit(f"server default URL is stale: expected {release_url}")
+
+          if not re.fullmatch(r"[0-9a-f]{40}", manifest["sha1"]):
+              raise SystemExit(f"invalid sha1 format: {manifest['sha1']}")
+          PY
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: bong-resourcepack-${{ github.sha }}
+          path: |
+            ${{ env.BONG_RESOURCEPACK_OUT_DIR }}/${{ format('bong-full-{0}.zip', env.BONG_RESOURCEPACK_VERSION) }}
+            ${{ env.BONG_RESOURCEPACK_OUT_DIR }}/${{ format('bong-full-{0}.zip.sha1', env.BONG_RESOURCEPACK_VERSION) }}
+            ${{ env.BONG_RESOURCEPACK_OUT_DIR }}/manifest.json
+          if-no-files-found: error
+
+  publish-release:
+    name: Publish release asset
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      # Required only on main pushes to create/update the resourcepack-v1 release assets.
+      contents: write
+
+    steps:
+      - name: Download resource pack artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: bong-resourcepack-${{ github.sha }}
+          path: ${{ env.BONG_RESOURCEPACK_OUT_DIR }}
+
+      - name: Publish release artifact
+        env:
+          GH_REPO: ${{ github.repository }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          tag="resourcepack-${BONG_RESOURCEPACK_VERSION}"
+          pack_file="bong-full-${BONG_RESOURCEPACK_VERSION}.zip"
+          if ! gh release view "$tag" >/dev/null 2>&1; then
+            gh release create "$tag" \
+              --title "Bong Resource Pack ${BONG_RESOURCEPACK_VERSION}" \
+              --notes "Automated Bong full resource pack build for ${GITHUB_SHA}."
+          fi
+          gh release upload "$tag" \
+            "$BONG_RESOURCEPACK_OUT_DIR/$pack_file" \
+            "$BONG_RESOURCEPACK_OUT_DIR/$pack_file.sha1" \
+            "$BONG_RESOURCEPACK_OUT_DIR/manifest.json" \
+            --clobber

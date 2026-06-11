@@ -13,7 +13,14 @@
 //!   - STONE / COBBLESTONE / ANDESITE / DIORITE / GRANITE → stone_chunk ×1
 //!   - IRON_ORE / DEEPSLATE_IRON_ORE → iron_ore ×1
 //!   - GRASS_BLOCK → grass_fiber ×1
+//!   - DIRT → earth_crumb ×1
+//!   - COARSE_DIRT → hardened_soil ×1
+//!   - SAND → barren_sand ×1
+//!   - GRAVEL → weathered_stone ×1
+//!   - CLAY → raw_clay_lump ×1
+//!   - OBSIDIAN → obsidian_shard ×1（需 Pickaxe）
 
+use crate::gathering::tools::{equipped_gathering_tool, GatheringToolKind};
 use valence::prelude::{
     App, BlockPos, BlockState, Client, DiggingEvent, DiggingState, Entity, EventReader, GameMode,
     IntoSystemConfigs, Query, Res, ResMut, Update, With,
@@ -33,6 +40,7 @@ pub struct BlockDropEntry {
     pub template_id: &'static str,
     pub min_count: u32,
     pub max_count: u32,
+    pub required_tool: Option<GatheringToolKind>,
 }
 
 pub fn block_drop_for(block: BlockState) -> Option<BlockDropEntry> {
@@ -44,6 +52,7 @@ pub fn block_drop_for(block: BlockState) -> Option<BlockDropEntry> {
             template_id: "crude_wood",
             min_count: 1,
             max_count: 2,
+            required_tool: None,
         }),
         BlockState::STONE
         | BlockState::COBBLESTONE
@@ -53,18 +62,66 @@ pub fn block_drop_for(block: BlockState) -> Option<BlockDropEntry> {
             template_id: "stone_chunk",
             min_count: 1,
             max_count: 1,
+            required_tool: None,
         }),
         BlockState::IRON_ORE | BlockState::DEEPSLATE_IRON_ORE => Some(BlockDropEntry {
             template_id: "iron_ore",
             min_count: 1,
             max_count: 1,
+            required_tool: None,
         }),
         BlockState::GRASS_BLOCK => Some(BlockDropEntry {
             template_id: "grass_fiber",
             min_count: 1,
             max_count: 1,
+            required_tool: None,
+        }),
+        BlockState::DIRT => Some(BlockDropEntry {
+            template_id: "earth_crumb",
+            min_count: 1,
+            max_count: 1,
+            required_tool: None,
+        }),
+        BlockState::COARSE_DIRT => Some(BlockDropEntry {
+            template_id: "hardened_soil",
+            min_count: 1,
+            max_count: 1,
+            required_tool: None,
+        }),
+        BlockState::SAND => Some(BlockDropEntry {
+            template_id: "barren_sand",
+            min_count: 1,
+            max_count: 1,
+            required_tool: None,
+        }),
+        BlockState::GRAVEL => Some(BlockDropEntry {
+            template_id: "weathered_stone",
+            min_count: 1,
+            max_count: 1,
+            required_tool: None,
+        }),
+        BlockState::CLAY => Some(BlockDropEntry {
+            template_id: "raw_clay_lump",
+            min_count: 1,
+            max_count: 1,
+            required_tool: None,
+        }),
+        BlockState::OBSIDIAN => Some(BlockDropEntry {
+            template_id: "obsidian_shard",
+            min_count: 1,
+            max_count: 1,
+            required_tool: Some(GatheringToolKind::Pickaxe),
         }),
         _ => None,
+    }
+}
+
+fn has_required_tool(inventory: &PlayerInventory, entry: &BlockDropEntry) -> bool {
+    match entry.required_tool {
+        Some(required) => {
+            equipped_gathering_tool(inventory).is_some_and(|tool| tool.kind == required)
+        }
+        None => true,
     }
 }
 
@@ -169,14 +226,18 @@ pub fn apply_block_drops(
             continue;
         };
 
+        let Ok(mut inventory) = inventories.get_mut(event.client) else {
+            continue;
+        };
+        if !has_required_tool(&inventory, &entry) {
+            continue;
+        }
+
         let count = roll_count(&entry, event.position, event.client, now_tick);
         if count == 0 {
             continue;
         }
 
-        let Ok(mut inventory) = inventories.get_mut(event.client) else {
-            continue;
-        };
         match add_item_to_player_inventory(
             &mut inventory,
             &item_registry,
@@ -219,6 +280,13 @@ pub fn register(app: &mut App) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::inventory::{
+        ContainerState, InventoryRevision, ItemCategory, ItemInstance, ItemRarity, ItemTemplate,
+        PlacedItemState, EQUIP_SLOT_MAIN_HAND, MAIN_PACK_CONTAINER_ID,
+    };
+    use std::collections::HashMap;
+    use valence::prelude::{ChunkLayer, IntoSystemConfigs, UnloadedChunk};
+    use valence::testing::ScenarioSingleClient;
 
     #[test]
     fn oak_log_drops_crude_wood() {
@@ -277,9 +345,59 @@ mod tests {
     #[test]
     fn air_and_unrecognized_blocks_have_no_drop() {
         assert!(block_drop_for(BlockState::AIR).is_none());
-        assert!(block_drop_for(BlockState::DIRT).is_none());
         assert!(block_drop_for(BlockState::BEDROCK).is_none());
-        assert!(block_drop_for(BlockState::SAND).is_none());
+        assert!(block_drop_for(BlockState::DIRT).is_some());
+        assert!(block_drop_for(BlockState::SAND).is_some());
+    }
+
+    #[test]
+    fn soft_blocks_drop_p0_materials_one_to_one() {
+        for (block, template_id) in [
+            (BlockState::DIRT, "earth_crumb"),
+            (BlockState::COARSE_DIRT, "hardened_soil"),
+            (BlockState::SAND, "barren_sand"),
+            (BlockState::GRAVEL, "weathered_stone"),
+            (BlockState::CLAY, "raw_clay_lump"),
+        ] {
+            let entry = block_drop_for(block).expect("P0 soft block should have a drop");
+            assert_eq!(entry.template_id, template_id, "block {block:?}");
+            assert_eq!(entry.min_count, 1, "block {block:?}");
+            assert_eq!(entry.max_count, 1, "block {block:?}");
+            assert_eq!(entry.required_tool, None, "block {block:?}");
+        }
+    }
+
+    #[test]
+    fn p0_placeable_block_drops_are_fixed_one_count() {
+        for block in [
+            BlockState::DIRT,
+            BlockState::COARSE_DIRT,
+            BlockState::SAND,
+            BlockState::GRAVEL,
+            BlockState::CLAY,
+            BlockState::OBSIDIAN,
+        ] {
+            let entry = block_drop_for(block).expect("P0 block should have a drop");
+            assert_eq!(entry.min_count, 1, "block {block:?}");
+            assert_eq!(entry.max_count, 1, "block {block:?}");
+        }
+    }
+
+    #[test]
+    fn obsidian_drop_requires_pickaxe() {
+        let entry = block_drop_for(BlockState::OBSIDIAN).expect("obsidian should have a drop");
+        assert_eq!(entry.template_id, "obsidian_shard");
+        assert_eq!(entry.required_tool, Some(GatheringToolKind::Pickaxe));
+
+        assert!(!has_required_tool(&empty_inventory(), &entry));
+        assert!(!has_required_tool(
+            &inventory_with_main_hand("axe_iron"),
+            &entry
+        ));
+        assert!(has_required_tool(
+            &inventory_with_main_hand("pickaxe_iron"),
+            &entry
+        ));
     }
 
     #[test]
@@ -299,6 +417,7 @@ mod tests {
             template_id: "crude_wood",
             min_count: 1,
             max_count: 2,
+            required_tool: None,
         };
         for tick in 0..200 {
             let count = roll_count(&entry, BlockPos::new(5, 64, 5), Entity::from_raw(1), tick);
@@ -317,6 +436,7 @@ mod tests {
             template_id: "stone_chunk",
             min_count: 1,
             max_count: 1,
+            required_tool: None,
         };
         for tick in 0..50 {
             assert_eq!(
@@ -332,10 +452,237 @@ mod tests {
             template_id: "grass_fiber",
             min_count: 1,
             max_count: 1,
+            required_tool: None,
         };
         for tick in 0..500 {
             let count = roll_count(&entry, BlockPos::new(3, 64, 7), Entity::from_raw(2), tick);
             assert_eq!(count, 1);
         }
+    }
+
+    #[test]
+    fn survival_stop_breaking_dirt_grants_one_earth_crumb() {
+        let (mut app, player, layer) = block_drop_app(BlockState::DIRT, empty_inventory());
+
+        send_stop_break(&mut app, player, BlockPos::new(1, 64, 1));
+        app.update();
+
+        assert_eq!(inventory_template_count(&app, player, "earth_crumb"), 1);
+        assert_eq!(inventory_template_count(&app, player, "obsidian_shard"), 0);
+        assert_eq!(
+            app.world()
+                .get::<ChunkLayer>(layer)
+                .and_then(|layer| layer.block(BlockPos::new(1, 64, 1)).map(|b| b.state)),
+            Some(BlockState::DIRT),
+            "block_drop system must grant drops without mutating the block state"
+        );
+    }
+
+    #[test]
+    fn survival_stop_breaking_sand_grants_one_barren_sand() {
+        let (mut app, player, _) = block_drop_app(BlockState::SAND, empty_inventory());
+
+        send_stop_break(&mut app, player, BlockPos::new(1, 64, 1));
+        app.update();
+
+        let actual = inventory_template_count(&app, player, "barren_sand");
+        assert_eq!(
+            actual, 1,
+            "expected 1 barren_sand because survival Stop break should grant the mapped P0 soft block drop, actual {actual}"
+        );
+    }
+
+    #[test]
+    fn creative_breaking_sand_grants_no_barren_sand() {
+        let (mut app, player, _) = block_drop_app(BlockState::SAND, empty_inventory());
+        app.world_mut()
+            .entity_mut(player)
+            .insert(GameMode::Creative);
+
+        send_stop_break(&mut app, player, BlockPos::new(1, 64, 1));
+        app.update();
+
+        let actual = inventory_template_count(&app, player, "barren_sand");
+        assert_eq!(
+            actual, 0,
+            "expected 0 barren_sand because block drops only run for Survival Stop events, actual {actual}"
+        );
+    }
+
+    #[test]
+    fn survival_stop_breaking_obsidian_without_pickaxe_grants_nothing() {
+        let (mut app, player, _) = block_drop_app(BlockState::OBSIDIAN, empty_inventory());
+
+        send_stop_break(&mut app, player, BlockPos::new(1, 64, 1));
+        app.update();
+
+        let actual = inventory_template_count(&app, player, "obsidian_shard");
+        assert_eq!(
+            actual, 0,
+            "expected 0 obsidian_shard because no pickaxe is equipped, actual {actual}"
+        );
+    }
+
+    #[test]
+    fn survival_stop_breaking_obsidian_with_pickaxe_grants_shard() {
+        let (mut app, player, _) = block_drop_app(
+            BlockState::OBSIDIAN,
+            inventory_with_main_hand("pickaxe_iron"),
+        );
+
+        send_stop_break(&mut app, player, BlockPos::new(1, 64, 1));
+        app.update();
+
+        let actual = inventory_template_count(&app, player, "obsidian_shard");
+        assert_eq!(
+            actual, 1,
+            "expected 1 obsidian_shard because an iron pickaxe is equipped, actual {actual}"
+        );
+    }
+
+    fn block_drop_app(block: BlockState, inventory: PlayerInventory) -> (App, Entity, Entity) {
+        let scenario = ScenarioSingleClient::new();
+        let mut app = scenario.app;
+        crate::world::dimension::mark_test_layer_as_overworld(&mut app);
+        app.add_event::<DiggingEvent>();
+        app.insert_resource(item_registry_for_block_drops());
+        app.insert_resource(InventoryInstanceIdAllocator::new(1));
+        app.insert_resource(DimensionLayers {
+            overworld: scenario.layer,
+            tsy: scenario.layer,
+        });
+        app.add_systems(Update, apply_block_drops.into_configs());
+        app.world_mut().entity_mut(scenario.client).insert((
+            GameMode::Survival,
+            CurrentDimension(DimensionKind::Overworld),
+            inventory,
+        ));
+
+        let mut layer = app
+            .world_mut()
+            .get_mut::<ChunkLayer>(scenario.layer)
+            .expect("test layer should carry ChunkLayer");
+        layer.insert_chunk([0, 0], UnloadedChunk::new());
+        layer.set_block(BlockPos::new(1, 64, 1), block);
+
+        (app, scenario.client, scenario.layer)
+    }
+
+    fn send_stop_break(app: &mut App, player: Entity, position: BlockPos) {
+        app.world_mut().send_event(DiggingEvent {
+            client: player,
+            position,
+            direction: valence::protocol::Direction::Up,
+            state: DiggingState::Stop,
+        });
+    }
+
+    fn item_registry_for_block_drops() -> ItemRegistry {
+        ItemRegistry::from_map(HashMap::from([
+            item_template("crude_wood"),
+            item_template("barren_sand"),
+            item_template("earth_crumb"),
+            item_template("obsidian_shard"),
+        ]))
+    }
+
+    fn item_template(template_id: &str) -> (String, ItemTemplate) {
+        (
+            template_id.to_string(),
+            ItemTemplate {
+                id: template_id.to_string(),
+                display_name: template_id.to_string(),
+                category: ItemCategory::Misc,
+                placeable: None,
+                max_stack_count: 16,
+                grid_w: 1,
+                grid_h: 1,
+                base_weight: 0.1,
+                rarity: ItemRarity::Common,
+                spirit_quality_initial: 0.0,
+                description: "test template".to_string(),
+                effect: None,
+                cast_duration_ms: crate::inventory::DEFAULT_CAST_DURATION_MS,
+                cooldown_ms: crate::inventory::DEFAULT_COOLDOWN_MS,
+                weapon_spec: None,
+                forge_station_spec: None,
+                blueprint_scroll_spec: None,
+                inscription_scroll_spec: None,
+                technique_scroll_spec: None,
+                recipe_fragment_spec: None,
+                container_spec: None,
+                shelflife_profile: None,
+                shield_spec: None,
+                shelflife_track: None,
+            },
+        )
+    }
+
+    fn empty_inventory() -> PlayerInventory {
+        PlayerInventory {
+            revision: InventoryRevision(0),
+            containers: vec![ContainerState {
+                id: MAIN_PACK_CONTAINER_ID.to_string(),
+                name: "主背包".to_string(),
+                rows: 2,
+                cols: 9,
+                items: Vec::new(),
+            }],
+            equipped: HashMap::new(),
+            hotbar: Default::default(),
+            bone_coins: 0,
+            max_weight: 99.0,
+        }
+    }
+
+    fn inventory_with_main_hand(template_id: &str) -> PlayerInventory {
+        let mut inventory = empty_inventory();
+        inventory.equipped.insert(
+            EQUIP_SLOT_MAIN_HAND.to_string(),
+            item_instance(900, template_id, 1),
+        );
+        inventory
+    }
+
+    fn item_instance(instance_id: u64, template_id: &str, stack_count: u32) -> ItemInstance {
+        ItemInstance {
+            instance_id,
+            template_id: template_id.to_string(),
+            display_name: template_id.to_string(),
+            grid_w: 1,
+            grid_h: 1,
+            weight: 0.1,
+            rarity: ItemRarity::Common,
+            description: String::new(),
+            stack_count,
+            spirit_quality: 0.0,
+            durability: 1.0,
+            freshness: None,
+            mineral_id: None,
+            charges: None,
+            forge_quality: None,
+            forge_color: None,
+            forge_side_effects: Vec::new(),
+            forge_achieved_tier: None,
+            alchemy: None,
+            lingering_owner_qi: None,
+        }
+    }
+
+    fn inventory_template_count(app: &App, player: Entity, template_id: &str) -> u32 {
+        let inventory = app
+            .world()
+            .get::<PlayerInventory>(player)
+            .expect("player should carry inventory");
+        inventory
+            .containers
+            .iter()
+            .flat_map(|container| container.items.iter())
+            .map(|placed: &PlacedItemState| &placed.instance)
+            .chain(inventory.hotbar.iter().filter_map(|item| item.as_ref()))
+            .chain(inventory.equipped.values())
+            .filter(|item| item.template_id == template_id)
+            .map(|item| item.stack_count)
+            .sum()
     }
 }

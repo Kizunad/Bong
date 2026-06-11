@@ -70,7 +70,7 @@
           "kind": "spawn_tutorial_coffin",
           "name": "半埋石棺",
           "pos_xyz": [0.0, 69.0, 0.0],
-          "tags": ["spawn_tutorial", "coffin", "loot:spirit_niche_stone"],
+          "tags": ["spawn_tutorial", "coffin", "loot:niche_base"],
           "qi_affinity": 0.05
         },
         {

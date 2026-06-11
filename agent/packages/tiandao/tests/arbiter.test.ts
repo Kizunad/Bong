@@ -365,7 +365,11 @@ describe("Arbiter", () => {
     expect(result.commands[0].target).toBe("attack");
   });
 
-  it("materializes an era decree into currentEra and uniform global modify_zone commands", () => {
+  it("materializes an era decree into currentEra, a global server-bound command, and per-zone modify_zone commands", () => {
+    // cross-repo contract (B1 fix): arbiter 必须在 merged.commands 里保留一条
+    // modify_zone{target="全局", era_name=...} 发往 redis，
+    // 供 server execute_modify_zone 全局分支（command_executor.rs:950）消费 → EraDecreeIntent → WorldEraState。
+    // 旧行为（只有 per-zone 无 era_name）导致 WorldEraState 永不更新——此测试锁住修复后的正确契约。
     const state = createTestWorldState();
     state.tick = 888;
     state.zones.push({
@@ -415,13 +419,27 @@ describe("Arbiter", () => {
     expect(result.narrations[0]?.style).toBe("era_decree");
 
     const modifyCommands = result.commands.filter((command) => command.type === "modify_zone");
-    expect(modifyCommands).toHaveLength(2);
-    expect(modifyCommands.map((command) => command.target).sort()).toEqual([
+    // 1 全局 era 指令 + 2 per-zone 指令（starter_zone、green_cloud_peak）= 3 条
+    // 若只有 2 条说明全局 era_name 路径未修复（B1 blocker）
+    expect(modifyCommands).toHaveLength(3);
+
+    // 必须有一条 target="全局" 并携带 era_name，用于 server WorldEraState 更新
+    // 若缺失说明 server execute_modify_zone 全局分支永不触发（B1）
+    const globalEraCmd = modifyCommands.find((cmd) => cmd.target === "全局");
+    expect(globalEraCmd).toBeDefined();
+    // 全局 era 指令必须携带 era_name；server 据此 emit EraDecreeIntent
+    expect(globalEraCmd?.params["era_name"]).toBe("末法纪");
+    expect(globalEraCmd?.params["spirit_qi_delta"]).toBeCloseTo(-0.02, 6);
+    expect(globalEraCmd?.params["danger_level_delta"]).toBe(1);
+
+    // per-zone 指令仍需覆盖所有 zone
+    const perZoneCommands = modifyCommands.filter((cmd) => cmd.target !== "全局");
+    expect(perZoneCommands).toHaveLength(2);
+    expect(perZoneCommands.map((command) => command.target).sort()).toEqual([
       "green_cloud_peak",
       "starter_zone",
     ]);
-
-    for (const command of modifyCommands) {
+    for (const command of perZoneCommands) {
       expect(command.params["spirit_qi_delta"]).toBeCloseTo(-0.02, 6);
       expect(command.params["danger_level_delta"]).toBe(1);
     }
@@ -676,5 +694,71 @@ describe("Arbiter", () => {
         kind: "death_insight",
       },
     ]);
+  });
+
+  it("[e2e-agent] era_decree through real arbiter chain: era_name arrives in redis-bound commands (B1 regression guard)", () => {
+    // 模拟真实 LLM era agent 发出 era_decree → 走真实 Arbiter.merge() →
+    // 验证 merged.commands 中确实有携带 era_name 的 target="全局" 指令。
+    // 此测试是 B1 回归守卫：绕过 arbiter 直接注入的集成测试不能替代本测试。
+    //
+    // cross-repo: server execute_modify_zone 全局分支（command_executor.rs:950）
+    // 消费 era_name → EraDecreeIntent → era_decree_system → WorldEraState 更新。
+    const state = createTestWorldState();
+    state.tick = 1234;
+
+    // 走真实 Arbiter（非 mock），模拟 LLM agent 输出
+    const arbiter = new Arbiter(state);
+    const decisions: SourcedDecision[] = [
+      {
+        source: "era",
+        decision: {
+          commands: [
+            {
+              type: "modify_zone",
+              target: "全局",
+              params: {
+                era_name: "苍灵纪",
+                global_effect: "天道复苏，灵气涌现",
+                spirit_qi_delta: 0.03,
+                danger_level_delta: -1,
+              },
+            },
+          ],
+          narrations: [
+            {
+              scope: "broadcast",
+              text: "天道昭告：苍灵纪将起，灵机始聚。",
+              style: "era_decree",
+            },
+          ],
+          reasoning: "era shift to vitality",
+        },
+      },
+    ];
+
+    const merged = arbiter.merge(decisions);
+
+    // 1. currentEra 已由 arbiter 更新
+    // currentEra.name 应为 arbiter 从 era_name param 提取的值；undefined 说明 materializeEraCommand 未命中
+    expect(merged.currentEra?.name).toBe("苍灵纪");
+
+    // 2. redis-bound merged.commands 必须包含全局 era 指令
+    // 若缺失说明 arbiter 剥掉了 era_name 导致 server WorldEraState 永不更新（B1 blocker）
+    const globalEraCmd = merged.commands.find(
+      (cmd) => cmd.type === "modify_zone" && cmd.target === "全局",
+    );
+    expect(globalEraCmd).toBeDefined();
+    // 全局 era 指令必须携带 era_name；server 据此触发 EraDecreeIntent
+    expect(globalEraCmd?.params["era_name"]).toBe("苍灵纪");
+    expect(globalEraCmd?.params["spirit_qi_delta"]).toBeCloseTo(0.03, 6);
+    expect(globalEraCmd?.params["danger_level_delta"]).toBe(-1);
+
+    // 3. per-zone fan-out 仍存在（starter_zone）
+    // per-zone fan-out 应至少覆盖 starter_zone（createTestWorldState 默认 1 zone）
+    const perZoneCmds = merged.commands.filter(
+      (cmd) => cmd.type === "modify_zone" && cmd.target !== "全局",
+    );
+    expect(perZoneCmds.length).toBeGreaterThanOrEqual(1);
+    expect(perZoneCmds.map((c) => c.target)).toContain("starter_zone");
   });
 });

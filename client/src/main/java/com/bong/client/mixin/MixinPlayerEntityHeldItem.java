@@ -1,6 +1,9 @@
 package com.bong.client.mixin;
 
+import com.bong.client.block.BlockVanillaIconMap;
 import com.bong.client.combat.EquippedWeapon;
+import com.bong.client.combat.SkillBarEntry;
+import com.bong.client.combat.SkillBarStore;
 import com.bong.client.combat.WeaponEquippedStore;
 import com.bong.client.weapon.WeaponVanillaIconMap;
 
@@ -87,7 +90,13 @@ public abstract class MixinPlayerEntityHeldItem {
         if (MinecraftClient.getInstance().player != self) return;
 
         EquippedWeapon bong = WeaponEquippedStore.mainHandRenderWeapon();
-        if (bong == null) return;
+        if (bong == null) {
+            ItemStack blockFake = bong$selectedBlockStack().orElse(null);
+            if (blockFake != null) {
+                cir.setReturnValue(blockFake);
+            }
+            return;
+        }
 
         ItemStack fake = WeaponVanillaIconMap.createStackFor(bong.templateId());
         if (fake == null) return;
@@ -97,5 +106,15 @@ public abstract class MixinPlayerEntityHeldItem {
             LOGGER.info("getMainHandStack #{} override → {} (template={})",
                 mainHandOverrideCount, fake.getItem(), bong.templateId());
         }
+    }
+
+    private static java.util.Optional<ItemStack> bong$selectedBlockStack() {
+        MinecraftClient client = MinecraftClient.getInstance();
+        if (client == null || client.player == null) return java.util.Optional.empty();
+
+        int selectedSlot = SkillBarStore.selectedSlot();
+        SkillBarEntry entry = SkillBarStore.snapshot().slot(selectedSlot);
+        if (entry == null || entry.kind() != SkillBarEntry.Kind.ITEM) return java.util.Optional.empty();
+        return BlockVanillaIconMap.createStackFor(entry.id());
     }
 }

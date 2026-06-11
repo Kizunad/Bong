@@ -671,8 +671,36 @@ public final class ClientRequestProtocol {
         return obj.toString();
     }
 
+    public static String encodeBlockPlace(BlockPos pos, long itemInstanceId, ZhenfaTargetFace targetFace) {
+        if (pos == null) {
+            throw new IllegalArgumentException("pos must not be null");
+        }
+        if (itemInstanceId < 0) {
+            throw new IllegalArgumentException("itemInstanceId must be >= 0, got " + itemInstanceId);
+        }
+        if (targetFace == null) {
+            throw new IllegalArgumentException("targetFace must not be null");
+        }
+        JsonObject obj = envelope("block_place");
+        obj.addProperty("x", pos.getX());
+        obj.addProperty("y", pos.getY());
+        obj.addProperty("z", pos.getZ());
+        obj.addProperty("item_instance_id", itemInstanceId);
+        obj.addProperty("target_face", targetFace.wireName());
+        return obj.toString();
+    }
+
     public static String encodeSpiritNichePlace(int x, int y, int z, long itemInstanceId) {
         JsonObject obj = envelope("spirit_niche_place");
+        obj.addProperty("x", x);
+        obj.addProperty("y", y);
+        obj.addProperty("z", z);
+        obj.addProperty("item_instance_id", itemInstanceId);
+        return obj.toString();
+    }
+
+    public static String encodeSpiritNicheRepair(int x, int y, int z, long itemInstanceId) {
+        JsonObject obj = envelope("spirit_niche_repair");
         obj.addProperty("x", x);
         obj.addProperty("y", y);
         obj.addProperty("z", z);
@@ -1241,6 +1269,35 @@ public final class ClientRequestProtocol {
         JsonObject obj = envelope("supply_coffin_open");
         obj.addProperty("entity_id", entityId);
         return obj.toString();
+    }
+
+    // ─── plan-workbench-place-runtime-v1 P2：workbench open (entity-based) ──
+
+    /** 玩家右键制作台实体，发送 entity_id 让 server 校验距离并打开制作 UI。 */
+    public static String encodeWorkbenchOpen(int entityId) {
+        JsonObject obj = envelope("workbench_open");
+        obj.addProperty("entity_id", entityId);
+        return obj.toString();
+    }
+
+    // ─── plan-shield-block-v1 P1：盾牌格挡 C2S ───────────────────────
+
+    /**
+     * plan-shield-block-v1 P1 — 玩家 off_hand 持盾，右键按下边沿或举盾键按下边沿发送。
+     *
+     * <p>对应 server {@code ClientRequestV1::RaiseShield}。</p>
+     */
+    public static String encodeRaiseShield() {
+        return envelope("raise_shield").toString();
+    }
+
+    /**
+     * plan-shield-block-v1 P1 — 玩家 off_hand 持盾，右键松开边沿或举盾键松开边沿发送。
+     *
+     * <p>对应 server {@code ClientRequestV1::LowerShield}。</p>
+     */
+    public static String encodeLowerShield() {
+        return envelope("lower_shield").toString();
     }
 
     // ─── plan-supply-coffin-loot-ui P1：外部容器 C2S ──────────────────

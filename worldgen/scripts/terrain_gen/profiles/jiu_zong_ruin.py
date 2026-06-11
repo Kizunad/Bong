@@ -17,28 +17,20 @@ from .base import (
 
 JIU_ZONG_RUIN_DECORATIONS_COMMON = (
     DecorationSpec(
-        name="broken_pillar",
+        name="mossy_rubble_mound",
         kind="boulder",
-        blocks=("chiseled_stone_bricks", "stone_bricks", "mossy_stone_bricks"),
-        size_range=(4, 8),
-        rarity=0.55,
-        notes="断柱：刻纹石砖 + 苔藓砖，倒卧或半埋的大殿石柱。",
+        blocks=("stone_bricks", "mossy_stone_bricks", "cobblestone"),
+        size_range=(3, 6),
+        rarity=0.35,
+        notes="苔石废堆：断柱/钟楼等语义结构改走 authored placement，此处只放低风险瓦砾。",
     ),
     DecorationSpec(
-        name="ruined_bell_tower",
-        kind="tree",
-        blocks=("oak_log", "stone_bricks", "bell"),
-        size_range=(7, 12),
-        rarity=0.10,
-        notes="残钟楼：橡木柱 + 石砖基座 + 顶端铜钟，近距触发钟声叙事。",
-    ),
-    DecorationSpec(
-        name="moss_lain_statue",
+        name="cracked_plinth_stones",
         kind="boulder",
-        blocks=("mossy_cobblestone", "cracked_stone_bricks", "armor_stand"),
+        blocks=("mossy_cobblestone", "cracked_stone_bricks", "andesite"),
         size_range=(2, 4),
         rarity=0.25,
-        notes="苔卧像：苔石 + 裂砖 + armor_stand 残身，长老雕像面部已剥蚀。",
+        notes="裂座石：雕像/armor_stand 不走 density flora，只保留基座碎石。",
     ),
     DecorationSpec(
         name="formation_core_stub",
@@ -49,12 +41,12 @@ JIU_ZONG_RUIN_DECORATIONS_COMMON = (
         notes="阵核残柱：磁石 + 刻纹石 + 紫晶，可激活 landmark。",
     ),
     DecorationSpec(
-        name="forgotten_stele_garden",
+        name="weathered_flagstone_patch",
         kind="boulder",
-        blocks=("polished_andesite", "chiseled_polished_blackstone", "sculk_vein"),
-        size_range=(3, 6),
-        rarity=0.18,
-        notes="忘碑林：壁文 narration 锚，靠近触发该宗历史片段。",
+        blocks=("andesite", "polished_blackstone", "mossy_stone_bricks"),
+        size_range=(2, 5),
+        rarity=0.16,
+        notes="风化铺石：碑林/叙事锚改走 authored placement，此处只保留铺地碎片。",
     ),
 )
 

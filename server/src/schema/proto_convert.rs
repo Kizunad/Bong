@@ -1425,6 +1425,15 @@ impl From<&ServerDataPayloadV1> for Payload {
                     })
                     .collect(),
             }),
+            ServerDataPayloadV1::WorkbenchOpen {
+                entity_id,
+                position,
+            } => Payload::WorkbenchOpen(bong::WorkbenchOpen {
+                entity_id: *entity_id,
+                x: position[0],
+                y: position[1],
+                z: position[2],
+            }),
         }
     }
 }
@@ -3280,6 +3289,20 @@ impl From<&super::client_request::ClientRequestV1> for bong::client_request_enve
                 z: *z,
                 item_instance_id: *item_instance_id,
             }),
+            ClientRequestV1::BlockPlace {
+                x,
+                y,
+                z,
+                item_instance_id,
+                target_face,
+                ..
+            } => Payload::BlockPlace(bong::BlockPlace {
+                x: *x,
+                y: *y,
+                z: *z,
+                item_instance_id: *item_instance_id,
+                target_face: trap_target_face_to_proto(target_face),
+            }),
             ClientRequestV1::CoffinEnter { x, y, z, .. } => {
                 Payload::CoffinEnter(bong::CoffinEnter {
                     x: *x,
@@ -3311,6 +3334,18 @@ impl From<&super::client_request::ClientRequestV1> for bong::client_request_enve
                 item_instance_id,
                 ..
             } => Payload::SpiritNichePlace(bong::SpiritNichePlace {
+                x: *x,
+                y: *y,
+                z: *z,
+                item_instance_id: *item_instance_id,
+            }),
+            ClientRequestV1::SpiritNicheRepair {
+                x,
+                y,
+                z,
+                item_instance_id,
+                ..
+            } => Payload::SpiritNicheRepair(bong::SpiritNicheRepair {
                 x: *x,
                 y: *y,
                 z: *z,
@@ -3788,6 +3823,14 @@ impl From<&super::client_request::ClientRequestV1> for bong::client_request_enve
                 pill_instance_id: *pill_instance_id,
                 elder_entity_id: *elder_entity_id,
             }),
+            ClientRequestV1::WorkbenchOpen { entity_id, .. } => {
+                Payload::WorkbenchOpen(bong::WorkbenchOpenReq {
+                    entity_id: *entity_id,
+                })
+            }
+            // plan-shield-block-v1 P1 — 持续举盾 / 放盾 C2S
+            ClientRequestV1::RaiseShield { .. } => Payload::RaiseShield(bong::RaiseShield {}),
+            ClientRequestV1::LowerShield { .. } => Payload::LowerShield(bong::LowerShield {}),
         }
     }
 }
@@ -4051,6 +4094,30 @@ mod tests {
     }
 
     #[test]
+    fn s2c_workbench_open_proto_roundtrip() {
+        use bong::server_data_envelope::Payload;
+        use prost::Message;
+        let payload = ServerDataPayloadV1::WorkbenchOpen {
+            entity_id: 42,
+            position: [1, 64, -2],
+        };
+        let proto = server_data_to_proto_payload(&payload);
+        let envelope = bong::ServerDataEnvelope {
+            payload: Some(proto),
+        };
+        let bytes = envelope.encode_to_vec();
+        let decoded =
+            bong::ServerDataEnvelope::decode(bytes.as_slice()).expect("WorkbenchOpen proto decode");
+        match decoded.payload {
+            Some(Payload::WorkbenchOpen(open)) => {
+                assert_eq!(open.entity_id, 42);
+                assert_eq!([open.x, open.y, open.z], [1, 64, -2]);
+            }
+            other => panic!("expected WorkbenchOpen payload, got {other:?}"),
+        }
+    }
+
+    #[test]
     fn s2c_ui_open_roundtrip() {
         s2c_encode_decode_roundtrip(ServerDataPayloadV1::UiOpen {
             ui: Some("inspect".to_string()),
@@ -4139,6 +4206,18 @@ mod tests {
             trigger: None,
             item_instance_id: Some(999),
             target_face: Some(crate::zhenfa::trap_content::TrapTargetFace::Top),
+        });
+    }
+
+    #[test]
+    fn c2s_block_place_roundtrip() {
+        c2s_encode_decode_roundtrip(super::super::client_request::ClientRequestV1::BlockPlace {
+            v: 1,
+            x: 8,
+            y: 64,
+            z: -8,
+            item_instance_id: 4242,
+            target_face: crate::zhenfa::trap_content::TrapTargetFace::North,
         });
     }
 
@@ -4370,6 +4449,41 @@ mod tests {
                 entity_id: i32::MAX,
             },
         );
+    }
+
+    #[test]
+    fn c2s_workbench_open_roundtrip() {
+        c2s_encode_decode_roundtrip(
+            super::super::client_request::ClientRequestV1::WorkbenchOpen {
+                v: 1,
+                entity_id: 42,
+            },
+        );
+    }
+
+    #[test]
+    fn c2s_workbench_open_proto_roundtrip_asserts_variant_and_entity_id() {
+        use prost::Message;
+        let req = super::super::client_request::ClientRequestV1::WorkbenchOpen {
+            v: 1,
+            entity_id: 165,
+        };
+        let proto_payload = bong::client_request_envelope::Payload::from(&req);
+        let envelope = bong::ClientRequestEnvelope {
+            payload: Some(proto_payload),
+        };
+        let bytes = envelope.encode_to_vec();
+        let decoded = bong::ClientRequestEnvelope::decode(bytes.as_slice())
+            .expect("C2S WorkbenchOpen proto decode should succeed");
+        match decoded.payload {
+            Some(bong::client_request_envelope::Payload::WorkbenchOpen(open)) => {
+                assert_eq!(
+                    open.entity_id, 165,
+                    "WorkbenchOpen.entity_id should survive proto roundtrip"
+                );
+            }
+            other => panic!("expected WorkbenchOpen payload, got {other:?}"),
+        }
     }
 
     // ─── plan-coffin-tiers-v1 P3：延寿棺 C2S proto roundtrip ────────────────

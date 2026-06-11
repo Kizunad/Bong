@@ -9,7 +9,27 @@
 //!
 //! §8.1 #3 决议：不设 per-chunk 数量限制（制作台是凡物，材料成本已限制滥放）。
 
-use valence::prelude::{bevy_ecs, Component, Entity};
+use valence::prelude::{
+    bevy_ecs, App, BlockPos, Client, Commands, Component, DVec3, DiggingEvent, Entity, Event,
+    EventReader, Events, GameMode, Position, Query, Res, ResMut, Update, Username, With,
+};
+
+use crate::cultivation::components::Cultivation;
+use crate::inventory::{
+    add_item_to_player_inventory, spawn_template_dropped_loot, DroppedLootRegistry,
+    InventoryInstanceIdAllocator, ItemRegistry, PlayerInventory, TemplateDroppedLootRequest,
+};
+use crate::network::agent_bridge::{payload_type_label, serialize_server_data_payload};
+use crate::network::audio_event_emit::{AudioRecipient, PlaySoundRecipeRequest, AUDIO_AREA_RADIUS};
+use crate::network::inventory_snapshot_emit::send_inventory_snapshot_to_client;
+use crate::network::{log_payload_build_error, send_server_data_payload};
+use crate::player::gameplay::GameplayTick;
+use crate::player::state::PlayerState;
+use crate::schema::server_data::{ServerDataPayloadV1, ServerDataV1};
+use crate::world::block_break::should_apply_default_break;
+use crate::world::block_place::{break_placeable, PlaceableBlockKind};
+use crate::world::dimension::{CurrentDimension, DimensionKind};
+use crate::world::entity_model::{spawn_visual_marker, BongVisualKind};
 
 /// 制作台方块 ECS component。
 ///
@@ -40,6 +60,15 @@ pub const WORKBENCH_INTERACT_RANGE: f64 = 3.0;
 
 /// 制作台物品 template_id。
 pub const WORKBENCH_ITEM_TEMPLATE: &str = "workbench_item";
+pub const WORKBENCH_PLACE_AUDIO_RECIPE_ID: &str = "workbench_place";
+pub const WORKBENCH_BREAK_AUDIO_RECIPE_ID: &str = "workbench_break";
+pub const WORKBENCH_OPEN_AUDIO_RECIPE_ID: &str = "workbench_open";
+
+#[derive(Debug, Clone, Copy, Event)]
+pub struct WorkbenchOpenRequest {
+    pub client: Entity,
+    pub workbench: Entity,
+}
 
 /// 检查玩家位置是否在制作台 3 格交互范围内。
 ///
@@ -52,13 +81,251 @@ pub fn is_within_workbench_range(player_pos: [f64; 3], workbench_pos: [i32; 3]) 
     dx.max(dy).max(dz) <= WORKBENCH_INTERACT_RANGE
 }
 
-// ===== 系统占位（PR-2 范围内仅定义签名和数据结构，
-// 完整 Bevy system 实现依赖 chunk / block 交互 API，属 PR-3/PR-4）=====
+pub fn register(app: &mut App) {
+    app.add_event::<WorkbenchOpenRequest>()
+        .add_systems(Update, (handle_workbench_interact, handle_workbench_break));
+}
 
-// NOTE: handle_workbench_place / handle_workbench_interact / handle_workbench_break
-// 作为完整 Bevy system 需要访问 ChunkLayer / BlockState / Inventory 等实际运行时
-// 资源，当前 PR-2 不引入运行时依赖。这些 system 的签名和行为在 plan §P0.1 / §P2.3
-// 已定义，将在 PR-3 实装。本模块先暴露数据结构和纯函数供 session 校验使用。
+pub fn handle_workbench_place(
+    commands: &mut Commands,
+    layer: Entity,
+    placed_by: Entity,
+    pos: BlockPos,
+    placed_at_tick: u64,
+) -> Entity {
+    let visual = spawn_visual_marker(
+        commands,
+        layer,
+        None,
+        BongVisualKind::Workbench,
+        DVec3::new(
+            f64::from(pos.x) + 0.5,
+            f64::from(pos.y),
+            f64::from(pos.z) + 0.5,
+        ),
+        0,
+    );
+    commands.entity(visual).insert(WorkbenchBlock {
+        placed_by,
+        placed_at_tick,
+    });
+    visual
+}
+
+pub fn handle_workbench_interact(
+    mut requests: EventReader<WorkbenchOpenRequest>,
+    mut clients: Query<&mut Client>,
+    players: Query<&Position, With<Client>>,
+    workbenches: Query<(&Position, &WorkbenchBlock)>,
+    mut audio_events: Option<ResMut<Events<PlaySoundRecipeRequest>>>,
+) {
+    for request in requests.read() {
+        let Ok(player_pos) = players.get(request.client) else {
+            continue;
+        };
+        let Ok((workbench_pos, _workbench)) = workbenches.get(request.workbench) else {
+            continue;
+        };
+        let block_pos = workbench_block_pos(workbench_pos);
+        if !is_within_workbench_range([player_pos.0.x, player_pos.0.y, player_pos.0.z], block_pos) {
+            tracing::warn!(
+                "[bong][workbench] rejected open: client={:?} workbench={:?} out of range",
+                request.client,
+                request.workbench
+            );
+            continue;
+        }
+        let Ok(mut client) = clients.get_mut(request.client) else {
+            continue;
+        };
+        let payload = ServerDataV1::new(ServerDataPayloadV1::WorkbenchOpen {
+            entity_id: request.workbench.to_bits(),
+            position: block_pos,
+        });
+        let payload_type = payload_type_label(payload.payload_type());
+        let bytes = match serialize_server_data_payload(&payload) {
+            Ok(bytes) => bytes,
+            Err(error) => {
+                log_payload_build_error(payload_type, &error);
+                continue;
+            }
+        };
+        send_server_data_payload(&mut client, bytes.as_slice());
+        send_workbench_audio(
+            audio_events.as_deref_mut(),
+            WORKBENCH_OPEN_AUDIO_RECIPE_ID,
+            block_pos,
+        );
+    }
+}
+
+#[allow(clippy::too_many_arguments, clippy::type_complexity)]
+pub fn handle_workbench_break(
+    mut commands: Commands,
+    mut digs: EventReader<DiggingEvent>,
+    item_registry: Res<ItemRegistry>,
+    current_tick: Option<Res<GameplayTick>>,
+    mut instance_allocator: ResMut<InventoryInstanceIdAllocator>,
+    mut dropped_registry: ResMut<DroppedLootRegistry>,
+    mut players: Query<
+        (
+            &GameMode,
+            &Position,
+            Option<&CurrentDimension>,
+            &mut PlayerInventory,
+            &Username,
+            &mut Client,
+            &PlayerState,
+            Option<&Cultivation>,
+        ),
+        With<Client>,
+    >,
+    workbenches: Query<(Entity, &Position, &WorkbenchBlock)>,
+    mut audio_events: Option<ResMut<Events<PlaySoundRecipeRequest>>>,
+) {
+    for event in digs.read() {
+        let Ok((
+            game_mode,
+            player_position,
+            current_dimension,
+            mut inventory,
+            username,
+            mut client,
+            player_state,
+            cultivation,
+        )) = players.get_mut(event.client)
+        else {
+            continue;
+        };
+        if !should_apply_default_break(event.state, *game_mode) {
+            continue;
+        }
+        let Some((workbench_entity, workbench_position, _workbench)) =
+            workbenches.iter().find(|(_, position, _)| {
+                workbench_block_pos(position)
+                    == [event.position.x, event.position.y, event.position.z]
+            })
+        else {
+            continue;
+        };
+
+        let now = current_tick
+            .as_ref()
+            .map(|tick| tick.current_tick())
+            .unwrap_or(0);
+        let dimension = current_dimension
+            .map(|component| component.0)
+            .unwrap_or(DimensionKind::Overworld);
+        let default_cultivation;
+        let cultivation = match cultivation {
+            Some(cultivation) => cultivation,
+            None => {
+                default_cultivation = Cultivation::default();
+                &default_cultivation
+            }
+        };
+
+        match add_item_to_player_inventory(
+            &mut inventory,
+            &item_registry,
+            &mut instance_allocator,
+            WORKBENCH_ITEM_TEMPLATE,
+            1,
+            now,
+        ) {
+            Ok(_) => {
+                send_inventory_snapshot_to_client(
+                    event.client,
+                    &mut client,
+                    username.0.as_str(),
+                    &inventory,
+                    player_state,
+                    cultivation,
+                    "workbench_break_returned",
+                );
+            }
+            Err(error) => {
+                tracing::warn!(
+                    "[bong][workbench] inventory return failed, spawning drop: client={:?} error={error}",
+                    event.client
+                );
+                if let Err(drop_error) = spawn_template_dropped_loot(
+                    &mut dropped_registry,
+                    &item_registry,
+                    &mut instance_allocator,
+                    TemplateDroppedLootRequest {
+                        template_id: WORKBENCH_ITEM_TEMPLATE,
+                        stack_count: 1,
+                        world_pos: [
+                            player_position.0.x,
+                            player_position.0.y,
+                            player_position.0.z,
+                        ],
+                        dimension,
+                        current_tick: now,
+                    },
+                ) {
+                    tracing::error!(
+                        "[bong][workbench] rejected break: failed to return or drop workbench_item: {drop_error}"
+                    );
+                    continue;
+                }
+            }
+        }
+        if let Err(error) = break_placeable(
+            PlaceableBlockKind::Workbench,
+            &mut commands,
+            workbench_entity,
+        ) {
+            tracing::error!("[bong][workbench] failed to break placeable workbench: {error}");
+        } else {
+            send_workbench_audio(
+                audio_events.as_deref_mut(),
+                WORKBENCH_BREAK_AUDIO_RECIPE_ID,
+                workbench_block_pos(workbench_position),
+            );
+        }
+    }
+}
+
+pub fn send_workbench_audio(
+    audio_events: Option<&mut Events<PlaySoundRecipeRequest>>,
+    recipe_id: &str,
+    block_pos: [i32; 3],
+) {
+    let Some(audio_events) = audio_events else {
+        return;
+    };
+    let origin = workbench_audio_origin(block_pos);
+    audio_events.send(PlaySoundRecipeRequest {
+        recipe_id: recipe_id.to_string(),
+        instance_id: 0,
+        pos: Some(block_pos),
+        flag: None,
+        volume_mul: 1.0,
+        pitch_shift: 0.0,
+        recipient: AudioRecipient::Radius {
+            origin,
+            radius: AUDIO_AREA_RADIUS,
+        },
+    });
+}
+
+pub fn workbench_audio_origin(block_pos: [i32; 3]) -> DVec3 {
+    DVec3::new(
+        f64::from(block_pos[0]) + 0.5,
+        f64::from(block_pos[1]) + 0.5,
+        f64::from(block_pos[2]) + 0.5,
+    )
+}
+
+pub fn workbench_block_pos(position: &Position) -> [i32; 3] {
+    [
+        position.0.x.floor() as i32,
+        position.0.y.floor() as i32,
+        position.0.z.floor() as i32,
+    ]
+}
 
 #[cfg(test)]
 mod tests {

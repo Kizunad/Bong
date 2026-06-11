@@ -125,6 +125,37 @@ class QuickBarHudPlannerTest {
     }
 
     @Test
+    void itemSlotUsesEntryIconTexture() {
+        SkillBarConfig skills = SkillBarConfig.of(
+            new SkillBarEntry[] {
+                SkillBarEntry.item(
+                    "earth_crumb",
+                    "土块",
+                    0,
+                    0,
+                    "bong-client:textures/gui/items/earth_crumb.png"
+                )
+            },
+            new long[9]
+        );
+
+        List<HudRenderCommand> commands = QuickBarHudPlanner.buildCommands(
+            QuickSlotConfig.empty(),
+            skills,
+            0,
+            CastState.idle(),
+            List.of(),
+            1_000L,
+            960,
+            540
+        );
+
+        assertTrue(commands.stream().anyMatch(cmd -> cmd.isTexturedRect()
+            && cmd.texturePath().equals("bong-client:textures/gui/items/earth_crumb.png")));
+        assertFalse(commands.stream().anyMatch(cmd -> cmd.isItemTexture() && cmd.text().equals("earth_crumb")));
+    }
+
+    @Test
     void skillSlotFallsBackToShortTextWithoutIcon() {
         SkillBarConfig skills = SkillBarConfig.of(
             new SkillBarEntry[] { SkillBarEntry.skill("woliu.burst", "瞬涡", 50, 500, "") },

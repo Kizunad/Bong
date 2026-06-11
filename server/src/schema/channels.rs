@@ -3,6 +3,7 @@ pub const CH_WORLD_STATE: &str = "bong:world_state";
 pub const CH_PLAYER_CHAT: &str = "bong:player_chat";
 pub const CH_AGENT_COMMAND: &str = "bong:agent_command";
 pub const CH_AGENT_NARRATE: &str = "bong:agent_narrate";
+pub const CH_TIANDAO_HUNT_NARRATION_REQUEST: &str = "bong:tiandao_hunt_narration_request";
 pub const CH_AGENT_WORLD_MODEL: &str = "bong:agent_world_model";
 pub const CH_CALAMITY_INTENT: &str = "bong:calamity_intent";
 pub const CH_SEASON_CHANGED: &str = "bong:season_changed";
@@ -250,6 +251,12 @@ pub const CH_BAOMAI_V4_RESONANCE_LOCK: &str = "bong:baomai_v4/resonance_lock";
 /// 共振锁定结束事件，对齐 agent `CHANNELS.BAOMAI_V4_RESONANCE_LOCK_END`。
 pub const CH_BAOMAI_V4_RESONANCE_LOCK_END: &str = "bong:baomai_v4/resonance_lock_end";
 
+// 领地信息暴露（plan-territory-v1 P3）—— server → agent 领地叙事请求频道。
+/// 领地霸主变动叙事请求（新确立 / 被驱逐 / 灵气耗尽）。
+/// 对齐 agent `CHANNELS.TERRITORY_NARRATION_REQUEST`。
+/// 注意：P3 agent 侧暂无订阅 runtime；push_zone 兜底保证不依赖 agent 即 in-game 可见。
+pub const CH_TERRITORY_NARRATION_REQUEST: &str = "bong:territory_narration_request";
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -260,6 +267,10 @@ mod tests {
         assert_eq!(CH_PLAYER_CHAT, "bong:player_chat");
         assert_eq!(CH_AGENT_COMMAND, "bong:agent_command");
         assert_eq!(CH_AGENT_NARRATE, "bong:agent_narrate");
+        assert_eq!(
+            CH_TIANDAO_HUNT_NARRATION_REQUEST,
+            "bong:tiandao_hunt_narration_request"
+        );
         assert_eq!(CH_AGENT_WORLD_MODEL, "bong:agent_world_model");
         assert_eq!(CH_CALAMITY_INTENT, "bong:calamity_intent");
         assert_eq!(CH_SEASON_CHANGED, "bong:season_changed");
@@ -422,5 +433,10 @@ mod tests {
         );
         // plan-dying-elder-v1 P0 — 垂死大能遭遇 server → agent 叙事频道
         assert_eq!(CH_ELDER_ENCOUNTER, "bong:elder_encounter");
+        // plan-territory-v1 P3 — 领地叙事请求频道
+        assert_eq!(
+            CH_TERRITORY_NARRATION_REQUEST,
+            "bong:territory_narration_request"
+        );
     }
 }

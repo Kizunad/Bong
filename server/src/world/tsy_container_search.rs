@@ -19,8 +19,8 @@
 #![allow(dead_code)]
 
 use valence::prelude::{
-    bevy_ecs, Commands, Component, Entity, Event, EventReader, EventWriter, Position, Query, Res,
-    ResMut, Username, With,
+    bevy_ecs, Commands, Component, Entity, Event, EventReader, EventWriter, Events, Position,
+    Query, Res, ResMut, Username, With,
 };
 
 use std::collections::HashMap;
@@ -34,19 +34,23 @@ use crate::inventory::spirit_treasure::{
 };
 use crate::inventory::InventoryInstanceIdAllocator;
 use crate::inventory::{
-    bump_revision, consume_item_instance_once, ItemInstance, ItemRegistry, PlacedItemState,
-    PlayerInventory, MAIN_PACK_CONTAINER_ID,
+    bump_revision, consume_item_instance_once, inventory_item_by_instance_mut, ItemInstance,
+    ItemRegistry, PlacedItemState, PlayerInventory, MAIN_PACK_CONTAINER_ID,
 };
 use crate::network::audio_event_emit::{AudioRecipient, PlaySoundRecipeRequest};
 use crate::network::vfx_event_emit::VfxEventRequest;
 use crate::player::state::canonical_player_id;
+use crate::qi_physics::attrition::{apply_attrition, is_attrition_exempt};
+use crate::qi_physics::ledger::{AttritionOpKind, QiTransfer};
 use crate::schema::vfx_event::VfxEventPayloadV1;
+use crate::world::dimension::DimensionKind;
 use crate::world::loot_pool::{roll_loot_pool, LootPoolRegistry};
 use crate::world::tsy_container::{
     item_as_container_key, KeyKind, LootContainer, SearchProgress, SEARCH_INTERACT_RANGE_M,
     SEARCH_MOVE_INTERRUPT_THRESHOLD_M,
 };
 use crate::world::tsy_container_spawn::relic_source_for_family;
+use crate::world::zone::ZoneRegistry;
 
 const TSY_SEARCH_DUST_VFX: &str = "bong:tsy_search_dust";
 const TSY_SEARCH_LOOT_POP_VFX: &str = "bong:tsy_search_loot_pop";
@@ -218,9 +222,60 @@ pub fn register(app: &mut valence::prelude::App) {
             start_search_container,
             tick_search_progress,
             handle_cancel_search,
+            // plan-qi-handling-attrition-v1 P1：搜刮完成后对入包 loot 施加天道磨损
+            apply_search_attrition.after(tick_search_progress),
         )
             .chain(),
     );
+}
+
+/// plan-qi-handling-attrition-v1 P1 — 搜刮完成后对入包 loot 施加 ContainerSearch 磨损。
+///
+/// 消费 `SearchCompleted` 事件（由 `tick_search_progress` emit），
+/// 对每件入包 item 按 instance_id 在玩家 inventory 中定位后调用 `apply_attrition`。
+/// ZoneRegistry 取玩家 Position 对应的 zone（与 pickup 路径一致）。
+pub fn apply_search_attrition(
+    mut completed: EventReader<SearchCompleted>,
+    mut inventories: Query<(&mut PlayerInventory, &Position)>,
+    mut zones: Option<ResMut<ZoneRegistry>>,
+    mut qi_transfers: Option<ResMut<Events<QiTransfer>>>,
+) {
+    for ev in completed.read() {
+        let Ok((mut inv, pos)) = inventories.get_mut(ev.player) else {
+            continue;
+        };
+
+        let zone_name = zones.as_deref().and_then(|z| {
+            z.find_zone(DimensionKind::Overworld, pos.0)
+                .map(|zone| zone.name.clone())
+        });
+
+        for item_snapshot in &ev.loot {
+            let instance_id = item_snapshot.instance_id;
+            // 找到 inventory 中的真实 item（spirit_quality 已落地）
+            if let Some(item) = inventory_item_by_instance_mut(&mut inv, instance_id) {
+                if is_attrition_exempt(item) {
+                    continue;
+                }
+                // 获取 zone mut 并应用磨损
+                if let (Some(zone_name), Some(ref mut zones)) =
+                    (zone_name.clone(), zones.as_deref_mut())
+                {
+                    if let Some(zone) = zones.find_zone_mut(&zone_name) {
+                        apply_attrition(
+                            item,
+                            AttritionOpKind::ContainerSearch,
+                            Some(zone),
+                            qi_transfers.as_deref_mut(),
+                        );
+                    }
+                } else {
+                    // 无 zone 上下文时仍应用磨损（zone=None 不归还，用于 offline test）
+                    apply_attrition(item, AttritionOpKind::ContainerSearch, None, None);
+                }
+            }
+        }
+    }
 }
 
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]

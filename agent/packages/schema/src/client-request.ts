@@ -617,6 +617,19 @@ export const SpiritNichePlaceRequestV1 = Type.Object(
 );
 export type SpiritNichePlaceRequestV1 = Static<typeof SpiritNichePlaceRequestV1>;
 
+export const SpiritNicheRepairRequestV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    type: Type.Literal("spirit_niche_repair"),
+    x: Type.Integer(),
+    y: Type.Integer(),
+    z: Type.Integer(),
+    item_instance_id: Type.Integer({ minimum: 0, maximum: JS_SAFE_INTEGER_MAX }),
+  },
+  { additionalProperties: false },
+);
+export type SpiritNicheRepairRequestV1 = Static<typeof SpiritNicheRepairRequestV1>;
+
 export const SpiritNicheGazeRequestV1 = Type.Object(
   {
     v: Type.Literal(1),
@@ -979,6 +992,41 @@ export const ForgeStationPlaceRequestV1 = Type.Object(
 );
 export type ForgeStationPlaceRequestV1 = Static<typeof ForgeStationPlaceRequestV1>;
 
+export const BlockPlaceRequestV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    type: Type.Literal("block_place"),
+    x: Type.Integer(),
+    y: Type.Integer(),
+    z: Type.Integer(),
+    item_instance_id: Type.Integer({ minimum: 0, maximum: JS_SAFE_INTEGER_MAX }),
+    target_face: ZhenfaTargetFaceV1,
+  },
+  { additionalProperties: false },
+);
+export type BlockPlaceRequestV1 = Static<typeof BlockPlaceRequestV1>;
+
+// plan-shield-block-v1 P1 — 盾牌举盾 / 放盾请求。
+// 对应 Rust ClientRequestV1::RaiseShield / LowerShield。
+// 玩家 off_hand 持盾时按住右键边沿发送 RaiseShield；松开右键边沿发送 LowerShield。
+export const RaiseShieldRequestV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    type: Type.Literal("raise_shield"),
+  },
+  { additionalProperties: false },
+);
+export type RaiseShieldRequestV1 = Static<typeof RaiseShieldRequestV1>;
+
+export const LowerShieldRequestV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    type: Type.Literal("lower_shield"),
+  },
+  { additionalProperties: false },
+);
+export type LowerShieldRequestV1 = Static<typeof LowerShieldRequestV1>;
+
 export const ClientRequestV1 = Type.Union([
   SetMeridianTargetRequestV1,
   BreakthroughRequestV1,
@@ -1027,6 +1075,7 @@ export const ClientRequestV1 = Type.Union([
   CoffinEnterRequestV1,
   CoffinLeaveRequestV1,
   SpiritNichePlaceRequestV1,
+  SpiritNicheRepairRequestV1,
   SpiritNicheGazeRequestV1,
   SpiritNicheMarkCoordinateRequestV1,
   SpiritNicheActivateGuardianRequestV1,
@@ -1056,5 +1105,8 @@ export const ClientRequestV1 = Type.Union([
   ForgeBlueprintTurnPageRequestV1,
   ForgeLearnBlueprintRequestV1,
   ForgeStationPlaceRequestV1,
+  BlockPlaceRequestV1,
+  RaiseShieldRequestV1,
+  LowerShieldRequestV1,
 ]);
 export type ClientRequestV1 = Static<typeof ClientRequestV1>;

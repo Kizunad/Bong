@@ -75,6 +75,9 @@ use super::events::{
 const COMBAT_DRAIN_PER_SEC: f32 = 5.0;
 const JOG_DRAIN_PER_SEC: f32 = 2.0;
 const SPRINT_DRAIN_PER_SEC: f32 = 10.0;
+/// plan-shield-block-v1 P2 — 举盾持续每秒体力消耗（量级：COMBAT=5.0，JOG=2.0，盾=3.0）。
+/// 不触 qi_physics ledger（体力非真元）。P4 按熟练度 1→2 不在本阶段。
+pub const SHIELD_DRAIN_PER_SEC: f32 = 3.0;
 const EXHAUSTED_RECOVER_RATIO: f32 = 0.5;
 const EXHAUSTED_EXIT_FRACTION: f32 = 0.3;
 const DEATH_INSIGHT_RECENT_BIO_N: usize = 16;
@@ -148,7 +151,11 @@ pub fn sync_combat_state_from_events(
 
         if let Ok((mut state, mut stamina)) = actors.get_mut(event.target) {
             state.refresh_combat_window(event.resolved_at_tick);
-            if stamina.state != StaminaState::Exhausted {
+            // 举盾态与精疲状态不被战斗事件覆盖（让 stamina_tick 维护其 drain/drain-零 逻辑）。
+            if !matches!(
+                stamina.state,
+                StaminaState::Exhausted | StaminaState::ShieldBlocking
+            ) {
                 stamina.state = StaminaState::Combat;
             }
         }
@@ -220,6 +227,9 @@ pub fn stamina_tick(clock: Res<CombatClock>, mut stamina_q: Query<&mut Stamina>)
             StaminaState::Sprinting => -SPRINT_DRAIN_PER_SEC,
             StaminaState::Combat => -COMBAT_DRAIN_PER_SEC,
             StaminaState::Exhausted => stamina.recover_per_sec * EXHAUSTED_RECOVER_RATIO,
+            // plan-shield-block-v1 P2 — 举盾持续 drain。
+            // 体力归零时由 `force_lower_shield_on_stamina_exhausted` 负责强制放盾 + 施加 ParryRecovery。
+            StaminaState::ShieldBlocking => -SHIELD_DRAIN_PER_SEC,
         };
 
         stamina.current = (stamina.current + delta_per_sec * dt).clamp(0.0, stamina.max);
@@ -227,7 +237,7 @@ pub fn stamina_tick(clock: Res<CombatClock>, mut stamina_q: Query<&mut Stamina>)
         if stamina.current <= 0.0
             && matches!(
                 stamina.state,
-                StaminaState::Sprinting | StaminaState::Combat
+                StaminaState::Sprinting | StaminaState::Combat | StaminaState::ShieldBlocking
             )
         {
             stamina.state = StaminaState::Exhausted;
@@ -1290,7 +1300,8 @@ fn revive_lifecycle(
     ) {
         staged_lifecycle.fortune_remaining = staged_lifecycle.fortune_remaining.saturating_sub(1);
     }
-    staged_lifecycle.revive(now_tick);
+    let weakened_multiplier = damaged_spawn_anchor_weakened_multiplier(lifecycle);
+    staged_lifecycle.revive_with_weakened_multiplier(now_tick, weakened_multiplier);
 
     let mut staged_cultivation = cultivation.as_ref().map(|value| (**value).clone());
     let mut staged_meridians = meridians.as_ref().map(|value| (**value).clone());
@@ -1341,7 +1352,7 @@ fn revive_lifecycle(
     }
 
     lifecycle.fortune_remaining = staged_lifecycle.fortune_remaining;
-    lifecycle.revive(now_tick);
+    lifecycle.revive_with_weakened_multiplier(now_tick, weakened_multiplier);
     if let (Some(mut cultivation), Some(staged_cultivation)) = (cultivation, staged_cultivation) {
         *cultivation = staged_cultivation;
     }
@@ -1380,6 +1391,14 @@ fn revive_lifecycle(
 
     revived.send(PlayerRevived { entity });
     true
+}
+
+fn damaged_spawn_anchor_weakened_multiplier(lifecycle: &Lifecycle) -> u64 {
+    if lifecycle.spawn_anchor.is_some() && lifecycle.spawn_anchor_damaged {
+        2
+    } else {
+        1
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1578,7 +1597,8 @@ fn reset_for_new_character(
     // （spawn_pos = spawn_plain，realm = Awaken，lifespan = AWAKEN cap）。这里曾硬编
     // MORTAL=80，与 attach_cultivation_to_joined_clients 路径用的 AWAKEN=120 数值漂移；
     // 现统一从 spec 读，单一数据源。
-    let new_char_spec = crate::cultivation::character_select::next_character_spec();
+    let new_char_spec =
+        crate::cultivation::character_select::next_character_spec_for_seed(&lifecycle.character_id);
     let spawn_position = new_char_spec.spawn_pos;
     let fresh_lifespan = LifespanComponent::new(new_char_spec.lifespan_cap);
 
@@ -1925,7 +1945,7 @@ mod tests {
     use crate::combat::anticheat::AntiCheatCounter;
     use crate::combat::components::{
         ActiveStatusEffect, BodyPart, DefenseWindow, StatusEffects, Wound, WoundKind,
-        IN_COMBAT_WINDOW_TICKS,
+        IN_COMBAT_WINDOW_TICKS, REVIVE_WEAKENED_TICKS,
     };
     use crate::combat::events::{
         ApplyStatusEffectIntent, DefenseIntent, RevivalActionIntent, RevivalActionKind,
@@ -3931,10 +3951,11 @@ mod tests {
         assert_eq!(lifespan.cap_by_realm, LifespanCapTable::AWAKEN);
         assert_eq!(lifespan.years_lived, 0.0);
         assert_eq!(player_state, &PlayerState::default());
-        assert_eq!(
-            position.get(),
-            Position::new(crate::player::spawn_position()).get()
-        );
+        let expected_spawn = crate::cultivation::character_select::next_character_spec_for_seed(
+            &lifecycle.character_id,
+        )
+        .spawn_pos;
+        assert_eq!(position.get(), Position::new(expected_spawn).get());
         assert_eq!(cultivation.realm, Realm::Awaken);
         assert_eq!(cultivation.qi_current, 0.0);
         assert_eq!(cultivation.qi_max, 10.0);
@@ -3951,7 +3972,7 @@ mod tests {
             username.0.as_str(),
         );
         assert_eq!(persisted.state, PlayerState::default());
-        assert_eq!(persisted.position, crate::player::spawn_position());
+        assert_eq!(persisted.position, expected_spawn);
         assert!(persisted.inventory.is_some());
         let persisted_lifespan = persisted.lifespan.expect("fresh lifespan should persist");
         assert_eq!(persisted_lifespan.born_at_tick, 0);
@@ -4307,5 +4328,142 @@ mod tests {
         );
 
         let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn damaged_spawn_anchor_doubles_revive_weakened_duration() {
+        let mut app = App::new();
+        let (settings, root) = persistence_settings("revive-damaged-spawn-anchor");
+        app.insert_resource(settings);
+        app.insert_resource(CombatClock { tick: 42 });
+        app.add_event::<RevivalActionIntent>();
+        app.add_event::<PlayerRevived>();
+        app.add_event::<PlayerTerminated>();
+        app.add_event::<AscensionQuotaOpened>();
+        app.add_event::<VfxEventRequest>();
+        app.add_systems(Update, handle_revival_action_intents);
+
+        let damaged = app
+            .world_mut()
+            .spawn((
+                Position::new([99.0, 64.0, 99.0]),
+                Lifecycle {
+                    state: LifecycleState::AwaitingRevival,
+                    awaiting_decision: Some(RevivalDecision::Fortune { chance: 1.0 }),
+                    spawn_anchor: Some([11.0, 65.0, 10.0]),
+                    spawn_anchor_damaged: true,
+                    fortune_remaining: 1,
+                    ..Default::default()
+                },
+            ))
+            .id();
+        let intact = app
+            .world_mut()
+            .spawn((
+                Position::new([99.0, 64.0, 99.0]),
+                Lifecycle {
+                    state: LifecycleState::AwaitingRevival,
+                    awaiting_decision: Some(RevivalDecision::Fortune { chance: 1.0 }),
+                    spawn_anchor: Some([12.0, 65.0, 10.0]),
+                    spawn_anchor_damaged: false,
+                    fortune_remaining: 1,
+                    ..Default::default()
+                },
+            ))
+            .id();
+
+        for entity in [damaged, intact] {
+            app.world_mut().send_event(RevivalActionIntent {
+                entity,
+                action: RevivalActionKind::Reincarnate,
+                issued_at_tick: 42,
+            });
+        }
+        app.update();
+
+        let damaged_lifecycle = app.world().entity(damaged).get::<Lifecycle>().unwrap();
+        let intact_lifecycle = app.world().entity(intact).get::<Lifecycle>().unwrap();
+        assert_eq!(
+            damaged_lifecycle.weakened_until_tick.unwrap() - 42,
+            REVIVE_WEAKENED_TICKS * 2,
+            "damaged spirit niche spawn anchor should double revive weakened duration"
+        );
+        assert_eq!(
+            intact_lifecycle.weakened_until_tick.unwrap() - 42,
+            REVIVE_WEAKENED_TICKS,
+            "intact spirit niche spawn anchor should keep baseline revive weakened duration"
+        );
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    // ── plan-shield-block-v1 P2 §Issue5.2 — sync_combat_state ShieldBlocking 保留 ──
+    // 被命中时若受击方处于 ShieldBlocking 状态，sync_combat_state_from_events 不应将其
+    // stamina.state 翻成 Combat（应保留 ShieldBlocking，由 stamina_tick 维护 drain 逻辑）。
+    #[test]
+    fn sync_combat_state_preserves_shield_blocking_state_on_target() {
+        let mut app = App::new();
+        app.add_event::<CombatEvent>();
+        app.add_systems(Update, sync_combat_state_from_events);
+
+        let attacker = app
+            .world_mut()
+            .spawn((
+                Wounds::default(),
+                Stamina {
+                    current: 100.0,
+                    max: 100.0,
+                    recover_per_sec: 5.0,
+                    state: StaminaState::Combat,
+                    last_drain_tick: None,
+                },
+                CombatState::default(),
+                Lifecycle::default(),
+            ))
+            .id();
+        let target = app
+            .world_mut()
+            .spawn((
+                Wounds::default(),
+                Stamina {
+                    current: 60.0,
+                    max: 100.0,
+                    recover_per_sec: 5.0,
+                    state: StaminaState::ShieldBlocking,
+                    last_drain_tick: None,
+                },
+                CombatState::default(),
+                Lifecycle::default(),
+            ))
+            .id();
+
+        app.world_mut().send_event(CombatEvent {
+            attacker,
+            target,
+            resolved_at_tick: 100,
+            body_part: BodyPart::Chest,
+            wound_kind: WoundKind::Blunt,
+            source: crate::combat::events::AttackSource::Melee,
+            debug_command: false,
+            physical_damage: 0.5,
+            damage: 0.0,
+            contam_delta: 0.0,
+            description: "test_hit".to_string(),
+            defense_kind: Some(crate::combat::events::DefenseKind::ShieldBlock),
+            defense_effectiveness: Some(0.6),
+            defense_contam_reduced: None,
+            defense_wound_severity: None,
+        });
+        app.update();
+
+        let target_stamina = app.world().entity(target).get::<Stamina>().unwrap();
+        assert_eq!(
+            target_stamina.state,
+            StaminaState::ShieldBlocking,
+            "sync_combat_state_from_events 被命中时不应将 ShieldBlocking 状态覆写为 Combat；\
+             举盾状态由 stamina_tick 维护（drain/exhausted 逻辑）；\
+             actual: {:?}",
+            target_stamina.state
+        );
     }
 }

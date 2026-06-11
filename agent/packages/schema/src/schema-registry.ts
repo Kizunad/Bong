@@ -51,6 +51,7 @@ import {
   BreakthroughRequestV1,
   AbortTribulationRequestV1,
   CancelExtractRequestV1,
+  BlockPlaceRequestV1,
   CoffinOpenRequestV1,
   CoffinEnterRequestV1,
   CoffinLeaveRequestV1,
@@ -92,6 +93,7 @@ import {
   TradeOfferRequestV1,
   TradeOfferResponseRequestV1,
   SelfAntidoteRequestV1,
+  SpiritNicheRepairRequestV1,
   UseQuickSlotRequestV1,
   UseLifeCoreRequestV1,
   ZhenfaDisarmRequestV1,
@@ -201,6 +203,10 @@ import {
   TribulationKindV1,
   TribulationPhaseV1,
 } from "./tribulation.js";
+import {
+  TiandaoHuntNarrationRequestV1,
+  TiandaoHuntResponseLevelV1,
+} from "./tiandao-hunt-narration.js";
 import {
   BarrierGeometryV1,
   VoidActionBroadcastV1,
@@ -494,6 +500,8 @@ export const SCHEMA_REGISTRY = {
   calamityKindV1: CalamityKindV1,
   calamityIntentV1: CalamityIntentV1,
   narrationV1: NarrationV1,
+  tiandaoHuntResponseLevelV1: TiandaoHuntResponseLevelV1,
+  tiandaoHuntNarrationRequestV1: TiandaoHuntNarrationRequestV1,
   zonePressureLevelV1: ZonePressureLevelV1,
   zonePressureCrossedV1: ZonePressureCrossedV1,
   ratPhaseV1: RatPhaseV1,
@@ -623,6 +631,7 @@ export const SCHEMA_REGISTRY = {
   clientRequestCoffinPlaceV1: CoffinPlaceRequestV1,
   clientRequestCoffinEnterV1: CoffinEnterRequestV1,
   clientRequestCoffinLeaveV1: CoffinLeaveRequestV1,
+  clientRequestSpiritNicheRepairV1: SpiritNicheRepairRequestV1,
   clientRequestSparringInviteResponseV1: SparringInviteResponseRequestV1,
   clientRequestTradeOfferV1: TradeOfferRequestV1,
   clientRequestTradeOfferResponseV1: TradeOfferResponseRequestV1,
@@ -903,6 +912,7 @@ export const SCHEMA_REGISTRY = {
   clientRequestForgeBlueprintTurnPageV1: ForgeBlueprintTurnPageRequestV1,
   clientRequestForgeLearnBlueprintV1: ForgeLearnBlueprintRequestV1,
   clientRequestForgeStationPlaceV1: ForgeStationPlaceRequestV1,
+  clientRequestBlockPlaceV1: BlockPlaceRequestV1,
   // ─── 身份与信誉（plan-identity-v1 §7） ──────────
   revealedTagKindV1: RevealedTagKindV1,
   reactionTierV1: ReactionTierV1,
@@ -919,6 +929,10 @@ export const GENERATED_SCHEMA_FILES = {
   "calamity-kind-v1.json": SCHEMA_REGISTRY.calamityKindV1,
   "calamity-intent-v1.json": SCHEMA_REGISTRY.calamityIntentV1,
   "narration-v1.json": SCHEMA_REGISTRY.narrationV1,
+  "tiandao-hunt-response-level-v1.json":
+    SCHEMA_REGISTRY.tiandaoHuntResponseLevelV1,
+  "tiandao-hunt-narration-request-v1.json":
+    SCHEMA_REGISTRY.tiandaoHuntNarrationRequestV1,
   "zone-pressure-level-v1.json": SCHEMA_REGISTRY.zonePressureLevelV1,
   "zone-pressure-crossed-v1.json": SCHEMA_REGISTRY.zonePressureCrossedV1,
   "rat-phase-v1.json": SCHEMA_REGISTRY.ratPhaseV1,
@@ -1087,6 +1101,8 @@ export const GENERATED_SCHEMA_FILES = {
   "client-request-coffin-place-v1.json": SCHEMA_REGISTRY.clientRequestCoffinPlaceV1,
   "client-request-coffin-enter-v1.json": SCHEMA_REGISTRY.clientRequestCoffinEnterV1,
   "client-request-coffin-leave-v1.json": SCHEMA_REGISTRY.clientRequestCoffinLeaveV1,
+  "client-request-spirit-niche-repair-v1.json":
+    SCHEMA_REGISTRY.clientRequestSpiritNicheRepairV1,
   "client-request-trade-offer-v1.json": SCHEMA_REGISTRY.clientRequestTradeOfferV1,
   "client-request-trade-offer-response-v1.json":
     SCHEMA_REGISTRY.clientRequestTradeOfferResponseV1,
@@ -1408,6 +1424,7 @@ export const GENERATED_SCHEMA_FILES = {
   "client-request-forge-blueprint-turn-page-v1.json": SCHEMA_REGISTRY.clientRequestForgeBlueprintTurnPageV1,
   "client-request-forge-learn-blueprint-v1.json": SCHEMA_REGISTRY.clientRequestForgeLearnBlueprintV1,
   "client-request-forge-station-place-v1.json": SCHEMA_REGISTRY.clientRequestForgeStationPlaceV1,
+  "client-request-block-place-v1.json": SCHEMA_REGISTRY.clientRequestBlockPlaceV1,
   // plan-identity-v1 §7
   "wanted-player-event-v1.json": SCHEMA_REGISTRY.wantedPlayerEventV1,
   "identity-panel-state-v1.json": SCHEMA_REGISTRY.identityPanelStateV1,

@@ -30,6 +30,11 @@ import {
 import { createClient, createMockClient, LlmBackoffError, LlmTimeoutError, type LlmClient } from "./llm.js";
 import { createMockWorldState } from "./mock-state.js";
 import {
+  applyNegDomainTribulationGate,
+  recordNegDomainEscapeTelemetry,
+  renderNegDomainNarrations,
+} from "./neg-domain-escape.js";
+import {
   NARRATION_LOW_SCORE_THRESHOLD,
   evaluateNarrations,
   formatNarrationLowScoreWarning,
@@ -446,6 +451,15 @@ export async function runTick(state: WorldStateV1, deps: TickDeps): Promise<Tick
     correlationId: `tiandao-tick-${state.tick}`,
   };
 
+  const negDomainNarrations = renderNegDomainNarrations({
+    previousState: worldModel?.latestState ?? null,
+    state,
+  });
+  recordNegDomainEscapeTelemetry({
+    previousState: worldModel?.latestState ?? null,
+    state,
+    worldModel,
+  });
   worldModel?.updateState(state);
   applyWorldModelToAgents(agents, worldModel);
   applyChatSignalsToAgents(agents, chatSignals ?? []);
@@ -540,6 +554,16 @@ export async function runTick(state: WorldStateV1, deps: TickDeps): Promise<Tick
     ? [...sourcedDecisions, ...producedNpcDecisions]
     : sourcedDecisions;
   const merged = new Arbiter(state).merge(decisionsForMerge);
+  const gated = applyNegDomainTribulationGate({
+    commands: merged.commands,
+    state,
+    worldModel,
+  });
+  const negDomainNarrationsToAdd = negDomainNarrations.filter(
+    (narration) => !gated.narrations.some((gatedNarration) => sameNarration(gatedNarration, narration)),
+  );
+  merged.commands = gated.commands;
+  merged.narrations = [...merged.narrations, ...gated.narrations, ...negDomainNarrationsToAdd];
   const totalCommands = decisionsForMerge.reduce((sum, { decision }) => sum + decision.commands.length, 0);
   const totalNarrations = decisionsForMerge.reduce((sum, { decision }) => sum + decision.narrations.length, 0);
   const narrationScores = evaluateNarrations(merged.narrations);
@@ -629,6 +653,7 @@ export async function runTick(state: WorldStateV1, deps: TickDeps): Promise<Tick
     narrationScores,
     narrationLowScoreCount,
     narrationAverageScore: summarizeNarrationAverage(narrationScores),
+    negDomainEscape: worldModel?.getNegDomainEscapeTelemetrySnapshot(),
   };
 
   if (telemetrySink) {
@@ -875,6 +900,15 @@ function weatherNarrationText(zone: string, kind: WeatherEventUpdateV1["data"]["
 
 function isScorchWeatherZone(zone: string): boolean {
   return SCORCH_WEATHER_ZONE_IDS.has(zone);
+}
+
+function sameNarration(left: Narration, right: Narration): boolean {
+  return (
+    left.scope === right.scope &&
+    left.target === right.target &&
+    left.style === right.style &&
+    left.text === right.text
+  );
 }
 
 export async function processLocustSwarmEvents(args: {
@@ -1372,6 +1406,9 @@ function worldModelSnapshotToEnvelopeSnapshot(
     zoneHistory: snapshot.zoneHistory,
     lastDecisions: snapshot.lastDecisions,
     playerFirstSeenTick: snapshot.playerFirstSeenTick,
+    negDomainPendingTribulations: snapshot.negDomainPendingTribulations,
+    negDomainEscapeTelemetry: snapshot.negDomainEscapeTelemetry,
+    negDomainEscapeSessions: snapshot.negDomainEscapeSessions,
     lastTick: snapshot.lastTick,
     lastStateTs: snapshot.lastStateTs,
   };

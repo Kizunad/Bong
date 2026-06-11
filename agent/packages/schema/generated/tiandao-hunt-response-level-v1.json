@@ -1,0 +1,21 @@
+{
+  "description": "天道狩猎叙事响应档；none 不触发叙事请求",
+  "anyOf": [
+    {
+      "const": "watch",
+      "type": "string"
+    },
+    {
+      "const": "pressure",
+      "type": "string"
+    },
+    {
+      "const": "tribulation",
+      "type": "string"
+    },
+    {
+      "const": "annihilate",
+      "type": "string"
+    }
+  ]
+}

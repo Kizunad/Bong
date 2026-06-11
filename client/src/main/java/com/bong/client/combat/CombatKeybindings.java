@@ -26,13 +26,19 @@ public final class CombatKeybindings {
     private static KeyBinding jiemaiKey;
     private static KeyBinding spellVolumeKey;
     private static KeyBinding eventStreamToggleKey;
+    // plan-shield-block-v1 P1 — 举盾持键（默认未绑定，玩家可自定义；右键路径走 MixinMouse）。
+    private static KeyBinding shieldHoldKey;
 
     private static volatile IntConsumer quickSlotHandler = slot -> { };
     private static volatile Runnable jiemaiHandler = () -> { };
     private static volatile SpellVolumeHoldHandler spellVolumeHandler = pressed -> { };
     private static volatile Runnable eventStreamToggleHandler = () -> { };
+    // plan-shield-block-v1 P1 — 举盾 hold handler（和 spellVolumeHandler 同模式）。
+    private static volatile ShieldHoldHandler shieldHoldHandler = pressed -> { };
 
     private static boolean spellVolumeHeldLastTick = false;
+    // plan-shield-block-v1 P1 — 举盾 hold 状态（同 spellVolumeHeldLastTick 模式）。
+    private static boolean shieldHeldLastTick = false;
 
     private CombatKeybindings() {
     }
@@ -64,9 +70,16 @@ public final class CombatKeybindings {
             GLFW.GLFW_KEY_UNKNOWN,
             CATEGORY
         ));
+        // plan-shield-block-v1 P1 — 举盾持键（默认未绑定；主要路径是右键 MixinMouse 仲裁）。
+        shieldHoldKey = KeyBindingHelper.registerKeyBinding(new KeyBinding(
+            "key.bong-client.shield_hold",
+            InputUtil.Type.KEYSYM,
+            GLFW.GLFW_KEY_UNKNOWN,
+            CATEGORY
+        ));
 
         ClientTickEvents.END_CLIENT_TICK.register(CombatKeybindings::onTick);
-        BongClient.LOGGER.info("Registered combat HUD keybindings (F1-F9, V, R, event stream toggle).");
+        BongClient.LOGGER.info("Registered combat HUD keybindings (F1-F9, V, R, event stream toggle, shield hold).");
     }
 
     public static void setQuickSlotHandler(IntConsumer handler) {
@@ -83,6 +96,11 @@ public final class CombatKeybindings {
 
     public static void setEventStreamToggleHandler(Runnable handler) {
         eventStreamToggleHandler = handler == null ? () -> { } : handler;
+    }
+
+    // plan-shield-block-v1 P1 — 举盾 hold handler setter。
+    public static void setShieldHoldHandler(ShieldHoldHandler handler) {
+        shieldHoldHandler = handler == null ? pressed -> { } : handler;
     }
 
     private static void onTick(MinecraftClient client) {
@@ -117,10 +135,25 @@ public final class CombatKeybindings {
             }
         }
 
+        // plan-shield-block-v1 P1 — 举盾持键边沿检测（同 spellVolumeKey 模式）。
+        // 主要路径是右键（MixinMouse）；此处提供备用键盘绑定（默认 UNKNOWN）。
+        boolean shieldHeldNow = shieldHoldKey.isPressed();
+        if (shieldHeldNow != shieldHeldLastTick) {
+            shieldHoldHandler.onShieldHold(shieldHeldNow);
+            shieldHeldLastTick = shieldHeldNow;
+        }
+
     }
 
     @FunctionalInterface
     public interface SpellVolumeHoldHandler {
         void onSpellVolumeHold(boolean pressed);
+    }
+
+    // plan-shield-block-v1 P1 — 举盾 hold 回调接口（同 SpellVolumeHoldHandler 模式）。
+    @FunctionalInterface
+    public interface ShieldHoldHandler {
+        /** @param pressed true=按下边沿(RaiseShield), false=松开边沿(LowerShield) */
+        void onShieldHold(boolean pressed);
     }
 }

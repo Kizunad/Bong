@@ -7,6 +7,22 @@ import {
 import { validate } from "../src/validate.js";
 
 describe("zhenfa-v2 schema", () => {
+  const deceiveHeavenExposureEvent = (chance: unknown) => ({
+    v: 1,
+    event: "deceive_heaven_exposed",
+    array_id: 8,
+    kind: "deceive_heaven",
+    owner: "offline:Azure",
+    breaker: "offline:Breaker",
+    x: 12,
+    y: 64,
+    z: -9,
+    tick: 160,
+    reveal_chance_lifetime: chance,
+    self_weight_multiplier: 0.5,
+    target_weight_multiplier: 1.5,
+  });
+
   it("accepts new array kinds in zhenfa_place requests", () => {
     const result = validate(ClientRequestV1, {
       v: 1,
@@ -107,23 +123,10 @@ describe("zhenfa-v2 schema", () => {
       }).ok,
     ).toBe(true);
 
-    expect(
-      validateZhenfaV2EventV1Contract({
-        v: 1,
-        event: "deceive_heaven_exposed",
-        array_id: 8,
-        kind: "deceive_heaven",
-        owner: "offline:Azure",
-        breaker: "offline:Breaker",
-        x: 12,
-        y: 64,
-        z: -9,
-        tick: 160,
-        reveal_chance_per_tick: 0.002,
-        self_weight_multiplier: 0.5,
-        target_weight_multiplier: 1.5,
-      }).ok,
-    ).toBe(true);
+    for (const chance of [0, 1]) {
+      const result = validateZhenfaV2EventV1Contract(deceiveHeavenExposureEvent(chance));
+      expect(result.ok, `reveal_chance_lifetime=${chance} should be accepted`).toBe(true);
+    }
 
     expect(
       validateZhenfaV2EventV1Contract({
@@ -139,5 +142,25 @@ describe("zhenfa-v2 schema", () => {
         reveal_threshold: 50,
       }).ok,
     ).toBe(true);
+
+    expect(
+      validateZhenfaV2EventV1Contract({
+        v: 1,
+        event: "deceive_heaven_exposed",
+        array_id: 10,
+        kind: "deceive_heaven",
+        owner: "offline:Azure",
+        x: 12,
+        y: 64,
+        z: -9,
+        tick: 180,
+        reveal_chance_per_tick: 0.002,
+      }).ok,
+    ).toBe(false);
+
+    for (const chance of [-0.001, 1.001, "0.5", null, Number.NaN]) {
+      const result = validateZhenfaV2EventV1Contract(deceiveHeavenExposureEvent(chance));
+      expect(result.ok, `reveal_chance_lifetime=${String(chance)} should be rejected`).toBe(false);
+    }
   });
 });

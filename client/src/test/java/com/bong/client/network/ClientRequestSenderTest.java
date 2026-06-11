@@ -228,6 +228,22 @@ public class ClientRequestSenderTest {
     }
 
     @Test
+    void sendBlockPlaceUsesCorrectChannelAndJson() {
+        install();
+        ClientRequestSender.sendBlockPlace(
+            new net.minecraft.util.math.BlockPos(8, 64, 8),
+            4242L,
+            ClientRequestProtocol.ZhenfaTargetFace.NORTH
+        );
+        assertEquals(1, sent.size());
+        assertEquals(new Identifier("bong", "client_request"), sent.get(0).channel());
+        assertEquals(
+            "{\"type\":\"block_place\",\"v\":1,\"x\":8,\"y\":64,\"z\":8,\"item_instance_id\":4242,\"target_face\":\"north\"}",
+            sent.get(0).body()
+        );
+    }
+
+    @Test
     void sendSpiritNichePlaceUsesCorrectChannelAndJson() {
         install();
         ClientRequestSender.sendSpiritNichePlace(11, 64, 10, 4242L);
@@ -235,6 +251,18 @@ public class ClientRequestSenderTest {
         assertEquals(new Identifier("bong", "client_request"), sent.get(0).channel());
         assertEquals(
             "{\"type\":\"spirit_niche_place\",\"v\":1,\"x\":11,\"y\":64,\"z\":10,\"item_instance_id\":4242}",
+            sent.get(0).body()
+        );
+    }
+
+    @Test
+    void sendSpiritNicheRepairUsesCorrectChannelAndJson() {
+        install();
+        ClientRequestSender.sendSpiritNicheRepair(11, 64, 10, 4242L);
+        assertEquals(1, sent.size());
+        assertEquals(new Identifier("bong", "client_request"), sent.get(0).channel());
+        assertEquals(
+            "{\"type\":\"spirit_niche_repair\",\"v\":1,\"x\":11,\"y\":64,\"z\":10,\"item_instance_id\":4242}",
             sent.get(0).body()
         );
     }
@@ -462,6 +490,18 @@ public class ClientRequestSenderTest {
         assertEquals(new Identifier("bong", "client_request"), sent.get(0).channel());
         assertEquals(
             "{\"type\":\"supply_coffin_open\",\"v\":1,\"entity_id\":42}",
+            sent.get(0).body()
+        );
+    }
+
+    @Test
+    void sendWorkbenchOpenUsesCorrectChannelAndJson() {
+        install();
+        ClientRequestSender.sendWorkbenchOpen(42);
+        assertEquals(1, sent.size());
+        assertEquals(new Identifier("bong", "client_request"), sent.get(0).channel());
+        assertEquals(
+            "{\"type\":\"workbench_open\",\"v\":1,\"entity_id\":42}",
             sent.get(0).body()
         );
     }

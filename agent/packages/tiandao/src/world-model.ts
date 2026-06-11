@@ -88,8 +88,36 @@ export interface WorldModelSnapshot {
   zoneHistory: Record<string, ZoneSnapshot[]>;
   lastDecisions: Record<string, AgentDecision>;
   playerFirstSeenTick: Record<string, number>;
+  negDomainPendingTribulations: Record<string, NegDomainPendingTribulation>;
+  negDomainEscapeTelemetry: NegDomainEscapeTelemetrySnapshot;
+  negDomainEscapeSessions: Record<string, NegDomainEscapeSession>;
   lastTick: number | null;
   lastStateTs: number | null;
+}
+
+export interface NegDomainPendingTribulation {
+  playerUuid: string;
+  playerName: string;
+  zone: string;
+  enteredAtTick: number;
+  lastSuppressedTick: number;
+  reason: "negative_domain_tribulation_exempt";
+}
+
+export interface NegDomainEscapeTelemetrySnapshot {
+  escapeEntryCount: number;
+  postEscapeRealmDropCount: number;
+  successfulTribulationAvoidanceCount: number;
+  activeEscapeSessionCount: number;
+  postEscapeRealmDropRate: number;
+}
+
+export interface NegDomainEscapeSession {
+  playerUuid: string;
+  playerName: string;
+  zone: string;
+  enteredAtTick: number;
+  entryRealmRank: number;
 }
 
 export interface ZoneStressFlag {
@@ -125,6 +153,11 @@ export class WorldModel {
   readonly zoneHistory = new Map<string, ZoneSnapshot[]>();
   readonly lastDecisions = new Map<string, AgentDecision>();
   private readonly playerFirstSeenTick = new Map<string, number>();
+  private readonly negDomainPendingTribulations = new Map<string, NegDomainPendingTribulation>();
+  private readonly negDomainEscapeSessions = new Map<string, NegDomainEscapeSession>();
+  private negDomainEscapeEntryCount = 0;
+  private negDomainPostEscapeRealmDropCount = 0;
+  private negDomainSuccessfulTribulationAvoidanceCount = 0;
   private botanyEcologyValue: BotanyEcologySnapshotV1 | null = null;
   private readonly botanyEcologySnapshots: BotanyEcologySnapshotV1[] = [];
   readonly botanyEcologyHistory = new Map<string, BotanyZoneEcologyV1[]>();
@@ -186,6 +219,9 @@ export class WorldModel {
       zoneHistory,
       lastDecisions,
       playerFirstSeenTick: Object.fromEntries(this.playerFirstSeenTick.entries()),
+      negDomainPendingTribulations: Object.fromEntries(this.negDomainPendingTribulations.entries()),
+      negDomainEscapeTelemetry: this.getNegDomainEscapeTelemetrySnapshot(),
+      negDomainEscapeSessions: Object.fromEntries(this.negDomainEscapeSessions.entries()),
       lastTick: this.lastTick,
       lastStateTs: this.lastStateTs,
     };
@@ -199,6 +235,25 @@ export class WorldModel {
     this.latestStateValue = clonedState;
     this.lastStateTsValue = clonedState.ts;
     this.newPlayersThisTick = new Set<string>();
+
+    // plan-era-state-v1 P2：从 WorldStateV1.era 同步时代状态到 currentEraValue。
+    // agent era.md skill 可在决策前通过 worldModel.currentEra 获取当前时代，避免重复宣告。
+    if (clonedState.era) {
+      const eraTypeToName: Record<string, string> = {
+        calamity: "calamity",
+        change: "mutation",
+        deduction: "deduction",
+        unknown: "unknown",
+      };
+      const eraName = eraTypeToName[clonedState.era.era_type] ?? clonedState.era.era_type;
+      this.currentEraValue = {
+        name: eraName,
+        sinceTick: clonedState.era.onset_tick,
+        globalEffect: `era_type:${clonedState.era.era_type}|intensity:${clonedState.era.intensity.toFixed(2)}`,
+      };
+    }
+    // 注意：era=undefined 时不清除 currentEraValue（保留 agent 自己记录的时代状态，
+    // 避免 server 未回填 era 字段时丢失 agent 内部推演结果）。
 
     for (const zone of clonedState.zones) {
       const history = this.zoneHistory.get(zone.name) ?? [];
@@ -338,6 +393,93 @@ export class WorldModel {
 
   getBalanceSummary(): BalanceSummary {
     return summarizeBalance(this.latestStateValue?.players ?? []);
+  }
+
+  recordNegDomainPendingTribulation(args: {
+    playerUuid: string;
+    playerName: string;
+    zone: string;
+    tick: number;
+    reason: NegDomainPendingTribulation["reason"];
+  }): void {
+    const existing = this.negDomainPendingTribulations.get(args.playerUuid);
+    this.negDomainPendingTribulations.set(args.playerUuid, {
+      playerUuid: args.playerUuid,
+      playerName: args.playerName,
+      zone: args.zone,
+      enteredAtTick: existing?.enteredAtTick ?? args.tick,
+      lastSuppressedTick: args.tick,
+      reason: args.reason,
+    });
+  }
+
+  hasNegDomainPendingTribulation(playerUuid: string): boolean {
+    return this.negDomainPendingTribulations.has(playerUuid);
+  }
+
+  getNegDomainPendingTribulation(playerUuid: string): NegDomainPendingTribulation | null {
+    const pending = this.negDomainPendingTribulations.get(playerUuid);
+    return pending ? { ...pending } : null;
+  }
+
+  clearNegDomainPendingTribulation(playerUuid: string): void {
+    this.negDomainPendingTribulations.delete(playerUuid);
+  }
+
+  consumeNegDomainPendingTribulation(playerUuid: string): NegDomainPendingTribulation | null {
+    const pending = this.getNegDomainPendingTribulation(playerUuid);
+    this.clearNegDomainPendingTribulation(playerUuid);
+    return pending;
+  }
+
+  recordNegDomainEscapeEntry(args: {
+    playerUuid: string;
+    playerName: string;
+    zone: string;
+    tick: number;
+    entryRealmRank: number;
+  }): void {
+    if (this.negDomainEscapeSessions.has(args.playerUuid)) {
+      return;
+    }
+
+    this.negDomainEscapeEntryCount += 1;
+    this.negDomainEscapeSessions.set(args.playerUuid, {
+      playerUuid: args.playerUuid,
+      playerName: args.playerName,
+      zone: args.zone,
+      enteredAtTick: args.tick,
+      entryRealmRank: args.entryRealmRank,
+    });
+  }
+
+  recordNegDomainEscapeExit(args: { playerUuid: string; exitRealmRank: number }): void {
+    const session = this.negDomainEscapeSessions.get(args.playerUuid);
+    if (!session) {
+      return;
+    }
+
+    if (args.exitRealmRank < session.entryRealmRank) {
+      this.negDomainPostEscapeRealmDropCount += 1;
+    }
+    this.negDomainEscapeSessions.delete(args.playerUuid);
+  }
+
+  recordSuccessfulNegDomainTribulationAvoidance(): void {
+    this.negDomainSuccessfulTribulationAvoidanceCount += 1;
+  }
+
+  getNegDomainEscapeTelemetrySnapshot(): NegDomainEscapeTelemetrySnapshot {
+    return {
+      escapeEntryCount: this.negDomainEscapeEntryCount,
+      postEscapeRealmDropCount: this.negDomainPostEscapeRealmDropCount,
+      successfulTribulationAvoidanceCount: this.negDomainSuccessfulTribulationAvoidanceCount,
+      activeEscapeSessionCount: this.negDomainEscapeSessions.size,
+      postEscapeRealmDropRate:
+        this.negDomainEscapeEntryCount > 0
+          ? this.negDomainPostEscapeRealmDropCount / this.negDomainEscapeEntryCount
+          : 0,
+    };
   }
 
   getKeyPlayers(): KeyPlayerSummary[] {
@@ -482,6 +624,26 @@ export class WorldModel {
     for (const [playerId, firstSeenTick] of Object.entries(playerFirstSeenTick)) {
       this.playerFirstSeenTick.set(playerId, firstSeenTick);
     }
+
+    this.negDomainPendingTribulations.clear();
+    const pendingTribulations = sanitizeNegDomainPendingTribulations(
+      snapshot.negDomainPendingTribulations,
+    );
+    for (const [playerId, pending] of Object.entries(pendingTribulations)) {
+      this.negDomainPendingTribulations.set(playerId, pending);
+    }
+
+    this.negDomainEscapeSessions.clear();
+    const escapeSessions = sanitizeNegDomainEscapeSessions(snapshot.negDomainEscapeSessions);
+    for (const [playerId, session] of Object.entries(escapeSessions)) {
+      this.negDomainEscapeSessions.set(playerId, session);
+    }
+
+    const escapeTelemetry = sanitizeNegDomainEscapeTelemetry(snapshot.negDomainEscapeTelemetry);
+    this.negDomainEscapeEntryCount = escapeTelemetry.escapeEntryCount;
+    this.negDomainPostEscapeRealmDropCount = escapeTelemetry.postEscapeRealmDropCount;
+    this.negDomainSuccessfulTribulationAvoidanceCount =
+      escapeTelemetry.successfulTribulationAvoidanceCount;
 
     const normalizedLastTick = sanitizeLastTick(snapshot.lastTick);
     const normalizedLastStateTs = sanitizeLastStateTs(snapshot.lastStateTs);
@@ -832,6 +994,8 @@ function cloneWorldState(state: WorldStateV1): WorldStateV1 {
       zone: event.zone,
       details: event.details ? { ...event.details } : undefined,
     })),
+    // plan-era-state-v1 P2: 携带时代状态字段
+    era: state.era ? { ...state.era } : undefined,
   };
 }
 
@@ -1113,12 +1277,109 @@ function sanitizePlayerFirstSeenTick(playerFirstSeenTick: unknown): Record<strin
   return normalized;
 }
 
+function sanitizeNegDomainPendingTribulations(
+  pendingTribulations: unknown,
+): Record<string, NegDomainPendingTribulation> {
+  if (!isRecord(pendingTribulations)) {
+    return {};
+  }
+
+  const normalized: Record<string, NegDomainPendingTribulation> = {};
+  for (const [playerId, pending] of Object.entries(pendingTribulations)) {
+    if (!isRecord(pending)) {
+      continue;
+    }
+
+    const playerUuid = typeof pending.playerUuid === "string" ? pending.playerUuid : playerId;
+    const playerName = typeof pending.playerName === "string" ? pending.playerName : playerUuid;
+    const zone = typeof pending.zone === "string" ? pending.zone : "";
+    const enteredAtTick = sanitizeFiniteNumber(pending.enteredAtTick);
+    const lastSuppressedTick = sanitizeFiniteNumber(pending.lastSuppressedTick);
+    if (zone.length === 0 || enteredAtTick === null || lastSuppressedTick === null) {
+      continue;
+    }
+
+    normalized[playerUuid] = {
+      playerUuid,
+      playerName,
+      zone,
+      enteredAtTick,
+      lastSuppressedTick,
+      reason: "negative_domain_tribulation_exempt",
+    };
+  }
+
+  return normalized;
+}
+
+function sanitizeNegDomainEscapeTelemetry(
+  telemetry: unknown,
+): Omit<NegDomainEscapeTelemetrySnapshot, "activeEscapeSessionCount" | "postEscapeRealmDropRate"> {
+  if (!isRecord(telemetry)) {
+    return {
+      escapeEntryCount: 0,
+      postEscapeRealmDropCount: 0,
+      successfulTribulationAvoidanceCount: 0,
+    };
+  }
+
+  return {
+    escapeEntryCount: sanitizeNonNegativeInteger(telemetry.escapeEntryCount),
+    postEscapeRealmDropCount: sanitizeNonNegativeInteger(telemetry.postEscapeRealmDropCount),
+    successfulTribulationAvoidanceCount: sanitizeNonNegativeInteger(
+      telemetry.successfulTribulationAvoidanceCount,
+    ),
+  };
+}
+
+function sanitizeNegDomainEscapeSessions(
+  sessions: unknown,
+): Record<string, NegDomainEscapeSession> {
+  if (!isRecord(sessions)) {
+    return {};
+  }
+
+  const normalized: Record<string, NegDomainEscapeSession> = {};
+  for (const [playerId, session] of Object.entries(sessions)) {
+    if (!isRecord(session)) {
+      continue;
+    }
+
+    const playerUuid = typeof session.playerUuid === "string" ? session.playerUuid : playerId;
+    const playerName = typeof session.playerName === "string" ? session.playerName : playerUuid;
+    const zone = typeof session.zone === "string" ? session.zone : "";
+    const enteredAtTick = sanitizeFiniteNumber(session.enteredAtTick);
+    const entryRealmRank = sanitizeFiniteNumber(session.entryRealmRank);
+    if (zone.length === 0 || enteredAtTick === null || entryRealmRank === null) {
+      continue;
+    }
+
+    normalized[playerUuid] = {
+      playerUuid,
+      playerName,
+      zone,
+      enteredAtTick,
+      entryRealmRank,
+    };
+  }
+
+  return normalized;
+}
+
 function sanitizeFiniteNumber(value: unknown): number | null {
   if (typeof value !== "number" || !Number.isFinite(value)) {
     return null;
   }
 
   return value;
+}
+
+function sanitizeNonNegativeInteger(value: unknown): number {
+  if (typeof value !== "number" || !Number.isFinite(value) || value < 0) {
+    return 0;
+  }
+
+  return Math.floor(value);
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

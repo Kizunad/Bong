@@ -233,6 +233,7 @@ mod tests {
             id: id.to_string(),
             display_name: id.to_string(),
             category,
+            placeable: None,
             max_stack_count: if matches!(category, ItemCategory::BoneCoin) {
                 u32::MAX
             } else {
@@ -255,6 +256,7 @@ mod tests {
             recipe_fragment_spec: None,
             container_spec: None,
             shelflife_profile: None,
+            shield_spec: None,
             shelflife_track: None,
         }
     }

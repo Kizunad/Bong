@@ -107,6 +107,7 @@ mod tests {
             id: "starter_talisman".to_string(),
             display_name: "启程护符".to_string(),
             category: ItemCategory::Treasure,
+            placeable: None,
             max_stack_count: 1,
             grid_w: 1,
             grid_h: 1,
@@ -125,6 +126,7 @@ mod tests {
             recipe_fragment_spec: None,
             container_spec: None,
             shelflife_profile: None,
+            shield_spec: None,
             shelflife_track: None,
         }
     }

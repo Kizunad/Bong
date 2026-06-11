@@ -46,6 +46,7 @@ use crate::npc::tsy_hostile::{
 };
 use crate::skin::{NpcSkinFallbackPolicy, SkinPool};
 use crate::world::dimension::{CurrentDimension, DimensionKind, DimensionLayers};
+use crate::world::era::WorldEraState;
 use crate::world::poi_novice::PoiNoviceRegistry;
 use crate::world::tsy_lifecycle::DaoxiangOrigin;
 use crate::world::zone::ZoneRegistry;
@@ -88,11 +89,18 @@ pub fn hydrate_dormant_near_players_system(
     mut skin_pool: Option<ResMut<SkinPool>>,
     mut tribulations: EventWriter<InitiateXuhuaTribulation>,
     zone_registry: Option<Res<ZoneRegistry>>,
+    world_era: Option<Res<WorldEraState>>,
 ) {
     let tick = crate::npc::dormant::current_tick(game_tick.as_deref());
     if !crate::npc::dormant::should_run_interval(tick, config.transition_interval_ticks) {
         return;
     }
+
+    // P1 era 注入：读取渡劫阈值系数（Resource 不存在时退回基准 1.0）。
+    let tribulation_threshold_mul = world_era
+        .as_deref()
+        .map(|e| e.current_modifiers().tribulation_threshold_mul)
+        .unwrap_or(1.0);
 
     let player_positions = players
         .iter()
@@ -106,7 +114,7 @@ pub fn hydrate_dormant_near_players_system(
 
     let mut to_hydrate = BTreeMap::<String, bool>::new();
     for (char_id, snapshot) in &store.snapshots {
-        let tribulation_ready = dormant_tribulation_ready(snapshot);
+        let tribulation_ready = dormant_tribulation_ready(snapshot, tribulation_threshold_mul);
         let near_player = nearest_same_dimension_player_distance(
             snapshot.position_vec(),
             snapshot.dimension,
@@ -220,7 +228,8 @@ pub fn dehydrate_far_npcs_system(
         let dimension = current_dimension
             .map(|dimension| dimension.0)
             .unwrap_or(DimensionKind::Overworld);
-        if live_tribulation_ready(cultivation, meridian_system) {
+        // 脱水守护：若 NPC 满足渡劫条件（基准 1.0，不使用时代修正），则不脱水以保留渡劫机会。
+        if live_tribulation_ready(cultivation, meridian_system, 1.0) {
             continue;
         }
         let nearest =
@@ -676,13 +685,27 @@ fn spawn_from_snapshot(
     entity
 }
 
-fn dormant_tribulation_ready(snapshot: &NpcDormantSnapshot) -> bool {
-    live_tribulation_ready(&snapshot.cultivation, &snapshot.meridian_system)
+fn dormant_tribulation_ready(
+    snapshot: &NpcDormantSnapshot,
+    tribulation_threshold_mul: f64,
+) -> bool {
+    live_tribulation_ready(
+        &snapshot.cultivation,
+        &snapshot.meridian_system,
+        tribulation_threshold_mul,
+    )
 }
 
-fn live_tribulation_ready(cultivation: &Cultivation, meridian_system: &MeridianSystem) -> bool {
+/// P1 era 注入：渡劫阈值乘以 `tribulation_threshold_mul`（来自 WorldEraState::current_modifiers）。
+/// 灾劫时代 mul > 1.0 → 需要更高 qi 才能触发渡劫；演绎时代 mul < 1.0 → 阈值微降。
+fn live_tribulation_ready(
+    cultivation: &Cultivation,
+    meridian_system: &MeridianSystem,
+    tribulation_threshold_mul: f64,
+) -> bool {
+    let effective_ratio = DORMANT_TRIBULATION_MIN_QI_RATIO * tribulation_threshold_mul;
     du_xu_prereqs_met(cultivation, meridian_system)
-        && cultivation.qi_current >= cultivation.qi_max * DORMANT_TRIBULATION_MIN_QI_RATIO
+        && cultivation.qi_current >= cultivation.qi_max * effective_ratio
 }
 
 #[cfg(test)]
@@ -771,19 +794,60 @@ mod tests {
     fn dormant_tribulation_ready_requires_spirit_full_meridians_and_qi() {
         let mut ready = snapshot("npc_ready", DVec3::new(10.0, 64.0, 10.0));
         open_all_meridians(&mut ready);
-        assert!(dormant_tribulation_ready(&ready));
+        assert!(dormant_tribulation_ready(&ready, 1.0));
         assert!(live_tribulation_ready(
             &ready.cultivation,
-            &ready.meridian_system
+            &ready.meridian_system,
+            1.0
         ));
 
         let mut low_qi = ready.clone();
         low_qi.cultivation.qi_current = 700.0;
-        assert!(!dormant_tribulation_ready(&low_qi));
+        assert!(!dormant_tribulation_ready(&low_qi, 1.0));
 
         let mut missing_meridian = ready.clone();
         missing_meridian.meridian_system.regular[0].opened = false;
-        assert!(!dormant_tribulation_ready(&missing_meridian));
+        assert!(!dormant_tribulation_ready(&missing_meridian, 1.0));
+    }
+
+    #[test]
+    fn dormant_tribulation_calamity_era_raises_threshold() {
+        use crate::world::era::{current_modifiers, EraType};
+        let mut ready = snapshot("npc_calamity", DVec3::new(10.0, 64.0, 10.0));
+        open_all_meridians(&mut ready);
+        // qi = 0.85 * qi_max — 在 Unknown 时代通过，灾劫时代（×1.1 → 需 0.88）被拒
+        let qi_max = ready.cultivation.qi_max;
+        ready.cultivation.qi_current = qi_max * 0.85;
+
+        let calamity_mul = current_modifiers(EraType::Calamity).tribulation_threshold_mul;
+        assert!(
+            !dormant_tribulation_ready(&ready, calamity_mul),
+            "灾劫时代 qi=0.85*max < 0.8*1.1=0.88*max，dormant tribulation 应被拒"
+        );
+        assert!(
+            dormant_tribulation_ready(&ready, 1.0),
+            "Unknown 时代 qi=0.85*max >= 0.8*max，dormant tribulation 应通过"
+        );
+    }
+
+    #[test]
+    fn dormant_tribulation_deduction_era_lowers_threshold() {
+        use crate::world::era::{current_modifiers, EraType};
+        let mut ready = snapshot("npc_deduction", DVec3::new(10.0, 64.0, 10.0));
+        open_all_meridians(&mut ready);
+        // qi = 0.77 * qi_max — Unknown 时代被拒，演绎时代（×0.95 → 需 0.76）通过
+        let qi_max = ready.cultivation.qi_max;
+        ready.cultivation.qi_current = qi_max * 0.77;
+
+        let deduction_mul = current_modifiers(EraType::Deduction).tribulation_threshold_mul;
+        assert!(
+            dormant_tribulation_ready(&ready, deduction_mul),
+            "演绎时代 qi=0.77*max >= 0.8*0.95=0.76*max，dormant tribulation 应通过"
+        );
+        assert!(
+            !dormant_tribulation_ready(&ready, 1.0),
+            "Unknown 时代 qi=0.77*max < 0.8*max，dormant tribulation 应被拒"
+        );
     }
 
     #[test]

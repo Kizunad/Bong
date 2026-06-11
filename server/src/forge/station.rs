@@ -221,6 +221,7 @@ mod tests {
             id: id.to_string(),
             display_name: id.to_string(),
             category: ItemCategory::Misc,
+            placeable: None,
             max_stack_count: 1,
             grid_w: 2,
             grid_h: 2,
@@ -239,6 +240,7 @@ mod tests {
             recipe_fragment_spec: None,
             container_spec: None,
             shelflife_profile: None,
+            shield_spec: None,
             shelflife_track: None,
         }
     }

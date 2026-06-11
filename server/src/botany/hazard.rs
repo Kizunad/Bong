@@ -9,7 +9,8 @@ use crate::npc::spawn::spawn_beast_npc_at;
 use crate::npc::territory::Territory;
 use crate::tools::{has_required_tool, ToolKind};
 use crate::world::dimension::{DimensionKind, DimensionLayers, OverworldLayer};
-use crate::world::mob_spawn::{spawn_natural_mob_at, NaturalMobKind};
+use crate::world::era::WorldEraState;
+use crate::world::mob_spawn::{era_beast_spawn_gate, spawn_natural_mob_at, NaturalMobKind};
 use crate::world::zone::ZoneRegistry;
 
 pub fn hazard_hints_for_kind(
@@ -195,7 +196,14 @@ pub fn spawn_attracted_mobs_from_harvest(
     dimension_layers: Option<Res<DimensionLayers>>,
     overworld_layers: Query<Entity, With<OverworldLayer>>,
     zone_registry: Option<Res<ZoneRegistry>>,
+    // plan-era-state-v1 M1 — 时代兽密度门控：灾劫×1.5 / 演绎×0.8 / Unknown×1.0。
+    world_era: Option<Res<WorldEraState>>,
 ) {
+    let beast_density_mul = world_era
+        .as_deref()
+        .map(|e| e.current_modifiers().beast_density_mul)
+        .unwrap_or(1.0);
+
     for event in events.read() {
         let Some(dimension) = harvest_zone_dimension(event, zone_registry.as_deref()) else {
             continue;
@@ -219,6 +227,17 @@ pub fn spawn_attracted_mobs_from_harvest(
             event.target_pos[2],
         );
         for idx in 0..count {
+            // plan-era-state-v1 M1 — 时代兽密度门控：每只 spawn 独立采样，保证 Deduction 时代
+            // 不会无脑抑制所有 spawn（概率降低，不是截断）。
+            let spawn_seed = event_seed(event).wrapping_add(idx as u64);
+            if !era_beast_spawn_gate(beast_density_mul, spawn_seed) {
+                tracing::debug!(
+                    "[bong][botany] era_beast_spawn_gate blocked spawn idx={} zone={} beast_density_mul={:.2}",
+                    idx, event.zone_name, beast_density_mul
+                );
+                continue;
+            }
+
             let spawn_pos = attracted_mob_position(event.target_pos, event_seed(event), idx);
             // 拟态灰烬蛛（FaunaKind::MimicSpider）走 spawn_natural_mob_at，
             // 附带完整 MimicSpiderBlackboard / SpiderDisguiseState 组件。

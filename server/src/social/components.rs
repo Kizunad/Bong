@@ -232,6 +232,8 @@ pub struct SpiritNiche {
     pub revealed: bool,
     pub revealed_by: Option<CharId>,
     #[serde(default)]
+    pub is_damaged: bool,
+    #[serde(default)]
     pub guardians: Vec<HouseGuardian>,
 }
 

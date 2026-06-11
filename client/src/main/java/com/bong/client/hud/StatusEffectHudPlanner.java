@@ -25,6 +25,52 @@ public final class StatusEffectHudPlanner {
     /** plan-cultivation-pacing-v1 P2.3: text color for cultivation acceleration indicator. */
     public static final int CULTIVATION_ACCEL_COLOR = 0xFF80E0A0;
 
+    /** Texture namespace+path prefix for per-effect emblem icons. */
+    public static final String ICON_BASE = "bong-client:textures/hud/effects/";
+
+    /**
+     * Effect ids that ship a dedicated emblem texture under {@link #ICON_BASE}.
+     * Keys match server {@code status_effect_id()} output — most variants are
+     * {@code format!("{:?}").to_ascii_lowercase()} (PascalCase → all-lowercase,
+     * no underscore, e.g. {@code DamageReduction → "damagereduction"}); a few
+     * explicit arms keep underscores ({@code qi_regen_paused}). Parameterized
+     * ids ({@code body_part_resist:head}) resolve to their base key through
+     * {@link #iconKey}, so all body parts share one emblem.
+     */
+    private static final java.util.Set<String> ICON_IDS = java.util.Set.of(
+        // dot
+        "bleeding",
+        // control
+        "stunned", "vortexcasting", "parryrecovery", "staggered", "disoriented",
+        "voidcoreactive",
+        // buff
+        "damagereduction", "breakthroughboost", "antispiritpressurepill",
+        "qiregenboost", "insightflash", "woundheal", "body_part_resist",
+        "speedboost", "staminarecovboost", "mirror_concealment", "swordparrying",
+        "spirit_treasure_perception", "cultivationacceleration",
+        "extraordinarymeridianacceleration",
+        // debuff
+        "slowed", "damageamp", "humility", "insighthallucination", "frailty",
+        "qicappermminus", "contaminationboost", "body_part_weaken", "staminacrash",
+        "qidrainforstamina", "legstrain", "qi_regen_paused", "mirror_exposed",
+        "resonancelocked", "qiregenslowed", "damagevulnerability",
+        // unknown
+        "alchemy_buff"
+    );
+
+    /** Strip a parameterized suffix ({@code body_part_resist:head → body_part_resist}). */
+    static String iconKey(String id) {
+        if (id == null) return "";
+        int colon = id.indexOf(':');
+        return colon >= 0 ? id.substring(0, colon) : id;
+    }
+
+    /** Texture path for an effect id, or {@code null} when no emblem ships for it. */
+    static String iconPathFor(String id) {
+        String key = iconKey(id);
+        return ICON_IDS.contains(key) ? ICON_BASE + key + ".png" : null;
+    }
+
     public static List<HudRenderCommand> buildCommands(
         int screenWidth,
         int screenHeight
@@ -64,11 +110,21 @@ public final class StatusEffectHudPlanner {
             out.add(HudRenderCommand.rect(
                 HudRenderLayer.STATUS_EFFECTS, x + 1, y + 1, SLOT_SIZE - 2, SLOT_SIZE - 2, TRACK_BG
             ));
-            // Kind tint fill (dimmer)
-            int tint = tintForKind(e.kind());
-            out.add(HudRenderCommand.rect(
-                HudRenderLayer.STATUS_EFFECTS, x + 2, y + 2, SLOT_SIZE - 4, SLOT_SIZE - 4, tint
-            ));
+            // Inner fill: a per-effect emblem texture when one ships, otherwise a
+            // flat kind tint so an un-iconned effect still reads as its category.
+            // The source-color border (above) carries the category either way.
+            String iconPath = iconPathFor(e.id());
+            if (iconPath != null) {
+                out.add(HudRenderCommand.texture(
+                    HudRenderLayer.STATUS_EFFECTS, iconPath,
+                    x + 2, y + 2, SLOT_SIZE - 4, SLOT_SIZE - 4, 0xFFFFFFFF
+                ));
+            } else {
+                int tint = tintForKind(e.kind());
+                out.add(HudRenderCommand.rect(
+                    HudRenderLayer.STATUS_EFFECTS, x + 2, y + 2, SLOT_SIZE - 4, SLOT_SIZE - 4, tint
+                ));
+            }
             // Remaining-time bar (bottom 2px)
             long rem = e.remainingMs();
             float norm = remainingNorm(rem);

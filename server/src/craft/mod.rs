@@ -65,8 +65,10 @@ pub use unlock::{
 };
 #[allow(unused_imports)]
 pub use workbench::{
-    is_within_workbench_range, WorkbenchBlock, WorkbenchOpenPayload, WORKBENCH_INTERACT_RANGE,
-    WORKBENCH_ITEM_TEMPLATE,
+    handle_workbench_break, handle_workbench_interact, handle_workbench_place,
+    is_within_workbench_range, send_workbench_audio, WorkbenchBlock, WorkbenchOpenPayload,
+    WorkbenchOpenRequest, WORKBENCH_BREAK_AUDIO_RECIPE_ID, WORKBENCH_INTERACT_RANGE,
+    WORKBENCH_ITEM_TEMPLATE, WORKBENCH_OPEN_AUDIO_RECIPE_ID, WORKBENCH_PLACE_AUDIO_RECIPE_ID,
 };
 #[allow(unused_imports)]
 pub use workbench_recipes::register_workbench_recipes;
@@ -131,6 +133,7 @@ pub fn register(app: &mut App) {
     // P2 client → server intents（被 `network/craft_emit::apply_craft_intents` 系统消费）
     app.add_event::<CraftStartIntent>();
     app.add_event::<CraftCancelIntent>();
+    workbench::register(app);
     // P3 三渠道解锁 intent —— 由各 source plan emit，被
     // `network/craft_emit::apply_unlock_intents` 系统消费
     app.add_event::<CraftUnlockIntent>();

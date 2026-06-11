@@ -129,6 +129,7 @@ pub struct ItemTemplate {
     pub id: String,
     pub display_name: String,
     pub category: ItemCategory,
+    pub placeable: Option<String>,
     pub max_stack_count: u32,
     pub grid_w: u8,
     pub grid_h: u8,
@@ -151,6 +152,9 @@ pub struct ItemTemplate {
     pub recipe_fragment_spec: Option<RecipeFragmentSpec>,
     /// plan-backpack-equip-v1 P0 — 可装备容器规格；category=Container 时必填。
     pub container_spec: Option<ContainerSpec>,
+    /// plan-shield-block-v1 P2 — 盾牌物理防御规格；category=Shield 时必填。
+    /// 不继承 ArmorProfile（其 validate 硬拒非四体护甲槽）。
+    pub shield_spec: Option<ShieldSpec>,
     /// plan-food-v1 P1 — 默认 shelflife profile ID；Some(id) 时 `runtime_instance_from_template`
     /// 在 tick=0 自动挂 `Freshness`，无需消费侧手动初始化。
     /// 食物类物品（category=Food）在 food.toml 内填此字段。
@@ -158,6 +162,52 @@ pub struct ItemTemplate {
     /// plan-food-v1 P1 — shelflife 初始路径（`DecayTrack`）；配合 `shelflife_profile` 使用。
     /// None = 无 shelflife（shelflife_profile 也为 None 时）。
     pub shelflife_track: Option<crate::shelflife::DecayTrack>,
+}
+
+/// plan-shield-block-v1 P2 — 盾牌物理防御模板级别静态规格（不随 instance 变动）。
+/// 凡人级物理盾，不触真元（qi_physics），与 ArmorProfile 独立。
+/// - `block_ratio`：正面命中时削减伤害的比例（0.0..=0.7；worldview §五 凡人盾上限 0.7）。
+/// - `durability_max`：盾的最大耐久点数（P3 按点数扣减）。
+/// - `stamina_drain_per_s`：持续举盾每秒消耗体力。**P2 仅 validate/存储，运行时由常量
+///   `SHIELD_DRAIN_PER_SEC = 3.0` 覆盖（两盾当前同值）；P4 将经 `shield_block_profile`
+///   按熟练度接入此 per-shield 字段。配置非 3.0 的值在 P2 过验但暂不生效，勿误判为已接线。
+#[derive(Debug, Clone, PartialEq)]
+pub struct ShieldSpec {
+    /// 正面命中削减比例（0.0..=0.7）。
+    pub block_ratio: f64,
+    /// 最大耐久点数（P3 用）。
+    pub durability_max: f64,
+    /// 每秒体力 drain（P2 validate/存储但运行时不消费——drain 用常量 SHIELD_DRAIN_PER_SEC=3.0；P4 接入按熟练度调整）。
+    pub stamina_drain_per_s: f32,
+}
+
+impl ShieldSpec {
+    /// 校验 ShieldSpec 字段合法性：
+    /// - block_ratio 须在 (0, 0.7] 区间（worldview §五 凡人盾上限 0.7，不能为 0）。
+    /// - durability_max 须 > 0。
+    /// - stamina_drain_per_s 须 > 0 且有限。
+    pub fn validate(&self, item_id: &str) -> Result<(), String> {
+        if !self.block_ratio.is_finite() || self.block_ratio <= 0.0 || self.block_ratio > 0.7 {
+            return Err(format!(
+                "item `{item_id}` shield_spec.block_ratio {} must be in (0, 0.7] \
+                 (worldview §五: 凡人盾不得压过修士防御)",
+                self.block_ratio
+            ));
+        }
+        if !self.durability_max.is_finite() || self.durability_max <= 0.0 {
+            return Err(format!(
+                "item `{item_id}` shield_spec.durability_max {} must be > 0",
+                self.durability_max
+            ));
+        }
+        if !self.stamina_drain_per_s.is_finite() || self.stamina_drain_per_s <= 0.0 {
+            return Err(format!(
+                "item `{item_id}` shield_spec.stamina_drain_per_s {} must be > 0 and finite",
+                self.stamina_drain_per_s
+            ));
+        }
+        Ok(())
+    }
 }
 
 /// plan-backpack-equip-v1 P0 — 可装备容器（背包/囊/挎包）的模板级静态规格。
@@ -234,11 +284,15 @@ pub enum ItemCategory {
     Tool,
     Scroll,
     Misc,
+    Block,
     /// plan-backpack-equip-v1 P0 — 可装备容器（背包/囊/挎包），携带 ContainerSpec。
     #[allow(dead_code)]
     Container,
     /// plan-food-v1 P0 — 灵食（熟肉 / 陈饼 / 灵果 / 陈酒 / 陈醋等），消费时触发 FoodRegen。
     Food,
+    /// plan-shield-block-v1 P0 — 凡人级物理防御盾牌（wooden_shield / bone_shield），装备于 off_hand 槽。
+    /// 全程不涉真元（纯体力消耗），与 ItemCategory::Armor 语义不同（ArmorProfile 硬拒非四槽）。
+    Shield,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -267,6 +321,13 @@ pub enum ItemEffect {
     },
     ContaminationCleanse {
         magnitude: f64,
+    },
+    ComposureRestore {
+        magnitude: f64,
+    },
+    WoundHeal {
+        magnitude: f64,
+        target: Option<String>,
     },
     LifespanExtension {
         years: u32,
@@ -1418,6 +1479,8 @@ struct ItemTemplateToml {
     id: String,
     name: String,
     category: String,
+    #[serde(default)]
+    placeable: Option<String>,
     grid_w: u8,
     grid_h: u8,
     base_weight: f64,
@@ -1450,6 +1513,9 @@ struct ItemTemplateToml {
     /// plan-backpack-equip-v1 P0：category == "Container" 时必填，否则须缺省。
     #[serde(default)]
     container: Option<ContainerSpecToml>,
+    /// plan-shield-block-v1 P2：category == "Shield" 时必填，否则须缺省。
+    #[serde(default)]
+    shield_spec: Option<ShieldSpecToml>,
     /// plan-food-v1 P1：食物类物品的默认 shelflife profile ID。
     /// Some(id) → 物品生成时自动挂 `Freshness`；None → 无 shelflife。
     #[serde(default)]
@@ -1519,6 +1585,15 @@ pub struct ContainerSpecToml {
     durability_cost_per_op: f64,
 }
 
+/// plan-shield-block-v1 P2 — TOML 层的盾牌规格块（对应 `[item.shield_spec]`）。
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ShieldSpecToml {
+    block_ratio: f64,
+    durability_max: f64,
+    stamina_drain_per_s: f32,
+}
+
 fn default_qi_cost_mul() -> f32 {
     1.0
 }
@@ -1585,9 +1660,25 @@ pub fn parse_container_spec(
     })
 }
 
+/// plan-shield-block-v1 P2 — 解析 TOML 盾牌规格块为 `ShieldSpec`。
+pub fn parse_shield_spec(
+    raw: ShieldSpecToml,
+    source_path: &Path,
+    item_id: &str,
+) -> Result<ShieldSpec, String> {
+    let spec = ShieldSpec {
+        block_ratio: raw.block_ratio,
+        durability_max: raw.durability_max,
+        stamina_drain_per_s: raw.stamina_drain_per_s,
+    };
+    spec.validate(item_id)
+        .map_err(|e| format!("{} {}", source_path.display(), e))?;
+    Ok(spec)
+}
+
 fn default_max_stack_count_for_category(category: ItemCategory) -> u32 {
     match category {
-        ItemCategory::Herb => 64,
+        ItemCategory::Herb | ItemCategory::Block => 64,
         ItemCategory::BoneCoin => u32::MAX,
         ItemCategory::Pill | ItemCategory::Misc | ItemCategory::Food => 16,
         ItemCategory::Armor
@@ -1597,7 +1688,9 @@ fn default_max_stack_count_for_category(category: ItemCategory) -> u32 {
         | ItemCategory::RecipeFragment
         | ItemCategory::RecipeHint
         | ItemCategory::Scroll
-        | ItemCategory::Container => 1,
+        | ItemCategory::Container
+        // plan-shield-block-v1 P0 — 盾牌不可叠加，与武器/防具同为 1。
+        | ItemCategory::Shield => 1,
     }
 }
 
@@ -1648,6 +1741,19 @@ impl ItemTemplateToml {
         }
 
         let category = parse_item_category(self.category.as_str(), source_path, id.as_str())?;
+        let placeable = self
+            .placeable
+            .map(|raw| {
+                required_non_empty(raw, source_path, &format!("item `{id}` placeable"))
+                    .map(|value| value.trim().to_ascii_lowercase())
+            })
+            .transpose()?;
+        if placeable.is_some() && category != ItemCategory::Block {
+            return Err(format!(
+                "{} item `{id}` has placeable marker but category != Block",
+                source_path.display()
+            ));
+        }
         let rarity = parse_item_rarity(self.rarity.as_str(), source_path, id.as_str())?;
         let max_stack_count = self
             .max_stack_count
@@ -1732,6 +1838,26 @@ impl ItemTemplateToml {
             (_, None) => None,
         };
 
+        // plan-shield-block-v1 P2：shield_spec 块与 category=Shield 必须一致。
+        let shield_spec = match (&category, self.shield_spec) {
+            (ItemCategory::Shield, Some(raw)) => {
+                Some(parse_shield_spec(raw, source_path, id.as_str())?)
+            }
+            (ItemCategory::Shield, None) => {
+                return Err(format!(
+                    "{} item `{id}` has category=Shield but missing [item.shield_spec] block",
+                    source_path.display()
+                ));
+            }
+            (_, Some(_)) => {
+                return Err(format!(
+                    "{} item `{id}` has [item.shield_spec] block but category != Shield",
+                    source_path.display()
+                ));
+            }
+            (_, None) => None,
+        };
+
         // plan-food-v1 P1：解析 shelflife_track 字符串 → DecayTrack。
         // CodeRabbit fix：shelflife_track 只写而 shelflife_profile=None 时报错，
         // 防止半配置静默绕过 freshness gate。
@@ -1764,6 +1890,7 @@ impl ItemTemplateToml {
             id,
             display_name,
             category,
+            placeable,
             max_stack_count,
             grid_w: self.grid_w,
             grid_h: self.grid_h,
@@ -1781,6 +1908,7 @@ impl ItemTemplateToml {
             technique_scroll_spec,
             recipe_fragment_spec,
             container_spec,
+            shield_spec,
             shelflife_profile: self.shelflife_profile,
             shelflife_track,
         })
@@ -1964,9 +2092,12 @@ fn parse_item_category(
         "tool" => Ok(ItemCategory::Tool),
         "scroll" => Ok(ItemCategory::Scroll),
         "misc" => Ok(ItemCategory::Misc),
+        "block" => Ok(ItemCategory::Block),
         "container" => Ok(ItemCategory::Container),
         // plan-food-v1 P0 — 灵食分类
         "food" => Ok(ItemCategory::Food),
+        // plan-shield-block-v1 P0 — 凡人级物理防御盾牌
+        "shield" => Ok(ItemCategory::Shield),
         other => Err(format!(
             "{} item `{item_id}` has unknown category `{other}`",
             source_path.display()
@@ -2020,6 +2151,13 @@ fn parse_item_effect(
         }
         "contamination_cleanse" => Ok(ItemEffect::ContaminationCleanse {
             magnitude: effect.magnitude,
+        }),
+        "composure_restore" => Ok(ItemEffect::ComposureRestore {
+            magnitude: effect.magnitude,
+        }),
+        "wound_heal" => Ok(ItemEffect::WoundHeal {
+            magnitude: effect.magnitude,
+            target: parse_wound_heal_effect_target(effect.target, source_path, item_id)?,
         }),
         "lifespan_extension" => {
             let source = effect
@@ -2098,6 +2236,42 @@ fn parse_item_effect(
             source_path.display()
         )),
     }
+}
+
+fn parse_wound_heal_effect_target(
+    target: Option<String>,
+    source_path: &Path,
+    item_id: &str,
+) -> Result<Option<String>, String> {
+    let Some(raw) = target else {
+        return Ok(None);
+    };
+    let parts: Vec<String> = raw
+        .split('/')
+        .map(|part| part.trim().to_ascii_lowercase())
+        .collect();
+    if parts.iter().any(String::is_empty) {
+        return Err(format!(
+            "{} item `{item_id}` effect `wound_heal` has empty target segment; omit target for all wounds or use body parts separated by `/`",
+            source_path.display()
+        ));
+    }
+    for part in &parts {
+        if !is_wound_heal_body_part(part) {
+            return Err(format!(
+                "{} item `{item_id}` effect `wound_heal` has unknown target `{part}`; expected one of head/chest/back/abdomen/arm_l/arm_r/leg_l/leg_r",
+                source_path.display()
+            ));
+        }
+    }
+    Ok(Some(parts.join("/")))
+}
+
+fn is_wound_heal_body_part(part: &str) -> bool {
+    matches!(
+        part,
+        "head" | "chest" | "back" | "abdomen" | "arm_l" | "arm_r" | "leg_l" | "leg_r"
+    )
 }
 
 #[derive(Debug, Deserialize)]
@@ -3398,6 +3572,45 @@ pub fn dropped_loot_snapshot(registry: &DroppedLootRegistry) -> Vec<DroppedLootE
     drops
 }
 
+pub struct TemplateDroppedLootRequest<'a> {
+    pub template_id: &'a str,
+    pub stack_count: u32,
+    pub world_pos: [f64; 3],
+    pub dimension: DimensionKind,
+    pub current_tick: u64,
+}
+
+pub fn spawn_template_dropped_loot(
+    registry: &mut DroppedLootRegistry,
+    item_registry: &ItemRegistry,
+    allocator: &mut InventoryInstanceIdAllocator,
+    request: TemplateDroppedLootRequest<'_>,
+) -> Result<DroppedLootEntry, String> {
+    if request.stack_count == 0 {
+        return Err("spawn_template_dropped_loot requires stack_count >= 1".to_string());
+    }
+    let template = item_registry
+        .get(request.template_id)
+        .ok_or_else(|| format!("unknown item template id `{}`", request.template_id))?;
+    let instance_id = allocator.next_id()?;
+    let dropped = DroppedLootEntry {
+        instance_id,
+        source_container_id: "placeable_break".to_string(),
+        source_row: 0,
+        source_col: 0,
+        world_pos: request.world_pos,
+        dimension: request.dimension,
+        item: runtime_instance_from_template(
+            template,
+            instance_id,
+            request.stack_count,
+            request.current_tick,
+        ),
+    };
+    registry.entries.insert(instance_id, dropped.clone());
+    Ok(dropped)
+}
+
 pub fn pickup_dropped_loot_instance(
     inventory: &mut PlayerInventory,
     registry: &mut DroppedLootRegistry,
@@ -3756,6 +3969,13 @@ fn validate_move_semantics(
                 item.template_id
             ))
         }
+        // plan-shield-block-v1 P0 — 盾牌（Shield 类）同样不能进 hotbar，必须留在 off_hand 槽。
+        InventoryLocationV1::Hotbar { .. } if matches!(template.category, ItemCategory::Shield) => {
+            Err(format!(
+                "shield `{}` cannot move to hotbar; shield must stay in equipped slots",
+                item.template_id
+            ))
+        }
         InventoryLocationV1::Hotbar { .. }
             if matches!(template.category, ItemCategory::Treasure) =>
         {
@@ -3799,6 +4019,18 @@ fn validate_move_semantics(
                     if inventory.equipped.contains_key(EQUIP_SLOT_TWO_HAND) && !from_two_hand {
                         return Err(
                             "cannot equip off_hand while two_hand slot is occupied".to_string()
+                        );
+                    }
+                    return Ok(());
+                }
+
+                // plan-shield-block-v1 P0 — 盾牌（Shield 类）可装入 off_hand；
+                // 同样受 two_hand 占用约束，但不需要 weapon_spec（盾无 weapon_spec）。
+                if matches!(template.category, ItemCategory::Shield) {
+                    if inventory.equipped.contains_key(EQUIP_SLOT_TWO_HAND) && !from_two_hand {
+                        return Err(
+                            "cannot equip off_hand shield while two_hand slot is occupied"
+                                .to_string(),
                         );
                     }
                     return Ok(());
@@ -4426,6 +4658,15 @@ fn required_non_empty_option(
 mod tests {
     use super::*;
 
+    const BLOCK_ITEM_TEMPLATE_IDS: [&str; 6] = [
+        "earth_crumb",
+        "hardened_soil",
+        "barren_sand",
+        "weathered_stone",
+        "raw_clay_lump",
+        "obsidian_shard",
+    ];
+
     fn test_registry_from_strs(entries: &[(&str, &str)]) -> Result<ItemRegistry, String> {
         let mut templates = HashMap::new();
         for (template_id, display_name) in entries {
@@ -4435,6 +4676,7 @@ mod tests {
                     id: (*template_id).to_string(),
                     display_name: (*display_name).to_string(),
                     category: ItemCategory::Misc,
+                    placeable: None,
                     max_stack_count: 1,
                     grid_w: 1,
                     grid_h: 1,
@@ -4452,6 +4694,8 @@ mod tests {
                     technique_scroll_spec: None,
                     recipe_fragment_spec: None,
                     container_spec: None,
+                    shield_spec: None,
+
                     shelflife_profile: None,
                     shelflife_track: None,
                 },
@@ -4471,6 +4715,7 @@ mod tests {
             id: template_id.to_string(),
             display_name: template_id.to_string(),
             category,
+            placeable: None,
             max_stack_count,
             grid_w,
             grid_h,
@@ -4488,6 +4733,8 @@ mod tests {
             technique_scroll_spec: None,
             recipe_fragment_spec: None,
             container_spec: None,
+            shield_spec: None,
+
             shelflife_profile: None,
             shelflife_track: None,
         }
@@ -4564,6 +4811,108 @@ mod tests {
             error.contains("unknown poison pill target `poison_pill_typo`"),
             "expected poison pill target validation error, got {error}"
         );
+    }
+
+    #[test]
+    fn parse_item_effect_accepts_wound_heal_missing_target_as_all_wounds() {
+        let effect = parse_item_effect(
+            ItemEffectToml {
+                kind: "wound_heal".to_string(),
+                magnitude: 1.0,
+                target: None,
+                duration_ticks: None,
+            },
+            Path::new("<inline-items.toml>"),
+            "bandage",
+        )
+        .expect("wound_heal without target should parse as all wounds");
+
+        assert_eq!(
+            effect,
+            ItemEffect::WoundHeal {
+                magnitude: 1.0,
+                target: None
+            }
+        );
+    }
+
+    #[test]
+    fn parse_item_effect_rejects_wound_heal_blank_target() {
+        let error = parse_item_effect(
+            ItemEffectToml {
+                kind: "wound_heal".to_string(),
+                magnitude: 1.0,
+                target: Some("   ".to_string()),
+                duration_ticks: None,
+            },
+            Path::new("<inline-items.toml>"),
+            "blank_bandage",
+        )
+        .expect_err("blank wound_heal target should be rejected instead of healing all wounds");
+
+        assert!(
+            error.contains("empty target segment"),
+            "expected empty wound_heal target validation error, got {error}"
+        );
+    }
+
+    #[test]
+    fn parse_item_effect_rejects_wound_heal_unknown_target() {
+        let error = parse_item_effect(
+            ItemEffectToml {
+                kind: "wound_heal".to_string(),
+                magnitude: 1.0,
+                target: Some("arm_l/tail".to_string()),
+                duration_ticks: None,
+            },
+            Path::new("<inline-items.toml>"),
+            "tail_splint",
+        )
+        .expect_err("unknown wound_heal body part should be rejected");
+
+        assert!(
+            error.contains("unknown target `tail`"),
+            "expected unknown wound_heal target validation error, got {error}"
+        );
+    }
+
+    #[test]
+    fn item_effect_new_consumable_variants_serde_roundtrip() {
+        for original in [
+            ItemEffect::ComposureRestore { magnitude: 0.35 },
+            ItemEffect::WoundHeal {
+                magnitude: 1.0,
+                target: None,
+            },
+            ItemEffect::WoundHeal {
+                magnitude: 2.0,
+                target: Some("arm_l/arm_r".to_string()),
+            },
+        ] {
+            let json = serde_json::to_string(&original).expect("new item effect should serialize");
+            let parsed: ItemEffect =
+                serde_json::from_str(&json).expect("new item effect should deserialize");
+            assert_eq!(
+                parsed, original,
+                "expected serde roundtrip to preserve new consumable effect, json={json}"
+            );
+        }
+    }
+
+    #[test]
+    fn item_effect_new_consumable_variants_reject_invalid_json_shape() {
+        for json in [
+            r#"{"ComposureRestore":{"amount":0.35}}"#,
+            r#"{"WoundHeal":{"magnitude":1.0,"target":5}}"#,
+            r#"{"WoundHeal":{"target":"arm_l"}}"#,
+        ] {
+            let error = serde_json::from_str::<ItemEffect>(json)
+                .expect_err("invalid new item effect JSON should fail");
+            assert!(
+                !error.to_string().is_empty(),
+                "expected serde error for invalid new item effect JSON, json={json}"
+            );
+        }
     }
 
     fn empty_inventory(rows: u8, cols: u8) -> PlayerInventory {
@@ -4682,6 +5031,79 @@ mod tests {
             Some(ItemEffect::QiRecovery { amount }) if (*amount - 60.0).abs() < f64::EPSILON
         ));
         assert!(matches!(
+            registry
+                .get("huiyuan_decoction")
+                .and_then(|item| item.effect.as_ref()),
+            Some(ItemEffect::QiRecovery { amount }) if (*amount - 40.0).abs() < f64::EPSILON
+        ));
+        assert!(matches!(
+            registry
+                .get("meridian_salve")
+                .and_then(|item| item.effect.as_ref()),
+            Some(ItemEffect::MeridianHeal { magnitude, target })
+                if (*magnitude - 0.2).abs() < f64::EPSILON && target == "any_meridian"
+        ));
+        assert!(matches!(
+            registry
+                .get("meridian_rubbing")
+                .and_then(|item| item.effect.as_ref()),
+            Some(ItemEffect::MeridianHeal { magnitude, target })
+                if (*magnitude - 0.15).abs() < f64::EPSILON && target == "any_meridian"
+        ));
+        assert!(matches!(
+            registry
+                .get("qingzhuo_powder")
+                .and_then(|item| item.effect.as_ref()),
+            Some(ItemEffect::ContaminationCleanse { magnitude })
+                if (*magnitude - 0.4).abs() < f64::EPSILON
+        ));
+        assert!(matches!(
+            registry
+                .get("anti_gu_powder")
+                .and_then(|item| item.effect.as_ref()),
+            Some(ItemEffect::ContaminationCleanse { magnitude })
+                if (*magnitude - 0.4).abs() < f64::EPSILON
+        ));
+        assert!(matches!(
+            registry
+                .get("qi_guide_talisman")
+                .and_then(|item| item.effect.as_ref()),
+            Some(ItemEffect::FoodRegen {
+                bonus_factor,
+                duration_ticks,
+            }) if (*bonus_factor - 0.30).abs() < f32::EPSILON && *duration_ticks == 36_000
+        ));
+        assert!(matches!(
+            registry
+                .get("calming_tea")
+                .and_then(|item| item.effect.as_ref()),
+            Some(ItemEffect::ComposureRestore { magnitude })
+                if (*magnitude - 0.35).abs() < f64::EPSILON
+        ));
+        assert!(matches!(
+            registry.get("bandage").and_then(|item| item.effect.as_ref()),
+            Some(ItemEffect::WoundHeal { magnitude, target })
+                if (*magnitude - 1.0).abs() < f64::EPSILON && target.is_none()
+        ));
+        assert!(matches!(
+            registry
+                .get("arm_splint")
+                .and_then(|item| item.effect.as_ref()),
+            Some(ItemEffect::WoundHeal {
+                magnitude,
+                target: Some(target),
+            }) if (*magnitude - 2.0).abs() < f64::EPSILON && target == "arm_l/arm_r"
+        ));
+        assert!(matches!(
+            registry
+                .get("leg_splint")
+                .and_then(|item| item.effect.as_ref()),
+            Some(ItemEffect::WoundHeal {
+                magnitude,
+                target: Some(target),
+            }) if (*magnitude - 2.0).abs() < f64::EPSILON && target == "leg_l/leg_r"
+        ));
+        assert!(matches!(
             registry.get("life_core").and_then(|item| item.effect.as_ref()),
             Some(ItemEffect::LifespanExtension {
                 years: 25,
@@ -4698,6 +5120,7 @@ mod tests {
             registry.get("spirit_treasure_jizhaojing"),
             Some(ItemTemplate {
                 category: ItemCategory::Treasure,
+                placeable: None,
                 rarity: ItemRarity::Ancient,
                 max_stack_count: 1,
                 ..
@@ -5143,6 +5566,46 @@ max_stack_count = 0
     }
 
     #[test]
+    fn parse_item_category_accepts_block_alias() {
+        for raw in ["block", "Block", " block "] {
+            let category =
+                parse_item_category(raw, Path::new("<inline-items.toml>"), "earth_crumb")
+                    .expect("block category alias should parse");
+
+            assert_eq!(category, ItemCategory::Block);
+        }
+    }
+
+    #[test]
+    fn block_category_default_stack_count_is_64() {
+        assert_eq!(
+            default_max_stack_count_for_category(ItemCategory::Block),
+            64
+        );
+    }
+
+    #[test]
+    fn block_material_templates_load_with_block_category_and_default_stack() {
+        let registry =
+            load_item_registry().expect("item registry should load from assets/items/*.toml");
+
+        for template_id in BLOCK_ITEM_TEMPLATE_IDS {
+            let template = registry
+                .get(template_id)
+                .unwrap_or_else(|| panic!("block item `{template_id}` should load"));
+            assert_eq!(
+                template.category,
+                ItemCategory::Block,
+                "block item `{template_id}` must use ItemCategory::Block"
+            );
+            assert_eq!(
+                template.max_stack_count, 64,
+                "block item `{template_id}` should inherit Block default stack count"
+            );
+        }
+    }
+
+    #[test]
     fn parse_forge_station_spec_accepts_valid_tier() {
         let spec = parse_forge_station_spec(
             ForgeStationSpecToml { tier: 4 },
@@ -5255,8 +5718,8 @@ max_stack_count = 0
             );
         }
         assert!(
-            !all_template_ids.contains(&"spirit_niche_stone"),
-            "spirit_niche_stone must be granted by spawn coffin, not default loadout"
+            !all_template_ids.contains(&"niche_base"),
+            "niche_base must be granted by spawn coffin, not default loadout"
         );
     }
 
@@ -5428,6 +5891,7 @@ cols = 4
                 id: "wide_talisman".to_string(),
                 display_name: "阔符".to_string(),
                 category: ItemCategory::Misc,
+                placeable: None,
                 max_stack_count: 1,
                 grid_w: 2,
                 grid_h: 2,
@@ -5445,6 +5909,8 @@ cols = 4
                 technique_scroll_spec: None,
                 recipe_fragment_spec: None,
                 container_spec: None,
+                shield_spec: None,
+
                 shelflife_profile: None,
                 shelflife_track: None,
             },
@@ -5494,6 +5960,7 @@ cols = 4
                 id: "wide_talisman".to_string(),
                 display_name: "阔符".to_string(),
                 category: ItemCategory::Misc,
+                placeable: None,
                 max_stack_count: 1,
                 grid_w: 2,
                 grid_h: 2,
@@ -5511,6 +5978,8 @@ cols = 4
                 technique_scroll_spec: None,
                 recipe_fragment_spec: None,
                 container_spec: None,
+                shield_spec: None,
+
                 shelflife_profile: None,
                 shelflife_track: None,
             },
@@ -5751,6 +6220,82 @@ cols = 4
         assert_eq!(receipt.merged_instance_ids, vec![first_instance_id]);
         assert_eq!(inventory.containers[0].items.len(), 1);
         assert_eq!(inventory.containers[0].items[0].instance.stack_count, 15);
+    }
+
+    #[test]
+    fn runtime_grant_merges_same_block_template_stack() {
+        let registry = registry_from_templates(vec![test_template(
+            "earth_crumb",
+            ItemCategory::Block,
+            1,
+            1,
+            64,
+        )]);
+        let mut inventory = empty_inventory(2, 2);
+        let mut allocator = InventoryInstanceIdAllocator::new(100);
+
+        add_item_to_player_inventory(
+            &mut inventory,
+            &registry,
+            &mut allocator,
+            "earth_crumb",
+            10,
+            0,
+        )
+        .expect("initial block stack should fit");
+        let first_instance_id = inventory.containers[0].items[0].instance.instance_id;
+
+        let receipt = add_item_to_player_inventory(
+            &mut inventory,
+            &registry,
+            &mut allocator,
+            "earth_crumb",
+            5,
+            0,
+        )
+        .expect("same block template should merge into existing stack");
+
+        assert_eq!(receipt.instance_id, 0);
+        assert!(receipt.created_instance_ids.is_empty());
+        assert_eq!(receipt.merged_instance_ids, vec![first_instance_id]);
+        assert_eq!(inventory.containers[0].items.len(), 1);
+        assert_eq!(inventory.containers[0].items[0].instance.stack_count, 15);
+    }
+
+    #[test]
+    fn runtime_grant_keeps_different_block_templates_in_separate_stacks() {
+        let registry = registry_from_templates(vec![
+            test_template("earth_crumb", ItemCategory::Block, 1, 1, 64),
+            test_template("barren_sand", ItemCategory::Block, 1, 1, 64),
+        ]);
+        let mut inventory = empty_inventory(2, 2);
+        let mut allocator = InventoryInstanceIdAllocator::new(110);
+
+        add_item_to_player_inventory(
+            &mut inventory,
+            &registry,
+            &mut allocator,
+            "earth_crumb",
+            1,
+            0,
+        )
+        .expect("earth_crumb block stack should fit");
+        add_item_to_player_inventory(
+            &mut inventory,
+            &registry,
+            &mut allocator,
+            "barren_sand",
+            1,
+            0,
+        )
+        .expect("barren_sand block stack should fit");
+
+        let main_pack = &inventory.containers[0];
+        assert_eq!(main_pack.items.len(), 2);
+        assert_eq!(main_pack.items[0].instance.template_id, "earth_crumb");
+        assert_eq!(main_pack.items[0].instance.stack_count, 1);
+        assert_eq!(main_pack.items[1].instance.template_id, "barren_sand");
+        assert_eq!(main_pack.items[1].instance.stack_count, 1);
     }
 
     #[test]
@@ -6252,6 +6797,37 @@ cols = 4
     }
 
     #[test]
+    fn apply_move_rejects_block_to_main_hand() {
+        use crate::schema::inventory::{EquipSlotV1, InventoryLocationV1};
+
+        let registry = load_item_registry().expect("item registry should load");
+        let mut inv = make_test_inventory_with_one_item();
+        inv.containers[0].items[0].instance.template_id = "earth_crumb".to_string();
+        inv.containers[0].items[0].instance.display_name = "土屑".to_string();
+
+        let error = apply_inventory_move(
+            &mut inv,
+            &registry,
+            42,
+            &InventoryLocationV1::Container {
+                container_id: "main_pack".to_string(),
+                row: 0,
+                col: 0,
+            },
+            &InventoryLocationV1::Equip {
+                slot: EquipSlotV1::MainHand,
+            },
+        )
+        .expect_err("block items must not equip to main_hand");
+
+        assert!(
+            error.contains("expected weapon, tool, or hoe"),
+            "expected main_hand category rejection, got: {error}"
+        );
+        assert!(!inv.equipped.contains_key(EQUIP_SLOT_MAIN_HAND));
+    }
+
+    #[test]
     fn item_registry_loads_all_24_mundane_armor_templates() {
         let registry = load_item_registry().expect("item registry should load");
 
@@ -6502,6 +7078,42 @@ cols = 4
         assert!(error.contains("armor `armor_bone_boots` cannot move to hotbar"));
     }
 
+    // plan-shield-block-v1 P0 MAJOR #1 — 盾不能进 hotbar（Shield category 守卫回归）。
+    #[test]
+    fn apply_move_rejects_shield_to_hotbar() {
+        use crate::schema::inventory::InventoryLocationV1;
+
+        let registry = load_item_registry().expect("item registry should load");
+        let mut inv = make_test_inventory_with_one_item();
+        inv.containers[0].items[0].instance.template_id = "wooden_shield".to_string();
+        inv.containers[0].items[0].instance.display_name = "木盾".to_string();
+        inv.containers[0].items[0].instance.grid_h = 2;
+
+        let error = apply_inventory_move(
+            &mut inv,
+            &registry,
+            42,
+            &InventoryLocationV1::Container {
+                container_id: "main_pack".to_string(),
+                row: 0,
+                col: 0,
+            },
+            &InventoryLocationV1::Hotbar { index: 0 },
+        )
+        .expect_err("shield should be rejected from hotbar");
+
+        assert!(
+            error.contains("shield `wooden_shield` cannot move to hotbar"),
+            "期望错误消息含 'shield `wooden_shield` cannot move to hotbar'，\
+             实际消息：{error}"
+        );
+        assert!(
+            error.contains("shield must stay in equipped slots"),
+            "期望错误消息含 'shield must stay in equipped slots'，\
+             实际消息：{error}"
+        );
+    }
+
     #[test]
     fn apply_move_rejects_non_dagger_off_hand_weapon() {
         use crate::schema::inventory::{EquipSlotV1, InventoryLocationV1};
@@ -6528,6 +7140,42 @@ cols = 4
         .expect_err("sword should be rejected from off_hand");
 
         assert!(error.contains("only dagger/fist are allowed"));
+    }
+
+    // plan-shield-block-v1 P0 MAJOR #2 — off_hand 路径 a：无 weapon_spec 的非武器物品（armor）
+    // 装 off_hand 被拒，错误消息含 "expected dagger/fist weapon or treasure"。
+    #[test]
+    fn apply_move_rejects_non_weapon_armor_to_off_hand() {
+        use crate::schema::inventory::{EquipSlotV1, InventoryLocationV1};
+
+        let registry = load_item_registry().expect("item registry should load");
+        let mut inv = make_test_inventory_with_one_item();
+        // armor_bone_boots：ItemCategory::Armor，无 weapon_spec → 走路径 a 被 ok_or_else 拒
+        inv.containers[0].items[0].instance.template_id = "armor_bone_boots".to_string();
+        inv.containers[0].items[0].instance.display_name = "骨甲靴".to_string();
+        inv.containers[0].items[0].instance.grid_w = 1;
+        inv.containers[0].items[0].instance.grid_h = 1;
+
+        let error = apply_inventory_move(
+            &mut inv,
+            &registry,
+            42,
+            &InventoryLocationV1::Container {
+                container_id: "main_pack".to_string(),
+                row: 0,
+                col: 0,
+            },
+            &InventoryLocationV1::Equip {
+                slot: EquipSlotV1::OffHand,
+            },
+        )
+        .expect_err("armor should be rejected from off_hand (path a: no weapon_spec)");
+
+        assert!(
+            error.contains("expected dagger/fist weapon or treasure"),
+            "期望错误消息含 'expected dagger/fist weapon or treasure'（off_hand 路径 a，\
+             无 weapon_spec 非武器物品），实际消息：{error}"
+        );
     }
 
     #[test]
@@ -7241,6 +7889,7 @@ cols = 4
                 id: "iron_sword".to_string(),
                 display_name: "铁剑".to_string(),
                 category: ItemCategory::Weapon,
+                placeable: None,
                 max_stack_count: 1,
                 grid_w: 1,
                 grid_h: 2,
@@ -7264,6 +7913,8 @@ cols = 4
                 technique_scroll_spec: None,
                 recipe_fragment_spec: None,
                 container_spec: None,
+                shield_spec: None,
+
                 shelflife_profile: None,
                 shelflife_track: None,
             },
@@ -7315,6 +7966,7 @@ cols = 4
                 id: "iron_sword".to_string(),
                 display_name: "铁剑".to_string(),
                 category: ItemCategory::Weapon,
+                placeable: None,
                 max_stack_count: 1,
                 grid_w: 1,
                 grid_h: 2,
@@ -7338,6 +7990,8 @@ cols = 4
                 technique_scroll_spec: None,
                 recipe_fragment_spec: None,
                 container_spec: None,
+                shield_spec: None,
+
                 shelflife_profile: None,
                 shelflife_track: None,
             },
@@ -7624,6 +8278,7 @@ cols = 4
             id: id.to_string(),
             display_name: id.to_string(),
             category: ItemCategory::Container,
+            placeable: None,
             max_stack_count: 1,
             grid_w: 2,
             grid_h: 3,
@@ -7647,6 +8302,8 @@ cols = 4
                 equip_slot: equip_slot.to_string(),
                 durability_cost_per_op: 0.0,
             }),
+            shield_spec: None,
+
             shelflife_profile: None,
             shelflife_track: None,
         }
@@ -8290,7 +8947,30 @@ cols = 4
         }
     }
 
-    // ItemCategory::Container serde pin
+    // ItemCategory serde pins
+
+    #[test]
+    fn item_category_block_serde_pin() {
+        let serialized =
+            serde_json::to_string(&ItemCategory::Block).expect("serialize Block category");
+        assert_eq!(
+            serialized, "\"Block\"",
+            "expected ItemCategory::Block to serialize as the explicit protocol literal"
+        );
+
+        let deserialized: ItemCategory =
+            serde_json::from_str("\"Block\"").expect("deserialize Block category literal");
+        assert_eq!(deserialized, ItemCategory::Block);
+    }
+
+    #[test]
+    fn item_category_invalid_variant_is_rejected() {
+        let result = serde_json::from_str::<ItemCategory>("\"InvalidVariant\"");
+        assert!(
+            result.is_err(),
+            "expected invalid ItemCategory protocol literal to be rejected, got {result:?}"
+        );
+    }
 
     #[test]
     fn item_category_container_serde_roundtrip() {
@@ -8313,6 +8993,7 @@ cols = 4
             id: "worn_grass_pouch".to_string(),
             display_name: "草编囊（磨损）".to_string(),
             category: ItemCategory::Container,
+            placeable: None,
             max_stack_count: 1,
             grid_w: 1,
             grid_h: 2,
@@ -8336,6 +9017,8 @@ cols = 4
                 equip_slot: EQUIP_SLOT_WAIST_POUCH.to_string(),
                 durability_cost_per_op: 0.008,
             }),
+            shield_spec: None,
+
             shelflife_profile: None,
             shelflife_track: None,
         };
@@ -8731,6 +9414,7 @@ cols = 4
             id: id.to_string(),
             display_name: id.to_string(),
             category: ItemCategory::Weapon,
+            placeable: None,
             max_stack_count: 1,
             grid_w: 1,
             grid_h: 2,
@@ -8754,6 +9438,8 @@ cols = 4
             technique_scroll_spec: None,
             recipe_fragment_spec: None,
             container_spec: None,
+            shield_spec: None,
+
             shelflife_profile: None,
             shelflife_track: None,
         }
@@ -8764,6 +9450,7 @@ cols = 4
             id: id.to_string(),
             display_name: id.to_string(),
             category: ItemCategory::Misc,
+            placeable: None,
             max_stack_count: 64,
             grid_w: 1,
             grid_h: 1,
@@ -8781,9 +9468,75 @@ cols = 4
             technique_scroll_spec: None,
             recipe_fragment_spec: None,
             container_spec: None,
+            shield_spec: None,
+
             shelflife_profile: None,
             shelflife_track: None,
         }
+    }
+
+    #[test]
+    fn validate_move_semantics_accepts_low_cost_disguise_items_to_false_skin_slot() {
+        use crate::combat::tuike::{CAMOUFLAGE_NET_ITEM_ID, DISGUISE_WRAP_ITEM_ID};
+        use crate::schema::inventory::{EquipSlotV1, InventoryLocationV1};
+
+        let registry = ItemRegistry::from_map(HashMap::from([
+            (
+                DISGUISE_WRAP_ITEM_ID.to_string(),
+                make_misc_template(DISGUISE_WRAP_ITEM_ID),
+            ),
+            (
+                CAMOUFLAGE_NET_ITEM_ID.to_string(),
+                make_misc_template(CAMOUFLAGE_NET_ITEM_ID),
+            ),
+        ]));
+        let inventory = make_empty_inventory();
+        let from = InventoryLocationV1::Container {
+            container_id: MAIN_PACK_CONTAINER_ID.to_string(),
+            row: 0,
+            col: 0,
+        };
+        let to = InventoryLocationV1::Equip {
+            slot: EquipSlotV1::FalseSkin,
+        };
+
+        for (instance_id, template_id) in
+            [(10, DISGUISE_WRAP_ITEM_ID), (11, CAMOUFLAGE_NET_ITEM_ID)]
+        {
+            let item = make_test_item_instance(instance_id, template_id);
+            assert!(
+                validate_move_semantics(&registry, &inventory, &item, &from, &to).is_ok(),
+                "{template_id} should pass the false_skin equip slot guard"
+            );
+        }
+    }
+
+    #[test]
+    fn validate_move_semantics_still_rejects_non_false_skin_item_to_false_skin_slot() {
+        use crate::schema::inventory::{EquipSlotV1, InventoryLocationV1};
+
+        let registry = ItemRegistry::from_map(HashMap::from([(
+            "rough_cloth".to_string(),
+            make_misc_template("rough_cloth"),
+        )]));
+        let inventory = make_empty_inventory();
+        let item = make_test_item_instance(12, "rough_cloth");
+        let from = InventoryLocationV1::Container {
+            container_id: MAIN_PACK_CONTAINER_ID.to_string(),
+            row: 0,
+            col: 0,
+        };
+        let to = InventoryLocationV1::Equip {
+            slot: EquipSlotV1::FalseSkin,
+        };
+
+        let error = validate_move_semantics(&registry, &inventory, &item, &from, &to)
+            .expect_err("non false-skin item should be rejected by false_skin slot guard");
+
+        assert!(
+            error.contains("expected tuike false skin"),
+            "expected false_skin slot error, got: {error}"
+        );
     }
 
     #[test]
@@ -9354,6 +10107,7 @@ cols = 4
             id: "food.spirit_wine.chen_jiu".to_string(),
             display_name: "陈酒".to_string(),
             category: ItemCategory::Food,
+            placeable: None,
             max_stack_count: 16,
             grid_w: 1,
             grid_h: 1,
@@ -9371,6 +10125,7 @@ cols = 4
             technique_scroll_spec: None,
             recipe_fragment_spec: None,
             container_spec: None,
+            shield_spec: None,
             shelflife_profile: Some("chen_jiu_v1".to_string()),
             shelflife_track: Some(DecayTrack::Age),
         };
@@ -9421,6 +10176,7 @@ cols = 4
             id: "misc_thing".to_string(),
             display_name: "misc".to_string(),
             category: ItemCategory::Misc,
+            placeable: None,
             max_stack_count: 1,
             grid_w: 1,
             grid_h: 1,
@@ -9438,6 +10194,8 @@ cols = 4
             technique_scroll_spec: None,
             recipe_fragment_spec: None,
             container_spec: None,
+            shield_spec: None,
+
             shelflife_profile: None,
             shelflife_track: None,
         };
@@ -9504,6 +10262,7 @@ cols = 4
             id: "test_item".to_string(),
             name: "Test".to_string(),
             category: "food".to_string(),
+            placeable: None,
             grid_w: 1,
             grid_h: 1,
             base_weight: 0.1,
@@ -9521,6 +10280,7 @@ cols = 4
             technique_scroll: None,
             recipe_fragment: None,
             container: None,
+            shield_spec: None,
             shelflife_profile: Some("some_profile".to_string()),
             shelflife_track: Some("INVALID_TRACK".to_string()),
         };
@@ -9548,6 +10308,7 @@ cols = 4
             id: "test_item".to_string(),
             name: "Test".to_string(),
             category: "food".to_string(),
+            placeable: None,
             grid_w: 1,
             grid_h: 1,
             base_weight: 0.1,
@@ -9566,6 +10327,7 @@ cols = 4
             recipe_fragment: None,
             container: None,
             shelflife_profile: Some("some_profile".to_string()),
+            shield_spec: None,
             shelflife_track: None, // should default to "spoil"
         };
 
@@ -9593,6 +10355,7 @@ cols = 4
             id: "bad_food_half_config".to_string(),
             name: "半配置食物".to_string(),
             category: "food".to_string(),
+            placeable: None,
             grid_w: 1,
             grid_h: 1,
             base_weight: 0.1,
@@ -9610,6 +10373,7 @@ cols = 4
             technique_scroll: None,
             recipe_fragment: None,
             container: None,
+            shield_spec: None,
             shelflife_profile: None,                    // ← 故意缺失
             shelflife_track: Some("spoil".to_string()), // ← 有值但 profile 为 None → 报错
         };
@@ -9643,6 +10407,7 @@ cols = 4
             id: "good_food_full_config".to_string(),
             name: "完整配置食物".to_string(),
             category: "food".to_string(),
+            placeable: None,
             grid_w: 1,
             grid_h: 1,
             base_weight: 0.1,
@@ -9660,6 +10425,7 @@ cols = 4
             technique_scroll: None,
             recipe_fragment: None,
             container: None,
+            shield_spec: None,
             shelflife_profile: Some("my_spoil_profile_v1".to_string()), // ← 正确配对
             shelflife_track: Some("spoil".to_string()),
         };
@@ -9677,5 +10443,635 @@ cols = 4
             Some(DecayTrack::Spoil),
             "shelflife_track='spoil' 应解析为 DecayTrack::Spoil"
         );
+    }
+
+    // ── plan-shield-block-v1 P0 — ItemCategory::Shield 饱和化测试 ──────────────
+
+    /// Shield 变体 serde 正反对拍（happy path）：序列化后再反序列化须还原原值。
+    #[test]
+    fn item_category_shield_serde_roundtrip() {
+        let cat = ItemCategory::Shield;
+        let json = serde_json::to_string(&cat).expect(
+            "期望 Shield 变体可序列化为 JSON，\
+             实际 serde_json::to_string 失败",
+        );
+        let parsed: ItemCategory = serde_json::from_str(&json).expect(
+            "期望 JSON 字符串可反序列化回 ItemCategory::Shield，\
+             实际 serde_json::from_str 失败",
+        );
+        assert_eq!(
+            parsed,
+            ItemCategory::Shield,
+            "期望 serde roundtrip 结果为 Shield，\
+             实际得到 {parsed:?}"
+        );
+    }
+
+    /// parse_item_category("shield") 应返回 ItemCategory::Shield。
+    #[test]
+    fn parse_item_category_shield_happy() {
+        use std::path::PathBuf;
+        let path = PathBuf::from("test.toml");
+        let result = parse_item_category("shield", &path, "wooden_shield");
+        assert!(
+            matches!(result, Ok(ItemCategory::Shield)),
+            "期望 parse_item_category(\"shield\") = Ok(Shield)，因为 plan-shield-block-v1 P0 加了 shield 分支，\
+             实际得到 {result:?}"
+        );
+    }
+
+    /// parse_item_category("Shield")（首字母大写）因 to_ascii_lowercase 后应也命中 shield 分支。
+    #[test]
+    fn parse_item_category_shield_case_insensitive() {
+        use std::path::PathBuf;
+        let path = PathBuf::from("test.toml");
+        let result = parse_item_category("Shield", &path, "wooden_shield");
+        assert!(
+            matches!(result, Ok(ItemCategory::Shield)),
+            "期望 parse_item_category(\"Shield\") 因 trim+to_ascii_lowercase 后命中 shield 分支，\
+             实际得到 {result:?}"
+        );
+    }
+
+    /// parse_item_category("") 应返回 Err（未知 category 分支）。
+    #[test]
+    fn parse_item_category_empty_string_errors() {
+        use std::path::PathBuf;
+        let path = PathBuf::from("test.toml");
+        let result = parse_item_category("", &path, "x");
+        assert!(
+            result.is_err(),
+            "期望 parse_item_category(\"\") 返回 Err（空字符串不是合法 category），\
+             实际得到 {result:?}"
+        );
+    }
+
+    /// ItemCategory::Shield 的 max_stack_count 应为 1（与武器/防具同级，不可叠加）。
+    #[test]
+    fn shield_category_default_stack_count_is_one() {
+        assert_eq!(
+            default_max_stack_count_for_category(ItemCategory::Shield),
+            1,
+            "期望 Shield max_stack_count = 1，因为盾牌与武器/防具同级不可叠加，\
+             实际得到 {}",
+            default_max_stack_count_for_category(ItemCategory::Shield)
+        );
+    }
+
+    /// workbench_materials.toml 中 wooden_shield / bone_shield 应以 ItemCategory::Shield 加载。
+    #[test]
+    fn shield_templates_load_with_shield_category() {
+        let registry =
+            load_item_registry().expect("item registry should load from assets/items/*.toml");
+
+        for id in ["wooden_shield", "bone_shield"] {
+            let tpl = registry.get(id).unwrap_or_else(|| {
+                panic!(
+                    "期望 item `{id}` 在 registry 中存在，\
+                     实际未找到——检查 workbench_materials.toml 是否包含该 id"
+                )
+            });
+            assert_eq!(
+                tpl.category,
+                ItemCategory::Shield,
+                "期望 item `{id}` category = Shield（plan-shield-block-v1 P0 改 category），\
+                 实际得到 {:?}",
+                tpl.category
+            );
+        }
+    }
+
+    /// 盾牌装入 off_hand 应成功（happy path）。
+    #[test]
+    fn apply_move_shield_to_off_hand_succeeds() {
+        use crate::schema::inventory::{EquipSlotV1, InventoryLocationV1};
+
+        let registry = load_item_registry().expect("item registry should load");
+        let mut inv = make_test_inventory_with_one_item();
+        inv.containers[0].items[0].instance.template_id = "wooden_shield".to_string();
+        inv.containers[0].items[0].instance.display_name = "木盾".to_string();
+        inv.containers[0].items[0].instance.grid_h = 2;
+
+        let result = apply_inventory_move(
+            &mut inv,
+            &registry,
+            42,
+            &InventoryLocationV1::Container {
+                container_id: "main_pack".to_string(),
+                row: 0,
+                col: 0,
+            },
+            &InventoryLocationV1::Equip {
+                slot: EquipSlotV1::OffHand,
+            },
+        );
+        assert!(
+            result.is_ok(),
+            "期望 wooden_shield 装入 off_hand 成功（plan-shield-block-v1 P0 消灭孤岛根因），\
+             实际得到错误：{result:?}"
+        );
+        // MINOR #3 — 锁住「槽位真被盾占用」：断言 equipped 里 OFF_HAND 槽存在且 template_id 正确。
+        assert_eq!(
+            inv.equipped
+                .get(EQUIP_SLOT_OFF_HAND)
+                .map(|item| item.template_id.as_str()),
+            Some("wooden_shield"),
+            "期望 OFF_HAND 槽被 wooden_shield 占用（plan-shield-block-v1 P0 post-state 断言），\
+             实际 equipped[off_hand] = {:?}",
+            inv.equipped
+                .get(EQUIP_SLOT_OFF_HAND)
+                .map(|i| &i.template_id)
+        );
+    }
+
+    /// two_hand 槽占用时拒绝装 off_hand 盾（边界）。
+    #[test]
+    fn apply_move_shield_to_off_hand_rejected_when_two_hand_occupied() {
+        use crate::schema::inventory::{EquipSlotV1, InventoryLocationV1};
+
+        let registry = load_item_registry().expect("item registry should load");
+        let mut inv = make_test_inventory_with_one_item();
+        inv.containers[0].items[0].instance.template_id = "wooden_shield".to_string();
+        inv.containers[0].items[0].instance.display_name = "木盾".to_string();
+        inv.containers[0].items[0].instance.grid_h = 2;
+        inv.equipped.insert(
+            EQUIP_SLOT_TWO_HAND.to_string(),
+            ItemInstance {
+                instance_id: 99,
+                template_id: "wooden_staff".to_string(),
+                display_name: "木杖".to_string(),
+                grid_w: 1,
+                grid_h: 3,
+                weight: 2.0,
+                rarity: ItemRarity::Common,
+                description: String::new(),
+                stack_count: 1,
+                spirit_quality: 1.0,
+                durability: 1.0,
+                freshness: None,
+                mineral_id: None,
+                charges: None,
+                forge_quality: None,
+                forge_color: None,
+                forge_side_effects: Vec::new(),
+                forge_achieved_tier: None,
+                alchemy: None,
+                lingering_owner_qi: None,
+            },
+        );
+
+        let error = apply_inventory_move(
+            &mut inv,
+            &registry,
+            42,
+            &InventoryLocationV1::Container {
+                container_id: "main_pack".to_string(),
+                row: 0,
+                col: 0,
+            },
+            &InventoryLocationV1::Equip {
+                slot: EquipSlotV1::OffHand,
+            },
+        )
+        .expect_err(
+            "期望 two_hand 占用时装盾到 off_hand 被拒绝，\
+             实际返回 Ok——校验逻辑漏掉了 two_hand 占用检查",
+        );
+
+        assert!(
+            error.contains("two_hand slot is occupied"),
+            "期望错误消息含 'two_hand slot is occupied'，\
+             实际消息：{error}"
+        );
+    }
+
+    /// 非盾非 treasure 非 dagger 物品装 off_hand 仍按原逻辑拒绝（回归保护）。
+    #[test]
+    fn apply_move_non_shield_non_treasure_non_dagger_off_hand_still_rejected() {
+        use crate::schema::inventory::{EquipSlotV1, InventoryLocationV1};
+
+        let registry = load_item_registry().expect("item registry should load");
+        let mut inv = make_test_inventory_with_one_item();
+        // iron_sword：Weapon 但非 Dagger/Fist，应被拒
+        inv.containers[0].items[0].instance.template_id = "iron_sword".to_string();
+        inv.containers[0].items[0].instance.display_name = "凡铁剑".to_string();
+        inv.containers[0].items[0].instance.grid_h = 2;
+
+        let error = apply_inventory_move(
+            &mut inv,
+            &registry,
+            42,
+            &InventoryLocationV1::Container {
+                container_id: "main_pack".to_string(),
+                row: 0,
+                col: 0,
+            },
+            &InventoryLocationV1::Equip {
+                slot: EquipSlotV1::OffHand,
+            },
+        )
+        .expect_err(
+            "期望 iron_sword 装 off_hand 被拒绝（非盾非 treasure 非 dagger），\
+             实际返回 Ok——Shield 分支意外放行了其他类别",
+        );
+
+        assert!(
+            error.contains("only dagger/fist are allowed"),
+            "期望错误消息含 'only dagger/fist are allowed'，\
+             实际消息：{error}"
+        );
+    }
+
+    /// equip_slot_for_item_id("armor_iron_chestplate") 正向返回 Some(Chest)（路由回归正向断言）。
+    #[test]
+    fn equip_slot_for_item_id_armor_still_routes_correctly() {
+        use crate::armor::mundane::equip_slot_for_item_id;
+        use crate::schema::inventory::EquipSlotV1;
+        let slot = equip_slot_for_item_id("armor_iron_chestplate");
+        // MINOR #4 — MundaneArmorSlot::Chestplate → EquipSlotV1::Chest；
+        // 正向断言锁住「iron chestplate 确实路由到 Chest 槽」，防 Shield 分支意外影响 Armor routing。
+        assert_eq!(
+            slot,
+            Some(EquipSlotV1::Chest),
+            "期望 equip_slot_for_item_id(\"armor_iron_chestplate\") == Some(Chest)，\
+             plan-shield-block-v1 P0 不改此函数；实际得到 {slot:?}"
+        );
+    }
+
+    /// equip_slot_for_item_id("wooden_shield") 仍返回 None（盾不经此函数）。
+    #[test]
+    fn equip_slot_for_item_id_wooden_shield_returns_none() {
+        use crate::armor::mundane::equip_slot_for_item_id;
+        let slot = equip_slot_for_item_id("wooden_shield");
+        assert!(
+            slot.is_none(),
+            "期望 equip_slot_for_item_id(\"wooden_shield\") = None，\
+             因为盾走 EquipSlotV1::OffHand 3799 arm 不走此函数，\
+             实际得到 {slot:?}"
+        );
+    }
+
+    // ── plan-shield-block-v1 P2 — ShieldSpec 饱和化测试 ──────────────────────
+
+    /// ShieldSpec.validate() happy path：wooden_shield 规格通过验证。
+    #[test]
+    fn shield_spec_validate_happy_path_wooden_shield() {
+        let spec = ShieldSpec {
+            block_ratio: 0.5,
+            durability_max: 40.0,
+            stamina_drain_per_s: 3.0,
+        };
+        assert!(
+            spec.validate("wooden_shield").is_ok(),
+            "wooden_shield 规格（0.5/40/3.0）应通过 validate()；\
+             实际 Err: {:?}",
+            spec.validate("wooden_shield")
+        );
+    }
+
+    /// ShieldSpec.validate() happy path：bone_shield 规格通过验证。
+    #[test]
+    fn shield_spec_validate_happy_path_bone_shield() {
+        let spec = ShieldSpec {
+            block_ratio: 0.65,
+            durability_max: 80.0,
+            stamina_drain_per_s: 3.0,
+        };
+        assert!(
+            spec.validate("bone_shield").is_ok(),
+            "bone_shield 规格（0.65/80/3.0）应通过 validate()；\
+             实际 Err: {:?}",
+            spec.validate("bone_shield")
+        );
+    }
+
+    /// block_ratio = 0.7（上限）仍通过验证（边界：上界包含）。
+    #[test]
+    fn shield_spec_validate_block_ratio_max_boundary_passes() {
+        let spec = ShieldSpec {
+            block_ratio: 0.7,
+            durability_max: 40.0,
+            stamina_drain_per_s: 3.0,
+        };
+        assert!(
+            spec.validate("test_shield").is_ok(),
+            "block_ratio=0.7（worldview §五 凡人盾上限）应通过 validate()（>= 包含边界），\
+             实际 Err: {:?}",
+            spec.validate("test_shield")
+        );
+    }
+
+    /// block_ratio > 0.7 被拒绝（超出凡人盾上限）。
+    #[test]
+    fn shield_spec_validate_block_ratio_above_max_rejected() {
+        let spec = ShieldSpec {
+            block_ratio: 0.71,
+            durability_max: 40.0,
+            stamina_drain_per_s: 3.0,
+        };
+        let err = spec
+            .validate("cheat_shield")
+            .expect_err("block_ratio=0.71 超出凡人盾 0.7 上限，应被拒绝");
+        assert!(
+            err.contains("block_ratio"),
+            "错误消息应含 'block_ratio'，实际：{err}"
+        );
+    }
+
+    /// block_ratio = 0.0 被拒绝（无效：不可为零）。
+    #[test]
+    fn shield_spec_validate_block_ratio_zero_rejected() {
+        let spec = ShieldSpec {
+            block_ratio: 0.0,
+            durability_max: 40.0,
+            stamina_drain_per_s: 3.0,
+        };
+        assert!(
+            spec.validate("zero_shield").is_err(),
+            "block_ratio=0.0 应被拒绝（无效：不能为 0）"
+        );
+    }
+
+    /// block_ratio 负值被拒绝。
+    #[test]
+    fn shield_spec_validate_block_ratio_negative_rejected() {
+        let spec = ShieldSpec {
+            block_ratio: -0.1,
+            durability_max: 40.0,
+            stamina_drain_per_s: 3.0,
+        };
+        assert!(
+            spec.validate("neg_shield").is_err(),
+            "block_ratio 负值应被拒绝"
+        );
+    }
+
+    /// block_ratio = NaN 被拒绝。
+    #[test]
+    fn shield_spec_validate_block_ratio_nan_rejected() {
+        let spec = ShieldSpec {
+            block_ratio: f64::NAN,
+            durability_max: 40.0,
+            stamina_drain_per_s: 3.0,
+        };
+        assert!(
+            spec.validate("nan_shield").is_err(),
+            "block_ratio=NaN 应被拒绝（is_finite 检查）"
+        );
+    }
+
+    /// durability_max = 0.0 被拒绝。
+    #[test]
+    fn shield_spec_validate_durability_zero_rejected() {
+        let spec = ShieldSpec {
+            block_ratio: 0.5,
+            durability_max: 0.0,
+            stamina_drain_per_s: 3.0,
+        };
+        let err = spec
+            .validate("zero_dur_shield")
+            .expect_err("durability_max=0 应被拒绝");
+        assert!(
+            err.contains("durability_max"),
+            "错误消息应含 'durability_max'，实际：{err}"
+        );
+    }
+
+    /// stamina_drain_per_s = 0.0 被拒绝。
+    #[test]
+    fn shield_spec_validate_stamina_drain_zero_rejected() {
+        let spec = ShieldSpec {
+            block_ratio: 0.5,
+            durability_max: 40.0,
+            stamina_drain_per_s: 0.0,
+        };
+        let err = spec
+            .validate("zero_drain_shield")
+            .expect_err("stamina_drain_per_s=0 应被拒绝");
+        assert!(
+            err.contains("stamina_drain_per_s"),
+            "错误消息应含 'stamina_drain_per_s'，实际：{err}"
+        );
+    }
+
+    // plan-shield-block-v1 P2 §Issue5.3 — durability_max NaN/inf 独立用例
+    /// durability_max = NaN 被拒绝（is_finite 检查）。
+    #[test]
+    fn shield_spec_validate_durability_max_nan_rejected() {
+        let spec = ShieldSpec {
+            block_ratio: 0.5,
+            durability_max: f64::NAN,
+            stamina_drain_per_s: 3.0,
+        };
+        let err = spec
+            .validate("nan_dur_shield")
+            .expect_err("durability_max=NaN 应被拒绝（is_finite 检查）");
+        assert!(
+            err.contains("durability_max"),
+            "错误消息应含 'durability_max'，实际：{err}"
+        );
+    }
+
+    /// durability_max = +Inf 被拒绝（is_finite 检查）。
+    #[test]
+    fn shield_spec_validate_durability_max_inf_rejected() {
+        let spec = ShieldSpec {
+            block_ratio: 0.5,
+            durability_max: f64::INFINITY,
+            stamina_drain_per_s: 3.0,
+        };
+        let err = spec
+            .validate("inf_dur_shield")
+            .expect_err("durability_max=+Inf 应被拒绝（is_finite 检查）");
+        assert!(
+            err.contains("durability_max"),
+            "错误消息应含 'durability_max'，实际：{err}"
+        );
+    }
+
+    // plan-shield-block-v1 P2 §Issue5.3 — stamina_drain_per_s NaN/inf 独立用例
+    /// stamina_drain_per_s = NaN 被拒绝（is_finite 检查）。
+    #[test]
+    fn shield_spec_validate_stamina_drain_nan_rejected() {
+        let spec = ShieldSpec {
+            block_ratio: 0.5,
+            durability_max: 40.0,
+            stamina_drain_per_s: f32::NAN,
+        };
+        let err = spec
+            .validate("nan_drain_shield")
+            .expect_err("stamina_drain_per_s=NaN 应被拒绝（is_finite 检查）");
+        assert!(
+            err.contains("stamina_drain_per_s"),
+            "错误消息应含 'stamina_drain_per_s'，实际：{err}"
+        );
+    }
+
+    /// stamina_drain_per_s = +Inf 被拒绝（is_finite 检查）。
+    #[test]
+    fn shield_spec_validate_stamina_drain_inf_rejected() {
+        let spec = ShieldSpec {
+            block_ratio: 0.5,
+            durability_max: 40.0,
+            stamina_drain_per_s: f32::INFINITY,
+        };
+        let err = spec
+            .validate("inf_drain_shield")
+            .expect_err("stamina_drain_per_s=+Inf 应被拒绝（is_finite 检查）");
+        assert!(
+            err.contains("stamina_drain_per_s"),
+            "错误消息应含 'stamina_drain_per_s'，实际：{err}"
+        );
+    }
+
+    /// 从 TOML 加载的 wooden_shield 含正确 ShieldSpec（block_ratio=0.5, durability=40, drain=3.0）。
+    #[test]
+    fn wooden_shield_loads_correct_shield_spec_from_toml() {
+        let registry = load_item_registry().expect("item registry 应从 assets/items/*.toml 加载");
+        let tpl = registry
+            .get("wooden_shield")
+            .expect("wooden_shield 应存在于 registry");
+        let spec = tpl
+            .shield_spec
+            .as_ref()
+            .expect("wooden_shield 应有 shield_spec（P2 TOML 块必须存在）");
+        assert!(
+            (spec.block_ratio - 0.5).abs() < 1e-9,
+            "wooden_shield.block_ratio 应为 0.5，实际 {}",
+            spec.block_ratio
+        );
+        assert!(
+            (spec.durability_max - 40.0).abs() < 1e-9,
+            "wooden_shield.durability_max 应为 40.0，实际 {}",
+            spec.durability_max
+        );
+        assert!(
+            (spec.stamina_drain_per_s - 3.0).abs() < 1e-4,
+            "wooden_shield.stamina_drain_per_s 应为 3.0，实际 {}",
+            spec.stamina_drain_per_s
+        );
+    }
+
+    /// 从 TOML 加载的 bone_shield 含正确 ShieldSpec（block_ratio=0.65, durability=80, drain=3.0）。
+    #[test]
+    fn bone_shield_loads_correct_shield_spec_from_toml() {
+        let registry = load_item_registry().expect("item registry 应从 assets/items/*.toml 加载");
+        let tpl = registry
+            .get("bone_shield")
+            .expect("bone_shield 应存在于 registry");
+        let spec = tpl
+            .shield_spec
+            .as_ref()
+            .expect("bone_shield 应有 shield_spec（P2 TOML 块必须存在）");
+        assert!(
+            (spec.block_ratio - 0.65).abs() < 1e-9,
+            "bone_shield.block_ratio 应为 0.65，实际 {}",
+            spec.block_ratio
+        );
+        assert!(
+            (spec.durability_max - 80.0).abs() < 1e-9,
+            "bone_shield.durability_max 应为 80.0，实际 {}",
+            spec.durability_max
+        );
+        assert!(
+            (spec.stamina_drain_per_s - 3.0).abs() < 1e-4,
+            "bone_shield.stamina_drain_per_s 应为 3.0，实际 {}",
+            spec.stamina_drain_per_s
+        );
+    }
+
+    /// 非盾物品（如 iron_sword）的 shield_spec 为 None。
+    #[test]
+    fn non_shield_item_has_no_shield_spec() {
+        let registry = load_item_registry().expect("item registry 应加载");
+        let tpl = registry
+            .get("iron_sword")
+            .expect("iron_sword 应存在于 registry");
+        assert!(
+            tpl.shield_spec.is_none(),
+            "iron_sword 不是盾，shield_spec 应为 None，实际有值"
+        );
+    }
+
+    /// category=Shield 但缺 shield_spec 块 → try_into_item_template 报错。
+    #[test]
+    fn shield_category_without_shield_spec_block_is_rejected() {
+        use std::path::PathBuf;
+        let path = PathBuf::from("test_shield.toml");
+        let raw = ItemTemplateToml {
+            id: "bad_shield_no_spec".to_string(),
+            placeable: None,
+            name: "无规格盾".to_string(),
+            category: "shield".to_string(),
+            grid_w: 1,
+            grid_h: 2,
+            base_weight: 2.0,
+            rarity: "common".to_string(),
+            spirit_quality_initial: 0.0,
+            description: "category=shield but missing shield_spec".to_string(),
+            max_stack_count: None,
+            effect: None,
+            cast_duration_ms: None,
+            cooldown_ms: None,
+            weapon: None,
+            forge_station: None,
+            blueprint_scroll: None,
+            inscription_scroll: None,
+            technique_scroll: None,
+            recipe_fragment: None,
+            container: None,
+            shield_spec: None, // ← 故意缺失
+            shelflife_profile: None,
+            shelflife_track: None,
+        };
+        let result = raw.try_into_item_template(&path);
+        assert!(
+            result.is_err(),
+            "category=shield 但缺 shield_spec 块时应报错，防止孤岛装备"
+        );
+        let err = result.unwrap_err();
+        assert!(
+            err.contains("shield_spec") || err.contains("Shield"),
+            "错误消息应提到 shield_spec 缺失，实际：{err}"
+        );
+    }
+
+    /// 非盾 category 带 shield_spec 块 → try_into_item_template 报错。
+    #[test]
+    fn non_shield_category_with_shield_spec_block_is_rejected() {
+        use std::path::PathBuf;
+        let path = PathBuf::from("test_sword_with_shield_spec.toml");
+        let raw = ItemTemplateToml {
+            id: "bad_sword_with_shield_spec".to_string(),
+            placeable: None,
+            name: "剑+盾规格冲突".to_string(),
+            category: "weapon".to_string(),
+            grid_w: 1,
+            grid_h: 2,
+            base_weight: 1.0,
+            rarity: "common".to_string(),
+            spirit_quality_initial: 0.0,
+            description: "weapon category with shield_spec should fail".to_string(),
+            max_stack_count: None,
+            effect: None,
+            cast_duration_ms: None,
+            cooldown_ms: None,
+            weapon: None,
+            forge_station: None,
+            blueprint_scroll: None,
+            inscription_scroll: None,
+            technique_scroll: None,
+            recipe_fragment: None,
+            container: None,
+            shield_spec: Some(ShieldSpecToml {
+                block_ratio: 0.5,
+                durability_max: 40.0,
+                stamina_drain_per_s: 3.0,
+            }),
+            shelflife_profile: None,
+            shelflife_track: None,
+        };
+        let result = raw.try_into_item_template(&path);
+        assert!(result.is_err(), "非盾 category 带 shield_spec 块时应报错");
     }
 }

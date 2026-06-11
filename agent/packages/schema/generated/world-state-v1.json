@@ -1005,6 +1005,46 @@
           }
         }
       }
+    },
+    "era": {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "era_type",
+        "intensity",
+        "onset_tick"
+      ],
+      "properties": {
+        "era_type": {
+          "anyOf": [
+            {
+              "const": "calamity",
+              "type": "string"
+            },
+            {
+              "const": "change",
+              "type": "string"
+            },
+            {
+              "const": "deduction",
+              "type": "string"
+            },
+            {
+              "const": "unknown",
+              "type": "string"
+            }
+          ]
+        },
+        "intensity": {
+          "minimum": 0,
+          "maximum": 1,
+          "type": "number"
+        },
+        "onset_tick": {
+          "minimum": 0,
+          "type": "integer"
+        }
+      }
     }
   }
 }

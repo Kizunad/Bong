@@ -85,10 +85,14 @@ pub fn compute_regen(zone_qi: f64, rate: f64, avg_integrity: f64, qi_room: f64) 
 
 /// QiRegenTick + ZoneQiDrainTick 合并实现。零和：玩家 qi 增量 = zone 浓度减量 × coef。
 #[allow(clippy::type_complexity)]
+#[allow(clippy::too_many_arguments)]
 pub fn qi_regen_and_zone_drain_tick(
     mut clock: ResMut<CultivationClock>,
     zone_registry: Option<ResMut<ZoneRegistry>>,
     war_bonus: Option<Res<crate::npc::war::settle::ZoneSpiritBonusStore>>,
+    // plan-territory-v1 P1: 霸主 zone qi regen 速率倍率（ZoneDominanceRegenStore）。
+    // Option<Res> 防资源缺失 panic（克隆 war_bonus 写法）。守恒安全：只乘 rate。
+    dominance_regen: Option<Res<crate::world::territory_perks::ZoneDominanceRegenStore>>,
     mut practice_events: Option<ResMut<Events<CultivationSessionPracticeEvent>>>,
     mut practice_accumulator: Option<ResMut<CultivationSessionPracticeAccumulator>>,
     mut vfx_events: Option<ResMut<Events<VfxEventRequest>>>,
@@ -196,6 +200,11 @@ pub fn qi_regen_and_zone_drain_tick(
             .as_deref()
             .map(|s| s.multiplier_for(&zone_name))
             .unwrap_or(1.0);
+        // plan-territory-v1 P1：霸主 zone regen 速率倍率（守恒安全：只乘 rate）。
+        let dominance_regen_multiplier = dominance_regen
+            .as_deref()
+            .map(|s| s.multiplier_for(&zone_name))
+            .unwrap_or(1.0);
         let (gain, drain) = compute_regen(
             zone.spirit_qi,
             rate * wind_candle_multiplier
@@ -206,7 +215,8 @@ pub fn qi_regen_and_zone_drain_tick(
                 * exhausted_multiplier
                 * turbulence_multiplier
                 * juebi_aftershock_multiplier
-                * war_zone_multiplier,
+                * war_zone_multiplier
+                * dominance_regen_multiplier,
             avg_integrity,
             qi_room,
         );
@@ -1124,6 +1134,134 @@ mod tests {
              期望 {:.6}，实际 {:.6}",
             normal_qi * 2.0,
             accel_qi
+        );
+    }
+
+    // ── plan-territory-v1 P1: ZoneDominanceRegenStore 集成测试 ─────────────────
+    //
+    // 审查指摘：删除 tick.rs line 219 的 dominance_regen_multiplier 乘法后全测仍绿
+    // （因为所有测试都不向 qi_regen_and_zone_drain_tick 注入 ZoneDominanceRegenStore 资源）。
+    // 此测试注入 ZoneDominanceRegenStore，断言霸主 zone 的 qi 回复 ≈ 基线 × 1.20，
+    // 确保删掉该乘法后此测立即红。
+
+    #[test]
+    fn dominance_regen_store_multiplier_applied_in_qi_tick() {
+        use crate::cultivation::components::MeridianId;
+        use crate::world::territory_perks::{ZoneDominanceRegenStore, DOMINANCE_REGEN_MULTIPLIER};
+        use crate::world::zone::ZoneRegistry;
+
+        fn run_once(inject_dominance_store: bool) -> f64 {
+            let mut app = App::new();
+            app.insert_resource(CultivationClock::default());
+            app.insert_resource(ZoneRegistry::fallback());
+
+            if inject_dominance_store {
+                let mut store = ZoneDominanceRegenStore::default();
+                // fallback zone name は "spawn"
+                store
+                    .multipliers
+                    .insert("spawn".to_string(), DOMINANCE_REGEN_MULTIPLIER);
+                app.insert_resource(store);
+            }
+
+            app.add_systems(Update, qi_regen_and_zone_drain_tick);
+
+            let mut meridians = MeridianSystem::default();
+            meridians.get_mut(MeridianId::Lung).opened = true;
+            let entity = app
+                .world_mut()
+                .spawn((
+                    Position::new([8.0, 66.0, 8.0]),
+                    meridians,
+                    Cultivation::default(),
+                ))
+                .id();
+
+            app.update();
+
+            app.world()
+                .entity(entity)
+                .get::<Cultivation>()
+                .unwrap()
+                .qi_current
+        }
+
+        let baseline_qi = run_once(false);
+        let dominant_qi = run_once(true);
+
+        assert!(baseline_qi > 0.0, "基线 qi 回复应为正；实际 {baseline_qi}");
+        assert!(
+            dominant_qi > baseline_qi,
+            "ZoneDominanceRegenStore(×{DOMINANCE_REGEN_MULTIPLIER}) 应使 qi 回复 > 基线；\
+             baseline={baseline_qi:.9}, dominant={dominant_qi:.9}"
+        );
+        // 允许 1e-6 误差（qi_room 截断可能使实际倍率略小于 1.20）
+        assert!(
+            (dominant_qi - baseline_qi * DOMINANCE_REGEN_MULTIPLIER).abs() < 1e-6,
+            "dominant qi 应 ≈ baseline × DOMINANCE_REGEN_MULTIPLIER({DOMINANCE_REGEN_MULTIPLIER})；\
+             期望 {:.9}，实际 {dominant_qi:.9}",
+            baseline_qi * DOMINANCE_REGEN_MULTIPLIER
+        );
+    }
+
+    #[test]
+    fn dominance_regen_store_absent_does_not_affect_qi_tick() {
+        use crate::cultivation::components::MeridianId;
+        use crate::world::zone::ZoneRegistry;
+
+        // 不注入 ZoneDominanceRegenStore → multiplier 应回落 1.0，qi 与基线一致
+        let mut app_no_store = App::new();
+        app_no_store.insert_resource(CultivationClock::default());
+        app_no_store.insert_resource(ZoneRegistry::fallback());
+        app_no_store.add_systems(Update, qi_regen_and_zone_drain_tick);
+
+        let mut meridians = MeridianSystem::default();
+        meridians.get_mut(MeridianId::Lung).opened = true;
+        let entity_no_store = app_no_store
+            .world_mut()
+            .spawn((
+                Position::new([8.0, 66.0, 8.0]),
+                meridians.clone(),
+                Cultivation::default(),
+            ))
+            .id();
+
+        let mut app_empty_store = App::new();
+        app_empty_store.insert_resource(CultivationClock::default());
+        app_empty_store.insert_resource(ZoneRegistry::fallback());
+        use crate::world::territory_perks::ZoneDominanceRegenStore;
+        app_empty_store.insert_resource(ZoneDominanceRegenStore::default()); // 空 store，无 dominant
+        app_empty_store.add_systems(Update, qi_regen_and_zone_drain_tick);
+
+        let entity_empty_store = app_empty_store
+            .world_mut()
+            .spawn((
+                Position::new([8.0, 66.0, 8.0]),
+                meridians,
+                Cultivation::default(),
+            ))
+            .id();
+
+        app_no_store.update();
+        app_empty_store.update();
+
+        let qi_no_store = app_no_store
+            .world()
+            .entity(entity_no_store)
+            .get::<Cultivation>()
+            .unwrap()
+            .qi_current;
+        let qi_empty_store = app_empty_store
+            .world()
+            .entity(entity_empty_store)
+            .get::<Cultivation>()
+            .unwrap()
+            .qi_current;
+
+        assert!(
+            (qi_no_store - qi_empty_store).abs() < 1e-9,
+            "无 dominant zone 时 qi 回复应与无 store 时一致；\
+             no_store={qi_no_store:.9}, empty_store={qi_empty_store:.9}"
         );
     }
 }

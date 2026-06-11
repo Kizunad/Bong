@@ -1417,7 +1417,7 @@ plan-style-balance-v1 实装 + telemetry      [实证]
 
 | # | Plan | 状态 | 直接前置 | 决策来源 |
 |---:|---|:---:|---|---|
-| 43 | `plan-gameplay-acceptance-v1` | 🆕 | **全部 1-42 完成** | §H 6 段 E2E + 100h 实测 |
+| 43 | §H 终极验收（内联，无独立 plan） | 🆕 | **全部 1-42 完成** | §H 6 段 E2E + 100h 实测；原 `plan-gameplay-acceptance-v1` 已于 2026-06-09 移除（与 §H 冗余，验收规格保留在 §H） |
 
 #### 装饰层（独立可选）
 
@@ -1487,7 +1487,7 @@ graph TD
     multiLife[42.multi-life-v1 🆕]:::derived
 
     %% 终极验收
-    accept[43.gameplay-acceptance-v1 🆕]:::accept
+    accept[43.§H 终极验收 内联 🆕]:::accept
 
     %% 依赖边
     canonalign --> styleVecInt
@@ -1660,7 +1660,7 @@ graph TD
 |---|---|
 | 组 5-A | plan-void-quota-v1 ✅ finished + plan-multi-life-v1 ⏳ active-design |
 | 组 5-B(quota 已完成) | plan-void-actions-v1 ⏳ active-design |
-| 组 5-C(终极) | **plan-gameplay-acceptance-v1** 🆕（6 段 E2E + 100h 实测） |
+| 组 5-C(终极) | **§H 终极验收（内联，无独立 plan）** 🆕（6 段 E2E + 100h 实测；原 plan-gameplay-acceptance-v1 已 2026-06-09 移除） |
 
 **Wave 5 退出条件**：E2E `p5-void.sh` 三终局(succeed/intercepted/burst)全绿；100h 真实玩家走通。
 
@@ -1697,7 +1697,7 @@ graph TD
                             ✅ → tribulation-v1 (4w) — finished
                                 ✅ → void-quota-v1 (2w) — finished（世界灵气预算公式 + 绝壁劫）
                                     ⏳ → void-actions-v1 (2w) — active-design（4 类化虚 action）
-                                        🆕 → gameplay-acceptance-v1 (4w 含 100h 实测)
+                                        🆕 → §H 终极验收 内联 (4w 含 100h 实测)
     ───────────────────────────────────────
     剩临界路径 ≈ 15 周（约 4 个月，前 16 周已实际跑完）
 ```
@@ -1706,7 +1706,7 @@ graph TD
 1. **Wave 0 中**：persistence-v1 与 canonical-align-v1 互不依赖，并行可省 3 周
 2. **Wave 2 中**：7 流派并行后的 style-balance-v1 已 finished；剩余收口以 E2E 数据回放和 acceptance 计划为准
 3. **niche-defense-v1** 同时依赖 fauna + zhenfa，是 P3-P4 链路上的关键节点
-4. **gameplay-acceptance-v1** 100h 实测无法压缩——必须真人跑
+4. **§H 终极验收**（内联，无独立 plan）100h 实测无法压缩——必须真人跑
 
 ### Q.6 风险与依赖塌方点
 
@@ -1729,7 +1729,7 @@ graph TD
 
 - [ ] `git mv docs/plans-skeleton/plan-gameplay-journey-v1.md docs/plan-gameplay-journey-v1.md`
 - [ ] 同步起新派生 plan 的 skeleton（Q.1 标 🆕 的）：
-  - cultivation-canonical-align-v1 ✅ finished / input-binding-v1 ✅ finished / spawn-tutorial-v1 ✅ finished / poi-novice-v1 ✅ finished / ~~style-pick-v1~~（撤销）/ **style-vector-integration-v1 ✅ active** / **multi-style-v1 ✅ finished** (05-04) / **style-balance-v1 ✅ finished** (05-11) / economy-v1 ⬜ / **tsy-raceout-v1 ✅ active** (05-04) / **void-quota-v1 ✅ finished** (05-08) / **void-actions-v1 ⏳ active-design** (05-08) / **multi-life-v1 ✅ active** (05-04) / gameplay-acceptance-v1 ⬜
+  - cultivation-canonical-align-v1 ✅ finished / input-binding-v1 ✅ finished / spawn-tutorial-v1 ✅ finished / poi-novice-v1 ✅ finished / ~~style-pick-v1~~（撤销）/ **style-vector-integration-v1 ✅ active** / **multi-style-v1 ✅ finished** (05-04) / **style-balance-v1 ✅ finished** (05-11) / economy-v1 ⬜ / **tsy-raceout-v1 ✅ active** (05-04) / **void-quota-v1 ✅ finished** (05-08) / **void-actions-v1 ⏳ active-design** (05-08) / **multi-life-v1 ✅ active** (05-04) / ~~gameplay-acceptance-v1~~（2026-06-09 移除，验收内联 §H）
 - [ ] 在 `docs/plans-skeleton/reminder.md` 登记新派生 plan 的待办
 - [ ] 删除/迁移 deepseek 原稿 `docs/plan-player-journey-deepseek.md`(违规位置)
 - [ ] gpt 原稿 `plan-playthrough-100h-gpt-v1.md` 在头部加 note "已合并入 v1，保留作审计"

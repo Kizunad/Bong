@@ -29,6 +29,7 @@ use crate::schema::common::{CommandType, GameEventType, MAX_COMMANDS_PER_TICK};
 use crate::schema::pseudo_vein::PseudoVeinSeasonV1;
 use crate::skin::{NpcSkinFallbackPolicy, SkinPool};
 use crate::world::calamity::{CalamityArsenal, TiandaoPower};
+use crate::world::era::EraDecreeIntent;
 use crate::world::events::ActiveEventsResource;
 use crate::world::heartbeat::{apply_heartbeat_override_command, WorldHeartbeat};
 use crate::world::karma::{KarmaWeightStore, QiDensityHeatmap};
@@ -184,6 +185,8 @@ pub fn execute_agent_commands(
     mut qi_transfers: EventWriter<QiTransfer>,
     // plan-offscreen-war-v1 P6：headless 玩家参与涌现冲突（路径 B，汇聚到与 brigadier 同一 handler）。
     mut war_intents: EventWriter<WarParticipateIntent>,
+    // plan-era-state-v1 B1：modify_zone{target="全局"} 携带 era_name → EraDecreeIntent。
+    mut era_decree_intents: EventWriter<EraDecreeIntent>,
     layers: LayerQuery<'_, '_>,
     npc_entities: LiveNpcQuery<'_, '_>,
     pseudo_vein_runtimes: Query<&PseudoVeinRuntime>,
@@ -225,6 +228,7 @@ pub fn execute_agent_commands(
                 &mut faction_notices,
                 &mut qi_transfers,
                 &mut war_intents,
+                &mut era_decree_intents,
                 &layers,
                 &npc_entities,
                 &pseudo_vein_runtimes,
@@ -273,6 +277,8 @@ fn execute_single_command(
     qi_transfers: &mut EventWriter<QiTransfer>,
     // plan-offscreen-war-v1 P6：headless 路径 B 注入的战争参与 intent。
     war_intents: &mut EventWriter<WarParticipateIntent>,
+    // plan-era-state-v1 B1：生产路径 modify_zone{target="全局"} → EraDecreeIntent。
+    era_decree_intents: &mut EventWriter<EraDecreeIntent>,
     layers: &LayerQuery<'_, '_>,
     npc_entities: &LiveNpcQuery<'_, '_>,
     pseudo_vein_runtimes: &Query<&PseudoVeinRuntime>,
@@ -290,7 +296,9 @@ fn execute_single_command(
     );
 
     let result = match command.command_type {
-        CommandType::ModifyZone => execute_modify_zone(command, zone_registry),
+        CommandType::ModifyZone => {
+            execute_modify_zone(command, zone_registry, era_decree_intents, tick)
+        }
         CommandType::SpawnNpc => execute_spawn_npc(
             command,
             commands,
@@ -934,7 +942,42 @@ fn pseudo_vein_season_from_world(season: Season) -> PseudoVeinSeasonV1 {
 fn execute_modify_zone(
     command: &Command,
     zone_registry: &mut Option<ResMut<ZoneRegistry>>,
+    era_decree_intents: &mut EventWriter<EraDecreeIntent>,
+    tick: Option<u64>,
 ) -> &'static str {
+    // plan-era-state-v1 B1 — 若 target=="全局" 且 params 携带 era_name，走时代宣告路径。
+    // agent era.md skill 总是将 era_decree 作为 modify_zone{target="全局"} 发出（viability 决议 §8#1）。
+    if command.target == "全局" {
+        if let Some(era_name) = command.params.get("era_name").and_then(|v| v.as_str()) {
+            let spirit_qi_delta = param_as_f64(&command.params, "spirit_qi_delta").unwrap_or(0.0);
+            let danger_level_delta =
+                optional_param_as_i64(&command.params, "danger_level_delta").unwrap_or(0);
+            let current_tick = tick.unwrap_or(0);
+
+            tracing::info!(
+                "[bong][era] era_decree_from_agent: era_name={} spirit_qi_delta={} danger_level_delta={} tick={}",
+                era_name,
+                spirit_qi_delta,
+                danger_level_delta,
+                current_tick,
+            );
+
+            era_decree_intents.send(EraDecreeIntent {
+                era_name: era_name.to_string(),
+                spirit_qi_delta,
+                danger_level_delta,
+                tick: current_tick,
+            });
+            return "ok_era_decree";
+        }
+        // 全局 target without era_name — reject with clear reason
+        tracing::warn!(
+            "[bong][network] modify_zone target `全局` missing `era_name` param; \
+             全局 target only valid for era_decree commands"
+        );
+        return "rejected_global_missing_era_name";
+    }
+
     let Some(zone_registry) = zone_registry.as_deref_mut() else {
         tracing::warn!(
             "[bong][network] cannot execute modify_zone for `{}` because ZoneRegistry resource is missing",
@@ -1200,7 +1243,9 @@ mod command_executor_tests {
     use std::collections::HashMap;
 
     use serde_json::json;
-    use valence::prelude::{App, BlockPos, DVec3, EntityKind, Events, Position, Update};
+    use valence::prelude::{
+        App, BlockPos, DVec3, EntityKind, Events, IntoSystemConfigs, Position, Update,
+    };
     use valence::testing::ScenarioSingleClient;
 
     use crate::npc::brain::{canonical_npc_id, NpcBehaviorConfig, DEFAULT_FLEE_THRESHOLD};
@@ -1249,6 +1294,8 @@ mod command_executor_tests {
         app.add_event::<QiTransfer>();
         // plan-offscreen-war-v1 P6：headless 路径 B 出口
         app.add_event::<WarParticipateIntent>();
+        // plan-era-state-v1 B1：生产路径 modify_zone{target="全局"} → EraDecreeIntent
+        app.add_event::<EraDecreeIntent>();
         app.add_systems(Update, execute_agent_commands);
         app
     }
@@ -2720,5 +2767,166 @@ mod command_executor_tests {
             )
             .expect("spawn zone should still exist");
         assert!((spawn_zone.spirit_qi - 0.8).abs() < 1e-9);
+    }
+
+    // ── plan-era-state-v1 B1 — 生产路径集成测试 ─────────────────────────────
+
+    fn drain_era_decree_intents(app: &App) -> Vec<EraDecreeIntent> {
+        app.world()
+            .resource::<Events<EraDecreeIntent>>()
+            .iter_current_update_events()
+            .cloned()
+            .collect()
+    }
+
+    /// 生产路径：modify_zone{target="全局", era_name="calamity"} 应 emit EraDecreeIntent。
+    ///
+    /// 这是 B1 断路修复的核心集成测试——任何回归都会让此测试失败：
+    /// 若 execute_modify_zone 不处理 "全局" target 并 emit EraDecreeIntent，
+    /// drain 结果为空，断言失败。
+    #[test]
+    fn modify_zone_global_era_name_emits_era_decree_intent_via_production_path() {
+        let mut app = setup_executor_app();
+        // 注入 WorldEraState（era_decree_system 消费者依赖此 Resource）
+        app.insert_resource(crate::world::era::WorldEraState::default());
+        app.add_event::<crate::world::era::EraChangedEvent>();
+        app.add_systems(
+            Update,
+            crate::world::era::era_decree_system.after(execute_agent_commands),
+        );
+
+        let mut params = HashMap::new();
+        params.insert("era_name".to_string(), json!("calamity"));
+        params.insert("global_effect".to_string(), json!("天地肃杀，渡劫更难"));
+        params.insert("spirit_qi_delta".to_string(), json!(-0.05));
+        params.insert("danger_level_delta".to_string(), json!(2));
+
+        {
+            let mut executor = app.world_mut().resource_mut::<CommandExecutorResource>();
+            let outcome = executor.enqueue_batch(batch(
+                "cmd_era_decree_calamity_e2e",
+                vec![command(CommandType::ModifyZone, "全局", params)],
+            ));
+            assert!(
+                outcome.accepted,
+                "era_decree modify_zone batch 应被接受入队列，实际 accepted={}",
+                outcome.accepted
+            );
+        }
+
+        app.update();
+
+        // 验证 EraDecreeIntent 通过生产路径发出
+        let era_intents = drain_era_decree_intents(&app);
+        assert_eq!(
+            era_intents.len(),
+            1,
+            "期望恰好一个 EraDecreeIntent 通过生产路径（execute_modify_zone 全局分支）发出；\
+             实际 {}（=0 说明 modify_zone 未处理 全局 target，B1 断路未修）",
+            era_intents.len()
+        );
+
+        let intent = &era_intents[0];
+        assert_eq!(
+            intent.era_name, "calamity",
+            "EraDecreeIntent.era_name 应等于 agent 发出的值；期望 calamity 实际 {}",
+            intent.era_name
+        );
+        assert!(
+            (intent.spirit_qi_delta - (-0.05)).abs() < 1e-9,
+            "EraDecreeIntent.spirit_qi_delta 应等于 params 里的值；期望 -0.05 实际 {}",
+            intent.spirit_qi_delta
+        );
+        assert_eq!(
+            intent.danger_level_delta, 2,
+            "EraDecreeIntent.danger_level_delta 应等于 params 里的值；期望 2 实际 {}",
+            intent.danger_level_delta
+        );
+
+        // 验证 WorldEraState 被 era_decree_system 真实更新（生产链路全通）
+        let world_era = app.world().resource::<crate::world::era::WorldEraState>();
+        assert_eq!(
+            world_era.era,
+            crate::world::era::EraType::Calamity,
+            "WorldEraState.era 应在 EraDecreeIntent → era_decree_system 消费后更新为 Calamity；\
+             实际 {:?}（=Unknown 说明 era_decree_system 未被驱动或 EraDecreeIntent 未发出）",
+            world_era.era
+        );
+    }
+
+    /// 生产路径：modify_zone{target="全局"} 无 era_name 应被拒绝，不 panic，不 emit intent。
+    #[test]
+    fn modify_zone_global_without_era_name_is_rejected_cleanly() {
+        let mut app = setup_executor_app();
+
+        let mut params = HashMap::new();
+        params.insert("spirit_qi_delta".to_string(), json!(-0.02));
+        // 故意不加 era_name
+
+        {
+            let mut executor = app.world_mut().resource_mut::<CommandExecutorResource>();
+            executor.enqueue_batch(batch(
+                "cmd_global_no_era_name",
+                vec![command(CommandType::ModifyZone, "全局", params)],
+            ));
+        }
+
+        app.update(); // 不应 panic
+
+        let era_intents = drain_era_decree_intents(&app);
+        assert!(
+            era_intents.is_empty(),
+            "无 era_name 的全局 modify_zone 不应发出 EraDecreeIntent；实际发出 {}",
+            era_intents.len()
+        );
+    }
+
+    /// 生产路径：modify_zone{target="mutation"} (Change 时代别名) 应 emit EraDecreeIntent，
+    /// era_decree_system 应将 mutation 解析为 EraType::Change。
+    #[test]
+    fn modify_zone_global_era_name_mutation_maps_to_change_via_production_path() {
+        let mut app = setup_executor_app();
+        app.insert_resource(crate::world::era::WorldEraState::default());
+        app.add_event::<crate::world::era::EraChangedEvent>();
+        app.add_systems(
+            Update,
+            crate::world::era::era_decree_system.after(execute_agent_commands),
+        );
+
+        let mut params = HashMap::new();
+        params.insert("era_name".to_string(), json!("mutation"));
+        params.insert("spirit_qi_delta".to_string(), json!(0.0));
+
+        {
+            let mut executor = app.world_mut().resource_mut::<CommandExecutorResource>();
+            executor.enqueue_batch(batch(
+                "cmd_era_decree_mutation_e2e",
+                vec![command(CommandType::ModifyZone, "全局", params)],
+            ));
+        }
+
+        app.update();
+
+        let era_intents = drain_era_decree_intents(&app);
+        assert_eq!(
+            era_intents.len(),
+            1,
+            "期望 mutation 时代 modify_zone 全局 发出一个 EraDecreeIntent；实际 {}",
+            era_intents.len()
+        );
+        assert_eq!(
+            era_intents[0].era_name, "mutation",
+            "EraDecreeIntent.era_name 应保留 agent 发出的原始字符串 mutation；实际 {}",
+            era_intents[0].era_name
+        );
+
+        // era_decree_system 消费后 WorldEraState 应为 Change（mutation → Change 映射）
+        let world_era = app.world().resource::<crate::world::era::WorldEraState>();
+        assert_eq!(
+            world_era.era,
+            crate::world::era::EraType::Change,
+            "WorldEraState.era 应为 Change（mutation 别名映射）；实际 {:?}",
+            world_era.era
+        );
     }
 }

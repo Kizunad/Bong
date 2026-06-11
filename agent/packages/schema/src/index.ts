@@ -47,6 +47,7 @@ export * from "./spirit-treasure.js";
 export * from "./spiritual-sense.js";
 export * from "./spawn-tutorial.js";
 export * from "./style-balance.js";
+export * from "./tiandao-hunt-narration.js";
 // VFX (plan-player-animation-v1 §4.1, plan-particle-system-v1 §2.2)
 export * from "./vfx-event.js";
 export * from "./tuike.js";

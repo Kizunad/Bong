@@ -1,0 +1,1 @@
+dark xianxia game item icon, shattered dark stone and crystal material, glowing energy cracks as the only light source, high contrast, dramatic self-illumination, photorealistic 3D render, fully transparent background (alpha=0), no background fill, centered, no shadows, no gradients — 玉髓，末法残土风格，暗色调水墨，透明背景，128×128 icon

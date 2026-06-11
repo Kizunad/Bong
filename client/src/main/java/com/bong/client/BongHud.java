@@ -23,6 +23,8 @@ import com.bong.client.hud.HudRenderCommand;
 import com.bong.client.hud.HudRuntimeContext;
 import com.bong.client.hud.ScreenHudVisibility;
 import com.bong.client.inventory.component.GridSlotComponent;
+import com.bong.client.tiandao.TiandaoPresenceHudPlanner;
+import com.bong.client.tiandao.TiandaoPresenceStore;
 import com.bong.client.ui.ClientConnectionStatusStore;
 import com.bong.client.ui.ScreenTransition;
 import com.bong.client.ui.ScreenTransitionOverlay;
@@ -41,7 +43,6 @@ import com.mojang.blaze3d.systems.RenderSystem;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.gui.DrawContext;
 import net.minecraft.client.gui.screen.Screen;
-import net.minecraft.entity.player.PlayerEntity;
 import net.minecraft.util.Identifier;
 import net.minecraft.util.Util;
 import org.lwjgl.glfw.GLFW;
@@ -101,6 +102,16 @@ public class BongHud {
         if (!spiritualSenseIndicators.isEmpty()) {
             commands = new ArrayList<>(commands);
             PerceptionEdgeRenderer.append(commands, spiritualSenseIndicators);
+        }
+        List<HudRenderCommand> tiandaoCommands = TiandaoPresenceHudPlanner.buildCommands(
+            TiandaoPresenceStore.snapshot(),
+            nowMillis,
+            client.getWindow().getScaledWidth(),
+            client.getWindow().getScaledHeight()
+        );
+        if (!tiandaoCommands.isEmpty()) {
+            commands = new ArrayList<>(commands);
+            commands.addAll(tiandaoCommands);
         }
 
         if (visibility == ScreenHudVisibility.CAST_BAR_ONLY) {
@@ -277,17 +288,12 @@ public class BongHud {
     }
 
     private static CombatHudSnapshot captureCombatSnapshot(MinecraftClient client) {
-        int selectedSlot = -1;
-        PlayerEntity player = client.player;
-        if (player != null) {
-            selectedSlot = player.getInventory().selectedSlot;
-        }
         return CombatHudSnapshot.create(
             CombatHudStateStore.snapshot(),
             PhysicalBodyStore.snapshot(),
             QuickUseSlotStore.snapshot(),
             SkillBarStore.snapshot(),
-            selectedSlot,
+            SkillBarStore.selectedSlot(),
             CastStateStore.snapshot(),
             UnifiedEventStore.stream(),
             SpellVolumeStore.snapshot(),

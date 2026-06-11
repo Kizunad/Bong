@@ -109,9 +109,21 @@ export const WORLD_MODEL_STATE_FIELDS = Object.freeze({
   zoneHistory: "zone_history",
   lastDecisions: "last_decisions",
   playerFirstSeenTick: "player_first_seen_tick",
+  negDomainPendingTribulations: "neg_domain_pending_tribulations",
+  negDomainEscapeTelemetry: "neg_domain_escape_telemetry",
+  negDomainEscapeSessions: "neg_domain_escape_sessions",
   lastTick: "last_tick",
   lastStateTs: "last_state_ts",
 });
+
+const REQUIRED_WORLD_MODEL_STATE_FIELDS = Object.freeze([
+  WORLD_MODEL_STATE_FIELDS.currentEra,
+  WORLD_MODEL_STATE_FIELDS.zoneHistory,
+  WORLD_MODEL_STATE_FIELDS.lastDecisions,
+  WORLD_MODEL_STATE_FIELDS.playerFirstSeenTick,
+  WORLD_MODEL_STATE_FIELDS.lastTick,
+  WORLD_MODEL_STATE_FIELDS.lastStateTs,
+]);
 
 export interface PublishAgentWorldModelRequest {
   source: NonNullable<AgentWorldModelEnvelopeV1["source"]>;
@@ -890,7 +902,7 @@ function parseWorldModelStateMirror(
   mirror: Record<string, string>,
   logger: Pick<typeof console, "warn">,
 ): AgentWorldModelEnvelopeV1["snapshot"] | null {
-  const missingFields = Object.values(WORLD_MODEL_STATE_FIELDS).filter((field) => !(field in mirror));
+  const missingFields = REQUIRED_WORLD_MODEL_STATE_FIELDS.filter((field) => !(field in mirror));
   if (missingFields.length > 0) {
     logger.warn(`[redis-ipc] missing world model mirror fields: ${missingFields.join(", ")}`);
     return null;
@@ -920,6 +932,25 @@ function parseWorldModelStateMirror(
     logger,
     isPlayerFirstSeenTick,
   );
+  const negDomainPendingTribulations = parseJsonField(
+    mirror[WORLD_MODEL_STATE_FIELDS.negDomainPendingTribulations] ?? "{}",
+    WORLD_MODEL_STATE_FIELDS.negDomainPendingTribulations,
+    logger,
+    isNegDomainPendingTribulations,
+  );
+  const negDomainEscapeTelemetry = parseJsonField(
+    mirror[WORLD_MODEL_STATE_FIELDS.negDomainEscapeTelemetry] ??
+      '{"escapeEntryCount":0,"postEscapeRealmDropCount":0,"successfulTribulationAvoidanceCount":0,"activeEscapeSessionCount":0,"postEscapeRealmDropRate":0}',
+    WORLD_MODEL_STATE_FIELDS.negDomainEscapeTelemetry,
+    logger,
+    isNegDomainEscapeTelemetry,
+  );
+  const negDomainEscapeSessions = parseJsonField(
+    mirror[WORLD_MODEL_STATE_FIELDS.negDomainEscapeSessions] ?? "{}",
+    WORLD_MODEL_STATE_FIELDS.negDomainEscapeSessions,
+    logger,
+    isNegDomainEscapeSessions,
+  );
   const lastTick = parseOptionalIntegerField(
     mirror[WORLD_MODEL_STATE_FIELDS.lastTick],
     WORLD_MODEL_STATE_FIELDS.lastTick,
@@ -936,6 +967,9 @@ function parseWorldModelStateMirror(
     zoneHistory === INVALID_MIRROR_FIELD ||
     lastDecisions === INVALID_MIRROR_FIELD ||
     playerFirstSeenTick === INVALID_MIRROR_FIELD ||
+    negDomainPendingTribulations === INVALID_MIRROR_FIELD ||
+    negDomainEscapeTelemetry === INVALID_MIRROR_FIELD ||
+    negDomainEscapeSessions === INVALID_MIRROR_FIELD ||
     lastTick === INVALID_MIRROR_FIELD ||
     lastStateTs === INVALID_MIRROR_FIELD
   ) {
@@ -947,6 +981,9 @@ function parseWorldModelStateMirror(
     zoneHistory,
     lastDecisions,
     playerFirstSeenTick,
+    negDomainPendingTribulations,
+    negDomainEscapeTelemetry,
+    negDomainEscapeSessions,
     lastTick,
     lastStateTs,
   };
@@ -1090,6 +1127,70 @@ function isPlayerFirstSeenTick(value: unknown): value is AgentWorldModelSnapshot
   return Object.values(value).every((firstSeenTick) => {
     return typeof firstSeenTick === "number" && Number.isFinite(firstSeenTick);
   });
+}
+
+function isNegDomainPendingTribulations(
+  value: unknown,
+): value is AgentWorldModelSnapshotV1["negDomainPendingTribulations"] {
+  if (!isObjectRecord(value)) {
+    return false;
+  }
+
+  return Object.values(value).every((pending) => {
+    return (
+      isObjectRecord(pending) &&
+      typeof pending.playerUuid === "string" &&
+      typeof pending.playerName === "string" &&
+      typeof pending.zone === "string" &&
+      typeof pending.enteredAtTick === "number" &&
+      Number.isFinite(pending.enteredAtTick) &&
+      typeof pending.lastSuppressedTick === "number" &&
+      Number.isFinite(pending.lastSuppressedTick) &&
+      pending.reason === "negative_domain_tribulation_exempt"
+    );
+  });
+}
+
+function isNegDomainEscapeTelemetry(
+  value: unknown,
+): value is AgentWorldModelSnapshotV1["negDomainEscapeTelemetry"] {
+  return (
+    isObjectRecord(value) &&
+    isNonNegativeFiniteNumber(value.escapeEntryCount) &&
+    Number.isInteger(value.escapeEntryCount) &&
+    isNonNegativeFiniteNumber(value.postEscapeRealmDropCount) &&
+    Number.isInteger(value.postEscapeRealmDropCount) &&
+    isNonNegativeFiniteNumber(value.successfulTribulationAvoidanceCount) &&
+    Number.isInteger(value.successfulTribulationAvoidanceCount) &&
+    isNonNegativeFiniteNumber(value.activeEscapeSessionCount) &&
+    Number.isInteger(value.activeEscapeSessionCount) &&
+    isNonNegativeFiniteNumber(value.postEscapeRealmDropRate)
+  );
+}
+
+function isNegDomainEscapeSessions(
+  value: unknown,
+): value is AgentWorldModelSnapshotV1["negDomainEscapeSessions"] {
+  if (!isObjectRecord(value)) {
+    return false;
+  }
+
+  return Object.values(value).every((session) => {
+    return (
+      isObjectRecord(session) &&
+      typeof session.playerUuid === "string" &&
+      typeof session.playerName === "string" &&
+      typeof session.zone === "string" &&
+      typeof session.enteredAtTick === "number" &&
+      Number.isInteger(session.enteredAtTick) &&
+      typeof session.entryRealmRank === "number" &&
+      Number.isFinite(session.entryRealmRank)
+    );
+  });
+}
+
+function isNonNegativeFiniteNumber(value: unknown): value is number {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0;
 }
 
 function isObjectRecord(value: unknown): value is Record<string, unknown> {

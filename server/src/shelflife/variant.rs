@@ -318,6 +318,7 @@ mod tests {
             id: id.to_string(),
             display_name: format!("死·{}", id),
             category: ItemCategory::Misc,
+            placeable: None,
             max_stack_count: 1,
             grid_w: 1,
             grid_h: 1,
@@ -336,6 +337,7 @@ mod tests {
             recipe_fragment_spec: None,
             container_spec: None,
             shelflife_profile: None,
+            shield_spec: None,
             shelflife_track: None,
         }
     }
@@ -356,6 +358,7 @@ mod tests {
                 id: "rotten_bone_coin".to_string(),
                 display_name: "腐骨币".to_string(),
                 category: ItemCategory::BoneCoin,
+                placeable: None,
                 max_stack_count: 1,
                 grid_w: 1,
                 grid_h: 1,
@@ -374,6 +377,7 @@ mod tests {
                 recipe_fragment_spec: None,
                 container_spec: None,
                 shelflife_profile: None,
+                shield_spec: None,
                 shelflife_track: None,
             },
         );
@@ -384,6 +388,7 @@ mod tests {
                 id: "food.spirit_wine.chen_cu".to_string(),
                 display_name: "陈醋".to_string(),
                 category: ItemCategory::Food,
+                placeable: None,
                 max_stack_count: 16,
                 grid_w: 1,
                 grid_h: 1,
@@ -401,6 +406,7 @@ mod tests {
                 technique_scroll_spec: None,
                 recipe_fragment_spec: None,
                 container_spec: None,
+                shield_spec: None,
                 shelflife_profile: Some("chen_cu_v1".to_string()),
                 shelflife_track: Some(crate::shelflife::DecayTrack::Spoil),
             },

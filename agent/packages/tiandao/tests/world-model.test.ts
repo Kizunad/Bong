@@ -505,4 +505,81 @@ describe("WorldModel", () => {
       }),
     ]);
   });
+
+  // ── plan-era-state-v1 P2：updateState 从 WorldStateV1.era 同步 currentEra ──────
+
+  it("P2: updateState syncs currentEra from WorldStateV1.era calamity", () => {
+    const model = new WorldModel();
+    model.updateState({
+      ...createState({ tick: 1000 }),
+      era: { era_type: "calamity", intensity: 0.9, onset_tick: 1000 },
+    });
+    const era = model.currentEra;
+    expect(era, "WorldStateV1.era=calamity → currentEra 应被同步").not.toBeNull();
+    expect(era?.name).toBe("calamity");
+    expect(era?.sinceTick).toBe(1000);
+    expect(era?.globalEffect).toMatch(/era_type:calamity/);
+  });
+
+  it("P2: updateState syncs currentEra from WorldStateV1.era change", () => {
+    const model = new WorldModel();
+    model.updateState({
+      ...createState({ tick: 5000 }),
+      era: { era_type: "change", intensity: 0.5, onset_tick: 4500 },
+    });
+    const era = model.currentEra;
+    expect(era).not.toBeNull();
+    // agent era.md 的 era_name 字段是 "mutation"，Change 时代 → name = "mutation"
+    expect(era?.name).toBe("mutation");
+    expect(era?.sinceTick).toBe(4500);
+  });
+
+  it("P2: updateState syncs currentEra from WorldStateV1.era deduction", () => {
+    const model = new WorldModel();
+    model.updateState({
+      ...createState({ tick: 12000 }),
+      era: { era_type: "deduction", intensity: 0.3, onset_tick: 12000 },
+    });
+    const era = model.currentEra;
+    expect(era).not.toBeNull();
+    expect(era?.name).toBe("deduction");
+    expect(era?.sinceTick).toBe(12000);
+  });
+
+  it("P2: updateState with era=undefined preserves existing currentEra (agent-side record not cleared)", () => {
+    const model = new WorldModel();
+    // 先通过 setCurrentEra 设置 agent 侧时代
+    model.setCurrentEra({ name: "霜烬纪", sinceTick: 500, globalEffect: "灵机渐枯" });
+    // updateState 中无 era 字段
+    model.updateState(createState({ tick: 1000 }));
+    // currentEra 不应被清除（server 可能尚未填充 era 字段）
+    expect(
+      model.currentEra,
+      "updateState 中 era=undefined 时不应清除已有 agent 侧 currentEra",
+    ).not.toBeNull();
+    expect(model.currentEra?.name).toBe("霜烬纪");
+  });
+
+  it("P2: updateState with era field overwrites existing setCurrentEra value", () => {
+    const model = new WorldModel();
+    model.setCurrentEra({ name: "旧时代", sinceTick: 100, globalEffect: "旧律令" });
+    // server 发来 calamity
+    model.updateState({
+      ...createState({ tick: 2000 }),
+      era: { era_type: "calamity", intensity: 0.8, onset_tick: 2000 },
+    });
+    expect(model.currentEra?.name, "server 的 era 字段应覆盖 agent 侧的 setCurrentEra").toBe(
+      "calamity",
+    );
+  });
+
+  it("P2: era field is included in cloneWorldState (carried through updateState)", () => {
+    const model = new WorldModel();
+    const era = { era_type: "deduction" as const, intensity: 0.4, onset_tick: 8000 };
+    model.updateState({ ...createState({ tick: 8000 }), era });
+    // latestState 应包含 era 字段（cloneWorldState 应 carry it）
+    expect(model.latestState?.era, "latestState 中应保留 era 字段（cloneWorldState 未丢弃）").toEqual(
+      era,
+    );
+  });
 });

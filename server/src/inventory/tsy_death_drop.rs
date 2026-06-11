@@ -466,6 +466,7 @@ mod tests {
             id: id.into(),
             display_name: id.into(),
             category: ItemCategory::Weapon,
+            placeable: None,
             max_stack_count: 1,
             grid_w: 1,
             grid_h: 2,
@@ -490,6 +491,7 @@ mod tests {
             recipe_fragment_spec: None,
             container_spec: None,
             shelflife_profile: None,
+            shield_spec: None,
             shelflife_track: None,
         }
     }

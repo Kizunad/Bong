@@ -52,6 +52,8 @@ pub mod social;
 pub mod spirit_eye;
 pub mod spirit_treasure;
 pub mod style_balance;
+pub mod territory_narration;
+pub mod tiandao_hunt_narration;
 pub mod tribulation;
 pub mod tsy;
 pub mod tsy_hostile;

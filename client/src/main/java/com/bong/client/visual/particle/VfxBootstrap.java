@@ -49,6 +49,9 @@ public final class VfxBootstrap {
         registry.register(JueBiTribulationPlayer.FISSURE,         jueBi);
         registry.register(JueBiTribulationPlayer.ERUPTION,        jueBi);
         registry.register(RealmCollapseBoundaryPlayer.EVENT_ID,  new RealmCollapseBoundaryPlayer());
+        TiandaoHuntVfxPlayer tiandaoHunt = new TiandaoHuntVfxPlayer();
+        registry.register(TiandaoHuntVfxPlayer.BEAST_SPAWN,       tiandaoHunt);
+        registry.register(TiandaoHuntVfxPlayer.DIRECTED_THUNDER,  tiandaoHunt);
         registry.register(FormationActivatePlayer.EVENT_ID,      new FormationActivatePlayer());
         registry.register(DeathSoulDissipatePlayer.EVENT_ID,     new DeathSoulDissipatePlayer());
         registry.register(NpcDeathSmokePlayer.EVENT_ID,          new NpcDeathSmokePlayer());
@@ -175,6 +178,8 @@ public final class VfxBootstrap {
             new ZhenfaActionVfxPlayer(ZhenfaActionVfxPlayer.Kind.DEPLETE));
         registry.register(SocialLinkVfxPlayer.NICHE_ESTABLISH,
             new SocialLinkVfxPlayer(SocialLinkVfxPlayer.Kind.NICHE_ESTABLISH));
+        registry.register(NicheRepairParticlePlayer.EVENT_ID,
+            new NicheRepairParticlePlayer());
         registry.register(SocialLinkVfxPlayer.PACT_LINK,
             new SocialLinkVfxPlayer(SocialLinkVfxPlayer.Kind.PACT_LINK));
         registry.register(SocialLinkVfxPlayer.FEUD_MARK,

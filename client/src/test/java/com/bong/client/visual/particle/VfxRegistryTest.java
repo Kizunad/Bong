@@ -195,6 +195,8 @@ public class VfxRegistryTest {
             "bootstrap should register tribulation_omen_cloud");
         assertTrue(VfxRegistry.instance().contains(RealmCollapseBoundaryPlayer.EVENT_ID),
             "bootstrap should register realm_collapse_boundary");
+        assertTiandaoHuntRoute(TiandaoHuntVfxPlayer.BEAST_SPAWN);
+        assertTiandaoHuntRoute(TiandaoHuntVfxPlayer.DIRECTED_THUNDER);
         assertTrue(VfxRegistry.instance().contains(NpcDeathSmokePlayer.EVENT_ID),
             "bootstrap should register npc_death_smoke");
         assertTrue(VfxRegistry.instance().contains(NpcDeathQiBurstPlayer.EVENT_ID),
@@ -343,6 +345,8 @@ public class VfxRegistryTest {
             "bootstrap should register zhenfa_deplete");
         assertTrue(VfxRegistry.instance().contains(SocialLinkVfxPlayer.NICHE_ESTABLISH),
             "bootstrap should register social_niche_establish");
+        assertTrue(VfxRegistry.instance().contains(NicheRepairParticlePlayer.EVENT_ID),
+            "bootstrap should register social_niche_repair");
         assertTrue(VfxRegistry.instance().contains(SocialLinkVfxPlayer.PACT_LINK),
             "bootstrap should register social_pact_link");
         assertTrue(VfxRegistry.instance().contains(SocialLinkVfxPlayer.FEUD_MARK),
@@ -356,6 +360,14 @@ public class VfxRegistryTest {
                 "bootstrap should register alchemy combat pill VFX " + eventId);
         }
         assertNotNull(VfxRegistry.instance().lookup(SwordQiSlashPlayer.EVENT_ID).orElse(null));
+    }
+
+    private static void assertTiandaoHuntRoute(Identifier eventId) {
+        Optional<VfxPlayer> player = VfxRegistry.instance().lookup(eventId);
+        assertTrue(player.isPresent(), "bootstrap should register tiandao hunt VFX " + eventId);
+        assertTrue(player.get() instanceof TiandaoHuntVfxPlayer,
+            "tiandao hunt event " + eventId + " should route to TiandaoHuntVfxPlayer; got "
+                + player.get().getClass().getName());
     }
 
     private static final class RecordingPlayer implements VfxPlayer {

@@ -701,6 +701,38 @@
           140.0
         ]
       ],
+      "spawn_distribution": [
+        {
+          "anchor": [
+            -240.0,
+            70.0,
+            -160.0
+          ],
+          "radius": 96.0,
+          "weight": 3,
+          "safe_y": 72.0
+        },
+        {
+          "anchor": [
+            180.0,
+            70.0,
+            140.0
+          ],
+          "radius": 112.0,
+          "weight": 2,
+          "safe_y": 72.0
+        },
+        {
+          "anchor": [
+            24.0,
+            70.0,
+            -24.0
+          ],
+          "radius": 80.0,
+          "weight": 1,
+          "safe_y": 72.0
+        }
+      ],
       "blocked_tiles": []
     },
     {

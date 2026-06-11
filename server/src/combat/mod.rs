@@ -25,6 +25,7 @@ pub mod rat_bite;
 pub mod raycast;
 pub mod realm_gap;
 pub mod resolve;
+pub mod shield_block;
 pub mod status;
 pub mod style_telemetry;
 pub mod sword_basics;
@@ -394,5 +395,48 @@ pub fn register(app: &mut App) {
         style_telemetry::track_style_tendency
             .in_set(CombatSystemSet::Emit)
             .after(style_telemetry::collect_hunyuan_pvp_telemetry),
+    );
+
+    // plan-territory-v1 P2 — PvP 击杀 → 影响力争夺
+    // EventReader<DeathEvent> after death_arbiter_tick（保证 DeathEvent 已 emit）。
+    app.add_systems(
+        Update,
+        crate::world::territory::territory_pvp_influence_system
+            .in_set(CombatSystemSet::Emit)
+            .after(lifecycle::death_arbiter_tick),
+    );
+
+    // plan-shield-block-v1 P1 — 盾牌格挡持续状态系统
+    app.add_event::<shield_block::RaiseShieldIntent>();
+    app.add_event::<shield_block::LowerShieldIntent>();
+    app.add_systems(
+        Update,
+        (
+            shield_block::raise_shield_handler.in_set(CombatSystemSet::Intent),
+            shield_block::lower_shield_handler
+                .in_set(CombatSystemSet::Intent)
+                .after(shield_block::raise_shield_handler),
+        ),
+    );
+    app.add_systems(
+        Update,
+        shield_block::cleanup_shield_on_death
+            .in_set(CombatSystemSet::Resolve)
+            .after(lifecycle::death_arbiter_tick),
+    );
+    app.add_systems(
+        Update,
+        shield_block::cleanup_shield_on_disconnect
+            .in_set(CombatSystemSet::Intent)
+            .before(crate::player::despawn_disconnected_clients),
+    );
+    // plan-shield-block-v1 P2 — 体力归零强制放盾（在 Physics set 内 stamina_tick 之后运行）。
+    // 注：stamina_tick ∈ Physics，force_lower 也注册到 Physics set 并 .after(stamina_tick)，
+    // 避免跨 set 约束（Intent→Physics chain 已确保 set 间全序，跨 set .after 会产生环）。
+    app.add_systems(
+        Update,
+        shield_block::force_lower_shield_on_stamina_exhausted
+            .in_set(CombatSystemSet::Physics)
+            .after(lifecycle::stamina_tick),
     );
 }

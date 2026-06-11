@@ -1178,6 +1178,15 @@ describe("redis-ipc", () => {
         playerFirstSeenTick: {
           "offline:Elder": 88,
         },
+        negDomainPendingTribulations: {},
+        negDomainEscapeTelemetry: {
+          escapeEntryCount: 0,
+          postEscapeRealmDropCount: 0,
+          successfulTribulationAvoidanceCount: 0,
+          activeEscapeSessionCount: 0,
+          postEscapeRealmDropRate: 0,
+        },
+        negDomainEscapeSessions: {},
         lastTick: 123,
         lastStateTs: 1710000100,
       },
@@ -1278,6 +1287,15 @@ describe("redis-ipc", () => {
       playerFirstSeenTick: {
         "offline:test-player": 188,
       },
+      negDomainPendingTribulations: {},
+      negDomainEscapeTelemetry: {
+        escapeEntryCount: 0,
+        postEscapeRealmDropCount: 0,
+        successfulTribulationAvoidanceCount: 0,
+        activeEscapeSessionCount: 0,
+        postEscapeRealmDropRate: 0,
+      },
+      negDomainEscapeSessions: {},
       lastTick: 188,
       lastStateTs: null,
     });

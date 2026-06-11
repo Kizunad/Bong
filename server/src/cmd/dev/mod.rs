@@ -23,6 +23,7 @@ pub mod supply_coffin;
 pub mod technique;
 pub mod time;
 pub mod top;
+pub mod tppoi;
 pub mod tptree;
 pub mod tpzone;
 pub mod tribulation_debug;
@@ -58,6 +59,7 @@ pub fn register(app: &mut App) {
     technique::register(app);
     time::register(app);
     tptree::register(app);
+    tppoi::register(app);
     tpzone::register(app);
     shrine::register(app);
     wound::register(app);

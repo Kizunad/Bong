@@ -153,8 +153,20 @@ public final class ClientRequestSender {
         dispatch(ClientRequestProtocol.encodeForgeStationPlace(x, y, z, itemInstanceId, stationTier));
     }
 
+    public static void sendBlockPlace(
+        net.minecraft.util.math.BlockPos pos,
+        long itemInstanceId,
+        ClientRequestProtocol.ZhenfaTargetFace targetFace
+    ) {
+        dispatch(ClientRequestProtocol.encodeBlockPlace(pos, itemInstanceId, targetFace));
+    }
+
     public static void sendSpiritNichePlace(int x, int y, int z, long itemInstanceId) {
         dispatch(ClientRequestProtocol.encodeSpiritNichePlace(x, y, z, itemInstanceId));
+    }
+
+    public static void sendSpiritNicheRepair(int x, int y, int z, long itemInstanceId) {
+        dispatch(ClientRequestProtocol.encodeSpiritNicheRepair(x, y, z, itemInstanceId));
     }
 
     public static void sendSpiritNicheGaze(int x, int y, int z) {
@@ -495,6 +507,10 @@ public final class ClientRequestSender {
         dispatch(ClientRequestProtocol.encodeSupplyCoffinOpen(entityId));
     }
 
+    public static void sendWorkbenchOpen(int entityId) {
+        dispatch(ClientRequestProtocol.encodeWorkbenchOpen(entityId));
+    }
+
     // ─── plan-supply-coffin-loot-ui P1：外部容器 C2S ──────────────
 
     public static void sendExternalContainerMove(
@@ -507,6 +523,18 @@ public final class ClientRequestSender {
 
     public static void sendExternalContainerClose(long sessionId) {
         dispatch(ClientRequestProtocol.encodeExternalContainerClose(sessionId));
+    }
+
+    // ─── plan-shield-block-v1 P1：盾牌举盾 / 放盾 C2S ──────────────────────
+
+    /** plan-shield-block-v1 P1 — 通知 server 玩家举盾（对应 ClientRequestV1::RaiseShield）。 */
+    public static void sendRaiseShield() {
+        dispatch(ClientRequestProtocol.encodeRaiseShield());
+    }
+
+    /** plan-shield-block-v1 P1 — 通知 server 玩家放盾（对应 ClientRequestV1::LowerShield）。 */
+    public static void sendLowerShield() {
+        dispatch(ClientRequestProtocol.encodeLowerShield());
     }
 
     private static void dispatch(String json) {

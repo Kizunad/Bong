@@ -1,11 +1,13 @@
 package com.bong.client.entity;
 
+import com.bong.client.dandao.BaolongwangEntities;
 import com.bong.client.fauna.FaunaVisualKind;
 import com.bong.client.whale.WhaleEntities;
 import org.junit.jupiter.api.Test;
 
 import java.util.EnumMap;
 import java.util.HashSet;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
@@ -30,17 +32,20 @@ public class BongEntityModelRegistryTest {
     void rawIdsStayAfterFaunaWithoutShiftingExistingContract() {
         // raw_id 146-159: contiguous block (plan-entity-model-v1 / plan-supply-coffin-v1).
         // raw_id 160-163: plan-coffin-tiers-v1 延寿棺四档，与上面同在一个注册循环里连号。
-        // Baolongwang BOSS（独立 bootstrap）在本枚举之后注册，取 164 —— 不在本枚举内，
-        // 故本枚举的 raw_id 必须是从 146 起一路连续无空位（早期"160 留给 boss"的设计
-        // 已废弃：单循环注册无法在中间插空）。
+        // Baolongwang BOSS（独立 bootstrap）取 164；Workbench deferred 注册取 165。
         int expectedRawId = 146;
-        for (BongEntityModelKind kind : BongEntityRegistry.orderedKindsForTests()) {
+        for (BongEntityModelKind kind : BongEntityRegistry.baseKindsForTests()) {
             assertEquals(
                 expectedRawId++,
                 kind.expectedRawId(),
-                "Entity model raw ids must start after fauna raw_id=145 and stay strictly sequential (no gaps)"
+                "Base entity model raw ids must stay 146..=163 before Baolongwang"
             );
         }
+        assertEquals(164, BaolongwangEntities.EXPECTED_RAW_ID,
+            "Baolongwang must keep raw_id=164 between base model entities and deferred workbench");
+        assertEquals(List.of(BongEntityModelKind.WORKBENCH), BongEntityRegistry.deferredKindsForTests());
+        assertEquals(165, BongEntityModelKind.WORKBENCH.expectedRawId(),
+            "WORKBENCH raw_id must match server WORKBENCH_ENTITY_KIND=165");
     }
 
     @Test
@@ -54,6 +59,7 @@ public class BongEntityModelRegistryTest {
         }
 
         assertEquals(145, maxFaunaRawId, "Entity model ids must move if fauna reserves more ids");
+        assertTrue(occupied.add(BaolongwangEntities.EXPECTED_RAW_ID), "Baolongwang raw id must be unique");
         for (BongEntityModelKind kind : BongEntityModelKind.values()) {
             assertTrue(
                 kind.expectedRawId() > maxFaunaRawId,
@@ -131,6 +137,11 @@ public class BongEntityModelRegistryTest {
         assertRenderer(BongEntityModelKind.COFFIN_JADE, CoffinJadeRenderer.class, 1);
         assertRenderer(BongEntityModelKind.COFFIN_STONE, CoffinStoneRenderer.class, 1);
         assertRenderer(BongEntityModelKind.COFFIN_BRONZE, CoffinBronzeRenderer.class, 1);
+    }
+
+    @Test
+    void workbenchRendererRegistersAfterBaolongwangSlot() {
+        assertRenderer(BongEntityModelKind.WORKBENCH, WorkbenchRenderer.class, 1);
     }
 
     @Test

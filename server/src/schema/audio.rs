@@ -63,6 +63,7 @@ pub enum AudioBus {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
 pub struct SoundLayer {
     pub sound: String,
     pub volume: f32,
@@ -94,6 +95,7 @@ impl SoundLayer {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct LoopConfig {
     pub interval_ticks: u32,
     pub while_flag: String,
@@ -112,6 +114,7 @@ impl LoopConfig {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
 pub struct SoundRecipe {
     pub id: String,
     pub layers: Vec<SoundLayer>,
@@ -465,6 +468,26 @@ mod tests {
         let recipe: SoundRecipe = serde_json::from_str(json).expect("legacy recipe should parse");
         assert_eq!(recipe.bus, None);
         recipe.validate().expect("legacy recipe remains valid");
+    }
+
+    #[test]
+    fn sound_recipe_rejects_unknown_layer_fields() {
+        let json = r#"{
+            "id": "tiandao_watch_ambient",
+            "layers": [
+                { "sound": "minecraft:ambient.cave", "volume": 0.06, "pitch": 0.4, "delay_ticks": 0, "loop": true }
+            ],
+            "priority": 90,
+            "attenuation": "global_hint",
+            "category": "AMBIENT"
+        }"#;
+
+        let error = serde_json::from_str::<SoundRecipe>(json)
+            .expect_err("audio recipe layers must reject unsupported loop fields");
+        assert!(
+            error.to_string().contains("unknown field"),
+            "error should mention unknown field: {error}"
+        );
     }
 
     #[test]

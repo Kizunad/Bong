@@ -46,6 +46,8 @@ pub enum CombatRealtimeKindV1 {
 pub enum CombatDefenseKindV1 {
     JieMai,
     SwordParry,
+    /// plan-shield-block-v1 P2 — 盾牌正面格挡成功。
+    ShieldBlock,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

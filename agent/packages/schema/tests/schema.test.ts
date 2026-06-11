@@ -11,7 +11,7 @@ import { AntiCheatReportV1 } from "../src/anticheat.js";
 import { AudioEventV1 } from "../src/audio-event.js";
 import { ChatMessageV1 } from "../src/chat-message.js";
 import { validateQiInjectionEventV1Contract } from "../src/combat-carrier.js";
-import { CombatRealtimeEventV1, CombatSummaryV1 } from "../src/combat-event.js";
+import { CombatDefenseKindV1, CombatRealtimeEventV1, CombatSummaryV1 } from "../src/combat-event.js";
 import { DeathInsightRequestV1 } from "../src/death-insight.js";
 import {
   HeartDemonOfferDraftV1,
@@ -138,6 +138,8 @@ import { validate } from "../src/validate.js";
 import { VfxEventV1 } from "../src/vfx-event.js";
 import { BreakthroughCinematicEventV1 } from "../src/breakthrough-cinematic.js";
 import {
+  EraStateV1,
+  EraTypeV1,
   WorldStateV1,
   validateWorldStateV1Contract,
 } from "../src/world-state.js";
@@ -497,6 +499,66 @@ describe("sample files pass schema validation", () => {
     const data = loadSample("world-state.sample.json");
     const result = validate(WorldStateV1, data);
     expect(result.ok, result.errors.join("; ")).toBe(true);
+  });
+
+  // ── plan-era-state-v1 P2：EraStateV1 TypeBox 正反 sample 对拍 ────────────
+
+  it("EraStateV1 — calamity sample validates", () => {
+    const samples = loadSample("era-state.sample.json") as Record<string, unknown>;
+    const result = validate(EraStateV1, samples["calamity"]);
+    expect(result.ok, `calamity sample 应通过 EraStateV1 验证；errors: ${result.errors.join("; ")}`).toBe(true);
+  });
+
+  it("EraStateV1 — change sample validates", () => {
+    const samples = loadSample("era-state.sample.json") as Record<string, unknown>;
+    const result = validate(EraStateV1, samples["change"]);
+    expect(result.ok, `change sample 应通过 EraStateV1 验证；errors: ${result.errors.join("; ")}`).toBe(true);
+  });
+
+  it("EraStateV1 — deduction sample validates", () => {
+    const samples = loadSample("era-state.sample.json") as Record<string, unknown>;
+    const result = validate(EraStateV1, samples["deduction"]);
+    expect(result.ok, `deduction sample 应通过 EraStateV1 验证；errors: ${result.errors.join("; ")}`).toBe(true);
+  });
+
+  it("EraStateV1 — null/undefined for Optional era field is valid in WorldStateV1", () => {
+    const data = loadSample("world-state.sample.json") as Record<string, unknown>;
+    const withoutEra = { ...data };
+    delete withoutEra["era"];
+    const result = validate(WorldStateV1, withoutEra);
+    expect(result.ok, `era 字段缺失时 WorldStateV1 验证应通过（Optional）；errors: ${result.errors.join("; ")}`).toBe(true);
+  });
+
+  it("EraStateV1 — rejects extra fields", () => {
+    const bad = { era_type: "calamity", intensity: 0.9, onset_tick: 1000, rogue: 99 };
+    const result = validate(EraStateV1, bad);
+    expect(result.ok, "EraStateV1 应拒绝额外字段").toBe(false);
+  });
+
+  it("EraStateV1 — rejects unknown era_type", () => {
+    const bad = { era_type: "invalid_era", intensity: 0.5, onset_tick: 100 };
+    const result = validate(EraStateV1, bad);
+    expect(result.ok, "EraStateV1 应拒绝未知 era_type").toBe(false);
+  });
+
+  it("EraTypeV1 — all 4 literal variants validate", () => {
+    for (const literal of ["calamity", "change", "deduction", "unknown"]) {
+      const result = validate(EraTypeV1, literal);
+      expect(
+        result.ok,
+        `EraTypeV1 literal "${literal}" 应通过验证；errors: ${result.errors.join("; ")}`,
+      ).toBe(true);
+    }
+  });
+
+  it("world-state.sample.json — era field validates against EraStateV1", () => {
+    const data = loadSample("world-state.sample.json") as { era?: unknown };
+    expect(data.era, "world-state.sample.json 应含 era 字段（plan-era-state-v1 P2）").toBeDefined();
+    const result = validate(EraStateV1, data.era);
+    expect(
+      result.ok,
+      `world-state.sample.json 的 era 字段应通过 EraStateV1 验证；errors: ${result.errors.join("; ")}`,
+    ).toBe(true);
   });
 
   it("rat phase event contract", () => {
@@ -1466,6 +1528,8 @@ describe("sample files pass schema validation", () => {
     "client-request.forge-inscription-submit.sample.json",
     "client-request.forge-consecration-inject.sample.json",
     "client-request.forge-station-place.sample.json",
+    "client-request.block-place.sample.json",
+    "client-request.spirit-niche-repair.sample.json",
   ]) {
     it(sample, () => {
       const data = loadSample(sample);
@@ -1473,6 +1537,128 @@ describe("sample files pass schema validation", () => {
       expect(result.ok, result.errors.join("; ")).toBe(true);
     });
   }
+
+  // plan-shield-block-v1 P1 — RaiseShield / LowerShield schema pin
+  for (const sample of [
+    "client-request.raise-shield.sample.json",
+    "client-request.lower-shield.sample.json",
+  ]) {
+    it(`${sample} 正样本通过`, () => {
+      const data = loadSample(sample);
+      const result = validate(ClientRequestV1, data);
+      expect(
+        result.ok,
+        `${sample} must be accepted by ClientRequestV1 — raise/lower shield are minimal two-field requests, errors: ${result.errors.join("; ")}`,
+      ).toBe(true);
+    });
+  }
+
+  it("RaiseShieldRequestV1 负样本：额外字段应拒绝 (additionalProperties:false)", () => {
+    const bad = loadSample(
+      "client-request.raise-shield.invalid-extra-field.sample.json",
+    );
+    const result = validate(ClientRequestV1, bad);
+    expect(
+      result.ok,
+      "raise_shield with extra field must be rejected because additionalProperties is false",
+    ).toBe(false);
+  });
+
+  it("LowerShieldRequestV1 负样本：额外字段应拒绝 (additionalProperties:false)", () => {
+    const bad = loadSample(
+      "client-request.lower-shield.invalid-extra-field.sample.json",
+    );
+    const result = validate(ClientRequestV1, bad);
+    expect(
+      result.ok,
+      "lower_shield with extra field must be rejected because additionalProperties is false",
+    ).toBe(false);
+  });
+
+  // plan-shield-block-v1 P1 — CR#1/CR#2：shield 负向样例 sample pin（双端对拍）
+  for (const sample of [
+    "client-request.raise-shield.invalid-missing-v.sample.json",
+    "client-request.raise-shield.invalid-missing-type.sample.json",
+    "client-request.raise-shield.invalid-type-value.sample.json",
+    "client-request.raise-shield.invalid-v-nonone.sample.json",
+    "client-request.lower-shield.invalid-missing-v.sample.json",
+    "client-request.lower-shield.invalid-missing-type.sample.json",
+    "client-request.lower-shield.invalid-type-value.sample.json",
+    "client-request.lower-shield.invalid-v-nonone.sample.json",
+  ]) {
+    it(`${sample} 负样本应被 ClientRequestV1 拒绝`, () => {
+      const bad = loadSample(sample);
+      const result = validate(ClientRequestV1, bad);
+      expect(
+        result.ok,
+        `${sample} must be rejected by ClientRequestV1 — shield requests require exact type literal and v:1, errors: ${result.errors.join("; ")}`,
+      ).toBe(false);
+    });
+  }
+
+  it("RaiseShieldRequestV1 负样本：缺少 v 字段应拒绝", () => {
+    const bad = loadSample(
+      "client-request.raise-shield.invalid-missing-v.sample.json",
+    );
+    const result = validate(ClientRequestV1, bad);
+    expect(result.ok, "raise_shield without v field must be rejected").toBe(
+      false,
+    );
+  });
+
+  it("LowerShieldRequestV1 负样本：缺少 v 字段应拒绝", () => {
+    const bad = loadSample(
+      "client-request.lower-shield.invalid-missing-v.sample.json",
+    );
+    const result = validate(ClientRequestV1, bad);
+    expect(result.ok, "lower_shield without v field must be rejected").toBe(
+      false,
+    );
+  });
+
+  it("RaiseShieldRequestV1 负样本：v:2 字面量应拒绝 (Type.Literal(1))", () => {
+    const bad = loadSample(
+      "client-request.raise-shield.invalid-v-nonone.sample.json",
+    );
+    const result = validate(ClientRequestV1, bad);
+    expect(
+      result.ok,
+      "raise_shield with v:2 must be rejected because v is Type.Literal(1)",
+    ).toBe(false);
+  });
+
+  it("LowerShieldRequestV1 负样本：v:2 字面量应拒绝 (Type.Literal(1))", () => {
+    const bad = loadSample(
+      "client-request.lower-shield.invalid-v-nonone.sample.json",
+    );
+    const result = validate(ClientRequestV1, bad);
+    expect(
+      result.ok,
+      "lower_shield with v:2 must be rejected because v is Type.Literal(1)",
+    ).toBe(false);
+  });
+
+  it("RaiseShieldRequestV1 负样本：type 字面量错误 (invalid_action) 应拒绝", () => {
+    const bad = loadSample(
+      "client-request.raise-shield.invalid-type-value.sample.json",
+    );
+    const result = validate(ClientRequestV1, bad);
+    expect(
+      result.ok,
+      "type:'invalid_action' must be rejected because it does not match any ClientRequestV1 union member",
+    ).toBe(false);
+  });
+
+  it("LowerShieldRequestV1 负样本：type 字面量错误 (invalid_action) 应拒绝", () => {
+    const bad = loadSample(
+      "client-request.lower-shield.invalid-type-value.sample.json",
+    );
+    const result = validate(ClientRequestV1, bad);
+    expect(
+      result.ok,
+      "type:'invalid_action' must be rejected because it does not match any ClientRequestV1 union member",
+    ).toBe(false);
+  });
 
   it("client-request.use-quick-slot.sample.json", () => {
     const data = loadSample("client-request.use-quick-slot.sample.json");
@@ -1573,6 +1759,45 @@ describe("sample files pass schema validation", () => {
     const data = loadSample("combat-event.summary.sample.json");
     const result = validate(CombatSummaryV1, data);
     expect(result.ok, result.errors.join("; ")).toBe(true);
+  });
+
+  // plan-shield-block-v1 P2 — CombatDefenseKindV1 schema pin tests
+  it("CombatDefenseKindV1 accepts jie_mai", () => {
+    const result = validate(CombatDefenseKindV1, "jie_mai");
+    expect(result.ok, result.errors.join("; ")).toBe(true);
+  });
+  it("CombatDefenseKindV1 accepts sword_parry", () => {
+    const result = validate(CombatDefenseKindV1, "sword_parry");
+    expect(result.ok, result.errors.join("; ")).toBe(true);
+  });
+  it("CombatDefenseKindV1 accepts shield_block", () => {
+    const result = validate(CombatDefenseKindV1, "shield_block");
+    expect(
+      result.ok,
+      `shield_block must be a valid CombatDefenseKindV1 variant (plan-shield-block-v1 P2 IPC contract): ${result.errors.join("; ")}`,
+    ).toBe(true);
+  });
+  it("CombatDefenseKindV1 rejects unknown_parry", () => {
+    const result = validate(CombatDefenseKindV1, "unknown_parry");
+    expect(result.ok).toBe(false);
+  });
+  it("combat-event.realtime.shield-block.sample.json positive", () => {
+    const data = loadSample("combat-event.realtime.shield-block.sample.json");
+    const result = validate(CombatRealtimeEventV1, data);
+    expect(
+      result.ok,
+      `shield_block combat event sample must validate against CombatRealtimeEventV1: ${result.errors.join("; ")}`,
+    ).toBe(true);
+  });
+  it("combat-event.realtime.shield-block.invalid-defense-kind.sample.json rejects invalid defense kind", () => {
+    const data = loadSample(
+      "combat-event.realtime.shield-block.invalid-defense-kind.sample.json",
+    );
+    const result = validate(CombatRealtimeEventV1, data);
+    expect(
+      result.ok,
+      "unknown_parry must be rejected as defense_kind",
+    ).toBe(false);
   });
 
   it("anticheat-report.sample.json", () => {
@@ -1828,6 +2053,18 @@ describe("negative sample files fail schema validation", () => {
     const result = validate(ClientRequestV1, data);
     expect(result.ok).toBe(false);
   });
+
+  for (const sample of [
+    "client-request.block-place.invalid-extra-field.sample.json",
+    "client-request.block-place.invalid-target-face.sample.json",
+    "client-request.spirit-niche-repair.invalid-extra-field.sample.json",
+  ]) {
+    it(sample, () => {
+      const data = loadSample(sample);
+      const result = validate(ClientRequestV1, data);
+      expect(result.ok).toBe(false);
+    });
+  }
 
   it("client-request.trade-offer-response.invalid-null-instance.sample.json", () => {
     const data = loadSample("client-request.trade-offer-response.invalid-null-instance.sample.json");

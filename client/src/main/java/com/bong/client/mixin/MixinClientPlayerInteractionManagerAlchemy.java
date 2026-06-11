@@ -4,7 +4,10 @@ import com.bong.client.alchemy.AlchemyFurnaceItems;
 import com.bong.client.alchemy.AlchemyFurnaceInteractionRules;
 import com.bong.client.alchemy.AlchemyScreenBootstrap;
 import com.bong.client.alchemy.state.AlchemyFurnaceStore;
+import com.bong.client.block.BlockPlaceIntentResolver;
 import com.bong.client.coffin.CoffinEnterIntentHandler;
+import com.bong.client.combat.SkillBarStore;
+import com.bong.client.craft.WorkbenchPlaceDust;
 import com.bong.client.combat.screen.ZhenfaLayoutScreen;
 import com.bong.client.entity.BongEntityModelKind;
 import com.bong.client.entity.BongModeledEntity;
@@ -24,7 +27,6 @@ import net.minecraft.util.ActionResult;
 import net.minecraft.util.Hand;
 import net.minecraft.util.hit.BlockHitResult;
 import net.minecraft.util.math.BlockPos;
-import net.minecraft.util.math.Direction;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
@@ -34,6 +36,7 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 @Mixin(ClientPlayerInteractionManager.class)
 public abstract class MixinClientPlayerInteractionManagerAlchemy {
     private static final String MUNDANE_COFFIN_ITEM_ID = "mundane_coffin";
+    private static final String WORKBENCH_ITEM_ID = "workbench_item";
     private static final String WARNING_TRAP_ITEM_ID = "warning_trap";
     private static final String BLAST_TRAP_ITEM_ID = "blast_trap";
     private static final String SLOW_TRAP_ITEM_ID = "slow_trap";
@@ -92,7 +95,7 @@ public abstract class MixinClientPlayerInteractionManagerAlchemy {
                 hit.getBlockPos(),
                 zhenfaTrapKind,
                 mainHand.instanceId(),
-                bong$zhenfaFace(hit.getSide())
+                BlockPlaceIntentResolver.zhenfaFace(hit.getSide())
             ));
             cir.setReturnValue(ActionResult.SUCCESS);
             return;
@@ -112,6 +115,26 @@ public abstract class MixinClientPlayerInteractionManagerAlchemy {
             && mainHand.instanceId() > 0) {
             BlockPos placePos = hit.getBlockPos().offset(hit.getSide());
             ClientRequestSender.sendAlchemyFurnacePlace(placePos, mainHand.instanceId());
+            cir.setReturnValue(ActionResult.SUCCESS);
+            return;
+        }
+
+        InventoryItem selectedBlockItem = BlockPlaceIntentResolver.selectedBlockItem(
+            SkillBarStore.selectedSlot(),
+            InventoryStateStore.snapshot()
+        );
+        BlockPlaceIntentResolver.Intent blockPlace = BlockPlaceIntentResolver.selectedBlockPlaceIntent(
+            SkillBarStore.selectedSlot(),
+            InventoryStateStore.snapshot(),
+            hit.getBlockPos(),
+            hit.getSide()
+        );
+        if (blockPlace != null) {
+            ClientRequestSender.sendBlockPlace(blockPlace.placePos(), blockPlace.instanceId(), blockPlace.face());
+            if (selectedBlockItem != null && WORKBENCH_ITEM_ID.equals(selectedBlockItem.itemId())) {
+                WorkbenchPlaceDust.spawn(client, blockPlace.placePos());
+            }
+            player.swingHand(Hand.MAIN_HAND);
             cir.setReturnValue(ActionResult.SUCCESS);
             return;
         }
@@ -142,17 +165,6 @@ public abstract class MixinClientPlayerInteractionManagerAlchemy {
             case BLAST_TRAP_ITEM_ID -> ClientRequestProtocol.ZhenfaKind.BLAST_TRAP;
             case SLOW_TRAP_ITEM_ID -> ClientRequestProtocol.ZhenfaKind.SLOW_TRAP;
             default -> null;
-        };
-    }
-
-    private static ClientRequestProtocol.ZhenfaTargetFace bong$zhenfaFace(Direction direction) {
-        return switch (direction) {
-            case UP -> ClientRequestProtocol.ZhenfaTargetFace.TOP;
-            case DOWN -> ClientRequestProtocol.ZhenfaTargetFace.BOTTOM;
-            case NORTH -> ClientRequestProtocol.ZhenfaTargetFace.NORTH;
-            case SOUTH -> ClientRequestProtocol.ZhenfaTargetFace.SOUTH;
-            case EAST -> ClientRequestProtocol.ZhenfaTargetFace.EAST;
-            case WEST -> ClientRequestProtocol.ZhenfaTargetFace.WEST;
         };
     }
 }

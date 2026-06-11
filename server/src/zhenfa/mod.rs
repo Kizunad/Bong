@@ -29,8 +29,8 @@ use crate::player::gameplay::PendingGameplayNarrations;
 use crate::player::state::canonical_player_id;
 use crate::qi_physics::constants::QI_ZONE_UNIT_CAPACITY;
 use crate::qi_physics::{
-    qi_release_to_zone, CarrierGrade, MediumKind, QiAccountId, QiTransfer, StyleAttack,
-    StyleDefense,
+    qi_release_to_zone, CarrierGrade, MediumKind, QiAccountId, QiTransfer, QiTransferReason,
+    StyleAttack, StyleDefense,
 };
 use crate::schema::common::NarrationStyle;
 use crate::schema::realm_vision::{SenseEntryV1, SenseKindV1, SpiritualSenseTargetsV1};
@@ -51,6 +51,13 @@ const ZHENFA_PEARL_ITEM_ID: &str = "scattered_qi_pearl";
 const CHAIN_DELAY_TICKS: u64 = 6;
 const WARD_ALERT_THROTTLE_TICKS: u64 = 60 * TICKS_PER_SECOND;
 const DISARM_RANGE: f64 = 4.5;
+pub const DECEIVE_HEAVEN_DURATION_TICKS: u64 = 30 * 60 * TICKS_PER_SECOND;
+pub const DECEIVE_HEAVEN_REVEAL_CHANCE: f64 = 0.10;
+const DECEIVE_HEAVEN_SPIRITWOOD_ITEM_ID: &str = "ling_mu_ban";
+const DECEIVE_HEAVEN_SPIRITWOOD_COST: u32 = 2;
+const DECEIVE_HEAVEN_BEAST_BONE_ITEM_ID: &str = "yi_shou_gu";
+const DECEIVE_HEAVEN_BEAST_BONE_COST: u32 = 4;
+const DECEIVE_HEAVEN_BONE_COIN_COST: u64 = 10;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -171,7 +178,7 @@ pub struct DeceiveHeavenEvent {
     pub pos: [i32; 3],
     pub self_weight_multiplier: f64,
     pub target_weight_multiplier: f64,
-    pub reveal_chance_per_tick: f64,
+    pub reveal_chance: f64,
     pub placed_at_tick: u64,
 }
 
@@ -183,7 +190,7 @@ pub struct DeceiveHeavenExposedEvent {
     pub pos: [i32; 3],
     pub self_weight_multiplier: f64,
     pub target_weight_multiplier: f64,
-    pub reveal_chance_per_tick: f64,
+    pub reveal_chance: f64,
     pub exposed_at_tick: u64,
 }
 
@@ -701,8 +708,17 @@ pub struct ZhenfaKindProfile {
     pub density_multiplier: f64,
     pub tiandao_gaze_weight: f64,
     pub reveal_threshold: f64,
-    pub reveal_chance_per_tick: f64,
+    pub reveal_chance: f64,
     pub reflect_ratio: f64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct ZhenfaMaterialCost {
+    spiritwood_template_id: &'static str,
+    spiritwood_count: u32,
+    beast_bone_template_id: &'static str,
+    beast_bone_count: u32,
+    bone_coin_count: u64,
 }
 
 pub fn zhenfa_kind_profile(
@@ -723,7 +739,7 @@ pub fn zhenfa_kind_profile(
             density_multiplier: 1.0,
             tiandao_gaze_weight: 0.0,
             reveal_threshold: 30.0,
-            reveal_chance_per_tick: 0.0,
+            reveal_chance: 0.0,
             reflect_ratio: 0.0,
         },
         ZhenfaKind::WarningTrap => ZhenfaKindProfile {
@@ -738,7 +754,7 @@ pub fn zhenfa_kind_profile(
                 trap_content::OrdinaryTrapKind::Warning,
             )
             .reveal_threshold(),
-            reveal_chance_per_tick: 0.0,
+            reveal_chance: 0.0,
             reflect_ratio: 0.0,
         },
         ZhenfaKind::BlastTrap => ZhenfaKindProfile {
@@ -753,7 +769,7 @@ pub fn zhenfa_kind_profile(
                 trap_content::OrdinaryTrapKind::Blast,
             )
             .reveal_threshold(),
-            reveal_chance_per_tick: 0.0,
+            reveal_chance: 0.0,
             reflect_ratio: 0.0,
         },
         ZhenfaKind::SlowTrap => ZhenfaKindProfile {
@@ -766,7 +782,7 @@ pub fn zhenfa_kind_profile(
             tiandao_gaze_weight: 0.0,
             reveal_threshold: trap_content::discovery_profile(trap_content::OrdinaryTrapKind::Slow)
                 .reveal_threshold(),
-            reveal_chance_per_tick: 0.0,
+            reveal_chance: 0.0,
             reflect_ratio: 0.0,
         },
         ZhenfaKind::Ward => ZhenfaKindProfile {
@@ -778,7 +794,7 @@ pub fn zhenfa_kind_profile(
             density_multiplier: 1.0,
             tiandao_gaze_weight: 0.0,
             reveal_threshold: 30.0,
-            reveal_chance_per_tick: 0.0,
+            reveal_chance: 0.0,
             reflect_ratio: 0.0,
         },
         ZhenfaKind::ShrineWard => {
@@ -795,7 +811,7 @@ pub fn zhenfa_kind_profile(
                 density_multiplier: 1.0,
                 tiandao_gaze_weight: 0.0,
                 reveal_threshold: 30.0,
-                reveal_chance_per_tick: 0.0,
+                reveal_chance: 0.0,
                 reflect_ratio: if realm == Realm::Void { 0.80 } else { 0.50 },
             }
         }
@@ -813,7 +829,7 @@ pub fn zhenfa_kind_profile(
                 density_multiplier: 1.5 + void_bonus,
                 tiandao_gaze_weight: if realm == Realm::Void { 5.0 } else { 1.0 },
                 reveal_threshold: 30.0,
-                reveal_chance_per_tick: 0.0,
+                reveal_chance: 0.0,
                 reflect_ratio: 0.0,
             }
         }
@@ -821,12 +837,12 @@ pub fn zhenfa_kind_profile(
             min_invest_ratio: 0.80,
             cap_invest_ratio: 1.0,
             cast_time_ticks: cast_time_between(300, 120, mastery_ratio),
-            duration_ticks: 60 * TICKS_PER_SECOND,
+            duration_ticks: DECEIVE_HEAVEN_DURATION_TICKS,
             radius: if realm == Realm::Void { 24 } else { 16 },
             density_multiplier: 0.25,
             tiandao_gaze_weight: 1.5,
             reveal_threshold: 50.0,
-            reveal_chance_per_tick: deceive_heaven_reveal_chance(realm),
+            reveal_chance: deceive_heaven_reveal_chance(realm),
             reflect_ratio: 0.0,
         },
         ZhenfaKind::Illusion => ZhenfaKindProfile {
@@ -841,10 +857,126 @@ pub fn zhenfa_kind_profile(
             density_multiplier: 1.0,
             tiandao_gaze_weight: 0.0,
             reveal_threshold: if realm == Realm::Void { 50.0 } else { 30.0 },
-            reveal_chance_per_tick: 0.0,
+            reveal_chance: 0.0,
             reflect_ratio: 0.0,
         },
     }
+}
+
+fn zhenfa_material_cost(kind: ZhenfaKind) -> Option<ZhenfaMaterialCost> {
+    (kind == ZhenfaKind::DeceiveHeaven).then_some(ZhenfaMaterialCost {
+        spiritwood_template_id: DECEIVE_HEAVEN_SPIRITWOOD_ITEM_ID,
+        spiritwood_count: DECEIVE_HEAVEN_SPIRITWOOD_COST,
+        beast_bone_template_id: DECEIVE_HEAVEN_BEAST_BONE_ITEM_ID,
+        beast_bone_count: DECEIVE_HEAVEN_BEAST_BONE_COST,
+        bone_coin_count: DECEIVE_HEAVEN_BONE_COIN_COST,
+    })
+}
+
+fn validate_zhenfa_material_cost(
+    inventory: Option<&PlayerInventory>,
+    cost: ZhenfaMaterialCost,
+) -> Result<(), String> {
+    let Some(inventory) = inventory else {
+        return Err("inventory missing".to_string());
+    };
+    if inventory.bone_coins < cost.bone_coin_count {
+        return Err(format!(
+            "bone_coins {} < required {}",
+            inventory.bone_coins, cost.bone_coin_count
+        ));
+    }
+    let spiritwood = inventory_template_count(inventory, cost.spiritwood_template_id);
+    if spiritwood < cost.spiritwood_count {
+        return Err(format!(
+            "{} count {} < required {}",
+            cost.spiritwood_template_id, spiritwood, cost.spiritwood_count
+        ));
+    }
+    let beast_bone = inventory_template_count(inventory, cost.beast_bone_template_id);
+    if beast_bone < cost.beast_bone_count {
+        return Err(format!(
+            "{} count {} < required {}",
+            cost.beast_bone_template_id, beast_bone, cost.beast_bone_count
+        ));
+    }
+    Ok(())
+}
+
+fn consume_zhenfa_material_cost(
+    inventory: Option<&mut PlayerInventory>,
+    cost: ZhenfaMaterialCost,
+) -> Result<(), String> {
+    let Some(inventory) = inventory else {
+        return Err("inventory missing".to_string());
+    };
+    validate_zhenfa_material_cost(Some(inventory), cost)?;
+    for _ in 0..cost.spiritwood_count {
+        let instance_id =
+            find_inventory_instance_by_template(inventory, cost.spiritwood_template_id)
+                .ok_or_else(|| format!("{} missing", cost.spiritwood_template_id))?;
+        consume_item_instance_once(inventory, instance_id)?;
+    }
+    for _ in 0..cost.beast_bone_count {
+        let instance_id =
+            find_inventory_instance_by_template(inventory, cost.beast_bone_template_id)
+                .ok_or_else(|| format!("{} missing", cost.beast_bone_template_id))?;
+        consume_item_instance_once(inventory, instance_id)?;
+    }
+    inventory.bone_coins = inventory.bone_coins.saturating_sub(cost.bone_coin_count);
+    Ok(())
+}
+
+fn inventory_template_count(inventory: &PlayerInventory, template_id: &str) -> u32 {
+    inventory
+        .containers
+        .iter()
+        .flat_map(|container| container.items.iter())
+        .filter(|placed| placed.instance.template_id == template_id)
+        .map(|placed| placed.instance.stack_count)
+        .chain(
+            inventory
+                .equipped
+                .values()
+                .filter(|item| item.template_id == template_id)
+                .map(|item| item.stack_count),
+        )
+        .chain(
+            inventory
+                .hotbar
+                .iter()
+                .flatten()
+                .filter(|item| item.template_id == template_id)
+                .map(|item| item.stack_count),
+        )
+        .sum()
+}
+
+fn find_inventory_instance_by_template(
+    inventory: &PlayerInventory,
+    template_id: &str,
+) -> Option<u64> {
+    inventory
+        .containers
+        .iter()
+        .flat_map(|container| container.items.iter())
+        .find(|placed| placed.instance.template_id == template_id)
+        .map(|placed| placed.instance.instance_id)
+        .or_else(|| {
+            inventory
+                .equipped
+                .values()
+                .find(|item| item.template_id == template_id)
+                .map(|item| item.instance_id)
+        })
+        .or_else(|| {
+            inventory
+                .hotbar
+                .iter()
+                .flatten()
+                .find(|item| item.template_id == template_id)
+                .map(|item| item.instance_id)
+        })
 }
 
 pub fn zhenfa_meridian_dependencies(kind: ZhenfaKind) -> &'static [MeridianId] {
@@ -993,6 +1125,15 @@ fn handle_zhenfa_place_requests(
             );
             continue;
         }
+        if let Some(cost) = zhenfa_material_cost(req.kind) {
+            if let Err(error) = validate_zhenfa_material_cost(inventory.as_deref(), cost) {
+                tracing::warn!(
+                    "[bong][zhenfa] place rejected: {:?} material cost unmet: {error}",
+                    req.kind
+                );
+                continue;
+            }
+        }
 
         let mastery_at_cast = mastery
             .as_deref()
@@ -1066,7 +1207,8 @@ fn handle_zhenfa_place_requests(
         } else {
             profile.duration_ticks
         };
-        let duration_ticks = effective_duration_ticks(base_duration_ticks, qi_color, specialist);
+        let duration_ticks =
+            zhenfa_instance_duration_ticks(req.kind, base_duration_ticks, qi_color, specialist);
         let owner_player_id = canonical_player_id(username.0.as_str());
         let anchor_entity = commands
             .spawn((
@@ -1108,6 +1250,19 @@ fn handle_zhenfa_place_requests(
 
         match registry.insert(instance) {
             Ok(id) => {
+                if let Some(cost) = zhenfa_material_cost(req.kind) {
+                    if let Err(error) = consume_zhenfa_material_cost(inventory.as_deref_mut(), cost)
+                    {
+                        registry.remove(id);
+                        remove_zhenfa_anchor_block(&mut layers, req.pos);
+                        commands.entity(anchor_entity).despawn();
+                        tracing::warn!(
+                            "[bong][zhenfa] place rolled back: {:?} material consume failed: {error}",
+                            req.kind
+                        );
+                        continue;
+                    }
+                }
                 if let Some(item_instance_id) = req.item_instance_id {
                     if ordinary_trap.is_some() {
                         let consume_result = inventory
@@ -1298,7 +1453,7 @@ fn emit_deploy_event(
                 pos,
                 self_weight_multiplier: 0.5,
                 target_weight_multiplier: 1.5,
-                reveal_chance_per_tick: profile.reveal_chance_per_tick,
+                reveal_chance: profile.reveal_chance,
                 placed_at_tick,
             });
         }
@@ -1392,8 +1547,8 @@ fn tick_zhenfa_registry(
         tracing::debug!("[bong][zhenfa] expired {} array eye(s)", expired.len());
     }
     for instance in &expired {
-        if trap_content::OrdinaryTrapKind::from_zhenfa_kind(instance.kind).is_some() {
-            release_trap_qi_to_zone(zones.as_deref_mut(), &mut events.qi_transfers, instance);
+        if should_release_sealed_qi_to_zone(instance.kind) {
+            release_zhenfa_qi_to_zone(zones.as_deref_mut(), &mut events.qi_transfers, instance);
         }
         remove_zhenfa_anchor_block(&mut layers, instance.pos);
         events.decay_events.send(ArrayDecayEvent {
@@ -1555,7 +1710,7 @@ fn tick_zhenfa_registry(
             }
             ZhenfaKind::Lingju => {}
             ZhenfaKind::DeceiveHeaven => {
-                if deceive_heaven_detected(instance.id, now, instance.realm_at_cast) {
+                if deceive_heaven_detected(instance, now) {
                     deceived_exposed.push((
                         instance.id,
                         instance.owner,
@@ -1679,6 +1834,7 @@ fn tick_zhenfa_registry(
 
     for (id, owner, pos, anchor_entity) in deceived_exposed {
         if let Some(instance) = registry.remove(id) {
+            release_zhenfa_qi_to_zone(zones.as_deref_mut(), &mut events.qi_transfers, &instance);
             events.juebi_events.send(JueBiTriggerEvent {
                 entity: owner,
                 source: JueBiTriggerSource::ZhenfaDeceptionExposed,
@@ -1699,7 +1855,7 @@ fn tick_zhenfa_registry(
                     pos: instance.pos,
                     self_weight_multiplier: 0.5,
                     target_weight_multiplier: 1.5,
-                    reveal_chance_per_tick: deceive_heaven_reveal_chance(instance.realm_at_cast),
+                    reveal_chance: deceive_heaven_reveal_chance(instance.realm_at_cast),
                     exposed_at_tick: now,
                 });
         }
@@ -2314,6 +2470,18 @@ fn effective_duration_ticks(
     ((base_ticks as f64) * specialist_factor * color_factor).round() as u64
 }
 
+fn zhenfa_instance_duration_ticks(
+    kind: ZhenfaKind,
+    base_ticks: u64,
+    qi_color: &QiColor,
+    specialist: ZhenfaSpecialistLevel,
+) -> u64 {
+    if kind == ZhenfaKind::DeceiveHeaven {
+        return DECEIVE_HEAVEN_DURATION_TICKS;
+    }
+    effective_duration_ticks(base_ticks, qi_color, specialist)
+}
+
 fn active_trigger_range(cultivation: &Cultivation, qi_color: &QiColor) -> f64 {
     let base =
         crate::cultivation::spiritual_sense::scanner::scan_radius_for_realm(cultivation.realm);
@@ -2351,16 +2519,35 @@ fn shrine_ward_damage_per_tick(realm: Realm, mastery: f64) -> f32 {
     (5.0 * realm_factor * (1.0 + mastery_ratio(mastery))) as f32
 }
 
-pub fn deceive_heaven_reveal_chance(realm: Realm) -> f64 {
-    if realm == Realm::Void {
-        0.002
-    } else {
-        0.005
-    }
+pub fn deceive_heaven_reveal_chance(_realm: Realm) -> f64 {
+    DECEIVE_HEAVEN_REVEAL_CHANCE
 }
 
-fn deceive_heaven_detected(array_id: u64, tick: u64, realm: Realm) -> bool {
-    deterministic_tick_roll(array_id, tick) <= deceive_heaven_reveal_chance(realm)
+fn deceive_heaven_detected(instance: &ZhenfaInstance, tick: u64) -> bool {
+    deceive_heaven_reveal_tick(
+        instance.id,
+        instance.placed_at_tick,
+        instance.expires_at_tick,
+        instance.realm_at_cast,
+    )
+    .is_some_and(|reveal_tick| tick >= reveal_tick)
+}
+
+fn deceive_heaven_reveal_tick(
+    array_id: u64,
+    placed_at_tick: u64,
+    expires_at_tick: u64,
+    realm: Realm,
+) -> Option<u64> {
+    let duration_ticks = expires_at_tick.saturating_sub(placed_at_tick);
+    if duration_ticks == 0
+        || deterministic_lifetime_roll(array_id) > deceive_heaven_reveal_chance(realm)
+    {
+        return None;
+    }
+
+    let offset = 1 + deterministic_reveal_offset(array_id, duration_ticks.saturating_sub(1));
+    Some(placed_at_tick.saturating_add(offset))
 }
 
 fn has_zhenfa_flag(inventory: Option<&PlayerInventory>) -> bool {
@@ -2433,14 +2620,25 @@ fn deterministic_roll(player: Entity, instance_id: u64, pos: [i32; 3]) -> f64 {
     (x as f64) / (u64::MAX as f64)
 }
 
-fn deterministic_tick_roll(instance_id: u64, tick: u64) -> f64 {
-    let mut x = instance_id.rotate_left(17) ^ tick.wrapping_mul(0x9E37_79B9_7F4A_7C15);
+fn deterministic_lifetime_roll(instance_id: u64) -> f64 {
+    deterministic_seeded_roll(instance_id, 0xD3CE_1FEA_5EED_u64)
+}
+
+fn deterministic_reveal_offset(instance_id: u64, max_offset: u64) -> u64 {
+    if max_offset == 0 {
+        return 0;
+    }
+    (deterministic_seeded_roll(instance_id, 0xA11E_5EED_u64) * (max_offset as f64)).floor() as u64
+}
+
+fn deterministic_seeded_roll(instance_id: u64, salt: u64) -> f64 {
+    let mut x = instance_id.rotate_left(17) ^ salt.wrapping_mul(0x9E37_79B9_7F4A_7C15);
     x ^= x >> 30;
     x = x.wrapping_mul(0xBF58_476D_1CE4_E5B9);
     x ^= x >> 27;
     x = x.wrapping_mul(0x94D0_49BB_1331_11EB);
     x ^= x >> 31;
-    (x as f64) / (u64::MAX as f64)
+    (x as f64) / ((u64::MAX as f64) + 1.0)
 }
 
 fn in_horizontal_radius(position: valence::math::DVec3, center: [i32; 3], radius: u8) -> bool {
@@ -2527,7 +2725,7 @@ fn release_trap_snapshot_qi_to_zone(
     qi_transfers: &mut EventWriter<QiTransfer>,
     snapshot: &TriggerSnapshot,
 ) {
-    release_trap_qi_amount_to_zone(
+    release_zhenfa_qi_amount_to_zone(
         zones,
         qi_transfers,
         snapshot.id,
@@ -2537,12 +2735,12 @@ fn release_trap_snapshot_qi_to_zone(
     );
 }
 
-fn release_trap_qi_to_zone(
+fn release_zhenfa_qi_to_zone(
     zones: Option<&mut ZoneRegistry>,
     qi_transfers: &mut EventWriter<QiTransfer>,
     instance: &ZhenfaInstance,
 ) {
-    release_trap_qi_amount_to_zone(
+    release_zhenfa_qi_amount_to_zone(
         zones,
         qi_transfers,
         instance.id,
@@ -2552,7 +2750,7 @@ fn release_trap_qi_to_zone(
     );
 }
 
-fn release_trap_qi_amount_to_zone(
+fn release_zhenfa_qi_amount_to_zone(
     zones: Option<&mut ZoneRegistry>,
     qi_transfers: &mut EventWriter<QiTransfer>,
     array_id: u64,
@@ -2563,10 +2761,12 @@ fn release_trap_qi_amount_to_zone(
     if amount <= f64::EPSILON {
         return;
     }
+    let from = QiAccountId::container(format!("zhenfa_trap:{owner_player_id}:{array_id}"));
     let Some(zones) = zones else {
         tracing::warn!(
-            "[bong][zhenfa] trap qi release skipped: ZoneRegistry missing array_id={array_id}"
+            "[bong][zhenfa] zhenfa qi release routed to overflow: ZoneRegistry missing array_id={array_id}"
         );
+        send_zhenfa_release_overflow(qi_transfers, from, owner_player_id, array_id, amount);
         return;
     };
     let zone_name = zones
@@ -2581,21 +2781,37 @@ fn release_trap_qi_amount_to_zone(
         .map(|zone| zone.name.clone());
     let Some(zone_name) = zone_name else {
         tracing::warn!(
-            "[bong][zhenfa] trap qi release skipped: no zone for array_id={array_id} pos={pos:?}"
+            "[bong][zhenfa] zhenfa qi release routed to overflow: no zone for array_id={array_id} pos={pos:?}"
         );
+        send_zhenfa_release_overflow(qi_transfers, from, owner_player_id, array_id, amount);
         return;
     };
     let Some(zone) = zones.find_zone_mut(zone_name.as_str()) else {
+        send_zhenfa_release_overflow(qi_transfers, from, owner_player_id, array_id, amount);
         return;
     };
-    let from = QiAccountId::container(format!("zhenfa_trap:{owner_player_id}:{array_id}"));
     let to = QiAccountId::zone(zone.name.clone());
     let zone_current = zone.spirit_qi.max(0.0) * QI_ZONE_UNIT_CAPACITY;
-    match qi_release_to_zone(amount, from, to, zone_current, QI_ZONE_UNIT_CAPACITY) {
+    match qi_release_to_zone(
+        amount,
+        from.clone(),
+        to,
+        zone_current,
+        QI_ZONE_UNIT_CAPACITY,
+    ) {
         Ok(outcome) => {
             zone.spirit_qi = (outcome.zone_after / QI_ZONE_UNIT_CAPACITY).clamp(-1.0, 1.0);
             if let Some(transfer) = outcome.transfer {
                 qi_transfers.send(transfer);
+            }
+            if outcome.overflow > f64::EPSILON {
+                send_zhenfa_release_overflow(
+                    qi_transfers,
+                    from,
+                    owner_player_id,
+                    array_id,
+                    outcome.overflow,
+                );
             }
         }
         Err(error) => {
@@ -2603,8 +2819,34 @@ fn release_trap_qi_amount_to_zone(
                 ?error,
                 "[bong][zhenfa] invalid trap qi release array_id={array_id}"
             );
+            send_zhenfa_release_overflow(qi_transfers, from, owner_player_id, array_id, amount);
         }
     }
+}
+
+fn send_zhenfa_release_overflow(
+    qi_transfers: &mut EventWriter<QiTransfer>,
+    from: QiAccountId,
+    owner_player_id: &str,
+    array_id: u64,
+    amount: f64,
+) {
+    if amount <= f64::EPSILON {
+        return;
+    }
+    let overflow_to = QiAccountId::overflow(format!(
+        "zhenfa_release_overflow:{owner_player_id}:{array_id}"
+    ));
+    if let Ok(transfer) =
+        QiTransfer::new(from, overflow_to, amount, QiTransferReason::ReleaseToZone)
+    {
+        qi_transfers.send(transfer);
+    }
+}
+
+fn should_release_sealed_qi_to_zone(kind: ZhenfaKind) -> bool {
+    trap_content::OrdinaryTrapKind::from_zhenfa_kind(kind).is_some()
+        || kind == ZhenfaKind::DeceiveHeaven
 }
 
 fn chebyshev_distance(left: [i32; 3], right: [i32; 3]) -> i32 {
@@ -2906,11 +3148,57 @@ mod tests {
         }
     }
 
+    fn material_item(instance_id: u64, template_id: &str, stack_count: u32) -> ItemInstance {
+        let mut item = trap_item(instance_id, template_id, template_id);
+        item.stack_count = stack_count;
+        item
+    }
+
+    fn released_zhenfa_qi_total(transfers: &Events<QiTransfer>) -> f64 {
+        transfers
+            .iter_current_update_events()
+            .filter(|transfer| {
+                transfer.reason == QiTransferReason::ReleaseToZone
+                    && transfer.from.kind == crate::qi_physics::QiAccountKind::Container
+                    && transfer.from.id.starts_with("zhenfa_trap:")
+            })
+            .map(|transfer| transfer.amount)
+            .sum()
+    }
+
     fn zhenfa_flag_inventory() -> PlayerInventory {
         let mut inventory = empty_inventory();
         inventory
             .equipped
             .insert(EQUIP_SLOT_MAIN_HAND.to_string(), array_flag_item(9001));
+        inventory
+    }
+
+    fn deceive_heaven_material_inventory() -> PlayerInventory {
+        let mut inventory = zhenfa_flag_inventory();
+        inventory.bone_coins = DECEIVE_HEAVEN_BONE_COIN_COST;
+        inventory.containers[0]
+            .items
+            .push(crate::inventory::PlacedItemState {
+                row: 0,
+                col: 0,
+                instance: material_item(
+                    9101,
+                    DECEIVE_HEAVEN_SPIRITWOOD_ITEM_ID,
+                    DECEIVE_HEAVEN_SPIRITWOOD_COST,
+                ),
+            });
+        inventory.containers[0]
+            .items
+            .push(crate::inventory::PlacedItemState {
+                row: 0,
+                col: 1,
+                instance: material_item(
+                    9102,
+                    DECEIVE_HEAVEN_BEAST_BONE_ITEM_ID,
+                    DECEIVE_HEAVEN_BEAST_BONE_COST,
+                ),
+            });
         inventory
     }
 
@@ -2927,6 +3215,7 @@ mod tests {
             id: ZHENFA_PEARL_ITEM_ID.to_string(),
             display_name: "散逸真元珠".to_string(),
             category: ItemCategory::Misc,
+            placeable: None,
             max_stack_count: 1,
             grid_w: 1,
             grid_h: 1,
@@ -2945,6 +3234,7 @@ mod tests {
             recipe_fragment_spec: None,
             container_spec: None,
             shelflife_profile: None,
+            shield_spec: None,
             shelflife_track: None,
         };
         ItemRegistry::from_map(HashMap::from([(
@@ -2995,6 +3285,155 @@ mod tests {
         assert_eq!(instance.qi_invest_ratio, 0.10);
         assert_eq!(instance.effect_radius, 0);
         assert_eq!(registry.len(), 1);
+    }
+
+    #[test]
+    fn deceive_heaven_rejects_when_material_cost_is_missing() {
+        let mut app = app_with_loaded_zhenfa();
+        let owner = spawn_player(&mut app, "Alice", [0.0, 64.0, 0.0]);
+        app.world_mut().get_mut::<Cultivation>(owner).unwrap().realm = Realm::Solidify;
+
+        app.world_mut().send_event(ZhenfaPlaceRequest {
+            player: owner,
+            pos: [1, 64, 1],
+            kind: ZhenfaKind::DeceiveHeaven,
+            carrier: ZhenfaCarrierKind::BeastCoreInlaid,
+            qi_invest_ratio: 0.80,
+            trigger: None,
+            item_instance_id: None,
+            target_face: None,
+            requested_at_tick: 10,
+        });
+        app.update();
+
+        assert_eq!(app.world().resource::<ZhenfaRegistry>().len(), 0);
+        let cultivation = app.world().get::<Cultivation>(owner).unwrap();
+        assert_eq!(cultivation.qi_current, 100.0);
+    }
+
+    #[test]
+    fn deceive_heaven_consumes_spiritwood_beast_bone_bone_coin_and_qi() {
+        let mut app = app_with_loaded_zhenfa();
+        let owner = spawn_player(&mut app, "Alice", [0.0, 64.0, 0.0]);
+        app.world_mut().get_mut::<Cultivation>(owner).unwrap().realm = Realm::Solidify;
+        app.world_mut()
+            .entity_mut(owner)
+            .insert(deceive_heaven_material_inventory());
+
+        app.world_mut().send_event(ZhenfaPlaceRequest {
+            player: owner,
+            pos: [1, 64, 1],
+            kind: ZhenfaKind::DeceiveHeaven,
+            carrier: ZhenfaCarrierKind::BeastCoreInlaid,
+            qi_invest_ratio: 0.80,
+            trigger: None,
+            item_instance_id: None,
+            target_face: None,
+            requested_at_tick: 10,
+        });
+        app.update();
+
+        assert_eq!(app.world().resource::<ZhenfaRegistry>().len(), 1);
+        let cultivation = app.world().get::<Cultivation>(owner).unwrap();
+        assert_eq!(cultivation.qi_current, 20.0);
+        let inventory = app.world().get::<PlayerInventory>(owner).unwrap();
+        assert_eq!(inventory.bone_coins, 0);
+        assert_eq!(
+            inventory_template_count(inventory, DECEIVE_HEAVEN_SPIRITWOOD_ITEM_ID),
+            0
+        );
+        assert_eq!(
+            inventory_template_count(inventory, DECEIVE_HEAVEN_BEAST_BONE_ITEM_ID),
+            0
+        );
+    }
+
+    #[test]
+    fn deceive_heaven_instance_lasts_exactly_thirty_minutes_without_duration_bonuses() {
+        let mut app = app_with_loaded_zhenfa();
+        let owner = spawn_player(&mut app, "Alice", [0.0, 64.0, 0.0]);
+        app.world_mut().entity_mut(owner).insert(Cultivation {
+            realm: Realm::Solidify,
+            qi_current: 100.0,
+            qi_max: 100.0,
+            ..Default::default()
+        });
+        app.world_mut().entity_mut(owner).insert(QiColor {
+            main: ColorKind::Solid,
+            is_chaotic: false,
+            ..Default::default()
+        });
+        let mut modifiers = InsightModifiers::new();
+        modifiers.zhenfa_concealment = 10.0;
+        app.world_mut().entity_mut(owner).insert(modifiers);
+        app.world_mut()
+            .entity_mut(owner)
+            .insert(deceive_heaven_material_inventory());
+
+        app.world_mut().send_event(ZhenfaPlaceRequest {
+            player: owner,
+            pos: [1, 64, 1],
+            kind: ZhenfaKind::DeceiveHeaven,
+            carrier: ZhenfaCarrierKind::BeastCoreInlaid,
+            qi_invest_ratio: 0.80,
+            trigger: None,
+            item_instance_id: None,
+            target_face: None,
+            requested_at_tick: 10,
+        });
+        app.update();
+
+        let instance = app
+            .world()
+            .resource::<ZhenfaRegistry>()
+            .find_at([1, 64, 1])
+            .expect("欺天阵应成功放置");
+        assert_eq!(
+            instance.expires_at_tick - instance.placed_at_tick,
+            DECEIVE_HEAVEN_DURATION_TICKS,
+            "欺天阵生产实例必须固定 30 分钟，不吃专精/颜色时长加成"
+        );
+    }
+
+    #[test]
+    fn deceive_heaven_expiry_releases_sealed_qi_to_zone() {
+        let mut app = app_with_loaded_zhenfa();
+        app.insert_resource(ZoneRegistry::fallback());
+        let owner = spawn_player(&mut app, "Alice", [0.0, 64.0, 0.0]);
+        app.world_mut().entity_mut(owner).insert(Cultivation {
+            realm: Realm::Solidify,
+            qi_current: 100.0,
+            qi_max: 100.0,
+            ..Default::default()
+        });
+        app.world_mut()
+            .entity_mut(owner)
+            .insert(deceive_heaven_material_inventory());
+
+        app.world_mut().send_event(ZhenfaPlaceRequest {
+            player: owner,
+            pos: [1, 64, 1],
+            kind: ZhenfaKind::DeceiveHeaven,
+            carrier: ZhenfaCarrierKind::BeastCoreInlaid,
+            qi_invest_ratio: 0.80,
+            trigger: None,
+            item_instance_id: None,
+            target_face: None,
+            requested_at_tick: 10,
+        });
+        app.update();
+        app.world_mut().resource_mut::<CombatClock>().tick = 10 + DECEIVE_HEAVEN_DURATION_TICKS;
+        app.update();
+
+        assert!(app
+            .world()
+            .resource::<ZhenfaRegistry>()
+            .find_at([1, 64, 1])
+            .is_none());
+        assert!(
+            (released_zhenfa_qi_total(app.world().resource::<Events<QiTransfer>>()) - 80.0).abs()
+                < f64::EPSILON
+        );
     }
 
     #[test]
@@ -4168,6 +4607,9 @@ mod tests {
     fn deceive_heaven_requires_solidify_or_higher() {
         let mut app = app_with_zhenfa();
         let owner = spawn_player(&mut app, "Alice", [0.0, 64.0, 0.0]);
+        app.world_mut()
+            .entity_mut(owner)
+            .insert(deceive_heaven_material_inventory());
         app.world_mut().send_event(ZhenfaPlaceRequest {
             player: owner,
             pos: [0, 64, 0],
@@ -4194,6 +4636,21 @@ mod tests {
             qi_max: 100.0,
             ..Default::default()
         });
+        app.world_mut()
+            .entity_mut(owner)
+            .insert(deceive_heaven_material_inventory());
+        let exposed_id = (1..=1_000)
+            .find(|id| {
+                deceive_heaven_reveal_tick(
+                    *id,
+                    1,
+                    1 + DECEIVE_HEAVEN_DURATION_TICKS,
+                    Realm::Solidify,
+                )
+                .is_some()
+            })
+            .expect("test id window should contain at least one exposed array");
+        app.world_mut().resource_mut::<ZhenfaRegistry>().next_id = exposed_id - 1;
         app.world_mut().send_event(ZhenfaPlaceRequest {
             player: owner,
             pos: [0, 64, 0],
@@ -4207,15 +4664,19 @@ mod tests {
         });
         app.update();
 
-        let instance_id = app
+        let instance = app
             .world()
             .resource::<ZhenfaRegistry>()
             .find_at([0, 64, 0])
             .unwrap()
-            .id;
-        let exposure_tick = (2..10_000)
-            .find(|tick| deceive_heaven_detected(instance_id, *tick, Realm::Solidify))
-            .expect("deterministic exposure tick should exist in test window");
+            .clone();
+        let exposure_tick = deceive_heaven_reveal_tick(
+            instance.id,
+            instance.placed_at_tick,
+            instance.expires_at_tick,
+            instance.realm_at_cast,
+        )
+        .expect("selected array id should expose during its lifecycle");
         app.world_mut().resource_mut::<CombatClock>().tick = exposure_tick;
         app.update();
 
@@ -4233,6 +4694,39 @@ mod tests {
             .resource::<Events<JueBiTriggerEvent>>()
             .iter_current_update_events()
             .any(|event| event.source == JueBiTriggerSource::ZhenfaDeceptionExposed));
+        assert!(
+            (released_zhenfa_qi_total(app.world().resource::<Events<QiTransfer>>()) - 90.0).abs()
+                < f64::EPSILON
+        );
+    }
+
+    #[test]
+    fn deceive_heaven_detection_is_lifecycle_ten_percent_not_per_tick() {
+        assert_eq!(
+            deceive_heaven_reveal_chance(Realm::Solidify),
+            DECEIVE_HEAVEN_REVEAL_CHANCE
+        );
+        assert_eq!(
+            deceive_heaven_reveal_chance(Realm::Void),
+            DECEIVE_HEAVEN_REVEAL_CHANCE
+        );
+
+        let exposed_count = (1..=1_000)
+            .filter(|id| {
+                deceive_heaven_reveal_tick(
+                    *id,
+                    1,
+                    1 + DECEIVE_HEAVEN_DURATION_TICKS,
+                    Realm::Solidify,
+                )
+                .is_some()
+            })
+            .count();
+
+        assert!(
+            (80..=120).contains(&exposed_count),
+            "deterministic lifecycle exposure should approximate 10%, actual={exposed_count}/1000"
+        );
     }
 
     #[test]
@@ -4312,7 +4806,8 @@ mod tests {
             ZhenfaCarrierKind::BeastCoreInlaid,
         );
         assert_eq!(deceive.min_invest_ratio, 0.80);
-        assert_eq!(deceive.reveal_chance_per_tick, 0.002);
+        assert_eq!(deceive.duration_ticks, DECEIVE_HEAVEN_DURATION_TICKS);
+        assert_eq!(deceive.reveal_chance, DECEIVE_HEAVEN_REVEAL_CHANCE);
     }
 
     #[test]

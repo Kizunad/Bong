@@ -1,4 +1,5 @@
 pub mod gameplay;
+pub mod spawn_selector;
 pub mod state;
 
 use self::state::{
@@ -35,7 +36,6 @@ use valence::prelude::{
     VisibleChunkLayer, VisibleEntityLayers, With, Without,
 };
 
-const SPAWN_POSITION: [f64; 3] = [8.0, 150.0, 8.0];
 const WELCOME_MESSAGE: &str =
     "Welcome to Bong! Test commands: /zones, /tpzone <zone>, /top, /gm <c|a|s>, /spawn";
 const CORE_SLICE_FLUSH_INTERVAL_TICKS: u64 = 5 * TICKS_PER_SECOND;
@@ -115,7 +115,11 @@ pub fn register(app: &mut App) {
 }
 
 pub fn spawn_position() -> [f64; 3] {
-    SPAWN_POSITION
+    spawn_selector::emergency_spawn_position()
+}
+
+pub fn spawn_position_for_seed(seed: &str, purpose: spawn_selector::SpawnPurpose) -> [f64; 3] {
+    spawn_selector::fallback_spawn(seed, purpose)
 }
 
 pub fn welcome_message() -> &'static str {
@@ -123,7 +127,7 @@ pub fn welcome_message() -> &'static str {
 }
 
 pub fn initial_game_mode() -> GameMode {
-    GameMode::Creative
+    GameMode::Survival
 }
 
 fn init_clients(
@@ -164,9 +168,10 @@ fn init_clients(
 
         client.send_chat_message(welcome_message());
 
-        let spawn_position = spawn_position();
+        let spawn_position = position_to_array(&position);
+        let game_mode = *game_mode;
         tracing::info!(
-            "[bong][player] initialized client entity {entity:?} at [{}, {}, {}] in Adventure",
+            "[bong][player] initialized client entity {entity:?} at [{}, {}, {}] in {game_mode:?}",
             spawn_position[0],
             spawn_position[1],
             spawn_position[2]
@@ -835,8 +840,8 @@ mod tests {
 
         assert_eq!(spawn_position(), [8.0, 150.0, 8.0]);
         assert_eq!(position.get(), DVec3::new(8.0, 150.0, 8.0));
-        assert_eq!(initial_game_mode(), GameMode::Creative);
-        assert_eq!(game_mode, GameMode::Creative);
+        assert_eq!(initial_game_mode(), GameMode::Survival);
+        assert_eq!(game_mode, GameMode::Survival);
         assert_eq!(welcome_message(), WELCOME_MESSAGE);
         assert_eq!(layer_id.0, spawn_layer);
         assert_eq!(visible_chunk_layer.0, spawn_layer);
@@ -1051,7 +1056,11 @@ mod tests {
 
         assert_eq!(karma, 0.2);
         assert_eq!(inventory_score, 0.4);
-        assert_eq!((pos_x, pos_y, pos_z), (8.0, 150.0, 8.0));
+        let [spawn_x, spawn_y, spawn_z] = spawn_position_for_seed(
+            "Azure",
+            crate::player::spawn_selector::SpawnPurpose::InitialLogin,
+        );
+        assert_eq!((pos_x, pos_y, pos_z), (spawn_x, spawn_y, spawn_z));
         assert_ne!(
             serde_json::from_str::<serde_json::Value>(&inventory_json)
                 .expect("inventory_json should decode"),

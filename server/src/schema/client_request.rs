@@ -148,6 +148,15 @@ pub enum ClientRequestV1 {
         z: i32,
         item_instance_id: u64,
     },
+    /// plan-block-lifecycle-v1 P2 — 玩家从 Bong 背包选中方块物品后请求放置。
+    BlockPlace {
+        v: u8,
+        x: i32,
+        y: i32,
+        z: i32,
+        item_instance_id: u64,
+        target_face: TrapTargetFace,
+    },
     /// plan-coffin-v1 — 右键凡物棺材任一半，进入卧棺状态。
     CoffinEnter {
         v: u8,
@@ -176,6 +185,14 @@ pub enum ClientRequestV1 {
     },
     /// plan-social-v1 §2.1 — 消耗龛石，在目标坐标放置/替换当前角色唯一灵龛。
     SpiritNichePlace {
+        v: u8,
+        x: i32,
+        y: i32,
+        z: i32,
+        item_instance_id: u64,
+    },
+    /// plan-niche-craft-fix-v1 P1 — 使用 niche_repair_kit 修补自己的受损灵龛。
+    SpiritNicheRepair {
         v: u8,
         x: i32,
         y: i32,
@@ -454,6 +471,13 @@ pub enum ClientRequestV1 {
         v: u8,
         entity_id: i32,
     },
+    // ─── plan-workbench-place-runtime-v1 P2：entity-based workbench open ────
+    /// 玩家右键制作台 Marker entity 后发送此请求。server 解析 MC protocol
+    /// entity_id → ECS Entity，再交给 `WorkbenchOpenRequest` 做距离校验与开屏。
+    WorkbenchOpen {
+        v: u8,
+        entity_id: i32,
+    },
     // ─── plan-supply-coffin-loot-ui P1：外部容器 C2S ────────────────
     ExternalContainerMove {
         v: u8,
@@ -600,6 +624,16 @@ pub enum ClientRequestV1 {
         pill_instance_id: u64,
         /// 垂死大能的 MC protocol entity_id（i32）。
         elder_entity_id: i32,
+    },
+    /// plan-shield-block-v1 P1 — 按下右键边沿（off_hand 持盾），开始持续举盾状态。
+    /// server 校验 off_hand 实装盾后插入 ShieldBlocking 持续状态。
+    RaiseShield {
+        v: u8,
+    },
+    /// plan-shield-block-v1 P1 — 松开右键边沿（off_hand 持盾），结束持续举盾状态。
+    /// server 移除 ShieldBlocking 状态与 ShieldBlock component。
+    LowerShield {
+        v: u8,
     },
 }
 
@@ -1536,6 +1570,33 @@ mod tests {
     }
 
     #[test]
+    fn spirit_niche_repair_roundtrip_and_rejects_extra_fields() {
+        let json =
+            r#"{"type":"spirit_niche_repair","v":1,"x":11,"y":64,"z":10,"item_instance_id":4242}"#;
+        let req: ClientRequestV1 = serde_json::from_str(json).unwrap();
+        match req {
+            ClientRequestV1::SpiritNicheRepair {
+                v,
+                x,
+                y,
+                z,
+                item_instance_id,
+            } => {
+                assert_eq!(v, 1);
+                assert_eq!((x, y, z), (11, 64, 10));
+                assert_eq!(item_instance_id, 4242);
+            }
+            other => panic!("expected SpiritNicheRepair, got {other:?}"),
+        }
+
+        let extra = r#"{"type":"spirit_niche_repair","v":1,"x":11,"y":64,"z":10,"item_instance_id":4242,"extra":true}"#;
+        assert!(
+            serde_json::from_str::<ClientRequestV1>(extra).is_err(),
+            "spirit_niche_repair must reject extra fields"
+        );
+    }
+
+    #[test]
     fn spirit_niche_gaze_roundtrip() {
         let json = r#"{"type":"spirit_niche_gaze","v":1,"x":11,"y":64,"z":10}"#;
         let req: ClientRequestV1 = serde_json::from_str(json).unwrap();
@@ -1687,6 +1748,50 @@ mod tests {
             }
             other => panic!("expected NpcTradeRequest, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn block_place_roundtrip() {
+        let json = r#"{"type":"block_place","v":1,"x":8,"y":64,"z":8,"item_instance_id":4242,"target_face":"north"}"#;
+        let req: ClientRequestV1 = serde_json::from_str(json)
+            .unwrap_or_else(|error| panic!("block_place should parse: {error}"));
+        match req {
+            ClientRequestV1::BlockPlace {
+                v,
+                x,
+                y,
+                z,
+                item_instance_id,
+                target_face,
+            } => {
+                assert_eq!(v, 1);
+                assert_eq!((x, y, z), (8, 64, 8));
+                assert_eq!(item_instance_id, 4242);
+                assert_eq!(target_face, TrapTargetFace::North);
+            }
+            other => panic!("expected BlockPlace, got {other:?}"),
+        }
+
+        let encoded = serde_json::to_string(&req).expect("block_place serializes");
+        let encoded_value: serde_json::Value =
+            serde_json::from_str(&encoded).expect("encoded block_place JSON is valid");
+        let expected_value: serde_json::Value =
+            serde_json::from_str(json).expect("expected block_place JSON is valid");
+        assert_eq!(
+            encoded_value, expected_value,
+            "block_place must preserve wire fields across serde roundtrip"
+        );
+    }
+
+    #[test]
+    fn block_place_rejects_unknown_fields() {
+        let json = r#"{"type":"block_place","v":1,"x":8,"y":64,"z":8,"item_instance_id":4242,"target_face":"north","extra":true}"#;
+        let error = serde_json::from_str::<ClientRequestV1>(json)
+            .expect_err("block_place must reject unknown fields");
+        assert!(
+            error.to_string().contains("unknown field"),
+            "expected unknown-field error for block_place, got {error}"
+        );
     }
 
     #[test]
@@ -1996,6 +2101,37 @@ mod tests {
             }
             other => panic!("expected SupplyCoffinOpen, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn workbench_open_roundtrip() {
+        let json = r#"{"type":"workbench_open","v":1,"entity_id":42}"#;
+        let req: ClientRequestV1 = serde_json::from_str(json).unwrap();
+        match req {
+            ClientRequestV1::WorkbenchOpen { v, entity_id } => {
+                assert_eq!(v, 1, "version should be 1");
+                assert_eq!(entity_id, 42, "entity_id should be 42");
+            }
+            other => panic!("expected WorkbenchOpen, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn workbench_open_rejects_missing_entity_id() {
+        let json = r#"{"type":"workbench_open","v":1}"#;
+        assert!(
+            serde_json::from_str::<ClientRequestV1>(json).is_err(),
+            "missing entity_id should fail"
+        );
+    }
+
+    #[test]
+    fn workbench_open_rejects_extra_fields() {
+        let json = r#"{"type":"workbench_open","v":1,"entity_id":42,"extra":true}"#;
+        assert!(
+            serde_json::from_str::<ClientRequestV1>(json).is_err(),
+            "extra field should fail due to deny_unknown_fields"
+        );
     }
 
     #[test]
@@ -2371,5 +2507,193 @@ mod tests {
             }
             other => panic!("expected ExternalContainerMove, got {other:?}"),
         }
+    }
+
+    // ─── plan-shield-block-v1 P1 CR#1：负向样例双端 serde 对拍（include_str! pin）───
+
+    /// CR#1 — 正向样例 include_str! pin：确认 samples/ 里的 JSON 文件内容与 Rust serde 可双端对拍。
+    #[test]
+    fn raise_shield_positive_sample_deserializes() {
+        let json = include_str!(
+            "../../../agent/packages/schema/samples/client-request.raise-shield.sample.json"
+        );
+        let req: ClientRequestV1 = serde_json::from_str(json)
+            .unwrap_or_else(|e| panic!("positive raise-shield sample should deserialize: {e}"));
+        assert!(
+            matches!(req, ClientRequestV1::RaiseShield { v: 1 }),
+            "positive sample must deserialize to RaiseShield{{v:1}}, got {req:?}"
+        );
+    }
+
+    #[test]
+    fn lower_shield_positive_sample_deserializes() {
+        let json = include_str!(
+            "../../../agent/packages/schema/samples/client-request.lower-shield.sample.json"
+        );
+        let req: ClientRequestV1 = serde_json::from_str(json)
+            .unwrap_or_else(|e| panic!("positive lower-shield sample should deserialize: {e}"));
+        assert!(
+            matches!(req, ClientRequestV1::LowerShield { v: 1 }),
+            "positive sample must deserialize to LowerShield{{v:1}}, got {req:?}"
+        );
+    }
+
+    /// CR#1 — 负向样例 include_str! pin：缺 v 字段被 serde 拒绝。
+    #[test]
+    fn raise_shield_invalid_missing_v_sample_is_rejected() {
+        let json = include_str!(
+            "../../../agent/packages/schema/samples/client-request.raise-shield.invalid-missing-v.sample.json"
+        );
+        assert!(
+            serde_json::from_str::<ClientRequestV1>(json).is_err(),
+            "raise-shield invalid-missing-v sample must be rejected by serde; \
+             missing v field cannot satisfy ClientRequestV1::RaiseShield{{v:u8}}"
+        );
+    }
+
+    #[test]
+    fn lower_shield_invalid_missing_v_sample_is_rejected() {
+        let json = include_str!(
+            "../../../agent/packages/schema/samples/client-request.lower-shield.invalid-missing-v.sample.json"
+        );
+        assert!(
+            serde_json::from_str::<ClientRequestV1>(json).is_err(),
+            "lower-shield invalid-missing-v sample must be rejected by serde"
+        );
+    }
+
+    /// CR#1 — 负向样例 include_str! pin：额外字段被 deny_unknown_fields 拒绝。
+    #[test]
+    fn raise_shield_invalid_extra_field_sample_is_rejected() {
+        let json = include_str!(
+            "../../../agent/packages/schema/samples/client-request.raise-shield.invalid-extra-field.sample.json"
+        );
+        assert!(
+            serde_json::from_str::<ClientRequestV1>(json).is_err(),
+            "raise-shield invalid-extra-field sample must be rejected (deny_unknown_fields)"
+        );
+    }
+
+    #[test]
+    fn lower_shield_invalid_extra_field_sample_is_rejected() {
+        let json = include_str!(
+            "../../../agent/packages/schema/samples/client-request.lower-shield.invalid-extra-field.sample.json"
+        );
+        assert!(
+            serde_json::from_str::<ClientRequestV1>(json).is_err(),
+            "lower-shield invalid-extra-field sample must be rejected (deny_unknown_fields)"
+        );
+    }
+
+    // ─── plan-shield-block-v1 P1 CR#7：RaiseShield / LowerShield serde pin tests ───
+
+    /// CR#7 — RaiseShield happy-path round-trip：{"type":"raise_shield","v":1} 反序列化为 RaiseShield{v:1}。
+    #[test]
+    fn raise_shield_roundtrip() {
+        let json = r#"{"type":"raise_shield","v":1}"#;
+        let req: ClientRequestV1 = serde_json::from_str(json)
+            .unwrap_or_else(|e| panic!("raise_shield should deserialize: {e}"));
+        assert!(
+            matches!(req, ClientRequestV1::RaiseShield { v: 1 }),
+            "expected RaiseShield{{v:1}}, got {req:?}"
+        );
+        // round-trip：serialize 回去应与原 wire JSON 一致
+        let encoded = serde_json::to_string(&req).expect("RaiseShield serializes");
+        let encoded_val: serde_json::Value = serde_json::from_str(&encoded).unwrap();
+        let expected_val: serde_json::Value = serde_json::from_str(json).unwrap();
+        assert_eq!(
+            encoded_val, expected_val,
+            "RaiseShield round-trip must preserve wire structure; expected={expected_val} actual={encoded_val}"
+        );
+    }
+
+    /// CR#7 — LowerShield happy-path round-trip：{"type":"lower_shield","v":1} 反序列化为 LowerShield{v:1}。
+    #[test]
+    fn lower_shield_roundtrip() {
+        let json = r#"{"type":"lower_shield","v":1}"#;
+        let req: ClientRequestV1 = serde_json::from_str(json)
+            .unwrap_or_else(|e| panic!("lower_shield should deserialize: {e}"));
+        assert!(
+            matches!(req, ClientRequestV1::LowerShield { v: 1 }),
+            "expected LowerShield{{v:1}}, got {req:?}"
+        );
+        let encoded = serde_json::to_string(&req).expect("LowerShield serializes");
+        let encoded_val: serde_json::Value = serde_json::from_str(&encoded).unwrap();
+        let expected_val: serde_json::Value = serde_json::from_str(json).unwrap();
+        assert_eq!(
+            encoded_val, expected_val,
+            "LowerShield round-trip must preserve wire structure; expected={expected_val} actual={encoded_val}"
+        );
+    }
+
+    /// CR#7 — RaiseShield 缺失 v 字段应反序列化失败。
+    #[test]
+    fn raise_shield_rejects_missing_v() {
+        let json = r#"{"type":"raise_shield"}"#;
+        let result: Result<ClientRequestV1, _> = serde_json::from_str(json);
+        assert!(
+            result.is_err(),
+            "raise_shield without v field should fail deserialization; \
+             v is required by serde for enum variant discrimination"
+        );
+    }
+
+    /// CR#7 — LowerShield 缺失 v 字段应反序列化失败。
+    #[test]
+    fn lower_shield_rejects_missing_v() {
+        let json = r#"{"type":"lower_shield"}"#;
+        let result: Result<ClientRequestV1, _> = serde_json::from_str(json);
+        assert!(
+            result.is_err(),
+            "lower_shield without v field should fail deserialization"
+        );
+    }
+
+    /// CR#7 — RaiseShield 额外字段被拒绝（deny_unknown_fields）。
+    #[test]
+    fn raise_shield_rejects_extra_fields() {
+        let json = r#"{"type":"raise_shield","v":1,"extra":true}"#;
+        let result: Result<ClientRequestV1, _> = serde_json::from_str(json);
+        assert!(
+            result.is_err(),
+            "raise_shield with extra field should fail deserialization (deny_unknown_fields); \
+             got Ok variant instead"
+        );
+    }
+
+    /// CR#7 — LowerShield 额外字段被拒绝（deny_unknown_fields）。
+    #[test]
+    fn lower_shield_rejects_extra_fields() {
+        let json = r#"{"type":"lower_shield","v":1,"extra":true}"#;
+        let result: Result<ClientRequestV1, _> = serde_json::from_str(json);
+        assert!(
+            result.is_err(),
+            "lower_shield with extra field should fail deserialization (deny_unknown_fields)"
+        );
+    }
+
+    /// CR#7 — 边界：raise_shield 与 lower_shield 是独立变体，互不混用。
+    #[test]
+    fn raise_shield_and_lower_shield_are_distinct_variants() {
+        let raise: ClientRequestV1 =
+            serde_json::from_str(r#"{"type":"raise_shield","v":1}"#).unwrap();
+        let lower: ClientRequestV1 =
+            serde_json::from_str(r#"{"type":"lower_shield","v":1}"#).unwrap();
+        assert!(
+            matches!(raise, ClientRequestV1::RaiseShield { .. }),
+            "raise_shield must deserialize to RaiseShield variant, got {raise:?}"
+        );
+        assert!(
+            matches!(lower, ClientRequestV1::LowerShield { .. }),
+            "lower_shield must deserialize to LowerShield variant, got {lower:?}"
+        );
+        // They must serialize back to different JSON
+        let raise_json = serde_json::to_string(&raise).unwrap();
+        let lower_json = serde_json::to_string(&lower).unwrap();
+        assert_ne!(
+            raise_json, lower_json,
+            "RaiseShield and LowerShield must produce different wire JSON; \
+             raise={raise_json} lower={lower_json}"
+        );
     }
 }

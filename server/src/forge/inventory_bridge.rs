@@ -171,6 +171,7 @@ mod tests {
             id: id.to_string(),
             display_name: id.to_string(),
             category: ItemCategory::Weapon,
+            placeable: None,
             max_stack_count: 1,
             grid_w: 1,
             grid_h: 2,
@@ -195,6 +196,7 @@ mod tests {
             recipe_fragment_spec: None,
             container_spec: None,
             shelflife_profile: None,
+            shield_spec: None,
             shelflife_track: None,
         }
     }
@@ -203,6 +205,7 @@ mod tests {
         ItemTemplate {
             weapon_spec: None,
             category: ItemCategory::Misc,
+            placeable: None,
             max_stack_count: 1,
             ..weapon_template(id)
         }
@@ -212,6 +215,7 @@ mod tests {
         ItemTemplate {
             weapon_spec: None,
             category: ItemCategory::Tool,
+            placeable: None,
             max_stack_count: 1,
             grid_h: 1,
             ..weapon_template(id)

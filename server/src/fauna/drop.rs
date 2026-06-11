@@ -470,6 +470,7 @@ mod tests {
             } else {
                 ItemCategory::Misc
             },
+            placeable: None,
             max_stack_count: if id.starts_with("bone_coin") {
                 u32::MAX
             } else {
@@ -492,6 +493,7 @@ mod tests {
             recipe_fragment_spec: None,
             container_spec: None,
             shelflife_profile: None,
+            shield_spec: None,
             shelflife_track: None,
         }
     }

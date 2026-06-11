@@ -1,0 +1,19 @@
+{
+  "_comment": "plan-era-state-v1 P2 — EraStateV1 正样本 × 3 时代（Calamity/Change/Deduction）。用于双端 serde/TypeBox 对拍。null 代表 era=Optional 缺失情形（WorldStateV1.era 字段不存在）。",
+  "calamity": {
+    "era_type": "calamity",
+    "intensity": 0.9,
+    "onset_tick": 1000
+  },
+  "change": {
+    "era_type": "change",
+    "intensity": 0.5,
+    "onset_tick": 5000
+  },
+  "deduction": {
+    "era_type": "deduction",
+    "intensity": 0.3,
+    "onset_tick": 12000
+  },
+  "null": null
+}

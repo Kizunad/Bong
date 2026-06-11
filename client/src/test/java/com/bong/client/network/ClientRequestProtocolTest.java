@@ -289,10 +289,49 @@ public class ClientRequestProtocolTest {
     }
 
     @Test
+    void encodesBlockPlace() {
+        String json = ClientRequestProtocol.encodeBlockPlace(
+            new BlockPos(8, 64, 8),
+            4242L,
+            ClientRequestProtocol.ZhenfaTargetFace.NORTH
+        );
+        assertEquals(
+            "{\"type\":\"block_place\",\"v\":1,\"x\":8,\"y\":64,\"z\":8,\"item_instance_id\":4242,\"target_face\":\"north\"}",
+            json
+        );
+    }
+
+    @Test
+    void encodeBlockPlaceRejectsInvalidArguments() {
+        BlockPos pos = new BlockPos(8, 64, 8);
+        assertThrows(
+            IllegalArgumentException.class,
+            () -> ClientRequestProtocol.encodeBlockPlace(null, 4242L, ClientRequestProtocol.ZhenfaTargetFace.NORTH)
+        );
+        assertThrows(
+            IllegalArgumentException.class,
+            () -> ClientRequestProtocol.encodeBlockPlace(pos, -1L, ClientRequestProtocol.ZhenfaTargetFace.NORTH)
+        );
+        assertThrows(
+            IllegalArgumentException.class,
+            () -> ClientRequestProtocol.encodeBlockPlace(pos, 4242L, null)
+        );
+    }
+
+    @Test
     void encodesSpiritNichePlace() {
         String json = ClientRequestProtocol.encodeSpiritNichePlace(11, 64, 10, 4242L);
         assertEquals(
             "{\"type\":\"spirit_niche_place\",\"v\":1,\"x\":11,\"y\":64,\"z\":10,\"item_instance_id\":4242}",
+            json
+        );
+    }
+
+    @Test
+    void encodesSpiritNicheRepair() {
+        String json = ClientRequestProtocol.encodeSpiritNicheRepair(11, 64, 10, 4242L);
+        assertEquals(
+            "{\"type\":\"spirit_niche_repair\",\"v\":1,\"x\":11,\"y\":64,\"z\":10,\"item_instance_id\":4242}",
             json
         );
     }
@@ -787,6 +826,28 @@ public class ClientRequestProtocolTest {
         );
     }
 
+    // ─── plan-workbench-place-runtime-v1 P2：workbench_open ──────────
+
+    @Test
+    void encodesWorkbenchOpen() {
+        String json = ClientRequestProtocol.encodeWorkbenchOpen(42);
+        assertEquals(
+            "{\"type\":\"workbench_open\",\"v\":1,\"entity_id\":42}",
+            json,
+            "workbench_open should encode type + v + entity_id"
+        );
+    }
+
+    @Test
+    void encodesWorkbenchOpenWithZeroId() {
+        String json = ClientRequestProtocol.encodeWorkbenchOpen(0);
+        assertEquals(
+            "{\"type\":\"workbench_open\",\"v\":1,\"entity_id\":0}",
+            json,
+            "entity_id 0 is a valid MC protocol entity id"
+        );
+    }
+
     // ─── plan-coffin-tiers-v1 P3：C2S coffin_break / coffin_menu_reclaim ────
 
     @Test
@@ -928,5 +989,104 @@ public class ClientRequestProtocolTest {
             () -> ClientRequestProtocol.encodeFreshnessProbe(-1L),
             "instance_id=-1 应抛 IllegalArgumentException（非负约束）"
         );
+    }
+
+    // ─── plan-shield-block-v1 P1 CR#3：encodeRaiseShield / encodeLowerShield encode tests ───
+
+    @Test
+    void encodesRaiseShieldTypeField() {
+        String json = ClientRequestProtocol.encodeRaiseShield();
+        com.google.gson.JsonObject obj = com.google.gson.JsonParser.parseString(json).getAsJsonObject();
+        assertEquals(
+            "raise_shield",
+            obj.get("type").getAsString(),
+            "encodeRaiseShield type field must be 'raise_shield' to match server ClientRequestV1::RaiseShield serde tag, actual=" + obj.get("type")
+        );
+    }
+
+    @Test
+    void encodesRaiseShieldVersionField() {
+        String json = ClientRequestProtocol.encodeRaiseShield();
+        com.google.gson.JsonObject obj = com.google.gson.JsonParser.parseString(json).getAsJsonObject();
+        assertEquals(
+            1,
+            obj.get("v").getAsInt(),
+            "encodeRaiseShield must include v=1 for server serde, actual=" + obj.get("v")
+        );
+    }
+
+    @Test
+    void encodesRaiseShieldExactPayload() {
+        String json = ClientRequestProtocol.encodeRaiseShield();
+        assertEquals(
+            "{\"type\":\"raise_shield\",\"v\":1}",
+            json,
+            "encodeRaiseShield must produce minimal two-field payload matching server RaiseShield schema, actual=" + json
+        );
+    }
+
+    @Test
+    void encodesRaiseShieldNoExtraFields() {
+        String json = ClientRequestProtocol.encodeRaiseShield();
+        com.google.gson.JsonObject obj = com.google.gson.JsonParser.parseString(json).getAsJsonObject();
+        assertEquals(
+            2,
+            obj.size(),
+            "encodeRaiseShield must contain exactly 2 fields (type + v); server serde uses additionalProperties:false, actual size=" + obj.size() + " json=" + json
+        );
+    }
+
+    @Test
+    void encodesLowerShieldTypeField() {
+        String json = ClientRequestProtocol.encodeLowerShield();
+        com.google.gson.JsonObject obj = com.google.gson.JsonParser.parseString(json).getAsJsonObject();
+        assertEquals(
+            "lower_shield",
+            obj.get("type").getAsString(),
+            "encodeLowerShield type field must be 'lower_shield' to match server ClientRequestV1::LowerShield serde tag, actual=" + obj.get("type")
+        );
+    }
+
+    @Test
+    void encodesLowerShieldVersionField() {
+        String json = ClientRequestProtocol.encodeLowerShield();
+        com.google.gson.JsonObject obj = com.google.gson.JsonParser.parseString(json).getAsJsonObject();
+        assertEquals(
+            1,
+            obj.get("v").getAsInt(),
+            "encodeLowerShield must include v=1 for server serde, actual=" + obj.get("v")
+        );
+    }
+
+    @Test
+    void encodesLowerShieldExactPayload() {
+        String json = ClientRequestProtocol.encodeLowerShield();
+        assertEquals(
+            "{\"type\":\"lower_shield\",\"v\":1}",
+            json,
+            "encodeLowerShield must produce minimal two-field payload matching server LowerShield schema, actual=" + json
+        );
+    }
+
+    @Test
+    void encodesLowerShieldNoExtraFields() {
+        String json = ClientRequestProtocol.encodeLowerShield();
+        com.google.gson.JsonObject obj = com.google.gson.JsonParser.parseString(json).getAsJsonObject();
+        assertEquals(
+            2,
+            obj.size(),
+            "encodeLowerShield must contain exactly 2 fields (type + v); server serde uses additionalProperties:false, actual size=" + obj.size() + " json=" + json
+        );
+    }
+
+    @Test
+    void raiseShieldAndLowerShieldPayloadsAreDifferent() {
+        // Smoke: raise and lower must produce different type literals — not the same payload.
+        String raise = ClientRequestProtocol.encodeRaiseShield();
+        String lower = ClientRequestProtocol.encodeLowerShield();
+        assertNotNull(raise, "encodeRaiseShield must not return null");
+        assertNotNull(lower, "encodeLowerShield must not return null");
+        assertEquals(false, raise.equals(lower),
+            "encodeRaiseShield and encodeLowerShield must produce different payloads — raise=" + raise + " lower=" + lower);
     }
 }

@@ -15,7 +15,7 @@ public final class BongEntityRenderBootstrap {
     ) {
     }
 
-    private static final List<RendererBinding> BINDINGS = List.of(
+    private static final List<RendererBinding> BASE_BINDINGS = List.of(
         new RendererBinding(BongEntityModelKind.SPIRIT_NICHE, SpiritNicheRenderer.class, SpiritNicheRenderer::new),
         new RendererBinding(BongEntityModelKind.SPIRIT_EYE, SpiritEyeRenderer.class, SpiritEyeRenderer::new),
         new RendererBinding(BongEntityModelKind.RIFT_PORTAL, RiftPortalRenderer.class, RiftPortalRenderer::new),
@@ -31,11 +31,14 @@ public final class BongEntityRenderBootstrap {
         new RendererBinding(BongEntityModelKind.COFFIN_COMMON, CoffinCommonRenderer.class, CoffinCommonRenderer::new),
         new RendererBinding(BongEntityModelKind.COFFIN_RARE, CoffinRareRenderer.class, CoffinRareRenderer::new),
         new RendererBinding(BongEntityModelKind.COFFIN_PRECIOUS, CoffinPreciousRenderer.class, CoffinPreciousRenderer::new),
-        // plan-coffin-tiers-v1 P3 — 延寿棺四档（raw_id 161-164）
+        // plan-coffin-tiers-v1 P3 — 延寿棺四档（raw_id 160-163）
         new RendererBinding(BongEntityModelKind.COFFIN_MUNDANE, CoffinMundaneRenderer.class, CoffinMundaneRenderer::new),
         new RendererBinding(BongEntityModelKind.COFFIN_JADE, CoffinJadeRenderer.class, CoffinJadeRenderer::new),
         new RendererBinding(BongEntityModelKind.COFFIN_STONE, CoffinStoneRenderer.class, CoffinStoneRenderer::new),
         new RendererBinding(BongEntityModelKind.COFFIN_BRONZE, CoffinBronzeRenderer.class, CoffinBronzeRenderer::new)
+    );
+    private static final List<RendererBinding> DEFERRED_BINDINGS = List.of(
+        new RendererBinding(BongEntityModelKind.WORKBENCH, WorkbenchRenderer.class, WorkbenchRenderer::new)
     );
 
     private static final Map<BongEntityModelKind, Class<? extends BongModeledEntityRenderer>> RENDERER_CLASSES =
@@ -46,7 +49,16 @@ public final class BongEntityRenderBootstrap {
     public static void register() {
         LingtianPlotBlock.register();
         BongEntityRegistry.register();
-        for (RendererBinding binding : BINDINGS) {
+        registerBindings(BASE_BINDINGS);
+    }
+
+    public static void registerDeferred() {
+        BongEntityRegistry.registerDeferred();
+        registerBindings(DEFERRED_BINDINGS);
+    }
+
+    private static void registerBindings(List<RendererBinding> bindings) {
+        for (RendererBinding binding : bindings) {
             EntityRendererRegistry.register(BongEntityRegistry.type(binding.kind()), binding.factory());
         }
     }
@@ -58,18 +70,26 @@ public final class BongEntityRenderBootstrap {
     private static Map<BongEntityModelKind, Class<? extends BongModeledEntityRenderer>> rendererClassMap() {
         EnumMap<BongEntityModelKind, Class<? extends BongModeledEntityRenderer>> map =
             new EnumMap<>(BongEntityModelKind.class);
-        for (RendererBinding binding : BINDINGS) {
-            Class<? extends BongModeledEntityRenderer> previous =
-                map.put(binding.kind(), binding.rendererClass());
-            if (previous != null) {
-                throw new IllegalStateException("Duplicate renderer binding for " + binding.kind());
-            }
-        }
+        addRendererClasses(map, BASE_BINDINGS);
+        addRendererClasses(map, DEFERRED_BINDINGS);
         for (BongEntityModelKind kind : BongEntityModelKind.values()) {
             if (!map.containsKey(kind)) {
                 throw new IllegalStateException("Missing renderer binding for " + kind);
             }
         }
         return Map.copyOf(map);
+    }
+
+    private static void addRendererClasses(
+        EnumMap<BongEntityModelKind, Class<? extends BongModeledEntityRenderer>> map,
+        List<RendererBinding> bindings
+    ) {
+        for (RendererBinding binding : bindings) {
+            Class<? extends BongModeledEntityRenderer> previous =
+                map.put(binding.kind(), binding.rendererClass());
+            if (previous != null) {
+                throw new IllegalStateException("Duplicate renderer binding for " + binding.kind());
+            }
+        }
     }
 }

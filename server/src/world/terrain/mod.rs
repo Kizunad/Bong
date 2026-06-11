@@ -19,7 +19,7 @@ use std::path::PathBuf;
 use valence::prelude::{
     ident, App, BiomeRegistry, BlockState, Chunk, ChunkLayer, ChunkPos, ChunkView, Client,
     Commands, DimensionTypeRegistry, Entity, IntoSystemConfigs, Local, Position, Query, Res,
-    ResMut, Resource, Server, UnloadedChunk, Update, View, VisibleChunkLayer, With,
+    ResMut, Resource, Server, UnloadedChunk, Update, Username, View, VisibleChunkLayer, With,
 };
 
 use crate::mineral::{MineralOreIndex, MineralOreNode};
@@ -165,7 +165,10 @@ fn recover_fall_through(
     providers: Option<Res<TerrainProviders>>,
     dimension_layers: Option<Res<DimensionLayers>>,
     mut layers: Query<&mut ChunkLayer>,
-    mut clients: Query<(Entity, &mut Position, &VisibleChunkLayer), With<Client>>,
+    mut clients: Query<
+        (Entity, &mut Position, &VisibleChunkLayer, Option<&Username>),
+        With<Client>,
+    >,
     server: Res<Server>,
     mut last_resend_tick: Local<HashMap<Entity, i64>>,
 ) {
@@ -178,7 +181,7 @@ fn recover_fall_through(
         return;
     };
     let floor_y = layer.min_y();
-    for (entity, mut position, visible_chunk_layer) in &mut clients {
+    for (entity, mut position, visible_chunk_layer, username) in &mut clients {
         if visible_chunk_layer.0 != overworld {
             continue;
         }
@@ -196,7 +199,13 @@ fn recover_fall_through(
                 last_resend_tick.remove(&entity);
             }
             FallRecovery::Spawn => {
-                position.set(crate::player::spawn_position());
+                let seed = username
+                    .map(|username| username.0.as_str())
+                    .unwrap_or("fall-recovery");
+                position.set(crate::player::spawn_position_for_seed(
+                    seed,
+                    crate::player::spawn_selector::SpawnPurpose::FallRecovery,
+                ));
                 last_resend_tick.remove(&entity);
                 tracing::warn!(
                     "[bong][world] {:?} fell out of world (y={:.1} < floor {} - {}) → rescued to spawn",

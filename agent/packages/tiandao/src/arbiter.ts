@@ -36,6 +36,8 @@ interface TaggedCommand {
   command: Command;
   index: number;
   bypassSpiritQiConservation: boolean;
+  /** era 全局指令跳过区域存在性检查（target="全局" 不在 zone registry 中，由 server execute_modify_zone 全局分支处理） */
+  bypassHardConstraints?: boolean;
 }
 
 interface FlattenedCommands {
@@ -94,13 +96,14 @@ export class Arbiter {
     const pushCommand = (
       source: string,
       command: Command,
-      options: { bypassSpiritQiConservation?: boolean } = {},
+      options: { bypassSpiritQiConservation?: boolean; bypassHardConstraints?: boolean } = {},
     ): void => {
       flattened.push({
         source,
         command: cloneCommand(command),
         index: flattened.length,
         bypassSpiritQiConservation: options.bypassSpiritQiConservation ?? false,
+        bypassHardConstraints: options.bypassHardConstraints ?? false,
       });
     };
 
@@ -111,7 +114,15 @@ export class Arbiter {
         const materialized = this.materializeEraCommand(source, command);
         if (materialized) {
           currentEra = materialized.currentEra;
-          for (const eraCommand of materialized.commands) {
+          const [globalEraCmd, ...perZoneCmds] = materialized.commands;
+          // 全局 era 指令透传给 server（target="全局"），不走区域存在性检查
+          if (globalEraCmd) {
+            pushCommand(source, globalEraCmd, {
+              bypassSpiritQiConservation: true,
+              bypassHardConstraints: true,
+            });
+          }
+          for (const eraCommand of perZoneCmds) {
             pushCommand(source, eraCommand, { bypassSpiritQiConservation: true });
           }
           continue;
@@ -128,6 +139,12 @@ export class Arbiter {
   }
 
   private passesHardConstraints(tagged: TaggedCommand): boolean {
+    // era 全局指令（modify_zone{target="全局", era_name=...}）直接透传给 server 全局分支，
+    // 跳过 zone 存在性检查（cross-repo: arbiter→redis→server execute_modify_zone 全局分支）。
+    if (tagged.bypassHardConstraints) {
+      return true;
+    }
+
     const { command } = tagged;
     if (targetsKnownZone(command) && !this.hasZone(command.target)) {
       return false;
@@ -271,12 +288,25 @@ export class Arbiter {
       getStringParam(command.params, "global_effect") ??
       describeEraEffect(spiritQiDelta, dangerLevelDelta);
 
+    // cross-repo contract: server execute_modify_zone 全局分支（command_executor.rs:950）
+    // 消费 modify_zone{target="全局", era_name, spirit_qi_delta, danger_level_delta}
+    // → emit EraDecreeIntent → WorldEraState 更新。
+    // 此全局指令与 per-zone fan-out 一并发往 redis，由 server 处理时代切换。
+    const globalEraCommand: Command = {
+      type: "modify_zone",
+      target: "全局",
+      params: buildGlobalEraParams(eraName, spiritQiDelta, dangerLevelDelta),
+    };
+
     return {
-      commands: this.state.zones.map((zone) => ({
-        type: "modify_zone",
-        target: zone.name,
-        params: buildModifyZoneParams(spiritQiDelta, dangerLevelDelta),
-      })),
+      commands: [
+        globalEraCommand,
+        ...this.state.zones.map((zone) => ({
+          type: "modify_zone" as const,
+          target: zone.name,
+          params: buildModifyZoneParams(spiritQiDelta, dangerLevelDelta),
+        })),
+      ],
       currentEra: {
         name: eraName,
         sinceTick: this.state.tick,
@@ -391,6 +421,15 @@ export class Arbiter {
       params["danger_level_delta"] = dangerLevelDelta;
     }
 
+    // 保留 era_name（若存在）：全局 era 指令携带 era_name 供 server execute_modify_zone 全局分支消费。
+    // cross-repo: server command_executor.rs:951 读取 era_name → EraDecreeIntent → WorldEraState。
+    const eraName = bucket.modifyZones
+      .map((tagged) => getStringParam(tagged.command.params, "era_name"))
+      .find((name): name is string => name !== null);
+    if (eraName !== undefined) {
+      params["era_name"] = eraName;
+    }
+
     const primary = bucket.modifyZones[0];
     return {
       source: primary.source,
@@ -398,6 +437,7 @@ export class Arbiter {
       bypassSpiritQiConservation: bucket.modifyZones.some(
         (tagged) => tagged.bypassSpiritQiConservation,
       ),
+      bypassHardConstraints: bucket.modifyZones.some((tagged) => tagged.bypassHardConstraints),
       command: {
         type: "modify_zone",
         target: bucket.zone,
@@ -621,6 +661,27 @@ function hasNameBoundary(text: string, start: number, end: number): boolean {
 
 function isWordLikeCharacter(char: string | undefined): boolean {
   return char !== undefined && /[\p{L}\p{N}_:-]/u.test(char);
+}
+
+/**
+ * cross-repo: server execute_modify_zone 全局分支（command_executor.rs:950）
+ * 读取 era_name / spirit_qi_delta / danger_level_delta 触发 EraDecreeIntent → WorldEraState 更新。
+ */
+function buildGlobalEraParams(
+  eraName: string,
+  spiritQiDelta: number,
+  dangerLevelDelta: number,
+): Record<string, unknown> {
+  const params: Record<string, unknown> = {
+    era_name: eraName,
+    spirit_qi_delta: spiritQiDelta,
+  };
+
+  if (dangerLevelDelta !== 0) {
+    params["danger_level_delta"] = dangerLevelDelta;
+  }
+
+  return params;
 }
 
 function buildModifyZoneParams(

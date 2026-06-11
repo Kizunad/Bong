@@ -15,6 +15,9 @@ export const CHANNELS = {
   /** Agent → Server: 叙事文本，转发给客户端 (Pub/Sub) */
   AGENT_NARRATE: "bong:agent_narrate",
 
+  /** Server → Agent: 天道狩猎专属叙事请求（plan-tiandao-hunt-v1 P3） */
+  TIANDAO_HUNT_NARRATION_REQUEST: "bong:tiandao_hunt_narration_request",
+
   /** Agent → Server: WorldModel 快照权威上报（Task 5）(Pub/Sub) */
   AGENT_WORLD_MODEL: "bong:agent_world_model",
 
@@ -353,6 +356,10 @@ export const CHANNELS = {
   /** Server → Agent: 虚蚀阶段推进事件（我流虚蚀整链激活，agent narration） */
   VOID_EROSION_EVENT: "bong:void_erosion_event",
 
+  // ─── 领地霸主叙事（plan-territory-v1 P3） ────────────────────────────────
+  /** Server → Agent: 领地霸主叙事请求（Established / Ousted / QiDepleted 三时刻） */
+  TERRITORY_NARRATION_REQUEST: "bong:territory_narration_request",
+
   // ─── 爆脉 v4（plan-combat-skill-feedback-bridges-v1 P1） ────────────────────
   /** Server → Agent: 疤纹回路形成（baomai_v4 scar_circuit formed，agent narration） */
   BAOMAI_V4_SCAR_CIRCUIT_FORMED: "bong:baomai_v4/scar_circuit_formed",
@@ -371,6 +378,7 @@ export const REDIS_V1_CHANNELS = [
   CHANNELS.PLAYER_CHAT,
   CHANNELS.AGENT_COMMAND,
   CHANNELS.AGENT_NARRATE,
+  CHANNELS.TIANDAO_HUNT_NARRATION_REQUEST,
   CHANNELS.AGENT_WORLD_MODEL,
   CHANNELS.CALAMITY_INTENT,
   CHANNELS.SEASON_CHANGED,
@@ -478,6 +486,8 @@ export const REDIS_V1_CHANNELS = [
   CHANNELS.BAOMAI_V3_BLOOD_BURN,
   CHANNELS.BAOMAI_V3_TRANSCENDENCE_EXPIRED,
   CHANNELS.BAOMAI_V3_OVERLOAD_RIPPLE,
+  // plan-territory-v1 P3 — 领地霸主叙事通道
+  CHANNELS.TERRITORY_NARRATION_REQUEST,
 ] as const;
 
 export type ChannelName = (typeof CHANNELS)[keyof typeof CHANNELS];

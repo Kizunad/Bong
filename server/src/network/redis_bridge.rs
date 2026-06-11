@@ -46,6 +46,19 @@ use crate::schema::channels::{
     CH_SOCIAL_NICHE_INTRUSION, CH_SOCIAL_PACT, CH_SOCIAL_RENOWN_DELTA, CH_SPIRIT_EYE_DISCOVERED,
     CH_SPIRIT_EYE_MIGRATE, CH_SPIRIT_EYE_USED_FOR_BREAKTHROUGH, CH_SPIRIT_TREASURE_DIALOGUE,
     CH_SPIRIT_TREASURE_DIALOGUE_REQUEST, CH_STYLE_BALANCE_TELEMETRY, CH_TRIBULATION,
+    CH_DUGU_V2_CAST, CH_DUGU_V2_REVERSE, CH_DUGU_V2_SELF_CURE, CH_DUO_SHE_EVENT, CH_FACTION_EVENT,
+    CH_FACTION_STATE, CH_FACTION_WAR, CH_FORGE_EVENT, CH_FORGE_OUTCOME, CH_FORGE_START,
+    CH_HEART_DEMON_OFFER, CH_HEART_DEMON_REQUEST, CH_HIGH_RENOWN_MILESTONE, CH_INSIGHT_OFFER,
+    CH_INSIGHT_REQUEST, CH_LIFESPAN_EVENT, CH_MERIDIAN_SEVERED, CH_MUTATION_EVENT, CH_NPC_COMBAT,
+    CH_NPC_DEATH, CH_NPC_RELIC, CH_NPC_SPAWN, CH_PLAYER_CHAT, CH_POISON_DOSE_EVENT,
+    CH_POISON_OVERDOSE_EVENT, CH_POI_NOVICE_EVENT, CH_PRICE_INDEX, CH_PSEUDO_VEIN_ACTIVE,
+    CH_PSEUDO_VEIN_DISSIPATE, CH_RAT_PHASE_EVENT, CH_REBIRTH, CH_SEASON_CHANGED,
+    CH_SKILL_CAP_CHANGED, CH_SKILL_LV_UP, CH_SKILL_SCROLL_USED, CH_SKILL_XP_GAIN,
+    CH_SOCIAL_EXPOSURE, CH_SOCIAL_FEUD, CH_SOCIAL_NICHE_INTRUSION, CH_SOCIAL_PACT,
+    CH_SOCIAL_RENOWN_DELTA, CH_SPIRIT_EYE_DISCOVERED, CH_SPIRIT_EYE_MIGRATE,
+    CH_SPIRIT_EYE_USED_FOR_BREAKTHROUGH, CH_SPIRIT_TREASURE_DIALOGUE,
+    CH_SPIRIT_TREASURE_DIALOGUE_REQUEST, CH_STYLE_BALANCE_TELEMETRY,
+    CH_TERRITORY_NARRATION_REQUEST, CH_TIANDAO_HUNT_NARRATION_REQUEST, CH_TRIBULATION,
     CH_TRIBULATION_COLLAPSE, CH_TRIBULATION_LOCK, CH_TRIBULATION_OMEN, CH_TRIBULATION_SETTLE,
     CH_TRIBULATION_WAVE, CH_TSY_EVENT, CH_TUIKE_ASH_DECAY, CH_TUIKE_SHED, CH_TUIKE_V2_SKILL_EVENT,
     CH_VOID_ACTION_BARRIER, CH_VOID_ACTION_EXPLODE_ZONE, CH_VOID_ACTION_LEGACY_ASSIGN,
@@ -103,6 +116,8 @@ use crate::schema::spirit_eye::{
 };
 use crate::schema::spirit_treasure::{SpiritTreasureDialogueRequestV1, SpiritTreasureDialogueV1};
 use crate::schema::style_balance::StyleBalanceTelemetryEventV1;
+use crate::schema::territory_narration::TerritoryDominanceNarrationRequestV1;
+use crate::schema::tiandao_hunt_narration::TiandaoHuntNarrationRequestV1;
 use crate::schema::tribulation::{TribulationEventV1, TribulationKindV1, TribulationPhaseV1};
 use crate::schema::tsy::{TsyEnterEventV1, TsyExitEventV1};
 use crate::schema::tsy_hostile::{TsyNpcSpawnedV1, TsySentinelPhaseChangedV1};
@@ -171,6 +186,7 @@ pub enum RedisOutbound {
     AlchemyInsight(AlchemyInsightV1),
     CultivationDeath(CultivationDeathV1),
     InsightRequest(InsightRequestV1),
+    TiandaoHuntNarrationRequest(TiandaoHuntNarrationRequestV1),
     HeartDemonRequest(HeartDemonPregenRequestV1),
     SpiritTreasureDialogueRequest(SpiritTreasureDialogueRequestV1),
     DeathInsight(DeathInsightRequestV1),
@@ -280,6 +296,9 @@ pub enum RedisOutbound {
     VoidErosionEvent(VoidErosionEventV1),
     /// plan-dying-elder-v1 P3 — 垂死大能遭遇事件（bong:elder_encounter）。
     ElderEncounterEvent(ElderEncounterEventV1),
+    /// plan-territory-v1 P3 — 领地霸主变动叙事请求（bong:territory_narration_request）。
+    /// 三时刻：新霸主确立 / 霸主被驱逐 / 区域灵气耗尽。匿名（境界段，非 char_id）。
+    TerritoryDominanceNarration(TerritoryDominanceNarrationRequestV1),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -786,6 +805,17 @@ fn prepare_outbound_command(message: RedisOutbound) -> Result<RedisIoCommand, Va
             })?;
             Ok(RedisIoCommand::Publish {
                 channel: CH_INSIGHT_REQUEST,
+                payload,
+            })
+        }
+        RedisOutbound::TiandaoHuntNarrationRequest(evt) => {
+            let payload = serde_json::to_string(&evt).map_err(|error| {
+                ValidationError::new(format!(
+                    "failed to serialize TiandaoHuntNarrationRequestV1: {error}"
+                ))
+            })?;
+            Ok(RedisIoCommand::Publish {
+                channel: CH_TIANDAO_HUNT_NARRATION_REQUEST,
                 payload,
             })
         }
@@ -1573,6 +1603,18 @@ fn prepare_outbound_command(message: RedisOutbound) -> Result<RedisIoCommand, Va
             })?;
             Ok(RedisIoCommand::Publish {
                 channel: CH_ELDER_ENCOUNTER,
+                payload,
+            })
+        }
+        // plan-territory-v1 P3 — 领地霸主变动叙事请求（照搬 ZonePressureCrossed arm）
+        RedisOutbound::TerritoryDominanceNarration(req) => {
+            let payload = serde_json::to_string(&req).map_err(|error| {
+                ValidationError::new(format!(
+                    "failed to serialize TerritoryDominanceNarrationRequestV1: {error}"
+                ))
+            })?;
+            Ok(RedisIoCommand::Publish {
+                channel: CH_TERRITORY_NARRATION_REQUEST,
                 payload,
             })
         }
@@ -3247,6 +3289,35 @@ mod redis_bridge_tests {
                 let v: Value = serde_json::from_str(&payload).unwrap();
                 assert_eq!(v["trigger_id"], "heart_demon:1:1000");
                 assert_eq!(v["recent_biography"][0], "t240:reach:Spirit");
+            }
+            other => panic!("expected publish, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn publishes_tiandao_hunt_narration_request_on_dedicated_channel() {
+        let command = prepare_outbound_command(RedisOutbound::TiandaoHuntNarrationRequest(
+            TiandaoHuntNarrationRequestV1 {
+                v: 1,
+                character_id: "offline:Alice".into(),
+                realm: "Spirit".into(),
+                attention_level: 72.5,
+                response_level:
+                    crate::schema::tiandao_hunt_narration::TiandaoHuntResponseLevelV1::Tribulation,
+                zone: "血谷".into(),
+                recent_actions: vec!["activity:meditating".into()],
+                narration_count: 2,
+            },
+        ))
+        .expect("tiandao hunt narration request should serialize");
+
+        match command {
+            RedisIoCommand::Publish { channel, payload } => {
+                assert_eq!(channel, CH_TIANDAO_HUNT_NARRATION_REQUEST);
+                let v: Value = serde_json::from_str(&payload).unwrap();
+                assert_eq!(v["character_id"], "offline:Alice");
+                assert_eq!(v["response_level"], "tribulation");
+                assert_eq!(v["narration_count"], 2);
             }
             other => panic!("expected publish, got {other:?}"),
         }

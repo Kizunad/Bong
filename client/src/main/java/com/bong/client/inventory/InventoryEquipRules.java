@@ -10,7 +10,8 @@ import java.util.Map;
 import java.util.Set;
 import java.util.function.Predicate;
 
-final class InventoryEquipRules {
+// plan-shield-block-v1 P1 — 改为 public 以允许 MixinMouse 调用 isShieldPublic（同包内也可直接用 isShield）。
+public final class InventoryEquipRules {
     private enum WeaponKind {
         SWORD,
         SABER,
@@ -61,6 +62,13 @@ final class InventoryEquipRules {
         "tuike_rotten_wood_armor"
     );
 
+    // plan-shield-block-v1 P0 — 凡人级物理防御盾牌，装备于 off_hand 槽。
+    // 与 server ItemCategory::Shield 对齐；不走 WeaponKind 路由（盾无 weapon_spec）。
+    private static final Set<String> SHIELD_TEMPLATE_IDS = Set.of(
+        "wooden_shield",
+        "bone_shield"
+    );
+
     private InventoryEquipRules() {
     }
 
@@ -80,8 +88,10 @@ final class InventoryEquipRules {
         return switch (targetSlot) {
             case MAIN_HAND -> (weaponKind != null || hoe || tool)
                 && (fromTwoHand || !isOccupied(equipped, EquipSlotType.TWO_HAND));
+            // plan-shield-block-v1 P0 — 加 isShield 分支，与 server EquipSlotV1::OffHand Shield 校验对齐。
             case OFF_HAND -> ((weaponKind == WeaponKind.DAGGER || weaponKind == WeaponKind.FIST)
-                || isTreasure(item))
+                || isTreasure(item)
+                || isShield(item))
                 && (fromTwoHand || !isOccupied(equipped, EquipSlotType.TWO_HAND));
             case TWO_HAND -> (weaponKind == WeaponKind.SPEAR || weaponKind == WeaponKind.STAFF)
                 && (fromTwoHand
@@ -115,7 +125,8 @@ final class InventoryEquipRules {
     }
 
     static boolean canPlaceIntoHotbar(InventoryItem item) {
-        return isSingleCell(item) && !isWeapon(item) && !isTool(item) && !isTreasure(item) && !isArmor(item);
+        // plan-shield-block-v1 P0 MAJOR #1 — 盾牌同样不能进 hotbar，必须留在 off_hand 槽。
+        return isSingleCell(item) && !isWeapon(item) && !isTool(item) && !isTreasure(item) && !isArmor(item) && !isShield(item);
     }
 
     static boolean canPlaceIntoQuickUse(InventoryItem item) {
@@ -140,6 +151,16 @@ final class InventoryEquipRules {
 
     static boolean isArmor(InventoryItem item) {
         return item != null && isArmor(item.itemId());
+    }
+
+    // plan-shield-block-v1 P0 — 盾牌判断，供 OFF_HAND 路由使用。
+    static boolean isShield(InventoryItem item) {
+        return item != null && isShield(item.itemId());
+    }
+
+    // plan-shield-block-v1 P1 — public 版本，供 MixinMouse 右键仲裁层跨包访问。
+    public static boolean isShieldPublic(InventoryItem item) {
+        return isShield(item);
     }
 
     private static boolean isSingleCell(InventoryItem item) {
@@ -189,6 +210,11 @@ final class InventoryEquipRules {
 
     private static boolean isTool(String itemId) {
         return itemId != null && TOOL_TEMPLATE_IDS.contains(itemId);
+    }
+
+    // plan-shield-block-v1 P0 — 盾牌 id 判断（与 SHIELD_TEMPLATE_IDS 对齐）。
+    private static boolean isShield(String itemId) {
+        return itemId != null && SHIELD_TEMPLATE_IDS.contains(itemId);
     }
 
     private static WeaponKind weaponKindOf(String itemId) {

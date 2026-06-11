@@ -456,6 +456,31 @@ mod tests {
         app.add_event::<StartHarvestRequest>();
         app.add_event::<StartReplenishRequest>();
         app.add_event::<StartDrainQiRequest>();
+        app.add_event::<crate::combat::events::AttackIntent>();
+        app.add_event::<crate::world::extract_system::StartExtractRequest>();
+        app.add_event::<crate::world::extract_system::CancelExtractRequest>();
+        app.add_event::<crate::network::vfx_event_emit::VfxEventRequest>();
+        app.add_event::<crate::network::audio_event_emit::PlaySoundRecipeRequest>();
+        app.add_event::<crate::network::qi_color_observed_emit::QiColorInspectRequest>();
+        app.add_event::<crate::mineral::events::MineralProbeIntent>();
+        app.add_event::<crate::shelflife::probe::FreshnessProbeIntent>();
+        app.add_event::<crate::skill::events::SkillXpGain>();
+        app.add_event::<crate::skill::events::SkillScrollUsed>();
+        app.add_event::<crate::world::block_place::BlockPlaceRequest>();
+        app.add_event::<InventoryDurabilityChangedEvent>();
+        app.add_event::<crate::alchemy::AlchemyOutcomeEvent>();
+        app.add_event::<crate::combat::events::CombatEvent>();
+        app.add_event::<crate::combat::events::DeathEvent>();
+        app.add_event::<crate::combat::zhenmai_v2::LocalNeutralizeEvent>();
+        app.add_event::<crate::combat::zhenmai_v2::MultiPointBackfireEvent>();
+        app.add_event::<crate::combat::zhenmai_v2::MeridianHardenEvent>();
+        app.add_event::<crate::combat::zhenmai_v2::MeridianSeveredVoluntaryEvent>();
+        app.add_event::<crate::combat::zhenmai_v2::BackfireAmplificationActiveEvent>();
+        app.add_event::<crate::cultivation::meridian::severed::MeridianSeveredEvent>();
+        app.add_event::<crate::cultivation::overload::MeridianOverloadEvent>();
+        // plan-shield-block-v1 P1 — 举盾 intent events（ClientRequestDispatchParams 需要）。
+        app.add_event::<crate::combat::shield_block::RaiseShieldIntent>();
+        app.add_event::<crate::combat::shield_block::LowerShieldIntent>();
 
         // Run request handler, then broadcast dropped_loot_sync if the registry changed.
         app.add_systems(
@@ -664,6 +689,75 @@ mod tests {
             (left - right).abs() < 1e-9,
             "expected {left} approximately equals {right}"
         );
+    }
+
+    #[test]
+    fn inventory_snapshot_preserves_deleted_template_instances() {
+        let deleted_ids = [
+            "bone_coin_blank",
+            "waymark_stone",
+            "price_tag",
+            "trade_puppet_frame",
+            "rat_bait",
+            "powder_zhu_sha",
+            "iron_sword_blank",
+            "stone_spearhead",
+            "sling_stone",
+            "sling_weapon",
+            "stone_hoe",
+            "mortar_stone",
+            "heat_gloves",
+            "trade_scale",
+            "trade_scale_stand",
+        ];
+        let mut inventory = make_inventory(33, false);
+        for container in &mut inventory.containers {
+            container.items.clear();
+        }
+        let main_cols = inventory.containers[0].cols as usize;
+        for (offset, deleted_id) in deleted_ids.iter().enumerate() {
+            inventory.containers[0].items.push(PlacedItemState {
+                row: (offset / main_cols) as u8,
+                col: (offset % main_cols) as u8,
+                instance: make_item(
+                    9000 + offset as u64,
+                    deleted_id,
+                    &format!("{deleted_id} legacy instance"),
+                    0.1,
+                    1,
+                ),
+            });
+        }
+
+        let snapshot = build_inventory_snapshot(
+            &inventory,
+            &PlayerState {
+                karma: 0.0,
+                inventory_score: 0.0,
+            },
+            &Cultivation {
+                realm: crate::cultivation::components::Realm::Awaken,
+                qi_current: 1.0,
+                qi_max: 10.0,
+                ..Cultivation::default()
+            },
+        );
+
+        let snapshot_ids: Vec<&str> = snapshot
+            .placed_items
+            .iter()
+            .map(|placed| placed.item.item_id.as_str())
+            .collect();
+        assert_eq!(
+            snapshot_ids, deleted_ids,
+            "deleted template instances must remain serializable because ItemInstance carries display data"
+        );
+        for (placed, deleted_id) in snapshot.placed_items.iter().zip(deleted_ids) {
+            assert_eq!(
+                placed.item.display_name,
+                format!("{deleted_id} legacy instance")
+            );
+        }
     }
 
     #[test]

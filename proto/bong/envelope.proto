@@ -158,8 +158,16 @@ message ServerDataEnvelope {
     FreshnessUpdate freshness_update = 130;
     // ─── plan-exploration-probe-return-v1 P2：修炼顿悟 S2C ──────
     InsightOffer insight_offer = 131;
+    WorkbenchOpen workbench_open = 132;
     // 字段编号一旦分配永不复用（buf breaking 检测保证）。
   }
+}
+
+message WorkbenchOpen {
+  uint64 entity_id = 1;
+  sint32 x = 2;
+  sint32 y = 3;
+  sint32 z = 4;
 }
 
 // ─── C2S 信封（Client → Server） ────────────────────────────────
@@ -265,7 +273,16 @@ message ClientRequestEnvelope {
     // ─── plan-exploration-probe-return-v1 P1：神识感知保鲜 C2S ────
     FreshnessProbe              freshness_probe               = 90;
     // ─── plan-dying-elder-v1 P1：垂死大能给丹 C2S ──────────────────
-    GiveDanToElderReq           give_dan_to_elder             = 91;
+    GiveDanToElderReq           give_dan_to_elder             = 96;
+    // plan-block-lifecycle-v1 P2 — Bong 自有背包方块放置 C2S。
+    BlockPlace                  block_place                   = 91;
+    // plan-niche-craft-fix-v1 P1 — 灵龛修补 C2S。
+    SpiritNicheRepair           spirit_niche_repair           = 92;
+    // plan-shield-block-v1 P1 — 持续举盾 / 放盾 C2S。
+    RaiseShield                 raise_shield                  = 93;
+    LowerShield                 lower_shield                  = 94;
+    // plan-workbench-place-runtime-v1 P2 — 制作台 marker 右键打开。
+    WorkbenchOpenReq            workbench_open                = 95;
   }
 }
 
@@ -2061,6 +2078,14 @@ message SpiritNichePlace {
   uint64 item_instance_id = 4;
 }
 
+// 与 Rust ClientRequestV1::SpiritNicheRepair 精确对应。
+message SpiritNicheRepair {
+  int32  x                = 1;
+  int32  y                = 2;
+  int32  z                = 3;
+  uint64 item_instance_id = 4;
+}
+
 // 与 Rust ClientRequestV1::SpiritNicheGaze 精确对应。
 message SpiritNicheGaze {
   int32 x = 1;
@@ -3416,6 +3441,15 @@ message CoffinPlace {
   uint64 item_instance_id = 4;
 }
 
+// 与 Rust ClientRequestV1::BlockPlace 精确对应。
+message BlockPlace {
+  int32          x                = 1;
+  int32          y                = 2;
+  int32          z                = 3;
+  uint64         item_instance_id = 4;
+  TrapTargetFace target_face      = 5;
+}
+
 // 与 Rust ClientRequestV1::CoffinEnter 精确对应。
 message CoffinEnter {
   int32 x = 1;
@@ -3716,6 +3750,11 @@ message SupplyCoffinOpenReq {
   int32 entity_id = 1;
 }
 
+// 与 Rust ClientRequestV1::WorkbenchOpen 精确对应。
+message WorkbenchOpenReq {
+  int32 entity_id = 1;
+}
+
 // plan-combat-skill-feedback-bridges-v1 P6：人剑共生 HUD 状态推送（server → client）。
 // 守恒红线：stored_qi_ratio 只读展示，不二次扣 qi。
 // heaven_gate_ready = can_store_qi() && stored_qi >= stored_qi_cap()。
@@ -3788,3 +3827,8 @@ message InsightOffer {
   string           character_id = 3;
   repeated InsightChoice choices = 4;
 }
+
+// ─── plan-shield-block-v1 P1：持续举盾 / 放盾 C2S ────────────────
+// 与 Rust ClientRequestV1::RaiseShield / LowerShield 精确对应。
+message RaiseShield {}
+message LowerShield {}

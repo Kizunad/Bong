@@ -30,7 +30,8 @@ use self::events::{
     SocialExposureEvent, SocialMentorshipEvent, SocialPactEvent, SocialRelationshipEvent,
     SocialRenownDeltaEvent, SparringInviteRequest, SparringInviteResponseEvent,
     SparringInviteResponseKind, SpiritNicheCoordinateRevealRequest, SpiritNichePlaceRequest,
-    SpiritNicheRevealRequest, SpiritNicheRevealSource, TradeOfferRequest, TradeOfferResponseEvent,
+    SpiritNicheRepairRequest, SpiritNicheRevealRequest, SpiritNicheRevealSource, TradeOfferRequest,
+    TradeOfferResponseEvent,
 };
 use crate::combat::components::{Lifecycle, LifecycleState};
 use crate::combat::events::{ApplyStatusEffectIntent, DeathEvent, StatusEffectKind};
@@ -44,16 +45,19 @@ use crate::inventory::{
     PlayerInventory,
 };
 use crate::network::agent_bridge::{payload_type_label, serialize_server_data_payload};
+use crate::network::audio_event_emit::{AudioRecipient, PlaySoundRecipeRequest, AUDIO_AREA_RADIUS};
 use crate::network::inventory_snapshot_emit::send_inventory_snapshot_to_client;
 use crate::network::redis_bridge::RedisOutbound;
 use crate::network::{gameplay_vfx, vfx_event_emit::VfxEventRequest};
 use crate::network::{send_server_data_payload, RedisBridgeResource};
 use crate::npc::faction::FactionId;
 use crate::persistence::PersistenceSettings;
+use crate::player::gameplay::PendingGameplayNarrations;
 use crate::player::state::{
     player_username_from_character_id, save_player_shrine_anchor_slice, PlayerState,
     PlayerStatePersistence,
 };
+use crate::schema::common::NarrationStyle;
 use crate::schema::server_data::{ServerDataPayloadV1, ServerDataV1};
 use crate::schema::social::{
     ExposureKindV1, GuardianKindV1, NicheGuardianBrokenV1, NicheGuardianFatigueV1,
@@ -77,14 +81,20 @@ const SPARRING_MAX_TICKS: u64 = 5 * 60 * 20;
 const SPARRING_HUMILITY_TICKS: u64 = 5 * 60 * 20;
 const TRADE_OFFER_TIMEOUT_TICKS: u64 = 10 * 20;
 const TRADE_OFFER_TIMEOUT_MS: u64 = 10_000;
-const SPIRIT_NICHE_ITEM_TEMPLATE_ID: &str = "spirit_niche_stone";
+const SPIRIT_NICHE_ITEM_TEMPLATE_ID: &str = "niche_base";
+const SPIRIT_NICHE_REPAIR_ITEM_TEMPLATE_ID: &str = "niche_repair_kit";
 const SPIRIT_NICHE_RADIUS: f64 = 5.0;
 const SPIRIT_NICHE_NEGATIVE_QI_DAMAGE_RATIO: f64 = 0.1;
 const NAMELESS_LABEL: &str = "无名修士";
+const SPIRIT_NICHE_REPAIR_AUDIO_RECIPE_ID: &str = "niche_repair";
+const SPIRIT_NICHE_REPAIR_NARRATIONS: [&str; 2] = [
+    "龛石的裂纹被混合料填实，冷石重新泛起温润的微光。",
+    "你将碎石灵铁糊进灵龛的伤口，它低低地“合”了一声，像是松了口气。",
+];
 
 type CompanionPairKey = (String, String);
 type FactionMembershipSqlRow = (Option<String>, i64, i64, i64, Option<i64>, i64);
-type SpiritNicheSqlRow = ([i32; 3], u64, bool, Option<String>, String);
+type SpiritNicheSqlRow = ([i32; 3], u64, bool, Option<String>, bool, String);
 
 #[derive(Debug, Default, Resource)]
 struct CompanionProgress {
@@ -164,9 +174,15 @@ pub fn register(app: &mut App) {
     app.add_event::<TradeOfferResponseEvent>();
     app.add_event::<FactionMembershipDecisionEvent>();
     app.add_event::<SpiritNichePlaceRequest>();
+    app.add_event::<SpiritNicheRepairRequest>();
     app.add_event::<SpiritNicheCoordinateRevealRequest>();
     app.add_event::<SpiritNicheRevealRequest>();
     niche_defense::register(app);
+    app.add_systems(
+        Update,
+        handle_spirit_niche_repair_requests
+            .after(crate::network::client_request_handler::handle_client_request_payloads),
+    );
     app.add_systems(
         Update,
         (
@@ -230,13 +246,14 @@ pub fn register(app: &mut App) {
 fn attach_social_bundle_to_joined_clients(
     mut commands: Commands,
     persistence: Option<Res<PersistenceSettings>>,
-    joined_clients: Query<
-        (valence::prelude::Entity, Option<&Lifecycle>),
+    mut joined_clients: Query<
+        (valence::prelude::Entity, Option<&mut Lifecycle>),
         (Added<Client>, Without<Anonymity>),
     >,
 ) {
-    for (entity, lifecycle) in &joined_clients {
+    for (entity, mut lifecycle) in &mut joined_clients {
         let social_state = lifecycle
+            .as_deref()
             .and_then(|lifecycle| {
                 persistence
                     .as_deref()
@@ -270,6 +287,9 @@ fn attach_social_bundle_to_joined_clients(
             entity_commands.insert(faction_membership);
         }
         if let Some(spirit_niche) = spirit_niche {
+            if let Some(lifecycle) = lifecycle.as_deref_mut() {
+                lifecycle.spawn_anchor_damaged = spirit_niche.is_damaged;
+            }
             entity_commands.insert(spirit_niche);
         }
     }
@@ -1536,7 +1556,7 @@ fn handle_spirit_niche_place_requests(
         };
         if instance.template_id != SPIRIT_NICHE_ITEM_TEMPLATE_ID {
             tracing::warn!(
-                "[bong][social] spirit niche place rejected for `{}`: item `{}` is not a niche stone",
+                "[bong][social] spirit niche place rejected for `{}`: item `{}` is not a niche base",
                 lifecycle.character_id,
                 instance.template_id
             );
@@ -1581,9 +1601,11 @@ fn handle_spirit_niche_place_requests(
             placed_at_tick: event.tick,
             revealed: false,
             revealed_by: None,
+            is_damaged: false,
             guardians: Vec::new(),
         };
         lifecycle.spawn_anchor = Some(spirit_niche_spawn_anchor(event.pos));
+        lifecycle.spawn_anchor_damaged = false;
         let old_niche = registry.niches.get(&lifecycle.character_id).cloned();
         registry.upsert(niche.clone());
         commands.entity(event.player).insert(niche.clone());
@@ -1641,8 +1663,148 @@ fn handle_spirit_niche_place_requests(
                 &inventory,
                 player_state,
                 cultivation,
-                "spirit_niche_stone_consumed",
+                "niche_base_consumed",
             );
+        }
+    }
+}
+
+#[allow(clippy::too_many_arguments, clippy::type_complexity)]
+fn handle_spirit_niche_repair_requests(
+    persistence: Option<Res<PersistenceSettings>>,
+    mut events: EventReader<SpiritNicheRepairRequest>,
+    mut players: Query<(
+        Entity,
+        &mut Lifecycle,
+        &Position,
+        Option<&mut PlayerInventory>,
+        Option<&mut SpiritNiche>,
+    )>,
+    mut registry: ResMut<SpiritNicheRegistry>,
+    mut vfx_events: Option<ResMut<Events<VfxEventRequest>>>,
+    mut audio_events: Option<ResMut<Events<PlaySoundRecipeRequest>>>,
+    mut narrations: Option<ResMut<PendingGameplayNarrations>>,
+) {
+    for event in events.read() {
+        let Ok((entity, mut lifecycle, position, inventory, niche)) = players.get_mut(event.player)
+        else {
+            continue;
+        };
+        if entity != event.player || lifecycle.state == LifecycleState::Terminated {
+            continue;
+        }
+        if !niche_place_target_is_close(position, event.pos) {
+            tracing::warn!(
+                "[bong][social] spirit niche repair rejected for `{}`: target {:?} too far from player",
+                lifecycle.character_id,
+                event.pos
+            );
+            continue;
+        }
+
+        let Some(mut niche) = niche else {
+            tracing::warn!(
+                "[bong][social] spirit niche repair rejected for `{}`: player has no niche component",
+                lifecycle.character_id
+            );
+            continue;
+        };
+        if niche.owner != lifecycle.character_id || niche.pos != event.pos || niche.revealed {
+            tracing::warn!(
+                "[bong][social] spirit niche repair rejected for `{}`: target {:?} is not own active niche",
+                lifecycle.character_id,
+                event.pos
+            );
+            continue;
+        }
+        if !niche.is_damaged {
+            tracing::warn!(
+                "[bong][social] spirit niche repair rejected for `{}`: niche at {:?} is not damaged",
+                lifecycle.character_id,
+                event.pos
+            );
+            continue;
+        }
+
+        let Some(mut inventory) = inventory else {
+            continue;
+        };
+        let Some(item_instance_id) = event.item_instance_id else {
+            tracing::warn!(
+                "[bong][social] spirit niche repair rejected for `{}`: missing item instance",
+                lifecycle.character_id
+            );
+            continue;
+        };
+        let Some(instance) = inventory_item_by_instance(&inventory, item_instance_id) else {
+            tracing::warn!(
+                "[bong][social] spirit niche repair rejected for `{}`: missing instance {item_instance_id}",
+                lifecycle.character_id
+            );
+            continue;
+        };
+        if instance.template_id != SPIRIT_NICHE_REPAIR_ITEM_TEMPLATE_ID {
+            tracing::warn!(
+                "[bong][social] spirit niche repair rejected for `{}`: item `{}` is not a repair kit",
+                lifecycle.character_id,
+                instance.template_id
+            );
+            continue;
+        }
+        if let Err(error) = consume_item_instance_once(&mut inventory, item_instance_id) {
+            tracing::warn!(
+                "[bong][social] spirit niche repair rejected for `{}`: consume failed: {error}",
+                lifecycle.character_id
+            );
+            continue;
+        }
+
+        niche.is_damaged = false;
+        lifecycle.spawn_anchor_damaged = false;
+        let repaired_niche = niche.clone();
+        registry.upsert(repaired_niche.clone());
+        if let Some(persistence) = persistence.as_deref() {
+            if let Err(error) = persist_social_spirit_niche(persistence, &repaired_niche) {
+                tracing::warn!(
+                    "[bong][social] failed to persist repaired spirit niche for `{}`: {error}",
+                    lifecycle.character_id
+                );
+            }
+        }
+
+        let origin = gameplay_vfx::block_center(event.pos);
+        if let Some(events) = vfx_events.as_deref_mut() {
+            gameplay_vfx::send_spawn(
+                events,
+                gameplay_vfx::spawn_request(
+                    gameplay_vfx::SOCIAL_NICHE_REPAIR,
+                    origin,
+                    Some([0.0, 0.4, 0.0]),
+                    "#B8B0A0",
+                    0.7,
+                    6,
+                    14,
+                ),
+            );
+        }
+        if let Some(audio_events) = audio_events.as_deref_mut() {
+            audio_events.send(PlaySoundRecipeRequest {
+                recipe_id: SPIRIT_NICHE_REPAIR_AUDIO_RECIPE_ID.to_string(),
+                instance_id: 0,
+                pos: Some(event.pos),
+                flag: None,
+                volume_mul: 1.0,
+                pitch_shift: 0.0,
+                recipient: AudioRecipient::Radius {
+                    origin,
+                    radius: AUDIO_AREA_RADIUS,
+                },
+            });
+        }
+        if let Some(narrations) = narrations.as_deref_mut() {
+            let text = SPIRIT_NICHE_REPAIR_NARRATIONS
+                [event.tick as usize % SPIRIT_NICHE_REPAIR_NARRATIONS.len()];
+            narrations.push_player(&lifecycle.character_id, text, NarrationStyle::Perception);
         }
     }
 }
@@ -1791,6 +1953,7 @@ fn apply_spirit_niche_reveals(
             }
             *niche = revealed_niche.clone();
             lifecycle.spawn_anchor = None;
+            lifecycle.spawn_anchor_damaged = false;
             if let Some(mut client) = client {
                 client.send_chat_message("灵龛再无庇佑");
             }
@@ -2292,7 +2455,7 @@ fn load_social_spirit_niche(
     let row: Option<SpiritNicheSqlRow> = connection
         .query_row(
             "
-            SELECT pos_x, pos_y, pos_z, placed_at_tick, revealed, revealed_by, guardians_json
+            SELECT pos_x, pos_y, pos_z, placed_at_tick, revealed, revealed_by, is_damaged, guardians_json
             FROM social_spirit_niches
             WHERE owner = ?1
             ",
@@ -2309,14 +2472,22 @@ fn load_social_spirit_niche(
                     })?,
                     row.get::<_, i64>(4)? != 0,
                     row.get(5)?,
-                    row.get(6)?,
+                    row.get::<_, i64>(6)? != 0,
+                    row.get(7)?,
                 ))
             },
         )
         .optional()
         .map_err(io::Error::other)?;
     row.map(
-        |(pos, placed_at_tick, revealed, revealed_by, guardians_json)| -> io::Result<SpiritNiche> {
+        |(
+            pos,
+            placed_at_tick,
+            revealed,
+            revealed_by,
+            is_damaged,
+            guardians_json,
+        )| -> io::Result<SpiritNiche> {
             let guardians = decode_guardians_json(guardians_json.as_str()).map_err(|error| {
                 io::Error::new(
                     error.kind(),
@@ -2329,6 +2500,7 @@ fn load_social_spirit_niche(
                 placed_at_tick,
                 revealed,
                 revealed_by,
+                is_damaged,
                 guardians,
             })
         },
@@ -2343,7 +2515,7 @@ fn load_all_social_spirit_niches(
     let mut statement = connection
         .prepare(
             "
-            SELECT owner, pos_x, pos_y, pos_z, placed_at_tick, revealed, revealed_by, guardians_json
+            SELECT owner, pos_x, pos_y, pos_z, placed_at_tick, revealed, revealed_by, is_damaged, guardians_json
             FROM social_spirit_niches
             ORDER BY owner ASC
             ",
@@ -2363,10 +2535,11 @@ fn load_all_social_spirit_niches(
                 })?,
                 revealed: row.get::<_, i64>(5)? != 0,
                 revealed_by: row.get(6)?,
-                guardians: decode_guardians_json(row.get::<_, String>(7)?.as_str()).map_err(
+                is_damaged: row.get::<_, i64>(7)? != 0,
+                guardians: decode_guardians_json(row.get::<_, String>(8)?.as_str()).map_err(
                     |error| {
                         rusqlite::Error::FromSqlConversionFailure(
-                            7,
+                            8,
                             rusqlite::types::Type::Text,
                             Box::new(error),
                         )
@@ -2605,8 +2778,8 @@ fn persist_social_spirit_niche(
             "
             INSERT INTO social_spirit_niches (
                 owner, pos_x, pos_y, pos_z, placed_at_tick, revealed, revealed_by,
-                guardians_json, schema_version, last_updated_wall
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 1, ?9)
+                is_damaged, guardians_json, schema_version, last_updated_wall
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, 1, ?10)
             ON CONFLICT(owner) DO UPDATE SET
                 pos_x = excluded.pos_x,
                 pos_y = excluded.pos_y,
@@ -2614,6 +2787,7 @@ fn persist_social_spirit_niche(
                 placed_at_tick = excluded.placed_at_tick,
                 revealed = excluded.revealed,
                 revealed_by = excluded.revealed_by,
+                is_damaged = excluded.is_damaged,
                 guardians_json = excluded.guardians_json,
                 schema_version = excluded.schema_version,
                 last_updated_wall = excluded.last_updated_wall
@@ -2626,6 +2800,7 @@ fn persist_social_spirit_niche(
                 tick_to_sql(niche.placed_at_tick)?,
                 if niche.revealed { 1_i64 } else { 0_i64 },
                 niche.revealed_by.as_deref(),
+                if niche.is_damaged { 1_i64 } else { 0_i64 },
                 encode_guardians_json(&niche.guardians)?,
                 wall_clock,
             ],
@@ -2916,11 +3091,11 @@ mod tests {
     use valence::protocol::packets::play::CustomPayloadS2c;
     use valence::testing::{create_mock_client, MockClientHelper};
 
-    fn spirit_niche_test_item(instance_id: u64) -> ItemInstance {
+    fn item_instance(instance_id: u64, template_id: &str, display_name: &str) -> ItemInstance {
         ItemInstance {
             instance_id,
-            template_id: SPIRIT_NICHE_ITEM_TEMPLATE_ID.to_string(),
-            display_name: "龛石".to_string(),
+            template_id: template_id.to_string(),
+            display_name: display_name.to_string(),
             grid_w: 1,
             grid_h: 1,
             weight: 0.4,
@@ -2939,6 +3114,26 @@ mod tests {
             alchemy: None,
             lingering_owner_qi: None,
         }
+    }
+
+    fn spirit_niche_test_item(instance_id: u64) -> ItemInstance {
+        item_instance(instance_id, SPIRIT_NICHE_ITEM_TEMPLATE_ID, "灵龛基座")
+    }
+
+    fn niche_repair_kit_test_item(instance_id: u64) -> ItemInstance {
+        item_instance(
+            instance_id,
+            SPIRIT_NICHE_REPAIR_ITEM_TEMPLATE_ID,
+            "灵龛修补料",
+        )
+    }
+
+    fn spirit_niche_stone_test_item(instance_id: u64) -> ItemInstance {
+        item_instance(instance_id, "spirit_niche_stone", "龛石")
+    }
+
+    fn wood_plank_test_item(instance_id: u64) -> ItemInstance {
+        item_instance(instance_id, "wood_plank", "木板")
     }
 
     fn trade_test_item(instance_id: u64, name: &str) -> ItemInstance {
@@ -4282,7 +4477,7 @@ mod tests {
     }
 
     #[test]
-    fn spirit_niche_place_consumes_stone_sets_anchor_and_persists() {
+    fn spirit_niche_place_consumes_base_sets_anchor_and_persists() {
         let (persistence, data_dir) = social_persistence("spirit-niche-place");
         let mut app = App::new();
         app.insert_resource(persistence.clone());
@@ -4347,6 +4542,409 @@ mod tests {
     }
 
     #[test]
+    fn spirit_niche_repair_consumes_kit_clears_damage_and_emits_feedback() {
+        let (persistence, data_dir) = social_persistence("spirit-niche-repair");
+        let mut app = App::new();
+        app.insert_resource(persistence.clone());
+        let mut registry = SpiritNicheRegistry::default();
+        registry.upsert(SpiritNiche {
+            owner: "char:azure".to_string(),
+            pos: [11, 64, 10],
+            placed_at_tick: 1,
+            revealed: false,
+            revealed_by: None,
+            is_damaged: true,
+            guardians: Vec::new(),
+        });
+        app.insert_resource(registry);
+        app.insert_resource(PendingGameplayNarrations::default());
+        app.add_event::<SpiritNicheRepairRequest>();
+        app.add_event::<VfxEventRequest>();
+        app.add_event::<PlaySoundRecipeRequest>();
+        app.add_systems(Update, handle_spirit_niche_repair_requests);
+
+        let (mut client_bundle, _helper) = create_mock_client("Azure");
+        client_bundle.player.position = Position::new([10.0, 64.0, 10.0]);
+        let entity = app.world_mut().spawn(client_bundle).id();
+        app.world_mut().entity_mut(entity).insert((
+            Lifecycle {
+                character_id: "char:azure".to_string(),
+                spawn_anchor: Some([11.5, 65.0, 10.5]),
+                spawn_anchor_damaged: true,
+                ..Default::default()
+            },
+            inventory_with_item(niche_repair_kit_test_item(9001)),
+            SpiritNiche {
+                owner: "char:azure".to_string(),
+                pos: [11, 64, 10],
+                placed_at_tick: 1,
+                revealed: false,
+                revealed_by: None,
+                is_damaged: true,
+                guardians: Vec::new(),
+            },
+        ));
+        app.world_mut().send_event(SpiritNicheRepairRequest {
+            player: entity,
+            pos: [11, 64, 10],
+            item_instance_id: Some(9001),
+            tick: 77,
+        });
+
+        app.update();
+
+        let lifecycle = app.world().get::<Lifecycle>(entity).unwrap();
+        assert!(
+            !lifecycle.spawn_anchor_damaged,
+            "repair must clear the revive-weakened damage marker"
+        );
+        let niche = app.world().get::<SpiritNiche>(entity).unwrap();
+        assert!(!niche.is_damaged, "component damage flag should be cleared");
+        let registry = app.world().resource::<SpiritNicheRegistry>();
+        assert!(
+            !registry.niches.get("char:azure").unwrap().is_damaged,
+            "registry damage flag should stay in sync with component"
+        );
+        let inventory = app.world().get::<PlayerInventory>(entity).unwrap();
+        assert!(
+            inventory_item_by_instance(inventory, 9001).is_none(),
+            "successful repair must consume exactly the repair kit instance"
+        );
+        let loaded = load_social_components(&persistence, "char:azure")
+            .expect("repaired niche should persist")
+            .spirit_niche
+            .expect("persisted niche should load");
+        assert!(!loaded.is_damaged, "persisted damage flag should be false");
+
+        let vfx_events = app.world().resource::<Events<VfxEventRequest>>();
+        let emitted_vfx = vfx_events
+            .iter_current_update_events()
+            .next()
+            .expect("repair should emit vfx");
+        match &emitted_vfx.payload {
+            crate::schema::vfx_event::VfxEventPayloadV1::SpawnParticle { event_id, .. } => {
+                assert_eq!(event_id, gameplay_vfx::SOCIAL_NICHE_REPAIR);
+            }
+            other => panic!("expected repair SpawnParticle, got {other:?}"),
+        }
+        let audio_events = app.world().resource::<Events<PlaySoundRecipeRequest>>();
+        let emitted_audio = audio_events
+            .iter_current_update_events()
+            .next()
+            .expect("repair should emit audio");
+        assert_eq!(emitted_audio.recipe_id, SPIRIT_NICHE_REPAIR_AUDIO_RECIPE_ID);
+        let narrations = app
+            .world_mut()
+            .resource_mut::<PendingGameplayNarrations>()
+            .drain();
+        assert_eq!(narrations.len(), 1);
+        assert_eq!(narrations[0].target.as_deref(), Some("char:azure"));
+        assert_eq!(narrations[0].style, NarrationStyle::Perception);
+
+        let _ = std::fs::remove_dir_all(data_dir);
+    }
+
+    #[test]
+    fn spirit_niche_repair_rejects_intact_or_wrong_item_without_consuming() {
+        let mut app = App::new();
+        app.insert_resource(SpiritNicheRegistry::default());
+        app.add_event::<SpiritNicheRepairRequest>();
+        app.add_systems(Update, handle_spirit_niche_repair_requests);
+
+        let (mut intact_bundle, _helper) = create_mock_client("Intact");
+        intact_bundle.player.position = Position::new([10.0, 64.0, 10.0]);
+        let intact = app.world_mut().spawn(intact_bundle).id();
+        app.world_mut().entity_mut(intact).insert((
+            Lifecycle {
+                character_id: "char:intact".to_string(),
+                spawn_anchor: Some([11.5, 65.0, 10.5]),
+                ..Default::default()
+            },
+            inventory_with_item(niche_repair_kit_test_item(9001)),
+            SpiritNiche {
+                owner: "char:intact".to_string(),
+                pos: [11, 64, 10],
+                placed_at_tick: 1,
+                revealed: false,
+                revealed_by: None,
+                is_damaged: false,
+                guardians: Vec::new(),
+            },
+        ));
+
+        let (mut wrong_bundle, _helper) = create_mock_client("Wrong");
+        wrong_bundle.player.position = Position::new([12.0, 64.0, 10.0]);
+        let wrong = app.world_mut().spawn(wrong_bundle).id();
+        app.world_mut().entity_mut(wrong).insert((
+            Lifecycle {
+                character_id: "char:wrong".to_string(),
+                spawn_anchor: Some([12.5, 65.0, 10.5]),
+                spawn_anchor_damaged: true,
+                ..Default::default()
+            },
+            inventory_with_item(wood_plank_test_item(9002)),
+            SpiritNiche {
+                owner: "char:wrong".to_string(),
+                pos: [12, 64, 10],
+                placed_at_tick: 1,
+                revealed: false,
+                revealed_by: None,
+                is_damaged: true,
+                guardians: Vec::new(),
+            },
+        ));
+
+        app.world_mut().send_event(SpiritNicheRepairRequest {
+            player: intact,
+            pos: [11, 64, 10],
+            item_instance_id: Some(9001),
+            tick: 77,
+        });
+        app.world_mut().send_event(SpiritNicheRepairRequest {
+            player: wrong,
+            pos: [12, 64, 10],
+            item_instance_id: Some(9002),
+            tick: 78,
+        });
+
+        app.update();
+
+        assert!(
+            inventory_item_by_instance(app.world().get::<PlayerInventory>(intact).unwrap(), 9001)
+                .is_some(),
+            "intact niche rejection must not consume repair kit"
+        );
+        assert!(
+            !app.world().get::<SpiritNiche>(intact).unwrap().is_damaged,
+            "intact niche should remain intact"
+        );
+        assert!(
+            inventory_item_by_instance(app.world().get::<PlayerInventory>(wrong).unwrap(), 9002)
+                .is_some(),
+            "wrong item rejection must not consume inventory item"
+        );
+        assert!(
+            app.world().get::<SpiritNiche>(wrong).unwrap().is_damaged,
+            "wrong item rejection should keep damage flag"
+        );
+        assert!(
+            app.world()
+                .get::<Lifecycle>(wrong)
+                .unwrap()
+                .spawn_anchor_damaged,
+            "wrong item rejection should keep revive damage marker"
+        );
+    }
+
+    #[test]
+    fn spirit_niche_repair_rejects_non_owner_and_allows_repeated_damage_repair_cycle() {
+        let mut app = App::new();
+        app.insert_resource(SpiritNicheRegistry::default());
+        app.add_event::<SpiritNicheRepairRequest>();
+        app.add_systems(Update, handle_spirit_niche_repair_requests);
+
+        let (mut client_bundle, _helper) = create_mock_client("Azure");
+        client_bundle.player.position = Position::new([10.0, 64.0, 10.0]);
+        let entity = app.world_mut().spawn(client_bundle).id();
+        app.world_mut().entity_mut(entity).insert((
+            Lifecycle {
+                character_id: "char:azure".to_string(),
+                spawn_anchor: Some([11.5, 65.0, 10.5]),
+                spawn_anchor_damaged: true,
+                ..Default::default()
+            },
+            inventory_with_item(niche_repair_kit_test_item(9001)),
+            SpiritNiche {
+                owner: "char:other".to_string(),
+                pos: [11, 64, 10],
+                placed_at_tick: 1,
+                revealed: false,
+                revealed_by: None,
+                is_damaged: true,
+                guardians: Vec::new(),
+            },
+        ));
+
+        app.world_mut().send_event(SpiritNicheRepairRequest {
+            player: entity,
+            pos: [11, 64, 10],
+            item_instance_id: Some(9001),
+            tick: 77,
+        });
+        app.update();
+
+        assert!(
+            app.world().get::<SpiritNiche>(entity).unwrap().is_damaged,
+            "non-owner rejection should keep damage flag"
+        );
+        assert!(
+            inventory_item_by_instance(app.world().get::<PlayerInventory>(entity).unwrap(), 9001)
+                .is_some(),
+            "non-owner rejection must not consume repair kit"
+        );
+
+        app.world_mut().entity_mut(entity).insert((
+            inventory_with_item(niche_repair_kit_test_item(9002)),
+            SpiritNiche {
+                owner: "char:azure".to_string(),
+                pos: [11, 64, 10],
+                placed_at_tick: 1,
+                revealed: false,
+                revealed_by: None,
+                is_damaged: true,
+                guardians: Vec::new(),
+            },
+        ));
+        app.world_mut().send_event(SpiritNicheRepairRequest {
+            player: entity,
+            pos: [11, 64, 10],
+            item_instance_id: Some(9002),
+            tick: 78,
+        });
+        app.update();
+
+        assert!(
+            !app.world().get::<SpiritNiche>(entity).unwrap().is_damaged,
+            "same niche should be repairable after becoming damaged again"
+        );
+        assert!(
+            inventory_item_by_instance(app.world().get::<PlayerInventory>(entity).unwrap(), 9002)
+                .is_none(),
+            "valid second repair should consume the new repair kit"
+        );
+    }
+
+    #[test]
+    fn niche_base_template_id_is_recipe_output() {
+        let mut registry = crate::craft::CraftRegistry::new();
+        crate::craft::register_workbench_recipes(&mut registry)
+            .expect("workbench recipes should register");
+        let recipe = registry
+            .get(&crate::craft::RecipeId::new("workbench.shelter.niche_base"))
+            .expect("niche base recipe should exist");
+
+        assert_eq!(
+            recipe.output.0, SPIRIT_NICHE_ITEM_TEMPLATE_ID,
+            "spirit niche placement must accept the workbench recipe output"
+        );
+    }
+
+    #[test]
+    fn spirit_niche_place_rejects_old_stone_material() {
+        let mut app = App::new();
+        app.insert_resource(SpiritNicheRegistry::default());
+        app.add_event::<SpiritNichePlaceRequest>();
+        app.add_systems(Update, handle_spirit_niche_place_requests);
+
+        let (mut client_bundle, _helper) = create_mock_client("Azure");
+        client_bundle.player.position = Position::new([10.0, 64.0, 10.0]);
+        let entity = app.world_mut().spawn(client_bundle).id();
+        app.world_mut().entity_mut(entity).insert((
+            Lifecycle {
+                character_id: "char:azure".to_string(),
+                ..Default::default()
+            },
+            inventory_with_item(spirit_niche_stone_test_item(4242)),
+        ));
+        app.world_mut().send_event(SpiritNichePlaceRequest {
+            player: entity,
+            pos: [11, 64, 10],
+            item_instance_id: Some(4242),
+            tick: 77,
+        });
+
+        app.update();
+
+        assert!(app.world().get::<SpiritNiche>(entity).is_none());
+        let lifecycle = app.world().get::<Lifecycle>(entity).unwrap();
+        assert_eq!(lifecycle.spawn_anchor, None);
+        let inventory = app.world().get::<PlayerInventory>(entity).unwrap();
+        assert!(
+            inventory_item_by_instance(inventory, 4242).is_some(),
+            "old spirit_niche_stone is crafting material only and must not be consumed"
+        );
+    }
+
+    #[test]
+    fn spirit_niche_place_rejects_missing_or_wrong_item_without_consuming() {
+        let mut app = App::new();
+        app.insert_resource(SpiritNicheRegistry::default());
+        app.add_event::<SpiritNichePlaceRequest>();
+        app.add_systems(Update, handle_spirit_niche_place_requests);
+
+        let (mut client_bundle, _helper) = create_mock_client("Azure");
+        client_bundle.player.position = Position::new([10.0, 64.0, 10.0]);
+        let entity = app.world_mut().spawn(client_bundle).id();
+        app.world_mut().entity_mut(entity).insert((
+            Lifecycle {
+                character_id: "char:azure".to_string(),
+                ..Default::default()
+            },
+            inventory_with_item(wood_plank_test_item(4242)),
+        ));
+
+        app.world_mut().send_event(SpiritNichePlaceRequest {
+            player: entity,
+            pos: [11, 64, 10],
+            item_instance_id: None,
+            tick: 77,
+        });
+        app.world_mut().send_event(SpiritNichePlaceRequest {
+            player: entity,
+            pos: [11, 64, 10],
+            item_instance_id: Some(4242),
+            tick: 78,
+        });
+
+        app.update();
+
+        assert!(app.world().get::<SpiritNiche>(entity).is_none());
+        let lifecycle = app.world().get::<Lifecycle>(entity).unwrap();
+        assert_eq!(lifecycle.spawn_anchor, None);
+        let inventory = app.world().get::<PlayerInventory>(entity).unwrap();
+        assert!(
+            inventory_item_by_instance(inventory, 4242).is_some(),
+            "wrong template must not be consumed"
+        );
+    }
+
+    #[test]
+    fn spirit_niche_place_rejects_remote_target_without_consuming() {
+        let mut app = App::new();
+        app.insert_resource(SpiritNicheRegistry::default());
+        app.add_event::<SpiritNichePlaceRequest>();
+        app.add_systems(Update, handle_spirit_niche_place_requests);
+
+        let (mut client_bundle, _helper) = create_mock_client("Azure");
+        client_bundle.player.position = Position::new([10.0, 64.0, 10.0]);
+        let entity = app.world_mut().spawn(client_bundle).id();
+        app.world_mut().entity_mut(entity).insert((
+            Lifecycle {
+                character_id: "char:azure".to_string(),
+                ..Default::default()
+            },
+            inventory_with_item(spirit_niche_test_item(4242)),
+        ));
+        app.world_mut().send_event(SpiritNichePlaceRequest {
+            player: entity,
+            pos: [128, 64, 128],
+            item_instance_id: Some(4242),
+            tick: 77,
+        });
+
+        app.update();
+
+        assert!(app.world().get::<SpiritNiche>(entity).is_none());
+        let lifecycle = app.world().get::<Lifecycle>(entity).unwrap();
+        assert_eq!(lifecycle.spawn_anchor, None);
+        let inventory = app.world().get::<PlayerInventory>(entity).unwrap();
+        assert!(
+            inventory_item_by_instance(inventory, 4242).is_some(),
+            "remote target rejection must happen before item consumption"
+        );
+    }
+
+    #[test]
     fn spirit_niche_place_rejects_occupied_active_coordinates() {
         let mut app = App::new();
         let mut registry = SpiritNicheRegistry::default();
@@ -4356,6 +4954,7 @@ mod tests {
             placed_at_tick: 1,
             revealed: false,
             revealed_by: None,
+            is_damaged: false,
             guardians: Vec::new(),
         });
         app.insert_resource(registry);
@@ -4440,6 +5039,7 @@ mod tests {
             placed_at_tick: 1,
             revealed: false,
             revealed_by: None,
+            is_damaged: false,
             guardians: Vec::new(),
         });
         app.insert_resource(registry);
@@ -4468,6 +5068,7 @@ mod tests {
                 placed_at_tick: 1,
                 revealed: false,
                 revealed_by: None,
+                is_damaged: false,
                 guardians: Vec::new(),
             },
         ));
@@ -4536,6 +5137,7 @@ mod tests {
             placed_at_tick: 1,
             revealed: false,
             revealed_by: None,
+            is_damaged: false,
             guardians: Vec::new(),
         });
         app.insert_resource(registry);
@@ -4588,6 +5190,7 @@ mod tests {
             placed_at_tick: 1,
             revealed: false,
             revealed_by: None,
+            is_damaged: false,
             guardians: Vec::new(),
         });
         app.insert_resource(registry);

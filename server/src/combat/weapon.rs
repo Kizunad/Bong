@@ -350,6 +350,7 @@ mod tests {
                 id: "iron_sword".to_string(),
                 display_name: "铁剑".to_string(),
                 category: ItemCategory::Weapon,
+                placeable: None,
                 max_stack_count: 1,
                 grid_w: 1,
                 grid_h: 2,
@@ -374,6 +375,7 @@ mod tests {
                 recipe_fragment_spec: None,
                 container_spec: None,
                 shelflife_profile: None,
+                shield_spec: None,
                 shelflife_track: None,
             },
         );
@@ -383,6 +385,7 @@ mod tests {
                 id: "spirit_saber".to_string(),
                 display_name: "灵刀".to_string(),
                 category: ItemCategory::Weapon,
+                placeable: None,
                 max_stack_count: 1,
                 grid_w: 1,
                 grid_h: 2,
@@ -407,6 +410,7 @@ mod tests {
                 recipe_fragment_spec: None,
                 container_spec: None,
                 shelflife_profile: None,
+                shield_spec: None,
                 shelflife_track: None,
             },
         );
