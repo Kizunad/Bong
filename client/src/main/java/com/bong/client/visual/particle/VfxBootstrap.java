@@ -28,6 +28,8 @@ public final class VfxBootstrap {
         }
         registry.register(BreakthroughPillarPlayer.EVENT_ID,     new BreakthroughPillarPlayer());
         registry.register(EnlightenmentAuraPlayer.EVENT_ID,      new EnlightenmentAuraPlayer());
+        registry.register(BedRestAuraPlayer.EVENT_ID,            new BedRestAuraPlayer());
+        registry.register(MeditationAuraPlayer.EVENT_ID,         new MeditationAuraPlayer());
         registry.register(TribulationLightningPlayer.EVENT_ID,   new TribulationLightningPlayer());
         registry.register(TribulationOmenCloudPlayer.EVENT_ID,   new TribulationOmenCloudPlayer());
         registry.register(TribulationBoundaryPlayer.EVENT_ID,    new TribulationBoundaryPlayer());
