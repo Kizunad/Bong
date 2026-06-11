@@ -3264,6 +3264,27 @@ mod tests {
     }
 
     #[test]
+    fn lingju_cap_bonus_is_clamped_to_plot_qi_cap_max() {
+        let mut app = app_with_loaded_zhenfa();
+        let owner = spawn_player(&mut app, "Alice", [0.5, 64.0, 0.5]);
+        let near_max_cap = PLOT_QI_CAP_MAX - (QI_LINGJU_ARRAY_CAP_BONUS * 0.5);
+        spawn_plot(&mut app, [0, 64, 0], near_max_cap);
+
+        send_lingju_place(&mut app, owner, [0, 64, 0], 1);
+        app.update();
+        app.world_mut().resource_mut::<CombatClock>().tick = 2;
+        app.update();
+
+        let actual = plot_cap(&mut app, [0, 64, 0]);
+        assert!(
+            (actual - PLOT_QI_CAP_MAX).abs() < 1e-6,
+            "expected cap={} because Lingju bonus must clamp at PLOT_QI_CAP_MAX; actual={}",
+            PLOT_QI_CAP_MAX,
+            actual
+        );
+    }
+
+    #[test]
     fn lingju_decay_clears_cap_bonus_and_emits_decay_event() {
         let mut app = app_with_loaded_zhenfa();
         let owner = spawn_player(&mut app, "Alice", [0.5, 64.0, 0.5]);
@@ -3420,6 +3441,52 @@ mod tests {
         assert!(narrations
             .iter()
             .any(|narration| narration.style == NarrationStyle::Narration));
+    }
+
+    #[test]
+    fn non_lingju_place_does_not_emit_lingju_feedback() {
+        let mut app = app_with_loaded_zhenfa();
+        app.insert_resource(ZoneRegistry::fallback());
+        app.add_event::<VfxEventRequest>();
+        let owner = spawn_player(&mut app, "Alice", [0.5, 64.0, 0.5]);
+
+        app.world_mut().send_event(ZhenfaPlaceRequest {
+            player: owner,
+            pos: [0, 64, 0],
+            kind: ZhenfaKind::Ward,
+            carrier: ZhenfaCarrierKind::LingqiBlock,
+            qi_invest_ratio: 0.20,
+            trigger: None,
+            item_instance_id: None,
+            target_face: None,
+            requested_at_tick: 1,
+        });
+        app.update();
+
+        assert!(
+            app.world()
+                .resource::<ZhenfaRegistry>()
+                .find_at([0, 64, 0])
+                .is_some(),
+            "expected Ward place to succeed because this test must exercise a real non-Lingju place path"
+        );
+        assert!(
+            app.world()
+                .resource::<Events<VfxEventRequest>>()
+                .iter_current_update_events()
+                .next()
+                .is_none(),
+            "expected no VfxEventRequest because non-Lingju place must not run Lingju feedback"
+        );
+        let narrations = app
+            .world_mut()
+            .resource_mut::<PendingGameplayNarrations>()
+            .drain();
+        assert!(
+            narrations.is_empty(),
+            "expected no PendingGameplayNarrations because non-Lingju place must not run Lingju feedback; actual={:?}",
+            narrations
+        );
     }
 
     #[test]
