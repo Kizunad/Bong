@@ -615,4 +615,240 @@ mod tests {
         assert!(realm_ordinal(Realm::Solidify) < realm_ordinal(Realm::Spirit));
         assert!(realm_ordinal(Realm::Spirit) < realm_ordinal(Realm::Void));
     }
+
+    // ── ECS 集成测试：update_risk_heatmap 端到端 ─────────────────────────────
+
+    /// 构建包含单个 zone 的 ZoneRegistry，zone 位于 [0,0,0]...[100,256,100]。
+    fn registry_with_single_zone(name: &str, spirit_qi: f64) -> ZoneRegistry {
+        use crate::world::zone::Zone;
+        use valence::prelude::DVec3;
+        ZoneRegistry {
+            zones: vec![Zone {
+                name: name.to_string(),
+                dimension: DimensionKind::Overworld,
+                bounds: (DVec3::new(0.0, 0.0, 0.0), DVec3::new(100.0, 256.0, 100.0)),
+                spirit_qi,
+                danger_level: 3,
+                active_events: vec![],
+                patrol_anchors: vec![],
+                blocked_tiles: vec![],
+            }],
+        }
+    }
+
+    /// 推进系统恰好触发一次 eval（节流窗口为 RISK_HEATMAP_EVAL_INTERVAL_TICKS 次 update）。
+    fn advance_to_eval(app: &mut App) {
+        for _ in 0..RISK_HEATMAP_EVAL_INTERVAL_TICKS {
+            app.update();
+        }
+    }
+
+    #[test]
+    fn ecs_system_fauna_and_npc_contribute_to_zone_axes() {
+        // 端到端：在 Overworld zone 内 spawn 1 只 Rat（tier=0）+ 1 只 GuardianRelic NPC，
+        // 跑 update_risk_heatmap 系统，断言 fauna/npc 分量均 > 0 且 player == 0。
+        use crate::fauna::components::{BeastKind, FaunaTag};
+        use crate::npc::lifecycle::NpcArchetype;
+        use crate::npc::spawn::common::NpcMarker;
+        use valence::prelude::{App, DVec3, Position, Update};
+
+        let mut app = App::new();
+        app.insert_resource(RiskHeatmap::default());
+        app.add_systems(Update, update_risk_heatmap);
+        app.insert_resource(registry_with_single_zone("test_zone", 0.7));
+
+        // zone 内中心位置 (50, 64, 50)
+        let inside = DVec3::new(50.0, 64.0, 50.0);
+
+        // 野兽：Rat（realm_tier=0） → tier_weight = (0+1)*5 = 5
+        app.world_mut().spawn((
+            Position::new(inside.to_array()),
+            FaunaTag::new(BeastKind::Rat),
+            NpcMarker,
+        ));
+
+        // 高危 NPC：GuardianRelic → score = NPC_SCORE_HIGH_DANGER = 8
+        app.world_mut().spawn((
+            Position::new(inside.to_array()),
+            NpcArchetype::GuardianRelic,
+            NpcMarker,
+        ));
+
+        advance_to_eval(&mut app);
+
+        let heatmap = app.world().resource::<RiskHeatmap>();
+        let axes = heatmap.axes_for_zone("test_zone");
+
+        assert!(
+            axes.fauna > 0.0,
+            "野兽 Rat 应贡献 fauna 轴 > 0，实际 fauna={:.1}（期望 ≥ 5.0）",
+            axes.fauna
+        );
+        assert!(
+            axes.npc > 0.0,
+            "GuardianRelic 应贡献 npc 轴 > 0，实际 npc={:.1}（期望 ≥ {NPC_SCORE_HIGH_DANGER}）",
+            axes.npc
+        );
+        assert_eq!(
+            axes.player, 0.0,
+            "无玩家时 player 轴应为 0，实际 player={:.1}",
+            axes.player
+        );
+        // qi 轴由 spirit_qi=0.7 驱动，应等于 QI_SCORE_HIGH
+        assert_eq!(
+            axes.qi, QI_SCORE_HIGH,
+            "spirit_qi=0.7 应映射 QI_SCORE_HIGH={QI_SCORE_HIGH}，实际 qi={:.1}",
+            axes.qi
+        );
+    }
+
+    #[test]
+    fn ecs_system_low_realm_player_counted_high_realm_player_skipped() {
+        // 低境（凝脉=ordinal 2）玩家 → 计入 player 轴；
+        // 高境（通灵=ordinal 4）玩家 → 跳过，不计入。
+        use crate::cultivation::components::{Cultivation, Realm};
+        use valence::client::ClientMarker;
+        use valence::prelude::{App, DVec3, Position, Update};
+
+        let mut app = App::new();
+        app.insert_resource(RiskHeatmap::default());
+        app.add_systems(Update, update_risk_heatmap);
+        app.insert_resource(registry_with_single_zone("test_zone2", 0.4));
+
+        let inside = DVec3::new(50.0, 64.0, 50.0);
+
+        // 低境玩家（凝脉，ordinal=2 < 4）→ 应被计入
+        app.world_mut().spawn((
+            Position::new(inside.to_array()),
+            Cultivation {
+                realm: Realm::Condense,
+                ..Default::default()
+            },
+            ClientMarker,
+        ));
+
+        // 高境玩家（通灵，ordinal=4，等于阈值）→ 应被跳过
+        app.world_mut().spawn((
+            Position::new(inside.to_array()),
+            Cultivation {
+                realm: Realm::Spirit,
+                ..Default::default()
+            },
+            ClientMarker,
+        ));
+
+        advance_to_eval(&mut app);
+
+        let heatmap = app.world().resource::<RiskHeatmap>();
+        let axes = heatmap.axes_for_zone("test_zone2");
+
+        // 只有凝脉玩家计入，player 轴 = PLAYER_SCORE_PER_PLAYER = 4
+        assert_eq!(
+            axes.player, PLAYER_SCORE_PER_PLAYER,
+            "只有凝脉玩家应计入 player 轴（期望 {PLAYER_SCORE_PER_PLAYER}），\
+             通灵应被过滤，实际 player={:.1}",
+            axes.player
+        );
+    }
+
+    #[test]
+    fn ecs_system_nested_zone_entity_attributed_to_inner_zone() {
+        // MAJOR 1 回归锁定：嵌套 zone 场景下，落在内层小 zone 内的实体
+        // 应归属到小 zone，而不是注册顺序更早的大 zone。
+        use crate::fauna::components::{BeastKind, FaunaTag};
+        use crate::npc::spawn::common::NpcMarker;
+        use crate::world::zone::Zone;
+        use valence::prelude::{App, DVec3, Position, Update};
+
+        // 外层大 zone: [0,0,0]...[200,256,200]
+        // 内层小 zone: [50,60,50]...[80,100,80]（嵌入外层）
+        let outer = Zone {
+            name: "outer_large".to_string(),
+            dimension: DimensionKind::Overworld,
+            bounds: (DVec3::new(0.0, 0.0, 0.0), DVec3::new(200.0, 256.0, 200.0)),
+            spirit_qi: 0.2,
+            danger_level: 1,
+            active_events: vec![],
+            patrol_anchors: vec![],
+            blocked_tiles: vec![],
+        };
+        let inner = Zone {
+            name: "inner_small".to_string(),
+            dimension: DimensionKind::Overworld,
+            bounds: (DVec3::new(50.0, 60.0, 50.0), DVec3::new(80.0, 100.0, 80.0)),
+            spirit_qi: 0.8,
+            danger_level: 5,
+            active_events: vec![],
+            patrol_anchors: vec![],
+            blocked_tiles: vec![],
+        };
+
+        let mut app = App::new();
+        app.insert_resource(RiskHeatmap::default());
+        app.add_systems(Update, update_risk_heatmap);
+        // 外层先注册，内层后注册——首匹配 bug 会错归属到 outer_large
+        app.insert_resource(ZoneRegistry {
+            zones: vec![outer, inner],
+        });
+
+        // 实体位置在内层小 zone 内（65, 70, 65）
+        let inner_pos = DVec3::new(65.0, 70.0, 65.0);
+        app.world_mut().spawn((
+            Position::new(inner_pos.to_array()),
+            FaunaTag::new(BeastKind::Rat),
+            NpcMarker,
+        ));
+
+        advance_to_eval(&mut app);
+
+        let heatmap = app.world().resource::<RiskHeatmap>();
+        let inner_axes = heatmap.axes_for_zone("inner_small");
+        let outer_axes = heatmap.axes_for_zone("outer_large");
+
+        assert!(
+            inner_axes.fauna > 0.0,
+            "内层小 zone 应归属实体（find_zone 取最小 AABB），\
+             inner.fauna={:.1}，outer.fauna={:.1}",
+            inner_axes.fauna,
+            outer_axes.fauna
+        );
+        assert_eq!(
+            outer_axes.fauna, 0.0,
+            "外层大 zone 不应归属嵌套内层的实体，\
+             outer.fauna={:.1}（期望 0.0），inner.fauna={:.1}",
+            outer_axes.fauna, inner_axes.fauna
+        );
+    }
+
+    #[test]
+    fn ecs_system_entity_outside_all_zones_not_counted() {
+        // 实体位置在所有 zone 之外 → 所有轴均为 0
+        use crate::fauna::components::{BeastKind, FaunaTag};
+        use crate::npc::spawn::common::NpcMarker;
+        use valence::prelude::{App, DVec3, Position, Update};
+
+        let mut app = App::new();
+        app.insert_resource(RiskHeatmap::default());
+        app.add_systems(Update, update_risk_heatmap);
+        app.insert_resource(registry_with_single_zone("test_zone3", 0.5));
+
+        // 在 zone [0,0,0]...[100,256,100] 之外
+        let outside = DVec3::new(200.0, 64.0, 200.0);
+        app.world_mut().spawn((
+            Position::new(outside.to_array()),
+            FaunaTag::new(BeastKind::Rat),
+            NpcMarker,
+        ));
+
+        advance_to_eval(&mut app);
+
+        let heatmap = app.world().resource::<RiskHeatmap>();
+        let axes = heatmap.axes_for_zone("test_zone3");
+
+        assert_eq!(
+            axes.fauna, 0.0,
+            "zone 外实体不应贡献 fauna 轴，实际 fauna={:.1}",
+            axes.fauna
+        );
+    }
 }
