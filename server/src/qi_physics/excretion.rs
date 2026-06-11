@@ -108,6 +108,45 @@ mod tests {
     }
 
     #[test]
+    fn embedded_trap_leaks_between_weapon_and_pill() {
+        let env = EnvField::new(0.0);
+        let weapon = qi_excretion(1.0, ContainerKind::WieldedInWeapon, 10_000.0, env);
+        let embedded = qi_excretion(1.0, ContainerKind::EmbeddedTrap, 10_000.0, env);
+        let pill = qi_excretion(1.0, ContainerKind::LooseInPill, 10_000.0, env);
+
+        assert!(
+            weapon > embedded && embedded > pill,
+            "EmbeddedTrap 应介于持械封存和丹药松散封存之间：weapon={weapon}, embedded={embedded}, pill={pill}"
+        );
+    }
+
+    #[test]
+    fn embedded_trap_respects_pressure_and_invalid_inputs() {
+        let env = EnvField::new(0.4);
+
+        assert_eq!(
+            qi_excretion(0.3, ContainerKind::EmbeddedTrap, 3600.0, env),
+            0.3,
+            "低于环境灵压时预埋阵物不应反向吸收或继续逸散"
+        );
+        assert_eq!(
+            qi_excretion(1.0, ContainerKind::EmbeddedTrap, 0.0, env),
+            1.0,
+            "elapsed=0 时不应改变封存量"
+        );
+        assert_eq!(
+            qi_excretion(f64::NAN, ContainerKind::EmbeddedTrap, 60.0, env),
+            env.local_zone_qi,
+            "NaN 初始值必须被压到环境下限，避免向外传播 NaN"
+        );
+        assert_eq!(
+            qi_excretion(1.0, ContainerKind::EmbeddedTrap, f64::INFINITY, env),
+            1.0,
+            "非有限 elapsed 不执行指数逸散，保持安全 clamp 值"
+        );
+    }
+
+    #[test]
     fn elapsed_zero_keeps_initial() {
         assert_eq!(
             qi_excretion(1.0, ContainerKind::AmbientField, 0.0, EnvField::new(0.1)),

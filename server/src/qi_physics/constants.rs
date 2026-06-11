@@ -48,6 +48,10 @@ pub const QI_TSY_DRAIN_NONLINEAR_EXPONENT: f64 = 1.5;
 pub const QI_TSY_REFERENCE_POOL: f64 = 100.0;
 /// plan-tsy-zone-v1：TSY 抽取基准速率（点 / tick）。
 pub const QI_TSY_BASE_DRAIN_PER_TICK: f64 = 0.5;
+/// plan-zhenfa-content-v2 P0：单颗散真元珠可封存并释放的真元量。
+pub const QI_SCATTER_BEAD_CAPACITY: f64 = 3.0;
+/// plan-zhenfa-content-v2 P0：凡阶组网阵提供的聚灵容量加成。
+pub const QI_NETWORK_ARRAY_LINGJU_CAP_BONUS: f32 = 0.5;
 /// plan-tsy-container-v1：搜刮中主动暴露的 TSY 抽取放大因子。
 pub const QI_TSY_SEARCH_EXPOSURE_FACTOR: f64 = 1.5;
 /// worldview §十七：中性节律。
@@ -206,6 +210,25 @@ mod tests {
     fn dugu_dirty_qi_constants_match_plan_budget() {
         assert!((DUGU_RHO - 0.05).abs() < QI_EPSILON);
         assert!((DUGU_DIRTY_QI_ZONE_RETURN_RATIO - 0.99).abs() < QI_EPSILON);
+    }
+
+    #[test]
+    fn zhenfa_content_v2_qi_constants_match_plan_budget() {
+        let cases = [
+            (QI_SCATTER_BEAD_CAPACITY, 3.0, "QI_SCATTER_BEAD_CAPACITY"),
+            (
+                f64::from(QI_NETWORK_ARRAY_LINGJU_CAP_BONUS),
+                0.5,
+                "QI_NETWORK_ARRAY_LINGJU_CAP_BONUS",
+            ),
+        ];
+
+        for (actual, expected, name) in cases {
+            assert!(
+                (actual - expected).abs() < QI_EPSILON,
+                "{name} 应固定为 plan-zhenfa-content-v2 P0 的 {expected}，实际 {actual}"
+            );
+        }
     }
 
     // ── plan-neg-domain-fauna-v1 P0：真元抽取率常量 pin 测试 ──
