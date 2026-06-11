@@ -67,8 +67,9 @@ use crate::forge::station::PlaceForgeStationRequest;
 use crate::inventory::{
     add_item_to_player_inventory, add_item_to_player_inventory_with_alchemy, apply_inventory_move,
     apply_item_spiritual_wear, consume_item_instance_once, discard_inventory_item_to_dropped_loot,
-    fully_repair_weapon_instance, inventory_item_by_instance_borrow,
-    inventory_item_by_instance_mut, pickup_dropped_loot_instance, DroppedLootRegistry,
+    fully_repair_weapon_instance, inventory_instance_container_attrition_exempt,
+    inventory_item_by_instance_borrow, inventory_item_by_instance_mut,
+    inventory_location_attrition_exempt, pickup_dropped_loot_instance, DroppedLootRegistry,
     InventoryDurabilityChangedEvent, InventoryInstanceIdAllocator, InventoryMoveOutcome,
     ItemInstance, ItemTemplate, PlayerInventory,
 };
@@ -128,7 +129,7 @@ use crate::player::gameplay::{GameplayAction, GameplayActionQueue, GatherAction}
 use crate::player::state::{
     canonical_player_id, update_player_ui_prefs, PlayerState, PlayerStatePersistence,
 };
-use crate::qi_physics::attrition::{apply_attrition, is_attrition_exempt};
+use crate::qi_physics::attrition::{apply_attrition_checked, is_attrition_exempt};
 use crate::qi_physics::constants::QI_TARGETED_ITEM_WEAR_WEIGHT_THRESHOLD;
 use crate::qi_physics::ledger::AttritionOpKind;
 use crate::qi_physics::qi_targeted_item_wear_fraction;
@@ -168,6 +169,7 @@ use crate::world::spawn_tutorial::CoffinOpenRequest;
 use crate::world::tsy_container_search::{
     CancelSearchRequest as CancelSearchRequestEvent, StartSearchRequest as StartSearchRequestEvent,
 };
+use crate::world::tsy_lifecycle::TsyZoneStateRegistry;
 use crate::world::zone::{ZoneRegistry, DEFAULT_SPAWN_ZONE_NAME};
 use crate::zhenfa::{ZhenfaDisarmRequest, ZhenfaPlaceRequest, ZhenfaTriggerRequest};
 
@@ -250,6 +252,8 @@ pub struct AlchemyRequestParams<'w, 's> {
     pub redis: Option<Res<'w, RedisBridgeResource>>,
     /// plan-qi-handling-attrition-v1 P0/P1：升级为 ResMut，兼顾 alchemy read-only 和磨损写权限。
     pub zones: Option<ResMut<'w, ZoneRegistry>>,
+    /// plan-qi-handling-attrition-v1 P3：死坍缩渊 family 禁止磨损结算。
+    pub tsy_lifecycle: Option<Res<'w, TsyZoneStateRegistry>>,
     pub vfx_events: Option<ResMut<'w, Events<VfxEventRequest>>>,
     /// plan-qi-handling-attrition-v1 P0/P1：AttritionTax 审计转账事件队列。
     pub attrition_qi_transfers: Option<ResMut<'w, Events<crate::qi_physics::ledger::QiTransfer>>>,
@@ -1519,6 +1523,7 @@ pub fn handle_client_request_payloads(
                     alchemy_params.zones.as_deref_mut(),
                     alchemy_params.attrition_qi_transfers.as_deref_mut(),
                     alchemy_params.attrition_applied_events.as_deref_mut(),
+                    alchemy_params.tsy_lifecycle.as_deref(),
                 );
             }
             ClientRequestV1::AlchemyTakeBack {
@@ -1566,6 +1571,7 @@ pub fn handle_client_request_payloads(
                     alchemy_params.zones.as_deref_mut(),
                     alchemy_params.attrition_qi_transfers.as_deref_mut(),
                     alchemy_params.attrition_applied_events.as_deref_mut(),
+                    alchemy_params.tsy_lifecycle.as_deref(),
                 );
             }
             ClientRequestV1::EquipFalseSkin {
@@ -1608,6 +1614,7 @@ pub fn handle_client_request_payloads(
                     alchemy_params.zones.as_deref_mut(),
                     alchemy_params.attrition_qi_transfers.as_deref_mut(),
                     alchemy_params.attrition_applied_events.as_deref_mut(),
+                    alchemy_params.tsy_lifecycle.as_deref(),
                 );
             }
             ClientRequestV1::ForgeFalseSkin { kind, .. } => {
@@ -1676,6 +1683,7 @@ pub fn handle_client_request_payloads(
                     instance_id,
                     &mut inventories,
                     &mut dropped_loot_params.registry,
+                    &combat_params.item_registry,
                     &mut clients,
                     &player_states,
                     &skill_scroll_params.cultivations,
@@ -1684,6 +1692,7 @@ pub fn handle_client_request_payloads(
                     alchemy_params.zones.as_deref_mut(),
                     alchemy_params.attrition_qi_transfers.as_deref_mut(),
                     alchemy_params.attrition_applied_events.as_deref_mut(),
+                    alchemy_params.tsy_lifecycle.as_deref(),
                 );
             }
             ClientRequestV1::MineralProbe { x, y, z, .. } => {
@@ -7730,6 +7739,7 @@ fn handle_inventory_move(
     zones: Option<&mut ZoneRegistry>,
     qi_transfers: Option<&mut Events<crate::qi_physics::ledger::QiTransfer>>,
     attrition_events: Option<&mut Events<AttritionAppliedEvent>>,
+    tsy_lifecycle: Option<&TsyZoneStateRegistry>,
 ) {
     let item_before_move = inventories
         .get(entity)
@@ -7796,6 +7806,8 @@ fn handle_inventory_move(
 
             // plan-qi-handling-attrition-v1 P1: SlotMove 磨损，逸散守恒归还 zone
             if let Some(zones) = zones {
+                let target_container_exempt =
+                    inventory_location_attrition_exempt(&inventory, item_registry, &to);
                 let dim = dimensions
                     .get(entity)
                     .map(|d| d.0)
@@ -7813,13 +7825,14 @@ fn handle_inventory_move(
                         if let Some(item) =
                             inventory_item_by_instance_mut(&mut inventory, instance_id)
                         {
-                            if !is_attrition_exempt(item) {
+                            if !target_container_exempt && !is_attrition_exempt(item) {
                                 let before_abs_qi = item_abs_qi_for_attrition(item);
-                                apply_attrition(
+                                apply_attrition_checked(
                                     item,
                                     AttritionOpKind::SlotMove,
                                     Some(zone),
                                     qi_transfers,
+                                    tsy_lifecycle,
                                 );
                                 emit_attrition_applied_if_lost(
                                     attrition_events,
@@ -8113,6 +8126,7 @@ fn handle_pickup_dropped_item(
     instance_id: u64,
     inventories: &mut Query<&mut PlayerInventory>,
     dropped_loot_registry: &mut DroppedLootRegistry,
+    item_registry: &ItemRegistry,
     clients: &mut Query<(&Username, &mut Client)>,
     player_states: &Query<&PlayerState>,
     cultivations: &Query<&Cultivation>,
@@ -8121,6 +8135,7 @@ fn handle_pickup_dropped_item(
     zones: Option<&mut ZoneRegistry>,
     qi_transfers: Option<&mut Events<crate::qi_physics::ledger::QiTransfer>>,
     attrition_events: Option<&mut Events<AttritionAppliedEvent>>,
+    tsy_lifecycle: Option<&TsyZoneStateRegistry>,
 ) {
     let player_pos = client_position(positions, entity);
     let mut inventory = match inventories.get_mut(entity) {
@@ -8157,16 +8172,22 @@ fn handle_pickup_dropped_item(
                 if let Some(zone_name) = zone_name {
                     if let Some(zone) = zones.find_zone_mut(&zone_name) {
                         // 在 inventory 里按 instance_id 找到拾起的 item 并应用磨损
+                        let target_container_exempt = inventory_instance_container_attrition_exempt(
+                            &inventory,
+                            item_registry,
+                            instance_id,
+                        );
                         if let Some(item) =
                             inventory_item_by_instance_mut(&mut inventory, instance_id)
                         {
-                            if !is_attrition_exempt(item) {
+                            if !target_container_exempt && !is_attrition_exempt(item) {
                                 let before_abs_qi = item_abs_qi_for_attrition(item);
-                                apply_attrition(
+                                apply_attrition_checked(
                                     item,
                                     AttritionOpKind::Pickup,
                                     Some(zone),
                                     qi_transfers,
+                                    tsy_lifecycle,
                                 );
                                 emit_attrition_applied_if_lost(
                                     attrition_events,
@@ -8627,6 +8648,7 @@ fn handle_alchemy_feed_slot(
     mut zones: Option<&mut ZoneRegistry>,
     mut qi_transfers: Option<&mut Events<crate::qi_physics::ledger::QiTransfer>>,
     mut attrition_events: Option<&mut Events<AttritionAppliedEvent>>,
+    tsy_lifecycle: Option<&TsyZoneStateRegistry>,
 ) {
     let Ok((username, mut client)) = clients.get_mut(entity) else {
         return;
@@ -8715,7 +8737,7 @@ fn handle_alchemy_feed_slot(
                     {
                         if let Some(zone) = zones.find_zone_mut(&zone_name) {
                             let before_abs_qi = item_abs_qi_for_attrition(item);
-                            apply_attrition(
+                            apply_attrition_checked(
                                 item,
                                 AttritionOpKind::AlchemyLoad,
                                 Some(zone),
@@ -8723,6 +8745,7 @@ fn handle_alchemy_feed_slot(
                                     Some(events) => Some(&mut **events),
                                     None => None,
                                 },
+                                tsy_lifecycle,
                             );
                             emit_attrition_applied_if_lost(
                                 match &mut attrition_events {

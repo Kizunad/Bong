@@ -51,7 +51,7 @@
 | **P0** | ✅ 2026-06-10 | `AttritionTax` QiTransferReason + `AttritionConfig` 常数 + `QiAttritionSystem` server 逻辑 | 拿起 1 个 qi_value=100 灵石 → qi_value=97 + zone +3 + 守恒律单测全绿 |
 | **P1** | ✅ 2026-06-10 | 多 op_kind 磨损分档（拾起/移动/搜刮/炼器/炼丹）+ 环境倍率（死域×3/坍缩渊×3/馈赠区×0.8）+ `AttritionExemptTag` | 各 op_kind 磨损率单测 + 环境倍率边界 |
 | **P2** | ✅ 2026-06-11 | Client VFX：`bong:vfx/qi_attrition` 粒子闪光 + 物品 qi_value HUD 实时更新 | 客户端拿起高灵气物品 → 物品栏显示 qi_value 下降 + 粒子闪烁 |
-| **P3** | ⬜ | 边界情况：`qi_value < 0.5` 跳过磨损 + 封灵容器豁免 + 死坍缩渊（已 dead）无灵气可逸散的处理 | 边界单测 + 封灵容器豁免单测 |
+| **P3** | ✅ 2026-06-11 | 边界情况：`qi_value < 0.5` 跳过磨损 + 封灵容器豁免 + 死坍缩渊（已 dead）无灵气可逸散的处理 | 边界单测 + 封灵容器豁免单测 |
 
 > **P0/P1 落地（2026-06-10）**：`server/src/qi_physics/attrition.rs` 新建（`AttritionConfig` + `AttritionOpKind` + `apply_attrition` + `release_attrition_to_zone` 守恒归还 `zone.spirit_qi`）；`ledger.rs` 加 `QiTransferReason::AttritionTax{op_kind}` 变体；`constants.rs` 配置（BASE_RATE=0.03 等）。**4/5 op_kind 已接生产**：Pickup / SlotMove / ContainerSearch / AlchemyLoad。**遗留**：`ForgeLoad`（炼器）变体+rate 已定义并 pin 测试，但 forge session 生产接线 deferred follow-up。cargo fmt + clippy(-D warnings) + test **8130 passed**（attrition 专项 25，含守恒律+overflow守恒+各 op_kind率+环境倍率边界+<0.5 skip+exempt）。
 
@@ -60,20 +60,20 @@
 
 ## P0 — 数据模型 + 核心系统
 
-- [ ] `server/src/qi_physics/attrition.rs`（新文件）：`AttritionConfig { base_rate: f32, env_multipliers: HashMap<ZoneType, f32> }` Resource + `compute_attrition_amount(qi_value, op_kind, env) -> f32` 函数
-- [ ] `AttritionTax { op_kind: AttritionOpKind }` 变体加入 `qi_physics::ledger::QiTransferReason`（`server/src/qi_physics/ledger.rs`）
-- [ ] `QiAttritionSystem` Bevy System：监听 `InventoryItemMoved` event → 检查 item `ItemQiValue.current > 0.5` → 计算 `attrition_amount` → `ledger.transfer(AttritionTax)` → emit `AttritionAppliedEvent`
-- [ ] BASE_RATE = 0.03（3%）写入 `qi_physics/constants.rs`（禁止本 plan 内 inline 常数，必须经 const 引用）
-- [ ] ≥ 10 单测（pickup 磨损 3% 守恒 / qi_value 为 0 时跳过 / QiTransfer reason 正确 / WorldQiAccount 增量等于 item 减量）
+- [x] `server/src/qi_physics/attrition.rs`（新文件）：`AttritionConfig { base_rate: f32, env_multipliers: HashMap<ZoneType, f32> }` Resource + `compute_attrition_amount(qi_value, op_kind, env) -> f32` 函数
+- [x] `AttritionTax { op_kind: AttritionOpKind }` 变体加入 `qi_physics::ledger::QiTransferReason`（`server/src/qi_physics/ledger.rs`）
+- [x] `QiAttritionSystem` Bevy System：监听 `InventoryItemMoved` event → 检查 item `ItemQiValue.current > 0.5` → 计算 `attrition_amount` → `ledger.transfer(AttritionTax)` → emit `AttritionAppliedEvent`
+- [x] BASE_RATE = 0.03（3%）写入 `qi_physics/constants.rs`（禁止本 plan 内 inline 常数，必须经 const 引用）
+- [x] ≥ 10 单测（pickup 磨损 3% 守恒 / qi_value 为 0 时跳过 / QiTransfer reason 正确 / WorldQiAccount 增量等于 item 减量）
 
 ---
 
 ## P1 — 多档磨损 + 环境倍率
 
-- [ ] `AttritionOpKind { Pickup(0.03), SlotMove(0.02), ContainerSearch(0.05), ForgeLoad(0.04), AlchemyLoad(0.04) }` — 括号内为 BASE_RATE 乘子
-- [ ] 环境倍率（`ZoneType` based）：`AshDeadZone` → ×3，`CollapseZoneActive` → ×3，`SpiritSourceZone(density > 0.7)` → ×0.8，其余 ×1.0
-- [ ] `AttritionExemptTag` Component：贴此 tag 的物品所在容器内操作豁免（实装"封灵匣"物品的防护效果；封灵匣 item 是 spiritwood-v1 ✅ 的产物）
-- [ ] ≥ 12 单测（各 op_kind 分档 / 死域×3 边界 / 封灵容器内物品豁免 / 0.8 倍率精度）
+- [x] `AttritionOpKind { Pickup(0.03), SlotMove(0.02), ContainerSearch(0.05), ForgeLoad(0.04), AlchemyLoad(0.04) }` — 括号内为 BASE_RATE 乘子
+- [x] 环境倍率（`ZoneType` based）：`AshDeadZone` → ×3，`CollapseZoneActive` → ×3，`SpiritSourceZone(density > 0.7)` → ×0.8，其余 ×1.0
+- [x] `AttritionExemptTag` Component：贴此 tag 的物品所在容器内操作豁免（实装"封灵匣"物品的防护效果；封灵匣 item 是 spiritwood-v1 ✅ 的产物）
+- [x] ≥ 12 单测（各 op_kind 分档 / 死域×3 边界 / 封灵容器内物品豁免 / 0.8 倍率精度）
 
 ---
 
@@ -90,10 +90,12 @@
 
 ## P3 — 边界与豁免处理
 
-- [ ] `qi_value < 0.5` 时跳过磨损（避免微小真元频繁结算带来的性能损耗 + 归还量小于 ledger 最小精度的数值问题）
-- [ ] Zone `spirit_qi = 0.0`（死域）：磨损额仍从物品扣除，但 `qi_release` 到该 zone 由 qi_physics 正常处理（0 浓度 zone 仍有 WorldQiAccount，只是不增加密度——守恒律维护）
-- [ ] 死坍缩渊（zone 已塌缩）内的操作：禁止进死坍缩渊操作物品（tsy-raceout-v1 应已强制撤离，此处加断言 + warn log）
-- [ ] ≥ 8 单测（0.5 阈值边界 / 死域 zone 归还守恒 / 死坍缩渊 guard）
+- [x] `qi_value < 0.5` 时跳过磨损（避免微小真元频繁结算带来的性能损耗 + 归还量小于 ledger 最小精度的数值问题）
+- [x] Zone `spirit_qi = 0.0`（死域）：磨损额仍从物品扣除，但 `qi_release` 到该 zone 由 qi_physics 正常处理（0 浓度 zone 仍有 WorldQiAccount，只是不增加密度——守恒律维护）
+- [x] 死坍缩渊（zone 已塌缩）内的操作：禁止进死坍缩渊操作物品（tsy-raceout-v1 应已强制撤离，此处加断言 + warn log）
+- [x] ≥ 8 单测（0.5 阈值边界 / 死域 zone 归还守恒 / 死坍缩渊 guard）
+
+> **P3 落地（2026-06-11）**：`server/src/qi_physics/attrition.rs` 新增 `AttritionApplyOutcome` / `AttritionSkipReason` / `apply_attrition_checked`，把 `qi_value < QI_ATTRITION_MIN_QI` 显式归类为 `BelowMinimumQi`，并让 `qi_value == QI_ATTRITION_MIN_QI` 正常结算磨损；`dead_tsy_family_id` 读取 `TsyZoneStateRegistry` 中 `TsyLifecycle::Dead`，死坍缩渊操作返回 `DeadTsy` 并 warn，不扣物品真元，避免无接收方时吞真元；缺少 zone 上下文时返回 `MissingZone`，不扣 item、不发 transfer；`server/src/inventory/mod.rs` 给 `ContainerSpec` 增加 `attrition_exempt`，`client_request_handler.rs` / `tsy_container_search.rs` 在 SlotMove / Pickup / ContainerSearch / AlchemyLoad 接入容器级豁免与 checked 磨损。验证：`cargo fmt --check`、`cargo clippy --all-targets -j 2 -- -D warnings`、`cargo test -q -j 2` 通过。
 
 ---
 
@@ -104,3 +106,36 @@
 3. **搬运骨币是否算 qi_value > 0**：骨币是"异变兽骨封灵"所得，确实有 qi_value——频繁倒腾骨币被征税是设计意图还是意外惩罚？建议：骨币封灵值按当前 qi_value 征 1%（更低税率），避免货币体系被磨损机制摧毁
 4. **炼器/炼丹工序拆解**：一次炼器需要 3-4 步 inventory 操作，每步 4% = 总损耗约 15%。设计上这是"专业技术有保真溢价"的体现，但数值需实测
 5. **封灵容器的制作门槛**：spiritwood-v1 ✅ 的封灵匣需要高级灵木，低境界玩家根本买不起——他们只能硬扛磨损或极度减少操作次数，这是 worldview "末法残土万物皆有代价"的体现，无需豁免
+
+## Finish Evidence
+
+### 落地清单
+
+- **P0/P1 server 核心**：`server/src/qi_physics/attrition.rs`、`server/src/qi_physics/ledger.rs`、`server/src/qi_physics/constants.rs` 落地 `AttritionOpKind`、`AttritionConfig`、`QiTransferReason::AttritionTax`、环境倍率、`release_attrition_to_zone` 守恒归还；`server/src/network/client_request_handler.rs`、`server/src/world/tsy_container_search.rs` 接入 Pickup / SlotMove / ContainerSearch / AlchemyLoad。
+- **P2 client 反馈**：`server/src/network/qi_attrition_emit.rs` 定向发射 `bong:vfx/qi_attrition`；`client/src/main/java/com/bong/client/network/QiAttritionPayload.java`、`client/src/main/java/com/bong/client/visual/particle/QiAttritionVfxPlayer.java` 解析并播放暗金粒子；物品栏 qi_value 继续走 `InventorySync` 实时刷新。
+- **P3 边界豁免**：`server/src/qi_physics/attrition.rs` 落地 `AttritionApplyOutcome`、`AttritionSkipReason::{BelowMinimumQi, DeadTsy, MissingZone}`、`apply_attrition_checked`、`dead_tsy_family_id`；`server/src/inventory/mod.rs` 落地 `ContainerSpec.attrition_exempt` 与 `inventory_instance_container_attrition_exempt`；生产接线覆盖 SlotMove / Pickup / ContainerSearch / AlchemyLoad。
+
+### 关键 commit
+
+- `a29bf371f`（2026-06-10）：P0/P1 真元搬运磨损，含守恒归还 zone、op_kind 分档和环境倍率。
+- `c9dcea5cc` / `42eba7bda` / `a87fc20a0` / `1e6982dfb`（2026-06-11）：P2 客户端粒子反馈、搜刮与炼丹投料磨损反馈补齐。
+- `a3bed2dfb` / `18cd57e20` / `97c378d95`（2026-06-11）：P3 阈值边界、封灵容器显式豁免、死坍缩渊 guard、缺 zone 守恒 skip 与饱和单测。
+
+### 测试结果
+
+- `cd server && cargo fmt --check`：通过。
+- `cd server && BONG_SKIP_SKIN_PREFETCH=1 CARGO_BUILD_JOBS=2 nice -n 10 ionice -c3 cargo clippy --all-targets -j 2 -- -D warnings`：通过。
+- `cd server && BONG_SKIP_SKIN_PREFETCH=1 CARGO_BUILD_JOBS=2 nice -n 10 ionice -c3 cargo test -q -j 2 attrition`：通过，`47 passed; 0 failed`。
+- `cd server && BONG_SKIP_SKIN_PREFETCH=1 CARGO_BUILD_JOBS=2 nice -n 10 ionice -c3 cargo test -q -j 2`：通过，`8532 passed; 0 failed; 1 ignored`。
+- `cd client && ./gradlew test --max-workers=2`：P2 阶段通过，覆盖 VFX packet 与粒子参数。
+
+### 跨仓库核验
+
+- **server**：`AttritionOpKind`、`AttritionApplyOutcome`、`AttritionSkipReason`、`apply_attrition_checked`、`QiTransferReason::AttritionTax`、`ContainerSpec.attrition_exempt`、`inventory_instance_container_attrition_exempt`。
+- **client**：`QiAttritionPayload`、`QiAttritionVfxPlayer`、`InventorySync` 物品 qi_value 更新链路。
+- **agent**：本 plan 为服务端物理与客户端粒子反馈，不新增 agent schema / Redis 契约。
+
+### 遗留 / 后续
+
+- `ForgeLoad` 变体与 rate 已定义并测试，炼器生产接线仍依赖后续 forge session 流程接入，不阻塞本 plan。
+- 骨币搬运税率是否降为 1% 仍属数值校准问题，待 telemetry 或独立 balance plan 决策。

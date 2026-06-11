@@ -26,8 +26,9 @@ pub mod wear;
 use valence::prelude::App;
 
 pub use attrition::{
-    apply_attrition, env_multiplier, is_attrition_exempt, release_attrition_to_zone,
-    AttritionConfig,
+    apply_attrition, apply_attrition_checked, dead_tsy_family_id, env_multiplier,
+    is_attrition_exempt, release_attrition_to_zone, AttritionApplyOutcome, AttritionConfig,
+    AttritionSkipReason,
 };
 pub use channeling::{qi_channeling, qi_channeling_transfer, ChannelDirection, ChannelingOutcome};
 pub use collision::{
