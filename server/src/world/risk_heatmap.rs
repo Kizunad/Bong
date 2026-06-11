@@ -85,7 +85,7 @@ pub const PLAYER_SCORE_CAP: f32 = 15.0;
 /// 阈值取 `realm_ordinal(Realm::Spirit)` = 4，即「低于通灵」为低境。
 pub const PLAYER_LOW_REALM_ORDINAL_THRESHOLD: u8 = 4; // Spirit ordinal
 
-/// 境界修正：通灵（Spirit，ordinal=4）在中险区 -20（食物链顶）。
+/// 境界修正：通灵/化虚（Spirit/Void，ordinal ≥ 4）在中险区 -20（食物链顶）。
 pub const REALM_SPIRIT_MID_BONUS: i32 = -20;
 
 /// 境界修正：引气（Induce，ordinal=1）在中险区 +30（底端）。
