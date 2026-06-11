@@ -2375,6 +2375,7 @@ pub fn handle_client_request_payloads(
                     &mut clients,
                     dispatch.give_dan_to_elder_tx.as_deref_mut(),
                 );
+            }
             // ─── plan-shield-block-v1 P1：盾牌举盾 intent ─────────────────────
             ClientRequestV1::RaiseShield { .. } => {
                 tracing::debug!("[bong][shield] RaiseShield received entity={:?}", ev.client);
