@@ -176,7 +176,7 @@ mod tests {
             SoundRecipeRegistry::load_default().expect("default audio recipes should load");
         assert_eq!(
             registry.len(),
-            221,
+            222,
             "audio registry should exclude removed slide and double-jump movement recipes \
              plus include 7 supply_coffin recipes (break + open common/rare/precious + emerge) \
              plus 1 ambient_dan_zong recipe \
@@ -185,7 +185,8 @@ mod tests {
              plus 1 coffin_reclaim recipe (plan-coffin-tiers-v1 P2 对峙修复) \
              plus 1 niche_repair recipe (plan-niche-craft-fix-v1 P1) \
              plus 4 tiandao hunt ambient recipes \
-             plus 3 workbench runtime recipes (place/break/open)"
+             plus 3 workbench runtime recipes (place/break/open) \
+             plus 1 furniture aura hint recipe"
         );
         assert!(
             registry.get("niche_repair").is_some(),
@@ -243,6 +244,10 @@ mod tests {
         assert!(registry.get("locust_swarm_warning").is_some());
         assert!(registry.get("tribulation_thunder_distant").is_some());
         assert!(registry.get("skill_lv_up").is_some());
+        assert!(
+            registry.get("furniture_aura_hint").is_some(),
+            "plan-furniture-buff-v1 P3：床/蒲团 aura 上身轻提示音 recipe 必须加载"
+        );
         assert!(registry.get("yidao_meridian_repair").is_some());
         assert!(registry.get("zhenmai_parry_thud").is_some());
         assert!(registry.get("zhenmai_neutralize_hiss").is_some());
