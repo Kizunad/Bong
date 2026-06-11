@@ -299,6 +299,18 @@ pub fn register(app: &mut App) {
     );
     app.add_systems(
         Update,
+        lifecycle::health_regen_tick
+            .in_set(CombatSystemSet::Physics)
+            .after(lifecycle::wound_bleed_tick)
+            .after(status::status_effect_tick)
+            .after(status::attribute_aggregate_tick)
+            .after(baomai_v4::scar_circuit::scar_circuit_derive_system)
+            .after(baomai_v4::iron_cocoon::iron_cocoon_passive_system)
+            .after(baomai_v4::resonance_lock::resonance_lock_tick_system)
+            .after(body_conditioning::body_conditioning_aggregate),
+    );
+    app.add_systems(
+        Update,
         (
             body_conditioning::consume_guangbo_practice_events.in_set(CombatSystemSet::Intent),
             body_conditioning::body_conditioning_aggregate
