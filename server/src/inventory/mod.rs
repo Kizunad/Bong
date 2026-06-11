@@ -227,6 +227,8 @@ pub struct ContainerSpec {
     pub equip_slot: String,
     /// 每次操作扣除的耐久度比例（0.0 = 无损耗）。
     pub durability_cost_per_op: f64,
+    /// plan-qi-handling-attrition-v1 P3 — 此容器内物品跳过搬运磨损。
+    pub attrition_exempt: bool,
 }
 
 /// plan-weapon-v1 §1.1：武器模板级别的静态属性（不随 instance 变动）。
@@ -1583,6 +1585,8 @@ pub struct ContainerSpecToml {
     equip_slot: String,
     #[serde(default)]
     durability_cost_per_op: f64,
+    #[serde(default)]
+    attrition_exempt: bool,
 }
 
 /// plan-shield-block-v1 P2 — TOML 层的盾牌规格块（对应 `[item.shield_spec]`）。
@@ -1657,6 +1661,7 @@ pub fn parse_container_spec(
         weight_capacity: raw.weight_capacity,
         equip_slot: raw.equip_slot,
         durability_cost_per_op: raw.durability_cost_per_op,
+        attrition_exempt: raw.attrition_exempt,
     })
 }
 
@@ -4270,6 +4275,107 @@ pub(crate) fn inventory_item_by_instance_mut(
         .iter_mut()
         .flatten()
         .find(|item| item.instance_id == instance_id)
+}
+
+pub(crate) fn inventory_location_by_instance(
+    inventory: &PlayerInventory,
+    instance_id: u64,
+) -> Option<crate::schema::inventory::InventoryLocationV1> {
+    use crate::schema::inventory::InventoryLocationV1;
+
+    for container in &inventory.containers {
+        if let Some(placed) = container
+            .items
+            .iter()
+            .find(|placed| placed.instance.instance_id == instance_id)
+        {
+            return Some(InventoryLocationV1::Container {
+                container_id: container.id.clone(),
+                row: u64::from(placed.row),
+                col: u64::from(placed.col),
+            });
+        }
+    }
+
+    for (slot, item) in &inventory.equipped {
+        if item.instance_id == instance_id {
+            return equip_slot_v1_for_runtime_key(slot)
+                .map(|slot| InventoryLocationV1::Equip { slot });
+        }
+    }
+
+    inventory
+        .hotbar
+        .iter()
+        .enumerate()
+        .find_map(|(index, item)| {
+            item.as_ref()
+                .filter(|item| item.instance_id == instance_id)
+                .map(|_| InventoryLocationV1::Hotbar { index: index as u8 })
+        })
+}
+
+pub(crate) fn inventory_location_attrition_exempt(
+    inventory: &PlayerInventory,
+    registry: &ItemRegistry,
+    location: &crate::schema::inventory::InventoryLocationV1,
+) -> bool {
+    use crate::schema::inventory::InventoryLocationV1;
+
+    let InventoryLocationV1::Container { container_id, .. } = location else {
+        return false;
+    };
+    container_attrition_exempt(inventory, registry, container_id_str(container_id))
+}
+
+pub(crate) fn inventory_instance_container_attrition_exempt(
+    inventory: &PlayerInventory,
+    registry: &ItemRegistry,
+    instance_id: u64,
+) -> bool {
+    inventory_location_by_instance(inventory, instance_id)
+        .as_ref()
+        .is_some_and(|location| inventory_location_attrition_exempt(inventory, registry, location))
+}
+
+fn container_attrition_exempt(
+    inventory: &PlayerInventory,
+    registry: &ItemRegistry,
+    container_id: &str,
+) -> bool {
+    let Some(slot) = container_id_to_equip_slot(container_id) else {
+        return false;
+    };
+    let Some(container_item) = inventory.equipped.get(slot) else {
+        return false;
+    };
+    registry
+        .get(&container_item.template_id)
+        .and_then(|template| template.container_spec.as_ref())
+        .is_some_and(|spec| spec.attrition_exempt)
+}
+
+fn equip_slot_v1_for_runtime_key(slot: &str) -> Option<crate::schema::inventory::EquipSlotV1> {
+    use crate::schema::inventory::EquipSlotV1;
+
+    match slot {
+        EQUIP_SLOT_HEAD => Some(EquipSlotV1::Head),
+        EQUIP_SLOT_CHEST => Some(EquipSlotV1::Chest),
+        EQUIP_SLOT_LEGS => Some(EquipSlotV1::Legs),
+        EQUIP_SLOT_FEET => Some(EquipSlotV1::Feet),
+        EQUIP_SLOT_FALSE_SKIN => Some(EquipSlotV1::FalseSkin),
+        EQUIP_SLOT_MAIN_HAND => Some(EquipSlotV1::MainHand),
+        EQUIP_SLOT_OFF_HAND => Some(EquipSlotV1::OffHand),
+        EQUIP_SLOT_TWO_HAND => Some(EquipSlotV1::TwoHand),
+        EQUIP_SLOT_TREASURE_BELT_0 => Some(EquipSlotV1::TreasureBelt0),
+        EQUIP_SLOT_TREASURE_BELT_1 => Some(EquipSlotV1::TreasureBelt1),
+        EQUIP_SLOT_TREASURE_BELT_2 => Some(EquipSlotV1::TreasureBelt2),
+        EQUIP_SLOT_TREASURE_BELT_3 => Some(EquipSlotV1::TreasureBelt3),
+        EQUIP_SLOT_BACK_PACK => Some(EquipSlotV1::BackPack),
+        EQUIP_SLOT_WAIST_POUCH => Some(EquipSlotV1::WaistPouch),
+        EQUIP_SLOT_CHEST_SATCHEL => Some(EquipSlotV1::ChestSatchel),
+        _ => None,
+    }
 }
 
 fn detach_instance(inventory: &mut PlayerInventory, instance_id: u64) {
@@ -8301,6 +8407,7 @@ cols = 4
                 weight_capacity,
                 equip_slot: equip_slot.to_string(),
                 durability_cost_per_op: 0.0,
+                attrition_exempt: false,
             }),
             shield_spec: None,
 
@@ -8334,6 +8441,100 @@ cols = 4
         }
     }
 
+    #[test]
+    fn attrition_exempt_container_marks_inner_instance_exempt() {
+        let mut sealed_bag =
+            make_container_template("sealed_bag", EQUIP_SLOT_BACK_PACK, 2, 2, 10.0);
+        sealed_bag
+            .container_spec
+            .as_mut()
+            .expect("sealed_bag should have container spec")
+            .attrition_exempt = true;
+        let registry =
+            ItemRegistry::from_map(HashMap::from([("sealed_bag".to_string(), sealed_bag)]));
+
+        let mut inv = make_empty_inventory();
+        inv.equipped.insert(
+            EQUIP_SLOT_BACK_PACK.to_string(),
+            make_container_item(1000, "sealed_bag"),
+        );
+        inv.containers.push(ContainerState {
+            id: EQUIP_SLOT_BACK_PACK.to_string(),
+            name: "封灵背包".to_string(),
+            rows: 2,
+            cols: 2,
+            items: vec![PlacedItemState {
+                row: 0,
+                col: 0,
+                instance: make_test_item_instance(1001, "spirit_herb"),
+            }],
+        });
+
+        assert!(
+            inventory_instance_container_attrition_exempt(&inv, &registry, 1001),
+            "封灵容器内物品应按 instance_id 识别为搬运磨损豁免"
+        );
+    }
+
+    #[test]
+    fn ordinary_container_does_not_mark_inner_instance_exempt() {
+        let ordinary_bag =
+            make_container_template("ordinary_bag", EQUIP_SLOT_BACK_PACK, 2, 2, 10.0);
+        let registry =
+            ItemRegistry::from_map(HashMap::from([("ordinary_bag".to_string(), ordinary_bag)]));
+
+        let mut inv = make_empty_inventory();
+        inv.equipped.insert(
+            EQUIP_SLOT_BACK_PACK.to_string(),
+            make_container_item(1002, "ordinary_bag"),
+        );
+        inv.containers.push(ContainerState {
+            id: EQUIP_SLOT_BACK_PACK.to_string(),
+            name: "普通背包".to_string(),
+            rows: 2,
+            cols: 2,
+            items: vec![PlacedItemState {
+                row: 0,
+                col: 0,
+                instance: make_test_item_instance(1003, "spirit_herb"),
+            }],
+        });
+
+        assert!(
+            !inventory_instance_container_attrition_exempt(&inv, &registry, 1003),
+            "普通容器内物品不应误判为搬运磨损豁免"
+        );
+    }
+
+    #[test]
+    fn equipped_or_hotbar_instance_is_not_container_attrition_exempt() {
+        let mut sealed_bag =
+            make_container_template("sealed_bag", EQUIP_SLOT_BACK_PACK, 2, 2, 10.0);
+        sealed_bag
+            .container_spec
+            .as_mut()
+            .expect("sealed_bag should have container spec")
+            .attrition_exempt = true;
+        let registry =
+            ItemRegistry::from_map(HashMap::from([("sealed_bag".to_string(), sealed_bag)]));
+
+        let mut inv = make_empty_inventory();
+        inv.equipped.insert(
+            EQUIP_SLOT_BACK_PACK.to_string(),
+            make_container_item(1004, "sealed_bag"),
+        );
+        inv.hotbar[0] = Some(make_test_item_instance(1005, "spirit_herb"));
+
+        assert!(
+            !inventory_instance_container_attrition_exempt(&inv, &registry, 1004),
+            "装备槽中的容器物品自身不应因自身 container_spec 被判为内含物豁免"
+        );
+        assert!(
+            !inventory_instance_container_attrition_exempt(&inv, &registry, 1005),
+            "hotbar 物品不在封灵容器内，不应获得容器级豁免"
+        );
+    }
+
     // P0.1 — ContainerSpec TOML 解析：正例
 
     #[test]
@@ -8344,6 +8545,7 @@ cols = 4
             weight_capacity: 30.0,
             equip_slot: EQUIP_SLOT_BACK_PACK.to_string(),
             durability_cost_per_op: 0.001,
+            attrition_exempt: false,
         };
         let spec =
             parse_container_spec(raw, Path::new("<test>"), "back_pack_item").expect("should parse");
@@ -8355,6 +8557,7 @@ cols = 4
         );
         assert_eq!(spec.equip_slot, EQUIP_SLOT_BACK_PACK, "equip_slot mismatch");
         assert!((spec.durability_cost_per_op - 0.001).abs() < f64::EPSILON);
+        assert!(!spec.attrition_exempt, "普通背包默认不应豁免搬运磨损");
     }
 
     #[test]
@@ -8365,6 +8568,7 @@ cols = 4
             weight_capacity: 10.0,
             equip_slot: EQUIP_SLOT_WAIST_POUCH.to_string(),
             durability_cost_per_op: 0.0,
+            attrition_exempt: false,
         };
         let spec = parse_container_spec(raw, Path::new("<test>"), "waist_pouch_item")
             .expect("should parse");
@@ -8379,10 +8583,15 @@ cols = 4
             weight_capacity: 20.0,
             equip_slot: EQUIP_SLOT_CHEST_SATCHEL.to_string(),
             durability_cost_per_op: 0.0,
+            attrition_exempt: true,
         };
         let spec = parse_container_spec(raw, Path::new("<test>"), "chest_satchel_item")
             .expect("should parse");
         assert_eq!(spec.equip_slot, EQUIP_SLOT_CHEST_SATCHEL);
+        assert!(
+            spec.attrition_exempt,
+            "显式封灵容器应保留 attrition_exempt=true"
+        );
     }
 
     // P0.1 — ContainerSpec TOML 解析：反例
@@ -8395,6 +8604,7 @@ cols = 4
             weight_capacity: 10.0,
             equip_slot: EQUIP_SLOT_BACK_PACK.to_string(),
             durability_cost_per_op: 0.0,
+            attrition_exempt: false,
         };
         let err = parse_container_spec(raw, Path::new("<test>"), "bad_rows")
             .expect_err("should fail with rows=0");
@@ -8409,6 +8619,7 @@ cols = 4
             weight_capacity: 10.0,
             equip_slot: EQUIP_SLOT_BACK_PACK.to_string(),
             durability_cost_per_op: 0.0,
+            attrition_exempt: false,
         };
         let err = parse_container_spec(raw, Path::new("<test>"), "bad_rows_overflow")
             .expect_err("rows > 16 should fail");
@@ -8423,6 +8634,7 @@ cols = 4
             weight_capacity: 10.0,
             equip_slot: EQUIP_SLOT_BACK_PACK.to_string(),
             durability_cost_per_op: 0.0,
+            attrition_exempt: false,
         };
         let err = parse_container_spec(raw, Path::new("<test>"), "bad_cols")
             .expect_err("cols=0 should fail");
@@ -8437,6 +8649,7 @@ cols = 4
             weight_capacity: -1.0,
             equip_slot: EQUIP_SLOT_BACK_PACK.to_string(),
             durability_cost_per_op: 0.0,
+            attrition_exempt: false,
         };
         let err = parse_container_spec(raw, Path::new("<test>"), "bad_weight")
             .expect_err("negative weight_capacity should fail");
@@ -8454,6 +8667,7 @@ cols = 4
             weight_capacity: 10.0,
             equip_slot: "main_hand".to_string(),
             durability_cost_per_op: 0.0,
+            attrition_exempt: false,
         };
         let err = parse_container_spec(raw, Path::new("<test>"), "bad_slot")
             .expect_err("invalid equip_slot should fail");
@@ -8471,6 +8685,7 @@ cols = 4
             weight_capacity: 10.0,
             equip_slot: EQUIP_SLOT_BACK_PACK.to_string(),
             durability_cost_per_op: -0.1,
+            attrition_exempt: false,
         };
         let err = parse_container_spec(raw, Path::new("<test>"), "bad_dur_cost")
             .expect_err("negative durability_cost_per_op should fail");
@@ -9016,6 +9231,7 @@ cols = 4
                 weight_capacity: 10.0,
                 equip_slot: EQUIP_SLOT_WAIST_POUCH.to_string(),
                 durability_cost_per_op: 0.008,
+                attrition_exempt: false,
             }),
             shield_spec: None,
 

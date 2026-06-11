@@ -43,7 +43,7 @@ use crate::network::qi_attrition_emit::{
 };
 use crate::network::vfx_event_emit::VfxEventRequest;
 use crate::player::state::canonical_player_id;
-use crate::qi_physics::attrition::{apply_attrition, is_attrition_exempt};
+use crate::qi_physics::attrition::{apply_attrition, apply_attrition_checked, is_attrition_exempt};
 use crate::qi_physics::ledger::{AttritionOpKind, QiTransfer};
 use crate::schema::vfx_event::VfxEventPayloadV1;
 use crate::world::dimension::DimensionKind;
@@ -53,6 +53,7 @@ use crate::world::tsy_container::{
     SEARCH_MOVE_INTERRUPT_THRESHOLD_M,
 };
 use crate::world::tsy_container_spawn::relic_source_for_family;
+use crate::world::tsy_lifecycle::TsyZoneStateRegistry;
 use crate::world::zone::ZoneRegistry;
 
 const TSY_SEARCH_DUST_VFX: &str = "bong:tsy_search_dust";
@@ -243,6 +244,7 @@ pub fn apply_search_attrition(
     mut zones: Option<ResMut<ZoneRegistry>>,
     mut qi_transfers: Option<ResMut<Events<QiTransfer>>>,
     mut attrition_events: Option<ResMut<Events<AttritionAppliedEvent>>>,
+    tsy_lifecycle: Option<Res<TsyZoneStateRegistry>>,
 ) {
     for ev in completed.read() {
         let Ok((mut inv, pos)) = inventories.get_mut(ev.player) else {
@@ -268,11 +270,12 @@ pub fn apply_search_attrition(
                     (zone_name.clone(), zones.as_deref_mut())
                 {
                     if let Some(zone) = zones.find_zone_mut(&zone_name) {
-                        apply_attrition(
+                        apply_attrition_checked(
                             item,
                             AttritionOpKind::ContainerSearch,
                             Some(zone),
                             qi_transfers.as_deref_mut(),
+                            tsy_lifecycle.as_deref(),
                         );
                     }
                 } else {
