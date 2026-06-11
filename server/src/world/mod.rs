@@ -137,7 +137,7 @@ pub fn register(app: &mut App) {
     pseudo_vein_runtime::register(app);
     spirit_eye::register(app);
     entity_model::register(app);
-    app.init_resource::<furniture::FurnitureRegistry>();
+    furniture::register(app);
     app.insert_resource(karma::KarmaWeightStore::default());
     app.insert_resource(karma::QiDensityHeatmap::default());
     events::register(app);

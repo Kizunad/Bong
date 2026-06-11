@@ -203,6 +203,12 @@ public class VfxRegistryTest {
             "bootstrap should register npc_death_qi_burst");
         assertTrue(VfxRegistry.instance().contains(OffscreenRelicRevealPlayer.EVENT_ID),
             "bootstrap should register offscreen_relic_reveal (plan-offscreen-war-v1 P3 battlefield relic decal)");
+        assertTrue(VfxRegistry.instance().lookup(BedRestAuraPlayer.EVENT_ID).orElseThrow()
+                instanceof BedRestAuraPlayer,
+            "bootstrap should register furniture_bed_rest to BedRestAuraPlayer");
+        assertTrue(VfxRegistry.instance().lookup(MeditationAuraPlayer.EVENT_ID).orElseThrow()
+                instanceof MeditationAuraPlayer,
+            "bootstrap should register furniture_meditation to MeditationAuraPlayer");
         assertTrue(VfxRegistry.instance().contains(NpcRankAuraPlayer.ELDER),
             "bootstrap should register npc_rank_aura_elder");
         assertTrue(VfxRegistry.instance().contains(NpcRankAuraPlayer.MASTER),
