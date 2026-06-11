@@ -53,6 +53,7 @@ pub mod npc_metadata;
 pub mod npc_mood;
 pub mod poi_novice_bridge;
 pub mod poison_trait_emit;
+pub mod qi_attrition_emit;
 pub mod qi_color_observed_emit;
 pub mod quickslot_config_emit;
 pub mod rat_phase_bridge;
@@ -745,6 +746,11 @@ pub fn register(app: &mut App) {
     );
     app.add_systems(
         Update,
+        qi_attrition_emit::emit_qi_attrition_payloads
+            .after(client_request_handler::handle_client_request_payloads),
+    );
+    app.add_systems(
+        Update,
         skill_config_emit::emit_skill_config_snapshots
             .after(crate::player::attach_player_state_to_joined_clients)
             .after(client_request_handler::handle_client_request_payloads),
@@ -944,6 +950,7 @@ pub fn register(app: &mut App) {
     app.init_resource::<tsy_polish::TsyBossHealthSyncState>();
     app.add_event::<audio_event_emit::PlaySoundRecipeRequest>();
     app.add_event::<audio_event_emit::StopSoundRecipeRequest>();
+    app.add_event::<qi_attrition_emit::AttritionAppliedEvent>();
     app.add_event::<qi_color_observed_emit::QiColorInspectRequest>();
     app.add_event::<vfx_event_emit::VfxEventRequest>();
     app.add_event::<vfx_event_emit::VanillaVfxParticleRequest>();

@@ -14,6 +14,7 @@ import com.bong.client.identity.IdentityPanelStateStore;
 import com.bong.client.network.AmbientZoneHandler;
 import com.bong.client.network.AudioEventRouter;
 import com.bong.client.network.LocustSwarmWarningHandler;
+import com.bong.client.network.QiAttritionPayload;
 import com.bong.client.network.ServerDataDispatch;
 import com.bong.client.network.ServerDataEnvelope;
 import com.bong.client.network.ServerDataRouter;
@@ -27,6 +28,7 @@ import com.bong.client.npc.NpcDialogueBubbleRenderer;
 import com.bong.client.npc.NpcMoodHandler;
 import com.bong.client.npc.NpcMoodStore;
 import com.bong.client.visual.particle.BongVfxParticleBridge;
+import com.bong.client.visual.particle.QiAttritionVfxPlayer;
 import com.bong.client.state.NarrationState;
 import com.bong.client.state.PlayerStateStore;
 import com.bong.client.state.RealmCollapseHudStateStore;
@@ -85,6 +87,7 @@ public class BongNetworkHandler {
         registerTsyDeathVfxChannel();
         registerLocustSwarmWarningChannel();
         registerVfxEventChannel();
+        registerQiAttritionChannel();
         registerAudioPlayChannel();
         registerAudioStopChannel();
         registerTiandaoPresenceChannel();
@@ -351,6 +354,35 @@ public class BongNetworkHandler {
                     return;
                 }
                 BongClient.LOGGER.info("Processed bong:vfx_event payload: {}", result.logMessage());
+            });
+        });
+    }
+
+    private static void registerQiAttritionChannel() {
+        ClientPlayNetworking.registerGlobalReceiver(QiAttritionVfxPlayer.CHANNEL, (client, handler, buf, responseSender) -> {
+            int readableBytes = buf.readableBytes();
+            if (readableBytes < 0 || readableBytes > QiAttritionPayload.MAX_PAYLOAD_BYTES) {
+                markConnectionPayload();
+                BongClient.LOGGER.error("Rejected bong:vfx/qi_attrition payload with invalid size: {}", readableBytes);
+                return;
+            }
+            byte[] bytes = new byte[readableBytes];
+            buf.readBytes(bytes);
+
+            String jsonPayload = QiAttritionPayload.decodeUtf8(bytes);
+            markConnectionPayload();
+            client.execute(() -> {
+                QiAttritionPayload.ParseResult result = QiAttritionPayload.parse(jsonPayload, readableBytes);
+                if (!result.success()) {
+                    BongClient.LOGGER.error("Failed to parse bong:vfx/qi_attrition payload: {}", result.errorMessage());
+                    return;
+                }
+                QiAttritionVfxPlayer.play(client, result.payload());
+                BongClient.LOGGER.debug(
+                    "Processed bong:vfx/qi_attrition item={} amount={}",
+                    result.payload().itemEntityId(),
+                    result.payload().amountLost()
+                );
             });
         });
     }
