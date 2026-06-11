@@ -92,6 +92,15 @@ pub const QI_LEDGER_REDIS_KEY: &str = "bong:qi/ledger";
 // store + faction store，强者陨落仍走 P2 的 release_dormant_qi_to_zone，本通道不碰 ledger。
 pub const CH_FACTION_STATE: &str = "bong:faction_state";
 
+// plan-faction-expansion-v1 P0：具名势力注册表快照（纯观测，防孤岛 #6）。
+//
+// 与 CH_FACTION_STATE（emergent group census，bong:faction_state）完全独立——
+// 不同 key、不同 struct（NamedFactionStateV1 vs FactionStateV1），避免撞名。
+// P0 publish_named_faction_state system 真发一帧到此 key，防孤岛（数据模型非死结构）。
+// 下游：social-v2 WarReputation / faction-wars FactionWarEventV1 消费 NamedFactionId。
+// P1: faction-wars consumes NamedFactionId via faction_id_for_war
+pub const CH_NAMED_FACTION_STATE: &str = "bong:named_faction_state";
+
 // plan-offscreen-war-v1 P6：涌现区域冲突生命周期（纯观测旁路，零真元）。
 //
 // 每次 WarPhaseChanged（Emerging/Skirmish/Settling/Aftermath）或玩家参与改变 role 计数时
@@ -437,6 +446,22 @@ mod tests {
         assert_eq!(
             CH_TERRITORY_NARRATION_REQUEST,
             "bong:territory_narration_request"
+        );
+    }
+
+    #[test]
+    fn test_named_faction_state_channel() {
+        // plan-faction-expansion-v1 P0：具名势力注册表快照 key 防撞（双端 pin）。
+        // CH_NAMED_FACTION_STATE 必须是 "bong:named_faction_state"（非 "bong:faction_state"）。
+        assert_eq!(
+            CH_NAMED_FACTION_STATE,
+            "bong:named_faction_state",
+            "CH_NAMED_FACTION_STATE 必须是 \"bong:named_faction_state\"（plan-faction-expansion-v1 P0）"
+        );
+        assert_ne!(
+            CH_NAMED_FACTION_STATE,
+            CH_FACTION_STATE,
+            "CH_NAMED_FACTION_STATE 绝不能等于 CH_FACTION_STATE（防撞：emergent group census vs 具名势力快照）"
         );
     }
 }

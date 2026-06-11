@@ -210,3 +210,86 @@ export type FactionWarEventV1 = Static<typeof FactionWarEventV1>;
 export function validateFactionWarEventV1Contract(data: unknown): ValidationResult {
   return validate(FactionWarEventV1, data);
 }
+
+// ── plan-faction-expansion-v1 P0：具名势力 schema ────────────────────────────────
+//
+// 命名避撞：既有 FactionStateV1（bong:faction_state，emergent group census）。
+// 本 plan 专用 NamedFactionStateV1 + CHANNELS.NAMED_FACTION_STATE（bong:named_faction_state）。
+//
+// Rust serde 对应：server/src/schema/npc.rs（NamedFactionStateV1/NamedFactionEntryV1/FactionRelationEntryV1）。
+// FactionStatus 三变体 snake_case 对齐 server npc::faction::FactionStatus。
+
+/**
+ * plan-faction-expansion-v1 P0：具名势力领袖存活态。
+ *
+ * active=有确定领袖 / headless=无领袖（北荒漂流者初始态）/ decayed=势力式微。
+ * 对齐 server `FactionStatus`（snake_case serde）。
+ */
+export const FactionStatusV1 = Type.Union([
+  Type.Literal("active"),
+  Type.Literal("headless"),
+  Type.Literal("decayed"),
+]);
+export type FactionStatusV1 = Static<typeof FactionStatusV1>;
+
+/**
+ * plan-faction-expansion-v1 P0：具名势力注册表条目。
+ *
+ * id = snake_case（如 "qingyun_hunters"），对齐 `NamedFactionId::as_str()`。
+ * zone_anchor 对齐 world/zone.rs 字符串体系（如 "qingyun_peaks"）。
+ * additionalProperties:false 对齐 server serde（拒未知字段）。
+ */
+export const NamedFactionEntryV1 = Type.Object(
+  {
+    id: Type.String({ minLength: 1 }),
+    display_name: Type.String({ minLength: 1 }),
+    zone_anchor: Type.String({ minLength: 1 }),
+    current_npc_count: Type.Integer({ minimum: 0 }),
+    status: FactionStatusV1,
+  },
+  { additionalProperties: false },
+);
+export type NamedFactionEntryV1 = Static<typeof NamedFactionEntryV1>;
+
+/**
+ * plan-faction-expansion-v1 P0：两具名势力关系矩阵条目。
+ *
+ * hostile 由 FactionStore::faction_id_for_war→is_hostile_pair 派生（P0 兼容层）。
+ * P1 faction-wars 接入后可扩展 relation_kind；P0 只留 bool。
+ */
+export const FactionRelationEntryV1 = Type.Object(
+  {
+    a: Type.String({ minLength: 1 }),
+    b: Type.String({ minLength: 1 }),
+    hostile: Type.Boolean(),
+  },
+  { additionalProperties: false },
+);
+export type FactionRelationEntryV1 = Static<typeof FactionRelationEntryV1>;
+
+/**
+ * plan-faction-expansion-v1 P0：具名势力注册表快照（`bong:named_faction_state`）。
+ *
+ * 与 FactionStateV1（bong:faction_state，emergent group census）完全独立——
+ * 不同 kind（"named_faction_state" vs "faction_state"），不同 channel。
+ *
+ * 下游消费契约（P1 实现）：
+ * - social-v2 WarReputation 按 (NamedFactionId, NamedFactionId) 累积
+ * - faction-wars FactionWarEventV1 携 NamedFactionId 发起/防守方
+ * // P1: faction-wars consumes NamedFactionId via faction_id_for_war
+ */
+export const NamedFactionStateV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    kind: Type.Literal("named_faction_state"),
+    named_factions: Type.Array(NamedFactionEntryV1),
+    relation_matrix: Type.Array(FactionRelationEntryV1),
+    at_tick: Type.Number({ minimum: 0 }),
+  },
+  { additionalProperties: false },
+);
+export type NamedFactionStateV1 = Static<typeof NamedFactionStateV1>;
+
+export function validateNamedFactionStateV1Contract(data: unknown): ValidationResult {
+  return validate(NamedFactionStateV1, data);
+}

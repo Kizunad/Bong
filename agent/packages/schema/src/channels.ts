@@ -104,6 +104,17 @@ export const CHANNELS = {
   /** Server → Agent: 散修群体消长盘面快照（plan-offscreen-war-v1 P5，reframe b） */
   FACTION_STATE: "bong:faction_state",
 
+  /**
+   * Server → Agent: 具名势力注册表快照（plan-faction-expansion-v1 P0）。
+   *
+   * 与 FACTION_STATE（bong:faction_state，emergent group census）完全独立——
+   * 不同 key（bong:named_faction_state），不同 payload（NamedFactionStateV1）。
+   * 防撞：NamedFactionStateV1 != FactionStateV1，key != bong:faction_state。
+   * 下游：social-v2 WarReputation / faction-wars FactionWarEventV1 消费 NamedFactionId。
+   * P1: faction-wars consumes NamedFactionId via faction_id_for_war
+   */
+  NAMED_FACTION_STATE: "bong:named_faction_state",
+
   /** Server → Agent: 涌现区域冲突生命周期事件（plan-offscreen-war-v1 P6/P9，reframe b） */
   FACTION_WAR: "bong:faction/war",
 
@@ -488,6 +499,8 @@ export const REDIS_V1_CHANNELS = [
   CHANNELS.BAOMAI_V3_OVERLOAD_RIPPLE,
   // plan-territory-v1 P3 — 领地霸主叙事通道
   CHANNELS.TERRITORY_NARRATION_REQUEST,
+  // plan-faction-expansion-v1 P0 — 具名势力注册表快照通道
+  CHANNELS.NAMED_FACTION_STATE,
 ] as const;
 
 export type ChannelName = (typeof CHANNELS)[keyof typeof CHANNELS];

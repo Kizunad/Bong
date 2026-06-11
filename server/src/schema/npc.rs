@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use crate::npc::faction::GroupStatus;
+use crate::npc::faction::{FactionStatus, GroupStatus};
 use crate::npc::war::WarPhase;
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
@@ -166,6 +166,66 @@ pub struct FactionWarEventV1 {
     /// 累积战死计数（Settling/Aftermath 才 Some）。
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub total_casualties: Option<u32>,
+    pub at_tick: u64,
+}
+
+// ── plan-faction-expansion-v1 P0：具名势力状态 schema ────────────────────────────
+//
+// 命名避撞：既有 FactionStateV1（schema/npc.rs:100，emergent group census）+
+// bong:faction_state（CH_FACTION_STATE，plan-offscreen-war-v1 P5 正被使用）。
+// 本 plan 专用 NamedFactionStateV1 + bong:named_faction_state，绝不复用既有名。
+//
+// TS source of truth：agent/packages/schema/src/npc.ts（NamedFactionStateV1）。
+// 字段对齐 TypeBox additionalProperties:false ↔ serde 默认拒未知（无 deny_unknown_fields
+// 宏但 TypeBox 侧已有反样本守卫）。
+
+/// plan-faction-expansion-v1 P0：具名势力注册表条目 schema（`bong:named_faction_state`）。
+///
+/// id 序列化为 snake_case（如 "qingyun_hunters"，对齐 NamedFactionId::as_str()）。
+/// status 复用 npc::faction::FactionStatus（snake_case：active/headless/decayed）。
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct NamedFactionEntryV1 {
+    /// 具名势力 id（snake_case，如 "qingyun_hunters"）。
+    pub id: String,
+    pub display_name: String,
+    /// zone 锚点字符串（对齐 world/zone.rs 体系，如 "qingyun_peaks"）。
+    pub zone_anchor: String,
+    pub current_npc_count: u32,
+    /// 领袖存活态（active / headless / decayed）。
+    pub status: FactionStatus,
+}
+
+/// plan-faction-expansion-v1 P0：两具名势力关系矩阵条目（`bong:named_faction_state` relation_matrix）。
+///
+/// hostile 由 FactionStore::faction_id_for_war→is_hostile_pair 派生（P0 兼容层）。
+/// P1 faction-wars 接入后可扩展 relation_kind 字段；P0 只留 bool。
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct FactionRelationEntryV1 {
+    /// 势力 a id（snake_case）。
+    pub a: String,
+    /// 势力 b id（snake_case）。
+    pub b: String,
+    /// true=敌对，由 faction_id_for_war→is_hostile_pair 派生。
+    pub hostile: bool,
+}
+
+/// plan-faction-expansion-v1 P0：具名势力注册表快照（`bong:named_faction_state`）。
+///
+/// 与 FactionStateV1（emergent group census，bong:faction_state）完全独立——
+/// 不同 kind（"named_faction_state"），不同 channel（bong:named_faction_state）。
+///
+/// P0 publish stub：publish_named_faction_state system 真发一帧到 CH_NAMED_FACTION_STATE
+/// （参见 schema/channels.rs）。下游消费契约：
+/// - social-v2 WarReputation 按 (NamedFactionId, NamedFactionId) 累积
+/// - faction-wars FactionWarEventV1 携 NamedFactionId 发起/防守方
+///
+/// P1: faction-wars consumes NamedFactionId via faction_id_for_war
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct NamedFactionStateV1 {
+    pub v: u8,
+    pub kind: String,
+    pub named_factions: Vec<NamedFactionEntryV1>,
+    pub relation_matrix: Vec<FactionRelationEntryV1>,
     pub at_tick: u64,
 }
 
@@ -744,5 +804,143 @@ mod tests {
             parsed.is_err(),
             "期望缺 war_id 字段时 serde 报错（必填），实际解析成功: {parsed:?}"
         );
+    }
+
+    // ─── plan-faction-expansion-v1 P0：NamedFactionStateV1 schema 双端 ─────────
+
+    fn sample_named_faction_state() -> NamedFactionStateV1 {
+        NamedFactionStateV1 {
+            v: 1,
+            kind: "named_faction_state".to_string(),
+            named_factions: vec![
+                NamedFactionEntryV1 {
+                    id: "qingyun_hunters".to_string(),
+                    display_name: "青云猎盟".to_string(),
+                    zone_anchor: "qingyun_peaks".to_string(),
+                    current_npc_count: 0,
+                    status: FactionStatus::Active,
+                },
+                NamedFactionEntryV1 {
+                    id: "cangyuan_merchants".to_string(),
+                    display_name: "沧渊商会".to_string(),
+                    zone_anchor: "blood_valley".to_string(),
+                    current_npc_count: 0,
+                    status: FactionStatus::Active,
+                },
+                NamedFactionEntryV1 {
+                    id: "north_waste_drifters".to_string(),
+                    display_name: "北荒漂流者".to_string(),
+                    zone_anchor: "north_wastes".to_string(),
+                    current_npc_count: 0,
+                    status: FactionStatus::Headless,
+                },
+            ],
+            relation_matrix: vec![FactionRelationEntryV1 {
+                a: "qingyun_hunters".to_string(),
+                b: "cangyuan_merchants".to_string(),
+                hostile: true,
+            }],
+            at_tick: 100,
+        }
+    }
+
+    #[test]
+    fn test_named_faction_state_v1_roundtrip() {
+        // NamedFactionStateV1（含 Headless 北荒）serde_json 往返无损 + status 序列化为 snake_case。
+        let payload = sample_named_faction_state();
+        let json = serde_json::to_string(&payload).expect("NamedFactionStateV1 序列化必须成功");
+        let parsed: NamedFactionStateV1 =
+            serde_json::from_str(&json).expect("NamedFactionStateV1 反序列化必须成功");
+        assert_eq!(
+            parsed, payload,
+            "NamedFactionStateV1 必须无损 roundtrip（含 Headless 北荒 status）"
+        );
+
+        let value: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(value["v"], serde_json::json!(1), "v 字段必须序列化为 1");
+        assert_eq!(
+            value["kind"],
+            serde_json::json!("named_faction_state"),
+            "kind 字段必须是 \"named_faction_state\"（与既有 FactionStateV1 的 \"faction_state\" 区分）"
+        );
+        // 北荒漂流者 status 序列化为 snake_case "headless"。
+        let north_status = &value["named_factions"][2]["status"];
+        assert_eq!(
+            *north_status,
+            serde_json::json!("headless"),
+            "NorthWasteDrifters status 必须序列化为 \"headless\"（FactionStatus snake_case），实际 {north_status}"
+        );
+    }
+
+    #[test]
+    fn test_named_faction_state_v1_invalid_status_rejected() {
+        // 反：非法 status 串（"alive"）反序列化失败——锁住 FactionStatus 三变体契约。
+        let bad = serde_json::json!({
+            "v": 1,
+            "kind": "named_faction_state",
+            "named_factions": [{
+                "id": "qingyun_hunters",
+                "display_name": "青云猎盟",
+                "zone_anchor": "qingyun_peaks",
+                "current_npc_count": 0,
+                "status": "alive"
+            }],
+            "relation_matrix": [],
+            "at_tick": 1
+        });
+        let parsed = serde_json::from_value::<NamedFactionStateV1>(bad);
+        assert!(
+            parsed.is_err(),
+            "非法 status 字符串 \"alive\" 必须被 serde 拒绝（FactionStatus 只有 active/headless/decayed），\
+             实际解析成功: {parsed:?}"
+        );
+    }
+
+    #[test]
+    fn test_named_faction_state_v1_missing_field_rejected() {
+        // 反：缺必填字段（at_tick）反序列化失败（无 serde default）。
+        let bad = serde_json::json!({
+            "v": 1,
+            "kind": "named_faction_state",
+            "named_factions": [],
+            "relation_matrix": []
+        });
+        let parsed = serde_json::from_value::<NamedFactionStateV1>(bad);
+        assert!(
+            parsed.is_err(),
+            "缺必填 at_tick 字段必须被 serde 拒绝（无 serde default），实际解析成功: {parsed:?}"
+        );
+    }
+
+    #[test]
+    fn test_named_faction_state_v1_faction_status_three_variants() {
+        // FactionStatus 三变体（active/headless/decayed）各有专属 pin 测试，嵌入 NamedFactionEntryV1。
+        for (status, wire) in [
+            (FactionStatus::Active, "active"),
+            (FactionStatus::Headless, "headless"),
+            (FactionStatus::Decayed, "decayed"),
+        ] {
+            let entry = NamedFactionEntryV1 {
+                id: "qingyun_hunters".to_string(),
+                display_name: "青云猎盟".to_string(),
+                zone_anchor: "qingyun_peaks".to_string(),
+                current_npc_count: 0,
+                status,
+            };
+            let value = serde_json::to_value(&entry).expect("NamedFactionEntryV1 序列化");
+            assert_eq!(
+                value["status"],
+                serde_json::json!(wire),
+                "FactionStatus::{status:?} 嵌入 NamedFactionEntryV1 必须序列化为 {wire:?}，实际 {}",
+                value["status"]
+            );
+            let back: NamedFactionEntryV1 =
+                serde_json::from_value(value).expect("NamedFactionEntryV1 反序列化");
+            assert_eq!(
+                back.status, status,
+                "FactionStatus::{status:?} 必须 roundtrip 还原，实际 {:?}",
+                back.status
+            );
+        }
     }
 }

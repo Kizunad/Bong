@@ -333,6 +333,21 @@ impl FactionStore {
         a != b
     }
 
+    /// plan-faction-expansion-v1 P0：两具名势力交战→映射回现有 FactionId 二元 war 模型。
+    ///
+    /// 约定 a=发起/进攻方→Attack，b=防守方→Defend；返回 (FactionId, FactionId)
+    /// 直接喂现有 `is_hostile_pair`（无需改 war 逻辑），Attack/Defend 语义不变。
+    ///
+    /// P1 faction-wars 真接战时仍走此映射，NamedFactionId 经此兼容层桥接现有 hydrated AI
+    /// 战斗二元模型（防孤岛 #2）。
+    ///
+    /// # 前置断言
+    /// `a != b`——同势力不交战（调试模式断言，生产不 panic）。
+    pub fn faction_id_for_war(a: NamedFactionId, b: NamedFactionId) -> (FactionId, FactionId) {
+        debug_assert!(a != b, "同势力不交战：faction_id_for_war 要求 a != b");
+        (FactionId::Attack, FactionId::Defend)
+    }
+
     /// 从旧 `FactionId` 派生涌现群体 id（plan-offscreen-war-v1 P5 reframe b 非破坏迁移）。
     ///
     /// 旧持久化快照只有 `faction` 没有显式 `emergent_group`，反序列化后用本方法回退派生：
@@ -483,8 +498,217 @@ impl ActionBuilder for MissionExecuteAction {
     }
 }
 
+// ── plan-faction-expansion-v1 P0：具名势力注册表 ────────────────────────────────
+//
+// 三具名势力（QingyunHunters / CangyuanMerchants / NorthWasteDrifters）是末法残土已知的
+// 有组织散修集体，与离屏涌现群体（EmergentGroupId）**正交**——后者是匿名动态集体，前者是
+// 固定势力档案。NamedFactionId 不替换 FactionId；FactionId::Attack/Defend/Neutral
+// 及 FactionMembership 一律不变；通过兼容层 faction_id_for_war 映射到现有 war 二元模型。
+//
+// zone_anchor 用 zone.rs 字符串体系（如 "qingyun_peaks"），对齐 world/zone.rs；
+// plan 文案写 ZoneId 此处实现落 &'static str/String，注释说明决议。
+/// zone 锚点字符串别名（对齐 world/zone.rs 字符串 zone 体系，非 enum）。
+pub type ZoneAnchor = &'static str;
+
+/// plan-faction-expansion-v1 P0：三具名散修势力 id。
+///
+/// 与 FactionId（attack/defend/neutral 战斗二元模型）正交；通过 `FactionStore::faction_id_for_war`
+/// 兼容层桥接。变体命名对齐 plan；序列化为 snake_case（TypeBox 双端 `NamedFactionEntryV1.id`）。
+///
+/// # 正典依据
+/// - QingyunHunters：docs/library/peoples/宗门残息.json（青云宗外门三脉、第一脉「锋锐三十二人」）
+/// - NorthWasteDrifters：docs/library/geography/北荒坍缩渊记.json（入者十归者不过百）
+/// - CangyuanMerchants：plan-faction-expansion-v1 创作设定，正典无「沧渊/盐商」直接记载，
+///   推演自 worldview §13 血谷矿脉经济生态（见注释）。
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum NamedFactionId {
+    /// 青云猎盟——青云宗外门残脉，以猎兽护矿为生。正典：宗门残息.json 外门第一/三脉。
+    QingyunHunters,
+    /// 沧渊商会——盘踞血谷矿道的骨币商会。
+    /// 正典无「沧渊/盐商」直接记载，推演自 worldview §13 血谷矿脉经济生态；名取自 plan-faction-expansion-v1。
+    CangyuanMerchants,
+    /// 北荒漂流者——入北荒寻坍缩渊遗物的游荡散修松散结盟。
+    /// 正典依据：北荒坍缩渊记.json（入者十归者不过百），初始 Headless 有正典支撑。
+    NorthWasteDrifters,
+}
+
+impl NamedFactionId {
+    pub const fn all() -> [Self; 3] {
+        [
+            Self::QingyunHunters,
+            Self::CangyuanMerchants,
+            Self::NorthWasteDrifters,
+        ]
+    }
+
+    /// 正典显示名，对应 docs/worldview.md + docs/library/ 正典依据。
+    pub const fn display_name(self) -> &'static str {
+        match self {
+            // 正典：宗门残息.json 外门残脉，猎盟非正典专名，对应外门第一/三脉散修残余。
+            Self::QingyunHunters => "青云猎盟",
+            // 正典无「沧渊商会」直接记载，推演自 worldview §13 血谷矿脉经济生态；非正典专名。
+            Self::CangyuanMerchants => "沧渊商会",
+            // 正典：北荒坍缩渊记.json 游荡散修；无固定领袖，成员替换率极高。
+            Self::NorthWasteDrifters => "北荒漂流者",
+        }
+    }
+
+    /// zone 锚点字符串（对齐 world/zone.rs 字符串 zone 体系；plan 文案写 ZoneId，实现落 &'static str）。
+    pub const fn zone_anchor(self) -> ZoneAnchor {
+        match self {
+            // 青云残峰——worldview §13 + zone.rs terrain profile "qingyun_peaks"。
+            Self::QingyunHunters => "qingyun_peaks",
+            // 裂谷·血谷——worldview §13 坐标(3000,-2500)，zone.rs:447 blood_valley。
+            // plan 文案「裂谷·血谷」对应 blood_valley（rift_valley 同区另名，P1 可扩）。
+            Self::CangyuanMerchants => "blood_valley",
+            // 北荒·灵泉沼主锚——worldview §13 坐标(0,-7000)，zone.rs:453 north_wastes。
+            Self::NorthWasteDrifters => "north_wastes",
+        }
+    }
+
+    /// lore 标签，供叙事 agent 参考（非正典字段已注释标注来源）。
+    pub const fn lore_tag(self) -> &'static str {
+        match self {
+            // 正典：宗门残息.json 外门第一脉「锋锐三十二人」，掌脉「沉舟」凝脉中期；
+            // 「猎盟/护山堂」非正典专名，此处描述对应外门残脉守矿生态。
+            Self::QingyunHunters => "青云宗外门残脉,以猎兽护矿为生,收保护费维系松散盟约",
+            // 正典无「沧渊/盐商」直接记载；推演自 worldview §13 血谷矿脉经济生态；plan 创作设定。
+            Self::CangyuanMerchants => "盘踞血谷矿道的骨币商会,以货仓为据点垄断矿脉供给,见利翻脸",
+            // 正典：北荒坍缩渊记.json（入者十归者不过百）+ 散修百态.json（游荡者原型）。
+            Self::NorthWasteDrifters => {
+                "入北荒寻坍缩渊遗物的游荡散修松散结盟,成员替换率极高,无固定领袖"
+            }
+        }
+    }
+
+    /// snake_case 字符串（与 serde 序列化一致，供 schema/migration 串行）。
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::QingyunHunters => "qingyun_hunters",
+            Self::CangyuanMerchants => "cangyuan_merchants",
+            Self::NorthWasteDrifters => "north_waste_drifters",
+        }
+    }
+
+    /// 从 snake_case 字符串反序列化（与 FactionId::from_str_name 风格一致）。
+    pub fn from_str_name(value: &str) -> Option<Self> {
+        match value {
+            "qingyun_hunters" => Some(Self::QingyunHunters),
+            "cangyuan_merchants" => Some(Self::CangyuanMerchants),
+            "north_waste_drifters" => Some(Self::NorthWasteDrifters),
+            _ => None,
+        }
+    }
+}
+
+/// plan-faction-expansion-v1 P0：领袖存活态（具名势力用，不影响 FactionId 现有战斗状态）。
+///
+/// Active=有确定领袖 / Headless=无领袖（北荒漂流者初始态；正典：坍缩渊记无法组织化）/
+/// Decayed=势力已式微（领袖陨落后无人接续）。
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FactionStatus {
+    /// 有确定领袖，势力正常运转。
+    Active,
+    /// 无领袖——初始态（北荒漂流者）或领袖死亡后尚未补位。
+    /// 正典：北荒坍缩渊记.json「入者十归者不过百」，松散结盟无法组织化。
+    Headless,
+    /// 势力式微——领袖陨落后无人接续，P2 census 填充后可迁入此态。
+    Decayed,
+}
+
+impl FactionStatus {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Active => "active",
+            Self::Headless => "headless",
+            Self::Decayed => "decayed",
+        }
+    }
+
+    pub fn from_str_name(value: &str) -> Option<Self> {
+        match value {
+            "active" => Some(Self::Active),
+            "headless" => Some(Self::Headless),
+            "decayed" => Some(Self::Decayed),
+            _ => None,
+        }
+    }
+}
+
+/// plan-faction-expansion-v1 P0：具名势力注册表条目。
+///
+/// display_name/zone_anchor 从 `NamedFactionId` 派生填入（避免手抄）；
+/// current_npc_count P0 初始 0，P2 census 填充。
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct NamedFaction {
+    pub id: NamedFactionId,
+    pub display_name: String,
+    /// zone 锚点字符串（对齐 world/zone.rs 字符串 zone 体系；plan 文案写 ZoneId，实现落 String）。
+    pub zone_anchor: String,
+    /// P0 初始 0；P2 census 按 zone_anchor 计入 hydrated NPC 填充。
+    pub current_npc_count: u32,
+    pub status: FactionStatus,
+}
+
+impl NamedFaction {
+    /// 从 NamedFactionId + FactionStatus 构造（派生 display_name/zone_anchor，避免手抄）。
+    pub fn from_id(id: NamedFactionId, status: FactionStatus) -> Self {
+        Self {
+            id,
+            display_name: id.display_name().to_string(),
+            zone_anchor: id.zone_anchor().to_string(),
+            current_npc_count: 0,
+            status,
+        }
+    }
+}
+
+/// plan-faction-expansion-v1 P0：具名势力注册表 Bevy Resource。
+///
+/// 启动时在 `register()` 中 `insert_resource(NamedFactionRegistry::startup_default())`，
+/// 与 `FactionStore` 同处注册，确保启动即三条可查（防孤岛 #1）。
+///
+/// 下游消费契约（P0 标注，P1 实现）：
+/// - social-v2 WarReputation 按 (NamedFactionId, NamedFactionId) 累积
+/// - faction-wars FactionWarEventV1 携 NamedFactionId 发起/防守方
+///
+/// P1: faction-wars consumes NamedFactionId via faction_id_for_war
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, Resource)]
+pub struct NamedFactionRegistry {
+    pub factions: Vec<NamedFaction>,
+}
+
+impl NamedFactionRegistry {
+    /// 启动默认注册表：三条；北荒漂流者初始 Headless（正典支撑），其余 Active。
+    pub fn startup_default() -> Self {
+        Self {
+            factions: vec![
+                NamedFaction::from_id(NamedFactionId::QingyunHunters, FactionStatus::Active),
+                NamedFaction::from_id(NamedFactionId::CangyuanMerchants, FactionStatus::Active),
+                NamedFaction::from_id(NamedFactionId::NorthWasteDrifters, FactionStatus::Headless),
+            ],
+        }
+    }
+
+    pub fn get(&self, id: NamedFactionId) -> Option<&NamedFaction> {
+        self.factions.iter().find(|f| f.id == id)
+    }
+
+    pub fn get_mut(&mut self, id: NamedFactionId) -> Option<&mut NamedFaction> {
+        self.factions.iter_mut().find(|f| f.id == id)
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = &NamedFaction> {
+        self.factions.iter()
+    }
+}
+
 pub fn register(app: &mut App) {
     app.insert_resource(FactionStore::default())
+        // plan-faction-expansion-v1 P0：具名势力注册表，启动即 3 条可查（防孤岛 #1）。
+        .insert_resource(NamedFactionRegistry::startup_default())
         .add_event::<FactionEventNotice>();
     app.add_systems(Update, assign_hostile_encounters)
         .add_systems(
@@ -1294,6 +1518,205 @@ mod tests {
         assert_eq!(
             *app.world().get::<ActionState>(action).unwrap(),
             ActionState::Failure
+        );
+    }
+
+    // ── plan-faction-expansion-v1 P0：具名势力注册表 & 兼容层 ────────────────────
+
+    #[test]
+    fn test_named_faction_id_display_name() {
+        // 三变体 display_name 各==正典串。
+        // 正典依据：宗门残息.json（青云外门），北荒坍缩渊记.json（北荒漂流者）。
+        // 沧渊商会为 plan 创作设定，正典无「沧渊/盐商」直接记载。
+        assert_eq!(
+            NamedFactionId::QingyunHunters.display_name(),
+            "青云猎盟",
+            "QingyunHunters display_name 必须=「青云猎盟」(正典：宗门残息.json 外门残脉)"
+        );
+        assert_eq!(
+            NamedFactionId::CangyuanMerchants.display_name(),
+            "沧渊商会",
+            "CangyuanMerchants display_name 必须=「沧渊商会」(plan 创作设定，非正典直载)"
+        );
+        assert_eq!(
+            NamedFactionId::NorthWasteDrifters.display_name(),
+            "北荒漂流者",
+            "NorthWasteDrifters display_name 必须=「北荒漂流者」(正典：北荒坍缩渊记.json)"
+        );
+    }
+
+    #[test]
+    fn test_named_faction_id_zone_anchor() {
+        // 三变体 zone_anchor 各对应 zone.rs 字符串（防止与 zone 体系漂移）。
+        assert_eq!(
+            NamedFactionId::QingyunHunters.zone_anchor(),
+            "qingyun_peaks",
+            "QingyunHunters zone_anchor 必须对齐 zone.rs 「qingyun_peaks」terrain profile"
+        );
+        assert_eq!(
+            NamedFactionId::CangyuanMerchants.zone_anchor(),
+            "blood_valley",
+            "CangyuanMerchants zone_anchor 必须对齐 zone.rs 「blood_valley」（裂谷·血谷）"
+        );
+        assert_eq!(
+            NamedFactionId::NorthWasteDrifters.zone_anchor(),
+            "north_wastes",
+            "NorthWasteDrifters zone_anchor 必须对齐 zone.rs 「north_wastes」（北荒主锚）"
+        );
+    }
+
+    #[test]
+    fn test_named_faction_id_lore_tag() {
+        // 三变体 lore_tag 非空且含锚区关键词；CangyuanMerchants 注释标注非正典。
+        let q = NamedFactionId::QingyunHunters.lore_tag();
+        assert!(!q.is_empty(), "QingyunHunters lore_tag 不能空");
+        assert!(
+            q.contains("青云") || q.contains("外门") || q.contains("猎"),
+            "QingyunHunters lore_tag 应含「青云/外门/猎」相关词，实际：{q}"
+        );
+
+        let c = NamedFactionId::CangyuanMerchants.lore_tag();
+        assert!(!c.is_empty(), "CangyuanMerchants lore_tag 不能空");
+        // 沧渊商会 plan 创作设定，验证 lore_tag 含「血谷」（地理锚点）。
+        assert!(
+            c.contains("血谷") || c.contains("矿"),
+            "CangyuanMerchants lore_tag 应含「血谷/矿」（地理依据），实际：{c}"
+        );
+
+        let n = NamedFactionId::NorthWasteDrifters.lore_tag();
+        assert!(!n.is_empty(), "NorthWasteDrifters lore_tag 不能空");
+        assert!(
+            n.contains("北荒") || n.contains("坍缩") || n.contains("漂流"),
+            "NorthWasteDrifters lore_tag 应含「北荒/坍缩/漂流」，实际：{n}"
+        );
+    }
+
+    #[test]
+    fn test_faction_status_three_variants() {
+        // Active/Headless/Decayed 各 as_str↔from_str_name 往返 + 非法串返 None（三 state 专属 case）。
+        for (status, wire) in [
+            (FactionStatus::Active, "active"),
+            (FactionStatus::Headless, "headless"),
+            (FactionStatus::Decayed, "decayed"),
+        ] {
+            assert_eq!(
+                status.as_str(),
+                wire,
+                "FactionStatus::{status:?}.as_str() 必须返回 {wire:?}"
+            );
+            assert_eq!(
+                FactionStatus::from_str_name(wire),
+                Some(status),
+                "FactionStatus::from_str_name({wire:?}) 必须返回 {status:?}"
+            );
+            let serialized = serde_json::to_value(status).expect("FactionStatus should serialize");
+            assert_eq!(
+                serialized,
+                json!(wire),
+                "FactionStatus::{status:?} 序列化必须是 snake_case {wire:?}，实际 {serialized}"
+            );
+            let back: FactionStatus =
+                serde_json::from_value(serialized).expect("FactionStatus should deserialize");
+            assert_eq!(
+                back, status,
+                "FactionStatus serde roundtrip 必须还原 {status:?}，实际 {back:?}"
+            );
+        }
+        // 非法串返 None，不 panic。
+        assert_eq!(
+            FactionStatus::from_str_name("alive"),
+            None,
+            "非法 status 字符串 \"alive\" 必须返回 None"
+        );
+        assert_eq!(FactionStatus::from_str_name(""), None, "空串必须返回 None");
+    }
+
+    #[test]
+    fn test_named_faction_registry_registers_three() {
+        // startup_default 返回 3 条；北荒漂流者初始 Headless，其余 Active；
+        // display_name/zone_anchor 经 from_id 派生正确。
+        let registry = NamedFactionRegistry::startup_default();
+        assert_eq!(
+            registry.iter().count(),
+            3,
+            "startup_default 必须注册 3 条具名势力，实际 {}",
+            registry.iter().count()
+        );
+        let north = registry
+            .get(NamedFactionId::NorthWasteDrifters)
+            .expect("NorthWasteDrifters 必须存在于注册表");
+        assert_eq!(
+            north.status,
+            FactionStatus::Headless,
+            "NorthWasteDrifters 初始 status 必须是 Headless（正典：坍缩渊记无法组织化），实际 {:?}",
+            north.status
+        );
+        for faction_id in [
+            NamedFactionId::QingyunHunters,
+            NamedFactionId::CangyuanMerchants,
+        ] {
+            let f = registry
+                .get(faction_id)
+                .unwrap_or_else(|| panic!("{faction_id:?} 必须存在"));
+            assert_eq!(
+                f.status,
+                FactionStatus::Active,
+                "{faction_id:?} 初始 status 必须是 Active，实际 {:?}",
+                f.status
+            );
+            assert_eq!(
+                f.display_name,
+                faction_id.display_name(),
+                "{faction_id:?} display_name 必须从 id 派生"
+            );
+            assert_eq!(
+                f.zone_anchor,
+                faction_id.zone_anchor(),
+                "{faction_id:?} zone_anchor 必须从 id 派生"
+            );
+        }
+    }
+
+    #[test]
+    fn test_registry_inserted_at_app_boot() {
+        // 防孤岛 #1：build 最小 App→register()→断言 world.get_resource::<NamedFactionRegistry>()
+        // Some 且 3 条（非仅类型存在，必须可查内容）。
+        let mut app = App::new();
+        register(&mut app);
+        let registry = app
+            .world()
+            .get_resource::<NamedFactionRegistry>()
+            .expect("NamedFactionRegistry 必须在 register() 后存在于 World（防孤岛 #1）");
+        assert_eq!(
+            registry.iter().count(),
+            3,
+            "注册表 App boot 后必须有 3 条，实际 {}",
+            registry.iter().count()
+        );
+    }
+
+    #[test]
+    fn test_faction_id_for_war_maps_to_hostile() {
+        // 防孤岛 #2：faction_id_for_war 返回喂现有 FactionStore::is_hostile_pair，
+        // 单测真打通到现有 war 逻辑（assert 理由：兼容层必须打通到 is_hostile_pair 否则孤岛）。
+        let store = FactionStore::default();
+        let (attack, defend) = FactionStore::faction_id_for_war(
+            NamedFactionId::QingyunHunters,
+            NamedFactionId::CangyuanMerchants,
+        );
+        assert!(
+            store.is_hostile_pair(attack, defend),
+            "faction_id_for_war(Qingyun, Cangyuan) 返回的 ({attack:?},{defend:?}) 必须满足 \
+             is_hostile_pair==true（兼容层必须打通到 is_hostile_pair，否则为孤岛桩）"
+        );
+        // 对称：进攻/防守互换方向也要正确。
+        let (attack2, defend2) = FactionStore::faction_id_for_war(
+            NamedFactionId::CangyuanMerchants,
+            NamedFactionId::NorthWasteDrifters,
+        );
+        assert!(
+            store.is_hostile_pair(attack2, defend2),
+            "faction_id_for_war(Cangyuan, North) 也必须打通到 is_hostile_pair"
         );
     }
 }

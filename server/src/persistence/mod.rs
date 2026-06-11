@@ -37,7 +37,8 @@ pub mod identity;
 pub const DEFAULT_DATABASE_PATH: &str = "data/bong.db";
 pub const SQLITE_BUSY_TIMEOUT_MS: u64 = 15_000;
 const DEFAULT_DECEASED_PUBLIC_DIR: &str = "../library-web/public/deceased";
-const CURRENT_USER_VERSION: i32 = 29;
+/// plan-faction-expansion-v1 P0：v30 新增 social_faction_memberships.named_faction 列。
+const CURRENT_USER_VERSION: i32 = 30;
 const AGENT_WORLD_MODEL_ROW_ID: i64 = 1;
 const ASCENSION_QUOTA_ROW_ID: i64 = 1;
 const TRIBULATION_KIND_DU_XU: &str = "du_xu";
@@ -1840,6 +1841,52 @@ fn apply_migrations(connection: &mut Connection) -> rusqlite::Result<()> {
             ",
         )?;
         transaction.execute_batch("PRAGMA user_version = 29;")?;
+        transaction.commit()?;
+    }
+
+    let current_version: i32 =
+        connection.query_row("PRAGMA user_version;", [], |row| row.get(0))?;
+    if current_version < 30 {
+        // plan-faction-expansion-v1 P0：social_faction_memberships.named_faction 列迁移。
+        //
+        // 迁移目标：social_faction_memberships.faction 列存 "attack"/"defend"/"neutral"（v15 建，
+        // FactionId 真持久化数据）→ 按 zone_anchor 归属回填到具名势力。
+        // 映射依据：
+        //   attack  → qingyun_hunters    （青云外门猎杀型主动出击）
+        //   defend  → cangyuan_merchants  （血谷守矿型防守）
+        //   neutral → north_waste_drifters（流窜无归属→北荒漂流者）
+        //   此为 P0 既有数据合理 zone_anchor 归属，非凭空映射；正典依据见 NamedFactionId 注释。
+        //
+        // (a) 新增 named_faction 列（保留旧 faction 列不破坏 social-v2 读路径）。
+        // (b) 三条 UPDATE 按 faction 值回填 named_faction（WHERE named_faction IS NULL 防幂等覆盖）。
+        // (c) 表不存在时跳过列/UPDATE（早期 fixture 库，social v15 之前），直接升版本。
+        let transaction = connection.transaction()?;
+        let existing_columns = table_columns(&transaction, "social_faction_memberships")?;
+        if !existing_columns.is_empty() {
+            // 表存在：(a) 按需加列，(b) 三条 UPDATE 回填。
+            if !existing_columns.iter().any(|c| c == "named_faction") {
+                transaction.execute_batch(
+                    "ALTER TABLE social_faction_memberships ADD COLUMN named_faction TEXT;",
+                )?;
+            }
+            transaction.execute_batch(
+                "
+                UPDATE social_faction_memberships
+                SET named_faction = 'qingyun_hunters'
+                WHERE faction = 'attack' AND named_faction IS NULL;
+
+                UPDATE social_faction_memberships
+                SET named_faction = 'cangyuan_merchants'
+                WHERE faction = 'defend' AND named_faction IS NULL;
+
+                UPDATE social_faction_memberships
+                SET named_faction = 'north_waste_drifters'
+                WHERE faction = 'neutral' AND named_faction IS NULL;
+                ",
+            )?;
+        }
+        // 无论表是否存在，均升版本号（前置 migration 会在 v15 建表，本 migration 幂等）。
+        transaction.execute_batch("PRAGMA user_version = 30;")?;
         transaction.commit()?;
     }
 
@@ -12851,5 +12898,138 @@ mod persistence_tests {
             .query_row("PRAGMA user_version;", [], |row| row.get(0))
             .expect("user_version should be readable");
         assert_eq!(user_version, CURRENT_USER_VERSION);
+    }
+
+    // ── plan-faction-expansion-v1 P0：v30 migration 单测 ────────────────────────
+
+    #[test]
+    fn test_migration_v29_to_v30_real_migrate() {
+        // 防孤岛 #3：建 user_version=29 库 + social_faction_memberships 塞 attack/defend/neutral
+        // 三行→open_database→断言 named_faction 列各=对应具名势力且 user_version==30（真迁移验证）。
+        let db_path = database_path("v30-named-faction-migration");
+        fs::create_dir_all(db_path.parent().expect("db path parent"))
+            .expect("temp db dir should create");
+        let mut connection = Connection::open(&db_path).expect("db should open");
+
+        connection
+            .execute_batch(
+                "
+                CREATE TABLE IF NOT EXISTS social_faction_memberships (
+                    char_id TEXT PRIMARY KEY,
+                    faction TEXT,
+                    rank INTEGER NOT NULL DEFAULT 0,
+                    loyalty INTEGER NOT NULL DEFAULT 0,
+                    betrayal_count INTEGER NOT NULL DEFAULT 0,
+                    invite_block_until_tick INTEGER,
+                    permanently_refused INTEGER NOT NULL DEFAULT 0,
+                    schema_version INTEGER NOT NULL DEFAULT 1,
+                    last_updated_wall INTEGER NOT NULL DEFAULT 0
+                );
+                INSERT INTO social_faction_memberships (char_id, faction, rank, loyalty, betrayal_count, permanently_refused, schema_version, last_updated_wall)
+                    VALUES ('char:hunter', 'attack', 1, 50, 0, 0, 1, 0);
+                INSERT INTO social_faction_memberships (char_id, faction, rank, loyalty, betrayal_count, permanently_refused, schema_version, last_updated_wall)
+                    VALUES ('char:merchant', 'defend', 1, 60, 0, 0, 1, 0);
+                INSERT INTO social_faction_memberships (char_id, faction, rank, loyalty, betrayal_count, permanently_refused, schema_version, last_updated_wall)
+                    VALUES ('char:drifter', 'neutral', 0, 40, 0, 0, 1, 0);
+                PRAGMA user_version = 29;
+                ",
+            )
+            .expect("v29 social_faction_memberships fixture should create");
+
+        apply_migrations(&mut connection).expect("v30 migration should succeed");
+
+        let hunter_named: Option<String> = connection
+            .query_row(
+                "SELECT named_faction FROM social_faction_memberships WHERE char_id = 'char:hunter'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("char:hunter row should exist");
+        assert_eq!(
+            hunter_named.as_deref(),
+            Some("qingyun_hunters"),
+            "attack faction 必须迁移到 qingyun_hunters，实际 {:?}（防孤岛 #3：真迁移现有 FactionId 持久化数据）",
+            hunter_named
+        );
+
+        let merchant_named: Option<String> = connection
+            .query_row(
+                "SELECT named_faction FROM social_faction_memberships WHERE char_id = 'char:merchant'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("char:merchant row should exist");
+        assert_eq!(
+            merchant_named.as_deref(),
+            Some("cangyuan_merchants"),
+            "defend faction 必须迁移到 cangyuan_merchants，实际 {:?}",
+            merchant_named
+        );
+
+        let drifter_named: Option<String> = connection
+            .query_row(
+                "SELECT named_faction FROM social_faction_memberships WHERE char_id = 'char:drifter'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("char:drifter row should exist");
+        assert_eq!(
+            drifter_named.as_deref(),
+            Some("north_waste_drifters"),
+            "neutral faction 必须迁移到 north_waste_drifters，实际 {:?}",
+            drifter_named
+        );
+
+        let user_version: i32 = connection
+            .query_row("PRAGMA user_version;", [], |row| row.get(0))
+            .expect("user_version should be readable");
+        assert_eq!(
+            user_version, 30,
+            "v30 migration 完成后 user_version 必须是 30，实际 {user_version}"
+        );
+    }
+
+    #[test]
+    fn test_migration_v30_idempotent() {
+        // 幂等性：已 v30 库再 open 不重复 ALTER/不报错（named_faction IS NULL 守卫）。
+        let db_path = database_path("v30-idempotent");
+        fs::create_dir_all(db_path.parent().expect("db path parent"))
+            .expect("temp db dir should create");
+        let mut connection = Connection::open(&db_path).expect("db should open");
+
+        // 先跑一次到 v30。
+        connection
+            .execute_batch(
+                "
+                CREATE TABLE IF NOT EXISTS social_faction_memberships (
+                    char_id TEXT PRIMARY KEY,
+                    faction TEXT,
+                    rank INTEGER NOT NULL DEFAULT 0,
+                    loyalty INTEGER NOT NULL DEFAULT 0,
+                    betrayal_count INTEGER NOT NULL DEFAULT 0,
+                    invite_block_until_tick INTEGER,
+                    permanently_refused INTEGER NOT NULL DEFAULT 0,
+                    schema_version INTEGER NOT NULL DEFAULT 1,
+                    last_updated_wall INTEGER NOT NULL DEFAULT 0
+                );
+                INSERT INTO social_faction_memberships (char_id, faction, rank, loyalty, betrayal_count, permanently_refused, schema_version, last_updated_wall)
+                    VALUES ('char:a', 'attack', 0, 0, 0, 0, 1, 0);
+                PRAGMA user_version = 29;
+                ",
+            )
+            .expect("v29 fixture should create");
+        apply_migrations(&mut connection).expect("first v30 migration should succeed");
+
+        // 再 apply 一次——必须不报错（named_faction 列已存在，UPDATE 守卫 IS NULL）。
+        apply_migrations(&mut connection)
+            .expect("second apply_migrations must be idempotent (v30 already applied)");
+
+        let user_version: i32 = connection
+            .query_row("PRAGMA user_version;", [], |row| row.get(0))
+            .expect("user_version should be readable");
+        assert_eq!(
+            user_version, CURRENT_USER_VERSION,
+            "幂等后 user_version 必须仍是 CURRENT_USER_VERSION={CURRENT_USER_VERSION}，实际 {user_version}"
+        );
     }
 }
