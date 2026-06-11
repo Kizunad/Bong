@@ -94,6 +94,16 @@ pub enum StaminaState {
     ShieldBlocking,
 }
 
+/// plan-shield-block-v1 P4 — 盾牌格挡的每秒体力 drain 覆写（仅 ShieldBlocking 状态生效）。
+/// `raise_shield_handler` 在玩家举盾时插入此 component，存储经 `shield_block_profile`
+/// 按熟练度缩放后的 drain_per_s（范围 2.0..3.0）。
+/// `stamina_tick` 读取此 component，覆写 `SHIELD_DRAIN_PER_SEC` 常量（P2 fallback 仍为 3.0）。
+#[derive(Debug, Clone, Component)]
+pub struct ShieldDrainOverride {
+    /// 每秒体力消耗量（>= 2.0，由 `shield_block_profile.drain_per_s` 提供）。
+    pub drain_per_s: f32,
+}
+
 #[derive(Debug, Clone, Component, Serialize, Deserialize)]
 pub struct Stamina {
     pub current: f32,
