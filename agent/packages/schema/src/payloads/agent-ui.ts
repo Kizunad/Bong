@@ -98,6 +98,12 @@ export type AgentUiResponsePayloadV1 = Static<typeof AgentUiResponsePayloadV1>;
 
 // ─── Schema 4：Server → Client close 信号（bong:server_data 变体 agent_ui_close）──
 
+export const AgentUiCloseReasonV1 = Type.Union([
+  Type.Literal("invalid_button_id"),
+  Type.Literal("session_expired"),
+]);
+export type AgentUiCloseReasonV1 = Static<typeof AgentUiCloseReasonV1>;
+
 /**
  * server 向 client 发送关闭信号。
  *
@@ -107,7 +113,7 @@ export type AgentUiResponsePayloadV1 = Static<typeof AgentUiResponsePayloadV1>;
 export const AgentUiClosePayloadV1 = Type.Object(
   {
     request_id: Type.String({ minLength: 1, maxLength: 128 }),
-    reason: Type.Optional(Type.String({ maxLength: 64 })),
+    reason: Type.Optional(AgentUiCloseReasonV1),
   },
   { additionalProperties: false },
 );

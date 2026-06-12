@@ -17326,8 +17326,16 @@
           "type": "string"
         },
         "reason": {
-          "maxLength": 64,
-          "type": "string"
+          "anyOf": [
+            {
+              "const": "invalid_button_id",
+              "type": "string"
+            },
+            {
+              "const": "session_expired",
+              "type": "string"
+            }
+          ]
         }
       }
     }
