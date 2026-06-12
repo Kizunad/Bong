@@ -25,6 +25,8 @@ import importlib
 import unittest
 from pathlib import Path
 
+import numpy as np
+
 from scripts.terrain_gen import dsl
 
 PROFILES_DIR = (
@@ -34,6 +36,7 @@ PROFILES_DIR = (
 # (profile_key, module_name) for每个已迁移到 DSL 的 profile。迁移完一个就追加。
 MIGRATED_PROFILES: tuple[tuple[str, str], ...] = (
     ("broken_peaks", "scripts.terrain_gen.profiles.broken_peaks"),
+    ("ash_dead_zone", "scripts.terrain_gen.profiles.ash_dead_zone"),
 )
 
 # 迁移后不应再裸 import 的低层 noise 函数（应改走 dsl 算子库封装）。
@@ -99,6 +102,38 @@ class ProfileDslMigrationTest(unittest.TestCase):
                 "after migration; route noise through dsl.fbm_height / "
                 "dsl.ridge_height / dsl.warped_height instead",
             )
+
+
+class AshDeadZoneInvariantTest(unittest.TestCase):
+    """死域专属守恒不变量：DSL 迁移后必须仍恒成立（最易回归的点）。"""
+
+    def test_qi_vein_flow_is_exactly_zero_everywhere(self) -> None:
+        # §死域：灵脉断绝 → qi_vein_flow 恒 0.0。DSL 迁移若误把灵脉流引回（如复用
+        # 通用 qi 算子带回非零），此 pin 立即撞红。与 raster_check 死域规则对齐。
+        from v3_full_profile_baseline import build_full_profile_buffer
+
+        buffer = build_full_profile_buffer("ash_dead_zone")
+        vein = np.asarray(buffer.layers["qi_vein_flow"])
+        max_abs = float(np.abs(vein).max()) if vein.size else 0.0
+        self.assertEqual(
+            max_abs,
+            0.0,
+            "ash_dead_zone qi_vein_flow must be exactly 0.0 everywhere (severed "
+            f"meridians); DSL migration leaked a non-zero flow (max|flow|={max_abs})",
+        )
+
+    def test_core_qi_density_is_exactly_zero(self) -> None:
+        # 死域核心 qi_density 恒 0（死灵核心）。迁移后核心至少有一列必须为 0。
+        from v3_full_profile_baseline import build_full_profile_buffer
+
+        buffer = build_full_profile_buffer("ash_dead_zone")
+        qi = np.asarray(buffer.layers["qi_density"])
+        self.assertEqual(
+            float(qi.min()),
+            0.0,
+            "ash_dead_zone must have a dead core column with qi_density==0.0; "
+            f"min qi_density={float(qi.min())} after migration",
+        )
 
 
 if __name__ == "__main__":

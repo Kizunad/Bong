@@ -2,10 +2,16 @@ from __future__ import annotations
 
 import numpy as np
 
+from .. import dsl
 from ..blueprint import BlueprintZone
+from ..dsl import QiGrade
 from ..fields import SurfacePalette, TileFieldBuffer, WorldTile
-from ..noise import _tile_coords, fbm_2d, warped_fbm_2d
+from ..noise import _tile_coords
 from .base import DecorationSpec, EcologySpec, ProfileContext, TerrainProfileGenerator
+
+# §8.1 #4 — 余烬死域：恒 0 灵气核心、灵脉断绝，归 dead 档。
+# 现有 zone spirit_qi=0.0（south_ash_dead_zone）就近归档。
+QI_GRADE = QiGrade.DEAD
 
 
 ASH_DEAD_ZONE_DECORATIONS = (
@@ -120,7 +126,11 @@ def fill_ash_dead_zone_tile(
     half_d = max(zone.size_xz[1] * 0.5, 1.0)
 
     wx, wz = _tile_coords(tile.min_x, tile.min_z, tile_size)
-    edge_warp = 1.0 + fbm_2d(wx, wz, scale=520.0, octaves=3, seed=870) * 0.18
+    # 边界有机变形：edge_warp = 1 + 0.18*fbm（DSL fbm_height，base=1, amplitude=0.18）。
+    edge_warp = dsl.fbm_height(
+        wx, wz, scale=520.0, octaves=3, seed=870, amplitude=0.18, base=1.0
+    )
+    # 非对称 radial（edge_warp 横向胀缩）—— 死域专属，保持内联。
     dx = (wx - center_x) / (half_w * edge_warp)
     dz = (wz - center_z) / (half_d * (1.0 - (edge_warp - 1.0) * 0.35))
     radial = np.sqrt(dx * dx + dz * dz)
@@ -129,7 +139,8 @@ def fill_ash_dead_zone_tile(
     body = (radial > 0.5) & (radial <= 0.8)
     edge = (radial > 0.8) & (radial <= 1.0)
 
-    ash_wave = warped_fbm_2d(
+    # 残灰起伏（warped fbm）+ 低频涟漪（fbm）→ DSL 算子库。
+    ash_wave = dsl.warped_height(
         wx,
         wz,
         scale=260.0,
@@ -138,8 +149,14 @@ def fill_ash_dead_zone_tile(
         warp_strength=42.0,
         seed=910,
     )
-    low_ripple = fbm_2d(wx, wz, scale=96.0, octaves=3, seed=920)
-    height = 76.0 + np.maximum(0.0, 1.0 - radial) * 5.5 + ash_wave * 2.4 + low_ripple * 0.9
+    low_ripple = dsl.fbm_height(wx, wz, scale=96.0, octaves=3, seed=920)
+    # 高度合成（DSL compose_height）：基底 + 径向凸起 + 残灰 + 涟漪；外缘平台另算。
+    height = dsl.compose_height(
+        np.full_like(ash_wave, 76.0),
+        np.maximum(0.0, 1.0 - radial) * 5.5,
+        ash_wave * 2.4,
+        low_ripple * 0.9,
+    )
     height = np.where(interior, height, 74.0 + ash_wave * 1.6)
 
     surface_id = np.full_like(height, coarse_dirt_id, dtype=np.int32)
