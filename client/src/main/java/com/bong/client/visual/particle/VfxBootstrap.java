@@ -182,6 +182,10 @@ public final class VfxBootstrap {
             new LingjuActivatePlayer());
         registry.register(ScatterBurstPlayer.EVENT_ID,
             new ScatterBurstPlayer());
+        registry.register(NetworkArrayFormPlayer.FORM,
+            new NetworkArrayFormPlayer(NetworkArrayFormPlayer.Kind.FORM));
+        registry.register(NetworkArrayFormPlayer.BREAK,
+            new NetworkArrayFormPlayer(NetworkArrayFormPlayer.Kind.BREAK));
         registry.register(SocialLinkVfxPlayer.NICHE_ESTABLISH,
             new SocialLinkVfxPlayer(SocialLinkVfxPlayer.Kind.NICHE_ESTABLISH));
         registry.register(NicheRepairParticlePlayer.EVENT_ID,

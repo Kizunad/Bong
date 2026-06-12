@@ -355,6 +355,12 @@ public class VfxRegistryTest {
         assertTrue(VfxRegistry.instance().lookup(ScatterBurstPlayer.EVENT_ID).orElseThrow()
                 instanceof ScatterBurstPlayer,
             "bootstrap should register scatter_burst to ScatterBurstPlayer");
+        assertTrue(VfxRegistry.instance().lookup(NetworkArrayFormPlayer.FORM).orElseThrow()
+                instanceof NetworkArrayFormPlayer,
+            "bootstrap should register network_array_form to NetworkArrayFormPlayer");
+        assertTrue(VfxRegistry.instance().lookup(NetworkArrayFormPlayer.BREAK).orElseThrow()
+                instanceof NetworkArrayFormPlayer,
+            "bootstrap should register network_array_break to NetworkArrayFormPlayer");
         assertTrue(VfxRegistry.instance().contains(SocialLinkVfxPlayer.NICHE_ESTABLISH),
             "bootstrap should register social_niche_establish");
         assertTrue(VfxRegistry.instance().contains(NicheRepairParticlePlayer.EVENT_ID),
