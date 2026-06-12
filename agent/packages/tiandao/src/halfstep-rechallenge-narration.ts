@@ -167,7 +167,7 @@ export function renderPlayerNarration(
     scope: "player",
     target: payload.char_id,
     text: "你感到曾遭封压的经脉微微松动，或许时机已到。",
-    style: "narration",
+    style: "perception",
   };
 }
 
@@ -183,6 +183,6 @@ export function renderZoneEchoNarration(
     scope: "zone",
     target: payload.zone_name,
     text: "虚空中某处的修士收到了相同的消息。",
-    style: "narration",
+    style: "perception",
   };
 }
