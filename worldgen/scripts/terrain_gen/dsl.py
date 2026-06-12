@@ -676,6 +676,24 @@ class TerrainStyleSpec:
     carve_ops: tuple[OpStep, ...] = ()
     features: tuple[str, ...] = ()
 
+    def __post_init__(self) -> None:
+        # 构造期锁定算子类别：height_ops 只收 height 算子、carve_ops 只收 carve 算子。
+        # 否则 carve 算子误入 height 链（破坏 base height 相加语义）、surface/height 算子
+        # 误入 carve 链（如 snowline_split 会把高度场替换成块 ID 毁几何）都要等到 eval 才暴露。
+        # custom: 算子是 escape hatch，类别由注册方负责，这里跳过（与 OpStep.__post_init__ 一致）。
+        for step in self.height_ops:
+            if not step.op.startswith(CUSTOM_OP_PREFIX) and step.category != "height":
+                raise ValueError(
+                    f"height_ops 只接受 category='height' 的算子，"
+                    f"收到 {step.category!r}/{step.op!r}（放错链会破坏 base height 语义）"
+                )
+        for step in self.carve_ops:
+            if not step.op.startswith(CUSTOM_OP_PREFIX) and step.category != "carve":
+                raise ValueError(
+                    f"carve_ops 只接受 category='carve' 的算子，"
+                    f"收到 {step.category!r}/{step.op!r}（非 carve 算子误入会毁高度场几何）"
+                )
+
 
 @dataclass(frozen=True)
 class SurfaceRule:

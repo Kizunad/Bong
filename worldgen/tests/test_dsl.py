@@ -241,6 +241,29 @@ class DslSpecConstructionTest(unittest.TestCase):
         step = dsl.OpStep(category="ignored", op="custom:anything")
         self.assertEqual(step.op, "custom:anything")
 
+    def test_terrain_style_rejects_carve_op_in_height_ops(self) -> None:
+        # 构造期就拦：carve 算子误入 height_ops 会破坏 base height 相加语义。
+        carve_step = dsl.OpStep(category="carve", op="rift_carve")
+        with self.assertRaises(ValueError):
+            dsl.TerrainStyleSpec(height_ops=(carve_step,))
+
+    def test_terrain_style_rejects_non_carve_op_in_carve_ops(self) -> None:
+        # surface/height 算子误入 carve_ops（如 snowline_split）会毁高度场几何，构造期拦。
+        height_step = dsl.OpStep(category="height", op="fbm_height")
+        with self.assertRaises(ValueError):
+            dsl.TerrainStyleSpec(carve_ops=(height_step,))
+
+    def test_terrain_style_accepts_matching_categories_and_custom(self) -> None:
+        # 正例 + custom: 在任一链都放行（escape hatch，类别由注册方负责）。
+        spec = dsl.TerrainStyleSpec(
+            height_ops=(
+                dsl.OpStep(category="height", op="fbm_height"),
+                dsl.OpStep(category="custom", op="custom:bespoke_height"),
+            ),
+            carve_ops=(dsl.OpStep(category="carve", op="rift_carve"),),
+        )
+        self.assertEqual(len(spec.height_ops), 2)
+
     def test_parse_empty_terrain_style_is_empty_spec(self) -> None:
         self.assertEqual(dsl.parse_terrain_style(None), dsl.TerrainStyleSpec())
         self.assertEqual(dsl.parse_terrain_style({}), dsl.TerrainStyleSpec())
