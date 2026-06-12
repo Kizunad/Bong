@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import argparse
 import math
 import subprocess
 import sys
@@ -11,10 +12,13 @@ import pytest
 
 from anim_common import VALID_PARTS
 from video2emotecraft import (
+    apply_reference_calibration,
     batch_convert,
     FrameSampler,
+    infer_keyframe_easing,
     iter_video_files,
     LandmarkFrame,
+    parse_frame_range,
     PoseToEmotecraft,
     parse_args,
     sample_frame_indices,
@@ -229,6 +233,40 @@ def test_angle_continuity_unwraps_180_boundary() -> None:
     )
 
 
+def test_savgol_smoothing_reduces_high_frequency_noise() -> None:
+    """Verify Savitzky-Golay smoothing reduces synthetic angular jitter."""
+    baseline = np.linspace(0.0, 20.0, 21)
+    noise = np.array([2.0 if index % 2 == 0 else -2.0 for index in range(21)])
+    noisy = baseline + noise
+
+    smoothed = np.array(smooth_angle_degrees(noisy.tolist(), window=5))
+
+    before = float(np.std(noisy - baseline))
+    after = float(np.std(smoothed - baseline))
+    assert after < before * 0.5, (
+        f"expected Savitzky-Golay smoothing to cut high-frequency jitter by >50%, "
+        f"before={before:.4f} after={after:.4f}"
+    )
+
+
+def test_smooth_window_zero_keeps_unwrap_only() -> None:
+    """Verify --smooth-window 0 disables denoising while preserving unwrap behavior."""
+    values = [170.0, 179.0, -179.0, -170.0]
+
+    smoothed = smooth_angle_degrees(values, window=0)
+    deltas = [abs(b - a) for a, b in pairwise(smoothed)]
+
+    assert max(deltas) < 180.0, (
+        f"expected window=0 to keep unwrap-only smoothing, actual deltas={deltas}"
+    )
+
+
+def test_smooth_window_rejects_even_values() -> None:
+    """Verify direct smoothing rejects Savitzky-Golay windows scipy cannot apply."""
+    with pytest.raises(ValueError, match="odd integer"):
+        smooth_angle_degrees([0.0, 1.0, 2.0, 3.0], window=4)
+
+
 def test_loop_mode_closes_boundary_pose() -> None:
     """Verify loop mode copies tick zero pose to the boundary tick."""
     landmarks0 = canonical_t_pose()
@@ -331,6 +369,43 @@ def test_invalid_key_threshold_is_rejected(
     assert "must be >= 0" in stderr, (
         f"expected argparse stderr to include the threshold validation message, actual stderr={stderr!r}"
     )
+
+
+@pytest.mark.parametrize("window", ["2", "4"])
+def test_invalid_smooth_window_is_rejected(
+    window: str,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Verify CLI rejects invalid Savitzky-Golay windows before conversion."""
+    with pytest.raises(SystemExit) as exc_info:
+        parse_args(["input.mp4", "-o", "bad", "--smooth-window", window])
+
+    stderr = capsys.readouterr().err
+    assert exc_info.value.code != 0, (
+        f"expected non-zero SystemExit because --smooth-window={window} is invalid, actual {exc_info.value.code}"
+    )
+    assert "odd integer" in stderr, (
+        f"expected argparse stderr to explain smooth-window oddness, actual stderr={stderr!r}"
+    )
+
+
+def test_calibrate_range_cli_parses_inclusive_ticks() -> None:
+    """Verify CLI parses T-pose calibration frame ranges into inclusive tick tuples."""
+    args = parse_args(["input.mp4", "-o", "unit", "--calibrate", "0-40", "--smooth-window", "0"])
+
+    assert args.calibrate == (0, 40), (
+        f"expected --calibrate 0-40 to parse as inclusive ticks, actual {args.calibrate}"
+    )
+    assert args.smooth_window == 0, (
+        f"expected --smooth-window 0 to keep unwrap-only smoothing, actual {args.smooth_window}"
+    )
+
+
+@pytest.mark.parametrize("value", ["bad", "4-", "5-1"])
+def test_parse_frame_range_rejects_invalid_ranges(value: str) -> None:
+    """Verify calibration range parser rejects malformed or reversed input."""
+    with pytest.raises(argparse.ArgumentTypeError):
+        parse_frame_range(value)
 
 
 @pytest.mark.parametrize(
@@ -457,6 +532,101 @@ def test_keyframe_filter_rejects_invalid_thresholds(threshold: float) -> None:
     """Verify direct keyframe selection rejects non-finite and negative thresholds."""
     with pytest.raises(ValueError, match="angle_threshold_degrees must be >= 0"):
         select_key_pose_table({0: {"rightArm": {"pitch": 0.0}}}, angle_threshold_degrees=threshold)
+
+
+def test_easing_inference_marks_acceleration() -> None:
+    """Verify increasing angular velocity is annotated as EASEINQUAD for gen export."""
+    pose_table = {
+        0: {"rightArm": {"pitch": 0.0}},
+        5: {"rightArm": {"pitch": 2.0}},
+        10: {"rightArm": {"pitch": 8.0}},
+    }
+
+    easing = infer_keyframe_easing(pose_table)
+
+    assert easing[10] == "EASEINQUAD", (
+        f"expected rising angular velocity to infer EASEINQUAD, actual {easing}"
+    )
+
+
+def test_easing_inference_marks_deceleration() -> None:
+    """Verify decreasing angular velocity is annotated as EASEOUTQUAD for gen export."""
+    pose_table = {
+        0: {"rightArm": {"pitch": 0.0}},
+        5: {"rightArm": {"pitch": 8.0}},
+        10: {"rightArm": {"pitch": 10.0}},
+    }
+
+    easing = infer_keyframe_easing(pose_table)
+
+    assert easing[10] == "EASEOUTQUAD", (
+        f"expected falling angular velocity to infer EASEOUTQUAD, actual {easing}"
+    )
+
+
+def test_easing_inference_keeps_uniform_velocity_linear() -> None:
+    """Verify uniform angular velocity remains linear rather than overfitted."""
+    pose_table = {
+        0: {"rightArm": {"pitch": 0.0}},
+        5: {"rightArm": {"pitch": 5.0}},
+        10: {"rightArm": {"pitch": 10.0}},
+    }
+
+    easing = infer_keyframe_easing(pose_table)
+
+    assert easing[10] == "linear", (
+        f"expected constant angular velocity to stay linear, actual {easing}"
+    )
+
+
+def test_export_gen_script_includes_inferred_easing(tmp_path) -> None:
+    """Verify export-gen writes inferred easing markers into hand-editable scripts."""
+    out_path = tmp_path / "gen_easing.py"
+    write_gen_script(
+        {
+            0: {"rightArm": {"pitch": 0.0}},
+            5: {"rightArm": {"pitch": 8.0}},
+            10: {"rightArm": {"pitch": 10.0}},
+        },
+        name="easing",
+        out_path=out_path,
+        angle_threshold_degrees=0.0,
+    )
+
+    source = out_path.read_text()
+    assert "'easing': 'EASEOUTQUAD'" in source, (
+        f"expected decelerating rough pose to mark EASEOUTQUAD in gen script, actual source={source}"
+    )
+
+
+def test_reference_calibration_removes_t_pose_offset() -> None:
+    """Verify calibration subtracts average reference rotation from all frames."""
+    pose_table = {
+        0: {"rightArm": {"pitch": 10.0, "yaw": -5.0, "bend": 2.0, "axis": 180.0}},
+        1: {"rightArm": {"pitch": 10.0, "yaw": -5.0, "bend": 2.0, "axis": 180.0}},
+        2: {"rightArm": {"pitch": 14.0, "yaw": -2.0, "bend": 5.0, "axis": 180.0}},
+    }
+
+    calibrated = apply_reference_calibration(pose_table, (0, 1))
+
+    assert abs(calibrated[0]["rightArm"]["pitch"]) < 1.0, (
+        f"expected reference pitch residual <1° after calibration, actual {calibrated[0]}"
+    )
+    assert abs(calibrated[0]["rightArm"]["yaw"]) < 1.0, (
+        f"expected reference yaw residual <1° after calibration, actual {calibrated[0]}"
+    )
+    assert calibrated[2]["rightArm"]["pitch"] == 4.0, (
+        f"expected action frames to preserve motion relative to reference, actual {calibrated[2]}"
+    )
+    assert calibrated[2]["rightArm"]["axis"] == 180.0, (
+        f"expected bend axis to remain a plane marker rather than calibration offset, actual {calibrated[2]}"
+    )
+
+
+def test_reference_calibration_rejects_empty_reference_range() -> None:
+    """Verify calibration fails clearly when the requested T-pose range has no frames."""
+    with pytest.raises(ValueError, match="did not match"):
+        apply_reference_calibration({10: {"rightArm": {"pitch": 10.0}}}, (0, 1))
 
 
 def test_export_gen_rounds_angles_to_half_degree(tmp_path) -> None:
