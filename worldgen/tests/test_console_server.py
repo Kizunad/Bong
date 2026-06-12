@@ -693,6 +693,95 @@ def test_apply_overrides_deep_merges_nested_worldgen(tmp_path) -> None:
     )
 
 
+def _write_collapsed_overlay(path: Path, zone_id: str) -> None:
+    """Write a zones_export_v1 bundle marking ``zone_id`` collapsed."""
+    path.write_text(
+        json.dumps(
+            {
+                "schema_version": 10,
+                "kind": "zones_export_v1",
+                "zones_runtime": [],
+                "zone_overlays": [
+                    {
+                        "zone_id": zone_id,
+                        "overlay_kind": "collapsed",
+                        "payload_json": json.dumps(
+                            {
+                                "zone_status": "collapsed",
+                                "active_events": ["realm_collapse"],
+                            }
+                        ),
+                        "payload_version": 1,
+                        "since_wall": 456,
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+
+def test_regen_honors_zone_overlays_like_full_bake(tmp_path) -> None:
+    """A regen must apply the persisted zone_overlays the operator passed.
+
+    Without ``zone_overlays_path`` the regen drops overlay state: the rewritten
+    manifest's ``collapsed_zones`` would come back empty even though the operator
+    fed a bundle marking 'peaks' collapsed. With the path plumbed through
+    create_app, regen honors it the same way the full pipeline does
+    (--zone-overlays), so the manifest stays consistent.
+    """
+    blueprint_path = tmp_path / "bp.json"
+    blueprint_path.write_text(json.dumps(_TINY_BLUEPRINT), encoding="utf-8")
+    out_dir = tmp_path / "out"
+    _full_bake(out_dir, blueprint_path)
+    rasters = out_dir / "rasters"
+
+    overlay_path = tmp_path / "zones-export.json"
+    _write_collapsed_overlay(overlay_path, "peaks")
+
+    # Control: no overlays path → regen leaves collapsed_zones empty (the bug
+    # this fix addresses — overlays silently dropped on regen).
+    app_no_overlays = create_app(
+        rasters,
+        blueprint_path=blueprint_path,
+        profiles_path=PROFILES_PATH,
+        tile_size=TILE_SIZE,
+        output_dir=out_dir,
+    )
+    c0 = TestClient(app_no_overlays)
+    assert c0.post("/api/regen", json={"zone_name": "peaks"}).status_code == 200
+    m0 = c0.get("/api/manifest").json()
+    assert m0["collapsed_zones"] == [], (
+        "without a zone_overlays_path the regen must not invent collapse state; "
+        f"got {m0['collapsed_zones']!r}"
+    )
+
+    # Subject: overlays path plumbed → regen records 'peaks' as collapsed, just
+    # like a full bake that consumed the same bundle would.
+    app = create_app(
+        rasters,
+        blueprint_path=blueprint_path,
+        profiles_path=PROFILES_PATH,
+        tile_size=TILE_SIZE,
+        output_dir=out_dir,
+        zone_overlays_path=overlay_path,
+    )
+    c = TestClient(app)
+    assert c.post("/api/regen", json={"zone_name": "peaks"}).status_code == 200
+    m = c.get("/api/manifest").json()
+    collapsed_ids = {entry["zone_id"] for entry in m["collapsed_zones"]}
+    assert "peaks" in collapsed_ids, (
+        "with zone_overlays_path set, regen must surface the collapsed 'peaks' "
+        f"zone in manifest.collapsed_zones — overlays were dropped; got {m['collapsed_zones']!r}"
+    )
+    peaks_entry = next(e for e in m["collapsed_zones"] if e["zone_id"] == "peaks")
+    assert peaks_entry["zone_status"] == "collapsed"
+    assert peaks_entry["since_wall"] == 456, (
+        "the overlay's since_wall must round-trip through the regen manifest"
+    )
+
+
+
 def test_regen_unknown_override_field_returns_400(client: TestClient) -> None:
     resp = client.post(
         "/api/regen",

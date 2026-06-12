@@ -227,19 +227,35 @@ def create_app(
     tile_size: int = 512,
     output_dir: Optional[Path] = None,
     overworld_only: bool = True,
+    zone_overlays_path: Optional[Path] = None,
 ) -> FastAPI:
     """Build the FastAPI app bound to a concrete rasters directory.
 
-    ``rasters_dir``     — directory holding manifest.json + tile_*/ subdirs.
-    ``output_dir``      — the terrain_gen ``--output-dir`` whose ``rasters``
-                          child equals ``rasters_dir`` (defaults to its parent),
-                          used to rebuild the bake plan for /api/regen.
-    ``overworld_only``  — drop TSY-only layers from the regen whitelist (matches
-                          the main pipeline's overworld pass).
+    ``rasters_dir``        — directory holding manifest.json + tile_*/ subdirs.
+    ``output_dir``         — the terrain_gen ``--output-dir`` whose ``rasters``
+                             child equals ``rasters_dir`` (defaults to its
+                             parent), used to rebuild the bake plan for
+                             /api/regen.
+    ``overworld_only``     — drop TSY-only layers from the regen whitelist
+                             (matches the main pipeline's overworld pass).
+    ``zone_overlays_path`` — same ``zones_export_v1`` JSON the full pipeline
+                             takes via ``--zone-overlays`` (persisted server
+                             zone_overlays, e.g. collapse records). Loaded once
+                             and reused by every /api/regen so an incremental
+                             re-bake honors the SAME overlays the full bake did.
+                             ``None`` (default) → no overlays, matching the
+                             pipeline's own default.
     """
     rasters_dir = rasters_dir.resolve()
     if output_dir is None:
         output_dir = rasters_dir.parent
+
+    # Load the persisted zone_overlays ONCE, the same way the full pipeline does
+    # (terrain_gen --zone-overlays). Reusing them on every regen keeps an
+    # incremental re-bake byte-consistent with a full bake that used the same
+    # overlays; passing None here (the old behavior) silently dropped collapse /
+    # overlay records on regen.
+    zone_overlays = load_zone_overlays(zone_overlays_path)
 
     app = FastAPI(
         title="Bong worldgen-v4 console (dev-only)",
@@ -337,7 +353,6 @@ def create_app(
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
         profile_catalog = load_profile_catalog(profiles_path)
-        zone_overlays = load_zone_overlays(None)
         plan = build_generation_plan(
             blueprint=blueprint,
             profile_catalog=profile_catalog,
@@ -399,6 +414,16 @@ def parse_args() -> argparse.Namespace:
         default=DEFAULT_PROFILES_PATH,
         help="Profile catalog JSON used by POST /api/regen",
     )
+    parser.add_argument(
+        "--zone-overlays",
+        type=Path,
+        default=None,
+        help=(
+            "Optional zones_export_v1 JSON carrying persisted zone_overlays "
+            "(collapse records etc.); same file the full pipeline takes via "
+            "--zone-overlays. Regen honors these so it matches the full bake."
+        ),
+    )
     parser.add_argument("--tile-size", type=int, default=512)
     parser.add_argument("--host", default="127.0.0.1", help="bind host (localhost only)")
     parser.add_argument("--port", type=int, default=8765)
@@ -414,6 +439,7 @@ def main() -> None:
         blueprint_path=args.blueprint,
         profiles_path=args.profiles,
         tile_size=args.tile_size,
+        zone_overlays_path=args.zone_overlays,
     )
     print(
         f"[console] serving rasters from {args.rasters.resolve()} "
