@@ -38,10 +38,10 @@ use crate::schema::channels::{
     CH_CULTIVATION_DEATH, CH_DEATH_CINEMATIC, CH_DEATH_INSIGHT, CH_DUGU_POISON_PROGRESS,
     CH_DUGU_V2_CAST, CH_DUGU_V2_REVERSE, CH_DUGU_V2_SELF_CURE, CH_DUO_SHE_EVENT,
     CH_ELDER_ENCOUNTER, CH_FACTION_EVENT, CH_FACTION_STATE, CH_FACTION_WAR, CH_FORGE_EVENT,
-    CH_FORGE_OUTCOME, CH_FORGE_START, CH_HEART_DEMON_OFFER, CH_HEART_DEMON_REQUEST,
-    CH_HIGH_RENOWN_MILESTONE, CH_INSIGHT_OFFER, CH_INSIGHT_REQUEST, CH_LIFESPAN_EVENT,
-    CH_MERIDIAN_SEVERED, CH_MUTATION_EVENT, CH_NPC_COMBAT, CH_NPC_DEATH, CH_NPC_RELIC,
-    CH_NPC_SPAWN, CH_PLAYER_CHAT, CH_POISON_DOSE_EVENT, CH_POISON_OVERDOSE_EVENT,
+    CH_FORGE_OUTCOME, CH_FORGE_START, CH_HALFSTEP_RECHALLENGE, CH_HEART_DEMON_OFFER,
+    CH_HEART_DEMON_REQUEST, CH_HIGH_RENOWN_MILESTONE, CH_INSIGHT_OFFER, CH_INSIGHT_REQUEST,
+    CH_LIFESPAN_EVENT, CH_MERIDIAN_SEVERED, CH_MUTATION_EVENT, CH_NPC_COMBAT, CH_NPC_DEATH,
+    CH_NPC_RELIC, CH_NPC_SPAWN, CH_PLAYER_CHAT, CH_POISON_DOSE_EVENT, CH_POISON_OVERDOSE_EVENT,
     CH_POI_NOVICE_EVENT, CH_PRICE_INDEX, CH_PSEUDO_VEIN_ACTIVE, CH_PSEUDO_VEIN_DISSIPATE,
     CH_RAT_PHASE_EVENT, CH_REBIRTH, CH_SEASON_CHANGED, CH_SKILL_CAP_CHANGED, CH_SKILL_LV_UP,
     CH_SKILL_SCROLL_USED, CH_SKILL_XP_GAIN, CH_SOCIAL_EXPOSURE, CH_SOCIAL_FEUD,
@@ -298,6 +298,11 @@ pub enum RedisOutbound {
     // ─── plan-agent-ui-data-v1 P0 ───────────────────────────────────
     /// 玩家天道 UI 面板交互响应（bong:agent_ui_response）。
     AgentUiResponse(AgentUiResponsePayloadV1),
+    // ─── plan-halfstep-rechallenge-integration-v1 P1 ────────────────
+    /// 半步化虚重渡触发（bong:tribulation/halfstep_rechallenge），agent narration 用。
+    HalfStepRechallengeTrigger(
+        crate::schema::halfstep_rechallenge::HalfStepRechallengeTriggerPayloadV1,
+    ),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -1637,6 +1642,18 @@ fn prepare_outbound_command(message: RedisOutbound) -> Result<RedisIoCommand, Va
             })?;
             Ok(RedisIoCommand::Publish {
                 channel: CH_AGENT_UI_RESPONSE,
+                payload,
+            })
+        }
+        // ─── plan-halfstep-rechallenge-integration-v1 P1 ────────────
+        RedisOutbound::HalfStepRechallengeTrigger(evt) => {
+            let payload = serde_json::to_string(&evt).map_err(|error| {
+                ValidationError::new(format!(
+                    "failed to serialize HalfStepRechallengeTriggerPayloadV1: {error}"
+                ))
+            })?;
+            Ok(RedisIoCommand::Publish {
+                channel: CH_HALFSTEP_RECHALLENGE,
                 payload,
             })
         }
