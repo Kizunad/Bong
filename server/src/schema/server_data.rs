@@ -4042,6 +4042,13 @@ mod tests {
                 request_id: "agent-ui-req".to_string(),
                 reason: Some("invalid_button_id".to_string()),
             }),
+            // ─── plan-halfstep-rechallenge-integration-v1 P0 wire/label guard ─────
+            ServerDataPayloadV1::HalfStepRechallenge(HalfStepRechallengeV1 {
+                active: true,
+                char_id: "offline:Kiz".to_string(),
+                rechallenge_window_until: 50_000,
+                at_tick: 1_000,
+            }),
         ];
 
         for payload in cases {

@@ -190,7 +190,7 @@ pub fn payload_type_label(payload_type: ServerDataType) -> &'static str {
         ServerDataType::AgentUiRequest => "agent_ui_request",
         ServerDataType::AgentUiClose => "agent_ui_close",
         // ─── plan-halfstep-rechallenge-integration-v1 P0 ────────────────
-        ServerDataType::HalfStepRechallenge => "halfstep_rechallenge",
+        ServerDataType::HalfStepRechallenge => "half_step_rechallenge",
     }
 }
 
