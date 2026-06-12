@@ -277,7 +277,7 @@ Agent(
 ### 测试结果
 
 - `cd server && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test -- --test-threads=2`：8724 passed / 0 failed / 1 ignored（P2 小收口前全量验证）。
-- `cd server && cargo fmt && CARGO_BUILD_JOBS=2 cargo fmt --check && CARGO_BUILD_JOBS=2 cargo clippy --all-targets -- -D warnings`：通过（P2 小收口后）。
+- `cd server && cargo fmt && CARGO_BUILD_JOBS=2 cargo fmt --check && CARGO_BUILD_JOBS=2 cargo clippy --all-targets -- -D warnings && CARGO_BUILD_JOBS=2 cargo test -- --test-threads=2`：8737 passed / 0 failed / 1 ignored（P2 小收口后全量验证）。
 - `cd server && CARGO_BUILD_JOBS=2 cargo test blackboard -- --test-threads=2`：19 passed / 0 failed。
 - `cd server && CARGO_BUILD_JOBS=2 cargo test bait_stake -- --test-threads=2`：2 passed / 0 failed。
 - `cd server && CARGO_BUILD_JOBS=2 cargo test world::tiandao_hunt::tests::production_zhenfa -- --test-threads=2`：2 passed / 0 failed。
