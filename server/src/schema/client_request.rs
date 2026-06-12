@@ -1834,6 +1834,30 @@ mod tests {
             other => panic!("expected ZhenfaPlace, got {other:?}"),
         }
 
+        for (kind_wire, expected_kind, item_instance_id) in [
+            ("beast_trap", ZhenfaKind::BeastTrap, 9002),
+            ("trip_wire", ZhenfaKind::TripWire, 9003),
+            ("decoy_stake", ZhenfaKind::DecoyStake, 9004),
+        ] {
+            let json = format!(
+                r#"{{"type":"zhenfa_place","v":1,"x":1,"y":64,"z":-2,"kind":"{kind_wire}","carrier":"common_stone","qi_invest_ratio":0.0,"item_instance_id":{item_instance_id},"target_face":"top"}}"#
+            );
+            let req: ClientRequestV1 = serde_json::from_str(&json).unwrap();
+            match req {
+                ClientRequestV1::ZhenfaPlace {
+                    kind,
+                    item_instance_id: actual_item_instance_id,
+                    target_face,
+                    ..
+                } => {
+                    assert_eq!(kind, expected_kind);
+                    assert_eq!(actual_item_instance_id, Some(item_instance_id));
+                    assert_eq!(target_face, Some(TrapTargetFace::Top));
+                }
+                other => panic!("expected ZhenfaPlace for {kind_wire}, got {other:?}"),
+            }
+        }
+
         let trigger = r#"{"type":"zhenfa_trigger","v":1,"instance_id":42}"#;
         let req: ClientRequestV1 = serde_json::from_str(trigger).unwrap();
         assert!(matches!(

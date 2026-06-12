@@ -63,6 +63,25 @@ describe("zhenfa-v2 schema", () => {
     });
     expect(networkArrayResult.ok).toBe(true);
 
+    for (const [kind, itemInstanceId, targetFace] of [
+      ["beast_trap", 9004, "north"],
+      ["trip_wire", 9005, "north"],
+      ["decoy_stake", 9006, "top"],
+    ] as const) {
+      const trapRuntimeResult = validate(ClientRequestV1, {
+        v: 1,
+        type: "zhenfa_place",
+        x: 4,
+        y: 64,
+        z: -5,
+        kind,
+        qi_invest_ratio: 0,
+        item_instance_id: itemInstanceId,
+        target_face: targetFace,
+      });
+      expect(trapRuntimeResult.ok, `${kind} must remain valid in shared schema`).toBe(true);
+    }
+
     const omittedFaceResult = validate(ClientRequestV1, {
       v: 1,
       type: "zhenfa_place",

@@ -2986,6 +2986,9 @@ fn zhenfa_kind_to_proto(k: &crate::zhenfa::ZhenfaKind) -> i32 {
         ZhenfaKind::DeceiveHeaven => bong::ZhenfaKind::DeceiveHeaven as i32,
         ZhenfaKind::Illusion => bong::ZhenfaKind::Illusion as i32,
         ZhenfaKind::NetworkArray => bong::ZhenfaKind::NetworkArray as i32,
+        ZhenfaKind::BeastTrap => bong::ZhenfaKind::BeastTrap as i32,
+        ZhenfaKind::TripWire => bong::ZhenfaKind::TripWire as i32,
+        ZhenfaKind::DecoyStake => bong::ZhenfaKind::DecoyStake as i32,
     }
 }
 
@@ -4229,6 +4232,43 @@ mod tests {
             item_instance_id: Some(999),
             target_face: Some(crate::zhenfa::trap_content::TrapTargetFace::Top),
         });
+    }
+
+    #[test]
+    fn c2s_zhenfa_kind_proto_pins_include_trap_runtime_variants() {
+        use crate::zhenfa::ZhenfaKind;
+        let cases = [
+            (ZhenfaKind::Trap, bong::ZhenfaKind::Trap),
+            (ZhenfaKind::Ward, bong::ZhenfaKind::Ward),
+            (ZhenfaKind::WarningTrap, bong::ZhenfaKind::WarningTrap),
+            (ZhenfaKind::BlastTrap, bong::ZhenfaKind::BlastTrap),
+            (ZhenfaKind::SlowTrap, bong::ZhenfaKind::SlowTrap),
+            (ZhenfaKind::ShrineWard, bong::ZhenfaKind::ShrineWard),
+            (ZhenfaKind::Lingju, bong::ZhenfaKind::Lingju),
+            (ZhenfaKind::DeceiveHeaven, bong::ZhenfaKind::DeceiveHeaven),
+            (ZhenfaKind::Illusion, bong::ZhenfaKind::Illusion),
+            (ZhenfaKind::NetworkArray, bong::ZhenfaKind::NetworkArray),
+            (ZhenfaKind::BeastTrap, bong::ZhenfaKind::BeastTrap),
+            (ZhenfaKind::TripWire, bong::ZhenfaKind::TripWire),
+            (ZhenfaKind::DecoyStake, bong::ZhenfaKind::DecoyStake),
+        ];
+        for (rust, proto) in cases {
+            assert_eq!(
+                zhenfa_kind_to_proto(&rust),
+                proto as i32,
+                "ZhenfaKind::{rust:?} must map to protobuf {proto:?}"
+            );
+            assert_ne!(
+                zhenfa_kind_to_proto(&rust),
+                bong::ZhenfaKind::Unspecified as i32,
+                "ZhenfaKind::{rust:?} must not map to UNSPECIFIED"
+            );
+        }
+        assert_eq!(
+            cases.len(),
+            13,
+            "ZhenfaKind proto coverage must include the 13 P0 variants"
+        );
     }
 
     #[test]
