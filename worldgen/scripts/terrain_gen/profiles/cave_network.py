@@ -2,15 +2,21 @@ from __future__ import annotations
 
 import numpy as np
 
+from .. import dsl
 from ..blueprint import BlueprintZone
+from ..dsl import QiGrade
 from ..fields import SurfacePalette, TileFieldBuffer, WorldTile
-from ..noise import _tile_coords, fbm_2d, warped_fbm_2d
+from ..noise import _tile_coords
 from .base import (
     DecorationSpec,
     EcologySpec,
     ProfileContext,
     TerrainProfileGenerator,
 )
+
+# §8.1 #4 — 幽暗地穴：地下灵脉汇聚但末法腐朽，主世界常量区，归 common 档。
+# 现有 zone spirit_qi=0.40（youan_depths 等）就近归档。
+QI_GRADE = QiGrade.COMMON
 
 
 CAVE_NETWORK_DECORATIONS = (
@@ -121,19 +127,27 @@ def fill_cave_network_tile(
     half_d = max(zone.size_xz[1] * 0.5, 1.0)
 
     wx, wz = _tile_coords(tile.min_x, tile.min_z, tile_size)
-    dx = (wx - center_x) / half_w
-    dz = (wz - center_z) / half_d
-    radial = np.sqrt(dx * dx + dz * dz)
-    cluster = np.maximum(0.0, 1.0 - radial ** 1.55)
+    # 地穴簇聚强度 cluster = max(0, 1 - radial**1.55)（DSL radial_uplift）。
+    cluster = dsl.radial_uplift(
+        wx,
+        wz,
+        center_xz=(center_x, center_z),
+        half_w=half_w,
+        half_d=half_d,
+        exponent=1.55,
+        amplitude=1.0,
+    )
 
-    # Sinkhole noise — warped for organic, not circular, shapes
-    sinkhole = warped_fbm_2d(wx, wz, scale=130.0, octaves=4,
-                             warp_scale=200.0, warp_strength=55.0, seed=400)
+    # Sinkhole noise — warped for organic, not circular, shapes（DSL warped_height）
+    sinkhole = dsl.warped_height(
+        wx, wz, scale=130.0, octaves=4, warp_scale=200.0, warp_strength=55.0, seed=400
+    )
     # Cave connectivity — large-scale tunneling pattern
-    crack = warped_fbm_2d(wx, wz, scale=100.0, octaves=5,
-                          warp_scale=160.0, warp_strength=40.0, seed=410)
+    crack = dsl.warped_height(
+        wx, wz, scale=100.0, octaves=5, warp_scale=160.0, warp_strength=40.0, seed=410
+    )
     # Surface undulation
-    surface_fbm = fbm_2d(wx, wz, scale=200.0, octaves=3, seed=420)
+    surface_fbm = dsl.fbm_height(wx, wz, scale=200.0, octaves=3, seed=420)
 
     cave_mask = np.minimum(1.0, cluster * 0.78 + (crack * 0.5 + 0.5) * 0.34)
     entrance_mask = np.maximum(
@@ -142,7 +156,12 @@ def fill_cave_network_tile(
     )
 
     sink_depth = entrance_mask * 14.0 + np.maximum(0.0, cave_mask - 0.68) * 9.0
-    height = 75.0 + surface_fbm * 3.0 - sink_depth
+    # 高度合成（DSL compose_height）：地表基底 + 起伏 − 陷穴下切。
+    height = dsl.compose_height(
+        np.full_like(surface_fbm, 75.0),
+        surface_fbm * 3.0,
+        -sink_depth,
+    )
     ceiling_height = np.maximum(10.0, 24.0 + cave_mask * 18.0 - entrance_mask * 7.0)
 
     surface_id = np.full_like(height, stone_id, dtype=np.int32)
@@ -244,10 +263,11 @@ def _cave_rift_hotspot_sdf(
     half_w: float,
     half_d: float,
 ) -> np.ndarray:
+    # 3 个固定热点锚：到各锚的欧氏距离 SDF（DSL anchor_sdf），取最近。
     anchors = (
         (center_x - half_w * 0.22, center_z + half_d * 0.18),
         (center_x + half_w * 0.28, center_z - half_d * 0.22),
         (center_x + half_w * 0.05, center_z + half_d * 0.32),
     )
-    distances = [np.sqrt((wx - ax) ** 2 + (wz - az) ** 2) for ax, az in anchors]
+    distances = [dsl.anchor_sdf(wx, wz, anchor_xz=(ax, az)) for ax, az in anchors]
     return np.minimum.reduce(distances)
