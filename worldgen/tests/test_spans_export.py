@@ -224,6 +224,28 @@ class SpansExportLayoutTest(unittest.TestCase):
                         f"tile['layers'] of {tile['dir']}",
                     )
 
+    def test_structure_layers_gated_on_written_not_registry(self) -> None:
+        # worldgen-v4 P0 (CodeRabbit #520): structure_layers (fossil_bbox) must be
+        # gated on written_layer_names too — a registry-only check declared
+        # fossil_bbox for every export even when no tile wrote it.  sky_isle has no
+        # fossil POIs, so fossil_bbox must NOT appear; and any layer that IS declared
+        # must have a real .bin on disk (else the Rust reader mmaps a missing file).
+        with tempfile.TemporaryDirectory() as td:
+            manifest, raster_dir, _fields = _export("sky_isle", td)
+            self.assertNotIn(
+                "fossil_bbox", manifest["structure_layers"],
+                "sky_isle writes no fossils, yet structure_layers still declares "
+                "fossil_bbox — registry-only phantom regression",
+            )
+            for tile in manifest["tiles"]:
+                tile_dir = raster_dir / tile["dir"]
+                for layer in manifest["structure_layers"]:
+                    self.assertTrue(
+                        (tile_dir / f"{layer}.bin").exists(),
+                        f"manifest declares structure layer '{layer}' but "
+                        f"{tile['dir']}/{layer}.bin is absent — manifest↔disk mismatch",
+                    )
+
     def test_decoded_column_surface_matches_shim_fold(self) -> None:
         # The bytes on disk must decode (offset = col_idx * stride) to exactly
         # what the shim folded — the binary path is the contract, not an

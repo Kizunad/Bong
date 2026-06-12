@@ -265,7 +265,10 @@ def export_rasters(
         },
         "profiles_ecology": ecology_payload,
         "global_decoration_palette": global_decoration_palette,
-        "structure_layers": [name for name in ("fossil_bbox",) if name in LAYER_REGISTRY],
+        # Gate on written_layer_names (on-disk truth), same as vertical_layers /
+        # semantic_layers above — a registry-only check declares fossil_bbox even
+        # when no tile wrote it (CodeRabbit #520).
+        "structure_layers": [name for name in ("fossil_bbox",) if name in written_layer_names],
         "fossil_bboxes": fossil_bboxes,
         "corpse_mounds": corpse_mounds,
         "ascension_pits": ascension_pits,
