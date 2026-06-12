@@ -231,6 +231,75 @@ class RunBudgetTest(unittest.TestCase):
             "when every run floats above the old surface, the lowest is span[0]",
         )
 
+    def test_budget_never_lifts_surface_ceiling_by_merging_upward(self) -> None:
+        # worldgen-v4 P3 §8.1 #2 — surface-anchoring regression guard.
+        # An overhang-dense column (>MAX_SPANS runs) with the *thinnest* air gap
+        # sitting just ABOVE the surface run.  The naive "merge thinnest gap"
+        # budget would swallow the surface run upward, lifting span[0].ceiling
+        # off the real ground (e.g. surface 100 → 110, or worse, drop the merged
+        # run below the surface candidate set so query_surface lands at 20).
+        # The surface-aware budget must protect that gap and keep query_surface
+        # pinned to surface_y.
+        runs = [
+            (0, 10),      # deep floor remnant
+            (12, 20),     # gap=1 below surface (safe to merge — keeps ceiling)
+            (95, 100),    # SURFACE run (ceiling == surface_y)
+            (102, 110),   # gap=1 ABOVE surface (must NOT merge into surface)
+            (200, 210),   # floating isle
+            (300, 310),   # floating isle
+        ]
+        spans = _runs_to_spans(runs, surface_y=100)
+        self.assertLessEqual(spans.count, MAX_SPANS)
+        assert_legal_spans(self, spans, "overhang-dense >4-run column")
+        self.assertEqual(
+            spans.surface_ceiling_y, 100,
+            "query_surface must stay on the real ground (100): the budget must "
+            "not merge the surface run upward across the thin gap above it; "
+            f"got {spans.surface_ceiling_y} from spans {spans.spans}",
+        )
+
+    def test_budget_may_merge_surface_run_downward_keeping_ceiling(self) -> None:
+        # The complement: when the thin gap is *below* the surface run, merging
+        # is allowed because it preserves the surface ceiling — only an air gap
+        # underground is lost.  query_surface stays pinned.
+        runs = [
+            (80, 88),     # floor remnant just below surface
+            (90, 100),    # SURFACE run (ceiling == surface_y), gap=1 below
+            (200, 210),
+            (300, 310),
+            (400, 410),
+        ]
+        spans = _runs_to_spans(runs, surface_y=100)
+        self.assertLessEqual(spans.count, MAX_SPANS)
+        assert_legal_spans(self, spans, "merge-below-surface column")
+        self.assertEqual(
+            spans.surface_ceiling_y, 100,
+            "merging the surface run with a run *below* it keeps the ceiling at "
+            f"surface_y=100; got {spans.surface_ceiling_y} from {spans.spans}",
+        )
+
+    def test_budget_surface_anchored_when_runs_all_above_lowest_surface(self) -> None:
+        # Degenerate: surface run is the lowest and every other run floats above
+        # it, more than MAX_SPANS total.  The gap above the surface is the *only*
+        # one touching it; the budget merges among the upper runs instead, so the
+        # surface run survives intact and query_surface stays pinned.
+        runs = [
+            (0, 10),      # SURFACE (lowest), surface_y == 10
+            (50, 60),
+            (100, 110),
+            (150, 160),
+            (200, 210),
+            (250, 260),
+        ]
+        spans = _runs_to_spans(runs, surface_y=10)
+        self.assertLessEqual(spans.count, MAX_SPANS)
+        assert_legal_spans(self, spans, "surface-lowest dense column")
+        self.assertEqual(
+            spans.surface_ceiling_y, 10,
+            "surface run is lowest; the budget must merge upper runs and keep "
+            f"the ground span (0,10) intact; got {spans.spans}",
+        )
+
 
 class ValidateSpansTest(unittest.TestCase):
     def test_accepts_legal_column(self) -> None:

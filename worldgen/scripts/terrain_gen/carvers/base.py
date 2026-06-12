@@ -154,7 +154,7 @@ def _runs_to_spans(
     if not runs:
         return ColumnSpans(())
 
-    budgeted = _budget_runs(list(runs), MAX_SPANS)
+    budgeted = _budget_runs(list(runs), MAX_SPANS, surface_y)
 
     # Pick the surface run: the run whose ceiling is closest to (and not above)
     # the original surface_y.  Fall back to the topmost run if every run floats
@@ -166,8 +166,29 @@ def _runs_to_spans(
     return ColumnSpans(tuple(ordered))
 
 
+def _surface_run_index(
+    runs: list[tuple[int, int]], surface_y: int | None
+) -> int | None:
+    """Index of the run that will be anchored as span[0] (the walkable surface).
+
+    Mirrors :func:`_select_surface_run`'s selection rule but is used *during*
+    budgeting to know which run's ceiling must stay equal to ``surface_y``.
+    Returns ``None`` only for an empty ``runs`` list.
+    """
+    if not runs:
+        return None
+    if surface_y is None:
+        return max(range(len(runs)), key=lambda i: runs[i][1])
+    candidates = [i for i, run in enumerate(runs) if run[1] <= surface_y]
+    if candidates:
+        return max(candidates, key=lambda i: runs[i][1])
+    return min(range(len(runs)), key=lambda i: runs[i][1])
+
+
 def _budget_runs(
-    runs: list[tuple[int, int]], max_spans: int
+    runs: list[tuple[int, int]],
+    max_spans: int,
+    surface_y: int | None = None,
 ) -> list[tuple[int, int]]:
     """Reduce *runs* to at most *max_spans* by merging the narrowest gaps.
 
@@ -175,16 +196,38 @@ def _budget_runs(
     ``[lower.floor, upper.ceiling]`` solid, so the result is always legal — we
     only ever *lose* a thin air gap, never create an overlap.  We greedily
     merge the smallest gap first so the visually dominant voids survive.
+
+    **Surface anchoring (§8.1 #2).**  The run that becomes span[0] must keep its
+    ceiling equal to the recorded ``surface_y`` so ``query_surface`` keeps
+    reading the original ground.  Merging the surface run *upward* (across the
+    gap immediately above it) would raise its ceiling above ``surface_y`` and
+    silently move the walkable surface — so that single gap is protected from
+    merging.  Merging the surface run *downward* (a run below it) is safe: the
+    ceiling is preserved, only an air gap below the ground is lost.  We only fall
+    back to merging the protected gap if it is the *last* mergeable gap left
+    (degenerate column with too many runs all above the surface), where keeping
+    the column legal must win over perfect anchoring.
     """
     while len(runs) > max_spans:
-        # Find the adjacent pair with the smallest air gap and merge it.
-        best_i = 0
+        # The gap just above the surface run is index ``surface_idx`` in the
+        # gap list (gap ``g`` sits between run ``g`` and run ``g+1``); merging it
+        # would swallow the surface run upward and lift its ceiling.
+        surface_idx = _surface_run_index(runs, surface_y)
+        protected_gap = surface_idx if surface_idx is not None else -1
+
+        best_i = None
         best_gap = None
         for i in range(len(runs) - 1):
+            if i == protected_gap:
+                continue  # never raise the surface ceiling
             gap = runs[i + 1][0] - runs[i][1] - 1
             if best_gap is None or gap < best_gap:
                 best_gap = gap
                 best_i = i
+        if best_i is None:
+            # Only the protected gap remains (all other runs already merged) —
+            # legality must win; merge it even though the surface ceiling lifts.
+            best_i = protected_gap if protected_gap >= 0 else 0
         merged = (runs[best_i][0], runs[best_i + 1][1])
         runs = runs[:best_i] + [merged] + runs[best_i + 2 :]
     return runs
