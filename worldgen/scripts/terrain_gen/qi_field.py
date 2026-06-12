@@ -145,21 +145,41 @@ def zone_contribution_kernel(
     target: float,
     base: float = QI_FIELD_BASE,
     falloff_exponent: float = 1.6,
+    plateau_ratio: float = 0.0,
 ) -> np.ndarray:
     """单个 zone 的灵气贡献核：核心铺 ``target``，径向向 ``base`` 过渡.
 
-    径向归一掩码 ``m = clamp(1 - radial**exp, 0, 1)``（中心=1，edge→0）；核值
-    ``field = base + m * (target - base)``。中心区接近 target，边界外退回 base，
-    实现"每 zone 按档位铺一个目标浓度核"（§8.1 #4）。
+    径向归一距离 ``r = sqrt((dx/half_w)^2 + (dz/half_d)^2)``。
 
-    返回的核**未 clamp**到 [-1,1]——合成阶段（``build_qi_field``）统一 clamp，
-    使多核叠加 + veins 抬升的中间量不被过早截断。
+    * ``plateau_ratio == 0``（默认，向后兼容）：纯尖核掩码
+      ``m = clamp(1 - r**exp, 0, 1)``（中心=1，edge→0）—— 仅中心点接近 target。
+    * ``plateau_ratio ∈ (0, 1)``：**平顶核**——``r <= plateau_ratio`` 的内圈整片
+      铺死 target（mask=1），在 ``(plateau_ratio, 1]`` 的过渡环里按 exp 衰减到 base。
+      这让 zone 的**整片 bounds**读到它声明的档位浓度（而非只有圆心），过渡发生在
+      bounds 外缘——对应"zone 内部均匀目标浓度、向 wilderness 过渡"的物理语义。
+      派生 zone spirit_qi（bounds 内面积加权均值）时必须用平顶核，否则均值被 edge
+      的 base 拉低、所有 zone 误判为负灵域。
+
+    核值 ``field = base + m * (target - base)``。返回的核**未 clamp**到 [-1,1]——
+    合成阶段（``build_qi_field``）统一 clamp，使多核叠加 + veins 抬升的中间量不被
+    过早截断。
     """
+    if not (0.0 <= plateau_ratio < 1.0):
+        raise ValueError(
+            f"plateau_ratio must be in [0, 1); got {plateau_ratio} "
+            "(1.0 would make the kernel a flat top with no falloff to base)"
+        )
     cx, cz = center_xz
     dx = (wx - cx) / max(half_w, 1.0)
     dz = (wz - cz) / max(half_d, 1.0)
     radial = np.sqrt(dx * dx + dz * dz)
-    mask = np.clip(1.0 - radial**falloff_exponent, 0.0, 1.0)
+    if plateau_ratio <= 0.0:
+        mask = np.clip(1.0 - radial**falloff_exponent, 0.0, 1.0)
+    else:
+        # 平顶：内圈 r<=plateau_ratio 全 1；过渡环把 r 线性重映射到 [0,1] 再施 exp 衰减。
+        denom = max(1.0 - plateau_ratio, 1e-6)
+        transition = np.clip((radial - plateau_ratio) / denom, 0.0, 1.0)
+        mask = np.clip(1.0 - transition**falloff_exponent, 0.0, 1.0)
     return base + mask * (target - base)
 
 
@@ -225,6 +245,7 @@ def build_qi_field(
         half_d = float(spec["half_d"])
         target = float(spec["target"])
         exponent = float(spec.get("falloff_exponent", 1.6))
+        plateau_ratio = float(spec.get("plateau_ratio", 0.0))
         override = spec.get("override", None)
         eff_target = target
         if override is not None:
@@ -239,15 +260,22 @@ def build_qi_field(
             target=eff_target,
             base=base,
             falloff_exponent=exponent,
+            plateau_ratio=plateau_ratio,
         )
         field = np.maximum(field, kernel)
         if override is not None:
             # 核心区（径向掩码 > 0.5，即接近 target 的内圈）锁为 override 硬约束。
+            # 用与核同款的（平顶 / 尖核）掩码，使平顶核的整片内圈都被锁死。
             cx, cz = center
             dx = (wx - cx) / max(half_w, 1.0)
             dz = (wz - cz) / max(half_d, 1.0)
             radial = np.sqrt(dx * dx + dz * dz)
-            mask = np.clip(1.0 - radial**exponent, 0.0, 1.0)
+            if plateau_ratio <= 0.0:
+                mask = np.clip(1.0 - radial**exponent, 0.0, 1.0)
+            else:
+                denom = max(1.0 - plateau_ratio, 1e-6)
+                transition = np.clip((radial - plateau_ratio) / denom, 0.0, 1.0)
+                mask = np.clip(1.0 - transition**exponent, 0.0, 1.0)
             override_lock |= mask > 0.5
 
     if enable_veins:
@@ -259,6 +287,15 @@ def build_qi_field(
     return np.clip(field, QI_FIELD_MIN, QI_FIELD_MAX)
 
 
+# 平顶核默认形参（zone bounds 读自身档位浓度，过渡发生在 bounds 外缘）。
+#   FOOTPRINT —— 核 half-extent 相对 zone 半径的放大倍率：1.7 让过渡环越过 AABB
+#                角落（radial ≈ 1.41），zone 整片落在平顶 + 内过渡区。
+#   PLATEAU   —— 平顶占核半径比例：0.6 内圈铺死 target，外 0.4 衰减到 base。
+# 这两个默认值经实证标定（六档 zone 的 AABB 面积加权均值各落回声明档位区间）。
+GRADE_KERNEL_FOOTPRINT = 1.7
+GRADE_KERNEL_PLATEAU_RATIO = 0.6
+
+
 def kernel_spec_from_grade(
     *,
     center_xz: tuple[float, float],
@@ -267,18 +304,25 @@ def kernel_spec_from_grade(
     grade: QiGrade,
     override: float | None = None,
     falloff_exponent: float = 1.6,
+    footprint_scale: float = GRADE_KERNEL_FOOTPRINT,
+    plateau_ratio: float = GRADE_KERNEL_PLATEAU_RATIO,
 ) -> dict:
     """便捷构造一个 ``build_qi_field`` zone_kernel dict（按 qi_grade 取目标值）.
 
     ``grade`` 决定核心目标值（``qi_grade_target``）；``override`` 非 None 时为硬约束
-    （精调浓度铺死）。返回的 dict 直接喂给 ``build_qi_field(zone_kernels=[...])``。
+    （精调浓度铺死）。``footprint_scale`` 放大核 half-extent 让过渡发生在 zone bounds
+    之外，``plateau_ratio`` 使 zone 内部整片读 target —— 两者保证 **zone 自身 bounds
+    的面积加权均值落回声明档位**（派生 spirit_qi 的核心不变量；否则 edge 的 base 会
+    把均值拉低、所有 zone 误判负灵域）。返回的 dict 直接喂给
+    ``build_qi_field(zone_kernels=[...])``。
     """
     return {
         "center_xz": center_xz,
-        "half_w": half_w,
-        "half_d": half_d,
+        "half_w": half_w * footprint_scale,
+        "half_d": half_d * footprint_scale,
         "target": qi_grade_target(grade),
         "falloff_exponent": falloff_exponent,
+        "plateau_ratio": plateau_ratio,
         "override": override,
     }
 

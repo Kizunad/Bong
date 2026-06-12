@@ -1,0 +1,476 @@
+"""worldgen-v4 P4 §8.1 #3/#4/#11 — zone spirit_qi 派生 + 预算配平 + zones.json 治理饱和单测.
+
+锁五件事：
+
+1. **预算配平断言**（§8.1 #3）—— Σ zone 份额 + wilderness 余量 == 预算口径
+   （从 env var / 默认锚取，**绝不写字面 100**）；override 计入总量、wilderness +
+   非 override 区吸收差额；病态退化（全死域 / wilderness 面积负）报错。
+2. **spirit_qi 派生正反 pin**（§8.1 #4）—— 单 zone 面积加权均值落回声明档位；
+   富集 / 死域 / 负灵三态 zone 各派生到对应区间；同源闭环（spirit_qi 与
+   qi_density 均值互推）。
+3. **zones.json merge 治理**（§8.1 #11）—— 只覆写 spirit_qi、运行时字段
+   (active_events / patrol_anchors / blocked_tiles / 扩展字段) 逐字段保留不 clobber、
+   generated_by 标记、未知 zone 报错、缺失 zone 保留旧值。
+4. **qi_grade 六档归档** —— 历史 spirit_qi 标量就近落档。
+5. **预算口径单源 + CI 漂移防护** —— resolve_spirit_qi_total 读 env var / 默认锚；
+   parse + assert_const_matches_rust 防 Python↔Rust 常量分裂。
+"""
+
+from __future__ import annotations
+
+import json
+import unittest
+
+from scripts.terrain_gen.dsl import QiGrade
+from scripts.terrain_gen.qi_field import QI_FIELD_BASE, qi_density_from_field
+from scripts.terrain_gen import zones_export as ze
+from scripts.terrain_gen.zones_export import (
+    QI_BUDGET_EPSILON,
+    SPIRIT_QI_TOTAL_ENV,
+    ZoneQiInput,
+    archive_grade_from_spirit_qi,
+    balance_qi_budget,
+    build_zones_file,
+    derive_zone_spirit_qi,
+    merge_zone_spirit_qi,
+    resolve_spirit_qi_total,
+)
+
+
+def _zone(name: str, *, cx: float, cz: float, half: float, grade: QiGrade,
+          override: float | None = None) -> ZoneQiInput:
+    return ZoneQiInput(
+        name=name,
+        bounds_xz=(cx - half, cx + half, cz - half, cz + half),
+        grade=grade,
+        override=override,
+    )
+
+
+# ===========================================================================
+# 1. spirit_qi 派生正反 pin（面积加权均值落回声明档位）
+# ===========================================================================
+
+
+class SpiritQiDerivationPinTest(unittest.TestCase):
+    def test_three_state_zones_derive_to_their_grade(self) -> None:
+        # 富集 / 死域 / 负灵三态 zone 的派生 spirit_qi 各落回声明档位区间。
+        cases = [
+            (QiGrade.FONT, 0.7, 1.0),
+            (QiGrade.RICH, 0.45, 0.7),
+            (QiGrade.COMMON, 0.15, 0.45),
+            (QiGrade.TRACE, 0.02, 0.15),
+            (QiGrade.DEAD, -0.1, 0.02),
+            (QiGrade.NEGATIVE, -1.0, -0.1),
+        ]
+        for grade, lo, hi in cases:
+            # 单 zone（无邻核干扰），关 veins 隔离档位读数。
+            z = _zone("solo", cx=0, cz=0, half=300, grade=grade)
+            derived = derive_zone_spirit_qi([z], enable_veins=False)
+            sq = derived["solo"]
+            self.assertTrue(
+                lo <= sq < hi or (hi == 1.0 and sq <= 1.0),
+                f"{grade.value} zone derives spirit_qi={sq:+.4f} which must land "
+                f"in declared grade range [{lo}, {hi}); got {sq}",
+            )
+            # 反向 pin：派生值归档回同一档位（往返自洽）。
+            self.assertEqual(
+                archive_grade_from_spirit_qi(sq), grade,
+                f"{grade.value} zone derived sq={sq:+.4f} must archive back to "
+                f"{grade.value}",
+            )
+
+    def test_same_source_closed_loop(self) -> None:
+        # 同源闭环：zone spirit_qi 与其 qi_density 期望均值通过派生公式互推。
+        z = _zone("loop", cx=0, cz=0, half=250, grade=QiGrade.RICH)
+        derived = derive_zone_spirit_qi([z], enable_veins=False)
+        sq = derived["loop"]
+        expected_density = float(qi_density_from_field(sq))
+        # density = clamp01((sq+1)/2) 必须与 sq 同向（同源派生不漂移）。
+        self.assertAlmostEqual(expected_density, (sq + 1.0) / 2.0, places=6)
+
+    def test_override_pins_zone_to_precise_value(self) -> None:
+        # qi_override 硬约束：精调浓度铺死，派生 spirit_qi 贴近 override 值。
+        z = _zone("ov", cx=0, cz=0, half=300, grade=QiGrade.COMMON, override=0.62)
+        derived = derive_zone_spirit_qi([z], enable_veins=False)
+        sq = derived["ov"]
+        # override 铺死核心，AABB 均值偏向 override（不会被档位 target 0.3 拉走）。
+        self.assertGreater(
+            sq, 0.45,
+            f"override=0.62 must pull derived spirit_qi above 0.45 (toward "
+            f"override, not the common grade target 0.3); got {sq}",
+        )
+
+    def test_duplicate_zone_name_raises(self) -> None:
+        z1 = _zone("dup", cx=0, cz=0, half=100, grade=QiGrade.COMMON)
+        z2 = _zone("dup", cx=500, cz=0, half=100, grade=QiGrade.FONT)
+        with self.assertRaisesRegex(ValueError, "duplicate zone name"):
+            derive_zone_spirit_qi([z1, z2])
+
+    def test_neighbor_kernel_bleeds_in_via_max_blend(self) -> None:
+        # 邻 zone 强核 max-blend 抬升相邻弱 zone 的派生 spirit_qi（一份场两种导出）。
+        weak = _zone("weak", cx=0, cz=0, half=150, grade=QiGrade.TRACE)
+        strong = _zone("strong", cx=200, cz=0, half=300, grade=QiGrade.FONT)
+        solo = derive_zone_spirit_qi([weak], enable_veins=False)["weak"]
+        withnb = derive_zone_spirit_qi([weak, strong], enable_veins=False)["weak"]
+        self.assertGreater(
+            withnb, solo,
+            "邻接 font 核 max-blend 必须抬升 weak zone 派生 spirit_qi（场两种导出同源）",
+        )
+
+
+# ===========================================================================
+# 2. 预算配平断言（Σ 份额 + wilderness == 预算）
+# ===========================================================================
+
+
+class BudgetBalanceTest(unittest.TestCase):
+    def setUp(self) -> None:
+        self.zones = [
+            _zone("a", cx=0, cz=0, half=100, grade=QiGrade.FONT),
+            _zone("b", cx=1000, cz=0, half=100, grade=QiGrade.COMMON),
+            _zone("c", cx=2000, cz=0, half=100, grade=QiGrade.NEGATIVE),
+        ]
+        self.derived = derive_zone_spirit_qi(self.zones, enable_veins=False)
+        self.world_area = 10_000_000.0  # >> Σ zone area
+
+    def test_shares_plus_wilderness_equals_budget(self) -> None:
+        budget = 100.0
+        report = balance_qi_budget(
+            self.zones, self.derived, world_area=self.world_area, budget=budget
+        )
+        self.assertAlmostEqual(
+            report.zone_sum + report.wilderness_share, budget, places=6,
+            msg="Σ zone_shares + wilderness_share must equal budget (conservation)",
+        )
+        # zone_sum 字段与 Σ zone_shares 一致。
+        self.assertAlmostEqual(
+            report.zone_sum, sum(report.zone_shares.values()), places=9
+        )
+
+    def test_budget_defaults_to_resolved_total_not_literal(self) -> None:
+        # budget=None 时取 resolve_spirit_qi_total()（env / 默认锚），不写字面 100。
+        report = balance_qi_budget(
+            self.zones, self.derived, world_area=self.world_area, budget=None
+        )
+        self.assertAlmostEqual(report.total, resolve_spirit_qi_total(), places=9)
+        self.assertAlmostEqual(
+            report.zone_sum + report.wilderness_share, report.total, places=6
+        )
+
+    def test_override_zone_counts_in_total_not_exempt(self) -> None:
+        # override zone 的 mass 进分母（精调浓度不豁免守恒）：加一个高 override zone
+        # 后总和仍 == budget，且 override zone 拿到非零份额。
+        zones = list(self.zones) + [
+            _zone("ov", cx=3000, cz=0, half=100, grade=QiGrade.TRACE, override=0.9)
+        ]
+        derived = derive_zone_spirit_qi(zones, enable_veins=False)
+        report = balance_qi_budget(
+            zones, derived, world_area=self.world_area, budget=100.0
+        )
+        self.assertAlmostEqual(
+            report.zone_sum + report.wilderness_share, 100.0, places=6,
+            msg="override zone 计入总量后配平仍守恒（不豁免）",
+        )
+        self.assertGreater(
+            report.zone_shares["ov"], 0.0,
+            "override zone 必须拿到非零预算份额（mass 进 M 分母）",
+        )
+
+    def test_wilderness_absorbs_difference(self) -> None:
+        # wilderness 面积越大，wilderness 份额越大（吸收差额）；zone 份额相应缩小。
+        small_world = balance_qi_budget(
+            self.zones, self.derived, world_area=1_000_000.0, budget=100.0
+        )
+        big_world = balance_qi_budget(
+            self.zones, self.derived, world_area=100_000_000.0, budget=100.0
+        )
+        self.assertGreater(
+            big_world.wilderness_share, small_world.wilderness_share,
+            "更大 wilderness 面积必须吸收更多预算份额",
+        )
+        self.assertLess(
+            big_world.zone_sum, small_world.zone_sum,
+            "wilderness 吸收更多时 zone 总份额相应缩小（总和守恒）",
+        )
+
+    def test_zero_zones_all_budget_to_wilderness(self) -> None:
+        # 无 zone（纯 wilderness）→ 全部预算归 wilderness，zone_sum=0。
+        report = balance_qi_budget(
+            [], {}, world_area=self.world_area, budget=100.0
+        )
+        self.assertEqual(report.zone_sum, 0.0)
+        self.assertAlmostEqual(report.wilderness_share, 100.0, places=6)
+
+    def test_negative_wilderness_area_raises(self) -> None:
+        # world_area < Σ zone area（配置错误：zone 溢出世界）→ 报错而非静默。
+        with self.assertRaisesRegex(ValueError, "wilderness area would be negative"):
+            balance_qi_budget(
+                self.zones, self.derived, world_area=1.0, budget=100.0
+            )
+
+    def test_nonpositive_budget_raises(self) -> None:
+        with self.assertRaisesRegex(ValueError, "budget must be > 0"):
+            balance_qi_budget(
+                self.zones, self.derived, world_area=self.world_area, budget=0.0
+            )
+
+    def test_total_mass_zero_raises(self) -> None:
+        # 病态退化：全 zone 死到 qi_density=0（spirit_qi=-1）且无 wilderness 质量
+        # （world_area == Σ zone area，base 不参与）→ 无法归一，报错。
+        dead = [_zone("d", cx=0, cz=0, half=100, grade=QiGrade.NEGATIVE)]
+        # bounds 200x200 → area 40000；world_area 设成恰好等于它（无 wilderness）。
+        forced = {"d": -1.0}  # 强制 density=0
+        with self.assertRaisesRegex(ValueError, "total qi mass is 0"):
+            balance_qi_budget(dead, forced, world_area=40000.0, budget=100.0)
+
+    def test_histogram_buckets_all_six_grades(self) -> None:
+        report = balance_qi_budget(
+            self.zones, self.derived, world_area=self.world_area, budget=100.0
+        )
+        grades = [b["grade"] for b in report.histogram]
+        self.assertEqual(grades, [g.value for g in QiGrade])
+        # 三 zone 各落不同档（font/common/negative），计数总和 == zone 数。
+        total_zones = sum(b["zone_count"] for b in report.histogram)
+        self.assertEqual(total_zones, len(self.zones))
+
+
+# ===========================================================================
+# 3. 预算口径单源 + CI 漂移防护
+# ===========================================================================
+
+
+class BudgetTotalSourceTest(unittest.TestCase):
+    def test_resolve_reads_env_var(self) -> None:
+        import os
+        prev = os.environ.get(SPIRIT_QI_TOTAL_ENV)
+        try:
+            os.environ[SPIRIT_QI_TOTAL_ENV] = "250.0"
+            self.assertEqual(resolve_spirit_qi_total(), 250.0)
+        finally:
+            if prev is None:
+                os.environ.pop(SPIRIT_QI_TOTAL_ENV, None)
+            else:
+                os.environ[SPIRIT_QI_TOTAL_ENV] = prev
+
+    def test_resolve_falls_back_on_invalid_env(self) -> None:
+        import os
+        prev = os.environ.get(SPIRIT_QI_TOTAL_ENV)
+        try:
+            os.environ[SPIRIT_QI_TOTAL_ENV] = "not-a-number"
+            # 无效 → fallback 默认锚（与 Rust DEFAULT_SPIRIT_QI_TOTAL 对齐）。
+            self.assertEqual(resolve_spirit_qi_total(), ze._RUST_DEFAULT_SPIRIT_QI_TOTAL)
+            os.environ[SPIRIT_QI_TOTAL_ENV] = "-5.0"  # 非正 → fallback
+            self.assertEqual(resolve_spirit_qi_total(), ze._RUST_DEFAULT_SPIRIT_QI_TOTAL)
+        finally:
+            if prev is None:
+                os.environ.pop(SPIRIT_QI_TOTAL_ENV, None)
+            else:
+                os.environ[SPIRIT_QI_TOTAL_ENV] = prev
+
+    def test_no_literal_100_in_module_source(self) -> None:
+        # noLiteral100 守门：配平 / 报表逻辑不得硬编字面 100，只允许从 const 锚取。
+        # 只有 _RUST_DEFAULT_SPIRIT_QI_TOTAL 这一处镜像 Rust 常量允许出现 100.0。
+        import inspect
+        src = inspect.getsource(balance_qi_budget) + inspect.getsource(
+            resolve_spirit_qi_total
+        )
+        for token in ("100.0", "100 ", "= 100"):
+            self.assertNotIn(
+                token, src,
+                f"配平 / resolve 逻辑禁止硬编字面 100（{token!r}）；预算口径必须经 "
+                "resolve_spirit_qi_total 从 env var / 默认锚解析",
+            )
+
+    def test_parse_rust_const(self) -> None:
+        src = "pub const DEFAULT_SPIRIT_QI_TOTAL: f64 = 100.0;\n"
+        self.assertEqual(ze.parse_rust_default_spirit_qi_total(src), 100.0)
+
+    def test_parse_rust_const_missing_raises(self) -> None:
+        with self.assertRaisesRegex(ValueError, "not found"):
+            ze.parse_rust_default_spirit_qi_total("// no const here")
+
+    def test_python_anchor_matches_rust_constants(self) -> None:
+        # 漂移防护：Python 默认锚必须等于 server/src/qi_physics/constants.rs 实值。
+        from scripts.terrain_gen.blueprint import REPO_ROOT
+        const_path = REPO_ROOT / "server" / "src" / "qi_physics" / "constants.rs"
+        if const_path.exists():
+            ze.assert_const_matches_rust(const_path)
+        else:  # pragma: no cover — worldgen 可能被单独 checkout
+            self.skipTest("constants.rs not present in this checkout")
+
+
+# ===========================================================================
+# 4. qi_grade 六档归档
+# ===========================================================================
+
+
+class GradeArchiveTest(unittest.TestCase):
+    def test_archive_each_grade_band(self) -> None:
+        # 每档代表值就近归档回本档（六档专属 case）。
+        cases = [
+            (-0.8, QiGrade.NEGATIVE),
+            (-0.15, QiGrade.NEGATIVE),
+            (-0.05, QiGrade.DEAD),
+            (0.0, QiGrade.DEAD),
+            (0.05, QiGrade.TRACE),
+            (0.30, QiGrade.COMMON),
+            (0.50, QiGrade.RICH),
+            (0.70, QiGrade.FONT),
+            (0.85, QiGrade.FONT),
+        ]
+        for sq, grade in cases:
+            self.assertEqual(
+                archive_grade_from_spirit_qi(sq), grade,
+                f"spirit_qi {sq} must archive to {grade.value}",
+            )
+
+
+# ===========================================================================
+# 5. zones.json merge 治理（§8.1 #11）
+# ===========================================================================
+
+
+class ZonesJsonMergeTest(unittest.TestCase):
+    def _doc(self) -> dict:
+        return {
+            "zones": [
+                {
+                    "name": "alpha",
+                    "aabb": {"min": [0, 0, 0], "max": [10, 10, 10]},
+                    "spirit_qi": 0.1,
+                    "danger_level": 3,
+                    "active_events": ["e1"],
+                    "patrol_anchors": [[1, 2, 3]],
+                    "blocked_tiles": [],
+                    "ambient_recipe_id": "amb_alpha",
+                },
+                {
+                    "name": "beta",
+                    "aabb": {"min": [20, 0, 20], "max": [30, 10, 30]},
+                    "spirit_qi": -0.2,
+                    "danger_level": 5,
+                    "active_events": [],
+                    "patrol_anchors": [],
+                    "blocked_tiles": [[1, 1]],
+                    "spawn_distribution": {"k": "v"},
+                },
+            ]
+        }
+
+    def test_only_spirit_qi_overwritten(self) -> None:
+        merged = merge_zone_spirit_qi(
+            self._doc()["zones"], {"alpha": 0.55, "beta": 0.7}
+        )
+        by_name = {z["name"]: z for z in merged}
+        self.assertAlmostEqual(by_name["alpha"]["spirit_qi"], 0.55)
+        self.assertAlmostEqual(by_name["beta"]["spirit_qi"], 0.7)
+
+    def test_runtime_fields_preserved_not_clobbered(self) -> None:
+        merged = merge_zone_spirit_qi(
+            self._doc()["zones"], {"alpha": 0.55, "beta": 0.7}
+        )
+        by_name = {z["name"]: z for z in merged}
+        # 运行时手工字段逐字段保留。
+        self.assertEqual(by_name["alpha"]["active_events"], ["e1"])
+        self.assertEqual(by_name["alpha"]["patrol_anchors"], [[1, 2, 3]])
+        self.assertEqual(by_name["alpha"]["ambient_recipe_id"], "amb_alpha")
+        self.assertEqual(by_name["beta"]["blocked_tiles"], [[1, 1]])
+        self.assertEqual(by_name["beta"]["spawn_distribution"], {"k": "v"})
+        # aabb / danger_level 也不被改（本段只动 spirit_qi）。
+        self.assertEqual(by_name["alpha"]["danger_level"], 3)
+        self.assertEqual(
+            by_name["beta"]["aabb"], {"min": [20, 0, 20], "max": [30, 10, 30]}
+        )
+
+    def test_spirit_qi_clamped_to_native_range(self) -> None:
+        merged = merge_zone_spirit_qi(self._doc()["zones"], {"alpha": 1.7})
+        by_name = {z["name"]: z for z in merged}
+        self.assertEqual(by_name["alpha"]["spirit_qi"], 1.0)
+
+    def test_missing_zone_keeps_old_spirit_qi(self) -> None:
+        # 派生字典只覆盖 alpha → beta 保留旧 spirit_qi（不强制全覆盖）。
+        merged = merge_zone_spirit_qi(self._doc()["zones"], {"alpha": 0.5})
+        by_name = {z["name"]: z for z in merged}
+        self.assertAlmostEqual(by_name["alpha"]["spirit_qi"], 0.5)
+        self.assertAlmostEqual(by_name["beta"]["spirit_qi"], -0.2)
+
+    def test_unknown_derived_zone_raises(self) -> None:
+        # 派生字典里有 zones.json 没有的 zone → 报错（结构性新增留人工）。
+        with self.assertRaisesRegex(ValueError, "not in"):
+            merge_zone_spirit_qi(self._doc()["zones"], {"gamma": 0.5})
+
+    def test_build_zones_file_stamps_generated_by_and_keeps_top_keys(self) -> None:
+        doc = self._doc()
+        doc["some_other_top_key"] = "keep_me"
+        out = build_zones_file(
+            doc, {"alpha": 0.4, "beta": 0.4}, generated_by="worldgen-v4 abc123"
+        )
+        self.assertEqual(out["generated_by"], "worldgen-v4 abc123")
+        # 其它顶层键保留。
+        self.assertEqual(out["some_other_top_key"], "keep_me")
+        self.assertEqual(len(out["zones"]), 2)
+
+    def test_write_zones_json_round_trip(self) -> None:
+        import tempfile
+        from pathlib import Path
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "zones.json"
+            path.write_text(json.dumps(self._doc()), encoding="utf-8")
+            doc = ze.write_zones_json(
+                path, {"alpha": 0.33, "beta": 0.66},
+                generated_by="worldgen-v4 deadbeef",
+            )
+            on_disk = json.loads(path.read_text(encoding="utf-8"))
+            self.assertEqual(on_disk["generated_by"], "worldgen-v4 deadbeef")
+            by_name = {z["name"]: z for z in on_disk["zones"]}
+            self.assertAlmostEqual(by_name["alpha"]["spirit_qi"], 0.33)
+            self.assertEqual(by_name["alpha"]["ambient_recipe_id"], "amb_alpha")
+            # 返回的 doc 与磁盘一致。
+            self.assertEqual(doc["generated_by"], on_disk["generated_by"])
+
+
+# ===========================================================================
+# 6. 端到端：bake_zone_qi 在真实 blueprint 上守恒 + 同源
+# ===========================================================================
+
+
+class BakeZoneQiE2ETest(unittest.TestCase):
+    def test_real_blueprint_balances_and_archives(self) -> None:
+        from scripts.terrain_gen.blueprint import load_blueprint, DEFAULT_BLUEPRINT_PATH
+        from scripts.terrain_gen.zones_export import bake_zone_qi, _world_area_from_bounds
+
+        bp = load_blueprint(DEFAULT_BLUEPRINT_PATH)
+        world_area = _world_area_from_bounds(bp.bounds_xz)
+        result = bake_zone_qi(bp.zones, world_area=world_area, budget=100.0)
+        report = result.budget_report
+        # 守恒：Σ 份额 + wilderness == 预算。
+        self.assertAlmostEqual(
+            report.zone_sum + report.wilderness_share, 100.0,
+            delta=QI_BUDGET_EPSILON,
+        )
+        # 每个 zone 都有派生 spirit_qi 且在 native 值域。
+        self.assertEqual(len(result.derived_spirit_qi), len(bp.zones))
+        for name, sq in result.derived_spirit_qi.items():
+            self.assertGreaterEqual(sq, -1.0, f"{name} spirit_qi below -1")
+            self.assertLessEqual(sq, 1.0, f"{name} spirit_qi above 1")
+            # 归档 grade 与派生值自洽。
+            self.assertEqual(
+                result.archived_grades[name],
+                archive_grade_from_spirit_qi(sq).value,
+            )
+
+    def test_base_wilderness_density_matches_field_base(self) -> None:
+        # wilderness 质量用 base 浓度（末法薄灵）：base_field=-0.76 → density≈0.12。
+        z = _zone("x", cx=0, cz=0, half=100, grade=QiGrade.COMMON)
+        derived = derive_zone_spirit_qi([z], enable_veins=False)
+        report = balance_qi_budget(
+            [z], derived, world_area=1e8, budget=100.0, base_field=QI_FIELD_BASE
+        )
+        # wilderness 份额 > 0（薄灵也有质量）。
+        self.assertGreater(report.wilderness_share, 0.0)
+
+
+if __name__ == "__main__":  # pragma: no cover
+    unittest.main()

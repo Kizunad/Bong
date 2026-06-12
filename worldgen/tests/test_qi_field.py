@@ -425,5 +425,93 @@ class BuildQiFieldTest(unittest.TestCase):
         )
 
 
+# ===========================================================================
+# 4f. zone_contribution_kernel plateau_ratio —— 平顶核（P4 第2段加）
+# ===========================================================================
+
+
+class PlateauKernelTest(unittest.TestCase):
+    def test_plateau_zero_is_backward_compatible_tip_kernel(self) -> None:
+        # plateau_ratio=0（默认）= 旧尖核：仅圆心到 target，edge 退 base。
+        wx, wz = _centered_grid(200)
+        tip = qf.zone_contribution_kernel(
+            wx, wz, center_xz=(0, 0), half_w=50, half_d=50,
+            target=0.85, base=-0.76, plateau_ratio=0.0,
+        )
+        center = float(tip[100, 100])
+        self.assertAlmostEqual(center, 0.85, places=3)
+        # 半径中点（r≈0.5）尖核已明显衰减（不是平顶）。
+        mid = float(tip[100, 125])  # 25 cells from center, half_w=50 → r≈0.5
+        self.assertLess(mid, 0.85 - 0.05, "尖核半径中点应已衰减，非平顶")
+
+    def test_plateau_flattens_inner_disk_to_target(self) -> None:
+        # plateau_ratio=0.6：内 60% 半径整片铺死 target（平顶），不止圆心。
+        wx, wz = _centered_grid(200)
+        flat = qf.zone_contribution_kernel(
+            wx, wz, center_xz=(0, 0), half_w=50, half_d=50,
+            target=0.85, base=-0.76, plateau_ratio=0.6,
+        )
+        center = float(flat[100, 100])
+        inner = float(flat[100, 115])  # 15 cells, half_w=50 → r=0.3 < 0.6 → 平顶
+        self.assertAlmostEqual(center, 0.85, places=3)
+        self.assertAlmostEqual(
+            inner, 0.85, places=3,
+            msg="平顶核内 60% 半径必须整片铺 target（r=0.3 仍在平顶）",
+        )
+
+    def test_plateau_still_decays_to_base_far_out(self) -> None:
+        # 平顶外仍衰减到 base（不是无限平顶）。
+        wx, wz = _centered_grid(200)
+        flat = qf.zone_contribution_kernel(
+            wx, wz, center_xz=(0, 0), half_w=40, half_d=40,
+            target=0.85, base=-0.76, plateau_ratio=0.6,
+        )
+        corner = float(flat[0, 0])  # 远角 r >> 1 → base
+        self.assertAlmostEqual(corner, -0.76, places=3)
+
+    def test_plateau_ratio_out_of_range_raises(self) -> None:
+        wx, wz = _centered_grid(40)
+        with self.assertRaisesRegex(ValueError, "plateau_ratio"):
+            qf.zone_contribution_kernel(
+                wx, wz, center_xz=(0, 0), half_w=10, half_d=10,
+                target=0.3, plateau_ratio=1.0,
+            )
+
+    def test_kernel_spec_from_grade_uses_plateau_and_footprint(self) -> None:
+        # kernel_spec_from_grade 默认带 plateau_ratio + footprint_scale（zone 读自身档）。
+        spec = qf.kernel_spec_from_grade(
+            center_xz=(0, 0), half_w=100, half_d=100, grade=QiGrade.FONT,
+        )
+        self.assertEqual(spec["plateau_ratio"], qf.GRADE_KERNEL_PLATEAU_RATIO)
+        # footprint 放大了 half-extent（过渡发生在 zone 外缘）。
+        self.assertGreater(spec["half_w"], 100)
+        self.assertAlmostEqual(
+            spec["half_w"], 100 * qf.GRADE_KERNEL_FOOTPRINT, places=6
+        )
+
+    def test_grade_kernel_zone_aabb_mean_lands_in_grade(self) -> None:
+        # 核心不变量：用 kernel_spec_from_grade 建的核，zone 自身 AABB 的面积加权均值
+        # 落回声明档位（派生 spirit_qi 不被 edge base 拉成负灵域）。
+        for grade, lo, hi in (
+            (QiGrade.FONT, 0.7, 1.0),
+            (QiGrade.RICH, 0.45, 0.7),
+            (QiGrade.COMMON, 0.15, 0.45),
+            (QiGrade.NEGATIVE, -1.0, -0.1),
+        ):
+            # zone AABB half=150；采样仅覆盖 AABB（不含核的外过渡环）。
+            wx, wz = _centered_grid(300)  # ±150 grid == zone AABB
+            ks = [qf.kernel_spec_from_grade(
+                center_xz=(0, 0), half_w=150, half_d=150, grade=grade,
+            )]
+            field = qf.build_qi_field(wx, wz, zone_kernels=ks, enable_veins=False)
+            mean = qf.spirit_qi_from_field(field)
+            self.assertTrue(
+                lo <= mean < hi or (hi == 1.0 and mean <= 1.0),
+                f"{grade.value} zone AABB mean={mean:+.4f} must land in declared "
+                f"grade [{lo}, {hi}); plateau+footprint should keep zone reading "
+                f"its own grade, got {mean}",
+            )
+
+
 if __name__ == "__main__":  # pragma: no cover
     unittest.main()
