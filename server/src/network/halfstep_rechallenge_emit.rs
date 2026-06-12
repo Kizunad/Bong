@@ -1,7 +1,17 @@
 //! plan-halfstep-rechallenge-integration-v1 P0/P1：半步化虚重渡触发推送。
 //!
 //! **P0**：监听 `HalfStepRechallengeTriggerEvent`（仅非 dormant 条目），targeted 下发
-//! `halfstep_rechallenge` server_data payload + `halfstep_rechallenge_trigger_player` 音效。
+//! `bong:halfstep_rechallenge` 专属 JSON channel payload + `halfstep_rechallenge_trigger_player` 音效。
+//!
+//! ## Wire protocol（JSON 专属 channel，不走 bong:server_data/proto 路径）
+//!
+//! server 直接序列化 `HalfStepRechallengeV1` 为 JSON 字节，通过
+//! `client.send_custom_payload(ident!("bong:halfstep_rechallenge"), &bytes)` 发送。
+//! client 注册专属 channel listener（`BongNetworkHandler.registerHalfStepRechallengeChannel()`），
+//! 解析 JSON 后写入 `HalfStepRechallengeStore`。
+//!
+//! 设计与 `bong:era_ambiance` 保持一致（era_ambiance_emit.rs L246-256）：
+//! test 和 production 均走相同 JSON 路径，无 `cfg(test)/cfg(not(test))` 分叉。
 //!
 //! **P1**：同时 publish Redis `bong:tribulation/halfstep_rechallenge` 供 agent narration：
 //! - char_id / zone_name / zone_halfstep_count（同 zone HalfStep 实体数，≥2 才产 zone echo）/ at_tick。
@@ -13,19 +23,23 @@
 //! 2. 化虚结算（`TribulationSettled` outcome = Ascended 且 entity 有 `HalfStepState`）：
 //!    由本模块 `emit_halfstep_rechallenge_hide_on_settle` 系统负责。
 
+use valence::ident;
 use valence::prelude::{Client, Entity, EventReader, EventWriter, Position, Query, Res, With};
 
 use crate::cultivation::tribulation::{
     HalfStepRechallengeTriggerEvent, HalfStepState, TribulationSettled,
 };
-use crate::network::agent_bridge::{payload_type_label, serialize_server_data_payload};
 use crate::network::audio_event_emit::{AudioRecipient, PlaySoundRecipeRequest};
 use crate::network::redis_bridge::RedisOutbound;
-use crate::network::{log_payload_build_error, send_server_data_payload, RedisBridgeResource};
+use crate::network::RedisBridgeResource;
 use crate::schema::halfstep_rechallenge::HalfStepRechallengeTriggerPayloadV1;
-use crate::schema::server_data::{HalfStepRechallengeV1, ServerDataPayloadV1, ServerDataV1};
+use crate::schema::server_data::HalfStepRechallengeV1;
 use crate::schema::tribulation::DuXuOutcomeV1;
 use crate::world::zone::{ZoneRegistry, DEFAULT_SPAWN_ZONE_NAME};
+
+/// S2C channel identifier for halfstep rechallenge payloads（专属 JSON channel）。
+/// client 侧 `BongNetworkHandler.registerHalfStepRechallengeChannel()` 注册相同 channel。
+pub const HALFSTEP_RECHALLENGE_CHANNEL: &str = "bong:halfstep_rechallenge";
 
 pub const HALFSTEP_RECHALLENGE_AUDIO_RECIPE: &str = "halfstep_rechallenge_trigger_player";
 /// P1 zone echo 音效 recipe id（plan-halfstep-buff-v1 P3 spec）。
@@ -176,17 +190,24 @@ fn resolve_zone_name(pos: &Position, zone_registry: &Option<Res<ZoneRegistry>>) 
 
 // ─────────────────────────────────────────────────────────────────────────────
 
+/// 向指定 client 发送 `bong:halfstep_rechallenge` JSON payload。
+///
+/// 直接序列化 `HalfStepRechallengeV1` 为 JSON，经专属 channel 发送——
+/// 不走 `bong:server_data` / proto 路径（该路径对 HalfStepRechallenge 无 proto 定义）。
+/// 仿照 `era_ambiance_emit.rs` L246-256 的 `to_json_bytes_checked` → `send_custom_payload` 模式。
 fn send_halfstep_rechallenge_to_client(client: &mut Client, data: HalfStepRechallengeV1) {
-    let payload = ServerDataV1::new(ServerDataPayloadV1::HalfStepRechallenge(data));
-    let payload_type = payload_type_label(payload.payload_type());
-    let payload_bytes = match serialize_server_data_payload(&payload) {
-        Ok(bytes) => bytes,
-        Err(error) => {
-            log_payload_build_error(payload_type, &error);
-            return;
+    match serde_json::to_vec(&data) {
+        Ok(bytes) => {
+            client.send_custom_payload(ident!("bong:halfstep_rechallenge"), &bytes);
         }
-    };
-    send_server_data_payload(client, payload_bytes.as_slice());
+        Err(error) => {
+            tracing::error!(
+                "[bong][halfstep-rechallenge] failed to serialize HalfStepRechallengeV1 for \
+                 channel {}: {error}",
+                HALFSTEP_RECHALLENGE_CHANNEL
+            );
+        }
+    }
 }
 
 #[cfg(test)]
@@ -195,10 +216,9 @@ mod tests {
     use crate::cultivation::tribulation::{
         HalfStepRechallengeTriggerEvent, HalfStepState, TribulationSettled,
     };
-    use crate::network::agent_bridge::SERVER_DATA_CHANNEL;
     use crate::network::redis_bridge::RedisOutbound;
     use crate::schema::halfstep_rechallenge::HalfStepRechallengeTriggerPayloadV1;
-    use crate::schema::server_data::{HalfStepRechallengeV1, ServerDataPayloadV1, ServerDataV1};
+    use crate::schema::server_data::HalfStepRechallengeV1;
     use crate::schema::tribulation::{DuXuOutcomeV1, DuXuResultV1};
     use crossbeam_channel::Receiver;
     use valence::prelude::{bevy_ecs, App, Entity, Events, Position, Update};
@@ -237,6 +257,10 @@ mod tests {
         }
     }
 
+    /// 从 MockClientHelper 中收集所有发往 `bong:halfstep_rechallenge` 专属 channel 的 payload。
+    ///
+    /// 不检查 `bong:server_data` channel——该 channel 不再用于 HalfStepRechallenge。
+    /// payload 直接是 `HalfStepRechallengeV1` JSON（无外层 ServerDataV1 envelope）。
     fn collect_halfstep_rechallenge_payloads(
         helper: &mut MockClientHelper,
     ) -> Vec<HalfStepRechallengeV1> {
@@ -245,18 +269,49 @@ mod tests {
             let Ok(packet) = frame.decode::<CustomPayloadS2c>() else {
                 continue;
             };
-            if packet.channel.as_str() != SERVER_DATA_CHANNEL {
+            // 必须是专属 channel（非 bong:server_data）
+            if packet.channel.as_str() != HALFSTEP_RECHALLENGE_CHANNEL {
                 continue;
             }
-            let payload: ServerDataV1 = match serde_json::from_slice(packet.data.0 .0) {
-                Ok(p) => p,
-                Err(_) => continue,
-            };
-            if let ServerDataPayloadV1::HalfStepRechallenge(data) = payload.payload {
-                payloads.push(data);
+            // 直接反序列化 HalfStepRechallengeV1（无 ServerDataV1 外层）
+            match serde_json::from_slice::<HalfStepRechallengeV1>(packet.data.0 .0) {
+                Ok(data) => payloads.push(data),
+                Err(err) => {
+                    panic!(
+                        "bong:halfstep_rechallenge payload 无法反序列化为 HalfStepRechallengeV1: \
+                         {err}\n bytes={:?}",
+                        packet.data.0 .0
+                    );
+                }
             }
         }
         payloads
+    }
+
+    /// 断言：bong:server_data channel 上不存在 HalfStepRechallenge payload。
+    /// 防止未来代码意外地把 halfstep_rechallenge 通过旧路径发送（进而在 production 引起 proto panic）。
+    fn assert_no_halfstep_on_server_data_channel(helper: &mut MockClientHelper) {
+        use crate::network::agent_bridge::SERVER_DATA_CHANNEL;
+        use crate::schema::server_data::{ServerDataPayloadV1, ServerDataV1};
+        for frame in helper.collect_received().0 {
+            let Ok(packet) = frame.decode::<CustomPayloadS2c>() else {
+                continue;
+            };
+            if packet.channel.as_str() != SERVER_DATA_CHANNEL {
+                continue;
+            }
+            if let Ok(envelope) = serde_json::from_slice::<ServerDataV1>(packet.data.0 .0) {
+                if matches!(
+                    envelope.payload,
+                    ServerDataPayloadV1::HalfStepRechallenge(_)
+                ) {
+                    panic!(
+                        "HalfStepRechallenge 不应经由 bong:server_data channel 发送（production 会触发 proto unreachable! panic）；\
+                         应使用专属 bong:halfstep_rechallenge channel"
+                    );
+                }
+            }
+        }
     }
 
     fn make_app() -> App {
@@ -310,6 +365,58 @@ mod tests {
                 }
             })
             .collect()
+    }
+
+    /// 防回归：trigger payload 不经由 bong:server_data channel 发送。
+    /// 若未来有人误将 HalfStepRechallenge 改回 server_data 路径，此测试立即撞红，
+    /// 防止 production proto unreachable! panic 再次出现。
+    #[test]
+    fn trigger_payload_not_sent_on_server_data_channel() {
+        let mut app = make_app();
+        let at_tick: u64 = 9_001;
+        let (mut helper, entity) = spawn_halfstep_client(&mut app, "offline:Azure", at_tick);
+
+        app.world_mut()
+            .resource_mut::<Events<HalfStepRechallengeTriggerEvent>>()
+            .send(HalfStepRechallengeTriggerEvent {
+                char_id: "offline:Azure".to_string(),
+                entity,
+                is_dormant: false,
+                at_tick,
+            });
+
+        app.update();
+        flush_client_packets(&mut app);
+        // assert_no_halfstep_on_server_data_channel 会扫描剩余帧；
+        // collect_received() 是消费性的，所以在此之前不要再调用 collect_halfstep_rechallenge_payloads。
+        assert_no_halfstep_on_server_data_channel(&mut helper);
+    }
+
+    /// 防回归：HIDE payload（化虚成功）不经由 bong:server_data channel 发送。
+    #[test]
+    fn hide_payload_not_sent_on_server_data_channel() {
+        use crate::cultivation::tribulation::TribulationKind;
+        let mut app = make_app();
+        let (mut helper, entity) = spawn_halfstep_client(&mut app, "offline:Azure", 500);
+
+        app.world_mut()
+            .resource_mut::<Events<TribulationSettled>>()
+            .send(TribulationSettled {
+                entity,
+                kind: TribulationKind::DuXu,
+                source: None,
+                result: DuXuResultV1 {
+                    char_id: "offline:Azure".to_string(),
+                    outcome: DuXuOutcomeV1::Ascended,
+                    killer: None,
+                    waves_survived: 3,
+                    reason: None,
+                },
+            });
+
+        app.update();
+        flush_client_packets(&mut app);
+        assert_no_halfstep_on_server_data_channel(&mut helper);
     }
 
     /// happy path：非 dormant 玩家收到 trigger payload，active=true，window 字段正确。
@@ -458,6 +565,85 @@ mod tests {
         assert_eq!(hide.char_id, "offline:Test");
         assert_eq!(hide.rechallenge_window_until, 0);
         assert_eq!(hide.at_tick, 0);
+    }
+
+    /// wire JSON 结构 pin：发往 bong:halfstep_rechallenge 的字节必须是裸 HalfStepRechallengeV1 JSON，
+    /// 无 ServerDataV1 外层 envelope（无 "v"/"type" 包装字段）。
+    /// client 侧 BongNetworkHandler.registerHalfStepRechallengeChannel() 直接解析这个结构。
+    #[test]
+    fn trigger_payload_wire_json_is_bare_halfstep_rechallenge_v1() {
+        let mut app = make_app();
+        let at_tick: u64 = 42_000;
+        let (mut helper, entity) = spawn_halfstep_client(&mut app, "offline:Azure", at_tick);
+
+        app.world_mut()
+            .resource_mut::<Events<HalfStepRechallengeTriggerEvent>>()
+            .send(HalfStepRechallengeTriggerEvent {
+                char_id: "offline:Azure".to_string(),
+                entity,
+                is_dormant: false,
+                at_tick,
+            });
+
+        app.update();
+        flush_client_packets(&mut app);
+
+        // 收集原始 CustomPayloadS2c 帧，检查 JSON 结构
+        let mut raw_bytes: Option<Vec<u8>> = None;
+        for frame in helper.collect_received().0 {
+            let Ok(packet) = frame.decode::<CustomPayloadS2c>() else {
+                continue;
+            };
+            if packet.channel.as_str() == HALFSTEP_RECHALLENGE_CHANNEL {
+                raw_bytes = Some(packet.data.0 .0.to_vec());
+                break;
+            }
+        }
+
+        let bytes =
+            raw_bytes.expect("应在 bong:halfstep_rechallenge channel 收到至少 1 条 payload");
+        let value: serde_json::Value =
+            serde_json::from_slice(&bytes).expect("payload 应为有效 JSON");
+
+        // 裸 HalfStepRechallengeV1：有 active/char_id/rechallenge_window_until/at_tick
+        assert!(
+            value.get("active").is_some(),
+            "裸 HalfStepRechallengeV1 必须包含 'active' 字段；当前 JSON={value}"
+        );
+        assert!(
+            value.get("char_id").is_some(),
+            "裸 HalfStepRechallengeV1 必须包含 'char_id' 字段；当前 JSON={value}"
+        );
+        assert!(
+            value.get("rechallenge_window_until").is_some(),
+            "裸 HalfStepRechallengeV1 必须包含 'rechallenge_window_until' 字段；当前 JSON={value}"
+        );
+        assert!(
+            value.get("at_tick").is_some(),
+            "裸 HalfStepRechallengeV1 必须包含 'at_tick' 字段；当前 JSON={value}"
+        );
+        // 绝对不应有 ServerDataV1 外层 envelope 字段
+        assert!(
+            value.get("v").is_none(),
+            "payload 不应包含 ServerDataV1 envelope 的 'v' 版本字段（应为裸 HalfStepRechallengeV1）；\
+             当前 JSON={value}"
+        );
+        assert!(
+            value.get("type").is_none(),
+            "payload 不应包含 ServerDataV1 envelope 的 'type' 字段（应为裸 HalfStepRechallengeV1）；\
+             当前 JSON={value}"
+        );
+        // 验证 active=true
+        assert_eq!(
+            value.get("active").and_then(|v| v.as_bool()),
+            Some(true),
+            "trigger payload active 字段应为 true；当前 JSON={value}"
+        );
+        assert_eq!(
+            value.get("char_id").and_then(|v| v.as_str()),
+            Some("offline:Azure"),
+            "trigger payload char_id 字段应为 'offline:Azure'；当前 JSON={value}"
+        );
     }
 
     /// trigger payload 中 window_until 随 HalfStepState 入队 tick 正确计算。

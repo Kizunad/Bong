@@ -112,6 +112,8 @@ public class BongNetworkHandler {
         registerElderEncounterChannel();
         // plan-era-state-v1 P3 — 时代天象 S2C CustomPayload（realm gate 由 server 执行）
         registerEraAmbianceChannel();
+        // plan-halfstep-rechallenge-integration-v1 P0 — 半步化虚重渡触发 HUD（专属 JSON channel）
+        registerHalfStepRechallengeChannel();
         // plan-era-state-v1 M2 — EraAmbianceState 渐变计数器每游戏 tick 推进（非渲染帧）。
         // 必须在游戏 tick 而非渲染帧调用，保证 transitionTicks 按 @20TPS 推进。
         ClientTickEvents.END_CLIENT_TICK.register(
@@ -148,6 +150,8 @@ public class BongNetworkHandler {
                 com.bong.client.dying_elder.DyingElderEncounterStore.clearOnDisconnect();
                 // plan-era-state-v1 P3 — 断线时重置时代天象状态
                 com.bong.client.era.EraAmbianceState.reset();
+                // plan-halfstep-rechallenge-integration-v1 P0 — 断线时清理半步重渡触发状态
+                com.bong.client.combat.store.HalfStepRechallengeStore.clear();
             })
         );
         ClientPlayConnectionEvents.JOIN.register(
@@ -993,6 +997,41 @@ public class BongNetworkHandler {
             iterator.next();
             iterator.remove();
         }
+    }
+
+    // ── plan-halfstep-rechallenge-integration-v1 P0 — 半步化虚重渡触发 HUD channel ─────
+
+    /**
+     * 注册 {@code bong:halfstep_rechallenge} 专属 channel。
+     *
+     * <p>payload 是裸 {@code HalfStepRechallengeV1} JSON（无 {@code ServerDataV1} envelope），
+     * 由 {@link com.bong.client.combat.handler.HalfStepRechallengeHandler#handle(String)} 解析，
+     * 结果写入 {@link com.bong.client.combat.store.HalfStepRechallengeStore}。
+     *
+     * <p>设计对齐 {@code bong:era_ambiance} 专属 channel 模式，不经过 {@code ServerDataRouter}
+     * / {@code ProtoServerDataBridge}（避免 proto 不支持此 variant 导致的 unreachable panic）。
+     */
+    private static void registerHalfStepRechallengeChannel() {
+        ClientPlayNetworking.registerGlobalReceiver(
+            new Identifier("bong", "halfstep_rechallenge"),
+            (client, handler, buf, responseSender) -> {
+                int readableBytes = buf.readableBytes();
+                byte[] bytes = new byte[readableBytes];
+                buf.readBytes(bytes);
+                String jsonPayload = ServerDataEnvelope.decodeUtf8(bytes);
+                markConnectionPayload();
+                client.execute(() -> {
+                    try {
+                        com.bong.client.combat.handler.HalfStepRechallengeHandler.handle(jsonPayload);
+                        BongClient.LOGGER.debug(
+                            "Processed bong:halfstep_rechallenge payload ({} bytes)", readableBytes);
+                    } catch (Exception ex) {
+                        BongClient.LOGGER.error(
+                            "Failed to handle bong:halfstep_rechallenge payload: {}", ex.getMessage());
+                    }
+                });
+            }
+        );
     }
 
     // ── plan-era-state-v1 P3 — 时代天象 S2C CustomPayload ──────────────────────

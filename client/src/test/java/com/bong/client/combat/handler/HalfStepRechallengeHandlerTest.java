@@ -16,7 +16,15 @@ import static org.junit.jupiter.api.Assertions.*;
 /**
  * plan-halfstep-rechallenge-integration-v1 P0 饱和测试：
  * HalfStepRechallengeHandler — active/inactive 状态转换 + readBoolean/readString/readLong
- * 畸形字段 fallback + ServerDataRouter wire key "half_step_rechallenge" 契约 pin。
+ * 畸形字段 fallback。
+ *
+ * <p>Wire protocol：server 通过专属 {@code bong:halfstep_rechallenge} channel 发送裸
+ * {@code HalfStepRechallengeV1} JSON（无 {@code ServerDataV1} envelope wrapper）。
+ * {@link com.bong.client.BongNetworkHandler#register()} 中注册 channel listener，
+ * 调用 {@link HalfStepRechallengeHandler#handle(String)}。
+ *
+ * <p>注意：{@code half_step_rechallenge} 已从 {@code ServerDataRouter} 移除，
+ * 不再经 {@code bong:server_data} / proto 路径。
  */
 class HalfStepRechallengeHandlerTest {
 
@@ -334,69 +342,97 @@ class HalfStepRechallengeHandlerTest {
                 + HalfStepRechallengeStore.snapshot().active());
     }
 
-    // ─── 8. ServerDataRouter wire key 契约 pin ───────────────────────────────
+    // ─── 8. 专属 channel 直接调用契约 pin ───────────────────────────────────────
+    //
+    // wire protocol 变更：bong:halfstep_rechallenge 专属 JSON channel 取代 ServerDataRouter 路由。
+    // BongNetworkHandler.registerHalfStepRechallengeChannel() 接收裸 HalfStepRechallengeV1 JSON，
+    // 调用 HalfStepRechallengeHandler.handle(String)（静态方法）。
 
     @Test
-    void routerRegistersHalfStepRechallengeKey() {
-        // 锁死 server wire type "half_step_rechallenge"（plan 契约：agent_bridge.rs L:HalfStepRechallenge）
+    void routerDoesNotRegisterHalfStepRechallengeKey() {
+        // 防回归 pin：half_step_rechallenge 已迁移到专属 channel，不再经 ServerDataRouter。
+        // 若有人把它重新加回 router，此测试立即撞红，提示可能重新引入 proto unreachable panic 风险。
         ServerDataRouter router = ServerDataRouter.createDefault();
-        assertTrue(router.registeredTypes().contains("half_step_rechallenge"),
-            "'half_step_rechallenge' 必须已在 ServerDataRouter 注册（server wire type；"
-                + "注意旧错误拼写 'halfstep_rechallenge' 无下划线不被接受）；"
-                + "实际注册类型=" + router.registeredTypes());
+        assertFalse(router.registeredTypes().contains("half_step_rechallenge"),
+            "half_step_rechallenge 已迁移到专属 bong:halfstep_rechallenge channel，"
+                + "不应再出现在 ServerDataRouter 的注册 key 中；"
+                + "实际注册类型包含: half_step_rechallenge（需要从 ServerDataRouter.createDefault() 移除）");
         assertFalse(router.registeredTypes().contains("halfstep_rechallenge"),
-            "错误拼写 'halfstep_rechallenge'（无下划线）不应存在于 router；"
-                + "server agent_bridge.rs 下发的是 'half_step_rechallenge'");
+            "halfstep_rechallenge（无下划线版本）也不应存在于 router");
     }
 
     @Test
-    void routerDispatchesHalfStepRechallengeActiveToStore() {
-        // 完整路由链：JSON payload → ServerDataRouter.route() → handler → store
-        ServerDataRouter router = ServerDataRouter.createDefault();
-        String json = "{\"v\":1,\"type\":\"half_step_rechallenge\","
-            + "\"active\":true,\"char_id\":\"offline:Azure\","
+    void directChannelHandleActiveTrueWritesStore() {
+        // 模拟 BongNetworkHandler.registerHalfStepRechallengeChannel() 收到裸 JSON（无 envelope）
+        String bareJson = "{\"active\":true,\"char_id\":\"offline:Azure\","
             + "\"rechallenge_window_until\":4032000,\"at_tick\":10000}";
-        int size = json.getBytes(StandardCharsets.UTF_8).length;
 
-        ServerDataRouter.RouteResult result = router.route(json, size);
-
-        assertFalse(result.isParseError(),
-            "路由 half_step_rechallenge 不应有 parse 错误；实际=" + result.logMessage());
-        assertTrue(result.isHandled(),
-            "ServerDataRouter 必须将 half_step_rechallenge 路由到 handler（非 noOp）；实际="
-                + result.logMessage());
+        HalfStepRechallengeHandler.handle(bareJson);
 
         HalfStepRechallengeStore.State state = HalfStepRechallengeStore.snapshot();
         assertTrue(state.active(),
-            "router 路由后 store.active 应为 true；实际=" + state.active());
+            "专属 channel handle(String) active=true 后 store.active 应为 true；实际=" + state.active());
         assertEquals("offline:Azure", state.charId(),
-            "router 路由后 store.charId 应为 'offline:Azure'；实际=" + state.charId());
+            "专属 channel handle(String) 后 store.charId 应为 'offline:Azure'；实际=" + state.charId());
         assertEquals(4032000L, state.windowUntilTick(),
-            "router 路由后 windowUntilTick 应为 4032000；实际=" + state.windowUntilTick());
+            "专属 channel handle(String) 后 windowUntilTick 应为 4032000；实际=" + state.windowUntilTick());
         assertEquals(10000L, state.atTick(),
-            "router 路由后 atTick 应为 10000；实际=" + state.atTick());
+            "专属 channel handle(String) 后 atTick 应为 10000；实际=" + state.atTick());
     }
 
     @Test
-    void routerDispatchesHalfStepRechallengeHideToClear() {
-        // HIDE 路径：active=false → clear()
+    void directChannelHandleActiveFalseClearsStore() {
+        // 先置为 active
         HalfStepRechallengeStore.replace(
             new HalfStepRechallengeStore.State(true, "offline:Azure", 9999L, 100L, 0L)
         );
+        assertTrue(HalfStepRechallengeStore.snapshot().active(), "前提：store 应为 active=true");
 
-        ServerDataRouter router = ServerDataRouter.createDefault();
-        String json = "{\"v\":1,\"type\":\"half_step_rechallenge\","
-            + "\"active\":false,\"char_id\":\"offline:Azure\","
+        // 裸 JSON HIDE（无 envelope wrapper）
+        String bareHideJson = "{\"active\":false,\"char_id\":\"offline:Azure\","
             + "\"rechallenge_window_until\":0,\"at_tick\":0}";
-        int size = json.getBytes(StandardCharsets.UTF_8).length;
 
-        ServerDataRouter.RouteResult result = router.route(json, size);
+        HalfStepRechallengeHandler.handle(bareHideJson);
 
-        assertTrue(result.isHandled(),
-            "HIDE payload 的路由结果应为 handled；实际=" + result.logMessage());
         assertFalse(HalfStepRechallengeStore.snapshot().active(),
-            "HIDE 路由后 store 应已清空（active=false）；实际="
+            "专属 channel handle(String) active=false 后 store 应已清空；实际="
                 + HalfStepRechallengeStore.snapshot().active());
+    }
+
+    @Test
+    void directChannelHandleBlankJsonDoesNotThrow() {
+        // blank / null JSON 不应抛异常（graceful ignore）
+        assertDoesNotThrow(() -> HalfStepRechallengeHandler.handle(""),
+            "空字符串不应抛出异常");
+        assertDoesNotThrow(() -> HalfStepRechallengeHandler.handle((String) null),
+            "null 不应抛出异常");
+        assertDoesNotThrow(() -> HalfStepRechallengeHandler.handle("  "),
+            "空白字符串不应抛出异常");
+    }
+
+    @Test
+    void directChannelHandleMalformedJsonDoesNotThrow() {
+        // 畸形 JSON 不应抛出异常（graceful ignore）
+        assertDoesNotThrow(() -> HalfStepRechallengeHandler.handle("{invalid json!!!}"),
+            "畸形 JSON 不应抛出异常（应被 try-catch 吞掉并记录日志）");
+    }
+
+    @Test
+    void directChannelHandleFullFieldsFromServerWireFormat() {
+        // 锁定 server 发出的真实 wire JSON 格式（serde_json 序列化的 HalfStepRechallengeV1）
+        // server 发: {"active":true,"char_id":"...","rechallenge_window_until":...,"at_tick":...}
+        // 无 "v" / "type" 字段（那是 ServerDataV1 外层，此处不存在）
+        String serverWireJson = "{\"active\":true,\"char_id\":\"offline:Beryl\","
+            + "\"rechallenge_window_until\":5000000,\"at_tick\":25000}";
+
+        HalfStepRechallengeHandler.handle(serverWireJson);
+
+        HalfStepRechallengeStore.State state = HalfStepRechallengeStore.snapshot();
+        assertTrue(state.active(), "server wire format: active 应为 true");
+        assertEquals("offline:Beryl", state.charId(), "server wire format: char_id 应正确写入");
+        assertEquals(5000000L, state.windowUntilTick(),
+            "server wire format: rechallenge_window_until 应正确写入");
+        assertEquals(25000L, state.atTick(), "server wire format: at_tick 应正确写入");
     }
 
     // ─── Helper ──────────────────────────────────────────────────────────────
