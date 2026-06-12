@@ -229,6 +229,15 @@ pub struct ContainerSpec {
     pub durability_cost_per_op: f64,
     /// plan-qi-handling-attrition-v1 P3 — 此容器内物品跳过搬运磨损。
     pub attrition_exempt: bool,
+    /// plan-container-filter-and-completion-v1 P0 — 可接受物品筛选；None/empty = 全收。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub accept_filter: Option<Vec<ContainerAcceptFilter>>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ContainerAcceptFilter {
+    Category(ItemCategory),
+    TemplatePrefix(String),
 }
 
 /// plan-weapon-v1 §1.1：武器模板级别的静态属性（不随 instance 变动）。
@@ -287,6 +296,12 @@ pub enum ItemCategory {
     Scroll,
     Misc,
     Block,
+    /// plan-container-filter-and-completion-v1 P0 — 矿石/矿物类散料。
+    Mineral,
+    /// plan-container-filter-and-completion-v1 P0 — 暗器类物品。
+    Anqi,
+    /// plan-container-filter-and-completion-v1 P0 — 液体类容器内容物。
+    Liquid,
     /// plan-backpack-equip-v1 P0 — 可装备容器（背包/囊/挎包），携带 ContainerSpec。
     #[allow(dead_code)]
     Container,
@@ -1587,6 +1602,8 @@ pub struct ContainerSpecToml {
     durability_cost_per_op: f64,
     #[serde(default)]
     attrition_exempt: bool,
+    #[serde(default)]
+    accept: Option<Vec<String>>,
 }
 
 /// plan-shield-block-v1 P2 — TOML 层的盾牌规格块（对应 `[item.shield_spec]`）。
@@ -1655,6 +1672,15 @@ pub fn parse_container_spec(
             raw.durability_cost_per_op
         ));
     }
+    let accept_filter = raw
+        .accept
+        .map(|accept| {
+            accept
+                .into_iter()
+                .map(|raw_filter| parse_container_accept_filter(&raw_filter, source_path, item_id))
+                .collect::<Result<Vec<_>, _>>()
+        })
+        .transpose()?;
     Ok(ContainerSpec {
         rows: raw.rows,
         cols: raw.cols,
@@ -1662,7 +1688,33 @@ pub fn parse_container_spec(
         equip_slot: raw.equip_slot,
         durability_cost_per_op: raw.durability_cost_per_op,
         attrition_exempt: raw.attrition_exempt,
+        accept_filter,
     })
+}
+
+fn parse_container_accept_filter(
+    raw: &str,
+    source_path: &Path,
+    item_id: &str,
+) -> Result<ContainerAcceptFilter, String> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return Err(format!(
+            "{} item `{item_id}` has empty container.accept entry",
+            source_path.display()
+        ));
+    }
+    if let Some(prefix) = trimmed.strip_prefix("prefix:") {
+        let prefix = prefix.trim();
+        if prefix.is_empty() {
+            return Err(format!(
+                "{} item `{item_id}` has empty container.accept prefix",
+                source_path.display()
+            ));
+        }
+        return Ok(ContainerAcceptFilter::TemplatePrefix(prefix.to_string()));
+    }
+    parse_item_category(trimmed, source_path, item_id).map(ContainerAcceptFilter::Category)
 }
 
 /// plan-shield-block-v1 P2 — 解析 TOML 盾牌规格块为 `ShieldSpec`。
@@ -1683,9 +1735,10 @@ pub fn parse_shield_spec(
 
 fn default_max_stack_count_for_category(category: ItemCategory) -> u32 {
     match category {
-        ItemCategory::Herb | ItemCategory::Block => 64,
+        ItemCategory::Herb | ItemCategory::Block | ItemCategory::Mineral => 64,
         ItemCategory::BoneCoin => u32::MAX,
-        ItemCategory::Pill | ItemCategory::Misc | ItemCategory::Food => 16,
+        ItemCategory::Anqi => 32,
+        ItemCategory::Pill | ItemCategory::Misc | ItemCategory::Food | ItemCategory::Liquid => 16,
         ItemCategory::Armor
         | ItemCategory::Weapon
         | ItemCategory::Tool
@@ -2098,6 +2151,9 @@ fn parse_item_category(
         "scroll" => Ok(ItemCategory::Scroll),
         "misc" => Ok(ItemCategory::Misc),
         "block" => Ok(ItemCategory::Block),
+        "mineral" | "ore" => Ok(ItemCategory::Mineral),
+        "anqi" | "hidden_weapon" => Ok(ItemCategory::Anqi),
+        "liquid" => Ok(ItemCategory::Liquid),
         "container" => Ok(ItemCategory::Container),
         // plan-food-v1 P0 — 灵食分类
         "food" => Ok(ItemCategory::Food),
@@ -2107,6 +2163,23 @@ fn parse_item_category(
             "{} item `{item_id}` has unknown category `{other}`",
             source_path.display()
         )),
+    }
+}
+
+#[allow(dead_code)]
+pub fn item_passes_filter(
+    filter: &Option<Vec<ContainerAcceptFilter>>,
+    item: &ItemInstance,
+    registry: &ItemRegistry,
+) -> bool {
+    match filter.as_deref() {
+        None | Some([]) => true,
+        Some(filters) => filters.iter().any(|entry| match entry {
+            ContainerAcceptFilter::Category(category) => registry
+                .get(&item.template_id)
+                .is_some_and(|template| template.category == *category),
+            ContainerAcceptFilter::TemplatePrefix(prefix) => item.template_id.starts_with(prefix),
+        }),
     }
 }
 
@@ -8448,6 +8521,7 @@ cols = 4
                 equip_slot: equip_slot.to_string(),
                 durability_cost_per_op: 0.0,
                 attrition_exempt: false,
+                accept_filter: None,
             }),
             shield_spec: None,
 
@@ -8586,6 +8660,7 @@ cols = 4
             equip_slot: EQUIP_SLOT_BACK_PACK.to_string(),
             durability_cost_per_op: 0.001,
             attrition_exempt: false,
+            accept: None,
         };
         let spec =
             parse_container_spec(raw, Path::new("<test>"), "back_pack_item").expect("should parse");
@@ -8598,6 +8673,10 @@ cols = 4
         assert_eq!(spec.equip_slot, EQUIP_SLOT_BACK_PACK, "equip_slot mismatch");
         assert!((spec.durability_cost_per_op - 0.001).abs() < f64::EPSILON);
         assert!(!spec.attrition_exempt, "普通背包默认不应豁免搬运磨损");
+        assert_eq!(
+            spec.accept_filter, None,
+            "旧 TOML 未声明 accept 时应保持 accept_filter=None，避免破坏既有容器"
+        );
     }
 
     #[test]
@@ -8609,6 +8688,7 @@ cols = 4
             equip_slot: EQUIP_SLOT_WAIST_POUCH.to_string(),
             durability_cost_per_op: 0.0,
             attrition_exempt: false,
+            accept: None,
         };
         let spec = parse_container_spec(raw, Path::new("<test>"), "waist_pouch_item")
             .expect("should parse");
@@ -8624,6 +8704,7 @@ cols = 4
             equip_slot: EQUIP_SLOT_CHEST_SATCHEL.to_string(),
             durability_cost_per_op: 0.0,
             attrition_exempt: true,
+            accept: None,
         };
         let spec = parse_container_spec(raw, Path::new("<test>"), "chest_satchel_item")
             .expect("should parse");
@@ -8631,6 +8712,263 @@ cols = 4
         assert!(
             spec.attrition_exempt,
             "显式封灵容器应保留 attrition_exempt=true"
+        );
+    }
+
+    // ── plan-container-filter-and-completion-v1 P0 — category + accept_filter 数据模型 ──
+
+    #[test]
+    fn parse_item_category_accepts_container_filter_categories_and_aliases() {
+        let path = Path::new("<inline-items.toml>");
+        let cases = [
+            ("mineral", ItemCategory::Mineral),
+            ("ore", ItemCategory::Mineral),
+            ("MINERAL", ItemCategory::Mineral),
+            (" anqi ", ItemCategory::Anqi),
+            ("hidden_weapon", ItemCategory::Anqi),
+            ("liquid", ItemCategory::Liquid),
+        ];
+        for (raw, expected) in cases {
+            let parsed = parse_item_category(raw, path, "filter_case")
+                .expect("container filter category should parse");
+            assert_eq!(
+                parsed, expected,
+                "期望 category `{raw}` 解析为 {expected:?}，实际得到 {parsed:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn item_category_container_filter_variants_serde_roundtrip() {
+        for category in [
+            ItemCategory::Mineral,
+            ItemCategory::Anqi,
+            ItemCategory::Liquid,
+        ] {
+            let json = serde_json::to_string(&category).expect("ItemCategory should serialize");
+            let parsed: ItemCategory =
+                serde_json::from_str(&json).expect("ItemCategory should deserialize");
+            assert_eq!(
+                parsed, category,
+                "期望 {category:?} serde roundtrip 后保持同一变体"
+            );
+        }
+    }
+
+    #[test]
+    fn container_filter_categories_have_pinned_default_stack_counts() {
+        assert_eq!(
+            default_max_stack_count_for_category(ItemCategory::Mineral),
+            64
+        );
+        assert_eq!(default_max_stack_count_for_category(ItemCategory::Anqi), 32);
+        assert_eq!(
+            default_max_stack_count_for_category(ItemCategory::Liquid),
+            16
+        );
+    }
+
+    #[test]
+    fn parse_container_spec_accept_empty_is_explicit_all_accepting_filter() {
+        let raw = ContainerSpecToml {
+            rows: 2,
+            cols: 2,
+            weight_capacity: 0.0,
+            equip_slot: EQUIP_SLOT_WAIST_POUCH.to_string(),
+            durability_cost_per_op: 0.0,
+            attrition_exempt: false,
+            accept: Some(Vec::new()),
+        };
+        let spec = parse_container_spec(raw, Path::new("<test>"), "open_pouch")
+            .expect("explicit empty accept list should parse");
+        assert_eq!(
+            spec.accept_filter,
+            Some(Vec::new()),
+            "显式 accept=[] 应保留为 Some(empty)，语义仍由 item_passes_filter 判定为全收"
+        );
+    }
+
+    #[test]
+    fn parse_container_spec_accept_parses_categories_and_template_prefix() {
+        let raw = ContainerSpecToml {
+            rows: 3,
+            cols: 3,
+            weight_capacity: 0.0,
+            equip_slot: EQUIP_SLOT_WAIST_POUCH.to_string(),
+            durability_cost_per_op: 0.0,
+            attrition_exempt: false,
+            accept: Some(vec![
+                "mineral".to_string(),
+                "prefix:anqi_".to_string(),
+                "hidden_weapon".to_string(),
+            ]),
+        };
+        let spec = parse_container_spec(raw, Path::new("<test>"), "filtered_pouch")
+            .expect("category and prefix filters should parse");
+        assert_eq!(
+            spec.accept_filter,
+            Some(vec![
+                ContainerAcceptFilter::Category(ItemCategory::Mineral),
+                ContainerAcceptFilter::TemplatePrefix("anqi_".to_string()),
+                ContainerAcceptFilter::Category(ItemCategory::Anqi),
+            ])
+        );
+    }
+
+    #[test]
+    fn parse_container_spec_accept_trims_template_prefix_payload() {
+        for raw_prefix in ["prefix:anqi_", "prefix: anqi_"] {
+            let raw = ContainerSpecToml {
+                rows: 3,
+                cols: 3,
+                weight_capacity: 0.0,
+                equip_slot: EQUIP_SLOT_WAIST_POUCH.to_string(),
+                durability_cost_per_op: 0.0,
+                attrition_exempt: false,
+                accept: Some(vec![raw_prefix.to_string()]),
+            };
+            let spec = parse_container_spec(raw, Path::new("<test>"), "prefix_pouch")
+                .expect("prefix accept entry should parse with optional whitespace");
+            assert_eq!(
+                spec.accept_filter,
+                Some(vec![ContainerAcceptFilter::TemplatePrefix(
+                    "anqi_".to_string()
+                )]),
+                "prefix accept entry `{raw_prefix}` 应归一化为无空白前缀"
+            );
+        }
+    }
+
+    #[test]
+    fn parse_container_spec_rejects_invalid_accept_entries() {
+        for (accept, expected_fragment) in [
+            (vec!["unknown_category".to_string()], "unknown category"),
+            (vec!["".to_string()], "empty container.accept entry"),
+            (vec!["prefix:".to_string()], "empty container.accept prefix"),
+        ] {
+            let raw = ContainerSpecToml {
+                rows: 2,
+                cols: 2,
+                weight_capacity: 0.0,
+                equip_slot: EQUIP_SLOT_WAIST_POUCH.to_string(),
+                durability_cost_per_op: 0.0,
+                attrition_exempt: false,
+                accept: Some(accept),
+            };
+            let err = parse_container_spec(raw, Path::new("<test>"), "bad_accept")
+                .expect_err("invalid accept entry should fail");
+            assert!(
+                err.contains(expected_fragment),
+                "期望错误包含 `{expected_fragment}`，实际错误为 {err}"
+            );
+        }
+    }
+
+    #[test]
+    fn item_passes_filter_treats_none_and_empty_as_all_accepting() {
+        let registry = registry_from_templates(vec![test_template(
+            "ordinary_herb",
+            ItemCategory::Herb,
+            1,
+            1,
+            64,
+        )]);
+        let item = make_test_item_instance(42, "ordinary_herb");
+        assert!(item_passes_filter(&None, &item, &registry));
+        assert!(item_passes_filter(&Some(Vec::new()), &item, &registry));
+    }
+
+    #[test]
+    fn item_passes_filter_matches_category_template_prefix_and_union() {
+        let registry = registry_from_templates(vec![
+            test_template("ore_iron", ItemCategory::Mineral, 1, 1, 64),
+            test_template("spirit_herb", ItemCategory::Herb, 1, 1, 64),
+            test_template("water_skin_filled", ItemCategory::Liquid, 1, 1, 16),
+            test_template("anqi_bone_chip", ItemCategory::Anqi, 1, 1, 32),
+        ]);
+        let mineral_filter = Some(vec![ContainerAcceptFilter::Category(ItemCategory::Mineral)]);
+        assert!(item_passes_filter(
+            &mineral_filter,
+            &make_test_item_instance(1, "ore_iron"),
+            &registry
+        ));
+        assert!(!item_passes_filter(
+            &mineral_filter,
+            &make_test_item_instance(2, "spirit_herb"),
+            &registry
+        ));
+
+        let prefix_filter = Some(vec![ContainerAcceptFilter::TemplatePrefix(
+            "anqi_".to_string(),
+        )]);
+        assert!(item_passes_filter(
+            &prefix_filter,
+            &make_test_item_instance(3, "anqi_bone_chip"),
+            &registry
+        ));
+        assert!(!item_passes_filter(
+            &prefix_filter,
+            &make_test_item_instance(4, "ore_iron"),
+            &registry
+        ));
+
+        let union_filter = Some(vec![
+            ContainerAcceptFilter::Category(ItemCategory::Mineral),
+            ContainerAcceptFilter::Category(ItemCategory::Liquid),
+        ]);
+        assert!(item_passes_filter(
+            &union_filter,
+            &make_test_item_instance(5, "water_skin_filled"),
+            &registry
+        ));
+        assert!(!item_passes_filter(
+            &union_filter,
+            &make_test_item_instance(6, "spirit_herb"),
+            &registry
+        ));
+    }
+
+    #[test]
+    fn container_spec_accept_filter_serde_roundtrip() {
+        let spec = ContainerSpec {
+            rows: 2,
+            cols: 3,
+            weight_capacity: 4.0,
+            equip_slot: EQUIP_SLOT_WAIST_POUCH.to_string(),
+            durability_cost_per_op: 0.0,
+            attrition_exempt: false,
+            accept_filter: Some(vec![
+                ContainerAcceptFilter::Category(ItemCategory::Mineral),
+                ContainerAcceptFilter::TemplatePrefix("anqi_".to_string()),
+            ]),
+        };
+        let json = serde_json::to_string(&spec).expect("ContainerSpec should serialize");
+        let parsed: ContainerSpec =
+            serde_json::from_str(&json).expect("ContainerSpec should deserialize");
+        assert_eq!(parsed, spec);
+    }
+
+    #[test]
+    fn legacy_container_spec_json_without_accept_filter_defaults_to_none() {
+        let json = r#"{
+            "rows": 2,
+            "cols": 3,
+            "weight_capacity": 4.0,
+            "equip_slot": "waist_pouch",
+            "durability_cost_per_op": 0.0,
+            "attrition_exempt": false
+        }"#;
+        let parsed: ContainerSpec =
+            serde_json::from_str(json).expect("legacy ContainerSpec should deserialize");
+        assert_eq!(
+            parsed.accept_filter, None,
+            "旧存档/协议缺 accept_filter 时必须默认 None"
+        );
+        let serialized =
+            serde_json::to_string(&parsed).expect("legacy ContainerSpec should serialize");
+        assert!(
+            !serialized.contains("accept_filter"),
+            "accept_filter=None 序列化时应省略字段，避免旧 JSON 形状变成 null：{serialized}"
         );
     }
 
@@ -8645,6 +8983,7 @@ cols = 4
             equip_slot: EQUIP_SLOT_BACK_PACK.to_string(),
             durability_cost_per_op: 0.0,
             attrition_exempt: false,
+            accept: None,
         };
         let err = parse_container_spec(raw, Path::new("<test>"), "bad_rows")
             .expect_err("should fail with rows=0");
@@ -8660,6 +8999,7 @@ cols = 4
             equip_slot: EQUIP_SLOT_BACK_PACK.to_string(),
             durability_cost_per_op: 0.0,
             attrition_exempt: false,
+            accept: None,
         };
         let err = parse_container_spec(raw, Path::new("<test>"), "bad_rows_overflow")
             .expect_err("rows > 16 should fail");
@@ -8675,6 +9015,7 @@ cols = 4
             equip_slot: EQUIP_SLOT_BACK_PACK.to_string(),
             durability_cost_per_op: 0.0,
             attrition_exempt: false,
+            accept: None,
         };
         let err = parse_container_spec(raw, Path::new("<test>"), "bad_cols")
             .expect_err("cols=0 should fail");
@@ -8690,6 +9031,7 @@ cols = 4
             equip_slot: EQUIP_SLOT_BACK_PACK.to_string(),
             durability_cost_per_op: 0.0,
             attrition_exempt: false,
+            accept: None,
         };
         let err = parse_container_spec(raw, Path::new("<test>"), "bad_weight")
             .expect_err("negative weight_capacity should fail");
@@ -8708,6 +9050,7 @@ cols = 4
             equip_slot: "main_hand".to_string(),
             durability_cost_per_op: 0.0,
             attrition_exempt: false,
+            accept: None,
         };
         let err = parse_container_spec(raw, Path::new("<test>"), "bad_slot")
             .expect_err("invalid equip_slot should fail");
@@ -8726,6 +9069,7 @@ cols = 4
             equip_slot: EQUIP_SLOT_BACK_PACK.to_string(),
             durability_cost_per_op: -0.1,
             attrition_exempt: false,
+            accept: None,
         };
         let err = parse_container_spec(raw, Path::new("<test>"), "bad_dur_cost")
             .expect_err("negative durability_cost_per_op should fail");
@@ -9272,6 +9616,7 @@ cols = 4
                 equip_slot: EQUIP_SLOT_WAIST_POUCH.to_string(),
                 durability_cost_per_op: 0.008,
                 attrition_exempt: false,
+                accept_filter: None,
             }),
             shield_spec: None,
 
