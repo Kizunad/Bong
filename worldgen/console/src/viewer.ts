@@ -235,24 +235,59 @@ export class Viewer {
 
   // ---- fly camera input ----------------------------------------------------
 
+  /** True when the focused element is a text-editing control. The fly camera
+   *  must NOT consume WASD/QE while the user types in the param textarea. */
+  private static isEditingTarget(target: EventTarget | null): boolean {
+    const el = target as HTMLElement | null;
+    if (!el) return false;
+    const tag = el.tagName;
+    return (
+      tag === "INPUT" ||
+      tag === "TEXTAREA" ||
+      tag === "SELECT" ||
+      el.isContentEditable === true
+    );
+  }
+
+  private readonly onKeyDown = (e: KeyboardEvent): void => {
+    // Ignore movement keys while editing a control (textarea/input/select) so
+    // typing parameters doesn't fly the camera around. Drop any keys already
+    // held so the camera doesn't keep drifting once focus enters the textarea.
+    if (Viewer.isEditingTarget(e.target)) {
+      this.keys.clear();
+      return;
+    }
+    this.keys.add(e.key.toLowerCase());
+  };
+
+  private readonly onKeyUp = (e: KeyboardEvent): void => {
+    this.keys.delete(e.key.toLowerCase());
+  };
+
+  private readonly onMouseUp = (): void => {
+    this.dragging = false;
+  };
+
+  private readonly onMouseMove = (e: MouseEvent): void => {
+    if (!this.dragging) return;
+    this.yaw -= (e.clientX - this.lastX) * 0.005;
+    this.pitch -= (e.clientY - this.lastY) * 0.005;
+    this.pitch = Math.max(-1.4, Math.min(1.4, this.pitch));
+    this.lastX = e.clientX;
+    this.lastY = e.clientY;
+  };
+
   private bindInput(): void {
     const el = this.renderer.domElement;
-    window.addEventListener("keydown", (e) => this.keys.add(e.key.toLowerCase()));
-    window.addEventListener("keyup", (e) => this.keys.delete(e.key.toLowerCase()));
+    window.addEventListener("keydown", this.onKeyDown);
+    window.addEventListener("keyup", this.onKeyUp);
     el.addEventListener("mousedown", (e) => {
       this.dragging = true;
       this.lastX = e.clientX;
       this.lastY = e.clientY;
     });
-    window.addEventListener("mouseup", () => (this.dragging = false));
-    window.addEventListener("mousemove", (e) => {
-      if (!this.dragging) return;
-      this.yaw -= (e.clientX - this.lastX) * 0.005;
-      this.pitch -= (e.clientY - this.lastY) * 0.005;
-      this.pitch = Math.max(-1.4, Math.min(1.4, this.pitch));
-      this.lastX = e.clientX;
-      this.lastY = e.clientY;
-    });
+    window.addEventListener("mouseup", this.onMouseUp);
+    window.addEventListener("mousemove", this.onMouseMove);
     el.addEventListener("wheel", (e) => {
       const dir = this.forward();
       this.camera.position.addScaledVector(dir, -e.deltaY * 0.4);
@@ -299,6 +334,10 @@ export class Viewer {
   dispose(): void {
     this.disposed = true;
     window.removeEventListener("resize", this.onResize);
+    window.removeEventListener("keydown", this.onKeyDown);
+    window.removeEventListener("keyup", this.onKeyUp);
+    window.removeEventListener("mouseup", this.onMouseUp);
+    window.removeEventListener("mousemove", this.onMouseMove);
     this.renderer.dispose();
   }
 }
