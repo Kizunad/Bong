@@ -5,6 +5,7 @@
 
 import { describe, it, expect, vi, afterEach } from "vitest";
 import { editableSubset, parseOverrides, EDITABLE_ZONE_FIELDS } from "../src/params";
+import { hashSwatchColor } from "../src/palette";
 import { postRegen } from "../src/api";
 import type { ManifestZone } from "../src/types";
 
@@ -72,6 +73,31 @@ describe("parseOverrides", () => {
     const parsed = parseOverrides(text);
     expect(parsed.spirit_qi).toBe(0.3);
     expect(parsed.worldgen).toEqual({ terrain_profile: "spawn_plain", shape: "ellipse" });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// hashSwatchColor — distinct zones get distinct colors (no all-magenta bug)
+// ---------------------------------------------------------------------------
+
+describe("hashSwatchColor", () => {
+  it("is deterministic per name", () => {
+    expect(hashSwatchColor("rift_valley")).toEqual(hashSwatchColor("rift_valley"));
+  });
+
+  it("gives distinct zones distinct colors (the all-magenta fallback bug fix)", () => {
+    const names = ["spawn", "peaks", "rift", "marsh", "wastes", "ash"];
+    const seen = new Set(names.map((n) => hashSwatchColor(n).join(",")));
+    // Hash collisions are possible but vanishingly unlikely for this small set;
+    // require at least most to be distinct so the list is readable.
+    expect(seen.size).toBeGreaterThanOrEqual(names.length - 1);
+  });
+
+  it("returns RGB in 0..255", () => {
+    for (const v of hashSwatchColor("any_zone")) {
+      expect(v).toBeGreaterThanOrEqual(0);
+      expect(v).toBeLessThanOrEqual(255);
+    }
   });
 });
 

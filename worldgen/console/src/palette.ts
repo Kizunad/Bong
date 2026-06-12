@@ -58,6 +58,46 @@ export const ZONE_COLORS: Record<string, RGB> = {
 /** Fallback zone swatch (exporters.py default `(214, 88, 185)`). */
 export const ZONE_FALLBACK: RGB = [214, 88, 185];
 
+/**
+ * Deterministic per-name swatch color for zones whose terrain_profile has no
+ * entry in ZONE_COLORS. Hash the name into a hue so two distinct zones never
+ * collapse to the same fallback magenta — each zone stays distinguishable in
+ * the list even when its profile is unknown to the static table.
+ */
+export function hashSwatchColor(name: string): RGB {
+  let h = 2166136261; // FNV-1a 32-bit basis
+  for (let i = 0; i < name.length; i++) {
+    h ^= name.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  const hue = (h >>> 0) % 360;
+  return hslToRgb(hue / 360, 0.5, 0.6);
+}
+
+/** HSL (0..1 each) -> RGB (0..255). Small local helper for hashSwatchColor. */
+function hslToRgb(h: number, s: number, l: number): RGB {
+  if (s === 0) {
+    const v = Math.round(l * 255);
+    return [v, v, v];
+  }
+  const q = l < 0.5 ? l * (1 + s) : l + s - l * s;
+  const p = 2 * l - q;
+  const hk = (t: number): number => {
+    let tc = t;
+    if (tc < 0) tc += 1;
+    if (tc > 1) tc -= 1;
+    if (tc < 1 / 6) return p + (q - p) * 6 * tc;
+    if (tc < 1 / 2) return q;
+    if (tc < 2 / 3) return p + (q - p) * (2 / 3 - tc) * 6;
+    return p;
+  };
+  return [
+    Math.round(hk(h + 1 / 3) * 255),
+    Math.round(hk(h) * 255),
+    Math.round(hk(h - 1 / 3) * 255),
+  ];
+}
+
 /** Fixed water tint used by the preview exporter for the water overlay layer. */
 export const WATER_COLOR: RGB = [74, 112, 168];
 

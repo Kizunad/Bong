@@ -7,7 +7,7 @@ import { fetchManifest, postRegen } from "./api";
 import { loadTile, tilesByDistanceToSpawn } from "./tile-loader";
 import { Viewer, type ViewerLayers } from "./viewer";
 import type { Manifest, ManifestTile } from "./types";
-import { ZONE_COLORS, ZONE_FALLBACK, type RGB } from "./palette";
+import { ZONE_COLORS, hashSwatchColor, type RGB } from "./palette";
 import { editableSubset, parseOverrides } from "./params";
 
 const statusEl = document.getElementById("status")!;
@@ -78,9 +78,10 @@ function loadBlueprintZones(): void {
 }
 
 function zoneSwatch(zone: ZoneInfo): RGB {
-  // Color by the zone's real terrain_profile (now surfaced in manifest.zones),
-  // matching the PNG previews. Unknown profiles fall back to magenta for now.
-  return ZONE_COLORS[zone.profile] ?? ZONE_FALLBACK;
+  // Color by the zone's real terrain_profile (surfaced in manifest.zones),
+  // matching the PNG previews. A profile with no static table entry hashes its
+  // NAME to a stable hue so distinct zones never collapse to one magenta swatch.
+  return ZONE_COLORS[zone.profile] ?? hashSwatchColor(zone.name);
 }
 
 function buildZoneList(): void {
