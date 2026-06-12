@@ -7,7 +7,7 @@ import { readFileSync } from "node:fs";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { WorldStateV1 } from "@bong/schema";
-import type { ChatSignal, NpcDeathV1 } from "@bong/schema";
+import type { ChatSignal, NpcDeathV1, AgentUiResponsePayloadV1 } from "@bong/schema";
 import { type ContextRecipe, assembleContext, createContextInput } from "./context.js";
 import { normalizeLlmChatResult, type LlmClient, type LlmToolUsage } from "./llm.js";
 import { type AgentDecision, parseDecision } from "./parse.js";
@@ -69,6 +69,8 @@ export class TiandaoAgent {
   readonly intervalMs: number;
   private latestChatSignals: ChatSignal[] = [];
   private latestNpcDeathEvents: NpcDeathV1[] = [];
+  /** plan-agent-ui-data-v1 P2 — 本窗口玩家 UI button_click 事件，tick 时织入 LLM context。 */
+  private latestButtonClickEvents: AgentUiResponsePayloadV1[] = [];
   private worldModel?: WorldModel;
   private readonly now: () => number;
   private readonly tools: readonly AgentTool[];
@@ -93,6 +95,16 @@ export class TiandaoAgent {
   /** plan-offscreen-war-v1 P4：注入本窗口离屏 death 事件，供 offscreenWarBlock 聚合喂推演。 */
   setNpcDeathEvents(events: NpcDeathV1[]): void {
     this.latestNpcDeathEvents = events;
+  }
+
+  /**
+   * plan-agent-ui-data-v1 P2 — 注入本轮玩家 UI button_click 事件。
+   * runtime 在每轮 tick 前调 applyButtonClickEventsToAgents → 此方法；
+   * tick() 将 latestButtonClickEvents 织入 LLM context（buttonClickBlock），
+   * 让天道 Agent 在下一轮推演中感知玩家意图（进入秘境/仅观察/关闭等）。
+   */
+  setButtonClickEvents(events: AgentUiResponsePayloadV1[]): void {
+    this.latestButtonClickEvents = events;
   }
 
   setWorldModel(worldModel: WorldModel): void {
@@ -120,6 +132,8 @@ export class TiandaoAgent {
         agentName: this.name,
         worldModel: this.worldModel,
         npcDeathEvents: this.latestNpcDeathEvents,
+        // plan-agent-ui-data-v1 P2 — 玩家 UI button_click 意图信号进 LLM 推演上下文
+        buttonClickEvents: this.latestButtonClickEvents,
       }),
     );
     const userPrompt = `${context}\n\n---\n\n请基于以上信息决策。输出 JSON。如果不需要行动，返回空数组。`;
