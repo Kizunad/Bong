@@ -268,7 +268,6 @@ class SpansExportLayoutTest(unittest.TestCase):
             buf = next(
                 t for t in fields.tiles if t.tile.tile_id == tile_meta["dir"]
             )
-            folded = spans_for_tile(buf)
             zone_chains = _zone_carver_chains(plan)
             chain = _tile_carver_chain(buf, zone_chains)
             self.assertTrue(
@@ -276,6 +275,12 @@ class SpansExportLayoutTest(unittest.TestCase):
                 "sky_isle tile must resolve a floating_island carver chain — "
                 "the export carves it, so the round-trip reference must too",
             )
+            # worldgen-v4 P3 §6.1 双源收口: the export folds with
+            # suppress_fold_isle=True whenever the chain owns the isle, so the
+            # round-trip baseline MUST mirror that flag or it would silently
+            # diverge from the on-disk bytes when the 2D fold also has isle data.
+            suppress_fold_isle = any(c.name == "floating_island" for c in chain)
+            folded = spans_for_tile(buf, suppress_fold_isle=suppress_fold_isle)
             carved = apply_carver_chain(
                 folded,
                 chain,
@@ -299,6 +304,75 @@ class SpansExportLayoutTest(unittest.TestCase):
                     f"column {col_idx} on disk != fold+carve (offset "
                     f"{col_idx * SPAN_BYTES_PER_COLUMN})",
                 )
+
+
+class ZoneFilterValidationTest(unittest.TestCase):
+    """synthesize_fields must fail fast on an unknown zone_filter name."""
+
+    def _plan(self, td: str):
+        zone = _build_zone("cave_network")
+        blueprint = WorldBlueprint(
+            version=1,
+            world_name="filter_world",
+            spawn_zone=zone.name,
+            bounds_xz=zone.bounds_xz,
+            notes=(),
+            zones=(zone,),
+        )
+        catalog = TerrainProfileCatalog(
+            version=1,
+            profiles={
+                "cave_network": TerrainProfileSpec(
+                    name="cave_network",
+                    boundary=BoundarySpec(mode="soft", width=24),
+                    height={"base": [60, 80], "peak": 96},
+                    surface=("grass_block", "stone", "gravel"),
+                    water={"level": "none", "coverage": 0.0},
+                    passability="medium",
+                    extras={},
+                )
+            },
+        )
+        return build_generation_plan(
+            blueprint=blueprint,
+            profile_catalog=catalog,
+            blueprint_path=Path("b.json"),
+            profiles_path=Path("p.json"),
+            output_dir=Path(td),
+            tile_size=TILE_SIZE,
+        ), zone.name
+
+    def test_unknown_zone_filter_raises_with_candidates(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            plan, known_name = self._plan(td)
+            with self.assertRaises(ValueError) as ctx:
+                synthesize_fields(plan, zone_filter={"does_not_exist"})
+        msg = str(ctx.exception)
+        self.assertIn(
+            "does_not_exist", msg,
+            "the error must name the offending unknown zone so the typo is "
+            f"obvious; got: {msg!r}",
+        )
+        self.assertIn(
+            known_name, msg,
+            "the error must list the available zone names as candidates; got: "
+            f"{msg!r}",
+        )
+
+    def test_known_zone_filter_is_accepted(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            plan, known_name = self._plan(td)
+            fields = synthesize_fields(plan, zone_filter={known_name})
+        self.assertTrue(
+            fields.tiles,
+            "a valid zone_filter must still synthesize that zone's tiles",
+        )
+
+    def test_none_zone_filter_skips_validation(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            plan, _ = self._plan(td)
+            fields = synthesize_fields(plan, zone_filter=None)
+        self.assertTrue(fields.tiles, "no filter must export the full world")
 
 
 if __name__ == "__main__":
