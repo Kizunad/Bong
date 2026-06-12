@@ -117,7 +117,7 @@ class ColumnSpans:
         return slots
 
     @classmethod
-    def from_slots(cls, slots: Iterable[int], count: int) -> "ColumnSpans":
+    def from_slots(cls, slots: Iterable[int], count: int) -> ColumnSpans:
         """Rebuild from a flat i16 slot list + a count byte (decode side)."""
         flat = list(slots)
         if len(flat) != MAX_SPANS * 2:

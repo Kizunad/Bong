@@ -95,7 +95,7 @@ def capture_baseline() -> list[dict]:
                     "local_z": local_z,
                     "surface_y": v3_carved_surface(buffer, idx),
                     "water_y": (
-                        int(round(water_level)) if water_level >= 0.0 else None
+                        round(water_level) if water_level >= 0.0 else None
                     ),
                     "biome_id": int(biome[idx]),
                 }

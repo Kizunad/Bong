@@ -157,8 +157,6 @@ class SpanByteLayoutTest(unittest.TestCase):
 class SpanDecodeGuardTest(unittest.TestCase):
     def test_decode_rejects_non_sentinel_padding(self) -> None:
         # count=1 but slot 1 carries real-looking coords → corrupt encoding.
-        from scripts.terrain_gen.fields import ColumnSpans as _CS  # noqa: F401
-
         count_bytes = bytes([1])
         # slot0 = (-64, 70); slot1 = (5, 9) (illegal padding); rest sentinel.
         slots = [-64, 70, 5, 9, SPAN_SENTINEL, SPAN_SENTINEL, SPAN_SENTINEL, SPAN_SENTINEL]

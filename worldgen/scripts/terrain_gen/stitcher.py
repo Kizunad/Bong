@@ -256,7 +256,7 @@ def blend_spans(
     structural = overlay_spans if weight >= 0.5 else base_spans
     base_ceiling = base_spans[0][1]
     ov_ceiling = overlay_spans[0][1]
-    blended_ceiling = int(round(base_ceiling + (ov_ceiling - base_ceiling) * weight))
+    blended_ceiling = round(base_ceiling + (ov_ceiling - base_ceiling) * weight)
 
     struct_floor = structural[0][0]
     # Guard: the lerped surface must stay above the structural span's floor.

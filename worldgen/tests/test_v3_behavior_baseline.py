@@ -124,7 +124,7 @@ class HandCalcedV3CarveAnchors(unittest.TestCase):
         self.assertEqual(
             got,
             83,
-            "neg_pressure sink: round(0.5*14)=7 off 90 → 83; got {}".format(got),
+            f"neg_pressure sink: round(0.5*14)=7 off 90 → 83; got {got}",
         )
 
     def test_entrance_only_anchor(self) -> None:
@@ -216,7 +216,7 @@ class V3SurfaceBaselineTest(unittest.TestCase):
             rows = [r for r in self.baseline if r["profile"] == profile_key]
             for row in rows:
                 idx = _col_index(row["local_x"], row["local_z"])
-                raw = int(round(float(height[idx])))
+                raw = round(float(height[idx]))
                 if row["surface_y"] < raw:
                     carved_below_raw += 1
         self.assertGreater(
@@ -265,7 +265,7 @@ class V3SurfaceBaselineTest(unittest.TestCase):
                 got_surface = v3_carved_surface(buffer, idx)
                 water_level = float(water[idx])
                 got_water = (
-                    int(round(water_level)) if water_level >= 0.0 else None
+                    round(water_level) if water_level >= 0.0 else None
                 )
                 got_biome = int(biome[idx])
                 col = (row["local_x"], row["local_z"])
