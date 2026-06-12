@@ -14,10 +14,16 @@ from __future__ import annotations
 
 import numpy as np
 
+from .. import dsl
 from ..blueprint import BlueprintZone
+from ..dsl import QiGrade
 from ..fields import SurfacePalette, TileFieldBuffer, WorldTile
-from ..noise import _tile_coords, fbm_2d, warped_fbm_2d
+from ..noise import _tile_coords
 from .base import DecorationSpec, EcologySpec, ProfileContext, TerrainProfileGenerator
+
+# §8.1 #4 — 丹宗遗园：灵气中等(0.35)但受丹毒抑制，主世界常量区，归 common 档。
+# 现有 zone spirit_qi=0.40（dan_zong_yi_yuan）就近归档。
+QI_GRADE = QiGrade.COMMON
 
 
 DAN_ZONG_YI_YUAN_DECORATIONS = (
@@ -121,24 +127,30 @@ def fill_dan_zong_yi_yuan_tile(
 
     wx, wz = _tile_coords(tile.min_x, tile.min_z, tile_size)
 
-    # Edge warp for organic zone boundary
-    edge_warp = 1.0 + fbm_2d(wx, wz, scale=480.0, octaves=3, seed=1100) * 0.15
+    # Edge warp for organic zone boundary（DSL fbm_height，base=1, amplitude=0.15）
+    edge_warp = dsl.fbm_height(
+        wx, wz, scale=480.0, octaves=3, seed=1100, amplitude=0.15, base=1.0
+    )
     dx = (wx - center_x) / (half_w * edge_warp)
     dz = (wz - center_z) / (half_d * edge_warp)
     radial = np.sqrt(dx * dx + dz * dz)
     interior = radial <= 1.0
 
-    # Noise layers
-    terrain_noise = warped_fbm_2d(
+    # Noise layers（DSL 算子库）
+    terrain_noise = dsl.warped_height(
         wx, wz,
         scale=300.0, octaves=4,
         warp_scale=400.0, warp_strength=35.0,
         seed=1110,
     )
-    detail_noise = fbm_2d(wx, wz, scale=80.0, octaves=3, seed=1120)
+    detail_noise = dsl.fbm_height(wx, wz, scale=80.0, octaves=3, seed=1120)
 
-    # Height field: base [62,78], peak 92
-    height_base = 70.0 + terrain_noise * 6.0 + detail_noise * 2.0
+    # Height field: base [62,78], peak 92（DSL compose_height）
+    height_base = dsl.compose_height(
+        np.full_like(terrain_noise, 70.0),
+        terrain_noise * 6.0,
+        detail_noise * 2.0,
+    )
     height = np.where(
         interior,
         np.clip(height_base, 62.0, 92.0),
@@ -146,7 +158,7 @@ def fill_dan_zong_yi_yuan_tile(
     )
 
     # Surface: podzol-dominant with toxin staining
-    toxin_stain = fbm_2d(wx, wz, scale=120.0, octaves=3, seed=1130)
+    toxin_stain = dsl.fbm_height(wx, wz, scale=120.0, octaves=3, seed=1130)
     surface_id = np.full_like(height, podzol_id, dtype=np.int32)
     surface_id = np.where(toxin_stain > 0.20, purple_terra_id, surface_id)
     surface_id = np.where(toxin_stain < -0.25, coarse_dirt_id, surface_id)
