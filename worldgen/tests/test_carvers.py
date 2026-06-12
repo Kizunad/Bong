@@ -602,6 +602,87 @@ class CarverChainTest(unittest.TestCase):
         )
 
 
+class CarveTileEquivalenceTest(unittest.TestCase):
+    """worldgen-v4 P3 — vectorized carve_tile MUST equal the scalar carve_column.
+
+    ``apply_carver_chain`` uses each carver's vectorized ``carve_tile`` for speed
+    (gate/noise computed once over the tile).  This is only valid if it produces
+    *byte-identical* output to looping ``carve_column`` per column — otherwise the
+    fast export would diverge from the carve contract the rest of P3 tests lock.
+    These pin that equivalence over a real-ish field for every production carver,
+    including a multi-span ground column (cave / canyon split inputs).
+    """
+
+    GROUND_LO = ColumnSpans(((SPAN_MIN_Y, 70),))  # wall-band surface for canyon
+    GROUND_HI = ColumnSpans(((SPAN_MIN_Y, 250),))  # high plateau
+
+    def _assert_chain_equiv(self, carver, base_columns, tile_size, origin):
+        ox, oz = origin
+        fast = apply_carver_chain(
+            list(base_columns), [carver],
+            origin_x=ox, origin_z=oz, tile_size=tile_size, seed=4242,
+        )
+        for i, base in enumerate(base_columns):
+            wx = ox + (i % tile_size)
+            wz = oz + (i // tile_size)
+            ref = carver.carve_column(base, wx, wz, 4242)
+            self.assertEqual(
+                ref.spans, fast[i].spans,
+                f"{carver.name} carve_tile diverged from carve_column at "
+                f"col {i} (wx={wx},wz={wz}): scalar {ref.spans} != "
+                f"vectorized {fast[i].spans}",
+            )
+
+    def test_canyon_tile_equals_scalar(self) -> None:
+        ts = 24
+        cols = [self.GROUND_LO for _ in range(ts * ts)]
+        self._assert_chain_equiv(
+            CanyonCarver(wall_threshold=0.3, wall_depth_band=(50, 90)),
+            cols, ts, (1000, 2000),
+        )
+
+    def test_floating_island_tile_equals_scalar(self) -> None:
+        ts = 24
+        cols = [self.GROUND_HI for _ in range(ts * ts)]
+        self._assert_chain_equiv(
+            FloatingIslandCarver(silhouette_threshold=0.45),
+            cols, ts, (500, 700),
+        )
+
+    def test_cave_network_tile_equals_scalar(self) -> None:
+        ts = 20
+        cols = [self.GROUND_HI for _ in range(ts * ts)]
+        self._assert_chain_equiv(
+            CaveNetworkCarver(layers=3, octaves=2),
+            cols, ts, (333, 888),
+        )
+
+    def test_chain_of_all_three_equals_scalar(self) -> None:
+        # Composed chain: each carver's tile path must equal scalar even when
+        # the previous carver already split the column (the divergence-prone case).
+        ts = 16
+        cols = [self.GROUND_HI for _ in range(ts * ts)]
+        chain = [
+            CanyonCarver(wall_threshold=0.3),
+            FloatingIslandCarver(silhouette_threshold=0.5),
+            CaveNetworkCarver(layers=2, octaves=2),
+        ]
+        ox, oz = 1234, 5678
+        fast = apply_carver_chain(
+            list(cols), chain, origin_x=ox, origin_z=oz, tile_size=ts, seed=99,
+        )
+        for i, base in enumerate(cols):
+            wx = ox + (i % ts)
+            wz = oz + (i // ts)
+            ref = base
+            for c in chain:
+                ref = c.carve_column(ref, wx, wz, 99)
+            self.assertEqual(
+                ref.spans, fast[i].spans,
+                f"3-carver chain diverged at col {i}: {ref.spans} != {fast[i].spans}",
+            )
+
+
 class CarverRegistryTest(unittest.TestCase):
     def test_registry_has_all_four(self) -> None:
         self.assertEqual(

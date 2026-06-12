@@ -280,6 +280,71 @@ class BaseCarver:
         self._carve(col, wx, wz, self._seed_for(seed))
         return validate_spans(col.to_spans())
 
+    def _gate_mask(
+        self,
+        wx: np.ndarray,
+        surface_y: np.ndarray,
+        wz: np.ndarray,
+        seed: int,
+        active: np.ndarray,
+    ) -> np.ndarray:
+        """Vectorized "this column *might* carve" mask over a whole tile.
+
+        Default: every active (non-void, surface-bearing) column is a candidate,
+        so :meth:`carve_tile` falls back to running the scalar ``_carve`` on all
+        of them — correct but slow.  A subclass overrides this to vectorize its
+        cheap gating noise (silhouette / wall-strength / depth band) so the
+        scalar ``_carve`` only runs on the minority of columns that can actually
+        carve.  The mask MUST be a *superset* of the columns the scalar
+        ``_carve`` would change — skipping a False column must be exactly
+        equivalent to running ``_carve`` and having it no-op, or the vectorized
+        path would diverge from ``carve_column`` and break determinism.
+        """
+        return active
+
+    def carve_tile(
+        self,
+        columns: list[ColumnSpans],
+        wx: np.ndarray,
+        wz: np.ndarray,
+        seed: int,
+    ) -> list[ColumnSpans]:
+        """Carve a whole tile, vectorizing the gate so most columns short-circuit.
+
+        ``wx`` / ``wz`` are flat per-column world-coordinate arrays in the same
+        row-major order as ``columns``.  Produces output **identical** to calling
+        ``carve_column`` on each column (the determinism contract): the gate is a
+        superset of carve-able columns, and only gated columns run the scalar
+        ``_carve``; the rest are passed through untouched, exactly as a no-op
+        ``_carve`` would leave them.
+        """
+        salted = self._seed_for(seed)
+        n = len(columns)
+        # Per-column surface (None → -1 sentinel) + "active" (surface-bearing).
+        surface = np.full(n, -1, dtype=np.int64)
+        active = np.zeros(n, dtype=bool)
+        for i, col in enumerate(columns):
+            s = col.surface_ceiling_y
+            if s is not None:
+                surface[i] = s
+                active[i] = True
+        gate = self._gate_mask(
+            np.asarray(wx, dtype=np.float64),
+            surface.astype(np.float64),
+            np.asarray(wz, dtype=np.float64),
+            salted,
+            active,
+        )
+        out: list[ColumnSpans] = []
+        for i, column in enumerate(columns):
+            if not gate[i]:
+                out.append(column)
+                continue
+            col = SolidColumn.from_spans(column)
+            self._carve(col, int(wx[i]), int(wz[i]), salted)
+            out.append(validate_spans(col.to_spans()))
+        return out
+
 
 def apply_carver_chain(
     columns: list[ColumnSpans],
@@ -300,17 +365,27 @@ def apply_carver_chain(
 
     Returns a new list (does not mutate the input).  Deterministic for a given
     ``seed``: world coordinates + seed fully determine every column.
+
+    Uses each carver's vectorized :meth:`BaseCarver.carve_tile` (gate noise
+    computed once over the whole tile, scalar ``_carve`` only on gated columns)
+    — orders of magnitude faster than 40k scalar ``carve_column`` calls, and
+    produces byte-identical output (carve_tile is a faithful vectorization of
+    the scalar loop).
     """
     if not carvers:
         return list(columns)
-    out: list[ColumnSpans] = []
-    for idx, column in enumerate(columns):
-        local_x = idx % tile_size
-        local_z = idx // tile_size
-        wx = origin_x + local_x
-        wz = origin_z + local_z
-        carved = column
-        for carver in carvers:
-            carved = carver.carve_column(carved, wx, wz, seed)
-        out.append(carved)
-    return out
+    n = len(columns)
+    idx = np.arange(n)
+    wx = (origin_x + (idx % tile_size)).astype(np.float64)
+    wz = (origin_z + (idx // tile_size)).astype(np.float64)
+    carved = list(columns)
+    for carver in carvers:
+        carve_tile = getattr(carver, "carve_tile", None)
+        if callable(carve_tile):
+            carved = carve_tile(carved, wx, wz, seed)
+        else:  # pragma: no cover — a non-BaseCarver Carver protocol impl
+            carved = [
+                carver.carve_column(col, int(wx[i]), int(wz[i]), seed)
+                for i, col in enumerate(carved)
+            ]
+    return carved

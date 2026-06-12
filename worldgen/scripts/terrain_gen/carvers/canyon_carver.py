@@ -20,7 +20,9 @@ a flat ledge at one height.
 
 from __future__ import annotations
 
-from .base import SEED_SALT, BaseCarver, SolidColumn, clamp_y
+import numpy as np
+
+from .base import SEED_SALT, BaseCarver, SolidColumn, clamp_y, validate_spans
 from ..fields import SPAN_MIN_Y
 from ..noise import fbm_3d, warped_fbm_3d
 
@@ -78,6 +80,25 @@ class CanyonCarver(BaseCarver):
         )
         return float((raw + 1.0) * 0.5)  # → [0,1]
 
+    def _gate_mask(self, wx, surface_y, wz, seed, active):
+        # Vectorize the two cheap gates ``_carve`` applies before any expensive
+        # punch: (1) surface inside the optional wall depth band, (2) wall
+        # strength >= threshold.  Same fields/comparisons as the scalar path, so
+        # the gate is an exact carve-able superset (only surface-bearing columns
+        # can overhang, hence the ``active`` factor).
+        gate = np.asarray(active, dtype=bool)
+        if self.wall_depth_band is not None:
+            lo, hi = self.wall_depth_band
+            gate = gate & (surface_y >= lo) & (surface_y <= hi)
+        raw = warped_fbm_3d(
+            np.asarray(wx, dtype=np.float64),
+            np.asarray(surface_y, dtype=np.float64),
+            np.asarray(wz, dtype=np.float64),
+            scale=160.0, seed=seed + 11,
+        )
+        strength = (raw + 1.0) * 0.5
+        return gate & (strength >= self.wall_threshold)
+
     def _carve(self, col: SolidColumn, wx: int, wz: int, seed: int) -> None:
         surface_y = col.surface_y
         if surface_y is None:
@@ -115,3 +136,59 @@ class CanyonCarver(BaseCarver):
 
         # Punch the air band: clear [floor_ceiling+1, shelf_floor-1].
         col.fill_range(clamp_y(floor_ceiling + 1), clamp_y(shelf_floor - 1), False)
+
+    def carve_tile(self, columns, wx, wz, seed):
+        """Fully-vectorized tile carve — identical output to the scalar loop.
+
+        Computes wall-strength / lip-depth / void noise once over the tile and
+        derives ``shelf_floor`` / ``floor_ceiling`` arrays with the *same*
+        arithmetic + ``np.rint`` as ``_carve``, then punches the air band only on
+        gated, geometrically-valid columns.  The scalar path and this share the
+        gate (``_gate_mask``), so the wall-strength comparison is identical.
+        """
+        salted = self._seed_for(seed)
+        wx = np.asarray(wx, dtype=np.float64)
+        wz = np.asarray(wz, dtype=np.float64)
+        n = len(columns)
+        surface = np.full(n, -1, dtype=np.int64)
+        active = np.zeros(n, dtype=bool)
+        for i, col in enumerate(columns):
+            s = col.surface_ceiling_y
+            if s is not None:
+                surface[i] = s
+                active[i] = True
+        gate = self._gate_mask(wx, surface.astype(np.float64), wz, salted, active)
+
+        surf_f = surface.astype(np.float64)
+        depth_noise = fbm_3d(wx, surf_f, wz, scale=self.scale, seed=salted + 23)
+        lip_drop = self.shelf_thickness + np.rint(
+            (depth_noise + 1.0) * 4.0
+        ).astype(np.int64)
+        shelf_floor = surface - lip_drop
+        void_noise = fbm_3d(
+            wx, (surface - lip_drop).astype(np.float64), wz,
+            scale=self.scale, seed=salted + 37,
+        )
+        void_h = self.void_height + np.rint(
+            (void_noise + 1.0) * 5.0
+        ).astype(np.int64)
+        floor_ceiling = shelf_floor - void_h
+        valid = (
+            gate
+            & (floor_ceiling > SPAN_MIN_Y + 4)
+            & (shelf_floor > floor_ceiling + 1)
+        )
+
+        out: list = []
+        for i, column in enumerate(columns):
+            if not valid[i]:
+                out.append(column)
+                continue
+            col = SolidColumn.from_spans(column)
+            col.fill_range(
+                clamp_y(int(floor_ceiling[i]) + 1),
+                clamp_y(int(shelf_floor[i]) - 1),
+                False,
+            )
+            out.append(validate_spans(col.to_spans()))
+        return out
