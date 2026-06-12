@@ -208,8 +208,8 @@ function renderBlurVersion(scenario: UiScenario, realm: string): string {
  * - 若超限：先尝试找到最后一个完整标签边界截断，再追加省略标记，
  *   发出警告日志让 agent 侧可观测（而非等 server 静默拒绝）。
  *
- * 截断策略：找 limit-16 字节内最后一个 '>' 位置（保证不截断在 UTF-8 多字节序列中间），
- * 追加 "…（天道叙事已截断）" 标记。
+ * 截断策略：按 Unicode code point 取 UTF-8 安全前缀，回退到最后一个完整标签边界，
+ * 追加 "…（天道叙事已截断）" 标记，并按当前前缀的 XML 标签栈补齐闭合标签。
  */
 export function enforceXmlByteLimit(
   xml: string,
@@ -221,20 +221,22 @@ export function enforceXmlByteLimit(
     return xml;
   }
 
-  // 截断后缀：关闭 label / flow-layout / components / owo-ui（与模板实际嵌套层级对应）。
-  // 模板结构：<owo-ui><components><flow-layout>...<label>TEXT</label>...</flow-layout></components></owo-ui>
-  // 旧版本误用 </widget>（owo-ui 无此标签），已改为正确层级。
-  const TRUNCATION_SUFFIX = "…（天道叙事已截断）</label></flow-layout></components></owo-ui>";
-  const suffixBytes = Buffer.byteLength(TRUNCATION_SUFFIX, "utf8");
-  const targetBytes = byteLimit - suffixBytes;
+  const marker = "…（天道叙事已截断）";
+  let truncated = truncateToUtf8ByteLimit(
+    xml,
+    Math.max(0, byteLimit - Buffer.byteLength(marker, "utf8")),
+  );
+  truncated = dropPartialXmlTag(truncated);
+  let suffix = marker + buildXmlClosingSuffix(truncated);
 
-  // 截取到 targetBytes 字节（Buffer 切割保证不在 UTF-8 序列中间）
-  let truncated = Buffer.from(xml, "utf8").subarray(0, targetBytes).toString("utf8");
+  while (Buffer.byteLength(truncated + suffix, "utf8") > byteLimit && truncated.length > 0) {
+    truncated = truncateToUtf8ByteLimit(truncated, Buffer.byteLength(truncated, "utf8") - 1);
+    truncated = dropPartialXmlTag(truncated);
+    suffix = marker + buildXmlClosingSuffix(truncated);
+  }
 
-  // 去掉末尾可能残缺的标签片段：找最后一个 '>'
-  const lastGt = truncated.lastIndexOf(">");
-  if (lastGt > 0) {
-    truncated = truncated.substring(0, lastGt + 1);
+  if (Buffer.byteLength(truncated + suffix, "utf8") > byteLimit) {
+    return truncateToUtf8ByteLimit(marker, byteLimit);
   }
 
   logger.warn(
@@ -242,5 +244,63 @@ export function enforceXmlByteLimit(
     `— truncating and appending suffix (prevents server rejection)`,
   );
 
-  return truncated + TRUNCATION_SUFFIX;
+  return truncated + suffix;
+}
+
+function truncateToUtf8ByteLimit(value: string, byteLimit: number): string {
+  if (byteLimit <= 0) {
+    return "";
+  }
+
+  let usedBytes = 0;
+  let result = "";
+  for (const char of value) {
+    const charBytes = Buffer.byteLength(char, "utf8");
+    if (usedBytes + charBytes > byteLimit) {
+      break;
+    }
+    result += char;
+    usedBytes += charBytes;
+  }
+  return result;
+}
+
+function dropPartialXmlTag(value: string): string {
+  const lastLt = value.lastIndexOf("<");
+  const lastGt = value.lastIndexOf(">");
+  if (lastLt > lastGt) {
+    return value.substring(0, lastLt);
+  }
+  return value;
+}
+
+function buildXmlClosingSuffix(xmlPrefix: string): string {
+  const stack: string[] = [];
+  const tagPattern = /<\/?([A-Za-z][A-Za-z0-9:_-]*)(?:\s[^<>]*)?>/g;
+
+  for (const match of xmlPrefix.matchAll(tagPattern)) {
+    const rawTag = match[0];
+    const tagName = match[1];
+
+    if (rawTag.endsWith("/>")) {
+      continue;
+    }
+
+    if (rawTag.startsWith("</")) {
+      if (stack.at(-1) === tagName) {
+        stack.pop();
+        continue;
+      }
+
+      const matchingIndex = stack.lastIndexOf(tagName);
+      if (matchingIndex >= 0) {
+        stack.length = matchingIndex;
+      }
+      continue;
+    }
+
+    stack.push(tagName);
+  }
+
+  return stack.reverse().map((tagName) => `</${tagName}>`).join("");
 }
