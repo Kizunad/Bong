@@ -172,7 +172,10 @@ fn map_kind(kind: ZhenfaKind) -> ZhenfaArrayKindV2 {
         ZhenfaKind::Trap
         | ZhenfaKind::WarningTrap
         | ZhenfaKind::BlastTrap
-        | ZhenfaKind::SlowTrap => ZhenfaArrayKindV2::Trap,
+        | ZhenfaKind::SlowTrap
+        | ZhenfaKind::BeastTrap
+        | ZhenfaKind::TripWire
+        | ZhenfaKind::DecoyStake => ZhenfaArrayKindV2::Trap,
         ZhenfaKind::Ward => ZhenfaArrayKindV2::Ward,
         ZhenfaKind::ShrineWard => ZhenfaArrayKindV2::ShrineWard,
         ZhenfaKind::Lingju => ZhenfaArrayKindV2::Lingju,
