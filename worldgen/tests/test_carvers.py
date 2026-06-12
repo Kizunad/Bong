@@ -611,7 +611,8 @@ class CarverChainTest(unittest.TestCase):
             assert_legal_spans(self, col, "chain output")
 
     def test_empty_chain_is_identity(self) -> None:
-        columns = [GROUND, GROUND]
+        # 2x2 square tile (the shape contract holds even for an empty chain).
+        columns = [GROUND, GROUND, GROUND, GROUND]
         out = apply_carver_chain(
             columns, [], origin_x=0, origin_z=0, tile_size=2, seed=1
         )
@@ -641,6 +642,32 @@ class CarverChainTest(unittest.TestCase):
         )
         for col in out:
             assert_legal_spans(self, col, "canyon+cave chain")
+
+    def test_non_square_columns_rejected(self) -> None:
+        # CodeRabbit base.py:381 — a column count that is not tile_size**2 would
+        # mislabel every (wx, wz) via idx % / // tile_size, sampling the carve
+        # noise at the wrong world coordinate.  Fail fast instead.
+        columns = [GROUND for _ in range(15)]  # 15 != 4*4
+        with self.assertRaises(ValueError) as ctx:
+            apply_carver_chain(
+                columns, [CanyonCarver()],
+                origin_x=0, origin_z=0, tile_size=4, seed=1,
+            )
+        self.assertIn("16", str(ctx.exception), "error must state the expected count")
+
+    def test_non_square_rejected_even_with_empty_chain(self) -> None:
+        # The shape contract is independent of whether any carver runs.
+        with self.assertRaises(ValueError):
+            apply_carver_chain(
+                [GROUND, GROUND, GROUND],  # 3 columns, not 2*2
+                [], origin_x=0, origin_z=0, tile_size=2, seed=1,
+            )
+
+    def test_nonpositive_tile_size_rejected(self) -> None:
+        with self.assertRaises(ValueError):
+            apply_carver_chain(
+                [], [CanyonCarver()], origin_x=0, origin_z=0, tile_size=0, seed=1,
+            )
 
     def test_world_coords_use_origin_offset(self) -> None:
         # Two tiles at different origins must carve their shared local index
@@ -775,6 +802,44 @@ class CarveTileEquivalenceTest(unittest.TestCase):
                 ref.spans, fast[i].spans,
                 f"3-carver chain diverged at col {i}: {ref.spans} != {fast[i].spans}",
             )
+
+    def test_empty_void_columns_tile_equals_scalar(self) -> None:
+        # CodeRabbit test_carvers.py:709 — the equivalence suite only used solid
+        # GROUND columns, so a void column ``ColumnSpans(())`` (surface_ceiling_y
+        # is None) never exercised the vectorized gate's None-surface branch.  A
+        # void column must carve to a void column on BOTH paths (no surface ⇒
+        # nothing to overhang, no ground ⇒ isle-air-gap guard skips it, cave has
+        # no solid to remove).  Pin that the tile path agrees with the scalar
+        # path over an all-void tile for every production carver.
+        ts = 12
+        void = ColumnSpans(())
+        cols = [void for _ in range(ts * ts)]
+        for carver in (
+            CanyonCarver(wall_threshold=0.3),
+            FloatingIslandCarver(silhouette_threshold=0.45),
+            CaveNetworkCarver(layers=2, octaves=2),
+        ):
+            with self.subTest(carver=carver.name):
+                self._assert_chain_equiv(carver, cols, ts, (700, 900))
+
+    def test_mixed_void_and_solid_columns_tile_equals_scalar(self) -> None:
+        # The realistic case: a tile where some columns are void (sky over an
+        # abyss) interleaved with solid ground.  The vectorized gate must skip
+        # void columns exactly as the scalar loop's per-column guards do, with
+        # no index drift between the two interleaved kinds.
+        ts = 14
+        void = ColumnSpans(())
+        cols = [
+            (void if (i % 3 == 0) else self.GROUND_HI)
+            for i in range(ts * ts)
+        ]
+        for carver in (
+            CanyonCarver(wall_threshold=0.3),
+            FloatingIslandCarver(silhouette_threshold=0.45),
+            CaveNetworkCarver(layers=2, octaves=2),
+        ):
+            with self.subTest(carver=carver.name):
+                self._assert_chain_equiv(carver, cols, ts, (123, 456))
 
 
 class CarverRegistryTest(unittest.TestCase):

@@ -418,6 +418,18 @@ def apply_carver_chain(
     produces byte-identical output (carve_tile is a faithful vectorization of
     the scalar loop).
     """
+    if tile_size <= 0:
+        raise ValueError(
+            f"apply_carver_chain needs tile_size > 0, got {tile_size}"
+        )
+    if len(columns) != tile_size * tile_size:
+        raise ValueError(
+            f"apply_carver_chain expects a square row-major tile: "
+            f"len(columns)={len(columns)} must equal tile_size*tile_size="
+            f"{tile_size * tile_size} (index = local_z*tile_size + local_x). A "
+            f"mismatch silently mislabels every column's (wx, wz) via idx % / // "
+            f"tile_size, sampling the carve noise at the wrong world coordinate."
+        )
     if not carvers:
         return list(columns)
     n = len(columns)
