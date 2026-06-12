@@ -8,6 +8,29 @@ import { buildFloraPoints, buildPoiMarkers } from "./decorations";
 import { LIGHT_DIR } from "./palette";
 import type { DecodedTile, Manifest } from "./types";
 
+/**
+ * Recursively detach an object from its parent AND free its GPU resources.
+ *
+ * Walks the whole subtree (Group -> Mesh/Points/...): for every node carrying a
+ * `geometry` and/or `material`, dispose them (materials can be an array — a
+ * multi-material mesh), then remove the root from its parent. Plain
+ * `removeFromParent()` only unhooks the scene-graph link and leaks the
+ * underlying WebGL buffers/textures, which accumulate across regens.
+ */
+function disposeObject3D(root: THREE.Object3D): void {
+  root.traverse((node) => {
+    const withGeo = node as Partial<THREE.Mesh>;
+    withGeo.geometry?.dispose?.();
+    const material = (node as Partial<THREE.Mesh>).material;
+    if (Array.isArray(material)) {
+      for (const m of material) m.dispose();
+    } else {
+      material?.dispose?.();
+    }
+  });
+  root.removeFromParent();
+}
+
 export interface ViewerLayers {
   terrain: boolean;
   water: boolean;
@@ -88,7 +111,10 @@ export class Viewer {
     for (let i = this.decorGroup.children.length - 1; i >= 0; i--) {
       const child = this.decorGroup.children[i];
       if (child.userData?.kind === "poi") {
-        child.removeFromParent();
+        // dispose the old markers' GPU resources, not just detach them — a
+        // re-`setPoiMarkers` (e.g. after regen) would otherwise leak the cone
+        // geometry + per-POI materials.
+        disposeObject3D(child);
       }
     }
     const markers = buildPoiMarkers(manifest);
@@ -203,13 +229,7 @@ export class Viewer {
     const key = `tile_${tile.tileX}_${tile.tileZ}`;
     const meshes = this.tileMeshes.get(key);
     if (!meshes) return;
-    for (const m of meshes) {
-      m.removeFromParent();
-      if (m instanceof THREE.Mesh) {
-        m.geometry.dispose();
-        (m.material as THREE.Material).dispose();
-      }
-    }
+    for (const m of meshes) disposeObject3D(m);
     this.tileMeshes.delete(key);
   }
 
