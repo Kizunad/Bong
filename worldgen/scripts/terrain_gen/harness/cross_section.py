@@ -98,6 +98,11 @@ def render_cross_section(
         raise ValueError("render_cross_section needs at least one column")
     if y_max <= y_min:
         raise ValueError(f"y_max={y_max} must be > y_min={y_min}")
+    if pixel_scale < 1:
+        raise ValueError(
+            f"pixel_scale={pixel_scale} must be >= 1 (the upscale factor); a "
+            f"value < 1 would collapse the image to zero/negative size"
+        )
 
     width = len(columns)
     height = y_max - y_min + 1

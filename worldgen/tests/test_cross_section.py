@@ -97,6 +97,14 @@ class RenderCrossSectionTest(unittest.TestCase):
             with self.assertRaises(ValueError):
                 render_cross_section(cols, Path(tmp) / "x.png", y_min=10, y_max=5)
 
+    def test_nonpositive_pixel_scale_rejected(self) -> None:
+        cols = [ColumnSpans(((SPAN_MIN_Y, 0),))]
+        with tempfile.TemporaryDirectory() as tmp:
+            with self.assertRaises(ValueError):
+                render_cross_section(
+                    cols, Path(tmp) / "x.png", y_min=0, y_max=10, pixel_scale=0
+                )
+
     def test_render_carved_line_end_to_end(self) -> None:
         ground = ColumnSpans(((SPAN_MIN_Y, 80),))
         with tempfile.TemporaryDirectory() as tmp:
