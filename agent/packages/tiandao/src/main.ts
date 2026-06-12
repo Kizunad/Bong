@@ -27,6 +27,8 @@ import { WoliuV2NarrationRuntime } from "./woliu_v2_runtime.js";
 import { ZhenmaiNarrationRuntime } from "./zhenmai-narration.js";
 import { ZhenfaV2NarrationRuntime } from "./zhenfa-v2-runtime.js";
 import { AnqiNarrationRuntime } from "./anqi-narration.js";
+// plan-agent-ui-data-v1 P2：天道 UI 响应消费 runtime
+import { UiResponseConsumer } from "./ui/uiResponseConsumer.js";
 import { BaomaiV3NarrationRuntime } from "./baomai-v3-runtime.js";
 import { BaomaiV4NarrationRuntime } from "./baomai-v4-runtime.js";
 import { MeridianSeveredNarrationRuntime } from "./meridian-severed-runtime.js";
@@ -263,8 +265,13 @@ async function startAuxiliaryRuntimes(config: RuntimeConfig): Promise<RuntimeCle
   const tiandaoHuntCleanup = await startTiandaoHuntNarrationRuntime({
     ...runtimeOpts,
   });
+  // plan-agent-ui-data-v1 P2：天道 UI 响应消费 runtime（订阅 bong:agent_ui_response）。
+  const agentUiResponseCleanup = await startAgentUiResponseRuntime({
+    redisUrl: config.redisUrl,
+  });
 
   return [
+    agentUiResponseCleanup,
     tiandaoHuntCleanup,
     politicalCleanup,
     spiritTreasureCleanup,
@@ -1395,6 +1402,36 @@ async function startWarOutcomeNarrationRuntime(opts: {
 
 // Auto-run only when executed directly as CLI entry point
 const __filename = fileURLToPath(import.meta.url);
+// plan-agent-ui-data-v1 P2：启动天道 UI 响应消费 runtime（订阅 bong:agent_ui_response）。
+async function startAgentUiResponseRuntime(opts: {
+  redisUrl: string;
+}): Promise<() => Promise<void>> {
+  const IORedisCtor = ((Redis as unknown as { default?: unknown }).default ??
+    Redis) as new (url: string) => unknown;
+  const sub = new IORedisCtor(opts.redisUrl) as ConstructorParameters<
+    typeof UiResponseConsumer
+  >[0]["sub"];
+  const pub = new IORedisCtor(opts.redisUrl) as ConstructorParameters<
+    typeof UiResponseConsumer
+  >[0]["pub"];
+
+  const runtime = new UiResponseConsumer({ sub, pub });
+  runtime
+    .connect()
+    .then(() => console.log("[tiandao] agent ui response consumer online"))
+    .catch((error) =>
+      console.warn("[tiandao] agent ui response consumer failed to start:", error),
+    );
+  return async () => {
+    const timeout = new Promise<void>((resolve) => setTimeout(resolve, 500));
+    try {
+      await Promise.race([runtime.disconnect(), timeout]);
+    } catch (error) {
+      console.warn("[tiandao] agent ui response consumer disconnect error:", error);
+    }
+  };
+}
+
 if (process.argv[1] === __filename) {
   loadEnv();
   const config = resolveRuntimeConfig(process.argv, process.env);
