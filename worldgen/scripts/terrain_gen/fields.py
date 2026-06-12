@@ -9,6 +9,151 @@ import numpy as np
 if TYPE_CHECKING:
     from .blueprint import BlueprintZone, ZoneOverlaySpec
 
+
+# ---------------------------------------------------------------------------
+# Column spans — worldgen-v4 P0 §8.1 #1
+#
+# The vertical structure of a column is a small list of *solid* spans, each an
+# inclusive ``(floor_y, ceiling_y)`` block range.  This single representation
+# replaces the old height + sky_island_base_y/thickness + cave_mask/
+# ceiling_height/entrance_mask/cavern_floor_y patch layers.
+#
+# Binary layout (decided in §8.1 #1, mmap-friendly fixed stride):
+#   spans_count.bin : u8 per column, 0..=MAX_SPANS  (0 = full void column)
+#   spans.bin       : MAX_SPANS slots per column, each slot = two little-endian
+#                     i16 (floor_y, ceiling_y) = 4 bytes; column stride = 16 B.
+#                     Unused slots are filled with the sentinel i16::MAX so the
+#                     Rust reader can mmap at ``offset = col_idx * 16`` and skip
+#                     trailing sentinels without a separate index.
+#
+# Y range: world Y ∈ [-64, 432) (MIN_Y=-64, WORLD_HEIGHT=496); i16 has ample
+# headroom.  We reject f32 (precision waste, double the size) and variable
+# length + index encoding (extra indirection for no payoff).
+# ---------------------------------------------------------------------------
+
+MAX_SPANS = 4
+SPAN_SENTINEL = 32767  # i16::MAX — marks an unused slot
+SPAN_MIN_Y = -64
+SPAN_MAX_Y = 431  # inclusive top (world Y < 432)
+SPAN_BYTES_PER_COLUMN = MAX_SPANS * 2 * 2  # 4 spans × (i16 floor + i16 ceiling)
+
+
+@dataclass(frozen=True)
+class ColumnSpans:
+    """Up to ``MAX_SPANS`` inclusive solid ``(floor_y, ceiling_y)`` ranges.
+
+    Spans are kept sorted bottom-to-top and must be non-overlapping with
+    ``floor_y <= ceiling_y`` per span.  Construction validates these invariants
+    so an illegal column can never be silently serialized.
+    """
+
+    spans: tuple[tuple[int, int], ...]
+
+    def __post_init__(self) -> None:
+        if len(self.spans) > MAX_SPANS:
+            raise ValueError(
+                f"ColumnSpans accepts at most {MAX_SPANS} spans, got {len(self.spans)}"
+            )
+        prev_ceiling: int | None = None
+        for floor_y, ceiling_y in self.spans:
+            if not (SPAN_MIN_Y <= floor_y <= SPAN_MAX_Y):
+                raise ValueError(
+                    f"span floor_y={floor_y} out of world range "
+                    f"[{SPAN_MIN_Y}, {SPAN_MAX_Y}]"
+                )
+            if not (SPAN_MIN_Y <= ceiling_y <= SPAN_MAX_Y):
+                raise ValueError(
+                    f"span ceiling_y={ceiling_y} out of world range "
+                    f"[{SPAN_MIN_Y}, {SPAN_MAX_Y}]"
+                )
+            if floor_y > ceiling_y:
+                raise ValueError(
+                    f"span floor_y={floor_y} must be <= ceiling_y={ceiling_y}"
+                )
+            if prev_ceiling is not None and floor_y <= prev_ceiling:
+                raise ValueError(
+                    f"spans must be sorted, non-overlapping with a gap: "
+                    f"floor_y={floor_y} <= previous ceiling_y={prev_ceiling}"
+                )
+            prev_ceiling = ceiling_y
+
+    @property
+    def count(self) -> int:
+        return len(self.spans)
+
+    @property
+    def surface_ceiling_y(self) -> int | None:
+        """Top face of the lowest solid span (NPC/decoration surface anchor).
+
+        Returns ``None`` for a fully void column.  §8.1 #2: ``query_surface``
+        semantics = the lowest solid span's ceiling.
+        """
+        if not self.spans:
+            return None
+        return self.spans[0][1]
+
+    def to_slots(self) -> list[int]:
+        """Flatten to ``MAX_SPANS * 2`` i16 values, sentinel-padded."""
+        slots: list[int] = []
+        for floor_y, ceiling_y in self.spans:
+            slots.append(floor_y)
+            slots.append(ceiling_y)
+        while len(slots) < MAX_SPANS * 2:
+            slots.append(SPAN_SENTINEL)
+        return slots
+
+    @classmethod
+    def from_slots(cls, slots: Iterable[int], count: int) -> "ColumnSpans":
+        """Rebuild from a flat i16 slot list + a count byte (decode side)."""
+        flat = list(slots)
+        if len(flat) != MAX_SPANS * 2:
+            raise ValueError(
+                f"expected {MAX_SPANS * 2} slot values, got {len(flat)}"
+            )
+        if not (0 <= count <= MAX_SPANS):
+            raise ValueError(f"span count={count} out of range [0, {MAX_SPANS}]")
+        spans = tuple(
+            (flat[2 * i], flat[2 * i + 1]) for i in range(count)
+        )
+        # Trailing slots beyond count must be the sentinel — guard against
+        # corrupt encodings leaking real-looking coordinates.
+        for i in range(count, MAX_SPANS):
+            if flat[2 * i] != SPAN_SENTINEL or flat[2 * i + 1] != SPAN_SENTINEL:
+                raise ValueError(
+                    f"slot {i} beyond count={count} is not sentinel-filled: "
+                    f"{flat[2 * i]}, {flat[2 * i + 1]}"
+                )
+        return cls(spans=spans)
+
+
+def encode_spans_arrays(
+    columns: list[ColumnSpans],
+) -> tuple[np.ndarray, np.ndarray]:
+    """Encode a column list into (spans_count uint8, spans int16) arrays.
+
+    The returned ``spans`` array is shape ``(len(columns) * MAX_SPANS * 2,)``
+    little-endian int16; ``spans_count`` is shape ``(len(columns),)`` uint8.
+    Both are C-contiguous so ``.tobytes()`` yields the on-disk layout directly.
+    """
+    count = np.empty(len(columns), dtype=np.uint8)
+    slots = np.empty(len(columns) * MAX_SPANS * 2, dtype="<i2")
+    for idx, column in enumerate(columns):
+        count[idx] = column.count
+        base = idx * MAX_SPANS * 2
+        slots[base : base + MAX_SPANS * 2] = column.to_slots()
+    return count, slots
+
+
+def decode_spans_column(
+    count_bytes: bytes, spans_bytes: bytes, col_idx: int
+) -> ColumnSpans:
+    """Decode a single column from the raw binary buffers (mmap-style read)."""
+    count = count_bytes[col_idx]
+    base = col_idx * SPAN_BYTES_PER_COLUMN
+    raw = spans_bytes[base : base + SPAN_BYTES_PER_COLUMN]
+    flat = list(np.frombuffer(raw, dtype="<i2"))
+    return ColumnSpans.from_slots(flat, count)
+
 DEFAULT_FIELD_LAYERS = (
     "height",
     "surface_id",
@@ -57,9 +202,9 @@ LAYER_REGISTRY: dict[str, LayerSpec] = {
     "portal_anchor_sdf": LayerSpec(safe_default=999.0, blend_mode="minimum", export_type="float32"),
     "rim_edge_mask":    LayerSpec(safe_default=0.0,  blend_mode="maximum",  export_type="float32"),
     "fracture_mask":    LayerSpec(safe_default=0.0,  blend_mode="maximum",  export_type="float32"),
-    "cave_mask":        LayerSpec(safe_default=0.0,  blend_mode="maximum",  export_type="float32"),
-    "ceiling_height":   LayerSpec(safe_default=0.0,  blend_mode="maximum",  export_type="float32"),
-    "entrance_mask":    LayerSpec(safe_default=0.0,  blend_mode="maximum",  export_type="float32"),
+    # worldgen-v4 P0 §8.1 #1: cave_mask / ceiling_height / entrance_mask are
+    # collapsed into the span representation (the cave carve is now an explicit
+    # gap between two solid spans) and no longer exported as patch layers.
     "neg_pressure":     LayerSpec(safe_default=0.0,  blend_mode="maximum",  export_type="float32"),
     "ruin_density":     LayerSpec(safe_default=0.0,  blend_mode="maximum",  export_type="float32"),
     # --- xianxia / mofa semantic layers ---
@@ -79,20 +224,17 @@ LAYER_REGISTRY: dict[str, LayerSpec] = {
     #   ZoneStatus::Collapsed.  Consumers should preserve physical structures
     #   but disable qi-dependent functionality inside the marked columns.
     "realm_collapse_mask": LayerSpec(safe_default=0.0, blend_mode="maximum", export_type="uint8"),
-    # --- vertical-dimension layers ---
+    # --- vertical-dimension semantic layers (kept; §8.1 #12) ---
+    # The geometric base_y/thickness/cavern_floor_y patch layers were folded
+    # into spans (§8.1 #1).  sky_island_mask and underground_tier survive as
+    # independent SEMANTIC layers because the 5 灵草 environment locks key off
+    # them directly; deriving them from raw span geometry would be lossy.
     # sky_island_mask: 该列上空是否存在浮岛 (0~1). profile 写入浮岛核心强度，
     #   stitcher `maximum`+weight 让边界自然消退 → 浮岛视觉上边缘逐渐变薄。
-    # sky_island_base_y: 浮岛底面世界 y. safe_default=9999 表示"无浮岛"，
-    #   用 `minimum` blend 避免边界乘 weight 导致坐标值失真；Rust 消费时以
-    #   sky_island_mask>0.01 做 gate 判定是否真的生成浮岛块。
-    # sky_island_thickness: 浮岛厚度（沿 -Y 方向挖 thickness 深）. maximum blend.
+    #   env_sky_island() 改由 span 高位悬空段派生 base_y/thickness（Rust 侧）。
     # underground_tier: 0=地表，1=浅洞，2=中洞，3=深渊. uint8 maximum blend.
-    # cavern_floor_y: 最深层大空洞的地板 y. safe_default=9999, `minimum` blend.
     "sky_island_mask":      LayerSpec(safe_default=0.0,    blend_mode="maximum", export_type="float32"),
-    "sky_island_base_y":    LayerSpec(safe_default=9999.0, blend_mode="minimum", export_type="float32"),
-    "sky_island_thickness": LayerSpec(safe_default=0.0,    blend_mode="maximum", export_type="float32"),
     "underground_tier":     LayerSpec(safe_default=0.0,    blend_mode="maximum", export_type="uint8"),
-    "cavern_floor_y":       LayerSpec(safe_default=9999.0, blend_mode="minimum", export_type="float32"),
     # --- ecology layers ---
     # flora_density: [0,1] likelihood a decoration occupies this column.
     #   Rust consumer samples it per-chunk and rolls against per-variant rarity.
