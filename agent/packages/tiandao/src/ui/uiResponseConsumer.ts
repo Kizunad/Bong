@@ -31,14 +31,36 @@ const { AGENT_UI_RESPONSE, AGENT_NARRATE } = CHANNELS;
 
 // ─── 接口 ────────────────────────────────────────────────────────────────────
 
-export interface UiResponseConsumerClient {
+/**
+ * sub 专用接口：subscribe/on/off/unsubscribe/disconnect。
+ * 兼容 UiResponseConsumerClient（向后兼容，旧代码传整个 client 仍可用）。
+ */
+export interface UiResponseConsumerSubClient {
   subscribe(channel: string): Promise<unknown>;
   on(event: string, listener: (channel: string, message: string) => void): unknown;
   off?(event: string, listener: (channel: string, message: string) => void): unknown;
   unsubscribe(): Promise<unknown>;
   disconnect(): void;
-  publish(channel: string, message: string): Promise<number>;
 }
+
+/**
+ * pub 专用接口：仅需要 publish + disconnect 两个方法。
+ *
+ * disconnect 用于 consumer.disconnect() 时清理 pub 连接（narPub 可以是独立连接）。
+ * 不包含 subscribe/on/off（pub 不需要订阅）。
+ */
+export interface UiResponseConsumerPubClient {
+  publish(channel: string, message: string): Promise<number>;
+  disconnect(): void;
+}
+
+/**
+ * @deprecated 用 UiResponseConsumerSubClient（sub）+ UiResponseConsumerPubClient（pub）替代。
+ * 保留以向后兼容现有调用方（旧代码传全量 client 到 sub/pub 仍可用）。
+ */
+export interface UiResponseConsumerClient
+  extends UiResponseConsumerSubClient,
+    UiResponseConsumerPubClient {}
 
 export interface UiResponseConsumerLogger {
   info: (...args: unknown[]) => void;
@@ -57,8 +79,8 @@ export type ButtonClickCallback = (response: AgentUiResponsePayloadV1) => void;
 export type SessionEndCallback = (response: AgentUiResponsePayloadV1) => void;
 
 export interface UiResponseConsumerConfig {
-  sub: UiResponseConsumerClient;
-  pub: UiResponseConsumerClient;
+  sub: UiResponseConsumerSubClient;
+  pub: UiResponseConsumerPubClient;
   logger?: UiResponseConsumerLogger;
   /** button_click 回调（注入 Arbiter 推演） */
   onButtonClick?: ButtonClickCallback;
@@ -88,8 +110,8 @@ export const REALM_GATE_NARRATION_TEXT =
 // ─── UiResponseConsumer 类 ────────────────────────────────────────────────────
 
 export class UiResponseConsumer {
-  private readonly sub: UiResponseConsumerClient;
-  private readonly pub: UiResponseConsumerClient;
+  private readonly sub: UiResponseConsumerSubClient;
+  private readonly pub: UiResponseConsumerPubClient;
   private readonly logger: UiResponseConsumerLogger;
   private readonly onButtonClick: ButtonClickCallback | undefined;
   private readonly onSessionEnd: SessionEndCallback | undefined;

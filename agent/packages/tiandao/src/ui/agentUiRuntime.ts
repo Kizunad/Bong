@@ -23,6 +23,18 @@ export interface AgentUiRuntimePubClient {
   publish(channel: string, message: string): Promise<number>;
 }
 
+/**
+ * narPub 专用接口：仅需要 publish + disconnect 两个方法。
+ *
+ * UiResponseConsumer.pub 在 disconnect() 时会调用 pub.disconnect()，
+ * 因此不能用 AgentUiRuntimePubClient（只有 publish）。
+ * 使用此接口代替不安全的 `as AgentUiRuntimeSubClient` 类型断言。
+ */
+export interface AgentUiRuntimeNarPubClient {
+  publish(channel: string, message: string): Promise<number>;
+  disconnect(): void;
+}
+
 export interface AgentUiRuntimeSubClient extends AgentUiRuntimePubClient {
   subscribe(channel: string): Promise<unknown>;
   on(event: string, listener: (channel: string, message: string) => void): unknown;
@@ -36,8 +48,13 @@ export interface AgentUiRuntimeConfig {
   pub: AgentUiRuntimePubClient;
   /** Redis sub（订阅 bong:agent_ui_response） */
   sub: AgentUiRuntimeSubClient;
-  /** Redis pub for narration（发布 bong:agent_narrate，用于 realm_gate_rejected 降级） */
-  narPub?: AgentUiRuntimePubClient;
+  /**
+   * Redis pub for narration（发布 bong:agent_narrate，用于 realm_gate_rejected 降级）。
+   *
+   * 必须同时提供 publish 和 disconnect，因为 UiResponseConsumer 在 disconnect() 时
+   * 会调用 pub.disconnect()。若未提供则复用 sub（已满足接口）。
+   */
+  narPub?: AgentUiRuntimeNarPubClient;
   logger?: { info: (...args: unknown[]) => void; warn: (...args: unknown[]) => void };
 }
 
@@ -62,8 +79,9 @@ export class AgentUiRuntime {
       logger,
     });
 
-    // narPub 优先用于 realm_gate_rejected narration；若未提供则复用 pub
-    const narPub = (config.narPub ?? config.pub) as AgentUiRuntimeSubClient;
+    // narPub 优先用于 realm_gate_rejected narration；
+    // 若未提供则复用 sub（sub 已实现 publish + disconnect，类型安全）
+    const narPub: AgentUiRuntimeNarPubClient = config.narPub ?? config.sub;
 
     this.consumer = new UiResponseConsumer({
       sub: config.sub,
