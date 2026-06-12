@@ -141,12 +141,20 @@ interface Quad {
  *
  * For each sampled column we emit, per solid span, the top quad (span ceiling),
  * the bottom quad (span floor — only when there is air below it, i.e. a cave
- * floor or sky-isle underside), and the four side quads facing neighbor columns
- * where the neighbor leaves that height exposed. This is a face-culling voxel
- * mesher (the practical "greedy" baseline): interior faces between solid blocks
- * are never emitted, so a flat plateau costs one top quad per column instead of
- * full cubes. Single-span ground, cave (lower span under air), and sky-isle
- * (upper span floating) all fall out of the same per-span loop.
+ * ceiling or sky-isle underside), and the four side quads facing neighbor
+ * columns where the neighbor leaves that height exposed.
+ *
+ * This is a FACE-CULLED voxel mesher, NOT a greedy mesher: it culls interior
+ * faces (a face hidden behind a solid neighbor is never emitted) but it does
+ * NOT merge adjacent coplanar same-color quads into larger ones — every exposed
+ * column face is its own quad. So a flat plateau costs one top quad PER COLUMN
+ * (greedy meshing would collapse those into a single big quad). That keeps the
+ * mesher dead simple and the per-face law unit-testable; this is a dev preview
+ * tool and LOD stride already caps the worst case. Real greedy quad-merging for
+ * the 512² ~1.3M-quad full-res case is deferred to P7 (perf follow-up).
+ *
+ * Single-span ground, cave (lower span under air), and sky-isle (upper span
+ * floating) all fall out of the same per-span loop.
  *
  * Coordinates: world X = tileX*tileSize + localX, world Z = tileZ*tileSize +
  * localZ, with col_idx = localZ*tileSize + localX (row-major, matches Python).

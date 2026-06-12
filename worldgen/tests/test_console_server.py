@@ -285,7 +285,7 @@ def test_tile_spans_offset_decodes_to_valid_surface(client: TestClient) -> None:
 
     Decode the same column from both the count and spans buffers and assert the
     surface span (span[0].ceiling_y) is a real world Y, and that unused slots are
-    sentinel-filled — exactly what the greedy-mesh decoder relies on.
+    sentinel-filled — exactly what the face-culled voxel mesher relies on.
     """
     m = client.get("/api/manifest").json()
     x, z = _first_solid_tile(m)
