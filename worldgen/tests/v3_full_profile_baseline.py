@@ -20,8 +20,9 @@ origin tile) and exposes the column observables the golden pins:
 The span shape is produced by folding the profile's 2D buffer through
 ``spans_fold.spans_for_tile`` — the SAME canonical fold the raster export uses —
 so the golden pins exactly what ships to the Rust runtime.  Every profile is now
-DSL-driven; its DSL-built layers fold here and must reproduce this tuple within
-tolerance; that is the "换表示不换景观" gate.
+DSL-driven; its DSL-built layers fold here and must reproduce this integer tuple
+exactly (the golden test asserts via ``assertEqual``, not a tolerance); that is
+the "换表示不换景观" gate.
 
 The baseline is captured ONCE by ``regenerate_v3_full_profile_baseline.py`` and
 frozen in ``worldgen/fixtures/v3_full_profile_baseline.json``.  It must NOT be

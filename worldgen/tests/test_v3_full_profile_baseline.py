@@ -4,7 +4,10 @@ P2 rewrites every hand-written numpy profile into the declarative DSL.  The hard
 constraint is **换表示不换景观** (change the representation, not the landscape):
 a migrated DSL profile must reproduce the same observable terrain it produced as
 numpy — surface_y / water_y / biome_id and the full span shape (cave voids,
-sky-isle second spans).  Plan §P2 验收 is容差等价 (NOT byte-exact like P0).
+sky-isle second spans).  The observables pinned here are integers (carved
+surface_y, rounded water_y, biome_id, span floor/ceiling), so the assertions are
+**exact** ``assertEqual`` — every sampled column must reproduce the golden number
+bit-for-bit, not merely within a tolerance.
 
 This test freezes that contract for ALL 20 registered profiles in
 ``worldgen/fixtures/v3_full_profile_baseline.json``.  Three guarantees:
@@ -21,7 +24,7 @@ This test freezes that contract for ALL 20 registered profiles in
    be silently migrated without an equivalence pin.
 
 Every profile is now DSL-driven; its 2D layers fold through the canonical
-span fold and must reproduce these numbers within tolerance.  If a profile
+span fold and must reproduce these integer observables exactly.  If a profile
 legitimately changes its landscape, regenerate with
 ``python3 tests/regenerate_v3_full_profile_baseline.py`` and review the diff —
 never hand-edit the JSON to silence this test.
