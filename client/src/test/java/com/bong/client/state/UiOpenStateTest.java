@@ -34,14 +34,17 @@ public class UiOpenStateTest {
 
     @Test
     void rawXmlStaysDisabledByDefaultAndRejectsUnsafeContent() {
-        // plan-agent-ui-data-v1 P1: ENABLE_DYNAMIC_XML_UI 已设为 true；
-        // 用显式 enabled=false 参数验证"关闭"分支行为仍正确（2-arg 变体已反映新默认值）。
-        UiOpenState explicitlyDisabled = UiOpenState.dynamicXml("cultivation_panel", "<flow-layout/> ", false);
+        // 通过无 flag 参数的 2-arg 变体（读 BongClientFeatures.ENABLE_DYNAMIC_XML_UI）验证：
+        // 默认 flag 态（false）下 dynamicXml raw-XML 通道应被拦截（返回 empty）。
+        // 任何将 ENABLE_DYNAMIC_XML_UI 改为 true 的变动都会让这条用例立即红，保护安全副作用护栏。
+        UiOpenState defaultFlagResult = UiOpenState.dynamicXml("cultivation_panel", "<flow-layout/>");
         UiOpenState unsafe = UiOpenState.dynamicXml("cultivation_panel", "<!DOCTYPE foo><flow-layout/>", true);
 
-        assertTrue(explicitlyDisabled.isEmpty(),
-            "enabled=false 时 dynamicXml 应返回 empty，实际非空（2026 P1）");
-        assertTrue(unsafe.isEmpty());
+        assertTrue(defaultFlagResult.isEmpty(),
+            "ENABLE_DYNAMIC_XML_UI=false（默认态）时 dynamicXml 应返回 empty，"
+            + "raw XML 通道未授权打开；若此断言失败，检查 BongClientFeatures.ENABLE_DYNAMIC_XML_UI 是否被翻 true");
+        assertTrue(unsafe.isEmpty(),
+            "含 DOCTYPE 的 XML 应被拦截，unsafe content guard 失效");
     }
 
     @Test
