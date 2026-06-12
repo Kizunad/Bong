@@ -13,15 +13,20 @@ from __future__ import annotations
 
 import numpy as np
 
+from .. import dsl
 from ..blueprint import BlueprintZone
+from ..dsl import QiGrade
 from ..fields import SurfacePalette, TileFieldBuffer, WorldTile
-from ..noise import _tile_coords, fbm_2d, warped_fbm_2d
+from ..noise import _tile_coords
 from .base import (
     DecorationSpec,
     EcologySpec,
     ProfileContext,
     TerrainProfileGenerator,
 )
+
+# §8.1 #4 — TSY 近代高手死处：化虚馈赠区灵气浓（qi 0.78–1.0），归 font 档。
+QI_GRADE = QiGrade.FONT
 
 GAOSHOU_DECORATIONS = (
     DecorationSpec(
@@ -120,23 +125,30 @@ def fill_tsy_gaoshou_hermitage_tile(
     dx = (wx - center_x) / half_w
     dz = (wz - center_z) / half_d
     radial = np.sqrt(dx * dx + dz * dz)
-    core = np.maximum(0.0, 1.0 - radial**1.5)
+    # 中心 core 掩码（DSL radial_uplift，exponent=1.5，amplitude=1=裸掩码）。
+    core = dsl.radial_uplift(
+        wx, wz,
+        center_xz=(center_x, center_z),
+        half_w=half_w, half_d=half_d,
+        exponent=1.5, amplitude=1.0,
+    )
 
+    # depth_tier 三分支各自独立地形公式（DSL fbm_height，amplitude=1=裸噪声）。
     if depth_tier == "shallow":
         # 平地，茅屋+农田
-        base = 64.0 + fbm_2d(wx, wz, scale=200.0, octaves=2, seed=5100) * 1.5
+        base = 64.0 + dsl.fbm_height(wx, wz, scale=200.0, octaves=2, seed=5100) * 1.5
         ruin = np.clip(0.10 + core * 0.20, 0.0, 0.4)
         qi = np.clip(0.84 + core * 0.04, 0.78, 0.95)
         decay = np.clip(0.18, 0.10, 0.25)
     elif depth_tier == "mid":
         # 半山腰
-        base = 18.0 + fbm_2d(wx, wz, scale=140.0, octaves=3, seed=5200) * 4.0 + core * 6.0
+        base = 18.0 + dsl.fbm_height(wx, wz, scale=140.0, octaves=3, seed=5200) * 4.0 + core * 6.0
         ruin = np.clip(0.20 + core * 0.30, 0.05, 0.55)
         qi = np.clip(0.88 + core * 0.05, 0.80, 1.0)
         decay = np.clip(0.13, 0.06, 0.22)
     else:  # deep
         # 山洞修炼室
-        base = -18.0 + fbm_2d(wx, wz, scale=120.0, octaves=2, seed=5300) * 3.0 - core * 4.0
+        base = -18.0 + dsl.fbm_height(wx, wz, scale=120.0, octaves=2, seed=5300) * 3.0 - core * 4.0
         ruin = np.clip(0.25 + core * 0.20, 0.10, 0.55)
         qi = np.clip(0.92 + core * 0.05, 0.85, 1.0)
         decay = np.clip(0.10, 0.05, 0.18)
@@ -157,7 +169,7 @@ def fill_tsy_gaoshou_hermitage_tile(
 
     # 异常稀疏
     anomaly_seed = 5500 + depth_id * 100
-    anomaly_field = warped_fbm_2d(wx, wz, scale=240.0, octaves=2, warp_scale=300.0, warp_strength=80.0, seed=anomaly_seed)
+    anomaly_field = dsl.warped_height(wx, wz, scale=240.0, octaves=2, warp_scale=300.0, warp_strength=80.0, seed=anomaly_seed)
     anomaly_threshold = {"shallow": 0.65, "mid": 0.55, "deep": 0.50}[depth_tier]
     anomaly_intensity = np.clip((anomaly_field - anomaly_threshold) * 2.5, 0.0, 0.45)
     # qi_turbulence（2）主导，少量 wild_formation（5）

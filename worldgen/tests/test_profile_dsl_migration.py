@@ -54,6 +54,7 @@ MIGRATED_PROFILES: tuple[tuple[str, str], ...] = (
     ("tsy_zongmen_ruin", "scripts.terrain_gen.profiles.tsy_zongmen_ruin"),
     ("tsy_daneng_crater", "scripts.terrain_gen.profiles.tsy_daneng_crater"),
     ("tsy_zhanchang", "scripts.terrain_gen.profiles.tsy_zhanchang"),
+    ("tsy_gaoshou_hermitage", "scripts.terrain_gen.profiles.tsy_gaoshou_hermitage"),
 )
 
 # 迁移后不应再裸 import 的低层 noise 函数（应改走 dsl 算子库封装）。
