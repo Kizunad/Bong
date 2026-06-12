@@ -51,11 +51,22 @@ class CanyonCarver(BaseCarver):
         void_height: int = 14,
         shelf_thickness: int = 8,
         scale: float = 70.0,
+        wall_depth_band: tuple[int, int] | None = None,
     ) -> None:
         self.wall_threshold = wall_threshold
         self.void_height = max(3, void_height)
         self.shelf_thickness = max(2, shelf_thickness)
         self.scale = scale
+        # Optional [lo, hi] surface-Y gate: a profile sets this to the valley
+        # *wall* band (between floor and rim) so overhangs hug the slope and
+        # never appear on the flat plateau top or the valley floor.  None (the
+        # default, used by the standalone carver tests) means "any surface Y".
+        if wall_depth_band is not None:
+            lo, hi = wall_depth_band
+            if lo > hi:
+                lo, hi = hi, lo
+            wall_depth_band = (int(lo), int(hi))
+        self.wall_depth_band = wall_depth_band
 
     def _wall_strength(self, wx: int, wz: int, surface_y: int, seed: int) -> float:
         # 2.5D wall-likelihood from warped 3D noise sampled at the surface; the
@@ -71,6 +82,10 @@ class CanyonCarver(BaseCarver):
         surface_y = col.surface_y
         if surface_y is None:
             return  # void column — nothing to overhang
+        if self.wall_depth_band is not None:
+            lo, hi = self.wall_depth_band
+            if not (lo <= surface_y <= hi):
+                return  # plateau top or valley floor — not the wall, no overhang
         strength = self._wall_strength(wx, wz, surface_y, seed)
         if strength < self.wall_threshold:
             return  # not a wall — leave the solid column alone
