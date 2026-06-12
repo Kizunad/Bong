@@ -94,6 +94,12 @@ export class UiRenderer {
   }
 
   /**
+   * plan-agent-ui-data-v1 P2 — XML UTF-8 字节上限（8192 字节，与 server xml_sanitize 口径一致）。
+   * 超出时截断 agent_narrative 后缀并追加省略标记，把"长叙事被 server 拒"前移到 agent 侧可观测。
+   */
+  static readonly XML_BYTE_LIMIT = 8192;
+
+  /**
    * 根据 scenario + player.realm 选模板、设 realm_gate，发布 AgentUiRequestCommandV1。
    *
    * 当 player.realm rank < scenario 的 realm_gate 时，发布模糊版（UX 降级）：
@@ -127,6 +133,11 @@ export class UiRenderer {
       allowedButtonIds = extractButtonIds(xml);
       sentBlurVersion = false;
     }
+
+    // plan-agent-ui-data-v1 P2 MINOR — UTF-8 字节预检/截断（≤8192 字节）。
+    // Buffer.byteLength 按 UTF-8 字节口径计量，与 server 的 xml_sanitize 字节截断对齐。
+    // 超限时截断 xml 并发警告日志，防止 server 因过大 payload 拒绝。
+    xml = enforceXmlByteLimit(xml, UiRenderer.XML_BYTE_LIMIT, this.logger);
 
     const requestId = this.generateRequestId();
     const command: AgentUiRequestCommandV1 = {
@@ -186,4 +197,47 @@ function renderBlurVersion(scenario: UiScenario, realm: string): string {
   // blur_insufficient 模板不通过 renderTemplate（它用的是 BLUR_INSUFFICIENT_TEMPLATE）
   return BLUR_INSUFFICIENT_TEMPLATE
     .replace(/\{\{blur_hint\}\}/g, xmlEscape(hint));
+}
+
+// ─── plan-agent-ui-data-v1 P2 MINOR — UTF-8 字节预检/截断 ────────────────────
+
+/**
+ * 按 UTF-8 字节口径对 xml 做 ≤byteLimit 预检/截断。
+ *
+ * - 若 xml 字节数 ≤ limit：原样返回，无副作用。
+ * - 若超限：先尝试找到最后一个完整标签边界截断，再追加省略标记，
+ *   发出警告日志让 agent 侧可观测（而非等 server 静默拒绝）。
+ *
+ * 截断策略：找 limit-16 字节内最后一个 '>' 位置（保证不截断在 UTF-8 多字节序列中间），
+ * 追加 "…（天道叙事已截断）" 标记。
+ */
+export function enforceXmlByteLimit(
+  xml: string,
+  byteLimit: number,
+  logger: { warn: (...args: unknown[]) => void },
+): string {
+  const byteLen = Buffer.byteLength(xml, "utf8");
+  if (byteLen <= byteLimit) {
+    return xml;
+  }
+
+  const TRUNCATION_SUFFIX = "…（天道叙事已截断）</label></widget></owo-ui>";
+  const suffixBytes = Buffer.byteLength(TRUNCATION_SUFFIX, "utf8");
+  const targetBytes = byteLimit - suffixBytes;
+
+  // 截取到 targetBytes 字节（Buffer 切割保证不在 UTF-8 序列中间）
+  let truncated = Buffer.from(xml, "utf8").subarray(0, targetBytes).toString("utf8");
+
+  // 去掉末尾可能残缺的标签片段：找最后一个 '>'
+  const lastGt = truncated.lastIndexOf(">");
+  if (lastGt > 0) {
+    truncated = truncated.substring(0, lastGt + 1);
+  }
+
+  logger.warn(
+    `[ui-renderer] xml byte-limit exceeded: original=${byteLen} limit=${byteLimit} ` +
+    `— truncating and appending suffix (prevents server rejection)`,
+  );
+
+  return truncated + TRUNCATION_SUFFIX;
 }

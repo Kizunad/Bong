@@ -33,7 +33,7 @@ import {
   TEMPLATE_REALM_GATE,
   extractButtonIds,
 } from "./xmlTemplates.js";
-import { UiRenderer } from "./uiRenderer.js";
+import { UiRenderer, enforceXmlByteLimit } from "./uiRenderer.js";
 import { UiResponseConsumer, REALM_GATE_NARRATION_TEXT } from "./uiResponseConsumer.js";
 import { AgentUiRuntime } from "./agentUiRuntime.js";
 
@@ -1106,5 +1106,189 @@ describe("AgentUiRuntime e2e (P2 验收)", () => {
     await expect(runtime.disconnect()).resolves.not.toThrow();
     expect(sub.unsubscribe, "disconnect 调用 unsubscribe").toHaveBeenCalled();
     expect(sub.disconnect, "disconnect 调用 sub.disconnect").toHaveBeenCalled();
+  });
+
+  it("e2e: target_player field in published command uses player.uuid (canonical offline:X format)", async () => {
+    // plan-agent-ui-data-v1 BLOCKER-target_player 契约 pin：
+    // agent_ui_cmd.target_player must be player.uuid (= "offline:X" from world-state),
+    // matching server agent_ui.rs canonical_player_id comparison.
+    const pub = makeFullMockClient();
+    const sub = makeFullMockClient();
+    const runtime = new AgentUiRuntime({ pub, sub });
+    await runtime.connect();
+
+    const canonicalPlayer = {
+      ...tsyPlayer,
+      uuid: "offline:Kiz",     // canonical_player_id format, as emitted by server world-state
+      name: "Kiz",
+      realm: "Condense",
+    };
+
+    await runtime.triggerUi({
+      scenario: "tsy_discovery",
+      targetPlayer: canonicalPlayer,
+      params: {
+        zone_name: "活坍缩渊",
+        spirit_qi_display: "0.72",
+        danger_tier: "高危",
+        agent_narrative: "天道感知裂缝",
+      },
+    });
+
+    const [, raw] = pub.publish.mock.calls[0];
+    const cmd = JSON.parse(raw as string);
+
+    // BLOCKER 契约 pin: target_player 必须 === player.uuid（canonical "offline:Kiz"）
+    expect(
+      cmd.target_player,
+      "agent_ui_cmd.target_player must equal player.uuid (canonical 'offline:Kiz'), not a bare username",
+    ).toBe("offline:Kiz");
+    expect(
+      cmd.target_player,
+      "canonical id must start with 'offline:' prefix (server lookup key)",
+    ).toMatch(/^offline:/);
+
+    await runtime.disconnect();
+  });
+});
+
+// ─── plan-agent-ui-data-v1 P2 MINOR: enforceXmlByteLimit 字节预检 ─────────────
+
+describe("enforceXmlByteLimit (MINOR-字节预检)", () => {
+  const noopLogger = { warn: vi.fn() };
+
+  beforeEach(() => {
+    noopLogger.warn.mockClear();
+  });
+
+  it("returns xml unchanged when byte length ≤ limit (happy path, ASCII)", () => {
+    const xml = "<owo-ui><label>hello</label></owo-ui>";
+    const result = enforceXmlByteLimit(xml, 8192, noopLogger);
+    expect(result, "short xml must pass through unchanged").toBe(xml);
+    expect(noopLogger.warn, "no warn for xml within limit").not.toHaveBeenCalled();
+  });
+
+  it("returns xml unchanged when byte length exactly equals limit", () => {
+    // Build a string of exactly 100 bytes
+    const xml = "A".repeat(100);
+    const result = enforceXmlByteLimit(xml, 100, noopLogger);
+    expect(result).toBe(xml);
+    expect(noopLogger.warn).not.toHaveBeenCalled();
+  });
+
+  it("truncates xml when byte length exceeds limit and emits warn log", () => {
+    // Build an xml longer than the limit
+    // "天道" = 6 bytes (2 CJK chars × 3 bytes each); 2000 × 6 = 12000 bytes > 8192
+    const longXml = "<owo-ui>" + "天道".repeat(2000) + "</owo-ui>";
+    const byteLen = Buffer.byteLength(longXml, "utf8");
+    expect(byteLen, "sanity: longXml must exceed 8192 bytes").toBeGreaterThan(8192);
+
+    const result = enforceXmlByteLimit(longXml, 8192, noopLogger);
+    const resultBytes = Buffer.byteLength(result, "utf8");
+
+    expect(
+      resultBytes,
+      `result must be ≤ 8192 bytes, got ${resultBytes}`,
+    ).toBeLessThanOrEqual(8192);
+    expect(
+      noopLogger.warn,
+      "must emit warn when truncating",
+    ).toHaveBeenCalledOnce();
+    expect(
+      noopLogger.warn.mock.calls[0][0] as string,
+      "warn message must mention byte-limit and original size",
+    ).toMatch(/byte-limit exceeded/);
+  });
+
+  it("truncated result contains the suffix marker", () => {
+    const longXml = "<owo-ui>" + "x".repeat(9000) + "</owo-ui>";
+    const result = enforceXmlByteLimit(longXml, 8192, noopLogger);
+    expect(
+      result,
+      "truncated result must contain the 天道叙事已截断 suffix marker",
+    ).toContain("天道叙事已截断");
+  });
+
+  it("never truncates mid-UTF8 sequence (multi-byte characters are clean)", () => {
+    // Fill with multi-byte CJK chars to force a mid-sequence truncation risk
+    const xml = "<owo-ui>" + "道".repeat(2000) + "</owo-ui>"; // "道" is 3 bytes each
+    const result = enforceXmlByteLimit(xml, 8192, noopLogger);
+    // Verify result is valid UTF-8 (can round-trip through Buffer without replacement chars)
+    const asBuffer = Buffer.from(result, "utf8");
+    const roundTripped = asBuffer.toString("utf8");
+    expect(
+      roundTripped,
+      "round-tripped string must equal result (no invalid UTF-8 sequences)",
+    ).toBe(result);
+    expect(Buffer.byteLength(result, "utf8")).toBeLessThanOrEqual(8192);
+  });
+
+  it("xml within limit is never warned about even with CJK content", () => {
+    const xml = "<owo-ui><label>天道</label></owo-ui>"; // short CJK
+    const result = enforceXmlByteLimit(xml, 8192, noopLogger);
+    expect(result).toBe(xml);
+    expect(noopLogger.warn).not.toHaveBeenCalled();
+  });
+
+  it("UiRenderer.XML_BYTE_LIMIT is 8192 (server口径 pin)", () => {
+    expect(
+      UiRenderer.XML_BYTE_LIMIT,
+      "XML_BYTE_LIMIT must be 8192 bytes to match server xml_sanitize byte limit",
+    ).toBe(8192);
+  });
+
+  it("UiRenderer.renderUi warns and truncates when xml exceeds 8192 bytes", async () => {
+    // Build a large agent_narrative that will push the XML over 8192 bytes
+    const longNarrative = "天道叙事".repeat(1000); // ~12000 bytes
+    const pub = {
+      publish: vi.fn(async () => 1),
+    };
+    const warnSpy = vi.fn();
+    const renderer = new UiRenderer({
+      pub,
+      logger: { info: vi.fn(), warn: warnSpy },
+      generateRequestId: () => "req-byte-test",
+    });
+
+    const player = {
+      uuid: "offline:ByteTest",
+      name: "ByteTest",
+      realm: "Condense",
+      composite_power: 0.5,
+      breakdown: { combat: 0.5, wealth: 0.5, social: 0.5, karma: 0.0, territory: 0.5 },
+      trend: "stable" as const,
+      active_hours: 10,
+      zone: "test_zone",
+      pos: [0, 64, 0] as [number, number, number],
+      recent_kills: 0,
+      recent_deaths: 0,
+    };
+
+    const result = await renderer.renderUi({
+      scenario: "tsy_discovery",
+      targetPlayer: player,
+      params: {
+        zone_name: "超限测试区",
+        spirit_qi_display: "0.85",
+        danger_tier: "极危",
+        agent_narrative: longNarrative,
+      },
+    });
+
+    expect(
+      warnSpy,
+      "renderUi must warn when xml exceeds byte limit",
+    ).toHaveBeenCalledOnce();
+    expect(warnSpy.mock.calls[0][0] as string).toMatch(/byte-limit exceeded/);
+
+    // Published xml must be within byte limit
+    const publishArgs = pub.publish.mock.calls[0] as unknown as [string, string];
+    const cmd = JSON.parse(publishArgs[1] as string) as Record<string, string>;
+    expect(
+      Buffer.byteLength(cmd["xml"], "utf8"),
+      "published xml must be ≤ 8192 bytes after truncation",
+    ).toBeLessThanOrEqual(8192);
+    // Result must indicate blur=false (realm sufficient) and have a requestId
+    expect(result.requestId).toBe("req-byte-test");
   });
 });
