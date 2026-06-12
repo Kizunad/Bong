@@ -87,6 +87,23 @@ export function decodeTile(p: DecodeParams): DecodedTile {
         `— truncated spans.bin (stride is ${SPAN_BYTES_PER_COLUMN} B/col)`,
     );
   }
+  // Optional semantic layers are per-column (one value per col_idx), so each
+  // must hold exactly tileSize² entries. Validate up front: a truncated layer
+  // would otherwise read `undefined` mid-mesh and color/place geometry at NaN
+  // (silent corruption) rather than failing loud here.
+  const checkLayer = (name: string, arr: { length: number } | undefined): void => {
+    if (arr !== undefined && arr.length !== cols) {
+      throw new Error(
+        `${name} length ${arr.length} != tileSize² ${cols} ` +
+          `— truncated ${name}.bin (one value per column expected)`,
+      );
+    }
+  };
+  checkLayer("surface_id", p.surfaceId);
+  checkLayer("water_level", p.waterLevel);
+  checkLayer("qi_density", p.qiDensity);
+  checkLayer("flora_variant_id", p.floraVariantId);
+
   const columns: ColumnSpans[] = new Array(cols);
   for (let c = 0; c < cols; c++) {
     columns[c] = decodeColumn(p.spansCount, spansView, c);

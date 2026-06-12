@@ -124,6 +124,48 @@ describe("decodeTile validates buffer sizes", () => {
       decodeTile({ tileSize: 2, spansCount, spans: shortSpans }),
     ).toThrow(/byteLength/);
   });
+
+  it("rejects a truncated surface_id layer (wrong length vs tileSize²)", () => {
+    const { spansCount, spans } = encodeColumns(2, fillColumns(2, [[-64, 60]]));
+    const shortSurface = new Uint8Array(3); // should be 4 (2×2)
+    expect(() =>
+      decodeTile({ tileSize: 2, spansCount, spans, surfaceId: shortSurface }),
+    ).toThrow(/surface_id length 3 != tileSize² 4/);
+  });
+
+  it("rejects a truncated water_level / qi_density / flora_variant_id layer", () => {
+    const { spansCount, spans } = encodeColumns(2, fillColumns(2, [[-64, 60]]));
+    expect(() =>
+      decodeTile({ tileSize: 2, spansCount, spans, waterLevel: new Float32Array(3) }),
+    ).toThrow(/water_level length 3 != tileSize² 4/);
+    expect(() =>
+      decodeTile({ tileSize: 2, spansCount, spans, qiDensity: new Float32Array(5) }),
+    ).toThrow(/qi_density length 5 != tileSize² 4/);
+    expect(() =>
+      decodeTile({
+        tileSize: 2,
+        spansCount,
+        spans,
+        floraVariantId: new Uint8Array(1),
+      }),
+    ).toThrow(/flora_variant_id length 1 != tileSize² 4/);
+  });
+
+  it("accepts correctly-sized optional layers (tileSize² entries each)", () => {
+    const { spansCount, spans } = encodeColumns(2, fillColumns(2, [[-64, 60]]));
+    // No throw, and the layers round-trip onto the decoded tile.
+    const tile = decodeTile({
+      tileSize: 2,
+      spansCount,
+      spans,
+      surfaceId: new Uint8Array(4),
+      waterLevel: new Float32Array(4),
+      qiDensity: new Float32Array(4),
+      floraVariantId: new Uint8Array(4),
+    });
+    expect(tile.surfaceId?.length).toBe(4);
+    expect(tile.qiDensity?.length).toBe(4);
+  });
 });
 
 // ---------------------------------------------------------------------------
