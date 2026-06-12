@@ -6,12 +6,49 @@
 //
 // All requests go through the vite dev proxy (/api -> :8765), so paths are relative.
 
+import { MAX_SPANS, SPAN_BYTES_PER_COLUMN, SPAN_SENTINEL } from "./decode";
 import type { Manifest } from "./types";
 
 export interface RegenResult {
   zone_name: string;
   rewritten_tiles: string[];
   tile_count: number;
+}
+
+/**
+ * Assert the manifest's spans_encoding matches the constants the decoder is
+ * compiled against. The decoder reads spans.bin at a hard-coded stride
+ * (`col_idx * SPAN_BYTES_PER_COLUMN`) with a hard-coded MAX_SPANS / sentinel; if
+ * a future bake bumps `max_spans` the manifest would say one thing while the
+ * decoder silently mis-reads every column. Fail loud at load time instead.
+ */
+export function assertSpansEncoding(m: Manifest): void {
+  const enc = m.spans_encoding;
+  if (!enc) {
+    throw new Error(
+      "manifest missing spans_encoding — the v2 span contract is mandatory " +
+        "(the decoder needs max_spans/stride/sentinel to read spans.bin)",
+    );
+  }
+  const mismatches: string[] = [];
+  if (enc.max_spans !== MAX_SPANS) {
+    mismatches.push(`max_spans ${enc.max_spans} != decoder MAX_SPANS ${MAX_SPANS}`);
+  }
+  if (enc.bytes_per_column !== SPAN_BYTES_PER_COLUMN) {
+    mismatches.push(
+      `bytes_per_column ${enc.bytes_per_column} != decoder stride ${SPAN_BYTES_PER_COLUMN}`,
+    );
+  }
+  if (enc.sentinel !== SPAN_SENTINEL) {
+    mismatches.push(`sentinel ${enc.sentinel} != decoder SPAN_SENTINEL ${SPAN_SENTINEL}`);
+  }
+  if (mismatches.length > 0) {
+    throw new Error(
+      `manifest spans_encoding disagrees with the compiled decoder — every ` +
+        `column would be mis-decoded: ${mismatches.join("; ")}. Rebuild the ` +
+        `console against this bake's span layout.`,
+    );
+  }
 }
 
 export async function fetchManifest(): Promise<Manifest> {
@@ -25,6 +62,7 @@ export async function fetchManifest(): Promise<Manifest> {
       `console only speaks manifest v2 (P0 spans); server returned v${m.version}`,
     );
   }
+  assertSpansEncoding(m);
   return m;
 }
 
