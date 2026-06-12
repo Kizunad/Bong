@@ -10,8 +10,8 @@ from __future__ import annotations
 
 import argparse
 import math
-import subprocess
 import sys
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable, Sequence
@@ -57,6 +57,8 @@ class VideoPoser:
     """Sample MediaPipe Pose landmarks from a video at Minecraft tick cadence."""
 
     def __init__(self, *, fps: int = 20, model_complexity: int = 2) -> None:
+        if fps <= 0:
+            raise ValueError("fps must be > 0")
         self.fps = fps
         try:
             import cv2  # type: ignore
@@ -79,17 +81,19 @@ class VideoPoser:
         if not cap.isOpened():
             raise ValueError(f"cannot open video: {video_path}")
 
-        source_fps = cap.get(self._cv2.CAP_PROP_FPS) or float(self.fps)
-        step = max(1, int(round(source_fps / float(self.fps))))
+        source_fps = float(cap.get(self._cv2.CAP_PROP_FPS))
+        if not math.isfinite(source_fps) or source_fps <= 0:
+            source_fps = float(self.fps)
+        sampler = FrameSampler(source_fps=source_fps, target_fps=self.fps)
         frames: list[LandmarkFrame] = []
         frame_index = 0
-        tick = 0
         try:
             while True:
                 ok, frame_bgr = cap.read()
                 if not ok:
                     break
-                if frame_index % step != 0:
+                tick = sampler.tick_for_frame(frame_index)
+                if tick is None:
                     frame_index += 1
                     continue
                 frame_rgb = self._cv2.cvtColor(frame_bgr, self._cv2.COLOR_BGR2RGB)
@@ -105,7 +109,6 @@ class VideoPoser:
                     else None
                 )
                 frames.append(LandmarkFrame(tick=tick, world_landmarks=world, image_landmarks=image))
-                tick += 1
                 frame_index += 1
         finally:
             cap.release()
@@ -280,6 +283,41 @@ def _xyz(point: object) -> tuple[float, float, float]:
     return float(point[0]), float(point[1]), float(point[2] if len(point) > 2 else 0.0)  # type: ignore[index]
 
 
+def sample_frame_indices(frame_count: int, source_fps: float, target_fps: int) -> list[int]:
+    """Return source frame indices sampled at target tick cadence."""
+    if frame_count < 0:
+        raise ValueError("frame_count must be >= 0")
+    sampler = FrameSampler(source_fps=source_fps, target_fps=target_fps)
+    return [
+        frame_index
+        for frame_index in range(frame_count)
+        if sampler.tick_for_frame(frame_index) is not None
+    ]
+
+
+class FrameSampler:
+    """Streaming source-frame sampler for a target animation tick cadence."""
+
+    def __init__(self, *, source_fps: float, target_fps: int) -> None:
+        if not math.isfinite(source_fps) or source_fps <= 0:
+            raise ValueError("source_fps must be > 0")
+        if target_fps <= 0:
+            raise ValueError("target_fps must be > 0")
+        self.source_fps = source_fps
+        self.target_fps = target_fps
+        self._tick = 0
+        self._next_sample_time = 0.0
+
+    def tick_for_frame(self, frame_index: int) -> int | None:
+        frame_time = frame_index / self.source_fps
+        if frame_time + 1e-9 < self._next_sample_time:
+            return None
+        tick = self._tick
+        self._tick += 1
+        self._next_sample_time = self._tick / float(self.target_fps)
+        return tick
+
+
 def _vec_from_any(point: object) -> np.ndarray:
     return np.array(_xyz(point), dtype=float)
 
@@ -389,13 +427,20 @@ def parse_args(argv: Sequence[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Convert pose video to Bong Emotecraft v3 JSON")
     parser.add_argument("input_video", type=Path)
     parser.add_argument("-o", "--output", required=True, help="animation name without .json")
-    parser.add_argument("--fps", type=int, default=20)
+    parser.add_argument("--fps", type=_positive_int, default=20)
     parser.add_argument("--complexity", type=int, default=2, choices=(0, 1, 2))
     parser.add_argument("--translate", action="store_true")
     parser.add_argument("--no-smooth", action="store_true")
     parser.add_argument("--loop", action="store_true")
     parser.add_argument("--preview", action="store_true")
     return parser.parse_args(argv)
+
+
+def _positive_int(value: str) -> int:
+    parsed = int(value)
+    if parsed <= 0:
+        raise argparse.ArgumentTypeError("must be > 0")
+    return parsed
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -413,14 +458,12 @@ def main(argv: Sequence[str] | None = None) -> int:
 
 
 def _run_preview(out_path: Path) -> None:
-    render = Path(__file__).resolve().parent / "render_animation.py"
-    preview_dir = Path("/tmp/video2anim_preview")
+    preview_dir = Path(tempfile.mkdtemp(prefix=f"video2anim_{out_path.stem}_"))
     try:
-        subprocess.run(
-            [sys.executable, str(render), str(out_path), "-o", str(preview_dir)],
-            check=True,
-        )
-        print(f"preview: {preview_dir}")
+        from render_animation import render_grid
+
+        grid_path = render_grid(out_path, preview_dir)
+        print(f"preview: {grid_path}")
     except Exception as exc:
         print(f"warning: preview failed: {exc}", file=sys.stderr)
 

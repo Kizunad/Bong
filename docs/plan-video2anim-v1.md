@@ -31,12 +31,6 @@
 
 ## P0 — 核心转换器 ✅ 2026-06-12
 
-**落地记录（PR-1）**：
-- `client/tools/video2emotecraft.py`：新增 `VideoPoser`（MediaPipe/OpenCV 延迟导入）与 `PoseToEmotecraft`（坐标变换、7 部件 pose table、bend 分解、Emotecraft v3 JSON 发射）。
-- `client/tools/test_video2emotecraft.py`：锁定 P0 数学与输出契约，覆盖坐标符号、T-pose 归零、手臂/腿 bend、弧度 JSON、pose_table 结构、丢帧、角度 unwrap、loop 闭合。
-- `client/tools/requirements-video2anim.txt`：登记真实视频转换所需 `mediapipe` / `opencv-contrib-python` / `numpy` / `scipy`。
-- 本地验收：`python3 -m pytest client/tools/test_video2emotecraft.py -q` → 9 passed。
-
 目标：`python3 client/tools/video2emotecraft.py input.mp4 -o punch_from_video` 产出可直接 F3+T 加载的 Emotecraft v3 JSON。
 
 ### P0.1 MediaPipe 姿态提取
@@ -223,3 +217,12 @@ MediaPipe 的 T-pose 检测不完美，导致"站直不动"时骨骼旋转不为
 | `client/tools/video2emotecraft.py` | 核心转换器（P0 全部 + P2 平滑/校准） |
 | `client/tools/test_video2emotecraft.py` | 单测 |
 | `client/tools/requirements-video2anim.txt` | Python 依赖（mediapipe / opencv / numpy / scipy） |
+
+## Finish Evidence
+
+> 阶段性证据：本 PR 仅完成 P0；P1/P2 仍未开始，本 plan 暂不归档。
+
+- **P0 落地清单**：`client/tools/video2emotecraft.py` 新增 `VideoPoser`（MediaPipe/OpenCV 延迟导入）与 `PoseToEmotecraft`（坐标变换、7 部件 pose table、bend 分解、Emotecraft v3 JSON 发射）；`client/tools/requirements-video2anim.txt` 登记真实视频转换依赖。
+- **P0 测试结果**：`client/tools/test_video2emotecraft.py` 覆盖公开 API 下的 body 平移符号、T-pose 归零、手臂/腿 bend、弧度 JSON、pose_table 结构、丢帧、角度 unwrap、loop 闭合、30→20 FPS 采样、低 FPS 边界与 `--fps 0` 错误分支。
+- **本地验收**：`python3 -m py_compile client/tools/video2emotecraft.py client/tools/test_video2emotecraft.py`；`python3 client/tools/video2emotecraft.py --help >/tmp/video2emotecraft_help.txt`；`python3 -m pytest client/tools/test_video2emotecraft.py -q` → 12 passed。
+- **遗留 / 后续**：P1 继续做 `--export-gen` / preview 集成 / batch；P2 继续做 Savitzky-Golay、easing 推断与 T-pose calibration；真实真人视频/F3+T 手测仍按 P0 验收标准在本地执行。
