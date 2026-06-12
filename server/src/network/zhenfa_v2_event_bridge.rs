@@ -172,7 +172,10 @@ fn map_kind(kind: ZhenfaKind) -> ZhenfaArrayKindV2 {
         ZhenfaKind::Trap
         | ZhenfaKind::WarningTrap
         | ZhenfaKind::BlastTrap
-        | ZhenfaKind::SlowTrap => ZhenfaArrayKindV2::Trap,
+        | ZhenfaKind::SlowTrap
+        | ZhenfaKind::BeastTrap
+        | ZhenfaKind::TripWire
+        | ZhenfaKind::DecoyStake => ZhenfaArrayKindV2::Trap,
         ZhenfaKind::Ward => ZhenfaArrayKindV2::Ward,
         ZhenfaKind::ShrineWard => ZhenfaArrayKindV2::ShrineWard,
         ZhenfaKind::Lingju => ZhenfaArrayKindV2::Lingju,
@@ -202,5 +205,42 @@ mod tests {
             !payload.owner.starts_with("entity_bits:"),
             "zhenfa v2 events must not expose process-local entity ids"
         );
+    }
+
+    #[test]
+    fn map_kind_maps_trap_family_to_trap_bucket() {
+        for kind in [
+            ZhenfaKind::Trap,
+            ZhenfaKind::WarningTrap,
+            ZhenfaKind::BlastTrap,
+            ZhenfaKind::SlowTrap,
+            ZhenfaKind::BeastTrap,
+            ZhenfaKind::TripWire,
+            ZhenfaKind::DecoyStake,
+        ] {
+            assert_eq!(
+                map_kind(kind),
+                ZhenfaArrayKindV2::Trap,
+                "{kind:?} must map to the Trap bucket because zhenfa v2 decay/breakthrough events merge trap subtypes"
+            );
+        }
+    }
+
+    #[test]
+    fn map_kind_keeps_non_trap_buckets_distinct() {
+        for (kind, expected) in [
+            (ZhenfaKind::Ward, ZhenfaArrayKindV2::Ward),
+            (ZhenfaKind::ShrineWard, ZhenfaArrayKindV2::ShrineWard),
+            (ZhenfaKind::Lingju, ZhenfaArrayKindV2::Lingju),
+            (ZhenfaKind::DeceiveHeaven, ZhenfaArrayKindV2::DeceiveHeaven),
+            (ZhenfaKind::Illusion, ZhenfaArrayKindV2::Illusion),
+            (ZhenfaKind::NetworkArray, ZhenfaArrayKindV2::NetworkArray),
+        ] {
+            assert_eq!(
+                map_kind(kind),
+                expected,
+                "{kind:?} must keep its dedicated zhenfa v2 event bucket instead of falling into Trap"
+            );
+        }
     }
 }

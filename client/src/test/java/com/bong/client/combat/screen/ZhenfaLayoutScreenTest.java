@@ -51,6 +51,31 @@ final class ZhenfaLayoutScreenTest {
     }
 
     @Test
+    void trapRuntimeKindsAlsoOmitTriggerAndForwardItem() {
+        Object[][] cases = {
+            {ClientRequestProtocol.ZhenfaKind.BEAST_TRAP, "beast_trap", ClientRequestProtocol.ZhenfaTargetFace.NORTH},
+            {ClientRequestProtocol.ZhenfaKind.TRIP_WIRE, "trip_wire", ClientRequestProtocol.ZhenfaTargetFace.NORTH},
+            {ClientRequestProtocol.ZhenfaKind.DECOY_STAKE, "decoy_stake", ClientRequestProtocol.ZhenfaTargetFace.TOP}
+        };
+
+        for (Object[] entry : cases) {
+            ClientRequestProtocol.ZhenfaKind kind = (ClientRequestProtocol.ZhenfaKind) entry[0];
+            String wireName = (String) entry[1];
+            ClientRequestProtocol.ZhenfaTargetFace face = (ClientRequestProtocol.ZhenfaTargetFace) entry[2];
+            ZhenfaLayoutScreen screen = new ZhenfaLayoutScreen(new BlockPos(11, 64, -3), kind, 9002L, face);
+            JsonObject payload = payload(screen);
+
+            assertString(payload, "kind", wireName, "trap runtime kind must preserve its dedicated wire name");
+            assertFalse(
+                payload.has("trigger"),
+                "expected " + wireName + " to omit trigger because runtime traps use fixed server-side semantics; actual payload=" + payload
+            );
+            assertLong(payload, "item_instance_id", 9002L, "trap runtime placement must forward item instance id");
+            assertString(payload, "target_face", face.wireName(), "trap runtime placement must forward target face");
+        }
+    }
+
+    @Test
     void nonPositiveItemIdsAreOmittedForFixedTraps() {
         ZhenfaLayoutScreen zeroItem = new ZhenfaLayoutScreen(
             new BlockPos(1, 65, 2),

@@ -20,6 +20,7 @@ use crate::cultivation::meridian::severed::{
     check_meridian_dependencies, MeridianSeveredPermanent,
 };
 use crate::cultivation::tribulation::{JueBiTriggerEvent, JueBiTriggerSource};
+use crate::fauna::components::{BeastKind, FaunaTag};
 use crate::inventory::{
     add_item_to_player_inventory, consume_item_instance_once, inventory_item_by_instance_borrow,
     InventoryInstanceIdAllocator, ItemRegistry, PlayerInventory,
@@ -78,6 +79,9 @@ pub enum ZhenfaKind {
     WarningTrap,
     BlastTrap,
     SlowTrap,
+    BeastTrap,
+    TripWire,
+    DecoyStake,
     ShrineWard,
     Lingju,
     DeceiveHeaven,
@@ -371,7 +375,10 @@ impl ArrayMastery {
             ZhenfaKind::Trap
             | ZhenfaKind::WarningTrap
             | ZhenfaKind::BlastTrap
-            | ZhenfaKind::SlowTrap => self.trap,
+            | ZhenfaKind::SlowTrap
+            | ZhenfaKind::BeastTrap
+            | ZhenfaKind::TripWire
+            | ZhenfaKind::DecoyStake => self.trap,
             ZhenfaKind::Ward => self.ward,
             ZhenfaKind::ShrineWard => self.shrine_ward,
             ZhenfaKind::Lingju => self.lingju,
@@ -394,7 +401,10 @@ impl ArrayMastery {
             ZhenfaKind::Trap
             | ZhenfaKind::WarningTrap
             | ZhenfaKind::BlastTrap
-            | ZhenfaKind::SlowTrap => &mut self.trap,
+            | ZhenfaKind::SlowTrap
+            | ZhenfaKind::BeastTrap
+            | ZhenfaKind::TripWire
+            | ZhenfaKind::DecoyStake => &mut self.trap,
             ZhenfaKind::Ward => &mut self.ward,
             ZhenfaKind::ShrineWard => &mut self.shrine_ward,
             ZhenfaKind::Lingju => &mut self.lingju,
@@ -1255,6 +1265,57 @@ pub fn zhenfa_kind_profile(
             reveal_chance: 0.0,
             reflect_ratio: 0.0,
         },
+        ZhenfaKind::BeastTrap => ZhenfaKindProfile {
+            min_invest_ratio: 0.0,
+            cap_invest_ratio: 0.0,
+            cast_time_ticks: cast_time_between(1, 1, mastery_ratio),
+            duration_ticks: trap_content::survival_ticks(trap_content::OrdinaryTrapKind::Beast),
+            radius: trap_content::OrdinaryTrapKind::Beast
+                .detection_radius()
+                .ceil() as u8,
+            density_multiplier: 1.0,
+            tiandao_gaze_weight: 0.0,
+            reveal_threshold: trap_content::discovery_profile(
+                trap_content::OrdinaryTrapKind::Beast,
+            )
+            .reveal_threshold(),
+            reveal_chance: 0.0,
+            reflect_ratio: 0.0,
+        },
+        ZhenfaKind::TripWire => ZhenfaKindProfile {
+            min_invest_ratio: 0.0,
+            cap_invest_ratio: 0.0,
+            cast_time_ticks: cast_time_between(1, 1, mastery_ratio),
+            duration_ticks: trap_content::survival_ticks(trap_content::OrdinaryTrapKind::TripWire),
+            radius: trap_content::OrdinaryTrapKind::TripWire
+                .detection_radius()
+                .ceil() as u8,
+            density_multiplier: 1.0,
+            tiandao_gaze_weight: 0.0,
+            reveal_threshold: trap_content::discovery_profile(
+                trap_content::OrdinaryTrapKind::TripWire,
+            )
+            .reveal_threshold(),
+            reveal_chance: 0.0,
+            reflect_ratio: 0.0,
+        },
+        ZhenfaKind::DecoyStake => ZhenfaKindProfile {
+            min_invest_ratio: 0.0,
+            cap_invest_ratio: 0.0,
+            cast_time_ticks: cast_time_between(1, 1, mastery_ratio),
+            duration_ticks: trap_content::survival_ticks(trap_content::OrdinaryTrapKind::Decoy),
+            radius: trap_content::OrdinaryTrapKind::Decoy
+                .detection_radius()
+                .ceil() as u8,
+            density_multiplier: 1.0,
+            tiandao_gaze_weight: 0.0,
+            reveal_threshold: trap_content::discovery_profile(
+                trap_content::OrdinaryTrapKind::Decoy,
+            )
+            .reveal_threshold(),
+            reveal_chance: 0.0,
+            reflect_ratio: 0.0,
+        },
         ZhenfaKind::Ward => ZhenfaKindProfile {
             min_invest_ratio: MIN_QI_INVEST_RATIO,
             cap_invest_ratio: cap,
@@ -1467,7 +1528,10 @@ pub fn zhenfa_meridian_dependencies(kind: ZhenfaKind) -> &'static [MeridianId] {
         | ZhenfaKind::Ward
         | ZhenfaKind::WarningTrap
         | ZhenfaKind::BlastTrap
-        | ZhenfaKind::SlowTrap => &[MeridianId::Ren],
+        | ZhenfaKind::SlowTrap
+        | ZhenfaKind::BeastTrap
+        | ZhenfaKind::TripWire
+        | ZhenfaKind::DecoyStake => &[MeridianId::Ren],
         ZhenfaKind::ShrineWard => &[MeridianId::Ren, MeridianId::Du],
         ZhenfaKind::Lingju => &[MeridianId::Ren, MeridianId::Du, MeridianId::Kidney],
         ZhenfaKind::DeceiveHeaven => &[
@@ -2015,6 +2079,9 @@ fn emit_deploy_event(
         | ZhenfaKind::WarningTrap
         | ZhenfaKind::BlastTrap
         | ZhenfaKind::SlowTrap
+        | ZhenfaKind::BeastTrap
+        | ZhenfaKind::TripWire
+        | ZhenfaKind::DecoyStake
         | ZhenfaKind::NetworkArray => {}
     }
 }
@@ -2612,6 +2679,7 @@ type ZhenfaDamageTarget<'a> = (
     &'a mut Wounds,
     Option<&'a Lifecycle>,
     Option<&'a Username>,
+    Option<&'a FaunaTag>,
     Option<&'a mut Contamination>,
     Option<&'a mut MeridianSystem>,
     Option<&'a Relationships>,
@@ -2831,6 +2899,24 @@ fn tick_zhenfa_registry(
                     }
                 }
             }
+            ZhenfaKind::BeastTrap => {
+                for (target, position, _wounds, _lifecycle, _username, fauna_tag, ..) in
+                    &mut targets
+                {
+                    if !is_non_owner_beast_target(target, instance.owner, fauna_tag) {
+                        continue;
+                    }
+                    if trap_content::vertical_column_contains(
+                        position.get(),
+                        instance.pos,
+                        trap_content::OrdinaryTrapKind::Beast.detection_radius(),
+                        trap_content::OrdinaryTrapKind::Beast.vertical_height(),
+                    ) {
+                        break;
+                    }
+                }
+            }
+            ZhenfaKind::TripWire | ZhenfaKind::DecoyStake => {}
             ZhenfaKind::Ward => {
                 for (target, position) in &ward_positions {
                     if target == instance.owner {
@@ -3167,14 +3253,16 @@ fn handle_zhenfa_disarm_requests(
 
         match req.mode {
             ZhenfaDisarmMode::ForceBreak => {
-                apply_backlash(
-                    req.player,
-                    &mut wounds,
-                    contamination,
-                    meridians,
-                    req.requested_at_tick,
-                    backlash_contam_delta(instance.kind),
-                );
+                if !is_mundane_mechanical_trap_kind(instance.kind) {
+                    apply_backlash(
+                        req.player,
+                        &mut wounds,
+                        contamination,
+                        meridians,
+                        req.requested_at_tick,
+                        backlash_contam_delta(instance.kind),
+                    );
+                }
             }
             ZhenfaDisarmMode::Disarm => {
                 let chance = zhenfa_disarm_chance(modifiers);
@@ -3251,6 +3339,7 @@ fn apply_shrine_ward_pressure(
         mut wounds,
         lifecycle,
         username,
+        _fauna_tag,
         _contamination,
         _meridians,
         relationships,
@@ -3415,6 +3504,7 @@ fn apply_trigger_snapshots(
             mut wounds,
             lifecycle,
             username,
+            _fauna_tag,
             contamination,
             meridians,
             _relationships,
@@ -3817,6 +3907,7 @@ fn backlash_contam_delta(kind: ZhenfaKind) -> f64 {
         ZhenfaKind::Trap | ZhenfaKind::BlastTrap => 0.5,
         ZhenfaKind::WarningTrap => 0.2,
         ZhenfaKind::SlowTrap => 0.35,
+        ZhenfaKind::BeastTrap | ZhenfaKind::TripWire | ZhenfaKind::DecoyStake => 0.0,
         ZhenfaKind::Ward => 0.3,
         ZhenfaKind::ShrineWard => 0.35,
         ZhenfaKind::Lingju => 0.25,
@@ -3824,6 +3915,13 @@ fn backlash_contam_delta(kind: ZhenfaKind) -> f64 {
         ZhenfaKind::Illusion => 0.2,
         ZhenfaKind::NetworkArray => 0.2,
     }
+}
+
+fn is_mundane_mechanical_trap_kind(kind: ZhenfaKind) -> bool {
+    matches!(
+        kind,
+        ZhenfaKind::BeastTrap | ZhenfaKind::TripWire | ZhenfaKind::DecoyStake
+    )
 }
 
 fn apply_backlash(
@@ -4099,6 +4197,21 @@ fn send_zhenfa_release_overflow(
 fn should_release_sealed_qi_to_zone(kind: ZhenfaKind) -> bool {
     trap_content::OrdinaryTrapKind::from_zhenfa_kind(kind).is_some()
         || kind == ZhenfaKind::DeceiveHeaven
+}
+
+pub fn is_beast_target(tag: &FaunaTag) -> bool {
+    matches!(
+        tag.beast_kind,
+        BeastKind::Rat
+            | BeastKind::Spider
+            | BeastKind::GreenSpider
+            | BeastKind::JungleScorpion
+            | BeastKind::CockadeSnake
+    )
+}
+
+fn is_non_owner_beast_target(target: Entity, owner: Entity, fauna_tag: Option<&FaunaTag>) -> bool {
+    target != owner && fauna_tag.is_some_and(is_beast_target)
 }
 
 fn chebyshev_distance(left: [i32; 3], right: [i32; 3]) -> i32 {
@@ -5984,6 +6097,349 @@ mod tests {
         assert_eq!(instance.qi_invest_amount, 2.0);
         let inventory = app.world().get::<PlayerInventory>(owner).unwrap();
         assert!(inventory_item_by_instance_borrow(inventory, 9101).is_none());
+    }
+
+    #[test]
+    fn place_and_disarm_trap_runtime_p0_variants() {
+        let cases = [
+            (
+                ZhenfaKind::BeastTrap,
+                trap_content::BEAST_TRAP_ITEM_ID,
+                trap_content::TrapTargetFace::North,
+            ),
+            (
+                ZhenfaKind::TripWire,
+                trap_content::TRIP_WIRE_ITEM_ID,
+                trap_content::TrapTargetFace::North,
+            ),
+            (
+                ZhenfaKind::DecoyStake,
+                trap_content::BAIT_STAKE_ITEM_ID,
+                trap_content::TrapTargetFace::Top,
+            ),
+        ];
+
+        for (idx, (kind, item_id, target_face)) in cases.into_iter().enumerate() {
+            let mut app = app_with_loaded_zhenfa();
+            let owner = spawn_player(&mut app, "Alice", [0.0, 64.0, 0.0]);
+            let item_instance_id = 9200 + idx as u64;
+            let pos = [1 + idx as i32, 64, 1];
+            app.world_mut()
+                .entity_mut(owner)
+                .insert(ordinary_trap_inventory(trap_item(
+                    item_instance_id,
+                    item_id,
+                    item_id,
+                )));
+
+            app.world_mut().send_event(ZhenfaPlaceRequest {
+                player: owner,
+                pos,
+                kind,
+                carrier: ZhenfaCarrierKind::CommonStone,
+                qi_invest_ratio: 1.0,
+                trigger: None,
+                item_instance_id: Some(item_instance_id),
+                target_face: Some(target_face),
+                requested_at_tick: 10,
+            });
+            app.update();
+
+            let registry = app.world().resource::<ZhenfaRegistry>();
+            let instance = registry.find_at(pos).expect("P0 trap should be placed");
+            assert_eq!(instance.kind, kind);
+            assert_eq!(
+                instance.qi_invest_amount, 0.0,
+                "{kind:?} is a mundane trap and must not seal qi"
+            );
+            assert_eq!(
+                app.world().get::<Cultivation>(owner).unwrap().qi_current,
+                100.0,
+                "{kind:?} placement must not debit qi"
+            );
+            let inventory = app.world().get::<PlayerInventory>(owner).unwrap();
+            assert!(inventory_item_by_instance_borrow(inventory, item_instance_id).is_none());
+
+            let qi_before_disarm = app.world().get::<Cultivation>(owner).unwrap().qi_current;
+            let wounds_before_disarm = app.world().get::<Wounds>(owner).unwrap().clone();
+            let contam_count_before_disarm = app
+                .world()
+                .get::<Contamination>(owner)
+                .unwrap()
+                .entries
+                .len();
+            let lung_integrity_before_disarm = app
+                .world()
+                .get::<MeridianSystem>(owner)
+                .unwrap()
+                .get(MeridianId::Lung)
+                .integrity;
+            app.world_mut().send_event(ZhenfaDisarmRequest {
+                player: owner,
+                pos,
+                mode: ZhenfaDisarmMode::ForceBreak,
+                requested_at_tick: 20,
+            });
+            app.update();
+
+            assert!(
+                app.world()
+                    .resource::<ZhenfaRegistry>()
+                    .find_at(pos)
+                    .is_none(),
+                "{kind:?} must be removable through ZhenfaDisarm"
+            );
+            let wounds_after_disarm = app.world().get::<Wounds>(owner).unwrap();
+            assert_eq!(
+                app.world().get::<Cultivation>(owner).unwrap().qi_current,
+                qi_before_disarm,
+                "{kind:?} ForceBreak is a mundane mechanical cleanup and must not debit qi"
+            );
+            assert_eq!(
+                wounds_after_disarm.health_current, wounds_before_disarm.health_current,
+                "{kind:?} ForceBreak must not apply zhenfa backlash health loss"
+            );
+            assert_eq!(
+                wounds_after_disarm.entries.len(),
+                wounds_before_disarm.entries.len(),
+                "{kind:?} ForceBreak must not append backlash wounds"
+            );
+            assert_eq!(
+                app.world()
+                    .get::<Contamination>(owner)
+                    .unwrap()
+                    .entries
+                    .len(),
+                contam_count_before_disarm,
+                "{kind:?} ForceBreak must not append contamination entries"
+            );
+            assert_eq!(
+                app.world()
+                    .get::<MeridianSystem>(owner)
+                    .unwrap()
+                    .get(MeridianId::Lung)
+                    .integrity,
+                lung_integrity_before_disarm,
+                "{kind:?} ForceBreak must not damage Lung meridian integrity"
+            );
+        }
+    }
+
+    #[test]
+    fn runtime_p0_traps_reject_bad_item_face_and_missing_item() {
+        let cases = [
+            (
+                ZhenfaKind::BeastTrap,
+                trap_content::BEAST_TRAP_ITEM_ID,
+                trap_content::TrapTargetFace::North,
+                trap_content::TrapTargetFace::Bottom,
+            ),
+            (
+                ZhenfaKind::TripWire,
+                trap_content::TRIP_WIRE_ITEM_ID,
+                trap_content::TrapTargetFace::North,
+                trap_content::TrapTargetFace::Bottom,
+            ),
+            (
+                ZhenfaKind::DecoyStake,
+                trap_content::BAIT_STAKE_ITEM_ID,
+                trap_content::TrapTargetFace::Top,
+                trap_content::TrapTargetFace::North,
+            ),
+        ];
+
+        for (idx, (kind, item_id, valid_face, invalid_face)) in cases.into_iter().enumerate() {
+            let base_id = 9300 + (idx as u64 * 10);
+            assert_runtime_trap_place_rejected(
+                kind,
+                item_id,
+                Some(base_id + 99),
+                Some(valid_face),
+                base_id,
+                [10 + idx as i32, 64, 1],
+                "wrong item_instance_id",
+            );
+            assert_runtime_trap_place_rejected(
+                kind,
+                item_id,
+                Some(base_id),
+                Some(invalid_face),
+                base_id,
+                [20 + idx as i32, 64, 1],
+                "wrong target_face",
+            );
+            assert_runtime_trap_place_rejected(
+                kind,
+                item_id,
+                None,
+                Some(valid_face),
+                base_id,
+                [30 + idx as i32, 64, 1],
+                "missing item_instance_id",
+            );
+        }
+    }
+
+    fn assert_runtime_trap_place_rejected(
+        kind: ZhenfaKind,
+        item_id: &str,
+        request_item_instance_id: Option<u64>,
+        request_face: Option<trap_content::TrapTargetFace>,
+        inventory_item_instance_id: u64,
+        pos: [i32; 3],
+        case_label: &str,
+    ) {
+        let mut app = app_with_loaded_zhenfa();
+        let owner = spawn_player(&mut app, "Alice", [0.0, 64.0, 0.0]);
+        app.world_mut()
+            .entity_mut(owner)
+            .insert(ordinary_trap_inventory(trap_item(
+                inventory_item_instance_id,
+                item_id,
+                item_id,
+            )));
+
+        app.world_mut().send_event(ZhenfaPlaceRequest {
+            player: owner,
+            pos,
+            kind,
+            carrier: ZhenfaCarrierKind::CommonStone,
+            qi_invest_ratio: 1.0,
+            trigger: None,
+            item_instance_id: request_item_instance_id,
+            target_face: request_face,
+            requested_at_tick: 10,
+        });
+        app.update();
+
+        assert!(
+            app.world()
+                .resource::<ZhenfaRegistry>()
+                .find_at(pos)
+                .is_none(),
+            "{kind:?} placement must reject {case_label} before creating a registry entry"
+        );
+        assert_eq!(
+            app.world().get::<Cultivation>(owner).unwrap().qi_current,
+            100.0,
+            "{kind:?} rejected placement for {case_label} must not debit qi"
+        );
+        let inventory = app.world().get::<PlayerInventory>(owner).unwrap();
+        assert!(
+            inventory_item_by_instance_borrow(inventory, inventory_item_instance_id).is_some(),
+            "{kind:?} rejected placement for {case_label} must keep the trap item in inventory"
+        );
+    }
+
+    #[test]
+    fn beast_trap_p0_scan_does_not_apply_p1_side_effects() {
+        let mut app = app_with_loaded_zhenfa();
+        let owner = spawn_player(&mut app, "Alice", [0.0, 64.0, 0.0]);
+        app.world_mut()
+            .entity_mut(owner)
+            .insert(ordinary_trap_inventory(trap_item(
+                9401,
+                trap_content::BEAST_TRAP_ITEM_ID,
+                trap_content::BEAST_TRAP_ITEM_ID,
+            )));
+        let beast = app
+            .world_mut()
+            .spawn((
+                Position::new([1.5, 64.0, 1.5]),
+                Wounds::default(),
+                FaunaTag::new(BeastKind::Spider),
+            ))
+            .id();
+
+        app.world_mut().send_event(ZhenfaPlaceRequest {
+            player: owner,
+            pos: [1, 64, 1],
+            kind: ZhenfaKind::BeastTrap,
+            carrier: ZhenfaCarrierKind::CommonStone,
+            qi_invest_ratio: 1.0,
+            trigger: None,
+            item_instance_id: Some(9401),
+            target_face: Some(trap_content::TrapTargetFace::North),
+            requested_at_tick: 10,
+        });
+        app.update();
+        app.world_mut().resource_mut::<CombatClock>().tick = 11;
+        app.update();
+
+        assert!(
+            app.world()
+                .resource::<ZhenfaRegistry>()
+                .find_at([1, 64, 1])
+                .is_some(),
+            "P0 BeastTrap target scan must not consume the trap before P1 snap behavior exists"
+        );
+        assert!(
+            app.world()
+                .resource::<Events<ApplyStatusEffectIntent>>()
+                .iter_current_update_events()
+                .next()
+                .is_none(),
+            "P0 BeastTrap must not emit Immobilized before P1 implements the status effect"
+        );
+        assert!(
+            app.world()
+                .resource::<Events<CombatEvent>>()
+                .iter_current_update_events()
+                .next()
+                .is_none(),
+            "P0 BeastTrap must not deal damage before P1 implements snap damage"
+        );
+        assert!(
+            app.world().get::<Wounds>(beast).unwrap().entries.is_empty(),
+            "P0 BeastTrap scan must leave the low-tier beast without wounds"
+        );
+    }
+
+    #[test]
+    fn beast_target_filter_uses_fauna_tag_low_tier_set_and_excludes_owner() {
+        let mut app = app_with_zhenfa();
+        let owner = app.world_mut().spawn_empty().id();
+        let non_owner = app.world_mut().spawn_empty().id();
+
+        for kind in [
+            BeastKind::Rat,
+            BeastKind::Spider,
+            BeastKind::GreenSpider,
+            BeastKind::JungleScorpion,
+            BeastKind::CockadeSnake,
+        ] {
+            let tag = FaunaTag::new(kind);
+            assert!(
+                is_beast_target(&tag),
+                "{kind:?} is in the P0 mundane beast-trap target set"
+            );
+            assert!(
+                is_non_owner_beast_target(non_owner, owner, Some(&tag)),
+                "{kind:?} non-owner with FaunaTag should pass beast-trap targeting"
+            );
+            assert!(
+                !is_non_owner_beast_target(owner, owner, Some(&tag)),
+                "{kind:?} owner must not trigger their own beast trap"
+            );
+        }
+
+        for kind in [
+            BeastKind::BlueSpider,
+            BeastKind::IceScorpion,
+            BeastKind::MandrakeSnake,
+            BeastKind::HybridBeast,
+            BeastKind::LivingPillar,
+            BeastKind::Whale,
+        ] {
+            assert!(
+                !is_beast_target(&FaunaTag::new(kind)),
+                "{kind:?} is outside the P0 mundane beast-trap target set"
+            );
+        }
+        assert!(
+            !is_non_owner_beast_target(non_owner, owner, None),
+            "entities without FaunaTag, including players and mundane mobs, must not be beast targets"
+        );
     }
 
     #[test]

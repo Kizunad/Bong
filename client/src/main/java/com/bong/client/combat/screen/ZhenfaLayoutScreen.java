@@ -91,7 +91,10 @@ public final class ZhenfaLayoutScreen extends Screen {
     private boolean usesFixedTrapTrigger() {
         return kind == ClientRequestProtocol.ZhenfaKind.WARNING_TRAP
             || kind == ClientRequestProtocol.ZhenfaKind.BLAST_TRAP
-            || kind == ClientRequestProtocol.ZhenfaKind.SLOW_TRAP;
+            || kind == ClientRequestProtocol.ZhenfaKind.SLOW_TRAP
+            || kind == ClientRequestProtocol.ZhenfaKind.BEAST_TRAP
+            || kind == ClientRequestProtocol.ZhenfaKind.TRIP_WIRE
+            || kind == ClientRequestProtocol.ZhenfaKind.DECOY_STAKE;
     }
 
     private String placementTrigger() {

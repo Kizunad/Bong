@@ -2924,6 +2924,18 @@
             {
               "const": "network_array",
               "type": "string"
+            },
+            {
+              "const": "beast_trap",
+              "type": "string"
+            },
+            {
+              "const": "trip_wire",
+              "type": "string"
+            },
+            {
+              "const": "decoy_stake",
+              "type": "string"
             }
           ]
         },

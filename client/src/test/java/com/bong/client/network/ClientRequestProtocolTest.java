@@ -412,6 +412,42 @@ public class ClientRequestProtocolTest {
             )
         );
         assertEquals(
+            "{\"type\":\"zhenfa_place\",\"v\":1,\"x\":11,\"y\":64,\"z\":-3,\"kind\":\"beast_trap\",\"carrier\":\"common_stone\",\"qi_invest_ratio\":0.0,\"item_instance_id\":9002,\"target_face\":\"north\"}",
+            ClientRequestProtocol.encodeZhenfaPlace(
+                pos,
+                ClientRequestProtocol.ZhenfaKind.BEAST_TRAP,
+                ClientRequestProtocol.ZhenfaCarrierKind.COMMON_STONE,
+                0.0,
+                null,
+                9002L,
+                ClientRequestProtocol.ZhenfaTargetFace.NORTH
+            )
+        );
+        assertEquals(
+            "{\"type\":\"zhenfa_place\",\"v\":1,\"x\":11,\"y\":64,\"z\":-3,\"kind\":\"trip_wire\",\"carrier\":\"common_stone\",\"qi_invest_ratio\":0.0,\"item_instance_id\":9003,\"target_face\":\"north\"}",
+            ClientRequestProtocol.encodeZhenfaPlace(
+                pos,
+                ClientRequestProtocol.ZhenfaKind.TRIP_WIRE,
+                ClientRequestProtocol.ZhenfaCarrierKind.COMMON_STONE,
+                0.0,
+                null,
+                9003L,
+                ClientRequestProtocol.ZhenfaTargetFace.NORTH
+            )
+        );
+        assertEquals(
+            "{\"type\":\"zhenfa_place\",\"v\":1,\"x\":11,\"y\":64,\"z\":-3,\"kind\":\"decoy_stake\",\"carrier\":\"common_stone\",\"qi_invest_ratio\":0.0,\"item_instance_id\":9004,\"target_face\":\"top\"}",
+            ClientRequestProtocol.encodeZhenfaPlace(
+                pos,
+                ClientRequestProtocol.ZhenfaKind.DECOY_STAKE,
+                ClientRequestProtocol.ZhenfaCarrierKind.COMMON_STONE,
+                0.0,
+                null,
+                9004L,
+                ClientRequestProtocol.ZhenfaTargetFace.TOP
+            )
+        );
+        assertEquals(
             "{\"type\":\"zhenfa_disarm\",\"v\":1,\"x\":11,\"y\":64,\"z\":-3,\"mode\":\"force_break\"}",
             ClientRequestProtocol.encodeZhenfaDisarm(pos, ClientRequestProtocol.ZhenfaDisarmMode.FORCE_BREAK)
         );

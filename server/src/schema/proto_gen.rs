@@ -9772,6 +9772,36 @@ mod tests {
     }
 
     #[test]
+    fn zhenfa_kind_enum_includes_trap_runtime_variants() {
+        let expected = [
+            (ZhenfaKind::Unspecified, 0, "ZHENFA_KIND_UNSPECIFIED"),
+            (ZhenfaKind::Trap, 1, "ZHENFA_KIND_TRAP"),
+            (ZhenfaKind::Ward, 2, "ZHENFA_KIND_WARD"),
+            (ZhenfaKind::WarningTrap, 3, "ZHENFA_KIND_WARNING_TRAP"),
+            (ZhenfaKind::BlastTrap, 4, "ZHENFA_KIND_BLAST_TRAP"),
+            (ZhenfaKind::SlowTrap, 5, "ZHENFA_KIND_SLOW_TRAP"),
+            (ZhenfaKind::ShrineWard, 6, "ZHENFA_KIND_SHRINE_WARD"),
+            (ZhenfaKind::Lingju, 7, "ZHENFA_KIND_LINGJU"),
+            (ZhenfaKind::DeceiveHeaven, 8, "ZHENFA_KIND_DECEIVE_HEAVEN"),
+            (ZhenfaKind::Illusion, 9, "ZHENFA_KIND_ILLUSION"),
+            (ZhenfaKind::NetworkArray, 10, "ZHENFA_KIND_NETWORK_ARRAY"),
+            (ZhenfaKind::BeastTrap, 11, "ZHENFA_KIND_BEAST_TRAP"),
+            (ZhenfaKind::TripWire, 12, "ZHENFA_KIND_TRIP_WIRE"),
+            (ZhenfaKind::DecoyStake, 13, "ZHENFA_KIND_DECOY_STAKE"),
+        ];
+        for (variant, wire, name) in expected {
+            assert_eq!(variant as i32, wire);
+            assert_eq!(variant.as_str_name(), name);
+            assert_eq!(ZhenfaKind::from_str_name(name), Some(variant));
+        }
+        assert_eq!(
+            expected.len(),
+            14,
+            "ZhenfaKind proto enum must cover P0 additions"
+        );
+    }
+
+    #[test]
     fn zhenfa_trigger_roundtrip() {
         let envelope = ClientRequestEnvelope {
             payload: Some(client_request_envelope::Payload::ZhenfaTrigger(

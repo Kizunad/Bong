@@ -14,6 +14,9 @@ const TICKS_PER_HOUR: u64 = 60 * 60 * TICKS_PER_SECOND;
 pub const WARNING_TRAP_ITEM_ID: &str = "warning_trap";
 pub const BLAST_TRAP_ITEM_ID: &str = "blast_trap";
 pub const SLOW_TRAP_ITEM_ID: &str = "slow_trap";
+pub const BEAST_TRAP_ITEM_ID: &str = "beast_trap";
+pub const TRIP_WIRE_ITEM_ID: &str = "trip_wire";
+pub const BAIT_STAKE_ITEM_ID: &str = "bait_stake";
 
 pub const WARNING_TRIGGER_THROTTLE_TICKS: u64 = 5 * TICKS_PER_SECOND;
 pub const SLOW_TRAP_MAX_CHARGES: u8 = 3;
@@ -25,6 +28,9 @@ pub enum OrdinaryTrapKind {
     Warning,
     Blast,
     Slow,
+    Beast,
+    TripWire,
+    Decoy,
 }
 
 impl OrdinaryTrapKind {
@@ -33,6 +39,9 @@ impl OrdinaryTrapKind {
             ZhenfaKind::WarningTrap => Some(Self::Warning),
             ZhenfaKind::BlastTrap => Some(Self::Blast),
             ZhenfaKind::SlowTrap => Some(Self::Slow),
+            ZhenfaKind::BeastTrap => Some(Self::Beast),
+            ZhenfaKind::TripWire => Some(Self::TripWire),
+            ZhenfaKind::DecoyStake => Some(Self::Decoy),
             _ => None,
         }
     }
@@ -42,6 +51,9 @@ impl OrdinaryTrapKind {
             Self::Warning => WARNING_TRAP_ITEM_ID,
             Self::Blast => BLAST_TRAP_ITEM_ID,
             Self::Slow => SLOW_TRAP_ITEM_ID,
+            Self::Beast => BEAST_TRAP_ITEM_ID,
+            Self::TripWire => TRIP_WIRE_ITEM_ID,
+            Self::Decoy => BAIT_STAKE_ITEM_ID,
         }
     }
 
@@ -49,13 +61,16 @@ impl OrdinaryTrapKind {
         match self {
             Self::Warning | Self::Blast => 1.5,
             Self::Slow => 2.0,
+            Self::Beast => 1.5,
+            Self::TripWire => 3.0,
+            Self::Decoy => 8.0,
         }
     }
 
     pub fn vertical_height(self) -> f64 {
         match self {
-            Self::Warning | Self::Slow => 3.0,
-            Self::Blast => 1.0,
+            Self::Warning | Self::Slow | Self::Decoy => 3.0,
+            Self::Blast | Self::Beast | Self::TripWire => 1.0,
         }
     }
 }
@@ -105,8 +120,12 @@ impl TrapDiscoveryProfile {
 
 pub fn placement_shape(kind: OrdinaryTrapKind) -> TrapPlacementShape {
     match kind {
-        OrdinaryTrapKind::Warning | OrdinaryTrapKind::Slow => TrapPlacementShape::EmbeddedVertical,
-        OrdinaryTrapKind::Blast => TrapPlacementShape::SurfaceHorizontal,
+        OrdinaryTrapKind::Warning | OrdinaryTrapKind::Slow | OrdinaryTrapKind::Decoy => {
+            TrapPlacementShape::EmbeddedVertical
+        }
+        OrdinaryTrapKind::Blast | OrdinaryTrapKind::Beast | OrdinaryTrapKind::TripWire => {
+            TrapPlacementShape::SurfaceHorizontal
+        }
     }
 }
 
@@ -122,6 +141,7 @@ pub fn resolve_qi_cost(kind: OrdinaryTrapKind, qi_max: f64, requested_ratio: f64
     let sealed_qi = match kind {
         OrdinaryTrapKind::Warning => 2.0,
         OrdinaryTrapKind::Slow => 8.0,
+        OrdinaryTrapKind::Beast | OrdinaryTrapKind::TripWire | OrdinaryTrapKind::Decoy => 0.0,
         OrdinaryTrapKind::Blast => {
             let requested = if requested_ratio.is_finite() {
                 requested_ratio.clamp(0.0, 1.0)
@@ -142,6 +162,9 @@ pub fn half_life_ticks(kind: OrdinaryTrapKind) -> u64 {
         OrdinaryTrapKind::Warning => 8 * TICKS_PER_HOUR,
         OrdinaryTrapKind::Blast => 2 * TICKS_PER_HOUR,
         OrdinaryTrapKind::Slow => 4 * TICKS_PER_HOUR,
+        OrdinaryTrapKind::Beast | OrdinaryTrapKind::TripWire | OrdinaryTrapKind::Decoy => {
+            8 * TICKS_PER_HOUR
+        }
     }
 }
 
@@ -151,6 +174,7 @@ pub fn survival_ticks(kind: OrdinaryTrapKind) -> u64 {
         OrdinaryTrapKind::Warning => ((half_life as f64) * 6.25).round() as u64,
         OrdinaryTrapKind::Blast => half_life * 4,
         OrdinaryTrapKind::Slow => half_life * 3,
+        OrdinaryTrapKind::Beast | OrdinaryTrapKind::TripWire | OrdinaryTrapKind::Decoy => half_life,
     }
 }
 
@@ -180,6 +204,14 @@ pub fn discovery_profile(kind: OrdinaryTrapKind) -> TrapDiscoveryProfile {
             condense_chance: 1.0,
             scan_range_blocks: 2.0,
         },
+        OrdinaryTrapKind::Beast | OrdinaryTrapKind::TripWire | OrdinaryTrapKind::Decoy => {
+            TrapDiscoveryProfile {
+                signature_qi: 0.0,
+                induce_chance: 0.0,
+                condense_chance: 0.0,
+                scan_range_blocks: 0.0,
+            }
+        }
     }
 }
 
@@ -263,6 +295,22 @@ mod tests {
             OrdinaryTrapKind::Blast,
             TrapTargetFace::Bottom
         ));
+        assert!(placement_allowed(
+            OrdinaryTrapKind::Beast,
+            TrapTargetFace::North
+        ));
+        assert!(!placement_allowed(
+            OrdinaryTrapKind::TripWire,
+            TrapTargetFace::Bottom
+        ));
+        assert!(placement_allowed(
+            OrdinaryTrapKind::Decoy,
+            TrapTargetFace::Top
+        ));
+        assert!(!placement_allowed(
+            OrdinaryTrapKind::Decoy,
+            TrapTargetFace::North
+        ));
     }
 
     #[test]
@@ -283,6 +331,15 @@ mod tests {
             resolve_qi_cost(OrdinaryTrapKind::Blast, 100.0, 1.0).sealed_qi,
             30.0
         );
+        for kind in [
+            OrdinaryTrapKind::Beast,
+            OrdinaryTrapKind::TripWire,
+            OrdinaryTrapKind::Decoy,
+        ] {
+            let cost = resolve_qi_cost(kind, 100.0, 1.0);
+            assert_eq!(cost.sealed_qi, 0.0);
+            assert_eq!(cost.ratio_of_max, 0.0);
+        }
     }
 
     #[test]
@@ -320,8 +377,33 @@ mod tests {
         assert_eq!(half_life_ticks(OrdinaryTrapKind::Blast), 2 * TICKS_PER_HOUR);
         assert_eq!(half_life_ticks(OrdinaryTrapKind::Slow), 4 * TICKS_PER_HOUR);
         assert_eq!(survival_ticks(OrdinaryTrapKind::Blast), 8 * TICKS_PER_HOUR);
+        assert_eq!(survival_ticks(OrdinaryTrapKind::Beast), 8 * TICKS_PER_HOUR);
+        assert_eq!(
+            survival_ticks(OrdinaryTrapKind::TripWire),
+            8 * TICKS_PER_HOUR
+        );
+        assert_eq!(survival_ticks(OrdinaryTrapKind::Decoy), 8 * TICKS_PER_HOUR);
         assert_eq!(blast_damage(15.0), 9.0);
         assert_eq!(blast_damage(30.0), 18.0);
+    }
+
+    #[test]
+    fn new_trap_kinds_pin_item_ids_and_geometry() {
+        assert_eq!(
+            OrdinaryTrapKind::Beast.expected_item_id(),
+            BEAST_TRAP_ITEM_ID
+        );
+        assert_eq!(
+            OrdinaryTrapKind::TripWire.expected_item_id(),
+            TRIP_WIRE_ITEM_ID
+        );
+        assert_eq!(
+            OrdinaryTrapKind::Decoy.expected_item_id(),
+            BAIT_STAKE_ITEM_ID
+        );
+        assert_eq!(OrdinaryTrapKind::Decoy.detection_radius(), 8.0);
+        assert_eq!(OrdinaryTrapKind::Beast.vertical_height(), 1.0);
+        assert_eq!(OrdinaryTrapKind::TripWire.vertical_height(), 1.0);
     }
 
     #[test]
