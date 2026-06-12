@@ -63,6 +63,27 @@ from .cross_section import render_cross_section
 
 TILE_SIZE = 200
 
+
+def _resolve_z_local(z_local: int | None) -> int:
+    """Resolve + range-check the cross-section row index.
+
+    ``None`` → the middle row.  Otherwise ``z_local`` must index a real tile row
+    ``[0, TILE_SIZE - 1]``.  Without this guard a negative or out-of-range index
+    silently picks the wrong row (``render_profile_fast`` would ``KeyError`` on a
+    ``folded`` dict miss, ``render_profile_cross_section`` would slice an empty /
+    wrapped row) and the evidence picture would lie about the geometry.
+    """
+    if z_local is None:
+        return TILE_SIZE // 2
+    if not (0 <= z_local < TILE_SIZE):
+        raise ValueError(
+            f"z_local={z_local} is out of the tile row range "
+            f"[0, {TILE_SIZE - 1}]; it must index a real cross-section row "
+            f"(None selects the middle row {TILE_SIZE // 2})"
+        )
+    return z_local
+
+
 # Direct fill dispatch for the fast (single-tile, no-stitch) evidence path.
 _PROFILE_FILL = {
     "rift_valley": fill_rift_valley_tile,
@@ -297,7 +318,7 @@ def render_profile_fast(
     rendered one) rather than the whole tile, to stay fast.
     """
     buffer, tile = _build_fast_buffer(profile, qi)
-    z = TILE_SIZE // 2 if z_local is None else z_local
+    z = _resolve_z_local(z_local)
     sample = sorted(
         {z}
         | {
@@ -341,7 +362,7 @@ def render_profile_cross_section(
         tile_id = tile.tile.tile_id
         columns = _decode_tile_columns(raster_dir, tile_id)
 
-    z = TILE_SIZE // 2 if z_local is None else z_local
+    z = _resolve_z_local(z_local)
     row = columns[z * TILE_SIZE : (z + 1) * TILE_SIZE]
     stats = _analyze(columns)
     output_path = Path(output_path)

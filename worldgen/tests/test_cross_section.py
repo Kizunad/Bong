@@ -22,6 +22,12 @@ from scripts.terrain_gen.harness.cross_section import (
     render_carved_line,
     render_cross_section,
 )
+from scripts.terrain_gen.harness.p3_evidence import (
+    TILE_SIZE,
+    CrossSectionStats,
+    _resolve_z_local,
+    render_profile_fast,
+)
 
 
 class ColumnColorStackTest(unittest.TestCase):
@@ -104,6 +110,71 @@ class RenderCrossSectionTest(unittest.TestCase):
 
             img = Image.open(out)
             self.assertEqual(img.size, (64, 121))
+
+
+class ResolveZLocalTest(unittest.TestCase):
+    """CodeRabbit p3_evidence.py:301 — z_local must be range-checked."""
+
+    def test_none_resolves_to_middle_row(self) -> None:
+        self.assertEqual(_resolve_z_local(None), TILE_SIZE // 2)
+
+    def test_in_range_passes_through(self) -> None:
+        self.assertEqual(_resolve_z_local(0), 0)
+        self.assertEqual(_resolve_z_local(TILE_SIZE - 1), TILE_SIZE - 1)
+
+    def test_negative_is_rejected(self) -> None:
+        with self.assertRaises(ValueError):
+            _resolve_z_local(-1)
+
+    def test_at_or_beyond_tile_size_is_rejected(self) -> None:
+        # TILE_SIZE-1 is the last valid row; TILE_SIZE itself is off the end and
+        # would silently slice an empty / wrong row without this guard.
+        with self.assertRaises(ValueError):
+            _resolve_z_local(TILE_SIZE)
+        with self.assertRaises(ValueError):
+            _resolve_z_local(TILE_SIZE + 50)
+
+
+class RenderProfileFastSmokeTest(unittest.TestCase):
+    """Basic coverage for the §6.1 evidence entrypoint (dev tool, not saturated).
+
+    render_profile_fast does a single-tile fold+carve and a one-row render; we
+    smoke that it produces a non-empty PNG and plausible stats, and that the
+    z_local guard fires through the public entrypoint too.
+    """
+
+    def test_produces_a_nonempty_png_and_stats(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            out_path = Path(tmp) / "rift.png"
+            path, stats = render_profile_fast(
+                "rift_valley", out_path, pixel_scale=1
+            )
+            self.assertTrue(path.exists(), "the evidence PNG must be written")
+            self.assertGreater(
+                path.stat().st_size, 0, "the PNG must not be empty"
+            )
+            self.assertIsInstance(stats, CrossSectionStats)
+            # Stats are aggregated over a set of full sampled rows, so the column
+            # count is a positive whole multiple of TILE_SIZE (one full row each).
+            self.assertGreater(stats.columns_total, 0)
+            self.assertEqual(stats.columns_total % TILE_SIZE, 0)
+            self.assertLessEqual(stats.surface_min, stats.surface_max)
+
+    def test_explicit_z_local_in_range_renders(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            out_path = Path(tmp) / "row0.png"
+            path, _ = render_profile_fast(
+                "rift_valley", out_path, z_local=0, pixel_scale=1
+            )
+            self.assertTrue(path.exists())
+
+    def test_out_of_range_z_local_is_rejected_at_entrypoint(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            out_path = Path(tmp) / "bad.png"
+            with self.assertRaises(ValueError):
+                render_profile_fast(
+                    "rift_valley", out_path, z_local=TILE_SIZE, pixel_scale=1
+                )
 
 
 if __name__ == "__main__":
