@@ -119,6 +119,13 @@ def _zone_carver_chains(
     so the export hook can run them after the span fold.  Returns an empty map
     when ``plan`` is None (the incremental console path that has no plan) so the
     fold falls back to the un-carved 2.5D spans rather than crashing.
+
+    A ``zone_plan`` whose ``profile_name`` has no registered generator is a real
+    inconsistency (``build_generation_plan`` already validated zone→profile, so a
+    miss here means a profile in the catalog with no Python generator).  We
+    fail fast instead of swallowing the ``KeyError`` and silently shipping that
+    zone *un-carved* — a flat zone where the design called for canyon / isle /
+    cave geometry is a wrong export, not a degraded-but-valid one.
     """
     chains: dict[str, list[Carver]] = {}
     if plan is None:
@@ -126,8 +133,14 @@ def _zone_carver_chains(
     for zone_plan in plan.zone_plans:
         try:
             generator = get_profile_generator(zone_plan.profile_name)
-        except KeyError:
-            continue
+        except KeyError as exc:
+            raise KeyError(
+                f"zone '{zone_plan.zone_name}' references profile "
+                f"'{zone_plan.profile_name}' that has no registered terrain "
+                f"generator — cannot resolve its carver chain. Register the "
+                f"generator or fix the zone's profile_name (failing fast rather "
+                f"than silently exporting this zone un-carved)."
+            ) from exc
         specs = getattr(generator, "carvers", ())
         if not specs:
             continue

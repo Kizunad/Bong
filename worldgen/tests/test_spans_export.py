@@ -306,6 +306,45 @@ class SpansExportLayoutTest(unittest.TestCase):
                 )
 
 
+class _StubZonePlan:
+    def __init__(self, zone_name: str, profile_name: str) -> None:
+        self.zone_name = zone_name
+        self.profile_name = profile_name
+
+
+class _StubPlan:
+    def __init__(self, zone_plans) -> None:
+        self.zone_plans = zone_plans
+
+
+class ZoneCarverChainResolutionTest(unittest.TestCase):
+    """_zone_carver_chains must fail fast on an unregistered profile."""
+
+    def test_none_plan_yields_empty_map(self) -> None:
+        # The incremental console path has no plan — no carving, no crash.
+        self.assertEqual(_zone_carver_chains(None), {})
+
+    def test_known_profile_resolves_its_chain(self) -> None:
+        # sky_isle declares a floating_island chain; it must materialize.
+        plan = _StubPlan([_StubZonePlan("z", "sky_isle")])
+        chains = _zone_carver_chains(plan)
+        self.assertIn("z", chains)
+        self.assertTrue(
+            chains["z"],
+            "sky_isle must resolve a non-empty floating_island carver chain",
+        )
+
+    def test_unregistered_profile_raises_not_silently_skipped(self) -> None:
+        # A zone referencing a profile with no generator is a misconfig — the
+        # export must fail loudly, not ship that zone flat/un-carved.
+        plan = _StubPlan([_StubZonePlan("ghost_zone", "no_such_profile_xyz")])
+        with self.assertRaises(KeyError) as ctx:
+            _zone_carver_chains(plan)
+        msg = str(ctx.exception)
+        self.assertIn("ghost_zone", msg)
+        self.assertIn("no_such_profile_xyz", msg)
+
+
 class ZoneFilterValidationTest(unittest.TestCase):
     """synthesize_fields must fail fast on an unknown zone_filter name."""
 
