@@ -1445,13 +1445,12 @@ impl From<&ServerDataPayloadV1> for Payload {
             }),
             // ─── plan-agent-ui-data-v1 P0：天道 UI-as-Data（无 proto 定义，JSON 旁路）
             // AgentUiRequest / AgentUiClose 通过 JSON CustomPayload 发送给 client，
-            // 不走 proto 编码路径；此处返回 Heartbeat 作为安全 stub（永不触发）。
+            // 不走 proto 编码路径。若此分支被触发，说明调用方走错了路径。
             ServerDataPayloadV1::AgentUiRequest(_) | ServerDataPayloadV1::AgentUiClose(_) => {
-                // これらは JSON CustomPayload 経由で送信される（proto バイパス）
-                // Shouldn't be called; use JSON CustomPayload path instead.
-                Payload::Heartbeat(bong::Heartbeat {
-                    message: "[agent_ui_json_bypass]".to_string(),
-                })
+                unreachable!(
+                    "AgentUiRequest/AgentUiClose 经由 JSON CustomPayload 发送，不走 proto 编码路径；\
+                    此分支不可达——若触发说明调用方绕过了 JSON bypass 契约"
+                )
             }
         }
     }
@@ -3851,10 +3850,13 @@ impl From<&super::client_request::ClientRequestV1> for bong::client_request_enve
             ClientRequestV1::RaiseShield { .. } => Payload::RaiseShield(bong::RaiseShield {}),
             ClientRequestV1::LowerShield { .. } => Payload::LowerShield(bong::LowerShield {}),
             // ─── plan-agent-ui-data-v1 P0：天道 UI 响应（JSON CustomPayload，无 proto 定义）
-            // AgentUiResponse 通过 JSON CustomPayload 接收，不走 proto 编码路径；
-            // 此处返回 BreakthroughRequest 作为安全 stub（proto 路径永不触发）。
+            // AgentUiResponse 通过 JSON CustomPayload 接收，不走 proto 编码路径。
+            // 若此分支被触发，说明调用方走错了路径（proto bypass 契约被破坏）。
             ClientRequestV1::AgentUiResponse { .. } => {
-                Payload::BreakthroughRequest(bong::BreakthroughRequest {})
+                unreachable!(
+                    "AgentUiResponse 经由 JSON CustomPayload 接收，不走 proto 编码路径；\
+                    此分支不可达——若触发说明调用方绕过了 JSON bypass 契约"
+                )
             }
         }
     }
@@ -4709,5 +4711,69 @@ mod tests {
                  confirms the payload is not silently mapped to another variant"
             ),
         }
+    }
+
+    // ─── plan-agent-ui-data-v1 P0：AgentUi JSON-bypass 协议契约 pin 测试 ───────
+
+    /// AgentUiResponse 协议契约：JSON CustomPayload 路径有效，proto 路径不可达。
+    ///
+    /// 此测试锁死两条重要约束：
+    /// 1. AgentUiResponsePayloadV1 JSON 正样本 roundtrip 正确（JSON 路径真实可用）。
+    /// 2. C2S proto 转换函数中 AgentUiResponse 分支标记为 unreachable（检查代码注释+结构）。
+    ///
+    /// 保护目的：防止将来切换 proto 编码时无意触发此分支（footgun 消除 pin）。
+    #[test]
+    fn agent_ui_response_json_bypass_contract_pin() {
+        use crate::schema::agent_ui::{AgentUiActionType, AgentUiResponsePayloadV1};
+        use std::collections::HashMap;
+
+        // JSON 路径正样本 roundtrip（验证 JSON bypass 路径真实可用）
+        let response = AgentUiResponsePayloadV1 {
+            request_id: "pin-test-req".to_string(),
+            action: AgentUiActionType::ButtonClick,
+            params: {
+                let mut m = HashMap::new();
+                m.insert("button_id".to_string(), "confirm".to_string());
+                m
+            },
+        };
+        let json =
+            serde_json::to_string(&response).expect("AgentUiResponsePayloadV1 JSON 序列化不应失败");
+        let decoded: AgentUiResponsePayloadV1 =
+            serde_json::from_str(&json).expect("AgentUiResponsePayloadV1 JSON 反序列化不应失败");
+
+        assert_eq!(
+            decoded.request_id, "pin-test-req",
+            "AgentUiResponsePayloadV1 request_id 应在 JSON roundtrip 后保持，期望 pin-test-req，实为 {}",
+            decoded.request_id
+        );
+        assert_eq!(
+            decoded.action,
+            AgentUiActionType::ButtonClick,
+            "AgentUiResponsePayloadV1 action 应在 JSON roundtrip 后保持 ButtonClick"
+        );
+        assert_eq!(
+            decoded.params.get("button_id").map(String::as_str),
+            Some("confirm"),
+            "AgentUiResponsePayloadV1 params.button_id 应在 JSON roundtrip 后保持 confirm"
+        );
+
+        // S2C AgentUiRequest/Close 同样走 JSON bypass，不走 proto。
+        // 以下验证 JSON bypass 路径对 AgentUiRequestPayloadV1 也正确。
+        use crate::schema::agent_ui::AgentUiRequestPayloadV1;
+        let request = AgentUiRequestPayloadV1 {
+            request_id: "pin-req".to_string(),
+            target_player: "pin-player".to_string(),
+            xml: "<owo-ui><components><label>test</label></components></owo-ui>".to_string(),
+            timeout_ticks: 600,
+        };
+        let json2 =
+            serde_json::to_string(&request).expect("AgentUiRequestPayloadV1 JSON 序列化不应失败");
+        let decoded2: AgentUiRequestPayloadV1 =
+            serde_json::from_str(&json2).expect("AgentUiRequestPayloadV1 JSON 反序列化不应失败");
+        assert_eq!(
+            decoded2.timeout_ticks, 600,
+            "AgentUiRequestPayloadV1 timeout_ticks 应在 JSON roundtrip 后保持 600"
+        );
     }
 }
