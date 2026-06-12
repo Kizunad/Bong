@@ -55,21 +55,6 @@
     "safe_default": 0.0
   },
   {
-    "name": "cave_mask",
-    "export_type": "float32",
-    "safe_default": 0.0
-  },
-  {
-    "name": "ceiling_height",
-    "export_type": "float32",
-    "safe_default": 0.0
-  },
-  {
-    "name": "entrance_mask",
-    "export_type": "float32",
-    "safe_default": 0.0
-  },
-  {
     "name": "neg_pressure",
     "export_type": "float32",
     "safe_default": 0.0
@@ -110,24 +95,9 @@
     "safe_default": 0.0
   },
   {
-    "name": "sky_island_base_y",
-    "export_type": "float32",
-    "safe_default": 9999.0
-  },
-  {
-    "name": "sky_island_thickness",
-    "export_type": "float32",
-    "safe_default": 0.0
-  },
-  {
     "name": "underground_tier",
     "export_type": "uint8",
     "safe_default": 0.0
-  },
-  {
-    "name": "cavern_floor_y",
-    "export_type": "float32",
-    "safe_default": 9999.0
   },
   {
     "name": "flora_density",

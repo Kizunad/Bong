@@ -98,9 +98,10 @@ const LAYER_SCHEMAS: &[LayerSchema] = &[
     f32_layer("portal_anchor_sdf", 999.0),
     f32_layer("rim_edge_mask", 0.0),
     f32_layer("fracture_mask", 0.0),
-    f32_layer("cave_mask", 0.0),
-    f32_layer("ceiling_height", 0.0),
-    f32_layer("entrance_mask", 0.0),
+    // worldgen-v4 P0 §8.1 #1: cave_mask / ceiling_height / entrance_mask are
+    // folded into the column-span representation (spans_count.bin + spans.bin)
+    // and no longer exist as standalone rasters. They stay deleted here so the
+    // registry mirror matches Python's LAYER_REGISTRY.
     f32_layer("neg_pressure", 0.0),
     f32_layer("ruin_density", 0.0),
     f32_layer("qi_density", 0.12),
@@ -108,11 +109,12 @@ const LAYER_SCHEMAS: &[LayerSchema] = &[
     f32_layer("qi_vein_flow", 0.0),
     u8_layer("spirit_eye_candidates", 0),
     u8_layer("realm_collapse_mask", 0),
+    // worldgen-v4 P0 §8.1 #12: sky_island_mask + underground_tier are RETAINED
+    // semantic layers (the 5 灵草 environment locks key off them directly). The
+    // geometric sky_island_base_y/thickness + cavern_floor_y are folded into
+    // spans and deleted here.
     f32_layer("sky_island_mask", 0.0),
-    f32_layer("sky_island_base_y", 9999.0),
-    f32_layer("sky_island_thickness", 0.0),
     u8_layer("underground_tier", 0),
-    f32_layer("cavern_floor_y", 9999.0),
     f32_layer("flora_density", 0.0),
     u8_layer("flora_variant_id", 0),
     f32_layer("ground_cover_density", 0.0),
@@ -134,6 +136,61 @@ fn layer_schema(layer_name: &str) -> Option<&'static LayerSchema> {
         .find(|schema| schema.name == layer_name)
 }
 
+// ---------------------------------------------------------------------------
+// Column spans — worldgen-v4 P0 §8.1 #1 (Rust mirror of Python
+// worldgen/scripts/terrain_gen/fields.py::ColumnSpans encoding).
+//
+// The vertical structure of a column is a small fixed-capacity list of *solid*
+// inclusive `(floor_y, ceiling_y)` block ranges. This single representation
+// replaces the old `height` field + the sky_island_base_y/thickness +
+// cave_mask/ceiling_height/entrance_mask/cavern_floor_y patch layers.
+//
+// On-disk binary layout (mmap-friendly fixed stride, decided in §8.1 #1):
+//   spans_count.bin : u8 per column, 0..=MAX_SPANS  (0 = full void column)
+//   spans.bin       : MAX_SPANS slots per column, each slot = two little-endian
+//                     i16 (floor_y, ceiling_y) = 4 bytes; column stride = 16 B.
+//                     Unused slots are filled with the sentinel i16::MAX so the
+//                     reader can mmap at `offset = col_idx * SPAN_STRIDE` and
+//                     ignore trailing sentinels without a separate index.
+//
+// Convention (§8.1 #2): **span[0] is the surface/ground span**; its ceiling is
+// the walkable surface and is what `query_surface()` returns ("最低段顶面").
+// Extra spans — a cave-floor remnant below, a floating sky-isle above — follow
+// in any order; only span[0] is privileged.
+// ---------------------------------------------------------------------------
+
+/// Max solid spans per column (matches Python `MAX_SPANS`).
+pub const MAX_SPANS: usize = 4;
+/// Sentinel marking an unused span slot (i16::MAX, matches Python `SPAN_SENTINEL`).
+/// Production decode stops at the count byte and never reads sentinels; this
+/// constant pins the encoding contract and is exercised by the span pin tests.
+#[allow(dead_code)]
+pub const SPAN_SENTINEL: i16 = i16::MAX;
+/// Bytes per column in spans.bin: MAX_SPANS × (i16 floor + i16 ceiling).
+pub const SPAN_STRIDE: usize = MAX_SPANS * 2 * 2;
+
+/// Inline-storage list of `(floor_y, ceiling_y)` solid spans for one column.
+pub type ColumnSpanList = smallvec::SmallVec<[(i16, i16); MAX_SPANS]>;
+
+/// Decode a single column's spans from the raw `spans_count` + `spans` mmaps.
+///
+/// `count` slots beyond which everything must be the sentinel; we stop at the
+/// count byte so a corrupt sentinel never leaks coordinates. The count byte is
+/// clamped to `MAX_SPANS` defensively (a malformed exporter can't overflow the
+/// fixed-capacity slot region).
+fn decode_spans(count_bytes: &Mmap, spans_bytes: &Mmap, index: usize) -> ColumnSpanList {
+    let count = (count_bytes[index] as usize).min(MAX_SPANS);
+    let base = index * SPAN_STRIDE;
+    let mut spans = ColumnSpanList::new();
+    for slot in 0..count {
+        let off = base + slot * 4;
+        let floor_y = i16::from_le_bytes([spans_bytes[off], spans_bytes[off + 1]]);
+        let ceiling_y = i16::from_le_bytes([spans_bytes[off + 2], spans_bytes[off + 3]]);
+        spans.push((floor_y, ceiling_y));
+    }
+    spans
+}
+
 #[allow(dead_code)]
 #[derive(Clone, Copy, Debug)]
 pub struct Bounds2D {
@@ -151,9 +208,15 @@ impl Bounds2D {
 }
 
 #[allow(dead_code)]
-#[derive(Clone, Copy, Debug)]
+// `spans` is a SmallVec, so ColumnSample is Clone but not Copy.
+#[derive(Clone, Debug)]
 pub struct ColumnSample {
-    pub height: f32,
+    /// Vertical structure of this column — worldgen-v4 P0 §8.1 #1. `spans[0]`
+    /// is the surface/ground span; its ceiling is the walkable surface. Extra
+    /// spans encode a cave-floor remnant (below) or a floating sky-isle (above).
+    /// Empty = full void column. Replaces the old `height` + sky_island_base_y/
+    /// thickness + cave_mask/ceiling_height/cavern_floor_y fields.
+    pub spans: ColumnSpanList,
     pub surface_block: BlockState,
     pub subsurface_block: BlockState,
     pub biome_id: u8,
@@ -164,9 +227,6 @@ pub struct ColumnSample {
     pub rift_axis_sdf: f32,
     pub portal_anchor_sdf: f32,
     pub rim_edge_mask: f32,
-    pub cave_mask: f32,
-    pub ceiling_height: f32,
-    pub entrance_mask: f32,
     pub fracture_mask: f32,
     pub neg_pressure: f32,
     pub ruin_density: f32,
@@ -176,17 +236,14 @@ pub struct ColumnSample {
     pub qi_vein_flow: f32,
     pub spirit_eye_candidates: u8,
     pub realm_collapse_mask: u8,
-    // --- vertical-dimension layers (2D rasters encoding 3D structure) ---
+    // --- vertical-dimension SEMANTIC layers (retained; §8.1 #12) ---
+    // The geometric sky_island_base_y/thickness + cavern_floor_y are folded
+    // into `spans`; sky_island_mask + underground_tier survive because the 5
+    // 灵草 environment locks key off them directly.
     /// 0..1 likelihood this column hosts a floating isle above. Gate on >= 0.2.
     pub sky_island_mask: f32,
-    /// World-y of isle bottom face. 9999.0 sentinel = "no isle here".
-    pub sky_island_base_y: f32,
-    /// Isle thickness in blocks (carved downward from base_y).
-    pub sky_island_thickness: f32,
     /// Deepest active cave tier at this column: 0 (none), 1 shallow, 2 middle, 3 deep.
     pub underground_tier: u8,
-    /// World-y of deepest cavern floor. 9999.0 sentinel = no cavern.
-    pub cavern_floor_y: f32,
     // --- ecology layers ---
     /// 0..1 decoration placement probability.
     pub flora_density: f32,
@@ -225,6 +282,84 @@ pub struct ColumnSample {
 }
 
 impl ColumnSample {
+    /// Walkable surface Y = ceiling of the surface span (`spans[0]`), the lowest
+    /// solid span's top face (§8.1 #2). Returns `MIN_Y` for a full void column so
+    /// downstream consumers still get a sane (floor-of-world) anchor.
+    pub fn surface_y(&self) -> i32 {
+        self.spans
+            .first()
+            .map(|(_floor, ceiling)| i32::from(*ceiling))
+            .unwrap_or(super::MIN_Y)
+    }
+
+    /// True when this column has no solid blocks at all (full void).
+    #[allow(dead_code)]
+    pub fn is_void(&self) -> bool {
+        self.spans.is_empty()
+    }
+
+    /// The surface span itself `(floor_y, ceiling_y)`, if any.
+    fn surface_span(&self) -> Option<(i32, i32)> {
+        self.spans
+            .first()
+            .map(|(floor, ceiling)| (i32::from(*floor), i32::from(*ceiling)))
+    }
+
+    /// Floating sky-isle span `(bottom_y, top_y)`, derived from any span that
+    /// sits strictly above the surface span with a real air gap. Mirrors the
+    /// old `sky_island_span_for_sample` gate (an isle floats above the ground).
+    pub fn sky_island_span(&self) -> Option<(i32, i32)> {
+        let (_surface_floor, surface_ceiling) = self.surface_span()?;
+        self.spans
+            .iter()
+            .skip(1)
+            .map(|(floor, ceiling)| (i32::from(*floor), i32::from(*ceiling)))
+            .filter(|(floor, ceiling)| *floor > surface_ceiling + 1 && *ceiling > *floor)
+            // Highest such span is the isle (caves are below the surface, not above).
+            .max_by_key(|(floor, _ceiling)| *floor)
+    }
+
+    /// Carved cave void `(carve_floor, carve_ceiling)` between the surface span
+    /// and a floor remnant directly below it. `None` when the column is solid
+    /// down to bedrock (no carve). Mirrors the old cave carve geometry: the void
+    /// is the inclusive air gap between the floor remnant and the surface cap.
+    pub fn cave_carve(&self) -> Option<(i32, i32)> {
+        let (surface_floor, _surface_ceiling) = self.surface_span()?;
+        // The floor remnant is the highest span strictly below the surface span.
+        let remnant_ceiling = self
+            .spans
+            .iter()
+            .skip(1)
+            .map(|(_floor, ceiling)| i32::from(*ceiling))
+            .filter(|ceiling| *ceiling < surface_floor)
+            .max()?;
+        let carve_floor = remnant_ceiling + 1;
+        let carve_ceiling = surface_floor - 1;
+        if carve_ceiling >= carve_floor {
+            Some((carve_floor, carve_ceiling))
+        } else {
+            None
+        }
+    }
+
+    /// True when this column is carved open by a cave void (has a floor remnant).
+    pub fn has_carved_cave(&self) -> bool {
+        self.cave_carve().is_some()
+    }
+
+    /// Top face of the deepest cavern floor remnant — where a plant rooted in a
+    /// cave would sit. `None` when there is no carved cave. Replaces the old
+    /// `cavern_floor_y` field (§8.1 #1).
+    pub fn cavern_floor_y(&self) -> Option<i32> {
+        let (surface_floor, _surface_ceiling) = self.surface_span()?;
+        self.spans
+            .iter()
+            .skip(1)
+            .map(|(_floor, ceiling)| i32::from(*ceiling))
+            .filter(|ceiling| *ceiling < surface_floor)
+            .max()
+    }
+
     pub fn is_peaks_biome(&self) -> bool {
         matches!(self.biome_id, 1 | 9)
     }
@@ -309,7 +444,10 @@ impl TerrainProviders {
 
 #[derive(Debug)]
 struct TileFields {
-    height: Mmap,
+    // worldgen-v4 P0 §8.1 #1: spans_count.bin (u8/col) + spans.bin (16B/col)
+    // replace height.bin + the six deleted vertical patch layers.
+    spans_count: Mmap,
+    spans: Mmap,
     surface_id: Mmap,
     subsurface_id: Mmap,
     biome_id: Mmap,
@@ -319,9 +457,6 @@ struct TileFields {
     rift_axis_sdf: Option<Mmap>,
     portal_anchor_sdf: Option<Mmap>,
     rim_edge_mask: Option<Mmap>,
-    cave_mask: Option<Mmap>,
-    ceiling_height: Option<Mmap>,
-    entrance_mask: Option<Mmap>,
     fracture_mask: Option<Mmap>,
     neg_pressure: Option<Mmap>,
     ruin_density: Option<Mmap>,
@@ -333,10 +468,7 @@ struct TileFields {
     spirit_eye_candidates: Option<Mmap>,
     realm_collapse_mask: Option<Mmap>,
     sky_island_mask: Option<Mmap>,
-    sky_island_base_y: Option<Mmap>,
-    sky_island_thickness: Option<Mmap>,
     underground_tier: Option<Mmap>,
-    cavern_floor_y: Option<Mmap>,
     flora_density: Option<Mmap>,
     flora_variant_id: Option<Mmap>,
     ground_cover_density: Option<Mmap>,
@@ -353,8 +485,36 @@ struct TileFields {
     tsy_depth_tier: Option<Mmap>,
 }
 
+/// worldgen-v4 P0 §8.1 #1 — manifest schema version the Rust reader expects.
+/// v2 introduced the span column encoding (spans_count.bin + spans.bin) that
+/// replaced height.bin + the deleted vertical patch layers; a v1 manifest has
+/// no spans on disk and would mmap garbage, so the loader must reject it loudly
+/// instead of letting serde default the field and read a bad layout.
+const EXPECTED_RASTER_MANIFEST_VERSION: u32 = 2;
+
+/// Reject any raster manifest whose schema version is not the one the span
+/// reader understands. A mismatched manifest (e.g. v1 with height.bin and no
+/// spans.bin) would mmap the wrong on-disk layout, so this fails loudly rather
+/// than letting the reader produce silent garbage. Mirrors the PlacementManifest
+/// `version` field convention, but actually enforced.
+fn validate_manifest_version(version: u32, manifest_path: &Path) -> Result<(), String> {
+    if version == EXPECTED_RASTER_MANIFEST_VERSION {
+        return Ok(());
+    }
+    Err(format!(
+        "terrain raster manifest {} has unsupported version {version} \
+         (this server expects v{EXPECTED_RASTER_MANIFEST_VERSION}, the span column \
+         encoding — regenerate the rasters with worldgen-v4)",
+        manifest_path.display(),
+    ))
+}
+
 #[derive(Debug, Deserialize)]
 struct RasterManifest {
+    /// Manifest schema version (written by worldgen raster_export). Validated in
+    /// `load()` against `EXPECTED_RASTER_MANIFEST_VERSION`. No serde default — a
+    /// manifest missing the field fails to parse rather than silently passing.
+    version: u32,
     tile_size: i32,
     world_bounds: ManifestBounds,
     surface_palette: Vec<String>,
@@ -537,6 +697,8 @@ impl TerrainProvider {
                 manifest_path.display()
             )
         })?;
+
+        validate_manifest_version(manifest.version, manifest_path)?;
 
         let tile_area = (manifest.tile_size as usize)
             .checked_mul(manifest.tile_size as usize)
@@ -777,7 +939,7 @@ impl TerrainProvider {
             .unwrap_or(self.default_wilderness_biome);
 
         ColumnSample {
-            height: read_f32(&tile.height, index),
+            spans: decode_spans(&tile.spans_count, &tile.spans, index),
             surface_block: *self
                 .surface_palette
                 .get(surface_index)
@@ -794,9 +956,6 @@ impl TerrainProvider {
             rift_axis_sdf: read_optional_f32(&tile.rift_axis_sdf, index, 99.0),
             portal_anchor_sdf: read_optional_f32(&tile.portal_anchor_sdf, index, 999.0),
             rim_edge_mask: read_optional_f32(&tile.rim_edge_mask, index, 0.0),
-            cave_mask: read_optional_f32(&tile.cave_mask, index, 0.0),
-            ceiling_height: read_optional_f32(&tile.ceiling_height, index, 0.0),
-            entrance_mask: read_optional_f32(&tile.entrance_mask, index, 0.0),
             fracture_mask: read_optional_f32(&tile.fracture_mask, index, 0.0),
             neg_pressure: read_optional_f32(&tile.neg_pressure, index, 0.0),
             ruin_density: read_optional_f32(&tile.ruin_density, index, 0.0),
@@ -806,10 +965,7 @@ impl TerrainProvider {
             spirit_eye_candidates: read_optional_u8(&tile.spirit_eye_candidates, index, 0),
             realm_collapse_mask: read_optional_u8(&tile.realm_collapse_mask, index, 0),
             sky_island_mask: read_optional_f32(&tile.sky_island_mask, index, 0.0),
-            sky_island_base_y: read_optional_f32(&tile.sky_island_base_y, index, 9999.0),
-            sky_island_thickness: read_optional_f32(&tile.sky_island_thickness, index, 0.0),
             underground_tier: read_optional_u8(&tile.underground_tier, index, 0),
-            cavern_floor_y: read_optional_f32(&tile.cavern_floor_y, index, 9999.0),
             flora_density: read_optional_f32(&tile.flora_density, index, 0.0),
             flora_variant_id: read_optional_u8(&tile.flora_variant_id, index, 0),
             ground_cover_density: read_optional_f32(&tile.ground_cover_density, index, 0.0),
@@ -889,7 +1045,13 @@ impl TerrainProvider {
 
 fn read_tile_layer_f32(tile: &TileFields, index: usize, layer_name: &str, fallback: f32) -> f32 {
     match layer_name {
-        "height" => read_f32(&tile.height, index),
+        // height.bin no longer exists on disk (folded into spans, §8.1 #1).
+        // The registry still lists `height` so the Python↔Rust mirror matches;
+        // route generic height queries to the surface span ceiling.
+        "height" => decode_spans(&tile.spans_count, &tile.spans, index)
+            .first()
+            .map(|(_floor, ceiling)| f32::from(*ceiling))
+            .unwrap_or(fallback),
         "water_level" => read_f32(&tile.water_level, index),
         "feature_mask" => read_f32(&tile.feature_mask, index),
         "boundary_weight" => read_f32(&tile.boundary_weight, index),
@@ -897,18 +1059,12 @@ fn read_tile_layer_f32(tile: &TileFields, index: usize, layer_name: &str, fallba
         "portal_anchor_sdf" => read_optional_f32(&tile.portal_anchor_sdf, index, fallback),
         "rim_edge_mask" => read_optional_f32(&tile.rim_edge_mask, index, fallback),
         "fracture_mask" => read_optional_f32(&tile.fracture_mask, index, fallback),
-        "cave_mask" => read_optional_f32(&tile.cave_mask, index, fallback),
-        "ceiling_height" => read_optional_f32(&tile.ceiling_height, index, fallback),
-        "entrance_mask" => read_optional_f32(&tile.entrance_mask, index, fallback),
         "neg_pressure" => read_optional_f32(&tile.neg_pressure, index, fallback),
         "ruin_density" => read_optional_f32(&tile.ruin_density, index, fallback),
         "qi_density" => read_optional_f32(&tile.qi_density, index, fallback),
         "mofa_decay" => read_optional_f32(&tile.mofa_decay, index, fallback),
         "qi_vein_flow" => read_optional_f32(&tile.qi_vein_flow, index, fallback),
         "sky_island_mask" => read_optional_f32(&tile.sky_island_mask, index, fallback),
-        "sky_island_base_y" => read_optional_f32(&tile.sky_island_base_y, index, fallback),
-        "sky_island_thickness" => read_optional_f32(&tile.sky_island_thickness, index, fallback),
-        "cavern_floor_y" => read_optional_f32(&tile.cavern_floor_y, index, fallback),
         "flora_density" => read_optional_f32(&tile.flora_density, index, fallback),
         "ground_cover_density" => read_optional_f32(&tile.ground_cover_density, index, fallback),
         "mineral_density" => read_optional_f32(&tile.mineral_density, index, fallback),
@@ -942,7 +1098,10 @@ impl TileFields {
     fn load(tile_dir: &Path, layers: &[String], tile_area: usize) -> Result<Self, String> {
         let area4 = tile_area * 4;
         Ok(Self {
-            height: map_required_layer(tile_dir, "height.bin", area4)?,
+            // worldgen-v4 P0 §8.1 #1: spans_count.bin is u8/col (tile_area bytes);
+            // spans.bin is SPAN_STRIDE bytes/col. Both replace height.bin.
+            spans_count: map_required_layer(tile_dir, "spans_count.bin", tile_area)?,
+            spans: map_required_layer(tile_dir, "spans.bin", tile_area * SPAN_STRIDE)?,
             surface_id: map_required_layer(tile_dir, "surface_id.bin", tile_area)?,
             subsurface_id: map_required_layer(tile_dir, "subsurface_id.bin", tile_area)?,
             biome_id: map_required_layer(tile_dir, "biome_id.bin", tile_area)?,
@@ -952,9 +1111,6 @@ impl TileFields {
             rift_axis_sdf: map_optional_layer(tile_dir, layers, "rift_axis_sdf", area4)?,
             portal_anchor_sdf: map_optional_layer(tile_dir, layers, "portal_anchor_sdf", area4)?,
             rim_edge_mask: map_optional_layer(tile_dir, layers, "rim_edge_mask", area4)?,
-            cave_mask: map_optional_layer(tile_dir, layers, "cave_mask", area4)?,
-            ceiling_height: map_optional_layer(tile_dir, layers, "ceiling_height", area4)?,
-            entrance_mask: map_optional_layer(tile_dir, layers, "entrance_mask", area4)?,
             fracture_mask: map_optional_layer(tile_dir, layers, "fracture_mask", area4)?,
             neg_pressure: map_optional_layer(tile_dir, layers, "neg_pressure", area4)?,
             ruin_density: map_optional_layer(tile_dir, layers, "ruin_density", area4)?,
@@ -974,15 +1130,7 @@ impl TileFields {
                 tile_area,
             )?,
             sky_island_mask: map_optional_layer(tile_dir, layers, "sky_island_mask", area4)?,
-            sky_island_base_y: map_optional_layer(tile_dir, layers, "sky_island_base_y", area4)?,
-            sky_island_thickness: map_optional_layer(
-                tile_dir,
-                layers,
-                "sky_island_thickness",
-                area4,
-            )?,
             underground_tier: map_optional_layer(tile_dir, layers, "underground_tier", tile_area)?,
-            cavern_floor_y: map_optional_layer(tile_dir, layers, "cavern_floor_y", area4)?,
             flora_density: map_optional_layer(tile_dir, layers, "flora_density", area4)?,
             flora_variant_id: map_optional_layer(tile_dir, layers, "flora_variant_id", tile_area)?,
             ground_cover_density: map_optional_layer(
@@ -1284,13 +1432,26 @@ mod tests {
             .expect("layer registry fixture should be valid JSON")
     }
 
+    /// Surface ceiling baked into every fixture column's surface span. Chosen
+    /// in-range so `sample_layer("height")` (which now reads the span ceiling)
+    /// has a deterministic expected value.
+    const FIXTURE_SURFACE_Y: i16 = 100;
+
     fn build_fixture() -> RasterFixture {
         let root = unique_temp_dir();
         let tile_dir = root.join("tile_0_0");
         fs::create_dir_all(&tile_dir).expect("test raster tile dir should be creatable");
         let tile_area = (TILE_SIZE * TILE_SIZE) as usize;
 
+        // worldgen-v4 P0 §8.1 #1: every fixture column is a single solid span
+        // (MIN_Y .. FIXTURE_SURFACE_Y); height.bin no longer exists on disk.
+        write_spans_single_fixture(&tile_dir, tile_area, FIXTURE_SURFACE_Y);
+
         for (index, schema) in LAYER_SCHEMAS.iter().enumerate() {
+            if schema.name == "height" {
+                // height is folded into spans — never written as a raster.
+                continue;
+            }
             let path = tile_dir.join(format!("{}.bin", schema.name));
             match schema.export_type {
                 LayerExportType::F32 => write_f32_layer(&path, test_f32_value(index), tile_area),
@@ -1358,6 +1519,40 @@ mod tests {
 
     fn write_u8_layer(path: &Path, value: u8, tile_area: usize) {
         fs::write(path, vec![value; tile_area]).expect("test u8 layer should be writable");
+    }
+
+    /// Encode a slice of per-column span lists into the on-disk
+    /// (spans_count.bin, spans.bin) byte layout — the exact mirror of the
+    /// Python exporter (`encode_spans_arrays`). Unused slots get the sentinel.
+    fn encode_spans_bytes(columns: &[ColumnSpanList]) -> (Vec<u8>, Vec<u8>) {
+        let mut count_bytes = Vec::with_capacity(columns.len());
+        let mut spans_bytes = Vec::with_capacity(columns.len() * SPAN_STRIDE);
+        for column in columns {
+            let n = column.len().min(MAX_SPANS);
+            count_bytes.push(n as u8);
+            for slot in 0..MAX_SPANS {
+                let (floor_y, ceiling_y) = if slot < n {
+                    column[slot]
+                } else {
+                    (SPAN_SENTINEL, SPAN_SENTINEL)
+                };
+                spans_bytes.extend_from_slice(&floor_y.to_le_bytes());
+                spans_bytes.extend_from_slice(&ceiling_y.to_le_bytes());
+            }
+        }
+        (count_bytes, spans_bytes)
+    }
+
+    /// Write spans_count.bin + spans.bin for a tile whose every column is one
+    /// solid span `(MIN_Y, surface_y)`.
+    fn write_spans_single_fixture(tile_dir: &Path, tile_area: usize, surface_y: i16) {
+        let column: ColumnSpanList = smallvec::smallvec![(super::super::MIN_Y as i16, surface_y)];
+        let columns = vec![column; tile_area];
+        let (count_bytes, spans_bytes) = encode_spans_bytes(&columns);
+        fs::write(tile_dir.join("spans_count.bin"), count_bytes)
+            .expect("test spans_count.bin should be writable");
+        fs::write(tile_dir.join("spans.bin"), spans_bytes)
+            .expect("test spans.bin should be writable");
     }
 
     fn test_f32_value(index: usize) -> f32 {
@@ -1432,6 +1627,15 @@ mod tests {
 
         for (index, schema) in TerrainProvider::layer_names().iter().enumerate() {
             if schema.export_type != LayerExportType::F32 {
+                continue;
+            }
+            // worldgen-v4 P0 §8.1 #1: "height" has no standalone raster anymore
+            // — it resolves to the surface span ceiling, asserted separately.
+            if schema.name == "height" {
+                let actual = provider
+                    .sample_layer_f32(1, 1, "height")
+                    .expect("height should resolve via spans");
+                assert_f32_eq(actual, f32::from(FIXTURE_SURFACE_Y), "height");
                 continue;
             }
             let actual = provider
@@ -1538,23 +1742,88 @@ mod tests {
         let fixture = build_fixture();
         let provider = fixture.provider();
 
-        let height_index = TerrainProvider::layer_names()
-            .iter()
-            .position(|schema| schema.name == "height")
-            .expect("height schema should exist");
         let surface_index = TerrainProvider::layer_names()
             .iter()
             .position(|schema| schema.name == "surface_id")
             .expect("surface_id schema should exist");
 
+        // worldgen-v4 P0 §8.1 #1: "height" now resolves to the surface span's
+        // ceiling (FIXTURE_SURFACE_Y), not a standalone height.bin value.
         assert_eq!(
             provider.sample_layer(1, 1, "height"),
-            Some(test_f32_value(height_index))
+            Some(f32::from(FIXTURE_SURFACE_Y)),
+            "sample_layer(\"height\") should return the span ceiling now that \
+             height.bin is folded into spans"
         );
         assert_eq!(
             provider.sample_layer(1, 1, "surface_id"),
             Some(f32::from(test_u8_value(surface_index)))
         );
+    }
+
+    // -----------------------------------------------------------------------
+    // worldgen-v4 P0 §8.1 #1 — RasterManifest version validation
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn manifest_version_accepts_expected_and_rejects_others() {
+        let path = Path::new("/tmp/manifest.json");
+        // The current span encoding (v2) is accepted.
+        assert!(
+            validate_manifest_version(EXPECTED_RASTER_MANIFEST_VERSION, path).is_ok(),
+            "v{EXPECTED_RASTER_MANIFEST_VERSION} (span encoding) must load"
+        );
+        // A pre-span v1 manifest (height.bin, no spans.bin) must be rejected so
+        // the reader never mmaps the wrong layout.
+        let err = validate_manifest_version(1, path)
+            .expect_err("v1 (pre-span height.bin layout) must be rejected, not silently loaded");
+        assert!(
+            err.contains("unsupported version 1") && err.contains("v2"),
+            "the error must name the bad version and the expected one for diagnosis; got: {err}"
+        );
+        // A future v3 is also rejected (forward-incompat is loud too).
+        assert!(
+            validate_manifest_version(3, path).is_err(),
+            "an unknown future version must be rejected, not best-effort loaded"
+        );
+    }
+
+    #[test]
+    fn manifest_missing_version_field_fails_to_parse() {
+        // `version` has no serde default — a manifest that omits it (e.g. a
+        // hand-edited or truncated file) must error at parse time rather than
+        // defaulting to 0 and slipping past the version gate.
+        let json = r#"{
+            "tile_size": 1,
+            "world_bounds": {"min_x":0,"max_x":0,"min_z":0,"max_z":0},
+            "surface_palette": ["minecraft:stone"],
+            "biome_palette": ["minecraft:plains"],
+            "tiles": []
+        }"#;
+        let parsed: Result<RasterManifest, _> = serde_json::from_str(json);
+        assert!(
+            parsed.is_err(),
+            "a manifest with no `version` field must fail to deserialize (no default), \
+             so a missing version can never be mistaken for a supported one"
+        );
+    }
+
+    #[test]
+    fn manifest_with_version_field_parses() {
+        // Sanity: the same shape WITH version=2 parses, proving the field is the
+        // only thing the previous case was missing.
+        let json = r#"{
+            "version": 2,
+            "tile_size": 1,
+            "world_bounds": {"min_x":0,"max_x":0,"min_z":0,"max_z":0},
+            "surface_palette": ["minecraft:stone"],
+            "biome_palette": ["minecraft:plains"],
+            "tiles": []
+        }"#;
+        let manifest: RasterManifest =
+            serde_json::from_str(json).expect("a v2 manifest with all required fields must parse");
+        assert_eq!(manifest.version, 2);
+        assert_eq!(manifest.tile_size, 1);
     }
 
     // -----------------------------------------------------------------------
@@ -1854,5 +2123,533 @@ mod tests {
              resolved (drop count = {}). Add missing names to block_from_name in blocks.rs.",
             authored_count.saturating_sub(total)
         );
+    }
+
+    // -----------------------------------------------------------------------
+    // worldgen-v4 P0 §8.1 #1 — span encode/decode pin + behavior equivalence
+    // -----------------------------------------------------------------------
+
+    /// Decode helper that mmaps a freshly written pair of span buffers so the
+    /// pin tests exercise the real `decode_spans` mmap path (offset arithmetic
+    /// + sentinel handling), not an in-memory shortcut.
+    fn decode_via_disk(columns: &[ColumnSpanList], col_idx: usize) -> ColumnSpanList {
+        let dir = unique_temp_dir();
+        fs::create_dir_all(&dir).expect("temp span dir should be creatable");
+        let (count_bytes, spans_bytes) = encode_spans_bytes(columns);
+        let count_path = dir.join("spans_count.bin");
+        let spans_path = dir.join("spans.bin");
+        fs::write(&count_path, &count_bytes).expect("write count");
+        fs::write(&spans_path, &spans_bytes).expect("write spans");
+        let count_mmap = map_file(&count_path, columns.len()).expect("map count");
+        let spans_mmap = map_file(&spans_path, columns.len() * SPAN_STRIDE).expect("map spans");
+        let decoded = decode_spans(&count_mmap, &spans_mmap, col_idx);
+        drop(count_mmap);
+        drop(spans_mmap);
+        let _ = fs::remove_dir_all(&dir);
+        decoded
+    }
+
+    #[test]
+    fn span_decode_roundtrip_all_column_shapes() {
+        // Four representative shapes (§8.1 #1): normal single span, floating
+        // sky-isle (2 spans), carved cave (surface cap + floor remnant), and a
+        // full 4-span column. Each must decode back byte-identically.
+        let normal: ColumnSpanList = smallvec::smallvec![(-64, 72)];
+        let sky_isle: ColumnSpanList = smallvec::smallvec![(-64, 74), (260, 272)];
+        let cave: ColumnSpanList = smallvec::smallvec![(70, 74), (-64, 40)];
+        let four: ColumnSpanList = smallvec::smallvec![(70, 74), (-64, 40), (120, 130), (200, 210)];
+        let columns = vec![normal.clone(), sky_isle.clone(), cave.clone(), four.clone()];
+
+        assert_eq!(
+            decode_via_disk(&columns, 0).as_slice(),
+            normal.as_slice(),
+            "normal single span must roundtrip"
+        );
+        assert_eq!(
+            decode_via_disk(&columns, 1).as_slice(),
+            sky_isle.as_slice(),
+            "sky-isle 2 spans must roundtrip in order (surface then isle)"
+        );
+        assert_eq!(
+            decode_via_disk(&columns, 2).as_slice(),
+            cave.as_slice(),
+            "cave (surface cap + floor remnant) must roundtrip in order"
+        );
+        assert_eq!(
+            decode_via_disk(&columns, 3).as_slice(),
+            four.as_slice(),
+            "a full MAX_SPANS=4 column must roundtrip every slot"
+        );
+    }
+
+    #[test]
+    fn span_decode_void_column_is_empty() {
+        // count byte 0 → no spans, regardless of slot bytes. surface_y falls
+        // back to MIN_Y (full void).
+        let void: ColumnSpanList = smallvec::smallvec![];
+        let columns = vec![void];
+        let decoded = decode_via_disk(&columns, 0);
+        assert!(
+            decoded.is_empty(),
+            "void column (count=0) decodes to zero spans, got {decoded:?}"
+        );
+    }
+
+    #[test]
+    fn span_decode_stops_at_count_and_ignores_trailing_sentinels() {
+        // A 1-span column has its remaining 3 slots sentinel-filled on disk;
+        // decode must stop at the count byte and never leak the sentinels as
+        // real coordinates.
+        let single: ColumnSpanList = smallvec::smallvec![(-64, 50)];
+        let columns = vec![single.clone()];
+        // Verify the on-disk trailing slots really are the sentinel.
+        let (_count, spans_bytes) = encode_spans_bytes(&columns);
+        let slot1_floor = i16::from_le_bytes([spans_bytes[4], spans_bytes[5]]);
+        assert_eq!(
+            slot1_floor, SPAN_SENTINEL,
+            "slot 1 floor should be the sentinel for a 1-span column"
+        );
+        let decoded = decode_via_disk(&columns, 0);
+        assert_eq!(
+            decoded.len(),
+            1,
+            "decode must honor the count byte (1), not the sentinel slots"
+        );
+        assert_eq!(decoded[0], (-64, 50));
+    }
+
+    #[test]
+    fn span_decode_clamps_corrupt_count_to_max_spans() {
+        // A malformed exporter could write a count byte above MAX_SPANS; the
+        // decoder must clamp it so it never reads past the fixed slot region.
+        let dir = unique_temp_dir();
+        fs::create_dir_all(&dir).expect("temp dir");
+        // One column, all four slots populated, but a corrupt count = 9.
+        let full: ColumnSpanList = smallvec::smallvec![(0, 1), (5, 6), (10, 11), (20, 21)];
+        let (_good_count, spans_bytes) = encode_spans_bytes(&[full]);
+        fs::write(dir.join("spans_count.bin"), [9u8]).expect("write corrupt count");
+        fs::write(dir.join("spans.bin"), &spans_bytes).expect("write spans");
+        let count_mmap = map_file(&dir.join("spans_count.bin"), 1).expect("map count");
+        let spans_mmap = map_file(&dir.join("spans.bin"), SPAN_STRIDE).expect("map spans");
+        let decoded = decode_spans(&count_mmap, &spans_mmap, 0);
+        drop(count_mmap);
+        drop(spans_mmap);
+        let _ = fs::remove_dir_all(&dir);
+        assert_eq!(
+            decoded.len(),
+            MAX_SPANS,
+            "corrupt count=9 must clamp to MAX_SPANS={MAX_SPANS}, never overrun the slot region"
+        );
+    }
+
+    /// Build a provider from explicit per-column (spans, water_level, biome_id)
+    /// so behavior-equivalence assertions read the real mmap → ColumnSample →
+    /// query_surface path. Tile is `n × 1` (columns laid along x at z=0).
+    fn build_spans_provider(cols: &[(ColumnSpanList, f32, u8)]) -> RasterFixture {
+        let root = unique_temp_dir();
+        let tile_dir = root.join("tile_0_0");
+        fs::create_dir_all(&tile_dir).expect("tile dir");
+        let tile_size = cols.len() as i32;
+        let area = cols.len();
+
+        let span_cols: Vec<ColumnSpanList> = cols.iter().map(|(s, _, _)| s.clone()).collect();
+        let (count_bytes, spans_bytes) = encode_spans_bytes(&span_cols);
+        fs::write(tile_dir.join("spans_count.bin"), count_bytes).expect("count");
+        fs::write(tile_dir.join("spans.bin"), spans_bytes).expect("spans");
+
+        // Required non-span layers.
+        let mut water = Vec::with_capacity(area * 4);
+        for (_, w, _) in cols {
+            water.extend_from_slice(&w.to_le_bytes());
+        }
+        fs::write(tile_dir.join("water_level.bin"), water).expect("water");
+        let biomes: Vec<u8> = cols.iter().map(|(_, _, b)| *b).collect();
+        fs::write(tile_dir.join("biome_id.bin"), &biomes).expect("biome");
+        write_u8_layer(&tile_dir.join("surface_id.bin"), 0, area);
+        write_u8_layer(&tile_dir.join("subsurface_id.bin"), 0, area);
+        write_f32_layer(&tile_dir.join("feature_mask.bin"), 0.0, area);
+        write_f32_layer(&tile_dir.join("boundary_weight.bin"), 0.0, area);
+
+        let tile = TileFields::load(&tile_dir, &[], area).expect("spans tile should load");
+        let mut tiles = HashMap::new();
+        tiles.insert((0, 0), tile);
+        let provider = TerrainProvider {
+            tiles,
+            tile_size,
+            world_bounds: Bounds2D {
+                min_x: 0,
+                max_x: tile_size - 1,
+                min_z: 0,
+                max_z: 0,
+            },
+            surface_palette: vec![BlockState::STONE; 4],
+            biome_palette: vec![BiomeId::DEFAULT; 32],
+            default_wilderness_biome: BiomeId::DEFAULT,
+            forest_wilderness_biome: BiomeId::DEFAULT,
+            river_wilderness_biome: BiomeId::DEFAULT,
+            pois: Vec::new(),
+            anomaly_kinds: HashMap::new(),
+            decoration_palette: Vec::new(),
+            abyssal_tier_floor_y: HashMap::new(),
+            fossil_bboxes: Vec::new(),
+            placement_index: HashMap::new(),
+            placement_block_count: 0,
+        };
+        RasterFixture {
+            provider: Some(provider),
+            root,
+        }
+    }
+
+    /// Build a provider that also carries the §8.1 #12 SEMANTIC layers
+    /// (sky_island_mask + underground_tier) so the 5 灵草 env-locks can be
+    /// exercised through the REAL span → ColumnSample → env_sky_island path.
+    /// Each column: (spans, sky_island_mask, underground_tier).
+    fn build_botany_provider(cols: &[(ColumnSpanList, f32, u8)]) -> RasterFixture {
+        let root = unique_temp_dir();
+        let tile_dir = root.join("tile_0_0");
+        fs::create_dir_all(&tile_dir).expect("tile dir");
+        let tile_size = cols.len() as i32;
+        let area = cols.len();
+
+        let span_cols: Vec<ColumnSpanList> = cols.iter().map(|(s, _, _)| s.clone()).collect();
+        let (count_bytes, spans_bytes) = encode_spans_bytes(&span_cols);
+        fs::write(tile_dir.join("spans_count.bin"), count_bytes).expect("count");
+        fs::write(tile_dir.join("spans.bin"), spans_bytes).expect("spans");
+
+        write_f32_layer(&tile_dir.join("water_level.bin"), -1.0, area);
+        write_u8_layer(&tile_dir.join("biome_id.bin"), 0, area);
+        write_u8_layer(&tile_dir.join("surface_id.bin"), 0, area);
+        write_u8_layer(&tile_dir.join("subsurface_id.bin"), 0, area);
+        write_f32_layer(&tile_dir.join("feature_mask.bin"), 0.0, area);
+        write_f32_layer(&tile_dir.join("boundary_weight.bin"), 0.0, area);
+
+        // The semantic layers the 5 灵草 lock off (§8.1 #12 — retained, not folded).
+        let mut sky_mask = Vec::with_capacity(area * 4);
+        for (_, m, _) in cols {
+            sky_mask.extend_from_slice(&m.to_le_bytes());
+        }
+        fs::write(tile_dir.join("sky_island_mask.bin"), sky_mask).expect("sky mask");
+        let tiers: Vec<u8> = cols.iter().map(|(_, _, t)| *t).collect();
+        fs::write(tile_dir.join("underground_tier.bin"), &tiers).expect("tier");
+        // qi_vein_flow is needed by yuan_ni_hong_yu; give it a high constant.
+        write_f32_layer(&tile_dir.join("qi_vein_flow.bin"), 1.0, area);
+
+        let optional = vec![
+            "sky_island_mask".to_string(),
+            "underground_tier".to_string(),
+            "qi_vein_flow".to_string(),
+        ];
+        let tile = TileFields::load(&tile_dir, &optional, area).expect("botany tile loads");
+        let mut tiles = HashMap::new();
+        tiles.insert((0, 0), tile);
+        let provider = TerrainProvider {
+            tiles,
+            tile_size,
+            world_bounds: Bounds2D {
+                min_x: 0,
+                max_x: tile_size - 1,
+                min_z: 0,
+                max_z: 0,
+            },
+            surface_palette: vec![BlockState::STONE; 4],
+            biome_palette: vec![BiomeId::DEFAULT; 32],
+            default_wilderness_biome: BiomeId::DEFAULT,
+            forest_wilderness_biome: BiomeId::DEFAULT,
+            river_wilderness_biome: BiomeId::DEFAULT,
+            pois: Vec::new(),
+            anomaly_kinds: HashMap::new(),
+            decoration_palette: Vec::new(),
+            abyssal_tier_floor_y: HashMap::new(),
+            fossil_bboxes: Vec::new(),
+            placement_index: HashMap::new(),
+            placement_block_count: 0,
+        };
+        RasterFixture {
+            provider: Some(provider),
+            root,
+        }
+    }
+
+    /// worldgen-v4 P0 §8.1 #12 — the 5 灵草 lock off sky_island_mask +
+    /// underground_tier; the span refactor must NOT drift their generation
+    /// positions. Old (round-height) and new (span) representations must agree on
+    /// every column for all five, exercising the real span → env_sky_island path
+    /// (botany/registry.rs:181-223 EnvLock specs).
+    #[test]
+    fn spirit_herbs_env_locks_unchanged_after_span_refactor() {
+        use crate::botany::env_lock::check_env_lock;
+        use crate::botany::registry::{DecorationLock, EnvLock, SkyIsleSurface};
+
+        // 5 columns laid along x at z=0. Each crafted to make EXACTLY one herb's
+        // primary geometry lock pass, isolating sky-isle Top/Bottom and the three
+        // underground tiers:
+        //   x=0 yun_ding_lan   — sky isle present (mask>=0.2, base<9000)        → Top
+        //   x=1 xuan_gen_wei   — sky isle present (thickness>0)                 → Bottom
+        //   x=2 ying_yuan_gu   — underground_tier 1
+        //   x=3 xuan_rong_tai  — underground_tier 2
+        //   x=4 yuan_ni_hong_yu— underground_tier 3 (+ qi_vein_flow constant 1.0)
+        let isle: ColumnSpanList = smallvec::smallvec![(-64, 72), (260, 280)];
+        let cols: Vec<(ColumnSpanList, f32, u8)> = vec![
+            (isle.clone(), 0.5, 0), // sky isle, no tier
+            (isle.clone(), 0.5, 0), // sky isle, no tier
+            (smallvec::smallvec![(-64, 60)], 0.0, 1),
+            (smallvec::smallvec![(-64, 60)], 0.0, 2),
+            (smallvec::smallvec![(-64, 60)], 0.0, 3),
+        ];
+        let fixture = build_botany_provider(&cols);
+        let provider = fixture.provider();
+        let zone = crate::world::zone::Zone {
+            name: "botany_test".to_string(),
+            dimension: crate::world::dimension::DimensionKind::Overworld,
+            bounds: (
+                valence::prelude::DVec3::new(0.0, 0.0, 0.0),
+                valence::prelude::DVec3::new(16.0, 320.0, 16.0),
+            ),
+            spirit_qi: 0.0,
+            danger_level: 1,
+            active_events: vec![],
+            patrol_anchors: vec![],
+            blocked_tiles: vec![],
+        };
+        let manifest = crate::botany::env_lock::DecorationManifest::from_terrain_provider(provider);
+
+        // First, prove env_sky_island derives a real (base_y, thickness) from the
+        // span (the §8.1 #12 swap point) — base 260, thickness 20.
+        use crate::botany::env_lock::EnvLayerSampler;
+        assert_eq!(
+            provider.env_sky_island(0, 0),
+            Some((260.0, 20.0)),
+            "sky-isle (base_y, thickness) must come from the span (260, 280), not a \
+             deleted base_y/thickness field"
+        );
+
+        // Each herb's primary geometry lock at its intended column → PASS.
+        let yun_ding_lan = EnvLock::SkyIslandMask {
+            min: 0.2,
+            surface: SkyIsleSurface::Top,
+        };
+        let xuan_gen_wei = EnvLock::SkyIslandMask {
+            min: 0.2,
+            surface: SkyIsleSurface::Bottom,
+        };
+        assert!(
+            check_env_lock(yun_ding_lan, 0, 0, provider, &zone, &manifest),
+            "yun_ding_lan (sky-isle Top) must pass on the isle column via the span path"
+        );
+        assert!(
+            check_env_lock(xuan_gen_wei, 1, 0, provider, &zone, &manifest),
+            "xuan_gen_wei (sky-isle Bottom) must pass on the isle column"
+        );
+        assert!(
+            check_env_lock(
+                EnvLock::UndergroundTier { tier: 1 },
+                2,
+                0,
+                provider,
+                &zone,
+                &manifest
+            ),
+            "ying_yuan_gu (tier 1) must pass on the tier-1 column"
+        );
+        assert!(
+            check_env_lock(
+                EnvLock::UndergroundTier { tier: 2 },
+                3,
+                0,
+                provider,
+                &zone,
+                &manifest
+            ),
+            "xuan_rong_tai (tier 2) must pass on the tier-2 column"
+        );
+        assert!(
+            check_env_lock(
+                EnvLock::UndergroundTier { tier: 3 },
+                4,
+                0,
+                provider,
+                &zone,
+                &manifest
+            ),
+            "yuan_ni_hong_yu (tier 3) must pass on the tier-3 column"
+        );
+
+        // And each lock must FAIL where its semantic layer is absent — proving the
+        // span refactor did not silently make every column pass (position drift).
+        assert!(
+            !check_env_lock(yun_ding_lan, 2, 0, provider, &zone, &manifest),
+            "sky-isle Top must NOT pass on a non-isle underground column"
+        );
+        assert!(
+            !check_env_lock(
+                EnvLock::UndergroundTier { tier: 3 },
+                2,
+                0,
+                provider,
+                &zone,
+                &manifest
+            ),
+            "tier-3 lock must NOT pass on a tier-1 column (no position drift)"
+        );
+        // qi_vein_flow lock (part of yuan_ni_hong_yu) reads its own layer, set 1.0.
+        assert!(
+            check_env_lock(
+                EnvLock::QiVeinFlow { min: 0.5 },
+                4,
+                0,
+                provider,
+                &zone,
+                &manifest
+            ),
+            "yuan_ni_hong_yu qi_vein_flow lock must pass with the constant 1.0 layer"
+        );
+        let _ = DecorationLock::One("yuan_ni_ebony"); // keep the import meaningful
+    }
+
+    #[test]
+    fn behavior_equivalence_surface_water_biome_match_v3_golden() {
+        use super::super::SurfaceProvider;
+        // Frozen v3 golden sample (subset of worldgen/fixtures/v3_surface_baseline.json).
+        // These are the REAL v3 carved surfaces (rift/fracture/neg/entrance
+        // sculpting baked in), NOT round(height) — the Python golden records the
+        // exact same numbers via v3_surface_top_y (test_v3_behavior_baseline.py).
+        // For a carved column the surface span ceiling already == carved top_y, so
+        // the byte path here (mmap → ColumnSample → query_surface) reproduces the
+        // carved surface. water_level<0 → no water.
+        // Exact frozen golden rows from worldgen/fixtures/v3_surface_baseline.json:
+        //   normal  (60,100)  surface 307, no water,  biome 9   (no carve)
+        //   water   (100,100) surface 44,  water 44,  biome 10  (no carve)
+        //   sky_isle(100,100) surface 75,  no water,  biome 4   (height 74.5 →
+        //                     f32 round-half-away = 75, NOT banker's 74)
+        //   cave    (100,100) surface 63,  no water,  biome 5   (entrance sink 4)
+        //   abyssal (100,100) surface 57,  no water,  biome 5   (neg 9 + entrance 4)
+        let cols: Vec<(ColumnSpanList, f32, u8)> = vec![
+            (smallvec::smallvec![(-64, 307)], -1.0, 9),
+            (smallvec::smallvec![(-64, 44)], 44.0, 10),
+            // sky_isle: ground 75 + isle span above; surface stays 75.
+            (smallvec::smallvec![(-64, 75), (260, 272)], -1.0, 4),
+            // cave: carved surface cap ceiling 63 + a floor remnant below.
+            (smallvec::smallvec![(58, 63), (-64, 30)], -1.0, 5),
+            // abyssal: carved surface cap 57 (neg+entrance) + remnant.
+            (smallvec::smallvec![(40, 57), (-64, 20)], -1.0, 5),
+        ];
+        let expected: [(i32, Option<i32>, u8); 5] = [
+            (307, None, 9),
+            (44, Some(44), 10),
+            (75, None, 4),
+            (63, None, 5),
+            (57, None, 5),
+        ];
+
+        let fixture = build_spans_provider(&cols);
+        let provider = fixture.provider();
+
+        for (x, (want_y, want_water, want_biome)) in expected.iter().enumerate() {
+            let surface = provider.query_surface(x as i32, 0);
+            let sample = provider.sample(x as i32, 0);
+            assert_eq!(
+                surface.y, *want_y,
+                "column {x}: query_surface().y should equal the carved v3 surface \
+                 (golden surface_y={want_y}), got {}",
+                surface.y
+            );
+            let got_water = if surface.water_y == i32::MIN {
+                None
+            } else {
+                Some(surface.water_y)
+            };
+            assert_eq!(
+                got_water, *want_water,
+                "column {x}: water_y should match v3 golden ({want_water:?}), got {got_water:?}"
+            );
+            assert_eq!(
+                sample.biome_id, *want_biome,
+                "column {x}: biome_id should match v3 golden ({want_biome}), got {}",
+                sample.biome_id
+            );
+        }
+    }
+
+    /// Anti-circular literal anchors for the carved surfaces above. v4 Rust no
+    /// longer carves (the rift/fracture/neg/entrance sculpt moved into the Python
+    /// span shim — `surface_y_for_sample` now just reads `spans[0].ceiling`), so
+    /// the carve FORMULA is pinned by hand-calced literals on the Python side
+    /// (`worldgen/tests/test_v3_behavior_baseline.py::HandCalcedV3CarveAnchors`).
+    /// Here we pin the CONSUMER contract: a span whose ceiling already equals the
+    /// hand-computed carved top_y must surface at exactly that Y through the real
+    /// mmap → ColumnSample → query_surface path, so a span-decode regression撞红.
+    #[test]
+    fn carved_surface_spans_query_to_hand_calced_top_y() {
+        use super::super::SurfaceProvider;
+        // Each row: a surface span whose ceiling is the hand-computed v3 carved
+        // top_y (matching the Python literals), plus the expected query_surface.
+        //   rift     80 - round((1-0.5)*22 + 0.25*4)=12          → 68
+        //   fracture 100 - int(f32(0.90-0.7)*300=59.99→59)       → 41
+        //   neg      90 - round(0.5*14)=7                         → 83
+        //   entrance 72 - round(0.45*10)=round(4.5)=5             → 67
+        //   stacked  95 - 9(rift) - 30(frac) - 4(neg) - 2(ent)   → 50
+        let cols: Vec<(ColumnSpanList, f32, u8)> = vec![
+            (smallvec::smallvec![(-64, 68)], -1.0, 3),
+            (smallvec::smallvec![(-64, 41)], -1.0, 3),
+            (smallvec::smallvec![(-64, 83)], -1.0, 6),
+            (smallvec::smallvec![(-64, 67)], -1.0, 5),
+            (smallvec::smallvec![(-64, 50)], -1.0, 3),
+        ];
+        let expected = [68, 41, 83, 67, 50];
+        let fixture = build_spans_provider(&cols);
+        let provider = fixture.provider();
+        for (x, want) in expected.iter().enumerate() {
+            let surface = provider.query_surface(x as i32, 0);
+            assert_eq!(
+                surface.y, *want,
+                "column {x}: carved-surface span must query to the hand-calced \
+                 v3 top_y {want}, got {}",
+                surface.y
+            );
+        }
+    }
+
+    #[test]
+    fn column_sample_helpers_derive_geometry_from_spans() {
+        // Sky-isle span and cave carve must be recoverable from a decoded
+        // ColumnSample, mirroring the Python shim's folding (consumer contract
+        // for flora/botany/lifecycle).
+        let cols: Vec<(ColumnSpanList, f32, u8)> = vec![
+            (smallvec::smallvec![(-64, 74), (260, 272)], -1.0, 4),
+            (smallvec::smallvec![(60, 67), (-64, 30)], -1.0, 5),
+            (smallvec::smallvec![(-64, 80)], -1.0, 9),
+        ];
+        let fixture = build_spans_provider(&cols);
+        let provider = fixture.provider();
+
+        let isle = provider.sample(0, 0);
+        assert_eq!(isle.surface_y(), 74, "surface = lowest span ceiling");
+        assert_eq!(
+            isle.sky_island_span(),
+            Some((260, 272)),
+            "high span above the surface is the isle"
+        );
+        assert!(!isle.has_carved_cave(), "isle column has no cave void");
+
+        let cave = provider.sample(1, 0);
+        assert_eq!(cave.surface_y(), 67, "cave surface = surface cap ceiling");
+        assert_eq!(
+            cave.cave_carve(),
+            Some((31, 59)),
+            "carve void = (remnant_ceiling+1, surface_floor-1) = (31, 59)"
+        );
+        assert_eq!(
+            cave.cavern_floor_y(),
+            Some(30),
+            "cavern floor anchor = floor remnant ceiling (30)"
+        );
+        assert_eq!(cave.sky_island_span(), None, "cave column has no isle");
+
+        let plain = provider.sample(2, 0);
+        assert_eq!(plain.surface_y(), 80);
+        assert!(!plain.has_carved_cave());
+        assert_eq!(plain.sky_island_span(), None);
+        assert!(!plain.is_void());
     }
 }

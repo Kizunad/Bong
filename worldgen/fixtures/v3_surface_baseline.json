@@ -1,0 +1,394 @@
+[
+  {
+    "profile": "normal",
+    "local_x": 100,
+    "local_z": 100,
+    "surface_y": 429,
+    "water_y": null,
+    "biome_id": 9
+  },
+  {
+    "profile": "normal",
+    "local_x": 60,
+    "local_z": 100,
+    "surface_y": 307,
+    "water_y": null,
+    "biome_id": 9
+  },
+  {
+    "profile": "normal",
+    "local_x": 140,
+    "local_z": 100,
+    "surface_y": 248,
+    "water_y": null,
+    "biome_id": 1
+  },
+  {
+    "profile": "normal",
+    "local_x": 100,
+    "local_z": 60,
+    "surface_y": 366,
+    "water_y": null,
+    "biome_id": 9
+  },
+  {
+    "profile": "normal",
+    "local_x": 100,
+    "local_z": 140,
+    "surface_y": 319,
+    "water_y": null,
+    "biome_id": 9
+  },
+  {
+    "profile": "normal",
+    "local_x": 40,
+    "local_z": 40,
+    "surface_y": 161,
+    "water_y": null,
+    "biome_id": 1
+  },
+  {
+    "profile": "normal",
+    "local_x": 160,
+    "local_z": 160,
+    "surface_y": 146,
+    "water_y": null,
+    "biome_id": 1
+  },
+  {
+    "profile": "water",
+    "local_x": 100,
+    "local_z": 100,
+    "surface_y": 44,
+    "water_y": 44,
+    "biome_id": 10
+  },
+  {
+    "profile": "water",
+    "local_x": 60,
+    "local_z": 100,
+    "surface_y": 50,
+    "water_y": null,
+    "biome_id": 2
+  },
+  {
+    "profile": "water",
+    "local_x": 140,
+    "local_z": 100,
+    "surface_y": 38,
+    "water_y": 44,
+    "biome_id": 2
+  },
+  {
+    "profile": "water",
+    "local_x": 100,
+    "local_z": 60,
+    "surface_y": 47,
+    "water_y": null,
+    "biome_id": 2
+  },
+  {
+    "profile": "water",
+    "local_x": 100,
+    "local_z": 140,
+    "surface_y": 48,
+    "water_y": null,
+    "biome_id": 2
+  },
+  {
+    "profile": "water",
+    "local_x": 40,
+    "local_z": 40,
+    "surface_y": 46,
+    "water_y": null,
+    "biome_id": 2
+  },
+  {
+    "profile": "water",
+    "local_x": 160,
+    "local_z": 160,
+    "surface_y": 39,
+    "water_y": 44,
+    "biome_id": 2
+  },
+  {
+    "profile": "sky_isle",
+    "local_x": 100,
+    "local_z": 100,
+    "surface_y": 75,
+    "water_y": null,
+    "biome_id": 4
+  },
+  {
+    "profile": "sky_isle",
+    "local_x": 60,
+    "local_z": 100,
+    "surface_y": 74,
+    "water_y": null,
+    "biome_id": 4
+  },
+  {
+    "profile": "sky_isle",
+    "local_x": 140,
+    "local_z": 100,
+    "surface_y": 74,
+    "water_y": null,
+    "biome_id": 4
+  },
+  {
+    "profile": "sky_isle",
+    "local_x": 100,
+    "local_z": 60,
+    "surface_y": 74,
+    "water_y": null,
+    "biome_id": 4
+  },
+  {
+    "profile": "sky_isle",
+    "local_x": 100,
+    "local_z": 140,
+    "surface_y": 74,
+    "water_y": null,
+    "biome_id": 4
+  },
+  {
+    "profile": "sky_isle",
+    "local_x": 40,
+    "local_z": 40,
+    "surface_y": 73,
+    "water_y": null,
+    "biome_id": 4
+  },
+  {
+    "profile": "sky_isle",
+    "local_x": 160,
+    "local_z": 160,
+    "surface_y": 73,
+    "water_y": null,
+    "biome_id": 4
+  },
+  {
+    "profile": "cave",
+    "local_x": 100,
+    "local_z": 100,
+    "surface_y": 63,
+    "water_y": null,
+    "biome_id": 5
+  },
+  {
+    "profile": "cave",
+    "local_x": 60,
+    "local_z": 100,
+    "surface_y": 71,
+    "water_y": null,
+    "biome_id": 5
+  },
+  {
+    "profile": "cave",
+    "local_x": 140,
+    "local_z": 100,
+    "surface_y": 69,
+    "water_y": null,
+    "biome_id": 5
+  },
+  {
+    "profile": "cave",
+    "local_x": 100,
+    "local_z": 60,
+    "surface_y": 67,
+    "water_y": null,
+    "biome_id": 5
+  },
+  {
+    "profile": "cave",
+    "local_x": 100,
+    "local_z": 140,
+    "surface_y": 63,
+    "water_y": null,
+    "biome_id": 5
+  },
+  {
+    "profile": "cave",
+    "local_x": 40,
+    "local_z": 40,
+    "surface_y": 74,
+    "water_y": null,
+    "biome_id": 5
+  },
+  {
+    "profile": "cave",
+    "local_x": 160,
+    "local_z": 160,
+    "surface_y": 74,
+    "water_y": null,
+    "biome_id": 5
+  },
+  {
+    "profile": "abyssal",
+    "local_x": 100,
+    "local_z": 100,
+    "surface_y": 57,
+    "water_y": null,
+    "biome_id": 5
+  },
+  {
+    "profile": "abyssal",
+    "local_x": 60,
+    "local_z": 100,
+    "surface_y": 63,
+    "water_y": null,
+    "biome_id": 5
+  },
+  {
+    "profile": "abyssal",
+    "local_x": 140,
+    "local_z": 100,
+    "surface_y": 75,
+    "water_y": null,
+    "biome_id": 5
+  },
+  {
+    "profile": "abyssal",
+    "local_x": 100,
+    "local_z": 60,
+    "surface_y": 76,
+    "water_y": null,
+    "biome_id": 5
+  },
+  {
+    "profile": "abyssal",
+    "local_x": 100,
+    "local_z": 140,
+    "surface_y": 65,
+    "water_y": null,
+    "biome_id": 5
+  },
+  {
+    "profile": "abyssal",
+    "local_x": 40,
+    "local_z": 40,
+    "surface_y": 73,
+    "water_y": null,
+    "biome_id": 5
+  },
+  {
+    "profile": "abyssal",
+    "local_x": 160,
+    "local_z": 160,
+    "surface_y": 76,
+    "water_y": null,
+    "biome_id": 5
+  },
+  {
+    "profile": "rift",
+    "local_x": 100,
+    "local_z": 100,
+    "surface_y": -58,
+    "water_y": null,
+    "biome_id": 3
+  },
+  {
+    "profile": "rift",
+    "local_x": 60,
+    "local_z": 100,
+    "surface_y": 46,
+    "water_y": null,
+    "biome_id": 3
+  },
+  {
+    "profile": "rift",
+    "local_x": 140,
+    "local_z": 100,
+    "surface_y": 48,
+    "water_y": null,
+    "biome_id": 3
+  },
+  {
+    "profile": "rift",
+    "local_x": 100,
+    "local_z": 60,
+    "surface_y": 48,
+    "water_y": null,
+    "biome_id": 3
+  },
+  {
+    "profile": "rift",
+    "local_x": 100,
+    "local_z": 140,
+    "surface_y": 55,
+    "water_y": null,
+    "biome_id": 3
+  },
+  {
+    "profile": "rift",
+    "local_x": 40,
+    "local_z": 40,
+    "surface_y": 82,
+    "water_y": null,
+    "biome_id": 3
+  },
+  {
+    "profile": "rift",
+    "local_x": 160,
+    "local_z": 160,
+    "surface_y": 84,
+    "water_y": null,
+    "biome_id": 3
+  },
+  {
+    "profile": "waste",
+    "local_x": 100,
+    "local_z": 100,
+    "surface_y": 72,
+    "water_y": null,
+    "biome_id": 6
+  },
+  {
+    "profile": "waste",
+    "local_x": 60,
+    "local_z": 100,
+    "surface_y": 95,
+    "water_y": null,
+    "biome_id": 6
+  },
+  {
+    "profile": "waste",
+    "local_x": 140,
+    "local_z": 100,
+    "surface_y": 95,
+    "water_y": null,
+    "biome_id": 6
+  },
+  {
+    "profile": "waste",
+    "local_x": 100,
+    "local_z": 60,
+    "surface_y": 92,
+    "water_y": null,
+    "biome_id": 6
+  },
+  {
+    "profile": "waste",
+    "local_x": 100,
+    "local_z": 140,
+    "surface_y": 95,
+    "water_y": null,
+    "biome_id": 6
+  },
+  {
+    "profile": "waste",
+    "local_x": 40,
+    "local_z": 40,
+    "surface_y": 88,
+    "water_y": null,
+    "biome_id": 6
+  },
+  {
+    "profile": "waste",
+    "local_x": 160,
+    "local_z": 160,
+    "surface_y": 86,
+    "water_y": null,
+    "biome_id": 6
+  }
+]

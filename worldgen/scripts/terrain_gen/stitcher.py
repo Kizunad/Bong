@@ -206,6 +206,76 @@ def _compute_boundary_weight_array(
 # ---------------------------------------------------------------------------
 
 
+# worldgen-v4 P0 §8.1 #1: blend modes for the legacy vertical patch layers that
+# were removed from LAYER_REGISTRY (folded into spans) but are still emitted by
+# the unrewritten profiles and consumed by the shim.  Mirrors the modes those
+# layers carried in v3 so the span fold reproduces the v3 landscape verbatim.
+SHIM_PATCH_BLEND_MODES: dict[str, str] = {
+    "cave_mask": "maximum",
+    "ceiling_height": "maximum",
+    "entrance_mask": "maximum",
+    "sky_island_base_y": "minimum",       # coordinate sentinel 9999 preserved
+    "sky_island_thickness": "maximum",
+    "cavern_floor_y": "minimum",          # coordinate sentinel 9999 preserved
+}
+
+
+def blend_spans(
+    base_spans: tuple[tuple[int, int], ...],
+    overlay_spans: tuple[tuple[int, int], ...],
+    weight: float,
+) -> tuple[tuple[int, int], ...]:
+    """Merge a wilderness *base* column with a zone *overlay* column by weight.
+
+    The span representation's blend semantic (§8.1 #1 落点): the overlay's
+    ground span端点 is lerped toward the base's by ``1 - weight`` (so the zone
+    fully owns its interior at weight 1 and fades to wilderness at weight 0);
+    overlay-only features (floating isles / extra cave-floor remnants) appear
+    once weight crosses 0.5 — the same dithered cut the discrete layers use —
+    and disappear below it.  The result is always a legal, non-overlapping span
+    list with span[0] as the surface.
+
+    This is a pure helper so the span-blend rule is unit-pinnable independently
+    of the numpy tile machinery; the per-column 2D layer blend in
+    ``_blend_tile_layers`` feeds the same landscape into the export-time fold.
+    """
+    from .fields import ColumnSpans
+
+    weight = max(0.0, min(1.0, weight))
+    if not overlay_spans:
+        return base_spans
+    if not base_spans:
+        # No wilderness ground here — only adopt the overlay once we are mostly
+        # inside the zone, else keep the void.
+        return overlay_spans if weight >= 0.5 else ()
+
+    # The column's vertical STRUCTURE (caves below / isles above) belongs to the
+    # dominant side — crossing the 0.5 dither line hands the structure to the
+    # zone overlay.  Only the surface ceiling lerps continuously so the ground
+    # height transitions smoothly across the boundary instead of stepping.
+    structural = overlay_spans if weight >= 0.5 else base_spans
+    base_ceiling = base_spans[0][1]
+    ov_ceiling = overlay_spans[0][1]
+    blended_ceiling = round(base_ceiling + (ov_ceiling - base_ceiling) * weight)
+
+    struct_floor = structural[0][0]
+    # Guard: the lerped surface must stay above the structural span's floor.
+    blended_ceiling = max(blended_ceiling, struct_floor)
+    merged: list[tuple[int, int]] = [(struct_floor, blended_ceiling)]
+
+    # Keep the dominant side's extra spans (cave floor remnant, floating isle),
+    # dropping any that would collide with the lerped surface span.
+    for span in structural[1:]:
+        if len(merged) >= 4:
+            break
+        floor_y, ceiling_y = span
+        if floor_y <= blended_ceiling + 1 and ceiling_y >= struct_floor - 1:
+            continue
+        merged.append(span)
+
+    return ColumnSpans(tuple(merged)).spans
+
+
 def _blend_tile_layers(
     base_tile: TileFieldBuffer,
     overlay_tile: TileFieldBuffer,
@@ -301,7 +371,16 @@ def _blend_tile_layers(
             continue
         base_arr = base_tile.layers[extra_layer]
         spec = LAYER_REGISTRY.get(extra_layer)
-        blend = spec.blend_mode if spec else "maximum"
+        # worldgen-v4 P0: cave_mask / ceiling_height / sky_island_base_y etc.
+        # are no longer in LAYER_REGISTRY (folded into spans at export) but the
+        # shim still reads them per column.  Blend them with their ORIGINAL v3
+        # modes so the folded spans reproduce the v3 landscape across zone
+        # boundaries — a coordinate layer like sky_island_base_y must keep its
+        # `minimum` blend (sentinel 9999 preserved), not default to maximum.
+        if spec is not None:
+            blend = spec.blend_mode
+        else:
+            blend = SHIM_PATCH_BLEND_MODES.get(extra_layer, "maximum")
         if blend == "minimum":
             blended = np.minimum(base_arr, overlay_arr)
         elif blend == "lerp":

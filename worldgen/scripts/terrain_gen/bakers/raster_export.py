@@ -8,7 +8,17 @@ from typing import Optional
 import numpy as np
 
 from ..blueprint import BlueprintZone, PoiSpec
-from ..fields import LAYER_REGISTRY, BakePlan, GeneratedFieldSet, TerrainGenerationPlan
+from ..fields import (
+    LAYER_REGISTRY,
+    MAX_SPANS,
+    SPAN_BYTES_PER_COLUMN,
+    SPAN_SENTINEL,
+    BakePlan,
+    GeneratedFieldSet,
+    TerrainGenerationPlan,
+    encode_spans_arrays,
+)
+from ..spans_shim import spans_for_tile
 from ..profiles import (
     GLOBAL_DECORATION_PALETTE,
     PROFILE_DECORATION_OFFSETS,
@@ -57,6 +67,26 @@ UINT8_LAYERS = {
 }
 
 
+# worldgen-v4 P0 §8.1 #1: the spans replace height.bin + the six vertical patch
+# layers.  height stays in LAYER_REGISTRY for the stitcher's internal blend math,
+# and the six patch layers are still emitted by the unrewritten profiles into the
+# tile buffer for the shim to read — but NONE of them are written as standalone
+# rasters; they are all folded into spans_count.bin + spans.bin at export.
+SPANS_COUNT_FILE = "spans_count.bin"
+SPANS_FILE = "spans.bin"
+_SPAN_FOLDED_LAYERS = frozenset(
+    {
+        "height",
+        "cave_mask",
+        "ceiling_height",
+        "entrance_mask",
+        "sky_island_base_y",
+        "sky_island_thickness",
+        "cavern_floor_y",
+    }
+)
+
+
 def _layer_file_name(layer_name: str) -> str:
     return f"{layer_name}.bin"
 
@@ -69,6 +99,19 @@ def _write_float_layer(path: Path, values: np.ndarray) -> None:
 def _write_u8_layer(path: Path, values: np.ndarray) -> None:
     arr = np.ascontiguousarray(values, dtype=np.uint8)
     path.write_bytes(arr.tobytes())
+
+
+def _write_spans(tile_dir: Path, buffer) -> None:
+    """Fold the tile's blended 2D layers into spans and write both files.
+
+    spans_count.bin : u8 per column (0..=MAX_SPANS)
+    spans.bin       : SPAN_BYTES_PER_COLUMN bytes per column, little-endian i16
+                      pairs, sentinel-padded; Rust mmaps at col_idx * stride.
+    """
+    columns = spans_for_tile(buffer)
+    count_arr, spans_arr = encode_spans_arrays(columns)
+    (tile_dir / SPANS_COUNT_FILE).write_bytes(count_arr.tobytes())
+    (tile_dir / SPANS_FILE).write_bytes(spans_arr.tobytes())
 
 
 def export_rasters(
@@ -95,9 +138,15 @@ def export_rasters(
         tile_dir = output_dir / tile.tile.tile_id
         tile_dir.mkdir(parents=True, exist_ok=True)
 
+        # worldgen-v4 P0: spans replace height + the deleted vertical layers.
+        _write_spans(tile_dir, tile)
+
         written_layers: list[str] = []
         for layer_name in fields.layers:
             if layer_name not in tile.layers:
+                continue
+            if layer_name in _SPAN_FOLDED_LAYERS:
+                # height is folded into spans.bin — never written standalone.
                 continue
             if layer_whitelist is not None and layer_name not in layer_whitelist:
                 continue
@@ -130,6 +179,9 @@ def export_rasters(
                 "dir": tile.tile.tile_id,
                 "zones": list(tile.contributing_zones),
                 "layers": written_layers,
+                # worldgen-v4 P0: every tile carries the two span files; the
+                # Rust reader mmaps spans_count.bin + spans.bin per tile.
+                "spans": True,
             }
         )
 
@@ -143,10 +195,22 @@ def export_rasters(
     ascension_pits = _collect_ascension_pits(plan.blueprint_zones)
 
     manifest = {
-        "version": 1,
+        "version": 2,
         "backend": "raster",
         "world_name": plan.world_name,
         "tile_size": fields.tile_size,
+        # worldgen-v4 P0 §8.1 #1 — span column encoding (replaces height.bin +
+        # the deleted vertical patch layers).  The Rust reader uses these
+        # constants to mmap spans.bin at offset = col_idx * bytes_per_column.
+        "spans_encoding": {
+            "max_spans": MAX_SPANS,
+            "bytes_per_column": SPAN_BYTES_PER_COLUMN,
+            "sentinel": SPAN_SENTINEL,
+            "count_file": SPANS_COUNT_FILE,
+            "spans_file": SPANS_FILE,
+            "slot_layout": "i16_le(floor_y, ceiling_y) × max_spans, "
+            "unused slots = sentinel; surface = span[0].ceiling_y",
+        },
         "world_bounds": {
             "min_x": plan.world_bounds.min_x,
             "max_x": plan.world_bounds.max_x,
@@ -170,17 +234,25 @@ def export_rasters(
             if name in written_layer_names
         ],
         "collapsed_zones": collapsed_zones_payload,
+        # worldgen-v4 P0 §8.1 #1/#12: the geometric vertical patch layers
+        # (sky_island_base_y/thickness, cave_mask, ceiling_height, entrance_mask,
+        # cavern_floor_y) are folded into spans.  Only the SEMANTIC vertical
+        # layers (sky_island_mask, underground_tier) remain as rasters because
+        # the 灵草 environment locks key off them directly.
+        #
+        # Gate on written_layer_names (actual on-disk truth) — NOT just
+        # ``name in LAYER_REGISTRY`` (always true once registered).  The standalone
+        # write is conditional on the whitelist + each tile carrying the layer, so
+        # a registry-only check could declare a layer the Rust reader then fails to
+        # mmap.  This mirrors how ``semantic_layers`` above filters by what was
+        # actually written.
         "vertical_layers": [
             name
             for name in (
                 "sky_island_mask",
-                "sky_island_base_y",
-                "sky_island_thickness",
                 "underground_tier",
-                "cavern_floor_y",
-                "ceiling_height",
             )
-            if name in LAYER_REGISTRY
+            if name in written_layer_names
         ],
         "abyssal_tier_floor_y": {"1": 28.0, "2": -4.0, "3": -36.0},
         "anomaly_kinds": {
@@ -193,17 +265,24 @@ def export_rasters(
         },
         "profiles_ecology": ecology_payload,
         "global_decoration_palette": global_decoration_palette,
-        "structure_layers": [name for name in ("fossil_bbox",) if name in LAYER_REGISTRY],
+        # Gate on written_layer_names (on-disk truth), same as vertical_layers /
+        # semantic_layers above — a registry-only check declares fossil_bbox even
+        # when no tile wrote it (CodeRabbit #520).
+        "structure_layers": [name for name in ("fossil_bbox",) if name in written_layer_names],
         "fossil_bboxes": fossil_bboxes,
         "corpse_mounds": corpse_mounds,
         "ascension_pits": ascension_pits,
         "notes": [
             "Python exports 2D terrain fields only; block and biome realization happens in Rust.",
             "All tile layer payloads are little-endian raw binaries for mmap-friendly loading.",
+            "worldgen-v4 P0: column vertical structure lives in spans_count.bin + spans.bin",
+            "  (per-column solid (floor_y, ceiling_y) ranges, see manifest.spans_encoding).",
+            "  These replace height.bin AND the old sky_island_base_y/thickness, cave_mask,",
+            "  ceiling_height, entrance_mask, cavern_floor_y patch layers (folded by the shim).",
+            "  surface_y = span[0].ceiling_y (walkable ground; caves carved below, isles above).",
             "Semantic layers (qi_density / mofa_decay / qi_vein_flow) carry the xianxia world model.",
-            "Vertical layers encode 3D world from 2D rasters: sky_island_* for floating isles above",
-            "  (Rust should gate on mask>=0.2), underground_tier+cavern_floor_y for stacked caves below",
-            "  (tier 1/2/3 floors per abyssal_tier_floor_y). Sentinel 9999 = 'no isle/cavern here'.",
+            "Vertical SEMANTIC layers retained: sky_island_mask (gate isle flora) +",
+            "  underground_tier (0..3) for the 5 灵草 environment locks (§8.1 #12).",
             "Ecology: flora_density (0..1) + flora_variant_id (uint8 index into ",
             "  profiles_ecology[zone_profile].decorations; 0 = no flora / wilderness fallback).",
             "Anomaly: anomaly_intensity (0..1) + anomaly_kind (uint8 from anomaly_kinds map).",

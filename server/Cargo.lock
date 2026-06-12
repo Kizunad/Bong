@@ -563,6 +563,7 @@ dependencies = [
  "seldom_state",
  "serde",
  "serde_json",
+ "smallvec",
  "tokio",
  "toml",
  "tracing",

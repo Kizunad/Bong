@@ -24,7 +24,8 @@ pub fn register(app: &mut App) {
 pub fn target_top_y(current: valence::prelude::DVec3, terrain: Option<&TerrainProvider>) -> f64 {
     if let Some(terrain) = terrain {
         let sample = terrain.sample(current.x.floor() as i32, current.z.floor() as i32);
-        let surface_y = sample.height.round() as f64;
+        // worldgen-v4 P0 §8.1 #1: surface comes from the span ceiling now.
+        let surface_y = sample.surface_y() as f64;
         let water_y = if sample.water_level >= 0.0 {
             sample.water_level.round() as f64
         } else {

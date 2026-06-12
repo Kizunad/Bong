@@ -106,10 +106,7 @@ fn decorate_cave_column(
     world_z: i32,
     sample: &super::raster::ColumnSample,
 ) {
-    if sample.cave_mask <= 0.6 {
-        return;
-    }
-
+    // worldgen-v4 P0 §8.1 #1: cave_mask is gone; gate on a carved cave span.
     let Some(cave) = column::cave_span_for_sample(sample, min_y, chunk.height() as i32) else {
         return;
     };
@@ -142,7 +139,7 @@ fn decorate_cave_column(
     }
 
     let lichen_hash = decoration_hash(world_x, world_z, 223) % 1000;
-    if sample.cave_mask > 0.7 && lichen_hash < 40 {
+    if lichen_hash < 40 {
         set_block_if_air(
             chunk,
             local_x,
@@ -154,7 +151,7 @@ fn decorate_cave_column(
     }
 
     let moss_hash = decoration_hash(world_x, world_z, 227) % 1000;
-    if sample.cave_mask > 0.65 && moss_hash < 60 {
+    if moss_hash < 60 {
         set_block_if_air(
             chunk,
             local_x,
@@ -191,7 +188,7 @@ fn decorate_cave_column(
     }
 
     let vine_hash = decoration_hash(world_x, world_z, 241) % 1000;
-    if sample.cave_mask > 0.68 && vine_hash < 55 {
+    if vine_hash < 55 {
         let vine_length = 1 + (decoration_hash(world_x, world_z, 243) % 3) as i32;
         for offset in 0..vine_length {
             let vy = cave.carve_ceiling - offset;

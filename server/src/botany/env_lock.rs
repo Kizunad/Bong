@@ -27,8 +27,15 @@ impl EnvLayerSampler for TerrainProvider {
     }
 
     fn env_sky_island(&self, world_x: i32, world_z: i32) -> Option<(f32, f32)> {
+        // worldgen-v4 P0 §8.1 #12: derive (base_y, thickness) from the sky-isle
+        // span instead of the deleted base_y/thickness fields. Signature and the
+        // sentinel semantics consumed by the SkyIslandMask lock are unchanged:
+        // no isle → (9999, 0) so both the Top and Bottom surface checks fail.
         let sample = self.sample(world_x, world_z);
-        Some((sample.sky_island_base_y, sample.sky_island_thickness))
+        match sample.sky_island_span() {
+            Some((bottom_y, top_y)) => Some((bottom_y as f32, (top_y - bottom_y) as f32)),
+            None => Some((9999.0, 0.0)),
+        }
     }
 }
 

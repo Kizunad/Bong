@@ -205,10 +205,13 @@ fn v2_candidate_position(
     let z = position[2].round() as i32;
     let surface = crate::world::terrain::SurfaceProvider::query_surface(terrain, x, z);
     let sample = terrain.sample(x, z);
-    position[1] = if sample.cavern_floor_y < 9000.0 {
-        f64::from(sample.cavern_floor_y)
-    } else if sample.sky_island_base_y < 9000.0 {
-        f64::from(sample.sky_island_base_y + sample.sky_island_thickness)
+    // worldgen-v4 P0 §8.1 #1: anchor cave-dwelling plants on the cavern floor
+    // remnant, isle plants on the isle top, otherwise the surface — all derived
+    // from spans now (replaces cavern_floor_y / sky_island_base_y+thickness).
+    position[1] = if let Some(cavern_floor) = sample.cavern_floor_y() {
+        f64::from(cavern_floor)
+    } else if let Some((_bottom_y, top_y)) = sample.sky_island_span() {
+        f64::from(top_y)
     } else {
         f64::from(surface.y + 1)
     };
