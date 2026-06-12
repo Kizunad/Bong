@@ -23,13 +23,19 @@
 
 | 阶段 | 内容 | 状态 | 验收日期 |
 |------|------|------|----------|
-| P0 | 核心转换器 `video2emotecraft.py` — 端到端视频→Emotecraft v3 | ⬜ | TBD |
+| P0 | 核心转换器 `video2emotecraft.py` — 端到端视频→Emotecraft v3 | ✅ | 2026-06-12 |
 | P1 | 工具链集成 — render 验证 / gen 脚本导出 / 批量 CLI | ⬜ | TBD |
 | P2 | 质量提升 — 时域平滑 / easing 推断 / 参考姿态校准 | ⬜ | TBD |
 
 ---
 
-## P0 — 核心转换器 ⬜
+## P0 — 核心转换器 ✅ 2026-06-12
+
+**落地记录（PR-1）**：
+- `client/tools/video2emotecraft.py`：新增 `VideoPoser`（MediaPipe/OpenCV 延迟导入）与 `PoseToEmotecraft`（坐标变换、7 部件 pose table、bend 分解、Emotecraft v3 JSON 发射）。
+- `client/tools/test_video2emotecraft.py`：锁定 P0 数学与输出契约，覆盖坐标符号、T-pose 归零、手臂/腿 bend、弧度 JSON、pose_table 结构、丢帧、角度 unwrap、loop 闭合。
+- `client/tools/requirements-video2anim.txt`：登记真实视频转换所需 `mediapipe` / `opencv-contrib-python` / `numpy` / `scipy`。
+- 本地验收：`python3 -m pytest client/tools/test_video2emotecraft.py -q` → 9 passed。
 
 目标：`python3 client/tools/video2emotecraft.py input.mp4 -o punch_from_video` 产出可直接 F3+T 加载的 Emotecraft v3 JSON。
 
