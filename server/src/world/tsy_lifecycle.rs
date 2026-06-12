@@ -219,11 +219,18 @@ impl TsyZoneStateRegistry {
 
 /// 通知"某 TSY 进入 Active"——首次玩家踏入时 emit，由 tsy_event_bridge 转发到 Redis
 /// `bong:tsy_event`（kind="tsy_zone_activated"），agent 侧 drainTsyZoneActivatedEvents 消费。
+///
+/// `triggering_player_entity`：触发 first-enter 的玩家 ECS entity id；bridge 层
+/// 通过 `Query<&Username>` 解析为 `canonical_player_id`（"offline:<name>"），写入
+/// wire schema `player_id` 字段，让 agent 直接拿到"该发 TSY 面板给谁"，
+/// 无需再靠 zone 名瞎匹配。
 #[derive(Event, Debug, Clone)]
 pub struct TsyZoneActivated {
     pub family_id: String,
     pub source_class: AncientRelicSource,
     pub at_tick: u64,
+    /// 触发首次进入的玩家 ECS entity（由 bridge 解析为 canonical_player_id）。
+    pub triggering_player_entity: valence::prelude::Entity,
 }
 
 /// "塌缩开始"信号。所有还在 zone 内的玩家 client 端会收到（HUD 倒计时）；

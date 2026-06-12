@@ -1043,9 +1043,11 @@ export async function processTsyZoneActivatedForUi(args: {
 }): Promise<void> {
   const { state, events, agentUiRuntime, logger } = args;
   for (const event of events) {
-    // 找秘境内玩家（zone 字段匹配 family_id）；若无则取全部在线玩家的第一个
-    const playersInZone = state.players.filter((p) => p.zone === event.family_id);
-    const targetPlayer = playersInZone[0] ?? state.players[0];
+    // 优先用 event.player_id 直接命中触发玩家（server bridge 已解析为 canonical_player_id）；
+    // 旧逻辑「p.zone === event.family_id」在 zone 名带 _shallow/_mid/_deep 后缀时永不匹配，
+    // 已弃用。fallback 到在线第一个玩家以确保面板总能送达。
+    const targetPlayer =
+      state.players.find((p) => p.uuid === event.player_id) ?? state.players[0];
     if (!targetPlayer) {
       logger.log(
         `[tiandao] tsy_zone_activated family=${event.family_id} tick=${event.tick}: ` +

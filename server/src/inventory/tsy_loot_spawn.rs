@@ -139,6 +139,8 @@ pub fn tsy_loot_spawn_on_enter(
                 family_id: ev.family_id.clone(),
                 source_class: source,
                 at_tick: clock.tick,
+                // 把触发玩家 entity 透传给 bridge，bridge 解析 Username → canonical_player_id
+                triggering_player_entity: ev.player_entity,
             });
         }
 

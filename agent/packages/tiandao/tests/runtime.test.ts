@@ -2261,14 +2261,17 @@ describe("processTsyZoneActivatedForUi (Fix①: triggerUi production path)", () 
       tick: 1000,
       family_id: "tsy_lingxu_01",
       source_class: "dao_lord",
+      // 默认 player_id 对应 createTestWorldState() 中唯一的在线玩家
+      player_id: "offline:test-player",
       ...overrides,
     };
   }
 
   it("calls triggerUi with tsy_discovery scenario when a TSY zone activates with a player online", async () => {
     const uiRuntime = makeMockUiRuntime();
-    const state = createTestWorldState(); // has player in "starter_zone"
-    const event = makeTsyZoneActivatedV1({ family_id: "starter_zone" }); // player is in this zone
+    const state = createTestWorldState(); // has player with uuid "offline:test-player"
+    // player_id 直接命中 state.players[0].uuid，无需 zone 名匹配
+    const event = makeTsyZoneActivatedV1({ player_id: "offline:test-player" });
 
     await processTsyZoneActivatedForUi({
       state,
@@ -2281,16 +2284,43 @@ describe("processTsyZoneActivatedForUi (Fix①: triggerUi production path)", () 
     const opts = uiRuntime.triggerUi.mock.calls[0][0] as Record<string, unknown>;
     expect(opts["scenario"], "scenario must be tsy_discovery").toBe("tsy_discovery");
     expect(opts["targetPlayer"], "targetPlayer must be set to the online player").toBeTruthy();
+    const target = opts["targetPlayer"] as { uuid: string };
+    expect(target.uuid, "targetPlayer must be the player_id from the event").toBe("offline:test-player");
     const params = opts["params"] as Record<string, string>;
-    expect(params["zone_name"], "zone_name must match family_id").toBe("starter_zone");
+    expect(params["zone_name"], "zone_name must match family_id").toBe("tsy_lingxu_01");
     expect(params["danger_tier"], "danger_tier must be resolved from zone snapshot").toBeTruthy();
-    expect(params["agent_narrative"], "agent_narrative must contain family_id").toContain("starter_zone");
+    expect(params["agent_narrative"], "agent_narrative must contain family_id").toContain("tsy_lingxu_01");
   });
 
-  it("picks any online player when no player is in the exact TSY zone", async () => {
+  it("player_id 直接命中目标玩家（不靠 zone 名匹配）", async () => {
+    // 回归：旧逻辑 p.zone===event.family_id 在 zone 名带 _shallow/_mid/_deep 后缀时永远不匹配；
+    // 新逻辑 p.uuid===event.player_id 直接命中，family_id 与 zone 名不一致也能正确送达。
     const uiRuntime = makeMockUiRuntime();
-    const state = createTestWorldState(); // player in "starter_zone"
-    const event = makeTsyZoneActivatedV1({ family_id: "tsy_lingxu_99" }); // different zone, no player
+    const state = createTestWorldState(); // player zone="starter_zone"，uuid="offline:test-player"
+    // family_id 是秘境 id（"tsy_lingxu_01"），不是 zone 名；player_id 直接给出目标
+    const event = makeTsyZoneActivatedV1({
+      family_id: "tsy_lingxu_01",
+      player_id: "offline:test-player",
+    });
+
+    await processTsyZoneActivatedForUi({
+      state,
+      events: [event],
+      agentUiRuntime: uiRuntime as never,
+      logger: { log: vi.fn(), warn: vi.fn() },
+    });
+
+    expect(uiRuntime.triggerUi, "即使 zone 名与 family_id 不匹配，player_id 直接命中应调用 triggerUi").toHaveBeenCalledOnce();
+    const opts = uiRuntime.triggerUi.mock.calls[0][0] as Record<string, unknown>;
+    const target = opts["targetPlayer"] as { uuid: string };
+    expect(target.uuid, "targetPlayer 应为 player_id 指定的玩家").toBe("offline:test-player");
+  });
+
+  it("falls back to first online player when player_id not found in state", async () => {
+    const uiRuntime = makeMockUiRuntime();
+    const state = createTestWorldState(); // player uuid="offline:test-player"
+    // player_id 指向一个不在线的玩家 → 回退到在线第一个
+    const event = makeTsyZoneActivatedV1({ player_id: "offline:unknown-player" });
 
     await processTsyZoneActivatedForUi({
       state,
@@ -2721,6 +2751,8 @@ describe("processTsyZoneActivatedForUi target_player canonical format (BLOCKER-�
       tick: 1001,
       family_id: "tsy_canonical_test",
       source_class: "dao_lord",
+      // player_id 直接给出 canonical 格式 id，与 server bridge 解析一致
+      player_id: "offline:test-player",
     };
 
     await processTsyZoneActivatedForUi({
@@ -2770,7 +2802,7 @@ describe("processTsyZoneActivatedForUi target_player canonical format (BLOCKER-�
 
     await processTsyZoneActivatedForUi({
       state,
-      events: [{ v: 1, kind: "tsy_zone_activated", tick: 2000, family_id: "starter_zone", source_class: "sect_ruins" }],
+      events: [{ v: 1, kind: "tsy_zone_activated", tick: 2000, family_id: "tsy_lingxu_01", source_class: "sect_ruins", player_id: state.players[0].uuid }],
       agentUiRuntime: uiRuntime as never,
       logger: { log: vi.fn(), warn: vi.fn() },
     });

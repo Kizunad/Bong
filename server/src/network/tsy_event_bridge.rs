@@ -145,17 +145,28 @@ pub fn publish_tsy_sentinel_phase_changed_events(
 /// 本桥 system 读 event → `RedisOutbound::TsyZoneActivated` →
 /// `redis_bridge::prepare_outbound_command` 序列化 → `bong:tsy_event`（kind="tsy_zone_activated"）→
 /// agent `drainTsyZoneActivatedEvents` 消费。
+///
+/// `player_id` 解析：从 `TsyZoneActivated.triggering_player_entity` 通过
+/// `Query<&Username>` 拿 canonical_player_id；entity 无 Username（entity 已 despawn /
+/// 非 Client）时回退到 `entity:<debug>` 调试形态，保证 wire 不缺字段。
 pub fn publish_tsy_zone_activated_events(
     redis: Res<RedisBridgeResource>,
     mut events: EventReader<TsyZoneActivated>,
+    clients: Query<&Username, With<valence::prelude::Client>>,
 ) {
     for ev in events.read() {
+        let player_id = clients
+            .get(ev.triggering_player_entity)
+            .map(|u| canonical_player_id(u.0.as_str()))
+            .unwrap_or_else(|_| format!("entity:{:?}", ev.triggering_player_entity));
+
         let wire = TsyZoneActivatedEventV1 {
             v: TSY_EVENT_VERSION,
             kind: "tsy_zone_activated".to_string(),
             tick: ev.at_tick,
             family_id: ev.family_id.clone(),
             source_class: source_class_to_wire(ev.source_class),
+            player_id,
         };
         if let Err(error) = redis
             .tx_outbound
@@ -390,13 +401,16 @@ mod tests {
 
     /// happy path：TsyZoneActivated Bevy event → RedisOutbound::TsyZoneActivated，
     /// 字段与 TypeBox TsyZoneActivatedV1 对齐。
+    /// entity 无 Username（非 Client）→ player_id 降级为 "entity:..." fallback。
     #[test]
     fn publish_tsy_zone_activated_emits_correct_payload() {
         let (mut app, rx) = setup_app();
+        let dummy = app.world_mut().spawn(()).id();
         app.world_mut().send_event(TsyZoneActivated {
             family_id: "tsy_lingxu_01".to_string(),
             source_class: AncientRelicSource::DaoLord,
             at_tick: 9999,
+            triggering_player_entity: dummy,
         });
         app.update();
 
@@ -412,6 +426,36 @@ mod tests {
             wire.source_class, "dao_lord",
             "DaoLord → snake_case dao_lord"
         );
+        // 非 Client entity → fallback "entity:..."
+        assert!(
+            wire.player_id.starts_with("entity:"),
+            "非 Client entity 应降级为 entity:... 形态，实为 {}",
+            wire.player_id
+        );
+    }
+
+    /// 真实 Client entity（含 Username）→ player_id 解析为 "offline:<name>"。
+    #[test]
+    fn publish_tsy_zone_activated_resolves_client_username_to_canonical_player_id() {
+        let (mut app, rx) = setup_app();
+        let (client_bundle, _helper) = create_mock_client("WanLingFeng");
+        let entity = app.world_mut().spawn(client_bundle).id();
+        app.world_mut().send_event(TsyZoneActivated {
+            family_id: "tsy_zongmen_yiji_01".to_string(),
+            source_class: AncientRelicSource::SectRuins,
+            at_tick: 500,
+            triggering_player_entity: entity,
+        });
+        app.update();
+        let outbound = rx.try_recv().expect("应有一条 outbound");
+        let RedisOutbound::TsyZoneActivated(wire) = outbound else {
+            panic!("期望 TsyZoneActivated，实为 {:?}", outbound);
+        };
+        assert_eq!(
+            wire.player_id, "offline:WanLingFeng",
+            "真实 Client 应解析为 offline:WanLingFeng，实为 {}",
+            wire.player_id
+        );
     }
 
     /// 三种 source_class 变体均产出正确 snake_case 字面量（契约 pin 测试）。
@@ -423,10 +467,12 @@ mod tests {
             (AncientRelicSource::BattleSediment, "battle_sediment"),
         ] {
             let (mut app, rx) = setup_app();
+            let dummy = app.world_mut().spawn(()).id();
             app.world_mut().send_event(TsyZoneActivated {
                 family_id: "tsy_test".to_string(),
                 source_class: source,
                 at_tick: 0,
+                triggering_player_entity: dummy,
             });
             app.update();
             let outbound = rx.try_recv().expect("应有一条 outbound");
@@ -442,14 +488,17 @@ mod tests {
     }
 
     /// TsyZoneActivated payload JSON round-trip：序列化后可被 agent TypeBox 解析
-    /// （kind/source_class 字面量正确）。
+    /// （kind/source_class/player_id 字面量正确）。
     #[test]
     fn publish_tsy_zone_activated_payload_json_round_trip() {
         let (mut app, rx) = setup_app();
+        let (client_bundle, _helper) = create_mock_client("Kiz");
+        let entity = app.world_mut().spawn(client_bundle).id();
         app.world_mut().send_event(TsyZoneActivated {
             family_id: "tsy_zongmen_yiji_01".to_string(),
             source_class: AncientRelicSource::SectRuins,
             at_tick: 500,
+            triggering_player_entity: entity,
         });
         app.update();
         let outbound = rx.try_recv().expect("应有一条 outbound");
@@ -462,10 +511,15 @@ mod tests {
         assert_eq!(parsed.source_class, "sect_ruins");
         assert_eq!(parsed.family_id, "tsy_zongmen_yiji_01");
         assert_eq!(parsed.tick, 500);
-        // 不含 player_id
+        assert_eq!(
+            parsed.player_id, "offline:Kiz",
+            "player_id 应为触发玩家 offline:Kiz，实为 {}",
+            parsed.player_id
+        );
+        // 含 player_id
         assert!(
-            !json.contains("player_id"),
-            "TsyZoneActivated payload 不应含 player_id，实为 {json}"
+            json.contains("player_id"),
+            "TsyZoneActivated payload 应含 player_id 字段，实为 {json}"
         );
     }
 
@@ -473,11 +527,13 @@ mod tests {
     #[test]
     fn publish_tsy_zone_activated_multiple_events_all_emitted() {
         let (mut app, rx) = setup_app();
+        let dummy = app.world_mut().spawn(()).id();
         for i in 0..3u64 {
             app.world_mut().send_event(TsyZoneActivated {
                 family_id: format!("tsy_lingxu_{:02}", i),
                 source_class: AncientRelicSource::BattleSediment,
                 at_tick: i * 100,
+                triggering_player_entity: dummy,
             });
         }
         app.update();
