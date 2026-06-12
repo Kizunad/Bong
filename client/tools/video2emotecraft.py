@@ -314,17 +314,15 @@ class FrameSampler:
             raise ValueError("target_fps must be > 0")
         self.source_fps = source_fps
         self.target_fps = target_fps
-        self._tick = 0
-        self._next_sample_time = 0.0
+        self._last_tick: int | None = None
 
     def tick_for_frame(self, frame_index: int) -> int | None:
-        """Return output tick for this source frame, or None when skipped."""
+        """Return the time-preserving output tick, or None for duplicate ticks."""
         frame_time = frame_index / self.source_fps
-        if frame_time + 1e-9 < self._next_sample_time:
+        tick = int(math.floor(frame_time * float(self.target_fps) + 1e-9))
+        if tick == self._last_tick:
             return None
-        tick = self._tick
-        self._tick += 1
-        self._next_sample_time = self._tick / float(self.target_fps)
+        self._last_tick = tick
         return tick
 
 
