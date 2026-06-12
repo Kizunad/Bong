@@ -241,6 +241,10 @@ def _fold_carve_rows(
 
     generator = get_profile_generator(profile)
     chain = [build_carver(spec.kind, spec.params) for spec in generator.carvers]
+    # Mirror the real export's P3 §6.1 双源收口: when a floating_island carver owns
+    # the isle, skip the redundant 2D fold-isle so this fast preview matches the
+    # on-disk spans (carver = sole isle source).
+    suppress_fold_isle = any(c.name == "floating_island" for c in chain)
 
     out: dict[int, list[ColumnSpans]] = {}
     for z in z_rows:
@@ -262,6 +266,7 @@ def _fold_carve_rows(
                 sky_mask=float(sky_mask[idx]),
                 sky_base_y=float(sky_base[idx]),
                 sky_thickness=float(sky_thick[idx]),
+                suppress_fold_isle=suppress_fold_isle,
             )
             wx = tile.min_x + x
             wz = tile.min_z + z

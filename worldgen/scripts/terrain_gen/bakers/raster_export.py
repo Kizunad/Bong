@@ -170,8 +170,13 @@ def _write_spans(
     geometry.  Carving mutates only spans — it never adds a raster layer — and
     is deterministic for a given world coordinate + ``CARVE_SEED``.
     """
-    columns = spans_for_tile(buffer)
     chain = _tile_carver_chain(buffer, zone_chains or {})
+    # worldgen-v4 P3 §6.1 双源收口: when a floating_island carver owns the isle
+    # geometry, suppress the redundant 2D sky_island_base_y/thickness fold so the
+    # carver is the SOLE isle source (otherwise the flat fold slab + the carver's
+    # 3D body double-source the column → 3~4 redundant stacked spans).
+    suppress_fold_isle = any(c.name == "floating_island" for c in chain)
+    columns = spans_for_tile(buffer, suppress_fold_isle=suppress_fold_isle)
     if chain:
         columns = apply_carver_chain(
             columns,

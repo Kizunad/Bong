@@ -183,6 +183,7 @@ def column_spans_for_index(
     sky_mask: float,
     sky_base_y: float,
     sky_thickness: float,
+    suppress_fold_isle: bool = False,
 ) -> ColumnSpans:
     """Fold one column's scalar 2D values into a ColumnSpans.
 
@@ -190,6 +191,18 @@ def column_spans_for_index(
     :func:`v3_surface_top_y`), because the v3 cave carve in column.rs operates on
     the rift/fracture/neg/entrance-sculpted ``top_y`` — feeding it a raw
     ``round(height)`` would re-float the cave floor remnant off the v3 value.
+
+    worldgen-v4 P3 §6.1 双源收口: ``suppress_fold_isle`` skips the 2D
+    sky_island_base_y/thickness → floating-span fold.  A profile that declares a
+    ``floating_island`` carver (currently only ``sky_isle``) gets its floating
+    geometry from that carver — a richer 3D, staggered-altitude, drippy-underside
+    island — so letting the flat 2D fold *also* emit an isle span double-sources
+    the same column (the carver stacks its body on top of the fold slab → 3~4
+    redundant spans).  The export sets this True whenever the tile's carver chain
+    contains a floating_island carver, making the carver the **sole** geometric
+    isle source; the sky_island_mask SEMANTIC layer is untouched (botany 五灵草
+    env-locks + the carver gate still key off it).  Default False keeps the pure
+    fold (and the P2 换表示不换景观 baseline + the fold unit tests) intact.
 
     Pure + deterministic so it can be unit-tested without building a tile.
     """
@@ -225,8 +238,13 @@ def column_spans_for_index(
         spans.append((BEDROCK_Y, surface_y))
 
     # --- sky-isle span: a floating solid block above the ground ---
+    # Suppressed when a floating_island carver owns the isle geometry (P3 §6.1
+    # 双源收口) — see the docstring.  The mask/base_y/thickness layers still
+    # exist (mask is exported as a semantic layer), they just don't fold a
+    # redundant flat slab under the carver's 3D island.
     if (
-        sky_mask >= SKY_ISLE_MASK_THRESHOLD
+        not suppress_fold_isle
+        and sky_mask >= SKY_ISLE_MASK_THRESHOLD
         and sky_base_y < SKY_ISLE_SENTINEL
         and sky_thickness >= SKY_ISLE_MIN_THICKNESS
     ):
@@ -240,8 +258,18 @@ def column_spans_for_index(
     return ColumnSpans(tuple(spans))
 
 
-def spans_for_tile(buffer: TileFieldBuffer) -> list[ColumnSpans]:
-    """Fold every column of *buffer* into a ColumnSpans list (column order)."""
+def spans_for_tile(
+    buffer: TileFieldBuffer, suppress_fold_isle: bool = False
+) -> list[ColumnSpans]:
+    """Fold every column of *buffer* into a ColumnSpans list (column order).
+
+    ``suppress_fold_isle`` (worldgen-v4 P3 §6.1 双源收口) forwards to
+    :func:`column_spans_for_index`: when the tile's carver chain owns the
+    floating-island geometry, the 2D sky_island_base_y/thickness fold is skipped
+    so the carver is the sole isle source.  Default False keeps the canonical
+    fold for callers without a carver context (the P2 equivalence baseline, the
+    incremental console path).
+    """
     area = buffer.tile_size * buffer.tile_size
     if "height" not in buffer.layers:
         raise KeyError("tile buffer has no 'height' layer to fold into spans")
@@ -287,6 +315,7 @@ def spans_for_tile(buffer: TileFieldBuffer) -> list[ColumnSpans]:
                 sky_mask=float(sky_mask[idx]),
                 sky_base_y=float(sky_base_y[idx]),
                 sky_thickness=float(sky_thickness[idx]),
+                suppress_fold_isle=suppress_fold_isle,
             )
         )
     return columns
