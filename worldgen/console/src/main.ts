@@ -175,6 +175,16 @@ async function onRegen(): Promise<void> {
     // Refresh the manifest (tile zone membership / palette may shift) then
     // re-fetch + re-mesh exactly the rewritten tiles.
     manifest = await fetchManifest();
+    // Rebuild the zone sidebar from the fresh manifest: an overrides regen
+    // updates manifest.zones (spirit_qi / danger_level / terrain_profile), so
+    // the swatch colors and the param panel's editable subset would otherwise
+    // show stale pre-regen values. Re-select the same zone so the panel stays
+    // on it (selectedZone is preserved across the rebuild).
+    loadBlueprintZones();
+    buildZoneList();
+    if (selectedZone && blueprintZones.some((z) => z.name === selectedZone)) {
+      selectZone(selectedZone);
+    }
     await reloadTiles(result.rewritten_tiles);
     setStatus(`zone '${result.zone_name}' 重生成完成 — 刷新 ${result.tile_count} tiles`);
   } catch (err) {
