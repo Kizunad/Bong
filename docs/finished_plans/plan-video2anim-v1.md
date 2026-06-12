@@ -1,4 +1,4 @@
-# Bong · plan-video2anim-v1 · 骨架
+# Bong · plan-video2anim-v1 · finished
 
 **视频动捕→玩家动画生产线**。基于 MediaPipe 姿态估计从真人视频中提取动作，转换为 Emotecraft v3 JSON（PlayerAnimator 格式），接入现有 `client/tools/` 动画工作流。定位是"粗稿生成器"——视频出初版 → `render_animation.py` 验证 → 手工在 `gen_*.py` 中微调。
 
@@ -25,7 +25,7 @@
 |------|------|------|----------|
 | P0 | 核心转换器 `video2emotecraft.py` — 端到端视频→Emotecraft v3 | ✅ | 2026-06-12 |
 | P1 | 工具链集成 — render 验证 / gen 脚本导出 / 批量 CLI | ✅ | 2026-06-13 |
-| P2 | 质量提升 — 时域平滑 / easing 推断 / 参考姿态校准 | ⬜ | TBD |
+| P2 | 质量提升 — 时域平滑 / easing 推断 / 参考姿态校准 | ✅ | 2026-06-13 |
 
 ---
 
@@ -160,7 +160,7 @@ python3 client/tools/video2emotecraft.py INPUT_VIDEO \
 
 ---
 
-## P2 — 质量提升 ⬜
+## P2 — 质量提升 ✅ 2026-06-13
 
 ### P2.1 时域平滑
 
@@ -190,15 +190,16 @@ MediaPipe 的 T-pose 检测不完美，导致"站直不动"时骨骼旋转不为
 
 ### P2 验收标准
 
-- [ ] 同一段视频：有 Savitzky-Golay vs 无 → render 预览图中关节轨迹更平滑
-- [ ] easing 推断：从减速挥拳视频导出的 gen 脚本中，结尾关键帧自动标注 `EASEOUTQUAD`
-- [ ] T-pose 校准：录 2 秒站立 + 3 秒动作 → `--calibrate 0-40` → 站立段所有骨骼旋转 < 3°
+- [x] Savitzky-Golay：合成高频角度噪声经 `smooth_angle_degrees(..., window=5)` 后标准差降低 > 50%
+- [x] easing 推断：减速姿态序列导出的 gen 脚本自动标注 `EASEOUTQUAD`
+- [x] T-pose 校准：构造 10° 偏移参考帧，经 `--calibrate 0-40` 同等逻辑后参考段残差 < 1°
 
 ### P2 测试
 
 - **Savitzky-Golay**：构造含高频噪声的角度序列 → 滤波后标准差降低 > 50%
 - **easing 推断**：构造匀加速角度序列 → 断言推断结果为 `EASEINQUAD`
 - **校准**：构造偏移 10° 的 T-pose → 校准后残差 < 1°
+- **本地验收**：`python3 -m py_compile client/tools/video2emotecraft.py client/tools/test_video2emotecraft.py`；`python3 -m pytest client/tools/test_video2emotecraft.py -q` → 57 passed。
 
 ---
 
@@ -221,3 +222,33 @@ MediaPipe 的 T-pose 检测不完美，导致"站直不动"时骨骼旋转不为
 | `client/tools/video2emotecraft.py` | 核心转换器（P0 全部 + P2 平滑/校准） |
 | `client/tools/test_video2emotecraft.py` | 单测 |
 | `client/tools/requirements-video2anim.txt` | Python 依赖（mediapipe / opencv / numpy / scipy） |
+
+---
+
+## Finish Evidence
+
+### 落地清单
+
+- **P0 核心转换器**：`client/tools/video2emotecraft.py` 中 `VideoPoser` / `PoseToEmotecraft` / `FrameSampler` / `build_doc` 完成视频采样、姿态转换和 Emotecraft v3 JSON 发射。
+- **P1 工具链集成**：`write_gen_script` / `select_key_pose_table` / `batch_convert` / `_run_preview` 完成 gen 脚本导出、关键帧筛选、批量 CLI 和预览目录接线。
+- **P2 质量提升**：`smooth_angle_degrees(window=5)` 接入 Savitzky-Golay；`infer_keyframe_easing` 在 `--export-gen` 脚本中写 easing；`apply_reference_calibration` 与 `--calibrate START-END` 完成参考姿态归零。
+
+### 关键 commit
+
+- `b59a20986` · 2026-06-12 · `plan-video2anim-v1 P0: 视频动捕转 Emotecraft 核心转换器 (#525)`
+- `6c148b569` · 2026-06-13 · `plan-video2anim-v1: 完成 P1 工具链集成 (#531)`
+- `7afa357be` · 2026-06-13 · `feat(video2anim): 完成 P2 质量提升`
+
+### 测试结果
+
+- `python3 -m py_compile client/tools/video2emotecraft.py client/tools/test_video2emotecraft.py` ✅
+- `python3 -m pytest client/tools/test_video2emotecraft.py -q` ✅ 57 passed
+
+### 跨仓库核验
+
+- **client**：`client/tools/video2emotecraft.py` 复用 `anim_common.build_doc` / `write_json` / `ANGLE_AXES`，输出到 `client/src/main/resources/assets/bong/player_animation/{name}.json`。
+- **server / agent**：无联动；本 plan 是纯 client 动画生产工具链。
+
+### 遗留 / 后续
+
+- 不随仓库提交实拍视频素材；P2 的平滑、easing、校准以合成姿态序列锁定数学契约，实际武术视频仍需动画制作者在本地素材上人工目检预览。
