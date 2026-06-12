@@ -1,4 +1,4 @@
-# Bong · plan-video2anim-v1 · finished
+# Bong · plan-video2anim-v1 · 骨架
 
 **视频动捕→玩家动画生产线**。基于 MediaPipe 姿态估计从真人视频中提取动作，转换为 Emotecraft v3 JSON（PlayerAnimator 格式），接入现有 `client/tools/` 动画工作流。定位是"粗稿生成器"——视频出初版 → `render_animation.py` 验证 → 手工在 `gen_*.py` 中微调。
 
@@ -25,7 +25,7 @@
 |------|------|------|----------|
 | P0 | 核心转换器 `video2emotecraft.py` — 端到端视频→Emotecraft v3 | ✅ | 2026-06-12 |
 | P1 | 工具链集成 — render 验证 / gen 脚本导出 / 批量 CLI | ✅ | 2026-06-13 |
-| P2 | 质量提升 — 时域平滑 / easing 推断 / 参考姿态校准 | ✅ | 2026-06-13 |
+| P2 | 质量提升 — 时域平滑 / easing 推断 / 参考姿态校准 | ⬜ | TBD |
 
 ---
 
@@ -160,7 +160,7 @@ python3 client/tools/video2emotecraft.py INPUT_VIDEO \
 
 ---
 
-## P2 — 质量提升 ✅ 2026-06-13
+## P2 — 质量提升 ⬜
 
 ### P2.1 时域平滑
 
@@ -190,16 +190,15 @@ MediaPipe 的 T-pose 检测不完美，导致"站直不动"时骨骼旋转不为
 
 ### P2 验收标准
 
-- [x] Savitzky-Golay：合成高频角度噪声经 `smooth_angle_degrees(..., window=5)` 后标准差降低 > 50%
-- [x] easing 推断：减速姿态序列导出的 gen 脚本自动标注 `EASEOUTQUAD`
-- [x] T-pose 校准：构造 10° 偏移参考帧，经 `--calibrate 0-40` 同等逻辑后参考段残差 < 1°
+- [ ] 同一段视频：有 Savitzky-Golay vs 无 → render 预览图中关节轨迹更平滑
+- [ ] easing 推断：从减速挥拳视频导出的 gen 脚本中，结尾关键帧自动标注 `EASEOUTQUAD`
+- [ ] T-pose 校准：录 2 秒站立 + 3 秒动作 → `--calibrate 0-40` → 站立段所有骨骼旋转 < 3°
 
 ### P2 测试
 
 - **Savitzky-Golay**：构造含高频噪声的角度序列 → 滤波后标准差降低 > 50%
 - **easing 推断**：构造匀加速角度序列 → 断言推断结果为 `EASEINQUAD`
 - **校准**：构造偏移 10° 的 T-pose → 校准后残差 < 1°
-- **本地验收**：`python3 -m py_compile client/tools/video2emotecraft.py client/tools/test_video2emotecraft.py`；`python3 -m pytest client/tools/test_video2emotecraft.py -q` → 57 passed。
 
 ---
 
@@ -242,7 +241,7 @@ MediaPipe 的 T-pose 检测不完美，导致"站直不动"时骨骼旋转不为
 ### 测试结果
 
 - `python3 -m py_compile client/tools/video2emotecraft.py client/tools/test_video2emotecraft.py` ✅
-- `python3 -m pytest client/tools/test_video2emotecraft.py -q` ✅ 57 passed
+- `python3 -m pytest client/tools/test_video2emotecraft.py -q` ✅ 62 passed
 
 ### 跨仓库核验
 

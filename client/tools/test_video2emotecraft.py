@@ -267,6 +267,12 @@ def test_smooth_window_rejects_even_values() -> None:
         smooth_angle_degrees([0.0, 1.0, 2.0, 3.0], window=4)
 
 
+def test_smooth_window_rejects_less_than_minimum_odd() -> None:
+    """Verify direct smoothing rejects the off-by-one minimum window boundary."""
+    with pytest.raises(ValueError, match="odd integer"):
+        smooth_angle_degrees([0.0, 1.0, 2.0], window=1)
+
+
 def test_loop_mode_closes_boundary_pose() -> None:
     """Verify loop mode copies tick zero pose to the boundary tick."""
     landmarks0 = canonical_t_pose()
@@ -549,6 +555,29 @@ def test_easing_inference_marks_acceleration() -> None:
     )
 
 
+def test_easing_inference_empty_pose_returns_empty_mapping() -> None:
+    """Verify empty keyframe input returns an empty easing map."""
+    easing = infer_keyframe_easing({})
+
+    assert easing == {}, (
+        f"expected empty easing map because no keyframes exist, actual {easing}"
+    )
+
+
+def test_easing_inference_short_series_defaults_linear() -> None:
+    """Verify fewer than three ticks cannot infer acceleration and stays linear."""
+    pose_table = {
+        0: {"rightArm": {"pitch": 1.0}},
+        5: {"rightArm": {"pitch": 3.0}},
+    }
+
+    easing = infer_keyframe_easing(pose_table)
+
+    assert easing == {0: "linear", 5: "linear"}, (
+        f"expected linear defaults for fewer than 3 ticks, actual {easing}"
+    )
+
+
 def test_easing_inference_marks_deceleration() -> None:
     """Verify decreasing angular velocity is annotated as EASEOUTQUAD for gen export."""
     pose_table = {
@@ -621,6 +650,30 @@ def test_reference_calibration_removes_t_pose_offset() -> None:
     assert calibrated[2]["rightArm"]["axis"] == 180.0, (
         f"expected bend axis to remain a plane marker rather than calibration offset, actual {calibrated[2]}"
     )
+
+
+def test_reference_calibration_uses_circular_mean_for_angle_offsets() -> None:
+    """Verify calibration averages reference angles across the ±180° seam correctly."""
+    pose_table = {
+        0: {"head": {"yaw": 179.0}},
+        1: {"head": {"yaw": -179.0}},
+        2: {"head": {"yaw": 181.0}},
+    }
+
+    calibrated = apply_reference_calibration(pose_table, (0, 1))
+
+    assert abs(calibrated[0]["head"]["yaw"]) <= 1.1, (
+        f"expected 179°/-179° reference mean near 180° rather than 0°, actual {calibrated[0]}"
+    )
+    assert abs(calibrated[1]["head"]["yaw"]) <= 1.1, (
+        f"expected seam-crossing reference to stay near zero residual, actual {calibrated[1]}"
+    )
+
+
+def test_reference_calibration_rejects_reversed_range() -> None:
+    """Verify calibration rejects reversed reference ranges before sampling."""
+    with pytest.raises(ValueError, match="start must be <= end"):
+        apply_reference_calibration({0: {"rightArm": {"pitch": 10.0}}}, (3, 1))
 
 
 def test_reference_calibration_rejects_empty_reference_range() -> None:

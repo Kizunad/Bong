@@ -14,6 +14,7 @@ import re
 import sys
 import tempfile
 from dataclasses import dataclass
+from itertools import pairwise
 from pathlib import Path
 from typing import Callable, Iterable, Sequence
 
@@ -364,12 +365,12 @@ def infer_keyframe_easing(pose_table: dict[int, dict]) -> dict[int, str]:
     ticks = sorted(pose_table)
     if not ticks:
         return {}
-    easing = {tick: "linear" for tick in ticks}
+    easing = dict.fromkeys(ticks, "linear")
     if len(ticks) < 3:
         return easing
 
     velocities: list[float] = []
-    for previous_tick, current_tick in zip(ticks, ticks[1:]):
+    for previous_tick, current_tick in pairwise(ticks):
         duration = max(1, current_tick - previous_tick)
         delta = _max_angular_delta(pose_table[previous_tick], pose_table[current_tick])
         velocities.append(delta / duration)
@@ -685,7 +686,7 @@ def apply_reference_calibration(
             for axis in CALIBRATION_AXES:
                 key = (part, axis)
                 if axis in calibrated_axes and key in offsets:
-                    calibrated_axes[axis] = round(float(calibrated_axes[axis]) - offsets[key], 4)
+                    calibrated_axes[axis] = round(_wrap_degrees(float(calibrated_axes[axis]) - offsets[key]), 4)
             calibrated_pose[part] = calibrated_axes
         calibrated[tick] = calibrated_pose
     return calibrated
@@ -712,7 +713,22 @@ def _reference_offsets(
             for axis in CALIBRATION_AXES:
                 if axis in axes:
                     samples.setdefault((part, axis), []).append(float(axes[axis]))
-    return {key: float(sum(values) / len(values)) for key, values in samples.items()}
+    return {key: _mean_angle_degrees(values) for key, values in samples.items()}
+
+
+def _mean_angle_degrees(values: Sequence[float]) -> float:
+    """Return a circular mean for degree values near the ±180° seam."""
+    radians = np.radians(np.array(values, dtype=float))
+    sin_sum = float(np.sin(radians).sum())
+    cos_sum = float(np.cos(radians).sum())
+    if abs(sin_sum) < 1e-12 and abs(cos_sum) < 1e-12:
+        return float(np.mean(np.degrees(np.unwrap(radians))))
+    return math.degrees(math.atan2(sin_sum, cos_sum))
+
+
+def _wrap_degrees(value: float) -> float:
+    """Normalize a degree value to the [-180, 180] interval."""
+    return (value + 180.0) % 360.0 - 180.0
 
 
 def _merge_boundary_pose(last_pose: dict, first_pose: dict) -> dict:
