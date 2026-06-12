@@ -62,8 +62,8 @@ public final class AgentUiVfxPlanner {
         // ── 天道启示：轻微 shake（前 40t 内，用上下各 1px 的矩形条模拟抖动）
         if (state.tiandaoShakeActive(nowMs)) {
             long elapsed = nowMs - state.openedAtMs();
-            // frequency 0.1Hz = 100ms 周期；用 sin 驱动幅度 0~1 映射到 1px alpha
-            double phase = (elapsed / 100.0) * Math.PI * 2.0; // 0.1Hz = 2π / 1000ms × 100ms
+            // frequency 0.1Hz = 10000ms 周期；用 sin 驱动幅度 0~1 映射到 1px alpha
+            double phase = (elapsed / 10000.0) * Math.PI * 2.0;
             double shakeIntensity = Math.abs(Math.sin(phase)); // 0~1
 
             if (shakeIntensity > 0.01) {

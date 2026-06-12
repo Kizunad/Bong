@@ -2371,7 +2371,10 @@ describe("processTsyZoneActivatedForUi (Fix①: triggerUi production path)", () 
       logger: { log: vi.fn(), warn: vi.fn() },
     });
 
-    expect(uiRuntime.triggerUi.mock.calls).toHaveLength(3);
+    expect(
+      uiRuntime.triggerUi.mock.calls,
+      `expected 3 triggerUi calls because all TSY activation events should be attempted, actual ${uiRuntime.triggerUi.mock.calls.length}`,
+    ).toHaveLength(3);
   });
 
   it("warns and continues when triggerUi throws for one event", async () => {
@@ -2395,9 +2398,15 @@ describe("processTsyZoneActivatedForUi (Fix①: triggerUi production path)", () 
     });
 
     // Both events attempted
-    expect(uiRuntime.triggerUi.mock.calls).toHaveLength(2);
+    expect(
+      uiRuntime.triggerUi.mock.calls,
+      `expected 2 triggerUi calls because failure in one event must not stop the batch, actual ${uiRuntime.triggerUi.mock.calls.length}`,
+    ).toHaveLength(2);
     expect(warnSpy, "should warn on triggerUi failure").toHaveBeenCalledOnce();
-    expect(warnSpy.mock.calls[0][0]).toContain("triggerUi failed");
+    expect(
+      warnSpy.mock.calls[0][0],
+      `expected warning to mention triggerUi failed, actual ${warnSpy.mock.calls[0]?.[0]}`,
+    ).toContain("triggerUi failed");
   });
 
   it("emits AGENT_UI_CMD via agentUiRuntime.triggerUi for dao_lord source class", async () => {
@@ -2699,9 +2708,18 @@ describe("runTick button_click 真注入: applyButtonClickEventsToAgents 进 age
       logger: { log: vi.fn(), error: vi.fn() },
     });
 
-    expect(agent.receivedButtonClicks).toHaveLength(2);
-    expect(agent.receivedButtonClicks[0].params["button_id"]).toBe("enter_realm");
-    expect(agent.receivedButtonClicks[1].params["button_id"]).toBe("observe_only");
+    expect(
+      agent.receivedButtonClicks,
+      `expected 2 button click events to be injected into agent, actual ${agent.receivedButtonClicks.length}`,
+    ).toHaveLength(2);
+    expect(
+      agent.receivedButtonClicks[0].params["button_id"],
+      `expected first button_id enter_realm because order must be preserved, actual ${agent.receivedButtonClicks[0].params["button_id"]}`,
+    ).toBe("enter_realm");
+    expect(
+      agent.receivedButtonClicks[1].params["button_id"],
+      `expected second button_id observe_only because order must be preserved, actual ${agent.receivedButtonClicks[1].params["button_id"]}`,
+    ).toBe("observe_only");
   });
 
   it("agent without setButtonClickEvents is not affected (graceful no-op)", async () => {
@@ -2713,20 +2731,22 @@ describe("runTick button_click 真注入: applyButtonClickEventsToAgents 进 age
       { request_id: "r1", action: "button_click", params: { button_id: "dismiss" } },
     ];
 
-    await expect(
-      runTick(state, {
-        agents: [agentWithout, agentWith],
-        llmClient: { chat: vi.fn(async (m: string) => ({ content: "[]", durationMs: 0, requestId: "r", model: m })) },
-        model: DEFAULT_MODEL,
-        buttonClickEvents: clicks,
-        publishCommands: vi.fn(async () => {}),
-        publishNarrations: vi.fn(async () => {}),
-        logger: { log: vi.fn(), error: vi.fn() },
-      }),
-    ).resolves.not.toThrow();
+    const result = await runTick(state, {
+      agents: [agentWithout, agentWith],
+      llmClient: { chat: vi.fn(async (m: string) => ({ content: "[]", durationMs: 0, requestId: "r", model: m })) },
+      model: DEFAULT_MODEL,
+      buttonClickEvents: clicks,
+      publishCommands: vi.fn(async () => {}),
+      publishNarrations: vi.fn(async () => {}),
+      logger: { log: vi.fn(), error: vi.fn() },
+    });
+    expect(result, "expected runTick to resolve with TickResult when an agent lacks setButtonClickEvents").toBeDefined();
 
     // agent with setButtonClickEvents received the events
-    expect(agentWith.receivedButtonClicks).toHaveLength(1);
+    expect(
+      agentWith.receivedButtonClicks,
+      `expected setButtonClickEvents-capable agent to receive 1 click, actual ${agentWith.receivedButtonClicks.length}`,
+    ).toHaveLength(1);
   });
 });
 
@@ -2762,7 +2782,7 @@ describe("processTsyZoneActivatedForUi target_player canonical format (BLOCKER-�
       logger: { log: vi.fn(), warn: vi.fn() },
     });
 
-    expect(uiRuntime.triggerUi).toHaveBeenCalledOnce();
+    expect(uiRuntime.triggerUi, "expected triggerUi to be called once for canonical target_player event").toHaveBeenCalledOnce();
     const opts = uiRuntime.triggerUi.mock.calls[0][0] as Record<string, unknown>;
     const targetPlayer = opts["targetPlayer"] as { uuid: string; name: string };
 
@@ -2807,7 +2827,10 @@ describe("processTsyZoneActivatedForUi target_player canonical format (BLOCKER-�
       logger: { log: vi.fn(), warn: vi.fn() },
     });
 
-    expect(capturedTargetPlayer).toHaveLength(1);
+    expect(
+      capturedTargetPlayer,
+      `expected exactly 1 captured targetPlayer because one TSY event was processed, actual ${capturedTargetPlayer.length}`,
+    ).toHaveLength(1);
     expect(
       capturedTargetPlayer[0].uuid,
       "targetPlayer.uuid passed to triggerUi must equal the world-state player.uuid unchanged",

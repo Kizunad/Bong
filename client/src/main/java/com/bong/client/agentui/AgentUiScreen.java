@@ -396,9 +396,6 @@ public final class AgentUiScreen extends BaseOwoScreen<FlowLayout> {
                 double vy = -oy * 0.01;
                 double vz = -oz * 0.03;
 
-                net.minecraft.particle.ParticleEffect particleType =
-                    net.minecraft.particle.ParticleTypes.ENTITY_EFFECT;
-
                 // 使用内置 ENTITY_EFFECT 粒子（可设颜色），避免自定义粒子类型注册
                 // x/y/z 作为 count=0 时的 speed 参数，data 通过 ENTITY_EFFECT 的 r/g/b 编码
                 world.addParticle(

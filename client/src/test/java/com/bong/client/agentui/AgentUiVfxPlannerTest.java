@@ -199,9 +199,7 @@ public class AgentUiVfxPlannerTest {
     @Test
     void buildCommands_tiandao_duringShake_containsRectBars() {
         long opened = 1_000_000L;
-        // Use a time where sin(phase) > 0.01 to ensure shake is visible
-        // phase = (100 / 100.0) * 2π = 2π → sin(2π) ≈ 0, try phase π/2 = elapsed=25ms
-        long atQuarterPeriod = opened + 25L; // still in shake duration
+        // Use timestamps where sin(phase) > 0.01 to ensure shake is visible.
         AgentUiVfxState state = new AgentUiVfxState(opened, true);
 
         // Try multiple timestamps to find one where shake renders (sin non-zero)

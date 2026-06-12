@@ -5,8 +5,11 @@ import com.bong.client.agentui.AgentUiStore;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonPrimitive;
 import net.minecraft.client.MinecraftClient;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import javax.annotation.Nullable;
+import java.util.function.Consumer;
 
 /**
  * plan-agent-ui-data-v1 P1 — 天道 UI ServerData handler。
@@ -22,6 +25,7 @@ import javax.annotation.Nullable;
  * <p>两个 payload 类型共用同一 handler 实例；由 {@link ServerDataRouter} 注册。
  */
 public final class AgentUiPayloadHandler implements ServerDataHandler {
+    private static final Logger LOGGER = LoggerFactory.getLogger(AgentUiPayloadHandler.class);
 
     @Override
     public ServerDataDispatch handle(ServerDataEnvelope envelope) {
@@ -54,35 +58,69 @@ public final class AgentUiPayloadHandler implements ServerDataHandler {
         }
 
         int timeoutTicks = readInt(payload, "timeout_ticks", 600);
+        if (timeoutTicks <= 0) {
+            LOGGER.warn(
+                "[bong][agent_ui] agent_ui_request timeout_ticks={} 非法，回退为 1 tick request_id={}",
+                timeoutTicks,
+                requestId
+            );
+            timeoutTicks = 1;
+        }
 
         final String finalXml = xml;
         final String finalRequestId = requestId;
         final int finalTimeoutTicks = timeoutTicks;
 
         MinecraftClient client = MinecraftClient.getInstance();
-        long currentTick = client != null ? client.player != null
-            ? getClientTick(client) : 0L : 0L;
+        if (client == null || client.player == null) {
+            return ServerDataDispatch.noOp(
+                envelope.type(),
+                "agent_ui_request: MinecraftClient/player 未就绪，payload 忽略 request_id='" + finalRequestId + "'"
+            );
+        }
 
-        AgentUiScreen screen = AgentUiScreen.create(
-            finalRequestId,
-            finalXml,
-            finalTimeoutTicks,
-            currentTick
-        );
-
-        AgentUiStore.setActive(screen);
-
-        if (client != null) {
-            client.execute(() -> {
-                if (client.player != null) {
+        client.execute(() -> {
+            if (client.player == null) {
+                return;
+            }
+            openReadyRequestForTests(
+                envelope.type(),
+                finalRequestId,
+                finalXml,
+                finalTimeoutTicks,
+                getClientTick(client),
+                screen -> {
+                    AgentUiStore.setActive(screen);
                     client.setScreen(screen);
                 }
-            });
-        }
+            );
+        });
 
         return ServerDataDispatch.handled(
             envelope.type(),
             "agent_ui_request 已打开面板 request_id='" + finalRequestId + "'"
+        );
+    }
+
+    static ServerDataDispatch openReadyRequestForTests(
+        String payloadType,
+        String requestId,
+        String xml,
+        int timeoutTicks,
+        long currentTick,
+        Consumer<AgentUiScreen> opener
+    ) {
+        int safeTimeoutTicks = timeoutTicks <= 0 ? 1 : timeoutTicks;
+        AgentUiScreen screen = AgentUiScreen.create(
+            requestId,
+            xml,
+            safeTimeoutTicks,
+            currentTick
+        );
+        opener.accept(screen);
+        return ServerDataDispatch.handled(
+            payloadType,
+            "agent_ui_request 已打开面板 request_id='" + requestId + "'"
         );
     }
 
