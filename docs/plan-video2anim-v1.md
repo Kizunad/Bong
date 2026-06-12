@@ -137,7 +137,7 @@ python3 client/tools/video2emotecraft.py INPUT_VIDEO \
 
 ### P1.2 render 集成
 
-`--preview` 标志：转换完成后自动调用 `render_animation.py {output}.json -o /tmp/video2anim_preview/`，在终端显示预览路径。失败时只 warning 不 abort。
+`--preview` 标志：转换完成后自动调用 `render_animation.py {output}.json -o /tmp/video2anim_preview/<name>/`，在终端显示预览路径。失败时只 warning 不 abort。
 
 ### P1.3 批量 CLI
 
@@ -155,6 +155,8 @@ python3 client/tools/video2emotecraft.py INPUT_VIDEO \
 - **关键帧过滤**：20 FPS × 3 秒 = 60 帧原始数据 → 关键帧 < 30（至少过滤一半静止帧）
 - **角度精度**：round 后与原始值差异 < 0.5°
 - **batch 幂等**：跑两次，第二次不重新生成已有文件
+- **review 边界**：覆盖全中文 `--export-gen` 名称、数字开头脚本名、空安全名拒绝、负/非有限 `--key-threshold`、translate-only 关键帧保留、零字节残缺输出重试。
+- **本地验收**：`python3 -m py_compile client/tools/video2emotecraft.py client/tools/test_video2emotecraft.py`；`python3 -m pytest client/tools/test_video2emotecraft.py -q` → 42 passed。
 
 ---
 
@@ -219,15 +221,3 @@ MediaPipe 的 T-pose 检测不完美，导致"站直不动"时骨骼旋转不为
 | `client/tools/video2emotecraft.py` | 核心转换器（P0 全部 + P2 平滑/校准） |
 | `client/tools/test_video2emotecraft.py` | 单测 |
 | `client/tools/requirements-video2anim.txt` | Python 依赖（mediapipe / opencv / numpy / scipy） |
-
-## Finish Evidence
-
-> 阶段性证据：P0/P1 已完成；P2 仍未开始，本 plan 暂不归档。
-
-- **P0 落地清单**：`client/tools/video2emotecraft.py` 新增 `VideoPoser`（MediaPipe/OpenCV 延迟导入）与 `PoseToEmotecraft`（坐标变换、7 部件 pose table、bend 分解、Emotecraft v3 JSON 发射）；`client/tools/requirements-video2anim.txt` 登记真实视频转换依赖。
-- **P0 测试结果**：`client/tools/test_video2emotecraft.py` 覆盖公开 API 下的 body 平移符号、T-pose 归零、手臂/腿 bend、弧度 JSON、空 pose_table 错误、pose_table 结构、反平行/gimbal-lock 数学边界、丢帧、角度 unwrap、loop 闭合、30→20 FPS 采样、低 FPS 边界与 `--fps 0` 错误分支。
-- **本地验收**：`python3 -m py_compile client/tools/video2emotecraft.py client/tools/test_video2emotecraft.py`；`python3 client/tools/video2emotecraft.py --help >/tmp/video2emotecraft_help.txt`；`python3 -m pytest client/tools/test_video2emotecraft.py -q` → 16 passed。
-- **P1 落地清单**：`client/tools/video2emotecraft.py` 新增 `--export-gen NAME`、稀疏关键帧筛选、0.5° 角度 round、原始帧号/时间戳注释、`/tmp/video2anim_preview/<name>/` 预览输出路径，以及 `batch INPUT_DIR -o OUTPUT_DIR` 批量转换幂等逻辑。
-- **P1 测试结果**：`client/tools/test_video2emotecraft.py` 新增 gen 脚本语法/直接执行/注释、关键帧过滤、0.5° round、batch 幂等、视频扩展名筛选、`FrameSampler` 直接 guard 分支覆盖；review 补丁补齐全中文 `--export-gen` 名称、负 `--key-threshold`、零字节残缺输出重试三条边界。
-- **P1 本地验收**：`python3 -m py_compile client/tools/video2emotecraft.py client/tools/test_video2emotecraft.py`；`python3 client/tools/video2emotecraft.py --help >/tmp/video2anim_help.txt`；`python3 client/tools/video2emotecraft.py batch --help >/tmp/video2anim_batch_help.txt`；`python3 -m pytest client/tools/test_video2emotecraft.py -q` → 33 passed。
-- **遗留 / 后续**：P2 继续做 Savitzky-Golay、easing 推断与 T-pose calibration；真实真人视频/F3+T 手测仍按 P0/P1 验收标准在本地执行。

@@ -4,6 +4,7 @@ import math
 import subprocess
 import sys
 from itertools import pairwise
+from pathlib import Path
 
 import numpy as np
 import pytest
@@ -313,14 +314,19 @@ def test_non_positive_fps_is_rejected(fps: str, capsys: pytest.CaptureFixture[st
     )
 
 
-def test_negative_key_threshold_is_rejected(capsys: pytest.CaptureFixture[str]) -> None:
+@pytest.mark.parametrize("threshold", ["-0.5", "nan", "inf"])
+def test_invalid_key_threshold_is_rejected(
+    threshold: str,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
     """Verify CLI rejects impossible export-gen keyframe thresholds before conversion."""
     with pytest.raises(SystemExit) as exc_info:
-        parse_args(["input.mp4", "--export-gen", "unit", "--key-threshold", "-0.5"])
+        parse_args(["input.mp4", "--export-gen", "unit", "--key-threshold", threshold])
 
     stderr = capsys.readouterr().err
     assert exc_info.value.code != 0, (
-        f"expected non-zero SystemExit because --key-threshold=-0.5 is invalid, actual {exc_info.value.code}"
+        f"expected non-zero SystemExit because --key-threshold={threshold} is invalid, "
+        f"actual {exc_info.value.code}"
     )
     assert "must be >= 0" in stderr, (
         f"expected argparse stderr to include the threshold validation message, actual stderr={stderr!r}"
@@ -331,6 +337,7 @@ def test_negative_key_threshold_is_rejected(capsys: pytest.CaptureFixture[str]) 
     ("source_fps", "target_fps", "message"),
     [
         (0.0, 20, "source_fps must be > 0"),
+        (-1.0, 20, "source_fps must be > 0"),
         (float("nan"), 20, "source_fps must be > 0"),
         (30.0, 0, "target_fps must be > 0"),
     ],
@@ -403,18 +410,53 @@ def test_export_gen_accepts_unicode_filename_suffix() -> None:
     )
 
 
+def test_export_gen_rejects_empty_filename_suffix() -> None:
+    """Verify export-gen still rejects names with no usable filename characters."""
+    with pytest.raises(ValueError, match="filename-safe character"):
+        _safe_gen_name("!!!")
+
+
+def test_export_gen_prefixes_digit_filename_suffix() -> None:
+    """Verify digit-leading export-gen names are prefixed into valid script stems."""
+    safe_name = _safe_gen_name("1name")
+
+    assert safe_name == "anim_1name", (
+        f"expected digit-leading export-gen names to gain anim_ prefix, actual {safe_name!r}"
+    )
+
+
 def test_keyframe_filter_keeps_sparse_angle_changes() -> None:
     """Verify export-gen keeps key frames rather than every sampled frame."""
     pose_table = {tick: {"rightArm": {"pitch": float(tick)}} for tick in range(60)}
 
     selected = select_key_pose_table(pose_table, angle_threshold_degrees=5.0)
 
-    assert len(selected) < 30, (
-        f"expected 60-frame slow motion to be reduced by at least half, actual {len(selected)}"
+    expected_ticks = list(range(0, 60, 5)) + [59]
+    assert list(selected) == expected_ticks, (
+        "expected sparse keyframes every 5° plus final boundary because threshold is 5°, "
+        f"actual ticks={list(selected)}"
     )
     assert 0 in selected and 59 in selected, (
         f"expected export-gen to preserve boundary keyframes, actual ticks={sorted(selected)}"
     )
+
+
+def test_keyframe_filter_preserves_translate_only_changes() -> None:
+    """Verify --translate poses are not collapsed when only body xyz changes."""
+    pose_table = {tick: {"body": {"x": tick * 0.1}} for tick in range(4)}
+
+    selected = select_key_pose_table(pose_table, angle_threshold_degrees=5.0)
+
+    assert list(selected) == [0, 1, 2, 3], (
+        f"expected translate-only frames to be preserved because body.x is observable, actual {list(selected)}"
+    )
+
+
+@pytest.mark.parametrize("threshold", [-1.0, float("nan"), float("inf")])
+def test_keyframe_filter_rejects_invalid_thresholds(threshold: float) -> None:
+    """Verify direct keyframe selection rejects non-finite and negative thresholds."""
+    with pytest.raises(ValueError, match="angle_threshold_degrees must be >= 0"):
+        select_key_pose_table({0: {"rightArm": {"pitch": 0.0}}}, angle_threshold_degrees=threshold)
 
 
 def test_export_gen_rounds_angles_to_half_degree(tmp_path) -> None:
@@ -447,7 +489,7 @@ def test_batch_convert_is_idempotent(tmp_path) -> None:
     (input_dir / "ignore.txt").write_text("not a video")
     calls: list[str] = []
 
-    def fake_convert(video_path, out_path):
+    def fake_convert(video_path, out_path) -> Path:
         calls.append(video_path.name)
         out_path.write_text("{}")
         return out_path
@@ -479,7 +521,7 @@ def test_batch_convert_retries_zero_byte_outputs(tmp_path) -> None:
     (output_dir / "a.json").write_bytes(b"")
     calls: list[str] = []
 
-    def fake_convert(video_path, out_path):
+    def fake_convert(video_path, out_path) -> Path:
         calls.append(video_path.name)
         out_path.write_text('{"ok":true}')
         return out_path

@@ -43,6 +43,7 @@ LM_RIGHT_ANKLE = 28
 VIDEO_EXTENSIONS = frozenset({".mp4", ".mov"})
 PART_ORDER = ("body", "torso", "head", "leftArm", "rightArm", "leftLeg", "rightLeg")
 AXIS_ORDER = ("x", "y", "z", "pitch", "yaw", "roll", "bend", "axis")
+LINEAR_AXES = frozenset({"x", "y", "z"})
 
 
 @dataclass(frozen=True)
@@ -332,8 +333,8 @@ def select_key_pose_table(
     angle_threshold_degrees: float = 5.0,
 ) -> dict[int, dict]:
     """Return sparse key poses whose angle deltas exceed a threshold."""
-    if angle_threshold_degrees < 0:
-        raise ValueError("angle_threshold_degrees must be >= 0")
+    if not math.isfinite(angle_threshold_degrees) or angle_threshold_degrees < 0:
+        raise ValueError("angle_threshold_degrees must be >= 0 and finite")
     ticks = sorted(pose_table)
     if len(ticks) <= 2:
         return {tick: pose_table[tick] for tick in ticks}
@@ -624,7 +625,7 @@ def _merge_boundary_pose(last_pose: dict, first_pose: dict) -> dict:
 
 
 def _max_angle_delta(previous_pose: dict, current_pose: dict) -> float:
-    """Return the largest angular delta between two sparse poses."""
+    """Return the largest angular delta, preserving any linear-axis change."""
     largest = 0.0
     for part in set(previous_pose) | set(current_pose):
         previous_axes = previous_pose.get(part, {})
@@ -638,6 +639,13 @@ def _max_angle_delta(previous_pose: dict, current_pose: dict) -> float:
                 return math.inf
             if has_previous and has_current:
                 largest = max(largest, abs(float(current_axes[axis]) - float(previous_axes[axis])))
+        for axis in LINEAR_AXES:
+            has_previous = axis in previous_axes
+            has_current = axis in current_axes
+            if has_previous != has_current:
+                return math.inf
+            if has_previous and has_current and float(current_axes[axis]) != float(previous_axes[axis]):
+                return math.inf
     return largest
 
 
@@ -794,8 +802,8 @@ def _positive_int(value: str) -> int:
 def _non_negative_float(value: str) -> float:
     """Parse a non-negative float for argparse."""
     parsed = float(value)
-    if parsed < 0:
-        raise argparse.ArgumentTypeError("must be >= 0")
+    if not math.isfinite(parsed) or parsed < 0:
+        raise argparse.ArgumentTypeError("must be >= 0 and finite")
     return parsed
 
 
