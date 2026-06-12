@@ -133,6 +133,11 @@ export interface TickAgent {
   setWorldModel?(worldModel: WorldModel): void;
   /** plan-offscreen-war-v1 P4：注入本窗口离屏 death 事件（喂 offscreenWarBlock）。 */
   setNpcDeathEvents?(events: NpcDeathV1[]): void;
+  /**
+   * plan-agent-ui-data-v1 P2 — 注入本轮玩家 UI button_click 事件。
+   * Arbiter/Agent tick 把 button_click 追加到推演上下文，让天道感知玩家意图。
+   */
+  setButtonClickEvents?(events: AgentUiResponsePayloadV1[]): void;
 }
 
 export interface RuntimeRedis {
@@ -451,6 +456,7 @@ export async function runTick(state: WorldStateV1, deps: TickDeps): Promise<Tick
 
   // plan-agent-ui-data-v1 P2 — 把上轮 drainPendingButtonClicks 结果注入推演日志，
   // 让 agent context 感知玩家 UI 交互（button_click 事件作为玩家意图信号）。
+  // 注意：实际注入 agents 在 applyButtonClickEventsToAgents 完成（见下方）。
   if (buttonClickEvents && buttonClickEvents.length > 0) {
     logger.log(
       `[tiandao] button_click inject: count=${buttonClickEvents.length} ` +
@@ -491,6 +497,8 @@ export async function runTick(state: WorldStateV1, deps: TickDeps): Promise<Tick
   applyWorldModelToAgents(agents, worldModel);
   applyChatSignalsToAgents(agents, chatSignals ?? []);
   applyNpcDeathEventsToAgents(agents, npcDeathEvents ?? []);
+  // plan-agent-ui-data-v1 P2 — button_click 真注入：玩家 UI 交互信号进每个 agent 推演上下文。
+  applyButtonClickEventsToAgents(agents, buttonClickEvents ?? []);
   logger.log("[tiandao] === tick start ===");
   logger.log(
     `[tiandao] tick: ${state.tick}, players: ${state.players.length}, zones: ${state.zones.length}, correlation_id: ${metadata.correlationId}`,
@@ -749,6 +757,21 @@ function applyNpcDeathEventsToAgents(agents: TickAgent[], events: NpcDeathV1[]):
   for (const agent of agents) {
     if (typeof agent.setNpcDeathEvents === "function") {
       agent.setNpcDeathEvents(events);
+    }
+  }
+}
+
+/**
+ * plan-agent-ui-data-v1 P2 — 把 button_click 事件注入每个 agent 的推演上下文。
+ * 仿照 applyNpcDeathEventsToAgents：遍历 agents，调用可选的 setButtonClickEvents。
+ */
+function applyButtonClickEventsToAgents(
+  agents: TickAgent[],
+  events: AgentUiResponsePayloadV1[],
+): void {
+  for (const agent of agents) {
+    if (typeof agent.setButtonClickEvents === "function") {
+      agent.setButtonClickEvents(events);
     }
   }
 }
@@ -1267,6 +1290,19 @@ export async function runRuntime(
                 `[tiandao] ui button_click drain: count=${drainedButtonClicks.length} ` +
                 `(injecting into tick=${state.tick} as player interaction context)`,
               );
+            }
+
+            // plan-agent-ui-data-v1 P2 — session_end drain 接线：
+            // 消费 dismissed / timeout / completed 信号，标记当前面板上下文已结束。
+            // 防止 pendingSessionEnds 队列无界增长（内存泄漏），同时为下游 plan 提供扩展点。
+            const drainedSessionEnds = agentUiRuntime?.drainPendingSessionEnds() ?? [];
+            if (drainedSessionEnds.length > 0) {
+              for (const se of drainedSessionEnds) {
+                logger.log(
+                  `[tiandao] ui session_end: action=${se.action} request_id=${se.request_id} ` +
+                  `(panel context ended, tick=${state.tick})`,
+                );
+              }
             }
 
             await runFreshTickWithPublish({

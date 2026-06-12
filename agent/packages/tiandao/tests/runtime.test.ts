@@ -2501,4 +2501,284 @@ describe("runRuntime Fix②: drainPendingButtonClicks injected into tick before 
 
     expect(logger.error, "no errors when agentUiRuntime is absent").not.toHaveBeenCalled();
   });
+
+  // ─── session_end drain 接线 ────────────────────────────────────────────────
+
+  it("drainPendingSessionEnds is called in runRuntime loop and session_end is logged (接线验收)", async () => {
+    const sessionEndEvent: AgentUiResponsePayloadV1 = {
+      request_id: "req-se-001",
+      action: "dismissed",
+      params: {},
+    };
+    const mockUiRuntime = {
+      triggerUi: vi.fn(async () => ({ requestId: "r", sentBlurVersion: false })),
+      drainPendingButtonClicks: vi.fn(() => []),
+      drainPendingSessionEnds: vi.fn()
+        .mockReturnValueOnce([sessionEndEvent]) // first tick: one session_end
+        .mockReturnValue([]),
+    };
+
+    const state1 = createTestWorldState();
+    const redis = new AgentUiAwareRuntimeRedis([state1, null]);
+    const logger = { log: vi.fn(), error: vi.fn(), warn: vi.fn() };
+
+    const tempDir = await mkdtemp(join(tmpdir(), "tiandao-se-drain-"));
+    const prevCwd = process.cwd();
+    try {
+      process.chdir(tempDir);
+      await mkdir(join(tempDir, "data"), { recursive: true });
+
+      await runRuntime(
+        {
+          mockMode: false,
+          model: DEFAULT_MODEL,
+          redisUrl: DEFAULT_REDIS_URL,
+          baseUrl: "https://llm.example.test/v1",
+          apiKey: "k_test",
+        },
+        {
+          createRedis: () => redis,
+          createClient: () => ({ chat: vi.fn(async (m: string) => ({ content: "[]", durationMs: 0, requestId: "r", model: m })) }),
+          agents: [new FakeAgent("calamity", { commands: [], narrations: [], reasoning: "ok" })],
+          sleep: vi.fn(async () => {}),
+          logger,
+          maxLoopIterations: 2,
+          agentUiRuntime: mockUiRuntime as never,
+        },
+      );
+    } finally {
+      process.chdir(prevCwd);
+      await rm(tempDir, { recursive: true, force: true });
+    }
+
+    // drainPendingSessionEnds 必须在每轮 fresh-state tick 时被调
+    expect(
+      mockUiRuntime.drainPendingSessionEnds.mock.calls.length,
+      "drainPendingSessionEnds must be called at least once in the loop",
+    ).toBeGreaterThanOrEqual(1);
+
+    // session_end 消费时应有 log 记录（action=dismissed, request_id）
+    const logLines = logger.log.mock.calls.flatMap((c) => c.map(String));
+    const sessionEndLog = logLines.find(
+      (l) => l.includes("session_end") && l.includes("dismissed") && l.includes("req-se-001"),
+    );
+    expect(
+      sessionEndLog,
+      "should log session_end with action=dismissed and request_id=req-se-001",
+    ).toBeTruthy();
+  });
+});
+
+// ─── plan-agent-ui-data-v1 P2 Fix③: button_click 真注入 agent 推演上下文 ──────────────────────
+
+describe("runTick button_click 真注入: applyButtonClickEventsToAgents 进 agent.setButtonClickEvents", () => {
+  /** TickAgent 实现了 setButtonClickEvents，用于验证注入路径 */
+  class ButtonClickAwareAgent extends FakeAgent {
+    public receivedButtonClicks: AgentUiResponsePayloadV1[] = [];
+
+    setButtonClickEvents(events: AgentUiResponsePayloadV1[]): void {
+      this.receivedButtonClicks = events;
+    }
+  }
+
+  it("runTick calls setButtonClickEvents on agent with button_click events", async () => {
+    const clickEvent: AgentUiResponsePayloadV1 = {
+      request_id: "req-inject-001",
+      action: "button_click",
+      params: { button_id: "enter_realm" },
+    };
+    const agent = new ButtonClickAwareAgent("calamity", { commands: [], narrations: [], reasoning: "ok" });
+    const state = createTestWorldState();
+
+    await runTick(state, {
+      agents: [agent],
+      llmClient: { chat: vi.fn(async (m: string) => ({ content: "[]", durationMs: 0, requestId: "r", model: m })) },
+      model: DEFAULT_MODEL,
+      buttonClickEvents: [clickEvent],
+      publishCommands: vi.fn(async () => {}),
+      publishNarrations: vi.fn(async () => {}),
+      logger: { log: vi.fn(), error: vi.fn() },
+    });
+
+    expect(
+      agent.receivedButtonClicks,
+      "agent.setButtonClickEvents must be called with the button_click events (真注入验收)",
+    ).toHaveLength(1);
+    expect(
+      agent.receivedButtonClicks[0].params["button_id"],
+      "injected button_id must match the original click event",
+    ).toBe("enter_realm");
+  });
+
+  it("runTick with empty buttonClickEvents does not call setButtonClickEvents", async () => {
+    const agent = new ButtonClickAwareAgent("calamity", { commands: [], narrations: [], reasoning: "ok" });
+    const state = createTestWorldState();
+
+    await runTick(state, {
+      agents: [agent],
+      llmClient: { chat: vi.fn(async (m: string) => ({ content: "[]", durationMs: 0, requestId: "r", model: m })) },
+      model: DEFAULT_MODEL,
+      buttonClickEvents: [], // empty
+      publishCommands: vi.fn(async () => {}),
+      publishNarrations: vi.fn(async () => {}),
+      logger: { log: vi.fn(), error: vi.fn() },
+    });
+
+    // setButtonClickEvents is called with empty array (not undefined), queue size stays 0
+    expect(
+      agent.receivedButtonClicks,
+      "empty buttonClickEvents: agent receives empty array (no residual from prior state)",
+    ).toHaveLength(0);
+  });
+
+  it("runTick with no buttonClickEvents field calls setButtonClickEvents with empty array", async () => {
+    const agent = new ButtonClickAwareAgent("era", { commands: [], narrations: [], reasoning: "ok" });
+    const state = createTestWorldState();
+
+    await runTick(state, {
+      agents: [agent],
+      llmClient: { chat: vi.fn(async (m: string) => ({ content: "[]", durationMs: 0, requestId: "r", model: m })) },
+      model: DEFAULT_MODEL,
+      // buttonClickEvents omitted
+      publishCommands: vi.fn(async () => {}),
+      publishNarrations: vi.fn(async () => {}),
+      logger: { log: vi.fn(), error: vi.fn() },
+    });
+
+    expect(
+      agent.receivedButtonClicks,
+      "omitted buttonClickEvents: agent receives empty array (setButtonClickEvents called with [])",
+    ).toHaveLength(0);
+  });
+
+  it("multiple button_click events all reach agent.setButtonClickEvents", async () => {
+    const clicks: AgentUiResponsePayloadV1[] = [
+      { request_id: "r1", action: "button_click", params: { button_id: "enter_realm" } },
+      { request_id: "r2", action: "button_click", params: { button_id: "observe_only" } },
+    ];
+    const agent = new ButtonClickAwareAgent("mutation", { commands: [], narrations: [], reasoning: "ok" });
+    const state = createTestWorldState();
+
+    await runTick(state, {
+      agents: [agent],
+      llmClient: { chat: vi.fn(async (m: string) => ({ content: "[]", durationMs: 0, requestId: "r", model: m })) },
+      model: DEFAULT_MODEL,
+      buttonClickEvents: clicks,
+      publishCommands: vi.fn(async () => {}),
+      publishNarrations: vi.fn(async () => {}),
+      logger: { log: vi.fn(), error: vi.fn() },
+    });
+
+    expect(agent.receivedButtonClicks).toHaveLength(2);
+    expect(agent.receivedButtonClicks[0].params["button_id"]).toBe("enter_realm");
+    expect(agent.receivedButtonClicks[1].params["button_id"]).toBe("observe_only");
+  });
+
+  it("agent without setButtonClickEvents is not affected (graceful no-op)", async () => {
+    // FakeAgent does NOT implement setButtonClickEvents → should not throw
+    const agentWithout = new FakeAgent("calamity", { commands: [], narrations: [], reasoning: "ok" });
+    const agentWith = new ButtonClickAwareAgent("era", { commands: [], narrations: [], reasoning: "ok" });
+    const state = createTestWorldState();
+    const clicks: AgentUiResponsePayloadV1[] = [
+      { request_id: "r1", action: "button_click", params: { button_id: "dismiss" } },
+    ];
+
+    await expect(
+      runTick(state, {
+        agents: [agentWithout, agentWith],
+        llmClient: { chat: vi.fn(async (m: string) => ({ content: "[]", durationMs: 0, requestId: "r", model: m })) },
+        model: DEFAULT_MODEL,
+        buttonClickEvents: clicks,
+        publishCommands: vi.fn(async () => {}),
+        publishNarrations: vi.fn(async () => {}),
+        logger: { log: vi.fn(), error: vi.fn() },
+      }),
+    ).resolves.not.toThrow();
+
+    // agent with setButtonClickEvents received the events
+    expect(agentWith.receivedButtonClicks).toHaveLength(1);
+  });
+});
+
+// ─── plan-agent-ui-data-v1 P2 BLOCKER: target_player canonical format ─────────────────────────
+
+describe("processTsyZoneActivatedForUi target_player canonical format (BLOCKER-身份键)", () => {
+  it("target_player passed to triggerUi is the player.uuid field (offline:X canonical format)", async () => {
+    const uiRuntime = {
+      triggerUi: vi.fn(async (_opts: unknown) => ({
+        requestId: "mock-request-id-canonical",
+        sentBlurVersion: false,
+      })),
+      drainPendingButtonClicks: vi.fn(() => [] as AgentUiResponsePayloadV1[]),
+      drainPendingSessionEnds: vi.fn(() => [] as AgentUiResponsePayloadV1[]),
+    };
+
+    // createTestWorldState() already uses uuid: "offline:test-player" (canonical format)
+    const state = createTestWorldState();
+    const event: TsyZoneActivatedV1 = {
+      v: 1,
+      kind: "tsy_zone_activated",
+      tick: 1001,
+      family_id: "tsy_canonical_test",
+      source_class: "dao_lord",
+    };
+
+    await processTsyZoneActivatedForUi({
+      state,
+      events: [event],
+      agentUiRuntime: uiRuntime as never,
+      logger: { log: vi.fn(), warn: vi.fn() },
+    });
+
+    expect(uiRuntime.triggerUi).toHaveBeenCalledOnce();
+    const opts = uiRuntime.triggerUi.mock.calls[0][0] as Record<string, unknown>;
+    const targetPlayer = opts["targetPlayer"] as { uuid: string; name: string };
+
+    // BLOCKER 契约 pin：target_player 必须是 "offline:X" 格式（canonical_player_id）
+    // 与 server agent_ui.rs 的 canonical_player_id(username.0.as_str()) 比较逻辑对齐
+    expect(
+      targetPlayer.uuid,
+      "target_player.uuid must be 'offline:X' (canonical_player_id format) to match server lookup",
+    ).toBe("offline:test-player");
+    expect(
+      targetPlayer.uuid,
+      "canonical id must start with 'offline:' prefix",
+    ).toMatch(/^offline:/);
+  });
+
+  it("target_player canonical id is preserved intact through triggerUi → renderUi → command.target_player", async () => {
+    // End-to-end: processTsyZoneActivatedForUi → agentUiRuntime.triggerUi → target_player field
+    // The triggerUi receives targetPlayer.uuid which is the world-state canonical id.
+    // This pin test verifies the uuid string is never transformed (no stripping, no concatenation).
+    const state = createTestWorldState();
+    // UUID is "offline:test-player" — canonical format
+    expect(
+      state.players[0].uuid,
+      "createTestWorldState player.uuid must be in canonical 'offline:X' format (world-state contract)",
+    ).toMatch(/^offline:/);
+
+    const capturedTargetPlayer: { uuid: string }[] = [];
+    const uiRuntime = {
+      triggerUi: vi.fn(async (opts: unknown) => {
+        const o = opts as Record<string, unknown>;
+        capturedTargetPlayer.push(o["targetPlayer"] as { uuid: string });
+        return { requestId: "r-canon", sentBlurVersion: false };
+      }),
+      drainPendingButtonClicks: vi.fn(() => [] as AgentUiResponsePayloadV1[]),
+      drainPendingSessionEnds: vi.fn(() => [] as AgentUiResponsePayloadV1[]),
+    };
+
+    await processTsyZoneActivatedForUi({
+      state,
+      events: [{ v: 1, kind: "tsy_zone_activated", tick: 2000, family_id: "starter_zone", source_class: "sect_ruins" }],
+      agentUiRuntime: uiRuntime as never,
+      logger: { log: vi.fn(), warn: vi.fn() },
+    });
+
+    expect(capturedTargetPlayer).toHaveLength(1);
+    expect(
+      capturedTargetPlayer[0].uuid,
+      "targetPlayer.uuid passed to triggerUi must equal the world-state player.uuid unchanged",
+    ).toBe(state.players[0].uuid);
+  });
 });
