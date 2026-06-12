@@ -644,12 +644,21 @@ class OpStep:
 
     def __post_init__(self) -> None:
         if self.op.startswith(CUSTOM_OP_PREFIX):
-            # custom op 跳过 category 校验（escape hatch）。
+            # custom op 跳过 category + op 名校验（escape hatch，运行时按需注册）。
             return
         if self.category not in _BUILTIN_OPS:
             raise ValueError(
                 f"OpStep category {self.category!r} invalid; "
                 f"expected one of {OP_CATEGORIES} (or a custom: op)"
+            )
+        # 在 parse/构造期就校验 op 名在该类别内存在，而不是拖到 eval 才 KeyError。
+        # 这样非法 op 名在解析 blueprint/catalog 时立即报错、带可选候选名。
+        if self.op not in _BUILTIN_OPS[self.category]:
+            available = ", ".join(sorted(_BUILTIN_OPS[self.category]))
+            raise ValueError(
+                f"OpStep op {self.op!r} not found in category {self.category!r}; "
+                f"available: {available} (or {CUSTOM_OP_PREFIX}<name> for a "
+                "registered custom op)"
             )
 
 

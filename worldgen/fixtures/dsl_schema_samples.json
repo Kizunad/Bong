@@ -99,6 +99,16 @@
       }
     },
     {
+      "_name": "unknown_op_in_valid_category",
+      "_reason": "category 'height' 合法但 op 'nonexistent_height' 不在该类别内 —— parse 期就该拒，不能拖到 eval 才 KeyError",
+      "qi_grade": "common",
+      "terrain_style": {
+        "height_ops": [
+          {"category": "height", "op": "nonexistent_height", "params": {}}
+        ]
+      }
+    },
+    {
       "_name": "surface_rule_missing_block",
       "_reason": "surface rule 缺 'block' 必填键",
       "qi_grade": "common",

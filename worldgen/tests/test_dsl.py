@@ -213,6 +213,29 @@ class DslSpecConstructionTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             dsl.OpStep(category="bogus", op="fbm_height")
 
+    def test_opstep_rejects_unknown_op_in_valid_category_at_construction(
+        self,
+    ) -> None:
+        # A real category with a non-existent op name must fail at construction /
+        # parse time (not silently survive until eval() raises KeyError). The
+        # error must name a real candidate to aid debugging.
+        with self.assertRaises(ValueError) as ctx:
+            dsl.OpStep(category="height", op="nonexistent_height")
+        self.assertIn("fbm_height", str(ctx.exception))
+
+    def test_opstep_accepts_valid_op_in_each_category(self) -> None:
+        # Sanity: a real op in its real category constructs cleanly (guards the
+        # new parse-time check against false positives across all categories).
+        for category, op in (
+            ("height", "fbm_height"),
+            ("mask", "radial_mask"),
+            ("carve", "rift_carve"),
+            ("surface", "snowline_split"),
+            ("scatter", "anomaly_compete"),
+        ):
+            step = dsl.OpStep(category=category, op=op)
+            self.assertEqual((step.category, step.op), (category, op))
+
     def test_opstep_allows_custom_op_without_category_check(self) -> None:
         # custom: op bypasses category validation (escape hatch).
         step = dsl.OpStep(category="ignored", op="custom:anything")
