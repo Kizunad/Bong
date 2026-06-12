@@ -979,9 +979,15 @@ pub fn register(app: &mut App) {
     app.add_systems(
         Update,
         (
-            // increment_current_tick_system 必须在 agent_ui_tick_system 之前运行
+            // increment_current_tick_system 必须在 agent_ui_tick_system /
+            // receive_agent_ui_cmd_system 之前运行，使同帧看到一致的 current_tick。
+            // MINOR 修复：receive_agent_ui_cmd_system 也加 .after(increment_current_tick_system)，
+            // 确保 expire_tick = current_tick + timeout_ticks 与 agent_ui_tick_system 基准一致
+            // （否则 cmd_system 看到 tick N-1，ticker 看到 tick N，边界偏 1）。
             agent_ui::increment_current_tick_system,
-            agent_ui::receive_agent_ui_cmd_system.after(process_redis_inbound),
+            agent_ui::receive_agent_ui_cmd_system
+                .after(process_redis_inbound)
+                .after(agent_ui::increment_current_tick_system),
             agent_ui::agent_ui_tick_system.after(agent_ui::increment_current_tick_system),
             agent_ui::receive_agent_ui_response_system,
             agent_ui::receive_player_disconnect_system,
