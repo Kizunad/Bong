@@ -3,6 +3,7 @@ const IORedis = Redis.default ?? Redis;
 import {
   CHANNELS,
   type ChannelName,
+  validateAgentUiResponsePayloadV1Contract,
   validateAlchemyInsightV1Contract,
   validateAlchemySessionEndV1Contract,
   validateBotanyEcologySnapshotV1Contract,
@@ -20,6 +21,8 @@ import {
   validateZonePressureCrossedV1Contract,
 } from "@bong/schema";
 import type {
+  AgentUiRequestCommandV1,
+  AgentUiResponsePayloadV1,
   AgentWorldModelEnvelopeV1,
   AgentWorldModelSnapshotV1,
   AgentCommandV1,
@@ -49,6 +52,8 @@ const {
   AGENT_COMMAND,
   AGENT_NARRATE,
   AGENT_WORLD_MODEL,
+  AGENT_UI_CMD,
+  AGENT_UI_RESPONSE,
   PLAYER_CHAT,
   PRICE_INDEX,
   TSY_EVENT,
@@ -243,6 +248,8 @@ export class RedisIpc {
   private latestCrossSystemEvents: CrossSystemRuntimeEventV1[] = [];
   private latestBotanyEcologyEvents: BotanyEcologySnapshotV1[] = [];
   private latestZonePressureCrossedEvents: ZonePressureCrossedV1[] = [];
+  // plan-agent-ui-data-v1 P2：天道 UI 响应回调队列。
+  private agentUiResponseCallbacks: Array<(response: AgentUiResponsePayloadV1) => void> = [];
   private stateCallbacks: Array<(state: WorldStateV1) => void> = [];
   private tsyHostileCallbacks: Array<(event: TsyHostileEventV1) => void> = [];
   private npcEventCallbacks: Array<(event: NpcRuntimeEventV1) => void> = [];
@@ -261,6 +268,10 @@ export class RedisIpc {
       return;
     }
 
+    if (channel === AGENT_UI_RESPONSE) {
+      this.handleAgentUiResponseMessage(message);
+      return;
+    }
 
     if (channel === TSY_EVENT) {
       this.handleTsyEventMessage(message);
@@ -326,6 +337,24 @@ export class RedisIpc {
       }
     } catch (e) {
       console.warn("[redis-ipc] failed to parse world_state:", e);
+    }
+  }
+
+  // plan-agent-ui-data-v1 P2 — bong:agent_ui_response 消费
+  private handleAgentUiResponseMessage(message: string): void {
+    try {
+      const data = JSON.parse(message) as unknown;
+      const result = validateAgentUiResponsePayloadV1Contract(data);
+      if (!result.ok) {
+        console.warn("[redis-ipc] invalid AgentUiResponsePayloadV1:", result.errors.join("; "));
+        return;
+      }
+      const response = data as AgentUiResponsePayloadV1;
+      for (const cb of this.agentUiResponseCallbacks) {
+        cb(response);
+      }
+    } catch (e) {
+      console.warn("[redis-ipc] failed to parse agent_ui_response:", e);
     }
   }
 
@@ -656,6 +685,8 @@ export class RedisIpc {
     await this.sub.subscribe(ALCHEMY_INSIGHT);
     await this.sub.subscribe(POI_NOVICE_EVENT);
     await this.sub.subscribe(RAT_PHASE_EVENT);
+    // plan-agent-ui-data-v1 P2：订阅 server→agent 天道 UI 响应通道
+    await this.sub.subscribe(AGENT_UI_RESPONSE);
     for (const channel of CROSS_SYSTEM_EVENT_CHANNELS) {
       await this.sub.subscribe(channel);
     }
@@ -663,7 +694,7 @@ export class RedisIpc {
     this.sub.on("message", this.onMessage);
     this.connected = true;
     console.log(
-      `[redis-ipc] subscribed to ${[WORLD_STATE, TSY_EVENT, NPC_SPAWN, NPC_DEATH, FACTION_EVENT, ALCHEMY_SESSION_END, ALCHEMY_INSIGHT, POI_NOVICE_EVENT, RAT_PHASE_EVENT, ...CROSS_SYSTEM_EVENT_CHANNELS].join(", ")}`,
+      `[redis-ipc] subscribed to ${[WORLD_STATE, TSY_EVENT, NPC_SPAWN, NPC_DEATH, FACTION_EVENT, ALCHEMY_SESSION_END, ALCHEMY_INSIGHT, POI_NOVICE_EVENT, RAT_PHASE_EVENT, AGENT_UI_RESPONSE, ...CROSS_SYSTEM_EVENT_CHANNELS].join(", ")}`,
     );
   }
 
@@ -816,6 +847,29 @@ export class RedisIpc {
     this.sub.disconnect();
     this.pub.disconnect();
     console.log("[redis-ipc] disconnected");
+  }
+
+  // ─── plan-agent-ui-data-v1 P2：天道 UI IPC ─────────────────────────────────
+
+  /**
+   * 发布 AgentUiRequestCommandV1 到 `bong:agent_ui_cmd`（agent → server）。
+   * realm_gate / allowed_button_ids 由 Agent 设置，不下发给 client。
+   */
+  async publishAgentUiCmd(command: AgentUiRequestCommandV1): Promise<void> {
+    const json = JSON.stringify(command);
+    const subscribers = await this.pub.publish(AGENT_UI_CMD, json);
+    console.log(
+      `[redis-ipc] published AgentUiRequestCommandV1 to ${AGENT_UI_CMD} ` +
+      `(${subscribers} subscribers, request_id=${command.request_id})`,
+    );
+  }
+
+  /**
+   * 注册 bong:agent_ui_response 消费回调（server → agent）。
+   * button_click / dismissed / timeout / replaced / error 各 action 均触发此回调。
+   */
+  onAgentUiResponse(cb: (response: AgentUiResponsePayloadV1) => void): void {
+    this.agentUiResponseCallbacks.push(cb);
   }
 
   async publishAgentWorldModel(request: PublishAgentWorldModelRequest): Promise<void> {

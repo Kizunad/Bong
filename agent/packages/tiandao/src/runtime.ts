@@ -151,6 +151,10 @@ export interface RuntimeRedis {
     snapshot: AgentWorldModelEnvelopeV1["snapshot"];
     metadata: TickPublishMetadata;
   }): Promise<void>;
+  /** plan-agent-ui-data-v1 P2：发布 AgentUiRequestCommandV1 到 bong:agent_ui_cmd */
+  publishAgentUiCmd?(command: import("@bong/schema").AgentUiRequestCommandV1): Promise<void>;
+  /** plan-agent-ui-data-v1 P2：注册 bong:agent_ui_response 响应回调 */
+  onAgentUiResponse?(cb: (response: import("@bong/schema").AgentUiResponsePayloadV1) => void): void;
   disconnect(): Promise<void>;
 }
 
