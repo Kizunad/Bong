@@ -377,7 +377,7 @@ Agent(
 - `cd agent && npm test --workspace @bong/schema` · 通过。
 - `cd server && CARGO_BUILD_JOBS=2 cargo fmt --check` · 通过。
 - `cd server && CARGO_BUILD_JOBS=2 cargo test network_array -- --test-threads=2` · 通过。
-- `cd server && CARGO_BUILD_JOBS=2 cargo test -- --test-threads=2` · 8699 passed,0 failed,1 ignored。
+- `cd server && CARGO_BUILD_JOBS=2 cargo test -- --test-threads=2` · 截至 2026-06-12 归档日:8699 passed,0 failed,1 ignored。
 - PR #513 CI:`e2e` SUCCESS；PR #514/#515/#517 CI:`Build resource pack` SUCCESS,`e2e` SUCCESS,`Publish release asset` SKIPPED。
 
 ### 跨仓库核验
