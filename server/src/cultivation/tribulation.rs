@@ -73,14 +73,16 @@ pub const JUEBI_FISSURE_VFX_EVENT_ID: &str = "bong:juebi_fissure";
 pub const JUEBI_ERUPTION_VFX_EVENT_ID: &str = "bong:juebi_eruption";
 
 const DUXU_DEFAULT_WAVES: u32 = 3;
-const DUXU_AOE_DAMAGE_BASE: f32 = 18.0;
-const DUXU_QI_DRAIN_BASE: f64 = 35.0;
+// plan-tribulation-balance-v1 P0：pub 化供 TribulationBalanceConfig 镜像（pin 测试防漂移）
+pub const DUXU_AOE_DAMAGE_BASE: f32 = 18.0;
+pub const DUXU_QI_DRAIN_BASE: f64 = 35.0;
 const DUXU_CHAIN_LIGHTNING_WAVE: u32 = 2;
 const DUXU_CHAIN_LIGHTNING_STRIKES: u32 = 3;
 const DUXU_SOUL_DEVOUR_QI_MAX_FREEZE_RATIO: f64 = 0.20;
 pub const DUXU_HEART_DEMON_WAVE: u32 = 4;
 pub const DUXU_HEART_DEMON_TIMEOUT_TICKS: u64 = 30 * 20;
-const DUXU_HEART_DEMON_OBSESSION_QI_PENALTY_RATIO: f64 = 0.30;
+// plan-tribulation-balance-v1 P0：pub 化供 TribulationBalanceConfig 镜像（pin 测试防漂移）
+pub const DUXU_HEART_DEMON_OBSESSION_QI_PENALTY_RATIO: f64 = 0.30;
 const DUXU_HEART_DEMON_OBSESSION_NEXT_WAVE_MULTIPLIER: f32 = 1.20;
 const DUXU_KAITIAN_WAVE: u32 = 5;
 const DUXU_FULL_HEALTH_EPSILON: f32 = 0.001;

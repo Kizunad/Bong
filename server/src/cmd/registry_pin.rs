@@ -1,4 +1,6 @@
 pub const COMMAND_NAMES: &[&str] = &[
+    // plan-tribulation-balance-v1 P0：渡劫平衡监控看板 dev 命令
+    "balance",
     // plan-dandao-runtime-wiring-v1 P4：暴龙王 BOSS dev spawn 命令
     "baolongwang",
     "bong",
@@ -46,6 +48,8 @@ pub const COMMAND_NAMES: &[&str] = &[
 
 #[cfg(test)]
 pub const COMMAND_TREE_PATHS: &[&str] = &[
+    // plan-tribulation-balance-v1 P0：渡劫平衡监控看板
+    "balance tribulation",
     // plan-dandao-runtime-wiring-v1 P4：暴龙王 BOSS dev spawn 命令
     "baolongwang spawn",
     "bong breakthrough",
@@ -134,6 +138,7 @@ mod tests {
         assert_eq!(
             COMMAND_NAMES,
             &[
+                "balance",
                 "baolongwang",
                 "bong",
                 "clearinv",

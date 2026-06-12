@@ -1,3 +1,5 @@
+// plan-tribulation-balance-v1 P0：/balance tribulation dev 命令
+pub mod balance;
 pub mod baolongwang;
 pub mod clearinv;
 pub mod coffin;
@@ -38,6 +40,7 @@ pub mod zones;
 use valence::prelude::App;
 
 pub fn register(app: &mut App) {
+    balance::register(app);
     baolongwang::register(app);
     coffin::register(app);
     clearinv::register(app);

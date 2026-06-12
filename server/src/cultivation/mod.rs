@@ -79,6 +79,8 @@ pub mod technique_scroll;
 pub mod tick;
 pub mod topology;
 pub mod tribulation;
+// plan-tribulation-balance-v1 P0：平衡监控配置 Resource
+pub mod tribulation_balance;
 pub mod void;
 
 use valence::prelude::{
@@ -238,6 +240,8 @@ pub fn register(app: &mut App) {
     app.init_resource::<QuotaFullTracker>();
     app.init_resource::<HalfStepRechallengeQueue>();
     app.add_event::<HalfStepRechallengeTriggerEvent>();
+    // plan-tribulation-balance-v1 P0：平衡监控配置 Resource（只读看板，初始值镜像 tribulation.rs 常数）
+    app.init_resource::<tribulation_balance::TribulationBalanceConfig>();
     app.insert_resource(SpiritualSensePushState::default());
     realm_taint::register(app);
     void::register(app);
