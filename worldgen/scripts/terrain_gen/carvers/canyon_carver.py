@@ -113,18 +113,33 @@ class CanyonCarver(BaseCarver):
 
         # How deep below the surface the overhang lip sits, modulated by 3D
         # noise so the shelf rises and dips along the wall.
+        #
+        # worldgen-v4 P3 §6.1 悬壁自然化: the depth/void noise is read at the
+        # column's *surface_y*, which varies smoothly along the wall, so adjacent
+        # columns used to sample nearly-identical noise → the cut depth barely
+        # changed column-to-column and the overhang read as a flat horizontal
+        # WorldEdit-style ledge (同高列切口趋同成水平条纹).  Fix: (1) bigger noise
+        # amplitude (±9 lip / ±11 void instead of ±4 / ±5) so the depth swings
+        # harder, and (2) a high-frequency lateral PHASE added to the noise's
+        # vertical sample coordinate — ``lat_phase`` decorrelates neighbouring
+        # columns (it shifts fast along x/z) so same-surface-height columns no
+        # longer align on one cut depth.  The cut now staggers high/low into a
+        # natural broken cliff.  ``lat_phase`` is a pure function of (wx, wz) so
+        # the scalar and vectorized paths stay byte-identical.
+        lat_phase = wx * 11.0 - wz * 7.0
         depth_noise = fbm_3d(
-            float(wx), float(surface_y), float(wz), scale=self.scale, seed=seed + 23
+            float(wx), float(surface_y) + lat_phase, float(wz),
+            scale=self.scale, seed=seed + 23,
         )
-        lip_drop = self.shelf_thickness + int(round((depth_noise + 1.0) * 4.0))
+        lip_drop = self.shelf_thickness + int(round((depth_noise + 1.0) * 9.0))
         # The shelf occupies [shelf_floor, surface_y]; the void is the band of
         # air immediately under it; the floor remnant is everything below.
         shelf_floor = surface_y - lip_drop
         void_noise = fbm_3d(
-            float(wx), float(surface_y - lip_drop), float(wz),
+            float(wx), float(surface_y - lip_drop) + lat_phase, float(wz),
             scale=self.scale, seed=seed + 37,
         )
-        void_h = self.void_height + int(round((void_noise + 1.0) * 5.0))
+        void_h = self.void_height + int(round((void_noise + 1.0) * 11.0))
         floor_ceiling = shelf_floor - void_h
 
         # Only carve if there's room for a real floor remnant below the void —
@@ -159,18 +174,23 @@ class CanyonCarver(BaseCarver):
                 active[i] = True
         gate = self._gate_mask(wx, surface.astype(np.float64), wz, salted, active)
 
+        # Mirror the scalar lateral-phase decorrelation + larger amplitude (P3
+        # §6.1 悬壁自然化) bit-for-bit so the vectorized carve stays byte-identical.
+        lat_phase = wx * 11.0 - wz * 7.0
         surf_f = surface.astype(np.float64)
-        depth_noise = fbm_3d(wx, surf_f, wz, scale=self.scale, seed=salted + 23)
+        depth_noise = fbm_3d(
+            wx, surf_f + lat_phase, wz, scale=self.scale, seed=salted + 23
+        )
         lip_drop = self.shelf_thickness + np.rint(
-            (depth_noise + 1.0) * 4.0
+            (depth_noise + 1.0) * 9.0
         ).astype(np.int64)
         shelf_floor = surface - lip_drop
         void_noise = fbm_3d(
-            wx, (surface - lip_drop).astype(np.float64), wz,
+            wx, (surface - lip_drop).astype(np.float64) + lat_phase, wz,
             scale=self.scale, seed=salted + 37,
         )
         void_h = self.void_height + np.rint(
-            (void_noise + 1.0) * 5.0
+            (void_noise + 1.0) * 11.0
         ).astype(np.int64)
         floor_ceiling = shelf_floor - void_h
         valid = (
