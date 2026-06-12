@@ -494,6 +494,28 @@ mod tests {
             );
         }
 
+        // occupied=1, limit=0 → ratio=INFINITY（off-by-one：刚好跨超载临界，仅 1 人占用名额=0）
+        {
+            let metrics = TribulationMetrics::default();
+            let tracker = QuotaFullTracker {
+                current_occupied: 1,
+                current_limit: 0,
+                full_since_tick: None,
+            };
+            let report = build_balance_report(&metrics, &tracker, &config, &[], 100);
+            assert!(
+                report.quota_fill_ratio.is_infinite(),
+                "occupied=1 limit=0（临界超载：名额归零且恰有 1 人占用）时 quota_fill_ratio 应为 INFINITY，\
+                 got {}；off-by-one：occupied==1 已是 >0 应触发 INFINITY 分支",
+                report.quota_fill_ratio
+            );
+            let text = format_balance_report(&report);
+            assert!(
+                text.contains("[OVER-FULL: 名额=0 仍有 1 占用]"),
+                "occupied=1 limit=0 时 format 应包含 [OVER-FULL: 名额=0 仍有 1 占用]，got:\n{text}"
+            );
+        }
+
         // occupied=0, limit=0 → ratio=0.0（良性空载：名额归零且无人占用，不是失衡）
         {
             let metrics = TribulationMetrics::default();
@@ -906,6 +928,92 @@ mod tests {
         assert!(
             (report.config.quota_k - DEFAULT_VOID_QUOTA_K).abs() > 1e-9,
             "live VoidQuotaConfig.quota_k 应覆盖 DEFAULT_VOID_QUOTA_K；两者相同说明覆盖未生效",
+        );
+    }
+
+    /// ⑩ MAJOR 契约测试：真实 handle() 系统使用 live VoidQuotaConfig.quota_k 覆盖 TribulationBalanceConfig
+    ///   的默认值，并将 live quota_k 输出到 emit 的 chat 消息中。
+    ///
+    ///   验证方式：insert VoidQuotaConfig { quota_k: 80.0 }（与 DEFAULT_VOID_QUOTA_K=50.0 明显不同），
+    ///   dispatch `/balance tribulation` 命令驱动真实 handle() ECS system，
+    ///   捕获 GameMessageS2c 文本，断言包含 "quota_k=80.00" 而非 "quota_k=50.00"。
+    ///   删除 handle() L220 的 `live_config.quota_k = vq.quota_k` 生产行后此测试必须变红。
+    #[test]
+    fn handle_emits_live_void_quota_k_in_chat_not_default() {
+        use valence::prelude::Position;
+        use valence::protocol::packets::play::GameMessageS2c;
+        use valence::testing::create_mock_client;
+
+        let live_quota_k = 80.0_f64; // 与 DEFAULT_VOID_QUOTA_K=50.0 明显不同
+
+        let mut app = App::new();
+        app.insert_resource(crate::combat::CombatClock { tick: 100 });
+        app.init_resource::<TribulationMetrics>();
+        app.init_resource::<QuotaFullTracker>();
+        app.init_resource::<TribulationBalanceConfig>();
+        // 注入 live VoidQuotaConfig，模拟 BONG_VOID_QUOTA_K env 覆盖
+        app.insert_resource(VoidQuotaConfig {
+            quota_k: live_quota_k,
+        });
+        app.add_event::<CommandResultEvent<BalanceCmd>>();
+        app.add_systems(Update, handle);
+
+        // 使用 create_mock_client 保留 helper，以便捕获发出的网络包
+        let (mut bundle, mut helper) = create_mock_client("QuotaTest");
+        bundle.player.position = Position::new([0.0, 0.0, 0.0]);
+        let player = app.world_mut().spawn(bundle).id();
+
+        // dispatch /balance tribulation 命令
+        app.world_mut()
+            .resource_mut::<Events<CommandResultEvent<BalanceCmd>>>()
+            .send(CommandResultEvent {
+                result: BalanceCmd::Tribulation,
+                executor: player,
+                modifiers: Default::default(),
+            });
+        app.update();
+
+        // flush 客户端 ECS 发包缓冲，使数据包进入 helper 可读取队列
+        {
+            let world = app.world_mut();
+            let mut q = world.query::<&mut valence::client::Client>();
+            for mut client in q.iter_mut(world) {
+                client
+                    .flush_packets()
+                    .expect("mock client flush should succeed");
+            }
+        }
+
+        // 收集 GameMessageS2c 文本
+        let messages: Vec<String> = helper
+            .collect_received()
+            .0
+            .into_iter()
+            .filter_map(|frame| {
+                frame
+                    .decode::<GameMessageS2c>()
+                    .ok()
+                    .map(|pkt| pkt.chat.to_legacy_lossy())
+            })
+            .collect();
+
+        assert!(
+            !messages.is_empty(),
+            "handle() 应 emit 至少一条 GameMessageS2c，但收到零条；\
+             handle system 未正确注册或资源缺失导致 continue 跳过"
+        );
+
+        let combined = messages.join("\n");
+        assert!(
+            combined.contains("quota_k=80.00"),
+            "handle() 应在 chat 中输出 live quota_k=80.00（来自 VoidQuotaConfig），\
+             got:\n{combined}\n\
+             --- 诊断：删除 handle() 中 `live_config.quota_k = vq.quota_k` 会产生此失败"
+        );
+        assert!(
+            !combined.contains("quota_k=50.00"),
+            "chat 不应输出 DEFAULT_VOID_QUOTA_K=50.00，应已被 live VoidQuotaConfig 覆盖，\
+             got:\n{combined}"
         );
     }
 }
