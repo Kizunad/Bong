@@ -403,6 +403,26 @@ def regen_zone(
     # Any rewritten tile not already in the manifest is appended (new tile).
     merged_tiles.extend(rewritten.values())
     manifest["tiles"] = merged_tiles
+
+    # Refresh the zone-list-derived manifest fields. A console regen with
+    # overrides (spirit_qi / danger_level / display_name / worldgen.*) mutates
+    # the in-memory blueprint, so these become stale if we only patch tiles[]:
+    #   - zones        drives the console param panel + zone-swatch directly,
+    #   - pois         tutorial POIs are gated on worldgen.terrain_profile,
+    #   - *fossil / corpse_mound / ascension_pit / collapsed_zones are all
+    #     profile- or zone-property-gated structure derivations.
+    # All are O(n_zones) recomputations from blueprint zones we already hold —
+    # no tile re-synthesis — so refreshing them is cheap and keeps the manifest
+    # internally consistent with the overridden blueprint.
+    pois_payload = _collect_poi_payload(plan.blueprint_zones)
+    pois_payload.extend(build_novice_poi_manifest_payload(fields))
+    manifest["zones"] = _collect_zone_params(plan.blueprint_zones)
+    manifest["pois"] = pois_payload
+    manifest["fossil_bboxes"] = _collect_fossil_bboxes(plan.blueprint_zones)
+    manifest["corpse_mounds"] = _collect_corpse_mounds(plan.blueprint_zones)
+    manifest["ascension_pits"] = _collect_ascension_pits(plan.blueprint_zones)
+    manifest["collapsed_zones"] = _collect_collapsed_zone_payload(plan)
+
     with manifest_path.open("w", encoding="utf-8") as handle:
         json.dump(manifest, handle, ensure_ascii=False, indent=2)
         handle.write("\n")
