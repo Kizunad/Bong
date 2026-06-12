@@ -102,4 +102,20 @@ mod tests {
         let outcome = foreign_qi_resistance_for_use(&template(ItemCategory::Pill), false);
         assert_eq!(outcome, ForeignQiResistanceOutcome::none());
     }
+
+    #[test]
+    fn container_filter_categories_do_not_gain_foreign_qi_resistance() {
+        for category in [
+            ItemCategory::Mineral,
+            ItemCategory::Anqi,
+            ItemCategory::Liquid,
+        ] {
+            let outcome = foreign_qi_resistance_for_use(&template(category), true);
+            assert_eq!(
+                outcome,
+                ForeignQiResistanceOutcome::none(),
+                "期望 {category:?} 走非丹药/非武器兜底，不产生外来真元抗性"
+            );
+        }
+    }
 }
