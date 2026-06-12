@@ -19,15 +19,20 @@ from __future__ import annotations
 
 import numpy as np
 
+from .. import dsl
 from ..blueprint import BlueprintZone
+from ..dsl import QiGrade
 from ..fields import SurfacePalette, TileFieldBuffer, WorldTile
-from ..noise import _tile_coords, fbm_2d, warped_fbm_2d
+from ..noise import _tile_coords
 from .base import (
     DecorationSpec,
     EcologySpec,
     ProfileContext,
     TerrainProfileGenerator,
 )
+
+# §8.1 #4 — 九霄浮岛：灵源馈赠区（celestial_isles spirit_qi≈0.85）就近归档 font 档。
+QI_GRADE = QiGrade.FONT
 
 
 # Sky isle flora variants — each gets a slot in flora_variant_id.
@@ -148,13 +153,16 @@ def fill_sky_isle_tile(
     half_d = max(zone.size_xz[1] * 0.5, 1.0)
 
     wx, wz = _tile_coords(tile.min_x, tile.min_z, tile_size)
-    dx = (wx - center_x) / half_w
-    dz = (wz - center_z) / half_d
-    radial = np.sqrt(dx * dx + dz * dz)
-    heartland = np.maximum(0.0, 1.0 - radial**1.6)
+    # 径向 heartland 隆起掩码（DSL radial_uplift，amplitude=1=裸掩码）。
+    heartland = dsl.radial_uplift(
+        wx, wz,
+        center_xz=(center_x, center_z),
+        half_w=half_w, half_d=half_d,
+        exponent=1.6, amplitude=1.0,
+    )
 
-    # --- Ground: gentle meditative plain ---
-    rolling = fbm_2d(wx, wz, scale=360.0, octaves=3, seed=700)
+    # --- Ground: gentle meditative plain（DSL fbm_height，amplitude=1=裸噪声）---
+    rolling = dsl.fbm_height(wx, wz, scale=360.0, octaves=3, seed=700)
     height = 72.0 + heartland * 2.5 + rolling * 1.2
 
     surface_id = np.full_like(height, grass_id, dtype=np.int32)
@@ -164,15 +172,15 @@ def fill_sky_isle_tile(
     # --- Sky isles: two-scale archipelago ---
     # Large-scale cluster locations (big island groups). FBM returns values
     # roughly in [-0.7, 0.7] after normalization, so thresholds sit near 0.
-    cluster_field = warped_fbm_2d(
+    cluster_field = dsl.warped_height(
         wx, wz, scale=320.0, octaves=3, warp_scale=480.0, warp_strength=100.0, seed=710
     )
     # Mid-scale individual isle cores.
-    isle_field = warped_fbm_2d(
+    isle_field = dsl.warped_height(
         wx, wz, scale=160.0, octaves=4, warp_scale=220.0, warp_strength=55.0, seed=720
     )
     # Fine detail: carves irregular isle silhouettes (not circular blobs).
-    detail = fbm_2d(wx, wz, scale=70.0, octaves=3, seed=730)
+    detail = dsl.fbm_height(wx, wz, scale=70.0, octaves=3, seed=730)
 
     # Cluster gate: sparse but present. Shift cluster_field into [0, 1] via
     # a soft threshold around -0.1, so ~40% of heartland columns qualify.
@@ -189,7 +197,7 @@ def fill_sky_isle_tile(
 
     # Altitude varies between 260 and 340 — higher isles in the cluster core
     # so archipelagos feel layered rather than a flat ceiling.
-    altitude_warp = fbm_2d(wx, wz, scale=600.0, octaves=2, seed=740)
+    altitude_warp = dsl.fbm_height(wx, wz, scale=600.0, octaves=2, seed=740)
     base_y = 270.0 + cluster_field * 40.0 + altitude_warp * 24.0
     base_y = np.clip(base_y, 240.0, 360.0)
     # Sentinel 9999 where no isle exists (so `minimum` blend leaves it alone).
