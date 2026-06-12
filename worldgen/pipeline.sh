@@ -37,12 +37,16 @@ BLUEPRINT_REL="${1:-../server/zones.worldview.example.json}"
 OUTPUT_REL="${2:-generated/terrain-gen-smoke}"
 BACKEND="${3:-raster}"
 TILE_SIZE="${4:-512}"
+ZONE_FILTER="${5:-}"
 
 echo "=== 末法残土 terrain_gen Pipeline ==="
 echo "蓝图: ${BLUEPRINT_REL}"
 echo "输出目录: ${OUTPUT_REL}"
 echo "Bake backend: ${BACKEND}"
 echo "Tile size: ${TILE_SIZE}"
+if [ -n "$ZONE_FILTER" ]; then
+  echo "Zone filter: ${ZONE_FILTER}"
+fi
 echo ""
 
 # Anvil backend: 先跑 raster（PR #78 worldgen-preview workflow 仍消费 PNG previews），
@@ -52,11 +56,17 @@ if [ "$BACKEND" = "anvil" ]; then
   TERRAIN_BACKEND="raster"
 fi
 
+ZONE_FILTER_ARGS=()
+if [ -n "$ZONE_FILTER" ]; then
+  ZONE_FILTER_ARGS=(--zone-filter "$ZONE_FILTER")
+fi
+
 python3 -m scripts.terrain_gen \
   --blueprint "$BLUEPRINT_REL" \
   --output-dir "$OUTPUT_REL" \
   --tile-size "$TILE_SIZE" \
-  --backend "$TERRAIN_BACKEND"
+  --backend "$TERRAIN_BACKEND" \
+  "${ZONE_FILTER_ARGS[@]}"
 
 if [ "$BACKEND" = "anvil" ]; then
   echo ""

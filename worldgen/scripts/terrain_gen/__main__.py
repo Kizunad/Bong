@@ -200,7 +200,23 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help="Optional TSY-dim zones_export_v1 JSON carrying persisted zone_overlays",
     )
+    parser.add_argument(
+        "--zone-filter",
+        type=str,
+        default=None,
+        help=(
+            "Comma-separated zone names to synthesize. Intended for preview/"
+            "incremental runs; omitted means full active worldgen."
+        ),
+    )
     return parser.parse_args()
+
+
+def _parse_zone_filter(raw: str | None) -> set[str] | None:
+    if raw is None:
+        return None
+    zones = {part.strip() for part in raw.split(",") if part.strip()}
+    return zones or None
 
 
 def _run_pipeline(
@@ -213,6 +229,7 @@ def _run_pipeline(
     layer_whitelist: Optional[set[str]] = None,
     label: str = "",
     zone_overlays_path: Optional[Path] = None,
+    zone_filter: Optional[set[str]] = None,
 ) -> None:
     """Single export pass; mirrors original `main()` body."""
     if label:
@@ -235,7 +252,7 @@ def _run_pipeline(
         plan.bake_plan = build_raster_bake_plan(plan, output_dir)
 
     plan_path = write_plan_json(plan, output_dir)
-    field_set = synthesize_fields(plan)
+    field_set = synthesize_fields(plan, zone_filter=zone_filter)
     field_summary_path = write_field_summary_json(field_set, output_dir)
     preview_paths = write_preview_images(plan, field_set, output_dir)
     bake_artifacts: dict[str, Path] = {}
@@ -258,6 +275,7 @@ def _run_pipeline(
 
 def main() -> None:
     args = parse_args()
+    zone_filter = _parse_zone_filter(args.zone_filter)
     overworld_whitelist = set(LAYER_REGISTRY.keys()) - TSY_ONLY_LAYERS
     _run_pipeline(
         args.blueprint,
@@ -268,6 +286,7 @@ def main() -> None:
         layer_whitelist=overworld_whitelist if args.backend == "raster" else None,
         label="overworld" if args.tsy_blueprint else "",
         zone_overlays_path=args.zone_overlays,
+        zone_filter=zone_filter,
     )
     if args.tsy_blueprint is not None:
         _run_pipeline(
@@ -279,6 +298,7 @@ def main() -> None:
             layer_whitelist=None,
             label="tsy",
             zone_overlays_path=args.tsy_zone_overlays,
+            zone_filter=zone_filter,
         )
 
 
