@@ -113,10 +113,19 @@ pub fn build_balance_report(
 }
 
 /// 将 BalanceReport 序列化为可读文本（纯函数）。
+///
+/// 当 `quota_fill_ratio > 1.0`（occupied > limit，天道衰减 quota_limit 致超载）时，
+/// 输出真实比率并附 `[OVER-FULL]` 标注，**不静默 clamp 成 100%**——看板核心职责是暴露失衡。
 pub fn format_balance_report(report: &BalanceReport) -> String {
+    let fill_pct = report.quota_fill_ratio * 100.0;
+    let over_full_marker = if report.quota_fill_ratio > 1.0 {
+        " [OVER-FULL]"
+    } else {
+        ""
+    };
     format!(
         "[渡劫平衡看板]\n\
-         quota: {current}/{max} ({fill:.1}%满载)\n\
+         quota: {current}/{max} ({fill:.1}%满载{over_full})\n\
          结算: halfstep={hs} ascended={asc} failed=n/a(无遥测)\n\
          当前半步修士: {active}人 平均滞留={stay_ticks}tick ({stay_months:.2}月)\n\
          quota满载累计: {full_ticks}tick\n\
@@ -125,7 +134,8 @@ pub fn format_balance_report(report: &BalanceReport) -> String {
          juebi_intensity_base={jib} heart_demon_qi_penalty_ratio={hdqpr:.2}",
         current = report.quota_current,
         max = report.quota_max,
-        fill = report.quota_fill_ratio * 100.0,
+        fill = fill_pct,
+        over_full = over_full_marker,
         hs = report.halfstep_count,
         asc = report.ascended_count,
         active = report.halfstep_active_count,
@@ -344,6 +354,143 @@ mod tests {
                 (report.quota_fill_ratio - 1.0).abs() < 1e-6,
                 "occupied==limit 时满载率期望=1.0，got {}",
                 report.quota_fill_ratio
+            );
+        }
+    }
+
+    /// ③-a MAJOR-1：over-full 边界——occupied > limit 时 ratio 真实反映超载（>1.0），不 clamp 成 1.0，
+    ///        format 输出包含 [OVER-FULL] 标注（天道衰减 quota_limit 致暂超 occupied 的真实场景）。
+    #[test]
+    fn build_balance_report_over_full_ratio_exceeds_one_and_format_marks_it() {
+        let config = TribulationBalanceConfig::default();
+
+        // occupied=4 limit=3 → ratio = 4/3 ≈ 1.333...（天道衰减 limit 后的超载态）
+        {
+            let metrics = TribulationMetrics::default();
+            let tracker = QuotaFullTracker {
+                current_occupied: 4,
+                current_limit: 3,
+                full_since_tick: None,
+            };
+            let report = build_balance_report(&metrics, &tracker, &config, &[], 100);
+            let expected_ratio = 4.0_f32 / 3.0_f32;
+            assert!(
+                report.quota_fill_ratio > 1.0,
+                "occupied=4 limit=3 时满载率应 >1.0（超载），got {}；不允许 clamp 成 1.0 掩盖失衡",
+                report.quota_fill_ratio
+            );
+            assert!(
+                (report.quota_fill_ratio - expected_ratio).abs() < 1e-5,
+                "occupied=4 limit=3 满载率期望={expected_ratio:.6}，got {}；计算有误",
+                report.quota_fill_ratio
+            );
+            let text = format_balance_report(&report);
+            assert!(
+                text.contains("[OVER-FULL]"),
+                "over-full 时 format 应包含 [OVER-FULL] 标注，got:\n{text}"
+            );
+            // 确保百分比真实显示（> 100%），不被截断
+            assert!(
+                text.contains("133."),
+                "over-full 时百分比应真实显示（约133.3%），got:\n{text}"
+            );
+        }
+
+        // occupied=1 limit=3 → ratio≈0.333（正常范围），format 不包含 [OVER-FULL]
+        {
+            let metrics = TribulationMetrics::default();
+            let tracker = QuotaFullTracker {
+                current_occupied: 1,
+                current_limit: 3,
+                full_since_tick: None,
+            };
+            let report = build_balance_report(&metrics, &tracker, &config, &[], 100);
+            let text = format_balance_report(&report);
+            assert!(
+                !text.contains("[OVER-FULL]"),
+                "正常范围（occupied<limit）format 不应包含 [OVER-FULL]，got:\n{text}"
+            );
+        }
+
+        // occupied==limit → ratio==1.0（正好满载），format 不包含 [OVER-FULL]
+        {
+            let metrics = TribulationMetrics::default();
+            let tracker = QuotaFullTracker {
+                current_occupied: 3,
+                current_limit: 3,
+                full_since_tick: None,
+            };
+            let report = build_balance_report(&metrics, &tracker, &config, &[], 100);
+            let text = format_balance_report(&report);
+            assert!(
+                !text.contains("[OVER-FULL]"),
+                "occupied==limit（恰好满载，ratio=1.0）format 不应含 [OVER-FULL]，got:\n{text}"
+            );
+        }
+    }
+
+    /// ③-b MAJOR-2：quota_full_duration_ticks pending 分支覆盖——tracker.full_since_tick=Some(t)
+    ///        且 current_tick>t 时，build_balance_report 报告的满载累计 = base + (current_tick - t)，
+    ///        不 panic，pending 分支不被零覆盖。
+    #[test]
+    fn build_balance_report_quota_full_duration_includes_pending_when_full_since_set() {
+        let config = TribulationBalanceConfig::default();
+
+        // base=500（已记录的历史满载），full_since_tick=Some(1000)，current_tick=1200
+        // 期望：pending = 1200-1000 = 200，total = 500+200 = 700
+        {
+            let metrics = TribulationMetrics {
+                halfstep_count: 0,
+                ascended_count: 0,
+                quota_full_duration_ticks: 500, // base：已结算的历史满载
+            };
+            let tracker = QuotaFullTracker {
+                current_occupied: 3,
+                current_limit: 3,
+                full_since_tick: Some(1000), // 正在进行中的满载，尚未结算
+            };
+            let report = build_balance_report(&metrics, &tracker, &config, &[], 1200);
+            assert_eq!(
+                report.quota_full_duration_ticks, 700,
+                "base=500 + pending(1200-1000=200) = 700；\
+                 pending 分支未命中或 current_quota_full_duration_ticks 计算错误，got {}",
+                report.quota_full_duration_ticks
+            );
+        }
+
+        // base=0，full_since_tick=Some(50)，current_tick=150 → pending=100，total=100
+        {
+            let metrics = TribulationMetrics::default(); // quota_full_duration_ticks=0
+            let tracker = QuotaFullTracker {
+                current_occupied: 2,
+                current_limit: 2,
+                full_since_tick: Some(50),
+            };
+            let report = build_balance_report(&metrics, &tracker, &config, &[], 150);
+            assert_eq!(
+                report.quota_full_duration_ticks, 100,
+                "base=0 + pending(150-50=100) = 100；got {}",
+                report.quota_full_duration_ticks
+            );
+        }
+
+        // full_since_tick=None → 仅返回 base，不加 pending（对照组，确保分支区分正确）
+        {
+            let metrics = TribulationMetrics {
+                halfstep_count: 0,
+                ascended_count: 0,
+                quota_full_duration_ticks: 300,
+            };
+            let tracker = QuotaFullTracker {
+                current_occupied: 1,
+                current_limit: 3,
+                full_since_tick: None, // 非满载，无 pending
+            };
+            let report = build_balance_report(&metrics, &tracker, &config, &[], 1000);
+            assert_eq!(
+                report.quota_full_duration_ticks, 300,
+                "full_since_tick=None 时应返回 base=300，不加 pending；got {}",
+                report.quota_full_duration_ticks
             );
         }
     }
