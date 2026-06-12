@@ -325,9 +325,9 @@ fn positions_for_anchor(anchor: &MineralAnchor, terrain: &TerrainProvider) -> Ve
         .into_iter()
         .filter_map(|(_, pos)| {
             // 把矿石压到地表或地下 —— 防止 anchor 球体上半部漂浮在 air 里。
-            // 用每列 height 作为 surface_y；矿石 y = min(原 y, surface_y)，
-            // 这样深矿脉保持地下分布，浅 anchor 自然贴地形成"露头"。
-            let surface_y = terrain.sample(pos.x, pos.z).height.round() as i32;
+            // worldgen-v4 P0 §8.1 #1: 用每列 span 顶面作为 surface_y；矿石
+            // y = min(原 y, surface_y)，深矿脉保持地下分布，浅 anchor 贴地"露头"。
+            let surface_y = terrain.sample(pos.x, pos.z).surface_y();
             let snapped_y = pos.y.min(surface_y);
             if snapped_y < MIN_WORLD_Y {
                 return None;

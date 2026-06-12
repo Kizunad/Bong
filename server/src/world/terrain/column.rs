@@ -34,6 +34,15 @@ pub(super) fn surface_y_for_sample(sample: &ColumnSample, min_y: i32, world_heig
     resolve_column(sample, min_y, world_height).top_y
 }
 
+/// Walkable surface from the sample's spans alone (no block styling). This is
+/// the authoritative §8.1 #2 surface = ceiling of the surface span, clamped to
+/// the world Y budget. `resolve_column().top_y` agrees with this; this helper
+/// is the cheap path for callers that only need the Y.
+#[allow(dead_code)]
+pub(super) fn span_surface_y(sample: &ColumnSample, min_y: i32, world_height: i32) -> i32 {
+    clamp_world_y(sample.surface_y(), min_y, world_height)
+}
+
 #[derive(Clone, Copy)]
 pub(super) struct SkyIslandSpan {
     pub bottom_y: i32,
@@ -45,16 +54,16 @@ pub(super) fn sky_island_span_for_sample(
     min_y: i32,
     world_height: i32,
 ) -> Option<SkyIslandSpan> {
-    if sample.sky_island_mask < 0.2
-        || sample.sky_island_base_y >= 9000.0
-        || sample.sky_island_thickness < 4.0
-    {
+    // worldgen-v4 P0 §8.1 #1/#12: the floating isle is now a span above the
+    // surface span (the Python shim appends it when sky_island_mask>=0.2 &&
+    // base_y<9000 && thickness>=4). The sky_island_mask gate still applies so a
+    // stray high span without mask never reads as an isle.
+    if sample.sky_island_mask < 0.2 {
         return None;
     }
-
-    let bottom_y = clamp_world_y(sample.sky_island_base_y.round() as i32, min_y, world_height);
-    let thickness = sample.sky_island_thickness.round().clamp(4.0, 40.0) as i32;
-    let top_y = clamp_world_y(bottom_y + thickness, min_y, world_height);
+    let (base_y, top_raw) = sample.sky_island_span()?;
+    let bottom_y = clamp_world_y(base_y, min_y, world_height);
+    let top_y = clamp_world_y(top_raw, min_y, world_height);
     if top_y <= bottom_y {
         return None;
     }
@@ -95,7 +104,13 @@ struct ResolvedColumn {
 
 fn resolve_column(sample: &ColumnSample, min_y: i32, world_height: i32) -> ResolvedColumn {
     let bedrock_y = min_y;
-    let mut top_y = clamp_world_y(sample.height.round() as i32, min_y, world_height);
+    // worldgen-v4 P0 §8.1 #1/#2: the walkable surface is the surface span's
+    // ceiling. The spans are now the single source of vertical truth, so the
+    // old height-mutating deformations (rift / fracture / neg_pressure / entrance
+    // sinks) no longer move the surface — those layers only restyle the surface
+    // blocks below. This is what makes query_surface() agree with the Python
+    // golden (surface == round(height)) instead of double-carving.
+    let top_y = clamp_world_y(sample.surface_y(), min_y, world_height);
     let water_top = if sample.water_level < 0.0 {
         -1
     } else {
@@ -107,8 +122,21 @@ fn resolve_column(sample: &ColumnSample, min_y: i32, world_height: i32) -> Resol
     let mut deep_block_bias = subsurface_hash(sample);
 
     let mut filler_depth = 4;
-    let mut carve_floor = None;
-    let mut carve_ceiling = None;
+    // worldgen-v4 P0 §8.1 #1: the cave void is the carved gap between the
+    // surface span and a floor remnant below it, derived straight from spans.
+    let (carve_floor, carve_ceiling) = match sample.cave_carve() {
+        Some((floor, ceiling)) => {
+            let floor = clamp_world_y(floor, min_y, world_height).max(bedrock_y + 1);
+            let ceiling = clamp_world_y(ceiling, min_y, world_height);
+            if ceiling >= floor {
+                deep_block_bias = deep_block_bias.wrapping_add(37);
+                (Some(floor), Some(ceiling))
+            } else {
+                (None, None)
+            }
+        }
+        None => (None, None),
+    };
     let sky_island = sky_island_span_for_sample(sample, min_y, world_height);
 
     if matches!(
@@ -149,10 +177,14 @@ fn resolve_column(sample: &ColumnSample, min_y: i32, world_height: i32) -> Resol
         filler_depth = 5;
     }
 
+    // worldgen-v4 P0 §8.1 #1/#2: the rift / fracture / neg_pressure semantic
+    // layers are RETAINED, but their old terrain-depth mutations (`top_y -=`)
+    // are gone — the span already encodes the final surface height (the Python
+    // `height` for these profiles already shapes the valley / scar). These
+    // blocks now only restyle the surface/filler material, never move the
+    // walkable top, so the rendered surface stays byte-equal to the span ceiling
+    // (== round(height), the frozen v3 golden).
     if sample.rift_axis_sdf < 0.9 {
-        let carve_depth =
-            ((1.0 - sample.rift_axis_sdf) * 22.0 + sample.rim_edge_mask * 4.0).round() as i32;
-        top_y -= carve_depth;
         if sample.rift_axis_sdf < 0.42 {
             surface_block = BlockState::BLACKSTONE;
         }
@@ -163,8 +195,6 @@ fn resolve_column(sample: &ColumnSample, min_y: i32, world_height: i32) -> Resol
     }
 
     if sample.fracture_mask > 0.7 {
-        let crack_depth = ((sample.fracture_mask - 0.7) * 300.0) as i32;
-        top_y = (bedrock_y + 6).max(top_y - crack_depth);
         if sample.fracture_mask > 0.88 {
             surface_block = BlockState::LAVA;
         } else if sample.surface_block != BlockState::CRIMSON_NYLIUM {
@@ -175,25 +205,10 @@ fn resolve_column(sample: &ColumnSample, min_y: i32, world_height: i32) -> Resol
     }
 
     if sample.neg_pressure > 0.18 {
-        let sink = (sample.neg_pressure * 14.0).round() as i32;
-        top_y -= sink;
         if sample.neg_pressure > 0.42 {
             filler_block = BlockState::GRAVEL;
         }
         if sample.ruin_density > 0.5 {
-            surface_block = BlockState::GRAVEL;
-        }
-    }
-
-    if sample.entrance_mask > 0.16 {
-        top_y -= (sample.entrance_mask * 10.0).round() as i32;
-    }
-
-    if sample.cave_mask > 0.58 {
-        carve_floor = Some((top_y - sample.ceiling_height.round() as i32).max(bedrock_y + 8));
-        carve_ceiling = Some((top_y - 2).max(carve_floor.unwrap_or(bedrock_y + 12) + 4));
-        deep_block_bias = deep_block_bias.wrapping_add(37);
-        if sample.entrance_mask > 0.4 {
             surface_block = BlockState::GRAVEL;
         }
     }
@@ -209,7 +224,7 @@ fn resolve_column(sample: &ColumnSample, min_y: i32, world_height: i32) -> Resol
         filler_depth = min_depth + ((max_depth - min_depth) as f32 * transition).round() as i32;
     }
 
-    top_y = top_y.clamp(bedrock_y + 2, min_y + world_height - 2);
+    let top_y = top_y.clamp(bedrock_y + 2, min_y + world_height - 2);
 
     ResolvedColumn {
         bedrock_y,
@@ -304,12 +319,15 @@ fn deep_block_at(world_y: i32, bedrock_y: i32, deep_block_bias: u32) -> BlockSta
 }
 
 fn subsurface_hash(sample: &ColumnSample) -> u32 {
-    let mut bits = sample.height.to_bits();
+    // worldgen-v4 P0 §8.1 #1: height / cave_mask are gone; derive the deep-block
+    // bias from the span surface Y and the carved-cave flag instead so the deep
+    // stone/deepslate mix stays deterministic per column.
+    let mut bits = (sample.surface_y() as f32).to_bits();
     bits ^= sample.water_level.to_bits().rotate_left(7);
     bits ^= sample.feature_mask.to_bits().rotate_left(13);
     bits ^= sample.boundary_weight.to_bits().rotate_left(19);
     bits ^= sample.rift_axis_sdf.to_bits().rotate_left(3);
-    bits ^= sample.cave_mask.to_bits().rotate_left(11);
+    bits ^= u32::from(sample.has_carved_cave()).rotate_left(11);
     bits ^= sample.neg_pressure.to_bits().rotate_left(23);
     bits ^= u32::from(sample.biome_id).wrapping_mul(0x9E37_79B9);
     bits ^= bits >> 16;
@@ -353,7 +371,8 @@ mod tests {
 
     fn sample() -> ColumnSample {
         ColumnSample {
-            height: 72.0,
+            // Single solid span: bedrock (-64) → surface 72 (replaces height=72).
+            spans: smallvec::smallvec![(-64, 72)],
             surface_block: BlockState::GRASS_BLOCK,
             subsurface_block: BlockState::DIRT,
             biome_id: 0,
@@ -364,9 +383,6 @@ mod tests {
             rift_axis_sdf: 99.0,
             portal_anchor_sdf: 999.0,
             rim_edge_mask: 0.0,
-            cave_mask: 0.0,
-            ceiling_height: 0.0,
-            entrance_mask: 0.0,
             fracture_mask: 0.0,
             neg_pressure: 0.0,
             ruin_density: 0.0,
@@ -376,10 +392,7 @@ mod tests {
             spirit_eye_candidates: 0,
             realm_collapse_mask: 0,
             sky_island_mask: 0.0,
-            sky_island_base_y: 9999.0,
-            sky_island_thickness: 0.0,
             underground_tier: 0,
-            cavern_floor_y: 9999.0,
             flora_density: 0.0,
             flora_variant_id: 0,
             ground_cover_density: 0.0,
@@ -420,13 +433,45 @@ mod tests {
 
     #[test]
     fn sky_island_span_uses_manifest_vertical_layers() {
+        // worldgen-v4 P0: the isle is a span above the surface span (base 260,
+        // top 272) gated by sky_island_mask. surface span (-64..72) stays span[0].
         let mut sample = sample();
         sample.sky_island_mask = 0.5;
-        sample.sky_island_base_y = 260.0;
-        sample.sky_island_thickness = 12.0;
+        sample.spans = smallvec::smallvec![(-64, 72), (260, 272)];
 
         let span = sky_island_span_for_sample(&sample, -64, 512).unwrap();
-        assert_eq!(span.bottom_y, 260);
-        assert_eq!(span.top_y, 272);
+        assert_eq!(
+            span.bottom_y, 260,
+            "isle bottom should be the high span floor"
+        );
+        assert_eq!(span.top_y, 272, "isle top should be the high span ceiling");
+    }
+
+    #[test]
+    fn sky_island_span_requires_mask_gate() {
+        // A high span with no sky_island_mask must NOT read as an isle (the mask
+        // is the §8.1 #12 semantic gate retained alongside spans).
+        let mut sample = sample();
+        sample.sky_island_mask = 0.0;
+        sample.spans = smallvec::smallvec![(-64, 72), (260, 272)];
+        assert!(
+            sky_island_span_for_sample(&sample, -64, 512).is_none(),
+            "no mask → no isle even with a high span present"
+        );
+    }
+
+    #[test]
+    fn cave_carve_recovered_from_span_gap() {
+        // surface cap (70..74) over a floor remnant (-64..40): the void between
+        // them is the carve (41..69). Mirrors the Python shim's cave folding.
+        let mut sample = sample();
+        sample.spans = smallvec::smallvec![(70, 74), (-64, 40)];
+        let cave = super::cave_span_for_sample(&sample, -64, 512).expect("carved cave span");
+        assert_eq!(
+            (cave.carve_floor, cave.carve_ceiling),
+            (41, 69),
+            "carve void = (remnant_ceiling+1, surface_floor-1); expected (41,69) \
+             from remnant ceiling 40 and surface floor 70"
+        );
     }
 }

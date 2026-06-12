@@ -1,6 +1,8 @@
 use valence::prelude::{BiomeId, BlockState};
+use smallvec::smallvec;
 
 use super::raster::ColumnSample;
+use super::MIN_Y;
 
 pub fn sample(
     world_x: i32,
@@ -57,8 +59,11 @@ pub fn sample(
         BlockState::STONE
     };
 
+    // worldgen-v4 P0 §8.1 #1: wilderness columns are a single solid span from
+    // bedrock up to the rounded surface height (no caves / isles out here).
+    let surface_y = (height.round() as i32).clamp(MIN_Y, super::WORLD_HEIGHT as i32 + MIN_Y - 1);
     ColumnSample {
-        height: height as f32,
+        spans: smallvec![(MIN_Y as i16, surface_y as i16)],
         surface_block,
         subsurface_block: BlockState::STONE,
         biome_id,
@@ -69,9 +74,6 @@ pub fn sample(
         rift_axis_sdf: 99.0,
         portal_anchor_sdf: 999.0,
         rim_edge_mask: 0.0,
-        cave_mask: 0.0,
-        ceiling_height: 0.0,
-        entrance_mask: 0.0,
         fracture_mask: 0.0,
         neg_pressure: 0.0,
         ruin_density: 0.0,
@@ -84,10 +86,7 @@ pub fn sample(
         spirit_eye_candidates: 0,
         realm_collapse_mask: 0,
         sky_island_mask: 0.0,
-        sky_island_base_y: 9999.0,
-        sky_island_thickness: 0.0,
         underground_tier: 0,
-        cavern_floor_y: 9999.0,
         flora_density: 0.0,
         flora_variant_id: 0,
         // Wilderness fallback path (no raster loaded) — flora 系统不会撒任何

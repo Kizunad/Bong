@@ -78,7 +78,8 @@ pub fn target_y_for_tree(
 ) -> f64 {
     if let Some(terrain) = terrain {
         let sample = terrain.sample(center.x.floor() as i32, center.z.floor() as i32);
-        sample.height.round() as f64 + 40.0
+        // worldgen-v4 P0 §8.1 #1: surface comes from the span ceiling now.
+        sample.surface_y() as f64 + 40.0
     } else {
         center.y + 60.0
     }
