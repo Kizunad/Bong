@@ -13,6 +13,7 @@ import {
   runTick,
   runRuntime,
   processLocustSwarmEvents,
+  processTsyZoneActivatedForUi,
   type RuntimeModelOverrides,
   type CommandPublishRequest,
   type NarrationPublishRequest,
@@ -22,7 +23,7 @@ import { LlmBackoffError, LlmTimeoutError, type LlmClient } from "../src/llm.js"
 import type { TelemetrySink } from "../src/telemetry.js";
 import { WorldModel, type WorldModelSnapshot } from "../src/world-model.js";
 import { FakeAgent, createTestWorldState } from "./support/fakes.js";
-import type { AgentWorldModelEnvelopeV1, ChatMessageV1, Command, Narration, NpcDeathV1, RatPhaseChangeEventV1 } from "@bong/schema";
+import type { AgentUiResponsePayloadV1, AgentWorldModelEnvelopeV1, ChatMessageV1, Command, Narration, NpcDeathV1, RatPhaseChangeEventV1, TsyZoneActivatedV1 } from "@bong/schema";
 
 function createStructuredChatResult(content: string, model: string) {
   return {
@@ -2235,5 +2236,269 @@ describe("runRuntime", () => {
       process.chdir(previousCwd);
       await rm(tempDir, { recursive: true, force: true });
     }
+  });
+});
+
+// ─── plan-agent-ui-data-v1 P2 Fix①: triggerUi 在 TSY 秘境信号下被调 → emit AGENT_UI_CMD ─────
+
+describe("processTsyZoneActivatedForUi (Fix①: triggerUi production path)", () => {
+  /** 构造一个最小 mock AgentUiRuntime，只暴露 triggerUi */
+  function makeMockUiRuntime() {
+    return {
+      triggerUi: vi.fn(async (_opts: unknown) => ({
+        requestId: "mock-request-id-001",
+        sentBlurVersion: false,
+      })),
+      drainPendingButtonClicks: vi.fn(() => [] as AgentUiResponsePayloadV1[]),
+      drainPendingSessionEnds: vi.fn(() => [] as AgentUiResponsePayloadV1[]),
+    };
+  }
+
+  function makeTsyZoneActivatedV1(overrides: Partial<TsyZoneActivatedV1> = {}): TsyZoneActivatedV1 {
+    return {
+      v: 1,
+      kind: "tsy_zone_activated",
+      tick: 1000,
+      family_id: "tsy_lingxu_01",
+      source_class: "dao_lord",
+      ...overrides,
+    };
+  }
+
+  it("calls triggerUi with tsy_discovery scenario when a TSY zone activates with a player online", async () => {
+    const uiRuntime = makeMockUiRuntime();
+    const state = createTestWorldState(); // has player in "starter_zone"
+    const event = makeTsyZoneActivatedV1({ family_id: "starter_zone" }); // player is in this zone
+
+    await processTsyZoneActivatedForUi({
+      state,
+      events: [event],
+      agentUiRuntime: uiRuntime as never,
+      logger: { log: vi.fn(), warn: vi.fn() },
+    });
+
+    expect(uiRuntime.triggerUi, "triggerUi must be called once for a TSY activation event").toHaveBeenCalledOnce();
+    const opts = uiRuntime.triggerUi.mock.calls[0][0] as Record<string, unknown>;
+    expect(opts["scenario"], "scenario must be tsy_discovery").toBe("tsy_discovery");
+    expect(opts["targetPlayer"], "targetPlayer must be set to the online player").toBeTruthy();
+    const params = opts["params"] as Record<string, string>;
+    expect(params["zone_name"], "zone_name must match family_id").toBe("starter_zone");
+    expect(params["danger_tier"], "danger_tier must be resolved from zone snapshot").toBeTruthy();
+    expect(params["agent_narrative"], "agent_narrative must contain family_id").toContain("starter_zone");
+  });
+
+  it("picks any online player when no player is in the exact TSY zone", async () => {
+    const uiRuntime = makeMockUiRuntime();
+    const state = createTestWorldState(); // player in "starter_zone"
+    const event = makeTsyZoneActivatedV1({ family_id: "tsy_lingxu_99" }); // different zone, no player
+
+    await processTsyZoneActivatedForUi({
+      state,
+      events: [event],
+      agentUiRuntime: uiRuntime as never,
+      logger: { log: vi.fn(), warn: vi.fn() },
+    });
+
+    // Falls back to first online player
+    expect(uiRuntime.triggerUi, "should fallback to first online player").toHaveBeenCalledOnce();
+    const opts = uiRuntime.triggerUi.mock.calls[0][0] as Record<string, unknown>;
+    const target = opts["targetPlayer"] as { uuid: string };
+    expect(target.uuid, "target player uuid is the first online player").toBe("offline:test-player");
+  });
+
+  it("skips triggerUi and logs when there are no online players", async () => {
+    const uiRuntime = makeMockUiRuntime();
+    const state = { ...createTestWorldState(), players: [] };
+    const event = makeTsyZoneActivatedV1();
+    const logSpy = vi.fn();
+
+    await processTsyZoneActivatedForUi({
+      state,
+      events: [event],
+      agentUiRuntime: uiRuntime as never,
+      logger: { log: logSpy, warn: vi.fn() },
+    });
+
+    expect(uiRuntime.triggerUi, "no players → triggerUi must NOT be called").not.toHaveBeenCalled();
+    expect(logSpy, "should log skip message").toHaveBeenCalledWith(
+      expect.stringContaining("no online players"),
+    );
+  });
+
+  it("processes multiple TSY activation events in one batch", async () => {
+    const uiRuntime = makeMockUiRuntime();
+    const state = createTestWorldState();
+    const events = [
+      makeTsyZoneActivatedV1({ family_id: "tsy_a", tick: 100 }),
+      makeTsyZoneActivatedV1({ family_id: "tsy_b", tick: 101 }),
+      makeTsyZoneActivatedV1({ family_id: "tsy_c", tick: 102 }),
+    ];
+
+    await processTsyZoneActivatedForUi({
+      state,
+      events,
+      agentUiRuntime: uiRuntime as never,
+      logger: { log: vi.fn(), warn: vi.fn() },
+    });
+
+    expect(uiRuntime.triggerUi.mock.calls).toHaveLength(3);
+  });
+
+  it("warns and continues when triggerUi throws for one event", async () => {
+    const uiRuntime = makeMockUiRuntime();
+    uiRuntime.triggerUi
+      .mockRejectedValueOnce(new Error("redis down"))
+      .mockResolvedValueOnce({ requestId: "req-002", sentBlurVersion: false });
+
+    const state = createTestWorldState();
+    const events = [
+      makeTsyZoneActivatedV1({ family_id: "tsy_fail", tick: 200 }),
+      makeTsyZoneActivatedV1({ family_id: "tsy_ok", tick: 201 }),
+    ];
+    const warnSpy = vi.fn();
+
+    await processTsyZoneActivatedForUi({
+      state,
+      events,
+      agentUiRuntime: uiRuntime as never,
+      logger: { log: vi.fn(), warn: warnSpy },
+    });
+
+    // Both events attempted
+    expect(uiRuntime.triggerUi.mock.calls).toHaveLength(2);
+    expect(warnSpy, "should warn on triggerUi failure").toHaveBeenCalledOnce();
+    expect(warnSpy.mock.calls[0][0]).toContain("triggerUi failed");
+  });
+
+  it("emits AGENT_UI_CMD via agentUiRuntime.triggerUi for dao_lord source class", async () => {
+    const uiRuntime = makeMockUiRuntime();
+    const state = createTestWorldState();
+    const event = makeTsyZoneActivatedV1({ source_class: "dao_lord" });
+
+    await processTsyZoneActivatedForUi({
+      state, events: [event], agentUiRuntime: uiRuntime as never, logger: { log: vi.fn(), warn: vi.fn() },
+    });
+
+    const params = (uiRuntime.triggerUi.mock.calls[0][0] as Record<string, unknown>)["params"] as Record<string, string>;
+    expect(params["agent_narrative"], "narrative references source class").toContain("dao_lord");
+  });
+});
+
+// ─── plan-agent-ui-data-v1 P2 Fix②: Arbiter loop drain → button_click 进推演输入 ─────────────
+
+describe("runRuntime Fix②: drainPendingButtonClicks injected into tick before each Arbiter run", () => {
+  /** 扩展 SequenceRuntimeRedis 支持 drainTsyZoneActivatedEvents（返回空） */
+  class AgentUiAwareRuntimeRedis implements RuntimeRedis {
+    public readonly connect = vi.fn(async () => {});
+    public readonly disconnect = vi.fn(async () => {});
+    public readonly drainPlayerChat = vi.fn(async (): Promise<ChatMessageV1[]> => []);
+    public readonly publishCommands = vi.fn(async (_r: CommandPublishRequest) => {});
+    public readonly publishNarrations = vi.fn(async (_r: NarrationPublishRequest) => {});
+    public readonly drainTsyZoneActivatedEvents = vi.fn(() => [] as TsyZoneActivatedV1[]);
+    private index = 0;
+    constructor(private readonly states: Array<ReturnType<typeof createTestWorldState> | null>) {}
+    getLatestState() {
+      const s = this.states[Math.min(this.index, this.states.length - 1)] ?? null;
+      this.index += 1;
+      return s;
+    }
+  }
+
+  it("drain is called exactly once per fresh-state tick and button_clicks logged as injected (Fix②)", async () => {
+    const clickEvent: AgentUiResponsePayloadV1 = {
+      request_id: "req-fix2-001",
+      action: "button_click",
+      params: { button_id: "enter_realm" },
+    };
+    const mockUiRuntime = {
+      triggerUi: vi.fn(async () => ({ requestId: "r", sentBlurVersion: false })),
+      drainPendingButtonClicks: vi.fn()
+        .mockReturnValueOnce([clickEvent]) // first tick: one click
+        .mockReturnValue([]),              // subsequent ticks: empty
+      drainPendingSessionEnds: vi.fn(() => []),
+    };
+
+    const state1 = createTestWorldState();
+    const state2 = { ...createTestWorldState(), tick: 124, ts: state1.ts + 5 };
+    const redis = new AgentUiAwareRuntimeRedis([state1, state2, null]);
+    const logger = { log: vi.fn(), error: vi.fn(), warn: vi.fn() };
+
+    const tempDir = await mkdtemp(join(tmpdir(), "tiandao-fix2-"));
+    const prevCwd = process.cwd();
+    try {
+      process.chdir(tempDir);
+      await mkdir(join(tempDir, "data"), { recursive: true });
+
+      await runRuntime(
+        {
+          mockMode: false,
+          model: DEFAULT_MODEL,
+          redisUrl: DEFAULT_REDIS_URL,
+          baseUrl: "https://llm.example.test/v1",
+          apiKey: "k_test",
+        },
+        {
+          createRedis: () => redis,
+          createClient: () => ({ chat: vi.fn(async (m: string) => ({ content: "[]", durationMs: 0, requestId: "r", model: m })) }),
+          agents: [new FakeAgent("calamity", { commands: [], narrations: [], reasoning: "ok" })],
+          sleep: vi.fn(async () => {}),
+          logger,
+          maxLoopIterations: 3,
+          agentUiRuntime: mockUiRuntime as never,
+        },
+      );
+    } finally {
+      process.chdir(prevCwd);
+      await rm(tempDir, { recursive: true, force: true });
+    }
+
+    // Fix②: drainPendingButtonClicks 必须在每轮 fresh-state tick 时被调
+    expect(
+      mockUiRuntime.drainPendingButtonClicks.mock.calls.length,
+      "drainPendingButtonClicks should be called for each fresh-state tick",
+    ).toBeGreaterThanOrEqual(1);
+
+    // Fix②: button_click 注入时应有 log 记录
+    const logLines = logger.log.mock.calls.flatMap((c) => c.map(String));
+    const injectLog = logLines.find((l) => l.includes("button_click inject") && l.includes("enter_realm"));
+    expect(injectLog, "should log button_click inject with button_id=enter_realm").toBeTruthy();
+  });
+
+  it("runRuntime with no agentUiRuntime proceeds without error (drain skipped gracefully)", async () => {
+    const redis = new AgentUiAwareRuntimeRedis([createTestWorldState(), null]);
+    const logger = { log: vi.fn(), error: vi.fn(), warn: vi.fn() };
+
+    const tempDir = await mkdtemp(join(tmpdir(), "tiandao-fix2-noop-"));
+    const prevCwd = process.cwd();
+    try {
+      process.chdir(tempDir);
+      await mkdir(join(tempDir, "data"), { recursive: true });
+
+      await expect(
+        runRuntime(
+          {
+            mockMode: false,
+            model: DEFAULT_MODEL,
+            redisUrl: DEFAULT_REDIS_URL,
+            baseUrl: "https://llm.example.test/v1",
+            apiKey: "k_test",
+          },
+          {
+            createRedis: () => redis,
+            createClient: () => ({ chat: vi.fn(async (m: string) => ({ content: "[]", durationMs: 0, requestId: "r", model: m })) }),
+            agents: [new FakeAgent("calamity", { commands: [], narrations: [], reasoning: "ok" })],
+            sleep: vi.fn(async () => {}),
+            logger,
+            maxLoopIterations: 2,
+            // agentUiRuntime intentionally omitted
+          },
+        ),
+      ).resolves.toBeUndefined();
+    } finally {
+      process.chdir(prevCwd);
+      await rm(tempDir, { recursive: true, force: true });
+    }
+
+    expect(logger.error, "no errors when agentUiRuntime is absent").not.toHaveBeenCalled();
   });
 });

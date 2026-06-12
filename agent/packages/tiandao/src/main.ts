@@ -65,7 +65,12 @@ export interface MainOptions {
 }
 
 export type RuntimeCleanup = () => Promise<void>;
-export type AuxiliaryRuntimeStarter = (config: RuntimeConfig) => Promise<RuntimeCleanup[]>;
+/** plan-agent-ui-data-v1 P2: AuxiliaryRuntimeStarter 可附带返回 agentUiRuntime 供 runRuntime 接线 */
+export interface AuxiliaryRuntimeResult {
+  cleanupFns: RuntimeCleanup[];
+  agentUiRuntime?: AgentUiRuntime;
+}
+export type AuxiliaryRuntimeStarter = (config: RuntimeConfig) => Promise<AuxiliaryRuntimeResult>;
 
 export interface MockTickOptions {
   llmClient: LlmClient;
@@ -138,10 +143,12 @@ export async function main(options: MainOptions): Promise<void> {
     apiKey: options.apiKey ?? null,
   };
 
-  const cleanupFns = await (options.auxiliaryRuntimeStarter ?? startAuxiliaryRuntimes)(config);
+  const { cleanupFns, agentUiRuntime } = await (
+    options.auxiliaryRuntimeStarter ?? startAuxiliaryRuntimes
+  )(config);
 
   try {
-    await runRuntime(config);
+    await runRuntime(config, { agentUiRuntime });
   } finally {
     for (const cleanup of cleanupFns) {
       await cleanup();
@@ -149,7 +156,7 @@ export async function main(options: MainOptions): Promise<void> {
   }
 }
 
-async function startAuxiliaryRuntimes(config: RuntimeConfig): Promise<RuntimeCleanup[]> {
+async function startAuxiliaryRuntimes(config: RuntimeConfig): Promise<AuxiliaryRuntimeResult> {
   const runtimeOpts = {
     redisUrl: config.redisUrl,
     baseUrl: config.baseUrl ?? undefined,
@@ -266,45 +273,48 @@ async function startAuxiliaryRuntimes(config: RuntimeConfig): Promise<RuntimeCle
     ...runtimeOpts,
   });
   // plan-agent-ui-data-v1 P2：天道 UI 响应消费 runtime（订阅 bong:agent_ui_response）。
-  const agentUiResponseCleanup = await startAgentUiResponseRuntime({
-    redisUrl: config.redisUrl,
-  });
+  // Fix①②：agentUiRuntime 实例传给 runRuntime，接通 triggerUi + drainPendingButtonClicks。
+  const { cleanup: agentUiResponseCleanup, runtime: agentUiRuntime } =
+    await startAgentUiResponseRuntime({ redisUrl: config.redisUrl });
 
-  return [
-    agentUiResponseCleanup,
-    tiandaoHuntCleanup,
-    politicalCleanup,
-    spiritTreasureCleanup,
-    heartDemonCleanup,
-    craftCleanup,
-    anqiCleanup,
-    mutationNarrationCleanup,
-    meridianSeveredCleanup,
-    voidErosionCleanup,
-    baomaiV4Cleanup,
-    baomaiV3Cleanup,
-    yidaoCleanup,
-    zhenmaiCleanup,
-    zhenfaV2Cleanup,
-    tuikeV2Cleanup,
-    tuikeAshCleanup,
-    tuikeCleanup,
-    duguV2Cleanup,
-    duguCleanup,
-    poisonTraitCleanup,
-    elderEncounterCleanup,
-    scatteredCultivatorCleanup,
-    offscreenWarCleanup,
-    warOutcomeCleanup,
-    woliuV2Cleanup,
-    woliuCleanup,
-    voidActionCleanup,
-    tribulationCleanup,
-    breakthroughCinematicCleanup,
-    skillLvUpCleanup,
-    deathInsightCleanup,
-    insightCleanup,
-  ];
+  return {
+    agentUiRuntime,
+    cleanupFns: [
+      agentUiResponseCleanup,
+      tiandaoHuntCleanup,
+      politicalCleanup,
+      spiritTreasureCleanup,
+      heartDemonCleanup,
+      craftCleanup,
+      anqiCleanup,
+      mutationNarrationCleanup,
+      meridianSeveredCleanup,
+      voidErosionCleanup,
+      baomaiV4Cleanup,
+      baomaiV3Cleanup,
+      yidaoCleanup,
+      zhenmaiCleanup,
+      zhenfaV2Cleanup,
+      tuikeV2Cleanup,
+      tuikeAshCleanup,
+      tuikeCleanup,
+      duguV2Cleanup,
+      duguCleanup,
+      poisonTraitCleanup,
+      elderEncounterCleanup,
+      scatteredCultivatorCleanup,
+      offscreenWarCleanup,
+      warOutcomeCleanup,
+      woliuV2Cleanup,
+      woliuCleanup,
+      voidActionCleanup,
+      tribulationCleanup,
+      breakthroughCinematicCleanup,
+      skillLvUpCleanup,
+      deathInsightCleanup,
+      insightCleanup,
+    ],
+  };
 }
 
 async function startTiandaoHuntNarrationRuntime(opts: {
@@ -1402,12 +1412,17 @@ async function startWarOutcomeNarrationRuntime(opts: {
 
 // Auto-run only when executed directly as CLI entry point
 const __filename = fileURLToPath(import.meta.url);
-// plan-agent-ui-data-v1 P2：启动天道 UI runtime（UiRenderer + UiResponseConsumer 接线）。
-// onButtonClick 回调把 button_click 追加到 pendingButtonClicks 队列供下一轮推演 drain。
-// onSessionEnd 回调记录 session 结束事件（dismissed / timeout）。
+/**
+ * plan-agent-ui-data-v1 P2：启动天道 UI runtime（UiRenderer + UiResponseConsumer 接线）。
+ * 返回 runtime 实例供 runRuntime 接线（Fix① triggerUi + Fix② drainPendingButtonClicks）。
+ *
+ * - onButtonClick 把 button_click 追加到 pendingButtonClicks 队列，
+ *   runRuntime 每轮 tick 前 drain 并注入推演输入。
+ * - onSessionEnd 记录 session 结束事件（dismissed / timeout）。
+ */
 async function startAgentUiResponseRuntime(opts: {
   redisUrl: string;
-}): Promise<() => Promise<void>> {
+}): Promise<{ cleanup: () => Promise<void>; runtime: AgentUiRuntime }> {
   const IORedisCtor = ((Redis as unknown as { default?: unknown }).default ??
     Redis) as new (url: string) => unknown;
   const pub = new IORedisCtor(opts.redisUrl) as ConstructorParameters<
@@ -1424,7 +1439,7 @@ async function startAgentUiResponseRuntime(opts: {
     .catch((error) =>
       console.warn("[tiandao] agent ui runtime failed to start:", error),
     );
-  return async () => {
+  const cleanup = async () => {
     const timeout = new Promise<void>((resolve) => setTimeout(resolve, 500));
     try {
       await Promise.race([runtime.disconnect(), timeout]);
@@ -1432,6 +1447,7 @@ async function startAgentUiResponseRuntime(opts: {
       console.warn("[tiandao] agent ui runtime disconnect error:", error);
     }
   };
+  return { cleanup, runtime };
 }
 
 if (process.argv[1] === __filename) {

@@ -1,4 +1,5 @@
 import type {
+  AgentUiResponsePayloadV1,
   AgentWorldModelEnvelopeV1,
   BotanyEcologySnapshotV1,
   ChatMessageV1,
@@ -8,10 +9,12 @@ import type {
   NpcDeathV1,
   PriceIndexV1,
   RatPhaseChangeEventV1,
+  TsyZoneActivatedV1,
   WeatherEventUpdateV1,
   WorldStateV1,
   ZonePressureCrossedV1,
 } from "@bong/schema";
+import type { AgentUiRuntime } from "./ui/agentUiRuntime.js";
 import dotenv from "dotenv";
 import { mkdir, readdir, unlink, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
@@ -139,6 +142,8 @@ export interface RuntimeRedis {
   drainRatPhaseEvents?(): RatPhaseChangeEventV1[];
   /** plan-offscreen-war-v1 P4：drain 本窗口 bong:npc/death 事件喂 offscreenWarBlock（context）。 */
   drainNpcDeathEvents?(): NpcDeathV1[];
+  /** plan-agent-ui-data-v1 P2：drain tsy_zone_activated 事件供 triggerUi 生产路径消费。 */
+  drainTsyZoneActivatedEvents?(): TsyZoneActivatedV1[];
   drainPriceIndexEvents?(): PriceIndexV1[];
   drainWeatherEventUpdates?(): WeatherEventUpdateV1[];
   drainBotanyEcologyEvents?(): BotanyEcologySnapshotV1[];
@@ -166,6 +171,12 @@ export interface RuntimeDeps {
   maxLoopIterations?: number;
   telemetrySink?: TelemetrySink;
   deterministicNpcProducer?: DeterministicNpcProducer;
+  /**
+   * plan-agent-ui-data-v1 P2 — 天道 UI runtime；若提供则：
+   *   - 每轮 tick 前 drain pendingButtonClicks → 注入该轮推演输入
+   *   - fresh state 后 drain tsy_zone_activated → 触发 triggerUi TSY 秘境面板
+   */
+  agentUiRuntime?: AgentUiRuntime;
 }
 
 interface WorldStateCursor {
@@ -182,6 +193,11 @@ export interface TickDeps {
   chatSignals?: ChatSignal[];
   /** plan-offscreen-war-v1 P4：本窗口离屏 death 事件，喂 offscreenWarBlock（变化/演绎时代）。 */
   npcDeathEvents?: NpcDeathV1[];
+  /**
+   * plan-agent-ui-data-v1 P2 — 上轮 AgentUiRuntime.drainPendingButtonClicks() 的结果，
+   * 注入本轮推演作为玩家 UI 交互上下文（Arbiter 合并前由 context/agent 消费）。
+   */
+  buttonClickEvents?: AgentUiResponsePayloadV1[];
   worldModel?: WorldModel;
   publishCommands: (request: CommandPublishRequest) => Promise<void>;
   publishNarrations: (request: NarrationPublishRequest) => Promise<void>;
@@ -418,6 +434,7 @@ export async function runTick(state: WorldStateV1, deps: TickDeps): Promise<Tick
     modelOverrides,
     chatSignals,
     npcDeathEvents,
+    buttonClickEvents,
     worldModel,
     publishCommands,
     publishNarrations,
@@ -431,6 +448,16 @@ export async function runTick(state: WorldStateV1, deps: TickDeps): Promise<Tick
     telemetryWarnLogger,
     deterministicNpcProducer,
   } = deps;
+
+  // plan-agent-ui-data-v1 P2 — 把上轮 drainPendingButtonClicks 结果注入推演日志，
+  // 让 agent context 感知玩家 UI 交互（button_click 事件作为玩家意图信号）。
+  if (buttonClickEvents && buttonClickEvents.length > 0) {
+    logger.log(
+      `[tiandao] button_click inject: count=${buttonClickEvents.length} ` +
+      `ids=${buttonClickEvents.map((e) => e.params["button_id"] ?? "(none)").join(",")} ` +
+      `(player ui interaction context for this tick)`,
+    );
+  }
   const measuredTickStartMs = tickStartedAtMs ?? Date.now();
   const effectiveModelOverrides = modelOverrides ?? {
     default: model,
@@ -974,11 +1001,87 @@ function isLocustSwarmSpawnCommand(command: Command): boolean {
     && command.params.tide_kind === "locust_swarm";
 }
 
+/**
+ * plan-agent-ui-data-v1 P2 Fix① — TSY 秘境激活 → triggerUi 参考生产路径。
+ *
+ * 当 tsy_zone_activated 事件到达时，从 world state 找出秘境内（zone 名匹配 family_id）
+ * 或全体在线玩家（若秘境内无人），选第一个玩家触发 tsy_discovery UI 面板。
+ *
+ * 设计决议（plan §P2 验收 line 167-170）：
+ *   - 仅作为"参考生产路径"：垂死传承/天道启示触发源属下游 skeleton plan，不在本 plan 范围
+ *   - dangerTier 从 zone snapshot 的 danger_level 推算（0-7 → 低危/中危/高危/极危）
+ *   - 若无在线玩家则静默跳过（不 emit）
+ */
+export async function processTsyZoneActivatedForUi(args: {
+  state: WorldStateV1;
+  events: TsyZoneActivatedV1[];
+  agentUiRuntime: AgentUiRuntime;
+  logger: Pick<typeof console, "log" | "warn">;
+}): Promise<void> {
+  const { state, events, agentUiRuntime, logger } = args;
+  for (const event of events) {
+    // 找秘境内玩家（zone 字段匹配 family_id）；若无则取全部在线玩家的第一个
+    const playersInZone = state.players.filter((p) => p.zone === event.family_id);
+    const targetPlayer = playersInZone[0] ?? state.players[0];
+    if (!targetPlayer) {
+      logger.log(
+        `[tiandao] tsy_zone_activated family=${event.family_id} tick=${event.tick}: ` +
+        `no online players, skipping triggerUi`,
+      );
+      continue;
+    }
+
+    // 从 zone snapshot 推算展示信息
+    const zoneSnap = state.zones.find((z) => z.name === event.family_id);
+    const spiritQiDisplay = zoneSnap
+      ? zoneSnap.spirit_qi.toFixed(2)
+      : "0.50";
+    const dangerTier = resolveTsyDangerTier(zoneSnap?.danger_level ?? 3);
+    const agentNarrative =
+      `天道感知到${event.family_id}（${event.source_class}遗址）出现活坍缩渊，` +
+      `灵气浓度异常，宜速做决断。`;
+
+    try {
+      const result = await agentUiRuntime.triggerUi({
+        scenario: "tsy_discovery",
+        targetPlayer,
+        params: {
+          zone_name: event.family_id,
+          spirit_qi_display: spiritQiDisplay,
+          danger_tier: dangerTier,
+          agent_narrative: agentNarrative,
+        },
+      });
+      logger.log(
+        `[tiandao] triggerUi tsy_discovery: family=${event.family_id} ` +
+        `player=${targetPlayer.uuid} request_id=${result.requestId} ` +
+        `blur=${result.sentBlurVersion}`,
+      );
+    } catch (error) {
+      logger.warn(
+        `[tiandao] triggerUi failed for family=${event.family_id}:`,
+        error,
+      );
+    }
+  }
+}
+
+/**
+ * danger_level (0-7) → 中文危险等级字符串（TSY 面板展示用）
+ */
+function resolveTsyDangerTier(dangerLevel: number): string {
+  if (dangerLevel <= 1) return "低危";
+  if (dangerLevel <= 3) return "中危";
+  if (dangerLevel <= 5) return "高危";
+  return "极危";
+}
+
 export async function runRuntime(
   config: RuntimeConfig,
   deps: RuntimeDeps = {},
 ): Promise<void> {
   const logger = deps.logger ?? console;
+  const agentUiRuntime = deps.agentUiRuntime;
   const modelOverrides = resolveModelOverrides(config);
   const agents = deps.agents ?? createDefaultAgents({ modelOverrides });
   const llmClientsByRole = createRuntimeClients(
@@ -1156,6 +1259,16 @@ export async function runRuntime(
             );
             pendingStaleSkip = true;
           } else {
+            // plan-agent-ui-data-v1 P2 Fix②: drain pendingButtonClicks 注入本轮推演输入。
+            // 必须在 runTick 之前 drain，让 button_click 作为玩家 UI 交互上下文进入本轮推演。
+            const drainedButtonClicks = agentUiRuntime?.drainPendingButtonClicks() ?? [];
+            if (drainedButtonClicks.length > 0) {
+              logger.log(
+                `[tiandao] ui button_click drain: count=${drainedButtonClicks.length} ` +
+                `(injecting into tick=${state.tick} as player interaction context)`,
+              );
+            }
+
             await runFreshTickWithPublish({
               worldModel,
               run: async () => {
@@ -1167,6 +1280,7 @@ export async function runRuntime(
                   modelOverrides,
                   chatSignals: latestChatSignals,
                   npcDeathEvents: drainedNpcDeaths,
+                  buttonClickEvents: drainedButtonClicks,
                   worldModel,
                   publishCommands: (request) => redis.publishCommands(request),
                   publishNarrations: (request) => redis.publishNarrations(request),
@@ -1205,6 +1319,21 @@ export async function runRuntime(
                     },
                   });
                 }
+
+                // plan-agent-ui-data-v1 P2 Fix①: TSY 秘境发现 → triggerUi 生产路径接通。
+                // drain tsy_zone_activated 事件，为秘境内的玩家触发 tsy_discovery UI 面板。
+                if (agentUiRuntime) {
+                  const tsyActivatedEvents = redis.drainTsyZoneActivatedEvents?.() ?? [];
+                  if (tsyActivatedEvents.length > 0) {
+                    await processTsyZoneActivatedForUi({
+                      state,
+                      events: tsyActivatedEvents,
+                      agentUiRuntime,
+                      logger,
+                    });
+                  }
+                }
+
                 await persistWorldModelAfterFreshTick({
                   worldModel,
                   redis,

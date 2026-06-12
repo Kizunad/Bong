@@ -156,7 +156,8 @@ describe("main mock execution", () => {
 
   it("forwards redisUrl to runtime in non-mock mode", async () => {
     const runRuntimeSpy = vi.spyOn(runtime, "runRuntime").mockResolvedValue(undefined);
-    const auxiliaryRuntimeStarter = vi.fn().mockResolvedValue([]);
+    // plan-agent-ui-data-v1 P2：auxiliaryRuntimeStarter 现在返回 AuxiliaryRuntimeResult
+    const auxiliaryRuntimeStarter = vi.fn().mockResolvedValue({ cleanupFns: [], agentUiRuntime: undefined });
 
     try {
       await main({
@@ -168,13 +169,17 @@ describe("main mock execution", () => {
         auxiliaryRuntimeStarter,
       });
 
-      expect(runRuntimeSpy).toHaveBeenCalledWith({
-        mockMode: false,
-        redisUrl: "redis://unit-test:6380",
-        baseUrl: "https://llm.example.test/v1",
-        apiKey: "k_test",
-        model: "mock-model",
-      });
+      // runRuntime 现在接收 config 和 deps（含 agentUiRuntime）
+      expect(runRuntimeSpy).toHaveBeenCalledWith(
+        {
+          mockMode: false,
+          redisUrl: "redis://unit-test:6380",
+          baseUrl: "https://llm.example.test/v1",
+          apiKey: "k_test",
+          model: "mock-model",
+        },
+        { agentUiRuntime: undefined },
+      );
       expect(auxiliaryRuntimeStarter).toHaveBeenCalledWith({
         mockMode: false,
         redisUrl: "redis://unit-test:6380",
