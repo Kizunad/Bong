@@ -1,0 +1,14 @@
+# worldgen dev-only dependencies (NOT installed by setup.sh's production path,
+# NOT required by the CI raster pipeline which is numpy-only).
+#
+# These power the worldgen-v4 3D preview console (§8.1 #7):
+#   scripts/terrain_gen/console_server.py  — FastAPI app + uvicorn runner
+#   worldgen/console/                       — vite + three.js viewer (npm, separate)
+#
+# Install (localhost dev box only):
+#   cd worldgen && .venv/bin/pip install -r requirements-dev.txt
+# or run the console_server with a system python that already has fastapi.
+fastapi>=0.115
+uvicorn[standard]>=0.30
+# httpx is required by fastapi.testclient.TestClient (pytest).
+httpx>=0.27

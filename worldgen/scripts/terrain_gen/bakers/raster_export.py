@@ -136,41 +136,12 @@ def export_rasters(
     written_layer_names: set[str] = set()
     for tile in fields.tiles:
         tile_dir = output_dir / tile.tile.tile_id
-        tile_dir.mkdir(parents=True, exist_ok=True)
-
         # worldgen-v4 P0: spans replace height + the deleted vertical layers.
-        _write_spans(tile_dir, tile)
-
-        written_layers: list[str] = []
-        for layer_name in fields.layers:
-            if layer_name not in tile.layers:
-                continue
-            if layer_name in _SPAN_FOLDED_LAYERS:
-                # height is folded into spans.bin — never written standalone.
-                continue
-            if layer_whitelist is not None and layer_name not in layer_whitelist:
-                continue
-            layer_path = tile_dir / _layer_file_name(layer_name)
-            values = tile.layers[layer_name]
-            if layer_name in FLOAT_LAYERS:
-                _write_float_layer(layer_path, values)
-            elif layer_name in UINT8_LAYERS:
-                # plan-terrain-wiring-v1 P2 #10: bake-time guard — any biome_id
-                # that exceeds the palette bounds would silently degrade to
-                # default_wilderness_biome at runtime (raster.rs :775).  Fail fast.
-                if layer_name == "biome_id":
-                    max_biome_id = int(values.max()) if len(values) > 0 else 0
-                    palette_len = len(BIOME_PALETTE)
-                    assert max_biome_id < palette_len, (
-                        f"biome_id max={max_biome_id} >= len(BIOME_PALETTE)={palette_len} "
-                        f"in tile {tile.tile.tile_id}; "
-                        f"extend BIOME_PALETTE (append-only) to cover this id"
-                    )
-                _write_u8_layer(layer_path, values)
-            else:
-                raise ValueError(f"unsupported raster layer '{layer_name}'")
-            written_layers.append(layer_name)
-            written_layer_names.add(layer_name)
+        # plan-terrain-wiring-v1 P2 #10 bake-time biome_id guard lives in the
+        # shared writer.
+        written_layers = _write_tile_rasters(
+            tile_dir, tile, fields, layer_whitelist, written_layer_names
+        )
 
         manifest_tiles.append(
             {
@@ -187,6 +158,7 @@ def export_rasters(
 
     pois_payload = _collect_poi_payload(plan.blueprint_zones)
     pois_payload.extend(build_novice_poi_manifest_payload(fields))
+    zone_params_payload = _collect_zone_params(plan.blueprint_zones)
     ecology_payload = _collect_profile_ecology()
     global_decoration_palette = _collect_global_decoration_palette()
     collapsed_zones_payload = _collect_collapsed_zone_payload(plan)
@@ -221,6 +193,11 @@ def export_rasters(
         "biome_palette": list(BIOME_PALETTE),
         "tiles": manifest_tiles,
         "pois": pois_payload,
+        # worldgen-v4 P1 §8.1 #7 — per-zone editable blueprint subset for the
+        # dev console: the param panel renders this, edits it, and POSTs it back
+        # as /api/regen overrides. ``terrain_profile`` here also drives the
+        # zone-list swatch color (so zones are distinguishable, not all magenta).
+        "zones": zone_params_payload,
         "semantic_layers": [
             name
             for name in (
@@ -310,6 +287,149 @@ def export_rasters(
     }
 
 
+def _write_tile_rasters(
+    tile_dir: Path,
+    tile,
+    fields: GeneratedFieldSet,
+    layer_whitelist: Optional[set[str]],
+    written_layer_names: set[str],
+) -> list[str]:
+    """Write one tile's spans + standalone layer rasters; return layer names.
+
+    Shared by the full ``export_rasters`` loop and the incremental
+    ``regen_zone`` path so both produce byte-identical on-disk tiles.
+    """
+    tile_dir.mkdir(parents=True, exist_ok=True)
+    # worldgen-v4 P0: spans replace height + the deleted vertical layers.
+    _write_spans(tile_dir, tile)
+
+    written_layers: list[str] = []
+    for layer_name in fields.layers:
+        if layer_name not in tile.layers:
+            continue
+        if layer_name in _SPAN_FOLDED_LAYERS:
+            continue
+        if layer_whitelist is not None and layer_name not in layer_whitelist:
+            continue
+        layer_path = tile_dir / _layer_file_name(layer_name)
+        values = tile.layers[layer_name]
+        if layer_name in FLOAT_LAYERS:
+            _write_float_layer(layer_path, values)
+        elif layer_name in UINT8_LAYERS:
+            if layer_name == "biome_id":
+                max_biome_id = int(values.max()) if len(values) > 0 else 0
+                palette_len = len(BIOME_PALETTE)
+                # raise (not assert): a palette overflow corrupts the on-disk
+                # biome_id -> name mapping the Rust reader trusts.  `assert` would
+                # be stripped under `python -O`, letting the bad raster ship
+                # silently — this is a data-integrity guard, not a debug check.
+                if max_biome_id >= palette_len:
+                    raise ValueError(
+                        f"biome_id max={max_biome_id} >= len(BIOME_PALETTE)={palette_len} "
+                        f"in tile {tile.tile.tile_id}; "
+                        f"extend BIOME_PALETTE (append-only) to cover this id"
+                    )
+            _write_u8_layer(layer_path, values)
+        else:
+            raise ValueError(f"unsupported raster layer '{layer_name}'")
+        written_layers.append(layer_name)
+        written_layer_names.add(layer_name)
+    return written_layers
+
+
+def regen_zone(
+    plan: TerrainGenerationPlan,
+    fields: GeneratedFieldSet,
+    zone_name: str,
+    *,
+    layer_whitelist: Optional[set[str]] = None,
+) -> list[str]:
+    """Incrementally re-bake only the tiles touched by ``zone_name`` in place.
+
+    worldgen-v4 P1 §8.1 #7 — console POST /api/regen.  Unlike ``export_rasters``
+    this does **not** ``shutil.rmtree`` the output dir: it overwrites only the
+    affected tile subdirs (and patches their manifest entries), so the rest of
+    the world stays readable by concurrent browser fetches.
+
+    ``fields`` must already be the result of
+    ``synthesize_fields(plan, zone_filter={zone_name})`` (or a wider filter that
+    still covers ``zone_name``'s tiles).  Returns the list of rewritten tile ids.
+
+    Raises ``KeyError`` if ``zone_name`` is not a blueprint zone.
+    """
+    if plan.bake_plan is None:
+        raise ValueError("raster bake plan is required before regen")
+    known_zones = {zone.name for zone in plan.blueprint_zones}
+    if zone_name not in known_zones:
+        raise KeyError(zone_name)
+
+    output_dir = plan.bake_plan.output_dir
+    manifest_path = plan.bake_plan.artifacts["manifest"]
+    if not manifest_path.exists():
+        raise FileNotFoundError(
+            f"manifest {manifest_path} missing — run a full export before regen"
+        )
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    written_layer_names: set[str] = set()
+    rewritten: dict[str, dict[str, object]] = {}
+    rewritten_ids: list[str] = []
+    for tile in fields.tiles:
+        tile_dir = output_dir / tile.tile.tile_id
+        written_layers = _write_tile_rasters(
+            tile_dir, tile, fields, layer_whitelist, written_layer_names
+        )
+        rewritten[tile.tile.tile_id] = {
+            "tile_x": tile.tile.tile_x,
+            "tile_z": tile.tile.tile_z,
+            "dir": tile.tile.tile_id,
+            "zones": list(tile.contributing_zones),
+            "layers": written_layers,
+            "spans": True,
+        }
+        rewritten_ids.append(tile.tile.tile_id)
+
+    # Patch the existing manifest's tile entries in place — replace the entry
+    # for each rewritten tile, keep all others untouched.
+    with manifest_path.open("r", encoding="utf-8") as handle:
+        manifest = json.load(handle)
+    merged_tiles: list[dict[str, object]] = []
+    for entry in manifest.get("tiles", []):
+        tile_id = entry.get("dir")
+        if tile_id in rewritten:
+            merged_tiles.append(rewritten.pop(tile_id))
+        else:
+            merged_tiles.append(entry)
+    # Any rewritten tile not already in the manifest is appended (new tile).
+    merged_tiles.extend(rewritten.values())
+    manifest["tiles"] = merged_tiles
+
+    # Refresh the zone-list-derived manifest fields. A console regen with
+    # overrides (spirit_qi / danger_level / display_name / worldgen.*) mutates
+    # the in-memory blueprint, so these become stale if we only patch tiles[]:
+    #   - zones        drives the console param panel + zone-swatch directly,
+    #   - pois         tutorial POIs are gated on worldgen.terrain_profile,
+    #   - *fossil / corpse_mound / ascension_pit / collapsed_zones are all
+    #     profile- or zone-property-gated structure derivations.
+    # All are O(n_zones) recomputations from blueprint zones we already hold —
+    # no tile re-synthesis — so refreshing them is cheap and keeps the manifest
+    # internally consistent with the overridden blueprint.
+    pois_payload = _collect_poi_payload(plan.blueprint_zones)
+    pois_payload.extend(build_novice_poi_manifest_payload(fields))
+    manifest["zones"] = _collect_zone_params(plan.blueprint_zones)
+    manifest["pois"] = pois_payload
+    manifest["fossil_bboxes"] = _collect_fossil_bboxes(plan.blueprint_zones)
+    manifest["corpse_mounds"] = _collect_corpse_mounds(plan.blueprint_zones)
+    manifest["ascension_pits"] = _collect_ascension_pits(plan.blueprint_zones)
+    manifest["collapsed_zones"] = _collect_collapsed_zone_payload(plan)
+
+    with manifest_path.open("w", encoding="utf-8") as handle:
+        json.dump(manifest, handle, ensure_ascii=False, indent=2)
+        handle.write("\n")
+
+    return rewritten_ids
+
+
 def _poi_dict(zone_name: str, poi: PoiSpec) -> dict[str, object]:
     return {
         "zone": zone_name,
@@ -335,6 +455,43 @@ def _collect_poi_payload(zones: list[BlueprintZone]) -> list[dict[str, object]]:
                     continue
                 payload.append(_poi_dict(zone.name, poi))
                 seen.add((poi.kind, poi.name))
+    return payload
+
+
+def _collect_zone_params(zones: list[BlueprintZone]) -> list[dict[str, object]]:
+    """Per-zone editable blueprint subset for the dev console (§8.1 #7).
+
+    Surfaces the fields the console param panel can edit (and POST back as
+    ``overrides`` to /api/regen): spirit_qi / danger_level / display_name and the
+    ``worldgen`` section (terrain_profile etc.). ``terrain_profile`` is also
+    promoted to the top level so the zone-list swatch can color by profile
+    without digging into worldgen.
+    """
+    payload: list[dict[str, object]] = []
+    for zone in zones:
+        wg = zone.worldgen
+        worldgen_view: dict[str, object] = {
+            "terrain_profile": wg.terrain_profile,
+            "shape": wg.shape,
+            "boundary": {"mode": wg.boundary.mode, "width": wg.boundary.width},
+            "height_model": dict(wg.height_model),
+        }
+        if wg.surface_palette:
+            worldgen_view["surface_palette"] = list(wg.surface_palette)
+        if wg.biome_mix:
+            worldgen_view["biome_mix"] = list(wg.biome_mix)
+        if wg.landmarks:
+            worldgen_view["landmarks"] = list(wg.landmarks)
+        payload.append(
+            {
+                "name": zone.name,
+                "display_name": zone.display_name,
+                "terrain_profile": wg.terrain_profile,
+                "spirit_qi": zone.spirit_qi,
+                "danger_level": zone.danger_level,
+                "worldgen": worldgen_view,
+            }
+        )
     return payload
 
 

@@ -1,0 +1,23 @@
+{
+  "name": "bong-worldgen-console",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "description": "Dev-only vite + three.js 3D preview for worldgen-v4 rasters (§8.1 #7). Not for prod.",
+  "scripts": {
+    "dev": "vite --port 5173",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "three": "^0.167.1"
+  },
+  "devDependencies": {
+    "@types/three": "^0.167.2",
+    "typescript": "^5.5.4",
+    "vite": "^5.4.8",
+    "vitest": "^2.1.2"
+  }
+}

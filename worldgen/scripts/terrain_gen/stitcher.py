@@ -673,7 +673,21 @@ def _resolve_layout_target_height(zone: BlueprintZone) -> float:
     return 64.0
 
 
-def synthesize_fields(plan: TerrainGenerationPlan) -> GeneratedFieldSet:
+def synthesize_fields(
+    plan: TerrainGenerationPlan,
+    zone_filter: set[str] | None = None,
+) -> GeneratedFieldSet:
+    """Synthesize the blended field set for every active tile.
+
+    When ``zone_filter`` is given (worldgen-v4 P1 console incremental regen,
+    §8.1 #7), only tiles that intersect at least one named zone are
+    synthesized — but those tiles still blend in *every* zone that overlaps
+    them, so the per-tile output is byte-identical to a full run.  This keeps
+    boundary blends seam-free: re-baking a zone re-bakes all of its tiles, and
+    those tiles transparently pick up their neighbor zones.  ``zone_filter``
+    only narrows *which tiles* get touched, never *which zones* contribute to a
+    touched tile.
+    """
     palette = SurfacePalette()
     palette.extend(("stone", "coarse_dirt", "gravel"))
 
@@ -687,11 +701,19 @@ def synthesize_fields(plan: TerrainGenerationPlan) -> GeneratedFieldSet:
         all_layers.append("realm_collapse_mask")
 
     generated_tiles: list[TileFieldBuffer] = []
-    active_tiles = [
-        tile
-        for tile in plan.tiles
-        if any(_zone_intersects_tile(zone, tile) for zone in plan.blueprint_zones)
-    ]
+
+    def _tile_selected(tile: WorldTile) -> bool:
+        # A tile is synthesized when it intersects *any* zone.  With a
+        # zone_filter, restrict to tiles intersecting one of the named zones —
+        # but blending below still walks all blueprint_zones for that tile.
+        for zone in plan.blueprint_zones:
+            if not _zone_intersects_tile(zone, tile):
+                continue
+            if zone_filter is None or zone.name in zone_filter:
+                return True
+        return False
+
+    active_tiles = [tile for tile in plan.tiles if _tile_selected(tile)]
 
     # plan-terrain-wiring-v1 P0 M2/#8: build a name→zone lookup for flatten/mask.
     _zone_by_name: dict[str, BlueprintZone] = {z.name: z for z in plan.blueprint_zones}

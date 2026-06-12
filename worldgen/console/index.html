@@ -1,0 +1,144 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>末法残土 · worldgen-v4 控制台 (dev)</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        --panel-bg: rgba(18, 20, 26, 0.92);
+        --panel-border: #2c3140;
+        --accent: #6fb0ff;
+        --text: #d6dae2;
+        --text-dim: #8a909c;
+      }
+      * { box-sizing: border-box; }
+      html, body {
+        margin: 0;
+        height: 100%;
+        overflow: hidden;
+        font-family: "Segoe UI", system-ui, sans-serif;
+        background: #07090d;
+        color: var(--text);
+      }
+      #app { position: relative; width: 100vw; height: 100vh; }
+      #viewport { position: absolute; inset: 0; }
+      #viewport canvas { display: block; }
+
+      #sidebar {
+        position: absolute;
+        top: 12px;
+        left: 12px;
+        width: 264px;
+        max-height: calc(100vh - 24px);
+        overflow-y: auto;
+        background: var(--panel-bg);
+        border: 1px solid var(--panel-border);
+        border-radius: 8px;
+        padding: 12px;
+        font-size: 13px;
+        backdrop-filter: blur(4px);
+      }
+      #sidebar h1 {
+        font-size: 14px;
+        margin: 0 0 8px;
+        letter-spacing: 0.5px;
+      }
+      #sidebar h2 {
+        font-size: 12px;
+        text-transform: uppercase;
+        color: var(--text-dim);
+        margin: 14px 0 6px;
+      }
+      .layer-toggle { display: flex; align-items: center; gap: 7px; padding: 3px 0; cursor: pointer; }
+      .layer-toggle input { accent-color: var(--accent); }
+      #zone-list { list-style: none; margin: 0; padding: 0; }
+      #zone-list li {
+        padding: 5px 8px;
+        border-radius: 5px;
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        gap: 7px;
+      }
+      #zone-list li:hover { background: rgba(111, 176, 255, 0.12); }
+      #zone-list li.selected { background: rgba(111, 176, 255, 0.22); }
+      .zone-swatch { width: 11px; height: 11px; border-radius: 2px; flex: none; }
+      #param-panel textarea {
+        width: 100%;
+        height: 150px;
+        background: #0d1016;
+        color: var(--text);
+        border: 1px solid var(--panel-border);
+        border-radius: 5px;
+        font-family: ui-monospace, monospace;
+        font-size: 11px;
+        resize: vertical;
+      }
+      button.action {
+        width: 100%;
+        margin-top: 8px;
+        padding: 7px;
+        background: var(--accent);
+        color: #07090d;
+        border: none;
+        border-radius: 5px;
+        font-weight: 600;
+        cursor: pointer;
+      }
+      button.action:disabled { opacity: 0.5; cursor: progress; }
+      #status {
+        position: absolute;
+        bottom: 12px;
+        left: 12px;
+        font-size: 12px;
+        color: var(--text-dim);
+        background: var(--panel-bg);
+        border: 1px solid var(--panel-border);
+        border-radius: 6px;
+        padding: 6px 10px;
+        max-width: 60vw;
+      }
+      #help {
+        position: absolute;
+        bottom: 12px;
+        right: 12px;
+        font-size: 11px;
+        color: var(--text-dim);
+        background: var(--panel-bg);
+        border: 1px solid var(--panel-border);
+        border-radius: 6px;
+        padding: 6px 10px;
+        text-align: right;
+        line-height: 1.5;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="app">
+      <div id="viewport"></div>
+      <aside id="sidebar">
+        <h1>worldgen-v4 控制台 <span style="color: var(--text-dim)">dev</span></h1>
+        <h2>图层</h2>
+        <div id="layer-toggles"></div>
+        <h2>Zones</h2>
+        <ul id="zone-list"></ul>
+        <h2>Zone 参数 (可编辑 · 重生成生效)</h2>
+        <div id="param-panel">
+          <textarea id="param-edit" spellcheck="false" placeholder="选择一个 zone…"></textarea>
+          <p style="font-size: 11px; color: var(--text-dim); margin: 4px 0 0">
+            编辑 spirit_qi / danger_level / worldgen 等字段，点「重生成」后作为
+            overrides 重跑该 zone tiles（不改磁盘 blueprint 源）。
+          </p>
+          <button id="regen-btn" type="button" class="action" disabled>重生成 zone</button>
+        </div>
+      </aside>
+      <div id="status">初始化…</div>
+      <div id="help">
+        WASD 平移 · QE 升降 · 拖拽旋转 · 滚轮缩放
+      </div>
+    </div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
