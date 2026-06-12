@@ -424,6 +424,13 @@ public final class BongHudOrchestrator {
         commands.addAll(AlchemyProgressHudPlanner.buildCommands(screenWidth, screenHeight, nowMillis));
         // plan-dying-elder-v1 P3: 垂死大能遭遇 HUD（遭遇激活时在屏幕底部中央显示面板）
         commands.addAll(DyingElderHudPlanner.buildCommands(screenWidth, screenHeight));
+        // plan-agent-ui-data-v1 P3: 天道动态面板 VFX overlay（fade-in / tiandao vignette+shake）
+        commands.addAll(com.bong.client.agentui.AgentUiVfxPlanner.buildCommands(
+            com.bong.client.agentui.AgentUiVfxStore.getActive(),
+            nowMillis,
+            screenWidth,
+            screenHeight
+        ));
         commands.addAll(CoffinHudPlanner.buildCommands(screenWidth, screenHeight));
         commands.addAll(LingtianOverlayHudPlanner.buildCommands(
             com.bong.client.lingtian.state.LingtianSessionStore.snapshot(),
