@@ -54,7 +54,7 @@
 
 | 阶段 | 状态 | 主要交付物 | 验收标准 |
 |------|------|-----------|---------|
-| **P0** | ⬜ | 平衡监控看板 + 指标定义 | `/balance tribulation` 命令显示全部平衡指标 |
+| **P0** | ✅ 2026-06-13 | 平衡监控看板 + 指标定义 | `/balance tribulation` 命令显示全部平衡指标 |
 | **P1** | ⬜ | 名额公式校准（`QUOTA_PER_PLAYER` / `QUOTA_MAX`）| 名额满载率落入 30-70% 区间（模拟数据验证）|
 | **P2** | ⬜ | 三波强度 + 心魔触发概率校准 | 渡虚劫成功率落入设计目标区间 |
 | **P3** | ⬜ | 半步化虚 buff 强度终版 + 联合回归测试 | 全参数调整后回归 53 单测 green |
@@ -146,3 +146,29 @@
 2. **跨周目名额**：plan-multi-life-v1 ✅ 的跨周目继承与本 plan 名额公式是否需要联合校准（化虚修士死亡后名额释放速度）
 3. **天道介入**：是否允许天道 agent 在"名额长期空缺"时主动降低难度（触发 plan-tiandao-hunt 等辅助机制）or 维持被动观察
 4. **平衡监控开放**：`/balance tribulation` 是否在某时期向玩家公开（促进社区自研战术），还是永远 dev-only
+
+---
+
+## P0 Finish Evidence（仅 P0；多 PR plan，P1-P5 仍 ⬜，不归档）
+
+平衡监控看板落地：`TribulationBalanceConfig` resource + `/balance tribulation` dev-only 命令，dev env mock 渡劫结算后正确显示统计、**真实暴露失衡**（含名额=0 超载这一最严重态）。
+
+### 落地清单
+- `server/src/cultivation/tribulation_balance.rs` — `TribulationBalanceConfig` resource（字段 default 镜像真实代码常数 + const-引用 pin 测试防漂移）
+- `server/src/cmd/dev/balance.rs` — `/balance tribulation` brigadier 命令 + `build_balance_report`/`format_balance_report`/`handle`，挂 `cmd/dev/mod.rs`，`registry_pin.rs` 同步 pin
+- 指标源（零新增 telemetry，全读既有 state）：quota_current/max ← `QuotaFullTracker`；满载率 = occupied/limit（**occupied>0 且 limit==0 → `[OVER-FULL: 名额=0 仍有 N 占用]`，不掩盖**）；halfstep/ascended 次数 ← `TribulationMetrics`；半步滞留 tick ← 在场 `HalfStepState.entered_at`；in-game 月 ← `TICKS_PER_MONTH`；**quota_k 读 live `VoidQuotaConfig`（含 env 覆盖，看板不撒谎）**
+
+### 关键 commit（5，2026-06-13）
+`f6fa8374f` Config resource · `099ac47a7` /balance 命令 · `a315d0f25` over-full/pending 测试 · `85a9616f3` 暴露名额=0 超载+live quota_k+清理 · `f511c97d2` 真实 handle() 契约测试+off-by-one
+
+### 测试
+`cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test` → **8890 passed / 0 failed**（含 balance 32 测试：mock 10 渡劫结算统计 / 满载率边界 / over-full INFINITY / pending 满载 / avg-stay 回拨 / live quota_k 契约 / failed n/a）
+
+### ⚠️ 设计偏差决议（reviewer 须有意识接受）
+**plan P0 规定的字段（`quota_per_player=50` / `quota_max_hard_cap=3` / `wave_1/2/3_intensity` / `heart_demon_trigger_ratio`）在真实代码里根本不存在**：真实 quota = `floor(world_qi/quota_k)`（无 player_count 维度、无硬上限 3，`quota_k`=DEFAULT_VOID_QUOTA_K=50.0）；真实心魔劫是**确定性** choice_idx 映射（`heart_demon_outcome_for_choice`，无 rand/概率）。实现做了正确工程判断——**镜像真实常数而非 plan 虚构常数**（`quota_per_player→quota_k`、`heart_demon_trigger_ratio→penalty_ratio`、`wave_*_intensity→DUXU_AOE_DAMAGE_BASE/QI_DRAIN_BASE/JUEBI_INTENSITY_BASE`），并在 `tribulation_balance.rs:18-41` doc-comment 如实记录映射。镜像现实优于镜像虚构。
+
+### 遗留 / 后续
+- **P1/P2 需 plan 层修正**：P1（`名额公式校准 QUOTA_PER_PLAYER/QUOTA_MAX`）、P2（`心魔触发概率校准`）仍引用上述**不存在的常数/概率模型**，后续阶段实施前须先按真实模型（quota_k / 确定性心魔）修正 plan 数值模型，否则撞同一断链。**此 plan-doc 修正超出 P0 consume 的 docs 写权限，留人工/下阶段处理。**
+- **failed 次数无源**：`TribulationMetrics` 无 `failed_count`（settlement 把 Killed/Failed/Fled 合并只清理不计数），看板对 failed 显 `n/a（无遥测，halfstep-buff-v1 未埋点）`，**不显假 0**；failed 埋点应由数据源 plan（halfstep-buff-v1）补，非本平衡 plan 自造。
+- **flaky 测试（已知 minor）**：`handle_emits_live_void_quota_k_in_chat_not_default` 在首次冷进程并行负载下偶发 1/70 失败（Bevy 资源解析时序），~70 次复跑稳定通过；生产代码正确，属测试间冷启动不确定性，CI 偶发可重跑。
+- **本 P0 不产生 QiTransfer**：纯只读统计，不改 qi/quota 真实值——reverify 守恒确认。
