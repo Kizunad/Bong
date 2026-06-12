@@ -272,6 +272,7 @@ Agent(
 - `7637dd0b9`（2026-06-12）`plan-trap-runtime-v1 P2：接入诱饵桩仇恨黑板`。
 - `56b0a469b`（2026-06-12）`plan-trap-runtime-v1 P2：实装诱饵桩运行时与配方`。
 - `6481a120b`（2026-06-12）`plan-trap-runtime-v1 P2：接通诱饵桩客户端视听`。
+- `71cdd412c`（2026-06-12）`fix(plan-trap-runtime-v1): 恢复 zhenfa 独立注册 AttackIntent`。
 
 ### 测试结果
 
@@ -279,6 +280,7 @@ Agent(
 - `cd server && cargo fmt && CARGO_BUILD_JOBS=2 cargo fmt --check && CARGO_BUILD_JOBS=2 cargo clippy --all-targets -- -D warnings`：通过（P2 小收口后）。
 - `cd server && CARGO_BUILD_JOBS=2 cargo test blackboard -- --test-threads=2`：19 passed / 0 failed。
 - `cd server && CARGO_BUILD_JOBS=2 cargo test bait_stake -- --test-threads=2`：2 passed / 0 failed。
+- `cd server && CARGO_BUILD_JOBS=2 cargo test world::tiandao_hunt::tests::production_zhenfa -- --test-threads=2`：2 passed / 0 failed。
 - `cd server && CARGO_BUILD_JOBS=2 cargo test trap_runtime_audio_recipes_are_pinned -- --test-threads=2`：1 passed / 0 failed。
 - `cd server && CARGO_BUILD_JOBS=2 cargo test trap_runtime_recipes_are_grouped_under_zhenfa_trap -- --test-threads=2`：1 passed / 0 failed。
 - `cd client && JAVA_HOME="$HOME/.sdkman/candidates/java/17.0.18-amzn" ./gradlew --max-workers=2 test build`：BUILD SUCCESSFUL。
