@@ -266,6 +266,16 @@ pub const CH_BAOMAI_V4_RESONANCE_LOCK_END: &str = "bong:baomai_v4/resonance_lock
 /// 注意：P3 agent 侧暂无订阅 runtime；push_zone 兜底保证不依赖 agent 即 in-game 可见。
 pub const CH_TERRITORY_NARRATION_REQUEST: &str = "bong:territory_narration_request";
 
+// ─── 天道 UI-as-Data（plan-agent-ui-data-v1 P0） ─────────────────────────────
+
+/// Agent → Server: 天道 UI 面板指令（含 realm_gate / allowed_button_ids，Pub/Sub）。
+/// 对齐 agent `CHANNELS.AGENT_UI_CMD`。
+pub const CH_AGENT_UI_CMD: &str = "bong:agent_ui_cmd";
+
+/// Server → Agent: 天道 UI 面板响应（Pub/Sub）。
+/// 对齐 agent `CHANNELS.AGENT_UI_RESPONSE`。
+pub const CH_AGENT_UI_RESPONSE: &str = "bong:agent_ui_response";
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -462,6 +472,24 @@ mod tests {
             CH_NAMED_FACTION_STATE,
             CH_FACTION_STATE,
             "CH_NAMED_FACTION_STATE 绝不能等于 CH_FACTION_STATE（防撞：emergent group census vs 具名势力快照）"
+        );
+    }
+
+    #[test]
+    fn agent_ui_channels_match_typescript_source() {
+        // plan-agent-ui-data-v1 P0：双端 pin，防 channels.ts 与 Rust 常量漂移。
+        assert_eq!(
+            CH_AGENT_UI_CMD, "bong:agent_ui_cmd",
+            "CH_AGENT_UI_CMD 必须是 \"bong:agent_ui_cmd\"（plan-agent-ui-data-v1 P0）"
+        );
+        assert_eq!(
+            CH_AGENT_UI_RESPONSE, "bong:agent_ui_response",
+            "CH_AGENT_UI_RESPONSE 必须是 \"bong:agent_ui_response\"（plan-agent-ui-data-v1 P0）"
+        );
+        // 两个 channel 不能相同（防乒乓路由）
+        assert_ne!(
+            CH_AGENT_UI_CMD, CH_AGENT_UI_RESPONSE,
+            "CH_AGENT_UI_CMD 与 CH_AGENT_UI_RESPONSE 必须不同"
         );
     }
 }

@@ -1443,6 +1443,16 @@ impl From<&ServerDataPayloadV1> for Payload {
                 y: position[1],
                 z: position[2],
             }),
+            // ─── plan-agent-ui-data-v1 P0：天道 UI-as-Data（无 proto 定义，JSON 旁路）
+            // AgentUiRequest / AgentUiClose 通过 JSON CustomPayload 发送给 client，
+            // 不走 proto 编码路径；此处返回 Heartbeat 作为安全 stub（永不触发）。
+            ServerDataPayloadV1::AgentUiRequest(_) | ServerDataPayloadV1::AgentUiClose(_) => {
+                // これらは JSON CustomPayload 経由で送信される（proto バイパス）
+                // Shouldn't be called; use JSON CustomPayload path instead.
+                Payload::Heartbeat(bong::Heartbeat {
+                    message: "[agent_ui_json_bypass]".to_string(),
+                })
+            }
         }
     }
 }
@@ -3840,6 +3850,12 @@ impl From<&super::client_request::ClientRequestV1> for bong::client_request_enve
             // plan-shield-block-v1 P1 — 持续举盾 / 放盾 C2S
             ClientRequestV1::RaiseShield { .. } => Payload::RaiseShield(bong::RaiseShield {}),
             ClientRequestV1::LowerShield { .. } => Payload::LowerShield(bong::LowerShield {}),
+            // ─── plan-agent-ui-data-v1 P0：天道 UI 响应（JSON CustomPayload，无 proto 定义）
+            // AgentUiResponse 通过 JSON CustomPayload 接收，不走 proto 编码路径；
+            // 此处返回 BreakthroughRequest 作为安全 stub（proto 路径永不触发）。
+            ClientRequestV1::AgentUiResponse { .. } => {
+                Payload::BreakthroughRequest(bong::BreakthroughRequest {})
+            }
         }
     }
 }

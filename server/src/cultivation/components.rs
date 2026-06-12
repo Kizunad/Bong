@@ -44,6 +44,21 @@ impl Realm {
             Realm::Void => 20,
         }
     }
+
+    /// plan-agent-ui-data-v1 P0 — 境界 1-indexed rank（与 `realm_gate` 比较）。
+    ///
+    /// 醒灵=1, 引气=2, 凝脉=3, 固元=4, 通灵=5, 化虚=6。
+    /// realm_gate=0 表示不门控，判断时 player_rank >= realm_gate（0 恒真）。
+    pub fn rank(self) -> u8 {
+        match self {
+            Realm::Awaken => 1,
+            Realm::Induce => 2,
+            Realm::Condense => 3,
+            Realm::Solidify => 4,
+            Realm::Spirit => 5,
+            Realm::Void => 6,
+        }
+    }
 }
 
 /// 20 条经脉（12 正经 + 8 奇经）。

@@ -8,6 +8,7 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
+use super::agent_ui::AgentUiActionType;
 use super::alchemy::AlchemyInterventionV1;
 use super::combat_carrier::AnqiContainerKindV1;
 use super::inventory::{EquipSlotV1, InventoryLocationV1};
@@ -634,6 +635,16 @@ pub enum ClientRequestV1 {
     /// server 移除 ShieldBlocking 状态与 ShieldBlock component。
     LowerShield {
         v: u8,
+    },
+    // ─── plan-agent-ui-data-v1 P0：天道 UI 面板交互响应 ──────────────
+    /// 玩家面板交互响应（button_click / dismissed / timeout / parse_error 等）。
+    /// server 校验 request_id / allowed_button_ids 后转 `bong:agent_ui_response`。
+    AgentUiResponse {
+        v: u8,
+        request_id: String,
+        action: AgentUiActionType,
+        #[serde(default)]
+        params: std::collections::HashMap<String, String>,
     },
 }
 
