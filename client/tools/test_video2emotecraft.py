@@ -285,11 +285,25 @@ def test_sample_frame_indices_boundary_cases(frame_count: int, expected: list[in
     )
 
 
+def test_sample_frame_indices_rejects_negative_frame_count() -> None:
+    """Verify negative frame counts surface the explicit validation error."""
+    with pytest.raises(ValueError, match="frame_count must be >= 0"):
+        sample_frame_indices(frame_count=-1, source_fps=30.0, target_fps=20)
+
+
 @pytest.mark.parametrize("fps", ["0", "-1"])
-def test_non_positive_fps_is_rejected(fps: str) -> None:
+def test_non_positive_fps_is_rejected(fps: str, capsys: pytest.CaptureFixture[str]) -> None:
     """Verify CLI rejects zero FPS before video sampling."""
-    with pytest.raises(SystemExit):
+    with pytest.raises(SystemExit) as exc_info:
         parse_args(["input.mp4", "-o", "bad", "--fps", fps])
+
+    stderr = capsys.readouterr().err
+    assert exc_info.value.code != 0, (
+        f"expected non-zero SystemExit because --fps={fps} is invalid, actual {exc_info.value.code}"
+    )
+    assert "must be > 0" in stderr, (
+        f"expected argparse stderr to include the FPS validation message, actual stderr={stderr!r}"
+    )
 
 
 def canonical_t_pose() -> list[Lm]:

@@ -319,7 +319,7 @@ class FrameSampler:
     def tick_for_frame(self, frame_index: int) -> int | None:
         """Return the time-preserving output tick, or None for duplicate ticks."""
         frame_time = frame_index / self.source_fps
-        tick = int(math.floor(frame_time * float(self.target_fps) + 1e-9))
+        tick = math.floor(frame_time * float(self.target_fps) + 1e-9)
         if tick == self._last_tick:
             return None
         self._last_tick = tick
