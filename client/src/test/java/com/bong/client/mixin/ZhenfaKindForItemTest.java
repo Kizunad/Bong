@@ -32,6 +32,25 @@ class ZhenfaKindForItemTest {
     }
 
     @Test
+    void trapRuntimeItemsMapToDedicatedZhenfaKinds() {
+        assertEquals(
+            ClientRequestProtocol.ZhenfaKind.BEAST_TRAP,
+            MixinClientPlayerInteractionManagerAlchemy.bong$zhenfaKindForItem(item("beast_trap")),
+            "beast_trap 必须走 beast_trap 放置协议，不能继续当普通 trap"
+        );
+        assertEquals(
+            ClientRequestProtocol.ZhenfaKind.TRIP_WIRE,
+            MixinClientPlayerInteractionManagerAlchemy.bong$zhenfaKindForItem(item("trip_wire")),
+            "trip_wire 必须走 trip_wire 放置协议，后续报警 runtime 才能区分"
+        );
+        assertEquals(
+            ClientRequestProtocol.ZhenfaKind.DECOY_STAKE,
+            MixinClientPlayerInteractionManagerAlchemy.bong$zhenfaKindForItem(item("bait_stake")),
+            "bait_stake 物品必须映射到 decoy_stake wireName，保留 decoy_stake 正典语义切割"
+        );
+    }
+
+    @Test
     void nonZhenfaItemDoesNotTriggerLingjuPlacement() {
         assertNull(
             MixinClientPlayerInteractionManagerAlchemy.bong$zhenfaKindForItem(item("qi_scatter_bead")),
