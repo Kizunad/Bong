@@ -118,7 +118,7 @@ function fallbackNarration(payload: TribulationEventV1): Narration {
     return {
       scope: "broadcast",
       target: narrationTarget(payload),
-      text: "化虚有位，叩关者可往；天道只空出座次，不替任何人铺路。",
+      text: "灵脉间隐约传来一股真元波动，似有化虚修士陨落，名额空出一席。",
       style: "narration",
     };
   }
