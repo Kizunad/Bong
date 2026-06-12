@@ -17,15 +17,21 @@ from __future__ import annotations
 
 import numpy as np
 
+from .. import dsl
 from ..blueprint import BlueprintZone
+from ..dsl import QiGrade
 from ..fields import SurfacePalette, TileFieldBuffer, WorldTile
-from ..noise import _tile_coords, fbm_2d, ridge_2d, warped_fbm_2d
+from ..noise import _tile_coords
 from .base import (
     DecorationSpec,
     EcologySpec,
     ProfileContext,
     TerrainProfileGenerator,
 )
+
+# §8.1 #4 — 古战场：战痕灵脉残涌但 mofa 厚覆，主世界常量区，归 common 档。
+# 现有 zone spirit_qi=0.40（zhanhun_plain 等）就近归档。
+QI_GRADE = QiGrade.COMMON
 
 
 BATTLEFIELD_DECORATIONS = (
@@ -159,23 +165,36 @@ def fill_ancient_battlefield_tile(
     half_d = max(zone.size_xz[1] * 0.5, 1.0)
 
     wx, wz = _tile_coords(tile.min_x, tile.min_z, tile_size)
-    dx = (wx - center_x) / half_w
-    dz = (wz - center_z) / half_d
-    radial = np.sqrt(dx * dx + dz * dz)
-    core = np.maximum(0.0, 1.0 - radial**1.5)
+    # 径向核心强度 core = max(0, 1 - radial**1.5)（DSL radial_uplift，amplitude=1）。
+    core = dsl.radial_uplift(
+        wx,
+        wz,
+        center_xz=(center_x, center_z),
+        half_w=half_w,
+        half_d=half_d,
+        exponent=1.5,
+        amplitude=1.0,
+    )
 
-    # --- Surface: pockmarked rolling terrain ---
-    base_fbm = fbm_2d(wx, wz, scale=280.0, octaves=4, seed=900)
+    # --- Surface: pockmarked rolling terrain（噪声走 dsl 算子库）---
+    base_fbm = dsl.fbm_height(wx, wz, scale=280.0, octaves=4, seed=900)
     # Impact craters: low-frequency warped FBM threshold for circular pits.
-    crater_field = warped_fbm_2d(
+    crater_field = dsl.warped_height(
         wx, wz, scale=180.0, octaves=4, warp_scale=240.0, warp_strength=70.0, seed=910
     )
     crater_mask = np.clip((crater_field - 0.15) * 2.5, 0.0, 1.0) * core
     # Fracture lines from wild-formation spell blasts.
-    fracture = ridge_2d(wx, wz, scale=90.0, octaves=5, seed=920)
+    fracture = dsl.ridge_height(wx, wz, scale=90.0, octaves=5, seed=920)
     fracture_mask = np.maximum(0.0, fracture) * core
 
-    height = 76.0 + core * 4.0 + base_fbm * 3.5 - crater_mask * 12.0 - fracture_mask * 4.0
+    # 高度合成（DSL compose_height）：基底 + 核心隆起 + 起伏 − 弹坑 − 裂缝。
+    height = dsl.compose_height(
+        np.full_like(core, 76.0),
+        core * 4.0,
+        base_fbm * 3.5,
+        -crater_mask * 12.0,
+        -fracture_mask * 4.0,
+    )
 
     # --- Surfaces ---
     surface_id = np.full_like(height, podzol_id, dtype=np.int32)
@@ -188,7 +207,7 @@ def fill_ancient_battlefield_tile(
         surface_id,
     )
     # Bone scatter at high ruin density
-    ruin_noise = fbm_2d(wx, wz, scale=60.0, octaves=3, seed=930)
+    ruin_noise = dsl.fbm_height(wx, wz, scale=60.0, octaves=3, seed=930)
     ruin_density = np.clip(
         0.20 + core * 0.30 + np.maximum(0.0, ruin_noise) * 0.3 + crater_mask * 0.2,
         0.0,
@@ -218,37 +237,34 @@ def fill_ancient_battlefield_tile(
     )
 
     # --- Anomaly: sparse hotspots driven by noise peaks ---
-    # Four independent seed grids; pick the strongest kind at each column.
-    anomaly_rift = warped_fbm_2d(
+    # Five independent seed grids; pick the strongest kind at each column
+    # （DSL anomaly_compete：argmax 竞争 + 阈值 0.15 收口 kind=0）。
+    anomaly_rift = dsl.warped_height(
         wx, wz, scale=240.0, octaves=3, warp_scale=320.0, warp_strength=80.0, seed=940
     )
-    anomaly_turb = warped_fbm_2d(
+    anomaly_turb = dsl.warped_height(
         wx, wz, scale=180.0, octaves=3, warp_scale=240.0, warp_strength=60.0, seed=950
     )
-    anomaly_moon = warped_fbm_2d(
+    anomaly_moon = dsl.warped_height(
         wx, wz, scale=300.0, octaves=3, warp_scale=400.0, warp_strength=100.0, seed=960
     )
-    anomaly_curse = warped_fbm_2d(
+    anomaly_curse = dsl.warped_height(
         wx, wz, scale=160.0, octaves=3, warp_scale=200.0, warp_strength=55.0, seed=970
     )
-    anomaly_formation = ridge_2d(wx, wz, scale=130.0, octaves=4, seed=980)
+    anomaly_formation = dsl.ridge_height(wx, wz, scale=130.0, octaves=4, seed=980)
 
-    kinds = np.stack(
-        [
-            np.clip((anomaly_rift - 0.35) * 3.5, 0.0, 1.0) * core,       # 1
-            np.clip((anomaly_turb - 0.35) * 2.8, 0.0, 1.0) * core,       # 2
-            np.clip((anomaly_moon - 0.45) * 3.5, 0.0, 1.0) * core,       # 3
-            np.clip((anomaly_curse - 0.40) * 3.0, 0.0, 1.0) * core,      # 4
-            np.clip((anomaly_formation - 0.55) * 3.0, 0.0, 1.0) * core,  # 5
-        ],
-        axis=0,
-    )  # shape (5, H, W)
-    best_kind_idx = np.argmax(kinds, axis=0)  # 0..4 → kind ids 1..5
-    best_intensity = np.max(kinds, axis=0)
-    anomaly_kind = np.where(
-        best_intensity > 0.15,
-        (best_kind_idx + 1).astype(np.int32),
-        0,
+    # 各 anomaly 候选场（专属阈值/增益预处理 → core 收口）。
+    anomaly_fields = [
+        np.clip((anomaly_rift - 0.35) * 3.5, 0.0, 1.0) * core,       # 1 spacetime_rift
+        np.clip((anomaly_turb - 0.35) * 2.8, 0.0, 1.0) * core,       # 2 qi_turbulence
+        np.clip((anomaly_moon - 0.45) * 3.5, 0.0, 1.0) * core,       # 3 blood_moon_anchor
+        np.clip((anomaly_curse - 0.40) * 3.0, 0.0, 1.0) * core,      # 4 cursed_echo
+        np.clip((anomaly_formation - 0.55) * 3.0, 0.0, 1.0) * core,  # 5 wild_formation
+    ]
+    best_intensity, anomaly_kind = dsl.anomaly_compete(
+        fields=anomaly_fields,
+        kind_ids=(1, 2, 3, 4, 5),
+        threshold=0.15,
     )
     anomaly_intensity = np.where(anomaly_kind > 0, best_intensity, 0.0)
 

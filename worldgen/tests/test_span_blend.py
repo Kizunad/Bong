@@ -6,7 +6,7 @@ boundary weight.  These cases lock the contract:
   * overlay-only features (isles / cave floors) appear only at weight >= 0.5;
   * void base adopts the overlay only once mostly inside the zone;
   * the result is always a legal ColumnSpans (delegated to ColumnSpans ctor).
-Also verifies the SHIM patch-layer blend modes still match the v3 modes so the
+Also verifies the FOLD patch-layer blend modes still match the v3 modes so the
 fold across boundaries stays landscape-faithful.
 """
 
@@ -15,7 +15,7 @@ from __future__ import annotations
 import unittest
 
 from scripts.terrain_gen.fields import ColumnSpans
-from scripts.terrain_gen.stitcher import SHIM_PATCH_BLEND_MODES, blend_spans
+from scripts.terrain_gen.stitcher import FOLD_PATCH_BLEND_MODES, blend_spans
 
 
 class BlendSpansTest(unittest.TestCase):
@@ -78,18 +78,18 @@ class BlendSpansTest(unittest.TestCase):
         ColumnSpans(result)
 
 
-class ShimPatchBlendModeTest(unittest.TestCase):
+class FoldPatchBlendModeTest(unittest.TestCase):
     def test_coordinate_layers_keep_minimum_blend(self) -> None:
         # sky_island_base_y / cavern_floor_y are coordinate-valued with sentinel
         # 9999; a maximum blend would corrupt them across boundaries.
-        self.assertEqual(SHIM_PATCH_BLEND_MODES["sky_island_base_y"], "minimum")
-        self.assertEqual(SHIM_PATCH_BLEND_MODES["cavern_floor_y"], "minimum")
+        self.assertEqual(FOLD_PATCH_BLEND_MODES["sky_island_base_y"], "minimum")
+        self.assertEqual(FOLD_PATCH_BLEND_MODES["cavern_floor_y"], "minimum")
 
     def test_mask_layers_keep_maximum_blend(self) -> None:
         for layer in ("cave_mask", "ceiling_height", "entrance_mask",
                       "sky_island_thickness"):
             self.assertEqual(
-                SHIM_PATCH_BLEND_MODES[layer],
+                FOLD_PATCH_BLEND_MODES[layer],
                 "maximum",
                 f"{layer} must blend by maximum (v3 behaviour)",
             )

@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import numpy as np
 
+from .. import dsl
 from ..blueprint import BlueprintZone
+from ..dsl import QiGrade
 from ..fields import SurfacePalette, TileFieldBuffer, WorldTile
-from ..noise import _tile_coords, fbm_2d, warped_fbm_2d
+from ..noise import _tile_coords
 from ..structures.whale_fossil import rasterize_whale_fossil_mask
 from .base import (
     DecorationSpec,
@@ -12,6 +14,9 @@ from .base import (
     ProfileContext,
     TerrainProfileGenerator,
 )
+
+# §8.1 #4 — 北荒台地：末法荒野微量灵气（north_wastes spirit_qi≈0.05）就近归档 trace 档。
+QI_GRADE = QiGrade.TRACE
 
 
 WASTE_PLATEAU_DECORATIONS = (
@@ -126,22 +131,36 @@ def fill_waste_plateau_tile(
     patches = zone.worldgen.extras.get("negative_pressure_patches", [])
 
     wx, wz = _tile_coords(tile.min_x, tile.min_z, tile_size)
-    dx = (wx - center_x) / half_w
-    dz = (wz - center_z) / half_d
-    radial = np.sqrt(dx * dx + dz * dz)
-    plateau = np.maximum(0.0, 1.0 - radial**1.15)
-    crown = np.maximum(0.0, 1.0 - radial**2.3)
+    # 径向 plateau / crown 隆起掩码（DSL radial_uplift，amplitude=1=裸掩码）。
+    plateau = dsl.radial_uplift(
+        wx, wz,
+        center_xz=(center_x, center_z),
+        half_w=half_w, half_d=half_d,
+        exponent=1.15, amplitude=1.0,
+    )
+    crown = dsl.radial_uplift(
+        wx, wz,
+        center_xz=(center_x, center_z),
+        half_w=half_w, half_d=half_d,
+        exponent=2.3, amplitude=1.0,
+    )
 
-    # Shelf undulation — broad, windswept feel
-    shelf = fbm_2d(wx, wz, scale=400.0, octaves=4, seed=500) * 5.0
+    # Shelf undulation — broad, windswept feel（DSL fbm_height，amplitude=1=裸噪声）
+    shelf = dsl.fbm_height(wx, wz, scale=400.0, octaves=4, seed=500) * 5.0
     # Fracture lines — warped for organic cracks
-    fracture = warped_fbm_2d(
+    fracture = dsl.warped_height(
         wx, wz, scale=140.0, octaves=4, warp_scale=220.0, warp_strength=50.0, seed=510
     )
     # Scarp edges
-    scarp = fbm_2d(wx, wz, scale=200.0, octaves=3, seed=520)
+    scarp = dsl.fbm_height(wx, wz, scale=200.0, octaves=3, seed=520)
 
-    height = 84.0 + plateau * 11.5 + crown * 4.2 + shelf
+    # 高度合成：基底 84 + plateau/crown 隆起 + shelf 起伏（DSL compose_height）。
+    height = dsl.compose_height(
+        np.full_like(plateau, 84.0),
+        plateau * 11.5,
+        crown * 4.2,
+        shelf,
+    )
     # Fracture cutting
     fracture_cut = np.maximum(0.0, -fracture - 0.2) * 18.0
     height = height - fracture_cut

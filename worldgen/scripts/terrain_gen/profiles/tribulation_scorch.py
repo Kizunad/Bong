@@ -2,11 +2,17 @@ from __future__ import annotations
 
 import numpy as np
 
+from .. import dsl
 from ..blueprint import BlueprintZone
+from ..dsl import QiGrade
 from ..fields import SurfacePalette, TileFieldBuffer, WorldTile
-from ..noise import _tile_coords, fbm_2d, ridge_2d, warped_fbm_2d
+from ..noise import _tile_coords
 from ..structures.ascension_pit import ASCENSION_PIT_DEFAULT_RADIUS
 from .base import DecorationSpec, EcologySpec, ProfileContext, TerrainProfileGenerator
+
+# §8.1 #4 — 烬焰焦土：主世界常量灵气（drift/blood_valley scorch spirit_qi≈0.28–0.32）
+# 就近归档 common 档。
+QI_GRADE = QiGrade.COMMON
 
 
 TRIBULATION_SCORCH_DECORATIONS = (
@@ -148,7 +154,9 @@ def fill_tribulation_scorch_tile(
     half_d = max(zone.size_xz[1] * 0.5, 1.0)
 
     wx, wz = _tile_coords(tile.min_x, tile.min_z, tile_size)
-    edge_warp = 1.0 + fbm_2d(wx, wz, scale=620.0, octaves=3, seed=1610) * 0.18
+    # 边界有机变形 + 各尺度噪声（DSL fbm_height / ridge_height / warped_height，
+    # amplitude=1=裸噪声）。
+    edge_warp = 1.0 + dsl.fbm_height(wx, wz, scale=620.0, octaves=3, seed=1610) * 0.18
     dx = (wx - center_x) / (half_w * edge_warp)
     dz = (wz - center_z) / (half_d * (1.0 - (edge_warp - 1.0) * 0.25))
     radial = np.sqrt(dx * dx + dz * dz)
@@ -158,7 +166,7 @@ def fill_tribulation_scorch_tile(
     disturbed_edge = (radial > 0.78) & (radial <= 1.08)
     falloff = np.clip(1.0 - radial, 0.0, 1.0)
 
-    ash_wave = warped_fbm_2d(
+    ash_wave = dsl.warped_height(
         wx,
         wz,
         scale=300.0,
@@ -167,9 +175,9 @@ def fill_tribulation_scorch_tile(
         warp_strength=58.0,
         seed=1620,
     )
-    glass_noise = fbm_2d(wx, wz, scale=76.0, octaves=3, seed=1630)
-    crater_noise = ridge_2d(wx, wz, scale=132.0, octaves=5, seed=1640)
-    static_noise = warped_fbm_2d(
+    glass_noise = dsl.fbm_height(wx, wz, scale=76.0, octaves=3, seed=1630)
+    crater_noise = dsl.ridge_height(wx, wz, scale=132.0, octaves=5, seed=1640)
+    static_noise = dsl.warped_height(
         wx,
         wz,
         scale=210.0,

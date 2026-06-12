@@ -12,15 +12,20 @@ from __future__ import annotations
 
 import numpy as np
 
+from .. import dsl
 from ..blueprint import BlueprintZone
+from ..dsl import QiGrade
 from ..fields import SurfacePalette, TileFieldBuffer, WorldTile
-from ..noise import _tile_coords, fbm_2d, ridge_2d, warped_fbm_2d
+from ..noise import _tile_coords
 from .base import (
     DecorationSpec,
     EcologySpec,
     ProfileContext,
     TerrainProfileGenerator,
 )
+
+# §8.1 #4 — TSY 大能陨落：化虚馈赠区灵气溢出（qi 0.78–1.0），归 font 档。
+QI_GRADE = QiGrade.FONT
 
 DANENG_CRATER_DECORATIONS = (
     DecorationSpec(
@@ -121,30 +126,38 @@ def fill_tsy_daneng_crater_tile(
     dx = (wx - center_x) / half_w
     dz = (wz - center_z) / half_d
     radial = np.sqrt(dx * dx + dz * dz)
-    core = np.maximum(0.0, 1.0 - radial**1.5)  # 中心 = 1，边缘 = 0
+    # 中心碗状坑 core 掩码（DSL radial_uplift，exponent=1.5，amplitude=1=裸掩码）。
+    core = dsl.radial_uplift(
+        wx, wz,
+        center_xz=(center_x, center_z),
+        half_w=half_w, half_d=half_d,
+        exponent=1.5, amplitude=1.0,
+    )  # 中心 = 1，边缘 = 0
 
+    # depth_tier 三分支各自独立地形公式（DSL fbm_height / ridge_height /
+    # warped_height，amplitude=1=裸噪声）。
     if depth_tier == "shallow":
         # 陨击坑边缘隆起，中心微凹
         rim = np.clip(1.0 - np.abs(radial - 0.85) * 4.0, 0.0, 1.0)
-        base = 64.0 + rim * 12.0 - core * 6.0 + fbm_2d(wx, wz, scale=140.0, octaves=3, seed=3100) * 3.0
-        ruin = np.clip(0.15 + core * 0.20 + fbm_2d(wx, wz, scale=80.0, octaves=2, seed=3110) * 0.15, 0.0, 0.5)
+        base = 64.0 + rim * 12.0 - core * 6.0 + dsl.fbm_height(wx, wz, scale=140.0, octaves=3, seed=3100) * 3.0
+        ruin = np.clip(0.15 + core * 0.20 + dsl.fbm_height(wx, wz, scale=80.0, octaves=2, seed=3110) * 0.15, 0.0, 0.5)
         qi = np.clip(0.86 + core * 0.06, 0.78, 1.0)
         decay = np.clip(0.14 - core * 0.04, 0.05, 0.22)
         cave = np.zeros_like(base)
     elif depth_tier == "mid":
-        base = 12.0 + ridge_2d(wx, wz, scale=70.0, octaves=4, seed=3200) * 5.0 - core * 6.0
-        ruin = np.clip(0.45 + core * 0.30 + warped_fbm_2d(wx, wz, scale=80.0, octaves=3, warp_scale=120.0, warp_strength=40.0, seed=3210) * 0.20, 0.2, 0.85)
+        base = 12.0 + dsl.ridge_height(wx, wz, scale=70.0, octaves=4, seed=3200) * 5.0 - core * 6.0
+        ruin = np.clip(0.45 + core * 0.30 + dsl.warped_height(wx, wz, scale=80.0, octaves=3, warp_scale=120.0, warp_strength=40.0, seed=3210) * 0.20, 0.2, 0.85)
         qi = np.clip(0.88 + core * 0.05, 0.78, 1.0)
         decay = np.clip(0.13, 0.06, 0.25)
-        cave = np.clip(core * 0.5 + fbm_2d(wx, wz, scale=120.0, octaves=2, seed=3220) * 0.2, 0.0, 0.7)
+        cave = np.clip(core * 0.5 + dsl.fbm_height(wx, wz, scale=120.0, octaves=2, seed=3220) * 0.2, 0.0, 0.7)
     else:  # deep
         # 中央巨型晶柱腔体 — 中心 cavity 顶 -4，底 -36
-        base = -22.0 + fbm_2d(wx, wz, scale=160.0, octaves=3, seed=3300) * 5.0 - core * 12.0
+        base = -22.0 + dsl.fbm_height(wx, wz, scale=160.0, octaves=3, seed=3300) * 5.0 - core * 12.0
         ruin = np.clip(0.30 + core * 0.25, 0.15, 0.7)
         qi = np.clip(0.94 + core * 0.05, 0.88, 1.0)
         decay = np.clip(0.08, 0.03, 0.18)
         # cave_mask: 深层中心高
-        cave = np.clip(core * 0.85 + fbm_2d(wx, wz, scale=140.0, octaves=2, seed=3320) * 0.15, 0.0, 1.0)
+        cave = np.clip(core * 0.85 + dsl.fbm_height(wx, wz, scale=140.0, octaves=2, seed=3320) * 0.15, 0.0, 1.0)
 
     qi_vein = np.clip(core * 0.5 + ruin * 0.3, 0.0, 1.0)
 
@@ -164,7 +177,7 @@ def fill_tsy_daneng_crater_tile(
         surface_id = np.where(core < 0.2, gravel_id, surface_id)
 
     anomaly_seed = 3500 + depth_id * 100
-    anomaly_field = warped_fbm_2d(wx, wz, scale=220.0, octaves=3, warp_scale=260.0, warp_strength=70.0, seed=anomaly_seed)
+    anomaly_field = dsl.warped_height(wx, wz, scale=220.0, octaves=3, warp_scale=260.0, warp_strength=70.0, seed=anomaly_seed)
     anomaly_threshold = {"shallow": 0.55, "mid": 0.45, "deep": 0.30}[depth_tier]
     anomaly_intensity = np.clip((anomaly_field - anomaly_threshold) * 3.0, 0.0, 1.0)
     # kind: shallow 多 spacetime_rift（1），deep 多 wild_formation（5），mid 偶发 qi_turbulence（2）

@@ -2,15 +2,22 @@ from __future__ import annotations
 
 import numpy as np
 
+from .. import dsl
 from ..blueprint import BlueprintZone
+from ..dsl import QiGrade
 from ..fields import SurfacePalette, TileFieldBuffer, WorldTile
-from ..noise import _tile_coords, fbm_2d, warped_fbm_2d
+from ..noise import _tile_coords
 from .base import (
     DecorationSpec,
     EcologySpec,
     ProfileContext,
     TerrainProfileGenerator,
 )
+
+# §8.1 #4 — 伪灵脉绿洲：中心高灵气诱饵（0.80 false-well core），主世界常量区，
+# 归 common 档（中心 body 0.60 仍落 rich 上界内，整体就近 common）。
+# 现有 zone spirit_qi=0.32（drift_scorch_001）就近归档。
+QI_GRADE = QiGrade.COMMON
 
 
 PSEUDO_VEIN_DECORATIONS = (
@@ -134,11 +141,17 @@ def fill_pseudo_vein_oasis_tile(
     oasis_mask = t <= 1.0
     hungry_ring = (t > 1.0) & (t <= (rim_radius / core_radius))
 
-    mound_noise = warped_fbm_2d(
+    mound_noise = dsl.warped_height(
         wx, wz, scale=130.0, octaves=4, warp_scale=180.0, warp_strength=34.0, seed=610
     )
-    petal_noise = fbm_2d(wx, wz, scale=34.0, octaves=3, seed=620)
-    height = 69.0 + core * 8.0 + np.maximum(0.0, petal_noise) * 1.6 + mound_noise * 1.4
+    petal_noise = dsl.fbm_height(wx, wz, scale=34.0, octaves=3, seed=620)
+    # 高度合成（DSL compose_height）：基底 + 中心隆起 + 花瓣起伏 + 土丘扰动。
+    height = dsl.compose_height(
+        np.full_like(core, 69.0),
+        core * 8.0,
+        np.maximum(0.0, petal_noise) * 1.6,
+        mound_noise * 1.4,
+    )
     height = np.where(hungry_ring, 67.5 + petal_noise * 0.8, height)
     height = np.where(t > (rim_radius / core_radius), 66.5 + mound_noise * 0.5, height)
 

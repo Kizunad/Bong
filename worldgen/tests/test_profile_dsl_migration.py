@@ -1,0 +1,200 @@
+"""worldgen-v4 P2 — 迁移到 DSL 的 profile 的契约 pin.
+
+每个被重写为声明式 DSL 组合的 profile 必须满足两条契约：
+
+1. **景观不变（换表示不换景观）** —— 迁移后的 ``fill_*_tile`` 输出与迁移前
+   逐层 byte-identical。这一条由 ``test_v3_full_profile_baseline.py`` 的全 profile
+   等价对拍兜底（采样列 + span 形态 + water + biome）。本文件额外锁**整层**等价：
+   迁移后的 generator 仍只用 DSL 算子库（noise via dsl.fbm_height/ridge_height/
+   warped_height、径向 via dsl.radial_uplift、合成 via dsl.compose_height），而非
+   绕过 DSL 重新内联 numpy——通过断言「profile 模块 import 了 dsl 且不再裸 import
+   noise 的 fbm_2d/ridge_2d/warped_fbm_2d」来 pin「已迁移」状态。
+
+2. **qi_grade 声明（§8.1 #4）** —— 每个迁移 profile 模块导出一个 ``QI_GRADE``
+   常量，落在六档枚举内（现有 zone spirit_qi 就近归档）。P2 只锁 schema 声明，
+   实际灵气场生成在 P4。
+
+迁移一个 profile 就把它的 key 追加进 ``MIGRATED_PROFILES``，pin 立即生效。P2 收尾
+后全部 profile 已迁；其 2D 层经统一 spans_fold 折成 spans（"换表示不换景观"）。
+"""
+
+from __future__ import annotations
+
+import ast
+import importlib
+import unittest
+from pathlib import Path
+
+import numpy as np
+
+from scripts.terrain_gen import dsl
+
+PROFILES_DIR = (
+    Path(__file__).resolve().parents[1] / "scripts/terrain_gen/profiles"
+)
+
+# (profile_key, module_name) for每个已迁移到 DSL 的 profile。迁移完一个就追加。
+MIGRATED_PROFILES: tuple[tuple[str, str], ...] = (
+    ("broken_peaks", "scripts.terrain_gen.profiles.broken_peaks"),
+    ("ash_dead_zone", "scripts.terrain_gen.profiles.ash_dead_zone"),
+    ("ancient_battlefield", "scripts.terrain_gen.profiles.ancient_battlefield"),
+    ("cave_network", "scripts.terrain_gen.profiles.cave_network"),
+    ("rift_valley", "scripts.terrain_gen.profiles.rift_valley"),
+    ("pseudo_vein_oasis", "scripts.terrain_gen.profiles.pseudo_vein_oasis"),
+    ("rift_mouth_barrens", "scripts.terrain_gen.profiles.rift_mouth_barrens"),
+    ("dan_zong_yi_yuan", "scripts.terrain_gen.profiles.dan_zong_yi_yuan"),
+    ("jiu_zong_ruin", "scripts.terrain_gen.profiles.jiu_zong_ruin"),
+    ("abyssal_maze", "scripts.terrain_gen.profiles.abyssal_maze"),
+    ("spawn_plain", "scripts.terrain_gen.profiles.spawn_plain"),
+    ("spring_marsh", "scripts.terrain_gen.profiles.spring_marsh"),
+    ("sky_isle", "scripts.terrain_gen.profiles.sky_isle"),
+    ("waste_plateau", "scripts.terrain_gen.profiles.waste_plateau"),
+    ("tribulation_scorch", "scripts.terrain_gen.profiles.tribulation_scorch"),
+    ("wangyintai", "scripts.terrain_gen.profiles.wangyintai"),
+    ("tsy_zongmen_ruin", "scripts.terrain_gen.profiles.tsy_zongmen_ruin"),
+    ("tsy_daneng_crater", "scripts.terrain_gen.profiles.tsy_daneng_crater"),
+    ("tsy_zhanchang", "scripts.terrain_gen.profiles.tsy_zhanchang"),
+    ("tsy_gaoshou_hermitage", "scripts.terrain_gen.profiles.tsy_gaoshou_hermitage"),
+)
+
+# 迁移后不应再裸 import 的低层 noise 函数（应改走 dsl 算子库封装）。
+_BARE_NOISE_FNS = frozenset({"fbm_2d", "ridge_2d", "warped_fbm_2d"})
+
+
+class ProfileDslMigrationTest(unittest.TestCase):
+    def test_migrated_profile_declares_valid_qi_grade(self) -> None:
+        # §8.1 #4：每个迁移 profile 导出 QI_GRADE 落在六档枚举内。
+        for profile_key, module_name in MIGRATED_PROFILES:
+            module = importlib.import_module(module_name)
+            self.assertTrue(
+                hasattr(module, "QI_GRADE"),
+                f"{profile_key} migrated to DSL but does not export a QI_GRADE "
+                "constant; §8.1 #4 requires every migrated profile declare its "
+                "qi_grade band (spirit_qi 就近归档)",
+            )
+            grade = module.QI_GRADE
+            self.assertIsInstance(
+                grade,
+                dsl.QiGrade,
+                f"{profile_key}.QI_GRADE must be a dsl.QiGrade enum member, got "
+                f"{type(grade)!r}",
+            )
+            # 枚举值必须落在 QI_GRADE_BOUNDS 已声明的六档之一。
+            self.assertIn(
+                grade,
+                dsl.QI_GRADE_BOUNDS,
+                f"{profile_key}.QI_GRADE={grade!r} is not one of the six declared "
+                f"qi_grade bands {tuple(dsl.QI_GRADE_BOUNDS)}",
+            )
+
+    def test_migrated_profile_uses_dsl_not_bare_noise(self) -> None:
+        # 迁移 = 把噪声/径向/合成换成 dsl 算子库；模块应 import dsl 且不再裸 import
+        # fbm_2d/ridge_2d/warped_fbm_2d（防「假迁移」：换了 import 又内联回来）。
+        for profile_key, module_name in MIGRATED_PROFILES:
+            source_path = PROFILES_DIR / f"{profile_key}.py"
+            self.assertTrue(
+                source_path.exists(),
+                f"migrated profile source {source_path} not found",
+            )
+            tree = ast.parse(source_path.read_text(encoding="utf-8"))
+            imports_dsl = False
+            bare_noise: set[str] = set()
+            for node in ast.walk(tree):
+                if isinstance(node, ast.ImportFrom):
+                    imported = {alias.name for alias in node.names}
+                    if "dsl" in imported or (
+                        node.module and node.module.endswith("dsl")
+                    ):
+                        imports_dsl = True
+                    bare_noise |= imported & _BARE_NOISE_FNS
+            self.assertTrue(
+                imports_dsl,
+                f"{profile_key} is listed as migrated but does not import the dsl "
+                "operator library; a DSL migration must build its height field "
+                "through dsl.* ops",
+            )
+            self.assertEqual(
+                bare_noise,
+                set(),
+                f"{profile_key} still bare-imports low-level noise {sorted(bare_noise)} "
+                "after migration; route noise through dsl.fbm_height / "
+                "dsl.ridge_height / dsl.warped_height instead",
+            )
+
+
+class AshDeadZoneInvariantTest(unittest.TestCase):
+    """死域专属守恒不变量：DSL 迁移后必须仍恒成立（最易回归的点）。"""
+
+    def test_qi_vein_flow_is_exactly_zero_everywhere(self) -> None:
+        # §死域：灵脉断绝 → qi_vein_flow 恒 0.0。DSL 迁移若误把灵脉流引回（如复用
+        # 通用 qi 算子带回非零），此 pin 立即撞红。与 raster_check 死域规则对齐。
+        from v3_full_profile_baseline import build_full_profile_buffer
+
+        buffer = build_full_profile_buffer("ash_dead_zone")
+        vein = np.asarray(buffer.layers["qi_vein_flow"])
+        max_abs = float(np.abs(vein).max()) if vein.size else 0.0
+        self.assertEqual(
+            max_abs,
+            0.0,
+            "ash_dead_zone qi_vein_flow must be exactly 0.0 everywhere (severed "
+            f"meridians); DSL migration leaked a non-zero flow (max|flow|={max_abs})",
+        )
+
+    def test_core_qi_density_is_exactly_zero(self) -> None:
+        # 死域核心 qi_density 恒 0（死灵核心）。迁移后核心至少有一列必须为 0。
+        from v3_full_profile_baseline import build_full_profile_buffer
+
+        buffer = build_full_profile_buffer("ash_dead_zone")
+        qi = np.asarray(buffer.layers["qi_density"])
+        self.assertEqual(
+            float(qi.min()),
+            0.0,
+            "ash_dead_zone must have a dead core column with qi_density==0.0; "
+            f"min qi_density={float(qi.min())} after migration",
+        )
+
+
+class WangyintaiNegativeQiInvariantTest(unittest.TestCase):
+    """忘音台负灵域不变量：DSL 迁移后 qi_density 必须仍写入负值（最易回归点）。
+
+    wangyintai 是 batch-2 唯一 NEGATIVE 档 profile（spirit_qi=-0.15）。DSL 迁移
+    若误把负 qi clamp 到 0 或取绝对值（常见错误），此 pin 立即撞红——锁住
+    §8.1 #4 negative 档 / qi_override 负值域路径。
+    """
+
+    def test_qi_density_field_carries_negative_values(self) -> None:
+        from v3_full_profile_baseline import build_full_profile_buffer
+
+        buffer = build_full_profile_buffer("wangyintai")
+        qi = np.asarray(buffer.layers["qi_density"])
+        self.assertLess(
+            float(qi.min()),
+            0.0,
+            "wangyintai must write a negative qi_density column (void resonance "
+            f"吞噬真元); min qi_density={float(qi.min())} >= 0 means the DSL "
+            "migration clamped/abs'd the negative qi field away",
+        )
+        # native 值域下界：忘音台实写 [-0.25, 0.0]（§8.1 #4 negative 档下边界 -0.1
+        # 之外的连续值，P4 qi_override 收口）。锁住绝不越出 -0.25 native 地板。
+        self.assertGreaterEqual(
+            float(qi.min()),
+            -0.25,
+            "wangyintai qi_density must stay within its authored [-0.25, 0.0] "
+            f"floor; min={float(qi.min())} drifted below -0.25",
+        )
+
+    def test_no_qi_vein_flow_layer(self) -> None:
+        # 涡流宗灵脉已断：wangyintai 不导出 qi_vein_flow 层（§profile 注释）。
+        from v3_full_profile_baseline import build_full_profile_buffer
+
+        buffer = build_full_profile_buffer("wangyintai")
+        self.assertNotIn(
+            "qi_vein_flow",
+            buffer.layers,
+            "wangyintai must NOT emit a qi_vein_flow layer (涡流宗灵脉已断); "
+            "DSL migration leaked a vein flow layer",
+        )
+
+
+if __name__ == "__main__":
+    unittest.main()

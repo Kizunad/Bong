@@ -19,15 +19,21 @@ from __future__ import annotations
 
 import numpy as np
 
+from .. import dsl
 from ..blueprint import BlueprintZone
+from ..dsl import QiGrade
 from ..fields import SurfacePalette, TileFieldBuffer, WorldTile
-from ..noise import _tile_coords, fbm_2d, warped_fbm_2d
+from ..noise import _tile_coords
 from .base import (
     DecorationSpec,
     EcologySpec,
     ProfileContext,
     TerrainProfileGenerator,
 )
+
+# §8.1 #4 — 无垠深渊：灵脉残存（深渊藏脉，tier3 vein 高），归 rich 档。
+# 现有 zone spirit_qi=0.55（wuxing_abyss）就近归档。
+QI_GRADE = QiGrade.RICH
 
 
 # Abyssal flora/decor variants. ID 0 = none.
@@ -168,30 +174,41 @@ def fill_abyssal_maze_tile(
     half_d = max(zone.size_xz[1] * 0.5, 1.0)
 
     wx, wz = _tile_coords(tile.min_x, tile.min_z, tile_size)
-    dx = (wx - center_x) / half_w
-    dz = (wz - center_z) / half_d
-    radial = np.sqrt(dx * dx + dz * dz)
-    cluster = np.maximum(0.0, 1.0 - radial**1.4)
+    # 簇聚径向 cluster = max(0, 1 - radial**1.4)（DSL radial_uplift）。
+    cluster = dsl.radial_uplift(
+        wx,
+        wz,
+        center_xz=(center_x, center_z),
+        half_w=half_w,
+        half_d=half_d,
+        exponent=1.4,
+        amplitude=1.0,
+    )
 
-    # --- Surface ---
-    surface_fbm = fbm_2d(wx, wz, scale=220.0, octaves=3, seed=800)
-    sinkhole = warped_fbm_2d(
+    # --- Surface（噪声走 dsl 算子库）---
+    surface_fbm = dsl.fbm_height(wx, wz, scale=220.0, octaves=3, seed=800)
+    sinkhole = dsl.warped_height(
         wx, wz, scale=160.0, octaves=4, warp_scale=220.0, warp_strength=60.0, seed=810
     )
     entrance_mask = np.clip(
         cluster * 0.7 - np.abs(sinkhole - 0.18) * 1.8, 0.0, 1.0
     )
     sink_depth = entrance_mask * 16.0
-    height = 76.0 + surface_fbm * 3.5 - sink_depth
+    # 高度合成（DSL compose_height）：地表基底 + 起伏 − 陷穴下切。
+    height = dsl.compose_height(
+        np.full_like(surface_fbm, 76.0),
+        surface_fbm * 3.5,
+        -sink_depth,
+    )
 
     # --- Three tier noise fields (independent seeds for varied layouts) ---
-    tier1 = warped_fbm_2d(
+    tier1 = dsl.warped_height(
         wx, wz, scale=140.0, octaves=4, warp_scale=200.0, warp_strength=50.0, seed=820
     )
-    tier2 = warped_fbm_2d(
+    tier2 = dsl.warped_height(
         wx, wz, scale=120.0, octaves=5, warp_scale=180.0, warp_strength=45.0, seed=830
     )
-    tier3 = warped_fbm_2d(
+    tier3 = dsl.warped_height(
         wx, wz, scale=110.0, octaves=5, warp_scale=160.0, warp_strength=40.0, seed=840
     )
 
@@ -199,7 +216,8 @@ def fill_abyssal_maze_tile(
     # support, keeping the deep abyss rare and meaningful.
     tier1_active = (tier1 * cluster) > 0.08
     tier2_active = (tier2 * cluster) > 0.12
-    abyssal_rift_sdf = np.sqrt((wx - center_x) ** 2 + (wz - center_z) ** 2)
+    # 中心 rift 锚点欧氏距离 SDF（DSL anchor_sdf）。
+    abyssal_rift_sdf = dsl.anchor_sdf(wx, wz, anchor_xz=(center_x, center_z))
     tier3_active = ((tier3 * cluster) > 0.18) | (abyssal_rift_sdf <= 30.0)
 
     # underground_tier: highest active tier number (deeper wins).
@@ -284,7 +302,7 @@ def fill_abyssal_maze_tile(
     flora_density = np.zeros_like(height)
     flora_variant = np.zeros_like(height, dtype=np.int32)
 
-    tier_noise = fbm_2d(wx, wz, scale=90.0, octaves=3, seed=850)
+    tier_noise = dsl.fbm_height(wx, wz, scale=90.0, octaves=3, seed=850)
 
     # tier 1 (shallow y≈28): xun_guang_mushroom (3) + gu_teng_creeper (5)
     flora_variant = np.where(

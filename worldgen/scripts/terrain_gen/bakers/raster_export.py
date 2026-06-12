@@ -18,7 +18,7 @@ from ..fields import (
     TerrainGenerationPlan,
     encode_spans_arrays,
 )
-from ..spans_shim import spans_for_tile
+from ..spans_fold import spans_for_tile
 from ..profiles import (
     GLOBAL_DECORATION_PALETTE,
     PROFILE_DECORATION_OFFSETS,
@@ -67,10 +67,10 @@ UINT8_LAYERS = {
 }
 
 
-# worldgen-v4 P0 §8.1 #1: the spans replace height.bin + the six vertical patch
+# worldgen-v4 §8.1 #1: the spans replace height.bin + the six vertical patch
 # layers.  height stays in LAYER_REGISTRY for the stitcher's internal blend math,
-# and the six patch layers are still emitted by the unrewritten profiles into the
-# tile buffer for the shim to read — but NONE of them are written as standalone
+# and the six patch layers are still emitted by the DSL profiles into the tile
+# buffer for the spans_fold to read — but NONE of them are written as standalone
 # rasters; they are all folded into spans_count.bin + spans.bin at export.
 SPANS_COUNT_FILE = "spans_count.bin"
 SPANS_FILE = "spans.bin"
@@ -255,7 +255,7 @@ def export_rasters(
             "worldgen-v4 P0: column vertical structure lives in spans_count.bin + spans.bin",
             "  (per-column solid (floor_y, ceiling_y) ranges, see manifest.spans_encoding).",
             "  These replace height.bin AND the old sky_island_base_y/thickness, cave_mask,",
-            "  ceiling_height, entrance_mask, cavern_floor_y patch layers (folded by the shim).",
+            "  ceiling_height, entrance_mask, cavern_floor_y patch layers (folded by spans_fold).",
             "  surface_y = span[0].ceiling_y (walkable ground; caves carved below, isles above).",
             "Semantic layers (qi_density / mofa_decay / qi_vein_flow) carry the xianxia world model.",
             "Vertical SEMANTIC layers retained: sky_island_mask (gate isle flora) +",

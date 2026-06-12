@@ -1,0 +1,132 @@
+{
+  "_doc": "worldgen-v4 P2 DSL schema 正反样本 (§P2 + §8.1 #4). valid[] 必须解析通过且字段对齐; invalid[] 必须被拒。供 test_dsl.py 双端对拍, 不被运行时 pipeline 消费。",
+  "valid": [
+    {
+      "_name": "minimal_common",
+      "qi_grade": "common"
+    },
+    {
+      "_name": "negative_with_override",
+      "qi_grade": "negative",
+      "qi_override": -0.15,
+      "terrain_style": {
+        "height_ops": [
+          {"category": "height", "op": "warped_height", "params": {"base": 64.0, "amplitude": 3.0, "scale": 160.0, "seed": 700}}
+        ],
+        "features": ["deterministic_compound"]
+      }
+    },
+    {
+      "_name": "font_full_dsl",
+      "qi_grade": "font",
+      "qi_override": 0.85,
+      "terrain_style": {
+        "height_ops": [
+          {"category": "height", "op": "fbm_height", "params": {"base": 70.0, "amplitude": 4.0, "scale": 120.0, "seed": 10}},
+          {"category": "height", "op": "radial_uplift", "params": {"exponent": 1.9, "amplitude": 3.8, "$weight": 1.0}}
+        ],
+        "carve_ops": [
+          {"category": "carve", "op": "rift_carve", "params": {"rift_axis_sdf": "field:rift_axis_sdf", "rim_edge_mask": "field:rim_edge_mask"}}
+        ],
+        "features": ["spirit_font", "ridge_double"]
+      },
+      "surface_palette": {
+        "rules": [
+          {"block": "stone", "condition": "default"},
+          {"block": "snow", "condition": "snowline_above", "params": {"snowline_y": 285.0}}
+        ]
+      },
+      "flora_table": {
+        "variants": [
+          {"variant": "spirit_pine", "density": 0.55, "band_condition": "heartland", "params": {"band_threshold": 0.2, "pick_threshold": 0.4}}
+        ],
+        "ground_cover": [
+          {"variant": "qi_moss", "density": 0.3, "band_condition": "default"}
+        ]
+      }
+    },
+    {
+      "_name": "custom_op_escape_hatch",
+      "qi_grade": "common",
+      "terrain_style": {
+        "height_ops": [
+          {"category": "height", "op": "custom:fossil_uplift", "params": {"bbox": [0, 0, 32, 32]}}
+        ]
+      }
+    },
+    {
+      "_name": "dead_grade_boundary",
+      "qi_grade": "dead",
+      "qi_override": 0.0
+    },
+    {
+      "_name": "trace_grade",
+      "qi_grade": "trace",
+      "qi_override": 0.05
+    },
+    {
+      "_name": "rich_grade",
+      "qi_grade": "rich",
+      "qi_override": 0.5
+    }
+  ],
+  "invalid": [
+    {
+      "_name": "unknown_qi_grade",
+      "_reason": "qi_grade 'ultra' 不在六档之内",
+      "qi_grade": "ultra"
+    },
+    {
+      "_name": "override_above_range",
+      "_reason": "qi_override 1.5 超出 native 值域 [-1, 1]",
+      "qi_grade": "font",
+      "qi_override": 1.5
+    },
+    {
+      "_name": "override_below_range",
+      "_reason": "qi_override -2.0 低于 native 值域 [-1, 1]",
+      "qi_grade": "negative",
+      "qi_override": -2.0
+    },
+    {
+      "_name": "bad_op_category",
+      "_reason": "OpStep category 'bogus' 不是合法算子类别",
+      "qi_grade": "common",
+      "terrain_style": {
+        "height_ops": [
+          {"category": "bogus", "op": "fbm_height", "params": {}}
+        ]
+      }
+    },
+    {
+      "_name": "unknown_op_in_valid_category",
+      "_reason": "category 'height' 合法但 op 'nonexistent_height' 不在该类别内 —— parse 期就该拒，不能拖到 eval 才 KeyError",
+      "qi_grade": "common",
+      "terrain_style": {
+        "height_ops": [
+          {"category": "height", "op": "nonexistent_height", "params": {}}
+        ]
+      }
+    },
+    {
+      "_name": "surface_rule_missing_block",
+      "_reason": "surface rule 缺 'block' 必填键",
+      "qi_grade": "common",
+      "surface_palette": {
+        "rules": [
+          {"condition": "default"}
+        ]
+      }
+    },
+    {
+      "_name": "flora_missing_variant",
+      "_reason": "flora entry 缺 'variant' 必填键",
+      "qi_grade": "common",
+      "flora_table": {
+        "variants": [
+          {"density": 0.5}
+        ]
+      }
+    }
+  ]
+}

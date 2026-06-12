@@ -4,15 +4,21 @@ from __future__ import annotations
 
 import numpy as np
 
+from .. import dsl
 from ..blueprint import BlueprintZone
+from ..dsl import QiGrade
 from ..fields import SurfacePalette, TileFieldBuffer, WorldTile
-from ..noise import _tile_coords, fbm_2d, ridge_2d, warped_fbm_2d
+from ..noise import _tile_coords
 from .base import (
     DecorationSpec,
     EcologySpec,
     ProfileContext,
     TerrainProfileGenerator,
 )
+
+# §8.1 #4 — 九宗故地：灵气均值 ~0.40，主世界常量区，归 common 档。
+# 现有七宗 zone spirit_qi=0.40 就近归档。
+QI_GRADE = QiGrade.COMMON
 
 
 JIU_ZONG_RUIN_DECORATIONS_COMMON = (
@@ -199,7 +205,8 @@ def fill_jiu_zong_ruin_tile(
     radial = np.sqrt(nx * nx + nz * nz)
     core = np.clip(1.0 - radial, 0.0, 1.0)
 
-    landform = warped_fbm_2d(
+    # 地貌/瓦砾/殿格/紊流/阵场噪声走 dsl 算子库（origin_id 偏移 seed 保持参数化）。
+    landform = dsl.warped_height(
         wx,
         wz,
         scale=210.0,
@@ -208,20 +215,30 @@ def fill_jiu_zong_ruin_tile(
         warp_strength=80.0,
         seed=7100 + origin_id * 31,
     )
-    rubble = np.abs(ridge_2d(wx, wz, scale=64.0, octaves=4, seed=7200 + origin_id * 37))
-    hall_grid = np.abs(ridge_2d(wx, wz, scale=96.0, octaves=3, seed=7300 + origin_id * 41))
+    rubble = np.abs(
+        dsl.ridge_height(wx, wz, scale=64.0, octaves=4, seed=7200 + origin_id * 37)
+    )
+    hall_grid = np.abs(
+        dsl.ridge_height(wx, wz, scale=96.0, octaves=3, seed=7300 + origin_id * 41)
+    )
     ruin_density = np.clip(core * 0.78 + rubble * 0.22 + (hall_grid > 0.58) * 0.18, 0.0, 1.0)
 
-    height = 76.0 + core * 9.0 + landform * 5.0 + rubble * 2.5
+    # 高度合成（DSL compose_height）：基底 + 核心隆起 + 地貌 + 瓦砾。
+    height = dsl.compose_height(
+        np.full_like(core, 76.0),
+        core * 9.0,
+        landform * 5.0,
+        rubble * 2.5,
+    )
     height = np.where(radial > 0.86, 72.0 + landform * 2.0, height)
 
-    turbulence = fbm_2d(wx, wz, scale=92.0, octaves=3, seed=7400 + origin_id * 43)
+    turbulence = dsl.fbm_height(wx, wz, scale=92.0, octaves=3, seed=7400 + origin_id * 43)
     qi_density = np.clip(0.40 + turbulence * 0.30 - radial * 0.10, 0.10, 0.70)
     qi_density = np.where(radial > 0.92, np.clip(qi_density - 0.10, 0.10, 0.70), qi_density)
     mofa_decay = np.clip(0.62 - core * 0.12 + rubble * 0.08, 0.45, 0.72)
     qi_vein_flow = np.clip((hall_grid > 0.52) * 0.35 + core * 0.20 + rubble * 0.15, 0.0, 0.65)
 
-    formation_field = warped_fbm_2d(
+    formation_field = dsl.warped_height(
         wx,
         wz,
         scale=150.0,

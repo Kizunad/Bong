@@ -12,15 +12,20 @@ from __future__ import annotations
 
 import numpy as np
 
+from .. import dsl
 from ..blueprint import BlueprintZone
+from ..dsl import QiGrade
 from ..fields import SurfacePalette, TileFieldBuffer, WorldTile
-from ..noise import _tile_coords, fbm_2d, ridge_2d, warped_fbm_2d
+from ..noise import _tile_coords
 from .base import (
     DecorationSpec,
     EcologySpec,
     ProfileContext,
     TerrainProfileGenerator,
 )
+
+# §8.1 #4 — TSY 宗门遗迹：化虚馈赠区残灵浓厚（qi 0.85–1.0），归 font 档。
+QI_GRADE = QiGrade.FONT
 
 ZONGMEN_RUIN_DECORATIONS = (
     DecorationSpec(
@@ -115,23 +120,25 @@ def fill_tsy_zongmen_ruin_tile(
     wx, wz = _tile_coords(tile.min_x, tile.min_z, tile_size)
     area = tile_size * tile_size
 
+    # depth_tier 三分支各自独立高度公式（DSL fbm_height / ridge_height /
+    # warped_height，amplitude=1=裸噪声）。
     if depth_tier == "shallow":
-        base = 60.0 + fbm_2d(wx, wz, scale=120.0, octaves=3, seed=2100) * 4.0
-        ruin = np.clip(0.20 + fbm_2d(wx, wz, scale=80.0, octaves=2, seed=2110) * 0.25, 0.0, 0.6)
-        qi = np.clip(0.85 + fbm_2d(wx, wz, scale=140.0, octaves=2, seed=2120) * 0.05, 0.7, 1.0)
-        decay = np.clip(0.12 + np.abs(ridge_2d(wx, wz, scale=70.0, octaves=2, seed=2130)) * 0.08, 0.05, 0.25)
+        base = 60.0 + dsl.fbm_height(wx, wz, scale=120.0, octaves=3, seed=2100) * 4.0
+        ruin = np.clip(0.20 + dsl.fbm_height(wx, wz, scale=80.0, octaves=2, seed=2110) * 0.25, 0.0, 0.6)
+        qi = np.clip(0.85 + dsl.fbm_height(wx, wz, scale=140.0, octaves=2, seed=2120) * 0.05, 0.7, 1.0)
+        decay = np.clip(0.12 + np.abs(dsl.ridge_height(wx, wz, scale=70.0, octaves=2, seed=2130)) * 0.08, 0.05, 0.25)
     elif depth_tier == "mid":
-        base = 8.0 + ridge_2d(wx, wz, scale=60.0, octaves=4, seed=2200) * 6.0
-        ruin = np.clip(0.55 + warped_fbm_2d(wx, wz, scale=80.0, octaves=3, warp_scale=120.0, warp_strength=40.0, seed=2210) * 0.25, 0.3, 0.95)
-        qi = np.clip(0.88 + fbm_2d(wx, wz, scale=110.0, octaves=2, seed=2220) * 0.06, 0.75, 1.0)
+        base = 8.0 + dsl.ridge_height(wx, wz, scale=60.0, octaves=4, seed=2200) * 6.0
+        ruin = np.clip(0.55 + dsl.warped_height(wx, wz, scale=80.0, octaves=3, warp_scale=120.0, warp_strength=40.0, seed=2210) * 0.25, 0.3, 0.95)
+        qi = np.clip(0.88 + dsl.fbm_height(wx, wz, scale=110.0, octaves=2, seed=2220) * 0.06, 0.75, 1.0)
         decay = np.clip(0.15 + ruin * 0.05, 0.08, 0.30)
     else:  # deep
-        base = -28.0 + fbm_2d(wx, wz, scale=140.0, octaves=3, seed=2300) * 4.0
-        ruin = np.clip(0.40 + fbm_2d(wx, wz, scale=70.0, octaves=2, seed=2310) * 0.20, 0.2, 0.8)
-        qi = np.clip(0.92 + fbm_2d(wx, wz, scale=180.0, octaves=2, seed=2320) * 0.06, 0.85, 1.0)
-        decay = np.clip(0.10 + fbm_2d(wx, wz, scale=90.0, octaves=2, seed=2330) * 0.05, 0.05, 0.20)
+        base = -28.0 + dsl.fbm_height(wx, wz, scale=140.0, octaves=3, seed=2300) * 4.0
+        ruin = np.clip(0.40 + dsl.fbm_height(wx, wz, scale=70.0, octaves=2, seed=2310) * 0.20, 0.2, 0.8)
+        qi = np.clip(0.92 + dsl.fbm_height(wx, wz, scale=180.0, octaves=2, seed=2320) * 0.06, 0.85, 1.0)
+        decay = np.clip(0.10 + dsl.fbm_height(wx, wz, scale=90.0, octaves=2, seed=2330) * 0.05, 0.05, 0.20)
 
-    fracture = np.maximum(0.0, ridge_2d(wx, wz, scale=80.0, octaves=4, seed=2400 + depth_id * 100))
+    fracture = np.maximum(0.0, dsl.ridge_height(wx, wz, scale=80.0, octaves=4, seed=2400 + depth_id * 100))
     qi_vein = np.clip(fracture * 0.7 + ruin * 0.2, 0.0, 1.0)
 
     stone_id = palette.ensure("stone")
@@ -146,12 +153,12 @@ def fill_tsy_zongmen_ruin_tile(
         surface_id = np.where((ruin < 0.3) & (fracture < 0.2), moss_id, surface_id)
 
     anomaly_seed = 2500 + depth_id * 100
-    anomaly_field = warped_fbm_2d(wx, wz, scale=200.0, octaves=3, warp_scale=240.0, warp_strength=70.0, seed=anomaly_seed)
+    anomaly_field = dsl.warped_height(wx, wz, scale=200.0, octaves=3, warp_scale=240.0, warp_strength=70.0, seed=anomaly_seed)
     anomaly_threshold = {"shallow": 0.55, "mid": 0.45, "deep": 0.35}[depth_tier]
     anomaly_intensity = np.clip((anomaly_field - anomaly_threshold) * 3.0, 0.0, 1.0)
     anomaly_kind = np.where(anomaly_intensity > 0.15, 5, 0).astype(np.int32)
     if depth_tier == "deep":
-        rift_field = fbm_2d(wx, wz, scale=160.0, octaves=2, seed=2600)
+        rift_field = dsl.fbm_height(wx, wz, scale=160.0, octaves=2, seed=2600)
         rift_strong = (rift_field > 0.35) & (anomaly_intensity < 0.25)
         anomaly_intensity = np.where(rift_strong, np.clip(rift_field * 0.8, 0.0, 1.0), anomaly_intensity)
         anomaly_kind = np.where(rift_strong, 1, anomaly_kind)

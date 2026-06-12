@@ -8,8 +8,8 @@ The output is the frozen behaviour-equivalence golden for worldgen-v4 P0.
 It is captured from the untouched v3 generators (height + carve masks) fed
 through ``v3_surface_top_y`` — the Python mirror of the v3 Rust carve — so the
 golden is the REAL v3 walkable surface, not ``round(height)``.  It must NOT be
-regenerated after the span shim lands unless a profile legitimately changes,
-because the whole point is to pin v3 landscape behaviour.
+regenerated unless a profile legitimately changes, because the whole point is to
+pin v3 landscape behaviour.
 
 CRITICAL (worldgen-v4 P0 BLOCKER): the previous golden recorded
 ``surface_y = round(height)`` and never applied the v3 rift/fracture/neg/
@@ -37,7 +37,7 @@ import numpy as np
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from scripts.terrain_gen.spans_shim import v3_surface_top_y  # noqa: E402
+from scripts.terrain_gen.spans_fold import v3_surface_top_y  # noqa: E402
 from v3_baseline_zones import (  # noqa: E402
     BASELINE_PROFILES,
     SAMPLE_COLUMNS,

@@ -8,7 +8,7 @@ End-to-end export of a real profile, asserting the on-disk contract:
     semantic vertical rasters a given export actually wrote (gated on disk, not on
     registry membership — Major #3);
   * decoding column 0 from the raw files via the i16-LE/sentinel layout matches
-    the surface folded by the shim (offset = col_idx * stride round-trip).
+    the surface folded by spans_fold (offset = col_idx * stride round-trip).
 """
 
 from __future__ import annotations
@@ -38,7 +38,7 @@ from scripts.terrain_gen.fields import (
     Bounds2D,
     decode_spans_column,
 )
-from scripts.terrain_gen.spans_shim import spans_for_tile
+from scripts.terrain_gen.spans_fold import spans_for_tile
 from scripts.terrain_gen.stitcher import build_generation_plan, synthesize_fields
 
 TILE_SIZE = 200
@@ -246,9 +246,9 @@ class SpansExportLayoutTest(unittest.TestCase):
                         f"{tile['dir']}/{layer}.bin is absent — manifest↔disk mismatch",
                     )
 
-    def test_decoded_column_surface_matches_shim_fold(self) -> None:
+    def test_decoded_column_surface_matches_span_fold(self) -> None:
         # The bytes on disk must decode (offset = col_idx * stride) to exactly
-        # what the shim folded — the binary path is the contract, not an
+        # what spans_fold folded — the binary path is the contract, not an
         # internal re-fold.
         with tempfile.TemporaryDirectory() as td:
             manifest, raster_dir, fields = _export("sky_isle", td)
@@ -267,7 +267,7 @@ class SpansExportLayoutTest(unittest.TestCase):
                 self.assertEqual(
                     decoded.spans,
                     folded[col_idx].spans,
-                    f"column {col_idx} on disk != shim fold (offset "
+                    f"column {col_idx} on disk != span fold (offset "
                     f"{col_idx * SPAN_BYTES_PER_COLUMN})",
                 )
 

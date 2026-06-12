@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import numpy as np
 
+from .. import dsl
 from ..blueprint import BlueprintZone
+from ..dsl import QiGrade
 from ..fields import SurfacePalette, TileFieldBuffer, WorldTile
-from ..noise import _tile_coords, fbm_2d, ridge_2d, warped_fbm_2d
+from ..noise import _tile_coords
 from ..spirit_eye_selector import select_spirit_eye_candidates
 from .base import (
     DecorationSpec,
@@ -15,6 +17,10 @@ from .base import (
 
 
 SNOW_LINE_Y = 285.0
+
+# §8.1 #4 — 青云残峰：灵脉残存（高处接天、峰脊有脉），归 rich 档。
+# 现有 zone spirit_qi≈0.40–0.50（qingyun_peaks=0.50）就近归档。
+QI_GRADE = QiGrade.RICH
 
 
 BROKEN_PEAKS_DECORATIONS = (
@@ -139,23 +145,29 @@ def fill_broken_peaks_tile(
     half_d = max(zone.size_xz[1] * 0.5, 1.0)
 
     wx, wz = _tile_coords(tile.min_x, tile.min_z, tile_size)
-    dx = (wx - center_x) / half_w
-    dz = (wz - center_z) / half_d
-    radial = np.sqrt(dx * dx + dz * dz)
-    massif = np.maximum(0.0, 1.0 - radial**1.45)
+    # 径向台地隆起：massif = max(0, 1 - radial**1.45)（DSL radial_uplift，amplitude=1）。
+    massif = dsl.radial_uplift(
+        wx,
+        wz,
+        center_xz=(center_x, center_z),
+        half_w=half_w,
+        half_d=half_d,
+        exponent=1.45,
+        amplitude=1.0,
+    )
 
-    # --- Primary ridges: sharp, dramatic ---
-    ridges = ridge_2d(
+    # --- Primary ridges: sharp, dramatic（DSL ridge_height，amplitude=1=裸噪声）---
+    ridges = dsl.ridge_height(
         wx, wz, scale=140.0, octaves=5, lacunarity=2.1, gain=0.48, seed=100
     )
     # Secondary ridge system at different orientation for complexity
-    ridges2 = ridge_2d(wx, wz, scale=220.0, octaves=4, seed=110)
+    ridges2 = dsl.ridge_height(wx, wz, scale=220.0, octaves=4, seed=110)
     # Large-scale base — broad doming
-    base_fbm = fbm_2d(wx, wz, scale=500.0, octaves=3, seed=120)
+    base_fbm = dsl.fbm_height(wx, wz, scale=500.0, octaves=3, seed=120)
     # Fine crag detail
-    detail = fbm_2d(wx, wz, scale=45.0, octaves=3, seed=130)
+    detail = dsl.fbm_height(wx, wz, scale=45.0, octaves=3, seed=130)
     # Erosion channels — warped for organic gullies
-    erosion = warped_fbm_2d(
+    erosion = dsl.warped_height(
         wx, wz, scale=80.0, octaves=4, warp_scale=150.0, warp_strength=35.0, seed=140
     )
 
@@ -177,14 +189,15 @@ def fill_broken_peaks_tile(
     # Erosion gullies on slopes
     erosion_cut = np.maximum(0.0, erosion - 0.1) * 32.0 * massif
 
-    height = (
-        base_height
-        + ridge_lift
-        + ridge2_lift
-        + crag
-        + valley_cut
-        + valley_cut2
-        - erosion_cut
+    # 高度合成：基底 + 各贡献项（DSL compose_height 逐元素相加；侵蚀沟为负贡献）。
+    height = dsl.compose_height(
+        base_height,
+        ridge_lift,
+        ridge2_lift,
+        crag,
+        valley_cut,
+        valley_cut2,
+        -erosion_cut,
     )
 
     # Clamp to stay within world bounds (min_y=-64, max_y=319)

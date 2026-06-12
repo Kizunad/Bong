@@ -2,15 +2,21 @@ from __future__ import annotations
 
 import numpy as np
 
+from .. import dsl
 from ..blueprint import BlueprintZone
+from ..dsl import QiGrade
 from ..fields import SurfacePalette, TileFieldBuffer, WorldTile
-from ..noise import _tile_coords, fbm_2d, ridge_2d, warped_fbm_2d
+from ..noise import _tile_coords
 from .base import (
     DecorationSpec,
     EcologySpec,
     ProfileContext,
     TerrainProfileGenerator,
 )
+
+# §8.1 #4 — 渊口荒丘：末法荒野基线（核心负压区灵气趋零），归 trace 档。
+# 现有 zone spirit_qi=0.05（rift_mouth_north_001/blood_001 等）就近归档。
+QI_GRADE = QiGrade.TRACE
 
 
 RIFT_MOUTH_DECORATIONS = (
@@ -143,20 +149,27 @@ def fill_rift_mouth_barrens_tile(
     outer_radius = max(float(zone.worldgen.extras.get("outer_radius", 150.0)), core_radius)
 
     wx, wz = _tile_coords(tile.min_x, tile.min_z, tile_size)
-    portal_anchor_sdf = np.sqrt((wx - anchor_x) ** 2 + (wz - anchor_z) ** 2)
+    # portal 锚点欧氏距离 SDF（DSL anchor_sdf）。
+    portal_anchor_sdf = dsl.anchor_sdf(wx, wz, anchor_xz=(anchor_x, anchor_z))
     anchor_theta = np.arctan2(wz - anchor_z, wx - anchor_x)
     zone_dist = np.sqrt((wx - center_x) ** 2 + (wz - center_z) ** 2)
     t = portal_anchor_sdf / core_radius
     outer_t = np.clip((portal_anchor_sdf - core_radius) / (outer_radius - core_radius), 0.0, 1.0)
     scar = np.clip(1.0 - portal_anchor_sdf / outer_radius, 0.0, 1.0)
 
-    mound = warped_fbm_2d(
+    mound = dsl.warped_height(
         wx, wz, scale=150.0, octaves=4, warp_scale=210.0, warp_strength=38.0, seed=930
     )
-    crack = ridge_2d(wx, wz, scale=42.0, octaves=4, seed=940)
-    cold_noise = fbm_2d(wx, wz, scale=36.0, octaves=3, seed=950)
+    crack = dsl.ridge_height(wx, wz, scale=42.0, octaves=4, seed=940)
+    cold_noise = dsl.fbm_height(wx, wz, scale=36.0, octaves=3, seed=950)
 
-    height = 74.0 + mound * 3.2 - scar * 4.5 - np.maximum(0.0, 1.0 - t) * 2.0
+    # 高度合成（DSL compose_height）：基底 + 土丘 − 疤痕沉降 − 核心下凹。
+    height = dsl.compose_height(
+        np.full_like(mound, 74.0),
+        mound * 3.2,
+        -scar * 4.5,
+        -np.maximum(0.0, 1.0 - t) * 2.0,
+    )
     height = np.where(portal_anchor_sdf < 2.0, height - 0.8, height)
 
     core_pull = np.clip(1.0 - (portal_anchor_sdf / core_radius) ** 1.15, 0.0, 1.0)

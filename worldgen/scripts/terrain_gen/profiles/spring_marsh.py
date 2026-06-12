@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import numpy as np
 
+from .. import dsl
 from ..blueprint import BlueprintZone
+from ..dsl import QiGrade
 from ..fields import SurfacePalette, TileFieldBuffer, WorldTile
-from ..noise import _tile_coords, fbm_2d, warped_fbm_2d
+from ..noise import _tile_coords
 from ..spirit_eye_selector import select_spirit_eye_candidates
 from .base import (
     DecorationSpec,
@@ -12,6 +14,9 @@ from .base import (
     ProfileContext,
     TerrainProfileGenerator,
 )
+
+# §8.1 #4 — 灵泉湿地：灵源馈赠区（lingquan_marsh spirit_qi≈0.70）就近归档 font 档。
+QI_GRADE = QiGrade.FONT
 
 
 SPRING_MARSH_DECORATIONS = (
@@ -142,25 +147,29 @@ def fill_spring_marsh_tile(
     half_d = max(zone.size_xz[1] * 0.5, 1.0)
 
     wx, wz = _tile_coords(tile.min_x, tile.min_z, tile_size)
-    dx = (wx - center_x) / half_w
-    dz = (wz - center_z) / half_d
-    radial = np.sqrt(dx * dx + dz * dz)
-    basin = np.maximum(0.0, 1.0 - radial**1.7)
+    # 径向 basin 隆起掩码（DSL radial_uplift，amplitude=1=裸掩码）。
+    basin = dsl.radial_uplift(
+        wx, wz,
+        center_xz=(center_x, center_z),
+        half_w=half_w, half_d=half_d,
+        exponent=1.7, amplitude=1.0,
+    )
 
-    large_islands = warped_fbm_2d(
+    # 多尺度岛屿-水道合成（DSL warped_height / fbm_height，amplitude=1=裸噪声）。
+    large_islands = dsl.warped_height(
         wx, wz, scale=280.0, octaves=4, warp_scale=360.0, warp_strength=90.0, seed=200
     )
-    medium_islands = warped_fbm_2d(
+    medium_islands = dsl.warped_height(
         wx, wz, scale=120.0, octaves=4, warp_scale=180.0, warp_strength=55.0, seed=210
     )
-    small_islands = fbm_2d(wx, wz, scale=50.0, octaves=3, seed=220)
-    channels = warped_fbm_2d(
+    small_islands = dsl.fbm_height(wx, wz, scale=50.0, octaves=3, seed=220)
+    channels = dsl.warped_height(
         wx, wz, scale=90.0, octaves=5, warp_scale=250.0, warp_strength=70.0, seed=230
     )
-    pools = warped_fbm_2d(
+    pools = dsl.warped_height(
         wx, wz, scale=120.0, octaves=3, warp_scale=200.0, warp_strength=40.0, seed=240
     )
-    rim = fbm_2d(wx, wz, scale=180.0, octaves=3, seed=250)
+    rim = dsl.fbm_height(wx, wz, scale=180.0, octaves=3, seed=250)
 
     island_noise = large_islands * 0.55 + medium_islands * 0.3 + small_islands * 0.15
     pool_depth = np.maximum(0.0, pools - 0.1) * 2.5

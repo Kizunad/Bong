@@ -2,15 +2,20 @@ from __future__ import annotations
 
 import numpy as np
 
+from .. import dsl
 from ..blueprint import BlueprintZone, PoiSpec
+from ..dsl import QiGrade
 from ..fields import SurfacePalette, TileFieldBuffer, WorldTile
-from ..noise import _tile_coords, fbm_2d, warped_fbm_2d
+from ..noise import _tile_coords
 from .base import (
     DecorationSpec,
     EcologySpec,
     ProfileContext,
     TerrainProfileGenerator,
 )
+
+# §8.1 #4 — 初醒原：主世界常量灵气（spawn spirit_qi≈0.30）就近归档 common 档。
+QI_GRADE = QiGrade.COMMON
 
 TUTORIAL_LINGQUAN_QI_THRESHOLD = 0.5
 TUTORIAL_LINGQUAN_SCAN_RADIUS = 200.0
@@ -288,22 +293,37 @@ def fill_spawn_plain_tile(
     half_d = max(zone.size_xz[1] * 0.5, 1.0)
 
     wx, wz = _tile_coords(tile.min_x, tile.min_z, tile_size)
-    dx = (wx - center_x) / half_w
-    dz = (wz - center_z) / half_d
-    radial = np.sqrt(dx * dx + dz * dz)
-    heartland = np.maximum(0.0, 1.0 - radial**1.9)
-    inner_meadow = np.maximum(0.0, 1.0 - radial**2.8)
+    # 径向 heartland / inner_meadow 隆起掩码（DSL radial_uplift，amplitude=1=裸掩码）。
+    heartland = dsl.radial_uplift(
+        wx, wz,
+        center_xz=(center_x, center_z),
+        half_w=half_w, half_d=half_d,
+        exponent=1.9, amplitude=1.0,
+    )
+    inner_meadow = dsl.radial_uplift(
+        wx, wz,
+        center_xz=(center_x, center_z),
+        half_w=half_w, half_d=half_d,
+        exponent=2.8, amplitude=1.0,
+    )
 
-    # Gentle rolling hills — large-scale FBM
-    rolling = fbm_2d(wx, wz, scale=320.0, octaves=4, seed=10) * 2.3
+    # Gentle rolling hills — large-scale FBM（DSL fbm_height，amplitude=1=裸噪声）
+    rolling = dsl.fbm_height(wx, wz, scale=320.0, octaves=4, seed=10) * 2.3
     # Organic swale depressions — domain-warped for natural curves
-    swale = warped_fbm_2d(
+    swale = dsl.warped_height(
         wx, wz, scale=180.0, octaves=3, warp_scale=350.0, warp_strength=60.0, seed=20
     )
     # Path-like ridges
-    path = fbm_2d(wx, wz, scale=220.0, octaves=3, seed=30)
+    path = dsl.fbm_height(wx, wz, scale=220.0, octaves=3, seed=30)
 
-    height = 69.0 + heartland * 3.8 + rolling * 0.8 - inner_meadow * 1.2
+    # 高度合成：基底 69 + heartland 隆起 + 滚动起伏 - inner_meadow 凹陷
+    # （DSL compose_height 逐元素相加；inner_meadow 为负贡献）。
+    height = dsl.compose_height(
+        np.full_like(heartland, 69.0),
+        heartland * 3.8,
+        rolling * 0.8,
+        -inner_meadow * 1.2,
+    )
     # Occasional ponds in swale depressions
     pond_mask = (heartland > 0.14) & (swale < -0.55)
     water_level = np.where(pond_mask, 66.8, -1.0)
@@ -367,13 +387,13 @@ def fill_spawn_plain_tile(
     # 小尺度高频 fbm 在区域内打孔，让单格散点而非连片 blob。
     # 不这样做的话 fbm 平滑场会让一整片 cell 都标记 variant，server 端
     # 对每 cell 独立 roll 概率会变成"一片林子里到处都是倒木"。
-    fallen_select = fbm_2d(wx, wz, scale=200.0, octaves=2, seed=8811)
-    fallen_pick = fbm_2d(wx, wz, scale=10.0, octaves=1, seed=8812)
+    fallen_select = dsl.fbm_height(wx, wz, scale=200.0, octaves=2, seed=8811)
+    fallen_pick = dsl.fbm_height(wx, wz, scale=10.0, octaves=1, seed=8812)
     fallen_band = (heartland > 0.30) & (fallen_select > 0.42) & (fallen_pick > 0.55)
     flora_variant = np.where(fallen_band, 8, flora_variant)
     flora_density = np.where(fallen_band, np.maximum(flora_density, 0.35), flora_density)
-    grave_select = fbm_2d(wx, wz, scale=320.0, octaves=2, seed=8821)
-    grave_pick = fbm_2d(wx, wz, scale=12.0, octaves=1, seed=8822)
+    grave_select = dsl.fbm_height(wx, wz, scale=320.0, octaves=2, seed=8821)
+    grave_pick = dsl.fbm_height(wx, wz, scale=12.0, octaves=1, seed=8822)
     grave_band = (
         (heartland > 0.20)
         & (grave_select > 0.55)
@@ -414,7 +434,7 @@ def fill_spawn_plain_tile(
     # （而不是 path 高频 noise，避免邻列变种乱跳）
     gc_variant = np.full_like(height, gc_grass, dtype=np.int32)
     flower_zone = biome_id == flower_forest_biome_id
-    flower_select = fbm_2d(wx, wz, scale=70.0, octaves=2, seed=4423)
+    flower_select = dsl.fbm_height(wx, wz, scale=70.0, octaves=2, seed=4423)
     gc_variant = np.where(flower_zone & (flower_select > 0.18), gc_dandelion, gc_variant)
     gc_variant = np.where(flower_zone & (flower_select < -0.18), gc_poppy, gc_variant)
     gc_variant = np.where(gc_density <= 0.0, 0, gc_variant)

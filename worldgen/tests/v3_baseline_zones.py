@@ -3,7 +3,7 @@
 These build deterministic zones + tiles for the representative column shapes
 that the span refactor must preserve byte-for-byte at the 2D level — AND for the
 carved zones whose v3 surface was sculpted in Rust (rift / fracture / neg /
-entrance), which the span shim now has to reproduce:
+entrance), which the span fold now has to reproduce:
 
   * normal    — broken_peaks: single solid span (bedrock → height)
   * water     — spring_marsh: solid span with a water surface above it
@@ -21,7 +21,7 @@ The v3 baseline is NOT ``round(height)`` — it is the fully carved v3 surface
 ``top_y`` (rift → fracture → neg → entrance, then the cave void / sky-isle), the
 exact value Rust ``column.rs::resolve_column`` produced before worldgen-v4
 dropped that sculpting.  It is frozen in ``v3_surface_baseline.json`` and the
-shim must reproduce it column-for-column ("先换表示不换景观").
+span fold must reproduce it column-for-column ("先换表示不换景观").
 
 Capturing the baseline from the untouched v3 carve math is the whole point —
 ``regenerate_v3_baseline.py`` re-derives it via ``v3_surface_top_y`` (the Python

@@ -1,17 +1,26 @@
-"""worldgen-v4 P0 §8.1 #1/#54 — 2D → spans 兼容折算 shim.
+"""worldgen-v4 §8.1 #1/#54 — 2D → spans 统一折算 (canonical fold).
 
-The 19 existing profiles still emit the legacy 2D layers (height + the now-
-unexported vertical patch layers cave_mask / ceiling_height / entrance_mask /
-sky_island_base_y / sky_island_thickness) plus the carve-driving masks
-rift_axis_sdf / rim_edge_mask / fracture_mask / neg_pressure / entrance_mask.
-Rather than rewrite every profile (that is P2's job), this shim folds those
-layers into the span representation.
+This is the single, canonical place where a tile's blended 2D layers are folded
+into the span column representation that ships to the Rust runtime.  Every
+terrain profile (all DSL-driven after P2) emits the 2D layers — height + the
+carve-driving masks rift_axis_sdf / rim_edge_mask / fracture_mask / neg_pressure
+/ entrance_mask + the vertical patch layers cave_mask / ceiling_height /
+sky_island_base_y / sky_island_thickness — and the export folds them here.
 
-CRITICAL (worldgen-v4 P0 BLOCKER fix): the v3 final landscape was NOT
+History: this module started life in P0 as a compatibility *shim* — its job was
+to keep the v3 landscape byte-identical while the 19 hand-written numpy profiles
+were rewritten into the declarative DSL.  P2 finished that rewrite, so the shim
+framing is retired: the fold below is the permanent 2D→spans converter, not a
+temporary bridge.  The carve formulas it applies are mirrored by the dsl.py
+carve ops (rift_carve / fracture_carve / neg_pressure_carve), so a profile
+authored in pure DSL and a profile folded here describe the same surface —
+"换表示不换景观".
+
+CRITICAL (worldgen-v4 BLOCKER invariant): the v3 final landscape was NOT
 ``round(height)``.  v3 baked the surface in Rust ``column.rs::resolve_column``
 by taking ``top_y = clamp_world_y(round(height))`` and then carving it down with
 rift / fracture / neg_pressure / entrance sculpting (up to ~90 blocks) before
-the cave void was even considered.  v4 dropped that Rust sculpting, so the shim
+the cave void was even considered.  v4 dropped that Rust sculpting, so this fold
 MUST reproduce the full v3 ``top_y`` here or the rendered surface of every
 rift / fracture / neg / entrance zone floats 14~90 blocks above where v3 put it
 ("换表示不换景观" 被破坏).
@@ -87,7 +96,7 @@ def _round_half_away(value: float) -> int:
 
     Python ``round`` / ``numpy.round`` use banker's rounding (half to even),
     which can differ from Rust by ±1 on exact ``.5`` boundaries.  Every carve
-    depth in v3 went through ``f32::round`` (or ``round() as i32``), so the shim
+    depth in v3 went through ``f32::round`` (or ``round() as i32``), so the fold
     must round identically or the folded surface drifts off the v3 byte value.
     """
     if value >= 0.0:
@@ -107,7 +116,7 @@ def v3_surface_top_y(
 
     This is the walkable surface BEFORE the cave void / sky-isle are layered on.
     Returns the integer block Y, fully clamped to the v3 world range, so the
-    span shim and the v3-equivalence golden can both anchor to it.
+    span fold and the v3-equivalence golden can both anchor to it.
 
     All carve arithmetic runs in **float32** (``np.float32``) because the v3 Rust
     column.rs did it in f32, and f32 vs f64 truncation diverges by ±1 at the
