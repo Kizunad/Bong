@@ -81,6 +81,12 @@ class CaveNetworkGenerator(TerrainProfileGenerator):
     # worldgen-v4 P3 §8.1 #1 — 幽暗地穴：cave_network_carver 在 spans_fold 的单层
     # 洞穴空腔之下再雕多层连通 3D 噪声画廊（多个空气夹层 = 多段实体）。surface_cap
     # 保证地表不直接破口；layers=3 + 较窄 carve_band 让画廊在不同深度蜿蜒连通。
+    #
+    # P3 perf 收口：cave_network 是 worldgen bake 的绝对热点（多层 3D 噪声覆盖整
+    # 个洞穴体积，全量 pipeline 因此推过 snapshot CI 的 30min 预算）。octaves=1
+    # （单层密度足以蜿蜒）+ y_step=4（沿绝对世界 Y 每 4 格采样密度、线性插值——
+    # scale≈28 下亚步长抖动小于 1 格洞壁）把单 tile 雕刻从 ~128s 降到 ~22s，画廊
+    # 仍多层连通、剖面无退化。
     carvers = (
         CarverSpec(
             kind="cave_network",
@@ -90,6 +96,8 @@ class CaveNetworkGenerator(TerrainProfileGenerator):
                 "carve_band": (-0.07, 0.07),
                 "scale": 28.0,
                 "layers": 3,
+                "octaves": 1,
+                "y_step": 4,
             },
         ),
     )

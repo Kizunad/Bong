@@ -657,6 +657,28 @@ class CarveTileEquivalenceTest(unittest.TestCase):
             cols, ts, (333, 888),
         )
 
+    def test_cave_network_coarse_y_mixed_surface_equals_scalar(self) -> None:
+        # worldgen-v4 P3 perf: the cave carver samples density on a coarse
+        # absolute world-Y grid (y_step > 1) and interpolates.  A REAL cave zone
+        # has an undulating surface, so columns have DIFFERENT carve tops — the
+        # vectorized path builds the grid to the GLOBAL top and slices each
+        # column, while the scalar path anchors on each column's OWN top.  If the
+        # Y-anchor lattice were keyed on the per-column top instead of absolute
+        # world Y, the lerp would diverge near the surface cap on every column
+        # whose top is not a step multiple.  This pins the absolute-anchor
+        # equivalence across a staggered surface for the production y_step.
+        ts = 18
+        rng = __import__("random").Random(20240613)
+        cols = [
+            ColumnSpans(((SPAN_MIN_Y, 60 + rng.randint(0, 40)),))
+            for _ in range(ts * ts)
+        ]
+        for y_step in (1, 3, 4, 5):
+            self._assert_chain_equiv(
+                CaveNetworkCarver(layers=3, octaves=1, y_step=y_step),
+                cols, ts, (333, 888),
+            )
+
     def test_chain_of_all_three_equals_scalar(self) -> None:
         # Composed chain: each carver's tile path must equal scalar even when
         # the previous carver already split the column (the divergence-prone case).

@@ -15,6 +15,21 @@ connect in 3D instead of being flat slabs.  Because the framework budgets to
 MAX_SPANS=4 by merging the thinnest gaps, deep columns with many noise pockets
 collapse gracefully to the four most prominent solid layers — never an illegal
 column.
+
+Performance — vertical coarse sampling
+--------------------------------------
+The dominant cost is sampling the layered 3D density over the *whole* cave
+volume (``depth × columns × layers`` gradient-noise evaluations).  At the cave
+feature ``scale`` (≈28 blocks) the density varies smoothly along Y, so we sample
+it only every ``y_step`` blocks on an **absolute world-Y grid** and linearly
+interpolate the in-between blocks.  Keying the sample grid on absolute world Y
+(``carve_bottom`` + k·step) — not a per-column relative index — is what keeps the
+scalar ``_carve`` and the vectorized ``carve_tile`` byte-identical: both reach
+for the same world-Y sample anchors regardless of how deep their own column runs.
+With ``y_step=4`` this drops the Y noise work ~4× (and a single density octave
+halves it again) for a visually indistinguishable gallery silhouette — the carve
+band is a threshold on a smooth field, so sub-``y_step`` wobble is below one
+block of cave wall.
 """
 
 from __future__ import annotations
@@ -44,6 +59,14 @@ class CaveNetworkCarver(BaseCarver):
     layers:
         Number of independent noise octave-bands stacked to create multiple
         vertically separated galleries.
+    octaves:
+        fbm octaves per density layer.  A single octave winds convincingly at
+        this feature size; the default keeps the cave volume cheap.
+    y_step:
+        Sample the density on an absolute world-Y grid every ``y_step`` blocks
+        and linearly interpolate between anchors.  ``1`` = sample every block
+        (exact, slowest).  Larger steps trade an imperceptible amount of cave
+        wall wobble for a proportional drop in noise cost.
     """
 
     name = "cave_network"
@@ -57,18 +80,91 @@ class CaveNetworkCarver(BaseCarver):
         scale: float = 30.0,
         layers: int = 2,
         octaves: int = 2,
+        y_step: int = 1,
     ) -> None:
         self.surface_cap = max(2, surface_cap)
         self.floor_buffer = max(2, floor_buffer)
         self.carve_band = carve_band
         self.scale = scale
         self.layers = max(1, layers)
-        # Cave density only needs a couple of octaves to wind convincingly; 2
-        # (vs the fbm default 4) roughly halves the noise cost over the full
-        # cave volume — the dominant export expense — with no visible loss in
-        # the gallery shapes.  Scalar + vectorized paths share this so they stay
-        # byte-identical.
+        # Cave density only needs a couple of octaves to wind convincingly; the
+        # default keeps the noise cost over the full cave volume — the dominant
+        # export expense — low with no visible loss in the gallery shapes.
+        # Scalar + vectorized paths share this so they stay byte-identical.
         self.octaves = max(1, octaves)
+        self.y_step = max(1, y_step)
+
+    # ------------------------------------------------------------------
+    # Shared density core — both the scalar and vectorized carve paths call
+    # this so they are byte-identical by construction.
+    # ------------------------------------------------------------------
+    def _carve_band_mask(
+        self,
+        wx: np.ndarray,
+        wz: np.ndarray,
+        carve_bottom: int,
+        carve_top: int,
+        seed: int,
+    ) -> np.ndarray:
+        """Boolean ``(depth, ncols)`` air mask over world-Y ``[carve_bottom, carve_top]``.
+
+        ``wx`` / ``wz`` are flat per-column coordinate arrays (length ``ncols``).
+        Returns a mask whose row ``r`` is world-Y ``carve_bottom + r`` and whose
+        column ``c`` is the input column ``c``.  The density is sampled on an
+        **absolute** world-Y anchor grid (``carve_bottom`` stepped by
+        ``y_step``) and linearly interpolated — keying on absolute Y (not a
+        relative index) makes the scalar single-column and the vectorized
+        whole-tile callers sample the identical anchors, so their carve masks
+        match block-for-block.
+        """
+        depth = carve_top - carve_bottom + 1
+        ncols = wx.shape[0]
+        if depth <= 0 or ncols == 0:
+            return np.zeros((max(depth, 0), ncols), dtype=bool)
+
+        # Absolute world-Y anchors keyed on ``carve_bottom`` + k·step, stepping
+        # PAST ``carve_top`` so the final lerp segment always brackets the top
+        # row.  Crucially the anchor offsets ``{0, step, 2·step, …}`` do NOT
+        # depend on ``carve_top`` — every caller (a single column with its own
+        # surface, or the whole-tile grid with the max surface) lays anchors on
+        # the identical world-Y lattice, so a shorter column is an exact prefix
+        # of a taller one.  That prefix property is what makes the scalar
+        # ``_carve`` (per-column top) and the vectorized ``carve_tile`` (global
+        # top, then sliced per column) byte-identical for every column.
+        last_off = ((depth - 1) // self.y_step) * self.y_step
+        if last_off < depth - 1:
+            last_off += self.y_step
+        anchor_off = np.arange(0, last_off + 1, self.y_step)
+        ys_anchor = (carve_bottom + anchor_off).astype(np.float64)
+        nanchor = anchor_off.shape[0]
+
+        # For each full-Y row, the anchor segment it falls in + the lerp weight.
+        rows = np.arange(depth)
+        seg = np.clip(np.searchsorted(anchor_off, rows, side="right") - 1, 0, nanchor - 2)
+        a0 = anchor_off[seg]
+        a1 = anchor_off[seg + 1]
+        weight = ((rows - a0) / np.maximum(a1 - a0, 1)).astype(np.float64)
+
+        wx_g = wx[None, :]
+        wz_g = wz[None, :]
+        lo, hi = self.carve_band
+        mask = np.zeros((depth, ncols), dtype=bool)
+        for layer in range(self.layers):
+            # Each layer uses a different vertical frequency so the galleries
+            # appear at different depths, then merge where they overlap.
+            ys_layer = (ys_anchor * (1.0 + 0.35 * layer))[:, None]
+            sampled = fbm_3d(
+                np.broadcast_to(wx_g, (nanchor, ncols)),
+                np.broadcast_to(ys_layer, (nanchor, ncols)),
+                np.broadcast_to(wz_g, (nanchor, ncols)),
+                scale=self.scale * (1.0 + 0.25 * layer),
+                octaves=self.octaves,
+                seed=seed + 41 + layer * 7,
+            )
+            # Linearly interpolate the sampled anchors back to every world-Y row.
+            v = sampled[seg] * (1.0 - weight)[:, None] + sampled[seg + 1] * weight[:, None]
+            mask |= (v >= lo) & (v <= hi)
+        return mask
 
     def _carve(self, col: SolidColumn, wx: int, wz: int, seed: int) -> None:
         surface_y = col.surface_y
@@ -79,46 +175,31 @@ class CaveNetworkCarver(BaseCarver):
         if carve_top <= carve_bottom + 2:
             return  # column too shallow to host caves
 
-        lo, hi = self.carve_band
-        # Vectorized over the whole cave band: sample the layered 3D noise for
-        # every Y at once (one fbm_3d call per layer over a Y vector) instead of
-        # a per-block Python loop — the per-block loop is ~500×layers scalar
-        # noise evals per column and made full-tile carving impractically slow.
-        # The result is identical: a block carves to air where ANY layer's noise
-        # falls inside the density window.
-        ys = np.arange(carve_bottom, carve_top + 1, dtype=np.float64)
-        wx_v = np.full(ys.shape, float(wx))
-        wz_v = np.full(ys.shape, float(wz))
-        carve_mask = np.zeros(ys.shape, dtype=bool)
-        for layer in range(self.layers):
-            # Each layer uses a different vertical frequency so the galleries
-            # appear at different depths, then merge where they overlap.
-            v = fbm_3d(
-                wx_v,
-                ys * (1.0 + 0.35 * layer),
-                wz_v,
-                scale=self.scale * (1.0 + 0.25 * layer),
-                octaves=self.octaves,
-                seed=seed + 41 + layer * 7,
-            )
-            carve_mask |= (v >= lo) & (v <= hi)
+        mask = self._carve_band_mask(
+            np.array([float(wx)]),
+            np.array([float(wz)]),
+            carve_bottom,
+            carve_top,
+            seed,
+        )[:, 0]
 
         # Apply the carve only where the column is currently solid.
         lo_idx = carve_bottom - SPAN_MIN_Y
         hi_idx = carve_top - SPAN_MIN_Y
         band = col.mask[lo_idx : hi_idx + 1]
-        band[carve_mask] = False
+        band[mask] = False
 
     def carve_tile(self, columns, wx, wz, seed):
         """Fully-vectorized tile carve — identical output to the scalar loop.
 
-        Samples each layer's density noise once over a global ``(Y, column)``
-        grid (the carve band is ``[floor_buffer .. max_surface - surface_cap]``),
-        then masks each column to its own ``[carve_bottom .. surface - cap]`` band
-        and carves air where any layer's noise falls in the density window.  The
-        noise coords + window are identical to the per-column ``_carve``, so the
-        result is byte-identical — just ``layers`` vectorized fbm calls instead
-        of 40k × layers scalar ones.
+        Samples each layer's density once over a global ``(Y, column)`` grid (the
+        carve band is ``[floor_buffer .. max_surface - surface_cap]``) via the
+        shared :meth:`_carve_band_mask`, then masks each column to its own
+        ``[carve_bottom .. surface - cap]`` band and carves air where any layer's
+        density falls in the window.  Both paths anchor the coarse-Y sampling on
+        absolute world Y, so the result is byte-identical to the scalar
+        ``_carve`` — just ``layers`` vectorized fbm calls instead of 40k × layers
+        scalar ones.
         """
         salted = self._seed_for(seed)
         wx = np.asarray(wx, dtype=np.float64)
@@ -143,30 +224,14 @@ class CaveNetworkCarver(BaseCarver):
         sel = np.flatnonzero(carveable)
         wx_sel = wx[sel]
         wz_sel = wz[sel]
-        m = sel.shape[0]
 
         global_top = int(carve_top_per[carveable].max())
         if global_top <= carve_bottom:
             return list(columns)
-        ys = np.arange(carve_bottom, global_top + 1, dtype=np.float64)
-        depth = ys.shape[0]
 
-        # Grid shape (depth, m): broadcast wx/wz across Y, ys across columns.
-        ys_g = ys[:, None]
-        wx_g = wx_sel[None, :]
-        wz_g = wz_sel[None, :]
-        lo, hi = self.carve_band
-        carve_grid = np.zeros((depth, m), dtype=bool)
-        for layer in range(self.layers):
-            v = fbm_3d(
-                np.broadcast_to(wx_g, (depth, m)),
-                np.broadcast_to(ys_g * (1.0 + 0.35 * layer), (depth, m)),
-                np.broadcast_to(wz_g, (depth, m)),
-                scale=self.scale * (1.0 + 0.25 * layer),
-                octaves=self.octaves,
-                seed=salted + 41 + layer * 7,
-            )
-            carve_grid |= (v >= lo) & (v <= hi)
+        carve_grid = self._carve_band_mask(
+            wx_sel, wz_sel, carve_bottom, global_top, salted
+        )
 
         # Map selected-column index → its grid column for the carve loop.
         grid_col_of = {int(col_idx): j for j, col_idx in enumerate(sel)}
