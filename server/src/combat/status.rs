@@ -480,6 +480,111 @@ mod tests {
     }
 
     #[test]
+    fn immobilized_status_intent_applies_and_has_active_status_reports_it() {
+        let mut app = App::new();
+        app.add_event::<ApplyStatusEffectIntent>();
+        app.add_systems(Update, status_effect_apply_tick);
+
+        let entity = spawn_status_actor(&mut app);
+        app.world_mut().send_event(ApplyStatusEffectIntent {
+            target: entity,
+            kind: StatusEffectKind::Immobilized,
+            magnitude: 1.0,
+            duration_ticks: 40,
+            issued_at_tick: 10,
+        });
+        app.update();
+
+        let status_effects = app.world().entity(entity).get::<StatusEffects>().unwrap();
+        assert!(
+            has_active_status(status_effects, StatusEffectKind::Immobilized),
+            "Immobilized must be visible to explicit consumers such as NPC navigator"
+        );
+    }
+
+    #[test]
+    fn immobilized_status_intent_expires_through_shared_lifecycle() {
+        let mut app = App::new();
+        app.insert_resource(CombatClock {
+            tick: STATUS_EFFECT_TICK_INTERVAL_TICKS,
+        });
+        app.add_systems(Update, status_effect_tick);
+
+        let entity = app
+            .world_mut()
+            .spawn(StatusEffects {
+                active: vec![crate::combat::components::ActiveStatusEffect {
+                    kind: StatusEffectKind::Immobilized,
+                    magnitude: 1.0,
+                    remaining_ticks: STATUS_EFFECT_TICK_INTERVAL_TICKS,
+                    source_pill: None,
+                }],
+            })
+            .id();
+        app.update();
+
+        let status_effects = app.world().entity(entity).get::<StatusEffects>().unwrap();
+        assert!(
+            !has_active_status(status_effects, StatusEffectKind::Immobilized),
+            "Immobilized should expire through the same status tick lifecycle as other statuses"
+        );
+    }
+
+    #[test]
+    fn immobilized_zero_duration_dispels_and_non_positive_magnitude_is_ignored() {
+        let mut app = App::new();
+        app.add_event::<ApplyStatusEffectIntent>();
+        app.add_systems(Update, status_effect_apply_tick);
+
+        let entity = app
+            .world_mut()
+            .spawn(StatusEffects {
+                active: vec![crate::combat::components::ActiveStatusEffect {
+                    kind: StatusEffectKind::Immobilized,
+                    magnitude: 1.0,
+                    remaining_ticks: 40,
+                    source_pill: None,
+                }],
+            })
+            .id();
+        app.world_mut().send_event(ApplyStatusEffectIntent {
+            target: entity,
+            kind: StatusEffectKind::Immobilized,
+            magnitude: 0.0,
+            duration_ticks: 0,
+            issued_at_tick: 11,
+        });
+        app.update();
+        assert!(
+            app.world()
+                .entity(entity)
+                .get::<StatusEffects>()
+                .unwrap()
+                .active
+                .is_empty(),
+            "zero-duration Immobilized intent must remove an existing immobilize control"
+        );
+
+        app.world_mut().send_event(ApplyStatusEffectIntent {
+            target: entity,
+            kind: StatusEffectKind::Immobilized,
+            magnitude: 0.0,
+            duration_ticks: 40,
+            issued_at_tick: 12,
+        });
+        app.update();
+        assert!(
+            app.world()
+                .entity(entity)
+                .get::<StatusEffects>()
+                .unwrap()
+                .active
+                .is_empty(),
+            "non-positive magnitude Immobilized intent must not create an inert active status"
+        );
+    }
+
+    #[test]
     fn status_effect_tick_expires_effect_after_duration() {
         let mut app = App::new();
         app.insert_resource(CombatClock {

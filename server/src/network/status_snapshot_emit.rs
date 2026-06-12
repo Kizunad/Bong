@@ -78,6 +78,7 @@ fn status_effect_name(kind: &StatusEffectKind) -> String {
         StatusEffectKind::Bleeding => "流血".to_string(),
         StatusEffectKind::Slowed => "迟缓".to_string(),
         StatusEffectKind::Stunned => "僵直".to_string(),
+        StatusEffectKind::Immobilized => "定身".to_string(),
         StatusEffectKind::DamageAmp => "伤害放大".to_string(),
         StatusEffectKind::DamageReduction => "减伤".to_string(),
         StatusEffectKind::BreakthroughBoost => "破境助力".to_string(),
@@ -122,6 +123,7 @@ fn status_effect_category(kind: &StatusEffectKind) -> &'static str {
     match kind {
         StatusEffectKind::Bleeding => "dot",
         StatusEffectKind::Stunned
+        | StatusEffectKind::Immobilized
         | StatusEffectKind::VortexCasting
         | StatusEffectKind::ParryRecovery
         | StatusEffectKind::Staggered
@@ -174,6 +176,7 @@ fn status_effect_source_label(kind: &StatusEffectKind) -> &'static str {
         | StatusEffectKind::ExtraordinaryMeridianAcceleration
         | StatusEffectKind::QiRegenSlowed
         | StatusEffectKind::DamageVulnerability => "修炼丹药",
+        StatusEffectKind::Immobilized => "机关陷阱",
         _ => "战场丹药",
     }
 }
@@ -191,7 +194,9 @@ fn status_effect_color(kind: &StatusEffectKind) -> i32 {
 fn status_effect_dispel(kind: &StatusEffectKind) -> i32 {
     match kind {
         StatusEffectKind::QiCapPermMinus => 5,
-        StatusEffectKind::Stunned | StatusEffectKind::StaminaCrash => 3,
+        StatusEffectKind::Stunned
+        | StatusEffectKind::Immobilized
+        | StatusEffectKind::StaminaCrash => 3,
         StatusEffectKind::BodyPartWeaken(_) | StatusEffectKind::QiDrainForStamina => 2,
         StatusEffectKind::HealthRegenBoost => 1,
         _ => 1,
