@@ -663,6 +663,166 @@ mod tests {
         );
     }
 
+    // ─── cross-zone count + resolve_zone_name(Some) coverage ────────────────
+
+    /// 跨 zone 排除：注入含两个命名 zone 的 ZoneRegistry，trigger 方在 zone_a，
+    /// 另一个 HalfStep 实体在 zone_b（不同 Position / zone）。
+    /// 断言 zone_halfstep_count == 1（zone_b 实体被 .filter 排除，不计入 zone_a 计数）。
+    /// 如果 .filter 从未真执行（如 ZoneRegistry=None 时全部归同一 fallback），
+    /// 计数会错误地变成 2，本测试会撞红。
+    #[test]
+    fn redis_publish_cross_zone_entity_excluded_from_count() {
+        use crate::world::dimension::DimensionKind;
+        use crate::world::zone::Zone;
+        use valence::prelude::DVec3;
+
+        let (mut app, rx) = make_redis_app();
+        let at_tick: u64 = 9_000;
+
+        // 构造两个不重叠的命名 zone：
+        //   zone_a: x=[-50,50], z=[-50,50] —— trigger 方所在 zone
+        //   zone_b: x=[1000,1100], z=[1000,1100] —— 另一 HalfStep 实体所在 zone（远离 zone_a）
+        // 注意：ZoneRegistry 必须含 spawn zone，否则 try_from 校验失败；
+        // 但这里我们直接构造 ZoneRegistry { zones } 跳过文件验证。
+        let zone_a = Zone {
+            name: "zone_a".to_string(),
+            dimension: DimensionKind::Overworld,
+            bounds: (
+                DVec3::new(-50.0, 50.0, -50.0),
+                DVec3::new(50.0, 100.0, 50.0),
+            ),
+            spirit_qi: 0.5,
+            danger_level: 0,
+            active_events: Vec::new(),
+            patrol_anchors: Vec::new(),
+            blocked_tiles: Vec::new(),
+        };
+        let zone_b = Zone {
+            name: "zone_b".to_string(),
+            dimension: DimensionKind::Overworld,
+            bounds: (
+                DVec3::new(1000.0, 50.0, 1000.0),
+                DVec3::new(1100.0, 100.0, 1100.0),
+            ),
+            spirit_qi: 0.3,
+            danger_level: 1,
+            active_events: Vec::new(),
+            patrol_anchors: Vec::new(),
+            blocked_tiles: Vec::new(),
+        };
+        let registry = ZoneRegistry {
+            zones: vec![zone_a, zone_b],
+        };
+        app.insert_resource(registry);
+
+        // trigger 方：在 zone_a 内
+        let trigger_entity = app
+            .world_mut()
+            .spawn((
+                Position::new([0.0_f64, 64.0, 0.0]),
+                HalfStepState::new(at_tick),
+            ))
+            .id();
+
+        // 另一 HalfStep 实体：在 zone_b 内（位置 [1050, 64, 1050]）
+        app.world_mut().spawn((
+            Position::new([1050.0_f64, 64.0, 1050.0]),
+            HalfStepState::new(at_tick),
+        ));
+
+        app.world_mut()
+            .resource_mut::<Events<HalfStepRechallengeTriggerEvent>>()
+            .send(HalfStepRechallengeTriggerEvent {
+                char_id: "offline:Azure".to_string(),
+                entity: trigger_entity,
+                is_dormant: false,
+                at_tick,
+            });
+
+        app.update();
+
+        let payloads = drain_halfstep_trigger_payloads(&rx);
+        assert_eq!(payloads.len(), 1, "应入队 1 条 trigger payload");
+        assert_eq!(
+            payloads[0].zone_halfstep_count, 1,
+            "zone_b 内的 HalfStep 实体不应计入 zone_a 的 count，\
+             期望 zone_halfstep_count == 1（仅触发方自身），实际 {}；\
+             .filter zone 判别未正确执行（跨 zone 排除失效）",
+            payloads[0].zone_halfstep_count
+        );
+        assert_eq!(
+            payloads[0].zone_name, "zone_a",
+            "trigger 方在 zone_a 内，payload.zone_name 应为 \"zone_a\"（非 fallback spawn），\
+             实际 {:?}；resolve_zone_name(Some(registry)) 主路径未正确解析",
+            payloads[0].zone_name
+        );
+    }
+
+    /// resolve_zone_name Some 主路径：注入 ZoneRegistry 后，trigger 方位置落在命名 zone
+    /// 的 AABB 内，payload.zone_name 应等于该 zone 的名称（非 DEFAULT_SPAWN_ZONE_NAME fallback）。
+    #[test]
+    fn redis_publish_named_zone_resolves_zone_name_from_registry() {
+        use crate::world::dimension::DimensionKind;
+        use crate::world::zone::Zone;
+        use valence::prelude::DVec3;
+
+        let (mut app, rx) = make_redis_app();
+        let at_tick: u64 = 10_000;
+
+        // 构造一个 "qingyun_peaks" 命名 zone：trigger 方位置 [500, 70, 300] 落在此 AABB 内。
+        let qingyun = Zone {
+            name: "qingyun_peaks".to_string(),
+            dimension: DimensionKind::Overworld,
+            bounds: (
+                DVec3::new(400.0, 60.0, 200.0),
+                DVec3::new(600.0, 120.0, 400.0),
+            ),
+            spirit_qi: 0.7,
+            danger_level: 2,
+            active_events: Vec::new(),
+            patrol_anchors: Vec::new(),
+            blocked_tiles: Vec::new(),
+        };
+        let registry = ZoneRegistry {
+            zones: vec![qingyun],
+        };
+        app.insert_resource(registry);
+
+        let trigger_entity = app
+            .world_mut()
+            .spawn((
+                Position::new([500.0_f64, 70.0, 300.0]),
+                HalfStepState::new(at_tick),
+            ))
+            .id();
+
+        app.world_mut()
+            .resource_mut::<Events<HalfStepRechallengeTriggerEvent>>()
+            .send(HalfStepRechallengeTriggerEvent {
+                char_id: "offline:Beryl".to_string(),
+                entity: trigger_entity,
+                is_dormant: false,
+                at_tick,
+            });
+
+        app.update();
+
+        let payloads = drain_halfstep_trigger_payloads(&rx);
+        assert_eq!(payloads.len(), 1, "应入队 1 条 trigger payload");
+        assert_eq!(
+            payloads[0].zone_name, "qingyun_peaks",
+            "trigger 方在 qingyun_peaks AABB 内，zone_name 应解析为 \"qingyun_peaks\"，\
+             实际 {:?}；期望 resolve_zone_name(Some(registry)) 走 ZoneRegistry.find_zone 主路径，\
+             而非 fallback DEFAULT_SPAWN_ZONE_NAME（\"{}\"）",
+            payloads[0].zone_name, DEFAULT_SPAWN_ZONE_NAME
+        );
+        assert_eq!(
+            payloads[0].zone_halfstep_count, 1,
+            "单实体在命名 zone 内，zone_halfstep_count 应为 1，实际 {}",
+            payloads[0].zone_halfstep_count
+        );
+    }
+
     /// dormant 触发：不入队 Redis payload（dormant 实体无位置，agent 不产 zone echo），
     /// 但 dormant fallback zone_name == "dormant" / zone_halfstep_count == 0 的逻辑
     /// 仍会走，确认入队一条 payload（dormant 路径需要 agent 记录触发但不 echo）。
