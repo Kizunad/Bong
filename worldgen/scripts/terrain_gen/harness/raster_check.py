@@ -7,7 +7,10 @@ Catches known data integrity issues before they reach the Rust server:
 - water level above surrounding terrain (floating water)
 - missing layers in tiles
 - qi_density / mofa_decay outside [0, 1]
-- qi_density vs zone.spirit_qi declared gross mismatch
+- qi_density vs zone.spirit_qi same-source derivation (worldgen-v4 P4 §8.1 #8):
+  when manifest declares qi_density_source == "qi_field", each tile's per-zone
+  qi_density mean must match clamp01((spirit_qi+1)/2) within QI_DENSITY_TOLERANCE
+  (a HARD ERROR — replaces the never-implemented "gross mismatch" warning)
 - underground_tier outside {0,1,2,3}
 - anomaly_kind outside {0..5} or present without anomaly_intensity
 - fossil_bbox outside {0,1,2} or manifest fossil_bboxes with no raster cells
@@ -28,6 +31,25 @@ SPAN_BYTES_PER_COLUMN = SPAN_MAX_SPANS * 2 * 2  # 16
 SPAN_MIN_Y = -64
 SPAN_MAX_Y = 431
 
+# worldgen-v4 P4 §8.1 #8 — qi_density vs zone.spirit_qi 同源派生硬断言.
+#
+# 统一灵气场 [-1,1] 两种导出（terrain_gen.qi_field 是单一真相）：
+#     qi_density = clamp01((field+1)/2)        zone spirit_qi = 面积加权均值(field)
+# 故 zone 内 qi_density 均值 ≈ clamp01((spirit_qi+1)/2)。容差吸收 zone 内灵脉抬升 /
+# 边界过渡的空间噪声（与 qi_field.QI_DENSITY_TOLERANCE 同值，单源一致）。
+# 这两个常量与 qi_field.py 手工对齐——harness 刻意不重 import terrain_gen 全栈，
+# 改动时两端同步（与 SPAN_* 常量同策略）。
+QI_DENSITY_TOLERANCE = 0.2
+
+
+def _expected_qi_density_from_spirit_qi(spirit_qi: float) -> float:
+    """zone 声明 spirit_qi [-1,1] → 期望 qi_density [0,1]：clamp01((sq+1)/2).
+
+    与 ``terrain_gen.qi_field.qi_density_from_field`` 同公式（统一场两种导出的
+    同源派生），单列在 harness 避免重 import。
+    """
+    return max(0.0, min(1.0, (spirit_qi + 1.0) / 2.0))
+
 
 
 def validate_rasters(raster_dir: str | Path) -> tuple[bool, str]:
@@ -47,6 +69,17 @@ def validate_rasters(raster_dir: str | Path) -> tuple[bool, str]:
     collapse_mask_tiles = 0
     collapse_mask_has_positive = False
     fossil_cell_count = 0
+
+    # worldgen-v4 P4 §8.1 #8 — 同源派生硬断言开关与 zone spirit_qi 查表。
+    # 仅当 manifest 声明 ``qi_density_source == "qi_field"`` 时激活（profile 迁移
+    # 到统一场后由导出端置位）；未迁移的旧 manifest 保持旧行为，规则休眠，避免
+    # 在两份漂移阶段误报。zone spirit_qi 来自 manifest.zones（导出物，已携带）。
+    qi_source_is_field = manifest.get("qi_density_source") == "qi_field"
+    zone_spirit_qi: dict[str, float] = {}
+    for zone_param in manifest.get("zones", []):
+        name = zone_param.get("name")
+        if name is not None and "spirit_qi" in zone_param:
+            zone_spirit_qi[str(name)] = float(zone_param["spirit_qi"])
 
     for tile_info in tiles:
         tile_dir = raster_path / tile_info["dir"]
@@ -138,6 +171,32 @@ def validate_rasters(raster_dir: str | Path) -> tuple[bool, str]:
                     f"{tile_id}: {semantic_layer} range=[{s_min:.3f},{s_max:.3f}] "
                     f"outside [0,1] (zones={zones})"
                 )
+
+        # worldgen-v4 P4 §8.1 #8 — qi_density vs zone.spirit_qi 同源派生硬断言.
+        # 一份统一场两种导出后，zone 内 qi_density 均值必须与声明 spirit_qi 派生的
+        # 期望值 clamp01((spirit_qi+1)/2) 一致（±tolerance）。系统性偏离 = 两份漂移
+        # 复发（qi_density 不再同源派生），HARD ERROR。仅在 qi_source_is_field 激活。
+        if qi_source_is_field and zones:
+            qi_file = tile_dir / "qi_density.bin"
+            if qi_file.exists():
+                qi_data = _read_float_layer(qi_file, area)
+                if qi_data is not None:
+                    tile_qi_mean = sum(qi_data) / len(qi_data)
+                    for zone_name in zones:
+                        if zone_name not in zone_spirit_qi:
+                            continue
+                        sq = zone_spirit_qi[zone_name]
+                        expected = _expected_qi_density_from_spirit_qi(sq)
+                        delta = abs(tile_qi_mean - expected)
+                        if delta > QI_DENSITY_TOLERANCE:
+                            errors.append(
+                                f"{tile_id}: qi_density mean={tile_qi_mean:.3f} "
+                                f"diverges from zone '{zone_name}' spirit_qi={sq:.3f} "
+                                f"(expected qi_density≈{expected:.3f} via "
+                                f"clamp01((spirit_qi+1)/2), |Δ|={delta:.3f} > "
+                                f"tol={QI_DENSITY_TOLERANCE}) — qi_density no longer "
+                                f"same-source-derived from the unified qi field"
+                            )
 
         collapse_file = tile_dir / "realm_collapse_mask.bin"
         if collapse_file.exists():
