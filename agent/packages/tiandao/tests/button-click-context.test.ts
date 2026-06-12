@@ -22,6 +22,7 @@ import {
   createContextInput,
 } from "../src/context.js";
 import { TiandaoAgent } from "../src/agent.js";
+import type { LlmClient } from "../src/llm.js";
 import { createTestWorldState } from "./support/fakes.js";
 
 // ─── helpers ───────────────────────────────────────────────────────────────────
@@ -181,7 +182,7 @@ describe("TiandaoAgent.setButtonClickEvents — button_id 真正进入 LLM 推�
           model: "test-model",
         };
       },
-    };
+    } as unknown as LlmClient;
     return { client, capturedMessages };
   }
 
@@ -317,7 +318,7 @@ describe("TiandaoAgent.setButtonClickEvents — button_id 真正进入 LLM 推�
           model: "test-model",
         };
       },
-    };
+    } as unknown as LlmClient;
 
     const agent = new TiandaoAgent({
       name: "calamity",
@@ -360,7 +361,7 @@ describe("TiandaoAgent.setButtonClickEvents — button_id 真正进入 LLM 推�
           model: "test-model",
         };
       },
-    };
+    } as unknown as LlmClient;
 
     const nowSeq = [30_000, 90_000];
     let idx = 0;
