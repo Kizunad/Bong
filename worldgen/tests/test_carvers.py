@@ -429,6 +429,59 @@ class FloatingIslandCarverTest(_CarverCaseMixin, unittest.TestCase):
         self.fail("floating island carver produced no detached isle")
 
 
+class FloatingIslandDripTest(unittest.TestCase):
+    """worldgen-v4 P3 §6.1 round 2/3 — the stalactite-underside drip params.
+
+    sky_isle gives the carver a tight ``drip_scale`` + a ``drip_sharpness`` > 1
+    so the island bottom hangs as irregular 钟乳 points.  These pin that the
+    drip params actually change the underside (a regression that ignored them
+    would re-flatten the bottom).
+    """
+
+    def test_drip_sharpness_lowers_average_drip(self) -> None:
+        # A sharpness > 1 on the [0,1] drip field pushes most columns toward
+        # *less* drip (small values shrink under a power > 1), so the average
+        # island floor sits HIGHER than with linear drip.  Compare mean isle
+        # floor across a field for sharpness 1.0 vs 2.5.
+        def mean_floor(sharpness: float) -> float:
+            carver = FloatingIslandCarver(
+                altitude=250, silhouette_threshold=0.0, drip_depth=20,
+                drip_scale=20.0, drip_sharpness=sharpness,
+            )
+            floors = []
+            for wx in range(0, 120):
+                col = carver.carve_column(GROUND, wx, 9, 4242)
+                isles = [s for s in col.spans if s[0] > 150]
+                floors.extend(s[0] for s in isles)
+            return sum(floors) / len(floors) if floors else 0.0
+
+        linear = mean_floor(1.0)
+        sharp = mean_floor(2.5)
+        self.assertGreater(
+            sharp, linear,
+            f"sharpness 2.5 must raise the mean isle floor vs linear "
+            f"({sharp:.1f} should be > {linear:.1f}): a >1 exponent biases most "
+            f"columns to hang less, so only spiky drips reach deep",
+        )
+
+    def test_drip_params_keep_columns_legal(self) -> None:
+        carver = FloatingIslandCarver(
+            altitude=260, silhouette_threshold=0.0, drip_depth=24,
+            drip_scale=14.0, drip_sharpness=2.2,
+        )
+        for wx in range(0, 200, 3):
+            for wz in range(0, 80, 7):
+                out = carver.carve_column(GROUND, wx, wz, 4242)
+                assert_legal_spans(self, out, f"drip@({wx},{wz})")
+
+    def test_drip_is_deterministic(self) -> None:
+        carver = FloatingIslandCarver(drip_scale=18.0, drip_sharpness=1.9)
+        for wx in range(0, 100, 5):
+            a = carver.carve_column(GROUND, wx, 11, 7).spans
+            b = carver.carve_column(GROUND, wx, 11, 7).spans
+            self.assertEqual(a, b, f"drip carve must be deterministic at wx={wx}")
+
+
 class ArchCarverTest(_CarverCaseMixin, unittest.TestCase):
     carver = ArchCarver()
     min_expected_count = 2  # ground/wall + arch roof

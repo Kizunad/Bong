@@ -100,20 +100,23 @@ class SkyIsleGenerator(TerrainProfileGenerator):
         notes="九霄浮岛生态：地面草甸点缀云兰灌丛与玉璞巨石；浮岛顶生灵玉树、"
               "飞羽竹，底面悬天脉水晶。整体冷色+光洁+灵光粒子，气韵出尘。",
     )
-    # worldgen-v4 P3 §6.1 round 3/3 — 浮空岛群：两道 floating_island_carver 各锚
-    # 一个高度层，叠出错落的双层群岛——下层主岛 (alt≈250) 厚实、上层小岛
-    # (alt≈320) 稀疏。silhouette_threshold 越高=群岛越稀；drip_depth 把岛底雕成
-    # 不规则钟乳垂坠（天脉水晶垂挂处）。两层 salt 同源但 altitude 错开 → 真正的
-    # "层叠浮空岛" 而非单一天花板。
+    # worldgen-v4 P3 §6.1 round 3/3 终轮 — 浮空岛群：两道 floating_island_carver
+    # 各锚一个高度层，叠出错落的双层群岛：
+    #   · 下层主岛 (alt≈246, 厚 28, 大尺度 silhouette) —— 群岛主体，宽而厚；
+    #   · 上层小岛 (alt≈334, 厚 14, 高 threshold=稀疏) —— 零星点缀九霄之上，
+    #     与下层拉开 ~90 块高差，错落感鲜明。
+    # silhouette_threshold 越高=群岛越稀；drip_scale 小 + drip_sharpness>1 把岛底
+    # 雕成不规则尖锥钟乳垂坠（天脉水晶垂挂处）。两层 salt 同源但 altitude 错开 →
+    # 真正的层叠浮空岛而非单一天花板。
     carvers = (
         CarverSpec(
             kind="floating_island",
             params={
-                "altitude": 248,
-                "body_thickness": 26,
-                "silhouette_threshold": 0.52,
+                "altitude": 246,
+                "body_thickness": 28,
+                "silhouette_threshold": 0.50,
                 "drip_depth": 22,
-                "scale": 150.0,
+                "scale": 155.0,
                 "drip_scale": 22.0,
                 "drip_sharpness": 1.9,
             },
@@ -121,13 +124,13 @@ class SkyIsleGenerator(TerrainProfileGenerator):
         CarverSpec(
             kind="floating_island",
             params={
-                "altitude": 322,
-                "body_thickness": 16,
-                "silhouette_threshold": 0.60,
-                "drip_depth": 14,
-                "scale": 110.0,
-                "drip_scale": 18.0,
-                "drip_sharpness": 1.9,
+                "altitude": 334,
+                "body_thickness": 14,
+                "silhouette_threshold": 0.62,
+                "drip_depth": 13,
+                "scale": 105.0,
+                "drip_scale": 17.0,
+                "drip_sharpness": 2.1,
             },
         ),
     )
