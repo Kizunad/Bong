@@ -41,7 +41,7 @@ public class AgentUiPayloadHandlerTest {
     // ─── agent_ui_request happy path ────────────────────────────────────────
 
     @Test
-    void agentUiRequest_validPayload_returnsHandled() {
+    void agentUiRequest_validPayload_withoutMinecraftClientNoOps() {
         String json = """
             {
               "v": 1,
@@ -55,34 +55,33 @@ public class AgentUiPayloadHandlerTest {
 
         ServerDataDispatch dispatch = handler.handle(parseEnvelope(json));
 
-        assertTrue(dispatch.handled(),
-            "合法 agent_ui_request 应返回 handled=true，实际=" + dispatch.handled());
+        assertFalse(dispatch.handled(),
+            "headless 环境无 MinecraftClient/player 时应 noOp，实际 handled=" + dispatch.handled());
         assertTrue(dispatch.logMessage().contains("req-001"),
             "logMessage 应含 request_id 'req-001'，实际=" + dispatch.logMessage());
+        assertNull(AgentUiStore.getActive(),
+            "无 MinecraftClient/player 时不应写入 AgentUiStore");
     }
 
     @Test
-    void agentUiRequest_setsActiveScreenInStore() {
-        // AgentUiStore.getActive() 在测试环境下（无 MC client）不会实际打开屏幕，
-        // 但 screen 对象本身已创建并存入 store
+    void agentUiRequest_nonPositiveTimeout_withoutMinecraftClientNoOps() {
         String json = """
             {
               "v": 1,
               "type": "agent_ui_request",
-              "request_id": "req-store-test",
+              "request_id": "req-bad-timeout",
               "target_player": "player-uuid",
               "xml": "<owo-ui><components><flow-layout><label>测试</label></flow-layout></components></owo-ui>",
-              "timeout_ticks": 300
+              "timeout_ticks": 0
             }
             """;
 
-        handler.handle(parseEnvelope(json));
+        ServerDataDispatch dispatch = handler.handle(parseEnvelope(json));
 
-        AgentUiScreen active = AgentUiStore.getActive();
-        assertNotNull(active,
-            "handler 应将 AgentUiScreen 存入 AgentUiStore，getActive() 不应为 null");
-        assertEquals("req-store-test", active.requestId(),
-            "screen.requestId() 应等于 payload 的 request_id，实际=" + active.requestId());
+        assertFalse(dispatch.handled(),
+            "timeout_ticks <= 0 会被归一化，但 headless 环境仍应 noOp，实际 handled=" + dispatch.handled());
+        assertNull(AgentUiStore.getActive(),
+            "headless 环境不应因非法 timeout 写入 AgentUiStore");
     }
 
     @Test
@@ -139,11 +138,10 @@ public class AgentUiPayloadHandlerTest {
 
         ServerDataDispatch dispatch = handler.handle(parseEnvelope(json));
 
-        // handler 返回 handled（进入 fallback 面板路径）
-        assertTrue(dispatch.handled(),
-            "缺 xml 时 handler 应仍返回 handled（降级 fallback），实际=" + dispatch.handled());
-        AgentUiScreen active = AgentUiStore.getActive();
-        assertNotNull(active, "缺 xml 时 AgentUiStore 仍应有 active screen（fallback 面板）");
+        assertFalse(dispatch.handled(),
+            "缺 xml 可降级，但 headless 环境无 MinecraftClient/player 时应 noOp，实际 handled=" + dispatch.handled());
+        assertNull(AgentUiStore.getActive(),
+            "headless 环境缺 xml 时也不应写入 AgentUiStore");
     }
 
     @Test
@@ -161,8 +159,8 @@ public class AgentUiPayloadHandlerTest {
 
         ServerDataDispatch dispatch = handler.handle(parseEnvelope(json));
 
-        assertTrue(dispatch.handled(),
-            "缺 timeout_ticks 时应使用默认值 600 并返回 handled，实际=" + dispatch.handled());
+        assertFalse(dispatch.handled(),
+            "缺 timeout_ticks 会使用默认值 600，但 headless 环境应 noOp，实际 handled=" + dispatch.handled());
     }
 
     // ─── agent_ui_close happy path ───────────────────────────────────────────
@@ -260,6 +258,40 @@ public class AgentUiPayloadHandlerTest {
 
         assertFalse(dispatch.handled(),
             "缺 request_id 的 agent_ui_close 应返回 noOp，实际=" + dispatch.handled());
+    }
+
+    // ─── state transition: new request replaces old active screen ────────────
+
+    @Test
+    void agentUiStore_newRequestReplacesOldActiveScreen() {
+        // 模拟 req-old 已激活（与 agent_ui_request 处理路径相同：setActive 在 client.execute 内调用）
+        AgentUiScreen oldScreen = AgentUiScreen.create(
+            "req-old",
+            "<owo-ui><components><flow-layout><label>旧</label></flow-layout></components></owo-ui>",
+            600, 0L
+        );
+        AgentUiStore.setActive(oldScreen);
+
+        assertNotNull(AgentUiStore.getActive(),
+            "先放置 req-old 后 AgentUiStore 应有 active screen");
+        assertEquals("req-old", AgentUiStore.getActive().requestId(),
+            "active screen requestId 应为 'req-old'，实际=" + AgentUiStore.getActive().requestId());
+
+        // 新请求 req-new 到达 → setActive 覆盖旧 screen（单面板互斥语义）
+        AgentUiScreen newScreen = AgentUiScreen.create(
+            "req-new",
+            "<owo-ui><components><flow-layout><label>新</label></flow-layout></components></owo-ui>",
+            300, 100L
+        );
+        AgentUiStore.setActive(newScreen);
+
+        assertNotNull(AgentUiStore.getActive(),
+            "新请求 setActive 后 AgentUiStore 应有 active screen");
+        assertEquals("req-new", AgentUiStore.getActive().requestId(),
+            "新请求应替换旧 active screen，requestId 应为 'req-new'，实际="
+            + AgentUiStore.getActive().requestId());
+        assertFalse(AgentUiStore.getActive() == oldScreen,
+            "getActive() 应返回新 screen 对象而非旧对象");
     }
 
     // ─── ServerDataRouter 注册 ───────────────────────────────────────────────
