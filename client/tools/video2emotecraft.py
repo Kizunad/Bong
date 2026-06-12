@@ -14,10 +14,12 @@ import re
 import sys
 import tempfile
 from dataclasses import dataclass
+from itertools import pairwise
 from pathlib import Path
 from typing import Callable, Iterable, Sequence
 
 import numpy as np
+from scipy.signal import savgol_filter
 
 from anim_common import ANGLE_AXES, VALID_PARTS, build_doc, resolve_output_path, write_json
 
@@ -44,6 +46,9 @@ VIDEO_EXTENSIONS = frozenset({".mp4", ".mov"})
 PART_ORDER = ("body", "torso", "head", "leftArm", "rightArm", "leftLeg", "rightLeg")
 AXIS_ORDER = ("x", "y", "z", "pitch", "yaw", "roll", "bend", "axis")
 LINEAR_AXES = frozenset({"x", "y", "z"})
+CALIBRATION_AXES = frozenset({"pitch", "yaw", "roll", "bend"})
+DEFAULT_SMOOTH_WINDOW = 5
+SAVGOL_POLYORDER = 2
 
 
 @dataclass(frozen=True)
@@ -156,6 +161,8 @@ class PoseToEmotecraft:
         frames: Iterable[LandmarkFrame],
         *,
         smooth: bool = True,
+        smooth_window: int = DEFAULT_SMOOTH_WINDOW,
+        calibration_range: tuple[int, int] | None = None,
         loop: bool = False,
     ) -> dict[int, dict]:
         """Convert sampled landmark frames into an anim_common pose table."""
@@ -168,8 +175,10 @@ class PoseToEmotecraft:
                 frame.image_landmarks,
             )
 
+        if calibration_range is not None:
+            pose_table = apply_reference_calibration(pose_table, calibration_range)
         if smooth:
-            _smooth_pose_table(pose_table)
+            _smooth_pose_table(pose_table, window=smooth_window)
         if loop and pose_table:
             first_tick = min(pose_table)
             last_tick = max(pose_table)
@@ -351,6 +360,26 @@ def select_key_pose_table(
     return {tick: pose_table[tick] for tick in selected}
 
 
+def infer_keyframe_easing(pose_table: dict[int, dict]) -> dict[int, str]:
+    """Infer coarse easing labels from adjacent angular velocity changes."""
+    ticks = sorted(pose_table)
+    if not ticks:
+        return {}
+    easing = dict.fromkeys(ticks, "linear")
+    if len(ticks) < 3:
+        return easing
+
+    velocities: list[float] = []
+    for previous_tick, current_tick in pairwise(ticks):
+        duration = max(1, current_tick - previous_tick)
+        delta = _max_angular_delta(pose_table[previous_tick], pose_table[current_tick])
+        velocities.append(delta / duration)
+
+    for index, tick in enumerate(ticks[2:], start=2):
+        easing[tick] = _classify_easing(velocities[index - 2], velocities[index - 1])
+    return easing
+
+
 def write_gen_script(
     pose_table: dict[int, dict],
     *,
@@ -368,6 +397,7 @@ def write_gen_script(
         pose_table,
         angle_threshold_degrees=angle_threshold_degrees,
     )
+    easing_by_tick = infer_keyframe_easing(key_pose_table)
     rounded_pose_table = _round_pose_table_for_gen(key_pose_table)
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text(
@@ -375,6 +405,7 @@ def write_gen_script(
             rounded_pose_table,
             name=name,
             source_info=source_info or {},
+            easing_by_tick=easing_by_tick,
             loop=loop,
         )
     )
@@ -403,12 +434,20 @@ def convert_video_file(
     output_path: Path | None = None,
     export_gen_name: str | None = None,
     angle_threshold_degrees: float = 5.0,
+    smooth_window: int = DEFAULT_SMOOTH_WINDOW,
+    calibration_range: tuple[int, int] | None = None,
 ) -> Path:
     """Convert one video into either JSON or a hand-editable gen script."""
     poser = VideoPoser(fps=fps, model_complexity=model_complexity)
     frames = poser.sample(input_video)
     converter = PoseToEmotecraft(translate=translate)
-    pose_table = converter.convert_frames(frames, smooth=smooth, loop=loop)
+    pose_table = converter.convert_frames(
+        frames,
+        smooth=smooth,
+        smooth_window=smooth_window,
+        calibration_range=calibration_range,
+        loop=loop,
+    )
     if export_gen_name is not None:
         gen_path = write_gen_script(
             pose_table,
@@ -444,6 +483,8 @@ def batch_convert(
     smooth: bool = True,
     loop: bool = False,
     preview: bool = False,
+    smooth_window: int = DEFAULT_SMOOTH_WINDOW,
+    calibration_range: tuple[int, int] | None = None,
     convert_one: Callable[[Path, Path], Path] | None = None,
 ) -> BatchResult:
     """Convert all supported videos in a directory, skipping existing JSON."""
@@ -469,6 +510,8 @@ def batch_convert(
                 loop=loop,
                 preview=preview,
                 output_path=out_path,
+                smooth_window=smooth_window,
+                calibration_range=calibration_range,
             )
         else:
             written = convert_one(video_path, out_path)
@@ -589,8 +632,9 @@ def _matrix_to_euler_xyz(matrix: np.ndarray) -> tuple[float, float, float]:
     return pitch, yaw, roll
 
 
-def _smooth_pose_table(pose_table: dict[int, dict]) -> None:
-    """Unwrap angular axes in-place to avoid ±180° discontinuities."""
+def _smooth_pose_table(pose_table: dict[int, dict], *, window: int = DEFAULT_SMOOTH_WINDOW) -> None:
+    """Unwrap and optionally denoise angular axes in-place."""
+    _validate_smooth_window(window)
     if len(pose_table) < 2:
         return
     for part in VALID_PARTS:
@@ -602,15 +646,89 @@ def _smooth_pose_table(pose_table: dict[int, dict]) -> None:
             if len(ticks) < 2:
                 continue
             values = [float(pose_table[tick][part][axis]) for tick in ticks]
-            smoothed = smooth_angle_degrees(values)
+            smoothed = smooth_angle_degrees(values, window=window)
             for tick, value in zip(ticks, smoothed):
                 pose_table[tick][part][axis] = round(value, 4)
 
 
-def smooth_angle_degrees(values: Sequence[float]) -> list[float]:
-    """Unwrap a degree sequence across the ±180° boundary."""
+def smooth_angle_degrees(values: Sequence[float], *, window: int = 0) -> list[float]:
+    """Unwrap a degree sequence and optionally apply Savitzky-Golay denoising."""
+    _validate_smooth_window(window)
     radians = np.radians(np.array(values, dtype=float))
-    return [float(v) for v in np.degrees(np.unwrap(radians))]
+    unwrapped = np.degrees(np.unwrap(radians))
+    if window == 0 or len(unwrapped) < window:
+        return [float(v) for v in unwrapped]
+    filtered = savgol_filter(unwrapped, window_length=window, polyorder=SAVGOL_POLYORDER, mode="interp")
+    return [float(v) for v in filtered]
+
+
+def apply_reference_calibration(
+    pose_table: dict[int, dict],
+    frame_range: tuple[int, int],
+) -> dict[int, dict]:
+    """Subtract average reference-pose rotation from all matching pose axes."""
+    start_tick, end_tick = frame_range
+    if start_tick > end_tick:
+        raise ValueError("calibration range start must be <= end")
+    reference_ticks = [tick for tick in sorted(pose_table) if start_tick <= tick <= end_tick]
+    if not reference_ticks:
+        raise ValueError("calibration range did not match any pose frames")
+
+    offsets = _reference_offsets(pose_table, reference_ticks)
+    calibrated: dict[int, dict] = {}
+    for tick, pose in pose_table.items():
+        calibrated_pose: dict = {}
+        for part, axes in pose.items():
+            if not isinstance(axes, dict):
+                calibrated_pose[part] = axes
+                continue
+            calibrated_axes = dict(axes)
+            for axis in CALIBRATION_AXES:
+                key = (part, axis)
+                if axis in calibrated_axes and key in offsets:
+                    calibrated_axes[axis] = round(_wrap_degrees(float(calibrated_axes[axis]) - offsets[key]), 4)
+            calibrated_pose[part] = calibrated_axes
+        calibrated[tick] = calibrated_pose
+    return calibrated
+
+
+def _validate_smooth_window(window: int) -> None:
+    """Validate a Savitzky-Golay window; zero means unwrap-only smoothing."""
+    if window == 0:
+        return
+    if window < 3 or window % 2 == 0:
+        raise ValueError("smooth_window must be 0 or an odd integer >= 3")
+
+
+def _reference_offsets(
+    pose_table: dict[int, dict],
+    reference_ticks: Sequence[int],
+) -> dict[tuple[str, str], float]:
+    """Average calibratable axes over reference ticks."""
+    samples: dict[tuple[str, str], list[float]] = {}
+    for tick in reference_ticks:
+        for part, axes in pose_table[tick].items():
+            if not isinstance(axes, dict):
+                continue
+            for axis in CALIBRATION_AXES:
+                if axis in axes:
+                    samples.setdefault((part, axis), []).append(float(axes[axis]))
+    return {key: _mean_angle_degrees(values) for key, values in samples.items()}
+
+
+def _mean_angle_degrees(values: Sequence[float]) -> float:
+    """Return a circular mean for degree values near the ±180° seam."""
+    radians = np.radians(np.array(values, dtype=float))
+    sin_sum = float(np.sin(radians).sum())
+    cos_sum = float(np.cos(radians).sum())
+    if abs(sin_sum) < 1e-12 and abs(cos_sum) < 1e-12:
+        return float(np.mean(np.degrees(np.unwrap(radians))))
+    return math.degrees(math.atan2(sin_sum, cos_sum))
+
+
+def _wrap_degrees(value: float) -> float:
+    """Normalize a degree value to the [-180, 180] interval."""
+    return (value + 180.0) % 360.0 - 180.0
 
 
 def _merge_boundary_pose(last_pose: dict, first_pose: dict) -> dict:
@@ -649,6 +767,30 @@ def _max_angle_delta(previous_pose: dict, current_pose: dict) -> float:
     return largest
 
 
+def _max_angular_delta(previous_pose: dict, current_pose: dict) -> float:
+    """Return the largest angular delta shared by two poses."""
+    largest = 0.0
+    for part in set(previous_pose) | set(current_pose):
+        previous_axes = previous_pose.get(part, {})
+        current_axes = current_pose.get(part, {})
+        if not isinstance(previous_axes, dict) or not isinstance(current_axes, dict):
+            continue
+        for axis in ANGLE_AXES:
+            if axis in previous_axes and axis in current_axes:
+                largest = max(largest, abs(float(current_axes[axis]) - float(previous_axes[axis])))
+    return largest
+
+
+def _classify_easing(previous_velocity: float, current_velocity: float) -> str:
+    """Classify velocity change into a coarse generator easing string."""
+    epsilon = 1e-6
+    if current_velocity > previous_velocity * 1.1 + epsilon:
+        return "EASEINQUAD"
+    if current_velocity < previous_velocity * 0.9 - epsilon:
+        return "EASEOUTQUAD"
+    return "linear"
+
+
 def _round_pose_table_for_gen(pose_table: dict[int, dict]) -> dict[int, dict]:
     """Round a pose table for hand-editable generator output."""
     rounded: dict[int, dict] = {}
@@ -680,6 +822,7 @@ def _build_gen_script_source(
     *,
     name: str,
     source_info: dict[int, tuple[int | None, float | None]],
+    easing_by_tick: dict[int, str],
     loop: bool,
 ) -> str:
     """Build Python source for a generated gen_NAME.py script."""
@@ -702,6 +845,7 @@ def _build_gen_script_source(
         frame_index, frame_time = source_info.get(tick, (None, None))
         lines.append(f"    # {_format_source_comment(frame_index, frame_time)}")
         lines.append(f"    {tick}: {{")
+        lines.append(f"        'easing': {easing_by_tick.get(tick, 'linear')!r},")
         pose = pose_table[tick]
         for part in PART_ORDER:
             axes = pose.get(part)
@@ -787,6 +931,18 @@ def _add_common_cli_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--complexity", type=int, default=2, choices=(0, 1, 2))
     parser.add_argument("--translate", action="store_true")
     parser.add_argument("--no-smooth", action="store_true")
+    parser.add_argument(
+        "--smooth-window",
+        type=_smooth_window,
+        default=DEFAULT_SMOOTH_WINDOW,
+        help="Savitzky-Golay smoothing window; 0 keeps unwrap only",
+    )
+    parser.add_argument(
+        "--calibrate",
+        type=parse_frame_range,
+        metavar="START-END",
+        help="inclusive T-pose reference tick range used as zero-offset calibration",
+    )
     parser.add_argument("--loop", action="store_true")
     parser.add_argument("--preview", action="store_true")
 
@@ -807,6 +963,28 @@ def _non_negative_float(value: str) -> float:
     return parsed
 
 
+def _smooth_window(value: str) -> int:
+    """Parse a Savitzky-Golay smoothing window for argparse."""
+    parsed = int(value)
+    try:
+        _validate_smooth_window(parsed)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(str(exc)) from exc
+    return parsed
+
+
+def parse_frame_range(value: str) -> tuple[int, int]:
+    """Parse an inclusive START-END calibration frame range."""
+    if not re.fullmatch(r"\d+-\d+", value):
+        raise argparse.ArgumentTypeError("calibration range must use START-END")
+    start_text, end_text = value.split("-", 1)
+    start_tick = int(start_text)
+    end_tick = int(end_text)
+    if start_tick > end_tick:
+        raise argparse.ArgumentTypeError("calibration range start must be <= end")
+    return start_tick, end_tick
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     """Run the video-to-animation CLI pipeline."""
     args = parse_args(sys.argv[1:] if argv is None else argv)
@@ -820,6 +998,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             smooth=not args.no_smooth,
             loop=args.loop,
             preview=args.preview,
+            smooth_window=args.smooth_window,
+            calibration_range=args.calibrate,
         )
         print(f"batch converted={len(result.converted)} skipped={len(result.skipped)}")
         return 0
@@ -836,6 +1016,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         preview=args.preview,
         export_gen_name=args.export_gen,
         angle_threshold_degrees=args.key_threshold,
+        smooth_window=args.smooth_window,
+        calibration_range=args.calibrate,
     )
     return 0
 

@@ -221,3 +221,33 @@ MediaPipe 的 T-pose 检测不完美，导致"站直不动"时骨骼旋转不为
 | `client/tools/video2emotecraft.py` | 核心转换器（P0 全部 + P2 平滑/校准） |
 | `client/tools/test_video2emotecraft.py` | 单测 |
 | `client/tools/requirements-video2anim.txt` | Python 依赖（mediapipe / opencv / numpy / scipy） |
+
+---
+
+## Finish Evidence
+
+### 落地清单
+
+- **P0 核心转换器**：`client/tools/video2emotecraft.py` 中 `VideoPoser` / `PoseToEmotecraft` / `FrameSampler` / `build_doc` 完成视频采样、姿态转换和 Emotecraft v3 JSON 发射。
+- **P1 工具链集成**：`write_gen_script` / `select_key_pose_table` / `batch_convert` / `_run_preview` 完成 gen 脚本导出、关键帧筛选、批量 CLI 和预览目录接线。
+- **P2 质量提升**：`smooth_angle_degrees(window=5)` 接入 Savitzky-Golay；`infer_keyframe_easing` 在 `--export-gen` 脚本中写 easing；`apply_reference_calibration` 与 `--calibrate START-END` 完成参考姿态归零。
+
+### 关键 commit
+
+- `b59a20986` · 2026-06-12 · `plan-video2anim-v1 P0: 视频动捕转 Emotecraft 核心转换器 (#525)`
+- `6c148b569` · 2026-06-13 · `plan-video2anim-v1: 完成 P1 工具链集成 (#531)`
+- `7afa357be` · 2026-06-13 · `feat(video2anim): 完成 P2 质量提升`
+
+### 测试结果
+
+- `python3 -m py_compile client/tools/video2emotecraft.py client/tools/test_video2emotecraft.py` ✅
+- `python3 -m pytest client/tools/test_video2emotecraft.py -q` ✅ 62 passed
+
+### 跨仓库核验
+
+- **client**：`client/tools/video2emotecraft.py` 复用 `anim_common.build_doc` / `write_json` / `ANGLE_AXES`，输出到 `client/src/main/resources/assets/bong/player_animation/{name}.json`。
+- **server / agent**：无联动；本 plan 是纯 client 动画生产工具链。
+
+### 遗留 / 后续
+
+- 不随仓库提交实拍视频素材；P2 的平滑、easing、校准以合成姿态序列锁定数学契约，实际武术视频仍需动画制作者在本地素材上人工目检预览。
