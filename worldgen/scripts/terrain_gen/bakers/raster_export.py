@@ -239,13 +239,20 @@ def export_rasters(
         # cavern_floor_y) are folded into spans.  Only the SEMANTIC vertical
         # layers (sky_island_mask, underground_tier) remain as rasters because
         # the 灵草 environment locks key off them directly.
+        #
+        # Gate on written_layer_names (actual on-disk truth) — NOT just
+        # ``name in LAYER_REGISTRY`` (always true once registered).  The standalone
+        # write is conditional on the whitelist + each tile carrying the layer, so
+        # a registry-only check could declare a layer the Rust reader then fails to
+        # mmap.  This mirrors how ``semantic_layers`` above filters by what was
+        # actually written.
         "vertical_layers": [
             name
             for name in (
                 "sky_island_mask",
                 "underground_tier",
             )
-            if name in LAYER_REGISTRY
+            if name in written_layer_names
         ],
         "abyssal_tier_floor_y": {"1": 28.0, "2": -4.0, "3": -36.0},
         "anomaly_kinds": {

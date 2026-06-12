@@ -4,7 +4,9 @@ End-to-end export of a real profile, asserting the on-disk contract:
   * spans_count.bin (u8/col) + spans.bin (SPAN_BYTES_PER_COLUMN/col) written;
   * height.bin and the six deleted vertical patch layers are NOT written;
   * sky_island_mask + underground_tier remain as semantic rasters;
-  * manifest version == 2, carries spans_encoding, vertical_layers trimmed;
+  * manifest version == 2, carries spans_encoding; vertical_layers lists only the
+    semantic vertical rasters a given export actually wrote (gated on disk, not on
+    registry membership — Major #3);
   * decoding column 0 from the raw files via the i16-LE/sentinel layout matches
     the surface folded by the shim (offset = col_idx * stride round-trip).
 """
@@ -122,15 +124,32 @@ class SpansExportLayoutTest(unittest.TestCase):
         self.assertEqual(enc["count_file"], SPANS_COUNT_FILE)
         self.assertEqual(enc["spans_file"], SPANS_FILE)
 
-    def test_vertical_layers_trimmed_to_semantic_only(self) -> None:
-        with tempfile.TemporaryDirectory() as td:
-            manifest, _raster_dir, _fields = _export("sky_isle", td)
-        self.assertEqual(
-            manifest["vertical_layers"],
-            ["sky_island_mask", "underground_tier"],
-            "only the semantic vertical layers survive; the geometric ones are "
-            "folded into spans",
-        )
+    def test_vertical_layers_reflect_actually_written_per_profile(self) -> None:
+        # worldgen-v4 P0 Major #3: vertical_layers is gated on written_layer_names,
+        # so it lists ONLY the semantic vertical layers a given export actually
+        # wrote — never every registered name.  The old registry-only gate declared
+        # BOTH layers in every single-profile export (phantom layers the Rust
+        # reader would fail to mmap).  Pin the corrected per-profile truth:
+        #   sky_isle      → only sky_island_mask  (no abyssal tiers ⇒ no underground_tier)
+        #   abyssal_maze  → only underground_tier (no isle ⇒ no sky_island_mask)
+        #   cave_network  → neither               (uses neither semantic layer)
+        expected = {
+            "sky_isle": ["sky_island_mask"],
+            "abyssal_maze": ["underground_tier"],
+            "cave_network": [],
+        }
+        for profile, want in expected.items():
+            with self.subTest(profile=profile):
+                with tempfile.TemporaryDirectory() as td:
+                    manifest, raster_dir, _fields = _export(profile, td)
+                self.assertEqual(
+                    manifest["vertical_layers"],
+                    want,
+                    f"{profile}: vertical_layers must list exactly the semantic "
+                    f"vertical rasters this export wrote ({want}); the geometric "
+                    f"vertical layers are folded into spans and the unwritten "
+                    f"semantic one must NOT be declared",
+                )
 
     def test_span_files_have_exact_byte_lengths(self) -> None:
         with tempfile.TemporaryDirectory() as td:
@@ -175,6 +194,35 @@ class SpansExportLayoutTest(unittest.TestCase):
             tile_dir = raster_dir / tile["dir"]
             self.assertTrue((tile_dir / "sky_island_mask.bin").exists())
             self.assertIn("sky_island_mask", tile["layers"])
+
+    def test_declared_vertical_layers_all_exist_on_disk(self) -> None:
+        # worldgen-v4 P0 Major #3: manifest.vertical_layers must be gated on what
+        # was actually written (written_layer_names), NOT on registry membership.
+        # Pin that EVERY declared vertical layer has a real .bin in EVERY tile —
+        # otherwise the Rust reader mmaps a missing file.  A registry-only gate
+        # would silently re-introduce the mismatch this test guards against.
+        with tempfile.TemporaryDirectory() as td:
+            manifest, raster_dir, _fields = _export("sky_isle", td)
+            declared = manifest["vertical_layers"]
+            self.assertTrue(
+                declared,
+                "sky_isle profile must yield at least sky_island_mask in "
+                "vertical_layers — empty means the gate over-trimmed",
+            )
+            for tile in manifest["tiles"]:
+                tile_dir = raster_dir / tile["dir"]
+                for layer in declared:
+                    self.assertTrue(
+                        (tile_dir / f"{layer}.bin").exists(),
+                        f"manifest declares vertical layer '{layer}' but "
+                        f"{tile['dir']}/{layer}.bin is absent — manifest↔disk "
+                        f"mismatch (Rust load would fail to mmap)",
+                    )
+                    self.assertIn(
+                        layer, tile["layers"],
+                        f"'{layer}' declared in vertical_layers but missing from "
+                        f"tile['layers'] of {tile['dir']}",
+                    )
 
     def test_decoded_column_surface_matches_shim_fold(self) -> None:
         # The bytes on disk must decode (offset = col_idx * stride) to exactly
