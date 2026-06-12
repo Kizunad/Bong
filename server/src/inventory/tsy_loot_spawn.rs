@@ -17,7 +17,7 @@ use std::hash::{Hash, Hasher};
 use serde::{Deserialize, Serialize};
 use valence::math::DVec3;
 use valence::prelude::bevy_ecs::{
-    event::EventReader,
+    event::{EventReader, EventWriter},
     system::{Res, ResMut},
 };
 use valence::prelude::{bevy_ecs, Resource};
@@ -28,7 +28,7 @@ use super::ancient_relics::{AncientRelicPool, AncientRelicSource};
 use super::{DroppedLootEntry, DroppedLootRegistry, InventoryInstanceIdAllocator};
 use crate::combat::CombatClock;
 use crate::world::dimension::DimensionKind;
-use crate::world::tsy_lifecycle::{on_first_enter, TsyZoneStateRegistry};
+use crate::world::tsy_lifecycle::{on_first_enter, TsyZoneActivated, TsyZoneStateRegistry};
 use crate::world::tsy_portal::TsyEnterEmit;
 use crate::world::zone::{TsyDepth, ZoneRegistry};
 
@@ -125,11 +125,22 @@ pub fn tsy_loot_spawn_on_enter(
     mut drops: ResMut<DroppedLootRegistry>,
     mut lifecycle: ResMut<TsyZoneStateRegistry>,
     clock: Res<CombatClock>,
+    mut activated_events: EventWriter<TsyZoneActivated>,
 ) {
     for ev in events.read() {
         // 任何"玩家踏进 family"都先把 family 注册到 lifecycle registry —— 即便
         // 本 tick 没真正放下遗物（zones 未 ready）也保证 lifecycle 有 anchor 可查。
-        on_first_enter(&mut lifecycle, &ev.family_id, ev.return_to, clock.tick);
+        // is_new=true 表示本次调用首次激活该 family → 发 TsyZoneActivated 供 tsy_event_bridge
+        // 转发到 Redis bong:tsy_event（agent drainTsyZoneActivatedEvents 消费路径）。
+        let is_new = on_first_enter(&mut lifecycle, &ev.family_id, ev.return_to, clock.tick);
+        if is_new {
+            let source = source_class_from_family_id(&ev.family_id);
+            activated_events.send(TsyZoneActivated {
+                family_id: ev.family_id.clone(),
+                source_class: source,
+                at_tick: clock.tick,
+            });
+        }
 
         // 已经 spawn 过本 family → 跳。
         if spawned.families.contains(&ev.family_id) {

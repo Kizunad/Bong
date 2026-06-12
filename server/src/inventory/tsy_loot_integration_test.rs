@@ -120,6 +120,9 @@ mod tests {
         app.insert_resource(InventoryInstanceIdAllocator::default());
         app.insert_resource(DroppedLootRegistry::default());
         app.add_event::<TsyEnterEmit>();
+        // plan-agent-ui-data-v1 server fix：tsy_loot_spawn_on_enter 现在 emit TsyZoneActivated，
+        // 需要先注册事件类型，否则 Bevy 系统调度 panic。
+        app.add_event::<crate::world::tsy_lifecycle::TsyZoneActivated>();
         app.add_systems(Update, tsy_loot_spawn_on_enter);
         register_lingxu_subzones(&mut app);
         app
@@ -227,6 +230,8 @@ mod tests {
         app.insert_resource(InventoryInstanceIdAllocator::default());
         app.insert_resource(DroppedLootRegistry::default());
         app.add_event::<TsyEnterEmit>();
+        // plan-agent-ui-data-v1 server fix：tsy_loot_spawn_on_enter 现在 emit TsyZoneActivated。
+        app.add_event::<crate::world::tsy_lifecycle::TsyZoneActivated>();
         app.add_systems(Update, tsy_loot_spawn_on_enter);
         // 故意不 register_lingxu_subzones —— mid/deep zone 不存在
 

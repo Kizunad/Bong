@@ -109,7 +109,7 @@ use crate::schema::style_balance::StyleBalanceTelemetryEventV1;
 use crate::schema::territory_narration::TerritoryDominanceNarrationRequestV1;
 use crate::schema::tiandao_hunt_narration::TiandaoHuntNarrationRequestV1;
 use crate::schema::tribulation::{TribulationEventV1, TribulationKindV1, TribulationPhaseV1};
-use crate::schema::tsy::{TsyEnterEventV1, TsyExitEventV1};
+use crate::schema::tsy::{TsyEnterEventV1, TsyExitEventV1, TsyZoneActivatedEventV1};
 use crate::schema::tsy_hostile::{TsyNpcSpawnedV1, TsySentinelPhaseChangedV1};
 use crate::schema::tuike::ShedEventV1;
 use crate::schema::tuike_v2::{TuikeAshDecayV1, TuikeSkillEventV1};
@@ -211,6 +211,9 @@ pub enum RedisOutbound {
     TsyExit(TsyExitEventV1),
     TsyNpcSpawned(TsyNpcSpawnedV1),
     TsySentinelPhaseChanged(TsySentinelPhaseChangedV1),
+    /// plan-agent-ui-data-v1 server fix — 坍缩渊首次激活（bong:tsy_event kind=tsy_zone_activated）。
+    /// agent 消费此事件触发秘境发现 UI 面板（drainTsyZoneActivatedEvents）。
+    TsyZoneActivated(TsyZoneActivatedEventV1),
     PoiSpawned(PoiSpawnedEventV1),
     PoiTrespass(TrespassEventV1),
     SocialExposure(SocialExposureEventV1),
@@ -1082,6 +1085,17 @@ fn prepare_outbound_command(message: RedisOutbound) -> Result<RedisIoCommand, Va
             let payload = serde_json::to_string(&evt).map_err(|error| {
                 ValidationError::new(format!(
                     "failed to serialize TsySentinelPhaseChangedV1: {error}"
+                ))
+            })?;
+            Ok(RedisIoCommand::Publish {
+                channel: CH_TSY_EVENT,
+                payload,
+            })
+        }
+        RedisOutbound::TsyZoneActivated(evt) => {
+            let payload = serde_json::to_string(&evt).map_err(|error| {
+                ValidationError::new(format!(
+                    "failed to serialize TsyZoneActivatedEventV1: {error}"
                 ))
             })?;
             Ok(RedisIoCommand::Publish {

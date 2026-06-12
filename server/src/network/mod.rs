@@ -652,6 +652,9 @@ pub fn register(app: &mut App) {
             tsy_event_bridge::publish_tsy_npc_spawned_events
                 .after(crate::npc::tsy_hostile::emit_tsy_hostile_spawn_summary),
             tsy_event_bridge::publish_tsy_sentinel_phase_changed_events,
+            // plan-agent-ui-data-v1 server fix — TsyZoneActivated → bong:tsy_event
+            tsy_event_bridge::publish_tsy_zone_activated_events
+                .after(crate::inventory::tsy_loot_spawn::tsy_loot_spawn_on_enter),
             poi_novice_bridge::publish_poi_spawned_events,
             poi_novice_bridge::publish_trespass_events,
             forge_snapshot_emit::emit_join_forge_snapshots
