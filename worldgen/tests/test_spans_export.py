@@ -19,11 +19,15 @@ import unittest
 from pathlib import Path
 
 from scripts.terrain_gen.bakers.raster_export import (
+    CARVE_SEED,
     SPANS_COUNT_FILE,
     SPANS_FILE,
+    _tile_carver_chain,
+    _zone_carver_chains,
     build_raster_bake_plan,
     export_rasters,
 )
+from scripts.terrain_gen.carvers import apply_carver_chain
 from scripts.terrain_gen.blueprint import (
     BlueprintZone,
     BoundarySpec,
@@ -109,13 +113,13 @@ def _export(profile: str, temp_dir: str):
     fields = synthesize_fields(plan)
     artifacts = export_rasters(plan, fields)
     manifest = json.loads(artifacts["manifest"].read_text(encoding="utf-8"))
-    return manifest, artifacts["raster_dir"], fields
+    return manifest, artifacts["raster_dir"], fields, plan
 
 
 class SpansExportLayoutTest(unittest.TestCase):
     def test_manifest_is_version_2_with_spans_encoding(self) -> None:
         with tempfile.TemporaryDirectory() as td:
-            manifest, _raster_dir, _fields = _export("sky_isle", td)
+            manifest, _raster_dir, _fields, _plan = _export("sky_isle", td)
         self.assertEqual(manifest["version"], 2)
         enc = manifest["spans_encoding"]
         self.assertEqual(enc["max_spans"], 4)
@@ -141,7 +145,7 @@ class SpansExportLayoutTest(unittest.TestCase):
         for profile, want in expected.items():
             with self.subTest(profile=profile):
                 with tempfile.TemporaryDirectory() as td:
-                    manifest, raster_dir, _fields = _export(profile, td)
+                    manifest, raster_dir, _fields, _plan = _export(profile, td)
                 self.assertEqual(
                     manifest["vertical_layers"],
                     want,
@@ -153,7 +157,7 @@ class SpansExportLayoutTest(unittest.TestCase):
 
     def test_span_files_have_exact_byte_lengths(self) -> None:
         with tempfile.TemporaryDirectory() as td:
-            manifest, raster_dir, _fields = _export("cave_network", td)
+            manifest, raster_dir, _fields, _plan = _export("cave_network", td)
             area = TILE_SIZE * TILE_SIZE
             for tile in manifest["tiles"]:
                 self.assertTrue(tile.get("spans"), "tile must flag spans=True")
@@ -172,7 +176,7 @@ class SpansExportLayoutTest(unittest.TestCase):
 
     def test_height_and_deleted_layers_not_written(self) -> None:
         with tempfile.TemporaryDirectory() as td:
-            manifest, raster_dir, _fields = _export("sky_isle", td)
+            manifest, raster_dir, _fields, _plan = _export("sky_isle", td)
             for tile in manifest["tiles"]:
                 tile_dir = raster_dir / tile["dir"]
                 self.assertFalse(
@@ -189,7 +193,7 @@ class SpansExportLayoutTest(unittest.TestCase):
 
     def test_semantic_vertical_rasters_still_written(self) -> None:
         with tempfile.TemporaryDirectory() as td:
-            manifest, raster_dir, _fields = _export("sky_isle", td)
+            manifest, raster_dir, _fields, _plan = _export("sky_isle", td)
             tile = manifest["tiles"][0]
             tile_dir = raster_dir / tile["dir"]
             self.assertTrue((tile_dir / "sky_island_mask.bin").exists())
@@ -202,7 +206,7 @@ class SpansExportLayoutTest(unittest.TestCase):
         # otherwise the Rust reader mmaps a missing file.  A registry-only gate
         # would silently re-introduce the mismatch this test guards against.
         with tempfile.TemporaryDirectory() as td:
-            manifest, raster_dir, _fields = _export("sky_isle", td)
+            manifest, raster_dir, _fields, _plan = _export("sky_isle", td)
             declared = manifest["vertical_layers"]
             self.assertTrue(
                 declared,
@@ -231,7 +235,7 @@ class SpansExportLayoutTest(unittest.TestCase):
         # fossil POIs, so fossil_bbox must NOT appear; and any layer that IS declared
         # must have a real .bin on disk (else the Rust reader mmaps a missing file).
         with tempfile.TemporaryDirectory() as td:
-            manifest, raster_dir, _fields = _export("sky_isle", td)
+            manifest, raster_dir, _fields, _plan = _export("sky_isle", td)
             self.assertNotIn(
                 "fossil_bbox", manifest["structure_layers"],
                 "sky_isle writes no fossils, yet structure_layers still declares "
@@ -246,28 +250,53 @@ class SpansExportLayoutTest(unittest.TestCase):
                         f"{tile['dir']}/{layer}.bin is absent — manifest↔disk mismatch",
                     )
 
-    def test_decoded_column_surface_matches_span_fold(self) -> None:
+    def test_decoded_column_surface_matches_span_fold_and_carve(self) -> None:
         # The bytes on disk must decode (offset = col_idx * stride) to exactly
-        # what spans_fold folded — the binary path is the contract, not an
-        # internal re-fold.
+        # what the export wrote: spans_fold THEN the zone's P3 carver chain
+        # (sky_isle = floating_island).  The binary path is the contract — we
+        # reproduce fold+carve here and assert byte-for-byte, so a regression in
+        # the carve hook or the encoding offset turns this red.
         with tempfile.TemporaryDirectory() as td:
-            manifest, raster_dir, fields = _export("sky_isle", td)
+            manifest, raster_dir, fields, plan = _export("sky_isle", td)
             tile_meta = manifest["tiles"][0]
             tile_dir = raster_dir / tile_meta["dir"]
             count_bytes = (tile_dir / SPANS_COUNT_FILE).read_bytes()
             spans_bytes = (tile_dir / SPANS_FILE).read_bytes()
 
-            # Find the matching in-memory tile buffer and re-fold it.
+            # Find the matching in-memory tile buffer, fold, then carve exactly
+            # as the export does (same chain lookup + CARVE_SEED).
             buf = next(
                 t for t in fields.tiles if t.tile.tile_id == tile_meta["dir"]
             )
             folded = spans_for_tile(buf)
-            for col_idx in (0, 100, len(folded) // 2, len(folded) - 1):
+            zone_chains = _zone_carver_chains(plan)
+            chain = _tile_carver_chain(buf, zone_chains)
+            self.assertTrue(
+                chain,
+                "sky_isle tile must resolve a floating_island carver chain — "
+                "the export carves it, so the round-trip reference must too",
+            )
+            carved = apply_carver_chain(
+                folded,
+                chain,
+                origin_x=buf.tile.min_x,
+                origin_z=buf.tile.min_z,
+                tile_size=buf.tile_size,
+                seed=CARVE_SEED,
+            )
+            # The chain actually changed at least one column (a real isle span),
+            # else this test would pass even if carving silently no-op'd.
+            self.assertNotEqual(
+                [c.spans for c in carved],
+                [c.spans for c in folded],
+                "sky_isle carve must add isle spans to some columns",
+            )
+            for col_idx in (0, 100, len(carved) // 2, len(carved) - 1):
                 decoded = decode_spans_column(count_bytes, spans_bytes, col_idx)
                 self.assertEqual(
                     decoded.spans,
-                    folded[col_idx].spans,
-                    f"column {col_idx} on disk != span fold (offset "
+                    carved[col_idx].spans,
+                    f"column {col_idx} on disk != fold+carve (offset "
                     f"{col_idx * SPAN_BYTES_PER_COLUMN})",
                 )
 
