@@ -333,6 +333,64 @@ class CanyonCarverTest(_CarverCaseMixin, unittest.TestCase):
         self.fail("canyon carver produced no overhang over a 300-block line")
 
 
+class CanyonWallDepthBandTest(unittest.TestCase):
+    """worldgen-v4 P3 §6.1 round 3 — overhangs gate on the valley wall band.
+
+    rift_valley sets ``wall_depth_band`` so the overhang shelf only appears on
+    the valley *wall* (a surface between floor and rim), never the flat plateau
+    top or the valley floor.  These pin that gate: a column whose surface sits
+    outside the band is left solid no matter how strongly the wall noise fires.
+    """
+
+    def test_surface_above_band_is_left_solid(self) -> None:
+        # A high plateau column (surface 200) with a band capping at 100 must not
+        # overhang — the whole point of the round-3 fix.
+        carver = CanyonCarver(wall_threshold=0.0, wall_depth_band=(40, 100))
+        high = ColumnSpans(((SPAN_MIN_Y, 200),))
+        for wx in range(0, 80):
+            out = carver.carve_column(high, wx, 17, 4242)
+            self.assertEqual(
+                out.count, 1,
+                f"plateau column (surface 200 > band hi 100) must stay solid at "
+                f"wx={wx}; got {out.spans}",
+            )
+
+    def test_surface_in_band_can_overhang(self) -> None:
+        # A wall column (surface 70, inside [40,100]) with permissive noise must
+        # be able to overhang somewhere across the line.
+        carver = CanyonCarver(wall_threshold=0.0, wall_depth_band=(40, 100))
+        wall = ColumnSpans(((SPAN_MIN_Y, 70),))
+        overhung = any(
+            carver.carve_column(wall, wx, 17, 4242).count >= 2
+            for wx in range(0, 300)
+        )
+        self.assertTrue(
+            overhung,
+            "a wall column inside the depth band must overhang somewhere "
+            "(threshold=0 lets noise fire freely)",
+        )
+
+    def test_band_none_is_unrestricted(self) -> None:
+        # Default (no band) keeps the original standalone behavior: overhangs the
+        # high plateau column too (so segment-1 tests stay valid).
+        carver = CanyonCarver(wall_threshold=0.0, wall_depth_band=None)
+        high = ColumnSpans(((SPAN_MIN_Y, 200),))
+        overhung = any(
+            carver.carve_column(high, wx, 17, 4242).count >= 2
+            for wx in range(0, 300)
+        )
+        self.assertTrue(
+            overhung,
+            "with no depth band the carver overhangs any surface (unrestricted)",
+        )
+
+    def test_band_order_independent(self) -> None:
+        # (100, 40) is normalized to (40, 100): same gate either way.
+        a = CanyonCarver(wall_depth_band=(40, 100)).wall_depth_band
+        b = CanyonCarver(wall_depth_band=(100, 40)).wall_depth_band
+        self.assertEqual(a, b, "wall_depth_band must normalize to (lo, hi)")
+
+
 class FloatingIslandCarverTest(_CarverCaseMixin, unittest.TestCase):
     carver = FloatingIslandCarver()
     min_expected_count = 2  # ground + floating isle

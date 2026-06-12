@@ -78,28 +78,35 @@ class RiftValleyGenerator(TerrainProfileGenerator):
         notes="血谷生态：赤骨树沿裂隙生长，火脉仙人掌在断层边吐热气，"
               "血碑散布谷底。绯血苔藓铺地，红黑主调。",
     )
-    # worldgen-v4 P3 §6.1 round 3/3 — 真·大峡谷：canyon_carver 把谷壁雕成层叠
-    # 悬壁（上部岩架 + 空气带 + 下部谷底）。wall_threshold 低=峡谷壁大面积出
-    # 悬壁；void_height/shelf_thickness 控制层叠岩带的虚实节奏；scale 控悬壁沿高
-    # 起伏频率。两道 canyon 链（不同 scale/salt 由参数微调）叠出多层岩带——上层
-    # 大岩架、下层细悬挑，读起来像被流水冲刷千年的赤色大峡谷断壁。
+    # worldgen-v4 P3 §6.1 round 3/3 — 真·大峡谷：canyon_carver 把谷壁雕成层叠悬
+    # 壁（上部岩架 + 空气带 + 下部谷底）。两层把控：
+    #   ① wall_depth_band=(48, 100) —— 悬壁只在「谷壁带」（地表 Y 在谷底 ~40 与谷
+    #      缘 ~108 之间的斜坡列）出现，平台顶与谷底全程不被雕成薄壳——这是 round 2
+    #      "整片平台变薄壳" 的根因修复，让悬壁真正贴着峡谷断壁。
+    #   ② wall_threshold 高 + 3D 噪声 —— 在谷壁带内再按噪声峰挑出陡壁段，悬壁断续
+    #      分布而非连成一条带。
+    # 两道 canyon 链叠出多层岩带：上层大岩架（厚 lip、大 void、缓变 scale=64），下
+    # 层细悬挑（薄 lip、小 void、高频 scale=36），读起来像被流水冲刷千年的赤色大
+    # 峡谷断壁——层层岩棚向谷心退台。
     carvers = (
         CarverSpec(
             kind="canyon",
             params={
-                "wall_threshold": 0.30,
-                "void_height": 16,
-                "shelf_thickness": 10,
+                "wall_threshold": 0.58,
+                "void_height": 15,
+                "shelf_thickness": 9,
                 "scale": 64.0,
+                "wall_depth_band": (60, 100),
             },
         ),
         CarverSpec(
             kind="canyon",
             params={
-                "wall_threshold": 0.52,
-                "void_height": 9,
+                "wall_threshold": 0.64,
+                "void_height": 8,
                 "shelf_thickness": 6,
-                "scale": 38.0,
+                "scale": 36.0,
+                "wall_depth_band": (48, 84),
             },
         ),
     )
