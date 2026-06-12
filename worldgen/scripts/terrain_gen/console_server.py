@@ -99,6 +99,28 @@ class OverrideError(Exception):
     """
 
 
+def _deep_merge(base: dict[str, Any], patch: dict[str, Any]) -> dict[str, Any]:
+    """Recursively merge ``patch`` into a copy of ``base``.
+
+    Nested dicts are merged key-by-key (so a partial sub-section keeps the
+    sibling keys it didn't mention); every other value type — including lists —
+    replaces the base value wholesale. The inputs are never mutated.
+
+    A *shallow* ``dict.update`` here would drop un-submitted nested keys: e.g.
+    posting ``{"worldgen": {"height_model": {"amplitude": 12}}}`` would replace
+    the entire ``height_model`` sub-dict (losing ``base``, ``octaves``, …) and
+    silently bake garbage. Deep-merge keeps the rest of ``height_model``.
+    """
+    merged = dict(base)
+    for key, value in patch.items():
+        existing = merged.get(key)
+        if isinstance(existing, dict) and isinstance(value, dict):
+            merged[key] = _deep_merge(existing, value)
+        else:
+            merged[key] = value
+    return merged
+
+
 def _apply_zone_overrides(
     blueprint_raw: dict[str, Any],
     zone_name: str,
@@ -108,9 +130,10 @@ def _apply_zone_overrides(
     ``zone_name`` zone entry.
 
     Only keys in ``_OVERRIDABLE_ZONE_FIELDS`` are accepted at the zone top level;
-    ``worldgen`` (itself a dict) is shallow-merged so a partial worldgen patch
-    (e.g. just ``terrain_profile``) keeps the rest of the section. Unknown keys
-    raise ``OverrideError`` (→ 400). The source dict is never mutated.
+    ``worldgen`` (itself a dict) is deep-merged so a partial worldgen patch (e.g.
+    just ``terrain_profile`` or a single ``height_model`` knob) keeps every
+    sibling key it didn't mention. Unknown keys raise ``OverrideError`` (→ 400).
+    The source dict is never mutated.
     """
     import copy
 
@@ -138,9 +161,9 @@ def _apply_zone_overrides(
 
     for key, value in overrides.items():
         if key == "worldgen" and isinstance(value, dict):
-            wg = dict(zone_entry.get("worldgen", {}))
-            wg.update(value)
-            zone_entry["worldgen"] = wg
+            base_wg = zone_entry.get("worldgen", {})
+            base_wg = base_wg if isinstance(base_wg, dict) else {}
+            zone_entry["worldgen"] = _deep_merge(base_wg, value)
         else:
             zone_entry[key] = value
     return merged

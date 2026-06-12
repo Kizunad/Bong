@@ -54,7 +54,10 @@ from scripts.terrain_gen.blueprint import (  # noqa: E402
     load_profile_catalog,
     load_zone_overlays,
 )
-from scripts.terrain_gen.console_server import create_app  # noqa: E402
+from scripts.terrain_gen.console_server import (  # noqa: E402
+    _apply_zone_overrides,
+    create_app,
+)
 from scripts.terrain_gen.fields import (  # noqa: E402
     LAYER_REGISTRY,
     MAX_SPANS,
@@ -639,6 +642,40 @@ def test_regen_worldgen_override_changes_terrain(tmp_path) -> None:
     assert differing, (
         "swapping terrain_profile via a worldgen override must change spans.bin "
         "for the affected tiles — worldgen sub-dict merge is live"
+    )
+
+
+def test_apply_overrides_deep_merges_nested_worldgen(tmp_path) -> None:
+    """A partial nested ``worldgen`` patch must keep the un-submitted nested keys.
+
+    The peaks zone's ``worldgen.height_model`` has both ``base`` and ``peak``.
+    Overriding only ``height_model.peak`` must preserve ``base`` (and the sibling
+    worldgen keys ``shape`` / ``boundary``). A shallow ``dict.update`` would drop
+    ``base``, silently baking garbage terrain — this pins the deep-merge.
+    """
+    blueprint_raw = json.loads(json.dumps(_TINY_BLUEPRINT))  # deep copy
+    merged = _apply_zone_overrides(
+        blueprint_raw,
+        "peaks",
+        {"worldgen": {"height_model": {"peak": 999}}},
+    )
+
+    peaks = next(z for z in merged["zones"] if z["name"] == "peaks")
+    hm = peaks["worldgen"]["height_model"]
+    assert hm["peak"] == 999, "the submitted nested key must win"
+    assert hm["base"] == [90, 120], (
+        "the un-submitted sibling 'base' must survive the partial patch — a "
+        f"shallow update would have dropped it; got {hm!r}"
+    )
+    # Sibling worldgen sections (not mentioned in the patch) are untouched.
+    assert peaks["worldgen"]["terrain_profile"] == "broken_peaks"
+    assert peaks["worldgen"]["shape"] == "ellipse"
+    assert peaks["worldgen"]["boundary"] == {"mode": "soft", "width": 32}
+
+    # The source blueprint dict is never mutated by the merge.
+    src_peaks = next(z for z in blueprint_raw["zones"] if z["name"] == "peaks")
+    assert src_peaks["worldgen"]["height_model"]["peak"] == 140, (
+        "_apply_zone_overrides must not mutate its input blueprint"
     )
 
 
