@@ -162,7 +162,21 @@ impl std::fmt::Display for XmlSanitizeError {
 }
 
 /// 允许白名单标签（OwoUI 组件）。
-const ALLOWED_TAGS: &[&str] = &["label", "button", "flow-layout", "grid-layout", "texture"];
+///
+/// `owo-ui` / `components` 是 owo-lib UIModel.load 要求的 XML 根容器：
+/// client 端 `UIModel.load(xml)` 强制要求 root=<owo-ui>，agent xmlTemplates.ts
+/// 所有模板均产出 `<owo-ui><components>...</components></owo-ui>` 包裹形。
+/// 不加这两个标签会导致 xml_sanitize 以 NonWhitelistedTag 拒绝所有 agent 模板，
+/// AgentUiRequest 永不 emit（BLOCKER 修复：plan-agent-ui-data-v1 P0 v2）。
+const ALLOWED_TAGS: &[&str] = &[
+    "owo-ui",
+    "components",
+    "label",
+    "button",
+    "flow-layout",
+    "grid-layout",
+    "texture",
+];
 
 fn is_allowed_tag(tag: &str) -> bool {
     ALLOWED_TAGS.contains(&tag)
@@ -701,10 +715,12 @@ mod tests {
     }
 
     fn make_cmd(request_id: &str, target: &str, realm_gate: u8) -> AgentUiRequestCommandV1 {
+        // XML 使用与 agent xmlTemplates.ts 真实产出一致的 <owo-ui><components> 包裹形，
+        // 确保 xml_sanitize 对真实流量的测试不会通过裸 flow-layout 蒙混（BLOCKER 修复）。
         AgentUiRequestCommandV1 {
             request_id: request_id.to_string(),
             target_player: target.to_string(),
-            xml: r#"<flow-layout><button id="btn_a">确认</button></flow-layout>"#.to_string(),
+            xml: r#"<owo-ui><components><flow-layout direction="vertical" gap="4"><button id="btn_a">确认</button></flow-layout></components></owo-ui>"#.to_string(),
             timeout_ticks: 600,
             realm_gate,
             allowed_button_ids: vec!["btn_a".to_string(), "btn_b".to_string()],
@@ -1090,6 +1106,39 @@ mod tests {
     }
 
     // ── xml_sanitize ─────────────────────────────────────────────────────────
+
+    /// 跨端契约 pin 测试：agent xmlTemplates.ts 真实输出的 <owo-ui><components> 包裹形
+    /// 必须通过 xml_sanitize。此测试锁死 server 接受 client 所需的包裹结构，
+    /// 任何对 ALLOWED_TAGS 的破坏性变更会立刻撞红此用例（BLOCKER 修复 cross-stack contract）。
+    #[test]
+    fn xml_sanitize_accepts_owo_ui_wrapped_form_cross_stack_contract() {
+        // 与 agent TSY_DISCOVERY_TEMPLATE 结构对齐（精简版）
+        let xml_tsy = r#"<owo-ui><components><flow-layout direction="vertical" gap="4"><label style="color:#C8A060">【活坍缩渊】测试地带</label><button id="enter_realm">踏入探寻</button><button id="dismiss">离开</button></flow-layout></components></owo-ui>"#;
+        let result = xml_sanitize(xml_tsy);
+        assert!(
+            result.is_ok(),
+            "agent TSY_DISCOVERY_TEMPLATE 包裹形应通过 xml_sanitize（owo-ui+components 必须在白名单），错误：{:?}",
+            result.err()
+        );
+
+        // 与 agent TIANDAO_REVELATION_TEMPLATE 结构对齐
+        let xml_tiandao = r#"<owo-ui><components><flow-layout direction="vertical" gap="6"><label style="color:#8888FF">天意</label><label style="color:#CCCCCC">天道降示：真元将竭，速寻灵源</label><button id="dismiss" style="color:#AAAAAA">闭目冥思</button></flow-layout></components></owo-ui>"#;
+        let result2 = xml_sanitize(xml_tiandao);
+        assert!(
+            result2.is_ok(),
+            "agent TIANDAO_REVELATION_TEMPLATE 包裹形应通过 xml_sanitize，错误：{:?}",
+            result2.err()
+        );
+
+        // DTD/entity 仍须禁（即使包裹在 owo-ui 内）
+        let xml_with_doctype = r#"<!DOCTYPE evil><owo-ui><components><flow-layout><label>x</label></flow-layout></components></owo-ui>"#;
+        let result3 = xml_sanitize(xml_with_doctype);
+        assert_eq!(
+            result3,
+            Err(XmlSanitizeError::DoctypeOrEntity),
+            "owo-ui 包裹形内嵌 DOCTYPE 仍应被拒绝"
+        );
+    }
 
     #[test]
     fn xml_sanitize_happy_path() {
