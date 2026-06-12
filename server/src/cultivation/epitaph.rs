@@ -51,7 +51,7 @@ impl Default for EpitaphId {
 pub struct LifeRecordSummary {
     /// 本角色有生以来达到的最高境界（无 BreakthroughSucceeded 时 fallback Awaken）。
     pub peak_realm: Realm,
-    /// 合计 PvP 击杀数（PvpEncounter outcome 含 "killed" 语义 + JueBiKilled）。
+    /// 合计 PvP 击杀数（PvpEncounter outcome = "death_fight" + TribulationIntercepted）。
     pub total_kills: u32,
     /// 合计死亡次数（取 Lifecycle.death_count）。
     pub total_deaths: u32,
@@ -161,14 +161,18 @@ impl PendingFinalThoughtStore {
 /// 最多取前 N 个最高级别的技能。
 const SIGNATURE_SKILL_TOP_N: usize = 3;
 
-/// PvpEncounter.outcome 中被认定为「击杀」语义的字符串（含子串匹配）。
-const KILL_OUTCOME_KEYWORDS: &[&str] = &["killed", "kill", "slain"];
+/// PvpEncounter.outcome 中被认定为「本玩家是击杀方」的精确字面值。
+///
+/// "death_fight" 是 EncounterOutcome::DeathFight 的 wire name（见 pvp_encounter.rs），
+/// 表示致死格斗；参与者一方确认为击杀方。其余 outcome（bypass/peaceful_separation/
+/// probe_fight/temporary_cooperation/betrayal）均不构成"击杀对手"语义。
+const KILL_OUTCOME_EXACT: &str = "death_fight";
 
 /// 从 LifeRecord + Lifecycle.death_count 提取 LifeRecordSummary。
 ///
 /// # 字段语义
 /// * `peak_realm`：biography 中 BreakthroughSucceeded{realm} 取最高（按 Realm::rank()），无则 Awaken
-/// * `total_kills`：PvpEncounter{outcome} 含击杀关键字 + JueBiKilled 计数
+/// * `total_kills`：PvpEncounter{outcome} == "death_fight"（致死格斗） + TribulationIntercepted（截劫）
 /// * `total_deaths`：传入 lifecycle.death_count（Lifecycle component 最精确）
 /// * `signature_skill_ids`：skill_milestones 按 new_lv 降序取前 3
 /// * `final_zone`：最后一条带 zone 的 biography entry（SpiritEyeBreakthrough/PvpEncounter）
@@ -187,16 +191,15 @@ pub fn summarize(life_record: &LifeRecord, death_count: u32) -> LifeRecordSummar
         .max_by_key(|r| r.rank())
         .unwrap_or(Realm::Awaken);
 
-    // total_kills：PvpEncounter.outcome 含击杀关键字 + JueBiKilled
+    // total_kills：PvpEncounter.outcome == "death_fight"（致死格斗）+ TribulationIntercepted（截劫）
+    //
+    // JueBiKilled 表示本玩家自己在绝壁劫中殒命，属死亡语义而非击杀对手，不计入此处。
+    // "death_fight" 是 EncounterOutcome::DeathFight 唯一的 wire name，精确匹配排除伪阳性。
     let total_kills = life_record
         .biography
         .iter()
         .filter(|entry| match entry {
-            BiographyEntry::PvpEncounter { outcome, .. } => {
-                let lower = outcome.to_lowercase();
-                KILL_OUTCOME_KEYWORDS.iter().any(|kw| lower.contains(kw))
-            }
-            BiographyEntry::JueBiKilled { .. } => true,
+            BiographyEntry::PvpEncounter { outcome, .. } => outcome == KILL_OUTCOME_EXACT,
             BiographyEntry::TribulationIntercepted { .. } => true,
             _ => false,
         })
@@ -448,49 +451,71 @@ mod tests {
     #[test]
     fn summarize_pvp_encounter_with_kill_outcome_counts_kills() {
         let mut lr = make_life_record("Alice");
-        // "killed" 关键字
+        // "death_fight" — EncounterOutcome::DeathFight 唯一 wire name，计为击杀
         lr.push(BiographyEntry::PvpEncounter {
             counterparty_id: "offline:Bob".to_string(),
-            outcome: "killed".to_string(),
+            outcome: "death_fight".to_string(),
             zone: "spawn".to_string(),
-            context: "duel".to_string(),
+            context: "wilderness".to_string(),
             observed_style: None,
             appearance_hint: None,
             qi_color_hint: None,
             tick: 200,
         });
-        // "kill" 关键字（大小写混）
+        // 第二条 death_fight
         lr.push(BiographyEntry::PvpEncounter {
             counterparty_id: "offline:Charlie".to_string(),
-            outcome: "Kill_confirmed".to_string(),
+            outcome: "death_fight".to_string(),
             zone: "qingyun_peaks".to_string(),
-            context: "ambush".to_string(),
+            context: "resource_point".to_string(),
             observed_style: None,
             appearance_hint: None,
             qi_color_hint: None,
             tick: 400,
         });
-        // non-kill outcome（不计）
+        // 非击杀 outcome（不计）："betrayal" / "probe_fight" / "bypass" 均不算击杀对手
         lr.push(BiographyEntry::PvpEncounter {
             counterparty_id: "offline:Dave".to_string(),
-            outcome: "fled".to_string(),
+            outcome: "betrayal".to_string(),
             zone: "blood_valley".to_string(),
-            context: "chase".to_string(),
+            context: "tsy_extract".to_string(),
             observed_style: None,
             appearance_hint: None,
             qi_color_hint: None,
             tick: 600,
         });
+        lr.push(BiographyEntry::PvpEncounter {
+            counterparty_id: "offline:Eve".to_string(),
+            outcome: "probe_fight".to_string(),
+            zone: "spawn".to_string(),
+            context: "wilderness".to_string(),
+            observed_style: None,
+            appearance_hint: None,
+            qi_color_hint: None,
+            tick: 800,
+        });
+        lr.push(BiographyEntry::PvpEncounter {
+            counterparty_id: "offline:Frank".to_string(),
+            outcome: "bypass".to_string(),
+            zone: "spawn".to_string(),
+            context: "wilderness".to_string(),
+            observed_style: None,
+            appearance_hint: None,
+            qi_color_hint: None,
+            tick: 1000,
+        });
         let summary = summarize(&lr, 0);
         assert_eq!(
             summary.total_kills, 2,
-            "期望 2 条含 kill 关键字的 PvpEncounter 被计入击杀，实际={}",
+            "期望只有 outcome=death_fight 的 2 条 PvpEncounter 被计入击杀，实际={}（非death_fight的outcome如betrayal/probe_fight/bypass不应计入）",
             summary.total_kills
         );
     }
 
     #[test]
-    fn summarize_juebi_killed_counts_as_kill() {
+    fn summarize_juebi_killed_does_not_count_as_kill() {
+        // JueBiKilled = 玩家自己在绝壁劫中殒命（"绝壁劫殁亡"），
+        // 是死亡语义而非击杀对手——不应计入 total_kills。
         let mut lr = make_life_record("Alice");
         lr.push(BiographyEntry::JueBiKilled {
             source: "void_quota_exceeded".to_string(),
@@ -498,8 +523,40 @@ mod tests {
         });
         let summary = summarize(&lr, 0);
         assert_eq!(
-            summary.total_kills, 1,
-            "期望 JueBiKilled 被计入击杀数，实际={}",
+            summary.total_kills, 0,
+            "期望 JueBiKilled（绝壁劫殁亡=自身死亡）不计入 total_kills，实际={}",
+            summary.total_kills
+        );
+    }
+
+    #[test]
+    fn summarize_juebi_killed_does_not_inflate_kills_mixed_with_real_kills() {
+        // 混入真实击杀（death_fight + TribulationIntercepted）后，
+        // JueBiKilled 仍不应虚增 kills 计数。
+        let mut lr = make_life_record("Alice");
+        lr.push(BiographyEntry::JueBiKilled {
+            source: "void_quota_exceeded".to_string(),
+            tick: 50,
+        });
+        lr.push(BiographyEntry::PvpEncounter {
+            counterparty_id: "offline:Bob".to_string(),
+            outcome: "death_fight".to_string(),
+            zone: "spawn".to_string(),
+            context: "wilderness".to_string(),
+            observed_style: None,
+            appearance_hint: None,
+            qi_color_hint: None,
+            tick: 200,
+        });
+        lr.push(BiographyEntry::TribulationIntercepted {
+            victim_id: "offline:Charlie".to_string(),
+            tag: "戮道者 · 截劫".to_string(),
+            tick: 400,
+        });
+        let summary = summarize(&lr, 0);
+        assert_eq!(
+            summary.total_kills, 2,
+            "期望 JueBiKilled 不虚增 kills：1 death_fight + 1 TribulationIntercepted = 2，实际={}",
             summary.total_kills
         );
     }
@@ -954,6 +1011,334 @@ mod tests {
             0,
             "期望无 LifeRecord 的实体不生成碑刻，实际 registry 含 {} 条",
             registry.entries.len()
+        );
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    // ─── death_tick 三分支专属测试 ──────────────────────────────────────────
+
+    #[test]
+    fn death_tick_branch_lifecycle_last_death_tick_takes_priority() {
+        // 分支 1：Lifecycle.last_death_tick 有值时，优先取它
+        let (settings, root) = temp_persistence("death-tick-lifecycle");
+        let mut app = App::new();
+        app.insert_resource(settings.clone());
+        app.init_resource::<WorldEpitaphRegistry>();
+        app.add_event::<PlayerTerminated>();
+        app.add_systems(valence::prelude::Update, epitaph_generation_system);
+
+        let mut lr = LifeRecord::new(canonical_player_id("Alice"));
+        // biography 里也有 Terminated，但 Lifecycle.last_death_tick 应优先
+        lr.push(BiographyEntry::Terminated {
+            cause: "pvp".to_string(),
+            tick: 9999,
+        });
+
+        let entity = app
+            .world_mut()
+            .spawn((
+                lr,
+                crate::combat::components::Lifecycle {
+                    character_id: canonical_player_id("Alice"),
+                    last_death_tick: Some(42),
+                    death_count: 1,
+                    ..Default::default()
+                },
+            ))
+            .id();
+        app.world_mut().send_event(PlayerTerminated { entity });
+        app.update();
+
+        let registry = app.world().resource::<WorldEpitaphRegistry>();
+        let entry = registry.entries.values().next().expect("应生成一条碑刻");
+        assert_eq!(
+            entry.death_tick, 42,
+            "期望 Lifecycle.last_death_tick=42 优先于 biography Terminated.tick=9999，实际={}",
+            entry.death_tick
+        );
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn death_tick_branch_biography_terminated_fallback_when_no_lifecycle_tick() {
+        // 分支 2：Lifecycle.last_death_tick=None，fallback 取 biography 末尾 Terminated.tick
+        let (settings, root) = temp_persistence("death-tick-biography");
+        let mut app = App::new();
+        app.insert_resource(settings.clone());
+        app.init_resource::<WorldEpitaphRegistry>();
+        app.add_event::<PlayerTerminated>();
+        app.add_systems(valence::prelude::Update, epitaph_generation_system);
+
+        let mut lr = LifeRecord::new(canonical_player_id("Bob"));
+        lr.push(BiographyEntry::Terminated {
+            cause: "tribulation".to_string(),
+            tick: 777,
+        });
+
+        let entity = app
+            .world_mut()
+            .spawn((
+                lr,
+                crate::combat::components::Lifecycle {
+                    character_id: canonical_player_id("Bob"),
+                    last_death_tick: None, // 无 lifecycle tick
+                    death_count: 1,
+                    ..Default::default()
+                },
+            ))
+            .id();
+        app.world_mut().send_event(PlayerTerminated { entity });
+        app.update();
+
+        let registry = app.world().resource::<WorldEpitaphRegistry>();
+        let entry = registry.entries.values().next().expect("应生成一条碑刻");
+        assert_eq!(
+            entry.death_tick, 777,
+            "期望 Lifecycle.last_death_tick=None 时回退到 biography Terminated.tick=777，实际={}",
+            entry.death_tick
+        );
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn death_tick_branch_fallback_zero_when_neither_source_present() {
+        // 分支 3：Lifecycle.last_death_tick=None 且 biography 无 Terminated 条目 → unwrap_or(0)
+        let (settings, root) = temp_persistence("death-tick-zero");
+        let mut app = App::new();
+        app.insert_resource(settings.clone());
+        app.init_resource::<WorldEpitaphRegistry>();
+        app.add_event::<PlayerTerminated>();
+        app.add_systems(valence::prelude::Update, epitaph_generation_system);
+
+        // biography 空，lifecycle.last_death_tick=None
+        let lr = LifeRecord::new(canonical_player_id("Charlie"));
+
+        let entity = app
+            .world_mut()
+            .spawn((
+                lr,
+                crate::combat::components::Lifecycle {
+                    character_id: canonical_player_id("Charlie"),
+                    last_death_tick: None,
+                    death_count: 0,
+                    ..Default::default()
+                },
+            ))
+            .id();
+        app.world_mut().send_event(PlayerTerminated { entity });
+        app.update();
+
+        let registry = app.world().resource::<WorldEpitaphRegistry>();
+        let entry = registry.entries.values().next().expect("应生成一条碑刻");
+        assert_eq!(
+            entry.death_tick, 0,
+            "期望两个 tick 来源均无时 death_tick=0（unwrap_or(0)），实际={}",
+            entry.death_tick
+        );
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    // ─── niche_pos 两路径专属测试 ────────────────────────────────────────────
+
+    #[test]
+    fn niche_pos_set_from_position_including_floor_of_negative_coords() {
+        // 有 Position 时，niche_pos 应取整数 floor 坐标（含负坐标：-5.7 → -6）
+        let (settings, root) = temp_persistence("niche-pos-with-pos");
+        let mut app = App::new();
+        app.insert_resource(settings.clone());
+        app.init_resource::<WorldEpitaphRegistry>();
+        app.add_event::<PlayerTerminated>();
+        app.add_systems(valence::prelude::Update, epitaph_generation_system);
+
+        let entity = app
+            .world_mut()
+            .spawn((
+                LifeRecord::new(canonical_player_id("Diana")),
+                crate::combat::components::Lifecycle {
+                    character_id: canonical_player_id("Diana"),
+                    death_count: 1,
+                    ..Default::default()
+                },
+                // 正值和负小数坐标：x=12.9 → 12, y=64.1 → 64, z=-5.7 → -6
+                valence::prelude::Position(valence::prelude::DVec3::new(12.9, 64.1, -5.7)),
+            ))
+            .id();
+        app.world_mut().send_event(PlayerTerminated { entity });
+        app.update();
+
+        let registry = app.world().resource::<WorldEpitaphRegistry>();
+        let entry = registry.entries.values().next().expect("应生成一条碑刻");
+        assert_eq!(
+            entry.niche_pos,
+            Some([12, 64, -6]),
+            "期望 Position(12.9, 64.1, -5.7) floor → [12, 64, -6]，实际={:?}",
+            entry.niche_pos
+        );
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn niche_pos_none_when_entity_has_no_position_component() {
+        // 实体无 Position component 时 niche_pos=None
+        let (settings, root) = temp_persistence("niche-pos-none");
+        let mut app = App::new();
+        app.insert_resource(settings.clone());
+        app.init_resource::<WorldEpitaphRegistry>();
+        app.add_event::<PlayerTerminated>();
+        app.add_systems(valence::prelude::Update, epitaph_generation_system);
+
+        let entity = app
+            .world_mut()
+            .spawn((
+                LifeRecord::new(canonical_player_id("Eric")),
+                crate::combat::components::Lifecycle {
+                    character_id: canonical_player_id("Eric"),
+                    death_count: 1,
+                    ..Default::default()
+                },
+                // 故意不附加 Position component
+            ))
+            .id();
+        app.world_mut().send_event(PlayerTerminated { entity });
+        app.update();
+
+        let registry = app.world().resource::<WorldEpitaphRegistry>();
+        let entry = registry.entries.values().next().expect("应生成一条碑刻");
+        assert_eq!(
+            entry.niche_pos, None,
+            "期望实体无 Position component 时 niche_pos=None，实际={:?}",
+            entry.niche_pos
+        );
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    // ─── final_thought 系统层端到端装配 ─────────────────────────────────────
+
+    #[test]
+    fn final_thought_taken_from_pending_store_and_removed_on_player_terminated() {
+        // 插入 PendingFinalThoughtStore，触发 PlayerTerminated，
+        // 断言 EpitaphEntry.final_thought 取自 store 且 store 已 remove。
+        let (settings, root) = temp_persistence("final-thought-store");
+        let mut app = App::new();
+        app.insert_resource(settings.clone());
+        app.init_resource::<WorldEpitaphRegistry>();
+        // 注册 PendingFinalThoughtStore（P1 路径）
+        let mut store = PendingFinalThoughtStore::default();
+        store.insert(
+            canonical_player_id("Fang"),
+            FinalThought::RevengeHint("offline:Killer 偷袭了我".to_string()),
+        );
+        app.insert_resource(store);
+        app.add_event::<PlayerTerminated>();
+        app.add_systems(valence::prelude::Update, epitaph_generation_system);
+
+        let entity = app
+            .world_mut()
+            .spawn((
+                LifeRecord::new(canonical_player_id("Fang")),
+                crate::combat::components::Lifecycle {
+                    character_id: canonical_player_id("Fang"),
+                    death_count: 2,
+                    ..Default::default()
+                },
+            ))
+            .id();
+        app.world_mut().send_event(PlayerTerminated { entity });
+        app.update();
+
+        let registry = app.world().resource::<WorldEpitaphRegistry>();
+        let entry = registry.entries.values().next().expect("应生成一条碑刻");
+        assert_eq!(
+            entry.final_thought,
+            FinalThought::RevengeHint("offline:Killer 偷袭了我".to_string()),
+            "期望 final_thought 取自 PendingFinalThoughtStore 的 RevengeHint，实际={:?}",
+            entry.final_thought
+        );
+
+        // store 已 remove（take 后条目消失，再次 take 返回 None）
+        let mut store = app.world_mut().resource_mut::<PendingFinalThoughtStore>();
+        let second_take = store.take(&canonical_player_id("Fang"));
+        assert!(
+            second_take.is_none(),
+            "期望 PlayerTerminated 触发后 PendingFinalThoughtStore 中对应条目已移除（二次 take 返回 None）"
+        );
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn final_thought_none_when_no_pending_store_resource_registered() {
+        // 无 PendingFinalThoughtStore resource（P0 默认场景）→ final_thought=None
+        let (settings, root) = temp_persistence("final-thought-no-store");
+        let mut app = App::new();
+        app.insert_resource(settings.clone());
+        app.init_resource::<WorldEpitaphRegistry>();
+        // 故意不 insert PendingFinalThoughtStore
+        app.add_event::<PlayerTerminated>();
+        app.add_systems(valence::prelude::Update, epitaph_generation_system);
+
+        let entity = app
+            .world_mut()
+            .spawn((
+                LifeRecord::new(canonical_player_id("Ghost")),
+                crate::combat::components::Lifecycle {
+                    character_id: canonical_player_id("Ghost"),
+                    death_count: 0,
+                    ..Default::default()
+                },
+            ))
+            .id();
+        app.world_mut().send_event(PlayerTerminated { entity });
+        app.update();
+
+        let registry = app.world().resource::<WorldEpitaphRegistry>();
+        let entry = registry.entries.values().next().expect("应生成一条碑刻");
+        assert_eq!(
+            entry.final_thought,
+            FinalThought::None,
+            "期望无 PendingFinalThoughtStore 时 final_thought=FinalThought::None，实际={:?}",
+            entry.final_thought
+        );
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn final_thought_none_when_store_has_no_entry_for_character() {
+        // PendingFinalThoughtStore 存在但不含本角色的条目 → final_thought=None
+        let (settings, root) = temp_persistence("final-thought-store-miss");
+        let mut app = App::new();
+        app.insert_resource(settings.clone());
+        app.init_resource::<WorldEpitaphRegistry>();
+        // store 里只有别的角色
+        let mut store = PendingFinalThoughtStore::default();
+        store.insert(
+            canonical_player_id("OtherPlayer"),
+            FinalThought::LocationHint("血谷有矿".to_string()),
+        );
+        app.insert_resource(store);
+        app.add_event::<PlayerTerminated>();
+        app.add_systems(valence::prelude::Update, epitaph_generation_system);
+
+        let entity = app
+            .world_mut()
+            .spawn((
+                LifeRecord::new(canonical_player_id("Heron")),
+                crate::combat::components::Lifecycle {
+                    character_id: canonical_player_id("Heron"),
+                    death_count: 1,
+                    ..Default::default()
+                },
+            ))
+            .id();
+        app.world_mut().send_event(PlayerTerminated { entity });
+        app.update();
+
+        let registry = app.world().resource::<WorldEpitaphRegistry>();
+        let entry = registry.entries.values().next().expect("应生成一条碑刻");
+        assert_eq!(
+            entry.final_thought,
+            FinalThought::None,
+            "期望 store 中无本角色条目时 final_thought=None，实际={:?}",
+            entry.final_thought
         );
         let _ = std::fs::remove_dir_all(root);
     }
