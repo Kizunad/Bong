@@ -76,3 +76,34 @@ export type TribulationEventV1 = Static<typeof TribulationEventV1>;
 export function validateTribulationEventV1Contract(data: unknown): ValidationResult {
   return validate(TribulationEventV1, data);
 }
+
+// ─── plan-halfstep-rechallenge-integration-v1 P1 ────────────────────────────
+
+/**
+ * 半步化虚重渡触发 payload（server → agent，`bong:tribulation/halfstep_rechallenge`）。
+ *
+ * - `char_id`：触发方玩家/NPC 的 char_id（agent 用于 player-scope narration target）
+ * - `zone_name`：触发方当前所在 zone 名称（agent 用于 zone-scope narration target；
+ *               dormant 触发方填 "dormant"）
+ * - `zone_halfstep_count`：当前同 zone 内 HalfStep 修士总数（含触发方；
+ *                          agent 据此决定是否 emit zone echo narration，门槛 >= 2）
+ * - `at_tick`：server 游戏 tick（时序审计）
+ */
+export const HalfStepRechallengeTriggerPayloadV1 = Type.Object(
+  {
+    char_id: Type.String({ minLength: 1 }),
+    zone_name: Type.String({ minLength: 1 }),
+    zone_halfstep_count: Type.Integer({ minimum: 0 }),
+    at_tick: Type.Integer({ minimum: 0 }),
+  },
+  { additionalProperties: false },
+);
+export type HalfStepRechallengeTriggerPayloadV1 = Static<
+  typeof HalfStepRechallengeTriggerPayloadV1
+>;
+
+export function validateHalfStepRechallengeTriggerPayloadV1Contract(
+  data: unknown,
+): ValidationResult {
+  return validate(HalfStepRechallengeTriggerPayloadV1, data);
+}
