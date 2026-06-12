@@ -1,15 +1,24 @@
 #!/usr/bin/env bash
 # dev-reload.sh — one-command regen + validate + rebuild + restart
-# Usage: bash scripts/dev-reload.sh [--skip-regen] [--skip-validate]
+# Usage: bash scripts/dev-reload.sh [--skip-regen] [--skip-validate] [--console]
+#
+# --console (worldgen-v4 P1 §8.1 #7, dev-only): after the raster regen+validate,
+# launch the FastAPI 3D-preview console_server in the background (logs to
+# /tmp/bong-console.log, http://127.0.0.1:8765). The console is fully decoupled
+# from the cargo build/restart steps below — it just reads the same rasters. The
+# vite + three.js viewer is started separately:
+#   cd worldgen/console && npm install && npm run dev
 set -euo pipefail
 cd "$(git rev-parse --show-toplevel)"
 
 SKIP_REGEN=false
 SKIP_VALIDATE=false
+LAUNCH_CONSOLE=false
 for arg in "$@"; do
     case "$arg" in
         --skip-regen)    SKIP_REGEN=true ;;
         --skip-validate) SKIP_VALIDATE=true ;;
+        --console)       LAUNCH_CONSOLE=true ;;
     esac
 done
 
@@ -65,6 +74,19 @@ sys.exit(0 if ok_all else 1)
     echo "    OK"
 else
     echo "==> [2/4] Skipping validation (--skip-validate)"
+fi
+
+# --- Optional: launch dev-only 3D preview console (worldgen-v4 P1 §8.1 #7) ---
+# Decoupled from build/restart — backgrounded so the 4-step flow continues.
+if [ "$LAUNCH_CONSOLE" = true ]; then
+    echo "==> [console] Launching worldgen-v4 3D preview console (dev-only)..."
+    pkill -f 'scripts.terrain_gen.console_server' 2>/dev/null || true
+    (cd worldgen && .venv/bin/python -m scripts.terrain_gen.console_server \
+         --rasters "$WORLDGEN_RASTER_DIR" \
+         > /tmp/bong-console.log 2>&1 &)
+    disown
+    echo "    console -> http://127.0.0.1:8765 (log: /tmp/bong-console.log)"
+    echo "    viewer  -> cd worldgen/console && npm install && npm run dev"
 fi
 
 # --- Step 3: Rebuild server ---

@@ -5,15 +5,34 @@
 #   cd worldgen && bash pipeline.sh ../server/zones.worldview.example.json generated/terrain-gen-smoke raster
 #   cd worldgen && bash pipeline.sh ../server/zones.worldview.example.json generated/snapshot anvil
 #   cd worldgen && bash pipeline.sh ../server/zones.worldview.example.json generated/snapshot anvil 128
+#   cd worldgen && bash pipeline.sh --console   # raster 后启动 3D 预览控制台
 #
 # BACKEND:
 #   raster (默认): 写 raster .bin layers + zone PNG previews
 #   worldpainter: 写 wp 项目（已有）
 #   anvil: 先跑 raster（保证 PNG 预览完整），再用 P1 anvil_world_export 写
 #          <OUTPUT>/world/region/r.X.Z.mca（plan-worldgen-anvil-export-v1 §2）
+#
+# --console (worldgen-v4 P1 §8.1 #7, dev-only):
+#   raster 导出后启动 FastAPI console_server（http://127.0.0.1:8765），供
+#   worldgen/console/ 的 vite + three.js 查看器读取。需先 `bash setup.sh --console`
+#   或系统 python 已装 fastapi+uvicorn。该 flag 不改动现有 raster/anvil 流程。
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+
+# Strip the optional --console flag from anywhere in the arg list so the
+# positional blueprint/output/backend/tile-size parsing below is unaffected.
+LAUNCH_CONSOLE=false
+POSITIONAL=()
+for arg in "$@"; do
+  case "$arg" in
+    --console) LAUNCH_CONSOLE=true ;;
+    *)         POSITIONAL+=("$arg") ;;
+  esac
+done
+set -- "${POSITIONAL[@]:-}"
+
 BLUEPRINT_REL="${1:-../server/zones.worldview.example.json}"
 OUTPUT_REL="${2:-generated/terrain-gen-smoke}"
 BACKEND="${3:-raster}"
@@ -92,3 +111,22 @@ echo "  ${OUTPUT_REL}/zone-qingyun_peaks-height-preview.png"
 echo "  ${OUTPUT_REL}/zone-north_wastes-layout-preview.png"
 echo ""
 echo "完成。"
+
+# worldgen-v4 P1 §8.1 #7 — dev-only 3D 预览控制台。raster 导出后启动 FastAPI
+# console_server，读取刚生成的 rasters。前端在 worldgen/console/（vite + three.js）。
+if [ "$LAUNCH_CONSOLE" = true ]; then
+  if [ "$BACKEND" != "raster" ] && [ "$BACKEND" != "anvil" ]; then
+    echo ""
+    echo "[console] --console 需要 raster 或 anvil backend（当前 ${BACKEND}）— 跳过启动。"
+  else
+    echo ""
+    echo "=== worldgen-v4 console (dev-only, §8.1 #7) ==="
+    echo "  rasters: ${OUTPUT_REL}/rasters"
+    echo "  打开 http://127.0.0.1:8765  （Ctrl-C 退出）"
+    echo "  前端 (另开终端): cd worldgen/console && npm install && npm run dev"
+    python3 -m scripts.terrain_gen.console_server \
+      --rasters "${OUTPUT_REL}/rasters" \
+      --blueprint "$BLUEPRINT_REL" \
+      --tile-size "$TILE_SIZE"
+  fi
+fi
