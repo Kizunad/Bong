@@ -125,6 +125,24 @@ public final class NetworkArrayFormPlayer implements VfxPlayer {
                 maxAge,
                 0.16f
             );
+            for (int spark = 0; spark < 3; spark++) {
+                double jitter = (world.random.nextDouble() - 0.5) * 0.18;
+                GameplayVfxUtil.spawnSprite(
+                    client,
+                    world,
+                    BongParticles.qiAuraSprites,
+                    x0 + jitter,
+                    oy + 0.42,
+                    z0 - jitter,
+                    jitter * 0.08,
+                    0.08 + world.random.nextDouble() * 0.05,
+                    -jitter * 0.08,
+                    rgb,
+                    0.68f,
+                    12,
+                    0.09f
+                );
+            }
         }
     }
 

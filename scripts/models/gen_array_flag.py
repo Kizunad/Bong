@@ -75,6 +75,8 @@ def part_cloth():
         ("cloth", "cloth", "banner_lower_left", [0.25, 6.75, 0.04], [2.15, 8.65, 0.2]),
         ("cloth", "cloth", "banner_lower_mid", [2.2, 7.25, -0.03], [3.55, 8.65, 0.15]),
         ("cloth", "cloth", "banner_lower_right", [3.65, 6.45, 0.08], [4.85, 8.65, 0.24]),
+        ("cloth", "cloth", "banner_frayed_tip_l", [0.55, 6.15, 0.08], [1.15, 6.75, 0.2]),
+        ("cloth", "cloth", "banner_frayed_tip_r", [4.05, 5.95, 0.1], [4.55, 6.45, 0.25]),
     ]
 
 
@@ -84,6 +86,8 @@ def part_runes():
         ("rune", "rune", "rune_upper_slash", [1.25, 10.9, 0.26], [4.25, 11.18, 0.35]),
         ("rune", "rune", "rune_lower_slash", [1.6, 8.85, 0.26], [4.65, 9.13, 0.35]),
         ("rune", "rune", "rune_eye", [2.25, 9.65, 0.27], [3.15, 10.55, 0.36]),
+        ("bone", "bone", "top_rope_lash", [0.35, 12.58, 0.23], [1.35, 12.88, 0.43]),
+        ("bone", "bone", "lower_rope_lash", [0.35, 7.18, 0.2], [1.2, 7.42, 0.38]),
         ("bone", "bone", "cloth_bone_tag", [4.5, 7.1, 0.24], [5.05, 7.95, 0.42]),
     ]
 
