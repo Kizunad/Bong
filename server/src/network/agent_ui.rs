@@ -144,6 +144,8 @@ pub enum XmlSanitizeError {
     TooManyNodes,
     /// 检测到非白名单标签（仅允许 label/button/flow-layout/grid-layout/texture）。
     NonWhitelistedTag(String),
+    /// 缺少 `<owo-ui>` 根节点：client UIModel.load 强制要求此根容器。
+    MissingOwoUiRoot,
 }
 
 impl std::fmt::Display for XmlSanitizeError {
@@ -157,6 +159,12 @@ impl std::fmt::Display for XmlSanitizeError {
             XmlSanitizeError::TooManyNodes => write!(f, "xml node count exceeds limit 64"),
             XmlSanitizeError::NonWhitelistedTag(tag) => {
                 write!(f, "xml contains non-whitelisted tag: <{tag}>")
+            }
+            XmlSanitizeError::MissingOwoUiRoot => {
+                write!(
+                    f,
+                    "xml must have <owo-ui> as root element (client UIModel.load requirement)"
+                )
             }
         }
     }
@@ -210,6 +218,14 @@ pub fn xml_sanitize(xml: &str) -> Result<String, XmlSanitizeError> {
     let upper = xml.to_ascii_uppercase();
     if upper.contains("<!DOCTYPE") || upper.contains("<!ENTITY") {
         return Err(XmlSanitizeError::DoctypeOrEntity);
+    }
+
+    // 2b. owo-ui 根节点检查：client UIModel.load 强制要求 root=<owo-ui>。
+    // agent xmlTemplates.ts 所有模板均输出 <owo-ui><components>...</components></owo-ui>。
+    // 裸 XML（如 <flow-layout>...） 通过 sanitize 但 client 必 fallback，此处提前拒绝。
+    let trimmed = xml.trim_start();
+    if !trimmed.starts_with("<owo-ui") {
+        return Err(XmlSanitizeError::MissingOwoUiRoot);
     }
 
     // 3. 节点计数 + 深度检查（扫描 `<tag` 形式，跳过 `</tag>` 关闭 tag 和注释 / PI）
@@ -1223,20 +1239,38 @@ mod tests {
 
     #[test]
     fn xml_sanitize_happy_path() {
-        let xml =
-            r#"<flow-layout><label>踏入世界</label><button id="enter">确认</button></flow-layout>"#;
+        // owo-ui 根节点是 client UIModel.load 的强制要求，合法 XML 必须以 <owo-ui> 开头。
+        let xml = r#"<owo-ui><components><flow-layout><label>踏入世界</label><button id="enter">确认</button></flow-layout></components></owo-ui>"#;
         let result = xml_sanitize(xml);
         assert!(
             result.is_ok(),
-            "合法 XML 应通过清洗，错误：{:?}",
+            "合法 owo-ui 包裹 XML 应通过清洗，错误：{:?}",
             result.err()
         );
     }
 
     #[test]
-    fn xml_sanitize_empty_string() {
+    fn xml_sanitize_rejects_bare_xml_missing_owo_ui_root() {
+        // 裸 XML 通过 sanitize 但 client UIModel.load 必 fallback，server 提前拦截。
+        let xml =
+            r#"<flow-layout><label>踏入世界</label><button id="enter">确认</button></flow-layout>"#;
+        let result = xml_sanitize(xml);
+        assert_eq!(
+            result,
+            Err(XmlSanitizeError::MissingOwoUiRoot),
+            "缺 <owo-ui> 根节点的裸 XML 应返回 MissingOwoUiRoot，实为 {result:?}"
+        );
+    }
+
+    #[test]
+    fn xml_sanitize_empty_string_rejects_missing_owo_ui_root() {
+        // 空字符串无 owo-ui 根节点，应被拒绝。
         let result = xml_sanitize("");
-        assert!(result.is_ok(), "空字符串应通过清洗（无标签）");
+        assert_eq!(
+            result,
+            Err(XmlSanitizeError::MissingOwoUiRoot),
+            "空字符串缺 <owo-ui> 根节点应返回 MissingOwoUiRoot，实为 {result:?}"
+        );
     }
 
     #[test]
@@ -1285,22 +1319,24 @@ mod tests {
 
     #[test]
     fn xml_sanitize_accepts_exactly_8192_bytes() {
-        // 构造正好 8192 字节的合法 xml
-        let overhead = "<label>".len() + "</label>".len(); // 15
-        let content = "x".repeat(8192 - overhead);
-        let xml = format!("<label>{content}</label>");
+        // 构造正好 8192 字节的合法 owo-ui 包裹 xml
+        // 框架：<owo-ui><label>CONTENT</label></owo-ui>
+        let wrapper_overhead = "<owo-ui><label>".len() + "</label></owo-ui>".len(); // 15 + 17 = 32
+        let content = "x".repeat(8192 - wrapper_overhead);
+        let xml = format!("<owo-ui><label>{content}</label></owo-ui>");
         assert_eq!(xml.len(), 8192, "测试数据构造错误");
         let result = xml_sanitize(&xml);
         assert!(
             result.is_ok(),
-            "恰好 8192 字节的 XML 应通过清洗，错误：{:?}",
+            "恰好 8192 字节的 owo-ui 包裹 XML 应通过清洗，错误：{:?}",
             result.err()
         );
     }
 
     #[test]
     fn xml_sanitize_rejects_non_whitelisted_tag() {
-        let xml = r#"<flow-layout><script>alert(1)</script></flow-layout>"#;
+        // 非白名单标签必须带 owo-ui 根节点（先通过根节点检查，再检查内容）。
+        let xml = r#"<owo-ui><components><flow-layout><script>alert(1)</script></flow-layout></components></owo-ui>"#;
         let result = xml_sanitize(xml);
         assert!(
             matches!(result, Err(XmlSanitizeError::NonWhitelistedTag(ref t)) if t == "script"),
@@ -1310,7 +1346,7 @@ mod tests {
 
     #[test]
     fn xml_sanitize_allows_all_whitelisted_tags() {
-        let xml = r#"<flow-layout><grid-layout><label>x</label><button id="b">y</button><texture id="t"/></grid-layout></flow-layout>"#;
+        let xml = r#"<owo-ui><components><flow-layout><grid-layout><label>x</label><button id="b">y</button><texture id="t"/></grid-layout></flow-layout></components></owo-ui>"#;
         let result = xml_sanitize(xml);
         assert!(
             result.is_ok(),
@@ -1321,8 +1357,8 @@ mod tests {
 
     #[test]
     fn xml_sanitize_rejects_too_deep() {
-        // 7 层嵌套（超出 6 层上限）
-        let xml = "<flow-layout><flow-layout><flow-layout><flow-layout><flow-layout><flow-layout><label>deep</label></flow-layout></flow-layout></flow-layout></flow-layout></flow-layout></flow-layout>";
+        // owo-ui 根 + 6 层内部嵌套 = 7 层（超出 6 层上限）
+        let xml = "<owo-ui><flow-layout><flow-layout><flow-layout><flow-layout><flow-layout><label>deep</label></flow-layout></flow-layout></flow-layout></flow-layout></flow-layout></owo-ui>";
         let result = xml_sanitize(xml);
         assert!(
             matches!(result, Err(XmlSanitizeError::TooDeep)),
@@ -1332,8 +1368,8 @@ mod tests {
 
     #[test]
     fn xml_sanitize_accepts_depth_6() {
-        // 正好 6 层
-        let xml = "<flow-layout><flow-layout><flow-layout><flow-layout><flow-layout><label>ok</label></flow-layout></flow-layout></flow-layout></flow-layout></flow-layout>";
+        // owo-ui 根 + 5 层内部嵌套 = 6 层（正好达到上限）
+        let xml = "<owo-ui><flow-layout><flow-layout><flow-layout><flow-layout><label>ok</label></flow-layout></flow-layout></flow-layout></flow-layout></owo-ui>";
         let result = xml_sanitize(xml);
         assert!(
             result.is_ok(),
@@ -1344,9 +1380,9 @@ mod tests {
 
     #[test]
     fn xml_sanitize_rejects_too_many_nodes() {
-        // 65 个 label 标签（超出 64 节点上限）
-        let inner: String = (0..65).map(|i| format!("<label>{i}</label>")).collect();
-        let xml = format!("<flow-layout>{inner}</flow-layout>");
+        // owo-ui(1) + flow-layout(1) + 63 labels = 65 节点（超出 64 上限）
+        let inner: String = (0..63).map(|i| format!("<label>{i}</label>")).collect();
+        let xml = format!("<owo-ui><flow-layout>{inner}</flow-layout></owo-ui>");
         let result = xml_sanitize(&xml);
         assert!(
             matches!(result, Err(XmlSanitizeError::TooManyNodes)),
@@ -1356,11 +1392,9 @@ mod tests {
 
     #[test]
     fn xml_sanitize_accepts_64_nodes() {
-        // 64 个 label 标签（flow-layout 本身算第 1 个节点；总共 64 个 label + 1 flow-layout = 65）
-        // 修正：64 个节点包括 flow-layout 自身
-        let inner: String = (0..63).map(|i| format!("<label>{i}</label>")).collect();
-        let xml = format!("<flow-layout>{inner}</flow-layout>");
-        // 节点数 = 1(flow-layout) + 63(labels) = 64 → should pass
+        // owo-ui(1) + flow-layout(1) + 62 labels = 64 节点（正好达到上限）
+        let inner: String = (0..62).map(|i| format!("<label>{i}</label>")).collect();
+        let xml = format!("<owo-ui><flow-layout>{inner}</flow-layout></owo-ui>");
         let result = xml_sanitize(&xml);
         assert!(
             result.is_ok(),
@@ -1462,6 +1496,16 @@ mod tests {
         assert!(
             msg.contains("64") || msg.contains("node"),
             "TooManyNodes Display 应含 64/node，实为：{msg}"
+        );
+    }
+
+    #[test]
+    fn xml_sanitize_error_display_missing_owo_ui_root() {
+        let err = XmlSanitizeError::MissingOwoUiRoot;
+        let msg = err.to_string();
+        assert!(
+            msg.contains("owo-ui"),
+            "MissingOwoUiRoot Display 应含 owo-ui，实为：{msg}"
         );
     }
 
