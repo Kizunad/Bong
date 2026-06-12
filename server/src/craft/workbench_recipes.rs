@@ -948,7 +948,7 @@ fn register_array_basics(registry: &mut CraftRegistry) -> Result<(), RegistryErr
             0.0,
             20,
             ("trip_wire", 3),
-            CraftCategory::Misc,
+            CraftCategory::ZhenfaTrap,
             vec![],
         ),
         // #79 欺天阵木桩 (ZhenfaTrap, 📜👤)
@@ -1006,7 +1006,23 @@ fn register_array_basics(registry: &mut CraftRegistry) -> Result<(), RegistryErr
             0.0,
             50,
             ("beast_trap", 1),
-            CraftCategory::Misc,
+            CraftCategory::ZhenfaTrap,
+            vec![],
+        ),
+        // #104 诱饵桩
+        (
+            "workbench.array.bait_stake",
+            "诱饵桩",
+            vec![
+                ("wood_handle", 1),
+                ("dried_grass", 3),
+                ("rough_cloth", 1),
+                ("raw_beast_hide", 1),
+            ],
+            0.0,
+            35,
+            ("bait_stake", 1),
+            CraftCategory::ZhenfaTrap,
             vec![],
         ),
     ];
@@ -1345,11 +1361,11 @@ mod tests {
     fn register_workbench_recipes_succeeds() {
         let mut registry = CraftRegistry::new();
         register_workbench_recipes(&mut registry).unwrap();
-        // 88 workbench/coffin recipes (85 workbench.* + 3 coffin tiers P4) + 1 workbench self recipe = 89
+        // 89 workbench/coffin recipes (86 workbench.* + 3 coffin tiers P4) + 1 workbench self recipe = 90
         assert_eq!(
             registry.len(),
-            89,
-            "expected 89 recipes (88 workbench/coffin + 1 self craft), got {}",
+            90,
+            "expected 90 recipes (89 workbench/coffin + 1 self craft), got {}",
             registry.len()
         );
     }
@@ -1456,8 +1472,8 @@ mod tests {
             }
         }
         assert_eq!(
-            workbench_count, 85,
-            "must have exactly 85 workbench.* recipes"
+            workbench_count, 86,
+            "must have exactly 86 workbench.* recipes"
         );
     }
 
@@ -1848,9 +1864,51 @@ mod tests {
             }
         }
         assert_eq!(
-            workbench_count, 88,
-            "expected exactly 88 workbench/coffin recipes (85 workbench.* + 3 coffin tiers P4)"
+            workbench_count, 89,
+            "expected exactly 89 workbench/coffin recipes (86 workbench.* + 3 coffin tiers P4)"
         );
+    }
+
+    #[test]
+    fn trap_runtime_recipes_are_grouped_under_zhenfa_trap() {
+        let mut registry = CraftRegistry::new();
+        register_workbench_recipes(&mut registry).unwrap();
+
+        let cases = [
+            (
+                "workbench.array.trip_wire",
+                ("trip_wire", 3),
+                vec![
+                    ("spider_silk_cord".to_string(), 2),
+                    ("iron_needle".to_string(), 1),
+                ],
+            ),
+            (
+                "workbench.array.beast_trap",
+                ("beast_trap", 1),
+                vec![("iron_ingot".to_string(), 3), ("grass_rope".to_string(), 2)],
+            ),
+            (
+                "workbench.array.bait_stake",
+                ("bait_stake", 1),
+                vec![
+                    ("wood_handle".to_string(), 1),
+                    ("dried_grass".to_string(), 3),
+                    ("rough_cloth".to_string(), 1),
+                    ("raw_beast_hide".to_string(), 1),
+                ],
+            ),
+        ];
+
+        for (recipe_id, output, materials) in cases {
+            let recipe = registry
+                .get(&RecipeId::new(recipe_id))
+                .expect("trap runtime recipe must exist");
+            assert_eq!(recipe.category, CraftCategory::ZhenfaTrap);
+            assert_eq!(recipe.qi_cost, 0.0);
+            assert_eq!(recipe.output, (output.0.to_string(), output.1));
+            assert_eq!(recipe.materials, materials);
+        }
     }
 
     #[test]

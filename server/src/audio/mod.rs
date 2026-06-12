@@ -176,7 +176,7 @@ mod tests {
             SoundRecipeRegistry::load_default().expect("default audio recipes should load");
         assert_eq!(
             registry.len(),
-            224,
+            225,
             "audio registry should exclude removed slide and double-jump movement recipes \
              plus include 7 supply_coffin recipes (break + open common/rare/precious + emerge) \
              plus 1 ambient_dan_zong recipe \
@@ -187,7 +187,8 @@ mod tests {
              plus 4 tiandao hunt ambient recipes \
              plus 3 workbench runtime recipes (place/break/open) \
              plus 1 furniture aura hint recipe \
-             plus 2 trap runtime P1 recipes (beast_trap_snap/trip_wire_trigger)"
+             plus 2 trap runtime P1 recipes (beast_trap_snap/trip_wire_trigger) \
+             plus 1 trap runtime P2 recipe (bait_stake_break)"
         );
         assert!(
             registry.get("beast_trap_snap").is_some(),
@@ -196,6 +197,10 @@ mod tests {
         assert!(
             registry.get("trip_wire_trigger").is_some(),
             "plan-trap-runtime-v1 P1 绊线触发音效 recipe 必须加载"
+        );
+        assert!(
+            registry.get("bait_stake_break").is_some(),
+            "plan-trap-runtime-v1 P2 诱饵桩碎裂音效 recipe 必须加载"
         );
         assert!(
             registry.get("niche_repair").is_some(),
