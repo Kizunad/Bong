@@ -119,7 +119,7 @@ function fallbackNarration(payload: TribulationEventV1): Narration {
       scope: "broadcast",
       target: narrationTarget(payload),
       text: "灵脉间隐约传来一股真元波动，似有化虚修士陨落，名额空出一席。",
-      style: "narration",
+      style: "perception",
     };
   }
   if (payload.kind === "jue_bi") {
