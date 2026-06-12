@@ -84,8 +84,9 @@ use crate::npc::lod::NpcLodTier;
 use crate::npc::movement::GameTick;
 use crate::npc::perf::NpcPerfProbe;
 use crate::npc::schedule::ScheduleActivity;
-use crate::npc::spawn::{DuelTarget, NpcBlackboard, NpcMarker};
+use crate::npc::spawn::{DecoyTarget, DuelTarget, NpcBlackboard, NpcMarker};
 use crate::npc::technique::NpcCooldownMap;
+use crate::zhenfa::trap_content;
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -289,6 +290,7 @@ type BlackboardNpcQueryItem<'a> = (
 pub fn update_npc_blackboard(
     mut npc_query: Query<BlackboardNpcQueryItem<'_>, With<NpcMarker>>,
     player_query: Query<(Entity, &Position, Option<&GameMode>), With<ClientMarker>>,
+    decoy_query: Query<(Entity, &Position, &DecoyTarget)>,
     all_positions: Query<&Position>,
     game_tick: Option<Res<GameTick>>,
     mut perf_probe: Option<ResMut<NpcPerfProbe>>,
@@ -330,8 +332,16 @@ pub fn update_npc_blackboard(
             }
         }
 
-        // Expire stale retaliation targets.
         let current_tick = game_tick.as_deref().map(|t| t.0 as u64).unwrap_or(u64::MAX);
+
+        // Expire stale bait target cache before recomputing it from live DecoyTarget entities.
+        if let Some((_, expire)) = blackboard.decoy_target {
+            if current_tick >= expire {
+                blackboard.decoy_target = None;
+            }
+        }
+
+        // Expire stale retaliation targets.
         if let Some((_, expire)) = blackboard.retaliation_target {
             if current_tick >= expire {
                 blackboard.retaliation_target = None;
@@ -353,6 +363,18 @@ pub fn update_npc_blackboard(
             }
             blackboard.retaliation_target = None;
         }
+
+        if let Some((decoy_entity, decoy_pos, decoy_distance)) =
+            nearest_decoy_target(npc_pos, &decoy_query)
+        {
+            blackboard.nearest_player = Some(decoy_entity);
+            blackboard.player_distance = decoy_distance as f32;
+            blackboard.target_position = Some(DVec3::new(decoy_pos.x, npc_pos.y, decoy_pos.z));
+            blackboard.decoy_target = Some((decoy_entity, current_tick.saturating_add(1)));
+            continue;
+        }
+
+        blackboard.decoy_target = None;
 
         if nearest_player.is_some() {
             blackboard.nearest_player = nearest_player;
@@ -379,6 +401,22 @@ fn horizontal_distance(a: DVec3, b: DVec3) -> f64 {
     let dx = a.x - b.x;
     let dz = a.z - b.z;
     (dx * dx + dz * dz).sqrt()
+}
+
+fn nearest_decoy_target(
+    npc_pos: DVec3,
+    decoy_query: &Query<(Entity, &Position, &DecoyTarget)>,
+) -> Option<(Entity, DVec3, f64)> {
+    let radius = trap_content::OrdinaryTrapKind::Decoy.detection_radius();
+    decoy_query
+        .iter()
+        .filter_map(|(entity, position, decoy)| {
+            let _owner = decoy.owner();
+            let decoy_pos = position.get();
+            let distance = horizontal_distance(npc_pos, decoy_pos);
+            (distance <= radius).then_some((entity, decoy_pos, distance))
+        })
+        .min_by(|left, right| left.2.total_cmp(&right.2))
 }
 
 pub fn register(app: &mut App) {
@@ -487,6 +525,7 @@ mod tests {
     use crate::npc::spawn::NpcMeleeProfile;
     use crate::world::zone::DEFAULT_SPAWN_ZONE_NAME;
     use big_brain::prelude::{ActionState, Actor, FirstToScore, Thinker};
+    use valence::client::ClientMarker;
     use valence::prelude::{App, IntoSystemConfigs, Position, Update};
 
     fn npc_brain_persistence_settings(
@@ -566,6 +605,143 @@ mod tests {
             canonical_npc_id(entity),
             format!("npc_{}v{}", entity.index(), entity.generation())
         );
+    }
+
+    fn app_with_blackboard_update() -> App {
+        let mut app = App::new();
+        app.insert_resource(GameTick(100));
+        app.add_systems(Update, update_npc_blackboard);
+        app
+    }
+
+    fn spawn_blackboard_npc(app: &mut App, pos: [f64; 3]) -> Entity {
+        app.world_mut()
+            .spawn((NpcMarker, Position::new(pos), NpcBlackboard::default()))
+            .id()
+    }
+
+    fn spawn_trackable_player(app: &mut App, pos: [f64; 3]) -> Entity {
+        app.world_mut()
+            .spawn((ClientMarker, Position::new(pos)))
+            .id()
+    }
+
+    fn spawn_decoy(app: &mut App, pos: [f64; 3]) -> Entity {
+        let owner = app.world_mut().spawn_empty().id();
+        app.world_mut()
+            .spawn((DecoyTarget(owner), Position::new(pos)))
+            .id()
+    }
+
+    fn blackboard_of(app: &App, npc: Entity) -> NpcBlackboard {
+        *app.world()
+            .get::<NpcBlackboard>(npc)
+            .expect("test NPC should keep a blackboard")
+    }
+
+    #[test]
+    fn blackboard_targets_nearest_decoy_within_range() {
+        let mut app = app_with_blackboard_update();
+        let npc = spawn_blackboard_npc(&mut app, [0.0, 66.0, 0.0]);
+        let player = spawn_trackable_player(&mut app, [5.0, 66.0, 0.0]);
+        let decoy = spawn_decoy(&mut app, [2.0, 64.0, 0.0]);
+
+        app.update();
+
+        let bb = blackboard_of(&app, npc);
+        assert_eq!(bb.nearest_player, Some(decoy));
+        assert_eq!(bb.decoy_target, Some((decoy, 101)));
+        assert_eq!(bb.player_distance, 2.0);
+        assert_eq!(
+            bb.target_position,
+            Some(DVec3::new(2.0, 66.0, 0.0)),
+            "decoy target should keep NPC navigation on its current y plane"
+        );
+        assert_ne!(
+            bb.nearest_player,
+            Some(player),
+            "within-range DecoyTarget must override patrol nearest-player aggro"
+        );
+    }
+
+    #[test]
+    fn blackboard_ignores_decoy_outside_detection_radius() {
+        let mut app = app_with_blackboard_update();
+        let npc = spawn_blackboard_npc(&mut app, [0.0, 66.0, 0.0]);
+        let player = spawn_trackable_player(&mut app, [5.0, 66.0, 0.0]);
+        spawn_decoy(&mut app, [8.1, 64.0, 0.0]);
+
+        app.update();
+
+        let bb = blackboard_of(&app, npc);
+        assert_eq!(bb.nearest_player, Some(player));
+        assert_eq!(bb.decoy_target, None);
+        assert_eq!(bb.player_distance, 5.0);
+    }
+
+    #[test]
+    fn blackboard_duel_and_retaliation_are_not_overridden_by_decoy() {
+        let mut app = app_with_blackboard_update();
+        let duel_target = spawn_trackable_player(&mut app, [12.0, 66.0, 0.0]);
+        let retaliation_target = spawn_trackable_player(&mut app, [6.0, 66.0, 0.0]);
+        let duel_npc = spawn_blackboard_npc(&mut app, [0.0, 66.0, 0.0]);
+        let retaliation_npc = spawn_blackboard_npc(&mut app, [0.0, 66.0, 2.0]);
+        app.world_mut()
+            .entity_mut(duel_npc)
+            .insert(DuelTarget(duel_target));
+        app.world_mut()
+            .get_mut::<NpcBlackboard>(retaliation_npc)
+            .unwrap()
+            .retaliation_target = Some((retaliation_target, 200));
+        spawn_decoy(&mut app, [1.0, 64.0, 0.0]);
+
+        app.update();
+
+        let duel_bb = blackboard_of(&app, duel_npc);
+        assert_eq!(duel_bb.nearest_player, Some(duel_target));
+        assert_eq!(duel_bb.decoy_target, None);
+
+        let retaliation_bb = blackboard_of(&app, retaliation_npc);
+        assert_eq!(retaliation_bb.nearest_player, Some(retaliation_target));
+        assert_eq!(retaliation_bb.decoy_target, None);
+    }
+
+    #[test]
+    fn blackboard_allows_many_npcs_and_prefers_nearest_decoy() {
+        let mut app = app_with_blackboard_update();
+        let npc_a = spawn_blackboard_npc(&mut app, [0.0, 66.0, 0.0]);
+        let npc_b = spawn_blackboard_npc(&mut app, [1.0, 66.0, 0.0]);
+        spawn_trackable_player(&mut app, [3.0, 66.0, 0.0]);
+        let far_decoy = spawn_decoy(&mut app, [4.0, 64.0, 0.0]);
+        let near_decoy = spawn_decoy(&mut app, [2.0, 64.0, 0.0]);
+
+        app.update();
+
+        for npc in [npc_a, npc_b] {
+            let bb = blackboard_of(&app, npc);
+            assert_eq!(bb.nearest_player, Some(near_decoy));
+            assert_eq!(bb.decoy_target, Some((near_decoy, 101)));
+            assert_ne!(bb.nearest_player, Some(far_decoy));
+        }
+    }
+
+    #[test]
+    fn blackboard_clears_dangling_decoy_after_despawn() {
+        let mut app = app_with_blackboard_update();
+        let npc = spawn_blackboard_npc(&mut app, [0.0, 66.0, 0.0]);
+        let player = spawn_trackable_player(&mut app, [4.0, 66.0, 0.0]);
+        let decoy = spawn_decoy(&mut app, [2.0, 64.0, 0.0]);
+        app.world_mut()
+            .get_mut::<NpcBlackboard>(npc)
+            .unwrap()
+            .decoy_target = Some((decoy, 200));
+        app.world_mut().entity_mut(decoy).despawn();
+
+        app.update();
+
+        let bb = blackboard_of(&app, npc);
+        assert_eq!(bb.nearest_player, Some(player));
+        assert_eq!(bb.decoy_target, None);
     }
 
     /// E2E：Rogue 从 Awaken 起步，靠 `qi_regen_and_zone_drain_tick` +

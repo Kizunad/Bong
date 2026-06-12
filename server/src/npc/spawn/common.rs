@@ -165,6 +165,17 @@ impl Default for NpcCombatLoadout {
 #[derive(Clone, Copy, Debug, Component)]
 pub struct DuelTarget(pub Entity);
 
+/// Passive bait target for NPC aggression redirection.
+/// The inner entity is the trap owner; combat targeting uses the component entity itself.
+#[derive(Clone, Copy, Debug, Component)]
+pub struct DecoyTarget(pub Entity);
+
+impl DecoyTarget {
+    pub fn owner(&self) -> Entity {
+        self.0
+    }
+}
+
 #[derive(Clone, Copy, Debug, Component)]
 #[allow(dead_code, unfulfilled_lint_expectations)]
 pub struct NpcBlackboard {
@@ -181,6 +192,9 @@ pub struct NpcBlackboard {
     /// Immediate retaliation: (attacker entity, expire tick).
     /// Set when the NPC takes damage; overrides chase/melee scorers until it expires.
     pub retaliation_target: Option<(Entity, u64)>,
+    /// Passive bait target: (decoy entity, expire tick).
+    /// Recomputed by `update_npc_blackboard`; never overrides duel or retaliation targets.
+    pub decoy_target: Option<(Entity, u64)>,
 }
 
 impl Default for NpcBlackboard {
@@ -193,6 +207,7 @@ impl Default for NpcBlackboard {
             threat_assessment: None,
             self_interest_decision: None,
             retaliation_target: None,
+            decoy_target: None,
         }
     }
 }

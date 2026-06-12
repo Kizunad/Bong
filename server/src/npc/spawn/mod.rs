@@ -22,8 +22,8 @@ use crate::skin::{NpcSkinFallbackPolicy, SkinPool};
 
 #[allow(unused_imports)]
 pub use self::common::{
-    DuelTarget, NpcBlackboard, NpcCombatLoadout, NpcMarker, NpcMeleeArchetype, NpcMeleeProfile,
-    NpcSkinSpawnContext,
+    DecoyTarget, DuelTarget, NpcBlackboard, NpcCombatLoadout, NpcMarker, NpcMeleeArchetype,
+    NpcMeleeProfile, NpcSkinSpawnContext,
 };
 
 #[allow(unused_imports)]
