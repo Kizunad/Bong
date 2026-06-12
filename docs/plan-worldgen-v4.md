@@ -17,7 +17,7 @@
 |------|------|------|
 | P0 | span 列表示地基（Python 导出 + Rust 消费原地重写，行为等价迁移） | ✅ 2026-06-12 |
 | P1 | Web 3D 预览控制台（只读查看器 + zone 级重生成按钮） | ✅ 2026-06-12 |
-| P2 | Zone 地形 DSL + 19 个 profile 全量重写为声明式组合 | ⬜ |
+| P2 | Zone 地形 DSL + 19 个 profile 全量重写为声明式组合 | ✅ 2026-06-13 |
 | P3 | 3D 噪声雕刻奇幻地貌（大峡谷悬壁 / 浮空岛群 / 拱门 / 多层洞穴） | ⬜ |
 | P4 | 全局灵气配平（统一灵气场 → zone spirit_qi 预算 → zones.json，对齐 `SPIRIT_QI_TOTAL`） | ⬜ |
 | P5 | 画廊审阅闭环（Rust NBT IO + `/gallery` + structure save 回写 + owo 方块面板） | ⬜ |
