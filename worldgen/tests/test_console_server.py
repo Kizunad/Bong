@@ -56,6 +56,7 @@ from scripts.terrain_gen.blueprint import (  # noqa: E402
 )
 from scripts.terrain_gen.console_server import (  # noqa: E402
     _apply_zone_overrides,
+    _is_loopback_host,
     create_app,
 )
 from scripts.terrain_gen.fields import (  # noqa: E402
@@ -693,6 +694,27 @@ def test_apply_overrides_deep_merges_nested_worldgen(tmp_path) -> None:
     )
 
 
+@pytest.mark.parametrize(
+    "host",
+    ["127.0.0.1", "::1", "localhost", "LOCALHOST", "[::1]", "127.5.0.1"],
+)
+def test_is_loopback_host_accepts_loopback(host: str) -> None:
+    assert _is_loopback_host(host), (
+        f"'{host}' is a loopback target the unauthenticated console may bind"
+    )
+
+
+@pytest.mark.parametrize(
+    "host",
+    ["0.0.0.0", "192.168.0.105", "::", "example.com", "10.0.0.1", ""],
+)
+def test_is_loopback_host_rejects_nonloopback(host: str) -> None:
+    assert not _is_loopback_host(host), (
+        f"'{host}' is NOT loopback — binding the auth-less console there would "
+        "expose world rasters + the live regen endpoint to the network"
+    )
+
+
 def _write_collapsed_overlay(path: Path, zone_id: str) -> None:
     """Write a zones_export_v1 bundle marking ``zone_id`` collapsed."""
     path.write_text(
@@ -779,7 +801,6 @@ def test_regen_honors_zone_overlays_like_full_bake(tmp_path) -> None:
     assert peaks_entry["since_wall"] == 456, (
         "the overlay's since_wall must round-trip through the regen manifest"
     )
-
 
 
 def test_regen_unknown_override_field_returns_400(client: TestClient) -> None:

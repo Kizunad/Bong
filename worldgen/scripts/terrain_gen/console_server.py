@@ -425,15 +425,81 @@ def parse_args() -> argparse.Namespace:
         ),
     )
     parser.add_argument("--tile-size", type=int, default=512)
-    parser.add_argument("--host", default="127.0.0.1", help="bind host (localhost only)")
+    parser.add_argument(
+        "--host",
+        default="127.0.0.1",
+        help=(
+            "bind host — loopback only (127.0.0.1 / ::1 / localhost). This is an "
+            "unauthenticated dev tool; a non-loopback bind is rejected unless "
+            "--allow-nonloopback is also passed."
+        ),
+    )
+    parser.add_argument(
+        "--allow-nonloopback",
+        action="store_true",
+        help=(
+            "DANGER: permit a non-loopback --host. The console has NO auth and "
+            "serves world rasters + a live regen endpoint; binding it to a "
+            "reachable interface exposes both to the network. Dev-only escape."
+        ),
+    )
     parser.add_argument("--port", type=int, default=8765)
     return parser.parse_args()
 
 
+# Loopback hosts the console may bind without an explicit override. uvicorn also
+# treats "localhost" as loopback (resolves to 127.0.0.1 / ::1).
+_LOOPBACK_HOSTS = frozenset({"127.0.0.1", "::1", "localhost"})
+
+
+def _is_loopback_host(host: str) -> bool:
+    """True when ``host`` is a loopback bind target.
+
+    Accepts the literal loopback names plus any address inside an IPv4/IPv6
+    loopback network (so 127.0.0.0/8 and ::1 are covered), matching what an
+    unauthenticated dev tool is allowed to expose.
+    """
+    import ipaddress
+
+    normalized = host.strip().strip("[]").lower()
+    if normalized in _LOOPBACK_HOSTS:
+        return True
+    try:
+        return ipaddress.ip_address(normalized).is_loopback
+    except ValueError:
+        # A hostname we can't classify as loopback by literal/IP — treat as
+        # non-loopback (refuse rather than risk binding it network-wide).
+        return False
+
+
 def main() -> None:
+    import sys
+
     import uvicorn
 
     args = parse_args()
+
+    # The console is unauthenticated and serves world rasters + a live regen
+    # endpoint (see module docstring: localhost-only). Refuse a non-loopback bind
+    # unless the operator explicitly opts in, so a stray `--host 0.0.0.0` can't
+    # silently expose it to the network.
+    if not _is_loopback_host(args.host):
+        if not args.allow_nonloopback:
+            print(
+                f"[console] refusing to bind non-loopback host '{args.host}': this "
+                "is an unauthenticated dev tool (world rasters + live regen). Use a "
+                "loopback host (127.0.0.1 / ::1 / localhost), or pass "
+                "--allow-nonloopback if you really mean to expose it.",
+                file=sys.stderr,
+            )
+            raise SystemExit(2)
+        print(
+            f"[console] WARNING: binding NON-LOOPBACK host '{args.host}' with "
+            "--allow-nonloopback — the unauthenticated console + regen endpoint "
+            "are now reachable from the network.",
+            file=sys.stderr,
+        )
+
     app = create_app(
         args.rasters,
         blueprint_path=args.blueprint,
