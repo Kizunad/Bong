@@ -23,6 +23,8 @@ public final class ZhenfaActionVfxPlayer implements VfxPlayer {
     public static final Identifier DEPLETE = new Identifier("bong", "zhenfa_deplete");
     public static final Identifier BEAST_TRAP_SNAP = new Identifier("bong", "beast_trap_snap");
     public static final Identifier TRIP_WIRE_TRIGGER = new Identifier("bong", "trip_wire_trigger");
+    public static final Identifier DECOY_BREAK = new Identifier("bong", "decoy_break");
+    public static final Identifier DECOY_TAUNT = new Identifier("bong", "decoy_taunt");
 
     private static final AtomicLong AUDIO_INSTANCE_ID = new AtomicLong(43_000L);
 
@@ -37,7 +39,9 @@ public final class ZhenfaActionVfxPlayer implements VfxPlayer {
         WARD,
         DEPLETE,
         BITE_SNAP,
-        TRIP_WIRE
+        TRIP_WIRE,
+        STRAW_SCATTER,
+        TAUNT_PULSE
     }
 
     @Override
@@ -54,6 +58,15 @@ public final class ZhenfaActionVfxPlayer implements VfxPlayer {
         if (kind == Kind.BITE_SNAP) {
             spawnBiteSnap(client, world, ox, oy, oz, rgb, maxAge);
             playAudio(ox, oy, oz, "beast_trap_snap", beastTrapSnapRecipe());
+            return;
+        }
+        if (kind == Kind.STRAW_SCATTER) {
+            spawnStrawScatter(client, world, ox, oy, oz, rgb, maxAge);
+            playAudio(ox, oy, oz, "bait_stake_break", baitStakeBreakRecipe());
+            return;
+        }
+        if (kind == Kind.TAUNT_PULSE) {
+            spawnTauntPulse(client, world, ox, oy, oz, rgb, maxAge);
             return;
         }
         double halfSize = kind == Kind.WARD ? 1.8 : 1.1;
@@ -82,6 +95,8 @@ public final class ZhenfaActionVfxPlayer implements VfxPlayer {
             case DEPLETE -> 0x888888;
             case BITE_SNAP -> 0xB06338;
             case TRIP_WIRE -> 0x66BBFF;
+            case STRAW_SCATTER -> 0xC8B878;
+            case TAUNT_PULSE -> 0xD86060;
         };
     }
 
@@ -106,6 +121,42 @@ public final class ZhenfaActionVfxPlayer implements VfxPlayer {
                 Math.sin(theta) * speed,
                 rgb, 0.75f, Math.min(maxAge, 24), 0.16f);
         }
+    }
+
+    private static void spawnStrawScatter(
+        MinecraftClient client,
+        ClientWorld world,
+        double ox,
+        double oy,
+        double oz,
+        float[] rgb,
+        int maxAge
+    ) {
+        for (int i = 0; i < 10; i++) {
+            double theta = (Math.PI * 2.0 * i) / 10.0;
+            double speed = 0.18 + world.random.nextDouble() * 0.08;
+            GameplayVfxUtil.spawnSprite(client, world, BongParticles.runeCharSprites,
+                ox, oy + 0.35, oz,
+                Math.cos(theta) * speed,
+                -0.02 + world.random.nextDouble() * 0.05,
+                Math.sin(theta) * speed,
+                rgb, 0.72f, Math.min(maxAge, 18), 0.14f);
+        }
+    }
+
+    private static void spawnTauntPulse(
+        MinecraftClient client,
+        ClientWorld world,
+        double ox,
+        double oy,
+        double oz,
+        float[] rgb,
+        int maxAge
+    ) {
+        GameplayVfxUtil.spawnSprite(client, world, BongParticles.lingqiRippleSprites,
+            ox, oy + 1.2, oz,
+            0.0, 0.01, 0.0,
+            rgb, 0.55f, Math.min(maxAge, 12), 0.20f);
     }
 
     private static void playAudio(double ox, double oy, double oz, String recipeId, AudioRecipe recipe) {
@@ -141,6 +192,21 @@ public final class ZhenfaActionVfxPlayer implements VfxPlayer {
             List.of(
                 new AudioLayer(new Identifier("minecraft", "block.tripwire.click_on"), 0.55f, 0.95f, 0),
                 new AudioLayer(new Identifier("minecraft", "block.note_block.hat"), 0.25f, 1.35f, 1)
+            ),
+            Optional.empty(),
+            55,
+            AudioAttenuation.WORLD_3D,
+            AudioCategory.BLOCKS,
+            AudioBus.ENVIRONMENT
+        );
+    }
+
+    static AudioRecipe baitStakeBreakRecipe() {
+        return new AudioRecipe(
+            "bait_stake_break",
+            List.of(
+                new AudioLayer(new Identifier("minecraft", "block.wood.break"), 0.80f, 0.70f, 0),
+                new AudioLayer(new Identifier("minecraft", "block.bamboo.break"), 0.40f, 0.90f, 1)
             ),
             Optional.empty(),
             55,
