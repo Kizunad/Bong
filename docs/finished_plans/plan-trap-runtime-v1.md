@@ -254,3 +254,42 @@ Agent(
 - ✅ **跨仓库契约不缺面**：ZhenfaKind 四处同步（Rust enum / proto / proto_convert / client 枚举+映射）写入 P0 交付物 + §10.4 双绿 gate。
 - ✅ **不开第二套放置路径**：统一走 `ZhenfaPlace` + `ZhenfaKind`（client_request.rs:257 既有）。
 - ✅ **decoy 语义切割**：`bait_stake`(凡物引仇恨) vs `decoy_stake`(欺天阵) vs `ZhenfaKind::DeceiveHeaven`(对天道隐身) 三者 §8.1 #1 文档双锚定，避免混淆。
+
+## Finish Evidence
+
+### 落地清单
+
+- P0 陷阱放置 + 触发底盘：PR #519 / commit `6a269af76` 接通 `ZhenfaKind::{BeastTrap,TripWire,DecoyStake}`、proto/client 映射、`OrdinaryTrapKind` 规格、owner 排除与野兽目标过滤。
+- P1 beast_trap + trip_wire：PR #521 / merge commit `2c844adb97bfacb9210f0d48522e42cc600e6259` 接通 `StatusEffectKind::Immobilized`、`navigator_tick_system` 定身消费、困兽夹咬合、绊线报警、P1 VFX/SFX。
+- P2 bait_stake + DecoyTarget：`server/src/npc/spawn/common.rs` 新增 `DecoyTarget` 和 `NpcBlackboard.decoy_target`；`server/src/npc/brain/mod.rs` 在 retaliation 后、nearest-player 回填前扫描最近诱饵桩；`server/src/zhenfa/mod.rs` 放置 `DecoyStake` 时挂 `DecoyTarget` + `BaitDurability(4)`，4 次 `AttackIntent` 后碎裂、移除 registry/custom block/anchor 并发 `DECOY_BREAK`。
+- P2 资源与配方：`server/assets/items/workbench_materials.toml` 新增 `bait_stake` 纯凡物条目；`server/src/craft/workbench_recipes.rs` 新增 `workbench.array.bait_stake` #104，并将 `trip_wire`/`beast_trap` 归入 `CraftCategory::ZhenfaTrap`；`server/assets/audio/recipes/bait_stake_break.json` 新增碎裂音效。
+- P2 客户端视听：`server/src/network/gameplay_vfx.rs` 新增 `DECOY_BREAK`/`DECOY_TAUNT`；`client/src/main/java/com/bong/client/visual/particle/ZhenfaActionVfxPlayer.java` 新增 `STRAW_SCATTER`/`TAUNT_PULSE`；`client/src/main/java/com/bong/client/visual/particle/VfxBootstrap.java` 注册两个事件。
+
+### 关键 commit
+
+- `6a269af76`（2026-06-10）`plan-trap-runtime-v1 P0: 接通陷阱放置契约 (#519)`。
+- `2c844adb97bfacb9210f0d48522e42cc600e6259`（2026-06-11）`plan-trap-runtime-v1 P1：实装困兽夹与绊线触发`。
+- `d20fbd474`（2026-06-12）`plan-trap-runtime-v1 P2：接入诱饵桩仇恨黑板`。
+- `42299c0ad`（2026-06-12）`plan-trap-runtime-v1 P2：实装诱饵桩运行时与配方`。
+- `b2d8fb609`（2026-06-12）`plan-trap-runtime-v1 P2：接通诱饵桩客户端视听`。
+
+### 测试结果
+
+- `cd server && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test -- --test-threads=2`：8724 passed / 0 failed / 1 ignored（P2 小收口前全量验证）。
+- `cd server && cargo fmt && CARGO_BUILD_JOBS=2 cargo fmt --check && CARGO_BUILD_JOBS=2 cargo clippy --all-targets -- -D warnings`：通过（P2 小收口后）。
+- `cd server && CARGO_BUILD_JOBS=2 cargo test blackboard -- --test-threads=2`：19 passed / 0 failed。
+- `cd server && CARGO_BUILD_JOBS=2 cargo test bait_stake -- --test-threads=2`：2 passed / 0 failed。
+- `cd server && CARGO_BUILD_JOBS=2 cargo test trap_runtime_audio_recipes_are_pinned -- --test-threads=2`：1 passed / 0 failed。
+- `cd server && CARGO_BUILD_JOBS=2 cargo test trap_runtime_recipes_are_grouped_under_zhenfa_trap -- --test-threads=2`：1 passed / 0 failed。
+- `cd client && JAVA_HOME="$HOME/.sdkman/candidates/java/17.0.18-amzn" ./gradlew --max-workers=2 test build`：BUILD SUCCESSFUL。
+
+### 跨仓库核验
+
+- server：`ZhenfaKind::{BeastTrap,TripWire,DecoyStake}`、`OrdinaryTrapKind::{Beast,TripWire,Decoy}`、`StatusEffectKind::Immobilized`、`DecoyTarget`、`NpcBlackboard.decoy_target`、`BaitDurability`、`gameplay_vfx::{BEAST_TRAP_SNAP,TRIP_WIRE_TRIGGER,DECOY_BREAK,DECOY_TAUNT}`。
+- proto/schema：`proto/bong/envelope.proto` / `server/src/schema/proto_convert.rs` / `server/src/schema/proto_gen.rs` 覆盖陷阱三变体编号与转换。
+- client：`ClientRequestProtocol.ZhenfaKind::{BEAST_TRAP,TRIP_WIRE,DECOY_STAKE}`、`MixinClientPlayerInteractionManagerAlchemy` 的 `bait_stake -> DECOY_STAKE` 映射、`ZhenfaActionVfxPlayer` 的四类陷阱视听事件。
+- agent：本 plan 无 agent runtime/schema 消费面；未改 `agent/`。
+
+### 遗留 / 后续
+
+- `[BLOCKED: 需 /gen-image 生成 bait_stake 图标]`：Codex 不生成图标；server/client 已完成物品、配方、放置、runtime、VFX/SFX 接线，图标资产留给 `/gen-image item`。
