@@ -37,6 +37,7 @@ PROFILES_DIR = (
 MIGRATED_PROFILES: tuple[tuple[str, str], ...] = (
     ("broken_peaks", "scripts.terrain_gen.profiles.broken_peaks"),
     ("ash_dead_zone", "scripts.terrain_gen.profiles.ash_dead_zone"),
+    ("ancient_battlefield", "scripts.terrain_gen.profiles.ancient_battlefield"),
 )
 
 # 迁移后不应再裸 import 的低层 noise 函数（应改走 dsl 算子库封装）。
