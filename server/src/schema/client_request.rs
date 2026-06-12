@@ -1846,11 +1846,16 @@ mod tests {
             match req {
                 ClientRequestV1::ZhenfaPlace {
                     kind,
+                    trigger,
                     item_instance_id: actual_item_instance_id,
                     target_face,
                     ..
                 } => {
                     assert_eq!(kind, expected_kind);
+                    assert!(
+                        trigger.is_none(),
+                        "runtime trap kind {kind_wire} omits trigger, so server contract must deserialize trigger=None"
+                    );
                     assert_eq!(actual_item_instance_id, Some(item_instance_id));
                     assert_eq!(target_face, Some(TrapTargetFace::Top));
                 }
