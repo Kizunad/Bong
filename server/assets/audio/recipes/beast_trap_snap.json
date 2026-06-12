@@ -1,0 +1,11 @@
+{
+  "id": "beast_trap_snap",
+  "layers": [
+    { "sound": "minecraft:block.chain.break", "volume": 0.65, "pitch": 0.75, "delay_ticks": 0 },
+    { "sound": "minecraft:entity.wolf.hurt", "volume": 0.35, "pitch": 1.2, "delay_ticks": 1 }
+  ],
+  "priority": 65,
+  "attenuation": "world_3d",
+  "category": "HOSTILE",
+  "bus": "COMBAT"
+}

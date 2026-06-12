@@ -44,6 +44,9 @@ use valence::prelude::{
     EntityLayerId, Position, Query, Res, ResMut, Update, With,
 };
 
+use crate::combat::components::StatusEffects;
+use crate::combat::events::StatusEffectKind;
+use crate::combat::status::has_active_status;
 use crate::npc::lod::NpcLodTier;
 use crate::npc::movement::{GameTick, MovementController};
 use crate::npc::perf::NpcPerfProbe;
@@ -283,6 +286,7 @@ pub fn navigator_tick_system(
             &mut HeadYaw,
             &mut Navigator,
             Option<&MovementController>,
+            Option<&StatusEffects>,
             Option<&EntityLayerId>,
             Option<&NpcLodTier>,
         ),
@@ -313,6 +317,7 @@ pub fn navigator_tick_system(
         mut head_yaw,
         mut nav,
         movement_ctrl,
+        status_effects,
         npc_layer,
         lod_tier,
     ) in &mut npcs
@@ -321,6 +326,11 @@ pub fn navigator_tick_system(
         // this tick. Navigator must not interfere.
         let movement_ctrl = movement_ctrl.cloned().unwrap_or_default();
         if movement_ctrl.navigator_should_yield() {
+            continue;
+        }
+        if status_effects
+            .is_some_and(|statuses| has_active_status(statuses, StatusEffectKind::Immobilized))
+        {
             continue;
         }
 
@@ -1110,6 +1120,7 @@ mod tests {
     use super::*;
     use valence::prelude::Entity;
 
+    use crate::combat::components::{ActiveStatusEffect, StatusEffects};
     use crate::world::terrain::{SurfaceInfo, SurfaceProvider};
 
     #[allow(dead_code)]
@@ -1231,6 +1242,45 @@ mod tests {
             pos.x > 0.5,
             "partial path should advance the NPC toward the far target instead of freezing at {:?}",
             pos,
+        );
+    }
+
+    #[test]
+    fn immobilized_npc_does_not_write_position_while_goal_exists() {
+        let (mut app, _) = make_navigator_app_with_ground(66);
+        let mut navigator = Navigator::new();
+        navigator.set_goal(DVec3::new(4.5, 67.0, 0.5), 1.0);
+        navigator.force_next_repath = true;
+        let npc = app
+            .world_mut()
+            .spawn((
+                NpcMarker,
+                Position::new([0.5, 67.0, 0.5]),
+                Transform::default(),
+                Look::default(),
+                HeadYaw::default(),
+                navigator,
+                StatusEffects {
+                    active: vec![ActiveStatusEffect {
+                        kind: StatusEffectKind::Immobilized,
+                        magnitude: 1.0,
+                        remaining_ticks: 20,
+                        source_pill: None,
+                    }],
+                },
+            ))
+            .id();
+
+        app.update();
+
+        let pos = app.world().get::<Position>(npc).unwrap().get();
+        assert_eq!(
+            pos.x, 0.5,
+            "Immobilized NPC with an active navigator goal must not advance Position"
+        );
+        assert_eq!(
+            pos.z, 0.5,
+            "Immobilized NPC should leave horizontal Position untouched"
         );
     }
 

@@ -57,6 +57,8 @@ const ZHENFA_FLAG_ITEM_ID: &str = "array_flag";
 const ZHENFA_PEARL_ITEM_ID: &str = "scattered_qi_pearl";
 const CHAIN_DELAY_TICKS: u64 = 6;
 const WARD_ALERT_THROTTLE_TICKS: u64 = 60 * TICKS_PER_SECOND;
+const BEAST_TRAP_IMMOBILIZED_TICKS: u64 = 8 * TICKS_PER_SECOND;
+const BEAST_TRAP_SNAP_DAMAGE: f32 = 2.0;
 const DISARM_RANGE: f64 = 4.5;
 const QI_SCATTER_BEAD_ITEM_ID: &str = "qi_scatter_bead";
 const NETWORK_ARRAY_FLAG_ITEM_ID: &str = "array_flag_basic";
@@ -2799,6 +2801,8 @@ fn tick_zhenfa_registry(
     let mut passive_triggers = Vec::new();
     let mut blast_triggers = Vec::new();
     let mut warning_alerts = Vec::new();
+    let mut beast_triggers = Vec::new();
+    let mut trip_wire_alerts = Vec::new();
     let mut slow_triggers = Vec::new();
     let mut ward_alerts = Vec::new();
     let mut network_alerts = Vec::new();
@@ -2912,11 +2916,45 @@ fn tick_zhenfa_registry(
                         trap_content::OrdinaryTrapKind::Beast.detection_radius(),
                         trap_content::OrdinaryTrapKind::Beast.vertical_height(),
                     ) {
+                        beast_triggers.push((
+                            instance.id,
+                            target,
+                            instance.owner,
+                            instance.owner_player_id.clone(),
+                            instance.pos,
+                        ));
                         break;
                     }
                 }
             }
-            ZhenfaKind::TripWire | ZhenfaKind::DecoyStake => {}
+            ZhenfaKind::TripWire => {
+                for (target, position, ..) in &mut targets {
+                    if target == instance.owner {
+                        continue;
+                    }
+                    if trap_content::vertical_column_contains(
+                        position.get(),
+                        instance.pos,
+                        trap_content::OrdinaryTrapKind::TripWire.detection_radius(),
+                        trap_content::OrdinaryTrapKind::TripWire.vertical_height(),
+                    ) {
+                        let key = (instance.id, target);
+                        let last = registry.ward_alert_seen.get(&key).copied();
+                        if last.is_none_or(|tick| {
+                            now.saturating_sub(tick) >= WARD_ALERT_THROTTLE_TICKS
+                        }) {
+                            trip_wire_alerts.push((
+                                instance.id,
+                                target,
+                                instance.owner,
+                                instance.owner_player_id.clone(),
+                                instance.pos,
+                            ));
+                        }
+                    }
+                }
+            }
+            ZhenfaKind::DecoyStake => {}
             ZhenfaKind::Ward => {
                 for (target, position) in &ward_positions {
                     if target == instance.owner {
@@ -3083,6 +3121,52 @@ fn tick_zhenfa_registry(
             14,
             50,
         );
+    }
+
+    for (id, intruder, owner, owner_player_id, pos) in trip_wire_alerts {
+        registry.ward_alert_seen.insert((id, intruder), now);
+        if let Some(pending_narrations) = pending_narrations.as_deref_mut() {
+            pending_narrations.push_player(
+                owner_player_id.as_str(),
+                "绊线被扯动了，埋线处传回一声干涩轻响。",
+                NarrationStyle::Perception,
+            );
+        }
+        events.sense_pulses.send(ZhenfaSensePulse {
+            owner,
+            kind: SenseKindV1::ZhenfaWardAlert,
+            pos,
+            intensity: 1.0,
+            generation: now,
+        });
+        emit_zhenfa_vfx(
+            vfx_events.as_deref_mut(),
+            gameplay_vfx::TRIP_WIRE_TRIGGER,
+            pos,
+            "#66BBFF",
+            0.55,
+            14,
+            50,
+        );
+    }
+
+    for snapshot in registry.trigger_now(beast_triggers.iter().map(|(id, ..)| *id), now) {
+        remove_zhenfa_anchor_block(&mut layers, snapshot.pos);
+        commands.entity(snapshot.anchor_entity).despawn();
+        if let Some((_, target, owner, _owner_player_id, pos)) =
+            beast_triggers.iter().find(|(id, ..)| *id == snapshot.id)
+        {
+            apply_beast_trap_snap(
+                *target,
+                *owner,
+                *pos,
+                now,
+                &mut targets,
+                &mut events.status_effects,
+                &mut events.sense_pulses,
+                vfx_events.as_deref_mut(),
+            );
+        }
     }
 
     for (id, intruder, owner, owner_player_id, pos) in slow_triggers {
@@ -3641,6 +3725,55 @@ fn apply_trigger_snapshots(
             }
         }
     }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn apply_beast_trap_snap(
+    target: Entity,
+    owner: Entity,
+    pos: [i32; 3],
+    tick: u64,
+    targets: &mut Query<ZhenfaDamageTarget<'_>>,
+    status_effects: &mut EventWriter<ApplyStatusEffectIntent>,
+    sense_pulses: &mut EventWriter<ZhenfaSensePulse>,
+    vfx_events: Option<&mut Events<VfxEventRequest>>,
+) {
+    let Ok((_target, _position, mut wounds, ..)) = targets.get_mut(target) else {
+        return;
+    };
+    wounds.health_current =
+        (wounds.health_current - BEAST_TRAP_SNAP_DAMAGE).clamp(0.0, wounds.health_max);
+    wounds.entries.push(Wound {
+        location: BodyPart::LegL,
+        kind: WoundKind::Pierce,
+        severity: BEAST_TRAP_SNAP_DAMAGE,
+        bleeding_per_sec: 0.0,
+        created_at_tick: tick,
+        inflicted_by: Some("beast_trap".to_string()),
+    });
+    status_effects.send(ApplyStatusEffectIntent {
+        target,
+        kind: StatusEffectKind::Immobilized,
+        magnitude: 1.0,
+        duration_ticks: BEAST_TRAP_IMMOBILIZED_TICKS,
+        issued_at_tick: tick,
+    });
+    sense_pulses.send(ZhenfaSensePulse {
+        owner,
+        kind: SenseKindV1::ZhenfaWardAlert,
+        pos,
+        intensity: 1.0,
+        generation: tick,
+    });
+    emit_zhenfa_vfx(
+        vfx_events,
+        gameplay_vfx::BEAST_TRAP_SNAP,
+        pos,
+        "#B06338",
+        0.85,
+        18,
+        24,
+    );
 }
 
 fn despawn_triggered_anchors(commands: &mut Commands, snapshots: &[TriggerSnapshot]) {
@@ -6332,8 +6465,9 @@ mod tests {
     }
 
     #[test]
-    fn beast_trap_p0_scan_does_not_apply_p1_side_effects() {
+    fn beast_trap_snaps_low_tier_beast_once_and_emits_status_damage_vfx() {
         let mut app = app_with_loaded_zhenfa();
+        app.add_event::<VfxEventRequest>();
         let owner = spawn_player(&mut app, "Alice", [0.0, 64.0, 0.0]);
         app.world_mut()
             .entity_mut(owner)
@@ -6370,8 +6504,97 @@ mod tests {
             app.world()
                 .resource::<ZhenfaRegistry>()
                 .find_at([1, 64, 1])
+                .is_none(),
+            "P1 BeastTrap must consume itself after the first valid low-tier beast snap"
+        );
+        let status_events = app
+            .world()
+            .resource::<Events<ApplyStatusEffectIntent>>()
+            .iter_current_update_events()
+            .collect::<Vec<_>>();
+        assert_eq!(status_events.len(), 1);
+        assert_eq!(status_events[0].target, beast);
+        assert_eq!(status_events[0].kind, StatusEffectKind::Immobilized);
+        assert_eq!(
+            status_events[0].duration_ticks, BEAST_TRAP_IMMOBILIZED_TICKS,
+            "BeastTrap immobilize duration must stay pinned to the P1 8s contract"
+        );
+        let wounds = app.world().get::<Wounds>(beast).unwrap();
+        assert_eq!(
+            wounds.health_current,
+            wounds.health_max - BEAST_TRAP_SNAP_DAMAGE
+        );
+        assert_eq!(wounds.entries.len(), 1);
+        assert_eq!(wounds.entries[0].kind, WoundKind::Pierce);
+        assert_eq!(wounds.entries[0].severity, BEAST_TRAP_SNAP_DAMAGE);
+        let has_snap_vfx = app
+            .world()
+            .resource::<Events<VfxEventRequest>>()
+            .iter_current_update_events()
+            .any(|event| {
+                matches!(
+                    &event.payload,
+                    crate::schema::vfx_event::VfxEventPayloadV1::SpawnParticle { event_id, .. }
+                        if event_id == gameplay_vfx::BEAST_TRAP_SNAP
+                )
+            });
+        assert!(
+            has_snap_vfx,
+            "BeastTrap snap must emit its dedicated VFX id"
+        );
+
+        app.world_mut().resource_mut::<CombatClock>().tick = 12;
+        app.update();
+        let wounds_after_second_tick = app.world().get::<Wounds>(beast).unwrap();
+        assert_eq!(
+            wounds_after_second_tick.entries.len(),
+            1,
+            "consumed BeastTrap must not reapply wound entries on later ticks"
+        );
+    }
+
+    #[test]
+    fn beast_trap_ignores_non_fauna_and_high_tier_beasts() {
+        let mut app = app_with_loaded_zhenfa();
+        let owner = spawn_player(&mut app, "Alice", [0.0, 64.0, 0.0]);
+        let bob = spawn_player(&mut app, "Bob", [1.5, 64.0, 1.5]);
+        let high_tier_beast = app
+            .world_mut()
+            .spawn((
+                Position::new([1.5, 64.0, 1.5]),
+                Wounds::default(),
+                FaunaTag::new(BeastKind::BlueSpider),
+            ))
+            .id();
+        app.world_mut()
+            .entity_mut(owner)
+            .insert(ordinary_trap_inventory(trap_item(
+                9402,
+                trap_content::BEAST_TRAP_ITEM_ID,
+                trap_content::BEAST_TRAP_ITEM_ID,
+            )));
+
+        app.world_mut().send_event(ZhenfaPlaceRequest {
+            player: owner,
+            pos: [1, 64, 1],
+            kind: ZhenfaKind::BeastTrap,
+            carrier: ZhenfaCarrierKind::CommonStone,
+            qi_invest_ratio: 1.0,
+            trigger: None,
+            item_instance_id: Some(9402),
+            target_face: Some(trap_content::TrapTargetFace::North),
+            requested_at_tick: 10,
+        });
+        app.update();
+        app.world_mut().resource_mut::<CombatClock>().tick = 11;
+        app.update();
+
+        assert!(
+            app.world()
+                .resource::<ZhenfaRegistry>()
+                .find_at([1, 64, 1])
                 .is_some(),
-            "P0 BeastTrap target scan must not consume the trap before P1 snap behavior exists"
+            "BeastTrap must stay armed when only players or high-tier FaunaTag beasts enter"
         );
         assert!(
             app.world()
@@ -6379,20 +6602,182 @@ mod tests {
                 .iter_current_update_events()
                 .next()
                 .is_none(),
-            "P0 BeastTrap must not emit Immobilized before P1 implements the status effect"
+            "non-beast and high-tier beast entries must not receive Immobilized"
+        );
+        assert!(
+            app.world().get::<Wounds>(bob).unwrap().entries.is_empty()
+                && app
+                    .world()
+                    .get::<Wounds>(high_tier_beast)
+                    .unwrap()
+                    .entries
+                    .is_empty(),
+            "non-targets must not receive BeastTrap wound entries"
+        );
+    }
+
+    #[test]
+    fn trip_wire_alerts_owner_with_throttle_vfx_and_no_damage() {
+        let mut app = app_with_loaded_zhenfa();
+        app.add_event::<VfxEventRequest>();
+        let owner = spawn_player(&mut app, "Alice", [0.0, 64.0, 0.0]);
+        let intruder = spawn_player(&mut app, "Bob", [1.5, 64.0, 1.5]);
+        let health_before = app.world().get::<Wounds>(intruder).unwrap().health_current;
+        app.world_mut()
+            .entity_mut(owner)
+            .insert(ordinary_trap_inventory(trap_item(
+                9403,
+                trap_content::TRIP_WIRE_ITEM_ID,
+                trap_content::TRIP_WIRE_ITEM_ID,
+            )));
+
+        app.world_mut().send_event(ZhenfaPlaceRequest {
+            player: owner,
+            pos: [1, 64, 1],
+            kind: ZhenfaKind::TripWire,
+            carrier: ZhenfaCarrierKind::CommonStone,
+            qi_invest_ratio: 1.0,
+            trigger: None,
+            item_instance_id: Some(9403),
+            target_face: Some(trap_content::TrapTargetFace::North),
+            requested_at_tick: 10,
+        });
+        app.update();
+        app.world_mut().resource_mut::<CombatClock>().tick = 11;
+        app.update();
+
+        assert!(
+            app.world()
+                .resource::<ZhenfaRegistry>()
+                .find_at([1, 64, 1])
+                .is_some(),
+            "TripWire is an alarm and must not consume itself on trigger"
+        );
+        let narrations = app
+            .world_mut()
+            .resource_mut::<PendingGameplayNarrations>()
+            .drain();
+        assert_eq!(narrations.len(), 1);
+        assert!(
+            narrations[0].text.contains("绊线"),
+            "TripWire owner narration should explicitly identify the line alarm"
         );
         assert!(
             app.world()
-                .resource::<Events<CombatEvent>>()
+                .resource::<Events<ZhenfaSensePulse>>()
+                .iter_current_update_events()
+                .any(|pulse| pulse.owner == owner && pulse.kind == SenseKindV1::ZhenfaWardAlert),
+            "TripWire must reuse ward-alert sense pulse semantics"
+        );
+        assert!(
+            app.world()
+                .resource::<Events<VfxEventRequest>>()
+                .iter_current_update_events()
+                .any(|event| {
+                    matches!(
+                        &event.payload,
+                        crate::schema::vfx_event::VfxEventPayloadV1::SpawnParticle { event_id, .. }
+                            if event_id == gameplay_vfx::TRIP_WIRE_TRIGGER
+                    )
+                }),
+            "TripWire must emit a distinct VFX id so client can play the trip-wire SFX"
+        );
+        assert_eq!(
+            app.world().get::<Wounds>(intruder).unwrap().health_current,
+            health_before,
+            "TripWire alarm must not damage intruders"
+        );
+        assert!(
+            app.world()
+                .resource::<Events<ApplyStatusEffectIntent>>()
                 .iter_current_update_events()
                 .next()
                 .is_none(),
-            "P0 BeastTrap must not deal damage before P1 implements snap damage"
+            "TripWire alarm must not apply combat status effects"
         );
+
+        app.world_mut().resource_mut::<CombatClock>().tick = 12;
+        app.update();
         assert!(
-            app.world().get::<Wounds>(beast).unwrap().entries.is_empty(),
-            "P0 BeastTrap scan must leave the low-tier beast without wounds"
+            app.world_mut()
+                .resource_mut::<PendingGameplayNarrations>()
+                .drain()
+                .is_empty(),
+            "TripWire must throttle repeat alerts while the same intruder remains inside"
         );
+
+        app.world_mut().resource_mut::<CombatClock>().tick = 11 + WARD_ALERT_THROTTLE_TICKS;
+        app.update();
+        assert_eq!(
+            app.world_mut()
+                .resource_mut::<PendingGameplayNarrations>()
+                .drain()
+                .len(),
+            1,
+            "TripWire should alert again after the ward throttle window elapses"
+        );
+    }
+
+    #[test]
+    fn trip_wire_owner_alone_does_not_self_alert() {
+        let mut app = app_with_loaded_zhenfa();
+        let owner = spawn_player(&mut app, "Alice", [1.5, 64.0, 1.5]);
+        app.world_mut()
+            .entity_mut(owner)
+            .insert(ordinary_trap_inventory(trap_item(
+                9404,
+                trap_content::TRIP_WIRE_ITEM_ID,
+                trap_content::TRIP_WIRE_ITEM_ID,
+            )));
+
+        app.world_mut().send_event(ZhenfaPlaceRequest {
+            player: owner,
+            pos: [1, 64, 1],
+            kind: ZhenfaKind::TripWire,
+            carrier: ZhenfaCarrierKind::CommonStone,
+            qi_invest_ratio: 1.0,
+            trigger: None,
+            item_instance_id: Some(9404),
+            target_face: Some(trap_content::TrapTargetFace::North),
+            requested_at_tick: 10,
+        });
+        app.update();
+        app.world_mut().resource_mut::<CombatClock>().tick = 11;
+        app.update();
+
+        assert!(
+            app.world_mut()
+                .resource_mut::<PendingGameplayNarrations>()
+                .drain()
+                .is_empty(),
+            "TripWire must not alert on its owner standing inside the trigger column"
+        );
+    }
+
+    #[test]
+    fn trap_runtime_p1_audio_recipes_are_pinned() {
+        let beast: serde_json::Value = serde_json::from_str(include_str!(
+            "../../assets/audio/recipes/beast_trap_snap.json"
+        ))
+        .expect("beast_trap_snap audio recipe must parse");
+        assert_eq!(beast["id"], "beast_trap_snap");
+        assert_eq!(beast["layers"][0]["sound"], "minecraft:block.chain.break");
+        assert_eq!(beast["layers"][1]["sound"], "minecraft:entity.wolf.hurt");
+        assert_eq!(beast["attenuation"], "world_3d");
+        assert_eq!(beast["bus"], "COMBAT");
+
+        let trip: serde_json::Value = serde_json::from_str(include_str!(
+            "../../assets/audio/recipes/trip_wire_trigger.json"
+        ))
+        .expect("trip_wire_trigger audio recipe must parse");
+        assert_eq!(trip["id"], "trip_wire_trigger");
+        assert_eq!(
+            trip["layers"][0]["sound"],
+            "minecraft:block.tripwire.click_on"
+        );
+        assert_eq!(trip["layers"][1]["sound"], "minecraft:block.note_block.hat");
+        assert_eq!(trip["attenuation"], "world_3d");
+        assert_eq!(trip["bus"], "ENVIRONMENT");
     }
 
     #[test]

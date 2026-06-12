@@ -84,6 +84,8 @@ pub enum StatusEffectKind {
     Bleeding,
     Slowed,
     Stunned,
+    /// plan-trap-runtime-v1 P1：困兽夹造成的短时定身，NPC navigator 显式消费。
+    Immobilized,
     /// plan-zhenfa-content-v1：缓阵短暂停止真元回复。
     QiRegenPaused,
     DamageAmp,
