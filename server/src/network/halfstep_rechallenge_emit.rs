@@ -1,25 +1,36 @@
-//! plan-halfstep-rechallenge-integration-v1 P0：半步化虚重渡触发 HUD S2C 推送。
+//! plan-halfstep-rechallenge-integration-v1 P0/P1：半步化虚重渡触发推送。
 //!
-//! 监听 `HalfStepRechallengeTriggerEvent`（仅非 dormant 条目），targeted 下发
+//! **P0**：监听 `HalfStepRechallengeTriggerEvent`（仅非 dormant 条目），targeted 下发
 //! `halfstep_rechallenge` server_data payload + `halfstep_rechallenge_trigger_player` 音效。
+//!
+//! **P1**：同时 publish Redis `bong:tribulation/halfstep_rechallenge` 供 agent narration：
+//! - char_id / zone_name / zone_halfstep_count（同 zone HalfStep 实体数，≥2 才产 zone echo）/ at_tick。
+//! - dormant 触发方无 Position → zone_name fallback "dormant"，zone_halfstep_count = 0（agent 不产 zone echo）。
+//! - 音效：zone_halfstep_count >= 2 时另发 `halfstep_rechallenge_trigger_zone_echo` 广播音效。
 //!
 //! HIDE payload 在两处追发：
 //! 1. `/tribulation_rechallenge` 命令成功（`StartDuXuRequest` 发出后）：由 cmd 路径负责。
 //! 2. 化虚结算（`TribulationSettled` outcome = Ascended 且 entity 有 `HalfStepState`）：
 //!    由本模块 `emit_halfstep_rechallenge_hide_on_settle` 系统负责。
 
-use valence::prelude::{Client, EventReader, EventWriter, Query, With};
+use valence::prelude::{Client, Entity, EventReader, EventWriter, Position, Query, Res, With};
 
 use crate::cultivation::tribulation::{
     HalfStepRechallengeTriggerEvent, HalfStepState, TribulationSettled,
 };
 use crate::network::agent_bridge::{payload_type_label, serialize_server_data_payload};
 use crate::network::audio_event_emit::{AudioRecipient, PlaySoundRecipeRequest};
-use crate::network::{log_payload_build_error, send_server_data_payload};
+use crate::network::redis_bridge::RedisOutbound;
+use crate::network::{log_payload_build_error, send_server_data_payload, RedisBridgeResource};
+use crate::schema::halfstep_rechallenge::HalfStepRechallengeTriggerPayloadV1;
 use crate::schema::server_data::{HalfStepRechallengeV1, ServerDataPayloadV1, ServerDataV1};
 use crate::schema::tribulation::DuXuOutcomeV1;
+use crate::world::zone::{ZoneRegistry, DEFAULT_SPAWN_ZONE_NAME};
 
 pub const HALFSTEP_RECHALLENGE_AUDIO_RECIPE: &str = "halfstep_rechallenge_trigger_player";
+/// P1 zone echo 音效 recipe id（plan-halfstep-buff-v1 P3 spec）。
+pub const HALFSTEP_RECHALLENGE_ZONE_ECHO_AUDIO_RECIPE: &str =
+    "halfstep_rechallenge_trigger_zone_echo";
 
 /// 监听 `HalfStepRechallengeTriggerEvent`，向非 dormant 玩家 targeted 发 HUD trigger payload
 /// 并触发音效。dormant NPC 跳过（HUD 无客户端接收方）。
@@ -81,6 +92,87 @@ pub fn emit_halfstep_rechallenge_hide_on_settle(
         send_halfstep_rechallenge_to_client(&mut client, hide);
     }
 }
+
+// ─── P1：Redis publish system ────────────────────────────────────────────────
+
+/// plan-halfstep-rechallenge-integration-v1 P1：
+/// 监听 `HalfStepRechallengeTriggerEvent`，把触发信息 publish 到 Redis
+/// `bong:tribulation/halfstep_rechallenge` 供 agent 生成 narration。
+///
+/// 同时在 zone_halfstep_count >= 2 时发 zone echo 音效广播。
+///
+/// dormant 触发方无 Position → zone_name = "dormant"，zone_halfstep_count = 0。
+pub fn publish_halfstep_rechallenge_to_redis(
+    mut events: EventReader<HalfStepRechallengeTriggerEvent>,
+    redis: Res<RedisBridgeResource>,
+    mut audio: EventWriter<PlaySoundRecipeRequest>,
+    halfstep_positions: Query<(Entity, &Position, &HalfStepState)>,
+    zone_registry: Option<Res<ZoneRegistry>>,
+) {
+    for event in events.read() {
+        let (zone_name, zone_halfstep_count) = if event.is_dormant {
+            // dormant 实体无 Position；zone 信息不可用，agent 不产 zone echo
+            ("dormant".to_string(), 0u32)
+        } else {
+            // 非 dormant：从 Position 解析 zone_name
+            let trigger_zone = halfstep_positions
+                .get(event.entity)
+                .ok()
+                .map(|(_, pos, _)| resolve_zone_name(pos, &zone_registry))
+                .unwrap_or_else(|| DEFAULT_SPAWN_ZONE_NAME.to_string());
+
+            // 统计同 zone 内所有 HalfStep 实体数（含本次触发方）
+            let count = halfstep_positions
+                .iter()
+                .filter(|(_, pos, _)| resolve_zone_name(pos, &zone_registry) == trigger_zone)
+                .count() as u32;
+
+            (trigger_zone, count)
+        };
+
+        let payload = HalfStepRechallengeTriggerPayloadV1 {
+            char_id: event.char_id.clone(),
+            zone_name: zone_name.clone(),
+            zone_halfstep_count,
+            at_tick: event.at_tick,
+        };
+
+        if let Err(error) = redis
+            .tx_outbound
+            .send(RedisOutbound::HalfStepRechallengeTrigger(payload))
+        {
+            tracing::warn!(
+                "[bong][halfstep-rechallenge] failed to queue HalfStepRechallengeTriggerPayloadV1 for {}: {error}",
+                event.char_id
+            );
+        }
+
+        // zone echo 音效：同 zone ≥2 个 HalfStep 修士时广播环境音
+        if zone_halfstep_count >= 2 {
+            audio.send(PlaySoundRecipeRequest {
+                recipe_id: HALFSTEP_RECHALLENGE_ZONE_ECHO_AUDIO_RECIPE.to_string(),
+                instance_id: 0,
+                pos: None,
+                flag: None,
+                volume_mul: 1.0,
+                pitch_shift: 0.0,
+                recipient: AudioRecipient::All,
+            });
+        }
+    }
+}
+
+fn resolve_zone_name(pos: &Position, zone_registry: &Option<Res<ZoneRegistry>>) -> String {
+    zone_registry
+        .as_deref()
+        .and_then(|reg| {
+            reg.find_zone(crate::world::dimension::DimensionKind::Overworld, pos.get())
+                .map(|z| z.name.clone())
+        })
+        .unwrap_or_else(|| DEFAULT_SPAWN_ZONE_NAME.to_string())
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 
 fn send_halfstep_rechallenge_to_client(client: &mut Client, data: HalfStepRechallengeV1) {
     let payload = ServerDataV1::new(ServerDataPayloadV1::HalfStepRechallenge(data));

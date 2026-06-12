@@ -1,0 +1,15 @@
+{
+  "id": "halfstep_rechallenge_trigger_zone_echo",
+  "layers": [
+    {
+      "sound": "minecraft:block.beacon.ambient",
+      "volume": 0.3,
+      "pitch": 1.0,
+      "delay_ticks": 0
+    }
+  ],
+  "priority": 60,
+  "attenuation": "WORLD",
+  "category": "AMBIENT",
+  "bus": "ENVIRONMENT"
+}

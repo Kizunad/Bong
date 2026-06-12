@@ -176,7 +176,7 @@ mod tests {
             SoundRecipeRegistry::load_default().expect("default audio recipes should load");
         assert_eq!(
             registry.len(),
-            226,
+            228,
             "audio registry should exclude removed slide and double-jump movement recipes \
              plus include 7 supply_coffin recipes (break + open common/rare/precious + emerge) \
              plus 1 ambient_dan_zong recipe \
@@ -189,7 +189,8 @@ mod tests {
              plus 1 furniture aura hint recipe \
              plus 2 trap runtime P1 recipes (beast_trap_snap/trip_wire_trigger) \
              plus 1 trap runtime P2 recipe (bait_stake_break) \
-             plus 1 halfstep_rechallenge_trigger_player recipe (plan-halfstep-rechallenge-integration-v1 P0)"
+             plus 1 halfstep_rechallenge_trigger_player recipe (plan-halfstep-rechallenge-integration-v1 P0) \
+             plus 2 halfstep P1 recipes (halfstep_quota_release_broadcast + halfstep_rechallenge_trigger_zone_echo)"
         );
         assert!(
             registry.get("beast_trap_snap").is_some(),
@@ -329,6 +330,16 @@ mod tests {
                 .get("halfstep_rechallenge_trigger_player")
                 .is_some(),
             "plan-halfstep-rechallenge-integration-v1 P0：半步重渡触发音效 recipe 必须加载"
+        );
+        assert!(
+            registry.get("halfstep_quota_release_broadcast").is_some(),
+            "plan-halfstep-rechallenge-integration-v1 P1：名额释放广播音效 recipe 必须加载"
+        );
+        assert!(
+            registry
+                .get("halfstep_rechallenge_trigger_zone_echo")
+                .is_some(),
+            "plan-halfstep-rechallenge-integration-v1 P1：半步重渡 zone echo 音效 recipe 必须加载"
         );
         for key in [
             "sword_cleave",

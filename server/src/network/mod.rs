@@ -546,7 +546,7 @@ pub fn register(app: &mut App) {
         Update,
         cultivation_insight_offer_emit::emit_cultivation_insight_offers,
     );
-    // plan-halfstep-rechallenge-integration-v1 P0：半步化虚重渡触发 HUD + HIDE S2C。
+    // plan-halfstep-rechallenge-integration-v1 P0/P1：半步化虚重渡触发 HUD + Redis + HIDE S2C。
     app.add_systems(
         Update,
         (
@@ -554,6 +554,10 @@ pub fn register(app: &mut App) {
                 crate::cultivation::tribulation::dispatch_rechallenge_on_quota_opened_system,
             ),
             halfstep_rechallenge_emit::emit_halfstep_rechallenge_hide_on_settle,
+            // plan-halfstep-rechallenge-integration-v1 P1：Redis publish → agent narration。
+            halfstep_rechallenge_emit::publish_halfstep_rechallenge_to_redis.after(
+                crate::cultivation::tribulation::dispatch_rechallenge_on_quota_opened_system,
+            ),
         ),
     );
     app.add_systems(Update, tuike_event_bridge::publish_tuike_v2_skill_events);
