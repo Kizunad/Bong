@@ -32,12 +32,6 @@ LM_LEFT_ELBOW = 13
 LM_RIGHT_ELBOW = 14
 LM_LEFT_WRIST = 15
 LM_RIGHT_WRIST = 16
-LM_LEFT_PINKY = 17
-LM_RIGHT_PINKY = 18
-LM_LEFT_INDEX = 19
-LM_RIGHT_INDEX = 20
-LM_LEFT_THUMB = 21
-LM_RIGHT_THUMB = 22
 LM_LEFT_HIP = 23
 LM_RIGHT_HIP = 24
 LM_LEFT_KNEE = 25
@@ -129,9 +123,9 @@ class PoseToEmotecraft:
 
     @staticmethod
     def _p(point: object) -> np.ndarray:
-        """MediaPipe X-right/Y-down/Z-camera -> PlayerAnimator X-right/Y-up/Z-front."""
+        """MediaPipe world X-right/Y-up/Z-camera -> PlayerAnimator X-right/Y-up/Z-front."""
         x, y, z = _xyz(point)
-        return np.array([-x, -y, -z], dtype=float)
+        return np.array([-x, y, -z], dtype=float)
 
     def convert_frames(
         self,

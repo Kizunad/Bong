@@ -44,12 +44,12 @@
 
 ### P0.2 坐标系变换 + 骨骼旋转计算
 
-类 `PoseToEmotecraft`，核心数学借鉴 video2geckolib4 的 `PoseConverter`：
+类 `PoseToEmotecraft`，核心数学借鉴 video2geckolib4 的 `PoseConverter`，但按 MediaPipe `pose_world_landmarks` 的世界坐标系修正 Y 轴方向：
 
 **坐标系对齐**：
-- MediaPipe：X 右（被试视角）/ Y 下 / Z 朝镜头
+- MediaPipe world：X 右（被试视角）/ Y 上 / Z 朝镜头（`pose_landmarks` 图像坐标才是 Y 下，仅用于可选 `--translate`）
 - MC PlayerAnimator：X 右 / Y 上 / Z 前
-- 变换：`[-x, -y, -z]`（与 video2geckolib4 的 `_p()` 一致）
+- 变换：`[-x, y, -z]`
 
 **10 → 7 骨骼映射 + bend 分解**（本 plan 核心难点）：
 
@@ -59,20 +59,19 @@
 | Body (translation) | 23,24 hip midpoint | `body` (x/y/z) | 髋中点位移 × scale |
 | Head | 3,6,9,10 | `head` (pitch/yaw/roll) | 相对于 Body 的旋转，pitch 取反 |
 | LeftUpperArm | 11,13,15 | `leftArm` (pitch/yaw/roll) | 相对于 Body 的旋转 → 直接映射 |
-| LeftForearm | 13,17,19,21 | `leftArm` (bend/axis) | 前臂相对上臂的旋转 → 分解为 bend 幅度 + axis 方向 |
+| LeftForearm | 13,15 | `leftArm` (bend/axis) | 前臂相对上臂的夹角 → bend；axis 固定 180°（粗稿前折约定） |
 | RightUpperArm | 12,14,16 | `rightArm` (pitch/yaw/roll) | 同 LeftUpperArm |
-| RightForearm | 14,18,20,22 | `rightArm` (bend/axis) | 同 LeftForearm |
+| RightForearm | 14,16 | `rightArm` (bend/axis) | 同 LeftForearm |
 | LeftThigh | 23,24,25 | `leftLeg` (pitch/yaw/roll) | 相对于 Body 的旋转 |
 | LeftCalf | 23,24,25,27 | `leftLeg` (bend) | 小腿相对大腿的旋转 → bend（腿只有单轴弯曲，axis 固定 0） |
 | RightThigh | 23,24,26 | `rightLeg` (pitch/yaw/roll) | 同 LeftThigh |
 | RightCalf | 23,24,26,28 | `rightLeg` (bend) | 同 LeftCalf |
 
 **bend 分解算法**（`_decompose_bend`）：
-1. 取前臂/小腿相对于上臂/大腿的旋转矩阵 `R_rel`（已由 `_rel()` 计算）
-2. 从 `R_rel` 提取欧拉角 `[pitch, yaw, roll]`
-3. `bend = acos(clamp(R_rel[1][1], -1, 1))`（Y 轴夹角 = 弯曲幅度）
-4. `axis = atan2(R_rel[2][1], R_rel[0][1])`（弯曲平面在 XZ 平面上的方向角）
-5. 对腿：bend 主要由 pitch 贡献，axis ≈ 0（膝盖只能前弯），直接取 `abs(pitch)` 作为 bend
+1. 归一化上臂/大腿向量 `parent` 与前臂/小腿向量 `child`
+2. `bend = acos(clamp(dot(parent, child), -1, 1))`
+3. 对手臂：`bend < 1e-6` 时返回直臂；否则 `axis = 180°`，沿 Bong 当前 PlayerAnimator 粗稿前折约定
+4. 对腿：`axis = 0°`（膝盖单轴前弯），保留侧踢等复杂轴向给 P2 校准
 
 **单位转换**：
 - 旋转：度 → 弧度（`math.radians()`，与 `anim_common.py` 的 `d = math.radians` 一致）
@@ -95,6 +94,7 @@ python3 client/tools/video2emotecraft.py INPUT_VIDEO \
   --complexity 2             # MediaPipe model_complexity (0/1/2)
   --translate                # 是否提取 body 平移（默认关）
   --no-smooth                # 关闭角度 unwrap（默认开）
+  --loop                     # 输出 loop 动画并闭合边界 pose
   --preview                  # 完成后自动调 render_animation.py 出预览图
 ```
 
@@ -118,7 +118,9 @@ python3 client/tools/video2emotecraft.py INPUT_VIDEO \
 - **单位转换**：断言输出 JSON 中角度为弧度、degrees=false
 - **pose_table 结构**：断言输出的 pose_table key 全是 int、part name 全在 `VALID_PARTS` 内
 - **空帧处理**：MediaPipe 丢帧（landmarks=None）时，断言该 tick 被跳过或插值
+- **错误路径**：全空 pose_table 抛出明确 `ValueError`
 - **角度连续性**：构造跨 ±180° 边界的角度序列 → 断言 smooth 后差值 < 180°
+- **数学边界**：反平行 torso 旋转、gimbal-lock 欧拉分支均有限且可预测
 - **循环闭合**：`--loop` 模式下断言 tick 0 和 end_tick 值匹配（复用 `anim_common._check_loop_closure`）
 
 ---
@@ -203,7 +205,7 @@ MediaPipe 的 T-pose 检测不完美，导致"站直不动"时骨骼旋转不为
 | 风险 | 影响 | 缓解 |
 |------|------|------|
 | MediaPipe 对武术快速动作精度不足 | 出拳/劈砍关键帧跳变 | P2.1 时域平滑 + 定位为"粗稿"而非最终产出 |
-| bend 分解信息损失（3DOF→2DOF） | 前臂扭转丢失 | 对修仙动画影响小（多为弯曲/伸展，少有前臂旋转） |
+| bend 分解信息损失（3DOF→2DOF） | 前臂扭转丢失；手臂 axis 当前固定 180° | 对修仙动画影响小（多为弯曲/伸展，少有前臂旋转）；P2 再做参考姿态校准与 per-frame axis |
 | 单人姿态限制 | 不支持双人对练视频 | 分别录单人动作 |
 | torso/body 拆分不精确 | 弯腰/转身时 torso 和 body 耦合 | 参考 feedback_torso_legs_hinge 做鞠躬补偿 |
 | 腿 bend axis 固定 0 | 侧踢等非前向弯曲丢失 | 大多数战斗动作是前踢/前弓步，影响有限 |
@@ -223,6 +225,6 @@ MediaPipe 的 T-pose 检测不完美，导致"站直不动"时骨骼旋转不为
 > 阶段性证据：本 PR 仅完成 P0；P1/P2 仍未开始，本 plan 暂不归档。
 
 - **P0 落地清单**：`client/tools/video2emotecraft.py` 新增 `VideoPoser`（MediaPipe/OpenCV 延迟导入）与 `PoseToEmotecraft`（坐标变换、7 部件 pose table、bend 分解、Emotecraft v3 JSON 发射）；`client/tools/requirements-video2anim.txt` 登记真实视频转换依赖。
-- **P0 测试结果**：`client/tools/test_video2emotecraft.py` 覆盖公开 API 下的 body 平移符号、T-pose 归零、手臂/腿 bend、弧度 JSON、pose_table 结构、丢帧、角度 unwrap、loop 闭合、30→20 FPS 采样、低 FPS 边界与 `--fps 0` 错误分支。
-- **本地验收**：`python3 -m py_compile client/tools/video2emotecraft.py client/tools/test_video2emotecraft.py`；`python3 client/tools/video2emotecraft.py --help >/tmp/video2emotecraft_help.txt`；`python3 -m pytest client/tools/test_video2emotecraft.py -q` → 12 passed。
+- **P0 测试结果**：`client/tools/test_video2emotecraft.py` 覆盖公开 API 下的 body 平移符号、T-pose 归零、手臂/腿 bend、弧度 JSON、空 pose_table 错误、pose_table 结构、反平行/gimbal-lock 数学边界、丢帧、角度 unwrap、loop 闭合、30→20 FPS 采样、低 FPS 边界与 `--fps 0` 错误分支。
+- **本地验收**：`python3 -m py_compile client/tools/video2emotecraft.py client/tools/test_video2emotecraft.py`；`python3 client/tools/video2emotecraft.py --help >/tmp/video2emotecraft_help.txt`；`python3 -m pytest client/tools/test_video2emotecraft.py -q` → 16 passed。
 - **遗留 / 后续**：P1 继续做 `--export-gen` / preview 集成 / batch；P2 继续做 Savitzky-Golay、easing 推断与 T-pose calibration；真实真人视频/F3+T 手测仍按 P0 验收标准在本地执行。

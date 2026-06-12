@@ -10,6 +10,7 @@ from anim_common import VALID_PARTS
 from video2emotecraft import (
     LandmarkFrame,
     PoseToEmotecraft,
+    _matrix_to_euler_xyz,
     parse_args,
     sample_frame_indices,
     smooth_angle_degrees,
@@ -54,12 +55,16 @@ def test_t_pose_maps_to_near_zero_rotations() -> None:
                 f"expected {part}.{axis}≈0 because canonical T-pose is the neutral "
                 f"reference, actual {pose[part][axis]}"
             )
+    assert pose["leftArm"]["bend"] == 0.0 and pose["rightArm"]["bend"] == 0.0, (
+        f"expected straight T-pose arms to have zero bend, actual left/right "
+        f"{pose['leftArm']['bend']}/{pose['rightArm']['bend']}"
+    )
 
 
 def test_public_pose_reports_left_arm_bend_90_degrees() -> None:
     """Verify arm bend through the public frame_to_pose API."""
     landmarks = canonical_t_pose()
-    landmarks[15] = Lm(-0.7, -1.7, 0.0)
+    landmarks[15] = Lm(-0.7, 1.7, 0.0)
 
     pose = PoseToEmotecraft().frame_to_pose(landmarks)
 
@@ -76,7 +81,7 @@ def test_public_pose_reports_left_arm_bend_90_degrees() -> None:
 def test_public_pose_reports_left_leg_bend_45_degrees() -> None:
     """Verify leg bend through the public frame_to_pose API."""
     landmarks = canonical_t_pose()
-    landmarks[27] = Lm(-0.65, 1.05, 0.0)
+    landmarks[27] = Lm(-0.65, -1.05, 0.0)
 
     pose = PoseToEmotecraft().frame_to_pose(landmarks)
 
@@ -117,6 +122,33 @@ def test_output_json_uses_radians_and_degrees_false() -> None:
     )
 
 
+def test_build_doc_rejects_empty_pose_table() -> None:
+    """Verify all-dropped video input surfaces a clear error."""
+    with pytest.raises(ValueError, match="no valid pose frames"):
+        PoseToEmotecraft().build_doc({}, name="empty_from_video")
+
+
+def test_build_doc_loop_preserves_linear_axes() -> None:
+    """Verify looped multi-frame docs keep xyz linear units."""
+    doc = PoseToEmotecraft().build_doc(
+        {
+            0: {"body": {"x": 0.25}, "rightArm": {"pitch": 0.0}},
+            1: {"body": {"x": 0.5}, "rightArm": {"pitch": 45.0}},
+            2: {"body": {"x": 0.25}, "rightArm": {"pitch": 0.0}},
+        },
+        name="loop_from_video",
+        loop=True,
+    )
+
+    assert doc["emote"]["isLoop"] is True, (
+        f"expected loop flag to propagate into Emotecraft doc, actual {doc['emote']['isLoop']}"
+    )
+    body_move = next(move for move in doc["emote"]["moves"] if move.get("body", {}).get("x") == 0.25)
+    assert body_move["body"]["x"] == 0.25, (
+        f"expected body.x to stay linear meters rather than radians, actual {body_move['body']['x']}"
+    )
+
+
 def test_pose_table_structure_and_valid_parts() -> None:
     """Verify pose table keys and part names match anim_common contracts."""
     frames = [LandmarkFrame(0, canonical_t_pose(), None)]
@@ -131,6 +163,43 @@ def test_pose_table_structure_and_valid_parts() -> None:
             f"expected pose parts within VALID_PARTS because PlayerAnimator rejects unknown parts, "
             f"actual {set(pose) - VALID_PARTS}"
         )
+
+
+def test_antiparallel_torso_rotation_is_finite() -> None:
+    """Verify upside-down torso input takes the anti-parallel branch safely."""
+    landmarks = canonical_t_pose()
+    landmarks[11] = Lm(-0.2, -0.2, 0.0)
+    landmarks[12] = Lm(0.2, -0.2, 0.0)
+    landmarks[23] = Lm(-0.15, 1.2, 0.0)
+    landmarks[24] = Lm(0.15, 1.2, 0.0)
+
+    pose = PoseToEmotecraft().frame_to_pose(landmarks)
+
+    assert all(math.isfinite(pose["torso"][axis]) for axis in ("pitch", "yaw", "roll")), (
+        f"expected finite torso axes for anti-parallel vector, actual {pose['torso']}"
+    )
+
+
+def test_matrix_to_euler_handles_gimbal_lock_branch() -> None:
+    """Verify yaw≈90° matrices use the gimbal-lock branch safely."""
+    matrix = np.array(
+        [
+            [0.0, 0.0, 1.0],
+            [0.0, 1.0, 0.0],
+            [-1.0, 0.0, 0.0],
+        ],
+        dtype=float,
+    )
+
+    pitch, yaw, roll = _matrix_to_euler_xyz(matrix)
+
+    assert math.isclose(yaw, math.pi / 2.0, abs_tol=1e-7), (
+        f"expected yaw≈π/2 in gimbal-lock branch, actual {yaw}"
+    )
+    assert math.isclose(roll, 0.0, abs_tol=1e-9), (
+        f"expected gimbal-lock branch to pin roll=0, actual {roll}"
+    )
+    assert math.isfinite(pitch), f"expected finite pitch in gimbal-lock branch, actual {pitch}"
 
 
 def test_missing_landmarks_frame_is_skipped() -> None:
@@ -208,23 +277,23 @@ def canonical_t_pose() -> list[Lm]:
     """Build a 33-landmark neutral pose compatible with MediaPipe indices."""
     landmarks = [Lm(0.0, 0.0, 0.0) for _ in range(33)]
 
-    # Values are pre-transform MediaPipe-like coordinates.  After conversion:
+    # Values are pre-transform MediaPipe world-like coordinates.  After conversion:
     # shoulders/arms lie on +/-X, torso points +Y, legs point -Y, face points -Z.
-    landmarks[0] = Lm(0.0, -1.4, 1.0)
-    landmarks[3] = Lm(0.1, -1.45, 0.0)
-    landmarks[6] = Lm(-0.1, -1.45, 0.0)
-    landmarks[9] = Lm(0.08, -1.35, 0.0)
-    landmarks[10] = Lm(-0.08, -1.35, 0.0)
-    landmarks[11] = Lm(-0.2, -1.2, 0.0)
-    landmarks[12] = Lm(0.2, -1.2, 0.0)
-    landmarks[13] = Lm(-0.7, -1.2, 0.0)
-    landmarks[14] = Lm(0.7, -1.2, 0.0)
-    landmarks[15] = Lm(-1.1, -1.2, 0.0)
-    landmarks[16] = Lm(1.1, -1.2, 0.0)
-    landmarks[23] = Lm(-0.15, -0.2, 0.0)
-    landmarks[24] = Lm(0.15, -0.2, 0.0)
-    landmarks[25] = Lm(-0.15, 0.55, 0.0)
-    landmarks[26] = Lm(0.15, 0.55, 0.0)
-    landmarks[27] = Lm(-0.15, 1.2, 0.0)
-    landmarks[28] = Lm(0.15, 1.2, 0.0)
+    landmarks[0] = Lm(0.0, 1.4, 1.0)
+    landmarks[3] = Lm(0.1, 1.45, 0.0)
+    landmarks[6] = Lm(-0.1, 1.45, 0.0)
+    landmarks[9] = Lm(0.08, 1.35, 0.0)
+    landmarks[10] = Lm(-0.08, 1.35, 0.0)
+    landmarks[11] = Lm(-0.2, 1.2, 0.0)
+    landmarks[12] = Lm(0.2, 1.2, 0.0)
+    landmarks[13] = Lm(-0.7, 1.2, 0.0)
+    landmarks[14] = Lm(0.7, 1.2, 0.0)
+    landmarks[15] = Lm(-1.1, 1.2, 0.0)
+    landmarks[16] = Lm(1.1, 1.2, 0.0)
+    landmarks[23] = Lm(-0.15, 0.2, 0.0)
+    landmarks[24] = Lm(0.15, 0.2, 0.0)
+    landmarks[25] = Lm(-0.15, -0.55, 0.0)
+    landmarks[26] = Lm(0.15, -0.55, 0.0)
+    landmarks[27] = Lm(-0.15, -1.2, 0.0)
+    landmarks[28] = Lm(0.15, -1.2, 0.0)
     return landmarks
