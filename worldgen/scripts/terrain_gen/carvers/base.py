@@ -116,20 +116,23 @@ class SolidColumn:
 
 
 def _mask_to_runs(mask: np.ndarray) -> list[tuple[int, int]]:
-    """Extract contiguous True runs as world-Y ``(floor, ceiling)`` pairs."""
-    runs: list[tuple[int, int]] = []
-    in_run = False
-    start = 0
-    for i in range(mask.shape[0]):
-        if mask[i] and not in_run:
-            in_run = True
-            start = i
-        elif not mask[i] and in_run:
-            in_run = False
-            runs.append((start + SPAN_MIN_Y, (i - 1) + SPAN_MIN_Y))
-    if in_run:
-        runs.append((start + SPAN_MIN_Y, (mask.shape[0] - 1) + SPAN_MIN_Y))
-    return runs
+    """Extract contiguous True runs as world-Y ``(floor, ceiling)`` pairs.
+
+    Vectorized edge-detect: a run starts where a False→True transition happens
+    and ends where True→False does.  Padding the mask with a False on both ends
+    turns the head/tail runs into ordinary interior transitions, so the starts
+    and ends come straight out of ``np.diff`` — byte-identical to the scalar
+    scan but ~one ``np.diff`` instead of a 495-iteration Python loop per column
+    (``_mask_to_runs`` is the dominant cost of the post-carve refold).
+    """
+    if not mask.any():
+        return []
+    # diff of the int view: +1 at each run start, -1 just past each run end.
+    edges = np.diff(np.concatenate(([0], mask.view(np.int8), [0])))
+    starts = np.flatnonzero(edges == 1)
+    ends = np.flatnonzero(edges == -1) - 1  # inclusive ceiling index
+    base = int(SPAN_MIN_Y)
+    return [(int(s) + base, int(e) + base) for s, e in zip(starts, ends)]
 
 
 def _runs_to_spans(
