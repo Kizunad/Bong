@@ -542,11 +542,19 @@ def _peaks_qi_density_after_regen(
     )
     rewritten = resp.json()["rewritten_tiles"]
     assert rewritten, "regen must rewrite at least one peaks tile"
-    return {
-        tile_id: (rasters / tile_id / "qi_density.bin").read_bytes()
-        for tile_id in rewritten
-        if (rasters / tile_id / "qi_density.bin").exists()
-    }
+    # Assert qi_density.bin EXISTS rather than filtering on .exists(): a regen
+    # that stopped writing the layer would otherwise yield an empty/partial dict
+    # and the byte-comparison would pass vacuously, hiding the regression.
+    out: dict[str, bytes] = {}
+    for tile_id in rewritten:
+        qi_path = rasters / tile_id / "qi_density.bin"
+        assert qi_path.exists(), (
+            f"regen'd peaks tile {tile_id} is missing qi_density.bin at {qi_path} "
+            "— every baked peaks tile must carry the qi_density layer the "
+            "override test compares; a filtered .exists() would silently skip it"
+        )
+        out[tile_id] = qi_path.read_bytes()
+    return out
 
 
 def test_regen_overrides_change_generated_output(tmp_path) -> None:
@@ -621,10 +629,16 @@ def test_regen_worldgen_override_changes_terrain(tmp_path) -> None:
         output_dir=out_dir,
     )
     c = TestClient(app)
-    # Capture the affected tiles' spans before the override regen.
-    affected = c.post("/api/regen", json={"zone_name": "peaks"}).json()[
-        "rewritten_tiles"
-    ]
+    # Capture the affected tiles' spans before the override regen. Assert the
+    # baseline regen succeeded FIRST: a non-200 here would make `.json()` blow up
+    # on the error body (no "rewritten_tiles" key) and mask the real failure.
+    baseline = c.post("/api/regen", json={"zone_name": "peaks"})
+    assert baseline.status_code == 200, (
+        f"baseline regen must succeed before the override run; "
+        f"got {baseline.status_code}: {baseline.text}"
+    )
+    affected = baseline.json()["rewritten_tiles"]
+    assert affected, "baseline regen must rewrite at least one peaks tile"
     before = {
         tid: (rasters / tid / SPANS_FILE).read_bytes() for tid in affected
     }
