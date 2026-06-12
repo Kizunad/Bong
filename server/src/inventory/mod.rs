@@ -230,7 +230,7 @@ pub struct ContainerSpec {
     /// plan-qi-handling-attrition-v1 P3 — 此容器内物品跳过搬运磨损。
     pub attrition_exempt: bool,
     /// plan-container-filter-and-completion-v1 P0 — 可接受物品筛选；None/empty = 全收。
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub accept_filter: Option<Vec<ContainerAcceptFilter>>,
 }
 
@@ -1705,6 +1705,7 @@ fn parse_container_accept_filter(
         ));
     }
     if let Some(prefix) = trimmed.strip_prefix("prefix:") {
+        let prefix = prefix.trim();
         if prefix.is_empty() {
             return Err(format!(
                 "{} item `{item_id}` has empty container.accept prefix",
@@ -8815,6 +8816,30 @@ cols = 4
     }
 
     #[test]
+    fn parse_container_spec_accept_trims_template_prefix_payload() {
+        for raw_prefix in ["prefix:anqi_", "prefix: anqi_"] {
+            let raw = ContainerSpecToml {
+                rows: 3,
+                cols: 3,
+                weight_capacity: 0.0,
+                equip_slot: EQUIP_SLOT_WAIST_POUCH.to_string(),
+                durability_cost_per_op: 0.0,
+                attrition_exempt: false,
+                accept: Some(vec![raw_prefix.to_string()]),
+            };
+            let spec = parse_container_spec(raw, Path::new("<test>"), "prefix_pouch")
+                .expect("prefix accept entry should parse with optional whitespace");
+            assert_eq!(
+                spec.accept_filter,
+                Some(vec![ContainerAcceptFilter::TemplatePrefix(
+                    "anqi_".to_string()
+                )]),
+                "prefix accept entry `{raw_prefix}` 应归一化为无空白前缀"
+            );
+        }
+    }
+
+    #[test]
     fn parse_container_spec_rejects_invalid_accept_entries() {
         for (accept, expected_fragment) in [
             (vec!["unknown_category".to_string()], "unknown category"),
@@ -8938,6 +8963,12 @@ cols = 4
         assert_eq!(
             parsed.accept_filter, None,
             "旧存档/协议缺 accept_filter 时必须默认 None"
+        );
+        let serialized =
+            serde_json::to_string(&parsed).expect("legacy ContainerSpec should serialize");
+        assert!(
+            !serialized.contains("accept_filter"),
+            "accept_filter=None 序列化时应省略字段，避免旧 JSON 形状变成 null：{serialized}"
         );
     }
 
