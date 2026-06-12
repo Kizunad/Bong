@@ -335,6 +335,7 @@ const AgentUiResponsePayloadV1 = Type.Object({
 - `client/.../agentui` 天道面板 VFX（粒子 / 音效 / fade-in / tiandao vignette+shake）
 
 ### 关键 commit（30 个，origin/main..HEAD，2026-06-12）
+
 - P0：`8299ba91d` TypeBox schema / `89aef9f1b` Rust serde 镜像 / `c0bdb42b4` AgentUiSession 状态机+Redis IPC
 - P1：`d3737b321` OwoUI 动态渲染+C2S
 - P2：`e2cbf2b4f`/`1d2374b7f`/`d53e8bb64`/`ca4c400d8`/`f1bcd688c`（validate / xmlTemplates+UiRenderer+Consumer / redis-ipc+runtime / main.ts 注册 / 68 饱和测试）
@@ -342,18 +343,21 @@ const AgentUiResponsePayloadV1 = Type.Object({
 - Fix 轮（对抗审查逐层逼出端到端孤岛并修复）：`2b1f32a6e` server S2C发包/tick自增/session过期 · `bcfb0d98a` UiRenderer/Consumer 接线+去重 · `dc5c26a5e`/`6fed50906`/`73a3909e3` client 关闭语义+tickLocalTimeout+UiOpenHandler 复原 · `0663c9147` owo-ui/components 白名单+跨端契约测试 · `31ee31075` S2C 双向 emit system 测试 · `ee4ae8803` tick 排序 · `9ca1f5343` triggerUi/drain 接线 · `52a2147e0` TsyZoneActivated 生产者 · `f0ad65887` canonical_player_id 身份键 · `c6f8c6dbb` button_click 真注入+session drain · `e4f7492ba` 字节预检 · `1e3596af5`/`b75fcff8a`/`60051a329` 回滚 ENABLE_DYNAMIC_XML_UI 回归+恢复护栏+fallback seam · `9b6bcbf79` TsyZoneActivated 加 player_id 直达触发玩家 · `a0bf0954e` 真 TiandaoAgent 实现 setButtonClickEvents · `f423fbddc` 修 makeCaptureClient 类型（tsc CI 门禁）
 
 ### 测试结果（全绿）
+
 - `cd server && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test` → **8748 passed / 0 failed**（含 agent_ui system 级 S2C 双向 emit 测试、realm_gate/player_offline/Replaced/timeout/session_expired、TsyZoneActivated 双端 pin）
 - `cd agent/packages/tiandao && npm test`（tsc + vitest）→ **765 passed**；`npm run check` → tsc clean
 - `cd agent/packages/schema && npm test` → **692 passed**
 - `cd client && ./gradlew test build` → **2611 passed / 0 failed**（AgentUiScreenProtocolTest 25 / UiOpenState 默认 flag 态护栏）
 
 ### 跨仓库核验
+
 - **server**：`AgentUiSessionStore` / `receive_agent_ui_cmd_system` / `agent_ui_tick_system` / `receive_agent_ui_response_system` / `xml_sanitize` / `Realm::rank` / `canonical_player_id` / `TsyZoneActivatedEventV1`
 - **agent**：`AgentUiRequestCommandV1` / `AgentUiResponsePayloadV1` / `UiRenderer.renderUi` / `UiResponseConsumer` / `TiandaoAgent.setButtonClickEvents` / `buttonClickBlock` / `processTsyZoneActivatedForUi`
 - **client**：`AgentUiScreen` / `AgentUiPayloadHandler` / `AgentUiBootstrap` / `ServerDataRouter`（agent_ui_request/close）
 - **Redis key**：`bong:agent_ui_cmd` / `bong:agent_ui_response` / `bong:server_data`(AgentUiRequest/AgentUiClose) / `bong:tsy_event`(tsy_zone_activated)
 
 ### 遗留 / 后续（均为 reverify 标记的 minor，不阻塞本 plan；记为后续优化）
+
 - **realm_gate_rejected 降级 narration 当前 broadcast scope**：`AgentUiResponsePayloadV1` 的 error params 无玩家标识字段，consumer 无从定位被拒玩家，故 narration 发全服而非 per-player（偏离 §0.1 指定的 `scope=player`）。修需 server 在 error response 加触发玩家 id 字段——属下游优化（建议与 dying-elder / 天道启示触发落地一并处理）。
 - **TSY 面板展示值（spirit_qi/danger_tier）多为占位**：`runtime.ts` 按 `z.name===event.family_id` 匹配 zone snapshot，因 zone 名带 `_shallow/_mid/_deep` 后缀而 family_id 不带，多 miss → 展示值回退占位（plan §4 标这两项为只读展示，不阻断闭环）。后续可在匹配时 strip 后缀。
 - **TSY target_player fallback**：`?? state.players[0]`，当 `event.player_id` 在快照短暂滞后/降级为 `entity:...` 时可能误投；server realm_gate 兜底阻止误发清晰面板给不够格者。
