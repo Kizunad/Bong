@@ -269,9 +269,9 @@ Agent(
 
 - `6a269af76`（2026-06-10）`plan-trap-runtime-v1 P0: 接通陷阱放置契约 (#519)`。
 - `2c844adb97bfacb9210f0d48522e42cc600e6259`（2026-06-11）`plan-trap-runtime-v1 P1：实装困兽夹与绊线触发`。
-- `d20fbd474`（2026-06-12）`plan-trap-runtime-v1 P2：接入诱饵桩仇恨黑板`。
-- `42299c0ad`（2026-06-12）`plan-trap-runtime-v1 P2：实装诱饵桩运行时与配方`。
-- `b2d8fb609`（2026-06-12）`plan-trap-runtime-v1 P2：接通诱饵桩客户端视听`。
+- `7637dd0b9`（2026-06-12）`plan-trap-runtime-v1 P2：接入诱饵桩仇恨黑板`。
+- `56b0a469b`（2026-06-12）`plan-trap-runtime-v1 P2：实装诱饵桩运行时与配方`。
+- `6481a120b`（2026-06-12）`plan-trap-runtime-v1 P2：接通诱饵桩客户端视听`。
 
 ### 测试结果
 
